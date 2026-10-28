@@ -1,0 +1,2188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevDesk · 上线模块</title>
+<style>
+/* ============================================================
+   设计令牌 —— 唯一来源：src/core/theme.cpp lightTokens / ui_kit
+   底 #FAFAF9 · 卡面 #FFFFFF · 侧栏 #F0FDF7 · hover #F3F4F6 · active #E5E7EB
+   主色 #36D399 · success #10B981 · warning #F59E0B · error #EF4444 · info #3B82F6
+   字号 12 / 14 / 18 / 24 · 圆角 6 / 8 / 12 / 16 / 999 · 间距 4/8/16/24/40
+   ============================================================ */
+:root{
+  --bg:#FAFAF9;
+  --surface:#FFFFFF;
+  --sidebar:#F0FDF7;
+  --hover:#F3F4F6;
+  --active:#E5E7EB;
+  --primary:#36D399;
+  --primary-hover:#2EC48F;
+  --primary-pressed:#23B07F;
+  --primary-soft:#E6FBF2;
+  --primary-text:#157E4E;
+  --accent-text:#0C7E58;
+  --success:#10B981;
+  --warning:#F59E0B;
+  --error:#EF4444;
+  --error-text:#B91C1C;
+  --info:#3B82F6;
+  --purple:#71639B;
+  --yellow:#EAB308; /* 提醒黄档：token 无专用黄，取同族 500 档 */
+  --text-1:#1F2937;
+  --text-2:#4B5563;
+  --text-3:#6B7280;
+  --border:#E5E7EB;
+  --border-muted:#F3F4F6;
+  --r-sm:6px;
+  --r-md:8px;
+  --r-lg:12px;
+  --r-xl:16px;
+  --r-pill:999px;
+  --shadow-card:0 1px 3px rgba(10,14,22,.06);
+  --shadow-hover:0 4px 12px rgba(10,14,22,.08);
+  --shadow-pop:0 12px 32px rgba(10,14,22,.16);
+  --mono:"Cascadia Code","Cascadia Mono",Consolas,"SFMono-Regular",monospace;
+  --font:"Microsoft YaHei","PingFang SC",sans-serif;
+}
+
+/* ============================================================
+   基础
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+body{
+  font-family:var(--font);font-size:14px;line-height:1.5;color:var(--text-1);
+  background:var(--bg);-webkit-font-smoothing:antialiased;overflow:hidden;
+}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+[hidden]{display:none!important}
+h1,h2,h3,p{margin:0}
+a{color:var(--accent-text)}
+::selection{background:var(--primary-soft);color:var(--text-1)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--active);border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-3)}
+::-webkit-scrollbar-track{background:transparent}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.spacer{flex:1}
+.mono{font-family:var(--mono)}
+
+/* ============================================================
+   应用框架 / 侧边栏（宽 208，条目 40，半径 6，图标盒 28，项间 4）
+   ============================================================ */
+.app{display:flex;height:100vh;min-height:640px;min-width:1000px;background:var(--bg)}
+.sidebar{
+  width:208px;flex:0 0 208px;background:var(--sidebar);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;padding:32px 16px 16px;
+  min-height:0;overflow-y:auto;overflow-x:hidden;
+}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--active);border-radius:3px}
+.brand{display:flex;align-items:center;gap:12px;padding:0 4px;min-height:56px;margin-bottom:28px}
+.brand-mark{
+  width:48px;height:48px;border-radius:var(--r-md);background:var(--primary);
+  color:#fff;display:grid;place-items:center;font-size:18px;font-weight:700;flex:0 0 48px;
+}
+.brand-name{font-size:18px;font-weight:600;line-height:1.25;letter-spacing:-.01em}
+.brand-sub{font-size:12px;color:var(--text-3);line-height:1.4}
+
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav-group{display:flex;flex-direction:column;gap:4px}
+.nav-item{
+  position:relative;display:flex;align-items:center;width:100%;height:40px;
+  padding:0 12px;border:1px solid transparent;border-radius:var(--r-sm);
+  background:transparent;color:var(--text-2);font-size:14px;text-align:left;
+  transition:background .15s,color .15s,border-color .15s;overflow:hidden;
+}
+button.nav-item{appearance:none}
+.nav-item:hover{background:var(--hover);color:var(--text-1)}
+.nav-item:active{background:var(--active)}
+.nav-item.active{
+  background:var(--surface);border-color:var(--border);color:var(--text-1);font-weight:500;
+}
+.nav-item.active::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary);
+}
+.nav-item.active .nav-icon{color:var(--primary)}
+.nav-item.has-active{color:var(--text-1)}
+.nav-item.has-active .nav-icon{color:var(--primary)}
+.nav-icon{width:28px;height:28px;flex:0 0 28px;display:grid;place-items:center}
+.nav-icon svg{width:18px;height:18px}
+.nav-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nav-arrow{
+  margin-left:auto;width:20px;height:20px;flex:0 0 20px;
+  display:grid;place-items:center;border-radius:4px;color:var(--text-3);
+  font-size:12px;line-height:1;transition:transform .15s,background .15s;
+}
+.nav-arrow:hover{background:var(--active);color:var(--text-1)}
+.nav-item[aria-expanded="true"] .nav-arrow{transform:rotate(90deg)}
+.nav-children{display:flex;flex-direction:column;gap:4px;margin:0 0 4px 24px}
+.nav-child{height:40px;padding:0 12px 0 16px;font-size:14px}
+.nav-divider{height:1px;background:var(--border);margin:8px 0}
+.nav-badge{
+  margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:var(--r-pill);
+  background:var(--error);color:#fff;font-size:11px;font-weight:600;
+  display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+}
+.sidebar-spacer{flex:1;min-height:16px}
+.nav-label{font-size:12px;color:var(--text-3);padding:8px 8px 6px}
+.sidebar-foot{
+  padding:12px 8px 0;margin-top:8px;border-top:1px solid var(--border);
+  font-size:12px;color:var(--text-3);display:flex;align-items:center;gap:6px;
+}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--success);flex:0 0 6px}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.pages{flex:1;min-height:0;overflow:auto}
+.page{display:none;padding:32px 32px 64px}
+.page.active{display:block;animation:pageIn .16s ease-out}
+@keyframes pageIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+
+/* ============================================================
+   页头 / 按钮 / chips
+   ============================================================ */
+.page-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:24px;
+  margin-bottom:24px;flex-wrap:wrap;
+}
+.page-title{font-size:24px;line-height:34px;font-weight:600;letter-spacing:-.01em}
+.page-sub{margin-top:8px;font-size:14px;line-height:1.6;color:var(--text-2);max-width:760px}
+.page-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.back-link{
+  display:inline-flex;align-items:center;gap:4px;background:none;border:0;padding:0;
+  color:var(--text-2);font-size:14px;margin-bottom:16px;
+}
+.back-link:hover{color:var(--accent-text)}
+
+.btn{
+  height:40px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:0 16px;border:1px solid transparent;border-radius:var(--r-md);
+  font-size:14px;font-weight:600;white-space:nowrap;
+  transition:background .15s,border-color .15s;
+}
+.btn:active{transform:translateY(0)}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-primary:active{background:var(--primary-pressed)}
+.btn-secondary{background:var(--hover);color:var(--text-1)}
+.btn-secondary:hover{background:var(--active)}
+.btn-text{
+  height:32px;padding:0 8px;background:transparent;border:0;border-radius:var(--r-sm);
+  color:var(--accent-text);font-size:14px;font-weight:600;
+}
+.btn-text:hover{background:var(--hover)}
+.btn-sm{height:32px;padding:0 12px;font-size:12px;border-radius:var(--r-sm)}
+
+.chip{
+  display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;
+  border-radius:var(--r-pill);background:var(--hover);color:var(--text-2);
+  font-size:11px;font-weight:600;line-height:1;white-space:nowrap;
+}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 6px}
+.chip-env{color:var(--text-2)}
+.st-config{color:var(--text-2)}
+.st-wait{color:var(--info)}
+.st-run{color:var(--primary-text)}
+.st-done{color:var(--accent-text)}
+.st-void{color:var(--text-3)}
+.meta-pill{
+  display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:var(--r-pill);
+  background:var(--hover);color:var(--text-3);font-size:12px;font-weight:500;white-space:nowrap;
+}
+
+/* ============================================================
+   任务列表 —— 自适应瀑布流（最小卡宽 320 / 间距 16）
+   ============================================================ */
+.list-meta{font-size:12px;color:var(--text-3);margin:-8px 0 16px}
+.waterfall{display:flex;gap:16px;align-items:flex-start}
+.wf-col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:16px}
+.task-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-card);padding:16px;cursor:pointer;
+  transition:border-color .15s,box-shadow .15s,transform .15s;
+}
+.task-card:hover{border-color:rgba(54,211,153,.55);box-shadow:var(--shadow-hover);transform:translateY(-1px)}
+.task-card:active{transform:none;background:var(--bg)}
+.task-card.is-void{opacity:.68}
+.tc-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.tc-date{display:flex;align-items:baseline;gap:6px;min-width:0}
+.tc-date b{font-size:18px;line-height:22px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+.tc-date span{font-size:12px;color:var(--text-3);white-space:nowrap}
+.tc-progress{display:flex;align-items:center;gap:8px;margin-top:14px}
+.bar{height:4px;border-radius:var(--r-pill);background:var(--border-muted);overflow:hidden;flex:1;min-width:60px}
+.bar i{display:block;height:100%;border-radius:inherit;background:var(--primary);transition:width .25s ease}
+.bar.success i{background:var(--success)}
+.bar.muted i{background:var(--text-3);opacity:.45}
+.tc-pct{
+  font-size:12px;font-weight:600;color:var(--text-2);min-width:36px;text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+.tc-envs{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.tc-summary{
+  margin-top:10px;font-size:14px;line-height:1.55;color:var(--text-2);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+}
+.wf-loader{
+  display:flex;align-items:center;justify-content:center;gap:8px;height:40px;
+  margin-top:16px;font-size:12px;color:var(--text-3);
+}
+.spinner{
+  width:12px;height:12px;border-radius:50%;border:2px solid var(--border);
+  border-top-color:var(--primary);animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.wf-end{margin-top:16px;padding:8px 0;text-align:center;font-size:12px;color:var(--text-3)}
+
+/* ============================================================
+   任务执行页
+   ============================================================ */
+.exec-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.section{margin-bottom:32px}
+.section-head{display:flex;align-items:baseline;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.section-title{font-size:18px;font-weight:600;line-height:1.4}
+.section-note{font-size:12px;color:var(--text-3)}
+
+.prereqs{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.prereq{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  padding:16px;min-height:128px;display:flex;flex-direction:column;gap:8px;
+  box-shadow:var(--shadow-card);
+}
+.preq-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.preq-icon{
+  width:20px;height:20px;border-radius:50%;background:var(--success);color:#fff;
+  display:grid;place-items:center;font-size:11px;flex:0 0 20px;
+}
+.preq-icon.pending{background:transparent;border:1.5px solid var(--warning);color:var(--warning)}
+.preq-title{font-size:14px;font-weight:600}
+.preq-state{margin-left:auto;font-size:12px;font-weight:600;color:var(--accent-text)}
+.preq-state.pending{color:var(--warning)}
+.preq-no{font-family:var(--mono);font-size:12px;color:var(--text-1);word-break:break-all}
+.preq-announce{
+  font-size:12px;line-height:1.6;color:var(--text-2);
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+}
+.preq-meta{font-size:12px;color:var(--text-3);margin-top:auto}
+
+.env-list{display:flex;flex-direction:column;gap:16px}
+.env-group{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  box-shadow:var(--shadow-card);overflow:hidden;transition:border-color .15s;
+}
+.env-group.overdue{border-color:rgba(239,68,68,.4)}
+.env-head{
+  display:flex;align-items:center;gap:12px;padding:12px 16px;min-height:56px;
+  cursor:pointer;user-select:none;flex-wrap:wrap;transition:background .15s;
+}
+.env-head:hover{background:var(--hover)}
+.env-group.overdue .env-head{background:rgba(239,68,68,.05)}
+.env-name{font-size:18px;font-weight:600;letter-spacing:.02em}
+.env-window{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.env-group.overdue .env-window{color:var(--error-text)}
+.env-badge{font-size:11px;height:22px;padding:0 8px;border-radius:var(--r-pill);display:inline-flex;align-items:center;background:var(--hover);color:var(--text-3);font-weight:600;white-space:nowrap}
+.env-group.overdue .env-badge{color:var(--error-text)}
+.env-group.running .env-badge{color:var(--primary-text)}
+.env-group.upcoming .env-badge{color:var(--text-3)}
+.env-progress{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:220px}
+.env-progress .bar{min-width:96px}
+.env-group.overdue .env-progress .bar i{background:var(--error)}
+.env-group.running .env-progress .bar i{background:var(--primary)}
+.env-count{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.env-pct{font-size:12px;font-weight:600;color:var(--text-2);font-variant-numeric:tabular-nums;min-width:34px;text-align:right}
+.env-group.overdue .env-pct{color:var(--error-text)}
+.env-body{padding:0 16px 16px;display:flex;flex-direction:column;gap:12px}
+.env-group.collapsed .env-body{display:none}
+.chev-btn{
+  width:20px;height:20px;flex:0 0 20px;display:grid;place-items:center;
+  color:var(--text-3);font-size:12px;line-height:1;transition:transform .15s;
+}
+.env-group.collapsed > .env-head .chev-btn,
+.svc-card.collapsed > .svc-head .chev-btn{transform:rotate(-90deg)}
+
+.svc-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  overflow:hidden;transition:border-color .15s;
+}
+.svc-card:hover{border-color:rgba(54,211,153,.4)}
+.svc-head{
+  display:flex;align-items:center;gap:10px;padding:12px 16px;
+  cursor:pointer;user-select:none;flex-wrap:wrap;
+}
+.svc-head:hover{background:var(--hover)}
+.svc-name{font-family:var(--mono);font-size:14px;font-weight:600;word-break:break-all}
+.kind-backend{color:var(--info)}
+.kind-pc{color:var(--primary-text)}
+.kind-mobile{color:var(--purple)}
+.branch{
+  font-family:var(--mono);font-size:12px;color:var(--text-2);
+  background:var(--hover);border-radius:var(--r-sm);padding:2px 8px;white-space:nowrap;
+}
+.svc-progress{
+  margin-left:auto;font-size:12px;color:var(--text-3);background:var(--hover);
+  border-radius:var(--r-pill);padding:2px 9px;font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.svc-card.collapsed .steps{display:none}
+
+.steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:0 16px 16px}
+.steps.frontend{grid-template-columns:repeat(3,minmax(0,1fr))}
+.step{
+  position:relative;background:var(--surface);border:1px solid var(--border-muted);
+  border-radius:var(--r-md);padding:12px;min-height:88px;display:flex;flex-direction:column;gap:8px;
+  cursor:pointer;transition:border-color .15s,background .15s,box-shadow .15s;
+}
+.step:hover{border-color:rgba(54,211,153,.5);box-shadow:var(--shadow-card)}
+.step-head{display:flex;align-items:center;gap:8px;min-width:0}
+.mark{
+  width:20px;height:20px;border-radius:50%;flex:0 0 20px;
+  display:grid;place-items:center;font-size:11px;line-height:1;
+}
+.step.pending .mark{border:1.5px solid var(--border);color:transparent}
+.step.current{border-color:var(--primary);background:var(--primary-soft)}
+.step.current .mark{border:1.5px solid var(--primary);color:var(--primary-text)}
+.step.current .step-name{color:var(--primary-text)}
+.step.done .mark{background:var(--success);color:#fff}
+.step.skipped{background:var(--hover);border-style:dashed}
+.step.skipped .mark{background:var(--active);color:var(--text-2);border:1px dashed var(--border)}
+.step.skipped .step-name{text-decoration:line-through;color:var(--text-3)}
+.step.skipped .step-sub{color:var(--text-3)}
+.step-no{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.step-name{font-size:14px;font-weight:600;line-height:1.4;min-width:0}
+.ticket{
+  margin-left:auto;flex:0 0 auto;font-family:var(--mono);font-size:10px;line-height:1;
+  padding:3px 6px;border-radius:var(--r-sm);background:var(--primary-soft);
+  color:var(--primary-text);white-space:nowrap;
+}
+.step-foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.step-sub{
+  font-size:12px;color:var(--text-2);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.view-link{
+  flex:0 0 auto;font-size:12px;font-weight:600;color:var(--accent-text);
+  background:none;border:0;padding:2px 6px;border-radius:var(--r-sm);line-height:1.4;
+}
+.view-link:hover{background:var(--surface)}
+
+/* ============================================================
+   新建任务
+   ============================================================ */
+.create-grid{
+  display:grid;grid-template-columns:minmax(380px,440px) minmax(0,1fr);
+  gap:24px;align-items:start;
+}
+.card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:24px;box-shadow:var(--shadow-card);
+}
+.cal-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}
+.cal-label{font-size:18px;font-weight:600}
+.cal-nav{display:flex;gap:4px}
+.icon-btn{
+  width:36px;height:36px;border:1px solid var(--border);background:var(--surface);
+  border-radius:var(--r-md);display:grid;place-items:center;color:var(--text-2);
+  font-size:18px;line-height:1;flex:0 0 36px;
+}
+.icon-btn:hover{background:var(--hover);color:var(--text-1)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-wd{font-size:12px;font-weight:600;color:var(--text-3);text-align:center;padding:4px 0 8px}
+.cal-day{
+  position:relative;height:44px;border:0;background:transparent;border-radius:var(--r-md);
+  font-size:14px;color:var(--text-3);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;line-height:1;
+  font-variant-numeric:tabular-nums;transition:background .15s,color .15s;
+}
+.cal-day:hover{background:var(--hover)}
+.cal-day.off{color:var(--text-3)}
+.cal-day.normal{color:var(--accent-text);font-weight:600;background:var(--primary-soft)}
+.cal-day.selected{background:var(--primary);color:#fff;font-weight:600}
+.cal-day.selected .cal-dot{display:none}
+.cal-day.empty{height:44px;pointer-events:none}
+.cal-dot{width:4px;height:4px;border-radius:50%;background:currentColor;opacity:.75}
+.cal-today{
+  font-size:9px;line-height:1;padding:1px 4px;border-radius:4px;
+  background:rgba(31,41,55,.08);color:var(--text-2);
+}
+.cal-day.selected .cal-today{background:rgba(255,255,255,.25);color:#fff}
+.cal-legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:16px;font-size:12px;color:var(--text-3)}
+.legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--border);margin-right:6px}
+.legend-dot.accent{background:var(--primary)}
+.selected-date{
+  margin-top:16px;padding:12px 16px;border-radius:var(--r-md);background:var(--hover);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  font-size:12px;color:var(--text-3);
+}
+.selected-date b{font-size:14px;color:var(--text-1)}
+
+.create-section-title{font-size:18px;font-weight:600;margin-bottom:12px}
+.env-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.env-option{
+  border:1px solid var(--border);background:var(--surface);border-radius:var(--r-md);
+  padding:12px 14px;text-align:left;display:flex;flex-direction:column;gap:4px;
+  transition:border-color .15s,background .15s;
+}
+.env-option:hover{background:var(--hover)}
+.env-option.active{border-color:var(--primary);background:var(--primary-soft)}
+.eo-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.eo-check{
+  width:16px;height:16px;border-radius:4px;border:1.5px solid var(--border);
+  display:grid;place-items:center;font-size:10px;line-height:1;color:transparent;flex:0 0 16px;
+}
+.env-option.active .eo-check{background:var(--primary);border-color:var(--primary);color:#fff}
+.eo-meta{font-size:12px;color:var(--text-3)}
+
+.preview-panel{margin-top:24px;border-top:1px solid var(--border-muted);padding-top:20px}
+.pv-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.pv-head .create-section-title{margin:0}
+.pv-list{display:flex;flex-direction:column;gap:12px;max-height:380px;overflow:auto;padding-right:4px}
+.pv-env{border:1px solid var(--border-muted);border-radius:var(--r-md);padding:12px 14px;background:var(--surface)}
+.pv-env-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px}
+.pv-env-head b{font-size:14px}
+.pv-env-head span{color:var(--text-3)}
+.pv-svc{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12px;flex-wrap:wrap}
+.pv-svc + .pv-svc{border-top:1px dashed var(--border-muted)}
+.pv-name{font-family:var(--mono);font-size:12px;color:var(--text-1)}
+.empty{
+  padding:32px 16px;text-align:center;font-size:12px;color:var(--text-3);
+  background:var(--hover);border-radius:var(--r-md);
+}
+.create-actions{
+  margin-top:24px;padding-top:16px;border-top:1px solid var(--border-muted);
+  display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+}
+.create-footer-text{font-size:12px;color:var(--text-3)}
+
+/* ============================================================
+   基础配置
+   ============================================================ */
+.big-tabs{
+  display:inline-flex;gap:4px;background:var(--hover);padding:4px;
+  border-radius:var(--r-md);margin-bottom:24px;
+}
+.big-tab{
+  height:32px;padding:0 16px;border:0;background:transparent;border-radius:var(--r-sm);
+  font-size:14px;font-weight:500;color:var(--text-2);transition:background .15s,color .15s;
+}
+.big-tab:hover{color:var(--text-1)}
+.big-tab.active{background:var(--surface);color:var(--accent-text);font-weight:600;box-shadow:var(--shadow-card)}
+.panel-toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+.panel-title{font-size:18px;font-weight:600;display:flex;align-items:baseline;gap:8px}
+.panel-title .muted{font-size:12px;font-weight:400;color:var(--text-3)}
+.table-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+  overflow:hidden;box-shadow:var(--shadow-card);
+}
+.table-wrap{overflow:auto}
+.table{width:100%;border-collapse:collapse;min-width:820px}
+.table th{
+  font-size:12px;font-weight:600;color:var(--text-2);text-align:left;
+  padding:10px 16px;background:var(--hover);border-bottom:1px solid var(--border);white-space:nowrap;
+}
+.table td{padding:10px 16px;border-bottom:1px solid var(--border-muted);font-size:14px;vertical-align:middle;height:40px}
+.table tbody tr:last-child td{border-bottom:0}
+.table tbody tr:hover td{background:rgba(243,244,246,.6)}
+.mini-chip{
+  display:inline-block;font-size:11px;line-height:1.7;padding:1px 8px;margin:2px 4px 2px 0;
+  border-radius:var(--r-sm);background:var(--hover);color:var(--text-2);white-space:nowrap;
+}
+.none-text{font-size:12px;color:var(--text-3)}
+.cell-action{text-align:right;white-space:nowrap}
+.chip-list{display:flex;flex-wrap:wrap;gap:2px 0}
+
+/* ============================================================
+   全屏配置编辑层
+   ============================================================ */
+.editor-layer{
+  position:fixed;inset:0;z-index:120;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(31,41,55,.45);
+  animation:backdropIn .16s ease-out;
+}
+@keyframes backdropIn{from{opacity:0}to{opacity:1}}
+.editor-shell{
+  width:100%;height:100%;background:var(--surface);border-radius:var(--r-xl);
+  box-shadow:var(--shadow-pop);display:flex;flex-direction:column;overflow:hidden;
+  animation:modalIn .18s cubic-bezier(.32,.72,0,1);
+}
+@keyframes modalIn{from{opacity:0;transform:scale(.99)}to{opacity:1;transform:none}}
+.editor-head{
+  padding:16px 24px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;
+}
+.editor-head h2{font-size:18px;font-weight:600;line-height:1.4}
+.editor-head p{font-size:12px;color:var(--text-3);margin-top:2px}
+.editor-body{padding:16px 24px;flex:1;min-height:0;display:flex;flex-direction:column}
+#configText{
+  flex:1;width:100%;resize:none;border:1px solid var(--border);
+  border-radius:var(--r-md);padding:16px;background:var(--bg);color:var(--text-1);
+  font-family:var(--mono);font-size:13px;line-height:1.7;
+  transition:border-color .15s,box-shadow .15s;
+}
+#configText:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.editor-foot{
+  padding:12px 24px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:var(--bg);
+}
+.char-count{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+/* ============================================================
+   提醒窗（红 / 橙 / 黄）
+   ============================================================ */
+.reminder-layer{
+  position:fixed;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;
+  padding:32px;background:rgba(31,41,55,.55);
+  animation:backdropIn .16s ease-out;
+}
+.reminder-window{
+  --rem:var(--error);
+  --rem-soft:rgba(239,68,68,.10);
+  width:min(880px,100%);max-height:calc(100vh - 64px);
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-xl);
+  box-shadow:var(--shadow-pop);display:flex;flex-direction:column;overflow:hidden;
+  animation:modalIn .18s cubic-bezier(.32,.72,0,1);
+}
+.reminder-window[data-level="orange"]{--rem:var(--warning);--rem-soft:rgba(245,158,11,.14)}
+.reminder-window[data-level="yellow"]{--rem:var(--yellow);--rem-soft:rgba(234,179,8,.14)}
+.reminder-head{
+  display:flex;align-items:center;gap:16px;padding:16px 24px;
+  background:var(--rem-soft);border-top:4px solid var(--rem);
+  border-bottom:1px solid var(--border);flex-wrap:wrap;
+}
+.rem-bell{
+  width:40px;height:40px;border-radius:var(--r-md);background:var(--rem);color:#fff;
+  display:grid;place-items:center;flex:0 0 40px;
+}
+.rem-bell svg{width:22px;height:22px}
+.rem-head-text h2{font-size:18px;font-weight:600;line-height:1.4}
+.rem-head-text p{font-size:12px;color:var(--text-2);margin-top:2px}
+.rem-levels{
+  margin-left:auto;display:flex;gap:4px;background:rgba(255,255,255,.72);
+  padding:4px;border-radius:var(--r-md);
+}
+.rem-level{
+  height:28px;padding:0 10px;border:0;background:transparent;border-radius:var(--r-sm);
+  font-size:12px;color:var(--text-2);display:inline-flex;align-items:center;gap:6px;
+  transition:background .15s,box-shadow .15s;
+}
+.rem-level:hover{color:var(--text-1)}
+.rem-level.active{background:var(--surface);color:var(--text-1);font-weight:600;box-shadow:var(--shadow-card)}
+.rem-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+.rem-dot.red{background:var(--error)}
+.rem-dot.orange{background:var(--warning)}
+.rem-dot.yellow{background:var(--yellow)}
+.reminder-body{padding:16px 24px;overflow:auto;flex:1;min-height:0}
+.rem-group + .rem-group{margin-top:16px}
+.rem-group-title{font-size:12px;font-weight:600;color:var(--text-3);margin-bottom:8px}
+.rem-item{
+  display:flex;align-items:center;gap:12px;padding:12px 14px;
+  border:1px solid var(--border-muted);border-radius:var(--r-md);background:var(--surface);
+  margin-bottom:8px;
+}
+.rem-item:last-child{margin-bottom:0}
+.rem-item-body{min-width:0}
+.rem-item-title{font-size:14px;font-weight:600;line-height:1.5}
+.rem-item-meta{font-size:12px;color:var(--text-3)}
+.rem-goto{margin-left:auto;flex:0 0 auto}
+.reminder-foot{
+  display:flex;align-items:center;gap:12px;padding:12px 24px;
+  border-top:1px solid var(--border);background:var(--bg);flex-wrap:wrap;
+}
+.rem-foot-note{font-size:12px;color:var(--text-3);display:inline-flex;align-items:center;gap:6px}
+.rem-foot-note svg{width:15px;height:15px;flex:0 0 15px}
+
+/* ============================================================
+   弹窗 / 表单 / 提示
+   ============================================================ */
+.modal-layer{
+  position:fixed;inset:0;z-index:130;display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(31,41,55,.45);animation:backdropIn .15s ease-out;
+}
+.modal{
+  width:min(460px,100%);background:var(--surface);border-radius:var(--r-xl);
+  box-shadow:var(--shadow-pop);padding:24px;animation:modalIn .16s cubic-bezier(.32,.72,0,1);
+}
+.modal-wide{width:min(680px,100%)}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:8px}
+.modal h2{font-size:18px;font-weight:600;line-height:1.4}
+.modal p{font-size:14px;color:var(--text-2);line-height:1.6;margin-bottom:20px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:16px 0}
+.field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text-3)}
+.input{
+  height:40px;border:1px solid var(--border);border-radius:var(--r-md);
+  padding:0 12px;font-size:14px;background:var(--surface);color:var(--text-1);
+  transition:border-color .15s,box-shadow .15s;width:100%;
+}
+.input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.input[readonly]{background:var(--hover);color:var(--text-2)}
+.field-block{display:flex;flex-direction:column;gap:8px;margin:8px 0 0;font-size:12px;color:var(--text-3)}
+.check-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px}
+.check{
+  display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-1);
+  padding:8px 10px;border:1px solid var(--border-muted);border-radius:var(--r-md);cursor:pointer;
+}
+.check:hover{background:var(--hover)}
+.check input{accent-color:var(--primary);width:15px;height:15px}
+.form-hint{font-size:12px;color:var(--text-3);line-height:1.6}
+.toast{
+  position:fixed;left:50%;bottom:32px;z-index:200;transform:translateX(-50%) translateY(8px);
+  background:var(--text-1);color:#FAFAF9;font-size:12px;line-height:1.5;
+  padding:10px 16px;border-radius:var(--r-md);box-shadow:var(--shadow-pop);
+  opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;max-width:80vw;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.flash{animation:flashPulse .8s ease 2;border-color:var(--primary)!important}
+@keyframes flashPulse{0%,100%{box-shadow:0 0 0 0 rgba(54,211,153,0)}50%{box-shadow:0 0 0 4px rgba(54,211,153,.25)}}
+
+/* ============================================================
+   响应式（最小 1000 × 640）
+   ============================================================ */
+@media (max-width:1240px){
+  .page{padding:24px 24px 48px}
+  .create-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .steps.frontend{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .env-progress{min-width:180px}
+}
+@media (max-width:1120px){
+  .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .steps.frontend{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .env-progress{min-width:150px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ============ 侧边栏（可折叠树） ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">D</div>
+      <div>
+        <div class="brand-name">DevDesk</div>
+        <div class="brand-sub">上线模块</div>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="主导航">
+      <button type="button" class="nav-item" data-module="首页">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11 12 4l8 7"/><path d="M6 10v9h12v-9"/></svg></span>
+        <span class="nav-text">首页</span>
+      </button>
+      <button type="button" class="nav-item" data-module="笔记">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h9l4 4v12H6z"/><path d="M14 4v5h5"/><path d="M9 13h7M9 17h5"/></svg></span>
+        <span class="nav-text">笔记</span>
+      </button>
+      <button type="button" class="nav-item" data-module="待办">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 3 3 5-6"/></svg></span>
+        <span class="nav-text">待办</span>
+      </button>
+
+      <div class="nav-group" id="releaseGroup">
+        <div class="nav-item nav-parent" id="releaseParent" data-page="list" role="button" tabindex="0">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V7"/><path d="m6 13 6-6 6 6"/></svg></span>
+          <span class="nav-text">上线</span>
+          <span class="nav-arrow" id="releaseArrow" role="button" tabindex="0" aria-label="折叠上线菜单" aria-expanded="true">▸</span>
+        </div>
+        <div class="nav-children" id="releaseChildren">
+          <button type="button" class="nav-item nav-child active" data-page="list">任务</button>
+          <button type="button" class="nav-item nav-child" data-page="config">基础配置</button>
+        </div>
+      </div>
+
+      <button type="button" class="nav-item" data-module="Claude">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 10 2 2-2 2"/><path d="M12 14h4"/></svg></span>
+        <span class="nav-text">Claude</span>
+      </button>
+      <button type="button" class="nav-item" data-module="智能体">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4v4"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg></span>
+        <span class="nav-text">智能体</span>
+      </button>
+      <button type="button" class="nav-item" data-module="壁纸">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5 17 5-5 4 4 2-2 4 4"/></svg></span>
+        <span class="nav-text">壁纸</span>
+      </button>
+
+      <div class="nav-divider" role="separator"></div>
+
+      <button type="button" class="nav-item" data-module="设置">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg></span>
+        <span class="nav-text">设置</span>
+      </button>
+      <button type="button" class="nav-item" data-module="关于">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/></svg></span>
+        <span class="nav-text">关于</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-spacer"></div>
+
+    <div class="nav-label">今天</div>
+    <button type="button" class="nav-item" id="navReminder">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M10.3 21a2 2 0 0 0 3.4 0"/></svg></span>
+      <span class="nav-text">提醒</span>
+      <span class="nav-badge">4</span>
+    </button>
+    <div class="sidebar-foot"><span class="live-dot"></span>当前时间 21:40</div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="main">
+    <div class="pages" id="pages">
+
+      <!-- ============ ① 任务列表（瀑布流） ============ -->
+      <section class="page active" id="page-list">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">任务列表</h1>
+            <p class="page-sub">按计划日期管理上线任务；同一天只有一个任务，提前建好，到点推进。</p>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn btn-primary" data-nav="create">＋ 新建任务</button>
+          </div>
+        </div>
+        <div class="list-meta" id="listMeta">共 40 个任务 · 已加载 10</div>
+
+        <div class="waterfall" id="taskWaterfall"></div>
+        <div class="wf-loader" id="wfLoader" hidden><span class="spinner"></span>加载中…</div>
+        <div class="wf-end" id="wfEnd" hidden></div>
+      </section>
+
+      <!-- ============ ② 任务执行页 ============ -->
+      <section class="page" id="page-exec">
+        <button type="button" class="back-link" id="backToList">‹ 返回任务列表</button>
+        <div class="page-head">
+          <div>
+            <h1 class="page-title" id="execTitle">10 月 27 日 · 周二上线</h1>
+            <div class="exec-meta">
+              <span class="chip status st-run" id="execStatus"><span class="dot"></span>执行中</span>
+              <span class="meta-pill" id="overallProgress">总进度 0%</span>
+              <span class="meta-pill">当前时间 21:40</span>
+              <span class="meta-pill">时间基准 20:00</span>
+            </div>
+            <p class="page-sub">自由推进：任意服务的任意可做步骤都能点；点已完成的步骤可撤回，撤回需二次确认。</p>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn btn-secondary" id="validateBtn">校验</button>
+            <button type="button" class="btn btn-primary" id="execToConfig">基础配置</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <h2 class="section-title">任务级前置</h2>
+            <span class="section-note">前置单到期 19:00 · 公告到期 20:00</span>
+          </div>
+          <div class="prereqs">
+            <div class="prereq" data-prereq="pretest">
+              <div class="preq-head"><span class="preq-icon">✓</span><span class="preq-title">提测单</span><span class="preq-state">已通过</span></div>
+              <div class="preq-no">TK-20261027-018</div>
+              <div class="preq-meta">到期 19:00 · 18:42 完成</div>
+            </div>
+            <div class="prereq" data-prereq="cab">
+              <div class="preq-head"><span class="preq-icon">✓</span><span class="preq-title">CAB 单</span><span class="preq-state">已通过</span></div>
+              <div class="preq-no">CAB-20261027-03</div>
+              <div class="preq-meta">到期 19:00 · 18:55 完成</div>
+            </div>
+            <div class="prereq" data-prereq="ticket-nacos">
+              <div class="preq-head"><span class="preq-icon">✓</span><span class="preq-title">nacos 工单</span><span class="preq-state">已审批</span></div>
+              <div class="preq-no">NS-2417</div>
+              <div class="preq-meta">到期 19:00 · 19:06 完成</div>
+            </div>
+            <div class="prereq" data-prereq="ticket-db">
+              <div class="preq-head"><span class="preq-icon">✓</span><span class="preq-title">数据库工单</span><span class="preq-state">已审批</span></div>
+              <div class="preq-no">DB-1189</div>
+              <div class="preq-meta">到期 19:00 · 19:10 完成</div>
+            </div>
+            <div class="prereq" data-prereq="announce">
+              <div class="preq-head"><span class="preq-icon">✓</span><span class="preq-title">上线公告</span><span class="preq-state">已发</span></div>
+              <div class="preq-announce" title="10 月 27 日 20:00–22:30 上线 EM / EU；次日 03:00–04:30 上线 AM，次日 06:00–07:30 上线 US。">10 月 27 日 20:00–22:30 上线 EM / EU；次日 03:00–04:30 上线 AM，次日 06:00–07:30 上线 US。</div>
+              <div class="preq-meta">到期 20:00 · 20:00 发出</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <h2 class="section-title">环境与服务</h2>
+            <span class="section-note">共 4 个环境 · 13 个服务执行项</span>
+          </div>
+          <div class="env-list" id="envGroups"></div>
+        </div>
+      </section>
+
+      <!-- ============ ③ 新建任务 ============ -->
+      <section class="page" id="page-create">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">新建任务</h1>
+            <p class="page-sub">选择计划日期与环境，服务按环境配置自动带入，加入即生成快照。</p>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn btn-secondary" data-nav="list">取消</button>
+          </div>
+        </div>
+
+        <div class="create-grid">
+          <div class="card">
+            <div class="cal-head">
+              <div class="cal-label" id="calLabel">2026 年 10 月</div>
+              <div class="cal-nav">
+                <button type="button" class="icon-btn" id="calPrev" aria-label="上个月">‹</button>
+                <button type="button" class="icon-btn" id="calNext" aria-label="下个月">›</button>
+              </div>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+            <div class="cal-legend">
+              <span><i class="legend-dot accent"></i>常规发布日（周二 / 周四）</span>
+              <span><i class="legend-dot"></i>非常规日期（需二次确认）</span>
+            </div>
+            <div class="selected-date">
+              <span>计划上线日期</span>
+              <b id="selectedDateText">2026 年 10 月 29 日 · 周四</b>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="create-section-title">选择环境</div>
+            <div class="env-options" id="envOptions"></div>
+
+            <div class="preview-panel">
+              <div class="pv-head">
+                <div class="create-section-title">将带入的服务</div>
+                <span class="section-note" id="previewCount"></span>
+              </div>
+              <div class="pv-list" id="previewList"></div>
+            </div>
+
+            <div class="create-actions">
+              <span class="create-footer-text" id="createFooterText"></span>
+              <button type="button" class="btn btn-primary" id="createTaskBtn">创建任务</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ ④ 基础配置 ============ -->
+      <section class="page" id="page-config">
+        <div class="page-head">
+          <div>
+            <h1 class="page-title">基础配置</h1>
+            <p class="page-sub">长期维护服务目录与环境定义；已建任务使用快照，不受这里的后续修改影响。</p>
+          </div>
+        </div>
+
+        <div class="big-tabs" role="tablist" aria-label="基础配置">
+          <button type="button" class="big-tab active" data-tab="services" role="tab" aria-selected="true">服务目录</button>
+          <button type="button" class="big-tab" data-tab="envs" role="tab" aria-selected="false">环境定义</button>
+        </div>
+
+        <div class="tab-panel" id="panel-services" role="tabpanel">
+          <div class="panel-toolbar">
+            <div class="panel-title">服务目录 <span class="muted" id="serviceCount">4 个服务</span></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="addServiceBtn">＋ 新增服务</button>
+          </div>
+          <div class="table-card">
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>名称</th><th>类型</th><th>默认分支</th><th>配置项</th><th></th></tr></thead>
+                <tbody id="servicesTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-envs" role="tabpanel" hidden>
+          <div class="panel-toolbar">
+            <div class="panel-title">环境定义 <span class="muted" id="envCount">4 个环境</span></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="addEnvBtn">＋ 新增环境</button>
+          </div>
+          <div class="table-card">
+            <div class="table-wrap">
+              <table class="table">
+                <thead><tr><th>名称</th><th>服务</th><th>时间窗</th><th></th></tr></thead>
+                <tbody id="envsTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- ============ ⑤ 配置内容全屏编辑层 ============ -->
+<div class="editor-layer" id="editorLayer" hidden>
+  <div class="editor-shell" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+    <div class="editor-head">
+      <div>
+        <h2 id="editorTitle">配置项</h2>
+        <p id="editorSub"></p>
+      </div>
+      <button type="button" class="icon-btn" id="editorClose" aria-label="关闭">×</button>
+    </div>
+    <div class="editor-body">
+      <textarea id="configText" spellcheck="false" placeholder="粘贴配置内容…"></textarea>
+    </div>
+    <div class="editor-foot">
+      <span class="char-count" id="charCount">0 字</span>
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-secondary" id="cancelConfigBtn">取消</button>
+      <button type="button" class="btn btn-primary" id="saveConfigBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ⑥ 提醒全屏窗 ============ -->
+<div class="reminder-layer" id="reminderLayer" hidden>
+  <div class="reminder-window" id="reminderWindow" data-level="red" role="dialog" aria-modal="true" aria-labelledby="reminderTitle">
+    <div class="reminder-head">
+      <div class="rem-bell">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M10.3 21a2 2 0 0 0 3.4 0"/></svg>
+      </div>
+      <div class="rem-head-text">
+        <h2 id="reminderTitle">上线提醒</h2>
+        <p id="reminderDesc"></p>
+      </div>
+      <div class="rem-levels" role="group" aria-label="提醒级别">
+        <button type="button" class="rem-level" data-level="red"><span class="rem-dot red"></span>红</button>
+        <button type="button" class="rem-level" data-level="orange"><span class="rem-dot orange"></span>橙</button>
+        <button type="button" class="rem-level" data-level="yellow"><span class="rem-dot yellow"></span>黄</button>
+      </div>
+      <button type="button" class="icon-btn" id="reminderCloseX" aria-label="关闭提醒">×</button>
+    </div>
+    <div class="reminder-body" id="reminderList"></div>
+    <div class="reminder-foot">
+      <span class="rem-foot-note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        关闭后 5 分钟再次提醒
+      </span>
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-secondary" id="reminderCloseBtn">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 通用确认弹窗 ============ -->
+<div class="modal-layer" id="confirmLayer" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <h2 id="confirmTitle">确认</h2>
+    <p id="confirmBody"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" id="confirmCancel">取消</button>
+      <button type="button" class="btn btn-primary" id="confirmOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 服务编辑弹窗 ============ -->
+<div class="modal-layer" id="serviceLayer" hidden>
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="serviceModalTitle">
+    <div class="modal-head">
+      <h2 id="serviceModalTitle">新增服务</h2>
+      <button type="button" class="icon-btn" data-close="serviceLayer" aria-label="关闭">×</button>
+    </div>
+    <div class="form-grid">
+      <label class="field"><span>服务名称</span><input class="input" id="svcName" placeholder="rs-host-service-xxx"></label>
+      <label class="field"><span>类型</span>
+        <select class="input" id="svcKind">
+          <option value="backend">后端</option>
+          <option value="pc">PC 前端</option>
+          <option value="mobile">移动前端</option>
+        </select>
+      </label>
+      <label class="field"><span>默认分支</span><input class="input" id="svcBranch" placeholder="release/20261027"></label>
+    </div>
+    <p class="form-hint" id="svcHint">后端自动带出 nacos、数据库、定时任务、菜单、网关 5 项配置；两类前端不带配置项。</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" data-close="serviceLayer">取消</button>
+      <button type="button" class="btn btn-primary" id="saveServiceBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 环境编辑弹窗 ============ -->
+<div class="modal-layer" id="envLayer" hidden>
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="envModalTitle">
+    <div class="modal-head">
+      <h2 id="envModalTitle">编辑环境</h2>
+      <button type="button" class="icon-btn" data-close="envLayer" aria-label="关闭">×</button>
+    </div>
+    <div class="form-grid">
+      <label class="field"><span>环境名称</span><input class="input" id="envName" placeholder="EM / EU / AM / US"></label>
+      <label class="field"><span>开始时间</span><input class="input" id="envStart" type="time"></label>
+      <label class="field"><span>结束时间</span><input class="input" id="envEnd" type="time"></label>
+    </div>
+    <div class="field-block">
+      <span>包含的服务</span>
+      <div class="check-grid" id="envServiceChecks"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" data-close="envLayer">取消</button>
+      <button type="button" class="btn btn-primary" id="saveEnvBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ============================================================
+     常量与状态
+     ============================================================ */
+  const KIND_LABEL = { backend:'后端', pc:'PC 前端', mobile:'移动前端' };
+  const STATUS_CLASS = { '配置中':'st-config', '待执行':'st-wait', '执行中':'st-run', '已完成':'st-done', '已作废':'st-void' };
+  const WEEKDAYS = ['一','二','三','四','五','六','日'];
+  const CONFIG_KEYS = new Set(['nacos','db','cron','menu','gateway']);
+  const CONFIG_LABELS = ['nacos','数据库脚本','定时任务','菜单配置','网关配置'];
+  const STEP_LABELS = {
+    merge:'合并分支', nacos:'nacos 配置', db:'数据库脚本', cron:'定时任务',
+    menu:'菜单配置', gateway:'网关配置', deploy:'部署', verify:'验证完成'
+  };
+  const TICKETS = { nacos:'NS-2417', db:'DB-1189' };
+  const MONO_BRANCH = 'release/20261027';
+  const TODAY_ISO = '2026-10-27';
+  const TODAY = new Date(2026, 9, 27);
+  const PAGE_SIZE = 10;
+  const MAX_COLUMNS = 3;
+  const MIN_CARD_WIDTH = 320;
+
+  const state = {
+    services: [
+      { name:'rs-host-service-order',  kind:'backend', branch:MONO_BRANCH },
+      { name:'rs-host-service-repair', kind:'backend', branch:MONO_BRANCH },
+      { name:'rs-ui-pc',               kind:'pc',      branch:MONO_BRANCH },
+      { name:'zems-app',               kind:'mobile',  branch:MONO_BRANCH }
+    ],
+    envs: [
+      { name:'EM', start:'20:00', end:'21:30', services:['rs-host-service-order','rs-host-service-repair','rs-ui-pc','zems-app'] },
+      { name:'EU', start:'21:00', end:'22:30', services:['rs-host-service-order','rs-host-service-repair','rs-ui-pc'] },
+      { name:'AM', start:'03:00', end:'04:30', services:['rs-host-service-order','rs-host-service-repair','rs-ui-pc','zems-app'] },
+      { name:'US', start:'06:00', end:'07:30', services:['rs-ui-pc','zems-app'] }
+    ],
+    selectedEnvs: new Set(['EM','EU']),
+    selectedDate: new Date(2026, 9, 29),
+    calYear: 2026,
+    calMonth: 9,
+    editingService: null,
+    editingEnv: null,
+    tasks: [],
+    loadedCount: PAGE_SIZE,
+    loading: false
+  };
+
+  const savedConfigs = {};
+  let currentExecTitle = '10 月 27 日 · 周二';
+  let currentExecDate = TODAY_ISO;
+  let confirmAction = null;
+  let toastTimer = null;
+  let editorContext = null;
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+  const weekdayOf = d => '周' + WEEKDAYS[(d.getDay()+6)%7];
+  const formatLongDate = d => d.getFullYear() + ' 年 ' + (d.getMonth()+1) + ' 月 ' + d.getDate() + ' 日 · ' + weekdayOf(d);
+  const formatShortDate = d => (d.getMonth()+1) + ' 月 ' + d.getDate() + ' 日';
+  const nowHM = () => new Date().toLocaleTimeString('zh-CN', { hour12:false, hour:'2-digit', minute:'2-digit' });
+  const windowText = env => env.end <= env.start ? env.start + ' – 次日 ' + env.end : env.start + ' – ' + env.end;
+  const serviceByName = name => state.services.find(s => s.name === name);
+  const addDays = (d, n) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() + n); return x; };
+
+  /* ============================================================
+     任务数据：计划日期降序（最新的在上），周二 / 周四
+     ============================================================ */
+  function buildTasks(){
+    const past = [];
+    let d = addDays(TODAY, -1);
+    while (past.length < 33) {
+      if (d.getDay() === 2 || d.getDay() === 4) past.push(new Date(d));
+      d = addDays(d, -1);
+    }
+    const future = [];
+    d = addDays(TODAY, 1);
+    while (future.length < 6) {
+      if (d.getDay() === 2 || d.getDay() === 4) future.push(new Date(d));
+      d = addDays(d, 1);
+    }
+
+    const items = past.concat([new Date(TODAY)], future).map(date => ({
+      date,
+      iso: iso(date),
+      weekday: weekdayOf(date),
+      title: formatShortDate(date) + ' · ' + weekdayOf(date)
+    }));
+    items.sort((a, b) => a.iso < b.iso ? 1 : (a.iso > b.iso ? -1 : 0));
+
+    const futureItems = items.filter(t => t.iso > TODAY_ISO);
+    const waitIsos = new Set(futureItems.slice(-2).map(t => t.iso));
+    const pastItems = items.filter(t => t.iso < TODAY_ISO);
+    const voidIsos = new Set([pastItems[4] && pastItems[4].iso, pastItems[11] && pastItems[11].iso]);
+
+    const envSets = [
+      ['EM','EU','AM','US'], ['EM','EU'], ['EM','EU','AM'], ['EU','US'],
+      ['EM'], ['AM','US'], ['EM','EU','US'], ['EU','AM']
+    ];
+    const servicesByEnv = { EM:4, EU:3, AM:4, US:2 };
+    const configNotes = [
+      '前置单待填，配置内容尚未粘贴',
+      '环境已加入快照，分支沿用默认值；提测单与 CAB 单尚未审批，确认后即可提交校验',
+      '工单尚未提，待提交校验',
+      '时间窗已确认，待补服务分支与配置内容；提交后仍可修改，改完自动重新校验'
+    ];
+    const waitNotes = [
+      '分支已合并，到点推进配置与部署',
+      '前置单已通过，等待时间窗开始',
+      '快照已生成，待提交校验；分支与配置内容确认后将自动锁定执行顺序'
+    ];
+    const doneNotes = [
+      '全部步骤验证通过 · 用时 2 小时 18 分',
+      '执行项完成，无跳过；验证结果已归档，可随时回看配置快照与撤回记录',
+      '全部步骤验证通过 · 上线记录已归档'
+    ];
+
+    items.forEach((task, index) => {
+      if (task.iso === TODAY_ISO) task.status = '执行中';
+      else if (task.iso > TODAY_ISO) task.status = waitIsos.has(task.iso) ? '待执行' : '配置中';
+      else task.status = voidIsos.has(task.iso) ? '已作废' : '已完成';
+
+      task.envs = task.iso === TODAY_ISO ? ['EM','EU','AM','US'] : envSets[index % envSets.length].slice();
+      task.serviceCount = task.envs.reduce((n, name) => n + (servicesByEnv[name] || 3), 0);
+
+      if (task.status === '已完成') task.progress = 100;
+      else if (task.status === '已作废') task.progress = 35 + (index % 3) * 12;
+      else if (task.status === '执行中') task.progress = 27;
+      else if (task.status === '待执行') task.progress = 12 + (index % 4) * 7;
+      else task.progress = (index * 3) % 13;
+
+      if (task.status === '执行中') {
+        task.summary = '4 个环境 · 13 个服务执行项 · EM 已超时 10 分钟';
+      } else if (task.status === '配置中') {
+        task.summary = task.envs.length + ' 个环境 · ' + task.serviceCount + ' 个服务执行项 · '
+          + configNotes[index % configNotes.length];
+      } else if (task.status === '待执行') {
+        task.summary = task.envs.join(' / ') + ' · ' + waitNotes[index % waitNotes.length];
+      } else if (task.status === '已完成') {
+        task.summary = task.serviceCount + ' 个服务执行项 · ' + doneNotes[index % doneNotes.length];
+      } else {
+        task.summary = '作废于 19:40 · 进度已冻结并保留，可按当前进度与时间自动恢复';
+      }
+    });
+
+    return items;
+  }
+
+  state.tasks = buildTasks();
+
+  /* ============================================================
+     瀑布流渲染
+     ============================================================ */
+  function buildCard(task, index){
+    const el = document.createElement('article');
+    el.className = 'task-card' + (task.status === '已作废' ? ' is-void' : '');
+    el.dataset.date = task.iso;
+    el.dataset.seq = String(index);
+    el.dataset.title = task.title;
+    el.dataset.status = task.status;
+    const barClass = task.status === '已完成' ? 'bar success' : (task.status === '已作废' ? 'bar muted' : 'bar');
+    el.innerHTML =
+      '<div class="tc-head">'
+      +   '<div class="tc-date"><b>' + esc(formatShortDate(task.date)) + '</b><span>' + esc(task.weekday) + '</span></div>'
+      +   '<span class="chip ' + STATUS_CLASS[task.status] + '"><span class="dot"></span>' + esc(task.status) + '</span>'
+      + '</div>'
+      + '<div class="tc-progress"><div class="' + barClass + '"><i style="width:' + task.progress + '%"></i></div>'
+      +   '<span class="tc-pct">' + task.progress + '%</span></div>'
+      + '<div class="tc-envs">' + task.envs.map(name => '<span class="chip chip-env">' + esc(name) + '</span>').join('') + '</div>'
+      + '<p class="tc-summary">' + esc(task.summary) + '</p>';
+    return el;
+  }
+
+  function columnCount(){
+    const width = $('taskWaterfall').clientWidth || 0;
+    if (!width) return MAX_COLUMNS;
+    return Math.max(1, Math.min(MAX_COLUMNS, Math.floor((width + 16) / (MIN_CARD_WIDTH + 16))));
+  }
+
+  function appendToShortest(columns, card){
+    let best = columns[0];
+    for (const col of columns) {
+      if (col.offsetHeight < best.offsetHeight) best = col;
+    }
+    best.appendChild(card);
+  }
+
+  function rebuildWaterfall(){
+    const wrap = $('taskWaterfall');
+    wrap.innerHTML = '';
+    const count = columnCount();
+    const columns = [];
+    for (let i = 0; i < count; i++) {
+      const col = document.createElement('div');
+      col.className = 'wf-col';
+      wrap.appendChild(col);
+      columns.push(col);
+    }
+    state.tasks.slice(0, state.loadedCount).forEach((task, index) => {
+      appendToShortest(columns, buildCard(task, index));
+    });
+    updateListMeta();
+  }
+
+  function appendBatch(){
+    const columns = Array.from(document.querySelectorAll('#taskWaterfall .wf-col'));
+    if (!columns.length) { rebuildWaterfall(); return; }
+    const start = state.loadedCount;
+    const end = Math.min(state.tasks.length, start + PAGE_SIZE);
+    for (let i = start; i < end; i++) appendToShortest(columns, buildCard(state.tasks[i], i));
+    state.loadedCount = end;
+    updateListMeta();
+  }
+
+  function updateListMeta(){
+    const done = state.loadedCount >= state.tasks.length;
+    $('listMeta').textContent = '共 ' + state.tasks.length + ' 个任务 · 已加载 ' + state.loadedCount;
+    $('wfEnd').hidden = !done;
+    if (done) $('wfEnd').textContent = '已全部加载（' + state.tasks.length + ' 条）';
+  }
+
+  function maybeLoadMore(){
+    if (state.loading) return;
+    if (state.loadedCount >= state.tasks.length) return;
+    if (!$('page-list').classList.contains('active')) return;
+    const pages = $('pages');
+    if (pages.scrollTop + pages.clientHeight < pages.scrollHeight - 32) return;
+    state.loading = true;
+    $('wfLoader').hidden = false;
+    setTimeout(() => {
+      appendBatch();
+      state.loading = false;
+      $('wfLoader').hidden = true;
+    }, 420);
+  }
+
+  // 高窗口兜底：首批 10 条撑不满视口时滚无可滚，自动续取下一批（同一「加载中…」占位），
+  // 直到内容溢出或全部加载；常规窗口首批即溢出，此分支不触发。
+  function ensureFilled(){
+    if (state.loading) return;
+    if (state.loadedCount >= state.tasks.length) return;
+    if (!$('page-list').classList.contains('active')) return;
+    const pages = $('pages');
+    if (pages.scrollHeight > pages.clientHeight + 8) return;
+    state.loading = true;
+    $('wfLoader').hidden = false;
+    setTimeout(() => {
+      appendBatch();
+      state.loading = false;
+      $('wfLoader').hidden = true;
+      ensureFilled();
+    }, 420);
+  }
+
+  function updateCardProgress(task){
+    const card = document.querySelector('.task-card[data-date="' + task.iso + '"]');
+    if (!card) return;
+    const fill = card.querySelector('.tc-progress .bar i');
+    const pct = card.querySelector('.tc-pct');
+    if (fill) fill.style.width = task.progress + '%';
+    if (pct) pct.textContent = task.progress + '%';
+  }
+
+  /* ============================================================
+     执行页数据
+     ============================================================ */
+  const EXEC_DATA = [
+    {
+      name:'EM', window:'20:00 – 21:30', status:'overdue', badge:'已超时 10 分钟',
+      active:true, expanded:true,
+      services:[
+        { name:'rs-host-service-order', kind:'backend', branch:'release/20261027', expanded:true,
+          steps:{ merge:'done', nacos:'done', db:'done', cron:'skipped', menu:'done', gateway:'done', deploy:'pending', verify:'pending' } },
+        { name:'rs-host-service-repair', kind:'backend', branch:'release/20261027', expanded:true,
+          steps:{ merge:'done', nacos:'done', db:'done', cron:'skipped', menu:'pending', gateway:'pending', deploy:'pending', verify:'pending' } },
+        { name:'rs-ui-pc', kind:'pc', branch:'release/20261027', expanded:true,
+          steps:{ merge:'done', deploy:'done', verify:'pending' } },
+        { name:'zems-app', kind:'mobile', branch:'release/20261027', expanded:true,
+          steps:{ merge:'done', deploy:'done', verify:'done' } }
+      ]
+    },
+    {
+      name:'EU', window:'21:00 – 22:30', status:'running', badge:'进行中',
+      active:true, expanded:true,
+      services:[
+        { name:'rs-host-service-order', kind:'backend', branch:'release/20261027', expanded:false,
+          steps:{ merge:'done', nacos:'pending', db:'pending', cron:'skipped', menu:'pending', gateway:'pending', deploy:'pending', verify:'pending' } },
+        { name:'rs-host-service-repair', kind:'backend', branch:'release/20261027', expanded:false,
+          steps:{ merge:'done', nacos:'pending', db:'pending', cron:'pending', menu:'pending', gateway:'pending', deploy:'pending', verify:'pending' } },
+        { name:'rs-ui-pc', kind:'pc', branch:'release/20261027', expanded:false,
+          steps:{ merge:'done', deploy:'pending', verify:'pending' } }
+      ]
+    },
+    {
+      name:'AM', window:'次日 03:00 – 04:30', status:'upcoming', badge:'未开始',
+      active:false, expanded:false,
+      services:[
+        { name:'rs-host-service-order', kind:'backend', branch:'release/20261027', expanded:false,
+          steps:{ merge:'done', nacos:'pending', db:'pending', cron:'pending', menu:'pending', gateway:'pending', deploy:'pending', verify:'pending' } },
+        { name:'rs-host-service-repair', kind:'backend', branch:'release/20261027', expanded:false,
+          steps:{ merge:'pending', nacos:'pending', db:'pending', cron:'pending', menu:'pending', gateway:'pending', deploy:'pending', verify:'pending' } },
+        { name:'rs-ui-pc', kind:'pc', branch:'release/20261027', expanded:false,
+          steps:{ merge:'pending', deploy:'pending', verify:'pending' } },
+        { name:'zems-app', kind:'mobile', branch:'release/20261027', expanded:false,
+          steps:{ merge:'pending', deploy:'pending', verify:'pending' } }
+      ]
+    },
+    {
+      name:'US', window:'次日 06:00 – 07:30', status:'upcoming', badge:'未开始',
+      active:false, expanded:false,
+      services:[
+        { name:'rs-ui-pc', kind:'pc', branch:'release/20261027', expanded:false,
+          steps:{ merge:'pending', deploy:'pending', verify:'pending' } },
+        { name:'zems-app', kind:'mobile', branch:'release/20261027', expanded:false,
+          steps:{ merge:'pending', deploy:'pending', verify:'pending' } }
+      ]
+    }
+  ];
+
+  const STEP_DEFS = {
+    backend: [['merge','合并分支'],['nacos','nacos 配置'],['db','数据库脚本'],['cron','定时任务'],['menu','菜单配置'],['gateway','网关配置'],['deploy','部署'],['verify','验证完成']],
+    pc: [['merge','合并分支'],['deploy','部署'],['verify','验证完成']],
+    mobile: [['merge','合并分支'],['deploy','部署'],['verify','验证完成']]
+  };
+
+  const CONFIG_TEMPLATES = {
+    nacos: 'spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: nacos-em.zeekrlife.internal:8848\n        namespace: zems-rs-host\n        group: ZEMS_RS_HOST\n      config:\n        file-extension: yaml\n\nzems:\n  tenant:\n    default: ZEEKR\n  release:\n    window: 2026-10-27',
+    db: '-- 上线日期 2026-10-27 / EM\n-- 变更单 DB-1189\n\nALTER TABLE svc_service_order\n  ADD COLUMN delivery_estimate_flag TINYINT NOT NULL DEFAULT 0\n  COMMENT \'预计交车标记\';\n\nCREATE INDEX idx_order_tenant_plan\n  ON svc_service_order (tenant_code, plan_date);',
+    cron: '# 定时任务变更\nsvc-order-timeout-job:\n  cron: "0 0/10 * * * ?"\n  enabled: true\n\nsvc-order-warning-job:\n  cron: "0 5 8 * * ?"\n  enabled: true',
+    menu: '-- 菜单配置\nINSERT INTO sys_menu (menu_code, menu_name, parent_code, sort, status)\nVALUES (\'SVC_ORDER_DELIVERY\', \'交车预计\', \'SVC_ORDER\', 12, \'0\');',
+    gateway: '# 网关路由\n- id: rs-host-service-order\n  uri: lb://rs-host-service-order\n  predicates:\n    - Path=/api/order/**\n  filters:\n    - StripPrefix=1'
+  };
+
+  /* ============================================================
+     执行页渲染
+     ============================================================ */
+  function stepHint(key, stateName){
+    if (stateName === 'skipped') return '已跳过 · 本次无需变更';
+    if (stateName === 'done') return CONFIG_KEYS.has(key) ? '已填写' : '已完成';
+    switch (key) {
+      case 'merge': return '待合并';
+      case 'deploy': return '待部署';
+      case 'verify': return '待验证';
+      default: return '待填写';
+    }
+  }
+
+  function renderExec(){
+    const wrap = $('envGroups');
+    wrap.innerHTML = EXEC_DATA.map(env => {
+      const svcHtml = env.services.map(svc => {
+        const defs = STEP_DEFS[svc.kind];
+        const stepsHtml = defs.map((pair, idx) => {
+          const key = pair[0], label = pair[1];
+          const st = svc.steps[key] || 'pending';
+          const isConfig = CONFIG_KEYS.has(key);
+          const ticket = TICKETS[key] ? '<span class="ticket" title="已关联工单">工单 ' + TICKETS[key] + '</span>' : '';
+          const view = isConfig ? '<button type="button" class="view-link" data-view="1">查看</button>' : '';
+          const mark = st === 'done' ? '✓' : (st === 'skipped' ? '–' : '');
+          return '<div class="step ' + st + '" data-step-key="' + key + '" data-env="' + env.name + '" data-svc="' + svc.name + '">'
+            + '<div class="step-head">'
+            +   '<span class="mark">' + mark + '</span>'
+            +   '<span class="step-no">' + (idx+1) + '</span>'
+            +   '<span class="step-name">' + label + '</span>'
+            +   ticket
+            + '</div>'
+            + '<div class="step-foot"><span class="step-sub">' + stepHint(key, st) + '</span>' + view + '</div>'
+            + '</div>';
+        }).join('');
+        return '<article class="svc-card ' + (svc.expanded ? '' : 'collapsed') + '" data-env="' + env.name + '" data-svc="' + svc.name + '">'
+          + '<div class="svc-head">'
+          +   '<span class="chev-btn">▾</span>'
+          +   '<span class="svc-name">' + esc(svc.name) + '</span>'
+          +   '<span class="chip kind-' + svc.kind + '">' + KIND_LABEL[svc.kind] + '</span>'
+          +   '<span class="branch">' + esc(svc.branch) + '</span>'
+          +   '<span class="svc-progress"></span>'
+          + '</div>'
+          + '<div class="steps ' + (svc.kind === 'backend' ? '' : 'frontend') + '">' + stepsHtml + '</div>'
+          + '</article>';
+      }).join('');
+
+      return '<section class="env-group ' + env.status + ' ' + (env.expanded ? '' : 'collapsed') + '" data-env="' + env.name + '" data-active="' + env.active + '">'
+        + '<div class="env-head">'
+        +   '<span class="chev-btn">▾</span>'
+        +   '<span class="env-name">' + env.name + '</span>'
+        +   '<span class="env-window">' + env.window + '</span>'
+        +   '<span class="env-badge">' + env.badge + '</span>'
+        +   '<div class="env-progress"><div class="bar"><i></i></div><span class="env-count"></span><span class="env-pct"></span></div>'
+        + '</div>'
+        + '<div class="env-body">' + svcHtml + '</div>'
+        + '</section>';
+    }).join('');
+    applyCurrent();
+    refreshAllProgress();
+  }
+
+  function applyCurrent(){
+    document.querySelectorAll('.svc-card').forEach(card => {
+      card.querySelectorAll('.step.current').forEach(el => el.classList.remove('current'));
+      const group = card.closest('.env-group');
+      if (!group || group.dataset.active !== 'true') return;
+      const firstPending = Array.from(card.querySelectorAll('.step')).find(el => el.classList.contains('pending'));
+      if (firstPending) firstPending.classList.add('current');
+    });
+  }
+
+  function countSteps(card){
+    const steps = Array.from(card.querySelectorAll('.step'));
+    const counted = steps.filter(el => !el.classList.contains('skipped'));
+    const done = counted.filter(el => el.classList.contains('done'));
+    return { done: done.length, total: counted.length };
+  }
+
+  function refreshAllProgress(){
+    let allDone = 0, allTotal = 0;
+    document.querySelectorAll('.env-group').forEach(group => {
+      let d = 0, t = 0;
+      group.querySelectorAll('.svc-card').forEach(card => {
+        const c = countSteps(card);
+        d += c.done; t += c.total;
+        const badge = card.querySelector('.svc-progress');
+        if (badge) badge.textContent = c.done + '/' + c.total;
+      });
+      allDone += d; allTotal += t;
+      const pct = t ? Math.round(d / t * 100) : 0;
+      const fill = group.querySelector('.env-progress .bar i');
+      if (fill) fill.style.width = pct + '%';
+      const count = group.querySelector('.env-count');
+      if (count) count.textContent = d + '/' + t + ' 步';
+      const pctEl = group.querySelector('.env-pct');
+      if (pctEl) pctEl.textContent = pct + '%';
+    });
+
+    const totalPct = allTotal ? Math.round(allDone / allTotal * 100) : 0;
+    const overall = $('overallProgress');
+    if (overall) overall.textContent = '总进度 ' + totalPct + '%';
+
+    const task = state.tasks.find(t => t.iso === currentExecDate);
+    if (task) {
+      task.progress = totalPct;
+      updateCardProgress(task);
+    }
+  }
+
+  function setStepState(el, newState){
+    el.classList.remove('done', 'skipped', 'pending', 'current');
+    el.classList.add(newState);
+    const mark = el.querySelector('.mark');
+    if (mark) mark.textContent = newState === 'done' ? '✓' : (newState === 'skipped' ? '–' : '');
+    const sub = el.querySelector('.step-sub');
+    if (sub) sub.textContent = stepHint(el.dataset.stepKey, newState);
+    applyCurrent();
+    refreshAllProgress();
+  }
+
+  function handleStepClick(el){
+    if (el.classList.contains('skipped')) {
+      openConfirm('取消跳过？', '取消后该步骤需要重新填写内容，并重新校验。', () => {
+        setStepState(el, 'pending');
+        toast('已取消跳过');
+      });
+      return;
+    }
+    if (el.classList.contains('done')) {
+      openConfirm('撤回这一步？', '撤回后该步骤退回未完成，并会记录一条撤回日志。', () => {
+        setStepState(el, 'pending');
+        toast('已撤回该步骤');
+      });
+      return;
+    }
+    setStepState(el, 'done');
+  }
+
+  /* ============================================================
+     配置编辑层
+     ============================================================ */
+  function openConfigEditor(stepEl){
+    editorContext = {
+      env: stepEl.dataset.env,
+      svc: stepEl.dataset.svc,
+      key: stepEl.dataset.stepKey,
+      el: stepEl
+    };
+    const label = STEP_LABELS[editorContext.key] || '配置项';
+    $('editorTitle').textContent = label + ' · ' + editorContext.svc;
+    $('editorSub').textContent = editorContext.env + ' · ' + currentExecTitle + '上线任务';
+    const id = editorContext.env + '|' + editorContext.svc + '|' + editorContext.key;
+    $('configText').value = savedConfigs[id] !== undefined ? savedConfigs[id] : (CONFIG_TEMPLATES[editorContext.key] || '');
+    updateCharCount();
+    $('editorLayer').hidden = false;
+    $('configText').focus();
+  }
+
+  function closeEditor(){ $('editorLayer').hidden = true; }
+
+  function updateCharCount(){
+    const text = $('configText').value;
+    const lines = text ? text.split('\n').length : 0;
+    $('charCount').textContent = text.length.toLocaleString('zh-CN') + ' 字 · ' + lines + ' 行';
+  }
+
+  function saveConfig(){
+    if (!editorContext) return;
+    const id = editorContext.env + '|' + editorContext.svc + '|' + editorContext.key;
+    savedConfigs[id] = $('configText').value;
+    const sub = editorContext.el.querySelector('.step-sub');
+    if (sub) sub.textContent = '已保存 · ' + nowHM();
+    closeEditor();
+    toast('配置已保存');
+  }
+
+  /* ============================================================
+     页面切换 / 侧边栏
+     ============================================================ */
+  function switchPage(name){
+    const pageId = { list:'page-list', exec:'page-exec', create:'page-create', config:'page-config' }[name];
+    document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === pageId));
+
+    const navName = (name === 'exec' || name === 'create') ? 'list' : name;
+    document.querySelectorAll('.nav-child[data-page]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.page === navName);
+    });
+    const inRelease = ['list','exec','create','config'].indexOf(name) !== -1;
+    $('releaseParent').classList.toggle('has-active', inRelease);
+    $('releaseParent').classList.toggle('active', false);
+
+    $('pages').scrollTop = 0;
+    if (name === 'list') {
+      rebuildWaterfall();
+      setTimeout(ensureFilled, 0);
+    }
+    if (name === 'create') {
+      renderCalendar();
+      renderEnvOptions();
+      renderPreview();
+      updateCreateFooter();
+    }
+    if (name === 'config') {
+      renderServicesTable();
+      renderEnvTable();
+    }
+  }
+
+  function toggleReleaseTree(force){
+    const children = $('releaseChildren');
+    const arrow = $('releaseArrow');
+    const expanded = typeof force === 'boolean' ? force : children.hidden;
+    children.hidden = !expanded;
+    arrow.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    arrow.setAttribute('aria-label', expanded ? '折叠上线菜单' : '展开上线菜单');
+  }
+
+  function openExecution(card){
+    currentExecTitle = card.dataset.title || '10 月 27 日 · 周二';
+    currentExecDate = card.dataset.date || TODAY_ISO;
+    const status = card.dataset.status || '执行中';
+    $('execTitle').textContent = currentExecTitle + '上线';
+    const chip = $('execStatus');
+    chip.className = 'chip status ' + (STATUS_CLASS[status] || 'st-run');
+    chip.innerHTML = '<span class="dot"></span>' + status;
+    switchPage('exec');
+    refreshAllProgress();
+  }
+
+  /* ============================================================
+     新建任务：日历
+     ============================================================ */
+  function renderCalendar(){
+    $('calLabel').textContent = state.calYear + ' 年 ' + (state.calMonth + 1) + ' 月';
+    const grid = $('calGrid');
+    let html = WEEKDAYS.map(w => '<div class="cal-wd">周' + w + '</div>').join('');
+    const first = new Date(state.calYear, state.calMonth, 1);
+    const offset = (first.getDay() + 6) % 7;
+    const days = new Date(state.calYear, state.calMonth + 1, 0).getDate();
+    for (let i = 0; i < offset; i++) html += '<div class="cal-day empty"></div>';
+    for (let d = 1; d <= days; d++) {
+      const date = new Date(state.calYear, state.calMonth, d);
+      const dow = date.getDay();
+      const normal = dow === 2 || dow === 4;
+      const selected = iso(date) === iso(state.selectedDate);
+      const today = iso(date) === TODAY_ISO;
+      const cls = ['cal-day', normal ? 'normal' : 'off', selected ? 'selected' : ''].filter(Boolean).join(' ');
+      html += '<button type="button" class="' + cls + '" data-date="' + iso(date) + '" data-normal="' + normal + '">'
+        + d
+        + (normal ? '<span class="cal-dot"></span>' : '')
+        + (today ? '<span class="cal-today">今天</span>' : '')
+        + '</button>';
+    }
+    grid.innerHTML = html;
+  }
+
+  function selectDate(date){
+    state.selectedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    renderCalendar();
+    updateCreateFooter();
+  }
+
+  function parseISODate(value){
+    const parts = value.split('-').map(Number);
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+
+  /* ============================================================
+     新建任务：环境选择与服务预览
+     ============================================================ */
+  function renderEnvOptions(){
+    const wrap = $('envOptions');
+    wrap.innerHTML = state.envs.map(env => {
+      const active = state.selectedEnvs.has(env.name);
+      return '<button type="button" class="env-option ' + (active ? 'active' : '') + '" data-env="' + esc(env.name) + '">'
+        + '<span class="eo-top"><span class="eo-check">✓</span><span>' + esc(env.name) + '</span></span>'
+        + '<span class="eo-meta">' + windowText(env) + ' · ' + env.services.length + ' 个服务</span>'
+        + '</button>';
+    }).join('');
+  }
+
+  function renderPreview(){
+    const list = $('previewList');
+    const selected = state.envs.filter(env => state.selectedEnvs.has(env.name));
+    if (!selected.length) {
+      list.innerHTML = '<div class="empty">选择环境后，这里会按环境列出将带入的服务。</div>';
+      $('previewCount').textContent = '未选择环境';
+      return;
+    }
+    list.innerHTML = selected.map(env => {
+      const rows = env.services.map(name => {
+        const svc = serviceByName(name);
+        if (!svc) return '';
+        return '<div class="pv-svc">'
+          + '<span class="pv-name">' + esc(svc.name) + '</span>'
+          + '<span class="chip kind-' + svc.kind + '">' + KIND_LABEL[svc.kind] + '</span>'
+          + '<span class="branch">' + esc(svc.branch) + '</span>'
+          + '</div>';
+      }).join('');
+      return '<div class="pv-env">'
+        + '<div class="pv-env-head"><b>' + esc(env.name) + '</b><span>' + windowText(env) + '</span></div>'
+        + rows
+        + '</div>';
+    }).join('');
+    const total = selected.reduce((n, env) => n + env.services.length, 0);
+    $('previewCount').textContent = selected.length + ' 个环境 · ' + total + ' 个服务执行项';
+  }
+
+  function updateCreateFooter(){
+    const selected = state.envs.filter(env => state.selectedEnvs.has(env.name));
+    const total = selected.reduce((n, env) => n + env.services.length, 0);
+    const d = state.selectedDate;
+    $('selectedDateText').textContent = formatLongDate(d);
+    $('createFooterText').textContent = iso(d) + ' · ' + weekdayOf(d) + ' · ' + selected.length + ' 个环境 · ' + total + ' 个服务执行项';
+  }
+
+  function createTask(){
+    const date = state.selectedDate;
+    const key = iso(date);
+    const selected = state.envs.filter(env => state.selectedEnvs.has(env.name));
+
+    if (!selected.length) {
+      toast('请至少选择一个环境');
+      return;
+    }
+
+    const existing = state.tasks.find(task => task.iso === key);
+    if (existing) {
+      openConfirm('该日期已有任务', '同一天只允许有一个上线任务，是否打开已有任务？', () => {
+        const card = document.querySelector('.task-card[data-date="' + key + '"]');
+        if (card) {
+          openExecution(card);
+        } else {
+          switchPage('list');
+          toast('该任务尚未加载，请滚动找到 ' + formatShortDate(date));
+        }
+      }, '打开已有任务');
+      return;
+    }
+
+    const total = selected.reduce((n, env) => n + env.services.length, 0);
+    const task = {
+      date: new Date(date.getFullYear(), date.getMonth(), date.getDate()),
+      iso: key,
+      weekday: weekdayOf(date),
+      title: formatShortDate(date) + ' · ' + weekdayOf(date),
+      status: '配置中',
+      envs: selected.map(env => env.name),
+      serviceCount: total,
+      progress: 0,
+      summary: selected.map(env => env.name).join(' / ') + ' · ' + total + ' 个服务执行项 · 待到点执行'
+    };
+    state.tasks.push(task);
+    state.tasks.sort((a, b) => a.iso < b.iso ? 1 : (a.iso > b.iso ? -1 : 0));
+
+    const index = state.tasks.indexOf(task);
+    state.loadedCount = Math.min(state.tasks.length, Math.max(state.loadedCount, index + 1));
+
+    switchPage('list');
+    setTimeout(() => {
+      const card = document.querySelector('.task-card[data-date="' + key + '"]');
+      if (card) {
+        card.scrollIntoView({ behavior:'smooth', block:'center' });
+        card.classList.add('flash');
+        setTimeout(() => card.classList.remove('flash'), 1600);
+      }
+    }, 80);
+    toast('已创建 ' + task.title + ' 上线任务');
+  }
+
+  /* ============================================================
+     基础配置：服务目录 / 环境定义
+     ============================================================ */
+  function renderServicesTable(){
+    const tbody = $('servicesTbody');
+    tbody.innerHTML = state.services.map(svc => {
+      const configs = svc.kind === 'backend'
+        ? CONFIG_LABELS.map(label => '<span class="mini-chip">' + label + '</span>').join('')
+        : '<span class="none-text">无配置项 · 3 步清单</span>';
+      return '<tr>'
+        + '<td><span class="mono">' + esc(svc.name) + '</span></td>'
+        + '<td><span class="chip kind-' + svc.kind + '">' + KIND_LABEL[svc.kind] + '</span></td>'
+        + '<td><span class="branch">' + esc(svc.branch) + '</span></td>'
+        + '<td><div class="chip-list">' + configs + '</div></td>'
+        + '<td class="cell-action"><button type="button" class="btn-text" data-edit-service="' + esc(svc.name) + '">编辑</button></td>'
+        + '</tr>';
+    }).join('');
+    $('serviceCount').textContent = state.services.length + ' 个服务';
+  }
+
+  function renderEnvTable(){
+    const tbody = $('envsTbody');
+    tbody.innerHTML = state.envs.map(env => {
+      const services = env.services.length
+        ? env.services.map(name => '<span class="mini-chip">' + esc(name) + '</span>').join('')
+        : '<span class="none-text">未选择服务</span>';
+      return '<tr>'
+        + '<td><b>' + esc(env.name) + '</b></td>'
+        + '<td><div class="chip-list">' + services + '</div></td>'
+        + '<td><span class="branch">' + windowText(env) + '</span></td>'
+        + '<td class="cell-action"><button type="button" class="btn-text" data-edit-env="' + esc(env.name) + '">编辑</button></td>'
+        + '</tr>';
+    }).join('');
+    $('envCount').textContent = state.envs.length + ' 个环境';
+  }
+
+  function openServiceModal(svc){
+    state.editingService = svc ? svc.name : null;
+    $('serviceModalTitle').textContent = svc ? '编辑服务' : '新增服务';
+    $('svcName').value = svc ? svc.name : '';
+    $('svcName').readOnly = !!svc;
+    $('svcKind').value = svc ? svc.kind : 'backend';
+    $('svcBranch').value = svc ? svc.branch : MONO_BRANCH;
+    updateSvcHint();
+    $('serviceLayer').hidden = false;
+    if (!svc) $('svcName').focus();
+  }
+
+  function updateSvcHint(){
+    const kind = $('svcKind').value;
+    $('svcHint').textContent = kind === 'backend'
+      ? '后端自动带出 nacos、数据库脚本、定时任务、菜单配置、网关配置 5 项。'
+      : '两类前端不带配置项，执行清单为 合并分支 → 部署 → 验证完成。';
+  }
+
+  function saveServiceModal(){
+    const name = $('svcName').value.trim();
+    const kind = $('svcKind').value;
+    const branch = $('svcBranch').value.trim();
+    if (!name) { toast('请填写服务名称'); return; }
+    if (!branch) { toast('请填写默认分支'); return; }
+    if (!state.editingService && state.services.some(s => s.name === name)) {
+      toast('服务名称已存在');
+      return;
+    }
+    if (state.editingService) {
+      const svc = serviceByName(state.editingService);
+      if (svc) { svc.kind = kind; svc.branch = branch; }
+    } else {
+      state.services.push({ name, kind, branch });
+    }
+    $('serviceLayer').hidden = true;
+    renderServicesTable();
+    renderPreview();
+    toast('服务已保存');
+  }
+
+  function openEnvModal(env){
+    state.editingEnv = env ? env.name : null;
+    $('envModalTitle').textContent = env ? '编辑环境' : '新增环境';
+    $('envName').value = env ? env.name : '';
+    $('envName').readOnly = !!env;
+    $('envStart').value = env ? env.start : '20:00';
+    $('envEnd').value = env ? env.end : '21:30';
+    $('envServiceChecks').innerHTML = state.services.map(svc => {
+      const checked = env && env.services.includes(svc.name) ? ' checked' : '';
+      return '<label class="check"><input type="checkbox" value="' + esc(svc.name) + '"' + checked + '><span>' + esc(svc.name) + '</span></label>';
+    }).join('');
+    $('envLayer').hidden = false;
+    if (!env) $('envName').focus();
+  }
+
+  function saveEnvModal(){
+    const name = $('envName').value.trim();
+    const start = $('envStart').value;
+    const end = $('envEnd').value;
+    const services = Array.from($('envServiceChecks').querySelectorAll('input:checked')).map(el => el.value);
+    if (!name) { toast('请填写环境名称'); return; }
+    if (!start || !end) { toast('请填写完整的时间窗'); return; }
+    if (!services.length) { toast('请至少选择一个服务'); return; }
+    if (!state.editingEnv && state.envs.some(env => env.name === name)) {
+      toast('环境名称已存在');
+      return;
+    }
+    if (state.editingEnv) {
+      const env = state.envs.find(item => item.name === state.editingEnv);
+      if (env) { env.start = start; env.end = end; env.services = services; }
+    } else {
+      state.envs.push({ name, start, end, services });
+    }
+    $('envLayer').hidden = true;
+    renderEnvTable();
+    renderEnvOptions();
+    renderPreview();
+    updateCreateFooter();
+    toast('环境定义已保存');
+  }
+
+  /* ============================================================
+     提醒窗
+     ============================================================ */
+  const REMINDERS = {
+    red: {
+      note: '已到上线时间，仍有部署或验证未完成。',
+      groups: [
+        { name:'EM · 已超时 10 分钟', items:[
+          { sev:'red', title:'rs-host-service-order · 部署', meta:'计划 20:00 · 已超时 1 小时 40 分', target:{ type:'service', env:'EM', svc:'rs-host-service-order' } },
+          { sev:'red', title:'rs-host-service-repair · 部署', meta:'计划 20:00 · 已超时 1 小时 40 分', target:{ type:'service', env:'EM', svc:'rs-host-service-repair' } },
+          { sev:'yellow', title:'上线公告 · 未发布', meta:'计划 20:00 · 尚未发出', target:{ type:'prereq', prereq:'announce' } }
+        ]},
+        { name:'EU · 进行中', items:[
+          { sev:'red', title:'rs-host-service-order · 部署', meta:'计划 21:00 · 已到时间，部署未完成', target:{ type:'service', env:'EU', svc:'rs-host-service-order' } },
+          { sev:'orange', title:'数据库工单 · 审批', meta:'计划 19:00 · 尚未审批', target:{ type:'prereq', prereq:'ticket-db' } }
+        ]}
+      ]
+    },
+    orange: {
+      note: '时间基准前 1 小时已到，仍有前置项未完成。',
+      groups: [
+        { name:'任务级前置', items:[
+          { sev:'orange', title:'CAB 单 · 审批', meta:'计划 19:00 · 已超时 2 小时 40 分', target:{ type:'prereq', prereq:'cab' } },
+          { sev:'orange', title:'nacos 工单 · 审批', meta:'计划 19:00 · 已超时 2 小时 40 分', target:{ type:'prereq', prereq:'ticket-nacos' } },
+          { sev:'yellow', title:'上线公告 · 未发布', meta:'计划 20:00 · 尚未发出', target:{ type:'prereq', prereq:'announce' } }
+        ]}
+      ]
+    },
+    yellow: {
+      note: '公告已到发布时间，尚未发布。',
+      groups: [
+        { name:'任务级公告', items:[
+          { sev:'yellow', title:'上线公告 · 未发布', meta:'计划 20:00 · 距发布时间已过 1 小时 40 分', target:{ type:'prereq', prereq:'announce' } }
+        ]}
+      ]
+    }
+  };
+
+  function renderReminder(level){
+    const data = REMINDERS[level];
+    const win = $('reminderWindow');
+    win.dataset.level = level;
+    $('reminderDesc').textContent = data.note;
+    document.querySelectorAll('.rem-level').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.level === level);
+      btn.setAttribute('aria-pressed', btn.dataset.level === level ? 'true' : 'false');
+    });
+    $('reminderList').innerHTML = data.groups.map(group => {
+      const items = group.items.map(item => {
+        const attrs = item.target.type === 'service'
+          ? 'data-target="service" data-env="' + item.target.env + '" data-svc="' + item.target.svc + '"'
+          : 'data-target="prereq" data-prereq="' + item.target.prereq + '"';
+        return '<div class="rem-item">'
+          + '<span class="rem-dot ' + item.sev + '"></span>'
+          + '<div class="rem-item-body"><div class="rem-item-title">' + item.title + '</div>'
+          +   '<div class="rem-item-meta">' + item.meta + '</div></div>'
+          + '<button type="button" class="btn btn-secondary btn-sm rem-goto" ' + attrs + '>去处理</button>'
+          + '</div>';
+      }).join('');
+      return '<div class="rem-group"><div class="rem-group-title">' + group.name + '</div>' + items + '</div>';
+    }).join('');
+  }
+
+  function openReminder(level){
+    renderReminder(level || 'red');
+    $('reminderLayer').hidden = false;
+  }
+
+  function closeReminder(){ $('reminderLayer').hidden = true; }
+
+  function gotoReminderTarget(btn){
+    closeReminder();
+    switchPage('exec');
+    if (btn.dataset.target === 'service') {
+      const group = document.querySelector('.env-group[data-env="' + btn.dataset.env + '"]');
+      if (group) group.classList.remove('collapsed');
+      const card = group ? group.querySelector('.svc-card[data-svc="' + btn.dataset.svc + '"]') : null;
+      if (card) {
+        card.classList.remove('collapsed');
+        setTimeout(() => {
+          card.scrollIntoView({ behavior:'smooth', block:'center' });
+          card.classList.add('flash');
+          setTimeout(() => card.classList.remove('flash'), 1600);
+        }, 60);
+      }
+    } else {
+      const card = document.querySelector('.prereq[data-prereq="' + btn.dataset.prereq + '"]');
+      if (card) {
+        setTimeout(() => {
+          card.scrollIntoView({ behavior:'smooth', block:'center' });
+          card.classList.add('flash');
+          setTimeout(() => card.classList.remove('flash'), 1600);
+        }, 60);
+      }
+    }
+  }
+
+  /* ============================================================
+     通用弹窗 / 提示
+     ============================================================ */
+  function openConfirm(title, body, action, okLabel){
+    $('confirmTitle').textContent = title;
+    $('confirmBody').textContent = body;
+    $('confirmOk').textContent = okLabel || '确定';
+    confirmAction = action || null;
+    $('confirmLayer').hidden = false;
+  }
+
+  function closeConfirm(){
+    $('confirmLayer').hidden = true;
+    confirmAction = null;
+  }
+
+  function toast(message){
+    const el = $('toast');
+    el.textContent = message;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+
+  /* ============================================================
+     事件绑定
+     ============================================================ */
+  function bindEvents(){
+    document.querySelectorAll('.nav-child[data-page]').forEach(btn => {
+      btn.addEventListener('click', () => switchPage(btn.dataset.page));
+    });
+
+    $('releaseParent').addEventListener('click', () => {
+      if ($('releaseChildren').hidden) toggleReleaseTree(true);
+      switchPage('list');
+    });
+    $('releaseParent').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchPage('list'); }
+    });
+
+    $('releaseArrow').addEventListener('click', e => {
+      e.stopPropagation();
+      toggleReleaseTree();
+    });
+    $('releaseArrow').addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleReleaseTree();
+      }
+    });
+
+    document.querySelectorAll('.nav-item[data-module]').forEach(btn => {
+      btn.addEventListener('click', () => toast('「' + btn.dataset.module + '」不在本原型范围内'));
+    });
+
+    document.querySelectorAll('[data-nav]').forEach(btn => {
+      btn.addEventListener('click', () => switchPage(btn.dataset.nav));
+    });
+
+    $('navReminder').addEventListener('click', () => openReminder('red'));
+
+    $('taskWaterfall').addEventListener('click', e => {
+      const card = e.target.closest('.task-card');
+      if (card) openExecution(card);
+    });
+
+    $('pages').addEventListener('scroll', maybeLoadMore, { passive:true });
+
+    $('backToList').addEventListener('click', () => switchPage('list'));
+    $('validateBtn').addEventListener('click', () => toast('校验通过：分支与配置均已填写，未跳过的配置项内容完整'));
+    $('execToConfig').addEventListener('click', () => switchPage('config'));
+
+    document.addEventListener('click', e => {
+      const viewBtn = e.target.closest('.view-link');
+      if (viewBtn) {
+        e.stopPropagation();
+        openConfigEditor(viewBtn.closest('.step'));
+        return;
+      }
+      const step = e.target.closest('.step');
+      if (step) { handleStepClick(step); return; }
+      const svcHead = e.target.closest('.svc-head');
+      if (svcHead) { svcHead.closest('.svc-card').classList.toggle('collapsed'); return; }
+      const envHead = e.target.closest('.env-head');
+      if (envHead) { envHead.closest('.env-group').classList.toggle('collapsed'); return; }
+
+      const closeBtn = e.target.closest('[data-close]');
+      if (closeBtn) {
+        const layer = $(closeBtn.dataset.close);
+        if (layer) layer.hidden = true;
+      }
+    });
+
+    $('editorClose').addEventListener('click', closeEditor);
+    $('cancelConfigBtn').addEventListener('click', closeEditor);
+    $('saveConfigBtn').addEventListener('click', saveConfig);
+    $('configText').addEventListener('input', updateCharCount);
+
+    $('calPrev').addEventListener('click', () => {
+      state.calMonth -= 1;
+      if (state.calMonth < 0) { state.calMonth = 11; state.calYear -= 1; }
+      renderCalendar();
+    });
+    $('calNext').addEventListener('click', () => {
+      state.calMonth += 1;
+      if (state.calMonth > 11) { state.calMonth = 0; state.calYear += 1; }
+      renderCalendar();
+    });
+    $('calGrid').addEventListener('click', e => {
+      const day = e.target.closest('.cal-day[data-date]');
+      if (!day) return;
+      const date = parseISODate(day.dataset.date);
+      if (day.dataset.normal === 'true') {
+        selectDate(date);
+        return;
+      }
+      openConfirm('非常规发布日', formatLongDate(date) + ' 不在常规发布日（周二 / 周四）内。确定要在这天创建上线任务吗？', () => {
+        selectDate(date);
+      }, '确定建立');
+    });
+
+    $('envOptions').addEventListener('click', e => {
+      const btn = e.target.closest('.env-option');
+      if (!btn) return;
+      const name = btn.dataset.env;
+      if (state.selectedEnvs.has(name)) state.selectedEnvs.delete(name);
+      else state.selectedEnvs.add(name);
+      renderEnvOptions();
+      renderPreview();
+      updateCreateFooter();
+    });
+
+    $('createTaskBtn').addEventListener('click', createTask);
+
+    document.querySelectorAll('.big-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.tab;
+        document.querySelectorAll('.big-tab').forEach(t => {
+          const active = t === tab;
+          t.classList.toggle('active', active);
+          t.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        $('panel-services').hidden = target !== 'services';
+        $('panel-envs').hidden = target !== 'envs';
+      });
+    });
+
+    $('addServiceBtn').addEventListener('click', () => openServiceModal(null));
+    $('addEnvBtn').addEventListener('click', () => openEnvModal(null));
+    $('svcKind').addEventListener('change', updateSvcHint);
+    $('saveServiceBtn').addEventListener('click', saveServiceModal);
+    $('saveEnvBtn').addEventListener('click', saveEnvModal);
+
+    $('servicesTbody').addEventListener('click', e => {
+      const btn = e.target.closest('[data-edit-service]');
+      if (!btn) return;
+      const svc = serviceByName(btn.dataset.editService);
+      if (svc) openServiceModal(svc);
+    });
+    $('envsTbody').addEventListener('click', e => {
+      const btn = e.target.closest('[data-edit-env]');
+      if (!btn) return;
+      const env = state.envs.find(item => item.name === btn.dataset.editEnv);
+      if (env) openEnvModal(env);
+    });
+
+    $('reminderCloseX').addEventListener('click', closeReminder);
+    $('reminderCloseBtn').addEventListener('click', closeReminder);
+    document.querySelectorAll('.rem-level').forEach(btn => {
+      btn.addEventListener('click', () => renderReminder(btn.dataset.level));
+    });
+    $('reminderList').addEventListener('click', e => {
+      const btn = e.target.closest('.rem-goto');
+      if (btn) gotoReminderTarget(btn);
+    });
+
+    $('confirmCancel').addEventListener('click', closeConfirm);
+    $('confirmOk').addEventListener('click', () => {
+      const action = confirmAction;
+      $('confirmLayer').hidden = true;
+      confirmAction = null;
+      if (action) action();
+    });
+
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if ($('page-list').classList.contains('active')) {
+          rebuildWaterfall();
+          ensureFilled();
+        }
+      }, 120);
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if (!$('editorLayer').hidden) { closeEditor(); return; }
+      if (!$('serviceLayer').hidden) { $('serviceLayer').hidden = true; return; }
+      if (!$('envLayer').hidden) { $('envLayer').hidden = true; return; }
+      if (!$('confirmLayer').hidden) { closeConfirm(); return; }
+      if (!$('reminderLayer').hidden) closeReminder();
+    });
+  }
+
+  /* ============================================================
+     启动
+     ============================================================ */
+  renderExec();
+  renderCalendar();
+  renderServicesTable();
+  renderEnvTable();
+  renderEnvOptions();
+  renderPreview();
+  updateCreateFooter();
+  rebuildWaterfall();
+  setTimeout(ensureFilled, 0);
+  bindEvents();
+
+  /* 测试缝：只读快照（自测脚本断言用） */
+  window.__releaseDemo = {
+    tasks: state.tasks,
+    loaded: () => state.loadedCount,
+    columns: columnCount,
+    switchPage,
+    openExecution
+  };
+})();
+</script>
+</body>
+</html>

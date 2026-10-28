@@ -2291,7 +2291,7 @@ echo "截图已保存: docs/screenshots/${PAGE_NAME}.png"
 | **P12：Home 仪表盘数据** | 真实数据展示 + 30 天日志清理任务 | 首页不是空壳 | P4, P6, P9 |
 | **P13：设置页面** | 主题、目录、token UI、字体大小、日志保留策略 | 用户可定制 | P12 |
 | **P14：Windows 支持（必选）** | 路径、字体、CI workflow（windows-latest runner）、FTS5 vcpkg feature | 编译 + 单元测试过；功能承诺（Windows 11 已是当前开发环境，2026-09-21 起） | P13 |
-| **发布形态（P14 约束）** | 单 exe 零外部 DLL：MinGW 全静态链接（sqlite3/curl/ssl/crypto/C++ 运行时全部静态化） | `objdump -p DevDesk.exe \| grep "DLL Name"` 仅出现 Windows 系统 DLL | P14 |
+| **发布形态（P14 约束）** | 单 exe 零外部 DLL：MinGW 全静态链接（sqlite3/curl/ssl/crypto/C++ 运行时全部静态化）。该约束已于 2026-10-27 解除 | `objdump -p DevDesk.exe \| grep "DLL Name"` 仅出现 Windows 系统 DLL | P14 |
 | **P15：完善文档** | README、USER_GUIDE、ARCHITECTURE + 自我诊断页面 + 已知限制 | 文档齐全 | P13 |
 | **P16：长期维护评估** | 评估 EUI-NEO Metal 后端或 fork 需求；评估 Markdown 编辑器自实现 | macOS 27+ 升级准备 | P15 |
 

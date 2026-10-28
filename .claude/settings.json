@@ -70,6 +70,30 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/deliverable-gate.sh\" --mode=stop",
+            "timeout": 10,
+            "statusMessage": "交付闸门核查"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/deliverable-gate.sh\" --mode=session-end",
+            "timeout": 10,
+            "statusMessage": "交付闸门存档"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
