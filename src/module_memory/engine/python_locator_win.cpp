@@ -1,6 +1,8 @@
 // src/module_memory/engine/python_locator_win.cpp
 // Windows 候选清单：uv 管的 cpython-3.12 → 官方安装器目录 → PATH。
 // 顺序即优先级（任务书定案：uv 管的 3.12 优先于 PATH；本机默认 3.14 在版本判定步被拦）。
+// uv 安装目录两处都找：%APPDATA%\uv\python 是当前 uv 默认（Roaming，live 验证实测落此），
+// %LOCALAPPDATA%\uv\python 是旧版 uv 目录——两处都 glob，存在才算候选。
 #include "python_locator.h"
 
 #include <algorithm>
@@ -39,11 +41,13 @@ std::vector<std::string> globUvPythons(const fs::path& uvRoot) {
 
 std::vector<std::string> pythonCandidatePaths() {
     std::vector<std::string> out;
-    // 1) uv 管的 3.12（%LOCALAPPDATA%\uv\python\）
-    if (const char* localAppData = std::getenv("LOCALAPPDATA")) {
-        for (std::string& p :
-             globUvPythons(fs::path(localAppData) / "uv" / "python")) {
-            out.push_back(std::move(p));
+    // 1) uv 管的 3.12（%APPDATA%\uv\python\ 与 %LOCALAPPDATA%\uv\python\）
+    for (const char* env : {"APPDATA", "LOCALAPPDATA"}) {
+        if (const char* base = std::getenv(env)) {
+            for (std::string& p :
+                 globUvPythons(fs::path(base) / "uv" / "python")) {
+                out.push_back(std::move(p));
+            }
         }
     }
     // 2) 官方安装器默认目录（Python310/311/312）
