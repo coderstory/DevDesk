@@ -1089,6 +1089,13 @@ private:
                 ::core::IMarkdownNotesSource>();
             return src.isOk() && src.value()->noteExists(relPath);
         },
+        // 提供方可用性与存在性分开：Markdown 模块被禁用时详情灰态提示
+        // 「模块未启用」而非误导性的「文档不存在」（与选择器入口状态提示同口径）
+        .notesSourceAvailable = [] {
+            auto src = ::core::ServiceLocator::requireService<
+                ::core::IMarkdownNotesSource>();
+            return src.isOk();
+        },
         .openDetail = [this](const Task& task) { openDetailDialog(task); },
         .contextSelectPath = [this](const std::vector<int>& path) {
             onContextSelectPath(path);

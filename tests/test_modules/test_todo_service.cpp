@@ -1461,3 +1461,49 @@ REGISTER_TEST(todo_svc_fixed_migration_idempotent,
         env.path.parent_path(), env.path.filename().string() + ".backup-", 0);
     return true;
 })
+
+// 防：moveTask 来源列 kind 查询失败被静默吞掉（A-4）——DB 瞬态错误下退化为
+// 「来源列未知」，done→待办不清 completed_at，口径矩阵静默失守。查询失败必须
+// 显式 fail（事务回滚，完成时间哨兵值原样不动）。
+REGISTER_TEST(todo_svc_move_task_from_kind_query_fail_explicit,
+              "TodoService: moveTask 来源列 kind 查询失败显式 fail", {
+    TestEnv env("fromkind_fail");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doneId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "done") doneId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+
+    auto t = env.svc->createTask(todoId, "查来源列失败");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+    const int64_t sentinel = 1234567890;
+    DOCTEST_REQUIRE(env.handle().exec(
+        "UPDATE todo_tasks SET completed_at = " + std::to_string(sentinel) +
+        " WHERE id = " + std::to_string(taskId)).isOk());
+
+    // 模拟 DB 错误：kind 查询目标表消失（等价瞬态故障/坏库）
+    DOCTEST_REQUIRE(env.handle().exec("DROP TABLE todo_columns").isOk());
+    auto r = env.svc->moveTask(taskId, todoId, 0);
+    DOCTEST_CHECK(r.isFail());  // 显式失败，不静默继续
+
+    // 事务回滚：completed_at 哨兵值原样（修复前静默成功会把卡移走且不清完成时间）
+    auto prep = env.handle().prepare(
+        "SELECT completed_at FROM todo_tasks WHERE id = " +
+        std::to_string(taskId));
+    DOCTEST_REQUIRE(prep.isOk());
+    auto rows = prep.value().fetchAll();
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+    DOCTEST_CHECK_EQ(rows.value()[0].getString("completed_at").valueOr("?"),
+                     std::to_string(sentinel));
+    return true;
+})

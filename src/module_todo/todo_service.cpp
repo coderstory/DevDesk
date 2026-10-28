@@ -733,7 +733,17 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             auto& stmtSrcKind = prepSrcKind.value();
             if (auto r = stmtSrcKind.bind(1, fromColumnId); r.isFail()) return r;
             auto srcKindRows = stmtSrcKind.fetchAll();
-            if (srcKindRows.isOk() && !srcKindRows.value().empty()) {
+            if (srcKindRows.isFail()) {
+                // 来源列 kind 查询失败不得静默降级为「来源列未知」：DB 瞬态错误下
+                // done→待办会不清 completed_at，口径矩阵静默失守。显式失败 + 日志，
+                // 事务整体回滚（位置/时间戳改动一并还原）。
+                LOG_ERROR("moveTask 查询来源列 kind 失败 taskId=" +
+                          std::to_string(taskId) + ": " +
+                          srcKindRows.errorMessage());
+                return core::Result<void>::fail(srcKindRows.errorCode(),
+                                                srcKindRows.errorMessage());
+            }
+            if (!srcKindRows.value().empty()) {
                 auto k = srcKindRows.value()[0].getString("kind");
                 if (k.isOk()) fromKind = k.value();
             }
