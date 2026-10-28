@@ -78,6 +78,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_collector.cpp
     # hook 同步注入（S3-C）：输出契约/预算/失败开放/hooks 配置
     test_modules/test_memory_hook.cpp
+    # 卡片数据层/整理器/计量（S4）：内存库夹具，状态机与撤销链
+    test_modules/test_memory_proposals.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp

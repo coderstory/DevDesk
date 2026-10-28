@@ -28,6 +28,12 @@ public:
                                                         int timeoutMs) = 0;
     // 直存语义入库（infer=false：不调云端提炼）；返回引擎侧新条目 id（缺失空串）
     virtual core::Result<std::string> addDirect(const std::string& text) = 0;
+
+    // 标记翻转（卡片代理层执行面）：forgotten=true 移出「自动想起」= 遗忘/撤销新增；
+    // false = 恢复。实现映射 telemem update 工具的 metadata（工具名/参数形状 live
+    // 对账待 S4 验收——失败如实上抛，提案保持待审）
+    virtual core::Result<void> setMemoryForgotten(const std::string& memoryId,
+                                                  bool forgotten) = 0;
 };
 
 // MCP-HTTP 实现（生产装配）。telemem 只绑回环（kTelememPort）。
@@ -37,6 +43,8 @@ public:
                                                 int limit,
                                                 int timeoutMs) override;
     core::Result<std::string> addDirect(const std::string& text) override;
+    core::Result<void> setMemoryForgotten(const std::string& memoryId,
+                                          bool forgotten) override;
 };
 
 // 响应解析纯函数（单测钉三层）：SSE 信封剥离 → JSON-RPC envelope（含嵌套

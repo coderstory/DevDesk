@@ -40,6 +40,10 @@ public:
     core::Result<std::string> addDirect(const std::string&) override {
         return core::Result<std::string>::ok("1");
     }
+    core::Result<void> setMemoryForgotten(const std::string&,
+                                          bool) override {
+        return core::Result<void>::ok();
+    }
 };
 
 const char* kStdinTemplate =

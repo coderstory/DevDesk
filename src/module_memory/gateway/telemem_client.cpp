@@ -206,6 +206,67 @@ core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
     return parseSearchResponse(resp.value().body);
 }
 
+namespace {
+
+// tools/call 通用 POST（search/add/update 三工具共用；回环 + Accept 双类型）
+core::Result<std::string> callTool(const std::string& tool,
+                                   platform::json::JsonObject args,
+                                   long timeoutMs) {
+    platform::json::JsonObject params;
+    params.set("name", platform::json::makeString(tool));
+    params.set("arguments", platform::json::JsonValue(args));
+    platform::json::JsonObject rpc;
+    rpc.set("jsonrpc", platform::json::makeString("2.0"));
+    rpc.set("id", platform::json::makeInt(1));
+    rpc.set("method", platform::json::makeString("tools/call"));
+    rpc.set("params", platform::json::JsonValue(params));
+    const auto body = platform::json::stringify(platform::json::JsonValue(rpc));
+    if (body.isFail()) {
+        return core::Result<std::string>::fail(body.errorCode(),
+                                               body.errorMessage());
+    }
+    platform::http::Request req;
+    req.method = "POST";
+    req.url = "http://127.0.0.1:" + std::to_string(engine::kTelememPort) + "/mcp";
+    req.body = body.value();
+    req.headers["Content-Type"] = "application/json";
+    // MCP SDK 硬校验：Accept 双类型缺一 406（S2 live 实测教训）
+    req.headers["Accept"] = "application/json, text/event-stream";
+    req.timeoutMs = timeoutMs;
+    const auto resp = platform::http::send(req);
+    if (resp.isFail()) {
+        return core::Result<std::string>::fail(resp.errorCode(),
+                                               resp.errorMessage());
+    }
+    if (resp.value().statusCode != 200) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::HttpError,
+            "HTTP " + std::to_string(resp.value().statusCode));
+    }
+    return core::Result<std::string>::ok(resp.value().body);
+}
+
+}  // namespace
+
+core::Result<void> TelememHttpRetriever::setMemoryForgotten(
+    const std::string& memoryId, bool forgotten) {
+    platform::json::JsonObject meta;
+    meta.set("forgotten", platform::json::makeBool(forgotten));
+    platform::json::JsonObject args;
+    args.set("memory_id", platform::json::makeString(memoryId));
+    args.set("metadata", platform::json::JsonValue(meta));
+    const auto resp = callTool("update_memory", std::move(args), 10000);
+    if (resp.isFail()) {
+        return core::Result<void>::fail(resp.errorCode(), resp.errorMessage());
+    }
+    const auto parsed = parseAddResponse(resp.value());
+    if (parsed.isFail()) {
+        return core::Result<void>::fail(parsed.errorCode(),
+                                        parsed.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
 core::Result<std::string> TelememHttpRetriever::addDirect(
     const std::string& text) {
     platform::json::JsonObject args;

@@ -18,6 +18,12 @@ add_library(devdesk_module_memory STATIC
     hook/hook_command.h
     hook/hooks_settings.cpp
     hook/hooks_settings.h
+    proposals/usage_ledger.cpp
+    proposals/usage_ledger.h
+    proposals/proposal_store.cpp
+    proposals/proposal_store.h
+    proposals/curator.cpp
+    proposals/curator.h
     engine/telemem_config.cpp
     engine/telemem_config.h
     engine/python_locator.cpp
