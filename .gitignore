@@ -77,3 +77,6 @@ Testing/
 tools/memcpp-integration/spike/.venv/
 tools/memcpp-integration/spike/.runtime/
 tools/memcpp-integration/spike/results/
+
+# memcpp 本地向量跑分工作区（llama-server/模型/日志/结果 JSON，脚本与 hard_queries 入库）
+tools/memcpp-integration/spike/.bakeoff/
