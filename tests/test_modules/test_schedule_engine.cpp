@@ -5,8 +5,10 @@
 // 假时钟驱动：引擎 tick(now) 直接注入 unix 秒，不经真实 ticker；冷启动口径 =
 // 首次 tick 前 last_eval_at 为空 → 不补历史。
 //
-// S5 对齐点：ChannelRegistry 的构造/注册/投递方法名以 channel_registry.h 实际
-// 定义为准（见 makeRegistry/FakeChannel）——若签名不同只改这两个 helper。
+// S5 对齐点：真实 ChannelRegistry 键 = 渠道 kind 字符串，注册走
+// registerChannel(unique_ptr)（接管所有权）、投递走 deliver({kind}, Delivery)、
+// 无 addChannel/deliverLocal。引擎侧经 schedule_channel 配置行 id → kind 桥接，
+// 故 TestChannels 同时建配置行（见下方 helper）——签名再变只改这些 helper。
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
@@ -73,21 +75,22 @@ int64_t nextFireOf(core::data::SqliteDb& db, int64_t ruleId) {
 
 // ---- S5 对齐点：Receipt 形状与 ChannelRegistry 方法名以 channel_registry.h 为准 ----
 
-module::schedule::Receipt makeReceipt(bool success, bool retryable, int64_t retryAfter = 0,
-                                      const std::string& message = "") {
+module::schedule::Receipt makeReceipt(const std::string& status,
+                                      const std::string& detail = "") {
     module::schedule::Receipt r;
-    r.success = success;
-    r.retryable = retryable;
-    r.retryAfterSec = retryAfter;
-    r.httpStatus = 0;
-    r.remoteErrcode = 0;
-    r.message = message;
+    r.status = status;
+    r.detail = detail;
     return r;
 }
 
-// 可脚本化渠道：按调用次数返回指定序列的 Receipt。
+// 可脚本化渠道：按调用次数返回指定序列的 Receipt。id() 必须等于配置行 kind，
+// 引擎桥接（配置行 id → kind → 注册表键）才能命中本渠道。
 class FakeChannel : public module::schedule::Channel {
 public:
+    explicit FakeChannel(std::string id) : id_(std::move(id)) {}
+
+    std::string id() const override { return id_; }
+
     int calls = 0;
     std::vector<module::schedule::Receipt> script;  // 依调用次序返回；越界用最后一个
 
@@ -95,27 +98,38 @@ public:
         const module::schedule::Delivery& delivery) override {
         (void)delivery;
         if (script.empty())
-            return core::Result<module::schedule::Receipt>::ok(makeReceipt(true, false));
+            return core::Result<module::schedule::Receipt>::ok(makeReceipt("ok"));
         const std::size_t idx = std::min<std::size_t>(calls, script.size() - 1);
         ++calls;
         return core::Result<module::schedule::Receipt>::ok(script[idx]);
     }
+
+private:
+    std::string id_;
 };
 
 struct TestChannels {
     module::schedule::ChannelRegistry registry;
-    std::shared_ptr<FakeChannel> fake = std::make_shared<FakeChannel>();
+    FakeChannel* fake = nullptr;  // registry 接管所有权；raw 指针仅作观察
+    int64_t channelRowId = 0;     // schedule_channel 配置行 id（规则 channel_ids 用它）
 
-    explicit TestChannels(int64_t channelId) {
-        // S5 对齐点：注册方法名以实际 ChannelRegistry 为准。
-        registry.addChannel(channelId, fake);
+    explicit TestChannels(module::schedule::ScheduleStore& store,
+                          const std::string& kind = "fake_remind") {
+        module::schedule::ChannelRecord ch;
+        ch.kind = kind;
+        ch.name = "test-" + kind;
+        auto created = store.createChannel(ch).value();
+        channelRowId = created.id;
+        auto f = std::make_unique<FakeChannel>(kind);
+        fake = f.get();
+        REQUIRE(registry.registerChannel(std::move(f)).isOk());
     }
 };
 
 module::schedule::RuleRecord makeIntervalRule(int64_t everySec, int64_t anchor,
                                               const std::string& actionKind = "remind",
                                               const std::string& missedPolicy = "once",
-                                              std::vector<int64_t> channelIds = {1}) {
+                                              std::vector<int64_t> channelIds = {}) {
     module::schedule::RuleRecord r;
     r.name = "interval-rule";
     r.kind = "interval";
@@ -128,14 +142,15 @@ module::schedule::RuleRecord makeIntervalRule(int64_t everySec, int64_t anchor,
     return r;
 }
 
-module::schedule::RuleRecord makeOnceRule(int64_t atUnix, const std::string& missedPolicy = "once") {
+module::schedule::RuleRecord makeOnceRule(int64_t atUnix, const std::string& missedPolicy = "once",
+                                          std::vector<int64_t> channelIds = {}) {
     module::schedule::RuleRecord r;
     r.name = "once-rule";
     r.kind = "once";
     r.specJson = "{\"at\":" + std::to_string(atUnix) + "}";
     r.actionKind = "remind";
     r.actionJson = "{}";
-    r.channelIds = {1};
+    r.channelIds = std::move(channelIds);
     r.missedPolicy = missedPolicy;
     return r;
 }
@@ -148,10 +163,11 @@ REGISTER_TEST(schedule_engine_fires_at_due_time,
               "调度引擎: next_fire_at 到期触发一次, 触发后重算下次并推进 last_eval_at", {
     auto db = openMigrated("due").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    auto rule = store.createRule(makeIntervalRule(60, 0)).value();
+    auto rule = store.createRule(
+        makeIntervalRule(60, 0, "remind", "once", {channels.channelRowId})).value();
     engine.tick(10);   // 冷启动: 算 next = 60
     engine.tick(60);   // 到期
     CHECK(countRuns(db.db()) == 1);
@@ -166,10 +182,11 @@ REGISTER_TEST(schedule_engine_not_fire_before_due,
               "调度引擎: 未到 next_fire_at 不触发", {
     auto db = openMigrated("notdue").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    (void)store.createRule(makeIntervalRule(60, 0)).value();
+    (void)store.createRule(
+        makeIntervalRule(60, 0, "remind", "once", {channels.channelRowId})).value();
     engine.tick(10);
     engine.tick(59);
     CHECK(countRuns(db.db()) == 0);
@@ -181,10 +198,11 @@ REGISTER_TEST(schedule_engine_missed_skip_writes_missed_rows,
               "调度引擎: missed_policy=skip 停机跨 3 个到期点, 写 3 条 missed 不执行动作", {
     auto db = openMigrated("skip").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    auto rule = store.createRule(makeIntervalRule(100, 0, "remind", "skip")).value();
+    auto rule = store.createRule(
+        makeIntervalRule(100, 0, "remind", "skip", {channels.channelRowId})).value();
     engine.tick(50);    // 冷启动: last_eval=50, next=100
     engine.tick(400);   // 错过 100/200/300
     CHECK(countRuns(db.db()) == 3);
@@ -199,10 +217,11 @@ REGISTER_TEST(schedule_engine_missed_once_single_catchup,
               "调度引擎: missed_policy=once 只补最早一个错过点, 摘要标注原定时刻", {
     auto db = openMigrated("once").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    (void)store.createRule(makeIntervalRule(100, 0, "remind", "once")).value();
+    (void)store.createRule(
+        makeIntervalRule(100, 0, "remind", "once", {channels.channelRowId})).value();
     engine.tick(50);
     engine.tick(400);   // 错过 100/200/300 → 只补 100
     CHECK(countRuns(db.db()) == 1);
@@ -219,10 +238,11 @@ REGISTER_TEST(schedule_engine_missed_all_fires_each,
               "调度引擎: missed_policy=all 停机跨 3 个到期点补 3 次", {
     auto db = openMigrated("all").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    (void)store.createRule(makeIntervalRule(100, 0, "remind", "all")).value();
+    (void)store.createRule(
+        makeIntervalRule(100, 0, "remind", "all", {channels.channelRowId})).value();
     engine.tick(50);
     engine.tick(400);
     CHECK(countRuns(db.db()) == 3);
@@ -235,10 +255,11 @@ REGISTER_TEST(schedule_engine_clock_rollback_no_replay,
               "调度引擎: 时钟回拨只刷新 last_eval_at 不重放历史触发", {
     auto db = openMigrated("rollback").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    auto rule = store.createRule(makeIntervalRule(100, 0, "remind", "all")).value();
+    auto rule = store.createRule(
+        makeIntervalRule(100, 0, "remind", "all", {channels.channelRowId})).value();
     engine.tick(50);
     engine.tick(100);   // 正常触发一次
     CHECK(countRuns(db.db()) == 1);
@@ -255,7 +276,7 @@ REGISTER_TEST(schedule_engine_same_rule_serialized,
               "调度引擎: run_task 异步未完成期间第二条到期点入队不并发", {
     auto db = openMigrated("serial").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
     int active = 0;
@@ -293,7 +314,7 @@ REGISTER_TEST(schedule_engine_queue_full_suppressed,
               "调度引擎: 待执行队列满后 skip 并记 suppressed 不静默丢弃", {
     auto db = openMigrated("qfull").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
     engine.taskRegistry().registerTask(
@@ -319,10 +340,10 @@ REGISTER_TEST(schedule_engine_once_rule_archived_no_refire,
               "调度引擎: 一次性规则触发后归档停用, 重启引擎也不再触发", {
     auto db = openMigrated("archive").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     {
         module::schedule::ScheduleEngine engine(db.db(), channels.registry);
-        (void)store.createRule(makeOnceRule(100)).value();
+        (void)store.createRule(makeOnceRule(100, "once", {channels.channelRowId})).value();
         engine.tick(50);
         engine.tick(100);   // 触发一次
         CHECK(countRuns(db.db()) == 1);
@@ -344,10 +365,11 @@ REGISTER_TEST(schedule_engine_edit_recomputes_next_fire,
               "调度引擎: recomputeNextFire 事务内重算 next_fire_at 并刷新 last_eval_at", {
     auto db = openMigrated("edit").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(1);
+    TestChannels channels(store, "fake_remind");
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    auto rule = store.createRule(makeIntervalRule(60, 1000, "remind", "once")).value();
+    auto rule = store.createRule(
+        makeIntervalRule(60, 1000, "remind", "once", {channels.channelRowId})).value();
     engine.tick(990);   // 冷启动: next = 1000
     CHECK(nextFireOf(db.db(), rule.id) == 1000);
 
@@ -369,15 +391,15 @@ REGISTER_TEST(schedule_delivery_retry_ladder_and_bookkeeping,
               "投递编排: 可重试失败按 0s/30s/300s 重试, 3 次尝试 3 行记录, run 仍 success", {
     auto db = openMigrated("retry").value();
     module::schedule::ScheduleStore store(db.db());
-    TestChannels channels(7);
-    channels.fake->script = {makeReceipt(false, true, 0, "http 500"),
-                             makeReceipt(false, true, 0, "timeout"),
-                             makeReceipt(false, true, 0, "errcode 45009")};
+    TestChannels channels(store, "fake_retry");
+    channels.fake->script = {makeReceipt("retryable:http_5xx"),
+                             makeReceipt("retryable:network_error"),
+                             makeReceipt("retryable:errcode_45009")};
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    auto rule = store.createRule(makeOnceRule(100)).value();
+    auto rule = store.createRule(makeOnceRule(100, "once", {channels.channelRowId})).value();
     auto edited = rule;
-    edited.channelIds = {7};
+    edited.channelIds = {channels.channelRowId};
     (void)store.updateRule(edited);
     engine.tick(50);
     engine.tick(100);   // 尝试 1 失败 → 重试队列
@@ -405,17 +427,14 @@ REGISTER_TEST(schedule_delivery_permanent_failure_disables_channel,
     auto db = openMigrated("perm").value();
     module::schedule::ScheduleStore store(db.db());
 
-    // 渠道配置行 id 同时用作注册表渠道 id（S5 对齐点: addChannel 签名以实际为准）
-    module::schedule::ChannelRecord ch;
-    ch.kind = "wecom";
-    ch.name = "wecom-test";
-    auto created = store.createChannel(ch).value();
-
-    TestChannels channels(created.id);
-    channels.fake->script = {makeReceipt(false, false, 0, "errcode 93000")};
+    // 真实注册表键 = kind 字符串（S5 对齐点）：TestChannels 建 kind="wecom" 配置行
+    // 并注册同 id 假渠道，规则 channel_ids 用配置行 id 经引擎桥接命中。
+    TestChannels channels(store, "wecom");
+    channels.fake->script = {makeReceipt("permanent:errcode_93000")};
     module::schedule::ScheduleEngine engine(db.db(), channels.registry);
 
-    (void)store.createRule(makeIntervalRule(100, 0, "remind", "once", {created.id})).value();
+    (void)store.createRule(
+        makeIntervalRule(100, 0, "remind", "once", {channels.channelRowId})).value();
     engine.tick(50);
     engine.tick(100);
     CHECK(channels.fake->calls == 1);

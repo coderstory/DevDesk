@@ -2,11 +2,13 @@
 // 四动作 + 渠道 Receipt 分类消费（成功 / 可重试带建议延迟 / 永久失败）+ 重试排队
 // 阶梯（0s/30s/300s，§4.9）+ schedule_delivery 每渠道每次尝试一行记账。
 //
-// 跨波对接约定（接口契约冻结）：
+// 跨波对接约定（已按 dev 合入的 S5 真实接口对齐）：
 //   - Delivery / Receipt / Channel / ChannelRegistry 由 S5 波定义在
-//     module_schedule/channel_registry.h；本波按 §3 签名消费。所有读 Receipt
-//     字段、调 ChannelRegistry 方法的代码集中在 action_runner.cpp 的三个
-//     「S5 对齐点」函数里——若 S5 实际签名不同，只改这三处。
+//     module_schedule/channel_registry.h。真实 Receipt = {status, detail}
+//     稳定串（分类映射见 action_runner.cpp classifyReceipt）；真实注册表键 =
+//     渠道 kind 字符串，deliver(vector<string>, Delivery) 无 deliverLocal。
+//     所有读 Receipt 字段、调 ChannelRegistry 方法的代码集中在
+//     action_runner.cpp 的三个「S5 对齐点」函数里——再变只改这三处。
 //   - 动作代码禁止写 if(wecom)：渠道选择由规则 channel_ids[] 决定，动作只按
 //     列表分发（webhook_only 与 remind 共用同一分发路径，差别在规则配置）。
 //   - deeplink 跳转动作（remind_open）只产出载荷（Delivery.deeplink），
@@ -136,7 +138,7 @@ public:
     // 更新 run 行终态；run 的最终状态机归引擎调度，本函数只落库。
     core::Result<RetryOutcome> completeAsync(int64_t runId, const TaskOutcome& outcome);
 
-    // 溢出摘要等本地一次性告警：走注册表本地通道（S5 对齐点）。
+    // 溢出摘要等本地一次性告警：走注册表内置 toast 渠道（S5 对齐点）。
     core::Result<Receipt> localAlert(const Delivery& delivery);
 
     // 单渠道单次尝试（供引擎/测试直接使用）：记账 + deliver + 分类。
@@ -153,7 +155,7 @@ private:
     std::map<int64_t, int> httpInFlight_;  // 渠道在飞计数（HTTP 每渠道 ≤2，§4.7）
 };
 
-// Receipt → 分类。S5 对齐点：唯一读 Receipt 字段的函数。
+// Receipt → 分类。S5 对齐点：唯一读 Receipt 字段的函数（按 status 稳定串分类）。
 ReceiptClass classifyReceipt(const module::schedule::Receipt& receipt);
 
 // 从 action_json 提取 title/body/deeplink/key（缺省回退规则名）；失败不抛，回退。
