@@ -82,7 +82,7 @@ REGISTER_TEST(memory_proposal_state_machine,
     FakeEngine engine;
     // 未到 TTL 正常接受：accepted + decidedAt/appliedAt 落定 + 引擎真调用
     auto ok = store.accept(add.value().id, now + 10,
-                           [](std::int64_t) {
+                           [](const std::string&) {
                                return core::Result<std::int64_t>::ok(0);
                            },
                            engineExecutor(engine));
@@ -93,11 +93,11 @@ REGISTER_TEST(memory_proposal_state_machine,
     DOCTEST_CHECK_EQ(engine.calls.size(), static_cast<std::size_t>(1));
     // 引擎条目 id 回填（撤销需要知道标记谁）
     DOCTEST_REQUIRE_EQ(ok.value().targetIds.size(), static_cast<std::size_t>(1));
-    DOCTEST_CHECK_EQ(ok.value().targetIds[0], static_cast<std::int64_t>(42));
+    DOCTEST_CHECK_EQ(ok.value().targetIds[0], std::string("42"));
 
     // 终态幂等：重复接受/拒绝 = 直接返回不做事
     auto dup = store.accept(ok.value().id, now + 20,
-                            [](std::int64_t) {
+                            [](const std::string&) {
                                 return core::Result<std::int64_t>::ok(0);
                             },
                             engineExecutor(engine));
@@ -137,7 +137,7 @@ REGISTER_TEST(memory_proposal_base_version_and_apply_failure,
     const std::int64_t now = 1769472000;
 
     // 遗忘卡：目标 7，出卡时版本 3
-    auto forget = store.create("forget", {7}, "", "", "devdesk", {}, 0.8,
+    auto forget = store.create("forget", {std::string("7")}, "", "", "devdesk", {}, 0.8,
                                "decay", "assistant_derived", now, 3);
     DOCTEST_REQUIRE(forget.isOk());
     DOCTEST_CHECK_EQ(forget.value().baseVersion, static_cast<std::int64_t>(3));
@@ -146,20 +146,20 @@ REGISTER_TEST(memory_proposal_base_version_and_apply_failure,
     // 目标已变（版本 4 ≠ 3）→ expired，引擎零调用
     auto changed = store.accept(
         forget.value().id, now + 5,
-        [](std::int64_t) { return core::Result<std::int64_t>::ok(4); },
+        [](const std::string&) { return core::Result<std::int64_t>::ok(4); },
         engineExecutor(engine));
     DOCTEST_REQUIRE(changed.isOk());
     DOCTEST_CHECK_EQ(changed.value().status, std::string("expired"));
     DOCTEST_CHECK(engine.calls.empty());
 
     // 版本一致但引擎失败 → 保持 pending（可重试），失败原因进审计
-    auto forget2 = store.create("forget", {8}, "", "", "devdesk", {}, 0.8,
+    auto forget2 = store.create("forget", {std::string("8")}, "", "", "devdesk", {}, 0.8,
                                 "decay", "assistant_derived", now, 1);
     DOCTEST_REQUIRE(forget2.isOk());
     engine.fail = true;
     auto failed = store.accept(
         forget2.value().id, now + 5,
-        [](std::int64_t) { return core::Result<std::int64_t>::ok(1); },
+        [](const std::string&) { return core::Result<std::int64_t>::ok(1); },
         engineExecutor(engine));
     DOCTEST_REQUIRE(failed.isOk());
     DOCTEST_CHECK_EQ(failed.value().status, std::string("pending"));
@@ -168,7 +168,7 @@ REGISTER_TEST(memory_proposal_base_version_and_apply_failure,
     engine.fail = false;
     auto retried = store.accept(
         forget2.value().id, now + 15,
-        [](std::int64_t) { return core::Result<std::int64_t>::ok(1); },
+        [](const std::string&) { return core::Result<std::int64_t>::ok(1); },
         engineExecutor(engine));
     DOCTEST_REQUIRE(retried.isOk());
     DOCTEST_CHECK_EQ(retried.value().status, std::string("accepted"));
@@ -188,11 +188,11 @@ REGISTER_TEST(memory_proposal_undo_chain,
     FakeEngine engine;
     auto accepted = store.accept(
         add.value().id, now + 5,
-        [](std::int64_t) { return core::Result<std::int64_t>::ok(0); },
+        [](const std::string&) { return core::Result<std::int64_t>::ok(0); },
         engineExecutor(engine));
     DOCTEST_REQUIRE(accepted.isOk());
     // 未决撤销卡唯一：重复 createUndo 复用同一张并刷新
-    auto vok = [](std::int64_t) { return core::Result<std::int64_t>::ok(9); };
+    auto vok = [](const std::string&) { return core::Result<std::int64_t>::ok(9); };
     auto u1 = store.createUndo(add.value().id, now + 10, vok);
     DOCTEST_REQUIRE(u1.isOk());
     DOCTEST_CHECK_EQ(u1.value().undoOf, add.value().id);
@@ -231,7 +231,7 @@ REGISTER_TEST(memory_curator_propose_add_and_forget,
     DOCTEST_CHECK(engine.calls.empty());
     auto applied = store.accept(
         addCard.value().id, now + 5,
-        [](std::int64_t) { return core::Result<std::int64_t>::ok(0); },
+        [](const std::string&) { return core::Result<std::int64_t>::ok(0); },
         engineExecutor(engine));
     DOCTEST_REQUIRE(applied.isOk());
     DOCTEST_CHECK_EQ(engine.calls.size(), static_cast<std::size_t>(1));
@@ -332,5 +332,81 @@ REGISTER_TEST(memory_usage_ledger_accumulates,
     auto todayAfter = ledger.todayTokens(now + 120);
     DOCTEST_REQUIRE(todayAfter.isOk());
     DOCTEST_CHECK_EQ(todayAfter.value(), static_cast<long long>(150000));
+    return true;
+})
+
+REGISTER_TEST(memory_proposal_live_id_and_forget_undo_readd,
+              "memory: live 对账钉版——UUID 串 id 原样回填；遗忘撤销=按原卡证据重录入；undo 卡透传证据", {
+    auto opened = ProposalStore::open(tmpDb("liveid"));
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    const std::int64_t now = 1769472000;
+
+    // ① 遗忘扫描建卡（MemorySummary.id=7 → 引擎条目 "uuid-7"）
+    auto memories = []() {
+        return core::Result<std::vector<MemorySummary>>::ok(
+            std::vector<MemorySummary>{
+                {7, "闲置很久的记忆E", now - 120 * 86400, 3}});
+    };
+    auto created = Curator::proposeForget(store, memories, 60, now);
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE_EQ(created.value().size(), static_cast<std::size_t>(1));
+    FakeEngine engine;
+    auto accepted = store.accept(
+        created.value()[0], now + 5,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(3); },
+        engineExecutor(engine));
+    DOCTEST_REQUIRE(accepted.isOk());
+    DOCTEST_CHECK_EQ(engine.calls.back(), std::string("mark:7:1"));  // delete 通道
+    DOCTEST_CHECK_EQ(store.isUndone(created.value()[0]), false);
+
+    // ② 撤销遗忘 = 重录入：undo 卡透传原卡证据，执行器调 addDirect(原文)
+    auto undo = store.createUndo(
+        created.value()[0], now + 10,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(3); });
+    DOCTEST_REQUIRE(undo.isOk());
+    DOCTEST_CHECK_EQ(undo.value().undoOf, created.value()[0]);
+    DOCTEST_REQUIRE_EQ(undo.value().evidence.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(undo.value().evidence[0].quoted, std::string("闲置很久的记忆E"));
+    auto undone = store.accept(
+        undo.value().id, now + 15,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(3); },
+        engineExecutor(engine));
+    DOCTEST_REQUIRE(undone.isOk());
+    DOCTEST_CHECK_EQ(undone.value().status, std::string("accepted"));
+    DOCTEST_REQUIRE_EQ(engine.calls.back(), std::string("add:闲置很久的记忆E"));
+    DOCTEST_CHECK(store.isUndone(created.value()[0]));
+
+    // ③ add 提案：引擎回 UUID 串（live 定案形态）→ 原样回填 targetIds
+    auto addCard = Curator::proposeAdd(store, "UUID 回填验证", {}, 0.9, now);
+    DOCTEST_REQUIRE(addCard.isOk());
+    struct UuidEngine : FakeEngine {
+        core::Result<std::string> addDirect(const std::string& text) override {
+            calls.push_back("add:" + text);
+            return core::Result<std::string>::ok("dd0f76f4-d511-420b-b1ba-6bbc90a05815");
+        }
+    };
+    UuidEngine uuidEngine;
+    auto acceptedAdd = store.accept(
+        addCard.value().id, now + 20,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(-1); },
+        engineExecutor(uuidEngine));
+    DOCTEST_REQUIRE(acceptedAdd.isOk());
+    DOCTEST_REQUIRE_EQ(acceptedAdd.value().targetIds.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(acceptedAdd.value().targetIds[0],
+                     std::string("dd0f76f4-d511-420b-b1ba-6bbc90a05815"));
+    // ④ 撤销新增 = 引擎条目删除（UUID 原样传给遗忘通道）
+    auto undoAdd = store.createUndo(
+        addCard.value().id, now + 25,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(-1); });
+    DOCTEST_REQUIRE(undoAdd.isOk());
+    auto undoneAdd = store.accept(
+        undoAdd.value().id, now + 30,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(-1); },
+        engineExecutor(uuidEngine));
+    DOCTEST_REQUIRE(undoneAdd.isOk());
+    DOCTEST_CHECK_EQ(
+        uuidEngine.calls.back(),
+        std::string("mark:dd0f76f4-d511-420b-b1ba-6bbc90a05815:1"));
     return true;
 })

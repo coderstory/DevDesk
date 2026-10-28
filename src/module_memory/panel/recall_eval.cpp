@@ -135,6 +135,19 @@ core::Result<RecallResult> runFrozenEval(gateway::IMemoryRetriever& engine) {
                 hit = true;
                 break;
             }
+            // telemem 1.10.1 融合段落形态（2026-10-28 live 定案）：前 5 名被空格
+            // 连接成单串、无条目 id——gold 正文出现在融合段内 = 该 gold 在前 5 名
+            //（Recall@5 等价口径；旧判定只认逐条 id/全文相等，对真引擎恒 0 命中）
+            if (!h.text.empty()) {
+                const std::string fusedText = normalizeText(h.text);
+                for (const auto& gold : goldTexts) {
+                    if (!gold.empty() && fusedText.find(gold) != std::string::npos) {
+                        hit = true;
+                        break;
+                    }
+                }
+            }
+            if (hit) break;
         }
         if (hit) ++hits;
     }

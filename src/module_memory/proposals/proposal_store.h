@@ -13,7 +13,7 @@
 //   - 同一 undoOf 全库至多一张未决撤销提案（partial unique index 钉死）；整理器重复
 //     产出复用既有未决卡（刷新），不建新卡。
 //   - add 类执行成功后 targetIds 回填引擎条目 id（撤销需要知道标记谁）——这是
-//     16 字段之外的桥接不变量，写入审计。
+//     16 字段之外的桥接不变量，写入审计。id 形态 = telemem UUID 串（live 定案）。
 #pragma once
 
 #include <cstdint>
@@ -39,7 +39,9 @@ struct Proposal {
     std::string id;
     int schemaVersion = 1;
     std::string kind;  // merge | invalidate | forget | add（undo 类沿用逆操作 kind）
-    std::vector<std::int64_t> targetIds;  // add 类执行前为空，成功后回填引擎 id
+    // 引擎侧条目 id（telemem 1.10.1 live 定案 = UUID 串，非整型）；add 类执行前
+    // 为空，成功后回填；撤销链以此定位引擎条目
+    std::vector<std::string> targetIds;
     std::string resultText;               // 失效/遗忘类为空（不改原正文）
     std::string resultType;
     std::string resultProjectId;
@@ -57,7 +59,7 @@ struct Proposal {
 };
 
 // 目标记忆当前版本查询缝（baseVersion 前置校验输入）；执行动作缝（引擎落库）
-using TargetVersionFn = std::function<core::Result<std::int64_t>(std::int64_t)>;
+using TargetVersionFn = std::function<core::Result<std::int64_t>(const std::string&)>;  // 实参 = 引擎条目 id（telemem UUID 串，live 定案）
 using ProposalExecutor =
     std::function<core::Result<std::string>(const Proposal&)>;
 
@@ -69,7 +71,7 @@ public:
     // 建提案（状态恒 pending，TTL 默认 30 天）。id 生成器在 store 内
     //（prop_YYYYMMDD_hexseq）。kind/targetIds 由调用方给全。
     core::Result<Proposal> create(const std::string& kind,
-                                  std::vector<std::int64_t> targetIds,
+                                  std::vector<std::string> targetIds,
                                   const std::string& resultText,
                                   const std::string& resultType,
                                   const std::string& resultProjectId,

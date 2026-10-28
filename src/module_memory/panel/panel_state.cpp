@@ -30,7 +30,7 @@ std::filesystem::path dbDir() { return engine::memoryDataDir(); }
 
 // A 阶段引擎无版本查询缝（头文件契约说明）：以提案快照版本放行
 TargetVersionFn trustSnapshotVersion(std::int64_t baseVersion) {
-    return [baseVersion](std::int64_t) {
+    return [baseVersion](const std::string&) {
         return core::Result<std::int64_t>::ok(baseVersion);
     };
 }

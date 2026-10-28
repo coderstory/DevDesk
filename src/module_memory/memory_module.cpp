@@ -1126,7 +1126,7 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
         body += p.evidence.front().quoted;
     } else {
         body = "目标条目 #" +
-               std::to_string(p.targetIds.empty() ? 0 : p.targetIds.front());
+               (p.targetIds.empty() ? std::string("0") : p.targetIds.front());
     }
     ui.text("memory.rv.body." + p.id)
         .position(x + 16.0f, y + 42.0f)

@@ -57,20 +57,22 @@ CREATE TABLE IF NOT EXISTS memory_proposal_idseq (
 // B4 设计值（待标定）：提案 TTL 30 天
 constexpr int kProposalTtlDays = 30;
 
-std::vector<std::int64_t> parseIds(const std::string& json) {
-    std::vector<std::int64_t> out;
+std::vector<std::string> parseIds(const std::string& json) {
+    std::vector<std::string> out;
     const auto v = platform::json::parse(json);
     if (v.isOk() && v.value().isArray()) {
         for (int i = 0; i < v.value().size(); ++i) {
-            out.push_back(v.value()[i].asInt());
+            const JsonValue& e = v.value()[i];
+            if (e.isString()) out.push_back(e.asString());
+            else if (e.isNumber()) out.push_back(std::to_string(e.asInt()));
         }
     }
     return out;
 }
 
-std::string idsToJson(const std::vector<std::int64_t>& ids) {
+std::string idsToJson(const std::vector<std::string>& ids) {
     JsonValue arr = platform::json::makeArray();
-    for (std::int64_t id : ids) arr.append(platform::json::makeInt(id));
+    for (const std::string& id : ids) arr.append(platform::json::makeString(id));
     const auto s = platform::json::stringify(arr);
     return s.isOk() ? s.value() : std::string("[]");
 }
@@ -218,7 +220,7 @@ core::Result<void> ProposalStore::audit(const std::string& proposalId,
 }
 
 core::Result<Proposal> ProposalStore::create(
-    const std::string& kind, std::vector<std::int64_t> targetIds,
+    const std::string& kind, std::vector<std::string> targetIds,
     const std::string& resultText, const std::string& resultType,
     const std::string& resultProjectId,
     const std::vector<ProposalEvidence>& evidence, double confidence,
@@ -415,7 +417,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
     }
 
     // baseVersion 前置校验：目标已变 → expired（防把新改动盖掉）
-    for (std::int64_t tid : p.targetIds) {
+    for (const std::string& tid : p.targetIds) {
         const auto v = targetVersion(tid);
         if (v.isFail() || v.value() != p.baseVersion) {
             auto stmt = db_->prepare(
@@ -447,12 +449,9 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
     // add 类回填引擎条目 id（撤销需要知道标记谁；桥接不变量）
     if (p.kind == "add" && !applied.value().empty()) {
         if (!p.targetIds.empty()) p.targetIds.clear();
-        // 引擎 id 恒为十进制数字串（telemem 整型 id）；非数字留审计不入列
-        if (!applied.value().empty() &&
-            applied.value().find_first_not_of("0123456789") ==
-                std::string::npos) {
-            p.targetIds.push_back(std::stoll(applied.value()));
-        }
+        // 引擎 id 形态 = telemem UUID 串（2026-10-28 live 对账定案；旧假设整型
+        // 与真实形态不符，UUID 被丢弃 → 撤销链 targetIds 恒空必挂）——原样入列
+        p.targetIds.push_back(applied.value());
         auto stmt = db_->prepare(
             "UPDATE memory_proposals SET target_ids=? WHERE id=?");
         if (stmt.isOk()) {
@@ -607,6 +606,9 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
         undo.baseVersion = -1;
     }
     undo.undoOf = originalId;
+    // 证据透传（2026-10-28 live 定案）：forget 撤销 = 引擎 delete 不可逆后按
+    // 原卡证据正文重录入，执行器从 undo 卡 evidence[0].quoted 取原文
+    undo.evidence = original.value().evidence;
     undo.createdAt = nowSec;
     undo.expiresAt = nowSec + kProposalTtlDays * 86400;
     undo.status = "pending";

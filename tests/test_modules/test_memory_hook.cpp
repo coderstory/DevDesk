@@ -204,3 +204,29 @@ REGISTER_TEST(memory_hooks_settings_install_restore,
     DOCTEST_CHECK(!changed);
     return true;
 })
+
+REGISTER_TEST(memory_hook_parser_live_envelope,
+              "memory: 检索缝 live 对账钉版——telemem search 真实信封 {query,memories} 取正文，空段落=无命中，绝不注入 JSON 原文", {
+    // 2026-10-28 live 实测形态：content[0].text = {"query":…,"memories":"融合段落"}
+    const char* kLiveEnvelope =
+        "event: message\n"
+        "data: {\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"content\":[{"
+        "\"text\":\"{\\n  \\\"query\\\": \\\"verify entry\\\",\\n  \\\"memories\\\": "
+"\\\"recon-001 verify entry\\\"\\n}\",\"type\":\"text\"}],"
+        "\"isError\":false,\"structuredContent\":{\"result\":{\"query\":"
+        "\"verify entry\",\"memories\":\"recon-001 verify entry\"}}}}";
+    auto fused = parseSearchResponse(kLiveEnvelope);
+    DOCTEST_REQUIRE(fused.isOk());
+    DOCTEST_REQUIRE_EQ(fused.value().size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(fused.value()[0].text, std::string("recon-001 verify entry"));
+    // 旧实现缺陷回归钉：信封 JSON 原文不得成为注入正文
+    DOCTEST_CHECK(fused.value()[0].text.find("query") == std::string::npos);
+    // 空融合段落 = 无命中（delete 后真实形态）
+    auto empty = parseSearchResponse(
+        "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{"
+        "\"content\":[{\"type\":\"text\",\"text\":\"{\\\"query\\\":\\\"q\\\","
+        "\\\"memories\\\":\\\"\\\"}\"}]}}");
+    DOCTEST_REQUIRE(empty.isOk());
+    DOCTEST_CHECK(empty.value().empty());
+    return true;
+})

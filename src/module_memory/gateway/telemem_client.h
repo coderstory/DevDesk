@@ -29,14 +29,18 @@ public:
     // 直存语义入库（infer=false：不调云端提炼）；返回引擎侧新条目 id（缺失空串）
     virtual core::Result<std::string> addDirect(const std::string& text) = 0;
 
-    // 标记翻转（卡片代理层执行面）：forgotten=true 移出「自动想起」= 遗忘/撤销新增；
-    // false = 恢复。实现映射 telemem update 工具的 metadata（工具名/参数形状 live
-    // 对账待 S4 验收——失败如实上抛，提案保持待审）
+    // 移出「自动想起」（卡片代理层执行面）：live 对账定案（2026-10-28）——
+    // telemem 1.10.1 无 forgotten 过滤缝（update 打标记后 search 照回），唯一
+    // 真实生效通道 = delete_memory；故 true → delete_memory，false（恢复）引擎
+    // 侧无缝 → 如实报 NotImplemented，恢复由提案执行层按原卡证据重录入
     virtual core::Result<void> setMemoryForgotten(const std::string& memoryId,
                                                   bool forgotten) = 0;
 };
 
 // MCP-HTTP 实现（生产装配）。telemem 只绑回环（kTelememPort）。
+// 会话契约（2026-10-28 live 定案）：telemem 1.10.1 streamable-http 除 initialize
+// 外一律要求 Mcp-Session-Id 头（缺失 400 -32600）——本实现 initialize 一次缓存
+// 会话 id，tools/call 全部回传；引擎重启致 404 时自动重取一次。
 class TelememHttpRetriever : public IMemoryRetriever {
 public:
     core::Result<std::vector<MemoryHit>> search(const std::string& query,
@@ -50,7 +54,9 @@ public:
 // 响应解析纯函数（单测钉三层）：SSE 信封剥离 → JSON-RPC envelope（含嵌套
 // result.error / body.error 判错，同健康判据契约）→ content[] 逐条化：
 //   - text 元素本身是 mem0 风格 JSON 数组（含 memory/score/createdAt 字段）→ 逐条；
-//   - 否则按"融合段落"处理（telemem search_memories 默认形态，推测项 6）→ 单条。
+//   - text 为 {"query":…,"memories":"<融合段落>"} 信封（telemem search_memories
+//     实测唯一形态，live 定案 2026-10-28）→ 取 memories 正文按单条，空段落=无命中；
+//     绝不把信封 JSON 原文当记忆正文（旧实现缺陷）。
 core::Result<std::vector<MemoryHit>> parseSearchResponse(
     const std::string& httpBody);
 
