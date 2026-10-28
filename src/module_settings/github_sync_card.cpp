@@ -9,7 +9,12 @@
 // UAT6 最小窗零滚动收口（用户：「同步 tab 出滚动条完全没必要」）：两开关行的
 // 说明文案行删除（label 自承担语义）、「仓库配置」组题行删除（分段线已分节、
 // 三个表单 label 自明）、行距/分段留白/信息行/卡上下留白按档收紧——卡高常量
-// 496 → 372（可用高恰好值，复算见 settings_ui_logic.h 的 kGithubSyncCardHeight）。
+// 496 → 372 → 362。
+// H28（2026-10-28 两全拍板）：UAT6 收口把间距压到设计系统令牌以下（行距 6/
+// 分段 5/信息行间 2/标题摘要距 1），真机反馈「过于紧凑」。按设计系统 v1.0
+// 间距令牌恢复（4/8/12/16，见行几何常量注释），披露折叠链接并入摘要行右端
+//（省独立行、消除与启用行的重叠），卡高常量 420 = S4.2 后最小窗可用高恰好值
+// ——100%/85% 档零滚动契约不变（复算见 settings_ui_logic.h kGithubSyncCardHeight）。
 #include "github_sync_card.h"
 
 #include "github_sync_config.h"
@@ -39,23 +44,26 @@ namespace {
 
 // 行几何常量（100% 档基准，运行期随 roundFs 缩放）；E 批统一：label+control 行
 // 迁 ui_kit::formRow（label 110、行高 36）。UAT5 方案 A 三段式 + UAT6 开关行 +
-// UAT6 零滚动收口：
-//   头部 = 状态点 8 + 标题 20 + 摘要 16（左列）+ 启用/自动推送两整行开关行
-//  （行盒 28 = 主开关高——说明文案行删除后行盒贴开关，label 垂直居中于行盒；
-//   开关钉卡内容右缘，尺寸 52×28 / 44×24 为字面值不随字号缩放）；
+// H28 间距令牌恢复（设计系统 v1.0：行距 8 / 分段 12 / 信息行间 4 / 卡上下留白
+// 16 / 标题摘要距 4——UAT6 收口压到 6/5/2/1/8，真机反馈过于紧凑）：
+//   头部 = 状态点 8 + 标题 20 + 摘要 16（左列，折叠链接并入摘要行右端）+
+//   启用/自动推送两整行开关行（行盒 24 = 主开关高，label 垂直居中于行盒；
+//   开关钉卡内容右缘，尺寸 44×24 字面值不随字号缩放）；
 //   配置组 = URL 全宽行 + 分支|Token 双列（组题行已删，分段线已分节）；
 //   操作组 = 左侧进度（条+文案，仅运行中）+ 右侧三按钮组（按钮组右锚）；
 //   操作组下方为条件信息行。
-// 卡高最坏行序（85%/130% 档复算）见 settings_ui_logic.h 的 kGithubSyncCardHeight。
+// 卡高最坏行序（85%/115%/130% 档复算）见 settings_ui_logic.h 的 kGithubSyncCardHeight。
 inline constexpr float kCardPaddingX = 28.0f;
-inline constexpr float kCardPaddingY = 8.0f;    // 卡上下留白（字面值，不缩放；零滚动收口 16→8）
+inline constexpr float kCardPaddingY = 16.0f;   // 卡上下留白（字面值不缩放；常规间距令牌 16，零滚动收口 16→8，H28 恢复）
 inline constexpr float kTitleH = 20.0f;         // 头部标题行高（零滚动收口 22→20）
-inline constexpr float kSummaryGapY = 1.0f;      // 标题与摘要行间距（零滚动收口 2→1）
+inline constexpr float kSummaryGapY = 4.0f;      // 标题与摘要行间距（超小间距令牌 4；零滚动收口 2→1，H28 取 4）
 inline constexpr float kMutedH = 16.0f;          // 摘要行高
+inline constexpr float kSummaryToggleGap = 8.0f; // 摘要文本与折叠链接间距（小间距令牌 8）
+inline constexpr float kSummaryToggleW = 72.0f;  // 折叠链接盒宽（「查看/收起详细说明」11px × 6 字 + 余量）
 inline constexpr float kRowH = 36.0f;            // 表单行高（formRow 同口径）
 inline constexpr float kToggleRowH = 24.0f;     // 开关行高（N 项: 28→24, = 主开关 24）
-inline constexpr float kRowGap = 6.0f;          // 行距（列间距同值；零滚动收口 8→6）
-inline constexpr float kSectionGapY = 5.0f;     // 分段线上下留白（零滚动收口 12→5）
+inline constexpr float kRowGap = 8.0f;          // 行距（小间距令牌 8；列间距同值；零滚动收口 8→6，H28 恢复）
+inline constexpr float kSectionGapY = 12.0f;    // 分段线上下留白（中间距令牌 12；零滚动收口 12→5，H28 恢复）
 // H18 横向弹性锚（S4.1：1000×640 为锚点）：三按钮定宽不伸，按钮组整体右锚
 // 卡内容右缘（组右缘 = w − 28）；宽窗增量全部让给左侧进度文案列（flex）。
 inline constexpr float kBtnW = 120.0f;
@@ -85,8 +93,8 @@ inline constexpr float kProgressBarH = 4.0f;
 inline constexpr float kProgressBarW = 130.0f;
 inline constexpr float kProgressTextGap = 10.0f;   // 轨道右缘与文案间距
 inline constexpr float kProgressLeadGapX = 16.0f;  // 进度区右缘与按钮组左缘间距
-inline constexpr float kInfoLeadGapY = 6.0f;       // 操作行与条件信息行的间距（零滚动收口 8→6）
-inline constexpr float kInfoRowGap = 2.0f;         // 信息行行间（零滚动收口 4→2；仅行间无行尾距）
+inline constexpr float kInfoLeadGapY = 8.0f;       // 操作行与条件信息行间距（小间距令牌 8；零滚动收口 8→6，H28 恢复）
+inline constexpr float kInfoRowGap = 4.0f;         // 信息行行间（超小间距令牌 4；零滚动收口 4→2，H28 恢复；仅行间无行尾距）
 // 禁用态档位（UAT4 去门控沿用）：Input/Switch 组件没有自带 .disabled()，借 DSL
 // element 级 disabled（子树不参与命中/聚焦）+ 子树 opacity 调暗实现置灰禁用。
 // 0.55 对齐 Button 禁用态文字 40% 透明的既有先例，整树调暗取略轻档。
@@ -239,28 +247,34 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .onClick([f = a.githubSyncShowErrorDetail] { f(); })
                 .build();
         } else {
-            // S3.7#4: 同步说明可折叠——默认紧凑摘要，展开后显示完整披露
+            // S3.7#4: 同步说明可折叠——默认紧凑摘要，展开后显示完整披露。
+            // H28: 折叠链接并入摘要行右端（与错误行「查看详情」同模，右缘 = 卡
+            // 内容右缘）。原 S3.7#4 把链接放摘要下方独立行，但行序公式未记账该
+            // 行（enableRowY 只加 summaryY+mutedH+rowGap），独立行与启用行重叠
+            // ——并入同行使披露区恒 1 行：重叠消除、零滚动预算不再为它加码。
             if (in.githubSyncStatus.empty()) {
                 const char* compactSummary = "同步笔记与整库数据库快照到 GitHub 私有仓库";
                 std::string summaryText = in.githubSyncDetailExpanded
                     ? githubSyncDisclosureText()
                     : compactSummary;
+                const float toggleW = roundFs(kSummaryToggleW);
+                const float textW = std::max(
+                    0.0f, summaryW - toggleW - roundFs(kSummaryToggleGap));
                 ui.text(id + ".summary")
                     .position(textL, summaryY)
-                    .size(summaryW, mutedH)
+                    .size(textW, mutedH)
                     .text(summaryText)
                     .fontSize(fs(12.0f))
                     .lineHeight(mutedH)
                     .color(t.colors.textTertiary)
-                    .maxWidth(summaryW)
+                    .maxWidth(textW)
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
-                // 折叠/展开按钮（Ghost 风格文字链接）
-                const float toggleY = summaryY + mutedH + 1.0f;
+                // 折叠/展开链接（Ghost 风格文字链接，摘要行右端）
                 auto toggle = ui.text(id + ".summary.toggle")
-                    .position(textL, toggleY)
-                    .size(100.0f, mutedH)
+                    .position(textL + summaryW - toggleW, summaryY)
+                    .size(toggleW, mutedH)
                     .text(in.githubSyncDetailExpanded ? "收起详细说明" : "查看详细说明")
                     .fontSize(fs(11.0f))
                     .lineHeight(mutedH)
@@ -350,7 +364,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         float y = std::max(autoRowY + toggleRowH,
                            std::max(autoTextBottom, autoSwY + kAutoSwitchH));
         const float formW = w - kCardPaddingX * 2.0f;
-        // 双列几何沿用：列间距 = 行距（kRowGap，零滚动收口 8→6）；每列宽 =
+        // 双列几何沿用：列间距 = 行距（kRowGap = 小间距令牌 8，H28 恢复）；每列宽 =
         // (formW − 列距)/2，右列外缘与全宽行同贴卡内容右缘；label 走 formRow 定宽 110。
         const float colGap = roundFs(kRowGap);
         const float colW = (formW - colGap) * 0.5f;
@@ -543,8 +557,8 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += rowH;
 
         // ── 条件信息行（操作组下方纵排；id 沿用 UAT4）──
-        // 零滚动收口：行高 20→16、行距 4→2 且**仅行间**（旧行尾距 +4 是纯浪费的
-        // 记账高度，五条全显的最坏组合直接吃进卡高常量）。
+        // 行高 20→16（零滚动收口）；行距 4（超小间距令牌，H28 恢复）且**仅行间**
+        //（旧行尾距 +4 是纯浪费的记账高度，五条全显的最坏组合直接吃进卡高常量）。
         y += roundFs(kInfoLeadGapY);
         const float infoH = roundFs(kStatusH);
         const float infoGap = roundFs(kInfoRowGap);

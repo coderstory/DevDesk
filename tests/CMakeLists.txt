@@ -106,6 +106,7 @@ add_executable(devdesk_tests
     test_modules/test_upstream_dialect.cpp
     test_modules/test_home.cpp
     test_modules/test_github_sync_card.cpp
+    test_modules/test_github_sync_card_spacing.cpp
     test_modules/test_github_sync_engine.cpp
     test_modules/test_github_sync_logic.cpp
     test_modules/test_local_git_probe.cpp
