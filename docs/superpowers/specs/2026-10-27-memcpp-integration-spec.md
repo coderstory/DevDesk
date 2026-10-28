@@ -1,5 +1,7 @@
 # memcpp A 起步集成规格（telemem 面板 + 升级 C 预埋缝）
 
+> **状态（2026-10-28 回填）：已实现至 S4，S5 = 用户 UAT。** 各 S 节末尾附「实现回填」行（达成/偏差/证据 sha），原判据原样保留作对照；总览入口见 `docs/superpowers/specs/2026-10-28-memcpp-overview.md`。
+
 - 日期：2026-10-27
 - 依据：用户已拍板「组合 1：A telemem 面板起步 + 预埋升级 C 的两条缝」及七项定案（§0）
 - 上游依据（只引用不翻案）：路线比选 `docs/superpowers/plans/2026-10-27-memcpp-route-comparison.md`、telemem 拆解 `docs/superpowers/research/2026-10-27-memcpp-telemem-reference.md`、hook 契约钉版 `docs/superpowers/research/2026-10-27-memcpp-hook-contract-facts.md`、提案卡片设计 `docs/superpowers/plans/2026-10-27-memcpp-proposal-card-design.md`（下称 B4）、智谱端点调研 `docs/superpowers/research/2026-10-27-memcpp-zhipu-endpoint-research.md`
@@ -109,11 +111,15 @@ Claude Code 会话（jsonl 尾读；jsonl=每行一个 JSON 对象的文本文�
 
 产出：实测数字回单（回单即证据，不新增文档）；触发线判定自此生效。
 
+> **实现回填（2026-10-28）**：①②达成（安装 97s 零编译；常驻 157MB<300MB 红线）；⑤实测完成=现用 key 为纯套餐 key，paas/v4 embeddings 429 无按量额度、云端向量不可用（anthropic 端点 200）；③④因云端向量不可用未出数——**偏差**：向量化落地改本机 llama-server + bge-small-zh-v1.5（512 维），检索实测与评测由本地向量档覆盖（S2 端到端 search 157ms；冻结评测单元内建面板 recall_eval）；触发线判定=不触发升级。证据：`docs/superpowers/plans/2026-10-27-memcpp-s1-spike-results.md`、`docs/superpowers/plans/2026-10-27-memcpp-embed-bakeoff.md`、`docs/superpowers/plans/2026-10-28-memcpp-s2-live-verify.md`。
+
 ### S2 托管壳 + 面板骨架
 
 - 内容：pip 首跑安装引导（含 Python 检测，定案 6）、`TELEMEM_CONFIG` 配置生成、进程拉起/终止/健康检查（健康检查=对 127.0.0.1:8421 周期探活，间隔与超时 S2 内定，须为持续机制而非一次性检查）、回环端口绑定校验、面板骨架（安装态 / 运行态 / 配置态三视图）、消耗页（今日/本月 token 用量与估算金额、最近调用记录——消耗控制第 4 条）。
 - 验收：干净机器上面板引导完成安装并拉起 telemem；重启 DevDesk 后懒加载恢复；进程被杀后面板显式提示并可一键重启；pip 安装失败或引导后仍无合区间 Python 时，面板给可读失败提示与重试/引导入口，不留白；消耗页展示数字与内部账面一致（端点与消耗控制块第 4 条）。
 - 依赖：S1（安装方式按实测；网关 embedding 接口可用性定全云端向量化成立与否）。
+
+> **实现回填（2026-10-28）**：达成（live 层五项全过，独立数据根）：Python 3.10~3.12 区间检测（3.14 拦截、uv 3.12 放行）、venv+pip 首跑（4s+68s）、telemem 拉起与健康探活（POST /mcp initialize）、端到端 add 2316ms / search 157ms、三视图真窗口截图、key 红线 grep 零命中。**偏差**：telemem 真实契约与推定不符处 4 缺陷当场修复钉进单测（Python 候选目录/serve 入口与配置字段名/健康探活 SSE 信封/pip 补装 anthropic）。证据：`docs/superpowers/plans/2026-10-28-memcpp-s2-live-verify.md`；提交 `1331450c`/`90cf043f`/`473204ff`/`00ac9931`、面板批 `d25e0c15`/`ccbeaac2`/`758f5c1a`/`663a2396`/`214f9043`/`032506b0`。UI 全链路（面板按钮→后台线程→拉起）与重启懒加载恢复属端到端验收线，验收中。
 
 ### S3 脱敏闸 + 注入接线
 
@@ -121,17 +127,23 @@ Claude Code 会话（jsonl 尾读；jsonl=每行一个 JSON 对象的文本文�
 - 验收：注入路径不直连引擎（断言只调内部接口）；脱敏闸开关语义正确（默认开；枚举全部外发调用点逐一核过闸；关闭态下出机旁路正确、面板状态联动，二次确认与「敏感信息将原样出机」警示齐全）；hook 契约按钉版断言（additionalContext 送达、超时放行、任何内部错误不产生退出码 2——钉版契约见 hook 契约文档第三节）；云端链路失败不着落不算过——网关不可用（key 失效/断网/提炼或 embedding 报错）时采集入队暂存待恢复、面板显式提示外发失败原因，不静默漏采，恢复后自动补跑；月度预算硬档触发行为正确——触发后暂停提炼、新采集入队暂存，检索不受影响（消耗控制第 3 条）；云端提炼与 embedding 出机调用注入 `NO_PROXY` 不被本机代理截胡（S1 实测：本机 `http_proxy` 截胡云端调用返回 503）。
 - 依赖：S2。
 
+> **实现回填（2026-10-28）**：代码与单测已落地，端到端验收中。达成：检索接口缝成型且注入路径不直连引擎（`gateway/telemem_client.h` IMemoryRetriever，单测断言）；脱敏闸红队 110 条泄漏 0/误杀 0 + fail-closed 传播契约 + 运行时开关（`c1fed58f`）；hook 契约钉版断言（additionalContext 字段位置、任何内部错误 exit 0、禁 exit 2，`fba5a126`）；采集尾读四道过滤 + (session_id,event_seq) 水位幂等（`8ee59132`）；账本与 hook 注入记账接线、预算硬档判定与面板消耗卡（`758f5c1a`/`214f9043`）。**偏差**：①采集→脱敏→提案→入库的运行时全链与云端失败「入队暂存自动补跑」待端到端验收线回单（当前形态采集默认零云端外发、候选先落提案库，「不静默漏采」结构性成立）；②`NO_PROXY` 注入未落产品代码（spike 脚本已固化该行为，`tools/memcpp-integration/spike/run_spike.py`），随云端提炼（infer=true）启用时接线；③预算硬档读估算账面（真 token 对账未接，`proposals/usage_ledger.h` 契约注释）。证据：`tests/test_modules/test_memory_{sanitize,collector,hook,engine}.cpp`；总览 §2.3/§5。
+
 ### S4 卡片代理
 
 - 内容：proposals 表落地（B4 §1 契约）、状态机与撤销链、记忆页卡片（落位默认按 B4 §3.3 推荐：新建记忆页 + 应用级通知；B4 落位推荐待用户看设计稿后拍板，动工前确认）、代理执行层（接受 → telemem 改/删，失败重试）。
 - 验收：接受 / 拒绝 / 编辑后接受 / 撤销四操作全链路可用；`baseVersion` 前置校验生效（目标已变自动过期重提）；telemem 执行失败时提案保持待审、面板可见失败原因。
 - 依赖：S3（要有真实记忆可审）。
 
+> **实现回填（2026-10-28）**：数据层与界面已落地，端到端验收中。达成：proposals 表 16 字段契约 + 状态机（唯一起点 pending、三终态写定不改）+ undoOf 未决唯一撤销链 + baseVersion 前置校验 + 幂等 + 代理执行失败保持 pending（`64efb989`）；整理器两类提案（新增必审/遗忘扫描，source=collect 为 B4 枚举扩展值）；审核页四操作/撤销链/批量（接受仅限遗忘·新增）/过滤/空态 + 配置页导出与清除自家库（`663a2396`）。**偏差**：①telemem 执行失败重试=「再按接受」（提案保持 pending，无自动重试循环）；②telemem 侧改/删经 `setMemoryForgotten` 标记翻转映射，工具名/参数形状 live 对账随端到端验收线回单；③telemem 存量无列举/全清缝（面板清除只及自家库）。证据：`tests/test_modules/test_memory_proposals.cpp`（105 项）；`src/module_memory/proposals/{proposal_store,curator}.h` 契约注释。
+
 ### S5 真机 UAT
 
 - 内容：真实会话跑一周量级；注入采纳率抽样、卡片处理体验、触发线终判（若 S1 已红，升级 C 另立票，不在本文展开）。
 - 验收：30 次真实注入抽样采纳率 ≥30%（不足则按既有结论退回 MCP recall 优先）；会话周期内 DevDesk 零崩溃退出、面板日志零未捕获异常（取代弱判据「无未处理崩溃」，两条均可查证）；触发线出最终数字。
 - 依赖：S4。
+
+> **实现回填（2026-10-28）**：未开始（S5 = 用户 UAT；触发线评测单元已内建面板，出数依赖引擎 Running 态真机跑）。
 
 ## 4. 触发线与降级
 
