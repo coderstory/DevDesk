@@ -1,5 +1,39 @@
 # DevDesk 未完成任务清单
 
+## 🔴 活跃待办（2026-10-28 memcpp 线收线）
+
+> memcpp 已交付部分见 `docs/superpowers/specs/2026-10-28-memcpp-overview.md`（需求→实现→验证映射）；本段只记**未完成项**，按优先级排。历史快照（含仍开着的 §13 profile 高级 tab）完整保留在下方分隔线之后。
+
+### P0 — 用户已明确要求，下一步先做
+
+- [ ] **MCP 集成（用户 2026-10-28 需求，纯增量接入）**：记忆功能作为一个 MCP 模块注册进 DevDesk 统一 MCP server（`src/module_mcp`，另一线已落 B1-B3）——Claude Code 经统一入口查记忆（recall/search 工具走既有 `module_memory/gateway/telemem_client`），MCP 页面展示记忆模块行+可开关（关=工具不注册/下线）。**红线：既有功能（hook 注入/面板/采集/卡片）一行不动**。前置：读 module_mcp 的模块注册模式与开关持久化；其线 B4 真连 E2E 是他们自己的欠账，不阻塞注册接线。
+- [ ] **打包+真机 UAT（S5 收官）**：`bash scripts/package-windows.sh` 出安装包 → 用户安装 → 首跑向导（Python 3.10~3.12 检测/venv/pip 约 97s/引擎拉起）→ 真机点验：自动采集（30s 轮询）、脱敏拦截（动态流可见）、提案卡审核+撤销、Claude Code 提问时 hook 注入（≤5 条 ≤500 字）、消耗页、触发线仪表（冻结 15 查询评测）。
+
+### P1 — 已知缺口（不影响 Windows 日常使用）
+
+- [ ] **infer=true 云端提炼真调**：当前全部直存（infer=False，零 LLM 调用）。智能提炼需真调智谱 anthropic 端点 glm-5.3-flash（key 运行时读 `~/.claude/settings.json`，TELEMEM_CONFIG 已配 anthropic provider）。注意：套餐 key 用于后台常驻提炼偏离智谱使用条款，用户 2026-10-27 已知悉自担；控耗五条（节流/月度预算软硬档）已实现，实测验证待做。
+- [ ] **月度预算硬档实测**：预算耗尽 → 暂停提炼只留检索的面板行为真机验证。
+- [ ] **decay 遗忘清单真实现**：待 telemem 引擎暴露记忆列举缝（MemoryListFn）；当前 fail-closed 零假卡（扫描触发在，清单为空）。
+- [ ] **baseVersion live 空转**：telemem 无版本查询缝，接受时以快照放行（契约位已留）；引擎升级后接真值。
+- [ ] **memory_e2e_probe 门禁注入通道**：探针需外部注入 DEVDESK_DATA_ROOT+外部编排 llama-server/telemem，当前在门禁属环境性失败；给 build-test-run.sh 加注入开关。
+
+### P2 — 平台与打磨
+
+- [ ] **macOS 平台面**：`process_host_posix`（含 F2 修复：per-child 环境不污染父进程）仅编译验证，待 mac 实机；引擎托管 posix 侧同。
+- [ ] **批量模式标签窄窗重叠**：1200 逻辑宽下批量开关标签与来源 chips 重叠（宽窗正常）。
+- [ ] **向量模型升级档**：记忆量增大（数百条+）后可升 Qwen3-Embedding-0.6B（610MB/约 1.4GB RSS，难集满分）——**必须显式 `-c 8192`**（默认槽位会吃 4GB）；改 `kEmbedModel` 常量+重启引擎即可，见 `docs/superpowers/plans/2026-10-27-memcpp-embed-bakeoff.md`。
+- [ ] **触发线升级 C**：冻结集转测 Recall@5<85% 或 2 字词命中低于 5/3/11 → 按备用图纸（`docs/superpowers/specs/2026-10-27-memcpp-p0-core-spec.md`）补自研全文通道；当前实测 100%（15/15），余量充足。
+
+### 环境事实（接线时会用到）
+
+- 模型文件收线时已删（曾下载于 spike/.bakeoff/）：bge-small-zh Q8_0 25MB（HF: CompendiumLabs/bge-small-zh-v1.5-gguf）+ Qwen3/bge-m3 各 640MB；`tools/memcpp-integration/spike/run_bakeoff.py` 内有下载 URL，重跑即取。
+- spike 全套脚本在 `tools/memcpp-integration/spike/`（run_spike.py 五项实测可复跑）。
+- 端口约定：llama-server 回环 11435、telemem 回环 8421；本机 http_proxy 会截胡云端调用（脚本已做 NO_PROXY 幂等旁路）。
+- hook 注入通道：`devdesk.exe memory hook` 子命令（先于单实例锁分派）；hooks 配置键级装拆走 DevDesk settings 管理通道。
+
+---
+
+
 > ⚠ **本文整篇为历史快照，不再维护**——里面的"状态"与"分支"描述多数已过期。
 > **当前状态以 `CLAUDE.md` 的「🚦 当前状态」段为准**（那段带日期与出处）。权威待办见 `docs/superpowers/plans/2026-10-21-UAT62-整改清单.md` 与 `2026-10-23-UAT62-收敛执行计划.md`。
 > 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目。
