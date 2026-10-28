@@ -1163,6 +1163,243 @@ REGISTER_TEST(todo_archive_sql_includes_column,
     return true;
 })
 
+// H30：拖入已完成列置 completed_at=now。防事故：拖入 done 不置时间戳 → 详情弹窗
+// 完成时间恒「—」，且当天完成的卡在次日冷启动被按 NULL 误归档。
+REGISTER_TEST(todo_done_move_into_sets_completed_at,
+              "TodoService: moveTask 进入已完成列设置 completed_at",
+              {
+    TestEnv env("done_into");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doneId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "done") doneId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+
+    auto t = env.svc->createTask(todoId, "拖入完成列");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+
+    // 初始 completedAt 为空
+    auto before = env.svc->listTasks(todoId);
+    DOCTEST_REQUIRE(before.isOk());
+    DOCTEST_REQUIRE(!before.value().empty());
+    DOCTEST_CHECK(!before.value()[0].completedAt.has_value());
+
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+
+    auto after = env.svc->listTasks(doneId);
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_REQUIRE(!after.value().empty());
+    DOCTEST_CHECK(after.value()[0].completedAt.has_value());
+    // 时间戳应在最近 5 秒内
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    DOCTEST_CHECK(after.value()[0].completedAt.value() >= now - 5);
+    DOCTEST_CHECK(after.value()[0].completedAt.value() <= now + 5);
+    return true;
+})
+
+// H30：拖出已完成列清空 completed_at。防事故：拖出 done 残留完成态 → 逾期口径
+//（completed_at IS NULL 才计逾期）与卡片完成样式在待办/进行中列上继续错判。
+REGISTER_TEST(todo_done_move_out_clears_completed_at,
+              "TodoService: moveTask 离开已完成列清除 completed_at",
+              {
+    TestEnv env("done_out");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doneId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "done") doneId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+
+    auto t = env.svc->createTask(todoId, "拖出完成列");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+
+    // 先进 done（触发完成时间戳），再移回待办
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+    DOCTEST_CHECK(env.svc->moveTask(taskId, todoId, 0).isOk());
+
+    auto after = env.svc->listTasks(todoId);
+    DOCTEST_REQUIRE(after.isOk());
+    bool found = false;
+    for (const auto& task : after.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(!task.completedAt.has_value());
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
+// H30 不变量：completed_at 是「进入 done 列那一刻」的真值，done 列内拖拽重排
+// 不得改写。防事故：无 from != to 守卫时，列内重排会把完成时刻改写成重排时刻。
+REGISTER_TEST(todo_done_reorder_preserves_completed_at,
+              "TodoService: moveTask done 列内重排不改写 completed_at",
+              {
+    TestEnv env("done_reorder");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doneId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "done") doneId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+
+    auto t = env.svc->createTask(todoId, "列内重排");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+
+    // 直接 UPDATE 一个哨兵值（service 造不出的历史完成时刻）
+    DOCTEST_REQUIRE(env.db->db().exec(
+        "UPDATE todo_tasks SET completed_at = 1234567890 WHERE id = " +
+        std::to_string(taskId)).isOk());
+
+    // done 列内重排（同列 moveTask，newPosition 0）
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+
+    auto after = env.svc->listTasks(doneId);
+    DOCTEST_REQUIRE(after.isOk());
+    bool found = false;
+    for (const auto& task : after.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(task.completedAt.has_value());
+            DOCTEST_CHECK_EQ(task.completedAt.value(), 1234567890);
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
+// H30 口径：completed_at 是事实记录，归档一律不清——手动归档与冷启动自动归档
+//（archiveDoneTasksBeforeToday 保留该列）口径必须一致。防事故：手动归档清掉完成
+// 时刻 → 归档卡历史信息丢失，且手动/自动两种归档行为分裂。
+REGISTER_TEST(todo_done_move_to_archive_preserves_completed_at,
+              "TodoService: moveTask done 列 → 归档列保留 completed_at",
+              {
+    TestEnv env("done_to_archive");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doneId = 0;
+    int64_t archiveId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "done") doneId = c.id;
+        if (c.kind == "archive") archiveId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+    DOCTEST_REQUIRE(archiveId > 0);
+
+    auto t = env.svc->createTask(todoId, "归档保留完成时刻");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+
+    // 先进 done 记下完成时刻，再拖入归档
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+    auto inDone = env.svc->listTasks(doneId);
+    DOCTEST_REQUIRE(inDone.isOk());
+    int64_t stampedAt = 0;
+    for (const auto& task : inDone.value()) {
+        if (task.id == taskId) {
+            DOCTEST_REQUIRE(task.completedAt.has_value());
+            stampedAt = task.completedAt.value();
+        }
+    }
+    DOCTEST_REQUIRE(stampedAt > 0);
+
+    DOCTEST_CHECK(env.svc->moveTask(taskId, archiveId, 0).isOk());
+
+    auto inArchive = env.svc->listTasks(archiveId);
+    DOCTEST_REQUIRE(inArchive.isOk());
+    bool found = false;
+    for (const auto& task : inArchive.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(task.completedAt.has_value());
+            DOCTEST_CHECK_EQ(task.completedAt.value(), stampedAt);
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
+// H30 不变量：completeTask 在任意列可置值（H20 既有行为——标记完成后卡留在原列）。
+// 防事故：非 done 列间移动静默清掉该值 → 「标记完成」按钮状态在移动后丢失。
+REGISTER_TEST(todo_non_done_move_preserves_completed_at,
+              "TodoService: 非已完成列间移动不改 completed_at",
+              {
+    TestEnv env("done_nondone");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doingId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "doing") doingId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doingId > 0);
+
+    auto t = env.svc->createTask(todoId, "待办列标记完成");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+
+    // 标记完成但卡留在待办列（completeTask 不搬列）
+    DOCTEST_CHECK(env.svc->completeTask(taskId).isOk());
+    auto before = env.svc->listTasks(todoId);
+    DOCTEST_REQUIRE(before.isOk());
+    int64_t stampedAt = 0;
+    for (const auto& task : before.value()) {
+        if (task.id == taskId) {
+            DOCTEST_REQUIRE(task.completedAt.has_value());
+            stampedAt = task.completedAt.value();
+        }
+    }
+    DOCTEST_REQUIRE(stampedAt > 0);
+
+    // 待办 → 进行中（两个都不是 done）
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doingId, 0).isOk());
+
+    auto after = env.svc->listTasks(doingId);
+    DOCTEST_REQUIRE(after.isOk());
+    bool found = false;
+    for (const auto& task : after.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(task.completedAt.has_value());
+            DOCTEST_CHECK_EQ(task.completedAt.value(), stampedAt);
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
 // 固定四列迁移挂在启动 migrate 路径（Database::open → addMissingAgentColumns →
 // core::schema::migrateTodoFixedColumns），不在 TodoService 构造器里。重跑必须零副作用
 // （列/任务数不变），且多余自定义列的任务按原意并入待办列。
