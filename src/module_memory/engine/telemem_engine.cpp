@@ -12,6 +12,7 @@
 #include "platform/process_runner.h"
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <thread>
 #include <utility>
@@ -45,6 +46,20 @@ constexpr const char* kTelememProbeBody =
     "\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
     "\"clientInfo\":{\"name\":\"devdesk-health\",\"version\":\"1.0\"}}}";
 
+// MCP 流式 HTTP 的 200 响应体是 SSE 信封（event:/data: 行），判据吃的是纯
+// JSON——剥出首个 data: 行的载荷再进判据；纯 JSON 响应（非 SSE）原样通过。
+std::string stripSseEnvelope(const std::string& body) {
+    if (body.rfind("event:", 0) != 0) return body;
+    static constexpr const char* kTag = "data: ";
+    const size_t at = body.find(kTag);
+    if (at == std::string::npos) return body;
+    const size_t begin = at + std::strlen(kTag);
+    const size_t end = body.find('\n', begin);
+    return body.substr(begin,
+                       end == std::string::npos ? std::string::npos
+                                                : end - begin);
+}
+
 // 回环健康探测（判据 = judgeTelememHealth 的纯函数契约：错误嵌 result 体，
 // 不能只看传输层 is_error）。jsonBody 非空 = POST JSON-RPC（telemem /mcp），
 // 空 = 普通 GET（llama-server /health）。
@@ -56,7 +71,8 @@ bool probeHealthy(int port, const char* path, const char* jsonBody,
     if (jsonBody != nullptr) {
         req.body = jsonBody;
         req.headers["Content-Type"] = "application/json";
-        req.headers["Accept"] = "application/json";
+        // MCP SDK 硬校验：Accept 必须同时含 json 与 event-stream，缺一个 406
+        req.headers["Accept"] = "application/json, text/event-stream";
     }
     req.timeoutMs = kHealthTimeoutMs;
     const auto r = platform::http::send(req);
@@ -65,8 +81,8 @@ bool probeHealthy(int port, const char* path, const char* jsonBody,
         return false;
     }
     const platform::http::Response& resp = r.value();
-    const HealthVerdict v =
-        judgeTelememHealth(resp.statusCode, resp.networkError, resp.body);
+    const HealthVerdict v = judgeTelememHealth(resp.statusCode, resp.networkError,
+                                               stripSseEnvelope(resp.body));
     if (reasonOut != nullptr) *reasonOut = v.reason;
     return v.healthy;
 }
