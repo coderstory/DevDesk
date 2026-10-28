@@ -122,18 +122,123 @@ core::Result<long long> UsageLedger::record(const std::string& kind,
     return core::Result<long long>::ok(cost);
 }
 
+// 成本口径排除注入账：inject_* 行是 hook 预算记账，不是模型 token（头文件契约）
+constexpr const char* kCostTokenSql =
+    "SELECT COALESCE(SUM(tokens),0) AS v FROM usage_ledger "
+    "WHERE ts >= ? AND kind NOT LIKE 'inject%'";
+constexpr const char* kCostMilliSql =
+    "SELECT COALESCE(SUM(cost_milli_yuan),0) AS v FROM usage_ledger "
+    "WHERE ts >= ? AND kind NOT LIKE 'inject%'";
+constexpr const char* kInjectSql =
+    "SELECT COALESCE(SUM(tokens),0) AS v FROM usage_ledger "
+    "WHERE ts >= ? AND kind = ?";
+
 core::Result<long long> UsageLedger::todayTokens(std::int64_t nowSec) const {
-    return core::Result<long long>::ok(queryInt64(
-        db_.get(), "SELECT COALESCE(SUM(tokens),0) AS v FROM usage_ledger "
-                   "WHERE ts >= ?",
-        dayStart(nowSec)));
+    return core::Result<long long>::ok(
+        queryInt64(db_.get(), kCostTokenSql, dayStart(nowSec)));
 }
 
 core::Result<long long> UsageLedger::monthTokens(std::int64_t nowSec) const {
-    return core::Result<long long>::ok(queryInt64(
-        db_.get(), "SELECT COALESCE(SUM(tokens),0) AS v FROM usage_ledger "
-                   "WHERE ts >= ?",
-        monthStart(nowSec)));
+    return core::Result<long long>::ok(
+        queryInt64(db_.get(), kCostTokenSql, monthStart(nowSec)));
+}
+
+core::Result<long long> UsageLedger::todayCostMilliYuan(
+    std::int64_t nowSec) const {
+    return core::Result<long long>::ok(
+        queryInt64(db_.get(), kCostMilliSql, dayStart(nowSec)));
+}
+
+core::Result<long long> UsageLedger::monthCostMilliYuan(
+    std::int64_t nowSec) const {
+    return core::Result<long long>::ok(
+        queryInt64(db_.get(), kCostMilliSql, monthStart(nowSec)));
+}
+
+core::Result<void> UsageLedger::recordInjection(int items, int chars,
+                                                std::int64_t nowSec) {
+    auto itemsRow = record(kKindInjectItems, items, nowSec);
+    if (itemsRow.isFail()) {
+        return core::Result<void>::fail(itemsRow.errorCode(),
+                                        itemsRow.errorMessage());
+    }
+    auto charsRow = record(kKindInjectChars, chars, nowSec);
+    if (charsRow.isFail()) {
+        return core::Result<void>::fail(charsRow.errorCode(),
+                                        charsRow.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<long long> UsageLedger::todayInjectItems(
+    std::int64_t nowSec) const {
+    auto stmt = db_->prepare(kInjectSql);
+    if (stmt.isFail()) {
+        return core::Result<long long>::fail(stmt.errorCode(),
+                                             stmt.errorMessage());
+    }
+    if (!stmt.value().bind(1, dayStart(nowSec)).isOk() ||
+        !stmt.value().bind(2, std::string(kKindInjectItems)).isOk()) {
+        return core::Result<long long>::fail(core::ErrorCode::Internal,
+                                             "注入账查询绑定失败");
+    }
+    auto step = stmt.value().step();
+    if (step.isFail() || !step.value()) {
+        return core::Result<long long>::ok(0);
+    }
+    auto row = stmt.value().currentRow();
+    if (row.isFail()) return core::Result<long long>::ok(0);
+    return core::Result<long long>::ok(row.value().getInt64("v").valueOr(0));
+}
+
+core::Result<long long> UsageLedger::todayInjectChars(
+    std::int64_t nowSec) const {
+    auto stmt = db_->prepare(kInjectSql);
+    if (stmt.isFail()) {
+        return core::Result<long long>::fail(stmt.errorCode(),
+                                             stmt.errorMessage());
+    }
+    if (!stmt.value().bind(1, dayStart(nowSec)).isOk() ||
+        !stmt.value().bind(2, std::string(kKindInjectChars)).isOk()) {
+        return core::Result<long long>::fail(core::ErrorCode::Internal,
+                                             "注入账查询绑定失败");
+    }
+    auto step = stmt.value().step();
+    if (step.isFail() || !step.value()) {
+        return core::Result<long long>::ok(0);
+    }
+    auto row = stmt.value().currentRow();
+    if (row.isFail()) return core::Result<long long>::ok(0);
+    return core::Result<long long>::ok(row.value().getInt64("v").valueOr(0));
+}
+
+core::Result<std::vector<LedgerRow>> UsageLedger::recentRows(int limit) const {
+    auto stmt = db_->prepare(
+        "SELECT ts, kind, tokens, cost_milli_yuan FROM usage_ledger "
+        "ORDER BY ts DESC, id DESC LIMIT ?");
+    if (stmt.isFail()) {
+        return core::Result<std::vector<LedgerRow>>::fail(stmt.errorCode(),
+                                                          stmt.errorMessage());
+    }
+    if (!stmt.value().bind(1, static_cast<std::int64_t>(limit)).isOk()) {
+        return core::Result<std::vector<LedgerRow>>::fail(
+            core::ErrorCode::Internal, "最近账面绑定失败");
+    }
+    std::vector<LedgerRow> rows;
+    for (int i = 0; i < limit; ++i) {
+        auto step = stmt.value().step();
+        if (step.isFail()) break;
+        if (!step.value()) break;
+        auto row = stmt.value().currentRow();
+        if (row.isFail()) break;
+        LedgerRow r;
+        r.ts = row.value().getInt64("ts").valueOr(0);
+        r.kind = row.value().getString("kind").valueOr("");
+        r.tokens = row.value().getInt64("tokens").valueOr(0);
+        r.costMilliYuan = row.value().getInt64("cost_milli_yuan").valueOr(0);
+        rows.push_back(std::move(r));
+    }
+    return core::Result<std::vector<LedgerRow>>::ok(std::move(rows));
 }
 
 }  // namespace module::memory::proposals

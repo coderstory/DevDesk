@@ -42,6 +42,10 @@ public:
     bool markProcessed(const std::string& sessionId, std::uint64_t seq);
     bool isProcessed(const std::string& sessionId, std::uint64_t seq) const;
 
+    // 存储概览读数（面板「存储概览」格消费；只读聚合，不改账本）
+    core::Result<std::int64_t> processedCount() const;
+    core::Result<int> sessionCount() const;
+
     // 尾读水位
     core::Result<void> setOffset(const std::string& sessionId, std::int64_t offset,
                                  std::int64_t lineCount);

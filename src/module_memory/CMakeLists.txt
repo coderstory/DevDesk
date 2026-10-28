@@ -24,6 +24,13 @@ add_library(devdesk_module_memory STATIC
     proposals/proposal_store.h
     proposals/curator.cpp
     proposals/curator.h
+    panel/settings_store.cpp
+    panel/settings_store.h
+    panel/recall_eval.cpp
+    panel/recall_eval.h
+    panel/recall_eval_data.h
+    panel/panel_state.cpp
+    panel/panel_state.h
     engine/telemem_config.cpp
     engine/telemem_config.h
     engine/python_locator.cpp

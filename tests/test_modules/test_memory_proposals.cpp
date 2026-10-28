@@ -254,6 +254,48 @@ REGISTER_TEST(memory_curator_propose_add_and_forget,
     return true;
 })
 
+REGISTER_TEST(memory_usage_ledger_injection_and_cost_split,
+              "memory: 注入账与成本账分轨——inject_* 不进 token/金额聚合、注入今日读数、最近行", {
+    auto opened = UsageLedger::open(tmpDb("ledger2"));
+    DOCTEST_REQUIRE(opened.isOk());
+    auto ledger = std::move(opened.value());
+    const std::int64_t now = 1769472000;
+
+    auto ins = ledger.recordInjection(3, 214, now);
+    DOCTEST_REQUIRE(ins.isOk());
+    // 成本聚合排除 inject_*（注入不调云端，无金额）
+    auto today = ledger.todayTokens(now + 10);
+    DOCTEST_REQUIRE(today.isOk());
+    DOCTEST_CHECK_EQ(today.value(), static_cast<long long>(0));
+    auto cost = ledger.todayCostMilliYuan(now + 10);
+    DOCTEST_REQUIRE(cost.isOk());
+    DOCTEST_CHECK_EQ(cost.value(), static_cast<long long>(0));
+    // 注入预算环读数
+    auto items = ledger.todayInjectItems(now + 10);
+    DOCTEST_REQUIRE(items.isOk());
+    DOCTEST_CHECK_EQ(items.value(), static_cast<long long>(3));
+    auto chars = ledger.todayInjectChars(now + 10);
+    DOCTEST_REQUIRE(chars.isOk());
+    DOCTEST_CHECK_EQ(chars.value(), static_cast<long long>(214));
+
+    // 计一笔真实成本 → 聚合含它、注入读数不受影响
+    DOCTEST_REQUIRE(ledger.record("llm_input", 100000, now + 20).isOk());
+    auto today2 = ledger.todayTokens(now + 30);
+    DOCTEST_REQUIRE(today2.isOk());
+    DOCTEST_CHECK_EQ(today2.value(), static_cast<long long>(100000));
+    auto items2 = ledger.todayInjectItems(now + 30);
+    DOCTEST_REQUIRE(items2.isOk());
+    DOCTEST_CHECK_EQ(items2.value(), static_cast<long long>(3));
+
+    // 最近行降序 + 字段齐全
+    auto rows = ledger.recentRows(10);
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE(rows.value().size() == static_cast<std::size_t>(3));
+    DOCTEST_CHECK_EQ(rows.value()[0].kind, std::string("llm_input"));
+    DOCTEST_CHECK_EQ(rows.value()[2].kind, std::string("inject_items"));
+    return true;
+})
+
 REGISTER_TEST(memory_usage_ledger_accumulates,
               "memory: 消耗计量——token 累计落库、金额估算按调研单价、今日/本月口径", {
     auto opened = UsageLedger::open(tmpDb("ledger"));

@@ -80,6 +80,33 @@ bool CollectorStore::isProcessed(const std::string& sessionId,
     return step.isOk() && step.value();
 }
 
+core::Result<std::int64_t> CollectorStore::processedCount() const {
+    auto stmt = db_->prepare("SELECT COUNT(*) AS v FROM processed_events");
+    if (stmt.isFail()) {
+        return core::Result<std::int64_t>::fail(stmt.errorCode(),
+                                                stmt.errorMessage());
+    }
+    auto step = stmt.value().step();
+    if (!step.isOk() || !step.value()) return core::Result<std::int64_t>::ok(0);
+    auto row = stmt.value().currentRow();
+    if (row.isFail()) return core::Result<std::int64_t>::ok(0);
+    return core::Result<std::int64_t>::ok(row.value().getInt64("v").valueOr(0));
+}
+
+core::Result<int> CollectorStore::sessionCount() const {
+    auto stmt = db_->prepare(
+        "SELECT COUNT(DISTINCT session_id) AS v FROM collector_watermark");
+    if (stmt.isFail()) {
+        return core::Result<int>::fail(stmt.errorCode(), stmt.errorMessage());
+    }
+    auto step = stmt.value().step();
+    if (!step.isOk() || !step.value()) return core::Result<int>::ok(0);
+    auto row = stmt.value().currentRow();
+    if (row.isFail()) return core::Result<int>::ok(0);
+    return core::Result<int>::ok(
+        static_cast<int>(row.value().getInt64("v").valueOr(0)));
+}
+
 core::Result<void> CollectorStore::setOffset(const std::string& sessionId,
                                              std::int64_t offset,
                                              std::int64_t lineCount) {

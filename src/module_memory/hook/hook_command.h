@@ -20,6 +20,9 @@ using UsageSink = std::function<void(const std::string& kind, long long tokens)>
 struct HookOutcome {
     std::string stdoutText;  // 空串 = 不注入（Claude Code 照常放行提问）
     int exitCode = 0;        // 恒 0；存在意义 = 显式钉死"绝不 exit 2"
+    // 注入预算记账（ledger inject_* 行的取数源；0 = 本轮未注入）
+    int injectedItems = 0;
+    int injectedChars = 0;  // 预算行字数（不含头部声明，与 ≤500 同一口径）
 };
 
 // 纯编排（检索器注入，测试不起真引擎）。任何异常路径都收敛为 {即空即 0}。

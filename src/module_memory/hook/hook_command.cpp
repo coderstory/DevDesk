@@ -55,6 +55,18 @@ HookOutcome runMemoryHook(const std::string& stdinJson,
     HookOutcome o;
     o.stdoutText = out;
     o.exitCode = 0;
+    // 注入记账：条数 = 预算行数；字数 = 预算行字数（不含头部声明，与 ≤500 同口径）
+    o.injectedItems = 1;
+    for (char c : context) {
+        if (c == '\n') ++o.injectedItems;
+    }
+    o.injectedItems -= 1;  // 首行是头部声明，不是预算行
+    {
+        const std::size_t headerEnd = context.find('\n');
+        o.injectedChars = static_cast<int>(countChars(
+            headerEnd == std::string::npos ? std::string()
+                                           : context.substr(headerEnd + 1)));
+    }
     return o;
 }
 

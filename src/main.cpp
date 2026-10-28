@@ -20,8 +20,10 @@
 #include "core/window_geometry.h"  // 窗体记忆几何账本（UAT6：每帧记账、退出落盘）
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
+#include "module_memory/engine/telemem_config.h"
 #include "module_memory/gateway/telemem_client.h"
 #include "module_memory/hook/hook_command.h"
+#include "module_memory/proposals/usage_ledger.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
 #include "platform/message_box.h"
@@ -31,6 +33,8 @@
 #include "settings_config.h"
 
 #include <components/styledmenu.h>
+
+#include <ctime>
 
 #include <utility>
 
@@ -643,6 +647,16 @@ int runMemoryHookSubcommand() {
     module::memory::gateway::TelememHttpRetriever retriever;
     const auto outcome =
         module::memory::hook::runMemoryHookFromStdin(&retriever);
+    // 注入预算记账（面板注入预算环数据源；尽力而为，任何失败绝不影响注入本身）
+    if (outcome.injectedItems > 0) {
+        auto ledger = module::memory::proposals::UsageLedger::open(
+            module::memory::engine::memoryDataDir() / "usage_ledger.db");
+        if (ledger.isOk()) {
+            (void)ledger.value().recordInjection(
+                outcome.injectedItems, outcome.injectedChars,
+                static_cast<std::int64_t>(std::time(nullptr)));
+        }
+    }
     if (!outcome.stdoutText.empty()) {
         std::fputs(outcome.stdoutText.c_str(), stdout);
         std::fflush(stdout);

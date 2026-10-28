@@ -330,6 +330,34 @@ core::Result<std::vector<Proposal>> ProposalStore::listPending() const {
     return core::Result<std::vector<Proposal>>::ok(std::move(out));
 }
 
+core::Result<std::vector<Proposal>> ProposalStore::listRecentDecided(
+    int limit) const {
+    auto stmt = db_->prepare(std::string(kSelectCols) +
+                             "WHERE status != 'pending' "
+                             "ORDER BY decided_at DESC, created_at DESC LIMIT " +
+                             std::to_string(limit > 0 ? limit : 1));
+    if (stmt.isFail()) {
+        return core::Result<std::vector<Proposal>>::fail(stmt.errorCode(),
+                                                         stmt.errorMessage());
+    }
+    std::vector<Proposal> out;
+    for (;;) {
+        auto step = stmt.value().step();
+        if (step.isFail()) {
+            return core::Result<std::vector<Proposal>>::fail(step.errorCode(),
+                                                             step.errorMessage());
+        }
+        if (!step.value()) break;
+        const auto row = stmt.value().currentRow();
+        if (row.isFail()) {
+            return core::Result<std::vector<Proposal>>::fail(row.errorCode(),
+                                                             row.errorMessage());
+        }
+        out.push_back(rowToProposal(row.value()));
+    }
+    return core::Result<std::vector<Proposal>>::ok(std::move(out));
+}
+
 core::Result<Proposal> ProposalStore::accept(const std::string& id,
                                              std::int64_t nowSec,
                                              const TargetVersionFn& targetVersion,

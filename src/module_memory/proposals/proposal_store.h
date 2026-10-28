@@ -101,6 +101,9 @@ public:
     core::Result<Proposal> get(const std::string& id) const;
     core::Result<std::vector<Proposal>> listPending() const;
 
+    // 最近已决提案（decidedAt 降序；面板「已处理」视图 + 撤销入口取数）
+    core::Result<std::vector<Proposal>> listRecentDecided(int limit) const;
+
     // 「已撤销」派生徽章判定：存在指向 id 的已接受（执行完成）撤销卡
     bool isUndone(const std::string& id) const;
 
