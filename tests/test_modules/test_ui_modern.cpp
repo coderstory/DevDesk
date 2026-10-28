@@ -866,12 +866,13 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
                          std::string("600"));
         // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0；批L 顶距后垂直内边距 0）：
-        // baseContentH = 页头40 + 统计144 + gap×3(60) + 图220 + 操作44 = 508；
-        // extraH = 720 − 508 − 0.5 = 211.5；statsGrow = 211.5×0.18 = 38.07；
-        // chartH = 220 + 211.5 − 38.07 = 393.43 → wrap = 393.43 − 64 = 329.43
-        // → plot = 329.43 − 112 = 217.43。
-        // 峰值柱（600）= plot，100/600 柱 = plot/6 ≈ 36.24，300/600 柱 = plot/2 = 108.715。
-        constexpr float kElasticPlotH = 217.43f;
+        // baseContentH = 页头40 + 统计144 + gap×3(60) + 图220 + 操作44 + 快捷底边距16
+        //   （30ad823c：16px 底边距计入内容高，防贴边窗口被滚动条吞底）= 524；
+        // extraH = 720 − 524 − 0.5 = 195.5；statsGrow = 195.5×0.18 = 35.19；
+        // chartH = 220 + 195.5 − 35.19 = 380.31 → wrap = 380.31 − 64 = 316.31
+        // → plot = 316.31 − 112 = 204.31。
+        // 峰值柱（600）= plot，100/600 柱 = plot/6 ≈ 34.05，300/600 柱 = plot/2 = 102.155。
+        constexpr float kElasticPlotH = 204.31f;
         const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
         const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
         const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
