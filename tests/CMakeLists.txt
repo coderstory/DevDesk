@@ -46,6 +46,7 @@ add_executable(devdesk_tests
     test_platform/test_autostart.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
+    test_modules/test_md_folder_tree.cpp
     test_modules/test_markdown_tools.cpp
     test_modules/test_md_note_git.cpp
     test_modules/test_md_highlight.cpp

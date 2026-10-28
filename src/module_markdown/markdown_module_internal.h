@@ -805,6 +805,30 @@ private:
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& componentTheme) ;
 
+    // H27：目录行右键菜单（重命名 / 删除）。坐标复用 ctxMenuX_/Y_（与笔记菜单互斥打开）。
+    void openDirContextMenu(const std::string& relPath, const eui::PointerEvent& ev) ;
+
+    void drawFolderContextMenu(eui::Ui& ui,
+                               const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& componentTheme) ;
+
+    // 文件夹删除确认弹窗（复用 drawDeleteDialog 同款 ui_kit 基建）
+    void drawFolderDeleteDialog(eui::Ui& ui,
+                                const eui::Screen& screen,
+                                const core::theme::Tokens& t,
+                                const components::theme::ThemeColorTokens& componentTheme) ;
+
+    // 文件夹重命名对话框（同级改名；预填当前文件夹名，不含父路径）
+    void drawFolderRenameDialog(eui::Ui& ui,
+                                const eui::Screen& screen,
+                                const core::theme::Tokens& t,
+                                const components::theme::ThemeColorTokens& componentTheme) ;
+
+    void doDeleteFolder() ;
+
+    void commitRenameFolder() ;
+
     // 光标处插表格模板（与键盘流同一写回：可 undo、走脏标记链路）
     void insertTableAtCursor(eui::Ui& ui, int rows, int cols) ;
 
@@ -905,6 +929,15 @@ private:
     std::string renameTargetPath_;   // 重命名原路径
     std::string renameInput_;        // 重命名输入框内容
     std::string renameError_;        // 弹窗内嵌红字错误行
+    // H27：目录行右键菜单 + 删除确认 + 重命名（位置复用 ctxMenuX_/Y_）
+    bool dirCtxOpen_ = false;
+    std::string dirCtxPath_;            // 右键目标目录（POSIX 相对路径）
+    bool dirDeleteConfirmOpen_ = false;
+    std::string dirDeleteTargetPath_;   // 待删目录（确认弹窗展示 + 删除目标）
+    bool dirRenameOpen_ = false;
+    std::string dirRenameTargetPath_;   // 重命名原目录路径
+    std::string dirRenameInput_;        // 重命名输入框内容（同级新名）
+    std::string dirRenameError_;        // 弹窗内嵌红字错误行
 
     // Toast（单实例）
     ui_kit::ToastState toast_;

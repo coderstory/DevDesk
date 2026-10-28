@@ -206,16 +206,22 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     drawNewFolderDialog(ui, screen, t, componentTheme);
     // 右键菜单 zIndex 1050 盖过 dialog 默认 1000；菜单项点击先 dismiss 再开弹窗
     drawNoteContextMenu(ui, screen, t, componentTheme);
+    drawFolderContextMenu(ui, screen, t, componentTheme);
     drawEditorContextMenu(ui, screen, t, componentTheme);
     drawDeleteDialog(ui, screen, t, componentTheme);
     drawRenameDialog(ui, screen, t, componentTheme);
+    drawFolderDeleteDialog(ui, screen, t, componentTheme);
+    drawFolderRenameDialog(ui, screen, t, componentTheme);
     drawToast(ui, screen, componentTheme);
 }
 
 bool MarkdownModule::closeTopmostPopup() {
+    if (dirRenameOpen_) { dirRenameOpen_ = false; return true; }
+    if (dirDeleteConfirmOpen_) { dirDeleteConfirmOpen_ = false; return true; }
     if (renameOpen_) { renameOpen_ = false; return true; }
     if (deleteConfirmOpen_) { deleteConfirmOpen_ = false; return true; }
     if (editorCtxOpen_) { editorCtxOpen_ = false; return true; }
+    if (dirCtxOpen_) { dirCtxOpen_ = false; return true; }
     if (ctxMenuOpen_) { ctxMenuOpen_ = false; return true; }
     if (newFolderOpen_) {
         newFolderOpen_ = false;

@@ -347,6 +347,14 @@ void MarkdownModule::openFileContextMenu(const std::string& relPath, const eui::
     ctxMenuOpen_ = true;
 }
 
+void MarkdownModule::openDirContextMenu(const std::string& relPath, const eui::PointerEvent& ev) {
+    dirCtxPath_ = relPath;
+    const core::MenuAnchor anchor = menuAnchorForPointerInPage(ev);
+    ctxMenuX_ = anchor.x;
+    ctxMenuY_ = anchor.y;
+    dirCtxOpen_ = true;
+}
+
 void MarkdownModule::drawNoteContextMenu(eui::Ui& ui,
                          const eui::Screen& screen,
                          const core::theme::Tokens& t,
@@ -379,6 +387,63 @@ void MarkdownModule::drawNoteContextMenu(eui::Ui& ui,
             }
         })
         .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
+        .build();
+}
+
+void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
+                            const eui::Screen& screen,
+                            const core::theme::Tokens& t,
+                            const components::theme::ThemeColorTokens& componentTheme) {
+    // 与笔记右键菜单同款 wechat 皮肤；两菜单互斥（笔记菜单开着时强制关目录菜单）
+    const auto wcTheme = core::theme::componentTokensWeChat(t);
+    if (ctxMenuOpen_) {
+        dirCtxOpen_ = false;
+        return;
+    }
+    if (dirCtxPath_.empty()) {
+        dirCtxOpen_ = false;
+        return;
+    }
+    components::contextMenu(ui, "md.dir.ctx")
+        .open(dirCtxOpen_)
+        .screen(screen.width, screen.height)
+        .position(ctxMenuX_, ctxMenuY_)
+        .autoWidth()  // 宽度按最宽项自适应
+        .items({"重命名", "删除"})
+        .theme(wcTheme)
+        .onSelect([this](int index) {
+            if (index == 0) {
+                dirRenameOpen_ = true;
+                dirRenameTargetPath_ = dirCtxPath_;
+                // 同级改名：预填文件夹名本身（不含父路径，含 / 会报错）
+                const size_t slash = dirCtxPath_.rfind('/');
+                dirRenameInput_ =
+                    slash == std::string::npos
+                        ? dirCtxPath_
+                        : dirCtxPath_.substr(slash + 1);
+                dirRenameError_.clear();  // 打开清残留错误
+            } else if (index == 1) {
+                // 删除判定：递归数 .md；非空 → 明确提示不静默，空 → 确认弹窗
+                if (!service_) return;
+                auto cnt = service_->folderNoteCount(dirCtxPath_);
+                if (cnt.isFail()) {
+                    showToast("删除失败",
+                              "「" + dirCtxPath_ + "」" + cnt.errorMessage(),
+                              true);
+                    return;
+                }
+                if (cnt.value() > 0) {
+                    showToast("不能删除",
+                              "文件夹「" + dirCtxPath_ + "」内有 " +
+                                  std::to_string(cnt.value()) + " 篇笔记",
+                              true);
+                    return;
+                }
+                dirDeleteConfirmOpen_ = true;
+                dirDeleteTargetPath_ = dirCtxPath_;
+            }
+        })
+        .onOpenChange([this](bool v) { dirCtxOpen_ = v; })
         .build();
 }
 
@@ -618,6 +683,180 @@ void MarkdownModule::commitRenameNote() {
     refreshList();
     showToast("已重命名", newPath, false);
     LOG_INFO("重命名笔记: " + oldPath + " → " + newPath);
+    core::event::bus().emit(core::event::kMdRenamed);
+}
+
+void MarkdownModule::drawFolderDeleteDialog(eui::Ui& ui,
+                             const eui::Screen& screen,
+                             const core::theme::Tokens& t,
+                             const components::theme::ThemeColorTokens& componentTheme) {
+    // 复用笔记删除确认弹窗同款 ui_kit 基建（frame/title/text/buttons 四件）
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
+    const float h = 200.0f;
+
+    ui_kit::DialogFrame frame;
+    frame.id = "md.dialog.deldir";
+    frame.width = ui_kit::DialogWidth::Standard;
+    frame.height = h;
+    frame.open = dirDeleteConfirmOpen_;
+    frame.onOpenChange = [this](bool v) { dirDeleteConfirmOpen_ = v; };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
+            ui_kit::drawDialogTitle(ui, "md.dialog.deldir.title", w, "删除文件夹",
+                                    20.0f, t.colors.textPrimary);
+            ui_kit::drawDialogText(
+                ui, "md.dialog.deldir.body", w,
+                "将删除文件夹「" + dirDeleteTargetPath_ + "」及其全部子文件夹，不可恢复。",
+                t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
+                {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f, .wrap = true});
+
+            ui_kit::DialogButtonSpec cancel;
+            cancel.label = "取消";
+            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+            cancel.onClick = [this] { dirDeleteConfirmOpen_ = false; };
+            ui_kit::DialogButtonSpec confirm;
+            confirm.label = "删除";
+            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
+            confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
+            confirm.onClick = [this] { doDeleteFolder(); };
+            ui_kit::drawDialogButtons(ui, "md.dialog.deldir", w, h, cancel, confirm, t,
+                                      core::theme::componentTokensWeChat(t));
+    });
+}
+
+void MarkdownModule::drawFolderRenameDialog(eui::Ui& ui,
+                             const eui::Screen& screen,
+                             const core::theme::Tokens& t,
+                             const components::theme::ThemeColorTokens& componentTheme) {
+    // 复用笔记重命名弹窗同款 ui_kit 基建；差异只在标题/提示/同级改名校验
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
+    const float h = 220.0f;
+    const auto wcTheme = core::theme::componentTokensWeChat(t);
+
+    ui_kit::DialogFrame frame;
+    frame.id = "md.dialog.renamedir";
+    frame.width = ui_kit::DialogWidth::Standard;
+    frame.height = h;
+    frame.open = dirRenameOpen_;
+    frame.onOpenChange = [this](bool v) { dirRenameOpen_ = v; };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
+            ui_kit::drawDialogTitle(ui, "md.dialog.renamedir.title", w, "重命名文件夹",
+                                    20.0f, t.colors.textPrimary);
+            ui_kit::drawDialogText(ui, "md.dialog.renamedir.hint", w,
+                                   "同级改名：只改文件夹名，新名不能包含 /",
+                                   t.sizes.fontSizeSmall, t.colors.textTertiary,
+                                   {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+            components::input(ui, "md.dialog.renamedir.input")
+                .position(28.0f, 84.0f)
+                .size(w - 56.0f, 44.0f)
+                .value(dirRenameInput_)
+                .placeholder("新文件夹名")
+                .fontSize(t.sizes.fontSizeBody)
+                .theme(wcTheme)
+                .onChange([this](const std::string& v) {
+                    dirRenameInput_ = v;
+                    dirRenameError_.clear();  // 错误随下一次输入清除
+                })
+                .onEnter([this] { commitRenameFolder(); })
+                // Esc=取消（关弹窗不改名）
+                .onCancel([this] { dirRenameOpen_ = false; })
+                .build();
+            // 校验/落盘失败内嵌红字，弹窗保持打开让用户改输入
+            ui_kit::drawDialogText(ui, "md.dialog.renamedir.error", w, dirRenameError_,
+                                   12.0f, t.colors.errorText,
+                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
+                                    .skipIfEmpty = true});
+            ui_kit::DialogButtonSpec cancel;
+            cancel.label = "取消";
+            cancel.fontSize = t.sizes.fontSizeBody;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+            cancel.onClick = [this] { dirRenameOpen_ = false; };
+            ui_kit::DialogButtonSpec confirm;
+            confirm.label = "重命名";
+            confirm.fontSize = t.sizes.fontSizeBody;
+            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
+            confirm.onClick = [this] { commitRenameFolder(); };
+            ui_kit::drawDialogButtons(ui, "md.dialog.renamedir", w, h, cancel, confirm, t,
+                                      core::theme::componentTokensWeChat(t));
+    });
+}
+
+void MarkdownModule::doDeleteFolder() {
+    const std::string path = dirDeleteTargetPath_;
+    dirDeleteConfirmOpen_ = false;
+    dirDeleteTargetPath_.clear();
+    if (!service_ || path.empty()) return;
+    auto r = service_->deleteFolder(path);
+    if (r.isFail()) {
+        LOG_ERROR("删除文件夹失败 " + path + ": " + r.errorMessage());
+        showToast("删除失败", "「" + path + "」" + r.errorMessage(), true);
+        return;
+    }
+    // 选中目录/新建落点若在被删子树内 → 复位到根目录（落点保持有效）。
+    // selectedDir_ 的状态语义不变，只做失效兜底。
+    if (selectedDir_ == path || selectedDir_.rfind(path + "/", 0) == 0) {
+        selectDir("");
+    }
+    refreshList();
+    showToast("已删除文件夹", path, false);
+    LOG_INFO("已删除文件夹: " + path);
+}
+
+void MarkdownModule::commitRenameFolder() {
+    std::string target = dirRenameInput_;
+    while (!target.empty() && (target.front() == ' ' || target.front() == '\t')) {
+        target.erase(target.begin());
+    }
+    while (!target.empty() &&
+           (target.back() == ' ' || target.back() == '\t' ||
+            target.back() == '\r' || target.back() == '\n')) {
+        target.pop_back();
+    }
+    if (target.empty()) {
+        dirRenameError_ = "新名字不能为空";
+        return;
+    }
+    if (!service_ || dirRenameTargetPath_.empty()) {
+        dirRenameOpen_ = false;
+        return;
+    }
+    if (target.find('/') != std::string::npos) {
+        // 同级改名的界面侧校验（service 层同规则兜底）
+        dirRenameError_ = "文件夹只支持同级改名，新名不能包含 /";
+        return;  // 弹窗保持打开让用户改
+    }
+    if (!MarkdownService::isSafeNewNotePath(target)) {
+        dirRenameError_ =
+            "名称不合法：不支持绝对路径、盘符（如 C:）或 ..";
+        return;
+    }
+    const std::string oldPath = dirRenameTargetPath_;
+    auto r = service_->renameFolder(oldPath, target);
+    if (r.isFail()) {
+        LOG_ERROR("重命名文件夹失败 " + oldPath + " → " + target + ": " +
+                  r.errorMessage());
+        dirRenameError_ = "重命名失败：" + r.errorMessage();
+        return;  // 弹窗保持打开让用户改
+    }
+    const std::string newPath = r.value();
+    dirRenameOpen_ = false;
+    dirRenameTargetPath_.clear();
+    dirRenameInput_.clear();
+    dirRenameError_.clear();
+    // 笔记路径随目录名变化 → 索引以磁盘为准对齐（旧路径行被 rescan 剪掉）
+    auto rs = service_->rescan();
+    if (rs.isFail()) {
+        LOG_ERROR("文件夹重命名后 rescan 失败: " + rs.errorMessage());
+    }
+    // 选中目录/新建落点若在被改名子树内 → 跟随新路径（状态语义不变）
+    if (selectedDir_ == oldPath || selectedDir_.rfind(oldPath + "/", 0) == 0) {
+        selectDir(newPath + selectedDir_.substr(oldPath.size()));
+    }
+    refreshList();
+    showToast("已重命名", newPath, false);
+    LOG_INFO("重命名文件夹: " + oldPath + " → " + newPath);
     core::event::bus().emit(core::event::kMdRenamed);
 }
 

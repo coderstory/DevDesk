@@ -459,28 +459,25 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                 if (r.isFolder) {
                     // 目录行：行体点击 = 选中目录，箭头命中区 = 收起/展开
                     //（命中取最上层兄弟，故命中区须叠在行体之上）。缩进每级 16px。
+                    // H29：文件夹行不画选中视觉（无底色、无左侧绿竖线）——selectedDir_
+                    // 仍是「新建笔记落点」状态锚与跨会话持久化状态，去的是视觉不是状态。
                     const float indent = static_cast<float>(r.depth) * 16.0f;
                     const bool expanded = collapsedDirs_.count(r.relPath) == 0;
-                    const bool selected = r.relPath == selectedDir_;
                     inner.stack(id)
                         .size(w, kTreeRowHeight)
                         .content([&] {
                             inner.rect(id + ".row")
                                 .size(w, kTreeRowHeight)
-                                .color(selected ? t.colors.primarySoftBg
-                                                : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                 .hoverColor(ui_kit::cardSurface(t))
                                 .radius(t.sizes.radiusSmall)
                                 .onClick([this, dir = r.relPath] { selectDir(dir); })
+                                .onContextMenu([this, dir = r.relPath](
+                                                   const eui::PointerEvent& ev,
+                                                   const eui::Rect&) {
+                                    openDirContextMenu(dir, ev);
+                                })
                                 .build();
-                            // 选中态左 3px 绿竖线（S2.5 selectionBar，行左缘锚定）
-                            if (selected) {
-                                inner.rect(id + ".accent")
-                                    .position(0.0f, 0.0f)
-                                    .size(3.0f, kTreeRowHeight)
-                                    .color(t.colors.primary)
-                                    .build();
-                            }
                             // 展开/收起命中区（叠在行体之上，命中取最上层）。
                             // UAT2 F批：26→46（箭头+文件夹图标整区可点）+ hover
                             // 反馈（原全透明无提示；三态同款 app.sidebar.toggle）。
@@ -501,6 +498,13 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                                     }
                                     saveViewState();  // 目录折叠跨会话记忆
                                 })
+                                // 右键菜单也接在命中区上：44px 区覆盖箭头+图标，
+                                // 只在行体上接会漏掉整区右键
+                                .onContextMenu([this, dir = r.relPath](
+                                                   const eui::PointerEvent& ev,
+                                                   const eui::Rect&) {
+                                    openDirContextMenu(dir, ev);
+                                })
                                 .build();
                             inner.text(id + ".arrow")
                                 .position(0.0f + indent, 0.0f)
@@ -518,8 +522,8 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                                 .fontSize(core::theme::scaled(kTreeFontSize))
                                 .lineHeight(kTreeRowHeight)
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(selected ? t.colors.primary
-                                                : t.colors.textTertiary)
+                                // H29：文件夹图标不随选中变色（与行底色/竖线同批去视觉）
+                                .color(t.colors.textTertiary)
                                 .build();
                             inner.text(id + ".name")
                                 .position(44.0f + indent, 0.0f)

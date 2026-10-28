@@ -1336,4 +1336,117 @@ core::Result<void> MarkdownService::createFolder(const std::string& name) {
     return core::Result<void>::ok();
 }
 
+core::Result<int64_t> MarkdownService::folderNoteCount(const fs::path& relPath) const {
+    const auto resolved = resolve(relPath);
+    if (resolved.isFail()) {
+        return core::Result<int64_t>::fail(resolved.errorCode(),
+                                           resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
+    std::error_code ec;
+    if (!fs::is_directory(absPath, ec) || ec) {
+        return core::Result<int64_t>::fail(core::ErrorCode::FileNotFound,
+            "文件夹不存在: " + toPosix(relPath));
+    }
+    // 契约：任意层级（不限一级）的 .md 都计数——删除判定依赖此语义，
+    // 改成只看一级会让深层笔记所在文件夹被误判为空而放行删除。
+    int64_t count = 0;
+    for (auto it = fs::recursive_directory_iterator(
+                    absPath, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file(ec) || ec) continue;
+        if (it->path().extension() == ".md") ++count;
+    }
+    if (ec) {
+        return core::Result<int64_t>::fail(core::ErrorCode::FileWriteFailed,
+            "枚举文件夹失败 " + toPosix(relPath) + ": " + ec.message());
+    }
+    return core::Result<int64_t>::ok(count);
+}
+
+core::Result<std::string> MarkdownService::renameFolder(
+    const fs::path& oldRelPath, const fs::path& newRelPath) {
+    const std::string oldPosix = toPosix(oldRelPath);
+    if (oldPosix.empty()) {
+        return core::Result<std::string>::fail(core::ErrorCode::ValidationError,
+            "根目录不能重命名");
+    }
+    const std::string newPosix = toPosix(newRelPath);
+    if (!isSafeNewNotePath(newPosix)) {
+        return core::Result<std::string>::fail(core::ErrorCode::ValidationError,
+            "新名不合法（不允许绝对路径、盘符或 ..）: " + newPosix);
+    }
+    // 契约：同级改名——新名就是文件夹名本身，含 '/' 会变成移动
+    if (newPosix.find('/') != std::string::npos) {
+        return core::Result<std::string>::fail(core::ErrorCode::ValidationError,
+            "文件夹只支持同级改名，新名不能包含 /: " + newPosix);
+    }
+    const auto resolvedOld = resolve(oldRelPath);
+    if (resolvedOld.isFail()) {
+        return core::Result<std::string>::fail(resolvedOld.errorCode(),
+                                               resolvedOld.errorMessage());
+    }
+    const auto absOld = resolvedOld.value();
+    std::error_code ec;
+    if (!fs::is_directory(absOld, ec) || ec) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileNotFound,
+            "文件夹不存在: " + oldPosix);
+    }
+    // 同级改名：目标 = 原父目录 + 新名（不 resolve(newRelPath)，那是笔记根下）
+    const fs::path absNew = absOld.parent_path() / newPosix;
+    if (fs::exists(absNew, ec)) {
+        return core::Result<std::string>::fail(core::ErrorCode::AlreadyExists,
+            "同名文件夹已存在: " + newPosix);
+    }
+    fs::rename(absOld, absNew, ec);
+    if (ec) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileWriteFailed,
+            "重命名失败 " + oldPosix + " → " + newPosix + ": " + ec.message());
+    }
+    const size_t slash = oldPosix.rfind('/');
+    const std::string parent =
+        slash == std::string::npos ? std::string() : oldPosix.substr(0, slash);
+    const std::string newFullPosix =
+        parent.empty() ? newPosix : parent + "/" + newPosix;
+    return core::Result<std::string>::ok(newFullPosix);
+}
+
+core::Result<void> MarkdownService::deleteFolder(const fs::path& relPath) {
+    const std::string relPosix = toPosix(relPath);
+    if (relPosix.empty()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "根目录不能删除");
+    }
+    const auto resolved = resolve(relPath);
+    if (resolved.isFail()) {
+        // 越界路径拒绝删（与 remove 同口径：否则是目录外任意删除缺口）
+        return core::Result<void>::fail(resolved.errorCode(),
+                                        resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
+    std::error_code ec;
+    if (!fs::is_directory(absPath, ec) || ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileNotFound,
+            "文件夹不存在: " + relPosix);
+    }
+    // 契约：递归判定任意层级 .md；非空拒绝且不删（删除误放行缺口）
+    auto count = folderNoteCount(relPath);
+    if (count.isFail()) {
+        return core::Result<void>::fail(count.errorCode(),
+                                        count.errorMessage());
+    }
+    if (count.value() != 0) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "文件夹内有 " + std::to_string(count.value()) +
+                " 篇笔记，不能删除: " + relPosix);
+    }
+    fs::remove_all(absPath, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+            "删除文件夹失败 " + relPosix + ": " + ec.message());
+    }
+    return core::Result<void>::ok();
+}
+
 } // namespace module::markdown
