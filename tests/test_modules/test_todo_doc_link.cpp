@@ -82,12 +82,14 @@ struct StubMdModule : ::core::Module {
 
 // 详情弹窗「点击关联文档」触发跳转后，Router 上挂给 Markdown 页的负载应为
 // "open:<相对路径>"——与 Markdown 侧 consumeNavPayload 的 open: 前缀契约同源。
-void clickCardAndOpenDetail(Frame& frame, const char* cardId) {
+// 返回 bool（断言宏展开含 return false，只能住在返回 bool 的函数里）
+bool clickCardAndOpenDetail(Frame& frame, const char* cardId) {
     const auto* card = frame.ui.find(cardId);
     DOCTEST_REQUIRE(card != nullptr);
     DOCTEST_REQUIRE(card->onClick != nullptr);
     card->onClick();
     frame.refresh();
+    return true;
 }
 
 } // namespace
@@ -318,10 +320,10 @@ REGISTER_TEST(todo_doclink_detail_jump_and_missing_gray,
     mod->onStart();
     {
         Frame frame(mod.get());
-        clickCardAndOpenDetail(frame, "todo.col.0.card.0.bg");
+        DOCTEST_CHECK(clickCardAndOpenDetail(frame, "todo.col.0.card.0.bg"));
 
         // 已关联且存在：doc.open 可点，点击 → open:<相对路径> 负载挂到 Markdown 页
-        const auto* open = frame.ui.find("todo.dialog.detail.doc.open");
+        const auto* open = frame.ui.find("todo.dialog.detail.doc.open.bg");
         DOCTEST_REQUIRE(open != nullptr);
         DOCTEST_REQUIRE(open->onClick != nullptr);
         DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.doc.missing") == nullptr);
@@ -334,7 +336,7 @@ REGISTER_TEST(todo_doclink_detail_jump_and_missing_gray,
         frame.refresh();
         const auto* missing = frame.ui.find("todo.dialog.detail.doc.missing");
         DOCTEST_REQUIRE(missing != nullptr);
-        const auto* open2 = frame.ui.find("todo.dialog.detail.doc.open");
+        const auto* open2 = frame.ui.find("todo.dialog.detail.doc.open.bg");
         DOCTEST_REQUIRE(open2 != nullptr);
         DOCTEST_CHECK(open2->onClick == nullptr);  // 灰态禁点
 
@@ -367,10 +369,10 @@ REGISTER_TEST(todo_doclink_picker_select_and_save,
     mod->onStart();
     {
         Frame frame(mod.get());
-        clickCardAndOpenDetail(frame, "todo.col.0.card.0.bg");
+        DOCTEST_CHECK(clickCardAndOpenDetail(frame, "todo.col.0.card.0.bg"));
 
         // 未关联 → 选择入口；点击 → 选择器开（清单来自提供方）
-        const auto* pick = frame.ui.find("todo.dialog.detail.doc.pick");
+        const auto* pick = frame.ui.find("todo.dialog.detail.doc.pick.bg");
         DOCTEST_REQUIRE(pick != nullptr);
         DOCTEST_REQUIRE(pick->onClick != nullptr);
         pick->onClick();
@@ -383,11 +385,11 @@ REGISTER_TEST(todo_doclink_picker_select_and_save,
         frame.refresh();
 
         // 详情切换到已关联形态（解除按钮出现）
-        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.doc.open") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.doc.open.bg") != nullptr);
         DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.doc.unlink") != nullptr);
 
         // 保存 → docPath 落库
-        const auto* save = frame.ui.find("todo.dialog.detail.save");
+        const auto* save = frame.ui.find("todo.dialog.detail.save.bg");
         DOCTEST_REQUIRE(save != nullptr);
         DOCTEST_REQUIRE(save->onClick != nullptr);
         save->onClick();
