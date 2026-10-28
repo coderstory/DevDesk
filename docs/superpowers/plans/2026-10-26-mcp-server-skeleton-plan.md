@@ -231,6 +231,7 @@
 | CE-G | ✅ | 批次门禁 | 一次增量构建（全目标，DevDesk.exe/tests/mcp_live 链接落地）+ `--filter html`/`--filter fetch` 定向全绿 + `--filter http` 审计子集不回归 | — |
 
 **批次证据（✅ 回填 2026-10-28，builder）**：红 = 用例先落（金样 off 口径按基线语义推导 pin 死；实现缺口处 html 过滤编译期/断言红）；实现后 `--filter html` 23/23、`--filter fetch` 48/48、`--filter http` 28/28 均退出 0（计数详见批次回单）。真实样本对比：OSChina 类列表页站头站尾/友情链接消失、新闻列表全存活；bigmodel 类文档页导航/页脚/版权消失、正文+TOC 锚链接+代码块完整。
+**收官统一门禁（✅ 回填 2026-10-28，tester；CE-G 判据，全流程仅此一次）**：worktree `D:/wt-mcp-skeleton` @ `2e959c16`（本批主干 `fd0b2e99`）；`bash scripts/build-test-run.sh --filter mcp --no-run` 退出 0：增量构建成功、发布形态单 exe/零外部 DLL（DEVDESK_STATIC=ON）、守卫段逐项绿（探针跳过登记、模块隔离、Windows 交叉编译 267/267 文件、std include 492+ 文件、玻璃体系、ToolGuard，守卫自检好树绿/坏树红非恒真）、`--filter mcp` 133/133；同产物追加直跑 `--filter settings` 113/113、`--filter http` 28/28 均退出 0。
 
 ### 审计 findings 修复（并入本批一次构建验证，独立 commit）
 
