@@ -168,3 +168,32 @@
 5. **缓置项**——F-3 父行存在性预检（导入/脚本入口出现时再补）；提醒窗句柄耦合块未抽纯函数（openReminder/closeForEmpty/collectReminderView/buildDemoView/绘制，硬抽会改行为）。
 6. **已知无关红灯**——agent_e2e_probe 在本机因 DPAPI 凭据失败（先前已判与需求无关，未做基线复核）。
 
+## 2026-10-28 收尾 · 未竟清单（用户指令：停止开发、收尾）
+> 本会话已推 dev（532f466c）：调度线 S1 ticker / S2 规则模型+cron 上移 / S3 存储 / S4 引擎 / S5 渠道 / S6a HTTP 代理 / S6b 企业微信，+ H27-H31 审计修复批，并与远端 Memory/Mcp 重构并线。**全部用例已写未执行、零构建**（本机免编译指令）——CI 判定等 EUI fork HEAD 修复后出，或用户另行指令。
+> release 线（上线模块）：分支 wt-release-core @ 9b3f9e1d 完整保留、**未上行**——其对旧结构的注册表改动与远端 Memory/Mcp 页面序重构（PageId 钉值 Mcp=7/Settings=8/About=9、all-on 计数 10）冲突，需由 release 会话按新结构重新整合后再合。
+
+### 待合入（代码已完成、停在分支）
+1. **S7a 装配+列表**：wt-s7a-module-list @ d580123b（模块注册/PageId/列表页/内置任务注册缝，引擎构造签名已注）。合并预期冲突三处：module_schedule/CMakeLists、tests/CMakeLists（追加并集）；**tests/test_modules/test_app_assembly.cpp 的注册表行数/枚举序断言必须按合并后真实 kModuleRegistry 语义重核（新结构 Memory 默认开、Mcp 默认关，再插 Schedule 行需重排）——勿盲取一边**
+2. **release 线全量**：见头部说明，由其会话重新整合
+
+### 接线与修缺（开发中止时未落）
+3. 引擎启动接线（S7a onStart/onStop 接缝注释：S4 构造 (SqliteDb&, ChannelRegistry&) + start/stop）
+4. 历史抽屉按钮 → S7b 抽屉本体接线（按钮位已留）
+5. wecom 渠道在 ChannelRegistry 的注册接线（channels/wecom.h 注册接缝已备）
+6. 令牌桶全局装配口径（调研 §16.4：全局一桶，防多 schedule_channel 行叠加超频）
+7. 引擎跨波对齐点核对（RuleKind / Receipt / ChannelRegistry 方法名——S4 源码内集中标注处）
+8. 设置页「定时」模块开关卡（kModuleIdSchedule；S7a 暂恒注册）
+9. module_schedule/CMakeLists 的 devdesk_platform 重复行去重
+10. cron 编辑回显透传（S7b 留白注释，见 schedule_ui_edit）
+
+### 审计（B 交卷 3 中 4 低；A 中止）
+11. 【中】toast_channel.cpp include app_sidebar.h 调 app::showAppNotice——渠道层反向依赖 app 层，接线必炸；改经注册回调/ServiceLocator 注入（报告：docs/superpowers/plans/2026-10-28-scheduling-line-audit-B.md）
+12. 【中】module_schedule 库缺 channel_registry 源登记（S7a 分支已补登——随第 1 条合入后核对销账）
+13. 【中】test_schedule_rule.cpp:390/451 DST 用例在无 DST 时区 return true 恒真跳过——§9.10 验收无任何环境实测覆盖，需可切换假时钟或 CI 补 DST 用例
+14. 【低】其余 4 条见审计 B 报告；交接文档 §11 波次表状态滞后待刷
+15. 审计 A（正确性面）中止未完成——重派范围：git diff f42ea2c4..dev 的调度线文件集（规格逐条/静默失败/边界/测试有效性四维）
+
+### 后续
+16. S8 系统定时只读源（ScheduleProvider；release 线按新结构合入后，release 为首个来源）
+17. 统一验证：全部用例已写未执行——EUI fork HEAD 修复后看 CI 判定，或用户另行指令
+
