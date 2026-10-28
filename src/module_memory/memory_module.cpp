@@ -845,6 +845,117 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         cy += kUsageH + kCardGap;
     }
 
+    // 最近调用记录表（消耗控制第 4 条：数字与内部账面一致——直接读 ledger 行）
+    {
+        constexpr float kRowH = 26.0f;
+        const auto rows = snap.recentLedger;
+        const float tableH = 40.0f + static_cast<float>(rows.size()) * kRowH + 14.0f;
+        ui.rect("memory.recent.card")
+            .position(x, cy)
+            .size(w, tableH)
+            .color(t.colors.surface)
+            .radius(t.sizes.radiusLarge)
+            .border(1.0f, t.colors.borderDefault)
+            .build();
+        ui.text("memory.recent.title")
+            .position(x + 16.0f, cy + 12.0f)
+            .size(320.0f, 22.0f)
+            .text("最近调用记录")
+            .fontSize(t.sizes.fontSizeBody)
+            .lineHeight(22.0f)
+            .fontWeight(600)
+            .color(t.colors.textPrimary)
+            .build();
+        auto colHeader = [&](const char* text, float cx, float cw, bool right) {
+            ui.text(std::string("memory.recent.h.") + text)
+                .position(cx, cy + 40.0f)
+                .size(cw, 18.0f)
+                .text(text)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(18.0f)
+                .horizontalAlign(right ? eui::HorizontalAlign::Right
+                                       : eui::HorizontalAlign::Left)
+                .color(t.colors.textTertiary)
+                .build();
+        };
+        const float cTime = x + 16.0f;
+        const float cKindW = 160.0f;
+        const float cKind = cTime + 140.0f;
+        const float cCount = cKind + cKindW;
+        const float cCountW = 120.0f;
+        const float cTok = cCount + cCountW;
+        const float cTokW = 120.0f;
+        colHeader("时间", cTime, 130.0f, false);
+        colHeader("类型", cKind, cKindW, false);
+        colHeader("条数/字数", cCount, cCountW, true);
+        colHeader("token · 金额", cTok, cTokW, true);
+        auto kindDisplay = [&](const std::string& kind) {
+            if (kind == "llm_input") return "提炼 · 输入";
+            if (kind == "llm_output") return "提炼 · 产出";
+            if (kind == "embed") return "向量化";
+            if (kind == "inject_items") return "注入 · 条数";
+            if (kind == "inject_chars") return "注入 · 字数";
+            if (kind == "hook_search") return "hook 检索";
+            return kind;
+        };
+        int i = 0;
+        for (const auto& r : rows) {
+            const float ry = cy + 62.0f + static_cast<float>(i) * kRowH;
+            const std::string rid = std::to_string(i);
+            ui.text("memory.recent.r" + rid + ".time")
+                .position(cTime, ry)
+                .size(130.0f, 20.0f)
+                .text(panel::formatFeedTime(r.ts))
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(20.0f)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.text("memory.recent.r" + rid + ".kind")
+                .position(cKind, ry)
+                .size(cKindW, 20.0f)
+                .text(kindDisplay(r.kind))
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(20.0f)
+                .color(t.colors.textSecondary)
+                .build();
+            char countBuf[40];
+            std::snprintf(countBuf, sizeof(countBuf), "%lld", r.tokens);
+            ui.text("memory.recent.r" + rid + ".count")
+                .position(cCount, ry)
+                .size(cCountW, 20.0f)
+                .text(countBuf)
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(20.0f)
+                .horizontalAlign(eui::HorizontalAlign::Right)
+                .color(t.colors.textPrimary)
+                .build();
+            char tokBuf[64];
+            std::snprintf(tokBuf, sizeof(tokBuf), "%lld · %s", r.tokens,
+                          formatMilliYuan(r.costMilliYuan).c_str());
+            ui.text("memory.recent.r" + rid + ".tok")
+                .position(cTok, ry)
+                .size(cTokW, 20.0f)
+                .text(tokBuf)
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(20.0f)
+                .horizontalAlign(eui::HorizontalAlign::Right)
+                .color(t.colors.textTertiary)
+                .build();
+            ++i;
+        }
+        if (rows.empty()) {
+            ui.text("memory.recent.empty")
+                .position(cTime, cy + 62.0f)
+                .size(w - 32.0f, 20.0f)
+                .text("还没有调用记录。")
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(20.0f)
+                .color(t.colors.textTertiary)
+                .build();
+        }
+        cy += tableH + kCardGap;
+    }
+
     composeFeed(ui, t, x, w, cy);
 }
 

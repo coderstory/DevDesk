@@ -355,7 +355,7 @@ core::Result<void> PanelState::rejectProposal(const std::string& id) {
 
 core::Result<void> PanelState::editThenAccept(const std::string& id,
                                               const std::string& newText) {
-    if (proposalStore_ == nullptr) {
+    if (!proposalStore_.has_value()) {
         return core::Result<void>::fail(core::ErrorCode::Internal, "提案库未打开");
     }
     auto upd = proposalStore_->updateResultText(
