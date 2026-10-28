@@ -171,6 +171,7 @@ add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_agent)
+add_subdirectory(src/module_memory)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
@@ -209,7 +210,7 @@ if(DEVDESK_COVERAGE)
     set(DEVDESK_COVERAGE_LIBS
         devdesk_core devdesk_platform devdesk_ui_kit
         devdesk_module_home devdesk_module_markdown devdesk_module_todo
-        devdesk_agent
+        devdesk_agent devdesk_module_memory
         devdesk_module_claude_proxy devdesk_module_settings
         devdesk_module_about devdesk_module_wallpaper)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
@@ -283,6 +284,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_agent
+    devdesk_module_memory
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about

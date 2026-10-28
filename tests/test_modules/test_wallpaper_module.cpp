@@ -95,8 +95,10 @@ const ::app::registry::ModuleEntry* wallpaperRow() {
 
 // 防：枚举插错位置导致侧栏/分发顺序漂移。
 REGISTER_TEST(wallpaper_pageid_order,
-              "wallpaper: PageId 序 Agent < Wallpaper < Settings 且 pageIdToString 为 Wallpaper", {
+              "wallpaper: PageId 序 Agent < Memory < Wallpaper < Settings 且 pageIdToString 为 Wallpaper", {
     DOCTEST_CHECK(static_cast<int>(::core::PageId::Agent) <
+                  static_cast<int>(::core::PageId::Memory));
+    DOCTEST_CHECK(static_cast<int>(::core::PageId::Memory) <
                   static_cast<int>(::core::PageId::Wallpaper));
     DOCTEST_CHECK(static_cast<int>(::core::PageId::Wallpaper) <
                   static_cast<int>(::core::PageId::Settings));
@@ -115,10 +117,11 @@ REGISTER_TEST(wallpaper_registry_row,
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,      ::core::PageId::Markdown,
         ::core::PageId::Todo,      ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,     ::core::PageId::Wallpaper,
-        ::core::PageId::Settings,  ::core::PageId::About,
+        ::core::PageId::Agent,     ::core::PageId::Memory,
+        ::core::PageId::Wallpaper, ::core::PageId::Settings,
+        ::core::PageId::About,
     };
-    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(8));
+    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(9));
     for (std::size_t i = 0; i < kRegistrySize; ++i) {
         DOCTEST_CHECK(::app::registry::kModuleRegistry[i].page == kEnumOrder[i]);
     }
@@ -147,10 +150,10 @@ REGISTER_TEST(wallpaper_registry_row,
 
 // 防：默认被打开，首次启动冒出壁纸页。
 REGISTER_TEST(wallpaper_default_off,
-              "wallpaper: 默认清单 5 项不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
+              "wallpaper: 默认清单 6 项不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
     using namespace module::settings;
     const SettingsConfig cfg;
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(5));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(6));
     DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
                             kModuleIdWallpaper) == cfg.enabledModules.end());
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdWallpaper));
@@ -165,7 +168,7 @@ REGISTER_TEST(wallpaper_default_off,
 
 // 防：门控键写错/表序错——启用后页面仍不出现，或出现在错误位置。
 REGISTER_TEST(wallpaper_enabled_gating,
-              "wallpaper: 启用后 moduleEnabled true；all-off 3 条、all-on 8 条且 wallpaper 在 Agent 与 Settings 之间", {
+              "wallpaper: 启用后 moduleEnabled true；all-off 3 条、all-on 9 条且 wallpaper 在 Memory 与 Settings 之间", {
     using namespace module::settings;
     constexpr std::size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
@@ -174,14 +177,16 @@ REGISTER_TEST(wallpaper_enabled_gating,
     SettingsConfig allOn;
     allOn.enabledModules = {kModuleIdHome,    kModuleIdMarkdown, kModuleIdTodo,
                             kModuleIdClaudeProxy, kModuleIdAgent,
-                            kModuleIdWallpaper, kModuleIdSettings};
+                            kModuleIdMemory, kModuleIdWallpaper,
+                            kModuleIdSettings};
     DOCTEST_CHECK(moduleEnabled(allOn, kModuleIdWallpaper));
     const auto gated = app::assembly::buildGatedEntries(
         allOn, ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(8));
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(9));
     DOCTEST_CHECK(gated[4].page == ::core::PageId::Agent);
-    DOCTEST_CHECK(gated[5].page == ::core::PageId::Wallpaper);
-    DOCTEST_CHECK(gated[6].page == ::core::PageId::Settings);
+    DOCTEST_CHECK(gated[5].page == ::core::PageId::Memory);
+    DOCTEST_CHECK(gated[6].page == ::core::PageId::Wallpaper);
+    DOCTEST_CHECK(gated[7].page == ::core::PageId::Settings);
 
     SettingsConfig allOff;
     allOff.enabledModules.clear();

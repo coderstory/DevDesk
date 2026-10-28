@@ -24,6 +24,7 @@ extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
 extern "C" ::core::Module* create_about_module();
 extern "C" ::core::Module* create_agent_module();
+extern "C" ::core::Module* create_memory_module();
 extern "C" void claude_test_force_show_guide(::core::Module*);
 
 namespace {
@@ -65,6 +66,7 @@ REGISTER_TEST(module_icons_fa_codepoints,
     if (!checkOneIcon(create_settings_module, 0xF013)) return false;
     if (!checkOneIcon(create_about_module, 0xF05A)) return false;
     if (!checkOneIcon(create_agent_module, 0xF544)) return false;
+    if (!checkOneIcon(create_memory_module, 0xF5DC)) return false;
     return true;
 })
 

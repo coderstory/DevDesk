@@ -217,6 +217,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_agent
+    devdesk_module_memory
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
@@ -297,6 +298,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_markdown
         devdesk_module_todo
         devdesk_agent
+        devdesk_module_memory
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
@@ -398,6 +400,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         devdesk_module_markdown
         devdesk_module_todo
         devdesk_agent
+        devdesk_module_memory
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
