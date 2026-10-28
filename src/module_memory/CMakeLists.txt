@@ -10,6 +10,8 @@ add_library(devdesk_module_memory STATIC
     collector/session_reader.h
     collector/collector.cpp
     collector/collector.h
+    pipeline/collect_round.cpp
+    pipeline/collect_round.h
     gateway/telemem_client.cpp
     gateway/telemem_client.h
     hook/inject.cpp

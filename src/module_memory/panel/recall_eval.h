@@ -32,6 +32,10 @@ struct RecallResult {
     int recallPct = -1;  // 0~100；-1 = 无记录
     int hits = 0;        // 15 查询中前 5 命中的条数
     int queries = 0;     // 参评查询数（恒 15；失败截断时如实记录）
+    // 清理缺口（不落库，只进当轮快照）：id 未回填（get_memories 清单 ≤200 条/
+    // 正文失配）+ 删除失败之和。>0 = 有评测条目残留引擎、可能进 hook 注入通道
+    //（审计 F5：必须面板可见，禁止只 LOG_WARN）
+    int cleanupFailures = 0;
 };
 
 // 评测结果库（memoryDataDir()/recall_eval.db；面板重开取 last()）

@@ -156,13 +156,23 @@ core::Result<RecallResult> runFrozenEval(gateway::IMemoryRetriever& engine) {
             core::ErrorCode::Internal, "引擎检索全部失败（引擎未运行或不可达）");
     }
 
-    // ③ 尽力清理：本次入库条目移出「自动想起」（评测数据不进注入通道）
+    // ③ 尽力清理：本次入库条目移出「自动想起」（评测数据不进注入通道）。
+    // F5：清理缺口必须计数上浮（面板可见）——id 未回填与删除失败都是真实残留，
+    // 残留条目会被 hook 注入通道检索到，只 LOG_WARN 等于静默污染
+    int cleanupFailures = 0;
     for (std::size_t i = 0; i < kFrozenDocCount; ++i) {
-        if (docIds[i].empty()) continue;
-        auto marked = engine.setMemoryForgotten(docIds[i], true);
-        if (marked.isFail()) {
-            LOG_WARN("评测数据清理标记失败（尽力而为，不影响结果）");
+        if (docIds[i].empty()) {
+            ++cleanupFailures;  // id 未回填：无法定向清理，残留如实计
+            continue;
         }
+        if (engine.setMemoryForgotten(docIds[i], true).isFail()) {
+            ++cleanupFailures;
+        }
+    }
+    if (cleanupFailures > 0) {
+        LOG_WARN("评测数据清理缺口 " + std::to_string(cleanupFailures) + "/" +
+                 std::to_string(kFrozenDocCount) +
+                 "（残留条目可能进注入通道，重跑评测可覆盖清理）");
     }
 
     RecallResult r;
@@ -170,6 +180,7 @@ core::Result<RecallResult> runFrozenEval(gateway::IMemoryRetriever& engine) {
     r.hits = hits;
     r.queries = static_cast<int>(kFrozenQueryCount);
     r.recallPct = hits * 100 / static_cast<int>(kFrozenQueryCount);
+    r.cleanupFailures = cleanupFailures;
     return core::Result<RecallResult>::ok(r);
 }
 
