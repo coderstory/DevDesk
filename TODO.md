@@ -155,12 +155,17 @@
 - 落实口径：实现子任务只写码 + 写测试，不构建不跑测试；合并 dev 由主会话串行做；全部合入后由主会话统一跑一次构建 + 测试收口
 - 本批范围：docs/superpowers/plans/2026-10-21-UAT62-整改清单.md「增补需求 · 2026-10-28 用户登记（H27-H31）」节
 
-## 上线模块收口状态（2026-10-28 18:15，用户指令"收尾了，没干完的写 TODO.md"）
+## 上线模块收口状态（2026-10-28 18:15 记录，18:40 按停止指令终态更新）
 
-已进 dev（本地 dev 26a2deaf = 调度线全部 + 上线模块全部 + 修复批）：实现 6ca2174a → 审计 C1/C2 全处置（52f68391/749aeec7/bd11fc52/aa0adf6b/8126eaa9/d1b34740，台账见 docs/superpowers/plans/2026-10-28-release-audit-C1C2-disposition.md）→ 与 origin/dev 合并 76aebdde（MCP 在上线上面，17 冲突按 2026-10-28-merge-dev-prep.md 解）→ dev 合并 26a2deaf。
+实现与审计全闭环（实现 6ca2174a → 审计 C1/C2 全处置 52f68391/749aeec7/bd11fc52/aa0adf6b/8126eaa9/d1b34740，台账 docs/superpowers/plans/2026-10-28-release-audit-C1C2-disposition.md）；**但 dev 推送最终未完成**：18:15 时本地 dev 26a2deaf 曾含上线模块，后因 memcpp 会话推 Memory 页上 origin/dev 造成 12 文件结构性冲突，调度会话收线时按"语义整合归各线"原则把 26a2deaf 从 dev 回退（留 reflog），dev 重置回 `532f466c`；我方随后派的一次性 13 页序重钉合并子任务**被用户停止指令中止**（差最后 1-2 个测试文件），worktree D:/wt-rel-core 已硬恢复干净于 `9b3f9e1d`，半成品解冲突已丢弃。
 
 **未干完清单（按优先级）：**
-0. **dev 推送未完成（收口时被卡）**——本地 dev `26a2deaf` 推送被拒：memcpp 会话已把「Memory 页」推上 origin/dev（其融合序 …Agent/Memory(5)/Wallpaper/Mcp/Settings/About，与本地 12 页序分叉），同步合并需重钉 13 页枚举（Memory 排智能体后，MCP 仍在上线上面）+ test_router/test_app_assembly/test_wallpaper 等全部钉值；且 dev 集成席位 wt-merge 被调度会话占用解冲突中。**待席位空闲：merge origin/dev → 重钉枚举序 → git-push.exe origin dev**。
+0. **dev 推送未完成——重做即收口**（在 D:/wt-rel-core 上执行）：
+   - `git merge origin/dev`（532f466c），12 个冲突文件：顶层 CMakeLists.txt、src/app_registry.h、src/app_sidebar.cpp、src/main.cpp、src/module_settings/settings_config.cpp、settings_ui_cards.cpp、tests/probes/uat62_page_shots_probe.cpp、wallpaper_probe.cpp、tests/test_core/test_router.cpp、tests/test_modules/test_app_assembly.cpp、test_module_gating.cpp、test_wallpaper_module.cpp
+   - **13 页终态序（唯一口径）**：PageId = 0 Home, 1 Markdown, 2 Todo, 3 ClaudeProxy, 4 Agent, 5 Memory, 6 Wallpaper, 7 Mcp, 8 ReleaseGroup, 9 ReleaseTasks, 10 ReleaseConfig, 11 Settings, 12 About（MCP 仍在上线之上；Memory 按 memcpp 线融合序排智能体后）
+   - 规则：注册表 13 行同序（Memory 行取 dev 侧、Release 三行取我方 parent 钉法）；默认 memory 开/mcp 关/release 开；main.cpp 13 case 并存；模块默认版本迁移链两侧收敛化；全部测试钉值按 13 项重算（不许抄一侧）；CMake 顶层 release/mcp/memory/schedule 四行并存
+   - 完成后：wt-merge 里 `git merge --ff-only wt-release-core` → `C:/Tools/Git/mingw64/libexec/git-core/git-push.exe origin dev`
+   - 本机一律不构建不跑测试（验证走构建时机到来时的首轮构建）
 1. **整批无编译/测试实测证据**——修复批 7 个提交 + 两个合并均未构建未跑测试（本机免编译指令；CI 验证环节按用户指示取消）。首个实测点 = 下次任何一次构建；红了按失败项修。macOS 侧全程仅静态审计，无实机编译。
 2. **feature/20261027-release-module 文档分支未合入 dev**——上面还有交付闸门 hook（.claude/hooks/deliverable-gate.sh）、spec 同步版、TODO 收口段、调度交接文档原版。后续合并时：handoff 文档 dev 侧已是"路径仓库相对"修订版，冲突取 dev 侧。
 3. **安装程序未做**——上线模块随 0.5.0 出包（Inno Setup / DMG）+ 用户真机 UAT 未做。
