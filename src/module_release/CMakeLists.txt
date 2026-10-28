@@ -3,6 +3,7 @@
 add_library(devdesk_module_release STATIC
     release_store.cpp
     release_logic.cpp
+    release_reminder_logic.cpp
     release_config_ui.cpp
     release_list_ui.cpp
     release_detail_ui.cpp

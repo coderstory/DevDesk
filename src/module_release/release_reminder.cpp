@@ -8,6 +8,7 @@
 //     都会在窗销毁回调缺失/时钟回拨时退化成每秒重复开窗。
 //   - 窗被打开期间只刷新内容、不重开；内容变空时自动关窗（全部做完就不弹）。
 #include "release_reminder.h"
+#include "release_reminder_logic.h"
 
 #include "release_logic.h"
 #include "release_store.h"
@@ -38,10 +39,8 @@ namespace module::release {
 
 namespace {
 
-constexpr std::int64_t kReshowSeconds = 5 * 60;  // 用户关闭后的冷却时长
-// 开窗请求的确认宽限期：onWindowCreated 未在此时长内确认句柄即视为创建
-// 失败（EUI-NEO openWindow 只是入队，失败时创建/销毁回调都不触发）。
-constexpr std::int64_t kWindowOpenGraceSeconds = 5;
+// 冷却时长 / 开窗宽限期两个常量已随决策逻辑迁至 release_reminder_logic.h
+// （唯一一处定义），本文件直接引用。
 
 // 全屏窗版面（逻辑像素）：标题区固定，列表区吃剩余高度。
 constexpr float kOuterInsetWide = 48.0f;
@@ -126,27 +125,8 @@ std::string joinText(const std::vector<std::string>& parts, const char* separato
 // 演示模式只替换 tick 的数据来源（假数据代替真实到期聚合），开窗、冷却、
 // 补弹、指纹去重等行为全部复用真实路径，因此不会让演示态与真实态产生
 // 行为漂移；未设置该变量时默认逻辑一字不变。
-
-// DEVDESK_RELEASE_DEMO = red / orange / yellow；非法值按未设置处理。
-// 只在引擎构造时调用一次：运行期不再 getenv。
-bool readDemoLevelFromEnv(RemindLevel& level) {
-    const char* raw = std::getenv("DEVDESK_RELEASE_DEMO");
-    if (raw == nullptr) return false;
-    const std::string value(raw);
-    if (value == "red") {
-        level = RemindLevel::Red;
-        return true;
-    }
-    if (value == "orange") {
-        level = RemindLevel::Orange;
-        return true;
-    }
-    if (value == "yellow") {
-        level = RemindLevel::Yellow;
-        return true;
-    }
-    return false;
-}
+// 演示开关的电平解析（readDemoLevelFromEnv）已随决策逻辑迁至
+// release_reminder_logic，本文件只保留演示数据的构造。
 
 // 演示任务的计划日取当天本地日期：窗标题里的「上线日」看起来像真实任务。
 // 引擎只在主线程使用，localtime 的静态缓冲无并发风险。
@@ -163,78 +143,10 @@ std::string demoPlanDate(std::int64_t nowUnix) {
 
 } // namespace
 
-// 视图类型放在具名 detail 命名空间：ReleaseReminder::Impl（外部链接类）持有
-// 这些类型作成员，若用匿名命名空间会触发 -Wsubobject-linkage。
-namespace detail {
-
-// 一个环境分组（scope 非 "task" 的到期条目）。
-struct ReminderEnvSection {
-    std::string envName;
-    std::vector<DueItem> items;
-};
-
-// 一个任务的展示分组：任务级条目 + 各环境条目；条目顺序沿用 dueItems 的输出。
-struct ReminderTaskGroup {
-    std::int64_t taskId = 0;
-    std::string planDate;
-    TaskStatus status = TaskStatus::Draft;
-    RemindLevel level = RemindLevel::Yellow;
-    std::vector<std::string> envNames;  // 任务全部未移除环境（展示上下文）
-    std::vector<DueItem> taskItems;
-    std::vector<ReminderEnvSection> envSections;
-};
-
-struct ReminderView {
-    std::vector<ReminderTaskGroup> tasks;
-    std::vector<DueItem> items;
-    std::string fingerprint;
-    RemindLevel level = RemindLevel::Yellow;
-};
-
-} // namespace detail
+// 视图类型（ReminderEnvSection / ReminderTaskGroup / ReminderView）已迁至
+// release_reminder_logic.h（namespace module::release），本文件直接使用。
 
 namespace {
-
-using detail::ReminderEnvSection;
-using detail::ReminderTaskGroup;
-using detail::ReminderView;
-
-void appendItemFingerprint(std::string& out, const DueItem& item) {
-    out += std::to_string(static_cast<int>(item.level));
-    out += '\x1f';
-    out += std::to_string(item.taskId);
-    out += '\x1f';
-    out += item.scope;
-    out += '\x1f';
-    out += item.title;
-    out += '\x1f';
-    out += item.detail;
-    out += '\x1e';
-}
-
-std::string buildFingerprint(const ReminderView& view) {
-    std::string out;
-    for (const ReminderTaskGroup& group : view.tasks) {
-        out += "T";
-        out += std::to_string(group.taskId);
-        out += '|';
-        out += group.planDate;
-        out += '|';
-        out += std::to_string(static_cast<int>(group.status));
-        for (const std::string& envName : group.envNames) {
-            out += "|E";
-            out += envName;
-        }
-        for (const DueItem& item : group.taskItems) appendItemFingerprint(out, item);
-        for (const ReminderEnvSection& section : group.envSections) {
-            out += "|S";
-            out += section.envName;
-            for (const DueItem& item : section.items) appendItemFingerprint(out, item);
-        }
-        out += '\n';
-    }
-    return out;
-}
 
 // 聚合到期项。任一读库失败即整体放弃本 tick（部分数据会让「全做完」误判，
 // 从而错误关窗）；错误由调用方节流记录。
@@ -446,7 +358,6 @@ void composeReminderWindow(
 
 } // namespace
 
-using detail::ReminderView;
 using detail::ReminderWindowState;
 
 // ReleaseReminder::Impl 必须在命名空间作用域定义（嵌套类的类外定义不能落在
@@ -519,7 +430,7 @@ void ReleaseReminder::Impl::tick(std::int64_t nowUnix) {
         }
     }
 
-    if (view.items.empty()) {
+    if (!hasDueItems(view.items)) {
         closeForEmpty();  // 全部做完就不弹：已开的窗也要收掉
         return;
     }
@@ -527,7 +438,7 @@ void ReleaseReminder::Impl::tick(std::int64_t nowUnix) {
     // 对账看门狗：已开窗但句柄为空（销毁回调缺失等异常路径）超过宽限期，
     // 视为窗已丢——清态并允许重新弹窗，而不是提醒静默失效。
     if (windowOpen && (window == nullptr || window->handle == nullptr)) {
-        if (currentNow - openConfirmedAt > kWindowOpenGraceSeconds) {
+        if (watchdogLostHandleGraceElapsed(currentNow, openConfirmedAt)) {
             LOG_WARN("Release 提醒：提醒窗句柄丢失（开窗状态与句柄失配超过 "
                      + std::to_string(kWindowOpenGraceSeconds) +
                      " 秒），重置开窗状态并允许重试");
@@ -553,7 +464,7 @@ void ReleaseReminder::Impl::tick(std::int64_t nowUnix) {
     // 创建/销毁回调都不触发）——超过宽限期判定失败，清态允许下一轮重开，
     // 避免提醒永久哑火。
     if (openRequestedAt != 0) {
-        if (currentNow - openRequestedAt > kWindowOpenGraceSeconds) {
+        if (openRequestGraceElapsed(currentNow, openRequestedAt)) {
             LOG_WARN("Release 提醒：开窗请求超过 "
                      + std::to_string(kWindowOpenGraceSeconds) +
                      " 秒未确认窗口句柄，判定创建失败并允许重试");
@@ -563,13 +474,12 @@ void ReleaseReminder::Impl::tick(std::int64_t nowUnix) {
         }
     }
 
-    if (currentNow < suppressUntil) return;
-
-    // 同一批到期项（内容指纹相同）在冷却窗口内不重复弹；时钟回拨时
-    // currentNow < lastShownAt，差值不可信，直接按「未冷却」处理。
-    const bool withinReshowWindow =
-        currentNow >= lastShownAt && currentNow - lastShownAt < kReshowSeconds;
-    if (withinReshowWindow && view.fingerprint == lastShownFingerprint) return;
+    // 补弹/重弹最终判据（冷却门 + 同指纹重弹窗护栏）已抽到
+    // release_reminder_logic::shouldOpenReminder，本文件只执行其结论。
+    if (!shouldOpenReminder(currentNow, suppressUntil, lastShownAt,
+                            lastShownFingerprint, view.fingerprint)) {
+        return;
+    }
 
     openReminder(view, nowUnix);
 }
@@ -658,7 +568,7 @@ void ReleaseReminder::Impl::openReminder(const ReminderView& view,
             .ignoreClearColorOverride()
             .windowEffect(core::platform::WindowEffect::None)
             .onWindowCreated([state, generation](core::window::Handle handle) {
-                if (state->openGeneration != generation) {
+                if (isStaleGeneration(generation, state->openGeneration)) {
                     // 过期代数的迟到窗口（看门狗已放弃该请求并重开）：
                     // 立即关掉，不碰当前窗状态。
                     core::window::requestWindowClose(handle);
@@ -674,7 +584,7 @@ void ReleaseReminder::Impl::openReminder(const ReminderView& view,
                 }
             })
             .onWindowDestroyed([state, generation](core::window::Handle handle) {
-                if (state->openGeneration != generation) return;
+                if (isStaleGeneration(generation, state->openGeneration)) return;
                 if (state->handle == handle) state->handle = nullptr;
                 if (state->onClosed) state->onClosed();
             })
@@ -714,7 +624,7 @@ void ReleaseReminder::Impl::handleWindowClosed() {
     openConfirmedAt = 0;
     if (!running) return;
     if (!autoClosing) {
-        suppressUntil = std::max(suppressUntil, currentNow + kReshowSeconds);
+        suppressUntil = computeSuppressUntil(currentNow, suppressUntil);
     }
     autoClosing = false;
 }

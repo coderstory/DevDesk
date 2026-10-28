@@ -136,6 +136,9 @@ add_executable(devdesk_tests
     test_modules/test_release_config_ui.cpp
     test_modules/test_release_task_ui.cpp
     test_modules/test_release_detail_ui.cpp
+    # 提醒窗调度/抑制/渲染零自动化断言（审计 C2 M2）：纯决策逻辑无头用例
+    #（指纹/冷却门/开-关窗判据/看门狗宽限/迟到代数/demo 电平映射，零窗口零 DB）
+    test_modules/test_release_reminder.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
