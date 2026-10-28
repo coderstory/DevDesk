@@ -358,7 +358,22 @@ inline constexpr const char* kSql = R"(
         FOREIGN KEY (task_id) REFERENCES release_task(id) ON DELETE CASCADE
     );
 
-    -- 唯一性兜底（应用层已拦，库层防并发写穿透与历史脏数据；与建表同脚本幂等执行）：
+    -- 唯一性兜底：去重守卫在先，唯一索引在后（与建表同脚本幂等执行）。
+    --   去重守卫：这四条 DELETE 仅在建索引前清理约束上线前的历史重复行，每组保留
+    --   最小 id；幂等、正常库零命中。早批次产物库若在无约束期写入过重复行，
+    --   靠它避免 CREATE UNIQUE INDEX 直接失败拖垮启动链。
+    --   task 先去重（外键 ON DELETE CASCADE，删重复 task 行会级联带走其子行，
+    --   属预期丢弃），env / config / step 随后各自清残留重复。
+    DELETE FROM release_task WHERE status <> 'voided' AND id NOT IN
+        (SELECT MIN(id) FROM release_task WHERE status <> 'voided' GROUP BY plan_date);
+    DELETE FROM release_task_env WHERE id NOT IN
+        (SELECT MIN(id) FROM release_task_env GROUP BY task_id, env_name);
+    DELETE FROM release_task_config WHERE id NOT IN
+        (SELECT MIN(id) FROM release_task_config GROUP BY task_service_id, kind);
+    DELETE FROM release_task_step WHERE id NOT IN
+        (SELECT MIN(id) FROM release_task_step GROUP BY task_service_id, kind);
+
+    -- 唯一索引防并发写穿透（应用层已拦为主，库层为兜底）：
     --   同日非作废任务唯一（作废不占当天名额，可共存）；
     --   环境 / 配置 / 步骤各按 (外键, 键) 唯一。
     CREATE UNIQUE INDEX IF NOT EXISTS idx_release_task_plan_date_active

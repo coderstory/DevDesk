@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -74,9 +75,18 @@ constexpr std::int64_t kDoneAt = 1700000000;
 
 // makeTask 的 planDate 固定为 2026-10-27；这里给出同一计划日零点的 epoch 秒 +
 // 分钟偏移（分钟可为负或 > 1440，与 release_logic 内部 nowMinute 同口径）。
+// 口径与 release_logic::planDateElapsedMinutes 完全一致：本地 mktime 零点起算，
+// std::mktime 按本机时区把 2026-10-27 00:00:00 折算为 epoch。
+// 反重构警告：不得改回 daysFromCivil（UTC 口径）——非 UTC 时区下与实现之间的
+// 时区偏移会让本文件的跨午夜 / 基线边界用例必红。
 std::int64_t planDayNowUnix(int minute) {
-    const std::int64_t dayZero = core::time::daysFromCivil(2026, 10, 27) * 86400;
-    return dayZero + static_cast<std::int64_t>(minute) * 60;
+    std::tm planMidnight{};
+    planMidnight.tm_year = 2026 - 1900;
+    planMidnight.tm_mon = 9;    // 10 月
+    planMidnight.tm_mday = 27;
+    planMidnight.tm_isdst = -1;  // 与 release_logic 内部同款：让 mktime 按当日规则定 DST
+    const std::time_t midnight = std::mktime(&planMidnight);
+    return static_cast<std::int64_t>(midnight) + static_cast<std::int64_t>(minute) * 60;
 }
 
 } // namespace
