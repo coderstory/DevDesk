@@ -417,7 +417,7 @@ REGISTER_TEST(core_window_to_compose_degenerate_and_legacy,
 // 断言写成显式钉死预期序：`PageId::Todo >= 0` 这类对 enum class 的比较恒真，验证不了
 // 任何顺序
 REGISTER_TEST(core_pageid_order,
-              "core: PageId ordering contract (Home<Markdown<Todo<ClaudeProxy<Agent<Memory<Wallpaper<Settings<About)", {
+              "core: PageId ordering contract (Home<Markdown<Todo<ClaudeProxy<Agent<Memory<Wallpaper<Mcp<Settings<About)", {
     using core::PageId;
     const int home = static_cast<int>(PageId::Home);
     const int markdown = static_cast<int>(PageId::Markdown);
@@ -426,18 +426,20 @@ REGISTER_TEST(core_pageid_order,
     const int agent = static_cast<int>(PageId::Agent);
     const int memory = static_cast<int>(PageId::Memory);
     const int wallpaper = static_cast<int>(PageId::Wallpaper);
+    const int mcp = static_cast<int>(PageId::Mcp);
     const int settings = static_cast<int>(PageId::Settings);
     const int about = static_cast<int>(PageId::About);
 
     // 严格单调：Home < Markdown < Todo < ClaudeProxy < Agent < Memory < Wallpaper <
-    // Settings < About。侧边栏顺序的真源 = 注册表序 = 枚举序
+    // Mcp < Settings < About。侧边栏顺序的真源 = 注册表序 = 枚举序
     DOCTEST_CHECK(home < markdown);
     DOCTEST_CHECK(markdown < todo);
     DOCTEST_CHECK(todo < claude);
     DOCTEST_CHECK(claude < agent);
     DOCTEST_CHECK(agent < memory);
     DOCTEST_CHECK(memory < wallpaper);
-    DOCTEST_CHECK(wallpaper < settings);
+    DOCTEST_CHECK(wallpaper < mcp);
+    DOCTEST_CHECK(mcp < settings);
     DOCTEST_CHECK(settings < about);
 
     // 钉死预期取值，防「虽单调但整体平移/插空」绕过顺序检查而悄悄改变路由编号
@@ -448,8 +450,9 @@ REGISTER_TEST(core_pageid_order,
     DOCTEST_CHECK_EQ(agent, 4);
     DOCTEST_CHECK_EQ(memory, 5);
     DOCTEST_CHECK_EQ(wallpaper, 6);
-    DOCTEST_CHECK_EQ(settings, 7);
-    DOCTEST_CHECK_EQ(about, 8);
+    DOCTEST_CHECK_EQ(mcp, 7);
+    DOCTEST_CHECK_EQ(settings, 8);
+    DOCTEST_CHECK_EQ(about, 9);
     return true;
 })
 

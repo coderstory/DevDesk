@@ -1,9 +1,13 @@
 #include "doctest.h"
 #include "test_support.h"
 #include "platform/http_client.h"
+#include "platform/http_client_ca.h"
 #include "platform/http_server.h"
 
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -199,5 +203,164 @@ REGISTER_TEST(http_stream_error_terminal,
     DOCTEST_CHECK(r == platform::http::ChunkResult::Error);
     DOCTEST_CHECK_EQ(err, std::string("test"));
     srv.stop();
+    return true;
+})
+// ── CA 策略(CA 批:DEVDESK_CA_BUNDLE 覆盖口,DevDesk 自有约定)────────
+
+REGISTER_TEST(http_ca_policy_env_unset_defaults_to_native,
+              "http ca: DEVDESK_CA_BUNDLE 未设 → 平台信任根策略(Windows NATIVE_CA 现状不变)", {
+    const auto policy = platform::http::resolveCaPolicy("");
+    DOCTEST_REQUIRE(policy.isOk());
+    DOCTEST_CHECK(policy.value().useNative);
+    DOCTEST_CHECK_EQ(policy.value().caInfo, std::string());
+    return true;
+})
+
+REGISTER_TEST(http_ca_policy_bundle_file_activates_cainfo,
+              "http ca: DEVDESK_CA_BUNDLE 指向存在文件 → Bundle 校验(CAINFO),不叠加 NATIVE", {
+    // 防的事故:NATIVE_CA 依赖本机 ROOT 库,缺根证书(如 example.com 链)即 CURLE 60;
+    // 显式 bundle 是完整校验的替代信任根,不是关校验。
+    const auto bundlePath = test_support::tempConfigFile("http_ca", "bundle");
+    {
+        std::ofstream o(bundlePath, std::ios::binary | std::ios::trunc);
+        o << "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----\n";
+    }
+    const auto policy = platform::http::resolveCaPolicy(bundlePath.string());
+    DOCTEST_REQUIRE(policy.isOk());
+    DOCTEST_CHECK_FALSE(policy.value().useNative);
+    DOCTEST_CHECK_EQ(policy.value().caInfo, bundlePath.string());
+    std::filesystem::remove(bundlePath);
+    return true;
+})
+
+REGISTER_TEST(http_ca_policy_missing_file_fails_readable,
+              "http ca: DEVDESK_CA_BUNDLE 指向不存在路径 → 可读失败(含变量名与路径)", {
+    const std::string missing =
+        (std::filesystem::temp_directory_path() /
+         "devdesk_ca_no_such_bundle.pem")
+            .string();
+    std::filesystem::remove(missing);  // 确保不存在
+    const auto policy = platform::http::resolveCaPolicy(missing);
+    DOCTEST_REQUIRE(policy.isFail());
+    DOCTEST_CHECK(policy.errorMessage().find(
+                      std::string(platform::http::kCaBundleEnv)) !=
+                  std::string::npos);
+    DOCTEST_CHECK(policy.errorMessage().find("devdesk_ca_no_such_bundle.pem") !=
+                  std::string::npos);
+    return true;
+})
+
+// ── 代理/CA 批审计修复(findings = docs/superpowers/plans/2026-10-27-mcp-proxy-ca-audit.md)──
+
+REGISTER_TEST(http_tcp_probe_pins_env_proxy,
+              "http: tcpReachable 钉掉 env 代理——http_proxy 指向死端口时探测仍直达本机(F1/F4)", {
+    // 活监听 + 死代理:修前探测经死代理连「代理的回环」→ false;修后 NOPROXY "*"
+    // 直达 → true。控制组:已关闭端口必须如实 false。
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.route("GET", "/ping",
+              [](const platform::http::RequestCtx&, platform::http::ResponseWriter& w) {
+                  w.write("ok");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(srv.start());
+    const int deadProxy = grabClosedLoopbackPort();
+    DOCTEST_REQUIRE(deadProxy > 0);
+    const std::string dead = "http://127.0.0.1:" + std::to_string(deadProxy);
+    const test_support::ScopedEnv lowerHttp("http_proxy", dead);
+    const test_support::ScopedEnv allLower("all_proxy", dead);
+    const test_support::ScopedEnv allUpper("ALL_PROXY", dead);
+    DOCTEST_CHECK(platform::http::tcpReachable(
+        "127.0.0.1:" + std::to_string(srv.actualPort()),
+        std::chrono::milliseconds(3000)));
+    srv.stop();
+    DOCTEST_CHECK_FALSE(platform::http::tcpReachable(
+        "127.0.0.1:" + std::to_string(deadProxy), std::chrono::milliseconds(3000)));
+    return true;
+})
+
+REGISTER_TEST(http_send_streaming_honors_request_proxy,
+              "http: sendStreaming 遵循 Request.proxy——死代理必败,不得静默直连(F3)", {
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.route("GET", "/live",
+              [](const platform::http::RequestCtx&, platform::http::ResponseWriter& w) {
+                  w.write("hello");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(srv.start());
+    const int deadProxy = grabClosedLoopbackPort();
+    DOCTEST_REQUIRE(deadProxy > 0);
+    platform::http::Request req;
+    req.method = "GET";
+    req.url = "http://127.0.0.1:" + std::to_string(srv.actualPort()) + "/live";
+    req.timeoutMs = 3000;
+    req.proxy = "127.0.0.1:" + std::to_string(deadProxy);
+    auto stream = platform::http::sendStreaming(req);
+    DOCTEST_REQUIRE(stream.isOk());
+    std::string chunk;
+    std::string err;
+    // 显式代理是死端口 → 连接失败 Error;修前忽略 proxy 直连本地活服务 → More(红)
+    DOCTEST_CHECK(stream.value()->readChunk(chunk, err) ==
+                  platform::http::ChunkResult::Error);
+    DOCTEST_CHECK(!err.empty());
+    srv.stop();
+    return true;
+})
+
+REGISTER_TEST(http_ca_bundle_missing_send_fails_readable,
+              "http ca: bundle 指向缺失路径时 send 先于网络可读失败——接线入口断言(F2)", {
+    const std::string missing =
+        (std::filesystem::temp_directory_path() / "devdesk_ca_missing_send.pem")
+            .string();
+    std::filesystem::remove(missing);
+    const test_support::ScopedEnv bundle(platform::http::kCaBundleEnv, missing);
+    const int deadPort = grabClosedLoopbackPort();
+    DOCTEST_REQUIRE(deadPort > 0);
+    platform::http::Request req;
+    req.method = "GET";
+    req.url = "http://127.0.0.1:" + std::to_string(deadPort) + "/nope";
+    req.timeoutMs = 1000;
+    const auto res = platform::http::send(req);
+    // 失败串只能产自 CA 解析路径(先于 curl 句柄创建)——删掉 send 内的解析
+    // 接线此断言即红
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK(res.errorMessage().find(std::string(platform::http::kCaBundleEnv)) !=
+                  std::string::npos);
+    DOCTEST_CHECK(res.errorMessage().find("devdesk_ca_missing_send.pem") !=
+                  std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(http_ca_bundle_missing_send_streaming_fails_readable,
+              "http ca: sendStreaming 同款先于网络可读失败——接线入口断言(F2)", {
+    const std::string missing =
+        (std::filesystem::temp_directory_path() / "devdesk_ca_missing_stream.pem")
+            .string();
+    std::filesystem::remove(missing);
+    const test_support::ScopedEnv bundle(platform::http::kCaBundleEnv, missing);
+    const int deadPort = grabClosedLoopbackPort();
+    DOCTEST_REQUIRE(deadPort > 0);
+    platform::http::Request req;
+    req.method = "GET";
+    req.url = "http://127.0.0.1:" + std::to_string(deadPort) + "/nope";
+    req.timeoutMs = 1000;
+    const auto res = platform::http::sendStreaming(req);
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK(res.errorMessage().find(std::string(platform::http::kCaBundleEnv)) !=
+                  std::string::npos);
+    DOCTEST_CHECK(res.errorMessage().find("devdesk_ca_missing_stream.pem") !=
+                  std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(http_ca_policy_directory_path_fails_readable,
+              "http ca: bundle 指向目录 → 提前可读报错,不留给 perform 期 libcurl 英文错(F6)", {
+    const auto dir = std::filesystem::temp_directory_path() / "devdesk_ca_dir_probe";
+    std::filesystem::create_directories(dir);
+    const auto policy = platform::http::resolveCaPolicy(dir.string());
+    DOCTEST_REQUIRE(policy.isFail());
+    DOCTEST_CHECK(policy.errorMessage().find(std::string(platform::http::kCaBundleEnv)) !=
+                  std::string::npos);
+    DOCTEST_CHECK(policy.errorMessage().find(dir.string()) != std::string::npos);
+    std::filesystem::remove(dir);
     return true;
 })

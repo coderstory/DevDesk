@@ -26,6 +26,9 @@
 #include "module_memory/proposals/usage_ledger.h"
 #include "module_toggle_bridge.h"
 #include "module_wallpaper/wallpaper_module.h"
+#include "mcp_service_bridge.h"
+#include "module_mcp/mcp_service.h"
+#include "module_mcp/mcp_tools_builtin.h"
 #include "platform/autostart.h"
 #include "platform/message_box.h"
 #include "platform/tray_icon.h"
@@ -246,6 +249,35 @@ std::string activeWindowEffectTier() {
     }
 }
 
+// ── MCP 装配段桥转发（无捕获函数指针，可安全转 handler 槽；转发 globalMcpService）──
+core::Result<void> mcpStartImpl(int port) {
+    auto r = module::mcp::globalMcpService().start(port);
+    if (r.isFail()) {
+        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+void mcpStopImpl() { module::mcp::globalMcpService().stop(); }
+
+// 运行中改端口 = 桥内 restart（未运行时设置页只落库，不走这里）
+core::Result<void> mcpApplyPortImpl(int port) {
+    auto r = module::mcp::globalMcpService().restart(port);
+    if (r.isFail()) {
+        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+app::mcp::LiveStatus mcpStatusImpl() {
+    const auto s = module::mcp::globalMcpService().status();
+    app::mcp::LiveStatus out;
+    out.running = (s.state == module::mcp::ServiceState::Running);
+    out.port = s.port;
+    out.lastError = s.lastError;
+    return out;
+}
+
 ::core::Router* getRouter() {
     static ::core::Router router;
     // 模块 static 须先于 armExitHook 构造：atexit LIFO 保证 handler 先于 modules/router 析构
@@ -258,6 +290,7 @@ std::string activeWindowEffectTier() {
     static std::unique_ptr<::core::Module> memory(create_memory_module());
     // 平台能力不支持时工厂返回 nullptr：门控装配按空实例跳过（页面不注册）
     static std::unique_ptr<::core::Module> wallpaper(create_wallpaper_module());
+    static std::unique_ptr<::core::Module> mcpPage(create_mcp_page_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
 
     static bool initialized = false;
@@ -273,6 +306,7 @@ std::string activeWindowEffectTier() {
                     case ::core::PageId::Agent: return agent.get();
                     case ::core::PageId::Memory: return memory.get();
                     case ::core::PageId::Wallpaper: return wallpaper.get();
+                    case ::core::PageId::Mcp: return mcpPage.get();
                     case ::core::PageId::About: return about.get();
                 }
                 return nullptr;
@@ -349,6 +383,24 @@ std::string activeWindowEffectTier() {
                         break;
                 }
             });
+
+        // MCP 装配段：注册内置工具（一次，常驻注册表）+ 注入桥 + 按开关启动。
+        // 启动失败只 LOG_ERROR 不弹窗（启动期与代理自启同口径）。
+        module::mcp::registerBuiltinMcpTools(core::mcp::globalMcpTools());
+        app::mcp::setHandlers(&mcpStartImpl, &mcpStopImpl, &mcpApplyPortImpl,
+                              &mcpStatusImpl);
+        if (module::settings::moduleEnabled(gatingConfigSnapshot(),
+                                            module::settings::kModuleIdMcp)) {
+            auto started = module::mcp::globalMcpService().start(
+                gatingConfigSnapshot().mcpPort);
+            if (started.isFail()) {
+                LOG_ERROR("MCP 服务启动失败（不阻断启动）: " +
+                          started.errorMessage());
+            }
+        }
+        // 单例永不析构（module_mcp 侧堆持有），退出钩子访问安全；与 Router
+        // stopAll 互不依赖（atexit LIFO：本钩子后注册 → 先于 stopAll 跑）。
+        std::atexit([] { module::mcp::globalMcpService().stop(); });
         initialized = true;
     }
     return &router;

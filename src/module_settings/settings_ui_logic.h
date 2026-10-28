@@ -107,27 +107,26 @@ inline constexpr float kEditorFontCardHeight = 184.0f;
 inline constexpr float kModulesCardHeight = 198.0f;
 inline constexpr float kModulesCardHeightWallpaper = 254.0f;
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
-// GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + UAT6 零滚动收口）：
-// 卡高由最坏行序决定——头部（标题 20+1+摘要 16 + 行距 6 + 启用行 28 + 6 +
-// 自动推送行 28 = 105）+ 分段 5+1+5 + 配置组（URL 行 36+6 + 分支|Token 行 36
-// = 78）+ 分段 11 + 操作行 36 + 6 + 条件信息行 5×16+4×2（分支提示/public/
-// 本地 git/未同步/删跳过五条全显的最坏组合，仅行间无行尾距）+ 下边距 8 →
-// 100% 档需高 351（内容底 343 + 边距 8）。开关尺寸 52×28/44×24 是字面值不随
-// 字号缩放（行盒随 roundFs，85% 档 24 贴自动推送 24、启用行 28 超行盒由
-// max(行盒/文本/开关) 记账兜住）：85% 档需高 307、115% 档 397、130% 档 456。
+// GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + H28 间距令牌恢复）：
+// 卡高由最坏行序决定——H28 后（100% 档，设计系统 v1.0 令牌 4/8/12/16）：
+// 头部（上留白 16 + 标题 20 + 4 + 摘要 16 + 8 + 启用行 24 + 8 + 自动推送行 24
+// = 120；折叠链接并入摘要行不另占行）+ 分段 12+1+12 + 配置组（URL 行 36+8 +
+// 分支|Token 行 36 = 80）+ 分段 25 + 操作行 36 + 8 + 条件信息行 5×16+4×4
+//（分支提示/public/本地 git/未同步/删跳过五条全显最坏组合，仅行间无行尾距）+
+// 下边距 16 → 100% 档内容需高 406。开关尺寸 44×24 是字面值不随字号缩放
+//（行盒随 roundFs，85% 档行盒 20 < 开关 24，由 max(行盒/文本/开关) 记账兜住）。
 //
-// UAT6 零滚动收口（用户：「同步 tab 出滚动条完全没必要」）：Windows 自绘壳下
-// 最小窗 1000×640 的页面高 = 600（标题条 40，app_sidebar.cpp bodyTop），卡区
-// 可用高 cardsH = 600 − cardsTopY 152 − pad 40 − hint 20 − gap 16 = 372。卡高
-// > 372 同步 tab 即出滚动条，故常量 496 → 372 取可用高**恰好值**：100% 档
-// roundFs(372)=372 ≤ 372 不滚（内容需高 351 有 21 富余）、85% 档
-// roundFs(372)=316 ≤ 375 不滚（需高 307 有 9 富余）、115%/130% 档（428/484）
-// 仍超可用高滚动（大字号档设计内，与通用/日志 tab 同口径）。瘦身来源见
-// github_sync_card.cpp 行几何常量注释（−124：说明行+行盒 36→28、组题行、
-// 分段留白 12→5、信息行 20→16/行距 4→2 去行尾距、行距 8→6、标题/摘要距、
-// 卡上下留白 16→8、信息行前距 8→6）。卡高恒定不按启用态折叠（UAT4 口径）：
-// 未启用态全字段显示，只差表单可交互性。
-inline constexpr float kGithubSyncCardHeight = 362.0f; // N 项: 372→362 (主开关 52×28→44×24, toggleRowH 28→24 节省 ~10px@130% 档)
+// 最小窗零滚动（用户铁律，UAT6 起）：S4.2 后 1000×640 的页面高 = 600（标题条
+// 40，app_sidebar.cpp bodyTop），卡区可用高 cardsH = 600 − cardsTopY 144
+//（32+40+16+40+16）− bottomHint 20 − spacingLarge 16 = 420（settings_module.cpp
+// cardsH 同式实算）。卡高 > 420 同步 tab 即出滚动条，故常量取可用高**恰好值**
+// 420：100% 档 roundFs(420)=420 ≤ 420 不滚（内容需高 406 有 14 富余）、85% 档
+// 357 ≤ 423 不滚（需高约 351 有 6 富余）、115%/130% 档（483/546）超可用高滚动
+//——大字号档设计内（与通用/日志 tab 同口径）。UAT6 收口曾压到 362（间距 6/5/
+// 2/1/8），H28 按设计系统 v1.0 间距令牌恢复（来源见 github_sync_card.cpp 行
+// 几何常量注释）。卡高恒定不按启用态折叠（UAT4 口径）：未启用态全字段显示，
+// 只差表单可交互性。
+inline constexpr float kGithubSyncCardHeight = 420.0f; // H28: 362→420（S4.2 后最小窗可用高恰好值）
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {
@@ -221,6 +220,22 @@ inline float proxyCardHeightFor(std::size_t warnLines) {
                   static_cast<float>(warnLines) * proxyWarnRowHeight()
             : proxyTakeoverRowY() + proxyTakeoverRowHeight();
     return bottom + roundFs(16.0f);
+}
+
+// MCP 配置卡行几何（drawMcpCard 与 mcpCardHeightFor 单一来源）：端口行 = FormRow
+//（行 y = proxyPortRowY、行高 = logFieldHeight），状态行 / 命令行依次从行盒底派生，
+// 卡高不写死——85% 档 roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。
+inline float mcpPortRowY() { return proxyPortRowY(); }            // 100% = 68
+inline float mcpStatusRowHeight() { return roundFs(18.0f); }      // 100% = 18
+inline float mcpCommandRowY() {
+    return mcpPortRowY() + logFieldHeight() + mcpStatusRowHeight() +
+           roundFs(6.0f);
+}                                                                 // 100% = 128
+inline float mcpCommandRowHeight() { return roundFs(16.0f); }     // 100% = 16
+inline float mcpCardHeightFor() {                                 // 100% = 160
+    // 下边距下限 16：85% 档 roundFs(16) = 14，不能直接 roundFs(16)
+    return mcpCommandRowY() + mcpCommandRowHeight() +
+           std::max(16.0f, roundFs(16.0f));
 }
 
 // 下拉弹层向下展开是否越出窗体底边（越界 → 调用方置 openUp 向上）；cardTopY = 卡顶页面绝对 y，fieldOffsetY/fieldHeight = 字段卡内 y 与高。

@@ -405,6 +405,8 @@ void drawModulesCard(const CardDrawArgs& args) {
         const char* name;
         const char* desc;
     };
+    // 标题右 MCP 开关盒宽：字面值 150，不随字号缩放（同外观卡动态背景开关口径）
+    constexpr float kMcpToggleBoxW = 150.0f;
     static const ModuleMeta kToggleable[] = {
         {kModuleIdMarkdown, "Markdown 笔记本",
          "本地文件存储 + SQLite FTS5 全文搜索"},
@@ -439,10 +441,27 @@ void drawModulesCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
+            cardTitle(ui, id, t, 16.0f, w - 56.0f - kMcpToggleBoxW, 22.0f, 22.0f,
+                      "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
+
+            // MCP 服务开关（模块 tab 标题右贴，零高度增量——不新增开关卡、不动
+            // 2×2 四格与卡高；盒宽固定 150（130% 档「MCP 服务」放得下，同外观卡
+            // kFluidToggleW 口径）。可点击元素 = <id>.hit（.track 只是视觉轨道）；
+            // 拨动走既有 applyModuleEnabled 链路，不新增生效通道。
+            components::toggleSwitch(ui, id + ".mcp")
+                .position(w - 28.0f - kMcpToggleBoxW, 12.0f)
+                .size(kMcpToggleBoxW, 28.0f)
+                .text("MCP 服务")
+                .fontSize(fs(13.0f))
+                .checked(moduleEnabled(in.cfg, kModuleIdMcp))
+                .theme(compThemeTop)
+                .onChange([f = a.applyModuleEnabled](bool v) {
+                    f(kModuleIdMcp, v);
+                })
+                .build();
 
             // 开关格（2 列，第 5 格壁纸末行落单）：行主序（0/1 同行异列，2/3 次行）；
             // 开关控件几何沿用
@@ -703,6 +722,161 @@ void drawProxyCard(const CardDrawArgs& args) {
                         .build();
                 }
             }
+        })
+        .build();
+}
+
+// MCP 服务配置卡（通用 tab，kModuleIdMcp 门控在注册表——模块关整卡不建）。
+// 行序/几何单一来源 settings_ui_logic.h（mcpPortRowY/mcpStatusRowHeight/
+// mcpCommandRowY/mcpCommandRowHeight/mcpCardHeightFor）；端口行 = 草稿 + 提交
+//（回车 /「应用」/ Esc 丢弃），反馈位在端口行说明列，不经 setStatus。
+void drawMcpCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const float h = args.h;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+
+    const auto compTheme = core::theme::componentTokensWeChat(t);
+    const float descH = roundFs(16.0f);
+    const float rowH = logFieldHeight();
+    const float portRowY = mcpPortRowY();
+    const float statusY = portRowY + rowH;
+    const float statusH = mcpStatusRowHeight();
+    const float cmdY = mcpCommandRowY();
+    const float cmdH = mcpCommandRowHeight();
+    const float hintH = roundFs(16.0f);
+
+    // 固定控件组右锚（与代理端口行同款口径）：输入 96 + 间距 8 + 应用 64
+    constexpr float kPortInputW = 96.0f;
+    constexpr float kPortApplyW = 64.0f;
+    constexpr float kPortCtrlGap = 8.0f;
+    constexpr float kPortHintGap = 12.0f;
+    constexpr float kStatusLabelW = 110.0f;  // formRow label 同宽列
+    constexpr float kStatusLabelGap = 12.0f;
+
+    ui.stack(id)
+        .size(w, h)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "MCP 服务");
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
+                     "本机 127.0.0.1 提供 MCP 工具服务；无鉴权，仅本机可访问");
+
+            // 状态三态：running / 停止（无错误）/ 启动失败（lastError 透出）
+            const bool running = in.mcpRunning;
+            const std::string statusText =
+                running
+                    ? "运行中 127.0.0.1:" + std::to_string(in.mcpLivePort)
+                    : (in.mcpLastError.empty()
+                           ? std::string("已停止")
+                           : "启动失败：" + in.mcpLastError);
+
+            // 端口行：FormRow label「MCP 端口」+ 说明列（兼反馈位）+ 右锚控件组
+            const std::string portText = in.mcpPortDraft.empty()
+                ? std::to_string(in.cfg.mcpPort)
+                : in.mcpPortDraft;
+            ui_kit::formRow(ui, id + ".port", "MCP 端口", 28.0f, portRowY,
+                            w - 56.0f, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float inputH = 28.0f;
+                    const float ctrlY = cy + (ch - inputH) * 0.5f;
+                    const float applyX = cx + cw - kPortApplyW;
+                    const float inputX = applyX - kPortCtrlGap - kPortInputW;
+                    components::input(ui, id + ".port.input")
+                        .position(inputX, ctrlY)
+                        .size(kPortInputW, inputH)
+                        .value(portText)
+                        .placeholder("8931")
+                        .fontSize(fs(13.0f))
+                        .theme(compTheme)
+                        .onChange([f = a.setMcpPortDraft](const std::string& v) {
+                            f(v);
+                        })
+                        .onEnter([f = a.applyMcpPort] { f(); })
+                        // Esc = 丢弃草稿（回落已应用端口，不触发提交）
+                        .onCancel([f = a.discardMcpPortDraft] { f(); })
+                        .build();
+                    components::button(ui, id + ".port.apply")
+                        .position(applyX, ctrlY)
+                        .size(kPortApplyW, inputH)
+                        .text("应用")
+                        .fontSize(fs(13.0f))
+                        .theme(compTheme, /*primary=*/true)
+                        .radius(t.sizes.radiusSmall)
+                        .onClick([f = a.applyMcpPort] { f(); })
+                        .build();
+                    // 说明列兼反馈位：静态提示 / 红字错误 / 三级「端口未变化」，
+                    // 直接由卡片状态渲染（setStatus 无页头渲染面，不作反馈通道）
+                    const float hintX = cx;
+                    const float hintW =
+                        std::max(0.0f, inputX - kPortHintGap - hintX);
+                    const bool hasFeedback = !in.mcpPortFeedback.empty();
+                    ui.text(id + ".port.feedback")
+                        .position(hintX, cy + (ch - hintH) * 0.5f)
+                        .size(hintW, hintH)
+                        .text(hasFeedback
+                                  ? in.mcpPortFeedback
+                                  : std::string("改后回车或点「应用」；运行中自动重启"))
+                        .fontSize(fs(12.0f))
+                        .lineHeight(hintH)
+                        .color(hasFeedback && in.mcpPortFeedbackError
+                                   ? t.colors.errorText
+                                   : t.colors.textTertiary)
+                        .maxWidth(hintW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
+                        .build();
+                }, t);
+
+            // 状态行：label 定宽 110 + 值
+            const float statusValueX = 28.0f + kStatusLabelW + kStatusLabelGap;
+            ui.text(id + ".status.label")
+                .position(28.0f, statusY)
+                .size(kStatusLabelW, statusH)
+                .text("运行状态")
+                .fontSize(fs(12.0f))
+                .lineHeight(statusH)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.text(id + ".status")
+                .position(statusValueX, statusY)
+                .size(w - statusValueX - 28.0f, statusH)
+                .text(statusText)
+                .fontSize(fs(12.0f))
+                .lineHeight(statusH)
+                .color(running ? t.colors.success
+                               : (in.mcpLastError.empty() ? t.colors.textTertiary
+                                                          : t.colors.warning))
+                .maxWidth(w - statusValueX - 28.0f)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+
+            // 接入命令行：端口取运行中实际端口，未运行取已配置端口
+            const int commandPort = running ? in.mcpLivePort : in.cfg.mcpPort;
+            const std::string command = "claude mcp add --transport http devdesk http://127.0.0.1:" +
+                                        std::to_string(commandPort) + "/mcp";
+            ui.text(id + ".command")
+                .position(28.0f, cmdY)
+                .size(w - 56.0f, cmdH)
+                .text(fitControlLabel(command, w - 56.0f, fs(12.0f)))
+                .fontSize(fs(12.0f))
+                .lineHeight(cmdH)
+                .color(t.colors.textTertiary)
+                .maxWidth(w - 56.0f)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
         })
         .build();
 }

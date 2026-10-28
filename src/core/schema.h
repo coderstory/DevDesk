@@ -74,6 +74,9 @@ inline constexpr const char* kSql = R"(
         priority INTEGER NOT NULL DEFAULT 0,
         due_at INTEGER,
         tags TEXT,
+        -- UAT6.2 H31：关联的 Markdown 笔记相对路径（POSIX 分隔）；空串 = 未关联。
+        -- 只存路径键不存标题：改名后靠路径失联判定灰态，不自动解除关联。
+        doc_path TEXT NOT NULL DEFAULT '',
         position INTEGER NOT NULL,
         completed_at INTEGER,
         created_at INTEGER NOT NULL,
@@ -420,12 +423,26 @@ core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db);
 //   - 四列 position 归位 0..3。
 core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db);
 
+// Todo 关联文档列迁移（UAT6.2 H31）：老库 todo_tasks 补 doc_path 列（空串默认）。
+// 挂在启动迁移序列（Database::migrate 与整库导入共用）；幂等——列已存在零操作，
+// 表不存在零操作（applySchema 会建全）。与 addMissingAgentColumns 同式：
+// CREATE IF NOT EXISTS 对已存在表跳过，老库永远缺新列，必须显式补。
+core::Result<void> migrateTodoDocLinkColumn(core::data::SqliteDb& db);
+
+// 冷启动归档清扫（UAT6.2 H30）：done 列中 completed_at 早于「今日本地零点」的任务
+// 移入归档列（archived_at = now）；completed_at 无值的存量 done 卡视为非本日一并归档，
+// completed_at 原样保留（无值仍无值）。挂在启动迁移序列里（每进程一次，非轮询）；
+// 单事务 + 幂等（今日零点前完成的归档后不再命中）。缺 done/archive 列时零操作
+// （固定四列由前置迁移保证，缺列 = 无归档目标，不失败）。
+core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db);
+
 // 已摘除功能的遗留表清理：幂等 DROP TABLE IF EXISTS（表不在 = 零操作）。
 // 表已不在 DDL 里，但老库启动会带着它们；无外键指向、无读方，删了安全。
 core::Result<void> dropRemovedTables(core::data::SqliteDb& db);
 
 // 完整迁移入口（Database::migrate 与整库导入共用）：applySchema → 补列/Todo 固定四列 →
-// 遗留表清理。幂等；失败时各步自身保事务原子性，调用方不得继续把该库交给 UI。
+// Todo 文档列 → 冷启动归档清扫 → 遗留表清理。幂等；失败时各步自身保事务原子性，
+// 调用方不得继续把该库交给 UI。
 core::Result<void> migrate(core::data::SqliteDb& db);
 
 } // namespace core::schema

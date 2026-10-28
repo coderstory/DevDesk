@@ -24,6 +24,7 @@ add_executable(devdesk_tests
     test_core/test_window_layout.cpp
     test_core/test_window_geometry.cpp
     test_core/test_tool_registry.cpp
+    test_core/test_mcp_tool_registry.cpp
     test_core/test_file_perms.cpp
     test_core/test_atomic_write.cpp
     test_core/test_db_backup.cpp
@@ -45,6 +46,7 @@ add_executable(devdesk_tests
     test_platform/test_autostart.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
+    test_modules/test_md_folder_tree.cpp
     test_modules/test_markdown_tools.cpp
     test_modules/test_md_note_git.cpp
     test_modules/test_md_highlight.cpp
@@ -59,6 +61,9 @@ add_executable(devdesk_tests
     test_modules/test_md_sync_map.cpp
     test_modules/test_todo_service.cpp
     test_modules/test_todo_tools.cpp
+    # UAT6.2 H31：todo 卡片关联 md 文档（置值/解除/失联灰态/迁移幂等/正面图标/
+    # 详情选文档→跳转负载全链）
+    test_modules/test_todo_doc_link.cpp
     test_modules/test_agent_store.cpp
     test_modules/test_agent_cron.cpp
     test_modules/test_agent_time_text.cpp
@@ -119,6 +124,7 @@ add_executable(devdesk_tests
     test_modules/test_upstream_dialect.cpp
     test_modules/test_home.cpp
     test_modules/test_github_sync_card.cpp
+    test_modules/test_github_sync_card_spacing.cpp
     test_modules/test_github_sync_engine.cpp
     test_modules/test_github_sync_logic.cpp
     test_modules/test_local_git_probe.cpp
@@ -127,12 +133,22 @@ add_executable(devdesk_tests
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
     test_modules/test_menu_beautify.cpp
+    test_modules/test_mcp_session_store.cpp
+    test_modules/test_mcp_protocol.cpp
+    test_modules/test_mcp_tools_builtin.cpp
+    test_modules/test_mcp_html_to_markdown.cpp
+    test_modules/test_mcp_fetch_tool.cpp
+    # UI 批：MCP 菜单页（卡片网格/详情弹窗/后台试运行）
+    test_modules/test_mcp_page.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
     test_modules/test_editor_font.cpp
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
+    # 全局 ticker（core 层）：注册/注销、firstAt/interval/expireAt 时间维度、
+    # 回调内自注销、空表空转、user 透传
+    test_modules/test_ticker.cpp
     test_modules/test_wallpaper_module.cpp
     # P2 纯逻辑 + P4 服务骨架：设置/轮换/让路/片库/文案/服务接线
     test_modules/test_wallpaper_core.cpp
@@ -143,6 +159,12 @@ add_executable(devdesk_tests
     # P5 尾托盘壁纸组：spec 形状/打开页映射/托盘桥/让路态暂停语义
     test_modules/test_wallpaper_tray.cpp
     test_modules/test_splash_contract.cpp
+    # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
+    test_modules/test_mcp_settings.cpp
+    test_modules/test_mcp_service.cpp
+    # app::mcp 桥实现缝：app_assembly.cpp 与 settings_module.cpp 引用其符号
+    #（module_toggle_bridge.cpp 同款理由）
+    ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -230,6 +252,7 @@ target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
     ${CMAKE_SOURCE_DIR}/src/module_settings
+    ${CMAKE_SOURCE_DIR}/src/module_mcp
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -244,6 +267,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper
+    devdesk_module_mcp
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -296,17 +320,26 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # module_toggle_sidebar_probe / wallpaper_probe：活门控真窗口 probe 还要真
     # app::compose + 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp +
     # app_assembly.cpp（其余 probe 维持最小链接面，不拖 app 层）
+    # mcp_page_module.cpp：app_registry.h 的 kModuleRegistry（inline constexpr）
+    # 初始化器取全部工厂地址，编 app_assembly.cpp 即 odr-use
+    # create_mcp_page_module——其宿主库 devdesk_module_mcp 不在本分支链接集，
+    # 该单源须编进来（自洽：只依赖 core/eui/桥缝，不依赖库内其他 TU）
     if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
        _probe_name STREQUAL "wallpaper_probe" OR
        _probe_name STREQUAL "h13_fluid_background_probe" OR
        _probe_name STREQUAL "uat62_page_shots_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
-            "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp")
+            "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
     else()
+        # mcp_service_bridge.cpp：probe 全体链 devdesk_module_settings，settings 引用
+        # app::mcp::* 桥符号后缝必须单独编进来（与 module_toggle_bridge.cpp 同款理由）
         add_executable(${_probe_name} "${_probe_source}"
-            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp")
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp")
     endif()
     target_include_directories(${_probe_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
@@ -406,11 +439,15 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号
     # app_sidebar.cpp / app_assembly.cpp：同 module_toggle_sidebar_probe 的理由
     #（settings_module.cpp 的装配期符号在这些 TU 里）
+    # mcp_page_module.cpp：同 probe——kModuleRegistry odr-use 其工厂地址，
+    # 链接集里没有 devdesk_module_mcp
     add_executable(github_sync_live
         live/github_sync_live.cpp
         ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
-        ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp)
+        ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
+        ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
     target_include_directories(github_sync_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests
@@ -455,7 +492,8 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     #（与 devdesk_tests 同款理由，见该目标注释）
     add_executable(agent_live
         live/agent_live.cpp
-        ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp)
+        ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp)
     # module_claude_proxy / module_settings：claude_tools.h / app_tools.h 的同级头
     target_include_directories(agent_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src
@@ -474,4 +512,26 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
             "${CMAKE_BINARY_DIR}")
     # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
     set_tests_properties(agent_live PROPERTIES LABELS "live")
+endif()
+
+# ==================== B4：MCP live 驱动（实连，默认不构建）====================
+# 台账 B4-02 的**独立块，无 AND UNIX**：mcp_live.cpp 零平台宏、include 全
+# "module_mcp/…" 前缀形态，Windows 受编集合必须纳入它（交叉编译守卫同验）。
+# 显式入口：cmake -B build -DDEVDESK_BUILD_LIVE_TOOLS=ON && cmake --build build
+#           --target mcp_live；build/tests/mcp_live --check | --serve
+if(DEVDESK_BUILD_LIVE_TOOLS)
+    # 只链 devdesk_module_mcp（core / platform 经其 PUBLIC 传递）；mcp_live.cpp
+    # 不引用 app 层符号,bridge.cpp 只依赖 core——不拉 settings 等兄弟模块
+    add_executable(mcp_live
+        live/mcp_live.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp)
+    target_include_directories(mcp_live PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests)
+    target_link_libraries(mcp_live PRIVATE devdesk_module_mcp)
+    devdesk_apply_warnings(mcp_live)
+
+    add_test(NAME mcp_live_check COMMAND mcp_live --check)
+    # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
+    set_tests_properties(mcp_live_check PROPERTIES LABELS "live")
 endif()

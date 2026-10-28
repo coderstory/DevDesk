@@ -7,6 +7,7 @@
 #include "core/result.h"
 #include "core/schema.h"
 #include "core/sqlite_db.h"
+#include "core/time.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -53,6 +54,25 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
         out.push_back(def);
     }
     return out;
+}
+
+// 按 kind 取 todo_columns.id（无该列返回 0）
+int64_t kindColumnId(core::data::SqliteDb& db, const std::string& kind) {
+    auto prep = db.prepare("SELECT id FROM todo_columns WHERE kind = ?");
+    if (prep.isFail()) return 0;
+    if (prep.value().bind(1, kind).isFail()) return 0;
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail() || rows.value().empty()) return 0;
+    return rows.value()[0].getInt64("id").valueOr(0);
+}
+
+// 单值计数查询（SQL 必须把结果列别名成 v）；失败/无行返回 -1
+int64_t countInt(core::data::SqliteDb& db, const std::string& sql) {
+    auto prep = db.prepare(sql);
+    if (prep.isFail()) return -1;
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail() || rows.value().empty()) return -1;
+    return rows.value()[0].getInt64("v").valueOr(-1);
 }
 
 } // namespace
@@ -1158,5 +1178,132 @@ REGISTER_TEST(schema_migration_whitelist_rejects_invalid,
     } // Database 在此析构（Windows 不允许删除打开中的文件）
 
     std::filesystem::remove(path, ec);
+    return true;
+})
+
+// H30 冷启动归档：跨日判定。done 列里 completed_at 早于今日本地零点的卡移入归档列、
+// 当日完成的卡留在 done。防事故：跨日判定缺失/用 UTC 零点 → 昨夜完成的卡永远赖在
+// 已完成列，done 列无限膨胀。
+REGISTER_TEST(schema_archive_done_before_today,
+              "schema: 冷启动归档——早于今日零点移入归档列、当日完成保留", {
+    test_support::TestDb env(kDbPrefix, "archive_day");
+    auto& db = env.handle();
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    const int64_t doneId = kindColumnId(db, "done");
+    const int64_t archiveId = kindColumnId(db, "archive");
+    DOCTEST_REQUIRE(doneId > 0);
+    DOCTEST_REQUIRE(archiveId > 0);
+
+    // 昨日完成（now − 2 天恒早于今日零点）+ 今日完成
+    DOCTEST_REQUIRE(db.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, completed_at, "
+        "created_at, updated_at) VALUES "
+        "(" + std::to_string(doneId) + ", '昨日完成', 0, 0, " +
+        std::to_string(now - 2 * 86400) + ", 0, 0), "
+        "(" + std::to_string(doneId) + ", '今日完成', 0, 1, " +
+        std::to_string(now) + ", 0, 0)").isOk());
+
+    DOCTEST_REQUIRE(core::schema::archiveDoneTasksBeforeToday(db).isOk());
+
+    // 昨日完成 → 归档列；今日完成 → 留在 done
+    DOCTEST_CHECK_EQ(
+        countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks WHERE column_id = " +
+                         std::to_string(archiveId) + " AND title = '昨日完成'"),
+        1);
+    DOCTEST_CHECK_EQ(
+        countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks WHERE column_id = " +
+                         std::to_string(doneId) + " AND title = '今日完成'"),
+        1);
+    // completed_at 原样保留，archived_at 置上
+    {
+        auto prep = db.prepare(
+            "SELECT completed_at, archived_at FROM todo_tasks WHERE title = '昨日完成'");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("completed_at").valueOr(-1),
+                         now - 2 * 86400);
+        DOCTEST_CHECK(!rows.value()[0].isNull("archived_at"));
+    }
+    // 任务行数守恒（搬移不是增删）
+    DOCTEST_CHECK_EQ(countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks"), 2);
+    return true;
+})
+
+// H30 冷启动归档：存量无 completed_at 的 done 卡视为非本日一并归档，完成时间保持
+// 无值（详情显示「—」口径的数据前提）。防事故：只按「completed_at < 零点」过滤 →
+// 存量 NULL 卡永不归档，老库的 done 列积压清不掉。
+REGISTER_TEST(schema_archive_done_null_completed_at,
+              "schema: 冷启动归档——completed_at 无值的 done 卡一并归档且保持无值", {
+    test_support::TestDb env(kDbPrefix, "archive_null");
+    auto& db = env.handle();
+    const int64_t doneId = kindColumnId(db, "done");
+    const int64_t archiveId = kindColumnId(db, "archive");
+    DOCTEST_REQUIRE(doneId > 0);
+    DOCTEST_REQUIRE(archiveId > 0);
+
+    DOCTEST_REQUIRE(db.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, created_at, "
+        "updated_at) VALUES "
+        "(" + std::to_string(doneId) + ", '存量老卡', 0, 0, 0, 0)").isOk());
+
+    DOCTEST_REQUIRE(core::schema::archiveDoneTasksBeforeToday(db).isOk());
+
+    DOCTEST_CHECK_EQ(
+        countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks WHERE column_id = " +
+                         std::to_string(archiveId) + " AND title = '存量老卡'"),
+        1);
+    {
+        auto prep = db.prepare(
+            "SELECT completed_at, archived_at FROM todo_tasks WHERE title = '存量老卡'");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK(rows.value()[0].isNull("completed_at"));  // 完成时间保持无值
+        DOCTEST_CHECK(!rows.value()[0].isNull("archived_at"));
+    }
+    return true;
+})
+
+// H30 冷启动归档：今日完成（含恰在今日零点边界——判据是严格小于）不归档，且清扫
+// 幂等（重跑不搬动）。防事故：边界写成 <= 把零点整完成的卡误归档；清扫不幂等则
+// 每次启动把「昨日 23:59 前完成又被拖回 done」的卡反复搬移。
+REGISTER_TEST(schema_archive_done_today_stays,
+              "schema: 冷启动归档——今日零点边界与当日完成不归档、清扫幂等", {
+    test_support::TestDb env(kDbPrefix, "archive_today");
+    auto& db = env.handle();
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    const int64_t midnight =
+        static_cast<int64_t>(core::time::localMidnightUnix(
+            static_cast<std::time_t>(now)));
+    const int64_t doneId = kindColumnId(db, "done");
+    const int64_t archiveId = kindColumnId(db, "archive");
+    DOCTEST_REQUIRE(doneId > 0);
+    DOCTEST_REQUIRE(archiveId > 0);
+
+    // 今日零点整（边界，须不归档）+ 当下完成
+    DOCTEST_REQUIRE(db.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, completed_at, "
+        "created_at, updated_at) VALUES "
+        "(" + std::to_string(doneId) + ", '零点边界', 0, 0, " +
+        std::to_string(midnight) + ", 0, 0), "
+        "(" + std::to_string(doneId) + ", '当下完成', 0, 1, " +
+        std::to_string(now) + ", 0, 0)").isOk());
+
+    DOCTEST_REQUIRE(core::schema::archiveDoneTasksBeforeToday(db).isOk());
+    // 幂等：再跑一次仍不动
+    DOCTEST_REQUIRE(core::schema::archiveDoneTasksBeforeToday(db).isOk());
+
+    DOCTEST_CHECK_EQ(
+        countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks WHERE column_id = " +
+                         std::to_string(doneId)),
+        2);
+    DOCTEST_CHECK_EQ(
+        countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks WHERE column_id = " +
+                         std::to_string(archiveId)),
+        0);
+    DOCTEST_CHECK_EQ(countInt(db, "SELECT COUNT(*) AS v FROM todo_tasks"), 2);
     return true;
 })

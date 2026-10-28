@@ -8,7 +8,7 @@
 #include "core/module_interface.h"
 #include "settings_config.h"
 
-// 9 个模块工厂声明（extern "C"）
+// 10 个模块工厂声明（extern "C"）
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
@@ -17,6 +17,7 @@ extern "C" ::core::Module* create_settings_module();
 extern "C" ::core::Module* create_about_module();
 extern "C" ::core::Module* create_agent_module();
 extern "C" ::core::Module* create_memory_module();
+extern "C" ::core::Module* create_mcp_page_module();
 // 平台能力不支持时返回 nullptr（装配层按空实例跳过，页面不注册）
 extern "C" ::core::Module* create_wallpaper_module();
 
@@ -40,6 +41,7 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Agent,       module::settings::kModuleIdAgent,        "智能体", "\xEF\x95\x84", &create_agent_module},      // U+F544 fa-robot
     {::core::PageId::Memory,      module::settings::kModuleIdMemory,       "记忆",   "\xEF\x97\x9C", &create_memory_module},     // U+F5DC fa-brain
     {::core::PageId::Wallpaper,   module::settings::kModuleIdWallpaper,    "壁纸",   "\xEF\x80\xBE", &create_wallpaper_module},  // U+F03E fa-image
+    {::core::PageId::Mcp,         module::settings::kModuleIdMcp,          "MCP",    "\xEF\x87\xA6", &create_mcp_page_module},   // U+F1E6 fa-plug
     {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
     {::core::PageId::About,       nullptr,                          "关于",   "\xEF\x81\x9A", &create_about_module},       // U+F05A fa-circle-info
 };

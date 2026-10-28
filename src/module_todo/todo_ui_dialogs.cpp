@@ -687,6 +687,9 @@ void DetailDialog::reset(const Task& task) {
     completed = task.completedAt.has_value();
     tags = task.tags;
     tagInput.clear();
+    docPath = task.docPath;
+    // docTitle 不落库：打开时按路径回落显示（选择/再选时由选择器写入）
+    docTitle = task.docPath;
     discardArmed = false;
 }
 
@@ -699,7 +702,8 @@ bool DetailDialog::dirty(const std::vector<Task>& tasks) const {
            orig->priority != priority ||
            orig->dueAt != dueAt ||
            orig->completedAt.has_value() != completed ||
-           orig->tags != tags;
+           orig->tags != tags ||
+           orig->docPath != docPath;
 }
 
 // 表单字段 → Task（保留原列/position——编辑不改序不切列；completedAt 取当前态）
@@ -718,6 +722,7 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
         ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
         : std::nullopt;
     updated.tags = tags;
+    updated.docPath = docPath;
     // 保留原 position（硬编码 0 会把任务顶到列首）
     updated.position = orig != nullptr ? orig->position : 0;
     return updated;
@@ -765,8 +770,22 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                            screen.width -
                                                themeTokens.metrics.spacing.overlay));
     const bool ro = d.detail.readOnly;
-    // 只读（归档）行整体下移一档给「归档时间」行让位
-    const float offY = ro ? 18.0f : 0.0f;
+    // 关联文档存在性（H31）：只对已关联任务判定；提供方缺回调按存在处理（详情不
+    // 灰态）。每帧判定——改名/删除后下一帧即灰。
+    const bool docLinked = !d.detail.docPath.empty();
+    const bool docMissing =
+        docLinked && host.docExists && !host.docExists(d.detail.docPath);
+    // 完成时间行（done 列卡片）/ 归档时间行（归档列卡片）占同一槽位（互斥：卡片
+    // 不可能同时在两列）；有一项即整体下移一档让位。
+    const Task* detailTask =
+        (host.tasks != nullptr) ? findTask(*host.tasks, d.detail.taskId) : nullptr;
+    bool inDoneColumn = false;
+    if (detailTask != nullptr && host.columns != nullptr) {
+        const Column* col = findColumn(*host.columns, detailTask->columnId);
+        inDoneColumn = (col != nullptr && col->kind == "done");
+    }
+    const bool showMetaLine = ro || inDoneColumn;
+    const float offY = showMetaLine ? 18.0f : 0.0f;
     const float x0 = ui_kit::kDialogInsetX;
     // 底部按钮带：贴 frame 底固定偏移（frame 底 − 18 − 按钮高），任何内容高度与
     // 窗口高度下都不越框（UAT6 前随请求高 600 定位，frame 被 clamp 矮后被顶出框）
@@ -786,6 +805,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     constexpr float kBlockPrioH = 64.0f;      // 双列标签 16 + 4 缝 + segment 32 + 12 缝
     constexpr float kBlockTagLabelH = 20.0f;  // 标签行标签 16 + 4 缝
     constexpr float kBlockTagInputH = 34.0f;  // 标签添加输入行（末块无尾缝）
+    constexpr float kBlockDocH = 64.0f;       // 关联文档块（H31）：标签 16 + 4 缝 + 操作行 32 + 12 缝
     // chips 块高预排（与内容 lambda 内 wrap 同式：cw2 = chipWidth+24、行右界
     // x0+sw、行高 28+行缝 8）。sw 取无滚动条口径（w−56）——短内容不出滚动条
     // 时与运行时精确一致；出滚动条时 frame 高已被上限钳住，估算差只进滚动量。
@@ -807,7 +827,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     }
     const float chipsBlockH = chipsBottomEst > 0.0f ? chipsBottomEst + 8.0f : 0.0f;
     const float contentH = kBlockTitleH + kBlockDescH + kBlockPrioH +
-                           kBlockTagLabelH + kBlockTagInputH + chipsBlockH;
+                           kBlockTagLabelH + kBlockTagInputH + kBlockDocH +
+                           chipsBlockH;
     const float h = std::max(0.0f,
                              std::min(contentTop + contentH +
                                           kContentGapAboveFooter + kFooterBtnH +
@@ -921,6 +942,20 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 }
             }
 
+            // 完成时间（UAT6.2 H30，done 列卡片显示；非 done 列不占位）。
+            // 无值显示「—」：标记完成后又取消完成、卡留在 done 列的状态。
+            if (inDoneColumn && detailTask != nullptr) {
+                const std::string doneStr =
+                    detailTask->completedAt.has_value()
+                        ? "完成时间: " +
+                              formatArchivedAt(detailTask->completedAt.value())
+                        : std::string("完成时间: —");
+                ui_kit::drawDialogText(
+                    ui, "todo.dialog.detail.completed", w, doneStr,
+                    t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+                    {.y = 52.0f, .height = 18.0f, .lineHeight = 18.0f});
+            }
+
             // —— 内容区（UAT6 限高滚动容器）——
             // 视口 = frame 高 − 头部 − 按钮带 − 12 缝（contentTop/viewportH 在
             // frame 高计算处预算，见函数头）；标题/描述/优先级|截止/
@@ -929,7 +964,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             // 测量缓存键：标签数 + 逐标签字节数（chips 换行数随两者变 → 内容高变）
             std::string scrollKey =
                 "todo.dialog.detail.scroll.t" +
-                std::to_string(d.detail.tags.size());
+                std::to_string(d.detail.tags.size()) + ".d" + d.detail.docPath +
+                ".e" + (docMissing ? "1" : "0");
             for (const auto& tg : d.detail.tags) {
                 scrollKey += "." + std::to_string(tg.size());
             }
@@ -1138,6 +1174,92 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .build();
                         })
                         .build();
+
+                    // —— 关联文档块（UAT6.2 H31）——
+                    // 未关联：选择入口；已关联：文档名（点击 = 跳转 Markdown 打开该
+                    // 文档，只从详情进）+ 解除；文档不存在：灰态「文档不存在」，点击
+                    // 不跳转（缺回调同灰），不自动解除关联。
+                    inner.stack("todo.dialog.detail.scroll.doc.w")
+                        .size(cw, kBlockDocH)
+                        .content([&] {
+                            drawFieldLabel(inner, "todo.dialog.detail.doclabel", x0,
+                                           0.0f, 120.0f, "关联文档", t);
+                            if (!docLinked) {
+                                drawSegOp(inner, "todo.dialog.detail.doc.pick", x0,
+                                          20.0f, 140.0f, 32.0f, "选择文档…", false,
+                                          t,
+                                          (ro || !host.openDocPicker)
+                                              ? std::function<void()>{}
+                                              : [&d, &host] { host.openDocPicker(); },
+                                          0xF15B);  // fa-file
+                                return;
+                            }
+                            const std::string showName =
+                                d.detail.docTitle.empty() ? d.detail.docPath
+                                                          : d.detail.docTitle;
+                            const float gapW = 8.0f;
+                            const float unlinkW = 86.0f;
+                            const float missingW = 76.0f;
+                            // 名称宽自适应：给「文档不存在」标签与解除按钮让位
+                            const float nameW = std::max(
+                                120.0f,
+                                std::min(sw * 0.62f,
+                                         sw - unlinkW - gapW - missingW - gapW));
+                            const float unlinkX = docMissing
+                                ? x0 + nameW + gapW + missingW + gapW
+                                : x0 + nameW + gapW;
+                            // 文档名按钮：灰态禁用点击（跳转只对存在的文档有意义）
+                            components::button(inner, "todo.dialog.detail.doc.open")
+                                .position(x0, 20.0f)
+                                .size(nameW, 32.0f)
+                                .icon(0xF15B)  // fa-file
+                                .text(showName)
+                                .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                                .colors(t.colors.background, t.colors.hover,
+                                        t.colors.primarySoftBg)
+                                .textColor(docMissing ? t.colors.textTertiary
+                                                      : t.colors.textPrimary)
+                                .iconColor(docMissing ? t.colors.textTertiary
+                                                      : t.colors.textSecondary)
+                                .radius(8.0f)
+                                .border(1.0f, t.colors.borderDefault)
+                                .disabled(docMissing || !host.openLinkedDoc)
+                                .onClick(docMissing || !host.openLinkedDoc
+                                             ? std::function<void()>{}
+                                             : [&d, &host] {
+                                                   host.openLinkedDoc(d.detail.docPath);
+                                               })
+                                .build();
+                            // 灰态标签（文档不存在）：只提示，不解除关联
+                            if (docMissing) {
+                                inner.text("todo.dialog.detail.doc.missing")
+                                    .position(x0 + nameW + gapW, 20.0f)
+                                    .size(missingW, 32.0f)
+                                    .text("文档不存在")
+                                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                                    .lineHeight(32.0f)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+                            }
+                            components::button(inner,
+                                               "todo.dialog.detail.doc.unlink")
+                                .position(unlinkX, 20.0f)
+                                .size(unlinkW, 32.0f)
+                                .text("解除关联")
+                                .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                                .colors(t.colors.background, t.colors.hover,
+                                        t.colors.primarySoftBg)
+                                .textColor(t.colors.textSecondary)
+                                .radius(8.0f)
+                                .border(1.0f, t.colors.borderDefault)
+                                .onClick(ro ? std::function<void()>{}
+                                            : [&d] {
+                                                  d.detail.docPath.clear();
+                                                  d.detail.docTitle.clear();
+                                              })
+                                .build();
+                        })
+                        .build();
                 })
                 .build();
 
@@ -1193,6 +1315,86 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             }
         })
         .build();
+}
+
+// 关联文档选择器（UAT6.2 H31）：清单由模块 openDocPicker 时从
+// IMarkdownNotesSource 拉取并填入 d.docPickNotes。行点击 = 选中一篇：写
+// detail.docPath/docTitle 后关本弹窗（详情弹窗仍在栈上）。固定行数截断（逾期弹窗
+// 同款），不引入滚动容器。
+void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
+                         const core::theme::Tokens& t, DialogSet& d,
+                         const DialogHost& host) {
+    (void)host;
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
+    const float rowH = 44.0f;
+    constexpr float kMaxDialogH = 552.0f;
+    const size_t maxRows =
+        static_cast<size_t>((kMaxDialogH - 96.0f) / rowH);  // = 12
+    const size_t shown = std::min(d.docPickNotes.size(), maxRows);
+    const float h =
+        std::min(kMaxDialogH, 96.0f + rowH * static_cast<float>(shown));
+
+    ui_kit::DialogFrame frame;
+    frame.id = "todo.dialog.docpick";
+    frame.width = ui_kit::DialogWidth::Wide;
+    frame.height = h;
+    frame.open = d.popups.isOpen(Popup::DocPick);
+    frame.zIndex = d.popups.zOf(Popup::DocPick);
+    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::DocPick, v); };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        ui_kit::drawDialogTitle(ui, "todo.dialog.docpick.title", w, "关联文档",
+                                20.0f, t.colors.textPrimary,
+                                {.x = 28.0f, .y = 16.0f, .inset = 78.0f});
+        std::string hint = "选择一篇笔记作为任务的详细说明（点击即关联）";
+        if (d.docPickNotes.empty()) {
+            hint = "无可用笔记（Markdown 模块未启用或笔记目录为空）";
+        } else if (d.docPickNotes.size() > shown) {
+            hint += "（仅显示前 " + std::to_string(shown) + " 条）";
+        }
+        ui_kit::drawDialogText(ui, "todo.dialog.docpick.hint", w, hint,
+                               t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
+                               {.y = 52.0f, .height = 16.0f, .lineHeight = 16.0f});
+        for (size_t i = 0; i < shown; ++i) {
+            const ::core::NoteRef& note = d.docPickNotes[i];
+            const float y = 76.0f + static_cast<float>(i) * rowH;
+            const std::string rowId =
+                "todo.dialog.docpick.item." + std::to_string(i);
+            const bool isCurrent = (note.relPath == d.detail.docPath);
+            ui.rect(rowId)
+                .position(20.0f, y)
+                .size(w - 40.0f, rowH - 6.0f)
+                .states(t.colors.hover, t.colors.hover, t.colors.primarySoftBg)
+                .radius(t.sizes.radius)
+                .border(1.0f, isCurrent ? t.colors.primary : t.colors.borderDefault)
+                .onClick([&d, note] {
+                    d.detail.docPath = note.relPath;
+                    d.detail.docTitle = note.title;
+                    d.popups.close(Popup::DocPick);
+                })
+                .build();
+            ui.text(rowId + ".title")
+                .position(32.0f, y + 6.0f)
+                .size(w - 300.0f, 20.0f)
+                .text(note.title.empty() ? note.relPath : note.title)
+                .fontSize(t.sizes.fontSizeSmall)
+                .lineHeight(20.0f)
+                .fontWeight(500)
+                .color(t.colors.textPrimary)
+                .overflow(core::TextOverflow::Ellipsis)
+                .build();
+            ui.text(rowId + ".path")
+                .position(32.0f, y + 26.0f)
+                .size(w - 80.0f, 14.0f)
+                .text(note.relPath)
+                .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                .lineHeight(14.0f)
+                .color(t.colors.textTertiary)
+                .overflow(core::TextOverflow::Ellipsis)
+                .build();
+        }
+    });
 }
 
 } // namespace module::todo::ui

@@ -767,6 +767,17 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     std::vector<PendingChip> pendingChips;
     float chipX = kCardChipPadX;
 
+    // H31 关联文档小图标：有关联才显示；仅提示不可点（跳转只从详情进）。
+    // 占 chip 行首槽（16 宽 + 6 缝），极窄列放不下则不画图标、chips 照常。
+    constexpr float kDocIconW = 16.0f;
+    constexpr float kDocIconGap = 6.0f;
+    const bool hasDocIcon = !task.docPath.empty();
+    const bool docIconFits =
+        hasDocIcon && chipX + kDocIconW + kCardChipPadRight <= width;
+    if (docIconFits) {
+        chipX += kDocIconW + kDocIconGap;
+    }
+
     // 截止 chip：列宽无下限（≥6-7 列时 colW 跌破 130），固定 66px 会越出卡右缘——自适应剩余空间，放不下就跳过
     if (task.dueAt.has_value()) {
         const std::string dueText = formatDue(task.dueAt.value());
@@ -817,10 +828,24 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         }
     }
 
-    // 内容组垂直居中：组 = 标题行 +（有 chip 时）chip 行（常量全走 todo_ui_logic.h）
-    const bool chipRow = !pendingChips.empty();
+    // 内容组垂直居中：组 = 标题行 +（有 chip 或文档图标时）chip 行（常量全走 todo_ui_logic.h）
+    const bool chipRow = !pendingChips.empty() || docIconFits;
     const float groupTop = cardContentGroupTop(chipRow);
     const float chipY = y + groupTop + kCardTitleLineH + kCardTitleToChipGap;
+
+    // 文档小图标（chip 行首）：纯提示，不挂 onClick（跳转只从详情弹窗进）
+    if (docIconFits) {
+        ui.text(id + ".docicon")
+            .position(kCardChipPadX, chipY)
+            .size(kDocIconW, kChipHeight)
+            .icon(0xF15B)  // fa-file
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .lineHeight(kChipHeight)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .color(t.colors.textTertiary)
+            .opacity(finalCardOpacity)
+            .build();
+    }
 
     // 序号徽章已移除（§4 卡片构成 = 标题+优先级+截止，不含序号）；标题可用全宽
     //（UAT6 misc2：左右内边距 40→28，双侧减 12px 让给标题字符；Ellipsis 截断机制不变）

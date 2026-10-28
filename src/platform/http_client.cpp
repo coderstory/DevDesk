@@ -6,8 +6,11 @@
 #include <chrono>
 #include <cctype>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
+#include <system_error>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -48,8 +51,49 @@ void globalInit() {
 
 } // anonymous namespace
 
+core::Result<CaPolicy> resolveCaPolicy(const std::string& envValue) {
+    if (envValue.empty()) return core::Result<CaPolicy>::ok(CaPolicy{});
+    const std::filesystem::path bundle(envValue);
+    std::error_code fsEc;
+    if (!std::filesystem::exists(bundle, fsEc)) {
+        return core::Result<CaPolicy>::fail(
+            core::ErrorCode::Internal,
+            std::string(kCaBundleEnv) + " 指向的文件不存在: " + envValue);
+    }
+    if (!std::filesystem::is_regular_file(bundle, fsEc)) {
+        // 目录/异常路径会让 CAINFO 在 perform 期才报 libcurl 英文错,提前到可读中文
+        return core::Result<CaPolicy>::fail(
+            core::ErrorCode::Internal,
+            std::string(kCaBundleEnv) + " 指向的不是常规文件: " + envValue);
+    }
+    CaPolicy policy;
+    policy.useNative = false;  // bundle 即完整校验：换信任根，不叠加 NATIVE、不弱化
+    policy.caInfo = envValue;
+    return core::Result<CaPolicy>::ok(policy);
+}
+
+void applyCaPolicy(CURL* curl, const CaPolicy& policy) {
+    if (policy.useNative) {
+        applyCaOptions(curl);
+        return;
+    }
+    // DEVDESK_CA_BUNDLE 覆盖口：bundle 即完整校验（不叠加 NATIVE）
+    curl_easy_setopt(curl, CURLOPT_CAINFO, policy.caInfo.c_str());
+}
+
 core::Result<Response> send(const Request& req) {
     globalInit();
+
+    // CA 策略（CA 批）：DEVDESK_CA_BUNDLE 覆盖口先于句柄创建解析，失败可读报错。
+    const char* caEnv = std::getenv(kCaBundleEnv);
+    const auto caPolicy = resolveCaPolicy(caEnv != nullptr ? caEnv : "");
+    if (caPolicy.isFail()) {
+        LOG_ERROR(std::string(kCaBundleEnv) + " 解析失败: " +
+                  caPolicy.errorMessage());
+        return core::Result<Response>::fail(core::ErrorCode::Internal,
+                                            caPolicy.errorMessage());
+    }
+
     Response resp;
 
     CURL* curl = curl_easy_init();
@@ -63,15 +107,22 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理在场时会劫持 127.0.0.1 请求。
-    curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+    if (!req.proxy.empty()) {
+        // 显式代理:全部目标(含回环,SSRF 层已另行拦截)都经代理走
+        const std::string proxyUrl = "http://" + req.proxy;
+        curl_easy_setopt(curl, CURLOPT_PROXY, proxyUrl.c_str());
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
+    } else {
+        // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理在场时会劫持 127.0.0.1 请求。
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+    }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, req.verifyTls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
-    applyCaOptions(curl);
+    applyCaPolicy(curl, caPolicy.value());
 
     // DELETE 也要带 body：GitHub Contents API 的删除要求 JSON 体（message + sha）。
     // 设 POSTFIELDS 会把内部方法改成 POST，但 CURLOPT_CUSTOMREQUEST 已把方法串钉成 req.method，
@@ -111,6 +162,27 @@ core::Result<Response> send(const Request& req) {
     if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return core::Result<Response>::ok(std::move(resp));
+}
+
+bool tcpReachable(const std::string& hostPort, std::chrono::milliseconds timeout) {
+    // CONNECT_ONLY + http:// scheme = 纯 TCP 握手探测,不发送任何应用层字节;
+    // FRESH_CONNECT 防连接复用把「上一秒还活着」误判为可达。
+    globalInit();  // 与 send/sendStreaming 同规:并发首触 curl_global_init 非线程安全
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+    const std::string url = "http://" + hostPort + "/";
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
+    curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    // 探测必须反映本机直达性:钉掉环境变量代理,否则 env 代理在场时探测经
+    // 第三方代理连「代理的回环」,结果失真(直连口径与 send() 的直连分支一致)
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "*");
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
+                     static_cast<long>(timeout.count()));
+    const CURLcode rc = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    return rc == CURLE_OK;
 }
 
 // 流式响应（三线程 + 队列 + backpressure）：readChunk 消费，curl_easy_perform 生产，write callback 推 chunk 入队。
@@ -349,6 +421,16 @@ bool StreamingResponse::isPaused() const {
 core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req) {
     globalInit();
 
+    // CA 策略（CA 批）：先于句柄创建解析，失败可读报错（与 send 同口径）。
+    const char* caEnv = std::getenv(kCaBundleEnv);
+    const auto caPolicy = resolveCaPolicy(caEnv != nullptr ? caEnv : "");
+    if (caPolicy.isFail()) {
+        LOG_ERROR(std::string(kCaBundleEnv) + " 解析失败: " +
+                  caPolicy.errorMessage());
+        return core::Result<std::unique_ptr<StreamingResponse>>::fail(
+            core::ErrorCode::Internal, caPolicy.errorMessage());
+    }
+
     auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
 
     if (req.timeoutMs > 0) {
@@ -376,7 +458,15 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, req.lowSpeedTimeSec);
     }
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+    if (!req.proxy.empty()) {
+        // 显式代理:全部目标(含回环,SSRF 层已另行拦截)都经代理走(与 send 同款)
+        const std::string proxyUrl = "http://" + req.proxy;
+        curl_easy_setopt(curl, CURLOPT_PROXY, proxyUrl.c_str());
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
+    } else {
+        // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理环境下 127.0.0.1 请求会被劫持
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+    }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_.get());
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, streamHeaderCb);
@@ -386,7 +476,7 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &sr->impl_->cancelled);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, req.verifyTls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
-    applyCaOptions(curl);
+    applyCaPolicy(curl, caPolicy.value());
 
     if (req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
         sr->impl_->requestBody = req.body;  // 保活：见 Impl::requestBody 注释

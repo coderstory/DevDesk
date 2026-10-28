@@ -56,11 +56,16 @@ FTS5 全文搜索（中文可用）、目录树、标签、大纲面板；编辑
 </tr>
 <tr>
 <td><b>设置</b></td>
-<td>外观（主题 / 全局字号 / 窗口效果三档）、模块插拔（开关即时生效）、桌宠、笔记目录、代理端口与接管状态、日志保留。</td>
+<td>外观（主题 / 全局字号 / 窗口效果三档）、模块插拔（开关即时生效）、桌宠、笔记目录、代理端口与接管状态、日志保留、MCP 服务开关与端口。</td>
 </tr>
 <tr>
 <td><b>桌宠</b></td>
 <td>无边框置顶透明小窗，可拖拽、四态动画、气泡对话、右键菜单；默认关闭，需要时再开；内置 6 套皮肤。</td>
+</tr>
+<tr>
+<td><b>MCP 服务</b></td>
+<td>本机 <code>127.0.0.1</code> 的 MCP（Streamable HTTP）服务，把 DevDesk 能力暴露给 Claude Code 等 MCP 客户端：内置 <code>devdesk_server_info</code>（版本 / 平台信息）与 <code>web_fetch_markdown</code>（抓网页转 Markdown，SSRF 防护 + 10 秒总时限）。<br>
+默认关闭；设置 → 模块 → 「MCP 服务」开关即时生效，端口默认 8931（设置页可改，运行中改端口自动重启；仅监听回环，无鉴权）。</td>
 </tr>
 </table>
 
@@ -157,6 +162,17 @@ cmake --build build && ./build/DevDesk
 Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时），产物是**单个 exe、零外部 DLL**。
 
 </details>
+
+### 接入 Claude Code（MCP 服务）
+
+1. 打开开关：设置 → 模块 → 「**MCP 服务**」（默认关闭，打开即时生效；端口默认 `8931`，设置页可改，运行中改端口自动重启）。
+2. 把 DevDesk 注册进 Claude Code（本机回环，仅本机可访问）：
+
+```bash
+claude mcp add --transport http devdesk http://127.0.0.1:8931/mcp
+```
+
+3. 验证：`claude -p "用 mcp__devdesk__devdesk_server_info 报告 DevDesk 版本"`；抓取能力用 `mcp__devdesk__web_fetch_markdown`。
 
 ---
 

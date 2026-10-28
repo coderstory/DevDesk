@@ -4,6 +4,7 @@
 #include "app_sidebar.h"
 #include "core/logging.h"
 #include "core/database.h"
+#include "mcp_service_bridge.h"
 #include "module_markdown/md_file_open.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
@@ -253,6 +254,23 @@ void navigateFromTray(::core::Router* router, ::core::PageId page) {
 
 void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup) {
+    // mcp 双面性（UI 批起）：既是 Router 页面模块（注册表有其行）又挂服务生命周期
+    // ——先启停服务，再**不提前返回**落入下方遍历做页面注册/注销。缺任一半都会破
+    // 「关闭 = 侧边栏入口消失」的门控承诺（settings_ui_cards 模块卡文案的当帧更新）。
+    if (moduleId == module::settings::kModuleIdMcp) {
+        if (on) {
+            const module::settings::SettingsStore store(::core::appDatabase());
+            auto r = app::mcp::start(store.load().mcpPort);
+            if (r.isFail()) {
+                // 用户动作失败要可见：toast 通知（启动期自启不经过这里）；服务失败
+                // 不阻断页面注册——页面状态行如实显示「已停止 + 错误」
+                app::showAppNotice("MCP 服务未启动", r.errorMessage());
+                LOG_ERROR("模块开关: MCP 服务启动失败: " + r.errorMessage());
+            }
+        } else {
+            app::mcp::stop();
+        }
+    }
     for (const auto& e : ::app::registry::kModuleRegistry) {
         if (e.gatingKey == nullptr || moduleId != e.gatingKey) {
             continue;  // 恒开行不参与拨开关；其余行键不匹配继续找
