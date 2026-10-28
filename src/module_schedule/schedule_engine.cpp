@@ -14,15 +14,16 @@ namespace module::schedule {
 
 namespace {
 
-// S2 对齐点：RuleKind 枚举名以 core/schedule_rule.h 实际定义为准；若 S2 另提供
-// kind 字符串转换函数，删掉本函数直接换用。
+// S2 对齐点：RuleKind 枚举名以 core/schedule_rule.h 实际定义为准（真实枚举无
+// k 前缀：Once/Interval/Calendar/Cron/Event/Resident）；S2 未提供 kind 字符串
+// 转换函数，本函数保留。
 core::schedule::RuleKind kindFromString(const std::string& kind) {
-    if (kind == "once") return core::schedule::RuleKind::kOnce;
-    if (kind == "interval") return core::schedule::RuleKind::kInterval;
-    if (kind == "calendar") return core::schedule::RuleKind::kCalendar;
-    if (kind == "cron") return core::schedule::RuleKind::kCron;
-    if (kind == "event") return core::schedule::RuleKind::kEvent;
-    return core::schedule::RuleKind::kResident;
+    if (kind == "once") return core::schedule::RuleKind::Once;
+    if (kind == "interval") return core::schedule::RuleKind::Interval;
+    if (kind == "calendar") return core::schedule::RuleKind::Calendar;
+    if (kind == "cron") return core::schedule::RuleKind::Cron;
+    if (kind == "event") return core::schedule::RuleKind::Event;
+    return core::schedule::RuleKind::Resident;
 }
 
 // 补跑窗口上限：all 策略最多补 100 次（§4.6），多取 1 个判溢出。

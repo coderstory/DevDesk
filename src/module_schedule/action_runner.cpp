@@ -12,9 +12,9 @@ namespace module::schedule {
 
 // ============ 纯函数 ============
 
-// attempt = 刚失败的尝试序号（1 起）。阶梯 0s/30s/300s 是三次尝试相对
-// planned_at 的绝对偏移（§4.9/验收 7）：第 1 次失败 → 下次在 +30s，第 2 次失败
-// → 下次在 +300s；Receipt 建议延迟更大时取建议值（如 wecom 45009 建议 60s）。
+// 阶梯 0s/30s/300s 是三次尝试相对 planned_at 的绝对偏移（§4.9/验收 7）：第 1 次
+// 失败 → 下次在 +30s，第 2 次失败 → 下次在 +300s。真实 Receipt 只有 status 稳定串、
+// 无结构化建议延迟字段，suggestedSec 保留参数位（当前 dispatch 恒传 0）。
 int64_t retryDelaySec(int attempt, int64_t suggestedSec) {
     const int idx = (attempt >= 1 && attempt < kMaxDeliveryAttempts)
                         ? attempt
@@ -23,11 +23,15 @@ int64_t retryDelaySec(int attempt, int64_t suggestedSec) {
     return suggestedSec > ladder ? suggestedSec : ladder;
 }
 
-// S5 对齐点①：Receipt 字段以 channel_registry.h 实际定义为准（§4.9 重试分类：
-// 网络错误/5xx/45009/45033 可重试；93000/93001/93004/93017 永久失败）。
+// S5 对齐点①：真实 Receipt 只有 {status, detail} 两个稳定串字段
+// （channel_registry.h，渠道实现与测试断言共用同一套 status 词汇，见 wecom.h 状态表）。
+// 分类（§4.9）：ok/queued = 成功；retryable:* 与 rate_limited = 可重试；
+// 其余（permanent:* / missing_secret / 未知串）= 永久失败不重试。
 ReceiptClass classifyReceipt(const module::schedule::Receipt& receipt) {
-    if (receipt.success) return ReceiptClass::kSuccess;
-    if (receipt.retryable) return ReceiptClass::kRetryable;
+    const std::string& s = receipt.status;
+    if (s == "ok" || s == "queued") return ReceiptClass::kSuccess;
+    if (s.rfind("retryable:", 0) == 0 || s == "rate_limited")
+        return ReceiptClass::kRetryable;
     return ReceiptClass::kPermanent;
 }
 
@@ -92,18 +96,53 @@ ActionRunner::ActionRunner(ScheduleStore& store, ChannelRegistry& channels,
 
 void ActionRunner::resetForTest() { httpInFlight_.clear(); }
 
-// S5 对齐点②：注册表按渠道 id 分发。若 S5 实际入口不是 deliver(channelId, Delivery)，
-// 只改本函数。
+// S5 对齐点②：真实注册表键 = 渠道 kind 字符串（"toast" 等），入口是
+// deliver(vector<string>, Delivery) → Result<DispatchReport>（无按 int64 id 的
+// deliver）。引擎按 schedule_channel 配置行 id（int64）分发：先经 store 取该行
+// kind，再投递并取该渠道回执。配置行缺失/未注册渠道 = 配置错误 → fail，
+// 由 dispatchOnce 判永久失败不重试。
 namespace {
 core::Result<module::schedule::Receipt> deliverViaRegistry(
-    ChannelRegistry& channels, int64_t channelId, const module::schedule::Delivery& delivery) {
-    return channels.deliver(channelId, delivery);
+    ScheduleStore& store, ChannelRegistry& channels, int64_t channelId,
+    const module::schedule::Delivery& delivery) {
+    auto got = store.getChannel(channelId);
+    if (got.isFail()) {
+        return core::Result<module::schedule::Receipt>::fail(got.errorCode(),
+                                                             got.errorMessage());
+    }
+    if (!got.value().has_value()) {
+        return core::Result<module::schedule::Receipt>::fail(
+            core::ErrorCode::NotFound,
+            "渠道配置不存在：id=" + std::to_string(channelId));
+    }
+    const std::string kind = got.value()->kind;
+    auto report = channels.deliver(std::vector<std::string>{kind}, delivery);
+    if (report.isFail()) {
+        return core::Result<module::schedule::Receipt>::fail(report.errorCode(),
+                                                             report.errorMessage());
+    }
+    const auto& entries = report.value().entries;
+    if (entries.empty()) {
+        return core::Result<module::schedule::Receipt>::fail(
+            core::ErrorCode::NotFound, "渠道分发报告为空");
+    }
+    return entries.front().receipt;
 }
-// S5 对齐点③：本地一次性告警（最终失败降级/永久失败告警）。若 S5 无 deliverLocal，
-// 改为「取内置 toast 渠道 id 再 deliver」——只改本函数。
+// S5 对齐点③：真实注册表无 deliverLocal——本地一次性告警（最终失败降级/
+// 永久失败告警）改为「取内置 toast 渠道 id 再 deliver」，只改本函数。
 core::Result<module::schedule::Receipt> localAlertViaRegistry(
     ChannelRegistry& channels, const module::schedule::Delivery& delivery) {
-    return channels.deliverLocal(delivery);
+    auto report = channels.deliver(std::vector<std::string>{kChannelToast}, delivery);
+    if (report.isFail()) {
+        return core::Result<module::schedule::Receipt>::fail(report.errorCode(),
+                                                             report.errorMessage());
+    }
+    const auto& entries = report.value().entries;
+    if (entries.empty()) {
+        return core::Result<module::schedule::Receipt>::fail(
+            core::ErrorCode::NotFound, "本地告警分发报告为空");
+    }
+    return entries.front().receipt;
 }
 } // namespace
 
@@ -140,9 +179,9 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
     }
     rec = inserted.value();
 
-    auto delivered = deliverViaRegistry(channels_, channelId, delivery);
+    auto delivered = deliverViaRegistry(store_, channels_, channelId, delivery);
     if (delivered.isFail()) {
-        // 渠道缺失/注册表失败 = 配置错误，判永久失败不重试。
+        // 渠道配置缺失/未注册 = 配置错误，判永久失败不重试。
         rec.status = "dropped";
         rec.error = delivered.errorMessage();
         (void)store_.updateDelivery(rec);
@@ -154,12 +193,9 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
 
     const module::schedule::Receipt& receipt = delivered.value();
     const ReceiptClass cls = classifyReceipt(receipt);
-    rec.responseCode = receipt.httpStatus > 0
-                            ? std::optional<int64_t>(receipt.httpStatus)
-                            : std::nullopt;
-    rec.remoteErrcode = receipt.remoteErrcode > 0
-                            ? std::optional<int64_t>(receipt.remoteErrcode)
-                            : std::nullopt;
+    // 真实 Receipt 无 http/errcode 数字字段（分类已编码进 status 串），投递行留空。
+    rec.responseCode = std::nullopt;
+    rec.remoteErrcode = std::nullopt;
 
     switch (cls) {
         case ReceiptClass::kSuccess:
@@ -171,7 +207,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
             return core::Result<RetryOutcome>::ok(std::move(out));
 
         case ReceiptClass::kRetryable:
-            rec.error = receipt.message;
+            rec.error = receipt.detail;
             if (attempt >= kMaxDeliveryAttempts) {
                 // 达上限：最终失败——降级本地提示一次（§4.9），run 仍 success。
                 rec.status = "failed";
@@ -180,29 +216,30 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
                 --httpInFlight_[channelId];
                 out.terminal = true;
                 out.degradedLocally = true;
-                out.error = "投递重试达上限：" + receipt.message;
+                out.error = "投递重试达上限：" + receipt.detail;
                 return core::Result<RetryOutcome>::ok(std::move(out));
             }
             rec.status = "retry";
-            rec.nextRetryAt = plannedAt + retryDelaySec(attempt, receipt.retryAfterSec);
+            // 真实 Receipt 无结构化建议延迟：按固定阶梯 0s/30s/300s（§4.9）。
+            rec.nextRetryAt = plannedAt + retryDelaySec(attempt, 0);
             (void)store_.updateDelivery(rec);
             --httpInFlight_[channelId];
             out.terminal = false;
             out.nextRetryAt = rec.nextRetryAt;
-            out.error = receipt.message;
+            out.error = receipt.detail;
             return core::Result<RetryOutcome>::ok(std::move(out));
 
         case ReceiptClass::kPermanent:
         default:
             // 永久失败：不重试、停用渠道、本地告警一次（§4.9）。
             rec.status = "dropped";
-            rec.error = receipt.message;
+            rec.error = receipt.detail;
             rec.nextRetryAt = std::nullopt;
             (void)store_.updateDelivery(rec);
             --httpInFlight_[channelId];
             out.terminal = true;
             out.channelDisabled = true;
-            out.error = receipt.message;
+            out.error = receipt.detail;
             return core::Result<RetryOutcome>::ok(std::move(out));
     }
 }
