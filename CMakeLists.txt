@@ -177,7 +177,7 @@ add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
 add_subdirectory(src/module_wallpaper)
 add_subdirectory(src/module_mcp)
-# 定时调度子系统（S3 存储层先行；app_registry/PageId 接线由 UI 波做，本波不注册）
+# 定时调度子系统（S3 存储层先行，S7a 完成 app_registry/PageId/宿主装配接线）
 add_subdirectory(src/module_schedule)
 
 # UAT6：构建机信息注入关于页构建行。定义挂在根而非 src/module_about/
@@ -297,6 +297,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_about
     devdesk_module_wallpaper
     devdesk_module_mcp
+    devdesk_module_schedule
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE

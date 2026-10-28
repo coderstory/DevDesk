@@ -108,7 +108,7 @@ private:
 };
 
 // 全启用配置：显式列全门控键（含默认清单里没有的 agent / wallpaper / mcp），
-// 「all-on = 10 项」按这个构造口径保住
+// 「all-on = 11 项」按这个构造口径保住
 module::settings::SettingsConfig allOnConfig() {
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
@@ -529,25 +529,26 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 // 真实 kModuleRegistry 表：门控键列填错或表序漂移，在此必挂
 
 REGISTER_TEST(assembly_registry_table_shape,
-              "assembly: 真实 kModuleRegistry —— 10 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 其余七行==kModuleId*", {
+              "assembly: 真实 kModuleRegistry —— 11 行 / 行序==PageId 枚举序 / home+schedule+settings+about gatingKey==nullptr / 其余七行==kModuleId*", {
     using ::app::registry::kModuleRegistry;
     constexpr size_t kRegistrySize =
         sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
-        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,      ::core::PageId::Memory,
-        ::core::PageId::Wallpaper,  ::core::PageId::Mcp,
-        ::core::PageId::Settings,
+        ::core::PageId::Todo,       ::core::PageId::Schedule,
+        ::core::PageId::ClaudeProxy, ::core::PageId::Agent,
+        ::core::PageId::Memory,     ::core::PageId::Wallpaper,
+        ::core::PageId::Mcp,        ::core::PageId::Settings,
         ::core::PageId::About,
     };
-    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(10));
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(11));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，这是 core_pageid_order 契约的
         // 装配侧镜像；Agent/Mcp 必须排在 Settings 之前）
         DOCTEST_CHECK(kModuleRegistry[i].page == kEnumOrder[i]);
     }
-    // home/settings/about 恒注册（gatingKey==nullptr）；七个工具模块各自带对应门控键。
+    // home/schedule/settings/about 恒注册（gatingKey==nullptr；schedule 的模块开关
+    // 卡片后续波次补）；七个工具模块各自带对应门控键。
     // 空指针必须走 null-safe 取值：直接 std::string(nullptr) 是 UB，clang -Wnonnull 会当
     // 编译错误拦下——这个 lambda 就是为了让 nullptr 与非空串落在同一条比较路径上。
     auto gating = [](const char* key) {
@@ -558,49 +559,53 @@ REGISTER_TEST(assembly_registry_table_shape,
                      std::string(module::settings::kModuleIdMarkdown));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[2].gatingKey),
                      std::string(module::settings::kModuleIdTodo));
-    DOCTEST_CHECK_EQ(gating(kModuleRegistry[3].gatingKey),
-                     std::string(module::settings::kModuleIdClaudeProxy));
+    DOCTEST_CHECK(kModuleRegistry[3].gatingKey == nullptr);
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[4].gatingKey),
-                     std::string(module::settings::kModuleIdAgent));
+                     std::string(module::settings::kModuleIdClaudeProxy));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[5].gatingKey),
-                     std::string(module::settings::kModuleIdMemory));
+                     std::string(module::settings::kModuleIdAgent));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[6].gatingKey),
-                     std::string(module::settings::kModuleIdWallpaper));
+                     std::string(module::settings::kModuleIdMemory));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[7].gatingKey),
+                     std::string(module::settings::kModuleIdWallpaper));
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[8].gatingKey),
                      std::string(module::settings::kModuleIdMcp));
-    DOCTEST_CHECK(kModuleRegistry[8].gatingKey == nullptr);
     DOCTEST_CHECK(kModuleRegistry[9].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[10].gatingKey == nullptr);
     return true;
 })
 
 REGISTER_TEST(assembly_build_gated_entries_real_table,
-              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册，mcp 默认关）/ all-on 10 条按表序", {
+              "assembly: buildGatedEntries 真实表 —— all-off 恰 4 条（home/schedule/settings/about 恒注册，mcp 默认关）/ all-on 11 条按表序", {
     constexpr size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
         sizeof(::app::registry::kModuleRegistry[0]);
-    // 全关（七个工具模块）→ 只剩 home/settings/about 三条恒注册行。锁的是**真实表**：
-    // gatingKey 列填错这里必挂——手搓清单的用例（homeSettingsOnly）覆盖不到这一层。
+    // 全关（七个工具模块）→ 只剩 home/schedule/settings/about 四条恒注册行。
+    // 锁的是**真实表**：gatingKey 列填错这里必挂——手搓清单的用例（homeSettingsOnly）
+    // 覆盖不到这一层。
     const auto gated = app::assembly::buildGatedEntries(
         allToolsOffConfig(), ::app::registry::kModuleRegistry,
         kRegistrySize);
-    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(3));
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(4));
     DOCTEST_CHECK(gated[0].page == ::core::PageId::Home);
-    DOCTEST_CHECK(gated[1].page == ::core::PageId::Settings);
-    DOCTEST_CHECK(gated[2].page == ::core::PageId::About);
+    DOCTEST_CHECK(gated[1].page == ::core::PageId::Schedule);
+    DOCTEST_CHECK(gated[2].page == ::core::PageId::Settings);
+    DOCTEST_CHECK(gated[3].page == ::core::PageId::About);
     // 实例列恒为 nullptr——由调用方按 page 从自有 static 持有填入
     DOCTEST_CHECK(gated[0].module == nullptr);
     DOCTEST_CHECK(gated[1].module == nullptr);
     DOCTEST_CHECK(gated[2].module == nullptr);
-    // 全开 → 10 条且序 == 表序
+    DOCTEST_CHECK(gated[3].module == nullptr);
+    // 全开 → 11 条且序 == 表序
     const auto allGated = app::assembly::buildGatedEntries(
         allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(10));
+    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(11));
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
-        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,      ::core::PageId::Memory,
-        ::core::PageId::Wallpaper,  ::core::PageId::Mcp,
-        ::core::PageId::Settings,
+        ::core::PageId::Todo,       ::core::PageId::Schedule,
+        ::core::PageId::ClaudeProxy, ::core::PageId::Agent,
+        ::core::PageId::Memory,     ::core::PageId::Wallpaper,
+        ::core::PageId::Mcp,        ::core::PageId::Settings,
         ::core::PageId::About,
     };
     for (size_t i = 0; i < allGated.size(); ++i) {

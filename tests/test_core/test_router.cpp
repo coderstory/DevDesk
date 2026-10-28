@@ -417,11 +417,12 @@ REGISTER_TEST(core_window_to_compose_degenerate_and_legacy,
 // 断言写成显式钉死预期序：`PageId::Todo >= 0` 这类对 enum class 的比较恒真，验证不了
 // 任何顺序
 REGISTER_TEST(core_pageid_order,
-              "core: PageId ordering contract (Home<Markdown<Todo<ClaudeProxy<Agent<Memory<Wallpaper<Mcp<Settings<About)", {
+              "core: PageId ordering contract (Home<Markdown<Todo<Schedule<ClaudeProxy<Agent<Memory<Wallpaper<Mcp<Settings<About)", {
     using core::PageId;
     const int home = static_cast<int>(PageId::Home);
     const int markdown = static_cast<int>(PageId::Markdown);
     const int todo = static_cast<int>(PageId::Todo);
+    const int schedule = static_cast<int>(PageId::Schedule);
     const int claude = static_cast<int>(PageId::ClaudeProxy);
     const int agent = static_cast<int>(PageId::Agent);
     const int memory = static_cast<int>(PageId::Memory);
@@ -430,11 +431,12 @@ REGISTER_TEST(core_pageid_order,
     const int settings = static_cast<int>(PageId::Settings);
     const int about = static_cast<int>(PageId::About);
 
-    // 严格单调：Home < Markdown < Todo < ClaudeProxy < Agent < Memory < Wallpaper <
-    // Mcp < Settings < About。侧边栏顺序的真源 = 注册表序 = 枚举序
+    // 严格单调：Home < Markdown < Todo < Schedule < ClaudeProxy < Agent < Memory <
+    // Wallpaper < Mcp < Settings < About。侧边栏顺序的真源 = 注册表序 = 枚举序
     DOCTEST_CHECK(home < markdown);
     DOCTEST_CHECK(markdown < todo);
-    DOCTEST_CHECK(todo < claude);
+    DOCTEST_CHECK(todo < schedule);
+    DOCTEST_CHECK(schedule < claude);
     DOCTEST_CHECK(claude < agent);
     DOCTEST_CHECK(agent < memory);
     DOCTEST_CHECK(memory < wallpaper);
@@ -446,13 +448,14 @@ REGISTER_TEST(core_pageid_order,
     DOCTEST_CHECK_EQ(home, 0);
     DOCTEST_CHECK_EQ(markdown, 1);
     DOCTEST_CHECK_EQ(todo, 2);
-    DOCTEST_CHECK_EQ(claude, 3);
-    DOCTEST_CHECK_EQ(agent, 4);
-    DOCTEST_CHECK_EQ(memory, 5);
-    DOCTEST_CHECK_EQ(wallpaper, 6);
-    DOCTEST_CHECK_EQ(mcp, 7);
-    DOCTEST_CHECK_EQ(settings, 8);
-    DOCTEST_CHECK_EQ(about, 9);
+    DOCTEST_CHECK_EQ(schedule, 3);
+    DOCTEST_CHECK_EQ(claude, 4);
+    DOCTEST_CHECK_EQ(agent, 5);
+    DOCTEST_CHECK_EQ(memory, 6);
+    DOCTEST_CHECK_EQ(wallpaper, 7);
+    DOCTEST_CHECK_EQ(mcp, 8);
+    DOCTEST_CHECK_EQ(settings, 9);
+    DOCTEST_CHECK_EQ(about, 10);
     return true;
 })
 
@@ -464,7 +467,7 @@ REGISTER_TEST(router_register_inserts_table_order,
     StubModule agent(::core::PageId::Agent, "agent");
     StubModule markdown(::core::PageId::Markdown, "markdown");
     StubModule home(::core::PageId::Home, "home");
-    // 乱序注册：Agent(4) 最先、Markdown(1) 其次、Home(0) 最后
+    // 乱序注册：Agent(5) 最先、Markdown(1) 其次、Home(0) 最后
     router.registerModule(&agent);
     router.registerModule(&markdown);
     router.registerModule(&home);

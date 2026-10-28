@@ -151,6 +151,8 @@ add_executable(devdesk_tests
     test_modules/test_wecom_channel.cpp
     # 定时调度子系统 S4 调度引擎：到期触发/错过三策略/回拨不重放/串行/队列满/归档/编辑重算/投递重试
     test_modules/test_schedule_engine.cpp
+    # 波 S7a 列表页/模块装配：装配排序/开关落库/归档折叠/系统段空注册表/注册表项完整
+    test_modules/test_schedule_ui_list.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp
