@@ -144,7 +144,7 @@
 **阶段目标**：先不执行测试；依次完成 ①剩余全部功能开发 ②测试代码编写 ③文档完善，然后**全部 commit、合并到 `dev` 分支**。测试执行放在合并之后统一做。
 
 - **代码位置**：全部实现在 `D:/wt-rel-core`（分支 `wt-release-core`），主仓 `feature/20261027-release-module` 只有文档；合并时以 worktree 分支为源
-- **待开发（进入批次 4）**：审计 B 剩余 3 major——提醒窗开窗失败即死（`release_reminder`）、steps 每秒 N+1 扫库（需 store 加按任务一次拉全的查询）、列表状态不按时间推导（需 `release_logic` 加纯函数）；Z 线留下的三件——详情页迁移到 `dueItems` 新签名、删除 `appendSyntheticConfigs` 兜底、N+1 同前；审计 A/B 共 28 minor 待分诊（修/不修/仅记录）
+- **待开发（进入批次 4）**：审计 B 剩余 3 major——~~提醒窗开窗失败即死（`release_reminder`）~~、steps 每秒 N+1 扫库（需 store 加按任务一次拉全的查询）、列表状态不按时间推导（需 `release_logic` 加纯函数）；Z 线留下的三件——~~详情页迁移到 `dueItems` 新签名~~、删除 `appendSyntheticConfigs` 兜底、N+1 同前；审计 A/B 共 28 minor 待分诊（修/不修/仅记录）
 - **测试编写**：批次 2/3 新增功能中无断言的——配置编辑层、跳过勾选、服务/环境移除、详情页返回；测试写好**不跑**，与代码一起 commit
 - **文档完善**：spec §10/§11 与实现同步（侧边栏重排、默认折叠、ticker、编辑层、原子化建单）；`.scratch/release-module/checklist.json` 状态更新
 - **完成后动作**：全部 commit（显式 pathspec）→ 合并到 `dev` → 用 `C:/Tools/Git/mingw64/libexec/git-core/git-push.exe` 推送 → 在 `dev` 上跑完整门禁（构建 + 全量单测 + 探针）

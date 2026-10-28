@@ -175,7 +175,7 @@
 | 顺序 | 步骤 | 何时可做 |
 |------|------|----------|
 | 1 | 合并分支 | 随时（建单后即可勾） |
-| 2~6 | 5 项配置（顺序可拖拽） | 时间窗开始后 |
+| 2~6 | 5 项配置（顺序可上下移） | 时间窗开始后 |
 | 7 | 部署 | 时间窗开始后 |
 | 8 | 验证完成 | 时间窗开始后 |
 
@@ -185,7 +185,7 @@
 
 - **自由推进 + 引导**：任意服务的任意可做步骤都能点，同时给一个「下一步」默认路径。
 - **服务顺序可拖拽**，调整结果记进任务。
-- **配置项顺序可拖拽**，但只在「配置中 / 待执行」阶段可调，进入执行后锁定。
+- **配置项顺序可上下移**（行内上下移按钮；另有拖拽手柄），但只在「配置中 / 待执行」阶段可调，进入执行后锁定。
 - 过了时间窗仍可继续做，列表标红「已超时」。
 
 ### 5.3 撤回
@@ -252,9 +252,10 @@
 ```
 
 - **状态只跟时间走**：提前勾前置不算「执行中」，只体现在进度上。
+- **列表状态按时间推导**：列表显示的状态由纯函数 `deriveStatus` 按当前时间推导，不写库；库内状态只由提交 / 作废 / 恢复三个动作维护。
 - **超时**是标记不是状态。
 - **已作废**：停止提醒、进度冻结但保留；**可恢复**（按当前进度与时间自动回到对应状态）；**不占当天名额**，所以作废后当天可再建一个。若恢复时当天已有另一个非作废任务 → 拒绝恢复并提示（唯一约束不允许静默覆盖）。
-- 状态值是英文枚举（`configuring/pending/running/done/void`），界面显示中文；「超时」是计算出的标记，不入库。
+- 状态值是英文枚举（`Draft/Pending/Running/Done/Voided`），界面显示中文；「超时」是计算出的标记，不入库。
 
 ---
 
@@ -286,7 +287,7 @@
 | `release_service` | `id INTEGER PK AUTOINCREMENT`、`name TEXT NOT NULL UNIQUE`、`kind TEXT NOT NULL`（backend/pc_web/mobile_web）、`default_branch TEXT NOT NULL DEFAULT ''`、`sort INTEGER NOT NULL DEFAULT 0`、`created_at INTEGER NOT NULL` |
 | `release_env` | `id`、`name TEXT NOT NULL UNIQUE`、`start_minute INTEGER NOT NULL`、`end_minute INTEGER NOT NULL`、`sort INTEGER NOT NULL DEFAULT 0`、`created_at INTEGER NOT NULL` |
 | `release_env_service` | `env_id INTEGER NOT NULL`、`service_id INTEGER NOT NULL`、`PRIMARY KEY(env_id, service_id)`、双 FK `ON DELETE CASCADE` |
-| `release_task` | `id`、`plan_date TEXT NOT NULL`、`status TEXT NOT NULL`（configuring/pending/running/done/void）、`announce_text TEXT NOT NULL DEFAULT ''`、`announce_sent_at INTEGER`、`pretest_no TEXT NOT NULL DEFAULT ''`、`pretest_ok INTEGER NOT NULL DEFAULT 0`、`cab_no`/`cab_ok`、`ticket_nacos_no`/`ticket_nacos_ok`、`ticket_db_no`/`ticket_db_ok`、`created_at/updated_at INTEGER NOT NULL` |
+| `release_task` | `id`、`plan_date TEXT NOT NULL`、`status TEXT NOT NULL`（Draft/Pending/Running/Done/Voided）、`announce_text TEXT NOT NULL DEFAULT ''`、`announce_sent_at INTEGER`、`pretest_no TEXT NOT NULL DEFAULT ''`、`pretest_ok INTEGER NOT NULL DEFAULT 0`、`cab_no`/`cab_ok`、`ticket_nacos_no`/`ticket_nacos_ok`、`ticket_db_no`/`ticket_db_ok`、`created_at/updated_at INTEGER NOT NULL` |
 | `release_task_env` | `id`、`task_id INTEGER NOT NULL`、`env_name TEXT NOT NULL`、`start_minute`、`end_minute`、`removed INTEGER NOT NULL DEFAULT 0`、`sort INTEGER NOT NULL DEFAULT 0`、`UNIQUE(task_id, env_name)` |
 | `release_task_service` | `id`、`task_env_id INTEGER NOT NULL`、`service_name TEXT NOT NULL`、`service_kind TEXT NOT NULL`、`default_branch TEXT NOT NULL DEFAULT ''`、`branch TEXT NOT NULL DEFAULT ''`、`removed INTEGER NOT NULL DEFAULT 0`、`sort INTEGER NOT NULL DEFAULT 0`、`UNIQUE(task_env_id, service_name)` |
 | `release_task_config` | `id`、`task_service_id INTEGER NOT NULL`、`kind TEXT NOT NULL`（nacos/db/cron/menu/gateway）、`content TEXT NOT NULL DEFAULT ''`、`skipped INTEGER NOT NULL DEFAULT 0`、`conf_order INTEGER NOT NULL DEFAULT 0`、`done_at INTEGER`、`UNIQUE(task_service_id, kind)` |
@@ -301,74 +302,69 @@
 
 ---
 
-## 10. 模块接入点（2026-10-27 修订）
+## 10. 模块接入点
 
-> 旧口径：「侧边栏自动接管，无需改动」。新决策把二级菜单做成通用能力，侧边栏需要改动；以下为完整清单。
+侧边栏是按登记表 `parent` 列组织的**可折叠树**。`ModuleEntry` 的 `parent` 类型为 `std::optional<PageId>`：空 = 顶级项，走既有平铺路径；非空 = 挂在对应分组父项下。既有 8 行的元数据、节点 id、相对顺序与缩进保持不变；几何不再逐行保持——「上线」父项占一整行，位于其后的 Settings / About 整体下移 44px。
 
-新增 `module_release` 需要改的既有文件（共 10 处，全部为最小改动）：
+上线模块在登记表占 3 行，共用门控键 `kModuleIdRelease`：
 
-| # | 文件 | 改动 |
-|---|------|------|
-| 1 | `src/core/module_interface.h` | `PageId` 加 `Release`（置于 `Todo` 之后、`ClaudeProxy` 之前，与原型侧栏序一致）；`pageIdToString` 加一项；`Module` 加可选子项虚函数（默认空实现，见 §10.1） |
-| 2 | `src/app_registry.h` | `extern "C" create_release_module()` + 注册表加一行（gatingKey=`kModuleIdRelease`，短名「上线」，图标 fa-upload U+F093） |
-| 3 | `src/main.cpp` | 静态实例 + `moduleForPage` switch 加一个 case |
-| 4 | `src/module_settings/settings_config.h` | `kModuleIdRelease = "release"` + 存量配置一次性纳入版本字段 |
-| 5 | `src/module_settings/settings_config.cpp` | 合法 ID 清单 + 默认启用集 + 存量配置一次性纳入（防老用户看不到新模块） |
-| 6 | `src/module_settings/settings_ui_cards.cpp` | 模块开关卡加第 5 项（上线） |
-| 7 | `src/module_settings/settings_ui_logic.h` | `kModulesCardHeight` 198 → 232（5 项 = 3 行，按现有公式 68 + 2×56 + 36 + 16） |
-| 8 | `src/app_sidebar.cpp` | 子项渲染分支（仅声明了子项的模块走）+ 提醒引擎每帧拉取一行 |
-| 9 | 根 `CMakeLists.txt` | `add_subdirectory(src/module_release)` + app 链接 + 覆盖率插桩清单 |
-| 10 | `tests/CMakeLists.txt` | 测试源登记 + `devdesk_module_release` 链接 |
+| 登记行 | PageId | 短名 | 父级 | 工厂行为 |
+|--------|--------|------|------|----------|
+| 分组父项 | `ReleaseGroup` | 上线 | 无 | `create_release_group_module()` 恒返回 `nullptr`：不可导航，不注册 Router，只承载侧边栏父级身份 |
+| 任务 | `ReleaseTasks` | 任务 | `ReleaseGroup` | `create_release_tasks_module()` 返回任务页 Module |
+| 基础配置 | `ReleaseConfig` | 基础配置 | `ReleaseGroup` | `create_release_config_module()` 返回配置页 Module |
 
-> 旧口径写的 `src/CMakeLists.txt` 在本仓库不存在；模块注册实际在根 `CMakeLists.txt`（`add_subdirectory` 段与 app `target_link_libraries` 段），已按实际路径修正。
->
-> **最小侵入的两处必要例外**：① `settings_ui_logic.h` 的卡高常量（第 5 项使 2×2 变 3 行，不改会裁切）；② `settings_config` 的 `modulesVersion`（不做一次性纳入，存量用户升级后看不到新模块）。除此之外不新增共享抽象、不改既有模块行为。
-
-**存量配置一次性纳入**：`SettingsConfig` 新增 `modulesVersion`（新配置内存默认 2；`load()` 必须把**键缺失**按 1 处理——不能用结构体默认值判断，否则老库永远读成 2、迁移不触发）。`load()` 读到 <2 时，把 `release` 补进 `enabledModules`（若不在）并把内存版本置 2；设置页任何一次保存会把版本 2 落库。这样老用户升级后直接看到上线模块，而用户随后手动关闭它不会被下次启动重新加回。
-
-### 10.1 Module 子项接口（通用能力，默认空 = 旧行为）
-
-```cpp
-struct ChildNavItem { std::string id; std::string label; };
-virtual std::vector<ChildNavItem> childNavItems() const { return {}; }
-virtual bool childNavExpandedByDefault() const { return true; }
-virtual std::string activeChildNavId() const { return {}; }
-virtual void onChildNavSelected(const std::string& id) { (void)id; }
-```
-
-契约：
-
-- 本期只支持**一级子项**（一级项下挂子项），不支持多级嵌套；多级需求另立设计。
-- `childNavItems()` 返回空 → 侧边栏渲染逻辑与改动前**完全一致**（节点 id、几何、分组规则都不变；由现有 `test_app_sidebar` 回归断言锁）。
-- 有子项时：父项右侧画 16×16 展开箭头；子项行 `x = padX + 24`（缩进 24）、宽 = `kWidth − 2×padX − 24`、高 = `kNavItemH`、间距 4。
-- 父项点击 = 展开/折叠；折叠态（72 宽图标栏）不渲染子项，父项点击 = 导航到该页并保持模块上次激活的子页。
-- 子项点击 = `router.navigateTo(page)` 后调 `onChildNavSelected(id)`；激活子项画 `ui_kit::selectionBar`。
-- 展开状态是进程内状态，按模块默认值 `childNavExpandedByDefault()` 初始化；不持久化（本期最小实现）。
-- 上线模块：`childNavItems()` = `{tasks, "任务"}`、`{config, "基础配置"}`，默认展开，默认激活 `tasks`。
-- 节点 id：`app.sidebar.item.Release.arrow`、`app.sidebar.child.Release.tasks.hit`、`app.sidebar.child.Release.config.hit`。
-
-### 10.2 module_release 文件布局（便于拆任务 / 并行，避免同文件多写者）
+接入涉及的文件与职责：
 
 | 文件 | 职责 |
 |------|------|
-| `release_module.h/.cpp` | `Module` 接口、子页路由、生命周期、提醒 tick 入口 |
-| `release_tokens.generated.h` | 由 token 清单生成，禁止手改 |
-| `release_model.h` | 枚举 / 数据结构 / 快照 |
-| `release_store.h/.cpp` | SQLite 读写（唯一 DB 入口） |
-| `release_service.h/.cpp` | 创建 / 提交 / 状态 / 完成度 / 撤回 / 日志 |
-| `release_validate.h/.cpp` | 纯校验（分支 / 配置 / 单据号 / 完成判定） |
-| `release_time.h/.cpp` | 纯时间计算（跨零点 / 到期 / 超时） |
-| `release_reminder.h/.cpp` | 提醒收集 / 分级 / 抑制（纯逻辑） |
-| `release_reminder_window.h/.cpp` | 提醒全屏窗 compose |
-| `release_ui_common.h/.cpp` | 页头 / 空状态 / 格式化 / chips |
-| `release_ui_tasks.h/.cpp` | 任务列表（瀑布流 + 卡片 + 分页占位） |
-| `release_ui_create.h/.cpp` | 新建任务页 |
-| `release_ui_exec.h/.cpp` | 执行页编排 |
-| `release_ui_exec_prereq.cpp` | 前置项区 + 单据号门槛 UI |
-| `release_ui_exec_env.cpp` | 环境 / 服务 / 步骤区 |
-| `release_ui_config.h/.cpp` | 基础配置页 |
-| `release_ui_dialogs.h/.cpp` | 确认框 / 全屏配置编辑器 / 表单弹窗 |
-| `release_ui_dnd.h/.cpp` | 拖拽排序（服务 / 配置项） |
+| `src/core/module_interface.h` | `PageId` 含 `ReleaseGroup` / `ReleaseTasks` / `ReleaseConfig`；`pageIdToString` 对应三项 |
+| `src/app_registry.h` | `ModuleEntry` 含 `std::optional<PageId> parent`；登记表含上述 3 行；声明 3 个 `extern "C"` 工厂；提供 `isGroupPage()` |
+| `src/main.cpp` | 三个静态实例 + `moduleForPage` 三个 case |
+| `src/app_sidebar.h` | 分组展开态接口 `sidebarGroupExpanded` / `toggleSidebarGroup`（进程内状态，默认折叠，不落库） |
+| `src/app_sidebar.cpp` | 分组父项渲染（图标 + 短名 + chevron 箭头、当前页在组内时的选中条）+ 子项缩进 16 + 展开/收起；父项点击只切换展开；折叠态父项画居中图标，子项按展开态继续列出（缩进按 0） |
+| `src/app_assembly.cpp` | 同一门控键匹配多行时逐行拨开关，不在首行命中后返回；无实例的分组父项行跳过；「键命中但页面无实例」与「键未知」分开诊断 |
+| `src/module_settings/settings_config.h` | `kModuleIdRelease` |
+| `src/module_settings/settings_config.cpp` | 合法 ID 清单 + 默认启用集 + 版本化默认模块迁移（`moduleDefaultsVersion`，版本 1 并入 release） |
+| `src/module_settings/settings_ui_cards.cpp` | 模块开关卡含第 5 项「上线」；开关行数由 `kToggleCount` 派生 |
+| `src/module_settings/settings_ui_logic.h` | `kModulesCardHeight = 254`（5 项 3 行的卡高） |
+| 根 `CMakeLists.txt`、`src/module_release/CMakeLists.txt` | 模块静态库、`add_subdirectory`、app 链接、覆盖率插桩清单 |
+| `tests/CMakeLists.txt` | 测试源登记 + `devdesk_module_release` 链接 |
+| `tests/probes/uat62_page_shots_probe.cpp` | 页面截图 slug 清单加入 `release_group` / `release_tasks` / `release_config`，并用 `static_assert` 锁登记表行数 |
+| `tests/probes/wallpaper_probe.cpp` | PageId 遍历 switch 补齐三个新枚举值 |
+
+模块注册在根 `CMakeLists.txt`（`add_subdirectory` 段与 app `target_link_libraries` 段），仓库内不存在 `src/CMakeLists.txt`。
+
+### 10.1 侧边栏分组树
+
+- 分组父项由登记表行的 `parent` 列识别；父项自身也是登记表一行，工厂返回 `nullptr`，装配层跳过注册，侧边栏用登记表行渲染父级。
+- 父项点击只切换展开/收起，不导航；子项点击导航到对应 `PageId`。当前页属于某分组时，父项保持选中条（子项收起后选中信息由父项承载）。
+- 子项缩进 16（展开态）；折叠侧栏（72 宽）下父项画居中图标，子项按展开态继续以图标列出，缩进按 0 参与命中区几何。
+- 分组展开态是进程级状态（`std::set<PageId>` 记录已展开的分组，空集 = 全折叠），默认折叠，不落库；`resetSidebarGlobals()` 将其复位。
+- 同一门控键可对应多行：`dispatchModuleToggle` 遍历全部匹配行逐页注册 / 注销并 `onStart` / `onStop`；分组父项无实例，跳过。
+- 节点 id：`app.sidebar.item.ReleaseGroup.hit` / `.icon` / `.label` / `.chevron`，`app.sidebar.item.ReleaseTasks.hit`，`app.sidebar.item.ReleaseConfig.hit`。
+
+### 10.2 已实现结构（文件与职责）
+
+| 文件 | 职责 |
+|------|------|
+| `release_types.h` | 领域类型：`ServiceKind` / `ConfigKind` / `StepKind` / `TaskStatus` / `RemindLevel`，以及 `ServiceDef` / `EnvDef` / `Task` / `TaskEnv` / `TaskService` / `TaskConfig` / `TaskStep` / `TaskLog` / `DueItem` |
+| `release_logic.h/.cpp` | 纯函数：常规发布日判定、时间基准、状态推导 `deriveStatus`、到期聚合 `dueItems`（带 `steps` 入参）、提交校验、进度与完成判定（分母按期望槽位 `expectedConfigs`）；无 IO、无 UI、无系统时钟依赖（`now` 由调用方传入） |
+| `release_store.h/.cpp` | 9 表数据访问：基础配置 CRUD、任务及环境/服务/配置/步骤/日志快照、原子建单 `createTaskWithEnvs`（单事务）、按任务拉取步骤 `listTaskStepsByTask`；错误走 `Result`，SQL 全参数绑定 |
+| `release_config_ui.h/.cpp` | 基础配置页：服务目录、环境定义、跨零点时间窗、删除二次确认 |
+| `release_list_ui.h/.cpp` | 任务列表：多列瀑布流 + 分页器 + 卡片 + 加载占位；日期与状态文案工具 |
+| `release_dialogs.h/.cpp` | 新建任务弹层：日期滚轮、非常规发布日二次确认、同日复用、环境与服务快照 |
+| `release_detail_ui.h/.cpp` | 执行页：任务级前置、环境/服务步骤、页内全屏配置编辑层、配置查看与顺序、跳过 / 移除二次确认、撤回、作废/恢复、按时间推导状态 |
+| `release_reminder.h/.cpp` | 提醒引擎（到期聚合调度、关闭后 5 分钟抑制、同内容指纹去重）+ 独立全屏提醒窗 |
+| `release_module.h/.cpp` | 三个工厂 + `ReleaseTasksModule` / `ReleaseConfigModule` 两个 Module；数据访问走进程级 `appDatabase()` 共享连接 |
+| `release_checkbox.h` | 自绘勾选框：选中 / 跳过 / 禁用 / hint 四态 |
+| `release_view_state.h/.cpp` | 视图状态骨架：选中任务 id、筛选文本，不落库 |
+| `CMakeLists.txt` | `devdesk_module_release` 静态库，依赖 `devdesk_core` / `devdesk_platform` / `devdesk_ui_kit` |
+
+### 10.3 已知限制与待办
+
+- `components::checkbox` 的 `build()` 中 hover / pressed 两个局部变量只赋值、从不读取（`components/checkbox.h:125-126`），在本仓库 `-Werror=unused-but-set-variable` 下编译失败；且该组件没有 disabled 态。本模块全部使用自绘勾选框 `release_checkbox.h`。建议后续向 EUI-NEO 提上游修复。
+- 详情页「分支编辑」（修改任务快照中服务的分支）尚未实现：分支行以文本展示，`updateTaskService` 无 UI 调用方，属后续票据。（「提交（Draft→Pending）」、服务顺序拖拽、配置编辑与跳过、移除环境/服务均已实现，不再列入限制。）
 
 ---
 
@@ -379,9 +375,9 @@ virtual void onChildNavSelected(const std::string& id) { (void)id; }
 - 瀑布流：`components/virtualmasonry.h` 提供 `columns / gap / itemHeight(index,width) / onEndReached / bind(signal)`，直接满足 §4.0。
 - 独立子窗：`eui::app::openWindow(DslWindowConfig, compose)`；关闭用 `core::window::requestWindowClose(handle)`；句柄由 `windowCreatedHandler` 取。
 - 多行文本：`components::input` 的 `.multiline(true)` + `.scrollbar(true)`。
-- 全屏编辑：`DialogBuilder.screen(screen.width, screen.height)`（本项目尚无使用先例，需在 UI 任务里首次落地并加断言）。
-- 复选框 `components::checkbox`、开关 `ui_kit::wswitch`、下拉 `components::dropdown`、日期 `components::datepicker`、时间 `components::timepicker`、进度 `components::progress`。
-- `components::checkbox` **没有 disabled 属性**（已核对源码）：单据号门槛的锁定态用模块内自绘「灰色方框 + 提示行」，启用态仍用 `components::checkbox`；禁止用「`onChange` 里拒绝但仍显示可点」的伪禁用。
+- 全屏编辑：`DialogBuilder.screen(screen.width, screen.height)` 模态层，已落地于执行页的页内全屏配置编辑层（多行大文本框 + 字数统计 + 保存 / 取消，不新开窗口）。
+- 复选框在本模块使用自绘 `release_checkbox.h`（选中 / 跳过 / 禁用 / hint 四态；原因见 §10.3）；开关 `ui_kit::wswitch`、下拉 `components::dropdown`、日期 `components::datepicker`、时间 `components::timepicker`、进度 `components::progress` 可用。
+- 禁止用「`onChange` 里拒绝但仍显示可点」的伪禁用：单据号门槛的锁定态由自绘勾选框的 disabled 态 + 提示行表达。
 - 块面式 Tab：用 `ui_kit::wtab`；`components::tabs` 是**下划线式**，本项目已明确淘汰，禁用。
 - 拖拽：EUI-NEO 提供 `onDrag` 原语，无现成「拖拽排序」组件；排序计算自绘（组合实现，不新增通用组件）。
 - 文本测量：`core::TextPrimitive::measureTextSize / measureTextWidth`（任务卡高度仍按固定行高而非测量值）。
@@ -462,7 +458,7 @@ virtual void onChildNavSelected(const std::string& id) { (void)id; }
 |------|--------------------|----------------|
 | 侧栏宽 | 展开 208 / 折叠 72 | `app.sidebar` |
 | 侧栏导航项 | x=16、h=40、项间距 4、首项 y=116 | `app.sidebar.item.<Page>.hit` |
-| 侧栏二级项 | 缩进 24（x=40）、宽=208−40−16=152、h=40、间距 4 | `app.sidebar.child.Release.<id>.hit` |
+| 侧栏二级项 | 缩进 16（x=32）、宽=208−32−16=160、h=40、间距 4 | `app.sidebar.child.Release.<id>.hit` |
 | 品牌块 | y=32、h=56、logo 48、品牌块→导航间距 28 | `app.sidebar.brand` |
 | 页标题 | 24px / 700 / 行高 32、`textPrimary` | `release.page.title` |
 | 区块标题 | 18px / 600 / 行高 26 | `release.page.section.*` |
