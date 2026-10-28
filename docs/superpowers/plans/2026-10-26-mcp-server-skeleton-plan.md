@@ -169,7 +169,7 @@
 | B5-02 | ⬜ | 修复 + 复审 | 只修 CONFIRMED 且属需求交付物的缺陷；非需求/历史遗留只记录；复审逐条闭合 | 按审计清单 |
 | B5-03 | ⬜ | 合入本地 dev | 从 `D:/project/gui/DevDesk` 串行 merge `feat/mcp-server-skeleton` 到本地 dev；无冲突残留；不 push；不碰 uat | — |
 | B5-04 | ✅ | dev 全量门禁 | dev 上 `bash scripts/build-test-run.sh --no-run` **一次**（全量套件 + probe，不启动 app）；构建成功且门禁退出 0 | — |
-| B5-05 | ⬜ | dev 复跑 E2E | 用 dev 构建产物复跑 B4-05..10；输出仍含目标正文；清理完成 | — |
+| B5-05 | ✅ | dev 复跑 E2E | 用 dev 构建产物复跑 B4-05..10；输出仍含目标正文；清理完成 | — |
 | B5-06 | ⬜ | 删除 worktree | 从主工作树 `git worktree remove D:/wt-mcp`；`git worktree list` 不再含该目录；分支保留 | — |
 | B5-07 | ⬜ | 按场景汇报 | 报「哪些业务场景真跑起来了（真窗口/真网/真机）、结果、哪些没跑到」；不报 Total/Passed 数字；明写 macOS 仅 CI、未出安装包、未 push | — |
 | B5-08 | ⬜ | 台账收口 | 全部条目 ✅ 且有证据；merge/commit sha 回填 | 本台账 |
@@ -183,6 +183,14 @@
 - 同产物追加直跑：`--filter settings` **Total: 113 Passed: 113 Failed: 0**、`--filter app` **Total: 47 Passed: 47 Failed: 0**，均退出 0。
 - DevDesk.exe 取证（verifier 预检用）：`build/DevDesk.exe` 208,785,578 字节，mtime 2026-10-28 14:08:32 +0800，sha256 `93ab24743ce71c296c03718c43b73926a4e240b26dd0bf975ac2122fef1841cd`；特征串 `mcp.card` ×1、`mcp.dialog` ×17 命中（另有 mcp.section ×4 / mcp.status ×3 等）。
 - **未验证**（不沉默）：无 filter 全量套件门禁未跑（本轮口径为 `--filter mcp`+settings/app 定向，沿用 CE 收官先例）；probe 实跑截图取证未做（`--no-run` 不执行 probe，截图归后续批次）；B5-05 dev 复跑 E2E（真实 Claude Code live）属下一条目；存量数据升级与目标平台真机未涉。
+
+**B5-05 dev 复跑 E2E（✅ 回填 2026-10-28，tester）**：worktree `D:/project/gui/wt-dev-gate`（分支 dev，HEAD `4ad41e52`，即 feat/mcp-server-skeleton 合入 dev 后）。单实例互斥：启动前 tasklist 确认无 DevDesk.exe。构建口径：任务书指定 `cmake --build build --target DevDesk` 直编 exe（devdesk_tests 共享对象已在 build/ 就绪，仅补编链 DevDesk.exe 10 步 EXIT=0；脚本 build-test-run.sh 无 target 粒度且默认串全量测试+自动启动 app，与本单「只编 exe + 临时数据根手动管理 app 生命周期」不符，属诊断例外）。分步证据：
+- **首启（B4-05 口径）**：`DEVDESK_DATA_ROOT=$(mktemp -d)`（临时根 `.../Temp/tmp.HTQc9eKpH5`，未触碰用户真实数据根），`build/DevDesk.exe --minimized` 首启 **2s** 内落 `devdesk.db`（日志「数据库已就绪」「应用数据目录: ...tmp.HTQc9eKpH5」）；tasklist 取 PID 832 `taskkill //F` → `CONFIRMED_GONE`。
+- **播种（B4-06 口径）**：sqlite3 写 `app_config` 两键并回读：`config.json:enabledModules = ["home","markdown","todo","claude_proxy","settings","mcp"]`、`config.json:mcpPort = 57242`。
+- **探活（B4-07 口径）**：重启 `--minimized`，GET `http://127.0.0.1:57242/mcp` **1s** 内返回 **405**；日志「启动模块: MCP」。
+- **真连（B4-08..10 口径）**：空 cwd + 临时 `{"mcpServers":{"devdesk":{"type":"http","url":"http://127.0.0.1:57242/mcp"}}}`，`claude 2.1.310 -p --strict-mcp-config --mcp-config <json> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text` 提示抓 `https://www.iana.org/domains/reserved`：**exit 0**，stdout 为该页 Markdown 正文，断言串 `illustrative examples` grep=1 命中（"These domains may be used as illustrative examples in documents without prior coordination with us."）——`--strict-mcp-config` 下唯一 MCP 服务即 devdesk、唯一放行工具即 web_fetch_markdown，正文只能经本链路取得。
+- **清理**：第二实例 PID 10856 终止 `CONFIRMED_GONE`；临时数据根 / mcp-config json / 空 cwd / 中间日志全删；终态 tasklist 无 DevDesk.exe 残留。
+- **未验证**（不沉默）：本条目口径内各步全跑到（含 iana.org 真网 live），无遗留；观察项：claude CLI stderr 有 `[claude-code:unrecognized_model] glm-5.3[1m]` 网关提示（exit 0 与断言不受影响）；存量数据升级与目标平台真机不属本条目口径。
 
 ## 7. 已知假设
 
