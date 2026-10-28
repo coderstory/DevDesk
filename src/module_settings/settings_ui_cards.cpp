@@ -6,6 +6,8 @@
 // UAT5：目录卡（数据目录/忽略规则展示）整卡删除，相关 includes 一并清退。
 #include "settings_ui_cards.h"
 
+#include <platform/wallpaper_capability.h>  // wallpaper::supported()（第 5 格可见性）
+
 #include <core/component_theme.h>
 #include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
 
@@ -413,6 +415,15 @@ void drawModulesCard(const CardDrawArgs& args) {
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
+    // 壁纸第 5 格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格）：
+    // 可见性判据与整卡时代同源 platform::wallpaper::supported()——不支持时整格
+    // 不建（网格自然回落 2×2，卡高注册表同判据回落 198），末行落单格按格机制自然流。
+    // 元素根 id 保留 settings.card.wallpaper.*（探针/测试锚不换）。
+    static const ModuleMeta kWallpaperToggle = {
+        kModuleIdWallpaper, "壁纸",
+        "动态桌面壁纸（视频 / 图片），开启后随 DevDesk 启动"};
+    const bool wallpaperCell = ::platform::wallpaper::supported();
+    const int cellCount = kToggleCount + (wallpaperCell ? 1 : 0);
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -431,7 +442,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关 2×2 格：行主序（0/1 同行异列，2/3 次行）；开关控件几何沿用
+            // 开关格（2 列，第 5 格壁纸末行落单）：行主序（0/1 同行异列，2/3 次行）；
+            // 开关控件几何沿用
             // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
             //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
             const float nameH = roundFs(18.0f);
@@ -444,15 +456,22 @@ void drawModulesCard(const CardDrawArgs& args) {
             float cellW = 0.0f;
             float cell2X = 0.0f;
             ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
-            for (int i = 0; i < kToggleCount; ++i) {
-                const ModuleMeta& meta = kToggleable[i];
-                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行
+            for (int i = 0; i < cellCount; ++i) {
+                const bool isWallpaper = wallpaperCell && i >= kToggleCount;
+                const ModuleMeta& meta =
+                    isWallpaper ? kWallpaperToggle : kToggleable[i];
+                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行，4=末行落单
                 const int row = i / 2;
                 const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
                 const float rowY = 68.0f + static_cast<float>(row) * rowPitch;
                 const float textW = cellW - switchW - switchGap;
-                const std::string suffix = std::to_string(i);
-                ui.text(id + ".name." + suffix)
+                // 壁纸格格元素根 id 独立于宿主卡 id（探针/测试锚不变），格内
+                // 子元素命名跟随常规格惯例（name/rowdesc/sw）。
+                const std::string cellId =
+                    isWallpaper ? std::string("settings.card.wallpaper") : id;
+                const std::string suffix =
+                    isWallpaper ? "" : "." + std::to_string(i);
+                ui.text(cellId + (isWallpaper ? ".name" : ".name" + suffix))
                     .position(cellX, rowY)
                     .size(textW, nameH)
                     .text(meta.name)
@@ -464,7 +483,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
-                ui.text(id + ".rowdesc." + suffix)
+                ui.text(cellId + (isWallpaper ? ".rowdesc"
+                                              : ".rowdesc" + suffix))
                     .position(cellX, rowY + rowDescDy)
                     .size(textW, rowDescH)
                     .text(meta.desc)
@@ -479,7 +499,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                 // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
                 // UAT3：80×32 显示过大 → 44×24（agent_module 详情弹窗同款）；
                 // 格视觉块 = name 18 + 2 + desc 16 = 36 高，24 开关居中偏移 +6。
-                ui_kit::wswitch(ui, id + ".sw." + suffix,
+                ui_kit::wswitch(ui, cellId + (isWallpaper ? ".sw"
+                                                           : ".sw" + suffix),
                     moduleEnabled(in.cfg, meta.moduleId),
                     cellX + cellW - switchW, rowY + 6.0f, switchW, switchH, t,
                     [f = a.applyModuleEnabled,
@@ -487,58 +508,6 @@ void drawModulesCard(const CardDrawArgs& args) {
                         f(mid, v);
                     });
             }
-        })
-        .build();
-}
-
-// 壁纸卡（模块 tab，全宽）：标题 + 说明 + 右侧 44×24 开关。平台能力门控在注册表
-// 的 visible 函数（unsupported 平台整卡不建、不占高度），本函数无平台分支。
-// 开关行几何与卡高同源（settings_ui_logic.h 的 kWallpaperCardHeight 注释）：
-// 行 y = roundFs(68) 内容起始锚、行盒 roundFs(44)，44×24 字面开关行内垂直居中。
-void drawWallpaperCard(const CardDrawArgs& args) {
-    eui::Ui& ui = args.ui;
-    const std::string& id = args.id;
-    const float w = args.w;
-    const float h = args.h;
-    const core::theme::Tokens& t = args.t;
-    const SettingsCardsIn& in = args.in;
-    const SettingsCardActions& a = args.a;
-
-    constexpr float kSwitchW = 44.0f;   // §4.4 微信开关字面值（不随字号缩放）
-    constexpr float kSwitchH = 24.0f;
-    constexpr float kSidePad = 28.0f;   // 卡内左右边距（与各卡同款）
-
-    ui.stack(id)
-        .size(w, h)
-        .content([&] {
-            const auto compThemeTop = core::theme::componentTokensWeChat(t);
-            // 白卡 + Sm 阴影 + 描边（与模块插拔卡同款，S6.1 玻璃退役口径）
-            ui.rect(id + ".bg")
-                .position(0.0f, 0.0f).size(w, h)
-                .color(ui_kit::cardSurface(t))
-                .radius(t.sizes.radiusLarge)
-                .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f,
-                                                  0.04f, 0.02f))
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "壁纸");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
-                     "动态桌面壁纸（视频 / 图片），开启后随 DevDesk 启动");
-
-            // 开关行：内容起始锚 68（与日志/编辑器卡同口径）→ 行盒 roundFs(44)
-            // → 下边距 roundFs(16)，三者之和即 kWallpaperCardHeight 基准。
-            const float rowY = roundFs(68.0f);
-            const float rowH = roundFs(44.0f);
-            const float swY = rowY + (rowH - kSwitchH) * 0.5f;
-            // wswitch 命中元素 = <id>.track；初始值读 cfg 模块态，拨动走既有
-            // applyModuleEnabled → onModuleToggled 链路（与模块插拔卡同一入口）。
-            ui_kit::wswitch(
-                ui, id + ".sw", moduleEnabled(in.cfg, kModuleIdWallpaper),
-                w - kSidePad - kSwitchW, swY, kSwitchW, kSwitchH, t,
-                [f = a.applyModuleEnabled](bool v) {
-                    f(kModuleIdWallpaper, v);
-                });
         })
         .build();
 }

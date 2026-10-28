@@ -32,7 +32,7 @@
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
 #include "platform/system_theme.h"
-#include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸卡可见性）
+#include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸格可见性 + 插拔卡卡高二值）
 
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
@@ -107,13 +107,14 @@ const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
      CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard,
      nullptr},
+    // 2026-10-27 用户真机拍板：壁纸开关收进插拔卡第 5 格，独立全宽壁纸卡删除。
+    // 卡高按平台能力二选一（supported → 第 5 格行 +56；不支持 → 格不建回落 198），
+    // 注册表静态行内运行期取值：visible 门控从「整卡」降级为「格内」判据，
+    // 判据仍是 platform::wallpaper::supported()，开关链路同走 applyModuleEnabled。
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
-     kModulesCardHeight, false, /*half=*/false, &drawModulesCard, nullptr},
-    // 壁纸卡：平台能力不支持时整卡不建（不是禁用态）——visible 在卡区入口判定，
-    // 不占高度、不留空白；开关链路与模块插拔卡同走 applyModuleEnabled。
-    {kTabModules, "settings.card.wallpaper", nullptr, CardHeightKind::Fixed,
-     kWallpaperCardHeight, false, /*half=*/false, &drawWallpaperCard,
-     &::platform::wallpaper::supported},
+     ::platform::wallpaper::supported() ? kModulesCardHeightWallpaper
+                                        : kModulesCardHeight,
+     false, /*half=*/false, &drawModulesCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,

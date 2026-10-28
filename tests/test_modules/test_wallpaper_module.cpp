@@ -22,6 +22,8 @@
 
 #include <eui/dsl.h>
 
+#include <ui_kit/columns.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -255,7 +257,7 @@ REGISTER_TEST(wallpaper_dispatch_toggle,
 //   非 Windows（supported=false）：整卡不建（不是禁用态）、工厂返回 nullptr。
 // 防：macOS CI 单分支断言必红 / 卡在不支持平台错误出现。
 REGISTER_TEST(wallpaper_settings_card_visible,
-              "wallpaper: 设置模块 tab 壁纸卡——supported 平台存在且默认关；不支持平台整卡与工厂均无", {
+              "wallpaper: 设置模块 tab 壁纸格（模块插拔卡第 5 格）——supported 平台存在且默认关；不支持平台整格与工厂均无", {
     namespace ms = module::settings;
     test_support::TestEnv env(kCfgPrefix, "cardvisible", true);
     test_support::ScopedConfigPath cfgEnv(
@@ -269,17 +271,19 @@ REGISTER_TEST(wallpaper_settings_card_visible,
     eui::Ui ui;
     composeModulesTab(*mod, screen, ui);
 
-    const auto* card = ui.find("settings.card.wallpaper");
+    // 2026-10-27 用户真机拍板：独立全宽卡废除，壁纸 = 插拔卡内第 5 格；
+    // 格无独立根元素，存在性锚 = 格 name / 开关 track（格根 id 保留 wallpaper 前缀）。
+    const auto* cell = ui.find("settings.card.wallpaper.name");
     const auto* track = ui.find("settings.card.wallpaper.sw.track");
     if (!::platform::wallpaper::supported()) {
-        DOCTEST_CHECK(card == nullptr);
+        DOCTEST_CHECK(cell == nullptr);
         DOCTEST_CHECK(track == nullptr);
         std::unique_ptr<::core::Module> wallpaperPage(create_wallpaper_module());
         DOCTEST_CHECK(wallpaperPage == nullptr);
         mod->onStop();
         return true;
     }
-    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_REQUIRE(cell != nullptr);
     DOCTEST_REQUIRE(track != nullptr);
     DOCTEST_CHECK_EQ(track->frame.width, 44.0f);
     DOCTEST_CHECK_EQ(track->frame.height, 24.0f);
@@ -351,13 +355,17 @@ REGISTER_TEST(wallpaper_settings_card_toggle_persists,
     return true;
 })
 
-// 三档几何（直绘卡片，不经注册表/平台门控——几何与平台无关）：
-//   标题 / 说明 / 开关三行都在卡高内；44×24 开关右贴 28；行底留边 ≥16；
-// 130% 档不裁切；点 track 回调带对模块 id。
-// 防：卡高没跟 roundFs 派生 → 130% 档开关被裁 / 开关尺寸漂移。
+// 三档几何（直绘插拔卡，壁纸第 5 格；平台门控在格内——不支持平台整格不建，
+// 见 wallpaper_settings_card_visible）：格随常规格机制（name 18/rowdesc 16/开关
+// 44×24 行内 +6），末行落单须整体包在卡高内、行底留边 ≥16、130% 档不裁切；
+// 点 track 回调带对模块 id。2026-10-27 用户真机拍板：独立全宽卡废除。
+// 防：卡高没跟 roundFs 派生 → 130% 档开关被裁 / 开关尺寸漂移 / 格错行错列。
 REGISTER_TEST(wallpaper_card_geometry,
-              "wallpaper: 壁纸卡 85/100/130% 几何——44×24 右贴28、三行在卡高内、130% 不裁切、回调带 id", {
+              "wallpaper: 壁纸第 5 格（插拔卡内）85/100/130% 几何——末行首列落单、44×24 开关右贴格、行底留边≥16、回调带 id", {
     namespace ms = module::settings;
+    if (!::platform::wallpaper::supported()) {
+        return true;   // 不支持平台无第 5 格（可见性用例已断言整格不建）
+    }
     struct FontScaleGuard {
         float prev;
         explicit FontScaleGuard(float s) : prev(::core::theme::fontScale()) {
@@ -383,28 +391,35 @@ REGISTER_TEST(wallpaper_card_geometry,
         };
 
         const float w = 1312.0f;   // 默认窗 1600 的内容宽
-        const float h = ms::roundFs(ms::kWallpaperCardHeight);
+        const float h = ms::roundFs(ms::kModulesCardHeightWallpaper);
         eui::Ui ui;
         ui.begin(scale < 0.9f   ? "wpg85"
                  : scale > 1.2f ? "wpg130"
                                 : "wpg100");
-        ms::CardDrawArgs args{ui, "settings.card.wallpaper", w, h,
+        ms::CardDrawArgs args{ui, "settings.card.modules", w, h,
                               ::core::theme::current(), 0.0f, 1000.0f, in, a};
-        ms::drawWallpaperCard(args);
+        ms::drawModulesCard(args);
         ui.end();
         ui.layout(w, h);
 
-        const auto* card = ui.find("settings.card.wallpaper");
-        const auto* title = ui.find("settings.card.wallpaper.title");
-        const auto* desc = ui.find("settings.card.wallpaper.desc");
+        const auto* card = ui.find("settings.card.modules");
+        const auto* name = ui.find("settings.card.wallpaper.name");
+        const auto* desc = ui.find("settings.card.wallpaper.rowdesc");
         const auto* track = ui.find("settings.card.wallpaper.sw.track");
         DOCTEST_REQUIRE(card != nullptr);
-        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_REQUIRE(name != nullptr);
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(track != nullptr);
 
-        // 标题 / 说明 / 开关三行都包在卡高内（0.5 容差）
-        DOCTEST_CHECK(title->frame.y + title->frame.height <=
+        // 末行落单（第 3 行首列）：格 y = 68（字面锚）+ 2×roundFs(56)，x = 28
+        //（与常规格同源：rowY = 68.0f + row×rowPitch，锚不随字号缩放）
+        DOCTEST_CHECK(std::fabs(
+            name->frame.y -
+            (68.0f + 2.0f * ms::roundFs(56.0f))) < 0.5f);
+        DOCTEST_CHECK(std::fabs(name->frame.x - 28.0f) < 0.5f);
+
+        // 格三行都包在卡高内（0.5 容差）
+        DOCTEST_CHECK(name->frame.y + name->frame.height <=
                       card->frame.y + card->frame.height + 0.5f);
         DOCTEST_CHECK(desc->frame.y + desc->frame.height <=
                       card->frame.y + card->frame.height + 0.5f);
@@ -414,14 +429,16 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_CHECK(track->frame.y + track->frame.height <=
                       card->frame.y + card->frame.height -
                           ms::roundFs(16.0f) + 0.5f);
-        // 44×24 字面值 + 右贴卡内边距 28
+        // 44×24 字面值 + 右贴格右缘（cellW = columnX(w−56, 16) 单一来源）
+        float cellW = 0.0f;
+        ui_kit::columnX(w - 56.0f, 16.0f, &cellW, nullptr);
         DOCTEST_CHECK_EQ(track->frame.width, 44.0f);
         DOCTEST_CHECK_EQ(track->frame.height, 24.0f);
-        DOCTEST_CHECK(std::fabs(track->frame.x - (w - 28.0f - 44.0f)) < 0.5f);
-        // 行几何单一来源：y = roundFs(68) + (roundFs(44) − 24)/2
-        DOCTEST_CHECK(std::fabs(
-            track->frame.y -
-            (ms::roundFs(68.0f) + (ms::roundFs(44.0f) - 24.0f) * 0.5f)) < 0.5f);
+        DOCTEST_CHECK(std::fabs(track->frame.x -
+                                (28.0f + cellW - 44.0f)) < 0.5f);
+        // 开关行内偏移 +6：track y = 格 y + 6
+        DOCTEST_CHECK(std::fabs(track->frame.y - name->frame.y - 6.0f) <
+                      0.5f);
 
         // 回调接线：off → on，带壁纸模块 id
         DOCTEST_REQUIRE(track->onClick != nullptr);

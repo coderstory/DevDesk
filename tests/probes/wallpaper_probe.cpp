@@ -8,7 +8,7 @@
 //   §1 默认关闭：默认 cfg 经真实注册表装配后 Router 不注册壁纸页、侧栏无条目。
 //   §2 打开：dispatchModuleToggle on → 注册 + 侧栏条目当帧出现 + 壁纸页空态渲染。
 //   §3 空态截图：--screenshot <路径>（captureIfRequested，退出码随失败转非零）。
-//   §3b 设置页：设置→模块 Tab 壁纸卡/44×24 开关存在且默认关；--screenshot-seeded
+//   §3b 设置页：设置→模块 Tab 壁纸格（插拔卡第 5 格）/44×24 开关存在且默认关；--screenshot-seeded
 //      <路径>（captureSeedIfRequested）落设置页截图。
 //   §4 关闭：off → 注销 + 当前页回 Home + 侧栏条目消失 + 关闭 toast。
 // 本阶段不 spawn mpv、不建 WorkerW（P3 才做），probe 只验模块骨架与页面。
@@ -437,8 +437,10 @@ int main(int argc, char* argv[]) {
         clickElement(*tabModules);
         composeFrame();
     }
-    const auto* wallpaperCard = ui->find("settings.card.wallpaper");
-    check(wallpaperCard != nullptr, "§3b 设置页：壁纸卡应存在");
+    // 2026-10-27 用户真机拍板：独立全宽卡废除 → 壁纸 = 模块插拔卡第 5 格
+    //（格无独立根元素，存在性锚 = 格 name）。
+    const auto* wallpaperCell = ui->find("settings.card.wallpaper.name");
+    check(wallpaperCell != nullptr, "§3b 设置页：壁纸格（插拔卡内第 5 格）应存在");
     const auto* cardsScroll = ui->find("settings.cards.scroll");
     check(cardsScroll != nullptr, "§3b 设置页：卡片滚动视口应存在");
     // 滚动视口内断言：元素 frame 必须整体落在视口可见区内——DOM 存在但被
@@ -458,17 +460,13 @@ int main(int argc, char* argv[]) {
                   std::to_string(cardsScroll->frame.height) +
                   "；要求 y≥0 且 y+height≤视口高）");
     };
-    if (wallpaperCard != nullptr) {
-        check(wallpaperCard->frame.x + wallpaperCard->frame.width <= w + 0.5f,
-              "§3b 设置页：壁纸卡右缘 " +
-                  std::to_string(wallpaperCard->frame.x +
-                                 wallpaperCard->frame.width) +
-                  " 不应超出逻辑宽 " + std::to_string(w));
-        assertInsideScrollViewport(*wallpaperCard, "§3b 壁纸卡");
+    if (wallpaperCell != nullptr) {
+        // 格在宿主卡内（末行首列），不再有全宽口径——右缘契约由插拔卡自身承担。
+        assertInsideScrollViewport(*wallpaperCell, "§3b 壁纸格");
     }
     const auto* wallpaperTrack =
         ui->find("settings.card.wallpaper.sw.track");
-    check(wallpaperTrack != nullptr, "§3b 设置页：壁纸开关应存在");
+    check(wallpaperTrack != nullptr, "§3b 设置页：壁纸开关应存在（44×24，格内右贴）");
     if (wallpaperTrack != nullptr) {
         check(std::fabs(wallpaperTrack->frame.width - 44.0f) < 0.01f &&
                   std::fabs(wallpaperTrack->frame.height - 24.0f) < 0.01f,

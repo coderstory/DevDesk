@@ -107,6 +107,13 @@ bool supported();   // true = 当前平台有壁纸能力
 - 点击调用现有 `applyModuleEnabled(moduleId, on)`：写 `enabledModules` → 持久化 → 经 `module_toggle_bridge` 通知 app 层。**不新增开关链路**。
 - 不在「通用」Tab 重复出现；不改开机自启卡。
 
+> **决策变更注记（2026-10-27，用户真机拍板）**：本节「独立全宽卡」方案作废——壁纸开关收进
+> 模块插拔卡网格，成为与 Markdown 笔记本/Todo/Claude/智能体 同尺寸/字号/布局的**第 5 张常规格**
+> （末行落单，网格按现有格机制自然流）；`kWallpaperCardHeight` 与 `drawWallpaperCard` 删除，
+> `kModulesCardHeight` 按 `platform::wallpaper::supported()` 二值（198 / 254）。语义保留：
+> ① 非 supported 平台整格不出现（判据不变）；② 开关初值/点击链路/文案不变；
+> ③ 格元素根 id 保留 `settings.card.wallpaper.*`。下文原文仅存档。
+
 ### 2.7 开关执行语义（复用现有即时生效）
 
 - 打开：`Router::registerModule` → `onStart()`；侧边栏与页面在下一帧出现。
