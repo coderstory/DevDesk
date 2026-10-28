@@ -36,6 +36,9 @@ struct Task {
     Priority priority = Priority::None;
     std::optional<int64_t> dueAt;       // Unix 秒；std::nullopt = 未设置
     std::vector<std::string> tags;       // 来自 JSON 数组
+    // 关联的 Markdown 笔记相对路径（POSIX 分隔；UAT6.2 H31）。空串 = 未关联。
+    // 只存路径键：文档改名/删除后靠存在性判定灰态，不自动解除。
+    std::string docPath;
     int position = 0;
     std::optional<int64_t> completedAt;  // Unix 秒；std::nullopt = 未完成
     std::optional<int64_t> archivedAt;   // Unix 秒；std::nullopt = 未归档（进归档列时置当前时间戳，出归档列置 NULL）

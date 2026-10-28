@@ -158,6 +158,12 @@ core::Result<Task> TodoService::parseTaskRow(const core::data::SqlRow& row) {
             }
         }
     }
+    if (!row.isNull("doc_path")) {
+        auto docResult = row.getString("doc_path");
+        if (docResult.isOk()) {
+            t.docPath = docResult.value();
+        }
+    }
     if (!row.isNull("completed_at")) {
         auto completedResult = row.getInt64("completed_at");
         if (completedResult.isOk()) {
@@ -531,7 +537,7 @@ core::Result<void> TodoService::updateTask(const Task& task) {
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET "
         "title = ?, description = ?, priority = ?, "
-        "due_at = ?, tags = ?, completed_at = ?, updated_at = ? "
+        "due_at = ?, tags = ?, doc_path = ?, completed_at = ?, updated_at = ? "
         "WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
@@ -550,13 +556,14 @@ core::Result<void> TodoService::updateTask(const Task& task) {
         if (auto r = stmt.bind(4, nullptr); r.isFail()) return r;
     }
     if (auto r = stmt.bind(5, tagsJson); r.isFail()) return r;
+    if (auto r = stmt.bind(6, task.docPath); r.isFail()) return r;
     if (task.completedAt.has_value()) {
-        if (auto r = stmt.bind(6, task.completedAt.value()); r.isFail()) return r;
+        if (auto r = stmt.bind(7, task.completedAt.value()); r.isFail()) return r;
     } else {
-        if (auto r = stmt.bind(6, nullptr); r.isFail()) return r;
+        if (auto r = stmt.bind(7, nullptr); r.isFail()) return r;
     }
-    if (auto r = stmt.bind(7, now); r.isFail()) return r;
-    if (auto r = stmt.bind(8, task.id); r.isFail()) return r;
+    if (auto r = stmt.bind(8, now); r.isFail()) return r;
+    if (auto r = stmt.bind(9, task.id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
         return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
