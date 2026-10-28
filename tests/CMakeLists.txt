@@ -7,6 +7,13 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
     # app::tray 壁纸托盘桥实现缝：test_wallpaper_tray.cpp 引用其符号
     ${CMAKE_SOURCE_DIR}/src/wallpaper_tray_bridge.cpp
+    # 调度通知渠道层（波 S5）：渠道注册表 + 四个内置渠道，随测试二进制直编
+    #（src/module_schedule 模块装配由宿主波注册，这里只覆盖渠道层）
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channel_registry.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/fullscreen_channel.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/toast_channel.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/os_notification.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/silent_channel.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -148,6 +155,8 @@ add_executable(devdesk_tests
     # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
     test_modules/test_mcp_settings.cpp
     test_modules/test_mcp_service.cpp
+    # 波 S5：调度通知渠道层（注册表分发/空与未知 id/静默/载荷透传/去重键/主线程封送/全屏聚合冷却）
+    test_modules/test_channels.cpp
     # app::mcp 桥实现缝：app_assembly.cpp 与 settings_module.cpp 引用其符号
     #（module_toggle_bridge.cpp 同款理由）
     ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
