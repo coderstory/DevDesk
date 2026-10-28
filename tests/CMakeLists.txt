@@ -74,6 +74,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_engine.cpp
     # 脱敏闸（S3-A）：红队夹具直读仓库数据集，DEVDESK_SOURCE_DIR 供定位
     test_modules/test_memory_sanitize.cpp
+    # 采集器（S3-B）：临时目录夹具，四道过滤 + 水位幂等
+    test_modules/test_memory_collector.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp

@@ -6,6 +6,10 @@ add_library(devdesk_module_memory STATIC
     memory_module.h
     sanitize/sanitize_gate.cpp
     sanitize/sanitize_gate.h
+    collector/session_reader.cpp
+    collector/session_reader.h
+    collector/collector.cpp
+    collector/collector.h
     engine/telemem_config.cpp
     engine/telemem_config.h
     engine/python_locator.cpp
