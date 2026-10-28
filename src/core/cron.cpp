@@ -1,6 +1,6 @@
 // cron 5 字段解析 + 匹配：纯函数，无 IO 无时钟。支持 * / 单值 / a-b / a-b/c /
 // */c / a/c / 逗号列表；拒绝字段数≠5、空字段、越界、逆序区间、步长 0、非数字
-#include "module_agent/cron.h"
+#include "cron.h"
 
 #include <charconv>
 #include <string>
@@ -8,9 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "core/time.h"
+#include "time.h"
 
-namespace module::agent {
+namespace core::cron {
 namespace {
 
 // 严格整数解析：空串 / 尾随字符 / 溢出 / 非数字一律拒。前导 '-' 由越界检查兜住
@@ -183,4 +183,4 @@ core::Result<std::tm> previousCronMatch(const CronExpr& c, std::time_t fromSec) 
                                        "一年内无匹配时间");
 }
 
-} // namespace module::agent
+} // namespace core::cron
