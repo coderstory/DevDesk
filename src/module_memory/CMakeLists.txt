@@ -4,7 +4,32 @@
 add_library(devdesk_module_memory STATIC
     memory_module.cpp
     memory_module.h
+    engine/telemem_config.cpp
+    engine/telemem_config.h
+    engine/python_locator.cpp
+    engine/python_locator.h
+    engine/telemem_process.cpp
+    engine/telemem_process.h
+    engine/llama_host.cpp
+    engine/llama_host.h
+    engine/telemem_engine.cpp
+    engine/telemem_engine.h
 )
+
+# 平台适配实现按平台选择编译（接口隔离：头文件平台无关，业务代码零平台宏）
+if(WIN32)
+    target_sources(devdesk_module_memory PRIVATE
+        engine/python_locator_win.cpp
+        engine/telemem_process_win.cpp
+        engine/llama_host_win.cpp
+    )
+else()
+    target_sources(devdesk_module_memory PRIVATE
+        engine/python_locator_posix.cpp
+        engine/telemem_process_posix.cpp
+        engine/llama_host_posix.cpp
+    )
+endif()
 
 devdesk_apply_warnings(devdesk_module_memory)
 
