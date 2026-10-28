@@ -9,6 +9,7 @@
 #include <eui/app.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <thread>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -26,7 +27,10 @@ constexpr const wchar_t* kEventName = L"Local\\DevDesk.SingleInstance.Event";
 HANDLE g_mutexHandle = nullptr;
 
 // 监听线程：WaitForSingleObject 等待事件 → 收到信号 → app::requestShow() 唤起主窗，
-// 循环直到 g_listenerRunning=false（当前实现永不置 false，进程退出时 OS 回收线程）。
+// 循环直到 g_listenerRunning=false（仅 shutdownListener 置 false）。
+// 不变量：g_listenerThread 只允许在 shutdownListener 内 join；joinable thread 若活到
+// 静态析构被销毁 = std::terminate（退出期 "terminate called without an active
+// exception" 尾巴、退出码非 0 的根因）。
 std::atomic<bool> g_listenerRunning{false};
 std::thread g_listenerThread;
 
@@ -40,8 +44,7 @@ void listenerLoop() {
     if (!hEvent) return;
 
     while (g_listenerRunning.load(std::memory_order_relaxed)) {
-        // 500ms 轮询以便响应 g_listenerRunning 变化（当前永不置 false，
-        // 仅在进程退出时自然终止；保底设计便于将来加优雅停机）
+        // 500ms 轮询：shutdownListener 置停旗标后 join 至多等一个轮询周期，退出有界
         DWORD result = WaitForSingleObject(hEvent, 500);
         if (result == WAIT_OBJECT_0) {
             ResetEvent(hEvent);
@@ -54,6 +57,14 @@ void listenerLoop() {
     }
 
     CloseHandle(hEvent);
+}
+
+// 优雅停机：通知（置停旗标）→ join。经 atexit 收口——本钩子在 acquireLockOnce（启动
+// 早期）注册，atexit LIFO 使其晚于 app 层各退出钩子（stopAll/同步推送/几何落盘）执行、
+// 又先于 g_listenerThread 自身析构：析构时必已 non-joinable。
+void shutdownListener() {
+    g_listenerRunning.store(false, std::memory_order_relaxed);
+    if (g_listenerThread.joinable()) g_listenerThread.join();
 }
 
 } // namespace
@@ -76,6 +87,8 @@ bool acquireLockOnce() {
 
         g_listenerRunning.store(true, std::memory_order_relaxed);
         g_listenerThread = std::thread(listenerLoop);
+        // 与线程启动同点注册：第二实例（未启线程）不注册，std::exit(0) 保持零收尾
+        std::atexit(&shutdownListener);
     } else {
         // 第二实例：不持锁，不启监听
         CloseHandle(h);
