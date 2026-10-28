@@ -708,6 +708,52 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             }
         }
 
+        // 完成时间戳（UAT6.2 H30）：跨列进入 done 置 now，跨列离开 done 置 NULL。
+        // 不变量：completed_at 真值只属于 done 列——「完成时刻」= 进入 done 列的时刻。
+        // 同列重排不碰它（done 列内拖拽排序合法；不加 from != to 守卫会把重排当「重新
+        // 完成」改写完成时刻）；非 done 列间移动也不碰它（completeTask 在任意列可置值
+        // 的 H20 既有行为不得被列间移动静默吞掉）。
+        std::string fromKind;
+        if (fromColumnId != toColumnId) {
+            auto prepSrcKind =
+                db_.prepare("SELECT kind FROM todo_columns WHERE id = ?");
+            if (prepSrcKind.isFail()) {
+                return core::Result<void>::fail(prepSrcKind.errorCode(),
+                                                prepSrcKind.errorMessage());
+            }
+            auto& stmtSrcKind = prepSrcKind.value();
+            if (auto r = stmtSrcKind.bind(1, fromColumnId); r.isFail()) return r;
+            auto srcKindRows = stmtSrcKind.fetchAll();
+            if (srcKindRows.isOk() && !srcKindRows.value().empty()) {
+                auto k = srcKindRows.value()[0].getString("kind");
+                if (k.isOk()) fromKind = k.value();
+            }
+        }
+        if (fromColumnId != toColumnId && targetKind == "done") {
+            auto prepC = db_.prepare("UPDATE todo_tasks SET completed_at = ? WHERE id = ?");
+            if (prepC.isFail()) {
+                return core::Result<void>::fail(prepC.errorCode(), prepC.errorMessage());
+            }
+            auto& stmtC = prepC.value();
+            if (auto r = stmtC.bind(1, now); r.isFail()) return r;
+            if (auto r = stmtC.bind(2, taskId); r.isFail()) return r;
+            auto stepC = stmtC.step();
+            if (stepC.isFail()) {
+                return core::Result<void>::fail(stepC.errorCode(), stepC.errorMessage());
+            }
+        } else if (fromColumnId != toColumnId && fromKind == "done") {
+            auto prepC = db_.prepare("UPDATE todo_tasks SET completed_at = NULL WHERE id = ?");
+            if (prepC.isFail()) {
+                return core::Result<void>::fail(prepC.errorCode(), prepC.errorMessage());
+            }
+            auto& stmtC = prepC.value();
+            if (auto r = stmtC.bind(1, taskId); r.isFail()) return r;
+            auto stepC = stmtC.step();
+            if (stepC.isFail()) {
+                return core::Result<void>::fail(stepC.errorCode(), stepC.errorMessage());
+            }
+        }
+
         return core::Result<void>::ok();
     });
     return txResult;

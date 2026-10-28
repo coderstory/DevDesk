@@ -420,6 +420,13 @@ core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db);
 //   - 四列 position 归位 0..3。
 core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db);
 
+// 冷启动归档清扫（UAT6.2 H30）：done 列中 completed_at 早于「今日本地零点」的任务
+// 移入归档列（archived_at = now）；completed_at 无值的存量 done 卡视为非本日一并归档，
+// completed_at 原样保留（无值仍无值）。挂在启动迁移序列里（每进程一次，非轮询）；
+// 单事务 + 幂等（今日零点前完成的归档后不再命中）。缺 done/archive 列时零操作
+// （固定四列由前置迁移保证，缺列 = 无归档目标，不失败）。
+core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db);
+
 // 已摘除功能的遗留表清理：幂等 DROP TABLE IF EXISTS（表不在 = 零操作）。
 // 表已不在 DDL 里，但老库启动会带着它们；无外键指向、无读方，删了安全。
 core::Result<void> dropRemovedTables(core::data::SqliteDb& db);

@@ -765,8 +765,17 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                            screen.width -
                                                themeTokens.metrics.spacing.overlay));
     const bool ro = d.detail.readOnly;
-    // 只读（归档）行整体下移一档给「归档时间」行让位
-    const float offY = ro ? 18.0f : 0.0f;
+    // 完成时间行（done 列卡片）/ 归档时间行（归档列卡片）占同一槽位（互斥：卡片
+    // 不可能同时在两列）；有一项即整体下移一档让位。
+    const Task* detailTask =
+        (host.tasks != nullptr) ? findTask(*host.tasks, d.detail.taskId) : nullptr;
+    bool inDoneColumn = false;
+    if (detailTask != nullptr && host.columns != nullptr) {
+        const Column* col = findColumn(*host.columns, detailTask->columnId);
+        inDoneColumn = (col != nullptr && col->kind == "done");
+    }
+    const bool showMetaLine = ro || inDoneColumn;
+    const float offY = showMetaLine ? 18.0f : 0.0f;
     const float x0 = ui_kit::kDialogInsetX;
     // 底部按钮带：贴 frame 底固定偏移（frame 底 − 18 − 按钮高），任何内容高度与
     // 窗口高度下都不越框（UAT6 前随请求高 600 定位，frame 被 clamp 矮后被顶出框）
@@ -919,6 +928,20 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
                         {.y = 52.0f, .height = 18.0f, .lineHeight = 18.0f});
                 }
+            }
+
+            // 完成时间（UAT6.2 H30，done 列卡片显示；非 done 列不占位）。
+            // 无值显示「—」：标记完成后又取消完成、卡留在 done 列的状态。
+            if (inDoneColumn && detailTask != nullptr) {
+                const std::string doneStr =
+                    detailTask->completedAt.has_value()
+                        ? "完成时间: " +
+                              formatArchivedAt(detailTask->completedAt.value())
+                        : std::string("完成时间: —");
+                ui_kit::drawDialogText(
+                    ui, "todo.dialog.detail.completed", w, doneStr,
+                    t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+                    {.y = 52.0f, .height = 18.0f, .lineHeight = 18.0f});
             }
 
             // —— 内容区（UAT6 限高滚动容器）——
