@@ -1350,9 +1350,10 @@ core::Result<int64_t> MarkdownService::folderNoteCount(const fs::path& relPath) 
     }
     // 契约：任意层级（不限一级）的 .md 都计数——删除判定依赖此语义，
     // 改成只看一级会让深层笔记所在文件夹被误判为空而放行删除。
+    // 枚举错误（含不可读子树）显式 fail，不静默跳过：删除闸门靠本函数 fail 拒绝
+    // 放行——不可读子树若被当 0 篇，笔记全在其中的文件夹会被 remove_all 误删。
     int64_t count = 0;
-    for (auto it = fs::recursive_directory_iterator(
-                    absPath, fs::directory_options::skip_permission_denied, ec);
+    for (auto it = fs::recursive_directory_iterator(absPath, ec);
          !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
         if (!it->is_regular_file(ec) || ec) continue;
