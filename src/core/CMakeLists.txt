@@ -14,6 +14,7 @@ add_library(devdesk_core STATIC
     window_geometry.cpp                   # 窗体记忆几何账本（UAT6：每帧记账、退出快照落盘）
     atomic_write.cpp
     tool.cpp
+    mcp_tool.cpp                        # MCP 能力接缝：工具抽象 + 注册表（模块自行实现并注册）
     sql_dump.cpp                        # SQLite 导出/导入（GitHub Sync 用）
 )
 

@@ -175,6 +175,7 @@ add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
 add_subdirectory(src/module_wallpaper)
+add_subdirectory(src/module_mcp)
 
 # UAT6：构建机信息注入关于页构建行。定义挂在根而非 src/module_about/
 # CMakeLists.txt——本批冻结清单只开根 CMakeLists（module_about 侧文件不动），
@@ -211,7 +212,7 @@ if(DEVDESK_COVERAGE)
         devdesk_module_home devdesk_module_markdown devdesk_module_todo
         devdesk_agent
         devdesk_module_claude_proxy devdesk_module_settings
-        devdesk_module_about devdesk_module_wallpaper)
+        devdesk_module_about devdesk_module_wallpaper devdesk_module_mcp)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
         # 链接期（目录级，置于 add_subdirectory(tests) 与主程序定义**之前**）：
         # 之后创建的所有可执行文件都拉进 profile runtime
@@ -251,7 +252,10 @@ add_subdirectory(tests)
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
 # 两者单测复用同一份实现）
 add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
-    src/module_toggle_bridge.cpp src/wallpaper_tray_bridge.cpp)
+    src/module_toggle_bridge.cpp src/wallpaper_tray_bridge.cpp
+    # MCP 桥实现缝（B3）：app_assembly / settings_module 引用 app::mcp::* 符号；
+    # 缝本体只依赖 core，不产生 module_mcp 链接边
+    src/mcp_service_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
 # 排除 EUI-NEO 的旧图标 RC（IDI_APP_ICON）：DevDesk 已在下方用 devdesk.rc.in
 # 注入自己的 "A_DEVDESK_ICON" 命名资源。两份 RC 共用 RT_ICON ID 1-6 会导致
@@ -287,6 +291,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper
+    devdesk_module_mcp
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE
@@ -301,6 +306,7 @@ target_include_directories(DevDesk PRIVATE
     src/module_about
     src/module_agent
     src/module_wallpaper
+    src/module_mcp
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}
 )

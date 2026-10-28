@@ -54,6 +54,15 @@ struct SettingsCardsIn {
     std::string githubSyncDeleteSkipHint;        // 删远端跳过提示 → 黄字
     bool githubSyncTokenVisible = false;          // S3.7#6 Token 显隐切换
     bool githubSyncDetailExpanded = false;        // S3.7#4 同步说明折叠展开
+
+    // MCP 卡（B3）：桥状态快照（compose 每帧刷新，加锁快照 O(1)）+ 端口草稿与反馈。
+    // 运行态文案三态 = running / (!running && lastError 空) / (!running && lastError 非空)。
+    std::string mcpPortDraft;            // 端口输入草稿（空 = 未编辑，显示 cfg.mcpPort）
+    std::string mcpPortFeedback;         // 非空 = 反馈位文案（替代静态提示）
+    bool mcpPortFeedbackError = false;   // true = 红字；false = 三级字
+    bool mcpRunning = false;             // 桥快照：服务运行中
+    int mcpLivePort = 0;                 // 桥快照：实际监听端口（运行中有效）
+    std::string mcpLastError;            // 桥快照：Failed 时非空
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -87,6 +96,11 @@ struct SettingsCardActions {
     std::function<void()> githubSyncShowErrorDetail;            // 错误行「详情」
     std::function<void()> toggleGithubSyncTokenVisibility;   // S3.7#6 Token 显隐切换
     std::function<void()> toggleGithubSyncDetail;            // S3.7#4 同步说明折叠展开
+
+    // MCP 端口行（草稿 + 提交语义与代理端口同款）；新回调一律追加末尾。
+    std::function<void(const std::string&)> setMcpPortDraft;  // 输入草稿（含清错）
+    std::function<void()> applyMcpPort;                        // 回车 /「应用」提交
+    std::function<void()> discardMcpPortDraft;                 // Esc 丢弃
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）
@@ -105,8 +119,9 @@ struct CardDrawArgs {
 // 6 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）
 void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题/字号/窗口效果）
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
-void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关（壁纸第 5 格，平台能力门控在格内）
+void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关（标题右含 MCP 开关；壁纸第 5 格，平台能力门控在格内）
 void drawProxyCard(const CardDrawArgs& args);        // 通用：Claude 代理（开关门控；UAT5 自模块 tab 迁入）
+void drawMcpCard(const CardDrawArgs& args);          // 通用：MCP 服务（kModuleIdMcp 门控）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别
 void drawLogViewCard(const CardDrawArgs& args);      // 日志：tail 查看
 

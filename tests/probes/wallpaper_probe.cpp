@@ -340,6 +340,8 @@ int main(int argc, char* argv[]) {
                 break;
             case ::core::PageId::Agent:
                 break;  // 默认关闭，门控清单本就不含
+            case ::core::PageId::Mcp:
+                break;  // 默认关闭，门控清单本就不含
         }
     }
     check(!defaultGatingHasWallpaper,
