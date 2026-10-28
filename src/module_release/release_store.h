@@ -66,10 +66,17 @@ public:
     core::Result<void> removeTaskEnv(std::int64_t taskEnvId);
 
     core::Result<std::vector<TaskService>> listTaskServices(std::int64_t taskEnvId);
+    // 一条 SQL 拉整个任务的全部服务快照（经 release_task_env 一级 JOIN 归集），
+    // 供列表页一次装载后按 taskEnvId 分发，消除「每环境一条查询」的 N+1 扫描。
+    core::Result<std::vector<TaskService>> listTaskServicesByTask(std::int64_t taskId);
     core::Result<void> updateTaskService(const TaskService& svc);
     core::Result<void> removeTaskService(std::int64_t taskServiceId);
 
     core::Result<std::vector<TaskConfig>> listTaskConfigs(std::int64_t taskServiceId);
+    // 一条 SQL 拉整个任务的全部配置项（经 release_task_service / release_task_env
+    // 两级 JOIN 归集），供列表页一次装载后按 taskServiceId 分发，消除
+    // 「每服务一条查询」的 N+1 扫描。
+    core::Result<std::vector<TaskConfig>> listTaskConfigsByTask(std::int64_t taskId);
     core::Result<void> upsertTaskConfig(const TaskConfig& cfg);
 
     core::Result<std::vector<TaskStep>> listTaskSteps(std::int64_t taskServiceId);
@@ -77,7 +84,10 @@ public:
     // 两级 JOIN 归集），供提醒引擎一次装载后按 taskServiceId 分发，消除
     // 「每服务一条查询」的 N+1 扫描。
     core::Result<std::vector<TaskStep>> listTaskStepsByTask(std::int64_t taskId);
-    // doneAt == 0 表示撤回（该步未完成），已有行置 0，不删行
+    // doneAt == 0 表示撤回（该步未完成），已有行置 0，不删行。
+    // 契约：从未置位过的步骤撤回（doneAt == 0）直接成功、不产生行（守卫见 cpp
+    // setStepDone 的 doneAt==0 早退）——不要按「先补插一行再置 0」实现，否则会
+    // 复现 done_at=0 幻影行（污染「缺行按未完成计」口径与唯一索引）。
     core::Result<void> setStepDone(std::int64_t taskServiceId, StepKind kind,
                                    std::int64_t doneAt);
 

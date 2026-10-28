@@ -116,6 +116,13 @@ bool isRegularReleaseDay(const std::string& isoDate) {
     return weekday == 2 /*周二*/ || weekday == 4 /*周四*/;
 }
 
+bool isValidIsoDate(const std::string& isoDate) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    return parseIsoDate(isoDate, year, month, day);
+}
+
 std::int64_t taskBaseline(const std::vector<TaskEnv>& envs) {
     bool found = false;
     std::int64_t earliest = 0;

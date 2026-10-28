@@ -792,6 +792,24 @@ core::Result<std::vector<ReleaseTaskCard>> releaseLoadTaskCards(ReleaseStore& st
             return core::Result<std::vector<ReleaseTaskCard>>::fail(
                 envs.errorCode(), envs.errorMessage());
         }
+        // 每任务 4 条 SQL 批量取全（环境 1 + 服务/配置/步骤各 1），再按外键在内存
+        // 归组——替换逐环境逐服务的 N+1 循环。归组后各组内顺序与旧逐条查询一致
+        // （store 侧 ORDER BY 沿用各 listTask* 的口径），卡片几何与瀑布流不受影响。
+        auto allServices = store.listTaskServicesByTask(task.id);
+        if (allServices.isFail()) {
+            return core::Result<std::vector<ReleaseTaskCard>>::fail(
+                allServices.errorCode(), allServices.errorMessage());
+        }
+        auto allConfigs = store.listTaskConfigsByTask(task.id);
+        if (allConfigs.isFail()) {
+            return core::Result<std::vector<ReleaseTaskCard>>::fail(
+                allConfigs.errorCode(), allConfigs.errorMessage());
+        }
+        auto allSteps = store.listTaskStepsByTask(task.id);
+        if (allSteps.isFail()) {
+            return core::Result<std::vector<ReleaseTaskCard>>::fail(
+                allSteps.errorCode(), allSteps.errorMessage());
+        }
         std::vector<TaskEnv> liveEnvs;
         std::vector<TaskService> liveServices;
         std::vector<TaskConfig> configs;
@@ -801,28 +819,18 @@ core::Result<std::vector<ReleaseTaskCard>> releaseLoadTaskCards(ReleaseStore& st
             liveEnvs.push_back(env);
             card.envNames.push_back(env.envName);
 
-            auto services = store.listTaskServices(env.id);
-            if (services.isFail()) {
-                return core::Result<std::vector<ReleaseTaskCard>>::fail(
-                    services.errorCode(), services.errorMessage());
-            }
-            for (const TaskService& service : services.value()) {
+            for (const TaskService& service : allServices.value()) {
+                if (service.taskEnvId != env.id) continue;
                 if (service.removed) continue;
                 liveServices.push_back(service);
-                auto serviceConfigs = store.listTaskConfigs(service.id);
-                if (serviceConfigs.isFail()) {
-                    return core::Result<std::vector<ReleaseTaskCard>>::fail(
-                        serviceConfigs.errorCode(), serviceConfigs.errorMessage());
-                }
-                for (const TaskConfig& config : serviceConfigs.value()) {
+                for (const TaskConfig& config : allConfigs.value()) {
+                    if (config.taskServiceId != service.id) continue;
                     configs.push_back(config);
                 }
-                auto serviceSteps = store.listTaskSteps(service.id);
-                if (serviceSteps.isFail()) {
-                    return core::Result<std::vector<ReleaseTaskCard>>::fail(
-                        serviceSteps.errorCode(), serviceSteps.errorMessage());
+                for (const TaskStep& step : allSteps.value()) {
+                    if (step.taskServiceId != service.id) continue;
+                    steps.push_back(step);
                 }
-                for (const TaskStep& step : serviceSteps.value()) steps.push_back(step);
             }
         }
 

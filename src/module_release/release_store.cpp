@@ -5,6 +5,7 @@
 // 不用 UPDATE 后 sqlite3_changes() 的两步配对（两个语句之间会被并发写者穿插）；
 // 多语句写入一律走 db_.transaction()，其全程持连接锁。
 #include "release_store.h"
+#include "release_logic.h"
 
 #include <cstddef>
 #include <limits>
@@ -24,6 +25,16 @@ std::int64_t boolInt(bool value) { return value ? 1 : 0; }
 
 bool isUniqueViolation(const std::string& message) {
     return message.find("UNIQUE") != std::string::npos;
+}
+
+// 日志 action 白名单（spec §9 词汇表）：写入口先拒白名单外值，不落库。
+bool isAllowedLogAction(const std::string& action) {
+    static const char* const kAllowed[] = {"create", "submit", "confirm",
+                                           "revoke", "void", "restore", "reorder"};
+    for (const char* const a : kAllowed) {
+        if (action == a) return true;
+    }
+    return false;
 }
 
 const char* serviceKindText(ServiceKind kind) {
@@ -496,6 +507,16 @@ core::Result<std::vector<EnvDef>> ReleaseStore::listEnvs() {
 }
 
 core::Result<std::int64_t> ReleaseStore::upsertEnv(const EnvDef& def) {
+    if (def.startMinute < 0 || def.startMinute > 1439) {
+        return core::Result<std::int64_t>::fail(
+            ErrorCode::ValidationError,
+            "startMinute 超出 0..1439: " + std::to_string(def.startMinute));
+    }
+    if (def.endMinute < 0 || def.endMinute > 1439) {
+        return core::Result<std::int64_t>::fail(
+            ErrorCode::ValidationError,
+            "endMinute 超出 0..1439: " + std::to_string(def.endMinute));
+    }
     std::int64_t envId = def.id;
     auto tx = db_.transaction([&]() -> core::Result<void> {
         if (envId == 0) {
@@ -686,6 +707,10 @@ core::Result<std::optional<Task>> ReleaseStore::findTaskByDate(
 }
 
 core::Result<std::int64_t> ReleaseStore::createTask(const Task& task) {
+    if (!isValidIsoDate(task.planDate)) {
+        return core::Result<std::int64_t>::fail(
+            ErrorCode::ValidationError, "计划日期非法: " + task.planDate);
+    }
     auto prep = db_.prepare(
         "INSERT INTO release_task "
         "(plan_date, status, announce_text, announce_sent_at, "
@@ -709,7 +734,14 @@ core::Result<std::int64_t> ReleaseStore::createTask(const Task& task) {
     if (auto r = stmt.bind(11, task.ticketDbNo); r.isFail()) return failAs<std::int64_t>(r);
     if (auto r = stmt.bind(12, boolInt(task.ticketDbOk)); r.isFail())
         return failAs<std::int64_t>(r);
-    return fetchId(stmt, "release_task INSERT");
+    // 与 upsertService/upsertEnv 同款映射：唯一索引冲突（同日非作废任务唯一）
+    // 不再以 Internal + 原始 SQLite 文本冒出。
+    auto id = fetchId(stmt, "release_task INSERT");
+    if (id.isFail() && isUniqueViolation(id.errorMessage())) {
+        return core::Result<std::int64_t>::fail(
+            ErrorCode::AlreadyExists, "该计划日任务已存在: " + task.planDate);
+    }
+    return id;
 }
 
 core::Result<std::int64_t> ReleaseStore::createTaskWithEnvs(
@@ -745,6 +777,10 @@ core::Result<void> ReleaseStore::updateTask(const Task& task) {
     if (task.id == 0) {
         return core::Result<void>::fail(ErrorCode::ValidationError, "task.id 不能为 0");
     }
+    if (!isValidIsoDate(task.planDate)) {
+        return core::Result<void>::fail(ErrorCode::ValidationError,
+                                        "计划日期非法: " + task.planDate);
+    }
     auto prep = db_.prepare(
         "UPDATE release_task SET plan_date = ?, status = ?, announce_text = ?, "
         "announce_sent_at = ?, pretest_no = ?, pretest_ok = ?, cab_no = ?, cab_ok = ?, "
@@ -766,7 +802,13 @@ core::Result<void> ReleaseStore::updateTask(const Task& task) {
     if (auto r = stmt.bind(12, boolInt(task.ticketDbOk)); r.isFail()) return r;
     if (auto r = stmt.bind(13, task.id); r.isFail()) return r;
     auto any = fetchAny(stmt);
-    if (any.isFail()) return failVoid(any);
+    if (any.isFail()) {
+        if (isUniqueViolation(any.errorMessage())) {
+            return core::Result<void>::fail(
+                ErrorCode::AlreadyExists, "该计划日任务已存在: " + task.planDate);
+        }
+        return failVoid(any);
+    }
     if (!any.value()) {
         return core::Result<void>::fail(ErrorCode::NotFound,
                                         "任务不存在: id=" + std::to_string(task.id));
@@ -798,6 +840,16 @@ core::Result<std::vector<TaskEnv>> ReleaseStore::listTaskEnvs(std::int64_t taskI
 
 core::Result<std::int64_t> ReleaseStore::addTaskEnv(
     const TaskEnv& env, const std::vector<TaskService>& services) {
+    if (env.startMinute < 0 || env.startMinute > 1439) {
+        return core::Result<std::int64_t>::fail(
+            ErrorCode::ValidationError,
+            "startMinute 超出 0..1439: " + std::to_string(env.startMinute));
+    }
+    if (env.endMinute < 0 || env.endMinute > 1439) {
+        return core::Result<std::int64_t>::fail(
+            ErrorCode::ValidationError,
+            "endMinute 超出 0..1439: " + std::to_string(env.endMinute));
+    }
     std::int64_t envId = 0;
     auto tx = db_.transaction([&]() -> core::Result<void> {
         auto envPrep = db_.prepare(
@@ -876,6 +928,33 @@ core::Result<std::vector<TaskService>> ReleaseStore::listTaskServices(
     return core::Result<std::vector<TaskService>>::ok(std::move(out));
 }
 
+core::Result<std::vector<TaskService>> ReleaseStore::listTaskServicesByTask(
+    std::int64_t taskId) {
+    // 与 listTaskStepsByTask 同口径：一次拉全、调用方按 taskEnvId 归组。
+    // 排序沿用 listTaskServices 的 id ASC——归组后每个环境的服务顺序不变。
+    auto prep = db_.prepare(
+        "SELECT svc.id, svc.task_env_id, svc.service_name, svc.service_kind, "
+        "svc.default_branch, svc.branch, svc.removed "
+        "FROM release_task_service AS svc "
+        "JOIN release_task_env AS env ON env.id = svc.task_env_id "
+        "WHERE env.task_id = ? ORDER BY svc.id ASC");
+    if (prep.isFail()) return failAs<std::vector<TaskService>>(prep);
+    auto& stmt = prep.value();
+    if (auto r = stmt.bind(1, taskId); r.isFail())
+        return failAs<std::vector<TaskService>>(r);
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) return failAs<std::vector<TaskService>>(rows);
+
+    std::vector<TaskService> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        auto parsed = parseTaskServiceRow(row);
+        if (parsed.isFail()) return failAs<std::vector<TaskService>>(parsed);
+        out.push_back(std::move(parsed.value()));
+    }
+    return core::Result<std::vector<TaskService>>::ok(std::move(out));
+}
+
 core::Result<void> ReleaseStore::updateTaskService(const TaskService& svc) {
     if (svc.id == 0) {
         return core::Result<void>::fail(ErrorCode::ValidationError,
@@ -940,6 +1019,35 @@ core::Result<std::vector<TaskConfig>> ReleaseStore::listTaskConfigs(
     return core::Result<std::vector<TaskConfig>>::ok(std::move(out));
 }
 
+core::Result<std::vector<TaskConfig>> ReleaseStore::listTaskConfigsByTask(
+    std::int64_t taskId) {
+    // 与 listTaskStepsByTask 同口径：一次拉全、调用方按 taskServiceId 归组。
+    // 排序沿用 listTaskConfigs 的 (conf_order ASC, id ASC)——归组后每个服务的
+    // 配置项顺序不变。
+    auto prep = db_.prepare(
+        "SELECT cfg.id, cfg.task_service_id, cfg.kind, cfg.content, cfg.skipped, "
+        "cfg.conf_order, cfg.done_at "
+        "FROM release_task_config AS cfg "
+        "JOIN release_task_service AS svc ON svc.id = cfg.task_service_id "
+        "JOIN release_task_env AS env ON env.id = svc.task_env_id "
+        "WHERE env.task_id = ? ORDER BY cfg.conf_order ASC, cfg.id ASC");
+    if (prep.isFail()) return failAs<std::vector<TaskConfig>>(prep);
+    auto& stmt = prep.value();
+    if (auto r = stmt.bind(1, taskId); r.isFail())
+        return failAs<std::vector<TaskConfig>>(r);
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) return failAs<std::vector<TaskConfig>>(rows);
+
+    std::vector<TaskConfig> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        auto parsed = parseTaskConfigRow(row);
+        if (parsed.isFail()) return failAs<std::vector<TaskConfig>>(parsed);
+        out.push_back(std::move(parsed.value()));
+    }
+    return core::Result<std::vector<TaskConfig>>::ok(std::move(out));
+}
+
 core::Result<void> ReleaseStore::upsertTaskConfig(const TaskConfig& cfg) {
     const std::string kind = configKindText(cfg.kind);
 
@@ -957,7 +1065,13 @@ core::Result<void> ReleaseStore::upsertTaskConfig(const TaskConfig& cfg) {
         if (auto r = stmt.bind(5, static_cast<std::int64_t>(cfg.order)); r.isFail()) return r;
         if (auto r = stmt.bind(6, cfg.doneAt); r.isFail()) return r;
         auto id = fetchId(stmt, "release_task_config INSERT");
-        if (id.isFail()) return failVoid(id);
+        if (id.isFail()) {
+            if (isUniqueViolation(id.errorMessage())) {
+                return core::Result<void>::fail(
+                    ErrorCode::AlreadyExists, "该服务同类型配置项已存在: " + kind);
+            }
+            return failVoid(id);
+        }
         return core::Result<void>::ok();
     }
 
@@ -1067,6 +1181,10 @@ core::Result<void> ReleaseStore::setStepDone(std::int64_t taskServiceId,
 // ==================== 日志 ====================
 
 core::Result<void> ReleaseStore::appendLog(const TaskLog& log) {
+    if (!isAllowedLogAction(log.action)) {
+        return core::Result<void>::fail(ErrorCode::ValidationError,
+                                        "日志 action 不在白名单: " + log.action);
+    }
     auto prep = db_.prepare(
         "INSERT INTO release_task_log (task_id, scope, step, action, at, note) "
         "VALUES (?, ?, ?, ?, ?, ?)");

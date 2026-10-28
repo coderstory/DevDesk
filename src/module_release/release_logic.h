@@ -16,6 +16,10 @@ namespace module::release {
 // 不存在的日期（如 2 月 30 日）一律 false——不抛异常，也不猜「最近的有效日」。
 bool isRegularReleaseDay(const std::string& isoDate);
 
+// 严格日历合法性（与 isRegularReleaseDay 同一解析实现）：仅判「YYYY-MM-DD 且
+// 该日期真实存在」，不含周二/周四判定。供数据层写入口校验 planDate。
+bool isValidIsoDate(const std::string& isoDate);
+
 // 任务时间基准 = 未移除环境的最早开始分钟（当天 0..1439）；无有效环境返回 -1。
 // 跨零点环境（end <= start）只影响窗口归属，不改变其「开始时刻」的取值。
 std::int64_t taskBaseline(const std::vector<TaskEnv>& envs);
