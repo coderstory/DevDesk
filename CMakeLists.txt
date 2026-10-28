@@ -166,17 +166,20 @@ function(devdesk_add_eui_includes target)
     )
 endfunction()
 
-# 功能模块（home / markdown / todo / claude_proxy / settings / about / agent / wallpaper）
+# 功能模块（home / markdown / todo / claude_proxy / settings / about / agent / wallpaper / schedule）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_agent)
+add_subdirectory(src/module_memory)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
 add_subdirectory(src/module_wallpaper)
 add_subdirectory(src/module_release)
 add_subdirectory(src/module_mcp)
+# 定时调度子系统（S3 存储层先行，S7a 完成 app_registry/PageId/宿主装配接线）
+add_subdirectory(src/module_schedule)
 
 # UAT6：构建机信息注入关于页构建行。定义挂在根而非 src/module_about/
 # CMakeLists.txt——本批冻结清单只开根 CMakeLists（module_about 侧文件不动），
@@ -211,10 +214,10 @@ if(DEVDESK_COVERAGE)
     set(DEVDESK_COVERAGE_LIBS
         devdesk_core devdesk_platform devdesk_ui_kit
         devdesk_module_home devdesk_module_markdown devdesk_module_todo
-        devdesk_agent
+        devdesk_agent devdesk_module_memory
         devdesk_module_claude_proxy devdesk_module_settings
         devdesk_module_about devdesk_module_wallpaper devdesk_module_release
-        devdesk_module_mcp)
+        devdesk_module_mcp devdesk_module_schedule)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
         # 链接期（目录级，置于 add_subdirectory(tests) 与主程序定义**之前**）：
         # 之后创建的所有可执行文件都拉进 profile runtime
@@ -289,12 +292,14 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_agent
+    devdesk_module_memory
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper
     devdesk_module_release
     devdesk_module_mcp
+    devdesk_module_schedule
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE

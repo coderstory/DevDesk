@@ -1,8 +1,42 @@
 # DevDesk 未完成任务清单
 
+## 🔴 活跃待办（2026-10-28 memcpp 线收线）
+
+> memcpp 已交付部分见 `docs/superpowers/specs/2026-10-28-memcpp-overview.md`（需求→实现→验证映射）；本段只记**未完成项**，按优先级排。历史快照（含仍开着的 §13 profile 高级 tab）完整保留在下方分隔线之后。
+
+### P0 — 用户已明确要求，下一步先做
+
+- [ ] **MCP 集成（用户 2026-10-28 需求，纯增量接入）**：记忆功能作为一个 MCP 模块注册进 DevDesk 统一 MCP server（`src/module_mcp`，另一线已落 B1-B3）——Claude Code 经统一入口查记忆（recall/search 工具走既有 `module_memory/gateway/telemem_client`），MCP 页面展示记忆模块行+可开关（关=工具不注册/下线）。**红线：既有功能（hook 注入/面板/采集/卡片）一行不动**。前置：读 module_mcp 的模块注册模式与开关持久化；其线 B4 真连 E2E 是他们自己的欠账，不阻塞注册接线。
+- [ ] **打包+真机 UAT（S5 收官）**：`bash scripts/package-windows.sh` 出安装包 → 用户安装 → 首跑向导（Python 3.10~3.12 检测/venv/pip 约 97s/引擎拉起）→ 真机点验：自动采集（30s 轮询）、脱敏拦截（动态流可见）、提案卡审核+撤销、Claude Code 提问时 hook 注入（≤5 条 ≤500 字）、消耗页、触发线仪表（冻结 15 查询评测）。
+
+### P1 — 已知缺口（不影响 Windows 日常使用）
+
+- [ ] **infer=true 云端提炼真调**：当前全部直存（infer=False，零 LLM 调用）。智能提炼需真调智谱 anthropic 端点 glm-5.3-flash（key 运行时读 `~/.claude/settings.json`，TELEMEM_CONFIG 已配 anthropic provider）。注意：套餐 key 用于后台常驻提炼偏离智谱使用条款，用户 2026-10-27 已知悉自担；控耗五条（节流/月度预算软硬档）已实现，实测验证待做。
+- [ ] **月度预算硬档实测**：预算耗尽 → 暂停提炼只留检索的面板行为真机验证。
+- [ ] **decay 遗忘清单真实现**：待 telemem 引擎暴露记忆列举缝（MemoryListFn）；当前 fail-closed 零假卡（扫描触发在，清单为空）。
+- [ ] **baseVersion live 空转**：telemem 无版本查询缝，接受时以快照放行（契约位已留）；引擎升级后接真值。
+- [ ] **memory_e2e_probe 门禁注入通道**：探针需外部注入 DEVDESK_DATA_ROOT+外部编排 llama-server/telemem，当前在门禁属环境性失败；给 build-test-run.sh 加注入开关。
+
+### P2 — 平台与打磨
+
+- [ ] **macOS 平台面**：`process_host_posix`（含 F2 修复：per-child 环境不污染父进程）仅编译验证，待 mac 实机；引擎托管 posix 侧同。
+- [ ] **批量模式标签窄窗重叠**：1200 逻辑宽下批量开关标签与来源 chips 重叠（宽窗正常）。
+- [ ] **向量模型升级档**：记忆量增大（数百条+）后可升 Qwen3-Embedding-0.6B（610MB/约 1.4GB RSS，难集满分）——**必须显式 `-c 8192`**（默认槽位会吃 4GB）；改 `kEmbedModel` 常量+重启引擎即可，见 `docs/superpowers/plans/2026-10-27-memcpp-embed-bakeoff.md`。
+- [ ] **触发线升级 C**：冻结集转测 Recall@5<85% 或 2 字词命中低于 5/3/11 → 按备用图纸（`docs/superpowers/specs/2026-10-27-memcpp-p0-core-spec.md`）补自研全文通道；当前实测 100%（15/15），余量充足。
+
+### 环境事实（接线时会用到）
+
+- 模型文件收线时已删（曾下载于 spike/.bakeoff/）：bge-small-zh Q8_0 25MB（HF: CompendiumLabs/bge-small-zh-v1.5-gguf）+ Qwen3/bge-m3 各 640MB；`tools/memcpp-integration/spike/run_bakeoff.py` 内有下载 URL，重跑即取。
+- spike 全套脚本在 `tools/memcpp-integration/spike/`（run_spike.py 五项实测可复跑）。
+- 端口约定：llama-server 回环 11435、telemem 回环 8421；本机 http_proxy 会截胡云端调用（脚本已做 NO_PROXY 幂等旁路）。
+- hook 注入通道：`devdesk.exe memory hook` 子命令（先于单实例锁分派）；hooks 配置键级装拆走 DevDesk settings 管理通道。
+
+---
+
+
 > ⚠ **本文整篇为历史快照，不再维护**——里面的"状态"与"分支"描述多数已过期。
 > **当前状态以 `CLAUDE.md` 的「🚦 当前状态」段为准**（那段带日期与出处）。权威待办见 `docs/superpowers/plans/2026-10-21-UAT62-整改清单.md` 与 `2026-10-23-UAT62-收敛执行计划.md`。
-> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目。
+> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目；**以及文末「2026-10-28 会话收尾新增待办」段**（壁纸线收尾遗留，全部现行有效）。
 > 2026-10-03 订正：§4 probes / §9 EUI-NEO / §「macOS 构建环境」/ §「分支-合并状态」四处已按当时事实改写（原描述均已失效）。
 
 > 原始日期：2026-09-28 会话截止
@@ -136,3 +170,90 @@
 - 工作区干净（`git status` 只剩 `?? Testing/` 之类非仓库产物）。
 - ~~未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪~~ → ✅ **已解决**（13 个探针文件全在版本控制里，见 §4）。
 - EUI-NEO：**永不 push 到 `origin`（2026-09-28 用户决策）**，origin/main 停在 `v0.6.0-4-g782c569`；本地 main 领先 origin **97** 个提交（2026-10-03 实测）为长期状态，**`fork` 已齐平（`cbd0b48`）**，不再有「待 push」事项（见 §9）。
+---
+
+## 2026-10-28 会话收尾新增待办（全部现行有效）
+
+> 壁纸模块已全线交付（dev `4ad41e52`，verifier 8/8，用户确认；详见 `docs/superpowers/specs/2026-10-28-wallpaper-requirements.md` / `-technical-design.md`）。以下是收尾时未干完的事。
+
+### A. 退出 terminate 尾巴修复——代码已写完，未提交未验证 ⚠️ 工作树里有活
+- **问题**：退出时 stdout 尾巴 `terminate called without an active exception`、退出码疑似非 0（进程退净无残留，非阻断）。根因已定位：**单实例锁唤起监听线程**（`src/platform/single_instance_win.cpp` 的全局 `g_listenerThread`，原注释"退出时 OS 回收"——joinable 线程活到静态析构即 std::terminate）。与壁纸无关，属既有债。
+- **修复代码已完成**：`wt-dev-gate` 工作树（dev @ c508a662 之上）的 `src/platform/single_instance_win.cpp`——`shutdownListener()`（置停旗标+join）经 `std::atexit` 在线程启动点注册；增量构建已绿（BUILD=0）。**改动未提交**——清理 wt-dev-gate 前必须先处理本条。
+- **剩余**：验证（启动→**托盘退出**路径，X 关闭是隐藏到托盘不是退出；判据 = 退出码 0 + stdout 无 terminate 行，建议双次确保确定性）→ 绿后原子提交 `fix(exit): 单实例监听线程 atexit join 收尾——消 terminate 尾巴` → 推 dev。
+
+### B. agent_e2e_probe 环境红（非代码问题）
+- 探针门禁 18/19 的唯一红：本机生产库无激活 Claude Profile（探针设计"前置缺失=FAIL 防假绿"）。**修法**：用户在 DevDesk 里激活任一 Claude Profile 后重跑 `ctest -L probe` 即 19/19。不碰代码。
+
+### C. 首页顶部 5 张统计卡片偏大（用户 UAT 反馈，未定案）
+- 用户 2026-10-27 反馈"首页顶部5个卡片太大了"，但同屏自述"窗体都没渲染完毕"——**待用户在新版上确认仍要改后再动**，勿抢跑。改动入口：`src/module_home/home_module.cpp` 统计卡区 + `tests/test_modules/test_home.cpp` H18 弹性双档断言。
+
+### D. 壁纸 deferred（非本轮欠账，按需求书 §deferred）
+- **四铺法**：图片壁纸当前走 mpv 拉伸显示；WIC 平铺为后续增强（需求书已列）。
+- 永久不做：多显示器/转码降帧/维护删除当前壁纸/玻璃半透/独立应用（handoff §1.3）。
+- macOS 平台层：规格 P8，代码未写，勿宣称可用。
+
+---
+
+## 上线模块收尾计划（2026-10-28 用户指令，生效中）
+
+**阶段目标**：先不执行测试；依次完成 ①剩余全部功能开发 ②测试代码编写 ③文档完善，然后**全部 commit、合并到 `dev` 分支**。测试执行放在合并之后统一做。
+
+- **代码位置**：全部实现在 `D:/wt-rel-core`（分支 `wt-release-core`），主仓 `feature/20261027-release-module` 只有文档；合并时以 worktree 分支为源
+- **待开发（进入批次 4）**：审计 B 剩余 3 major——~~提醒窗开窗失败即死（`release_reminder`）~~、steps 每秒 N+1 扫库（需 store 加按任务一次拉全的查询）、列表状态不按时间推导（需 `release_logic` 加纯函数）；Z 线留下的三件——~~详情页迁移到 `dueItems` 新签名~~、删除 `appendSyntheticConfigs` 兜底、N+1 同前；审计 A/B 共 28 minor 待分诊（修/不修/仅记录）
+- **测试编写**：批次 2/3 新增功能中无断言的——配置编辑层、跳过勾选、服务/环境移除、详情页返回；测试写好**不跑**，与代码一起 commit
+- **文档完善**：spec §10/§11 与实现同步（侧边栏重排、默认折叠、ticker、编辑层、原子化建单）；`.scratch/release-module/checklist.json` 状态更新
+- **完成后动作**：全部 commit（显式 pathspec）→ 合并到 `dev` → 用 `C:/Tools/Git/mingw64/libexec/git-core/git-push.exe` 推送 → 在 `dev` 上跑完整门禁（构建 + 全量单测 + 探针）
+- **审计口径**：批次 2/3 的 diff 尚未被审计，合并前需补一次审计 C（范围小）
+
+## 2026-10-28 · 增补批（H27-H31）执行指令（用户原话）
+- 先不执行测试，优先完成全部功能的开发、测试编写、文档完善，然后全部 commit，合并到 dev 分支
+- 落实口径：实现子任务只写码 + 写测试，不构建不跑测试；合并 dev 由主会话串行做；全部合入后由主会话统一跑一次构建 + 测试收口
+- 本批范围：docs/superpowers/plans/2026-10-21-UAT62-整改清单.md「增补需求 · 2026-10-28 用户登记（H27-H31）」节
+
+## 上线模块收口状态（2026-10-28 18:15 记录，18:40 按停止指令终态更新）
+
+实现与审计全闭环（实现 6ca2174a → 审计 C1/C2 全处置 52f68391/749aeec7/bd11fc52/aa0adf6b/8126eaa9/d1b34740，台账 docs/superpowers/plans/2026-10-28-release-audit-C1C2-disposition.md）；**但 dev 推送最终未完成**：18:15 时本地 dev 26a2deaf 曾含上线模块，后因 memcpp 会话推 Memory 页上 origin/dev 造成 12 文件结构性冲突，调度会话收线时按"语义整合归各线"原则把 26a2deaf 从 dev 回退（留 reflog），dev 重置回 `532f466c`；我方随后派的一次性 13 页序重钉合并子任务**被用户停止指令中止**（差最后 1-2 个测试文件），worktree D:/wt-rel-core 已硬恢复干净于 `9b3f9e1d`，半成品解冲突已丢弃。
+
+**未干完清单（按优先级）：**
+0. **dev 推送未完成——重做即收口**（在 D:/wt-rel-core 上执行）：
+   - `git merge origin/dev`（532f466c），12 个冲突文件：顶层 CMakeLists.txt、src/app_registry.h、src/app_sidebar.cpp、src/main.cpp、src/module_settings/settings_config.cpp、settings_ui_cards.cpp、tests/probes/uat62_page_shots_probe.cpp、wallpaper_probe.cpp、tests/test_core/test_router.cpp、tests/test_modules/test_app_assembly.cpp、test_module_gating.cpp、test_wallpaper_module.cpp
+   - **13 页终态序（唯一口径）**：PageId = 0 Home, 1 Markdown, 2 Todo, 3 ClaudeProxy, 4 Agent, 5 Memory, 6 Wallpaper, 7 Mcp, 8 ReleaseGroup, 9 ReleaseTasks, 10 ReleaseConfig, 11 Settings, 12 About（MCP 仍在上线之上；Memory 按 memcpp 线融合序排智能体后）
+   - 规则：注册表 13 行同序（Memory 行取 dev 侧、Release 三行取我方 parent 钉法）；默认 memory 开/mcp 关/release 开；main.cpp 13 case 并存；模块默认版本迁移链两侧收敛化；全部测试钉值按 13 项重算（不许抄一侧）；CMake 顶层 release/mcp/memory/schedule 四行并存
+   - 完成后：wt-merge 里 `git merge --ff-only wt-release-core` → `C:/Tools/Git/mingw64/libexec/git-core/git-push.exe origin dev`
+   - 本机一律不构建不跑测试（验证走构建时机到来时的首轮构建）
+1. **整批无编译/测试实测证据**——修复批 7 个提交 + 两个合并均未构建未跑测试（本机免编译指令；CI 验证环节按用户指示取消）。首个实测点 = 下次任何一次构建；红了按失败项修。macOS 侧全程仅静态审计，无实机编译。
+2. **feature/20261027-release-module 文档分支未合入 dev**——上面还有交付闸门 hook（.claude/hooks/deliverable-gate.sh）、spec 同步版、TODO 收口段、调度交接文档原版。后续合并时：handoff 文档 dev 侧已是"路径仓库相对"修订版，冲突取 dev 侧。
+3. **安装程序未做**——上线模块随 0.5.0 出包（Inno Setup / DMG）+ 用户真机 UAT 未做。
+4. **A-02 待拍板**——列表卡进度分母与详情页 5 槽位口径不一致，需要用户定夺（分母按服务×环境还是按配置项）。
+5. **缓置项**——F-3 父行存在性预检（导入/脚本入口出现时再补）；提醒窗句柄耦合块未抽纯函数（openReminder/closeForEmpty/collectReminderView/buildDemoView/绘制，硬抽会改行为）。
+6. **已知无关红灯**——agent_e2e_probe 在本机因 DPAPI 凭据失败（先前已判与需求无关，未做基线复核）。
+
+## 2026-10-28 收尾 · 未竟清单（用户指令：停止开发、收尾）
+> 本会话已推 dev（532f466c）：调度线 S1 ticker / S2 规则模型+cron 上移 / S3 存储 / S4 引擎 / S5 渠道 / S6a HTTP 代理 / S6b 企业微信，+ H27-H31 审计修复批，并与远端 Memory/Mcp 重构并线。**全部用例已写未执行、零构建**（本机免编译指令）——CI 判定等 EUI fork HEAD 修复后出，或用户另行指令。
+> release 线（上线模块）：分支 wt-release-core @ 9b3f9e1d 完整保留、**未上行**——其对旧结构的注册表改动与远端 Memory/Mcp 页面序重构（PageId 钉值 Mcp=7/Settings=8/About=9、all-on 计数 10）冲突，需由 release 会话按新结构重新整合后再合。
+
+### 待合入（代码已完成、停在分支）
+1. **S7a 装配+列表**：wt-s7a-module-list @ d580123b（模块注册/PageId/列表页/内置任务注册缝，引擎构造签名已注）。合并预期冲突三处：module_schedule/CMakeLists、tests/CMakeLists（追加并集）；**tests/test_modules/test_app_assembly.cpp 的注册表行数/枚举序断言必须按合并后真实 kModuleRegistry 语义重核（新结构 Memory 默认开、Mcp 默认关，再插 Schedule 行需重排）——勿盲取一边**
+2. **release 线全量**：见头部说明，由其会话重新整合
+
+### 接线与修缺（开发中止时未落）
+3. 引擎启动接线（S7a onStart/onStop 接缝注释：S4 构造 (SqliteDb&, ChannelRegistry&) + start/stop）
+4. 历史抽屉按钮 → S7b 抽屉本体接线（按钮位已留）
+5. wecom 渠道在 ChannelRegistry 的注册接线（channels/wecom.h 注册接缝已备）
+6. 令牌桶全局装配口径（调研 §16.4：全局一桶，防多 schedule_channel 行叠加超频）
+7. 引擎跨波对齐点核对（RuleKind / Receipt / ChannelRegistry 方法名——S4 源码内集中标注处）
+8. 设置页「定时」模块开关卡（kModuleIdSchedule；S7a 暂恒注册）
+9. module_schedule/CMakeLists 的 devdesk_platform 重复行去重
+10. cron 编辑回显透传（S7b 留白注释，见 schedule_ui_edit）
+
+### 审计（B 交卷 3 中 4 低；A 中止）
+11. 【中】toast_channel.cpp include app_sidebar.h 调 app::showAppNotice——渠道层反向依赖 app 层，接线必炸；改经注册回调/ServiceLocator 注入（报告：docs/superpowers/plans/2026-10-28-scheduling-line-audit-B.md）
+12. 【中】module_schedule 库缺 channel_registry 源登记（S7a 分支已补登——随第 1 条合入后核对销账）
+13. 【中】test_schedule_rule.cpp:390/451 DST 用例在无 DST 时区 return true 恒真跳过——§9.10 验收无任何环境实测覆盖，需可切换假时钟或 CI 补 DST 用例
+14. 【低】其余 4 条见审计 B 报告；交接文档 §11 波次表状态滞后待刷
+15. 审计 A（正确性面）中止未完成——重派范围：git diff f42ea2c4..dev 的调度线文件集（规格逐条/静默失败/边界/测试有效性四维）
+
+### 后续
+16. S8 系统定时只读源（ScheduleProvider；release 线按新结构合入后，release 为首个来源）
+17. 统一验证：全部用例已写未执行——EUI fork HEAD 修复后看 CI 判定，或用户另行指令
+

@@ -102,10 +102,13 @@ inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 
 inline constexpr float kEditorFontCardHeight = 184.0f;
 // 模块插拔卡（模块 | 全宽卡内开关格，UAT4 按用户拍板撑满）：release 加入后恒 3 行：
 // 68+roundFs(56)×2+roundFs(36)=216，+38 → 254（85% 档 216 / 130% 档 330）。
-// 2026-10-27 用户真机拍板：壁纸开关收进本卡作第 6 格（废除独立全宽壁纸卡），
-// supported 平台末行加一格；不支持平台整格不建，网格恒 5 格仍 3 行，卡高不变。
+// 2026-10-27 用户真机拍板：壁纸开关收进本卡作末格（第 7 格，废除独立全宽壁纸卡），
+// supported 平台末行加一格；不支持平台整格不建，网格恒 6 格仍 3 行，卡高不变。
+// 模块卡高两档随壁纸格分叉：6 格（无壁纸格，壁纸平台不支持时）= 3 行 → 254；
+// 7 格（含壁纸格）= 4 行 → 310（68 + 56×3 + 36 + 38）。memory/release 并存后
+// 网格恒 6+1 格，不支持平台也不再回落 2×2。
 inline constexpr float kModulesCardHeight = 254.0f;
-inline constexpr float kModulesCardHeightWallpaper = 254.0f;
+inline constexpr float kModulesCardHeightWallpaper = 310.0f;
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + H28 间距令牌恢复）：
 // 卡高由最坏行序决定——H28 后（100% 档，设计系统 v1.0 令牌 4/8/12/16）：

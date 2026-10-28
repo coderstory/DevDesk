@@ -8,6 +8,7 @@ add_library(devdesk_platform STATIC
     utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
     autostart.h                         # 开机自启动抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
     process_runner.h                    # 进程执行器抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
+    process_host.h                      # 常驻子进程托管抽象：拉起/树杀/探活（memcpp S2），实现按平台拆
     wallpaper_capability.h              # 壁纸宿主能力抽象：实现按平台拆（Windows true / 其余 false）
     window_visibility.h                 # 主窗可见态抽象：接口平台无关，实现按平台拆（_win/_macos）
     file_open_common.cpp
@@ -33,6 +34,7 @@ if(WIN32)
         notification_win.cpp           # 系统通知：EUI-NEO 托盘通知（Shell_NotifyIconW NIF_INFO）
         autostart_win.cpp              # 开机自启动：HKCU Run 注册表写/删/查（UAT6）
         process_runner_win.cpp          # 进程执行器：CreateProcess + 管道全捕获（UAT6）
+        process_host_win.cpp            # 常驻子进程托管：CreateProcessW + taskkill 树杀（memcpp S2）
         wallpaper_capability_win.cpp    # 壁纸宿主能力：WorkerW/mpv 路线可用（true）
         window_visibility_win.cpp       # 主窗可见态：EnumWindows 捕获 HWND + IsIconic/IsWindowVisible
     )
@@ -53,6 +55,7 @@ elseif(APPLE)
         notification_macos.mm          # UNUserNotificationCenter（ARC，见下方编译选项）
         autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
         process_runner_macos.cpp        # 进程执行器：posix_spawn + 管道全捕获（UAT6）
+        process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
         wallpaper_capability_macos.cpp  # 壁纸宿主能力：第二阶段 ObjC++ 平台层前恒 false
         window_visibility_macos.cpp     # 主窗可见态：当前 GLFW 上下文窗口的 ICONIFIED/VISIBLE（无句柄 fail-open）
     )
@@ -73,6 +76,7 @@ else()
         notification_posix.cpp         # 无原生通知后端：诚实 NotImplemented
         autostart_posix.cpp            # 开机自启动兜底：恒不支持（UAT6）
         process_runner_posix.cpp        # 进程执行器：fork/exec + 管道全捕获（UAT6）
+        process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
         wallpaper_capability_posix.cpp  # 壁纸宿主能力：无原生实现，恒 false
         # 主窗可见态：非 Win/macOS 桌面复用同一 GLFW 查询实现（只依赖 GLFW C
         # 查询 API；SDL2 后端经 EUI_WINDOW_BACKEND_SDL2 编译期走 fail-open true），

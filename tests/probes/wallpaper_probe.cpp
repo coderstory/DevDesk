@@ -8,7 +8,7 @@
 //   §1 默认关闭：默认 cfg 经真实注册表装配后 Router 不注册壁纸页、侧栏无条目。
 //   §2 打开：dispatchModuleToggle on → 注册 + 侧栏条目当帧出现 + 壁纸页空态渲染。
 //   §3 空态截图：--screenshot <路径>（captureIfRequested，退出码随失败转非零）。
-//   §3b 设置页：设置→模块 Tab 壁纸格（插拔卡第 5 格）/44×24 开关存在且默认关；--screenshot-seeded
+//   §3b 设置页：设置→模块 Tab 壁纸格（插拔卡第 7 格）/44×24 开关存在且默认关；--screenshot-seeded
 //      <路径>（captureSeedIfRequested）落设置页截图。
 //   §4 关闭：off → 注销 + 当前页回 Home + 侧栏条目消失 + 关闭 toast。
 // 本阶段不 spawn mpv、不建 WorkerW（P3 才做），probe 只验模块骨架与页面。
@@ -332,20 +332,24 @@ int main(int argc, char* argv[]) {
             case ::core::PageId::Home: entry.module = &home; break;
             case ::core::PageId::Markdown: entry.module = &markdown; break;
             case ::core::PageId::Todo: entry.module = &todo; break;
+            case ::core::PageId::Schedule:
+                break;  // 恒注册但不在本探针注册集（壁纸探针只关心壁纸页）
             case ::core::PageId::ClaudeProxy: entry.module = &claude; break;
-            case ::core::PageId::Settings: entry.module = settings.get(); break;
-            case ::core::PageId::About: entry.module = &about; break;
+            case ::core::PageId::Agent:
+                break;  // 默认关闭，门控清单本就不含
+            case ::core::PageId::Memory:
+                break;  // 默认开启但不在本探针注册集（壁纸探针只关心壁纸页）
             case ::core::PageId::Wallpaper:
                 defaultGatingHasWallpaper = true;
                 break;
-            case ::core::PageId::Agent:
+            case ::core::PageId::Mcp:
                 break;  // 默认关闭，门控清单本就不含
             case ::core::PageId::ReleaseGroup:
             case ::core::PageId::ReleaseTasks:
             case ::core::PageId::ReleaseConfig:
                 break;  // 上线模块与本 probe 无关；父项行无实例
-            case ::core::PageId::Mcp:
-                break;  // 默认关闭，门控清单本就不含
+            case ::core::PageId::Settings: entry.module = settings.get(); break;
+            case ::core::PageId::About: entry.module = &about; break;
         }
     }
     check(!defaultGatingHasWallpaper,
@@ -443,10 +447,10 @@ int main(int argc, char* argv[]) {
         clickElement(*tabModules);
         composeFrame();
     }
-    // 2026-10-27 用户真机拍板：独立全宽卡废除 → 壁纸 = 模块插拔卡第 5 格
-    //（格无独立根元素，存在性锚 = 格 name）。
+    // 2026-10-27 用户真机拍板：独立全宽卡废除 → 壁纸 = 模块插拔卡第 7 格
+    //（memory/release 六格之后落单；格无独立根元素，存在性锚 = 格 name）。
     const auto* wallpaperCell = ui->find("settings.card.wallpaper.name");
-    check(wallpaperCell != nullptr, "§3b 设置页：壁纸格（插拔卡内第 5 格）应存在");
+    check(wallpaperCell != nullptr, "§3b 设置页：壁纸格（插拔卡内第 7 格）应存在");
     const auto* cardsScroll = ui->find("settings.cards.scroll");
     check(cardsScroll != nullptr, "§3b 设置页：卡片滚动视口应存在");
     // 滚动视口内断言：元素 frame 必须整体落在视口可见区内——DOM 存在但被

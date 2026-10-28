@@ -416,22 +416,23 @@ REGISTER_TEST(core_window_to_compose_degenerate_and_legacy,
 // PageId 枚举序是侧边栏顺序与 Router 分发依赖的契约，重排会静默改变默认导航顺序。
 // 断言写成显式钉死预期序：`PageId::Todo >= 0` 这类对 enum class 的比较恒真，验证不了
 // 任何顺序。
-// 2026-10 重排：Mcp 与上线分组（父项 + 两个子页）整组插在 Wallpaper 与 Settings 之间，
-// 设置/关于固定收尾。既有 8 项的枚举值不再连续（Settings/About 后移 4 位），
-// 故这里改为逐位比对完整顺序数组——下标即枚举值，同时锁序与锁值。
+// 2026-10 重排：调度在 Todo 之后；Mcp 与上线分组（父项 + 两个子页）整组插在
+// Wallpaper 与 Settings 之间，设置/关于固定收尾。既有 11 项的枚举值不再连续
+//（Settings/About 后移 3 位），故这里改为逐位比对完整顺序数组——下标即枚举值，
+// 同时锁序与锁值。
 REGISTER_TEST(core_pageid_order,
-              "core: PageId ordering contract (Home<Markdown<Todo<ClaudeProxy<Agent<Wallpaper<Mcp<ReleaseGroup<ReleaseTasks<ReleaseConfig<Settings<About)", {
+              "core: PageId ordering contract (Home<Markdown<Todo<Schedule<ClaudeProxy<Agent<Memory<Wallpaper<Mcp<ReleaseGroup<ReleaseTasks<ReleaseConfig<Settings<About)", {
     using core::PageId;
     const PageId kExpectedOrder[] = {
         PageId::Home,         PageId::Markdown,      PageId::Todo,
-        PageId::ClaudeProxy,  PageId::Agent,         PageId::Wallpaper,
-        PageId::Mcp,
+        PageId::Schedule,     PageId::ClaudeProxy,   PageId::Agent,
+        PageId::Memory,       PageId::Wallpaper,     PageId::Mcp,
         PageId::ReleaseGroup, PageId::ReleaseTasks,  PageId::ReleaseConfig,
         PageId::Settings,     PageId::About,
     };
     constexpr int kExpectedCount =
         static_cast<int>(sizeof(kExpectedOrder) / sizeof(kExpectedOrder[0]));
-    DOCTEST_REQUIRE_EQ(kExpectedCount, 12);
+    DOCTEST_REQUIRE_EQ(kExpectedCount, 14);
     // 显式完整顺序数组：逐位断言「枚举值 == 下标」，少项/多项/换位都会红
     for (int i = 0; i < kExpectedCount; ++i) {
         DOCTEST_CHECK_EQ(static_cast<int>(kExpectedOrder[i]), i);
@@ -439,46 +440,47 @@ REGISTER_TEST(core_pageid_order,
     return true;
 })
 
-// 重排只做「插入」不做「重排」：既有 9 项（Home/Markdown/Todo/ClaudeProxy/Agent/
-// Wallpaper/Mcp/Settings/About）相对顺序必须原样保留，只有尾部两项整体下移 4 位。
-// 侧边栏「看起来顺序变了」的锅只能由 Mcp 与上线分组背，既有项不得被顺手调序。
-REGISTER_TEST(core_pageid_existing_eight_order_shifted,
-              "core: 既有 9 项相对顺序不变，Settings/About 因 Mcp 与上线组插入整体下移 4 位", {
+// 重排只做「插入」不做「重排」：上线组插入前的既有 11 项
+//（Home/Markdown/Todo/Schedule/ClaudeProxy/Agent/Memory/Wallpaper/Mcp/Settings/About）
+// 相对顺序必须原样保留，只有尾部两项整体下移 3 位。
+// 侧边栏「看起来顺序变了」的锅只能由上线分组背，既有项不得被顺手调序。
+REGISTER_TEST(core_pageid_existing_eleven_order_shifted,
+              "core: 既有 11 项相对顺序不变，Settings/About 因上线组插入整体下移 3 位", {
     using core::PageId;
     const PageId kNewOrder[] = {
         PageId::Home,         PageId::Markdown,      PageId::Todo,
-        PageId::ClaudeProxy,  PageId::Agent,         PageId::Wallpaper,
-        PageId::Mcp,
+        PageId::Schedule,     PageId::ClaudeProxy,   PageId::Agent,
+        PageId::Memory,       PageId::Wallpaper,     PageId::Mcp,
         PageId::ReleaseGroup, PageId::ReleaseTasks,  PageId::ReleaseConfig,
         PageId::Settings,     PageId::About,
     };
-    const PageId kExistingNine[] = {
-        PageId::Home,  PageId::Markdown, PageId::Todo,    PageId::ClaudeProxy,
-        PageId::Agent, PageId::Wallpaper, PageId::Mcp, PageId::Settings,
-        PageId::About,
+    const PageId kExistingEleven[] = {
+        PageId::Home,     PageId::Markdown, PageId::Todo,      PageId::Schedule,
+        PageId::ClaudeProxy, PageId::Agent, PageId::Memory,    PageId::Wallpaper,
+        PageId::Mcp,      PageId::Settings, PageId::About,
     };
-    // 从新序里滤掉上线三行，剩下的必须与旧契约序逐位相同
-    PageId filtered[9] = {};
+    // 从新序里滤掉上线三行，剩下的必须与既有契约序逐位相同
+    PageId filtered[11] = {};
     int filteredCount = 0;
     for (PageId page : kNewOrder) {
         if (page == PageId::ReleaseGroup || page == PageId::ReleaseTasks ||
             page == PageId::ReleaseConfig) {
             continue;
         }
-        DOCTEST_REQUIRE(filteredCount < 9);
+        DOCTEST_REQUIRE(filteredCount < 11);
         filtered[filteredCount++] = page;
     }
-    DOCTEST_REQUIRE_EQ(filteredCount, 9);
+    DOCTEST_REQUIRE_EQ(filteredCount, 11);
+    for (int i = 0; i < 11; ++i) {
+        DOCTEST_CHECK(filtered[i] == kExistingEleven[i]);
+    }
+    // 前 9 项枚举值不变；Mcp 占 8；插入点之后的 Settings/About 各后移 3 位（9→12 / 10→13）
     for (int i = 0; i < 9; ++i) {
-        DOCTEST_CHECK(filtered[i] == kExistingNine[i]);
+        DOCTEST_CHECK_EQ(static_cast<int>(kExistingEleven[i]), i);
     }
-    // 前 6 项枚举值不变；Mcp 占 6；插入点之后的 Settings/About 各后移 4 位（9→10 / 10→11）
-    for (int i = 0; i < 6; ++i) {
-        DOCTEST_CHECK_EQ(static_cast<int>(kExistingNine[i]), i);
-    }
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Mcp), 6);
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Settings), 10);
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::About), 11);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Mcp), 8);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Settings), 12);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::About), 13);
     return true;
 })
 
@@ -490,7 +492,7 @@ REGISTER_TEST(router_register_inserts_table_order,
     StubModule agent(::core::PageId::Agent, "agent");
     StubModule markdown(::core::PageId::Markdown, "markdown");
     StubModule home(::core::PageId::Home, "home");
-    // 乱序注册：Agent(4) 最先、Markdown(1) 其次、Home(0) 最后
+    // 乱序注册：Agent(5) 最先、Markdown(1) 其次、Home(0) 最后
     router.registerModule(&agent);
     router.registerModule(&markdown);
     router.registerModule(&home);

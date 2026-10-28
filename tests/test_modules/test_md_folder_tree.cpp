@@ -100,6 +100,36 @@ REGISTER_TEST(folder_delete_blocked_and_allowed,
     return true;
 })
 
+// 场景3（防：枚举错误被静默当 0——不可读子树笔记所在文件夹被删除闸门放行而
+//   remove_all 误删（A-1））：枚举遇错（悬挂软链，POSIX 恒可建）→ folderNoteCount
+//   显式 fail（非 0 放行）→ deleteFolder 拒绝删除且磁盘原样。Windows 建软链需
+//   特权，建不了则跳过（该路径 POSIX 平台验证）。
+REGISTER_TEST(folder_note_count_enum_error_fails,
+              "markdown_folder_tree: 枚举遇错显式 fail + 删除闸门拒绝放行", {
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "enumerr");
+    auto db = makeDb();
+    applySchema(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    fs::create_directories(dir / "异常");
+    std::error_code ec;
+    fs::create_symlink(dir / "不存在的目标.md", dir / "异常" / "悬挂.md", ec);
+    if (ec) {
+        // 平台不支持建软链（Windows 无特权）：无断言跳过，POSIX 平台验证
+        fs::remove_all(dir);
+        return true;
+    }
+
+    auto cnt = svc.folderNoteCount("异常");
+    DOCTEST_CHECK(cnt.isFail());   // 枚举遇错不静默当 0
+    auto r = svc.deleteFolder("异常");
+    DOCTEST_CHECK(r.isFail());     // 闸门拒绝放行
+    DOCTEST_CHECK(fs::exists(dir / "异常"));  // 磁盘原样
+
+    fs::remove_all(dir);
+    return true;
+})
+
 // 场景3（防：改名后树显示旧名——索引不随目录名刷新）：
 //   同级改名落盘 → rescan 后索引全换新路径、旧路径清零；
 //   新名含 / → fail；目标已存在 → AlreadyExists。

@@ -124,7 +124,8 @@ public:
 
 // 目录树 H27：文件夹操作（独立方法，不动既有笔记链路；错误一律 Result）
 
-// 目录内 .md 笔记数（递归任意层级，任意深度命中都计数）。目录不存在 / 越界 → fail。
+// 目录内 .md 笔记数（递归任意层级，任意深度命中都计数）。目录不存在 / 越界 /
+// 枚举遇不可读子树 → fail（不静默跳过，删除闸门依赖此 fail 拒绝放行）。
     core::Result<int64_t> folderNoteCount(
         const std::filesystem::path& relPath) const;
 

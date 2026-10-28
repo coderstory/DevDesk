@@ -270,6 +270,9 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
         return Result<SqliteDb>::fail(ErrorCode::DatabaseOpenFailed,
             "open: " + err);
     }
+    // hook 子进程与 GUI 并发写共享库（usage_ledger 等）：BUSY 先等 5s 再败，
+    // 消掉并发写静默丢行的大头（审计 F7）；仍失败由调用方留痕兜底
+    sqlite3_busy_timeout(handle, 5000);
     sqlite3_exec(handle, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
     sqlite3_exec(handle, "PRAGMA journal_mode = WAL;", nullptr, nullptr, nullptr);
 

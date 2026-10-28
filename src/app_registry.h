@@ -14,10 +14,12 @@
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
+extern "C" ::core::Module* create_schedule_module();
 extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
 extern "C" ::core::Module* create_about_module();
 extern "C" ::core::Module* create_agent_module();
+extern "C" ::core::Module* create_memory_module();
 extern "C" ::core::Module* create_mcp_page_module();
 // 平台能力不支持时返回 nullptr（装配层按空实例跳过，页面不注册）
 extern "C" ::core::Module* create_wallpaper_module();
@@ -46,8 +48,12 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Home,        nullptr,                          "首页",   "\xEF\x80\x95", &create_home_module},      // U+F015 fa-house
     {::core::PageId::Markdown,    module::settings::kModuleIdMarkdown,     "笔记",   "\xEF\x81\x84", &create_markdown_module},  // U+F044 fa-pen-to-square
     {::core::PageId::Todo,        module::settings::kModuleIdTodo,         "待办",   "\xEF\x81\x98", &create_todo_module},      // U+F058 fa-circle-check
+    // 定时调度恒注册（gatingKey==nullptr）：设置页模块开关暂未收录本模块，
+    // 拨开关卡片后续波次补（settings_ui_cards kToggleable + settings_config kModuleIdSchedule）
+    {::core::PageId::Schedule,    nullptr,                          "定时",   "\xEF\x80\x97", &create_schedule_module},   // U+F017 fa-clock
     {::core::PageId::ClaudeProxy, module::settings::kModuleIdClaudeProxy,  "Claude", "\xEF\x80\xA1", &create_claude_module},     // U+F021 fa-arrows-rotate
     {::core::PageId::Agent,       module::settings::kModuleIdAgent,        "智能体", "\xEF\x95\x84", &create_agent_module},      // U+F544 fa-robot
+    {::core::PageId::Memory,      module::settings::kModuleIdMemory,       "记忆",   "\xEF\x97\x9C", &create_memory_module},     // U+F5DC fa-brain
     {::core::PageId::Wallpaper,   module::settings::kModuleIdWallpaper,    "壁纸",   "\xEF\x80\xBE", &create_wallpaper_module},  // U+F03E fa-image
     {::core::PageId::Mcp,         module::settings::kModuleIdMcp,          "MCP",    "\xEF\x87\xA6", &create_mcp_page_module},   // U+F1E6 fa-plug
     // 上线：分组父项 + 两个可导航子页（父子三行同属 release 门控；父项工厂恒 nullptr）。

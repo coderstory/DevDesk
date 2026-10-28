@@ -77,6 +77,9 @@ public:
     int size() const;
     JsonValue operator[](int index) const;
 
+    // 数组尾部追加（元素深拷贝）。非数组调用 = no-op（不转型；先 makeArray 再 append）
+    void append(const JsonValue& value);
+
     void* internal() const { return data_; }
 
 private:

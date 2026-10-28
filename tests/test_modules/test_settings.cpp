@@ -2074,7 +2074,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
           "settings.card.log.level.ddwrap"}},
         {2, "settings.tab.log", {"settings.tab.log.title"}},
     };
-    // 2026-10-27 用户真机拍板：独立全宽壁纸卡废除 → 壁纸 = 模块插拔卡第 5 格，
+    // 2026-10-27 用户真机拍板：独立全宽壁纸卡废除 → 壁纸 = 模块插拔卡第 7 格，
     // 格内三行按平台能力并入模块卡行池（supported 才建，归属卡 = modules 卡）。
     if (platform::wallpaper::supported()) {
         for (auto& cr : kCards) {
@@ -2282,26 +2282,29 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                               yOf("settings.card.modules.name.0"),
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
-                // release 恒 5 格 → 3 行；壁纸再加 1 格仍 3 行
-                //（68+roundFs(56)×2+roundFs(36)=216 基准，+38 → 254；85% 216 / 100% 254 / 130% 330）
+                // memory+release 并存 → 恒 6 格 3 行（254）；壁纸平台再加 1 格 = 7 格 4 行（310）。
+                // 非壁纸（68+roundFs(56)×2+roundFs(36)=216 基准，+38 → 254）：85% 216 / 100% 254 / 130% 330；
+                // 壁纸 4 行（68+56×3+36+38=310）：85% 264 / 100% 310 / 130% 403。
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at(216.0f, 254.0f, 330.0f));
-            // 壁纸第 6 格（模块卡内末行落单，2026-10-27 拍板）：格几何随常规格
-            // 机制派生——行 y = roundFs(68)+2×roundFs(56)、开关行内偏移 +6（字面）。
+                          platform::wallpaper::supported()
+                              ? at(264.0f, 310.0f, 403.0f)
+                              : at(216.0f, 254.0f, 330.0f));
+            // 壁纸第 7 格（模块卡内末行落单，2026-10-27 拍板）：格几何随常规格
+            // 机制派生——行 y = roundFs(68)+3×roundFs(56)、开关行内偏移 +6（字面）。
             if (err.empty() && platform::wallpaper::supported()) {
                 err = pin("wallpaper.name 高（同常规格 name）",
                           heightOf("settings.card.wallpaper.name"),
                           at(15.0f, 18.0f, 23.0f));
                 if (err.empty())
-                    err = pin("wallpaper 格行距（2×rowPitch）",
+                    err = pin("wallpaper 格行距（3×rowPitch）",
                               yOf("settings.card.wallpaper.name") -
                                   yOf("settings.card.modules.name.0"),
-                              at(96.0f, 112.0f, 146.0f));
+                              at(144.0f, 168.0f, 219.0f));
                 if (err.empty())
                     err = pin("wallpaper 开关行顶（格 y+6，字面偏移）",
                               yOf("settings.card.wallpaper.sw.track") -
                                   yOf("settings.card.modules"),
-                              at(170.0f, 186.0f, 220.0f));
+                              at(208.0f, 242.0f, 313.0f));
                 if (err.empty())
                     err = pin("wallpaper 开关高（字面 24）",
                               heightOf("settings.card.wallpaper.sw.track"),
@@ -2580,7 +2583,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(pair->frame.height,
                              std::max(appearanceH, editorH)));
 
-        // 模块 tab：格子次行 desc 底不出卡（壁纸为第 5 格，id 无数字后缀）
+        // 模块 tab：格子次行 desc 底不出卡（壁纸为第 7 格，id 无数字后缀）
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         eui::Ui uiM;
         uiM.begin(scale < 0.9f ? "pairgeoM85" : "pairgeoM130");
@@ -3595,9 +3598,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // 内容高对可用 372 的零滚动预算逐值保持（338/356/372 @ 0/1/2 条代理警告）。
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
-    // 模块卡：release 加入后开关 5 格 → 3 行，卡高 68+roundFs(56)×2+roundFs(36)=216
-    // 基准 +38 富余 → 254（三档 roundFs = 216/254/330）。与 T01 的
-    // kModulesCardHeight 同源，改动必须与下方布局断言同步。
+    // 模块卡：memory+release 加入后开关 6 格 → 3 行，卡高 68+roundFs(56)×2+roundFs(36)=216
+    // 基准 +38 富余 → 254（三档 roundFs = 216/254/330）；壁纸格另档 310。
+    // 与 T01 的 kModulesCardHeight 同源，改动必须与下方布局断言同步。
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 254.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
@@ -3732,7 +3735,7 @@ REGISTER_TEST(settings_card_registry_order,
                               "配对行子卡 实测：" + join(pairChildren));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）；
-        // 2026-10-27：壁纸开关收进插拔卡第 5 格，模块 tab 恒单卡（格不另立卡根）。
+        // 2026-10-27：壁纸开关收进插拔卡第 7 格，模块 tab 恒单卡（格不另立卡根）。
         const std::vector<std::string> wantModulesAll = {"settings.card.modules"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
@@ -4024,7 +4027,7 @@ REGISTER_TEST(settings_cards_solid_white_bg,
             }
         }
     }
-    // 2026-10-27：壁纸收进模块插拔卡第 5 格，无独立卡 bg——白卡契约由上方
+    // 2026-10-27：壁纸收进模块插拔卡第 7 格，无独立卡 bg——白卡契约由上方
     // kBgIds 通用循环对 modules 卡统一覆盖，此处不再有壁纸专属断言面。
     mod->onStop();
     ::core::theme::setDark();

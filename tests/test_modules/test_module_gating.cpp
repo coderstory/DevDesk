@@ -3,8 +3,8 @@
 // 跨文件前提：
 //   - home 与 settings 恒启用：moduleEnabled 谓词里硬编码，sanitized 也会强制补齐，
 //     两者都不是配置里的普通项，从 enabledModules 里删掉也照样开着。
-//   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关。默认清单是 6 项（含 release），
-//     改动会让本文件的 size()==6 断言红。
+//   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关；memory 默认开（引擎未装时只显
+//     引导态）、release 默认开。默认清单是 7 项，改动会让本文件的 size()==7 断言红。
 //   - 生产装配在 main.cpp getRouter()，本文件的注册段是它的复制品；改了那边这里不会自动跟。
 #include "doctest.h"
 #include "test_support.h"
@@ -73,11 +73,12 @@ std::string currentVersionSeed(const std::string& body) {
 REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(6));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(7));
     for (const char* id : {module::settings::kModuleIdHome,
                            module::settings::kModuleIdMarkdown,
                            module::settings::kModuleIdTodo,
                            module::settings::kModuleIdClaudeProxy,
+                           module::settings::kModuleIdMemory,
                            module::settings::kModuleIdSettings,
                            module::settings::kModuleIdRelease}) {
         DOCTEST_CHECK(moduleEnabled(cfg, id));
@@ -228,8 +229,10 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     DOCTEST_REQUIRE(test_support::writeRawConfigRow(
         ::core::appDatabase(), kEnabledModulesRow.c_str(), "{not json at all"));
     loaded = SettingsStore(::core::appDatabase()).load();
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(6));
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(7));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMemory));
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdRelease));
     std::error_code ec;
     std::filesystem::remove(file, ec);
     return true;

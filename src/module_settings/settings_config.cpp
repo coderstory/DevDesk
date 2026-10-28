@@ -47,7 +47,7 @@ constexpr int kMaxWindowRestoreSide = 65535;
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
     kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
-    kModuleIdWallpaper, kModuleIdMcp, kModuleIdRelease};
+    kModuleIdMemory, kModuleIdWallpaper, kModuleIdMcp, kModuleIdRelease};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -80,9 +80,11 @@ void mergeDefaultModulesSince(std::vector<std::string>& ids, int storedVersion) 
 std::vector<std::string> defaultEnabledModules() {
     // agent 不在默认清单（跑 LLM 有成本，用户主动启用）；wallpaper 同默认关闭；
     // mcp 后台监听端口，同样默认关闭（开关在设置 → 模块卡）。
-    // release 默认启用（任务/基础配置两页共用该键）。
+    // memory 默认开启：引擎未安装时页面只显引导态，零后台成本。
+    // release 默认启用（任务/基础配置两页共用该键）；schedule 恒注册不走本清单。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
-            kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdRelease};
+            kModuleIdClaudeProxy, kModuleIdMemory, kModuleIdSettings,
+            kModuleIdRelease};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {

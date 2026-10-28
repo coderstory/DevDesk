@@ -16,6 +16,36 @@
 
 namespace platform::http {
 
+// 代理模式（调度子系统 S6a 平台代理扩展）：
+// FollowSystem（默认）= 现状语义：proxy 非空则经该代理（"host:port" 口径），
+//   空则 libcurl 吃环境变量代理、回环地址排除——不传本字段的既有消费方
+//   （claude_proxy 等）行为逐字节不变（本波最重要的回归约束）。
+// Disabled = 直连：CURLOPT_PROXY 显式置空，忽略环境变量代理与 proxy 字段。
+// Custom   = 自定义代理：proxy 字段必填，显式设置压过环境变量（curl 语义）；
+//   空 URL 由 resolveProxy 报 ValidationError。
+enum class ProxyMode {
+    FollowSystem = 0,
+    Disabled,
+    Custom,
+};
+
+// curl 层代理决策（纯函数缝，可单测）：由 proxyMode + proxy 推导
+// CURLOPT_PROXY / CURLOPT_NOPROXY 的设置口径；send 与 sendStreaming 共用，
+// 保证两条路径接线逐字节同款（历史两处重复接线即由本函数收敛）。
+struct ProxyDecision {
+    enum class Kind {
+        UseSystem,  // 不设 CURLOPT_PROXY（libcurl 吃环境变量）；NOPROXY = 回环排除
+        Disabled,   // CURLOPT_PROXY = ""（显式直连）
+        Custom,     // CURLOPT_PROXY = proxyUrl（已拼 http:// 前缀）；NOPROXY = ""
+    };
+    Kind kind = Kind::UseSystem;
+    std::string proxyUrl;  // kind == Custom 时有效（含 scheme）
+};
+
+// 纯函数：Request 代理字段 → curl 层决策。仅 Custom 模式空 proxy 报错
+// （ValidationError）；其余输入恒 ok。
+core::Result<ProxyDecision> resolveProxy(ProxyMode mode, const std::string& proxyUrl);
+
 struct Request {
     std::string method;                              // "GET" / "POST"
     std::string url;
@@ -23,10 +53,13 @@ struct Request {
     std::string body;
     long timeoutMs = 30000;
     bool verifyTls = true;
-    // 非空 = 经此 HTTP 代理（"host:port"，CURLOPT_PROXY 口径）；空 = 直连。
-    // send 与 sendStreaming 同款接线；代理是传输通道：目标侧 SSRF 校验与本字段无关
-    // （由调用方先行完成）。
+    // 代理地址（"host:port"，CURLOPT_PROXY 口径；resolveProxy 会拼 http:// 前缀）。
+    // FollowSystem：非空 = 经此代理（历史现状）；空 = 环境变量代理 + 回环排除。
+    // Custom：必填（空则 resolveProxy 报错），显式覆盖环境变量；Disabled：忽略。
+    // 代理是传输通道：目标侧 SSRF 校验与本字段无关（由调用方先行完成）。
     std::string proxy;
+    // 代理模式（见 ProxyMode 枚举）。不传 = FollowSystem = 现状行为（零回归）。
+    ProxyMode proxyMode = ProxyMode::FollowSystem;
     // 流式专用空闲超时（仅 sendStreaming）：速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒
     // → curl 中止（CURLE_OPERATION_TIMEDOUT），替代总墙钟超时；任一 <= 0 表示不启用。
     long lowSpeedBytesPerSec = 0;

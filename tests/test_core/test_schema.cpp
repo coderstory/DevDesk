@@ -79,7 +79,7 @@ int64_t countInt(core::data::SqliteDb& db, const std::string& sql) {
 
 
 REGISTER_TEST(schema_creates_all_tables,
-              "schema: applySchema 建出全部 13 张应用表", {
+              "schema: applySchema 建出全部 17 张应用表", {
     auto path = test_support::tempDbPath(kDbPrefix, "create");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -105,6 +105,11 @@ REGISTER_TEST(schema_creates_all_tables,
             // 六类 JSON 配置的落点：通用表 + run-settings 记录表
             "app_config",
             "claude_run_settings",
+            // 定时调度子系统四表（S3 存储层）
+            "schedule_rule",
+            "schedule_run",
+            "schedule_delivery",
+            "schedule_channel",
         };
         for (const auto& t : expected) {
             bool found = tables.count(t) > 0;
@@ -114,7 +119,8 @@ REGISTER_TEST(schema_creates_all_tables,
             }
         }
 
-                // 9 个索引（含 1 个部分唯一索引 + 3 个带 WHERE 的部分索引 + agent 3 个 + run-settings 1 个）
+                // 13 个索引（含 2 个唯一索引 + 4 个带 WHERE 的部分索引 + agent 3 个 +
+                // run-settings 1 个 + 调度 4 个）
         auto indexes = listObjects(r.value().db(), "index");
         std::set<std::string> expectedIndexes{
             "idx_tasks_column",
@@ -128,6 +134,11 @@ REGISTER_TEST(schema_creates_all_tables,
             "idx_agent_runs_running",
             // 直连会话记录按写入时刻倒序取最近
             "idx_run_settings_written",
+            // 调度：补跑去重唯一索引 + 历史/到期扫描/投递四个
+            "idx_schedule_run_unique",
+            "idx_schedule_run_rule",
+            "idx_schedule_rule_next",
+            "idx_schedule_delivery_run",
         };
         for (const auto& i : expectedIndexes) {
             bool found = indexes.count(i) > 0;

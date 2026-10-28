@@ -81,6 +81,52 @@ void applyCaPolicy(CURL* curl, const CaPolicy& policy) {
     curl_easy_setopt(curl, CURLOPT_CAINFO, policy.caInfo.c_str());
 }
 
+core::Result<ProxyDecision> resolveProxy(ProxyMode mode, const std::string& proxyUrl) {
+    ProxyDecision decision;
+    switch (mode) {
+        case ProxyMode::FollowSystem:
+            // 现状语义（零回归）：proxy 非空 = 显式代理（历史行为）；空 = 环境变量 + 回环排除
+            if (!proxyUrl.empty()) {
+                decision.kind = ProxyDecision::Kind::Custom;
+                decision.proxyUrl = "http://" + proxyUrl;
+            }
+            return core::Result<ProxyDecision>::ok(std::move(decision));
+        case ProxyMode::Disabled:
+            decision.kind = ProxyDecision::Kind::Disabled;
+            return core::Result<ProxyDecision>::ok(std::move(decision));
+        case ProxyMode::Custom:
+            if (proxyUrl.empty()) {
+                return core::Result<ProxyDecision>::fail(
+                    core::ErrorCode::ValidationError,
+                    "ProxyMode::Custom 需要非空代理地址");
+            }
+            decision.kind = ProxyDecision::Kind::Custom;
+            decision.proxyUrl = "http://" + proxyUrl;
+            return core::Result<ProxyDecision>::ok(std::move(decision));
+    }
+    return core::Result<ProxyDecision>::fail(core::ErrorCode::Internal,
+                                             "未知 ProxyMode 枚举值");
+}
+
+// 把 ProxyDecision 接到 curl 句柄（send 与 sendStreaming 共用；决策失败已在调用方拦截）。
+void applyProxy(CURL* curl, const ProxyDecision& decision) {
+    switch (decision.kind) {
+        case ProxyDecision::Kind::UseSystem:
+            // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理在场时会劫持 127.0.0.1 请求。
+            curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+            break;
+        case ProxyDecision::Kind::Disabled:
+            // 显式置空 CURLOPT_PROXY = 直连，压过环境变量代理。
+            curl_easy_setopt(curl, CURLOPT_PROXY, "");
+            break;
+        case ProxyDecision::Kind::Custom:
+            // 显式代理：全部目标（含回环，SSRF 层已另行拦截）都经代理走。
+            curl_easy_setopt(curl, CURLOPT_PROXY, decision.proxyUrl.c_str());
+            curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
+            break;
+    }
+}
+
 core::Result<Response> send(const Request& req) {
     globalInit();
 
@@ -92,6 +138,13 @@ core::Result<Response> send(const Request& req) {
                   caPolicy.errorMessage());
         return core::Result<Response>::fail(core::ErrorCode::Internal,
                                             caPolicy.errorMessage());
+    }
+
+    // 代理决策（S6a）：Custom 空地址在句柄创建前即报错，无需清理。
+    const auto proxyDecision = resolveProxy(req.proxyMode, req.proxy);
+    if (proxyDecision.isFail()) {
+        return core::Result<Response>::fail(proxyDecision.errorCode(),
+                                            proxyDecision.errorMessage());
     }
 
     Response resp;
@@ -107,15 +160,7 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    if (!req.proxy.empty()) {
-        // 显式代理:全部目标(含回环,SSRF 层已另行拦截)都经代理走
-        const std::string proxyUrl = "http://" + req.proxy;
-        curl_easy_setopt(curl, CURLOPT_PROXY, proxyUrl.c_str());
-        curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
-    } else {
-        // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理在场时会劫持 127.0.0.1 请求。
-        curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
-    }
+    applyProxy(curl, proxyDecision.value());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
@@ -431,6 +476,13 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
             core::ErrorCode::Internal, caPolicy.errorMessage());
     }
 
+    // 代理决策（S6a）：Custom 空地址在句柄创建前即报错，无需清理。
+    const auto proxyDecision = resolveProxy(req.proxyMode, req.proxy);
+    if (proxyDecision.isFail()) {
+        return core::Result<std::unique_ptr<StreamingResponse>>::fail(
+            proxyDecision.errorCode(), proxyDecision.errorMessage());
+    }
+
     auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
 
     if (req.timeoutMs > 0) {
@@ -458,15 +510,7 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, req.lowSpeedTimeSec);
     }
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    if (!req.proxy.empty()) {
-        // 显式代理:全部目标(含回环,SSRF 层已另行拦截)都经代理走(与 send 同款)
-        const std::string proxyUrl = "http://" + req.proxy;
-        curl_easy_setopt(curl, CURLOPT_PROXY, proxyUrl.c_str());
-        curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
-    } else {
-        // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理环境下 127.0.0.1 请求会被劫持
-        curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
-    }
+    applyProxy(curl, proxyDecision.value());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_.get());
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, streamHeaderCb);

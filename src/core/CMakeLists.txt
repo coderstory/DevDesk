@@ -15,6 +15,8 @@ add_library(devdesk_core STATIC
     atomic_write.cpp
     tool.cpp
     ticker.cpp                          # 全局帧泵：模块订阅、主循环每帧统一推进
+    cron.cpp                            # cron 5 字段解析/匹配（纯函数，供调度子系统与 module_agent 共用）
+    schedule_rule.cpp                   # 六 kind 规则模型：解析/校验/nextFire/missedFires（纯函数）
     mcp_tool.cpp                        # MCP 能力接缝：工具抽象 + 注册表（模块自行实现并注册）
     sql_dump.cpp                        # SQLite 导出/导入（GitHub Sync 用）
 )

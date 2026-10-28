@@ -112,8 +112,8 @@ const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
      CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard,
      nullptr},
-    // 2026-10-27 用户真机拍板：壁纸开关收进插拔卡第 5 格，独立全宽壁纸卡删除。
-    // 卡高按平台能力二选一（supported → 第 5 格行 +56；不支持 → 格不建回落 198），
+    // 2026-10-27 用户真机拍板：壁纸开关收进插拔卡第 7 格，独立全宽壁纸卡删除。
+    // 卡高按平台能力二选一（supported → 第 7 格行 310；不支持 → 格不建回落 254），
     // 注册表静态行内运行期取值：visible 门控从「整卡」降级为「格内」判据，
     // 判据仍是 platform::wallpaper::supported()，开关链路同走 applyModuleEnabled。
     // MCP 配置卡：排在代理卡后；模块关 → 整卡隐藏（不占高度）。

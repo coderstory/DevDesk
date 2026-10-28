@@ -43,6 +43,8 @@ inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
 inline constexpr const char* kModuleIdSettings = "settings";
 // agent：默认关闭（跑 LLM 有成本，用户主动启用）；开启 = 整页注册进 Router。
 inline constexpr const char* kModuleIdAgent = "agent";
+// memory：默认开启（telemem 记忆面板；引擎未安装时页面只显引导态，不产生任何后台成本）。
+inline constexpr const char* kModuleIdMemory = "memory";
 // wallpaper：默认关闭，用户主动启用；平台能力不支持时工厂仍返回 nullptr（开关不生效）。
 inline constexpr const char* kModuleIdWallpaper = "wallpaper";
 // release：上线模块（任务/基础配置两页共用一个开关），默认启用。

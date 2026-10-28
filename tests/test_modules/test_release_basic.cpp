@@ -516,7 +516,8 @@ REGISTER_TEST(release_group_removed_with_module_off,
                               module::settings::kModuleIdRelease};
         const auto gated = app::assembly::buildGatedEntries(
             cfg, ::app::registry::kModuleRegistry, kRegistrySize);
-        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(6));
+        // home/schedule/settings/about 恒注册 4 行 + 上线三行 = 7
+        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(7));
 
         ::core::Router router;
         router.registerModule(&home);
@@ -547,14 +548,15 @@ REGISTER_TEST(release_group_removed_with_module_off,
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseConfig.hit") != nullptr);
     }
 
-    // ② release 关：门控只剩恒注册三行 → 父项与两个子项整棵不出现
+    // ② release 关：门控只剩恒注册四行 → 父项与两个子项整棵不出现
     {
         module::settings::SettingsConfig cfg;
         cfg.enabledModules = {module::settings::kModuleIdHome,
                               module::settings::kModuleIdSettings};
         const auto gated = app::assembly::buildGatedEntries(
             cfg, ::app::registry::kModuleRegistry, kRegistrySize);
-        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(3));
+        // home/schedule/settings/about 恒注册 4 行
+        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(4));
 
         ::core::Router router;
         router.registerModule(&home);

@@ -69,13 +69,15 @@ private:
 // 两个用例锁，不在这里复刻。
 class StubModules {
 public:
-    // 全启用清单（5 项，= allOnConfig 下 buildGatedEntries 的真实输出形态）
+    // 全启用清单（6 项，= allOnConfig 下 buildGatedEntries 的真实输出形态；
+    // agent/wallpaper 不在其中——真实表用例单独覆盖它们）
     std::vector<app::assembly::GatedEntry> set() {
         return {
             {::core::PageId::Home, nullptr, &home_},
             {::core::PageId::Markdown, nullptr, &markdown_},
             {::core::PageId::Todo, nullptr, &todo_},
             {::core::PageId::ClaudeProxy, nullptr, &claude_},
+            {::core::PageId::Memory, nullptr, &memory_},
             {::core::PageId::Settings, nullptr, &settings_},
         };
     }
@@ -101,11 +103,12 @@ private:
     StubModule markdown_{::core::PageId::Markdown, "markdown", &log_};
     StubModule todo_{::core::PageId::Todo, "todo", &log_};
     StubModule claude_{::core::PageId::ClaudeProxy, "claude", &log_};
+    StubModule memory_{::core::PageId::Memory, "memory", &log_};
     StubModule settings_{::core::PageId::Settings, "settings", &log_};
 };
 
 // 全启用配置：显式列全门控键（含默认清单里没有的 agent / wallpaper / mcp /
-// release），「all-on = 12 项」（全部登记表行：既有 9 页 + 上线三行）按这个构造口径保住
+// release），「all-on = 14 项」（全部登记表行）按这个构造口径保住
 module::settings::SettingsConfig allOnConfig() {
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
@@ -114,6 +117,7 @@ module::settings::SettingsConfig allOnConfig() {
                           module::settings::kModuleIdClaudeProxy,
                           module::settings::kModuleIdSettings,
                           module::settings::kModuleIdAgent,
+                          module::settings::kModuleIdMemory,
                           module::settings::kModuleIdWallpaper,
                           module::settings::kModuleIdMcp,
                           module::settings::kModuleIdRelease};
@@ -226,7 +230,7 @@ REGISTER_TEST(assembly_modules_all_off,
 })
 
 REGISTER_TEST(assembly_registration_order_prestart_first,
-              "assembly: 注册顺序 home→markdown→todo→claude→settings 且 preStart 先于一切 onStart", {
+              "assembly: 注册顺序 home→markdown→todo→claude→memory→settings 且 preStart 先于一切 onStart", {
     test_support::ScopedAppRouter scoped;
     ::core::Router router;
     StubModules mods;
@@ -238,25 +242,25 @@ REGISTER_TEST(assembly_registration_order_prestart_first,
         router, allOnConfig(), mods.set(),
         [&mods] { mods.log().push_back("pre:claude-service"); });
 
-    DOCTEST_REQUIRE_EQ(order.size(), static_cast<size_t>(5));
+    DOCTEST_REQUIRE_EQ(order.size(), static_cast<size_t>(6));
     // 全启用下的期望注册顺序
     const ::core::PageId kExpectedOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Settings,
+        ::core::PageId::Memory,     ::core::PageId::Settings,
     };
     const char* const kExpectedStartLog[] = {
         "start:home", "start:markdown", "start:todo", "start:claude",
-        "start:settings",
+        "start:memory", "start:settings",
     };
-    for (size_t i = 0; i < 5; ++i) {
+    for (size_t i = 0; i < 6; ++i) {
         DOCTEST_CHECK(order[i] == kExpectedOrder[i]);
     }
-    DOCTEST_CHECK_EQ(router.modules().size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(router.modules().size(), static_cast<size_t>(6));
     // 账本：第一条是 preStart，其后依次是各模块 onStart（顺序 = 注册顺序）
-    DOCTEST_REQUIRE_EQ(mods.log().size(), static_cast<size_t>(6));
+    DOCTEST_REQUIRE_EQ(mods.log().size(), static_cast<size_t>(7));
     DOCTEST_CHECK_EQ(mods.log()[0], std::string("pre:claude-service"));
-    for (size_t i = 0; i < 5; ++i) {
+    for (size_t i = 0; i < 6; ++i) {
         DOCTEST_CHECK_EQ(mods.log()[i + 1], std::string(kExpectedStartLog[i]));
     }
     return true;
@@ -538,27 +542,29 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 // 真实 kModuleRegistry 表：门控键列填错或表序漂移，在此必挂
 
 REGISTER_TEST(assembly_registry_table_shape,
-              "assembly: 真实 kModuleRegistry —— 12 行 / 行序==PageId 枚举序（上线整组在 Settings 之前） / home+settings+about gatingKey==nullptr", {
+              "assembly: 真实 kModuleRegistry —— 14 行 / 行序==PageId 枚举序 / home+schedule+settings+about gatingKey==nullptr / 其余十行==kModuleId*", {
     using ::app::registry::kModuleRegistry;
     constexpr size_t kRegistrySize =
         sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
-    // 2026-10 重排后的完整表序：上线父项 + 两个子页插入 Wallpaper 与 Settings 之间
+    // 2026-10 重排后的完整表序：调度在 Todo 之后；上线父项 + 两个子页插入 Mcp 与 Settings 之间
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,         ::core::PageId::Markdown,
-        ::core::PageId::Todo,         ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,        ::core::PageId::Wallpaper,
+        ::core::PageId::Todo,         ::core::PageId::Schedule,
+        ::core::PageId::ClaudeProxy,  ::core::PageId::Agent,
+        ::core::PageId::Memory,       ::core::PageId::Wallpaper,
         ::core::PageId::Mcp,
         ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
         ::core::PageId::ReleaseConfig,
         ::core::PageId::Settings,     ::core::PageId::About,
     };
-    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(12));
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(14));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，这是 core_pageid_order 契约的
         // 装配侧镜像；Agent/Mcp 必须排在 Settings 之前）
         DOCTEST_CHECK(kModuleRegistry[i].page == kEnumOrder[i]);
     }
-    // home/settings/about 恒注册（gatingKey==nullptr）；其余工具模块各自带对应门控键。
+    // home/schedule/settings/about 恒注册（gatingKey==nullptr；schedule 的模块开关
+    // 卡片后续波次补）；其余工具模块各自带对应门控键。
     // 空指针必须走 null-safe 取值：直接 std::string(nullptr) 是 UB，clang -Wnonnull 会当
     // 编译错误拦下——这个 lambda 就是为了让 nullptr 与非空串落在同一条比较路径上。
     auto gating = [](const char* key) {
@@ -569,54 +575,61 @@ REGISTER_TEST(assembly_registry_table_shape,
                      std::string(module::settings::kModuleIdMarkdown));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[2].gatingKey),
                      std::string(module::settings::kModuleIdTodo));
-    DOCTEST_CHECK_EQ(gating(kModuleRegistry[3].gatingKey),
-                     std::string(module::settings::kModuleIdClaudeProxy));
+    DOCTEST_CHECK(kModuleRegistry[3].gatingKey == nullptr);
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[4].gatingKey),
-                     std::string(module::settings::kModuleIdAgent));
+                     std::string(module::settings::kModuleIdClaudeProxy));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[5].gatingKey),
-                     std::string(module::settings::kModuleIdWallpaper));
-    // mcp 单行门控；上线三行同属 release 门控（父项 + 两个子页；S 型多页模块）
+                     std::string(module::settings::kModuleIdAgent));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[6].gatingKey),
-                     std::string(module::settings::kModuleIdMcp));
+                     std::string(module::settings::kModuleIdMemory));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[7].gatingKey),
-                     std::string(module::settings::kModuleIdRelease));
+                     std::string(module::settings::kModuleIdWallpaper));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[8].gatingKey),
-                     std::string(module::settings::kModuleIdRelease));
+                     std::string(module::settings::kModuleIdMcp));
+    // 上线三行同属 release 门控（父项 + 两个子页；S 型多页模块）
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[9].gatingKey),
                      std::string(module::settings::kModuleIdRelease));
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[10].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[11].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
     // 设置/关于固定收尾，恒注册
-    DOCTEST_CHECK(kModuleRegistry[10].gatingKey == nullptr);
-    DOCTEST_CHECK(kModuleRegistry[11].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[12].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[13].gatingKey == nullptr);
     return true;
 })
 
 REGISTER_TEST(assembly_build_gated_entries_real_table,
-              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册）/ all-on 12 条按表序", {
+              "assembly: buildGatedEntries 真实表 —— all-off 恰 4 条（home/schedule/settings/about 恒注册）/ all-on 14 条按表序", {
     constexpr size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
         sizeof(::app::registry::kModuleRegistry[0]);
-    // 全关（六个工具模块）→ 只剩 home/settings/about 三条恒注册行。锁的是**真实表**：
-    // gatingKey 列填错这里必挂——手搓清单的用例（homeSettingsOnly）覆盖不到这一层。
+    // 全关（十个工具模块）→ 只剩 home/schedule/settings/about 四条恒注册行。
+    // 锁的是**真实表**：gatingKey 列填错这里必挂——手搓清单的用例（homeSettingsOnly）
+    // 覆盖不到这一层。
     const auto gated = app::assembly::buildGatedEntries(
         allToolsOffConfig(), ::app::registry::kModuleRegistry,
         kRegistrySize);
-    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(3));
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(4));
     DOCTEST_CHECK(gated[0].page == ::core::PageId::Home);
-    DOCTEST_CHECK(gated[1].page == ::core::PageId::Settings);
-    DOCTEST_CHECK(gated[2].page == ::core::PageId::About);
+    DOCTEST_CHECK(gated[1].page == ::core::PageId::Schedule);
+    DOCTEST_CHECK(gated[2].page == ::core::PageId::Settings);
+    DOCTEST_CHECK(gated[3].page == ::core::PageId::About);
     // 实例列恒为 nullptr——由调用方按 page 从自有 static 持有填入
     DOCTEST_CHECK(gated[0].module == nullptr);
     DOCTEST_CHECK(gated[1].module == nullptr);
     DOCTEST_CHECK(gated[2].module == nullptr);
-    // 全开 → 12 条且序 == 表序（上线父项行也在内：无实例，装配期跳过）
+    DOCTEST_CHECK(gated[3].module == nullptr);
+    // 全开 → 14 条且序 == 表序（上线父项行也在内：无实例，装配期跳过）
     const auto allGated = app::assembly::buildGatedEntries(
         allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(12));
-    // 2026-10 重排后的完整表序：Mcp 与上线三行在 Settings 之前
+    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(14));
+    // 2026-10 重排后的完整表序：调度在 Todo 之后；Mcp 与上线三行在 Settings 之前
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,         ::core::PageId::Markdown,
-        ::core::PageId::Todo,         ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,        ::core::PageId::Wallpaper,
+        ::core::PageId::Todo,         ::core::PageId::Schedule,
+        ::core::PageId::ClaudeProxy,  ::core::PageId::Agent,
+        ::core::PageId::Memory,       ::core::PageId::Wallpaper,
         ::core::PageId::Mcp,
         ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
         ::core::PageId::ReleaseConfig,
@@ -667,7 +680,7 @@ REGISTER_TEST(assembly_dispatch_tray_navigation,
     StubModules mods;
     app::assembly::assembleAndStart(router, allOnConfig(), mods.set(),
                                     app::assembly::PreStartHook{});
-    DOCTEST_REQUIRE_EQ(router.modules().size(), static_cast<size_t>(5));
+    DOCTEST_REQUIRE_EQ(router.modules().size(), static_cast<size_t>(6));
 
     // Navigate*：委托 navigateFromTray——目标页已注册 → 直接切页 + true
     DOCTEST_CHECK(app::assembly::dispatchTrayNavigation(

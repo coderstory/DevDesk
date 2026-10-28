@@ -4,8 +4,10 @@
 #include "app_sidebar.h"
 #include "core/logging.h"
 #include "core/database.h"
+#include "core/service_locator.h"
 #include "mcp_service_bridge.h"
 #include "module_markdown/md_file_open.h"
+#include "module_schedule/internal_task_registry.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
 #include "platform/file_open.h"
@@ -58,6 +60,14 @@ std::vector<::core::PageId> assembleAndStart(
     }
 
     ::core::registerAppRouter(&router);
+
+    // 内部任务注册表装配点（调度线 S7a）：进程级空注册表经 ServiceLocator 暴露，
+    // 调度引擎（S4）与动作层按需 requireService<InternalTaskRegistry>() 消费；
+    // 具体任务（agent:<id>、release:<check> 等）由后续波次在此注册。
+    // 必须早于 startAll：模块 onStart（schedule 宿主）之后即按需求取值。
+    static ::module::schedule::InternalTaskRegistry internalTasks;
+    ::core::ServiceLocator::set<::module::schedule::InternalTaskRegistry>(
+        &internalTasks);
 
     // 2b) 空态兜底渲染注入：当前页无对应模块时 Router 不自行绘制，改由 app 层注入
     router.setFallbackCompose([](eui::Ui& ui, const eui::Screen&) {

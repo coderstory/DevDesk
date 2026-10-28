@@ -83,6 +83,8 @@ struct DialogHost {
     std::function<void()> openDocPicker;
     std::function<void(const std::string&)> openLinkedDoc;
     std::function<bool(const std::string&)> docExists;
+    // 提供方可用性（H31）：Markdown 模块被禁用时与「文档不存在」区分灰态文案
+    std::function<bool()> notesSourceAvailable;
     // 打开任务详情（选中态 + 视图状态落盘在模块侧）
     std::function<void(const Task&)> openDetail;
     // 右键菜单分发（菜单项语义与模块写操作强耦合，留在模块）

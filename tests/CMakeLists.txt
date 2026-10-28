@@ -7,6 +7,13 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
     # app::tray 壁纸托盘桥实现缝：test_wallpaper_tray.cpp 引用其符号
     ${CMAKE_SOURCE_DIR}/src/wallpaper_tray_bridge.cpp
+    # 调度通知渠道层（波 S5）：渠道注册表 + 四个内置渠道，随测试二进制直编
+    #（src/module_schedule 模块装配由宿主波注册，这里只覆盖渠道层）
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channel_registry.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/fullscreen_channel.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/toast_channel.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/os_notification.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/silent_channel.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -30,6 +37,8 @@ add_executable(devdesk_tests
     test_core/test_db_backup.cpp
     test_core/test_event_bus.cpp
     test_platform/test_http_client.cpp
+    # S6a：Request.proxyMode 三模式 → curl 代理参数映射（纯函数缝 resolveProxy）
+    test_platform/test_http_proxy.cpp
     test_platform/test_http_server.cpp
     test_platform/test_keychain.cpp
     test_platform/test_credential_protection.cpp
@@ -66,6 +75,7 @@ add_executable(devdesk_tests
     test_modules/test_todo_doc_link.cpp
     test_modules/test_agent_store.cpp
     test_modules/test_agent_cron.cpp
+    test_modules/test_schedule_rule.cpp
     test_modules/test_agent_time_text.cpp
     test_modules/test_agent_trigger_config.cpp
     test_modules/test_agent_scheduler.cpp
@@ -78,6 +88,17 @@ add_executable(devdesk_tests
     test_modules/test_app_now_tool.cpp
     test_modules/test_net_fetch_tool.cpp
     test_modules/test_message_blocks.cpp
+    test_modules/test_memory_engine.cpp
+    # 脱敏闸（S3-A）：红队夹具直读仓库数据集，DEVDESK_SOURCE_DIR 供定位
+    test_modules/test_memory_sanitize.cpp
+    # 采集器（S3-B）：临时目录夹具，四道过滤 + 水位幂等
+    test_modules/test_memory_collector.cpp
+    # hook 同步注入（S3-C）：输出契约/预算/失败开放/hooks 配置
+    test_modules/test_memory_hook.cpp
+    # 卡片数据层/整理器/计量（S4）：内存库夹具，状态机与撤销链
+    test_modules/test_memory_proposals.cpp
+    # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
+    test_modules/test_memory_collect_wiring.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp
@@ -123,6 +144,15 @@ add_executable(devdesk_tests
     test_modules/test_module_gating.cpp
     test_modules/test_menu_beautify.cpp
     test_modules/test_mcp_session_store.cpp
+    # 定时调度子系统 S3 存储层：迁移幂等/唯一键守恒/CRUD 往返/软删隔离
+    test_modules/test_schedule_store.cpp
+    # 定时调度子系统 S6b 企业微信 webhook 渠道：UTF-8 截断边界/errcode 分类全表/
+    # 令牌桶节奏/请求体组装/凭据不泄进日志字符串
+    test_modules/test_wecom_channel.cpp
+    # 定时调度子系统 S4 调度引擎：到期触发/错过三策略/回拨不重放/串行/队列满/归档/编辑重算/投递重试
+    test_modules/test_schedule_engine.cpp
+    # 波 S7a 列表页/模块装配：装配排序/开关落库/归档折叠/系统段空注册表/注册表项完整
+    test_modules/test_schedule_ui_list.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp
@@ -163,6 +193,12 @@ add_executable(devdesk_tests
     # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
     test_modules/test_mcp_settings.cpp
     test_modules/test_mcp_service.cpp
+    # 波 S5：调度通知渠道层（注册表分发/空与未知 id/静默/载荷透传/去重键/主线程封送/全屏聚合冷却）
+    test_modules/test_channels.cpp
+    # 波 S7b：编辑弹窗纯逻辑（六 kind 往返/锚定日期周几校验/预览 5 次迭代/渠道多选落库/非法 spec 红字）
+    test_modules/test_schedule_ui_edit.cpp
+    # 波 S7b：运行历史抽屉纯装配（倒序排序/limit 截断/渠道尝试重试汇总/经 store 读两表）
+    test_modules/test_schedule_ui_history.cpp
     # app::mcp 桥实现缝：app_assembly.cpp 与 settings_module.cpp 引用其符号
     #（module_toggle_bridge.cpp 同款理由）
     ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
@@ -245,6 +281,7 @@ devdesk_apply_warnings(devdesk_tests)
 # 只挂 devdesk_tests（probes 无版本断言）；不做 PUBLIC 传播，宏不外泄到生产目标。
 target_compile_definitions(devdesk_tests PRIVATE
     DEVDESK_VERSION="${PROJECT_VERSION}"
+    DEVDESK_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_include_directories(devdesk_tests PRIVATE
@@ -262,12 +299,14 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_agent
+    devdesk_module_memory
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper
     devdesk_module_release
     devdesk_module_mcp
+    devdesk_module_schedule
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -356,6 +395,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_markdown
         devdesk_module_todo
         devdesk_agent
+        devdesk_module_memory
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
@@ -462,6 +502,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         devdesk_module_markdown
         devdesk_module_todo
         devdesk_agent
+        devdesk_module_memory
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about

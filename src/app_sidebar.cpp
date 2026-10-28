@@ -520,9 +520,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 y += itemH + gap;
             };
 
-            // 分两组（§4.8）：work（Home/Markdown/Todo/ClaudeProxy/Agent/Wallpaper + 上线分组）
-            // → system（Settings/About）。按 PageId 枚举分类，不依赖 modules() 顺序；router
-            // 按 PageId 序注册，天然 work 在前（上线整组枚举位于 Settings 之前）。
+            // 分两组（§4.8）：work（Home/Markdown/Todo/Schedule/ClaudeProxy/Agent/Memory/
+            // Wallpaper/Mcp + 上线分组）→ system（Settings/About）。按 PageId 枚举分类，
+            // 不依赖 modules() 顺序；router 按 PageId 序注册，天然 work 在前（上线整组
+            // 枚举位于 Settings 之前）。
             // 组间画 app.sidebar.groupdiv（wechat.dividerPrimary #E5E5E5，宽=kWidth-2*padX，高 1px）。
             auto isSystemGroup = [](::core::PageId page) {
                 return page == ::core::PageId::Settings ||

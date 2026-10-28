@@ -6,7 +6,7 @@
 // UAT5：目录卡（数据目录/忽略规则展示）整卡删除，相关 includes 一并清退。
 #include "settings_ui_cards.h"
 
-#include <platform/wallpaper_capability.h>  // wallpaper::supported()（第 5 格可见性）
+#include <platform/wallpaper_capability.h>  // wallpaper::supported()（第 7 格可见性）
 
 #include <core/component_theme.h>
 #include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
@@ -415,12 +415,15 @@ void drawModulesCard(const CardDrawArgs& args) {
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
         {kModuleIdAgent, "智能体",
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
+        {kModuleIdMemory, "记忆",
+         "telemem 记忆引擎面板（引擎未安装时仅显示引导，无后台成本）"},
         // 上线：一个开关控制「任务」+「基础配置」两个子页（多页模块共用门控键）
         {kModuleIdRelease, "上线",
          "任务执行与基础配置（两个子页同开同关）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
-    // 壁纸第 6 格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格）：
+    // 壁纸第 7 格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格；
+    // memory+release 后恒 6 格，壁纸格 = 末行落单的第 7 格）：
     // 可见性判据与整卡时代同源 platform::wallpaper::supported()——不支持时整格
     // 不建（网格自然回落 2×2，卡高注册表同判据回落 198），末行落单格按格机制自然流。
     // 元素根 id 保留 settings.card.wallpaper.*（探针/测试锚不换）。
@@ -464,7 +467,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                 })
                 .build();
 
-            // 开关格（2 列，第 5 格壁纸末行落单）：行主序（0/1 同行异列，2/3 次行）；
+            // 开关格（2 列，第 7 格壁纸末行落单）：行主序（0/1 同行异列，2/3 次行）；
             // 开关控件几何沿用
             // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
             //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。

@@ -156,7 +156,7 @@ REGISTER_TEST(mcp_page_pageid_order,
 
 // 防：表行与模块虚函数双副本漂移（gatingKey/短名/图标/工厂四处改一漏三）。
 REGISTER_TEST(mcp_page_registry_row,
-              "mcp_page: 表第 7 行=Mcp，gatingKey/shortName/icon 与工厂实例一致，默认门控关", {
+              "mcp_page: 表第 8 行=Mcp，gatingKey/shortName/icon 与工厂实例一致，默认门控关", {
     using namespace module::settings;
     const ::app::registry::ModuleEntry* row = nullptr;
     for (const auto& e : ::app::registry::kModuleRegistry) {
