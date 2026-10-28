@@ -29,18 +29,22 @@ core::Result<std::int64_t> spawnDetached(
         return core::Result<std::int64_t>::fail(core::ErrorCode::Internal,
                                         "spawnDetached: argv 为空");
     }
-    // fork 前把覆盖环境写进 setenv（子进程 execvp 继承）；同名即覆盖语义
-    for (const std::string& pair : envPairs) {
-        const size_t eq = pair.find('=');
-        if (eq == std::string::npos || eq == 0) continue;
-        setenv(pair.substr(0, eq).c_str(), pair.substr(eq + 1).c_str(), 1);
-    }
     const pid_t child = fork();
     if (child < 0) {
         return core::Result<std::int64_t>::fail(core::ErrorCode::Internal,
                                         "spawnDetached: fork 失败");
     }
     if (child == 0) {
+        // per-child 环境构造（与 process_host_win 的 per-child 环境块语义对齐）：
+        // 同名覆盖继承值，其余原样继承。密钥红线（telemem_config.h 契约）——
+        // ANTHROPIC_API_KEY 等注入项只允许存在于「子进程环境」一条通道；严禁把
+        // setenv 挪回 fork 之前的父进程（key 会常驻 DevDesk 主进程并被后续所有
+        // 子进程——终端/git/sidecar——继承，等价于密钥外泄面）。
+        for (const std::string& pair : envPairs) {
+            const size_t eq = pair.find('=');
+            if (eq == std::string::npos || eq == 0) continue;
+            setenv(pair.substr(0, eq).c_str(), pair.substr(eq + 1).c_str(), 1);
+        }
         // 子进程：新会话 + 新进程组（terminateTree 依赖 pgid == pid 杀全组）
         (void)setsid();
         if (!workingDir.empty()) {

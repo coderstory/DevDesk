@@ -82,6 +82,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_hook.cpp
     # 卡片数据层/整理器/计量（S4）：内存库夹具，状态机与撤销链
     test_modules/test_memory_proposals.cpp
+    # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
+    test_modules/test_memory_collect_wiring.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp

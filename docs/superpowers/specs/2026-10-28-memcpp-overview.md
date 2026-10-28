@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28。读者：项目负责人与任何新接手的开发；零黑话，术语首现就地解释。
 - 定位：本文是 memcpp（记忆功能）的需求清单、技术方案终版、实测数字与验收状态的唯一入口；细节按出处路径读原文。
-- 现状一句话：功能与界面代码全部落地并已提交（至 commit `19b79a26`），端到端验收与并入 `dev` 进行中；用户真机试用（UAT）未开始。
+- 现状一句话：功能与界面代码全部落地；端到端验收已通过（2026-10-28 e2e-verify 修 5 缺陷后判「可交付」，至 commit `9ee92079`）；里程碑审计 9 findings 已逐条处置（F1 产品接线、F2 posix 环境、F3 UUID 形态、F5-F8 中低危代码项已修，F4/F9 文档口径随本批落，逐条见审计文件处置栏 `plans/2026-10-28-memcpp-milestone-audit.md`）；并入 `dev` 与用户真机试用（UAT）未开始。
 - 上游规格：`docs/superpowers/specs/2026-10-27-memcpp-integration-spec.md`（下称「集成规格」）；本文与其冲突时以集成规格 §0 已拍板定案为准，实现偏差在 §5/§6 如实列出。
 
 ## 1. 需求全清单
@@ -131,9 +131,11 @@ R@5 = Recall@5（前 5 条命中率）；MRR = 排名倒数的平均。27 条冻
 | 1 | 引擎侧无列举/全清缝 | 检索接口缝只有 search/addDirect/setMemoryForgotten 三方法；telemem 的列表与全清工具未接缝——面板「导出/清除全部」只清自家库（proposals/账本/采集账），telemem 存量记忆需另开缝（升级 C 数据回填时一并补） |
 | 2 | 消耗/注入记账为估算口径 | token = 码点数估算（中文 1 字约 1 token），金额按智谱调研单价常量；引擎返回的真 token 对账未接（出处：`proposals/usage_ledger.h` 契约注释），结构已留好、只替换取数 |
 | 3 | 审核页批量视图窄窗标签重叠 | 批量模式的类型/状态标签在窄窗口下可能重叠，属界面瑕疵待修，不影响数据与操作语义 |
-| 4 | macOS/Linux 平台面未实测 | `python_locator_posix`/`telemem_process_posix` 已按平台拆文件并在守卫编译内，但真机只验过 Windows（S2 报告「未验证」节） |
-| 5 | 采集→脱敏→提案的运行时全链 | 各单元均已落地并单测，端到端验收进行中（见 §6 S3）；采集触发形态（页内动作/自动轮询）以验收结论为准 |
+| 4 | macOS/Linux 平台面未实测 | `python_locator_posix`/`telemem_process_posix` 已按平台拆文件并在守卫编译内，但真机只验过 Windows（S2 报告「未验证」节）；F2 已修——posix spawnDetached 改 per-child 环境构造（密钥不再进父进程环境，与 Windows 语义对齐），仍待 mac 实测 |
+| 5 | 采集→脱敏→提案的运行时全链 | **已接线（F1）**：引擎 Running 期间背景循环按 kPollIntervalMs（30s）跑「collector 扫描 → 脱敏闸 → curator.proposeAdd」，拦截/fail-closed 段只出审计行与动态流行、不入提案；循环随引擎停而停。残余边界：decay 扫描已周期触发（6h）但引擎无列举缝 → fail-closed 零卡（待限制#1 缝补齐后换清单实现） |
 | 6 | 触发线评测未出终数 | recall_eval 冻结集评测单元已内建，出数依赖引擎 Running 态，终判留待 UAT |
+| 7 | baseVersion 防覆盖校验 live 空转（F4） | 引擎无版本查询缝 → 面板以提案快照版本放行（`panel_state` trustSnapshotVersion），防覆盖是名义防线、勿误信已生效；引擎版本缝就绪后删除该旁路并补对照测试 |
+| 8 | 评测清理受 get_memories 清单上限约束（F5） | 评测 27 条清理只覆盖「id 回填成功者」；超 200 条清单/正文失配条目残留引擎、可被 hook 检索注入——清理缺口计数已上面板（重跑评测可覆盖清理），根治待引擎列举缝 |
 
 ### 触发线与升级路径（预先写死，定案 7）
 
@@ -147,8 +149,8 @@ R@5 = Recall@5（前 5 条命中率）；MRR = 排名倒数的平均。27 条冻
 |---|---|---|
 | S1 spike | **达成（两项改道）**：①安装 97s 通过 ②内存 157MB 通过 ⑤端点实测完成=云端向量不可用→本地 bge-small 定案；③④未出数，由本地向量档的 S2 端到端实测（搜 157ms）与面板评测单元覆盖 | `docs/superpowers/plans/2026-10-27-memcpp-s1-spike-results.md`；触发线判定=不触发升级 |
 | S2 托管壳+面板骨架 | **已达成**：真 venv/pip/引擎拉起/健康判据/三视图/key 红线五项全过；4 处缺陷当场修复并钉进单测 | `docs/superpowers/plans/2026-10-28-memcpp-s2-live-verify.md`；提交链 `1331450c..00ac9931` |
-| S3 脱敏闸+注入接线 | **代码与单测已落地，端到端验收中**：脱敏红队 110 条、hook 契约（exit 0/不 exit 2）、采集幂等、账本接线各有单测；全链路验收由独立验收线在跑，结论未回 | `c1fed58f` `8ee59132` `fba5a126` `758f5c1a`；`tests/test_modules/test_memory_{sanitize,collector,hook}.cpp` |
-| S4 卡片代理 | **数据层与界面已落地，端到端验收中**：16 字段/状态机/撤销链/baseVersion/整理器/代理执行映射 + 审核页四操作/批量/过滤 | `64efb989` `663a2396` `214f9043`；`tests/test_modules/test_memory_proposals.cpp` |
+| S3 脱敏闸+注入接线 | **已达成（e2e-verify 可交付 + 里程碑审计处置）**：脱敏红队 110 条、hook 契约（exit 0/不 exit 2）、采集幂等、账本接线各有单测；全链真跑探针 39 断言过；采集管线已接入引擎 Running 期背景循环（F1） | `c1fed58f` `8ee59132` `fba5a126` `758f5c1a` `9ee92079`；`tests/test_modules/test_memory_{sanitize,collector,hook,collect_wiring}.cpp`；`plans/2026-10-28-memcpp-e2e-verify.md` |
+| S4 卡片代理 | **已达成（e2e-verify + 里程碑审计处置）**：16 字段/状态机/撤销链/baseVersion/整理器/代理执行映射 + 审核页四操作/批量/过滤；UUID id 形态与遗忘撤销重录入已按 live 定案钉版（F3）；baseVersion live 空转如实入限制#7（F4） | `64efb989` `663a2396` `214f9043` `9ee92079`；`tests/test_modules/test_memory_proposals.cpp` |
 | S5 真机 UAT | **未开始**：真实会话一周量级、注入采纳率 ≥30% 抽样、触发线终判 | — |
 
 ---

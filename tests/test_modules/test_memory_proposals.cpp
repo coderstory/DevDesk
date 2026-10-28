@@ -236,14 +236,19 @@ REGISTER_TEST(memory_curator_propose_add_and_forget,
     DOCTEST_REQUIRE(applied.isOk());
     DOCTEST_CHECK_EQ(engine.calls.size(), static_cast<std::size_t>(1));
 
-    // ② 遗忘扫描：闲置 90 天的 1、2 建卡；最近使用过的 3、无使用记录的 4 不动
+    // ② 遗忘扫描（live 定案形态：引擎条目 id = UUID 串）：闲置 90 天的
+    // mem-a/mem-b 建卡；最近使用过的 mem-c、无使用记录的 mem-d 不动
     auto memories = []() {
         return core::Result<std::vector<MemorySummary>>::ok(
             std::vector<MemorySummary>{
-                {1, "久未想起的记忆A", now - 90 * 86400, 5},
-                {2, "久未想起的记忆B", now - 95 * 86400, 2},
-                {3, "刚被想起的记忆C", now - 3600, 7},
-                {4, "从没被想起过的D", 0, 1}});
+                {"1a2b3c4d-0001-4a55-9f0b-2c3d4e5f6001",
+                 "久未想起的记忆A", now - 90 * 86400, 5},
+                {"1a2b3c4d-0002-4a55-9f0b-2c3d4e5f6002",
+                 "久未想起的记忆B", now - 95 * 86400, 2},
+                {"1a2b3c4d-0003-4a55-9f0b-2c3d4e5f6003",
+                 "刚被想起的记忆C", now - 3600, 7},
+                {"1a2b3c4d-0004-4a55-9f0b-2c3d4e5f6004",
+                 "从没被想起过的D", 0, 1}});
     };
     auto created = Curator::proposeForget(store, memories, 60, now);
     DOCTEST_REQUIRE(created.isOk());
@@ -342,35 +347,57 @@ REGISTER_TEST(memory_proposal_live_id_and_forget_undo_readd,
     auto store = std::move(opened.value());
     const std::int64_t now = 1769472000;
 
-    // ① 遗忘扫描建卡（MemorySummary.id=7 → 引擎条目 "uuid-7"）
-    auto memories = []() {
+    // ① 遗忘扫描建卡（F3 钉版：targetIds 必须是引擎 UUID 串原样，整型
+    // to_string 形态会让 setMemoryForgotten 定位失败——live 形态回归面）
+    const std::string kLiveUuid = "e1f6a9c8-7d2e-4a55-9f0b-2c3d4e5f6007";
+    auto memories = [&kLiveUuid]() {
         return core::Result<std::vector<MemorySummary>>::ok(
             std::vector<MemorySummary>{
-                {7, "闲置很久的记忆E", now - 120 * 86400, 3}});
+                {kLiveUuid, "闲置很久的记忆E", now - 120 * 86400, 3}});
     };
     auto created = Curator::proposeForget(store, memories, 60, now);
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_REQUIRE_EQ(created.value().size(), static_cast<std::size_t>(1));
+    // 卡面目标即引擎 UUID 串（不是 to_string(整型) 的错位形态）
+    auto forgetCard = store.get(created.value()[0]);
+    DOCTEST_REQUIRE(forgetCard.isOk());
+    DOCTEST_REQUIRE_EQ(forgetCard.value().targetIds.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(forgetCard.value().targetIds[0], kLiveUuid);
     FakeEngine engine;
     auto accepted = store.accept(
         created.value()[0], now + 5,
-        [](const std::string&) { return core::Result<std::int64_t>::ok(3); },
+        [&kLiveUuid](const std::string& tid) {
+            return tid == kLiveUuid
+                       ? core::Result<std::int64_t>::ok(3)
+                       : core::Result<std::int64_t>::fail(
+                             core::ErrorCode::ValidationError, "id 形态错位");
+        },
         engineExecutor(engine));
     DOCTEST_REQUIRE(accepted.isOk());
-    DOCTEST_CHECK_EQ(engine.calls.back(), std::string("mark:7:1"));  // delete 通道
+    DOCTEST_CHECK_EQ(engine.calls.back(), "mark:" + kLiveUuid + ":1");  // delete 通道
     DOCTEST_CHECK_EQ(store.isUndone(created.value()[0]), false);
 
     // ② 撤销遗忘 = 重录入：undo 卡透传原卡证据，执行器调 addDirect(原文)
     auto undo = store.createUndo(
         created.value()[0], now + 10,
-        [](const std::string&) { return core::Result<std::int64_t>::ok(3); });
+        [&kLiveUuid](const std::string& tid) {
+            return tid == kLiveUuid
+                       ? core::Result<std::int64_t>::ok(3)
+                       : core::Result<std::int64_t>::fail(
+                             core::ErrorCode::ValidationError, "id 形态错位");
+        });
     DOCTEST_REQUIRE(undo.isOk());
     DOCTEST_CHECK_EQ(undo.value().undoOf, created.value()[0]);
     DOCTEST_REQUIRE_EQ(undo.value().evidence.size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK_EQ(undo.value().evidence[0].quoted, std::string("闲置很久的记忆E"));
     auto undone = store.accept(
         undo.value().id, now + 15,
-        [](const std::string&) { return core::Result<std::int64_t>::ok(3); },
+        [&kLiveUuid](const std::string& tid) {
+            return tid == kLiveUuid
+                       ? core::Result<std::int64_t>::ok(3)
+                       : core::Result<std::int64_t>::fail(
+                             core::ErrorCode::ValidationError, "id 形态错位");
+        },
         engineExecutor(engine));
     DOCTEST_REQUIRE(undone.isOk());
     DOCTEST_CHECK_EQ(undone.value().status, std::string("accepted"));

@@ -123,10 +123,14 @@ int main(int argc, char* argv[]) {
                                   now - 3600};
         auto addP = module::memory::proposals::Curator::proposeAdd(
             store, "用户偏好：周报用要点式，每条一行", {ev}, 0.9, now);
-        auto forgetP = store.create("forget", {"42"}, "", "", "", {ev}, 0.85,
-                                    "decay", "assistant_derived", now, 3);
-        auto invalP = store.create("invalidate", {"43"}, "", "", "", {ev}, 0.6,
-                                   "conflict", "assistant_derived", now, 5);
+        // targetIds = 引擎条目 id（telemem live 定案 = UUID 串，F3）；整型字面量
+        // 会在 vector<string> 上变成 size_type 构造（编译期即拒）
+        auto forgetP = store.create(
+            "forget", {"b7e23ec2-0042-4c55-8f0a-1b2c3d4e5f60"}, "", "", "", {ev},
+            0.85, "decay", "assistant_derived", now, 3);
+        auto invalP = store.create(
+            "invalidate", {"b7e23ec2-0043-4c55-8f0a-1b2c3d4e5f60"}, "", "", "",
+            {ev}, 0.6, "conflict", "assistant_derived", now, 5);
         if (addP.isFail() || forgetP.isFail() || invalP.isFail()) {
             std::cerr << "memory_probe: 演示提案创建失败\n";
             return 3;

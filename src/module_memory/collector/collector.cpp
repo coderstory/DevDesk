@@ -218,10 +218,13 @@ core::Result<std::vector<Segment>> Collector::readSessionFile(
     std::string line;
     std::int64_t consumedFrom = wmOffset;
     while (std::getline(in, line)) {
-        // getline 保留 \r（二进制模式）：CRLF 文件去尾
+        // getline 保留 \r（二进制模式）：去尾只影响解析文本。水位必须按流
+        // 实际消费字节推进（审计 F8）：\r 计入消费量——否则每个 CRLF 行少计 1 字节，
+        // 下轮从残留字节续读、水位逐轮抖动难排查
+        const std::int64_t rawLen = static_cast<std::int64_t>(line.size());
         if (!line.empty() && line.back() == '\r') line.pop_back();
         ++lineNo;
-        consumedFrom += static_cast<std::int64_t>(line.size()) + 1;
+        consumedFrom += rawLen + 1;
         if (line.empty()) continue;
         auto events = parseSessionLine(line, static_cast<std::uint64_t>(lineNo - 1));
         if (events.isFail()) {

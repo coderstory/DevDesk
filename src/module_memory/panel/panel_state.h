@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "core/result.h"
@@ -22,6 +23,7 @@
 #include "module_memory/sanitize/sanitize_gate.h"
 #include "module_memory/panel/recall_eval.h"
 #include "module_memory/panel/settings_store.h"
+#include "module_memory/pipeline/collect_round.h"
 
 namespace module::memory::panel {
 
@@ -63,6 +65,8 @@ struct PanelSnapshot {
 
     std::vector<FeedItem> feed;
     std::int64_t storageBytes = -1;  // 数据目录体积；<0 = 尚未统计
+
+    std::string lastEvalError;  // 最近一轮评测失败原因（空 = 无失败；F5 UI 可见）
 
     // 引擎快照透传（避免 UI 同时拉两处状态）
     engine::TelememEngine::Snapshot engine;
@@ -112,6 +116,13 @@ private:
     void rebuildFeedLocked();
     std::int64_t dirSizeBytes() const;
 
+    // ── F1 背景采集循环（引擎 Running 期间自驱）──
+    // 状态同步：refresh 每帧调（引擎起→起循环；引擎停→通知停并回收句柄）。
+    // 线程内自检引擎态：页未打开也随引擎停而停。反重构警告：循环与面板共用
+    // 同一 ProposalStore 连接（唯一真相）；禁止给循环另开库连接。
+    void syncCollectLoop();
+    void collectLoopMain();
+
     mutable std::mutex mu_;
     PanelSnapshot snap_;
 
@@ -126,6 +137,12 @@ private:
 
     // 评测线程状态（ mu_ 保护结果落库，flag 原子）
     std::atomic<bool> evalRunning_{false};
+
+    // F1 采集循环句柄与运行期动态行（拦截/出卡 note，mu_ 保护，封顶防涨）
+    std::thread collectThread_;
+    std::atomic<bool> collectStop_{false};
+    std::atomic<bool> collectActive_{false};
+    std::vector<FeedItem> runtimeFeed_;
 };
 
 }  // namespace module::memory::panel

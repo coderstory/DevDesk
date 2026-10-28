@@ -191,6 +191,9 @@ std::string MemoryModule::iconGlyph() const { return "\xEF\x97\x9C"; }
 
 void MemoryModule::onStart() {
     LOG_INFO("记忆模块已启用：引擎未启动时页面显引导态，零后台成本");
+    // F1 产品接线：开页即同步采集循环——引擎已 Running 则立即起跑
+    //（compose 每帧 refresh 也会同步；此处覆盖"启动引擎后未再切页"的首帧）
+    panel_.refresh(true);
 }
 
 void MemoryModule::onStop() {
@@ -562,8 +565,16 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
                                          "冻结 15 查询转测引擎检索（本机 embedding，零 API 费）");
                            }
                        }});
+        // F5：评测失败与清理缺口必须有 UI 出口（不再只进日志）
         note("memory.health.h1.note", cx, 180.0f,
-             "冻结 15 查询转测检索，Recall@5 低于阈值提醒升级；本机 embedding 零 API 费。");
+             !snap.lastEvalError.empty()
+                 ? "上次评测失败：" + snap.lastEvalError
+                 : (snap.lastEval.cleanupFailures > 0
+                        ? ("评测清理缺口 " +
+                           std::to_string(snap.lastEval.cleanupFailures) +
+                           " 条：残留可能进注入通道，重跑评测可覆盖清理")
+                        : "冻结 15 查询转测检索，Recall@5 低于阈值提醒升级；"
+                          "本机 embedding 零 API 费。"));
     }
 
     // ③ 注入预算（ledger 注入账：今日累计 vs 单次预算 ≤5 条 ≤500 字；

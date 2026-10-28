@@ -24,7 +24,10 @@ namespace module::memory::proposals {
 inline constexpr double kHighConfidence = 0.8;
 
 struct MemorySummary {
-    std::int64_t id = 0;
+    // 引擎条目 id：telemem 1.10.1 live 定案 = UUID 串，非整型（F3）——遗忘卡
+    // targetIds 原样使用本值；形态错位（如 to_string(整型)）会让 forget 卡
+    // 执行必挂（setMemoryForgotten 按此 id 定位引擎条目）
+    std::string id;
     std::string text;
     std::int64_t lastUsedAt = 0;  // 最近被想起的时间（engine 侧清单提供）
     std::int64_t version = 0;     // 当前版本（baseVersion 前置校验输入）

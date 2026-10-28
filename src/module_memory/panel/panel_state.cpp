@@ -1,5 +1,6 @@
 // src/module_memory/panel/panel_state.cpp
 #include "panel_state.h"
+#include <chrono>
 #include <system_error>
 #include <utility>
 
@@ -14,6 +15,7 @@
 #include "platform/folder_picker.h"
 #include "platform/json.h"
 #include "module_memory/engine/telemem_config.h"
+#include "module_memory/pipeline/collect_round.h"
 #include "module_memory/proposals/curator.h"
 
 namespace module::memory::panel {
@@ -42,6 +44,10 @@ ProposalExecutor makeExecutor() {
         return proposals::executeProposal(p, engine);
     };
 }
+
+// F1 采集循环参数：stop 分片（UI 线程 join 上界）与 decay 闲置阈值（B4 设计值）
+constexpr int kCollectStopTickMs = 250;
+constexpr int kDecayIdleThresholdDays = 60;
 
 // 时间文案："今天 HH:MM" / "MM-DD HH:MM"
 std::string formatTime(std::int64_t ts) {
@@ -113,7 +119,13 @@ PanelState::PanelState()
           LOG_INFO("[memory][sanitize] " + line);
       }) {}
 
-PanelState::~PanelState() = default;
+PanelState::~PanelState() {
+    // F1 循环先停再拆成员：线程触碰 proposalStore_ 等 optional，必须先 join
+    if (collectThread_.joinable()) {
+        collectStop_.store(true);
+        collectThread_.join();
+    }
+}
 
 void PanelState::openStores() {
     std::error_code ec;
@@ -136,6 +148,96 @@ void PanelState::openStores() {
     snap_.storesError = err;
 }
 
+// ── F1 背景采集循环 ─────────────────────────────────────────────────────────
+
+void PanelState::syncCollectLoop() {
+    const bool running =
+        engine::TelememEngine::global().snapshot().state ==
+        engine::TelememEngine::State::Running;
+    if (collectThread_.joinable()) {
+        if (!collectActive_.load()) {
+            collectThread_.join();  // 线程自停（引擎停/stop）→ 回收句柄
+        } else if (!running) {
+            collectStop_.store(true);
+            collectThread_.join();  // 分片等待保证 ≤kCollectStopTickMs 返回
+        } else {
+            return;  // 运行中：交给线程自管
+        }
+    }
+    if (running && proposalStore_.has_value()) {
+        // 引擎 Running → 起循环（首轮立即跑，此后 kPollIntervalMs 一轮）
+        bool expected = false;
+        if (collectActive_.compare_exchange_strong(expected, true)) {
+            collectStop_.store(false);
+            collectThread_ = std::thread([this]() { collectLoopMain(); });
+        }
+    }
+}
+
+void PanelState::collectLoopMain() {
+    // 谓词自检：页未打开也随引擎停而停（引擎停 → 循环停，F1 契约）
+    const auto engineRunning = []() {
+        return engine::TelememEngine::global().snapshot().state ==
+               engine::TelememEngine::State::Running;
+    };
+    const auto note = [this](const pipeline::RoundNote& n) {
+        // 动态流可见（拦截段必可见）；行内只有会话名/类别/计数，零正文
+        std::lock_guard<std::mutex> lk(mu_);
+        runtimeFeed_.push_back(FeedItem{
+            n.blocked ? FeedItem::Kind::Blocked : FeedItem::Kind::Collect,
+            n.text, static_cast<std::int64_t>(std::time(nullptr))});
+        if (runtimeFeed_.size() > 16) runtimeFeed_.erase(runtimeFeed_.begin());
+    };
+    // 生产 decay 清单缝：引擎无列举能力（telemem 未暴露 list，限制清单#1）
+    // → 如实报 NotImplemented，fail-closed 不出假卡；缝补齐后只换本闭包
+    const proposals::MemoryListFn decayMemories = []() {
+        return core::Result<std::vector<proposals::MemorySummary>>::fail(
+            core::ErrorCode::NotImplemented,
+            "引擎无列举缝（telemem 未暴露 list），decay 扫描待缝补齐");
+    };
+    std::int64_t lastDecay = 0;
+    for (;;) {
+        if (collectStop_.load()) break;
+        if (!engineRunning()) break;
+        if (proposalStore_.has_value()) {
+            // 闸快照锁内拷贝（脱敏开关翻转的跨线程可见性）
+            sanitize::SanitizeGate gate;
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                gate = gate_;
+            }
+            collector::Collector col(dbDir() / "collector.db",
+                                     collector::Collector::resolveProjectsRootFromEnv());
+            auto r = pipeline::runCollectRound(col, gate, *proposalStore_, note);
+            if (r.isFail()) {
+                LOG_WARN("采集轮失败: " + r.errorMessage());
+            } else {
+                if (r.value().blocked > 0 || r.value().cardsCreated > 0) {
+                    lastRefreshSec_ = 0;  // 有产出 → 下帧立刷动态流/审核数
+                }
+            }
+            const auto now = static_cast<std::int64_t>(std::time(nullptr));
+            if (now - lastDecay >= pipeline::kDecayScanIntervalSec) {
+                lastDecay = now;
+                auto d = pipeline::runDecayScan(*proposalStore_, decayMemories,
+                                                kDecayIdleThresholdDays, note);
+                if (d.isFail()) {
+                    LOG_INFO("decay 扫描未执行: " + d.errorMessage());
+                }
+            }
+        }
+        // 有界分片等待：stop 请求最迟 kCollectStopTickMs 生效（UI join 不被拖 30s）
+        for (int waited = 0;
+             waited < collector::kPollIntervalMs && !collectStop_.load() &&
+             engineRunning();
+             waited += kCollectStopTickMs) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(kCollectStopTickMs));
+        }
+    }
+    collectActive_.store(false);
+}
+
 void PanelState::refresh(bool force) {
     const auto now = static_cast<std::int64_t>(std::time(nullptr));
     {
@@ -151,6 +253,7 @@ void PanelState::refresh(bool force) {
         return;
     }
     if (!proposalStore_.has_value()) openStores();
+    syncCollectLoop();  // F1：每帧同步（不受 1s 节流约束；引擎起停即刻响应）
     if (!force && now - lastRefreshSec_ < 1) return;
     lastRefreshSec_ = now;
 
@@ -210,6 +313,11 @@ void PanelState::refresh(bool force) {
     // 动态流 = ledger + store 混排（数据源口径见任务书 U1）
     {
         std::vector<FeedItem> items;
+        {
+            // F1 运行期行（拦截/出卡 note）先入混排，与账面行按 ts 统一排序
+            std::lock_guard<std::mutex> lk(mu_);
+            for (const FeedItem& it : runtimeFeed_) items.push_back(it);
+        }
         for (const auto& r : next.recentLedger) {
             FeedItem it;
             it.kind = ledgerKindToFeed(r.kind);
@@ -274,9 +382,10 @@ PanelSnapshot PanelState::snapshot() const {
 }
 
 void PanelState::setSanitizeEnabled(bool on) {
-    gate_.setEnabled(on);
     {
         std::lock_guard<std::mutex> lk(mu_);
+        // 闸翻转必须在锁内：采集循环每轮锁内拷贝闸快照（跨线程可见性）
+        gate_.setEnabled(on);
         snap_.settings.sanitizeEnabled = on;
         snap_.gateEnabled = on;
     }
@@ -415,8 +524,10 @@ core::Result<void> PanelState::startEvalAsync() {
             if (result.isOk() && evalStore_.has_value()) {
                 (void)evalStore_->save(result.value());
                 snap_.lastEval = result.value();
+                snap_.lastEvalError.clear();  // F5：成功即清上次失败痕迹
             } else if (result.isFail()) {
                 LOG_WARN("触发线评测失败: " + result.errorMessage());
+                snap_.lastEvalError = result.errorMessage();  // F5：UI 零反馈缺陷修复
             }
         }
         evalRunning_.store(false);
