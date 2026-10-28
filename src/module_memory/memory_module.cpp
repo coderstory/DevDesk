@@ -29,6 +29,7 @@
 #include "ui_kit/dialog_form.h"
 #include "ui_kit/metrics.h"
 #include "ui_kit/slider.h"
+#include "ui_kit/wtab.h"
 #include "ui_kit/wswitch.h"
 
 namespace module::memory {
@@ -155,6 +156,27 @@ std::string formatMilliYuan(long long milli) {
     return buf;
 }
 
+// Primary 按钮在滚动画布内的文字补丁：EUI 渲染端对「stack 内 states 矩形 +
+// 白字」的组合会把文字盖回底色下（定位实验见 2026-10-28 探针； Secondary /
+// Danger 不触发）。文字改为画布层后置兄弟节点，保证浮于底色之上；渲染端
+// 修复后应删掉本包装恢复直调 ui_kit::button。
+void primaryButton(eui::Ui& ui, const std::string& id, const std::string& label,
+                   float x, float y, float w, float h,
+                   const core::theme::Tokens& t, std::function<void()> onClick) {
+    ui_kit::button(ui, id, "", ui_kit::ButtonLevel::Primary, x, y, w, h, t,
+                   {std::move(onClick)});
+    ui.text(id + ".label")
+        .position(x, y)
+        .size(w, h)
+        .text(label)
+        .fontSize(core::theme::scaled(ui_kit::kButtonFontSize))
+        .lineHeight(h)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.onPrimary)
+        .build();
+}
+
 }  // namespace
 
 ::core::PageId MemoryModule::pageId() const { return ::core::PageId::Memory; }
@@ -214,7 +236,6 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     }
 
     const float bodyY = tabY + kTabH + t.sizes.spacingLarge;
-    const float viewH = std::max(120.0f, screen.height - bodyY - 12.0f);
 
     // 三视图各套滚动容器（卡区总高可超小窗可视高；settings 卡区同款）
     const char* scrollIds[kViewConfig + 1] = {"memory.console.scroll",
@@ -222,26 +243,36 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                                               "memory.config.scroll"};
     const int view = activeView_;
     auto drawView = [&](eui::Ui& inner, float cw, float vh) {
-        if (view == kViewConsole) {
-            composeConsole(inner, t, pagePad, cw, bodyY, vh);
-        } else if (view == kViewReview) {
-            composeReview(inner, t, pagePad, cw, bodyY, vh);
-        } else {
-            composeConfig(inner, t, pagePad, cw, bodyY, vh);
-        }
+        // 画布栈：滚动内容列的子元素会被列布局重排，绝对定位必须收进一层
+        // stack（settings 卡区同款：卡根 stack 带页绝对坐标）
+        inner.stack("memory.view.canvas")
+            .width(cw)
+            .height(core::SizeValue::wrapContent())
+            .content([&] {
+                if (view == kViewConsole) {
+                    composeConsole(inner, t, pagePad, cw, bodyY, vh);
+                } else if (view == kViewReview) {
+                    composeReview(inner, t, pagePad, cw, bodyY, vh);
+                } else {
+                    composeConfig(inner, t, pagePad, cw, bodyY, vh);
+                }
+            })
+            .build();
     };
     float* offset = view == kViewConsole
                         ? &consoleScroll_
                         : (view == kViewReview ? &reviewScroll_ : &configScroll_);
+    // 滚动根铺满窗（settings 卡区同款：内容子元素自带页绝对坐标，
+    // 滚动根不设 position——EUI 滚动状态坐标以 (0,0) 为基准）
     components::scrollView(ui, scrollIds[view])
-        .position(pagePad, bodyY)
-        .size(contentW, viewH)
+        .size(contentW, std::max(120.0f, screen.height - bodyY - 12.0f))
         .step(60.0f)
         .theme(ct)
         .contentKey("memory.view" + std::to_string(view))
         .offset(*offset)
         .onChange([this, offset](float v) { *offset = v; })
-        .content(drawView);
+        .content(drawView)
+        .build();
 
     ui_kit::drawToast(ui, screen, "memory.toast", toast_, ct);
 
@@ -260,22 +291,26 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     const auto es = snap.engine;
     const eui::Color stateColor = engineStateColor(t, es.state);
 
-    ui.rect("memory.eng.card")
+    ui.stack("memory.eng.root")
         .position(x, y)
+        .size(w, 176.0f)
+        .content([&] {
+    ui.rect("memory.eng.card")
+        .position(0.0f, 0.0f)
         .size(w, 176.0f)
         .color(t.colors.surface)
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         .build();
     ui.rect("memory.eng.dot")
-        .position(x + t.sizes.spacingLarge, y + 22.0f)
+        .position(t.sizes.spacingLarge, 22.0f)
         .size(10.0f, 10.0f)
         .color(es.state == TelememEngine::State::Running ? t.colors.success
                                                          : t.colors.textDisabled)
         .radius(t.sizes.radiusPill)
         .build();
     ui.text("memory.eng.title")
-        .position(x + t.sizes.spacingLarge + 18.0f, y + 12.0f)
+        .position( t.sizes.spacingLarge + 18.0f, 12.0f)
         .size(300.0f, 28.0f)
         .text("telemem 记忆引擎")
         .fontSize(t.sizes.fontSizeLarge)
@@ -284,7 +319,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .color(t.colors.textPrimary)
         .build();
     ui.text("memory.eng.version")
-        .position(x + 320.0f, y + 16.0f)
+        .position( 320.0f, 16.0f)
         .size(90.0f, 20.0f)
         .text("v1.10.1")
         .fontSize(core::theme::scaled(11.0f))
@@ -293,7 +328,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .color(t.colors.textTertiary)
         .build();
     ui.text("memory.eng.state")
-        .position(x + 416.0f, y + 14.0f)
+        .position( 416.0f, 14.0f)
         .size(120.0f, 24.0f)
         .text(engineStateText(es.state))
         .fontSize(core::theme::scaled(13.0f))
@@ -303,7 +338,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .color(stateColor)
         .build();
     ui.text("memory.eng.detail")
-        .position(x + t.sizes.spacingLarge, y + 46.0f)
+        .position( t.sizes.spacingLarge, 46.0f)
         .size(w - 2.0f * t.sizes.spacingLarge, 40.0f)
         .wrap()
         .text(es.detail.empty()
@@ -322,7 +357,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
                    ? "本机模型文件缺失——embedding 档不可用，先跑首次安装向导"
                    : "未检测到 Python 3.10~3.12——点「首次安装向导」引导安装");
     ui.text("memory.eng.python")
-        .position(x + t.sizes.spacingLarge, y + 92.0f)
+        .position( t.sizes.spacingLarge, 92.0f)
         .size(w - 2.0f * t.sizes.spacingLarge, 20.0f)
         .text(pythonLine)
         .fontSize(core::theme::scaled(12.0f))
@@ -334,7 +369,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     const bool running = es.state == TelememEngine::State::Running;
     ui_kit::button(ui, "memory.eng.wizard", "首次安装向导",
                    ui_kit::ButtonLevel::Secondary, x + t.sizes.spacingLarge,
-                   y + 122.0f, 158.0f, ui_kit::kButtonHeight, t,
+                   122.0f, 158.0f, ui_kit::kButtonHeight, t,
                    {[this] { wizardOpen_ = true; }});
     std::function<void()> toggle;
     if (!busy) {
@@ -344,12 +379,18 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
             toggle = [] { TelememEngine::global().startAsync(); };
         }
     }
-    ui_kit::button(ui, "memory.eng.toggle",
-                   busy ? "启动中…" : (running ? "停止引擎" : "启动引擎"),
-                   running ? ui_kit::ButtonLevel::Danger
-                           : ui_kit::ButtonLevel::Primary,
-                   x + t.sizes.spacingLarge + 174.0f, y + 122.0f, 158.0f,
-                   ui_kit::kButtonHeight, t, {toggle});
+    if (running) {
+        ui_kit::button(ui, "memory.eng.toggle", "停止引擎",
+                       ui_kit::ButtonLevel::Danger,
+                       x + t.sizes.spacingLarge + 174.0f, 122.0f, 158.0f,
+                       ui_kit::kButtonHeight, t, {toggle});
+    } else {
+        primaryButton(ui, "memory.eng.toggle",
+                      busy ? "启动中…" : "启动引擎",
+                      x + t.sizes.spacingLarge + 174.0f, 122.0f, 158.0f,
+                      ui_kit::kButtonHeight, t, toggle);
+    }
+    });
 }
 
 void MemoryModule::composeHealthGrid(eui::Ui& ui,
@@ -738,10 +779,9 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             .fontWeight(600)
             .color(t.colors.warning)
             .build();
-        ui_kit::button(ui, "memory.degrade.start", "启动引擎",
-                       ui_kit::ButtonLevel::Primary, x + w - 180.0f, cy + 7.0f,
-                       140.0f, 30.0f, t,
-                       {[] { TelememEngine::global().startAsync(); }});
+        primaryButton(ui, "memory.degrade.start", "启动引擎",
+                      x + w - 180.0f, cy + 7.0f, 140.0f, 30.0f, t,
+                      [] { TelememEngine::global().startAsync(); });
         cy += 44.0f + kCardGap;
     }
 
@@ -889,7 +929,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         colHeader("类型", cKind, cKindW, false);
         colHeader("条数/字数", cCount, cCountW, true);
         colHeader("token · 金额", cTok, cTokW, true);
-        auto kindDisplay = [&](const std::string& kind) {
+        auto kindDisplay = [](const std::string& kind) -> std::string {
             if (kind == "llm_input") return "提炼 · 输入";
             if (kind == "llm_output") return "提炼 · 产出";
             if (kind == "embed") return "向量化";
@@ -1143,17 +1183,15 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
                        editingId_ = id;
                        editText_ = text;
                    }});
-    ui_kit::button(ui, "memory.rv.accept." + p.id, "接受",
-                   ui_kit::ButtonLevel::Primary, x + w - 100.0f, by, 84.0f,
-                   32.0f, t,
-                   {[this, id = p.id] {
-                       auto r = panel_.acceptProposal(id);
-                       if (r.isFail()) {
-                           showToast("未能执行", r.errorMessage(), true);
-                       } else {
-                           showToast("已接受", "提案已执行，可在「已处理」里撤销");
-                       }
-                   }});
+    primaryButton(ui, "memory.rv.accept." + p.id, "接受", x + w - 100.0f, by,
+                  84.0f, 32.0f, t, [this, id = p.id] {
+                      auto r = panel_.acceptProposal(id);
+                      if (r.isFail()) {
+                          showToast("未能执行", r.errorMessage(), true);
+                      } else {
+                          showToast("已接受", "提案已执行，可在「已处理」里撤销");
+                      }
+                  });
 }
 
 void MemoryModule::composeDecidedCard(eui::Ui& ui,
@@ -1356,25 +1394,29 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                            ui_kit::ButtonLevel::Secondary, x + w - 260.0f,
                            cy + 7.0f, 108.0f, 30.0f, t,
                            {[this] { batchSel_.clear(); }});
-            ui_kit::button(ui, "memory.rv.batchaccept", "批量接受",
-                           allOk ? ui_kit::ButtonLevel::Primary
-                                 : ui_kit::ButtonLevel::Secondary,
-                           x + w - 140.0f, cy + 7.0f, 124.0f, 30.0f, t,
-                           {[this, allOk] {
-                               if (!allOk) return;
-                               std::vector<std::string> ids(batchSel_.begin(),
-                                                            batchSel_.end());
-                               auto r = panel_.batchAccept(ids);
-                               if (r.isFail()) {
-                                   showToast("批量失败", r.errorMessage(), true);
-                               } else {
-                                   showToast("批量接受完成",
-                                             std::to_string(r.value()) + "/" +
-                                                 std::to_string(ids.size()) +
-                                                 " 条已执行（失败项保持待审）");
-                               }
-                               batchSel_.clear();
-                           }});
+            if (allOk) {
+                primaryButton(ui, "memory.rv.batchaccept", "批量接受",
+                              x + w - 140.0f, cy + 7.0f, 124.0f, 30.0f, t,
+                              [this] {
+                                  std::vector<std::string> ids(
+                                      batchSel_.begin(), batchSel_.end());
+                                  auto r = panel_.batchAccept(ids);
+                                  if (r.isFail()) {
+                                      showToast("批量失败", r.errorMessage(),
+                                                true);
+                                  } else {
+                                      showToast("批量接受完成",
+                                                std::to_string(r.value()) + "/" +
+                                                    std::to_string(ids.size()) +
+                                                    " 条已执行（失败项保持待审）");
+                                  }
+                                  batchSel_.clear();
+                              });
+            } else {
+                ui_kit::button(ui, "memory.rv.batchaccept", "批量接受",
+                               ui_kit::ButtonLevel::Secondary,
+                               x + w - 140.0f, cy + 7.0f, 124.0f, 30.0f, t, {});
+            }
             cy += 44.0f + 10.0f;
         }
     }
@@ -1507,10 +1549,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             .color(t.colors.textSecondary)
             .build();
         const bool imported = snap.settings.llmImportedAtSec > 0;
-        ui_kit::button(ui, "memory.cfg.llm.import",
-                       "从 DevDesk 网关一键导入当前 profile",
-                       ui_kit::ButtonLevel::Primary, x + 16.0f, cy + 62.0f,
-                       320.0f, ui_kit::kButtonHeight, t,
+        primaryButton(ui, "memory.cfg.llm.import",
+                      "从 DevDesk 网关一键导入当前 profile",
+                      x + 16.0f, cy + 62.0f,
+                      320.0f, ui_kit::kButtonHeight, t,
                        {[this] {
                            // 模块隔离：激活 profile 经 core::LlmProfileSource
                            // 服务缝读取（装配层映射），不 include module_claude_proxy

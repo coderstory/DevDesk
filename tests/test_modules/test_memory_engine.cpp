@@ -322,9 +322,12 @@ REGISTER_TEST(memory_ui_skeleton_console,
         DOCTEST_CHECK_MESSAGE(ui.find(id) != nullptr,
                               std::string("缺 Tab 锚点: ") + id);
     }
+    // U1 起引擎卡收进 eng.root 栈、启停钮合并为单 toggle、健康四格接真账面
     for (const char* id : {"memory.eng.card", "memory.eng.state",
-                           "memory.eng.start.bg", "memory.eng.stop.bg",
-                           "memory.usage.bar", "memory.feed.card"}) {
+                           "memory.eng.wizard.bg", "memory.eng.toggle.bg",
+                           "memory.health.card0", "memory.health.h2.value",
+                           "memory.usage.bar", "memory.recent.card",
+                           "memory.feed.card"}) {
         DOCTEST_CHECK_MESSAGE(ui.find(id) != nullptr,
                               std::string("缺主控台锚点: ") + id);
     }
