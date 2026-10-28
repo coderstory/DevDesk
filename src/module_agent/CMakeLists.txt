@@ -1,7 +1,6 @@
 add_library(devdesk_agent STATIC
     agent_store.cpp
     agent_time_text.cpp
-    cron.cpp
     trigger_config.cpp
     hot_parse.cpp
     hot_tool.cpp
