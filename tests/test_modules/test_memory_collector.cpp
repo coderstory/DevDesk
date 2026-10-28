@@ -7,6 +7,7 @@
 #include "module_memory/collector/session_reader.h"
 
 #include <atomic>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>

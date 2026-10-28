@@ -4,6 +4,7 @@
 // 引擎启停/健康接 TelememEngine。视觉与交互契约 = docs/mockups/memcpp-panel-demo.html；
 // 偏差处（预算环→双横条、来源枚举对齐数据层）在控件旁注明口径。
 #include "memory_module.h"
+#include <utility>
 
 #include <components/input.h>
 #include <components/scrollview.h>

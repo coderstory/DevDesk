@@ -1,5 +1,6 @@
 // src/module_memory/collector/session_reader.cpp
 #include "session_reader.h"
+#include <utility>
 
 #include "platform/json.h"
 

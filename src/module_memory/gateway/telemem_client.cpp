@@ -1,5 +1,6 @@
 // src/module_memory/gateway/telemem_client.cpp
 #include "telemem_client.h"
+#include <utility>
 
 #include <cstring>
 

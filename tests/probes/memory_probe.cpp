@@ -7,6 +7,8 @@
 // 不碰真实数据根。截图 = 进程内 glReadPixels 帧捕获（home_probes 同款），
 // 三视图各一张落 --out 目录（默认 ./.verify-screenshots/）。
 #include "probes/probe_harness.h"
+#include <ctime>
+#include <system_error>
 #include "app_registry.h"
 #include "core/module_interface.h"
 #include "core/theme.h"

@@ -11,6 +11,13 @@
 #include <string>
 #include <vector>
 
+// Windows 交叉编译守卫（check-windows-cross-compile.sh）单文件编译不带 CMake 的
+// target_compile_definitions，DEVDESK_SOURCE_DIR 会未声明——兜底空串让守卫可编，
+// 运行期红队夹具路径仅在正经 CMake 构建下有效（守卫只验编译不跑用例）。
+#ifndef DEVDESK_SOURCE_DIR
+#define DEVDESK_SOURCE_DIR ""
+#endif
+
 using module::memory::sanitize::SanitizeGate;
 using module::memory::sanitize::sanitizeText;
 using module::memory::sanitize::scanText;

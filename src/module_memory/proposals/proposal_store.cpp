@@ -1,5 +1,6 @@
 // src/module_memory/proposals/proposal_store.cpp
 #include "proposal_store.h"
+#include <utility>
 
 #include <algorithm>
 #include <cstdio>

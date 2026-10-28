@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <system_error>
+#include <utility>
 
 #include "core/logging.h"
 #include "core/sqlite_db.h"

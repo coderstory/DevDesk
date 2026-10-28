@@ -1,5 +1,6 @@
 // src/module_memory/proposals/curator.cpp
 #include "curator.h"
+#include <utility>
 
 #include "module_memory/gateway/telemem_client.h"
 

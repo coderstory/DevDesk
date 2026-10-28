@@ -1,5 +1,7 @@
 // src/module_memory/panel/panel_state.cpp
 #include "panel_state.h"
+#include <system_error>
+#include <utility>
 
 #include <algorithm>
 #include <cstdio>

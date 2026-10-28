@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string>
+#include <cstddef>
 #include <vector>
 
 #include "module_memory/gateway/telemem_client.h"
