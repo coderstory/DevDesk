@@ -289,6 +289,10 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # module_toggle_sidebar_probe / wallpaper_probe：活门控真窗口 probe 还要真
     # app::compose + 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp +
     # app_assembly.cpp（其余 probe 维持最小链接面，不拖 app 层）
+    # mcp_page_module.cpp：app_registry.h 的 kModuleRegistry（inline constexpr）
+    # 初始化器取全部工厂地址，编 app_assembly.cpp 即 odr-use
+    # create_mcp_page_module——其宿主库 devdesk_module_mcp 不在本分支链接集，
+    # 该单源须编进来（自洽：只依赖 core/eui/桥缝，不依赖库内其他 TU）
     if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
        _probe_name STREQUAL "wallpaper_probe" OR
        _probe_name STREQUAL "h13_fluid_background_probe" OR
@@ -297,7 +301,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
-            "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp")
+            "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
     else()
         # mcp_service_bridge.cpp：probe 全体链 devdesk_module_settings，settings 引用
         # app::mcp::* 桥符号后缝必须单独编进来（与 module_toggle_bridge.cpp 同款理由）
@@ -402,12 +407,15 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号
     # app_sidebar.cpp / app_assembly.cpp：同 module_toggle_sidebar_probe 的理由
     #（settings_module.cpp 的装配期符号在这些 TU 里）
+    # mcp_page_module.cpp：同 probe——kModuleRegistry odr-use 其工厂地址，
+    # 链接集里没有 devdesk_module_mcp
     add_executable(github_sync_live
         live/github_sync_live.cpp
         ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
-        ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp)
+        ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
+        ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
     target_include_directories(github_sync_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests
