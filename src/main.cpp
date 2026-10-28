@@ -20,8 +20,13 @@
 #include "core/window_geometry.h"  // 窗体记忆几何账本（UAT6：每帧记账、退出落盘）
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
+#include "module_memory/engine/telemem_config.h"
+#include "module_memory/gateway/telemem_client.h"
+#include "module_memory/hook/hook_command.h"
+#include "module_memory/proposals/usage_ledger.h"
 #include "module_toggle_bridge.h"
 #include "module_wallpaper/wallpaper_module.h"
+#include "platform/autostart.h"
 #include "platform/message_box.h"
 #include "platform/tray_icon.h"
 #include "github_sync_exit_hook.h"
@@ -30,6 +35,8 @@
 #include "wallpaper_tray_bridge.h"
 
 #include <components/styledmenu.h>
+
+#include <ctime>
 
 #include <utility>
 
@@ -43,6 +50,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -247,6 +255,7 @@ std::string activeWindowEffectTier() {
     static std::unique_ptr<::core::Module> claude(create_claude_module());
     static std::unique_ptr<::core::Module> settings(create_settings_module());
     static std::unique_ptr<::core::Module> agent(create_agent_module());
+    static std::unique_ptr<::core::Module> memory(create_memory_module());
     // 平台能力不支持时工厂返回 nullptr：门控装配按空实例跳过（页面不注册）
     static std::unique_ptr<::core::Module> wallpaper(create_wallpaper_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
@@ -262,6 +271,7 @@ std::string activeWindowEffectTier() {
                     case ::core::PageId::ClaudeProxy: return claude.get();
                     case ::core::PageId::Settings: return settings.get();
                     case ::core::PageId::Agent: return agent.get();
+                    case ::core::PageId::Memory: return memory.get();
                     case ::core::PageId::Wallpaper: return wallpaper.get();
                     case ::core::PageId::About: return about.get();
                 }
@@ -689,7 +699,46 @@ void saveWindowGeometryOnExit() {
 namespace app {
 
 // 常驻侧边栏 + 根布局在 app_sidebar
+namespace {
+
+// `devdesk.exe memory hook` 子命令分派（memcpp hook 同步注入，S3-C）。
+// 必须先于单实例锁：hook 由 Claude Code 在 GUI 运行期间拉起，锁会让它秒退。
+// 契约：任何内部错误 = 空 stdout + exit 0（绝不 exit 2——那是 hook 唯一能打断用户
+// 提问的路径，钉版契约禁用）。
+int runMemoryHookSubcommand() {
+    const auto args = platform::autostart::processArgsUtf8();
+    if (args.size() < 3 || args[1] != "memory" || args[2] != "hook") {
+        return -1;  // 非本子命令：继续正常启动
+    }
+    module::memory::gateway::TelememHttpRetriever retriever;
+    const auto outcome =
+        module::memory::hook::runMemoryHookFromStdin(&retriever);
+    // 注入预算记账（面板注入预算环数据源；尽力而为，任何失败绝不影响注入本身）
+    if (outcome.injectedItems > 0) {
+        auto ledger = module::memory::proposals::UsageLedger::open(
+            module::memory::engine::memoryDataDir() / "usage_ledger.db");
+        if (ledger.isOk()) {
+            (void)ledger.value().recordInjection(
+                outcome.injectedItems, outcome.injectedChars,
+                static_cast<std::int64_t>(std::time(nullptr)));
+        }
+    }
+    if (!outcome.stdoutText.empty()) {
+        std::fputs(outcome.stdoutText.c_str(), stdout);
+        std::fflush(stdout);
+    }
+    return outcome.exitCode;  // 恒 0
+}
+
+}  // namespace
+
 const DslAppConfig& dslAppConfig() {
+    // hook 子命令（先于一切 GUI/DB/单实例副作用；命中即同步注入后退出）
+    const int hookExit = runMemoryHookSubcommand();
+    if (hookExit >= 0) {
+        std::_Exit(hookExit);  // _Exit：跳过 atexit（此刻 GUI 对象尚未构造）
+    }
+
     // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
     if (!platform::single_instance::acquireInstanceLock()) {
         platform::single_instance::notifyExistingInstance();

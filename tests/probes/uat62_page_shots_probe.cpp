@@ -56,8 +56,8 @@ namespace {
 
 // 输出文件名 slug（与 kModuleRegistry 表序一一对应；static_assert 钉长度）
 constexpr const char* kSlugs[] = {
-    "home", "markdown", "todo", "claude_proxy", "agent", "wallpaper", "settings",
-    "about",
+    "home", "markdown", "todo", "claude_proxy", "agent", "memory", "wallpaper",
+    "settings", "about",
 };
 static_assert(sizeof(kSlugs) / sizeof(kSlugs[0]) ==
                   sizeof(::app::registry::kModuleRegistry) /

@@ -15,6 +15,7 @@ enum class PageId {
     Todo,
     ClaudeProxy,
     Agent,       // 位于 Settings 之前 = 侧边栏顺序
+    Memory,      // 记忆页（telemem 托管面板）；插在 Wallpaper 之前 = 侧边栏「记忆」在「壁纸」上方
     Wallpaper,
     Settings,
     About,
@@ -27,6 +28,7 @@ inline const char* pageIdToString(PageId id) {
         case PageId::Todo: return "Todo";
         case PageId::ClaudeProxy: return "ClaudeProxy";
         case PageId::Agent: return "Agent";
+        case PageId::Memory: return "Memory";
         case PageId::Wallpaper: return "Wallpaper";
         case PageId::Settings: return "Settings";
         case PageId::About: return "About";

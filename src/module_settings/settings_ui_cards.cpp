@@ -413,6 +413,8 @@ void drawModulesCard(const CardDrawArgs& args) {
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
         {kModuleIdAgent, "智能体",
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
+        {kModuleIdMemory, "记忆",
+         "telemem 记忆引擎面板（引擎未安装时仅显示引导，无后台成本）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
     // 壁纸第 5 格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格）：
