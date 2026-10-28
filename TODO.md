@@ -154,3 +154,17 @@
 - 先不执行测试，优先完成全部功能的开发、测试编写、文档完善，然后全部 commit，合并到 dev 分支
 - 落实口径：实现子任务只写码 + 写测试，不构建不跑测试；合并 dev 由主会话串行做；全部合入后由主会话统一跑一次构建 + 测试收口
 - 本批范围：docs/superpowers/plans/2026-10-21-UAT62-整改清单.md「增补需求 · 2026-10-28 用户登记（H27-H31）」节
+
+## 上线模块收口状态（2026-10-28 18:15，用户指令"收尾了，没干完的写 TODO.md"）
+
+已进 dev（本地 dev 26a2deaf = 调度线全部 + 上线模块全部 + 修复批）：实现 6ca2174a → 审计 C1/C2 全处置（52f68391/749aeec7/bd11fc52/aa0adf6b/8126eaa9/d1b34740，台账见 docs/superpowers/plans/2026-10-28-release-audit-C1C2-disposition.md）→ 与 origin/dev 合并 76aebdde（MCP 在上线上面，17 冲突按 2026-10-28-merge-dev-prep.md 解）→ dev 合并 26a2deaf。
+
+**未干完清单（按优先级）：**
+0. **dev 推送未完成（收口时被卡）**——本地 dev `26a2deaf` 推送被拒：memcpp 会话已把「Memory 页」推上 origin/dev（其融合序 …Agent/Memory(5)/Wallpaper/Mcp/Settings/About，与本地 12 页序分叉），同步合并需重钉 13 页枚举（Memory 排智能体后，MCP 仍在上线上面）+ test_router/test_app_assembly/test_wallpaper 等全部钉值；且 dev 集成席位 wt-merge 被调度会话占用解冲突中。**待席位空闲：merge origin/dev → 重钉枚举序 → git-push.exe origin dev**。
+1. **整批无编译/测试实测证据**——修复批 7 个提交 + 两个合并均未构建未跑测试（本机免编译指令；CI 验证环节按用户指示取消）。首个实测点 = 下次任何一次构建；红了按失败项修。macOS 侧全程仅静态审计，无实机编译。
+2. **feature/20261027-release-module 文档分支未合入 dev**——上面还有交付闸门 hook（.claude/hooks/deliverable-gate.sh）、spec 同步版、TODO 收口段、调度交接文档原版。后续合并时：handoff 文档 dev 侧已是"路径仓库相对"修订版，冲突取 dev 侧。
+3. **安装程序未做**——上线模块随 0.5.0 出包（Inno Setup / DMG）+ 用户真机 UAT 未做。
+4. **A-02 待拍板**——列表卡进度分母与详情页 5 槽位口径不一致，需要用户定夺（分母按服务×环境还是按配置项）。
+5. **缓置项**——F-3 父行存在性预检（导入/脚本入口出现时再补）；提醒窗句柄耦合块未抽纯函数（openReminder/closeForEmpty/collectReminderView/buildDemoView/绘制，硬抽会改行为）。
+6. **已知无关红灯**——agent_e2e_probe 在本机因 DPAPI 凭据失败（先前已判与需求无关，未做基线复核）。
+
