@@ -249,3 +249,19 @@ class ScheduleProvider { virtual std::vector<ScheduleItemView> items() const = 0
 | 全屏提醒参考 | `src/module_release/release_module.cpp:88-115`、`src/module_release/release_reminder.h:1-40` |
 | 平台能力 | `src/platform/notification.h`、`src/platform/http_client.h`、`src/platform/keychain.h`、`src/core/service_locator.h`、`src/core/time.h` |
 | 工程纪律 | `D:/project/gui/DevDesk/CLAUDE.md`（分层/Result/平台隔离/测试登记/构建脚本/worktree/注释/派单） |
+
+## 11. 波次执行状态（2026-10-28 起维护）
+
+> 调度线轻量台账，主会话逐波更新；状态机沿用 UAT6.2 口径：⬜ 待开发 → 🔵 已开发待核验 → ✅ 已核验（✅ 只认实测，纸面推导不算）。全程本机不构建不跑测试（用户 2026-10-28 指令），验证走 CI 或用户另行指令。
+
+| 波 | 内容 | 状态 |
+|---|---|---|
+| S1 | ticker 底座 + 本文档与调研入库 | 🔵 已合入 dev（c508a662），测试随附未执行 |
+| S2 | cron 上移 core + 六 kind 规则引擎纯函数层 | 🔵 在飞 |
+| S3 | schedule_* 四表 + 迁移 + store CRUD | 🔵 在飞 |
+| S5 | Channel 接口 + 全屏/toast/OS/静默四渠道 | 🔵 在飞 |
+| S6a | HTTP 客户端代理模式扩展 | 🔵 已合入本地 dev（543bd766），用例未执行 |
+| S4 | 调度引擎（挂 ticker、到期队列、补跑判定、冲突串行） | ⬜ 排队（依赖 S2+S3） |
+| S6b | 企业微信 webhook 渠道（限频/重试/幂等/凭据 keychain） | ⬜ 排队（依赖 S5+S6a） |
+| S7 | module_schedule UI（列表/编辑/运行历史）+ app 装配 | ⬜ 排队 |
+| S8 | 系统定时只读源（ScheduleProvider，release 为首个来源） | ⏸ 等 release 线合入 dev |
