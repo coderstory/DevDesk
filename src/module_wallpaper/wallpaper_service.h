@@ -10,9 +10,10 @@
 //     到「一条目录条目」的处理时间。
 //   - 锁顺序固定：mu_ → playerMu_。playerMu_ 内不得回调本类任何加 mu_ 的方法。
 //
-// 本批边界：系统让路事件源（全屏/锁屏/熄屏/睡眠/电池）在 P3b watcher 接入；此处只有
-// 仲裁器与 test-only 注入缝，不得对外宣称自动让路已生效。生产装配 = WorkerW 宿主 +
-// mpv 播放器；注入测试播放器时**不建桌面宿主、不 spawn mpv**（单测不碰真桌面）。
+// 本批边界：让路 watcher 全接线（P3b）——锁屏/电池/全屏/换屏四路事件经
+// YieldWatchers（platform 层，测试可注入假实现）实时喂入仲裁器；换屏广播触发
+// WorkerW 宿主重建。生产装配 = WorkerW 宿主 + mpv 播放器 + 真 watcher；
+// 注入测试播放器时**不建桌面宿主、不 spawn mpv、不启动 watcher**（单测不碰真桌面）。
 #pragma once
 
 #include <atomic>
@@ -34,6 +35,7 @@
 #include "module_wallpaper/core/video_library.h"
 #include "module_wallpaper/platform/player_backend.h"
 #include "module_wallpaper/platform/wallpaper_host.h"
+#include "module_wallpaper/platform/yield_watchers.h"
 
 namespace module::wallpaper {
 
@@ -119,7 +121,10 @@ public:
     void setPlayerForTest(std::unique_ptr<PlayerBackend> player);
     void setClockForTest(Clock clock);
     void setSettingsPathForTest(std::string path);
-    // 注入一个系统让路原因（P3 watcher 之前用它验证快照合并与暂停/恢复路径）。
+    // 注入假让路 watcher（替代 createYieldWatchers 的平台实现）。必须在 start() 之前
+    // 调用：start 时才装回调并启动 watcher（注入播放器 = 测试装配，真 watcher 不启动）。
+    void setYieldWatchersForTest(std::unique_ptr<YieldWatchers> watchers);
+    // 注入一个系统让路原因（等价于 watcher 事件回调；用于不注入 watcher 的老用例）。
     void setSystemHoldForTest(HoldReason reason, bool active);
 
 private:
@@ -128,6 +133,14 @@ private:
     void requestScanLocked();
     void scanLoop();
     void tickLoop();
+
+    // watcher 事件入口（事件回调与轮询共用）：喂 arbiter，状态真变才落暂停/恢复决策。
+    // 任意线程可入（watcher 线程 / tick 线程）；未 start 时 no-op。
+    void applySystemReason(HoldReason reason, bool active);
+    // 换屏广播：重建 WorkerW 宿主并用新句柄重装当前项。无宿主（测试装配/宿主失败）no-op。
+    void handleDisplayChanged();
+    // tickLoop 周期轮询：全屏每拍（250ms）、电池每 4 拍（≈1s）。mu_ 内调用。
+    void pollYieldWatchersLocked();
 
     // 视频来源扫描落库：池 = 视频 + 同目录图片（混合池），videoCount 只计视频。
     void applyVideoScanLocked(const VideoScanResult& video, const ImageScanResult& images);
@@ -157,6 +170,9 @@ private:
     ImageScanner imageScanner_;
     Clock clock_;
     std::string settingsPath_;
+    std::unique_ptr<YieldWatchers> yieldWatchers_;
+    bool testWatcherInjected_ = false;  // 显式注入假 watcher：测试装配下也要接线启动
+    int yieldPollCounter_ = 0;  // 电池轮询分频（mu_ 内读写；全屏每拍都查）
 
     WallpaperSettings settings_;
     WallpaperSnapshot snapshot_;

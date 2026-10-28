@@ -31,6 +31,8 @@ add_library(devdesk_module_wallpaper STATIC
     # 播放后端接口；Null 仅测试注入，生产走 platform/ 的 mpv 实现。
     platform/player_backend.h
     platform/player_null.cpp
+    # 让路事件源接口（锁屏/电池/全屏/换屏 → arbiter）：平台无关缝，测试注入假实现。
+    platform/yield_watchers.h
 )
 
 # 平台层（WallpaperHost / MpvController）：Win32 实现与 stub 按平台选择。
@@ -43,13 +45,17 @@ if(WIN32)
         platform/mpv_player.h
         platform/wallpaper_host_win.cpp
         platform/mpv_controller.cpp
+        platform/yield_watchers_win.cpp
     )
+    # yield_watchers：wtsapi32（WTS 会话通知）。
+    target_link_libraries(devdesk_module_wallpaper PRIVATE wtsapi32)
 else()
     target_sources(devdesk_module_wallpaper PRIVATE
         platform/mpv_player.cpp
         platform/mpv_player.h
         platform/wallpaper_host_stub.cpp
         platform/mpv_controller_stub.cpp
+        platform/yield_watchers_stub.cpp
     )
 endif()
 

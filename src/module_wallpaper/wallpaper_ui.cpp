@@ -17,7 +17,7 @@
 //       wallpaper.speed.title / .slider / .value；wallpaper.audio.title / .slider /
 //       .value / .mute（.mute.track 为开关轨道）
 //     wallpaper.card.holds            让路规则（独立折叠组）
-//       wallpaper.holds.title / .reason.0..3 / .battery（.battery.track）
+//       wallpaper.holds.title / .reason.0..3（激活条件亮显）/ .battery（.battery.track）
 //   片库页：
 //     wallpaper.card.folder           文件夹卡（.path / .select / .rescan）
 //       wallpaper.folder.stat.videos；图片一格 .stat.total（参与/低于两格不建：
@@ -264,9 +264,14 @@ void foldTitleRow(eui::Ui& ui, const std::string& idBase,
         .build();
 }
 
-// 系统让路原因 chip 文案（固定四项，顺序 = HoldReason 声明序）。
+// 系统让路原因 chip（固定四项，顺序 = HoldReason 声明序）。active 标志由
+// arbiter 快照实时点亮——watcher 全接线后（P3b），当前激活条件可见。
 const char* kHoldChipLabels[] = {"全屏 / 最大化", "屏幕锁定", "显示器熄屏",
                                  "系统睡眠"};
+const HoldReason kHoldChipReasons[] = {
+    HoldReason::Fullscreen, HoldReason::ScreenLocked, HoldReason::DisplayAsleep,
+    HoldReason::SystemSleeping,
+};
 
 std::string modeHint(WallpaperKind kind, PlayMode mode) {
     if (kind == WallpaperKind::Video) {
@@ -765,9 +770,12 @@ void drawHoldsCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
     const float h = roundFs(expanded ? kHoldsExpandedH : kHoldsCollapsedH);
     cardStack(ui, "wallpaper.card.holds", w, h, t, [&] {
         const auto onToggle = [&state] { state.holdsExpanded = !state.holdsExpanded; };
+        // 折叠摘要优先反映实时让路状态（watcher 喂入的 arbiter 快照）。
         foldTitleRow(ui, "wallpaper.holds", "这些情况会让路",
-                     snapshot.pauseOnBattery ? "电池供电时暂停"
-                                             : "电池供电时继续",
+                     snapshot.systemHolds != 0
+                         ? std::string("让路中")
+                         : (snapshot.pauseOnBattery ? "电池供电时暂停"
+                                                    : "电池供电时继续"),
                      expanded, w, t, onToggle);
         if (!expanded) return;
         float chipX = kCardPad;
@@ -776,8 +784,12 @@ void drawHoldsCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
             const float chipW = core::TextPrimitive::measureTextWidth(
                                     label, {}, fs(12.0f), 400) +
                                 20.0f;
+            // 激活条件亮显（dim=false = background 底），未激活压暗（dim=true =
+            // surface 底）。数据源只有快照 systemHolds，UI 不自己猜状态。
+            const bool active =
+                holdsReason(snapshot.systemHolds, kHoldChipReasons[i]);
             chip(ui, "wallpaper.holds.reason." + std::to_string(i), chipX,
-                 64.0f, chipW, roundFs(26.0f), label, t, false, false);
+                 64.0f, chipW, roundFs(26.0f), label, t, false, !active);
             chipX += chipW + 6.0f;
         }
         ui.text("wallpaper.holds.battery.label")
