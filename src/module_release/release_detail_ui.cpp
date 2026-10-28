@@ -1057,6 +1057,7 @@ TaskStatus restoredStatus(const ReleaseDetailUiState& state, int nowMinute) {
 
 void applyVoid(ReleaseStore& store, ReleaseDetailUiState& state) {
     if (state.displayStatus == TaskStatus::Voided) return;
+    const std::string fromStatus = releaseTaskStatusText(state.task.status);
     Task next = state.task;
     next.status = TaskStatus::Voided;
     auto result = store.updateTask(next);
@@ -1066,8 +1067,13 @@ void applyVoid(ReleaseStore& store, ReleaseDetailUiState& state) {
     }
     state.task = next;
     state.displayStatus = TaskStatus::Voided;
+    // 写库已成功：清掉历史推进失败标志，避免残留挡下后续所有状态推进。
+    state.statusWriteFailed = false;
     state.validationActive = false;
     state.validationMissing.clear();
+    appendActionLog(store, state, "任务", "作废", "void",
+                    "由「" + fromStatus + "」改为「" +
+                        releaseTaskStatusText(TaskStatus::Voided) + "」");
     setNotice(state, "任务已作废，整单只读", false);
 }
 
@@ -1104,8 +1110,13 @@ void applyRestore(ReleaseStore& store, ReleaseDetailUiState& state, int nowMinut
     }
     state.task = next;
     state.displayStatus = next.status;
+    // 写库已成功：清掉历史推进失败标志，避免残留挡下后续所有状态推进。
+    state.statusWriteFailed = false;
     state.validationActive = false;
     state.validationMissing.clear();
+    appendActionLog(store, state, "任务", "恢复", "restore",
+                    "由「" + releaseTaskStatusText(TaskStatus::Voided) + "」恢复为「" +
+                        releaseTaskStatusText(next.status) + "」");
     setNotice(state, "任务已恢复为「" + releaseTaskStatusText(next.status) + "」", false);
 }
 
@@ -1262,9 +1273,12 @@ void toggleConfigSkip(ReleaseStore& store, ReleaseDetailUiState& state,
 }
 
 // 打开配置编辑层：先补建落库行，再把现有内容快照进编辑缓冲（编辑层关闭前不写库）。
+// 只读态（Done/Voided）跳过补建——对已终态任务写库属范围外副作用，查看以清单占位行展示为准。
 void openConfigEditor(ReleaseStore& store, ReleaseDetailUiState& state,
                       std::int64_t serviceId, ConfigKind kind) {
-    if (!ensureServiceConfigs(store, state, serviceId)) return;
+    if (!isReadOnly(state.displayStatus)) {
+        if (!ensureServiceConfigs(store, state, serviceId)) return;
+    }
     const TaskConfig* cfg = findConfig(state, serviceId, kind);
     if (cfg == nullptr) {
         setNotice(state, "配置项不存在，无法打开编辑", true);
@@ -1301,8 +1315,8 @@ void saveConfigEditor(ReleaseStore& store, ReleaseDetailUiState& state) {
     next.content = state.editorText;
     auto result = store.upsertTaskConfig(next);
     if (result.isFail()) {
+        // 保留编辑层与缓冲内容：用户可重试或主动取消，整段输入不丢。
         setNotice(state, "保存配置失败：" + result.errorMessage(), true);
-        state.editorOpen = false;
         return;
     }
     state.editorOpen = false;
@@ -1327,6 +1341,10 @@ void openRemoveEnv(ReleaseDetailUiState& state, std::int64_t envId,
 }
 
 void applyRemoveService(ReleaseStore& store, ReleaseDetailUiState& state) {
+    if (isReadOnly(state.displayStatus)) {
+        setNotice(state, "任务已只读，不能移除服务", true);
+        return;
+    }
     const TaskService* svc = findService(state, state.removeServiceId);
     const std::string name = svc != nullptr ? svc->serviceName : state.removeName;
     auto result = store.removeTaskService(state.removeServiceId);
@@ -1340,6 +1358,10 @@ void applyRemoveService(ReleaseStore& store, ReleaseDetailUiState& state) {
 }
 
 void applyRemoveEnv(ReleaseStore& store, ReleaseDetailUiState& state) {
+    if (isReadOnly(state.displayStatus)) {
+        setNotice(state, "任务已只读，不能移除环境", true);
+        return;
+    }
     const TaskEnv* env = findEnv(state, state.removeEnvId);
     const std::string name = env != nullptr ? env->envName : state.removeName;
     auto result = store.removeTaskEnv(state.removeEnvId);
