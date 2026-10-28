@@ -8,7 +8,9 @@
 
 #include "core/database.h"
 #include "core/logging.h"
+#include "core/markdown_notes_source.h"
 #include "core/module_interface.h"
+#include "core/service_locator.h"
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
@@ -864,6 +866,9 @@ private:
     ::core::event::EventBus::Subscription dbImportedSub_;
     // 重入幂等守卫：double-onStart / double-onStop / 未启动的 off = no-op
     bool started_ = false;
+    // ServiceLocator 提供方（UAT6.2 H31）：onStart 注册、onStop 注销（set(nullptr)）。
+    // 生命周期 = service_（适配器持 MarkdownService&）；reset 必须晚于注销。
+    std::unique_ptr<::core::IMarkdownNotesSource> notesSource_;
     // 未创建 = 不持久化，saveViewState 静默跳过
     std::unique_ptr<MarkdownViewStateStore> viewStore_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）

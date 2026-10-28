@@ -646,6 +646,24 @@ core::Result<void> dropRemovedTables(core::data::SqliteDb& db) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> migrateTodoDocLinkColumn(core::data::SqliteDb& db) {
+    // 老库 todo_tasks 补 doc_path（UAT6.2 H31 关联文档）。幂等：表不存在零操作
+    //（applySchema 会建全，含本列）；列已存在零操作。已存在行默认空串（未关联），
+    // 不做任何行级回填——文档关联只能由用户显式建立。
+    auto exists = tableExists(db, "todo_tasks");
+    if (exists.isFail())
+        return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
+    if (!exists.value()) return core::Result<void>::ok();
+    auto cols = existingColumns(db, "todo_tasks");
+    if (cols.isFail())
+        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+    if (cols.value().count("doc_path") > 0) return core::Result<void>::ok();
+    auto alter = db.exec(
+        "ALTER TABLE todo_tasks ADD COLUMN doc_path TEXT NOT NULL DEFAULT ''");
+    if (alter.isFail()) return alter;
+    return core::Result<void>::ok();
+}
+
 core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
     const std::time_t nowT = core::time::nowUnix();
     const int64_t now = static_cast<int64_t>(nowT);
@@ -736,6 +754,13 @@ core::Result<void> migrate(core::data::SqliteDb& db) {
     if (todoMig.isFail()) {
         LOG_ERROR("Todo 固定四列迁移失败: " + todoMig.errorMessage());
         return todoMig;
+    }
+    // 文档列补列：晚于 applySchema（表已存在），早于归档清扫无依赖——归档只动
+    // column_id/position/archived_at，不触碰 doc_path。
+    auto docLinkMig = migrateTodoDocLinkColumn(db);
+    if (docLinkMig.isFail()) {
+        LOG_ERROR("Todo 关联文档列迁移失败: " + docLinkMig.errorMessage());
+        return docLinkMig;
     }
     // 冷启动归档清扫必须晚于固定四列迁移（done/archive 列已存在），同样与 Todo
     // 模块是否启用无关；每进程随启动迁移跑一次。

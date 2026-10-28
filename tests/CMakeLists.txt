@@ -61,6 +61,9 @@ add_executable(devdesk_tests
     test_modules/test_md_sync_map.cpp
     test_modules/test_todo_service.cpp
     test_modules/test_todo_tools.cpp
+    # UAT6.2 H31：todo 卡片关联 md 文档（置值/解除/失联灰态/迁移幂等/正面图标/
+    # 详情选文档→跳转负载全链）
+    test_modules/test_todo_doc_link.cpp
     test_modules/test_agent_store.cpp
     test_modules/test_agent_cron.cpp
     test_modules/test_agent_time_text.cpp

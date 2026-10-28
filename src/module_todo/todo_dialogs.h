@@ -5,6 +5,7 @@
 
 #include "todo_ui_logic.h"
 
+#include <core/markdown_notes_source.h>
 #include <core/theme.h>
 #include <eui/dsl.h>
 
@@ -26,6 +27,7 @@ enum class Popup {
     Ctx,
     DatePick,
     Confirm,
+    DocPick,   // UAT6.2 H31：详情内「关联文档」选择器（与 Detail 同栈共存，z 更高）
 };
 
 struct PopupStack {
@@ -76,6 +78,11 @@ struct DialogHost {
     std::function<void(int64_t, int64_t, int)> moveTask;
     std::function<void(int64_t)> completeTask;
     std::function<void(int64_t)> uncompleteTask;
+    // UAT6.2 H31 关联文档三通道：打开选择器（模块侧取笔记清单）、跳转打开关联
+    // 文档（模块侧导航 Markdown 页 + open: 负载）、存在性判定（文档灰态用）
+    std::function<void()> openDocPicker;
+    std::function<void(const std::string&)> openLinkedDoc;
+    std::function<bool(const std::string&)> docExists;
     // 打开任务详情（选中态 + 视图状态落盘在模块侧）
     std::function<void(const Task&)> openDetail;
     // 右键菜单分发（菜单项语义与模块写操作强耦合，留在模块）
@@ -166,6 +173,10 @@ struct DetailDialog {
     bool completed = false;
     std::vector<std::string> tags;
     std::string tagInput;  // 标签输入框（回车追加，未落库）
+    // UAT6.2 H31 关联文档：docPath = 笔记相对路径（空串 = 未关联）；docTitle =
+    // 选择/打开时解析的显示名（不落库，跳转与灰态判定只用 docPath）
+    std::string docPath;
+    std::string docTitle;
 
     // 打开时从任务装载全部字段（选中态 + 视图状态落盘在模块侧）
     void reset(const Task& task);
@@ -221,6 +232,8 @@ struct DialogSet {
     // datepicker 归属弹窗（详情「选择日期…」/ 新建「选择…」两个入口都写它）：
     // 打开时由入口设置；锚点读取与确定写回都按它路由
     DatePickOwner datePickOwner = DatePickOwner::Detail;
+    // UAT6.2 H31：文档选择器清单（模块在 openDocPicker 时刷新填充）
+    std::vector<::core::NoteRef> docPickNotes;
     // datepicker 本次打开已绘制的帧数（UAT5「默认当天」机制，详见 drawDatePicker）：
     // 首帧喂锚点日期初始化滚轮 + 放掉上一会话草稿，后续帧喂哨兵提交值——组件的
     // 「确定」只在「滚轮草稿 ≠ 提交值」时回调 onChange，不喂哨兵则「打开不滚直接
@@ -248,5 +261,9 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
 void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                              const core::theme::Tokens& t, DialogSet& d,
                              const DialogHost& host);
+// UAT6.2 H31：关联文档选择器（清单来自 DialogSet::docPickNotes，模块打开时填充）
+void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
+                         const core::theme::Tokens& t, DialogSet& d,
+                         const DialogHost& host);
 
 } // namespace module::todo::ui
