@@ -38,13 +38,20 @@ inline int64_t localDayNumber(std::time_t t) {
                          static_cast<unsigned>(local.tm_mday));
 }
 
-// 本地「当日零点」的 Unix 时刻 = t − 当日已流逝秒数（纯算术，不碰 mktime）。
-// 不变量：任意时刻 t 的返回值 ≤ t，且与 t 同属一个本地日历日（DST 切换日亦然——
-// 流逝秒数按墙钟 tm_hour/tm_min/tm_sec 计算，与当日实际 23h/25h 无关）。
+// 本地「当日零点」的 Unix 时刻：当日日历日期 + 00:00:00 + tm_isdst=-1 交 mktime
+// 按本地时区规则反解。不变量：任意时刻 t 的返回值 ≤ t，且与 t 同属一个本地日历日。
+// 不得用 t − 墙钟已流逝秒数的纯算术减法：DST 切换日墙钟时长 ≠ 24h，减法返回值
+// 秋回日（25h 日）= 今日 01:00（00:00-01:00 完成的卡被冷启动误归档）、
+// 春进日（23h 日）= 昨日 23:00（完成卡多滞留 done 一天）。mktime 会按本地
+// DST 规则解析，切换日同样返回真实零点（当日 00:00 本身不在模糊/跳空区间）。
 inline std::time_t localMidnightUnix(std::time_t t) {
     std::tm local{};
     localTime(t, &local);
-    return t - (local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec);
+    local.tm_hour = 0;
+    local.tm_min = 0;
+    local.tm_sec = 0;
+    local.tm_isdst = -1;  // 未知：让 mktime 查本地 DST 规则（切换日关键）
+    return std::mktime(&local);
 }
 
 } // namespace core::time

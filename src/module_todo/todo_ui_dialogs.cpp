@@ -773,8 +773,14 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     // 关联文档存在性（H31）：只对已关联任务判定；提供方缺回调按存在处理（详情不
     // 灰态）。每帧判定——改名/删除后下一帧即灰。
     const bool docLinked = !d.detail.docPath.empty();
+    // 提供方缺失（Markdown 模块被禁用）≠ 文档不存在：灰态文案分别给
+    // 「模块未启用」/「文档不存在」——前者文件可能还在，说「不存在」是误导
+    //（与选择器入口「需要 Markdown 模块启用」状态提示同口径）。
+    const bool sourceMissing =
+        docLinked && host.notesSourceAvailable && !host.notesSourceAvailable();
     const bool docMissing =
-        docLinked && host.docExists && !host.docExists(d.detail.docPath);
+        docLinked && !sourceMissing && host.docExists &&
+        !host.docExists(d.detail.docPath);
     // 完成时间行（done 列卡片）/ 归档时间行（归档列卡片）占同一槽位（互斥：卡片
     // 不可能同时在两列）；有一项即整体下移一档让位。
     const Task* detailTask =
@@ -1177,8 +1183,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
 
                     // —— 关联文档块（UAT6.2 H31）——
                     // 未关联：选择入口；已关联：文档名（点击 = 跳转 Markdown 打开该
-                    // 文档，只从详情进）+ 解除；文档不存在：灰态「文档不存在」，点击
-                    // 不跳转（缺回调同灰），不自动解除关联。
+                    // 文档，只从详情进）+ 解除；文档不存在 / 提供方缺失：灰态
+                    // 「文档不存在」/「模块未启用」，点击不跳转（缺回调同灰），
+                    // 不自动解除关联。
                     inner.stack("todo.dialog.detail.scroll.doc.w")
                         .size(cw, kBlockDocH)
                         .content([&] {
@@ -1200,12 +1207,12 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                             const float gapW = 8.0f;
                             const float unlinkW = 86.0f;
                             const float missingW = 76.0f;
-                            // 名称宽自适应：给「文档不存在」标签与解除按钮让位
+                            // 名称宽自适应：给灰态标签与解除按钮让位
                             const float nameW = std::max(
                                 120.0f,
                                 std::min(sw * 0.62f,
                                          sw - unlinkW - gapW - missingW - gapW));
-                            const float unlinkX = docMissing
+                            const float unlinkX = (docMissing || sourceMissing)
                                 ? x0 + nameW + gapW + missingW + gapW
                                 : x0 + nameW + gapW;
                             // 文档名按钮：灰态禁用点击（跳转只对存在的文档有意义）
@@ -1217,25 +1224,30 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
                                 .colors(t.colors.background, t.colors.hover,
                                         t.colors.primarySoftBg)
-                                .textColor(docMissing ? t.colors.textTertiary
-                                                      : t.colors.textPrimary)
-                                .iconColor(docMissing ? t.colors.textTertiary
-                                                      : t.colors.textSecondary)
+                                .textColor((docMissing || sourceMissing)
+                                               ? t.colors.textTertiary
+                                               : t.colors.textPrimary)
+                                .iconColor((docMissing || sourceMissing)
+                                               ? t.colors.textTertiary
+                                               : t.colors.textSecondary)
                                 .radius(8.0f)
                                 .border(1.0f, t.colors.borderDefault)
-                                .disabled(docMissing || !host.openLinkedDoc)
-                                .onClick(docMissing || !host.openLinkedDoc
+                                .disabled(docMissing || sourceMissing ||
+                                          !host.openLinkedDoc)
+                                .onClick(docMissing || sourceMissing ||
+                                                 !host.openLinkedDoc
                                              ? std::function<void()>{}
                                              : [&d, &host] {
                                                    host.openLinkedDoc(d.detail.docPath);
                                                })
                                 .build();
-                            // 灰态标签（文档不存在）：只提示，不解除关联
-                            if (docMissing) {
+                            // 灰态标签（文档不存在 / 模块未启用）：只提示，不解除关联
+                            if (docMissing || sourceMissing) {
                                 inner.text("todo.dialog.detail.doc.missing")
                                     .position(x0 + nameW + gapW, 20.0f)
                                     .size(missingW, 32.0f)
-                                    .text("文档不存在")
+                                    .text(sourceMissing ? "模块未启用"
+                                                        : "文档不存在")
                                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                                     .lineHeight(32.0f)
                                     .color(t.colors.textTertiary)
@@ -1319,8 +1331,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
 
 // 关联文档选择器（UAT6.2 H31）：清单由模块 openDocPicker 时从
 // IMarkdownNotesSource 拉取并填入 d.docPickNotes。行点击 = 选中一篇：写
-// detail.docPath/docTitle 后关本弹窗（详情弹窗仍在栈上）。固定行数截断（逾期弹窗
-// 同款），不引入滚动容器。
+// detail.docPath/docTitle 后关本弹窗（详情弹窗仍在栈上）。列表装进 scrollView：
+// 笔记多于视口容量时滚动可达，不做固定行数截断（曾截断 10 行、第 11 篇起不可选）。
 void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                          const core::theme::Tokens& t, DialogSet& d,
                          const DialogHost& host) {
@@ -1329,11 +1341,11 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
     const float rowH = 44.0f;
     constexpr float kMaxDialogH = 552.0f;
-    const size_t maxRows =
-        static_cast<size_t>((kMaxDialogH - 96.0f) / rowH);  // = 12
-    const size_t shown = std::min(d.docPickNotes.size(), maxRows);
-    const float h =
-        std::min(kMaxDialogH, 96.0f + rowH * static_cast<float>(shown));
+    const size_t n = d.docPickNotes.size();
+    // 视口 = 全部行高与 (552−96) 上限取小；内容 = 全部行高（超视口即滚动可达）
+    const float viewportH =
+        std::min(rowH * static_cast<float>(n), kMaxDialogH - 96.0f);
+    const float h = 96.0f + viewportH;
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.docpick";
@@ -1350,48 +1362,70 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
         std::string hint = "选择一篇笔记作为任务的详细说明（点击即关联）";
         if (d.docPickNotes.empty()) {
             hint = "无可用笔记（Markdown 模块未启用或笔记目录为空）";
-        } else if (d.docPickNotes.size() > shown) {
-            hint += "（仅显示前 " + std::to_string(shown) + " 条）";
         }
         ui_kit::drawDialogText(ui, "todo.dialog.docpick.hint", w, hint,
                                t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
                                {.y = 52.0f, .height = 16.0f, .lineHeight = 16.0f});
-        for (size_t i = 0; i < shown; ++i) {
-            const ::core::NoteRef& note = d.docPickNotes[i];
-            const float y = 76.0f + static_cast<float>(i) * rowH;
-            const std::string rowId =
-                "todo.dialog.docpick.item." + std::to_string(i);
-            const bool isCurrent = (note.relPath == d.detail.docPath);
-            ui.rect(rowId)
-                .position(20.0f, y)
-                .size(w - 40.0f, rowH - 6.0f)
-                .states(t.colors.hover, t.colors.hover, t.colors.primarySoftBg)
-                .radius(t.sizes.radius)
-                .border(1.0f, isCurrent ? t.colors.primary : t.colors.borderDefault)
-                .onClick([&d, note] {
-                    d.detail.docPath = note.relPath;
-                    d.detail.docTitle = note.title;
-                    d.popups.close(Popup::DocPick);
+        if (n > 0) {
+            // 测量缓存键：行数 + 逐行 relPath 字节数（内容高随两者变）
+            std::string scrollKey =
+                "todo.dialog.docpick.scroll.n" + std::to_string(n);
+            for (const auto& note : d.docPickNotes) {
+                scrollKey += "." + std::to_string(note.relPath.size());
+            }
+            components::scrollView(ui, "todo.dialog.docpick.scroll")
+                .position(0.0f, 76.0f)
+                .size(w, viewportH)
+                .theme(themeTokens)
+                .contentKey(scrollKey)
+                .content([&](eui::Ui& inner, float cw, float) {
+                    for (size_t i = 0; i < n; ++i) {
+                        const ::core::NoteRef& note = d.docPickNotes[i];
+                        inner.stack("todo.dialog.docpick.row." + std::to_string(i))
+                            .size(cw, rowH)
+                            .content([&] {
+                                const std::string rowId =
+                                    "todo.dialog.docpick.item." + std::to_string(i);
+                                const bool isCurrent =
+                                    (note.relPath == d.detail.docPath);
+                                inner.rect(rowId)
+                                    .position(20.0f, 0.0f)
+                                    .size(cw - 40.0f, rowH - 6.0f)
+                                    .states(t.colors.hover, t.colors.hover,
+                                            t.colors.primarySoftBg)
+                                    .radius(t.sizes.radius)
+                                    .border(1.0f, isCurrent ? t.colors.primary
+                                                            : t.colors.borderDefault)
+                                    .onClick([&d, note] {
+                                        d.detail.docPath = note.relPath;
+                                        d.detail.docTitle = note.title;
+                                        d.popups.close(Popup::DocPick);
+                                    })
+                                    .build();
+                                inner.text(rowId + ".title")
+                                    .position(32.0f, 6.0f)
+                                    .size(cw - 300.0f, 20.0f)
+                                    .text(note.title.empty() ? note.relPath
+                                                             : note.title)
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(20.0f)
+                                    .fontWeight(500)
+                                    .color(t.colors.textPrimary)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .build();
+                                inner.text(rowId + ".path")
+                                    .position(32.0f, 26.0f)
+                                    .size(cw - 80.0f, 14.0f)
+                                    .text(note.relPath)
+                                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                                    .lineHeight(14.0f)
+                                    .color(t.colors.textTertiary)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .build();
+                            })
+                            .build();
+                    }
                 })
-                .build();
-            ui.text(rowId + ".title")
-                .position(32.0f, y + 6.0f)
-                .size(w - 300.0f, 20.0f)
-                .text(note.title.empty() ? note.relPath : note.title)
-                .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(20.0f)
-                .fontWeight(500)
-                .color(t.colors.textPrimary)
-                .overflow(core::TextOverflow::Ellipsis)
-                .build();
-            ui.text(rowId + ".path")
-                .position(32.0f, y + 26.0f)
-                .size(w - 80.0f, 14.0f)
-                .text(note.relPath)
-                .fontSize(t.sizes.fontSizeSmall - 2.0f)
-                .lineHeight(14.0f)
-                .color(t.colors.textTertiary)
-                .overflow(core::TextOverflow::Ellipsis)
                 .build();
         }
     });

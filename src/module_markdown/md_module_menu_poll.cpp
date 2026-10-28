@@ -818,8 +818,14 @@ void MarkdownModule::commitRenameFolder() {
         dirRenameError_ = "新名字不能为空";
         return;
     }
-    if (!service_ || dirRenameTargetPath_.empty()) {
+    if (!service_) {
         dirRenameOpen_ = false;
+        return;
+    }
+    if (dirRenameTargetPath_.empty()) {
+        // 根目录不能重命名（服务层同文案兜底）：内嵌红字提示，不静默关弹窗——
+        // 用户动作必须有反馈（与删除路径的 toast「根目录不能删除」口径一致）
+        dirRenameError_ = "根目录不能重命名";
         return;
     }
     if (target.find('/') != std::string::npos) {

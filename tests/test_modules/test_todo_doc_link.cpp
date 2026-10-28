@@ -402,3 +402,97 @@ REGISTER_TEST(todo_doclink_picker_select_and_save,
     mod->onStop();
     return true;
 })
+
+// 防：选择器固定行数截断（A-5）——笔记 >10 篇时第 11 篇起不可选，关联功能
+// 部分失效。列表必须可滚动：全部行都在树中且可点选（旧实现 item.11 不存在）。
+REGISTER_TEST(todo_doclink_picker_scrollable_over_10,
+              "todo_ui: 选择器笔记 >10 篇时第 11 篇起仍可达可选中", {
+    TestEnv env("picker_scroll");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    auto created = env.svc->createTask(cols.value()[0].id, "多笔记任务");
+    DOCTEST_REQUIRE(created.isOk());
+
+    StubNotesSource source;
+    for (int i = 0; i < 12; ++i) {
+        source.notes.push_back({"n/" + std::to_string(i) + ".md",
+                                "文档 " + std::to_string(i)});
+    }
+    ::core::ScopedService<::core::IMarkdownNotesSource> reg(&source);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame frame(mod.get());
+        DOCTEST_CHECK(clickCardAndOpenDetail(frame, "todo.col.0.card.0.bg"));
+
+        const auto* pick = frame.ui.find("todo.dialog.detail.doc.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        DOCTEST_REQUIRE(pick->onClick != nullptr);
+        pick->onClick();
+        frame.refresh();
+
+        // 第 12 篇（下标 11）在旧 10 行截断下不可达 → 修复前红
+        const auto* item11 = frame.ui.find("todo.dialog.docpick.item.11");
+        DOCTEST_REQUIRE(item11 != nullptr);
+        DOCTEST_REQUIRE(item11->onClick != nullptr);
+        item11->onClick();
+        frame.refresh();
+
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.doc.open.bg") != nullptr);
+        const auto* save = frame.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        DOCTEST_REQUIRE(save->onClick != nullptr);
+        save->onClick();
+
+        auto tasks = env.svc->listTasks(cols.value()[0].id);
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_REQUIRE_EQ(tasks.value().size(), 1u);
+        DOCTEST_CHECK_EQ(tasks.value()[0].docPath, std::string("n/11.md"));
+    }
+    mod->onStop();
+    return true;
+})
+
+// 防：Markdown 模块被禁用时详情灰态显示误导性「文档不存在」（A-6）——文档其实
+// 存在只是提供方缺失。应显示「模块未启用」（与选择器入口状态提示同口径），
+// 打开按钮同样禁点、关联不自动解除。
+REGISTER_TEST(todo_doclink_detail_source_missing_label,
+              "todo_ui: 提供方缺失（Markdown 模块禁用）灰态文案「模块未启用」", {
+    TestEnv env("source_missing");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    auto created = env.svc->createTask(cols.value()[0].id, "模块禁用关联");
+    DOCTEST_REQUIRE(created.isOk());
+    {
+        module::todo::Task t = created.value();
+        t.docPath = "notes/存在.md";
+        DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
+    }
+
+    // 不注册 IMarkdownNotesSource（等价 Markdown 模块被禁用）
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame frame(mod.get());
+        DOCTEST_CHECK(clickCardAndOpenDetail(frame, "todo.col.0.card.0.bg"));
+
+        const auto* missing = frame.ui.find("todo.dialog.detail.doc.missing");
+        DOCTEST_REQUIRE(missing != nullptr);
+        DOCTEST_CHECK_EQ(missing->text, std::string("模块未启用"));
+        const auto* open = frame.ui.find("todo.dialog.detail.doc.open.bg");
+        DOCTEST_REQUIRE(open != nullptr);
+        DOCTEST_CHECK(open->onClick == nullptr);  // 灰态禁点
+
+        // 关联仍在库里（灰态不自动解除）
+        auto tasks = env.svc->listTasks(cols.value()[0].id);
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_CHECK_EQ(tasks.value()[0].docPath, std::string("notes/存在.md"));
+    }
+    mod->onStop();
+    return true;
+})

@@ -151,7 +151,8 @@ REGISTER_TEST(github_sync_card_min_window_no_scroll,
 
     // ② 最坏行序（五条信息行全显 + 空闲态折叠链接在场）内容底 + 下边距 16
     // 不越卡——与 test_github_sync_card.cpp 的 worst_case 用例同口径，本处
-    // 卡宽取最小窗 1000（卡 728）钉「最小窗」档。
+    // 卡宽取最小窗真实卡宽 936 = 窗口 1000 − 双侧内边距 32×2（settings_module
+    // contentW 同式实算）钉「最小窗」档。
     CardFixture fx;
     fx.in.githubSyncRepoPublic = true;
     fx.in.githubSyncBranchHint = "分支 main 不存在，已按仓库默认分支自动创建";
@@ -160,7 +161,7 @@ REGISTER_TEST(github_sync_card_min_window_no_scroll,
     fx.in.githubSyncDeleteSkipHint =
         "有 1 篇本地仍在但读取失败的笔记，已跳过远端删除（下轮重试）";
     eui::Ui ui;
-    fx.draw(ui, 1000.0f);
+    fx.draw(ui, 936.0f);
     ui.layout(1000.0f, 640.0f);
     const auto* card = ui.find(kCardId);
     const auto* last = ui.find(std::string(kCardId) + ".deleteskip");
