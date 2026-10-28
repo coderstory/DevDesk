@@ -10,6 +10,9 @@
 //   8) 任务分页与总数 —— 防「一次读全表再内存切片 / 分页越界返脏数据 / 总数口径漂移」
 //   9) createTaskWithEnvs 一次落库任务+N环境+每环境M服务 —— 防「原子接口漏写环境/服务、快照字段丢失」
 //  10) createTaskWithEnvs 中途失败整体回滚 —— 防「残留 Draft 死单、残留死单挡住同日重试」
+//  11) transaction fn 抛异常时深度守卫回退 + 悬挂 BEGIN 回滚 —— 防「后续事务退化 autocommit / 悬挂事务吞写」
+//  12) listTaskStepsByTask 按任务归集两任务步骤互不串 —— 防「JOIN 漏 env 级联、别任务步骤漏进来、分发顺序不稳」
+//  13) 从未置位过的 kind 撤回不插幻影行 —— 防「B-07 幻影行回归（done_at=0 补插行）」
 #include "doctest.h"
 #include "test_support.h"
 
@@ -18,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -764,5 +768,115 @@ REGISTER_TEST(release_store_create_task_with_envs_rollback,
     auto retrySvcs = store.listTaskServices(retryEnvs.value()[0].id);
     DOCTEST_REQUIRE(retrySvcs.isOk());
     DOCTEST_REQUIRE_EQ(retrySvcs.value().size(), 1u);
+    return true;
+})
+
+// 防：transaction 的 fn 抛异常时 txDepth 不回退（该线程后续所有「事务」静默退化成
+// 逐条 autocommit，createTaskWithEnvs 的原子性承诺落空）+ 最外层悬挂 BEGIN 吞掉连接
+// 后续所有写。契约：fn 正常不抛（仓库全链路 Result<T> 返回），抛是防御兜底路径。
+REGISTER_TEST(release_store_transaction_exception_guard_rolls_back,
+              "release_store: transaction fn 抛异常 → 部分写入回滚、深度回退，"
+              "后续事务照常真原子提交", {
+    test_support::TestDb tdb("releasestore", "txguard");
+    rel::ReleaseStore store(tdb.handle());
+    auto& db = tdb.handle();
+
+    // 事务内先写一行再抛：异常逃逸后这次的部分写入必须被 ROLLBACK 掉
+    bool threw = false;
+    try {
+        db.transaction([&]() -> core::Result<void> {
+            auto ins = db.exec(
+                "INSERT INTO release_task (plan_date, status) "
+                "VALUES ('2026-11-26', 'draft')");
+            if (ins.isFail()) return ins;
+            throw std::runtime_error("injected fn exception");
+        });
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    DOCTEST_CHECK(threw);  // 异常确实从 transaction 逃逸（走守卫路径）
+    auto total = store.countTasks();
+    DOCTEST_REQUIRE(total.isOk());
+    DOCTEST_CHECK_EQ(total.value(), 0);  // 防：部分写入残留（悬挂 BEGIN 未回滚）
+
+    // 守卫回退深度后：后续事务重新走最外层 BEGIN/COMMIT，真原子（不再退化成 autocommit）
+    DOCTEST_REQUIRE(db.transaction([&]() -> core::Result<void> {
+        auto ins = db.exec(
+            "INSERT INTO release_task (plan_date, status) "
+            "VALUES ('2026-11-26', 'draft')");
+        return ins;
+    }).isOk());
+    total = store.countTasks();
+    DOCTEST_REQUIRE(total.isOk());
+    DOCTEST_CHECK_EQ(total.value(), 1);  // 防：深度未回退 → 新事务不 BEGIN、写不提交
+    return true;
+})
+
+// 防：listTaskStepsByTask 的 JOIN 归集漏 env 级联 / 条件写错，导致别的任务的步骤
+// 漏进来（提醒引擎按任务维度一次装载，串任务 = 错发提醒），或 ORDER BY 丢失致分发顺序不稳。
+REGISTER_TEST(release_store_list_steps_by_task_scoped,
+              "release_store: listTaskStepsByTask 按 taskId 归集两任务步骤互不串、"
+              "归属 taskServiceId 正确、按 step.id 升序", {
+    test_support::TestDb tdb("releasestore", "stepsbytask");
+    rel::ReleaseStore store(tdb.handle());
+
+    const auto a = seedTaskService(store, "2026-11-23");
+    DOCTEST_REQUIRE(a.serviceId > 0);
+    const auto b = seedTaskService(store, "2026-11-24");
+    DOCTEST_REQUIRE(b.serviceId > 0);
+    DOCTEST_REQUIRE(a.taskId != b.taskId);
+
+    DOCTEST_REQUIRE(store.setStepDone(a.serviceId, rel::StepKind::Deploy, 1700000000).isOk());
+    DOCTEST_REQUIRE(store.setStepDone(a.serviceId, rel::StepKind::Verify, 1700000100).isOk());
+    DOCTEST_REQUIRE(store.setStepDone(b.serviceId, rel::StepKind::MergeBranch, 1700000200).isOk());
+
+    auto stepsA = store.listTaskStepsByTask(a.taskId);
+    DOCTEST_REQUIRE(stepsA.isOk());
+    DOCTEST_REQUIRE_EQ(stepsA.value().size(), 2u);  // 防：漏自己任务步骤
+    DOCTEST_CHECK(stepsA.value()[0].kind == rel::StepKind::Deploy);   // 分发顺序：step.id 升序
+    DOCTEST_CHECK(stepsA.value()[1].kind == rel::StepKind::Verify);
+    for (const auto& s : stepsA.value()) {
+        DOCTEST_CHECK_EQ(s.taskServiceId, a.serviceId);  // 防：别任务步骤漏进来
+    }
+
+    auto stepsB = store.listTaskStepsByTask(b.taskId);
+    DOCTEST_REQUIRE(stepsB.isOk());
+    DOCTEST_REQUIRE_EQ(stepsB.value().size(), 1u);
+    DOCTEST_CHECK_EQ(stepsB.value()[0].taskServiceId, b.serviceId);
+    DOCTEST_CHECK(stepsB.value()[0].kind == rel::StepKind::MergeBranch);
+
+    // 不存在的任务：空结果而非报错/全表
+    auto none = store.listTaskStepsByTask(999999);
+    DOCTEST_REQUIRE(none.isOk());
+    DOCTEST_CHECK(none.value().empty());
+    return true;
+})
+
+// 防：B-07 幻影行回归——撤回（doneAt=0）从未置位过的 kind 时补插出 done_at=0 的
+// 幻影行，污染「缺行按未完成计」的口径与唯一索引。
+REGISTER_TEST(release_store_revoke_never_set_kind_no_phantom_row,
+              "release_store: setStepDone(kind, 0) 从未置位过的 kind 返回成功且不插幻影行", {
+    test_support::TestDb tdb("releasestore", "phant");
+    rel::ReleaseStore store(tdb.handle());
+
+    const auto ids = seedTaskService(store, "2026-11-25");
+    DOCTEST_REQUIRE(ids.serviceId > 0);
+
+    auto before = store.listTaskSteps(ids.serviceId);
+    DOCTEST_REQUIRE(before.isOk());
+    DOCTEST_CHECK(before.value().empty());
+
+    // 直接撤回一个从未置位过的 kind：成功（no-op）且表行数不变
+    DOCTEST_REQUIRE(store.setStepDone(ids.serviceId, rel::StepKind::Verify, 0).isOk());
+    auto after = store.listTaskSteps(ids.serviceId);
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_CHECK(after.value().empty());  // 防：幻影行（done_at=0）被插进来
+
+    // 对照：非零 doneAt 才真正置位（守卫不是把 INSERT 整条废掉）
+    DOCTEST_REQUIRE(store.setStepDone(ids.serviceId, rel::StepKind::Verify, 1700000000).isOk());
+    after = store.listTaskSteps(ids.serviceId);
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_REQUIRE_EQ(after.value().size(), 1u);
+    DOCTEST_CHECK_EQ(after.value()[0].doneAt, 1700000000);
     return true;
 })

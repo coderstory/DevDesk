@@ -8,6 +8,7 @@
 #include "core/ticker.h"
 
 #include <cstdint>
+#include <stdexcept>
 
 namespace {
 
@@ -247,5 +248,38 @@ REGISTER_TEST(ticker_first_interval_expire_combined,
     DOCTEST_CHECK_FALSE(core::ticker::hasSubscribers());
     core::ticker::pump(140);
     DOCTEST_CHECK_EQ(rec.calls, 3);
+    return true;
+})
+
+// 防：单个订阅回调抛异常把整轮 pump 拖垮（异常漏出 pump，同轮后续订阅全部漏触发，
+// 主循环半死），以及异常被吞后抛异常的订阅破坏后续轮次的遍历。
+REGISTER_TEST(ticker_throwing_callback_does_not_kill_pump,
+              "ticker: 回调 A 抛异常被吞并点名，同一轮里回调 B 照常触发，后续轮次不受影响", {
+    TickerResetGuard guard;
+    core::ticker::resetForTest();
+    Recorder survivor;
+    core::ticker::subscribe(
+        {.name = "probe.thrower",
+         .fn = [](core::ticker::Now, void*) { throw std::runtime_error("boom"); },
+         .user = nullptr,
+         .firstAt = 0,
+         .intervalSec = 0,
+         .expireAt = 0});
+    core::ticker::subscribe(
+        {.name = "probe.survivor",
+         .fn = [](core::ticker::Now now, void* user) {
+             record(*static_cast<Recorder*>(user), now, user);
+         },
+         .user = &survivor,
+         .firstAt = 0,
+         .intervalSec = 0,
+         .expireAt = 0});
+
+    core::ticker::pump(100);  // A 抛（被 pump 吞并）、B 必须照常收到
+    DOCTEST_CHECK_EQ(survivor.calls, 1);
+    DOCTEST_CHECK_EQ(survivor.lastNow, static_cast<core::ticker::Now>(100));
+
+    core::ticker::pump(101);  // 抛异常的订阅仍留在表里，不破坏后续轮次
+    DOCTEST_CHECK_EQ(survivor.calls, 2);
     return true;
 })

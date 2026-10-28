@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <exception>
 #include <sqlite3.h>
 #include <utility>
 
@@ -383,8 +384,27 @@ Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
         }
     }
     ++txDepth;
+    // RAII 守卫（防御兜底）：仓库约定 fn 不抛异常（全链路 Result<T> 返回），但若真抛——
+    // ① 析构必回退 txDepth，否则该线程后续所有「事务」都静默退化成逐条 autocommit
+    //    （createTaskWithEnvs 的原子性承诺建立在这个计数上）；
+    // ② 最外层（进入前 depth==0）由本函数发出的 BEGIN 尚未被 COMMIT/ROLLBACK 收尾，
+    //    补发 ROLLBACK 让连接回干净态，否则悬挂事务会吞掉该连接后续所有写。
+    // 正常路径（fn 返回 Result、不抛）析构只回退深度，与原「++txDepth/fn()/--txDepth」
+    // 行为逐字节等价。
+    struct TxDepthGuard {
+        int* depth;
+        sqlite3* handle;
+        bool outermost;
+        ~TxDepthGuard() {
+            --*depth;
+            if (outermost && std::uncaught_exceptions() > 0) {
+                char* err = nullptr;
+                sqlite3_exec(handle, "ROLLBACK", nullptr, nullptr, &err);
+                if (err) sqlite3_free(err);
+            }
+        }
+    } depthGuard{&txDepth, handle_, outermost};
     auto result = fn();
-    --txDepth;
     if (!outermost) {
         // 内层不 COMMIT/ROLLBACK：失败外传，外层 isFail() 即整批 ROLLBACK，原子性不丢
         return result;
