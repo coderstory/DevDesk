@@ -360,13 +360,13 @@ REGISTER_TEST(wallpaper_settings_card_toggle_persists,
     return true;
 })
 
-// 三档几何（直绘插拔卡，壁纸第 5 格；平台门控在格内——不支持平台整格不建，
+// 三档几何（直绘插拔卡，壁纸第 6 格；平台门控在格内——不支持平台整格不建，
 // 见 wallpaper_settings_card_visible）：格随常规格机制（name 18/rowdesc 16/开关
-// 44×24 行内 +6），末行落单须整体包在卡高内、行底留边 ≥16、130% 档不裁切；
+// 44×24 行内 +6），末行（右列，记忆格同行）须整体包在卡高内、行底留边 ≥16、130% 档不裁切；
 // 点 track 回调带对模块 id。2026-10-27 用户真机拍板：独立全宽卡废除。
 // 防：卡高没跟 roundFs 派生 → 130% 档开关被裁 / 开关尺寸漂移 / 格错行错列。
 REGISTER_TEST(wallpaper_card_geometry,
-              "wallpaper: 壁纸第 5 格（插拔卡内）85/100/130% 几何——末行首列落单、44×24 开关右贴格、行底留边≥16、回调带 id", {
+              "wallpaper: 壁纸第 6 格（插拔卡内）85/100/130% 几何——末行右列、44×24 开关右贴格、行底留边≥16、回调带 id", {
     namespace ms = module::settings;
     if (!::platform::wallpaper::supported()) {
         return true;   // 不支持平台无第 5 格（可见性用例已断言整格不建）
@@ -416,12 +416,16 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(track != nullptr);
 
-        // 末行落单（第 3 行首列）：格 y = 68（字面锚）+ 2×roundFs(56)，x = 28
+        // 末行右列（第 3 行 col 1；格序不变量：kToggleable 表序 + 壁纸恒末格）：
+        // 格 y = 68（字面锚）+ 2×roundFs(56)，x = 28 + cell2X
         //（与常规格同源：rowY = 68.0f + row×rowPitch，锚不随字号缩放）
         DOCTEST_CHECK(std::fabs(
             name->frame.y -
             (68.0f + 2.0f * ms::roundFs(56.0f))) < 0.5f);
-        DOCTEST_CHECK(std::fabs(name->frame.x - 28.0f) < 0.5f);
+        float cellW = 0.0f;
+        float cell2X = 0.0f;
+        ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
+        DOCTEST_CHECK(std::fabs(name->frame.x - (28.0f + cell2X)) < 0.5f);
 
         // 格三行都包在卡高内（0.5 容差）
         DOCTEST_CHECK(name->frame.y + name->frame.height <=
@@ -434,13 +438,11 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_CHECK(track->frame.y + track->frame.height <=
                       card->frame.y + card->frame.height -
                           ms::roundFs(16.0f) + 0.5f);
-        // 44×24 字面值 + 右贴格右缘（cellW = columnX(w−56, 16) 单一来源）
-        float cellW = 0.0f;
-        ui_kit::columnX(w - 56.0f, 16.0f, &cellW, nullptr);
+        // 44×24 字面值 + 右贴格右缘（cellW/cell2X = columnX(w−56, 16) 单一来源）
         DOCTEST_CHECK_EQ(track->frame.width, 44.0f);
         DOCTEST_CHECK_EQ(track->frame.height, 24.0f);
         DOCTEST_CHECK(std::fabs(track->frame.x -
-                                (28.0f + cellW - 44.0f)) < 0.5f);
+                                (28.0f + cell2X + cellW - 44.0f)) < 0.5f);
         // 开关行内偏移 +6：track y = 格 y + 6
         DOCTEST_CHECK(std::fabs(track->frame.y - name->frame.y - 6.0f) <
                       0.5f);
