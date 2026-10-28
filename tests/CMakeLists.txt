@@ -127,6 +127,8 @@ add_executable(devdesk_tests
     test_modules/test_mcp_session_store.cpp
     # 定时调度子系统 S3 存储层：迁移幂等/唯一键守恒/CRUD 往返/软删隔离
     test_modules/test_schedule_store.cpp
+    # 定时调度子系统 S4 调度引擎：到期触发/错过三策略/回拨不重放/串行/队列满/归档/编辑重算/投递重试
+    test_modules/test_schedule_engine.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp

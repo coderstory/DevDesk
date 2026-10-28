@@ -1,5 +1,7 @@
 add_library(devdesk_module_schedule STATIC
     schedule_store.cpp
+    schedule_engine.cpp
+    action_runner.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_schedule)
