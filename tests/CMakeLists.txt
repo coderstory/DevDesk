@@ -72,6 +72,8 @@ add_executable(devdesk_tests
     test_modules/test_net_fetch_tool.cpp
     test_modules/test_message_blocks.cpp
     test_modules/test_memory_engine.cpp
+    # 脱敏闸（S3-A）：红队夹具直读仓库数据集，DEVDESK_SOURCE_DIR 供定位
+    test_modules/test_memory_sanitize.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp
@@ -202,6 +204,7 @@ devdesk_apply_warnings(devdesk_tests)
 # 只挂 devdesk_tests（probes 无版本断言）；不做 PUBLIC 传播，宏不外泄到生产目标。
 target_compile_definitions(devdesk_tests PRIVATE
     DEVDESK_VERSION="${PROJECT_VERSION}"
+    DEVDESK_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_include_directories(devdesk_tests PRIVATE
