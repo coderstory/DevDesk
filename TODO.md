@@ -2,7 +2,7 @@
 
 > ⚠ **本文整篇为历史快照，不再维护**——里面的"状态"与"分支"描述多数已过期。
 > **当前状态以 `CLAUDE.md` 的「🚦 当前状态」段为准**（那段带日期与出处）。权威待办见 `docs/superpowers/plans/2026-10-21-UAT62-整改清单.md` 与 `2026-10-23-UAT62-收敛执行计划.md`。
-> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目。
+> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目；**以及文末「2026-10-28 会话收尾新增待办」段**（壁纸线收尾遗留，全部现行有效）。
 > 2026-10-03 订正：§4 probes / §9 EUI-NEO / §「macOS 构建环境」/ §「分支-合并状态」四处已按当时事实改写（原描述均已失效）。
 
 > 原始日期：2026-09-28 会话截止
@@ -136,3 +136,24 @@
 - 工作区干净（`git status` 只剩 `?? Testing/` 之类非仓库产物）。
 - ~~未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪~~ → ✅ **已解决**（13 个探针文件全在版本控制里，见 §4）。
 - EUI-NEO：**永不 push 到 `origin`（2026-09-28 用户决策）**，origin/main 停在 `v0.6.0-4-g782c569`；本地 main 领先 origin **97** 个提交（2026-10-03 实测）为长期状态，**`fork` 已齐平（`cbd0b48`）**，不再有「待 push」事项（见 §9）。
+---
+
+## 2026-10-28 会话收尾新增待办（全部现行有效）
+
+> 壁纸模块已全线交付（dev `4ad41e52`，verifier 8/8，用户确认；详见 `docs/superpowers/specs/2026-10-28-wallpaper-requirements.md` / `-technical-design.md`）。以下是收尾时未干完的事。
+
+### A. 退出 terminate 尾巴修复——代码已写完，未提交未验证 ⚠️ 工作树里有活
+- **问题**：退出时 stdout 尾巴 `terminate called without an active exception`、退出码疑似非 0（进程退净无残留，非阻断）。根因已定位：**单实例锁唤起监听线程**（`src/platform/single_instance_win.cpp` 的全局 `g_listenerThread`，原注释"退出时 OS 回收"——joinable 线程活到静态析构即 std::terminate）。与壁纸无关，属既有债。
+- **修复代码已完成**：`wt-dev-gate` 工作树（dev @ c508a662 之上）的 `src/platform/single_instance_win.cpp`——`shutdownListener()`（置停旗标+join）经 `std::atexit` 在线程启动点注册；增量构建已绿（BUILD=0）。**改动未提交**——清理 wt-dev-gate 前必须先处理本条。
+- **剩余**：验证（启动→**托盘退出**路径，X 关闭是隐藏到托盘不是退出；判据 = 退出码 0 + stdout 无 terminate 行，建议双次确保确定性）→ 绿后原子提交 `fix(exit): 单实例监听线程 atexit join 收尾——消 terminate 尾巴` → 推 dev。
+
+### B. agent_e2e_probe 环境红（非代码问题）
+- 探针门禁 18/19 的唯一红：本机生产库无激活 Claude Profile（探针设计"前置缺失=FAIL 防假绿"）。**修法**：用户在 DevDesk 里激活任一 Claude Profile 后重跑 `ctest -L probe` 即 19/19。不碰代码。
+
+### C. 首页顶部 5 张统计卡片偏大（用户 UAT 反馈，未定案）
+- 用户 2026-10-27 反馈"首页顶部5个卡片太大了"，但同屏自述"窗体都没渲染完毕"——**待用户在新版上确认仍要改后再动**，勿抢跑。改动入口：`src/module_home/home_module.cpp` 统计卡区 + `tests/test_modules/test_home.cpp` H18 弹性双档断言。
+
+### D. 壁纸 deferred（非本轮欠账，按需求书 §deferred）
+- **四铺法**：图片壁纸当前走 mpv 拉伸显示；WIC 平铺为后续增强（需求书已列）。
+- 永久不做：多显示器/转码降帧/维护删除当前壁纸/玻璃半透/独立应用（handoff §1.3）。
+- macOS 平台层：规格 P8，代码未写，勿宣称可用。
