@@ -22,6 +22,11 @@ public:
     void onStart() override;
     void onStop() override;
 
+    // 托盘桥装配出口（main 装配段消费）：私有服务的只读转发。服务命令/快照均
+    // 线程安全（见 wallpaper_service.h 线程模型），托盘回调线程调用合法；不得
+    // 挪作页面装配/测试之外的用途（测试走 setPlayerForTest 一族缝）。
+    WallpaperService& service() { return service_; }
+
 private:
     WallpaperService service_;
     UiState uiState_;

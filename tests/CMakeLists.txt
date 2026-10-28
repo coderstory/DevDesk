@@ -5,6 +5,8 @@ add_executable(devdesk_tests
     # app::toggle 桥实现缝：settings_module.cpp 引用其符号；probe 同样需要
     #（probe 只链 module_* 库，app_assembly.cpp 不在 probe 链接集）
     ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+    # app::tray 壁纸托盘桥实现缝：test_wallpaper_tray.cpp 引用其符号
+    ${CMAKE_SOURCE_DIR}/src/wallpaper_tray_bridge.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -127,6 +129,8 @@ add_executable(devdesk_tests
     test_modules/test_wallpaper_platform.cpp
     # P5 播放/片库页面 UI：来源/Tab/状态卡/折叠/空态/片库卡/1000×640 无滚动条
     test_modules/test_wallpaper_ui.cpp
+    # P5 尾托盘壁纸组：spec 形状/打开页映射/托盘桥/让路态暂停语义
+    test_modules/test_wallpaper_tray.cpp
     test_modules/test_splash_contract.cpp
 )
 

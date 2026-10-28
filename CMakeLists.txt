@@ -251,7 +251,7 @@ add_subdirectory(tests)
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
 # 两者单测复用同一份实现）
 add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
-    src/module_toggle_bridge.cpp)
+    src/module_toggle_bridge.cpp src/wallpaper_tray_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
 # 排除 EUI-NEO 的旧图标 RC（IDI_APP_ICON）：DevDesk 已在下方用 devdesk.rc.in
 # 注入自己的 "A_DEVDESK_ICON" 命名资源。两份 RC 共用 RT_ICON ID 1-6 会导致

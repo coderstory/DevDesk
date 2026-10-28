@@ -207,6 +207,7 @@ std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction act
         case Action::NavigateMarkdown: return ::core::PageId::Markdown;
         case Action::NavigateTodo: return ::core::PageId::Todo;
         case Action::NavigateClaude: return ::core::PageId::ClaudeProxy;
+        case Action::NavigateWallpaper: return ::core::PageId::Wallpaper;
         default: return std::nullopt;
     }
 }

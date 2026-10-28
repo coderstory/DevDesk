@@ -21,11 +21,13 @@
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
 #include "module_toggle_bridge.h"
+#include "module_wallpaper/wallpaper_module.h"
 #include "platform/message_box.h"
 #include "platform/tray_icon.h"
 #include "github_sync_exit_hook.h"
 #include "platform/single_instance.h"
 #include "settings_config.h"
+#include "wallpaper_tray_bridge.h"
 
 #include <components/styledmenu.h>
 
@@ -300,6 +302,43 @@ std::string activeWindowEffectTier() {
         app::toggle::setClaudeAssemblyHandler(&ensureClaudeServiceAssembledImpl);
         // M-3：frosted 降级门控的 active 档回查缝（surfaceAlpha 读，桥见上）
         core::window_effect_state::setActiveTierProvider(&activeWindowEffectTier);
+        // 托盘壁纸桥：handler 捕获-less 直引本函数静态 wallpaper（moduleForPage 同款
+        // 惯用法）；实例为 nullptr（平台能力不支持）时查询报 absent、命令丢弃。
+        // 命令落到已 stop 的服务由服务自身幂等守卫吞掉（service 契约）。
+        app::tray::setWallpaperTrayBridge(
+            +[]() -> app::tray::WallpaperTrayState {
+                // service() 是非 const 成员（服务命令语义），这里只读快照也不可用
+                // const 指针访问（否则 this 限定符丢弃报错）
+                auto* wallpaperModule =
+                    static_cast<::module::wallpaper::WallpaperModule*>(
+                        wallpaper.get());
+                if (wallpaperModule == nullptr) {
+                    return {false, false};
+                }
+                const auto snapshot = wallpaperModule->service().snapshot();
+                return {true, snapshot.manualPaused};
+            },
+            +[](app::tray::WallpaperTrayCommand command) {
+                auto* wallpaperModule =
+                    static_cast<::module::wallpaper::WallpaperModule*>(
+                        wallpaper.get());
+                if (wallpaperModule == nullptr) {
+                    return;
+                }
+                ::module::wallpaper::WallpaperService& service =
+                    wallpaperModule->service();
+                switch (command) {
+                    case app::tray::WallpaperTrayCommand::TogglePause:
+                        service.toggleManualPause();
+                        break;
+                    case app::tray::WallpaperTrayCommand::Next:
+                        service.next();
+                        break;
+                    case app::tray::WallpaperTrayCommand::Stop:
+                        service.stop();
+                        break;
+                }
+            });
         initialized = true;
     }
     return &router;
@@ -457,6 +496,21 @@ void ensureClaudeServiceAssembledImpl(bool autoStart) {
     }
 }
 
+// 托盘壁纸组开关 + 文案口径：组出现 = 设置门控开 且 桥报告模块实例已装配
+//（工厂能力失败 → nullptr → absent）；暂停字样由桥的 manualPaused 驱动
+//（契约见 trayMenuSpec）。原生降级菜单在 dslAppConfig 静态初始化期一次性构建
+//（早于装配，桥未在位）→ 降级路径恒无壁纸组；styled 主路径每次右键现查。
+std::vector<::core::tray::TrayMenuSpecItem> currentTraySpec() {
+    const app::tray::WallpaperTrayState wallpaperTray =
+        app::tray::wallpaperTrayState();
+    const bool wallpaperGroupOn =
+        wallpaperTray.present &&
+        module::settings::moduleEnabled(
+            gatingConfigSnapshot(), module::settings::kModuleIdWallpaper);
+    return ::core::tray::trayMenuSpec(wallpaperGroupOn,
+                                      wallpaperTray.manualPaused);
+}
+
 // 托盘菜单唯一数据源 trayMenuSpec；动作→页面映射在 app_assembly（pageForTrayAction）
 void executeTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;
@@ -466,6 +520,18 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
     switch (action) {
         case Action::ShowMainWindow:
             app::requestShow();
+            break;
+        case Action::WallpaperTogglePause:
+            app::tray::dispatchWallpaperTrayCommand(
+                app::tray::WallpaperTrayCommand::TogglePause);
+            break;
+        case Action::WallpaperNext:
+            app::tray::dispatchWallpaperTrayCommand(
+                app::tray::WallpaperTrayCommand::Next);
+            break;
+        case Action::WallpaperStop:
+            app::tray::dispatchWallpaperTrayCommand(
+                app::tray::WallpaperTrayCommand::Stop);
             break;
         case Action::Exit:
             app::requestExit();
@@ -479,7 +545,7 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
 // 原生降级菜单（styled 失败时用；数据全来自 spec，无内置项）
 std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
     std::vector<core::platform::TrayMenuItem> items;
-    for (const auto& spec : ::core::tray::trayMenuSpec()) {
+    for (const auto& spec : currentTraySpec()) {
         core::platform::TrayMenuItem item;
         item.text = spec.text;
         if (!item.isSeparator()) {
@@ -493,7 +559,7 @@ std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
 
 // styled 托盘菜单；返回 false = 构建失败 → 原生降级；spec 按值捕获作回调映射
 bool showTrayStyledMenu(int x, int y) {
-    const auto spec = ::core::tray::trayMenuSpec();
+    const auto spec = currentTraySpec();
     std::vector<components::StyledMenuItem> items;
     for (const auto& s : spec) {
         components::StyledMenuItem item;
