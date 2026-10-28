@@ -16,6 +16,7 @@ enum class PageId {
     ClaudeProxy,
     Agent,       // 位于 Settings 之前 = 侧边栏顺序
     Wallpaper,
+    Mcp,         // 位于 Wallpaper 之后、Settings 之前 = 侧边栏顺序（work/system 分组界）
     Settings,
     About,
 };
@@ -28,6 +29,7 @@ inline const char* pageIdToString(PageId id) {
         case PageId::ClaudeProxy: return "ClaudeProxy";
         case PageId::Agent: return "Agent";
         case PageId::Wallpaper: return "Wallpaper";
+        case PageId::Mcp: return "Mcp";
         case PageId::Settings: return "Settings";
         case PageId::About: return "About";
     }

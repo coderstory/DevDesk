@@ -116,9 +116,10 @@ REGISTER_TEST(wallpaper_registry_row,
         ::core::PageId::Home,      ::core::PageId::Markdown,
         ::core::PageId::Todo,      ::core::PageId::ClaudeProxy,
         ::core::PageId::Agent,     ::core::PageId::Wallpaper,
-        ::core::PageId::Settings,  ::core::PageId::About,
+        ::core::PageId::Mcp,       ::core::PageId::Settings,
+        ::core::PageId::About,
     };
-    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(8));
+    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(9));
     for (std::size_t i = 0; i < kRegistrySize; ++i) {
         DOCTEST_CHECK(::app::registry::kModuleRegistry[i].page == kEnumOrder[i]);
     }
@@ -165,7 +166,7 @@ REGISTER_TEST(wallpaper_default_off,
 
 // 防：门控键写错/表序错——启用后页面仍不出现，或出现在错误位置。
 REGISTER_TEST(wallpaper_enabled_gating,
-              "wallpaper: 启用后 moduleEnabled true；all-off 3 条、all-on 8 条且 wallpaper 在 Agent 与 Settings 之间", {
+              "wallpaper: 启用后 moduleEnabled true；all-off 3 条、all-on 9 条且 wallpaper 在 Agent 之后、Mcp 之前", {
     using namespace module::settings;
     constexpr std::size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
@@ -174,14 +175,16 @@ REGISTER_TEST(wallpaper_enabled_gating,
     SettingsConfig allOn;
     allOn.enabledModules = {kModuleIdHome,    kModuleIdMarkdown, kModuleIdTodo,
                             kModuleIdClaudeProxy, kModuleIdAgent,
-                            kModuleIdWallpaper, kModuleIdSettings};
+                            kModuleIdWallpaper, kModuleIdMcp,
+                            kModuleIdSettings};
     DOCTEST_CHECK(moduleEnabled(allOn, kModuleIdWallpaper));
     const auto gated = app::assembly::buildGatedEntries(
         allOn, ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(8));
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(9));
     DOCTEST_CHECK(gated[4].page == ::core::PageId::Agent);
     DOCTEST_CHECK(gated[5].page == ::core::PageId::Wallpaper);
-    DOCTEST_CHECK(gated[6].page == ::core::PageId::Settings);
+    DOCTEST_CHECK(gated[6].page == ::core::PageId::Mcp);
+    DOCTEST_CHECK(gated[7].page == ::core::PageId::Settings);
 
     SettingsConfig allOff;
     allOff.enabledModules.clear();

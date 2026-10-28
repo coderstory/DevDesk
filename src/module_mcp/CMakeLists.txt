@@ -1,7 +1,8 @@
 # src/module_mcp/CMakeLists.txt
-# MCP 服务模块（Streamable HTTP + 可插拔能力接缝）。**模块隔离**：只链接
-# core / platform；不依赖 ui_kit、不依赖任何兄弟 module_*（settings 侧只经
-# app 层桥读状态/发指令，不 include 本模块）。
+# MCP 服务模块（Streamable HTTP + 可插拔能力接缝）+ MCP 菜单页（UI 批）。
+# **模块隔离**：只链接 core / platform（EUI 组件经 devdesk_core 的 PUBLIC
+# eui_neo 边传递，不新增库边）；不依赖 ui_kit 与任何兄弟 module_*（settings 侧
+# 只经 app 层桥读状态/发指令，不 include 本模块）。
 #
 # 编译期信息挂本 target（业务代码零平台宏）：DEVDESK_VERSION / DEVDESK_BUILD_TYPE
 # 来自顶层 project()，平台名走 CMake 注入。
@@ -12,6 +13,7 @@ add_library(devdesk_module_mcp STATIC
     mcp_http_handler.cpp
     mcp_tools_builtin.cpp
     html_to_markdown.cpp
+    mcp_page_module.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_mcp)

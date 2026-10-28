@@ -120,6 +120,8 @@ add_executable(devdesk_tests
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp
     test_modules/test_mcp_fetch_tool.cpp
+    # UI 批：MCP 菜单页（卡片网格/详情弹窗/后台试运行）
+    test_modules/test_mcp_page.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
     test_modules/test_editor_font.cpp
