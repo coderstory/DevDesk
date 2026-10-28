@@ -6,6 +6,7 @@
 #   ISCC          ISCC.exe 路径（最高优先级；装上 Inno Setup 后一般不需要设）
 #   EUI_NEO_DIR   EUI-NEO 目录（worktree 里自动反推主工作树，一般不需要设）
 #   DEVDESK_JOBS  并发编译单元数（默认 3）
+#   MPV_BIN       mpv.exe 源路径（默认 D:/software/mpv/mpv.exe；缺失即失败，不出包）
 #
 # 本脚本只管出安装包，不跑测试、不启动 app；构建 / 测试 / 启动走 build-test-run.sh。
 set -e
@@ -131,6 +132,27 @@ cmake -E copy_directory "$EUI_DIR/assets" "$ASSETS_DIR_POSIX"
 # DevDesk/assets 根文件（托盘图标 / splash 着色器 / 模板），09-30 后才加入，与 pets 同源幂等
 cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 
+# mpv 打包链路（P6）：壁纸播放后端随包分发。运行时解析优先级（mpv_controller.h）：
+# DEVDESK_MPV_PATH → <exeDir>/assets/mpv/mpv.exe → 开发兜底（仅非 Release）——安装版
+# 只能走第二条，故打包期必须把 MPV_BIN 拷到 assets/mpv/mpv.exe。源缺失即失败：
+# 静默产出无 mpv 的包 = 安装版壁纸必坏，比打不了包严重得多。
+MPV_SRC="${MPV_BIN:-D:/software/mpv/mpv.exe}"
+MPV_SRC_RAW="$MPV_SRC"
+if command -v cygpath >/dev/null 2>&1; then
+  # 容忍 Windows 形态（D:\... / D:/...）：统一转 POSIX；POSIX 路径原样透传
+  MPV_SRC="$(cygpath -u "$MPV_SRC" 2>/dev/null || printf '%s' "$MPV_SRC")"
+fi
+if [ ! -f "$MPV_SRC" ]; then
+  echo "❌ 找不到 mpv.exe：$MPV_SRC_RAW" >&2
+  echo "   壁纸模块的播放后端必须随包分发（安装版按 <安装目录>/assets/mpv/mpv.exe 解析）。" >&2
+  echo "   获取：主页 https://mpv.io ；Windows 构建 https://github.com/shinchiro/mpv-winbuild-cmake/releases" >&2
+  echo "   然后显式指定：MPV_BIN=<mpv.exe 路径> bash scripts/package-windows.sh" >&2
+  exit 1
+fi
+mkdir -p "$ASSETS_DIR_POSIX/mpv"
+cp -f "$MPV_SRC" "$ASSETS_DIR_POSIX/mpv/mpv.exe"
+echo "── mpv: $MPV_SRC_RAW → assets/mpv/mpv.exe ──"
+
 # H 批（UAT2 2026-10-20）资产瘦身：上游 copy_directory 是全量拷，DevDesk 运行时实际只用
 # EUI 的两字体（JingNanJunJunTi + Font Awesome，EUI core/render/text.cpp 默认 UI/icon 字体）+
 # icon.png（EUI 默认窗口图标 dsl_app.h iconPathValue，兼托盘兜底）+ icon.ico（devdesk.iss
@@ -182,7 +204,13 @@ if ! cmp -s "$ASSETS_DIR_POSIX/icon.ico" "$PROJECT_DIR/assets/icon.ico"; then
   echo "❌ 断言失败：icon.ico 与仓库 assets/icon.ico 内容不一致（EUI bulk copy 未被覆盖？）" >&2
   exit 1
 fi
-echo "✅ assets 就位（两字体 + icon.png/ico + splash.frag + 托盘图标；零引用资产已排除）"
+# 断言 ⑥（mpv 打包链路）：播放后端必须已在包目录（上面拷贝段的落点复核，防拷贝段
+# 被人挪到瘦身/清理之后被执行序吞掉）。
+if [ ! -f "$ASSETS_DIR_POSIX/mpv/mpv.exe" ]; then
+  echo "❌ 断言失败：$ASSETS_DIR_POSIX/mpv/mpv.exe 缺失（mpv 未拷入打包目录）" >&2
+  exit 1
+fi
+echo "✅ assets 就位（两字体 + icon.png/ico + splash.frag + 托盘图标 + mpv；零引用资产已排除）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
 if command -v cygpath >/dev/null 2>&1; then
