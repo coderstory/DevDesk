@@ -245,3 +245,27 @@
 | F6 | 低 | ✅ `resolveCaPolicy` 改 `exists/is_regular_file` error_code 口径；目录路径提前可读中文报错（用例红→绿） |
 | F7 | 低 | 注释口径处置：`http_client_ca.h` 声明「bundle 路径仅保证 ASCII 可靠，非 ASCII 有 ACP/UTF-8 错配风险、失败形态 fail-closed」；非 ASCII 路径实证用例不做（需真实编码环境，留待需要时立项） |
 | F8/F9 | info | 已读不修（审计自评可不修：类型不符静默按默认与既有钳制惯例一致；探测缓存死防御无害） |
+
+## 11. UI 批（MCP 菜单页；主会话拍板冻结面松绑，spec §15 口径）
+
+**范围**：MCP 成为 Router 页面模块（`PageId::Mcp` 插 Wallpaper 后、Settings 前），新增 `src/module_mcp/mcp_page_module.{h,cpp}`（工具卡片网格 + 详情弹窗 + 试一下后台收割）；`app_registry.h` 登记行；`dispatchModuleToggle` mcp 分支改双面性（先启停服务、不再提前 return，页面注册/注销走既有遍历）；`main.cpp` `moduleForPage` 补实例分支。冻结不变：B1/B2 五文件、`module_settings/**`、`mcp_service_bridge.*`（只读调用）、`../EUI-NEO/**`。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| UI-01 | ✅ | 枚举接线 | `PageId::Mcp` 序 Wallpaper < Mcp < Settings；`pageIdToString(Mcp)=="Mcp"` | `src/core/module_interface.h` |
+| UI-02 | ✅ | 注册表行 | 表 8→9 行，第 7 行 gatingKey=kModuleIdMcp/短名 MCP/图标 U+F1E6/工厂；行↔虚函数双副本一致（既有 getters 用例迭代全表自动锁） | `src/app_registry.h` |
+| UI-03 | ✅ | 页面模块 | 页头+状态行（桥 status 只读）/卡网格（flow 定宽 340+显式 size）/详情弹窗（按钮+Esc+backdrop 三通道关闭）/试一下（execute 后台线程+compose 收割，UI 线程零直调）/空态/亮暗 token | `src/module_mcp/mcp_page_module.h/.cpp`、`src/module_mcp/CMakeLists.txt` |
+| UI-04 | ✅ | 开关双面性 | mcp 开 on=启服务+注册页面；off=停服务+注销页面+回首页（settings 门控承诺兑现） | `src/app_assembly.cpp`、`src/main.cpp` |
+| UI-05 | ✅ | 受影响断言 | 真实表形状断言 8→9（assembly+wallpaper 两处）、all-on 计数、uat62 probe slug static_assert | `tests/test_modules/test_app_assembly.cpp`、`test_wallpaper_module.cpp`、`tests/probes/uat62_page_shots_probe.cpp` |
+| UI-06 | ✅ | 新用例 | mcp_page 组（pageid 序/注册表行/网格/弹窗开关通道/后台收割/失败路径/onStop join/状态行/hover CTA/默认构造全局源）先红后绿 | `tests/test_modules/test_mcp_page.cpp`、`tests/CMakeLists.txt` |
+| UI-G | ✅ | 批次门禁 | 一次增量构建成功 + `--filter mcp` / `--filter app` / `--filter mcp_page` 三子集退出 0 | — |
+
+**批次证据（✅ 已回填）**：
+- 命令原文（worktree `D:/wt-mcp-skeleton`，工具链 PATH 前置同 B1）：构建 `cmake --build build --target devdesk_tests` + 直跑 `build/tests/devdesk_tests.exe --filter <子集>`。
+- **为什么脚本不够用（CLAUDE.md 诊断例外，须写明）**：共享上游 `D:/project/gui/EUI-NEO` 于本批构建窗口内被并行会话改到中间态（`updateAndRender` 加参、调用点 `glfw_app_main.cpp` 未跟上，11:24 起），`bash scripts/build-test-run.sh` 的全量构建在 **DevDesk exe 目标**上必然失败（上游文件，非本轮改动、非本轮可修——EUI-NEO 红线禁碰）。`devdesk_tests` 目标不含该 TU，target 级构建可绕开破损面取得测试证据；脚本无 target 参数，故按 CLAUDE.md 诊断例外直敲 cmake。上游修复合拢后收官（B5-04）须以脚本全量门禁为准。
+- **构建槽互斥记录**：本批窗口内检测到同目录并行构建至少两次（12:14、12:20 前后），曾产生杂交 exe（首启 0xC0000135/行为错乱）；清产物后单写者重建 取证。
+- **红**（骨架态，`--filter mcp_page`）：`FAIL grid != nullptr` / `FAIL ui.find("mcp.empty") == nullptr` / `FAIL backdrop != nullptr` + SEGFAULT（弹窗未实现，后续用例未执行）——网格/弹窗/收割面全未落地，行为断言翻红。
+- **绿**（实现落定，一次链接后三子集直跑）：`--filter mcp_page` `Total: 13 Passed: 13 Failed: 0`；`--filter app` `Total: 47 Passed: 47 Failed: 0`；`--filter mcp` `Total: 147 Passed: 147 Failed: 0`；三者退出码均 0。
+- 过程缺陷（同批修）：①EUI 布局/flow/row 构建链漏 `.build()` 元素不入树（测试揭出，6 处补齐）；②`HorizontalAlign::End` 不存在 → `Right`；③私有方法头文件漏声明 + 缺 `<core/platform/platform.h>`；④hover 用例跨帧复用失旧元素指针（bad_function_call，改为每帧重 find）。
+- 待办移交：DevDesk exe 构建与 probe 编译证词待上游 EUI-NEO 中间态收口后随 B5-04 全量门禁统一补验；uat62_page_shots_probe 的 mcp slug 行已同步，截图取证归后续批次。
+

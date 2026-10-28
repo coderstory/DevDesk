@@ -749,3 +749,11 @@ public:
 1. **通用 Tab 零滚动预算冲突——已裁决（审计修订）**：采用「模块卡标题右侧开关（零高度增量）+ 通用 Tab 配置卡门控」。默认关闭态通用 Tab 零滚动预算逐值保持（0/1/2 条代理警告三档内容高 338/356/372，可用 372）；模块开启后配置卡出现、通用 Tab 出现滚动为**接受项**（不新增零滚动断言，只断言开启态卡存在）。
 2. 设计原文中的「PersistOnCommit」在现有代码中无对应抽象；本 spec 按代理端口行的既有行为（输入草稿 + 回车/应用提交 + Esc 丢弃）落笔。若另有所指，需澄清。
 3. 通用 Tab 卡高不再写死：`mcpCardHeightFor()` 由行几何求和（`mcpPortRowY()` 直接复用 `proxyPortRowY()`，状态行、命令行与下边距派生，100% = 160）；实现期以 `settings_ui_logic.h` 同源常量与 85%/100%/130% 三档几何断言为准，保持「行盒不重叠、下边距 ≥16」。模块开关卡零高度（不新增卡高常量）。
+## 15. UI 批口径（2026-10-28 增补：MCP 菜单页）
+
+本节是后增批次的口径登记，**覆盖前文与之冲突的表述**；未涉及处仍以上文为准。
+
+1. **§12 非目标废止两条**：「侧边栏页面、Router 页面注册」自 UI 批起不再是目标外——MCP 成为 Router 页面模块。
+2. **§11「不动」清单松绑**：`src/app_registry.h`（新增 `PageId::Mcp` 行）与 `src/core/module_interface.h`（`PageId::Mcp` 插 Wallpaper 后、Settings 前）自本批起改为「动，最小面」。`../EUI-NEO/**`、`module_settings/**`、B1/B2 冻结文件（service/protocol/http_handler/session_store/tools_builtin）、`mcp_service_bridge.*`（只读调用）冻结不变。
+3. **接线不变量**：`dispatchModuleToggle` 的 mcp 分支自本批起**不提前返回**——先启停服务，再落入注册表遍历做页面注册/注销（mcp 既有「页面」与「服务」双重身份，缺任一半即破设置页「关闭 = 侧栏入口消失」的门控承诺）；`main.cpp` `moduleForPage` 补 `PageId::Mcp` 分支与静态实例（缺则页面在生产装配永远拿不到实例、被 `registerOne` 静默跳过）。
+4. **页面口径**：页头 + 服务状态行（`app::mcp::status()` 只读，运行中显示 `127.0.0.1:port` / 已停止）；工具卡片网格（`ui.flow`，卡定宽 340——上游坑：flow 子元素必须显式 `size()`）+ 详情弹窗（`components::dialog`，关闭 = 按钮 + Esc + backdrop 三通道，`dialog.h` 的 backdrop `onClick(requestClose)` 已逐行核实）+「试一下」（`IMcpTool::execute` 一律后台线程 + compose 轮询收割，禁 UI 线程直调；结果区弹窗内展示，成功/失败前缀区分）。数据源 = `McpToolRegistry::list()` 快照（模块可注入注册表，生产工厂用全局单例）。空列表 = 页内空态提示；**MCP 关闭态 = 模块门控整页注销**（侧栏入口消失），页内不置灰、不放开关。视觉基准 = 桌面 `mcp-menu-demo.html`：设计 token 对齐、图标改 FA7 码点；demo 的页内开关与关闭置灰**不照抄**；pulse 动画与键盘焦点圈明确不做（后者为 EUI 上游缺口，已拍板砍）。
