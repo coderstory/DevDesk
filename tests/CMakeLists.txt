@@ -135,6 +135,9 @@ add_executable(devdesk_tests
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
+    # 全局 ticker（core 层）：注册/注销、firstAt/interval/expireAt 时间维度、
+    # 回调内自注销、空表空转、user 透传
+    test_modules/test_ticker.cpp
     test_modules/test_wallpaper_module.cpp
     # P2 纯逻辑 + P4 服务骨架：设置/轮换/让路/片库/文案/服务接线
     test_modules/test_wallpaper_core.cpp
