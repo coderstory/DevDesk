@@ -8,10 +8,11 @@
 #include "core/module_interface.h"
 #include "settings_config.h"
 
-// 9 个模块工厂声明（extern "C"）
+// 10 个模块工厂声明（extern "C"）
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
+extern "C" ::core::Module* create_schedule_module();
 extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
 extern "C" ::core::Module* create_about_module();
@@ -36,6 +37,9 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Home,        nullptr,                          "首页",   "\xEF\x80\x95", &create_home_module},      // U+F015 fa-house
     {::core::PageId::Markdown,    module::settings::kModuleIdMarkdown,     "笔记",   "\xEF\x81\x84", &create_markdown_module},  // U+F044 fa-pen-to-square
     {::core::PageId::Todo,        module::settings::kModuleIdTodo,         "待办",   "\xEF\x81\x98", &create_todo_module},      // U+F058 fa-circle-check
+    // 定时调度恒注册（gatingKey==nullptr）：设置页模块开关暂未收录本模块，
+    // 拨开关卡片后续波次补（settings_ui_cards kToggleable + settings_config kModuleIdSchedule）
+    {::core::PageId::Schedule,    nullptr,                          "定时",   "\xEF\x80\x97", &create_schedule_module},   // U+F017 fa-clock
     {::core::PageId::ClaudeProxy, module::settings::kModuleIdClaudeProxy,  "Claude", "\xEF\x80\xA1", &create_claude_module},     // U+F021 fa-arrows-rotate
     {::core::PageId::Agent,       module::settings::kModuleIdAgent,        "智能体", "\xEF\x95\x84", &create_agent_module},      // U+F544 fa-robot
     {::core::PageId::Wallpaper,   module::settings::kModuleIdWallpaper,    "壁纸",   "\xEF\x80\xBE", &create_wallpaper_module},  // U+F03E fa-image

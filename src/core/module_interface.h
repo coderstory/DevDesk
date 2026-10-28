@@ -13,6 +13,7 @@ enum class PageId {
     Home,
     Markdown,
     Todo,
+    Schedule,    // 位于 Todo 之后 = 侧边栏顺序（定时调度）
     ClaudeProxy,
     Agent,       // 位于 Settings 之前 = 侧边栏顺序
     Wallpaper,
@@ -26,6 +27,7 @@ inline const char* pageIdToString(PageId id) {
         case PageId::Home: return "Home";
         case PageId::Markdown: return "Markdown";
         case PageId::Todo: return "Todo";
+        case PageId::Schedule: return "Schedule";
         case PageId::ClaudeProxy: return "ClaudeProxy";
         case PageId::Agent: return "Agent";
         case PageId::Wallpaper: return "Wallpaper";
