@@ -125,6 +125,8 @@ add_executable(devdesk_tests
     test_modules/test_module_gating.cpp
     test_modules/test_menu_beautify.cpp
     test_modules/test_mcp_session_store.cpp
+    # 定时调度子系统 S3 存储层：迁移幂等/唯一键守恒/CRUD 往返/软删隔离
+    test_modules/test_schedule_store.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp
@@ -257,6 +259,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_about
     devdesk_module_wallpaper
     devdesk_module_mcp
+    devdesk_module_schedule
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到

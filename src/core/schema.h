@@ -228,6 +228,84 @@ inline constexpr const char* kSql = R"(
         settings_json TEXT NOT NULL DEFAULT ''
     );
 
+    -- 定时调度子系统（S3 存储层）。系统定时**不落库**：只读派生由 ScheduleProvider
+    -- 返回视图，其运行记录以 origin='system:<module>' 写入 schedule_run，rule_id
+    -- 不建 FK（系统项没有规则行）。
+    --
+    -- schedule_rule 用户规则：kind ∈ once/interval/calendar/cron/event/resident；
+    -- spec_json/action_json/channel_ids（JSON 数组文本）按 §5 逐列。
+    -- next_fire_at 是「本地墙钟推进后」的 Unix 秒缓存：换时区/改规则时重算（§4.8）。
+    -- deleted_at 软删（历史保留 90 天，查询侧过滤）；archived_at 一次性规则执行后归档（§4.4）。
+    CREATE TABLE IF NOT EXISTS schedule_rule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        paused_until INTEGER,
+        kind TEXT NOT NULL,
+        spec_json TEXT NOT NULL DEFAULT '',
+        tz_id TEXT NOT NULL DEFAULT '',
+        action_kind TEXT NOT NULL DEFAULT 'remind',
+        action_json TEXT NOT NULL DEFAULT '',
+        channel_ids TEXT NOT NULL DEFAULT '[]',
+        missed_policy TEXT NOT NULL DEFAULT 'once',
+        conflict_policy TEXT NOT NULL DEFAULT 'priority',
+        max_runs INTEGER NOT NULL DEFAULT 0,
+        next_fire_at INTEGER,
+        last_fire_at INTEGER,
+        last_eval_at INTEGER,
+        run_count INTEGER NOT NULL DEFAULT 0,
+        archived_at INTEGER,
+        deleted_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+
+    -- schedule_run：每次触发一行（含被跳过/抑制/错过）。唯一索引
+    -- (origin, origin_key, planned_at) 保证「同规则同计划时刻只产生一条 run」——
+    -- 重启补跑由它硬挡（§4.6/验收 6）。rule_id 可空且无 FK（系统项无规则行）。
+    CREATE TABLE IF NOT EXISTS schedule_run (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        origin TEXT NOT NULL,
+        origin_key TEXT NOT NULL,
+        rule_id INTEGER,
+        planned_at INTEGER NOT NULL,
+        started_at INTEGER,
+        ended_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempt INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER,
+        result_summary TEXT NOT NULL DEFAULT '',
+        error TEXT NOT NULL DEFAULT ''
+    );
+
+    -- schedule_delivery：每渠道每次尝试一行（含重试）。渠道失败只记本表、
+    -- 不改变 schedule_run 的 success——「run 成功、投递失败」必须能分辨（§4.5/验收 7）。
+    CREATE TABLE IF NOT EXISTS schedule_delivery (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL,
+        channel_id INTEGER NOT NULL,
+        attempt INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        response_code INTEGER,
+        remote_errcode INTEGER,
+        error TEXT NOT NULL DEFAULT '',
+        next_retry_at INTEGER,
+        created_at INTEGER NOT NULL
+    );
+
+    -- schedule_channel：通知渠道配置。secret_ref 只是 platform::keychain 的
+    -- account 名（如 wecom.<channel_id>）：key 本身不落库、不进日志、UI 只显 ****（§4.9）。
+    CREATE TABLE IF NOT EXISTS schedule_channel (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        config_json TEXT NOT NULL DEFAULT '',
+        secret_ref TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+
     -- GitHub Sync 同步基线（本机专属状态）。在 core::sql_dump::defaultSkipTables()
     -- 里被排除 → **SQL dump 不含本表**（dump 是跨设备传输面，基线不得随它走）。
     -- 本地备份是整库文件拷贝（db_backup），含本表且应当含：备份回滚要连基线一起
@@ -280,6 +358,20 @@ inline constexpr const char* kSql = R"(
     -- 直连会话记录：按写入时刻倒序取最近（run_key 已有 UNIQUE 索引）
     CREATE INDEX IF NOT EXISTS idx_run_settings_written
         ON claude_run_settings(written_at DESC);
+
+    -- 调度：补跑去重唯一索引——同键第二次插入被拒，重启/并发不产生第二行（§4.6）
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_run_unique
+        ON schedule_run(origin, origin_key, planned_at);
+    -- 调度：运行历史按规则倒序取最近
+    CREATE INDEX IF NOT EXISTS idx_schedule_run_rule
+        ON schedule_run(rule_id, planned_at DESC);
+    -- 调度：引擎「下次到期」扫描（未删 + 启用 + 按 next_fire_at 升序）。
+    -- 查询侧必须写 deleted_at IS NULL AND enabled=1 才命中（planner 蕴含匹配，见 agent_runs_running 注释）
+    CREATE INDEX IF NOT EXISTS idx_schedule_rule_next
+        ON schedule_rule(enabled, next_fire_at) WHERE deleted_at IS NULL;
+    -- 调度：投递按 run 内尝试序回放
+    CREATE INDEX IF NOT EXISTS idx_schedule_delivery_run
+        ON schedule_delivery(run_id, attempt);
 
     -- 种子数据
     -- 首次建库插入 4 个固定 Todo 列，kind 直接带最终值（UAT6.2 H20：四列固定、标题固定）。
