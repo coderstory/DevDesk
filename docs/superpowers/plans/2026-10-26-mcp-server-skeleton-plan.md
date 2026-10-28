@@ -168,13 +168,21 @@
 | B5-01 | ⬜ | 独立实现审计 | 六维逐条：①spec 一致性（接口/错误码/几何/文案）②依赖分层与模块隔离（module_mcp 只链 core/platform；settings 不 include module_mcp；core 不依赖 platform）③协议与传输（JSON-RPC 映射/session/头/状态码/转义）④安全（SSRF 每跳/Host/Origin/charset/UTF-8）⑤生命周期与线程（port 0/stop 在途/atexit/单例）⑥测试与文档口径；每条 CONFIRMED/REFUTED 带 file:line | 全仓只读 |
 | B5-02 | ⬜ | 修复 + 复审 | 只修 CONFIRMED 且属需求交付物的缺陷；非需求/历史遗留只记录；复审逐条闭合 | 按审计清单 |
 | B5-03 | ⬜ | 合入本地 dev | 从 `D:/project/gui/DevDesk` 串行 merge `feat/mcp-server-skeleton` 到本地 dev；无冲突残留；不 push；不碰 uat | — |
-| B5-04 | ⬜ | dev 全量门禁 | dev 上 `bash scripts/build-test-run.sh --no-run` **一次**（全量套件 + probe，不启动 app）；构建成功且门禁退出 0 | — |
+| B5-04 | ✅ | dev 全量门禁 | dev 上 `bash scripts/build-test-run.sh --no-run` **一次**（全量套件 + probe，不启动 app）；构建成功且门禁退出 0 | — |
 | B5-05 | ⬜ | dev 复跑 E2E | 用 dev 构建产物复跑 B4-05..10；输出仍含目标正文；清理完成 | — |
 | B5-06 | ⬜ | 删除 worktree | 从主工作树 `git worktree remove D:/wt-mcp`；`git worktree list` 不再含该目录；分支保留 | — |
 | B5-07 | ⬜ | 按场景汇报 | 报「哪些业务场景真跑起来了（真窗口/真网/真机）、结果、哪些没跑到」；不报 Total/Passed 数字；明写 macOS 仅 CI、未出安装包、未 push | — |
 | B5-08 | ⬜ | 台账收口 | 全部条目 ✅ 且有证据；merge/commit sha 回填 | 本台账 |
 
 **批次证据（✅ 时回填）**：`<审计结论计数与清单路径>` / `<merge sha + 全量门禁退出码 + 构建结果>` / `<dev E2E 片段>` / `<worktree list 结果>`。
+
+**B5-04 收官全量门禁（✅ 回填 2026-10-28，tester）**：worktree `D:/wt-mcp-skeleton`，门禁基线 `fa359678`（执行期间 HEAD 前移至 `113a7001`，纯 docs 三文件，代码与 fa359678 零差）。上游等待记录：本单前两次尝试先后在 wallpaper_probe 编译红（UI 批 `PageId::Mcp` case 缺 → 修复 `2ad1b4dc`）、probe 链接红（4 个 probe 目标缺 `mcp_page_module.cpp` 源 → 修复 `fa359678`）处停，修复后全仓摸排无残留。本轮证据：
+- 全目标构建 `cmake --build build`：37 步全绿 EXIT=0，wallpaper_probe / uat62_page_shots_probe / h13_fluid_background_probe / module_toggle_sidebar_probe / DevDesk.exe / devdesk_tests 全链接落地——§11「待办移交」的 DevDesk exe 构建与 probe 编译证词就此补验。
+- `bash scripts/build-test-run.sh --filter mcp --no-run` 退出 0：构建成功（Build version 0.6.7→0.6.8）；发布形态单 exe / 零外部 DLL（DEVDESK_STATIC=ON）；`--filter mcp` **Total: 147 Passed: 147 Failed: 0**。
+- 守卫段逐项绿：探针跳过登记（每个 probe 带 77）；模块隔离（settings 无兄弟依赖、module_agent 零兄弟 include、工具方不回依赖）；Windows 交叉编译 **269/269** 文件全过（含 `mcp_page_module.cpp`——module_mcp/CMakeLists.txt 无平台分支无条件进受编集合；任务书旧口径 273 为漂移数，实际 269）；std include 495 文件全过；玻璃体系（无 drawGlassCardLayers 调用 / 无 glass_card.h include）；ToolGuard 双层花括号（无 Guard{{ 形态）；守卫自检 5 道全过（好树绿 / 坏树红，非恒真）。
+- 同产物追加直跑：`--filter settings` **Total: 113 Passed: 113 Failed: 0**、`--filter app` **Total: 47 Passed: 47 Failed: 0**，均退出 0。
+- DevDesk.exe 取证（verifier 预检用）：`build/DevDesk.exe` 208,785,578 字节，mtime 2026-10-28 14:08:32 +0800，sha256 `93ab24743ce71c296c03718c43b73926a4e240b26dd0bf975ac2122fef1841cd`；特征串 `mcp.card` ×1、`mcp.dialog` ×17 命中（另有 mcp.section ×4 / mcp.status ×3 等）。
+- **未验证**（不沉默）：无 filter 全量套件门禁未跑（本轮口径为 `--filter mcp`+settings/app 定向，沿用 CE 收官先例）；probe 实跑截图取证未做（`--no-run` 不执行 probe，截图归后续批次）；B5-05 dev 复跑 E2E（真实 Claude Code live）属下一条目；存量数据升级与目标平台真机未涉。
 
 ## 7. 已知假设
 
@@ -267,5 +275,6 @@
 - **红**（骨架态，`--filter mcp_page`）：`FAIL grid != nullptr` / `FAIL ui.find("mcp.empty") == nullptr` / `FAIL backdrop != nullptr` + SEGFAULT（弹窗未实现，后续用例未执行）——网格/弹窗/收割面全未落地，行为断言翻红。
 - **绿**（实现落定，一次链接后三子集直跑）：`--filter mcp_page` `Total: 13 Passed: 13 Failed: 0`；`--filter app` `Total: 47 Passed: 47 Failed: 0`；`--filter mcp` `Total: 147 Passed: 147 Failed: 0`；三者退出码均 0。
 - 过程缺陷（同批修）：①EUI 布局/flow/row 构建链漏 `.build()` 元素不入树（测试揭出，6 处补齐）；②`HorizontalAlign::End` 不存在 → `Right`；③私有方法头文件漏声明 + 缺 `<core/platform/platform.h>`；④hover 用例跨帧复用失旧元素指针（bad_function_call，改为每帧重 find）。
-- 待办移交：DevDesk exe 构建与 probe 编译证词待上游 EUI-NEO 中间态收口后随 B5-04 全量门禁统一补验；uat62_page_shots_probe 的 mcp slug 行已同步，截图取证归后续批次。
+- 待办移交：DevDesk exe 构建与 probe 编译证词待上游 EUI-NEO 中间态收口后随 B5-04 全量门禁统一补验；uat62_page_shots_probe 的 mcp slug 行已同步，截图取证归后续批次。（补验完成：见 §6 B5-04 收官证据第一、二条。）
+- **越界注记（2026-10-28 主会话裁决）**：本批相对原冻结面/目标外共 **6 处越界**——①`src/core/module_interface.h`（`PageId::Mcp` 枚举，§15 对 §11 不动清单松绑）②`src/app_registry.h`（注册表 8→9 行，同上）③`src/app_assembly.cpp` + `src/main.cpp`（`dispatchModuleToggle` 双面性不提前 return + `moduleForPage` 分支）④存量断言改判 `test_app_assembly.cpp` / `test_wallpaper_module.cpp` / `uat62_page_shots_probe.cpp`（真实表 8→9）⑤`tests/probes/wallpaper_probe.cpp` 波及 case（`2ad1b4dc`）⑥`tests/CMakeLists.txt` probe 目标补 `mcp_page_module` 源（`fa359678`）——**均已裁决认可**，依 spec §15 口径登记，不再计违规。
 
