@@ -383,13 +383,18 @@ int treeRowIndex(eui::Ui& ui, const std::string& displayName, bool folder) {
     return -1;
 }
 
-// 目录行是否处于选中态（W8：底色 == primarySoftBg #E5E5E5）
-bool folderRowSelected(eui::Ui& ui, const std::string& displayName) {
+// H29：文件夹行一律无选中视觉——底色透明 + 无左侧 3px 绿竖线。
+// selectedDir_ 仍是「新建笔记落点」状态锚（状态切换由「保存到」提示行断言），
+// 本函数只锁视觉契约。返回 true = 该行确实没有选中视觉（改回退画底色/竖线 → 红）。
+bool folderRowNoSelection(eui::Ui& ui, const std::string& displayName) {
     const int i = treeRowIndex(ui, displayName, /*folder=*/true);
     if (i < 0) return false;
     const auto* row = ui.find("md.tree.node." + std::to_string(i) + ".row");
-    return row != nullptr &&
-           colorEq(row->color, core::theme::current().colors.primarySoftBg);
+    const bool noBg = row != nullptr &&
+                      colorEq(row->color, eui::Color{0.0f, 0.0f, 0.0f, 0.0f});
+    const bool noBar =
+        ui.find("md.tree.node." + std::to_string(i) + ".accent") == nullptr;
+    return noBg && noBar;
 }
 
 // W8：标签添加从独立按钮改为输入框内置（回车提交）。
@@ -1400,18 +1405,16 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     const auto* nfHint = ui.find("md.dialog.new.hint");
     DOCTEST_REQUIRE(nfHint != nullptr);
     DOCTEST_CHECK(nfHint->text.find("根目录") != std::string::npos);
-    // 选中态可视：根目录行底色 = primarySoftBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
+    // H29：文件夹行一律无选中视觉（选中/未选中同观感：透明底 + 无绿竖线）；
+    // 选中态只做「新建落点」状态锚，已由上方提示行断言
     const auto* rootRowNow = ui.find("md.tree.node.0.row");
     const auto* workRowNow = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(rootRowNow != nullptr);
     DOCTEST_REQUIRE(workRowNow != nullptr);
-    // W8：选中态底色改 primarySoftBg（#E5E5E5）
-    const auto& treeColors = core::theme::current().colors;
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg));
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg) &&
-                  !colorEq(workRowNow->color, treeColors.primarySoftBg));
-    // 2026-10-25 批H：未选行无底色（透明），非 cardSurface 白卡
+    DOCTEST_CHECK(rootRowNow->color.a == 0.0f);
     DOCTEST_CHECK(workRowNow->color.a == 0.0f);
+    DOCTEST_CHECK(ui.find("md.tree.node.0.accent") == nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.node.2.accent") == nullptr);
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();
@@ -1655,7 +1658,9 @@ REGISTER_TEST(md_module_new_folder_parent,
 
 // 2b4b''. 目录树选中态 → 新建笔记落在选中目录
 // 逐档钉死（不只测根——「永远落在根目录」正是报障点）：
-//   ① 初始选中 = 根目录行（默认值），行底色 = primarySoftBg；
+//   H29 口径：文件夹行无选中视觉（folderRowNoSelection 恒真），选中态切换一律由
+//   「保存到」提示行断言（状态语义不变，去的是视觉）：
+//   ① 初始选中 = 根目录行（默认值）；
 //   ② 点**二级目录**行 → 选中态 == 工作/周会 → 新建笔记落盘 工作/周会/xxx.md
 //      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
@@ -1706,16 +1711,17 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "周报.md", false), 3);
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "周会", true), 4);
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "纪要.md", false), 5);
-    // ① 初始选中 = 根目录（兜底默认：根目录行就是"被选中的那一层"，不是"无选中"）
-    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));
+    // ① 初始选中 = 根目录（兜底默认：根目录行就是"被选中的那一层"，不是"无选中"）；
+    //    H29：视觉一律无选中样式，状态切换由②③④的「保存到」提示行断言
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
 
     // ② 点二级目录「周会」行 → 选中 + 新建笔记落该目录
     const int weekMeeting = treeRowIndex(ui, "周会", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(weekMeeting) + ".row"));
     frame("sel2");
-    DOCTEST_CHECK(folderRowSelected(ui, "周会"));
-    DOCTEST_CHECK(!folderRowSelected(ui, "根目录"));   // 上一选中行回落
-    DOCTEST_CHECK(!folderRowSelected(ui, "工作"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "周会"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
     // 弹窗提示行 = 选中目录（模块状态 → 界面文案的同源证据）
     DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
     frame("sel3");
@@ -1728,15 +1734,15 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     DOCTEST_CHECK(fs::is_regular_file(env.dir / "工作" / "周会" / "二级选中笔记.md"));
     DOCTEST_CHECK(!fs::exists(env.dir / "二级选中笔记.md"));            // 不是根
     DOCTEST_CHECK(!fs::exists(env.dir / "工作" / "二级选中笔记.md"));   // 也不是父目录
-    // 打开这篇笔记后，选中态仍是它所在目录（选中态 = 当前所在目录）
-    DOCTEST_CHECK(folderRowSelected(ui, "周会"));
+    // 打开这篇笔记后，选中态仍是它所在目录（选中态 = 当前所在目录，视觉无样式）
+    DOCTEST_CHECK(folderRowNoSelection(ui, "周会"));
 
     // ③ 点一级目录「工作」行 → 新建笔记落 工作/
     const int work = treeRowIndex(ui, "工作", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(work) + ".row"));
     frame("sel6");
-    DOCTEST_CHECK(folderRowSelected(ui, "工作"));
-    DOCTEST_CHECK(!folderRowSelected(ui, "周会"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "周会"));
     DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
     frame("sel7");
     DOCTEST_REQUIRE(typeId("md.dialog.new.input", "一级选中笔记"));
@@ -1749,7 +1755,7 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     // ④ 点根目录行 → 新建笔记落根
     DOCTEST_REQUIRE(clickId("md.tree.node.0.row"));
     frame("sel10");
-    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
     DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
     frame("sel11");
     DOCTEST_REQUIRE(typeId("md.dialog.new.input", "根选中笔记"));
@@ -1764,9 +1770,9 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     DOCTEST_REQUIRE(noteRow >= 0);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(noteRow) + ".row"));
     frame("sel14");
-    // 选中不级联：父文件夹「周会」不入选
-    DOCTEST_CHECK(!folderRowSelected(ui, "周会"));
-    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));  // 上一选中不变
+    // 选中不级联由「保存到」提示行断言（H29 视觉一律无选中样式）
+    DOCTEST_CHECK(folderRowNoSelection(ui, "周会"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
     // 功能目标已跟到笔记所在目录（保存到提示行验证）
     DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
     frame("sel14a");
@@ -1779,9 +1785,9 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     const int weekMeeting2 = treeRowIndex(ui, "周会", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(weekMeeting2) + ".toggle"));
     frame("sel15");
-    // 收起：纪要不在了（该目录整棵子树隐藏），但选中态不变
+    // 收起：纪要不在了（该目录整棵子树隐藏），选中态不变（视觉无样式）
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "纪要.md", false), -1);
-    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(weekMeeting2) + ".toggle"));
     frame("sel16");
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "纪要.md", false) >= 0, true);  // 展开回来
@@ -1853,11 +1859,11 @@ REGISTER_TEST(md_module_root_row_new_folder_inside,
     const int work0 = treeRowIndex(ui, "工作", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(work0) + ".row"));
     frame("rf2");
-    DOCTEST_CHECK(folderRowSelected(ui, "工作"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
     DOCTEST_REQUIRE(clickId("md.tree.node.0.row"));
     frame("rf3");
-    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));
-    DOCTEST_CHECK(!folderRowSelected(ui, "工作"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
 
     // + 文件夹：弹窗「创建在」显示 = 根目录（落点提示与实际落点同源）
     DOCTEST_REQUIRE(clickId("md.tree.newfolder.bg"));
@@ -1873,8 +1879,8 @@ REGISTER_TEST(md_module_root_row_new_folder_inside,
     DOCTEST_CHECK(fs::is_directory(env.dir / "新目录"));
     DOCTEST_CHECK(!fs::exists(env.dir.parent_path() / "新目录"));
     DOCTEST_CHECK(!fs::exists(env.dir / "工作" / "新目录"));
-    // 建完选中态跟到新夹（与「新建的目录 = 新的选中目录」既有口径一致）
-    DOCTEST_CHECK(folderRowSelected(ui, "新目录"));
+    // 建完选中态跟到新夹（与「新建的目录 = 新的选中目录」既有口径一致；视觉无样式）
+    DOCTEST_CHECK(folderRowNoSelection(ui, "新目录"));
 
     // b. 几何：新顶层夹行 = 根行的**子**行（x = 根行 + 16），与其它顶层夹同层；
     // b. 几何：新顶层夹行 = 根行的**子**行（x = 根行 + 16），与其它顶层夹同层；
@@ -1896,7 +1902,7 @@ REGISTER_TEST(md_module_root_row_new_folder_inside,
     const int work1 = treeRowIndex(ui, "工作", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(work1) + ".row"));
     frame("rf7");
-    DOCTEST_CHECK(folderRowSelected(ui, "工作"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
     DOCTEST_REQUIRE(clickId("md.tree.newfolder.bg"));
     frame("rf8");
     DOCTEST_CHECK_EQ(ui.find("md.dialog.newfolder.parent.dd.label")->text,
@@ -8669,6 +8675,108 @@ REGISTER_TEST(md_module_statusbar_save_error,
     // 还原目录权限，RAII 夹具才能清理
     fs::permissions(env.dir, fs::perms::owner_all, pec);
     DOCTEST_REQUIRE(!pec);
+
+    mod->onStop();
+    return true;
+})
+
+// H27/H29 场景4（防：H29 改回退 / 误伤笔记行 / 菜单断线）：
+//   点文件夹行 → 无选中底色、无绿竖线（folderRowNoSelection），但「保存到」提示行
+//   证明 selectedDir_ 状态锚仍在（去的是视觉不是状态）；
+//   点笔记行 → 笔记行仍有选中视觉（primarySoftBg 底 + 绿竖线），文件夹行仍无；
+//   文件夹行 onContextMenu 接线 → 目录右键菜单节点出现。
+REGISTER_TEST(md_folder_row_h29_h27,
+              "markdown_folder_tree: 文件夹行无选中视觉+笔记行选中态保留+文件夹右键菜单接线（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "h29", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周会" / "纪要.md", "# 纪要\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周报.md", "# 周报\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 帧1：树 = [根目录, 工作, 周报.md, 周会, 纪要.md]
+    frame("h1");
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "根目录", true), 0);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "工作", true), 1);
+    const int noteIdx = treeRowIndex(ui, "周报.md", false);
+    DOCTEST_REQUIRE(noteIdx >= 0);
+    // 初始：文件夹行无选中视觉；笔记行未选中（无绿竖线）
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
+    DOCTEST_CHECK(ui.find("md.tree.node." + std::to_string(noteIdx) + ".accent") ==
+                  nullptr);
+
+    // 点文件夹行（真实 onClick → selectDir 状态链）→ 视觉仍无选中样式
+    const int workIdx = treeRowIndex(ui, "工作", true);
+    const auto* folderRow =
+        ui.find("md.tree.node." + std::to_string(workIdx) + ".row");
+    DOCTEST_REQUIRE(folderRow != nullptr);
+    DOCTEST_REQUIRE(folderRow->onClick != nullptr);
+    DOCTEST_REQUIRE(folderRow->onContextMenu != nullptr);  // H27 菜单接线
+    folderRow->onClick();
+    frame("h2");
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
+    DOCTEST_CHECK(ui.find("md.tree.node." + std::to_string(workIdx) + ".accent") ==
+                  nullptr);
+    // 状态锚仍在：新建笔记弹窗「保存到」= 工作（H29 只去视觉不去状态）
+    const auto* newBtn = ui.find("md.tree.new.bg");
+    DOCTEST_REQUIRE(newBtn != nullptr);
+    DOCTEST_REQUIRE(newBtn->onClick != nullptr);
+    newBtn->onClick();
+    frame("h2a");
+    const auto* hint = ui.find("md.dialog.new.hint");
+    DOCTEST_REQUIRE(hint != nullptr);
+    DOCTEST_CHECK(hint->text.find("保存到：工作") != std::string::npos);
+    const auto* cancel = ui.find("md.dialog.new.cancel.bg");
+    DOCTEST_REQUIRE(cancel != nullptr);
+    DOCTEST_REQUIRE(cancel->onClick != nullptr);
+    cancel->onClick();
+
+    // 点笔记行 → 笔记行有选中视觉（primarySoftBg 底 + 绿竖线），文件夹行仍无
+    frame("h3");
+    const int nIdx = treeRowIndex(ui, "周报.md", false);
+    DOCTEST_REQUIRE(nIdx >= 0);
+    const auto* noteRow =
+        ui.find("md.tree.node." + std::to_string(nIdx) + ".row");
+    DOCTEST_REQUIRE(noteRow != nullptr);
+    DOCTEST_REQUIRE(noteRow->onClick != nullptr);
+    noteRow->onClick();
+    frame("h4");
+    const auto* noteRowNow =
+        ui.find("md.tree.node." + std::to_string(nIdx) + ".row");
+    DOCTEST_REQUIRE(noteRowNow != nullptr);
+    DOCTEST_CHECK(colorEq(noteRowNow->color,
+                          core::theme::current().colors.primarySoftBg));
+    DOCTEST_CHECK(ui.find("md.tree.node." + std::to_string(nIdx) + ".accent") !=
+                  nullptr);
+    DOCTEST_CHECK(folderRowNoSelection(ui, "工作"));
+    DOCTEST_CHECK(folderRowNoSelection(ui, "根目录"));
+
+    // H27 接线：文件夹行 onContextMenu → 目录右键菜单节点出现（重命名/删除两项）
+    frame("h5");
+    const int w2 = treeRowIndex(ui, "工作", true);
+    DOCTEST_REQUIRE(w2 >= 0);
+    const auto* folderRow2 =
+        ui.find("md.tree.node." + std::to_string(w2) + ".row");
+    DOCTEST_REQUIRE(folderRow2 != nullptr);
+    DOCTEST_REQUIRE(folderRow2->onContextMenu != nullptr);
+    eui::PointerEvent ev;
+    ev.x = 100.0;
+    ev.y = 200.0;
+    eui::Rect rect;
+    folderRow2->onContextMenu(ev, rect);
+    frame("h6");
+    DOCTEST_CHECK(ui.find("md.dir.ctx") != nullptr);
 
     mod->onStop();
     return true;
