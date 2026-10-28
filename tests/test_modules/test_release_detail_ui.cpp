@@ -9,14 +9,18 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "app_registry.h"          // create_release_tasks_module（Esc 分层用例）
+#include "core/module_interface.h"
 #include "core/theme.h"
 #include "module_release/release_detail_ui.h"
 #include "module_release/release_store.h"
 
 #include <eui/dsl.h>
+#include <eui/types.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -448,5 +452,415 @@ REGISTER_TEST(release_detail_back_button_only_with_callback,
     DOCTEST_REQUIRE(frame.ui.find("release.detail.back") != nullptr);
     DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.back.bg"));
     DOCTEST_CHECK_EQ(backCount, 1);
+    return true;
+})
+
+REGISTER_TEST(release_detail_auto_revoke_content_change,
+              "自动撤回链·内容变更：已完成配置改内容保存后重读对账——doneAt 清零、"
+              "记 action=revoke 日志、行视觉回到未完成（跳过勾选框重新出现）"
+              "（防：loadDetail 快照对比 / dirty 置位 / applyContentRevocations 对账"
+              "改坏后全绿照过）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "revokecontent");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(store
+                        .upsertTaskConfig(makeConfig(ids.serviceId,
+                                                     rel::ConfigKind::Nacos,
+                                                     "nacos: v1",
+                                                     /*skipped=*/false, kDoneAt, 0))
+                        .isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string row = "release.detail.env." + std::to_string(ids.envId) +
+                            ".svc." + std::to_string(ids.serviceId) +
+                            ".step.config.0";
+    // 前置：已完成行不画跳过勾选框（撤回后要用它的重现证明行回到未完成）
+    DOCTEST_CHECK(frame.ui.find(row + ".skip.toggle") == nullptr);
+
+    // 打开编辑层 → 改内容保存。保存时 doneAt 原样保留，撤回发生在下一帧重读对账
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".view.bg"));
+    DOCTEST_CHECK(state.editorOpen);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(frame.ui.find("release.detail.config.editor.save") != nullptr);
+    state.editorText = "nacos: v2";
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.config.editor.save.bg"));
+    DOCTEST_CHECK(!state.editorOpen);
+
+    // 置 dirty 重读触发对账：库中 doneAt 清零 + 落一条 revoke 日志
+    frame.refresh(store, state, actions);
+    rel::TaskConfig saved;
+    DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
+                                 &saved));
+    DOCTEST_CHECK_EQ(saved.content, std::string("nacos: v2"));
+    DOCTEST_CHECK_EQ(saved.doneAt, std::int64_t{0});
+    {
+        auto logs = store.listLogs(ids.taskId);
+        DOCTEST_REQUIRE(logs.isOk());
+        bool sawRevoke = false;
+        for (const auto& log : logs.value()) {
+            if (log.action == "revoke") {
+                sawRevoke = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK(sawRevoke);
+    }
+    // 行视觉回到未完成：跳过勾选框重新出现（与既有跳过用例同口径）
+    DOCTEST_CHECK(frame.ui.find(row + ".skip.toggle") != nullptr);
+    return true;
+})
+
+REGISTER_TEST(release_detail_auto_revoke_branch_change,
+              "自动撤回链·服务分支变更：已完成「合并分支」步骤后直接改库分支并置 dirty "
+              "重读，该步骤 doneAt 被清零并记 action=revoke 日志"
+              "（防：applyContentRevocations 分支段回归）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "revokebranch");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(
+        store.setStepDone(ids.serviceId, rel::StepKind::MergeBranch, kDoneAt).isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    // 前置：合并分支步骤确已完成
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        bool done = false;
+        for (const auto& step : steps.value()) {
+            if (step.kind == rel::StepKind::MergeBranch && step.doneAt != 0) {
+                done = true;
+            }
+        }
+        DOCTEST_CHECK(done);
+    }
+
+    // 直接改库分支（模拟其它层保存分支后由宿主置 dirty 的既有契约路径）
+    {
+        auto services = store.listTaskServices(ids.envId);
+        DOCTEST_REQUIRE(services.isOk());
+        DOCTEST_REQUIRE(!services.value().empty());
+        rel::TaskService svc = services.value()[0];
+        svc.branch = "release/2026.1";
+        DOCTEST_REQUIRE(store.updateTaskService(svc).isOk());
+    }
+    state.dirty = true;
+    frame.refresh(store, state, actions);
+
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        bool mergeCleared = false;
+        for (const auto& step : steps.value()) {
+            if (step.kind == rel::StepKind::MergeBranch && step.doneAt == 0) {
+                mergeCleared = true;
+            }
+        }
+        DOCTEST_CHECK(mergeCleared);
+    }
+    {
+        auto logs = store.listLogs(ids.taskId);
+        DOCTEST_REQUIRE(logs.isOk());
+        bool sawRevoke = false;
+        for (const auto& log : logs.value()) {
+            if (log.action == "revoke") {
+                sawRevoke = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK(sawRevoke);
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_editor_save_failure_keeps_draft,
+              "编辑层保存失败：只读库注入写失败——notice 回显错误、编辑层保持打开、"
+              "草稿保留且未落库（防：保存失败静默关层丢草稿）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "savefail");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(store
+                        .upsertTaskConfig(makeConfig(ids.serviceId,
+                                                     rel::ConfigKind::Nacos,
+                                                     "nacos: v1"))
+                        .isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string row = "release.detail.env." + std::to_string(ids.envId) +
+                            ".svc." + std::to_string(ids.serviceId) +
+                            ".step.config.0";
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".view.bg"));
+    frame.refresh(store, state, actions);
+    state.editorText = "nacos: v2";
+
+    // 加载已完成，只封后续写（连接级只读，读仍可用）
+    DOCTEST_REQUIRE(tdb.handle().exec("PRAGMA query_only = ON").isOk());
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.config.editor.save.bg"));
+
+    // 修复后行为：失败只回显 notice，编辑层保持打开、草稿保留
+    DOCTEST_CHECK(state.editorOpen);
+    DOCTEST_CHECK_EQ(state.editorText, std::string("nacos: v2"));
+    DOCTEST_CHECK(state.noticeIsError);
+    DOCTEST_CHECK(state.notice.find("保存配置失败") != std::string::npos);
+
+    frame.refresh(store, state, actions);
+    const auto* noticeText = frame.ui.find("release.detail.notice.text");
+    DOCTEST_REQUIRE(noticeText != nullptr);
+    DOCTEST_CHECK(noticeText->text.find("保存配置失败") != std::string::npos);
+    // 编辑层仍在：输入框 + 保存按钮都在，字数统计反映草稿
+    DOCTEST_CHECK(frame.ui.find("release.detail.config.editor.input.hit") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.config.editor.save") != nullptr);
+    const auto* count = frame.ui.find("release.detail.config.editor.count");
+    DOCTEST_REQUIRE(count != nullptr);
+    DOCTEST_CHECK_EQ(count->text, std::string("共 9 字"));
+    // 草稿未落库：库里 content 仍是旧值
+    rel::TaskConfig saved;
+    DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
+                                 &saved));
+    DOCTEST_CHECK_EQ(saved.content, std::string("nacos: v1"));
+    return true;
+})
+
+REGISTER_TEST(release_detail_skip_failure_notice,
+              "跳过失败：只读库注入写失败——notice 回显错误、库中 skipped 不变"
+              "（防：跳过写失败静默、界面却表现已跳过）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "skipfail");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(store
+                        .upsertTaskConfig(makeConfig(ids.serviceId,
+                                                     rel::ConfigKind::Nacos, "x"))
+                        .isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string row = "release.detail.env." + std::to_string(ids.envId) +
+                            ".svc." + std::to_string(ids.serviceId) +
+                            ".step.config.0";
+    DOCTEST_REQUIRE(frame.ui.find(row + ".skip.toggle.hit") != nullptr);
+    DOCTEST_REQUIRE(tdb.handle().exec("PRAGMA query_only = ON").isOk());
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".skip.toggle.hit"));
+
+    DOCTEST_CHECK(state.noticeIsError);
+    DOCTEST_CHECK(state.notice.find("保存跳过状态失败") != std::string::npos);
+
+    frame.refresh(store, state, actions);
+    const auto* noticeText = frame.ui.find("release.detail.notice.text");
+    DOCTEST_REQUIRE(noticeText != nullptr);
+    DOCTEST_CHECK(noticeText->text.find("保存跳过状态失败") != std::string::npos);
+    rel::TaskConfig after;
+    DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
+                                 &after));
+    DOCTEST_CHECK(!after.skipped);
+    return true;
+})
+
+REGISTER_TEST(release_detail_remove_failure_notice,
+              "移除失败：确认后写库失败——notice 回显错误、库中服务未移除"
+              "（防：移除写失败静默、界面却消失）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "removefail");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string svcRemove = "release.detail.env." + std::to_string(ids.envId) +
+                                  ".svc." + std::to_string(ids.serviceId) +
+                                  ".remove";
+    DOCTEST_REQUIRE(clickNode(frame.ui, svcRemove + ".bg"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::RemoveService);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(tdb.handle().exec("PRAGMA query_only = ON").isOk());
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.confirm.primary.bg"));
+
+    DOCTEST_CHECK(state.noticeIsError);
+    DOCTEST_CHECK(state.notice.find("移除服务失败") != std::string::npos);
+
+    frame.refresh(store, state, actions);
+    const auto* noticeText = frame.ui.find("release.detail.notice.text");
+    DOCTEST_REQUIRE(noticeText != nullptr);
+    DOCTEST_CHECK(noticeText->text.find("移除服务失败") != std::string::npos);
+    {
+        auto services = store.listTaskServices(ids.envId);
+        DOCTEST_REQUIRE(services.isOk());
+        DOCTEST_REQUIRE_EQ(services.value().size(), std::size_t{1});
+        DOCTEST_CHECK(!services.value()[0].removed);
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_module_esc_layering,
+              "Esc 分层：编辑层开着时 Esc 只关编辑层、确认框开着时只关确认框、都关着时"
+              "返回列表（openTaskId_ 被清）（防：Esc 直通导致带层返回列表）", {
+    ThemeGuard guard;
+    // 注册进程级 appDatabase：模块 compose 经 core::appDatabase() 建 store
+    test_support::TestEnv tdb("releasedetail", "esc", /*registerAppDb=*/true);
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(store
+                        .upsertTaskConfig(makeConfig(ids.serviceId,
+                                                     rel::ConfigKind::Nacos, "x"))
+                        .isOk());
+
+    std::unique_ptr<::core::Module> module(create_release_tasks_module());
+    DOCTEST_REQUIRE(module != nullptr);
+
+    eui::KeyEvent esc;
+    esc.key = eui::InputKey::Escape;
+    esc.action = eui::KeyAction::Press;
+
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("release.detail.esc.test");
+        module->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+
+    // 列表页：Esc 不消费
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.tasks.root") != nullptr);
+        DOCTEST_CHECK_FALSE(module->onKeyEvent(esc));
+    }
+
+    // 点卡片进详情
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_REQUIRE(clickNode(
+            ui, "release.tasks.card." + std::to_string(ids.taskId) + ".bg"));
+    }
+
+    const std::string row = "release.detail.env." + std::to_string(ids.envId) +
+                            ".svc." + std::to_string(ids.serviceId) +
+                            ".step.config.0";
+    // 编辑层开着：Esc 只关编辑层，仍在详情页
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.detail.root") != nullptr);
+        DOCTEST_REQUIRE(clickNode(ui, row + ".view.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.detail.config.editor.title") != nullptr);
+        DOCTEST_CHECK(module->onKeyEvent(esc));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.detail.config.editor.title") == nullptr);
+        DOCTEST_CHECK(ui.find("release.detail.root") != nullptr);
+    }
+
+    // 确认框开着：Esc 只关确认框，仍在详情页
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_REQUIRE(clickNode(
+            ui, "release.detail.env." + std::to_string(ids.envId) + ".svc." +
+                    std::to_string(ids.serviceId) + ".remove.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.detail.confirm.primary.bg") != nullptr);
+        DOCTEST_CHECK(module->onKeyEvent(esc));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.detail.confirm.primary.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("release.detail.root") != nullptr);
+    }
+
+    // 都关着：Esc 返回列表（openTaskId_ 被清）
+    DOCTEST_CHECK(module->onKeyEvent(esc));
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("release.detail.root") == nullptr);
+        DOCTEST_CHECK(ui.find("release.tasks.root") != nullptr);
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_editor_char_count,
+              "配置编辑层：字数统计「共 N 字」随编辑缓冲变化（防：字数只渲染一次 / "
+              "绑定错误缓冲导致 N 不跟随）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "count");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(store
+                        .upsertTaskConfig(makeConfig(ids.serviceId,
+                                                     rel::ConfigKind::Nacos,
+                                                     "nacos: v1"))
+                        .isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string row = "release.detail.env." + std::to_string(ids.envId) +
+                            ".svc." + std::to_string(ids.serviceId) +
+                            ".step.config.0";
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".view.bg"));
+    frame.refresh(store, state, actions);
+
+    const auto* count = frame.ui.find("release.detail.config.editor.count");
+    DOCTEST_REQUIRE(count != nullptr);
+    DOCTEST_CHECK_EQ(count->text, std::string("共 9 字"));  // "nacos: v1"
+
+    state.editorText = "配置内容已更新 v2";  // 10 字符
+    frame.refresh(store, state, actions);
+    const auto* countAfter = frame.ui.find("release.detail.config.editor.count");
+    DOCTEST_REQUIRE(countAfter != nullptr);
+    DOCTEST_CHECK_EQ(countAfter->text, std::string("共 10 字"));
     return true;
 })
