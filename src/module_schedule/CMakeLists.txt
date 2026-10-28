@@ -1,5 +1,8 @@
 add_library(devdesk_module_schedule STATIC
     schedule_store.cpp
+    # 波 S7b：编辑弹窗 + 运行历史抽屉（纯逻辑 + 渲染；弹窗由宿主波经 EditDialogHost/HistoryDrawerHost 挂载）
+    schedule_ui_edit.cpp
+    schedule_ui_history.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_schedule)
@@ -11,4 +14,7 @@ target_include_directories(devdesk_module_schedule PUBLIC
 
 target_link_libraries(devdesk_module_schedule PUBLIC
     devdesk_core
+    # 波 S7b UI 层依赖：ui_kit/组件绘制（platform 为 ui_kit 传递依赖，与 module_todo 同款）
+    devdesk_platform
+    devdesk_ui_kit
 )

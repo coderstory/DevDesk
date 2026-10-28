@@ -164,6 +164,10 @@ add_executable(devdesk_tests
     test_modules/test_mcp_service.cpp
     # 波 S5：调度通知渠道层（注册表分发/空与未知 id/静默/载荷透传/去重键/主线程封送/全屏聚合冷却）
     test_modules/test_channels.cpp
+    # 波 S7b：编辑弹窗纯逻辑（六 kind 往返/锚定日期周几校验/预览 5 次迭代/渠道多选落库/非法 spec 红字）
+    test_modules/test_schedule_ui_edit.cpp
+    # 波 S7b：运行历史抽屉纯装配（倒序排序/limit 截断/渠道尝试重试汇总/经 store 读两表）
+    test_modules/test_schedule_ui_history.cpp
     # app::mcp 桥实现缝：app_assembly.cpp 与 settings_module.cpp 引用其符号
     #（module_toggle_bridge.cpp 同款理由）
     ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
