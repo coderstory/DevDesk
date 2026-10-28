@@ -435,6 +435,19 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
         }
     }
 
+    // 撤销类卡缺目标 = 无法定位引擎条目（防御性复检，与 createUndo 同因）：
+    // 快速失败给明确文案，不进 executor 循环报误导性的「可重试」
+    if (!p.undoOf.empty() && p.targetIds.empty()) {
+        if (auto a = audit(id, nowSec, "apply_rejected",
+                           "undo_without_target_ids"); a.isFail()) {
+            return core::Result<Proposal>::fail(a.errorCode(),
+                                                a.errorMessage());
+        }
+        return core::Result<Proposal>::fail(
+            core::ErrorCode::ValidationError,
+            "不可撤销：引擎条目 id 缺失（原卡入库时未回填），此卡只能拒绝");
+    }
+
     // 代理执行（失败重试 = 再次接受；保持 pending，失败原因进审计）
     auto applied = executor(p);
     if (applied.isFail()) {
@@ -536,6 +549,15 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
         return core::Result<Proposal>::fail(
             core::ErrorCode::ValidationError,
             "首版仅支持 add/forget 的撤销: " + original.value().kind);
+    }
+    // add 类 id 回填失败（正文失配/超 get_memories 清单上限）→ targetIds 恒空，
+    // 此类撤销卡接受必 ValidationError 且「再点接受重试」永不成立（审计 F6）——
+    // 建卡前即如实拒绝，不给用户只能拒绝的死循环卡
+    if (undoKind == "invalidate" && original.value().targetIds.empty()) {
+        return core::Result<Proposal>::fail(
+            core::ErrorCode::ValidationError,
+            "不可撤销：原新增卡未回填引擎条目 id（入库时正文失配或超清单上限），"
+            "引擎侧无对象可删除");
     }
 
     // 同一 undoOf 至多一张未决撤销卡：复用并刷新

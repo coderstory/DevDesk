@@ -652,9 +652,15 @@ int runMemoryHookSubcommand() {
         auto ledger = module::memory::proposals::UsageLedger::open(
             module::memory::engine::memoryDataDir() / "usage_ledger.db");
         if (ledger.isOk()) {
-            (void)ledger.value().recordInjection(
-                outcome.injectedItems, outcome.injectedChars,
-                static_cast<std::int64_t>(std::time(nullptr)));
+            // 尽力而为不假成功：丢行必须留痕（审计 F7）。走 stderr——stdout 是
+            // hook 注入通道（契约：非注入内容零字节），此刻日志通道未必已建立
+            if (ledger.value()
+                    .recordInjection(outcome.injectedItems, outcome.injectedChars,
+                                     static_cast<std::int64_t>(std::time(nullptr)))
+                    .isFail()) {
+                std::fputs("[memory] 注入记账失败（库忙/IO），本行丢弃\n",
+                           stderr);
+            }
         }
     }
     if (!outcome.stdoutText.empty()) {
