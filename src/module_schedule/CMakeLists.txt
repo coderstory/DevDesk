@@ -1,5 +1,6 @@
 add_library(devdesk_module_schedule STATIC
     schedule_store.cpp
+    channels/wecom.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_schedule)
@@ -11,4 +12,5 @@ target_include_directories(devdesk_module_schedule PUBLIC
 
 target_link_libraries(devdesk_module_schedule PUBLIC
     devdesk_core
+    devdesk_platform
 )

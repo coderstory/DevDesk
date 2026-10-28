@@ -135,6 +135,9 @@ add_executable(devdesk_tests
     test_modules/test_mcp_session_store.cpp
     # 定时调度子系统 S3 存储层：迁移幂等/唯一键守恒/CRUD 往返/软删隔离
     test_modules/test_schedule_store.cpp
+    # 定时调度子系统 S6b 企业微信 webhook 渠道：UTF-8 截断边界/errcode 分类全表/
+    # 令牌桶节奏/请求体组装/凭据不泄进日志字符串
+    test_modules/test_wecom_channel.cpp
     test_modules/test_mcp_protocol.cpp
     test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_mcp_html_to_markdown.cpp
