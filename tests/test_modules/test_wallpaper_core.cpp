@@ -3,10 +3,10 @@
 //
 // 每条用例注明防的事故；REGISTER_TEST 描述串必须含 ASCII "wallpaper"（--filter 只认 ASCII）。
 // 跨文件前提：
-//   - 本文件只测纯逻辑与服务骨架，不测 Win32/mpv/WorkerW/图片解码（P3）。
-//   - 图片像素档过滤本批未实现：passing == total、filtered == 0 是**当前契约**，
-//     P3 解码接入后这里会需要改断言（届时一并更新头注释与需求口径）。
-//   - 服务测试注入假扫描器/假玩家/临时设置路径，不读写用户真实数据根。
+//   - 本文件只测纯逻辑与服务骨架，不测 Win32/mpv/WorkerW（平台实现由探针覆盖）。
+//   - 图片像素档过滤已落地：过滤逻辑经 ImageSizeProbe 注入假探针做跨平台确定性
+//     测试；平台探针本体（WIC/stub）的 unknown 语义由探针与实现保证。
+//   - 服务测试注入假扫描器/假玩家/假 watcher/临时设置路径，不读写用户真实数据根。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -19,6 +19,7 @@
 #include "module_wallpaper/core/settings.h"
 #include "module_wallpaper/core/video_library.h"
 #include "module_wallpaper/platform/player_backend.h"
+#include "module_wallpaper/platform/yield_watchers.h"
 #include "module_wallpaper/wallpaper_service.h"
 
 #include <atomic>
@@ -33,6 +34,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -104,6 +106,43 @@ std::string loadedPath(const wp::NullPlayerBackend& player) {
     }
     return {};
 }
+
+// 假让路 watcher：事件通道手动点火（模拟 WTS 回调），轮询通道读原子开关
+//（模拟 GetSystemPowerStatus / EnumWindows 的瞬时状态）。
+class FakeYieldWatchers final : public wp::YieldWatchers {
+public:
+    void setHoldCallback(HoldCallback callback) override { hold_ = std::move(callback); }
+    void setDisplayChangedCallback(DisplayChangedCallback callback) override {
+        display_ = std::move(callback);
+    }
+    bool start(std::string* error) override {
+        if (error != nullptr) *error = "fake";
+        started_ = true;
+        return true;
+    }
+    void stop() override { stopped_ = true; }
+    bool pollOnBattery() override { return onBattery_.load(); }
+    bool pollFullscreenOtherProcess() override { return fullscreen_.load(); }
+
+    void fireHold(wp::HoldReason reason, bool active) {
+        if (hold_) hold_(reason, active);
+    }
+    void fireDisplayChanged() {
+        if (display_) display_();
+    }
+    void setBattery(bool on) { onBattery_.store(on); }
+    void setFullscreen(bool on) { fullscreen_.store(on); }
+    bool started() const { return started_; }
+    bool stopped() const { return stopped_; }
+
+private:
+    HoldCallback hold_;
+    DisplayChangedCallback display_;
+    std::atomic<bool> onBattery_{false};
+    std::atomic<bool> fullscreen_{false};
+    bool started_ = false;
+    bool stopped_ = false;
+};
 
 } // namespace
 
@@ -376,6 +415,75 @@ REGISTER_TEST(wallpaper_core_arbiter, "wallpaper core: arbiter 并集/锚点/幂
     return true;
 })
 
+// 防：watcher 全接线后四路原因叠加/部分解除/解除顺序错乱——UI 原因集合与恢复
+// seek 时机漂移（锚点必须只在第一路写入、seek 只在全解除时产生一次、电池门控
+// 与其它位共存时关门只摘电池位）。
+REGISTER_TEST(wallpaper_core_arbiter_matrix,
+              "wallpaper core: arbiter 四路组合矩阵（叠加/部分解除/单次 seek/电池门控共存）", {
+    float seek = -1.0f;
+
+    // 四路同时压上：锚点只在第一路写入，重复事件不覆盖。
+    wp::HoldArbiter four;
+    four.setPauseOnBattery(true);
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::Fullscreen, true, 10.0f));
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::Battery, true, 20.0f));
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::ScreenLocked, true, 30.0f));
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::DisplayAsleep, true, 40.0f));
+    const wp::HoldReasonSet allFour =
+        wp::holdReasonBit(wp::HoldReason::Fullscreen) |
+        wp::holdReasonBit(wp::HoldReason::ScreenLocked) |
+        wp::holdReasonBit(wp::HoldReason::DisplayAsleep) |
+        wp::holdReasonBit(wp::HoldReason::Battery);
+    DOCTEST_CHECK_EQ(four.systemHolds(), allFour);
+    DOCTEST_CHECK_FALSE(four.shouldPlay());
+    DOCTEST_CHECK_EQ(four.anchorSec(), 10.0f);
+
+    // 子集解除仍被其余原因拦住，不产生 seek。
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::Fullscreen, false, 0.0f));
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::Battery, false, 0.0f));
+    DOCTEST_CHECK_FALSE(four.takeResumeSeek(&seek));
+    DOCTEST_CHECK_FALSE(four.shouldPlay());
+    DOCTEST_CHECK_EQ(four.systemHolds(),
+                     wp::holdReasonBit(wp::HoldReason::ScreenLocked) |
+                         wp::holdReasonBit(wp::HoldReason::DisplayAsleep));
+
+    // 全解除才产生一次 seek，目标 = 首锚点。
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::ScreenLocked, false, 0.0f));
+    DOCTEST_CHECK_FALSE(four.shouldPlay());
+    DOCTEST_CHECK(four.setSystemReason(wp::HoldReason::DisplayAsleep, false, 0.0f));
+    DOCTEST_CHECK(four.shouldPlay());
+    DOCTEST_CHECK(four.takeResumeSeek(&seek));
+    DOCTEST_CHECK_EQ(seek, 10.0f);
+    DOCTEST_CHECK_FALSE(four.takeResumeSeek(&seek));
+
+    // 解除顺序不影响语义：先解除的不是锚点来源位时，锚点保持首次值。
+    wp::HoldArbiter order;
+    order.setPauseOnBattery(true);
+    DOCTEST_CHECK(order.setSystemReason(wp::HoldReason::Battery, true, 5.0f));
+    DOCTEST_CHECK(order.setSystemReason(wp::HoldReason::Fullscreen, true, 9.0f));
+    DOCTEST_CHECK(order.setSystemReason(wp::HoldReason::Battery, false, 0.0f));
+    DOCTEST_CHECK_FALSE(order.shouldPlay());  // 全屏仍拦
+    DOCTEST_CHECK_EQ(order.anchorSec(), 5.0f);
+    DOCTEST_CHECK(order.setSystemReason(wp::HoldReason::Fullscreen, false, 0.0f));
+    DOCTEST_CHECK(order.takeResumeSeek(&seek));
+    DOCTEST_CHECK_EQ(seek, 5.0f);
+
+    // 电池门控与其它位共存：关门只摘电池位，不解除整体暂停、不产生 seek。
+    wp::HoldArbiter coexist;
+    coexist.setPauseOnBattery(true);
+    DOCTEST_CHECK(coexist.setSystemReason(wp::HoldReason::Battery, true, 7.0f));
+    DOCTEST_CHECK(coexist.setSystemReason(wp::HoldReason::ScreenLocked, true, 8.0f));
+    coexist.setPauseOnBattery(false);
+    DOCTEST_CHECK_EQ(coexist.systemHolds(),
+                     wp::holdReasonBit(wp::HoldReason::ScreenLocked));
+    DOCTEST_CHECK_FALSE(coexist.shouldPlay());
+    DOCTEST_CHECK_FALSE(coexist.takeResumeSeek(&seek));
+    DOCTEST_CHECK(coexist.setSystemReason(wp::HoldReason::ScreenLocked, false, 0.0f));
+    DOCTEST_CHECK(coexist.takeResumeSeek(&seek));
+    DOCTEST_CHECK_EQ(seek, 7.0f);
+    return true;
+})
+
 // 防：四态判定把「未配置」和「目录不在」混淆 / 0 条被当成可播。
 REGISTER_TEST(wallpaper_core_availability, "wallpaper core: availability 空路径/不存在/0 可播/可用", {
     using wp::Availability;
@@ -452,7 +560,8 @@ REGISTER_TEST(wallpaper_core_video_library, "wallpaper core: video_library 扩�
     return true;
 })
 
-// 防：图片扩展名白名单错 / 统计三格口径漂移 / 本批伪称已按像素过滤。
+// 防：图片扩展名白名单错 / 统计三格口径漂移 / 无探针注入时误过滤（core 直调
+// 默认不过滤，生产路径才由 service 注入平台探针）。
 REGISTER_TEST(wallpaper_core_image_library, "wallpaper core: image_library 扩展名/递归/统计/隐藏", {
     test_support::TempDir dir("wallpaper_image_library");
     const fs::path root = dir.path / "library";
@@ -481,9 +590,80 @@ REGISTER_TEST(wallpaper_core_image_library, "wallpaper core: image_library 扩�
     DOCTEST_CHECK(names.count(".secret.png") == 0);
     DOCTEST_CHECK(names.count("h.png") == 0);
     DOCTEST_CHECK_EQ(result.total, 6);
-    DOCTEST_CHECK_EQ(result.passing, 6);  // 本批无解码：passing 恒等于 total
+    DOCTEST_CHECK_EQ(result.passing, 6);  // 无探针注入：passing 恒等于 total（不过滤）
     DOCTEST_CHECK_EQ(result.filtered, 0);
     DOCTEST_CHECK_EQ(result.extensionRejected, static_cast<std::size_t>(1));
+    return true;
+})
+
+// 防：像素档过滤逻辑漂移——unknown 语义（解码失败不过滤，宁滥勿缺）/ 档位线
+// 恰好过线按 ≥ / 过滤只影响 passing 不动 total / files 只含 passing /
+// minPixels<=0 关闭过滤。探针用夹具自带的 IHDR 解析（跨平台确定），等价于
+// 平台层 WIC 的成功/失败两态。
+REGISTER_TEST(wallpaper_core_image_filter,
+              "wallpaper core: image_library 像素档过滤（假探针 unknown 不过滤/档位分流/计数三格）", {
+    test_support::TempDir dir("wallpaper_image_filter");
+    const fs::path root = dir.path / "library";
+    fs::create_directories(root / "sub");
+    test_support::writeMinimalPng(root / "small.png", 64, 64);       // 4,096 px
+    test_support::writeMinimalPng(root / "big.png", 2560, 1440);     // 3,686,400 px（恰 2K 档）
+    test_support::writeMinimalPng(root / "sub" / "tiny.jpg", 10, 10);
+    test_support::writeMinimalPng(root / "opaque.webp", 1920, 1080); // 2,073,600 px（恰 1080P 档）
+    test_support::writeTextFile(root / "broken.png", "not a png at all");
+
+    const auto headerProbe = [](const std::string& path) -> wp::ProbedImageSize {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return {};
+        unsigned char head[24] = {};
+        in.read(reinterpret_cast<char*>(head), static_cast<std::streamsize>(sizeof(head)));
+        if (in.gcount() < 24) return {};
+        static const unsigned char kSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        for (int i = 0; i < 8; ++i) {
+            if (head[i] != kSig[i]) return {};  // 签名不符 = unknown（WIC 拒开同语义）
+        }
+        const auto be32 = [&head](int offset) {
+            return static_cast<int>((static_cast<unsigned>(head[offset]) << 24) |
+                                    (static_cast<unsigned>(head[offset + 1]) << 16) |
+                                    (static_cast<unsigned>(head[offset + 2]) << 8) |
+                                    static_cast<unsigned>(head[offset + 3]));
+        };
+        wp::ProbedImageSize size;
+        size.known = true;
+        size.width = be32(16);
+        size.height = be32(20);
+        return size;
+    };
+
+    // 2K 档：big 恰好过线（≥）；small/tiny/opaque 被滤；broken unknown 不过滤。
+    const wp::ImageScanResult at2K =
+        wp::scanImageLibrary(root, 3686400, 1000, {}, headerProbe);
+    DOCTEST_CHECK(at2K.status == wp::LibraryScanStatus::Ok);
+    const std::set<std::string> names2K = fileNames(at2K.files);
+    DOCTEST_CHECK(names2K.count("big.png") == 1);
+    DOCTEST_CHECK(names2K.count("broken.png") == 1);
+    DOCTEST_CHECK(names2K.count("small.png") == 0);
+    DOCTEST_CHECK(names2K.count("tiny.jpg") == 0);
+    DOCTEST_CHECK(names2K.count("opaque.webp") == 0);
+    DOCTEST_CHECK_EQ(at2K.total, 5);
+    DOCTEST_CHECK_EQ(at2K.passing, 2);
+    DOCTEST_CHECK_EQ(at2K.filtered, 3);
+
+    // 1080P 档：opaque 恰好过线（≥），big 仍在池。
+    const wp::ImageScanResult at1080 =
+        wp::scanImageLibrary(root, 2073600, 1000, {}, headerProbe);
+    DOCTEST_CHECK_EQ(at1080.passing, 3);
+    DOCTEST_CHECK_EQ(at1080.filtered, 2);
+    const std::set<std::string> names1080 = fileNames(at1080.files);
+    DOCTEST_CHECK(names1080.count("opaque.webp") == 1);
+    DOCTEST_CHECK(names1080.count("big.png") == 1);
+
+    // minPixels <= 0：过滤关闭，探针不调用（passing == total）。
+    const wp::ImageScanResult unfiltered =
+        wp::scanImageLibrary(root, 0, 1000, {}, headerProbe);
+    DOCTEST_CHECK_EQ(unfiltered.total, 5);
+    DOCTEST_CHECK_EQ(unfiltered.passing, 5);
+    DOCTEST_CHECK_EQ(unfiltered.filtered, 0);
+    DOCTEST_CHECK_EQ(unfiltered.files.size(), static_cast<std::size_t>(5));
     return true;
 })
 
@@ -550,7 +730,9 @@ REGISTER_TEST(wallpaper_core_presentation, "wallpaper core: presentation 标签/
     DOCTEST_REQUIRE(emptyImage.has_value());
     DOCTEST_CHECK_EQ(emptyImage->title, std::string("没有符合条件的图片"));
     DOCTEST_CHECK_EQ(emptyImage->primaryAction, std::string("更换文件夹"));
-    DOCTEST_CHECK(emptyImage->reason.find("档位") == std::string::npos);
+    // 档位过滤已落地：空态如实说明档位口径（F1 反转——旧「后续版本」口径回潮即红）。
+    DOCTEST_CHECK(emptyImage->reason.find("低于分辨率档位") != std::string::npos);
+    DOCTEST_CHECK(emptyImage->reason.find("后续版本") == std::string::npos);
     // 未配置的图片变体标题必须按来源分派（不能复用视频文案）。
     const auto unconfiguredImage = emptyStateCopy(wp::Availability::FolderUnconfigured,
                                                   wp::WallpaperKind::Image);
@@ -979,5 +1161,113 @@ REGISTER_TEST(wallpaper_core_service_hold_seek,
     DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), 0);  // 释放不重新装载
 
     service.stop();
+    return true;
+})
+
+// 防：watcher 全接线的服务侧裁决路径——事件/轮询两通道的状态变化必须落成
+// pause/seek 命令序列与快照原因集合；电池豁免开关即时生效且不受持续上报影响；
+// stop 必须真的停掉 watcher；测试装配下换屏回调安全 no-op（无宿主不报错）。
+REGISTER_TEST(wallpaper_core_service_yield_watchers,
+              "wallpaper core: service 让路 watcher 接线（锁屏事件/电池与全屏轮询/电池豁免/换屏 no-op）", {
+    test_support::TempDir dir("wallpaper_service_yield");
+    const fs::path settingsPath = dir.path / "wallpaper" / "settings.json";
+    const fs::path videoRoot = dir.path / "videos";
+    fs::create_directories(videoRoot);
+
+    auto player = std::make_unique<wp::NullPlayerBackend>();
+    wp::NullPlayerBackend* playerRaw = player.get();
+    auto watchers = std::make_unique<FakeYieldWatchers>();
+    FakeYieldWatchers* watchersRaw = watchers.get();
+
+    wp::WallpaperService service;
+    service.setSettingsPathForTest(settingsPath.string());
+    service.setVideoScannerForTest([&videoRoot](const std::string&) {
+        wp::VideoScanResult result;
+        result.status = wp::LibraryScanStatus::Ok;
+        result.files = {(videoRoot / "a.mp4").string()};
+        return result;
+    });
+    service.setYieldWatchersForTest(std::move(watchers));
+    service.setPlayerForTest(std::move(player));
+
+    service.start();
+    std::string error;
+    DOCTEST_REQUIRE_MESSAGE(service.selectFolder(videoRoot.string(), &error),
+                            "selectFolder 失败: " + error);
+    waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+    DOCTEST_CHECK(watchersRaw->started());
+
+    // ① 锁屏事件通道：fire → 暂停 + 原因集合；解锁 → 恢复 + seek 回锚点。
+    playerRaw->clearCalls();
+    playerRaw->setPositionForTest(11.0f);
+    watchersRaw->fireHold(wp::HoldReason::ScreenLocked, true);
+    wp::WallpaperSnapshot snapshot = waitForSnapshot(
+        service, [](const wp::WallpaperSnapshot& s) { return s.paused; });
+    DOCTEST_CHECK(snapshot.paused);
+    DOCTEST_CHECK(snapshot.systemHolds == wp::holdReasonBit(wp::HoldReason::ScreenLocked));
+    DOCTEST_CHECK(hasPauseCall(*playerRaw, true));
+    watchersRaw->fireHold(wp::HoldReason::ScreenLocked, false);
+    snapshot = waitForSnapshot(service,
+                               [](const wp::WallpaperSnapshot& s) { return !s.paused; });
+    DOCTEST_CHECK_FALSE(snapshot.paused);
+    DOCTEST_CHECK_EQ(snapshot.systemHolds, static_cast<wp::HoldReasonSet>(0));
+    DOCTEST_CHECK(hasSeekCall(*playerRaw, 11.0f));
+    DOCTEST_CHECK(hasPauseCall(*playerRaw, false));
+
+    // ② 全屏轮询通道：置位 → 下一拍（≤250ms+余量）暂停；复位 → 恢复。
+    playerRaw->clearCalls();
+    playerRaw->setPositionForTest(21.0f);
+    watchersRaw->setFullscreen(true);
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return s.paused &&
+               s.systemHolds == wp::holdReasonBit(wp::HoldReason::Fullscreen);
+    });
+    DOCTEST_CHECK(snapshot.paused);
+    watchersRaw->setFullscreen(false);
+    snapshot = waitForSnapshot(service,
+                               [](const wp::WallpaperSnapshot& s) { return !s.paused; });
+    DOCTEST_CHECK_FALSE(snapshot.paused);
+    DOCTEST_CHECK(hasSeekCall(*playerRaw, 21.0f));
+
+    // ③ 电池轮询通道 + 豁免开关：默认门控关闭时电池上报不让路；开门控后电池位
+    // 生效 → 暂停；关开关 → 立即恢复（watcher 仍上报电池也不让路）；重开开关 →
+    // 下一拍电池位回来（契约：开门不主动置位，等下一帧轮询）。
+    watchersRaw->setBattery(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    DOCTEST_CHECK_FALSE(service.snapshot().paused);  // 门控关：持续上报也不让路
+    service.setPauseOnBattery(true);
+    wp::WallpaperSnapshot batterySnap = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return s.paused && s.systemHolds == wp::holdReasonBit(wp::HoldReason::Battery);
+    });
+    DOCTEST_CHECK(batterySnap.paused);
+    DOCTEST_CHECK(batterySnap.pauseOnBattery);
+    service.setPauseOnBattery(false);
+    batterySnap = waitForSnapshot(
+        service, [](const wp::WallpaperSnapshot& s) { return !s.paused; });
+    DOCTEST_CHECK_FALSE(batterySnap.paused);
+    DOCTEST_CHECK_EQ(batterySnap.systemHolds, static_cast<wp::HoldReasonSet>(0));
+    service.setPauseOnBattery(true);
+    batterySnap = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return s.paused && s.systemHolds == wp::holdReasonBit(wp::HoldReason::Battery);
+    });
+    DOCTEST_CHECK(batterySnap.paused);
+    watchersRaw->setBattery(false);
+    batterySnap = waitForSnapshot(
+        service, [](const wp::WallpaperSnapshot& s) { return !s.paused; });
+    DOCTEST_CHECK_FALSE(batterySnap.paused);
+
+    // ④ 换屏回调：测试装配无宿主 → 安全 no-op（不报错、不影响播放态与暂停态）。
+    const std::string errorBefore = service.snapshot().playbackError;
+    watchersRaw->fireDisplayChanged();
+    snapshot = service.snapshot();
+    DOCTEST_CHECK_EQ(snapshot.playbackError, errorBefore);
+    DOCTEST_CHECK_FALSE(snapshot.paused);
+
+    // ⑤ stop 停 watcher：fake 记录 stopped，重复 stop 幂等。
+    service.stop();
+    service.stop();
+    DOCTEST_CHECK(watchersRaw->stopped());
     return true;
 })

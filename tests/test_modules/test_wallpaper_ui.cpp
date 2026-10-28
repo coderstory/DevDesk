@@ -777,14 +777,19 @@ REGISTER_TEST(wallpaper_ui_image_and_library_cards,
     DOCTEST_CHECK(libraryUi.find("wallpaper.card.formats") == nullptr);
     DOCTEST_CHECK(libraryUi.find("wallpaper.card.resolution") != nullptr);
     DOCTEST_CHECK(libraryUi.find("wallpaper.card.fit") != nullptr);
-    // 统计只保留"目录内图片"一格：passing 恒 total、filtered 恒 0，参与/低于
-    // 两格是虚假宣称（审计 F1；哨兵见 wallpaper_ui_no_filter_claims）。
-    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.total") != nullptr);
-    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.passing") == nullptr);
-    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.filtered") == nullptr);
+    // 档位过滤已落地：参与 / 低于两格真数据（makeSnapshot: passing=18 / filtered=6）。
+    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.passing") != nullptr);
+    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.filtered") != nullptr);
+    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.total") == nullptr);
     DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.videos") == nullptr);
-    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.total"),
-                     std::string("24"));
+    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.passing"),
+                     std::string("18"));
+    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.passing.label"),
+                     std::string("参与轮播"));
+    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.filtered"),
+                     std::string("6"));
+    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.filtered.label"),
+                     std::string("低于档位"));
     DOCTEST_CHECK(fireClick(libraryUi, "wallpaper.resolution.2"));
     DOCTEST_CHECK_EQ(requestedPixels, 8294400);
     DOCTEST_CHECK(fireClick(libraryUi, "wallpaper.fit.1"));
@@ -956,11 +961,11 @@ REGISTER_TEST(wallpaper_ui_no_maintenance_entry,
     return true;
 })
 
-// 防（审计 F1/F3 缺口①）：图片像素档过滤未接入（image_library 对 minPixels 显式
-// 忽略、passing==total、filtered 恒 0），UI 固定文案/统计格不得宣称"已按档位过滤"。
-// 任何宣称点回潮（hint 加回"低于档位不参与轮播"、复活参与/低于统计格）本用例即红。
-REGISTER_TEST(wallpaper_ui_no_filter_claims,
-              "wallpaper_ui: 片库图片不得宣称像素档过滤已生效（只留目录内图片一格 + 后续版本口径）", {
+// 防（F1 反转守卫）：像素档过滤已落地（image_library 注入尺寸探针、passing/
+// filtered 真数据），UI 必须展示真实计数并如实宣称档位生效；旧「后续版本生效」
+// 口径回潮、或复活已删除的 stat.total 格，本用例即红。
+REGISTER_TEST(wallpaper_ui_filter_live,
+              "wallpaper_ui: 片库图片档位过滤已落地（参与/低于两格真数据 + 档位文案如实宣称）", {
     wp::UiState state;
     state.tab = 1;
     const wp::WallpaperSnapshot snapshot = makeSnapshot(
@@ -969,17 +974,19 @@ REGISTER_TEST(wallpaper_ui_no_filter_claims,
     eui::Ui ui;
     composeFrame(ui, kPage1600x1000, snapshot, {}, state);
 
-    // 统计格缺席断言：参与/低于两格画出来即是宣称。
-    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.total") != nullptr);
-    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.passing") == nullptr);
-    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.filtered") == nullptr);
+    // 统计两格真数据断言：参与=18（accent）、低于档位=6；total 格已删。
+    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.passing") != nullptr);
+    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.filtered") != nullptr);
+    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.total") == nullptr);
+    DOCTEST_CHECK_EQ(elementText(ui, "wallpaper.folder.stat.passing"),
+                     std::string("18"));
+    DOCTEST_CHECK_EQ(elementText(ui, "wallpaper.folder.stat.filtered"),
+                     std::string("6"));
 
-    // 全树文案哨兵："不参与轮播 / 低于档位"= 过滤已生效的宣称，禁止出现。
+    // 全树文案哨兵：旧口径「后续版本」= 未落地的虚假宣称，禁止回潮。
     std::vector<std::string> violations;
     walkTree(ui, [&](const core::dsl::Element& element) {
-        if (element.text.empty()) return;
-        if (contains(element.text, "不参与轮播") ||
-            contains(element.text, "低于档位")) {
+        if (!element.text.empty() && contains(element.text, "后续版本")) {
             violations.push_back(element.text);
         }
     });
@@ -989,15 +996,67 @@ REGISTER_TEST(wallpaper_ui_no_filter_claims,
         joined += violation;
     }
     DOCTEST_CHECK_MESSAGE(violations.empty(),
-                          "宣称过滤已生效的文案回潮: " + joined);
+                          "过滤已落地后仍出现「后续版本」旧口径: " + joined);
 
-    // 口径必须与 presentation::emptyStateCopy 一致：筛选待后续版本 + 全部参与。
+    // 档位文案如实宣称：低于档位不参与轮播（与 presentation::emptyStateCopy 同口径）。
     const std::string resolutionHintText =
         elementText(ui, "wallpaper.card.resolution.hint");
-    DOCTEST_CHECK(contains(resolutionHintText, "后续版本"));
-    DOCTEST_CHECK(contains(resolutionHintText, "全部图片参与轮播"));
+    DOCTEST_CHECK(contains(resolutionHintText, "不参与轮播"));
     DOCTEST_CHECK(contains(elementText(ui, "wallpaper.folder.hint"),
-                           "后续版本"));
+                           "低于分辨率档位"));
+    return true;
+})
+
+// 防：让路折叠组的实时状态呈现——激活条件 chip 亮显（background 底）、未激活
+// 压暗（surface 底）、折叠摘要优先显示「让路中」；数据源只有快照 systemHolds
+//（watcher 喂入），UI 不得自己猜状态。
+REGISTER_TEST(wallpaper_ui_holds_active_state,
+              "wallpaper_ui: 让路激活条件亮显 + 摘要让路中 + 电池摘要随开关", {
+    const auto& t = ::core::theme::current();
+    wp::UiState state;
+    state.holdsExpanded = true;
+
+    // 无激活原因：四 chip 全压暗，摘要 = 电池开关文案。
+    const wp::WallpaperSnapshot idle = makeSnapshot(
+        wp::WallpaperKind::Video, wp::Availability::Playing,
+        wp::PlayMode::LoopList);
+    eui::Ui idleUi;
+    composeFrame(idleUi, kPage1600x1000, idle, {}, state);
+    DOCTEST_CHECK_EQ(elementText(idleUi, "wallpaper.holds.summary"),
+                     std::string("电池供电时继续"));
+    for (int i = 0; i < 4; ++i) {
+        const auto* bg = idleUi.find("wallpaper.holds.reason." +
+                                     std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK_MESSAGE(sameColor(bg->color, t.colors.surface),
+                              "未激活 chip " + std::to_string(i) + " 应压暗");
+    }
+
+    // 全屏激活：chip.0 亮显（background 底），其余压暗；摘要 = 让路中。
+    const wp::HoldReasonSet held =
+        wp::holdReasonBit(wp::HoldReason::Fullscreen) |
+        wp::holdReasonBit(wp::HoldReason::ScreenLocked);
+    const wp::WallpaperSnapshot active = makeSnapshot(
+        wp::WallpaperKind::Video, wp::Availability::Playing,
+        wp::PlayMode::LoopList, /*manualPaused=*/false, held);
+    eui::Ui activeUi;
+    composeFrame(activeUi, kPage1600x1000, active, {}, state);
+    DOCTEST_CHECK_EQ(elementText(activeUi, "wallpaper.holds.summary"),
+                     std::string("让路中"));
+    const auto* fullscreenBg = activeUi.find("wallpaper.holds.reason.0.bg");
+    DOCTEST_REQUIRE(fullscreenBg != nullptr);
+    DOCTEST_CHECK(sameColor(fullscreenBg->color, t.colors.background));
+    const auto* sleepBg = activeUi.find("wallpaper.holds.reason.2.bg");
+    DOCTEST_REQUIRE(sleepBg != nullptr);
+    DOCTEST_CHECK(sameColor(sleepBg->color, t.colors.surface));
+
+    // 电池开关翻起：无让路时摘要 = 电池供电时暂停。
+    wp::WallpaperSnapshot batteryOn = idle;
+    batteryOn.pauseOnBattery = true;
+    eui::Ui batteryUi;
+    composeFrame(batteryUi, kPage1600x1000, batteryOn, {}, state);
+    DOCTEST_CHECK_EQ(elementText(batteryUi, "wallpaper.holds.summary"),
+                     std::string("电池供电时暂停"));
     return true;
 })
 
