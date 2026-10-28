@@ -131,6 +131,7 @@ REGISTER_TEST(mcp_fetch_registered_with_server_info,
     const auto properties = schema.value().asObject().get("properties").asObject();
     DOCTEST_CHECK(properties.has("url"));
     DOCTEST_CHECK(properties.has("max_chars"));
+    DOCTEST_CHECK(properties.has("main_content"));
     const auto required = schema.value().asObject().get("required");
     DOCTEST_REQUIRE(required.isArray());
     DOCTEST_CHECK(required.size() == 1);
@@ -616,7 +617,8 @@ REGISTER_TEST(mcp_fetch_redirect_missing_location_and_bad_target,
 
     ScriptedFetcher badTarget({makeResponse(302, "", {{"Location", "ftp://h/x"}})});
     core::mcp::McpToolRegistry registry2;
-    module::mcp::registerBuiltinMcpTools(registry2, std::ref(badTarget));
+    module::mcp::registerBuiltinMcpTools(registry2, std::ref(badTarget),
+                                         module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto bad = runFetch(registry2, "{\"url\":\"http://a.test/n\"}");
     DOCTEST_CHECK(bad.value().text.find("无法解析为 http/https") != std::string::npos);
     return true;
@@ -742,7 +744,8 @@ REGISTER_TEST(mcp_fetch_total_timeout_across_hops,
     module::mcp::FetchLimits limits;
     limits.totalBudget = std::chrono::milliseconds(200);
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), limits);
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), limits,
+                                         legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"http://a.test/slow\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
@@ -765,5 +768,44 @@ REGISTER_TEST(mcp_fetch_network_error_readable_message,
     DOCTEST_CHECK(result.value().isError);
     DOCTEST_CHECK(result.value().text.find("网络请求失败") != std::string::npos);
     DOCTEST_CHECK(result.value().text.find("connection reset") != std::string::npos);
+    return true;
+})
+
+// ── 正文主干参数(CE 批):main_content 默认 true;false 规则全关断保底 ──
+
+REGISTER_TEST(mcp_fetch_main_content_default_strips_boilerplate,
+              "mcp fetch: main_content 缺省 true——导航/页脚样板不入输出,正文保留", {
+    const std::string page =
+        "<html><body><header><a href=\"/\">站头导航</a></header>"
+        "<main><h1>正文标题</h1><p>正文段落内容。</p></main>"
+        "<footer><a href=\"/f\">页脚链接</a></footer></body></html>";
+    ScriptedFetcher script({htmlOk(page)});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, legacyProxyOpts());
+    const std::string text = fetchText(registry, "https://e.test/doc");
+    DOCTEST_CHECK(text.find("# 正文标题") != std::string::npos);
+    DOCTEST_CHECK(text.find("正文段落内容") != std::string::npos);
+    DOCTEST_CHECK(text.find("站头导航") == std::string::npos);
+    DOCTEST_CHECK(text.find("页脚链接") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_main_content_false_keeps_everything,
+              "mcp fetch: main_content=false——规则全关断,输出与提取功能引入前逐字节同口径", {
+    const std::string page =
+        "<html><body><header><a href=\"/\">站头导航</a></header>"
+        "<main><h1>正文标题</h1><p>正文段落内容。</p></main>"
+        "<footer><a href=\"/f\">页脚链接</a></footer></body></html>";
+    ScriptedFetcher script({htmlOk(page)});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, legacyProxyOpts());
+    const std::string text =
+        fetchText(registry, "https://e.test/doc", ",\"main_content\":false");
+    DOCTEST_CHECK(text.find("# 正文标题") != std::string::npos);
+    DOCTEST_CHECK(text.find("正文段落内容") != std::string::npos);
+    DOCTEST_CHECK(text.find("[站头导航](/)") != std::string::npos);
+    DOCTEST_CHECK(text.find("[页脚链接](/f)") != std::string::npos);
     return true;
 })

@@ -369,7 +369,8 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
     "url": { "type": "string", "description": "http/https 网页地址" },
     "max_chars": { "type": "integer", "description": "输出字符上限，默认 60000，范围 1000..200000" },
     "useProxy": { "type": "boolean", "description": "是否自动探测本地代理（127.0.0.1:7897→10808→51295，取首个可连通者；全部不可连通则直连并附注）。默认 true" },
-    "proxy": { "type": "string", "description": "显式代理 host:port（仅 IP:port 或 localhost:port），提供时强制使用；预检失败报错，且不可与 useProxy=false 同给" }
+    "proxy": { "type": "string", "description": "显式代理 host:port（仅 IP:port 或 localhost:port），提供时强制使用；预检失败报错，且不可与 useProxy=false 同给" },
+    "main_content": { "type": "boolean", "description": "是否只提取正文主干（剔除导航/页脚/面包屑等样板）。默认 true；false 返回全量内容（与提取功能引入前行为一致）" }
   },
   "required": ["url"]
 }
@@ -379,6 +380,7 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
 
 - `useProxy`（boolean，默认 true）：true → 按优先级序探测 `127.0.0.1:7897` → `127.0.0.1:10808` → `127.0.0.1:51295`（TCP 连通探测，单候选阻塞 ≤300ms，探测结果同一次调用内缓存），首个可连通者作为 HTTP 代理；全部不可连通 → 直连，输出末尾追加一行「未检测到本地代理,已直连」。false → 不用代理、不探测、无附注。
 - `proxy`（string，可选）：格式仅 `IP:port` 或 `localhost:port`（控 SSRF 面——代理主机是 curl 实连对象）。提供时强制走该代理：先 TCP 预检，失败 → `isError=true`「显式指定的代理 <host:port> 不可用」（不回落直连）；与 `useProxy=false` 同给 → 参数冲突错误（-32602 口径）。
+- `main_content`（boolean，默认 true）：true → HTML 转换走正文主干提取（§7 规则 R1–R4，剔除导航/页脚/面包屑等样板）；false → 规则全关断，输出与提取功能引入前基线逐字节一致（保底契约，专项测试锁死）。仅对 HTML 响应生效。
 - SSRF 口径不变：代理地址本身（回环）是传输通道，不进抓取目标 deny 表；抓取目标的字面 SSRF 校验与重定向每跳复检完全不变（走代理时亦然）；DNS 层风险仍按 §14.2 接受。
 
 行为：
@@ -417,7 +419,7 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
 
 ## 7. HTML→Markdown 转换器
 
-接口：`std::string htmlToMarkdown(const std::string& html);`（输入上限 2 MiB，超出先截断）。
+接口：`std::string htmlToMarkdown(const std::string& html, bool extractMainContent = true);`（输入上限 2 MiB，超出先截断）。
 
 处理规则：
 
@@ -432,6 +434,13 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
 - 实体：常见命名实体（`&amp;` `&lt;` `&gt;` `&quot;` `&nbsp;` `&#39;` 等）与数字实体（十进制/十六进制）解码。
 - 空白：连续空白折叠为单个空格（`pre` 内除外）；最多保留一个空行；行尾空白去掉。
 - 标题兜底：`<title>` 非空且正文没有 `h1` 时，在最前面加 `# <title>`。
+- 正文主干提取（`extractMainContent`，默认开；规则/词表/阈值出处 = 蓝图 `docs/superpowers/research/2026-10-27-mcp-content-extraction-review.md` §3，照抄不改值）：
+  - **R1 语义标签整块剔除**：`header/footer/nav/aside/form/noscript/iframe/svg/template/dialog/button/select`（`Mode::Suppress` 抑制栈，嵌套按层计数；未闭合双保险 = 遇 `article`/`main`/`h1`–`h3` 信号释放 + 抑制区 64 KiB 字节上限硬释放；表格单元格与 `pre` 内不启动）；
+  - **R1b class/id 关键词剔除**：负面词表（Readability unlikelyCandidates 高置信子集）命中且无正词（`article/content/main/docs/code` 等保险丝，词表冲突存疑不删）→ 对 `div/section/ul/ol/table/p` 整块抑制；
+  - **R2 链接密度**：块 ≤150 字符且链接文字占比 >0.5 且无图 → 整块丢弃；锚链接（`href="#…"`）文字按 0.3 计重（保 TOC）；丢弃随块复位码 span/链接状态并回退有序列表编号；`<main>`/`<article>` 锚定区内暂停；
+  - **R3 锚定保护**：`<main>`/`<article>` 进入锚定态——区内暂停 R2，其出现触发 R1 信号释放；
+  - **R4 无障碍属性**：容器 `role` 命中词表（menu/menubar/complementary/navigation/alert/alertdialog/dialog/banner/contentinfo/search）或 `aria-hidden="true"`/`hidden`/`display:none`/`visibility:hidden` → 整块抑制（以必有闭合配对的容器为闸，void/自闭合标签不启动防栈滞留）；
+  - **关断保底**：`extractMainContent = false` 时以上规则全部短路，输出与引入本参数前的基线**逐字节一致**（差分金样测试锁死，防回归）。
 
 容错与局限（明写）：
 

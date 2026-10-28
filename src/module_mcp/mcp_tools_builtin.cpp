@@ -615,7 +615,7 @@ public:
     }
 
     std::string inputSchemaJson() const override {
-        return R"({"type":"object","properties":{"url":{"type":"string","description":"http/https 网页地址"},"max_chars":{"type":"integer","description":"输出字符上限，默认 60000，范围 1000..200000"},"useProxy":{"type":"boolean","description":"是否自动探测本地代理（127.0.0.1:7897→10808→51295，取首个可连通者；全部不可连通则直连并附注）。默认 true"},"proxy":{"type":"string","description":"显式代理 host:port（仅 IP:port 或 localhost:port），提供时强制使用；预检失败报错，且不可与 useProxy=false 同给"}},"required":["url"]})";
+        return R"({"type":"object","properties":{"url":{"type":"string","description":"http/https 网页地址"},"max_chars":{"type":"integer","description":"输出字符上限，默认 60000，范围 1000..200000"},"useProxy":{"type":"boolean","description":"是否自动探测本地代理（127.0.0.1:7897→10808→51295，取首个可连通者；全部不可连通则直连并附注）。默认 true"},"proxy":{"type":"string","description":"显式代理 host:port（仅 IP:port 或 localhost:port），提供时强制使用；预检失败报错，且不可与 useProxy=false 同给"},"main_content":{"type":"boolean","description":"是否只提取正文主干（剔除导航/页脚/面包屑等样板）。默认 true；false 返回全量内容（与提取功能引入前行为一致）"}},"required":["url"]})";
     }
 
     core::Result<core::mcp::ToolResult> execute(
@@ -636,6 +636,11 @@ public:
         if (maxCharsValue.isNumber()) maxChars = maxCharsValue.asInt();
         if (maxChars < kMinMaxChars) maxChars = kMinMaxChars;
         if (maxChars > kMaxMaxChars) maxChars = kMaxMaxChars;
+
+        // 正文主干开关(正文提取批):缺省 true 只出主干;false 规则全关断保底
+        bool mainContent = true;
+        const JsonValue mainContentValue = args.get("main_content");
+        if (mainContentValue.isBool()) mainContent = mainContentValue.asBool();
 
         // ── 代理参数(代理参数批;口径见 spec §6.1 本地代理段)──────────
         bool useProxy = true;
@@ -791,7 +796,7 @@ public:
         body = platform::utf8::sanitize(body);  // 先 sanitize 再转换/返回(spec §6.1-8)
         std::string text;
         if (htmlType) {
-            text = htmlToMarkdown(body);
+            text = htmlToMarkdown(body, mainContent);
             if (core::str::trimAscii(text).empty()) {
                 // 空可见文本非错误(spec §6.1-11)
                 return core::Result<core::mcp::ToolResult>::ok(

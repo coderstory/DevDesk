@@ -13,6 +13,61 @@ namespace {
 
 constexpr std::size_t kMaxInputBytes = 2 * 1024 * 1024;  // spec §7:输入上限
 
+// ── 正文主干提取(正文提取批;蓝图 = docs/superpowers/research/2026-10-27-
+// mcp-content-extraction-review.md,词表与阈值逐条对照 Readability/trafilatura
+// 一手核对)。调参只动本常量区。规则全部受 main_content 开关整体关断,关断时
+// 输出与关断前基线逐字节一致(差分保底测试锁死)。
+constexpr std::size_t kSuppressByteLimit = 64 * 1024;  // R1 双保险之二:抑制区字节上限
+constexpr std::size_t kLinkDensityBlockLimit = 150;    // R2:块长上限(字节;蓝图自定值)
+constexpr double kLinkDensityThreshold = 0.5;          // R2:密度阈值(Readability 高权重端)
+constexpr double kAnchorLinkWeight = 0.3;  // R2:锚链接(#开头)文字计重(Readability 同款)
+
+// R1:渲染性/交互性语义标签,整块剔除(svg 不在列则 <svg><text> 会漏进正文)
+const char* const kSuppressTags[] = {"header", "footer", "nav", "aside", "form",
+                                     "noscript", "iframe", "svg", "template",
+                                     "dialog", "button", "select"};
+// R1b:class/id 负面词表(Readability unlikelyCandidates 高置信子集 + 国内命名)
+const char* const kUnlikelyTokens[] = {
+    "footer", "header", "nav", "menu", "sidebar", "banner", "breadcrumb",
+    "comment", "related", "share", "social", "sponsor", "promo", "ads",
+    "advert", "pagination", "pager", "widget", "copyright", "newsletter",
+    "subscribe", "cookie", "gdpr", "drawer", "toolbar"};
+// R1b:正词保险丝(词表冲突时存疑不删;docs/code/highlight/snippet 为本仓扩展)
+const char* const kMaybeTokens[] = {"article", "content", "main", "post", "entry",
+                                    "body", "column", "story", "docs", "doc",
+                                    "markdown", "readme", "code", "highlight",
+                                    "snippet"};
+// R4:role 词表(Readability UNLIKELY_ROLES + banner/contentinfo/search 本仓扩展)
+const char* const kSuppressRoles[] = {"menu", "menubar", "complementary",
+                                      "navigation", "alert", "alertdialog",
+                                      "dialog", "banner", "contentinfo", "search"};
+
+template <std::size_t N>
+bool containsAnyToken(const std::string& s, const char* const (&tokens)[N]) {
+    for (std::size_t i = 0; i < N; ++i) {
+        if (s.find(tokens[i]) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool isSuppressTag(const std::string& name) {
+    return containsAnyToken(name, kSuppressTags);
+}
+
+bool isSuppressRole(const std::string& role) {
+    for (std::size_t i = 0; i < sizeof(kSuppressRoles) / sizeof(kSuppressRoles[0]);
+         ++i) {
+        if (role == kSuppressRoles[i]) return true;
+    }
+    return false;
+}
+
+// R1b/R4 容器集:必有闭合配对的块级标签(void/自闭合标签不做 Suppress,防栈滞留)
+bool isExtractionContainer(const std::string& name) {
+    return name == "div" || name == "section" || name == "ul" || name == "ol" ||
+           name == "table" || name == "p";
+}
+
 std::string lowerAscii(std::string s) {
     for (char& c : s) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -237,6 +292,8 @@ std::string escapeMarkdownText(const std::string& s, const bool chunkStart) {
 // (p/div/标题/列表/表格/pre)触发冲刷。引用/列表前缀在冲刷时套用,嵌套结构天然逐行生效。
 class Converter {
 public:
+    explicit Converter(bool extractMainContent) : mainContent_(extractMainContent) {}
+
     std::string run(const std::string& html) {
         parse(html);
         return assemble();
@@ -252,7 +309,7 @@ private:
         bool liOpen = false;
     };
 
-    enum class Mode { Normal, Head, RawSkip, Pre };
+    enum class Mode { Normal, Head, RawSkip, Pre, Suppress };
 
     Mode mode_ = Mode::Normal;
     std::string skipTag_;        // RawSkip 的结束标签名(script/style)
@@ -268,6 +325,17 @@ private:
     std::vector<std::vector<std::string>> rows_;
     std::vector<ListFrame> lists_;
     bool inCodeSpan_ = false;  // code/kbd/span 内容不走转义表(CommonMark 码 span 内反斜杠不生效)
+
+    // ── 正文主干提取状态(正文提取批;蓝图 §3)─────────────────────
+    bool mainContent_ = true;                     // 总开关(main_content 参数)
+    std::vector<std::string> suppressStack_;      // R1:抑制中的标签栈(嵌套计数)
+    std::size_t suppressBytes_ = 0;               // R1:抑制区字节计(64KiB 硬释放)
+    std::size_t blockChars_ = 0;                  // R2:当前块字符数(转义后,字节)
+    double blockLinkChars_ = 0.0;                 // R2:当前块链接文字计重(锚链接 0.3)
+    int linkDepth_ = 0;                           // R2:未闭合 <a> 深度
+    bool linkIsAnchor_ = false;                   // R2:当前链接 href 是否 # 开头
+    bool blockHasVisual_ = false;                 // R2:块内含 <img>(含图块不判)
+    int anchorDepth_ = 0;                         // R3:<main>/<article> 锚定深度
 
     std::vector<std::string> lines_;
     std::string inline_;
@@ -293,6 +361,14 @@ private:
             }
             pendingSpace_ = false;
             inline_ += c;
+            // R2 计数漏斗:块字符与链接文字(锚链接按 0.3 计重,Readability 同款);
+            // 表格单元格不经块模型(flushInlineLines 不裁表格行),计数一并关闭
+            if (!cellOpen_) {
+                blockChars_ += 1;
+                if (linkDepth_ > 0) {
+                    blockLinkChars_ += linkIsAnchor_ ? kAnchorLinkWeight : 1.0;
+                }
+            }
         }
     }
 
@@ -323,6 +399,13 @@ private:
         if (!lines_.empty() && !lines_.back().empty()) lines_.push_back("");
     }
 
+    // R2 计数器随块复位(丢弃/保留/标题三路共用,不变量:块边界外计数恒为 0)
+    void resetBlockCounters() {
+        blockChars_ = 0;
+        blockLinkChars_ = 0.0;
+        blockHasVisual_ = false;
+    }
+
     // 行级冲刷:不产生块间空行(列表项/引用行延续用)
     void flushInlineLines() {
         if (headingLevel_ > 0) {
@@ -330,7 +413,39 @@ private:
             return;
         }
         const std::string body = std::move(inline_);
-        inline_.clear();
+
+        // R2(正文提取批):短块高链接密度且无图 → 判样板,整块丢弃。
+        // 决策点在 body 取走之后(不污染输出);锚定区(R3)/引用块暂停;
+        // 标题块已在函数头分流,不经过这里。未闭合 <a>(linkDepth_>0)= 病理
+        // 输入,按"存疑不删"保险丝放行。
+        const double density =
+            blockChars_ > 0
+                ? blockLinkChars_ / static_cast<double>(blockChars_)
+                : 0.0;
+        const bool r2Drop = mainContent_ && anchorDepth_ == 0 &&
+                            quoteDepth_ == 0 && linkDepth_ == 0 &&
+                            blockChars_ <= kLinkDensityBlockLimit &&
+                            density > kLinkDensityThreshold &&
+                            !blockHasVisual_;
+        if (r2Drop) {
+            inline_.clear();  // move 后复位(moved-from 未指定)
+            pendingSpace_ = false;
+            // 交互点①:半截码 span / 未闭合链接随块复位,防状态漏进后续正文
+            inCodeSpan_ = false;
+            href_.clear();
+            linkDepth_ = 0;
+            resetBlockCounters();
+            // 交互点②:丢弃有序列表项 → 回退编号,防跳号
+            if (!lists_.empty() && lists_.back().liOpen &&
+                lists_.back().ordered && lists_.back().next > 1) {
+                --lists_.back().next;
+            }
+            pushBlockBreak();
+            return;
+        }
+        resetBlockCounters();
+        inline_.clear();  // move 后复位(moved-from 未指定,必须显式清)
+
         pendingSpace_ = false;
         std::size_t start = 0;
         while (start <= body.size()) {
@@ -348,6 +463,7 @@ private:
         const std::string text = trimAsciiCopy(inline_);
         inline_.clear();
         pendingSpace_ = false;
+        resetBlockCounters();  // 标题块不走 R2 判定,计数不得带入下一块
         const int level = headingLevel_;
         headingLevel_ = 0;
         if (text.empty()) return;
@@ -474,6 +590,13 @@ private:
         pushBlockBreak();
     }
 
+    // R1 双保险之二:抑制区超 64KiB → 认定抑制起点残缺,清栈恢复 Normal
+    void releaseSuppress() {
+        suppressStack_.clear();
+        suppressBytes_ = 0;
+        mode_ = Mode::Normal;
+    }
+
     void emitTextRun(const std::string& run) {
         switch (mode_) {
             case Mode::RawSkip: return;
@@ -482,6 +605,11 @@ private:
                 return;
             case Mode::Pre:
                 preBuf_ += decodeEntities(run);  // pre 内空白保持原文,实体仍解码
+                return;
+            case Mode::Suppress:
+                // R1:抑制区文本整体吞掉;字节计逼近上限即硬释放(双保险之二)
+                suppressBytes_ += run.size();
+                if (suppressBytes_ > kSuppressByteLimit) releaseSuppress();
                 return;
             case Mode::Normal:
                 appendText(run);
@@ -497,6 +625,60 @@ private:
             return;
         }
         if (mode_ == Mode::Pre) return;  // pre 内标签一律跳过,内容保持原文
+
+        // ── 正文主干提取(正文提取批;蓝图 §3;mainContent_=false 全部短路)──
+        if (mode_ == Mode::Suppress) {
+            // R1 双保险之一:抑制中遇正文信号(article/main/h1-h3)→ 判定抑制起点
+            // 残缺,清栈恢复 Normal,该标签照常处理(trafilatura 对含标题节点网开一面)
+            const bool headingSignal = name.size() == 2 && name[0] == 'h' &&
+                                       name[1] >= '1' && name[1] <= '3';
+            if (name == "article" || name == "main" || headingSignal) {
+                releaseSuppress();
+            } else {
+                // 嵌套计数:抑制标签再入与同名容器链(div-in-div)各占一层,
+                // 防内层同名闭合提前退栈漏出样板;栈非空是 mode_==Suppress 的不变量
+                if (isSuppressTag(name) ||
+                    (!suppressStack_.empty() && name == suppressStack_.back())) {
+                    suppressStack_.push_back(name);
+                }
+                return;  // 抑制中其他标签照常吞掉,不产出
+            }
+        }
+        if (mainContent_ && isSuppressTag(name)) {
+            if (cellOpen_) return;  // 保险丝:表格单元格内不启动(Readability table 祖先)
+            flushBlock();  // 先落盘当前块,行模型不脏
+            mode_ = Mode::Suppress;
+            suppressStack_.clear();
+            suppressStack_.push_back(name);
+            suppressBytes_ = 0;
+            return;
+        }
+        if (mainContent_ && isExtractionContainer(name)) {
+            // R1b/R4(正文提取批):class/id 负面词表 + role/隐藏惯例 → 整块抑制。
+            // 保险丝:正词在身存疑不删(kMaybeTokens,Readability okMaybeItsACandidate
+            // 同序前置);表格单元格内不启动;只对必有闭合配对的容器启动
+            //(void/自闭合标签入栈必滞留,防漏释放)。
+            std::string style = lowerAscii(attrOf(attrs, "style"));
+            style.erase(std::remove(style.begin(), style.end(), ' '), style.end());
+            const std::string signature =
+                lowerAscii(attrOf(attrs, "class") + " " + attrOf(attrs, "id"));
+            const bool hiddenByAttr = attrOf(attrs, "aria-hidden") == "true" ||
+                                      attrs.find("hidden") != attrs.end() ||
+                                      style.find("display:none") != std::string::npos ||
+                                      style.find("visibility:hidden") !=
+                                          std::string::npos;
+            const bool negative = containsAnyToken(signature, kUnlikelyTokens) ||
+                                  isSuppressRole(lowerAscii(attrOf(attrs, "role")));
+            if (!containsAnyToken(signature, kMaybeTokens) && !cellOpen_ &&
+                (negative || hiddenByAttr)) {
+                flushBlock();
+                mode_ = Mode::Suppress;
+                suppressStack_.clear();
+                suppressStack_.push_back(name);
+                suppressBytes_ = 0;
+                return;
+            }
+        }
         if (name == "head") {
             mode_ = Mode::Head;
             titleText_.clear();
@@ -524,6 +706,7 @@ private:
         }
         if (name == "img") {
             applyPending();
+            if (mainContent_ && !cellOpen_) blockHasVisual_ = true;  // R2 保险丝:含图块不判
             inline_ += "![" + attrOf(attrs, "alt") + "](" + attrOf(attrs, "src") + ")";
             return;
         }
@@ -541,6 +724,7 @@ private:
             if (!cellOpen_) flushBlock();
             return;
         }
+        if (name == "main" || name == "article") ++anchorDepth_;  // R3 锚定入栈(不 return)
         if (name == "div" || name == "section" || name == "article" ||
             name == "header" || name == "footer" || name == "main" ||
             name == "nav" || name == "aside" || name == "figure") {
@@ -550,6 +734,8 @@ private:
         if (name == "a") {
             applyPending();
             href_ = attrOf(attrs, "href");
+            linkIsAnchor_ = !href_.empty() && href_.front() == '#';  // R2:锚链接 0.3 计重
+            ++linkDepth_;
             inline_ += '[';
             return;
         }
@@ -631,6 +817,23 @@ private:
             if (name == "pre") endPre();
             return;
         }
+        if (mode_ == Mode::Suppress) {
+            // R1:乱序闭合一次弹到匹配层(含该层);栈空恢复 Normal
+            for (std::size_t i = suppressStack_.size(); i > 0; --i) {
+                if (suppressStack_[i - 1] == name) {
+                    suppressStack_.resize(i - 1);
+                    break;
+                }
+            }
+            if (suppressStack_.empty()) {
+                mode_ = Mode::Normal;
+                suppressBytes_ = 0;
+            }
+            return;
+        }
+        if (name == "main" || name == "article") {
+            if (anchorDepth_ > 0) --anchorDepth_;  // R3 锚定出栈
+        }
         if (name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6') {
             if (headingLevel_ > 0) flushHeading();
             return;
@@ -642,6 +845,7 @@ private:
             return;
         }
         if (name == "a") {
+            if (linkDepth_ > 0) --linkDepth_;
             if (!href_.empty()) {
                 inline_ += "](" + href_ + ")";
                 href_.clear();
@@ -875,10 +1079,10 @@ private:
 
 } // namespace
 
-std::string htmlToMarkdown(const std::string& html) {
+std::string htmlToMarkdown(const std::string& html, bool extractMainContent) {
     std::string input = html;
     if (input.size() > kMaxInputBytes) input.resize(kMaxInputBytes);  // spec §7:超出先截断
-    Converter converter;
+    Converter converter(extractMainContent);
     return converter.run(input);
 }
 

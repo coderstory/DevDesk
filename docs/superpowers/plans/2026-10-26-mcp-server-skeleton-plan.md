@@ -215,3 +215,32 @@
 | CA-G | ✅ | 批次门禁 | `--filter "http ca"` 3 例全绿 + `--filter http` 23/23 不回归；批级计数随攒批终门禁（见批次证据） | — |
 
 **批次证据（✅ 回填 2026-10-27，builder）**：红 = 用例先落（`resolveCaPolicy` 符号未声明，编译期红）；实现后 `--filter "http ca"` 3/3（未设→Native、存在文件→Bundle 不叠 NATIVE、不存在→fail 含变量名与路径）、`--filter http` 23/23；攒批终门禁 `--filter mcp` 120/120、`--filter settings` 113/113 均退出 0，std include 守卫 492 文件绿。example.com 抓取恢复验证留给后续 E2E（用含本批二进制 + `DEVDESK_CA_BUNDLE=<msys2 ca-bundle>`）。
+
+## 10. CE 正文主干提取批（B 系收官后追加；主会话拍板：main_content 默认 true，蓝图 R1–R4 全做）
+
+**范围**：`src/module_mcp/html_to_markdown.{h,cpp}`（Mode::Suppress 抑制栈 + R1/R1b/R2/R3/R4 + 参数化入口）、`mcp_tools_builtin.cpp`（main_content schema+透传）、两测试文件、spec §7 口径（§6.1 参数口径循代理批先例同步一行）。设计蓝图 = `docs/superpowers/research/2026-10-27-mcp-content-extraction-review.md`（词表与阈值照抄不改值）；六金样内嵌测试文件（批次范围不新增 fixture 目录）。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| CE-01 | ✅ | 参数与关断保底 | `main_content` boolean 默认 true；false 时全部规则短路，6 金样 off 输出 = 基线逐字节金样（差分保底） | `html_to_markdown.{h,cpp}`、`mcp_tools_builtin.cpp`、`test_mcp_html_to_markdown.cpp`、`test_mcp_fetch_tool.cpp` |
+| CE-02 | ✅ | R1 语义剔除 | header/footer/nav/aside/form/svg 等整块消失；Suppress 栈同名嵌套计数、乱序闭合弹到匹配层；article/main/h1-h3 信号释放 + 64KiB 硬释放双保险 | `html_to_markdown.cpp` + 金样 docs/malformed + 64KiB 用例 |
+| CE-03 | ✅ | R1b 关键词剔除 | 负面词表命中且无正词（kMaybeTokens 保险丝）→ 抑制；类名冲突金样零误伤 | 同上 + 金样 class-keyword/portal-list |
+| CE-04 | ✅ | R2 链接密度 | 块 ≤150 且密度 >0.5 且无图 → 丢弃；锚链接 0.3 计重保 TOC；inCodeSpan_/href_ 随块复位、有序列表 next-- 回退；未闭合 <a> 存疑不删 | 同上 + R2 三用例 |
+| CE-05 | ✅ | R3 锚定保护 | main/article 区内 R2 暂停（列表页主干即链接列表仍存活）+ 触发 R1 释放 | 同上 + 金样 portal-list/malformed |
+| CE-06 | ✅ | R4 无障碍属性 | role 词表/aria-hidden/hidden/display:none 以容器为闸抑制；void/自闭合不启动防栈滞留 | 同上 + R4 用例 |
+| CE-G | ✅ | 批次门禁 | 一次增量构建（全目标，DevDesk.exe/tests/mcp_live 链接落地）+ `--filter html`/`--filter fetch` 定向全绿 + `--filter http` 审计子集不回归 | — |
+
+**批次证据（✅ 回填 2026-10-28，builder）**：红 = 用例先落（金样 off 口径按基线语义推导 pin 死；实现缺口处 html 过滤编译期/断言红）；实现后 `--filter html` 23/23、`--filter fetch` 48/48、`--filter http` 28/28 均退出 0（计数详见批次回单）。真实样本对比：OSChina 类列表页站头站尾/友情链接消失、新闻列表全存活；bigmodel 类文档页导航/页脚/版权消失、正文+TOC 锚链接+代码块完整。
+
+### 审计 findings 修复（并入本批一次构建验证，独立 commit）
+
+| # | severity | 处置 |
+|---|---|---|
+| F1 | 中 | ✅ `tcpReachable` 加 `CURLOPT_NOPROXY "*"`（钉掉 env 代理）；用例 = env http_proxy 指死端口时探测活监听必真（修前红） |
+| F2 | 中 | ✅ send/sendStreaming 各补 bundle-missing 无网可读失败用例（删解析接线即红）；双调用点 CA 分支收敛 `applyCaPolicy` 单一事实源。CAINFO 下发本身无 TLS 对端不可单测观测，按审计建议留 live 层（已注记） |
+| F3 | 中低 | ✅ sendStreaming 按 Request.proxy 契约接线（与 send 同款 PROXY/NOPROXY 分支）；用例 = 显式死代理必败（修前静默直连红）；http_client.h 契约注释补「两入口同款」 |
+| F4 | 中低 | ✅ `tcpReachable` 首行 `globalInit()`（并发首触数据竞争）；无独立用例（窗口不可稳定复现），随 F1 用例同路径执行 |
+| F5 | 低 | ✅ `test_mcp_fetch_tool.cpp` :619/:745 两处补 `legacyProxyOpts()`，单测不再真触本机探测端口 |
+| F6 | 低 | ✅ `resolveCaPolicy` 改 `exists/is_regular_file` error_code 口径；目录路径提前可读中文报错（用例红→绿） |
+| F7 | 低 | 注释口径处置：`http_client_ca.h` 声明「bundle 路径仅保证 ASCII 可靠，非 ASCII 有 ACP/UTF-8 错配风险、失败形态 fail-closed」；非 ASCII 路径实证用例不做（需真实编码环境，留待需要时立项） |
+| F8/F9 | info | 已读不修（审计自评可不修：类型不符静默按默认与既有钳制惯例一致；探测缓存死防御无害） |
