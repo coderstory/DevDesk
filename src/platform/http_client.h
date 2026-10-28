@@ -24,7 +24,8 @@ struct Request {
     long timeoutMs = 30000;
     bool verifyTls = true;
     // 非空 = 经此 HTTP 代理（"host:port"，CURLOPT_PROXY 口径）；空 = 直连。
-    // 代理是传输通道：目标侧 SSRF 校验与本字段无关（由调用方先行完成）。
+    // send 与 sendStreaming 同款接线；代理是传输通道：目标侧 SSRF 校验与本字段无关
+    // （由调用方先行完成）。
     std::string proxy;
     // 流式专用空闲超时（仅 sendStreaming）：速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒
     // → curl 中止（CURLE_OPERATION_TIMEDOUT），替代总墙钟超时；任一 <= 0 表示不启用。
