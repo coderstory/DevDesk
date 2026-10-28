@@ -460,6 +460,7 @@ void McpPageModule::drawDetailDialog(
                 .color(t.colors.background)
                 .border(1.0f, t.colors.borderMuted)
                 .build();
+            // 不变量：schema 文本按节点框 clip，折行溢出不越 schema.box 压「运行结果」标题。
             ui.text("mcp.dialog.detail.schema.text")
                 .position(28.0f, 176.0f)
                 .size(w - 56.0f, 102.0f)
@@ -469,6 +470,7 @@ void McpPageModule::drawDetailDialog(
                 .lineHeight(core::theme::scaled(17.0f))
                 .color(t.colors.textSecondary)
                 .wrap(true)
+                .clip()
                 .build();
 
             // 结果区：成功/失败前缀区分；运行中占位
