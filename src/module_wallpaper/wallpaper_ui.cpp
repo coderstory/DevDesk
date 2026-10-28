@@ -9,7 +9,7 @@
 //   播放页：
 //     wallpaper.card.status           状态卡（空态时整卡不建）
 //       .dot / .title / .subtitle / .reasons（含 .text）/ .countdown（含 .label）
-//       / .progress（含 .fill）/ .pause / .next
+//       / .progress（含 .fill）/ .pause（图片项时多 .pause.disabled 遮罩）/ .next
 //     wallpaper.card.empty            空态卡（.title / .body / .support / .primary / .secondary）
 //     wallpaper.card.mode / .interval 模式 + 间隔（一行两卡）
 //       wallpaper.mode.0/1/2；wallpaper.interval.dropdown（禁用时多 .disabled 遮罩）
@@ -454,6 +454,20 @@ void drawStatusCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
         ui_kit::button(ui, "wallpaper.status.next", "下一个",
                        ui_kit::ButtonLevel::Secondary, actionsX + 96.0f,
                        actionsY, 88.0f, ui_kit::kButtonHeight, t, nextOptions);
+
+        // 图片当前项：媒体 pause/seek 对 mpv 静图无语义，暂停控件按 §7 失效遮罩模式
+        // 停用（后绘先命中，同 folder.select.disabled）；「下一个」与倒计时保留——
+        // 换片仍由轮换定时驱动。
+        if (snapshot.currentItemImage) {
+            ui.rect("wallpaper.status.pause.disabled")
+                .position(actionsX, actionsY)
+                .size(88.0f, ui_kit::kButtonHeight)
+                .color(eui::Color{t.colors.surface.r, t.colors.surface.g,
+                                  t.colors.surface.b, 0.55f})
+                .radius(8.0f)
+                .blockPointer()
+                .build();
+        }
 
         // 3px 进度条：轮换中显示剩余比例；暂停 / 单循环隐藏。
         if (!notRotating && !snapshot.paused) {
