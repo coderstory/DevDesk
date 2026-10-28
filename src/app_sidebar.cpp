@@ -12,6 +12,7 @@
 #include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
 #include "core/window_geometry.h"  // 窗体记忆账本（UAT6：compose 每帧记账还原态尺寸）
 #include "module_agent/agent_module.h"
+#include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
 #include "settings_config.h"
 #include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
 #include <ui_kit/metrics.h>
@@ -30,20 +31,6 @@
 #include <set>
 #include <utility>
 
-// 可见态门控的原生查询（IsIconic/IsWindowVisible/EnumWindows）：只在 Windows 编译。
-// 宏守卫与 EUI-NEO detail 头同款（LEAN_AND_MEAN + NOMINMAX），且放在 EUI 头之后
-//（eui/detail/dsl_app_impl.h 同序先例，防 min/max 宏污染 DSL 头）。
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <cwchar>
-#endif
-
 namespace app {
 
 namespace {
@@ -51,9 +38,9 @@ namespace {
 // 进程内折叠状态单值；默认展开，启动恢复由 main.cpp 调 setSidebarCollapsed（不回写）
 bool g_sidebarCollapsed = false;
 
-// 分组父项折叠集合（空 = 全展开）；进程内单值，不落库。存 PageId 而非下标：
-// 登记表增行不移动既有分组身份。
-std::set<::core::PageId> g_collapsedGroups;
+// 分组父项展开集合（空 = 全折叠 = 默认态）；进程内单值，不落库。存 PageId 而非下标：
+// 登记表增行不移动既有分组身份。渲染与 toggle 共用本轮唯一状态（sidebarGroupExpanded）。
+std::set<::core::PageId> g_expandedGroups;
 
 // 应用级 toast 通知：托盘失效入口点击的解释反馈。调用方写状态，compose 顶层每帧读状态绘制
 ui_kit::ToastState g_appNotice;
@@ -84,66 +71,15 @@ float fluidHash01(int n) {
     return x - std::floor(x);
 }
 
-#if defined(_WIN32)
-// 主窗 HWND 一次性捕获（首次门控查询时执行一次，static 缓存终身复用）：
-// EnumWindows 扫本进程顶层窗口，取「可见 + 非 WS_EX_TOOLWINDOW」命中——
-// styledMenu 弹层窗带 TOOLWINDOW、single_instance 辅助窗隐藏，首帧时主窗是
-// 唯一命中；标题精确等于 "DevDesk" 者优先（将来有第二个可见顶窗也保命）。
-// 捕获不到（无头单测/窗口未就绪）返回空 → 门控按可见降级（fail-open），
-// 零成本兜底仍由 EUI 主循环的 hidden/iconified 跳帧保证。
-struct FluidHwndSearch {
-    HWND fallback = nullptr;
-    HWND titled = nullptr;
-};
-
-BOOL CALLBACK fluidEnumWindowsProc(HWND hwnd, LPARAM lp) {
-    auto* ctx = reinterpret_cast<FluidHwndSearch*>(lp);
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (pid != GetCurrentProcessId()) return TRUE;
-    if ((GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return TRUE;
-    if (!IsWindowVisible(hwnd)) return TRUE;
-    if (ctx->fallback == nullptr) ctx->fallback = hwnd;
-    WCHAR title[64] = {};
-    if (GetWindowTextW(hwnd, title, 64) > 0 &&
-        wcscmp(title, L"DevDesk") == 0 && ctx->titled == nullptr) {
-        ctx->titled = hwnd;
-    }
-    return TRUE;
-}
-
-HWND fluidMainWindowHwnd() {
-    static const HWND cached = [] {
-        FluidHwndSearch search;
-        EnumWindows(fluidEnumWindowsProc, reinterpret_cast<LPARAM>(&search));
-        const HWND picked =
-            search.titled != nullptr ? search.titled : search.fallback;
-        if (picked == nullptr) {
-            LOG_WARN("动态背景：主窗 HWND 一次性捕获未命中（无头环境或窗口未就绪），"
-                     "可见态门控本轮按可见降级（EUI 主循环跳帧兜底不变）");
-        }
-        return picked;
-    }();
-    return cached;
-}
-#endif
-
 // 可见态门控查询（compose 每帧顶层调用，铁律防线）：最小化（iconic）或藏托盘
-//（hidden）→ false。Windows = 主窗 HWND 的 IsIconic/IsWindowVisible（EUI 公共
-// API 未暴露 iconic/visible，原生等价查询；glfwGetWindowAttrib(GLFW_ICONIFIED)
-// 的同源真值）；非 Windows 无统一查询恒 true（core::window::windowIsFocused
-// 同款降级口径）——两平台的零成本兜底都是 EUI 主循环跳帧（hiddenToTray/iconified
-// 分支不跑主窗 update/compose/render），本查询再钉一道：不可见帧即便 compose
-// 被调用也不画流质、不挂泵、相位不推进。
+//（hidden）→ false。原生查询收在 platform::window_visibility（Windows =
+// IsIconic/IsWindowVisible；macOS = GLFW_ICONIFIED/GLFW_VISIBLE），业务层零平台
+// 宏。两平台的零成本兜底都是 EUI 主循环跳帧（hiddenToTray/iconified 分支不跑
+// 主窗 update/compose/render），本查询再钉一道：不可见帧即便 compose 被调用
+// 也不画流质、不挂泵、相位不推进；平台判定不了时接口按可见降级（fail-open）。
 bool fluidWindowVisible() {
     if (g_fluidVisibleMode.has_value()) return *g_fluidVisibleMode;
-#if defined(_WIN32)
-    const HWND hwnd = fluidMainWindowHwnd();
-    if (hwnd == nullptr) return true;  // 捕获失败按可见降级
-    return !IsIconic(hwnd) && IsWindowVisible(hwnd);
-#else
-    return true;
-#endif
+    return ::platform::window_visibility::mainWindowVisible();
 }
 
 } // namespace
@@ -171,19 +107,21 @@ float sidebarWidth() {
     return g_sidebarCollapsed ? kSidebarWidthCollapsed : kSidebarWidthExpanded;
 }
 
-// 测试缝：折叠状态回厂（展开），纯内存不触发持久化副作用
+// 测试缝：侧边栏宽度状态回厂（展开）+ 分组展开集合回厂（空 = 默认折叠），
+// 纯内存不触发持久化副作用
 void resetSidebarGlobals() {
     g_sidebarCollapsed = false;
-    g_collapsedGroups.clear();
+    g_expandedGroups.clear();  // 空 = 全折叠（默认态）
 }
 
 bool sidebarGroupExpanded(::core::PageId parent) {
-    return g_collapsedGroups.find(parent) == g_collapsedGroups.end();
+    // 唯一真相：集合成员即展开，空集合（默认）即折叠。渲染与 toggle 都读这一个状态。
+    return g_expandedGroups.find(parent) != g_expandedGroups.end();
 }
 
 void toggleSidebarGroup(::core::PageId parent) {
-    if (!g_collapsedGroups.insert(parent).second) {
-        g_collapsedGroups.erase(parent);
+    if (!g_expandedGroups.insert(parent).second) {
+        g_expandedGroups.erase(parent);
     }
 }
 
@@ -363,8 +301,12 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     const float kWidth = sidebarWidth();
 
     static const bool mounted = [] {
-        LOG_INFO("侧边栏导航已挂载（" +
-                 std::to_string(::core::appRouter()->modules().size()) +
+        // 口径 = 登记表条目数（一行一个 Router 页面，含分组父项与子页），不写死数字、
+        // 不取 modules().size()（后者只数已启用实例，会随模块开关变动且漏掉分组父项）
+        constexpr std::size_t kPageEntryCount =
+            sizeof(::app::registry::kModuleRegistry) /
+            sizeof(::app::registry::kModuleRegistry[0]);
+        LOG_INFO("侧边栏导航已挂载（" + std::to_string(kPageEntryCount) +
                  " 个模块入口，宽 208/72 可折叠）");
         return true;
     }();
@@ -443,18 +385,27 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 
             // 分组父项行：与导航项同几何；不可导航，点击只切换展开/收起。
             // 折叠侧栏下父项同样只画居中图标，子项按展开态继续列出。
+            // holdsCurrent = 当前页是本分组的子页：父项保持「当前页在此组内」的
+            // 选中态（默认折叠/手动收起后子项隐藏，选中信息只由父项承载）。
             auto renderGroupHeader = [&](const ::app::registry::ModuleEntry& group,
-                                         bool expanded) {
+                                         bool expanded, bool holdsCurrent) {
                 const std::string id =
                     std::string("app.sidebar.item.") +
                     ::core::pageIdToString(group.page);
                 ui.rect(id + ".hit")
                     .position(padX, y)
                     .size(kWidth - padX * 2.0f, itemH)
-                    .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                    .states(kTransparent,
+                            holdsCurrent ? kTransparent : t.colors.hover,
+                            holdsCurrent ? kTransparent : t.colors.primarySoftBg)
                     .radius(t.sizes.radiusSmall)
                     .onClick([g = group.page] { toggleSidebarGroup(g); })
                     .build();
+                // 选中态与导航项同款 SelectionBar（§4.3）；文字由 label 画，不传文案
+                if (holdsCurrent) {
+                    ui_kit::selectionBar(ui, id + ".sel", std::string{}, padX, y,
+                                         kWidth - padX * 2.0f, itemH, t);
+                }
                 if (collapsed) {
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
@@ -463,7 +414,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .fontSize(t.sizes.fontSizeBody)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.textSecondary)
+                        .color(holdsCurrent ? t.colors.primary
+                                            : t.colors.textSecondary)
                         .build();
                 } else {
                     constexpr float kChevronW = 20.0f;
@@ -473,7 +425,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .icon(group.iconGlyph)
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.textSecondary)
+                        .color(holdsCurrent ? t.colors.primary
+                                            : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".label")
                         .position(padX + kItemInset + kIconW, y)
@@ -483,7 +436,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .text(group.shortName)
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.textSecondary)
+                        .color(holdsCurrent ? t.colors.textPrimary
+                                            : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".chevron")
                         .position(kWidth - padX - kChevronW, y)
@@ -498,7 +452,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 y += itemH + gap;
             };
 
-            // 二级菜单缩进（仅展开态生效；折叠态图标居中，缩进无意义）
+            // 二级菜单缩进（仅展开态生效；折叠态图标居中，缩进无意义且会把命中区/
+            // 选中条推出图标——折叠态一律按 0 参与 hit/sel 几何）
             constexpr float kChildIndent = 16.0f;
             auto renderNavItem = [&](::core::Module* m, float indent) {
                 const ::core::PageId page = m->pageId();
@@ -506,12 +461,13 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 const std::string id =
                     std::string("app.sidebar.item.") +
                     ::core::pageIdToString(page);
+                const float effIndent = collapsed ? 0.0f : indent;
 
                 // 命中区：normal 透明（active 时 SelectionBar 盖底；inactive 透出侧栏底）；
                 // hover/pressed：active 透明（不遮 SelectionBar），inactive 浅灰/深灰
                 ui.rect(id + ".hit")
-                    .position(padX + indent, y)
-                    .size(kWidth - padX * 2.0f - indent, itemH)
+                    .position(padX + effIndent, y)
+                    .size(kWidth - padX * 2.0f - effIndent, itemH)
                     .states(kTransparent,
                             active ? kTransparent : t.colors.hover,
                             active ? kTransparent : t.colors.primarySoftBg)
@@ -524,8 +480,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 文字由下方 .label 画（icon 同理）。selectionBar 只负责 bg + 左 2px 绿竖线。
                 if (active) {
                     ui_kit::selectionBar(ui, id + ".sel", std::string{},
-                                         padX + indent, y,
-                                         kWidth - padX * 2.0f - indent, itemH, t);
+                                         padX + effIndent, y,
+                                         kWidth - padX * 2.0f - effIndent, itemH, t);
                 }
 
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
@@ -543,7 +499,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .build();
                 } else {
                     ui.text(id + ".icon")
-                        .position(padX + kItemInset + indent, y)
+                        .position(padX + kItemInset + effIndent, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeBody)
@@ -551,8 +507,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".label")
-                        .position(padX + kItemInset + kIconW + indent, y)
-                        .size(kWidth - padX * 2.0f - kItemInset - kIconW - indent,
+                        .position(padX + kItemInset + kIconW + effIndent, y)
+                        .size(kWidth - padX * 2.0f - kItemInset - kIconW - effIndent,
                               itemH)
                         .text(m->displayName())
                         .fontSize(t.sizes.fontSizeBody)
@@ -564,8 +520,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 y += itemH + gap;
             };
 
-            // 分两组（§4.8）：work（Home/Markdown/Todo/ClaudeProxy/Agent/Wallpaper）→ system（Settings/About）。
-            // 按 PageId 枚举分类，不依赖 modules() 顺序；router 按 PageId 序注册，天然 work 在前。
+            // 分两组（§4.8）：work（Home/Markdown/Todo/ClaudeProxy/Agent/Wallpaper + 上线分组）
+            // → system（Settings/About）。按 PageId 枚举分类，不依赖 modules() 顺序；router
+            // 按 PageId 序注册，天然 work 在前（上线整组枚举位于 Settings 之前）。
             // 组间画 app.sidebar.groupdiv（wechat.dividerPrimary #E5E5E5，宽=kWidth-2*padX，高 1px）。
             auto isSystemGroup = [](::core::PageId page) {
                 return page == ::core::PageId::Settings ||
@@ -598,15 +555,18 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 if (row != nullptr && row->parent.has_value()) {
                     const auto* parent = registryEntry(*row->parent);
                     if (parent != nullptr) {
-                        bool expanded = sidebarGroupExpanded(parent->page);
-                        // 当前页属于该分组 → 本帧强制展开（不改用户折叠意愿）
-                        if (currentEntry != nullptr &&
+                        // 展开态唯一判定 = sidebarGroupExpanded（与 toggleSidebarGroup
+                        // 同一状态源）。默认折叠：首帧集合为空 → 只画父项、子项不显示。
+                        // 当前页在组内也不做本帧强制展开——那等于引入第二个状态源，且会
+                        // 让用户手动收起后立刻被自动弹回；改由父项选中态（holdsCurrent
+                        // = SelectionBar + primary 图标）承载「当前页在此组内」。
+                        const bool expanded = sidebarGroupExpanded(parent->page);
+                        const bool holdsCurrent =
+                            currentEntry != nullptr &&
                             currentEntry->parent.has_value() &&
-                            *currentEntry->parent == parent->page) {
-                            expanded = true;
-                        }
+                            *currentEntry->parent == parent->page;
                         if (drawnGroups.insert(parent->page).second) {
-                            renderGroupHeader(*parent, expanded);
+                            renderGroupHeader(*parent, expanded, holdsCurrent);
                         }
                         if (!expanded) continue;
                         renderNavItem(m, kChildIndent);

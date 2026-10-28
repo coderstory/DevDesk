@@ -1,13 +1,14 @@
 // uat62_page_shots_probe.cpp — UAT62 设计系统「全页面截图批」探针（真窗口 + app::compose）
 //
-// 交付物：8 个 Router 页面 × 每档窗口尺寸各一张 PNG（供「看图会话」逐页对设计稿审查）。
+// 交付物：kModuleRegistry 每个可导航行 × 每档窗口尺寸各一张 PNG（供「看图会话」逐页对设计稿审查）。
 // 运行两次（每档一次，尺寸由 --size 传入，文件名后缀 = 窗口高）：
-//   uat62_page_shots_probe.exe --size 1000x640 --out <输出目录>   → 01-home-640.png … 08-about-640.png
-//   uat62_page_shots_probe.exe --size 1600x1000 --out <输出目录>  → 01-home-1000.png … 08-about-1000.png
+//   uat62_page_shots_probe.exe --size 1000x640 --out <输出目录>   → 01-home-640.png … 11-about-640.png
+//   uat62_page_shots_probe.exe --size 1600x1000 --out <输出目录>  → 01-home-1000.png … 11-about-1000.png
+// （分组父项行工厂为空、无页面可拍；跳过项不落图，编号沿用表行下标故可能出现空号）
 // --out 缺省 = 当前工作目录下 UAT62-screenshots/；目录不存在自动建。
 //
 // 构图路径：真 app::compose（自绘标题栏 + 侧边栏 + Router 当前页，与真机同一条装配链）。
-// 页面按 src/app_registry.h 的 kModuleRegistry 表序遍历（8 行 = PageId 枚举序 =
+// 页面按 src/app_registry.h 的 kModuleRegistry 表序遍历（11 行 = PageId 枚举序 =
 // 侧边栏序），实例全部来自表内 extern "C" 工厂（真模块，非桩）。
 //
 // 数据态 = 探针默认空状态（设计审查对象之一，不造假数据）：MdHeadlessEnv 给
@@ -25,7 +26,7 @@
 
 #include <eui/detail/dsl_app_impl.h>  // app::requestShow/requestUpdate 内联实现
 #include "app_assembly.h"             // app_assembly.cpp 符号（app_sidebar 引用）
-#include "app_registry.h"             // kModuleRegistry（8 行登记表 + 工厂）
+#include "app_registry.h"             // kModuleRegistry（11 行登记表 + 工厂）
 #include "app_sidebar.h"              // 真 app::compose
 #include "module_toggle_bridge.h"     // app_assembly 的桥符号
 #include "test_support.h"             // MdHeadlessEnv / ScopedAppRouter
@@ -54,10 +55,11 @@ const app::DslAppConfig& dslAppConfig() {
 
 namespace {
 
-// 输出文件名 slug（与 kModuleRegistry 表序一一对应；static_assert 钉长度）
+// 输出文件名 slug（下标与 kModuleRegistry 表序一一对应；static_assert 钉长度）
+// 2026-10 重排：上线三行在 settings 之前
 constexpr const char* kSlugs[] = {
-    "home", "markdown", "todo", "claude_proxy", "agent", "wallpaper", "settings",
-    "about", "release_group", "release_tasks", "release_config",
+    "home", "markdown", "todo", "claude_proxy", "agent", "wallpaper",
+    "release_group", "release_tasks", "release_config", "settings", "about",
 };
 static_assert(sizeof(kSlugs) / sizeof(kSlugs[0]) ==
                   sizeof(::app::registry::kModuleRegistry) /
@@ -128,8 +130,8 @@ int main(int argc, char* argv[]) {
     // 关笔记目录 git 自动提交。全模块 onStart 吃这份空底座，不触真实用户数据。
     test_support::MdHeadlessEnv mdEnv("uat62shots_", "shots", "shots.db");
 
-    // 8 个真模块：实例来自 kModuleRegistry 表内工厂，注册序 = 表序 = 侧边栏序
-    //（不支持壁纸的平台工厂返回 nullptr，registerModule 对 nullptr 幂等跳过）
+    // 11 行真模块：实例来自 kModuleRegistry 表内工厂，注册序 = 表序 = 侧边栏序
+    //（分组父项/不支持壁纸的平台工厂返回 nullptr，registerModule 对 nullptr 幂等跳过）
     ::core::Router router;
     std::vector<std::unique_ptr<::core::Module>> mods;
     for (const auto& e : ::app::registry::kModuleRegistry) {

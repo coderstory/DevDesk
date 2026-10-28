@@ -15,6 +15,8 @@
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "core/ticker.h"
+#include "core/time.h"
 #include "core/tray_menu_spec.h"
 #include "core/window_layout.h"
 #include "core/window_geometry.h"  // 窗体记忆几何账本（UAT6：每帧记账、退出落盘）
@@ -634,6 +636,9 @@ namespace app {
 
 // 常驻侧边栏 + 根布局在 app_sidebar
 const DslAppConfig& dslAppConfig() {
+    // 全局帧泵：EUI 主循环每次进入应用帧都会经 app::update 读取本配置（main.cpp
+    // 可见的唯一每帧宿主入口）；空注册表时 pump 内部立即返回，零开销。
+    ::core::ticker::pump(::core::time::nowUnix());
     // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
     if (!platform::single_instance::acquireInstanceLock()) {
         platform::single_instance::notifyExistingInstance();

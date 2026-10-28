@@ -300,8 +300,20 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.png") == ::core::PageId::Home);
     DOCTEST_CHECK(app::assembly::dispatchPageForFile("no_ext") == ::core::PageId::Home);
     DOCTEST_CHECK(app::assembly::dispatchPageForFile("") == ::core::PageId::Home);
-    // 大小写敏感：识别不了时回首页
-    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.MD") == ::core::PageId::Home);
+    // 后缀判定大小写不敏感（APFS/NTFS 默认不敏感）：大写/混合大小写变体必须命中
+    // 与全小写相同的目标页。防事故：文件关联注册成 .MD、或 Finder 双击
+    // .Markdown/.HTML/.JSON 时按旧的大小写敏感判定被当成未知后缀静默回首页，
+    // 用户看到"双击文件跳首页"而不是对应模块。
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.MD") == ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.Markdown") == ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.MARKDOWN") == ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.JSON") == ::core::PageId::ClaudeProxy);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.HTML") == ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.HTM") == ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.TXT") == ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.JS") == ::core::PageId::Markdown);
+    // 反向锁：大小写不敏感不等于"任意后缀都命中"，未知后缀仍回首页
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.PNG") == ::core::PageId::Home);
 
     // 2. 托盘动作 → 页面（非导航动作无映射）
     DOCTEST_CHECK(trayPageIs(Action::NavigateHome, ::core::PageId::Home));
@@ -525,17 +537,18 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 // 真实 kModuleRegistry 表：门控键列填错或表序漂移，在此必挂
 
 REGISTER_TEST(assembly_registry_table_shape,
-              "assembly: 真实 kModuleRegistry —— 8 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 另五行==kModuleId*", {
+              "assembly: 真实 kModuleRegistry —— 11 行 / 行序==PageId 枚举序（上线整组在 Settings 之前） / home+settings+about gatingKey==nullptr", {
     using ::app::registry::kModuleRegistry;
     constexpr size_t kRegistrySize =
         sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
+    // 2026-10 重排后的完整表序：上线父项 + 两个子页插入 Wallpaper 与 Settings 之间
     const ::core::PageId kEnumOrder[] = {
-        ::core::PageId::Home,       ::core::PageId::Markdown,
-        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,      ::core::PageId::Wallpaper,
-        ::core::PageId::Settings,   ::core::PageId::About,
+        ::core::PageId::Home,         ::core::PageId::Markdown,
+        ::core::PageId::Todo,         ::core::PageId::ClaudeProxy,
+        ::core::PageId::Agent,        ::core::PageId::Wallpaper,
         ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
         ::core::PageId::ReleaseConfig,
+        ::core::PageId::Settings,     ::core::PageId::About,
     };
     DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(11));
     for (size_t i = 0; i < kRegistrySize; ++i) {
@@ -543,7 +556,7 @@ REGISTER_TEST(assembly_registry_table_shape,
         // 装配侧镜像；Agent 必须排在 Settings 之前）
         DOCTEST_CHECK(kModuleRegistry[i].page == kEnumOrder[i]);
     }
-    // home/settings/about 恒注册（gatingKey==nullptr）；四个工具模块各自带对应门控键。
+    // home/settings/about 恒注册（gatingKey==nullptr）；其余工具模块各自带对应门控键。
     // 空指针必须走 null-safe 取值：直接 std::string(nullptr) 是 UB，clang -Wnonnull 会当
     // 编译错误拦下——这个 lambda 就是为了让 nullptr 与非空串落在同一条比较路径上。
     auto gating = [](const char* key) {
@@ -560,20 +573,21 @@ REGISTER_TEST(assembly_registry_table_shape,
                      std::string(module::settings::kModuleIdAgent));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[5].gatingKey),
                      std::string(module::settings::kModuleIdWallpaper));
-    DOCTEST_CHECK(kModuleRegistry[6].gatingKey == nullptr);
-    DOCTEST_CHECK(kModuleRegistry[7].gatingKey == nullptr);
     // 上线三行同属 release 门控（父项 + 两个子页；S 型多页模块）
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[6].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[7].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[8].gatingKey),
                      std::string(module::settings::kModuleIdRelease));
-    DOCTEST_CHECK_EQ(gating(kModuleRegistry[9].gatingKey),
-                     std::string(module::settings::kModuleIdRelease));
-    DOCTEST_CHECK_EQ(gating(kModuleRegistry[10].gatingKey),
-                     std::string(module::settings::kModuleIdRelease));
+    // 设置/关于固定收尾，恒注册
+    DOCTEST_CHECK(kModuleRegistry[9].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[10].gatingKey == nullptr);
     return true;
 })
 
 REGISTER_TEST(assembly_build_gated_entries_real_table,
-              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册）/ all-on 8 条按表序", {
+              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册）/ all-on 11 条按表序", {
     constexpr size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
         sizeof(::app::registry::kModuleRegistry[0]);
@@ -594,14 +608,17 @@ REGISTER_TEST(assembly_build_gated_entries_real_table,
     const auto allGated = app::assembly::buildGatedEntries(
         allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
     DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(11));
+    // 2026-10 重排后的完整表序：上线三行在 Settings 之前
     const ::core::PageId kEnumOrder[] = {
-        ::core::PageId::Home,       ::core::PageId::Markdown,
-        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,      ::core::PageId::Wallpaper,
-        ::core::PageId::Settings,   ::core::PageId::About,
+        ::core::PageId::Home,         ::core::PageId::Markdown,
+        ::core::PageId::Todo,         ::core::PageId::ClaudeProxy,
+        ::core::PageId::Agent,        ::core::PageId::Wallpaper,
         ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
         ::core::PageId::ReleaseConfig,
+        ::core::PageId::Settings,     ::core::PageId::About,
     };
+    DOCTEST_REQUIRE_EQ(allGated.size(),
+                       sizeof(kEnumOrder) / sizeof(kEnumOrder[0]));
     for (size_t i = 0; i < allGated.size(); ++i) {
         DOCTEST_CHECK(allGated[i].page == kEnumOrder[i]);
     }

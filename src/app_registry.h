@@ -48,12 +48,13 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::ClaudeProxy, module::settings::kModuleIdClaudeProxy,  "Claude", "\xEF\x80\xA1", &create_claude_module},     // U+F021 fa-arrows-rotate
     {::core::PageId::Agent,       module::settings::kModuleIdAgent,        "智能体", "\xEF\x95\x84", &create_agent_module},      // U+F544 fa-robot
     {::core::PageId::Wallpaper,   module::settings::kModuleIdWallpaper,    "壁纸",   "\xEF\x80\xBE", &create_wallpaper_module},  // U+F03E fa-image
-    {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
-    {::core::PageId::About,       nullptr,                          "关于",   "\xEF\x81\x9A", &create_about_module},       // U+F05A fa-circle-info
-    // 上线：分组父项 + 两个可导航子页（父子三行同属 release 门控；父项工厂恒 nullptr）
+    // 上线：分组父项 + 两个可导航子页（父子三行同属 release 门控；父项工厂恒 nullptr）。
+    // 整组排在 Settings 之前（设置/关于固定收尾），枚举序与表序同步。
     {::core::PageId::ReleaseGroup,  module::settings::kModuleIdRelease, "上线",     "\xEF\x84\xB5", &create_release_group_module},                                   // U+F135 fa-rocket
     {::core::PageId::ReleaseTasks,  module::settings::kModuleIdRelease, "任务",     "\xEF\x82\xAE", &create_release_tasks_module, ::core::PageId::ReleaseGroup},  // U+F0AE fa-tasks
     {::core::PageId::ReleaseConfig, module::settings::kModuleIdRelease, "基础配置", "\xEF\x80\x93", &create_release_config_module, ::core::PageId::ReleaseGroup}, // U+F013 fa-gear
+    {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
+    {::core::PageId::About,       nullptr,                          "关于",   "\xEF\x81\x9A", &create_about_module},       // U+F05A fa-circle-info
 };
 
 

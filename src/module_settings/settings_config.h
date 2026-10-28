@@ -46,6 +46,13 @@ inline constexpr const char* kModuleIdRelease = "release";
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();
 
+// enabledModules 默认清单的迁移版本（当前值）。语义：配置里记录的版本 < 本值，
+// 说明该配置写于新增默认模块（release）之前——此时它的缺席代表「从未存在」，
+// load 会把新默认 ID 并入存储清单并回写本版本标记。版本已到位后绝不再插手，
+// 因此用户显式关掉的模块不会被迁移重新打开。新增默认启用模块时：迁移表追加
+// 一行 + 本常量 +1。
+inline constexpr int kModuleDefaultsVersion = 1;
+
 // 窗口效果三档（档位字符串直接持久化进 app_config）
 inline constexpr const char* kWindowEffectOff = "off";
 inline constexpr const char* kWindowEffectTranslucent = "translucent";
@@ -98,6 +105,9 @@ struct SettingsConfig {
     bool windowMaximized = false;
     // 模块开关：home/settings 恒启用（sanitized 强制补齐）；agent 与 pet 默认关闭。
     std::vector<std::string> enabledModules = defaultEnabledModules();
+    // 本配置已应用过的「新增默认启用模块」迁移版本（见 kModuleDefaultsVersion）：
+    // 键缺失 = 0 = 旧版本写出的配置；load 迁移后回写，save 原样持久化。
+    int moduleDefaultsVersion = kModuleDefaultsVersion;
 };
 
 // 模块开关判定（home/settings 恒 true，未知 ID 恒 false）；装配门控与卡片显隐共用。
@@ -155,9 +165,10 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：17 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    // 写入配置：18 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
     //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
-    // 批加 fluidBackgroundEnabled，键口径自此 17 个）。
+    // 批加 fluidBackgroundEnabled，键口径 17 个；默认模块迁移加
+    // moduleDefaultsVersion，自此 18 个）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;
 

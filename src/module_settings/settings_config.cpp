@@ -31,6 +31,8 @@ constexpr const char* kKeyFluidBackground = "fluidBackgroundEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
+// 默认模块清单迁移标记：键缺失 = 旧版本配置（见 kModuleDefaultsVersion）
+constexpr const char* kKeyModuleDefaultsVersion = "moduleDefaultsVersion";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 constexpr const char* kKeyAccentTheme = "accentTheme";
 // 窗体记忆（UAT6）：还原态尺寸 0 = 无记录；sanitized 负值/越此上限归 0
@@ -51,6 +53,26 @@ bool isKnownModuleId(const std::string& id) {
         if (id == known) return true;
     }
     return false;
+}
+
+// 版本化默认模块迁移表：一行 = 「该版本起新增的默认启用模块」。
+// 只并入这些 ID、绝不整体重置清单——存量的缺席按版本判定为「从未存在」，
+// 用户显式关闭的模块（配置已带当前版本标记）不会被重新打开。
+struct ModuleDefaultMigration {
+    int version;
+    const char* moduleId;
+};
+constexpr ModuleDefaultMigration kModuleDefaultMigrations[] = {
+    {1, kModuleIdRelease},
+};
+
+void mergeDefaultModulesSince(std::vector<std::string>& ids, int storedVersion) {
+    for (const auto& m : kModuleDefaultMigrations) {
+        if (m.version <= storedVersion) continue;
+        if (std::find(ids.begin(), ids.end(), m.moduleId) == ids.end()) {
+            ids.push_back(m.moduleId);
+        }
+    }
 }
 } // namespace
 
@@ -457,6 +479,7 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
         if (v.value().isString()) cfg.accentTheme = v.value().asString();
     }
     // 字符串数组；未知 ID 忽略 + WARN（防脏数据打死模块）；键缺失 → 默认全启用。
+    bool enabledModulesStored = false;
     if (auto raw = readRow(kKeyEnabledModules); raw.isOk()) {
         auto v = parseRow(configKey(kKeyEnabledModules), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -475,6 +498,42 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
                 ids.push_back(id);
             }
             cfg.enabledModules = std::move(ids);
+            enabledModulesStored = true;
+        }
+    }
+    // 默认模块清单一次性迁移（B1：存量配置升级后 release 不启用）：
+    // 标记缺失/落后 + 存储清单存在 → 并入该版本新增的默认 ID，只回写受影响的
+    // 两行（不借 load 重写整份配置）。已到位则原样保留，绝不重开用户关掉的模块。
+    int storedDefaultsVersion = 0;
+    if (auto raw = readRow(kKeyModuleDefaultsVersion); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyModuleDefaultsVersion), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) {
+            storedDefaultsVersion = static_cast<int>(v.value().asInt());
+        }
+    }
+    cfg.moduleDefaultsVersion = std::max(storedDefaultsVersion, kModuleDefaultsVersion);
+    if (enabledModulesStored && storedDefaultsVersion < kModuleDefaultsVersion) {
+        mergeDefaultModulesSince(cfg.enabledModules, storedDefaultsVersion);
+        const auto modsText = encodeRow(
+            kKeyEnabledModules, platform::json::makeStringArray(cfg.enabledModules));
+        const auto versionText = encodeRow(
+            kKeyModuleDefaultsVersion, platform::json::makeInt(kModuleDefaultsVersion));
+        if (modsText.isFail() || versionText.isFail()) {
+            LOG_WARN("Settings: 模块默认清单迁移文本编码失败（本次会话内存态已生效，"
+                     "下次启动重试）");
+        } else {
+            std::vector<core::appconfig::Entry> entries = {
+                {configKey(kKeyEnabledModules), modsText.value(), 0},
+                {configKey(kKeyModuleDefaultsVersion), versionText.value(), 0}};
+            auto wrote = db_->transaction([&]() -> core::Result<void> {
+                return core::appconfig::setMany(*db_, entries);
+            });
+            if (wrote.isFail()) {
+                LOG_WARN("Settings: 模块默认清单迁移回写失败（本次会话内存态已生效，"
+                         "下次启动重试）: " + wrote.errorMessage());
+            }
         }
     }
     return core::Result<SettingsConfig>::ok(sanitized(cfg));
@@ -511,6 +570,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyWindowMaximized, platform::json::makeBool(cfg.windowMaximized)},
         {kKeyEnabledModules,
          platform::json::makeStringArray(cfg.enabledModules)},
+        {kKeyModuleDefaultsVersion, platform::json::makeInt(cfg.moduleDefaultsVersion)},
     };
 
     std::vector<core::appconfig::Entry> entries;

@@ -2278,8 +2278,10 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                               yOf("settings.card.modules.name.0"),
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
+                // release 加入后开关 5 格 → 3 行：68+roundFs(56)×2+roundFs(36)=216
+                // 基准，+38 富余 → 254（85% 216 / 100% 254 / 130% 330）
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at(168.0f, 198.0f, 257.0f));
+                          at(216.0f, 254.0f, 330.0f));
             // 壁纸卡（模块 tab 第二张全宽卡）：不改变上方 2×2 格布局（上面
             // name/rowdesc 钉值继续守着），自身三行随 roundFs 派生、卡高 128 基准。
             if (err.empty() && platform::wallpaper::supported()) {
@@ -3601,9 +3603,10 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // 内容高对可用 372 的零滚动预算逐值保持（338/356/372 @ 0/1/2 条代理警告）。
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
-    // UAT3 多列分栏：模块卡半宽 + 卡内 2×2 格（次行块底 68+roundFs(56)+roundFs(36)=160，
-    // +16 → 198 给窄列字号档富余）
-    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 198.0f);
+    // 模块卡：release 加入后开关 5 格 → 3 行，卡高 68+roundFs(56)×2+roundFs(36)=216
+    // 基准 +38 富余 → 254（三档 roundFs = 216/254/330）。与 T01 的
+    // kModulesCardHeight 同源，改动必须与下方布局断言同步。
+    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 254.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 
@@ -4102,6 +4105,10 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
         std::string("{\n") +
+            // 带当前迁移版本：模拟本版本写出的配置，避免 B1 存量迁移把 release
+            // 并入 enabledModules，污染下面的条目数/顺序断言
+            "\"moduleDefaultsVersion\": " +
+            std::to_string(module::settings::kModuleDefaultsVersion) + ",\n" +
             "\"fontScalePercentV3\": 9999,\n" +
             "\"logRetentionDays\": -5,\n" +
             "\"claudeProxyPort\": 70000,\n" + "\"themeMode\": \"neon\",\n" +

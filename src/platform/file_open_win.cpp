@@ -44,7 +44,7 @@ namespace platform::file_open {
 
 // 测试缝：暴露 wideToUtf8 编码链供用例直接调用（与 openFileFromArgv 是同一函数）。
 std::string wideToUtf8ForTest(const std::wstring& w) {
-    return detail::wideToUtf8(w.data(), static_cast<int>(w.size()));
+    return platform::detail::wideToUtf8(w.data(), static_cast<int>(w.size()));
 }
 
 std::string openFileFromArgv() {
@@ -54,9 +54,10 @@ std::string openFileFromArgv() {
     // 解码 argv[0..1] 为 UTF-8（只这两项够选参数），交共用纯函数选 argv[1]
     std::vector<std::string> utf8Args;
     for (int i = 0; i < argc && i <= 1; ++i) {
-        utf8Args.push_back(argvW[i] != nullptr
-                               ? detail::wideToUtf8(argvW[i], lstrlenW(argvW[i]))
-                               : std::string{});
+        utf8Args.push_back(
+            argvW[i] != nullptr
+                ? platform::detail::wideToUtf8(argvW[i], lstrlenW(argvW[i]))
+                : std::string{});
     }
     LocalFree(argvW);
     return selectOpenFileArg(utf8Args);
@@ -67,7 +68,7 @@ core::Result<void> openDirectory(const std::string& path) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "目录路径为空");
     }
-    const std::wstring wpath = detail::utf8ToWide(path);
+    const std::wstring wpath = platform::detail::utf8ToWide(path);
     if (wpath.empty()) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "目录路径 UTF-8 转换失败");

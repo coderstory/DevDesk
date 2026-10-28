@@ -120,11 +120,22 @@ add_executable(devdesk_tests
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
+    # 全局 ticker（core 层）：注册/注销、firstAt/interval/expireAt 时间维度、
+    # 回调内自注销、空表空转、user 透传
+    test_modules/test_ticker.cpp
     test_modules/test_wallpaper_module.cpp
     # P2 纯逻辑 + P4 服务骨架：设置/轮换/让路/片库/文案/服务接线
     test_modules/test_wallpaper_core.cpp
     test_modules/test_splash_contract.cpp
     test_modules/test_release_basic.cpp
+    # 上线模块（Release）：纯逻辑 / 存储 / 两个页面 UI。四个源文件名由任务卡定死；
+    # 存储与 UI 三条由并行线产出——此处先登记，文件落地即参与编译。TIN-10 自检
+    # 会在 configure 期核对磁盘实况：文件没到位时显式 FATAL_ERROR，不会静默漏跑。
+    test_modules/test_release_logic.cpp
+    test_modules/test_release_store.cpp
+    test_modules/test_release_config_ui.cpp
+    test_modules/test_release_task_ui.cpp
+    test_modules/test_release_detail_ui.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -277,10 +288,13 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # module_toggle_sidebar_probe / wallpaper_probe：活门控真窗口 probe 还要真
     # app::compose + 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp +
     # app_assembly.cpp（其余 probe 维持最小链接面，不拖 app 层）
+    # release_probe：侧边栏分组树断言要真 app::compose + 真登记表，同样编译
+    # app_sidebar.cpp + app_assembly.cpp。
     if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
        _probe_name STREQUAL "wallpaper_probe" OR
        _probe_name STREQUAL "h13_fluid_background_probe" OR
-       _probe_name STREQUAL "uat62_page_shots_probe")
+       _probe_name STREQUAL "uat62_page_shots_probe" OR
+       _probe_name STREQUAL "release_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"

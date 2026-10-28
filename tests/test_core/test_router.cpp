@@ -415,38 +415,66 @@ REGISTER_TEST(core_window_to_compose_degenerate_and_legacy,
 
 // PageId 枚举序是侧边栏顺序与 Router 分发依赖的契约，重排会静默改变默认导航顺序。
 // 断言写成显式钉死预期序：`PageId::Todo >= 0` 这类对 enum class 的比较恒真，验证不了
-// 任何顺序
+// 任何顺序。
+// 2026-10 重排：上线分组（父项 + 两个子页）整组插在 Wallpaper 与 Settings 之间，
+// 设置/关于固定收尾。既有 8 项的枚举值不再连续（Settings/About 后移 3 位），
+// 故这里改为逐位比对完整顺序数组——下标即枚举值，同时锁序与锁值。
 REGISTER_TEST(core_pageid_order,
-              "core: PageId ordering contract (Home<Markdown<Todo<ClaudeProxy<Agent<Wallpaper<Settings<About)", {
+              "core: PageId ordering contract (Home<Markdown<Todo<ClaudeProxy<Agent<Wallpaper<ReleaseGroup<ReleaseTasks<ReleaseConfig<Settings<About)", {
     using core::PageId;
-    const int home = static_cast<int>(PageId::Home);
-    const int markdown = static_cast<int>(PageId::Markdown);
-    const int todo = static_cast<int>(PageId::Todo);
-    const int claude = static_cast<int>(PageId::ClaudeProxy);
-    const int agent = static_cast<int>(PageId::Agent);
-    const int wallpaper = static_cast<int>(PageId::Wallpaper);
-    const int settings = static_cast<int>(PageId::Settings);
-    const int about = static_cast<int>(PageId::About);
+    const PageId kExpectedOrder[] = {
+        PageId::Home,         PageId::Markdown,      PageId::Todo,
+        PageId::ClaudeProxy,  PageId::Agent,         PageId::Wallpaper,
+        PageId::ReleaseGroup, PageId::ReleaseTasks,  PageId::ReleaseConfig,
+        PageId::Settings,     PageId::About,
+    };
+    constexpr int kExpectedCount =
+        static_cast<int>(sizeof(kExpectedOrder) / sizeof(kExpectedOrder[0]));
+    DOCTEST_REQUIRE_EQ(kExpectedCount, 11);
+    // 显式完整顺序数组：逐位断言「枚举值 == 下标」，少项/多项/换位都会红
+    for (int i = 0; i < kExpectedCount; ++i) {
+        DOCTEST_CHECK_EQ(static_cast<int>(kExpectedOrder[i]), i);
+    }
+    return true;
+})
 
-    // 严格单调：Home < Markdown < Todo < ClaudeProxy < Agent < Wallpaper < Settings < About。
-    // 侧边栏顺序的真源 = 注册表序 = 枚举序
-    DOCTEST_CHECK(home < markdown);
-    DOCTEST_CHECK(markdown < todo);
-    DOCTEST_CHECK(todo < claude);
-    DOCTEST_CHECK(claude < agent);
-    DOCTEST_CHECK(agent < wallpaper);
-    DOCTEST_CHECK(wallpaper < settings);
-    DOCTEST_CHECK(settings < about);
-
-    // 钉死预期取值，防「虽单调但整体平移/插空」绕过顺序检查而悄悄改变路由编号
-    DOCTEST_CHECK_EQ(home, 0);
-    DOCTEST_CHECK_EQ(markdown, 1);
-    DOCTEST_CHECK_EQ(todo, 2);
-    DOCTEST_CHECK_EQ(claude, 3);
-    DOCTEST_CHECK_EQ(agent, 4);
-    DOCTEST_CHECK_EQ(wallpaper, 5);
-    DOCTEST_CHECK_EQ(settings, 6);
-    DOCTEST_CHECK_EQ(about, 7);
+// 重排只做「插入」不做「重排」：既有 8 项（Home/Markdown/Todo/ClaudeProxy/Agent/
+// Wallpaper/Settings/About）相对顺序必须原样保留，只有尾部两项整体下移 3 位。
+// 侧边栏「看起来顺序变了」的锅只能由上线分组背，既有项不得被顺手调序。
+REGISTER_TEST(core_pageid_existing_eight_order_shifted,
+              "core: 既有 8 项相对顺序不变，Settings/About 因上线组插入整体下移 3 位", {
+    using core::PageId;
+    const PageId kNewOrder[] = {
+        PageId::Home,         PageId::Markdown,      PageId::Todo,
+        PageId::ClaudeProxy,  PageId::Agent,         PageId::Wallpaper,
+        PageId::ReleaseGroup, PageId::ReleaseTasks,  PageId::ReleaseConfig,
+        PageId::Settings,     PageId::About,
+    };
+    const PageId kExistingEight[] = {
+        PageId::Home,  PageId::Markdown, PageId::Todo,    PageId::ClaudeProxy,
+        PageId::Agent, PageId::Wallpaper, PageId::Settings, PageId::About,
+    };
+    // 从新序里滤掉上线三行，剩下的必须与旧契约序逐位相同
+    PageId filtered[8] = {};
+    int filteredCount = 0;
+    for (PageId page : kNewOrder) {
+        if (page == PageId::ReleaseGroup || page == PageId::ReleaseTasks ||
+            page == PageId::ReleaseConfig) {
+            continue;
+        }
+        DOCTEST_REQUIRE(filteredCount < 8);
+        filtered[filteredCount++] = page;
+    }
+    DOCTEST_REQUIRE_EQ(filteredCount, 8);
+    for (int i = 0; i < 8; ++i) {
+        DOCTEST_CHECK(filtered[i] == kExistingEight[i]);
+    }
+    // 前 6 项枚举值不变；插入点之后的 Settings/About 各后移 3 位（6→9 / 7→10）
+    for (int i = 0; i < 6; ++i) {
+        DOCTEST_CHECK_EQ(static_cast<int>(kExistingEight[i]), i);
+    }
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Settings), 9);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::About), 10);
     return true;
 })
 

@@ -3,8 +3,8 @@
 // 跨文件前提：
 //   - home 与 settings 恒启用：moduleEnabled 谓词里硬编码，sanitized 也会强制补齐，
 //     两者都不是配置里的普通项，从 enabledModules 里删掉也照样开着。
-//   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关。默认清单是 5 项，改动会让本文件的
-//     size()==5 断言红。
+//   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关。默认清单是 6 项（含 release），
+//     改动会让本文件的 size()==6 断言红。
 //   - 生产装配在 main.cpp getRouter()，本文件的注册段是它的复制品；改了那边这里不会自动跟。
 #include "doctest.h"
 #include "test_support.h"
@@ -57,6 +57,15 @@ bool writeRawConfig(const std::string& json) {
         json);
 }
 
+// 手改配置若模拟「当前版本」写出的内容，必须带迁移标记——否则 load 按存量升级
+// 路径把 release 并入清单（见 gating_module_defaults_migration），下面的过滤/
+// 补齐断言会被迁移行为污染。body 是 JSON 对象的其余字段（逗号分隔）。
+std::string currentVersionSeed(const std::string& body) {
+    return "{\"moduleDefaultsVersion\": " +
+           std::to_string(module::settings::kModuleDefaultsVersion) + ", " + body +
+           "}";
+}
+
 } // namespace
 
 // enabledModules 配置
@@ -93,6 +102,48 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
     return true;
 })
 
+// B1（T01 审计）：存量配置升级路径。旧版本写出的清单没有 moduleDefaultsVersion
+// 标记，其缺席的 release 代表「从未存在」→ 迁移并入；用户显式关闭一定发生在
+// 迁移之后（配置已带当前标记），绝不能被重新打开。
+REGISTER_TEST(gating_module_defaults_migration,
+              "gating: 存量 5 项配置升级 → release 默认启用并写版本标记；关掉后不再重开", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "migrate", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+    const std::string versionKey =
+        std::string(SettingsStore::keyNamespace()) + "moduleDefaultsVersion";
+
+    // ① 旧版本形态：5 项清单、无版本标记
+    DOCTEST_REQUIRE(writeRawConfig(
+        "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
+        "\"claude_proxy\", \"settings\"]}"));
+    const SettingsConfig upgraded = store.load();
+    DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdRelease));  // 升级即开
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(6));
+    // 迁移标记已回写 → 下次 load 不再迁移
+    DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
+                                                    versionKey.c_str()),
+                     std::to_string(kModuleDefaultsVersion));
+
+    // ② 用户显式关掉 release 后落盘（save 持久化当前版本标记）→ 再 load 不得重开
+    SettingsConfig userOff;
+    userOff.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
+                              kModuleIdClaudeProxy, kModuleIdSettings};
+    DOCTEST_REQUIRE(store.save(userOff).isOk());
+    const SettingsConfig reloaded = store.load();
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdRelease));
+    DOCTEST_CHECK_EQ(reloaded.enabledModules.size(), static_cast<size_t>(5));
+
+    // ③ 旧配置里用户关掉的既有模块也不得被迁移连带重开
+    DOCTEST_REQUIRE(writeRawConfig(
+        "{\"enabledModules\": [\"home\", \"settings\"]}"));
+    const SettingsConfig sparse = store.load();
+    DOCTEST_CHECK(moduleEnabled(sparse, kModuleIdRelease));
+    DOCTEST_CHECK_FALSE(moduleEnabled(sparse, kModuleIdTodo));
+    DOCTEST_CHECK_FALSE(moduleEnabled(sparse, kModuleIdMarkdown));
+    return true;
+})
+
 REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往返", {
     using namespace module::settings;
     // registerAppDb 不可省：SettingsStore 无参构造经 ::core::appDatabase() 取连接，
@@ -122,8 +173,8 @@ REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽�
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "unknown");
     // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项
-    DOCTEST_REQUIRE(writeRawConfig("{\"enabledModules\": [\"home\", \"todo\", \"bogus\", "
-                                  "\"todo\"]}"));
+    DOCTEST_REQUIRE(writeRawConfig(currentVersionSeed(
+        "\"enabledModules\": [\"home\", \"todo\", \"bogus\", \"todo\"]")));
     const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
@@ -140,7 +191,7 @@ REGISTER_TEST(gating_config_empty_array, "gating: 空数组 = 四工具模块全
     test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "empty");
-    DOCTEST_REQUIRE(writeRawConfig("{\"enabledModules\": []}"));
+    DOCTEST_REQUIRE(writeRawConfig(currentVersionSeed("\"enabledModules\": []")));
     const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdTodo));
@@ -159,7 +210,8 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "corrupt");
     // 数组里的非字符串项被跳过，但数组本身有效 → 列表按字面生效（只含 todo）
-    DOCTEST_REQUIRE(writeRawConfig("{\"enabledModules\": [\"todo\", 42, true]}"));
+    DOCTEST_REQUIRE(writeRawConfig(currentVersionSeed(
+        "\"enabledModules\": [\"todo\", 42, true]")));
     SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));

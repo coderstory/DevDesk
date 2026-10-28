@@ -112,13 +112,16 @@ REGISTER_TEST(wallpaper_registry_row,
     constexpr std::size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
         sizeof(::app::registry::kModuleRegistry[0]);
+    // 2026-10 重排：上线整组（父项 + 任务 + 基础配置）插在 Wallpaper 与 Settings 之间
     const ::core::PageId kEnumOrder[] = {
-        ::core::PageId::Home,      ::core::PageId::Markdown,
-        ::core::PageId::Todo,      ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,     ::core::PageId::Wallpaper,
-        ::core::PageId::Settings,  ::core::PageId::About,
+        ::core::PageId::Home,         ::core::PageId::Markdown,
+        ::core::PageId::Todo,         ::core::PageId::ClaudeProxy,
+        ::core::PageId::Agent,        ::core::PageId::Wallpaper,
+        ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
+        ::core::PageId::ReleaseConfig,
+        ::core::PageId::Settings,     ::core::PageId::About,
     };
-    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(8));
+    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(11));
     for (std::size_t i = 0; i < kRegistrySize; ++i) {
         DOCTEST_CHECK(::app::registry::kModuleRegistry[i].page == kEnumOrder[i]);
     }
@@ -147,10 +150,12 @@ REGISTER_TEST(wallpaper_registry_row,
 
 // 防：默认被打开，首次启动冒出壁纸页。
 REGISTER_TEST(wallpaper_default_off,
-              "wallpaper: 默认清单 5 项不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
+              "wallpaper: 默认清单 6 项含 release 不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
     using namespace module::settings;
     const SettingsConfig cfg;
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(5));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(6));
+    DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
+                            kModuleIdRelease) != cfg.enabledModules.end());
     DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
                             kModuleIdWallpaper) == cfg.enabledModules.end());
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdWallpaper));
@@ -209,10 +214,13 @@ REGISTER_TEST(wallpaper_toggle_persist,
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdTodo));
 
-    // 手改配置：wallpaper 保留、未知 ID 过滤、恒启用项补齐（home/settings + wallpaper = 3）
+    // 手改配置：wallpaper 保留、未知 ID 过滤、恒启用项补齐（home/settings + wallpaper = 3）。
+    // 带当前迁移版本 = 模拟本版本写出的配置，避免 B1 的存量迁移把 release 并进来污染计数。
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), SettingsStore::keyNamespace(),
-        "{\"enabledModules\": [\"wallpaper\", \"bogus_module\"]}"));
+        "{\"moduleDefaultsVersion\": " +
+            std::to_string(module::settings::kModuleDefaultsVersion) +
+            ", \"enabledModules\": [\"wallpaper\", \"bogus_module\"]}"));
     const SettingsConfig raw = store.load();
     DOCTEST_CHECK(moduleEnabled(raw, kModuleIdWallpaper));
     DOCTEST_CHECK(!moduleEnabled(raw, "bogus_module"));

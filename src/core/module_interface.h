@@ -8,7 +8,10 @@
 
 namespace core {
 
-// 枚举序 = 侧边栏顺序 + Router 分发编号，是跨模块契约（重排会静默改变默认导航顺序）。
+// 枚举序 = 侧边栏顺序 + Router 注册/分发序，是跨模块契约（三处必须同步：本枚举、
+// kModuleRegistry 表序、Router::registerModule 的升序插入）。
+// PageId 从不持久化（无落库/落配置路径，pageIdToString 只用于日志诊断），因此重排
+// 枚举不会让老配置指向错误页面；但仍须同步登记表表序，否则侧边栏序静默漂移。
 enum class PageId {
     Home,
     Markdown,
@@ -16,13 +19,14 @@ enum class PageId {
     ClaudeProxy,
     Agent,       // 位于 Settings 之前 = 侧边栏顺序
     Wallpaper,
-    Settings,
-    About,
     // 上线模块（多页共用门控键 release）：ReleaseGroup 是不可导航的分组父项
     //（工厂返回 nullptr，装配期跳过注册），只承载侧边栏二级菜单的父级身份。
+    // 整组排在 Settings 之前（设置/关于固定收尾在侧边栏最后）。
     ReleaseGroup,
     ReleaseTasks,
     ReleaseConfig,
+    Settings,
+    About,
 };
 
 inline const char* pageIdToString(PageId id) {
@@ -33,11 +37,11 @@ inline const char* pageIdToString(PageId id) {
         case PageId::ClaudeProxy: return "ClaudeProxy";
         case PageId::Agent: return "Agent";
         case PageId::Wallpaper: return "Wallpaper";
-        case PageId::Settings: return "Settings";
-        case PageId::About: return "About";
         case PageId::ReleaseGroup: return "ReleaseGroup";
         case PageId::ReleaseTasks: return "ReleaseTasks";
         case PageId::ReleaseConfig: return "ReleaseConfig";
+        case PageId::Settings: return "Settings";
+        case PageId::About: return "About";
     }
     return "?";
 }

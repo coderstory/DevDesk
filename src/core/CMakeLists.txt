@@ -14,6 +14,7 @@ add_library(devdesk_core STATIC
     window_geometry.cpp                   # 窗体记忆几何账本（UAT6：每帧记账、退出快照落盘）
     atomic_write.cpp
     tool.cpp
+    ticker.cpp                          # 全局帧泵：模块订阅、主循环每帧统一推进
     sql_dump.cpp                        # SQLite 导出/导入（GitHub Sync 用）
 )
 

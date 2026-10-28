@@ -37,12 +37,13 @@ bool sidebarCollapsed();
 // 默认 false = 只改内存（启动恢复、纯内存翻转不该顺手写库）
 void setSidebarCollapsed(bool collapsed, bool persist = false);
 
-// 测试缝：复位进程级折叠状态回厂（展开），纯内存零持久化
+// 测试缝：侧边栏宽度状态回厂（展开）+ 分组展开集合回厂（空 = 默认折叠），纯内存零持久化
 void resetSidebarGlobals();
 
 // ---- 侧边栏二级菜单（分组父项）----
 // 只有登记表 parent 列非空的模块才进入分组树；无 parent 的顶级模块走原平铺路径。
-// 展开态是进程内单值（默认展开，不落库）；分组父项本身不可导航（点击只切换展开）。
+// 展开态是进程内单值（默认折叠：首帧只显示父项、子项隐藏；不落库）；分组父项本身
+// 不可导航（点击只切换展开）。当前页在组内时不自动展开，由父项选中态承载「当前页在此组内」。
 bool sidebarGroupExpanded(::core::PageId parent);
 void toggleSidebarGroup(::core::PageId parent);
 

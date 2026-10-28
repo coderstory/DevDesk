@@ -33,14 +33,16 @@ bool g_argvCaptureDone = false;
 bool g_minimizedCaptureDone = false;
 bool g_minimizedStartupPending = false;
 
-// 捕获落点：写进程级 pending 路径；空路径（无文件参数/只有 flag）不写
-void capturePendingOpenFile(const std::string& path) {
+// 捕获落点：写进程级 pending 路径；空路径（无文件参数/只有 flag）不写。
+// source 只进日志，区分 argv 与平台队列两条来源。
+void capturePendingOpenFile(const std::string& path, const char* source) {
     if (g_argvCaptureDone) return;
     g_argvCaptureDone = true;
     if (path.empty()) return;
 
     pendingOpenFilePath() = path;
-    LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
+    LOG_INFO("捕获到待打开文件（" + std::string(source) + "）: " +
+             pendingOpenFilePath());
 }
 
 } // namespace
@@ -133,12 +135,34 @@ std::string& pendingOpenFilePath() {
 }
 
 void captureOpenFileFromArgv() {
-    // 平台层读进程自身命令行（argv[1] 是文件路径；跳过 flag 类参数）
-    capturePendingOpenFile(platform::file_open::openFileFromArgv());
+    // 先取 argv（命令行 / 文件关联），再取平台队列（macOS odoc Apple Event 桥入队）：
+    // 两条来源合并进单一 pendingOpenFilePath。argv 优先，队列按入队序补位；
+    // 单槽只承载一条，其余逐条告警丢弃（不静默）。
+    const std::string fromArgv = platform::file_open::openFileFromArgv();
+    std::vector<std::string> fromQueue =
+        platform::file_open::takePendingOpenFiles();
+
+    if (!fromArgv.empty()) {
+        capturePendingOpenFile(fromArgv, "命令行 argv");
+        for (const auto& path : fromQueue) {
+            LOG_WARN("待打开文件队列：argv 已命中，本次忽略 " + path);
+        }
+        return;
+    }
+    if (fromQueue.empty()) {
+        capturePendingOpenFile(std::string(), "命令行 argv/打开请求队列");
+        return;  // 只翻幂等门，不写待打开路径
+    }
+    capturePendingOpenFile(fromQueue.front(), "系统打开请求队列");
+    for (std::size_t i = 1; i < fromQueue.size(); ++i) {
+        LOG_WARN("待打开文件队列：单槽仅承载一条，本次忽略 " + fromQueue[i]);
+    }
 }
 
 void captureOpenFileFromArgv(const std::vector<std::string>& utf8Args) {
-    capturePendingOpenFile(platform::file_open::selectOpenFileArg(utf8Args));
+    // 测试缝：只喂 argv 参数，不触碰平台队列（保持参数化用例语义）
+    capturePendingOpenFile(platform::file_open::selectOpenFileArg(utf8Args),
+                           "命令行 argv（参数化）");
 }
 
 void resetArgvCaptureForTest() { g_argvCaptureDone = false; }
@@ -168,10 +192,22 @@ bool consumePendingMinimizedStartup() {
 }
 
 ::core::PageId dispatchPageForFile(const std::string& path) {
-    auto endsWith = [&](const char* suffix) {
-        size_t n = std::string(suffix).size();
-        return path.size() >= n &&
-               path.compare(path.size() - n, n, suffix) == 0;
+    // ASCII 小写化：只折 'A'-'Z'，不依赖 locale（tolower 受 locale 影响）
+    const auto asciiLower = [](char c) {
+        return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+    };
+    // 后缀比较大小写不敏感（APFS/NTFS 默认不敏感）：只小写化文件名尾部与后缀，
+    // 不整串拷贝。Windows 同步为大小写不敏感（原本对该平台即应如此）。
+    const auto endsWith = [&](const char* suffix) {
+        const size_t n = std::string(suffix).size();
+        if (path.size() < n) return false;
+        const size_t offset = path.size() - n;
+        for (size_t i = 0; i < n; ++i) {
+            if (asciiLower(path[offset + i]) != asciiLower(suffix[i])) {
+                return false;
+            }
+        }
+        return true;
     };
     if (endsWith(".md") || endsWith(".markdown")) return ::core::PageId::Markdown;
     if (endsWith(".json")) return ::core::PageId::ClaudeProxy;
@@ -254,20 +290,24 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup) {
     // 一个门控键可对应多行（多页模块，如 release 的任务/基础配置）：逐行拨，
     // 不能命中首行就返回。分组父项行无实例，跳过（其展开态由侧边栏独立维护）。
+    // matched = 键命中登记表（与实例存在与否无关）：否则「键已知但实例缺失」会被
+    // 追加一条「未知或恒开模块」的错误诊断，排障时误导向键名写错。
     bool matched = false;
+    std::string missingPages;
     for (const auto& e : ::app::registry::kModuleRegistry) {
         if (e.gatingKey == nullptr || moduleId != e.gatingKey) {
             continue;  // 恒开行不参与拨开关；其余行键不匹配继续找
         }
+        matched = true;
         if (::app::registry::isGroupPage(e.page)) {
             continue;  // 分组父项不可导航、无实例
         }
         ::core::Module* mod = lookup(e.page);
         if (mod == nullptr) {
-            LOG_WARN("模块开关: " + moduleId + " 无实例，跳过即时生效");
+            if (!missingPages.empty()) missingPages += "/";
+            missingPages += ::core::pageIdToString(e.page);
             continue;
         }
-        matched = true;
         if (on) {
             if (moduleId == module::settings::kModuleIdClaudeProxy) {
                 // 惰性装配：启动期关、会话内开启时补装配，必须先于 registerModule/onStart
@@ -295,6 +335,11 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
     }
     if (!matched) {
         LOG_WARN("模块开关: 未知或恒开模块 " + moduleId + "，忽略");
+    } else if (!missingPages.empty()) {
+        // 键已命中、只是这些页面没有实例（如非支持平台/已注销）：单条准确日志，
+        // 与「键未知」区分开
+        LOG_WARN("模块开关: " + moduleId + " 已命中登记表，但页面 " +
+                 missingPages + " 无实例，跳过即时生效");
     }
 }
 

@@ -244,6 +244,132 @@ inline constexpr const char* kSql = R"(
         value TEXT NOT NULL
     );
 
+    -- ==================== 上线模块（Release）====================
+    -- 9 张表与 release_types.h 的结构体一一对应。约定：
+    --   - 枚举一律存文本（跨版本可读、避免数字漂移）；布尔存 0/1 INTEGER；
+    --   - 时间列：分钟语义 = 当天 0..1439；epoch 语义 = 秒；「未完成」恒为 0（不用 NULL），
+    --     0 是唯一的未完成判据，读侧无需区分「NULL / 空」；
+    --   - 任务引用基础配置时全量快照（env_name / 时间窗 / 服务清单 / 类型 / 默认分支），
+    --     基础配置后续改动不回灌已建任务。
+
+    -- 基础配置：服务目录。kind = backend / pc_web / mobile_web
+    CREATE TABLE IF NOT EXISTS release_service (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL DEFAULT 'backend',
+        default_branch TEXT NOT NULL DEFAULT '',
+        sort INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- 基础配置：环境目录。end_minute <= start_minute 视为跨零点到次日
+    CREATE TABLE IF NOT EXISTS release_env (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        start_minute INTEGER NOT NULL DEFAULT 0,
+        end_minute INTEGER NOT NULL DEFAULT 0,
+        sort INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- 环境包含的服务（EnvDef.serviceIds 的落点；删环境/服务即级联清关联）
+    CREATE TABLE IF NOT EXISTS release_env_service (
+        env_id INTEGER NOT NULL,
+        service_id INTEGER NOT NULL,
+        PRIMARY KEY (env_id, service_id),
+        FOREIGN KEY (env_id) REFERENCES release_env(id) ON DELETE CASCADE,
+        FOREIGN KEY (service_id) REFERENCES release_service(id) ON DELETE CASCADE
+    );
+
+    -- 上线任务。一天一个按 plan_date 判；作废不占当天名额 → plan_date 不能加 UNIQUE。
+    --   status = draft / pending / running / done / voided
+    --   announce_sent_at = epoch 秒，0 = 未发布；其余 *_ok 为 0/1，0 = 未完成
+    CREATE TABLE IF NOT EXISTS release_task (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'draft',
+        announce_text TEXT NOT NULL DEFAULT '',
+        announce_sent_at INTEGER NOT NULL DEFAULT 0,
+        pretest_no TEXT NOT NULL DEFAULT '',
+        pretest_ok INTEGER NOT NULL DEFAULT 0,
+        cab_no TEXT NOT NULL DEFAULT '',
+        cab_ok INTEGER NOT NULL DEFAULT 0,
+        ticket_nacos_no TEXT NOT NULL DEFAULT '',
+        ticket_nacos_ok INTEGER NOT NULL DEFAULT 0,
+        ticket_db_no TEXT NOT NULL DEFAULT '',
+        ticket_db_ok INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- 任务环境快照（时间窗是建任务时的拷贝）
+    CREATE TABLE IF NOT EXISTS release_task_env (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        env_name TEXT NOT NULL,
+        start_minute INTEGER NOT NULL DEFAULT 0,
+        end_minute INTEGER NOT NULL DEFAULT 0,
+        removed INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (task_id) REFERENCES release_task(id) ON DELETE CASCADE
+    );
+
+    -- 任务服务快照。服务级「跳过」= removed=1：不占进度、不提醒、不进执行清单
+    CREATE TABLE IF NOT EXISTS release_task_service (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_env_id INTEGER NOT NULL,
+        service_name TEXT NOT NULL,
+        service_kind TEXT NOT NULL DEFAULT 'backend',
+        default_branch TEXT NOT NULL DEFAULT '',
+        branch TEXT NOT NULL DEFAULT '',
+        removed INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (task_env_id) REFERENCES release_task_env(id) ON DELETE CASCADE
+    );
+
+    -- 服务配置项（仅后端）。kind = nacos / db / cron / menu / gateway
+    --   conf_order = 结构体 TaskConfig.order —— order 是 SQL 关键字，列名不能用它
+    --   skipped = 1 表示本次没有（不校验、不占进度）；done_at = epoch 秒，0 = 未完成
+    CREATE TABLE IF NOT EXISTS release_task_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_service_id INTEGER NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'nacos',
+        content TEXT NOT NULL DEFAULT '',
+        skipped INTEGER NOT NULL DEFAULT 0,
+        conf_order INTEGER NOT NULL DEFAULT 0,
+        done_at INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (task_service_id) REFERENCES release_task_service(id) ON DELETE CASCADE
+    );
+
+    -- 服务级步骤。kind = branch / config / deploy / verify（branch = 合并分支）；
+    -- done_at epoch 秒，0 = 未完成。配置完成以 release_task_config.done_at 记账，
+    -- kind=config 行只是可选的聚合标记。
+    CREATE TABLE IF NOT EXISTS release_task_step (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_service_id INTEGER NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'branch',
+        done_at INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (task_service_id) REFERENCES release_task_service(id) ON DELETE CASCADE
+    );
+
+    -- 操作留痕（action = confirm / revoke / submit / reorder；at = epoch 秒）
+    CREATE TABLE IF NOT EXISTS release_task_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        scope TEXT NOT NULL DEFAULT '',
+        step TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL DEFAULT '',
+        at INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (task_id) REFERENCES release_task(id) ON DELETE CASCADE
+    );
+
+    -- 唯一性兜底（应用层已拦，库层防并发写穿透与历史脏数据；与建表同脚本幂等执行）：
+    --   同日非作废任务唯一（作废不占当天名额，可共存）；
+    --   环境 / 配置 / 步骤各按 (外键, 键) 唯一。
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_release_task_plan_date_active
+        ON release_task(plan_date) WHERE status <> 'voided';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_release_task_env_unique
+        ON release_task_env(task_id, env_name);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_release_task_config_unique
+        ON release_task_config(task_service_id, kind);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_release_task_step_unique
+        ON release_task_step(task_service_id, kind);
+
     -- 索引
     CREATE INDEX IF NOT EXISTS idx_tasks_column
         ON todo_tasks(column_id, position);

@@ -13,6 +13,17 @@
 extern "C" int* _NSGetArgc(void);
 extern "C" char*** _NSGetArgv(void);
 
+// ── 待 macOS 实机接入：odoc（Finder 双击 / 右键「打开方式」）事件桥 ──
+// 这类请求由 LaunchServices 以 kAEOpenDocuments Apple Event 投递，不写进 argv，
+// 因此 openFileFromArgv() 接不住。接入方式：在 Cocoa 的
+// application:openFile:（或 NSAppleEventManager 的 kAEOpenDocuments 处理器）回调里
+// 对每个路径调用 platform::file_open::enqueueOpenFile(path)，由 app 层捕获时取走。
+// 本文件刻意不实现该桥：本机无 macOS，未经编译验证的 Objective-C++ 桥风险高于收益；
+// 留待 macOS 实机接入并补一次双击/打开方式的真机验证。
+// 接入前须确认：①不与 EUI-NEO 现有的 kAEOpenDocuments 处理器重复注册（同一
+// event class/id 后注册者覆盖前者，会让 onOpenFile 通道失效）；②运行期事件需要
+// 主循环取走点，否则队列只在启动捕获时被消费。
+
 namespace platform::file_open {
 
 std::string openFileFromArgv() {
