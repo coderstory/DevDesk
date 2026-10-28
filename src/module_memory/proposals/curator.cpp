@@ -43,15 +43,15 @@ core::Result<std::vector<std::string>> Curator::proposeForget(
         if (pending.isOk()) {
             for (const auto& p : pending.value()) {
                 if (p.kind != "forget") continue;
-                const std::string want = std::to_string(m.id);
+                // targetIds = MemorySummary.id 原样（UUID 串，live 定案形态）
                 for (const std::string& tid : p.targetIds) {
-                    if (tid == want) hasPending = true;
+                    if (tid == m.id) hasPending = true;
                 }
             }
         }
         if (hasPending) continue;
         auto card = store.create(
-            "forget", {std::to_string(m.id)}, "", "", "devdesk",
+            "forget", {m.id}, "", "", "devdesk",
             {ProposalEvidence{"", 0, m.text, nowSec}},
             kHighConfidence, "decay",
             "assistant_derived", nowSec, m.version);
