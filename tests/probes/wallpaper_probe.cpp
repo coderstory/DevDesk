@@ -253,6 +253,8 @@ int main(int argc, char* argv[]) {
                 break;
             case ::core::PageId::Agent:
                 break;  // 默认关闭，门控清单本就不含
+            case ::core::PageId::Memory:
+                break;  // 默认开启但不在本探针注册集（壁纸探针只关心壁纸页）
         }
     }
     check(!defaultGatingHasWallpaper,
