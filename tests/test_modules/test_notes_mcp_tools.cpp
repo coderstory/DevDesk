@@ -141,7 +141,7 @@ REGISTER_TEST(notes_mcp_schema_contract,
         const auto required = obj.get("required");
         DOCTEST_REQUIRE(required.isArray());
         bool hasField = false;
-        for (std::size_t i = 0; i < required.size(); ++i) {
+        for (std::size_t i = 0; i < static_cast<std::size_t>(required.size()); ++i) {
             if (required[i].asString() == s.required) hasField = true;
         }
         DOCTEST_CHECK_MESSAGE(hasField,
