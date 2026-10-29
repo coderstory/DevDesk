@@ -1,6 +1,6 @@
 # EUI-NEO UI 框架能力调研报告
 
-> **调研日期**：2026-09-20
+> **调研日期**：2026-09-20（最近核对：2026-10-30——托盘菜单三条更正，见老学究文档时效审计同日报告）
 > **调研目的**：DevDesk 项目技术选型验证
 > **调研方法**：实际打开 `/Users/coderstory/Dev/gui/DevDesk/EUI-NEO/` 源码（2026-10-29 起为 DevDesk 仓内 submodule），grep + 阅读组件实现 + 跑示例
 > **结论**：DevDesk 的全部设计**基本可实现**，但有 5 个硬限制 + 5 个隐藏陷阱需要避开
@@ -40,7 +40,7 @@
 | 陷阱 | 说明 |
 |------|------|
 | **`fontWeight()` 数值无效** | runtime 只打包 Bold 一份字重，`fontWeight(700)` 不切 face。打包多份 TTF 也不会切，**源码层面就不支持** |
-| **托盘菜单只有 Show/Exit** | `tray_bridge` 4 后端都硬编码，不能加自定义菜单项 |
+| ~~托盘菜单只有 Show/Exit~~（2026-10-30 更正：`app.h` 已有 `trayMenu` / `onTrayMenu` 自定义菜单 API，`styledMenu` 支持样式化菜单——此条不再成立） | —（原 `tray_bridge` 硬编码限制已被上游新 API 取代） |
 | **Toast 单实例无队列** | 同时显示多条要自管队列 |
 | **Tab 焦点循环未实现** | `InputKey::Tab` 枚举存在但不调度，键盘 Tab 导航需自实现 |
 | **窗口无 `onResize` / `onMove` 回调** | 自适应布局靠 `DslWindowRequest::compose(ui, screen)` 的 `screen` 参数变化触发 |
@@ -363,7 +363,7 @@ ui.image("icon").source("assets/myicon.svg");
 | 自定义菜单 | ❌ 硬编码 "Show / Exit" | ❌ | ❌ | ❌ |
 | 点击事件 | ✅ | ✅ | ✅ | ✅ |
 
-**结论**：DevDesk 想要"切换 Profile"、"查看日志"等自定义托盘菜单项**不可行**——必须用窗口 UI 替代。
+**结论（2026-10-30 更正）**：自定义托盘菜单项**可行**——上游已交付 `trayMenu` / `onTrayMenu` / `styledMenu` API（`include/eui/app.h`），DevDesk 侧直接挂自定义菜单项，无需窗口 UI 替代。
 
 ---
 
@@ -625,7 +625,7 @@ components::progress(ui, "p").value(0.6f).build();
 | Toast | ✅ 支持（单实例）| `components::toast` |
 | Loading | ✅ 支持 | `onTimer` + state |
 | 进度条 | ✅ 支持 | `components::progress` |
-| 系统托盘 | ⚠️ 部分支持 | 图标可设，菜单只有 Show/Exit |
+| 系统托盘 | ✅ 支持 | 图标 + 自定义菜单（`trayMenu` / `onTrayMenu`，2026-10-30 核对） |
 | Cmd+S / Ctrl+N 快捷键 | ✅ 支持 | `onKeyEvent` 元素级 + 窗口级 fallback |
 | IME 中文输入 | ✅ 支持（macOS/Windows，Linux no-op）| 三平台 bridge |
 | 全文搜索 | ✅ 框架无关 | SQL FTS5 + 渲染列表 |
