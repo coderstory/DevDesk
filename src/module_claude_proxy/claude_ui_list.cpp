@@ -465,6 +465,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .text("Profile 列表加载失败：" + profilesError)
                     .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(core::theme::scaled(20.0f))
+                    .wrap(true)  // 长错误原因必须换行读全（P0-C1：单行截断丢自查线索）
                     .color(t.colors.errorText)
                     .build();
             } else if (profiles.empty()) {
