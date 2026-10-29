@@ -325,6 +325,23 @@ inline constexpr const char* kSql = R"(
         value TEXT NOT NULL
     );
 
+    -- 需-11 项目卡：每个业务系统一张结构化档案（name 主键，一张卡 = 一个系统）。
+    -- 写方 = 设置页「项目卡」卡（CRUD）；读方 = MCP 工具 project_info(name)。
+    -- 字段全 NOT NULL DEFAULT ''：空串 = 未填写（与 NULL 严格区分，读侧不判空两套）。
+    -- test_db_url 可能含连接串凭据 → 在 core::sql_dump::defaultSkipTables() 整表
+    -- 剔除，不随 GitHub 同步上云（本库文件自身靠 0600 权限保护）。
+    CREATE TABLE IF NOT EXISTS project_cards (
+        name TEXT PRIMARY KEY,
+        repo_path TEXT NOT NULL DEFAULT '',
+        start_command TEXT NOT NULL DEFAULT '',
+        test_command TEXT NOT NULL DEFAULT '',
+        deploy_method TEXT NOT NULL DEFAULT '',
+        test_db_url TEXT NOT NULL DEFAULT '',
+        key_modules TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+
     -- ==================== 上线模块（Release）====================
     -- 9 张表与 release_types.h 的结构体一一对应。约定：
     --   - 枚举一律存文本（跨版本可读、避免数字漂移）；布尔存 0/1 INTEGER；
@@ -668,6 +685,12 @@ core::Result<void> migrateTodoDocLinkColumn(core::data::SqliteDb& db);
 // 单事务 + 幂等（今日零点前完成的归档后不再命中）。缺 done/archive 列时零操作
 // （固定四列由前置迁移保证，缺列 = 无归档目标，不失败）。
 core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db);
+
+// 需-11 项目卡补列迁移：老库已有 project_cards 表但缺新列时逐列 ALTER 补缺
+//（与 migrateTodoDocLinkColumn 同式——CREATE IF NOT EXISTS 对已存在表跳过，
+// 老库永远缺新列）。幂等：表不存在零操作（applySchema 会建全）、列已存在零操作。
+// 已存在行的新列取列 DEFAULT（文本 '' / 时间戳 0），不回填。
+core::Result<void> migrateProjectCardColumns(core::data::SqliteDb& db);
 
 // 已摘除功能的遗留表清理：幂等 DROP TABLE IF EXISTS（表不在 = 零操作）。
 // 表已不在 DDL 里，但老库启动会带着它们；无外键指向、无读方，删了安全。

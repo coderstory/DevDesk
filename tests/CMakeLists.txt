@@ -144,6 +144,12 @@ add_executable(devdesk_tests
     test_modules/test_github_sync_card_spacing.cpp
     test_modules/test_github_sync_engine.cpp
     test_modules/test_github_sync_logic.cpp
+    # 需-11 项目卡存储层：CRUD 往返/重启持久化/老库补列迁移/空名拒绝
+    test_modules/test_project_cards.cpp
+    # 需-11 project_info MCP 工具：中文命中/缺 name 明确错误/未知名清单/装配接线
+    test_modules/test_project_info_tool.cpp
+    # 需-11 项目卡设置卡：表单/列表/删除门控/按钮回调/卡高几何（无头 compose）
+    test_modules/test_project_cards_card.cpp
     test_modules/test_local_git_probe.cpp
     test_modules/test_settings.cpp
     test_modules/test_module_icons.cpp

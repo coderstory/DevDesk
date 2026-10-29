@@ -9,6 +9,9 @@ add_library(devdesk_module_settings STATIC
     github_sync_card.cpp
     github_sync_logic.cpp
     git_error_dialog.cpp
+    project_card_store.cpp
+    project_cards_card.cpp
+    project_info_tool.cpp
 )
 
 # 平台适配：本地 git 探测按平台拆文件（业务代码零平台宏，见 local_git_probe.h）

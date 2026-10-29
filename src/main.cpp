@@ -27,6 +27,7 @@
 #include "module_memory/hook/hook_command.h"
 #include "module_memory/mcp/search_tool.h"
 #include "module_memory/proposals/usage_ledger.h"
+#include "module_settings/project_info_tool.h"
 #include "module_toggle_bridge.h"
 #include "module_release/release_reminder.h"
 #include "module_release/release_schedule_source.h"
@@ -467,6 +468,17 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
         // MCP 装配段：注册内置工具（一次，常驻注册表）+ 注入桥 + 按开关启动。
         // 启动失败只 LOG_ERROR 不弹窗（启动期与代理自启同口径）。
         module::mcp::registerBuiltinMcpTools(core::mcp::globalMcpTools());
+        // project_info（需-11 项目卡查询）：纯本地 SQL 读、无引擎依赖，恒注册
+        //（不设开关 → 无需 memory_mcp_bridge 那类状态桥）；实现归 module_settings。
+        // 失败只 LOG_ERROR 不阻断启动（与 memory_search 同口径）。
+        {
+            auto registered = module::settings::registerProjectInfoTool(
+                core::mcp::globalMcpTools(), ::core::appDatabase());
+            if (registered.isFail()) {
+                LOG_ERROR("project_info 注册失败（不阻断启动）: " +
+                          registered.errorMessage());
+            }
+        }
         // memory_search 按记忆面板开关注册（不挂 MemoryModule 生命周期：引擎是
         // 应用级常驻服务，页面关闭不停引擎）；失败只 LOG_ERROR 不阻断启动。
         if (module::memory::mcp::searchEnabledBySetting()) {
