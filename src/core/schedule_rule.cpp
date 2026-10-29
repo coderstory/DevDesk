@@ -607,8 +607,11 @@ Result<std::optional<int64_t>> calendarNextFire(const RuleSpec& spec, int64_t af
         if (!resolveWallClock(want, u)) continue;  // 缺口兜底失败（病态时区），跳过该日
         if (u > afterUnix) return Result<std::optional<int64_t>>::ok(std::optional<int64_t>(u));
     }
-    return Result<std::optional<int64_t>>::fail(ErrorCode::ValidationError,
-                                                "日历规则 400 年内无触发时间");
+    // 契约（schedule_rule.h）：无下次一律 ok(nullopt)，fail 只留给参数非法——与
+    // cron 8 窗口无匹配同一口径。引擎把 fail/nullopt 都当休眠，但 UI 保存
+    // （buildRuleRecord）把 fail 当拒绝，会误拒合法稀疏 interval（day interval
+    // =1000000 首触发在 400 年外）与病态组合（nth=5 周日 + workdays_only 恒空）。
+    return Result<std::optional<int64_t>>::ok(std::optional<int64_t>());
 }
 
 // ---------- cron kind ----------

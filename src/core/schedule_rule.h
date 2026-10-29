@@ -88,7 +88,8 @@ struct FireContext {
 Result<RuleSpec> parseRuleSpec(RuleKind kind, const std::string& specJson);
 
 // 严格大于 afterUnix 的下一次触发时刻；无下次（一次性已过 / event / resident /
-// 超出可表示范围 / cron 8 个 366 天窗口内无匹配）返回 ok(nullopt)。
+// 超出可表示范围 / calendar 400 年窗口无匹配 / cron 8 个 366 天窗口内无匹配）
+// 返回 ok(nullopt)——六 kind 统一口径：无下次不是错误，fail 只留给参数非法。
 Result<std::optional<int64_t>> nextFire(const RuleSpec& spec, int64_t afterUnix,
                                         const FireContext& ctx);
 
