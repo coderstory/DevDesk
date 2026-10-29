@@ -401,8 +401,8 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 - **构建 / 测试**：`bash scripts/build-test-run.sh` 内部处理工具链 PATH（macOS 前置 `/opt/homebrew/bin`；Windows 三件套 cmake 4.4.4 / ninja 1.13.2 / `D:/software/msys64/mingw64`）；测试二进制 macOS `build/tests/devdesk_tests`、Windows `build/tests/devdesk_tests.exe`，两者都**支持子串过滤**。测试框架是**自制迷你 doctest**（`REGISTER_TEST` + fail-fast，**不是**真 doctest）——grep `TEST_CASE` 找不到用例、`--list-test-cases` 被当过滤子串属正常。用例总数与 CI 现状见本文「🚦 当前状态」。
 - **并行度封顶**：`CMAKE_BUILD_PARALLEL_LEVEL` = `DEVDESK_JOBS`（**默认 3**，`scripts/build-test-run.sh:90`）——多条 worktree 并发构建时避免互拖；单条独占机器才调高（如 `DEVDESK_JOBS=8`）。
 - **ccache 持久配置按平台各一份**（`.sh` 里已接，**平时不用管**）：Windows `%LOCALAPPDATA%\ccache\ccache.conf` + `D:/software/ccache-devdesk/ccache.conf`；macOS **`~/Library/Preferences/ccache/ccache.conf`**（`cache_dir=~/Library/Caches/ccache-devdesk` / `base_dir=~/dev/gui` / `hash_dir=false` / `max_size=5G`）——**不是** XDG 的 `~/.config/ccache/ccache.conf`，写那儿 ccache 完全无视。**不设 BASEDIR = 白装**：每棵 worktree 绝对路径不同 → 同一份源码哈希不同 → 永远 miss。要**临时覆盖**再 `source scripts/ccache-env.sh`。
-- **codegraph 索引排除 worktree / build**：`/Users/coderstory/dev/gui/codegraph.json`（Windows 侧同文件在 `D:/project/gui/`）的 `exclude` = `.claude/worktrees/**`、`**/.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。
-- **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe` / `cc-switch.exe`**）。
+- **codegraph 索引排除 worktree / build**：`codegraph.json`（仓库根，双机各一份）的 `exclude` = `**/build/**`、`**/build-*/**`、`Testing/**`、`wt-*/**`（新增临时目录时同步维护，别把产物灌进索引）。
+- **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe`**）。
 - **代理直测脚本**：`doc/scripts/proxy_smoke_test.py`（`proxy` / `upstream` / `all`；环境变量 `DEVDESK_PROXY` / `DEVDESK_MODEL` / `DEVDESK_TOKEN`）。
 - **EUI-NEO 版本匹配**：消费政策 = 每次用最新源码（ADR 0006，2026-10-29 起以仓内 submodule 承载）；无最低依赖 rev，configure 期零 rev 校验。唯一权威判据 = `bash scripts/check-eui-neo-version.sh --root . --eui-dir EUI-NEO`（内容级 API 守卫）绿。EUI-NEO 要保持本地 main 最新：先推 fork，再升 submodule 指针推 DevDesk，见「常用命令」段与「跨仓库耦合」段。
 - **已踩过的坑（写码前先想一遍）**：
@@ -412,7 +412,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
   - **上游方言 `upstream_dialect`**：UA 不能透传客户端（Cloudflare 1010 按 UA 封）、`opencode.ai/zen/go` 需 `x-opencode-session`、模型名带 `[1M]` 要剥。
   - **自定义 check 必须 raise**（只 print 的"全绿"是假象）。
   - **负载敏感 flake**：`md_preview_highlight` / `md_highlight` 的 `<8ms` 墙钟断言、`test_claude_ui` 的固定端口 28888。
-- **`~/.claude/settings.json` 归属（2026-09-27 定）**：**DevDesk 是 settings.json 接管功能的终局 owner**，cc-switch（本地代理 15721 + `sessionAutoSyncEnabled` 反向同步）只在过渡期并存，**不为它做任何兼容 / 协调处理**（用户原话"不需要管 cc-switch，本软件开发完善后就不使用了"）。并存期两边都会整体重写 settings.json；cc-switch 库里存有 DevDesk 代理时代的旧快照（`ANTHROPIC_BASE_URL=http://127.0.0.1:8888` + 老 token），切 provider 时可能吐回 → 用户感知为"配置一直被还原"。**识别写者看键名**：DevDesk 写 `ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED`，cc-switch 写 `ANTHROPIC_API_KEY=PROXY_MANAGED`。DevDesk 三个写入时机（`claude_service.cpp`）：起代理 takeOver / 运行中切 profile 再同步 / 停代理或退出按键还原；启动只在有残留 sidecar 时补还原（`main.cpp` 启动序列）。再遇"配置被还原"类反馈：先按键名判写者，是 cc-switch 写的一句话说明即止——**不派任务、不做兼容**。
+- **`~/.claude/settings.json` 归属（2026-09-27 定；2026-10-29 起 cc-switch 已删除，原并存/判写者条目作废）**：**DevDesk 是 settings.json 接管功能的终局 owner**，独占写者，**不为任何第三方工具做兼容 / 协调处理**。写者识别看键名：DevDesk 写 `ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED`（`ANTHROPIC_API_KEY=PROXY_MANAGED` 形态出自别的工具）。DevDesk 三个写入时机（`claude_service.cpp`）：起代理 takeOver / 运行中切 profile 再同步 / 停代理或退出按键还原；启动只在有残留 sidecar 时补还原（`main.cpp` 启动序列）。再遇"配置被还原"类反馈：先确认本机还有没有第三方工具在写该文件——**不派任务、不做兼容**。
 
 ### 反事故红线
 

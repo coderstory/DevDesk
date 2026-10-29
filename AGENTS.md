@@ -84,9 +84,6 @@ main → module_*（Router 页面模块 + 独立子窗）
 
 ## 六、编辑边界
 
-**只读，永不修改、不 commit**：
-- cc-switch 仓库 — 上游 `farion1231/cc-switch`（Tauri 2 + Rust 的配置切换器，目录仅存在于 Windows 主机）。只用于对照 `module_claude_proxy` 的 profile 管理与 settings 接管设计。
-
 **仓库外归档，不要在仓库内重建**：
 - 原 `/Users/coderstory/dev/gui` 工作区壳的产物/归档（claude_proxy 安全审计、EUI-NEO PR 文案、splash 交付、zpatch 拷贝等）已于 2026-10-29 清理，备份在 `/Users/coderstory/dev/gui-archive-backup-20261029/`（目录 + 同名 .tar.gz）。
 
@@ -124,7 +121,7 @@ main → module_*（Router 页面模块 + 独立子窗）
 
 | 适配件 | 内容 |
 |---|---|
-| `.zcode/config.json` | 项目门禁（PreToolUse）：手敲 cmake ❌、写 cc-switch 仓库 ❌、写产物目录 ❌；脚本在 `.zcode/armory/gates/pre-tool-use.sh`；六角色白名单与 SessionStart 激活由插件 hook 供给 |
+| `.zcode/config.json` | 项目门禁（PreToolUse）：手敲 cmake ❌、写产物目录 ❌；脚本在 `.zcode/armory/gates/pre-tool-use.sh`；六角色白名单与 SessionStart 激活由插件 hook 供给 |
 | `.zcode/armory/evidence-capture.sh` | 薄委托插件采集器；证据归档 `evidence/`（已 git-ignore），路径写回测试清单卡 |
 | `.zcode/cheatsheets/platform-file-map.md` | 平台拆分文件映射（含 ⚠ 无 posix 兜底族），改平台代码前先查 |
 | `.zcode/lessons/<role>.md` | 角色经验沉淀：一事一行带日期与来源，与既有规则重复不记 |

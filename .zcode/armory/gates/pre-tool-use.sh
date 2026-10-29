@@ -24,10 +24,6 @@ case "$mode" in
     ;;
   path-gate)
     case "$input" in
-      *cc-switch/*)
-        block "cc-switch 仓库是只读上游，禁止写入（AGENTS.md §六）" ;;
-    esac
-    case "$input" in
       */analysis/*|*/pr-bodies/*|*/splash-delivery/*|*/devdesk-agent-m1-sdd-archive/*|*/eui-neo-zpatch-copy/*|*eui-neo-dropdown-popup-z.patch*|*pr-push-eui-neo.sh*)
         block "产物/归档目录与文件，修改前先征得用户同意（AGENTS.md §六；2026-10-29 起原件已备份至仓库外，勿在仓库内重建）" ;;
     esac
