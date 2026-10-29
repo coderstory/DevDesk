@@ -20,14 +20,16 @@ namespace platform {
 
 namespace {
 
-// 排空管道当前可读数据，不阻塞：无数据或管道坏即返回（供读/等待交错轮询）
+// 排空管道当前可读数据，不阻塞：无数据或管道坏即返回（供读/等待交错轮询）。
+// ReadFile 请求量必须截到 avail——匿名管道读会阻塞到「读满请求量或写端关闭」，
+// 请求 4096 而对端只写了几个字节后沉默时，本调用永不返回，超时轮询失效。
 void drainPipe(HANDLE h, std::string& out) {
     char buf[4096];
     for (;;) {
         DWORD avail = 0;
         if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) return;
         DWORD n = 0;
-        if (!ReadFile(h, buf, sizeof(buf), &n, nullptr) || n == 0) return;
+        if (!ReadFile(h, buf, std::min<DWORD>(avail, sizeof(buf)), &n, nullptr) || n == 0) return;
         out.append(buf, n);
     }
 }
