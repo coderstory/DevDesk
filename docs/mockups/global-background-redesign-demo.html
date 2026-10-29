@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>DevDesk 全局背景层重设计 · 流体颜料三方案</title>
+<style>
+  body{margin:0;background:#1a1512;color:#e8e0d4;font-family:-apple-system,"PingFang SC",sans-serif;padding:32px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:#a89a86;font-size:13px;margin-bottom:28px;max-width:760px;line-height:1.6}
+  .plan{margin-bottom:44px}
+  .plan h2{font-size:16px;margin:0 0 2px;display:flex;gap:10px;align-items:center}
+  .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#3a2f26;color:#d97757}
+  .cost{color:#a89a86;font-size:12px;margin:2px 0 10px;max-width:760px;line-height:1.6}
+  .win{width:760px;height:475px;border-radius:12px;overflow:hidden;position:relative;display:flex;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+  .side{width:98px;height:100%;padding:14px 10px;box-sizing:border-box;font-size:11px;position:relative;z-index:2}
+  .side .logo{font-weight:700;margin-bottom:14px}
+  .side div.item{padding:5px 8px;border-radius:6px;margin-bottom:4px;opacity:.75;color:#5a4d40}
+  .side div.item.on{background:rgba(217,119,87,.25);opacity:1}
+  .main{flex:1;padding:20px 26px;box-sizing:border-box;position:relative;z-index:2}
+  .main h3{font-size:18px;margin:0 0 12px;font-weight:600;color:#2B2118}
+  .cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .card{background:rgba(255,255,255,.75);border:1px solid #e3ded2;border-radius:10px;padding:10px;font-size:11px;color:#4a4036}
+  .card b{display:block;font-size:16px;margin:4px 0}
+  .list{margin-top:12px;background:rgba(255,255,255,.65);border:1px solid #e3ded2;border-radius:10px;padding:10px;font-size:11px;line-height:1.9;color:#4a4036}
+  .side.paper{background:rgba(43,33,24,.05)}
+
+  /* A：纯色暖墨底（兜底项） */
+  .win.a{background:#F0EEE6}
+
+  /* B：gooey 滤镜流体颜料 —— 色块在 blur+对比度滤镜下相互交融，缓慢形变漂移，纯 CPU 合成 */
+  .win.b{background:#F0EEE6}
+  .win.b .fluid{position:absolute;inset:0;filter:url(#goo) blur(2px) contrast(1.15);z-index:1}
+  .blob{position:absolute;filter:blur(34px);opacity:.5;border-radius:50%}
+  .b1{width:300px;height:260px;background:#E8A87C;left:18%;top:12%;animation:morph 26s ease-in-out infinite alternate, drift 38s ease-in-out infinite alternate}
+  .b2{width:340px;height:300px;background:#D97757;right:8%;top:-6%;animation:morph 31s ease-in-out infinite alternate-reverse, drift 45s ease-in-out infinite alternate-reverse}
+  .b3{width:280px;height:240px;background:#C15A3E;left:34%;bottom:-14%;animation:morph 24s ease-in-out infinite alternate, drift 52s ease-in-out infinite alternate}
+  .b4{width:220px;height:200px;background:#F2D0A4;right:26%;bottom:6%;animation:morph 29s ease-in-out infinite alternate-reverse, drift 41s ease-in-out infinite alternate-reverse}
+  @keyframes morph{
+    0%  {border-radius:58% 42% 45% 55% / 52% 48% 55% 45%}
+    33% {border-radius:42% 58% 60% 40% / 45% 58% 42% 58%}
+    66% {border-radius:52% 48% 38% 62% / 60% 40% 55% 45%}
+    100%{border-radius:45% 55% 52% 48% / 42% 60% 48% 52%}
+  }
+  @keyframes drift{to{transform:translate(70px,-46px)}}
+
+  /* C：预烘焙真流体（WebGL sim 烘成的序列帧循环播放，demo 用 CSS 近似示意） */
+  .win.c{background:#F0EEE6}
+  .win.c .fluid{position:absolute;inset:0;z-index:1;filter:blur(1px)}
+  .flow{position:absolute;width:150%;height:150%;left:-25%;top:-25%;
+    background:
+      radial-gradient(40% 34% at 30% 30%, rgba(217,119,87,.55), transparent 70%),
+      radial-gradient(36% 30% at 68% 22%, rgba(232,168,124,.5), transparent 70%),
+      radial-gradient(42% 36% at 62% 68%, rgba(193,90,62,.45), transparent 70%),
+      radial-gradient(30% 26% at 22% 74%, rgba(242,208,164,.55), transparent 70%);
+    animation:sheen 24s linear infinite}
+  @keyframes sheen{
+    0%{transform:rotate(0deg) scale(1)}
+    50%{transform:rotate(180deg) scale(1.08)}
+    100%{transform:rotate(360deg) scale(1)}
+  }
+  .note{font-size:11px;color:#8a7c6a;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>DevDesk 全局背景层重设计 · 流体颜料三方案</h1>
+<div class="sub">按老板修正方向重做：目标是「流动颜料」——色块交融、缓慢形变，不是离散圆圈漂移。三案沿用暖墨象牙底 + Clay 橙色系，主内容照常压在背景之上（信息优先不降对比）。</div>
+
+<!-- gooey 滤镜：blur+contrast 让相邻色块边缘融合成颜料交融感 -->
+<svg width="0" height="0" style="position:absolute">
+  <filter id="goo"><feGaussianBlur in="SourceGraphic" stdDeviation="18" result="b"/>
+  <feColorMatrix in="b" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 24 -12"/></filter>
+</svg>
+
+<div class="plan">
+  <h2>方案 A · 纯色暖墨底<span class="tag">成本≈0 · 兜底项</span></h2>
+  <div class="cost">不要动效只要质感的话：砍整个动效层。作为 B/C 的降级路径保留。</div>
+  <div class="win a">
+    <div class="side paper"><div class="logo">DevDesk</div><div class="item">首页</div><div class="item on">智能体</div><div class="item">定时</div><div class="item">记忆</div><div class="item">上线</div></div>
+    <div class="main"><h3>智能体</h3><div class="cards"><div class="card">任务总数<b>24</b></div><div class="card">运行中<b>3</b></div><div class="card">成功率<b>96%</b></div></div><div class="list">▸ R4 清理任务 · 运行中<br>▸ mac 兼容审查 · 已完成</div></div>
+  </div>
+</div>
+
+<div class="plan">
+  <h2>方案 B · gooey 滤镜流体颜料<span class="tag">成本≈1 天 · 推荐</span></h2>
+  <div class="cost">4 个 Clay 色系色块，border-radius 持续形变 + 慢速漂移，外层 SVG goo 滤镜（blur+contrast 阈值化）让相邻色块边缘<b>交融成颜料</b>。纯 CPU 合成零 GPU 负担（无风扇机友好）；EUI-NEO 无滤镜缝，落地形态=离屏合成一帧一交或预烘焙，待与码农对缝。</div>
+  <div class="win b">
+    <div class="fluid"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="blob b4"></div></div>
+    <div class="side paper"><div class="logo">DevDesk</div><div class="item">首页</div><div class="item on">智能体</div><div class="item">定时</div><div class="item">记忆</div><div class="item">上线</div></div>
+    <div class="main"><h3>智能体</h3><div class="cards"><div class="card">任务总数<b>24</b></div><div class="card">运行中<b>3</b></div><div class="card">成功率<b>96%</b></div></div><div class="list">▸ R4 清理任务 · 运行中<br>▸ mac 兼容审查 · 已完成</div></div>
+  </div>
+  <div class="note">demo 为浏览器示意；app 内落地需按 EUI-NEO 渲染缝选「预烘焙循环帧」或「低频离屏重绘」，性能口径见 C。</div>
+</div>
+
+<div class="plan">
+  <h2>方案 C · 预烘焙真流体<span class="tag">成本≈2-3 天 · 质感上限</span></h2>
+  <div class="cost">拿现成开源 WebGL 流体模拟（MIT，Pavel Dobryakov fluid sim 这类）<b>离线烘 20~30 秒无缝循环序列帧</b>（透明背景，Clay 色系），app 内只做帧循环播放——运行期零 GPU、零 CPU，无风扇机不烧。成本在烘焙管线一次性搭建。demo 用旋转渐变近似示意（真实帧交融感更细腻）。</div>
+  <div class="win c">
+    <div class="fluid"><div class="flow"></div></div>
+    <div class="side paper"><div class="logo">DevDesk</div><div class="item">首页</div><div class="item on">智能体</div><div class="item">定时</div><div class="item">记忆</div><div class="item">上线</div></div>
+    <div class="main"><h3>智能体</h3><div class="cards"><div class="card">任务总数<b>24</b></div><div class="card">运行中<b>3</b></div><div class="card">成功率<b>96%</b></div></div><div class="list">▸ R4 清理任务 · 运行中<br>▸ mac 兼容审查 · 已完成</div></div>
+  </div>
+  <div class="note">文件体积口径：600px 高 30s@12fps WebP 约几 MB，打包体积可接受；双平台解码均原生支持。</div>
+</div>
+</body>
+</html>

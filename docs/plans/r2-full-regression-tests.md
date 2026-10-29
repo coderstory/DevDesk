@@ -1,5 +1,25 @@
 # R2 收口全量回归测试清单卡
 
+## 第 2 轮（2026-10-29 19:2x 启动，R3 收口）
+
+- 触发：mac P1 `3d59d076` 交叉审无 P0/P1，coderstory 发令（发令枪=魔女审查结论）
+- 命令：`DEVDESK_JOBS=2 bash scripts/build-test-run.sh --no-run`（降载规矩：老板无风扇 MacBook Air 易降频；后台 job `bash-20effb5bf57046ce`）
+- 预期：单测 ≥1944 条 0 失败（上轮 1944 为基线）；probe 22 条全绿（5 wallpaper_* 设计内跳过）；守卫全绿
+- 已知 flake（不算新红）：`md_preview_highlight`/`md_highlight` <8ms 墙钟、`test_claude_ui` 端口 28888
+- 结果：**5 红（第 2 轮，2026-10-29 19:4x，job `bash-20effb5bf57046ce` exit 1）**
+  - `Total: 1954 Passed: 1943 Failed: 5`（比上轮 +10 条，来自 mac P1 `3d59d076` agent 域新增用例）
+  - 基线 `3d59d076`，主树 src 干净（仅 TODO.md/docs 记账未提交）→ 排除半成品污染
+  - 5 条均稳定复现（按用例名单独复跑逐条红），定性**新回归嫌疑，非 flake 非环境**
+  - BUG-3：badge 断言 3 条——`test_home.cpp:262`（notesBadge）/`:388`/`:489` 仍断言 `.badge` 元素存在，统计卡瘦身 `5694df44` 把 badge 并入指标名同行后单测未同步；**码农自验「home 12/12」只覆盖名字含 home 的用例，未覆盖这 3 条用例名（Token 速率卡片/实底统计卡/HomeService）= 定向漏测实证**
+  - BUG-4：`test_ui_modern.cpp:884` 弹性双档高度断言红（bar8 h=243.67 ≠ kElasticPlotH），瘦身后布局变化未同步
+  - BUG-5：`test_mcp_settings.cpp:215` mcpPort 往返断言 rows.size()==19 红（实测 ≠19），独立于统计卡，归属待查
+  - 处置：已上报 coderstory 派修；修复后 QA 复跑定向 + 全量补绿后本轮才可销
+  - **销账（2026-10-29 20:1x）**：修复 commit `73ffb0d4`（worktree wt-bug345）→ 合 dev `8f3a1e17`。QA 验证：①定向 5 域（Token 速率/实底统计卡/HomeService/uiModern/mcpPort）全绿——注意首跑直跑旧二进制仍红，取证前必须先增量构建；②全量复跑 `DEVDESK_JOBS=2 bash scripts/build-test-run.sh --no-run` exit 0（job `bash-463d19fea02f4766`），直跑二进制复核 `Total: 1954`、0 FAIL。**第 2 轮销账，BUG-3/4/5 一并关单**。
+
+---
+
+# 历史：第 1 轮（R2 双真源清理后收口）
+
 - 日期：2026-10-29
 - 触发：R2 双真源清理落盘后第一次全量回归（派单人：coderstory）
 - 命令：`bash scripts/build-test-run.sh --no-run`（后台 job `bash-b73128d937bf4484`）

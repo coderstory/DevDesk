@@ -31,3 +31,4 @@
 | 2026-10-28 | 审计 | MCP 代理参数批+CA 批（eab2c496/cf990da3）六维独立审计 | 有条件通过：主路径与测试断言站得住；最重 = tcpReachable 未钉扎 env 代理致探测失真(http_client.cpp:154)+CA 接线零断言假绿风险+sendStreaming 忽略 Request.proxy，计 7 findings+2 informational | docs/superpowers/plans/2026-10-27-mcp-proxy-ca-audit.md |
 | 2026-10-28 | 实证·终验 | MCP 菜单页 UI 终验（门控/侧栏/菜单页/弹窗试一下/三路关闭/开关联动，真窗口真操作+外部 curl 探活） | 可交付：场景 6/6、两轮 37 断言 0 FAIL；GET /mcp=405、关=连接拒绝、再开恢复 405、tools/list 与卡片集合一致；附 1 非阻塞瑕疵（弹窗 schema 文本溢出压「运行结果」标题） | docs/superpowers/plans/2026-10-28-mcp-menu-ui-verify.md |
 
+| 2026-10-29 | 调研 | 现成美观流体效果 C++/GLSL 轮子（背景美化选型） | 一句话结论：无「拿来即用」的 C++ 成品；最优路=直接搬 PavelDoGreat/WebGL-Fluid-Simulation（16.7k★，MIT）的 GLSL shader 文件进 EUI-NEO shadertoy 缝；备选 bassicali/inkbox（59★，MIT，GPU Gems 稳定流体，C++/现代 OpenGL，染料墨水观感，shader 可拆）；kamindustries/touchFluid（238★，MIT）为 TouchDesigner 变体仅参考；tunabrain/gpu-fluid 上轮已封存不重复。Shadertoy 站单文件高赞流体未能二源核实具体条目，不列。 | docs/superpowers/research/2026-10-29-fluid-glsl-wheels.md |

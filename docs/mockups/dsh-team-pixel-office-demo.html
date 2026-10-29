@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DS Bot 团队像素办公室 v2 · 专属工位版</title>
+<style>
+  body{margin:0;background:#2b2340;font-family:-apple-system,"PingFang SC",sans-serif;color:#e8e0f0;display:flex;flex-direction:column;align-items:center;padding:24px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{font-size:12px;color:#a99cc0;margin-bottom:16px}
+  .room{position:relative;width:1080px;height:600px;border-radius:8px;image-rendering:pixelated;
+    background:linear-gradient(#4a3d63 0 60px,#5a4a78 60px 62px,#3a2f52 62px);
+    box-shadow:0 0 0 4px #1d1630,0 12px 40px rgba(0,0,0,.5);overflow:hidden}
+  .floor-office{position:absolute;left:0;top:62px;width:62%;height:100%;
+    background:repeating-linear-gradient(90deg,#6b5a42 0 32px,#61503a 32px 64px),repeating-linear-gradient(0deg,rgba(0,0,0,.12) 0 2px,transparent 2px 32px)}
+  .floor-lounge{position:absolute;right:0;top:62px;width:38%;height:100%;
+    background:repeating-linear-gradient(90deg,#7a4a58 0 32px,#6f4250 32px 64px),repeating-linear-gradient(0deg,rgba(0,0,0,.12) 0 2px,transparent 2px 32px)}
+  .zone{position:absolute;top:70px;font-size:12px;letter-spacing:4px;color:#d8cfa8;opacity:.8}
+  .divider{position:absolute;left:62%;top:62px;width:6px;height:100%;background:#1d1630}
+  /* 工位地垫 */
+  .pad{position:absolute;background:rgba(255,255,255,.05);border:1px dashed rgba(255,255,255,.18);border-radius:8px}
+  .padname{position:absolute;font-size:10px;color:#cbbfe0;opacity:.9}
+  .prop{position:absolute;image-rendering:pixelated}
+  .desk{position:absolute;width:130px;height:10px;background:#8a6a3a;box-shadow:0 4px 0 #5a4426}
+  .leg{position:absolute;width:8px;height:30px;background:#5a4426}
+  .monitor{position:absolute;width:50px;height:36px;background:#1d1630;box-shadow:inset 0 0 0 4px #33264d}
+  .screen{position:absolute;width:42px;height:24px;background:#0d1b2a;overflow:hidden}
+  .screen i{position:absolute;width:100%;height:3px;background:#59c2ff;opacity:.9}
+  .sofa{position:absolute;width:110px;height:34px;background:#7a3f4e;border-radius:6px 6px 0 0;box-shadow:inset 0 -10px 0 #5e2f3c}
+  .arcade{position:absolute;width:46px;height:64px;background:#2f2440;box-shadow:inset 0 0 0 4px #1d1630}
+  .arcade i{position:absolute;left:6px;top:8px;width:34px;height:22px;background:#120d1e;box-shadow:inset 0 0 8px #c367d8}
+  .coffee{position:absolute;width:30px;height:44px;background:#4a3a30;box-shadow:inset 0 0 0 3px #33271f}
+  .plant{position:absolute;width:26px;height:30px;background:#2e5a3a;border-radius:12px 12px 4px 4px;box-shadow:inset 0 -8px 0 #23452c}
+  .char{position:absolute;display:flex;flex-direction:column;align-items:center}
+  .px{display:grid;image-rendering:pixelated}
+  .px div{width:6px;height:6px}
+  .px.big div{width:8px;height:8px}
+  .bubble{position:absolute;bottom:calc(100% + 2px);left:50%;transform:translateX(-50%);background:#fff;color:#222;
+    font-size:11px;line-height:1.3;padding:4px 8px;border-radius:6px;white-space:nowrap;box-shadow:2px 2px 0 rgba(0,0,0,.35)}
+  .bubble::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#fff}
+  .name{margin-top:2px;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.45);color:#fff}
+  .name.work{background:#2e7d4f}.name.idle{background:#7a4a58}
+  .legend{display:flex;gap:16px;margin-top:14px;font-size:12px;color:#a99cc0}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+  .egg{position:absolute;font-size:16px;cursor:default;opacity:.9}
+  /* —— 专属动作动画 —— */
+  @keyframes typeBounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+  @keyframes sparkle{0%{opacity:0;transform:translate(0,0) scale(.6)}50%{opacity:1}100%{opacity:0;transform:translate(10px,-16px) scale(1.2)}}
+  @keyframes flip{0%,100%{transform:rotate(0)}50%{transform:rotate(-14deg)}}
+  @keyframes whip{0%,100%{transform:rotate(0)}40%{transform:rotate(22deg)}}
+  @keyframes palette{0%,100%{transform:translateX(0)}50%{transform:translateX(3px)}}
+  @keyframes glowPulse{0%,100%{opacity:.35}50%{opacity:.8}}
+  @keyframes steam{0%{opacity:0;transform:translateY(0)}40%{opacity:.8}100%{opacity:0;transform:translateY(-14px)}}
+  .anim-type{animation:typeBounce .35s infinite}
+  .spark{position:absolute;width:5px;height:5px;background:#c367d8;border-radius:1px;animation:sparkle 1.1s infinite}
+  .spark.s2{animation-delay:.5s;background:#ffd34d}
+  .flipper{transform-origin:bottom left;animation:flip 1.6s infinite}
+  .whipstick{transform-origin:bottom center;animation:whip .9s infinite}
+  .palettehand{animation:palette .8s infinite}
+  .magiccircle{position:absolute;width:56px;height:56px;border:2px solid #c367d8;border-radius:50%;opacity:.5;animation:glowPulse 1.4s infinite}
+  .magiccircle::after{content:"";position:absolute;inset:10px;border:2px dashed #ffd34d;border-radius:50%}
+  .steam{position:absolute;font-size:12px;color:#cbbfe0;animation:steam 1.8s infinite}
+  .can{position:absolute;width:10px;height:16px;border-radius:3px;background:#3fa34d;box-shadow:inset 0 3px 0 #2e7d3a}
+  .can.k2{background:#c9342b}.can.k3{background:#e8a13a}
+  .plaque{position:absolute;font-size:9px;background:#d4af37;color:#3a2f52;padding:1px 6px;border-radius:3px;font-weight:700}
+  .poster{position:absolute;font-size:10px;color:#ffd7a8;background:#1d1630;padding:2px 8px;border-radius:4px;opacity:.85}
+  /* —— 突发事件全屏动画：QA 甩蟑螂 → 巨型像素蟑螂碎裂 —— */
+  @keyframes qaSlide{0%{left:-120px}45%{left:38%}60%{left:34%}100%{left:-120px}}
+  @keyframes roachFly{0%{left:34%;top:60%;transform:scale(.6)}55%{left:50%;top:38%;transform:scale(3.2)}70%{left:50%;top:40%;transform:scale(4)}71%,100%{opacity:0}}
+  @keyframes shake{0%,100%{transform:translate(0,0)}20%{transform:translate(-6px,3px)}40%{transform:translate(5px,-4px)}60%{transform:translate(-4px,-3px)}80%{transform:translate(4px,3px)}}
+  @keyframes fragFly{0%{transform:translate(0,0) rotate(0);opacity:1}100%{transform:translate(var(--dx),var(--dy)) rotate(var(--rot));opacity:0}}
+  #eventBtn{margin-top:12px;background:#c0392b;color:#fff;border:none;border-radius:8px;padding:8px 20px;font-size:14px;cursor:pointer}
+  #eventOverlay{position:fixed;inset:0;background:rgba(10,6,20,.85);display:none;z-index:99;overflow:hidden}
+  #eventOverlay.show{display:block}
+  #eventOverlay.shake{animation:shake .5s 2}
+  .evChar{position:absolute;bottom:20%;animation:qaSlide 3.2s ease-in-out forwards}
+  .evRoach{position:absolute;font-size:60px;animation:roachFly 1.9s ease-out forwards;filter:brightness(1.2)}
+  .frag{position:absolute;left:50%;top:40%;width:10px;height:8px;background:#4a2c14;animation:fragFly 1.2s ease-out forwards}
+  .frag.leg{background:#2e1a0a}
+</style>
+</head>
+<body>
+<h1>DS BOT 像素办公室 v2</h1>
+<div class="sub">左·办公区 = 每人专属工位+专属动作｜右·休息区共享 = 待命。点小人切状态。彩蛋自己找（共 4 个）。</div>
+<div class="room" id="room">
+  <div class="floor-office"></div><div class="floor-lounge"></div>
+  <div class="divider"></div>
+  <div class="zone" style="left:24px">OFFICE · 办公区（专属工位）</div>
+  <div class="zone" style="right:40px">LOUNGE · 休息区（共享）</div>
+
+  <!-- 老板专属首脑角：金色铭牌 + 招待茶（彩蛋1：铭牌） -->
+  <div class="pad" style="left:24px;top:100px;width:130px;height:110px"></div>
+  <div class="plaque" style="left:34px;top:96px">CEO · 颜值担当</div>
+  <div class="desk" style="left:30px;top:196px"></div><div class="leg" style="left:36px;top:206px"></div><div class="leg" style="left:146px;top:206px"></div>
+  <div class="steam" style="left:120px;top:168px">♨</div>
+
+  <!-- 老炮儿：需求白板 -->
+  <div class="pad" style="left:180px;top:100px;width:130px;height:110px"></div>
+  <div class="padname" style="left:190px;top:96px">产品 · 老炮儿</div>
+  <div style="position:absolute;left:196px;top:120px;width:70px;height:46px;background:#e8e2d0;border-radius:3px;box-shadow:inset 0 0 0 3px #8a7a5a">
+    <div style="position:absolute;left:8px;top:8px;width:40px;height:3px;background:#b03838"></div>
+    <div style="position:absolute;left:8px;top:16px;width:52px;height:3px;background:#556"></div>
+    <div style="position:absolute;left:8px;top:24px;width:46px;height:3px;background:#556"></div>
+  </div>
+  <div class="desk" style="left:186px;top:196px"></div><div class="leg" style="left:192px;top:206px"></div><div class="leg" style="left:302px;top:206px"></div>
+
+  <!-- 魔女：魔法阵工位（彩蛋2：漂浮符文 ❄✦） -->
+  <div class="pad" style="left:340px;top:100px;width:130px;height:110px"></div>
+  <div class="padname" style="left:350px;top:96px">前端 · 傲娇魔女</div>
+  <div class="magiccircle" style="left:382px;top:130px"></div>
+  <div class="egg" style="left:442px;top:112px">✦</div>
+  <div class="desk" style="left:346px;top:196px"></div><div class="leg" style="left:352px;top:206px"></div><div class="leg" style="left:462px;top:206px"></div>
+
+  <!-- 直男：双屏+机械键盘+能量饮料罐堆（彩蛋3：罐堆摆成绿箭头=全绿） -->
+  <div class="pad" style="left:500px;top:100px;width:140px;height:110px"></div>
+  <div class="padname" style="left:510px;top:96px">后端 · 钢铁直男</div>
+  <div class="monitor" style="left:508px;top:150px"><div class="screen"><i style="top:4px"></i><i style="top:10px;width:70%"></i><i style="top:16px;width:50%"></i></div></div>
+  <div class="monitor" style="left:562px;top:150px"><div class="screen"><i style="top:4px;width:60%"></i><i style="top:10px"></i><i style="top:16px;width:80%"></i></div></div>
+  <div class="can" style="left:620px;top:168px"></div><div class="can k2" style="left:620px;top:150px"></div><div class="can k3" style="left:608px;top:168px"></div>
+  <div class="desk" style="left:506px;top:196px"></div><div class="leg" style="left:512px;top:206px"></div><div class="leg" style="left:622px;top:206px"></div>
+
+  <!-- 小恶魔：BUG 玩偶架 + 鞭子 -->
+  <div class="pad" style="left:24px;top:330px;width:130px;height:110px"></div>
+  <div class="padname" style="left:34px;top:326px">测试 · 棒棒糖小恶魔</div>
+  <div style="position:absolute;left:34px;top:352px;font-size:14px">🐛🐛<br>🐛</div>
+  <div class="whipstick" style="position:absolute;left:100px;top:356px;width:3px;height:26px;background:#5a3a26"></div>
+  <div class="desk" style="left:30px;top:426px"></div><div class="leg" style="left:36px;top:436px"></div><div class="leg" style="left:146px;top:436px"></div>
+
+  <!-- 母蟑螂：双屏调色板 + 口红（彩蛋4：桌角小强 🪳 是本尊吉祥物） -->
+  <div class="pad" style="left:180px;top:330px;width:140px;height:110px"></div>
+  <div class="padname" style="left:190px;top:326px">UI · 性感母蟑螂</div>
+  <div class="monitor" style="left:188px;top:380px"><div class="screen" style="background:#2a1418"><i style="top:4px;background:#d97757"></i><i style="top:10px;background:#e8b04a;width:60%"></i><i style="top:16px;background:#7a9bc4;width:80%"></i></div></div>
+  <div class="egg" style="left:300px;top:408px">🪳</div>
+  <div style="position:absolute;left:296px;top:382px;width:10px;height:16px;background:#b03858;border-radius:3px"></div>
+  <div class="desk" style="left:186px;top:426px"></div><div class="leg" style="left:192px;top:436px"></div><div class="leg" style="left:312px;top:436px"></div>
+
+  <!-- 老妖怪：符纸堆 + 水晶球 -->
+  <div class="pad" style="left:346px;top:330px;width:130px;height:110px"></div>
+  <div class="padname" style="left:356px;top:326px">调研 · 白发老妖怪</div>
+  <div style="position:absolute;left:356px;top:356px;width:18px;height:22px;background:#f2e6b8;box-shadow:inset 0 0 0 2px #b8a25a">
+    <div style="position:absolute;left:4px;top:4px;width:10px;height:3px;background:#b03838"></div>
+    <div style="position:absolute;left:4px;top:10px;width:10px;height:3px;background:#b03838"></div>
+  </div>
+  <div style="position:absolute;left:438px;top:352px;width:26px;height:26px;background:#8a7ac4;border-radius:50%;box-shadow:inset -6px -6px 0 #5a4a94,inset 0 0 8px #c9bdf0"></div>
+  <div class="flipper" style="position:absolute;left:380px;top:360px;width:16px;height:20px;background:#f2e6b8;box-shadow:inset 0 0 0 2px #b8a25a"></div>
+  <div class="desk" style="left:352px;top:426px"></div><div class="leg" style="left:358px;top:436px"></div><div class="leg" style="left:468px;top:436px"></div>
+
+  <!-- 小辣椒：火焰批注墙 -->
+  <div class="pad" style="left:506px;top:330px;width:130px;height:110px"></div>
+  <div class="padname" style="left:516px;top:326px">审查 · 毒舌小辣椒</div>
+  <div style="position:absolute;left:516px;top:356px;font-size:14px">🔥<span style="font-size:10px;color:#e8a13a">-1</span> 🔥<span style="font-size:10px;color:#e8a13a">-2</span></div>
+  <div class="desk" style="left:512px;top:426px"></div><div class="leg" style="left:518px;top:436px"></div><div class="leg" style="left:628px;top:436px"></div>
+
+  <div class="plant" style="left:660px;top:180px"></div><div class="poster" style="left:648px;top:120px">专注写码</div>
+  <!-- 休息区共享 -->
+  <div class="sofa" style="right:60px;top:240px"></div>
+  <div class="arcade" style="right:220px;top:200px"><i></i></div>
+  <div class="coffee" style="right:130px;top:200px"></div>
+  <div class="steam" style="right:138px;top:188px">♨</div>
+  <div class="plant" style="right:40px;top:400px"></div>
+  <div class="plant" style="right:250px;top:420px"></div>
+  <div class="poster" style="right:96px;top:110px">摸鱼有理</div>
+  <div id="chars"></div>
+</div>
+<div class="legend">
+  <span><span class="dot" style="background:#2e7d4f"></span>干活中（专属工位+专属动作）</span>
+  <span><span class="dot" style="background:#7a4a58"></span>待命（休息区共享）</span>
+  <button id="eventBtn" onclick="playBugEvent()">🎬 突发事件：QA 发现大 BUG</button>
+</div>
+<div id="eventOverlay"></div>
+<script>
+function playBugEvent(){
+ const ov=document.getElementById("eventOverlay");
+ ov.innerHTML="";ov.classList.add("show","shake");
+ // QA 小恶魔入场（手里举着一只蟑螂）
+ const q=document.createElement("div");q.className="evChar";
+ q.innerHTML='<div style="font-size:80px">💁‍♀️</div><div style="font-size:22px;text-align:center">捡到一只🪳「大 BUG 鞭子不够用了！」</div>';
+ ov.appendChild(q);
+ // 巨型蟑螂甩向屏幕中心
+ setTimeout(()=>{const r=document.createElement("div");r.className="evRoach";r.textContent="🪳";
+  r.style.left="34%";r.style.top="60%";ov.appendChild(r);},1400);
+ // 撞屏碎裂：30 片碎片四溅
+ setTimeout(()=>{ov.classList.remove("shake");
+  for(let i=0;i<30;i++){const f=document.createElement("div");f.className="frag"+(i%3?"":" leg");
+   f.style.setProperty("--dx",(Math.random()*400-200)+"px");f.style.setProperty("--dy",(Math.random()*400-200)+"px");
+   f.style.setProperty("--rot",(Math.random()*720)+"deg");ov.appendChild(f);}
+  const tip=document.createElement("div");tip.style.cssText="position:absolute;left:50%;top:20%;transform:translateX(-50%);font-size:16px;color:#ffd34d";
+  tip.textContent="💥 巨型像素 BUG（蟑螂）已碎裂——本次贡献者：性感母蟑螂本蟑 🪳";
+  ov.appendChild(tip);},3300);
+ setTimeout(()=>{ov.classList.remove("show");ov.innerHTML="";},5800);
+}
+const PAL={P:"#f2c9a0",H:"#000",O:"#888",A:"#e33",W:"#fff",K:"#111",G:"#222",B:"#e8938a",S:"#444",Y:"#ffd34d",C:"#59c2ff"};
+const CHARS=[
+ {id:"boss",name:"老板(彦祖)",work:false,x:56,y:130,big:true,
+  work:"都给我支棱起来",idle:"喝茶看戏",
+  art:["....HHHHHH..","...HHHHHHHH.","..HHHHHHHHH.","..HPPPPPPPH.","..PPKPPKPP..","..PPPKPPPP..","..BPPPPPPB..","...PPKKPP...","....PPPP....","..OOOOOOOO..",".POOOAAOOOP.",".POOOAAOOOP.","..OOOOOOOO..","...OO..OO...","...KK..KK..."],
+  map:{H:"#1a1410",O:"#2e3f6e",A:"#ffd34d",K:"#111",B:"#e0a878"}},
+ {id:"cpo",name:"冷面老炮儿",work:true,x:210,y:120,
+  work:"需求已锁，别改了",
+  art:["....HHHH....","...HHHHHH...","..HHHHHHHH..","..HPPPPPPH..","..PPKPPKPP..","..PPPPPPPP..","...PPPPPP...","..OOOOOOOO..",".POOOOOOOOP.",".POOOOOOOOP.","..OOOOOOOO..","...OO..OO...","...OO..OO...","...KK..KK..."],
+  map:{H:"#666",O:"#556"}},
+ {id:"witch",name:"傲娇魔女",work:true,x:370,y:120,
+  work:"哼，本小姐施法写码",
+  anim:"spark",
+  art:[".H..HHHH..H.",".HH.HHHH.HH.",".HHHHHHHHHH.",".HHPPPPPPHH.",".HPPKPPKPPH.","..PPPPPPPP..","...PPPPPP...","..AAAAAAAA..",".PAAAAAAAAP.",".PAAAAAAAA..","..AAAAAAAA..","...AA..AA...","...AA..AA...","...KK..KK..."],
+  map:{H:"#9a4ad8",O:"#7a2fb0",A:"#5a1f86",K:"#111"}},
+ {id:"coder",name:"钢铁直男",work:true,x:530,y:120,
+  work:"跑测试，绿的",
+  anim:"type",
+  art:["....HHHH....","...HHHHHH...","..HHHHHHHH..","..HPPPPPPH..","..PGKPPKGP..","..PPPPPPPP..","...PPPPPP...","..OAOOAOAO..",".POAOOAOAOP.",".POOOOOOOOP.","..OAOOAOAO..","...OO..OO...","...OO..OO...","...KK..KK..."],
+  map:{H:"#3a2a1a",O:"#4a7a4a",A:"#2e5a2e",G:"#222",K:"#111"}},
+ {id:"qa",name:"棒棒糖小恶魔",work:false,x:60,y:350,
+  work:"BUG 鞭子伺候～",idle:"棒棒糖真甜～🦴",
+  anim:"whip",
+  art:[".H..HHHH..H.",".HH.HHHH.HH.",".HHHHHHHHHH.",".HHPPPPPPHH.",".HPBKPPKBPH.","..PPPPPPPP..","...PPPPPP...","..AAAAAAAA..",".PAAAAAAAAP.",".PAAAYAAAAP.","..AAAAAAAA..","...AA..AA...","...AA..AA...","...KK..KK..."],
+  map:{H:"#e87ab8",O:"#d84a8a",A:"#b03868",Y:"#ffd34d",K:"#111",B:"#f2a0b8"}},
+ {id:"ui",name:"性感母蟑螂",work:true,x:216,y:350,
+  work:"这配色不配见我",
+  anim:"palette",
+  art:["....HHHH....","..HHHHHHHH..",".HHHHHHHHHH.",".HHPPPPPPHH.","..PPKPPKPP..","..PPPPPPPP..","...PPPPPP...","..OOOOOOOO..",".POOOOOOOOP.",".POOAOOAOOP.","..OOOOOOOO..","...PP..PP...","...PP..PP...","...AA..AA..."],
+  map:{H:"#1a1a1a",O:"#8a1f3a",A:"#d4af37",K:"#111"}},
+ {id:"rsh",name:"白发老妖怪",work:false,x:386,y:350,
+  work:"老夫翻符查典",idle:"岁月啊……",
+  anim:"flip",
+  art:["....WWWW....","...WWWWWW...","..WWWWWWWW..","..WPPPPPPW..","..PPKPPKPP..","..WWPPPPWW..","...WWWWWW...","..OOOOOOOO..",".POOOOOOOOP.",".POOOYOOOOP.","..OOOOOOOO..","...OO..OO...","...OO..OO...","...KK..KK..."],
+  map:{W:"#ddd",O:"#6a5a3a",Y:"#ffd34d",K:"#111"}},
+ {id:"rev",name:"毒舌小辣椒",work:false,x:546,y:350,
+  work:"这代码一句怼一个",idle:"辣得很，闲的",
+  art:["...AHHHH....","..AHHHHHH...","..HHHHHHHH..","..HPPPPPPH..","..PPKPPKPP..","..PPPPPPPP..","...PPPPPP...","..OOOOOOOO..",".POOOOOOOOP.",".POOOOOOOOP.","..OOOOOOOO..","...OO..OO...","...OO..OO...","...KK..KK..."],
+  map:{H:"#c0392b",A:"#e74c3c",O:"#a93226",K:"#111"}},
+];
+// 休息活动池：snack吃零食 / phone玩手机 / game打游戏 / aunt姨妈·大姨夫请假(被驳回彩蛋) / slk摸鱼被抓包彩蛋
+const ACTS=[
+ {k:"snack",e:"🍿",say:"摸鱼吃零食，真香"},
+ {k:"phone",e:"📱",say:"刷手机中…别@我"},
+ {k:"game",e:"🕹️",say:"再来一局！"},
+ {k:"aunt",e:"🩹",say:"请假条：今天姨妈/大姨夫上门",deny:"驳回！回工位！"},
+ {k:"slk",e:"😏",say:"摸鱼中…（彦祖已盯上，点我抓包）"},
+ {k:"snow",e:"🤤",say:"手机全是雪花…「内存不足」！口水流短路冒烟了 💨"},
+];
+function render(c){
+ const px=document.createElement("div");px.className="px"+(c.big?" big":"");
+ px.style.gridTemplateColumns="repeat(12,"+(c.big?8:6)+"px)";
+ for(const row of c.art){for(const ch of row){const d=document.createElement("div");
+   const col=ch==="."?"transparent":(c.map&&c.map[ch])||PAL[ch]||"transparent";
+   d.style.background=col;px.appendChild(d);}}
+ const el=document.createElement("div");el.className="char";el.style.left=c.x+"px";el.style.top=c.y+"px";el.dataset.id=c.id;
+ if(c.work&&c.anim==="type")px.classList.add("anim-type");
+ if(c.work&&c.anim==="palette")px.classList.add("palettehand");
+ if(c.work&&c.anim==="flip")px.classList.add("flipper");
+ el.appendChild(px);
+ if(c.work&&c.anim==="spark"){const s1=document.createElement("div");s1.className="spark";s1.style.left="48px";s1.style.top="6px";
+   const s2=document.createElement("div");s2.className="spark s2";s2.style.left="60px";s2.style.top="16px";el.append(s1,s2);}
+ if(c.work&&c.anim==="whip"){const w=document.createElement("div");w.className="whipstick";w.style.cssText+="position:absolute;left:66px;top:10px;width:3px;height:22px;background:#5a3a26";el.appendChild(w);}
+ const tag=document.createElement("div");tag.className="name "+(c.work?"work":"idle");tag.textContent=c.name;el.appendChild(tag);
+ if(c.work){const b=document.createElement("div");b.className="bubble";b.textContent=c.note||c.work||"";el.appendChild(b);}
+ else{
+  if(!c.act)c.act=ACTS[Math.floor(Math.random()*ACTS.length)];
+  const emo=document.createElement("div");emo.className="egg";emo.style.cssText="position:static;margin-bottom:2px;font-size:14px";emo.textContent=c.act.e;el.prepend(emo);
+  if(c.act.k==="snow"){const sm=document.createElement("div");sm.className="egg";sm.style.cssText="position:absolute;left:44px;top:-4px;font-size:12px";sm.textContent="💨";el.appendChild(sm);}
+  const b=document.createElement("div");b.className="bubble";b.textContent=c.act.say;el.appendChild(b);
+  if(c.act.deny){const d=document.createElement("div");d.className="bubble";d.style.background="#e74c3c";d.style.color="#fff";
+   d.style.bottom="calc(100% + 34px)";d.textContent=c.act.deny+"（老板批）";el.appendChild(d);}
+ }
+ el.onclick=()=>{c.work=!c.work;c.act=null;refresh(c.id);};
+ return el;
+}
+function refresh(id){const c=CHARS.find(x=>x.id===id);document.querySelector(`.char[data-id="${id}"]`).replaceWith(render(c));}
+document.getElementById("chars").append(...CHARS.map(render));
+// —— 真实数据通道：启动时拉 status.json（与定时任务约定），拉不到回落内置演示数据 ——
+// status.json 契约（coderstory 定时任务每几分钟覆写一次）：
+// { "updated": "2026-10-29T18:00:00", "members": [ {"id":"boss","work":false,"act":"snack"}, ... ] }
+// id 取值：boss/cpo/witch/coder/qa/ui/rsh/rev；work=true 干活(工位) / false 待命(休息区)；
+// act 可选：snack/phone/game/aunt/slk/snow（只对 work=false 生效，缺省随机）。
+const dataTag=document.createElement("div");dataTag.className="sub";document.querySelector(".legend").appendChild(dataTag);
+async function loadStatus(){
+ // 兼容两种契约：① {updated, members:[{id,work,act}]} ② [{name,status:"working"|"idle",note}]
+ const NAME2ID=[["老板","boss"],["老炮儿","cpo"],["魔女","witch"],["直男","coder"],["恶魔","qa"],["蟑螂","ui"],["老妖怪","rsh"],["辣椒","rev"]];
+ try{
+  const r=await fetch("./status.json",{cache:"no-store"});
+  if(!r.ok)throw 0;
+  const j=await r.json();
+  const list=Array.isArray(j)?j:(j.members||[]);
+  let hit=0;
+  for(const m of list){
+   let c=null,work,act=null,note=null;
+   if(m.id){c=CHARS.find(x=>x.id===m.id);work=!!m.work;act=m.act||null;}
+   else{const key=(m.name||"");const id=(NAME2ID.find(p=>key.includes(p[0]))||[])[1];
+        c=id&&CHARS.find(x=>x.id===id);work=m.status==="working";note=m.note||null;}
+   if(!c)continue;
+   c.work=work;c.act=act?(ACTS.find(a=>a.k===act)||null):null;c.note=note;hit++;
+  }
+  dataTag.textContent="数据源：status.json（"+(Array.isArray(j)?"":(j.updated||"")+" · ")+"命中 "+hit+"/8）";
+ }catch(e){dataTag.textContent="数据源：内置演示数据（status.json 未就绪）";}
+ const box=document.getElementById("chars");box.innerHTML="";box.append(...CHARS.map(render));
+}
+function manualToggle(id){/* 点击仍可手动切，下次轮询会以 status.json 为准 */}
+loadStatus();setInterval(loadStatus,30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>首页统计卡改小示意</title><style>
+body{background:#1A1816;color:#FAF9F5;font:15px/1.6 -apple-system,"PingFang SC",sans-serif;padding:40px}
+h2{font-size:16px;margin:24px 0 12px;color:#C9C5BD}
+.tag{font-size:12px;color:#9A948A}
+.row{display:flex;gap:16px}
+.card{border-radius:14px;padding:16px 20px;text-align:center;color:#1F1D1A;flex:1;cursor:pointer}
+.card:hover{filter:brightness(.97)}
+.now{height:144px}.new{height:96px;display:flex;flex-direction:column;justify-content:center;gap:6px}
+.label{font-size:12px;color:#6B6660}.label.new{font-size:14px;color:#6B6660}
+.num{font-size:28px;font-weight:600;line-height:36px}.num.new{font-size:44px;font-weight:700;line-height:48px}
+.g{background:#E6FBF2}.b{background:#E0F4FF}.o{background:#FFF1E0}.p{background:#F3E8FF}.c{background:#DFFAF6}
+</style></head><body>
+<div class="tag">首页统计卡 · 改前 vs 改后（示意，按真实 token 配色）</div>
+<h2>现状（高 144 · 数字 28px）</h2>
+<div class="row">
+<div class="card now g"><div class="label">笔记（今日）</div><div class="num">12</div><div class="label">说明文字占一行</div></div>
+<div class="card now b"><div class="label">待办</div><div class="num">8</div><div class="label">说明文字占一行</div></div>
+<div class="card now o"><div class="label">逾期</div><div class="num">2</div><div class="label">说明文字占一行</div></div>
+</div>
+<h2>改后（高 96 · 数字 44px，说明并进标签行）</h2>
+<div class="row">
+<div class="card new g"><div class="label new">笔记 · 今日</div><div class="num new">12</div></div>
+<div class="card new b"><div class="label new">待办 · 未完成</div><div class="num new">8</div></div>
+<div class="card new o"><div class="label new">逾期</div><div class="num new">2</div></div>
+</div>
+</body></html>
