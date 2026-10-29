@@ -1303,7 +1303,29 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
 
     // 工具条：类型 / 来源 / 状态 chips + 批量模式
     {
-        constexpr float kBarH = 56.0f;
+        // 窄窗换行：三组 chips 加间隔超过 (w-200) 会漫到右侧批量开关位，
+        // 此时状态 chips 折到第二行、工具条加高；批量开关恒在第一行右缘。
+        auto chipRowW = [](const std::vector<std::string>& labels) {
+            float w = 0.0f;
+            for (const auto& label : labels) {
+                float chipW = 30.0f;
+                for (unsigned char c : label) {
+                    if (c >= 0x80 && c < 0xC0) continue;  // UTF-8 续字节不计宽
+                    chipW += (c >= 0xC0) ? 12.0f : 6.0f;  // CJK 12 / ASCII 6，按首字节
+                }
+                w += chipW + 6.0f;
+            }
+            return w;
+        };
+        const float kBatchZone = 240.0f;  // 右侧「批量模式」标签+开关保留区（含估宽噪声余量）
+        const std::vector<std::string> typeLabels = {"全部", "合并", "失效", "遗忘", "新增"};
+        const std::vector<std::string> srcLabels = {"全部来源", "Claude 对话", "整理", "遗忘扫描"};
+        const std::vector<std::string> stateLabels = {"待审", "已处理"};
+        const float chipsTotal = 12.0f + chipRowW(typeLabels) + 14.0f + chipRowW(srcLabels) +
+                                 14.0f + chipRowW(stateLabels);
+        const bool wrapNarrow = chipsTotal > w - kBatchZone;
+        const float kBarH = wrapNarrow ? 88.0f : 56.0f;
+        const float stateRowY = wrapNarrow ? 42.0f : 10.0f;
         ui.rect("memory.rv.toolbar")
             .position(x, cy)
             .size(w, kBarH)
@@ -1349,14 +1371,15 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         };
         float cx = x + 12.0f;
         cx = chipRow("memory.rv.chipT.", cx, cy + 10.0f,
-                     {"全部", "合并", "失效", "遗忘", "新增"}, filterType_,
+                     typeLabels, filterType_,
                      [this](int v) { filterType_ = v; });
         cx += 14.0f;
         cx = chipRow("memory.rv.chipS.", cx, cy + 10.0f,
-                     {"全部来源", "Claude 对话", "整理", "遗忘扫描"}, filterSrc_,
+                     srcLabels, filterSrc_,
                      [this](int v) { filterSrc_ = v; });
-        cx += 14.0f;
-        cx = chipRow("memory.rv.chipSt.", cx, cy + 10.0f, {"待审", "已处理"},
+        // 窄窗：状态 chips 折第二行；宽窗：延续第一行（原版接排）
+        cx = wrapNarrow ? x + 12.0f : cx + 14.0f;
+        cx = chipRow("memory.rv.chipSt.", cx, cy + stateRowY, stateLabels,
                      filterState_, [this](int v) { filterState_ = v; });
         // 批量模式开关（右侧；标签贴紧开关，窄窗不与 chips 行重叠）
         ui.text("memory.rv.batchlbl")
