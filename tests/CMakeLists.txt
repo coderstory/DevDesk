@@ -474,6 +474,12 @@ endforeach()
 # 无法运行——按 github_sync_live / agent_live 同款挪出 probe 门禁；验收
 # runbook 见 docs/superpowers/plans/2026-10-28-memcpp-e2e-verify.md。
 set_tests_properties(memory_e2e_probe PROPERTIES LABELS "live")
+
+# agent_e2e_probe 是 live 型真窗探针：真调 LLM 网关端到端，单次 1~90s 波动
+# （真网关延迟敏感），冷启动首跑可长挂——按 memory_e2e_probe 先例挪出 probe
+# 默认门禁（BUG-7 裁决，docs/plans/probe-residue-incident.md）。目标照编、
+# SKIP_RETURN_CODE 77 登记不变；可执行仍可单独跑/带 live 标签跑。
+set_tests_properties(agent_e2e_probe PROPERTIES LABELS "live")
 endif()
 
 # ==================== GitHub Sync 真机验收（**默认不构建**）====================
