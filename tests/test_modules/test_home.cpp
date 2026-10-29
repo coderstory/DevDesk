@@ -57,6 +57,25 @@ private:
 // PageId 顺序不变量（PageId::Home == 0）只在 test_todo.cpp 的 todo_pageid 钉一份，
 // 本文件刻意不重复。
 
+extern "C" ::core::Module* create_home_module();
+
+// 宽窗档 compose：badge 并入 label 后，窄卡按设计丢弃 badge（合并文本超卡宽只留
+// 指标名，弱信息不溢出）——badge 文案语义一律在 4000 宽窗档断言
+struct WideCompose {
+    std::unique_ptr<::core::Module> mod{create_home_module()};
+    eui::Screen screen{4000.0f, 1000.0f};
+    eui::Ui ui;
+    // withStart=true 时 onStart：lastRate_ 等数据只在 onStart 后加载，badge
+    // 「最近一次」分档依赖它（不 onStart 的档断言的是空态口径）
+    explicit WideCompose(const char* name, bool withStart = false) {
+        if (withStart) mod->onStart();
+        ui.begin(name);
+        mod->compose(ui, screen);
+        ui.end();
+    }
+    const core::dsl::Element* find(const std::string& id) const { return ui.find(id); }
+};
+
 REGISTER_TEST(home_service_real_stats,
               "HomeService: 仪表盘统计聚合 + 纯函数",
               {
@@ -214,7 +233,6 @@ REGISTER_TEST(home_prune_call_logs,
     return true;
 })
 
-extern "C" ::core::Module* create_home_module();
 
 REGISTER_TEST(home_token_format_functions,
               "Token 速率卡片: formatTokenCount / formatRateTps 纯函数", {
@@ -257,19 +275,32 @@ REGISTER_TEST(home_token_rate_card_compose,
         // 重绘 + 常驻 animating_，反复打断 5 卡 hover 0.1s 过渡致闪烁；空闲静默后
         // 过渡完整跑完、hover 命中缓存恢复有效
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") == nullptr);
-        // 未 onStart（整页没加载成功）→ 错误态 badge 是「加载失败」，与「加载中」区分
-        const auto* notesBadge = ui.find("home.stat.notes.badge");
-        DOCTEST_REQUIRE(notesBadge != nullptr);
-        DOCTEST_CHECK(notesBadge->text.find("加载失败") != std::string::npos);
+        // 未 onStart（整页没加载成功）→ 错误态 badge 并入 label 同行（5694df44），
+        // 文案是「加载失败」，与「加载中」区分
+        const auto* notesLabel = ui.find("home.stat.notes.label");
+        DOCTEST_REQUIRE(notesLabel != nullptr);
+        DOCTEST_CHECK(notesLabel->text.find("加载失败") != std::string::npos);
         const auto* number = ui.find("home.stat.tokens.number");
         DOCTEST_REQUIRE(number != nullptr);
         // 数字来自最近一次成功调用；未加载到数据时是空态「--」，不是实时速率「0」
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
-        const auto* badge = ui.find("home.stat.tokens.badge");
-        DOCTEST_REQUIRE(badge != nullptr);
-        // 同 notes 卡口径「加载失败」，不冒充「暂无成功调用」
-        DOCTEST_CHECK(badge->text.find("加载失败") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
+        // 同 notes 卡口径「加载失败」，不冒充「暂无成功调用」。窄卡按设计丢弃
+        // badge（合并文本超卡宽时只留指标名，弱信息不溢出），语义在宽窗档验证。
+        DOCTEST_CHECK(ui.find("home.stat.tokens.label") != nullptr);
+        {
+            std::unique_ptr<::core::Module> modWide(create_home_module());
+            eui::Screen wide;
+            wide.width = 4000.0f;
+            wide.height = 1000.0f;
+            eui::Ui uiWide;
+            uiWide.begin("home_error_wide");
+            modWide->compose(uiWide, wide);
+            uiWide.end();
+            const auto* wl = uiWide.find("home.stat.tokens.label");
+            DOCTEST_REQUIRE(wl != nullptr);
+            DOCTEST_CHECK(wl->text.find("加载失败") != std::string::npos);
+            DOCTEST_CHECK(wl->text.find("累计") == std::string::npos);
+        }
         mod->onStop();
     }
 
@@ -287,16 +318,20 @@ REGISTER_TEST(home_token_rate_card_compose,
         mod->compose(ui, screen);
         ui.end();
 
-        const auto* badge = ui.find("home.stat.tokens.badge");
-        DOCTEST_REQUIRE(badge != nullptr);
-        DOCTEST_CHECK(badge->text.find("1 路") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("生成中") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
-        // 本节未 onStart（整页没加载）→ 数字是空态，副标题不承诺「最近一次」
-        //（该字样由已加载档位断言，见下方 home_last_rate_and_hourly_tokens）
-        DOCTEST_CHECK(badge->text.find("最近一次") == std::string::npos);
         // 流式中：周期重绘挂载（1s、仅活动期）
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
+        DOCTEST_CHECK(ui.find("home.stat.tokens.label") != nullptr);
+        {
+            // badge 文案（1 路生成中）在宽窗档断言；窄窗档按设计可能丢弃
+            WideCompose w("home_streaming_wide");
+            const auto* wl = w.find("home.stat.tokens.label");
+            DOCTEST_REQUIRE(wl != nullptr);
+            DOCTEST_CHECK(wl->text.find("1 路") != std::string::npos);
+            DOCTEST_CHECK(wl->text.find("生成中") != std::string::npos);
+            DOCTEST_CHECK(wl->text.find("累计") == std::string::npos);
+            // 本节未 onStart（整页没加载）→ 数字是空态，副标题不承诺「最近一次」
+            DOCTEST_CHECK(wl->text.find("最近一次") == std::string::npos);
+        }
         mod->onStop();
 
         core::proxy_stats::endStream(id);
@@ -311,7 +346,7 @@ REGISTER_TEST(home_token_rate_card_compose,
 // 防的事故：
 //  ① 五卡背景色写错/漏卡（逐卡 RGB 断言，S6.6 五色：cardGreen/cardBlue/cardOrange/cardPurple/cardCyan）
 //  ② 玻璃层组残留（.glass.* 节点应全部缺位）
-//  ③ 点击层仍可用 + 文字层级完整（label/number/badge 三行）
+//  ③ 点击层仍可用 + 文字层级完整（label/number 两行，badge 已并入 label）
 //  ④ 对比度门槛：数字 textPrimary on 辅色底 ≥4.5:1（WCAG AA），三级灰档 S6.6 预设
 // ============================================================================
 namespace {
@@ -385,7 +420,7 @@ REGISTER_TEST(home_solid_stat_cards,
         // —— ③ 文字层级完整 + 点击层可用 ——
         DOCTEST_CHECK(ui.find(id + ".label") != nullptr);
         DOCTEST_CHECK(ui.find(id + ".number") != nullptr);
-        DOCTEST_CHECK(ui.find(id + ".badge") != nullptr);
+        // badge 节点已并入 .label 同行（5694df44），文字层级只剩两行
         const auto* press = ui.find(id + ".press");
         DOCTEST_REQUIRE_MESSAGE(press != nullptr, id + ": 缺整卡点击层 .press");
         DOCTEST_CHECK(press->onClick != nullptr);
@@ -478,21 +513,23 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         // UI 空态：数字「--」+ 副标题「暂无成功调用」+ 分布图空态（不画空轴）
         std::unique_ptr<::core::Module> mod(create_home_module());
         mod->onStart();
-        eui::Screen screen{1200.0f, 720.0f};
+        // 4000 宽窗：卡片足够宽，「指标名 · badge」合并不触发丢 badge 分支，
+        // 副题语义（暂无成功调用 / 待办副题）在此档断言；窄屏档 badge 按设计丢弃。
+        eui::Screen screen{4000.0f, 720.0f};
         eui::Ui ui;
         ui.begin("home_rate_empty");
         mod->compose(ui, screen);
         ui.end();
         const auto* number = ui.find("home.stat.tokens.number");
-        const auto* badge = ui.find("home.stat.tokens.badge");
+        const auto* badge = ui.find("home.stat.tokens.label");
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
-        DOCTEST_CHECK_EQ(badge->text, std::string("暂无成功调用"));
+        DOCTEST_CHECK(badge->text.find("暂无成功调用") != std::string::npos);
         // 待办卡副题与 H21 口径一致（待办列 + 进行中列）
-        const auto* todoBadge = ui.find("home.stat.todo.badge");
+        const auto* todoBadge = ui.find("home.stat.todo.label");
         DOCTEST_REQUIRE(todoBadge != nullptr);
-        DOCTEST_CHECK_EQ(todoBadge->text, std::string("待办+进行中未完成"));
+        DOCTEST_CHECK(todoBadge->text.find("待办+进行中未完成") != std::string::npos);
         DOCTEST_CHECK(ui.find("home.api.chart.empty.title") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
         mod->onStop();
@@ -589,13 +626,19 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         mod->compose(ui, screen);
         ui.end();
         const auto* number = ui.find("home.stat.tokens.number");
-        const auto* badge = ui.find("home.stat.tokens.badge");
+        const auto* badge = ui.find("home.stat.tokens.label");
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("100.0"));
-        DOCTEST_CHECK(badge->text.find("1 路生成中") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("最近一次") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
+        {
+            // badge 文案（1 路生成中 · 最近一次）在宽窗档断言；窄窗档按设计丢弃
+            WideCompose w("home_last_rate_wide", /*withStart=*/true);
+            const auto* wl = w.find("home.stat.tokens.label");
+            DOCTEST_REQUIRE(wl != nullptr);
+            DOCTEST_CHECK(wl->text.find("1 路生成中") != std::string::npos);
+            DOCTEST_CHECK(wl->text.find("最近一次") != std::string::npos);
+            DOCTEST_CHECK(wl->text.find("累计") == std::string::npos);
+        }
         mod->onStop();
         core::proxy_stats::endStream(sid);
         core::proxy_stats::resetForTest();

@@ -205,14 +205,15 @@ REGISTER_TEST(mcp_settings_save_load_roundtrip_19_keys,
     DOCTEST_REQUIRE(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
     DOCTEST_CHECK_EQ(loaded.mcpPort, 9800);
-    // 行数口径：save 是 19 个顶层键一事务（settings_config.cpp save 注释同步处）。
-    // 演进：mcpPort 加入时 17→18（spec 2026-10-26-mcp-server-skeleton-design §save），
-    // 后 release 模块补 moduleDefaultsVersion 迁移键 → 19。本断言钉「save 写全部
-    // 顶层键、eraseWithPrefixExcept keep 全部键（新键落库不吞旧键）」的口径。
+    // 行数口径：save 是 21 个顶层键一事务（settings_config.cpp save 的 rows 表）。
+    // 演进：mcpPort 加入时 17→18，release 模块补 moduleDefaultsVersion → 19，
+    // 09d8aa62 +releaseReminderPopup → 20，48ddb708 +fullscreenPopup → 21。
+    // 本断言钉「save 写全部顶层键、eraseWithPrefixExcept keep 全部键
+    // （新键落库不吞旧键）」的口径。
     auto rows = core::appconfig::listWithPrefix(*::core::appDatabase(),
                                                 SettingsStore::keyNamespace());
     DOCTEST_REQUIRE(rows.isOk());
-    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(19));
+    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(21));
     // 存量库缺 mcpPort 键（旧版本升级）→ 读出默认 8931，不报错
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), SettingsStore::keyNamespace(),
