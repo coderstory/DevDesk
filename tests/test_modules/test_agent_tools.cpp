@@ -992,7 +992,9 @@ REGISTER_TEST(builtin_bash_run_echo,
     auto r = shell.value()->execute(core::ToolArgs{
         buildArgs({{"cmd", jsonStr("echo hello_agent")}})});
     DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_FALSE(r.value().isError);
+    // 失败现场带内容：isError=true 时 contentJson 就是工具错误文本
+    DOCTEST_CHECK_MESSAGE(!r.value().isError,
+                          "bash.run 结果: " + r.value().contentJson);
 
     auto parsed = platform::json::parse(r.value().contentJson);
     DOCTEST_REQUIRE(parsed.isOk());

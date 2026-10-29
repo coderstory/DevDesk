@@ -14,6 +14,8 @@ add_library(devdesk_module_memory STATIC
     pipeline/collect_round.h
     gateway/telemem_client.cpp
     gateway/telemem_client.h
+    mcp/search_tool.cpp
+    mcp/search_tool.h
     hook/inject.cpp
     hook/inject.h
     hook/hook_command.cpp

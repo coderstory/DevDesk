@@ -411,6 +411,8 @@ void drawModulesCard(const CardDrawArgs& args) {
         {kModuleIdMarkdown, "Markdown 笔记本",
          "本地文件存储 + SQLite FTS5 全文搜索"},
         {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
+        {kModuleIdSchedule, "定时",
+         "定时调度任务，到点自动触发动作与通知"},
         {kModuleIdClaudeProxy, "Claude 配置切换器",
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
         {kModuleIdAgent, "智能体",
@@ -422,10 +424,10 @@ void drawModulesCard(const CardDrawArgs& args) {
          "任务执行与基础配置（两个子页同开同关）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
-    // 壁纸第 7 格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格；
-    // memory+release 后恒 6 格，壁纸格 = 末行落单的第 7 格）：
+    // 壁纸末格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格；
+    // schedule 加入后开关格恒 7，壁纸格 = 第 8 格、4 行满行的末列）：
     // 可见性判据与整卡时代同源 platform::wallpaper::supported()——不支持时整格
-    // 不建（网格自然回落 2×2，卡高注册表同判据回落 198），末行落单格按格机制自然流。
+    // 不建（网格自然回落 7 格 4 行，卡高注册表同判据两档同值 310），末格按格机制自然流。
     // 元素根 id 保留 settings.card.wallpaper.*（探针/测试锚不换）。
     static const ModuleMeta kWallpaperToggle = {
         kModuleIdWallpaper, "壁纸",
@@ -467,7 +469,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                 })
                 .build();
 
-            // 开关格（2 列，第 7 格壁纸末行落单）：行主序（0/1 同行异列，2/3 次行）；
+            // 开关格（2 列，壁纸末格恒最末）：行主序（0/1 同行异列，2/3 次行）；
             // 开关控件几何沿用
             // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
             //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
@@ -485,7 +487,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                 const bool isWallpaper = wallpaperCell && i >= kToggleCount;
                 const ModuleMeta& meta =
                     isWallpaper ? kWallpaperToggle : kToggleable[i];
-                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行，4=末行落单
+                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行，奇数格=行末列
                 const int row = i / 2;
                 const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
                 const float rowY = 68.0f + static_cast<float>(row) * rowPitch;

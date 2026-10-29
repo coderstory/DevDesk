@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <string>
 
+#include "core/result.h"
+
 namespace module::memory::panel {
 
 struct MemoryPanelSettings {
@@ -17,9 +19,11 @@ struct MemoryPanelSettings {
     int twoWordBaseline = 5;      // 两字词提炼基线 · 命中次数（定案 7 基线 5）
     std::int64_t llmImportedAtSec = 0;  // 0 = 未从网关 profile 导入
     std::string llmProfileName;         // 导入时的激活 profile 名（纯回显，无凭据）
+    bool mcpSearchEnabled = true;  // memory_search MCP 工具注册开关（旧文件缺键 = true）
 };
 
 MemoryPanelSettings loadPanelSettings();
-void savePanelSettings(const MemoryPanelSettings& settings);
+// 写失败（磁盘满/权限）→ fail：memory_search 开关靠它回弹，不吞错
+core::Result<void> savePanelSettings(const MemoryPanelSettings& settings);
 
 }  // namespace module::memory::panel

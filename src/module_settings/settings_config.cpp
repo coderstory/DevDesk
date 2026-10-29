@@ -46,8 +46,9 @@ constexpr int kMaxWindowRestoreSide = 65535;
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
-    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
-    kModuleIdMemory, kModuleIdWallpaper, kModuleIdMcp, kModuleIdRelease};
+    kModuleIdSchedule, kModuleIdClaudeProxy, kModuleIdSettings,
+    kModuleIdAgent, kModuleIdMemory, kModuleIdWallpaper, kModuleIdMcp,
+    kModuleIdRelease};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -65,6 +66,7 @@ struct ModuleDefaultMigration {
 };
 constexpr ModuleDefaultMigration kModuleDefaultMigrations[] = {
     {1, kModuleIdRelease},
+    {2, kModuleIdSchedule},
 };
 
 void mergeDefaultModulesSince(std::vector<std::string>& ids, int storedVersion) {
@@ -81,10 +83,11 @@ std::vector<std::string> defaultEnabledModules() {
     // agent 不在默认清单（跑 LLM 有成本，用户主动启用）；wallpaper 同默认关闭；
     // mcp 后台监听端口，同样默认关闭（开关在设置 → 模块卡）。
     // memory 默认开启：引擎未安装时页面只显引导态，零后台成本。
-    // release 默认启用（任务/基础配置两页共用该键）；schedule 恒注册不走本清单。
+    // release 默认启用（任务/基础配置两页共用该键）；schedule 默认启用
+    //（此前恒注册，开关卡补齐后存量配置经迁移 v2 并入）。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
-            kModuleIdClaudeProxy, kModuleIdMemory, kModuleIdSettings,
-            kModuleIdRelease};
+            kModuleIdSchedule, kModuleIdClaudeProxy, kModuleIdMemory,
+            kModuleIdSettings, kModuleIdRelease};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {

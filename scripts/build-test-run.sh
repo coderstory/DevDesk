@@ -600,18 +600,36 @@ if [ "$RUN_TEST" = "1" ]; then
       #   分支报红「部分跳过」。若 ctest 改汇总格式、对混合态印 <100%，失败优先会先兜住
       #   并 exit 1，本分支变成不可达；结果仍是 RED（无假绿），只是诊断文字从「部分跳过」
       #   换成「有失败」。留本分支 = 不赌 ctest 永不改格式（删了等于赌）。
-      # 同一条判据对所有探针一视同仁，正常只有「全跑」或「全跳」两种形态；部分跳过 =
-      # 判据误判或代码 / 环境异常，必须人工查。
-      echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——判定为判据误判或代码 bug，必须人工查"
-      echo "──── 跳过原因 ────"
-      echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
-      echo "   （有 GUI 会话的机器上不该出现混合态；复现: cd $BUILD_DIR && ctest -L probe --output-on-failure -V）"
-      exit 1
+      # 同一条判据对所有探针一视同仁，正常形态是「全跑」「全跳」之外还有第三种：
+      # **能力门控家族的设计内跳过**（wallpaper_*：macOS 壁纸平台层二阶段未落地，
+      # src/platform/wallpaper_capability_macos.cpp 的 supported() 恒 false）——
+      # 跳过项全部落在该家族 = 已知平台不对称，黄牌放行；名单外任何跳过仍按
+      # 「判据误判或代码 / 环境异常」报红，必须人工查。
+      PROBE_SKIPPED_NAMES="$(echo "$PROBE_OUT" | grep -E '^\s*[0-9]+ - .*\(Skipped\)$' | sed -E 's/^[[:space:]]*[0-9]+ - +//; s/ \(Skipped\)$//' || true)"
+      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cv '^wallpaper_' || true)"
+      if [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
+        echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红"
+        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+      else
+        echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——判定为判据误判或代码 bug，必须人工查"
+        echo "──── 跳过原因 ────"
+        echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
+        echo "   （有 GUI 会话的机器上不该出现混合态；复现: cd $BUILD_DIR && ctest -L probe --output-on-failure -V）"
+        exit 1
+      fi
     else
       echo "✅ UI probe 全绿"
     fi
   fi
 fi
+
+# 3b 守卫链快路径（DEVDESK_FAST_TEST=1，用户成本纪律 2026-10-29）：迭代期只测受影响用例
+# 时，逐次全量守卫（Windows 交叉编译数百文件 + std include 全仓扫描 + 玻璃/自检链）是纯
+# 浪费——单次 10 分钟以上。**收口 / QA / 发版前必须不带此开关完整跑一次**，守卫一道不少；
+# 快路径只许用于「改源码→跑定向用例」的内循环。
+if [ "${DEVDESK_FAST_TEST:-0}" = "1" ]; then
+  echo "⚠️ 迭代快路径（DEVDESK_FAST_TEST=1）：跳过 3b 守卫链与守卫自检——收口前必须完整跑一次（不带此开关）"
+else
 
 # 3b-0. 探针跳过登记守卫。probe 在无显示环境以 77 退出（ctest 的跳过约定），
 # tests/CMakeLists.txt 必须给**每个** probe 测试登记 SKIP_RETURN_CODE 77。少一条 = 无显示
@@ -722,6 +740,8 @@ if [ "$SELF_TEST_FAIL" -ne 0 ]; then
   exit 1
 fi
 echo "✅ 守卫自检全过（${_GUARD_SELF_COUNT} 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
+
+fi  # DEVDESK_FAST_TEST 快路径 else 分支结束
 
 # 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）。顺序不可换，
 # 每一步都在补一个曾被漏掉的环节：

@@ -1462,11 +1462,11 @@ REGISTER_TEST(todo_svc_fixed_migration_idempotent,
     return true;
 })
 
-// 防：moveTask 来源列 kind 查询失败被静默吞掉（A-4）——DB 瞬态错误下退化为
-// 「来源列未知」，done→待办不清 completed_at，口径矩阵静默失守。查询失败必须
-// 显式 fail（事务回滚，完成时间哨兵值原样不动）。
+// 防：moveTask 列 kind 查询失败被静默吞掉（A-4 及其同族显式失败路径）——DB 瞬态
+// 错误下降级为「列 kind 未知」，done→待办不清 completed_at，口径矩阵静默失守。
+// 查询失败必须显式 fail（事务回滚，完成时间哨兵值原样不动）。
 REGISTER_TEST(todo_svc_move_task_from_kind_query_fail_explicit,
-              "TodoService: moveTask 来源列 kind 查询失败显式 fail", {
+              "TodoService: moveTask kind 查询失败显式 fail", {
     TestEnv env("fromkind_fail");
     DOCTEST_REQUIRE(env.ready);
 
@@ -1490,8 +1490,13 @@ REGISTER_TEST(todo_svc_move_task_from_kind_query_fail_explicit,
         "UPDATE todo_tasks SET completed_at = " + std::to_string(sentinel) +
         " WHERE id = " + std::to_string(taskId)).isOk());
 
-    // 模拟 DB 错误：kind 查询目标表消失（等价瞬态故障/坏库）
-    DOCTEST_REQUIRE(env.handle().exec("DROP TABLE todo_columns").isOk());
+    // 模拟 DB 错误：kind 查询失败（等价瞬态故障/坏库）。篡改方式必须是「删 kind 列」
+    // 而非 DROP TABLE：连接恒 foreign_keys=ON（SqliteDb::open），DROP TABLE 的隐式
+    // DELETE 会按 ON DELETE CASCADE 连带清空 todo_tasks——moveTask 退化成「task not
+    // found」路径、哨兵行消失，测不到 kind 查询失败显式化。DROP COLUMN 后目标列与
+    // 来源列两条 kind 查询（同表同 SQL）prepare 均失败，目标列那条先命中——与来源列
+    // A-4 分支同属一个显式 fail 家族，schema 层无法只让来源列查询失败。
+    DOCTEST_REQUIRE(env.handle().exec("ALTER TABLE todo_columns DROP COLUMN kind").isOk());
     auto r = env.svc->moveTask(taskId, todoId, 0);
     DOCTEST_CHECK(r.isFail());  // 显式失败，不静默继续
 
@@ -1503,7 +1508,9 @@ REGISTER_TEST(todo_svc_move_task_from_kind_query_fail_explicit,
     auto rows = prep.value().fetchAll();
     DOCTEST_REQUIRE(rows.isOk());
     DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
-    DOCTEST_CHECK_EQ(rows.value()[0].getString("completed_at").valueOr("?"),
-                     std::to_string(sentinel));
+    // completed_at 是 INTEGER 列：行物化按存储类型分派，getString 对 INTEGER 恒
+    // fail（"col not string"），必须 getInt64 读回哨兵。
+    DOCTEST_CHECK(!rows.value()[0].isNull("completed_at"));
+    DOCTEST_CHECK_EQ(rows.value()[0].getInt64("completed_at").valueOr(-1), sentinel);
     return true;
 })

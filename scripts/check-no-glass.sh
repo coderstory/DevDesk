@@ -142,39 +142,23 @@ SRC="$ROOT/src"
 
 VIOLATIONS=0
 
-rel() {
-    case "$1" in
-        "$ROOT"/*) printf '%s' "${1#"$ROOT"/}" ;;
-        *)         printf '%s' "$1" ;;
-    esac
+# 在 .h/.cpp 文件中查找模式，排除纯注释行（以 // 开头，含前导空白）；
+# 命中的 "文件:行号:内容" 即违规行。
+# **单条流水线实现，不走 per-file bash 循环**：旧的 while+进程替换+逐行 case
+# 结构在 macOS 自带 /bin/bash 3.2.57 上确定性堆损坏（SIGABRT「pointer being
+# freed was not allocated」，纯净树也崩、与被扫内容无关），bash 3.2 无补丁——
+# 改单条 grep 流水线绕开该 bash bug，判据与输出格式不变。
+scan_hits() {
+    grep -rnE --include='*.h' --include='*.cpp' \
+        -- '(drawGlassCardLayers|#include.*glass_card\.h)' "$SRC" 2>/dev/null \
+        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true
 }
 
-report() {
-    printf '%s\n' "$1"
-    VIOLATIONS=$((VIOLATIONS + 1))
-}
-
-# 在 .h/.cpp 文件中查找模式，排除纯注释行（以 // 开头，含前导空白）
-# 返回命中的 "文件:行号:内容" 行
-scan_pattern() {
-    local pattern="$1" file line
-    while IFS= read -r file; do
-        [ -f "$file" ] || continue
-        while IFS=: read -r lineno text; do
-            # 跳过纯注释行（以可选空白 + // 开头）
-            case "$text" in
-                [[:space:]]*//*|//*) continue ;;
-            esac
-            report "$(rel "$file"):$lineno:$text"
-        done < <(grep -n -- "$pattern" "$file" 2>/dev/null || true)
-    done < <(find "$SRC" -type f \( -name '*.h' -o -name '*.cpp' \) 2>/dev/null)
-}
-
-# 判据 A：drawGlassCardLayers 不得出现在非注释行
-scan_pattern 'drawGlassCardLayers'
-
-# 判据 B：#include .*glass_card\.h 不得出现在非注释行
-scan_pattern '#include.*glass_card\.h'
+HITS="$(scan_hits)"
+if [ -n "$HITS" ]; then
+    printf '%s\n' "$HITS" | sed "s|^$SRC/||"
+    VIOLATIONS="$(printf '%s\n' "$HITS" | wc -l | tr -d ' ')"
+fi
 
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "❌ 玻璃体系守卫失败：$VIOLATIONS 处违规（上方 file:line:命中行）" >&2

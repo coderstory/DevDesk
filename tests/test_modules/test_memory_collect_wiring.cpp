@@ -6,11 +6,15 @@
 #include "doctest.h"
 
 #include "module_memory/collector/collector.h"
+#include "module_memory/memory_module.h"
 #include "module_memory/pipeline/collect_round.h"
 #include "module_memory/proposals/curator.h"
 #include "module_memory/proposals/proposal_store.h"
 #include "module_memory/sanitize/sanitize_gate.h"
 
+#include <eui/dsl.h>
+
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -120,7 +124,7 @@ REGISTER_TEST(memory_collect_decay_scan_uuid_form,
     const std::string kUuid = "b7e23ec2-9a1d-4c55-8f0a-1b2c3d4e5f60";
 
     // live 定案形态：清单给 UUID 串 → 卡 targetIds 原样（整型错位形态必挂执行）
-    proposals::MemoryListFn live = [&kUuid, now]() {
+    proposals::MemoryListFn live = [&kUuid]() {
         return core::Result<std::vector<proposals::MemorySummary>>::ok(
             std::vector<proposals::MemorySummary>{
                 {kUuid, "闲置很久的引擎记忆", now - 120 * 86400, 3}});
@@ -150,5 +154,105 @@ REGISTER_TEST(memory_collect_decay_scan_uuid_form,
     auto pending2 = store.listPending();
     DOCTEST_REQUIRE(pending2.isOk());
     DOCTEST_CHECK_EQ(pending2.value().size(), static_cast<std::size_t>(1));
+    return true;
+})
+
+// ── 审核页工具条几何（TODO §A P2 批量标签窄窗重叠）──
+// 无头 compose 断言沿用 test_mcp_page.cpp 约定：raw eui::Ui + 真 layout
+//（compose 回调体内取 frame 全是 0）。chips 宽改按显示字符估算后，三档窗宽
+//（最小 1000 / TODO 档 1200 / 默认 1600）chips 行均须单行容下、不裁切、
+// 不压右侧批量开关组；开关钉右锚（toolbar 右缘 −52）三档同值不漂移。
+
+namespace {
+
+void composeReviewFrame(module::memory::MemoryModule& mod, eui::Ui& ui,
+                        float screenW, float screenH) {
+    eui::Screen s;
+    s.width = screenW;
+    s.height = screenH;
+    s.scale = 1.0f;
+    ui.begin("memory_review_toolbar");
+    mod.compose(ui, s);
+    ui.end();
+    ui.layout(screenW, screenH);
+}
+
+bool checkToolbarChain(eui::Ui& ui, float screenW) {
+    const float contentW = screenW - 64.0f;  // pagePad = spacingLarge×2 = 32
+    const auto* toolbar = ui.find("memory.rv.toolbar");
+    const auto* lastChip = ui.find("memory.rv.chipSt.1");
+    const auto* srcChip = ui.find("memory.rv.chipS.3");
+    const auto* label = ui.find("memory.rv.batchlbl");
+    const auto* track = ui.find("memory.rv.batchsw.track");
+    DOCTEST_REQUIRE(toolbar != nullptr);
+    DOCTEST_REQUIRE(lastChip != nullptr);
+    DOCTEST_REQUIRE(srcChip != nullptr);
+    DOCTEST_REQUIRE(label != nullptr);
+    DOCTEST_REQUIRE(track != nullptr);
+
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(toolbar->frame.width - contentW) < 0.5f,
+        "工具条内容宽 " + std::to_string(toolbar->frame.width) +
+            " ≠ 窗宽 " + std::to_string(screenW) + " − 64");
+    // 单行证据：工具条恒 56 高（chips 一旦换行/降双行必增高）
+    DOCTEST_CHECK_MESSAGE(std::fabs(toolbar->frame.height - 56.0f) < 0.5f,
+                          "工具条高 " + std::to_string(toolbar->frame.height) +
+                              " ≠ 56（单行布局漂移）");
+    // chips 行右缘不出工具条（窄窗不裁切）
+    DOCTEST_CHECK_MESSAGE(
+        lastChip->frame.x + lastChip->frame.width <=
+            toolbar->frame.x + toolbar->frame.width - 8.0f,
+        "状态 chips 右缘 " +
+            std::to_string(lastChip->frame.x + lastChip->frame.width) +
+            " 越出工具条右缘 " +
+            std::to_string(toolbar->frame.x + toolbar->frame.width));
+    // chips 行不压批量标签（TODO §A P2 重叠消除；≥12 中间距令牌）
+    DOCTEST_CHECK_MESSAGE(
+        label->frame.x - (lastChip->frame.x + lastChip->frame.width) >=
+            12.0f,
+        "批量标签左缘 " + std::to_string(label->frame.x) + " 与 chips 右缘 " +
+            std::to_string(lastChip->frame.x + lastChip->frame.width) +
+            " 间距不足 12");
+    DOCTEST_CHECK(srcChip->frame.x + srcChip->frame.width <= label->frame.x);
+    // 标签不盖开关、贴 8px；开关钉 toolbar 右缘 −52（右锚群组，三档同值）
+    DOCTEST_CHECK(label->frame.x + label->frame.width <= track->frame.x);
+    DOCTEST_CHECK(std::fabs(track->frame.x -
+                            (label->frame.x + label->frame.width) - 8.0f) <
+                  0.5f);
+    DOCTEST_CHECK(
+        std::fabs((toolbar->frame.x + toolbar->frame.width) -
+                  (track->frame.x + track->frame.width) - 52.0f) < 0.5f);
+    return true;
+}
+
+}  // namespace
+
+REGISTER_TEST(memory_review_toolbar_narrow_1200_no_overlap,
+              "memory: 审核工具条（TODO §A P2）——1200 窄窗 chips 不裁切、不压批量开关标签", {
+    MemoryModule mod;
+    mod.setActiveViewForTest(1);
+    eui::Ui ui;
+    composeReviewFrame(mod, ui, 1200.0f, 800.0f);
+    if (!checkToolbarChain(ui, 1200.0f)) return false;
+    return true;
+})
+
+REGISTER_TEST(memory_review_toolbar_min_window_1000_no_overlap,
+              "memory: 审核工具条——最小窗 1000×640 chips 不裁切、不压批量开关标签（1000 宽逐页适配延续）", {
+    MemoryModule mod;
+    mod.setActiveViewForTest(1);
+    eui::Ui ui;
+    composeReviewFrame(mod, ui, 1000.0f, 640.0f);
+    if (!checkToolbarChain(ui, 1000.0f)) return false;
+    return true;
+})
+
+REGISTER_TEST(memory_review_toolbar_wide_1600_anchored,
+              "memory: 审核工具条——1600 宽窗单行不变：chips 不重叠 + 开关右锚不漂移", {
+    MemoryModule mod;
+    mod.setActiveViewForTest(1);
+    eui::Ui ui;
+    composeReviewFrame(mod, ui, 1600.0f, 1000.0f);
+    if (!checkToolbarChain(ui, 1600.0f)) return false;
     return true;
 })

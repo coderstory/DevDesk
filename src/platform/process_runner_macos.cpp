@@ -8,6 +8,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -15,8 +16,11 @@
 
 #include <fcntl.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "core/logging.h"
 
 extern char** environ;
 
@@ -52,6 +56,40 @@ std::vector<const char*> buildArgvPtr(const std::vector<std::string>& argv) {
     return ptrs;
 }
 
+// 裸命令名（不含 '/'）按 PATH 查找解析为可执行文件路径。
+// 为什么在执行器层做：posix_spawn 语义等同 execv，不做 PATH 查找，裸命令名
+// 必 ENOENT；而 Windows CreateProcess 与 POSIX 兜底 execvp 都会搜 PATH。
+// 在这里补齐后三平台「裸命令名可 spawn」行为一致（agent 内置 git 八件套
+// 传的就是裸名 "git"）。含 '/' 的路径原样返回；找不到返回空串。
+std::string resolveExecutablePath(const std::string& cmd) {
+    if (cmd.find('/') != std::string::npos) return cmd;
+    const char* pathEnv = ::getenv("PATH");
+    if (pathEnv == nullptr) return "";
+    const std::string path = pathEnv;
+    struct stat st;
+    size_t start = 0;
+    while (start <= path.size()) {
+        size_t sep = path.find(':', start);
+        if (sep == std::string::npos) sep = path.size();
+        std::string dir = path.substr(start, sep - start);
+        if (dir.empty()) dir = ".";  // PATH 里的空条目按惯例指当前目录
+        const std::string candidate = dir + "/" + cmd;
+        if (::stat(candidate.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+            ::access(candidate.c_str(), X_OK) == 0) {
+            if (candidate[0] == '/') return candidate;
+            // PATH 条目是相对路径时按调用方 cwd 钉成绝对——后续可能 chdir 到
+            // 目标 cwd 再 spawn，相对形态会错位
+            char cwdBuf[PATH_MAX] = {};
+            if (getcwd(cwdBuf, sizeof(cwdBuf)) != nullptr) {
+                return std::string(cwdBuf) + "/" + candidate;
+            }
+            return candidate;
+        }
+        start = sep + 1;
+    }
+    return "";
+}
+
 } // namespace
 
 bool processRunnerSupported() { return true; }
@@ -64,6 +102,15 @@ ProcessRunner systemProcessRunner() {
         if (argv.empty()) {
             return core::Result<ProcessResult>::fail(
                 core::ErrorCode::ValidationError, "进程执行器：argv 为空");
+        }
+
+        // 裸命令名先解析成可执行文件路径（posix_spawn 不搜 PATH，见 helper 注释）。
+        // 放在管道创建之前，失败时不产生需要清理的 fd。
+        const std::string spawnPath = resolveExecutablePath(argv[0]);
+        if (spawnPath.empty()) {
+            return core::Result<ProcessResult>::fail(
+                core::ErrorCode::NotFound,
+                "进程执行器：命令未找到（PATH 查找失败）: " + argv[0]);
         }
 
         ProcessResult result;
@@ -130,7 +177,7 @@ ProcessRunner systemProcessRunner() {
                     core::ErrorCode::Internal,
                     "进程执行器：chdir 到 '" + cwd + "' 失败: " + strerror(errno));
             }
-            int spawnErr = posix_spawn(&pid, argv[0].c_str(),
+            int spawnErr = posix_spawn(&pid, spawnPath.c_str(),
                                        &actions, nullptr,
                                        const_cast<char* const*>(argvPtrs.data()),
                                        environ);
@@ -145,7 +192,7 @@ ProcessRunner systemProcessRunner() {
                     "进程执行器：posix_spawn 失败: " + std::string(strerror(spawnErr)));
             }
         } else {
-            int spawnErr = posix_spawn(&pid, argv[0].c_str(),
+            int spawnErr = posix_spawn(&pid, spawnPath.c_str(),
                                        &actions, nullptr,
                                        const_cast<char* const*>(argvPtrs.data()),
                                        environ);
@@ -177,10 +224,28 @@ ProcessRunner systemProcessRunner() {
         }
 
         // 等待进程退出（有超时）
+        // ECHILD 纪律：waitpid 返回 ECHILD = 子进程已被收尸（SIGCHLD 全局被
+        // 忽略或重复 waitpid 这类调用方 bug），必须显式 fail 暴露——历史 bug
+        // （process_host 全局 SIG_IGN）曾把它伪装成 timedOut=true + exitCode=-1。
         if (timeoutMs <= 0) {
-            // 无限等待
+            // 无限等待（EINTR 重试：进程还活着，打断不该算失败）
             int status = 0;
-            waitpid(pid, &status, 0);
+            pid_t w;
+            do {
+                w = waitpid(pid, &status, 0);
+            } while (w < 0 && errno == EINTR);
+            if (w < 0) {
+                if (errno == ECHILD) {
+                    return core::Result<ProcessResult>::fail(
+                        core::ErrorCode::Internal,
+                        "进程执行器：waitpid ECHILD —— 子进程已被收尸"
+                        "（SIGCHLD 全局被忽略或重复收尸），命令: " + argv[0]);
+                }
+                return core::Result<ProcessResult>::fail(
+                    core::ErrorCode::Internal,
+                    "进程执行器：waitpid 失败: " + std::string(strerror(errno)) +
+                        "，命令: " + argv[0]);
+            }
             result.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
         } else {
             const long stepUs = 100000;  // 100ms
@@ -194,7 +259,19 @@ ProcessRunner systemProcessRunner() {
                     exited = true;
                     break;
                 }
-                if (w < 0 && errno != EINTR) break;
+                if (w < 0) {
+                    if (errno == EINTR) continue;
+                    if (errno == ECHILD) {
+                        return core::Result<ProcessResult>::fail(
+                            core::ErrorCode::Internal,
+                            "进程执行器：waitpid ECHILD —— 子进程已被收尸"
+                            "（SIGCHLD 全局被忽略或重复收尸），命令: " + argv[0]);
+                    }
+                    return core::Result<ProcessResult>::fail(
+                        core::ErrorCode::Internal,
+                        "进程执行器：waitpid 失败: " + std::string(strerror(errno)) +
+                            "，命令: " + argv[0]);
+                }
                 usleep(static_cast<useconds_t>(stepUs));
                 elapsed += stepUs;
             }
@@ -202,7 +279,16 @@ ProcessRunner systemProcessRunner() {
                 result.timedOut = true;
                 kill(pid, SIGKILL);
                 int status = 0;
-                waitpid(pid, &status, 0);
+                pid_t w;
+                do {
+                    w = waitpid(pid, &status, 0);
+                } while (w < 0 && errno == EINTR);
+                if (w < 0) {
+                    // SIGKILL 后收尸失败 = 有并发收尸（异常信号面），记日志留痕；
+                    // 超时事实已成立，不再改判失败
+                    LOG_WARN("进程执行器：SIGKILL 后 waitpid 失败: " +
+                             std::string(strerror(errno)) + "，命令: " + argv[0]);
+                }
             }
         }
 

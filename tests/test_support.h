@@ -19,6 +19,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -75,6 +76,43 @@ public:
 private:
     std::string name_;
     std::string saved_;
+};
+
+// RAII：作用域内切换进程时区（TZ 环境变量 + tzset 重建），析构还原原值。
+// 用途：DST 类用例在无夏令时的宿主时区（CI 的 UTC / 固定偏移）内真实覆盖春季
+// 缺口 / 秋季回拨——libc 的 mktime / localtime_r 按 TZ 解析，core::time 与
+// std:: 的换算同步生效。还原后同样重建，防止污染同进程后续用例。
+// value 传 IANA 名（如 "America/New_York"，POSIX 自带 tzdata）；Windows ucrt
+// 不识别 IANA 名，用例须自检换算结果未生效时 SKIP（不假绿），勿在此层分平台。
+class ScopedTz {
+public:
+    explicit ScopedTz(const char* value) {
+        const char* cur = std::getenv("TZ");
+        saved_ = cur ? cur : "";
+        had_ = cur != nullptr;
+        setEnvVar("TZ", std::string(value));
+        reloadTzDatabase();
+    }
+    ~ScopedTz() {
+        // 还原走字符串重载：空串在 POSIX=unsetenv、Windows=_putenv_s 删除，
+        // 与 ScopedEnv 的「未设置记为空串」口径一致
+        setEnvVar("TZ", had_ ? saved_ : std::string());
+        reloadTzDatabase();
+    }
+    ScopedTz(const ScopedTz&) = delete;
+    ScopedTz& operator=(const ScopedTz&) = delete;
+
+private:
+    static void reloadTzDatabase() {
+#if defined(_WIN32)
+        ::_tzset();
+#else
+        ::tzset();
+#endif
+    }
+
+    std::string saved_;
+    bool had_ = false;
 };
 
 // 2) 临时目录

@@ -57,7 +57,7 @@ private:
     void harvestTryRun();
     bool tryRunning() const { return tryRunning_.load(std::memory_order_acquire); }
 
-    // 卡片 / 详情弹窗绘制（compose 专用；id 契约 = 测试定位面）
+    // 卡片 / 详情弹窗 / 「记忆」模块行绘制（compose 专用；id 契约 = 测试定位面）
     void drawToolCard(eui::Ui& ui,
                       const std::shared_ptr<::core::mcp::IMcpTool>& tool,
                       const core::theme::Tokens& t,
@@ -66,8 +66,15 @@ private:
     void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& comp);
+    void drawMemoryModuleRow(eui::Ui& ui, float contentW,
+                             const core::theme::Tokens& t,
+                             const components::theme::ThemeColorTokens& comp);
 
     ::core::mcp::McpToolRegistry* registry_;
+
+    // 「记忆」模块行写盘失败反馈：setEnabled fail 时存原因、成功帧清空。
+    // 开关本身无内部态（每帧按桥 status 重绘），失败回弹零额外逻辑。
+    std::string memorySaveError_;
 
     // 详情态：keep-alive 指针 + 卡片 hover 集合（compose 每帧重建，成员只做存储）
     std::shared_ptr<::core::mcp::IMcpTool> detailTool_;

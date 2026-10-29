@@ -1,5 +1,7 @@
 #include "module_schedule/schedule_provider.h"
 
+#include <utility>
+
 namespace module::schedule {
 
 core::Result<void> ScheduleProviderRegistry::registerProvider(

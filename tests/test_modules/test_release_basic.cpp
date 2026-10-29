@@ -516,8 +516,8 @@ REGISTER_TEST(release_group_removed_with_module_off,
                               module::settings::kModuleIdRelease};
         const auto gated = app::assembly::buildGatedEntries(
             cfg, ::app::registry::kModuleRegistry, kRegistrySize);
-        // home/schedule/settings/about 恒注册 4 行 + 上线三行 = 7
-        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(7));
+        // home/settings/about 恒注册 3 行 + 上线三行 = 6
+        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(6));
 
         ::core::Router router;
         router.registerModule(&home);
@@ -555,8 +555,8 @@ REGISTER_TEST(release_group_removed_with_module_off,
                               module::settings::kModuleIdSettings};
         const auto gated = app::assembly::buildGatedEntries(
             cfg, ::app::registry::kModuleRegistry, kRegistrySize);
-        // home/schedule/settings/about 恒注册 4 行
-        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(4));
+        // home/settings/about 恒注册 3 行
+        DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(3));
 
         ::core::Router router;
         router.registerModule(&home);

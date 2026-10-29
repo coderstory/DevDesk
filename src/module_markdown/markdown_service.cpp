@@ -1353,15 +1353,31 @@ core::Result<int64_t> MarkdownService::folderNoteCount(const fs::path& relPath) 
     // 枚举错误（含不可读子树）显式 fail，不静默跳过：删除闸门靠本函数 fail 拒绝
     // 放行——不可读子树若被当 0 篇，笔记全在其中的文件夹会被 remove_all 误删。
     int64_t count = 0;
-    for (auto it = fs::recursive_directory_iterator(absPath, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        if (!it->is_regular_file(ec) || ec) continue;
+    std::error_code enumEc;
+    for (auto it = fs::recursive_directory_iterator(absPath, enumEc);
+         !enumEc && it != fs::recursive_directory_iterator();
+         it.increment(enumEc)) {
+        if (enumEc) break;
+        // entry 状态探测用**局部** ec：外层 ec 传进 is_regular_file 后被置错，
+        // 再走 it.increment(ec) 会把 ec 清掉——错误就这么被吞成 ok(0)
+        //（悬挂软链实证：is_regular_file 置 ENOENT → increment 清零 → 枚举照常走完）。
+        std::error_code entryEc;
+        if (!it->is_regular_file(entryEc)) {
+            if (entryEc) {
+                // 状态未知（悬挂软链 / 无权探测）≠「不是普通文件」：本轮枚举结果
+                // 不可信，必须 fail 让删除闸门拒绝放行（A-1 误删防线）
+                return core::Result<int64_t>::fail(core::ErrorCode::FileReadFailed,
+                    "枚举文件夹失败 " + toPosix(relPath) + "（" +
+                        it->path().filename().generic_string() + "）: " +
+                        entryEc.message());
+            }
+            continue;  // 目录等其它类型：正常跳过
+        }
         if (it->path().extension() == ".md") ++count;
     }
-    if (ec) {
-        return core::Result<int64_t>::fail(core::ErrorCode::FileWriteFailed,
-            "枚举文件夹失败 " + toPosix(relPath) + ": " + ec.message());
+    if (enumEc) {
+        return core::Result<int64_t>::fail(core::ErrorCode::FileReadFailed,
+            "枚举文件夹失败 " + toPosix(relPath) + ": " + enumEc.message());
     }
     return core::Result<int64_t>::ok(count);
 }

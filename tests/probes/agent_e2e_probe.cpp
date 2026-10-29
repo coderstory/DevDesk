@@ -412,14 +412,25 @@ int main(int argc, char* argv[]) {
     // F1 种子：一条逾期未完成 todo
     module::todo::TodoService todoSvc(db);
     {
-        auto col = todoSvc.createColumn("待办");
-        if (col.isFail()) {
-            std::cerr << "agent_e2e_probe: todo 列创建失败: "
-                      << col.errorMessage() << "\n";
+        // 必须落进 kind='todo' 的标准待办列（schema 种子固定四列之一）：
+        // listOverdue 的逾期口径（core/overdue.h kWhereSql，UAT6.2 H20）只认
+        // todo/doing 两列，自建列 kind 为 NULL 会被判非逾期 → F1 恒败。
+        auto cols = todoSvc.listColumns();
+        std::optional<module::todo::Column> todoCol;
+        if (cols.isOk()) {
+            for (const auto& c : cols.value()) {
+                if (c.kind == "todo") todoCol = c;
+            }
+        }
+        if (!todoCol.has_value()) {
+            std::cerr << "agent_e2e_probe: 未找到 kind='todo' 标准待办列: "
+                      << (cols.isFail() ? cols.errorMessage()
+                                        : std::string("列清单无 todo 列"))
+                      << "\n";
         } else {
             module::todo::NewTaskAttributes attrs;
             attrs.dueAt = core::time::nowUnix() - 3600;  // 1 小时前 = 逾期
-            auto task = todoSvc.createTask(col.value().id,
+            auto task = todoSvc.createTask(todoCol->id,
                                            std::string(kTodoMarker) + "（缴费）",
                                            attrs);
             if (task.isFail()) {

@@ -11,7 +11,9 @@
 #include "module_schedule/schedule_module.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
+#include "module_schedule/schedule_ui_history.h"
 #include "module_schedule/schedule_ui_list.h"
+#include "settings_config.h"
 
 #include <eui/dsl.h>
 
@@ -235,7 +237,9 @@ REGISTER_TEST(schedule_module_registry_entry_complete,
         }
     }
     DOCTEST_REQUIRE(entry != nullptr);
-    DOCTEST_CHECK(entry->gatingKey == nullptr);  // 恒注册（设置页开关卡后续波补）
+    // 开关卡已补齐：门控键 = kModuleIdSchedule（默认启用，走通用模块门控）
+    DOCTEST_CHECK_EQ(std::string(entry->gatingKey),
+                     std::string(module::settings::kModuleIdSchedule));
     DOCTEST_CHECK_EQ(std::string(entry->shortName), std::string("定时"));
     DOCTEST_CHECK_EQ(std::string(entry->iconGlyph), eui::utf8(0xF017));  // fa-clock
 
@@ -293,5 +297,107 @@ REGISTER_TEST(schedule_list_summary_fallback_no_crash,
         R"({"unit":"week","interval":2,"weekdays":[2],"time":"09:00"})";
     DOCTEST_CHECK_EQ(module::schedule::ruleSummary(week),
                      std::string("每 2 周 周二 09:00"));
+    return true;
+})
+
+// 防：入口按钮退化回 LOG 占位不接抽屉——点击「运行历史」必须打开抽屉并装载
+// runs+投递数据，关闭钮必须收起。删掉 openHistory 接线（onClick 不再置 open/
+// 不再装数据）后：抽屉 opacity 恒 0、historyItems 恒空、row.* 不出现，本用例必红。
+REGISTER_TEST(schedule_list_history_drawer_open_close_wiring,
+              "schedule 历史抽屉接线：点入口开抽屉装载两表数据，点关闭收起", {
+    auto opened = openMigrated("histwiring");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+    ScheduleProviderRegistry providers;
+    ScheduleListUi listUi(store, providers);
+
+    const auto created = store.createRule(makeRule("历史规则", 0, 1761000000));
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t ruleId = created.value().id;
+    auto makeRunRow = [&](int64_t plannedAt, const std::string& status) {
+        module::schedule::RunRecord run;
+        run.origin = "user";
+        run.originKey = "rule:" + std::to_string(ruleId);
+        run.ruleId = ruleId;
+        run.plannedAt = plannedAt;
+        run.startedAt = plannedAt;
+        run.status = status;
+        return run;
+    };
+    DOCTEST_REQUIRE(store.insertRun(makeRunRow(1760001000, "success")).isOk());
+    const auto failedRun = store.insertRun(makeRunRow(1760002000, "failed"));
+    DOCTEST_REQUIRE(failedRun.isOk());
+    module::schedule::DeliveryRecord d;
+    d.runId = failedRun.value().id;
+    d.channelId = 1;
+    d.attempt = 0;
+    d.status = "failed";
+    DOCTEST_REQUIRE(store.insertDelivery(d).isOk());
+
+    listUi.reload(1760010000);
+    const eui::Screen screen = makeScreen();
+    eui::Ui frame;
+
+    // 初始：抽屉关闭态也常驻构建（panel 节点在、opacity=0）
+    composeFrame(listUi, frame, screen, "hist_wiring_closed");
+    const auto* panel = frame.find("schedule.history.drawer.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_EQ(panel->opacity, 0.0f);
+
+    // 点页头入口 → 置 open + 装载（planned_at 倒序：failed 在前且带渠道汇总）
+    const auto* entry = frame.find("schedule.list.history");
+    DOCTEST_REQUIRE(entry != nullptr);
+    DOCTEST_REQUIRE(entry->onClick != nullptr);
+    entry->onClick();
+    DOCTEST_CHECK(listUi.historyOpen());
+    DOCTEST_REQUIRE_EQ(listUi.historyItems().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(listUi.historyItems()[0].run.plannedAt, 1760002000);
+    DOCTEST_CHECK_EQ(listUi.historyItems()[0].run.status, std::string("failed"));
+    DOCTEST_REQUIRE_EQ(listUi.historyItems()[0].channelSummaries.size(),
+                       static_cast<size_t>(1));
+
+    composeFrame(listUi, frame, screen, "hist_wiring_open");
+    DOCTEST_CHECK_EQ(frame.find("schedule.history.drawer.panel")->opacity, 1.0f);
+    DOCTEST_CHECK(frame.find("schedule.history.row.0") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.history.row.1") != nullptr);
+
+    // 点抽屉内关闭钮 → 收起（下一帧 opacity 回 0；button 的 onClick 挂在 .bg 节点）
+    const auto* closeBtn = frame.find("schedule.history.close.bg");
+    DOCTEST_REQUIRE(closeBtn != nullptr);
+    DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
+    closeBtn->onClick();
+    DOCTEST_CHECK_FALSE(listUi.historyOpen());
+    composeFrame(listUi, frame, screen, "hist_wiring_closed_again");
+    DOCTEST_CHECK_EQ(frame.find("schedule.history.drawer.panel")->opacity, 0.0f);
+    return true;
+})
+
+// 防：零历史（新库/空 run 表）点入口崩溃或渲染残行——空态抽屉只出面板与关闭钮。
+REGISTER_TEST(schedule_list_history_drawer_empty_ok,
+              "schedule 历史抽屉接线：无运行记录时打开为空态不崩", {
+    auto opened = openMigrated("histempty");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+    ScheduleProviderRegistry providers;
+    ScheduleListUi listUi(store, providers);
+
+    DOCTEST_CHECK(store.createRule(makeRule("空历史规则", 0, 1761000000)).isOk());
+    listUi.reload(1760010000);
+
+    const eui::Screen screen = makeScreen();
+    eui::Ui frame;
+    composeFrame(listUi, frame, screen, "hist_empty_closed");
+    const auto* entry = frame.find("schedule.list.history");
+    DOCTEST_REQUIRE(entry != nullptr);
+    DOCTEST_REQUIRE(entry->onClick != nullptr);
+    entry->onClick();
+    DOCTEST_CHECK(listUi.historyOpen());
+    DOCTEST_CHECK(listUi.historyItems().empty());
+
+    composeFrame(listUi, frame, screen, "hist_empty_open");
+    DOCTEST_CHECK_EQ(frame.find("schedule.history.drawer.panel")->opacity, 1.0f);
+    DOCTEST_CHECK(frame.find("schedule.history.row.0") == nullptr);
     return true;
 })

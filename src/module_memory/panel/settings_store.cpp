@@ -50,10 +50,11 @@ MemoryPanelSettings loadPanelSettings() {
                              ? obj.get("llmImportedAtSec").asInt()
                              : 0;
     s.llmProfileName = getStr("llmProfileName");
+    s.mcpSearchEnabled = getBool("mcpSearchEnabled", true);
     return s;
 }
 
-void savePanelSettings(const MemoryPanelSettings& settings) {
+core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
     platform::json::JsonObject obj;
     obj.set("sanitizeEnabled", platform::json::JsonValue(settings.sanitizeEnabled));
     obj.set("recallThresholdPct",
@@ -63,21 +64,35 @@ void savePanelSettings(const MemoryPanelSettings& settings) {
     obj.set("llmImportedAtSec",
             platform::json::JsonValue(settings.llmImportedAtSec));
     obj.set("llmProfileName", platform::json::JsonValue(settings.llmProfileName));
+    obj.set("mcpSearchEnabled",
+            platform::json::JsonValue(settings.mcpSearchEnabled));
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), true);
     if (text.isFail()) {
         LOG_WARN("记忆面板设置序列化失败: " + text.errorMessage());
-        return;
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                        text.errorMessage());
     }
     std::error_code ec;
     std::filesystem::create_directories(engine::memoryDataDir(), ec);
     FILE* f = std::fopen(settingsFile().string().c_str(), "wb");
     if (f == nullptr) {
         LOG_WARN("记忆面板设置写入失败（目录不可写）");
-        return;
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                        "目录不可写");
     }
-    std::fwrite(text.value().data(), 1, text.value().size(), f);
-    std::fclose(f);
+    // 短写 / fclose 冲刷失败（磁盘满最常显形处）都必须报 fail：半截 JSON 下次
+    // load 会整体落默认，mcpSearchEnabled=false 的工具会借机复活
+    const std::string& payload = text.value();
+    const std::size_t written =
+        std::fwrite(payload.data(), 1, payload.size(), f);
+    const bool flushed = std::fclose(f) == 0;
+    if (written != payload.size() || !flushed) {
+        LOG_WARN("记忆面板设置写入不完整（磁盘满/IO）");
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                        "写入不完整");
+    }
+    return core::Result<void>::ok();
 }
 
 }  // namespace module::memory::panel

@@ -1,11 +1,13 @@
 // tests/test_modules/test_schedule_rule.cpp
 // core::schedule 规则引擎纯函数单测：六 kind 解析/校验 + nextFire/missedFires 时间推进。
 // 每条用例注明「防什么事故」；纯函数零 IO 零时钟（时间全由测试注入），无 fixture。
-// 环境前提：用例依赖系统本地时区；DST 用例在无 DST 时区（如 CI 的 UTC）自检跳过。
+// 环境前提：非 DST 用例依赖系统本地时区；DST 用例经 ScopedTz 进程内切到
+// America/New_York 真实跑（跳变日钉死 2026-03-08 / 2026-11-01），TZ 切换未生效
+// （tzdata 缺失 / Windows 不识别 IANA 名）时显式 SKIP 兜底，不假绿。
 // 跨文件前提：nextFire 严格大于 afterUnix；日历推进用 mktime(tm_isdst=-1)+daysFromCivil，
 // 禁止 +86400；秋季回拨重复墙钟只取第一次；春季缺口在最早存在时刻触发。
 #include "doctest.h"
-#include <cstdio>
+#include "test_support.h"
 #include <ctime>
 #include <iostream>
 
@@ -67,54 +69,23 @@ RuleSpec mustParse(RuleKind k, const std::string& json) {
     return r.value();
 }
 
-// 本机时区是否有 DST：1 月与 7 月正午的本地偏移不同即视为有（UTC/固定偏移时区跳过 DST 用例）
-bool zoneHasDst() {
-    const std::time_t jan = unixOf(2026, 1, 15, 12, 0);
-    const std::time_t jul = unixOf(2026, 7, 15, 12, 0);
-    const int64_t utcJan = core::time::daysFromCivil(2026, 1, 15) * 86400 + 12 * 3600;
-    const int64_t utcJul = core::time::daysFromCivil(2026, 7, 15) * 86400 + 12 * 3600;
-    const int64_t offJan = static_cast<int64_t>(jan) - utcJan;
-    const int64_t offJul = static_cast<int64_t>(jul) - utcJul;
-    return offJan != offJul;
-}
-
-// 逐日正午本地偏移扫描（mktime 走日，不 +86400）：找偏移变化日。
-// wantIncrease=true 找春季（偏移变大），false 找秋季（偏移变小）；未找到返回 false。
-bool findOffsetChangeDay(int year, bool wantIncrease, int& outMon, int& outDay) {
-    std::tm t{};
-    t.tm_year = year - 1900;
-    t.tm_mon = 0;
-    t.tm_mday = 1;
-    t.tm_hour = 12;
-    t.tm_min = 0;
-    t.tm_sec = 0;
-    t.tm_isdst = -1;
-    int64_t prevOff = 0;
-    bool havePrev = false;
-    for (int k = 0; k < 366; ++k) {
-        const std::time_t u = std::mktime(&t);
-        std::tm w{};
-        core::time::localTime(u, &w);
-        const int64_t utc = core::time::daysFromCivil(
-                                w.tm_year + 1900, static_cast<unsigned>(w.tm_mon) + 1,
-                                static_cast<unsigned>(w.tm_mday)) *
-                                86400 +
-                            43200;
-        const int64_t off = static_cast<int64_t>(u) - utc;
-        if (havePrev && (wantIncrease ? off > prevOff : off < prevOff)) {
-            outMon = w.tm_mon + 1;
-            outDay = w.tm_mday;
-            return true;
-        }
-        prevOff = off;
-        havePrev = true;
-        t.tm_mday = w.tm_mday + 1;  // 次日：跨月/跨年由 mktime 归一（不动 tm_mon/tm_year）
-        t.tm_hour = 12;
-        t.tm_min = 0;
-        t.tm_sec = 0;
-        t.tm_isdst = -1;
-    }
-    return false;
+// NY 钉死前提自检（全走 libc 换算：unixOf=mktime isdst=-1，daysFromCivil 为纯算术，
+// 不经引擎——SKIP 只代表环境不具备钉死前提，掩盖不了引擎回归）：
+// TZ=America/New_York 切换真实生效 + EST(-5h)/EDT(-4h) 偏移与 2026 年两个跳变日
+// 都在期望位置（美国现行规则：3 月第 2 个周日春进 / 11 月第 1 个周日秋回）。
+bool nyDstEnvReady() {
+    return static_cast<int64_t>(unixOf(2026, 1, 15, 12, 0)) ==
+               core::time::daysFromCivil(2026, 1, 15) * 86400 + 17 * 3600 &&   // 12:00 EST
+           static_cast<int64_t>(unixOf(2026, 7, 15, 12, 0)) ==
+               core::time::daysFromCivil(2026, 7, 15) * 86400 + 16 * 3600 &&   // 12:00 EDT
+           static_cast<int64_t>(unixOf(2026, 3, 8, 1, 30)) ==
+               core::time::daysFromCivil(2026, 3, 8) * 86400 + 6 * 3600 + 1800 &&   // 春进前 EST
+           static_cast<int64_t>(unixOf(2026, 3, 8, 3, 30)) ==
+               core::time::daysFromCivil(2026, 3, 8) * 86400 + 7 * 3600 + 1800 &&   // 春进后 EDT
+           static_cast<int64_t>(unixOf(2026, 11, 1, 0, 30)) ==
+               core::time::daysFromCivil(2026, 11, 1) * 86400 + 4 * 3600 + 1800 &&  // 秋回前 EDT
+           static_cast<int64_t>(unixOf(2026, 11, 1, 2, 30)) ==
+               core::time::daysFromCivil(2026, 11, 1) * 86400 + 7 * 3600 + 1800;    // 秋回后 EST
 }
 } // namespace
 
@@ -252,7 +223,7 @@ REGISTER_TEST(schedule_biweekly_tuesday, "schedule: 每两周周二 09:00 连续
     for (int i = 0; i < 4; ++i) {
         const int64_t n = nf(s, cursor, c);
         DOCTEST_CHECK_MESSAGE(n == static_cast<int64_t>(expect[i]),
-                              "第 " << i << " 次应等于 " << static_cast<int64_t>(expect[i]));
+                              "第 " + std::to_string(i) + " 次应等于 " + std::to_string(expect[i]));
         cursor = static_cast<std::time_t>(n);
     }
     // 8 周窗口内的全部触发（闭区间）也应恰好是这 4 个
@@ -320,7 +291,8 @@ REGISTER_TEST(schedule_interval_anchor, "schedule: interval 锚点式 nextFire /
     DOCTEST_CHECK(all[0] == 1000 && all[1] == 4600 && all[2] == 8200);
     const auto capped = mf(s, 1000, 8200, 2, c);
     DOCTEST_CHECK(capped.size() == 2);
-    DOCTEST_CHECK(mf(s, 20000, 30000, 10, c).empty());
+    // 空窗：网格 …19000, 22600…（锚点 1000 + 3600k），[20000, 22599] 无落点
+    DOCTEST_CHECK(mf(s, 20000, 22599, 10, c).empty());
     return true;
 })
 
@@ -384,128 +356,61 @@ REGISTER_TEST(schedule_rollback_no_replay, "schedule: 时钟回拨不重放（§
     return true;
 })
 
-// §9.10 春季：跳变缺口内墙钟（如 02:30 不存在）在最早存在时刻触发（如 03:00）。
-// 无 DST 的时区（CI UTC / 固定偏移）自检跳过：场景不适用。
+// §9.10 春季：跳变缺口内墙钟在最早存在时刻触发。ScopedTz 切到纽约真实跑：
+// 2026-03-08（3 月第 2 个周日）02:00→03:00，墙钟 02:30 在该日不存在。
+// 期望钉死真实日期（daysFromCivil 纯算术，无时区歧义）：缺口日触发 = 03:00 EDT = 07:00 UTC。
 // 防：春季在缺口日静默丢一次触发、或偏到缺口后的下一个整点之外（如 03:30）
 REGISTER_TEST(schedule_dst_spring_gap, "schedule: DST 春季缺口在最早存在时刻触发（§9.10 春季）", {
-    if (!zoneHasDst()) return true;
-    int smon = 0, sday = 0;
-    if (!findOffsetChangeDay(2026, true, smon, sday)) return true;  // 2026 无跳变（罕见）：跳过
-    // 逐分钟扫描跳变日：墙钟间隔 ≠ 1 分钟的第一分钟 = 缺口起点之后（最早存在时刻）
-    int gapMinute = -1;
-    const std::time_t base = unixOf(2026, smon, sday, 0, 0);
-    {
-        std::time_t prevU = base;
-        for (int m = 1; m <= 24 * 60; ++m) {
-            const std::time_t u = static_cast<std::time_t>(
-                static_cast<int64_t>(base) + static_cast<int64_t>(m) * 60);
-            std::tm wPrev{};
-            core::time::localTime(prevU, &wPrev);
-            std::tm w{};
-            core::time::localTime(u, &w);
-            const int64_t wallDelta =
-                (w.tm_hour * 60 + w.tm_min) - (wPrev.tm_hour * 60 + wPrev.tm_min);
-            if (wallDelta != 1) {
-                gapMinute = m;
-                break;
-            }
-            prevU = u;
-        }
-        if (gapMinute < 0) return true;  // 未找到缺口（理论不达）：跳过
+    const test_support::ScopedTz tz("America/New_York");
+    if (!nyDstEnvReady()) {
+        DOCTEST_SKIP("TZ=America/New_York 未生效（tzdata 缺失 / 受限环境），春季缺口用例跳过");
     }
-    // 规则时间 = 缺口前最后墙钟 + 30 分钟（落入缺口）；期望 = 缺口后最早存在墙钟
-    std::tm gapStartWall{};
-    {
-        const std::time_t u = static_cast<std::time_t>(
-            static_cast<int64_t>(base) + static_cast<int64_t>(gapMinute - 1) * 60);
-        core::time::localTime(u, &gapStartWall);
-    }
-    std::tm earliestWall{};
-    {
-        const std::time_t u = static_cast<std::time_t>(
-            static_cast<int64_t>(base) + static_cast<int64_t>(gapMinute) * 60);
-        core::time::localTime(u, &earliestWall);
-    }
-    const int reqMin = gapStartWall.tm_min + 30;
-    const int reqHour = gapStartWall.tm_hour + reqMin / 60;
-    const int reqMinute = reqMin % 60;
-    char timeJson[64];
-    std::snprintf(timeJson, sizeof(timeJson), "%02d:%02d", reqHour, reqMinute);
-    const std::string specJson = std::string(
-        R"({"unit":"day","interval":1,"time":")") + timeJson +
-        R"(","anchor_date":"2026-01-01"})";
-    const RuleSpec s = mustParse(RuleKind::Calendar, specJson);
-    const FireContext c = ctxAt(unixOf(2026, smon, sday - 1, 12, 0));
-    const int64_t n = nf(s, unixOf(2026, smon, sday - 1, 12, 0), c);
-    DOCTEST_CHECK(n != kErr && n != kNoFire);
+    const RuleSpec s = mustParse(RuleKind::Calendar,
+        R"({"unit":"day","interval":1,"time":"02:30","anchor_date":"2026-01-01"})");
+    const FireContext c = ctxAt(unixOf(2026, 3, 7, 12, 0));
+    // 缺口前一日（24h 日）同墙钟正常触发：02:30 EST = 07:30 UTC，不走前探
+    const int64_t prevFire = static_cast<int64_t>(unixOf(2026, 3, 7, 2, 30));
+    DOCTEST_CHECK(prevFire == core::time::daysFromCivil(2026, 3, 7) * 86400 + 7 * 3600 + 1800);
+    DOCTEST_CHECK(nf(s, unixOf(2026, 3, 7, 0, 0), c) == prevFire);
+    // 缺口日：请求 02:30 → 逐分钟前探命中最早存在墙钟 03:00 EDT = 07:00 UTC（Unix 秒钉死）
+    const int64_t n = nf(s, unixOf(2026, 3, 7, 12, 0), c);
+    DOCTEST_CHECK_MESSAGE(n == core::time::daysFromCivil(2026, 3, 8) * 86400 + 7 * 3600,
+                          "缺口日应触发在 03:00 EDT = 07:00 UTC，实际 " + std::to_string(n));
     std::tm got{};
     core::time::localTime(static_cast<std::time_t>(n), &got);
-    DOCTEST_CHECK_MESSAGE(got.tm_hour == earliestWall.tm_hour && got.tm_min == earliestWall.tm_min,
-                          "春季缺口应在最早存在时刻触发");
+    DOCTEST_CHECK(got.tm_mday == 8 && got.tm_hour == 3 && got.tm_min == 0);
+    // 23h 日的物理签名：比前一日同墙钟触发点只晚 23.5h（偏到 03:30 或次日都会破坏它）
+    DOCTEST_CHECK(n - prevFire == 23 * 3600 + 1800);
     return true;
 })
 
-// §9.10 秋季：回拨日重复墙钟（如 01:30 出现两次）只触发第一次；
-// missedFires 全天闭区间内该（本地日期, 时分）只出现一次（去重键）。
+// §9.10 秋季：回拨日重复墙钟只触发第一次出现。ScopedTz 切到纽约真实跑：
+// 2026-11-01（11 月第 1 个周日）02:00 EDT→01:00 EST，墙钟 01:30 出现两次
+// （第一次 EDT = 05:30 UTC、第二次 EST = 06:30 UTC，相差恰好 1h）。
+// 期望钉死真实日期：第一次出现 = daysFromCivil(2026,11,1)·86400 + 5h30m。
 // 防：同一本地日期+时分被返回两次 → 引擎重复执行同一计划时刻
 REGISTER_TEST(schedule_dst_fall_dedupe, "schedule: DST 秋季回拨重复墙钟只第一次（§9.10 秋季）", {
-    if (!zoneHasDst()) return true;
-    int fmon = 0, fday = 0;
-    if (!findOffsetChangeDay(2026, false, fmon, fday)) return true;
-    // 逐分钟扫描回拨日：墙钟回落（间隔 < 1 分钟）的第一分钟 = 重复时段起点
-    int repeatMinute = -1;
-    const std::time_t base = unixOf(2026, fmon, fday, 0, 0);
-    {
-        std::time_t prevU = base;
-        for (int m = 1; m <= 24 * 60; ++m) {
-            const std::time_t u = static_cast<std::time_t>(
-                static_cast<int64_t>(base) + static_cast<int64_t>(m) * 60);
-            std::tm wPrev{};
-            core::time::localTime(prevU, &wPrev);
-            std::tm w{};
-            core::time::localTime(u, &w);
-            const int64_t wallDelta =
-                (w.tm_hour * 60 + w.tm_min) - (wPrev.tm_hour * 60 + wPrev.tm_min);
-            if (wallDelta < 0) {
-                repeatMinute = m;
-                break;
-            }
-            prevU = u;
-        }
-        if (repeatMinute < 0) return true;  // 未找到重复时段（理论不达）：跳过
+    const test_support::ScopedTz tz("America/New_York");
+    if (!nyDstEnvReady()) {
+        DOCTEST_SKIP("TZ=America/New_York 未生效（tzdata 缺失 / 受限环境），秋季回拨用例跳过");
     }
-    // 规则时间 = 重复时段起点墙钟 + 30 分钟（如 01:30），期望 = 该墙钟第一次出现（回拨前）
-    std::tm repeatWall{};
-    {
-        const std::time_t u = static_cast<std::time_t>(
-            static_cast<int64_t>(base) + static_cast<int64_t>(repeatMinute) * 60);
-        core::time::localTime(u, &repeatWall);
-    }
-    const int reqMin = repeatWall.tm_min + 30;
-    const int reqHour = repeatWall.tm_hour + reqMin / 60;
-    const int reqMinute = reqMin % 60;
-    if (reqHour > 23) return true;  // 回拨跨零点（病态时区）：跳过
-    char timeJson[64];
-    std::snprintf(timeJson, sizeof(timeJson), "%02d:%02d", reqHour, reqMinute);
-    const std::string specJson = std::string(
-        R"({"unit":"day","interval":1,"time":")") + timeJson +
-        R"(","anchor_date":"2026-01-01"})";
-    const RuleSpec s = mustParse(RuleKind::Calendar, specJson);
-    const FireContext c = ctxAt(unixOf(2026, fmon, fday, 0, 0));
-    // 回拨日前一天起：nextFire 应命中该墙钟第一次出现（墙钟一致即可判）
-    const int64_t n = nf(s, unixOf(2026, fmon, fday - 1, 12, 0), c);
-    DOCTEST_CHECK(n != kErr && n != kNoFire);
+    const int64_t firstOcc = core::time::daysFromCivil(2026, 11, 1) * 86400 + 5 * 3600 + 1800;
+    const RuleSpec s = mustParse(RuleKind::Calendar,
+        R"({"unit":"day","interval":1,"time":"01:30","anchor_date":"2026-01-01"})");
+    const FireContext c = ctxAt(unixOf(2026, 11, 1, 0, 0));
+    // 回拨前一日 12:00 起：nextFire 命中第一次出现（EDT），不是第二次（EST）
+    const int64_t n = nf(s, unixOf(2026, 10, 31, 12, 0), c);
+    DOCTEST_CHECK_MESSAGE(n == firstOcc,
+                          "回拨日 01:30 应命中第一次出现 05:30 UTC，实际 " + std::to_string(n));
     std::tm got{};
     core::time::localTime(static_cast<std::time_t>(n), &got);
-    DOCTEST_CHECK(got.tm_hour == reqHour && got.tm_min == reqMinute);
-    // 全天 missedFires 中该（日期, 时分）只出现一次（去重键）
-    const auto all = mf(s, unixOf(2026, fmon, fday, 0, 0), unixOf(2026, fmon, fday, 23, 59), 10, c);
-    int count = 0;
-    for (int64_t u : all) {
-        std::tm w{};
-        core::time::localTime(static_cast<std::time_t>(u), &w);
-        if (w.tm_hour == reqHour && w.tm_min == reqMinute) ++count;
-    }
-    DOCTEST_CHECK_MESSAGE(count == 1, "回拨日重复墙钟只应出现一次，实际 " << count);
+    DOCTEST_CHECK(got.tm_mday == 1 && got.tm_hour == 1 && got.tm_min == 30);
+    // 已到第一次出现后再问：不得重放第二次出现（重放），而是次日 01:30 EST = 06:30 UTC
+    DOCTEST_CHECK(nf(s, static_cast<std::time_t>(firstOcc), c) ==
+                  core::time::daysFromCivil(2026, 11, 2) * 86400 + 6 * 3600 + 1800);
+    // 全天 missedFires 闭区间：该（本地日期, 时分）只出现一次，且为第一次出现
+    const auto all = mf(s, unixOf(2026, 11, 1, 0, 0), unixOf(2026, 11, 1, 23, 59), 10, c);
+    DOCTEST_CHECK(all.size() == 1);
+    DOCTEST_CHECK(all[0] == firstOcc);
     return true;
 })

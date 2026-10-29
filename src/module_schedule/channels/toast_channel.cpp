@@ -7,22 +7,24 @@
 //   * 自动消失由 app 层 toast（compose 每帧绘制 + 超时 clearAppNotice）负责，
 //     本渠道不管理消失时机。
 //   * 并发：deliver 任意线程只入队（互斥量保护槽位）；flushToMainThread
-//     仅主线程调用，是槽位内容唯一落 UI（showAppNotice）的时机。
+//     仅主线程调用，是槽位内容唯一落 UI（桥转发 showAppNotice）的时机。
 //   * 载荷裁剪：本渠道只透传 title/body；level/deeplink/runId/dedupeKey
 //     不参与 toast 渲染（记录层仍可经 Receipt 回溯）。
 #include "module_schedule/channel_registry.h"
 
 #include <mutex>
 #include <optional>
+#include <utility>
 
-#include "app_sidebar.h"  // app::showAppNotice（应用级 toast，跨页可见）
+#include "toast_notice_bridge.h"  // app::toast_notice::show（应用级 toast 投递缝，main 装配段注入真实现）
 
 namespace module::schedule {
 namespace {
 
-// 默认落点：app 级 toast。测试注入假 sink 断言主线程封送语义。
+// 默认落点：经 toast 通知桥投递 app 级 toast（渠道层不反向依赖 app 层）。
+// 测试注入假 sink 断言主线程封送语义。
 void defaultSink(const std::string& title, const std::string& body) {
-    app::showAppNotice(title, body);
+    app::toast_notice::show(title, body);
 }
 
 }  // namespace

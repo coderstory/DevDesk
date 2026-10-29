@@ -195,8 +195,8 @@ REGISTER_TEST(mcp_settings_unknown_module_id_mcp_is_known,
     return true;
 })
 
-REGISTER_TEST(mcp_settings_save_load_roundtrip_18_keys,
-              "mcp: mcpPort save/load 往返；顶层键 17→18（新键落库不吞旧键）", {
+REGISTER_TEST(mcp_settings_save_load_roundtrip_19_keys,
+              "mcp: mcpPort save/load 往返；顶层键 17→19（新键落库不吞旧键）", {
     using namespace module::settings;
     test_support::TestEnv env(kCfgPrefix, "roundtrip", true);
     SettingsConfig cfg;
@@ -205,11 +205,14 @@ REGISTER_TEST(mcp_settings_save_load_roundtrip_18_keys,
     DOCTEST_REQUIRE(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
     DOCTEST_CHECK_EQ(loaded.mcpPort, 9800);
-    // 行数口径：save 是 18 个顶层键一事务（settings_config.cpp save 注释同步处）
+    // 行数口径：save 是 19 个顶层键一事务（settings_config.cpp save 注释同步处）。
+    // 演进：mcpPort 加入时 17→18（spec 2026-10-26-mcp-server-skeleton-design §save），
+    // 后 release 模块补 moduleDefaultsVersion 迁移键 → 19。本断言钉「save 写全部
+    // 顶层键、eraseWithPrefixExcept keep 全部键（新键落库不吞旧键）」的口径。
     auto rows = core::appconfig::listWithPrefix(*::core::appDatabase(),
                                                 SettingsStore::keyNamespace());
     DOCTEST_REQUIRE(rows.isOk());
-    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(18));
+    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(19));
     // 存量库缺 mcpPort 键（旧版本升级）→ 读出默认 8931，不报错
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), SettingsStore::keyNamespace(),

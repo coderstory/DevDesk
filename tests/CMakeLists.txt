@@ -99,6 +99,9 @@ add_executable(devdesk_tests
     test_modules/test_memory_proposals.cpp
     # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
     test_modules/test_memory_collect_wiring.cpp
+    # memory_search MCP 工具（F-01/F-02/F-04/F-05/F-06）：假检索器 + 局部注册表，
+    # schema/参数/降级四态/截断/注册往返/持久化往返
+    test_modules/test_memory_mcp_search_tool.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp
@@ -202,6 +205,10 @@ add_executable(devdesk_tests
     # app::mcp 桥实现缝：app_assembly.cpp 与 settings_module.cpp 引用其符号
     #（module_toggle_bridge.cpp 同款理由）
     ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
+    # app::memory_mcp 桥实现缝：mcp_page_module.cpp 引用其符号（同款理由）
+    ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
+    # app::toast_notice 桥实现缝：toast_channel.cpp 引用其符号（同款理由）
+    ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -373,6 +380,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
@@ -381,7 +390,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
         # app::mcp::* 桥符号后缝必须单独编进来（与 module_toggle_bridge.cpp 同款理由）
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
-            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp")
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp")
     endif()
     target_include_directories(${_probe_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
@@ -401,6 +412,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_about
         devdesk_module_wallpaper
         devdesk_module_release
+        devdesk_module_schedule
     )
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），
@@ -456,6 +468,12 @@ foreach(_probe_source ${_devdesk_probe_sources})
             PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 endforeach()
+
+# memory_e2e_probe 是 live 栈探针：要外部拉起 llama-server + telemem（回环
+# 11435/8421）并注入 DEVDESK_DATA_ROOT 与 --projects <root>，裸 ctest 注册
+# 无法运行——按 github_sync_live / agent_live 同款挪出 probe 门禁；验收
+# runbook 见 docs/superpowers/plans/2026-10-28-memcpp-e2e-verify.md。
+set_tests_properties(memory_e2e_probe PROPERTIES LABELS "live")
 endif()
 
 # ==================== GitHub Sync 真机验收（**默认不构建**）====================
@@ -488,6 +506,8 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         live/github_sync_live.cpp
         ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
@@ -536,7 +556,9 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     add_executable(agent_live
         live/agent_live.cpp
         ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
-        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp)
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp)
     # module_claude_proxy / module_settings：claude_tools.h / app_tools.h 的同级头
     target_include_directories(agent_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src
@@ -565,9 +587,13 @@ endif()
 if(DEVDESK_BUILD_LIVE_TOOLS)
     # 只链 devdesk_module_mcp（core / platform 经其 PUBLIC 传递）；mcp_live.cpp
     # 不引用 app 层符号,bridge.cpp 只依赖 core——不拉 settings 等兄弟模块
+    # memory_mcp_bridge.cpp：module_mcp 页引用 app::memory_mcp::* 符号，须同编
+    # toast_notice_bridge.cpp：同款镜像登记（devdesk_module_schedule 渠道层引用其符号）
     add_executable(mcp_live
         live/mcp_live.cpp
-        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp)
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp)
     target_include_directories(mcp_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests)

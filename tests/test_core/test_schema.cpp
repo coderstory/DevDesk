@@ -279,6 +279,8 @@ REGISTER_TEST(schema_todo_tables_columns,
             "priority:INTEGER:1:0",
             "due_at:INTEGER:0:<none>",
             "tags:TEXT:0:<none>",
+            // UAT6.2 H31 关联文档列（schema.h DDL：TEXT NOT NULL DEFAULT ''，空串 = 未关联）
+            "doc_path:TEXT:1:''",
             "position:INTEGER:1:<none>",
             "completed_at:INTEGER:0:<none>",
             "created_at:INTEGER:1:<none>",

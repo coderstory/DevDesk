@@ -380,7 +380,7 @@ core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) 
 
 core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
         "FROM todo_tasks WHERE column_id = ? ORDER BY position ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
@@ -408,7 +408,7 @@ core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
 
 core::Result<std::vector<Task>> TodoService::listAllTasks() {
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
         "FROM todo_tasks ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
@@ -829,7 +829,7 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
         return listAllTasks();
     }
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
         "FROM todo_tasks "
         "WHERE title LIKE ? ESCAPE '\\' "
         "   OR (description IS NOT NULL AND description LIKE ? ESCAPE '\\') "
@@ -873,7 +873,7 @@ core::Result<std::vector<Task>> TodoService::listOverdue() {
     // 逾期谓词单源：core/overdue.h 的 kWhereSql（与 HomeService::getStats 共用，改一处两边同步）
     const std::string sql =
         std::string(
-            "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
+            "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
             "FROM todo_tasks WHERE ") +
         core::overdue::kWhereSql + " ORDER BY due_at ASC";
     auto prep = db_.prepare(sql);

@@ -3671,15 +3671,16 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
 })
 
 // UAT5 详情弹窗重设计几何钉值（弹性宽：1600 窗 → 800 = max(640, 窗口/2)）。
-// UAT6 增补：frame 高改内容驱动（短内容 416 = 头 76+内容 276+缝 12+钮 34+底距 18，
-// 上限仍 min(600, 窗−48)）——本用例即「短内容」钉值口径。
+// UAT6 增补：frame 高改内容驱动（上限仍 min(600, 窗−48)）；UAT6.2 H31 关联文档块
+// 入内容区后短内容 = 头 58 + 内容 340（54+104+64+20+34+64，末位 64 = 文档块
+// kBlockDocH）+ 缝 12 + 钮 34 + 底距 18 = 462——本用例即「短内容」钉值口径。
 // 防的事故：① 弹性宽回退固定 640 → 面板宽断言红；② 双列回退单列长条 → 右列 x
 // 断言红；③ segment 选项不按列宽平分 → 钮宽/右缘断言红；④ 底部按钮带（取消|保存）
-// 被删除/移动按钮挤掉 → 保存钮位置断言红；⑤ 高度回退恒 600（不随内容）→ 416 断言红。
+// 被删除/移动按钮挤掉 → 保存钮位置断言红；⑤ 高度回退恒 600（不随内容）→ 462 断言红。
 // 几何断言走 layout 后的 frame 绝对坐标，再减面板原点换回弹窗内坐标（与 agent
 // 弹窗几何用例同口径）。
 REGISTER_TEST(todo_ui_detail_two_column_geometry,
-              "todo_ui: 详情弹窗重设计几何——弹性宽 800、内容驱动高 416 / 双列 x=408 / segment 平分列宽 / 底部 取消|保存", {
+              "todo_ui: 详情弹窗重设计几何——弹性宽 800、内容驱动高 462 / 双列 x=408 / segment 平分列宽 / 底部 取消|保存", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto col = env.svc->createColumn("双列列");
@@ -3711,10 +3712,11 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     const float py = panel->frame.y;
 
     // ① 弹窗尺寸：弹性宽 = max(640, 窗口/2) = 800；高 = 内容驱动（UAT6 真机反馈
-    //「底部空白太多」恒 600）：短内容（无标签，各块定高 54+104+64+20+34=276）
-    // frame 高 = 头 58 + 内容 276 + 缝 12 + 钮 34 + 底距 18 = 398（上限 600 不触）
+    //「底部空白太多」恒 600）：短内容（无标签，各块定高 54+104+64+20+34+64=340，
+    // 末位 64 = H31 关联文档块 kBlockDocH）
+    // frame 高 = 头 58 + 内容 340 + 缝 12 + 钮 34 + 底距 18 = 462（上限 600 不触）
     DOCTEST_CHECK(floatEq(panel->frame.width, 800.0f));
-    DOCTEST_CHECK(floatEq(panel->frame.height, 398.0f));
+    DOCTEST_CHECK(floatEq(panel->frame.height, 462.0f));
     {
         // 窄窗不缩：1100 窗 → 仍为最小档 640（demo px 是下限）
         Frame g(mod.get(), 1100.0f, 900.0f);
@@ -3803,13 +3805,13 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 300.0f));
     DOCTEST_CHECK(floatEq(tagInput->frame.height, 34.0f));
 
-    // ⑧ 底部：取消|保存 右对齐、钉 frame 底（y = frame 高 −18 −34 = 398−52 = 346
+    // ⑧ 底部：取消|保存 右对齐、钉 frame 底（y = frame 高 −18 −34 = 462−52 = 410
     // h34）；保存底 = 面板底 − 18（UAT6 前是 h−58 随请求高定位）
     const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
     const auto* cancelBg = f.ui.find("todo.dialog.detail.cancel.bg");
     DOCTEST_REQUIRE(saveBg != nullptr);
     DOCTEST_REQUIRE(cancelBg != nullptr);
-    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 346.0f));
+    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 410.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.height, 34.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.x - px, 800.0f - 48.0f - 96.0f));
     DOCTEST_CHECK(floatEq(cancelBg->frame.x - px, 800.0f - 48.0f - 96.0f * 2.0f - 8.0f));
@@ -3826,8 +3828,8 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
 // 的 y 仍 == frame 底 − 18 − 按钮高，与内容高度、窗口高度都解耦；弹高 clamp 公式
 // min(600, 窗高 − 48) 在多档窗高下逐点验证（含真机出框报告里的 588 frame 档）。
 // UAT6 高度批增补：frame 高改内容驱动后本用例口径不变——任务给 60 枚标签
-//（8 行 chips，内容高 564 → 期望高 704 > 600），前 3 档仍由 clamp 公式主导、
-// 4 档 frameH 期望值全部照旧；矮窗档内容靠滚动兜底。
+//（8 行 chips，内容高 340+288=628 → 期望高 58+628+64=750 > 600），前 3 档仍由
+// clamp 公式主导、4 档 frameH 期望值全部照旧；矮窗档内容靠滚动兜底。
 // 回退路径：按钮改回随请求高定位（h − 58）→ 548/540/536/420 各档 y 断言红；
 // 高度公式回退成不 clamp 的固定 600 → 636/520 两档 frameH 断言红；
 // 内容驱动公式丢 chips 块 → 内容高不足 600，前 3 档 frameH 断言红。
@@ -3841,7 +3843,7 @@ REGISTER_TEST(todo_ui_detail_footer_pinned_frame_bottom,
     DOCTEST_REQUIRE(a.isOk());
     {
         // 60 枚中文标签 → chips 在 800 宽弹窗内换 8 行（UAT6 前单行截断只渲染前 8 枚），
-        // 内容高 276+288=564 → 期望 frame 高 76+564+64=704 > 600：保证 4 档仍测 clamp 档
+        // 内容高 340+288=628 → 期望 frame 高 58+628+64=750 > 600：保证 4 档仍测 clamp 档
         module::todo::Task t2 = a.value();
         for (int i = 0; i < 60; ++i) t2.tags.push_back("标签" + std::to_string(i));
         DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
@@ -3940,11 +3942,11 @@ REGISTER_TEST(todo_ui_detail_content_scroll_when_tall,
     {
         Frame f(mod.get());
         f.ui.layout(1600.0f, 1000.0f);
-        // 内容驱动高（短内容）：398 = 58+276+12+34+18，视口 276 == 内容 276 精确
-        // 贴合（scrollable 判定是严格 >）→ 不建滚动条
+        // 内容驱动高（短内容）：462 = 58+340+12+34+18（内容含 H31 文档块 64），
+        // 视口 340 == 内容 340 精确贴合（scrollable 判定是严格 >）→ 不建滚动条
         const auto* shortPanel = f.ui.find("todo.dialog.detail.panel");
         DOCTEST_REQUIRE(shortPanel != nullptr);
-        DOCTEST_CHECK(floatEq(shortPanel->frame.height, 398.0f));
+        DOCTEST_CHECK(floatEq(shortPanel->frame.height, 462.0f));
         DOCTEST_CHECK(f.ui.find("todo.dialog.detail.scroll.scroll.track") == nullptr);
         DOCTEST_CHECK(f.ui.find("todo.dialog.detail.tag.input") != nullptr);
     }

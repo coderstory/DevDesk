@@ -119,7 +119,7 @@ struct CardDrawArgs {
 // 6 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）
 void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题/字号/窗口效果）
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
-void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关（标题右含 MCP 开关；壁纸第 7 格，平台能力门控在格内）
+void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关（标题右含 MCP 开关；壁纸末格，平台能力门控在格内）
 void drawProxyCard(const CardDrawArgs& args);        // 通用：Claude 代理（开关门控；UAT5 自模块 tab 迁入）
 void drawMcpCard(const CardDrawArgs& args);          // 通用：MCP 服务（kModuleIdMcp 门控）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别

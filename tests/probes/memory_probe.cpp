@@ -2,6 +2,8 @@
 // 组 C 配置卡 + 三视图截图）。
 //
 // 运行：memory_probe.exe [--out <目录>] [--size 1200x1000]
+//   --size 口径 = 逻辑像素（probe_harness 约定：探针窗口逻辑 = 物理，帧驱动
+//   恒传刻度 1；与 about/todo_drag 探针同款，不按 contentScale 换算）。
 // 数据隔离：进程内先把 DEVDESK_DATA_ROOT 指到临时目录（先于一切 memoryDataDir()
 // 消费），演示数据（3 条提案 + 账面行 + 注入账 + 评测结果）全部落该独立根，
 // 不碰真实数据根。截图 = 进程内 glReadPixels 帧捕获（home_probes 同款），
@@ -172,20 +174,17 @@ int main(int argc, char* argv[]) {
     runtime.initialize(window);
 
     const std::string pageId = "memory";
-    // 窗口像素尺寸 = 物理像素；逻辑尺寸 = 物理 / contentScale（compose 逻辑宽高
-    // 必须与渲染刻度一致，否则整页按比例溢出、文本被渲染端剔除）
-    float contentScale = 1.0f;
-    glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &contentScale,
-                              nullptr);
-    if (contentScale <= 0.0f) contentScale = 1.0f;
-    const float w = static_cast<float>(args.windowW) / contentScale;
-    const float h = static_cast<float>(args.windowH) / contentScale;
+    // --size 即逻辑尺寸（逻辑 = 物理，probe_harness pollOnce 刻意口径）；不按
+    // contentScale 换算——除法会把 2x Retina 下的 1200x1000 压成 600x500 布局。
+    const float w = static_cast<float>(args.windowW);
+    const float h = static_cast<float>(args.windowH);
+    std::cout << "memory_probe: 逻辑窗口 " << args.windowW << "x" << args.windowH
+              << "（--size 口径 = 逻辑像素，逻辑 = 物理）" << NL;
     Asserts A;
 
-    // 帧驱动 dpiScale = 窗口真实 content scale（与 compose 逻辑尺寸配对，
-    // 见上文；pollOnce 的刻度 1 只适用于 scale=1 的窗口）
+    // 帧驱动刻度 1 与上方口径配对（probe_harness pollOnce 同款）
     auto composeFrame = [&]() {
-        runtime.update(window, 1.0f / 60.0f, contentScale, contentScale);
+        runtime.update(window, 1.0f / 60.0f, 1.0f, 1.0f);
         runtime.compose(pageId, w, h, [&](eui::Ui& u, const eui::Screen& screen) {
             A.ui = &u;
             mod->compose(u, screen);

@@ -196,7 +196,11 @@ core::Result<Response> send(const Request& req) {
         if (headers) curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         LOG_ERROR("HTTP " + req.method + " " + req.url + " failed: " + resp.errorMessage);
-        return core::Result<Response>::fail(core::ErrorCode::NetworkUnreachable,
+        // 超时单列成 NetworkTimeout（其余传输错误仍 NetworkUnreachable）——调用方
+        // 只透传 errorMessage，不分支此码；超时/拒连可分是检索类工具的降级文案前提
+        return core::Result<Response>::fail(
+            rc == CURLE_OPERATION_TIMEDOUT ? core::ErrorCode::NetworkTimeout
+                                           : core::ErrorCode::NetworkUnreachable,
             resp.errorMessage);
     }
 

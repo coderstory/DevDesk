@@ -1084,7 +1084,7 @@ private:
         .openLinkedDoc = [this](const std::string& relPath) {
             openLinkedDoc(relPath);
         },
-        .docExists = [this](const std::string& relPath) {
+        .docExists = [](const std::string& relPath) {
             auto src = ::core::ServiceLocator::requireService<
                 ::core::IMarkdownNotesSource>();
             return src.isOk() && src.value()->noteExists(relPath);

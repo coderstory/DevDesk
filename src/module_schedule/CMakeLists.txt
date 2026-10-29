@@ -14,8 +14,7 @@ add_library(devdesk_module_schedule STATIC
     channels/toast_channel.cpp
     channels/os_notification.cpp
     channels/silent_channel.cpp
-    # 波 S7a：内部任务注册表缝 + 系统定时只读来源接口 + 列表页 + 模块宿主
-    internal_task_registry.cpp
+    # 波 S7a：系统定时只读来源接口 + 列表页 + 模块宿主
     schedule_provider.cpp
     schedule_ui_list.cpp
     schedule_module.cpp

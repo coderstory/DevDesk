@@ -10,12 +10,14 @@
 #include "core/logging.h"
 #include "core/theme.h"
 #include "mcp_service_bridge.h"
+#include "memory_mcp_bridge.h"
 
 #include <core/platform/platform.h>  // core::platform::requestUiUpdate（唤醒主循环）
 
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/scrollview.h>
+#include <components/switch.h>
 #include <components/theme.h>
 
 #include <eui/dsl.h>
@@ -140,6 +142,10 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                                 .build();
                         })
                         .build();
+
+                    // 「记忆」模块行：向 MCP 贡献 memory_search 工具的模块开关
+                    // （关 = 立即注销工具；经 app::memory_mcp 桥操作，不触 module_memory）
+                    drawMemoryModuleRow(ui, contentW, t, comp);
 
                     // 区头：标题 + 计数 chip
                     ui.row("mcp.section")
@@ -344,6 +350,82 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                     }
                 })
                 .onClick([this, name] { openDetail(name); })
+                .build();
+        })
+        .build();
+}
+
+// 「记忆」模块行：全宽轻量行卡（状态行同构；不用 340 网格卡，为后续模块行
+// 自然堆叠留形）。开关态每帧从桥读——setEnabled 失败时注册态未变，下一帧自动
+// 回弹，无需额外状态回写；反馈红字占用说明行槽位，行盒几何不变。
+void McpPageModule::drawMemoryModuleRow(
+    eui::Ui& ui, float contentW, const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp) {
+    const std::string id = "mcp.module.memory";
+    constexpr float kRowH = 64.0f;
+    constexpr float kPad = 12.0f;
+    constexpr float kIconSize = 40.0f;
+    constexpr float kSwitchW = 44.0f;
+    constexpr float kSwitchH = 24.0f;
+    // 说明/标题区：图标右侧到开关左侧（130% 字号档靠 Ellipsis 兜底）
+    const float textW = std::max(
+        0.0f, contentW - kPad - kIconSize - 12.0f - kSwitchW - kPad);
+
+    ui.stack(id)
+        .size(contentW, kRowH)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .size(contentW, kRowH)
+                .color(eui::Color{t.colors.surface.r, t.colors.surface.g,
+                                  t.colors.surface.b, t.colors.surface.a})
+                .radius(t.sizes.radiusLarge)
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+            ui.rect(id + ".icon.bg")
+                .position(kPad, kPad)
+                .size(kIconSize, kIconSize)
+                .radius(t.sizes.radius)
+                .color(t.colors.primarySoftBg)
+                .build();
+            ui.text(id + ".icon")
+                .position(kPad, kPad)
+                .size(kIconSize, kIconSize)
+                .icon(eui::utf8(0xF5DC))  // fa-brain，与 app_registry 记忆行同码点
+                .fontSize(core::theme::scaled(16.0f))
+                .color(t.colors.primary)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .build();
+            ui.text(id + ".title")
+                .position(kPad + kIconSize + 12.0f, kPad)
+                .size(textW, core::theme::scaled(18.0f))
+                .text("记忆")
+                .fontSize(core::theme::scaled(14.0f))
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            const bool hasError = !memorySaveError_.empty();
+            ui.text(id + ".desc")
+                .position(kPad + kIconSize + 12.0f, kPad + core::theme::scaled(22.0f))
+                .size(textW, core::theme::scaled(16.0f))
+                .text(hasError ? "保存失败：" + memorySaveError_
+                               : "将本机长期记忆以 memory_search 工具开放给 MCP 客户端查询")
+                .fontSize(core::theme::scaled(12.0f))
+                .color(hasError ? t.colors.errorText : t.colors.textTertiary)
+                .maxWidth(textW)
+                .wrap(false)
+                .overflow(core::TextOverflow::Ellipsis)
+                .build();
+            components::toggleSwitch(ui, id + ".toggle")
+                .position(contentW - kPad - kSwitchW, (kRowH - kSwitchH) * 0.5f)
+                .size(kSwitchW, kSwitchH)
+                .checked(app::memory_mcp::status().switchOn)
+                .theme(comp)
+                .onChange([this](bool on) {
+                    const auto r = app::memory_mcp::setEnabled(on);
+                    memorySaveError_ =
+                        r.isFail() ? r.errorMessage() : std::string();
+                })
                 .build();
         })
         .build();

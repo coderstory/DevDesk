@@ -134,7 +134,7 @@ REGISTER_TEST(notes_git_integration_init, "notes_git: 临时目录 git init 后 
     }
     test_support::TempDir tmp("notes_git_init");
     int rc = runGit(tmp.path, {"git", "init"});
-    DOCTEST_CHECK_EQ(rc, 0);
+    DOCTEST_CHECK_MESSAGE(rc == 0, "git init 退出码 " + std::to_string(rc));
     std::error_code ec;
     bool hasDotGit = fs::exists(tmp.path / ".git", ec);
     DOCTEST_CHECK(hasDotGit);

@@ -1197,7 +1197,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                           t,
                                           (ro || !host.openDocPicker)
                                               ? std::function<void()>{}
-                                              : [&d, &host] { host.openDocPicker(); },
+                                              : [&host] { host.openDocPicker(); },
                                           0xF15B);  // fa-file
                                 return;
                             }

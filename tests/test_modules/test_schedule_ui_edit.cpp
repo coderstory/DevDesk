@@ -60,14 +60,15 @@ REGISTER_TEST(scheduleEditRoundTripOnceLocal, "schedule 编辑弹窗：once(at_l
     f.onceUseLocal = true;
     f.onceAtLocal = "2026-11-02 08:30";
     const auto spec = module::schedule::ui::validateAndParse(f);
-    REQUIRE(spec.isOk());
-    REQUIRE(spec.value().kind == RuleKind::Once);
-    REQUIRE(spec.value().hasAtLocal);
-    CHECK(spec.value().atLocal.tm_year + 1900 == 2026);
-    CHECK(spec.value().atLocal.tm_mon + 1 == 11);
-    CHECK(spec.value().atLocal.tm_mday == 2);
-    CHECK(spec.value().atLocal.tm_hour == 8);
-    CHECK(spec.value().atLocal.tm_min == 30);
+    DOCTEST_REQUIRE(spec.isOk());
+    DOCTEST_REQUIRE(spec.value().kind == RuleKind::Once);
+    DOCTEST_REQUIRE(spec.value().hasAtLocal);
+    DOCTEST_CHECK(spec.value().atLocal.tm_year + 1900 == 2026);
+    DOCTEST_CHECK(spec.value().atLocal.tm_mon + 1 == 11);
+    DOCTEST_CHECK(spec.value().atLocal.tm_mday == 2);
+    DOCTEST_CHECK(spec.value().atLocal.tm_hour == 8);
+    DOCTEST_CHECK(spec.value().atLocal.tm_min == 30);
+    return true;
 });
 
 // 防：once 绝对时刻形态（at）与本地形态（at_local）互串。
@@ -77,10 +78,11 @@ REGISTER_TEST(scheduleEditRoundTripOnceAt, "schedule 编辑弹窗：once(at) 表
     f.onceUseLocal = false;
     f.onceAtUnix = 1700000000;
     const auto spec = module::schedule::ui::validateAndParse(f);
-    REQUIRE(spec.isOk());
-    CHECK(spec.value().hasAt);
-    CHECK(spec.value().atUnix == 1700000000);
-    CHECK_FALSE(spec.value().hasAtLocal);
+    DOCTEST_REQUIRE(spec.isOk());
+    DOCTEST_CHECK(spec.value().hasAt);
+    DOCTEST_CHECK(spec.value().atUnix == 1700000000);
+    DOCTEST_CHECK_FALSE(spec.value().hasAtLocal);
+    return true;
 });
 
 // 防：interval 网格参数（every_sec/anchor/window）在表单↔JSON 间丢失导致相位漂移。
@@ -91,11 +93,12 @@ REGISTER_TEST(scheduleEditRoundTripInterval, "schedule 编辑弹窗：interval �
     f.intervalAnchor = 1000;
     f.intervalWindow = 10;
     const auto spec = module::schedule::ui::validateAndParse(f);
-    REQUIRE(spec.isOk());
-    CHECK(spec.value().kind == RuleKind::Interval);
-    CHECK(spec.value().everySec == 1800);
-    CHECK(spec.value().anchor == 1000);
-    CHECK(spec.value().windowSec == 10);
+    DOCTEST_REQUIRE(spec.isOk());
+    DOCTEST_CHECK(spec.value().kind == RuleKind::Interval);
+    DOCTEST_CHECK(spec.value().everySec == 1800);
+    DOCTEST_CHECK(spec.value().anchor == 1000);
+    DOCTEST_CHECK(spec.value().windowSec == 10);
+    return true;
 });
 
 // 防：周规则的周几/相位锚点（anchor_date）在表单↔JSON 间漂移（每两周周二 09:00）。
@@ -109,15 +112,16 @@ REGISTER_TEST(scheduleEditRoundTripCalendarWeek, "schedule 编辑弹窗：calend
     f.calendarMinute = 0;
     f.calendarAnchorDate = "2026-10-27";  // 周二
     const auto spec = module::schedule::ui::validateAndParse(f);
-    REQUIRE(spec.isOk());
+    DOCTEST_REQUIRE(spec.isOk());
     const auto& c = spec.value().calendar;
-    CHECK(c.unit == core::schedule::CalendarSpec::Unit::Week);
-    CHECK(c.interval == 2);
-    CHECK(c.weekdays[2]);
-    CHECK_FALSE(c.weekdays[1]);
-    CHECK(c.hour == 9);
-    CHECK(c.minute == 0);
-    CHECK(c.anchorDayNum == core::time::daysFromCivil(2026, 10, 27));
+    DOCTEST_CHECK(c.unit == core::schedule::CalendarSpec::Unit::Week);
+    DOCTEST_CHECK(c.interval == 2);
+    DOCTEST_CHECK(c.weekdays[2]);
+    DOCTEST_CHECK_FALSE(c.weekdays[1]);
+    DOCTEST_CHECK(c.hour == 9);
+    DOCTEST_CHECK(c.minute == 0);
+    DOCTEST_CHECK(c.anchorDayNum == core::time::daysFromCivil(2026, 10, 27));
+    return true;
 });
 
 // 防：每月三种选择器（第 N 天 / 第 N 个周几 / 最后工作日）互串。
@@ -131,9 +135,9 @@ REGISTER_TEST(scheduleEditRoundTripCalendarMonthSelectors, "schedule 编辑弹�
         f.calendarHour = 10;
         f.calendarMinute = 0;
         const auto spec = module::schedule::ui::validateAndParse(f);
-        REQUIRE(spec.isOk());
-        CHECK(spec.value().calendar.hasMonthDay);
-        CHECK(spec.value().calendar.monthDay == 15);
+        DOCTEST_REQUIRE(spec.isOk());
+        DOCTEST_CHECK(spec.value().calendar.hasMonthDay);
+        DOCTEST_CHECK(spec.value().calendar.monthDay == 15);
     }
     {
         EditFormState f;
@@ -145,10 +149,10 @@ REGISTER_TEST(scheduleEditRoundTripCalendarMonthSelectors, "schedule 编辑弹�
         f.calendarNthWeekday = 1;  // 周一
         f.calendarHour = 9;
         const auto spec = module::schedule::ui::validateAndParse(f);
-        REQUIRE(spec.isOk());
-        CHECK(spec.value().calendar.hasNthWeekday);
-        CHECK(spec.value().calendar.nth == 2);
-        CHECK(spec.value().calendar.nthWeekday == 1);
+        DOCTEST_REQUIRE(spec.isOk());
+        DOCTEST_CHECK(spec.value().calendar.hasNthWeekday);
+        DOCTEST_CHECK(spec.value().calendar.nth == 2);
+        DOCTEST_CHECK(spec.value().calendar.nthWeekday == 1);
     }
     {
         EditFormState f;
@@ -158,9 +162,10 @@ REGISTER_TEST(scheduleEditRoundTripCalendarMonthSelectors, "schedule 编辑弹�
         f.calendarLastWorkday = true;
         f.calendarHour = 17;
         const auto spec = module::schedule::ui::validateAndParse(f);
-        REQUIRE(spec.isOk());
-        CHECK(spec.value().calendar.lastWorkday);
+        DOCTEST_REQUIRE(spec.isOk());
+        DOCTEST_CHECK(spec.value().calendar.lastWorkday);
     }
+    return true;
 });
 
 // 防：「工作日 09:00」控件形态的 workdays_only 标志丢失（周末误触发）。
@@ -168,10 +173,11 @@ REGISTER_TEST(scheduleEditRoundTripCalendarWorkdays, "schedule 编辑弹窗：ca
     EditFormState f = makeDailyForm();
     f.calendarWorkdaysOnly = true;
     const auto spec = module::schedule::ui::validateAndParse(f);
-    REQUIRE(spec.isOk());
-    CHECK(spec.value().calendar.unit == core::schedule::CalendarSpec::Unit::Day);
-    CHECK(spec.value().calendar.workdaysOnly);
-    CHECK(spec.value().calendar.hour == 9);
+    DOCTEST_REQUIRE(spec.isOk());
+    DOCTEST_CHECK(spec.value().calendar.unit == core::schedule::CalendarSpec::Unit::Day);
+    DOCTEST_CHECK(spec.value().calendar.workdaysOnly);
+    DOCTEST_CHECK(spec.value().calendar.hour == 9);
+    return true;
 });
 
 // 防：cron 表达式经 JSON 转义损坏（空格/星号/逗号）。
@@ -180,8 +186,9 @@ REGISTER_TEST(scheduleEditRoundTripCron, "schedule 编辑弹窗：cron 表单→
     f.kind = RuleKind::Cron;
     f.cronExpr = "30 9 * * 1-5";
     const auto spec = module::schedule::ui::validateAndParse(f);
-    REQUIRE(spec.isOk());
-    CHECK(spec.value().kind == RuleKind::Cron);
+    DOCTEST_REQUIRE(spec.isOk());
+    DOCTEST_CHECK(spec.value().kind == RuleKind::Cron);
+    return true;
 });
 
 // 防：event 事件名列表与冷却在表单↔JSON 间丢失；resident 空 spec 被解析器拒收。
@@ -192,19 +199,20 @@ REGISTER_TEST(scheduleEditRoundTripEventAndResident, "schedule 编辑弹窗：ev
         f.eventNames = {"todo:saved", "note:edit"};
         f.eventCooldownSec = 60;
         const auto spec = module::schedule::ui::validateAndParse(f);
-        REQUIRE(spec.isOk());
-        REQUIRE(spec.value().events.size() == 2);
-        CHECK(spec.value().events[0] == "todo:saved");
-        CHECK(spec.value().events[1] == "note:edit");
-        CHECK(spec.value().cooldownSec == 60);
+        DOCTEST_REQUIRE(spec.isOk());
+        DOCTEST_REQUIRE(spec.value().events.size() == 2);
+        DOCTEST_CHECK(spec.value().events[0] == "todo:saved");
+        DOCTEST_CHECK(spec.value().events[1] == "note:edit");
+        DOCTEST_CHECK(spec.value().cooldownSec == 60);
     }
     {
         EditFormState f;
         f.kind = RuleKind::Resident;
         const auto spec = module::schedule::ui::validateAndParse(f);
-        REQUIRE(spec.isOk());
-        CHECK(spec.value().kind == RuleKind::Resident);
+        DOCTEST_REQUIRE(spec.isOk());
+        DOCTEST_CHECK(spec.value().kind == RuleKind::Resident);
     }
+    return true;
 });
 
 // 防：用户选了周一但锚定日期是周二时静默保存 → 相位错位（每两周规则整体错一周）。
@@ -215,12 +223,13 @@ REGISTER_TEST(scheduleEditAnchorWeekdayMismatchRejected, "schedule 编辑弹窗�
     f.calendarWeekdays = {1};       // 只勾周一
     f.calendarAnchorDate = "2026-10-27";  // 周二
     const auto bad = module::schedule::ui::validateAndParse(f);
-    CHECK(bad.isFail());
-    CHECK(bad.errorMessage().find("锚定日期") != std::string::npos);  // 红字文案可展示
+    DOCTEST_CHECK(bad.isFail());
+    DOCTEST_CHECK(bad.errorMessage().find("锚定日期") != std::string::npos);  // 红字文案可展示
 
     f.calendarWeekdays = {2};  // 改勾周二 → 通过
     const auto good = module::schedule::ui::validateAndParse(f);
-    CHECK(good.isOk());
+    DOCTEST_CHECK(good.isOk());
+    return true;
 });
 
 // 防：月规则三选择器全不选时落库出「永不触发」的哑规则。
@@ -231,7 +240,8 @@ REGISTER_TEST(scheduleEditMonthSelectorRequired, "schedule 编辑弹窗：month 
     f.calendarHasMonthDay = false;
     f.calendarHasNthWeekday = false;
     f.calendarLastWorkday = false;
-    CHECK(module::schedule::ui::validateAndParse(f).isFail());
+    DOCTEST_CHECK(module::schedule::ui::validateAndParse(f).isFail());
+    return true;
 });
 
 // 防：预览自算而非 nextFire 迭代，与引擎实际触发时刻漂移（预览 09:00 实际 10:00）。
@@ -239,16 +249,17 @@ REGISTER_TEST(scheduleEditPreviewFiveIterations, "schedule 编辑弹窗：预览
     EditFormState f = makeDailyForm();  // 每天 09:00
     const int64_t after = localUnix(2026, 10, 27, 8, 0);
     const auto preview = module::schedule::ui::previewNextFires(f, after, makeCtx(after));
-    REQUIRE(preview.isOk());
-    REQUIRE(preview.value().size() == 5);
+    DOCTEST_REQUIRE(preview.isOk());
+    DOCTEST_REQUIRE(preview.value().size() == 5);
     for (int i = 0; i < 5; ++i) {
         const int64_t expect = localUnix(2026, 10, 27 + i, 9, 0);
-        CHECK(preview.value()[static_cast<size_t>(i)] == expect);
+        DOCTEST_CHECK(preview.value()[static_cast<size_t>(i)] == expect);
         if (i > 0) {
-            CHECK(preview.value()[static_cast<size_t>(i)] >
+            DOCTEST_CHECK(preview.value()[static_cast<size_t>(i)] >
                   preview.value()[static_cast<size_t>(i - 1)]);  // 严格递增
         }
     }
+    return true;
 });
 
 // 防：一次性规则预览越界（过去时刻 → 空预览而非 5 个历史时刻）。
@@ -259,8 +270,9 @@ REGISTER_TEST(scheduleEditPreviewOncePastIsEmpty, "schedule 编辑弹窗：一�
     f.onceAtLocal = "2020-01-01 09:00";
     const int64_t now = localUnix(2026, 10, 27, 8, 0);
     const auto preview = module::schedule::ui::previewNextFires(f, now, makeCtx(now));
-    REQUIRE(preview.isOk());
-    CHECK(preview.value().empty());
+    DOCTEST_REQUIRE(preview.isOk());
+    DOCTEST_CHECK(preview.value().empty());
+    return true;
 });
 
 // 防：渠道多选/动作/错过策略在保存载荷中丢失 → 投递错渠道、错过策略被重置为默认。
@@ -272,16 +284,17 @@ REGISTER_TEST(scheduleEditBuildRecordChannelsAndPolicy, "schedule 编辑弹窗�
     f.missedPolicy = "all";
     const int64_t now = localUnix(2026, 10, 27, 8, 0);
     const auto rec = module::schedule::ui::buildRuleRecord(f, makeCtx(now));
-    REQUIRE(rec.isOk());
-    CHECK(rec.value().kind == "calendar");
-    CHECK(rec.value().name == "工作日提醒");
-    CHECK(rec.value().actionKind == "remind_open");
-    REQUIRE(rec.value().channelIds.size() == 2);
-    CHECK(rec.value().channelIds[0] == 1);
-    CHECK(rec.value().channelIds[1] == 3);
-    CHECK(rec.value().missedPolicy == "all");
-    REQUIRE(rec.value().nextFireAt.has_value());  // §4.4：保存时重算 next_fire_at
-    CHECK(*rec.value().nextFireAt == localUnix(2026, 10, 27, 9, 0));
+    DOCTEST_REQUIRE(rec.isOk());
+    DOCTEST_CHECK(rec.value().kind == "calendar");
+    DOCTEST_CHECK(rec.value().name == "工作日提醒");
+    DOCTEST_CHECK(rec.value().actionKind == "remind_open");
+    DOCTEST_REQUIRE(rec.value().channelIds.size() == 2);
+    DOCTEST_CHECK(rec.value().channelIds[0] == 1);
+    DOCTEST_CHECK(rec.value().channelIds[1] == 3);
+    DOCTEST_CHECK(rec.value().missedPolicy == "all");
+    DOCTEST_REQUIRE(rec.value().nextFireAt.has_value());  // §4.4：保存时重算 next_fire_at
+    DOCTEST_CHECK(*rec.value().nextFireAt == localUnix(2026, 10, 27, 9, 0));
+    return true;
 });
 
 // 防：非法 spec 静默落库（cron 表达式非法必须红字挡住，不产生记录）。
@@ -290,11 +303,12 @@ REGISTER_TEST(scheduleEditInvalidSpecRejectedWithText, "schedule 编辑弹窗：
     f.kind = RuleKind::Cron;
     f.cronExpr = "not-a-cron";
     const auto spec = module::schedule::ui::validateAndParse(f);
-    CHECK(spec.isFail());
-    CHECK_FALSE(spec.errorMessage().empty());  // 红字文案
+    DOCTEST_CHECK(spec.isFail());
+    DOCTEST_CHECK_FALSE(spec.errorMessage().empty());  // 红字文案
     const int64_t now = localUnix(2026, 10, 27, 8, 0);
     const auto rec = module::schedule::ui::buildRuleRecord(f, makeCtx(now));
-    CHECK(rec.isFail());  // 保存载荷不产出 = 不落库
+    DOCTEST_CHECK(rec.isFail());  // 保存载荷不产出 = 不落库
+    return true;
 });
 
 // 防：既有规则编辑回填时 kind/spec 字段映射错位（改保存后规则语义被静默改写）。
@@ -305,16 +319,17 @@ REGISTER_TEST(scheduleEditFormFromRecordRoundTrip, "schedule 编辑弹窗：Rule
     f.missedPolicy = "skip";
     const int64_t now = localUnix(2026, 10, 27, 8, 0);
     const auto rec = module::schedule::ui::buildRuleRecord(f, makeCtx(now));
-    REQUIRE(rec.isOk());
+    DOCTEST_REQUIRE(rec.isOk());
     const auto back = module::schedule::ui::formFromRecord(rec.value());
-    REQUIRE(back.isOk());
-    CHECK(back.value().kind == RuleKind::Calendar);
-    CHECK(back.value().calendarUnit == "day");
-    CHECK(back.value().calendarHour == 9);
-    CHECK(back.value().channelIds.size() == 1);
-    CHECK(back.value().channelIds[0] == 2);
-    CHECK(back.value().missedPolicy == "skip");
+    DOCTEST_REQUIRE(back.isOk());
+    DOCTEST_CHECK(back.value().kind == RuleKind::Calendar);
+    DOCTEST_CHECK(back.value().calendarUnit == "day");
+    DOCTEST_CHECK(back.value().calendarHour == 9);
+    DOCTEST_CHECK(back.value().channelIds.size() == 1);
+    DOCTEST_CHECK(back.value().channelIds[0] == 2);
+    DOCTEST_CHECK(back.value().missedPolicy == "skip");
     // 回填后的表单再保存 → spec 仍合法（往返闭环）
     const auto again = module::schedule::ui::buildRuleRecord(back.value(), makeCtx(now));
-    CHECK(again.isOk());
+    DOCTEST_CHECK(again.isOk());
+    return true;
 });

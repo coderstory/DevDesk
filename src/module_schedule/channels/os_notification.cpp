@@ -17,23 +17,6 @@
 #include "platform/notification.h"
 
 namespace module::schedule {
-namespace {
-
-const char* statusToString(platform::notify::Status status) {
-    using platform::notify::Status;
-    switch (status) {
-        case Status::Accepted: return "accepted";
-        case Status::Deduped: return "deduped";
-        case Status::RateLimited: return "rate_limited";
-        case Status::NotBundled: return "not_bundled";
-        case Status::PermissionDenied: return "permission_denied";
-        case Status::NotDetermined: return "not_determined";
-        case Status::BackendUnavailable: return "backend_unavailable";
-    }
-    return "unknown";
-}
-
-}  // namespace
 
 class OsNotificationChannel final : public Channel {
 public:
@@ -57,7 +40,7 @@ public:
         }
         const auto& receipt = result.value();
         return core::Result<Receipt>::ok(Receipt{
-            statusToString(receipt.status),
+            platform::notify::statusToString(receipt.status),
             receipt.detail.empty() ? "系统通知投递完成" : receipt.detail});
     }
 };

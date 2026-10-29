@@ -1,12 +1,14 @@
 #include "module_schedule/channel_registry.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "core/logging.h"
+#include "module_schedule/channels/wecom.h"
 
 namespace module::schedule {
 
-// ---- 四个内置渠道的实现见 channels/*.cpp（各自独立文件，工厂在此装配）----
+// ---- 内置渠道的实现见 channels/*.cpp（各自独立文件，工厂在此装配）----
 
 std::unique_ptr<Channel> makeFullscreenChannel();
 std::unique_ptr<Channel> makeToastChannel();
@@ -18,12 +20,17 @@ std::unique_ptr<Channel> makeBuiltinChannel(const std::string& id) {
     if (id == kChannelToast) return makeToastChannel();
     if (id == kChannelOs) return makeOsNotificationChannel();
     if (id == kChannelSilent) return makeSilentChannel();
+    if (id == kChannelWecom) {
+        // 默认配置装配（per-row config 的装配缝仍是 registerWecomChannel）：
+        // key 未配置时 deliver 即回 missing_secret 回执，不发请求
+        return makeWecomChannel(WecomConfig{});
+    }
     return nullptr;
 }
 
 void registerBuiltinChannels(ChannelRegistry& registry) {
     for (const char* id : {kChannelFullscreen, kChannelToast, kChannelOs,
-                           kChannelSilent}) {
+                           kChannelSilent, kChannelWecom}) {
         auto channel = makeBuiltinChannel(id);
         if (!channel) continue;
         auto result = registry.registerChannel(std::move(channel));

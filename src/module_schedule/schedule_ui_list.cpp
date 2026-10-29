@@ -1,5 +1,7 @@
 #include "module_schedule/schedule_ui_list.h"
 
+#include "module_schedule/schedule_ui_history.h"
+
 #include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/theme.h"
@@ -15,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <utility>
 
 namespace module::schedule {
 
@@ -23,6 +26,7 @@ namespace {
 // 页内常量（1000×640 最小档设计口径，弹性布局随屏宽伸缩）
 constexpr float kPagePad = 12.0f;      // 与 t.sizes.spacingPage 同值
 constexpr float kRowHeight = 64.0f;
+constexpr int kHistoryLimit = 50;      // 抽屉装载与展示的 runs 上限（assembleHistory 截断）
 constexpr unsigned int kLockGlyph = 0xF023;      // fa-lock（系统段锁图标）
 constexpr unsigned int kChevronDown = 0xF107;    // fa-angle-down
 constexpr unsigned int kChevronRight = 0xF105;   // fa-angle-right
@@ -92,7 +96,12 @@ std::vector<std::string> specStringArray(const platform::json::JsonObject& obj,
     if (!v.isArray()) return out;
     for (int i = 0; i < v.size(); ++i) {
         const auto elem = v[i];
-        if (elem.isString()) out.push_back(elem.asString());
+        if (elem.isString()) {
+            out.push_back(elem.asString());
+        } else if (elem.isNumber()) {
+            // weekdays 等数组存的是数字（[2] = 周二），统一转字符串
+            out.push_back(std::to_string(elem.asInt()));
+        }
     }
     return out;
 }
@@ -289,7 +298,10 @@ ListAssembly assembleList(const std::vector<RuleRecord>& rules,
 
 ScheduleListUi::ScheduleListUi(ScheduleStore& store,
                                ScheduleProviderRegistry& providers)
-    : store_(store), providers_(providers) {}
+    : store_(store), providers_(providers) {
+    // retryRun 留空 = 抽屉隐藏重试按钮（引擎重跑入口随宿主波接，§4.5）
+    historyHost_.close = [this] { historyState_.open = false; };
+}
 
 void ScheduleListUi::reload(int64_t nowSec) {
     (void)nowSec;
@@ -337,10 +349,47 @@ core::Result<void> ScheduleListUi::setRuleEnabled(int64_t ruleId, bool enabled) 
     return core::Result<void>::ok();
 }
 
+void ScheduleListUi::openHistory() {
+    error_.clear();
+    // 系统项 run 的 rule_id 为空且 store 无 origin_key 维度查询——抽屉 v1 只
+    // 聚合用户/归档规则的历史（listRules 含归档行），系统项历史随来源注册波接。
+    const auto rules = store_.listRules();
+    if (rules.isFail()) {
+        error_ = "运行历史加载失败：" + rules.errorMessage();
+        LOG_WARN("schedule 历史抽屉：规则清单读取失败 — " + rules.errorMessage());
+        return;
+    }
+    std::vector<RunRecord> runs;
+    std::vector<DeliveryRecord> deliveries;
+    for (const auto& rule : rules.value()) {
+        const auto rs = store_.listRunsByRule(rule.id, kHistoryLimit);
+        if (rs.isFail()) {
+            error_ = "运行历史加载失败：" + rs.errorMessage();
+            LOG_WARN("schedule 历史抽屉：run 读取失败 — " + rs.errorMessage());
+            continue;  // 单规则失败降级已载入部分，整页可用性优先
+        }
+        for (auto& run : rs.value()) {
+            const auto ds = store_.listDeliveriesByRun(run.id);
+            if (ds.isFail()) {
+                error_ = "运行历史加载失败：" + ds.errorMessage();
+                LOG_WARN("schedule 历史抽屉：投递读取失败 — " + ds.errorMessage());
+                continue;
+            }
+            runs.push_back(std::move(run));
+            deliveries.insert(deliveries.end(),
+                              std::make_move_iterator(ds.value().begin()),
+                              std::make_move_iterator(ds.value().end()));
+        }
+    }
+    historyHost_.items = ui::assembleHistory(runs, deliveries, kHistoryLimit);
+    historyState_.open = true;
+}
+
 void ScheduleListUi::resetForTest() {
     archiveExpanded_ = false;
     error_.clear();
     assembly_ = ListAssembly{};
+    historyState_ = ui::HistoryDrawerState{};
 }
 
 void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
@@ -519,7 +568,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                 .padding(pad, 0.0f, pad, t.sizes.spacingXLarge)
                 .gap(t.sizes.spacingLarge)
                 .content([&] {
-                    // 页头：标题 + 运行历史抽屉入口（抽屉本体 S7b 接，本波只留按钮位）
+                    // 页头：标题 + 运行历史抽屉入口（点击开 S7b 抽屉）
                     ui.row("schedule.list.header")
                         .size(contentW, core::theme::scaled(32.0f))
                         .alignItems(eui::Align::CENTER)
@@ -538,10 +587,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                 .text("运行历史")
                                 .fontSize(t.sizes.fontSizeBody)
                                 .color(t.colors.primaryText)
-                                .onClick([] {
-                                    // S7b：此处打开运行历史抽屉；本波入口位占位
-                                    LOG_INFO("schedule 列表：运行历史入口（S7b 接入抽屉）");
-                                })
+                                .onClick([this] { openHistory(); })
                                 .build();
                         })
                         .build();
@@ -621,8 +667,13 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                 "schedule.list.archive." + std::to_string(i));
                         }
                     }
-                });
-        });
+                })
+                .build();
+        })
+        .build();
+
+    // 运行历史抽屉（关闭态也常驻构建，EUI 收起过渡依赖节点存在；zIndex 990 盖过列表）
+    ui::drawHistoryDrawer(ui, screen, t, historyState_, historyHost_);
 }
 
 } // namespace module::schedule

@@ -121,7 +121,6 @@ private:
                              const std::string& action,
                              const std::string& detail);
     std::shared_ptr<class core::data::SqliteDb> db_;
-    std::int64_t idSeq_ = 0;
 };
 
 }  // namespace module::memory::proposals

@@ -1,7 +1,7 @@
 // src/module_schedule/schedule_ui_list.h
 // 定时列表页（波 S7a）：系统定时段（锁图标只读）+ 用户定时段（名称/规则摘要/
-// 下次时刻/上次结果/启停开关）+ 一次性已执行折叠区（默认折叠）+ 运行历史抽屉入口。
-// 抽屉本体 S7b 接，本波只有入口按钮位。
+// 下次时刻/上次结果/启停开关）+ 一次性已执行折叠区（默认折叠）+ 运行历史抽屉
+//（S7b 本体，经页头入口开合）。
 //
 // 分层：装配/摘要/时刻文本是纯函数（无 IO 无时钟，「现在」由调用方注入），
 // 测试直接驱动；ScheduleListUi 持有 store/providers 引用做 IO 与绘制。
@@ -10,6 +10,7 @@
 
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
+#include "module_schedule/schedule_ui_history.h"
 
 #include <eui/dsl.h>
 #include <eui/types.h>
@@ -79,12 +80,24 @@ public:
     // 失败 → fail（调用方弹提示），列表状态不变、不回写假开关。
     core::Result<void> setRuleEnabled(int64_t ruleId, bool enabled);
 
+    // 打开运行历史抽屉：经 store 读全部未软删规则（含归档行）的 runs+投递，
+    // assembleHistory 装配后置 open。规则清单读失败 → error_ 且不开抽屉；
+    // 单规则读失败降级已载入部分并标 error_。
+    void openHistory();
+
     const ListAssembly& assembly() const { return assembly_; }
     const std::string& errorText() const { return error_; }
     bool archiveExpanded() const { return archiveExpanded_; }
     void setArchiveExpanded(bool expanded) { archiveExpanded_ = expanded; }
 
-    // 测试缝：回默认态（归档折叠 + 清错误文案；生产不调用）
+    // 运行历史抽屉开合态与数据（无头用例断言面；数据经 store 读取后由
+    // assembleHistory 装配，retryRun 留空 = 抽屉隐藏重试按钮）
+    bool historyOpen() const { return historyState_.open; }
+    const std::vector<ui::RunHistoryItem>& historyItems() const {
+        return historyHost_.items;
+    }
+
+    // 测试缝：回默认态（归档折叠 + 清错误文案 + 收抽屉；生产不调用）
     void resetForTest();
 
     void compose(eui::Ui& ui, const eui::Screen& screen);
@@ -95,6 +108,8 @@ private:
     ListAssembly assembly_;
     std::string error_;
     bool archiveExpanded_ = false;  // 归档折叠区默认折叠（§4.4/验收 4）
+    ui::HistoryDrawerState historyState_;  // 抽屉开合态（关闭态也常驻构建）
+    ui::HistoryDrawerHost historyHost_;    // 抽屉数据 + close 回调（构造时接好）
 };
 
 } // namespace module::schedule

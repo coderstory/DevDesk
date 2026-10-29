@@ -25,10 +25,13 @@
 #include "module_memory/engine/telemem_config.h"
 #include "module_memory/gateway/telemem_client.h"
 #include "module_memory/hook/hook_command.h"
+#include "module_memory/mcp/search_tool.h"
 #include "module_memory/proposals/usage_ledger.h"
 #include "module_toggle_bridge.h"
 #include "module_wallpaper/wallpaper_module.h"
 #include "mcp_service_bridge.h"
+#include "memory_mcp_bridge.h"
+#include "toast_notice_bridge.h"
 #include "module_mcp/mcp_service.h"
 #include "module_mcp/mcp_tools_builtin.h"
 #include "platform/autostart.h"
@@ -280,6 +283,25 @@ app::mcp::LiveStatus mcpStatusImpl() {
     return out;
 }
 
+// ── 记忆 MCP 桥转发（无捕获函数指针；开关态读注册表实况——MCP 页每帧调用，
+// 不能走 searchEnabledBySetting() 的每帧文件 IO；注册 ⟺ mcpSearchEnabled 不变式
+// 下注册表实况即开关态）──
+app::memory_mcp::LiveStatus memoryMcpStatusImpl() {
+    return {core::mcp::globalMcpTools()
+                .find(module::memory::mcp::kMemorySearchToolName)
+                .isOk()};
+}
+
+core::Result<void> memoryMcpSetEnabledImpl(bool on) {
+    return module::memory::mcp::setSearchEnabled(core::mcp::globalMcpTools(), on);
+}
+
+// ── toast 通知桥转发（无捕获函数指针；转发 app::showAppNotice 应用级单槽
+// toast——schedule toast 渠道的默认落点，渠道层不反向依赖 app 层）──
+void toastNoticeShowImpl(const std::string& title, const std::string& body) {
+    app::showAppNotice(title, body);
+}
+
 ::core::Router* getRouter() {
     static ::core::Router router;
     // 模块 static 须先于 armExitHook 构造：atexit LIFO 保证 handler 先于 modules/router 析构
@@ -401,6 +423,20 @@ app::mcp::LiveStatus mcpStatusImpl() {
         // MCP 装配段：注册内置工具（一次，常驻注册表）+ 注入桥 + 按开关启动。
         // 启动失败只 LOG_ERROR 不弹窗（启动期与代理自启同口径）。
         module::mcp::registerBuiltinMcpTools(core::mcp::globalMcpTools());
+        // memory_search 按记忆面板开关注册（不挂 MemoryModule 生命周期：引擎是
+        // 应用级常驻服务，页面关闭不停引擎）；失败只 LOG_ERROR 不阻断启动。
+        if (module::memory::mcp::searchEnabledBySetting()) {
+            auto registered = module::memory::mcp::registerSearchTool(
+                core::mcp::globalMcpTools());
+            if (registered.isFail()) {
+                LOG_ERROR("memory_search 注册失败（不阻断启动）: " +
+                          registered.errorMessage());
+            }
+        }
+        app::memory_mcp::setHandlers(&memoryMcpStatusImpl,
+                                     &memoryMcpSetEnabledImpl);
+        // toast 渠道默认落点：schedule toast 渠道 flush 经桥投递应用级 toast
+        app::toast_notice::setHandler(&toastNoticeShowImpl);
         app::mcp::setHandlers(&mcpStartImpl, &mcpStopImpl, &mcpApplyPortImpl,
                               &mcpStatusImpl);
         if (module::settings::moduleEnabled(gatingConfigSnapshot(),

@@ -12,6 +12,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "mcp_service_bridge.h"
+#include "memory_mcp_bridge.h"
 #include "settings_config.h"
 
 #include <eui/dsl.h>
@@ -468,5 +469,114 @@ REGISTER_TEST(mcp_page_default_ctor_reads_global_registry,
     eui::Ui ui;
     composeFrame(mod, ui, screen, "mcp_global");
     DOCTEST_REQUIRE_NE(ui.find("mcp.card.test_global_tool"), nullptr);
+    return true;
+})
+
+// 记忆 MCP 桥 recording 桩（RAII 复位，防桩残留串扰）。
+bool g_memSwitchOn = false;
+app::memory_mcp::LiveStatus memStatusRec() {
+    return app::memory_mcp::LiveStatus{g_memSwitchOn};
+}
+core::Result<void> memSetEnabledRec(bool on) {
+    g_memSwitchOn = on;
+    return core::Result<void>::ok();
+}
+struct MemoryBridgeGuard {
+    MemoryBridgeGuard() {
+        app::memory_mcp::setHandlers(&memStatusRec, &memSetEnabledRec);
+    }
+    ~MemoryBridgeGuard() { app::memory_mcp::setHandlers(nullptr, nullptr); }
+    MemoryBridgeGuard(const MemoryBridgeGuard&) = delete;
+    MemoryBridgeGuard& operator=(const MemoryBridgeGuard&) = delete;
+};
+
+// 开关轨道色：checked == tokens.primary（SwitchStyle.on），unchecked 为灰混合。
+bool trackIsPrimary(const core::dsl::Element* track) {
+    const auto& t = core::theme::current();
+    return track->color.r == t.colors.primary.r &&
+           track->color.g == t.colors.primary.g &&
+           track->color.b == t.colors.primary.b;
+}
+
+// 防：模块行缺件 / 开关不读桥 / 失败反馈缺失或视觉不回弹（记忆 MCP 行）。
+REGISTER_TEST(mcp_page_memory_module_row,
+              "mcp_page: 记忆模块行全宽 64 高、标题/说明/开关齐全；桥失败 → 行内红字且轨道回弹；桥成功 → 轨道点亮", {
+    core::mcp::McpToolRegistry reg;
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    {
+        eui::Ui ui;  // 默认桩（未装配）：开关 = 关
+        composeFrame(mod, ui, screen, "mcp_memrow_1");
+        const auto* row = ui.find("mcp.module.memory");
+        DOCTEST_REQUIRE(row != nullptr);
+        // 全宽行卡（非 340 网格卡）：contentW = 1200 - 页边距 64，行高 64
+        DOCTEST_CHECK_EQ(row->width.value, 1136.0f);
+        DOCTEST_CHECK_EQ(row->height.value, 64.0f);
+        const auto* title = ui.find("mcp.module.memory.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("记忆"));
+        const auto* desc = ui.find("mcp.module.memory.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("memory_search") != std::string::npos);
+        const auto* toggle = ui.find("mcp.module.memory.toggle.hit");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        const auto* track = ui.find("mcp.module.memory.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_FALSE(trackIsPrimary(track));  // 默认桩 = 关
+    }
+    {
+        eui::Ui ui;  // 桥未装配时点击：setEnabled fail → 红字 + 轨道回弹（仍灰）
+        composeFrame(mod, ui, screen, "mcp_memrow_2");
+        ui.find("mcp.module.memory.toggle.hit")->onClick();
+        composeFrame(mod, ui, screen, "mcp_memrow_3");
+        const auto* desc = ui.find("mcp.module.memory.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            desc->text.find("保存失败") != std::string::npos,
+            "写盘失败红字缺失: " + desc->text);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK(desc->textColor.r == t.colors.errorText.r);
+        DOCTEST_CHECK(desc->textColor.g == t.colors.errorText.g);
+        DOCTEST_CHECK(desc->textColor.b == t.colors.errorText.b);
+        const auto* track = ui.find("mcp.module.memory.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_FALSE(trackIsPrimary(track));  // 回弹
+    }
+    {
+        MemoryBridgeGuard guard;
+        g_memSwitchOn = false;
+        eui::Ui ui;  // 桥已装配：点击 → 成功 → 下一帧轨道点亮、红字让位回说明
+        composeFrame(mod, ui, screen, "mcp_memrow_4");
+        ui.find("mcp.module.memory.toggle.hit")->onClick();
+        DOCTEST_CHECK(g_memSwitchOn);  // onChange(true) 真到达桥
+        composeFrame(mod, ui, screen, "mcp_memrow_5");
+        const auto* track = ui.find("mcp.module.memory.toggle.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_TRUE(trackIsPrimary(track));
+        const auto* desc = ui.find("mcp.module.memory.desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK(desc->text.find("保存失败") == std::string::npos);
+    }
+    {
+        // 130% 字号档行盒不重叠（PRD §7 自设判据）：说明行 y 必须随字号缩放，
+        // 与标题盒保持间隙且行底不越 64 盒（R4 防回归）
+        core::theme::setFontScale(1.3f);
+        eui::Ui ui;
+        composeFrame(mod, ui, screen, "mcp_memrow_6");
+        const auto* title = ui.find("mcp.module.memory.title");
+        const auto* desc = ui.find("mcp.module.memory.desc");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            desc->y >= title->y + title->height.value,
+            "130% 档标题/说明行盒重叠：标题底 " +
+                std::to_string(title->y + title->height.value) + " 说明顶 " +
+                std::to_string(desc->y));
+        DOCTEST_CHECK_MESSAGE(desc->y + desc->height.value <= 64.0f,
+                              "130% 档说明行越出 64 行盒：底 " +
+                                  std::to_string(desc->y + desc->height.value));
+        core::theme::setFontScale(1.0f);
+    }
     return true;
 })

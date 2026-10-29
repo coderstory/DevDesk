@@ -26,6 +26,7 @@
 
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 #include "core/logging.h"
@@ -138,20 +139,23 @@ public:
                 return;
             }
             if (windowOpen_) {
+                // 刷新已开窗内容：仅 dirty_ 时回调（内容没变不重绘）。
+                // 不能在此 return——回调统一走锁外的 callUpdater 段，提前
+                // return 会让刷新回调永不执行（窗开着内容不更新）。
                 if (dirty_) {
-                    snapshot = pending_;  // 刷新已开窗内容
+                    snapshot = pending_;
                     dirty_ = false;
                     callUpdater = true;
                 }
-                return;
+            } else {
+                if (pending_.empty()) return;
+                const std::int64_t now = now_();
+                if (now < cooldownUntil_) return;  // 冷却中：保持入队，到期后补弹
+                windowOpen_ = true;
+                cooldownUntil_ = 0;
+                snapshot = pending_;
+                callUpdater = true;
             }
-            if (pending_.empty()) return;
-            const std::int64_t now = now_();
-            if (now < cooldownUntil_) return;  // 冷却中：保持入队，到期后补弹
-            windowOpen_ = true;
-            cooldownUntil_ = 0;
-            snapshot = pending_;
-            callUpdater = true;
         }
         if (callUpdater) {
             updater_(snapshot, [this] { notifyWindowClosed(); });

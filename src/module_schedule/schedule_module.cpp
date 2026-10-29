@@ -1,7 +1,7 @@
 // src/module_schedule/schedule_module.cpp
-// 定时调度模块宿主（§3「宿主/装配」行）：Module 接口 + onStart 装配 +
-// onStop 释放。本波不接调度引擎——引擎（S4）合入后，onStart 追加唯一
-// ticker 泵订阅（见下方接缝注释），onStop 注销。
+// 定时调度模块宿主：Module 接口 + onStart 装配（store / 渠道注册表 /
+// ScheduleEngine）+ onStop 释放。引擎在 onStart 订阅全局唯一 1Hz ticker 泵
+//（§2.4 反重构：禁逐规则重注册），onStop 先停引擎再释放其引用的装配。
 #include "module_schedule/schedule_module.h"
 
 #include "core/database.h"
@@ -9,6 +9,7 @@
 #include "core/theme.h"
 #include "core/time.h"
 #include "module_schedule/channel_registry.h"
+#include "module_schedule/schedule_engine.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
 #include "module_schedule/schedule_ui_list.h"
@@ -23,6 +24,8 @@ struct ScheduleModule::Impl {
     std::unique_ptr<ChannelRegistry> channels;
     std::unique_ptr<ScheduleProviderRegistry> providers;
     std::unique_ptr<ScheduleListUi> listUi;
+    // 引擎持有 store 的 DB 连接与 channels 的引用，声明放最后 = 最先析构。
+    std::unique_ptr<ScheduleEngine> engine;
 };
 
 ScheduleModule::ScheduleModule() : impl_(std::make_unique<Impl>()) {}
@@ -50,17 +53,20 @@ void ScheduleModule::onStart() {
     impl_->listUi = std::make_unique<ScheduleListUi>(*impl_->store,
                                                      *impl_->providers);
     impl_->listUi->reload(static_cast<int64_t>(core::time::nowUnix()));
+    // 调度引擎：与 store 同一 DB 连接、同一渠道注册表；start() 订阅唯一 1Hz 泵。
+    impl_->engine = std::make_unique<ScheduleEngine>(*db, *impl_->channels);
+    impl_->engine->start();
     impl_->started = true;
-    // S4 合入后此处构造并启动 schedule_engine（唯一 ticker 泵订阅）
-    LOG_INFO("schedule 模块启动（渠道 4 / 系统来源 0）");
+    LOG_INFO("schedule 模块启动（渠道 5 / 系统来源 0，调度引擎 1Hz 已挂泵）");
 }
 
 void ScheduleModule::onStop() {
     // 重入幂等：未启动的 off = no-op
     if (!impl_->started) return;
-    // S4 合入后此处注销 ticker 泵并停止 schedule_engine
-    // 释放装配（DB 引用随 store 一起丢弃；无后台线程持有本模块成员，
-    // 引擎未接线前无 UAF 面）
+    // 先停引擎（注销 ticker 订阅、清内存队列；落库 pending/running 行保留），
+    // 再释放它引用的 registry/store——逆序释放防悬垂引用。
+    impl_->engine->stop();
+    impl_->engine.reset();
     impl_->listUi.reset();
     impl_->providers.reset();
     impl_->channels.reset();

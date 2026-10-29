@@ -14,7 +14,11 @@
 namespace platform::process_host {
 
 // 拉起常驻子进程：脱离父进程独立存活（Windows CREATE_NO_WINDOW + 新进程组；
-// POSIX setsid + 新进程组），stdout/stderr 丢弃。返回子进程 pid。
+// POSIX double-fork + setsid），stdout/stderr 丢弃。返回工作进程 pid——POSIX
+// double-fork 下是孙进程（父→中间→孙：中间进程由本层立即收尸不留 zombie，
+// 孙进程过继给 launchd；详见 process_host_posix.cpp 头注释）。
+// 历史教训：POSIX 侧禁止用全局 signal(SIGCHLD, SIG_IGN) 防僵尸——那会让
+// exec_capture / process_runner 等 waitpid 调用方全部 ECHILD、退出码全丢。
 // envPairs：追加环境项（"KEY=VALUE"），同名键覆盖继承值；空 = 纯继承。
 // workingDir：空 = 继承父进程 cwd。启动失败返回 fail（含系统错误文本）。不抛异常。
 core::Result<std::int64_t> spawnDetached(

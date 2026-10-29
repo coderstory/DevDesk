@@ -9,6 +9,7 @@
 
 #include <charconv>
 #include <system_error>
+#include <utility>
 
 namespace module::schedule {
 
@@ -326,7 +327,7 @@ core::Result<RuleRecord> ScheduleStore::createRule(const RuleRecord& rule) {
     auto& stmt = prep.value();
     int i = 1;
     if (auto r = stmt.bind(i++, rule.name); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.enabled ? 1 : 0); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
+    if (auto r = stmt.bind(i++, static_cast<std::int64_t>(rule.enabled ? 1 : 0)); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = bindOptInt(stmt, i++, rule.pausedUntil); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = stmt.bind(i++, rule.kind); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = stmt.bind(i++, rule.specJson); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
@@ -403,7 +404,7 @@ core::Result<void> ScheduleStore::updateRule(const RuleRecord& rule) {
     auto& stmt = prep.value();
     int i = 1;
     if (auto r = stmt.bind(i++, rule.name); r.isFail()) return r;
-    if (auto r = stmt.bind(i++, rule.enabled ? 1 : 0); r.isFail()) return r;
+    if (auto r = stmt.bind(i++, static_cast<std::int64_t>(rule.enabled ? 1 : 0)); r.isFail()) return r;
     if (auto r = bindOptInt(stmt, i++, rule.pausedUntil); r.isFail()) return r;
     if (auto r = stmt.bind(i++, rule.kind); r.isFail()) return r;
     if (auto r = stmt.bind(i++, rule.specJson); r.isFail()) return r;
@@ -421,7 +422,7 @@ core::Result<void> ScheduleStore::updateRule(const RuleRecord& rule) {
     if (auto r = stmt.bind(i++, now); r.isFail()) return r;
     if (auto r = stmt.bind(i++, rule.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -442,7 +443,7 @@ core::Result<void> ScheduleStore::deleteRule(int64_t id) {
     if (auto r = stmt.bind(2, now); r.isFail()) return r;
     if (auto r = stmt.bind(3, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -458,7 +459,7 @@ core::Result<void> ScheduleStore::purgeRule(int64_t id) {
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -480,7 +481,7 @@ core::Result<void> ScheduleStore::archiveRule(int64_t id) {
     if (auto r = stmt.bind(2, now); r.isFail()) return r;
     if (auto r = stmt.bind(3, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -581,7 +582,7 @@ core::Result<void> ScheduleStore::updateRun(const RunRecord& run) {
     if (auto r = stmt.bind(i++, run.error); r.isFail()) return r;
     if (auto r = stmt.bind(i++, run.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -665,7 +666,7 @@ core::Result<void> ScheduleStore::updateDelivery(const DeliveryRecord& delivery)
     if (auto r = bindOptInt(stmt, i++, delivery.nextRetryAt); r.isFail()) return r;
     if (auto r = stmt.bind(i++, delivery.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -710,7 +711,7 @@ core::Result<ChannelRecord> ScheduleStore::createChannel(const ChannelRecord& ch
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, channel.kind); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = stmt.bind(2, channel.name); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(3, channel.enabled ? 1 : 0); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
+    if (auto r = stmt.bind(3, static_cast<std::int64_t>(channel.enabled ? 1 : 0)); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = stmt.bind(4, channel.configJson); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = stmt.bind(5, channel.secretRef); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
     if (auto r = stmt.bind(6, now); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
@@ -774,13 +775,13 @@ core::Result<void> ScheduleStore::updateChannel(const ChannelRecord& channel) {
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, channel.kind); r.isFail()) return r;
     if (auto r = stmt.bind(2, channel.name); r.isFail()) return r;
-    if (auto r = stmt.bind(3, channel.enabled ? 1 : 0); r.isFail()) return r;
+    if (auto r = stmt.bind(3, static_cast<std::int64_t>(channel.enabled ? 1 : 0)); r.isFail()) return r;
     if (auto r = stmt.bind(4, channel.configJson); r.isFail()) return r;
     if (auto r = stmt.bind(5, channel.secretRef); r.isFail()) return r;
     if (auto r = stmt.bind(6, now); r.isFail()) return r;
     if (auto r = stmt.bind(7, channel.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {
@@ -796,7 +797,7 @@ core::Result<void> ScheduleStore::deleteChannel(int64_t id) {
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return step;
+    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
     auto changed = changesCount(db_);
     if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
     if (changed.value() == 0) {

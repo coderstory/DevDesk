@@ -15,6 +15,7 @@
 #include <initializer_list>
 #include <limits>
 #include <system_error>
+#include <utility>
 
 #include "time.h"
 #include "yyjson.h"
@@ -106,7 +107,9 @@ bool parseDigits(const std::string& s, size_t begin, size_t len, int& out) {
     int v = 0;
     const char* p = s.data() + begin;
     const auto res = std::from_chars(p, p + len, v);
-    return res.ec == std::errc() && res.ptr == p + len;
+    if (res.ec != std::errc() || res.ptr != p + len) return false;
+    out = v;
+    return true;
 }
 
 // "HH:MM"（长度 5，冒号定位于 2）

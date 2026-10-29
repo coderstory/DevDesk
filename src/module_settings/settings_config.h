@@ -39,6 +39,8 @@ constexpr int kMaxMcpPort = ::core::kMaxMcpPort;
 inline constexpr const char* kModuleIdHome = "home";
 inline constexpr const char* kModuleIdMarkdown = "markdown";
 inline constexpr const char* kModuleIdTodo = "todo";
+// schedule：默认启用（定时调度页 + 引擎宿主；此前恒注册，开关卡补齐后走通用门控）。
+inline constexpr const char* kModuleIdSchedule = "schedule";
 inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
 inline constexpr const char* kModuleIdSettings = "settings";
 // agent：默认关闭（跑 LLM 有成本，用户主动启用）；开启 = 整页注册进 Router。
@@ -57,11 +59,11 @@ inline constexpr const char* kModuleIdMcp = "mcp";
 std::vector<std::string> defaultEnabledModules();
 
 // enabledModules 默认清单的迁移版本（当前值）。语义：配置里记录的版本 < 本值，
-// 说明该配置写于新增默认模块（release）之前——此时它的缺席代表「从未存在」，
+// 说明该配置写于新增默认模块（release/schedule）之前——此时它的缺席代表「从未存在」，
 // load 会把新默认 ID 并入存储清单并回写本版本标记。版本已到位后绝不再插手，
 // 因此用户显式关掉的模块不会被迁移重新打开。新增默认启用模块时：迁移表追加
 // 一行 + 本常量 +1。
-inline constexpr int kModuleDefaultsVersion = 1;
+inline constexpr int kModuleDefaultsVersion = 2;
 
 // 窗口效果三档（档位字符串直接持久化进 app_config）
 inline constexpr const char* kWindowEffectOff = "off";

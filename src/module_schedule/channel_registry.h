@@ -110,11 +110,12 @@ private:
     std::vector<std::unique_ptr<Channel>> channels_;  // 保序：分发/flush 顺序稳定
 };
 
-// 内置渠道工厂：id 只认四个 kChannel* 常量，未知 id → nullptr。
-// 返回的渠道带生产默认接线（真窗口 / app toast / platform::notify / 空投递）。
+// 内置渠道工厂：id 只认 kChannel* 常量（S5 四渠道 + wecom），未知 id → nullptr。
+// 返回的渠道带生产默认接线（真窗口 / app toast / platform::notify / 空投递 /
+// 默认配置的 wecom webhook——key 未配置时投递回 missing_secret 回执，不发请求）。
 std::unique_ptr<Channel> makeBuiltinChannel(const std::string& id);
 
-// 标准装配：注册四个内置渠道。宿主模块 onStart 调用一次。
+// 标准装配：注册五个内置渠道。宿主模块 onStart 调用一次。
 void registerBuiltinChannels(ChannelRegistry& registry);
 
 // ---- 测试缝（仅测试使用；生产装配走 makeBuiltinChannel）----

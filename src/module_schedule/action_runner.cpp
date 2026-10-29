@@ -7,6 +7,7 @@
 #include "module_schedule/schedule_store.h"
 
 #include <sstream>
+#include <utility>
 
 namespace module::schedule {
 
@@ -26,10 +27,12 @@ int64_t retryDelaySec(int attempt, int64_t suggestedSec) {
 // S5 对齐点①：真实 Receipt 只有 {status, detail} 两个稳定串字段
 // （channel_registry.h，渠道实现与测试断言共用同一套 status 词汇，见 wecom.h 状态表）。
 // 分类（§4.9）：ok/queued = 成功；retryable:* 与 rate_limited = 可重试；
-// 其余（permanent:* / missing_secret / 未知串）= 永久失败不重试。
+// missing_secret = 配置缺失（keychain 无密钥，wecom.h 状态表），终态 dropped
+// 但不停用不重试——§4.9 只允许 93000 类永久失败停用渠道；其余 = 永久失败。
 ReceiptClass classifyReceipt(const module::schedule::Receipt& receipt) {
     const std::string& s = receipt.status;
     if (s == "ok" || s == "queued") return ReceiptClass::kSuccess;
+    if (s == "missing_secret") return ReceiptClass::kConfigMissing;
     if (s.rfind("retryable:", 0) == 0 || s == "rate_limited")
         return ReceiptClass::kRetryable;
     return ReceiptClass::kPermanent;
@@ -99,7 +102,7 @@ void ActionRunner::resetForTest() { httpInFlight_.clear(); }
 // S5 对齐点②：真实注册表键 = 渠道 kind 字符串（"toast" 等），入口是
 // deliver(vector<string>, Delivery) → Result<DispatchReport>（无按 int64 id 的
 // deliver）。引擎按 schedule_channel 配置行 id（int64）分发：先经 store 取该行
-// kind，再投递并取该渠道回执。配置行缺失/未注册渠道 = 配置错误 → fail，
+// kind，再投递并取该渠道回执。配置行缺失/未注册渠道/已停用 = 配置错误 → fail，
 // 由 dispatchOnce 判永久失败不重试。
 namespace {
 core::Result<module::schedule::Receipt> deliverViaRegistry(
@@ -114,6 +117,13 @@ core::Result<module::schedule::Receipt> deliverViaRegistry(
         return core::Result<module::schedule::Receipt>::fail(
             core::ErrorCode::NotFound,
             "渠道配置不存在：id=" + std::to_string(channelId));
+    }
+    if (!got.value()->enabled) {
+        // 停用渠道（§4.9 永久失败后 enabled=0）不再参与投递：后续触发按配置错误
+        // 落 dropped 终态，不打后端、不重试。
+        return core::Result<module::schedule::Receipt>::fail(
+            core::ErrorCode::NotFound,
+            "渠道已停用：id=" + std::to_string(channelId));
     }
     const std::string kind = got.value()->kind;
     auto report = channels.deliver(std::vector<std::string>{kind}, delivery);
@@ -156,9 +166,11 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
                                                       int64_t plannedAt, int64_t nowUnix) {
     RetryOutcome out;
     // HTTP 每渠道并发 ≤2（§4.7）：超并发不记账、0 秒后重试（同步渠道恒不命中）。
+    // 不计次：本次尝试没发生，引擎侧不得递增 attempt。
     if (httpInFlight_[channelId] >= 2) {
         out.terminal = false;
         out.nextRetryAt = nowUnix;
+        out.retryWithoutCharge = true;
         out.error = "渠道并发已满，稍后重试";
         return core::Result<RetryOutcome>::ok(std::move(out));
     }
@@ -229,6 +241,21 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
             out.error = receipt.detail;
             return core::Result<RetryOutcome>::ok(std::move(out));
 
+        case ReceiptClass::kConfigMissing:
+            // 配置缺失（keychain 无密钥）：终态 dropped、不停用、不重试；降级本地
+            // 提示引导补配置（每次触发提示一次，同 §4.9 降级模式）。
+            rec.status = "dropped";
+            rec.error = receipt.detail.empty() ? "渠道未配置密钥" : receipt.detail;
+            rec.nextRetryAt = std::nullopt;
+            (void)store_.updateDelivery(rec);
+            --httpInFlight_[channelId];
+            out.terminal = true;
+            out.degradedLocally = true;
+            out.error = rec.error;
+            LOG_WARN("action_runner: 渠道缺少密钥，本次投递放弃（不停用）channel=" +
+                     std::to_string(channelId));
+            return core::Result<RetryOutcome>::ok(std::move(out));
+
         case ReceiptClass::kPermanent:
         default:
             // 永久失败：不重试、停用渠道、本地告警一次（§4.9）。
@@ -249,16 +276,6 @@ core::Result<RetryOutcome> ActionRunner::attemptDelivery(const DeliveryRetry& re
     // 重试不改正文：delivery 是入队时的快照（§4.9）。
     return dispatchOnce(retry.channelId, retry.delivery, retry.runId, retry.attempt,
                         retry.plannedAt, nowUnix);
-}
-
-core::Result<RetryOutcome> ActionRunner::completeAsync(int64_t runId,
-                                                       const TaskOutcome& outcome) {
-    // 异步任务收尾：把 pending/async 的 run 行推进到终态。run 行由引擎在启动任务时
-    // 插入；这里只做状态回写（引擎负责 next_fire 重算等调度侧收尾）。
-    RetryOutcome out;
-    out.success = (outcome.status == "success");
-    out.error = outcome.error;
-    return core::Result<RetryOutcome>::ok(std::move(out));
 }
 
 core::Result<RunOutcome> ActionRunner::run(const RunContext& ctx) {

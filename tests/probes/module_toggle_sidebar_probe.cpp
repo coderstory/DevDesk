@@ -5,7 +5,7 @@
 // 桩可开关模块。两条路径：
 //
 //   点击路径 = 真 settings 模块实例 + 真卡片 compose，真点 agent 开关
-//         （settings.card.modules.sw.3.track 命中区中心，坐标取 compose 后的 DOM
+//         （settings.card.modules.sw.4.track 命中区中心，坐标取 compose 后的 DOM
 //         frame）→ settings 模块 applyModuleEnabled（persist + onModuleToggled）
 //         → app::toggle 桥 → 本 probe 注入的 handler（形态同生产接线）→ 侧边栏
 //         当帧反映 + 当前页=Agent 时回首页 redirect。覆盖「redirect 发生在点击
@@ -205,10 +205,10 @@ int main(int argc, char* argv[]) {
         composeFrame();
         // wswitch（§4.4）clickable 元素 id = <id>.track（W4 改动：toggleSwitch→wswitch）
         const auto* agentSwitch =
-            ui != nullptr ? ui->find("settings.card.modules.sw.3.track")
+            ui != nullptr ? ui->find("settings.card.modules.sw.4.track")
                           : nullptr;
         check(agentSwitch != nullptr,
-              "§0 settings.card.modules.sw.3.track（agent 开关）应存在");
+              "§0 settings.card.modules.sw.4.track（agent 开关）应存在");
         if (agentSwitch != nullptr) {
             // —— 真点击 on：侧边栏条目当帧出现
             clickElement(*agentSwitch);
@@ -218,7 +218,7 @@ int main(int argc, char* argv[]) {
                   "§0 真点击 on：Agent 条目应当帧出现");
             // —— 真点击 off：侧边栏条目当帧消失
             const auto* switchAgain =
-                ui != nullptr ? ui->find("settings.card.modules.sw.3.track")
+                ui != nullptr ? ui->find("settings.card.modules.sw.4.track")
                               : nullptr;
             if (switchAgain != nullptr) {
                 clickElement(*switchAgain);

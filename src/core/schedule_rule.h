@@ -68,7 +68,7 @@ struct RuleSpec {
     // calendar
     CalendarSpec calendar;
     // cron
-    CronExpr cron;                    // core::cron::CronExpr
+    cron::CronExpr cron;              // core::cron::CronExpr
     // event：事件名列表为引擎判定载荷；cooldownSec 由引擎执行冷却
     std::vector<std::string> events;
     int64_t cooldownSec = 0;

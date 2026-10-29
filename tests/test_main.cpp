@@ -13,6 +13,8 @@
 #include "core/theme.h"
 #include "module_toggle_bridge.h"
 #include "mcp_service_bridge.h"
+#include "memory_mcp_bridge.h"
+#include "toast_notice_bridge.h"
 #include "platform/notification.h"
 #include "ui_kit/splash.h"
 #include <algorithm>
@@ -84,6 +86,8 @@ void setEnvVar(const char* key, const std::string& value) {
 //  14. 模块开关桥 handler      两条桥的注入槽（模块开关 + claude 惰性装配）← module_toggle_bridge.h
 //  15. 系统通知后端注入槽      platform::notify 的进程级 Backend 槽 ← platform/notification.h
 //  16. MCP 服务桥 handler      四槽注入（start/stop/applyPort/status）     ← mcp_service_bridge.h
+//  17. 记忆 MCP 桥 handler     两槽注入（status + setEnabled）            ← memory_mcp_bridge.h
+//  18. toast 通知桥槽          单槽注入（应用级 toast 投递落点）           ← toast_notice_bridge.h
 //
 // 同口径纪律：**进程级单例一律永不析构**——服务/注册表/统计状态这类「与进程同寿」
 // 的对象不得写成「函数局部 static」。首次构造晚于 armExitHook 时，atexit 的 LIFO
@@ -180,6 +184,12 @@ void resetCaseGlobals() {
     // 用例注入 recording 桩后 fail-fast 会留桩，后续用例吃到别人的路由计数。
     // 出厂态 = 四槽全 nullptr（默认桩：start/applyPort fail、stop no-op、status 空）。
     ::app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr);
+    // 17) 记忆 MCP 桥注入槽（memory_mcp_bridge.h）：同 16，两槽进程级函数指针。
+    ::app::memory_mcp::setHandlers(nullptr, nullptr);
+    // 18) toast 通知桥注入槽（toast_notice_bridge.h）：单槽进程级函数指针——
+    // 用例注入 recording 桩后 fail-fast 会留桩，后续用例的 flush 会弹进别人的
+    // sink。出厂态 = nullptr（默认桩：投递静默丢弃，零 UI 副作用）。
+    ::app::toast_notice::setHandler(nullptr);
     // 15) 系统通知后端注入槽（platform/notification.h）：用例体内
     // setBackendForTest(&栈上 fake) 后 fail-fast 会跳过尾部复位，槽位里的悬垂指针
     // 会让后续用例崩溃；去重/限速/时钟覆盖同样会串味到后续用例。resetForTest

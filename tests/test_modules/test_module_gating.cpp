@@ -4,7 +4,7 @@
 //   - home 与 settings 恒启用：moduleEnabled 谓词里硬编码，sanitized 也会强制补齐，
 //     两者都不是配置里的普通项，从 enabledModules 里删掉也照样开着。
 //   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关；memory 默认开（引擎未装时只显
-//     引导态）、release 默认开。默认清单是 7 项，改动会让本文件的 size()==7 断言红。
+//     引导态）、release/schedule 默认开。默认清单是 8 项，改动会让本文件的 size()==8 断言红。
 //   - 生产装配在 main.cpp getRouter()，本文件的注册段是它的复制品；改了那边这里不会自动跟。
 #include "doctest.h"
 #include "test_support.h"
@@ -73,10 +73,11 @@ std::string currentVersionSeed(const std::string& body) {
 REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(7));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(8));
     for (const char* id : {module::settings::kModuleIdHome,
                            module::settings::kModuleIdMarkdown,
                            module::settings::kModuleIdTodo,
+                           module::settings::kModuleIdSchedule,
                            module::settings::kModuleIdClaudeProxy,
                            module::settings::kModuleIdMemory,
                            module::settings::kModuleIdSettings,
@@ -107,7 +108,7 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
 // 标记，其缺席的 release 代表「从未存在」→ 迁移并入；用户显式关闭一定发生在
 // 迁移之后（配置已带当前标记），绝不能被重新打开。
 REGISTER_TEST(gating_module_defaults_migration,
-              "gating: 存量 5 项配置升级 → release 默认启用并写版本标记；关掉后不再重开", {
+              "gating: 存量 5 项配置升级 → release/schedule 默认启用并写版本标记；关掉后不再重开", {
     using namespace module::settings;
     test_support::TestEnv env(kCfgPrefix, "migrate", /*registerAppDb=*/true);
     const SettingsStore store(::core::appDatabase());
@@ -120,19 +121,22 @@ REGISTER_TEST(gating_module_defaults_migration,
         "\"claude_proxy\", \"settings\"]}"));
     const SettingsConfig upgraded = store.load();
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdRelease));  // 升级即开
-    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(6));
+    // v2 迁移：schedule（此前恒注册）并入存量清单
+    DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdSchedule));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(7));
     // 迁移标记已回写 → 下次 load 不再迁移
     DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
                                                     versionKey.c_str()),
                      std::to_string(kModuleDefaultsVersion));
 
-    // ② 用户显式关掉 release 后落盘（save 持久化当前版本标记）→ 再 load 不得重开
+    // ② 用户显式关掉 release/schedule 后落盘（save 持久化当前版本标记）→ 再 load 不得重开
     SettingsConfig userOff;
     userOff.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
                               kModuleIdClaudeProxy, kModuleIdSettings};
     DOCTEST_REQUIRE(store.save(userOff).isOk());
     const SettingsConfig reloaded = store.load();
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdRelease));
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdSchedule));
     DOCTEST_CHECK_EQ(reloaded.enabledModules.size(), static_cast<size_t>(5));
 
     // ③ 旧配置里用户关掉的既有模块也不得被迁移连带重开
@@ -229,9 +233,10 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     DOCTEST_REQUIRE(test_support::writeRawConfigRow(
         ::core::appDatabase(), kEnabledModulesRow.c_str(), "{not json at all"));
     loaded = SettingsStore(::core::appDatabase()).load();
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(7));
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(8));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMemory));
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdSchedule));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdRelease));
     std::error_code ec;
     std::filesystem::remove(file, ec);
@@ -255,11 +260,13 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     StubModule home(::core::PageId::Home, "home");
     StubModule markdown(::core::PageId::Markdown, "markdown");
     StubModule todo(::core::PageId::Todo, "todo");
+    StubModule schedule(::core::PageId::Schedule, "schedule");
     StubModule claude(::core::PageId::ClaudeProxy, "claude");
     StubModule settings(::core::PageId::Settings, "settings");
     router.registerModule(&home);  // 恒注册
     if (moduleEnabled(loaded, kModuleIdMarkdown)) router.registerModule(&markdown);
     if (moduleEnabled(loaded, kModuleIdTodo)) router.registerModule(&todo);
+    if (moduleEnabled(loaded, kModuleIdSchedule)) router.registerModule(&schedule);
     if (moduleEnabled(loaded, kModuleIdClaudeProxy)) router.registerModule(&claude);
     router.registerModule(&settings);  // 恒注册
 
@@ -268,6 +275,7 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     DOCTEST_CHECK(router.isRegistered(::core::PageId::Markdown));
     DOCTEST_CHECK(router.isRegistered(::core::PageId::Settings));
     DOCTEST_CHECK(!router.isRegistered(::core::PageId::Todo));
+    DOCTEST_CHECK(!router.isRegistered(::core::PageId::Schedule));
     DOCTEST_CHECK(!router.isRegistered(::core::PageId::ClaudeProxy));
     std::error_code ec;
     std::filesystem::remove(file, ec);

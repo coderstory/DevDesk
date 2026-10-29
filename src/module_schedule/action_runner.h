@@ -39,9 +39,11 @@ class ScheduleStore;
 
 // ---- Receipt 分类（消费侧唯一入口） ----
 enum class ReceiptClass {
-    kSuccess,     // 投递成功
-    kRetryable,   // 可重试（Receipt 可携带建议延迟）
-    kPermanent,   // 永久失败：不重试，停用渠道 + 本地告警（§4.9 93000 类）
+    kSuccess,        // 投递成功
+    kRetryable,      // 可重试（Receipt 可携带建议延迟）
+    kPermanent,      // 永久失败：不重试，停用渠道 + 本地告警（§4.9 93000 类）
+    kConfigMissing,  // 配置缺失（missing_secret）：终态 dropped，不停用不重试，
+                     // 降级本地提示（未配 key 不该判死渠道）
 };
 
 // 投递尝试上限：3 次（§4.9）；阶梯 0s/30s/300s 为相对 planned_at 的绝对偏移。
@@ -63,7 +65,7 @@ struct TaskInvoke {
 };
 
 // 任务结局：success / failed / async（异步任务：run 保持 running，
-// 完成后由任务方回调 ActionRunner::completeAsync 收尾）。
+// 完成后由任务方回调 ScheduleEngine::completeRun 收尾）。
 struct TaskOutcome {
     std::string status = "success";  // success | failed | async
     std::string summary;
@@ -117,8 +119,10 @@ struct RetryOutcome {
     bool terminal = true;               // true = 投递生命周期结束（成功/永久失败/达上限）
     std::optional<int64_t> nextRetryAt;
     bool success = false;
-    bool degradedLocally = false;       // 最终失败降级本地提示一次（§4.9）
+    bool degradedLocally = false;       // 最终失败/配置缺失降级本地提示一次（§4.9）
     bool channelDisabled = false;       // 永久失败停用渠道
+    bool retryWithoutCharge = false;    // slotBusy（并发满未投递未记账）：引擎不计次，
+                                        // 防饱和期虚耗 3 次配额
     std::string error;
 };
 
@@ -133,10 +137,6 @@ public:
 
     // 引擎重试队列推进：做第 retry.attempt 次尝试并记账。
     core::Result<RetryOutcome> attemptDelivery(const DeliveryRetry& retry, int64_t nowUnix);
-
-    // 异步任务收尾（run_task 返回 async 后由任务方调用）：
-    // 更新 run 行终态；run 的最终状态机归引擎调度，本函数只落库。
-    core::Result<RetryOutcome> completeAsync(int64_t runId, const TaskOutcome& outcome);
 
     // 溢出摘要等本地一次性告警：走注册表内置 toast 渠道（S5 对齐点）。
     core::Result<Receipt> localAlert(const Delivery& delivery);

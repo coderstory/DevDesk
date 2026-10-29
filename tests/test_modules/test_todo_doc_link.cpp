@@ -129,7 +129,11 @@ REGISTER_TEST(todo_doclink_svc_set_and_clear,
     return true;
 })
 
-// 防的事故：历史库中手工置 NULL 的 doc_path 行把任务列表整批读炸（详情打不开）。
+// 防的事故：坏库/老库形态中 doc_path 为 NULL 的行把任务列表整批读炸（详情打不开）。
+// 注意：doc_path 最终形态是 TEXT NOT NULL DEFAULT ''（schema.h DDL，空串 = 未关联），
+// UPDATE 置 NULL 会被 NOT NULL 约束拒绝——NULL 行只能来自约束上线前的坏库形态。
+// 这里用 DROP COLUMN + 免 NOT NULL 重加列制造出合法工具根本写不出的 NULL 行，
+// 验证 parseTaskRow 的 NULL 容错（读回空串、不失败）。
 REGISTER_TEST(todo_doclink_svc_null_tolerated,
               "TodoService: doc_path NULL 行读回空串（不炸解析）", {
     TestEnv env("null_doc");
@@ -140,9 +144,20 @@ REGISTER_TEST(todo_doclink_svc_null_tolerated,
     auto created = env.svc->createTask(cols.value()[0].id, "NULL 行任务");
     DOCTEST_REQUIRE(created.isOk());
 
+    // 退回无约束列形态：现存行 doc_path 全为 NULL（等价坏库）
     DOCTEST_REQUIRE(env.handle().exec(
-        "UPDATE todo_tasks SET doc_path = NULL WHERE id = " +
-        std::to_string(created.value().id)).isOk());
+        "ALTER TABLE todo_tasks DROP COLUMN doc_path").isOk());
+    DOCTEST_REQUIRE(env.handle().exec(
+        "ALTER TABLE todo_tasks ADD COLUMN doc_path TEXT").isOk());
+    {
+        auto p = env.handle().prepare(
+            "SELECT COUNT(*) AS v FROM todo_tasks WHERE doc_path IS NULL");
+        DOCTEST_REQUIRE(p.isOk());
+        auto rows = p.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("v").valueOr(-1), 1);
+    }
 
     auto tasks = env.svc->listTasks(cols.value()[0].id);
     DOCTEST_REQUIRE(tasks.isOk());

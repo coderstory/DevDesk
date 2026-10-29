@@ -5,6 +5,8 @@
 
 #include "markdown_module_internal.h"
 
+#include <utility>
+
 namespace module::markdown {
 namespace {
 

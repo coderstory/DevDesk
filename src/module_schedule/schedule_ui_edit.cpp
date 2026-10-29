@@ -96,8 +96,8 @@ std::string formatDate(int y, int m, int d) {
     return buf;
 }
 
-core::Result<RuleSpec> failValidation(const std::string& msg) {
-    return core::Result<RuleSpec>::fail(core::ErrorCode::ValidationError, msg);
+core::Result<core::schedule::RuleSpec> failValidation(const std::string& msg) {
+    return core::Result<core::schedule::RuleSpec>::fail(core::ErrorCode::ValidationError, msg);
 }
 
 // calendar 各形态的 spec_json：week（weekdays+anchor_date）、day（anchor_date/
@@ -481,7 +481,6 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             };
             const float tabGap = 6.0f;
             const float tabW = (innerW - tabGap * 5.0f) / 6.0f;
-            float ty = 52.0f;
             for (int i = 0; i < 6; ++i) {
                 drawKindTab(ui, "schedule.edit.kind." + std::to_string(i),
                             x0 + static_cast<float>(i) * (tabW + tabGap), tabW, 30.0f,
@@ -791,7 +790,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .text("取消")
                 .radius(8.0f)
                 .border(1.0f, t.colors.borderDefault)
-                .onClick([&st, &host] {
+                .onClick([&host] {
                     if (host.close) host.close();
                 })
                 .build();

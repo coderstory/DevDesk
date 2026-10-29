@@ -274,7 +274,7 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         .theme(ct)
         .contentKey("memory.view" + std::to_string(view))
         .offset(*offset)
-        .onChange([this, offset](float v) { *offset = v; })
+        .onChange([offset](float v) { *offset = v; })
         .content(drawView)
         .build();
 
@@ -1315,11 +1315,13 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                            const std::vector<std::string>& labels, int active,
                            std::function<void(int)> onPick) {
             for (int i = 0; i < static_cast<int>(labels.size()); ++i) {
-                const float chipW =
-                    static_cast<float>(
-                        labels[static_cast<std::size_t>(i)].size()) *
-                        12.0f +
-                    24.0f;
+                // chip 宽按显示字符估（全宽 12px / ASCII 6px + 24 内边距）：
+                // 按字节数计会把 CJK 高估 3 倍，窄窗 chips 行溢出且压到批量开关
+                float chipW = 24.0f;
+                for (unsigned char c : labels[static_cast<std::size_t>(i)]) {
+                    if (c >= 0xC0) chipW += 12.0f;  // 全宽字符首字节
+                    else if (c < 0x80) chipW += 6.0f;
+                }
                 const std::string id = prefix + std::to_string(i);
                 ui.rect(id)
                     .position(cx, cyRow)
@@ -1356,10 +1358,10 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         cx += 14.0f;
         cx = chipRow("memory.rv.chipSt.", cx, cy + 10.0f, {"待审", "已处理"},
                      filterState_, [this](int v) { filterState_ = v; });
-        // 批量模式开关（右侧）
+        // 批量模式开关（右侧；标签贴紧开关，窄窗不与 chips 行重叠）
         ui.text("memory.rv.batchlbl")
-            .position(x + w - 220.0f, cy + 14.0f)
-            .size(120.0f, 20.0f)
+            .position(x + w - 180.0f, cy + 14.0f)
+            .size(76.0f, 20.0f)
             .text("批量模式")
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(20.0f)

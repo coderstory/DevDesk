@@ -260,7 +260,13 @@ add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
     src/module_toggle_bridge.cpp src/wallpaper_tray_bridge.cpp
     # MCP 桥实现缝（B3）：app_assembly / settings_module 引用 app::mcp::* 符号；
     # 缝本体只依赖 core，不产生 module_mcp 链接边
-    src/mcp_service_bridge.cpp)
+    src/mcp_service_bridge.cpp
+    # 记忆 MCP 桥实现缝：main.cpp / module_mcp 页引用 app::memory_mcp::* 符号；
+    # 缝本体只依赖 core，不产生 module_memory 链接边
+    src/memory_mcp_bridge.cpp
+    # toast 通知桥实现缝：schedule toast 渠道引用 app::toast_notice::* 符号；
+    # 缝本体只依赖标准库，不产生 module_schedule / app 层链接边
+    src/toast_notice_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
 # 排除 EUI-NEO 的旧图标 RC（IDI_APP_ICON）：DevDesk 已在下方用 devdesk.rc.in
 # 注入自己的 "A_DEVDESK_ICON" 命名资源。两份 RC 共用 RT_ICON ID 1-6 会导致

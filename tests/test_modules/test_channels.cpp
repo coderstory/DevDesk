@@ -5,7 +5,10 @@
 #include "doctest.h"
 
 #include "module_schedule/channel_registry.h"
+#include "module_schedule/channels/wecom.h"
 #include "platform/notification.h"
+#include "app_sidebar.h"
+#include "toast_notice_bridge.h"
 
 #include <cstdint>
 #include <functional>
@@ -237,15 +240,19 @@ REGISTER_TEST(channelsOsDedupeKeyAndStatus, "schedule OS 渠道：dedupeKey 透�
     DOCTEST_CHECK_EQ(fakeBackend.sent[0].body, std::string("提醒正文"));
     DOCTEST_CHECK(fakeBackend.sent[0].level == platform::notify::Level::Warning);
 
-    // 环境类失败 → 状态串，不是 Result::fail
+    // 环境类失败 → 状态串，不是 Result::fail（换 dedupeKey：同键会命中
+    // facade 2 秒去重窗口，测不到后端失败映射）
     fakeBackend.status = platform::notify::Status::PermissionDenied;
-    auto denied = channel->deliver(makeDelivery());
+    Delivery deniedIn = makeDelivery();
+    deniedIn.dedupeKey = "rule:7@planned:1700000001";
+    auto denied = channel->deliver(deniedIn);
     DOCTEST_CHECK(denied.isOk());
     DOCTEST_CHECK_EQ(denied.value().status, std::string("permission_denied"));
 
     // level 越界钳制（防：非法 level 越界读取）
     Delivery bad = makeDelivery();
     bad.level = 99;
+    bad.dedupeKey = "rule:7@planned:1700000002";
     fakeBackend.status = platform::notify::Status::Accepted;
     auto clamped = channel->deliver(bad);
     DOCTEST_CHECK(clamped.isOk());
@@ -387,12 +394,69 @@ REGISTER_TEST(channelsFullscreenDedupeKeyMerge, "schedule 全屏渠道：同 ded
     return true;
 });
 
-// 防：工厂拼错 id 映射——内置渠道 id 与 kChannel* 常量脱节导致分发永远 NotFound
-REGISTER_TEST(channelsFactoryKnownAndUnknownIds, "schedule 渠道工厂：四内置 id 就位 + 未知 id 空", {
+// 防：工厂拼错 id 映射——内置渠道 id 与 kChannel* 常量脱节导致分发永远 NotFound；
+// 防：渠道文件在、注册表零命中（wecom 注册接线欠账）——规则引用 wecom 时永远 NotFound
+REGISTER_TEST(channelsFactoryKnownAndUnknownIds, "schedule 渠道工厂：五内置 id 就位 + 未知 id 空 + 标准装配全注册", {
     DOCTEST_CHECK(module::schedule::makeBuiltinChannel(module::schedule::kChannelFullscreen) != nullptr);
     DOCTEST_CHECK(module::schedule::makeBuiltinChannel(module::schedule::kChannelToast) != nullptr);
     DOCTEST_CHECK(module::schedule::makeBuiltinChannel(module::schedule::kChannelOs) != nullptr);
     DOCTEST_CHECK(module::schedule::makeBuiltinChannel(module::schedule::kChannelSilent) != nullptr);
-    DOCTEST_CHECK_EQ(module::schedule::makeBuiltinChannel("wecom"), nullptr);
+    DOCTEST_CHECK(module::schedule::makeBuiltinChannel(module::schedule::kChannelWecom) != nullptr);
+    DOCTEST_CHECK_EQ(module::schedule::makeBuiltinChannel("ghost"), nullptr);
+    auto wecom = module::schedule::makeBuiltinChannel(module::schedule::kChannelWecom);
+    DOCTEST_CHECK_EQ(wecom->id(), std::string(module::schedule::kChannelWecom));
+
+    // 标准装配（宿主 onStart 路径）：五个内置渠道全部可查找
+    module::schedule::ChannelRegistry registry;
+    registry.resetForTest();
+    module::schedule::registerBuiltinChannels(registry);
+    for (const char* id : {module::schedule::kChannelFullscreen,
+                           module::schedule::kChannelToast,
+                           module::schedule::kChannelOs,
+                           module::schedule::kChannelSilent,
+                           module::schedule::kChannelWecom}) {
+        DOCTEST_CHECK_MESSAGE(registry.find(id) != nullptr,
+                              std::string("标准装配应注册渠道：") + id);
+    }
+    registry.resetForTest();
+    return true;
+});
+
+// 防：渠道层反向依赖 app 层（审计 B 维度 1）——toast 默认落点走函数指针桥：
+// 未装配 = 投递静默丢弃（无头零 UI 副作用），装配 = 转发到宿主注入的落点
+REGISTER_TEST(channelsToastDefaultSinkViaBridge, "schedule toast 渠道：默认落点走 toast 通知桥（未装配零 UI / 装配转发）", {
+    // 1) 桥未装配（出厂态）：生产默认渠道 deliver+flush 不触 UI、不崩溃
+    {
+        auto channel = module::schedule::makeBuiltinChannel(module::schedule::kChannelToast);
+        module::schedule::ChannelRegistry registry;
+        registry.registerChannel(std::move(channel));
+        auto r = registry.deliver({module::schedule::kChannelToast}, makeDelivery());
+        DOCTEST_CHECK(r.isOk());
+        registry.flushAllToMainThread();
+        DOCTEST_CHECK_FALSE(::app::appNoticeVisible());  // 默认桩：零 UI 副作用
+        registry.resetForTest();
+    }
+    // 2) 桥装配：flush 经桥转发到注入的落点（假 sink，不触真 UI）。
+    // 桥槽是无捕获函数指针：记录区用静态存储，lambda 零捕获直引它
+    static std::vector<std::pair<std::string, std::string>> shown;
+    shown.clear();
+    ::app::toast_notice::setHandler([](const std::string& t, const std::string& b) {
+        shown.emplace_back(t, b);
+    });
+    {
+        auto channel = module::schedule::makeBuiltinChannel(module::schedule::kChannelToast);
+        module::schedule::ChannelRegistry registry;
+        registry.registerChannel(std::move(channel));
+        Delivery d = makeDelivery();
+        d.title = "桥转发";
+        auto r = registry.deliver({module::schedule::kChannelToast}, d);
+        DOCTEST_CHECK(r.isOk());
+        registry.flushAllToMainThread();
+        DOCTEST_CHECK_EQ(shown.size(), 1u);
+        DOCTEST_CHECK_EQ(shown[0].first, std::string("桥转发"));
+        DOCTEST_CHECK_EQ(shown[0].second, std::string("提醒正文"));
+        registry.resetForTest();
+    }
+    ::app::toast_notice::setHandler(nullptr);  // 显式复位（防留桩；resetCaseGlobals 兜底）
     return true;
 });

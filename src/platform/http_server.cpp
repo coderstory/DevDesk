@@ -192,20 +192,31 @@ struct Server::Impl {
 
 // Server 实现
 
-// 服务端 socket 排他绑定（「端口占用 → fail」如实上报的传输层前提）：httplib
-// 默认 socket_options_ = default_socket_options 带 SO_REUSEADDR——Windows 语义下
-// 两个都带 REUSEADDR 的 bind 可共存同一端口（双绑定不报错，占用检测假阴性）；
-// Linux 的 SO_REUSEPORT 更是显式多监听负载均衡语义。故 Windows 改设
-// SO_EXCLUSIVEADDRUSE（对一切后来者 fail）；POSIX 不设任何 reuse 位（无
-// REUSEADDR 的活动 LISTEN 本就排他，第二个 bind EADDRINUSE）。代价：同端口快速
-// 重启需等旧连接 TIME_WAIT 清空，换来占用检测如实报错。
+// 服务端 socket 绑定选项（「端口占用 → fail」如实上报的传输层前提）：
+// - Windows：SO_EXCLUSIVEADDRUSE。httplib 默认 default_socket_options 带
+//   SO_REUSEADDR，Windows 语义下两个都带 REUSEADDR 的 bind 可共存同一端口
+//   （双绑定不报错，占用检测假阴性），且微软对服务端 socket 明确 MUST 级
+//   要求 EXCLUSIVE（REUSEADDR 在 Windows 有强制抢占语义）。TIME_WAIT 窗口
+//   （TcpTimedWaitDelay，默认 2 分钟）挡重绑是文档明写、已登记的已知取舍
+//  （见 docs/superpowers/research/2026-10-27-mcp-round2-review.md §二）。
+// - POSIX：SO_REUSEADDR。它的语义恰好是「豁免 TIME_WAIT/关闭尾部残留，活动
+//   LISTEN 照样排他」：连接关闭后内核对端口仍有短暂残留（被动关闭 ~3ms 尾部
+//   窗口、主动关闭 TIME_WAIT 30s），无 reuse 位时 stop→start 立即重绑同端口
+//   会偶发 EADDRINUSE——本地代理的启停与测试的重启循环都踩到过。SO_REUSEADDR
+//   豁免的只是已死连接的残留；两个活动 LISTEN 绑同一 specific 地址仍互相
+//   EADDRINUSE（macOS 实测：双方都带 REUSEADDR 也拒绝，"REUSEADDR 型服务
+//   占口 → start 如实 fail"用例因此仍红得起来）。已知弱点：占用者以
+//   wildcard(0.0.0.0)+REUSEADDR 监听同端口时，本服务的 specific bind 会共存
+//   而非报错（BSD 多监听传统语义；连接按最具体地址匹配仍由本服务接走）。
+//   这正是 libuv/Node、Go、Python http.server 在 POSIX 侧的默认姿势。
 void applyExclusiveServerSocketOptions(socket_t sock) {
 #if defined(_WIN32)
     BOOL exclusive = TRUE;
     ::setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
                  reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
 #else
-    (void)sock;
+    int reuse = 1;
+    ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #endif
 }
 
@@ -225,7 +236,7 @@ Server::Server(std::string bindAddress, int port)
     : bindAddress_(std::move(bindAddress)),
       port_(port),
       impl_(new Impl()) {
-    // 覆盖 httplib 默认 REUSEADDR：服务端 socket 一律排他绑定（见
+    // 覆盖 httplib 默认 REUSEADDR：服务端 socket 按平台设绑定选项（见
     // applyExclusiveServerSocketOptions 注）
     impl_->svr.set_socket_options(&applyExclusiveServerSocketOptions);
 

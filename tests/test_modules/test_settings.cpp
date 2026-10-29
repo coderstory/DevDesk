@@ -1702,7 +1702,7 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
 })
 
 
-REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（5 行模块开关）", {
+REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（7 行模块开关）", {
     test_support::TestEnv env(kCfgPrefix, "modcard", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "modcard_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -1721,17 +1721,18 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
-    // 桌宠已摘除，开关序: sw.0=markdown/sw.1=todo/sw.2=claude/sw.3=agent
+    // 桌宠已摘除；schedule 补进第 2 格后开关序: sw.0=markdown/sw.1=todo/
+    // sw.2=定时/sw.3=claude/sw.4=agent
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.3") != nullptr);
-    const auto* agentName = ui.find("settings.card.modules.name.3");
+    const auto* agentName = ui.find("settings.card.modules.name.4");
     DOCTEST_REQUIRE(agentName != nullptr);
     DOCTEST_CHECK(agentName->text == "智能体");
     // agent 行开关默认**不**勾选（默认清单不含 kModuleIdAgent）。track 色 =
-    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行（sw.3）
+    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行（sw.4）
     // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，
     // 逐分量比）
     const auto* mdTrack = ui.find("settings.card.modules.sw.0.track");
-    const auto* agentTrack = ui.find("settings.card.modules.sw.3.track");
+    const auto* agentTrack = ui.find("settings.card.modules.sw.4.track");
     DOCTEST_REQUIRE(mdTrack != nullptr);
     DOCTEST_REQUIRE(agentTrack != nullptr);
     DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
@@ -2282,13 +2283,11 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                               yOf("settings.card.modules.name.0"),
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
-                // memory+release 并存 → 恒 6 格 3 行（254）；壁纸平台再加 1 格 = 7 格 4 行（310）。
-                // 非壁纸（68+roundFs(56)×2+roundFs(36)=216 基准，+38 → 254）：85% 216 / 100% 254 / 130% 330；
-                // 壁纸 4 行（68+56×3+36+38=310）：85% 264 / 100% 310 / 130% 403。
+                // schedule 加入后开关格恒 7 → 无壁纸平台也 4 行（310）；壁纸平台再加
+                // 1 格仍 4 行（310，两档收敛同值）。
+                // 4 行（68+56×3+36+38=310）：85% 264 / 100% 310 / 130% 403。
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          platform::wallpaper::supported()
-                              ? at(264.0f, 310.0f, 403.0f)
-                              : at(216.0f, 254.0f, 330.0f));
+                          at(264.0f, 310.0f, 403.0f));
             // 壁纸第 7 格（模块卡内末行落单，2026-10-27 拍板）：格几何随常规格
             // 机制派生——行 y = roundFs(68)+3×roundFs(56)、开关行内偏移 +6（字面）。
             if (err.empty() && platform::wallpaper::supported()) {
@@ -2583,7 +2582,9 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(pair->frame.height,
                              std::max(appearanceH, editorH)));
 
-        // 模块 tab：格子次行 desc 底不出卡（壁纸为第 7 格，id 无数字后缀）
+        // 模块 tab：格子次行 desc 底不出卡（壁纸为第 7 格，id 无数字后缀；
+        // 格存在性按平台判据门控——wallpaper 格仅 platform::wallpaper::supported()
+        // 时建，macOS 第二阶段 ObjC++ 前整格不建，与其他用例的 supported() 门控同口径）
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         eui::Ui uiM;
         uiM.begin(scale < 0.9f ? "pairgeoM85" : "pairgeoM130");
@@ -2591,12 +2592,14 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         uiM.end();
         uiM.layout(screen.width, screen.height);
         const auto* modulesCard = uiM.find("settings.card.modules");
-        const auto* rowdesc3 = uiM.find("settings.card.wallpaper.rowdesc");
         DOCTEST_REQUIRE(modulesCard != nullptr);
-        DOCTEST_REQUIRE(rowdesc3 != nullptr);
         DOCTEST_CHECK(nearEq(modulesCard->frame.height, modulesH));
-        DOCTEST_CHECK(rowdesc3->frame.y + rowdesc3->frame.height <=
-                      modulesCard->frame.y + modulesCard->frame.height + 0.5f);
+        if (platform::wallpaper::supported()) {
+            const auto* rowdesc3 = uiM.find("settings.card.wallpaper.rowdesc");
+            DOCTEST_REQUIRE(rowdesc3 != nullptr);
+            DOCTEST_CHECK(rowdesc3->frame.y + rowdesc3->frame.height <=
+                          modulesCard->frame.y + modulesCard->frame.height + 0.5f);
+        }
 
         // 日志 tab：hint 并一行底不出卡
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -2650,10 +2653,10 @@ REGISTER_TEST(settings_card_pair_column_geometry,
                               "github_sync 卡高 " +
                                   std::to_string(syncCard->frame.height) +
                                   " 期望(恒满高) " + std::to_string(wantH));
-        // UAT6 零滚动收口：362 = W2.4 字号迁移后（fontSizeBody 15→14）最小窗可用高。
-        // S1.2 #24: fontSizeBody迁移 + W2.4 UI Kit尺寸迁移共同导致kGithubSyncCardHeight 372→362。
-        const float heightTiers[][2] = {{0.85f, 308.0f}, {1.0f, 362.0f},
-                                        {1.15f, 416.0f}, {1.3f, 471.0f}};
+        // H28: 420 = S4.2 后最小窗可用高恰好值（600−144−20−16；S1.2 #24 时代 362）。
+        // 100%/85% 档零滚动（420/357 ≤ 可用高），115%/130% 档（483/546）设计内滚动。
+        const float heightTiers[][2] = {{0.85f, 357.0f}, {1.0f, 420.0f},
+                                        {1.15f, 483.0f}, {1.3f, 546.0f}};
         for (const auto& kv : heightTiers) {
             FontScaleGuard g2{kv[0]};
             const float h = module::settings::roundFs(
@@ -3598,10 +3601,10 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // 内容高对可用 372 的零滚动预算逐值保持（338/356/372 @ 0/1/2 条代理警告）。
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
-    // 模块卡：memory+release 加入后开关 6 格 → 3 行，卡高 68+roundFs(56)×2+roundFs(36)=216
-    // 基准 +38 富余 → 254（三档 roundFs = 216/254/330）；壁纸格另档 310。
+    // 模块卡：schedule 加入后开关 7 格 → 4 行，卡高 68+roundFs(56)×3+roundFs(36)=272
+    // 基准 +38 富余 → 310（三档 roundFs = 264/310/403）；壁纸格两档同值 310。
     // 与 T01 的 kModulesCardHeight 同源，改动必须与下方布局断言同步。
-    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 254.0f);
+    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 310.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 

@@ -41,7 +41,7 @@ struct FakeKeychainBackend {
     }
     static core::Result<std::string> load(const std::string& service,
                                           const std::string& account) {
-        DOCTEST_CHECK_EQ(service, module::schedule::kWecomKeychainService);
+        if (service != module::schedule::kWecomKeychainService) badService = true;
         accounts.push_back(account);
         if (failLoad) {
             return core::Result<std::string>::fail(core::ErrorCode::NotFound,
@@ -58,6 +58,7 @@ struct FakeKeychainBackend {
     }
     static inline bool failLoad = false;
     static inline std::vector<std::string> accounts;  // 记录渠道读过的 account 名
+    static inline bool badService = false;  // load 收到非约定 service 名（shim 宏不可用于本函数，记账后在用例体断言）
 };
 
 const platform::keychain::Backend kFakeKeychainBackend{
@@ -68,6 +69,7 @@ struct KeychainBackendGuard {
     KeychainBackendGuard() {
         FakeKeychainBackend::failLoad = false;
         FakeKeychainBackend::accounts.clear();
+        FakeKeychainBackend::badService = false;
         platform::keychain::setBackendForTest(&kFakeKeychainBackend);
     }
     ~KeychainBackendGuard() { platform::keychain::setBackendForTest(nullptr); }
@@ -131,7 +133,7 @@ REGISTER_TEST(wecomTruncateNotCutHalfCjk, "截断边界：切口落在汉字中�
     for (int i = 0; i < 700; ++i) cjk += "汉";
     const std::string outCjk = module::schedule::truncateUtf8(
         cjk, module::schedule::kWecomTextMaxBytes);
-    DOCTEST_CHECK_LE(outCjk.size(), module::schedule::kWecomTextMaxBytes);
+    DOCTEST_CHECK(outCjk.size() <= module::schedule::kWecomTextMaxBytes);
     DOCTEST_CHECK_EQ(outCjk.size() % 3u, 0u);
     DOCTEST_CHECK(platform::utf8::isValid(outCjk));
     return true;
@@ -265,8 +267,8 @@ REGISTER_TEST(wecomPayloadMarkdownAndV2Mentions, "请求体组装 markdown/markd
     DOCTEST_CHECK(markdown.get("content").asString().find("\n<@lisi>") !=
                   std::string::npos);
     DOCTEST_CHECK(!markdown.has("mentioned_list"));  // markdown 官方无列表字段
-    DOCTEST_CHECK_LE(markdown.get("content").asString().size(),
-                     module::schedule::kWecomMarkdownMaxBytes);
+    DOCTEST_CHECK(markdown.get("content").asString().size() <=
+               module::schedule::kWecomMarkdownMaxBytes);
 
     WecomConfig v2;
     v2.msgtype = "markdown_v2";
@@ -423,6 +425,7 @@ REGISTER_TEST(wecomDeliverSuccessRequestShape, "投递成功路径：POST 官方
     // keychain account 走 secretRef 派生（secretRef 空 → wecom.<channelDbId>）
     DOCTEST_REQUIRE_EQ(FakeKeychainBackend::accounts.size(), 1u);
     DOCTEST_CHECK_EQ(FakeKeychainBackend::accounts[0], std::string("wecom.7"));
+    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
@@ -467,6 +470,7 @@ REGISTER_TEST(wecomDeliverKeyNeverInLogStrings, "凭据纪律：网络错/5xx/4x
 
     // key 确实被用于请求（证明上面不是"没读到 key 所以没泄"）
     DOCTEST_CHECK(http.requests.back().url.find(kKey) != std::string::npos);
+    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
@@ -483,6 +487,7 @@ REGISTER_TEST(wecomDeliverMissingSecretNoHttp, "缺凭据：keychain 失败 → 
     DOCTEST_REQUIRE(receipt.isOk());
     DOCTEST_CHECK_EQ(receipt.value().status, std::string("missing_secret"));
     DOCTEST_CHECK_EQ(http.requests.size(), 0u);
+    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
@@ -504,6 +509,7 @@ REGISTER_TEST(wecomDeliverRateLimitedNoHttp, "限频端到端：1 分钟内第 1
     DOCTEST_REQUIRE(nineteenth.isOk());
     DOCTEST_CHECK_EQ(nineteenth.value().status, std::string("rate_limited"));
     DOCTEST_CHECK_EQ(http.requests.size(), 18u);  // 第 19 条未出网
+    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
@@ -556,6 +562,7 @@ REGISTER_TEST(wecomDeliverErrcodeStatusStrings, "投递错误判定：必须解�
     http.failResult = true;  // 传输层 Result::fail
     auto rNet = channel->deliver(makeDelivery());
     DOCTEST_CHECK_EQ(rNet.value().status, std::string("retryable:network_error"));
+    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
