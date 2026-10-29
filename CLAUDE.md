@@ -84,7 +84,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-**一体化脚本（推荐）**：`bash scripts/build-test-run.sh` —— 增量构建 + 全量测试 + 杀旧进程 + 启动 app，默认全增量（不删 build/）。参数：`--clean` 全量重建、`--no-test` 跳过测试、`--no-run` 不启动、`--filter X` 只跑名字含 X 的用例。工具链 PATH 脚本内部处理，app 以重定向后台方式启动不阻塞终端。**worktree 里直接可用**：脚本按 `EUI_NEO_DIR` 环境变量 → 同级 `../EUI-NEO` → git 主工作树同级 自动定位 EUI-NEO 并传给 configure（`-DEUI_NEO_DIR`）；`build/` 未初始化时自动 configure —— worktree 首建无需手敲 `-D`（见 HANDOFF §0.4）。
+**一体化脚本（推荐）**：`bash scripts/build-test-run.sh` —— 增量构建 + 全量测试 + 杀旧进程 + 启动 app，默认全增量（不删 build/）。参数：`--clean` 全量重建、`--no-test` 跳过测试、`--no-run` 不启动、`--filter X` 只跑名字含 X 的用例。工具链 PATH 脚本内部处理，app 以重定向后台方式启动不阻塞终端。EUI-NEO 自动定位：脚本按 `EUI_NEO_DIR` 环境变量 → 仓库根 `./EUI-NEO`（仓内 submodule，worktree 内同样可见）定位并传给 configure（`-DEUI_NEO_DIR`）；`build/` 未初始化时自动 configure —— 无需手敲 `-D`（见 HANDOFF §0.4）。
 
 **模块隔离静态守卫（TIN-01，已从单测迁到脚本）**：`bash scripts/check-module-isolation.sh` —— 断言 `src/module_settings/settings_module.cpp` 不反向依赖 `module_pet`（零 include / 零触碰 pet 盘 store / 零 `namespace module::pet`）、`module_pet_bridge.h` 恰好 include 一次且四条桥函数都真被调用，并断言 `src/module_settings/CMakeLists.txt` 的非注释行不 link 兄弟模块库。退出码 `0` 通过 / `1` 违规（逐条打印 `文件:行:命中行`）/ `2` 环境错（**不静默绿**）；`--root DIR` 可指向仓库外拷贝树做反证。`scripts/build-test-run.sh` 在测试段之后自动串跑它（`--no-test` 也跑），失败即整体 `exit 1`。*为什么独立成脚本*：原守卫编在 `test_settings.cpp` 内靠 `__FILE__` 上溯仓库根，ccache 相对化 `__FILE__` 后 cwd=仓库根 必误报 → 全量必红；脚本全程绝对路径、不读 `$PWD`、脚本内不 cd。
 
@@ -103,7 +103,7 @@ launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动�
 **macOS 侧的脚本（跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 已支持 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植当年只做过语法检查，此后 macOS 已成为日常开发平台、脚本在 macOS 上逐日真跑**；`check-consistency.sh` 的 `screencapture` 分支所需的终端「屏幕录制」TCC 权限已授予，但对 OpenGL 窗口可能抓到导航前的旧帧。**agent 会话里不要指望 `screencapture`**：会话由 launchd 拉起、不在终端进程树下，拿不到该 TCC 授权——要出图请用探针的进程内帧捕获（`./build/tests/<probe> --screenshot <路径>`，见「功能开发生命周期」阶段 4）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。（旧版此处引用的 `docs/KNOWN_LIMITATIONS.md` 已按用户指示整档删除。）
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。消费政策（2026-10-25 用户拍板，**ADR `docs/adr/0006-eui-neo-consume-policy-latest-source.md`**）：**源码同级目录引入、不锁版本、每次用最新源码**——无最低依赖 rev、无 pin，configure 期不做任何 rev 校验（旧 rev 软校验已删，其基准 rev 在 EUI-NEO 历史重写后已蒸发）。版本匹配的唯一权威判据 = `scripts/check-eui-neo-version.sh` 的**内容级 API 守卫**（src/ 下全部 EUI-NEO 消费编译单元逐个 `-fsyntax-only`）。远端形态：EUI-NEO 的 `origin` = coderstory/EUI-NEO（fork，**已与本地 main 同步**），上游 sudoevolve/EUI-NEO 仅作参考；CI 的 `EUI_NEO_REPO` 克隆 fork、`--depth 1` 拉 HEAD = 最新源码（**政策，非缺陷**）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），用了新 API 先推 fork 再推 DevDesk。
+EUI-NEO 依赖：`EUI-NEO/`（**仓内 git submodule**，2026-10-29 起由同级目录迁入；`.gitmodules` url 指向 coderstory fork，`EUI_NEO_DIR` cache 变量默认即仓内路径、`add_subdirectory` 集成，`-DEUI_NEO_DIR` 仍可覆盖）。消费政策（2026-10-25 用户拍板，**ADR `docs/adr/0006-eui-neo-consume-policy-latest-source.md`**；承载形态 2026-10-29 改为 submodule）：版本基线由 gitlink 记录、推进 = 升 submodule 指针——无最低依赖 rev、configure 期不做任何 rev 校验（旧 rev 软校验已删，其基准 rev 在 EUI-NEO 历史重写后已蒸发）。版本匹配的唯一权威判据 = `scripts/check-eui-neo-version.sh` 的**内容级 API 守卫**（src/ 下全部 EUI-NEO 消费编译单元逐个 `-fsyntax-only`）。远端形态：submodule url = coderstory/EUI-NEO（fork），EUI-NEO 内 `origin` = sudoevolve/EUI-NEO 上游仅作参考、**永不 push**。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），用了新 API 先推 fork、再升 submodule 指针推 DevDesk。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -154,13 +154,13 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 
 ## 🔧 EUI-NEO 上游贡献政策（重要）
 
-**遇到 EUI-NEO 的 ❌ 限制时**，优先考虑**直接修复 EUI-NEO 仓库**（`../EUI-NEO/`，与 DevDesk 同级目录），反哺社区并提交 PR，而不是 DevDesk 内自造 workaround。
+**遇到 EUI-NEO 的 ❌ 限制时**，优先考虑**直接修复 EUI-NEO 仓库**（`EUI-NEO/`，仓内 submodule），反哺社区并提交 PR，而不是 DevDesk 内自造 workaround。
 
 ### 工作流
 
 1. **在 DevDesk 中遇到问题** → 不要立即写 DevDesk 专属 hack
 2. **判断是否通用问题** → 如果是（拖拽 / 文件拖入 / macOS 27 / 字体等），属于 EUI-NEO 上游应修
-3. **修复 EUI-NEO** → 在 `../EUI-NEO/` 写 patch → 编译 DevDesk 验证
+3. **修复 EUI-NEO** → 在 `EUI-NEO/`（submodule）写 patch → 编译 DevDesk 验证
 4. **提交 PR** → 推送到用户 GitHub EUI-NEO fork 或发起到上游
 5. **DevDesk 受益** → 移除自己的 hack，复用 EUI-NEO 新能力
 
@@ -223,9 +223,9 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 ### 后续开发遇到 UI 问题时的查询顺序
 
 1. 查 [`docs/EUI-NEO-CAPABILITIES.md`](docs/EUI-NEO-CAPABILITIES.md) 的组件清单和功能核对表
-2. grep `../EUI-NEO/components/` 看是否有现成组件
-3. grep `../EUI-NEO/core/dsl.h` 看 DSL API
-4. 看 `../EUI-NEO/examples/` 和 `../EUI-NEO/apps/` 的实际用法
+2. grep `EUI-NEO/components/` 看是否有现成组件
+3. grep `EUI-NEO/core/dsl.h` 看 DSL API
+4. 看 `EUI-NEO/examples/` 和 `EUI-NEO/apps/` 的实际用法
 5. 如果还是不清楚，**不要假设**，明确写"待验证"留 TODO
 
 ## 🎨 视觉规范（"大气"原则）
@@ -273,7 +273,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**消费政策：不锁版本、每次用最新源码（ADR 0006），版本匹配由 `scripts/check-eui-neo-version.sh` 内容级判据保证**；EUI-NEO 的 `origin` = coderstory fork（CI 克隆它，已与本地同步），见「常用命令」段 |
+| `EUI-NEO/` | 上游 GUI 框架（**仓内 submodule**，2026-10-29 起由同级目录迁入），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**消费政策：版本基线由 gitlink 记录、每次用最新源码（ADR 0006，2026-10-29 修订），版本匹配由 `scripts/check-eui-neo-version.sh` 内容级判据保证**；submodule url = coderstory fork（CI 经 checkout submodules 检出），见「常用命令」段 |
 | `docs/superpowers/specs/2026-09-27-*.md` | 09-27 批次 specs：wave1-fix / god-class-refactor / shared-config-and-failover |
 | `docs/superpowers/specs/2026-09-28-*.md` | 09-28 批次 specs：installer-and-dmg / devdesk-probes / r8-assembly-layer / tin06-test-scaffold-migration / setscrolloffset-upstream-m6-refactor / md01-reload-block-mapping / macos-three-features / ui-modernization / profile-run |
 
@@ -283,7 +283,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 - **未截屏 = 未完成**
 - **未读 spec = 未开始**
 - **未 commit = 未持久化**
-- **不要假设 EUI-NEO 能力** — 不确定时去 `../EUI-NEO/` 源码 grep
+- **不要假设 EUI-NEO 能力** — 不确定时去 `EUI-NEO/`（submodule）源码 grep
 - **按场景写测试**：每条用例对应一个具体业务场景、注明防的具体事故（场景 = 用户从什么状态来、在什么环境做什么；防 = 改动回退或场景条件变化时会红）。「覆盖 XX 函数」不是测试目的。
 - **智能体类测试两段制（2026-10-21 定）**：先用注入 mock（假模型端点、假工具）验证理想路径与分支逻辑，不发真实网络——但 **mock 只证明理想情况，收口验证必须真模型实测**：草稿生成、任务运行、工具循环每类至少一次真实端到端调用（真网关方言、真 token 计费、真超时行为只有实操才暴露；反例实证：UAT3 星锐网关拒 `[1M]` 模型名，mock 全绿真网关当场爆）。测试目的 = 验证用户场景与边界，不为代码覆盖率。
 - **所有业务场景必须实际跑起来**：验证金字塔 = 纯逻辑单测（守重构）< 无头几何 < **真窗口 probe（真点击 / 键盘 / 拖拽 / 渲染）** < 真网 live < 真机 UAT。交付主流程至少到 probe 层、涉网关到 live 层。无头单测绿不算「实际跑过」。
@@ -297,7 +297,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 
 ### 派单与并发
 
-- **主会话零分析/开发（2026-10-27 用户定，硬标准）**：错误定位、方案设计、代码分析、修复实现、文档撰写一律**不进主会话**——全部创建子任务执行；主会话只保留：需求裁决、任务拆分派单、构建 / 测试产物验收、只读核查、合并与提交决策、环境准备（依赖下载等非开发杂务）——构建 / 测试的执行本身可派 `devdesk-tester`。子任务一律用工作区根定义的六类子智能体创建（位于 `../.zcode/agents/`，ZCode 会话级配置，DevDesk 仓库外），按工种对号入座：`devdesk-builder`（实现类：修码 / 写码 / 重构 / 构建修复 / 文档撰写）、`devdesk-auditor`（只读审计类，实现者不得自审）、`devdesk-investigator`（只读侦察类：错误定位 / 影响面 / 方案比选 / 派单前侦察）、`devdesk-researcher`（外部调研类：联网查最新动态 / 技术方案 / 开源实现，选型与可行性核对，结论必带一手来源引用，防闭门造车与重复造轮子）、`devdesk-tester`（构建与测试执行类：定向测试 / 探针 / 截屏 / 先红后绿取证）、`devdesk-upstream`（EUI-NEO 跨仓库联络类，非隔离线，只碰 `../EUI-NEO/`），不得用其它类型创建开发 / 分析子任务。**类型粒度纪律（2026-10-27 定）：一个工种只允许一个定义文件**——子任务只能绑定一个 agent 定义，场景 / 细分需求一律通过扩展现有类型的任务书承载（任务书点名范围、工具、验收即可），确属全新工种才新增定义文件，禁止按场景拆兄弟类型。*为什么*：既分析又实现失去第二方视角；主会话 token 昂贵，子任务可钉低成本模型（六类 agent 的 frontmatter 均钉 GLM-5.3-Flash）。下一条「主会话禁改文件」（2026-09-27 定）是本条在「改文件」维度的既有细则，继续有效。
+- **主会话零分析/开发（2026-10-27 用户定，硬标准）**：错误定位、方案设计、代码分析、修复实现、文档撰写一律**不进主会话**——全部创建子任务执行；主会话只保留：需求裁决、任务拆分派单、构建 / 测试产物验收、只读核查、合并与提交决策、环境准备（依赖下载等非开发杂务）——构建 / 测试的执行本身可派 `devdesk-tester`。子任务一律用项目根定义的六类子智能体创建（位于 `.zcode/agents/`，2026-10-29 自工作区壳迁入仓库），按工种对号入座：`devdesk-builder`（实现类：修码 / 写码 / 重构 / 构建修复 / 文档撰写）、`devdesk-auditor`（只读审计类，实现者不得自审）、`devdesk-investigator`（只读侦察类：错误定位 / 影响面 / 方案比选 / 派单前侦察）、`devdesk-researcher`（外部调研类：联网查最新动态 / 技术方案 / 开源实现，选型与可行性核对，结论必带一手来源引用，防闭门造车与重复造轮子）、`devdesk-tester`（构建与测试执行类：定向测试 / 探针 / 截屏 / 先红后绿取证）、`devdesk-upstream`（EUI-NEO 跨仓库联络类，非隔离线，只碰 `EUI-NEO/` submodule），不得用其它类型创建开发 / 分析子任务。**类型粒度纪律（2026-10-27 定）：一个工种只允许一个定义文件**——子任务只能绑定一个 agent 定义，场景 / 细分需求一律通过扩展现有类型的任务书承载（任务书点名范围、工具、验收即可），确属全新工种才新增定义文件，禁止按场景拆兄弟类型。*为什么*：既分析又实现失去第二方视角；主会话 token 昂贵，子任务可钉低成本模型（六类 agent 的 frontmatter 均钉 GLM-5.3-Flash）。下一条「主会话禁改文件」（2026-09-27 定）是本条在「改文件」维度的既有细则，继续有效。
 - **主会话禁改文件**（2026-09-27 定）：源码 / 测试 / 配置 / 文档一律**派子任务**改；主会话只做需求裁决、任务拆分、派单、只读核查（Read/Grep/Glob）、产物审计、合并与提交决策。**边界**：`commit` / `merge` 不算改文件（写的是 `.git` 记账、不动工作区），主会话可直接执行——别拿这条当不提交的借口；构建 / 测试 / 只读 shell 同样可在主会话跑。*为什么*：既写又审会失去第二方视角（当时主会话连续直接改源码和配置被纠）。
 - **粒度看复杂度，不看文件数**：引用点已查清、无需独立判断的机械改动（3-6 文件也算）**合并成 1 个子任务**做完，不拆成 N 个；需独立探索 / 设计判断 / 影响面广 / 要第二视角才拆多个并行。*为什么*：拆细后子任务启动 + 产物验证 + 等通知的成本高于收益（6 文件机械删除被派了独立子代理，用户纠"不复杂时成本反而更高"）。与上一条合起来 = **"少派、但必须派"**（"主会话自己 inline 做"的旧做法已作废）。
 - **并发上限 8 个在飞子任务**（2026-10-21 用户上调）。**仍保留的约束**：① 其中**同时只允许 1 个执行编译/测试**（多 worktree 并发构建互抢 IO/ccache 实测互拖，派构建类任务前先确认构建槽空闲）；② 同一文件同一时刻只有一个写者（见下条）；③ 多 worktree 并发构建互拖时主会话主动收束（I/O / 内存带宽饱和、ccache 热命中率被挤压 → 串行排队或降 `DEVDESK_JOBS`），不必等用户干预。构建并行度是另一件事，见「常用命令」段的 `DEVDESK_JOBS=3`。
@@ -312,7 +312,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 ### 交付流水线（四律，按序叠加）
 
 1. **只跑定向测试**：只编译受影响目标 + 只跑相关用例（macOS：`./build/tests/devdesk_tests <功能子串>`；Windows：`./build/tests/devdesk_tests.exe <功能子串>`，如 `markdown` / `proxy` / `settings`）。**禁全量重建、禁全量套件**（用户原话"进度太慢了"）；全量只在里程碑收尾 / 提交前由主会话跑一次。
-2. **涉及编译 / 测试的子任务必须 worktree 隔离**（`isolation: "worktree"` 或手动 `git worktree add`），**主工作树禁跑构建**；worktree 首建用 `scripts/build-test-run.sh` 自动 configure——它按 `EUI_NEO_DIR` 环境变量 → 同级 `../EUI-NEO` → **git 主工作树同级**依次定位框架源码，并自动补 OPENSSL（macOS `-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`；Windows 由 `cmake/Dependencies.cmake` 从编译器路径自动推导）等平台参数，**worktree 里首建不需要手敲任何 `-D`**。
+2. **涉及编译 / 测试的子任务必须 worktree 隔离**（`isolation: "worktree"` 或手动 `git worktree add`），**主工作树禁跑构建**；worktree 首建用 `scripts/build-test-run.sh` 自动 configure——它按 `EUI_NEO_DIR` 环境变量 → 仓库根 `./EUI-NEO`（submodule，worktree 内同样可见）依次定位框架源码，并自动补 OPENSSL（macOS `-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`；Windows 由 `cmake/Dependencies.cmake` 从编译器路径自动推导）等平台参数，**worktree 里首建不需要手敲任何 `-D`**。
 3. **完成即提交并合 `dev`**：agent 在自己的分支原子 commit（**显式 pathspec，禁 `git add -A`**）并报 sha → 主会话审计（读 diff + 复跑验收）→ **串行**合并进 **`dev`**（多 agent 同时 merge 会撞 `index.lock`）。**不攒批**。⚠ **集成分支是 `dev` 不是 `master`**：近期的合并全是 `Merge branch 'worktree-agent-*' into dev`；`master` 只是**发布分支**（`.github/workflows/release.yml` 只在 `push master` 时出 Release 制品），本机甚至没有 `master` 分支（要引用得写 `origin/master`）。别把改动合到一个不存在的本地 `master` 上。**分支绿 ≠ 合并绿**：任何 merge 提交后必须对合并后的 dev 树跑一次完整门禁——worktree 上的审计闸不覆盖合并结果（f274f74 事故：审计在 worktree 跑闸、合并进 dev 后从未构建，dev 当场无法 configure，直到 1ad2ac9 补救）。
 4. **worktree 用完即清**：合并后立即 `git worktree remove <path>` + `git worktree prune`；有未跟踪文件先看内容、必要时先备份到仓库外再 `--force`。**禁止残留**（曾一次清出 12 个 EUI-NEO 残留 worktree）。
 
@@ -404,7 +404,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 - **codegraph 索引排除 worktree / build**：`/Users/coderstory/dev/gui/codegraph.json`（Windows 侧同文件在 `D:/project/gui/`）的 `exclude` = `.claude/worktrees/**`、`**/.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。
 - **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe` / `cc-switch.exe`**）。
 - **代理直测脚本**：`doc/scripts/proxy_smoke_test.py`（`proxy` / `upstream` / `all`；环境变量 `DEVDESK_PROXY` / `DEVDESK_MODEL` / `DEVDESK_TOKEN`）。
-- **EUI-NEO 版本匹配**：消费政策 = **不锁版本、每次用最新源码**（ADR 0006）；无最低依赖 rev / 无 pin，configure 期零 rev 校验。唯一权威判据 = `bash scripts/check-eui-neo-version.sh --root . --eui-dir ../EUI-NEO`（内容级 API 守卫）绿。EUI-NEO 要保持本地 main 最新并与 `origin`（coderstory fork，CI 克隆它）同步，见「常用命令」段与「跨仓库耦合」段。
+- **EUI-NEO 版本匹配**：消费政策 = 每次用最新源码（ADR 0006，2026-10-29 起以仓内 submodule 承载）；无最低依赖 rev，configure 期零 rev 校验。唯一权威判据 = `bash scripts/check-eui-neo-version.sh --root . --eui-dir EUI-NEO`（内容级 API 守卫）绿。EUI-NEO 要保持本地 main 最新：先推 fork，再升 submodule 指针推 DevDesk，见「常用命令」段与「跨仓库耦合」段。
 - **已踩过的坑（写码前先想一遍）**：
   - **单位错配（系统性）**：`windowSize` / `glfwCreateWindow` 是**客户区物理像素**，compose 侧按 `framebuffer/(dpiScale×uiScale)` 折算逻辑像素——菜单窗、启动窗、桌宠锚点都栽过。本机 125%：工作区 1920×1020 物理、任务栏 60 px，窗口客户区底部 52 物理 px 会被任务栏吃掉（贴底 UI 不可见）。
     - **上面这条只是 Windows 口径**；macOS 口径（2026-09-28 实机回填，三行实测）：① `windowSize` / `glfwCreateWindow` / `glfwSetWindowSizeLimits` 的单位是**点**——`core::window::windowScaleForPoint` 在 macOS **恒返 1.0**（Retina 的 2.0 是 contentScale/backing scale，**不是**窗口单位换算，乘上去会双倍放大）；② 本机实测 `framebuffer 2940×1602 / contentScale 2.0 → 逻辑 1470×801`，即 `screen.height` **等于客户区点高**（两平台都只除一次，无多除少除——"Retina 没折算"的假设已被此数据证伪）；③ 工作区 1470×833 点、标题栏 28 点 → 客户区 805 点；设计最小窗高现为 800 点 < 833（2026-10-20 UAT2 从 845 收窄——旧 845 点 > 833 点曾致「最小值 > 可用面积」，这正是最小窗必须经 `core::window_layout::minWindowSizeForWorkArea` 做**同一条换算**再与工作区取 min 的原因，只做其中一步就是把病换个平台复制）。非客户区外框同样按平台注入：macOS `{0,28}`、Windows `{14.4,37.6}@96dpi`（`window_layout_macos.cpp` / `_win.cpp`）。

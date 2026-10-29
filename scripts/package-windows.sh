@@ -4,7 +4,7 @@
 #
 # 环境变量：
 #   ISCC          ISCC.exe 路径（最高优先级；装上 Inno Setup 后一般不需要设）
-#   EUI_NEO_DIR   EUI-NEO 目录（worktree 里自动反推主工作树，一般不需要设）
+#   EUI_NEO_DIR   EUI-NEO 目录（默认取仓库根 ./EUI-NEO submodule，一般不需要设）
 #   DEVDESK_JOBS  并发编译单元数（默认 3）
 #   MPV_BIN       mpv.exe 源路径（默认 D:/software/mpv/mpv.exe；缺失即失败，不出包）
 #
@@ -76,27 +76,21 @@ fi
 # 并行度封顶：多 worktree 并发构建时避免互拖。
 export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-3}"
 
-# EUI-NEO 路径解析：worktree 里没有同级 ../EUI-NEO，需反推主工作树。
-# 优先级：EUI_NEO_DIR 环境变量 > 同级 ../EUI-NEO（主工作树）> git 主工作树同级。
+# EUI-NEO 路径解析：仓内 submodule，位于仓库根 ./EUI-NEO。
+# 优先级：EUI_NEO_DIR 环境变量 > 仓库根 ./EUI-NEO（git rev-parse --show-toplevel 拼接）。
 # 下面这整段与 build-test-run.sh 的同名解析重复：抽公共库时两处必须一起改，只改一边会让两条
 # 门禁/打包路径解析出不同的 EUI-NEO。
 EUI_DIR="${EUI_NEO_DIR:-}"
-if [ -z "$EUI_DIR" ] && [ -f ../EUI-NEO/CMakeLists.txt ]; then
-  EUI_DIR="$(cd ../EUI-NEO && pwd)"
-fi
 if [ -z "$EUI_DIR" ]; then
-  # worktree 的 git-common-dir 指向主工作树的 .git，其父目录即主工作树根
-  COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-  if [ -n "$COMMON_DIR" ]; then
-    MAIN_ROOT="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || true)"
-    if [ -n "$MAIN_ROOT" ] && [ -f "$MAIN_ROOT/../EUI-NEO/CMakeLists.txt" ]; then
-      EUI_DIR="$(cd "$MAIN_ROOT/../EUI-NEO" && pwd)"
-    fi
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/EUI-NEO/CMakeLists.txt" ]; then
+    EUI_DIR="$REPO_ROOT/EUI-NEO"
   fi
 fi
 if [ -z "$EUI_DIR" ]; then
-  echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 同级 ../EUI-NEO / 主工作树同级）" >&2
-  echo "   可用 EUI_NEO_DIR=<EUI-NEO 路径> bash scripts/package-windows.sh 显式指定" >&2
+  echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 仓库根 ./EUI-NEO submodule）" >&2
+  echo "   submodule 未检出先跑：git submodule update --init EUI-NEO" >&2
+  echo "   或 EUI_NEO_DIR=<EUI-NEO 路径> bash scripts/package-windows.sh 显式指定" >&2
   exit 1
 fi
 echo "── EUI-NEO: $EUI_DIR ──"

@@ -3,9 +3,9 @@
 # EUI-NEO 版本前置校验
 #
 # ── 它在守什么 ─────────────────────────────────────────────────────
-# DevDesk 与 EUI-NEO 是**两个独立仓库**（同级目录、非 submodule），CI 的取框架步骤
-# 是 `git clone --depth 1 <fork> EUI-NEO` —— **拉 fork 默认分支 HEAD，不锁版本**
-#（消费政策：每次用最新源码，见 ADR 0006）。
+# DevDesk 与 EUI-NEO 是**两个仓库**（EUI-NEO 以仓内 submodule 承载，2026-10-29 起；
+# CI 经 checkout 的 submodules 参数拉取 fork HEAD，不锁死内容——gitlink 记录的是
+# 推进时的基线，见 ADR 0006 与 scripts/check-eui-neo-version.sh 同名守卫的消费政策）。
 # 于是框架版本不匹配以编译错误的形式出现，而**报错文件是错的**（那一行代码本身
 # 没问题），排查方向被带偏。本守卫把它从「编到一半才发现、且报错指错文件」提前成
 # 「构建之前就红，并明确说：EUI-NEO 版本不匹配」。
@@ -25,8 +25,8 @@
 # 为什么不用 git rev 比对（最容易被质疑的取舍，明确记在这里）：消费政策已定案
 # （ADR 0006：源码同级引入、**不锁版本、每次用最新源码**），rev 比对在本项目
 # 根本不成立——
-#   ① CI 是 `--depth 1` 浅克隆（政策：拉 fork HEAD = 最新源码，有意为之），够不到
-#      历史，祖先关系查不了；
+#   ① CI 上 submodule 是浅检出（主仓 fetch-depth 受限，submodule 跟随），够不到
+#      EUI-NEO 完整历史，祖先关系查不了；
 #   ② EUI-NEO 的历史曾被重写，指向具体 rev 的校验没有稳定锚点（旧「最低依赖
 #      rev」软校验的基准 rev 在现历史中已蒸发，该检查已于 2026-10-26 删除）；
 #      且 origin 即 coderstory fork、已与本地 main 同步，不存在「本地与远端不在
@@ -234,19 +234,19 @@ report_mismatch_head() {
     echo "❌ EUI-NEO 版本不匹配：DevDesk 现在写的代码在克隆到的 EUI-NEO 上编不过。"
     echo "   这**不是**上方那些 DevDesk 文件写错了 —— 错的是框架版本。"
     echo "   典型形态：某个新 API（如 TextBuilder::overflow）还没落到 fork 上。"
-    echo "   处置：把 EUI-NEO 推到 fork（$EUI_DIR 所在仓库）后重跑本 job；"
-    echo "        或先等 CI 克隆到含该 API 的 HEAD。判据细节见本脚本文件头。"
+    echo "   处置：把 EUI-NEO 推到 fork（$EUI_DIR 所在仓库）并升 submodule 指针后重跑；"
+    echo "        或先等 CI 检出到含该 API 的 HEAD。判据细节见本脚本文件头。"
 }
 
 # --self-test：造一棵「旧框架」证明探针真的会红
 if [ "$SELF_TEST" -eq 1 ]; then
     CXX_BIN="$(pick_cxx)" || { echo "❌ 自检失败：找不到 C++ 编译器" >&2; exit 2; }
     [ -n "$EUI_DIR" ] || EUI_DIR="${EUI_NEO_DIR:-}"
-    if [ -z "$EUI_DIR" ] && [ -f "$ROOT/../EUI-NEO/CMakeLists.txt" ]; then
-        EUI_DIR="$(cd "$ROOT/../EUI-NEO" && pwd)"
+    if [ -z "$EUI_DIR" ] && [ -f "$ROOT/EUI-NEO/CMakeLists.txt" ]; then
+        EUI_DIR="$ROOT/EUI-NEO"
     fi
     [ -n "$EUI_DIR" ] && [ -f "$EUI_DIR/core/dsl.h" ] || {
-        echo "❌ 自检失败：定位不到真 EUI-NEO（--eui-dir / EUI_NEO_DIR / 同级 ../EUI-NEO）" >&2; exit 2; }
+        echo "❌ 自检失败：定位不到真 EUI-NEO（--eui-dir / EUI_NEO_DIR / 仓库根 ./EUI-NEO）" >&2; exit 2; }
 
     EUI_INCLUDES="$(parse_eui_includes "$ROOT" "$EUI_DIR")" || exit 2
     TMP="$(mktemp -d)"
@@ -342,22 +342,15 @@ echo "EUI-NEO 版本前置校验：克隆到的框架是否满足 DevDesk 当前
 [ -f "$ROOT/CMakeLists.txt" ] || { echo "❌ 环境错误：不可读 $ROOT/CMakeLists.txt" >&2; exit 2; }
 [ -d "$ROOT/src" ] || { echo "❌ 环境错误：目录不存在：$ROOT/src" >&2; exit 2; }
 
-# EUI-NEO 定位：--eui-dir > $EUI_NEO_DIR > 同级 ../EUI-NEO（CI 就是这个形态）
-# > git 主工作树同级
+# EUI-NEO 定位：--eui-dir > $EUI_NEO_DIR > 仓库根 ./EUI-NEO（gitlink submodule）
 if [ -z "$EUI_DIR" ]; then EUI_DIR="${EUI_NEO_DIR:-}"; fi
-if [ -z "$EUI_DIR" ] && [ -f "$ROOT/../EUI-NEO/CMakeLists.txt" ]; then
-    EUI_DIR="$(cd "$ROOT/../EUI-NEO" && pwd)"
-fi
-if [ -z "$EUI_DIR" ]; then
-    COMMON_DIR="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
-    if [ -n "$COMMON_DIR" ]; then
-        MAIN_ROOT="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || true)"
-        [ -n "$MAIN_ROOT" ] && [ -f "$MAIN_ROOT/../EUI-NEO/CMakeLists.txt" ] && EUI_DIR="$(cd "$MAIN_ROOT/../EUI-NEO" && pwd)"
-    fi
+if [ -z "$EUI_DIR" ] && [ -f "$ROOT/EUI-NEO/CMakeLists.txt" ]; then
+    EUI_DIR="$ROOT/EUI-NEO"
 fi
 if [ -z "$EUI_DIR" ] || [ ! -f "$EUI_DIR/CMakeLists.txt" ]; then
-    echo "❌ 环境错误：找不到 EUI-NEO（试过 --eui-dir / \$EUI_NEO_DIR / 同级 ../EUI-NEO）" >&2
-    echo "   版本校验必须对真实克隆到的框架跑，跳过它等于本门禁形同虚设" >&2
+    echo "❌ 环境错误：找不到 EUI-NEO（试过 --eui-dir / \$EUI_NEO_DIR / 仓库根 ./EUI-NEO submodule）" >&2
+    echo "   submodule 未检出先跑：git submodule update --init EUI-NEO" >&2
+    echo "   版本校验必须对真实检出到的框架跑，跳过它等于本门禁形同虚设" >&2
     exit 2
 fi
 

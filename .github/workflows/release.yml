@@ -10,7 +10,6 @@ permissions:
   contents: write
 
 env:
-  EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_COMPILERCHECK: content
@@ -23,12 +22,12 @@ jobs:
     name: macOS · 制品
     runs-on: xcode-27
     steps:
+      # EUI-NEO 是仓内 submodule，submodules: recursive 随 checkout 一并检出
       - uses: actions/checkout@v7
         with:
           path: DevDesk
           fetch-depth: 0          # 汇总提交信息要用完整历史
-
-      - run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
+          submodules: recursive
 
       - name: 切到镜像上最新的 Xcode
         run: |
@@ -70,12 +69,12 @@ jobs:
     name: Windows · 制品
     runs-on: windows-2025
     steps:
+      # 同 macOS job：EUI-NEO submodule 随 checkout 检出
       - uses: actions/checkout@v7
         with:
           path: DevDesk
           fetch-depth: 0
-
-      - run: git clone --depth 1 "$env:EUI_NEO_REPO" EUI-NEO
+          submodules: recursive
 
       - uses: msys2/setup-msys2@v2
         with:

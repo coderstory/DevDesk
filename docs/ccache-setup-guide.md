@@ -93,7 +93,7 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DOPENSSL_ROOT_DIR=C:/msys64/mingw64 \
   -DZLIB_LIBRARY=C:/msys64/mingw64/lib/libz.dll.a \
-  -DZLIB_INCLUDE_DIR=../EUI-NEO/3rd/zlib-1.3.1
+  -DZLIB_INCLUDE_DIR=EUI-NEO/3rd/zlib-1.3.1
 ```
 
 两条注意：

@@ -2,7 +2,7 @@
 
 > **调研日期**：2026-09-20
 > **调研目的**：DevDesk 项目技术选型验证
-> **调研方法**：实际打开 `/Users/coderstory/Dev/gui/EUI-NEO/` 源码，grep + 阅读组件实现 + 跑示例
+> **调研方法**：实际打开 `/Users/coderstory/Dev/gui/DevDesk/EUI-NEO/` 源码（2026-10-29 起为 DevDesk 仓内 submodule），grep + 阅读组件实现 + 跑示例
 > **结论**：DevDesk 的全部设计**基本可实现**，但有 5 个硬限制 + 5 个隐藏陷阱需要避开
 > **2026-09-27 补充实测**：Markdown Phase 3 · M0 spike（V1–V4，9 用例全绿，被测 rev `8a1227c`）——焦点 / `input` 编辑态口径见 §7「焦点与 input 编辑态实测口径」，其中含一条对 §7「焦点系统」的更正
 

@@ -148,37 +148,17 @@ build_incs() {
 }
 
 # EUI-NEO 定位（与 scripts/build-test-run.sh 同一套优先级，避免两边各认一份）：
-#   显式参数 → $EUI_NEO_DIR → 同级 ../EUI-NEO → git 主工作树同级
-# 第三条是 worktree 唯一能用的路径：worktree 里没有同级 ../EUI-NEO，要靠
-# git-common-dir 反推主工作树（只写 `${ROOT}/../EUI-NEO` 的话，worktree 下
-# 恒定找不到，EUI 相关文件会被整片记成「编不到」）。
-# rev-parse --git-common-dir 的返回形态：主工作树 = 相对路径（`.git`，须锚定到
-# ROOT 才能用）；链接 worktree = 绝对路径，Windows 上是 `D:/...` 盘符形式——
-# 它不以 `/` 开头，判绝对路径时必须连盘符一起认，否则被误判成相对路径拼成
-# `${ROOT}/D:/...`，一切无同级 EUI-NEO 的 worktree（盘符根 / .claude/worktrees/
-# 下）恒定找不到 EUI-NEO，120 个 TU 被记成「编不过」的假红。同级其它脚本
-# （build-test-run / coverage / package-windows）直接用原始值不判形态，没这坑。
+#   显式参数 → $EUI_NEO_DIR → 仓库根 ./EUI-NEO（gitlink submodule，git rev-parse
+#   --show-toplevel 拼接；worktree 下 show-toplevel 即 worktree 根，同样命中）
 find_eui() {
-    local c common main_root
+    local c
     for c in "$EUI_NEO_DIR_ARG" "${EUI_NEO_DIR:-}"; do
         if [ -n "$c" ] && [ -f "${c}/CMakeLists.txt" ]; then echo "$c"; return 0; fi
     done
-    for c in "$(cd "$ROOT/.." 2>/dev/null && pwd)/EUI-NEO" "${ROOT}/../EUI-NEO"; do
-        if [ -f "${c}/CMakeLists.txt" ]; then (cd "$c" && pwd); return 0; fi
-    done
-    common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
-    if [ -n "$common" ]; then
-        # /* = POSIX 绝对路径；[A-Za-z]:[/\\]* = Windows 盘符绝对路径。两者原样可用，
-        # 只有相对形态（主工作树的 `.git`）才需要锚定到 ROOT。
-        case "$common" in
-            /*|[A-Za-z]:[/\\]*) ;;
-            *) common="${ROOT}/${common}" ;;
-        esac
-        main_root="$(cd "$common/.." 2>/dev/null && pwd || true)"
-        if [ -n "$main_root" ] && [ -f "${main_root}/../EUI-NEO/CMakeLists.txt" ]; then
-            (cd "${main_root}/../EUI-NEO" && pwd); return 0
-        fi
-    fi
+    local root
+    root="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$ROOT")"
+    c="${root}/EUI-NEO"
+    if [ -f "${c}/CMakeLists.txt" ]; then (cd "$c" && pwd); return 0; fi
     return 1
 }
 
@@ -217,7 +197,7 @@ if [ -z "$EUI_DIR" ]; then
     # 绝大多数 TU 都 include eui/*.h，缺它继续编只会把整片文件记成「编不过」，
     # 产出长得像代码回归的假红。按文件头退出码口径走 2 = 环境错，绝不装成代码错。
     echo "❌ 找不到 EUI-NEO —— 环境错（退出 2），不是源码编不过。" >&2
-    echo "   探测顺序：--eui-neo 参数 → \$EUI_NEO_DIR → 同级 ../EUI-NEO → git 主工作树同级" >&2
+    echo "   探测顺序：--eui-neo 参数 → \$EUI_NEO_DIR → 仓库根 ./EUI-NEO submodule" >&2
     echo "   显式指定后重跑：bash scripts/check-windows-cross-compile.sh --eui-neo <EUI-NEO 路径>" >&2
     exit 2
 fi

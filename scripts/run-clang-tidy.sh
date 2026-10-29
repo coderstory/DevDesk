@@ -97,22 +97,16 @@ elif [ "$DEVDESK_OS" = "darwin" ]; then
   OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3)
 fi
 
-# EUI-NEO 定位：与 build-test-run.sh 同优先级（环境变量 > 同级 ../EUI-NEO > 主工作树同级）
+# EUI-NEO 定位：与 build-test-run.sh 同优先级（环境变量 > 仓库根 ./EUI-NEO submodule）
 EUI_DIR="${EUI_NEO_DIR:-}"
-if [ -z "$EUI_DIR" ] && [ -f ../EUI-NEO/CMakeLists.txt ]; then
-  EUI_DIR="$(cd ../EUI-NEO && pwd)"
-fi
 if [ -z "$EUI_DIR" ]; then
-  COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-  if [ -n "$COMMON_DIR" ]; then
-    MAIN_ROOT="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || true)"
-    if [ -n "$MAIN_ROOT" ] && [ -f "$MAIN_ROOT/../EUI-NEO/CMakeLists.txt" ]; then
-      EUI_DIR="$(cd "$MAIN_ROOT/../EUI-NEO" && pwd)"
-    fi
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/EUI-NEO/CMakeLists.txt" ]; then
+    EUI_DIR="$REPO_ROOT/EUI-NEO"
   fi
 fi
 if [ -z "$EUI_DIR" ]; then
-  echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 同级 ../EUI-NEO / 主工作树同级）" >&2
+  echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 仓库根 ./EUI-NEO submodule；未检出先跑 git submodule update --init EUI-NEO）" >&2
   exit 1
 fi
 

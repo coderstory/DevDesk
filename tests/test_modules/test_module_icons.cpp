@@ -4,7 +4,7 @@
 //   - glyph 是 FA 码点的 UTF-8 编码（eui::utf8(0xF...)），不是 emoji——emoji 在 Windows 上
 //     由系统彩色 emoji 字体渲染，风格不统一。
 //   - fontFamily=="Icon"（EUI-NEO 也收 "Font Awesome 7 Free"）路由到内置
-//     Font Awesome 7 Free-Solid-900.otf（../EUI-NEO/core/render/text.cpp
+//     Font Awesome 7 Free-Solid-900.otf（EUI-NEO submodule 的 core/render/text.cpp
 //     kDefaultIconFontFile，改那个匹配前先确认 EUI-NEO 侧仍收 "Icon"）。
 //   - 字体里码点是否齐全、字形观感均不作断言（属人工点验），本文件只钉码点与字体路由两件事。
 #include "doctest.h"

@@ -52,9 +52,9 @@
 #     相同不代表内容相同、不同也不代表内容不同；只有字节比对能回答「装上去的是不是这次
 #     编出来的」。
 #
-# worktree 感知：git worktree 里没有同级 ../EUI-NEO，脚本按
-#   EUI_NEO_DIR 环境变量 > 同级 ../EUI-NEO > git 主工作树同级
-# 自动定位 EUI-NEO 并传给 configure（-DEUI_NEO_DIR），worktree 首建无需手敲；
+# EUI-NEO 定位：仓内 submodule（仓库根 ./EUI-NEO，worktree 内同样可见），脚本按
+#   EUI_NEO_DIR 环境变量 > 仓库根 ./EUI-NEO
+# 自动定位 EUI-NEO 并传给 configure（-DEUI_NEO_DIR），无需手敲；
 # <构建目录> 未初始化（首次/换平台）时脚本自动 configure，无需 --clean。
 set -e
 # pipefail：管道退出码取最左非零 —— 防「构建/测试失败却被输出管道（tee/grep/head）吞掉
@@ -208,32 +208,26 @@ esac
 if [ -d "$BUILD_DIR" ]; then BUILD_DIR_ABS="$(cd "$BUILD_DIR" && pwd)"; fi
 echo "── 构建: $BUILD_TYPE → $BUILD_DIR/ ──"
 
-# 解析 EUI-NEO 路径（worktree 里没有同级 ../EUI-NEO，需反推主工作树）
-# 优先级：EUI_NEO_DIR 环境变量 > 同级 ../EUI-NEO（主工作树）> git 主工作树同级
+# 解析 EUI-NEO 路径（仓内 submodule，位于仓库根 ./EUI-NEO；worktree 内同样可见）
+# 优先级：EUI_NEO_DIR 环境变量 > 仓库根 ./EUI-NEO（git rev-parse --show-toplevel 拼接）
 EUI_DIR="${EUI_NEO_DIR:-}"
-if [ -z "$EUI_DIR" ] && [ -f ../EUI-NEO/CMakeLists.txt ]; then
-  EUI_DIR="$(cd ../EUI-NEO && pwd)"
-fi
 if [ -z "$EUI_DIR" ]; then
-  # worktree 的 git-common-dir 指向主工作树的 .git，其父目录即主工作树根
-  COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-  if [ -n "$COMMON_DIR" ]; then
-    MAIN_ROOT="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || true)"
-    if [ -n "$MAIN_ROOT" ] && [ -f "$MAIN_ROOT/../EUI-NEO/CMakeLists.txt" ]; then
-      EUI_DIR="$(cd "$MAIN_ROOT/../EUI-NEO" && pwd)"
-    fi
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/EUI-NEO/CMakeLists.txt" ]; then
+    EUI_DIR="$REPO_ROOT/EUI-NEO"
   fi
 fi
 if [ -z "$EUI_DIR" ]; then
-  echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 同级 ../EUI-NEO / 主工作树同级）" >&2
-  echo "   可用 EUI_NEO_DIR=<EUI-NEO 路径> bash scripts/build-test-run.sh 显式指定" >&2
+  echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 仓库根 ./EUI-NEO submodule）" >&2
+  echo "   submodule 未检出先跑：git submodule update --init EUI-NEO" >&2
+  echo "   或 EUI_NEO_DIR=<EUI-NEO 路径> bash scripts/build-test-run.sh 显式指定" >&2
   exit 1
 fi
 echo "── EUI-NEO: $EUI_DIR ──"
 
 # EUI-NEO 版本前置校验（必须在 configure / 构建之前）。
-# 为什么必须前置：DevDesk 与 EUI-NEO 是两个独立仓库，CI 用 `git clone --depth 1 <fork>`
-# 取框架、**不锁版本**。跨仓库版本不匹配会伪装成一个指向错误文件的编译错误（缺 API 报在
+# 为什么必须前置：DevDesk 与 EUI-NEO 是两个仓库（submodule 承载），CI 检出 submodule
+# 取框架、内容随检出时点。跨仓库版本不匹配会伪装成一个指向错误文件的编译错误（缺 API 报在
 # 用到它的那一行，那行代码本身没问题）—— 排查方向会被带偏一整轮。
 # 判据由 DevDesk 自身源码与 CMakeLists 自动推导（见 check-eui-neo-version.sh 文件头），不是
 # 手维护清单：新增一处 EUI-NEO 消费点、或 EUI-NEO 加一条 include 路径，本守卫都自动跟上。

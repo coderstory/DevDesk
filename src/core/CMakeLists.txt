@@ -83,8 +83,8 @@ if(TARGET eui_neo)
     target_link_libraries(devdesk_core PUBLIC eui_neo)
 else()
     target_include_directories(devdesk_core PUBLIC
-        ${CMAKE_SOURCE_DIR}/../EUI-NEO/include
-        ${CMAKE_SOURCE_DIR}/../EUI-NEO/3rd/yyjson-0.12.0/src
-        ${CMAKE_SOURCE_DIR}/../EUI-NEO/3rd/md4c/src
+        ${CMAKE_SOURCE_DIR}/EUI-NEO/include
+        ${CMAKE_SOURCE_DIR}/EUI-NEO/3rd/yyjson-0.12.0/src
+        ${CMAKE_SOURCE_DIR}/EUI-NEO/3rd/md4c/src
     )
 endif()

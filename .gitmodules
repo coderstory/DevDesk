@@ -1,0 +1,3 @@
+[submodule "EUI-NEO"]
+	path = EUI-NEO
+	url = https://github.com/coderstory/EUI-NEO.git

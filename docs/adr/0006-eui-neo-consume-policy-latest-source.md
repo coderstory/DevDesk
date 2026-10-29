@@ -1,7 +1,7 @@
 # ADR 0006：EUI-NEO 消费政策——同级源码目录引入、不锁版本、每次用最新源码
 
 - **日期**：2026-10-26
-- **状态**：Accepted
+- **状态**：Accepted（**2026-10-29 部分修订**：承载形态由同级目录改为仓内 submodule，见文末注记；「内容级守卫为唯一权威判据」的政策本体不变）
 - **决策方**：用户拍板（2026-10-25 晚；决策全文见 `docs/plans/开发计划-2026-10-25.md` §五 D1）
 - **相关**：`scripts/check-eui-neo-version.sh`（内容级守卫，唯一权威判据）；`.github/workflows/ci.yml`（取框架步骤 `--depth 1` 克隆）；`.scratch/remediation-2026-10/issues/01-eui-neo-policy-cleanup.md`（本 ADR 的落地票）
 
@@ -35,3 +35,7 @@ DevDesk 消费 GUI 框架 EUI-NEO。历史上曾用 git rev 做版本对齐：�
 - 「全新机器可复现构建」的口径 = **克隆两仓库 HEAD + `check-eui-neo-version.sh` 绿**，不以 pin-sha 为手段。
 - 全库不再维护「当前依赖 rev」类记录（CLAUDE.md、策略清单等已改为引用本 ADR 与守卫脚本）；关于页 / 设置页关于文案只展示 EUI-NEO 检出 rev，无「最低依赖 rev」。
 - **重审触发**：若 EUI-NEO 转为稳定 tag 发版且历史不再重写，可重估是否声明版本区间——判据仍应以内容级守卫为主，rev/tag 仅作人类可读的辅助信息。
+
+## 2026-10-29 更新注记（用户拍板）
+
+承载形态由「同级源码目录」改为**仓内 git submodule**（`EUI-NEO/`，url 指向 coderstory fork，见 `.gitmodules`），上文「为什么不转 submodule」一节的前提（多 worktree 同步成本）随仓库单根化不再成立，该节论断作废。政策本体保持：configure 期不做 rev 校验、版本匹配以 `scripts/check-eui-neo-version.sh` 内容级守卫为唯一权威判据；gitlink 记录推进基线，升 submodule 指针 = 消费新源码。CI 取框架随之改为 checkout `submodules: recursive`。

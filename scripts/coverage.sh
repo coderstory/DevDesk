@@ -28,7 +28,7 @@
 #   --help        本说明（= 本段注释）
 #
 # 环境变量：DEVDESK_JOBS 并发编译单元数（默认 3，同 build-test-run.sh 封顶）；
-#           EUI_NEO_DIR 显式指定框架源码（否则按 同级 ../EUI-NEO > git 主工作树同级 定位）；
+#           EUI_NEO_DIR 显式指定框架源码（否则按 仓库根 ./EUI-NEO submodule 定位）；
 #           DEVDESK_COV_BUILD_DIR 覆盖构建目录（仅 Windows 路线认，默认 build-coverage/）。
 # 产物（都在构建目录下）：
 #   coverage-summary.txt  分层表（本次跑的快照，两路线同名字段）
@@ -61,24 +61,18 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   exit 0
 fi
 
-# EUI-NEO 定位（两路线共用）：worktree 里没有同级 ../EUI-NEO，三级回退。
+# EUI-NEO 定位（两路线共用）：仓内 submodule，仓库根 ./EUI-NEO。
 locate_eui_neo() {
   local EUI_DIR="${EUI_NEO_DIR:-}"
-  if [ -z "$EUI_DIR" ] && [ -f ../EUI-NEO/CMakeLists.txt ]; then
-    EUI_DIR="$(cd ../EUI-NEO && pwd)"
-  fi
   if [ -z "$EUI_DIR" ]; then
-    local COMMON_DIR MAIN_ROOT
-    COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
-    if [ -n "$COMMON_DIR" ]; then
-      MAIN_ROOT="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd || true)"
-      if [ -n "$MAIN_ROOT" ] && [ -f "$MAIN_ROOT/../EUI-NEO/CMakeLists.txt" ]; then
-        EUI_DIR="$(cd "$MAIN_ROOT/../EUI-NEO" && pwd)"
-      fi
+    local REPO_ROOT
+    REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/EUI-NEO/CMakeLists.txt" ]; then
+      EUI_DIR="$REPO_ROOT/EUI-NEO"
     fi
   fi
   if [ -z "$EUI_DIR" ]; then
-    echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 同级 ../EUI-NEO / 主工作树同级）" >&2
+    echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 仓库根 ./EUI-NEO submodule；未检出先跑 git submodule update --init EUI-NEO）" >&2
     return 1
   fi
   echo "$EUI_DIR"

@@ -4,13 +4,11 @@
     {
       "name": "worktree",
       "displayName": "worktree 首建（Ninja + Debug + 本机 EUI-NEO/OpenSSL/zlib）",
-      "description": "把 CLAUDE.md「常用命令」里手敲的那串配方固化成一条命令：cmake --preset worktree。EUI_NEO_DIR 必须是绝对路径——worktree 里默认的 ../EUI-NEO 指向 .claude/worktrees/EUI-NEO（不存在）。ccache 由顶层 CMakeLists.txt 自动探测启用，本预设不传 launcher。仅适用本机（Windows 11 / MSYS2 MinGW64），macOS 平台请照 CLAUDE.md 的 macOS 命令走。",
+      "description": "把 CLAUDE.md「常用命令」里手敲的那串配方固化成一条命令：cmake --preset worktree。EUI-NEO 是仓内 submodule，CMakeLists 默认即命中（EUI_NEO_DIR 无需再传，worktree 里也指向同一份 submodule）。ccache 由顶层 CMakeLists.txt 自动探测启用，本预设不传 launcher。仅适用本机（Windows 11 / MSYS2 MinGW64），macOS 平台请照 CLAUDE.md 的 macOS 命令走。",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "EUI_NEO_DIR": "D:/project/gui/EUI-NEO",
-        "ZLIB_INCLUDE_DIR": "D:/project/gui/EUI-NEO/3rd/zlib-1.3.1"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     }
   ]

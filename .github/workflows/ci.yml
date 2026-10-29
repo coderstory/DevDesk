@@ -9,11 +9,6 @@ on:
   workflow_dispatch:
 
 env:
-  # EUI-NEO 用的是修改版 fork（比上游多百余个提交，计数随开发持续增长、不在此
-  # 写死）；上游缺 setScrollOffset / TextRun / chromeless 等 API，直接编译不过。
-  # 消费政策：不锁版本、每次用最新源码，取框架步骤 --depth 1 拉 fork HEAD 即
-  # 政策本身（见 docs/adr/0006 与 scripts/check-eui-neo-version.sh）
-  EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
   # ccache 放在工作区下，方便 actions/cache 直接命中；BASEDIR 让不同 worktree
   # 路径哈希一致 —— 不设 BASEDIR 等于白装缓存
   CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -34,12 +29,12 @@ jobs:
     name: macOS · 构建 + 测试
     runs-on: xcode-27
     steps:
+      # EUI-NEO 是仓内 submodule（.gitmodules，url 指向 coderstory fork），
+      # submodules: recursive 随 checkout 一并检出
       - uses: actions/checkout@v7
         with:
           path: DevDesk
-
-      - name: 取 EUI-NEO（须与 DevDesk 同级目录）
-        run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
+          submodules: recursive
 
       - name: 切到镜像上最新的 Xcode
         run: |
@@ -122,12 +117,11 @@ jobs:
     name: Windows · 构建 + 测试
     runs-on: windows-2025
     steps:
+      # 同 macOS job：EUI-NEO submodule 随 checkout 检出
       - uses: actions/checkout@v7
         with:
           path: DevDesk
-
-      - name: 取 EUI-NEO（须与 DevDesk 同级目录）
-        run: git clone --depth 1 "$env:EUI_NEO_REPO" EUI-NEO
+          submodules: recursive
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -176,7 +170,8 @@ jobs:
       # 独立目录 build-coverage/ Debug 构建 + 全量单测，scripts/coverage.sh 的 Windows
       # 路线汇总 core/platform 层行覆盖（纯 gcov + awk，无 Python 依赖，msys2 环境直接跑）。
       # 报告模式非阻塞：覆盖率数字只进 artifact 供人看，不影响合入信号（同上 clang-tidy）。
-      # EUI-NEO 在 checkout step 已 clone 到同级目录，脚本的三级回退（../EUI-NEO）直接命中；
+      # EUI-NEO 是仓内 submodule，checkout 的 submodules: recursive 已检出，
+      # 脚本按 仓库根 ./EUI-NEO 直接命中；
       # OpenSSL 用 MINGW_PREFIX（setup-msys2 一定导出），不写死安装路径。
       - name: 覆盖率报告（报告模式，非阻塞）
         continue-on-error: true
