@@ -391,7 +391,7 @@ REGISTER_TEST(notes_mcp_write_validates_topic,
     core::mcp::McpToolRegistry registry;
     DOCTEST_REQUIRE(nm::registerNotesMcpTools(registry, svc, nullptr).isOk());
 
-    std::string longTopic(200, '长');
+    std::string longTopic(200, 'x');
     const char* badCases[] = {
         "not json",
         "{}",
