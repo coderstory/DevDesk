@@ -30,7 +30,14 @@ struct ScheduleModule::Impl {
     std::unique_ptr<ScheduleListUi> listUi;
 };
 
-ScheduleModule::ScheduleModule() : impl_(std::make_unique<Impl>()) {}
+ScheduleModule::ScheduleModule() : impl_(std::make_unique<Impl>()) {
+    // 注册表构造期即建：装配段（main.cpp）在 onStart 前注册系统来源
+    impl_->providers = std::make_unique<ScheduleProviderRegistry>();
+}
+
+module::schedule::ScheduleProviderRegistry& ScheduleModule::providerRegistry() {
+    return *impl_->providers;
+}
 
 ScheduleModule::~ScheduleModule() = default;
 
@@ -50,8 +57,6 @@ void ScheduleModule::onStart() {
     impl_->store = std::make_unique<ScheduleStore>(*db);
     impl_->channels = std::make_unique<ChannelRegistry>();
     registerBuiltinChannels(*impl_->channels);
-    // 系统定时来源注册表：本波空注册表，release 等来源 S8 起注册
-    impl_->providers = std::make_unique<ScheduleProviderRegistry>();
     // 引擎先于 listUi 创建：列表编辑弹窗的 run_task 载荷需要引擎暴露的
     // 任务注册表（taskKeys 下拉）；start() 仍在首次 reload 之后。
     impl_->engine = std::make_unique<ScheduleEngine>(*db, *impl_->channels);
@@ -73,7 +78,6 @@ void ScheduleModule::onStop() {
     impl_->engine->stop();
     impl_->engine.reset();
     impl_->listUi.reset();
-    impl_->providers.reset();
     impl_->channels.reset();
     impl_->store.reset();
     impl_->started = false;

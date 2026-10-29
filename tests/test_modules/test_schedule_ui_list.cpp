@@ -481,3 +481,28 @@ REGISTER_TEST(schedule_list_edit_delete_wiring, "schedule 列表：编辑回填 
 
     return true;
 });
+
+REGISTER_TEST(schedule_module_provider_seam_pre_start,
+              "schedule 模块：装配段注册缝（onStart 前可注册、onStop 不清空注册表）", {
+    module::schedule::ScheduleModule mod;
+    struct StaticSource : module::schedule::ScheduleProvider {
+        std::vector<module::schedule::ScheduleItemView> items() const override {
+            module::schedule::ScheduleItemView v;
+            v.source = "release";
+            v.key = "release:task:1:precheck";
+            return {v};
+        }
+    };
+    const auto reg = mod.providerRegistry().registerProvider(
+        std::make_unique<StaticSource>());
+    DOCTEST_CHECK(reg.isOk());
+    // 重复注册同 source 判重拒绝
+    const auto dup = mod.providerRegistry().registerProvider(
+        std::make_unique<StaticSource>());
+    DOCTEST_CHECK(dup.isFail());
+    DOCTEST_CHECK(mod.providerRegistry().allItems().size() == 1);
+    // 未启动时 onStop = no-op，注册表保留（装配期注册不因启停循环丢失）
+    mod.onStop();
+    DOCTEST_CHECK(mod.providerRegistry().allItems().size() == 1);
+    return true;
+})
