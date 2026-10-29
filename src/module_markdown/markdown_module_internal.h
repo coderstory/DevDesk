@@ -856,7 +856,8 @@ private:
     static constexpr int64_t kPollIntervalMs = 5000;     // 文件变化轮询周期（默认值）
 
     std::unique_ptr<MarkdownService> service_;
-    std::unique_ptr<class NoteGitAutoCommit> noteGit_;  // 笔记目录 git 自动提交
+    // shared_ptr：notes_write MCP 工具共享持有（onStop reset 后在途 execute 不悬垂）
+    std::shared_ptr<class NoteGitAutoCommit> noteGit_;  // 笔记目录 git 自动提交
     // 引用 service_，onStop 须先注销再放 service
     std::unique_ptr<MarkdownTools> markdownTools_;
     // GitHub Sync 导入成功 → 置脏，compose 收割重载（导入线程只碰原子，不碰 UI 成员）。
