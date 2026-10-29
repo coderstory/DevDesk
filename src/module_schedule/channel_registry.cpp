@@ -48,7 +48,7 @@ core::Result<void> ChannelRegistry::registerChannel(
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "渠道指针为空");
     }
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& existing : channels_) {
         if (existing->id() == channel->id()) {
             return core::Result<void>::fail(core::ErrorCode::AlreadyExists,
@@ -60,7 +60,7 @@ core::Result<void> ChannelRegistry::registerChannel(
 }
 
 const Channel* ChannelRegistry::find(const std::string& id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& channel : channels_) {
         if (channel->id() == id) return channel.get();
     }
@@ -70,7 +70,7 @@ const Channel* ChannelRegistry::find(const std::string& id) const {
 core::Result<DispatchReport> ChannelRegistry::deliver(
     const std::vector<std::string>& channelIds, const Delivery& d) {
     DispatchReport report;
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& id : channelIds) {
         auto it = std::find_if(channels_.begin(), channels_.end(),
                                [&id](const auto& c) { return c->id() == id; });
@@ -86,14 +86,14 @@ core::Result<DispatchReport> ChannelRegistry::deliver(
 }
 
 void ChannelRegistry::flushAllToMainThread() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     for (const auto& channel : channels_) {
         channel->flushToMainThread();
     }
 }
 
 void ChannelRegistry::resetForTest() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     channels_.clear();
 }
 

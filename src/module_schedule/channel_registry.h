@@ -106,7 +106,8 @@ public:
     void resetForTest();
 
 private:
-    mutable std::mutex mutex_;                       // 保护 channels_
+    mutable std::recursive_mutex mutex_;             // 保护 channels_；必须递归：deliver 持锁调渠道回调，
+                                                     // 渠道实现里再入 registry API（含递归投递）是合法路径
     std::vector<std::unique_ptr<Channel>> channels_;  // 保序：分发/flush 顺序稳定
 };
 

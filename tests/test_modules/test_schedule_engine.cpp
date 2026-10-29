@@ -24,7 +24,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace {
@@ -105,11 +107,14 @@ public:
 
     int calls = 0;
     std::vector<module::schedule::Receipt> script;  // 依调用次序返回；越界用最后一个
+    std::function<void()> hook;  // deliver 入口钩子（calls 已自增）：供用例从渠道内
+                                 // 再入 runner 复现并发满；空 = 无行为（存量用例不受影响）
 
     core::Result<module::schedule::Receipt> deliver(
         const module::schedule::Delivery& delivery) override {
         (void)delivery;
         ++calls;  // 每次投递都计数（含 script 空的成功投递——断言把 calls 当投递次数）
+        if (hook) hook();
         if (script.empty())
             return core::Result<module::schedule::Receipt>::ok(makeReceipt("ok"));
         const std::size_t idx = std::min<std::size_t>(calls - 1, script.size() - 1);
@@ -447,6 +452,62 @@ REGISTER_TEST(schedule_delivery_retry_ladder_and_bookkeeping,
     DOCTEST_CHECK(rows[1].getInt64("next_retry_at").valueOr(-1) == 400);
     DOCTEST_CHECK(rows[2].getString("status").valueOr("") == "failed");
     DOCTEST_CHECK(channels.fake->calls == 3);
+    return true;
+})
+
+// 防：渠道并发满（httpInFlight≥2，§4.7）被当真实尝试虚耗配额——slotBusy 必须
+// 置 retryWithoutCharge 且不落记账行，引擎 drain 侧据此跳过 attempt 递增；若
+// 回归为计次，饱和期三次 slotBusy 烧光 3 次配额，渠道恢复后也无法再投。
+// 在飞计数在 dispatchOnce 每个出口都回落、本层单线程无异步完成回调，入口计数
+// 到 2 的唯一可达路径 = 渠道 deliver() 内经 hook 再入两层（未来真异步渠道
+// 在飞跨 tick 时即等价此态）。
+REGISTER_TEST(schedule_delivery_slot_busy_no_charge,
+              "投递编排: 渠道并发满 → retryWithoutCharge 置位且不落 delivery 记账行", {
+    auto db = openMigrated("slotbusy");
+    module::schedule::ScheduleStore store(db.db());
+    TestChannels channels(store, "fake_busy");
+    module::schedule::InternalTaskRegistry tasks;
+    module::schedule::ActionRunner runner(store, channels.registry, tasks);
+
+    module::schedule::Delivery d;
+    d.title = "slotbusy-probe";
+    d.body = "并发满探测";
+    d.runId = 1;
+
+    std::optional<module::schedule::RetryOutcome> slotBusy;
+    bool inner1Ok = false;  // 断言宏内含 return false，只能用在 bool 测试体；
+                            // hook（void）只记录结果，判定全部放回测试体
+    channels.fake->hook = [&]() {
+        if (channels.fake->calls == 1) {
+            // 第 1 层再入：入口计数 1 < 2 放行，计数推到 2
+            auto inner1 = runner.dispatchOnce(channels.channelRowId, d, 1, 1, 100, 500);
+            inner1Ok = inner1.isOk() && inner1.value().success;
+        } else if (channels.fake->calls == 2) {
+            // 第 2 层再入：入口计数 2 ≥ 2 → 命中 slotBusy 门
+            auto inner2 = runner.dispatchOnce(channels.channelRowId, d, 1, 1, 100, 500);
+            if (inner2.isOk()) slotBusy = inner2.value();
+        }
+    };
+
+    auto outer = runner.dispatchOnce(channels.channelRowId, d, 1, 1, 100, 500);
+    DOCTEST_REQUIRE(outer.isOk());
+    DOCTEST_REQUIRE(outer.value().success);
+    DOCTEST_REQUIRE(inner1Ok);  // 第 1 层再入放行且成功
+
+    DOCTEST_REQUIRE(slotBusy.has_value());
+    DOCTEST_CHECK(slotBusy->retryWithoutCharge);
+    DOCTEST_CHECK_FALSE(slotBusy->terminal);
+    DOCTEST_CHECK(slotBusy->nextRetryAt.value_or(-1) == 500);  // 0 秒后重试 = now
+    DOCTEST_CHECK_FALSE(slotBusy->success);
+    DOCTEST_CHECK(slotBusy->error == "渠道并发已满，稍后重试");
+    // 不记账：库中只有外层与第 1 层再入两行（均 success），slotBusy 那次零行——
+    // 记账行数变 3 即回归（gate 失效或 slotBusy 误记账）。
+    auto rows = db.db().prepare(
+                            "SELECT status FROM schedule_delivery ORDER BY id")
+                    .value().fetchAll().value();
+    DOCTEST_REQUIRE(rows.size() == 2);
+    DOCTEST_CHECK(rows[0].getString("status").valueOr("") == "success");
+    DOCTEST_CHECK(rows[1].getString("status").valueOr("") == "success");
     return true;
 })
 

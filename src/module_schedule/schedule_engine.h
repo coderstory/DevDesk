@@ -160,7 +160,7 @@ private:
 
     ScheduleStore store_;
     ChannelRegistry& channels_;    // flushAllToMainThread 每 tick 泵（registry 契约）
-    InternalTaskRegistry tasks_;   // app_assembly（S7）经引擎暴露的注册缝装配
+    InternalTaskRegistry tasks_;   // v1 无生产注册来源（run_task 未注册 key → invoke fail），待 S8 经 taskRegistry() 注册
     ActionRunner runner_;
     core::ticker::Handle handle_ = 0;
     GlobalDeliveryBucket deliveryBucket_;
