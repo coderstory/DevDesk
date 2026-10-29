@@ -16,6 +16,7 @@
 
 ## 登记簿
 
+- 2026-10-30 | 调研 | 需求场景支撑（老板 10-30 场景化材料整理）：记忆 4 / MCP 3 / 智能体 4 共 11 场景按「现状可用/差哪块」分层 | 三缺口收口：G-1 infer 真调（记忆原文直存，提炼模型从未真调）/ G-2 笔记 MCP（业务数据零暴露）/ G-3 cron 模板（= 需-8 S 级，第四出厂模板）；随行需-9 用量告警 S 级；附一天时间线；两份 spec 草案（需-8/需-9）同批落 docs/specs/ | docs/superpowers/research/2026-10-30-需求场景支撑.md
 - 2026-10-29 | 调研 | engram 存储检索底座选型（池子系统输入） | 一手核实 7.68k★/MIT/SQLite+FTS5/MCP 27 工具；schema 精读判定：migrate 上游独占不可扩表、无自由 metadata 列、关系网绑定 observations——engram 适合作 Agent 记忆层，池子业务实体主存储应自建 pool.db（双库或纯自建待业务方案定） | docs/research/2026-10-29-engram-storage-selection.md
 - 2026-10-28 | 调查 | memcpp S2 记忆模块 live 层验证 — venv/引擎对账、llama 联动、三视图截图、key 红线；4 处修复 1331450c/90cf043f/473204ff/00ac9931 | docs/superpowers/plans/2026-10-28-memcpp-s2-live-verify.md
 - 2026-10-28 | 调查 | memcpp 端到端联调验收 — S3+S4 遗留 live 对账，5 处缺陷修复（MCP 会话缝/update 形参/delete 遗忘映射/UUID id 回填/融合段解析），Recall@5=100%，hook 真跑+ledger 闭环+fail-open | docs/superpowers/plans/2026-10-28-memcpp-e2e-verify.md
