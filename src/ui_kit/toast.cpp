@@ -57,7 +57,7 @@ void drawToast(eui::Ui& ui, const eui::Screen& screen, const std::string& id,
                const ToastOptions& options) {
     auto builder = components::toast(ui, id);
     builder.theme(tokens)
-        .screen(screen.width, screen.height)
+        .screen(screen.width, screen.height - options.bottomInset)
         .visible(state.open)
         .duration(options.durationSec)
         .icon(state.isError ? options.errorIcon : options.okIcon)
