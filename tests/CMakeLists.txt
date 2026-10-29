@@ -58,6 +58,8 @@ add_executable(devdesk_tests
     test_modules/test_md_folder_tree.cpp
     test_modules/test_markdown_tools.cpp
     test_modules/test_md_note_git.cpp
+    # 需-7 笔记 MCP 三工具（F-01..F-05）：搜索/读全文/新文件路由写 + git 链白拿验证
+    test_modules/test_notes_mcp_tools.cpp
     test_modules/test_md_highlight.cpp
     test_modules/test_md_keyword_highlight.cpp
     test_modules/test_md_file_open.cpp

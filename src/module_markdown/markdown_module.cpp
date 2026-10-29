@@ -5,6 +5,9 @@
 
 #include "markdown_module_internal.h"
 
+#include "core/mcp_tool.h"
+#include "notes_mcp_tools.h"
+
 #include <utility>
 
 namespace module::markdown {
@@ -103,10 +106,19 @@ void MarkdownModule::onStart()  {
 
     // 笔记目录 git 自动提交：后台启动（异步 init，不阻塞 onStart）
     if (!noteGit_) {
-        noteGit_ = std::make_unique<NoteGitAutoCommit>(
+        noteGit_ = std::make_shared<NoteGitAutoCommit>(
             service_->notesDir());
     }
     noteGit_->start();
+
+    // 需-7 笔记 MCP 三工具（notes_search / notes_read / notes_write）：注册进
+    // 全局 MCP 注册表（onStart 注册 / onStop 注销，markdown_tools 同款生命周期；
+    // markdown 模块关闭即随行注销）。失败只 LOG_ERROR 不阻断启动。
+    if (auto reg = mcp::registerNotesMcpTools(core::mcp::globalMcpTools(),
+                                              *service_, noteGit_);
+        reg.isFail()) {
+        LOG_ERROR("notes MCP 工具注册失败（不阻断启动）: " + reg.errorMessage());
+    }
 
     LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
 }
@@ -120,6 +132,9 @@ void MarkdownModule::onStop()  {
         markdownTools_->unregisterAll();
         markdownTools_.reset();
     }
+    // 需-7：MCP notes 三工具先注销再放 noteGit（write 工具 shared 持有 git 链，
+    // 在途 execute 由注册表 + shared_ptr 保活；service_ 跨 stop/start 存续不悬垂）
+    mcp::unregisterNotesMcpTools(core::mcp::globalMcpTools());
     // 退出前落盘：无退出拦截 API，只能同步有限重试 + 日志兜底。
     // 退出时冲突未决（toast 随页面消失、没有让用户选择的时机）：只能按「保留本地」
     // 落盘 —— 未保存的键入不可恢复，外部版本可从笔记 git 历史 / 远端找回，所以这个
