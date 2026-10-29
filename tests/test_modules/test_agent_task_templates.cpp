@@ -75,10 +75,10 @@ std::vector<std::string> toolRefsIn(const std::string& goal) {
 
 } // namespace
 
-// 表形：恰好 3 张、名称互不相同、触发类型都是 kTriggerKeys 合法键
+// 表形：恰好 4 张、名称互不相同、触发类型都是 kTriggerKeys 合法键
 REGISTER_TEST(agent_task_tpl_table_shape,
-              "出厂任务模板：3 张、名称唯一、触发类型合法", {
-    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 3);
+              "出厂任务模板：4 张、名称唯一、触发类型合法", {
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 4);
     std::set<std::string> names;
     for (int i = 0; i < module::agent::kTaskTemplateCount; ++i) {
         const auto& tpl = module::agent::kTaskTemplates[i];
@@ -154,6 +154,43 @@ REGISTER_TEST(agent_task_tpl_env_inspect,
     DOCTEST_CHECK_EQ(tpl.triggerType, std::string("schedule"));
     DOCTEST_CHECK_EQ(tpl.cron, std::string("0 9 * * *"));
     DOCTEST_CHECK(module::agent::parseCron(tpl.cron).isOk());
+
+    const auto refs = toolRefsIn(tpl.goal);
+    DOCTEST_CHECK_MESSAGE(!refs.empty(), "提示词未引用任何工具");
+    const auto registered = registeredToolNames();
+    for (const auto& r : refs) {
+        DOCTEST_CHECK_MESSAGE(registered.count(r) > 0,
+                              "提示词引用了未注册工具: " + r);
+    }
+    return true;
+})
+
+// 模板四：变更雷达晨报——工作日 9:00 定时，git.status + git.log 巡查登记仓库三类风险
+REGISTER_TEST(agent_task_tpl_change_radar,
+              "出厂模板·变更雷达晨报：cron 钉 0 9 * * 1-5 且合法；git.status/git.log 锚点；工具引用全在注册清单", {
+    AgentToolRegistration tools;
+    // 先钉表长再取下标：红态（表仍 3 张）在此 fail-fast 停住，不越界摸 kTaskTemplates[3]
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 4);
+    const auto& tpl = module::agent::kTaskTemplates[3];
+    DOCTEST_CHECK_EQ(tpl.name, std::string("变更雷达晨报"));
+    DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
+                          "提示词为空");
+    DOCTEST_CHECK_EQ(tpl.triggerType, std::string("schedule"));
+    DOCTEST_CHECK_EQ(tpl.cron, std::string("0 9 * * 1-5"));
+    DOCTEST_CHECK(module::agent::parseCron(tpl.cron).isOk());
+
+    // 提示词锚点（防臆造）：巡查动作锚已注册的 git.status / git.log（git.log 无
+    // since 参数，近 24h 靠 n=50 拉取后按提交时间筛——文案与工具实参面一致）；
+    // 仓库清单占位语必须在场——模板不自动探测仓库布局（需-6 边界口径）
+    const std::string goal(tpl.goal);
+    DOCTEST_CHECK_MESSAGE(goal.find("git.status") != std::string::npos,
+                          "提示词缺少 git.status 锚点");
+    DOCTEST_CHECK_MESSAGE(goal.find("git.log") != std::string::npos,
+                          "提示词缺少 git.log 锚点");
+    DOCTEST_CHECK_MESSAGE(goal.find("仓库根路径列表") != std::string::npos,
+                          "提示词缺少仓库清单占位语");
+    DOCTEST_CHECK_MESSAGE(goal.find("用户首次使用时补全") != std::string::npos,
+                          "提示词缺少占位补全说明");
 
     const auto refs = toolRefsIn(tpl.goal);
     DOCTEST_CHECK_MESSAGE(!refs.empty(), "提示词未引用任何工具");
