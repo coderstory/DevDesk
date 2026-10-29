@@ -1,0 +1,31 @@
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${ZCODE_PROJECT_DIR}/.zcode/armory/gates/pre-tool-use.sh\" bash-gate",
+              "timeoutMs": 10000,
+              "statusMessage": "门禁检查：构建命令合规性"
+            }
+          ]
+        },
+        {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${ZCODE_PROJECT_DIR}/.zcode/armory/gates/pre-tool-use.sh\" path-gate",
+              "timeoutMs": 10000,
+              "statusMessage": "门禁检查：写入路径合规性"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

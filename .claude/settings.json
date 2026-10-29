@@ -1,4 +1,12 @@
 {
+  "enabledPlugins": {
+    "clangd-lsp@claude-plugins-official": true,
+    "code-modernization@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "claude-hud@claude-hud": true,
+    "cs-retro@x-rs-tools": true,
+    "ponytail@ponytail": true
+  },
   "hooks": {
     "PreToolUse": [
       {

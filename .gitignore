@@ -83,3 +83,8 @@ tools/memcpp-integration/spike/.bakeoff/
 
 # 证据物（AGENTS.md §九 evidence-capture.sh 产物，永不入库）
 evidence/
+
+# AI 适配件（2026-10-29 自工作区壳迁入，须入库）。上方「config.json」运行时用户数据
+# 规则会误伤 .zcode/config.json，此处整体否定；.claude/worktrees/ 仍按上方规则忽略
+!.zcode/**
+!.agents/**

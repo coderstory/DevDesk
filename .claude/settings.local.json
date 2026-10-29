@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch"
+    ]
+  },
+  "enabledPlugins": {
+    "code-modernization@claude-plugins-official": false,
+    "ponytail@ponytail": false
+  },
+  "outputStyle": "default",
+  "spinnerTipsEnabled": false,
+  "prefersReducedMotion": true
+}
