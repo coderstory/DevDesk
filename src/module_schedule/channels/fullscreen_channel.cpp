@@ -26,6 +26,7 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -48,14 +49,33 @@ struct FrameState {
     std::vector<Delivery> items;
     core::window::Handle handle = nullptr;
     std::function<void()> onClosed;  // 最近一次开窗接线；窗口销毁时调用
+    // 置顶降层状态机：开窗抢注意置顶，8 秒后或任意点击后让位回普通层。
+    // 判定与置顶切换都必须在 compose（主线程）里做——GLFW 窗口操作跨线程未定义。
+    std::chrono::steady_clock::time_point openedAt{std::chrono::steady_clock::now()};
+    bool topDemoted = false;
 };
+
+namespace {
+// 8 秒足够读完提醒标题；超时/点击都走这一个出口，幂等（topDemoted 单向闩）。
+void demoteReminderWindow(const std::shared_ptr<FrameState>& frame) {
+    if (frame->topDemoted) return;
+    frame->topDemoted = true;
+    if (frame->handle != nullptr) {
+        core::window::setWindowAlwaysOnTop(frame->handle, false);
+    }
+}
+}  // namespace
 
 // 生产默认开窗接线：独立置顶窗，compose 每帧渲染 FrameState::items，
 // 关闭按钮走 requestWindowClose（与 Alt+F4 同路，统一由 onWindowDestroyed
 // 触发 notifyClosed）。全部回调主线程。
 void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
                            const std::shared_ptr<FrameState>& frame) {
+    if (std::chrono::steady_clock::now() - frame->openedAt > std::chrono::seconds(8)) {
+        demoteReminderWindow(frame);
+    }
     ui.column("reminder.root")
+        .onClick([frame] { demoteReminderWindow(frame); })
         .position(0.0f, 0.0f)
         .size(screen.width, screen.height)
         .content([&] {
@@ -219,6 +239,8 @@ std::unique_ptr<Channel> makeFullscreenChannel() {
                     .focusOnShow(true)
                     .onWindowCreated([frame](core::window::Handle handle) {
                         frame->handle = handle;
+                        frame->openedAt = std::chrono::steady_clock::now();
+                        frame->topDemoted = false;
                     })
                     .onWindowDestroyed([frame](core::window::Handle handle) {
                         if (frame->handle == handle) frame->handle = nullptr;
