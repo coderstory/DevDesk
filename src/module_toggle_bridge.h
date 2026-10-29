@@ -21,6 +21,12 @@ using ReminderPopupHandler = void (*)(bool on);
 void setReminderPopupHandler(ReminderPopupHandler handler);  // nullptr = 恢复默认 no-op
 void notifyReminderPopupSetting(bool on);
 
+// 第四桥：调度全屏弹窗总开关缝（会话内拨「调度全屏弹窗」开关即时生效；
+// 同第三桥形态，转发到 app 注入的 schedule 渠道开关 setter）。
+using FullscreenPopupHandler = void (*)(bool on);
+void setFullscreenPopupHandler(FullscreenPopupHandler handler);  // nullptr = 恢复默认 no-op
+void notifyFullscreenPopupSetting(bool on);
+
 }  // namespace app::toggle
 
 static_assert(std::is_same_v<decltype(&app::toggle::onModuleToggled),
@@ -43,3 +49,10 @@ static_assert(
     std::is_same_v<decltype(&app::toggle::setReminderPopupHandler),
                    void (*)(app::toggle::ReminderPopupHandler)>,
     "module_toggle_bridge: setReminderPopupHandler 签名漂移");
+static_assert(std::is_same_v<decltype(&app::toggle::notifyFullscreenPopupSetting),
+                             void (*)(bool)>,
+              "module_toggle_bridge: notifyFullscreenPopupSetting 签名漂移");
+static_assert(
+    std::is_same_v<decltype(&app::toggle::setFullscreenPopupHandler),
+                   void (*)(app::toggle::FullscreenPopupHandler)>,
+    "module_toggle_bridge: setFullscreenPopupHandler 签名漂移");

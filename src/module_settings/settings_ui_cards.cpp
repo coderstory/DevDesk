@@ -887,8 +887,9 @@ void drawMcpCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 模块 tab 全宽矮卡（高 92）：上线提醒弹窗总开关（默认关）。全屏置顶提醒窗
-// 曾压住主窗标题栏致「无法最小化」（BUG 复盘），默认关 = 无入口不自动弹。
+// 模块 tab 全宽矮卡（高 92，双开关同排）：上线提醒 + 调度全屏两个弹窗总开关
+// （均默认关）。全屏置顶提醒窗曾压住主窗标题栏致「无法最小化」（BUG 复盘），
+// 默认关 = 无入口不自动弹。模块 tab 零滚动预算只剩 ~2px，不再开新卡。
 void drawReminderCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -909,40 +910,54 @@ void drawReminderCard(const CardDrawArgs& args) {
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
                 .build();
-            cardTitle(ui, id, t, 22.0f, w - 56.0f, 22.0f, 22.0f, "上线提醒");
-            // 开关行：label + 说明一行 + 右贴开关（行几何 = 自启动行同款简化）
+            cardTitle(ui, id, t, 22.0f, w - 56.0f, 22.0f, 22.0f, "提醒弹窗");
+            // 双开关行：左右两列各一组 label + 开关（几何 = 自启动行同款简化）；
+            // 说明并进标题行右侧（卡高 92 无第二行空间）
             const float rowY = 44.0f;
             const float rowH = 32.0f;
-            const float labelW = roundFs(92.0f);
-            const float descX = 28.0f + labelW + roundFs(8.0f);
-            const float descW = w - 28.0f - kAutostartSwitchW - roundFs(12.0f) - descX;
-            ui.text(id + ".popup.label")
-                .position(28.0f, rowY)
-                .size(labelW, rowH)
-                .text("上线提醒弹窗")
-                .fontSize(t.sizes.fontSizeBody - 1.0f)
-                .lineHeight(rowH)
-                .fontWeight(500)
-                .color(t.colors.textPrimary)
-                .maxWidth(labelW)
-                .overflow(core::TextOverflow::Ellipsis)
-                .clip()
-                .build();
-            ui.text(id + ".popup.desc")
-                .position(descX, rowY)
-                .size(std::max(0.0f, descW), rowH)
-                .text("有到期上线事项时弹全屏提醒窗（默认关闭，仅记日志）")
+            const float labelW = roundFs(110.0f);
+            const float swW = kAutostartSwitchW;
+            const float swH = kAutostartSwitchH;
+            const float col2X = 28.0f + (w - 56.0f) * 0.5f;
+            const float descX = col2X;
+            ui.text(id + ".title.desc")
+                .position(descX, 22.0f)
+                .size(std::max(0.0f, w - descX - 28.0f), 22.0f)
+                .text("到期事项弹全屏置顶窗（默认关，仅记日志）")
                 .fontSize(fs(12.0f))
-                .lineHeight(rowH)
+                .lineHeight(22.0f)
                 .color(t.colors.textTertiary)
-                .maxWidth(std::max(0.0f, descW))
+                .maxWidth(std::max(0.0f, w - descX - 28.0f))
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();
-            ui_kit::wswitch(ui, id + ".popup.sw", in.cfg.releaseReminderPopup,
-                            w - 28.0f - kAutostartSwitchW, rowY,
-                            kAutostartSwitchW, kAutostartSwitchH, t,
-                            [f = a.applyReminderPopup](bool v) { f(v); });
+            const auto drawSwitchRow = [&](const std::string& labelId,
+                                           const char* labelText,
+                                           float labelX, float swX,
+                                           bool value,
+                                           const std::function<void(bool)>& on) {
+                ui.text(labelId)
+                    .position(labelX, rowY)
+                    .size(labelW, rowH)
+                    .text(labelText)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .lineHeight(rowH)
+                    .fontWeight(500)
+                    .color(t.colors.textPrimary)
+                    .maxWidth(labelW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+                ui_kit::wswitch(ui, std::string(labelId) + ".sw", value,
+                                swX, rowY, swW, swH, t, on);
+            };
+            drawSwitchRow(id + ".popup.label", "上线提醒弹窗", 28.0f,
+                          28.0f + labelW + roundFs(12.0f),
+                          in.cfg.releaseReminderPopup,
+                          [f = a.applyReminderPopup](bool v) { f(v); });
+            drawSwitchRow(id + ".fs.label", "调度全屏弹窗", col2X,
+                          w - 28.0f - swW, in.cfg.fullscreenPopup,
+                          [f = a.applyFullscreenPopup](bool v) { f(v); });
         })
         .build();
 }

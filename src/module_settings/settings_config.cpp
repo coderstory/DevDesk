@@ -28,6 +28,8 @@ constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
 constexpr const char* kKeyAutostart = "autostartEnabled";
 // 上线提醒弹窗总开关（默认关；缺键 = 存量库 → 默认关）
 constexpr const char* kKeyReleaseReminderPopup = "releaseReminderPopup";
+// 调度全屏弹窗总开关（默认关；缺键 = 存量库 → 默认关）
+constexpr const char* kKeyFullscreenPopup = "fullscreenPopup";
 // 动态背景（UAT6 主窗活体流质）：bool 直存；键缺失（存量库/旧版本升级）→ 默认开
 constexpr const char* kKeyFluidBackground = "fluidBackgroundEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
@@ -461,6 +463,12 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.releaseReminderPopup = v.value().asBool();
     }
+    if (auto raw = readRow(kKeyFullscreenPopup); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyFullscreenPopup), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.fullscreenPopup = v.value().asBool();
+    }
     if (auto raw = readRow(kKeyFluidBackground); raw.isOk()) {
         auto v = parseRow(configKey(kKeyFluidBackground), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -601,6 +609,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyAutostart, platform::json::makeBool(cfg.autostartEnabled)},
         {kKeyReleaseReminderPopup,
          platform::json::makeBool(cfg.releaseReminderPopup)},
+        {kKeyFullscreenPopup, platform::json::makeBool(cfg.fullscreenPopup)},
         {kKeyFluidBackground, platform::json::makeBool(cfg.fluidBackgroundEnabled)},
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
         {kKeyMcpPort, platform::json::makeInt(cfg.mcpPort)},

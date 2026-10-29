@@ -48,6 +48,21 @@ void notifyReminderPopupSetting(bool on) {
     g_reminderPopupHandler(on);
 }
 
+// 第四桥：调度全屏弹窗总开关缝，形态与第三桥同款。
+namespace { FullscreenPopupHandler g_fullscreenPopupHandler = nullptr; }
+
+void setFullscreenPopupHandler(FullscreenPopupHandler handler) {
+    g_fullscreenPopupHandler = handler;
+}
+
+void notifyFullscreenPopupSetting(bool on) {
+    if (g_fullscreenPopupHandler == nullptr) {
+        LOG_WARN("全屏弹窗桥未装配（启动早期/测试环境），跳过");
+        return;
+    }
+    g_fullscreenPopupHandler(on);
+}
+
 }  // namespace app::toggle
 
 // 动态背景桥（UAT6 主窗活体流质）：settings_module.cpp 前置声明 ::app::setFluidBackgroundEnabled，

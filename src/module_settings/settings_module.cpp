@@ -432,6 +432,18 @@ public:
         app::toggle::notifyReminderPopupSetting(on);
     }
 
+    // 「调度全屏弹窗」开关（默认关）：落库后经第四桥转发 schedule 渠道开关，
+    // 会话内即时生效（桥未装配 = 启动早期/测试环境，落库为主、无转发）。
+    void applyFullscreenPopup(bool on) {
+        cfg_.fullscreenPopup = on;
+        persist();
+        setStatus(on ? "调度全屏弹窗已开启（即时生效）"
+                     : "调度全屏弹窗已关闭（即时生效）");
+        LOG_INFO("Settings: fullscreenPopup → " +
+                 std::string(on ? "true" : "false"));
+        app::toggle::notifyFullscreenPopupSetting(on);
+    }
+
     // 「开机自启动」开关（UAT6）：先写平台注册项（Windows HKCU Run / macOS
     // LaunchAgents，注册内容带 --minimized），回读真值后再持久化——写失败时
     // cfg/开关回到真值，不停留在错态。设置页显示的恒是注册真值（防漂移）。
@@ -1262,6 +1274,7 @@ private:
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
         a.applyReminderPopup = [this](bool on) { applyReminderPopup(on); };
+        a.applyFullscreenPopup = [this](bool on) { applyFullscreenPopup(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
             setProxyPortDraft(v);

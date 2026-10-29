@@ -311,6 +311,32 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
     return true;
 })
 
+// 调度全屏弹窗总开关（置顶 BUG 遗留尾巴）：默认关 + 落库往返 + 存量库缺键保持默认关
+REGISTER_TEST(settings_fullscreen_popup_roundtrip,
+              "settings: fullscreenPopup 默认关/读写往返/缺键默认关（防：存量库升级被误开自动全屏）", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "fspopup", true);
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "fspopup");
+    removeQuietly(path);
+    module::settings::SettingsStore store(::core::appDatabase());
+
+    // 默认不弹全屏
+    DOCTEST_CHECK_FALSE(store.load().fullscreenPopup);
+
+    // 打开后持久化 + 读回 true
+    module::settings::SettingsConfig cfg;
+    cfg.fullscreenPopup = true;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK(store.load().fullscreenPopup);
+
+    // 存量配置无该键 → 保持默认 false
+    DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        R"({"theme": "light"})"));
+    DOCTEST_CHECK_FALSE(store.load().fullscreenPopup);
+    removeQuietly(path);
+    return true;
+})
+
 // 窗体记忆（UAT6「记住窗体大小」）：还原态尺寸 + 最大化标志经 SettingsStore 落库往返；
 // 脏值（负尺寸/越上限）sanitized 归 0 = 无记录（0 是哨兵，负值钳 1 会把脏数据变成
 // 1px 窗口记录）。恢复钳制链与账本行为分别由 test_window_layout / test_window_geometry 钉
@@ -3739,7 +3765,10 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）；
         // 2026-10-27：壁纸开关收进插拔卡第 7 格，模块 tab 恒单卡（格不另立卡根）。
-        const std::vector<std::string> wantModulesAll = {"settings.card.modules"};
+        // 置顶 BUG 复盘（09d8aa62）：插拔卡后追加「提醒弹窗」矮卡（双开关默认关）。
+        const std::vector<std::string> wantModulesAll = {
+            "settings.card.modules",
+            "settings.card.reminder"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -3763,7 +3792,8 @@ REGISTER_TEST(settings_card_registry_order,
         mod->onStart();
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
-            "settings.card.modules"};
+            "settings.card.modules",
+            "settings.card.reminder"};  // 提醒卡无模块门控（开关语义非模块启停）
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
