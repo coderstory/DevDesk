@@ -44,8 +44,8 @@
 
 **剩余项（按审计 A 批次规划）**：
 
-- [ ] **R3·编辑弹窗接线（spec §4.2 欠账，最大项）**：`drawEditDialog`/`saveRule` 生产侧零调用——用户增删改/暂停全无 UI 入口；需挂载 + actionJson 三字段输入（remind_open 的 deeplink / run_task 的 key，现为 `schedule_ui_edit.h:77` 写 `task_key` vs `action_runner.cpp:60` 取 `key` 键名不一致）+ P2-6 摘要键名（nth_weekday/month_day）。约 1-2 天波次。
-- [ ] **R2·双真源与断链**（进行中）：internal_task_registry 死真源删除 + run_task 任务源现状核实；暂停分支旧到期点对齐；completeAsync 死代码；slotBusy 不计次；memory_probe `--size` 口径。
+- [ ] **R3·编辑弹窗接线（spec §4.2 欠账，最大项）·实现中**（2026-10-29 核：编辑弹窗待交付验收）：`drawEditDialog`/`saveRule` 生产侧零调用——用户增删改/暂停全无 UI 入口；需挂载 + actionJson 三字段输入（remind_open 的 deeplink / run_task 的 key，现为 `schedule_ui_edit.h:77` 写 `task_key` vs `action_runner.cpp:60` 取 `key` 键名不一致）+ P2-6 摘要键名（nth_weekday/month_day）。约 1-2 天波次。
+- [x] **R2·双真源与断链**（2026-10-29 销账：全量收口 + 交叉审通过，commit 1b97ab4a、1d3e342c）：internal_task_registry 死真源删除 + run_task 任务源现状核实；暂停分支旧到期点对齐；completeAsync 死代码；slotBusy 不计次；memory_probe `--size` 口径。
 - [ ] **R4·小修与文档**：老库（无 schedule 表）首次升级用例（test_schedule_store.cpp:73 现为幂等路径）；calendar 400 年 fail vs 头文件 ok(nullopt) 契约二选一；handoff §0/§11 快照刷新；P2-12 边界登记（skipped 无人写 / 崩溃遗留 running 悬挂 / 90 天保留无清理 / max_runs 双不消费）。
 - [ ] **S8 系统定时只读源**：release 线作为首个 ScheduleProvider 来源接线（见 §C）。
 - [ ] **Windows DST 真覆盖**：ucrt 不识别 IANA 时区名 → 恒 SKIP；需 Windows tzdata 分发或引擎时间源注入（需 Windows 机）。
@@ -56,7 +56,8 @@
 
 - [x] **整批零构建/零测试实测**（2026-10-29 销账：波次 A/B/C 全量回归 1915→1927 条全绿 + Debug/Release 双形态构建零错误 + 5 道静态守卫全过，见 `docs/superpowers/plans/` 波次交接与 `evidence/`）：合并进 dev 的调度 S1–S7a + H27–H31 + release 线代码从未构建、未跑测试（当时 CI 验证环节被用户取消，且等 EUI fork HEAD 修复——**EUI-NEO 现已同步 3ee91da，此前置已解除**）。**首个实测点 = 本机（Mac）下次构建**，红了按失败项修。macOS 侧此前仅静态审计，无实机编译。
 - [ ] **安装程序 + 真机 UAT**：0.5.0 出包（Inno Setup / DMG）+ 用户真机 UAT（与 memcpp P0-2 是同一件事，一处收口）。
-- [ ] **A-02 待拍板**：列表卡进度分母与详情页 5 槽位口径不一致（分母按服务×环境还是按配置项）——需用户定夺。
+- [x] **A-02 已核实销账（2026-10-29，产品经理核）**：列表与详情同源 `taskProgress()`，无口径冲突——列表卡 `release_list_ui.cpp:838` 与详情页头 `release_detail_ui.cpp:2615` 调用同一函数，分母 = 每服务 3 固定步骤 + 后端每服务 5 配置槽位（`release_logic.cpp:292` `expectedConfigs(Backend)=5`）+ 任务级前置 2~5 项；详情页环境卡为环境维度分层展示，非冲突。无需拍板。
+- [x] **置顶泄漏 BUG（临时插单，2026-10-29 销账）**：老板真机现象「主窗无法最小化 + 窗体置顶」，根因 = `release_reminder.cpp` 全屏提醒窗 `alwaysOnTop(true)` 泄漏到主窗（`09d8aa62` 修复）；设置新增「上线提醒弹窗」开关默认关。QA 定向回归全绿（gate 守卫 4/4、release 60/60、schedule 86/86），清单卡 `docs/plans/release-popup-gate-tests.md`。生效待下次 0.5.0 出包。
 - [ ] **S8 系统定时只读源**：ScheduleProvider 接口文件已在（`schedule_provider.cpp/h`），release 线作为首个来源的接线待做。
 - 缓置（有意不做/后置）：F-3 父行存在性预检（导入/脚本入口出现时再补）；提醒窗句柄耦合块不抽纯函数（openReminder/closeForEmpty/collectReminderView/buildDemoView/绘制，硬抽会改行为）；cron 编辑回显为 v1 有意取舍（`schedule_ui_edit.cpp:371` 注释）。
 - **已销账（2026-10-28 核）**：release 三页已并入 dev（ReleaseGroup/Tasks/Config，`app_registry.h:61-63`）；`feature/20261027-release-module` 文档分支已并入 dev。

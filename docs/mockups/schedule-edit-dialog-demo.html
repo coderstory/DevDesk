@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevDesk 调度规则编辑弹窗 · 交互 demo（R3）</title>
+<style>
+  :root{
+    --bg:#1A1816;--surface:#232120;--elevated:#2C2A28;--hover:#353231;--active:#3E3B39;
+    --accent:#D97757;--accent-h:#E0896B;--accent-p:#B85F3F;--accent-soft:#3A2620;
+    --t1:#FAF9F5;--t2:#C9C5BD;--t3:#9A948A;--td:#6B6660;
+    --bd:#3A3735;--bdm:#2A2826;--err:#CF2D56;--ok:#788C5D;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--t1);font:15px/1.8 -apple-system,"PingFang SC",sans-serif;padding:40px}
+  h1{font-size:18px;font-weight:600;margin-bottom:8px}
+  .note{font-size:12px;color:var(--t3);margin-bottom:24px}
+  /* 列表页 */
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+  .toolbar h2{font-size:16px;font-weight:600}
+  .btn{height:40px;padding:0 20px;border-radius:10px;font-size:15px;cursor:pointer;border:none}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:var(--accent-h)}
+  .btn-text{background:none;color:var(--accent);height:auto;padding:0 8px}
+  .btn-text.danger{color:var(--err)}
+  .row{background:var(--surface);border:1px solid var(--bdm);border-radius:12px;padding:16px;display:flex;align-items:center;gap:16px;margin-bottom:8px}
+  .row .main{flex:1;cursor:pointer}
+  .row .name{font-size:15px}
+  .row .sum{font-size:12px;color:var(--t3)}
+  .row.paused .name,.row.paused .sum{color:var(--td)}
+  .sysrow{opacity:.75}
+  .lock{font-size:12px;color:var(--t3)}
+  .switch{width:40px;height:22px;border-radius:999px;background:var(--active);position:relative;cursor:pointer;transition:background .15s}
+  .switch.on{background:var(--accent)}
+  .switch i{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s ease-out}
+  .switch.on i{transform:translateX(18px)}
+  /* 弹窗 */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:flex-start;justify-content:center;padding:48px 0;overflow:auto}
+  .overlay.show{display:flex}
+  .dialog{background:var(--elevated);border-radius:14px;width:760px;padding:24px}
+  .dialog h3{font-size:18px;font-weight:600;margin-bottom:16px}
+  .sec{background:var(--surface);border-radius:12px;padding:16px;margin-bottom:16px}
+  .sec .label{font-size:12px;color:var(--t3);margin-bottom:8px}
+  input[type=text],select{background:var(--bg);border:1px solid var(--bd);border-radius:10px;color:var(--t1);font-size:15px;padding:8px 12px;height:40px;width:100%}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .frow{display:flex;gap:16px;margin-bottom:8px}
+  .frow>div{flex:1}
+  .seg{display:flex;background:var(--bg);border-radius:10px;padding:4px;gap:4px;margin-bottom:16px}
+  .seg button{flex:1;height:32px;border:none;background:none;color:var(--t2);border-radius:8px;cursor:pointer;font-size:14px}
+  .seg button.on{background:var(--accent-soft);color:var(--accent)}
+  .radio{display:flex;gap:24px;align-items:center}
+  .radio label{display:flex;gap:6px;align-items:center;cursor:pointer;color:var(--t2);font-size:14px}
+  .hint{font-size:12px;color:var(--t3)}
+  .preview{border-top:1px solid var(--bdm);padding-top:12px;margin-top:4px}
+  .preview .t{font-size:12px;color:var(--t3);margin-bottom:4px}
+  .preview .times{font-size:14px;color:var(--t2)}
+  .err{font-size:13px;color:var(--err);margin-top:8px;display:none}
+  .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{padding:4px 12px;border-radius:999px;border:1px solid var(--bd);font-size:13px;color:var(--t2);cursor:pointer}
+  .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>调度规则 · 列表入口 + 编辑弹窗</h1>
+<div class="note">交互 demo（R3 设计稿）：点行或「编辑」开弹窗；弹窗内切触发类型/动作可看动态字段。样式取 spec §6.5.1 token，尺寸按 8px 网格。</div>
+
+<div class="toolbar"><h2>用户定时</h2><button class="btn btn-primary" onclick="openDlg(null)">＋ 新建规则</button></div>
+<div id="userRows"></div>
+<h2 style="font-size:16px;margin:24px 0 8px">系统定时</h2>
+<div class="row sysrow"><div class="main"><div class="name">上线任务前置检查</div><div class="sum">每天 09:00 · 下次 10-30 09:00</div></div><span class="lock">🔒 系统来源 · 只读</span></div>
+
+<div class="overlay" id="ov">
+  <div class="dialog">
+    <h3 id="dlgTitle">新建调度规则</h3>
+    <div class="sec">
+      <div class="frow">
+        <div style="flex:2"><div class="label">名称（必填）</div><input type="text" id="fName" value="工作日晨报提醒"></div>
+        <div style="flex:0 0 120px;display:flex;align-items:flex-end;gap:8px;padding-bottom:8px"><label class="switch on" onclick="this.classList.toggle('on')"><i></i></label><span class="hint">启用</span></div>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="label">触发规则</div>
+      <div class="seg" id="segKind"></div>
+      <div id="kindBody"></div>
+    </div>
+    <div class="sec">
+      <div class="label">动作</div>
+      <select id="fAction" onchange="renderAction()">
+        <option value="remind">仅提醒</option>
+        <option value="remind_open" selected>提醒并跳转</option>
+        <option value="run_task">执行内部任务</option>
+        <option value="webhook_only">只发企业微信</option>
+      </select>
+      <div id="actionBody" style="margin-top:8px"></div>
+    </div>
+    <div class="sec">
+      <div class="label">通知渠道（可多选）</div>
+      <div class="chips" id="chChips"></div>
+      <div class="label" style="margin-top:12px">错过策略</div>
+      <div class="radio">
+        <label><input type="radio" name="mp" checked>补一次</label>
+        <label><input type="radio" name="mp">跳过</label>
+        <label><input type="radio" name="mp">全部补跑</label>
+      </div>
+    </div>
+    <div class="preview">
+      <div class="t">接下来 5 次触发（与引擎同源实时预览）</div>
+      <div class="times">10-30 09:00 · 10-31 09:00 · 11-01 09:00 · 11-02 09:00 · 11-03 09:00</div>
+      <div class="err" id="fErr">触发规则校验失败：请填写触发时刻</div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-text" style="color:var(--t2)" onclick="closeDlg()">取消</button>
+      <button class="btn btn-primary" onclick="save()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const KINDS=[["once","一次"],["interval","间隔"],["calendar","日历"],["cron","Cron"],["event","事件"]];
+let kind="calendar";
+const rows=[
+ {name:"工作日晨报提醒",sum:"每周 一~五 09:00 · 下次 10-30 09:00",on:true},
+ {name:"周报归档",sum:"每月第 1 个周一 18:00 · 暂停中",on:false},
+];
+function renderRows(){
+ document.getElementById("userRows").innerHTML=rows.map((r,i)=>`
+ <div class="row${r.on?"":" paused"}">
+  <div class="main" onclick="openDlg(${i})"><div class="name">${r.name}</div><div class="sum">${r.sum}</div></div>
+  <button class="btn btn-text" onclick="openDlg(${i})">编辑</button>
+  <label class="switch${r.on?" on":""}" onclick="event.preventDefault();rows[${i}].on=!rows[${i}].on;renderRows()"><i></i></label>
+  <button class="btn btn-text danger" onclick="if(confirm('删除「${r.name}」？\\n默认软删除（历史保留 90 天），可在确认框勾选彻底删除。')){rows.splice(${i},1);renderRows()}">删除</button>
+ </div>`).join("");
+}
+function renderKind(){
+ document.getElementById("segKind").innerHTML=KINDS.map(k=>`<button class="${k[0]===kind?"on":""}" onclick="kind='${k[0]}';renderKind()">${k[1]}</button>`).join("");
+ const b={
+  once:`<div class="frow"><div><div class="label">触发时刻</div><input type="text" value="2026-11-01 09:00"></div></div>`,
+  interval:`<div class="frow"><div><div class="label">每</div><input type="text" value="60 分钟"></div><div><div class="label">漂移容差（0=关）</div><input type="text" value="0"></div></div>`,
+  calendar:`<div class="frow"><div><div class="label">单位</div><select><option>每周</option><option>每天</option><option>每月</option><option>每年</option></select></div><div><div class="label">时刻</div><input type="text" value="09:00"></div></div><div class="chips">${["一","二","三","四","五","六","日"].map((d,i)=>`<span class="chip${i<5?" on":""}" onclick="this.classList.toggle('on')">周${d}</span>`).join("")}</div>`,
+  cron:`<div class="frow"><div><div class="label">Cron 表达式（分 时 日 月 周）</div><input type="text" value="0 9 * * 1-5"></div></div>`,
+  event:`<div class="frow"><div><div class="label">事件名</div><input type="text" value="build.finished"></div><div><div class="label">冷却（秒，0=不冷却）</div><input type="text" value="0"></div></div>`,
+ }[kind];
+ document.getElementById("kindBody").innerHTML=b;
+}
+function renderAction(){
+ const v=document.getElementById("fAction").value,b=document.getElementById("actionBody");
+ b.innerHTML={
+  remind:`<div class="hint">仅提醒，按所选渠道投递，无附加参数。</div>`,
+  remind_open:`<div class="frow"><div><div class="label">跳转目标（deeplink：页面[:参数]）</div><input type="text" value="release:task:12" id="fDeep"></div><div style="flex:0 0 180px"><div class="label">常用页面快捷填入</div><select onchange="if(this.value)document.getElementById('fDeep').value=this.value"><option value="">选择…</option><option value="release:task:12">上线 · 任务详情</option><option value="markdown">笔记</option><option value="todo">待办</option></select></div></div>`,
+  run_task:`<div class="frow"><div><div class="label">内部任务（下拉选，免手敲）</div><select><option value="agent:12">智能体任务 · 日报生成（agent:12）</option><option value="release:precheck">上线 · 前置检查（release:precheck）</option></select></div></div><div class="hint">保存后写入 {"key":"…"}，与动作执行端同键名。</div>`,
+  webhook_only:`<div class="hint">只投递企业微信，不弹本地提醒；保存时校验渠道必含企业微信。</div>`,
+ }[v];
+}
+function openDlg(i){
+ document.getElementById("dlgTitle").textContent=i==null?"新建调度规则":"编辑调度规则";
+ document.getElementById("ov").classList.add("show");
+ if(i!=null)document.getElementById("fName").value=rows[i].name;
+}
+function closeDlg(){document.getElementById("ov").classList.remove("show")}
+function save(){
+ const e=document.getElementById("fErr");
+ if(!document.getElementById("fName").value.trim()){e.style.display="block";return}
+ e.style.display="none";closeDlg();renderRows();
+}
+document.getElementById("chChips").innerHTML=["全屏提醒","应用内 toast","OS 通知","静默","企业微信"].map((c,i)=>`<span class="chip${i===0?" on":""}" onclick="this.classList.toggle('on')">${c}</span>`).join("");
+renderRows();renderKind();renderAction();
+</script>
+</body>
+</html>
