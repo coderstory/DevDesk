@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -348,6 +349,19 @@ struct ReminderWindowState {
     // 过期代数的迟到回调一律忽略——防止看门狗放弃旧请求重开后，
     // 旧请求的窗口被创建/销毁时搅乱当前窗的状态。
     std::uint64_t openGeneration = 0;
+    // 置顶降层：开窗置顶 8 秒抢注意，之后或任意点击后让位回普通层。
+    // 判定与切换都在 compose（主线程）——GLFW 窗口操作跨线程未定义。
+    std::chrono::steady_clock::time_point openedAt{std::chrono::steady_clock::now()};
+    bool topDemoted = false;
+
+    // 幂等出口：8 秒超时与点击共用，topDemoted 单向闩防每帧重复设 attrib。
+    void demoteTop() {
+        if (topDemoted) return;
+        topDemoted = true;
+        if (handle != nullptr) {
+            core::window::setWindowAlwaysOnTop(handle, false);
+        }
+    }
 
     // 先请求关闭再让调用方决定后续（handle 未创建时由 onWindowCreated 补发）。
     void requestClose() {
@@ -599,6 +613,8 @@ void ReleaseReminder::Impl::openReminder(const ReminderView& view,
                     return;
                 }
                 state->handle = handle;
+                state->openedAt = std::chrono::steady_clock::now();
+                state->topDemoted = false;
                 if (state->onCreated) {
                     state->onCreated();
                     state->onCreated = nullptr;
@@ -848,6 +864,9 @@ void drawTaskCard(eui::Ui& ui, const std::string& prefix, float x, float y,
 
 void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
                            const std::shared_ptr<ReminderWindowState>& state) {
+    if (std::chrono::steady_clock::now() - state->openedAt > std::chrono::seconds(8)) {
+        state->demoteTop();
+    }
     const core::theme::Tokens& tokens = core::theme::current();
     const ReminderView& view = state->view;
     const eui::Color accent = levelAccent(view.level);
@@ -859,6 +878,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
         .size(screen.width, screen.height)
         .color(eui::mixColor(tokens.colors.background, accent,
                              tokens.isDark ? 0.20f : 0.09f))
+        .onClick([state] { state->demoteTop(); })
         .build();
     ui.rect("release.reminder.accent")
         .position(0.0f, 0.0f)
