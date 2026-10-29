@@ -20,6 +20,7 @@
 #include "module_agent/app_stats_tool.h"
 #include "platform/http_client.h"
 #include "platform/json.h"
+#include "platform/process_runner.h"
 
 #include <eui/dsl.h>
 
@@ -1085,5 +1086,27 @@ REGISTER_TEST(builtin_schema_json_validity,
                               name + std::string(" schema 非合法 JSON: ") +
                                   parsed.errorMessage());
     }
+    return true;
+})
+
+REGISTER_TEST(process_runner_large_stdout_no_deadlock,
+              "process_runner: 子进程输出超管道缓冲(128KB) → 全量收回、不误杀不截断", {
+    // 场景：agent bash.run 跑编译/扫描类命令，输出一超 64KB 管道上限，
+    // 「先等退出再读输出」的实现会让子进程卡在 write、父进程卡在 wait。
+    // 防的具体事故：设了超时 → 子进程被误杀 + 输出截断；不设 → 永久挂死。
+    DOCTEST_REQUIRE(platform::processRunnerSupported());
+    auto runner = platform::systemProcessRunner();
+    // 128KB 零字节 + 尾标记；2>/dev/null 隔离 dd 的进度 stderr
+    auto r = runner({"/bin/sh", "-c",
+                     "dd if=/dev/zero bs=1024 count=128 2>/dev/null; echo TAIL_OK"},
+                    "", "", 20000);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_MESSAGE(!r.value().timedOut,
+                          "大输出不应触发超时误杀（timedOut=true 即死锁病复发）");
+    DOCTEST_CHECK_EQ(r.value().exitCode, 0);
+    // 全量收回：128*1024 零字节 + "TAIL_OK\n"（8 字节），缺一个字节都算截断
+    DOCTEST_CHECK_EQ(r.value().stdoutText.size(),
+                     static_cast<size_t>(128 * 1024 + 8));
+    DOCTEST_CHECK(r.value().stdoutText.substr(128 * 1024) == "TAIL_OK\n");
     return true;
 })

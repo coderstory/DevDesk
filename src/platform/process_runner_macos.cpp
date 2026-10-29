@@ -1,6 +1,6 @@
 // src/platform/process_runner_macos.cpp
 // macOS 进程执行器：posix_spawn + 管道全捕获（stdin/stdout/stderr）。
-// 超时用 waitpid + WNOHANG 轮询；超时到期 kill 强杀。
+// 超时 = 输出管道排空 + waitpid WNOHANG 轮询并行（排空优先，防 >64KB 输出互锁）；超时到期 kill 强杀。
 // 线程安全：每次调用独立 posix_spawn，runner 自身无共享状态。
 #include "process_runner.h"
 
@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -35,16 +36,26 @@ void closeFdSafe(int& fd) {
     }
 }
 
-// 从 fd 读全部数据直到关闭
-std::string readFd(int fd) {
-    std::string out;
+// fd 设非阻塞：排空循环里 read 无数据立即 EAGAIN，绝不阻塞在管道上
+void setNonBlocking(int& fd) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+}
+
+// 非阻塞读一轮：有数据全收；EOF 或真错误关 fd 返回 false；EAGAIN/EINTR 返回 true
+bool drainOnce(int& fd, std::string& sink) {
     char buf[4096];
     while (true) {
         ssize_t n = read(fd, buf, sizeof(buf));
-        if (n <= 0) break;
-        out.append(buf, static_cast<size_t>(n));
+        if (n > 0) {
+            sink.append(buf, static_cast<size_t>(n));
+            continue;
+        }
+        if (n == 0) { closeFdSafe(fd); return false; }
+        if (errno == EAGAIN || errno == EINTR) return true;
+        closeFdSafe(fd);
+        return false;
     }
-    return out;
 }
 
 // 构建 argv 的 const char* 数组（posix_spawn 需要）
@@ -223,18 +234,54 @@ ProcessRunner systemProcessRunner() {
             closeFdSafe(stdinPipe[1]);
         }
 
-        // 等待进程退出（有超时）
-        // ECHILD 纪律：waitpid 返回 ECHILD = 子进程已被收尸（SIGCHLD 全局被
-        // 忽略或重复 waitpid 这类调用方 bug），必须显式 fail 暴露——历史 bug
-        // （process_host 全局 SIG_IGN）曾把它伪装成 timedOut=true + exitCode=-1。
-        if (timeoutMs <= 0) {
-            // 无限等待（EINTR 重试：进程还活着，打断不该算失败）
-            int status = 0;
-            pid_t w;
-            do {
-                w = waitpid(pid, &status, 0);
-            } while (w < 0 && errno == EINTR);
-            if (w < 0) {
+        // 排空 + 收尸一体：两输出管道全部读到 EOF 才算完。管道没排空前绝不
+        // 阻塞等退出——输出一旦超管道缓冲（64KB 量级），先等退出会让子进程
+        // 卡在 write、父进程卡在 wait 互锁：设超时被误杀+输出截断，不设永挂。
+        if (stdoutPipe[0] >= 0) setNonBlocking(stdoutPipe[0]);
+        if (stderrPipe[0] >= 0) setNonBlocking(stderrPipe[0]);
+        bool outOpen = stdoutPipe[0] >= 0;
+        bool errOpen = stderrPipe[0] >= 0;
+        const auto deadline =
+            timeoutMs > 0
+                ? std::chrono::steady_clock::now() +
+                      std::chrono::milliseconds(timeoutMs)
+                : std::chrono::steady_clock::time_point::max();
+        bool exited = false;
+        int status = 0;
+        while (outOpen || errOpen || !exited) {
+            struct pollfd pfds[2];
+            int nfds = 0;
+            int outIdx = -1, errIdx = -1;
+            if (outOpen) {
+                outIdx = nfds;
+                pfds[nfds++] = {stdoutPipe[0], POLLIN, 0};
+            }
+            if (errOpen) {
+                errIdx = nfds;
+                pfds[nfds++] = {stderrPipe[0], POLLIN, 0};
+            }
+            if (nfds > 0) {
+                int pr = poll(pfds, static_cast<nfds_t>(nfds), 20);
+                if (pr > 0) {
+                    if (outIdx >= 0 && (pfds[outIdx].revents & (POLLIN | POLLHUP)) != 0)
+                        outOpen = drainOnce(stdoutPipe[0], result.stdoutText);
+                    if (errIdx >= 0 && (pfds[errIdx].revents & (POLLIN | POLLHUP)) != 0)
+                        errOpen = drainOnce(stderrPipe[0], result.stderrText);
+                } else if (pr < 0 && errno != EINTR) {
+                    // poll 异常（不该发生）：强关两管道防死循环，错误事实留给 waitpid
+                    closeFdSafe(stdoutPipe[0]);
+                    outOpen = false;
+                    closeFdSafe(stderrPipe[0]);
+                    errOpen = false;
+                }
+            }
+            if (exited) continue;  // 已收尸：只剩把管道拖到 EOF（孙进程持写端时靠 poll 节流）
+            pid_t w = waitpid(pid, &status, WNOHANG);
+            if (w == pid) {
+                exited = true;
+                continue;
+            }
+            if (w < 0 && errno != EINTR) {
                 if (errno == ECHILD) {
                     return core::Result<ProcessResult>::fail(
                         core::ErrorCode::Internal,
@@ -246,57 +293,28 @@ ProcessRunner systemProcessRunner() {
                     "进程执行器：waitpid 失败: " + std::string(strerror(errno)) +
                         "，命令: " + argv[0]);
             }
-            result.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-        } else {
-            const long stepUs = 100000;  // 100ms
-            long elapsed = 0;
-            bool exited = false;
-            while (elapsed < timeoutMs * 1000) {
-                int status = 0;
-                pid_t w = waitpid(pid, &status, WNOHANG);
-                if (w == pid) {
-                    result.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-                    exited = true;
-                    break;
-                }
-                if (w < 0) {
-                    if (errno == EINTR) continue;
-                    if (errno == ECHILD) {
-                        return core::Result<ProcessResult>::fail(
-                            core::ErrorCode::Internal,
-                            "进程执行器：waitpid ECHILD —— 子进程已被收尸"
-                            "（SIGCHLD 全局被忽略或重复收尸），命令: " + argv[0]);
-                    }
-                    return core::Result<ProcessResult>::fail(
-                        core::ErrorCode::Internal,
-                        "进程执行器：waitpid 失败: " + std::string(strerror(errno)) +
-                            "，命令: " + argv[0]);
-                }
-                usleep(static_cast<useconds_t>(stepUs));
-                elapsed += stepUs;
-            }
-            if (!exited) {
+            if (!exited && std::chrono::steady_clock::now() >= deadline) {
                 result.timedOut = true;
                 kill(pid, SIGKILL);
-                int status = 0;
-                pid_t w;
+                int killStatus = 0;
+                pid_t wk;
                 do {
-                    w = waitpid(pid, &status, 0);
-                } while (w < 0 && errno == EINTR);
-                if (w < 0) {
+                    wk = waitpid(pid, &killStatus, 0);
+                } while (wk < 0 && errno == EINTR);
+                if (wk < 0) {
                     // SIGKILL 后收尸失败 = 有并发收尸（异常信号面），记日志留痕；
                     // 超时事实已成立，不再改判失败
                     LOG_WARN("进程执行器：SIGKILL 后 waitpid 失败: " +
                              std::string(strerror(errno)) + "，命令: " + argv[0]);
                 }
+                result.exitCode =
+                    WIFEXITED(killStatus) ? WEXITSTATUS(killStatus) : -1;
+                exited = true;
             }
         }
-
-        // 读输出
-        result.stdoutText = readFd(stdoutPipe[0]);
-        result.stderrText = readFd(stderrPipe[0]);
-        closeFdSafe(stdoutPipe[0]);
-        closeFdSafe(stderrPipe[0]);
+        if (!result.timedOut) {
+            result.exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        }
         if (!stdinText.empty()) {
             closeFdSafe(stdinPipe[0]);
             closeFdSafe(stdinPipe[1]);
