@@ -159,9 +159,10 @@ REGISTER_TEST(memory_collect_decay_scan_uuid_form,
 
 // ── 审核页工具条几何（TODO §A P2 批量标签窄窗重叠）──
 // 无头 compose 断言沿用 test_mcp_page.cpp 约定：raw eui::Ui + 真 layout
-//（compose 回调体内取 frame 全是 0）。chips 宽改按显示字符估算后，三档窗宽
-//（最小 1000 / TODO 档 1200 / 默认 1600）chips 行均须单行容下、不裁切、
-// 不压右侧批量开关组；开关钉右锚（toolbar 右缘 −52）三档同值不漂移。
+//（compose 回调体内取 frame 全是 0）。真渲染字宽大于估算（实测 1000 宽单行
+// 只剩 ~28px 缝、文字贴死），最小窗折两行：状态 chips 降第二行、工具条 88 高；
+// 1200 / 1600 单行 56 不变。chips 恒不裁切、不压批量开关组；开关钉右锚
+//（toolbar 右缘 −52）三档同值不漂移。
 
 namespace {
 
@@ -194,10 +195,11 @@ bool checkToolbarChain(eui::Ui& ui, float screenW) {
         std::fabs(toolbar->frame.width - contentW) < 0.5f,
         "工具条内容宽 " + std::to_string(toolbar->frame.width) +
             " ≠ 窗宽 " + std::to_string(screenW) + " − 64");
-    // 单行证据：工具条恒 56 高（chips 一旦换行/降双行必增高）
-    DOCTEST_CHECK_MESSAGE(std::fabs(toolbar->frame.height - 56.0f) < 0.5f,
+    // 高度按窗宽分档：1000 折两行 88 / 1200+ 单行 56（chips 一旦换行必增高）
+    const float expectH = (screenW < 1100.0f) ? 88.0f : 56.0f;
+    DOCTEST_CHECK_MESSAGE(std::fabs(toolbar->frame.height - expectH) < 0.5f,
                           "工具条高 " + std::to_string(toolbar->frame.height) +
-                              " ≠ 56（单行布局漂移）");
+                              " ≠ " + std::to_string(expectH));
     // chips 行右缘不出工具条（窄窗不裁切）
     DOCTEST_CHECK_MESSAGE(
         lastChip->frame.x + lastChip->frame.width <=
@@ -237,13 +239,26 @@ REGISTER_TEST(memory_review_toolbar_narrow_1200_no_overlap,
     return true;
 })
 
-REGISTER_TEST(memory_review_toolbar_min_window_1000_no_overlap,
-              "memory: 审核工具条——最小窗 1000×640 chips 不裁切、不压批量开关标签（1000 宽逐页适配延续）", {
+REGISTER_TEST(memory_review_toolbar_min_window_1000_wrap_two_rows,
+              "memory: 审核工具条——最小窗 1000×640 状态 chips 折第二行（工具条 88 高）不裁切、不压批量开关标签", {
     MemoryModule mod;
     mod.setActiveViewForTest(1);
     eui::Ui ui;
     composeReviewFrame(mod, ui, 1000.0f, 640.0f);
     if (!checkToolbarChain(ui, 1000.0f)) return false;
+    // 折行证据：工具条 88 高；状态 chips 在第二行（y = toolbar.y + 42）
+    const auto* toolbar = ui.find("memory.rv.toolbar");
+    const auto* stateChip = ui.find("memory.rv.chipSt.0");
+    DOCTEST_REQUIRE(toolbar != nullptr);
+    DOCTEST_REQUIRE(stateChip != nullptr);
+    DOCTEST_CHECK_MESSAGE(std::fabs(toolbar->frame.height - 88.0f) < 0.5f,
+                          "工具条高 " + std::to_string(toolbar->frame.height) +
+                              " ≠ 88（窄窗未折两行）");
+    DOCTEST_CHECK_MESSAGE(std::fabs(stateChip->frame.y -
+                                    (toolbar->frame.y + 42.0f)) < 0.5f,
+                          "状态 chips y=" + std::to_string(stateChip->frame.y) +
+                              " 未落在第二行 " +
+                              std::to_string(toolbar->frame.y + 42.0f));
     return true;
 })
 
