@@ -16,6 +16,7 @@
 
 ## 登记簿
 
+- 2026-10-29 | 调研 | engram 存储检索底座选型（池子系统输入） | 一手核实 7.68k★/MIT/SQLite+FTS5/MCP 27 工具；schema 精读判定：migrate 上游独占不可扩表、无自由 metadata 列、关系网绑定 observations——engram 适合作 Agent 记忆层，池子业务实体主存储应自建 pool.db（双库或纯自建待业务方案定） | docs/research/2026-10-29-engram-storage-selection.md
 - 2026-10-28 | 调查 | memcpp S2 记忆模块 live 层验证 — venv/引擎对账、llama 联动、三视图截图、key 红线；4 处修复 1331450c/90cf043f/473204ff/00ac9931 | docs/superpowers/plans/2026-10-28-memcpp-s2-live-verify.md
 - 2026-10-28 | 调查 | memcpp 端到端联调验收 — S3+S4 遗留 live 对账，5 处缺陷修复（MCP 会话缝/update 形参/delete 遗忘映射/UUID id 回填/融合段解析），Recall@5=100%，hook 真跑+ledger 闭环+fail-open | docs/superpowers/plans/2026-10-28-memcpp-e2e-verify.md
 
@@ -32,3 +33,5 @@
 | 2026-10-28 | 实证·终验 | MCP 菜单页 UI 终验（门控/侧栏/菜单页/弹窗试一下/三路关闭/开关联动，真窗口真操作+外部 curl 探活） | 可交付：场景 6/6、两轮 37 断言 0 FAIL；GET /mcp=405、关=连接拒绝、再开恢复 405、tools/list 与卡片集合一致；附 1 非阻塞瑕疵（弹窗 schema 文本溢出压「运行结果」标题） | docs/superpowers/plans/2026-10-28-mcp-menu-ui-verify.md |
 
 | 2026-10-29 | 调研 | 现成美观流体效果 C++/GLSL 轮子（背景美化选型） | 一句话结论：无「拿来即用」的 C++ 成品；最优路=直接搬 PavelDoGreat/WebGL-Fluid-Simulation（16.7k★，MIT）的 GLSL shader 文件进 EUI-NEO shadertoy 缝；备选 bassicali/inkbox（59★，MIT，GPU Gems 稳定流体，C++/现代 OpenGL，染料墨水观感，shader 可拆）；kamindustries/touchFluid（238★，MIT）为 TouchDesigner 变体仅参考；tunabrain/gpu-fluid 上轮已封存不重复。Shadertoy 站单文件高赞流体未能二源核实具体条目，不列。 | docs/superpowers/research/2026-10-29-fluid-glsl-wheels.md |
+| 2026-10-30 | 审计 | docs/ 全仓文档时效审计（341 份按 30 天口径） | 3 条已确认失实（EUI-NEO-CAPABILITIES.md:43/355-366/628 托盘菜单「不可行」——app.h:108 已有 trayMenu API）+CLAUDE.md 同款失实 1 条；待验证：fontWeight 切 face；归档候选仅 EUI-NEO-PR-PLAN.md（09-21）；其余顶层/strategy/specs 均未过期或有保留理由 | docs/superpowers/research/2026-10-30-docs-freshness-audit.md |
+| 2026-10-30 | 调研 | 会话结束 hook 摸底（需-10）：Claude Code SessionEnd 事件与 payload | 事件名 SessionEnd、matcher=退出原因五值；payload=公共字段+reason，transcript_path 直指会话 jsonl 原文；硬约束=无决策控制+默认 1.5s 超时（async/环境变量可放宽）、强杀不发事件需对账补漏；本机用户级与仓级 hooks 均无 SessionEnd 配置零冲突 | docs/research/2026-10-30-session-end-hook-recon.md |
