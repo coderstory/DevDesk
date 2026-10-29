@@ -617,6 +617,39 @@ if [ "$RUN_TEST" = "1" ]; then
   fi
 fi
 
+# 3a-尾. 探针残留守卫（guard_probe_residue）：真窗 probe 主进程退出而子窗进程不收时，
+# 残留进程的黑窗会一直留在用户屏幕上。测试段尾部复核：命中 build/tests/*_probe 残留
+# → 打印 PID + kill + exit 1（FAIL，不静默绿）。正常路径零命中、静默过；agent_e2e_probe
+# 等长挂探针真有残留时守卫红是预期行为，不是误报。判据终稿见 docs/plans/probe-residue-incident.md。
+guard_probe_residue() {
+  local residue=""
+  if [ "$DEVDESK_OS" = "windows" ]; then
+    # tasklist CSV 第 2 列是 PID；判据按映像名匹配 _probe（build/tests 下的 *_probe.exe）
+    residue=$(tasklist //FO CSV 2>/dev/null | awk -F'","' '$1 ~ /_probe/ {gsub(/"/, "", $2); print $2}' || true)
+  else
+    # build-release 等非常规构建目录同判据覆盖；模式只匹配 *_probe 可执行的完整命令行，
+    # 不会命中普通进程
+    residue=$(pgrep -f "(build|build-release)/tests/[a-z_]*_probe" || true)
+  fi
+  if [ -n "$residue" ]; then
+    echo "❌ 探针残留守卫：发现未收尾的 probe 进程（黑窗元凶），PID："
+    echo "$residue" | sed 's/^/  · /'
+    if [ "$DEVDESK_OS" = "windows" ]; then
+      echo "$residue" | while read -r pid; do taskkill /F /PID "$pid" >/dev/null 2>&1 || true; done
+    else
+      # 先 SIGTERM；SIGSTOP 挂起态进程对 TERM 免疫，必须补 SIGKILL 兜底（守卫验收 G-1）
+      echo "$residue" | xargs kill 2>/dev/null || true
+      sleep 1
+      echo "$residue" | xargs kill -9 2>/dev/null || true
+    fi
+    echo "   残留进程已代为清理并按 FAIL 处理 —— 请查上一个 probe 为何没有正常退出"
+    exit 1
+  fi
+}
+if [ "$RUN_TEST" = "1" ]; then
+  guard_probe_residue
+fi
+
 # 3b 守卫链快路径（DEVDESK_FAST_TEST=1，用户成本纪律 2026-10-29）：迭代期只测受影响用例
 # 时，逐次全量守卫（Windows 交叉编译数百文件 + std include 全仓扫描 + 玻璃/自检链）是纯
 # 浪费——单次 10 分钟以上。**收口 / QA / 发版前必须不带此开关完整跑一次**，守卫一道不少；
