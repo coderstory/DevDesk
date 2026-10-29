@@ -7,6 +7,8 @@
 
 #include "core/module_interface.h"
 
+#include "module_schedule/schedule_provider.h"
+
 #include <memory>
 
 namespace module::schedule {
@@ -25,6 +27,11 @@ public:
 
     void onStart() override;
     void onStop() override;
+
+    // 装配段注册系统定时只读来源（S8）：须在 onStart 前调用（onStart 起列表
+    // 即消费来源视图）。注册表与模块同生命周期：onStop 不清空——来源注册是
+    // 装配期一次性动作，运行期只读，重复注册同 source 返 AlreadyExists。
+    module::schedule::ScheduleProviderRegistry& providerRegistry();
 
 private:
     struct Impl;

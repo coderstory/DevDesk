@@ -16,6 +16,9 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "module_release/release_logic.h"
+#include "module_release/release_module.h"
+#include "module_release/release_schedule_source.h"
 #include "module_release/release_store.h"
 
 #include <cstddef>
@@ -878,5 +881,61 @@ REGISTER_TEST(release_store_revoke_never_set_kind_no_phantom_row,
     DOCTEST_REQUIRE(after.isOk());
     DOCTEST_REQUIRE_EQ(after.value().size(), 1u);
     DOCTEST_CHECK_EQ(after.value()[0].doneAt, 1700000000);
+    return true;
+})
+
+REGISTER_TEST(release_schedule_source_derives_non_terminal_tasks,
+              "release_schedule_source: 非终态任务派生定时条目（终态滤除、键稳定、零点折算走唯一口径）", {
+    test_support::TestDb tdb("releasesched", "src");
+    rel::ReleaseStore store(tdb.handle());
+
+    rel::Task pending;
+    pending.planDate = "2030-01-15";
+    pending.announceText = "1.2.0 全量上线";
+    auto pendingId = store.createTask(pending);
+    DOCTEST_CHECK(pendingId.isOk());
+
+    rel::Task done;
+    done.planDate = "2030-02-01";
+    done.status = rel::TaskStatus::Done;
+    auto doneId = store.createTask(done);
+    DOCTEST_CHECK(doneId.isOk());
+
+    rel::Task voided;
+    voided.planDate = "2030-03-01";
+    voided.status = rel::TaskStatus::Voided;
+    auto voidedId = store.createTask(voided);
+    DOCTEST_CHECK(voidedId.isOk());
+
+    const auto now = static_cast<std::int64_t>(1893456000);  // 2030-01-01 00:00 UTC 固定钟
+    const auto entries = rel::releaseScheduleEntries(store, now);
+    DOCTEST_CHECK(entries.size() == 1);
+    if (entries.empty()) DOCTEST_CHECK(false); else {
+        const auto& e = entries.front();
+        DOCTEST_CHECK(e.key == "release:task:" + std::to_string(pendingId.value()) + ":precheck");
+        DOCTEST_CHECK(e.title == "1.2.0 全量上线");
+        DOCTEST_CHECK(e.summary == "计划上线 2030-01-15");
+        DOCTEST_CHECK(e.enabled);
+        DOCTEST_CHECK(e.sourceRoute == rel::kReleaseTasksPageKey);
+        // 零点折算必须走 planDateElapsedMinutes 口径：now − minute×60 = 计划日本地零点
+        std::int64_t minute = 0;
+        DOCTEST_CHECK(rel::planDateElapsedMinutes("2030-01-15", now, minute));
+        DOCTEST_CHECK(e.nextFireAt.has_value());
+        if (e.nextFireAt.has_value())
+            DOCTEST_CHECK(*e.nextFireAt == now - minute * 60);
+    }
+
+    // 无 announceText 的任务回落「上线任务 #<id>」标题
+    rel::Task anonymous;
+    anonymous.planDate = "2030-01-20";
+    auto anonId = store.createTask(anonymous);
+    DOCTEST_CHECK(anonId.isOk());
+    const auto again = rel::releaseScheduleEntries(store, now);
+    DOCTEST_CHECK(again.size() == 2);
+    bool fallbackSeen = false;
+    for (const auto& e : again)
+        if (e.key == "release:task:" + std::to_string(anonId.value()) + ":precheck")
+            fallbackSeen = e.title == "上线任务 #" + std::to_string(anonId.value());
+    DOCTEST_CHECK(fallbackSeen);
     return true;
 })

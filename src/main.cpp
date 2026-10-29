@@ -29,7 +29,11 @@
 #include "module_memory/proposals/usage_ledger.h"
 #include "module_toggle_bridge.h"
 #include "module_release/release_reminder.h"
+#include "module_release/release_schedule_source.h"
+#include "module_release/release_store.h"
 #include "module_schedule/channel_registry.h"
+#include "module_schedule/schedule_module.h"
+#include "module_schedule/schedule_provider.h"
 #include "module_wallpaper/wallpaper_module.h"
 #include "mcp_service_bridge.h"
 #include "memory_mcp_bridge.h"
@@ -349,6 +353,40 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                 }
                 return nullptr;
             };
+        // S8：release 系统定时只读源接进 schedule 注册表（装配期一次性，
+        // 运行期只读）。适配器持有自己的 ReleaseStore（与 release 模块共读
+        // 进程级 appDatabase 同一连接）；DB 未注册时 items 降级空列表。
+        class ReleaseScheduleProviderAdapter
+            : public ::module::schedule::ScheduleProvider {
+        public:
+            std::vector<::module::schedule::ScheduleItemView> items()
+                const override {
+                std::vector<::module::schedule::ScheduleItemView> out;
+                auto* db = ::core::appDatabase();
+                if (!db) return out;
+                ::module::release::ReleaseStore store(*db);
+                const auto now = static_cast<std::int64_t>(
+                    ::core::time::nowUnix());
+                for (auto& entry : ::module::release::releaseScheduleEntries(
+                         store, now)) {
+                    ::module::schedule::ScheduleItemView view;
+                    view.source = "release";
+                    view.key = entry.key;
+                    view.title = entry.title;
+                    view.summary = entry.summary;
+                    view.nextFireAt = entry.nextFireAt;
+                    view.enabled = entry.enabled;
+                    view.sourceRoute = entry.sourceRoute;
+                    out.push_back(std::move(view));
+                }
+                return out;
+            }
+        };
+        static_cast<::module::schedule::ScheduleModule*>(schedule.get())
+            ->providerRegistry()
+            .registerProvider(
+                std::make_unique<ReleaseScheduleProviderAdapter>());
+
         auto gated = app::assembly::buildGatedEntries(
             gatingConfigSnapshot(), ::app::registry::kModuleRegistry,
             sizeof(::app::registry::kModuleRegistry) /
