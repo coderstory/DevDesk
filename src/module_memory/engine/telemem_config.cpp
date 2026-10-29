@@ -5,7 +5,7 @@
 #include "core/paths.h"
 #include "platform/json.h"
 
-#include <cstdio>
+#include <fstream>
 #include <system_error>
 
 namespace module::memory::engine {
@@ -81,21 +81,16 @@ std::string readLlmKeyFromClaudeSettings() {
     std::error_code ec;
     const std::filesystem::path file = ::core::paths::claudeSettingsFile();
     if (!std::filesystem::exists(file, ec) || ec) return {};
-    FILE* f = nullptr;
-#if defined(_WIN32)
-    if (_wfopen_s(&f, file.c_str(), L"rb") != 0 || f == nullptr) return {};
-#else
-    f = std::fopen(file.c_str(), "rb");
-    if (f == nullptr) return {};
-#endif
+    // ifstream 直收 fs::path：Windows 宽字符路径原生支持，无需 _wfopen_s 平台分叉
+    std::ifstream f(file, std::ios::binary);
+    if (!f.is_open()) return {};
     std::string text;
     char buf[4096];
-    size_t n = 0;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
-        text.append(buf, n);
+    while (f.good()) {
+        f.read(buf, sizeof(buf));
+        text.append(buf, static_cast<size_t>(f.gcount()));
         if (text.size() > 4u * 1024u * 1024u) break;  // settings.json 不该这么大，防呆
     }
-    std::fclose(f);
     return extractLlmKeyFromSettingsJson(text);
 }
 

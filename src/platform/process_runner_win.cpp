@@ -20,24 +20,27 @@ namespace platform {
 
 namespace {
 
-// 读取管道所有数据直到对端关闭；返回 UTF-8 文本
-std::string readPipe(HANDLE h) {
-    std::string out;
-    constexpr DWORD kBufSize = 4096;
-    char buf[kBufSize];
-    while (true) {
+// 排空管道当前可读数据，不阻塞：无数据或管道坏即返回（供读/等待交错轮询）
+void drainPipe(HANDLE h, std::string& out) {
+    char buf[4096];
+    for (;;) {
         DWORD avail = 0;
-        if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) {
-            DWORD n;
-            if (!ReadFile(h, buf, sizeof(buf) - 1, &n, nullptr) || n == 0) break;
-            out.append(buf, n);
-        } else {
-            DWORD n;
-            if (!ReadFile(h, buf, std::min<DWORD>(avail, sizeof(buf) - 1), &n, nullptr) || n == 0) break;
-            out.append(buf, n);
-        }
+        if (!PeekNamedPipe(h, nullptr, 0, nullptr, &avail, nullptr) || avail == 0) return;
+        DWORD n = 0;
+        if (!ReadFile(h, buf, sizeof(buf), &n, nullptr) || n == 0) return;
+        out.append(buf, n);
     }
-    return out;
+}
+
+// 进程终结后阻塞读到 EOF：写端随进程退出关闭，ReadFile 返回 0/失败即止。
+// 孙进程继承写端未关时会拖住本调用——与旧实现的同一已知边界，不在本函数处理。
+void drainToEof(HANDLE h, std::string& out) {
+    char buf[4096];
+    for (;;) {
+        DWORD n = 0;
+        if (!ReadFile(h, buf, sizeof(buf), &n, nullptr) || n == 0) return;
+        out.append(buf, n);
+    }
 }
 
 void closeHandleSafe(HANDLE& h) {
@@ -70,33 +73,6 @@ std::wstring buildCommandLine(const std::vector<std::string>& argv) {
         }
     }
     return cmd;
-}
-
-// WaitForSingleObject 阻塞等待进程退出或超时；超时则终止进程
-bool waitProcess(HANDLE hProcess, long timeoutMs, ProcessResult& result, bool& timedOut) {
-    if (timeoutMs <= 0) {
-        // 无限等待
-        DWORD wait = WaitForSingleObject(hProcess, INFINITE);
-        (void)wait;
-        return true;
-    }
-
-    // 小粒度轮询（100ms）支持超时后杀死进程
-    const long effective = timeoutMs;
-    const long stepMs = 100;
-    long elapsed = 0;
-    while (elapsed < effective) {
-        DWORD wait = WaitForSingleObject(hProcess, static_cast<DWORD>(stepMs));
-        if (wait == WAIT_OBJECT_0) return true;  // 进程已退出
-        elapsed += stepMs;
-    }
-
-    // 超时：杀进程
-    timedOut = true;
-    result.timedOut = true;
-    TerminateProcess(hProcess, 1);
-    WaitForSingleObject(hProcess, 5000);  // 给 5 秒清理
-    return false;  // 表示被杀了
 }
 
 } // namespace
@@ -246,9 +222,28 @@ ProcessRunner systemProcessRunner() {
 
         closeHandleSafe(pi.hThread);  // 不需要线程句柄
 
-        // 等待进程退出（有超时控制）
-        bool normal = waitProcess(pi.hProcess, timeoutMs, result, result.timedOut);
-        (void)normal;
+        // 读排空与等待交错轮询：管道缓冲满而子进程未退出时，「先 wait 后读」
+        // 双向死锁（子进程写管道阻塞、本进程等退出）。每拍先排空两根管道再探退出；
+        // 超时杀进程；退出后阻塞排空残余到 EOF。timeoutMs<=0 即无限等（仍每拍排空）。
+        constexpr long kPollMs = 20;
+        long elapsed = 0;
+        while (true) {
+            drainPipe(stdoutRead, result.stdoutText);
+            drainPipe(stderrRead, result.stderrText);
+            const DWORD wait = WaitForSingleObject(pi.hProcess, static_cast<DWORD>(kPollMs));
+            if (wait == WAIT_OBJECT_0) break;
+            if (timeoutMs > 0) {
+                elapsed += kPollMs;
+                if (elapsed >= timeoutMs) {
+                    result.timedOut = true;
+                    TerminateProcess(pi.hProcess, 1);
+                    WaitForSingleObject(pi.hProcess, 5000);  // 给 5 秒清理
+                    break;
+                }
+            }
+        }
+        drainToEof(stdoutRead, result.stdoutText);
+        drainToEof(stderrRead, result.stderrText);
 
         // 取退出码
         DWORD exitCode = 0;
@@ -257,9 +252,6 @@ ProcessRunner systemProcessRunner() {
         }
         closeHandleSafe(pi.hProcess);
 
-        // 读 stdout/stderr
-        result.stdoutText = readPipe(stdoutRead);
-        result.stderrText = readPipe(stderrRead);
         closeHandleSafe(stdoutRead);
         closeHandleSafe(stderrRead);
         closeHandleSafe(stdinRead);

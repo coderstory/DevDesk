@@ -91,3 +91,12 @@
 - [P2] src/module_schedule/schedule_ui_list.cpp 行尾操作区 — `scaled()` 与裸逻辑 px 混用（`contentW - 124.0f` 编辑/删除偏移、44×24 开关）— uiScale>1（Windows 125%）时裸 px 常量不随缩放，右侧操作区间距可能不均 — S7a 存量模式延续，R3 不顺手改，记入真机 UAT 一并核（前端补审口径，2026-10-29）。
 - 未上行项确认：壁纸退出 terminate 修复不在本仓 dev 树（TODO 提交 1121f05f 标注「待验证/未上行」，代码在 Windows 机），本次只确认现状不修。
 - DST 确认：时区主口径统一 `core::time`（`src/core/time_win.cpp` 用 `localtime_s`，接口隔离合规）；除 finding#6（release_reminder.cpp:135 直用 std::localtime）外无 Windows 行为差异点新增。
+
+## 处置记录（2026-10-29 后端修复，coderstory 拍板：P1 + ②③⑤ 修，①④ 记录在案）
+
+- P1 process_runner_win 死锁：已修（读排空与等待交错轮询，drainPipe/drainToEof 替换 waitProcess/readPipe；超时杀进程后仍排空到 EOF）。
+- ② agent_system_prompt.h 平台宏：已修——新增 core/platform_info.h + _win/_posix 实现（OS/架构名唯一落点），头文件零平台宏。
+- ③ telemem_config.cpp _wfopen_s：已修——改 std::ifstream 直收 fs::path（Windows 宽路径原生支持），平台分叉整个消掉，未新增 core 文件。
+- ⑤ release_reminder.cpp std::localtime：已修——改 core::time::localTime。
+- ① 引号规则三处不一致、④ mpv 头内平台缝：不修，记录在案（无实际故障、改动面不值当）。
+- 验证：scripts/check-windows-cross-compile.sh 372 文件全过（缺 curl 头 5 个未验证项与本次改动无关）；mac 侧全量增量构建绿；定向 agent 133/133、memory 57/58（1 skip）、release 59/59。

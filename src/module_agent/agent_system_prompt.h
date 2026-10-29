@@ -1,13 +1,13 @@
 // 新建智能体任务的默认系统提示词生成：环境上下文注入（工作目录、git 分支、OS、架构）。
 // 参照 Claude Code 的内置环境注入设计——用户可编辑，只在新建弹窗打开时预填。
 //
-// 纯函数：无 IO 之外的副作用、不摸 UI/DB/网络。全部平台分叉用编译期宏：
-//   _WIN32 / __APPLE__    → 操作系统名
-//   __x86_64__ / __aarch64__ → 系统架构
-// git 分支检测走文件 IO 读 .git/HEAD，禁 spawn git 子进程——跨平台零依赖。
+// 纯函数：无 IO 之外的副作用、不摸 UI/DB/网络。OS/架构名经 core::platform_info
+// 取（平台分叉的唯一落点，本文件不写平台宏）；git 分支检测走文件 IO 读 .git/HEAD，
+// 禁 spawn git 子进程——跨平台零依赖。
 #pragma once
 
-#include <cstdio>
+#include <core/platform_info.h>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -78,23 +78,8 @@ inline std::string readGitBranch(const std::string& workdir) {
 // 生成新建任务的默认系统提示词（四项环境信息）。
 // workdir：任务工作目录（应用启动时的 CWD）。
 inline std::string buildDefaultSystemPrompt(const std::string& workdir) {
-    std::string osName;
-#if defined(_WIN32)
-    osName = "Windows";
-#elif defined(__APPLE__)
-    osName = "macOS";
-#else
-    osName = "Linux";
-#endif
-
-    std::string archName;
-#if defined(__x86_64__) || defined(_M_X64) || defined(_M_AMD64)
-    archName = "x86_64";
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    archName = "arm64";
-#else
-    archName = "未知架构";
-#endif
+    const std::string osName = core::platform_info::osName();
+    const std::string archName = core::platform_info::archName();
 
     std::string branch = readGitBranch(workdir);
     std::string branchText = branch.empty() ? "非 git 仓库" : branch;

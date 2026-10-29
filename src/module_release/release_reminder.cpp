@@ -17,6 +17,7 @@
 #include <core/logging.h>
 #include <core/platform/window_effect.h>
 #include <core/theme.h>
+#include <core/time.h>
 #include <core/window/window_backend.h>
 
 #include <components/scrollview.h>
@@ -129,16 +130,16 @@ std::string joinText(const std::vector<std::string>& parts, const char* separato
 // release_reminder_logic，本文件只保留演示数据的构造。
 
 // 演示任务的计划日取当天本地日期：窗标题里的「上线日」看起来像真实任务。
-// 引擎只在主线程使用，localtime 的静态缓冲无并发风险。
+// 本地时间统一走 core::time::localTime（线程安全口径），不直用 std::localtime。
 std::string demoPlanDate(std::int64_t nowUnix) {
     const std::time_t now = static_cast<std::time_t>(nowUnix);
-    const std::tm* local = std::localtime(&now);
-    if (local == nullptr) return "2026-01-01";
-    std::string month = std::to_string(local->tm_mon + 1);
-    std::string day = std::to_string(local->tm_mday);
+    std::tm local{};
+    core::time::localTime(now, &local);
+    std::string month = std::to_string(local.tm_mon + 1);
+    std::string day = std::to_string(local.tm_mday);
     if (month.size() < 2) month.insert(month.begin(), '0');
     if (day.size() < 2) day.insert(day.begin(), '0');
-    return std::to_string(local->tm_year + 1900) + "-" + month + "-" + day;
+    return std::to_string(local.tm_year + 1900) + "-" + month + "-" + day;
 }
 
 } // namespace
