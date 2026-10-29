@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html
 import os
+import json
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -87,6 +88,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE VIRTUAL TABLE IF NOT EXISTS needs_fts USING fts5(title, body, content='');
         """
     )
+    # body 摘要列（决策文档修订 ④-1）：检索面=body，detail 保持指针/长文原样；
+    # 老 db 无此列则 ALTER 迁移并全量重建 FTS（contentless 重建只能整表重来）。
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(needs)")}
+    if "body" not in cols:
+        conn.execute("ALTER TABLE needs ADD COLUMN body TEXT NOT NULL DEFAULT ''")
+        # 存量行 body 从 detail 回填摘要（body 空才回填，不覆盖已有摘要）
+        conn.execute("UPDATE needs SET body = substr(COALESCE(detail,''),1,400) WHERE body = ''")
+        conn.execute("INSERT INTO needs_fts(needs_fts) VALUES ('delete-all')")
+        for r in conn.execute("SELECT id, title, body FROM needs"):
+            _fts_index(conn, r["id"], r["title"], r["body"] or "")
     conn.commit()
 
 
@@ -127,12 +138,17 @@ def _fts_query(keyword: str) -> str:
     return '"%s"' % _cjk_space(keyword).replace('"', '""')
 
 
+def _summarize(detail: str) -> str:
+    # body 摘要：入库时截取 detail 前 400 字符供 FTS 检索；detail 本身不截。
+    return (detail or "")[:400]
+
+
 def _fts_delete(conn: sqlite3.Connection, need_id: int) -> None:
     # content='' 的 contentless FTS5 删改必须走特殊 'delete' 命令，不能直接
     # DELETE/UPDATE——少这步会留下幽灵索引行，检索出已不存在的条目。
     conn.execute(
         "INSERT INTO needs_fts(needs_fts, rowid, title, body) "
-        "SELECT 'delete', ?, title, COALESCE(detail,'') FROM needs WHERE id = ?",
+        "SELECT 'delete', ?, title, COALESCE(body,'') FROM needs WHERE id = ?",
         (need_id, need_id),
     )
 
@@ -159,9 +175,9 @@ def pool_add(pool: str, title: str, priority: str, owner: str, detail: str = "")
     now = _now()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO needs(pool, title, priority, status, owner, detail, created, updated)"
-            " VALUES (?, ?, ?, '在池', ?, ?, ?, ?)",
-            (pool, title, priority, owner, detail, now, now),
+            "INSERT INTO needs(pool, title, priority, status, owner, detail, body, created, updated)"
+            " VALUES (?, ?, ?, '在池', ?, ?, ?, ?, ?)",
+            (pool, title, priority, owner, detail, _summarize(detail), now, now),
         )
         need_id = cur.lastrowid
         conn.execute(
@@ -171,6 +187,7 @@ def pool_add(pool: str, title: str, priority: str, owner: str, detail: str = "")
         )
         _fts_index(conn, need_id, title, detail)
     _write_report()
+    _write_snapshot()
     return {"ok": True, "id": need_id}
 
 
@@ -277,9 +294,12 @@ def pool_update(
             )
         # 标题/明细若变更需重建 FTS 行；本工具不改标题，此处按 detail 变更兜底
         fresh = conn.execute("SELECT title, detail FROM needs WHERE id = ?", (id,)).fetchone()
+        conn.execute("UPDATE needs SET body = ? WHERE id = ?",
+                     (_summarize(fresh["detail"]), id))
         _fts_delete(conn, id)
-        _fts_index(conn, id, fresh["title"], fresh["detail"] or "")
+        _fts_index(conn, id, fresh["title"], _summarize(fresh["detail"]))
     _write_report()
+    _write_snapshot()
     return {"ok": True}
 
 
@@ -403,6 +423,21 @@ def _write_report() -> None:
         report.write_text("".join(parts), encoding="utf-8")
     finally:
         conn.close()
+
+
+def _write_snapshot() -> None:
+    # 裁决 ④-2：pool.db 出 git，写后导出 JSON 快照入库留痕（可 diff 可 merge，
+    # 双机各写本地 db，git 侧只合快照）。
+    path = _report_path().parent / "pool-snapshot.json"
+    conn = _connect()
+    try:
+        data = {
+            t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")]
+            for t in ("needs", "dev_progress", "bugs", "acceptance", "status_log")
+        }
+    finally:
+        conn.close()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 # ---------- 入口 ----------
