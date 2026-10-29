@@ -30,7 +30,7 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 
 | 维度 | macOS arm64 | Windows 11 |
 |---|---|---|
-| 平台源码 | `*_macos.cpp` ×9 + `.mm`（EUI-NEO 4 个，Cocoa/ObjC++） | `*_win.cpp` ×14（EUI-NEO 7 个，DWM 原生 API） |
+| 平台源码 | `*_macos.cpp` ×16 + `.mm` ×1（EUI-NEO 另有 macos 4 个，Cocoa/ObjC++） | `*_win.cpp` ×31（EUI-NEO 另有 17 个，DWM 原生 API） |
 | 共用兜底 | `*_posix.cpp` | — |
 | 窗口效果 | 三档原生材质（关闭/半透/磨砂） | DWM 原生 API |
 | 数据根 | `~/DevDesk` | `%USERPROFILE%\DevDesk`（`DEVDESK_DATA_ROOT` 可覆盖） |
@@ -42,7 +42,11 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 
 已知平台不对称红（非回归，别当 bug 修）：macOS FileWatcher 轮询兜底 ×2、keychain 空账号语义 ×1。
 
-## 四、构建与测试纪律
+## 四、代码检索纪律（codegraph 优先）
+
+查代码先走 codegraph（仓库根 `codegraph.json`，按符号/调用关系检索），grep 只作兜底全文扫。索引排除 `**/build/**`、`**/wt-*/**` 与 EUI-NEO；新增临时目录要同步进 exclude，别把产物灌进索引。
+
+## 五、构建与测试纪律
 
 > **一律 `bash scripts/build-test-run.sh`（仓库根）。禁止手敲 `cmake -B …` / `cmake --build …`（有门禁硬阻断）。**
 
@@ -64,7 +68,7 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 
 测试基线：**用例总数以运行输出 `Total:` 为准，不要在文档写死**。
 
-## 五、架构约束（DevDesk 4 层）
+## 六、架构约束（DevDesk 4 层）
 
 ```
 main → module_*（Router 页面模块 + 独立子窗）
@@ -82,21 +86,21 @@ main → module_*（Router 页面模块 + 独立子窗）
 - **不抛 C++ 异常**，错误统一走 `Result<T>`（`src/core/result.h`）
 - Router 页面模块在 `src/app_registry.h` 一行登记，顺序 = 注册顺序 = 侧边栏顺序；**枚举以 `kModuleRegistry` 为准**（当前：home / markdown / todo / schedule / claude_proxy / agent / memory / wallpaper（平台能力不支持时不注册）/ mcp / release 分组（任务 + 基础配置两子页）/ settings / about）。
 
-## 六、编辑边界
+## 七、编辑边界
 
 **仓库外归档，不要在仓库内重建**：
 - 原 `/Users/coderstory/dev/gui` 工作区壳的产物/归档（claude_proxy 安全审计、EUI-NEO PR 文案、splash 交付、zpatch 拷贝等）已于 2026-10-29 清理，备份在 `/Users/coderstory/dev/gui-archive-backup-20261029/`（目录 + 同名 .tar.gz）。
 
 **可写**：本仓库全部（含 submodule `EUI-NEO/`，其在 main 分支）。
 
-## 七、协作方式
+## 八、协作方式
 
 - 用户**不熟悉 C++**，纯 AI 开发。代码对用户不可见，反馈走：文档 / 中文日志 / 截屏 / 测试结果。
 - 文档驱动：权威 spec 在 `docs/superpowers/specs/`，实现前先读。
 - 待办与剩余决策：`docs/superpowers/plans/2026-09-22-backlog.md`、`TODO.md`。
 - commit 前缀：`feat:` / `fix:` / `refactor:` / `docs:`。
 
-## 八、文档入口
+## 九、文档入口
 
 | 文件 | 内容 |
 |---|---|
@@ -109,7 +113,7 @@ main → module_*（Router 页面模块 + 独立子窗）
 | `DOCS-CONVENTIONS.md`（仓库根） | 文档目录地图；通用命名 / 骨架 / 写作规范权威在 devflow 插件模板 |
 | `.zcode/` | 本项目 AI 适配件（见 §十）；角色与流程 skill 由 devflow 插件供给 |
 
-## 九、AI 开发作业纪律（流程权威在 devflow 插件，激活由其 SessionStart hook 自动注入）
+## 十、AI 开发作业纪律（流程权威在 devflow 插件，激活由其 SessionStart hook 自动注入）
 
 > 通用规则（S/M/L 分级与裁决、卡片链、完成定义 = 证据物实操实证、检索先行与 POC、代码负资产与最小 90%、注释与测试纪律、六角色白名单）的权威定义在 devflow 插件（`ask` / `consolidate` / 6 角色），每个会话由插件 hook 注入激活提示，本节不复制。以下仅**本项目特有**约定：
 
@@ -117,7 +121,7 @@ main → module_*（Router 页面模块 + 独立子窗）
 - **Agent 评测任务集**：`docs/research/agent-eval-tasks.md`——真实失败当次入库、连续 5 次全过毕业为回归任务；复盘时读子代理完整汇报（transcript）。
 - **文档规范**：通用权威在插件 `devflow-setup` 的 docs-conventions 模板；本项目路径见 `DOCS-CONVENTIONS.md`。
 
-## 十、本项目 AI 适配件（仓库自含；通用能力全部在 devflow 插件，零副本）
+## 十一、本项目 AI 适配件（仓库自含；通用能力全部在 devflow 插件，零副本）
 
 | 适配件 | 内容 |
 |---|---|
