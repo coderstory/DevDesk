@@ -80,15 +80,33 @@ REGISTER_TEST(release_reminder_suppress_gate,
     // 冷却期内：suppressUntil 在未来 → 不开窗
     DOCTEST_CHECK_FALSE(rel::shouldOpenReminder(
         /*currentNow=*/1000, /*suppressUntil=*/1300, /*lastShownAt=*/1000,
-        fingerprint, fingerprint));
+        fingerprint, fingerprint, /*popupEnabled=*/true));
     // 冷却到期：suppressUntil 已过（且重弹窗也早已出窗）→ 开窗
     DOCTEST_CHECK(rel::shouldOpenReminder(100000, 2000, 1000, fingerprint,
-                                          fingerprint));
+                                          fingerprint, true));
     // 冷却上界恰好到期（now == suppressUntil）→ 开窗（边界不回退）
     DOCTEST_CHECK(rel::shouldOpenReminder(1300, 1300, 1000, fingerprint,
-                                          fingerprint));
+                                          fingerprint, true));
     // 应用重开补弹：状态全零 + 空指纹 → 开窗（首 tick 即补弹，错过不吞）
-    DOCTEST_CHECK(rel::shouldOpenReminder(1000, 0, 0, "", fingerprint));
+    DOCTEST_CHECK(rel::shouldOpenReminder(1000, 0, 0, "", fingerprint, true));
+    return true;
+})
+
+// 防：上线提醒弹窗总开关（默认关）被改坏时——关了开关仍弹全屏置顶窗，压住
+// 主窗标题栏致「无法最小化」（BUG 复盘回归门）。开关关 = 一切护栏都不参与，
+// 恒不弹；开关开 = 原有冷却/指纹行为不变。
+REGISTER_TEST(release_reminder_popup_gate,
+              "release 提醒：弹窗总开关关 → 恒不弹、开 → 行为不变（防：默认关被改坏自动弹窗）", {
+    const std::string fingerprint = "fp-gate";
+    // 开关关：即使状态全零（重开补弹场景该弹的形态）也恒不弹
+    DOCTEST_CHECK_FALSE(rel::shouldOpenReminder(1000, 0, 0, "", fingerprint,
+                                                /*popupEnabled=*/false));
+    // 开关关：冷却到期 + 指纹变化也不弹（开关门在最前）
+    DOCTEST_CHECK_FALSE(rel::shouldOpenReminder(100000, 2000, 1000, fingerprint,
+                                                "fp-other", false));
+    // 开关开：同样输入回到「该弹」结论（门不改变其余护栏语义）
+    DOCTEST_CHECK(rel::shouldOpenReminder(100000, 2000, 1000, fingerprint,
+                                          "fp-other", true));
     return true;
 })
 
@@ -99,11 +117,11 @@ REGISTER_TEST(release_reminder_fingerprint_gate,
     const std::string fingerprint = "fp";
     // lastShownAt 距今 < 5 分钟且指纹相同 → 不重弹
     DOCTEST_CHECK_FALSE(rel::shouldOpenReminder(1000, 0, 950, fingerprint,
-                                                fingerprint));
+                                                fingerprint, true));
     // 同窗口内指纹变化 → 重弹
-    DOCTEST_CHECK(rel::shouldOpenReminder(1000, 0, 950, fingerprint, "fp-2"));
+    DOCTEST_CHECK(rel::shouldOpenReminder(1000, 0, 950, fingerprint, "fp-2", true));
     // 时钟回拨：currentNow < lastShownAt → 按「未冷却」处理，开窗
-    DOCTEST_CHECK(rel::shouldOpenReminder(900, 0, 950, fingerprint, fingerprint));
+    DOCTEST_CHECK(rel::shouldOpenReminder(900, 0, 950, fingerprint, fingerprint, true));
     return true;
 })
 

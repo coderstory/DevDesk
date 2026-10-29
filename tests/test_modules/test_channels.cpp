@@ -394,6 +394,53 @@ REGISTER_TEST(channelsFullscreenDedupeKeyMerge, "schedule 全屏渠道：同 ded
     return true;
 });
 
+// 防：全屏弹窗总开关（默认关）被改坏时——无入口自动弹全屏置顶窗（BUG 复盘
+// 回归门）。respectGlobalGate=true 时开关关 = 投递被抑制（ok 回执 + updater
+// 不被调）；开关开 = 投递恢复入队并在 flush 开窗。
+REGISTER_TEST(channelsFullscreenPopupGate, "schedule 全屏渠道：弹窗总开关关 → 投递抑制不弹、开 → 恢复", {
+    struct Probe {
+        int calls = 0;
+        void updater(const std::vector<Delivery>&, const std::function<void()>&) {
+            ++calls;
+        }
+    } probe;
+    std::int64_t now = 1000;
+    auto nowFn = [&now] { return now; };
+    module::schedule::setFullscreenPopupEnabled(false);  // 默认关（守卫口径锚定）
+
+    auto channel = module::schedule::makeFullscreenChannelForTest(
+        [&probe](const std::vector<Delivery>& items,
+                 const std::function<void()>& onClosed) { probe.updater(items, onClosed); },
+        nowFn, /*respectGlobalGate=*/true);
+    module::schedule::ChannelRegistry registry;
+    registry.registerChannel(std::move(channel));
+
+    // 关：deliver 回 ok（环境类抑制不回 fail）但 updater 不被调
+    auto r = registry.deliver({module::schedule::kChannelFullscreen},
+                              makeDelivery());
+    DOCTEST_CHECK(r.isOk());
+    registry.flushAllToMainThread();
+    DOCTEST_CHECK_EQ(probe.calls, 0);
+    registry.resetForTest();
+
+    // 开：同一投递恢复入队并开窗（开关门语义翻转，其余管线不变）
+    module::schedule::setFullscreenPopupEnabled(true);
+    auto channel2 = module::schedule::makeFullscreenChannelForTest(
+        [&probe](const std::vector<Delivery>& items,
+                 const std::function<void()>& onClosed) { probe.updater(items, onClosed); },
+        nowFn, /*respectGlobalGate=*/true);
+    module::schedule::ChannelRegistry registry2;
+    registry2.registerChannel(std::move(channel2));
+    auto r2 = registry2.deliver({module::schedule::kChannelFullscreen},
+                                makeDelivery());
+    DOCTEST_CHECK(r2.isOk());
+    registry2.flushAllToMainThread();
+    DOCTEST_CHECK_EQ(probe.calls, 1);
+    module::schedule::setFullscreenPopupEnabled(false);  // 还原默认
+    registry2.resetForTest();
+    return true;
+});
+
 // 防：工厂拼错 id 映射——内置渠道 id 与 kChannel* 常量脱节导致分发永远 NotFound；
 // 防：渠道文件在、注册表零命中（wecom 注册接线欠账）——规则引用 wecom 时永远 NotFound
 REGISTER_TEST(channelsFactoryKnownAndUnknownIds, "schedule 渠道工厂：五内置 id 就位 + 未知 id 空 + 标准装配全注册", {

@@ -129,8 +129,17 @@ using ChannelNowFn = std::function<std::int64_t()>;
 // toast 渠道落点 sink（默认 app::showAppNotice）
 using ChannelToastSink = std::function<void(const std::string&, const std::string&)>;
 
+// 全屏渠道弹窗总开关（默认关，与 release「上线提醒弹窗」同口径独立）：关 =
+// fullscreen 渠道投递被抑制（deliver 记日志、返回 ok Receipt，不弹窗、不入队）。
+// 仅主线程调用；进程级状态（未来接设置项用，当前无设置入口恒为关）。
+void setFullscreenPopupEnabled(bool on);
+bool fullscreenPopupEnabled();
+
+// 测试工厂：respectGlobalGate=false（默认）→ 不读总开关，行为与历史上线版一致；
+// true 时 deliver 走与生产相同的开关抑制路径，供 OFF 路径守卫用例。
 std::unique_ptr<Channel> makeFullscreenChannelForTest(ChannelWindowUpdater updater,
-                                                      ChannelNowFn now);
+                                                      ChannelNowFn now,
+                                                      bool respectGlobalGate = false);
 std::unique_ptr<Channel> makeToastChannelForTest(ChannelToastSink sink);
 
 }  // namespace module::schedule

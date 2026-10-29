@@ -15,6 +15,12 @@ using ClaudeAssemblyHandler = void (*)(bool autoStart);
 void setClaudeAssemblyHandler(ClaudeAssemblyHandler handler);  // nullptr = 恢复默认 no-op
 void ensureClaudeServiceAssembled(bool autoStart);
 
+// 第三桥：release 提醒弹窗总开关缝（会话内拨「上线提醒弹窗」开关即时生效；
+// settings 模块不能依赖 release 模块，经此缝转发到 app 注入的真实现）。
+using ReminderPopupHandler = void (*)(bool on);
+void setReminderPopupHandler(ReminderPopupHandler handler);  // nullptr = 恢复默认 no-op
+void notifyReminderPopupSetting(bool on);
+
 }  // namespace app::toggle
 
 static_assert(std::is_same_v<decltype(&app::toggle::onModuleToggled),
@@ -30,3 +36,10 @@ static_assert(
     std::is_same_v<decltype(&app::toggle::setClaudeAssemblyHandler),
                    void (*)(app::toggle::ClaudeAssemblyHandler)>,
     "module_toggle_bridge: setClaudeAssemblyHandler 签名漂移");
+static_assert(std::is_same_v<decltype(&app::toggle::notifyReminderPopupSetting),
+                             void (*)(bool)>,
+              "module_toggle_bridge: notifyReminderPopupSetting 签名漂移");
+static_assert(
+    std::is_same_v<decltype(&app::toggle::setReminderPopupHandler),
+                   void (*)(app::toggle::ReminderPopupHandler)>,
+    "module_toggle_bridge: setReminderPopupHandler 签名漂移");

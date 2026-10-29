@@ -39,6 +39,15 @@
 namespace module::release {
 
 namespace {
+// 「上线提醒弹窗」总开关（默认关）：进程级状态，tick 每次读——设置页经桥
+// 改动后下一 tick 生效，无需实例指针；模块实例未构造时启动期写入也成立。
+bool g_autoPopup = false;
+}  // namespace
+
+void setReminderAutoPopup(bool on) { g_autoPopup = on; }
+bool reminderAutoPopup() { return g_autoPopup; }
+
+namespace {
 
 // 冷却时长 / 开窗宽限期两个常量已随决策逻辑迁至 release_reminder_logic.h
 // （唯一一处定义），本文件直接引用。
@@ -407,6 +416,8 @@ struct ReleaseReminder::Impl {
     // 句柄确认（windowOpen 置 true）的时刻；供 tick 对账「开窗状态与句柄
     // 失配」的看门狗。
     std::int64_t openConfirmedAt = 0;
+    // 弹窗开关关闭路径的上次日志时刻（60 秒节流；0 = 从未记过，下个 tick 即记）。
+    std::int64_t gateLogAt = 0;
 };
 
 void ReleaseReminder::Impl::tick(std::int64_t nowUnix) {
@@ -475,10 +486,22 @@ void ReleaseReminder::Impl::tick(std::int64_t nowUnix) {
         }
     }
 
-    // 补弹/重弹最终判据（冷却门 + 同指纹重弹窗护栏）已抽到
+    // 「上线提醒弹窗」总开关（默认关）：关 = 引擎照常扫描，到期项只记日志
+    // 不开窗（60 秒节流，tick 每秒跑不能刷屏）。已开的窗不强制收起。
+    if (!reminderAutoPopup()) {
+        if (gateLogAt == 0 || currentNow - gateLogAt >= 60) {
+            gateLogAt = currentNow;
+            LOG_INFO("Release 提醒：弹窗开关关闭，跳过开窗（到期项 " +
+                     std::to_string(view.items.size()) + " 条）");
+        }
+        return;
+    }
+
+    // 补弹/重弹最终判据（总开关门 + 冷却门 + 同指纹重弹窗护栏）已抽到
     // release_reminder_logic::shouldOpenReminder，本文件只执行其结论。
     if (!shouldOpenReminder(currentNow, suppressUntil, lastShownAt,
-                            lastShownFingerprint, view.fingerprint)) {
+                            lastShownFingerprint, view.fingerprint,
+                            /*popupEnabled=*/true)) {
         return;
     }
 

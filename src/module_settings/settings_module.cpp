@@ -124,6 +124,10 @@ const CardSpec kCardSpecs[] = {
      ::platform::wallpaper::supported() ? kModulesCardHeightWallpaper
                                         : kModulesCardHeight,
      false, /*half=*/false, &drawModulesCard, nullptr},
+    // 上线提醒卡（模块 tab 矮卡 92：310+16+92=418 ≤ 可用 420，零滚动不破）。
+    // 无模块门控：开关语义是 release 行为而非模块启停，release 关时卡保留。
+    {kTabModules, "settings.card.reminder", nullptr, CardHeightKind::Fixed,
+     kReminderCardHeight, false, /*half=*/false, &drawReminderCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
@@ -414,6 +418,18 @@ public:
                      : "代理不再随应用启动（下次启动生效）");
         LOG_INFO("Settings: claudeProxyAutoStart → " +
                  std::string(on ? "true" : "false"));
+    }
+
+    // 「上线提醒弹窗」开关（默认关）：落库后经第三桥转发 release 引擎，
+    // 会话内即时生效（桥未装配 = 启动早期/测试环境，落库为主、无转发）。
+    void applyReminderPopup(bool on) {
+        cfg_.releaseReminderPopup = on;
+        persist();
+        setStatus(on ? "上线提醒弹窗已开启（即时生效）"
+                     : "上线提醒弹窗已关闭（即时生效）");
+        LOG_INFO("Settings: releaseReminderPopup → " +
+                 std::string(on ? "true" : "false"));
+        app::toggle::notifyReminderPopupSetting(on);
     }
 
     // 「开机自启动」开关（UAT6）：先写平台注册项（Windows HKCU Run / macOS
@@ -1245,6 +1261,7 @@ private:
         };
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
+        a.applyReminderPopup = [this](bool on) { applyReminderPopup(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
             setProxyPortDraft(v);

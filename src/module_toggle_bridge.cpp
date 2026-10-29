@@ -33,6 +33,21 @@ void ensureClaudeServiceAssembled(bool autoStart) {
     g_claudeHandler(autoStart);
 }
 
+// 第三桥：release 提醒弹窗总开关缝，形态与第二桥同款（默认 no-op + LOG_WARN）。
+namespace { ReminderPopupHandler g_reminderPopupHandler = nullptr; }
+
+void setReminderPopupHandler(ReminderPopupHandler handler) {
+    g_reminderPopupHandler = handler;
+}
+
+void notifyReminderPopupSetting(bool on) {
+    if (g_reminderPopupHandler == nullptr) {
+        LOG_WARN("提醒弹窗桥未装配（启动早期/测试环境），跳过");
+        return;
+    }
+    g_reminderPopupHandler(on);
+}
+
 }  // namespace app::toggle
 
 // 动态背景桥（UAT6 主窗活体流质）：settings_module.cpp 前置声明 ::app::setFluidBackgroundEnabled，

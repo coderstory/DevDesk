@@ -97,6 +97,9 @@ struct SettingsConfig {
     // 开机自启动（UAT6 设置-通用）：持久化的是用户意图；真值 = 平台注册态
     //（HKCU Run / LaunchAgents），设置页打开时回读对齐、拨开关时双写（先写平台再落库）。
     bool autostartEnabled = false;
+    // 上线提醒弹窗总开关（默认关）：关 = release 引擎照常扫描到期项但只记日志
+    // 不开窗；运行期生效经 module_toggle_bridge 第三缝转发到 release 引擎。
+    bool releaseReminderPopup = false;
     // 动态背景（UAT6 主窗活体流质）：默认开——效果是用户主动拍板的交付物，
     // 关闭是给省电/静音偏好的出口（关闭 = 主窗恢复静态背景、帧泵零成本）。
     // 运行时镜像在 app 侧（app_sidebar 持有，设置页经 setFluidBackgroundEnabled 写）。

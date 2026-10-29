@@ -15,6 +15,8 @@
 //     同步触发 notifyWindowClosed，锁内调用会自锁。
 //   * 关窗判定：用户点「关闭」按钮 / Alt+F4 等一切窗口销毁路径统一走
 //     onWindowDestroyed → notifyWindowClosed，冷却口径一致。
+//   * 弹窗总开关（默认关）：respectGlobalGate=true（生产工厂）时 deliver 读
+//     fullscreenPopupEnabled()，关 = 抑制投递（日志 + ok Receipt，不入队）。
 //
 // 本波为独立置顶窗的最小实现；真全屏（无边框最大化）与视觉细化由 UI 波完成。
 #include "module_schedule/channel_registry.h"
@@ -33,7 +35,11 @@
 #include "core/time.h"
 
 namespace module::schedule {
+
 namespace {
+// 全屏渠道弹窗总开关（默认关）：进程级状态，deliver 每次读。默认关是拍板
+// 口径——全屏置顶窗不允许无入口自动弹出；未来接设置项时经 setter 打开。
+bool g_popupEnabled = false;
 
 constexpr std::int64_t kCooldownSeconds = 300;  // 关闭后冷却 5 分钟（§4.9）
 
@@ -90,14 +96,20 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
 
 }  // namespace
 
+void setFullscreenPopupEnabled(bool on) { g_popupEnabled = on; }
+bool fullscreenPopupEnabled() { return g_popupEnabled; }
+
 class FullscreenChannel final : public Channel {
 public:
     // updater 为空 = 生产默认（工厂随后用 setWindowUpdater 装真窗口接线）。
-    // now 为空 = core::time::nowUnix()。
-    explicit FullscreenChannel(ChannelWindowUpdater updater, ChannelNowFn now)
+    // now 为空 = core::time::nowUnix()。respectGlobalGate=false = 测试工厂
+    // 直通（不读总开关，历史行为）；生产工厂传 true。
+    explicit FullscreenChannel(ChannelWindowUpdater updater, ChannelNowFn now,
+                               bool respectGlobalGate)
         : updater_(std::move(updater)),
           now_(now ? std::move(now)
-                   : [] { return static_cast<std::int64_t>(core::time::nowUnix()); }) {}
+                   : [] { return static_cast<std::int64_t>(core::time::nowUnix()); }),
+          respectGlobalGate_(respectGlobalGate) {}
 
     // 替换开窗/刷新回调。工厂在构造后用它装生产接线；测试注入假回调。
     void setWindowUpdater(ChannelWindowUpdater updater) {
@@ -109,6 +121,13 @@ public:
 
     core::Result<Receipt> deliver(const Delivery& d) override {
         std::lock_guard<std::mutex> lock(mutex_);
+        // 弹窗总开关门（默认关）：关 = 记日志、不入队、回执 ok（与 OS 通知被禁
+        // 同口径：环境类抑制归 Receipt，不算投递失败）。
+        if (respectGlobalGate_ && !fullscreenPopupEnabled()) {
+            LOG_INFO("fullscreen 渠道投递被弹窗开关抑制，丢弃 1 条: " + d.title);
+            return core::Result<Receipt>::ok(
+                Receipt{"suppressed", "全屏弹窗开关关闭，未投递"});
+        }
         if (!d.dedupeKey.empty()) {
             for (auto& pending : pending_) {
                 if (pending.dedupeKey == d.dedupeKey) {
@@ -178,10 +197,12 @@ private:
     std::int64_t cooldownUntil_ = 0;
     ChannelWindowUpdater updater_;
     ChannelNowFn now_;
+    bool respectGlobalGate_ = false;  // 生产工厂 true；测试默认 false 直通
 };
 
 std::unique_ptr<Channel> makeFullscreenChannel() {
-    auto channel = std::make_unique<FullscreenChannel>(nullptr, nullptr);
+    auto channel = std::make_unique<FullscreenChannel>(nullptr, nullptr,
+                                                       /*respectGlobalGate=*/true);
     const auto frame = std::make_shared<FrameState>();
     channel->setWindowUpdater(
         [frame](const std::vector<Delivery>& items,
@@ -211,8 +232,10 @@ std::unique_ptr<Channel> makeFullscreenChannel() {
 }
 
 std::unique_ptr<Channel> makeFullscreenChannelForTest(ChannelWindowUpdater updater,
-                                                      ChannelNowFn now) {
-    return std::make_unique<FullscreenChannel>(std::move(updater), std::move(now));
+                                                      ChannelNowFn now,
+                                                      bool respectGlobalGate) {
+    return std::make_unique<FullscreenChannel>(std::move(updater), std::move(now),
+                                               respectGlobalGate);
 }
 
 }  // namespace module::schedule

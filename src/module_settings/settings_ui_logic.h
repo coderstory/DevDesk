@@ -108,6 +108,9 @@ inline constexpr float kEditorFontCardHeight = 184.0f;
 //（68 + 56×3 + 36 + 38）。85% 档 264 / 130% 档 403。
 inline constexpr float kModulesCardHeight = 310.0f;
 inline constexpr float kModulesCardHeightWallpaper = 310.0f;
+// 上线提醒卡（模块 tab，插拔卡下方）：标题 22 + 开关行 32 + 下边距 16 = 92。
+// 模块 tab 预算：310 + 16 间距 + 92 = 418 ≤ 可用 420（最小窗零滚动不破）。
+inline constexpr float kReminderCardHeight = 92.0f;
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + H28 间距令牌恢复）：
 // 卡高由最坏行序决定——H28 后（100% 档，设计系统 v1.0 令牌 4/8/12/16）：

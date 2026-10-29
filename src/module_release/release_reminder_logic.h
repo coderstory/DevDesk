@@ -85,13 +85,15 @@ bool openRequestGraceElapsed(std::int64_t currentNow,
 std::int64_t computeSuppressUntil(std::int64_t currentNow,
                                   std::int64_t suppressUntil);
 
-// 补弹/重弹最终判据（due 非空时调用）：冷却门（currentNow < suppressUntil 不弹）
+// 补弹/重弹最终判据（due 非空时调用）：总开关门（popupEnabled=false 恒不弹，
+// 设置「上线提醒弹窗」默认关）+ 冷却门（currentNow < suppressUntil 不弹）
 // + 同指纹重弹窗护栏（lastShownAt 起的冷却窗口内同指纹不弹；指纹变化 / 时钟
 // 回拨一律按「未冷却」处理）。true = 开窗。
 bool shouldOpenReminder(std::int64_t currentNow, std::int64_t suppressUntil,
                         std::int64_t lastShownAt,
                         const std::string& lastShownFingerprint,
-                        const std::string& viewFingerprint);
+                        const std::string& viewFingerprint,
+                        bool popupEnabled);
 
 // 迟到代数：回调捕获的发起代数 != 当前代数 → 忽略（看门狗放弃旧请求重开后，
 // 旧请求的窗口创建/销毁不得搅乱当前窗状态）。

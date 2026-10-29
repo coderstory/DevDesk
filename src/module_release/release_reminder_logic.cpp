@@ -92,7 +92,11 @@ std::int64_t computeSuppressUntil(std::int64_t currentNow,
 bool shouldOpenReminder(std::int64_t currentNow, std::int64_t suppressUntil,
                         std::int64_t lastShownAt,
                         const std::string& lastShownFingerprint,
-                        const std::string& viewFingerprint) {
+                        const std::string& viewFingerprint,
+                        bool popupEnabled) {
+    // 总开关门：设置「上线提醒弹窗」默认关，关时恒不弹（其余护栏不参与）。
+    if (!popupEnabled) return false;
+
     if (currentNow < suppressUntil) return false;
 
     // 同一批到期项（内容指纹相同）在冷却窗口内不重复弹；时钟回拨时

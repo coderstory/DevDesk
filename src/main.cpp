@@ -28,6 +28,7 @@
 #include "module_memory/mcp/search_tool.h"
 #include "module_memory/proposals/usage_ledger.h"
 #include "module_toggle_bridge.h"
+#include "module_release/release_reminder.h"
 #include "module_wallpaper/wallpaper_module.h"
 #include "mcp_service_bridge.h"
 #include "memory_mcp_bridge.h"
@@ -380,6 +381,8 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
             });
         // 惰性装配桥：会话内拨 claude 开关 → 装配单例（autoStart 才 startProxy）；目标静态存储期无悬垂
         app::toggle::setClaudeAssemblyHandler(&ensureClaudeServiceAssembledImpl);
+        // 第三桥：会话内拨「上线提醒弹窗」开关 → release 引擎即时生效
+        app::toggle::setReminderPopupHandler(&module::release::setReminderAutoPopup);
         // M-3：frosted 降级门控的 active 档回查缝（surfaceAlpha 读，桥见上）
         core::window_effect_state::setActiveTierProvider(&activeWindowEffectTier);
         // 托盘壁纸桥：handler 捕获-less 直引本函数静态 wallpaper（moduleForPage 同款
@@ -962,6 +965,9 @@ const DslAppConfig& dslAppConfig() {
         const module::settings::SettingsStore settingsStore(
             ::core::appDatabase());
         const auto settingsCfg = settingsStore.load();
+        // 上线提醒弹窗总开关（默认关）启动期装载：须在 getRouter()（模块构造）前
+        // 写入进程级状态，release 引擎首 tick 即按开关行事
+        module::release::setReminderAutoPopup(settingsCfg.releaseReminderPopup);
         app::setSidebarCollapsed(settingsCfg.sidebarCollapsed, false);
         getRouter();
         // 桌宠模块已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）

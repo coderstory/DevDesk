@@ -28,6 +28,13 @@ class ReleaseStore;
 using ReleaseReminderAction = std::function<void(std::int64_t taskId,
                                                  const std::string& scope)>;
 
+// 「上线提醒弹窗」总开关（设置页，默认关）。false = 引擎照常扫描到期项但只
+// 记日志不开窗；已开的窗不强制收起，由用户正常关闭。仅主线程调用；
+// tick 每次读，改后下一个 tick 即生效。进程级状态（非实例态）：设置项在
+// main 启动期写入、设置页运行期经桥写入，模块实例可能尚未构造。
+void setReminderAutoPopup(bool on);
+bool reminderAutoPopup();
+
 class ReleaseReminder {
 public:
     ReleaseReminder(ReleaseStore& store, ReleaseReminderAction onHandle);

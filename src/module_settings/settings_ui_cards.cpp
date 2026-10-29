@@ -887,6 +887,66 @@ void drawMcpCard(const CardDrawArgs& args) {
         .build();
 }
 
+// 模块 tab 全宽矮卡（高 92）：上线提醒弹窗总开关（默认关）。全屏置顶提醒窗
+// 曾压住主窗标题栏致「无法最小化」（BUG 复盘），默认关 = 无入口不自动弹。
+void drawReminderCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const float h = args.h;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+    const auto compTheme = core::theme::componentTokensWeChat(t);
+
+    ui.stack(id)
+        .size(w, h)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+            cardTitle(ui, id, t, 22.0f, w - 56.0f, 22.0f, 22.0f, "上线提醒");
+            // 开关行：label + 说明一行 + 右贴开关（行几何 = 自启动行同款简化）
+            const float rowY = 44.0f;
+            const float rowH = 32.0f;
+            const float labelW = roundFs(92.0f);
+            const float descX = 28.0f + labelW + roundFs(8.0f);
+            const float descW = w - 28.0f - kAutostartSwitchW - roundFs(12.0f) - descX;
+            ui.text(id + ".popup.label")
+                .position(28.0f, rowY)
+                .size(labelW, rowH)
+                .text("上线提醒弹窗")
+                .fontSize(t.sizes.fontSizeBody - 1.0f)
+                .lineHeight(rowH)
+                .fontWeight(500)
+                .color(t.colors.textPrimary)
+                .maxWidth(labelW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+            ui.text(id + ".popup.desc")
+                .position(descX, rowY)
+                .size(std::max(0.0f, descW), rowH)
+                .text("有到期上线事项时弹全屏提醒窗（默认关闭，仅记日志）")
+                .fontSize(fs(12.0f))
+                .lineHeight(rowH)
+                .color(t.colors.textTertiary)
+                .maxWidth(std::max(0.0f, descW))
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+            ui_kit::wswitch(ui, id + ".popup.sw", in.cfg.releaseReminderPopup,
+                            w - 28.0f - kAutostartSwitchW, rowY,
+                            kAutostartSwitchW, kAutostartSwitchH, t,
+                            [f = a.applyReminderPopup](bool v) { f(v); });
+        })
+        .build();
+}
+
 // 下拉出界则 openUp 向上；UAT3 多列分栏：两行改卡内双列同排（日志保留 | 日志级别，
 // 列几何走 ui_kit::columnX），hint 从行内尾注并一行下移（hintRowBelowY），
 // 卡高 170→144。行 y 单一来源 settings_ui_logic.h（logRow1LabelY，100% = 68）。
