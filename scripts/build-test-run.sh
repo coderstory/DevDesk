@@ -637,7 +637,10 @@ guard_probe_residue() {
     if [ "$DEVDESK_OS" = "windows" ]; then
       echo "$residue" | while read -r pid; do taskkill /F /PID "$pid" >/dev/null 2>&1 || true; done
     else
+      # 先 SIGTERM；SIGSTOP 挂起态进程对 TERM 免疫，必须补 SIGKILL 兜底（守卫验收 G-1）
       echo "$residue" | xargs kill 2>/dev/null || true
+      sleep 1
+      echo "$residue" | xargs kill -9 2>/dev/null || true
     fi
     echo "   残留进程已代为清理并按 FAIL 处理 —— 请查上一个 probe 为何没有正常退出"
     exit 1
