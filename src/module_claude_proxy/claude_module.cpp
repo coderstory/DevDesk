@@ -314,8 +314,10 @@ private:
     // Toast 走 ui_kit（成功图标 fa-circle-check）
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
+        // bottomInset 抬过详情/表单底部动作区，防 toast 盖住第三颗按钮（UI 走查 P1-C3）
         ui_kit::drawToast(ui, screen, "claude.toast", toast_, themeTokens,
-                          ui_kit::ToastOptions{.okIcon = 0xF058});
+                          ui_kit::ToastOptions{.okIcon = 0xF058,
+                                               .bottomInset = 110.0f});
     }
 
     void showToast(const std::string& title, const std::string& msg, bool isError) {

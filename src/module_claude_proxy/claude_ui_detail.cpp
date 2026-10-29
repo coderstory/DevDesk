@@ -697,16 +697,29 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
 
             float paneBottom = paneY;  // 各 pane 累加真实底沿，供 max() 兜底防重叠
             PaneRows paneRows;         // 行数统计（诊断日志用）
+            // 内容垂直居中（UI 走查 P1-C2，与向导 step2 同款）：字段集中上部 +
+            // 固定高内容框 → 下半大片空白。pane 高度固定行数可从前一帧缓存，
+            // 偏移 = 空白/2，按钮行仍钉底、三页签 actY 等高契约不破；首帧
+            // 缓存未热（0）不偏移，下一帧即正。UI 单线程，静态缓存安全。
+            static float s_paneH[3] = {0.0f, 0.0f, 0.0f};
+            const float paneH = s_paneH[st.detailTab_];
+            float paneOffset = 0.0f;
+            if (paneH > 0.0f) {
+                const float blank = contentBottom - paneY - paneH;
+                if (blank > 0.0f) paneOffset = blank * 0.5f;
+            }
+            const float paneDrawY = paneY + paneOffset;
             if (st.detailTab_ == 0) {
-                paneBottom = drawDetailBasic(ui, x0, paneY, w0, t, v,
+                paneBottom = drawDetailBasic(ui, x0, paneDrawY, w0, t, v,
                                              contentBottom);
             } else if (st.detailTab_ == 1) {
-                paneBottom = drawDetailModels(ui, x0, paneY, w0, t, v, a,
+                paneBottom = drawDetailModels(ui, x0, paneDrawY, w0, t, v, a,
                                               contentBottom);
             } else {
-                paneBottom = drawDetailEnv(ui, x0, paneY, w0, t, v,
+                paneBottom = drawDetailEnv(ui, x0, paneDrawY, w0, t, v,
                                            contentBottom, &paneRows);
             }
+            s_paneH[st.detailTab_] = paneBottom - paneDrawY;
             // 锚定 + 兜底：正常档三页签都取 actYFloor（分隔线 y 全等）；更矮时基础/模型
             // 固定行数使动作区下移、三页签不再同高；再矮用 actYHi 夹住：宁可压内容也不越出容器底
             const float actYHi = std::max(bodyH - kActionBlockH, actYFloor);

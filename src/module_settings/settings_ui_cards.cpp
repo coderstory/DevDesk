@@ -276,7 +276,9 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
+            // 标题「通用」：卡内实为 字号 + 开机自启动 两件（UI 走查 P1-S1）——
+            // 通用 tab 640 档零滚动预算无空位挪卡/建卡，改名是零几何解。
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "通用");
             ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
                             w - 56.0f, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {

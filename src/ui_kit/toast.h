@@ -37,6 +37,9 @@ struct ToastOptions {
     float durationSec = 3.5f;         // 自动消失秒数（0 = 不自动消失）
     unsigned int okIcon = 0xF00C;     // 成功态图标（fa-check）
     unsigned int errorIcon = 0xF071;  // 失败态图标（fa-triangle-exclamation）
+    // 右下贴角的抬升量：把 toast 底沿从 screen.height 上收这么多（逻辑 px），
+    // 用于避开页面底部按钮行（默认 0 = 贴底；claude 详情传动作区预留高度）。
+    float bottomInset = 0.0f;
 };
 
 // 绘制单实例 toast：每帧无条件调用，显隐由 state.open 控制；state 取非 const 引用以回写
