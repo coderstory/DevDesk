@@ -277,6 +277,38 @@ REGISTER_TEST(schedule_workdays, "schedule: 工作日 09:00 周六日不触发�
     return true;
 })
 
+// 契约统一（P2-11）：calendar 400 年窗口无匹配 → ok(nullopt)，不是 fail。
+// 防：两种合法形态被 UI 保存误拒——①合法稀疏 interval（首触发在 400 年外）；
+// ②病态组合（unit=year + 第 5 个周日 + workdays_only：周日非工作日，恒不匹配）。
+// 契约口径 = 无下次不是错误（与 cron 8 窗口无匹配一致）；回退成 fail(ValidationError) 此用例即红。
+REGISTER_TEST(schedule_calendar_no_match_nullopt, "schedule: calendar 400 年无匹配返回 ok(nullopt) 而非 fail", {
+    const FireContext c = ctxAt(unixOf(2026, 10, 29, 12, 0));
+    // 合法稀疏：day interval=1000000（约 2739 年一周），下一次远超 400 年窗口
+    const RuleSpec sparse = mustParse(RuleKind::Calendar,
+        R"({"unit":"day","interval":1000000,"time":"09:00","anchor_date":"2026-10-29"})");
+    {
+        auto r = nextFire(sparse, static_cast<int64_t>(unixOf(2026, 10, 29, 12, 0)), c);
+        DOCTEST_REQUIRE_MESSAGE(r.isOk(), "稀疏 interval 必须是 ok，不是 fail");
+        DOCTEST_CHECK(!r.value().has_value());
+    }
+    // 病态组合：第 5 个周日 + 仅工作日 → 恒不匹配
+    const RuleSpec impossible = mustParse(RuleKind::Calendar,
+        R"({"unit":"year","nth_weekday":{"n":5,"weekday":0},"workdays_only":true,"time":"09:00"})");
+    {
+        auto r = nextFire(impossible, static_cast<int64_t>(unixOf(2026, 10, 29, 12, 0)), c);
+        DOCTEST_REQUIRE_MESSAGE(r.isOk(), "病态组合也必须是 ok(nullopt)，不是 fail");
+        DOCTEST_CHECK(!r.value().has_value());
+    }
+    // 同款病态组合的 missedFires 也必须 ok 且空，不是 fail
+    {
+        auto r = missedFires(impossible, static_cast<int64_t>(unixOf(2026, 1, 1, 0, 0)),
+                             static_cast<int64_t>(unixOf(2026, 12, 31, 23, 59)), 10, c);
+        DOCTEST_REQUIRE_MESSAGE(r.isOk(), "missedFires 同契约：无触发返回 ok 空集");
+        DOCTEST_CHECK(r.value().empty());
+    }
+    return true;
+})
+
 // interval 锚点式推进：anchor + ceil((after-anchor)/N)*N；after < anchor 时返回 anchor 本身。
 // 防：网格相位漂移（每次从 now 重起算而非锚点）、恰在边界时刻被重复返回（不严格大于）
 REGISTER_TEST(schedule_interval_anchor, "schedule: interval 锚点式 nextFire / missedFires", {

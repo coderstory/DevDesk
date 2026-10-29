@@ -121,6 +121,53 @@ REGISTER_TEST(schedule_store_migrate_idempotent,
     return true;
 })
 
+REGISTER_TEST(schedule_store_migrate_fresh_upgrade,
+              "调度四表首次升级：老库（无 schedule 表）重开即建全四表+唯一索引，他表数据原样，store 可直接用（防：老用户升级首启建表炸/丢他表数据/半建表）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "upgrade");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    {
+        // 模拟 schedule 模块上线前的老库：有他模块的表和数据，无任何 schedule 表
+        auto opened = core::Database::open(path);
+        DOCTEST_REQUIRE(opened.isOk());
+        auto& db = opened.value().db();
+        DOCTEST_REQUIRE(
+            db.exec("CREATE TABLE IF NOT EXISTS markdown_index (id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL)").isOk());
+        DOCTEST_REQUIRE(db.exec("INSERT INTO markdown_index (path, size_bytes, modified_at, created_at) VALUES ('/notes/old.md', 1, 1, 1)").isOk());
+        for (const char* t : {"schedule_rule", "schedule_run", "schedule_delivery", "schedule_channel"}) {
+            DOCTEST_REQUIRE(db.exec(std::string("DROP TABLE IF EXISTS ") + t).isOk());
+        }
+    } // 关库
+    {
+        // 升级首启：open 内部 migrate 用当前 schema 建全 schedule 四表
+        auto reopened = core::Database::open(path);
+        DOCTEST_REQUIRE(reopened.isOk());
+        auto& db = reopened.value().db();
+        DOCTEST_CHECK_EQ(countRows(db, "schedule_rule"), 0);
+        DOCTEST_CHECK_EQ(countRows(db, "schedule_run"), 0);
+        DOCTEST_CHECK_EQ(countRows(db, "schedule_delivery"), 0);
+        DOCTEST_CHECK_EQ(countRows(db, "schedule_channel"), 0);
+        // 他模块老数据原样
+        DOCTEST_CHECK_EQ(countRows(db, "markdown_index"), 1);
+        // 唯一索引随建表就位
+        auto idx = queryOptInt(
+            db, "SELECT COUNT(*) AS v FROM sqlite_master WHERE type='index' "
+                "AND name='idx_schedule_run_unique'");
+        DOCTEST_REQUIRE(idx.isOk());
+        DOCTEST_CHECK_EQ(idx.value().value(), 1);
+        // store 升级后的库上立即可用
+        module::schedule::ScheduleStore store(db);
+        auto rule = store.createRule(makeRule("升级后第一条"));
+        DOCTEST_REQUIRE(rule.isOk());
+        // 再 migrate 一次幂等
+        DOCTEST_REQUIRE(reopened.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(countRows(db, "schedule_rule"), 1);
+        DOCTEST_CHECK_EQ(countRows(db, "markdown_index"), 1);
+    }
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
 REGISTER_TEST(schedule_store_run_insert_no_side_effect,
               "同 (origin,origin_key,planned_at) 二次插入被拒且零副作用、不覆盖已有行（防：重启重复补跑产生重复行/重复动作）", {
     auto opened = openMigrated("dup");
