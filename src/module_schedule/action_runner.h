@@ -79,6 +79,8 @@ public:
     // 重复注册同 key：后注册覆盖（装配段单线程，无并发问题）
     void registerTask(const std::string& key, TaskFn fn);
     core::Result<TaskOutcome> invoke(const TaskInvoke& invoke) const;
+    // 已注册 key 清单（编辑弹窗 run_task 下拉候选；map 序 = 字典序稳定）
+    std::vector<std::string> taskKeys() const;
     void resetForTest();
 
 private:

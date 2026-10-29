@@ -42,7 +42,7 @@ struct EditFormState {
 
     // once：二选一（onceUseLocal 决定用 at_local 还是 at）
     bool onceUseLocal = true;
-    std::string onceAtLocal = "2026-10-28 09:00";  // YYYY-MM-DD HH:MM
+    std::string onceAtLocal;  // YYYY-MM-DD HH:MM；默认空 = 新建时由 openNewRule 填明天 09:00（写死过去时刻会让预览恒「无下次触发时刻」）
     int64_t onceAtUnix = 0;
 
     // interval
@@ -74,7 +74,7 @@ struct EditFormState {
 
     // 通用：动作（§4.3）/ 渠道多选 / 错过策略（§4.6）
     std::string actionKind = "remind";   // remind/remind_open/run_task/webhook_only
-    std::string actionJson;              // remind_open: {"deeplink":...}；run_task: {"task_key":...}
+    std::string actionJson;              // remind_open: {"deeplink":...}；run_task: {"key":...}（键名与 action_runner.cpp extract("key") 对齐，禁用别名）
     std::vector<int64_t> channelIds;
     std::string missedPolicy = "once";   // once/skip/all
 
@@ -119,6 +119,7 @@ core::Result<EditFormState> formFromRecord(const RuleRecord& rec);
 // 宿主模块注入的通道：渠道列表项 + 保存回调（空串 = 成功，非空 = 弹窗内嵌红字）+ 关闭。
 struct EditDialogHost {
     std::vector<ChannelOption> channels;
+    std::vector<std::string> taskKeys;  // run_task 下拉候选 = InternalTaskRegistry 已注册 key（禁自由输入，防键名错写）；空 = 下拉只出灰字空态
     std::function<std::string(const RuleRecord&)> saveRule;  // 模块侧同事务落库
     std::function<void()> close;
 };
@@ -128,6 +129,7 @@ struct EditDialogHost {
 // spec 不落库），saveError = 宿主落库失败红字（任一字段编辑即清除）。
 struct EditDialogState {
     bool open = false;
+    int64_t ruleId = 0;  // 非 0 = 编辑既有规则（保存走 updateRule）；0 = 新建（createRule）
     EditFormState form;
     std::vector<int64_t> previewCache;  // previewNextFires 结果；空且无红字 = 无下次时刻
     std::string saveError;

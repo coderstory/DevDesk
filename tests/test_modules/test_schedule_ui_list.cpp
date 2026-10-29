@@ -401,3 +401,83 @@ REGISTER_TEST(schedule_list_history_drawer_empty_ok,
     DOCTEST_CHECK(frame.find("schedule.history.row.0") == nullptr);
     return true;
 })
+
+// 防：摘要键名与 buildCalendarJson 落库键脱节（P2-6）——month 的「第 n 个周 x」
+// 实际存对象 nth_weekday{n,weekday}、year 只有 month_day，读错键 = 摘要退化成
+// 「每月」「每年」；last_workday 形态此前无文案。
+REGISTER_TEST(schedule_list_summary_month_year_keys, "schedule 列表：month/year 摘要读 buildCalendarJson 实际落库键", {
+    module::schedule::RuleRecord r;
+    r.kind = "calendar";
+    r.name = "月度";
+    r.actionKind = "remind";
+    r.specJson = R"({"unit":"month","interval":1,"nth_weekday":{"n":2,"weekday":2},"time":"09:00"})";
+    const auto monthNth = module::schedule::ruleSummary(r);
+    DOCTEST_CHECK(monthNth.find("第 2 个") != std::string::npos);
+    DOCTEST_CHECK(monthNth.find("周二") != std::string::npos);
+
+    r.specJson = R"({"unit":"month","interval":1,"last_workday":true,"time":"09:00"})";
+    const auto monthLast = module::schedule::ruleSummary(r);
+    DOCTEST_CHECK(monthLast.find("最后一个工作日") != std::string::npos);
+
+    r.name = "年度";
+    r.specJson = R"({"unit":"year","interval":1,"month_day":15,"time":"09:00"})";
+    const auto yearDay = module::schedule::ruleSummary(r);
+    DOCTEST_CHECK(yearDay.find("15 日") != std::string::npos);
+    return true;
+});
+
+// 防：编辑/删除入口接错 store 调用（软删默认、勾选彻底删才物理删；失败不静默关弹窗）。
+REGISTER_TEST(schedule_list_edit_delete_wiring, "schedule 列表：编辑回填 + 删除软删/物理删接线", {
+    auto opened = openMigrated("edit_delete_wiring");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+
+    module::schedule::RuleRecord r = makeRule("待编辑", 0, std::nullopt);
+    const auto created = store.createRule(r);
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+
+    ScheduleProviderRegistry providers;
+    ScheduleListUi ui(store, providers, nullptr);
+    ui.reload(1760000000);
+
+    // 编辑入口：回填开弹窗；成功保存（updateRule 路径）改名后落库生效
+    ui.openEditRule(id);
+    DOCTEST_CHECK(ui.editOpen());
+    DOCTEST_CHECK(ui.errorText().empty());
+    module::schedule::RuleRecord edited;
+    edited.id = id;
+    edited.name = "改名后";
+    edited.kind = created.value().kind;
+    edited.specJson = created.value().specJson;
+    edited.actionKind = created.value().actionKind;
+    edited.actionJson = created.value().actionJson;
+    edited.channelIds = created.value().channelIds;
+    edited.missedPolicy = created.value().missedPolicy;
+    edited.nextFireAt = created.value().nextFireAt;
+    DOCTEST_CHECK(ui.saveRuleForTest(edited).empty());
+    const auto renamed = store.getRule(id);
+    DOCTEST_REQUIRE(renamed.isOk());
+    DOCTEST_CHECK(renamed.value().name == "改名后");
+    DOCTEST_CHECK_FALSE(ui.editOpen());
+
+    // 删除入口：默认软删（getRule NotFound = 对外不可见），确认后弹窗收起
+    ui.requestDeleteRule(id);
+    DOCTEST_CHECK(ui.deleteConfirmOpen());
+    ui.confirmPendingDelete();
+    DOCTEST_CHECK_FALSE(ui.deleteConfirmOpen());
+    DOCTEST_CHECK(ui.errorText().empty());
+    DOCTEST_CHECK(store.getRule(id).isFail());  // 软删后 getRule=NotFound
+
+    // 彻底删除路径：purge 后行消失（软删行还在库，仅过滤）
+    const auto again = store.createRule(makeRule("待物理删", 0, std::nullopt));
+    DOCTEST_REQUIRE(again.isOk());
+    ui.requestDeleteRule(again.value().id);
+    ui.setPendingDeletePurgeForTest(true);
+    ui.confirmPendingDelete();
+    DOCTEST_CHECK(ui.errorText().empty());
+    DOCTEST_CHECK(store.getRule(again.value().id).isFail());
+
+    return true;
+});

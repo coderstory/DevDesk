@@ -333,3 +333,24 @@ REGISTER_TEST(scheduleEditFormFromRecordRoundTrip, "schedule 编辑弹窗：Rule
     DOCTEST_CHECK(again.isOk());
     return true;
 });
+
+// 防：run_task 动作静默落库空 key——运行时 action_runner extract("key") 拿到空串
+// 只能静默失败；保存侧必须拦（R3 A2 的反例面）。
+REGISTER_TEST(scheduleEditRunTaskEmptyKeyRejected, "schedule 编辑弹窗：run_task 空 key 拒绝保存", {
+    EditFormState f = makeDailyForm();
+    f.actionKind = "run_task";
+    f.actionJson = "{}";
+    const auto empty = module::schedule::ui::validateAndParse(f);
+    DOCTEST_CHECK(empty.isFail());
+    DOCTEST_CHECK_FALSE(empty.errorMessage().empty());  // 弹窗内嵌红字文案
+    // 带注册 key → 合法，且落库键名为 "key"（与 action_runner 消费侧对齐）
+    f.actionJson = R"({"key":"md.cleanup"})";
+    const auto ok = module::schedule::ui::validateAndParse(f);
+    DOCTEST_REQUIRE(ok.isOk());
+    const int64_t now = localUnix(2026, 10, 27, 8, 0);
+    const auto rec = module::schedule::ui::buildRuleRecord(f, makeCtx(now));
+    DOCTEST_REQUIRE(rec.isOk());
+    DOCTEST_CHECK(rec.value().actionJson.find("\"key\"") != std::string::npos);
+    DOCTEST_CHECK(rec.value().actionJson.find("md.cleanup") != std::string::npos);
+    return true;
+});

@@ -8,8 +8,10 @@
 // 系统项只读展示、执行归来源模块（§4.2）：系统行无开关、无编辑。
 #pragma once
 
+#include "module_schedule/action_runner.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
+#include "module_schedule/schedule_ui_edit.h"
 #include "module_schedule/schedule_ui_history.h"
 
 #include <eui/dsl.h>
@@ -70,7 +72,10 @@ std::string lastRunText(const ListRow& row, int64_t nowSec);
 
 class ScheduleListUi {
 public:
-    ScheduleListUi(ScheduleStore& store, ScheduleProviderRegistry& providers);
+    // tasks 非空时 run_task 下拉候选取 taskKeys()（v1 生产注册表为空 → 下拉空态）。
+    // 引擎先于本类构造（注册只在启动装配段发生），传 &engine->taskRegistry()。
+    ScheduleListUi(ScheduleStore& store, ScheduleProviderRegistry& providers,
+                   InternalTaskRegistry* tasks = nullptr);
 
     // 重装配：拉全部规则 + 系统视图 + 每条用户规则的最近一次 run。
     // 读库失败降级空列表 + errorText()（整页不因库故障崩溃）。
@@ -85,6 +90,17 @@ public:
     // 单规则读失败降级已载入部分并标 error_。
     void openHistory();
 
+    // 新建入口：默认表单（kind=Once / action=remind / 策略=once）开编辑弹窗。
+    void openNewRule();
+    // 编辑入口：formFromRecord 回填；回填失败标 error_ 不开弹窗。
+    void openEditRule(int64_t ruleId);
+    // 删除入口：记待删行开确认弹窗（软删默认，勾选「彻底删除」走 purgeRule）。
+    void requestDeleteRule(int64_t ruleId);
+    // 确认弹窗「删除」落库点：purge=true 物理删（历史 run 保留），否则软删。
+    // 失败标 error_ 不关弹窗；成功 reload 并关。
+    void confirmPendingDelete();
+    void cancelPendingDelete();
+
     const ListAssembly& assembly() const { return assembly_; }
     const std::string& errorText() const { return error_; }
     bool archiveExpanded() const { return archiveExpanded_; }
@@ -97,19 +113,39 @@ public:
         return historyHost_.items;
     }
 
+    // 编辑/删除弹窗状态（无头用例断言面）
+    bool editOpen() const { return editState_.open; }
+    bool deleteConfirmOpen() const { return !pendingDeleteName_.empty(); }
+
     // 测试缝：回默认态（归档折叠 + 清错误文案 + 收抽屉；生产不调用）
     void resetForTest();
+    // 测试缝：直呼 editHost_.saveRule（保存落库点，headless 用例不走绘制层）
+    std::string saveRuleForTest(const RuleRecord& rec) {
+        return editHost_.saveRule ? editHost_.saveRule(rec) : std::string("no-host");
+    }
+    // 测试缝：勾选「彻底删除」（headless 用例不点 checkbox）
+    void setPendingDeletePurgeForTest(bool purge) { pendingDeletePurge_ = purge; }
 
     void compose(eui::Ui& ui, const eui::Screen& screen);
 
 private:
+    // 弹窗宿主装配：渠道选项（ChannelRegistry 注册键 + DB 行）与 taskKeys 在
+    // 每次打开弹窗时刷新（注册只在启动装配段变化，刷新成本可忽略）。
+    void refreshEditHost();
+
     ScheduleStore& store_;
     ScheduleProviderRegistry& providers_;
+    InternalTaskRegistry* tasks_ = nullptr;  // 引擎持有，生命周期长于本类
     ListAssembly assembly_;
     std::string error_;
     bool archiveExpanded_ = false;  // 归档折叠区默认折叠（§4.4/验收 4）
     ui::HistoryDrawerState historyState_;  // 抽屉开合态（关闭态也常驻构建）
     ui::HistoryDrawerHost historyHost_;    // 抽屉数据 + close 回调（构造时接好）
+    ui::EditDialogState editState_;        // 编辑弹窗（关闭态也常驻构建）
+    ui::EditDialogHost editHost_;          // 渠道/任务候选 + saveRule/close（构造时接好）
+    int64_t pendingDeleteId_ = 0;          // 非 0 = 删除确认弹窗开着
+    std::string pendingDeleteName_;        // 确认弹窗正文用规则名（兼开合标志）
+    bool pendingDeletePurge_ = false;      // 「彻底删除」勾选态
 };
 
 } // namespace module::schedule

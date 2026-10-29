@@ -23,9 +23,11 @@ struct ScheduleModule::Impl {
     std::unique_ptr<ScheduleStore> store;
     std::unique_ptr<ChannelRegistry> channels;
     std::unique_ptr<ScheduleProviderRegistry> providers;
-    std::unique_ptr<ScheduleListUi> listUi;
-    // 引擎持有 store 的 DB 连接与 channels 的引用，声明放最后 = 最先析构。
+    // 引擎持有 store 的 DB 连接与 channels 的引用，声明放最后 = 最先析构；
+    // listUi 持有 engine->taskRegistry() 指针（编辑弹窗 run_task 下拉用），
+    // 必须先于引擎析构 → 声明在 engine 之后。
     std::unique_ptr<ScheduleEngine> engine;
+    std::unique_ptr<ScheduleListUi> listUi;
 };
 
 ScheduleModule::ScheduleModule() : impl_(std::make_unique<Impl>()) {}
@@ -50,11 +52,14 @@ void ScheduleModule::onStart() {
     registerBuiltinChannels(*impl_->channels);
     // 系统定时来源注册表：本波空注册表，release 等来源 S8 起注册
     impl_->providers = std::make_unique<ScheduleProviderRegistry>();
-    impl_->listUi = std::make_unique<ScheduleListUi>(*impl_->store,
-                                                     *impl_->providers);
-    impl_->listUi->reload(static_cast<int64_t>(core::time::nowUnix()));
-    // 调度引擎：与 store 同一 DB 连接、同一渠道注册表；start() 订阅唯一 1Hz 泵。
+    // 引擎先于 listUi 创建：列表编辑弹窗的 run_task 载荷需要引擎暴露的
+    // 任务注册表（taskKeys 下拉）；start() 仍在首次 reload 之后。
     impl_->engine = std::make_unique<ScheduleEngine>(*db, *impl_->channels);
+    impl_->listUi =
+        std::make_unique<ScheduleListUi>(*impl_->store, *impl_->providers,
+                                         &impl_->engine->taskRegistry());
+    impl_->listUi->reload(static_cast<int64_t>(core::time::nowUnix()));
+    // start() 订阅唯一 1Hz 泵。
     impl_->engine->start();
     impl_->started = true;
     LOG_INFO("schedule 模块启动（渠道 5 / 系统来源 0，调度引擎 1Hz 已挂泵）");

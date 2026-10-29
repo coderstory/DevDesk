@@ -7,7 +7,11 @@
 #include "core/theme.h"
 #include "core/time.h"
 #include "platform/json.h"
+#include "ui_kit/dialog_form.h"
+#include "ui_kit/metrics.h"
 
+#include <components/button.h>
+#include <components/dialog.h>
 #include <components/scrollview.h>
 #include <components/switch.h>
 #include <components/theme.h>
@@ -85,6 +89,26 @@ int64_t specInt(const platform::json::JsonObject& obj, const char* key,
     const auto v = obj.get(key);
     if (!v.isNumber()) return fallback;
     return v.asInt();
+}
+
+// spec_json 安全取布尔字段；缺失/非布尔 → false
+bool specBool(const platform::json::JsonObject& obj, const char* key) {
+    if (!obj.has(key)) return false;
+    const auto v = obj.get(key);
+    return v.isBool() && v.asBool();
+}
+
+// month/year 形态的「第 n 个周 x」：spec 键是对象 nth_weekday{n,weekday}
+// （weekday 数字 0=周日，经 weekdayName 换算）；缺字段 → 空串
+std::string nthWeekdaySummary(const platform::json::JsonObject& obj) {
+    if (!obj.has("nth_weekday")) return "";
+    const auto v = obj.get("nth_weekday");
+    if (!v.isObject()) return "";
+    const auto o = v.asObject();
+    const int64_t n = specInt(o, "n", 0);
+    const int64_t wd = specInt(o, "weekday", -1);
+    if (n <= 0 || wd < 0 || wd > 6) return "";
+    return "第 " + std::to_string(n) + " 个" + weekdayName(static_cast<int>(wd));
 }
 
 // spec_json 安全取字符串数组字段；缺失/非数组 → 空
@@ -200,20 +224,28 @@ std::string ruleSummary(const RuleRecord& rule) {
             if (monthDay > 0) {
                 return "每月 " + std::to_string(monthDay) + " 日" + at;
             }
-            const int64_t nth = specInt(spec, "nth_weekday_nth", 0);
-            const std::string wd =
-                weekdaysSummary(specStringArray(spec, "nth_weekday"));
-            if (nth > 0 && !wd.empty()) {
-                return "每月第 " + std::to_string(nth) + " 个" + wd + at;
+            if (specBool(spec, "last_workday")) {
+                return "每月最后一个工作日" + at;
+            }
+            const std::string nth = nthWeekdaySummary(spec);
+            if (!nth.empty()) {
+                return "每月" + nth + at;
             }
             return "每月" + at;
         }
         if (unit == "year") {
-            const int64_t month = specInt(spec, "month", 0);
-            const int64_t day = specInt(spec, "month_day", 0);
-            if (month > 0 && day > 0) {
-                return "每年 " + std::to_string(month) + " 月 " +
-                       std::to_string(day) + " 日" + at;
+            // year spec 键与 month 同一套（month_day/nth_weekday/last_workday，
+            // buildCalendarJson 不落 "month" 数字），别按「每年 M 月 D 日」读
+            const int64_t monthDay = specInt(spec, "month_day", 0);
+            if (monthDay > 0) {
+                return "每年 " + std::to_string(monthDay) + " 日" + at;
+            }
+            if (specBool(spec, "last_workday")) {
+                return "每年最后一个工作日" + at;
+            }
+            const std::string nth = nthWeekdaySummary(spec);
+            if (!nth.empty()) {
+                return "每年" + nth + at;
             }
             return "每年" + at;
         }
@@ -297,10 +329,45 @@ ListAssembly assembleList(const std::vector<RuleRecord>& rules,
 // ---- ScheduleListUi ----
 
 ScheduleListUi::ScheduleListUi(ScheduleStore& store,
-                               ScheduleProviderRegistry& providers)
-    : store_(store), providers_(providers) {
+                               ScheduleProviderRegistry& providers,
+                               InternalTaskRegistry* tasks)
+    : store_(store), providers_(providers), tasks_(tasks) {
     // retryRun 留空 = 抽屉隐藏重试按钮（引擎重跑入口随宿主波接，§4.5）
     historyHost_.close = [this] { historyState_.open = false; };
+    // 保存落库点（drawEditDialog 保存按钮 → host.saveRule）：编辑 = 业务字段
+    // 覆盖（getRule 取现状保 created/archived 等不可写字段），新建 = createRule；
+    // 成功 reload 后回空串（弹窗关闭），失败回红字（弹窗保留不丢表单）。
+    editHost_.saveRule = [this](const RuleRecord& rec) -> std::string {
+        if (rec.id > 0) {
+            const auto cur = store_.getRule(rec.id);
+            if (cur.isFail()) {
+                return "规则不存在或已删除：" + cur.errorMessage();
+            }
+            RuleRecord updated = cur.value();
+            updated.name = rec.name;
+            updated.enabled = rec.enabled;
+            updated.kind = rec.kind;
+            updated.specJson = rec.specJson;
+            updated.actionKind = rec.actionKind;
+            updated.actionJson = rec.actionJson;
+            updated.channelIds = rec.channelIds;
+            updated.missedPolicy = rec.missedPolicy;
+            updated.nextFireAt = rec.nextFireAt;
+            const auto r = store_.updateRule(updated);
+            if (r.isFail()) return r.errorMessage();
+        } else {
+            const auto r = store_.createRule(rec);
+            if (r.isFail()) return r.errorMessage();
+        }
+        reload(static_cast<int64_t>(core::time::nowUnix()));
+        // 收弹窗放宿主侧（draw 层保存成功也调 host.close，幂等）
+        if (editHost_.close) editHost_.close();
+        return {};
+    };
+    editHost_.close = [this] {
+        editState_.open = false;
+        editState_.saveError.clear();
+    };
 }
 
 void ScheduleListUi::reload(int64_t nowSec) {
@@ -349,8 +416,90 @@ core::Result<void> ScheduleListUi::setRuleEnabled(int64_t ruleId, bool enabled) 
     return core::Result<void>::ok();
 }
 
-void ScheduleListUi::openHistory() {
+void ScheduleListUi::refreshEditHost() {
+    editHost_.channels.clear();
+    const auto chans = store_.listChannels();
+    if (chans.isOk()) {
+        for (const auto& c : chans.value()) {
+            ui::ChannelOption opt;
+            opt.id = c.id;
+            opt.key = c.kind;
+            opt.label = c.name;
+            editHost_.channels.push_back(std::move(opt));
+        }
+    } else {
+        error_ = "渠道选项加载失败：" + chans.errorMessage();
+    }
+    editHost_.taskKeys.clear();
+    if (tasks_) editHost_.taskKeys = tasks_->taskKeys();
+}
+
+void ScheduleListUi::openNewRule() {
     error_.clear();
+    refreshEditHost();
+    editState_ = ui::EditDialogState{};  // 默认表单：Once / remind / 策略 once
+    editState_.ruleId = 0;
+    {  // 默认触发时刻 = 明天 09:00（空串会卡校验，过去时刻会让预览恒空）
+        std::time_t tomorrow = static_cast<std::time_t>(core::time::nowUnix()) + 86400;
+        std::tm lt{};
+        core::time::localTime(tomorrow, &lt);
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d 09:00",
+                      lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+        editState_.form.onceAtLocal = buf;
+    }
+    editState_.open = true;
+}
+
+void ScheduleListUi::openEditRule(int64_t ruleId) {
+    error_.clear();
+    const auto rule = store_.getRule(ruleId);
+    if (rule.isFail()) {
+        error_ = "规则读取失败：" + rule.errorMessage();
+        return;
+    }
+    const auto form = ui::formFromRecord(rule.value());
+    if (form.isFail()) {
+        error_ = "规则回填失败：" + form.errorMessage();
+        return;
+    }
+    refreshEditHost();
+    editState_ = ui::EditDialogState{};
+    editState_.ruleId = ruleId;
+    editState_.form = form.value();
+    editState_.open = true;
+}
+
+void ScheduleListUi::requestDeleteRule(int64_t ruleId) {
+    error_.clear();
+    const auto rule = store_.getRule(ruleId);
+    if (rule.isFail()) {
+        error_ = "规则读取失败：" + rule.errorMessage();
+        return;
+    }
+    pendingDeleteId_ = ruleId;
+    pendingDeleteName_ = rule.value().name;
+    pendingDeletePurge_ = false;  // 默认软删（§4.4：配置与历史保留）
+}
+
+void ScheduleListUi::confirmPendingDelete() {
+    const auto r = pendingDeletePurge_ ? store_.purgeRule(pendingDeleteId_)
+                                       : store_.deleteRule(pendingDeleteId_);
+    if (r.isFail()) {
+        error_ = "删除失败：" + r.errorMessage();
+        return;  // 红字出列表页 toast，确认弹窗保留
+    }
+    cancelPendingDelete();
+    reload(static_cast<int64_t>(core::time::nowUnix()));
+}
+
+void ScheduleListUi::cancelPendingDelete() {
+    pendingDeleteId_ = 0;
+    pendingDeleteName_.clear();
+    pendingDeletePurge_ = false;
+}
+
+void ScheduleListUi::openHistory() {    error_.clear();
     // 系统项 run 的 rule_id 为空且 store 无 origin_key 维度查询——抽屉 v1 只
     // 聚合用户/归档规则的历史（listRules 含归档行），系统项历史随来源注册波接。
     const auto rules = store_.listRules();
@@ -390,6 +539,8 @@ void ScheduleListUi::resetForTest() {
     error_.clear();
     assembly_ = ListAssembly{};
     historyState_ = ui::HistoryDrawerState{};
+    editState_ = ui::EditDialogState{};
+    cancelPendingDelete();
 }
 
 void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
@@ -450,6 +601,21 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
             const float leftW = contentW - tailW - 56.0f;
             const float nameW = std::max(60.0f, leftW - 24.0f);
 
+            // 行级文字操作（用户行专属，编辑/删除排在启停开关左侧；
+            // 「上次」列整体左移给操作让位）
+            auto drawRowAction = [&](const std::string& id, float x,
+                                     const std::string& text, bool danger,
+                                     std::function<void()> onClick) {
+                ui.text(id)
+                    .position(x, 22.0f)
+                    .size(core::theme::scaled(34.0f), core::theme::scaled(20.0f))
+                    .text(text)
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .color(danger ? t.colors.errorText : t.colors.primaryText)
+                    .onClick(std::move(onClick))
+                    .build();
+            };
+
             auto drawUserRow = [&](const ListRow& row, const std::string& id) {
                 ui.stack(id)
                     .size(contentW, kRowHeight)
@@ -479,13 +645,21 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .color(t.colors.textSecondary)
                             .build();
                         ui.text(id + ".last")
-                            .position(contentW - lastW - 48.0f, 22.0f)
+                            .position(contentW - lastW - 140.0f, 22.0f)
                             .size(lastW, core::theme::scaled(20.0f))
                             .text("上次 " + lastRunText(row,
                                 static_cast<int64_t>(core::time::nowUnix())))
                             .fontSize(t.sizes.fontSizeSmall)
                             .color(t.colors.textSecondary)
                             .build();
+                        drawRowAction(id + ".edit", contentW - 124.0f, "编辑",
+                                      /*danger=*/false, [this, ruleId = row.ruleId] {
+                                          openEditRule(ruleId);
+                                      });
+                        drawRowAction(id + ".delete", contentW - 86.0f, "删除",
+                                      /*danger=*/true, [this, ruleId = row.ruleId] {
+                                          requestDeleteRule(ruleId);
+                                      });
                         components::toggleSwitch(ui, id + ".switch")
                             .position(contentW - 44.0f, 20.0f)
                             .size(44.0f, 24.0f)
@@ -589,6 +763,12 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                 .color(t.colors.primaryText)
                                 .onClick([this] { openHistory(); })
                                 .build();
+                            components::button(ui, "schedule.list.new")
+                                .size(core::theme::scaled(88.0f), 40.0f)
+                                .text("新建")
+                                .theme(comp)
+                                .onClick([this] { openNewRule(); })
+                                .build();
                         })
                         .build();
 
@@ -674,6 +854,80 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
 
     // 运行历史抽屉（关闭态也常驻构建，EUI 收起过渡依赖节点存在；zIndex 990 盖过列表）
     ui::drawHistoryDrawer(ui, screen, t, historyState_, historyHost_);
+
+    // 删除确认小弹窗（DialogBuilder 契约：open(false) 时节点常驻、仅禁交互）
+    {
+        const auto themeTokens = core::theme::componentTokensWeChat(t);
+        const float w = 460.0f;
+        const float h = 230.0f;
+        const float x0 = ui_kit::kDialogInsetX;
+        const float innerW = w - ui_kit::kDialogBodyInsetX;
+        components::dialog(ui, "schedule.list.deleteConfirm")
+            .open(deleteConfirmOpen())
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .zIndex(1200)
+            .onOpenChange([this](bool v) { if (!v) cancelPendingDelete(); })
+            .content([&] {
+                ui_kit::drawDialogTitle(ui, "schedule.list.deleteConfirm.title",
+                                        w, "删除定时规则", 20.0f,
+                                        t.colors.textPrimary,
+                                        {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
+                ui_kit::drawDialogText(
+                    ui, "schedule.list.deleteConfirm.body", w,
+                    "确定删除「" + pendingDeleteName_ +
+                        "」吗？默认仅软删（配置与运行历史保留）。",
+                    t.sizes.fontSizeSmall, t.colors.textSecondary,
+                    {.y = 56.0f, .height = 20.0f, .lineHeight = 20.0f});
+                // 不用 components::checkbox：其头文件在 -Werror 下有 unused
+                // variable（EUI-NEO 上游问题），「彻底删除」改行内开关同语义
+                ui.text("schedule.list.deleteConfirm.purge.label")
+                    .position(x0, 92.0f)
+                    .size(innerW - 60.0f, 24.0f)
+                    .text("彻底删除（物理删除规则，运行历史保留）")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .color(t.colors.textSecondary)
+                    .build();
+                components::toggleSwitch(ui, "schedule.list.deleteConfirm.purge")
+                    .position(w - ui_kit::kDialogInsetX - 52.0f, 90.0f)
+                    .size(44.0f, 24.0f)
+                    .checked(pendingDeletePurge_)
+                    .theme(themeTokens)
+                    .onChange([this](bool v) { pendingDeletePurge_ = v; })
+                    .build();
+                components::button(ui, "schedule.list.deleteConfirm.cancel")
+                    .position(x0, h - 60.0f)
+                    .size(120.0f, 36.0f)
+                    .text("取消")
+                    .colors(t.colors.background, t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textPrimary)
+                    .radius(8.0f)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { cancelPendingDelete(); })
+                    .build();
+                components::button(ui, "schedule.list.deleteConfirm.ok")
+                    .position(w - 120.0f - ui_kit::kDialogInsetX, h - 60.0f)
+                    .size(120.0f, 36.0f)
+                    .text("删除")
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
+                    .radius(8.0f)
+                    .onClick([this] { confirmPendingDelete(); })
+                    .build();
+            })
+            .build();
+    }
+
+    // 规则编辑弹窗（关闭态也常驻构建，EUI 内建收起过渡依赖节点存在）
+    {
+        core::schedule::FireContext ctx;
+        ctx.nowUnix = static_cast<int64_t>(core::time::nowUnix());
+        core::time::localTime(static_cast<std::time_t>(ctx.nowUnix), &ctx.localNow);
+        ui::drawEditDialog(ui, screen, t, editState_, editHost_, ctx);
+    }
 }
 
 } // namespace module::schedule

@@ -6,6 +6,8 @@
 
 #include "core/component_theme.h"
 #include "core/time.h"
+#include "module_schedule/channels/wecom.h"
+#include "platform/json.h"
 
 #include <ui_kit/dialog_form.h>
 
@@ -98,6 +100,17 @@ std::string formatDate(int y, int m, int d) {
 
 core::Result<core::schedule::RuleSpec> failValidation(const std::string& msg) {
     return core::Result<core::schedule::RuleSpec>::fail(core::ErrorCode::ValidationError, msg);
+}
+
+// action_json 安全取字符串字段（run_task key / remind_open deeplink 的回填真源）；
+// 缺失/非对象/非串 → 空串，不抛。
+std::string actionJsonField(const std::string& json, const char* key) {
+    const auto parsed = platform::json::parse(json);
+    if (parsed.isFail() || !parsed.value().isObject()) return "";
+    const auto& obj = parsed.value().asObject();
+    if (!obj.has(key)) return "";
+    const auto v = obj.get(key);
+    return v.isString() ? v.asString() : std::string();
 }
 
 // calendar 各形态的 spec_json：week（weekdays+anchor_date）、day（anchor_date/
@@ -235,6 +248,13 @@ core::Result<core::schedule::RuleSpec> validateAndParse(const EditFormState& f) 
     if (f.actionKind != "remind" && f.actionKind != "remind_open" &&
         f.actionKind != "run_task" && f.actionKind != "webhook_only") {
         return failValidation("未知动作类型: " + f.actionKind);
+    }
+    if (f.actionKind == "run_task") {
+        // 键名唯一真源 = action_runner parseActionText 的 "key"（禁别名）；
+        // 下拉禁自由输入，空 key 不许落库（触发即 NotFound 白跑一次）
+        if (actionJsonField(f.actionJson, "key").empty()) {
+            return failValidation("静默执行动作必须选择一个已注册任务");
+        }
     }
     if (f.missedPolicy != "once" && f.missedPolicy != "skip" && f.missedPolicy != "all") {
         return failValidation("未知错过策略: " + f.missedPolicy);
@@ -386,11 +406,11 @@ core::Result<EditFormState> formFromRecord(const RuleRecord& rec) {
 
 namespace {
 
-void drawKindTab(eui::Ui& ui, const std::string& id, float x, float w, float h,
+void drawKindTab(eui::Ui& ui, const std::string& id, float x, float y, float w, float h,
                  const std::string& label, bool on, const core::theme::Tokens& t,
                  std::function<void()> onClick) {
     components::button(ui, id)
-        .position(x, 0.0f)
+        .position(x, y)
         .size(w, h)
         .text(label)
         .fontSize(t.sizes.fontSizeSmall - 1.0f)
@@ -483,7 +503,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             const float tabW = (innerW - tabGap * 5.0f) / 6.0f;
             for (int i = 0; i < 6; ++i) {
                 drawKindTab(ui, "schedule.edit.kind." + std::to_string(i),
-                            x0 + static_cast<float>(i) * (tabW + tabGap), tabW, 30.0f,
+                            x0 + static_cast<float>(i) * (tabW + tabGap), 52.0f, tabW, 30.0f,
                             kTabs[i].label, st.form.kind == kTabs[i].kind, t,
                             [&st, touch, k = kTabs[i].kind] {
                                 st.form.kind = k;
@@ -536,13 +556,13 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 };
                 for (int i = 0; i < 4; ++i) {
                     drawKindTab(ui, "schedule.edit.calendar.unit." + std::to_string(i),
-                                x0 + static_cast<float>(i) * ((innerW / 4.0f)), innerW / 4.0f,
+                                x0 + static_cast<float>(i) * ((innerW / 4.0f)), fy + 20.0f, innerW / 4.0f,
                                 30.0f, kUnits[i].label, st.form.calendarUnit == kUnits[i].key, t,
                                 [&st, k = std::string(kUnits[i].key)] {
                                     st.form.calendarUnit = k;
                                 });
                 }
-                fy += 44.0f;
+                fy += 56.0f;
                 // 每 N 周 [周几] HH:MM 控件形态
                 if (st.form.calendarUnit == "week") {
                     drawLabel(ui, "schedule.edit.calendar.n.label", x0, fy, "每 N 周（N≥1）", t);
@@ -687,26 +707,88 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             };
             for (int i = 0; i < 4; ++i) {
                 drawKindTab(ui, "schedule.edit.action." + std::to_string(i),
-                            x0 + static_cast<float>(i) * (innerW / 4.0f), innerW / 4.0f, 30.0f,
+                            x0 + static_cast<float>(i) * (innerW / 4.0f), fy + 20.0f, innerW / 4.0f, 30.0f,
                             kActions[i].label, st.form.actionKind == kActions[i].key, t,
                             [&st, k = std::string(kActions[i].key)] {
                                 st.form.actionKind = k;
                             });
             }
-            fy += 44.0f;
+            fy += 56.0f;
+
+            // 动作载荷动态区（§4.3）：remind 无载荷；remind_open = deeplink 输入 +
+            // 常用页面点选（页面标识[:参数]，点选即整串填入）；run_task = 注册表
+            // key 点选，写 {"key":...}（禁自由输入，从控件层消灭键名错写）。
+            if (st.form.actionKind == "remind_open") {
+                drawLabel(ui, "schedule.edit.action.deeplink.label", x0, fy,
+                          "打开页面（页面标识[:参数]）", t);
+                components::input(ui, "schedule.edit.action.deeplink")
+                    .position(x0, fy + 20.0f)
+                    .size(innerW, 36.0f)
+                    .value(actionJsonField(st.form.actionJson, "deeplink"))
+                    .theme(themeTokens)
+                    .onChange([&st](const std::string& v) {
+                        st.form.actionJson =
+                            std::string("{\"deeplink\":\"") + escapeJsonString(v) + "\"}";
+                    })
+                    .build();
+                fy += 72.0f;
+                const char* kPages[] = {"home", "markdown", "todo",
+                                        "claude", "agent", "settings"};
+                float px = x0;
+                for (const char* p : kPages) {
+                    drawChannelChip(ui, std::string("schedule.edit.action.page.") + p,
+                                    px, fy, 96.0f, 30.0f, p, false, t, [&st, p] {
+                                        st.form.actionJson =
+                                            std::string("{\"deeplink\":\"") + p + "\"}";
+                                    });
+                    px += 104.0f;
+                }
+                fy += 56.0f;
+            } else if (st.form.actionKind == "run_task") {
+                drawLabel(ui, "schedule.edit.action.task.label", x0, fy, "已注册任务", t);
+                if (host.taskKeys.empty()) {
+                    ui.text("schedule.edit.action.task.empty")
+                        .position(x0, fy + 20.0f)
+                        .size(innerW, 16.0f)
+                        .text("暂无已注册任务（保存将被拦截）")
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .color(t.colors.textTertiary)
+                        .build();
+                } else {
+                    float tx = x0;
+                    for (size_t i = 0; i < host.taskKeys.size(); ++i) {
+                        const auto& k = host.taskKeys[i];
+                        const bool on =
+                            actionJsonField(st.form.actionJson, "key") == k;
+                        drawChannelChip(ui,
+                                        "schedule.edit.action.task." + std::to_string(i),
+                                        tx, fy + 20.0f, 140.0f, 30.0f, k, on, t,
+                                        [&st, k] {
+                                            st.form.actionJson =
+                                                "{\"key\":\"" + escapeJsonString(k) + "\"}";
+                                        });
+                        tx += 148.0f;
+                    }
+                }
+                fy += 72.0f;
+            } else if (st.form.actionKind == "remind") {
+                drawLabel(ui, "schedule.edit.action.remind.label", x0, fy,
+                          "提醒内容取规则名称，无附加参数", t);
+                fy += 28.0f;
+            }
             drawLabel(ui, "schedule.edit.policy.label", x0, fy, "错过策略", t);
             const struct { const char* key; const char* label; } kPolicies[3] = {
                 {"once", "补一次"}, {"skip", "跳过"}, {"all", "全部补"},
             };
             for (int i = 0; i < 3; ++i) {
                 drawKindTab(ui, "schedule.edit.policy." + std::to_string(i),
-                            x0 + static_cast<float>(i) * (innerW / 3.0f), innerW / 3.0f, 30.0f,
+                            x0 + static_cast<float>(i) * (innerW / 3.0f), fy + 20.0f, innerW / 3.0f, 30.0f,
                             kPolicies[i].label, st.form.missedPolicy == kPolicies[i].key, t,
                             [&st, k = std::string(kPolicies[i].key)] {
                                 st.form.missedPolicy = k;
                             });
             }
-            fy += 44.0f;
+            fy += 56.0f;
 
             // 渠道多选（列表项来自 host.channels = ChannelRegistry + schedule_channel）
             drawLabel(ui, "schedule.edit.channels.label", x0, fy, "通知渠道", t);
@@ -771,12 +853,31 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .textColor(t.colors.onPrimary)
                 .radius(8.0f)
                 .onClick([&st, &host, &ctx] {
+                    if (st.form.actionKind == "webhook_only") {
+                        // 仅投递动作唯一外发渠道是企微：未勾选直接拦（防静默丢通知）
+                        bool wecom = false;
+                        for (const auto& ch : host.channels) {
+                            if (ch.key == module::schedule::kChannelWecom &&
+                                std::find(st.form.channelIds.begin(),
+                                          st.form.channelIds.end(),
+                                          ch.id) != st.form.channelIds.end()) {
+                                wecom = true;
+                                break;
+                            }
+                        }
+                        if (!wecom) {
+                            st.saveError = "仅投递动作必须勾选「企业微信」渠道";
+                            return;
+                        }
+                    }
                     const auto rec = buildRuleRecord(st.form, ctx);
                     if (rec.isFail()) {
                         st.saveError = rec.errorMessage();
                         return;
                     }
-                    const std::string err = host.saveRule(rec.value());
+                    RuleRecord out = rec.value();
+                    out.id = st.ruleId;  // 非 0 = 编辑既有规则（宿主走 updateRule）
+                    const std::string err = host.saveRule(out);
                     if (err.empty()) {
                         if (host.close) host.close();
                     } else {

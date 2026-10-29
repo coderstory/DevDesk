@@ -91,6 +91,16 @@ core::Result<TaskOutcome> InternalTaskRegistry::invoke(const TaskInvoke& invoke)
 
 void InternalTaskRegistry::resetForTest() { tasks_.clear(); }
 
+std::vector<std::string> InternalTaskRegistry::taskKeys() const {
+    std::vector<std::string> out;
+    out.reserve(tasks_.size());
+    for (const auto& [key, fn] : tasks_) {
+        (void)fn;
+        out.push_back(key);
+    }
+    return out;
+}
+
 // ============ ActionRunner ============
 
 ActionRunner::ActionRunner(ScheduleStore& store, ChannelRegistry& channels,
