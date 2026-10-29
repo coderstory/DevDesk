@@ -88,3 +88,6 @@ evidence/
 # 规则会误伤 .zcode/config.json，此处整体否定；.claude/worktrees/ 仍按上方规则忽略
 !.zcode/**
 !.agents/**
+
+# pool MCP 本地 venv（tools/pool_mcp.py 运行环境，装机脚本外置）
+tools/.pool-mcp-venv/
