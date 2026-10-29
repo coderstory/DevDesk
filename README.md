@@ -17,7 +17,7 @@
 [![c++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus&logoColor=white)](#架构)
 [![gui](https://img.shields.io/badge/GUI-EUI--NEO-D97757?style=flat-square)](#架构)
 [![deps](https://img.shields.io/badge/runtime%20deps-none-2ea44f?style=flat-square)](#快速开始)
-[![tests](https://img.shields.io/badge/tests-1259-2ea44f?style=flat-square)](#项目状态)
+[![tests](https://img.shields.io/badge/tests-1954-2ea44f?style=flat-square)](#项目状态)
 
 <br>
 
@@ -48,7 +48,7 @@ FTS5 全文搜索（中文可用）、目录树、标签、大纲面板；编辑
 </tr>
 <tr>
 <td><b>智能体</b></td>
-<td>任务 / 运行 / 工具管理；单次运行墙钟与 token 上限、cron 定时调度、8 个内置工具。</td>
+<td>任务 / 运行 / 工具管理；单次运行墙钟与 token 上限、cron 定时调度、14 个内置工具（fs×6 / git×8，2026-10-30 实测）。</td>
 </tr>
 <tr>
 <td><b>首页仪表盘</b></td>
@@ -203,8 +203,8 @@ claude mcp add --transport http devdesk http://127.0.0.1:8931/mcp
 <h2 align="center"><a name="项目状态"></a>📌 项目状态</h2>
 
 <p align="center">
-八个模块全功能运行（笔记 / 待办 / Claude / 智能体 / 壁纸可经设置页即时插拔；壁纸默认关闭）<br>
-全量测试 <b>Total 1259 / Passed 1253 / Failed 0</b>（macOS，2026-10-03 CI 日志；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
+十三页全功能运行（可插拔模块 9 个：笔记 / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸 / MCP / 上线；壁纸默认关闭）<br>
+全量测试 <b>Total 1954 / Failed 0</b>（macOS，2026-10-29；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
 <sub>Total 与 Passed 的差额是按平台条件 <code>DOCTEST_SKIP</code> 的用例（Windows 专属实现 / soak 门控 / 非活跃平台分支等），不是失败</sub>
 </p>
 

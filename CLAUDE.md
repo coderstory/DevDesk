@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 另有**首页仪表盘**、**设置页**、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具）。
 
-> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **8 个 Router 页面**（首页 / 笔记 / 待办 / Claude / **智能体** / **壁纸** / 设置 / **关于**，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的有 笔记 / 待办 / Claude / 智能体 / 壁纸 五者**（壁纸默认关闭；Home / Settings / About 的 `ModuleEntry` 里模块 id 是 `nullptr`，不可禁用）。`src/` 下有 8 个 `module_*` 目录。
+> **模块口径以代码为准**（2026-10-30 核对）：`src/app_registry.h` 的 `kModuleRegistry` 现有 **14 行**（首页 / 笔记 / 待办 / **定时** / Claude / **智能体** / **记忆** / 壁纸 / **MCP** / 上线组父项+任务 / 基础配置 / 设置 / 关于；上线组父项工厂返回 nullptr 不导航，Router 实注册 13 页，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的有 9 个模块**：笔记 / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸 / MCP / 上线（壁纸默认关闭；Home / Settings / About 的 `gatingKey` 是 `nullptr`，不可禁用）。`src/` 下有 12 个 `module_*` 目录。
 
 目标平台：**macOS**（arm64）和 **Windows 11**——两平台均为原生支持。CI 双平台构建 + 测试守卫。
 
@@ -86,7 +86,7 @@ cd build && ctest --output-on-failure
 
 **一体化脚本（推荐）**：`bash scripts/build-test-run.sh` —— 增量构建 + 全量测试 + 杀旧进程 + 启动 app，默认全增量（不删 build/）。参数：`--clean` 全量重建、`--no-test` 跳过测试、`--no-run` 不启动、`--filter X` 只跑名字含 X 的用例。工具链 PATH 脚本内部处理，app 以重定向后台方式启动不阻塞终端。EUI-NEO 自动定位：脚本按 `EUI_NEO_DIR` 环境变量 → 仓库根 `./EUI-NEO`（仓内 submodule，worktree 内同样可见）定位并传给 configure（`-DEUI_NEO_DIR`）；`build/` 未初始化时自动 configure —— 无需手敲 `-D`（见 HANDOFF §0.4）。
 
-**模块隔离静态守卫（TIN-01，已从单测迁到脚本）**：`bash scripts/check-module-isolation.sh` —— 断言 `src/module_settings/settings_module.cpp` 不反向依赖 `module_pet`（零 include / 零触碰 pet 盘 store / 零 `namespace module::pet`）、`module_pet_bridge.h` 恰好 include 一次且四条桥函数都真被调用，并断言 `src/module_settings/CMakeLists.txt` 的非注释行不 link 兄弟模块库。退出码 `0` 通过 / `1` 违规（逐条打印 `文件:行:命中行`）/ `2` 环境错（**不静默绿**）；`--root DIR` 可指向仓库外拷贝树做反证。`scripts/build-test-run.sh` 在测试段之后自动串跑它（`--no-test` 也跑），失败即整体 `exit 1`。*为什么独立成脚本*：原守卫编在 `test_settings.cpp` 内靠 `__FILE__` 上溯仓库根，ccache 相对化 `__FILE__` 后 cwd=仓库根 必误报 → 全量必红；脚本全程绝对路径、不读 `$PWD`、脚本内不 cd。
+**模块隔离静态守卫（TIN-01，已从单测迁到脚本）**：`bash scripts/check-module-isolation.sh` —— 断言 `src/module_agent/` 源文件零兄弟模块头 include（C5）、todo/markdown/claude 工具与模块注册文件不回依赖 `module_agent`（C6）、`src/module_settings/CMakeLists.txt` 的非注释行不 link 兄弟模块库（B）。退出码 `0` 通过 / `1` 违规（逐条打印 `文件:行:命中行`）/ `2` 环境错（**不静默绿**）；`--root DIR` 可指向仓库外拷贝树做反证。`scripts/build-test-run.sh` 在测试段之后自动串跑它（`--no-test` 也跑），失败即整体 `exit 1`。*为什么独立成脚本*：原守卫编在 `test_settings.cpp` 内靠 `__FILE__` 上溯仓库根，ccache 相对化 `__FILE__` 后 cwd=仓库根 必误报 → 全量必红；脚本全程绝对路径、不读 `$PWD`、脚本内不 cd。
 
 **编译缓存 ccache（worktree 并行必备，已接进脚本）**：三件套**已落 ccache 持久配置**（`%LOCALAPPDATA%\ccache\ccache.conf` 写 cache_dir/base_dir/hash_dir/max_size，缓存目录 `D:/software/ccache-devdesk/ccache.conf` 再写一份），**不需要任何 `CCACHE_*` 环境变量**；手敲 cmake **只需带两个 launcher 参数**：
 ```
@@ -108,7 +108,7 @@ EUI-NEO 依赖：`EUI-NEO/`（**仓内 git submodule**，2026-10-29 起由同级
 ## 🏗️ 架构要点（4 层模块化）
 
 ```
-main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wallpaper / settings / about)
+main → 13 个 Router 页面 (home / markdown / todo / schedule / claude_proxy / agent / memory / wallpaper / mcp / release_tasks / release_config / settings / about；kModuleRegistry 14 行含 release 组父项)
             ↓
        core (Result / paths / sqlite_db / logging / theme / router)
             ↓
