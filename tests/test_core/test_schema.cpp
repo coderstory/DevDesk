@@ -666,6 +666,81 @@ REGISTER_TEST(schema_migrate_todo_fixed_columns,
     return true;
 })
 
+// 迁移前备份（BUG-G1 缺口回填）：触发迁移的 open 必须先落 <db名>.backup-<时间戳>
+// 在线备份文件，且备份内容 = 迁移前老形态（可独立打开、查得到老列）；
+// 无需改写的幂等迁移不得再新增备份文件。
+REGISTER_TEST(schema_migrate_todo_creates_backup,
+              "schema: Todo 固定四列迁移前自动备份（备份存在/内容为老形态/幂等不重复备份）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "todo_backup");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    auto backupFiles = [&]() {
+        std::vector<std::filesystem::path> out;
+        std::error_code itEc;
+        const std::string prefix = path.filename().string() + ".backup-";
+        for (std::filesystem::directory_iterator it(path.parent_path(), itEc), end;
+             !itEc && it != end; it.increment(itEc)) {
+            const std::string name = it->path().filename().string();
+            // 排除备份库被打开后留下的 -wal/-shm 伴生文件（同为备份前缀）
+            if (name.rfind(prefix, 0) != 0) continue;
+            if (name.size() > 4 && name.compare(name.size() - 4, 4, "-wal") == 0)
+                continue;
+            if (name.size() > 4 && name.compare(name.size() - 4, 4, "-shm") == 0)
+                continue;
+            out.push_back(it->path());
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    };
+
+    // 阶段 1：建库并退回老形态（进行中 kind=NULL），使下次 open 必然触发迁移
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE todo_columns SET kind = NULL WHERE kind = 'doing'").isOk());
+    }
+
+    // 阶段 2：重开触发迁移 → 备份文件恰 1 份，内容为迁移前老形态
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        const auto backups = backupFiles();
+        DOCTEST_REQUIRE_EQ(backups.size(), 1u);
+
+        // 备份用裸 SqliteDb 打开（Database::open 会触发迁移，改写备份本身），
+        // 查到迁移前的 kind=NULL 老形态 = 证明备份在改写前完成
+        auto b = core::data::SqliteDb::open(backups.front());
+        DOCTEST_REQUIRE(b.isOk());
+        auto prep = b.value().prepare(
+            "SELECT COUNT(*) AS v FROM todo_columns WHERE kind IS NULL");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_REQUIRE_EQ(
+            std::get<int64_t>(rows.value()[0].values[0]), 1);
+    }
+
+    // 阶段 3：已收敛的库再 migrate 两次 → 不新增备份（幂等不重复备份）
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(backupFiles().size(), 1u);
+    }
+
+    // 清理：主库 + WAL/SHM + 备份文件（同上，带 ec 重载）
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
+    for (const auto& f : backupFiles()) std::filesystem::remove(f, ec);
+    return true;
+})
+
 REGISTER_TEST(schema_is_idempotent,
               "schema: 重复 applySchema 幂等（不报错 / schema 不变 / 种子不重复）", {
     auto path = test_support::tempDbPath(kDbPrefix, "idempotent");

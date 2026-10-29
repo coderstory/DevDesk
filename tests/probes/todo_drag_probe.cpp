@@ -30,7 +30,9 @@
 #include "core/module_interface.h"
 #include "module_todo/todo_service.h"
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -94,8 +96,10 @@ int main(int argc, char* argv[]) {
     auto tC = svc.createTask(col0Id, "任务C");
     auto tD = svc.createTask(col1Id, "任务D");
     auto tE = svc.createTask(col1Id, "任务E");
+    // 归档列种子卡（BUG-G6）：R3 归档列内重排断言需要归档卡在场
+    auto tArch = svc.createTask(archiveColId, "归档种子卡");
     if (tA.isFail() || tB.isFail() || tC.isFail() ||
-        tD.isFail() || tE.isFail()) {
+        tD.isFail() || tE.isFail() || tArch.isFail()) {
         std::cerr << "todo_drag_probe: seed tasks failed\n";
         probe::terminateWindowBackend();
         return 3;
@@ -375,6 +379,14 @@ int main(int argc, char* argv[]) {
             std::cout << "R3 INFO: col2 无卡或无归档列，归档列内重排测试跳过\n";
         }
         composeFrame();
+        // 归档默认折叠不渲染卡片（BUG-G6 修复）：先点窄条展开，等 240ms 动画落位再取卡元素
+        if (const auto* compact = findEl("todo.col.3.expand.bg")) {
+            auto [cx, cy] = center(*compact);
+            probe::click(window, runtime, static_cast<double>(cx),
+                         static_cast<double>(cy));
+            std::this_thread::sleep_for(std::chrono::milliseconds(350));
+            composeFrame();
+        }
         auto archTasks = svc.listTasks(archiveColId);
         const auto* archCard = findEl("todo.col.3.card.0.bg");
         if (archTasks.isOk() && !archTasks.value().empty() && archCard != nullptr) {
@@ -391,7 +403,9 @@ int main(int argc, char* argv[]) {
                 std::cout << "R3 PASS: 归档列拖拽无效化 → position 不变\n";
             }
         } else {
-            std::cout << "R3 INFO: 归档列无卡，非决定性跳过\n";
+            // 归档卡已种子化 + 已展开：取不到卡即探针自身缺陷，不再非决定性跳过（BUG-G6）
+            std::cerr << "R3 FAIL: 归档列无卡或展开失败（探针种子/展开缺陷）\n";
+            passed = false;
         }
     }
 
@@ -464,6 +478,207 @@ int main(int argc, char* argv[]) {
                     std::cout << "R4 PASS: 拖拽中外部删卡 → 不崩、卡已删\n";
                 }
             }
+        }
+    }
+
+    // ==================== H20 时序联动（BUG-G2/G3/G4 取证）====================
+    // S1 搜索命中归档 → 自动展开；S2 Esc 清空 → 还原折叠；
+    // H1 拖卡悬停窄条 ≥300ms → 自动展开；H2 展开动画中点收起 → 从当前进度回插（不瞬跳）；
+    // H3 拖离且为自动展开 → ~200ms 后自动收回
+    {
+        auto archWidth = [&]() -> float {
+            const auto* bg = findEl("todo.col.3.bg");
+            return bg != nullptr ? bg->frame.width : -1.0f;
+        };
+        auto pump = [&](int ms) {
+            // 每 40ms 一帧推进（compose 期按壁钟推进动画/悬停/收回计时）
+            for (int t = 0; t < ms; t += 40) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                composeFrame();
+            }
+        };
+        // 前置：确保归档折叠（R3 修复段把归档列展开了）。
+        // 判据：折叠态才有窄条 todo.col.3.expand.bg；展开态只有 archivetoggle
+        if (findEl("todo.col.3.expand.bg") == nullptr) {
+            if (const auto* toggle = findEl("todo.col.3.archivetoggle.bg")) {
+                auto [cx, cy] = center(*toggle);
+                probe::click(window, runtime, static_cast<double>(cx),
+                             static_cast<double>(cy));
+            }
+            pump(350);
+        }
+        const float collapsedW = archWidth();
+        if (collapsedW <= 0.0f) {
+            std::cerr << "H0 FAIL: 归档列宽度读数无效\n";
+            passed = false;
+        }
+
+        // ---- S1: 搜索命中归档 → 自动展开 ----
+        if (const auto* input = findEl("todo.search")) {
+            auto [sx, sy] = center(*input);
+            probe::click(window, runtime, static_cast<double>(sx),
+                         static_cast<double>(sy));
+            probe::queueText(window, runtime, "归档");
+            pump(120);
+            const float w = archWidth();
+            const bool cardsVisible =
+                findEl("todo.col.3.card.0.bg") != nullptr;
+            if (w > collapsedW * 1.5f && cardsVisible) {
+                std::cout << "S1 PASS: 搜索命中归档 → 自动展开（宽 "
+                          << static_cast<int>(collapsedW) << "→"
+                          << static_cast<int>(w) << "）\n";
+            } else {
+                std::cerr << "S1 FAIL: 搜索命中归档未自动展开（宽 "
+                          << static_cast<int>(w) << "，卡可见="
+                          << cardsVisible << "）\n";
+                passed = false;
+            }
+            // ---- S2: Esc 清空 → 还原搜索前（折叠）状态 ----
+            injectEsc();
+            pump(350);
+            const float w2 = archWidth();
+            if (std::fabs(w2 - collapsedW) < 2.0f) {
+                std::cout << "S2 PASS: 清空搜索 → 还原折叠（宽 "
+                          << static_cast<int>(w2) << "）\n";
+            } else {
+                std::cerr << "S2 FAIL: 清空搜索未还原折叠（宽 "
+                          << static_cast<int>(w2) << "，期望 "
+                          << static_cast<int>(collapsedW) << "）\n";
+                passed = false;
+            }
+        } else {
+            std::cerr << "S1 FAIL: 找不到搜索框 todo.search\n";
+            passed = false;
+        }
+
+        // ---- H1: 拖卡悬停窄条 ≥300ms → 自动展开 ----
+        const auto* card = findEl("todo.col.0.card.0.bg");
+        const auto* strip = findEl("todo.col.3.expand.bg");
+        if (card != nullptr && strip != nullptr) {
+            auto [sx, sy] = center(*card);
+            const auto [tx, ty] = center(*strip);
+            const core::KeyModifiers noMods;
+            const core::PointerButtons held(core::PointerButton::Left);
+            core::queuePointerButton(window, sx, sy, core::PointerButton::Left,
+                                     core::PointerAction::Press, noMods);
+            probe::pollOnce(window, runtime);
+            for (int step = 1; step <= 6; ++step) {
+                const double t = static_cast<double>(step) / 6.0;
+                core::queuePointerMotion(window,
+                                         sx + (tx - sx) * t,
+                                         sy + (ty - sy) * t,
+                                         held, noMods);
+                probe::pollOnce(window, runtime);
+            }
+            bool expandedMid = false;
+            float beforeHoverW = archWidth();
+            for (int t = 0; t < 480; t += 40) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                composeFrame();
+                if (archWidth() > collapsedW * 1.5f) {
+                    expandedMid = true;
+                    break;
+                }
+            }
+            if (expandedMid && findEl("todo.col.3.card.0.bg") != nullptr) {
+                std::cout << "H1 PASS: 拖卡悬停窄条自动展开（悬停前宽 "
+                          << static_cast<int>(beforeHoverW) << "→"
+                          << static_cast<int>(archWidth()) << "）\n";
+            } else {
+                std::cerr << "H1 FAIL: 悬停 480ms 未自动展开（宽 "
+                          << static_cast<int>(archWidth()) << "）\n";
+                passed = false;
+            }
+
+            // ---- H3: 拖离 + 板外松手（取消）→ 自动收回 ----
+            core::queuePointerMotion(window, 4.0, 4.0, held, noMods);
+            probe::pollOnce(window, runtime);
+            core::queuePointerButton(window, 4.0, 4.0, core::PointerButton::Left,
+                                     core::PointerAction::Release, noMods);
+            probe::pollOnce(window, runtime);
+            composeFrame();
+            pump(400);
+            const float w3 = archWidth();
+            if (std::fabs(w3 - collapsedW) < 2.0f) {
+                std::cout << "H3 PASS: 拖离取消 → 自动收回折叠（宽 "
+                          << static_cast<int>(w3) << "）\n";
+            } else {
+                std::cerr << "H3 FAIL: 取消拖拽未自动收回（宽 "
+                          << static_cast<int>(w3) << "，期望 "
+                          << static_cast<int>(collapsedW) << "）\n";
+                passed = false;
+            }
+
+            // ---- H2: 折叠/展开动画连续性（不瞬跳）----
+            if (const auto* compact = findEl("todo.col.3.expand.bg")) {
+                // H2a: 点窄条展开 → 中间帧严格递增、终态展开
+                auto [cx, cy] = center(*compact);
+                probe::click(window, runtime, static_cast<double>(cx),
+                             static_cast<double>(cy));
+                composeFrame();
+                const float wStart = archWidth();
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                composeFrame();
+                const float wMid = archWidth();
+                pump(350);
+                const float wEnd = archWidth();
+                const bool expandContinuous =
+                    wStart > collapsedW + 2.0f &&
+                    wMid > wStart + 2.0f && wMid < wEnd - 2.0f;
+                if (expandContinuous) {
+                    std::cout << "H2a PASS: 展开动画中间帧连续（"
+                              << static_cast<int>(wStart) << "→"
+                              << static_cast<int>(wMid) << "→"
+                              << static_cast<int>(wEnd) << "）\n";
+                } else {
+                    std::cerr << "H2a FAIL: 展开动画不连续（"
+                              << static_cast<int>(wStart) << "→"
+                              << static_cast<int>(wMid) << "→"
+                              << static_cast<int>(wEnd) << "，折叠="
+                              << static_cast<int>(collapsedW) << "）\n";
+                    passed = false;
+                }
+                // H2b: 展开态点收起按钮 → 中间帧严格递减、终态折叠（从当前进度回插）
+                if (const auto* toggle = findEl("todo.col.3.archivetoggle.bg")) {
+                    auto [tx2, ty2] = center(*toggle);
+                    probe::click(window, runtime,
+                                 static_cast<double>(tx2),
+                                 static_cast<double>(ty2));
+                    composeFrame();
+                    const float rStart = archWidth();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                    composeFrame();
+                    const float rMid = archWidth();
+                    pump(350);
+                    const float rEnd = archWidth();
+                    const bool collapseContinuous =
+                        rStart > collapsedW + 2.0f &&
+                        rMid > collapsedW + 2.0f && rMid < rStart - 2.0f &&
+                        std::fabs(rEnd - collapsedW) < 2.0f;
+                    if (collapseContinuous) {
+                        std::cout << "H2b PASS: 收起动画中间帧连续（"
+                                  << static_cast<int>(rStart) << "→"
+                                  << static_cast<int>(rMid) << "→"
+                                  << static_cast<int>(rEnd) << "）\n";
+                    } else {
+                        std::cerr << "H2b FAIL: 收起动画不连续或未落折叠（"
+                                  << static_cast<int>(rStart) << "→"
+                                  << static_cast<int>(rMid) << "→"
+                                  << static_cast<int>(rEnd) << "，折叠="
+                                  << static_cast<int>(collapsedW) << "）\n";
+                        passed = false;
+                    }
+                } else {
+                    std::cerr << "H2b FAIL: 找不到 archivetoggle.bg\n";
+                    passed = false;
+                }
+            } else {
+                std::cerr << "H2 FAIL: 找不到归档窄条\n";
+                passed = false;
+            }
+        } else {
+            std::cerr << "H1 ERR: col0 卡或归档窄条缺失\n";
+            passed = false;
         }
     }
 
