@@ -8,6 +8,7 @@
 #include "core/time.h"
 #include "platform/json.h"
 #include "ui_kit/dialog_form.h"
+#include "ui_kit/empty_state.h"
 #include "ui_kit/metrics.h"
 
 #include <components/button.h>
@@ -739,21 +740,26 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
             ui.column("schedule.list.root")
                 .width(innerW)
                 .height(core::SizeValue::wrapContent())
-                .padding(pad, 0.0f, pad, t.sizes.spacingXLarge)
+                .padding(pad, 40.0f, pad, t.sizes.spacingXLarge)
                 .gap(t.sizes.spacingLarge)
                 .content([&] {
-                    // 页头：标题 + 运行历史抽屉入口（点击开 S7b 抽屉）
+                    // 页头：标题 + 弹性占位 + 运行历史抽屉入口 / 新建（历史靠右、新建最右）
                     ui.row("schedule.list.header")
                         .size(contentW, core::theme::scaled(32.0f))
                         .alignItems(eui::Align::CENTER)
                         .content([&] {
                             ui.text("schedule.list.title")
-                                .size(core::theme::scaled(200.0f),
-                                      core::theme::scaled(32.0f))
+                                .width(core::SizeValue::wrapContent())
+                                .height(core::theme::scaled(32.0f))
                                 .text("定时")
                                 .fontSize(t.sizes.fontSizeTitle)
+                                .lineHeight(core::theme::scaled(32.0f))
                                 .fontWeight(600)
                                 .color(t.colors.textPrimary)
+                                .build();
+                            ui.stack("schedule.list.header.spacer")
+                                .height(core::theme::scaled(24.0f))
+                                .flexGrow(1.0f)
                                 .build();
                             ui.text("schedule.list.history")
                                 .size(core::theme::scaled(96.0f),
@@ -785,11 +791,15 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                     sectionTitle("schedule.list.sys.title", "系统定时",
                                  /*lock=*/true);
                     if (assembly_.systemRows.empty()) {
-                        ui.text("schedule.list.sys.empty")
-                            .size(contentW, core::theme::scaled(20.0f))
-                            .text("暂无系统定时")
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textTertiary)
+                        ui.stack("schedule.list.sys.empty.wrap")
+                            .width(contentW)
+                            .height(core::theme::scaled(64.0f))
+                            .content([&] {
+                                ui_kit::emptyState(
+                                    ui, "schedule.list.sys.empty", "暂无系统定时",
+                                    std::nullopt, 0.0f, 0.0f, contentW,
+                                    core::theme::scaled(64.0f), t);
+                            })
                             .build();
                     }
                     for (size_t i = 0; i < assembly_.systemRows.size(); ++i) {
@@ -801,11 +811,18 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                     sectionTitle("schedule.list.user.title", "用户定时",
                                  /*lock=*/false);
                     if (assembly_.userRows.empty()) {
-                        ui.text("schedule.list.user.empty")
-                            .size(contentW, core::theme::scaled(20.0f))
-                            .text("暂无用户定时")
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textTertiary)
+                        ui.stack("schedule.list.user.empty.wrap")
+                            .width(contentW)
+                            .height(core::theme::scaled(96.0f))
+                            .content([&] {
+                                ui_kit::emptyState(
+                                    ui, "schedule.list.user.empty", "暂无用户定时",
+                                    std::make_optional(std::make_pair(
+                                        std::string("新建定时"),
+                                        [this] { openNewRule(); })),
+                                    0.0f, 0.0f, contentW,
+                                    core::theme::scaled(96.0f), t);
+                            })
                             .build();
                     }
                     for (size_t i = 0; i < assembly_.userRows.size(); ++i) {

@@ -496,7 +496,15 @@ void AgentModule::composeTaskDialog(
 
                 // --- Step 1: 触发 ---
                 if (currentStep_ == 1) {
-                    const float s1y = kContentY + kVertContentPad;
+                    // 内容区垂直居中：本步只有两行控件，顶格会留下大片底部空白；
+                    // 居中让空隙上下均分（kStep1BlockH = 标题 16 + 行距 4 + segment 32
+                    // + 行距 8 + 配置行 32 + 行距 12 + 预览行 12）
+                    constexpr float kStep1BlockH = 116.0f;
+                    const float step1ContentH =
+                        h - kContentY * 2.0f - kVertContentPad * 2.0f;
+                    const float step1CenterDy =
+                        std::max(0.0f, (step1ContentH - kStep1BlockH) * 0.5f);
+                    const float s1y = kContentY + kVertContentPad + step1CenterDy;
                     // 触发 segment（六类触发平分整行；保持旧 id）
                     fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式",
                                  x0, s1y, kDialogLabelW, 16.0f,
@@ -566,20 +574,22 @@ void AgentModule::composeTaskDialog(
                             .size(tplW, kDialogRowH)
                             .content([&] {
                                 std::vector<std::string> items;
-                                items.reserve(kCronTemplateCount + 1);
-                                items.emplace_back("选择模板…");
+                                items.reserve(kCronTemplateCount);
                                 for (int i = 0; i < kCronTemplateCount; ++i)
                                     items.emplace_back(kCronTemplates[i].label);
                                 components::dropdown(ui, "agent.dialog.task.cron.template")
                                     .size(tplW, kDialogRowH)
                                     .theme(themeTokens)
                                     .items(std::move(items))
-                                    .selected(0)
+                                    .placeholder("选择模板…")
+                                    .selected(editCronTemplateIdx_)
                                     .open(editCronTemplateOpen_)
                                     .onOpenChange([this](bool v) { editCronTemplateOpen_ = v; })
                                     .onChange([this](int idx) {
-                                        if (idx >= 1 && idx <= kCronTemplateCount)
-                                            setEditCronDraft(kCronTemplates[idx - 1].expr);
+                                        if (idx >= 0 && idx < kCronTemplateCount) {
+                                            setEditCronDraft(kCronTemplates[idx].expr);
+                                            editCronTemplateIdx_ = idx;
+                                        }
                                     })
                                     .build();
                             })

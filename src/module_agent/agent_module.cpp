@@ -26,6 +26,7 @@
 #include <core/platform/platform.h>
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/empty_state.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
@@ -597,54 +598,19 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         return;
                     }
                     if (tasks_.empty()) {
-                        // S2.8 空状态标准化：图标 + 标题 + 说明 + 操作按钮
-                        const float chipW = 120.0f, chipH = 40.0f;
-                        inner.text("agent.empty.icon")
-                            .size(cw, 24.0f)
-                            .text("+")
-                            .fontSize(core::theme::scaled(20.0f))
-                            .lineHeight(core::theme::scaled(24.0f))
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .color(t.colors.textTertiary)
-                            .build();
-                        inner.text("agent.empty.title")
-                            .size(cw, 24.0f)
-                            .text("暂无任务")
-                            .fontSize(core::theme::scaled(16.0f))
-                            .lineHeight(core::theme::scaled(24.0f))
-                            .fontWeight(600)
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .color(t.colors.textPrimary)
-                            .build();
-                        inner.text("agent.empty.desc")
-                            .size(cw, 20.0f)
-                            .text("创建智能任务，让 AI 自动执行工作流")
-                            .fontSize(core::theme::scaled(12.0f))
-                            .lineHeight(core::theme::scaled(20.0f))
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .color(t.colors.textTertiary)
-                            .build();
-                        inner.stack("agent.empty.btn.chip")
-                            .size(chipW, chipH)
+                        // S2.8 空状态标准化：ui_kit::emptyState 极简文字 + 就近按钮（§4.12 单一规格，与 todo/schedule 同源）
+                        constexpr float kEmptyWrapH = 160.0f;
+                        inner.stack("agent.empty.wrap")
+                            .width(cw)
+                            .height(core::theme::scaled(kEmptyWrapH))
                             .content([&] {
-                                inner.rect("agent.empty.btn.bg")
-                                    .size(chipW, chipH)
-                                    .states(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                                    .radius(t.sizes.radius)
-                                    .onClick([this] { openNewTaskDialog(); })
-                                    .build();
-                                inner.text("agent.empty.btn")
-                                    .size(chipW, chipH)
-                                    .text("创建第一个任务")
-                                    .fontSize(core::theme::scaled(14.0f))
-                                    .lineHeight(core::theme::scaled(40.0f))
-                                    .fontWeight(600)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(t.colors.onPrimary)
-                                    .hitTestMode(core::dsl::HitTestMode::None)
-                                    .onClick([this] { openNewTaskDialog(); })
-                                    .build();
+                                ui_kit::emptyState(
+                                    inner, "agent.empty", "暂无任务",
+                                    std::make_optional(std::make_pair(
+                                        std::string("新建任务"),
+                                        [this] { openNewTaskDialog(); })),
+                                    0.0f, 0.0f, cw,
+                                    core::theme::scaled(kEmptyWrapH), t);
                             })
                             .build();
                         return;

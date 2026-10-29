@@ -617,7 +617,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = ::core::theme::current();
 
     constexpr int kHalos = 7;            // UAT6.1 缩小增多：4→7 个小晕流动（几大团→多小晕流）
-    constexpr float kMaxAlpha = 0.14f;   // 单层峰值（7 层 α 平均约 0.123，全叠峰值可控）
+    constexpr float kMaxAlpha = 0.11f;   // 单层峰值（内容稀疏页上晕染存在感过强，收一档）
     constexpr int kSatsPerHalo = 2;      // 卫星/层
     // 层参数表（锚点 = 窗口比例；速度 rad/s；相位 rad 防共漂；半径 = 短边比例）
     constexpr float kAnchorX[kHalos] = {0.50f, 0.50f, 0.24f, 0.76f, 0.12f, 0.88f, 0.36f};

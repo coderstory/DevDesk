@@ -222,7 +222,7 @@ bool openNewTaskDialog(eui::Ui& ui, module::agent::AgentModule& mod,
     // 空库 = 空态 CTA「创建第一个任务」(.empty.btn.bg)；
     // 有任务列表 = 页头「+ 新建任务」(.page.newTask.bg)
     if (clickId(ui, "agent.page.newTask.bg")) return true;
-    if (clickId(ui, "agent.empty.btn.bg")) return true;
+    if (clickId(ui, "agent.empty.action.bg")) return true;
     return false;
 }
 
@@ -359,7 +359,7 @@ REGISTER_TEST(agent_ui_db_import_reloads_tasks,
 
     eui::Ui ui;
     composeTo(ui, mod, kScreen, "agent_ui_dbimport1");
-    DOCTEST_REQUIRE(ui.find("agent.empty.title") != nullptr);   // 空库空态 S2.8
+    DOCTEST_REQUIRE(ui.find("agent.empty.message") != nullptr);   // 空库空态 S2.8
     DOCTEST_CHECK(!mod.dbImportedDirtyForTest());
 
     // 模拟远端库导入：库里多出一条任务，但**不发任何事件**（缓存应保持旧值）
@@ -2447,7 +2447,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
                               "segment 第 " + std::to_string(i) + " 项宽应 " +
                                   std::to_string(opW));
         DOCTEST_CHECK(nearPx(op->frame.height, 32.0f));
-        DOCTEST_CHECK(nearPx(op->frame.y - py, 80.0f));
+        DOCTEST_CHECK_MESSAGE(nearPx(op->frame.y - py, 222.0f), "segment y-py 应 222（step1 垂直居中 dy=142）实测 " + std::to_string(op->frame.y - py));
     }
     const auto* segLast = ui2s1.find("agent.dialog.task.trigger.item.5.bg");
     DOCTEST_REQUIRE(segLast != nullptr);
@@ -3381,7 +3381,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_crontpl3");
 
-    // ① 模板下拉存在；item.0 是「选择模板…」占位，item.1..4 对应 kCronTemplates
+    // ① 模板下拉存在；未选时 label 显示 placeholder，item.0..3 对应 kCronTemplates
     DOCTEST_REQUIRE_MESSAGE(ui3.find("agent.dialog.task.cron.template") != nullptr,
                             "模板下拉 agent.dialog.task.cron.template 缺失");
     const auto* tplLabel3 = ui3.find("agent.dialog.task.cron.template.label");
@@ -3389,13 +3389,13 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_CHECK_EQ(tplLabel3->text, std::string("选择模板…"));
     for (int i = 0; i < module::agent::kCronTemplateCount; ++i) {
         const auto* item = ui3.find("agent.dialog.task.cron.template.item." +
-                                    std::to_string(i + 1));
+                                    std::to_string(i));
         DOCTEST_REQUIRE_MESSAGE(item != nullptr,
-                                "模板项 item." + std::to_string(i + 1) + " 缺失");
+                                "模板项 item." + std::to_string(i) + " 缺失");
         const auto* itemLabel = ui3.find(
-            "agent.dialog.task.cron.template.item.label." + std::to_string(i + 1));
+            "agent.dialog.task.cron.template.item.label." + std::to_string(i));
         DOCTEST_REQUIRE_MESSAGE(itemLabel != nullptr,
-                                "模板项 label." + std::to_string(i + 1) + " 缺失");
+                                "模板项 label." + std::to_string(i) + " 缺失");
         DOCTEST_CHECK_EQ(itemLabel->text,
                          std::string(module::agent::kCronTemplates[i].label));
     }
@@ -3424,7 +3424,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_REQUIRE(clickId(ui3s3, "agent.dialog.task.step.1.bg"));
     composeTo(ui3s1, mod, kScreen, "agent_ui_crontpl3s1");
     DOCTEST_REQUIRE(
-        callDropdownChange(ui3s1, "agent.dialog.task.cron.template", 2));
+        callDropdownChange(ui3s1, "agent.dialog.task.cron.template", 1));
     eui::Ui ui4;
     composeTo(ui4, mod, kScreen, "agent_ui_crontpl4");
     DOCTEST_CHECK_EQ(inputText(ui4, "agent.dialog.task.cron"),
@@ -4991,7 +4991,7 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
 
     eui::Ui uiA;
     composeTo(uiA, mod, kScreen, "agent_ui_dfl0");
-    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
+    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.action.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dfl1");
 
@@ -5110,7 +5110,7 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
 
     // ④ 遮罩点击关子弹窗（dialog 组件 backdrop onClick → onOpenChange(false)）
     // 本用例库内无任务 → 页头无「+ 新建任务」，走空态 CTA
-    DOCTEST_REQUIRE(clickId(uiG, "agent.empty.btn.bg"));
+    DOCTEST_REQUIRE(clickId(uiG, "agent.empty.action.bg"));
     eui::Ui uiH;
     composeTo(uiH, mod, kScreen, "agent_ui_dfl7");
     // 裁定 3：aichip 只在 step 2 渲染（设计稿 08-新建任务wizard 只在「系统指令」
@@ -5162,7 +5162,7 @@ REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
 
     eui::Ui uiA;
     composeTo(uiA, mod, kScreen, "agent_ui_dpf0");
-    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
+    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.action.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dpf1");
     // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）
@@ -5256,7 +5256,7 @@ REGISTER_TEST(agent_ui_draft_degrade_warning_no_trigger_takeover,
 
     eui::Ui uiA;
     composeTo(uiA, mod, kScreen, "agent_ui_dwr0");
-    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
+    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.action.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dwr1");
     // W4 步骤条：触发方式 segment 只在 step 1 渲染
@@ -5343,7 +5343,7 @@ REGISTER_TEST(agent_ui_draft_error_paths,
 
     eui::Ui uiA;
     composeTo(uiA, mod, kScreen, "agent_ui_der0");
-    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
+    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.action.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_der1");
     // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）
@@ -5432,7 +5432,7 @@ REGISTER_TEST(agent_ui_draft_close_discards_inflight_result,
 
     eui::Ui uiA;
     composeTo(uiA, mod, kScreen, "agent_ui_ddc0");
-    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
+    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.action.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_ddc1");
     // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）；

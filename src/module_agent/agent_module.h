@@ -357,6 +357,7 @@ private:
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）
     bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
     bool editCronTemplateOpen_ = false;   // cron 模板下拉弹层开合
+    int editCronTemplateIdx_ = -1;        // 已选模板下标（-1=未选，显示 placeholder；手改 cron 时复位）
     // AI 草稿子弹窗态（全部仅主线程）：draftInput_ 跨开合保留（用户的话不因关窗丢失）；
     // 关闭子弹窗即 bump draftEpoch_（在途结果将作废），重开按 draftJob_ 存活如实显示生成中
     bool draftDialogOpen_ = false;

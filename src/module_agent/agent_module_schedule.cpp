@@ -299,6 +299,7 @@ void AgentModule::openNewTaskDialog() {
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
     editCronTemplateOpen_ = false;
+    editCronTemplateIdx_ = -1;
     currentStep_ = 0;
     testRunResult_.clear();
     refreshCronPreview();
@@ -313,6 +314,7 @@ void AgentModule::closeTaskDialog() {
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
     editCronTemplateOpen_ = false;
+    editCronTemplateIdx_ = -1;
     closeDraftDialog();   // 子弹窗随外层一起退（在途结果一并作废）
     // 试运行线程仍在飞：请求取消 + join 回收（不 detach，不留悬垂线程）
     if (dryRun_) {
@@ -325,6 +327,9 @@ void AgentModule::closeTaskDialog() {
 
 void AgentModule::setEditCronDraft(const std::string& cron) {
     editCron_ = cron;
+    // 手改 cron（含 AI 草稿回填）后模板下拉回到未选态；模板下拉 onChange 会在
+    // 本调用之后重设 editCronTemplateIdx_，选中显示不受影响
+    editCronTemplateIdx_ = -1;
     refreshCronPreview();
 }
 
@@ -413,6 +418,14 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editName_ = r.name;
     editGoal_ = r.goal;
     editCron_ = cronTextOf(r);
+    // 编辑回填：cron 恰好等于某常用模板时下拉显示该模板名，否则未选态
+    editCronTemplateIdx_ = -1;
+    for (int i = 0; i < kCronTemplateCount; ++i) {
+        if (editCron_ == kCronTemplates[i].expr) {
+            editCronTemplateIdx_ = i;
+            break;
+        }
+    }
     editOnceAtText_.clear();
     editSlot_ = r.modelSlot;
     editIter_ = r.maxIterations;
@@ -469,6 +482,7 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
     editCronTemplateOpen_ = false;
+    editCronTemplateIdx_ = -1;
     currentStep_ = 0;
     testRunResult_.clear();
     refreshCronPreview();

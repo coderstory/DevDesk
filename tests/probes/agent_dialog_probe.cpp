@@ -514,9 +514,9 @@ int main(int argc, char* argv[]) {
                 passed = false;
             } else {
                 // 「选择模板…」占位 + 4 模板项 = 至少 5 项；首项存在即可证菜单渲染
-                if (findElement("agent.dialog.task.cron.template.item.1") ==
+                if (findElement("agent.dialog.task.cron.template.item.0") ==
                     nullptr) {
-                    std::cerr << "agent_dialog_probe: 模板下拉 item.1 "
+                    std::cerr << "agent_dialog_probe: 模板下拉 item.0 "
                                  "（工作日 9 点）缺失\n";
                     passed = false;
                 }

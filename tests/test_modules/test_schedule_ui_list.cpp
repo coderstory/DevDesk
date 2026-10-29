@@ -212,7 +212,7 @@ REGISTER_TEST(schedule_list_empty_provider_registry_ok,
     const eui::Screen screen = makeScreen();
     eui::Ui frame;
     composeFrame(listUi, frame, screen, "empty_sys");
-    DOCTEST_CHECK(frame.find("schedule.list.sys.empty") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.sys.empty.message") != nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.sys.0") == nullptr);
     return true;
 })
