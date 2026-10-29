@@ -82,6 +82,8 @@ add_executable(devdesk_tests
     test_modules/test_agent_loop.cpp
     test_modules/test_agent_draft.cpp
     test_modules/test_agent_tools.cpp
+    # 需-6 出厂任务模板：字段完整性（名称/cron/提示词）+ 工具引用全在注册清单
+    test_modules/test_agent_task_templates.cpp
     test_modules/test_hot_parse.cpp
     test_modules/test_hot_tool.cpp
     test_modules/test_notify_tool.cpp

@@ -75,6 +75,7 @@
 #include "core/tool.h"
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/agent_task_templates.h"
 #include "module_agent/agent_time_text.h"
 #include "module_agent/trigger_config.h"
 #include "platform/http_client.h"
@@ -6434,6 +6435,80 @@ REGISTER_TEST(agent_ui_dialog_frame_containment,
     composeTo(ui5, mod, kScreen, "agent_df_del2");
     DOCTEST_CHECK(check(ui5, "agent.dialog.delete.panel", "agent.dialog.delete.title",
                         "P10 删除确认", dialog_frame::kTitleY));
+
+    mod.onStop();
+    return true;
+})
+
+// 需-6 出厂任务模板：新建态 step 0 渲染 3 张模板 chips；点击「日报草稿」后表单草稿
+// 四件（名称/触发=定时/cron/提示词）按表回填（表数据字段完整性归
+// test_agent_task_templates.cpp 钉）；编辑态不渲染 chips（防一键覆盖既有任务配置）。
+REGISTER_TEST(agent_ui_task_template_apply,
+              "agent_ui: 出厂模板 chips 新建态渲染 + 点击套用回填 name/cron/goal + 编辑态不渲染", {
+    test_support::TestDb tdb("agentui", "tasktpl");
+    test_support::FakeProfileSource profile;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+    auto existing = store.createTask("既有任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(existing.isOk());
+    const std::string tid = std::to_string(existing.value());
+
+    // ---- 新建态：chips 渲染 + 点击套用 ----
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_tpl_0"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_tpl_1");
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.tpl.caption") != nullptr);
+    for (int i = 0; i < module::agent::kTaskTemplateCount; ++i) {
+        DOCTEST_CHECK_MESSAGE(
+            ui2.find("agent.dialog.task.tpl.item." + std::to_string(i) + ".bg") !=
+                nullptr,
+            "模板 chip " + std::to_string(i) + " 缺失");
+    }
+    // 几何断言（既有 containment 用例停在 step 2 看不到本行）：step 0 全部可见元素
+    //（含模板 chips 行）必须完全落在弹窗 panel frame 内
+    const std::string frameViolation =
+        dialog_frame::allInside(ui2, "agent.dialog.task.panel");
+    DOCTEST_CHECK_MESSAGE(frameViolation.empty(),
+                          "新建弹窗 step 0（含模板 chips）元素越框: " +
+                              frameViolation);
+    // 点第一张（日报草稿）→ step 0 名称已回填
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.tpl.item.0.bg"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_tpl_2");
+    DOCTEST_CHECK_EQ(inputText(ui3, "agent.dialog.task.name"),
+                     std::string(module::agent::kTaskTemplates[0].name));
+    // step 1：cron 输入只在「定时」态渲染——它出现且值=模板 cron，即触发类型也已套用
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.1.bg"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_tpl_3");
+    DOCTEST_CHECK_MESSAGE(ui4.find("agent.dialog.task.cron") != nullptr,
+                          "套用后触发方式应为定时（cron 输入未渲染）");
+    DOCTEST_CHECK_EQ(inputText(ui4, "agent.dialog.task.cron"),
+                     std::string(module::agent::kTaskTemplates[0].cron));
+    // step 2：提示词已回填
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.step.2.bg"));
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_tpl_4");
+    DOCTEST_CHECK_EQ(inputText(ui5, "agent.dialog.task.goal"),
+                     std::string(module::agent::kTaskTemplates[0].goal));
+
+    // ---- 编辑态：不渲染 chips ----
+    eui::Ui ui6;
+    composeTo(ui6, mod, kScreen, "agent_tpl_5");
+    DOCTEST_REQUIRE(clickId(ui6, "agent.dialog.task.close"));
+    eui::Ui ui7;
+    composeTo(ui7, mod, kScreen, "agent_tpl_6");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui7, "agent.task." + tid + ".edit"),
+                            "任务行编辑 chip 不可点");
+    eui::Ui ui8;
+    composeTo(ui8, mod, kScreen, "agent_tpl_7");
+    DOCTEST_CHECK(ui8.find("agent.dialog.task.tpl.caption") == nullptr);
+    DOCTEST_CHECK(ui8.find("agent.dialog.task.tpl.item.0.bg") == nullptr);
 
     mod.onStop();
     return true;

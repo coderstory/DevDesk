@@ -167,6 +167,9 @@ private:
     void startTask(int64_t taskId);
     // 任务弹窗（新建/编辑共用表单）：cron 非法 → 弹窗内报错、不落库、不关窗
     void openNewTaskDialog();
+    // 出厂模板一键套用（agent_task_templates.h）：只填表单草稿（名称/目标/触发类型/cron），
+    // 不落库——保存仍是用户动作（与 applyDraftPrefill 同口径）；越界下标 no-op
+    void applyTaskTemplate(int idx);
     void openTaskEditor(int64_t taskId);
     void closeTaskDialog();
     void saveTaskDialog();

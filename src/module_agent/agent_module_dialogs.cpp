@@ -8,6 +8,7 @@
 // 纯代码搬移，逻辑与签名零变化。
 
 #include "agent_module_internal.h"
+#include "module_agent/agent_task_templates.h"
 
 namespace module::agent {
 
@@ -492,6 +493,44 @@ void AgentModule::composeTaskDialog(
                         .onChange([this](const std::string& v) { editName_ = v; })
                         .onCancel([this] { closeTaskDialog(); })
                         .build();
+
+                    // 出厂模板（仅新建态渲染）：点击一键套用名称/触发类型/cron/提示词，
+                    // 之后各步仍可自由改；编辑态不渲染——套用是「从零起稿」动作，
+                    // 在既有任务上整体覆盖字段只会毁配置
+                    if (!isEdit) {
+                        constexpr float kTplCaptionY =
+                            kContentY + kVertContentPad + 28.0f + 40.0f + 24.0f;
+                        fieldCaption(ui, "agent.dialog.task.tpl.caption",
+                                     "出厂模板（点击套用，可再修改）", x0,
+                                     kTplCaptionY, kContentW, 16.0f,
+                                     t.colors.textSecondary);
+                        constexpr float kTplGap = 8.0f;
+                        const float tplW = (kContentW - kTplGap * (kTaskTemplateCount - 1)) /
+                                           static_cast<float>(kTaskTemplateCount);
+                        ui.stack("agent.dialog.task.tpl")
+                            .position(x0, kTplCaptionY + 24.0f)
+                            .size(kContentW, 32.0f)
+                            .content([&] {
+                                for (int i = 0; i < kTaskTemplateCount; ++i) {
+                                    components::button(
+                                        ui, "agent.dialog.task.tpl.item." +
+                                                std::to_string(i))
+                                        .position(static_cast<float>(i) * (tplW + kTplGap),
+                                                  0.0f)
+                                        .size(tplW, 32.0f)
+                                        .text(kTaskTemplates[i].name)
+                                        .fontSize(core::theme::scaled(12.0f))
+                                        .colors(t.colors.background, t.colors.hover,
+                                                t.colors.primarySoftBg)
+                                        .textColor(t.colors.textPrimary)
+                                        .radius(8.0f)
+                                        .border(1.0f, t.colors.borderDefault)
+                                        .onClick([this, i] { applyTaskTemplate(i); })
+                                        .build();
+                                }
+                            })
+                            .build();
+                    }
                 }
 
                 // --- Step 1: 触发 ---

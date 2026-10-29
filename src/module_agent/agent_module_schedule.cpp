@@ -7,6 +7,7 @@
 // 纯代码搬移，逻辑与签名零变化。
 
 #include "agent_module_internal.h"
+#include "module_agent/agent_task_templates.h"
 
 namespace module::agent {
 
@@ -323,6 +324,19 @@ void AgentModule::closeTaskDialog() {
         dryRun_.reset();
     }
     testRunResult_.clear();
+}
+
+// 出厂模板一键套用：覆盖表单草稿四件（名称/目标/触发类型/cron）。走 setEditCronDraft
+// 让 cron 预览行同步重算；manual 型模板清空 cron，防用户切回「定时」时残留上一个
+// 模板的表达式。不清 editSystemPrompt_ / editMaxRuns_（openNewTaskDialog 的缺省仍有效）
+void AgentModule::applyTaskTemplate(int idx) {
+    if (idx < 0 || idx >= kTaskTemplateCount) return;
+    const TaskTemplate& tpl = kTaskTemplates[idx];
+    editName_ = tpl.name;
+    editGoal_ = tpl.goal;
+    editTriggerIdx_ = triggerIndexOf(tpl.triggerType);
+    setEditCronDraft(tpl.cron);
+    editError_.clear();
 }
 
 void AgentModule::setEditCronDraft(const std::string& cron) {
