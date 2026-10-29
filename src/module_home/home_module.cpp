@@ -49,10 +49,12 @@ constexpr float kHomeActionsBottomMargin = 16.0f;
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 
 // S3.1 / S6.6：五色实底统计卡——辅助色纯色底 + 16px 圆角 + 20px 内边距 +
-// 指标名 12px 三级 / 数据 28px 600 一级 / 说明 12px 三级 上中下排版。
+// 指标名 14px（说明并入「笔记 · 今日」）/ 数据 44px 700 一级 两行排版。
 // 玻璃体系已退役（S6.1）。
-// numberColor/badgeColor 非空覆盖默认配色；timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；
-// chart 非空叠加迷你图表；onTick 为该 timer 回调。点击由 .press 透明层接收（hover/press 态）。
+// numberColor/badgeColor 非空覆盖默认配色（badge 并入 label 行后 badgeColor
+// 不再参与绘制，参数保留 = 五处调用点免改；传了也不生效）。timerSeconds > 0 挂
+// 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
+// 点击由 .press 透明层接收（hover/press 态）。
 void drawSolidStatCard(eui::Ui& ui,
                        const std::string& id,
                        float width,
@@ -73,17 +75,15 @@ void drawSolidStatCard(eui::Ui& ui,
     const float pad = 20.0f;  // S6.6 / v1.0 §三.6：卡片内边距 20px
     const float cw = width - pad * 2.0f;
     const float corner = t.sizes.radiusOverlay;  // 16px（S1 圆角 16px 档）
-    // 内部排版：指标名 16px 高 + 8px 间隙 + 数字 36px 高 + 8px 间隙 + 说明 16px 高
-    const float labelH = 16.0f;
+    // 两行排版（统计卡瘦身拍板）：指标名 18px 高 + 8px 间隙 + 数字 48px 高；
+    // 说明并入指标名（「笔记 · 今日」），不再单独占一行。
+    const float labelH = 18.0f;
     const float numGap = 8.0f;
-    const float numberH = 36.0f;
-    const float descGap = 8.0f;
-    const float descH = 16.0f;
-    // 统计行随窗高伸展后的余高均分到两个行间隙；基准档（144×字号档）余高为 0，
-    // 三行位置与改造前逐像素一致。
+    const float numberH = 48.0f;
+    // 统计行随窗高伸展后的余高均分到两个行间隙；基准档（96×字号档）余高为 0。
     const float extraCardH =
-        std::max(0.0f, height - 144.0f * core::theme::fontScale());
-    // 带 sparkline 的卡（Token）：顶带 y0..16 画曲线，文字三行整体让位其下
+        std::max(0.0f, height - 96.0f * core::theme::fontScale());
+    // 带 sparkline 的卡（Token）：顶带 y0..16 画曲线，文字两行整体让位其下
     // （home_probes 组 A：spark 与 label 不相交且 gapY ≥ 0）。
     const float chartTopH = chart ? 16.0f : 0.0f;
 
@@ -93,44 +93,42 @@ void drawSolidStatCard(eui::Ui& ui,
         .color(bgColor)
         .padding(pad)
         .content([&] {
-            // 指标名：12px 三级字，居中
+            // 指标名：14px 三级字，居中；说明（badge）并入同行「笔记 · 今日」。
+            // 合并文本量宽放不下卡宽时丢弃 badge 只留指标名——badge 是弱信息，
+            // 溢出会让居中文本越出卡缘（home_probes 类 6(a) 溢出判据守这条）。
+            std::string labelText = badge.empty() ? label : label + " · " + badge;
+            if (!badge.empty()) {
+                core::TextStyle merged;
+                merged.text = labelText;
+                merged.fontSize = core::theme::scaled(14.0f);
+                if (core::TextPrimitive::measureTextSize(merged).x > cw) {
+                    labelText = label;
+                }
+            }
             ui.text(id + ".label")
                 .position(0.0f, chartTopH)
                 .size(cw, labelH)
-                .text(label)
-                .fontSize(t.sizes.fontSizeSmall)  // 12px
+                .text(labelText)
+                .fontSize(core::theme::scaled(14.0f))
                 .lineHeight(labelH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.textTertiary)
                 .build();
 
-            // 数据：28px 600 一级字，居中
+            // 数据：44px 700 一级字，居中（卡内本地字号，不动全局 fontSizeStat——
+            // 该 token 被 别处共用，改全局波及面不可控）
             const float numberY = chartTopH + labelH + numGap + extraCardH * 0.5f;
             ui.text(id + ".number")
                 .position(0.0f, numberY)
                 .size(cw, numberH)
                 .text(number)
-                .fontSize(t.sizes.fontSizeStat)  // 28px
+                .fontSize(core::theme::scaled(44.0f))
                 .lineHeight(numberH)
-                .fontWeight(600)
+                .fontWeight(700)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(numberColor ? *numberColor
                                    : (accent ? t.colors.errorText
                                              : t.colors.textPrimary))
-                .build();
-
-            // 说明/副题：12px 三级字，居中
-            const float descY = numberY + numberH + descGap + extraCardH * 0.5f;
-            ui.text(id + ".badge")
-                .position(0.0f, descY)
-                .size(cw, descH)
-                .text(badge)
-                .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(descH)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(badgeColor ? *badgeColor
-                                  : (accent ? t.colors.errorText
-                                            : t.colors.textTertiary))
                 .build();
 
             // 可选计时器（0 尺寸 onTimer）
@@ -348,7 +346,7 @@ public:
                 if (moduleRegistered(btn.module)) ++actCount;
             }
             const bool hasActions = actCount > 0;
-            const float statBaseH = 144.0f * core::theme::fontScale();
+            const float statBaseH = 96.0f * core::theme::fontScale();
             // 全关时统计区是 32 高空态行（见下方 statCount == 0 分支）。
             const float statsBlockH = hasStats ? statBaseH : 32.0f;
             const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
