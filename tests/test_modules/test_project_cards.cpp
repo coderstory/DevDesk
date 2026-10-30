@@ -135,6 +135,8 @@ REGISTER_TEST(project_card_store_rejects_blank_name,
 REGISTER_TEST(project_card_migration_adds_missing_columns,
               "project_cards: 老库缺列表补列迁移（幂等 + 既有行不丢）", {
     devdesk::ProjectCardsDbEnv env;
+    // 夹具已跑过完整 migrate、project_cards 已存在——先拆掉再造「老库残表」
+    DOCTEST_REQUIRE((*env.db).exec("DROP TABLE IF EXISTS project_cards").isOk());
     // 造「老库」：只有 name + repo_path 两列的残表，带一行数据
     DOCTEST_REQUIRE((*env.db).exec(
                         "CREATE TABLE project_cards_old ("
