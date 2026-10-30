@@ -402,6 +402,7 @@ def todo_set(owner: str, content: str, status: str = "进行中") -> dict:
             " status=excluded.status, updated=excluded.updated",
             (owner, content, status, _now()),
         )
+    _write_snapshot()
     return {"ok": True, "owner": owner, "content": content, "status": status}
 
 
@@ -530,11 +531,15 @@ def _write_snapshot() -> None:
     # 裁决 ④-2：pool.db 出 git，写后导出 JSON 快照入库留痕（可 diff 可 merge，
     # 双机各写本地 db，git 侧只合快照）。
     path = _report_path().parent / "pool-snapshot.json"
+    path = _report_path().parent / "pool-snapshot.json"
     conn = _connect()
     try:
+        # personal_todo 无 id 列（owner 主键），排序键按表定制
+        order = {t: "id" for t in ("needs", "dev_progress", "bugs", "acceptance", "status_log")}
+        order["personal_todo"] = "owner"
         data = {
-            t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY id")]
-            for t in ("needs", "dev_progress", "bugs", "acceptance", "status_log")
+            t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY {order[t]}")]
+            for t in ("needs", "dev_progress", "bugs", "acceptance", "status_log", "personal_todo")
         }
     finally:
         conn.close()

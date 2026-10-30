@@ -5,6 +5,7 @@
   backup                 备份整库为 SQL 文本 → docs/pool/pool-backup-<时间戳>.sql
   restore [FILE]         从 SQL 文件还原；无参数=取时间戳最新的 pool-backup-*.sql
   reinstall-venv         重建 tools/.pool-mcp-venv（pip install mcp），让 pool_mcp.py 可跑
+  sync                   重生成 HTML 报告+JSON 快照（直写 SQL 后必跑，防 git 留痕漂移）
 
 设计约定：
 - 纯 stdlib（sqlite3/os/glob），无 venv 依赖——venv 坏了本工具仍能跑（restore 不依赖被救对象）。
@@ -137,6 +138,21 @@ def reinstall_venv() -> int:
     return check.returncode
 
 
+def sync() -> int:
+    """直写 SQL（绕过 MCP 工具）后重生成报告+快照——报告/快照的自动重生成只挂在
+    工具出口上，绕工具的写必须手动跑本命令，否则 git 侧留痕与库漂移。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pool_mcp", Path(__file__).parent / "pool_mcp.py")
+    mod = importlib.util.module_from_spec(spec)
+    os.environ.setdefault("POOL_DB", str(DB))
+    spec.loader.exec_module(mod)
+    mod._write_report()
+    mod._write_snapshot()
+    print(f"✅ 报告与快照已从 {DB.name} 重生成")
+    return 0
+
+
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "backup":
@@ -145,6 +161,8 @@ def main() -> int:
         return restore(sys.argv[2] if len(sys.argv) > 2 else None)
     if cmd == "reinstall-venv":
         return reinstall_venv()
+    if cmd == "sync":
+        return sync()
     print(__doc__)
     return 2
 
