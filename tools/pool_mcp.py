@@ -228,11 +228,9 @@ def pool_update(
     bug: str | None = None,
     evidence: str | None = None,
     reason: str | None = None,
-    detail: str | None = None,
 ) -> dict:
     """更新条目。状态迁移按状态机校验；note→dev_progress、bug→bugs、
-    关闭必须带 evidence→acceptance（验收前置）；挂起必填 blocker；拒绝必填 reason；
-    detail 更新走 body 摘要同步（FTS 重建见下方统一刷新）。"""
+    关闭必须带 evidence→acceptance（验收前置）；挂起必填 blocker；拒绝必填 reason。"""
     now = _now()
     with _connect() as conn:
         row = conn.execute("SELECT * FROM needs WHERE id = ?", (id,)).fetchone()
@@ -268,15 +266,11 @@ def pool_update(
             ("priority", priority),
             ("owner", owner),
             ("blocker", blocker),
-            ("detail", detail),
+            ("detail", None),
         ):
-            if val is not None:
+            if val is not None and col != "detail":
                 fields.append(f"{col} = ?")
                 args.append(val)
-        if detail is not None:
-            # body 摘要随 detail 同步（body 是 FTS 的检索面，滞留旧摘要=检索命中旧内容）
-            fields.append("body = ?")
-            args.append(_summarize(detail))
         fields.append("updated = ?")
         args.append(now)
         args.append(id)
