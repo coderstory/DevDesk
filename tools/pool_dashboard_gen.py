@@ -38,6 +38,16 @@ def stage_of(status: str):
     return STAGE_VIEW.get(status, (status, "#8A93A6"))
 
 
+# stage 阶段字段（status 管生死、stage 管流程段）的展示档；业务侧补档只改这里
+STAGE_LABEL = {
+    "已分析": ("已分析", "#C9A227"),
+    "已调研": ("已调研", "#C9A227"),
+    "开发中": ("开发中", "#D97757"),
+    "测试中": ("测试中", "#5B9BD5"),
+    "已验收": ("已验收", "#4CAF7D"),
+}
+
+
 def table_cols(conn, table: str):
     return [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
 
@@ -65,17 +75,19 @@ def main() -> None:
 
     conn.close()
 
-    # 汇总卡
+    # 汇总卡（计数按 status 生死口径；stage 流程段并行展示在需求行）
     stage_counts = {}
     for n in needs:
         label = stage_of(n["status"])[0]
         stage_counts[label] = stage_counts.get(label, 0) + 1
+    has_stage = "stage" in needs_cols
     not_done = sum(1 for n in needs if n["status"] not in ("关闭", "拒绝"))
     done = len(needs) - not_done
 
     payload = {
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "auditCols": has_audit,
+        "hasStage": has_stage,
         "needs": needs,
         "todos": todos,
         "stageCounts": stage_counts,
@@ -143,12 +155,17 @@ let rows = DATA.needs.map(n => {
   const color = COLORS[stage] || '#8A93A6';
   const who = n.owner || '—';
   const lastBy = DATA.auditCols && n.updated_by ? ` · 最后操作：${n.updated_by}` : '';
+  // stage 流程段（已分析/已调研/开发中/测试中/已验收）与 status 并行展示；空 = 未标注
+  const flow = DATA.hasStage && n.stage
+    ? `<span class="stage" style="color:#C9A227;border:1px solid #C9A227">${n.stage}</span>`
+    : '';
   return `<tr><td>#${n.id}</td><td>${n.title}</td>
-    <td><span class="stage" style="color:${color};border:1px solid ${color}">${stage}</span></td>
+    <td><span class="stage" style="color:${color};border:1px solid ${color}">${stage}</span>
+        ${flow}</td>
     <td class="owner">${who}</td><td style="color:#B9A99B">${n.priority || ''}${lastBy}</td></tr>`;
 }).join('');
 app.innerHTML += `<h2>需求进度全景（${DATA.needs.length} 条）</h2>
-<table><tr><th>#</th><th>需求</th><th>阶段</th><th>处理人</th><th>优先级/最后操作</th></tr>${rows}</table>`;
+<table><tr><th>#</th><th>需求</th><th>状态 / 流程段</th><th>处理人</th><th>优先级/最后操作</th></tr>${rows}</table>`;
 
 // 谁在干什么
 const todos = DATA.todos.map(t =>
