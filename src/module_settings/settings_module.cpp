@@ -1282,7 +1282,7 @@ private:
             return;
         }
         auto list = listProjectCards(*db);
-        projectCards_ = list.isSuccess() ? std::move(list.value())
+        projectCards_ = list.isOk() ? std::move(list.value())
                                          : std::vector<ProjectCard>{};
     }
 
