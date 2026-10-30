@@ -213,7 +213,7 @@ main → 13 个 Router 页面 (home / markdown / todo / schedule / claude_proxy 
 | FontAwesome 图标 + Unicode Emoji + SVG（栅格化） | **macOS 27 Liquid Glass / vibrancy** — 用实色 + 阴影 |
 | onTap / onPress / onDrag / onKeyEvent / onScroll / onContextMenu / clipboard / IME / 撤销重做 | **全局 OS hotkey**（窗口失焦时收不到键盘事件）|
 | `transition + animate` (8 种 easing + 位掩码属性) | **fontWeight runtime 切换**（只打包 Bold 一份字重，SemiBold/Medium 无效）|
-| 多窗口（`app::openWindow`） | **自定义托盘菜单**（只硬编码 Show/Exit）|
+| 多窗口（`app::openWindow`） | —（原「自定义托盘菜单不做」2026-10-30 更正为已支持：`trayMenu` / `onTrayMenu` / `styledMenu` API 在 `include/eui/app.h`，详见 docs/EUI-NEO-CAPABILITIES.md 托盘结论段）|
 | | **Toast 队列**（单实例）|
 | | **Collapse / Accordion 组件** |
 | | **skeleton loader**（loading 占位需自画）|
