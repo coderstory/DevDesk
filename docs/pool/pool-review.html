@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>挂起需求评审 — 勾选「不做」</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0;
+         background: #241C15; color: #F5EDE4; }
+  header { padding: 24px 32px 8px; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #D97757; }
+  .meta { color: #B9A99B; font-size: 13px; }
+  main { padding: 8px 32px 96px; }
+  .item { display: flex; gap: 12px; align-items: flex-start;
+          background: rgba(245,237,228,.06); border: 1px solid rgba(217,119,87,.25);
+          border-radius: 10px; padding: 12px 16px; margin: 10px 0; }
+  .item input { width: 18px; height: 18px; margin-top: 3px; accent-color: #D97757; }
+  .item.checked { background: rgba(217,119,87,.18); }
+  .id { color: #D97757; font-weight: 700; min-width: 52px; }
+  .prio { border: 1px solid #B9A99B; border-radius: 999px; padding: 1px 8px;
+          font-size: 12px; color: #B9A99B; min-width: 30px; text-align: center; }
+  .title { font-size: 15px; }
+  .blocker { color: #B9A99B; font-size: 12px; margin-top: 2px; }
+  footer { position: fixed; left: 0; right: 0; bottom: 0;
+           background: #1A1410; border-top: 1px solid rgba(217,119,87,.35);
+           padding: 12px 32px; display: flex; align-items: center; gap: 16px; }
+  button { background: #D97757; color: #241C15; border: 0; border-radius: 8px;
+           padding: 10px 24px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  #summary { flex: 1; color: #F5EDE4; font-size: 14px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>挂起需求评审 — 勾选 = 不做</h1>
+  <div class="meta">数据源 docs/pool/pool-snapshot.json · 22 条挂起 · 生成时间 2026-10-30 21:09 ·
+  勾完点底部按钮，把汇总整段复制发回群里</div>
+</header>
+<main><div id="list"></div></main>
+<footer>
+  <button onclick="summary()">汇总勾选项</button>
+  <div id="summary">（未勾选）</div>
+</footer>
+<script>
+const NEEDS = [{"id": 1, "pool": "need", "priority": "P0", "title": "打包+真机UAT（0.5.0 收官，memcpp 侧）", "blocker": "等授权", "body": "package-windows.sh 出包→安装→首跑向导→真机点验（采集/脱敏/提案卡/hook注入/消耗页/触发线仪表）。与需-2 同件事一处收口", "updated": "2026-10-30 00:42:48 +0800"}, {"id": 2, "pool": "need", "priority": "P0", "title": "安装程序+真机UAT（release 线）", "blocker": "等授权", "body": "0.5.0 出包 Inno/DMG；代码闸已过（1954/0+probe 22/22+守卫绿）", "updated": "2026-10-30 00:42:48 +0800"}, {"id": 3, "pool": "need", "priority": "P1", "title": "infer=true 云端真调+结构化记忆（含 type schema 四类）", "blocker": "等环境", "body": "合并原需-3/需-4：glm 端点真调+控耗五条/预算硬档实测；schema 带 type（踩坑/决策/契约/环境），hook 注入按类型分组", "updated": "2026-10-30 00:42:48 +0800"}, {"id": 10, "pool": "need", "priority": "P1", "title": "会话资产库（Claude Code 会话归档 FTS5 检索）", "blocker": "登记不派工", "body": "hook 通道现成（hooks_settings.cpp 同套机制）；归档读本地会话记录+FTS5 表+检索页；核实项：会话结束 hook 事件名/payload；可反哺 infer 提炼；M 级，阶段1 主力", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 23, "pool": "bug", "priority": "P1", "title": "dsh-zcode-plan-bridge 插件三症状（思考停不下/reasoning 过滤漏/收尾不滤）", "blocker": "登记不派工", "body": "处置路线改定（老板 10-30）：fork tangyixiao/dsh-zcode-plan-bridge 自修+加功能，维护权在手，后续排期不动工。issue #6 仍有效（已提）；本地修复补丁冻结于 ~/dev/bridge-fix-abort-reasoning.patch（abort 即时补发 stop + reasoning 尾缓冲过滤 + drain 同路 + 文本半截标签扣住，no", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 14, "pool": "bug", "priority": "P2", "title": "agent_e2e 真网探针首跑挂/复跑绿", "blocker": "登记不派工", "body": "flake，低；docs/plans/full-buglist-2026-10-29.md", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 15, "pool": "bug", "priority": "P2", "title": "归档动画重触发无观察缝", "blocker": "登记不派工", "body": "测试缺口，低；docs/plans/full-buglist-2026-10-29.md", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 16, "pool": "bug", "priority": "P2", "title": "壁纸线·退出 terminate 尾巴", "blocker": "等环境", "body": "single_instance_win.cpp 监听线程 joinable 至静态析构；修复码在另一 Windows 机 wt-dev-gate 未上行；随该机下次使用顺手上行", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 18, "pool": "debt", "priority": "P2", "title": "UI 交互链路自动化验证缺位", "blocker": "登记不派工", "body": "点击/输入无法自主执行；长期解法=测试自动化驱动入口（CLI/IPC）", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 19, "pool": "debt", "priority": "P2", "title": "build/DevDesk.app 陈旧 bundle 陷阱", "blocker": "登记不派工", "body": "产物为裸二进制，旧 bundle 假象；修法候选待老板选", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 20, "pool": "debt", "priority": "P2", "title": "process_runner 三平台共同待办", "blocker": "登记不派工", "body": "①收尸后 EOF 宽限②POLLERR/POLLNVAL 排水③posix ECHILD 口径；3d59d076 登记", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 21, "pool": "debt", "priority": "P2", "title": "Agent M4（EventBus+context note）", "blocker": "条件未触发", "body": "L 级；决策锁定，开工时点=老板真机使用后明示（R-1）", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 24, "pool": "bug", "priority": "P2", "title": "DSH 宿主 reasoning 渲染缺口（协议预留 kind:'reasoning' 零渲染代码）", "blocker": "登记不派工", "body": "前端功能缺口非桥问题；UI 复用规格已出（折叠面板+流式+alias token 零硬编码）。issue 已提：https://github.com/dsh-tauri/deepseek-harness-desktop/issues/1300", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 28, "pool": "need", "priority": "P2", "title": "fork bridge 源码自修+加功能（stop 懒检查/reasoning/drain）", "blocker": "条件未触发", "body": "", "updated": "2026-10-30 21:05"}, {"id": 29, "pool": "need", "priority": "P2", "title": "池 MCP 第4能力：个人 TODO 表（每人一条 skill 读写）", "blocker": "登记不派工", "body": "", "updated": "2026-10-30 21:05"}, {"id": 31, "pool": "need", "priority": "P2", "title": "decay 遗忘清单真实现（telemem MemoryListFn 缝）", "blocker": "条件未触发", "body": "", "updated": "2026-10-30 21:05"}, {"id": 32, "pool": "need", "priority": "P2", "title": "baseVersion live 空转接真值", "blocker": "条件未触发", "body": "", "updated": "2026-10-30 21:05"}, {"id": 33, "pool": "need", "priority": "P2", "title": "Windows DST 真覆盖（tzdata 分发或时间源注入）", "blocker": "等环境", "body": "", "updated": "2026-10-30 21:05"}, {"id": 12, "pool": "need", "priority": "P3", "title": "收集箱（全局快捷键速记窗+agent 归类）", "blocker": "条件未触发", "body": "卡点：全局快捷键 EUI-NEO 能力现状待核实；不做剪贴板后台监听；M/L 六条最重，阶段2 后定", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 13, "pool": "need", "priority": "P3", "title": "全局命令面板（Cmd+K）", "blocker": "条件未触发", "body": "卡点：唯一要动 EUI-NEO 框架交互层（弹层/z序）；体验放大器，真机反馈验证唤起成本痛点后再定；M/L", "updated": "2026-10-30 20:32:33 +0800"}, {"id": 34, "pool": "need", "priority": "P3", "title": "向量模型升级档（Qwen3-Embedding-0.6B）", "blocker": "条件未触发", "body": "", "updated": "2026-10-30 21:05"}, {"id": 35, "pool": "need", "priority": "P3", "title": "触发线升级 C（自研全文通道备用图纸）", "blocker": "条件未触发", "body": "", "updated": "2026-10-30 21:05"}];
+const list = document.getElementById('list');
+for (const n of NEEDS) {
+  const row = document.createElement('label');
+  row.className = 'item';
+  row.innerHTML = `<input type="checkbox" data-id="${n.id}">
+    <span class="id">#${n.id}</span><span class="prio">${n.priority}</span>
+    <span><div class="title">${n.title}</div>
+    <div class="blocker">卡点：${n.blocker || '—'}${n.body ? ' · ' + n.body : ''}</div></span>`;
+  const box = row.querySelector('input');
+  const sync = () => row.classList.toggle('checked', box.checked);
+  box.addEventListener('change', sync);
+  list.appendChild(row);
+}
+function summary() {
+  const picked = [...document.querySelectorAll('input:checked')]
+    .map(b => NEEDS.find(n => String(n.id) === b.dataset.id))
+    .filter(Boolean);
+  const text = picked.length
+    ? '以下挂起需求全部不做（' + picked.length + ' 条）：\n' +
+      picked.map(n => `#${n.id} ${n.title}`).join('\n')
+    : '（未勾选）';
+  document.getElementById('summary').textContent = text;
+}
+</script>
+</body>
+</html>
