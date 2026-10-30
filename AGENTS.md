@@ -99,6 +99,7 @@ main → module_*（Router 页面模块 + 独立子窗）
 - 文档驱动：权威 spec 在 `docs/superpowers/specs/`，实现前先读。
 - 待办与剩余决策：`docs/superpowers/plans/2026-09-22-backlog.md`、`TODO.md`。
 - commit 前缀：`feat:` / `fix:` / `refactor:` / `docs:`。
+- **不要阶段性汇报**：完成一个小阶段就停下来汇报会被用户明确否定（说过两次）；把整个任务做完、测试跑绿再一次性汇报。汇报极简（编号+一句话结论），细节与证据写进清单卡文件并给路径。
 
 ## 九、文档入口
 
