@@ -1,5 +1,7 @@
 # EUI-NEO 上游 PR 方案
 
+> **过期横幅（2026-10-30 时效审计）**：内容基线为 2026-09-21 的能力盘点，其后 EUI-NEO 已新增 `trayMenu`/`onTrayMenu` 等自定义托盘菜单 API——文内托盘相关条目已被上游实现部分兑现，动手前必须先对照 `EUI-NEO/include/eui/app.h` 现状重审，不得按本文直接开工。审计出处：`docs/superpowers/research/2026-10-30-docs-freshness-audit.md`。
+
 > **目的**：基于 DevDesk 实际使用 EUI-NEO 的经验，识别 EUI-NEO 上游可以改进的点，准备提交 PR 反哺社区。
 > **调研依据**：[`docs/EUI-NEO-CAPABILITIES.md`](EUI-NEO-CAPABILITIES.md) 中识别的 5 个硬限制 + 5 个隐藏陷阱。
 > **生成日期**：2026-09-21
