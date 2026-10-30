@@ -196,8 +196,10 @@ def pool_fetch(
     priority: str | None = None,
     status: str | None = None,
     pool: str | None = None,
+    owner: str | None = None,
 ) -> dict:
-    """捞取：按 P 级/状态/池过滤（均可选），结果按 priority,id 排序（P1-P3 不插队口径）。"""
+    """捞取：按 P 级/状态/池/负责人过滤（均可选），结果按 priority,id 排序
+    （P1-P3 不插队口径）。owner 传调用方自己的 Bot 名 = 「我还剩几个活」身份绑定查询。"""
     sql = "SELECT * FROM needs WHERE 1=1"
     args: list = []
     if priority:
@@ -209,6 +211,9 @@ def pool_fetch(
     if pool:
         sql += " AND pool = ?"
         args.append(pool)
+    if owner:
+        sql += " AND owner = ?"
+        args.append(owner)
     sql += " ORDER BY CASE priority "
     sql += " ".join(f"WHEN '{p}' THEN {i}" for p, i in PRIORITY_ORDER.items())
     sql += " END, id"
@@ -322,6 +327,27 @@ def pool_search(keyword: str) -> dict:
             )
         ]
     return {"ok": True, "rows": rows}
+
+
+@mcp.tool()
+def pool_stats(owner: str | None = None, pool: str | None = None) -> dict:
+    """统计：按状态计数（在池/排产/进行中/待验收/挂起/关闭/拒绝）。
+    owner 传自己的 Bot 名 = 只看自己的账（「我还剩几个 bug」一条龙）；pool 可再限单池。"""
+    sql = "SELECT status, COUNT(*) AS n FROM needs WHERE 1=1"
+    args: list = []
+    if owner:
+        sql += " AND owner = ?"
+        args.append(owner)
+    if pool:
+        sql += " AND pool = ?"
+        args.append(pool)
+    sql += " GROUP BY status"
+    with _connect() as conn:
+        by_status = {r["status"]: r["n"] for r in conn.execute(sql, args)}
+    total = sum(by_status.values())
+    open_items = sum(n for st, n in by_status.items()
+                     if st not in ("关闭", "拒绝"))
+    return {"ok": True, "total": total, "open": open_items, "by_status": by_status}
 
 
 @mcp.tool()
