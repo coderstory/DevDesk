@@ -1,0 +1,1250 @@
+{
+ "needs": [
+  {
+   "id": 1,
+   "pool": "need",
+   "title": "打包+真机UAT（0.5.0 收官，memcpp 侧）",
+   "priority": "P0",
+   "status": "挂起",
+   "blocker": "等授权",
+   "owner": null,
+   "detail": "package-windows.sh 出包→安装→首跑向导→真机点验（采集/脱敏/提案卡/hook注入/消耗页/触发线仪表）。与需-2 同件事一处收口",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 00:42:48 +0800",
+   "body": "package-windows.sh 出包→安装→首跑向导→真机点验（采集/脱敏/提案卡/hook注入/消耗页/触发线仪表）。与需-2 同件事一处收口"
+  },
+  {
+   "id": 2,
+   "pool": "need",
+   "title": "安装程序+真机UAT（release 线）",
+   "priority": "P0",
+   "status": "挂起",
+   "blocker": "等授权",
+   "owner": null,
+   "detail": "0.5.0 出包 Inno/DMG；代码闸已过（1954/0+probe 22/22+守卫绿）",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 00:42:48 +0800",
+   "body": "0.5.0 出包 Inno/DMG；代码闸已过（1954/0+probe 22/22+守卫绿）"
+  },
+  {
+   "id": 3,
+   "pool": "need",
+   "title": "infer=true 云端真调+结构化记忆（含 type schema 四类）",
+   "priority": "P1",
+   "status": "挂起",
+   "blocker": "等环境",
+   "owner": null,
+   "detail": "合并原需-3/需-4：glm 端点真调+控耗五条/预算硬档实测；schema 带 type（踩坑/决策/契约/环境），hook 注入按类型分组",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 00:42:48 +0800",
+   "body": "合并原需-3/需-4：glm 端点真调+控耗五条/预算硬档实测；schema 带 type（踩坑/决策/契约/环境），hook 注入按类型分组"
+  },
+  {
+   "id": 4,
+   "pool": "need",
+   "title": "三池 MCP 收尾实施",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "惨品",
+   "detail": "前置=pool.db 落地；工具 pool_list/pool_add/pool_set_status；红线：只增改不删、入池必带 P 级和来源、主从关系按 spec 收口 | 两坑已裁决实施（wt-pool-fix 38b65d66，QA 四项过已合 dev）：needs 加 body 摘要列、pool.db 出 git+JSON 快照留痕",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 00:43:06 +0800",
+   "body": "前置=pool.db 落地；工具 pool_list/pool_add/pool_set_status；红线：只增改不删、入池必带 P 级和来源、主从关系按 spec 收口 | 两坑已裁决实施（wt-pool-fix 38b65d66，QA 四项过已合 dev）：needs 加 body 摘要列、pool.db 出 git+JSON 快照留痕"
+  },
+  {
+   "id": 5,
+   "pool": "need",
+   "title": "Agent M3 可用性四件",
+   "priority": "P0",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "辛勤码农",
+   "detail": "已销账：三项此前已由其他线交付，码农核查+QA 独立复跑双确认（dev@c6155a81：agent 定向 133/133、agent_ui 73/73、dialog probe 绿、隔离守卫绿）。停止钮负载 flake 记 BUG-9（P2 观察）",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 00:42:48 +0800",
+   "body": "已销账：三项此前已由其他线交付，码农核查+QA 独立复跑双确认（dev@c6155a81：agent 定向 133/133、agent_ui 73/73、dialog probe 绿、隔离守卫绿）。停止钮负载 flake 记 BUG-9（P2 观察）"
+  },
+  {
+   "id": 6,
+   "pool": "need",
+   "title": "智能体出厂任务模板×3",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": null,
+   "detail": "日报（cron 18:00 git.log→fs.write）/发版 changelog（tag 区间）/测试环境巡检（cron 9:00 curl healthcheck）；零新工具，S 级免 PRD；与需-5 同模块串行",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "日报（cron 18:00 git.log→fs.write）/发版 changelog（tag 区间）/测试环境巡检（cron 9:00 curl healthcheck）；零新工具，S 级免 PRD；与需-5 同模块串行"
+  },
+  {
+   "id": 7,
+   "pool": "need",
+   "title": "笔记 MCP 最小三工具",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": null,
+   "detail": "notes_search(FTS5)/notes_read/notes_append；非目标=整篇改写（避 400ms 自动保存+git 自动提交写冲突）",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "notes_search(FTS5)/notes_read/notes_append；非目标=整篇改写（避 400ms 自动保存+git 自动提交写冲突）"
+  },
+  {
+   "id": 8,
+   "pool": "need",
+   "title": "变更雷达（多仓库晨报 cron 模板）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": null,
+   "detail": "零新能力，git.status/log 现成，第四个出厂模板；搭 M3/阶段0 便车；场景材料见老板 10-30 六方向清单",
+   "created": "2026-10-30 00:37",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "零新能力，git.status/log 现成，第四个出厂模板；搭 M3/阶段0 便车；场景材料见老板 10-30 六方向清单"
+  },
+  {
+   "id": 9,
+   "pool": "need",
+   "title": "代理用量告警（日/月阈值通知）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": null,
+   "detail": "用量统计已有，缺阈值判定+通知出口；通知搭 M3 run 终态桌面通知便车，M3 基建落地后收尾",
+   "created": "2026-10-30 00:37",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "用量统计已有，缺阈值判定+通知出口；通知搭 M3 run 终态桌面通知便车，M3 基建落地后收尾"
+  },
+  {
+   "id": 10,
+   "pool": "need",
+   "title": "会话资产库（Claude Code 会话归档 FTS5 检索）",
+   "priority": "P1",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "hook 通道现成（hooks_settings.cpp 同套机制）；归档读本地会话记录+FTS5 表+检索页；核实项：会话结束 hook 事件名/payload；可反哺 infer 提炼；M 级，阶段1 主力",
+   "created": "2026-10-30 00:37",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "hook 通道现成（hooks_settings.cpp 同套机制）；归档读本地会话记录+FTS5 表+检索页；核实项：会话结束 hook 事件名/payload；可反哺 infer 提炼；M 级，阶段1 主力"
+  },
+  {
+   "id": 11,
+   "pool": "need",
+   "title": "项目卡（多业务系统结构化档案+project_info MCP）",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": null,
+   "detail": "一表+小 UI 页+一个 MCP 工具，全走既有模式；S/M；阶段1 并排",
+   "created": "2026-10-30 00:37",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "一表+小 UI 页+一个 MCP 工具，全走既有模式；S/M；阶段1 并排"
+  },
+  {
+   "id": 12,
+   "pool": "need",
+   "title": "收集箱（全局快捷键速记窗+agent 归类）",
+   "priority": "P3",
+   "status": "拒绝",
+   "blocker": "none",
+   "owner": null,
+   "detail": "卡点：全局快捷键 EUI-NEO 能力现状待核实；不做剪贴板后台监听；M/L 六条最重，阶段2 后定 | 拒绝理由：老板 2026-10-30 评审页勾选裁决不做",
+   "created": "2026-10-30 00:37",
+   "updated": "2026-10-30 13:21:04",
+   "body": "卡点：全局快捷键 EUI-NEO 能力现状待核实；不做剪贴板后台监听；M/L 六条最重，阶段2 后定"
+  },
+  {
+   "id": 13,
+   "pool": "need",
+   "title": "全局命令面板（Cmd+K）",
+   "priority": "P3",
+   "status": "拒绝",
+   "blocker": "none",
+   "owner": null,
+   "detail": "卡点：唯一要动 EUI-NEO 框架交互层（弹层/z序）；体验放大器，真机反馈验证唤起成本痛点后再定；M/L | 拒绝理由：老板 2026-10-30 评审页勾选裁决不做",
+   "created": "2026-10-30 00:37",
+   "updated": "2026-10-30 13:21:04",
+   "body": "卡点：唯一要动 EUI-NEO 框架交互层（弹层/z序）；体验放大器，真机反馈验证唤起成本痛点后再定；M/L"
+  },
+  {
+   "id": 14,
+   "pool": "bug",
+   "title": "agent_e2e 真网探针首跑挂/复跑绿",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "flake，低；docs/plans/full-buglist-2026-10-29.md",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "flake，低；docs/plans/full-buglist-2026-10-29.md"
+  },
+  {
+   "id": 15,
+   "pool": "bug",
+   "title": "归档动画重触发无观察缝",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "测试缺口，低；docs/plans/full-buglist-2026-10-29.md",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "测试缺口，低；docs/plans/full-buglist-2026-10-29.md"
+  },
+  {
+   "id": 16,
+   "pool": "bug",
+   "title": "壁纸线·退出 terminate 尾巴",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "等环境",
+   "owner": null,
+   "detail": "single_instance_win.cpp 监听线程 joinable 至静态析构；修复码在另一 Windows 机 wt-dev-gate 未上行；随该机下次使用顺手上行",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "single_instance_win.cpp 监听线程 joinable 至静态析构；修复码在另一 Windows 机 wt-dev-gate 未上行；随该机下次使用顺手上行"
+  },
+  {
+   "id": 17,
+   "pool": "debt",
+   "title": "探针残留守卫",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "build-test-run.sh 测试段尾部 pgrep 复核；判据稿 docs/plans/probe-residue-incident.md",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 00:43:06 +0800",
+   "body": "build-test-run.sh 测试段尾部 pgrep 复核；判据稿 docs/plans/probe-residue-incident.md"
+  },
+  {
+   "id": 18,
+   "pool": "debt",
+   "title": "UI 交互链路自动化验证缺位",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "点击/输入无法自主执行；长期解法=测试自动化驱动入口（CLI/IPC）",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "点击/输入无法自主执行；长期解法=测试自动化驱动入口（CLI/IPC）"
+  },
+  {
+   "id": 19,
+   "pool": "debt",
+   "title": "build/DevDesk.app 陈旧 bundle 陷阱",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "产物为裸二进制，旧 bundle 假象；修法候选待老板选",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "产物为裸二进制，旧 bundle 假象；修法候选待老板选"
+  },
+  {
+   "id": 20,
+   "pool": "debt",
+   "title": "process_runner 三平台共同待办",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": null,
+   "detail": "①收尸后 EOF 宽限②POLLERR/POLLNVAL 排水③posix ECHILD 口径；3d59d076 登记",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "①收尸后 EOF 宽限②POLLERR/POLLNVAL 排水③posix ECHILD 口径；3d59d076 登记"
+  },
+  {
+   "id": 21,
+   "pool": "debt",
+   "title": "Agent M4（EventBus+context note）",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "条件未触发",
+   "owner": null,
+   "detail": "L 级；决策锁定，开工时点=老板真机使用后明示（R-1）",
+   "created": "2026-10-29",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "L 级；决策锁定，开工时点=老板真机使用后明示（R-1）"
+  },
+  {
+   "id": 22,
+   "pool": "need",
+   "title": "终验探针条目（跑完即拒）",
+   "priority": "P3",
+   "status": "拒绝",
+   "blocker": null,
+   "owner": "元气小萝莉",
+   "detail": "POOL_MCP_FINAL_CHECK",
+   "created": "2026-10-30 19:35:17 +0800",
+   "updated": "2026-10-30 19:35:17 +0800",
+   "body": "POOL_MCP_FINAL_CHECK"
+  },
+  {
+   "id": 23,
+   "pool": "bug",
+   "title": "dsh-zcode-plan-bridge 插件三症状（思考停不下/reasoning 过滤漏/收尾不滤）",
+   "priority": "P1",
+   "status": "挂起",
+   "blocker": "登记不派工",
+   "owner": "元气小萝莉",
+   "detail": "处置路线改定（老板 10-30）：fork tangyixiao/dsh-zcode-plan-bridge 自修+加功能，维护权在手，后续排期不动工。issue #6 仍有效（已提）；本地修复补丁冻结于 ~/dev/bridge-fix-abort-reasoning.patch（abort 即时补发 stop + reasoning 尾缓冲过滤 + drain 同路 + 文本半截标签扣住，node --check 过）",
+   "created": "2026-10-30 19:56:53 +0800",
+   "updated": "2026-10-30 20:32:33 +0800",
+   "body": "处置路线改定（老板 10-30）：fork tangyixiao/dsh-zcode-plan-bridge 自修+加功能，维护权在手，后续排期不动工。issue #6 仍有效（已提）；本地修复补丁冻结于 ~/dev/bridge-fix-abort-reasoning.patch（abort 即时补发 stop + reasoning 尾缓冲过滤 + drain 同路 + 文本半截标签扣住，node --check 过）"
+  },
+  {
+   "id": 24,
+   "pool": "bug",
+   "title": "DSH 宿主 reasoning 渲染缺口（协议预留 kind:'reasoning' 零渲染代码）",
+   "priority": "P2",
+   "status": "拒绝",
+   "blocker": "none",
+   "owner": "元气小萝莉",
+   "detail": "前端功能缺口非桥问题；UI 复用规格已出（折叠面板+流式+alias token 零硬编码）。issue 已提：https://github.com/dsh-tauri/deepseek-harness-desktop/issues/1300 | 拒绝理由：老板 2026-10-30 评审页勾选裁决不做",
+   "created": "2026-10-30 19:56:53 +0800",
+   "updated": "2026-10-30 13:21:04",
+   "body": "前端功能缺口非桥问题；UI 复用规格已出（折叠面板+流式+alias token 零硬编码）。issue 已提：https://github.com/dsh-tauri/deepseek-harness-desktop/issues/1300"
+  },
+  {
+   "id": 25,
+   "pool": "debt",
+   "title": "pool_update 补 detail 编辑能力（body/FTS 同步）",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "元气小萝莉",
+   "detail": "卡点=登记不派工。超出池运维 skill 范围被裁决回退（revert e5fa357b，原实现 a71f560b），需要时按池序重做",
+   "created": "2026-10-30 20:05:10 +0800",
+   "updated": "2026-10-30 20:12:51 +0800",
+   "body": "卡点=登记不派工。超出池运维 skill 范围被裁决回退（revert e5fa357b，原实现 a71f560b），需要时按池序重做"
+  },
+  {
+   "id": 26,
+   "pool": "need",
+   "title": "zcode 供应商自动切换（探测即判断/白嫖到底/失败告警）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "元气小萝莉",
+   "detail": "spec docs/specs/2026-10-30-需16-供应商自动切换-spec.md；实现 tools/zcode_provider_switch.py",
+   "created": "2026-10-30 20:53:32 +0800",
+   "updated": "2026-10-30 20:53:32 +0800",
+   "body": "spec docs/specs/2026-10-30-需16-供应商自动切换-spec.md；实现 tools/zcode_provider_switch.py"
+  },
+  {
+   "id": 27,
+   "pool": "need",
+   "title": "ZCode CLI 安装配置接入 bridge 标准化文档+skill",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": "登记不派工",
+   "owner": "惨品",
+   "detail": "装 CLI→登录→两层 patch→验证全流程标准化；素材=zcode-dsh-setup skill；业务分析 81adee19；S 级先行，fork 修复验证前置；等排产点名",
+   "created": "2026-10-30 20:50",
+   "updated": "2026-10-30 21:09:33 +0800",
+   "body": "装 CLI→登录→两层 patch→验证全流程标准化；素材=zcode-dsh-setup skill；业务分析 81adee19；S 级先行，fork 修复验证前置；等排产点名"
+  },
+  {
+   "id": 28,
+   "pool": "need",
+   "title": "fork bridge 源码自修+加功能（stop 懒检查/reasoning/drain）",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "条件未触发",
+   "owner": "惨品",
+   "detail": "分级 fork：stop 必修；reasoning/drain 按频率；patch 已存档零冲突可应用；老学究技术稿 45a803b7 定稿一天级；前置=需-14 环境+排产点名",
+   "created": "2026-10-30 20:50",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  },
+  {
+   "id": 29,
+   "pool": "need",
+   "title": "池 MCP 第4能力：个人 TODO 表（每人一条 skill 读写）",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": "none",
+   "owner": "惨品",
+   "detail": "todo 表 id/owner/content/status/updated_at；每 agent 身份一条由 DB upsert 保证；skill 读写两动作；窗口活 | 补关单(惨品 10-30 深夜对账)：功能已交付——todo 表+身份绑定 upsert+skill 读写；小萝莉自验（写→覆盖→单人读→全池 2 人 2 条）+史密斯独立抽验（覆盖语义/单人全池读/F-01~F-06 零回归）双过，验收记录在群 2026-10-30 深夜；当时销池漏执行，本轮补",
+   "created": "2026-10-30 20:58",
+   "updated": "2026-10-30 13:21:49",
+   "body": ""
+  },
+  {
+   "id": 30,
+   "pool": "bug",
+   "title": "project_cards upsert 保 created_at 行为无有效测试覆盖",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": "",
+   "owner": "史密斯专员",
+   "detail": "原 open 已被码农补测清零（c26d8dc1 合 6e481c3c，同秒盲区破除，变异红证），legacy 表漏销账补记",
+   "created": "2026-10-30 09:25",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  },
+  {
+   "id": 31,
+   "pool": "need",
+   "title": "decay 遗忘清单真实现（telemem MemoryListFn 缝）",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "条件未触发",
+   "owner": "",
+   "detail": "待 telemem 暴露记忆列举缝；当前 fail-closed 零假卡。TODO.md 旧册需-5 迁入",
+   "created": "2026-10-30 21:05",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  },
+  {
+   "id": 32,
+   "pool": "need",
+   "title": "baseVersion live 空转接真值",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "条件未触发",
+   "owner": "",
+   "detail": "telemem 无版本查询缝，接受时以快照放行（契约位已留）；引擎升级后接真值。TODO.md 旧册需-6 迁入",
+   "created": "2026-10-30 21:05",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  },
+  {
+   "id": 33,
+   "pool": "need",
+   "title": "Windows DST 真覆盖（tzdata 分发或时间源注入）",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "等环境",
+   "owner": "",
+   "detail": "ucrt 不识别 IANA 时区名恒 SKIP；需 Windows 机。TODO.md 旧册需-7 迁入",
+   "created": "2026-10-30 21:05",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  },
+  {
+   "id": 34,
+   "pool": "need",
+   "title": "向量模型升级档（Qwen3-Embedding-0.6B）",
+   "priority": "P3",
+   "status": "挂起",
+   "blocker": "条件未触发",
+   "owner": "",
+   "detail": "记忆量数百条+后可升；必须显式 -c 8192 否则吃 4GB；见 2026-10-27-memcpp-embed-bakeoff。TODO.md 旧册需-8 迁入",
+   "created": "2026-10-30 21:05",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  },
+  {
+   "id": 35,
+   "pool": "need",
+   "title": "触发线升级 C（自研全文通道备用图纸）",
+   "priority": "P3",
+   "status": "挂起",
+   "blocker": "条件未触发",
+   "owner": "",
+   "detail": "冻结集 Recall@5<85% 或 2 字词命中低于 5/3/11 才触发；当前 100% 余量足。TODO.md 旧册需-9 迁入",
+   "created": "2026-10-30 21:05",
+   "updated": "2026-10-30 21:05",
+   "body": ""
+  }
+ ],
+ "dev_progress": [
+  {
+   "id": 1,
+   "need_id": 10,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "P1 待排产窗口（摸底已过，SessionEnd hook 结论在案），等统一排产"
+  },
+  {
+   "id": 2,
+   "need_id": 23,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "老板定后续处理：fork 自修+加功能，补丁已冻结，现不动工"
+  },
+  {
+   "id": 3,
+   "need_id": 24,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "外部仓（dsh 宿主）issue #1300 已提，等上游；不派工"
+  },
+  {
+   "id": 4,
+   "need_id": 14,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "环境性 flake 已定性，低优先"
+  },
+  {
+   "id": 5,
+   "need_id": 15,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "测试缺口记账"
+  },
+  {
+   "id": 6,
+   "need_id": 16,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "等 Windows 机上行提交"
+  },
+  {
+   "id": 7,
+   "need_id": 18,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "长期基建，触发时立项"
+  },
+  {
+   "id": 8,
+   "need_id": 19,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "待用户选修法"
+  },
+  {
+   "id": 9,
+   "need_id": 20,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "下次触碰时修"
+  },
+  {
+   "id": 10,
+   "need_id": 21,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "等真机使用后拍板 M4"
+  },
+  {
+   "id": 11,
+   "need_id": 12,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "快捷键能力待核实+阶段2"
+  },
+  {
+   "id": 12,
+   "need_id": 13,
+   "time": "2026-10-30 20:32:33 +0800",
+   "note": "框架交互层+阶段2"
+  },
+  {
+   "id": 13,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "note": "解冻执行：标准化文档+skill 已交付"
+  }
+ ],
+ "bugs": [],
+ "acceptance": [
+  {
+   "id": 1,
+   "need_id": 5,
+   "time": "2026-10-30 00:42:48 +0800",
+   "evidence": "迁移前已关闭（pool_items 需-5）"
+  },
+  {
+   "id": 2,
+   "need_id": 4,
+   "time": "2026-10-30 00:43:06 +0800",
+   "evidence": "实现 dba07839+QA验收关单，merge c6155a81，F-01~F-06 全过"
+  },
+  {
+   "id": 3,
+   "need_id": 17,
+   "time": "2026-10-30 00:43:06 +0800",
+   "evidence": "守卫+live标签 merge b11d3666，QA 史密斯反证红/绿+主树复跑四步闭环"
+  },
+  {
+   "id": 4,
+   "need_id": 25,
+   "time": "2026-10-30 20:12:51 +0800",
+   "evidence": "老板裁决保留 detail 支持，恢复 commit 9ab8ebfc 已推远端，无需重做"
+  },
+  {
+   "id": 5,
+   "need_id": 6,
+   "time": "2026-10-30 20:32:33 +0800",
+   "evidence": "出厂模板×3 已交付 465baf2b，QA 变异抽查全红证真，zcode 首单验证件"
+  },
+  {
+   "id": 6,
+   "need_id": 7,
+   "time": "2026-10-30 20:32:33 +0800",
+   "evidence": "笔记 MCP 交付 c3ffeefe，QA 定向+变异红证过，主树门禁绿"
+  },
+  {
+   "id": 7,
+   "need_id": 8,
+   "time": "2026-10-30 20:32:33 +0800",
+   "evidence": "变更雷达晨报交付 53c82b5c（fb03e972），QA 变异红证过"
+  },
+  {
+   "id": 8,
+   "need_id": 9,
+   "time": "2026-10-30 20:32:33 +0800",
+   "evidence": "用量告警交付 385c780e，QA 四项验收过（红线合规/F 六条/兼容/变异）"
+  },
+  {
+   "id": 9,
+   "need_id": 11,
+   "time": "2026-10-30 20:32:33 +0800",
+   "evidence": "项目卡交付 db3b4079（21 文件），QA 四轮验收 core 最小必要+定向全绿；漂移断言缺口挂 BUG-4"
+  },
+  {
+   "id": 10,
+   "need_id": 26,
+   "time": "2026-10-30 20:53:32 +0800",
+   "evidence": "实现 76e121dc 已推远端；QA 史密斯独立验收 V-01~V-05 全过（真探测真切换/原子写/双 cron task-7807c9a2·fd51824e），9:05 起全自动"
+  },
+  {
+   "id": 11,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "evidence": "标准化文档 docs/zcode-cli-dsh-integration.md（8664ebf7 已推）+ skill zcode-dsh-setup 注册进能力系统，S 级当日清"
+  }
+ ],
+ "status_log": [
+  {
+   "id": 1,
+   "need_id": 1,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "挂起",
+   "reason": "自 pool_items 需-1 迁移"
+  },
+  {
+   "id": 2,
+   "need_id": 2,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "挂起",
+   "reason": "自 pool_items 需-2 迁移"
+  },
+  {
+   "id": 3,
+   "need_id": 3,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "挂起",
+   "reason": "自 pool_items 需-3 迁移"
+  },
+  {
+   "id": 4,
+   "need_id": 4,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-4 迁移"
+  },
+  {
+   "id": 5,
+   "need_id": 5,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "关闭",
+   "reason": "自 pool_items 需-5 迁移"
+  },
+  {
+   "id": 6,
+   "need_id": 6,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-6 迁移"
+  },
+  {
+   "id": 7,
+   "need_id": 7,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-7 迁移"
+  },
+  {
+   "id": 8,
+   "need_id": 8,
+   "time": "2026-10-30 00:37",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-8 迁移"
+  },
+  {
+   "id": 9,
+   "need_id": 9,
+   "time": "2026-10-30 00:37",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-9 迁移"
+  },
+  {
+   "id": 10,
+   "need_id": 10,
+   "time": "2026-10-30 00:37",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-10 迁移"
+  },
+  {
+   "id": 11,
+   "need_id": 11,
+   "time": "2026-10-30 00:37",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-11 迁移"
+  },
+  {
+   "id": 12,
+   "need_id": 12,
+   "time": "2026-10-30 00:37",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-12 迁移"
+  },
+  {
+   "id": 13,
+   "need_id": 13,
+   "time": "2026-10-30 00:37",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 需-13 迁移"
+  },
+  {
+   "id": 14,
+   "need_id": 14,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items BUG-1 迁移"
+  },
+  {
+   "id": 15,
+   "need_id": 15,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items BUG-2 迁移"
+  },
+  {
+   "id": 16,
+   "need_id": 16,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items BUG-3 迁移"
+  },
+  {
+   "id": 17,
+   "need_id": 17,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 债-1 迁移"
+  },
+  {
+   "id": 18,
+   "need_id": 18,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 债-2 迁移"
+  },
+  {
+   "id": 19,
+   "need_id": 19,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 债-3 迁移"
+  },
+  {
+   "id": 20,
+   "need_id": 20,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 债-4 迁移"
+  },
+  {
+   "id": 21,
+   "need_id": 21,
+   "time": "2026-10-29",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "自 pool_items 债-5 迁移"
+  },
+  {
+   "id": 22,
+   "need_id": 4,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 23,
+   "need_id": 4,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 24,
+   "need_id": 4,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 25,
+   "need_id": 4,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 26,
+   "need_id": 17,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 27,
+   "need_id": 17,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 28,
+   "need_id": 17,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 29,
+   "need_id": 17,
+   "time": "2026-10-30 00:43:06 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 30,
+   "need_id": 22,
+   "time": "2026-10-30 19:35:17 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池"
+  },
+  {
+   "id": 31,
+   "need_id": 22,
+   "time": "2026-10-30 19:35:17 +0800",
+   "from_status": "在池",
+   "to_status": "拒绝",
+   "reason": "终验用临时条目，非真实需求"
+  },
+  {
+   "id": 32,
+   "need_id": 23,
+   "time": "2026-10-30 19:56:53 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池"
+  },
+  {
+   "id": 33,
+   "need_id": 24,
+   "time": "2026-10-30 19:56:53 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池"
+  },
+  {
+   "id": 34,
+   "need_id": 25,
+   "time": "2026-10-30 20:05:10 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池"
+  },
+  {
+   "id": 35,
+   "need_id": 25,
+   "time": "2026-10-30 20:12:51 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 36,
+   "need_id": 25,
+   "time": "2026-10-30 20:12:51 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 37,
+   "need_id": 25,
+   "time": "2026-10-30 20:12:51 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 38,
+   "need_id": 25,
+   "time": "2026-10-30 20:12:51 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 39,
+   "need_id": 6,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 40,
+   "need_id": 6,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 41,
+   "need_id": 6,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 42,
+   "need_id": 6,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 43,
+   "need_id": 7,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 44,
+   "need_id": 7,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 45,
+   "need_id": 7,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 46,
+   "need_id": 7,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 47,
+   "need_id": 8,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 48,
+   "need_id": 8,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 49,
+   "need_id": 8,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 50,
+   "need_id": 8,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 51,
+   "need_id": 9,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 52,
+   "need_id": 9,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 53,
+   "need_id": 9,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 54,
+   "need_id": 9,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 55,
+   "need_id": 11,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 56,
+   "need_id": 11,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 57,
+   "need_id": 11,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 58,
+   "need_id": 11,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 59,
+   "need_id": 10,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 60,
+   "need_id": 23,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 61,
+   "need_id": 24,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 62,
+   "need_id": 14,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 63,
+   "need_id": 15,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 64,
+   "need_id": 16,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "等环境"
+  },
+  {
+   "id": 65,
+   "need_id": 18,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 66,
+   "need_id": 19,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 67,
+   "need_id": 20,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "登记不派工"
+  },
+  {
+   "id": 68,
+   "need_id": 21,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "条件未触发"
+  },
+  {
+   "id": 69,
+   "need_id": 12,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "条件未触发"
+  },
+  {
+   "id": 70,
+   "need_id": 13,
+   "time": "2026-10-30 20:32:33 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "条件未触发"
+  },
+  {
+   "id": 71,
+   "need_id": 26,
+   "time": "2026-10-30 20:53:32 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池"
+  },
+  {
+   "id": 72,
+   "need_id": 26,
+   "time": "2026-10-30 20:53:32 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 73,
+   "need_id": 26,
+   "time": "2026-10-30 20:53:32 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 74,
+   "need_id": 26,
+   "time": "2026-10-30 20:53:32 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 75,
+   "need_id": 26,
+   "time": "2026-10-30 20:53:32 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  },
+  {
+   "id": 76,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "解冻执行：标准化文档+skill 已交付"
+  },
+  {
+   "id": 77,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": ""
+  },
+  {
+   "id": 78,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": ""
+  },
+  {
+   "id": 79,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": ""
+  },
+  {
+   "id": 80,
+   "need_id": 27,
+   "time": "2026-10-30 21:09:33 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": ""
+  }
+ ]
+}
