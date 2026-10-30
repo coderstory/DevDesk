@@ -25,7 +25,7 @@ DB = REPO / "docs/pool/pool.db"
 OUT = REPO / "docs/pool/pool-dashboard.html"
 
 # Datasette 只读端点（甲案）：码农起服务后把 _ENDPOINT_ 换成实际 URL 即成活数据页
-ENDPOINT = ""  # 例：http://127.0.0.1:8941/pool.db/needs.json
+ENDPOINT = "http://127.0.0.1:8941/pool"  # Datasette 甲案（8941 长驻）；空串=快照内嵌兜底
 
 STAGE_COLORS = {
     "已分析": "#C9A227",
@@ -141,6 +141,23 @@ def main() -> None:
 <script>
 const DATA = __PAYLOAD__;
 const COLORS = __STAGECOLORS__;
+// 甲案活数据：Datasette 端点可达则覆盖内嵌快照（单一数据源纪律）；不可达保快照兜底
+async function loadLive() {
+  if (!DATA.endpoint) return false;
+  try {
+    const tables = ['needs', 'bugs', 'dev_progress', 'acceptance', 'personal_todo'];
+    const out = {};
+    for (const t of tables) {
+      const r = await fetch(`${DATA.endpoint}/${t}.json?_shape=objects&_size=max`,
+                            { cache: 'no-store' });
+      if (!r.ok) return false;
+      out[t] = (await r.json()).rows;
+    }
+    Object.assign(DATA, out);
+    document.getElementById('datatime').textContent = new Date().toLocaleString('zh-CN');
+    return true;
+  } catch { return false; }  // Datasette 不可达：快照兜底，页面照常
+}
 document.getElementById('datatime').textContent = DATA.generated;
 
 // ── 汇总卡（随筛选重算） ──
@@ -232,12 +249,15 @@ function bindFilters() {
 function resetF() { F = { status: '全部', stage: '全部', owner: '全部', q: '' }; render(); }
 
 // 默认视图 = 进行中 + 挂起（老板最关心），其余状态从筛选器点出来
-F.status = '进行中';
-render();
-F.status = '挂起';
-render();
-F.status = '全部';
-render();
+(async () => {
+  const live = await loadLive();
+  if (live) console.log('pool-dashboard: Datasette 活数据已接入（30 秒轮询）');
+  F.status = '进行中'; render();
+  F.status = '挂起'; render();
+  F.status = '全部'; render();
+  // 30 秒轮询（惨品 046de8fc ①）：活数据下池库一变页面自刷；快照兜底态轮询无副作用
+  setInterval(async () => { if (await loadLive()) render(); }, 30000);
+})();
 </script>
 </body>
 </html>"""
