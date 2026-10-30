@@ -41,3 +41,4 @@
 | 2026-10-30 | 调研 | zcode bridge 两需求技术分析（需-14/15） | 三病灶在 fork 现源逐一实锤（app-server.js:1397 懒 stop/1391 reasoning 无尾缓冲/1429 收尾不同源），存量 patch git apply --check 通过、真会话三场景回归后半天级；结论=fork 自修不等 upstream；需-14 半天级，先做作需-15 验证前置 | docs/superpowers/research/2026-10-30-zcode-bridge-技术分析.md |
 | 2026-10-30 | 调研 | 需-16 供应商自动切换技术面 | 切换点实锤=zcode 层 ~/.zcode/v2/provider_config.json 的 defaultModelSelection 一个字段（免费 start-plan↔付费套餐），DSH/bridge 不用动；探测=最小真实回合+失败报文判定+重试防误切；零新依赖半天级；权限授权仍前置卡点 | docs/superpowers/research/2026-10-30-provider-auto-switch-技术面.md |
 | 2026-10-30 | spec | 需-16 供应商自动切换合成 spec（实现任务书） | 授权来源=老板娘依在案授权代批全自动版；切换点 provider_config.json 单字段+最小回合探测+重试防抖+原子写回+告警兜底；V-01~V-05 五条验收含真实切换两向验证 | docs/specs/2026-10-30-需16-供应商自动切换-spec.md |
+| 2026-10-30 | 调研 | 看板 v2 数据层现成轮子（拿来主义先行） | Datasette（simonw/datasette，11,528★，Apache-2.0，10-23 在更）开箱即给 SQLite 只读 JSON API+任意列筛选，可顶替手搓只读端点或作其对照；未本地安装（pip 一条）；成本对比与取舍见群内结论，采纳再落 spec | （群内快答，未落独立文档）|
