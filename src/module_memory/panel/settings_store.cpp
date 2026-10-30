@@ -39,6 +39,11 @@ MemoryPanelSettings loadPanelSettings() {
         const auto v = obj.get(k);
         return v.isNumber() ? static_cast<int>(v.asInt()) : dflt;
     };
+    // 需-9 token 阈值量级 10^5~10^7，超 int 保险域，走 int64 读
+    const auto getInt64 = [&obj](const char* k, long long dflt) {
+        const auto v = obj.get(k);
+        return v.isNumber() ? static_cast<long long>(v.asInt()) : dflt;
+    };
     const auto getStr = [&obj](const char* k) {
         const auto v = obj.get(k);
         return v.isString() ? v.asString() : std::string();
@@ -51,6 +56,16 @@ MemoryPanelSettings loadPanelSettings() {
                              : 0;
     s.llmProfileName = getStr("llmProfileName");
     s.mcpSearchEnabled = getBool("mcpSearchEnabled", true);
+    // 需-9 用量告警（旧文件缺键 = 全默认：三档阈值常量 + 闸全武装零击发）
+    s.usageDayAlertTokens = getInt64("usageDayAlertTokens", 500000);
+    s.usageSoftBudgetTokens = getInt64("usageSoftBudgetTokens", 2000000);
+    s.usageHardBudgetTokens = getInt64("usageHardBudgetTokens", 3000000);
+    s.usageDayGate.armed = getBool("usageAlertDayArmed", true);
+    s.usageDayGate.lastFireDay = getInt64("usageAlertDayLastDay", 0);
+    s.usageSoftGate.armed = getBool("usageAlertSoftArmed", true);
+    s.usageSoftGate.lastFireDay = getInt64("usageAlertSoftLastDay", 0);
+    s.usageHardGate.armed = getBool("usageAlertHardArmed", true);
+    s.usageHardGate.lastFireDay = getInt64("usageAlertHardLastDay", 0);
     return s;
 }
 
@@ -66,6 +81,24 @@ core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
     obj.set("llmProfileName", platform::json::JsonValue(settings.llmProfileName));
     obj.set("mcpSearchEnabled",
             platform::json::JsonValue(settings.mcpSearchEnabled));
+    obj.set("usageDayAlertTokens",
+            platform::json::JsonValue(settings.usageDayAlertTokens));
+    obj.set("usageSoftBudgetTokens",
+            platform::json::JsonValue(settings.usageSoftBudgetTokens));
+    obj.set("usageHardBudgetTokens",
+            platform::json::JsonValue(settings.usageHardBudgetTokens));
+    obj.set("usageAlertDayArmed",
+            platform::json::JsonValue(settings.usageDayGate.armed));
+    obj.set("usageAlertDayLastDay",
+            platform::json::JsonValue(settings.usageDayGate.lastFireDay));
+    obj.set("usageAlertSoftArmed",
+            platform::json::JsonValue(settings.usageSoftGate.armed));
+    obj.set("usageAlertSoftLastDay",
+            platform::json::JsonValue(settings.usageSoftGate.lastFireDay));
+    obj.set("usageAlertHardArmed",
+            platform::json::JsonValue(settings.usageHardGate.armed));
+    obj.set("usageAlertHardLastDay",
+            platform::json::JsonValue(settings.usageHardGate.lastFireDay));
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), true);
     if (text.isFail()) {

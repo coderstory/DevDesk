@@ -12,6 +12,7 @@
 #include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
 #include "core/window_geometry.h"  // 窗体记忆账本（UAT6：compose 每帧记账还原态尺寸）
 #include "module_agent/agent_module.h"
+#include "module_memory/memory_module.h"  // 需-9：用量告警每帧判定驱动（M3 同款）
 #include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
 #include "settings_config.h"
 #include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
@@ -713,6 +714,14 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
             while (auto notice = agent->takeRunEndNotice()) {
                 showAppNotice(notice->first, notice->second);
             }
+        }
+    }
+    // 需-9 用量告警判定驱动（M3 同款装配层每帧 poll）：判定与投递不依赖记忆页
+    // 可见性（PanelState 内部 5s 节流；出口 = toast 桥 + platform::notify 在模块内）。
+    for (::core::Module* m : router->modules()) {
+        if (m->pageId() != ::core::PageId::Memory) continue;
+        if (auto* mem = dynamic_cast<::module::memory::MemoryModule*>(m)) {
+            mem->pollUsageAlerts();
         }
     }
     // 首帧一次性落真实 contentScale：窗口创建前查不到（首次 update 前恒 1.0）；Screen::scale 与

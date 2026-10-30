@@ -28,6 +28,10 @@ public:
     void onStart() override;
     void onStop() override;
 
+    // 需-9 用量告警判定驱动（装配层每帧调，M3 pollRunEnd 同款）：判定与投递
+    // 不依赖记忆页可见；出口在 PanelState（toast 桥 + platform::notify）。
+    void pollUsageAlerts();
+
     // 测试/探针缝：视图切换不经点击注入（probe 直驱）
     void setActiveViewForTest(int view) { activeView_ = view; }
 
