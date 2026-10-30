@@ -31,3 +31,19 @@ python -m venv tools/.pool-mcp-venv && tools/.pool-mcp-venv/Scripts/pip install 
 - 验收：`tools/.pool-mcp-venv/bin/python tools/pool_mcp_acceptance.py`（F-01~F-06，临时库，不碰真实池）
 - 旧表迁移：`tools/.pool-mcp-venv/bin/python tools/pool_migrate_legacy.py`
   （pool_items 21 条 → 五表全量重建，幂等可双机复跑；pool_items 保留作审计参照）
+
+## 运维与跨机部署（tools/pool_ops.py）
+
+```bash
+# 备份：docs/pool/pool-backup-<时间戳>.sql（SQL 文本，落项目内）
+tools/.pool-mcp-venv/bin/python tools/pool_ops.py backup
+# 还原：默认取时间戳最新一份；还原前自动留 pre-restore 保险备份
+tools/.pool-mcp-venv/bin/python tools/pool_ops.py restore [file.sql]
+# venv 修复/重装（跨机部署第二步的脚本化形态）
+tools/.pool-mcp-venv/bin/python tools/pool_ops.py reinstall-venv
+```
+
+跨机迁移三步：克隆仓库 → `python3 tools/pool_ops.py reinstall-venv` → 拷 `pool.db` 文件或
+`restore` 快照/SQL 备份。实现注记：纯 stdlib 零依赖（venv 坏了 restore 仍可跑）；
+contentless FTS5 不能被 iterdump 直接重放（无列名 INSERT 必炸），备份时滤掉 FTS 行、
+尾部按 needs 全量重建——无独立数据，重建无损。
