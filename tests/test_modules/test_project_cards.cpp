@@ -171,6 +171,25 @@ REGISTER_TEST(project_card_migration_adds_missing_columns,
     return true;
 })
 
+REGISTER_TEST(project_card_upsert_rejects_created_at_drift,
+              "project_cards: upsert 带漂移 createdAt 入参不改变库内 created_at", {
+    devdesk::ProjectCardsDbEnv env;
+    DOCTEST_REQUIRE(ms::upsertProjectCard(*env.db, sampleCard("订单中心")).isOk());
+    auto got = ms::getProjectCard(*env.db, "订单中心");
+    DOCTEST_REQUIRE(got.isOk());
+    const int64_t realCreated = got.value().createdAt;
+    DOCTEST_REQUIRE(realCreated > 0);
+    // 带漂移 createdAt 的入参再 upsert：存储层必须保库内原值，不信入参
+    ms::ProjectCard drifted = got.value();
+    drifted.createdAt = realCreated + 999999;
+    drifted.updatedAt = realCreated + 999999;
+    DOCTEST_REQUIRE(ms::upsertProjectCard(*env.db, drifted).isOk());
+    auto reget = ms::getProjectCard(*env.db, "订单中心");
+    DOCTEST_REQUIRE(reget.isOk());
+    DOCTEST_CHECK_EQ(reget.value().createdAt, realCreated);
+    return true;
+})
+
 REGISTER_TEST(project_card_migration_idempotent_on_current_schema,
               "project_cards: migrate() 全链对新库幂等（连跑两遍不红）", {
     devdesk::ProjectCardsDbEnv env;
