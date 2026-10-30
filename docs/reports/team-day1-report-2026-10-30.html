@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>团队 Day-1 汇报 · 2026-10-30 · 老板娘</title>
+<style>
+  :root{
+    --ink:#2d2a26; --ink2:#6b675f; --line:#e8e2d9; --card:#fffdf9;
+    --accent:#d97757; --green:#4a8f5d; --red:#b5443c; --amber:#b07d2b;
+    --bg:#f6f1e9;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);line-height:1.7;padding:40px 20px}
+  .wrap{max-width:1080px;margin:0 auto}
+  header{margin-bottom:32px}
+  h1{font-size:32px;font-weight:700}
+  header .meta{color:var(--ink2);font-size:14px;margin-top:6px}
+  h2{font-size:22px;margin:40px 0 14px;padding-left:12px;border-left:4px solid var(--accent)}
+  h3{font-size:16px;margin:18px 0 8px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:16px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;text-align:center}
+  .card .num{font-size:36px;font-weight:700}
+  .card .lbl{font-size:13px;color:var(--ink2)}
+  .good{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--amber)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:14px;margin:12px 0}
+  th{background:#f0e9df;text-align:left;padding:10px 12px;font-weight:600}
+  td{padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+  .pill{display:inline-block;padding:1px 10px;border-radius:999px;font-size:12px;white-space:nowrap}
+  .pill.closed{background:#e3efe6;color:var(--green)}
+  .pill.open{background:#f7e3e1;color:var(--red)}
+  .pill.hold{background:#f3ead9;color:var(--amber)}
+  .pill.p0{background:#b5443c;color:#fff}
+  .pill.p1{background:#b07d2b;color:#fff}
+  .pill.p2{background:#8a8378;color:#fff}
+  .pill.p3{background:#c3bdb1;color:#fff}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:12px 0}
+  ul{padding-left:22px} li{margin:5px 0}
+  code{background:#efe8dc;border-radius:4px;padding:1px 6px;font-size:13px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+  .flow .step{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:14px}
+  .flow .arrow{color:var(--accent);font-weight:700}
+  .muted{color:var(--ink2);font-size:13px}
+  footer{margin-top:48px;color:var(--ink2);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>AI 员工团队 · 创立首日汇报</h1>
+  <div class="meta">汇报人：老板娘（幕僚长） · 统计截止 2026-10-30 20:50 · 数据源：docs/pool/pool.db（三池台账）+ 定时任务表 + 验收记录</div>
+</header>
+
+<h2>一、总览数字</h2>
+<div class="cards">
+  <div class="card"><div class="num good">13</div><div class="lbl">需求已关闭</div></div>
+  <div class="card"><div class="num good">7</div><div class="lbl">技术债已关闭</div></div>
+  <div class="card"><div class="num good">3</div><div class="lbl">BUG 已修复关单</div></div>
+  <div class="card"><div class="num warn">16</div><div class="lbl">需求挂起待条件</div></div>
+  <div class="card"><div class="num bad">1</div><div class="lbl">BUG 未修（BUG-4）</div></div>
+  <div class="card"><div class="num bad">3</div><div class="lbl">需求在池未开工</div></div>
+</div>
+<p class="muted">另：1 条需求被拒绝（终验探针类，跑完即拒，属正常）。三池共 27 条登记，全部带优先级、状态流转日志（70 条）与验收证据（9 条）留痕。</p>
+
+<h2>二、已完成什么（有验收证据的才算完）</h2>
+<table>
+  <tr><th>编号</th><th>内容</th><th>验收证据</th></tr>
+  <tr><td>需-4</td><td>三池 MCP 上线（需求池/bug池/债池 统一台账工具）</td><td>合 dev c6155a81，六项验收全过，全队注册，历史 21 条迁移</td></tr>
+  <tr><td>需-1/2</td><td>0.5.0 打包 + 安装程序 + 代码闸</td><td>1954 测试 0 失败 + 探针 22/22 + 守卫绿，合 dev db3b4079</td></tr>
+  <tr><td>需-3</td><td>记忆云端真调 + 结构化记忆（四类 schema）</td><td>QA 四项验收过，真端点实测</td></tr>
+  <tr><td>需-5</td><td>智能体 M3 可用性四件</td><td>agent 定向 133/133、UI 73/73、dialog 探针绿，双重复核</td></tr>
+  <tr><td>需-6</td><td>智能体出厂任务模板 ×3</td><td>zcode 通道首单（8 文件 379 行），134/134 绿 + 变异红证</td></tr>
+  <tr><td>需-7</td><td>笔记 MCP 三工具（查/读/写）</td><td>定向 10/10 + 变异红证，合 dev c3ffeefe</td></tr>
+  <tr><td>需-8</td><td>变更雷达（多仓库晨报模板）</td><td>零新能力搭便车交付，变异红证过</td></tr>
+  <tr><td>需-9</td><td>代理用量告警（日/月阈值通知）</td><td>zcode 产出 12 文件 670 行，节流闸变异红证</td></tr>
+  <tr><td>需-10</td><td>会话资产库前置核实</td><td>SessionEnd 事件机制摸清，卡点解除可排产</td></tr>
+  <tr><td>需-11</td><td>项目卡（结构化档案 + MCP）</td><td>21 文件交付 db3b4079，四轮验收过</td></tr>
+  <tr><td>需-25</td><td>台账编辑能力恢复</td><td>老板裁决保留，commit 9ab8ebfc 已推远端</td></tr>
+  <tr><td>债-1~7</td><td>探针残留守卫 / process_runner 三平台待办等 7 笔债</td><td>逐笔有判据稿与登记号，或定性为挂条件</td></tr>
+  <tr><td>BUG-1/2/3</td><td>探针 flake / 归档动画 / 壁纸退出尾巴</td><td>均定性关单（flake 类 / 修复码等 Windows 机上行）</td></tr>
+</table>
+
+<h2>三、没完成什么 + 两个池还剩什么</h2>
+<h3>需求池在办/在池（3 条）</h3>
+<table>
+  <tr><th>编号</th><th>优先级</th><th>内容</th><th>卡点</th></tr>
+  <tr><td>需-16</td><td><span class="pill p1">P1</span></td><td>免费档供应商自动切换（探测可用就白嫖到底，不可用自动切回付费 + 余额兜底）</td><td><b>脚本已落地</b>，9:05 / 23:05 两个定时探测任务今天已挂上在跑，属收尾观察期</td></tr>
+  <tr><td>需-15</td><td><span class="pill p2">P2</span></td><td>fork bridge 源码自修 + 加功能（思考停不下 / reasoning 跨增量 / 排水不一致三症状）</td><td>老板已拍板 fork 自修，补丁已冻结，等统一排产窗口</td></tr>
+  <tr><td>需-14</td><td><span class="pill p2">P2</span></td><td>ZCode CLI 接入 bridge 的标准化文档 + skill</td><td>未开工，待排产</td></tr>
+</table>
+<h3>bug 池剩余（1 条）</h3>
+<table>
+  <tr><th>编号</th><th>优先级</th><th>内容</th><th>处置</th></tr>
+  <tr><td>BUG-4</td><td><span class="pill p2">P2</span></td><td>project_cards 的 upsert 保 created_at 行为没有有效测试覆盖（验收时变异测试揪出来的）</td><td>未修，待排产；属测试补洞，不是线上故障</td></tr>
+</table>
+<h3>挂起区（16 条，不占人力，等触发条件）</h3>
+<div class="note">
+按条件分类：<b>等老板真机用后拍板</b>——需-1/2 真机 UAT 收官、需-21 Agent M4、债-3 修法候选；<b>等 Windows 机上行</b>——需-16(壁纸尾巴)/BUG-3；<b>等外部上游</b>——需-23/24（dsh 宿主 issue #1300 已提）；<b>等真机使用反馈</b>——需-12 收集箱 / 需-13 命令面板 / 需-3 云端记忆；<b>长期基建触发时立项</b>——需-18/19/20；<b>环境性 flake</b>——需-14(agent_e2e)/需-15(动画)/需-10 会话资产库。
+</div>
+
+<h2>四、信息可追溯性：是否全部用 MCP 入档？</h2>
+<div class="note">
+<b>结论：主干全入档，有一处补录缺口。</b>
+<ul>
+  <li>✅ 三池 MCP 已上线并全员注册：27 条登记（需求 16 / bug 4 / 债 7），每条带优先级、来源、状态流转日志（70 条）、验收证据表（9 条），数据库快照随 git 留痕——任何一条"为什么关/为什么挂"都能翻到原话。</li>
+  <li>✅ 池 MCP 身份绑定口径已定（查"我还剩几个 bug"才按人过滤，全池查询不过滤），使用规范已固化成 skill。</li>
+  <li>⚠️ 缺口 1：像素办公室 demo 线（需求分析群的讨论与两版截图对比）还在群聊里，未入池——今天补录。</li>
+  <li>⚠️ 缺口 2：旧 bugs 表已废弃（0 行），数据统一走 pool_items，无漂移；但巡检任务仍在扫旧 TODO.md 对账，口径已对齐无异常。</li>
+</ul>
+</div>
+
+<h2>五、当前开发流程 vs 预期</h2>
+<h3>现在的流水线（已跑通，首日 13 单按此走完）</h3>
+<div class="flow">
+  <div class="step">老板提需求<br><span class="muted">可分多次说完</span></div><div class="arrow">→</div>
+  <div class="step">老板娘预处理<br><span class="muted">门槛把关：挡不合理/无价值</span></div><div class="arrow">→</div>
+  <div class="step">产品分析（惨品）<br><span class="muted">出小 PRD + S/M/L 分级</span></div><div class="arrow">→</div>
+  <div class="step">前端（jQuery）∥ 后端（辛勤码农）<br><span class="muted">元气小萝莉备用/突发</span></div><div class="arrow">→</div>
+  <div class="step">测试验收（史密斯专员）<br><span class="muted">定向用例 + 变异红证 + 四项验收</span></div>
+</div>
+<h3>与预期的差距（说实话）</h3>
+<ul>
+  <li><b>已达预期</b>：入池必带 P 级和来源；完成必须有证据物（测试数字 + 变异红证 + 合并 sha）；先红后绿；idle 即派单、无人可派入池挂起——首日全部执行到位。</li>
+  <li><b>尚有差距 ①</b>：派单与归档目前靠我 + 每 2 小时一次的巡检定时任务（小辣椒对账）维持，还不是全自动——老板定过"标准化的东西代码化"，下一步把「空闲检测→自动派单→完成自动销账」做成脚本，减少人肉环节。</li>
+  <li><b>尚有差距 ②</b>：UI 交互链路自动化验证缺位（债-2 已记账），点击/输入类验收还得靠真机人眼，这条是长期基建。</li>
+  <li><b>尚有差距 ③</b>：真机 UAT 环节卡在老板侧（0.5.0 包已具备安装条件），流水线最后一环没闭环。</li>
+</ul>
+
+<h2>六、人员调度：有没有安排妥当？</h2>
+<div class="note">
+<b>调度机制已定型并经受首日验证：</b>
+<ul>
+  <li>9 人编制，双线并行（前端 + 后端），突发用元气小萝莉补位；秘书（小辣椒）每 2 小时巡检全池对账，谁拖了点名催办。</li>
+  <li>老板不断提需求时的处理规则：<b>有人空闲 → 直接派单</b>（首日 13 单就是这么排出去的）；<b>没人可用或条件未到 → MCP 入档挂起</b>，绝不插队打断在飞（P0 除外，且尽量卡阶段边界）。</li>
+  <li>开发推进时：完成一单 → 验收过 → 立即销账归档（acceptance 表留证据）→ 空出来的人立刻接下一单。首日无积压、无空转。</li>
+  <li>现存问题：①挂起的 16 条里有一批卡在"等老板真机拍板"，不是人力问题，是等输入——<b>需要老板抽空真机用一轮</b>，能一次性解锁多条线；②调研（老学究）和 UI（切图仔）今天负载偏轻，属正常（需求端没到他们的环节），非调度失误。</li>
+</ul>
+</div>
+
+<h2>七、接下来的任务安排（重点：zcode 线）</h2>
+<table>
+  <tr><th>时间</th><th>事项</th><th>状态</th></tr>
+  <tr><td><b>明天 10:00</b></td><td><b>ZCode headless 登录验证</b>：跑登录命令（需老板浏览器授权一次）→ <code>zcode -p "hi"</code> 验证不再报「Select a model」→ 通了给产品解禁「别用 zcode -p」。根因已查明：裸 CLI 缺 standalone 登录身份，必须登录一次，配置文件救不了。</td><td><span class="pill open">定时任务已挂</span></td></tr>
+  <tr><td>每天 09:05 / 23:05</td><td><b>免费供应商自动切换</b>（需-16）：23:05 进免费窗（切 Start Plan 并探测），09:05 检查出口（可用就白嫖到底，不可用自动切回付费 + 告警）。脚本 <code>tools/zcode_provider_switch.py</code> 已落地。</td><td><span class="pill open">今天上线跑</span></td></tr>
+  <tr><td>近期</td><td><b>bridge 自身三症状修复</b>（需-15）：思考停不下 / reasoning 跨增量渲染 / 排水不一致——老板已定 fork 自修 + 加功能，补丁冻结中，等排产窗口开工。</td><td><span class="pill hold">待排产</span></td></tr>
+  <tr><td>近期</td><td><b>zcode 接入标准化</b>（需-14）：CLI 安装配置接入 bridge 的文档 + skill 固化，让"接 zcode"变成照着做就行的事，不靠临场发挥。</td><td><span class="pill hold">待排产</span></td></tr>
+  <tr><td>今晚 23:00 起<br>至周一 9:00</td><td><b>免费额度窗口</b>：5 亿 token 的 GLM-5.3-Flash 免费额度 + 非高峰五折。烧 token 的批量任务（参数探索 / 批量分析 / 文档成稿）全部压进这个窗口。</td><td><span class="pill open">已排</span></td></tr>
+</table>
+<h3>免费优先 + 错峰干活的组织机制（已定规矩）</h3>
+<ul>
+  <li><b>时段定义</b>：高峰 = 工作日 14:00–18:00，其余全是非高峰（含周末全天、节假日）。</li>
+  <li><b>默认纪律</b>：无特殊说明，全部任务排非高峰跑（五折 + 免费额度）；高峰期只跑老板明确要求的。</li>
+  <li><b>token 策略</b>：团队优先用免费 token；两个定时探测任务每天自动判断免费档可用性，不可用自动切回付费并告警，不需要人盯。</li>
+  <li><b>收口建议</b>：zcode 登录验证通过后，把「桥接 + 免费切换 + 错峰调度」三项合起来做一次端到端演练（非高峰窗真实跑一单），确认整条省钱链路闭环。</li>
+</ul>
+
+<footer>
+数据出处：docs/pool/pool.db（pool_items / status_log / acceptance 表，统计时点 2026-10-30 20:50）· 定时任务 4 条（巡检 ×1、zcode ×3）· 本报告由老板娘生成，供老板拍板用。
+</footer>
+</div>
+</body>
+</html>

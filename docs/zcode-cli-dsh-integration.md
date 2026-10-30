@@ -83,5 +83,5 @@ grep -q dsh-zcode-plan-bridge ~/.dsh/profiles/tauri/package.json                
 ## 7. 配套件
 
 - **供应商自动切换**：`tools/zcode_provider_switch.py`（需-16，探测即判断/白嫖到底/失败告警，双 cron 已注册）
-- **池工具面**：`tools/pool_mcp.py`（四工具 + 个人 TODO + 审计四件套）
+- **池工具面**：`tools/pool_mcp.py`（四工具 + 个人 TODO + 审计四件套）；ZCode CLI 侧注册在全局 `~/.zcode/cli/config.json` 的 `mcp.servers.devdesk-pool`（stdio，venv python 直跑脚本；**ZCode 不支持项目级 MCP**——`.mcp.json` 是插件包专用、项目 `zcode.json`/`.zcode/config.json` 的 `mcp.servers` 均不生效，2026-10-31 实测），工具名 `mcp__devdesk-pool__pool_add/fetch/update/search/soft_delete/trace/stats/todo_set/todo_get`
 - 已知桥侧 bug 与 fork 自修：fork `coderstory/dsh-zcode-plan-bridge` main（de8c28e，含修复），需-15 三场景真会话回归在装机实例上补验
