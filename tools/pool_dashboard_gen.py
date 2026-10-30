@@ -151,7 +151,9 @@ async function loadLive() {
       const r = await fetch(`${DATA.endpoint}/${t}.json?_shape=objects&_size=max`,
                             { cache: 'no-store' });
       if (!r.ok) return false;
-      out[t] = (await r.json()).rows;
+      const rows = (await r.json()).rows;
+      // Datasette 出全量含软删行：页面侧按 deleted 过滤（生成器读库侧同款口径）
+      out[t] = rows.filter(x => !x.deleted);
     }
     Object.assign(DATA, out);
     document.getElementById('datatime').textContent = new Date().toLocaleString('zh-CN');
