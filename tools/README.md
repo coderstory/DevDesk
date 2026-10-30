@@ -47,3 +47,17 @@ tools/.pool-mcp-venv/bin/python tools/pool_ops.py reinstall-venv
 `restore` 快照/SQL 备份。实现注记：纯 stdlib 零依赖（venv 坏了 restore 仍可跑）；
 contentless FTS5 不能被 iterdump 直接重放（无列名 INSERT 必炸），备份时滤掉 FTS 行、
 尾部按 needs 全量重建——无独立数据，重建无损。
+
+## zcode 供应商自动切换（tools/zcode_provider_switch.py，需-16）
+
+「探测即判断」：最小真实 zcode 回合探测当前档位实际可用性；可用=白嫖到底不切，不可用=自动切另一档；失败重试 1 次防抖，全程记 `~/.zcode/v2/provider_switch.log`，异常桌面通知+非零退出。
+
+```bash
+python3 tools/zcode_provider_switch.py --window free   # 23:05 免费窗入口：切 Start Plan 并探测，不可用自动切回付费
+python3 tools/zcode_provider_switch.py --window paid   # 9:05 出口：可用维持，不可用切回付费
+python3 tools/zcode_provider_switch.py status          # 只读当前档位
+python3 tools/zcode_provider_switch.py --probe-only    # 只探测不决策
+ZCODE_PROBE_FORCE_FAIL=1 python3 tools/zcode_provider_switch.py --window free  # 注入失败（验收用）
+```
+
+双 cron 点已注册 DS Bot 调度（23:05/9:05，任务 id task-7807c9a2/fd51824e）。切换点=`~/.zcode/v2/provider_config.json` 的 `defaultModelSelection.providerId`，原子写（tmp+rename）；付费档 id 从 credentials 的 `<providerId>:identity` 键现读，解析失败回落常量并告警。
