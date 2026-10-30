@@ -14,7 +14,8 @@
    "body": "package-windows.sh 出包→安装→首跑向导→真机点验（采集/脱敏/提案卡/hook注入/消耗页/触发线仪表）。与需-2 同件事一处收口",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 2,
@@ -30,7 +31,8 @@
    "body": "0.5.0 出包 Inno/DMG；代码闸已过（1954/0+probe 22/22+守卫绿）",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 3,
@@ -46,7 +48,8 @@
    "body": "合并原需-3/需-4：glm 端点真调+控耗五条/预算硬档实测；schema 带 type（踩坑/决策/契约/环境），hook 注入按类型分组",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 4,
@@ -62,7 +65,8 @@
    "body": "前置=pool.db 落地；工具 pool_list/pool_add/pool_set_status；红线：只增改不删、入池必带 P 级和来源、主从关系按 spec 收口 | 两坑已裁决实施（wt-pool-fix 38b65d66，QA 四项过已合 dev）：needs 加 body 摘要列、pool.db 出 git+JSON 快照留痕",
    "created_by": "惨品",
    "updated_by": "惨品",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 5,
@@ -78,7 +82,8 @@
    "body": "已销账：三项此前已由其他线交付，码农核查+QA 独立复跑双确认（dev@c6155a81：agent 定向 133/133、agent_ui 73/73、dialog probe 绿、隔离守卫绿）。停止钮负载 flake 记 BUG-9（P2 观察）",
    "created_by": "辛勤码农",
    "updated_by": "辛勤码农",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 6,
@@ -94,7 +99,8 @@
    "body": "日报（cron 18:00 git.log→fs.write）/发版 changelog（tag 区间）/测试环境巡检（cron 9:00 curl healthcheck）；零新工具，S 级免 PRD；与需-5 同模块串行",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 7,
@@ -110,7 +116,8 @@
    "body": "notes_search(FTS5)/notes_read/notes_append；非目标=整篇改写（避 400ms 自动保存+git 自动提交写冲突）",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 8,
@@ -126,7 +133,8 @@
    "body": "零新能力，git.status/log 现成，第四个出厂模板；搭 M3/阶段0 便车；场景材料见老板 10-30 六方向清单",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 9,
@@ -142,7 +150,8 @@
    "body": "用量统计已有，缺阈值判定+通知出口；通知搭 M3 run 终态桌面通知便车，M3 基建落地后收尾",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 10,
@@ -158,7 +167,8 @@
    "body": "hook 通道现成（hooks_settings.cpp 同套机制）；归档读本地会话记录+FTS5 表+检索页；核实项：会话结束 hook 事件名/payload；可反哺 infer 提炼；M 级，阶段1 主力",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 11,
@@ -174,7 +184,8 @@
    "body": "一表+小 UI 页+一个 MCP 工具，全走既有模式；S/M；阶段1 并排",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 12,
@@ -190,7 +201,8 @@
    "body": "卡点：全局快捷键 EUI-NEO 能力现状待核实；不做剪贴板后台监听；M/L 六条最重，阶段2 后定",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 13,
@@ -206,7 +218,8 @@
    "body": "卡点：唯一要动 EUI-NEO 框架交互层（弹层/z序）；体验放大器，真机反馈验证唤起成本痛点后再定；M/L",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 14,
@@ -222,7 +235,8 @@
    "body": "flake，低；docs/plans/full-buglist-2026-10-29.md",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 15,
@@ -238,7 +252,8 @@
    "body": "测试缺口，低；docs/plans/full-buglist-2026-10-29.md",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 16,
@@ -254,7 +269,8 @@
    "body": "single_instance_win.cpp 监听线程 joinable 至静态析构；修复码在另一 Windows 机 wt-dev-gate 未上行；随该机下次使用顺手上行",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 17,
@@ -270,7 +286,8 @@
    "body": "build-test-run.sh 测试段尾部 pgrep 复核；判据稿 docs/plans/probe-residue-incident.md",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 18,
@@ -286,7 +303,8 @@
    "body": "点击/输入无法自主执行；长期解法=测试自动化驱动入口（CLI/IPC）",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 19,
@@ -302,7 +320,8 @@
    "body": "产物为裸二进制，旧 bundle 假象；修法候选待老板选",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 20,
@@ -318,7 +337,8 @@
    "body": "①收尸后 EOF 宽限②POLLERR/POLLNVAL 排水③posix ECHILD 口径；3d59d076 登记",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 21,
@@ -334,7 +354,8 @@
    "body": "L 级；决策锁定，开工时点=老板真机使用后明示（R-1）",
    "created_by": null,
    "updated_by": null,
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 22,
@@ -350,7 +371,8 @@
    "body": "POOL_MCP_FINAL_CHECK",
    "created_by": "元气小萝莉",
    "updated_by": "元气小萝莉",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 23,
@@ -366,7 +388,8 @@
    "body": "处置路线改定（老板 10-30）：fork tangyixiao/dsh-zcode-plan-bridge 自修+加功能，维护权在手，后续排期不动工。issue #6 仍有效（已提）；本地修复补丁冻结于 ~/dev/bridge-fix-abort-reasoning.patch（abort 即时补发 stop + reasoning 尾缓冲过滤 + drain 同路 + 文本半截标签扣住，node --check 过）",
    "created_by": "元气小萝莉",
    "updated_by": "元气小萝莉",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 24,
@@ -382,7 +405,8 @@
    "body": "前端功能缺口非桥问题；UI 复用规格已出（折叠面板+流式+alias token 零硬编码）。issue 已提：https://github.com/dsh-tauri/deepseek-harness-desktop/issues/1300",
    "created_by": "元气小萝莉",
    "updated_by": "元气小萝莉",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 25,
@@ -398,7 +422,8 @@
    "body": "卡点=登记不派工。超出池运维 skill 范围被裁决回退（revert e5fa357b，原实现 a71f560b），需要时按池序重做",
    "created_by": "元气小萝莉",
    "updated_by": "元气小萝莉",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 26,
@@ -414,7 +439,8 @@
    "body": "spec docs/specs/2026-10-30-需16-供应商自动切换-spec.md；实现 tools/zcode_provider_switch.py",
    "created_by": "元气小萝莉",
    "updated_by": "元气小萝莉",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 27,
@@ -430,7 +456,8 @@
    "body": "装 CLI→登录→两层 patch→验证全流程标准化；素材=zcode-dsh-setup skill；业务分析 81adee19；S 级先行，fork 修复验证前置；等排产点名",
    "created_by": "惨品",
    "updated_by": "惨品",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 28,
@@ -446,7 +473,8 @@
    "body": "分级 fork：stop 必修；reasoning/drain 按频率；patch 已存档零冲突可应用；老学究技术稿 45a803b7 定稿一天级；前置=需-14 环境+排产点名 | 转「进行中」(惨品 10-30 深夜)：fork 修复在飞（元气小萝莉 patch 应用+三场景真会话回归，需-15 范畴），jQuery 对账实证",
    "created_by": "惨品",
    "updated_by": "惨品",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 29,
@@ -462,7 +490,8 @@
    "body": "",
    "created_by": "惨品",
    "updated_by": "惨品",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 30,
@@ -478,7 +507,8 @@
    "body": "",
    "created_by": "史密斯专员",
    "updated_by": "史密斯专员",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 31,
@@ -494,7 +524,8 @@
    "body": "",
    "created_by": "",
    "updated_by": "",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 32,
@@ -510,7 +541,8 @@
    "body": "",
    "created_by": "",
    "updated_by": "",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 33,
@@ -526,7 +558,8 @@
    "body": "",
    "created_by": "",
    "updated_by": "",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 34,
@@ -542,7 +575,8 @@
    "body": "",
    "created_by": "",
    "updated_by": "",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 35,
@@ -558,7 +592,8 @@
    "body": "",
    "created_by": "",
    "updated_by": "",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   },
   {
    "id": 36,
@@ -574,7 +609,8 @@
    "body": "",
    "created_by": "jQuery",
    "updated_by": "jQuery",
-   "deleted": 0
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [

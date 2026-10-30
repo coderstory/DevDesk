@@ -126,6 +126,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
         if backfill:
             conn.execute(backfill)
+    # stage 阶段字段（池 36 看板）：status 管生死、stage 管流程段（已分析/已调研/
+    # 开发中/测试中/已验收），自由文本工具层维护；statusLog 等子表不需要
+    ncols = {r[1] for r in conn.execute("PRAGMA table_info(needs)")}
+    if "stage" not in ncols:
+        conn.execute("ALTER TABLE needs ADD COLUMN stage TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
     # personal_todo 按规范重建：id 自增 + 四件套 + 每人一条（owner 部分唯一索引，
@@ -306,6 +311,7 @@ def pool_update(
     detail: str | None = None,
     bug_resolved: int | None = None,
     by: str | None = None,
+    stage: str | None = None,
 ) -> dict:
     """更新条目。状态迁移按状态机校验；note→dev_progress、bug→bugs（未处理行）、
     bug_resolved=行id 标记该 BUG 已处理；关闭必须带 evidence→acceptance 且子 BUG 全部
@@ -370,10 +376,18 @@ def pool_update(
         if by or owner:
             fields.append("updated_by = ?")
             args.append(by or owner)
+        if stage is not None:
+            fields.append("stage = ?")
+            args.append(stage)
         args.append(id)
         conn.execute(f"UPDATE needs SET {', '.join(fields)} WHERE id = ?", args)
 
         if status and status != row["status"]:
+            AUTO_STAGE = {"排产": "已分析", "进行中": "开发中", "待验收": "测试中",
+                          "关闭": "已验收", "拒绝": "已否决"}
+            if stage is None and status in AUTO_STAGE:
+                fields.append("stage = ?")
+                args.append(AUTO_STAGE[status])
             conn.execute(
                 "INSERT INTO status_log(need_id, time, from_status, to_status, reason,"
                 " created_by, updated_by, deleted) VALUES (?,?,?,?,?,?,?,0)",
