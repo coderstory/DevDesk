@@ -70,7 +70,7 @@ core::Result<core::mcp::ToolResult> ProjectInfoTool::execute(
             // 附已登记清单：agent 拿到可重试的名字，而不是干瞪错误
             std::string hint = "未找到名为「" + queryName + "」的项目卡。";
             auto all = listProjectCards(*db_);
-            if (all.isSuccess() && !all.value().empty()) {
+            if (all.isOk() && !all.value().empty()) {
                 hint += "已登记：";
                 for (std::size_t i = 0; i < all.value().size(); ++i) {
                     if (i > 0) hint += "、";
