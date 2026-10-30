@@ -157,15 +157,19 @@ ProcessRunner systemProcessRunner() {
         // 排空 + 收尸一体：两输出管道全部读到 EOF 才算完。管道没排空前绝不
         // 阻塞等退出——输出一旦超管道缓冲（64KB 量级），先等退出会让子进程
         // 卡在 write、父进程卡在 wait 互锁：设超时被误杀+输出截断，不设永挂。
+        // 收尸后 EOF 只再等 kReapGraceMs（债-20 ①）：孙进程持写端时 EOF 遥遥
+        // 无期，主进程结果此刻已完整，宽限到点强关走人，不随孙进程挂满全程。
         if (stdoutPipe[0] >= 0) setNonBlocking(stdoutPipe[0]);
         if (stderrPipe[0] >= 0) setNonBlocking(stderrPipe[0]);
         bool outOpen = stdoutPipe[0] >= 0;
         bool errOpen = stderrPipe[0] >= 0;
+        constexpr auto kReapGraceMs = std::chrono::milliseconds(2000);
         const auto deadline =
             timeoutMs > 0
                 ? std::chrono::steady_clock::now() +
                       std::chrono::milliseconds(timeoutMs)
                 : std::chrono::steady_clock::time_point::max();
+        auto reapDeadline = std::chrono::steady_clock::time_point::max();
         bool exited = false;
         int status = 0;
         while (outOpen || errOpen || !exited) {
@@ -183,9 +187,16 @@ ProcessRunner systemProcessRunner() {
             if (nfds > 0) {
                 int pr = poll(pfds, static_cast<nfds_t>(nfds), 20);
                 if (pr > 0) {
-                    if (outIdx >= 0 && (pfds[outIdx].revents & (POLLIN | POLLHUP)) != 0)
+                    // POLLERR/POLLNVAL 也要排水（债-20 ②）：只认 POLLIN|POLLHUP 会让
+                    // 坏 fd 永远留在 poll 集里 20ms 空转死循环；drainOnce 对坏 fd
+                    // read 一次即出错收尾，两种 revents 统一走它闭环。
+                    if (outIdx >= 0 &&
+                        (pfds[outIdx].revents &
+                         (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0)
                         outOpen = drainOnce(stdoutPipe[0], result.stdoutText);
-                    if (errIdx >= 0 && (pfds[errIdx].revents & (POLLIN | POLLHUP)) != 0)
+                    if (errIdx >= 0 &&
+                        (pfds[errIdx].revents &
+                         (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0)
                         errOpen = drainOnce(stderrPipe[0], result.stderrText);
                 } else if (pr < 0 && errno != EINTR) {
                     // poll 异常（不该发生）：强关两管道防死循环，错误事实留给 waitpid
@@ -195,13 +206,46 @@ ProcessRunner systemProcessRunner() {
                     errOpen = false;
                 }
             }
-            if (exited) continue;  // 已收尸：只剩把管道拖到 EOF（孙进程持写端时靠 poll 节流）
+            if (exited) {
+                if (!outOpen && !errOpen) break;  // 两管道 EOF：正常收尾
+                if (std::chrono::steady_clock::now() >= reapDeadline) {
+                    // 宽限到点 EOF 未至（孙进程持写端）：强关走人，结果已完整
+                    closeFdSafe(stdoutPipe[0]);
+                    outOpen = false;
+                    closeFdSafe(stderrPipe[0]);
+                    errOpen = false;
+                    break;
+                }
+                continue;  // 宽限内继续拖 EOF（poll 20ms 节流）
+            }
             pid_t w = waitpid(pid, &status, WNOHANG);
             if (w == pid) {
                 exited = true;
+                reapDeadline =
+                    std::chrono::steady_clock::now() + kReapGraceMs;
                 continue;
             }
-            if (w < 0 && errno != EINTR) break;
+            if (w < 0 && errno != EINTR) {
+                // ECHILD 口径与 macos 版对齐（债-20 ③）：子进程已被别处收尸
+                // （SIGCHLD 全局被忽略或重复收尸）属异常信号面，显式报错，
+                // 不静默 break 丢输出丢退出码
+                closeFdSafe(stdoutPipe[0]);
+                closeFdSafe(stderrPipe[0]);
+                if (!stdinText.empty()) {
+                    closeFdSafe(stdinPipe[0]);
+                    closeFdSafe(stdinPipe[1]);
+                }
+                if (errno == ECHILD) {
+                    return core::Result<ProcessResult>::fail(
+                        core::ErrorCode::Internal,
+                        "进程执行器：waitpid ECHILD —— 子进程已被收尸"
+                        "（SIGCHLD 全局被忽略或重复收尸），命令: " + argv[0]);
+                }
+                return core::Result<ProcessResult>::fail(
+                    core::ErrorCode::Internal,
+                    "进程执行器：waitpid 失败: " + std::string(strerror(errno)) +
+                        "，命令: " + argv[0]);
+            }
             if (!exited && std::chrono::steady_clock::now() >= deadline) {
                 result.timedOut = true;
                 kill(pid, SIGKILL);
@@ -214,6 +258,8 @@ ProcessRunner systemProcessRunner() {
                 result.exitCode =
                     WIFEXITED(killStatus) ? WEXITSTATUS(killStatus) : -1;
                 exited = true;
+                reapDeadline =
+                    std::chrono::steady_clock::now() + kReapGraceMs;
             }
         }
         if (!result.timedOut) {

@@ -48,6 +48,8 @@ add_executable(devdesk_tests
     test_platform/test_file_open.cpp
     test_platform/test_terminal_launch.cpp
     test_platform/test_file_watcher.cpp
+    # 债-20 process_runner 真实现契约（POSIX 族；win 侧用例整体空转另行登记）
+    test_platform/test_process_runner.cpp
     test_platform/test_tray_icon.cpp
     test_platform/test_single_instance.cpp
     test_platform/test_notification.cpp
