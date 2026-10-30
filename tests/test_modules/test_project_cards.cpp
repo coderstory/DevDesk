@@ -21,8 +21,8 @@ namespace {
 
 namespace ms = module::settings;
 
-ProjectCard sampleCard(const std::string& name) {
-    ProjectCard c;
+ms::ProjectCard sampleCard(const std::string& name) {
+    ms::ProjectCard c;
     c.name = name;
     c.repoPath = "/srv/git/order-center";
     c.startCommand = "make dev";
@@ -39,13 +39,13 @@ REGISTER_TEST(project_card_store_crud_roundtrip,
               "project_cards: 建卡→查卡→改卡→删卡全链（中文/字段往返）", {
     devdesk::ProjectCardsDbEnv env;
     // 建卡：中文名 + 六字段全部入库
-    ProjectCard c = sampleCard("订单中心");
+    ms::ProjectCard c = sampleCard("订单中心");
     auto saved = ms::upsertProjectCard(*env.db, c);
-    DOCTEST_CHECK(saved.isSuccess());
+    DOCTEST_CHECK(saved.isOk());
 
     // 查卡：六字段逐项往返（防「只写了 name 其余丢」的半截落库）
     auto got = ms::getProjectCard(*env.db, " 订单中心 ");  // 前后空格 = trim 后命中
-    DOCTEST_REQUIRE(got.isSuccess());
+    DOCTEST_REQUIRE(got.isOk());
     DOCTEST_CHECK_EQ(got.value().name, std::string("订单中心"));
     DOCTEST_CHECK_EQ(got.value().repoPath, c.repoPath);
     DOCTEST_CHECK_EQ(got.value().startCommand, c.startCommand);
@@ -57,14 +57,14 @@ REGISTER_TEST(project_card_store_crud_roundtrip,
     DOCTEST_CHECK(got.value().updatedAt >= got.value().createdAt);
 
     // 改卡：改两个字段，其余不动；created_at 不漂移
-    ProjectCard changed = got.value();
+    ms::ProjectCard changed = got.value();
     changed.repoPath = "/srv/git/order-center-v2";
     changed.deployMethod = "helm upgrade";
     const int64_t createdBefore = got.value().createdAt;
     auto resaved = ms::upsertProjectCard(*env.db, changed);
-    DOCTEST_CHECK(resaved.isSuccess());
+    DOCTEST_CHECK(resaved.isOk());
     auto regot = ms::getProjectCard(*env.db, "订单中心");
-    DOCTEST_REQUIRE(regot.isSuccess());
+    DOCTEST_REQUIRE(regot.isOk());
     DOCTEST_CHECK_EQ(regot.value().repoPath, std::string("/srv/git/order-center-v2"));
     DOCTEST_CHECK_EQ(regot.value().deployMethod, std::string("helm upgrade"));
     DOCTEST_CHECK_EQ(regot.value().startCommand, c.startCommand);  // 未改字段保持
@@ -73,19 +73,19 @@ REGISTER_TEST(project_card_store_crud_roundtrip,
 
     // 列表：两张卡按 name 字典序
     auto second = ms::upsertProjectCard(*env.db, sampleCard("会员系统"));
-    DOCTEST_CHECK(second.isSuccess());
+    DOCTEST_CHECK(second.isOk());
     auto list = ms::listProjectCards(*env.db);
-    DOCTEST_REQUIRE(list.isSuccess());
+    DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(list.value().size(), std::size_t{2});
 
     // 删卡：删后查 NotFound、列表少一
     auto removed = ms::deleteProjectCard(*env.db, "订单中心");
-    DOCTEST_CHECK(removed.isSuccess());
+    DOCTEST_CHECK(removed.isOk());
     auto missing = ms::getProjectCard(*env.db, "订单中心");
     DOCTEST_CHECK(missing.isFail());
     DOCTEST_CHECK_EQ(missing.errorCode(), core::ErrorCode::NotFound);
     auto relist = ms::listProjectCards(*env.db);
-    DOCTEST_REQUIRE(relist.isSuccess());
+    DOCTEST_REQUIRE(relist.isOk());
     DOCTEST_CHECK_EQ(relist.value().size(), std::size_t{1});
     DOCTEST_CHECK_EQ(relist.value()[0].name, std::string("会员系统"));
 
@@ -99,16 +99,16 @@ REGISTER_TEST(project_card_store_crud_roundtrip,
 REGISTER_TEST(project_card_store_persist_across_reopen,
               "project_cards: 建卡→重开库→卡还在（F-01 持久化）", {
     devdesk::ProjectCardsDbEnv env;
-    DOCTEST_CHECK(ms::upsertProjectCard(*env.db, sampleCard("订单中心")).isSuccess());
+    DOCTEST_CHECK(ms::upsertProjectCard(*env.db, sampleCard("订单中心")).isOk());
 
     // 重启模拟：销毁原连接，按同一路径重新 open + migrate，再查
     {
         auto reopened = core::data::SqliteDb::open(env.path);
-        DOCTEST_REQUIRE(reopened.isSuccess());
+        DOCTEST_REQUIRE(reopened.isOk());
         auto migrated = core::schema::migrate(reopened.value());
-        DOCTEST_CHECK(migrated.isSuccess());
+        DOCTEST_CHECK(migrated.isOk());
         auto got = ms::getProjectCard(reopened.value(), "订单中心");
-        DOCTEST_REQUIRE(got.isSuccess());
+        DOCTEST_REQUIRE(got.isOk());
         DOCTEST_CHECK_EQ(got.value().repoPath, std::string("/srv/git/order-center"));
         DOCTEST_CHECK_EQ(got.value().testDbUrl,
                          std::string("mysql://order:pwd@test-db:3306/order_center"));
@@ -119,7 +119,7 @@ REGISTER_TEST(project_card_store_persist_across_reopen,
 REGISTER_TEST(project_card_store_rejects_blank_name,
               "project_cards: 空/纯空白名被拒（ValidationError）", {
     devdesk::ProjectCardsDbEnv env;
-    ProjectCard blank = sampleCard("   ");
+    ms::ProjectCard blank = sampleCard("   ");
     auto saved = ms::upsertProjectCard(*env.db, blank);
     DOCTEST_CHECK(saved.isFail());
     DOCTEST_CHECK_EQ(saved.errorCode(), core::ErrorCode::ValidationError);
@@ -127,7 +127,7 @@ REGISTER_TEST(project_card_store_rejects_blank_name,
     DOCTEST_CHECK(got.isFail());
     DOCTEST_CHECK_EQ(got.errorCode(), core::ErrorCode::ValidationError);
     auto list = ms::listProjectCards(*env.db);
-    DOCTEST_REQUIRE(list.isSuccess());
+    DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK(list.value().empty());
     return true;
 })
@@ -139,32 +139,32 @@ REGISTER_TEST(project_card_migration_adds_missing_columns,
     DOCTEST_REQUIRE((*env.db).exec(
                         "CREATE TABLE project_cards_old ("
                         "name TEXT PRIMARY KEY, repo_path TEXT NOT NULL DEFAULT '')")
-                        .isSuccess());
+                        .isOk());
     DOCTEST_REQUIRE((*env.db).exec(
                         "ALTER TABLE project_cards_old RENAME TO project_cards")
-                        .isSuccess());
+                        .isOk());
     DOCTEST_REQUIRE((*env.db).exec(
                         "INSERT INTO project_cards (name, repo_path) "
                         "VALUES ('老系统', '/old/path')")
-                        .isSuccess());
+                        .isOk());
 
     auto migrated = core::schema::migrateProjectCardColumns(*env.db);
-    DOCTEST_CHECK(migrated.isSuccess());
+    DOCTEST_CHECK(migrated.isOk());
     // 幂等：再跑一遍零操作不红
-    DOCTEST_CHECK(core::schema::migrateProjectCardColumns(*env.db).isSuccess());
+    DOCTEST_CHECK(core::schema::migrateProjectCardColumns(*env.db).isOk());
 
     // 补列后既有行可整卡读出：缺的字段取列默认（空串），行不丢
     auto got = ms::getProjectCard(*env.db, "老系统");
-    DOCTEST_REQUIRE(got.isSuccess());
+    DOCTEST_REQUIRE(got.isOk());
     DOCTEST_CHECK_EQ(got.value().repoPath, std::string("/old/path"));
     DOCTEST_CHECK_EQ(got.value().startCommand, std::string(""));
     DOCTEST_CHECK_EQ(got.value().testDbUrl, std::string(""));
     // 补列库上 CRUD 恢复完整语义
-    ProjectCard updated = got.value();
+    ms::ProjectCard updated = got.value();
     updated.startCommand = "./run.sh";
-    DOCTEST_CHECK(ms::upsertProjectCard(*env.db, updated).isSuccess());
+    DOCTEST_CHECK(ms::upsertProjectCard(*env.db, updated).isOk());
     auto regot = ms::getProjectCard(*env.db, "老系统");
-    DOCTEST_REQUIRE(regot.isSuccess());
+    DOCTEST_REQUIRE(regot.isOk());
     DOCTEST_CHECK_EQ(regot.value().startCommand, std::string("./run.sh"));
     return true;
 })
@@ -172,7 +172,7 @@ REGISTER_TEST(project_card_migration_adds_missing_columns,
 REGISTER_TEST(project_card_migration_idempotent_on_current_schema,
               "project_cards: migrate() 全链对新库幂等（连跑两遍不红）", {
     devdesk::ProjectCardsDbEnv env;
-    DOCTEST_CHECK(core::schema::migrate(*env.db).isSuccess());
-    DOCTEST_CHECK(core::schema::migrate(*env.db).isSuccess());
+    DOCTEST_CHECK(core::schema::migrate(*env.db).isOk());
+    DOCTEST_CHECK(core::schema::migrate(*env.db).isOk());
     return true;
 })
