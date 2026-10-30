@@ -1,5 +1,7 @@
 # 智能体 M3（可用性收口）实现计划
 
+> **2026-10-30 销账**：Task 2/3/4 已由其他线交付并双重复核（码农核查 + QA 独立复跑 dev@c6155a81：agent 定向 133/133、agent_ui 73/73、dialog probe 绿、隔离守卫绿），M3 全部完成，本计划不再有剩余开发量。下文复选框未勾属销账滞后，以本注记为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** agent M3 = 决策记录（`docs/superpowers/specs/2026-10-agent-roadmap-decisions.md` §2）四项全做：① run 完成桌面通知（completed 可静默、failed/limited 必响）② cron 常用模板下拉 + 下次触发时间预览 ③ run 详情一键复制最终回复全文 ④ 代理未启/槽位解析失败时错误行带「去 Claude 页」直达引导。零 core 改动、零 migration（M3 不动 core，见决策 §1）。
