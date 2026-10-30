@@ -96,3 +96,11 @@ tools/.pool-mcp-venv/
 docs/pool/pool.db
 docs/pool/pool.db-journal
 docs/pool/pool.db-wal
+
+# Agent 工作区草稿（.scratch 交接卡/探针、.dsh-progress 会话进度日志），本机留存不入库
+.scratch/
+.dsh-progress/
+
+# Python 运行缓存（tools/pool_mcp.py 等本地脚本）
+__pycache__/
+*.pyc
