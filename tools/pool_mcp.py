@@ -86,6 +86,12 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           id INTEGER PRIMARY KEY, need_id REFERENCES needs(id), time TEXT,
           from_status TEXT, to_status TEXT, reason TEXT);
         CREATE VIRTUAL TABLE IF NOT EXISTS needs_fts USING fts5(title, body, content='');
+        CREATE TABLE IF NOT EXISTS personal_todo (
+          owner TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT '进行中',
+          updated TEXT
+        );
         """
     )
     # body 摘要列（决策文档修订 ④-1）：检索面=body，detail 保持指针/长文原样；
@@ -383,6 +389,34 @@ def pool_stats(owner: str | None = None, pool: str | None = None) -> dict:
     open_items = sum(n for st, n in by_status.items()
                      if st not in ("关闭", "拒绝"))
     return {"ok": True, "total": total, "open": open_items, "by_status": by_status}
+
+
+@mcp.tool()
+def todo_set(owner: str, content: str, status: str = "进行中") -> dict:
+    """写自己的个人 TODO（upsert：每人仅一条，写新的覆盖旧的）。
+    owner=自己的 Bot 名；status 自由文本（如 进行中/已完成/blocked）。"""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO personal_todo(owner, content, status, updated) VALUES (?,?,?,?)"
+            " ON CONFLICT(owner) DO UPDATE SET content=excluded.content,"
+            " status=excluded.status, updated=excluded.updated",
+            (owner, content, status, _now()),
+        )
+    return {"ok": True, "owner": owner, "content": content, "status": status}
+
+
+@mcp.tool()
+def todo_get(owner: str | None = None) -> dict:
+    """读个人 TODO：owner 给定=看那个人的一条；不给=看全池（各 Bot 一人一条）。"""
+    with _connect() as conn:
+        if owner:
+            row = conn.execute(
+                "SELECT * FROM personal_todo WHERE owner = ?", (owner,)
+            ).fetchone()
+            return {"ok": True, "rows": [dict(row)] if row else []}
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM personal_todo ORDER BY updated DESC")]
+        return {"ok": True, "rows": rows}
 
 
 @mcp.tool()
