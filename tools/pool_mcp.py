@@ -98,6 +98,11 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("INSERT INTO needs_fts(needs_fts) VALUES ('delete-all')")
         for r in conn.execute("SELECT id, title, body FROM needs"):
             _fts_index(conn, r["id"], r["title"], r["body"] or "")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(bugs)")}
+    if "resolved" not in cols:
+        # 存量行 DEFAULT 1 = 祖父化（迁移前的历史 BUG 视为已处理），否则老需求永远关不上；
+        # 新行由 pool_update(bug=...) 显式写 0（未处理），关闭闸按 0 计数
+        conn.execute("ALTER TABLE bugs ADD COLUMN resolved INTEGER NOT NULL DEFAULT 1")
     conn.commit()
 
 
@@ -248,10 +253,12 @@ def pool_update(
     evidence: str | None = None,
     reason: str | None = None,
     detail: str | None = None,
+    bug_resolved: int | None = None,
 ) -> dict:
-    """更新条目。状态迁移按状态机校验；note→dev_progress、bug→bugs、
-    关闭必须带 evidence→acceptance（验收前置）；挂起必填 blocker；拒绝必填 reason；
-    detail 更新走 body 摘要同步（FTS 重建见下方统一刷新）。"""
+    """更新条目。状态迁移按状态机校验；note→dev_progress、bug→bugs（未处理行）、
+    bug_resolved=行id 标记该 BUG 已处理；关闭必须带 evidence→acceptance 且子 BUG 全部
+    已处理（有未处理行直接拒并报数，调研对齐：比 rollup 更硬的程序闸）；挂起必填
+    blocker；拒绝必填 reason；detail 更新走 body 摘要同步（FTS 重建见下方统一刷新）。"""
     now = _now()
     with _connect() as conn:
         row = conn.execute("SELECT * FROM needs WHERE id = ?", (id,)).fetchone()
@@ -274,6 +281,15 @@ def pool_update(
             if status == "关闭":
                 if not evidence:
                     return {"ok": False, "error": "关闭前置：必须带 evidence（acceptance 记录）"}
+            if status == "关闭":
+                unresolved = conn.execute(
+                    "SELECT COUNT(*) FROM bugs WHERE need_id = ? AND resolved = 0", (id,)
+                ).fetchone()[0]
+                if unresolved > 0:
+                    return {
+                        "ok": False,
+                        "error": f"关闭前置：该需求还有 {unresolved} 条未处理 BUG（先逐条 bug_resolved 标记）",
+                    }
                 conn.execute(
                     "INSERT INTO acceptance(need_id, time, evidence) VALUES (?, ?, ?)",
                     (id, now, evidence),
@@ -314,8 +330,13 @@ def pool_update(
             )
         if bug:
             conn.execute(
-                "INSERT INTO bugs(need_id, time, note) VALUES (?, ?, ?)",
+                "INSERT INTO bugs(need_id, time, note, resolved) VALUES (?, ?, ?, 0)",
                 (id, now, bug),
+            )
+        if bug_resolved is not None:
+            conn.execute(
+                "UPDATE bugs SET resolved = 1 WHERE id = ? AND need_id = ?",
+                (bug_resolved, id),
             )
         # 标题/明细若变更需重建 FTS 行；本工具不改标题，此处按 detail 变更兜底
         fresh = conn.execute("SELECT title, detail FROM needs WHERE id = ?", (id,)).fetchone()

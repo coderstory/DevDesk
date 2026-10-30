@@ -95,13 +95,23 @@ async def run() -> None:
             await session.call_tool("pool_update", {"id": need_id, "status": "待验收"})
             r = (await session.call_tool("pool_update", {"id": need_id, "status": "关闭"})).content[0].text
             check("状态机：无 evidence 关闭被拒", '"ok": false' in r.replace(" ", " "), r)
+            # 关闭闸：F-03 挂的 BUG 未处理 → 带 evidence 也拒（调研采纳：子 BUG 全关闭前置）
             r = (await session.call_tool("pool_update", {
                 "id": need_id, "status": "关闭", "evidence": "全绿证据物",
             })).content[0].text
-            check("F-04 带 evidence 关闭 ok", '"ok": true' in r.replace(" ", " "), r)
+            check("关闭闸：子 BUG 未处理被拒", '"ok": false' in r.replace(" ", " ") and "未处理 BUG" in r, r)
+            # 标记已处理后放行
+            r = (await session.call_tool("pool_update", {"id": need_id, "bug_resolved": 1})).content[0].text
+            check("bug_resolved 标记 ok", '"ok": true' in r.replace(" ", " "), r)
+            r = (await session.call_tool("pool_update", {
+                "id": need_id, "status": "关闭", "evidence": "全绿证据物",
+            })).content[0].text
+            check("F-04 处理完关闭 ok", '"ok": true' in r.replace(" ", " "), r)
             acc = db_rows(db, "SELECT * FROM acceptance WHERE need_id=1")
             check("F-04 acceptance 一行 + status=关闭",
-                  len(acc) == 1 and db_rows(db, "SELECT status FROM needs WHERE id=1")[0]["status"] == "关闭")
+                  len(acc) == 1
+                  and db_rows(db, "SELECT status FROM needs WHERE id=1")[0]["status"] == "关闭",
+                  f"acceptance={len(acc)} status={db_rows(db, 'SELECT status FROM needs WHERE id=1')[0]['status']}")
 
             # F-05 FTS 检索命中 + 按 P 级/状态捞取
             r = (await session.call_tool("pool_search", {"keyword": "冲鸭"})).content[0].text
