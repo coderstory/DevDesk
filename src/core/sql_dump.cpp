@@ -24,7 +24,10 @@ const std::vector<std::string>& defaultSkipTables() {
         "claude_call_logs", "claude_run_settings",
         // 同步基线（sha/hash/首次方向/未同步提示）是本机专属状态：随 dump 跨设备
         // 转移会让新设备拿别人写的基线比对 → 误判未变跳过下载 → 进而删远端笔记。
-        "github_sync_state"};
+        "github_sync_state",
+        // 项目卡（需-11）：test_db_url 可能含连接串凭据，档案也不是跨设备转移面
+        //（各机仓库路径/命令不同），整表不进 dump。
+        "project_cards"};
     return kTables;
 }
 

@@ -9,6 +9,7 @@
 
 #include "settings_config.h"
 #include "settings_ui_logic.h"
+#include "project_card_store.h"
 
 #include <core/claude_proxy_service.h>
 #include <core/theme.h>
@@ -63,6 +64,14 @@ struct SettingsCardsIn {
     bool mcpRunning = false;             // 桥快照：服务运行中
     int mcpLivePort = 0;                 // 桥快照：实际监听端口（运行中有效）
     std::string mcpLastError;            // 桥快照：Failed 时非空
+
+    // 需-11 项目卡快照（「同步」tab 项目卡卡）
+    const std::vector<ProjectCard>* projectCards = nullptr;  // 列表（null = 按空渲染）
+    ProjectCard projectCardDraft;             // 表单草稿副本（compose 每帧从模块成员拷贝）
+    bool projectCardEditingExisting = false;  // true = 草稿来自已存卡（删除可用）
+    std::string projectCardSelectedName;      // 选中卡名（列表高亮 + 删除/改名目标）
+    std::string projectCardStatus;            // 反馈行文案（空 = 空白占位）
+    bool projectCardStatusError = false;      // true = 红字；false = 三级字
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -103,6 +112,13 @@ struct SettingsCardActions {
     std::function<void(const std::string&)> setMcpPortDraft;  // 输入草稿（含清错）
     std::function<void()> applyMcpPort;                        // 回车 /「应用」提交
     std::function<void()> discardMcpPortDraft;                 // Esc 丢弃
+
+    // 需-11 项目卡回调
+    std::function<void(ProjectCardField, const std::string&)> setProjectCardField;  // 字段编辑
+    std::function<void()> projectCardNew;      // 新建态（清草稿）
+    std::function<void()> projectCardSave;     // 保存草稿（upsert；改名 = 删旧名落新名）
+    std::function<void()> projectCardDelete;   // 删除选中卡
+    std::function<void(const std::string&)> projectCardSelect;  // 点列表行装入表单
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）

@@ -117,6 +117,8 @@ std::string disclosureLabelFor(const std::string& tableName) {
     // 「Token」明写出来，即「token 不上云」这条口径与实现绑定（改 skip 清单会经
     // 防漂移用例提醒）。
     if (tableName == "github_sync_state") return "Token 与同步状态";
+    // 需-11：项目卡含测试库地址（可能带凭据），随 skip 清单整表不上传
+    if (tableName == "project_cards") return "项目卡（含测试库地址）";
     return tableName;
 }
 

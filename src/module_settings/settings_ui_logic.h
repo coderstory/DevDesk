@@ -73,12 +73,14 @@ inline constexpr int kLogLevelPresetCount = 4;
 inline constexpr const char* kLogLevelPresetLabels[] = {
     "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
 
-inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志", "同步"};
-inline constexpr int kSettingTabCount = 4;
+inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志", "同步",
+                                                    "项目卡"};
+inline constexpr int kSettingTabCount = 5;
 inline constexpr int kTabGeneral = 0;
 inline constexpr int kTabModules = 1;
 inline constexpr int kTabLog = 2;
 inline constexpr int kTabSync = 3;
+inline constexpr int kTabProjectCards = 4;  // 需-11：追加末位，既有索引（探针/测试按 settings.tabs.N.hit 点选）不动
 inline constexpr float kSettingsTabHeight = 40.0f;  // tab 栏高
 inline constexpr int kLogTailMaxLines = 500;        // 日志查看 tail 行数上限
 inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256KB

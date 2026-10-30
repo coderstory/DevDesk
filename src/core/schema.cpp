@@ -664,6 +664,39 @@ core::Result<void> migrateTodoDocLinkColumn(core::data::SqliteDb& db) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> migrateProjectCardColumns(core::data::SqliteDb& db) {
+    // 需-11：老库 project_cards 逐列补缺。列清单与 kSql 中该表 DDL 的最终形态
+    // 一致（漏列/改默认值 = 迁移漂移）；name 是主键不参与补列。
+    auto exists = tableExists(db, "project_cards");
+    if (exists.isFail())
+        return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
+    if (!exists.value()) return core::Result<void>::ok();
+    auto cols = existingColumns(db, "project_cards");
+    if (cols.isFail())
+        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+    struct ColumnDdl {
+        const char* name;
+        const char* ddl;
+    };
+    static const ColumnDdl kColumns[] = {
+        {"repo_path",     "TEXT NOT NULL DEFAULT ''"},
+        {"start_command", "TEXT NOT NULL DEFAULT ''"},
+        {"test_command",  "TEXT NOT NULL DEFAULT ''"},
+        {"deploy_method", "TEXT NOT NULL DEFAULT ''"},
+        {"test_db_url",   "TEXT NOT NULL DEFAULT ''"},
+        {"key_modules",   "TEXT NOT NULL DEFAULT ''"},
+        {"created_at",    "INTEGER NOT NULL DEFAULT 0"},
+        {"updated_at",    "INTEGER NOT NULL DEFAULT 0"},
+    };
+    for (const auto& col : kColumns) {
+        if (cols.value().count(col.name) > 0) continue;
+        auto alter = db.exec(std::string("ALTER TABLE project_cards ADD COLUMN ") +
+                             col.name + " " + col.ddl);
+        if (alter.isFail()) return alter;
+    }
+    return core::Result<void>::ok();
+}
+
 core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
     const std::time_t nowT = core::time::nowUnix();
     const int64_t now = static_cast<int64_t>(nowT);
@@ -768,6 +801,12 @@ core::Result<void> migrate(core::data::SqliteDb& db) {
     if (archiveMig.isFail()) {
         LOG_ERROR("Todo 冷启动归档清扫失败: " + archiveMig.errorMessage());
         return archiveMig;
+    }
+    // 需-11 项目卡补列：晚于 applySchema（表已建），与其它迁移无依赖。
+    auto projectCardMig = migrateProjectCardColumns(db);
+    if (projectCardMig.isFail()) {
+        LOG_ERROR("项目卡表列迁移失败: " + projectCardMig.errorMessage());
+        return projectCardMig;
     }
     auto drop = dropRemovedTables(db);
     if (drop.isFail()) {
