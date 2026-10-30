@@ -146,6 +146,20 @@ def sync() -> int:
     spec = importlib.util.spec_from_file_location("pool_mcp", Path(__file__).parent / "pool_mcp.py")
     mod = importlib.util.module_from_spec(spec)
     os.environ.setdefault("POOL_DB", str(DB))
+    # sync 的设计目标是「venv 坏了也能跑」：裸 python 没有 mcp SDK，注入桩模块让
+    # import 通过（MCPServer 桩只满足 import，不会实例化；只取两个 _write 函数）
+    if importlib.util.find_spec("mcp") is None:
+        import types
+        msrv = types.ModuleType("mcp.server.mcpserver")
+        class MCPServer:  # noqa: D401 桩
+            def __init__(self, *a, **k): pass
+            def tool(self, *a, **k):
+                return lambda fn: fn
+            def run(self, *a, **k): pass
+        msrv.MCPServer = MCPServer
+        srv = types.ModuleType("mcp.server"); srv.mcpserver = msrv
+        top = types.ModuleType("mcp"); top.server = srv
+        sys.modules.update({"mcp": top, "mcp.server": srv, "mcp.server.mcpserver": msrv})
     spec.loader.exec_module(mod)
     mod._write_report()
     mod._write_snapshot()

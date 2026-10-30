@@ -111,6 +111,48 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE bugs ADD COLUMN resolved INTEGER NOT NULL DEFAULT 1")
     conn.commit()
 
+    # ---- 审计四件套迁移（表结构规范 §6.5）：created_by/updated_by/deleted ----
+    # needs 已有 created/updated 时间戳列；人员与软删标记缺失即补，存量行回填
+    # created_by/updated_by=owner（迁移前无从考证，owner 即台账负责人）、deleted=0。
+    for table in ("needs", "dev_progress", "bugs", "acceptance", "status_log"):
+        tcols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        backfill = ""
+        if table == "needs":
+            backfill = "UPDATE needs SET created_by=owner, updated_by=owner"
+        for col in ("created_by", "updated_by"):
+            if col not in tcols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+        if "deleted" not in tcols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+        if backfill:
+            conn.execute(backfill)
+    conn.commit()
+
+    # personal_todo 按规范重建：id 自增 + 四件套 + 每人一条（owner 部分唯一索引，
+    # 软删后可重新写入，未删行之间仍互斥）
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(personal_todo)")}
+    if "id" not in tcols:
+        old_rows = [dict(r) for r in conn.execute("SELECT * FROM personal_todo")]
+        conn.execute("DROP TABLE personal_todo")
+        conn.execute(
+            "CREATE TABLE personal_todo ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " owner TEXT NOT NULL, content TEXT NOT NULL,"
+            " status TEXT NOT NULL DEFAULT '进行中', updated TEXT,"
+            " created_by TEXT, updated_by TEXT, deleted INTEGER NOT NULL DEFAULT 0)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_personal_todo_owner_active"
+            " ON personal_todo(owner) WHERE deleted = 0")
+        for r in old_rows:
+            conn.execute(
+                "INSERT INTO personal_todo(owner, content, status, updated,"
+                " created_by, updated_by, deleted) VALUES (?,?,?,?,?,?,0)",
+                (r["owner"], r["content"], r["status"], r["updated"],
+                 r["owner"], r["owner"]),
+            )
+    conn.commit()
+
 
 # ---------- 状态机（决策文档 §4，非法迁移拒返回错误） ----------
 
@@ -186,15 +228,17 @@ def pool_add(pool: str, title: str, priority: str, owner: str, detail: str = "")
     now = _now()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO needs(pool, title, priority, status, owner, detail, body, created, updated)"
-            " VALUES (?, ?, ?, '在池', ?, ?, ?, ?, ?)",
-            (pool, title, priority, owner, detail, _summarize(detail), now, now),
+            "INSERT INTO needs(pool, title, priority, status, owner, detail, body,"
+            " created, updated, created_by, updated_by, deleted)"
+            " VALUES (?, ?, ?, '在池', ?, ?, ?, ?, ?, ?, ?, 0)",
+            (pool, title, priority, owner, detail, _summarize(detail), now, now,
+             owner, owner),
         )
         need_id = cur.lastrowid
         conn.execute(
-            "INSERT INTO status_log(need_id, time, from_status, to_status, reason)"
-            " VALUES (?, ?, NULL, '在池', '入池')",
-            (need_id, now),
+            "INSERT INTO status_log(need_id, time, from_status, to_status, reason,"
+            " created_by, updated_by, deleted) VALUES (?,?,?,?,?,?,?,0)",
+            (need_id, now, None, "在池", "入池", owner, owner),
         )
         _fts_index(conn, need_id, title, detail)
     _write_report()
@@ -216,7 +260,8 @@ def pool_fetch(
     status=在池 → 只看父需求未关闭的（=未处理完的 BUG）；不带 status → 全部。"""
     if need_id is not None:
         sql = ("SELECT b.id, b.need_id, b.time, b.note, n.status AS parent_status"
-               " FROM bugs b JOIN needs n ON n.id = b.need_id WHERE b.need_id = ?")
+               " FROM bugs b JOIN needs n ON n.id = b.need_id"
+               " WHERE b.need_id = ? AND b.deleted = 0")
         args: list = [need_id]
         if status:
             sql += " AND n.status = ?"
@@ -225,7 +270,7 @@ def pool_fetch(
         with _connect() as conn:
             rows = [dict(r) for r in conn.execute(sql, args)]
         return {"ok": True, "kind": "bugs_by_need", "rows": rows}
-    sql = "SELECT * FROM needs WHERE 1=1"
+    sql = "SELECT * FROM needs WHERE deleted = 0"
     args: list = []
     if priority:
         sql += " AND priority = ?"
@@ -260,6 +305,7 @@ def pool_update(
     reason: str | None = None,
     detail: str | None = None,
     bug_resolved: int | None = None,
+    by: str | None = None,
 ) -> dict:
     """更新条目。状态迁移按状态机校验；note→dev_progress、bug→bugs（未处理行）、
     bug_resolved=行id 标记该 BUG 已处理；关闭必须带 evidence→acceptance 且子 BUG 全部
@@ -289,7 +335,8 @@ def pool_update(
                     return {"ok": False, "error": "关闭前置：必须带 evidence（acceptance 记录）"}
             if status == "关闭":
                 unresolved = conn.execute(
-                    "SELECT COUNT(*) FROM bugs WHERE need_id = ? AND resolved = 0", (id,)
+                    "SELECT COUNT(*) FROM bugs WHERE need_id = ? AND resolved = 0"
+                    " AND deleted = 0", (id,)
                 ).fetchone()[0]
                 if unresolved > 0:
                     return {
@@ -320,15 +367,18 @@ def pool_update(
             args.append(_summarize(detail))
         fields.append("updated = ?")
         args.append(now)
+        if by or owner:
+            fields.append("updated_by = ?")
+            args.append(by or owner)
         args.append(id)
         conn.execute(f"UPDATE needs SET {', '.join(fields)} WHERE id = ?", args)
 
         if status and status != row["status"]:
             conn.execute(
-                "INSERT INTO status_log(need_id, time, from_status, to_status, reason)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (id, now, row["status"], status, reason or blocker or note or ""),
-            )
+                "INSERT INTO status_log(need_id, time, from_status, to_status, reason,"
+                " created_by, updated_by, deleted) VALUES (?,?,?,?,?,?,?,0)",
+                (id, now, row["status"], status, reason or blocker or note or "",
+                 by or owner or "", by or owner or ""))
         if note:
             conn.execute(
                 "INSERT INTO dev_progress(need_id, time, note) VALUES (?, ?, ?)",
@@ -336,8 +386,9 @@ def pool_update(
             )
         if bug:
             conn.execute(
-                "INSERT INTO bugs(need_id, time, note, resolved) VALUES (?, ?, ?, 0)",
-                (id, now, bug),
+                "INSERT INTO bugs(need_id, time, note, resolved, created_by, updated_by, deleted)"
+                " VALUES (?, ?, ?, 0, ?, ?, 0)",
+                (id, now, bug, by or owner or "", by or owner or ""),
             )
         if bug_resolved is not None:
             conn.execute(
@@ -363,7 +414,7 @@ def pool_search(keyword: str) -> dict:
             dict(r)
             for r in conn.execute(
                 "SELECT n.* FROM needs_fts f JOIN needs n ON n.id = f.rowid"
-                " WHERE needs_fts MATCH ? ORDER BY n.id",
+                " WHERE needs_fts MATCH ? AND n.deleted = 0 ORDER BY n.id",
                 (_fts_query(keyword),),
             )
         ]
@@ -374,7 +425,7 @@ def pool_search(keyword: str) -> dict:
 def pool_stats(owner: str | None = None, pool: str | None = None) -> dict:
     """统计：按状态计数（在池/排产/进行中/待验收/挂起/关闭/拒绝）。
     owner 传自己的 Bot 名 = 只看自己的账（「我还剩几个 bug」一条龙）；pool 可再限单池。"""
-    sql = "SELECT status, COUNT(*) AS n FROM needs WHERE 1=1"
+    sql = "SELECT status, COUNT(*) AS n FROM needs WHERE deleted = 0"
     args: list = []
     if owner:
         sql += " AND owner = ?"
@@ -397,10 +448,13 @@ def todo_set(owner: str, content: str, status: str = "进行中") -> dict:
     owner=自己的 Bot 名；status 自由文本（如 进行中/已完成/blocked）。"""
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO personal_todo(owner, content, status, updated) VALUES (?,?,?,?)"
+            "INSERT INTO personal_todo(owner, content, status, updated,"
+            " created_by, updated_by, deleted) VALUES (?,?,?,?,?,?,0)"
             " ON CONFLICT(owner) DO UPDATE SET content=excluded.content,"
-            " status=excluded.status, updated=excluded.updated",
-            (owner, content, status, _now()),
+            " status=excluded.status, updated=excluded.updated,"
+            " updated_by=excluded.updated_by, deleted=0"
+            " WHERE personal_todo.deleted = 0",
+            (owner, content, status, _now(), owner, owner),
         )
     _write_snapshot()
     return {"ok": True, "owner": owner, "content": content, "status": status}
@@ -412,12 +466,28 @@ def todo_get(owner: str | None = None) -> dict:
     with _connect() as conn:
         if owner:
             row = conn.execute(
-                "SELECT * FROM personal_todo WHERE owner = ?", (owner,)
+                "SELECT * FROM personal_todo WHERE owner = ? AND deleted = 0", (owner,)
             ).fetchone()
             return {"ok": True, "rows": [dict(row)] if row else []}
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM personal_todo ORDER BY updated DESC")]
+            "SELECT * FROM personal_todo WHERE deleted = 0 ORDER BY updated DESC")]
         return {"ok": True, "rows": rows}
+
+
+@mcp.tool()
+def pool_soft_delete(id: int, by: str) -> dict:
+    """软删条目（deleted=1，默认所有读路径不再返回；数据保留可审计回溯）。
+    by=操作人 Bot 名，必填（审计链不留无主删除）。"""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE needs SET deleted = 1, updated = ?, updated_by = ? WHERE id = ?",
+            (_now(), by, id),
+        )
+    if cur.rowcount == 0:
+        return {"ok": False, "error": f"条目 {id} 不存在"}
+    _write_report()
+    _write_snapshot()
+    return {"ok": True}
 
 
 @mcp.tool()
