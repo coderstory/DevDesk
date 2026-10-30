@@ -197,9 +197,23 @@ def pool_fetch(
     status: str | None = None,
     pool: str | None = None,
     owner: str | None = None,
+    need_id: int | None = None,
 ) -> dict:
-    """捞取：按 P 级/状态/池/负责人过滤（均可选），结果按 priority,id 排序
-    （P1-P3 不插队口径）。owner 传调用方自己的 Bot 名 = 「我还剩几个活」身份绑定查询。"""
+    """捞取。常规：按 P 级/状态/池/负责人过滤 needs（owner=自己=身份绑定查询）。
+    need_id 给定时切换为**按需求查子表**（外键关联查询，与身份绑定独立）：
+    返回该需求挂的 bugs 子表行（time/note），status 过滤作用于**父需求状态**——
+    status=在池 → 只看父需求未关闭的（=未处理完的 BUG）；不带 status → 全部。"""
+    if need_id is not None:
+        sql = ("SELECT b.id, b.need_id, b.time, b.note, n.status AS parent_status"
+               " FROM bugs b JOIN needs n ON n.id = b.need_id WHERE b.need_id = ?")
+        args: list = [need_id]
+        if status:
+            sql += " AND n.status = ?"
+            args.append(status)
+        sql += " ORDER BY b.time, b.id"
+        with _connect() as conn:
+            rows = [dict(r) for r in conn.execute(sql, args)]
+        return {"ok": True, "kind": "bugs_by_need", "rows": rows}
     sql = "SELECT * FROM needs WHERE 1=1"
     args: list = []
     if priority:
