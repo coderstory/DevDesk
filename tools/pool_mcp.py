@@ -462,12 +462,14 @@ def todo_set(owner: str, content: str, status: str = "进行中") -> dict:
     owner=自己的 Bot 名；status 自由文本（如 进行中/已完成/blocked）。"""
     with _connect() as conn:
         conn.execute(
+            # 冲突目标必须带上部分唯一索引同款 WHERE（idx_personal_todo_owner_active
+            # 是 WHERE deleted=0 的部分索引），裸 ON CONFLICT(owner) 无匹配目标直接炸
             "INSERT INTO personal_todo(owner, content, status, updated,"
             " created_by, updated_by, deleted) VALUES (?,?,?,?,?,?,0)"
-            " ON CONFLICT(owner) DO UPDATE SET content=excluded.content,"
-            " status=excluded.status, updated=excluded.updated,"
-            " updated_by=excluded.updated_by, deleted=0"
-            " WHERE personal_todo.deleted = 0",
+            " ON CONFLICT(owner) WHERE deleted = 0 DO UPDATE SET"
+            " content=excluded.content, status=excluded.status,"
+            " updated=excluded.updated, updated_by=excluded.updated_by,"
+            " deleted=0",
             (owner, content, status, _now(), owner, owner),
         )
     _write_snapshot()
