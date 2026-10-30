@@ -10,6 +10,7 @@
 #include <string>
 
 #include "core/result.h"
+#include "module_memory/proposals/usage_alert.h"
 
 namespace module::memory::panel {
 
@@ -20,6 +21,14 @@ struct MemoryPanelSettings {
     std::int64_t llmImportedAtSec = 0;  // 0 = 未从网关 profile 导入
     std::string llmProfileName;         // 导入时的激活 profile 名（纯回显，无凭据）
     bool mcpSearchEnabled = true;  // memory_search MCP 工具注册开关（旧文件缺键 = true）
+    // 需-9 用量告警：阈值（token 估算口径；月档与消耗卡预算同一套数）+ 节流闸。
+    // 闸随设置落盘 = 重启不重复轰炸；armed=false 表示越线未解除（跨日不重响）。
+    long long usageDayAlertTokens = 500000;      // 日档阈值；≤0 = 关闭
+    long long usageSoftBudgetTokens = 2000000;   // 月档·软档；≤0 = 关闭
+    long long usageHardBudgetTokens = 3000000;   // 月档·硬档；≤0 = 关闭
+    proposals::UsageAlertGate usageDayGate;
+    proposals::UsageAlertGate usageSoftGate;
+    proposals::UsageAlertGate usageHardGate;
 };
 
 MemoryPanelSettings loadPanelSettings();

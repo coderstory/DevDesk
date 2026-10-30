@@ -101,6 +101,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_hook.cpp
     # 卡片数据层/整理器/计量（S4）：内存库夹具，状态机与撤销链
     test_modules/test_memory_proposals.cpp
+    # 需-9 用量告警：纯判定（两档阈值 + 每档每日一次节流 + 跨档独立）+ 持久化往返
+    test_modules/test_usage_alert.cpp
     # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
     test_modules/test_memory_collect_wiring.cpp
     # memory_search MCP 工具（F-01/F-02/F-04/F-05/F-06）：假检索器 + 局部注册表，

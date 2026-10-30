@@ -83,12 +83,19 @@ public:
     // 每帧可调：节流刷新（force = 动作后立刷）
     void refresh(bool force = false);
 
+    // 需-9 用量告警判定（装配层每帧调，不依赖记忆页可见）：内部 5s 节流；越线
+    // 击发 → toast 桥（应用级）+ platform::notify（带 level）双出口，闸状态即落盘
+    void pollUsageAlerts();
+
     PanelSnapshot snapshot() const;  // 锁内拷贝
 
     // ── 设置写入口（改内存 + 落盘 + 联动刷新）──
     void setSanitizeEnabled(bool on);  // off = 旁路 + 审计行（UI 已做二次确认）
     void setRecallThresholdPct(int pct);
     void setTwoWordBaseline(int n);
+    // 需-9 用量告警阈值（月档软/硬 = 消耗卡预算同一套数，不另起一套）
+    void setUsageAlertThresholds(long long dayTokens, long long softTokens,
+                                 long long hardTokens);
     void markLlmImported(const std::string& profileName);
 
     // ── 审核操作（真接 ProposalStore；返回值供 toast）──
@@ -134,6 +141,7 @@ private:
 
     std::int64_t lastRefreshSec_ = 0;
     std::int64_t lastSizeCheckSec_ = 0;
+    std::int64_t lastAlertPollSec_ = 0;  // 需-9：判定节流（5s 一档，SQLite 读数轻查）
 
     // 评测线程状态（ mu_ 保护结果落库，flag 原子）
     std::atomic<bool> evalRunning_{false};

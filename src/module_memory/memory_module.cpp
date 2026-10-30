@@ -189,6 +189,8 @@ std::string MemoryModule::shortName() const { return "记忆"; }
 // fa-brain (U+F5DC) 的 UTF-8 字节；须与 app_registry 表行 iconGlyph 列同值。
 std::string MemoryModule::iconGlyph() const { return "\xEF\x97\x9C"; }
 
+void MemoryModule::pollUsageAlerts() { panel_.pollUsageAlerts(); }
+
 void MemoryModule::onStart() {
     LOG_INFO("记忆模块已启用：引擎未启动时页面显引导态，零后台成本");
     // F1 产品接线：开页即同步采集循环——引擎已 Running 则立即起跑
@@ -834,7 +836,11 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
-        const engine::TokenUsageMeter usage;
+        // 预算档随配置（需-9：软/硬阈值 = 用量告警月档同一套数，配置卡可调）
+        engine::TokenUsageMeter usage;
+        usage.monthTokens = snap.monthTokens;
+        usage.softBudgetTokens = snap.settings.usageSoftBudgetTokens;
+        usage.hardBudgetTokens = snap.settings.usageHardBudgetTokens;
         const auto phase = usage.phase();
         ui.text("memory.usage.phase")
             .position(x + w - 240.0f, cy + 12.0f)
@@ -1850,6 +1856,106 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .color(t.colors.textSecondary)
                 .build();
         }
+        cy += kCardH + kCardGap;
+    }
+
+    // ── 用量告警（需-9）：日/月两档阈值可调；月档软/硬 = 消耗卡预算同一套数 ──
+    {
+        constexpr float kCardH = 258.0f;
+        ui.rect("memory.cfg.usage")
+            .position(x, cy)
+            .size(w, kCardH)
+            .color(t.colors.surface)
+            .radius(t.sizes.radiusLarge)
+            .border(1.0f, t.colors.borderDefault)
+            .build();
+        cardHead("memory.cfg.usage.title", cy, "用量告警阈值（token 估算）");
+        ui.text("memory.cfg.usage.hint")
+            .position(x + 16.0f, cy + 38.0f)
+            .size(innerW, 18.0f)
+            .text("今日/本月 token 越线弹一条桌面提醒（每档每天最多一条）；月档软/硬即消耗卡预算。")
+            .fontSize(core::theme::scaled(12.0f))
+            .lineHeight(18.0f)
+            .color(t.colors.textSecondary)
+            .build();
+        // 行绘制：标签 + 说明 + 滑条（量化步进）+ 右侧当前值（万）。
+        // 去重在 PanelState::setUsageAlertThresholds（值未变 no-op），回调每 tick 直调。
+        auto sliderRow = [&](const std::string& id, const std::string& label,
+                             const std::string& sub, long long cur,
+                             long long lo, long long step, long long hi,
+                             float rowY,
+                             std::function<void(long long)> apply) {
+            ui.text(id + ".label")
+                .position(x + 16.0f, rowY)
+                .size(90.0f, 18.0f)
+                .text(label)
+                .fontSize(core::theme::scaled(12.5f))
+                .lineHeight(18.0f)
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text(id + ".sub")
+                .position(x + 96.0f, rowY)
+                .size(innerW - 220.0f, 18.0f)
+                .text(sub)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(18.0f)
+                .color(t.colors.textTertiary)
+                .build();
+            const auto clampN = [](double v) {
+                return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+            };
+            const double norm =
+                clampN(static_cast<double>(cur - lo) /
+                       static_cast<double>(hi - lo));
+            const double steps = static_cast<double>(hi - lo) /
+                                 static_cast<double>(step);
+            ui_kit::slider(ui, id, x + 16.0f, rowY + 24.0f, innerW - 120.0f,
+                           20.0f, static_cast<float>(norm), t,
+                           [apply, lo, step, steps](float v) {
+                               const long long q =
+                                   lo + step * static_cast<long long>(
+                                             v * steps + 0.5f);
+                               apply(q);
+                           });
+            char vbuf[24];
+            std::snprintf(vbuf, sizeof(vbuf), "%lld 万", cur / 10000);
+            ui.text(id + ".val")
+                .position(x + w - 92.0f, rowY + 22.0f)
+                .size(76.0f, 20.0f)
+                .text(vbuf)
+                .fontSize(core::theme::scaled(13.0f))
+                .lineHeight(20.0f)
+                .horizontalAlign(eui::HorizontalAlign::Right)
+                .color(t.colors.textPrimary)
+                .build();
+        };
+        sliderRow("memory.cfg.usage.day", "日档阈值",
+                  "今日 token 越线提醒（默认 50 万）",
+                  snap.settings.usageDayAlertTokens, 50000, 50000, 2000000,
+                  cy + 62.0f, [this](long long q) {
+                      const auto s = panel_.snapshot().settings;
+                      panel_.setUsageAlertThresholds(
+                          q, s.usageSoftBudgetTokens, s.usageHardBudgetTokens);
+                  });
+        sliderRow("memory.cfg.usage.soft", "月档 · 软档",
+                  "进黄档区提醒 = 消耗卡预算软档",
+                  snap.settings.usageSoftBudgetTokens, 500000, 100000, 5000000,
+                  cy + 114.0f, [this](long long q) {
+                      const auto s = panel_.snapshot().settings;
+                      panel_.setUsageAlertThresholds(
+                          s.usageDayAlertTokens, q, s.usageHardBudgetTokens);
+                  });
+        sliderRow("memory.cfg.usage.hard", "月档 · 硬档",
+                  "严重级提醒 = 消耗卡预算硬档",
+                  snap.settings.usageHardBudgetTokens, 1000000, 100000,
+                  10000000, cy + 166.0f, [this](long long q) {
+                      const auto s = panel_.snapshot().settings;
+                      panel_.setUsageAlertThresholds(
+                          s.usageDayAlertTokens, s.usageSoftBudgetTokens, q);
+                  });
+        warnBar("memory.cfg.usage.warn", cy + 216.0f,
+                "口径：token 为码点估算（非引擎真值）；判定面 = 记忆消耗账本。");
         cy += kCardH + kCardGap;
     }
 

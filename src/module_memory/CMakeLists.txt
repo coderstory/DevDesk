@@ -24,6 +24,8 @@ add_library(devdesk_module_memory STATIC
     hook/hooks_settings.h
     proposals/usage_ledger.cpp
     proposals/usage_ledger.h
+    proposals/usage_alert.cpp
+    proposals/usage_alert.h
     proposals/proposal_store.cpp
     proposals/proposal_store.h
     proposals/curator.cpp

@@ -14,9 +14,12 @@
 #include "core/time.h"
 #include "platform/folder_picker.h"
 #include "platform/json.h"
+#include "platform/notification.h"
+#include "toast_notice_bridge.h"
 #include "module_memory/engine/telemem_config.h"
 #include "module_memory/pipeline/collect_round.h"
 #include "module_memory/proposals/curator.h"
+#include "module_memory/proposals/usage_alert.h"
 
 namespace module::memory::panel {
 
@@ -29,6 +32,9 @@ using proposals::TargetVersionFn;
 using proposals::UsageLedger;
 
 std::filesystem::path dbDir() { return engine::memoryDataDir(); }
+
+// 需-9 判定节流：装配层每帧调 pollUsageAlerts，SQLite 双求和走此间隔限频
+constexpr std::int64_t kUsageAlertPollSec = 5;
 
 // A 阶段引擎无版本查询缝（头文件契约说明）：以提案快照版本放行
 TargetVersionFn trustSnapshotVersion(std::int64_t baseVersion) {
@@ -354,6 +360,69 @@ void PanelState::refresh(bool force) {
     snap_ = std::move(next);
 }
 
+void PanelState::pollUsageAlerts() {
+    if (!ledger_.has_value()) return;
+    const auto now = static_cast<std::int64_t>(std::time(nullptr));
+    if (now - lastAlertPollSec_ < kUsageAlertPollSec) return;
+    lastAlertPollSec_ = now;
+    // 直读盘而非 snap_ 缓存：记忆页不可见时 refresh 不跑，阈值改动也要即时生效
+    auto settings = loadPanelSettings();
+    const proposals::UsageAlertGate dayBefore = settings.usageDayGate;
+    const proposals::UsageAlertGate softBefore = settings.usageSoftGate;
+    const proposals::UsageAlertGate hardBefore = settings.usageHardGate;
+    proposals::UsageAlertThresholds th;
+    th.dayTokens = settings.usageDayAlertTokens;
+    th.monthSoftTokens = settings.usageSoftBudgetTokens;
+    th.monthHardTokens = settings.usageHardBudgetTokens;
+    const auto num = [](core::Result<long long> r) {
+        return r.isOk() ? r.value() : 0;
+    };
+    const long long todayTk = num(ledger_->todayTokens(now));
+    const long long monthTk = num(ledger_->monthTokens(now));
+    const long long dayKey = proposals::localDayKey(now);
+    const auto fires = proposals::evaluateUsageAlert(
+        th, todayTk, monthTk, dayKey, settings.usageDayGate,
+        settings.usageSoftGate, settings.usageHardGate);
+    const bool gateMoved =
+        settings.usageDayGate.armed != dayBefore.armed ||
+        settings.usageDayGate.lastFireDay != dayBefore.lastFireDay ||
+        settings.usageSoftGate.armed != softBefore.armed ||
+        settings.usageSoftGate.lastFireDay != softBefore.lastFireDay ||
+        settings.usageHardGate.armed != hardBefore.armed ||
+        settings.usageHardGate.lastFireDay != hardBefore.lastFireDay;
+    if (gateMoved) {
+        // 闸态迁移即落盘（击发卸武/回落重武装）：重启不重复轰炸、也不丢解除态
+        if (savePanelSettings(settings).isFail()) {
+            LOG_WARN("[usage-alert] 闸状态落盘失败，下次判定按旧闸重算");
+        }
+        std::lock_guard<std::mutex> lk(mu_);
+        snap_.settings.usageDayGate = settings.usageDayGate;
+        snap_.settings.usageSoftGate = settings.usageSoftGate;
+        snap_.settings.usageHardGate = settings.usageHardGate;
+    }
+    for (const auto& f : fires) {
+        const std::string title = proposals::usageAlertTitle(f.tier);
+        const std::string body = proposals::usageAlertBody(f);
+        LOG_INFO("[memory][usage-alert] " + title + "：" + body);
+        // 双出口都既有基建：应用级 toast（M3 同一 showAppNotice 落点，跨页可见）
+        app::toast_notice::show(title, body);
+        // 系统级（硬档 Error / 其余 Warning；facade 自带降级与限速，Accepted ≠ 看到）
+        platform::notify::Notification note;
+        note.id = std::string("memory.usage_alert.") +
+                  proposals::usageAlertTierTag(f.tier) + "." +
+                  std::to_string(dayKey);
+        note.title = title;
+        note.body = body;
+        note.level = f.tier == proposals::UsageAlertTier::MonthHard
+                         ? platform::notify::Level::Error
+                         : platform::notify::Level::Warning;
+        if (auto r = platform::notify::send(note); r.isFail()) {
+            LOG_WARN("[memory][usage-alert] 系统通知未受理: " +
+                     r.errorMessage());
+        }
+    }
+}
+
 std::int64_t PanelState::dirSizeBytes() const {
     // 记忆数据体积：排除 venv（引擎运行时，非记忆资产）
     std::error_code ec;
@@ -408,6 +477,25 @@ void PanelState::setTwoWordBaseline(int n) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         snap_.settings.twoWordBaseline = n;
+        savePanelSettings(snap_.settings);
+    }
+    refresh(true);
+}
+
+void PanelState::setUsageAlertThresholds(long long dayTokens,
+                                         long long softTokens,
+                                         long long hardTokens) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        // 值未变 no-op：滑条拖动每 tick 都回调，去重后拖动才落盘/立刷
+        if (snap_.settings.usageDayAlertTokens == dayTokens &&
+            snap_.settings.usageSoftBudgetTokens == softTokens &&
+            snap_.settings.usageHardBudgetTokens == hardTokens) {
+            return;
+        }
+        snap_.settings.usageDayAlertTokens = dayTokens;
+        snap_.settings.usageSoftBudgetTokens = softTokens;
+        snap_.settings.usageHardBudgetTokens = hardTokens;
         savePanelSettings(snap_.settings);
     }
     refresh(true);
