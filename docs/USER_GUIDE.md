@@ -180,7 +180,31 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 
 > **从旧位置升级**：旧数据位置（如 `%APPDATA%\DevDesk` / `~/Library/Application Support/DevDesk`）的数据**不做自动迁移**——新位置从头开始，旧数据原样留存。想保留旧配置 / 笔记 / 看板，手动把旧目录里的 `config.json` / `notes/` / `devdesk.db`（连同 `-wal` / `-shm`）拷进新目录即可（拷贝前先退出 DevDesk）。
 
-## 6. 常见问题
+## 6. UI 自动化驱动入口（场景验收工具）
+
+`devdesk_ui_driver` 是给 AI 开发闭环用的交互链验收工具：一份 JSON 场景文件 + 一条命令，驱动真实窗口做点击/键入/滚轮/拖拽，产出逐步报告 + 截图 + 退出码——交互链验收不再只能靠人手点。
+
+**一条命令**（构建目录 `build/tests/` 下）：
+
+```sh
+./devdesk_ui_driver --script scene.json                 # 执行场景
+./devdesk_ui_driver --dump-ids                          # 打印当帧元素 id 清单（写场景前先看这个）
+./devdesk_ui_driver --script scene.json --report-json r.json --out-dir shots --keep-going
+```
+
+**退出码**：0 全过 ｜ 1 有步骤失败（或截图/报告落盘失败）｜ 2 用法/场景文件非法 ｜ 77 无显示环境诚实跳过。
+
+**场景文件**（UTF-8 JSON，顶层 `{version, settings, steps}`，version 恒为 1）九种步骤：`click` / `type` / `key` / `scroll` / `drag` / `wait` / `assert` / `screenshot` / `dump`；元素用 id 定位（`--dump-ids` 实测为准），断言文本支持 `contains`/`equals`，几何支持 `within-window`/`intersects`；每步可带 `_comment` 注释。完整 schema 与在库示例见 `tests/ui_driver/scenes/`（正路径）与方案卡 `docs/superpowers/plans/2026-10-31-债-18-驱动入口-技术方案.md` §4。
+
+**边界（首版）**：
+
+- 跑在**临时数据根**，进程结束即弃，绝不碰真实数据目录；
+- 射程 = app 组装内的模块页与同窗弹层；独立子窗 / OS 原生控件（系统文件对话框、原生托盘菜单）不在驱动射程——场景引用其 id 会得到明确报错；
+- 仅支持当前可见（clip 链内）元素：视口外目标用 `scroll(dx,dy)` + `wait until exists` 组合显式驱动；
+- 动作前不做自动等待：需要等动画/弹层收场时显式写 `wait` 步骤；
+- 每步 `click` 默认带**命中回读**（点击点实际命中的元素必须是目标或其后代，防弹层截胡造成假绿灯）；明确要穿透时给该步加 `"force": true`。
+
+## 7. 常见问题
 
 - **打开应用代理却没在跑？** 这是设计行为：代理**默认不随应用启动**。去 Claude 页点「启动代理」，或设置页「Claude 代理」卡开「随应用启动代理」（下次启动生效）。
 - **代理端口被占用？** 默认 8888、可配：设置页「代理端口」改后回车或点「应用」，代理运行中会自动重启（Token 不变）。启动失败的中文提示见 toast 与日志（`logs\devdesk.log`）。

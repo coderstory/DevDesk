@@ -1,0 +1,69 @@
+{
+ "version": 1,
+ "steps": [
+  {
+   "type": "click",
+   "id": "app.sidebar.item.Todo.hit",
+   "_comment": "切到待办页"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "todo.btn.add"
+  },
+  {
+   "type": "click",
+   "id": "todo.btn.add"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "todo.dialog.newtask.input"
+  },
+  {
+   "type": "click",
+   "id": "todo.dialog.newtask.input"
+  },
+  {
+   "type": "type",
+   "text": "拖拽演示",
+   "_comment": "造卡片：数据一律由场景经 UI 制造（F-08 首版不直灌）"
+  },
+  {
+   "type": "key",
+   "name": "Enter"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "todo.col.0.card.0.bg"
+  },
+  {
+   "type": "drag",
+   "from": "todo.col.0.card.0.bg",
+   "to": "todo.col.1",
+   "steps": 8,
+   "_comment": "跨列真指针拖拽（press→插值 move→release，todo_drag_probe 同款原语）"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "todo.col.1.card.0.wrap"
+  },
+  {
+   "type": "assert",
+   "check": "missing",
+   "id": "todo.col.0.card.0.bg",
+   "_comment": "原列卡消失 = 跨列移动成功"
+  },
+  {
+   "type": "assert",
+   "check": "exists",
+   "id": "todo.col.1.card.0.wrap"
+  },
+  {
+   "type": "screenshot",
+   "path": "todo-drag.png"
+  }
+ ]
+}

@@ -223,6 +223,13 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
     # app::toast_notice 桥实现缝：toast_channel.cpp 引用其符号（同款理由）
     ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
+    # 债-18 UI 驱动入口底层件无头单测：只 include ui_driver/ 四个底层头
+    #（零 probe_harness 依赖——probe_harness 拖 png.h/GL loader/GLFW 窗口设施，
+    # 本目标链接集没有 PNG 目标，混编排头即编译失败，见方案卡 §3 分层纪律）
+    test_modules/test_ui_driver_schema.cpp
+    test_modules/test_ui_driver_keys.cpp
+    test_modules/test_ui_driver_checks.cpp
+    test_modules/test_ui_driver_report.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -262,6 +269,12 @@ foreach(_f ${_devdesk_cases_on_disk})
     # skip live/ dir（真机验收驱动：独立可执行，真网络 + 真凭据，不进 devdesk_tests）
     string(FIND "${_canon}" "${_devdesk_tests_dir}/live/" _live_pos)
     if(_live_pos EQUAL 0)
+        continue()
+    endif()
+    # skip ui_driver/ dir（债-18 场景驱动入口：独立可执行 + 六组装件头，纯函数
+    # 无头单测以 test_modules/test_ui_driver_*.cpp 形式登记，不按本目录 GLOB 核对）
+    string(FIND "${_canon}" "${_devdesk_tests_dir}/ui_driver/" _uidrv_pos)
+    if(_uidrv_pos EQUAL 0)
         continue()
     endif()
     list(APPEND _devdesk_cases_on_disk_canon "${_canon}")
@@ -481,6 +494,72 @@ foreach(_probe_source ${_devdesk_probe_sources})
         set_tests_properties(${_probe_name}_min_window
             PROPERTIES SKIP_RETURN_CODE 77)
     endif()
+endforeach()
+
+# ==================== 债-18：UI 自动化驱动入口（场景驱动 CLI）====================
+# devdesk_ui_driver：tests/ui_driver/ 六组装件（底层 4 头零 probe_harness 依赖 +
+# 编排 2 头）+ ui_driver_main.cpp。链接集 = module_toggle_sidebar_probe 同款
+# 7 缝源（app 级组装：真 app::compose + 真 dispatchModuleToggle 链路可用，
+# 理由见上方 probe 块注释）；PNG::PNG 同款硬保证（失败截图证据链不能静默消失）。
+# ctest：三条正路径场景 LABELS "probe" + SKIP_RETURN_CODE 77（金丝雀复用）。
+# 负路径演示场景不进回归（WILL_FAIL 无法区分退出码 1/2，见方案卡 §5 红绿总则）。
+if(TARGET PNG::PNG)
+    set(UIDRIVER_PNG_LINK PNG::PNG)
+elseif(TARGET png_static)
+    set(UIDRIVER_PNG_LINK png_static)
+else()
+    message(FATAL_ERROR
+        "ui_driver 失败截图/落图需要 libpng：EUI-NEO 未导出 PNG::PNG / png_static target")
+endif()
+add_executable(devdesk_ui_driver
+    ui_driver/ui_driver_main.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
+target_include_directories(devdesk_ui_driver PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
+    ${CMAKE_SOURCE_DIR}/src/module_settings
+    ${CMAKE_SOURCE_DIR}/src/module_wallpaper
+)
+target_link_libraries(devdesk_ui_driver PRIVATE
+    devdesk_module_home
+    devdesk_module_markdown
+    devdesk_module_todo
+    devdesk_agent
+    devdesk_module_memory
+    devdesk_module_claude_proxy
+    devdesk_module_settings
+    devdesk_module_about
+    devdesk_module_wallpaper
+    devdesk_module_release
+    devdesk_module_schedule
+    ${UIDRIVER_PNG_LINK}
+)
+devdesk_apply_warnings(devdesk_ui_driver)
+if(MSVC)
+    target_link_options(devdesk_ui_driver PRIVATE /SUBSYSTEM:CONSOLE)
+elseif(MINGW)
+    target_link_options(devdesk_ui_driver PRIVATE -mconsole)
+endif()
+# 用法错（无 --script 且无 --dump-ids）必须真红：单独注册一条裸命令回归（无显示
+# 环境下它不碰窗口，恒可跑，不需要 SKIP_RETURN_CODE）
+add_test(NAME ui_driver_usage_error COMMAND devdesk_ui_driver)
+set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
+# 正路径场景：真窗 + 临时数据根 + 真 app::compose（截图/dump 落 build/，gitignore）
+foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move)
+    add_test(NAME ui_driver_${_ui_scene}
+        COMMAND devdesk_ui_driver
+            --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"
+            --out-dir "${CMAKE_CURRENT_BINARY_DIR}/ui-drive-shots"
+            --report-json "${CMAKE_CURRENT_BINARY_DIR}/ui-drive-shots/${_ui_scene}-report.json")
+    set_tests_properties(ui_driver_${_ui_scene} PROPERTIES LABELS "probe")
+    set_tests_properties(ui_driver_${_ui_scene} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
 
 # memory_e2e_probe 是 live 栈探针：要外部拉起 llama-server + telemem（回环

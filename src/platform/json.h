@@ -86,7 +86,14 @@ private:
     void* data_ = nullptr;
 };
 
-// 解析
+// 解析错误详情（yyjson 原生 err.pos/msg 透出；消费方由 bytePos 数换行符得行号）
+struct ParseDiag {
+    size_t bytePos = 0;  // 解析失败处的字节偏移（成功时 0）
+    std::string msg;     // yyjson 错误消息（成功时为空）
+};
+
+// 解析。带 diag 重载填 ParseDiag（可为 nullptr）；单参版本行为与既往字节一致。
+core::Result<JsonValue> parse(const std::string& text, ParseDiag* diag);
 core::Result<JsonValue> parse(const std::string& text);
 
 // 序列化

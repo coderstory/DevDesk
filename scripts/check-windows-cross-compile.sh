@@ -139,7 +139,11 @@ build_incs() {
           -I "${ROOT}/tests")
     if [ -n "$EUI_DIR" ]; then
         INCS+=(-I "${EUI_DIR}/include" -I "${EUI_DIR}"
-               -I "${EUI_DIR}/3rd/yyjson-0.12.0/src" -I "${EUI_DIR}/3rd/md4c/src")
+               -I "${EUI_DIR}/3rd/yyjson-0.12.0/src" -I "${EUI_DIR}/3rd/md4c/src"
+               # 债-18：ui_driver 键名表（tests/ui_driver/driver_keys.h）只引
+               # GLFW_KEY_*/GLFW_MOD_* 常量（GLFW_INCLUDE_NONE）；eui_neo PUBLIC
+               # 链 glfw，CMake 侧经传递 include 可达，这里静态补同一路径
+               -I "${EUI_DIR}/3rd/glfw/include")
     fi
     [ -d "${ROOT}/3rd/cpp-httplib" ] && INCS+=(-I "${ROOT}/3rd/cpp-httplib")
     [ -n "$SQLITE_INC" ] && INCS+=(-I "$SQLITE_INC")
@@ -292,7 +296,12 @@ derive_sources() {
             else d="${d#"$ROOT"/}"; fi
             awk -v DIRNAME="$d" -f "$CMAWK" "$cl"
         done
-    } | LC_ALL=C sort -u | grep -v '^$' > "$TMP/sources.txt"
+    } | LC_ALL=C sort -u | grep -v '^$' \
+      | grep -v '^tests/ui_driver/' > "$TMP/sources.txt"
+    # tests/ui_driver/（债-18 场景驱动 CLI）排除在语法守卫外：ui_driver_main.cpp
+    # 是 probe 族真窗程序（经 probe_harness.h 拖 glad/png 生成面，本守卫的纯语法
+    # 编译没有稳定 include 面），其 Windows 编译性由真 Windows 构建守；目录内
+    # 四个纯函数无头单测 TU 仍在受编集合里（只多需上面的 vendored GLFW 常量头）。
 
     : > "$TMP/sources_ok.txt"
     local f

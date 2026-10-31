@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"enabledModules": ["markdown", "todo", "claude_proxy"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "assert", "check": "missing", "id": "app.sidebar.item.Memory.hit",
+     "_comment": "种子真实生效的证明：seed 关 memory（默认开）→ 条目不在场"},
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.Todo.hit",
+     "_comment": "种子证明：seed 开 todo"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "until": "exists", "id": "settings.tabs.1.hit"},
+    {"type": "click", "id": "settings.tabs.1.hit", "_comment": "切「模块」tab"},
+    {"type": "wait", "until": "exists", "id": "settings.card.modules.sw.4.track"},
+    {"type": "click", "id": "settings.card.modules.sw.4.track",
+     "_comment": "真点 agent 开关 on（settings.card.modules.sw.4 = kToggleable[4] 智能体）"},
+    {"type": "wait", "until": "exists", "id": "app.sidebar.item.Agent.hit",
+     "_comment": "侧边栏条目当帧反映（module_toggle_sidebar_probe 同款链路）"},
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "click", "id": "settings.card.modules.sw.4.track", "_comment": "真点 agent 开关 off"},
+    {"type": "wait", "until": "missing", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "assert", "check": "missing", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "screenshot", "path": "settings-toggle.png"}
+  ]
+}

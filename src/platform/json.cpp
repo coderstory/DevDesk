@@ -289,10 +289,22 @@ JsonValue makeStringArray(const std::vector<std::string>& items) {
     return v;
 }
 
-// 解析（yyjson）
-core::Result<JsonValue> parse(const std::string& text) {
-    yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0);
+// 解析（yyjson）。带 diag 重载透出 yyjson 错误详情；单参版本委托本重载，
+// 不传 diag 时错误文案与既往字节一致。
+core::Result<JsonValue> parse(const std::string& text, ParseDiag* diag) {
+    if (diag != nullptr) {
+        diag->bytePos = 0;
+        diag->msg.clear();
+    }
+    yyjson_read_err err{};
+    // yyjson_read_opts 形参是 char*（仅 INSITU 旗标下会改写缓冲，flags=0 只读），
+    // 对 std::string 只读缓冲 const_cast 安全。
+    yyjson_doc* doc = yyjson_read_opts(const_cast<char*>(text.data()), text.size(), 0, nullptr, &err);
     if (!doc) {
+        if (diag != nullptr) {
+            diag->bytePos = err.pos;
+            diag->msg = err.msg != nullptr ? err.msg : "";
+        }
         return core::Result<JsonValue>::fail(
             core::ErrorCode::JsonParseError, "JSON 解析失败（yyjson_read 失败）");
     }
@@ -303,6 +315,10 @@ core::Result<JsonValue> parse(const std::string& text) {
     }  // 空文档 → 保持默认 null
     yyjson_doc_free(doc);
     return core::Result<JsonValue>::ok(std::move(out));
+}
+
+core::Result<JsonValue> parse(const std::string& text) {
+    return parse(text, nullptr);
 }
 
 // 序列化（yyjson writer）。字节级期望值见 implToMut 注释与 snapshot 用例

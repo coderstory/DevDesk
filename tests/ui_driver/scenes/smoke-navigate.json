@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.Home.hit",
+     "_comment": "初始落首页：侧边栏 Home 条目在场"},
+    {"type": "click", "id": "app.sidebar.item.Todo.hit",
+     "_comment": "真点侧边栏切待办页（F-06：导航 = 真点击链，非独立 navigate 原语）"},
+    {"type": "wait", "until": "exists", "id": "todo.h1"},
+    {"type": "assert", "check": "exists", "id": "todo.h1"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit",
+     "_comment": "切设置页"},
+    {"type": "wait", "until": "exists", "id": "settings.tabs.1.hit"},
+    {"type": "assert", "check": "text", "op": "contains", "text": "设置",
+     "_comment": "全页文本断言（F-03 contains）"},
+    {"type": "assert", "check": "geometry", "id": "app.sidebar", "op": "within-window",
+     "_comment": "几何断言（F-03）：侧栏含于窗口逻辑矩形"},
+    {"type": "screenshot", "path": "smoke-settings.png"},
+    {"type": "dump", "path": "smoke-dump.txt",
+     "_comment": "当帧元素树落盘（场景编写辅助）"}
+  ]
+}

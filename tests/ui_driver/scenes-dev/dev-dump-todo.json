@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit", "_comment": "开发期辅助：建任务后 dump 实测卡片 id"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add"},
+    {"type": "click", "id": "todo.btn.add"},
+    {"type": "wait", "until": "exists", "id": "todo.dialog.newtask.input"},
+    {"type": "click", "id": "todo.dialog.newtask.input"},
+    {"type": "type", "text": "缴费"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "text", "text": "缴费"},
+    {"type": "dump", "path": "todo-page-dump.txt"}
+  ]
+}

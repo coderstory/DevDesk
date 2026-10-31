@@ -369,6 +369,10 @@ ui.image("icon").source("assets/myicon.svg");
 
 ## 7. 关键交互能力
 
+### 只读命中查询（测试/驱动设施，2026-10-31 债-18）
+
+`Runtime::hitTestInteractiveAt(x, y, dpiScale)`（`core/dsl_runtime.h`，inline 实现在 `core/runtime/runtime_input.h`）：返回逻辑坐标点命中的首个可交互元素 id（interactive && !disabled，z 序最顶层优先，clip 外 miss），纯查询、不走 hover 缓存、无副作用。测试/驱动设施专用（DevDesk `tests/ui_driver/` 的 click 命中回读即其消费方）；app 主循环不应依赖。
+
 ### 拖拽 API
 
 来源：`core/dsl.h:756`、`components/mousearea.h`

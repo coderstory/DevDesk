@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.Absent.hit",
+     "_comment": "负路径开发期演示（不进 ctest 回归——WILL_FAIL 无法区分退出码 1/2，方案卡 §5）：引用不存在 id → 运行期步骤失败退 1，stderr 给相近 id 候选"}
+  ]
+}

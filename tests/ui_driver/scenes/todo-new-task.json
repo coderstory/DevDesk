@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit", "_comment": "切到待办页"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add"},
+    {"type": "click", "id": "todo.btn.add", "_comment": "打开新建任务弹窗"},
+    {"type": "wait", "until": "exists", "id": "todo.dialog.newtask.input"},
+    {"type": "click", "id": "todo.dialog.newtask.input", "_comment": "聚焦标题输入框"},
+    {"type": "type", "text": "缴费", "_comment": "UTF-8 全量注入（queueText 语义）"},
+    {"type": "key", "name": "Enter", "_comment": "回车直接创建（富创建弹窗契约）"},
+    {"type": "wait", "until": "exists", "id": "todo.col.0.card.0.wrap",
+     "_comment": "待办列出现新卡（实测 id：卡容器本体不进 DOM，.wrap 才是元素——dev-dump-todo 实测）。注：dialog 关闭态元素常驻构建（0.16s 收起过渡依赖节点存在），完成信号不能用 wait missing 弹层内元素"},
+    {"type": "assert", "check": "text", "id": "todo.col.0.card.0.title", "op": "contains", "text": "缴费", "_comment": "定点文本断言（卡标题元素，实测 id）"},
+    {"type": "scroll", "dx": 0, "dy": 3, "id": "todo.root",
+     "_comment": "滚轮动作覆盖：看板下滚"},
+    {"type": "assert", "check": "text", "op": "contains", "text": "缴费",
+     "_comment": "滚动后全页文本仍命中"},
+    {"type": "screenshot", "path": "todo-new.png"}
+  ]
+}
