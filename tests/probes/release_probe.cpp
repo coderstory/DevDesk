@@ -11,7 +11,7 @@
 //     （padding 32、页标题 24、chip 22/11/pill）与 token 文档；
 //   - 任务列表：release_list_ui.h 瀑布流几何常量（最小卡宽 320、间距 16、
 //     首屏 kReleaseTaskPageSize=10）与 kCardRadius=12；
-//   - 执行页：release_detail_ui.cpp（kEnvHeaderH=56、kStepRowH=40、
+//   - 执行页：release_detail_draw.cpp（kEnvHeaderH=56、kStepRowH=44（池 53）、
 //     kStepDot=18、chip 22/11/pill）。
 // 失败信息统一打印「期望 / 实际 / token 出处」三段。
 //
@@ -545,7 +545,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ================= D. 执行页 =================
-    // 环境分组头高 56、标题 18；步骤行高 40、勾选框 18；状态 chip 22/11/999。
+    // 环境分组头高 56、标题 18；步骤行高 44（池 53 设计档）、勾选框 18；状态 chip 22/11/999。
     module::release::ReleaseDetailUiState detailState;
     detailState.taskId = std::to_string(detailTaskId);
     detailState.dirty = true;
@@ -584,8 +584,8 @@ int main(int argc, char* argv[]) {
         const auto* stepLabel =
             checks.need(ui, mergeRow + ".label", "步骤行（合并分支）");
         if (stepLabel != nullptr) {
-            checks.expectNear("步骤行高", stepLabel->frame.height, 40.0f,
-                              "release_detail_ui.cpp kStepRowH=40");
+            checks.expectNear("步骤行高", stepLabel->frame.height, 44.0f,
+                              "release_detail_draw.cpp kStepRowH=44（池 53）");
         }
         const auto* stepDot =
             checks.need(ui, mergeRow + ".status.dot", "步骤勾选框");
@@ -609,6 +609,14 @@ int main(int argc, char* argv[]) {
         if (statusText != nullptr) {
             checks.expectNear("状态 chip 字号", statusText->fontSize, 11.0f,
                               "release_detail_ui.cpp fontSizeSmall−1=11（drawChip）");
+        }
+
+        // 池 53 F-11：模式徽标高 22（Draft=准备中，中性灰底、无绿染）。
+        const auto* badgeBg =
+            checks.need(ui, "release.detail.modebadge.edit", "模式徽标底");
+        if (badgeBg != nullptr) {
+            checks.expectNear("模式徽标高", badgeBg->frame.height, 22.0f,
+                              "release_detail_draw.cpp drawModeBadge kChipH=22");
         }
     }
 

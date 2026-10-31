@@ -88,6 +88,15 @@ RemindLevel highestLevel(const std::vector<DueItem>& items);
 std::vector<std::string> validateTask(const std::vector<TaskService>& services,
                                       const std::vector<TaskConfig>& configs);
 
+// 提交门禁（F-20 入口防呆）= validateTask（内容齐备）+ 前置项齐备：
+//   提测/CAB 单号必填；nacos/DB 工单单号按内容出现（ticketNeeds）必填；公告内容必填。
+//   缺失清单前置项在前、内容项在后（与详情页表单流同序）；文案与详情页标红映射
+//   逐字契约，改措辞必须同步 release_detail_logic 的映射。纯函数，无 IO。
+std::vector<std::string> validateTaskSubmission(const Task& task,
+                                                const std::vector<TaskEnv>& envs,
+                                                const std::vector<TaskService>& services,
+                                                const std::vector<TaskConfig>& configs);
+
 // 服务类型的期望配置项数（进度与完成判定的分母基准）：Backend 固定 5 项
 // （nacos / db / cron / menu / gateway），前端（PcWeb / MobileWeb）为 0。
 // 与库中实际配置行数无关——缺行按未完成计，多行按 kind 去重不重复计 done。

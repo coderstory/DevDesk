@@ -123,6 +123,10 @@ public:
     bool onKeyEvent(const eui::KeyEvent& key) override {
         if (!key.isDown() || key.key != eui::InputKey::Escape) return false;
         if (!openTaskId_) return false;
+        if (detailState_.menuOpen) {
+            detailState_.menuOpen = false;
+            return true;
+        }
         if (detailState_.editorOpen) {
             detailState_.editorOpen = false;
             return true;
@@ -149,6 +153,13 @@ public:
             // taskId 每帧写入，页面内按 loadedTaskId 检测切换，切换时自行重读。
             detailState_.taskId = std::to_string(*openTaskId_);
             ReleaseDetailActions actions;
+            // 空态「去基础配置」出口（任务无环境时的就近导航，F-16）。
+            actions.onOpenConfig = [] {
+                auto* router = ::core::appRouter();
+                if (router != nullptr) {
+                    router->navigateTo(::core::PageId::ReleaseConfig);
+                }
+            };
             // 配置查看 / 编辑由详情页页内自绘全屏编辑层承担，因此不再注入
             // viewConfig（该回调保留为可选扩展口，详情页不调用）。
             // 页头「← 返回」的唯一实现：清空 openTaskId_ 即回列表（openTaskId_
@@ -185,6 +196,19 @@ private:
                 // 定位提醒条目，执行页按任务 id 展示，无需按 scope 分流。
                 (void)scope;
                 openTaskId_ = taskId;
+                // F-23：Pending/Running 落发布态轨道当前步（滚动+高亮）；
+                // Draft 打开详情即编辑态，无需锚点。
+                auto tasks = store_->listTasks();
+                if (tasks.isOk()) {
+                    for (const auto& task : tasks.value()) {
+                        if (task.id != taskId) continue;
+                        if (task.status == TaskStatus::Pending ||
+                            task.status == TaskStatus::Running) {
+                            detailState_.pendingAnchor = "publish.current";
+                        }
+                        break;
+                    }
+                }
                 detailState_.dirty = true;
                 auto* router = ::core::appRouter();
                 if (router == nullptr) {

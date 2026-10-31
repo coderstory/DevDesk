@@ -18,8 +18,14 @@ bool isReadOnly(TaskStatus status) {
     return status == TaskStatus::Done || status == TaskStatus::Voided;
 }
 
-bool isConfigPhase(TaskStatus status) {
-    return status == TaskStatus::Draft || status == TaskStatus::Pending;
+bool isEditMode(TaskStatus status) {
+    // 池 53 双模式：编辑域只认 Draft。Pending 并入发布态（F-03 废除 issue 06
+    // 「提交后仍可改配置」）；发布态 = Pending + Running，归档态 = Done + Voided。
+    return status == TaskStatus::Draft;
+}
+
+bool isPublishMode(TaskStatus status) {
+    return status == TaskStatus::Pending || status == TaskStatus::Running;
 }
 
 std::string trimmed(const std::string& value) {
@@ -319,6 +325,7 @@ std::vector<std::string> deployGateMissing(const Task& task, const TicketNeeds& 
 void setNotice(ReleaseDetailUiState& state, std::string text, bool isError) {
     state.notice = std::move(text);
     state.noticeIsError = isError;
+    state.noticeAt = static_cast<std::int64_t>(core::time::nowUnix());
 }
 
 void saveTask(ReleaseStore& store, ReleaseDetailUiState& state) {
@@ -602,8 +609,8 @@ bool markConfigCompleted(ReleaseStore& store, ReleaseDetailUiState& state,
 
 void moveConfig(ReleaseStore& store, ReleaseDetailUiState& state,
                 std::int64_t serviceId, ConfigKind kind, int delta) {
-    if (!isConfigPhase(state.displayStatus) || isReadOnly(state.displayStatus)) {
-        setNotice(state, "进入执行后配置顺序已锁定", true);
+    if (!isEditMode(state.displayStatus) || isReadOnly(state.displayStatus)) {
+        setNotice(state, "发布中任务不能调整配置顺序，请撤回提交或作废后操作", true);
         return;
     }
     if (!ensureServiceConfigs(store, state, serviceId)) return;
@@ -682,8 +689,26 @@ bool serviceConfigFlagged(const ReleaseDetailUiState& state, const std::string& 
                      message) != state.validationMissing.end();
 }
 
-// 提交：Draft → Pending。校验只认 release_logic::validateTask 的结果，
-// 缺失清单原样留作标红依据；通过才写库并记一条 action=submit 的日志。
+// 前置项标红：文案与 release_logic::validateTaskSubmission 的拼装逐字一致
+//（同一契约的另一侧，改措辞必须同步）。
+
+bool prereqFlagged(const ReleaseDetailUiState& state, PrereqKey key) {
+    if (!state.validationActive) return false;
+    const char* message = nullptr;
+    switch (key) {
+        case PrereqKey::Pretest: message = "提测单号未填写"; break;
+        case PrereqKey::Cab: message = "CAB 单号未填写"; break;
+        case PrereqKey::Nacos: message = "nacos 工单号未填写"; break;
+        case PrereqKey::Db: message = "数据库工单号未填写"; break;
+        case PrereqKey::Announce: message = "上线公告内容未填写"; break;
+    }
+    return std::find(state.validationMissing.begin(), state.validationMissing.end(),
+                     std::string(message)) != state.validationMissing.end();
+}
+
+// 提交：Draft → Pending。校验只认 release_logic::validateTaskSubmission 的结果
+//（F-20：内容齐备 + 前置单号/公告齐备），缺失清单原样留作标红依据；
+// 通过才写库并记一条 action=submit 的日志。
 
 void submitTask(ReleaseStore& store, ReleaseDetailUiState& state) {
     if (state.task.id == 0) return;
@@ -691,8 +716,8 @@ void submitTask(ReleaseStore& store, ReleaseDetailUiState& state) {
         setNotice(state, "只有「配置中」的任务可以提交", true);
         return;
     }
-    const std::vector<std::string> missing =
-        validateTask(state.services, configsForValidation(state));
+    const std::vector<std::string> missing = validateTaskSubmission(
+        state.task, state.envs, state.services, configsForValidation(state));
     if (!missing.empty()) {
         state.validationActive = true;
         state.validationMissing = missing;
@@ -717,6 +742,36 @@ void submitTask(ReleaseStore& store, ReleaseDetailUiState& state) {
     setNotice(state, "已提交，任务进入待执行", false);
 }
 
+// 撤回提交（F-02）：Pending → Draft 的状态回退，**不是数据清理**——已勾确认
+//（前置 ok 标志 / 公告时间 / 步骤 doneAt / 配置 doneAt）与既有日志原样保留，
+// 仅 release_task.status 落回 draft；applyRestore 以「日志存在 submit」判已提交，
+// 撤回不删该日志，作废→恢复链不受影响。Running 起拒绝：执行留痕不可回退。
+
+void applyWithdrawSubmission(ReleaseStore& store, ReleaseDetailUiState& state) {
+    if (state.task.id == 0) return;
+    if (state.displayStatus != TaskStatus::Pending) {
+        setNotice(state, isPublishMode(state.displayStatus)
+                             ? "任务已开始执行，不能撤回提交"
+                             : "只有「待执行」的任务可以撤回提交",
+                  true);
+        return;
+    }
+    Task next = state.task;
+    next.status = TaskStatus::Draft;
+    auto result = store.updateTask(next);
+    if (result.isFail()) {
+        setNotice(state, "撤回提交失败：" + result.errorMessage(), true);
+        return;
+    }
+    state.task = next;
+    state.displayStatus = TaskStatus::Draft;
+    state.validationActive = false;
+    state.validationMissing.clear();
+    appendActionLog(store, state, "任务", "提交", "revoke", "Pending→Draft 撤回提交");
+    state.dirty = true;
+    setNotice(state, "已撤回提交，可继续编辑", false);
+}
+
 // 校验项数 = 未移除服务的分支 + 各自未跳过的配置（含内存占位行），
 // 与 validateTask 的检查面一致，仅用于「N 项齐全」反馈。
 
@@ -736,8 +791,12 @@ int validationItemCount(const ReleaseDetailUiState& state) {
 // 通过时只回显结果；判定规则只来自 release_logic::validateTask。
 
 void runValidation(ReleaseDetailUiState& state) {
-    const std::vector<std::string> missing =
-        validateTask(state.services, configsForValidation(state));
+    // 与提交同一门禁（F-20）：Draft 的「校验」是提交前预演；发布态的只读校验
+    // 走内容检查（validateTask），前置在提交时已齐备，不再重复报。
+    const std::vector<std::string> missing = isEditMode(state.displayStatus)
+        ? validateTaskSubmission(state.task, state.envs, state.services,
+                                 configsForValidation(state))
+        : validateTask(state.services, configsForValidation(state));
     if (!missing.empty()) {
         state.validationActive = true;
         state.validationMissing = missing;
@@ -839,7 +898,7 @@ void updateConfigDragTarget(ReleaseDetailUiState& state) {
 void finishServiceDrag(ReleaseStore& store, ReleaseDetailUiState& state, bool released) {
     if (state.drag.kind != ReleaseDetailDragKind::ServiceOrder) return;
     // 中途状态跳到执行中 / 完成时把手柄锁死：落在锁定后松手不得写库。
-    if (!isConfigPhase(state.displayStatus) || isReadOnly(state.displayStatus)) {
+    if (!isEditMode(state.displayStatus) || isReadOnly(state.displayStatus)) {
         state.drag = ReleaseDetailDragState{};
         return;
     }
@@ -887,7 +946,7 @@ void finishServiceDrag(ReleaseStore& store, ReleaseDetailUiState& state, bool re
 
 void finishConfigDrag(ReleaseStore& store, ReleaseDetailUiState& state, bool released) {
     if (state.drag.kind != ReleaseDetailDragKind::ConfigOrder) return;
-    if (!isConfigPhase(state.displayStatus) || isReadOnly(state.displayStatus)) {
+    if (!isEditMode(state.displayStatus) || isReadOnly(state.displayStatus)) {
         state.drag = ReleaseDetailDragState{};
         return;
     }
@@ -1180,8 +1239,11 @@ void openRevokeConfig(ReleaseDetailUiState& state, std::int64_t serviceId,
 
 void toggleConfigSkip(ReleaseStore& store, ReleaseDetailUiState& state,
                       std::int64_t serviceId, ConfigKind kind) {
-    if (isReadOnly(state.displayStatus)) {
-        setNotice(state, "任务已只读，不能跳过", true);
+    if (!isEditMode(state.displayStatus)) {
+        setNotice(state, isReadOnly(state.displayStatus)
+                             ? "任务已只读，不能跳过"
+                             : "发布中任务不能跳过配置，请撤回提交或作废后操作",
+                  true);
         return;
     }
     const TaskConfig* current = findConfig(state, serviceId, kind);
@@ -1223,6 +1285,11 @@ void toggleConfigSkip(ReleaseStore& store, ReleaseDetailUiState& state,
 
 void openConfigEditor(ReleaseStore& store, ReleaseDetailUiState& state,
                       std::int64_t serviceId, ConfigKind kind) {
+    // 发布态禁止进入编辑层（F-03 只读）；归档态只读查看放行。
+    if (isPublishMode(state.displayStatus)) {
+        setNotice(state, "发布中任务不能编辑配置，请撤回提交或作废后操作", true);
+        return;
+    }
     if (!isReadOnly(state.displayStatus)) {
         if (!ensureServiceConfigs(store, state, serviceId)) return;
     }
@@ -1289,8 +1356,11 @@ void openRemoveEnv(ReleaseDetailUiState& state, std::int64_t envId,
 }
 
 void applyRemoveService(ReleaseStore& store, ReleaseDetailUiState& state) {
-    if (isReadOnly(state.displayStatus)) {
-        setNotice(state, "任务已只读，不能移除服务", true);
+    if (!isEditMode(state.displayStatus)) {
+        setNotice(state, isReadOnly(state.displayStatus)
+                             ? "任务已只读，不能移除服务"
+                             : "发布中任务不能移除服务，请撤回提交或作废后操作",
+                  true);
         return;
     }
     const TaskService* svc = findService(state, state.removeServiceId);
@@ -1306,8 +1376,11 @@ void applyRemoveService(ReleaseStore& store, ReleaseDetailUiState& state) {
 }
 
 void applyRemoveEnv(ReleaseStore& store, ReleaseDetailUiState& state) {
-    if (isReadOnly(state.displayStatus)) {
-        setNotice(state, "任务已只读，不能移除环境", true);
+    if (!isEditMode(state.displayStatus)) {
+        setNotice(state, isReadOnly(state.displayStatus)
+                             ? "任务已只读，不能移除环境"
+                             : "发布中任务不能移除环境，请撤回提交或作废后操作",
+                  true);
         return;
     }
     const TaskEnv* env = findEnv(state, state.removeEnvId);
@@ -1323,8 +1396,12 @@ void applyRemoveEnv(ReleaseStore& store, ReleaseDetailUiState& state) {
 }
 
 void performNextStep(ReleaseStore& store, ReleaseDetailUiState& state, int nowMinute) {
-    if (isReadOnly(state.displayStatus)) {
-        setNotice(state, "任务已只读，不能推进", true);
+    // 轨道 = 发布态专属（2026-10-31 审计裁决）：编辑态主动作是提交，不放轨道引导。
+    if (!isPublishMode(state.displayStatus)) {
+        setNotice(state, isReadOnly(state.displayStatus)
+                             ? "任务已只读，不能推进"
+                             : "任务尚未提交，先完成内容并提交后再执行",
+                  true);
         return;
     }
     if (!state.task.pretestOk) {
@@ -1378,6 +1455,228 @@ void performNextStep(ReleaseStore& store, ReleaseDetailUiState& state, int nowMi
         }
     }
     setNotice(state, "全部步骤已完成", false);
+}
+
+// ==================== 发布态流程轨道（F-04 / F-14 / F-23） ====================
+
+// 轨道序 = performNextStep 既有固定序（不新造）：任务前置 → 各环境（服务按任务内
+// 顺序：合并分支 → 配置 n 项 → 部署 → 验证）。drawPublishTrack、「下一步」按钮文案
+// 与 F-23 锚点偏移都消费同一份行清单——顺序与高度档单一来源，禁止另排一套。
+// 折叠：完成组默认收起、当前步所在组强制展开；trackGroupState 存手动覆盖，
+// 重读（状态变化）时由 loadDetail 清空重算默认态。
+
+std::vector<TrackRowView> collectTrackRows(const ReleaseDetailUiState& state,
+                                           int nowMinute) {
+    std::vector<TrackRowView> rows;
+    const TicketNeeds needs = scanTicketNeeds(state);
+
+    auto pushPrereq = [&](PrereqKey key, const std::string& value, bool checked,
+                          bool gateOpen) {
+        TrackRowView row;
+        row.kind = TrackRowKind::Step;
+        row.groupId = "prereq";
+        row.label = prereqTitle(key);
+        row.valueText = value;
+        row.node = checked ? TrackNodeState::Done
+                           : (gateOpen ? TrackNodeState::UnlockedTodo
+                                       : TrackNodeState::Locked);
+        row.statusText = checked ? std::string("已完成")
+                                 : (gateOpen ? std::string()
+                                             : std::string(key == PrereqKey::Announce
+                                                               ? "请先填写公告内容"
+                                                               : "请先填写单据号"));
+        row.confirmable = !checked && gateOpen;
+        row.revocable = checked;
+        row.prereqKey = key;
+        row.isAnnounce = key == PrereqKey::Announce;
+        row.height = kTrackRowH;
+        rows.push_back(std::move(row));
+    };
+    pushPrereq(PrereqKey::Pretest, state.task.pretestNo, state.task.pretestOk,
+               prereqGateOpen(state, PrereqKey::Pretest));
+    pushPrereq(PrereqKey::Cab, state.task.cabNo, state.task.cabOk,
+               prereqGateOpen(state, PrereqKey::Cab));
+    if (needs.nacos) {
+        pushPrereq(PrereqKey::Nacos, state.task.ticketNacosNo, state.task.ticketNacosOk,
+                   prereqGateOpen(state, PrereqKey::Nacos));
+    }
+    if (needs.db) {
+        pushPrereq(PrereqKey::Db, state.task.ticketDbNo, state.task.ticketDbOk,
+                   prereqGateOpen(state, PrereqKey::Db));
+    }
+    pushPrereq(PrereqKey::Announce, state.task.announceText,
+               state.task.announceSentAt != 0, prereqGateOpen(state, PrereqKey::Announce));
+
+    // 前置组头插在最前。
+    {
+        rows.insert(rows.begin(), TrackRowView{});
+        TrackRowView& head = rows.front();
+        head.kind = TrackRowKind::EnvGroupHeader;
+        head.groupId = "prereq";
+        head.title = "任务前置";
+        int done = 0;
+        for (std::size_t i = 1; i < rows.size(); ++i) {
+            if (rows[i].groupId == "prereq" && rows[i].node == TrackNodeState::Done) {
+                ++done;
+            }
+        }
+        head.progressText = std::to_string(done) + "/" + std::to_string(rows.size() - 1);
+        head.groupDone = done == static_cast<int>(rows.size()) - 1;
+        head.groupOverdue = false;
+        head.height = kTrackGroupH;
+    }
+
+    for (const auto& env : state.envs) {
+        if (env.removed) continue;
+        const std::vector<const TaskService*> services = liveServices(state, env);
+        const Progress progress = envProgress(env, state.services, state.configs, state.steps);
+        TrackRowView header;
+        header.kind = TrackRowKind::EnvGroupHeader;
+        header.groupId = "env." + std::to_string(env.id);
+        header.title = env.envName;
+        header.progressText =
+            std::to_string(progress.done) + "/" + std::to_string(progress.total);
+        header.groupDone = progress.total == 0 || progress.done == progress.total;
+        header.groupOverdue = nowMinute >= 0 && nowMinute > envEndMinuteAdjusted(env) &&
+                              !header.groupDone;
+        header.envId = env.id;
+        header.height = kTrackGroupH;
+        rows.push_back(std::move(header));
+
+        for (const TaskService* service : services) {
+            const TaskService& svc = *service;
+            TrackRowView svcLabel;
+            svcLabel.kind = TrackRowKind::ServiceLabel;
+            svcLabel.groupId = header.groupId;
+            svcLabel.title = svc.serviceName;
+            svcLabel.height = kTrackServiceH;
+            rows.push_back(std::move(svcLabel));
+
+            auto pushStep = [&](TrackRowView row) {
+                row.groupId = header.groupId;
+                row.envId = env.id;
+                row.serviceId = svc.id;
+                row.height = kTrackRowH;
+                rows.push_back(std::move(row));
+            };
+            {
+                TrackRowView row;
+                row.label = stepLabel(StepKind::MergeBranch);
+                row.stepKind = StepKind::MergeBranch;
+                row.done = stepDone(state, svc.id, StepKind::MergeBranch);
+                row.node = row.done ? TrackNodeState::Done : TrackNodeState::UnlockedTodo;
+                row.statusText = row.done ? "已完成" : "";
+                row.confirmable = !row.done;
+                row.revocable = row.done;
+                pushStep(std::move(row));
+            }
+            for (const auto& cfg : orderedConfigs(state, svc)) {
+                TrackRowView row;
+                row.config = true;
+                row.configKind = cfg.kind;
+                row.label = configLabel(cfg.kind);
+                row.done = !cfg.skipped && cfg.doneAt != 0;
+                if (cfg.skipped) {
+                    row.node = TrackNodeState::Skipped;
+                    row.statusText = "已跳过";
+                } else if (row.done) {
+                    row.node = TrackNodeState::Done;
+                    row.statusText = "已完成";
+                    row.revocable = true;
+                } else if (nowMinute < 0 || nowMinute < env.startMinute) {
+                    row.node = TrackNodeState::Locked;
+                    row.statusText = formatPlanMinute(env.startMinute) + " 解锁";
+                } else if (!configGateMissing(state.task, cfg.kind).empty()) {
+                    row.node = TrackNodeState::Locked;
+                    row.statusText = "请先填写工单单号";
+                } else {
+                    row.node = TrackNodeState::UnlockedTodo;
+                    row.confirmable = true;
+                }
+                pushStep(std::move(row));
+            }
+            {
+                TrackRowView row;
+                row.label = stepLabel(StepKind::Deploy);
+                row.stepKind = StepKind::Deploy;
+                row.done = stepDone(state, svc.id, StepKind::Deploy);
+                if (row.done) {
+                    row.node = TrackNodeState::Done;
+                    row.statusText = "已完成";
+                    row.revocable = true;
+                } else if (nowMinute < 0 || nowMinute < env.startMinute) {
+                    row.node = TrackNodeState::Locked;
+                    row.statusText = formatPlanMinute(env.startMinute) + " 解锁";
+                } else if (!deployGateMissing(state.task, needs).empty()) {
+                    row.node = TrackNodeState::Locked;
+                    row.statusText = "请先填写工单单号";
+                } else {
+                    row.node = TrackNodeState::UnlockedTodo;
+                    row.confirmable = true;
+                }
+                pushStep(std::move(row));
+            }
+            {
+                TrackRowView row;
+                row.label = stepLabel(StepKind::Verify);
+                row.stepKind = StepKind::Verify;
+                row.done = stepDone(state, svc.id, StepKind::Verify);
+                if (row.done) {
+                    row.node = TrackNodeState::Done;
+                    row.statusText = "已完成";
+                    row.revocable = true;
+                } else if (nowMinute < 0 || nowMinute < env.startMinute) {
+                    row.node = TrackNodeState::Locked;
+                    row.statusText = formatPlanMinute(env.startMinute) + " 解锁";
+                } else {
+                    row.node = TrackNodeState::UnlockedTodo;
+                    row.confirmable = true;
+                }
+                pushStep(std::move(row));
+            }
+        }
+    }
+
+    // 当前步 = 轨道里第一个未完成且已解锁的行（唯一绿染）。
+    std::string currentGroup;
+    for (auto& row : rows) {
+        if (row.kind == TrackRowKind::Step && row.node == TrackNodeState::UnlockedTodo) {
+            row.node = TrackNodeState::Current;
+            currentGroup = row.groupId;
+            break;
+        }
+    }
+    // 折叠：缺省 = 完成组收起；手动覆盖以 trackGroupState 为准；当前步组强制展开。
+    for (auto& row : rows) {
+        if (row.kind != TrackRowKind::EnvGroupHeader) continue;
+        const bool collapsed =
+            row.groupId != currentGroup &&
+            (state.trackGroupState.count(row.groupId)
+                 ? state.trackGroupState.at(row.groupId)
+                 : row.groupDone);
+        if (!collapsed) continue;
+        for (auto& other : rows) {
+            if (other.kind != TrackRowKind::EnvGroupHeader &&
+                other.groupId == row.groupId) {
+                other.hidden = true;
+            }
+        }
+    }
+    return rows;
+}
+
+// F-23 锚点：当前步行顶部的内容偏移（= 可见行前缀和 − 24px 余量，clamp ≥ 0）。
+// 与 drawPublishTrack 用同一份行清单与同一组高度档，折叠隐藏行不计入。
+
+float trackCurrentStepOffset(const std::vector<TrackRowView>& rows) {
+    float offset = 0.0f;
+    for (const auto& row : rows) {
+        if (row.kind == TrackRowKind::Step && row.node == TrackNodeState::Current) {
+            return std::max(0.0f, offset - 24.0f);
+        }
+        if (!row.hidden) offset += row.height + kTrackRowGap;
+    }
+    return 0.0f;
 }
 
 // ==================== 绘制辅助 ====================

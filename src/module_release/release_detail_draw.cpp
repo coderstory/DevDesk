@@ -111,30 +111,6 @@ void drawSectionTitle(eui::Ui& ui, const std::string& id, float x, float y,
         .build();
 }
 
-void drawMiniArrow(eui::Ui& ui, const std::string& id, float x, float y,
-                   bool up, bool enabled, const Tokens& t,
-                   const std::function<void()>& onClick) {
-    auto rect = ui.rect(id)
-                    .position(x, y)
-                    .size(kArrowW, kArrowW)
-                    .color(t.colors.hover)
-                    .radius(t.sizes.radiusSmall)
-                    .opacity(enabled ? 1.0f : 0.4f);
-    if (enabled && onClick) rect.onClick(onClick);
-    rect.build();
-    ui.text(id + ".icon")
-        .position(x, y)
-        .size(kArrowW, kArrowW)
-        .icon(up ? 0xF077u : 0xF078u)
-        .fontSize(core::theme::scaled(10.0f))
-        .lineHeight(kArrowW)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textSecondary)
-        .opacity(enabled ? 1.0f : 0.4f)
-        .build();
-}
-
 // 拖拽手柄（⋮⋮）：透明底 + hover 浅染；命中区与图标分离，图标在下层之后绘制。
 // 手柄自身承担 press/drag/release，行点击命中区在其下方，点手柄不会误触行。
 
@@ -306,209 +282,198 @@ bool containsAsciiCaseInsensitive(const std::string& haystack, const std::string
     return false;
 }
 
-int prereqColumns(float availableWidth, int count) {
-    if (count <= 0) return 1;
-    const float columns = std::floor((availableWidth + kPrereqGap) /
-                                     (kPrereqCardMinW + kPrereqGap));
-    return std::clamp(static_cast<int>(columns), 1, count);
-}
+// 前置区（F-12 单据式表单流，编辑态专属）：一行一单据，label 定宽 + 输入 +
+// 行尾勾；「填」是主体、「勾」是收尾。单号未填 → 勾禁用 + 提示（既有门禁）。
+// 到期提示不逐行常驻（设计 §5.2）：由已完成聚合 / 提醒引擎 / 轨道到期承载。
 
-float prereqSectionHeight(float width, int count) {
-    if (count <= 0) return kSectionTitleH;
-    const int cols = prereqColumns(width, count);
-    const int rows = (count + cols - 1) / cols;
-    return kSectionTitleH + kSectionGap +
-           static_cast<float>(rows) * kPrereqCardH +
-           static_cast<float>(rows - 1) * kPrereqGap;
+float prereqSectionHeight(const ReleaseDetailUiState& state) {
+    const TicketNeeds needs = scanTicketNeeds(state);
+    const int docRows = 2 + (needs.nacos ? 1 : 0) + (needs.db ? 1 : 0);
+    const float rowH = kStepRowH;
+    const float inner = 16.0f + 18.0f + 8.0f +
+                        static_cast<float>(docRows) * (rowH + 8.0f) - 8.0f +
+                        16.0f + 18.0f + 8.0f + 88.0f + 8.0f + 22.0f + 16.0f;
+    return kSectionTitleH + kSectionGap + inner;
 }
 
 void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                        bool readOnly, int nowMinute, const Tokens& t,
                        const components::theme::ThemeColorTokens& themeTokens,
                        ReleaseStore& store) {
+    (void)readOnly;   // 本节只在编辑态渲染（发布/归档走流程轨道）
+    (void)nowMinute;  // 到期提示不逐行常驻（设计 §5.2）
     const TicketNeeds needs = scanTicketNeeds(state);
-    std::vector<PrereqView> cards;
-    const PrereqKey baseKeys[2] = {PrereqKey::Pretest, PrereqKey::Cab};
-    for (PrereqKey key : baseKeys) {
-        PrereqView view;
-        view.key = key;
-        view.title = prereqTitle(key);
-        view.checkLabel = prereqCheckLabel(key);
-        view.checked = prereqChecked(state, key);
-        view.value = prereqValue(state, key);
-        view.gateOpen = prereqGateOpen(state, key);
-        cards.push_back(std::move(view));
-    }
-    if (needs.nacos) {
-        PrereqView view;
-        view.key = PrereqKey::Nacos;
-        view.title = prereqTitle(PrereqKey::Nacos);
-        view.checkLabel = prereqCheckLabel(PrereqKey::Nacos);
-        view.checked = prereqChecked(state, PrereqKey::Nacos);
-        view.value = prereqValue(state, PrereqKey::Nacos);
-        view.gateOpen = prereqGateOpen(state, PrereqKey::Nacos);
-        cards.push_back(std::move(view));
-    }
-    if (needs.db) {
-        PrereqView view;
-        view.key = PrereqKey::Db;
-        view.title = prereqTitle(PrereqKey::Db);
-        view.checkLabel = prereqCheckLabel(PrereqKey::Db);
-        view.checked = prereqChecked(state, PrereqKey::Db);
-        view.value = prereqValue(state, PrereqKey::Db);
-        view.gateOpen = prereqGateOpen(state, PrereqKey::Db);
-        cards.push_back(std::move(view));
-    }
-    {
-        PrereqView view;
-        view.key = PrereqKey::Announce;
-        view.title = prereqTitle(PrereqKey::Announce);
-        view.checkLabel = prereqCheckLabel(PrereqKey::Announce);
-        view.checked = prereqChecked(state, PrereqKey::Announce);
-        view.value = prereqValue(state, PrereqKey::Announce);
-        view.gateOpen = prereqGateOpen(state, PrereqKey::Announce);
-        cards.push_back(std::move(view));
-    }
+    struct DocRow {
+        PrereqKey key;
+    };
+    std::vector<DocRow> docs{{PrereqKey::Pretest}, {PrereqKey::Cab}};
+    if (needs.nacos) docs.push_back({PrereqKey::Nacos});
+    if (needs.db) docs.push_back({PrereqKey::Db});
 
-    const std::int64_t baseline = taskBaseline(state.envs);
-    // 到期状态只读 release_logic 的聚合结果，不在 UI 重算「基准 − 60」的触发时刻。
-    // 卡片标题是 dueItems 标题的子串（提测单 / CAB 单 / nacos 工单 / 数据库工单 /
-    // 上线公告），据此把条目对回卡片；已完成的项不会出现在 dueItems 里。
-    // 走 canonical 6 参入口：state.steps 是本任务全部步骤的汇总（loadDetail 按服务
-    // 收集），与提醒引擎同源——步骤全做完的环境不再因空 steps 在详情页假红。
-    const std::vector<DueItem> due = dueItems(state.task, state.envs, state.services,
-                                              state.configs, state.steps, nowMinute);
-    const int cols = prereqColumns(width, static_cast<int>(cards.size()));
-    const float cardW = cols > 0
-        ? (width - kPrereqGap * static_cast<float>(cols - 1)) / static_cast<float>(cols)
-        : width;
-    const float sectionH = prereqSectionHeight(width, static_cast<int>(cards.size()));
+    const float inset = 16.0f;
+    const float rowH = kStepRowH;
+    const float sectionH = prereqSectionHeight(state);
+    const float cardH = sectionH - kSectionTitleH - kSectionGap;
 
     ui.stack("release.detail.prereq.section")
         .size(width, sectionH)
         .content([&] {
-            drawSectionTitle(ui, "release.detail.prereq.title", 0.0f, 0.0f, "任务前置", t);
-            for (std::size_t i = 0; i < cards.size(); ++i) {
-                PrereqView& card = cards[i];
-                const int col = static_cast<int>(i) % cols;
-                const int row = static_cast<int>(i) / cols;
-                const float x = static_cast<float>(col) * (cardW + kPrereqGap);
-                const float y = kSectionTitleH + kSectionGap +
-                                static_cast<float>(row) * (kPrereqCardH + kPrereqGap);
-                const bool announce = card.key == PrereqKey::Announce;
-                const bool doc = !announce;
+            drawSectionTitle(ui, "release.detail.prereq.title", 0.0f, 0.0f, "发布准备", t);
+            const float cardY = kSectionTitleH + kSectionGap;
+            drawCardBackground(ui, "release.detail.prereq.card", 0.0f, cardY, width,
+                               cardH, t, themeTokens, false);
+            float y = cardY + inset;
+            ui.text("release.detail.prereq.group.docs")
+                .position(inset, y)
+                .size(width - inset * 2.0f, 18.0f)
+                .text("审批单据")
+                .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                .lineHeight(18.0f)
+                .color(t.colors.textTertiary)
+                .build();
+            y += 18.0f + 8.0f;
 
-                card.overdue = false;
-                if (!card.checked) {
-                    for (const auto& item : due) {
-                        if (item.scope == "task" &&
-                            containsAsciiCaseInsensitive(item.title, card.title)) {
-                            card.overdue = true;
-                            break;
-                        }
-                    }
-                }
-                if (baseline < 0) {
-                    card.dueText = "到期时间未定义";
-                } else if (announce) {
-                    // 公告到期时间 = 当天最早环境的开始时间（taskBaseline）。
-                    card.dueText = (card.checked ? "已确认 · " : "到期 ") +
-                                   formatPlanMinute(static_cast<int>(baseline)) +
-                                   "（最早环境）";
-                } else {
-                    card.dueText = "到期：时间基准前 60 分钟";
-                }
-
+            for (std::size_t i = 0; i < docs.size(); ++i) {
+                const PrereqKey key = docs[i].key;
                 const std::string id = "release.detail.prereq." + std::to_string(i);
-                drawCardBackground(ui, id + ".bg", x, y, cardW, kPrereqCardH, t,
-                                   themeTokens, false);
-                ui.text(id + ".title")
-                    .position(x + 16.0f, y + 14.0f)
-                    .size(std::max(0.0f, cardW - 32.0f), 20.0f)
-                    .text(card.title)
+                const bool checked = prereqChecked(state, key);
+                const bool gateOpen = prereqGateOpen(state, key);
+                const bool flagged = prereqFlagged(state, key);
+                // label 定宽 96 + 输入 flex + 行尾勾
+                const float labelW = kFormLabelW;
+                const float checkW = 64.0f;
+                const float inputX = inset + labelW + 12.0f;
+                const float inputW = std::max(
+                    0.0f, width - inset * 2.0f - labelW - 12.0f - checkW - 12.0f);
+                ui.text(id + ".label")
+                    .position(inset, y)
+                    .size(labelW, rowH)
+                    .text(prereqTitle(key))
                     .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(20.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
+                    .lineHeight(rowH)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(flagged && !checked ? t.colors.errorText
+                                               : t.colors.textPrimary)
                     .build();
-                ui.text(id + ".due")
-                    .position(x + 16.0f, y + 36.0f)
-                    .size(std::max(0.0f, cardW - 32.0f), 16.0f)
-                    .text(card.dueText)
-                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                    .lineHeight(16.0f)
-                    .maxWidth(std::max(0.0f, cardW - 32.0f))
-                    .overflow(core::TextOverflow::Ellipsis)
-                    .color(card.overdue ? t.colors.errorText : t.colors.textTertiary)
+                components::input(ui, id + ".input")
+                    .position(inputX, y + (rowH - 32.0f) * 0.5f)
+                    .size(inputW, 32.0f)
+                    .value(prereqValue(state, key))
+                    .placeholder("填写单号")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(themeTokens)
+                    .onChange([&state, key](const std::string& value) {
+                        setPrereqValue(state, key, value);
+                    })
+                    .onFocus([&store, &state](bool focused) {
+                        if (!focused) saveTask(store, state);
+                    })
+                    .onEnter([&store, &state]() { saveTask(store, state); })
+                    .onCancel([&store, &state]() { saveTask(store, state); })
                     .build();
-
-                const float inputX = x + 16.0f;
-                const float inputY = y + 58.0f;
-                const float inputW = std::max(0.0f, cardW - 32.0f);
-                const float inputH = announce ? 60.0f : 40.0f;
-                if (readOnly) {
-                    drawReadOnlyValue(ui, id + ".input", inputX, inputY, inputW, inputH,
-                                      card.value,
-                                      doc ? "未填写单号" : "未填写公告内容", announce, t);
-                } else {
-                    components::input(ui, id + ".input")
-                        .position(inputX, inputY)
-                        .size(inputW, inputH)
-                        .value(card.value)
-                        .placeholder(doc ? "填写单号" : "填写上线公告")
-                        .fontSize(t.sizes.fontSizeBody)
-                        .multiline(announce)
-                        .scrollbar(announce)
-                        .inset(announce ? 8.0f : 12.0f)
-                        .theme(themeTokens)
-                        .onChange([&state, key = card.key](const std::string& value) {
-                            setPrereqValue(state, key, value);
-                        })
-                        .onFocus([&store, &state](bool focused) {
-                            if (!focused) saveTask(store, state);
-                        })
-                        .onEnter([&store, &state]() { saveTask(store, state); })
-                        .onCancel([&store, &state]() { saveTask(store, state); })
+                if (!checked && !gateOpen) {
+                    ui.text(id + ".gate")
+                        .position(inputX, y)
+                        .size(std::max(0.0f, inputW - 120.0f), rowH)
+                        .text("请先填写单据号")
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(rowH)
+                        .horizontalAlign(eui::HorizontalAlign::Right)
+                        .color(t.colors.textTertiary)
                         .build();
                 }
-
-                const float checkY = y + (announce ? 126.0f : 112.0f);
-                // 单据号未填时禁用：灰态、不可点，标签位置改为提示文案。
-                const bool showHint = !readOnly && !card.checked && !card.gateOpen;
                 ReleaseCheckboxOptions check;
-                check.checked = card.checked;
-                check.enabled = !readOnly && (card.gateOpen || card.checked);
-                check.label = card.checkLabel;
-                check.hint = showHint
-                                 ? (doc ? "请先填写单据号" : "请先填写公告内容")
-                                 : std::string();
+                check.checked = checked;
+                check.enabled = gateOpen || checked;
+                check.label = prereqCheckLabel(key);
                 check.boxSize = kCheckSize;
                 check.fontSize = t.sizes.fontSizeSmall;
-                check.width = std::max(0.0f, cardW - 32.0f);
+                check.width = checkW;
                 check.height = kCheckSize;
                 check.inset = 0.0f;
-                check.gap = 8.0f;
+                check.gap = 6.0f;
                 std::function<void()> onCheck;
-                if (!readOnly) {
-                    const std::string code = prereqCode(card.key);
-                    const std::string label = card.checkLabel;
-                    onCheck = [&store, &state, key = card.key, code, label]() {
-                        if (isReadOnly(state.displayStatus)) return;
-                        if (prereqChecked(state, key)) {
-                            openRevokePrereq(state, code, label,
-                                             key == PrereqKey::Announce);
-                            return;
-                        }
-                        if (key == PrereqKey::Announce) {
-                            markAnnouncementSent(store, state);
-                        } else {
-                            markPrereqCompleted(store, state, code, label);
-                        }
-                    };
-                }
-                drawReleaseCheckboxAt(ui, id + ".check", inputX, checkY, check,
-                                      onCheck, t);
+                const std::string code = prereqCode(key);
+                const std::string label = prereqCheckLabel(key);
+                onCheck = [&store, &state, key, code, label]() {
+                    if (isReadOnly(state.displayStatus)) return;
+                    if (prereqChecked(state, key)) {
+                        openRevokePrereq(state, code, label, false);
+                        return;
+                    }
+                    markPrereqCompleted(store, state, code, prereqTitle(key));
+                };
+                drawReleaseCheckboxAt(ui, id + ".check",
+                                      width - inset - checkW, y + (rowH - kCheckSize) * 0.5f,
+                                      check, onCheck, t);
+                y += rowH + 8.0f;
             }
+
+            y += 8.0f;
+            ui.text("release.detail.prereq.group.announce")
+                .position(inset, y)
+                .size(width - inset * 2.0f, 18.0f)
+                .text("上线公告")
+                .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                .lineHeight(18.0f)
+                .color(t.colors.textTertiary)
+                .build();
+            y += 18.0f + 8.0f;
+            const std::string aid = "release.detail.prereq.announce";
+            const bool announceChecked = prereqChecked(state, PrereqKey::Announce);
+            const bool announceGate = prereqGateOpen(state, PrereqKey::Announce);
+            const bool announceFlagged = prereqFlagged(state, PrereqKey::Announce);
+            components::input(ui, aid + ".input")
+                .position(inset, y)
+                .size(width - inset * 2.0f - 84.0f, 88.0f)
+                .value(state.task.announceText)
+                .placeholder("填写上线公告")
+                .fontSize(t.sizes.fontSizeBody)
+                .multiline(true)
+                .scrollbar(true)
+                .inset(8.0f)
+                .theme(themeTokens)
+                .onChange([&state](const std::string& value) {
+                    setPrereqValue(state, PrereqKey::Announce, value);
+                })
+                .onFocus([&store, &state](bool focused) {
+                    if (!focused) saveTask(store, state);
+                })
+                .onEnter([&store, &state]() { saveTask(store, state); })
+                .onCancel([&store, &state]() { saveTask(store, state); })
+                .build();
+            ui.text(aid + ".count")
+                .position(inset, y + 88.0f + 8.0f)
+                .size(200.0f, 22.0f)
+                .text("共 " + std::to_string(utf8CharCount(state.task.announceText)) +
+                      " 字")
+                .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                .lineHeight(22.0f)
+                .color(announceFlagged && !announceChecked ? t.colors.errorText
+                                                           : t.colors.textTertiary)
+                .build();
+            ReleaseCheckboxOptions acheck;
+            acheck.checked = announceChecked;
+            acheck.enabled = announceGate || announceChecked;
+            acheck.label = prereqCheckLabel(PrereqKey::Announce);
+            acheck.boxSize = kCheckSize;
+            acheck.fontSize = t.sizes.fontSizeSmall;
+            acheck.width = 72.0f;
+            acheck.height = kCheckSize;
+            acheck.inset = 0.0f;
+            acheck.gap = 6.0f;
+            std::function<void()> aOnCheck = [&store, &state]() {
+                if (isReadOnly(state.displayStatus)) return;
+                if (prereqChecked(state, PrereqKey::Announce)) {
+                    openRevokePrereq(state, "announce", prereqCheckLabel(PrereqKey::Announce),
+                                     true);
+                    return;
+                }
+                markAnnouncementSent(store, state);
+            };
+            drawReleaseCheckboxAt(ui, aid + ".check", width - inset - 72.0f,
+                                  y + 88.0f + 8.0f + (22.0f - kCheckSize) * 0.5f,
+                                  acheck, aOnCheck, t);
         })
         .build();
 }
@@ -517,7 +482,12 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
 
 float serviceCardHeight(const ReleaseDetailUiState& state, const TaskService& svc) {
     const float rows = static_cast<float>(3 + orderedConfigs(state, svc).size());
-    return 68.0f + rows * kStepRowH + (rows - 1.0f) * kStepRowGap;
+    // 步骤行「···」次行展开时占一行（键前缀 = 服务 id，见 drawServiceCard）。
+    const std::string prefix = std::to_string(svc.id) + ":";
+    const float menuExtra = state.openMenuRowKey.rfind(prefix, 0) == 0
+                                ? kStepRowH + kStepRowGap
+                                : 0.0f;
+    return 68.0f + rows * kStepRowH + (rows - 1.0f) * kStepRowGap + menuExtra;
 }
 
 float envCardHeight(const ReleaseDetailUiState& state, const TaskEnv& env) {
@@ -541,14 +511,18 @@ float envSectionHeight(const ReleaseDetailUiState& state, float width) {
     return height;
 }
 
+// 步骤行（F-13 四要素）：状态点 + 名称 + 状态字 + 完成（整行点击）；行尾只留
+// 「填写/查看」（配置行）与「···」（编辑态配置行，上移/下移/跳过收进次行，
+// 由 drawServiceCard 在本行下方绘制）。原 40px 六类控件布局退役。
+
 void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float width,
                  const StepRowView& row, bool current, bool readOnly,
-                 bool configurable, bool readOnlyViewAllowed, const Tokens& t,
+                 bool configurable, bool readOnlyViewAllowed, bool menuOpen,
+                 const Tokens& t,
                  const std::function<void()>& onRowClick,
                  const std::function<void()>& onView,
-                 const std::function<void()>& onMoveUp,
-                 const std::function<void()>& onMoveDown,
-                 const std::function<void()>& onSkipToggle) {
+                 const std::function<void()>& onToggleMenu) {
+    (void)menuOpen;  // 次行由调用方绘制；此参仅供命中避让扩展
     const float rowX = x + 8.0f;
     const float rowW = std::max(0.0f, width - 16.0f);
     if (current) {
@@ -591,39 +565,21 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
     const float dotY = y + (kStepRowH - kStepDot) * 0.5f;
     drawStepDot(ui, id + ".status", dotX, dotY, row.done, row.skipped, t);
 
-    const float viewX = rowX + rowW - 8.0f - kViewButtonW;
-    const float arrowsX = viewX - kArrowGap - (kArrowW * 2.0f + kArrowGap);
+    // 行尾操作区（右缘向左排）：···(28) + 填写/查看(56)。
+    const bool showView = row.config && onView != nullptr;
+    const bool showMore = row.config && configurable && !row.done;  // 跳过行保留入口（取消跳过）
+    const float moreW = showMore ? 28.0f : 0.0f;
+    const float viewX = showView ? rowX + rowW - 8.0f - kViewButtonW -
+                                       (showMore ? moreW + 4.0f : 0.0f)
+                                 : rowX + rowW;
     // 可排序的配置行在最左侧预留拖拽手柄位（⋮⋮）；手柄由 drawServiceCard 叠加绘制。
     const bool showDragHandle = row.config && configurable;
     const float nameX = dotX + kStepDot +
                         (showDragHandle ? kDragHandleW + kDragHandleGap : 10.0f);
-    // 「跳过」勾选框（未完成配置行，readOnly 时 onSkipToggle 为空不出现）：
-    // 可排序时靠排序箭头左侧，执行中（不可排序）靠「查看」按钮左侧。
-    ReleaseCheckboxOptions skipOptions;
-    float skipToggleW = 0.0f;
-    float skipToggleX = 0.0f;
-    if (row.config && !row.done && onSkipToggle) {
-        skipOptions.checked = row.skipped;
-        skipOptions.enabled = true;
-        skipOptions.label = "跳过";
-        skipOptions.boxSize = kCheckSize;
-        skipOptions.fontSize = t.sizes.fontSizeSmall;
-        skipOptions.height = kStepRowH;
-        skipOptions.inset = 0.0f;
-        skipOptions.gap = 6.0f;
-        skipToggleW = checkbox_detail::stackWidth(skipOptions);
-        const float anchor = configurable ? arrowsX : viewX;
-        skipToggleX = anchor - kArrowGap - skipToggleW;
-    }
-    float nameRight = rowX + rowW - 8.0f;
-    if (row.config) {
-        nameRight = readOnly ? viewX - 8.0f
-                             : (skipToggleW > 0.0f ? skipToggleX - 8.0f
-                                                   : arrowsX - 8.0f);
-    }
-    const float nameW = std::max(0.0f, nameRight - nameX);
+    const float nameRight = viewX - (showView ? 8.0f : 0.0f) - moreW;
+    const float statusW = 88.0f;
+    const float nameW = std::max(0.0f, nameRight - statusW - 8.0f - nameX);
 
-    const std::string label = row.invalid ? row.label + " · 内容为空" : row.label;
     eui::Color labelColor = row.done ? t.colors.textPrimary
                              : (row.skipped ? t.colors.textDisabled
                                             : (current ? t.colors.textPrimary
@@ -632,7 +588,7 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
     ui.text(id + ".label")
         .position(nameX, y)
         .size(nameW, kStepRowH)
-        .text(label)
+        .text(row.label)
         .fontSize(t.sizes.fontSizeBody)
         .lineHeight(kStepRowH)
         .maxWidth(nameW)
@@ -649,39 +605,32 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
             .size(labelW, 1.0f)
             .color(t.colors.textDisabled)
             .build();
-        const float skipX = nameX + labelW + 8.0f;
-        const float skipW = std::max(0.0f, nameRight - skipX);
-        if (skipW > 28.0f) {
-            ui.text(id + ".skip")
-                .position(skipX, y)
-                .size(skipW, kStepRowH)
-                .text("已跳过")
-                .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(kStepRowH)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textTertiary)
-                .build();
-        }
     }
+    // 状态字：未完成 / 已填 n 字 / 已跳过 / 内容为空 / 已完成（StepRowView 组装）。
+    const float statusX = nameRight - statusW;
+    ui.text(id + ".state")
+        .position(statusX, y)
+        .size(statusW, kStepRowH)
+        .text(row.invalid ? "内容为空" : row.statusText)
+        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+        .lineHeight(kStepRowH)
+        .horizontalAlign(eui::HorizontalAlign::Right)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(row.invalid ? t.colors.errorText : t.colors.textTertiary)
+        .build();
 
-    if (row.config && readOnlyViewAllowed && onView) {
+    if (showView) {
         ui_kit::ButtonOptions options;
         options.onClick = onView;
-        ui_kit::button(ui, id + ".view", "查看", ui_kit::ButtonLevel::Text, viewX, y,
+        ui_kit::button(ui, id + ".view",
+                       readOnly ? "查看" : "填写", ui_kit::ButtonLevel::Text, viewX, y,
                        kViewButtonW, kStepRowH, t, options);
     }
-    if (row.config && configurable) {
-        const bool canUp = row.configIndex > 0;
-        const bool canDown = row.configIndex + 1 < row.configCount;
-        drawMiniArrow(ui, id + ".up", arrowsX, y + (kStepRowH - kArrowW) * 0.5f, true,
-                      canUp, t, onMoveUp);
-        drawMiniArrow(ui, id + ".down", arrowsX + kArrowW + kArrowGap,
-                      y + (kStepRowH - kArrowW) * 0.5f, false, canDown, t, onMoveDown);
-    }
-    // 最后画勾选框，保证命中区盖在行点击命中区之上。
-    if (skipToggleW > 0.0f) {
-        drawReleaseCheckboxAt(ui, id + ".skip.toggle", skipToggleX, y, skipOptions,
-                              onSkipToggle, t);
+    if (showMore && onToggleMenu) {
+        ui_kit::ButtonOptions options;
+        options.onClick = onToggleMenu;
+        ui_kit::button(ui, id + ".more", "···", ui_kit::ButtonLevel::Text,
+                       rowX + rowW - 8.0f - moreW, y, moreW, kStepRowH, t, options);
     }
 }
 
@@ -800,6 +749,7 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         merge.id = "merge";
         merge.label = stepLabel(StepKind::MergeBranch);
         merge.done = stepDone(state, svc.id, StepKind::MergeBranch);
+        merge.statusText = merge.done ? "已完成" : "未完成";
         merge.stepKind = StepKind::MergeBranch;
         rows.push_back(std::move(merge));
 
@@ -822,6 +772,15 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
             row.configKind = cfg.kind;
             row.configIndex = i;
             row.configCount = configs.size();
+            row.statusText = row.skipped
+                                 ? "已跳过"
+                                 : (row.done ? "已完成"
+                                             : (cfg.content.empty()
+                                                    ? "未完成"
+                                                    : "已填 " +
+                                                          std::to_string(
+                                                              utf8CharCount(cfg.content)) +
+                                                          " 字"));
             rows.push_back(std::move(row));
         }
 
@@ -830,6 +789,7 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         deploy.label = stepLabel(StepKind::Deploy);
         deploy.done = stepDone(state, svc.id, StepKind::Deploy);
         deploy.timeReady = nowMinute >= 0 && nowMinute >= env.startMinute;
+        deploy.statusText = deploy.done ? "已完成" : "未完成";
         deploy.stepKind = StepKind::Deploy;
         rows.push_back(std::move(deploy));
 
@@ -838,6 +798,7 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         verify.label = stepLabel(StepKind::Verify);
         verify.done = stepDone(state, svc.id, StepKind::Verify);
         verify.timeReady = nowMinute >= 0 && nowMinute >= env.startMinute;
+        verify.statusText = verify.done ? "已完成" : "未完成";
         verify.stepKind = StepKind::Verify;
         rows.push_back(std::move(verify));
     }
@@ -853,11 +814,14 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
     }
 
     const std::string scope = svc.serviceName;
+    float rowY = y + kServiceRowStart;
+    std::vector<float> rowYs;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const StepRowView& row = rows[i];
-        const float rowY = y + kServiceRowStart +
-                           static_cast<float>(i) * (kStepRowH + kStepRowGap);
         const std::string rowId = id + ".step." + row.id;
+        rowYs.push_back(rowY);
+        const std::string menuKey = std::to_string(svc.id) + ":" + row.id;
+        const bool menuOpen = state.openMenuRowKey == menuKey;
 
         std::function<void()> onRowClick;
         if (!row.done) {
@@ -925,36 +889,72 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
 
         std::function<void()> onView;
         if (row.config) {
-            // 配置查看 / 编辑 = 页内自绘全屏编辑层（不再经 actions.viewConfig）。
+            // 配置查看 / 编辑 = 页内自绘全屏编辑层（发布态入口在 logic 层拒绝）。
             onView = [&store, &state, serviceId = svc.id, kind = row.configKind] {
                 openConfigEditor(store, state, serviceId, kind);
             };
         }
 
+        std::function<void()> onToggleMenu;
         std::function<void()> onMoveUp;
         std::function<void()> onMoveDown;
-        if (row.config) {
+        std::function<void()> onSkipToggle;
+        if (row.config && !readOnly) {
+            onToggleMenu = [&state, menuKey] {
+                state.openMenuRowKey = state.openMenuRowKey == menuKey
+                                           ? std::string()
+                                           : menuKey;
+            };
             onMoveUp = [&store, &state, serviceId = svc.id, kind = row.configKind] {
                 moveConfig(store, state, serviceId, kind, -1);
             };
             onMoveDown = [&store, &state, serviceId = svc.id, kind = row.configKind] {
                 moveConfig(store, state, serviceId, kind, 1);
             };
-        }
-
-        std::function<void()> onSkipToggle;
-        if (row.config && !readOnly) {
             onSkipToggle = [&store, &state, serviceId = svc.id, kind = row.configKind] {
                 toggleConfigSkip(store, state, serviceId, kind);
             };
         }
         drawStepRow(ui, rowId, x, rowY, width, row, i == currentIndex, readOnly,
-                    configurable, true, t, onRowClickWithRevoke, onView, onMoveUp,
-                    onMoveDown, onSkipToggle);
+                    configurable, true, menuOpen, t, onRowClickWithRevoke, onView,
+                    onToggleMenu);
+        rowY += kStepRowH + kStepRowGap;
+
+        // 「···」次行：上移 / 下移 / 跳过（编辑态配置行收纳处，F-13）。
+        if (menuOpen) {
+            const float menuX = x + 8.0f;
+            const float menuW = std::max(0.0f, width - 16.0f);
+            ui.rect(rowId + ".menu.bg")
+                .position(menuX, rowY)
+                .size(menuW, kStepRowH)
+                .color(t.colors.hover)
+                .radius(t.sizes.radius)
+                .build();
+            float btnX = menuX + 8.0f;
+            const auto menuBtn = [&](const std::string& btnId, const std::string& text,
+                                     const std::function<void()>& onClick,
+                                     bool danger = false) {
+                ui_kit::ButtonOptions options;
+                options.onClick = onClick;
+                if (danger) {
+                    options.hasTextColorOverride = true;
+                    options.textColorOverride = t.colors.errorText;
+                }
+                ui_kit::button(ui, rowId + ".menu." + btnId, text,
+                               ui_kit::ButtonLevel::Text, btnX,
+                               rowY + (kStepRowH - 24.0f) * 0.5f, 72.0f, 24.0f, t,
+                               options);
+                btnX += 80.0f;
+            };
+            menuBtn("up", "上移", onMoveUp);
+            menuBtn("down", "下移", onMoveDown);
+            menuBtn("skip", row.skipped ? "取消跳过" : "跳过此项", onSkipToggle, true);
+            rowY += kStepRowH + kStepRowGap;
+        }
 
         if (row.config && configurable) {
             const float handleX = x + 8.0f + 10.0f + kStepDot + 4.0f;
-            const float handleY = rowY + (kStepRowH - kDragHandleH) * 0.5f;
+            const float handleY = rowYs.back() + (kStepRowH - kDragHandleH) * 0.5f;
             drawDragHandle(
                 ui, rowId + ".drag", handleX, handleY, kDragHandleW, kDragHandleH, t,
                 [&state, serviceId = svc.id,
@@ -978,7 +978,7 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         }
     }
 
-    // 配置拖拽的插入位指示线：画在目标边界（行间）。
+    // 配置拖拽的插入位指示线：画在目标边界（行间，与展开次行后的实际行位对齐）。
     if (configurable && state.drag.kind == ReleaseDetailDragKind::ConfigOrder &&
         state.drag.active && state.drag.serviceId == svc.id) {
         const std::vector<TaskConfig> allConfigs = orderedConfigs(state, svc);
@@ -988,7 +988,7 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
             source < static_cast<int>(allConfigs.size())) {
             const int boundary = target < source ? target : target + 1;
             const float step = kStepRowH + kStepRowGap;
-            const float firstConfigY = y + kServiceRowStart + step;
+            const float firstConfigY = rowYs.size() > 1 ? rowYs[1] : y + kServiceRowStart + step;
             float lineY = 0.0f;
             if (boundary < static_cast<int>(allConfigs.size())) {
                 lineY = firstConfigY + static_cast<float>(boundary) * step -
@@ -1141,7 +1141,7 @@ void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float wid
 void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                     bool readOnly, bool configurable, int nowMinute, const Tokens& t,
                     const components::theme::ThemeColorTokens& themeTokens,
-                    ReleaseStore& store) {
+                    ReleaseStore& store, const ReleaseDetailActions& actions) {
     const float sectionH = envSectionHeight(state, width);
     ui.stack("release.detail.env.section")
         .size(width, sectionH)
@@ -1156,6 +1156,16 @@ void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                     .lineHeight(48.0f)
                     .color(t.colors.textTertiary)
                     .build();
+                if (actions.onOpenConfig) {
+                    ui_kit::ButtonOptions options;
+                    options.onClick = actions.onOpenConfig;
+                    options.hasTextColorOverride = true;
+                    options.textColorOverride = t.colors.primaryText;
+                    ui_kit::button(ui, "release.detail.env.openconfig", "去基础配置",
+                                   ui_kit::ButtonLevel::Text, 0.0f,
+                                   kSectionTitleH + kSectionGap + 44.0f, 88.0f, 28.0f,
+                                   t, options);
+                }
                 return;
             }
             float envY = kSectionTitleH + kSectionGap;
@@ -1171,148 +1181,607 @@ void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
 
 // ==================== 页头 / 弹层 ====================
 
+// 页头（F-11 三分区）：身份区（返回 / 标题承载任务身份 / 模式徽标 / 状态 chip）+
+// 反馈进度（发布态迷你进度条）+ 操作区（**每状态主动作唯一**，次级动作收
+// 「···」菜单）。文案即软引导（F-04）：「下一步：{当前步名}」。
+
+namespace {
+
+std::string planDateShortLabel(const std::string& planDate) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    if (std::sscanf(planDate.c_str(), "%d-%d-%d", &year, &month, &day) == 3 &&
+        month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        return std::to_string(month) + "/" + std::to_string(day);
+    }
+    return planDate;
+}
+
+} // namespace
+
 void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
                     ReleaseDetailUiState& state, ReleaseStore& store, int nowMinute,
                     const ReleaseDetailActions& actions) {
     const float headerH = ui_kit::kHeaderH;
     const TaskStatus status = state.displayStatus;
-    const std::string weekday = releaseWeekdayLabel(state.task.planDate);
-    const Progress progress =
-        taskProgress(state.task, state.envs, state.services, state.configs, state.steps);
     const bool readOnly = isReadOnly(status);
+    const bool publish = isPublishMode(status);
 
-    // 「← 返回」由模块注入 onBack 才出现（默认空 = 不占位）；Esc 返回是模块层既有路径。
+    // —— 身份区（左，弹性）——
     const auto backFn = actions.onBack;
-    float titleX = 0.0f;
+    float x = 0.0f;
     if (backFn) {
         ui_kit::ButtonOptions backOptions;
         backOptions.onClick = backFn;
-        ui_kit::button(ui, "release.detail.back", "← 返回", ui_kit::ButtonLevel::Text, 0.0f,
-                       0.0f, 72.0f, headerH, t, backOptions);
-        titleX = 72.0f + 8.0f;
+        ui_kit::button(ui, "release.detail.back", "←", ui_kit::ButtonLevel::Text, 0.0f,
+                       0.0f, 40.0f, headerH, t, backOptions);
+        x = 40.0f + 8.0f;
     }
-
-    float right = width;
-    float voidX = 0.0f;
-    float restoreX = 0.0f;
-    float nextX = 0.0f;
-    float submitX = 0.0f;
-    bool showVoid = false;
-    bool showRestore = false;
-    bool showNext = false;
-    // 「提交」只在配置中可用（Draft→Pending 的唯一入口）；其余状态不出按钮。
-    const bool showSubmit = status == TaskStatus::Draft;
-    if (status == TaskStatus::Voided) {
-        restoreX = right - 80.0f;
-        right = restoreX - 8.0f;
-        showRestore = true;
-    } else {
-        voidX = right - 80.0f;
-        right = voidX - 8.0f;
-        showVoid = true;
-        if (!readOnly) {
-            nextX = right - 96.0f;
-            right = nextX - 8.0f;
-            showNext = true;
-            if (showSubmit) {
-                submitX = right - 88.0f;
-                right = submitX - 8.0f;
-            }
-        }
-    }
-    // 「校验」任何状态可见（独立只读校验）；Done / Voided 整单只读时禁用。
-    const float validateX = right - 72.0f;
-    right = validateX - 8.0f;
-
-    const std::string progressText =
-        std::to_string(progress.done) + "/" + std::to_string(progress.total);
-    ui.text("release.detail.progress")
-        .position(right - 56.0f, 0.0f)
-        .size(56.0f, headerH)
-        .text(progressText)
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(headerH)
-        .horizontalAlign(eui::HorizontalAlign::Right)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(readOnly ? t.colors.textTertiary : t.colors.textSecondary)
-        .build();
-    right -= 56.0f + 8.0f;
-
-    const ChipColors colors = statusChipColors(status, t);
-    const std::string statusText = releaseTaskStatusText(status);
-    const float chipTextW = chipWidth(statusText, t.sizes.fontSizeSmall - 1.0f);
-    drawChip(ui, "release.detail.status", right - chipTextW, (headerH - kChipH) * 0.5f,
-             statusText, colors.bg, colors.fg, t);
-    right -= chipTextW + 12.0f;
-
-    // 标题宽按字号档实测（130% 字号下固定 96 会裁掉最后一个字）。
-    const float titleW = measureText("上线任务", t.sizes.fontSizeTitle, 700) + 8.0f;
-    const float metaX = titleX + titleW + 8.0f;
+    const std::string titleText = "上线任务 " + planDateShortLabel(state.task.planDate);
+    const float titleW = measureText(titleText, t.sizes.fontSizeTitle, 700) + 8.0f;
     ui.text("release.detail.title")
-        .position(titleX, 0.0f)
+        .position(x, 0.0f)
         .size(titleW, headerH)
-        .text("上线任务")
+        .text(titleText)
         .fontSize(t.sizes.fontSizeTitle)
         .lineHeight(headerH)
         .fontWeight(700)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary)
         .build();
-    const std::string meta = state.task.planDate + (weekday.empty() ? "" : "  " + weekday);
-    ui.text("release.detail.meta")
-        .position(metaX, 0.0f)
-        .size(std::max(0.0f, right - metaX), headerH)
-        .text(meta)
+    x += titleW;
+    const std::string weekday = releaseWeekdayLabel(state.task.planDate);
+    if (!weekday.empty()) {
+        const float weekW = measureText(weekday, t.sizes.fontSizeBody, 400) + 8.0f;
+        ui.text("release.detail.weekday")
+            .position(x, 0.0f)
+            .size(weekW, headerH)
+            .text(weekday)
+            .fontSize(t.sizes.fontSizeBody)
+            .lineHeight(headerH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textSecondary)
+            .build();
+        x += weekW;
+    }
+    const char* modeKey = "edit";
+    if (status == TaskStatus::Voided) modeKey = "voided";
+    else if (status == TaskStatus::Done) modeKey = "archive";
+    else if (publish) modeKey = "publish";
+    const float badgeW = drawModeBadge(ui, std::string("release.detail.modebadge.") +
+                                            modeKey,
+                                       x, (headerH - kChipH) * 0.5f, status, t);
+    x += badgeW + 8.0f;
+    const ChipColors colors = statusChipColors(status, t);
+    const std::string statusText = releaseTaskStatusText(status);
+    const float chipW = chipWidth(statusText, t.sizes.fontSizeSmall - 1.0f);
+    drawChip(ui, "release.detail.status", x, (headerH - kChipH) * 0.5f, statusText,
+             colors.bg, colors.fg, t);
+    x += chipW + 12.0f;
+    ui.text("release.detail.title.budget")
+        .position(x, 0.0f)
+        .size(std::max(0.0f, width * 0.5f - x), headerH)
+        .text("")
         .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(headerH)
-        .maxWidth(std::max(0.0f, right - metaX))
-        .overflow(core::TextOverflow::Ellipsis)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textSecondary)
         .build();
 
-    if (showNext) {
+    // —— 操作区（右，定宽收缩）。主按钮文案即「下一步」指向（软引导）。——
+    std::string nextLabel;
+    if (publish) {
+        const std::vector<TrackRowView> rows = collectTrackRows(state, nowMinute);
+        for (const auto& row : rows) {
+            if (row.kind == TrackRowKind::Step && row.node == TrackNodeState::Current) {
+                nextLabel = "下一步：" + row.label;
+                break;
+            }
+        }
+        if (nextLabel.empty()) nextLabel = "下一步";
+    }
+    float right = width;
+    const auto placeButton = [&](const std::string& id, const std::string& text,
+                                 ui_kit::ButtonLevel level, float w,
+                                 const std::function<void()>& onClick) {
+        right -= w;
         ui_kit::ButtonOptions options;
-        options.onClick = [&store, &state, nowMinute] {
-            performNextStep(store, state, nowMinute);
+        options.onClick = onClick;
+        ui_kit::button(ui, id, text, level, right, 0.0f, w, headerH, t, options);
+        right -= 8.0f;
+    };
+    if (status == TaskStatus::Voided) {
+        placeButton("release.detail.restore", "恢复", ui_kit::ButtonLevel::Secondary,
+                    80.0f, [&state] { state.confirm = ReleaseDetailConfirm::RestoreTask; });
+    } else if (status == TaskStatus::Done) {
+        const std::string doneText = "已完成";
+        const float doneW = measureText(doneText, t.sizes.fontSizeSmall, 400) + 8.0f;
+        right -= doneW;
+        ui.text("release.detail.done")
+            .position(right, 0.0f)
+            .size(doneW, headerH)
+            .text(doneText)
+            .fontSize(t.sizes.fontSizeSmall)
+            .lineHeight(headerH)
+            .horizontalAlign(eui::HorizontalAlign::Right)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.success)
+            .build();
+        right -= 8.0f;
+    } else {
+        if (publish) {
+            const float nextW =
+                std::clamp(measureText(nextLabel, t.sizes.fontSizeBody, 400) + 28.0f,
+                           120.0f, 220.0f);
+            placeButton("release.detail.next", nextLabel, ui_kit::ButtonLevel::Primary,
+                        nextW, [&store, &state, nowMinute] {
+                            performNextStep(store, state, nowMinute);
+                        });
+            if (status == TaskStatus::Pending) {
+                placeButton("release.detail.withdraw", "撤回提交",
+                            ui_kit::ButtonLevel::Secondary, 88.0f,
+                            [&state] { state.confirm = ReleaseDetailConfirm::WithdrawSubmission; });
+            }
+        } else {
+            placeButton("release.detail.submit", "提交发布",
+                        ui_kit::ButtonLevel::Primary, 100.0f,
+                        [&store, &state] { submitTask(store, state); });
+            placeButton("release.detail.validate", "校验",
+                        ui_kit::ButtonLevel::Secondary, 72.0f,
+                        [&state] { runValidation(state); });
+        }
+        placeButton("release.detail.menu", "···", ui_kit::ButtonLevel::Text, 40.0f,
+                    [&state] { state.menuOpen = !state.menuOpen; });
+    }
+
+    // —— 反馈进度（发布态 / 归档态：迷你进度条 + n/n；编辑态不显示）——
+    if (publish || readOnly) {
+        const Progress progress = taskProgress(state.task, state.envs, state.services,
+                                               state.configs, state.steps);
+        const std::string progressText =
+            std::to_string(progress.done) + "/" + std::to_string(progress.total);
+        const float countW = measureText(progressText, t.sizes.fontSizeSmall, 400) + 8.0f;
+        right -= countW + 16.0f;
+        ui.text("release.detail.progress")
+            .position(right, 0.0f)
+            .size(countW, headerH)
+            .text(progressText)
+            .fontSize(t.sizes.fontSizeSmall)
+            .lineHeight(headerH)
+            .horizontalAlign(eui::HorizontalAlign::Right)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textSecondary)
+            .build();
+        const float barW = 80.0f;
+        right -= barW + 4.0f;
+        const auto headerComponentTokens = core::theme::componentTokensWeChat(t);
+        ui.stack("release.detail.progress.bar")
+            .position(right, (headerH - 4.0f) * 0.5f)
+            .size(barW, 4.0f)
+            .content([&] {
+                ui.rect("release.detail.progress.track")
+                    .size(barW, 4.0f)
+                    .color(t.colors.borderDefault)
+                    .radius(2.0f)
+                    .build();
+                components::progress(ui, "release.detail.progress.fill")
+                    .size(barW, 4.0f)
+                    .value(progress.total > 0
+                               ? static_cast<float>(progress.done) /
+                                     static_cast<float>(progress.total)
+                               : 1.0f)
+                    .theme(headerComponentTokens)
+                    .build();
+            })
+            .build();
+    }
+
+    // 「···」菜单浮层（页头固定壳坐标系内，绝对定位）。
+    if (state.menuOpen && (publish || status == TaskStatus::Draft)) {
+        const float menuW = 148.0f;
+        const float itemH = 32.0f;
+        const bool draft = status == TaskStatus::Draft;
+        const int itemCount = draft ? 1 : 2;
+        const float panelH = static_cast<float>(itemCount) * itemH + 8.0f;
+        const float panelX = width - menuW - 8.0f;
+        const float panelY = headerH + 4.0f;
+        ui.rect("release.detail.menu.panel")
+            .position(panelX, panelY)
+            .size(menuW, panelH)
+            .color(t.colors.surface)
+            .border(1.0f, t.colors.borderDefault)
+            .radius(6.0f)
+            .shadow(8.0f, 2.0f, eui::Color{0.0f, 0.0f, 0.0f, 0.10f})
+            .build();
+        float itemY = panelY + 4.0f;
+        const auto menuItem = [&](const std::string& text, bool danger,
+                                  const std::function<void()>& onClick) {
+            ui_kit::ButtonOptions options;
+            options.onClick = [onClick, &state] {
+                state.menuOpen = false;
+                onClick();
+            };
+            if (danger) {
+                options.hasTextColorOverride = true;
+                options.textColorOverride = t.colors.errorText;
+            }
+            ui_kit::button(ui, "release.detail.menu.item." + text, text,
+                           ui_kit::ButtonLevel::Text, panelX + 4.0f, itemY,
+                           menuW - 8.0f, itemH, t, options);
+            itemY += itemH;
         };
-        // 同一视口主按钮唯一：配置中「提交」是主动作，「下一步」降为次要按钮。
-        ui_kit::button(ui, "release.detail.next", "下一步",
-                       showSubmit ? ui_kit::ButtonLevel::Secondary
-                                  : ui_kit::ButtonLevel::Primary,
-                       nextX, 0.0f, 96.0f, headerH, t, options);
+        if (!draft) {
+            menuItem("校验", false, [&state] { runValidation(state); });
+        }
+        menuItem("作废任务", true,
+                 [&state] { state.confirm = ReleaseDetailConfirm::VoidTask; });
     }
-    if (showSubmit) {
-        ui_kit::ButtonOptions options;
-        options.onClick = [&store, &state] { submitTask(store, state); };
-        ui_kit::button(ui, "release.detail.submit", "提交", ui_kit::ButtonLevel::Primary,
-                       submitX, 0.0f, 88.0f, headerH, t, options);
+}
+
+// 模式徽标（F-11 几何断言值）：发布中 = 页头唯一绿染（primarySoftBg），
+// 其余中性灰；已作废字降级。
+
+float drawModeBadge(eui::Ui& ui, const std::string& id, float x, float y,
+                    TaskStatus status, const Tokens& t) {
+    const char* label = "准备中";
+    unsigned int icon = 0xF044u;  // fa-edit 铅笔
+    eui::Color bg = t.colors.hover;
+    eui::Color fg = t.colors.textSecondary;
+    if (status == TaskStatus::Pending || status == TaskStatus::Running) {
+        label = "发布中";
+        icon = 0xF024u;  // fa-flag 旗帜
+        bg = t.colors.primarySoftBg;
+        fg = t.colors.primaryText;
+    } else if (status == TaskStatus::Done) {
+        label = "已归档";
+        icon = 0xF00Cu;  // fa-check 对勾
+    } else if (status == TaskStatus::Voided) {
+        label = "已作废";
+        icon = 0xF05Eu;  // fa-ban 圆内斜杠
+        bg = t.colors.hover;
+        fg = t.colors.textDisabled;
     }
-    if (showVoid) {
-        ui_kit::ButtonOptions options;
-        options.onClick = [&state] { state.confirm = ReleaseDetailConfirm::VoidTask; };
-        ui_kit::button(ui, "release.detail.void", "作废", ui_kit::ButtonLevel::Danger,
-                       voidX, 0.0f, 80.0f, headerH, t, options);
+    const float iconW = 16.0f;
+    const float textW = measureText(label, t.sizes.fontSizeSmall - 1.0f, 600);
+    const float width = iconW + 6.0f + textW + 16.0f;
+    ui.rect(id)
+        .position(x, y)
+        .size(width, kChipH)
+        .color(bg)
+        .radius(t.sizes.radiusPill)
+        .build();
+    ui.text(id + ".icon")
+        .position(x + 8.0f, y)
+        .size(iconW, kChipH)
+        .icon(icon)
+        .fontSize(core::theme::scaled(11.0f))
+        .lineHeight(kChipH)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(fg)
+        .build();
+    ui.text(id + ".text")
+        .position(x + 8.0f + iconW + 6.0f, y)
+        .size(textW + 4.0f, kChipH)
+        .text(label)
+        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+        .lineHeight(kChipH)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(fg)
+        .fontWeight(600)
+        .build();
+    return width;
+}
+
+// 发布态流程轨道（F-14）：前置 + 各环境步骤按 collectTrackRows 固定序铺行；
+// 节点四态（当前步唯一绿染 / 可提前勾 / 锁定可见 / 已完成），完成组默认收起。
+// 行高与 F-23 滚动偏移共用 kTrackRowH 档（collectTrackRows 注释契约）。
+
+void drawPublishTrack(eui::Ui& ui, float width, ReleaseDetailUiState& state,
+                      int nowMinute, const Tokens& t,
+                      const components::theme::ThemeColorTokens& themeTokens,
+                      ReleaseStore& store) {
+    const std::vector<TrackRowView> rows = collectTrackRows(state, nowMinute);
+    float totalH = 0.0f;
+    for (const auto& row : rows) {
+        if (!row.hidden) totalH += row.height + kTrackRowGap;
     }
-    if (showRestore) {
-        ui_kit::ButtonOptions options;
-        options.onClick = [&state] {
-            state.confirm = ReleaseDetailConfirm::RestoreTask;
-        };
-        ui_kit::button(ui, "release.detail.restore", "恢复",
-                       ui_kit::ButtonLevel::Secondary, restoreX, 0.0f, 80.0f, headerH, t,
-                       options);
-    }
-    // 独立校验：只读动作，不改任务状态；只读整单时置灰且无点击动作。
-    ui_kit::ButtonOptions validateOptions;
-    if (!readOnly) validateOptions.onClick = [&state] { runValidation(state); };
-    if (readOnly) {
-        validateOptions.hasTextColorOverride = true;
-        validateOptions.textColorOverride = t.colors.textDisabled;
-    }
-    ui_kit::button(ui, "release.detail.validate", "校验",
-                   readOnly ? ui_kit::ButtonLevel::Text : ui_kit::ButtonLevel::Secondary,
-                   validateX, 0.0f, 72.0f, headerH, t, validateOptions);
+    totalH = std::max(totalH, kSectionTitleH + 48.0f);
+
+    ui.stack("release.detail.track")
+        .size(width, totalH)
+        .content([&] {
+            float y = 0.0f;
+            std::string lastGroup;
+            for (const auto& row : rows) {
+                if (row.hidden) continue;
+                const std::string base = "release.detail.track." + std::to_string(&row - rows.data());
+                if (row.kind == TrackRowKind::EnvGroupHeader) {
+                    // 组头：展开态标题 + 时间窗 + 超时 chip + 进度 + 折叠箭头。
+                    ui.rect(base + ".hit")
+                        .position(0.0f, y)
+                        .size(width, row.height)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .onClick([&state, groupId = row.groupId] {
+                            const bool wasCollapsed =
+                                state.trackGroupState.count(groupId)
+                                    ? state.trackGroupState.at(groupId)
+                                    : false;
+                            state.trackGroupState[groupId] = !wasCollapsed;
+                        })
+                        .build();
+                    ui.text(base + ".title")
+                        .position(0.0f, y)
+                        .size(width * 0.4f, row.height)
+                        .text(row.title)
+                        .fontSize(t.sizes.fontSizeLarge)
+                        .lineHeight(row.height)
+                        .fontWeight(600)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textPrimary)
+                        .build();
+                    float hx = measureText(row.title, t.sizes.fontSizeLarge, 600) + 12.0f;
+                    const TaskEnv* env = row.envId != 0 ? findEnv(state, row.envId) : nullptr;
+                    if (env != nullptr) {
+                        const std::string windowText = formatTimeWindow(env->startMinute, env->endMinute);
+                        const float wW = measureText(windowText, t.sizes.fontSizeSmall - 1.0f, 400) + 8.0f;
+                        ui.text(base + ".window")
+                            .position(hx, y)
+                            .size(wW, row.height)
+                            .text(windowText)
+                            .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                            .lineHeight(row.height)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textTertiary)
+                            .build();
+                        hx += wW;
+                    }
+                    if (row.groupOverdue) {
+                        drawChip(ui, base + ".overdue", hx, y + (row.height - kChipH) * 0.5f,
+                                 "已超时", eui::mixColor(t.colors.surface, t.colors.error, 0.12f),
+                                 t.colors.errorText, t);
+                    }
+                    ui.text(base + ".progress")
+                        .position(width - 60.0f, y)
+                        .size(52.0f, row.height)
+                        .text(row.progressText)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(row.height)
+                        .horizontalAlign(eui::HorizontalAlign::Right)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(row.groupDone ? t.colors.success : t.colors.textSecondary)
+                        .build();
+                    lastGroup = row.groupId;
+                    y += row.height + kTrackRowGap;
+                    continue;
+                }
+                if (row.kind == TrackRowKind::ServiceLabel) {
+                    ui.text(base + ".title")
+                        .position(28.0f, y)
+                        .size(std::max(0.0f, width - 28.0f), row.height)
+                        .text(row.title)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(row.height)
+                        .color(t.colors.textTertiary)
+                        .build();
+                    y += row.height + kTrackRowGap;
+                    continue;
+                }
+
+                // 步骤行：左缘连线 + 节点 + 名称/值 + 行尾状态/确认。
+                const bool inGroup = row.groupId == lastGroup || row.groupId == "prereq";
+                if (inGroup) {
+                    ui.rect(base + ".line")
+                        .position(18.0f, y - kTrackRowGap)
+                        .size(2.0f, row.height + kTrackRowGap * 2.0f)
+                        .color(row.node == TrackNodeState::Done
+                                   ? t.colors.primary
+                                   : t.colors.borderDefault)
+                        .build();
+                }
+                if (row.node == TrackNodeState::Current) {
+                    ui.rect(base + ".current.bg")
+                        .position(0.0f, y)
+                        .size(width, row.height)
+                        .color(t.colors.primarySoftBg)
+                        .radius(t.sizes.radius)
+                        .build();
+                    ui.rect(base + ".current.bar")
+                        .position(0.0f, y)
+                        .size(3.0f, row.height)
+                        .color(t.colors.primary)
+                        .radius(1.5f)
+                        .build();
+                }
+                // 节点圆 14px（x=12）。
+                const float nodeX = 12.0f;
+                const float nodeY = y + (row.height - 14.0f) * 0.5f;
+                const float labelX = 36.0f;
+                if (row.node == TrackNodeState::Done) {
+                    ui.rect(base + ".node")
+                        .position(nodeX, nodeY)
+                        .size(14.0f, 14.0f)
+                        .color(t.colors.primary)
+                        .radius(7.0f)
+                        .build();
+                    ui.text(base + ".node.check")
+                        .position(nodeX, nodeY)
+                        .size(14.0f, 14.0f)
+                        .text("✓")
+                        .fontSize(core::theme::scaled(9.0f))
+                        .lineHeight(14.0f)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.surface)
+                        .build();
+                } else if (row.node == TrackNodeState::Skipped) {
+                    ui.rect(base + ".node")
+                        .position(nodeX, nodeY)
+                        .size(14.0f, 14.0f)
+                        .color(t.colors.hover)
+                        .radius(7.0f)
+                        .build();
+                } else {
+                    ui.rect(base + ".node")
+                        .position(nodeX, nodeY)
+                        .size(14.0f, 14.0f)
+                        .color(row.node == TrackNodeState::Current ? t.colors.surface
+                                                                   : t.colors.surface)
+                        .border(row.node == TrackNodeState::Current ? 2.0f : 1.5f,
+                                row.node == TrackNodeState::Current
+                                    ? t.colors.primary
+                                    : (row.node == TrackNodeState::Locked
+                                           ? t.colors.borderDefault
+                                           : t.colors.textTertiary))
+                        .radius(7.0f)
+                        .build();
+                    if (row.node == TrackNodeState::Current) {
+                        ui.rect(base + ".node.dot")
+                            .position(nodeX + 4.0f, nodeY + 4.0f)
+                            .size(6.0f, 6.0f)
+                            .color(t.colors.primary)
+                            .radius(3.0f)
+                            .build();
+                    }
+                }
+                // 名称 + 只读值。
+                float tx = labelX;
+                const float nameW = std::max(
+                    0.0f, measureText(row.label, t.sizes.fontSizeBody, 400) + 8.0f);
+                ui.text(base + ".label")
+                    .position(tx, y)
+                    .size(nameW, row.height)
+                    .text(row.label)
+                    .fontSize(t.sizes.fontSizeBody)
+                    .lineHeight(row.height)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(row.node == TrackNodeState::Locked ? t.colors.textTertiary
+                                                              : t.colors.textPrimary)
+                    .build();
+                tx += nameW;
+                if (!row.valueText.empty()) {
+                    const float valueTop = width - 150.0f;
+                    ui.text(base + ".value")
+                        .position(tx, y)
+                        .size(std::max(0.0f, valueTop - tx), row.height)
+                        .text(row.valueText)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(row.height)
+                        .maxWidth(std::max(0.0f, valueTop - tx))
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textSecondary)
+                        .build();
+                }
+                // 行尾：确认钮 / 锁定提示 / 状态字。
+                if (row.confirmable) {
+                    const TaskEnv* env = findEnv(state, row.envId);
+                    ui_kit::ButtonOptions options;
+                    if (row.isAnnounce) {
+                        options.onClick = [&store, &state] {
+                            markAnnouncementSent(store, state);
+                        };
+                    } else if (row.serviceId == 0) {
+                        options.onClick = [&store, &state, key = row.prereqKey] {
+                            markPrereqCompleted(store, state, prereqCode(key),
+                                                prereqTitle(key));
+                        };
+                    } else if (row.config && env != nullptr) {
+                        options.onClick = [&store, &state, serviceId = row.serviceId,
+                                           kind = row.configKind, envCopy = *env,
+                                           nowMinute] {
+                            markConfigCompleted(store, state, serviceId, kind, envCopy,
+                                                nowMinute);
+                        };
+                    } else if (env != nullptr) {
+                        options.onClick = [&store, &state, serviceId = row.serviceId,
+                                           kind = row.stepKind, envCopy = *env,
+                                           nowMinute] {
+                            markStepCompleted(store, state, serviceId, kind, envCopy,
+                                              nowMinute);
+                        };
+                    }
+                    if (options.onClick) {
+                        ui_kit::button(ui, base + ".confirm", "确认",
+                                       ui_kit::ButtonLevel::Text, width - 8.0f - 56.0f,
+                                       y, 56.0f, row.height, t, options);
+                    }
+                } else if (!row.statusText.empty()) {
+                    const bool locked = row.node == TrackNodeState::Locked;
+                    const float iconW = locked ? 16.0f : 0.0f;
+                    if (locked) {
+                        ui.text(base + ".lock")
+                            .position(width - 8.0f - 16.0f -
+                                          (measureText(row.statusText, t.sizes.fontSizeSmall - 1.0f, 400) + 8.0f) - 4.0f,
+                                      y)
+                            .size(16.0f, row.height)
+                            .icon(0xF023u)
+                            .fontSize(core::theme::scaled(10.0f))
+                            .lineHeight(row.height)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textTertiary)
+                            .build();
+                    }
+                    ui.text(base + ".state")
+                        .position(width - 8.0f - iconW - 4.0f -
+                                      (measureText(row.statusText, t.sizes.fontSizeSmall - 1.0f, 400) + 8.0f),
+                                  y)
+                        .size(measureText(row.statusText, t.sizes.fontSizeSmall - 1.0f, 400) + 8.0f,
+                              row.height)
+                        .text(row.statusText)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(row.height)
+                        .horizontalAlign(eui::HorizontalAlign::Right)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }
+                // 整行命中：确认（可勾）或撤回确认（已完成，Done 前任意步）。
+                if (row.confirmable || row.revocable) {
+                    ui.rect(base + ".hit")
+                        .position(0.0f, y)
+                        .size(width, row.height)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .onClick([&store, &state, row, nowMinute]() {
+                            const TaskEnv* env = row.envId != 0 ? findEnv(state, row.envId) : nullptr;
+                            if (row.revocable) {
+                                if (row.serviceId == 0) {
+                                    openRevokePrereq(state, prereqCode(row.prereqKey),
+                                                     prereqCheckLabel(row.prereqKey),
+                                                     row.isAnnounce);
+                                } else if (row.config) {
+                                    openRevokeConfig(state, row.serviceId, row.configKind,
+                                                     findService(state, row.serviceId) != nullptr
+                                                         ? findService(state, row.serviceId)->serviceName
+                                                         : "服务");
+                                } else {
+                                    openRevokeStep(state, row.serviceId, row.stepKind,
+                                                   findService(state, row.serviceId) != nullptr
+                                                       ? findService(state, row.serviceId)->serviceName
+                                                       : "服务");
+                                }
+                                return;
+                            }
+                            if (env == nullptr) return;
+                            if (row.isAnnounce) {
+                                markAnnouncementSent(store, state);
+                            } else if (row.serviceId == 0) {
+                                markPrereqCompleted(store, state, prereqCode(row.prereqKey),
+                                                    prereqTitle(row.prereqKey));
+                            } else if (row.config) {
+                                markConfigCompleted(store, state, row.serviceId,
+                                                    row.configKind, *env, nowMinute);
+                            } else {
+                                markStepCompleted(store, state, row.serviceId,
+                                                  row.stepKind, *env, nowMinute);
+                            }
+                        })
+                        .build();
+                }
+                y += row.height + kTrackRowGap;
+            }
+        })
+        .build();
+    (void)themeTokens;
 }
 
 void drawNotice(eui::Ui& ui, float width, const ReleaseDetailUiState& state,
@@ -1583,6 +2052,13 @@ void drawConfirmDialogs(eui::Ui& ui, const eui::Screen& screen,
             "确定把「" + state.removeName + "」从本次任务移除？进度与提醒不再包含它";
         primaryText = "确定移除";
         danger = true;
+    } else if (state.confirm == ReleaseDetailConfirm::WithdrawSubmission) {
+        // 撤回提交（F-02 兜底出路）：状态回退非数据清理，文案如实声明保留项。
+        title = "撤回提交";
+        message =
+            "撤回后任务回到准备中（草稿），已确认的步骤与操作记录保留；修改后可重新提交。确定撤回？";
+        primaryText = "确定撤回";
+        danger = true;
     } else if (state.confirm == ReleaseDetailConfirm::RemoveEnv) {
         title = "移除环境";
         message = "确定把「" + state.removeName +
@@ -1618,6 +2094,11 @@ void drawConfirmDialogs(eui::Ui& ui, const eui::Screen& screen,
     if (state.confirm == ReleaseDetailConfirm::RestoreTask) {
         dialog.onPrimary([&store, &state, nowMinute] {
             applyRestore(store, state, nowMinute);
+            state.confirm = ReleaseDetailConfirm::None;
+        });
+    } else if (state.confirm == ReleaseDetailConfirm::WithdrawSubmission) {
+        dialog.onPrimary([&store, &state] {
+            applyWithdrawSubmission(store, state);
             state.confirm = ReleaseDetailConfirm::None;
         });
     } else if (state.confirm == ReleaseDetailConfirm::VoidTask) {

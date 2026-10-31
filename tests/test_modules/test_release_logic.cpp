@@ -638,3 +638,96 @@ REGISTER_TEST(release_status_invalid_plan_date_keeps_stored,
                   rel::TaskStatus::Pending);
     return true;
 })
+
+namespace {
+
+rel::TaskConfig makeCfg(std::int64_t serviceId, rel::ConfigKind kind,
+                        const std::string& content, bool skipped = false) {
+    rel::TaskConfig cfg;
+    cfg.taskServiceId = serviceId;
+    cfg.kind = kind;
+    cfg.content = content;
+    cfg.skipped = skipped;
+    return cfg;
+}
+
+} // namespace
+
+REGISTER_TEST(release_validate_submission_missing_prereq_blocks,
+              "提交校验扩展: 前置项齐备——提测/CAB/按内容出现的工单单号与公告内容，"
+              "缺任一非空缺失清单（防：F-20 入口防呆缺失，缺单号任务混进发布态）", {
+    const std::vector<rel::TaskEnv> envs{makeEnv(1, "EM", 600, 720)};
+    const std::vector<rel::TaskService> services{makeService(1, 1, "订单服务")};
+    std::vector<rel::TaskConfig> configs;
+    configs.push_back(makeCfg(1, rel::ConfigKind::Nacos, "nacos: v1"));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Db, "db: v1"));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Cron, "cron: v1"));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Menu, "menu: v1"));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Gateway, "gw: v1"));
+
+    // 内容齐备但单号/公告全空：5 条前置缺失
+    rel::Task task = makeTask(rel::TaskStatus::Draft);
+    const std::vector<std::string> missing =
+        rel::validateTaskSubmission(task, envs, services, configs);
+    DOCTEST_REQUIRE_EQ(missing.size(), std::size_t{5});
+    DOCTEST_CHECK_EQ(missing[0], std::string("提测单号未填写"));
+    DOCTEST_CHECK_EQ(missing[1], std::string("CAB 单号未填写"));
+    DOCTEST_CHECK_EQ(missing[2], std::string("nacos 工单号未填写"));
+    DOCTEST_CHECK_EQ(missing[3], std::string("数据库工单号未填写"));
+    DOCTEST_CHECK_EQ(missing[4], std::string("上线公告内容未填写"));
+
+    // 单号补齐后放行
+    task.pretestNo = "RM-1";
+    task.cabNo = "CAB-1";
+    task.ticketNacosNo = "MR-1";
+    task.ticketDbNo = "DB-1";
+    task.announceText = "公告";
+    DOCTEST_CHECK(rel::validateTaskSubmission(task, envs, services, configs).empty());
+    return true;
+})
+
+REGISTER_TEST(release_validate_submission_ticket_numbers_follow_content,
+              "提交校验扩展: 工单单号按内容出现才要求（ticketNeeds 同口径）——"
+              "只有 nacos 内容时不要求数据库工单号（防：无 DB 内容的任务被工单单号挡死）", {
+    const std::vector<rel::TaskEnv> envs{makeEnv(1, "EM", 600, 720)};
+    const std::vector<rel::TaskService> services{makeService(1, 1, "订单服务")};
+    std::vector<rel::TaskConfig> configs;
+    configs.push_back(makeCfg(1, rel::ConfigKind::Nacos, "nacos: v1"));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Db, "", /*skipped=*/true));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Cron, "", /*skipped=*/true));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Menu, "", /*skipped=*/true));
+    configs.push_back(makeCfg(1, rel::ConfigKind::Gateway, "", /*skipped=*/true));
+
+    rel::Task task = makeTask(rel::TaskStatus::Draft);
+    task.pretestNo = "RM-1";
+    task.cabNo = "CAB-1";
+    task.announceText = "公告";
+    const std::vector<std::string> missing =
+        rel::validateTaskSubmission(task, envs, services, configs);
+    DOCTEST_REQUIRE_EQ(missing.size(), std::size_t{1});
+    DOCTEST_CHECK_EQ(missing[0], std::string("nacos 工单号未填写"));
+
+    task.ticketNacosNo = "MR-1";
+    DOCTEST_CHECK(rel::validateTaskSubmission(task, envs, services, configs).empty());
+    return true;
+})
+
+REGISTER_TEST(release_validate_submission_missing_list_covers_content_and_prereq,
+              "提交校验扩展: 缺失清单=前置在前、内容在后且文案逐字"
+              "（防：标红映射按文案定位，措辞漂移导致标红失灵）", {
+    const std::vector<rel::TaskEnv> envs{makeEnv(1, "EM", 600, 720)};
+    std::vector<rel::TaskService> services{makeService(1, 1, "订单服务", rel::ServiceKind::Backend, "")};
+    std::vector<rel::TaskConfig> configs;
+    configs.push_back(makeCfg(1, rel::ConfigKind::Nacos, ""));
+
+    rel::Task task = makeTask(rel::TaskStatus::Draft);
+    const std::vector<std::string> missing =
+        rel::validateTaskSubmission(task, envs, services, configs);
+    DOCTEST_REQUIRE_EQ(missing.size(), std::size_t{5});
+    DOCTEST_CHECK_EQ(missing[0], std::string("提测单号未填写"));
+    DOCTEST_CHECK_EQ(missing[1], std::string("CAB 单号未填写"));
+    DOCTEST_CHECK_EQ(missing[2], std::string("上线公告内容未填写"));
+    DOCTEST_CHECK(missing[3].find("分支未填写") != std::string::npos);
+    DOCTEST_CHECK(missing[4].find("配置内容为空") != std::string::npos);
+    return true;
+})

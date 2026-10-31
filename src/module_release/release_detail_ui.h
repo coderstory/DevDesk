@@ -34,6 +34,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -42,7 +43,7 @@ namespace module::release {
 class ReleaseStore;
 
 // 二次确认类型（None = 无弹层；ValidationReport = 校验未通过清单；
-// RemoveService / RemoveEnv = 服务 / 环境移除确认）。
+// RemoveService / RemoveEnv = 服务 / 环境移除确认；WithdrawSubmission = 撤回提交）。
 enum class ReleaseDetailConfirm {
     None,
     Revoke,
@@ -50,7 +51,8 @@ enum class ReleaseDetailConfirm {
     RestoreTask,
     RemoveService,
     RemoveEnv,
-    ValidationReport
+    ValidationReport,
+    WithdrawSubmission
 };
 
 // 撤回目标类型。
@@ -125,6 +127,20 @@ struct ReleaseDetailUiState {
     std::int64_t editorServiceId = 0;
     ConfigKind editorKind = ConfigKind::Nacos;
     std::string editorText;
+
+    // —— 池 53 双模式（发布态状态机 + F-23 锚点）——
+    // F-23：提醒「去处理」的落点请求；宿主在打开任务详情前写入，详情页
+    // 消费（发布态滚动定位当前步）后立即清空，不跨重读残留。
+    std::string pendingAnchor;
+    // 页头「···」菜单展开态（Draft=作废 / Pending·Running=校验+作废）。
+    bool menuOpen = false;
+    // 步骤行「···」次行展开键（编辑态配置行：上移/下移/跳过收纳处）。
+    std::string openMenuRowKey;
+    // notice 写入时刻（nowUnix 秒）：3 秒自动消失的判据，0 = 不自动消失。
+    std::int64_t noticeAt = 0;
+    // 轨道组折叠记忆（键 = 组 id）：缺省 = 完成组收起、当前步所在组强制展开；
+    // 状态变化（确认/撤回）触发重读后清空重算默认态。
+    std::map<std::string, bool> trackGroupState;
 };
 
 // 调用方注入的动作。viewConfig 保留为可选扩展口（历史契约）：详情页的配置查看 /
@@ -135,6 +151,9 @@ struct ReleaseDetailActions {
     // 返回任务列表：由模块注入（模块层 Esc 返回之外的新入口）。
     // 默认空 = 页头不显示「← 返回」按钮；注入后按钮执行本回调。
     std::function<void()> onBack;
+    // 「去基础配置」空态链接（任务无环境时的就近出口）：由模块注入导航；
+    // 默认空 = 只显示文案不渲染链接。
+    std::function<void()> onOpenConfig;
 };
 
 // 页面入口：dirty 时从 store 读一次，再渲染并处理交互。

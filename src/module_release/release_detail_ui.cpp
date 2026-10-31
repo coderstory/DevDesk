@@ -123,6 +123,8 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
         state.validationMissing.clear();
         state.editorOpen = false;
         state.editorText.clear();
+        state.menuOpen = false;
+        state.openMenuRowKey.clear();
     }
     state.loadedTaskId = state.taskId;
     state.dirty = false;
@@ -136,6 +138,8 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
     state.steps.clear();
     state.logs.clear();
     state.drag = ReleaseDetailDragState{};
+    // 轨道组折叠记忆随重读重算默认态（确认/撤回等状态变化都会触发重读）。
+    state.trackGroupState.clear();
 
     std::int64_t taskId = 0;
     if (!parseTaskId(state.taskId, &taskId)) {
@@ -209,8 +213,10 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
 
     // 校验结果随数据变化重算：规则只来自 release_logic，UI 不自行推断哪些项算缺。
     if (state.validationActive) {
-        state.validationMissing =
-            validateTask(state.services, configsForValidation(state));
+        state.validationMissing = isEditMode(state.displayStatus)
+            ? validateTaskSubmission(state.task, state.envs, state.services,
+                                     configsForValidation(state))
+            : validateTask(state.services, configsForValidation(state));
         if (state.validationMissing.empty()) {
             state.validationActive = false;
             if (state.confirm == ReleaseDetailConfirm::ValidationReport) {
@@ -273,9 +279,24 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
     advanceTaskStatus(store, state, nowMinute);
 
     const bool readOnly = isReadOnly(state.displayStatus);
-    const bool configurable = !readOnly && isConfigPhase(state.displayStatus);
+    const bool editMode = isEditMode(state.displayStatus);
     const auto themeTokens = core::theme::componentTokensWeChat(t);
+    // notice 3s 自动消失（秒级判据；statusWriteFailed 等持续态由重设 noticeAt 续期）。
+    if (!state.notice.empty() && state.noticeAt > 0 &&
+        core::time::nowUnix() - state.noticeAt >= 3) {
+        state.notice.clear();
+        state.noticeIsError = false;
+        state.noticeAt = 0;
+    }
     const bool hasNotice = !state.notice.empty();
+    // F-23 锚点：发布态进页一次性滚动定位当前步（设计 §6.4；240ms 缓动因框架
+    // 无毫秒时钟降级为瞬时定位，欠债已登记清单卡）。消费后立即清空。
+    if (isPublishMode(state.displayStatus) && !state.pendingAnchor.empty()) {
+        state.pendingAnchor.clear();
+        const std::vector<TrackRowView> anchorRows =
+            collectTrackRows(state, nowMinute);
+        ui.setScrollOffset("release.detail.scroll", trackCurrentStepOffset(anchorRows));
+    }
     // 反馈条固定在页头下方（不随内容滚动），用户在清单底部操作失败时也能看到原因。
     const float noticeBlockH = hasNotice ? kNoticeH + t.sizes.spacingLarge : 0.0f;
     const float bodyH = std::max(
@@ -325,10 +346,17 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
                 .contentKey(contentKey)
                 .content([&](eui::Ui& inner, float innerWidth, float viewportHeight) {
                     (void)viewportHeight;
-                    drawPrereqSection(inner, innerWidth, state, readOnly, nowMinute, t,
-                                      themeTokens, store);
-                    drawEnvSection(inner, innerWidth, state, readOnly, configurable,
-                                   nowMinute, t, themeTokens, store);
+                    if (editMode) {
+                        // 编辑态：发布准备（单据式表单流）+ 环境与服务（F-10 双形态之一）。
+                        drawPrereqSection(inner, innerWidth, state, readOnly, nowMinute,
+                                          t, themeTokens, store);
+                        drawEnvSection(inner, innerWidth, state, readOnly, editMode,
+                                       nowMinute, t, themeTokens, store, actions);
+                    } else {
+                        // 发布态 / 归档态：流程轨道（F-14；前置并入轨道）。
+                        drawPublishTrack(inner, innerWidth, state, nowMinute, t,
+                                         themeTokens, store);
+                    }
                 })
                 .build();
         })

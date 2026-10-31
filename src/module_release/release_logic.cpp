@@ -289,6 +289,40 @@ std::vector<std::string> validateTask(const std::vector<TaskService>& services,
     return missing;
 }
 
+namespace {
+
+bool isBlank(const std::string& value) {
+    for (char c : value) {
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return false;
+    }
+    return true;
+}
+
+} // namespace
+
+std::vector<std::string> validateTaskSubmission(const Task& task,
+                                                const std::vector<TaskEnv>& envs,
+                                                const std::vector<TaskService>& services,
+                                                const std::vector<TaskConfig>& configs) {
+    // 前置项在前（表单流顺序）、内容项在后：详情页标红映射按文案逐字定位，
+    // 改措辞必须同步 validateTaskSubmission 的契约注释与标红映射两侧。
+    std::vector<std::string> missing;
+    if (isBlank(task.pretestNo)) missing.push_back("提测单号未填写");
+    if (isBlank(task.cabNo)) missing.push_back("CAB 单号未填写");
+    const TicketNeeds needs = ticketNeeds(envs, services, configs);
+    if (needs.nacos && isBlank(task.ticketNacosNo)) {
+        missing.push_back("nacos 工单号未填写");
+    }
+    if (needs.db && isBlank(task.ticketDbNo)) {
+        missing.push_back("数据库工单号未填写");
+    }
+    if (isBlank(task.announceText)) missing.push_back("上线公告内容未填写");
+    for (std::string& item : validateTask(services, configs)) {
+        missing.push_back(std::move(item));
+    }
+    return missing;
+}
+
 int expectedConfigs(ServiceKind kind) {
     switch (kind) {
         case ServiceKind::Backend: return 5;  // nacos / db / cron / menu / gateway

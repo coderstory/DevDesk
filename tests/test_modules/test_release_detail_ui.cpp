@@ -12,6 +12,7 @@
 #include "app_registry.h"          // create_release_tasks_module（Esc 分层用例）
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "module_release/release_detail_internal.h"  // 状态机直调（撤回/下一步守卫用例）
 #include "module_release/release_detail_ui.h"
 #include "module_release/release_store.h"
 
@@ -257,29 +258,35 @@ REGISTER_TEST(release_detail_skip_toggle_label_and_cancel,
     const std::string row2 = "release.detail.env." + std::to_string(ids.envId) +
                              ".svc." + std::to_string(ids.serviceId) +
                              ".step.config.2";  // cron（已完成）
-    DOCTEST_REQUIRE(frame.ui.find(row0 + ".skip.toggle.hit") != nullptr);
-    // 已完成行无勾选框
-    DOCTEST_CHECK(frame.ui.find(row2 + ".skip.toggle") == nullptr);
-
-    // 勾上 → skipped 落库 + 行显示「已跳过」
-    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".skip.toggle.hit"));
+    // 跳过入口在「···」次行（F-13 收纳）：展开后点「跳过此项」
+    DOCTEST_REQUIRE(frame.ui.find(row0 + ".more") != nullptr);
+    // 已完成行无「···」入口
+    DOCTEST_CHECK(frame.ui.find(row2 + ".more") == nullptr);
+    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".more.bg"));
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".menu.skip.bg"));
     rel::TaskConfig afterSkip;
     DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
                                  &afterSkip));
     DOCTEST_CHECK(afterSkip.skipped);
     frame.refresh(store, state, actions);
-    const auto* skipLabel = frame.ui.find(row0 + ".skip");
-    DOCTEST_REQUIRE(skipLabel != nullptr);
-    DOCTEST_CHECK_EQ(skipLabel->text, std::string("已跳过"));
+    const auto* stateText = frame.ui.find(row0 + ".state");
+    DOCTEST_REQUIRE(stateText != nullptr);
+    DOCTEST_CHECK_EQ(stateText->text, std::string("已跳过"));
 
-    // 再点一次（跳过态勾选框仍在）→ 取消跳过恢复，行上「已跳过」消失
-    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".skip.toggle.hit"));
+    // 次行保持展开（openMenuRowKey 跨重读存活）→ 「取消跳过」恢复
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".menu.skip.bg"));
     rel::TaskConfig afterUnskip;
     DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
                                  &afterUnskip));
     DOCTEST_CHECK(!afterUnskip.skipped);
     frame.refresh(store, state, actions);
-    DOCTEST_CHECK(frame.ui.find(row0 + ".skip") == nullptr);
+    const auto* stateTextAfter = frame.ui.find(row0 + ".state");
+    DOCTEST_REQUIRE(stateTextAfter != nullptr);
+    // 内容 "x" 仍在：状态字是「已填 n 字」；断言核心是「不再是已完成/已跳过」
+    DOCTEST_CHECK(stateTextAfter->text.find("已完成") == std::string::npos);
+    DOCTEST_CHECK(stateTextAfter->text.find("已跳过") == std::string::npos);
     return true;
 })
 
@@ -397,19 +404,14 @@ REGISTER_TEST(release_detail_done_voided_read_only,
                   nullptr);
     DOCTEST_CHECK(frame.ui.find(envBase + ".remove") == nullptr);
     DOCTEST_CHECK(frame.ui.find(row0 + ".skip.toggle") == nullptr);
-
-    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".view.bg"));
-    DOCTEST_CHECK(doneState.editorOpen);
-    frame.refresh(store, doneState, actions);
-    const auto* doneHint = frame.ui.find("release.detail.config.editor.hint.text");
-    DOCTEST_REQUIRE(doneHint != nullptr);
-    DOCTEST_CHECK_EQ(doneHint->text, std::string("任务已只读，配置内容仅可查看"));
-    DOCTEST_CHECK(frame.ui.find("release.detail.config.editor.save") == nullptr);
-    DOCTEST_CHECK(frame.ui.find("release.detail.config.editor.input.hit") == nullptr);
-    DOCTEST_REQUIRE(frame.ui.find("release.detail.config.editor.view.text") != nullptr);
+    // 归档态 = 流程轨道形态（全只读）：无编辑域入口、无提交/下一步
+    DOCTEST_CHECK(frame.ui.find("release.detail.track") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.submit") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.next") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.prereq.0.input.hit") == nullptr);
 
     // Voided：同样没有移除/跳过入口
-    const Seed voidedIds = seedDetailTask(store, rel::TaskStatus::Voided);
+    const Seed voidedIds = seedDetailTask(store, rel::TaskStatus::Voided, "2030-06-11");
     DOCTEST_REQUIRE(voidedIds.taskId != 0);
     rel::ReleaseDetailUiState voidedState;
     voidedState.taskId = std::to_string(voidedIds.taskId);
@@ -513,8 +515,10 @@ REGISTER_TEST(release_detail_auto_revoke_content_change,
         }
         DOCTEST_CHECK(sawRevoke);
     }
-    // 行视觉回到未完成：跳过勾选框重新出现（与既有跳过用例同口径）
-    DOCTEST_CHECK(frame.ui.find(row + ".skip.toggle") != nullptr);
+    // 行视觉回到未完成：状态字回「未完成」（与既有跳过用例同口径）
+    const auto* stateText = frame.ui.find(row + ".state");
+    DOCTEST_REQUIRE(stateText != nullptr);
+    DOCTEST_CHECK(stateText->text.find("已完成") == std::string::npos);
     return true;
 })
 
@@ -667,9 +671,10 @@ REGISTER_TEST(release_detail_skip_failure_notice,
     const std::string row = "release.detail.env." + std::to_string(ids.envId) +
                             ".svc." + std::to_string(ids.serviceId) +
                             ".step.config.0";
-    DOCTEST_REQUIRE(frame.ui.find(row + ".skip.toggle.hit") != nullptr);
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".more.bg"));
+    frame.refresh(store, state, actions);
     DOCTEST_REQUIRE(tdb.handle().exec("PRAGMA query_only = ON").isOk());
-    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".skip.toggle.hit"));
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".menu.skip.bg"));
 
     DOCTEST_CHECK(state.noticeIsError);
     DOCTEST_CHECK(state.notice.find("保存跳过状态失败") != std::string::npos);
@@ -862,5 +867,373 @@ REGISTER_TEST(release_detail_editor_char_count,
     const auto* countAfter = frame.ui.find("release.detail.config.editor.count");
     DOCTEST_REQUIRE(countAfter != nullptr);
     DOCTEST_CHECK_EQ(countAfter->text, std::string("共 10 字"));
+    return true;
+})
+
+REGISTER_TEST(release_detail_withdraw_pending_keeps_confirmations,
+              "撤回提交: Pending 页头「撤回提交」→ 二次确认 → 库状态回 Draft；"
+              "前置勾选与既有日志原样保留，新增一条 revoke/提交 日志"
+              "（防：撤回误清理确认数据 / 漏日志 / 状态未回退）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "withdraw");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Pending);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    // 种前置勾选 + 单号（撤回后必须原样保留）
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        rel::Task task = tasks.value()[0];
+        task.pretestNo = "RM-1";
+        task.pretestOk = true;
+        DOCTEST_REQUIRE(store.updateTask(task).isOk());
+    }
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(state.displayStatus == rel::TaskStatus::Pending);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.withdraw.bg"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::WithdrawSubmission);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.confirm.primary.bg"));
+
+    // 状态回 Draft；确认与单号保留；日志多一条 revoke（step=提交）
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_CHECK(tasks.value()[0].status == rel::TaskStatus::Draft);
+        DOCTEST_CHECK(tasks.value()[0].pretestOk);
+        DOCTEST_CHECK_EQ(tasks.value()[0].pretestNo, std::string("RM-1"));
+    }
+    {
+        auto logs = store.listLogs(ids.taskId);
+        DOCTEST_REQUIRE(logs.isOk());
+        bool sawWithdraw = false;
+        for (const auto& log : logs.value()) {
+            if (log.action == "revoke" && log.step == "提交") sawWithdraw = true;
+        }
+        DOCTEST_CHECK(sawWithdraw);
+    }
+    // 回到编辑态：提交按钮与单号输入框重新出现
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(state.displayStatus == rel::TaskStatus::Draft);
+    DOCTEST_CHECK(frame.ui.find("release.detail.submit") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.prereq.0.input.hit") != nullptr);
+    return true;
+})
+
+REGISTER_TEST(release_detail_withdraw_rejected_when_running,
+              "撤回提交: Running 无页头入口、logic 直调拒绝且不改状态"
+              "（防：执行中任务被回退成草稿破坏执行留痕）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "withdrawrun");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Running);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(frame.ui.find("release.detail.withdraw") == nullptr);
+
+    module::release::detail::applyWithdrawSubmission(store, state);
+    DOCTEST_CHECK(state.noticeIsError);
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_CHECK(tasks.value()[0].status == rel::TaskStatus::Running);
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_publish_mode_blocks_edit_paths,
+              "发布态只读: Pending 下移除/填写入口消失，跳过/移除 logic 直调拒绝"
+              "（防：issue 06「提交后仍可改配置」残留在写路径）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "publishro");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Pending);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(store
+                        .upsertTaskConfig(makeConfig(ids.serviceId,
+                                                     rel::ConfigKind::Nacos, "x"))
+                        .isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string envBase = "release.detail.env." + std::to_string(ids.envId);
+    const std::string row = envBase + ".svc." + std::to_string(ids.serviceId) +
+                            ".step.config.0";
+    DOCTEST_CHECK(frame.ui.find(envBase + ".svc." +
+                                std::to_string(ids.serviceId) + ".remove") == nullptr);
+    DOCTEST_CHECK(frame.ui.find(envBase + ".remove") == nullptr);
+    DOCTEST_CHECK(frame.ui.find(row + ".view") == nullptr);
+    DOCTEST_CHECK(frame.ui.find(row + ".more") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.prereq.0.input.hit") == nullptr);
+
+    // 越权写路径：logic 直调被拒
+    module::release::detail::toggleConfigSkip(store, state, ids.serviceId,
+                                              rel::ConfigKind::Nacos);
+    DOCTEST_CHECK(state.noticeIsError);
+    module::release::detail::applyRemoveService(store, state);
+    DOCTEST_CHECK(state.noticeIsError);
+    {
+        auto services = store.listTaskServices(ids.envId);
+        DOCTEST_REQUIRE(services.isOk());
+        DOCTEST_CHECK(!services.value()[0].removed);
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_next_step_track_order_and_window_gate,
+              "下一步: 按固定序推进 提测→CAB→公告→合并分支，部署被时间窗挡下并"
+              "指名环境（防：推进序漂移 / 时间窗门禁漏指名缺项）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "nextstep");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Pending);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        rel::Task task = tasks.value()[0];
+        task.pretestNo = "RM-1";
+        task.cabNo = "CAB-1";
+        task.ticketNacosNo = "MR-1";
+        task.ticketDbNo = "DB-1";
+        task.announceText = "公告";
+        DOCTEST_REQUIRE(store.updateTask(task).isOk());
+    }
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    auto taskInDb = [&store]() -> rel::Task {
+        auto tasks = store.listTasks();
+        // DOCTEST_REQUIRE 在返回 Task 的 lambda 里不可用（其失败路径返回 bool），
+        // 失败时回默认值，由后续断言红。
+        if (tasks.isFail() || tasks.value().empty()) return rel::Task{};
+        return tasks.value()[0];
+    };
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    DOCTEST_CHECK(taskInDb().pretestOk);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    DOCTEST_CHECK(taskInDb().cabOk);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    DOCTEST_CHECK(taskInDb().announceSentAt != 0);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    // 合并分支不受时间窗限制（既有语义）
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        bool mergeDone = false;
+        for (const auto& step : steps.value()) {
+            if (step.kind == rel::StepKind::MergeBranch && step.doneAt != 0) {
+                mergeDone = true;
+            }
+        }
+        DOCTEST_CHECK(mergeDone);
+    }
+    // 部署：计划日 2030-06-06 未到（nowMinute < 0）→ 时间窗拒绝并指名环境
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    DOCTEST_CHECK(state.noticeIsError);
+    DOCTEST_CHECK(state.notice.find("时间窗未开始") != std::string::npos);
+    DOCTEST_CHECK(state.notice.find("EM") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(release_detail_next_step_refused_in_draft,
+              "轨道发布态专属: Draft 调下一步被拒（防：编辑态绕过提交直接推进）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "nextdraft");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(frame.ui.find("release.detail.next") == nullptr);
+
+    module::release::detail::performNextStep(store, state, -1);
+    DOCTEST_CHECK(state.noticeIsError);
+    DOCTEST_CHECK_EQ(state.displayStatus, rel::TaskStatus::Draft);
+    return true;
+})
+
+REGISTER_TEST(release_detail_submit_gate_requires_prereq_numbers,
+              "提交入口防呆: 前置单号/公告缺失时提交被拒进清单，补齐后放行"
+              "（防：F-20 只在校验弹层出现而提交仍放行）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "submitgate");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    const char* kinds[] = {"nacos: v", "db: v", "cron: v", "menu: v", "gw: v"};
+    const rel::ConfigKind kindIds[] = {
+        rel::ConfigKind::Nacos, rel::ConfigKind::Db, rel::ConfigKind::Cron,
+        rel::ConfigKind::Menu, rel::ConfigKind::Gateway};
+    for (int i = 0; i < 5; ++i) {
+        DOCTEST_REQUIRE(store
+                            .upsertTaskConfig(makeConfig(ids.serviceId, kindIds[i],
+                                                         kinds[i]))
+                            .isOk());
+    }
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.submit.bg"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::ValidationReport);
+    bool sawPrereq = false;
+    for (const auto& item : state.validationMissing) {
+        if (item.find("提测单号未填写") != std::string::npos) sawPrereq = true;
+    }
+    DOCTEST_CHECK(sawPrereq);
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_CHECK(tasks.value()[0].status == rel::TaskStatus::Draft);
+    }
+
+    // 补齐后提交放行 → Pending（数字必须落库：dirty 重读会以库值覆盖 state.task）
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        rel::Task task = tasks.value()[0];
+        task.pretestNo = "RM-1";
+        task.cabNo = "CAB-1";
+        task.ticketNacosNo = "MR-1";
+        task.ticketDbNo = "DB-1";
+        task.announceText = "公告";
+        DOCTEST_REQUIRE(store.updateTask(task).isOk());
+    }
+    state.dirty = true;  // db 改数必须置 dirty：否则 compose 不重读，state.task 还是旧值
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.submit.bg"));
+    DOCTEST_CHECK(state.displayStatus == rel::TaskStatus::Pending);
+    {
+        auto tasks = store.listTasks();
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_CHECK(tasks.value()[0].status == rel::TaskStatus::Pending);
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_header_primary_action_matrix,
+              "页头主动作唯一: Draft=提交+校验次钮+菜单作废 / Pending=下一步+撤回次钮 / "
+              "Running 无撤回 / Done 无按钮 / Voided=恢复"
+              "（防：主动作漂移 / 撤回入口漏隐藏 / 恢复入口丢失）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "headermatrix");
+    rel::ReleaseStore store(tdb.handle());
+
+    Frame frame;
+    std::string probeDate;
+    auto probe = [&](rel::TaskStatus status) -> void {
+        probeDate = status == rel::TaskStatus::Draft ? "2030-06-06"
+                      : status == rel::TaskStatus::Pending ? "2030-06-07"
+                      : status == rel::TaskStatus::Running ? "2030-06-08"
+                      : status == rel::TaskStatus::Done ? "2030-06-09"
+                      : "2030-06-10";
+        const Seed ids = seedDetailTask(store, status, probeDate);
+        // lambda 内不能用 DOCTEST_REQUIRE（宏展开含 return 值）；种子失败时
+        // 后续 find 断言自然红。
+        if (ids.taskId == 0) return;
+        rel::ReleaseDetailUiState state;
+        state.taskId = std::to_string(ids.taskId);
+        state.dirty = true;
+        rel::ReleaseDetailActions actions;
+        actions.onBack = [] {};
+        frame.refresh(store, state, actions);
+    };
+
+    // Draft：提交主按钮 + 校验次按钮 + 菜单（作废）；无下一步/撤回/恢复
+    probe(rel::TaskStatus::Draft);
+    DOCTEST_CHECK(frame.ui.find("release.detail.submit") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.validate") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.menu") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.next") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.withdraw") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.restore") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.publish") == nullptr);
+
+    // Pending：下一步主按钮 + 撤回次按钮 + 菜单；无提交/恢复；发布中徽标出现
+    probe(rel::TaskStatus::Pending);
+    DOCTEST_CHECK(frame.ui.find("release.detail.next") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.withdraw") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.menu") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.submit") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.restore") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.publish") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.track") != nullptr);
+
+    // Running：下一步主按钮；撤回消失
+    probe(rel::TaskStatus::Running);
+    DOCTEST_CHECK(frame.ui.find("release.detail.next") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.withdraw") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.publish") != nullptr);
+
+    // Done：无主动作；Voided：恢复次按钮
+    probe(rel::TaskStatus::Done);
+    DOCTEST_CHECK(frame.ui.find("release.detail.submit") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.next") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.restore") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.archive") != nullptr);
+
+    probe(rel::TaskStatus::Voided);
+    DOCTEST_CHECK(frame.ui.find("release.detail.restore") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.voided") != nullptr);
+    return true;
+})
+
+REGISTER_TEST(release_detail_anchor_consumed_once,
+              "F-23 锚点: pendingAnchor 消费后清空、发布态轨道渲染"
+              "（防：锚点请求残留导致每次重读都跳滚动）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "anchor");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Pending);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    state.pendingAnchor = "publish.current";
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(state.pendingAnchor.empty());
+    DOCTEST_CHECK(frame.ui.find("release.detail.track") != nullptr);
+    // 再次重读不再触发锚点（字段已清）
+    state.dirty = true;
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(state.pendingAnchor.empty());
     return true;
 })
