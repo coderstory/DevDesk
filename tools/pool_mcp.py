@@ -617,14 +617,16 @@ def _write_snapshot() -> None:
     # 裁决 ④-2：pool.db 出 git，写后导出 JSON 快照入库留痕（可 diff 可 merge，
     # 双机各写本地 db，git 侧只合快照）。
     path = _report_path().parent / "pool-snapshot.json"
-    path = _report_path().parent / "pool-snapshot.json"
     conn = _connect()
     try:
-        # personal_todo 无 id 列（owner 主键），排序键按表定制
+        # personal_todo 无 id 列（owner 主键），排序键按表定制。
+        # 六表全滤软删（与读口径/看板一致）：快照是下游（看板轮询/对账）的数据源，
+        # 源头混入 deleted=1 行会复现「Datasette 出全量页面侧再滤」的老坑。
         order = {t: "id" for t in ("needs", "dev_progress", "bugs", "acceptance", "status_log")}
         order["personal_todo"] = "owner"
         data = {
-            t: [dict(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY {order[t]}")]
+            t: [dict(r) for r in conn.execute(
+                f"SELECT * FROM {t} WHERE deleted = 0 ORDER BY {order[t]}")]
             for t in ("needs", "dev_progress", "bugs", "acceptance", "status_log", "personal_todo")
         }
     finally:
