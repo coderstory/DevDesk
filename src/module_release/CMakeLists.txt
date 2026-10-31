@@ -8,6 +8,8 @@ add_library(devdesk_module_release STATIC
     release_config_ui.cpp
     release_list_ui.cpp
     release_detail_ui.cpp
+    release_detail_logic.cpp
+    release_detail_draw.cpp
     release_dialogs.cpp
     release_reminder.cpp
     release_view_state.cpp
