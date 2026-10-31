@@ -14,6 +14,7 @@
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include "todo_dialogs.h"
+#include "todo_observability.h"
 #include "todo_service.h"
 #include "todo_tools.h"
 #include "todo_ui_board.h"
@@ -87,6 +88,11 @@ public:
                     dbImportedDirty_.store(true, std::memory_order_release);
                 }
             });
+        // 池15 归档动画观察缝（测试驱动设施）：onStart 装 / onStop 卸（闸语义）；
+        // db 未注册的早退路径也要已装配（缝是模块级设施，不依赖数据）。
+        obs::setArchiveAnimProvider([this]() -> obs::ArchiveAnimSnapshot {
+            return {archiveAnimating_, archiveExpanded_, archiveT_};
+        });
         auto* db = ::core::appDatabase();
         if (!db) {
             LOG_WARN("Todo: 数据库尚未注册，跳过数据加载");
@@ -129,6 +135,7 @@ public:
         // 只注销工具，不 reset service_：agent run 线程可能正执行 todo.* 工具（持 TodoService&），reset = UAF。
         // service_ 交给成员析构（声明序 todoTools_ 在前 → 先析构，引用不悬垂）
         detachTools();
+        obs::setArchiveAnimProvider(nullptr);   // 观察缝随停卸载，防悬垂 this
         started_ = false;
         LOG_INFO("Todo 模块停止");
     }

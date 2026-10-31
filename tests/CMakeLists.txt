@@ -115,6 +115,8 @@ add_executable(devdesk_tests
     test_modules/test_agent_system_prompt.cpp
     test_modules/test_direct_llm_client.cpp
     test_modules/test_todo_ui.cpp
+    # 池15 归档动画观察缝：快照查询 + 在途重复触发收编回插四帧边界断言
+    test_modules/test_todo_anim_seam.cpp
     test_modules/test_ui_modern.cpp
     # W2b（§4.1/§4.15）：四级按钮 + FormRow helper 无头断言（色值/几何/尺寸统一）
     test_modules/test_ui_kit_button.cpp
