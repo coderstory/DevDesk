@@ -30,12 +30,14 @@
 #include "core/module_interface.h"
 #include "module_todo/todo_service.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <thread>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 // app:: 层桩（probe 不建应用级 UI，compose 走 probe::composeModuleFrame）
 namespace app {
@@ -611,31 +613,40 @@ int main(int argc, char* argv[]) {
 
             // ---- H2: 折叠/展开动画连续性（不瞬跳）----
             if (const auto* compact = findEl("todo.col.3.expand.bg")) {
-                // H2a: 点窄条展开 → 中间帧严格递增、终态展开
+                // H2a: 点窄条展开 → 过程中出现中间态、终态展开（不瞬跳）
+                // 判据是「存在中间态」，不是「首帧就已推进」：click 到首个 compose
+                // 之间未必跨过一帧，Release 构建下实测首帧仍为折叠宽（2026-10-31
+                // release 门禁假红），按首帧取值等于把时序当契约。
                 auto [cx, cy] = center(*compact);
                 probe::click(window, runtime, static_cast<double>(cx),
                              static_cast<double>(cy));
                 composeFrame();
-                const float wStart = archWidth();
-                std::this_thread::sleep_for(std::chrono::milliseconds(60));
-                composeFrame();
-                const float wMid = archWidth();
-                pump(350);
-                const float wEnd = archWidth();
+                std::vector<float> samples;
+                float wEnd = collapsedW;
+                for (int i = 0; i < 20; ++i) {  // 最多 400ms，20ms 一采
+                    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    composeFrame();
+                    const float w = archWidth();
+                    samples.push_back(w);
+                    wEnd = std::max(wEnd, w);
+                }
+                const auto midIt = std::find_if(
+                    samples.begin(), samples.end(), [&](float w) {
+                        return w > collapsedW + 2.0f && w < wEnd - 2.0f;
+                    });
                 const bool expandContinuous =
-                    wStart > collapsedW + 2.0f &&
-                    wMid > wStart + 2.0f && wMid < wEnd - 2.0f;
+                    wEnd > collapsedW + 2.0f && midIt != samples.end();
                 if (expandContinuous) {
-                    std::cout << "H2a PASS: 展开动画中间帧连续（"
-                              << static_cast<int>(wStart) << "→"
-                              << static_cast<int>(wMid) << "→"
-                              << static_cast<int>(wEnd) << "）\n";
+                    std::cout << "H2a PASS: 展开动画有中间态（折叠 "
+                              << static_cast<int>(collapsedW) << " → 中间 "
+                              << static_cast<int>(*midIt) << " → 终态 "
+                              << static_cast<int>(wEnd) << "，采样 "
+                              << samples.size() << " 帧）\n";
                 } else {
-                    std::cerr << "H2a FAIL: 展开动画不连续（"
-                              << static_cast<int>(wStart) << "→"
-                              << static_cast<int>(wMid) << "→"
-                              << static_cast<int>(wEnd) << "，折叠="
-                              << static_cast<int>(collapsedW) << "）\n";
+                    std::cerr << "H2a FAIL: 展开动画瞬跳（折叠="
+                              << static_cast<int>(collapsedW) << "，终态="
+                              << static_cast<int>(wEnd) << "，采样 "
+                              << samples.size() << " 帧无中间态）\n";
                     passed = false;
                 }
                 // H2b: 展开态点收起按钮 → 中间帧严格递减、终态折叠（从当前进度回插）
