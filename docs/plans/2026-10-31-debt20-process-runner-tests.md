@@ -25,5 +25,11 @@
 
 ## 残留
 
-- **win 版(process_runner_win.cpp)①②未动**:CreateProcess 管道面与本批 sh 语义用例不同源,本机(Mac)盲改禁;待 Windows 机按同构口径回归(池单关单时核对此项)。
+- **win 版(process_runner_win.cpp)①②未动**：CreateProcess 管道面与本批 sh 语义用例不同源，本机(Mac)盲改禁；待 Windows 机按同构口径回归(池单关单时核对此项)。
 - 全量回归:filter 定向绿+交叉守卫绿;全量 devdesk_tests 后台在跑,结果见池回单补注。
+
+## 独立审计记录(2026-10-31 按新纪律)
+
+- 独立审计子代理**通道不可用**(账号连接层拦截,具名角色 code-reviewer 两次派发失败)→ 降级为主会话按审计清单自查,**非独立,待通道恢复补审**。
+- 自查结论:**无 P0/P1**。备忘 2 条:①macos 版 ECHILD fail 路径未 close 输出 fd(原有行为,修则破两版同构,P2);②pr_grandchild_writer_grace 4500ms 断言在极慢机器可能贴线(宽限 2s+2.5s 余量,P3)。
+- 已核:reapDeadline 无 timeout 语义(max 起点仅收尸后生效)、posix ECHILD fail 路径 fd 清理齐、两版修复面同构、测试非凑数(先红后绿实证)。
