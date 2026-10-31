@@ -906,12 +906,12 @@
    "pool": "need",
    "title": "发布任务列表页（release_list_ui）重设计",
    "priority": "P3",
-   "status": "待验收",
+   "status": "关闭",
    "blocker": null,
    "owner": "ZCode主会话",
    "detail": "池 53 需求分析裁剪项转正（老板令 2026-10-31：没做的按新需求入池）：任务列表页（release_list_ui）重设计——池 53 只动详情页，列表页另立需求。源 PRD 同上",
    "created": "2026-10-31 22:52:12 +0800",
-   "updated": "2026-11-01 02:26:20 +0800",
+   "updated": "2026-11-01 02:27:58 +0800",
    "body": "池 53 需求分析裁剪项转正（老板令 2026-10-31：没做的按新需求入池）：任务列表页（release_list_ui）重设计——池 53 只动详情页，列表页另立需求。源 PRD 同上",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
@@ -1853,9 +1853,19 @@
    "need_id": 55,
    "time": "2026-11-01 02:12:34 +0800",
    "note": "P2 BUG-1（关联 F-55-2/F-55-5，2026-11-01 tester 发现）：筛选空态短路补页——release_list_ui.cpp:1185 rows.empty() 提前 return，矮窗自动补页与触底追加在筛选 Tab 空态下不可达；Tab 计数（DB 口径 countTasksByStatuses）与行区（内存筛选已加载页）口径分裂：计数≥1 仍画「暂无×的任务」，且不自动恢复，用户需点「查看全部」绕出。复现：21 任务仅加载 20、匹配行在未加载页时切到对应 Tab。QA 探针 --accept-shot-tab 场景可复现（该匹配行在未加载页时）。状态：未修复，待派发 developer/bug-fixer",
-   "resolved": 0,
+   "resolved": 1,
    "created_by": "",
    "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 3,
+   "need_id": 55,
+   "time": "2026-11-01 02:26:58 +0800",
+   "note": "P2 BUG-1（关联 F-55-2/F-55-5，2026-11-01 tester 发现）：筛选空态短路补页——release_list_ui.cpp:1185 rows.empty() 提前 return，矮窗自动补页与触底追加在筛选 Tab 空态下不可达；Tab 计数与行区口径分裂呈现「发布中·1 个+暂无发布中的任务」",
+   "resolved": 1,
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
    "deleted": 0
   }
  ],
@@ -2135,6 +2145,15 @@
    "need_id": 54,
    "time": "2026-11-01 00:57:33 +0800",
    "evidence": "QA 独立验收通过：改动面 9 文件无夹带、release_detail_branch 7/7+release 101/101+probe 双档 PASS 独立复现、行为抽验 4/4（缓冲独立字段/失败路径保留/四态越权拒/对账复用零改动 diff 实证）、截图双档目检过；dev 证据目录瑕疵（1600 档缺 meta）已由验收双档补齐。证据 evidence/20261101-pool54-accept-{1000,1600}",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 32,
+   "need_id": 55,
+   "time": "2026-11-01 02:27:58 +0800",
+   "evidence": "QA 独立验收通过+BUG-1 修复回归绿：release 111/111（含防回归新用例）+probe 双档+三场景截图；BUG-1 根因实证（单测先红后绿→补页判断上移判空前自愈）；行为抽验 4/4；D1-D4 裁决落点全过。Windows 双机归 CI。证据 evidence/20261101-pool55-*",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -4502,6 +4521,17 @@
    "from_status": "进行中",
    "to_status": "待验收",
    "reason": "实现+BUG-1 修复完成（QA 验收过，BUG 已 resolved）",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 216,
+   "need_id": 55,
+   "time": "2026-11-01 02:27:58 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
