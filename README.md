@@ -17,7 +17,7 @@
 [![c++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus&logoColor=white)](#架构)
 [![gui](https://img.shields.io/badge/GUI-EUI--NEO-D97757?style=flat-square)](#架构)
 [![deps](https://img.shields.io/badge/runtime%20deps-none-2ea44f?style=flat-square)](#快速开始)
-[![tests](https://img.shields.io/badge/tests-1954-2ea44f?style=flat-square)](#项目状态)
+[![tests](https://img.shields.io/badge/tests-2048-2ea44f?style=flat-square)](#项目状态)
 
 <br>
 
@@ -52,15 +52,11 @@ FTS5 全文搜索（中文可用）、目录树、标签、大纲面板；编辑
 </tr>
 <tr>
 <td><b>首页仪表盘</b></td>
-<td>今日笔记 / 待办 / 逾期 / API 调用统计；Token 速率取自最近一次成功调用，用量按小时分布；多供应商余量卡（配额后台刷新）。</td>
+<td>今日笔记 / 待办 / 逾期 / API 调用统计；Token 速率取自最近一次成功调用，用量按小时分布。</td>
 </tr>
 <tr>
 <td><b>设置</b></td>
-<td>外观（主题 / 全局字号 / 窗口效果三档）、模块插拔（开关即时生效）、桌宠、笔记目录、代理端口与接管状态、日志保留、MCP 服务开关与端口。</td>
-</tr>
-<tr>
-<td><b>桌宠</b></td>
-<td>无边框置顶透明小窗，可拖拽、四态动画、气泡对话、右键菜单；默认关闭，需要时再开；内置 6 套皮肤。</td>
+<td>外观（主题 / 全局字号 / 窗口效果三档）、模块插拔（开关即时生效）、笔记目录、代理端口与接管状态、日志保留、MCP 服务开关与端口。</td>
 </tr>
 <tr>
 <td><b>MCP 服务</b></td>
@@ -101,12 +97,11 @@ FTS5 全文搜索（中文可用）、目录树、标签、大纲面板；编辑
 <h2 align="center"><a name="快速开始"></a>🚀 快速开始</h2>
 
 > [!IMPORTANT]
-> DevDesk 依赖 **[coderstory/EUI-NEO](https://github.com/coderstory/EUI-NEO)**（**修改版 fork**，非上游）—— 源码需要放在 DevDesk 的**同级目录**（不是 submodule）：
+> DevDesk 依赖 **[coderstory/EUI-NEO](https://github.com/coderstory/EUI-NEO)**（**修改版 fork**，非上游）—— 它是本仓库的 **git submodule**（`.gitmodules`），指向 fork 的特定提交。**直接用上游 `sudoevolve/EUI-NEO` 会编译失败**（缺本项目依赖的 API）。
 
-```text
-your-workspace/
-├── DevDesk/     ← 本仓库
-└── EUI-NEO/     ← GUI 框架
+```bash
+git clone --recurse-submodules https://github.com/coderstory/DevDesk.git
+# 已有仓库：git submodule update --init
 ```
 
 ### 装依赖
@@ -204,7 +199,7 @@ claude mcp add --transport http devdesk http://127.0.0.1:8931/mcp
 
 <p align="center">
 十三页全功能运行（可插拔模块 9 个：笔记 / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸 / MCP / 上线；壁纸默认关闭）<br>
-全量测试 <b>Total 1954 / Failed 0</b>（macOS，2026-10-29；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
+全量测试 <b>Total 2048 / Failed 0</b>（macOS，2026-10-31；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
 <sub>Total 与 Passed 的差额是按平台条件 <code>DOCTEST_SKIP</code> 的用例（Windows 专属实现 / soak 门控 / 非活跃平台分支等），不是失败</sub>
 </p>
 
