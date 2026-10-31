@@ -16,10 +16,11 @@ namespace module::memory::engine {
 namespace {
 
 // 模型仓库定案：bge-small-zh-v1.5 的 Q8_0 量化 GGUF（维度 512 建索引前定死）。
-constexpr const char* kEmbedModelGguf = "bge-small-zh-v1.5-Q8_0.gguf";
+// HF 文件名为小写 q8_0（仓内实测只有小写形态，大写 Q8_0 resolve 恒 404——池 3/G-3）。
+constexpr const char* kEmbedModelGguf = "bge-small-zh-v1.5-q8_0.gguf";
 constexpr const char* kEmbedModelUrl =
     "https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/"
-    "bge-small-zh-v1.5-Q8_0.gguf";
+    "bge-small-zh-v1.5-q8_0.gguf";
 // 下载空闲超时：低于 8KB/s 持续 30s 判死（总墙钟不设限——百 MB 级模型慢网合法）
 constexpr long kDownloadLowSpeedBytes = 8 * 1024;
 constexpr long kDownloadLowSpeedSecs = 30;
