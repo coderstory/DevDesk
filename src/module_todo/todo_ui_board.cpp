@@ -384,13 +384,19 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
 
     // 列头（归档折叠窄态不画普通列头，整列让位给竖排条）
     if (archiveHeaderOn) {
-        // 列头热区保留；透明底防深色主题刷白（右键菜单入口已随固定四列删除）
-        ui.rect(id + ".head")
+        // 列头热区保留；透明底防深色主题刷白（右键菜单入口已随固定四列删除）。
+        // 归档列整条列头即折叠开关（2026-10-31 反馈：原先只有右侧 32px 箭头可点）；
+        // 箭头保留自身热区与 hover，命中优先级更高（顶层优先），不会双触发。
+        auto head = ui.rect(id + ".head")
             .position(0.0f, 0.0f)
             .size(width, kColumnHeaderHeight)
             .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-            .radius(t.sizes.radiusSmall)
-            .build();
+            .radius(t.sizes.radiusSmall);
+        if (isArchive) {
+            head.hoverColor(t.colors.primarySoftBg)
+                .onClick([cb = v.act.archiveToggle] { cb(); });
+        }
+        head.build();
 
         auto drawHeadContent = [&](eui::Ui& target) {
             // 列颜色点（10px 圆点，token→hex 见 ui::columnDotColor）

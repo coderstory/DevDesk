@@ -5239,6 +5239,24 @@ REGISTER_TEST(todo_ui_h20_board_render,
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".archivetoggle.bg") != nullptr);
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".card.0.title") != nullptr);
 
+    // 整条列头即折叠开关（2026-10-31 反馈：原先只有右侧 32px 箭头可点）：
+    // head 热区覆盖整个列宽，绑定与箭头同一动作；点一次折叠、再点窄态展开回本段前提。
+    const auto* headToggle = ui.find(colId(archiveIndex) + ".head");
+    DOCTEST_REQUIRE(headToggle != nullptr);
+    DOCTEST_REQUIRE(headToggle->onClick != nullptr);
+    const auto* archBg = ui.find(colId(archiveIndex) + ".bg");
+    DOCTEST_REQUIRE(archBg != nullptr);
+    DOCTEST_CHECK(std::fabs(headToggle->frame.width - archBg->frame.width) < 0.5f);
+    headToggle->onClick();
+    layoutFrame();
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".expand.bg") != nullptr);
+    const auto* reExpand = ui.find(colId(archiveIndex) + ".expand.bg");
+    DOCTEST_REQUIRE(reExpand != nullptr);
+    DOCTEST_REQUIRE(reExpand->onClick != nullptr);
+    reExpand->onClick();
+    layoutFrame();
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".archivetoggle.bg") != nullptr);
+
     // ---- 1000×640 最小档：内容宽按真实 pad（2×spacingLarge = 32/侧）复算 ----
     // 展开态：四列等分 W=(contentW−3×gap)/4；onPageEnter 落目标态（不补播动画）
     screen.width = 1000.0f;
