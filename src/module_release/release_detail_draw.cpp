@@ -4,6 +4,29 @@
 
 #include "release_detail_internal.h"
 
+#include "release_checkbox.h"
+#include "release_config_ui.h"
+#include "release_list_ui.h"
+
+#include <core/component_theme.h>
+#include <core/render/text.h>
+
+#include <components/dialog.h>
+#include <components/input.h>
+#include <components/progress.h>
+#include <components/scrollview.h>
+
+#include <ui_kit/button.h>
+#include <ui_kit/metrics.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <ctime>
+#include <functional>
+#include <limits>
+#include <utility>
+
 namespace module::release {
 namespace detail {
 

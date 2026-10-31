@@ -4,6 +4,13 @@
 
 #include "release_detail_internal.h"
 
+#include "release_config_ui.h"  // formatMinuteOfDay / configItemLabels
+#include "release_list_ui.h"    // releaseTaskStatusText
+
+#include <algorithm>
+#include <ctime>
+#include <limits>
+
 namespace module::release {
 namespace detail {
 
