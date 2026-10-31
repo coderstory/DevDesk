@@ -866,6 +866,23 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 53,
+   "pool": "need",
+   "title": "发布任务详情：补发布态（只读+按流程逐步执行）+编辑态 UI 重设计",
+   "priority": "P1",
+   "status": "在池",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "老板 2026-10-31 口述原话：①发布功能里，任务详情只有编辑态，没有发布态；发布态下不能编辑，需要按流程一个一个地执行。②当前编辑态 UI 不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。初步拆解：A) 发布任务状态机（编辑态→发布态，发布态只读+流程逐步执行）；B) release_detail_ui 编辑态 UI 重设计（现 3387 行上帝文件候选）。L 级候选（UI 新形态+状态机），待需求分析定级。撞车预警：DSH 侧 bot 正在并发改 module_release（release_detail_draw.cpp WIP 在工作区）——与 B 直接同文件域，需先厘清在飞改动与本需求关系",
+   "created": "2026-10-31 22:37:52 +0800",
+   "updated": "2026-10-31 22:40:09 +0800",
+   "body": "老板 2026-10-31 口述原话：①发布功能里，任务详情只有编辑态，没有发布态；发布态下不能编辑，需要按流程一个一个地执行。②当前编辑态 UI 不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。初步拆解：A) 发布任务状态机（编辑态→发布态，发布态只读+流程逐步执行）；B) release_detail_ui 编辑态 UI 重设计（现 3387 行上帝文件候选）。L 级候选（UI 新形态+状态机），待需求分析定级。撞车预警：DSH 侧 bot 正在并发改 module_release（release_detail_draw.cpp WIP 在工作区）——与 B 直接同文件域，需先厘清在飞改动与本需求关系",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [
@@ -4141,6 +4158,17 @@
    "from_status": "待验收",
    "to_status": "关闭",
    "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 200,
+   "need_id": 53,
+   "time": "2026-10-31 22:37:52 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
