@@ -8,7 +8,7 @@
 | 技术方案卡 | `docs/superpowers/plans/<slug>-tech.md` | 长期 |
 | 测试清单卡 | `docs/superpowers/plans/<slug>-tests.md` | 长期（验收后留作回归参照） |
 | 总结会纪要 | `docs/superpowers/plans/<slug>-retro.md` | 长期 |
-| 待办与剩余决策 | `TODO.md`、`docs/superpowers/plans/2026-09-22-backlog.md` | 活文档 |
+| 待办与剩余决策 | `docs/superpowers/plans/2026-09-22-backlog.md`、`docs/pool/` 池库 | 活文档（TODO.md 已退役删除 2026-10-31） |
 | 调研报告 | `docs/research/YYYY-MM-DD-<slug>.md` | 长期，结论过时须标注 |
 | Agent 评测任务集 | `docs/research/agent-eval-tasks.md` | 活文档 |
 | 证据物 | `evidence/YYYYMMDD-<slug>/`（git-ignore） | 测试清单卡引用的保留 |

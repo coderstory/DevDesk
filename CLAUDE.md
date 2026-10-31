@@ -84,7 +84,7 @@ cmake --build build
 cd build && ctest --output-on-failure
 ```
 
-**一体化脚本（推荐）**：`bash scripts/build-test-run.sh` —— 增量构建 + 全量测试 + 杀旧进程 + 启动 app，默认全增量（不删 build/）。参数：`--clean` 全量重建、`--no-test` 跳过测试、`--no-run` 不启动、`--filter X` 只跑名字含 X 的用例。工具链 PATH 脚本内部处理，app 以重定向后台方式启动不阻塞终端。EUI-NEO 自动定位：脚本按 `EUI_NEO_DIR` 环境变量 → 仓库根 `./EUI-NEO`（仓内 submodule，worktree 内同样可见）定位并传给 configure（`-DEUI_NEO_DIR`）；`build/` 未初始化时自动 configure —— 无需手敲 `-D`（见 HANDOFF §0.4）。
+**一体化脚本（推荐）**：`bash scripts/build-test-run.sh` —— 增量构建 + 全量测试 + 杀旧进程 + 启动 app，默认全增量（不删 build/）。参数：`--clean` 全量重建、`--no-test` 跳过测试、`--no-run` 不启动、`--filter X` 只跑名字含 X 的用例。工具链 PATH 脚本内部处理，app 以重定向后台方式启动不阻塞终端。EUI-NEO 自动定位：脚本按 `EUI_NEO_DIR` 环境变量 → 仓库根 `./EUI-NEO`（仓内 submodule，worktree 内同样可见）定位并传给 configure（`-DEUI_NEO_DIR`）；`build/` 未初始化时自动 configure —— 无需手敲 `-D`。
 
 **模块隔离静态守卫（TIN-01，已从单测迁到脚本）**：`bash scripts/check-module-isolation.sh` —— 断言 `src/module_agent/` 源文件零兄弟模块头 include（C5）、todo/markdown/claude 工具与模块注册文件不回依赖 `module_agent`（C6）、`src/module_settings/CMakeLists.txt` 的非注释行不 link 兄弟模块库（B）。退出码 `0` 通过 / `1` 违规（逐条打印 `文件:行:命中行`）/ `2` 环境错（**不静默绿**）；`--root DIR` 可指向仓库外拷贝树做反证。`scripts/build-test-run.sh` 在测试段之后自动串跑它（`--no-test` 也跑），失败即整体 `exit 1`。*为什么独立成脚本*：原守卫编在 `test_settings.cpp` 内靠 `__FILE__` 上溯仓库根，ccache 相对化 `__FILE__` 后 cwd=仓库根 必误报 → 全量必红；脚本全程绝对路径、不读 `$PWD`、脚本内不 cd。
 
@@ -424,7 +424,7 @@ main → 13 个 Router 页面 (home / markdown / todo / schedule / claude_proxy 
 
 ### Issue tracker
 
-Issues live as local markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+Issues 与待办统一走 `docs/pool/` 池库（pool MCP 工具，见 `.agents/skills/devdesk-pool-usage`）；原 `.scratch/` 本地 markdown 机制已于 2026-10-31 清理退役。
 
 ### Triage labels
 
