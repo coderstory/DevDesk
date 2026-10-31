@@ -700,10 +700,13 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const auto componentTheme = core::theme::componentTokensWeChat(t);
 
     // 卡片骨架用 card 组件；选中/未选中边框挂卡内交互层 .bg（挂 card 上会被不透明 .bg 盖住）
+    // 2026-10-31：骨架底必须透明——card 组件默认底是不透明 cardColor，会把内层 0.92 半透卡面
+    // 「垫实」成纯白（用户反馈的半透丢失）。卡面唯一载体 = 内层 .bg（kCardGlassAlpha + H16 浅染）。
     components::card(ui, id + ".card")
         .position(x, y)
         .size(width, kCardHeight)
         .radius(t.sizes.radius)
+        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
         .theme(core::theme::componentTokensWeChat(t))
         .padding(0.0f)  // 卡内坐标以 content 原点为基准
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
@@ -924,10 +927,12 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
         .opacity(kDragGhostAlpha)
         .content([&] {
             // 骨架复用 card 组件（与真卡同一份 radius/panelShadow/token）
+            // 骨架底透明：卡面唯一载体 = 内层 .bg（否则不透明默认底会把半透垫实）
             components::card(ui, "todo.dragghost.card")
                 .position(0.0f, 0.0f)
                 .size(w, kCardHeight)
                 .radius(t.sizes.radius)
+                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                 .theme(core::theme::componentTokensWeChat(t))
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)

@@ -133,7 +133,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     ui.rect("memory.eng.card")
         .position(0.0f, 0.0f)
         .size(w, 176.0f)
-        .color(t.colors.surface)
+        .color(ui_kit::cardSurface(t))
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         .build();
@@ -241,7 +241,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
         ui.rect("memory.health.card" + std::to_string(i))
             .position(cx, y)
             .size(cardW, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusOverlay)
             .border(1.0f, t.colors.borderDefault)
             .build();

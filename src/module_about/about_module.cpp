@@ -1,20 +1,16 @@
 // 关于页独立模块（S3.8 UAT6.2 整改）。
-// 实底白卡 + 标题左对齐 + 描述列表（标签/值层级）+ Ghost 复制图标 + 信息分组。
+// 标题左对齐 + 描述列表（标签/值层级）+ 信息分组，纯只读展示：无复制、无外链。
 // 玻璃体系已退役（S6.1）。
 // 平台/架构由 CMake 配置期注入宏，本文件只消费。
 #include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
-#include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
-
-#include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
 
 #include <eui/dsl.h>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iterator>
@@ -177,12 +173,10 @@ std::string aboutCppLine() {
     return "C++11";
 }
 
-// 信息行：左标签 + 右内容。highlight=true → 可复制（wechat.primary）。linkToast 非空=Ghost链接。
+// 信息行：左标签 + 右内容（纯只读，无可交互元素）。
 struct AboutRow {
     const char* label;
     std::string value;
-    bool highlight = false;
-    std::string linkToast;  // non-empty → render as ghost link, toast on click
 };
 
 } // namespace
@@ -203,7 +197,6 @@ public:
         constexpr float kGroupGap = 24.0f;     // 组间间距（1px 分隔线居中）
         constexpr float kRowH = 32.0f;         // 行高（S3.8#1）
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
-        constexpr float kCopyW = 24.0f;        // 复制按钮宽
         constexpr float kFooterH = 20.0f;
         constexpr float kTitleH = 32.0f;       // 页标题行高（fontSizeTitle 档，同 agent.title）
 
@@ -215,19 +208,18 @@ public:
         // S3.8#3: 三组——版本信息 / 构建信息 / 许可
         InfoGroup groups[] = {
             {"版本信息", {
-                {"版本", aboutVersionLine(), true},
-                {"Git commit", DEVDESK_GIT_REV, true},
-                {"EUI-NEO", aboutEuiNeoLine(), true},
+                {"版本", aboutVersionLine()},
+                {"Git commit", DEVDESK_GIT_REV},
+                {"EUI-NEO", aboutEuiNeoLine()},
             }},
             {"构建信息", {
-                {"构建时间", aboutBuildLine(), false},
-                {"编译器", DEVDESK_COMPILER, false},
-                {"平台", aboutPlatformLine(), false},
-                {"C++ 标准", aboutCppLine(), false},
+                {"构建时间", aboutBuildLine()},
+                {"编译器", DEVDESK_COMPILER},
+                {"平台", aboutPlatformLine()},
+                {"C++ 标准", aboutCppLine()},
             }},
             {"许可与致谢", {
-                {"开源协议", "MIT License", false},
-                {"开源组件", "查看完整列表", false, "完整开源组件清单见仓库 LICENSE 说明"},
+                {"开源协议", "MIT License"},
             }},
         };
 
@@ -289,63 +281,17 @@ public:
                     .horizontalAlign(eui::HorizontalAlign::Right)
                     .build();
 
-                // 右内容：14px/600，统一 textPrimary；highlight 仅控制复制图标显隐
-                const float valueW = contentW - valueX - kCopyW;
-                const bool isGhostLink = !g.rows[i].linkToast.empty();                ui.text("about.info.value." + std::to_string(gi) + "." +
+                // 右内容：14px/600，统一 textPrimary（只读，无可交互元素）
+                ui.text("about.info.value." + std::to_string(gi) + "." +
                         std::to_string(i))
                     .position(pagePad + valueX, rowY)
-                    .size(valueW, kRowH)
+                    .size(contentW - valueX, kRowH)
                     .text(g.rows[i].value)
                     .fontSize(t.sizes.fontSizeBody)  // 14px
                     .lineHeight(kRowH)
                     .fontWeight(600)
-                    .color(isGhostLink ? t.colors.accentText
-                                       : t.colors.textPrimary)
+                    .color(t.colors.textPrimary)
                     .build();
-
-                // S3.8#2: Ghost 复制图标按钮（highlight 行）；热区收窄到图标区
-                if (g.rows[i].highlight) {
-                    const float iconX = pagePad + contentW - kCopyW;
-                    const float iconY = rowY + (kRowH - 16.0f) * 0.5f;
-                    ui.text("about.info.copy." + std::to_string(gi) + "." +
-                            std::to_string(i))
-                        .position(iconX, iconY)
-                        .size(16.0f, 16.0f)
-                        .icon(0xF0C5)  // fa-copy
-                        .fontSize(core::theme::scaled(16.0f))
-                        .color(t.colors.primary)
-                        .build();
-
-                    std::string copyText = g.rows[i].value;
-                    ui.rect("about.info.hit." + std::to_string(gi) + "." +
-                            std::to_string(i))
-                        .position(pagePad + contentW - kCopyW, rowY)
-                        .size(kCopyW, kRowH)
-                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                        .cursor(eui::CursorShape::Hand)
-                        .onClick([this, copyText] {
-                            ::core::window::setClipboardText(copyText);
-                            triggerToast("已复制");
-                            LOG_INFO("About: 已复制 " + copyText);
-                        })
-                        .build();
-                }
-
-                // Ghost 链接按钮（linkToast 非空行）
-                if (!g.rows[i].linkToast.empty()) {
-                    std::string toastMsg = g.rows[i].linkToast;
-                    ui.rect("about.info.link." + std::to_string(gi) + "." +
-                            std::to_string(i))
-                        .position(pagePad + valueX, rowY)
-                        .size(valueW, kRowH)
-                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                        .cursor(eui::CursorShape::Hand)
-                        .onClick([this, toastMsg] {
-                            triggerToast(toastMsg);
-                            LOG_INFO("About: 开源组件链接点击");
-                        })
-                        .build();
-                }
             }
             y += static_cast<float>(g.rows.size()) * kRowH;
         }
@@ -360,30 +306,6 @@ public:
             .color(t.colors.textDisabled)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();
-
-        // 复制成功 toast
-        const std::string& toastMsg = toastActive_ ? toastMsg_ : std::string{};
-        ui_kit::showLightToast(ui, "about.toast", toastMsg,
-                               screen.width * 0.5f, screen.height * 0.5f, t);
-        if (toastActive_) {
-            const float elapsed =
-                std::chrono::duration<float>(
-                    std::chrono::steady_clock::now() - toastStart_).count();
-            if (elapsed >= ui_kit::kLightToastDurationSec) {
-                toastActive_ = false;
-            }
-        }
-    }
-
-private:
-    bool toastActive_ = false;
-    std::string toastMsg_;
-    std::chrono::steady_clock::time_point toastStart_{};
-
-    void triggerToast(const std::string& msg) {
-        toastMsg_ = msg;
-        toastActive_ = true;
-        toastStart_ = std::chrono::steady_clock::now();
     }
 };
 

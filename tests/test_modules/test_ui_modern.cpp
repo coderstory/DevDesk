@@ -662,7 +662,7 @@ REGISTER_TEST(uiModernMdCtxAnchor,
 REGISTER_TEST(uiModernVirtualProfileRows,
               "uiModern claude: profile 虚拟列表 slot 窗口 + 滚动回退语义", {
     ClaudeEnv env;
-    for (int i = 0; i < 25; ++i) {
+    for (int i = 0; i < 40; ++i) {
         auto p = env.svc->createProfile(
             "V" + std::to_string(i),
             "https://v" + std::to_string(i) + ".example.com",
@@ -682,13 +682,13 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
-    // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）。
-    // 1600×1000 下列表视口 782px、行距 68px、overscan 一屏 → 渲染窗 24 行：
-    // 行 23 在窗内，行 24（最后一帧可见区外）被裁掉。
+    // slot 窗口生效：行不整段渲染，视口外行不存在（virtualList 裁剪）。
+    // 1600×1000 下列表视口 ≈ 842px（底部新建钮已上移入列表头，空间回收给列表）、
+    // 行距 68px、overscan 一屏 → 渲染窗约 26 行：行 23 在窗内，行 39 被裁掉。
     DOCTEST_CHECK(ui.find("claude.profile.23.name") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.23") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.profile.24.name") == nullptr);
-    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.24") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.39.name") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.39") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
     // 重 compose 视口随偏移前移。偏移取 600 让行 19 落入渲染窗（56px×19≈1064）
@@ -1006,7 +1006,7 @@ REGISTER_TEST(uiAboutLayout,
     constexpr float kGroupGap = 24.0f;
     constexpr float kRowH = 32.0f;
     constexpr int kGroupCount = 3;
-    constexpr int kRowCount = 9;   // 3+4+2=9 行
+    constexpr int kRowCount = 8;   // 3+4+1=8 行（第三组「查看许可」链接行已删）
     constexpr float kFooterH = 20.0f;
     constexpr float kLabelW = 100.0f;
     const float valueX = kPagePad + kLabelW + 16.0f;
@@ -1055,7 +1055,7 @@ REGISTER_TEST(uiAboutLayout,
     }
     {
         const float contentW = screen.width - 2.0f * kPagePad;
-        const int gRowCount[kGroupCount] = {3, 4, 2};
+        const int gRowCount[kGroupCount] = {3, 4, 1};
         for (int gi = 0; gi < kGroupCount; ++gi) {
             for (int i = 0; i < gRowCount[gi]; ++i) {
                 const std::string sid = std::to_string(gi) + "." + std::to_string(i);
@@ -1085,17 +1085,11 @@ REGISTER_TEST(uiAboutLayout,
         // 扁平旧 id 不得回潮（批B 前的跨组覆盖载体）
         DOCTEST_CHECK(ui.find("about.info.label.0") == nullptr);
         DOCTEST_CHECK(ui.find("about.info.value.0") == nullptr);
-        // 复制图标/命中区仅组0 highlight 行存在
-        DOCTEST_REQUIRE(ui.find("about.info.copy.0.0") != nullptr);
-        DOCTEST_REQUIRE(ui.find("about.info.copy.0.1") != nullptr);
-        DOCTEST_REQUIRE(ui.find("about.info.copy.0.2") != nullptr);
-        DOCTEST_REQUIRE(ui.find("about.info.hit.0.0") != nullptr);
-        DOCTEST_REQUIRE(ui.find("about.info.hit.0.1") != nullptr);
-        DOCTEST_REQUIRE(ui.find("about.info.hit.0.2") != nullptr);
-        DOCTEST_CHECK(ui.find("about.info.copy.1.0") == nullptr);
-        DOCTEST_CHECK(ui.find("about.info.hit.1.0") == nullptr);
-        // 开源组件行 Ghost 链接热区
-        DOCTEST_REQUIRE(ui.find("about.info.link.2.1") != nullptr);
+        // 复制体系与外链已彻底删除：图标 / 命中区 / 链接热区一律不得出现
+        DOCTEST_CHECK(ui.find("about.info.copy.0.0") == nullptr);
+        DOCTEST_CHECK(ui.find("about.info.hit.0.0") == nullptr);
+        DOCTEST_CHECK(ui.find("about.info.link.2.0") == nullptr);
+        DOCTEST_CHECK(ui.find("about.toast") == nullptr);
     }
     {
         const auto* footer = ui.find("about.footer");
@@ -1119,7 +1113,7 @@ REGISTER_TEST(uiAboutLayout,
         mini.layout(minScreen.width, minScreen.height);
         const auto* title = mini.find("about.title");
         const auto* footer = mini.find("about.footer");
-        const auto* lastValue = mini.find("about.info.value.2.1");
+        const auto* lastValue = mini.find("about.info.value.2.0");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_REQUIRE(lastValue != nullptr);
@@ -1138,15 +1132,14 @@ REGISTER_TEST(uiAboutLayout,
         mod->compose(narrow, narrowScreen);
         narrow.end();
         narrow.layout(narrowScreen.width, narrowScreen.height);
-        const auto* v = narrow.find("about.info.value.2.1");
-        const auto* link = narrow.find("about.info.link.2.1");  // 开源组件行 = 链接热区（非复制行）
+        const auto* v = narrow.find("about.info.value.2.0");
+        const auto* link = narrow.find("about.info.link.2.0");  // 已删除：必须为空
         DOCTEST_REQUIRE(v != nullptr);
-        DOCTEST_REQUIRE(link != nullptr);
+        DOCTEST_CHECK(link == nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(v->frame.width,
-                                     (narrowScreen.width - 2.0f * kPagePad) - 116.0f - 24.0f),
+                                     (narrowScreen.width - 2.0f * kPagePad) - 116.0f),
                               px("about.narrow.value", v));
         DOCTEST_CHECK(v->frame.x + v->frame.width <= narrowScreen.width);
-        DOCTEST_CHECK(link->frame.x + link->frame.width <= narrowScreen.width);
     }
     mod->onStop();
     return true;

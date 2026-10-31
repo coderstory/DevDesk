@@ -879,3 +879,65 @@ REGISTER_TEST(home_todo_overdue_consistency,
     DOCTEST_CHECK_EQ(static_cast<int64_t>(overdue.value().size()), expected);
     return true;
 })
+
+// 趋势卡折叠（2026-10-31 反馈）：点标题行切换，折叠态只留标题行，图表区不建。
+REGISTER_TEST(home_chart_card_collapsible,
+              "home_module: 趋势卡折叠——点标题行收起/展开（跨帧保持）", {
+    core::proxy_stats::resetForTest();
+    core::theme::setLight();
+    core::theme::setFontScale(1.0f);
+    core::theme::setWindowHeight(960.0f);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Ui ui;
+    const eui::Screen screen{1600.0f, 960.0f};
+    auto frame = [&](const char* id) {
+        ui.begin(id);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+
+    // 展开档：吸收余高、图表区在、箭头朝下
+    frame("home_collapse_expanded");
+    const auto* chartOpen = ui.find("home.api.chart");
+    DOCTEST_REQUIRE(chartOpen != nullptr);
+    DOCTEST_CHECK_MESSAGE(chartOpen->frame.height > 300.0f,
+                          "展开档图表卡应吸收余高，实际 " +
+                              std::to_string(chartOpen->frame.height));
+    DOCTEST_CHECK(ui.find("home.api.chart.wrap") != nullptr);
+    const auto* arrowOpen = ui.find("home.api.chart.toggle");
+    DOCTEST_REQUIRE(arrowOpen != nullptr);
+    DOCTEST_CHECK_EQ(arrowOpen->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(arrowOpen->text, eui::utf8(0xF078));  // chevron-down
+
+    // 点标题行 → 折叠：卡高收到 56、图表区整块不建、箭头朝右
+    const auto* hit = ui.find("home.api.chart.headhit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onClick != nullptr);
+    hit->onClick();
+    frame("home_collapse_collapsed");
+    const auto* chartShut = ui.find("home.api.chart");
+    DOCTEST_REQUIRE(chartShut != nullptr);
+    DOCTEST_CHECK_MESSAGE(std::fabs(chartShut->frame.height - 56.0f) < 0.5f,
+                          "折叠档卡高应为 56，实际 " +
+                              std::to_string(chartShut->frame.height));
+    DOCTEST_CHECK(ui.find("home.api.chart.wrap") == nullptr);
+    const auto* arrowShut = ui.find("home.api.chart.toggle");
+    DOCTEST_REQUIRE(arrowShut != nullptr);
+    DOCTEST_CHECK_EQ(arrowShut->text, eui::utf8(0xF054));  // chevron-right
+
+    // 再点一次 → 恢复展开
+    const auto* hit2 = ui.find("home.api.chart.headhit");
+    DOCTEST_REQUIRE(hit2 != nullptr);
+    DOCTEST_REQUIRE(hit2->onClick != nullptr);
+    hit2->onClick();
+    frame("home_collapse_restored");
+    DOCTEST_CHECK(ui.find("home.api.chart.wrap") != nullptr);
+    const auto* chartBack = ui.find("home.api.chart");
+    DOCTEST_REQUIRE(chartBack != nullptr);
+    DOCTEST_CHECK(chartBack->frame.height > 300.0f);
+
+    mod->onStop();
+    return true;
+})

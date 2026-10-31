@@ -14,7 +14,6 @@
 #include <components/virtuallist.h>
 
 #include <core/logging.h>
-#include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
 #include <core/router.h>
 #include <core/ui_geometry.h>
 
@@ -27,13 +26,10 @@ namespace module::claude {
 namespace {
 
 constexpr float kListTopY = 56.0f;             // 列表起点 y
-constexpr float kListBottomGap = 12.0f;        // 列表底 → 底部按钮行顶
+constexpr float kListBottomGap = 12.0f;        // 列表底 → 面板底内距
 constexpr float kListMinH = 96.0f;             // 列表视口保底高
-// 底部按钮区（单行「+ 新建 Profile」）= 40 + 20 底距
-constexpr float kBottomBtnRowH = 60.0f;
-
-// 底部按钮行上沿（面板内绝对 y）
-float bottomButtonRowY(float bodyH) { return bodyH - kBottomBtnRowH; }
+// 列表头新增按钮（2026-10-31 反馈：新建入口从底部移到列表头右侧）
+constexpr float kHeadBtnSize = 28.0f;
 
 // 头像圆圈色按 profile id 稳定派生（FNV-1a 取色板下标）：compose 每帧跑真随机会闪烁。色板 9 个低饱和暖色。
 constexpr size_t kAvatarPaletteSize = 9;
@@ -444,7 +440,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
         .content([&] {
             ui.text("claude.profiles.title")
                 .position(20.0f, 20.0f)
-                .size(leftW - 40.0f, 20.0f)
+                .size(leftW - 40.0f - kHeadBtnSize, 20.0f)
                 .text("Profile 列表")
                 .fontSize(t.sizes.fontSizeBody)
                 .lineHeight(20.0f)
@@ -452,11 +448,23 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .color(t.colors.textPrimary)
                 .build();
 
+            // 列表头新增按钮（唯一新建入口）：与标题同行右对齐，幽灵样式
+            components::button(ui, "claude.profiles.new")
+                .position(leftW - 20.0f - kHeadBtnSize, 16.0f)
+                .size(kHeadBtnSize, kHeadBtnSize)
+                .text("+")
+                .fontSize(t.sizes.fontSizeBody)
+                .theme(themeTokens, false)
+                .textColor(t.colors.textSecondary)
+                .radius(t.sizes.radius)
+                .onClick([onNew = actions.onNewProfile] { onNew(); })
+                .build();
+
             const float cardY0 = kListTopY;
             const float cardGap = 12.0f;
 
-            // 列表底 = 底部按钮行上沿 − 间距
-            const float listBottom = bottomButtonRowY(bodyH) - kListBottomGap;
+            // 列表底 = 面板底内距（底部按钮行已取消，空间回收给列表）
+            const float listBottom = bodyH - kListBottomGap;
 
             if (!profilesError.empty()) {
                 ui.text("claude.profiles.error")
@@ -472,7 +480,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 ui.text("claude.profiles.empty")
                     .position(20.0f, cardY0 + 20.0f)
                     .size(leftW - 40.0f, 60.0f)
-                    .text("暂无 Profile，点击下方按钮新建")
+                    .text("暂无 Profile，点右上角 + 新建")
                     .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.textTertiary)
@@ -559,50 +567,6 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     })
                     .build();
             }
-
-            // 底部按钮：新建=Filled；fit-content 宽度（内边距水平 16 + 文字实宽
-            // 14/600；S4.5 单按钮公式 W=textWidth+32 钳 [96,200]），禁缩字号。
-            constexpr float kBtnPadH = 16.0f;   // 规格内边距水平 16
-            constexpr float kBtnFont = 14.0f;   // 规格文字 14/600
-            constexpr int kBtnWeight = 600;
-            const auto fitBtnW = [](const std::string& label) {
-                float textW = core::TextPrimitive::measureTextWidth(
-                    label, {}, kBtnFont, kBtnWeight);
-                if (textW <= 0.0f) {
-                    // 测量不可用（无字体上下文）退文本估算：CJK 全宽 14、ASCII 半宽
-                    // 7（按钮文案的保守上界，宁宽勿裁）。按 UTF-8 字符迭代——
-                    // 字节级计数会把 3 字节 CJK 当成 3 个字符。
-                    textW = 0.0f;
-                    for (std::size_t i = 0; i < label.size(); ) {
-                        const unsigned char b = static_cast<unsigned char>(label[i]);
-                        const bool isAscii = (b < 0x80);
-                        textW += isAscii ? kBtnFont * 0.5f : kBtnFont;
-                        // UTF-8 步进：ASCII 1 字节，multi-byte 按头字节前导 1 位数跳
-                        if (isAscii) { ++i; continue; }
-                        int nBytes = 0;
-                        if ((b & 0xE0) == 0xC0) nBytes = 2;
-                        else if ((b & 0xF0) == 0xE0) nBytes = 3;
-                        else if ((b & 0xF8) == 0xF0) nBytes = 4;
-                        i += (nBytes > 0 ? static_cast<std::size_t>(nBytes) : 1);
-                    }
-                }
-                return textW + 2.0f * kBtnPadH;   // 原值返回，钳制由布局处做
-            };
-            const float btnNewW =
-                std::clamp(fitBtnW("+ 新建 Profile"), 96.0f, 200.0f);
-            // 新建（主操作）Filled（绿底白字）
-            components::button(ui, "claude.profiles.new")
-                .position(20.0f, bottomButtonRowY(bodyH))
-                .size(btnNewW, 40.0f)
-                .text("+ 新建 Profile")
-                .fontSize(kBtnFont)
-                .colors(t.colors.primary,
-                        t.colors.primaryHover,
-                        t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(8.0f)
-                .onClick([onNew = actions.onNewProfile] { onNew(); })
-                .build();
         })
         .build();
 }

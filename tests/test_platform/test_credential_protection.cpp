@@ -75,8 +75,39 @@ REGISTER_TEST(credential_description_matches_implementation,
     return true;
 })
 
-REGISTER_TEST(credential_unprotect_rejects_broken_form,
-              "credential: 形态损坏 → fail，不静默回落空串", {
+REGISTER_TEST(credential_dpapi_blob_cross_platform_guard,
+              "credential: dpapi: 前缀跨平台语义——本机解不了必须报错，不当明文用", {
+    const std::string blob =
+        std::string(platform::credential::kDpapiBlobPrefix) +
+        "01000000d08c9ddf0115d1118c7a00c04fc297eb01000000";
+    DOCTEST_CHECK(platform::credential::isDpapiBlob(blob));
+    DOCTEST_CHECK(!platform::credential::isDpapiBlob("sk-ant-xxx"));
+    // 两平台都必须失败：明文平台不能把 Windows 密文当 API Key 发出去（会变成难查的 401）；
+    // 加密平台的 blob 不是本机加密的，DPAPI 自己也解不开。
+    DOCTEST_CHECK(platform::credential::unprotect(blob).isFail());
+    return true;
+})
+
+REGISTER_TEST(credential_plaintext_detection_bounds,
+              "credential: 明文形态判定边界（迁移兜底只认典型 Key 形态）", {
+    DOCTEST_CHECK(platform::credential::looksLikePlaintextCredential(
+        "ark-65bf7d70-1234-5678-9abc"));
+    DOCTEST_CHECK(platform::credential::looksLikePlaintextCredential(
+        "sk-ant-api03-abcdefghijklmn"));
+    DOCTEST_CHECK(!platform::credential::looksLikePlaintextCredential(""));
+    DOCTEST_CHECK(!platform::credential::looksLikePlaintextCredential("short12"));
+    DOCTEST_CHECK(
+        !platform::credential::looksLikePlaintextCredential("has space in it"));
+    DOCTEST_CHECK(
+        !platform::credential::looksLikePlaintextCredential("含中文的密钥内容"));
+    DOCTEST_CHECK(
+        !platform::credential::looksLikePlaintextCredential(std::string(600, 'a')));
+    return true;
+})
+
+REGISTER_TEST(
+    credential_unprotect_rejects_broken_form,
+    "credential: 形态损坏 → fail，不静默回落空串", {
     // 「解不开」与「没配过」必须可分辨：不静默回落空串，否则「密钥不可用」被
     // 伪装成「没配过密钥」，用户无从诊断。
     const std::string broken = platform::credential::storesPlaintext()

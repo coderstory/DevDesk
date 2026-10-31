@@ -8777,6 +8777,53 @@ REGISTER_TEST(md_folder_row_h29_h27,
     folderRow2->onContextMenu(ev, rect);
     frame("h6");
     DOCTEST_CHECK(ui.find("md.dir.ctx") != nullptr);
+    // 文件夹右键菜单四项：新建子目录 / 新建子笔记 / 重命名 / 删除
+    {
+        const char* expect[4] = {"新建子目录", "新建子笔记", "重命名", "删除"};
+        for (int i = 0; i < 4; ++i) {
+            const auto* item =
+                ui.find("md.dir.ctx.level.0.label." + std::to_string(i));
+            DOCTEST_REQUIRE(item != nullptr);
+            DOCTEST_CHECK_EQ(item->text, std::string(expect[i]));
+        }
+    }
+    // 新建子目录：弹窗出现且落点预置为右键的文件夹「工作」
+    {
+        const auto* item = ui.find("md.dir.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+        frame("h7");
+        const auto* dlg = ui.find("md.dialog.newfolder");
+        DOCTEST_REQUIRE(dlg != nullptr);
+        const auto* hint2 = ui.find("md.dialog.newfolder.hint");
+        DOCTEST_REQUIRE(hint2 != nullptr);
+        DOCTEST_CHECK(hint2->text.find("工作") != std::string::npos);
+        const auto* cancel2 = ui.find("md.dialog.newfolder.cancel.bg");
+        DOCTEST_REQUIRE(cancel2 != nullptr);
+        DOCTEST_REQUIRE(cancel2->onClick != nullptr);
+        cancel2->onClick();
+    }
+    // 新建子笔记：落点同样跟随右键的文件夹
+    {
+        frame("h8");
+        // 重取行节点：每帧重建，上一帧的 Element* 不可跨帧用
+        const auto* row3 =
+            ui.find("md.tree.node." + std::to_string(w2) + ".row");
+        DOCTEST_REQUIRE(row3 != nullptr);
+        DOCTEST_REQUIRE(row3->onContextMenu != nullptr);
+        row3->onContextMenu(ev, rect);
+        frame("h9");
+        const auto* item = ui.find("md.dir.ctx.level.0.item.1");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+        frame("h10");
+        DOCTEST_CHECK(ui.find("md.dialog.new") != nullptr);
+        const auto* nh = ui.find("md.dialog.new.hint");
+        DOCTEST_REQUIRE(nh != nullptr);
+        DOCTEST_CHECK(nh->text.find("保存到：工作") != std::string::npos);
+    }
 
     mod->onStop();
     return true;

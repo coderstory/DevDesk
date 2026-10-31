@@ -12,7 +12,7 @@ void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
     ui.rect(id + ".bg")
         .position(0.0f, 0.0f)
         .size(w, h)
-        .color(t.colors.surface)
+        .color(cardSurface(t))
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         // 阴影 token 与 home 卡同款：settings 卡填充 == 主体底顶色，无阴影时光凭 1px

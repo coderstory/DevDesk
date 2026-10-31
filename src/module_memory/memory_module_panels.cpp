@@ -13,7 +13,7 @@ void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
     ui.rect("memory.feed.card")
         .position(x, y)
         .size(w, kCardH)
-        .color(t.colors.surface)
+        .color(ui_kit::cardSurface(t))
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         .build();
@@ -144,7 +144,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.usage.card")
             .position(x, cy)
             .size(w, kUsageH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -232,7 +232,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.recent.card")
             .position(x, cy)
             .size(w, tableH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -350,7 +350,7 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
     ui.rect("memory.rv.card." + p.id)
         .position(x, y)
         .size(w, kCardH)
-        .color(t.colors.surface)
+        .color(ui_kit::cardSurface(t))
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         .build();
@@ -543,7 +543,7 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
     ui.rect("memory.rv.done." + p.id)
         .position(x, y)
         .size(w, kCardH)
-        .color(t.colors.surface)
+        .color(ui_kit::cardSurface(t))
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         .build();
@@ -656,7 +656,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.rv.toolbar")
             .position(x, cy)
             .size(w, kBarH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -802,7 +802,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             ui.rect("memory.rv.empty")
                 .position(x, cy)
                 .size(w, kEmptyH)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusOverlay)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
@@ -899,7 +899,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.llm")
             .position(x, cy)
             .size(w, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -976,7 +976,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.embed")
             .position(x, cy)
             .size(w, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -1004,7 +1004,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.mask")
             .position(x, cy)
             .size(w, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -1055,7 +1055,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.trig")
             .position(x, cy)
             .size(w, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -1186,7 +1186,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.usage")
             .position(x, cy)
             .size(w, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();
@@ -1286,7 +1286,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.data")
             .position(x, cy)
             .size(w, kCardH)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .border(1.0f, t.colors.borderDefault)
             .build();

@@ -21,6 +21,31 @@ bool realStoresPlaintext();
 // 面向用户的保护级别说明（UI 文案直出）。
 const char* realProtectionDescription();
 
+// Windows 写出的 DPAPI 密文带此前缀（后接 hex）。用途：库经双机同步搬到另一平台时，
+// macOS 能认出「这不是明文密钥」并明确报错，而不是把密文当 API Key 发出去吃 401。
+inline constexpr const char* kDpapiBlobPrefix = "dpapi:";
+
+inline bool isDpapiBlob(const std::string& stored) {
+    return stored.rfind(kDpapiBlobPrefix, 0) == 0;
+}
+
+// 明文形态启发判定：可打印 ASCII、无空白、8..512 字节、含字母数字 —— 典型 API Key 明文。
+// 只在 unprotect 已失败之后使用（hex + DPAPI 都解不开），不会把密文误判成明文；
+// 目的是接住「macOS 存的明文库同步到 Windows」这条跨平台迁移路径。
+inline bool looksLikePlaintextCredential(const std::string& stored) {
+    if (stored.size() < 8 || stored.size() > 512) return false;
+    bool hasAlnum = false;
+    for (const char ch : stored) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (c < 0x21 || c > 0x7E) return false;  // 控制符/空白/非 ASCII 一律不算
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+            (c >= 'a' && c <= 'z')) {
+            hasAlnum = true;
+        }
+    }
+    return hasAlnum;
+}
+
 // 注入缝：函数指针表，供单测替换 protect/unprotect；生产只读槽位、从不写。
 struct Backend {
     core::Result<std::string> (*protect)(const std::string& plaintext);

@@ -29,6 +29,7 @@
 #include "engine/token_usage.h"
 #include "module_memory/proposals/usage_ledger.h"
 #include "ui_kit/button.h"
+#include "ui_kit/card.h"
 #include "ui_kit/dialog_form.h"
 #include "ui_kit/metrics.h"
 #include "ui_kit/slider.h"

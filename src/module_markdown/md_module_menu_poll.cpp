@@ -409,10 +409,24 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
         .screen(screen.width, screen.height)
         .position(ctxMenuX_, ctxMenuY_)
         .autoWidth()  // 宽度按最宽项自适应
-        .items({"重命名", "删除"})
+        .items({"新建子目录", "新建子笔记", "重命名", "删除"})
         .theme(wcTheme)
         .onSelect([this](int index) {
             if (index == 0) {
+                // 新建子目录：弹窗的上级目录预置为右键的文件夹，并展开它
+                collapsedDirs_.erase(dirCtxPath_);
+                newFolderOpen_ = true;
+                newFolderName_.clear();
+                newFolderError_.clear();
+                newFolderParentDir_ = dirCtxPath_;
+                newFolderParentOpen_ = false;
+            } else if (index == 1) {
+                // 新建子笔记：新建落点改到右键的文件夹，并展开它
+                collapsedDirs_.erase(dirCtxPath_);
+                newItemTargetDir_ = dirCtxPath_;
+                selectDir(dirCtxPath_);
+                openNewNoteDialog();
+            } else if (index == 2) {
                 dirRenameOpen_ = true;
                 dirRenameTargetPath_ = dirCtxPath_;
                 // 同级改名：预填文件夹名本身（不含父路径，含 / 会报错）
@@ -422,7 +436,7 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
                         ? dirCtxPath_
                         : dirCtxPath_.substr(slash + 1);
                 dirRenameError_.clear();  // 打开清残留错误
-            } else if (index == 1) {
+            } else if (index == 3) {
                 // 删除判定：递归数 .md；非空 → 明确提示不静默，空 → 确认弹窗
                 if (!service_) return;
                 auto cnt = service_->folderNoteCount(dirCtxPath_);

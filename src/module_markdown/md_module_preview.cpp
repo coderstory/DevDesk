@@ -149,7 +149,7 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
             ui.rect("md.preview.paper")
                 .position(8.0f, 8.0f)
                 .size(midW - 16.0f, std::max(0.0f, bodyH - 16.0f))
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();

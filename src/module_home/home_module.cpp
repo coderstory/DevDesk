@@ -642,25 +642,27 @@ public:
                         .border(1.0f, t.colors.borderDefault)
                         .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
                         .content([&] {
-                            // 标题宽扣掉右侧折叠箭头（20 + 8 间距），防长标题压箭头
+                            // 标题保持满内容宽（home_probes 类5(a) 要求左右间隙对称）；
+                            // 折叠箭头叠在右端，标题文案远短于内容宽，窄窗也不会压字。
                             ui.text("home.api.chart.title")
                                 .position(0.0f, 16.0f)
-                                .size(contentW - 32.0f - 28.0f, 22.0f)
+                                .size(contentW - 32.0f, 22.0f)
                                 .text("今日 Token 用量分布（每小时输出 token 合计）")
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
                                 .lineHeight(22.0f)
                                 .fontWeight(600)
                                 .color(t.colors.textPrimary)
                                 .build();
-                            // 折叠箭头：▾ 展开 / ▸ 收起（整行可点，箭头只是状态指示）
+                            // 折叠箭头：chevron-down 展开 / chevron-right 收起
+                            // （走 Icon 字体：几何符号在正文字体里会退化成小点）
                             ui.text("home.api.chart.toggle")
                                 .position(contentW - 32.0f - 20.0f, 16.0f)
                                 .size(20.0f, 22.0f)
-                                .text(chartCollapsed_ ? "▸" : "▾")
+                                .icon(chartCollapsed_ ? 0xF054 : 0xF078)
                                 .fontSize(core::theme::scaled(12.0f))
                                 .lineHeight(22.0f)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
-                                .color(t.colors.textTertiary)
+                                .color(t.colors.textSecondary)
                                 .build();
                             // 标题行命中区：透明覆盖层，点整行切折叠态（鼠标手势提示可点）
                             ui.rect("home.api.chart.headhit")

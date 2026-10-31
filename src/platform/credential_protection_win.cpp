@@ -84,12 +84,17 @@ core::Result<std::string> realProtect(const std::string& plaintext) {
     const std::string blob(reinterpret_cast<const char*>(output.pbData),
                            output.cbData);
     LocalFree(output.pbData);
-    return core::Result<std::string>::ok(hexEncode(blob));
+    return core::Result<std::string>::ok(std::string(kDpapiBlobPrefix) +
+                                        hexEncode(blob));
 }
 
 core::Result<std::string> realUnprotect(const std::string& stored) {
+    // 前缀可缺：早期 Windows 版存的是裸 hex，两种都得认
+    const std::string body = isDpapiBlob(stored)
+                                 ? stored.substr(std::string(kDpapiBlobPrefix).size())
+                                 : stored;
     std::string blob;
-    if (!hexDecode(stored, blob) || blob.empty()) {
+    if (!hexDecode(body, blob) || blob.empty()) {
         // 形态不认识就报错：不静默回落空串（否则「密钥不可用」伪装成「没配过密钥」）
         return core::Result<std::string>::fail(
             core::ErrorCode::Internal,
