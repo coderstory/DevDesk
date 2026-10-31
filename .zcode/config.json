@@ -27,5 +27,12 @@
         }
       ]
     }
+  },
+  "plugins": {
+    "enabledPlugins": {
+      "zcode-site@zcode-plugins-official": true,
+      "autoresearch@zcode-plugins-official": false,
+      "zcode-auto-resume@local-auto-resume": false
+    }
   }
 }
