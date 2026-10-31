@@ -40,7 +40,9 @@
 #
 # 安装（--install，仅 macOS）—— 为什么必须带防陈旧断言：
 #   bundle 的组装只发生在 platform/macos/build-app.sh 里，而它只被 scripts/package-macos.sh
-#   调用 —— 常规构建路径根本不碰 bundle。于是「编译 → cp -R build/DevDesk.app /Applications/」
+#   调用 —— 常规构建路径根本不碰 bundle。2026-10-31 起（债-19）常规构建对**已存在**的 bundle
+#   自动重组（构建成功段 bundle 维护段），本段断言继续保护安装路径。于是
+#   「编译 → cp -R build/DevDesk.app /Applications/」
 #   拷过去的是一个**装着旧二进制的壳**：同一个字符串 'claude.detail.contentbox' 在裸 exe 里
 #   grep -c -a -F 得到 1，在 bundle 内与 /Applications 里得到 0。而 CLAUDE.md 阶段 5 的标准
 #   「编译 = 编译 + 复制到 /Applications」在脚本层做不到（没有一条命令能把「构建 → 重组
@@ -393,6 +395,33 @@ else
     echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
   echo "$BUILD_OUT" | tail -2
   echo "✅ 构建成功"
+fi
+
+# bundle 维护（债-19，A'「存在才维护」）：build/DevDesk.app 存在 = 有人用过它
+# （打包 / --install 留下的快照），维护义务随之成立——重组装，使 bundle 与本次构建的
+# 裸二进制一致，杜绝「裸二进制新、bundle 壳旧」的双产物假象。bundle 从未打过的纯开发树
+# 不进这段，零开销零输出。--install 流程在下方 3c 段自带重组（含防陈旧断言链），这里
+# 跳过避免同一次运行重组两遍。bundle 是 macOS 形态，其余平台整段不进。
+BUNDLE_APP="$BUILD_DIR_ABS/DevDesk.app"
+if [ "$DEVDESK_OS" = "darwin" ]; then
+  if [ "$INSTALL" = "1" ]; then
+    if [ -d "$BUNDLE_APP" ]; then
+      echo "⏭ bundle 维护跳过（--install 流程稍后自行重组，避免同一次运行重组两遍）"
+    fi
+  elif [ -d "$BUNDLE_APP" ]; then
+    echo "── bundle 维护（检测到既有 DevDesk.app，重组装）──"
+    BUNDLE_OUT=$(DEVDESK_BUILD_DIR="$BUILD_DIR_ABS" DEVDESK_SKIP_LSREGISTER=1 \
+      bash platform/macos/build-app.sh 2>&1) || {
+      echo "$BUNDLE_OUT" | tail -30
+      BARE_SHA="$(shasum -a 256 "$BUILD_DIR_ABS/DevDesk" 2>/dev/null | awk '{print $1}' || true)"
+      BUNDLE_SHA="$(shasum -a 256 "$BUNDLE_APP/Contents/MacOS/DevDesk" 2>/dev/null | awk '{print $1}' || true)"
+      echo "❌ bundle 重组失败——${BUNDLE_APP} 可能停在半组装态，验收勿拿它当最新产物" >&2
+      echo "   诊断：裸二进制 sha=${BARE_SHA:-<读不到>} / bundle 内二进制 sha=${BUNDLE_SHA:-<不存在>}" >&2
+      echo "   → 处置：查磁盘空间与权限；rm -rf $BUNDLE_APP 后重跑构建（bundle 缺席 = 纯开发树安全态，需要时 --install 重建）" >&2
+      exit 1
+    }
+    echo "✅ bundle 已与本次构建同步（${BUNDLE_APP}）"
+  fi
 fi
 
 # 发布形态守卫。发布契约 = 单 exe / 零外部 DLL。DEVDESK_STATIC=OFF 会把

@@ -22,11 +22,13 @@
 #   * Contents/Resources/DevDesk.icns 为 App 图标（见下方「图标」段）。
 #
 # ⚠️ 本脚本是 .app bundle 组装的**唯一入口**：常规构建（scripts/build-test-run.sh）只重建
-#    <构建目录>/DevDesk 裸可执行，**不碰 bundle**；不调本脚本就下载不到新的 bundle。
+#    <构建目录>/DevDesk 裸可执行；2026-10-31（债-19）起对**已存在**的 bundle 由
+#    build-test-run.sh 构建成功段自动重组（存在才维护）；不调本脚本就下载不到新的 bundle。
 #    2026-09-29 事故即由此而来——bundle 停在旧二进制，而「编译 → cp -R .app /Applications/」
 #    照旧把旧壳装了过去。安装 / 打包路径都必须调本脚本重组，不要在外面临时手搓 cp 组装。
 #    调用方：scripts/package-macos.sh §3（打 DMG）、scripts/build-test-run.sh --install（装到
-#    /Applications，装前会做 sha256 防陈旧断言）。
+#    /Applications，装前会做 sha256 防陈旧断言）、scripts/build-test-run.sh 构建成功段
+#    （bundle 维护，DEVDESK_SKIP_LSREGISTER=1、默认签名）。
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

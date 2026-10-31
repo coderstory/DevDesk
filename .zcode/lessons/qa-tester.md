@@ -1,4 +1,4 @@
 # qa-tester 角色经验沉淀（一事一行带日期与来源，与既有规则重复不记）
 
-- 2026-10-29（memcpp MCP 集成验收，一般缺陷 1）：启动验收前先核产物新鲜度——`build/DevDesk.app` 可能是陈旧 bundle（构建脚本常规路径不重组 bundle，真产物是 `build/DevDesk` 裸二进制）；拿旧 bundle 验收会得出「新功能不存在」的全盘假象。核验法：二进制 mtime + `strings` 含本批新符号。
+- 2026-10-29（memcpp MCP 集成验收，一般缺陷 1）：启动验收前先核产物新鲜度——`build/DevDesk.app` 可能是陈旧 bundle（构建脚本常规路径不重组 bundle，真产物是 `build/DevDesk` 裸二进制）；拿旧 bundle 验收会得出「新功能不存在」的全盘假象。核验法：二进制 mtime + `strings` 含本批新符号。（2026-10-31 债-19 A' 已根治：bundle 由构建自动维护，人工核验法仅在重组硬失败后排查时需要）
 - 2026-10-29（同批）：qa 宿主无「屏幕录制」TCC 时 `screencapture` 静默失败——截图类证据缺口要如实判「未验证」，可用 curl/日志/无头 compose 断言替代留证，勿伪装已验。

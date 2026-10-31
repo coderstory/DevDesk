@@ -41,8 +41,9 @@
 |---|---|---|---|---|
 | ~~债-1~~ | **探针残留守卫 + agent_e2e 挪 live** | P2 | ✅ 2026-10-29 销账 | 已交付合并 dev（merge b11d3666，实现 1666a2cb + G-1 兜底 3a0d2dea）；QA 史密斯专员反证红/绿+复验关单；guard_probe_residue 落 build-test-run.sh 测试段尾部（TERM→-9 兜底），agent_e2e_probe LABELS live（probe 门禁 22→21）。判据与终验：`docs/plans/probe-residue-incident.md`。 |
 | 债-2 | **UI 交互链路自动化验证缺位** | P2 | 登记不派工 | qa/研发可自主实证启动/截屏/日志/数据/HTTP，但点击/输入类交互无法自主执行（当前按 AGENTS.md §八如实标「交互链路未验证」）。长期解法：给 DevDesk 建测试自动化驱动入口（CLI/IPC 触发页面与操作）。 |
-| 债-3 | **`build/DevDesk.app` 陈旧 bundle 陷阱** | P2 | 登记不派工 | 构建脚本常规路径不重组 .app bundle，产物是 `build/DevDesk` 裸二进制——直接启动旧 bundle 会得出「新功能不存在」假象（2026-10-29 MCP 集成验收实际踩中）。修法候选：构建时清理陈旧 bundle，或验收/打包口径钉死 `--install`/裸二进制（待用户选）。 |
+| ~~债-3~~ | **`build/DevDesk.app` 陈旧 bundle 陷阱** | P2 | ✅ 2026-10-31 已修复（A'） | 构建脚本常规路径不重组 .app bundle，产物是 `build/DevDesk` 裸二进制——直接启动旧 bundle 会得出「新功能不存在」假象（2026-10-29 MCP 集成验收实际踩中）。已按候选 A'「存在才维护」根治：构建成功段对既有 bundle 自动重组（=池 debt id=19；方案卡 `docs/superpowers/plans/2026-10-31-债-19-bundle自动重组-技术方案.md`）。 |
 | 债-4 | **process_runner 三平台共同待办** | P2 | 登记不派工 | 2026-10-29 交叉审 3d59d076 登记，不单独派工，下次触碰时修：① 收尸后 exited=true 超时不再生效，管道被孙进程持有则 EOF 永不来——三平台统一补「收尸后排空加有界宽限（timeoutMs/2）」（process_runner_macos.cpp:268、posix:189）；② poll revents 只认 POLLIN\|POLLHUP，POLLERR/POLLNVAL 不排水不关 fd（process_runner_macos.cpp:247-262）；③ posix waitpid 失败 break 静默吞 ECHILD，与 macos 显式 fail+留痕口径不齐（process_runner_posix.cpp:204）。 |
+| 债-7 | **杀进程不覆盖 bundle 内二进制（债-19 遗留 P3-2）** | P3 | 登记不派工 | build-test-run.sh 杀旧进程段只覆盖裸二进制与 tests 两个路径，不杀从 `build/DevDesk.app` 启动的实例——重组时运行中实例持旧 inode（债-19 A' 后磁盘恒新鲜，「退出重开即新」自愈，非新增风险面）。修法候选 1 行：`kill_by_exe_path "$BUILD_DIR_ABS/DevDesk.app/Contents/MacOS/DevDesk"`；待验证：pkill -f 对 `open`/Finder 启动形态的命中率（技术方案卡 D3 拍板不纳入债-19）。 |
 
 ---
 
