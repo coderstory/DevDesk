@@ -1,6 +1,7 @@
 // Home 仪表盘模块：只读聚合 markdown_index / todo_tasks / claude_call_logs，
 // 经 core::appDatabase() 拿共享连接。导航经 core::appRouter()，module_* 互不依赖；
 // 跨模块动作走 Router payload（"action:*" / "open:*"），由目标页消费。
+#include "core/app_config.h"
 #include "core/call_rate.h"
 #include "core/component_theme.h"
 #include "core/database.h"
@@ -36,6 +37,12 @@ namespace {
 // 令牌派生（内容刚好填满页高），高于基准的余高 18% 给统计行、其余给图表卡；
 // 图表卡缺席时余高全给统计行。装不下时由外层 home.scroll 滚动吸收。
 constexpr float kHomeChartH = 220.0f;
+
+// 折叠态高度：只留卡片内边距 + 标题行（16 + 22 + 18），图表区整个收起。
+constexpr float kHomeChartCollapsedH = 56.0f;
+
+// 折叠态跨会话持久化的配置键（core::appconfig 纯文本键值）
+constexpr const char* kChartCollapsedKey = "home.chart_collapsed";
 
 // 基准以上余高分给统计行的比例（S4 弹性规则）：统计行适度增高，其余全部留给
 // 图表卡吸收——避免统计卡被拉成巨块、图表仍停在 220。
@@ -80,12 +87,13 @@ void drawSolidStatCard(eui::Ui& ui,
     const float labelH = 18.0f;
     const float numGap = 8.0f;
     const float numberH = 48.0f;
-    // 统计行随窗高伸展后的余高均分到两个行间隙；基准档（96×字号档）余高为 0。
-    const float extraCardH =
-        std::max(0.0f, height - 96.0f * core::theme::fontScale());
-    // 带 sparkline 的卡（Token）：顶带 y0..16 画曲线，文字两行整体让位其下
-    // （home_probes 组 A：spark 与 label 不相交且 gapY ≥ 0）。
-    const float chartTopH = chart ? 16.0f : 0.0f;
+    // 文本块（指标名 18 + 间隙 8 + 数字 48 = 74）在卡内垂直居中：五张卡同一口径。
+    // 2026-10-31 反馈：原先带 spark 的第一张卡把整块文字下移 16px，数字比其余四张低
+    // 一截，小窗（statH 恰 96）时数字底边还会越出卡底 14px。spark 改为垫在数字行同一
+    // 带、先画（压在数字下面），不再占用文字列的纵向空间。
+    const float textTop =
+        std::max(0.0f, (height - (labelH + numGap + numberH)) * 0.5f);
+    const float numberY = textTop + labelH + numGap;
 
     components::card(ui, id)
         .size(width, height)
@@ -93,6 +101,19 @@ void drawSolidStatCard(eui::Ui& ui,
         .color(bgColor)
         .padding(pad)
         .content([&] {
+            // 迷你图表（sparkline）：垫在数字行同一带，先于文字 build → 数字压其上。
+            // 五张卡的文字位置完全一致，不因有无 spark 而位移（home_probes 组 A 守）。
+            // 底留 4px：全零/平线序列是贴着带底画的，贴到卡内底缘会被吃掉看不见。
+            // 半透明：读作背景纹理，不与 44px 数字抢注意力。
+            if (chart) {
+                const float sparkH = numberH - 4.0f;
+                ui.stack(id + ".sparkwrap")
+                    .position(0.0f, numberY)
+                    .size(cw, sparkH)
+                    .opacity(0.55f)
+                    .content([&] { chart(ui, cw, sparkH); })
+                    .build();
+            }
             // 指标名：14px 三级字，居中；说明（badge）并入同行「笔记 · 今日」。
             // 合并文本量宽放不下卡宽时丢弃 badge 只留指标名——badge 是弱信息，
             // 溢出会让居中文本越出卡缘（home_probes 类 6(a) 溢出判据守这条）。
@@ -106,7 +127,7 @@ void drawSolidStatCard(eui::Ui& ui,
                 }
             }
             ui.text(id + ".label")
-                .position(0.0f, chartTopH)
+                .position(0.0f, textTop)
                 .size(cw, labelH)
                 .text(labelText)
                 .fontSize(core::theme::scaled(14.0f))
@@ -117,7 +138,6 @@ void drawSolidStatCard(eui::Ui& ui,
 
             // 数据：44px 700 一级字，居中（卡内本地字号，不动全局 fontSizeStat——
             // 该 token 被 别处共用，改全局波及面不可控）
-            const float numberY = chartTopH + labelH + numGap + extraCardH * 0.5f;
             ui.text(id + ".number")
                 .position(0.0f, numberY)
                 .size(cw, numberH)
@@ -138,15 +158,6 @@ void drawSolidStatCard(eui::Ui& ui,
                     .onTimer(timerSeconds,
                              onTick ? std::move(onTick)
                                     : std::function<void()>([] {}))
-                    .build();
-            }
-            // 可选迷你图表（sparkline）
-            if (chart) {
-                const float sparkW = cw - 56.0f;
-                ui.stack(id + ".sparkwrap")
-                    .position(0.0f, 0.0f)
-                    .size(sparkW, 16.0f)
-                    .content([&] { chart(ui, sparkW, 16.0f); })
                     .build();
             }
             // 整卡点击层：透明 rect 覆盖全卡，挂 hover/press/onClick
@@ -257,6 +268,11 @@ public:
             return;
         }
         service_ = std::make_unique<HomeService>(*db);
+        // 图表卡折叠态：跨会话记住（读失败按展开档，不阻断启动）
+        if (auto v = ::core::appconfig::get(*db, kChartCollapsedKey);
+            v.isOk() && v.value() == "1") {
+            chartCollapsed_ = true;
+        }
         refreshStats();
     }
 
@@ -350,17 +366,25 @@ public:
             // 全关时统计区是 32 高空态行（见下方 statCount == 0 分支）。
             const float statsBlockH = hasStats ? statBaseH : 32.0f;
             const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
+            // 图表卡基准高：折叠态只留标题行，基准随之收缩（否则底部留出一整块空白）
+            const float chartBaseH =
+                hasChart ? (chartCollapsed_ ? kHomeChartCollapsedH : kHomeChartH)
+                         : 0.0f;
             const float baseContentH =
                 40.0f + statsBlockH +   // 上下内边距 0（批L 顶格+贴底），左右 pad 不占高
                 gap * static_cast<float>(childCount - 1) +
-                (hasChart ? kHomeChartH : 0.0f) +
+                chartBaseH +
                 (hasActions ? 44.0f + kHomeActionsBottomMargin : 0.0f);
             // 顶距 32→0（批L）：高度向内边距为 0，基准里旧 32 顶距已不存在
             // 0.5px 余量：防浮点求和越过视口触发本不该出现的滚动条。
             const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
             // 余高去向：统计行分 18%，图表卡吸收其余；图表卡缺席时统计行全吃。
+            // 折叠态不参与伸展：多出的高度留白，不把统计卡拉成巨块。
             const float statsGrowH =
-                hasStats ? (hasChart ? extraH * kHomeStatGrowRatio : extraH) : 0.0f;
+                hasStats ? ((hasChart && !chartCollapsed_)
+                                ? extraH * kHomeStatGrowRatio
+                                : (hasChart ? 0.0f : extraH))
+                         : 0.0f;
             const float statH = statBaseH + statsGrowH;
         ui.column("home.root")
             // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」→ 永不判可滚
@@ -605,7 +629,10 @@ public:
                     }
                     // H18 纵向弹性：图表卡吸收基准以上的余高（扣掉统计行已分走的增量），
                     // 基准档（内容刚好填满）为 220；矮于基准才由外层滚动吸收。
-                    const float chartCardH = kHomeChartH + extraH - statsGrowH;
+                    // 折叠态：只留标题行高度（kHomeChartCollapsedH），不参与伸展。
+                    const float chartCardH =
+                        chartCollapsed_ ? kHomeChartCollapsedH
+                                        : kHomeChartH + extraH - statsGrowH;
                     const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 基准档 156
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
@@ -615,15 +642,37 @@ public:
                         .border(1.0f, t.colors.borderDefault)
                         .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
                         .content([&] {
+                            // 标题宽扣掉右侧折叠箭头（20 + 8 间距），防长标题压箭头
                             ui.text("home.api.chart.title")
                                 .position(0.0f, 16.0f)
-                                .size(contentW - 32.0f, 22.0f)
+                                .size(contentW - 32.0f - 28.0f, 22.0f)
                                 .text("今日 Token 用量分布（每小时输出 token 合计）")
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
                                 .lineHeight(22.0f)
                                 .fontWeight(600)
                                 .color(t.colors.textPrimary)
                                 .build();
+                            // 折叠箭头：▾ 展开 / ▸ 收起（整行可点，箭头只是状态指示）
+                            ui.text("home.api.chart.toggle")
+                                .position(contentW - 32.0f - 20.0f, 16.0f)
+                                .size(20.0f, 22.0f)
+                                .text(chartCollapsed_ ? "▸" : "▾")
+                                .fontSize(core::theme::scaled(12.0f))
+                                .lineHeight(22.0f)
+                                .horizontalAlign(eui::HorizontalAlign::Center)
+                                .color(t.colors.textTertiary)
+                                .build();
+                            // 标题行命中区：透明覆盖层，点整行切折叠态（鼠标手势提示可点）
+                            ui.rect("home.api.chart.headhit")
+                                .position(0.0f, 8.0f)
+                                .size(contentW - 32.0f, 34.0f)
+                                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                .radius(t.sizes.radiusSmall)
+                                .cursor(eui::CursorShape::Hand)
+                                .onClick([this] { toggleChartCollapsed(); })
+                                .build();
+                            // 折叠态：图表区整块不建（免白跑一遍柱体几何）
+                            if (!chartCollapsed_) {
                             // 图表区：自绘柱体包一层定位 stack（沿用 wrap id，probe 按它量左右对称）。
                             ui.stack("home.api.chart.wrap")
                                 .position(0.0f, 48.0f)
@@ -773,6 +822,7 @@ public:
                                     }
                                 })
                                 .build();
+                            }
                         })
                         .build();
                 }
@@ -861,6 +911,20 @@ private:
     std::string statsError_;
     LastCallRate lastRate_;
     std::string lastRateError_;   // 非空 = 最近速率查询失败（卡显示「加载失败」）
+    // 「今日 Token 用量分布」图表卡折叠态（持久化在 app_config）
+    bool chartCollapsed_ = false;
+
+    void toggleChartCollapsed() {
+        chartCollapsed_ = !chartCollapsed_;
+        if (auto* db = ::core::appDatabase(); db != nullptr) {
+            auto r = ::core::appconfig::set(*db, kChartCollapsedKey,
+                                            chartCollapsed_ ? "1" : "0");
+            if (r.isFail()) {
+                LOG_WARN("Home: 图表卡折叠态持久化失败（不影响本次会话）: " +
+                         r.errorMessage());
+            }
+        }
+    }
     // 上一拍看到的活跃流数（只有 Token 卡的 timer 回调写它）：1→0 那一拍 = 流式刚结束 → 重查
     int prevActiveStreams_ = 0;
 };

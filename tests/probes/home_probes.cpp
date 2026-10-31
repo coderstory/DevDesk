@@ -143,33 +143,92 @@ int main(int argc, char* argv[]) {
     // 未给该开关 = 立刻返回（零开销）。
     probe::captureSeedIfRequested(args, window, runtime, &passed);
 
-    // 组 A：类 1(b) sparkline z（P1）
-    // home.stat.tokens.spark（sparkwrap 顶带 y0..16）必须整带位于 label
-    // （.label y16..32）之上：不相交 + gapY ≥ 0（邻接语义）。回归成 32px 盒
-    // (0,0) → 与 label 相交 → 红。
-    // 不断言曲线段：linechart.h 空闲态 {0.0f} 零长度段被跳过，且平线贴 bottomY
-    // 时胶囊半宽会把段 frame 探进 label 带。
+    // 组 A：统计卡文字列对齐 + spark 同带（2026-10-31 改判据）
+    // 原判据「spark 整带在 label 之上」正是文字下移的成因：五张卡里只有 Token 卡带
+    // spark，于是它在纵向让出 16px，数字比其余四张低一截，小窗（statH=96）时数字底边
+    // 还会越出卡底。现判据（谁再让单张卡的文字位移就红）：
+    //   A1 五卡 .label 顶 / .number 顶逐一对齐（容差 0.5）
+    //   A2 label→number 间隙 = 8px（numGap）
+    //   A3 数字底边不越出卡底（基准档 statH=96 时文本块 74 + 内边距 40 本就装不下，
+    //      留白只能靠抬卡高；这条只守「不溢出」）
+    //   A4 spark 与数字同带（顶对齐、同宽、高 = 数字高 − 4）且宽 = 内容宽（垫在数字下面）
+    //   A5 spark 不得盖到 label 带（防回归成 32px 盒压住标题）
     {
-        const core::dsl::Element* spark =
+        const core::dsl::Element* tokenSpark =
             ui != nullptr ? ui->find("home.stat.tokens.spark") : nullptr;
-        const core::dsl::Element* label =
+        const core::dsl::Element* tokenNumber =
+            ui != nullptr ? ui->find("home.stat.tokens.number") : nullptr;
+        const core::dsl::Element* tokenLabel =
             ui != nullptr ? ui->find("home.stat.tokens.label") : nullptr;
-        if (spark == nullptr || label == nullptr) {
+        if (tokenSpark == nullptr || tokenNumber == nullptr || tokenLabel == nullptr) {
             std::cerr << "home_probes: 组 A 结构缺失 (spark="
-                      << (spark != nullptr ? "ok" : "null")
-                      << ", label=" << (label != nullptr ? "ok" : "null")
+                      << (tokenSpark != nullptr ? "ok" : "null")
+                      << ", number=" << (tokenNumber != nullptr ? "ok" : "null")
+                      << ", label=" << (tokenLabel != nullptr ? "ok" : "null")
                       << ")——Token 卡/图表未构建\n";
             passed = false;
         } else {
-            const float gapY = frameGapY(*spark, *label);
-            if (framesIntersect(*spark, *label) || gapY < -0.5f) {
-                std::cerr << "home_probes: 类1(b) FAIL——spark frame ("
-                          << spark->frame.x << "," << spark->frame.y << " "
-                          << spark->frame.width << "x" << spark->frame.height
-                          << ") 与 label frame (" << label->frame.x << ","
-                          << label->frame.y << " " << label->frame.width << "x"
-                          << label->frame.height << ") 相交，gapY=" << gapY
-                          << "（修复后 spark 应整带在 label 之上）\n";
+            float refLabelY = -1.0f;
+            float refNumberY = -1.0f;
+            for (const char* cardId : kStatCardIds) {
+                const std::string base(cardId);
+                const core::dsl::Element* label =
+                    ui != nullptr ? ui->find(base + ".label") : nullptr;
+                const core::dsl::Element* number =
+                    ui != nullptr ? ui->find(base + ".number") : nullptr;
+                const core::dsl::Element* bg =
+                    ui != nullptr ? ui->find(base) : nullptr;
+                if (label == nullptr || number == nullptr) {
+                    std::cerr << "home_probes: 组 A 结构缺失——" << base
+                              << " 的 label/number 未构建\n";
+                    passed = false;
+                    continue;
+                }
+                if (refLabelY < 0.0f) {
+                    refLabelY = label->frame.y;
+                    refNumberY = number->frame.y;
+                }
+                if (std::fabs(label->frame.y - refLabelY) > 0.5f ||
+                    std::fabs(number->frame.y - refNumberY) > 0.5f) {
+                    std::cerr << "home_probes: 组 A1 FAIL——" << base
+                              << " 文字行与首卡不对齐（label y=" << label->frame.y
+                              << " vs " << refLabelY << "，number y="
+                              << number->frame.y << " vs " << refNumberY << "）\n";
+                    passed = false;
+                }
+                const float gap = frameGapY(*label, *number);
+                if (std::fabs(gap - 8.0f) > 0.5f) {
+                    std::cerr << "home_probes: 组 A2 FAIL——" << base
+                              << " label→number 间隙 " << gap << "px（期望 8）\n";
+                    passed = false;
+                }
+                if (bg != nullptr) {
+                    const float bottomMargin =
+                        (bg->frame.y + bg->frame.height) -
+                        (number->frame.y + number->frame.height);
+                    if (bottomMargin < 0.5f) {
+                        std::cerr << "home_probes: 组 A3 FAIL——" << base
+                                  << " 数字越出卡底 " << -bottomMargin
+                                  << "px（应整块在卡内）\n";
+                        passed = false;
+                    }
+                }
+            }
+            // spark 带 = 数字带顶部对齐、同宽、高 = 数字带 − 4（底部留 4px 让平线可见）
+            if (std::fabs(tokenSpark->frame.y - tokenNumber->frame.y) > 0.5f ||
+                std::fabs(tokenSpark->frame.height - (tokenNumber->frame.height - 4.0f)) > 0.5f ||
+                std::fabs(tokenSpark->frame.width - tokenNumber->frame.width) > 0.5f) {
+                std::cerr << "home_probes: 组 A4 FAIL——spark frame ("
+                          << tokenSpark->frame.x << "," << tokenSpark->frame.y << " "
+                          << tokenSpark->frame.width << "x" << tokenSpark->frame.height
+                          << ") 与数字带 (" << tokenNumber->frame.x << ","
+                          << tokenNumber->frame.y << " " << tokenNumber->frame.width
+                          << "x" << tokenNumber->frame.height
+                          << ") 不一致（spark 应垫在数字同一带、占满内容宽）\n";
+                passed = false;
+            }
+            if (framesIntersect(*tokenSpark, *tokenLabel)) {
+                std::cerr << "home_probes: 组 A5 FAIL——spark 盖进了 label 带\n";
                 passed = false;
             }
         }
