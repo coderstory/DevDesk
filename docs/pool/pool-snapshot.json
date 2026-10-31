@@ -906,12 +906,12 @@
    "pool": "need",
    "title": "发布任务列表页（release_list_ui）重设计",
    "priority": "P3",
-   "status": "在池",
+   "status": "待验收",
    "blocker": null,
    "owner": "ZCode主会话",
    "detail": "池 53 需求分析裁剪项转正（老板令 2026-10-31：没做的按新需求入池）：任务列表页（release_list_ui）重设计——池 53 只动详情页，列表页另立需求。源 PRD 同上",
    "created": "2026-10-31 22:52:12 +0800",
-   "updated": "2026-11-01 00:58:05 +0800",
+   "updated": "2026-11-01 02:26:20 +0800",
    "body": "池 53 需求分析裁剪项转正（老板令 2026-10-31：没做的按新需求入池）：任务列表页（release_list_ui）重设计——池 53 只动详情页，列表页另立需求。源 PRD 同上",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
@@ -1799,6 +1799,42 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 95,
+   "need_id": 55,
+   "time": "2026-11-01 00:58:13 +0800",
+   "note": "夜间连续推进：ui-ux-designer 出图中（与池 53 设计语言对齐）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 96,
+   "need_id": 55,
+   "time": "2026-11-01 02:12:34 +0800",
+   "note": "【池55 QA 独立验收 2026-11-01 · tester】总判定：通过（附 1 新增 BUG-1 P2 待修）。\n1) 改动面核对：937b40f5+4d661600 共 13 文件全在 release 域+tests/probes+设计勘误（D2=40 入档），无夹带。\n2) 独立复跑：release 域定向 110/110 全绿；probe 双档 PASS（1200×1000、1000×640，断言分组 A/B/C/D 全过）。\n3) 行为抽验全过：①nextStepLabel 首中即停/门禁跳过/全锁定留白=纯函数单测 test_release_logic.cpp:735-877 ②countTasksByStatuses 单条参数化 SQL、空组报 ValidationError（release_store.cpp:687-722）③触底追加 10→20 probe 断言+失败不清空契约（release_list_ui.cpp:640 注释+retry 路径）④chip 文案单一来源 releaseTaskStatusText（release_list_ui.h:42），详情页 draw:1283/ui:324 引用同函数，Draft=「草稿」一字不差；「执行中」chip 为 deriveStatus 展示推导（release_logic.cpp:160-186）非缺陷。\n4) 补图三场景（probe 新增 --accept-shot-* 钩子，真实 click 走输入路径）：空态/筛选空态/Tab 切换 → 见证据目录。\n5) 目检对照设计：64px 行卡✓ 下划线 Tab 激活态✓ 迷你进度条(0/11)✓ 空态就近操作降级次按钮✓ 计数口径随 Tab✓；chip 五色中待执行/已完成/已作废三态列表行卡无截图（种子形态限制），数值断言由无头单测+probe D 段承担（证据缺口、非实现缺口）。\n6) 回归行：旧功能无回归（110/110 含存量 release 用例）。\n证据目录：evidence/20261101-pool55-accept-1200/（list-20rows/tab/filter-empty/empty 四 png+output.log）、evidence/20261101-pool55-accept-640/（output.log）。Windows 双机归 CI。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 97,
+   "need_id": 55,
+   "time": "2026-11-01 02:26:05 +0800",
+   "note": "BUG-1 已修复（d5b82c23）：ListPaging 装配+矮窗补页判断上移判空前，空态先补页再判空；单测先红后绿实证（10 Draft 首页+Pending 第 2 页 12 帧装不出→修复后自愈）；release 111/111+probe 三状态落图自洽；防回归用例固化。证据 evidence/20261101-pool55-bugfix-filterempty/",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 98,
+   "need_id": 55,
+   "time": "2026-11-01 02:26:20 +0800",
+   "note": "实现+BUG-1 修复完成（QA 验收过，BUG 已 resolved）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -1810,6 +1846,16 @@
    "resolved": 1,
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 2,
+   "need_id": 55,
+   "time": "2026-11-01 02:12:34 +0800",
+   "note": "P2 BUG-1（关联 F-55-2/F-55-5，2026-11-01 tester 发现）：筛选空态短路补页——release_list_ui.cpp:1185 rows.empty() 提前 return，矮窗自动补页与触底追加在筛选 Tab 空态下不可达；Tab 计数（DB 口径 countTasksByStatuses）与行区（内存筛选已加载页）口径分裂：计数≥1 仍画「暂无×的任务」，且不自动恢复，用户需点「查看全部」绕出。复现：21 任务仅加载 20、匹配行在未加载页时切到对应 Tab。QA 探针 --accept-shot-tab 场景可复现（该匹配行在未加载页时）。状态：未修复，待派发 developer/bug-fixer",
+   "resolved": 0,
+   "created_by": "",
+   "updated_by": "",
    "deleted": 0
   }
  ],
@@ -4423,6 +4469,39 @@
    "from_status": "待验收",
    "to_status": "关闭",
    "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 213,
+   "need_id": 55,
+   "time": "2026-11-01 00:58:13 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "夜间连续推进：ui-ux-designer 出图中（与池 53 设计语言对齐）",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 214,
+   "need_id": 55,
+   "time": "2026-11-01 02:26:14 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 215,
+   "need_id": 55,
+   "time": "2026-11-01 02:26:20 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "实现+BUG-1 修复完成（QA 验收过，BUG 已 resolved）",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
