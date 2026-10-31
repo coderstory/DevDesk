@@ -684,6 +684,43 @@ core::Result<int> ReleaseStore::countTasks() {
     return core::Result<int>::ok(static_cast<int>(total.value()));
 }
 
+core::Result<int> ReleaseStore::countTasksByStatuses(
+    const std::vector<TaskStatus>& statuses) {
+    if (statuses.empty()) {
+        return core::Result<int>::fail(ErrorCode::ValidationError,
+                                       "countTasksByStatuses: 状态组为空");
+    }
+    std::string sql =
+        "SELECT COUNT(*) AS total FROM release_task WHERE status IN (";
+    for (std::size_t i = 0; i < statuses.size(); ++i) {
+        sql += (i == 0 ? "?" : ", ?");
+    }
+    sql += ")";
+    auto prep = db_.prepare(sql);
+    if (prep.isFail()) return failAs<int>(prep);
+    auto& stmt = prep.value();
+    for (std::size_t i = 0; i < statuses.size(); ++i) {
+        if (auto r = stmt.bind(static_cast<int>(i) + 1,
+                               std::string(taskStatusText(statuses[i])));
+            r.isFail()) {
+            return failAs<int>(r);
+        }
+    }
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) return failAs<int>(rows);
+    if (rows.value().empty()) {
+        return core::Result<int>::fail(ErrorCode::Internal,
+                                       "release_task COUNT 未返回行");
+    }
+    auto total = rows.value()[0].getInt64("total");
+    if (total.isFail()) return failAs<int>(total);
+    if (total.value() > std::numeric_limits<int>::max()) {
+        return core::Result<int>::fail(ErrorCode::Internal,
+                                       "release_task 行数超出 int 范围");
+    }
+    return core::Result<int>::ok(static_cast<int>(total.value()));
+}
+
 core::Result<std::optional<Task>> ReleaseStore::findTaskByDate(
     const std::string& planDate) {
     // 作废任务不占当天名额（schema.h 注释）：同一天可另建一个有效任务

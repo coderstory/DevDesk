@@ -141,4 +141,22 @@ bool taskCompleted(const Task& task,
                    const std::vector<TaskConfig>& configs,
                    const std::vector<TaskStep>& steps);
 
+// 列表行「下一步 · {步名}」指引（池 55 设计 §5.4）：与详情页页头主动作
+// 「下一步：{当前步名}」同一信息源与同一固定序（performNextStep：提测单 →
+// CAB 单 → nacos 工单(按需) → 数据库工单(按需) → 上线公告 → 逐环境 逐服务：
+// 合并分支 → 配置 n 项 → 部署 → 验证完成）。
+// 返回首个「未完成且已解锁」条目名；时间窗未开（nowMinute < env.startMinute）、
+// 工单号门禁缺失（deployGateMissing / configGateMissing 同语义）、配置 skipped
+// （槽位关闭）均跳过；无（全完成 / 全锁定）→ 空串（列表行留白，不破版）。
+// 入参序 = store 读取序（env/service id 升序、配置 conf_order 升序）；
+// 池 55 方案卡 D3 裁决：不复算拖拽 reorder 序，用库序。
+// 文案契约：步骤/前置名与 release_detail_logic 的 stepLabel / prereqTitle
+// 一字不差，改一处必改两处。纯函数，无 IO；调用方保证状态为 Pending/Running。
+std::string nextStepLabel(const Task& task,
+                          const std::vector<TaskEnv>& envs,
+                          const std::vector<TaskService>& services,
+                          const std::vector<TaskConfig>& configs,
+                          const std::vector<TaskStep>& steps,
+                          int nowMinute);
+
 } // namespace module::release

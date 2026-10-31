@@ -43,10 +43,12 @@
 
 #include <eui/detail/dsl_app_impl.h>  // app::requestShow/requestUpdate 内联实现
 
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <thread>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -212,7 +214,24 @@ bool seedReleaseData(module::release::ReleaseStore& store,
 
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
+    // 池55 QA 验收补图参数（parseProbeArgs 不认识，直接扫 argv；未传 = 零开销）：
+    //   --accept-shot-tab <png>          「发布中」Tab 激活态（含行卡内容）
+    //   --accept-shot-filter-empty <png> 「已归档」Tab 筛选空态（种子无 Done/Voided）
+    //   --accept-shot-empty <png>        清库后的「全部」Tab 全空态
+    const auto acceptArg = [](int ac, char** av, const char* flag) {
+        for (int i = 1; i + 1 < ac; ++i) {
+            if (std::string(av[i]) == flag) return std::string(av[i + 1]);
+        }
+        return std::string{};
+    };
+    const std::string acceptTabPath = acceptArg(argc, argv, "--accept-shot-tab");
+    const std::string acceptFilterEmptyPath =
+        acceptArg(argc, argv, "--accept-shot-filter-empty");
+    const std::string acceptEmptyPath =
+        acceptArg(argc, argv, "--accept-shot-empty");
     if (!probe::initializeWindowBackend()) return 1;
+    // 设计语言基线为浅色微信风（池 53/55）：release 域探针固定浅色主题落图与断言
+    core::theme::setLight();
     auto window = probe::makeWindow("release_probe", args.windowW, args.windowH);
     if (!window) {
         probe::terminateWindowBackend();
@@ -475,12 +494,11 @@ int main(int argc, char* argv[]) {
                           "前端服务不应出现配置项 tag（类型决定配置项，恒 0 项）");
     }
 
-    // ================= C. 任务列表瀑布流 =================
-    // 首屏 10 张卡（kReleaseTaskPageSize），触底追加一页 → 20；卡宽 ≥ 320、
-    // 列间距 16、列内垂直间距 16、卡片圆角 12。
-    // 分页断言口径固定 1200×600（3 列）：10 张卡内容高 640 > 视口 512，把
-    // 「首屏不足一屏自动续载」的矮窗分支挡在门外，让「首屏 10」是分页契约而
-    // 不是窗口尺寸的巧合（4 列时 10 卡不足一屏会自动补页，混淆 kPageSize 契约）。
+    // ================= C. 任务列表（池 55：单列 64px 行卡 + Tab） =================
+    // 首屏 10 行（kReleaseTaskPageSize），触底追加一页 → 20；行高 64、内容列
+    // ≤1040、外层白卡 16px 圆角（池 53 大卡特例档）。
+    // 分页断言口径固定 1200×600：10 行内容高 640 > 视口 491，把「首屏不足一屏
+    // 自动续载」的矮窗分支挡在门外，让「首屏 10」是分页契约而不是窗口巧合。
     const float listW = 1200.0f;
     const float listH = 600.0f;
     const auto composeList = [&]() {
@@ -489,45 +507,35 @@ int main(int argc, char* argv[]) {
                         tasksModule->compose(frameUi, screen);
                     });
     };
-    composeList();
+    composeList();  // 骨架帧（池 55 D4：首屏 1 帧延迟装填）
+    checks.expectTrue(ui->find("release.tasks.skeleton") != nullptr,
+                      "首屏骨架帧应可见（D4：本帧画骨架、下一帧装填）");
+    composeList();  // 装填帧
     {
         auto cards = cardRoots(*ui);
         checks.expectTrue(cards.size() == std::size_t{10},
-                          "首屏卡片数：期望 10，实际 " +
+                          "首屏行数：期望 10，实际 " +
                               std::to_string(cards.size()) +
                               "（release_list_ui.h kReleaseTaskPageSize=10）");
         if (!cards.empty()) {
-            const auto* firstBg =
-                checks.need(ui, cards.front()->id + ".bg", "任务卡背景");
-            if (firstBg != nullptr) {
-                checks.expectNear("任务卡圆角", firstBg->radius, 12.0f,
-                                  "release_list_ui.cpp kCardRadius=12（视觉规范）");
-            }
+            checks.expectNear("行卡高度", cards.front()->frame.height, 64.0f,
+                              "release_list_ui.h kReleaseTaskRowH=64（池 55 设计 §3.2）");
             checks.expectTrue(
-                cards.front()->frame.width >= 320.0f - 0.5f,
-                "任务卡最小宽：期望 ≥320，实际 " +
+                cards.front()->frame.width <= 1040.0f + 0.5f,
+                "行宽 ≤ 内容列 1040，实际 " +
                     std::to_string(cards.front()->frame.width) +
-                    "（release_list_ui.h kReleaseTaskCardMinWidth=320）");
+                    "（release_list_ui.cpp kContentMaxW=1040）");
+            const auto* box = checks.need(ui, "release.tasks.cardbox", "外层列表白卡");
+            if (box != nullptr) {
+                checks.expectNear("列表白卡圆角", box->radius, 16.0f,
+                                  "release_list_ui.cpp kListCardRadius=16（池 53 大卡特例档）");
+            }
         }
-        // 列间距：瀑布流第 0/1 列的 x 差 = 卡宽 + 列间距
-        if (cards.size() >= std::size_t{3}) {
-            checks.expectNear("瀑布流列间距",
-                              cards[1]->frame.x - cards[0]->frame.x -
-                                  cards[0]->frame.width,
-                              16.0f,
-                              "release_list_ui.h kReleaseTaskCardGap=16");
-        }
-        // 列内垂直间距：第 4 张卡回到第 0 列（等高卡片）
-        if (cards.size() >= std::size_t{4}) {
-            checks.expectNear("瀑布流纵向间距",
-                              cards[3]->frame.y -
-                                  (cards[0]->frame.y + cards[0]->frame.height),
-                              16.0f,
-                              "release_list_ui.h kReleaseTaskCardGap=16");
-        }
+        checks.expectTrue(ui->find("release.tasks.tab.0") != nullptr,
+                          "模式筛选 Tab 行应存在（全部/发布中/准备中/已归档）");
 
         // 模拟滚到底：setScrollOffset 在帧末派发 onChange → requestLoad；帧泵
-        // 推进 6 帧后追加一页（release_list_ui.cpp advanceLoad）。
+        // 推进 6 帧后追加一页（release_list_ui.cpp 帧泵语义不变）。
         if (ui != nullptr) {
             ui->setScrollOffset("release.tasks.scroll", 1000000.0f);
         }
@@ -536,12 +544,68 @@ int main(int argc, char* argv[]) {
         }
         const auto afterScroll = cardRoots(*ui);
         checks.expectTrue(afterScroll.size() == std::size_t{20},
-                          "触底追加后卡片数：期望 20，实际 " +
+                          "触底追加后行数：期望 20，实际 " +
                               std::to_string(afterScroll.size()) +
                               "（release_list_ui.h kReleaseTaskPageSize=10，追加一页）");
 
-        // 20 卡状态的中途落图（--screenshot-seeded；未给开关时零开销）
+        // 20 行状态的中途落图（--screenshot-seeded；未给开关时零开销）
         probe::captureSeedIfRequested(args, window, runtime, &checks.passed);
+    }
+
+    // ================= C2. 池55 QA 验收补图（Tab 切换 / 筛选空态） =================
+    // QA 独立验收用：真实 click 走输入路径切 Tab（onClick → cache.tab → 内存
+    // 筛选），captureFramePng 落图；不参与常规断言。
+    if (!acceptTabPath.empty() || !acceptFilterEmptyPath.empty()) {
+        // 种子中段一条（listTasks 为 plan_date DESC，下标 10 落在已加载 20 行内、
+        // 非 detail 任务）推到 Pending，靠陈旧刷新分支（≥1000ms）重取卡片，
+        // 「发布中」Tab 内存筛选即有行卡可画（不走触底补页，避开其空态分支）。
+        auto allTasks = store.listTasks();
+        if (allTasks.isOk() && !allTasks.value().empty()) {
+            const auto pick =
+                std::min<std::size_t>(10, allTasks.value().size() - 1);
+            module::release::Task task = allTasks.value()[pick];
+            task.status = module::release::TaskStatus::Pending;
+            (void)store.updateTask(task);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        composeList();
+        composeList();
+        const auto clickTab = [&](int index) {
+            const auto* tab =
+                ui->find("release.tasks.tab." + std::to_string(index));
+            if (tab == nullptr) return;
+            probe::click(window, runtime,
+                         static_cast<double>(tab->frame.x +
+                                             tab->frame.width * 0.5f),
+                         static_cast<double>(tab->frame.y +
+                                             tab->frame.height * 0.5f));
+        };
+        const auto settle = [&] {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(200));  // Tab 下划线 150ms 过渡落位
+            for (int i = 0; i < 8; ++i) {
+                composeList();  // 走完 6 帧帧泵：Tab 切换后矮窗自动补页完成再落图
+            }
+        };
+        if (!acceptTabPath.empty()) {
+            clickTab(1);
+            settle();
+            if (!probe::captureFramePng(window, runtime, acceptTabPath)) {
+                std::cerr << "release_probe: --accept-shot-tab 落图失败\n";
+                checks.passed = false;
+            }
+        }
+        if (!acceptFilterEmptyPath.empty()) {
+            clickTab(3);  // 已归档组（Done/Voided）种子恒 0 → 筛选空态
+            settle();
+            if (!probe::captureFramePng(window, runtime,
+                                        acceptFilterEmptyPath)) {
+                std::cerr << "release_probe: --accept-shot-filter-empty 落图失败\n";
+                checks.passed = false;
+            }
+            clickTab(0);  // 回「全部」，不污染后续场景
+            composeList();
+        }
     }
 
     // ================= D. 执行页 =================
@@ -677,6 +741,36 @@ int main(int argc, char* argv[]) {
                         module::release::composeReleaseDetailPage(
                             frameUi, screen, store, detailState);
                     });
+    }
+
+    // ================= F2. 池55 空态落图（QA 验收） =================
+    // --accept-shot-empty <png>：清空任务表 → 陈旧刷新重锚 → 「全部」Tab 全空态。
+    // 放在 D 段之后：清库会破坏 detail 场景，必须最后执行。
+    if (!acceptEmptyPath.empty()) {
+        auto del = testEnv.db->db().exec(
+            "DELETE FROM release_task_step; DELETE FROM release_task_config;"
+            " DELETE FROM release_task_service; DELETE FROM release_task_env;"
+            " DELETE FROM release_task;");
+        if (del.isFail()) {
+            std::cerr << "release_probe: --accept-shot-empty 清库失败: "
+                      << del.errorMessage() << "\n";
+            checks.passed = false;
+        } else {
+            const auto composeListEnd = [&]() {
+                composePage("release.tasks", 1200.0f, 600.0f,
+                            [&](eui::Ui& frameUi, const eui::Screen& screen) {
+                                tasksModule->compose(frameUi, screen);
+                            });
+            };
+            std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+            composeListEnd();
+            composeListEnd();
+            composeListEnd();
+            if (!probe::captureFramePng(window, runtime, acceptEmptyPath)) {
+                std::cerr << "release_probe: --accept-shot-empty 落图失败\n";
+                checks.passed = false;
+            }
+        }
     }
 
     // 退出前落一张「当前状态图」（--screenshot <路径>；未传 = 零开销）

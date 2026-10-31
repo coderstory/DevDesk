@@ -1,6 +1,8 @@
 // 上线域纯逻辑实现：只读入参、只返回结果（无 IO / 无异常 / 无静态可变状态）。
 #include "release_logic.h"
 
+#include "release_config_ui.h"  // configItemLabels：配置项名单一来源（nextStepLabel 用）
+
 #include <cstddef>
 #include <ctime>
 
@@ -421,6 +423,78 @@ bool taskCompleted(const Task& task,
                    const std::vector<TaskStep>& steps) {
     const Progress progress = taskProgress(task, envs, services, configs, steps);
     return progress.done == progress.total;
+}
+
+std::string nextStepLabel(const Task& task,
+                          const std::vector<TaskEnv>& envs,
+                          const std::vector<TaskService>& services,
+                          const std::vector<TaskConfig>& configs,
+                          const std::vector<TaskStep>& steps,
+                          int nowMinute) {
+    // 与详情页 collectTrackRows 的节点判定同源：前置项单号缺失 = Locked（跳过，
+    // 与详情页页头「下一步」一致）；配置/部署/验证受时间窗与工单号门禁；
+    // skipped 配置 = 槽位关闭。门禁语义与 detail 的 configGateMissing /
+    // deployGateMissing 一致，此处只取布尔（不需缺失文案），不做第二份文案表。
+    const TicketNeeds needs = ticketNeeds(envs, services, configs);
+
+    // 前置固定序：提测 → CAB → nacos 工单(按需) → 数据库工单(按需) → 上线公告。
+    // gateOpen（单号/公告内容已填）才可成为「下一步」，否则按 Locked 跳过。
+    if (!task.pretestOk && !isBlank(task.pretestNo)) return "提测单";
+    if (!task.cabOk && !isBlank(task.cabNo)) return "CAB 单";
+    if (needs.nacos && !task.ticketNacosOk && !isBlank(task.ticketNacosNo)) {
+        return "nacos 工单";
+    }
+    if (needs.db && !task.ticketDbOk && !isBlank(task.ticketDbNo)) {
+        return "数据库工单";
+    }
+    if (task.announceSentAt == 0 && !isBlank(task.announceText)) {
+        return "上线公告";
+    }
+
+    auto stepDone = [&steps](std::int64_t serviceId, StepKind kind) {
+        for (const auto& step : steps) {
+            if (step.taskServiceId == serviceId && step.kind == kind &&
+                step.doneAt != 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto& configLabels = configItemLabels(ServiceKind::Backend);
+
+    // 环境/服务固定序（入参 = store 读取序）；合并分支不受时间窗门禁（与
+    // markStepCompleted 的既有语义一致），其余步骤/配置受时间窗与单号门禁。
+    for (const auto& env : envs) {
+        if (env.removed) continue;
+        for (const auto& svc : services) {
+            if (svc.taskEnvId != env.id || svc.removed) continue;
+            if (!stepDone(svc.id, StepKind::MergeBranch)) return "合并分支";
+            for (const auto& cfg : configs) {
+                if (cfg.taskServiceId != svc.id) continue;
+                if (cfg.skipped || cfg.doneAt != 0) continue;
+                if (nowMinute < 0 || nowMinute < env.startMinute) continue;
+                if (cfg.kind == ConfigKind::Nacos && isBlank(task.ticketNacosNo)) continue;
+                if (cfg.kind == ConfigKind::Db && isBlank(task.ticketDbNo)) continue;
+                const int index = static_cast<int>(cfg.kind);
+                if (index >= 0 && index < static_cast<int>(configLabels.size())) {
+                    return configLabels[static_cast<std::size_t>(index)];
+                }
+                return "配置";
+            }
+            if (!stepDone(svc.id, StepKind::Deploy)) {
+                if (nowMinute < 0 || nowMinute < env.startMinute) continue;
+                if (isBlank(task.pretestNo) || isBlank(task.cabNo)) continue;
+                if (needs.nacos && isBlank(task.ticketNacosNo)) continue;
+                if (needs.db && isBlank(task.ticketDbNo)) continue;
+                return "部署";
+            }
+            if (!stepDone(svc.id, StepKind::Verify)) {
+                if (nowMinute < 0 || nowMinute < env.startMinute) continue;
+                return "验证完成";
+            }
+        }
+    }
+    return {};
 }
 
 } // namespace module::release

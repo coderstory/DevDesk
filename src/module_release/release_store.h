@@ -46,6 +46,11 @@ public:
     // 计入已作废任务（列表页仍展示作废卡），与 findTaskByDate「作废不占当天名额」
     // 的口径刻意不同：后者是同日唯一性，前者要跟列表可见条数一致。
     core::Result<int> countTasks();
+    // 按状态组计数（列表页 Tab 行右端计数，池 55 F-55-5）：COUNT(*) WHERE
+    // status IN (...)，文本编码走 taskStatusText、参数绑定；statuses 为空 →
+    // ValidationError（空组是调用方 bug，不冒充「0 条」）。计入 voided（口径同
+    // countTasks：Tab「已归档」组含已作废，计数必须与可见行一致）。
+    core::Result<int> countTasksByStatuses(const std::vector<TaskStatus>& statuses);
     // 同计划日、非 voided 的任务（作废不占当天名额）；未命中 → ok(nullopt)
     core::Result<std::optional<Task>> findTaskByDate(const std::string& planDate);
     core::Result<std::int64_t> createTask(const Task& task);

@@ -768,9 +768,10 @@ REGISTER_TEST(release_detail_module_esc_layering,
         DOCTEST_CHECK_FALSE(module->onKeyEvent(esc));
     }
 
-    // 点卡片进详情
+    // 点卡片进详情（池 55 D4：列表首屏为骨架帧，预热一帧后才有数据行可点）
     {
         eui::Ui ui;
+        compose(ui);
         compose(ui);
         DOCTEST_REQUIRE(clickNode(
             ui, "release.tasks.card." + std::to_string(ids.taskId) + ".bg"));

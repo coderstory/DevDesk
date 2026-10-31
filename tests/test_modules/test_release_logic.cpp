@@ -731,3 +731,150 @@ REGISTER_TEST(release_validate_submission_missing_list_covers_content_and_prereq
     DOCTEST_CHECK(missing[4].find("配置内容为空") != std::string::npos);
     return true;
 })
+
+// ==================== 池 55：nextStepLabel（列表行「下一步」指引） ====================
+// 与详情页页头主动作「下一步：{当前步名}」同一信息源与同一固定序
+//（performNextStep）；首个未完成且已解锁条目，无则空串（列表行留白）。
+
+namespace {
+
+rel::TaskEnv nslEnv(std::int64_t id, std::int64_t taskId, int startMinute) {
+    rel::TaskEnv env;
+    env.id = id;
+    env.taskId = taskId;
+    env.envName = "EM";
+    env.startMinute = startMinute;
+    env.endMinute = startMinute + 60;
+    return env;
+}
+
+rel::TaskService nslService(std::int64_t id, std::int64_t envId) {
+    rel::TaskService svc;
+    svc.id = id;
+    svc.taskEnvId = envId;
+    svc.serviceName = "svc";
+    svc.kind = rel::ServiceKind::Backend;
+    return svc;
+}
+
+rel::TaskConfig nslConfig(std::int64_t id, std::int64_t svcId, rel::ConfigKind kind,
+                          const std::string& content, bool skipped = false) {
+    rel::TaskConfig cfg;
+    cfg.id = id;
+    cfg.taskServiceId = svcId;
+    cfg.kind = kind;
+    cfg.content = content;
+    cfg.skipped = skipped;
+    return cfg;
+}
+
+} // namespace
+
+REGISTER_TEST(release_next_step_label_fixed_order_and_gates,
+              "release 列表行下一步指引：与详情页 collectTrackRows 同源——单号缺失的"
+              "前置项按 Locked 跳过（不冒充下一步），固定序取首个未完成且已解锁项，"
+              "合并分支不受时间窗门禁（删顺序段/门禁段必红）", {
+                  rel::Task task = makeTask(rel::TaskStatus::Pending);
+                  std::vector<rel::TaskEnv> envs{nslEnv(1, 1, 570)};
+                  std::vector<rel::TaskService> services{nslService(11, 1)};
+                  std::vector<rel::TaskConfig> configs{
+                      nslConfig(21, 11, rel::ConfigKind::Nacos, "nacos-content")};
+                  std::vector<rel::TaskStep> steps;
+                  auto label = [&]() {
+                      return rel::nextStepLabel(task, envs, services, configs, steps, 600);
+                  };
+
+                  // 全部前置单号缺失 = 全 Locked（详情页同款语义）→ 跳到合并分支
+                  DOCTEST_CHECK_EQ(label(), std::string("合并分支"));
+                  // 提测单号已填未勾 → UnlockedTodo → 指向提测单
+                  task.pretestNo = "P-1";
+                  DOCTEST_CHECK_EQ(label(), std::string("提测单"));
+                  task.pretestOk = true;
+                  // CAB 单号缺失 → Locked 跳过
+                  DOCTEST_CHECK_EQ(label(), std::string("合并分支"));
+                  task.cabNo = "C-1";
+                  DOCTEST_CHECK_EQ(label(), std::string("CAB 单"));
+                  task.cabOk = true;
+                  // nacos 工单欠单号 → Locked 跳过
+                  DOCTEST_CHECK_EQ(label(), std::string("合并分支"));
+                  task.ticketNacosNo = "N-1";
+                  DOCTEST_CHECK_EQ(label(), std::string("nacos 工单"));
+                  task.ticketNacosOk = true;
+                  // 公告内容缺失 → Locked 跳过
+                  DOCTEST_CHECK_EQ(label(), std::string("合并分支"));
+                  task.announceText = "公告内容";
+                  DOCTEST_CHECK_EQ(label(), std::string("上线公告"));
+                  task.announceSentAt = 1;
+                  // 步骤序起点：合并分支（时间窗 600≥570 已开；未开也不锁合并分支）
+                  DOCTEST_CHECK_EQ(label(), std::string("合并分支"));
+                  DOCTEST_CHECK_EQ(rel::nextStepLabel(task, envs, services, configs,
+                                                      steps, 100),
+                                   std::string("合并分支"));
+                  // 步骤序：合并分支完成 → 配置 n 项（文案 = configItemLabels[0]）
+                  steps.push_back({1, 11, rel::StepKind::MergeBranch, 100});
+                  DOCTEST_CHECK_EQ(label(), std::string("nacos"));
+                  return true;
+              })
+
+REGISTER_TEST(release_next_step_label_locked_or_done_empty,
+              "release 列表行下一步指引：全锁定（时间窗未开）/ 全完成 → 空串"
+              "（防指引指向锁定项 / 完成任务仍出指引；空 = 列表行留白契约）", {
+                  rel::Task task = makeTask(rel::TaskStatus::Pending);
+                  task.pretestOk = true;
+                  task.cabOk = true;
+                  task.ticketNacosNo = "N-1";
+                  task.ticketNacosOk = true;
+                  task.announceSentAt = 1;
+                  std::vector<rel::TaskEnv> envs{nslEnv(1, 1, 570)};
+                  std::vector<rel::TaskService> services{nslService(11, 1)};
+                  std::vector<rel::TaskConfig> configs{
+                      nslConfig(21, 11, rel::ConfigKind::Nacos, "nacos-content")};
+                  std::vector<rel::TaskStep> steps;
+
+                  // 时间窗未开 + 合并分支已完成：配置/部署/验证全部锁定 → 空串
+                  steps.push_back({1, 11, rel::StepKind::MergeBranch, 100});
+                  DOCTEST_CHECK_EQ(
+                      rel::nextStepLabel(task, envs, services, configs, steps, 100),
+                      std::string(""));
+
+                  // 全完成：步骤全勾 + 配置已确认 → 空串
+                  steps.push_back({2, 11, rel::StepKind::Deploy, 100});
+                  steps.push_back({3, 11, rel::StepKind::Verify, 100});
+                  configs[0].doneAt = 100;
+                  DOCTEST_CHECK_EQ(
+                      rel::nextStepLabel(task, envs, services, configs, steps, 600),
+                      std::string(""));
+                  return true;
+              })
+
+REGISTER_TEST(release_next_step_label_skipped_slot_closed,
+              "release 列表行下一步指引：skipped 配置=槽位关闭不打断指引（与 envProgress"
+              " 口径一致），工单号缺失的配置项跳过指向下一已解锁项", {
+                  rel::Task task = makeTask(rel::TaskStatus::Pending);
+                  task.pretestNo = "P-1";
+                  task.pretestOk = true;
+                  task.cabNo = "C-1";
+                  task.cabOk = true;
+                  task.ticketNacosNo = "N-1";
+                  task.ticketNacosOk = true;
+                  task.ticketDbNo = "D-1";
+                  task.ticketDbOk = true;
+                  task.announceSentAt = 1;
+                  std::vector<rel::TaskEnv> envs{nslEnv(1, 1, 570)};
+                  std::vector<rel::TaskService> services{nslService(11, 1)};
+                  std::vector<rel::TaskConfig> configs{
+                      nslConfig(21, 11, rel::ConfigKind::Nacos, "", true)};
+                  std::vector<rel::TaskStep> steps{{1, 11, rel::StepKind::MergeBranch, 100}};
+                  // nacos 配置已跳过（槽位关闭）→ 指向部署
+                  DOCTEST_CHECK_EQ(
+                      rel::nextStepLabel(task, envs, services, configs, steps, 600),
+                      std::string("部署"));
+
+                  // 门禁跳过：db 配置欠单号 → 锁定；nacos 恢复未跳过且单号已填 → 指向它
+                  configs[0] = nslConfig(21, 11, rel::ConfigKind::Nacos, "nacos-content");
+                  configs.push_back(nslConfig(22, 11, rel::ConfigKind::Db, "db-content"));
+                  DOCTEST_CHECK_EQ(
+                      rel::nextStepLabel(task, envs, services, configs, steps, 600),
+                      std::string("nacos"));
+                  return true;
+              })
