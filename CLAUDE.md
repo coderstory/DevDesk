@@ -424,12 +424,4 @@ main → 13 个 Router 页面 (home / markdown / todo / schedule / claude_proxy 
 
 ### Issue tracker
 
-Issues 与待办统一走 `docs/pool/` 池库（pool MCP 工具，见 `.agents/skills/devdesk-pool-usage`）；原 `.scratch/` 本地 markdown 机制已于 2026-10-31 清理退役。
-
-### Triage labels
-
-Default five-role vocabulary. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context. See `docs/agents/domain.md`.
+Issues 与待办统一走 `docs/pool/` 池库（pool MCP 工具，见 `.agents/skills/devdesk-pool-usage`）；原 `.scratch/` 本地 markdown 机制已于 2026-10-31 清理退役。角色词汇以 devflow 插件六角色为准（`docs/agents/` 英文模板目录已随 .scratch 机制同批清理）。
