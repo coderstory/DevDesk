@@ -235,6 +235,9 @@ struct ProbeArgs {
     // --screenshot <路径>：非空 = 该 probe 在「当前状态点」把真实渲染帧落成 PNG。
     // 空 = 不建渲染后端、不渲染、不写文件、不改退出码。
     std::string screenshotPath;
+    // --screenshot-publish <路径>：发布态中途落图（release_probe D2 段专用，
+    // 与 screenshotPath / screenshotSeedPath 相互独立）。
+    std::string screenshotPublishPath;
     // --screenshot-seeded <路径>：**中途**状态点落图（与 screenshotPath 相互独立、
     // 可同时给）。探针收尾前常做破坏性收尾断言（清库再断言），退出点那张图拍到的
     // 是收尾后的空态；本开关让探针能在「数据还在」的中途点另拍一张。空 = 零开销。
@@ -269,6 +272,8 @@ inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
             }
         } else if (arg == "--screenshot" && i + 1 < argc) {
             args.screenshotPath = argv[++i];
+        } else if (arg == "--screenshot-publish" && i + 1 < argc) {
+            args.screenshotPublishPath = argv[++i];
         } else if (arg == "--screenshot-seeded" && i + 1 < argc) {
             args.screenshotSeedPath = argv[++i];
         } else if (arg == "--manual") {

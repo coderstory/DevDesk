@@ -1237,3 +1237,297 @@ REGISTER_TEST(release_detail_anchor_consumed_once,
     DOCTEST_CHECK(state.pendingAnchor.empty());
     return true;
 })
+
+// ==================== 池 54：分支编辑入口（F-54-1 ~ F-54-3） ====================
+
+namespace {
+
+std::string branchSvcBase(const Seed& ids) {
+    return "release.detail.env." + std::to_string(ids.envId) +
+           ".svc." + std::to_string(ids.serviceId);
+}
+
+// 分支编辑行真实链路助手（同 test_markdown 的 pressEnterOnInput 惯例）：
+// onTextInput → onChange → 缓冲；Enter 键 → onEnter → 提交落库。
+bool typeIntoBranchInput(eui::Ui& ui, const std::string& inputId,
+                         const std::string& text) {
+    const auto* hit = ui.find(inputId + ".hit");
+    if (hit == nullptr || !hit->onTextInput) return false;
+    core::TextInputEvent ev;
+    ev.text = text;
+    hit->onTextInput(ev);
+    return true;
+}
+
+bool pressEnterOnBranchInput(eui::Ui& ui, const std::string& inputId) {
+    const auto* hit = ui.find(inputId + ".hit");
+    if (hit == nullptr || !hit->onKeyEvent) return false;
+    eui::KeyEvent ev;
+    ev.key = eui::InputKey::Enter;
+    ev.action = eui::KeyAction::Press;
+    return hit->onKeyEvent(ev);
+}
+
+bool branchInDb(rel::ReleaseStore& store, std::int64_t envId, std::string* out) {
+    auto services = store.listTaskServices(envId);
+    if (services.isFail() || services.value().size() != 1) return false;
+    *out = services.value()[0].branch;
+    return true;
+}
+
+} // namespace
+
+REGISTER_TEST(release_detail_branch_save_writes_db,
+              "分支保存：缓冲经 updateTaskService 落库、成功清缓冲置 dirty"
+              "（防：改分支只进内存不落库 / 缓冲直改 services 让对账空转 / "
+              "整行写破坏 defaultBranch 快照）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "branchsave");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    rel::detail::beginBranchEdit(state, ids.serviceId, "release/2027");
+    rel::detail::applySaveBranch(store, state);
+    DOCTEST_CHECK(state.branchEditServiceId == 0);
+    DOCTEST_CHECK(state.dirty);  // 置 dirty → 下一帧重读走对账
+    DOCTEST_CHECK(state.noticeIsError == false);
+    frame.refresh(store, state, actions);
+
+    std::string branch;
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, std::string("release/2027"));
+    auto services = store.listTaskServices(ids.envId);
+    DOCTEST_REQUIRE(services.isOk());
+    DOCTEST_CHECK_EQ(services.value()[0].defaultBranch, std::string("main"));
+    return true;
+})
+
+REGISTER_TEST(release_detail_branch_illegal_rejected,
+              "分支非法：含空格/控制字符不落库、缓冲保留、错误 notice"
+              "（防：破版输入直接进单据 / 非法时缓冲被清丢输入）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "branchbad");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    rel::detail::beginBranchEdit(state, ids.serviceId, "bad name");
+    rel::detail::applySaveBranch(store, state);
+    std::string branch;
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, std::string("release/2026"));  // 库值未动
+    DOCTEST_CHECK(state.branchEditServiceId == ids.serviceId);  // 缓冲保留可改
+    DOCTEST_CHECK(state.branchEditText == std::string("bad name"));
+    DOCTEST_CHECK(state.noticeIsError);
+    DOCTEST_CHECK(state.notice.find("空格") != std::string::npos);
+
+    // 控制字符同样拒
+    rel::detail::beginBranchEdit(state, ids.serviceId,
+                                 std::string("a\001b"));
+    rel::detail::applySaveBranch(store, state);
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, std::string("release/2026"));
+    DOCTEST_CHECK(state.noticeIsError);
+
+    // 超长拒（>200 字节）
+    rel::detail::beginBranchEdit(state, ids.serviceId, std::string(201, 'a'));
+    rel::detail::applySaveBranch(store, state);
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, std::string("release/2026"));
+    DOCTEST_CHECK(state.noticeIsError);
+    return true;
+})
+
+REGISTER_TEST(release_detail_branch_trim_and_empty,
+              "分支两端空白 trim 后落库；清空合法（存空串）且校验报「分支未填写」"
+              "（防：空白分支原样入库 / 清空分支被当成非法拒绝）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "branchtrim");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    rel::detail::beginBranchEdit(state, ids.serviceId, "  release/2027\t");
+    rel::detail::applySaveBranch(store, state);
+    std::string branch;
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, std::string("release/2027"));
+
+    // 清空合法：trim 后空 = 「分支未填写」可标记态，由提交校验拦提交而非拦保存
+    rel::detail::beginBranchEdit(state, ids.serviceId, "   ");
+    rel::detail::applySaveBranch(store, state);
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, std::string(""));
+    frame.refresh(store, state, actions);
+    auto configs = store.listTaskConfigs(ids.serviceId);
+    DOCTEST_REQUIRE(configs.isOk());
+    const std::vector<std::string> missing =
+        rel::validateTask(state.services, configs.value());
+    DOCTEST_REQUIRE(missing.size() == 1);
+    DOCTEST_CHECK(missing[0].find("分支未填写") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(release_detail_branch_non_draft_rejected,
+              "越权守卫：Pending/Running/Done/Voided 拒绝保存分支且库值不变"
+              "（防：发布态只读铁律被逻辑层绕过）", {
+    ThemeGuard guard;
+    const rel::TaskStatus statuses[] = {rel::TaskStatus::Pending,
+                                        rel::TaskStatus::Running,
+                                        rel::TaskStatus::Done,
+                                        rel::TaskStatus::Voided};
+    for (int i = 0; i < 4; ++i) {
+        test_support::TestDb tdb("releasedetail",
+                                 ("branchguard" + std::to_string(i)).c_str());
+        rel::ReleaseStore store(tdb.handle());
+        const Seed ids = seedDetailTask(store, statuses[i]);
+        DOCTEST_REQUIRE(ids.taskId != 0);
+
+        rel::ReleaseDetailUiState state;
+        state.taskId = std::to_string(ids.taskId);
+        state.dirty = true;
+        rel::ReleaseDetailActions actions;
+        Frame frame;
+        frame.refresh(store, state, actions);
+
+        rel::detail::beginBranchEdit(state, ids.serviceId, "release/9999");
+        rel::detail::applySaveBranch(store, state);
+        std::string branch;
+        DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+        DOCTEST_CHECK_EQ(branch, std::string("release/2026"));
+        DOCTEST_CHECK(state.noticeIsError);
+        DOCTEST_CHECK(state.branchEditServiceId == 0);  // 越权缓冲一并清掉
+    }
+    return true;
+})
+
+REGISTER_TEST(release_detail_branch_change_revokes_merge_confirm,
+              "分支变更对账：已确认的合并分支在保存重读后自动撤回并记 revoke 日志"
+              "（防：改分支后旧确认残留 / 对账因缓冲直改内存而空转）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "branchrevoke");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+    DOCTEST_REQUIRE(
+        store.setStepDone(ids.serviceId, rel::StepKind::MergeBranch, kDoneAt)
+            .isOk());
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    rel::detail::beginBranchEdit(state, ids.serviceId, "release/2027");
+    rel::detail::applySaveBranch(store, state);
+    frame.refresh(store, state, actions);  // 重读触发 applyContentRevocations
+
+    auto steps = store.listTaskSteps(ids.serviceId);
+    DOCTEST_REQUIRE(steps.isOk());
+    bool mergeDone = false;
+    for (const auto& step : steps.value()) {
+        if (step.kind == rel::StepKind::MergeBranch && step.doneAt != 0) {
+            mergeDone = true;
+        }
+    }
+    DOCTEST_CHECK_FALSE(mergeDone);  // 旧确认已自动撤回
+    bool revokeLogged = false;
+    for (const auto& log : state.logs) {
+        if (log.action == "revoke" && log.note == "服务分支已修改") {
+            revokeLogged = true;
+        }
+    }
+    DOCTEST_CHECK(revokeLogged);
+    DOCTEST_CHECK(state.notice.find("自动撤回") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(release_detail_branch_entry_mode_gated,
+              "分支入口双模式：Draft 为表单行输入，发布态隐藏输入且走流程轨道"
+              "（防：发布态仍渲染输入框破坏 F-03 只读）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "branchgate");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string svcBase = branchSvcBase(ids);
+    DOCTEST_CHECK(frame.ui.find(svcBase + ".branch.input.hit") != nullptr);
+    DOCTEST_CHECK(frame.ui.find(svcBase + ".branch.label") != nullptr);
+
+    // 提交转发布态：输入框隐藏，页面切流程轨道（分支展示面随服务卡一并退出，
+    // 池 53 IA 既有路由）
+    rel::Task next = state.task;
+    next.status = rel::TaskStatus::Pending;
+    DOCTEST_REQUIRE(store.updateTask(next).isOk());
+    state.dirty = true;
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(frame.ui.find(svcBase + ".branch.input.hit") == nullptr);
+    DOCTEST_CHECK(frame.ui.find(svcBase + ".branch.label") == nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.track") != nullptr);
+    return true;
+})
+
+REGISTER_TEST(release_detail_branch_real_input_chain,
+              "分支真实输入链：onTextInput→onChange 写缓冲，Enter→onEnter 落库"
+              "（防：draw 绑定错服务 id / 回调漏接导致打字不进缓冲）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "branchchain");
+    rel::ReleaseStore store(tdb.handle());
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft);
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string inputId = branchSvcBase(ids) + ".branch.input";
+    DOCTEST_REQUIRE(typeIntoBranchInput(frame.ui, inputId, "x"));
+    DOCTEST_CHECK(state.branchEditServiceId == ids.serviceId);
+    // input 为「光标处插入」语义（components/input.h InputModel::insertAtCursor），
+    // 初值聚焦后的光标位不在这里锁——只锁缓冲确实吃到了输入字符。
+    DOCTEST_CHECK(state.branchEditText.find("x") != std::string::npos);
+    const std::string typed = state.branchEditText;
+    DOCTEST_REQUIRE(pressEnterOnBranchInput(frame.ui, inputId));
+    DOCTEST_CHECK(state.branchEditServiceId == 0);
+    frame.refresh(store, state, actions);
+
+    std::string branch;
+    DOCTEST_REQUIRE(branchInDb(store, ids.envId, &branch));
+    DOCTEST_CHECK_EQ(branch, typed);  // 落库值 == 提交时缓冲全文（真实链路证据）
+    return true;
+})

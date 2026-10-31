@@ -123,6 +123,8 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
         state.validationMissing.clear();
         state.editorOpen = false;
         state.editorText.clear();
+        state.branchEditServiceId = 0;
+        state.branchEditText.clear();
         state.menuOpen = false;
         state.openMenuRowKey.clear();
     }

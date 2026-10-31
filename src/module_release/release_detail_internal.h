@@ -194,6 +194,9 @@ void openRevokeConfig(ReleaseDetailUiState& state, std::int64_t serviceId, Confi
 void toggleConfigSkip(ReleaseStore& store, ReleaseDetailUiState& state, std::int64_t serviceId, ConfigKind kind);
 void openConfigEditor(ReleaseStore& store, ReleaseDetailUiState& state, std::int64_t serviceId, ConfigKind kind);
 void saveConfigEditor(ReleaseStore& store, ReleaseDetailUiState& state);
+void beginBranchEdit(ReleaseDetailUiState& state, std::int64_t serviceId, const std::string& value);
+void applySaveBranch(ReleaseStore& store, ReleaseDetailUiState& state);
+std::string isIllegalBranchName(const std::string& trimmedValue);
 void openRemoveService(ReleaseDetailUiState& state, std::int64_t serviceId, const std::string& name);
 void openRemoveEnv(ReleaseDetailUiState& state, std::int64_t envId, const std::string& name);
 void applyRemoveService(ReleaseStore& store, ReleaseDetailUiState& state);

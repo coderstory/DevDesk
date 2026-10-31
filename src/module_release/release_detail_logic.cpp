@@ -1339,6 +1339,86 @@ void saveConfigEditor(ReleaseStore& store, ReleaseDetailUiState& state) {
     setNotice(state, "已保存「" + configLabel(state.editorKind) + "」配置内容", false);
 }
 
+// ==================== 分支编辑（池 54 / F-54-2） ====================
+
+// 分支名合法性（记录台口径）：只拦会破版显示的空格/控制字符与超长，
+// 不做完整 git-check-ref-format 校验（本模块定位记录台，不执行 git）。
+// 调用前先 trim；空/纯空白合法——「分支未填写」是提交校验的可标记态，
+// 由 validateTask 拦提交，不在此拦保存。
+
+std::string isIllegalBranchName(const std::string& trimmedValue) {
+    if (trimmedValue.size() > 200) return "分支名过长（上限 200 字符）";
+    for (const unsigned char c : trimmedValue) {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c < 0x20 || c == 0x7f) {
+            return "分支名不能包含空格或控制字符";
+        }
+    }
+    return "";
+}
+
+// 登记分支编辑缓冲（服务 id + 输入全文）。刻意不写 state.services：
+// 缓冲与内存隔离，落库成功后置 dirty 重读统一进内存并触发对账——若 onChange
+// 直改内存，重读时 prev==DB 对账空转，「合并分支」旧确认不会撤（saveConfigEditor
+// 同一条契约，见 release_detail_ui.h 头注释）。
+
+void beginBranchEdit(ReleaseDetailUiState& state, std::int64_t serviceId,
+                     const std::string& value) {
+    state.branchEditServiceId = serviceId;
+    state.branchEditText = value;
+}
+
+// 提交分支缓冲（blur / Enter / Esc 三路同语义，由 draw 侧输入框回调统一调）。
+// 无缓冲 = 仅聚焦未输入，静默返回；trim 后与现值等值不打库不置 dirty（避免
+// 每次失焦空转重读）。成功清缓冲置 dirty：重读对账发现分支变更时自动撤回该
+// 服务「合并分支」旧确认并记 revoke 日志「服务分支已修改」（既有，零新增）。
+
+void applySaveBranch(ReleaseStore& store, ReleaseDetailUiState& state) {
+    if (state.branchEditServiceId == 0) return;
+    const std::int64_t serviceId = state.branchEditServiceId;
+    if (!isEditMode(state.displayStatus)) {
+        // 发布态只读铁律（F-03）的纵深防御：UI 层发布态不渲染输入框，
+        // 越权调用（测试 / 回归路径）在此拒绝；缓冲一并作废。
+        setNotice(state, isReadOnly(state.displayStatus)
+                             ? "任务已只读，不能修改分支"
+                             : "发布中任务不能修改分支，请撤回提交或作废后操作",
+                  true);
+        state.branchEditServiceId = 0;
+        state.branchEditText.clear();
+        return;
+    }
+    const TaskService* current = findService(state, serviceId);
+    if (current == nullptr) {
+        // 缓冲挂的服务行已不在（并发移除后重读）：无可重试对象，缓冲作废。
+        setNotice(state, "服务不存在，无法保存分支", true);
+        state.branchEditServiceId = 0;
+        state.branchEditText.clear();
+        return;
+    }
+    const std::string value = trimmed(state.branchEditText);
+    if (value == current->branch) {
+        state.branchEditServiceId = 0;
+        state.branchEditText.clear();
+        return;
+    }
+    const std::string illegal = isIllegalBranchName(value);
+    if (!illegal.empty()) {
+        setNotice(state, illegal, true);
+        return;  // 缓冲保留：可直接改后重试
+    }
+    TaskService next = *current;  // 整行写接口：其余字段原样透传
+    next.branch = value;
+    auto result = store.updateTaskService(next);
+    if (result.isFail()) {
+        // 保留缓冲与输入：与 saveConfigEditor 同款，写库失败不丢输入。
+        setNotice(state, "保存分支失败：" + result.errorMessage(), true);
+        return;
+    }
+    state.branchEditServiceId = 0;
+    state.branchEditText.clear();
+    state.dirty = true;
+    setNotice(state, "已保存「" + current->serviceName + "」分支", false);
+}
+
 void openRemoveService(ReleaseDetailUiState& state, std::int64_t serviceId,
                        const std::string& name) {
     state.confirm = ReleaseDetailConfirm::RemoveService;

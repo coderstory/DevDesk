@@ -620,6 +620,65 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ================= D2. 发布态分支入口门禁（池 54 F-54-1 / F-03） =================
+    // 提交转 Pending：分支输入框必须消失（发布态只读铁律），页面切流程轨道；
+    // 落一张发布态基准图后回到 Draft，保证退出落图仍是编辑态（与池 53 基准同态）。
+    {
+        auto detailTask = store.listTasks();
+        if (detailTask.isFail()) {
+            std::cerr << "release_probe: 读取任务失败\n";
+            checks.passed = false;
+        } else {
+            for (auto& task : detailTask.value()) {
+                if (task.id != detailTaskId) continue;
+                task.status = module::release::TaskStatus::Pending;
+                if (store.updateTask(task).isFail()) {
+                    std::cerr << "release_probe: 切发布态失败\n";
+                    checks.passed = false;
+                }
+                break;
+            }
+        }
+        detailState.dirty = true;
+        composePage("release.detail.publish", w, h,
+                    [&](eui::Ui& frameUi, const eui::Screen& screen) {
+                        module::release::composeReleaseDetailPage(
+                            frameUi, screen, store, detailState);
+                    });
+        const std::string svcBase =
+            "release.detail.env." + std::to_string(detailEnvId) +
+            ".svc." + std::to_string(detailServiceId);
+        if (ui->find(svcBase + ".branch.input.hit") != nullptr) {
+            std::cerr << "release_probe: 发布态仍渲染分支输入框（F-03 违规）\n";
+            checks.passed = false;
+        }
+        checks.need(ui, "release.detail.track", "发布态流程轨道");
+        if (!args.screenshotPublishPath.empty()) {
+            if (!probe::captureFramePng(window, runtime,
+                                        args.screenshotPublishPath)) {
+                std::cerr << "release_probe: --screenshot-publish 落图失败: "
+                          << args.screenshotPublishPath << "\n";
+                checks.passed = false;
+            }
+        }
+        // 回 Draft：退出落图保持编辑态
+        auto tasksAgain = store.listTasks();
+        if (tasksAgain.isOk()) {
+            for (auto& task : tasksAgain.value()) {
+                if (task.id != detailTaskId) continue;
+                task.status = module::release::TaskStatus::Draft;
+                (void)store.updateTask(task);
+                break;
+            }
+        }
+        detailState.dirty = true;
+        composePage("release.detail", w, h,
+                    [&](eui::Ui& frameUi, const eui::Screen& screen) {
+                        module::release::composeReleaseDetailPage(
+                            frameUi, screen, store, detailState);
+                    });
+    }
+
     // 退出前落一张「当前状态图」（--screenshot <路径>；未传 = 零开销）
     probe::captureIfRequested(args, window, runtime, &checks.passed);
 

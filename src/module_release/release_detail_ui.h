@@ -22,7 +22,9 @@
 //     通过只给反馈。「提交」仍按 validateTask 结果决定是否放行。
 //   - 配置内容（编辑层保存）/ 服务分支保存后（宿主置 state.dirty）重读时对比旧快照：
 //     内容变了旧确认不作数——已完成的对应步骤自动撤回并记 action=revoke 日志；
-//     未完成的不动。
+//     未完成的不动。分支缓冲（branchEditText）与 state.services 隔离：若 onChange
+//     直改内存，重读对账 prev==DB 会空转、旧确认不撤——保存路径必须走
+//     detail::applySaveBranch（落库成功才置 dirty）。
 //   - 跳过（配置项）与移除（服务 / 环境）都直接写库后置 dirty 重读；已跳过配置项的
 //     编辑层只读，Done / Voided 整单只读：勾选、跳过、移除、撤回、编辑、排序全部
 //     禁用；配置内容仍可查看（只读）。
@@ -127,6 +129,12 @@ struct ReleaseDetailUiState {
     std::int64_t editorServiceId = 0;
     ConfigKind editorKind = ConfigKind::Nacos;
     std::string editorText;
+
+    // 分支编辑缓冲（池 54，编辑态服务卡 44px 表单行）：branchEditServiceId = 0
+    // 表示无待提交缓冲（仅聚焦未输入不登记）。单槽：blur/Enter/Esc 统一经
+    // detail::applySaveBranch 提交，成功清缓冲置 dirty；切任务由 loadDetail 清。
+    std::int64_t branchEditServiceId = 0;
+    std::string branchEditText;
 
     // —— 池 53 双模式（发布态状态机 + F-23 锚点）——
     // F-23：提醒「去处理」的落点请求；宿主在打开任务详情前写入，详情页

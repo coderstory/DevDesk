@@ -487,7 +487,10 @@ float serviceCardHeight(const ReleaseDetailUiState& state, const TaskService& sv
     const float menuExtra = state.openMenuRowKey.rfind(prefix, 0) == 0
                                 ? kStepRowH + kStepRowGap
                                 : 0.0f;
-    return 68.0f + rows * kStepRowH + (rows - 1.0f) * kStepRowGap + menuExtra;
+    // 池 54（F-54-1）：编辑态分支行从 16px 只读行升级为 kStepRowH 表单行（+28）；
+    // 发布/归档态维持只读行高度。
+    const float branchExtra = isEditMode(state.displayStatus) ? kStepRowH - 16.0f : 0.0f;
+    return 68.0f + branchExtra + rows * kStepRowH + (rows - 1.0f) * kStepRowGap + menuExtra;
 }
 
 float envCardHeight(const ReleaseDetailUiState& state, const TaskEnv& env) {
@@ -720,28 +723,50 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)
         .build();
-    const bool hasBranch = !svc.branch.empty();
     const bool branchFlagged = serviceBranchFlagged(state, svc.serviceName);
-    if (branchFlagged) {
-        ui.rect(id + ".branch.flag")
-            .position(nameX - 4.0f, branchY - 2.0f)
-            .size(nameW + 8.0f, 20.0f)
-            .color(eui::mixColor(t.colors.surface, t.colors.error, 0.10f))
-            .radius(4.0f)
+    if (isEditMode(state.displayStatus)) {
+        // 池 54（F-54-1）：分支行 = 44px 表单行（label 96 + 输入框 32，前置单据流
+        // 同语言）；分支的确认语义在「合并分支」步骤行，行尾不放勾。守卫是 F-03
+        // 的绘制点防御——发布/归档走流程轨道不进本节（drawEnvsSection 仅编辑态），
+        // 分支值在发布态无展示面为池 53 IA 既有，非本单缺口。
+        const float labelW = kFormLabelW;
+        const float inputX = nameX + labelW + 12.0f;
+        const float inputW = std::max(0.0f, x + width - inset - inputX);
+        if (branchFlagged) {
+            ui.rect(id + ".branch.flag")
+                .position(nameX - 4.0f, branchY)
+                .size(nameW + 8.0f, kStepRowH)
+                .color(eui::mixColor(t.colors.surface, t.colors.error, 0.10f))
+                .radius(4.0f)
+                .build();
+        }
+        ui.text(id + ".branch.label")
+            .position(nameX, branchY)
+            .size(labelW, kStepRowH)
+            .text("分支")
+            .fontSize(t.sizes.fontSizeBody)
+            .lineHeight(kStepRowH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(branchFlagged ? t.colors.errorText : t.colors.textPrimary)
+            .build();
+        const bool editingThis = state.branchEditServiceId == svc.id;
+        components::input(ui, id + ".branch.input")
+            .position(inputX, branchY + (kStepRowH - 32.0f) * 0.5f)
+            .size(inputW, 32.0f)
+            .value(editingThis ? state.branchEditText : svc.branch)
+            .placeholder("填写分支")
+            .fontSize(t.sizes.fontSizeBody)
+            .theme(themeTokens)
+            .onChange([&state, serviceId = svc.id](const std::string& value) {
+                beginBranchEdit(state, serviceId, value);
+            })
+            .onFocus([&store, &state](bool focused) {
+                if (!focused) applySaveBranch(store, state);
+            })
+            .onEnter([&store, &state]() { applySaveBranch(store, state); })
+            .onCancel([&store, &state]() { applySaveBranch(store, state); })
             .build();
     }
-    ui.text(id + ".branch")
-        .position(nameX, branchY)
-        .size(nameW, 16.0f)
-        .text(hasBranch ? "分支 " + svc.branch
-                        : (branchFlagged ? "分支未填写 · 提交校验未通过"
-                                         : "分支未填写"))
-        .fontSize(t.sizes.fontSizeSmall - 1.0f)
-        .lineHeight(16.0f)
-        .maxWidth(nameW)
-        .overflow(core::TextOverflow::Ellipsis)
-        .color(branchFlagged || !hasBranch ? t.colors.errorText : t.colors.textTertiary)
-        .build();
 
     std::vector<StepRowView> rows;
     {
@@ -814,7 +839,8 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
     }
 
     const std::string scope = svc.serviceName;
-    float rowY = y + kServiceRowStart;
+    float rowY = y + kServiceRowStart +
+                 (isEditMode(state.displayStatus) ? kStepRowH - 16.0f : 0.0f);
     std::vector<float> rowYs;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const StepRowView& row = rows[i];
