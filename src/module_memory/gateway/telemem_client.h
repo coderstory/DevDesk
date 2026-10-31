@@ -4,6 +4,7 @@
 // 密钥红线：本通道不带任何凭据（引擎侧已注入）。
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,14 @@ struct MemoryHit {
     std::string memoryId;  // 引擎侧条目 id（来源标注；缺失为空）
     std::string dateText;  // "YYYY-MM-DD"（缺失为空）
     double score = 0.0;    // 相关度（排序输入；缺失 0）
+};
+
+// get_memories 清单条目（decay 遗忘扫描输入，池31）：只取遗忘判定所需三字段；
+// updated_at 解析失败/缺失 → 0（消费侧 curator 按「无使用记录」跳过，保守不删）
+struct MemoryListItem {
+    std::string id;
+    std::string text;
+    std::int64_t updatedAtEpoch = 0;
 };
 
 class IMemoryRetriever {
@@ -46,6 +55,18 @@ public:
     // 侧无缝 → 如实报 NotImplemented，恢复由提案执行层按原卡证据重录入
     virtual core::Result<void> setMemoryForgotten(const std::string& memoryId,
                                                   bool forgotten) = 0;
+
+    // 全量清单（decay 遗忘扫描输入，池31 缝闭环 2026-10-31）：get_memories
+    // limit 无上限（POC 定案）；不传 user_id → 仅默认用户，events 伪用户不在
+    // 扫描范围（OQ-1 留档方案卡）
+    virtual core::Result<std::vector<MemoryListItem>> listAll(int limit,
+                                                              int timeoutMs) = 0;
+
+    // 条目当前版本（baseVersion 前置校验输入，池32 缝闭环 2026-10-31）：引擎
+    // 无全局版本缝，以 get_memory 的 updated_at epoch 秒作版本 token（update
+    // 必刷 updated_at，mem0 main.py 定案）；not_found → NotFound
+    virtual core::Result<std::int64_t> getMemoryVersion(
+        const std::string& memoryId) = 0;
 };
 
 // MCP-HTTP 实现（生产装配）。telemem 只绑回环（kTelememPort）。
@@ -61,6 +82,10 @@ public:
     core::Result<std::string> addInferred(const std::string& text) override;
     core::Result<void> setMemoryForgotten(const std::string& memoryId,
                                           bool forgotten) override;
+    core::Result<std::vector<MemoryListItem>> listAll(int limit,
+                                                      int timeoutMs) override;
+    core::Result<std::int64_t> getMemoryVersion(
+        const std::string& memoryId) override;
 };
 
 // 响应解析纯函数（单测钉三层）：SSE 信封剥离 → JSON-RPC envelope（含嵌套
@@ -75,6 +100,21 @@ core::Result<std::vector<MemoryHit>> parseSearchResponse(
 // add_memory 响应解析：工具级错误（isError / error 字段）→ Error；成功 → 新条目 id
 //（telemem 返回 {"status":"stored",...} 无 id → 空串，调用方按空处理）
 core::Result<std::string> parseAddResponse(const std::string& httpBody);
+
+// ISO-8601 UTC（telemem 定案形态 "2026-10-27T12:34:56Z"）→ epoch 秒；容忍空格
+// 分隔与毫秒尾缀；空/非法/越界 → 0（纯函数，单测钉住）
+std::int64_t isoToEpochSec(const std::string& iso);
+
+// get_memories 清单响应解析（池31）：content[0].text =
+// {"results":[{id, memory, updated_at,…}]}（2026-10-28 live 定案 + 2026-10-31
+// POC 复核含 updated_at）→ 逐条 MemoryListItem；缺 id/正文的条目跳过
+core::Result<std::vector<MemoryListItem>> parseListResponse(
+    const std::string& httpBody);
+
+// get_memory 响应解析（池32）：updated_at → epoch 秒；条目不存在（not_found，
+// mem0 delete 后形态）→ NotFound；updated_at 缺失/不可解析 → JsonParseError
+//（版本校验 fail-closed：宁过期不误删）
+core::Result<std::int64_t> parseGetMemoryResponse(const std::string& httpBody);
 
 // add_memory 入参组装（纯函数，单测钉 infer 契约）：infer=false 直存 / true 提炼
 inline platform::json::JsonObject buildAddMemoryArgs(const std::string& text,

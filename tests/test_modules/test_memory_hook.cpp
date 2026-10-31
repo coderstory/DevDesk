@@ -17,7 +17,11 @@
 using namespace module::memory::hook;
 using module::memory::gateway::IMemoryRetriever;
 using module::memory::gateway::parseSearchResponse;
+using module::memory::gateway::parseListResponse;
+using module::memory::gateway::parseGetMemoryResponse;
+using module::memory::gateway::isoToEpochSec;
 using module::memory::gateway::MemoryHit;
+using module::memory::gateway::MemoryListItem;
 
 namespace {
 
@@ -43,6 +47,12 @@ public:
     core::Result<void> setMemoryForgotten(const std::string&,
                                           bool) override {
         return core::Result<void>::ok();
+    }
+    core::Result<std::vector<MemoryListItem>> listAll(int, int) override {
+        return core::Result<std::vector<MemoryListItem>>::ok({});
+    }
+    core::Result<std::int64_t> getMemoryVersion(const std::string&) override {
+        return core::Result<std::int64_t>::ok(0);
     }
 };
 
@@ -228,5 +238,79 @@ REGISTER_TEST(memory_hook_parser_live_envelope,
         "\\\"memories\\\":\\\"\\\"}\"}]}}");
     DOCTEST_REQUIRE(empty.isOk());
     DOCTEST_CHECK(empty.value().empty());
+    return true;
+})
+
+REGISTER_TEST(memory_gateway_list_parse_and_iso_epoch,
+              "memory: 清单缝解析（池31）——get_memories results 逐条化（缺 id/正文跳过、updated_at→epoch）；ISO→epoch 纯函数", {
+    // POC 定案形态：content[0].text = {"results":[{id,memory,…,updated_at}]}
+    auto items = parseListResponse(
+        "event: message\n"
+        "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[{"
+        "\"text\":\"{\\\"results\\\":[{\\\"id\\\":\\\"uuid-1\\\","
+        "\\\"memory\\\":\\\"记忆一\\\",\\\"created_at\\\":\\\"2026-01-01T00:00:00Z\\\","
+        "\\\"updated_at\\\":\\\"2026-10-27T12:34:56Z\\\"},"
+        "{\\\"memory\\\":\\\"缺id跳过\\\"},"
+        "{\\\"id\\\":\\\"uuid-2\\\",\\\"memory\\\":\\\"无时间字段\\\"}]}"
+        "\"}]}}");
+    DOCTEST_REQUIRE(items.isOk());
+    DOCTEST_REQUIRE_EQ(items.value().size(), static_cast<std::size_t>(2));
+    DOCTEST_CHECK_EQ(items.value()[0].id, std::string("uuid-1"));
+    DOCTEST_CHECK_EQ(items.value()[0].text, std::string("记忆一"));
+    DOCTEST_CHECK_EQ(items.value()[0].updatedAtEpoch,
+                     static_cast<std::int64_t>(1793104496));
+    // 无 updated_at → epoch 0（消费侧按「无使用记录」跳过，保守不删）
+    DOCTEST_CHECK_EQ(items.value()[1].id, std::string("uuid-2"));
+    DOCTEST_CHECK_EQ(items.value()[1].updatedAtEpoch,
+                     static_cast<std::int64_t>(0));
+    // 工具级错误 → fail；空清单 → ok 空
+    DOCTEST_CHECK(parseListResponse(R"({"result":{"isError":true}})").isFail());
+    auto empty = parseListResponse(
+        R"({"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"results\":[]}"}]}})");
+    DOCTEST_REQUIRE(empty.isOk());
+    DOCTEST_CHECK(empty.value().empty());
+    // ISO → epoch：telemem 定案 UTC 形态 + 空格分隔/毫秒尾缀容忍 + 非法 → 0
+    DOCTEST_CHECK_EQ(isoToEpochSec("2026-10-27T12:34:56Z"),
+                     static_cast<std::int64_t>(1793104496));
+    DOCTEST_CHECK_EQ(isoToEpochSec("2026-10-27 12:34:56"),
+                     static_cast<std::int64_t>(1793104496));
+    DOCTEST_CHECK_EQ(isoToEpochSec("2026-10-27T12:34:56.789Z"),
+                     static_cast<std::int64_t>(1793104496));
+    DOCTEST_CHECK_EQ(isoToEpochSec("2026-01-01T00:00:00Z"),
+                     static_cast<std::int64_t>(1767225600));
+    DOCTEST_CHECK_EQ(isoToEpochSec(""), static_cast<std::int64_t>(0));
+    DOCTEST_CHECK_EQ(isoToEpochSec("garbage"), static_cast<std::int64_t>(0));
+    DOCTEST_CHECK_EQ(isoToEpochSec("2026-13-40T99:99:99Z"),
+                     static_cast<std::int64_t>(0));
+    return true;
+})
+
+REGISTER_TEST(memory_gateway_get_memory_version_parse,
+              "memory: 版本缝解析（池32）——updated_at→epoch（直返/results 包裹两形态）；not_found→NotFound；缺字段 fail-closed", {
+    // mem0 get_memory 直返条目形态（POC：与清单条目同形，多 score）
+    auto direct = parseGetMemoryResponse(
+        R"({"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"id\":\"uuid-9\",\"memory\":\"正文\",\"updated_at\":\"2026-10-27T12:34:56Z\"}"}]}})");
+    DOCTEST_REQUIRE(direct.isOk());
+    DOCTEST_CHECK_EQ(direct.value(), static_cast<std::int64_t>(1793104496));
+    // results 包裹形态兼容
+    auto wrapped = parseGetMemoryResponse(
+        R"({"result":{"content":[{"text":"{\"results\":[{\"id\":\"uuid-9\",\"updated_at\":\"2026-01-01T00:00:00Z\"}]}"}]}})");
+    DOCTEST_REQUIRE(wrapped.isOk());
+    DOCTEST_CHECK_EQ(wrapped.value(), static_cast<std::int64_t>(1767225600));
+    // not_found（JSON error 形态 / 非 JSON 文本形态）→ NotFound
+    auto nf = parseGetMemoryResponse(
+        R"({"result":{"content":[{"text":"{\"error\":\"not_found\"}"}]}})");
+    DOCTEST_REQUIRE(nf.isFail());
+    DOCTEST_CHECK(nf.errorCode() == core::ErrorCode::NotFound);
+    auto nfText = parseGetMemoryResponse(
+        R"({"result":{"content":[{"text":"memory not_found"}]}})");
+    DOCTEST_REQUIRE(nfText.isFail());
+    DOCTEST_CHECK(nfText.errorCode() == core::ErrorCode::NotFound);
+    // 工具级错误 → fail；缺 updated_at → fail-closed（宁过期不误删）
+    DOCTEST_CHECK(
+        parseGetMemoryResponse(R"({"result":{"isError":true}})").isFail());
+    auto missing = parseGetMemoryResponse(
+        R"({"result":{"content":[{"text":"{\"id\":\"uuid-9\"}"}]}})");
+    DOCTEST_CHECK(missing.isFail());
     return true;
 })

@@ -37,11 +37,14 @@ std::filesystem::path dbDir() { return engine::memoryDataDir(); }
 // 需-9 判定节流：装配层每帧调 pollUsageAlerts，SQLite 双求和走此间隔限频
 constexpr std::int64_t kUsageAlertPollSec = 5;
 
-// A 阶段引擎无版本查询缝（头文件契约说明）：以提案快照版本放行
-TargetVersionFn trustSnapshotVersion(std::int64_t baseVersion) {
-    return [baseVersion](const std::string&) {
-        return core::Result<std::int64_t>::ok(baseVersion);
-    };
+// baseVersion 前置校验真值（池32 缝闭环）：引擎逐条目版本 = get_memory 的
+// updated_at epoch；错误码分流语义见 makeTargetVersionFn（proposal_store.h）
+TargetVersionFn realTargetVersion(std::int64_t baseVersion) {
+    return proposals::makeTargetVersionFn(
+        baseVersion, [](const std::string& targetId) {
+            gateway::TelememHttpRetriever engine;
+            return engine.getMemoryVersion(targetId);
+        });
 }
 
 // 代理执行器：真接检索接口缝（引擎不在 = 执行失败，提案保持待审）
@@ -55,6 +58,9 @@ ProposalExecutor makeExecutor() {
 // F1 采集循环参数：stop 分片（UI 线程 join 上界）与 decay 闲置阈值（B4 设计值）
 constexpr int kCollectStopTickMs = 250;
 constexpr int kDecayIdleThresholdDays = 60;
+// decay 清单拉取上限（与 findMemoryIdByText 既有 get_memories 口径一致；
+// 超限部分本轮不扫描且无提示，个人库量级远低于此——OQ-2 留档方案卡）
+constexpr int kDecayScanListLimit = 200;
 
 // 时间文案："今天 HH:MM" / "MM-DD HH:MM"
 std::string formatTime(std::int64_t ts) {
@@ -200,12 +206,26 @@ void PanelState::collectLoopMain() {
             n.text, static_cast<std::int64_t>(std::time(nullptr))});
         if (runtimeFeed_.size() > 16) runtimeFeed_.erase(runtimeFeed_.begin());
     };
-    // 生产 decay 清单缝：引擎无列举能力（telemem 未暴露 list，限制清单#1）
-    // → 如实报 NotImplemented，fail-closed 不出假卡；缝补齐后只换本闭包
+    // 生产 decay 清单缝（池31 缝闭环 2026-10-31）：get_memories 全量清单，
+    // 不传 user_id → 仅默认用户（events 伪用户不在扫描范围，OQ-1 留档方案卡）。
+    // updated_at 同源双用：lastUsedAt 闲置代理（老板拍板 2026-10-31，偏乐观
+    // 知情接受）+ version（池32 forget 卡 baseVersion 输入）。失败如实透传
+    // → runDecayScan fail → LOG 留痕下轮重试（fail-closed 不出假卡）
     const proposals::MemoryListFn decayMemories = []() {
-        return core::Result<std::vector<proposals::MemorySummary>>::fail(
-            core::ErrorCode::NotImplemented,
-            "引擎无列举缝（telemem 未暴露 list），decay 扫描待缝补齐");
+        gateway::TelememHttpRetriever engine;
+        auto items = engine.listAll(kDecayScanListLimit, 10000);
+        if (items.isFail()) {
+            return core::Result<std::vector<proposals::MemorySummary>>::fail(
+                items.errorCode(), items.errorMessage());
+        }
+        std::vector<proposals::MemorySummary> out;
+        out.reserve(items.value().size());
+        for (const gateway::MemoryListItem& it : items.value()) {
+            out.push_back(proposals::MemorySummary{
+                it.id, it.text, it.updatedAtEpoch, it.updatedAtEpoch});
+        }
+        return core::Result<std::vector<proposals::MemorySummary>>::ok(
+            std::move(out));
     };
     std::int64_t lastDecay = 0;
     for (;;) {
@@ -549,7 +569,7 @@ core::Result<void> PanelState::acceptProposal(const std::string& id) {
     }
     auto decided = proposalStore_->accept(
         id, static_cast<std::int64_t>(std::time(nullptr)),
-        trustSnapshotVersion(current.value().baseVersion), makeExecutor());
+        realTargetVersion(current.value().baseVersion), makeExecutor());
     if (decided.isFail()) {
         return core::Result<void>::fail(decided.errorCode(),
                                         decided.errorMessage());
@@ -599,7 +619,7 @@ core::Result<std::string> PanelState::createUndoCard(
     }
     auto undo = proposalStore_->createUndo(
         originalId, static_cast<std::int64_t>(std::time(nullptr)),
-        trustSnapshotVersion(-1));
+        realTargetVersion(-1));
     if (undo.isFail()) {
         return core::Result<std::string>::fail(undo.errorCode(),
                                                undo.errorMessage());

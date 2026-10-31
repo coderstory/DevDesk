@@ -311,6 +311,123 @@ core::Result<std::string> parseAddResponse(const std::string& httpBody) {
     return core::Result<std::string>::ok(std::move(id));
 }
 
+std::int64_t isoToEpochSec(const std::string& iso) {
+    // "2026-10-27T12:34:56Z"（telemem 固定 UTC 输出，POC 定案）；容忍空格分隔
+    // 与毫秒尾缀；空/非法/越界 → 0
+    if (iso.size() < 19 || iso[4] != '-' || iso[7] != '-' ||
+        (iso[10] != 'T' && iso[10] != ' ') || iso[13] != ':' ||
+        iso[16] != ':') {
+        return 0;
+    }
+    const auto num = [&iso](std::size_t at) -> int {
+        const int hi = iso[at] - '0';
+        const int lo = iso[at + 1] - '0';
+        if (hi < 0 || hi > 9 || lo < 0 || lo > 9) return -1;
+        return hi * 10 + lo;
+    };
+    const long long y = (iso[0] - '0') * 1000 + (iso[1] - '0') * 100 +
+                        (iso[2] - '0') * 10 + (iso[3] - '0');
+    const int mo = num(5), d = num(8), h = num(11), mi = num(14), s = num(17);
+    if (y < 1970 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 ||
+        mi < 0 || mi > 59 || s < 0 || s > 60) {
+        return 0;
+    }
+    // 公历日期 → 自 1970-01-01 天数（Hinnant days_from_civil，平台无关，
+    // 规避 timegm/_mkgmtime 平台差异）；引擎输出恒 UTC 无时区换算
+    const long long yy = y - (mo <= 2 ? 1 : 0);
+    const long long era = (yy >= 0 ? yy : yy - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(yy - era * 400);
+    const unsigned doy =
+        (153u * static_cast<unsigned>(mo + (mo > 2 ? -3 : 9)) + 2) / 5 +
+        static_cast<unsigned>(d) - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const long long days = era * 146097 + static_cast<long long>(doe) - 719468;
+    return days * 86400 + h * 3600 + mi * 60 + s;
+}
+
+core::Result<std::vector<MemoryListItem>> parseListResponse(
+    const std::string& httpBody) {
+    auto result = parseJsonRpcResult(httpBody);
+    if (result.isFail()) {
+        return core::Result<std::vector<MemoryListItem>>::fail(
+            result.errorCode(), result.errorMessage());
+    }
+    std::vector<MemoryListItem> items;
+    const JsonValue content = result.value().asObject().get("content");
+    if (!content.isArray() || content.size() == 0) {
+        return core::Result<std::vector<MemoryListItem>>::ok(std::move(items));
+    }
+    const auto inner =
+        platform::json::parse(content[0].asObject().get("text").asString());
+    if (inner.isFail() || !inner.value().isObject()) {
+        return core::Result<std::vector<MemoryListItem>>::ok(std::move(items));
+    }
+    const JsonValue results = inner.value().asObject().get("results");
+    if (!results.isArray()) {
+        return core::Result<std::vector<MemoryListItem>>::ok(std::move(items));
+    }
+    for (int i = 0; i < results.size(); ++i) {
+        if (!results[i].isObject()) continue;
+        const JsonValue id = results[i].asObject().get("id");
+        const JsonValue mem = results[i].asObject().get("memory");
+        if (!id.isString() || !mem.isString()) continue;
+        MemoryListItem item;
+        item.id = id.asString();
+        item.text = mem.asString();
+        const JsonValue upd = results[i].asObject().get("updated_at");
+        if (upd.isString()) item.updatedAtEpoch = isoToEpochSec(upd.asString());
+        items.push_back(std::move(item));
+    }
+    return core::Result<std::vector<MemoryListItem>>::ok(std::move(items));
+}
+
+core::Result<std::int64_t> parseGetMemoryResponse(const std::string& httpBody) {
+    auto result = parseJsonRpcResult(httpBody);
+    if (result.isFail()) {
+        return core::Result<std::int64_t>::fail(result.errorCode(),
+                                                result.errorMessage());
+    }
+    const JsonValue content = result.value().asObject().get("content");
+    if (!content.isArray() || content.size() == 0 || !content[0].isObject()) {
+        return core::Result<std::int64_t>::fail(core::ErrorCode::JsonParseError,
+                                                "get_memory 响应缺 content");
+    }
+    const std::string text = content[0].asObject().get("text").asString();
+    std::string updatedIso;
+    const auto inner = platform::json::parse(text);
+    if (inner.isOk() && inner.value().isObject()) {
+        const JsonValue upd = inner.value().asObject().get("updated_at");
+        if (upd.isString()) {
+            updatedIso = upd.asString();
+        } else {
+            // 兼容 results 包裹形态（与 get_memories 同形时）
+            const JsonValue results = inner.value().asObject().get("results");
+            if (results.isArray() && results.size() > 0 &&
+                results[0].isObject()) {
+                const JsonValue u2 = results[0].asObject().get("updated_at");
+                if (u2.isString()) updatedIso = u2.asString();
+            }
+        }
+    }
+    if (!updatedIso.empty()) {
+        const std::int64_t epoch = isoToEpochSec(updatedIso);
+        if (epoch <= 0) {
+            return core::Result<std::int64_t>::fail(
+                core::ErrorCode::JsonParseError,
+                "updated_at 无法解析: " + updatedIso);
+        }
+        return core::Result<std::int64_t>::ok(epoch);
+    }
+    // mem0 delete 后 get_memory 回 not_found（POC 定案）→ 明确错误码，
+    // 校验闭包据此分流（条目已删 ≠ 网络故障，方案卡 §二）
+    if (text.find("not_found") != std::string::npos) {
+        return core::Result<std::int64_t>::fail(core::ErrorCode::NotFound,
+                                                "条目不存在（not_found）");
+    }
+    return core::Result<std::int64_t>::fail(core::ErrorCode::JsonParseError,
+                                            "get_memory 响应缺 updated_at");
+}
+
 core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
     const std::string& query, int limit, int timeoutMs) {
     platform::json::JsonObject args;
@@ -324,8 +441,8 @@ core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
     return parseSearchResponse(resp.value());
 }
 
-// get_memories 清单解析：content[0].text = {"results":[{id, memory,…}]}
-//（2026-10-28 live 定案）。正文精确匹配取引擎侧条目 id（撤销链回填用）。
+// get_memories 清单（解析共用 parseListResponse，池31 提出）；正文精确匹配取
+// 引擎侧条目 id（撤销链回填用）。
 core::Result<std::string> findMemoryIdByText(const std::string& text) {
     platform::json::JsonObject args;
     args.set("limit", platform::json::makeInt(200));
@@ -334,30 +451,14 @@ core::Result<std::string> findMemoryIdByText(const std::string& text) {
         return core::Result<std::string>::fail(resp.errorCode(),
                                                resp.errorMessage());
     }
-    auto result = parseJsonRpcResult(resp.value());
-    if (result.isFail()) {
-        return core::Result<std::string>::fail(result.errorCode(),
-                                               result.errorMessage());
+    auto items = parseListResponse(resp.value());
+    if (items.isFail()) {
+        return core::Result<std::string>::fail(items.errorCode(),
+                                               items.errorMessage());
     }
-    const JsonValue content = result.value().asObject().get("content");
-    if (!content.isArray() || content.size() == 0) {
-        return core::Result<std::string>::ok(std::string());
-    }
-    const auto inner =
-        platform::json::parse(content[0].asObject().get("text").asString());
-    if (inner.isFail() || !inner.value().isObject()) {
-        return core::Result<std::string>::ok(std::string());
-    }
-    const JsonValue results = inner.value().asObject().get("results");
-    if (!results.isArray()) return core::Result<std::string>::ok(std::string());
-    for (int i = 0; i < results.size(); ++i) {
-        if (!results[i].isObject()) continue;
-        const JsonValue mem = results[i].asObject().get("memory");
-        if (mem.isString() && mem.asString() == text) {
-            const JsonValue id = results[i].asObject().get("id");
-            if (id.isString()) {
-                return core::Result<std::string>::ok(id.asString());
-            }
+    for (const MemoryListItem& item : items.value()) {
+        if (item.text == text) {
+            return core::Result<std::string>::ok(item.id);
         }
     }
     return core::Result<std::string>::ok(std::string());
@@ -427,6 +528,30 @@ core::Result<void> TelememHttpRetriever::setMemoryForgotten(
                                         parsed.errorMessage());
     }
     return core::Result<void>::ok();
+}
+
+core::Result<std::vector<MemoryListItem>> TelememHttpRetriever::listAll(
+    int limit, int timeoutMs) {
+    platform::json::JsonObject args;
+    args.set("limit", platform::json::makeInt(limit));
+    const auto resp = callTool("get_memories", std::move(args), timeoutMs);
+    if (resp.isFail()) {
+        return core::Result<std::vector<MemoryListItem>>::fail(
+            resp.errorCode(), resp.errorMessage());
+    }
+    return parseListResponse(resp.value());
+}
+
+core::Result<std::int64_t> TelememHttpRetriever::getMemoryVersion(
+    const std::string& memoryId) {
+    platform::json::JsonObject args;
+    args.set("memory_id", platform::json::makeString(memoryId));
+    const auto resp = callTool("get_memory", std::move(args), 10000);
+    if (resp.isFail()) {
+        return core::Result<std::int64_t>::fail(resp.errorCode(),
+                                                resp.errorMessage());
+    }
+    return parseGetMemoryResponse(resp.value());
 }
 
 }  // namespace module::memory::gateway

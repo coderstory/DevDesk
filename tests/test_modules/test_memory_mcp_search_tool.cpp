@@ -58,6 +58,14 @@ public:
     core::Result<void> setMemoryForgotten(const std::string&, bool) override {
         return core::Result<void>::ok();
     }
+    core::Result<std::vector<module::memory::gateway::MemoryListItem>> listAll(
+        int, int) override {
+        return core::Result<
+            std::vector<module::memory::gateway::MemoryListItem>>::ok({});
+    }
+    core::Result<std::int64_t> getMemoryVersion(const std::string&) override {
+        return core::Result<std::int64_t>::ok(0);
+    }
 };
 
 MemoryHit hitWithText(const std::string& text) {

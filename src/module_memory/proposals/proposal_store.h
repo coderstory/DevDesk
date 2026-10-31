@@ -63,6 +63,31 @@ using TargetVersionFn = std::function<core::Result<std::int64_t>(const std::stri
 using ProposalExecutor =
     std::function<core::Result<std::string>(const Proposal&)>;
 
+// 版本校验闭包（池32 缝闭环）：引擎真值 + 错误码分流——NotFound → ok(-1)
+//（条目已删：forget 正向卡自动过期；forget 撤销卡重录入前提是目标本就不在）；
+// 传输不可达 → ok(baseVersion)（放行给执行层，保持「引擎不在可重试」契约）；
+// 其余（工具错/形态错）如实 fail → accept 判 expired（宁过期不误删）。
+// lookup 由调用方注入：生产 = TelememHttpRetriever::getMemoryVersion，
+// 测试 = 假实现
+inline TargetVersionFn makeTargetVersionFn(
+    std::int64_t baseVersion,
+    const std::function<core::Result<std::int64_t>(const std::string&)>&
+        lookup) {
+    return [baseVersion, lookup](const std::string& targetId) {
+        auto v = lookup(targetId);
+        if (v.isOk()) return v;
+        if (v.errorCode() == core::ErrorCode::NotFound) {
+            return core::Result<std::int64_t>::ok(-1);
+        }
+        if (v.errorCode() == core::ErrorCode::NetworkUnreachable ||
+            v.errorCode() == core::ErrorCode::NetworkTimeout ||
+            v.errorCode() == core::ErrorCode::NetworkTlsFailed) {
+            return core::Result<std::int64_t>::ok(baseVersion);
+        }
+        return v;
+    };
+}
+
 class ProposalStore {
 public:
     static core::Result<ProposalStore> open(

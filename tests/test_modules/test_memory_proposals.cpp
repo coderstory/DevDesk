@@ -32,6 +32,9 @@ class FakeEngine : public IMemoryRetriever {
 public:
     std::vector<std::string> calls;
     bool fail = false;
+    // 池32 版本缝注入：versionErrorCode 非 Ok 时按其报错
+    std::int64_t version = 0;
+    core::ErrorCode versionErrorCode = core::ErrorCode::Ok;
     core::Result<std::vector<module::memory::gateway::MemoryHit>> search(
         const std::string&, int, int) override {
         return core::Result<std::vector<module::memory::gateway::MemoryHit>>::
@@ -54,6 +57,18 @@ public:
         calls.push_back(std::string("mark:") + memoryId + ":" +
                         (forgotten ? "1" : "0"));
         return core::Result<void>::ok();
+    }
+    core::Result<std::vector<module::memory::gateway::MemoryListItem>> listAll(
+        int, int) override {
+        return core::Result<
+            std::vector<module::memory::gateway::MemoryListItem>>::ok({});
+    }
+    core::Result<std::int64_t> getMemoryVersion(const std::string&) override {
+        if (versionErrorCode != core::ErrorCode::Ok) {
+            return core::Result<std::int64_t>::fail(versionErrorCode,
+                                                    "注入错误态");
+        }
+        return core::Result<std::int64_t>::ok(version);
     }
 };
 
@@ -253,6 +268,14 @@ REGISTER_TEST(memory_curator_propose_add_and_forget,
     auto created = Curator::proposeForget(store, memories, 60, now);
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_CHECK_EQ(created.value().size(), static_cast<std::size_t>(2));
+    // 池31：forget 卡 baseVersion = 扫描时条目 version（updated_at epoch 代理，
+    // 池32 前置校验输入）；卡序 = 清单迭代序（A: version 5，B: version 2）
+    auto cardA = store.get(created.value()[0]);
+    DOCTEST_REQUIRE(cardA.isOk());
+    DOCTEST_CHECK_EQ(cardA.value().baseVersion, static_cast<std::int64_t>(5));
+    auto cardB = store.get(created.value()[1]);
+    DOCTEST_REQUIRE(cardB.isOk());
+    DOCTEST_CHECK_EQ(cardB.value().baseVersion, static_cast<std::int64_t>(2));
     // 二次扫描不重复建卡
     auto again = Curator::proposeForget(store, memories, 60, now);
     DOCTEST_REQUIRE(again.isOk());
@@ -437,3 +460,91 @@ REGISTER_TEST(memory_proposal_live_id_and_forget_undo_readd,
         std::string("mark:dd0f76f4-d511-420b-b1ba-6bbc90a05815:1"));
     return true;
 })
+
+REGISTER_TEST(memory_proposal_target_version_fn_branches,
+              "memory: 池32 版本校验闭包——真值如实/NotFound→-1/传输不可达放行/其余如实fail；分流集成（目标被改→expired，遗忘撤销重录入→放行）", {
+        const std::int64_t kBase = 100;
+        // 真值如实
+        auto truth = makeTargetVersionFn(kBase, [](const std::string&) {
+            return core::Result<std::int64_t>::ok(7);
+        });
+        auto t = truth("t");
+        DOCTEST_REQUIRE(t.isOk());
+        DOCTEST_CHECK_EQ(t.value(), static_cast<std::int64_t>(7));
+        // NotFound → -1（条目已删：正向卡自动过期，撤销重录入卡放行）
+        auto gone = makeTargetVersionFn(kBase, [](const std::string&) {
+            return core::Result<std::int64_t>::fail(core::ErrorCode::NotFound,
+                                                    "not_found");
+        });
+        auto g = gone("t");
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value(), static_cast<std::int64_t>(-1));
+        // 传输不可达三码 → 放行（交给执行层，保持「引擎不在可重试」契约）
+        for (core::ErrorCode code : {core::ErrorCode::NetworkUnreachable,
+                                     core::ErrorCode::NetworkTimeout,
+                                     core::ErrorCode::NetworkTlsFailed}) {
+            auto down = makeTargetVersionFn(
+                kBase, [code](const std::string&) {
+                    return core::Result<std::int64_t>::fail(code, "引擎不在");
+                });
+            auto d = down("t");
+            DOCTEST_REQUIRE(d.isOk());
+            DOCTEST_CHECK_EQ(d.value(), kBase);
+        }
+        // 其余错误（工具级/形态错）→ 如实 fail → accept 判 expired（宁过期不误删）
+        auto toolErr = makeTargetVersionFn(kBase, [](const std::string&) {
+            return core::Result<std::int64_t>::fail(core::ErrorCode::HttpError,
+                                                    "isError");
+        });
+        DOCTEST_CHECK(toolErr("t").isFail());
+
+        // 集成①：目标被改（真值 4 ≠ baseVersion 3）→ accept 转 expired
+        auto opened = ProposalStore::open(tmpDb("tvfn"));
+        DOCTEST_REQUIRE(opened.isOk());
+        auto store = std::move(opened.value());
+        const std::int64_t now = 1769472000;
+        auto forget = store.create("forget", {std::string("7")}, "", "",
+                                   "devdesk", {}, 0.8, "decay",
+                                   "assistant_derived", now, 3);
+        DOCTEST_REQUIRE(forget.isOk());
+        FakeEngine engine;
+        auto changed = store.accept(
+            forget.value().id, now + 5,
+            makeTargetVersionFn(3, [](const std::string&) {
+                return core::Result<std::int64_t>::ok(4);
+            }),
+            engineExecutor(engine));
+        DOCTEST_REQUIRE(changed.isOk());
+        DOCTEST_CHECK_EQ(changed.value().status, std::string("expired"));
+        DOCTEST_CHECK(engine.calls.empty());
+
+        // 集成②：遗忘撤销重录入——目标已删（NotFound→-1）建卡与执行全链放行
+        auto forget2 = store.create(
+            "forget", {std::string("9")}, "", "", "devdesk",
+            {ProposalEvidence{"", 0, "被遗忘的原文", now}}, 0.8, "decay",
+            "assistant_derived", now, 3);
+        DOCTEST_REQUIRE(forget2.isOk());
+        engine.version = 3;
+        auto lookupViaEngine = [&engine](const std::string&) {
+            return engine.getMemoryVersion("9");
+        };
+        auto okForget = store.accept(
+            forget2.value().id, now + 5,
+            makeTargetVersionFn(3, lookupViaEngine), engineExecutor(engine));
+        DOCTEST_REQUIRE(okForget.isOk());
+        DOCTEST_CHECK_EQ(okForget.value().status, std::string("accepted"));
+        DOCTEST_CHECK_EQ(engine.calls.back(), std::string("mark:9:1"));
+        // 条目已删 → NotFound；undo 卡 baseVersion 记 -1，接受放行重录入
+        engine.versionErrorCode = core::ErrorCode::NotFound;
+        auto undo = store.createUndo(forget2.value().id, now + 10,
+                                     makeTargetVersionFn(-1, lookupViaEngine));
+        DOCTEST_REQUIRE(undo.isOk());
+        DOCTEST_CHECK_EQ(undo.value().baseVersion, static_cast<std::int64_t>(-1));
+        auto undone = store.accept(
+            undo.value().id, now + 15, makeTargetVersionFn(-1, lookupViaEngine),
+            engineExecutor(engine));
+        DOCTEST_REQUIRE(undone.isOk());
+        DOCTEST_CHECK_EQ(undone.value().status, std::string("accepted"));
+        DOCTEST_CHECK_EQ(engine.calls.back(), std::string("add:被遗忘的原文"));
+        return true;
+    })
