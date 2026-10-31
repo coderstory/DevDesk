@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevDesk · 池55 发布列表页 demo（仅视觉校准，不是实现蓝图）</title>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  对照设计文档：docs/design/2026-11-01-池55-发布列表页-UI设计.md
+  设计语言继承：docs/design/2026-10-31-池53-发布详情双模式-UI设计.md（token/组件逐值继承）
+  覆盖：五状态行卡（草稿/待执行/执行中/已完成/已作废）× 模式筛选 Tab（全部/发布中/准备中/已归档）
+        × 空态（全部空/筛选空）× 首屏骨架 × 追加失败 × 果冻按压。
+  可拖窗缩放验证自适应（最小可用档 1000×640：下一步指引溢出省略、环境 chips 收「+N」、
+  <1100px 进度条隐藏仅留计数、无横向滚动、外壳不滚内容区滚）。
+  整行点击进详情为导航契约，demo 不模拟跳转；「下一步 · {步名}」为装配层新增字段
+  （nextStepLabel，见设计文档 §5.4），demo 用静态样例值。
+-->
+<style>
+/* ================= tokens（逐值继承池 53 文档 §3） ================= */
+:root{
+  --primary:#36D399; --primary-hover:#2EC48F; --primary-active:#23B07F;
+  --primary-soft:#E6FBF2; --primary-text:#157E4E;
+  --danger:#EF4444; --danger-text:#B91C1C; --danger-soft:rgba(239,68,68,.08);
+  --link:#576B95;
+  --info:#576B95; --info-soft:rgba(87,107,149,.12);
+  --warn-text:#A16207; --warn-soft:#FDF2E3;
+  --page:#F7F7F7; --card:#FFFFFF;
+  --border:#E5E5E5; --border-2:#EDEDED;
+  --text-1:#1A1A1A; --text-2:#666666; --text-3:#999999;
+  --selected:#E5E5E5; --btn2:#F2F2F2;
+  --r:6px; --rc:16px;
+  --ease:cubic-bezier(.215,.61,.355,1);
+  --spring:cubic-bezier(.34,1.56,.64,1);
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei UI",sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:var(--sans);color:var(--text-1);background:var(--page);
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+button{border:none;background:none;cursor:pointer;padding:0;font:inherit;color:inherit}
+h1,p{margin:0}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* ================= demo 操控台（非页面设计的一部分） ================= */
+.demo-bar{height:48px;background:#26292E;color:#B7BDC6;display:flex;align-items:center;
+  gap:6px;padding:0 14px;font-size:12px;flex:0 0 auto;overflow-x:auto}
+.demo-bar b{color:#fff;font-weight:600;margin-right:8px;white-space:nowrap}
+.scn{height:28px;padding:0 12px;border-radius:var(--r);color:#B7BDC6;font-size:12px;
+  white-space:nowrap;transition:background .12s var(--ease)}
+.scn:hover{background:#33373D}
+.scn.on{background:var(--primary);color:#fff}
+.demo-bar .hint{margin-left:auto;white-space:nowrap;color:#7A8089}
+
+/* ================= app 外壳：页头 56 + Tab 行 44 连体白壳，内容区灰底内滚 ================= */
+.app{height:calc(100vh - 48px);display:flex;flex-direction:column;min-width:640px}
+.hdr{flex:0 0 56px;background:var(--card);display:flex;align-items:center;padding:0 12px;min-width:0}
+.hdr .title{font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hdr .grow{flex:1;min-width:0}
+.btn{height:36px;padding:0 16px;border-radius:var(--r);font-size:14px;font-weight:500;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+  transition:background 120ms var(--ease),transform 120ms var(--spring);flex:0 0 auto}
+.btn:active{transform:scale(.97);transition-duration:100ms}
+.btn.primary{background:var(--primary);color:#fff}
+.btn.primary:hover{background:var(--primary-hover)}
+.btn.primary:active{background:var(--primary-active)}
+.btn.secondary{background:var(--btn2);color:var(--text-1)}
+.btn.secondary:hover{background:var(--selected)}
+
+/* Tab 行（系统家族规范：激活深灰字 + 底部 2px 绿下划线；禁实心按钮当 Tab） */
+.tabs{flex:0 0 44px;background:var(--card);border-bottom:1px solid var(--border);
+  display:flex;align-items:stretch;padding:0 12px;gap:24px;min-width:0}
+.tab{position:relative;display:flex;align-items:center;padding:0 4px;font-size:14px;
+  font-weight:400;color:var(--text-2);white-space:nowrap;
+  transition:color 120ms var(--ease)}
+.tab:hover{color:var(--text-1)}
+.tab::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;border-radius:1px;
+  background:var(--primary);opacity:0;transform:scaleX(.6);transform-origin:center;
+  transition:opacity 150ms var(--ease),transform 150ms var(--ease)}
+.tab.on{color:var(--text-1);font-weight:600}
+.tab.on::after{opacity:1;transform:scaleX(1)}
+.tabs .count{margin-left:auto;align-self:center;font-size:12px;color:var(--text-3);white-space:nowrap}
+
+/* 内容区：浅灰底 + 内容列 1040 居中，外壳不滚 */
+.body{flex:1;min-height:0;overflow-y:auto;padding:12px}
+.col{max-width:1040px;margin:0 auto}
+
+/* ================= 外层列表白卡（16px 大卡特例档，1px 边 + 极淡阴影） ================= */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--rc);
+  box-shadow:0 1px 3px rgba(0,0,0,.04);overflow:hidden}
+
+/* ================= 列表行：64px 双行（主行 24 + 副行 20 + 内边距 10×2） ================= */
+.row{position:relative;display:block;width:100%;text-align:left;cursor:pointer;
+  padding:10px 16px;min-height:64px}
+.row + .row{border-top:1px solid var(--border-2)}   /* 行间 1px 二级线 */
+.row:hover{background:var(--border-2)}               /* 120ms ease-out */
+.row:active{background:var(--selected)}              /* 按压加深，不缩放（容器内全宽行） */
+.r-main{display:flex;align-items:center;height:24px;min-width:0}
+.r-date{font-size:17px;font-weight:600;color:var(--text-1);white-space:nowrap;flex:0 0 auto;min-width:72px}
+.r-wd{font-size:12px;font-weight:600;margin-left:8px;white-space:nowrap;flex:0 0 auto}
+.r-wd.regular{color:var(--primary-text)}             /* 常规发布日（周二/周四）加深绿字 */
+.r-wd.plain{color:var(--text-3)}
+.r-next{flex:1;min-width:0;margin-left:16px;font-size:14px;color:var(--text-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip{height:22px;border-radius:999px;padding:0 10px;display:inline-flex;align-items:center;
+  font-size:12px;font-weight:600;flex:0 0 auto;white-space:nowrap;margin-left:12px}
+.chip.draft{background:var(--btn2);color:var(--text-2)}
+.chip.pending{background:var(--info-soft);color:var(--info)}
+.chip.running{background:var(--warn-soft);color:var(--warn-text)}
+.chip.done{background:var(--primary-soft);color:var(--primary-text)}
+.chip.voided{background:var(--btn2);color:var(--text-3)}
+.r-sub{display:flex;align-items:center;height:20px;margin-top:4px;min-width:0}
+.envs{display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow:hidden}
+.env{height:20px;border-radius:999px;padding:0 8px;background:var(--btn2);color:var(--text-2);
+  font-size:11px;line-height:20px;white-space:nowrap;flex:0 0 auto}
+.env.more{color:var(--text-3)}
+.prog{display:flex;align-items:center;gap:8px;margin-left:16px;flex:0 0 auto}
+.prog .bar{width:80px;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
+.prog .fill{display:block;height:100%;background:var(--primary);border-radius:2px;transition:width 200ms var(--ease)}
+.prog .num{font-size:12px;color:var(--text-2);white-space:nowrap;min-width:34px;text-align:right}
+/* Running：左缘 3px 绿竖条（继承池 53 当前步竖条几何） */
+.row.running::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--primary)}
+/* Voided：整行内容灰化（背景保持白） */
+.row.voided .r-main,.row.voided .r-sub{opacity:.7}
+@media (max-width:1099px){ .prog .bar{display:none} .tabs .count{display:none} }  /* 降级链：<1100 仅留计数 */
+
+/* ================= 空态 / 加载 / 失败 ================= */
+.empty{padding:56px 16px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.empty .t{font-size:14px;color:var(--text-3)}
+.empty .btn{margin-top:8px}
+.foot{height:40px;display:flex;align-items:center;justify-content:center;gap:12px;
+  border-top:1px solid var(--border-2)}
+.foot .loading{font-size:12px;color:var(--text-3)}
+.foot .err{font-size:12px;color:var(--danger-text)}
+.tbtn{font-size:13px;color:var(--primary-text);padding:4px 10px;border-radius:var(--r);
+  transition:background 120ms var(--ease),transform 120ms var(--spring)}
+.tbtn:hover{background:rgba(54,211,153,.14)}
+.tbtn:active{transform:scale(.97);transition-duration:100ms}
+/* 首屏骨架：64px 灰条行 ×3，无文字 */
+.sk{display:block;width:100%;padding:10px 16px;min-height:64px}
+.sk + .sk{border-top:1px solid var(--border-2)}
+.sk .b1{display:block;height:14px;width:200px;border-radius:4px;background:var(--border-2)}
+.sk .b2{display:block;height:12px;width:120px;border-radius:4px;background:var(--border-2);margin-top:9px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+
+<div class="demo-bar" id="demoBar">
+  <b>池55 列表页</b>
+  <button class="scn on" data-scn="all">全部 · 常态</button>
+  <button class="scn" data-scn="tabRunning">发布中 Tab</button>
+  <button class="scn" data-scn="tabPrep">准备中 Tab</button>
+  <button class="scn" data-scn="tabArch">已归档 Tab</button>
+  <button class="scn" data-scn="emptyAll">空态 · 全部</button>
+  <button class="scn" data-scn="emptyFilter">空态 · 筛选空</button>
+  <button class="scn" data-scn="loading">首屏骨架</button>
+  <button class="scn" data-scn="loadFail">追加失败</button>
+  <span class="hint">拖窗缩放验证：最小 1000×640 无横向滚动；&lt;1100px 进度条隐藏仅留计数</span>
+</div>
+
+<div class="app">
+  <header class="hdr">
+    <h1 class="title">上线任务</h1>
+    <span class="grow"></span>
+    <button class="btn primary" id="btnNew">新建任务</button>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab on" data-tab="all">全部</button>
+    <button class="tab" data-tab="running">发布中</button>
+    <button class="tab" data-tab="prep">准备中</button>
+    <button class="tab" data-tab="arch">已归档</button>
+    <span class="count" id="tabCount"></span>
+  </nav>
+
+  <main class="body">
+    <div class="col" id="listCol"></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+/* 数据样例：字段与设计文档 §5.1 对齐（nextStepLabel 为装配层增项，静态样例值） */
+var TASKS = [
+  {date:"11/3",  wd:"周二", regular:true,  status:"draft",   next:"",           envs:["生产环境","灰度环境"],          done:0,  total:0,  showProg:false},
+  {date:"10/31", wd:"周五", regular:false, status:"running", next:"下一步 · DB 脚本",  envs:["生产环境","灰度环境"],          done:8,  total:12, showProg:true},
+  {date:"10/31", wd:"周五", regular:false, status:"pending", next:"下一步 · 合并分支", envs:["生产环境"],                      done:5,  total:12, showProg:true},
+  {date:"10/29", wd:"周四", regular:true,  status:"done",    next:"",           envs:["生产环境","灰度环境"],          done:12, total:12, showProg:true},
+  {date:"10/27", wd:"周二", regular:true,  status:"voided",  next:"",           envs:["生产环境"],                      done:3,  total:12, showProg:true},
+  {date:"10/22", wd:"周四", regular:true,  status:"done",    next:"",           envs:["生产环境","灰度环境","预发环境"], done:30, total:30, showProg:true}
+];
+var CHIP_TEXT = {draft:"草稿", pending:"待执行", running:"执行中", done:"已完成", voided:"已作废"};
+var TAB_OF = {draft:"prep", pending:"running", running:"running", done:"arch", voided:"arch"};
+var EMPTY_TEXT = {all:"还没有上线任务", running:"暂无发布中的任务", prep:"暂无准备中的任务", arch:"暂无已归档的任务"};
+var COUNT_PREFIX = {all:"共 ", running:"发布中 · ", prep:"准备中 · ", arch:"已归档 · "};
+
+var state = {scn:"all", tab:"all"};
+
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+
+function visibleTasks(){
+  if (state.scn === "emptyAll" || state.scn === "emptyFilter") return [];
+  if (state.scn === "loading") return [];
+  if (state.tab === "all") return TASKS;
+  return TASKS.filter(function(t){return TAB_OF[t.status] === state.tab;});
+}
+
+function taskRow(t){
+  var cls = "row" + (t.status === "running" ? " running" : "") + (t.status === "voided" ? " voided" : "");
+  var html = '<button class="' + cls + '" type="button">';
+  html += '<span class="r-main">';
+  html += '<span class="r-date">' + esc(t.date) + '</span>';
+  html += '<span class="r-wd ' + (t.regular ? "regular" : "plain") + '">' + esc(t.wd) + '</span>';
+  if (t.next) html += '<span class="r-next">' + esc(t.next) + '</span>';
+  else html += '<span class="r-next"></span>';
+  html += '<span class="chip ' + t.status + '">' + CHIP_TEXT[t.status] + '</span>';
+  html += '</span><span class="r-sub">';
+  html += '<span class="envs">';
+  var MAXV = 2;  /* demo 内模拟窄卡收纳：超出收 +N（实现按可用宽度实时算，语义沿用现状 +N） */
+  var shown = t.envs.slice(0, MAXV), rest = t.envs.length - shown.length;
+  shown.forEach(function(e){ html += '<span class="env">' + esc(e) + '</span>'; });
+  if (rest > 0) html += '<span class="env more">+' + rest + '</span>';
+  html += '</span>';
+  if (t.showProg) {
+    var pct = t.total > 0 ? Math.round(t.done / t.total * 100) : 0;
+    html += '<span class="prog"><span class="bar"><span class="fill" style="width:' + pct + '%"></span></span>';
+    html += '<span class="num">' + t.done + "/" + t.total + '</span></span>';
+  }
+  html += '</span></button>';
+  return html;
+}
+
+function render(){
+  var col = document.getElementById("listCol");
+  var html = "";
+
+  if (state.scn === "loading") {
+    html = '<div class="card">';
+    for (var i = 0; i < 3; i++) html += '<span class="sk"><span class="b1"></span><span class="b2"></span></span>';
+    html += '</div>';
+    col.innerHTML = html; setCount(0); syncTabs(); return;
+  }
+
+  var tasks = visibleTasks();
+  if (tasks.length === 0 && state.scn !== "loadFail") {
+    var filtered = (state.tab !== "all") || state.scn === "emptyFilter";
+    html = '<div class="card"><div class="empty">';
+    html += '<p class="t">' + EMPTY_TEXT[state.scn === "emptyFilter" ? state.tab : state.tab] + '</p>';
+    if (filtered) html += '<button class="tbtn" id="btnSeeAll">查看全部</button>';
+    else          html += '<button class="btn secondary" id="btnEmptyNew">新建任务</button>';
+    html += '</div></div>';
+  } else {
+    html = '<div class="card">';
+    tasks.forEach(function(t){ html += taskRow(t); });
+    if (state.scn === "loadFail") {
+      html += '<div class="foot"><span class="err">加载失败</span><button class="tbtn">重试</button></div>';
+    }
+    html += '</div>';
+  }
+  col.innerHTML = html;
+
+  var see = document.getElementById("btnSeeAll");
+  if (see) see.addEventListener("click", function(){ state.tab = "all"; state.scn = "all"; render(); syncScnBar(); });
+  var en = document.getElementById("btnEmptyNew");
+  if (en) en.addEventListener("click", function(){});
+  setCount(tasks.length); syncTabs();
+}
+
+function setCount(n){
+  document.getElementById("tabCount").textContent = n > 0 ? COUNT_PREFIX[state.tab] + n + " 个任务" : "";
+}
+function syncTabs(){
+  document.querySelectorAll(".tab").forEach(function(el){
+    el.classList.toggle("on", el.getAttribute("data-tab") === state.tab);
+  });
+}
+function syncScnBar(){
+  document.querySelectorAll(".scn").forEach(function(el){
+    el.classList.toggle("on", el.getAttribute("data-scn") === state.scn);
+  });
+}
+
+document.getElementById("tabs").addEventListener("click", function(ev){
+  var t = ev.target.closest(".tab"); if (!t) return;
+  state.tab = t.getAttribute("data-tab");
+  if (state.scn === "emptyAll") state.scn = "all";   /* 空态演示切 Tab 回常态语义 */
+  render(); syncScnBar();
+});
+document.getElementById("demoBar").addEventListener("click", function(ev){
+  var b = ev.target.closest(".scn"); if (!b) return;
+  state.scn = b.getAttribute("data-scn");
+  if (state.scn === "tabRunning") { state.tab = "running"; state.scn = "all"; }
+  if (state.scn === "tabPrep")    { state.tab = "prep";    state.scn = "all"; }
+  if (state.scn === "tabArch")    { state.tab = "arch";    state.scn = "all"; }
+  if (state.scn === "emptyFilter") state.tab = "prep";
+  render(); syncScnBar();
+});
+document.getElementById("btnNew").addEventListener("click", function(){});
+
+render();
+</script>
+</body>
+</html>
