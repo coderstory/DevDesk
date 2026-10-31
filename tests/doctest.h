@@ -77,13 +77,27 @@ using TestFunc = bool (*)();
 
 namespace test_registry {
 
-inline std::vector<std::pair<std::string, TestFunc>>& registry() {
-    static std::vector<std::pair<std::string, TestFunc>> r;
+// 注册表条目：名字（= REGISTER_TEST 第二参描述）+ 注册点源文件 + 源码可见用例名
+// （= 第一参，字符串化）+ 用例函数。file/id 存 __FILE__ / 字符串字面量指针（进程
+// 生命周期有效，零拷贝）。file 供 runner 的 file: 过滤词按源文件命中——描述不含
+// 域关键词的用例（md_block_model_* 等）靠文件圈定，fast lane 才不漏跑；id 供裸词
+// 过滤词按源码可见名命中——描述串与 unique_name 几乎完全脱节（全仓 2049 条仅 2 条
+// 自见），不纳入则测试文件注释承诺的「--filter 前缀定向」全部 0 命中。
+struct TestEntry {
+    std::string name;
+    const char* file;
+    const char* id;
+    TestFunc func;
+};
+
+inline std::vector<TestEntry>& registry() {
+    static std::vector<TestEntry> r;
     return r;
 }
 
-inline void register_test(const std::string& name, TestFunc f) {
-    registry().emplace_back(name, f);
+inline void register_test(const std::string& name, const char* file,
+                          const char* id, TestFunc f) {
+    registry().push_back(TestEntry{name, file, id, f});
 }
 
 // 最近一次断言失败的现场（file:line + 表达式 [+ 消息]）。cerr 是主通道，这里
@@ -222,7 +236,7 @@ inline std::filesystem::path repoRoot() {
         static bool unique_name() __VA_ARGS__ \
         struct UniqueRegistrar_##unique_name { \
             UniqueRegistrar_##unique_name() { \
-                test_registry::register_test(description, unique_name); \
+                test_registry::register_test(description, __FILE__, #unique_name, unique_name); \
             } \
         }; \
         static UniqueRegistrar_##unique_name registrar_instance_##unique_name; \

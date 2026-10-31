@@ -11,8 +11,12 @@
 #   --install     仅 macOS：构建/测试之后把本次产物重组进 .app 并**覆盖安装**到
 #                 /Applications/DevDesk.app，装完硬断言 sha256 与构建产物一致（见下方
 #                 「安装（--install）」段）。非 macOS 上给这个开关 = 硬失败，不静默忽略。
-#   --filter X    只跑描述含 X 的测试用例（透传给 devdesk_tests；注意中文关键词经
-#                 Git Bash 传参可能有编码问题，建议用 ASCII 词）
+#   --filter X    只跑命中的测试用例（透传给 devdesk_tests）。词形两种：
+#                 ① 裸词 = 用例名子串（旧语义不变）；② file:子串 = 按注册点源文件
+#                 匹配（如 file:test_md_ 圈定 test_md_*.cpp 全部用例，用例名不含
+#                 域关键词的也不漏）。多词逗号分隔 = OR（--filter file:test_md_,md_git）。
+#                 0 命中仍按失败处理（退出码 2）。注意中文关键词经 Git Bash 传参
+#                 可能有编码问题，建议用 ASCII 词
 #   --verify-app-str S   仅 --install 后生效（macOS）：装完对已装二进制
 #                 `LC_ALL=C grep -a -c S`，0 命中 = 装的包不含该特征（= 旧包 / 构建未含
 #                 本次修复）→ exit 1。sha 断言只证明「装的是本次产物」；本参数补上
@@ -527,6 +531,7 @@ if [ "$RUN_TEST" = "1" ]; then
   if [ "$TEST_RC" -ne 0 ]; then
     if [ "$TEST_RC" -eq 2 ]; then
       echo "❌ 过滤词未命中任何用例（0 条用例 ≠ 全绿；过滤词: ${FILTER:-<空>}）"
+      echo "   可按源文件过滤：--filter file:<文件名子串>（如 file:test_md_；多词逗号 OR）"
     else
       echo "❌ 测试有失败（退出码 $TEST_RC；上方为 FAIL 摘要；要看完整输出跑: ${TEST_BIN}）"
     fi

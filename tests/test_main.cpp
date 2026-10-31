@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <string_view>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -208,6 +209,99 @@ struct CaseResult {
     std::string note;  // 断言失败现场兜底副本（doctest.h lastFailNote），防 cerr 丢失
 };
 
+// ---- 过滤词（fast lane 过滤可信化）----
+// 旧语义 = 单个子串只匹配用例名：名字不含域关键词的用例全漏（filter=markdown 实测
+// 114/257）。新语义 = 多词 OR；"file:" 前缀按注册点源文件匹配，名字子串照旧。
+struct FilterTerm {
+    std::string raw;       // 原词（含 file: 前缀，展示用）
+    std::string text;      // 匹配串（剥前缀后）
+    bool byFile = false;   // true = file: 源文件匹配
+    int hits = 0;          // 全量扫描中该词命中数（诊断哪个词没配好）
+};
+
+// file: 词的源文件归一化：反斜杠先统一成正斜杠（绕开 fs::path 在 POSIX 上不认 '\\'
+// 的平台差异——Windows 编译单元的 __FILE__ 可能带反斜杠），再做词法正规化（ninja
+// 可能给相对形态 ..\tests\...，见 doctest.h repoRoot 注释）。归一后绝对/相对两平台
+// 都含 tests/test_core/ 这类可稳定子串匹配的形态。
+std::string normalizeSourceFile(const char* raw) {
+    std::string s = raw ? raw : "";
+    for (char& c : s) {
+        if (c == '\\') c = '/';
+    }
+    std::error_code ec;
+    return std::filesystem::path(s).lexically_normal().generic_string();
+}
+
+// 过滤词来源：每个非 --log 位置参数（旧「最后一个 arg 获胜」废弃——未文档化且无
+// 调用方）；--filter=X 形态剥前缀（脚本会原样透传这种形态，曾 0 命中踩坑）；词内
+// 逗号拆分成多个词。
+std::vector<FilterTerm> parseFilterTerms(int argc, char** argv) {
+    std::vector<FilterTerm> terms;
+    const std::string kFlagPrefix = "--filter=";
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--log") continue;
+        if (arg.rfind(kFlagPrefix, 0) == 0) arg = arg.substr(kFlagPrefix.size());
+        if (arg.empty()) continue;
+        size_t start = 0;
+        while (start <= arg.size()) {
+            const size_t comma = arg.find(',', start);
+            const std::string piece = arg.substr(
+                start, comma == std::string::npos ? std::string::npos : comma - start);
+            if (!piece.empty()) {
+                FilterTerm t;
+                t.raw = piece;
+                if (piece.rfind("file:", 0) == 0) {
+                    t.byFile = true;
+                    t.text = piece.substr(5);
+                } else {
+                    t.text = piece;
+                }
+                terms.push_back(std::move(t));
+            }
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+    }
+    return terms;
+}
+
+// 单用例是否命中任一词（OR）。裸词匹配域 = 描述串 **或** 源码可见用例名（id）——
+// 两者几乎完全脱节（2049 条仅 2 条自见），只匹配描述串会让注释承诺的
+// 「--filter <unique_name 前缀>」全部 0 命中。对每个词都计数不短路——词命中数是
+// 「词配没配好」的诊断面：Filter 行里哪个词 (0) 一眼可见。
+bool matchesAnyTerm(const test_registry::TestEntry& entry,
+                    const std::string& normalizedFile,
+                    std::vector<FilterTerm>& terms) {
+    bool hit = false;
+    for (auto& term : terms) {
+        bool thisHit = false;
+        if (term.byFile) {
+            thisHit = normalizedFile.find(term.text) != std::string::npos;
+        } else {
+            thisHit = entry.name.find(term.text) != std::string::npos ||
+                      (entry.id != nullptr &&
+                       std::string_view(entry.id).find(term.text) !=
+                           std::string_view::npos);
+        }
+        if (thisHit) {
+            ++term.hits;
+            hit = true;
+        }
+    }
+    return hit;
+}
+
+// 词列表还原成逗号串（[ERROR] 行展示用）
+std::string joinFilterTerms(const std::vector<FilterTerm>& terms) {
+    std::string out;
+    for (size_t i = 0; i < terms.size(); ++i) {
+        if (i > 0) out += ",";
+        out += terms[i].raw;
+    }
+    return out;
+}
+
 } // namespace
 
 // 用法：devdesk_tests.exe [子串] [--log]
@@ -219,7 +313,6 @@ int main(int argc, char** argv) {
     std::signal(SIGSEGV, segvHandler);
     std::signal(SIGABRT, segvHandler);
     int passed = 0, failed = 0, skipped = 0, total = 0;
-    std::string filter;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i] ? argv[i] : "";
         if (arg == "--log") {
@@ -227,14 +320,19 @@ int main(int argc, char** argv) {
             // 必须同时抬基线：否则 resetCaseGlobals 会在每个用例前把级别拉回 Info
             g_logLevelBaseline = core::log::Level::Debug;
             core::log::addConsoleOutput();
-        } else if (!arg.empty()) {
-            filter = arg;
         }
     }
+    std::vector<FilterTerm> terms = parseFilterTerms(argc, argv);
+    const bool anyFileTerm =
+        std::any_of(terms.begin(), terms.end(),
+                    [](const FilterTerm& t) { return t.byFile; });
     std::vector<CaseResult> results;
     results.reserve(1024);
     for (const auto& t : test_registry::registry()) {
-        if (!filter.empty() && t.first.find(filter) == std::string::npos) {
+        if (!terms.empty() &&
+            !matchesAnyTerm(t,
+                            anyFileTerm ? normalizeSourceFile(t.file) : std::string(),
+                            terms)) {
             continue;
         }
         ++total;
@@ -246,8 +344,8 @@ int main(int argc, char** argv) {
         try {
             resetCaseGlobals();
             test_registry::lastFailNote().clear();
-            g_currentTest = t.first.c_str();
-            ok = t.second();
+            g_currentTest = t.name.c_str();
+            ok = t.func();
         } catch (const std::exception& e) {
             ok = false;
             errMsg = e.what();
@@ -264,13 +362,13 @@ int main(int argc, char** argv) {
         // 结果先收集不打印：std::endl 的强 flush 是 800+ 例全量 ~3min 的主瓶颈，
         // 推到循环结束后一次性批量输出。
         if (ok && skippedCase) {
-            results.push_back({t.first, "SKIP", ms, ""});
+            results.push_back({t.name, "SKIP", ms, ""});
             ++skipped;
         } else if (ok) {
-            results.push_back({t.first, "PASS", ms, ""});
+            results.push_back({t.name, "PASS", ms, ""});
             ++passed;
         } else {
-            results.push_back({t.first, "FAIL", ms, errMsg,
+            results.push_back({t.name, "FAIL", ms, errMsg,
                                test_registry::lastFailNote()});
             ++failed;
         }
@@ -308,6 +406,16 @@ int main(int argc, char** argv) {
     std::cout << "Passed: " << passed << std::endl;
     std::cout << "Failed: " << failed << std::endl;
     std::cout << "Skipped: " << skipped << std::endl;
+    // 过滤词命中可见化：每个词的完整命中数 + 并集总数。「以为跑了其实没跑」
+    // （fast lane 漏跑）从机制上可见——哪个词 (0) 一眼可见。无过滤词不打。
+    if (!terms.empty()) {
+        std::cout << "Filter: ";
+        for (size_t i = 0; i < terms.size(); ++i) {
+            if (i > 0) std::cout << ",";
+            std::cout << terms[i].raw << "(" << terms[i].hits << ")";
+        }
+        std::cout << " -> " << total << " 例\n";
+    }
     // Top-10 慢测试：方便后续单点优化 I/O 大户
     auto slowest = results;
     std::stable_sort(slowest.begin(), slowest.end(),
@@ -327,8 +435,8 @@ int main(int argc, char** argv) {
     // 「未运行测试 = 未完成」纪律。
     if (total == 0) {
         std::cout << "[ERROR] 未命中任何用例"
-                  << (filter.empty() ? std::string()
-                                     : "（过滤词 \"" + filter + "\"）")
+                  << (terms.empty() ? std::string()
+                                    : "（过滤词 \"" + joinFilterTerms(terms) + "\"）")
                   << "—— 视为失败（退出码 2），防上层脚本误判「全绿」"
                   << std::endl;
         return 2;
