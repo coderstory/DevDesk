@@ -92,6 +92,9 @@ evidence/
 # pool MCP 本地 venv（tools/pool_mcp.py 运行环境，装机脚本外置）
 tools/.pool-mcp-venv/
 
+# 老板私人备份（2026-10-31 防误提交；文件原地保留，移出与否老板定）
+群信息备份.md
+
 # pool.db 出 git（裁决 ④-2）：双机各写本地 db，git 侧只留 JSON 快照
 docs/pool/pool.db
 docs/pool/pool.db-journal
