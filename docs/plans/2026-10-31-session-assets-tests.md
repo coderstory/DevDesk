@@ -12,6 +12,15 @@
 | F-4 | hook 接线后不阻塞退出 | 接线完成(async:true,timeout 30);**真触发待下一次 Claude Code 会话自然结束,当前未验证** | **未验证(待自然回归)** | `~/.claude/settings.json` SessionEnd 键;备份 `.bak-sa10-0322` |
 | F-5 | 软删纪律 | 读路径 `deleted=0` 过滤已在 search SQL;段1 无删除入口(留给段2) | **部分(设计内)** | 代码 cmd_search |
 
+## 独立审计(2026-10-31,general-purpose 子代理,938K tokens/33 工具调用)
+
+- 总判定:**有条件通过**→ P1×1+P2×3 已修,定向复验绿。
+- **P1(已修)**:parse_transcript 对「合法 JSON 非 dict 行」炸 AttributeError,破 exit-0 契约且中断 sync 全量对账 → 加 isinstance 防御;复验=坏行样例 ingest exit 0 无 traceback,正常行仍入库。
+- **P2(已修)**:①ingest 整体 try/except 兜底(DB 不可写静默 exit 0);②sync except 补 rollback(防半途脏提交致 FTS/assets 失配);③证据物归档 evidence/2026-10-31-need10-audit/。
+- **P3(已修)**:search 参数缺值/非法值明确报错 exit 2;spec 表结构字段名对齐(archived_at→created/updated)。
+- P3 备忘(挂账):段1 UPDATE 路径显式 deleted=0,软删后源文件变更会被「复活」——段2 必须定义冲突口径;pool_soft_delete 子行不随删(孤儿,无害)。
+- 修复回归断言:evidence/2026-10-31-need10-audit/assert_audit_fix.py(P1/P2/P3 全 PASS + sync 幂等保持)。
+
 ## 过程缺陷记录(修复链)
 
 1. INSERT 占位符 16≠15 → 修

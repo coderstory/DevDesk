@@ -123,6 +123,10 @@ def parse_transcript(path: Path) -> dict | None:
             line = json.loads(raw)
         except json.JSONDecodeError:
             continue
+        # 合法 JSON 但非对象(数组/字符串/数字)同样跳过——否则下游 .get 炸 AttributeError,
+        # 炸穿 ingest 的 exit-0 契约并中断 sync 全量对账(独立审计 P1)
+        if not isinstance(line, dict):
+            continue
         if not project and line.get("cwd"):
             project = str(line["cwd"])
         if line.get("timestamp"):
@@ -193,23 +197,27 @@ def _upsert(conn: sqlite3.Connection, sid: str, parsed: dict, path: Path, reason
 # ---------- 三模式 ----------
 
 def cmd_ingest() -> int:
-    """SessionEnd hook handler。任何失败都 exit 0(无决策权,不骚扰会话退出)。"""
+    """SessionEnd hook handler。任何失败都 exit 0(无决策权,不骚扰会话退出)——
+    整体兜底,不让 DB 不可写/解析异常等任何错误以 traceback 破约(独立审计 P2)。"""
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
-    except json.JSONDecodeError:
-        return 0
-    tp = payload.get("transcript_path")
-    if not tp or not Path(tp).exists():
-        return 0
-    sid = str(payload.get("session_id") or Path(tp).stem)
-    parsed = parse_transcript(Path(tp))
-    if not parsed:
-        return 0
-    conn = _connect()
-    try:
-        _upsert(conn, sid, parsed, Path(tp), str(payload.get("reason") or ""))
-    finally:
-        conn.close()
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except json.JSONDecodeError:
+            return 0
+        tp = payload.get("transcript_path")
+        if not tp or not Path(tp).exists():
+            return 0
+        sid = str(payload.get("session_id") or Path(tp).stem)
+        parsed = parse_transcript(Path(tp))
+        if not parsed:
+            return 0
+        conn = _connect()
+        try:
+            _upsert(conn, sid, parsed, Path(tp), str(payload.get("reason") or ""))
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001 — hook 契约:一切失败静默 exit 0
+        print(f"session_archive ingest: {e}", file=sys.stderr)
     return 0
 
 
@@ -231,6 +239,9 @@ def cmd_sync() -> int:
                 else:
                     skipped += 1
             except (OSError, sqlite3.Error) as e:
+                # 半途 _upsert 可能已写 assets 未写 fts:先 rollback 防脏状态
+                # 被下一个文件的 commit 顺带提交,造成 FTS 与 assets 静默失配(独立审计 P2)
+                conn.rollback()
                 failed += 1
                 print(f"fail {f.name}: {e}", file=sys.stderr)
             if i % 200 == 0:
@@ -290,13 +301,24 @@ def main() -> int:
         project = since = None
         limit = 20
         extra = sys.argv[3:]
+
+        def _flag_value(i: int) -> str:
+            if i + 1 >= len(extra):
+                print(f"flag {extra[i]} 缺值", file=sys.stderr)
+                sys.exit(2)
+            return extra[i + 1]
+
         for i, a in enumerate(extra):
             if a == "--project":
-                project = extra[i + 1]
+                project = _flag_value(i)
             elif a == "--since":
-                since = extra[i + 1]
+                since = _flag_value(i)
             elif a == "--limit":
-                limit = int(extra[i + 1])
+                try:
+                    limit = int(_flag_value(i))
+                except ValueError:
+                    print("invalid --limit(需整数)", file=sys.stderr)
+                    sys.exit(2)
         return cmd_search(kw, project, since, limit)
     print(f"unknown mode: {mode}", file=sys.stderr)
     return 2

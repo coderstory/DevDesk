@@ -306,6 +306,9 @@ ProcessRunner systemProcessRunner() {
                 continue;
             }
             if (w < 0 && errno != EINTR) {
+                // fail 路径同步关掉输出管道——posix 版同款(独立审计 P2:两版真同构)
+                closeFdSafe(stdoutPipe[0]);
+                closeFdSafe(stderrPipe[0]);
                 if (errno == ECHILD) {
                     return core::Result<ProcessResult>::fail(
                         core::ErrorCode::Internal,

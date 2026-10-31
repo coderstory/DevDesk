@@ -23,6 +23,14 @@
 
 判据输出:`bash scripts/build-test-run.sh --filter process_runner --no-run` → `Total: 4 Passed: 4 Failed: 0`;Windows 交叉编译守卫过(win 面用例整体空转)。
 
+## 独立审计(2026-10-31,general-purpose 子代理)
+
+- 总判定:process_runner 主体**通过**,一条 P2 已修。
+- **P2(已修)**:macos 版 ECHILD/waitpid fail 路径直接 return 未关输出管道(每次泄 2 fd),posix 新路径关了——「同构」只对齐了报错语义没对齐资源清理 → macos 补同款 close 块;复验 filter 定向 4/4 绿。
+- P3 备忘(既有非本批引入,挂账):双管道 EOF 先到+子进程未退+timeoutMs==0 时循环退化为 WNOHANG 忙等空转(收尸前同族场景);非 ECHILD waitpid 错误不 kill 留孤儿;4500ms 断言余量 2.5s 可接受。
+- 审计核实:Total 4/4 复核属实(含 test_agent_tools 既有大输出用例);F-4 豁免成立不属凑数;win 挂账如实。
+- 证据归档:evidence/2026-10-31-debt20-audit/process_runner-filter-run.txt。
+
 ## 残留
 
 - **win 版(process_runner_win.cpp)①②未动**：CreateProcess 管道面与本批 sh 语义用例不同源，本机(Mac)盲改禁；待 Windows 机按同构口径回归(池单关单时核对此项)。
