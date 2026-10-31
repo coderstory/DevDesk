@@ -60,6 +60,7 @@ MemoryPanelSettings loadPanelSettings() {
     s.usageDayAlertTokens = getInt64("usageDayAlertTokens", 500000);
     s.usageSoftBudgetTokens = getInt64("usageSoftBudgetTokens", 2000000);
     s.usageHardBudgetTokens = getInt64("usageHardBudgetTokens", 3000000);
+    s.inferHourlyLimit = getInt("inferHourlyLimit", 4);
     s.usageDayGate.armed = getBool("usageAlertDayArmed", true);
     s.usageDayGate.lastFireDay = getInt64("usageAlertDayLastDay", 0);
     s.usageSoftGate.armed = getBool("usageAlertSoftArmed", true);
@@ -87,6 +88,8 @@ core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
             platform::json::JsonValue(settings.usageSoftBudgetTokens));
     obj.set("usageHardBudgetTokens",
             platform::json::JsonValue(settings.usageHardBudgetTokens));
+    obj.set("inferHourlyLimit",
+            platform::json::JsonValue(settings.inferHourlyLimit));
     obj.set("usageAlertDayArmed",
             platform::json::JsonValue(settings.usageDayGate.armed));
     obj.set("usageAlertDayLastDay",

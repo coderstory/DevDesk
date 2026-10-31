@@ -365,11 +365,9 @@ core::Result<std::string> findMemoryIdByText(const std::string& text) {
 
 core::Result<std::string> TelememHttpRetriever::addDirect(
     const std::string& text) {
-    platform::json::JsonObject args;
-    args.set("text", platform::json::makeString(text));
-    args.set("infer", platform::json::makeBool(false));  // 直存语义，不调云端提炼
     // 入库非 hook 同步路径，放宽到 10s
-    const auto resp = callTool("add_memory", std::move(args), 10000);
+    const auto resp =
+        callTool("add_memory", buildAddMemoryArgs(text, false), 10000);
     if (resp.isFail()) {
         return core::Result<std::string>::fail(resp.errorCode(),
                                                resp.errorMessage());
@@ -386,6 +384,20 @@ core::Result<std::string> TelememHttpRetriever::addDirect(
     // 撤销链需要引擎条目 id → get_memories 按正文精确匹配回填（匹配不到返回
     // 空串：id 缺失时提案 targetIds 为空，如实进入契约边界记录）。
     return findMemoryIdByText(text);
+}
+
+core::Result<std::string> TelememHttpRetriever::addInferred(
+    const std::string& text) {
+    // 提炼语义（infer=true）：实测云端往返 4.45s 为快失败形态，成功含 LLM
+    // 生成 → 30s。不做 findMemoryIdByText：提炼后正文被云端改写，按原文精确
+    // 匹配拿不到产物 id（需-3 spec §3）；产物 id 走清单差分（需-3 路②，未接）。
+    const auto resp =
+        callTool("add_memory", buildAddMemoryArgs(text, true), 30000);
+    if (resp.isFail()) {
+        return core::Result<std::string>::fail(resp.errorCode(),
+                                               resp.errorMessage());
+    }
+    return parseAddResponse(resp.value());
 }
 
 core::Result<void> TelememHttpRetriever::setMemoryForgotten(

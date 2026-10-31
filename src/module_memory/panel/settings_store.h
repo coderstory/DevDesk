@@ -26,6 +26,9 @@ struct MemoryPanelSettings {
     long long usageDayAlertTokens = 500000;      // 日档阈值；≤0 = 关闭
     long long usageSoftBudgetTokens = 2000000;   // 月档·软档；≤0 = 关闭
     long long usageHardBudgetTokens = 3000000;   // 月档·硬档；≤0 = 关闭
+    // G-1 提炼节流（spec 控耗 2「每小时云端调用上限可配置，默认保守值」）：
+    // 默认 4 次/小时（OQ-2 保守取值：月硬档 3M token ≈ 全月约 375 次提炼的量级约束）
+    int inferHourlyLimit = 4;                    // ≤0 = 关闭节流
     proposals::UsageAlertGate usageDayGate;
     proposals::UsageAlertGate usageSoftGate;
     proposals::UsageAlertGate usageHardGate;

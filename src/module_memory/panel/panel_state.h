@@ -24,6 +24,7 @@
 #include "module_memory/panel/recall_eval.h"
 #include "module_memory/panel/settings_store.h"
 #include "module_memory/pipeline/collect_round.h"
+#include "module_memory/pipeline/infer_queue.h"
 
 namespace module::memory::panel {
 
@@ -137,6 +138,7 @@ private:
     std::optional<proposals::ProposalStore> proposalStore_;
     std::optional<proposals::UsageLedger> ledger_;
     std::optional<collector::CollectorStore> collectorStore_;
+    std::optional<pipeline::InferQueueStore> inferQueue_;
     std::optional<RecallEvalStore> evalStore_;
 
     std::int64_t lastRefreshSec_ = 0;

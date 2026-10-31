@@ -107,6 +107,9 @@ add_executable(devdesk_tests
     test_modules/test_usage_alert.cpp
     # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
     test_modules/test_memory_collect_wiring.cpp
+    # 池3 G-1 控耗接线：infer 提炼闸（硬档恰等越线/每小时节流）+ 暂存队列 +
+    # addInferred 契约 + llm_attempt 计数（token/金额聚合不受影响）
+    test_modules/test_memory_infer.cpp
     # memory_search MCP 工具（F-01/F-02/F-04/F-05/F-06）：假检索器 + 局部注册表，
     # schema/参数/降级四态/截断/注册往返/持久化往返
     test_modules/test_memory_mcp_search_tool.cpp

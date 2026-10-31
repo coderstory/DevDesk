@@ -26,6 +26,11 @@ inline constexpr int kEmbedDims = 512;
 // `config.api_key or os.getenv("ANTHROPIC_API_KEY")`（api_key_env 不是任何层的真实字段）
 inline constexpr const char* kLlmKeyEnvName = "ANTHROPIC_API_KEY";
 
+// NO_PROXY 旁路表（G-1 随 infer 通道接线，回填偏差②；S1 实测本机 http_proxy 截胡
+// 云端调用返回 503）：telemem 子进程出网目标只有 kLlmBaseUrl 的 host 与本机
+// embedding 回环——kLlmBaseUrl 换端点时本常量必须同步。
+inline constexpr const char* kLlmProxyBypassHosts = "open.bigmodel.cn,127.0.0.1,localhost";
+
 // 记忆数据根：<appDataDir>/memory（venv、faiss_db、history.db、模型文件都落这里，
 // 随 DEVDESK_DATA_ROOT 隔离，测试用独立根）
 std::filesystem::path memoryDataDir();

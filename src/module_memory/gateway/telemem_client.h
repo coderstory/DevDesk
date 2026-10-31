@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/result.h"
+#include "platform/json.h"
 
 namespace module::memory::gateway {
 
@@ -29,6 +30,16 @@ public:
     // 直存语义入库（infer=false：不调云端提炼）；返回引擎侧新条目 id（缺失空串）
     virtual core::Result<std::string> addDirect(const std::string& text) = 0;
 
+    // 提炼语义入库（infer=true：telemem 调云端 LLM 把原文段提炼为结论再落库，
+    // 需-3 spec §2）。接口默认 NotImplemented：既有假实现/直存调用方零波及，
+    // 提炼通道由 TelememHttpRetriever 与测试假实现按需实现。硬档暂停闸与
+    // 每小时节流在 pipeline::infer_batch 消费侧统一设闸，本通道不做成本判定。
+    virtual core::Result<std::string> addInferred(const std::string& text) {
+        (void)text;
+        return core::Result<std::string>::fail(core::ErrorCode::NotImplemented,
+                                               "本实现不支持提炼入库");
+    }
+
     // 移出「自动想起」（卡片代理层执行面）：live 对账定案（2026-10-28）——
     // telemem 1.10.1 无 forgotten 过滤缝（update 打标记后 search 照回），唯一
     // 真实生效通道 = delete_memory；故 true → delete_memory，false（恢复）引擎
@@ -47,6 +58,7 @@ public:
                                                 int limit,
                                                 int timeoutMs) override;
     core::Result<std::string> addDirect(const std::string& text) override;
+    core::Result<std::string> addInferred(const std::string& text) override;
     core::Result<void> setMemoryForgotten(const std::string& memoryId,
                                           bool forgotten) override;
 };
@@ -63,5 +75,14 @@ core::Result<std::vector<MemoryHit>> parseSearchResponse(
 // add_memory 响应解析：工具级错误（isError / error 字段）→ Error；成功 → 新条目 id
 //（telemem 返回 {"status":"stored",...} 无 id → 空串，调用方按空处理）
 core::Result<std::string> parseAddResponse(const std::string& httpBody);
+
+// add_memory 入参组装（纯函数，单测钉 infer 契约）：infer=false 直存 / true 提炼
+inline platform::json::JsonObject buildAddMemoryArgs(const std::string& text,
+                                                     bool infer) {
+    platform::json::JsonObject args;
+    args.set("text", platform::json::makeString(text));
+    args.set("infer", platform::json::makeBool(infer));
+    return args;
+}
 
 }  // namespace module::memory::gateway

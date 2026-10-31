@@ -12,6 +12,10 @@ add_library(devdesk_module_memory STATIC
     collector/collector.h
     pipeline/collect_round.cpp
     pipeline/collect_round.h
+    pipeline/infer_queue.cpp
+    pipeline/infer_queue.h
+    pipeline/infer_batch.cpp
+    pipeline/infer_batch.h
     gateway/telemem_client.cpp
     gateway/telemem_client.h
     mcp/search_tool.cpp

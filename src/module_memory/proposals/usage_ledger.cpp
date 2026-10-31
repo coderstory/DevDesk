@@ -42,6 +42,14 @@ std::int64_t monthStart(std::int64_t now) {
     return static_cast<std::int64_t>(std::mktime(&tm));
 }
 
+std::int64_t hourStart(std::int64_t now) {
+    std::tm tm{};
+    core::time::localTime(static_cast<std::time_t>(now), &tm);
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    return static_cast<std::int64_t>(std::mktime(&tm));
+}
+
 // 单值查询垫（同 collector 口径）：无行/失败回 0
 std::int64_t queryInt64(core::data::SqliteDb* db, const std::string& sql,
                         std::int64_t arg) {
@@ -169,6 +177,36 @@ core::Result<void> UsageLedger::recordInjection(int items, int chars,
                                         charsRow.errorMessage());
     }
     return core::Result<void>::ok();
+}
+
+core::Result<void> UsageLedger::recordAttempt(std::int64_t nowSec) {
+    auto row = record(kKindLlmAttempt, 0, nowSec);
+    if (row.isFail()) {
+        return core::Result<void>::fail(row.errorCode(), row.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<long long> UsageLedger::hourAttempts(std::int64_t nowSec) const {
+    // 次数口径 = COUNT 行数（attempt 行 tokens 恒 0，不能复用 SUM 的 kInjectSql）
+    auto stmt = db_->prepare(
+        "SELECT COUNT(*) AS v FROM usage_ledger WHERE ts >= ? AND kind = ?");
+    if (stmt.isFail()) {
+        return core::Result<long long>::fail(stmt.errorCode(),
+                                             stmt.errorMessage());
+    }
+    if (!stmt.value().bind(1, hourStart(nowSec)).isOk() ||
+        !stmt.value().bind(2, std::string(kKindLlmAttempt)).isOk()) {
+        return core::Result<long long>::fail(core::ErrorCode::Internal,
+                                             "提炼尝试计数绑定失败");
+    }
+    auto step = stmt.value().step();
+    if (step.isFail() || !step.value()) {
+        return core::Result<long long>::ok(0);
+    }
+    auto row = stmt.value().currentRow();
+    if (row.isFail()) return core::Result<long long>::ok(0);
+    return core::Result<long long>::ok(row.value().getInt64("v").valueOr(0));
 }
 
 core::Result<long long> UsageLedger::todayInjectItems(

@@ -4,6 +4,7 @@
 #include "telemem_config.h"
 #include "platform/json.h"
 
+#include <cstdlib>
 #include <filesystem>
 
 namespace module::memory::engine {
@@ -42,6 +43,20 @@ std::vector<std::string> buildTelememEnv(const fs::path& configPath,
     env.push_back("TELEMEM_CONFIG=" + configPath.string());
     if (!llmKey.empty()) {
         env.push_back(std::string(kLlmKeyEnvName) + "=" + llmKey);
+    }
+    // 云端 host 旁路本机代理（spike run_spike.py 固化行为回填）：合并继承的
+    // NO_PROXY/no_proxy 幂等追加（列表重复项在旁路语义下无害）
+    for (const char* var : {"NO_PROXY", "no_proxy"}) {
+        std::string value = kLlmProxyBypassHosts;
+        if (const char* prior = std::getenv(var);
+            prior != nullptr && *prior != '\0') {
+            value = prior;
+            if (value.find(kLlmProxyBypassHosts) == std::string::npos) {
+                value += ",";
+                value += kLlmProxyBypassHosts;
+            }
+        }
+        env.push_back(std::string(var) + "=" + value);
     }
     return env;
 }

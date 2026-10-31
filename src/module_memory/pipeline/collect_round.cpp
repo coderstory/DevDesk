@@ -26,7 +26,8 @@ RoundNote blockedNote(const collector::Segment& seg, const std::string& text) {
 core::Result<CollectRoundReport> runCollectRound(
     collector::Collector& collector, const sanitize::SanitizeGate& gate,
     proposals::ProposalStore& store,
-    const std::function<void(const RoundNote&)>& onNote) {
+    const std::function<void(const RoundNote&)>& onNote,
+    InferQueueStore* inferQueue) {
     auto segments = collector.pollOnce();
     if (segments.isFail()) {
         return core::Result<CollectRoundReport>::fail(segments.errorCode(),
@@ -69,6 +70,19 @@ core::Result<CollectRoundReport> runCollectRound(
             evidence.push_back(proposals::ProposalEvidence{
                 ev.sessionId, static_cast<std::int64_t>(ev.eventSeq),
                 seg.text, now});
+        }
+        // G-1 提炼暂存：过闸段入队（commit 之前；崩溃重放唯一键去重）。入队
+        // 失败不阻断卡片链（主通道），该段提炼机会丢失如实留痕
+        if (inferQueue != nullptr) {
+            const std::int64_t startSeq =
+                seg.events.empty()
+                    ? 0
+                    : static_cast<std::int64_t>(seg.events.front().eventSeq);
+            if (auto q = inferQueue->enqueue(seg.sessionId, startSeq,
+                                             gated.value().text, now);
+                q.isFail()) {
+                LOG_WARN("提炼入队失败: " + q.errorMessage());
+            }
         }
         auto card = proposals::Curator::proposeAdd(store, gated.value().text,
                                                    evidence, 0.9, now);

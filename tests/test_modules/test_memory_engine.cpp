@@ -234,7 +234,17 @@ REGISTER_TEST(memory_process_env_key_channel,
     for (const std::string& e : envNoKey) {
         DOCTEST_CHECK(e.rfind(std::string(kLlmKeyEnvName) + "=", 0) != 0);
     }
-    DOCTEST_CHECK(envNoKey.size() == 1);
+    // G-1 回填偏差②：恒注入 NO_PROXY/no_proxy（云端 host 旁路本机代理），
+    // 空 key 时环境 = TELEMEM_CONFIG + 双代理键共 3 行
+    DOCTEST_CHECK(envNoKey.size() == 3);
+    bool hasNoProxy = false;
+    for (const std::string& e : envNoKey) {
+        if (e.rfind("NO_PROXY=", 0) == 0 || e.rfind("no_proxy=", 0) == 0) {
+            DOCTEST_CHECK(e.find("open.bigmodel.cn") != std::string::npos);
+            hasNoProxy = true;
+        }
+    }
+    DOCTEST_CHECK(hasNoProxy);
     return true;
 })
 

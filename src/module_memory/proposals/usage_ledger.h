@@ -33,6 +33,10 @@ long long estimateCostMilliYuan(const std::string& kind, long long tokens);
 inline constexpr const char* kKindInjectItems = "inject_items";  // tokens 列存条数
 inline constexpr const char* kKindInjectChars = "inject_chars";  // tokens 列存字数
 
+// 云端提炼尝试 kind：每次 infer 出机尝试一行（成败都记），tokens 恒 0——
+// 每小时节流计数器（spec 控耗 2）兼失败审计行；token/金额聚合恒不受影响。
+inline constexpr const char* kKindLlmAttempt = "llm_attempt";
+
 // 账面行（消耗页最近调用表 / 动态流的取数形态）
 struct LedgerRow {
     std::int64_t ts = 0;
@@ -63,6 +67,11 @@ public:
     // 今日 / 本月估算金额（毫厘；不含 inject_* 行——注入不调云端，无金额）
     core::Result<long long> todayCostMilliYuan(std::int64_t nowSec) const;
     core::Result<long long> monthCostMilliYuan(std::int64_t nowSec) const;
+
+    // 提炼节流记账与计数（本地自然小时窗口，同日/月起点惯例）：attempt 失败也
+    // 计数（attempts 口径），云端失败的重试天然受同一小时预算约束
+    core::Result<void> recordAttempt(std::int64_t nowSec);
+    core::Result<long long> hourAttempts(std::int64_t nowSec) const;
 
     // 最近账面行（ts 降序；消耗页最近调用表 + 主控台动态流取数）
     core::Result<std::vector<LedgerRow>> recentRows(int limit) const;

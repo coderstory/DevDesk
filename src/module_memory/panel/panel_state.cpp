@@ -18,6 +18,7 @@
 #include "toast_notice_bridge.h"
 #include "module_memory/engine/telemem_config.h"
 #include "module_memory/pipeline/collect_round.h"
+#include "module_memory/pipeline/infer_batch.h"
 #include "module_memory/proposals/curator.h"
 #include "module_memory/proposals/usage_alert.h"
 
@@ -91,6 +92,8 @@ std::string ledgerRowText(const proposals::LedgerRow& r) {
                       r.tokens);
     } else if (r.kind == "inject_chars") {
         return "";  // 与 items 同一事件成对入账，流里只出条数那条
+    } else if (r.kind == proposals::kKindLlmAttempt) {
+        return "";  // 尝试行与后续 llm_input/output 成对，流里只出结果行
     } else if (r.kind == "embed") {
         std::snprintf(buf, sizeof(buf),
                       "采集 · %lld 字完成向量化（本机 embedding，零 API 费）",
@@ -139,6 +142,7 @@ void PanelState::openStores() {
     auto prop = ProposalStore::open(dbDir() / "proposals.db");
     auto led = UsageLedger::open(dbDir() / "usage_ledger.db");
     auto col = collector::CollectorStore::open(dbDir() / "collector.db");
+    auto que = pipeline::InferQueueStore::open(dbDir() / "infer_queue.db");
     auto ev = RecallEvalStore::open(dbDir() / "recall_eval.db");
     std::string err;
     if (prop.isOk()) proposalStore_.emplace(std::move(prop.value()));
@@ -147,6 +151,8 @@ void PanelState::openStores() {
     else err += "账本打开失败；";
     if (col.isOk()) collectorStore_.emplace(std::move(col.value()));
     else err += "采集账本打开失败；";
+    if (que.isOk()) inferQueue_.emplace(std::move(que.value()));
+    else err += "提炼队列打开失败；";
     if (ev.isOk()) evalStore_.emplace(std::move(ev.value()));
     else err += "评测库打开失败；";
     std::lock_guard<std::mutex> lk(mu_);
@@ -214,12 +220,32 @@ void PanelState::collectLoopMain() {
             }
             collector::Collector col(dbDir() / "collector.db",
                                      collector::Collector::resolveProjectsRootFromEnv());
-            auto r = pipeline::runCollectRound(col, gate, *proposalStore_, note);
+            auto r = pipeline::runCollectRound(col, gate, *proposalStore_, note,
+                                               inferQueue_ ? &*inferQueue_
+                                                           : nullptr);
             if (r.isFail()) {
                 LOG_WARN("采集轮失败: " + r.errorMessage());
             } else {
                 if (r.value().blocked > 0 || r.value().cardsCreated > 0) {
                     lastRefreshSec_ = 0;  // 有产出 → 下帧立刷动态流/审核数
+                }
+            }
+            // G-1 控耗接线：采集轮后置单步提炼（同线程同生命周期）。硬档暂停/
+            // 节流顺延/云端失败均留队下轮补跑；闸两级读 usage_ledger 账面与
+            // panel_settings 阈值（直读盘，阈值改动即时生效，同 pollUsageAlerts）
+            if (inferQueue_.has_value() && ledger_.has_value()) {
+                const auto settings = loadPanelSettings();
+                pipeline::InferLimits limits;
+                limits.hardBudgetTokens = settings.usageHardBudgetTokens;
+                limits.hourlyLimit = settings.inferHourlyLimit;
+                gateway::TelememHttpRetriever inferEngine;
+                auto step = pipeline::runInferStep(*inferQueue_, inferEngine,
+                                                   *ledger_, limits, note);
+                if (step.isFail()) {
+                    LOG_WARN("提炼步失败: " + step.errorMessage());
+                } else if (step.value().succeeded ||
+                           step.value().attempted) {
+                    lastRefreshSec_ = 0;  // 有动作 → 下帧立刷动态流/消耗卡
                 }
             }
             const auto now = static_cast<std::int64_t>(std::time(nullptr));
@@ -721,10 +747,12 @@ core::Result<void> PanelState::clearAllOwnStores() {
     proposalStore_.reset();
     ledger_.reset();
     collectorStore_.reset();
+    inferQueue_.reset();
     evalStore_.reset();
     std::error_code ec;
     for (const char* name :
-         {"proposals.db", "usage_ledger.db", "collector.db", "recall_eval.db"}) {
+         {"proposals.db", "usage_ledger.db", "collector.db", "infer_queue.db",
+          "recall_eval.db"}) {
         std::filesystem::remove(dbDir() / name, ec);
     }
     {

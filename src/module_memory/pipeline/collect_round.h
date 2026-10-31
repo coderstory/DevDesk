@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "module_memory/collector/collector.h"
+#include "module_memory/pipeline/infer_queue.h"
 #include "module_memory/proposals/curator.h"
 #include "module_memory/proposals/proposal_store.h"
 #include "module_memory/sanitize/sanitize_gate.h"
@@ -36,10 +37,14 @@ struct CollectRoundReport {
 
 // 单轮采集（同步、可重入；宿主循环与测试直驱同一实现）。
 // onNote 可空（测试直驱时用返回值断言即可）。
+// inferQueue 可空（默认）：注入时，过脱敏闸的段在 collector.commit 之前入提炼
+// 暂存队列（G-1「新采集入队暂存」）；唯一键兜崩溃重放，入队失败只 LOG 不阻断
+// 卡片链（主通道）。
 core::Result<CollectRoundReport> runCollectRound(
     collector::Collector& collector, const sanitize::SanitizeGate& gate,
     proposals::ProposalStore& store,
-    const std::function<void(const RoundNote&)>& onNote);
+    const std::function<void(const RoundNote&)>& onNote,
+    InferQueueStore* inferQueue = nullptr);
 
 // decay 扫描（周期触发体）：整理器遗忘扫描；清单缝由宿主注入。返回本轮新建卡数。
 // 生产清单缝在引擎列举能力落地前如实报 NotImplemented（fail-closed：不出卡、不假扫描）。
