@@ -17,7 +17,7 @@
 | R-3 | M4 事件总线形态 | 纯进程内 EventBus：core 层轻量发布/订阅，业务点 emit、Scheduler 订阅入队；不持久化、不补发 | 与 cron 既有语义一致（错过的触发不补跑，spec §5.1）；持久化队列是过度设计 |
 | R-4 | M4 首批事件 | 三个动作事件：todo.created / todo.completed / md.saved；不做 todo.overdue 等状态事件 | 动作事件在 service 写路径一行 emit 就有；状态事件要额外轮询判定，成本不对称 |
 | R-5 | M4 防抖 | 冷却窗口：任务×事件组合可配，默认 5 分钟；窗口内事件不重复起 run | 一行简单实现就能挡住高频写入（连续保存笔记）引发的 run 风暴；批量聚合留 M5 评估 |
-| R-6 | M4 记忆 | 任务级 context note：agent_tasks 新列（migration 顺延版本号）、UI 可编辑、注入 system prompt 末尾、run 正常结束自动 append 最终回复前 500 字 + 时间戳（任务级可关）、总长 4KB 滚动丢最旧 | 任务级够用且可控；全局记忆容易污染所有任务；4KB 上限防 context 无限膨胀 |
+| R-6 | M4 记忆 | 任务级 context note：agent_tasks 新列（migration 顺延版本号）、UI 可编辑、注入 system prompt 末尾、run 正常结束自动 append 最终回复前 500 字 + 时间戳（任务级可关）、总长 4KB 滚动丢最旧 | 任务级够用且可控；全局记忆容易污染所有任务；4KB 上限防 context 无限膨胀。**【2026-10-31 老板追认修订】**UAT62 W4 C3 已将本条实现形态替换为 systemPrompt 单字段手工维护（无自动 append/自动记录，遗留列清理归 W6）——追认不回工，F-07/F-08 不复活（池 21 PRD §开放问题 Q2） |
 | R-7 | 暂不做清单 | 持久化事件队列 / 状态事件 / 批量聚合 / 自动 LLM 摘要 / 多 agent 编排 / MCP / 流式响应 / OpenAI function_calling | 全部 YAGNI：当前使用强度撑不起这些复杂度，做了只增加维护面 |
 
 ---
