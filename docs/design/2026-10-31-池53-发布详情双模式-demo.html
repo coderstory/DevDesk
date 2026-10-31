@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevDesk · 池53 发布详情双模式 demo（仅视觉校准，不是实现蓝图）</title>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  对照设计文档：docs/design/2026-10-31-池53-发布详情双模式-UI设计.md
+  覆盖：F-10 双模式 IA / F-11 页头 / F-12 前置单据流 / F-13 步骤行减负 /
+        F-14 发布态流程轨道（软引导+折叠）/ F-15 弹层统一 / F-16 空态灰化态。
+  可拖窗缩放验证自适应（最小可用档 1000×640 无横向滚动）。
+  拖拽排序为视觉占位（手柄可见），交互不在本 demo 范围。
+-->
+<style>
+/* ================= tokens ================= */
+:root{
+  --primary:#36D399; --primary-hover:#2EC48F; --primary-active:#23B07F;
+  --primary-soft:#E6FBF2; --primary-text:#157E4E;
+  --danger:#EF4444; --danger-text:#B91C1C; --danger-soft:rgba(239,68,68,.08);
+  --link:#576B95;
+  --info:#576B95; --info-soft:rgba(87,107,149,.12);
+  --warn-text:#A16207; --warn-soft:#FDF2E3;
+  --page:#F7F7F7; --card:#FFFFFF;
+  --border:#E5E5E5; --border-2:#EDEDED;
+  --text-1:#1A1A1A; --text-2:#666666; --text-3:#999999;
+  --selected:#E5E5E5; --btn2:#F2F2F2;
+  --r:6px; --rc:16px;
+  --ease:cubic-bezier(.215,.61,.355,1);
+  --spring:cubic-bezier(.34,1.56,.64,1);
+  --fold:cubic-bezier(.2,.8,.3,1);
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei UI",sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font-family:var(--sans);color:var(--text-1);background:var(--page);
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+button,input,textarea{font:inherit;color:inherit}
+button{border:none;background:none;cursor:pointer;padding:0}
+h1,h2,h3,p{margin:0}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+[hidden]{display:none!important}
+
+/* ================= demo 操控台（非页面设计的一部分） ================= */
+.demo-bar{height:48px;background:#26292E;color:#B7BDC6;display:flex;align-items:center;
+  gap:6px;padding:0 14px;font-size:12px;flex:0 0 auto;overflow-x:auto}
+.demo-bar b{color:#fff;font-weight:600;margin-right:8px;white-space:nowrap}
+.scn{height:28px;padding:0 12px;border-radius:var(--r);color:#B7BDC6;font-size:12px;
+  white-space:nowrap;transition:background .12s var(--ease)}
+.scn:hover{background:#33373D}
+.scn.on{background:var(--primary);color:#fff}
+.demo-bar .sep{width:1px;height:16px;background:#3A3E44;margin:0 6px}
+.demo-bar .hint{margin-left:auto;white-space:nowrap;color:#7A8089}
+
+/* ================= app 外壳 ================= */
+.app{height:calc(100vh - 48px);display:flex;flex-direction:column;min-width:640px}
+.hdr{height:56px;flex:0 0 56px;background:var(--card);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 12px;gap:10px;min-width:0}
+.body{flex:1;min-height:0;display:flex;flex-direction:column}
+.content{flex:1;min-height:0;overflow-y:auto;padding:12px}
+.col{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.app.muted .content{opacity:.7;transition:opacity 200ms var(--ease)}
+
+/* ================= 页头（F-11） ================= */
+.back{width:32px;height:32px;border-radius:var(--r);color:var(--text-2);font-size:16px;
+  display:flex;align-items:center;justify-content:center;flex:0 0 auto;
+  transition:background .12s var(--ease),transform 100ms var(--ease)}
+.back:hover{background:var(--border-2)}
+.back:active{transform:scale(.97)}
+.title{font-size:17px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.title .wd{font-size:14px;font-weight:400;color:var(--text-2);margin-left:8px}
+.badge{height:22px;border-radius:999px;padding:0 10px;display:inline-flex;align-items:center;
+  gap:5px;font-size:12px;font-weight:600;flex:0 0 auto;white-space:nowrap}
+.badge svg{width:13px;height:13px}
+.badge.gray{background:var(--btn2);color:var(--text-2)}
+.badge.green{background:var(--primary-soft);color:var(--primary-text)}
+.badge.dim{background:var(--btn2);color:var(--text-3)}
+.chip{height:22px;border-radius:999px;padding:0 10px;display:inline-flex;align-items:center;
+  font-size:12px;font-weight:600;flex:0 0 auto;white-space:nowrap}
+.chip.draft{background:var(--btn2);color:var(--text-2)}
+.chip.pending{background:var(--info-soft);color:var(--info)}
+.chip.running{background:var(--warn-soft);color:var(--warn-text)}
+.chip.done{background:var(--primary-soft);color:var(--primary-text)}
+.chip.voided{background:var(--btn2);color:var(--text-3)}
+.chip.overdue{background:var(--danger-soft);color:var(--danger-text)}
+.hdr .grow{flex:1;min-width:0}
+.prog{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.prog .bar{width:80px;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
+.prog .fill{height:100%;background:var(--primary);border-radius:2px;
+  transition:width 200ms var(--ease)}
+.prog .num{font-size:12px;color:var(--text-2);white-space:nowrap}
+.prog .when{font-size:12px;color:var(--text-3);white-space:nowrap}
+.btn{height:36px;padding:0 16px;border-radius:var(--r);font-size:14px;font-weight:500;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+  transition:background 120ms var(--ease),transform 100ms var(--ease);flex:0 0 auto}
+.btn:active{transform:scale(.97)}
+.btn.primary{background:var(--primary);color:#fff}
+.btn.primary:hover{background:var(--primary-hover)}
+.btn.primary:active{background:var(--primary-active)}
+.btn.secondary{background:var(--btn2);color:var(--text-1)}
+.btn.secondary:hover{background:var(--selected)}
+.btn.danger{background:var(--danger);color:#fff}
+.btn.danger:hover{background:#DC3D3D}
+.btn.text{color:var(--primary-text);height:32px;padding:0 10px;font-size:13px}
+.btn.text:hover{background:rgba(54,211,153,.14)}
+.btn.text:disabled{color:var(--text-3);cursor:default;background:none}
+.more{width:32px;height:32px;border-radius:var(--r);color:var(--text-2);font-size:16px;
+  display:flex;align-items:center;justify-content:center;letter-spacing:1px;
+  transition:background .12s var(--ease),transform 100ms var(--ease)}
+.more:hover{background:var(--border-2)}
+.more:active{transform:scale(.97)}
+.done-word{font-size:12px;font-weight:600;color:var(--primary-text);white-space:nowrap}
+
+/* ================= notice（F-15） ================= */
+.notice{margin:12px 12px 0;max-width:1040px;width:calc(100% - 24px);align-self:center;
+  height:34px;border-radius:var(--r);display:flex;align-items:center;gap:8px;
+  padding:0 12px;font-size:13px;animation:notice-in 120ms var(--ease);flex:0 0 auto}
+.notice.ok{background:var(--primary-soft);color:var(--primary-text)}
+.notice.err{background:var(--danger-soft);color:var(--danger-text)}
+.notice .nx{margin-left:auto;width:22px;height:22px;border-radius:4px;color:inherit;
+  opacity:.6;font-size:13px;display:flex;align-items:center;justify-content:center}
+.notice .nx:hover{opacity:1;background:rgba(0,0,0,.05)}
+@keyframes notice-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.notice.out{opacity:0;transform:translateY(8px);transition:all 120ms var(--ease)}
+
+/* ================= 卡片 ================= */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--rc);
+  padding:16px}
+.card h2{font-size:15px;font-weight:600;margin-bottom:4px}
+.card .sub{font-size:12px;color:var(--text-3);margin-bottom:12px}
+.gtitle{font-size:12px;color:var(--text-3);margin:14px 0 8px;font-weight:400}
+.gtitle:first-of-type{margin-top:4px}
+
+/* ================= 编辑态 · 前置单据流（F-12） ================= */
+.frow{display:flex;align-items:center;gap:12px;min-height:44px;padding:4px 0}
+.frow label{width:96px;flex:0 0 96px;font-size:14px;color:var(--text-1)}
+.frow input[type=text]{flex:1;min-width:0;height:32px;border:1px solid var(--border);
+  border-radius:var(--r);padding:0 12px;font-size:14px;background:var(--card);
+  transition:border-color 120ms var(--ease)}
+.frow input[type=text]::placeholder{color:var(--text-3)}
+.frow input[type=text]:focus{outline:none;border-color:var(--primary)}
+.ck{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto;cursor:pointer;
+  transition:opacity 120ms var(--ease)}
+.ck .box{width:18px;height:18px;border-radius:4px;border:1.5px solid var(--text-3);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;
+  background:var(--card);transition:all 150ms var(--ease)}
+.ck.on .box{background:var(--primary);border-color:var(--primary)}
+.ck span{font-size:12px;color:var(--text-2)}
+.ck.locked{opacity:.45;cursor:default}
+.ck .gate{font-size:12px;color:var(--text-3)}
+.announce-row{display:flex;gap:12px}
+.announce-row label{width:96px;flex:0 0 96px;font-size:14px;padding-top:8px}
+.announce-wrap{flex:1;min-width:0}
+.announce-wrap textarea{width:100%;height:88px;border:1px solid var(--border);
+  border-radius:var(--r);padding:8px 12px;font-size:14px;line-height:20px;resize:none;
+  transition:border-color 120ms var(--ease)}
+.announce-wrap textarea:focus{outline:none;border-color:var(--primary)}
+.meta-line{display:flex;justify-content:flex-end;gap:12px;align-items:center;margin-top:6px}
+.meta-line .cnt{font-size:12px;color:var(--text-3)}
+
+/* ================= 编辑态 · 环境/服务/步骤行（F-13） ================= */
+.env{border:1px solid var(--border);border-radius:12px;padding:12px 16px;background:var(--card)}
+.env + .env{margin-top:12px}
+.env-h{display:flex;align-items:center;gap:10px;height:36px}
+.env-h .nm{font-size:15px;font-weight:600}
+.env-h .win{font-size:12px;color:var(--text-3)}
+.env-h .cnt{margin-left:auto;font-size:12px;color:var(--text-2)}
+.svc{background:var(--page);border-radius:12px;padding:10px 12px;margin-top:8px}
+.svc-h{display:flex;align-items:center;gap:8px;height:28px}
+.svc-h .nm{font-size:14px;font-weight:600}
+.kind{height:20px;border-radius:999px;padding:0 8px;font-size:11px;font-weight:600;
+  display:inline-flex;align-items:center}
+.kind.backend{background:var(--primary-soft);color:var(--primary-text)}
+.kind.other{background:var(--btn2);color:var(--text-2)}
+.svc-h .rm{margin-left:auto;font-size:12px;color:var(--danger-text);height:24px;padding:0 6px;
+  border-radius:4px;transition:background .12s var(--ease)}
+.svc-h .rm:hover{background:var(--danger-soft)}
+.branch{font-size:12px;color:var(--text-3);height:20px;line-height:20px;margin:2px 0 6px}
+.branch.missing{color:var(--danger-text)}
+.srow{position:relative;display:flex;align-items:center;gap:10px;height:44px;border-radius:var(--r);
+  padding:0 8px;cursor:pointer;transition:background 120ms var(--ease),transform 100ms var(--ease)}
+.srow:hover{background:var(--border-2)}
+.srow:active{transform:scale(.985)}
+.srow.invalid{background:var(--danger-soft)}
+.dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--text-3);flex:0 0 auto;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;
+  transition:all 150ms var(--spring);background:var(--card)}
+.srow.done .dot,.trow.done .dot,.grp-ok .dot{background:var(--primary);border-color:var(--primary)}
+.srow.skipped .dot{background:var(--btn2);border-color:var(--btn2)}
+.srow.skipped .dot::after{content:"";width:8px;height:2px;background:var(--text-3);border-radius:1px}
+.srow.invalid .dot{border-color:var(--danger-text)}
+.handle{width:14px;color:var(--text-3);font-size:11px;letter-spacing:-2px;opacity:.25;
+  flex:0 0 auto;transition:opacity 120ms var(--ease);cursor:grab;text-align:center}
+.srow:hover .handle{opacity:1}
+.sname{font-size:14px;color:var(--text-1);flex:0 1 auto;min-width:0;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.srow.skipped .sname{text-decoration:line-through;color:var(--text-3)}
+.srow.invalid .sname{color:var(--danger-text)}
+.sstate{font-size:12px;color:var(--text-3);flex:1 1 auto;min-width:0;text-align:left;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sops{display:flex;align-items:center;gap:2px;opacity:0;flex:0 0 auto;
+  transition:opacity 120ms var(--ease)}
+.srow:hover .sops,.srow.menu-open .sops{opacity:1}
+.sops .tbtn{height:28px;padding:0 8px;border-radius:4px;font-size:12px;color:var(--primary-text);
+  transition:background .12s var(--ease)}
+.sops .tbtn:hover{background:rgba(54,211,153,.14)}
+.sops .dots{width:26px;height:26px;border-radius:4px;color:var(--text-2);font-size:13px;
+  letter-spacing:1px;display:flex;align-items:center;justify-content:center}
+.sops .dots:hover{background:var(--selected)}
+.empty{font-size:14px;color:var(--text-3);padding:16px 0 8px;display:flex;align-items:center;gap:8px}
+.empty a{color:var(--link);text-decoration:none;font-size:13px}
+.empty a:hover{text-decoration:underline}
+
+/* ================= 发布态 · 流程轨道（F-14） ================= */
+.grp{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
+.grp + .grp{margin-top:12px}
+.grp-h{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;
+  font-size:15px;font-weight:600}
+.grp-h .win{font-size:12px;font-weight:400;color:var(--text-3)}
+.grp-h .cnt{margin-left:auto;font-size:12px;font-weight:400;color:var(--text-2)}
+.grp-h.fold{cursor:pointer;transition:background 120ms var(--ease)}
+.grp-h.fold:hover{background:var(--border-2)}
+.grp-h .arr{font-size:11px;color:var(--text-3);transition:transform 220ms var(--fold)}
+.grp-h.fold.open .arr{transform:rotate(90deg)}
+.grp-ok{font-size:14px;font-weight:400;color:var(--text-2);display:flex;align-items:center;gap:8px}
+.grp-ok .dot{width:18px;height:18px}
+.subsvc{font-size:12px;color:var(--text-3);padding:6px 16px 0 44px}
+.trows{padding:4px 8px 8px}
+.trow{position:relative;display:flex;align-items:center;gap:10px;height:44px;border-radius:var(--r);
+  padding:0 8px 0 12px;transition:background 150ms var(--ease),transform 100ms var(--ease)}
+.trow:active{transform:scale(.99)}
+.trow.done{cursor:pointer}
+.trow.done:hover{background:var(--border-2)}
+.trow.unlocked{cursor:default}
+.trow.unlocked:hover .tbtn{background:rgba(54,211,153,.14)}
+.trow.current{background:var(--primary-soft)}
+.trow.current::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;
+  border-radius:2px;background:var(--primary)}
+.trow.locked{cursor:default}
+.trow.locked .tname,.trow.locked .tsum,.trow.locked .tstate{color:var(--text-3)}
+.trow.skipped .tname{text-decoration:line-through;color:var(--text-3)}
+.trow.pulse{animation:anchor-pulse 800ms var(--ease) 1}
+@keyframes anchor-pulse{
+  0%{box-shadow:0 0 0 4px rgba(54,211,153,.25)}
+  100%{box-shadow:0 0 0 4px rgba(54,211,153,0)}
+}
+.node{width:14px;height:14px;border-radius:50%;flex:0 0 auto;margin:0 4px;
+  display:flex;align-items:center;justify-content:center;position:relative;z-index:1;
+  transition:all 150ms var(--ease)}
+.node.done{background:var(--primary)}
+.node.done::after{content:"";width:7px;height:4px;border-left:2px solid #fff;
+  border-bottom:2px solid #fff;transform:rotate(-45deg) translate(.5px,-1px)}
+.node.locked{border:2px solid var(--border);background:var(--card)}
+.node.unlocked{border:2px solid var(--text-3);background:var(--card)}
+.node.current{border:2px solid var(--primary);background:var(--card)}
+.node.current::after{content:"";width:6px;height:6px;border-radius:50%;background:var(--primary);
+  animation:breath 1.6s ease-in-out infinite}
+@keyframes breath{0%,100%{opacity:1}50%{opacity:.45}}
+.rail{position:absolute;left:19px;top:0;bottom:0;width:2px;background:var(--border);z-index:0}
+.rail.seg-done{background:var(--primary)}
+.trow.first .rail{top:50%}
+.trow.last .rail{bottom:50%}
+.tname{font-size:14px;color:var(--text-1);flex:0 1 auto;min-width:0;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.tsum{font-size:12px;color:var(--text-3);flex:1 1 auto;min-width:0;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.tstate{font-size:12px;color:var(--text-3);flex:0 0 auto;white-space:nowrap}
+.tstate.overdue{color:var(--danger-text)}
+.tbtn{height:28px;padding:0 10px;border-radius:4px;font-size:13px;color:var(--primary-text);
+  transition:background 120ms var(--ease)}
+.tbtn:hover{background:rgba(54,211,153,.18)}
+.lockico{width:14px;height:14px;flex:0 0 auto;color:var(--text-3)}
+.done-word2{font-size:12px;color:var(--text-3);flex:0 0 auto}
+
+/* ================= 操作记录（折叠区） ================= */
+.logs h2{margin-bottom:0}
+.loglist{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.logitem{display:flex;gap:10px;font-size:12px;color:var(--text-2);line-height:20px}
+.logitem .at{color:var(--text-3);flex:0 0 44px}
+.logitem .tag{flex:0 0 auto;color:var(--primary-text)}
+.logitem .tag.rv{color:var(--danger-text)}
+
+/* ================= 弹层（F-15） ================= */
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:100;
+  animation:fadein 120ms var(--ease);display:flex;align-items:center;justify-content:center}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+.dlg{width:420px;max-width:calc(100vw - 32px);background:var(--card);border-radius:var(--rc);
+  padding:20px;animation:dlg-in 160ms var(--ease);box-shadow:0 12px 40px rgba(0,0,0,.14)}
+.dlg.w480{width:480px}
+@keyframes dlg-in{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+.dlg h3{font-size:16px;font-weight:600}
+.dlg .msg{font-size:14px;color:var(--text-2);line-height:22px;margin-top:10px}
+.dlg .row{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.vlist{margin-top:12px;max-height:220px;overflow-y:auto;border-top:1px solid var(--border-2)}
+.vitem{display:flex;gap:8px;align-items:flex-start;font-size:14px;color:var(--danger-text);
+  line-height:28px;cursor:pointer;border-radius:4px;padding:0 6px}
+.vitem:hover{background:var(--danger-soft)}
+.vitem::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--danger);
+  flex:0 0 auto;margin-top:11px}
+.menu{position:fixed;z-index:120;min-width:140px;background:var(--card);
+  border:1px solid var(--border);border-radius:var(--r);padding:4px;
+  box-shadow:0 8px 24px rgba(0,0,0,.10);animation:menu-in 120ms var(--ease)}
+@keyframes menu-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.menu button{display:flex;width:100%;height:32px;align-items:center;padding:0 10px;
+  border-radius:4px;font-size:13px;color:var(--text-1);gap:8px;text-align:left}
+.menu button:hover{background:var(--border-2)}
+.menu button.dz{color:var(--danger-text)}
+.menu .sep{height:1px;background:var(--border-2);margin:4px 0}
+/* 配置编辑层（轻量演示版） */
+.edlg{width:640px;max-width:calc(100vw - 32px);height:480px;max-height:calc(100vh - 48px);
+  background:var(--card);border-radius:var(--rc);padding:20px;display:flex;flex-direction:column;
+  animation:dlg-in 160ms var(--ease);box-shadow:0 12px 40px rgba(0,0,0,.14)}
+.edlg h3{font-size:16px;font-weight:600}
+.edlg textarea{flex:1;margin-top:12px;border:1px solid var(--border);border-radius:var(--r);
+  padding:10px 12px;font-size:14px;line-height:20px;resize:none;min-height:0}
+.edlg textarea:focus{outline:none;border-color:var(--primary)}
+.edlg .cnt{font-size:12px;color:var(--text-3);margin-top:6px}
+.edlg .row{display:flex;justify-content:flex-end;gap:10px;margin-top:14px}
+
+@media (max-width:1100px){
+  .content{padding:12px 8px}
+  .col{max-width:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <b>池 53 · 双模式 demo</b>
+  <button class="scn on" data-scn="draft" onclick="setScene('draft')">编辑态 · 准备中</button>
+  <button class="scn" data-scn="pending" onclick="setScene('pending')">发布态 · 待执行（未到点）</button>
+  <button class="scn" data-scn="running" onclick="setScene('running')">发布态 · 执行中</button>
+  <button class="scn" data-scn="done" onclick="setScene('done')">归档 · 已完成</button>
+  <button class="scn" data-scn="voided" onclick="setScene('voided')">归档 · 已作废</button>
+  <span class="sep"></span>
+  <span class="hint">最小档 1000×640：拖窗缩放验证，无横向滚动</span>
+</div>
+
+<div class="app" id="app">
+  <div class="hdr" id="hdr"></div>
+  <div id="noticeSlot"></div>
+  <div class="body"><div class="content"><div class="col" id="content"></div></div></div>
+</div>
+
+<div id="overlay"></div>
+<div id="menuLayer"></div>
+
+<script>
+"use strict";
+/* ================= demo 数据 ================= */
+const KIND = {backend:"后端", pc_web:"PC Web", mobile_web:"移动 Web"};
+
+function baseData(){
+  return {
+    plan:"2026-10-31", weekday:"周五",
+    prereqs:[
+      {key:"pretest", label:"提测单", check:"已完成", no:"RM-20261031-007", ok:false, gate:true},
+      {key:"cab",     label:"CAB 单", check:"已完成", no:"CAB-2026-1031",  ok:false, gate:true},
+      {key:"nacos",   label:"nacos 工单", check:"已审批", no:"MR-20261031-118", ok:false, gate:true, needs:true},
+      {key:"db",      label:"数据库工单", check:"已审批", no:"DBA-20261031-042", ok:false, gate:true, needs:true},
+    ],
+    announce:{text:"本次上线订单服务 v2.3.0 与官网前端样式更新，预计 09:30 开始，影响时段 09:30–15:30。", sent:false},
+    envs:[
+      {name:"生产环境", win:"09:30–12:00", startAt:"09:30", locked:false, services:[
+        {name:"order-service", kind:"backend", branch:"release/20261031",
+         configs:[
+           {label:"nacos 配置", content:"dataId: order-service.yaml\ngroup: DEFAULT\n变更：超时时间 3s → 5s，新增灰度开关 1 项", skipped:false, done:false},
+           {label:"DB 脚本", content:"ALTER TABLE orders ADD COLUMN channel tinyint;\nCREATE INDEX idx_orders_channel ON orders(channel);", skipped:false, done:false},
+           {label:"cron 配置", content:"", skipped:false, done:false},
+         ],
+         merge:false, deploy:false, verify:false},
+        {name:"web-frontend", kind:"pc_web", branch:"release/20261031",
+         configs:[], merge:false, deploy:false, verify:false},
+      ]},
+      {name:"灰度环境", win:"14:00–15:30", startAt:"14:00", locked:true, services:[
+        {name:"order-service", kind:"backend", branch:"release/20261031",
+         configs:[{label:"nacos 配置", content:"灰度组配置：weight=10", skipped:false, done:false}],
+         merge:false, deploy:false, verify:false},
+        {name:"api-gateway", kind:"backend", branch:"main",
+         configs:[], merge:false, deploy:false, verify:false},
+      ]},
+    ],
+  };
+}
+let S = null;          // 当前场景数据
+let scene = "draft";   // 当前场景名
+let noticeTimer = null;
+let folded = {};       // 组折叠记忆
+let flashId = null;    // F-23 锚点脉冲目标
+
+/* 场景预设：各状态一份快照（demo 简化；实现由状态机推导） */
+function setScene(name){
+  scene = name;
+  document.querySelectorAll(".scn").forEach(b=>b.classList.toggle("on", b.dataset.scn===name));
+  S = baseData();
+  folded = {}; flashId = null;
+  if(name==="draft"){
+    S.prereqs[0].ok = true;
+    S.prereqs[2].ok = true;
+    S.announce.sent = true;
+    S.envs[0].services[0].configs[0].done = true;   // nacos 已随填随勾演示
+  }else if(name==="pending"){
+    S.envs.forEach(e=>e.locked = true);             // 未到 09:30，全部锁定
+  }else if(name==="running"){
+    S.prereqs.forEach(p=>p.ok = true);
+    S.announce.sent = true;
+    S.envs[0].locked = false;                       // 生产已开窗，灰度仍锁
+    const o = S.envs[0].services[0];
+    o.merge = true; o.configs[0].done = true;       // 推进到 DB 脚本 = 当前步
+    S.envs[0].services[1].merge = true;
+  }else if(name==="done"){
+    S.prereqs.forEach(p=>p.ok = true);
+    S.announce.sent = true;
+    S.envs.forEach(e=>{
+      e.locked = false;
+      e.services.forEach(s=>{
+        s.merge = s.deploy = s.verify = true;
+        s.configs.forEach(c=>{ if(!c.skipped) c.done = true; });
+      });
+    });
+  }else if(name==="voided"){
+    setSceneDataRunningFrozen();
+  }
+  render();
+}
+function setSceneDataRunningFrozen(){
+  S.prereqs.forEach(p=>p.ok = true);
+  S.announce.sent = true;
+  S.envs[0].locked = false;
+  const o = S.envs[0].services[0];
+  o.merge = true; o.configs[0].done = true;
+  S.envs[0].services[1].merge = true;
+}
+
+/* ================= 固定流程序（= performNextStep 语义，F-04） ================= */
+function trackItems(){
+  const items = [];
+  S.prereqs.forEach(p=>{
+    if(p.needs && !p.no && p.ok===false && p.no!==undefined){ /* needs 由内容出现决定，demo 固定出现 */ }
+    items.push({grp:"pre", grpTitle:"任务前置", id:"pre."+p.key, kind:"prereq", ref:p,
+      name:p.label, sum:p.no ? "单号 "+p.no : "", done:p.ok, locked:false});
+  });
+  items.push({grp:"pre", grpTitle:"任务前置", id:"pre.announce", kind:"announce", ref:S.announce,
+    name:"上线公告", sum:"已发布内容摘要 · "+S.announce.text.slice(0,14)+"…", done:S.announce.sent, locked:false});
+  S.envs.forEach((e,ei)=>{
+    e.services.forEach((s,si)=>{
+      const mk=(id,name,done,extra)=>items.push({grp:"env"+ei, grpTitle:e.name, env:e, svc:s, svcFirst:si===0,
+        id:"env"+ei+"."+id, kind:"step", name, sum:extra&&extra.sum||"", done, locked:e.locked,
+        skipped:extra&&extra.skipped||false});
+      mk(s.name+"|merge","合并分支",s.merge,{sum:"分支 "+(s.branch||"未填写")});
+      s.configs.forEach((c,ci)=>mk(s.name+"|cfg"+ci,c.label,c.done&&!c.skipped,
+        {sum:c.content?c.content.split("\n")[0]:"未填写内容", skipped:c.skipped}));
+      mk(s.name+"|deploy","部署",s.deploy,{sum:"发布 "+s.name});
+      mk(s.name+"|verify","验证",s.verify,{sum:"回归验证 "+s.name});
+    });
+  });
+  return items;
+}
+function currentStep(){
+  if(scene==="done"||scene==="voided") return null;  // 归档态只读，无当前步指向
+  return trackItems().find(i=>!i.done && !i.skipped && !i.locked) || null;
+}
+function progress(){
+  const items = trackItems().filter(i=>!i.skipped);
+  const done = items.filter(i=>i.done).length;
+  return {done, total:items.length};
+}
+
+/* ================= 渲染 ================= */
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+function render(){ renderHeader(); renderNotice(); renderContent(); }
+
+function renderHeader(){
+  MENUS = [];
+  const st = scene==="draft" ? ["draft","草稿","准备中"]
+    : scene==="pending" ? ["pending","待执行","发布中"]
+    : scene==="running" ? ["running","执行中","发布中"]
+    : scene==="done" ? ["done","已完成","已归档"] : ["voided","已作废","已作废"];
+  const badgeCls = st[2]==="发布中" ? "green" : (st[2]==="已作废" ? "dim" : "gray");
+  const ico = st[2]==="准备中" ? "M12 4l4 4-8 8H4v-4z"            // 铅笔
+    : st[2]==="发布中" ? "M5 3v18M5 4h11l-2.5 4L16 12H5"          // 旗帜
+    : st[2]==="已归档" ? "M4 12l5 5 11-11"                        // 对勾
+    : "M12 3a9 9 0 100 18 9 9 0 000-18zM5.5 18.5l13-13";          // 斜杠圆
+  const p = progress();
+  const showProg = scene!=="draft";
+  const cur = (scene==="pending"||scene==="running") ? currentStep() : null;
+  const when = scene==="pending"
+    ? (S.envs.find(e=>e.locked) ? "最早环境 "+S.envs.find(e=>e.locked).startAt+" 开始" : "") : "";
+
+  let right = "";
+  if(scene==="draft"){
+    right = `<button class="btn secondary" onclick="openValidate()">校验</button>
+             <button class="btn primary" onclick="onSubmit()">提交发布</button>
+             ${moreBtn(["作废任务|danger|onVoid"])}`;
+  }else if(scene==="pending"){
+    right = `<button class="btn secondary" onclick="openRevokeSubmit()">撤回提交</button>
+             <button class="btn primary" onclick="onNext()">${cur? "下一步："+esc(cur.name) : "下一步"}</button>
+             ${moreBtn(["校验（只读跑）|normal|onValidateRO","作废任务|danger|onVoid"])}`;
+  }else if(scene==="running"){
+    right = `<button class="btn primary" onclick="onNext()">${cur? "下一步："+esc(cur.name) : "下一步"}</button>
+             ${moreBtn(["校验（只读跑）|normal|onValidateRO","作废任务|danger|onVoid"])}`;
+  }else if(scene==="voided"){
+    right = `<button class="btn secondary" onclick="openRestore()">恢复</button>`;
+  }else{
+    right = `<span class="done-word">已完成</span>`;
+  }
+
+  document.getElementById("hdr").innerHTML = `
+    <button class="back" onclick="toast('demo：返回列表页',false)" title="返回">←</button>
+    <div class="title">上线任务 10/31<span class="wd">周五</span></div>
+    <span class="badge ${badgeCls}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${ico}"/></svg>${st[2]}</span>
+    <span class="chip ${st[0]}">${st[1]}</span>
+    <div class="grow"></div>
+    ${showProg ? `<div class="prog">
+        ${when?`<span class="when">${when}</span>`:""}
+        <span class="bar"><span class="fill" style="width:${p.total?Math.round(p.done/p.total*100):100}%"></span></span>
+        <span class="num">${p.done}/${p.total}</span></div>` : ""}
+    <div style="display:flex;gap:10px;align-items:center">${right}</div>`;
+}
+let MENUS = [];
+function moreBtn(entries){
+  MENUS.push(entries);
+  return `<button class="more" onclick="openHeaderMenu(this,${MENUS.length-1})">···</button>`;
+}
+
+/* notice（F-15）：3s 自动消失 */
+function renderNotice(){
+  document.getElementById("noticeSlot").innerHTML =
+    S&&S.notice ? `<div class="notice ${S.notice.err?"err":"ok"}" id="noticeBar">
+      <span>${S.notice.err?"!":"✓"}</span><span>${esc(S.notice.text)}</span>
+      <button class="nx" onclick="closeNotice()">×</button></div>` : "";
+}
+function notice(text, err){
+  S.notice = {text, err:!!err};
+  renderNotice();
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(()=>{
+    const b = document.getElementById("noticeBar");
+    if(b){ b.classList.add("out"); setTimeout(()=>{ if(S) S.notice=null; renderNotice(); },130); }
+  }, 3000);
+}
+function closeNotice(){ clearTimeout(noticeTimer); S.notice=null; renderNotice(); }
+
+/* ================= 编辑态内容（F-12 / F-13） ================= */
+function renderContent(){
+  const app = document.getElementById("app");
+  app.classList.toggle("muted", scene==="voided");
+  const c = document.getElementById("content");
+  if(scene==="draft") c.innerHTML = draftHTML();
+  else c.innerHTML = trackHTML();
+}
+
+function ckHTML(cls, on, label, gateHint, onclick){
+  if(gateHint) return `<span class="ck locked"><span class="box"></span><span class="gate">${gateHint}</span></span>`;
+  return `<span class="ck ${on?"on":""} ${cls}" onclick="${onclick}">
+    <span class="box">${on?"✓":""}</span><span>${label}</span></span>`;
+}
+function draftHTML(){
+  const g = S.prereqs;
+  const rows = g.map(p=>{
+    const filled = p.no.trim().length>0;
+    return `<div class="frow" id="pre-${p.key}">
+      <label>${p.label}</label>
+      <input type="text" placeholder="填写单号" value="${esc(p.no)}"
+        oninput="S.prereqs.find(x=>x.key==='${p.key}').no=this.value"
+        onchange="render()">
+      ${ckHTML("",p.ok,p.check, filled?null:"请先填写单据号",
+        `togglePrereq('${p.key}')`)}
+    </div>`;
+  }).join("");
+  const cfg = S.envs[0].services[0]; // demo 主演示服务
+  return `
+  <div class="card">
+    <h2>发布准备</h2>
+    <div class="sub">填齐单据并通过校验后，提交进入发布流程</div>
+    <div class="gtitle">审批单据</div>
+    ${rows}
+    <div class="gtitle">上线公告</div>
+    <div class="announce-row" id="pre-announce">
+      <label>公告内容</label>
+      <div class="announce-wrap">
+        <textarea placeholder="填写上线公告" oninput="S.announce.text=this.value">${esc(S.announce.text)}</textarea>
+        <div class="meta-line">
+          <span class="cnt">共 ${S.announce.text.length} 字</span>
+          ${ckHTML("",S.announce.sent,"已发",
+            S.announce.text.trim()?null:"请先填写公告内容","toggleAnnounce()")}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>环境与服务</h2>
+    <div class="sub">逐服务核对分支（只读）并填写配置；点击步骤行可提前标记完成</div>
+    ${S.envs.map((e,ei)=>envHTML(e,ei)).join("")}
+  </div>`;
+}
+function envHTML(e,ei){
+  const pr = envProgress(e);
+  const overdue = scene==="running" && e.name==="生产环境"; // demo 演示超时标记
+  return `<div class="env">
+    <div class="env-h">
+      <span class="nm">${esc(e.name)}</span><span class="win">${e.win}</span>
+      ${overdue?'<span class="chip overdue">已超时</span>':""}
+      <span class="cnt">${pr.done}/${pr.total}</span>
+      <button class="rm" onclick="notice('demo：移除环境走二次确认弹层（编辑态可用）',true)">移除环境</button>
+    </div>
+    ${e.services.length? e.services.map((s,si)=>svcHTML(e,s,ei,si)).join("")
+      : `<div class="empty">该环境暂无服务</div>`}
+  </div>`;
+}
+function envProgress(e){
+  let done=0,total=0;
+  e.services.forEach(s=>{
+    total += 3 + s.configs.filter(c=>!c.skipped).length;
+    done += (s.merge?1:0)+(s.deploy?1:0)+(s.verify?1:0)
+      + s.configs.filter(c=>!c.skipped&&c.done).length;
+  });
+  return {done,total};
+}
+function svcHTML(e,s,ei,si){
+  const noCfg = s.configs.length===0;
+  const row=(rid,label,done,skipped,invalid,stateTxt,opsHTML)=>{
+    return `<div class="srow ${done?"done":""} ${skipped?"skipped":""} ${invalid?"invalid":""}"
+        id="${rid}" onclick="rowDone('${rid}')">
+      <span class="handle" title="拖拽排序">⣿</span>
+      <span class="dot">${done?"✓":""}</span>
+      <span class="sname">${esc(label)}</span>
+      <span class="sstate">${esc(stateTxt)}</span>
+      <span class="sops" onclick="event.stopPropagation()">${opsHTML}</span>
+    </div>`;
+  };
+  const cfgOps=(ei,si,ci)=>`
+    <button class="tbtn" onclick="openEditor(${ei},${si},${ci})">填写</button>
+    <button class="dots" onclick="openRowMenu(event,${ei},${si},${ci})">···</button>`;
+  const rows = [];
+  rows.push(row(`r-${ei}-${si}-merge`,"合并分支",s.merge,false,s.branch==="" ,
+    s.branch? "分支已就绪":"分支未填写 · 提交校验未通过", ""));
+  s.configs.forEach((c,ci)=>{
+    rows.push(row(`r-${ei}-${si}-cfg${ci}`,c.label,c.done&&!c.skipped,c.skipped,c.content==="",
+      c.skipped?"已跳过":(c.content? "已填 "+c.content.split("\n").length+" 行":"内容为空"), cfgOps(ei,si,ci)));
+  });
+  rows.push(row(`r-${ei}-${si}-deploy`,"部署",s.deploy,false,false,"时间窗内可执行",""));
+  rows.push(row(`r-${ei}-${si}-verify`,"验证",s.verify,false,false,"部署后回归",""));
+  return `<div class="svc">
+    <div class="svc-h">
+      <span class="nm">${esc(s.name)}</span>
+      <span class="kind ${s.kind==="backend"?"backend":"other"}">${KIND[s.kind]}</span>
+      <button class="rm" onclick="notice('demo：移除服务走二次确认弹层（编辑态可用）',true)">移除</button>
+    </div>
+    <div class="branch ${s.branch?"":"missing"}">${s.branch?"分支 "+esc(s.branch):"分支未填写 · 提交校验未通过"}</div>
+    ${rows.join("")}
+  </div>`;
+}
+
+/* ================= 发布态轨道（F-14） ================= */
+function trackHTML(){
+  const items = trackItems();
+  const cur = currentStep();
+  const groups = [];
+  let gi = -1;
+  items.forEach(i=>{
+    if(groups.length===0 || groups[gi].id!==i.grp){
+      groups.push({id:i.grp, title:i.grpTitle, env:i.env||null, items:[]}); gi++;
+    }
+    groups[gi].items.push(i);
+  });
+  const html = groups.map(g=>{
+    const live = g.items.filter(i=>!i.skipped);
+    const allDone = live.length>0 && live.every(i=>i.done);
+    const isCur = cur && cur.grp===g.id;
+    const isOpen = isCur ? true : (folded[g.id]!==undefined ? !folded[g.id] : !allDone);
+    const pr = grpProgress(g);
+    let head;
+    if(allDone && !isOpen){
+      head = `<div class="grp-h fold" onclick="toggleFold('${g.id}')">
+        <span class="arr">▶</span>
+        <span class="grp-ok"><span class="dot done"></span>${esc(g.title)} · 已完成 ${pr.done}/${pr.total}</span>
+        <span class="cnt">点击展开</span></div>`;
+    }else{
+      const overdueFlag = g.env && scene==="running" && g.env.name==="生产环境";
+      head = `<div class="grp-h ${allDone?"fold open":""}" ${allDone?`onclick="toggleFold('${g.id}')"`:""}>
+        ${allDone?'<span class="arr">▶</span>':""}
+        <span>${esc(g.title)}</span>
+        ${g.env?`<span class="win">${g.env.win}</span>`:""}
+        ${overdueFlag?'<span class="chip overdue">已超时</span>':""}
+        <span class="cnt">${pr.done}/${pr.total}</span></div>`;
+    }
+    let body = "";
+    if(!(allDone && !isOpen)){
+      const archive = (scene==="done"||scene==="voided");
+      const parts = [];
+      let lastSvc = null;
+      g.items.forEach((i,idx)=>{
+        if(g.env && i.svc && i.svc!==lastSvc){
+          lastSvc = i.svc;
+          parts.push(`<div class="subsvc">${esc(i.svc.name)} · ${KIND[i.svc.kind]}</div>`);
+        }
+        const st = i.done?"done":(i.skipped?"skipped":(i.locked?"locked":
+          (cur && cur.id===i.id ? "current":"unlocked")));
+        let tail;
+        if(archive){
+          tail = st==="skipped" ? `<span class="done-word2">已跳过</span>`
+            : st==="done" ? `<span class="done-word2">已完成</span>`
+            : `<span class="done-word2">未完成</span>`;
+        }else if(st==="current"||st==="unlocked"){
+          tail = `<button class="tbtn" onclick="event.stopPropagation();confirmStep('${i.id}')">确认</button>`;
+        }else if(st==="locked"){
+          tail = `<span class="tstate"><svg class="lockico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg> ${i.env?i.env.startAt+" 解锁":""}</span>`;
+        }else{
+          tail = `<span class="done-word2">已完成</span>`;
+        }
+        const overdueStep = !archive && st!=="current" && st!=="done" && st!=="locked" &&
+          g.env && scene==="running" && g.env.name==="生产环境";
+        const clickable = st==="done" && !archive;
+        parts.push(`<div class="trow ${st} ${idx===0?"first":""} ${idx===g.items.length-1?"last":""} ${flashId===i.id?"pulse":""}" id="${i.id}"
+            ${clickable?`onclick="openRevokeStep('${i.id}')"`:
+             st==="locked"?`onclick="notice('${esc(g.title)} ${g.env?esc(g.env.startAt):""} 开始，暂时不能执行该步骤',true)"`:""}>
+          <span class="rail ${i.done?"seg-done":""}"></span>
+          <span class="node ${st}"></span>
+          <span class="tname">${esc(i.name)}</span>
+          <span class="tsum">${esc(i.sum)}</span>
+          ${overdueStep?`<span class="tstate overdue">已超时</span>`:""}
+          ${tail}
+        </div>`);
+      });
+      body = `<div class="trows">` + parts.join("") + `</div>`;
+    }
+    return `<div class="grp">${head}${body}</div>`;
+  }).join("");
+  return `<div class="card" style="padding:12px 16px">
+      <h2>流程轨道</h2>
+      <div class="sub">按固定流程逐项确认；下一步高亮指向，已解锁步骤可提前勾选，未解锁可见不可操作</div>
+    </div>${html}
+  <div class="card logs">
+    <h2>操作记录</h2>
+    <div class="loglist">
+      <div class="logitem"><span class="at">09:12</span><span class="tag">确认</span><span>任务 · 提测单 已确认</span></div>
+      <div class="logitem"><span class="at">09:15</span><span class="tag">确认</span><span>order-service · 合并分支 已确认</span></div>
+      <div class="logitem"><span class="at">09:18</span><span class="tag rv">撤回</span><span>web-frontend · 合并分支 撤回确认（选错分支后重做）</span></div>
+      <div class="logitem"><span class="at">09:20</span><span class="tag">提交</span><span>任务 · 提交进入发布流程</span></div>
+    </div>
+  </div>`;
+}
+function grpProgress(g){
+  const live = g.items.filter(i=>!i.skipped);
+  return {done:live.filter(i=>i.done).length, total:live.length};
+}
+function toggleFold(id){ folded[id] = (folded[id]!==undefined? !folded[id] : true); render(); }
+
+/* ================= 交互动作 ================= */
+function togglePrereq(key){
+  const p = S.prereqs.find(x=>x.key===key);
+  if(p.ok){ openConfirm("撤回确认", `撤回后「${p.label}」回到未完成，进度会重新计算。确定撤回？`, "确定撤回", true,
+    ()=>{ p.ok=false; notice(`已撤回「${p.label}」`); render(); }); return; }
+  if(!p.no.trim()){ notice("请先填写单据号", true); return; }
+  p.ok = true; notice(`已确认「${p.label}」`); render();
+}
+function toggleAnnounce(){
+  const a = S.announce;
+  if(a.sent){ openConfirm("撤回确认","撤回后「上线公告」回到未发，进度会重新计算。确定撤回？","确定撤回",true,
+    ()=>{ a.sent=false; notice("已撤回「上线公告」"); render(); }); return; }
+  if(!a.text.trim()){ notice("请先填写公告内容", true); return; }
+  a.sent = true; notice("已标记公告为已发"); render();
+}
+function rowDone(rid){
+  if(scene!=="draft") return;
+  const done = document.getElementById(rid).classList.contains("done");
+  if(done){ notice("demo：撤回确认弹层（同发布态单步撤回）",true); return; }
+  // demo：直接标记完成（门禁演示：cron 未填内容时拒绝）
+  const m = rid.match(/r-(\d+)-(\d+)-(.+)/); if(!m) return;
+  const [ ,ei,si,key] = m;
+  const e=S.envs[+ei], s=e.services[+si];
+  let label="", gateOk=true, gateMsg="";
+  if(key==="merge"){ label="合并分支"; }
+  else if(key==="deploy"){ label="部署"; }
+  else if(key==="verify"){ label="验证"; }
+  else{ const c=s.configs[+key.slice(3)]; label=c.label;
+    if(!c.content.trim()){ gateOk=false; gateMsg="请先填写配置内容"; } }
+  if(!gateOk){ notice(gateMsg,true); return; }
+  if(key==="merge") s.merge=true;
+  else if(key==="deploy") s.deploy=true;
+  else if(key==="verify") s.verify=true;
+  else s.configs[+key.slice(3)].done=true;
+  notice(`已确认「${label}」`); render();
+}
+/* F-20：提交校验（扩展到前置项齐备） */
+function validateItems(){
+  const miss = [];
+  S.prereqs.forEach(p=>{ if(!p.no.trim()) miss.push({t:`${p.label}未填写单号`, to:`pre-${p.key}`}); });
+  if(!S.announce.text.trim()) miss.push({t:"上线公告未填写内容", to:"pre-announce"});
+  S.envs.forEach((e,ei)=>e.services.forEach((s,si)=>{
+    if(!s.branch.trim()) miss.push({t:`${s.name}（${e.name}）分支未填写`, to:`r-${ei}-${si}-merge`});
+    s.configs.forEach((c,ci)=>{ if(!c.skipped && !c.content.trim())
+      miss.push({t:`${s.name}（${e.name}）${c.label}内容为空`, to:`r-${ei}-${si}-cfg${ci}`}); });
+  }));
+  return miss;
+}
+function openValidate(){
+  const miss = validateItems();
+  if(!miss.length){ notice("校验通过，可以提交发布"); return; }
+  openValidateDlg(miss);
+}
+function onSubmit(){
+  const miss = validateItems();
+  if(miss.length){ notice(`校验未通过：缺 ${miss.length} 项`, true); openValidateDlg(miss); return; }
+  openConfirm("提交发布","提交后任务进入发布态：内容全部只读，按流程逐项执行；如需修改可撤回提交。确定提交？","确定提交",false,
+    ()=>{ setScene("pending"); notice("已提交，进入发布流程"); });
+}
+function onValidateRO(){ notice("只读校验：全部通过"); }
+/* 发布态推进 */
+function confirmStep(id){
+  if(scene==="done"||scene==="voided") return;   // 归档只读
+  const it = trackItems().find(x=>x.id===id); if(!it||it.done) return;
+  if(it.kind==="prereq"){ it.ref.ok=true; }
+  else if(it.kind==="announce"){ it.ref.sent=true; }
+  else{
+    const s=it.svc, m=it.id.match(/\|(.+)$/)[1];
+    if(m==="merge") s.merge=true;
+    else if(m==="deploy") s.deploy=true;
+    else if(m==="verify") s.verify=true;
+    else s.configs[+m.slice(3)].done=true;
+  }
+  notice(`已确认「${it.name}」`);
+  const nxt = currentStep();
+  if(nxt && nxt.grp!==it.grp && folded[nxt.grp]) folded[nxt.grp]=false; // 当前步组自动展开
+  render();
+  if(nxt){ const el=document.getElementById(nxt.id);
+    if(el) el.scrollIntoView({behavior:"smooth",block:"center"}); }
+}
+function onNext(){
+  const cur = currentStep();
+  if(!cur){ if(trackItems().every(i=>i.done||i.skipped)){ notice("全部步骤已完成");
+      if(scene==="pending") setScene("done"); } return; }
+  confirmStep(cur.id);
+}
+function openRevokeStep(id){
+  if(scene==="done"||scene==="voided"){ notice("任务已只读，不能撤回", true); return; }
+  const it = trackItems().find(x=>x.id===id); if(!it) return;
+  openConfirm("撤回确认", `撤回后「${it.name}」回到未完成，进度会重新计算。确定撤回？`,"确定撤回",true,
+    ()=>{ if(it.kind==="prereq") it.ref.ok=false;
+      else if(it.kind==="announce") it.ref.sent=false;
+      else{ const s=it.svc,m=it.id.match(/\|(.+)$/)[1];
+        if(m==="merge")s.merge=false; else if(m==="deploy")s.deploy=false;
+        else if(m==="verify")s.verify=false; else s.configs[+m.slice(3)].done=false; }
+      notice(`已撤回「${it.name}」`); render(); });
+}
+/* F-02 兜底出路 */
+function openRevokeSubmit(){
+  openConfirm("撤回提交","撤回后任务回到准备中（草稿），已确认的步骤与操作记录保留；修改后可重新提交。确定撤回？","确定撤回",true,
+    ()=>{ setScene("draft"); notice("已撤回提交，可继续编辑"); });
+}
+function onVoid(){
+  openConfirm("作废任务","作废后停止提醒、整单只读；之后可随时恢复。确定作废？","确定作废",true,
+    ()=>{ setScene("voided"); notice("任务已作废"); });
+}
+function openRestore(){
+  openConfirm("恢复任务","恢复后按当前进度与时间回到对应状态。确定恢复？","确定恢复",false,
+    ()=>{ setScene("running"); notice("任务已恢复"); });
+}
+
+/* ================= 弹层 / 菜单 ================= */
+function openConfirm(title,msg,primary,danger,onOk){
+  window.__ok = onOk;
+  document.getElementById("overlay").innerHTML = `<div class="mask" onclick="if(event.target===this)closeDlg()">
+    <div class="dlg" role="dialog" aria-modal="true">
+      <h3>${esc(title)}</h3><p class="msg">${esc(msg)}</p>
+      <div class="row"><button class="btn secondary" onclick="closeDlg()">取消</button>
+      <button class="btn ${danger?"danger":"primary"}" onclick="okDlg()">${esc(primary)}</button></div>
+    </div></div>`;
+}
+function okDlg(){ const f=window.__ok; closeDlg(); if(f) f(); }
+function closeDlg(){ document.getElementById("overlay").innerHTML=""; }
+function openValidateDlg(miss){
+  document.getElementById("overlay").innerHTML = `<div class="mask" onclick="if(event.target===this)closeDlg()">
+    <div class="dlg w480" role="dialog" aria-modal="true">
+      <h3>校验未通过</h3><p class="msg">以下 ${miss.length} 项不完整，补齐后再继续（点击条目定位）：</p>
+      <div class="vlist">${miss.map(m=>`<div class="vitem" onclick="gotoItem('${m.to}')">${esc(m.t)}</div>`).join("")}</div>
+      <div class="row"><button class="btn primary" onclick="closeDlg()">知道了</button></div>
+    </div></div>`;
+}
+function gotoItem(id){
+  closeDlg();
+  const el=document.getElementById(id);
+  if(el){ el.scrollIntoView({behavior:"smooth",block:"center"});
+    el.style.transition="background 150ms var(--ease)";
+    const old=el.style.background; el.style.background="var(--primary-soft)";
+    setTimeout(()=>el.style.background=old,900); }
+}
+function openHeaderMenu(btn, idx){
+  const entries = MENUS[idx];
+  const r = btn.getBoundingClientRect();
+  document.getElementById("menuLayer").innerHTML = `<div class="menu" style="top:${r.bottom+6}px;right:${window.innerWidth-r.right}px">
+    ${entries.map(e=>{const [t,kind,fn]=e.split("|");
+      return `<button class="${kind==="danger"?"dz":""}" onclick="closeMenu();${fn}()">${esc(t)}</button>`;}).join("")}
+  </div>`;
+}
+function openRowMenu(ev,ei,si,ci){
+  ev.stopPropagation();
+  const r = ev.currentTarget.getBoundingClientRect();
+  const cfg = S.envs[ei].services[si].configs[ci];
+  document.getElementById("menuLayer").innerHTML = `<div class="menu" style="top:${r.bottom+4}px;left:${Math.min(r.left,window.innerWidth-160)}px">
+    <button onclick="closeMenu();notice('demo：上移/下移承接原箭头排序（配置行内可用）')">上移</button>
+    <button onclick="closeMenu();notice('demo：上移/下移承接原箭头排序（配置行内可用）')">下移</button>
+    <div class="sep"></div>
+    <button onclick="closeMenu();toggleSkip(${ei},${si},${ci})">${cfg.skipped?"取消跳过":"跳过此项"}</button>
+    <button onclick="closeMenu();openEditor(${ei},${si},${ci})">查看内容</button>
+  </div>`;
+}
+function closeMenu(){ document.getElementById("menuLayer").innerHTML=""; }
+function toggleSkip(ei,si,ci){
+  const c=S.envs[ei].services[si].configs[ci];
+  c.skipped=!c.skipped; if(c.skipped) c.done=false;
+  notice(c.skipped?`已跳过「${c.label}」（发布态将只读展示）`:`已取消跳过「${c.label}」`);
+  render();
+}
+/* 配置编辑层（轻量演示版，保留既有全屏形态语义） */
+let edTarget=null;
+function openEditor(ei,si,ci){
+  const s=S.envs[ei].services[si], c=s.configs[ci];
+  edTarget={ei,si,ci};
+  const ro = scene!=="draft";
+  document.getElementById("overlay").innerHTML = `<div class="mask" onclick="if(event.target===this)closeEditor()">
+    <div class="edlg" role="dialog" aria-modal="true">
+      <h3>${esc(s.name)} · ${esc(c.label)}${ro?"（只读）":""}</h3>
+      <textarea ${ro?"readonly":""} placeholder="粘贴或填写本次配置内容"
+        oninput="S.envs[${ei}].services[${si}].configs[${ci}].content=this.value;this.parentNode.querySelector('.cnt').textContent='共 '+this.value.length+' 字'">${esc(c.content)}</textarea>
+      <div class="cnt">共 ${c.content.length} 字</div>
+      <div class="row">
+        <button class="btn secondary" onclick="closeEditor()">${ro?"关闭":"取消"}</button>
+        ${ro?"":`<button class="btn primary" onclick="saveEditor()">保存</button>`}
+      </div>
+    </div></div>`;
+}
+function saveEditor(){
+  const {ei,si,ci}=edTarget;
+  const c=S.envs[ei].services[si].configs[ci];
+  closeEditor(); render();
+  notice(c.content.trim()?`已保存「${c.label}」（随填随勾：点击步骤行标记完成）`:`已保存「${c.label}」`);
+}
+function closeEditor(){ document.getElementById("overlay").innerHTML=""; }
+
+/* Esc：逐层关弹层（模块层既有语义） */
+document.addEventListener("keydown",e=>{
+  if(e.key!=="Escape") return;
+  if(document.getElementById("menuLayer").innerHTML) closeMenu();
+  else if(document.getElementById("overlay").innerHTML) closeDlg();
+});
+document.addEventListener("click",e=>{
+  const m=document.getElementById("menuLayer");
+  if(m.innerHTML && !m.contains(e.target) && !e.target.classList.contains("more") && !e.target.classList.contains("dots"))
+    closeMenu();
+});
+
+setScene("draft");
+</script>
+</body>
+</html>
