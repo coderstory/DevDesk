@@ -889,12 +889,12 @@
    "pool": "need",
    "title": "发布任务分支编辑入口补齐（updateTaskService 无 UI 调用方）",
    "priority": "P2",
-   "status": "在池",
+   "status": "关闭",
    "blocker": null,
    "owner": "ZCode主会话",
    "detail": "池 53 需求分析发现（PRD F-30，老板令 2026-10-31：没做的按新需求入池）：updateTaskService 有服务无 UI 调用方的既有缺口——分支编辑入口缺失。源 PRD docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md",
    "created": "2026-10-31 22:52:12 +0800",
-   "updated": "2026-10-31 22:52:12 +0800",
+   "updated": "2026-11-01 00:57:33 +0800",
    "body": "池 53 需求分析发现（PRD F-30，老板令 2026-10-31：没做的按新需求入池）：updateTaskService 有服务无 UI 调用方的既有缺口——分支编辑入口缺失。源 PRD docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
@@ -1781,6 +1781,24 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 93,
+   "need_id": 54,
+   "time": "2026-11-01 00:22:53 +0800",
+   "note": "夜间连续推进（老板令：待办需求都开发测试）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 94,
+   "need_id": 54,
+   "time": "2026-11-01 00:50:34 +0800",
+   "note": "实现段完成转待验收：分支编辑=编辑态服务卡 44px 表单行（label 96+input 32，前置单据流同语言），保存走 updateTaskService 整行写+独立缓冲（防对账空转），对账复用 applyContentRevocations 零新增；越权守卫 Pending/Running/Done/Voided 四态拒；发布/归档态分支无展示面为池53 IA 既有（轨道不显示分支）。测试 release_detail_branch 7/7 + release 全组 101/101 + release_probe 双档 PASS；4 张基准截图 evidence/20261101-pool54-dev/。方案卡偏差回填见 §八。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -2062,6 +2080,15 @@
    "need_id": 53,
    "time": "2026-11-01 00:22:29 +0800",
    "evidence": "QA 独立验收通过：release 域 94/94 复现、全量 2063/2057/0 账平（含他人批）、probe 实跑 PASS（dev 未做项补齐：44px/徽标断言）、行为抽验 4/4（撤回保留勾选/Running 拒撤/缺前置拒/轨道固定序时间窗）、设计符合度 3/3（probe 截屏实证）。欠债 4 项清单卡 §四 在案（动画类+校验定位+Windows 视觉走查转 CI）；徽标绿染断言缺转池 57；Windows 真机走查挂账（顺路第四件）。证据 evidence/20261101-pool53-accept-*",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 31,
+   "need_id": 54,
+   "time": "2026-11-01 00:57:33 +0800",
+   "evidence": "QA 独立验收通过：改动面 9 文件无夹带、release_detail_branch 7/7+release 101/101+probe 双档 PASS 独立复现、行为抽验 4/4（缓冲独立字段/失败路径保留/四态越权拒/对账复用零改动 diff 实证）、截图双档目检过；dev 证据目录瑕疵（1600 档缺 meta）已由验收双档补齐。证据 evidence/20261101-pool54-accept-{1000,1600}",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -4349,6 +4376,50 @@
    "id": 208,
    "need_id": 53,
    "time": "2026-11-01 00:22:29 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 209,
+   "need_id": 54,
+   "time": "2026-11-01 00:22:53 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "夜间连续推进（老板令：待办需求都开发测试）",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 210,
+   "need_id": 54,
+   "time": "2026-11-01 00:22:53 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 211,
+   "need_id": 54,
+   "time": "2026-11-01 00:50:34 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "实现段完成转待验收：分支编辑=编辑态服务卡 44px 表单行（label 96+input 32，前置单据流同语言），保存走 updateTaskService 整行写+独立缓冲（防对账空转），对账复用 applyContentRevocations 零新增；越权守卫 Pending/Running/Done/Voided 四态拒；发布/归档态分支无展示面为池53 IA 既有（轨道不显示分支）。测试 release_detail_branch 7/7 + release 全组 101/101 + release_probe 双档 PASS；4 张基准截图 evidence/20261101-pool54-dev/。方案卡偏差回填见 §八。",
+   "created_by": "ZCode研发代理",
+   "updated_by": "ZCode研发代理",
+   "deleted": 0
+  },
+  {
+   "id": 212,
+   "need_id": 54,
+   "time": "2026-11-01 00:57:33 +0800",
    "from_status": "待验收",
    "to_status": "关闭",
    "reason": "",
