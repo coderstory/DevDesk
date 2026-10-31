@@ -28,6 +28,12 @@ std::size_t countCodePoints(const std::string& utf8);
 // 金额估算（毫厘 = 0.001 元）。kind: llm_input / llm_output / embed
 long long estimateCostMilliYuan(const std::string& kind, long long tokens);
 
+// 计价 kind（与下面三个单价常量一一对应）。新增计价档 = 加常量 + 补 here 上方
+// if 分支 + 补 test_memory_proposals 的价目断言，三处缺一即静默计 0。
+inline constexpr const char* kKindLlmInput = "llm_input";
+inline constexpr const char* kKindLlmOutput = "llm_output";
+inline constexpr const char* kKindEmbed = "embed";
+
 // 注入记账专用 kind 前缀：inject_* 行是 hook 通道预算账（面板注入预算环消费），
 // 不是模型 token——恒被 todayTokens/monthTokens 与金额聚合排除（成本口径隔离）。
 inline constexpr const char* kKindInjectItems = "inject_items";  // tokens 列存条数

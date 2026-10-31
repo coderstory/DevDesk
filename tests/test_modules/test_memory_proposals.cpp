@@ -325,6 +325,36 @@ REGISTER_TEST(memory_usage_ledger_injection_and_cost_split,
     return true;
 })
 
+// 契约：计价档按单价精确、非计价档恒 0、未知 kind 显式 0（不失败）。
+// 防的回归：新增计价 kind 时只加常量不加价目 → 金额静默丢成 0 且无人察觉。
+// 会红条件：改动任一单价常量 / 把未知 kind 改成失败 / 删 tokens<=0 早退。
+REGISTER_TEST(memory_usage_ledger_kind_contract,
+              "memory: 计量 kind 契约——计价三档精确、非计价档与未知 kind 恒 0", {
+    // 价目（1M token，毫厘）：0.8 元 / 2.8 元 / 0.5 元
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindLlmInput, 1000000),
+                     static_cast<long long>(800));
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindLlmOutput, 1000000),
+                     static_cast<long long>(2800));
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindEmbed, 1000000),
+                     static_cast<long long>(500));
+    // 非计价档：尝试行与注入预算行恒 0（本就不该产生金额）
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindLlmAttempt, 1000000),
+                     static_cast<long long>(0));
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindInjectItems, 1000000),
+                     static_cast<long long>(0));
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindInjectChars, 1000000),
+                     static_cast<long long>(0));
+    // 未知 kind：显式 0，不失败（记账不因未知档中断）
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan("kind_not_in_price_table", 1000000),
+                     static_cast<long long>(0));
+    // 边界：0 / 负数 token 恒 0（不产生负金额）
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindLlmOutput, 0),
+                     static_cast<long long>(0));
+    DOCTEST_CHECK_EQ(estimateCostMilliYuan(kKindLlmOutput, -1),
+                     static_cast<long long>(0));
+    return true;
+})
+
 REGISTER_TEST(memory_usage_ledger_accumulates,
               "memory: 消耗计量——token 累计落库、金额估算按调研单价、今日/本月口径", {
     auto opened = UsageLedger::open(tmpDb("ledger"));

@@ -798,6 +798,57 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 49,
+   "pool": "debt",
+   "title": "测试覆盖明账：todo 切页返回动画中断分支无用例",
+   "priority": "P3",
+   "status": "在池",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "2026-10-31 测试质量抽样评审发现（场景/边界覆盖明账，非缺陷）：todo_module.cpp:708-710 切页返回「动画中断兜底落位」分支与观察缝七例同族却无对准用例——补一例（进动画→onPageEnter→返回后落位断言）。下次触碰 todo 动画时补",
+   "created": "2026-10-31 20:41:52 +0800",
+   "updated": "2026-10-31 20:41:52 +0800",
+   "body": "2026-10-31 测试质量抽样评审发现（场景/边界覆盖明账，非缺陷）：todo_module.cpp:708-710 切页返回「动画中断兜底落位」分支与观察缝七例同族却无对准用例——补一例（进动画→onPageEnter→返回后落位断言）。下次触碰 todo 动画时补",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
+  },
+  {
+   "id": 50,
+   "pool": "debt",
+   "title": "测试覆盖明账：usage_ledger 未知 kind 静默计 0 未钉契约",
+   "priority": "P3",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "2026-10-31 测试质量抽样评审发现（场景/边界覆盖明账，非缺陷）：usage_ledger estimateCostMilliYuan 单价表对未知 kind 静默计 0——新增记账 kind 时金额静默丢失。补未知 kind 用例（钉死「fail 或显式 0」契约，二选一在补例时定）。下次触碰记账层时补",
+   "created": "2026-10-31 20:41:52 +0800",
+   "updated": "2026-10-31 21:36:36 +0800",
+   "body": "2026-10-31 测试质量抽样评审发现（场景/边界覆盖明账，非缺陷）：usage_ledger estimateCostMilliYuan 单价表对未知 kind 静默计 0——新增记账 kind 时金额静默丢失。补未知 kind 用例（钉死「fail 或显式 0」契约，二选一在补例时定）。下次触碰记账层时补",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
+  },
+  {
+   "id": 51,
+   "pool": "debt",
+   "title": "测试资产优化：agent_ui DB 持久化用例下沉 service 层（缓行）",
+   "priority": "P3",
+   "status": "在池",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "2026-10-31 测试成本效益分析低收益候选（主会话权衡：缓行）：test_agent_ui.cpp（6515 行）中 DB 持久化类用例（如 agent_ui_db_import_reloads_tasks）与 agent_store service 层用例重叠——可下沉 service 层减 UI 测试体量；但动 6515 行测试文件的重构风险大于收益，待下次大改 agent UI 时顺带",
+   "created": "2026-10-31 21:11:02 +0800",
+   "updated": "2026-10-31 21:11:02 +0800",
+   "body": "2026-10-31 测试成本效益分析低收益候选（主会话权衡：缓行）：test_agent_ui.cpp（6515 行）中 DB 持久化类用例（如 agent_ui_db_import_reloads_tasks）与 agent_store service 层用例重叠——可下沉 service 层减 UI 测试体量；但动 6515 行测试文件的重构风险大于收益，待下次大改 agent UI 时顺带",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [
@@ -1556,6 +1607,42 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 85,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:31 +0800",
+   "note": "派工：补 usage_ledger 计量 kind 契约用例",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 86,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:31 +0800",
+   "note": "落地：新增 memory_usage_ledger_kind_contract + 三档 kind 常量化",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 87,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:31 +0800",
+   "note": "自测绿：全量 Total 2049 / Failed 0；变异注入该例红、旧例绿",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 88,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:36 +0800",
+   "note": "契约选定「未知 kind 显式 0 不失败」：llm_attempt 与 inject_* 本就不计价，若 record 对未知 kind 失败会打爆既有非计价记账路径。残余缺口＝加新计价档仍靠纪律（三处注释已写明），未做机检的 kind 注册表。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -1810,6 +1897,15 @@
    "need_id": 32,
    "time": "2026-10-31 20:08:03 +0800",
    "evidence": "同池 31 一批：trustSnapshotVersion→realTargetVersion 真值校验闭环（proposal_store 校验链零改动），NotFound→ok(-1)/网络错→快照放行分流 live 实证；forget 卡 baseVersion 填扫描时 updated_at epoch；同 wip 8ac14eb5",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 28,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:36 +0800",
+   "evidence": "新增用例 memory_usage_ledger_kind_contract 钉死契约：计价三档精确（800/2800/500 毫厘 @1M tok）、非计价档 llm_attempt/inject_items/inject_chars 恒 0、未知 kind 显式 0、tokens≤0 恒 0。变异注入（未知 kind 落 llm_input 单价）→ 该例红、旧 4 例仍绿（新增覆盖非冗余，非恒真）；全量 Total 2049 / Passed 2043 / Failed 0 / Skipped 6（macOS 2026-10-31 21:35）。同批把三档计价 kind 提为 kKindLlmInput/Output/Embed 常量，注释写明「新增计价档要改三处」。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -3869,6 +3965,83 @@
    "from_status": "在池",
    "to_status": "挂起",
    "reason": "登记不派工",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 188,
+   "need_id": 49,
+   "time": "2026-10-31 20:41:52 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 189,
+   "need_id": 50,
+   "time": "2026-10-31 20:41:52 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 190,
+   "need_id": 51,
+   "time": "2026-10-31 21:11:02 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 191,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:31 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "派工：补 usage_ledger 计量 kind 契约用例",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 192,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:31 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "落地：新增 memory_usage_ledger_kind_contract + 三档 kind 常量化",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 193,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:31 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "自测绿：全量 Total 2049 / Failed 0；变异注入该例红、旧例绿",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 194,
+   "need_id": 50,
+   "time": "2026-10-31 21:36:36 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "契约选定「未知 kind 显式 0 不失败」：llm_attempt 与 inject_* 本就不计价，若 record 对未知 kind 失败会打爆既有非计价记账路径。残余缺口＝加新计价档仍靠纪律（三处注释已写明），未做机检的 kind 注册表。",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0

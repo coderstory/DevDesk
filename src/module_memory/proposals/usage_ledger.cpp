@@ -75,12 +75,15 @@ std::size_t countCodePoints(const std::string& utf8) {
 
 long long estimateCostMilliYuan(const std::string& kind, long long tokens) {
     if (tokens <= 0) return 0;
+    // 未计价 kind（llm_attempt / inject_* / 未来新增但尚未定价的）显式计 0：
+    // 记账不因此失败，金额缺口由调用方「新增计价档要改三处」的纪律兜住
+    // （见 usage_ledger.h 的 kKindLlmInput 注释与 test_memory_proposals 价目断言）。
     double yuanPerTok = 0.0;
-    if (kind == "llm_input") {
+    if (kind == kKindLlmInput) {
         yuanPerTok = kLlmInputYuanPerMTok / 1000000.0;
-    } else if (kind == "llm_output") {
+    } else if (kind == kKindLlmOutput) {
         yuanPerTok = kLlmOutputYuanPerMTok / 1000000.0;
-    } else if (kind == "embed") {
+    } else if (kind == kKindEmbed) {
         yuanPerTok = kEmbedYuanPerMTok / 1000000.0;
     }
     const double milli = yuanPerTok * static_cast<double>(tokens) * 1000.0;
