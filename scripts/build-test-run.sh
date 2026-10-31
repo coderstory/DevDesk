@@ -304,6 +304,11 @@ if [ "$RUN_APP" = "1" ]; then
 # macOS/Linux 上取绝对路径的原因；Windows 侧启动路径保持相对形式不变。
   kill_by_exe_path "$BUILD_DIR_ABS/DevDesk$EXE_SUFFIX"
   kill_by_exe_path "$BUILD_DIR_ABS/tests/devdesk_tests$EXE_SUFFIX"
+  # 债-7（池 45）：bundle 内二进制同杀 —— 从 build/DevDesk.app 启动的运行实例持旧 inode，
+  # 债-19 重组时换不掉（磁盘恒新鲜但内存里还是旧码）。仅非 Windows（bundle 是 macOS 形态；
+  # Windows 分支即使传入也无命中，白调一次 PowerShell 故裁掉）。
+  [ "$DEVDESK_OS" != "windows" ] && \
+    kill_by_exe_path "$BUILD_DIR_ABS/DevDesk.app/Contents/MacOS/DevDesk"
   echo "✅ 旧进程已清（仅本 build 目录下的产物）"
 elif desk_running; then
   echo "⚠ DevDesk 正在运行（--no-run 不杀）：构建链接 DevDesk$EXE_SUFFIX 可能因文件锁失败" >&2
