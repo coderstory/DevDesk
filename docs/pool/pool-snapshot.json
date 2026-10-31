@@ -849,6 +849,23 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 52,
+   "pool": "debt",
+   "title": "fast lane 过滤可信化——自研 runner 单子串匹配漏跑",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "自测 runners --filter 漏跑 44%（markdown 家族 257 仅命中 114）——假绿风险。方案 A 已实现（wip d6046da7）：file: 源文件过滤+逗号多词 OR+裸词纳入 unique_name；反例 0→257/257，全量 2049 绿。源报告 docs/superpowers/research/2026-10-31-测试成本效益分析.md，方案卡 docs/superpowers/plans/2026-10-31-fastlane过滤可信化-技术方案.md",
+   "created": "2026-10-31 21:45:01 +0800",
+   "updated": "2026-10-31 22:04:12 +0800",
+   "body": "自测 runners --filter 漏跑 44%（markdown 家族 257 仅命中 114）——假绿风险。方案 A 已实现（wip d6046da7）：file: 源文件过滤+逗号多词 OR+裸词纳入 unique_name；反例 0→257/257，全量 2049 绿。源报告 docs/superpowers/research/2026-10-31-测试成本效益分析.md，方案卡 docs/superpowers/plans/2026-10-31-fastlane过滤可信化-技术方案.md",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [
@@ -1643,6 +1660,24 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 89,
+   "need_id": 52,
+   "time": "2026-10-31 21:45:24 +0800",
+   "note": "实现段完成（wip d6046da7，反例 0→257/257+8 项全过）；QA 独立验收派发",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 90,
+   "need_id": 52,
+   "time": "2026-10-31 22:04:01 +0800",
+   "note": "实现+QA 双段完成待关",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -1906,6 +1941,15 @@
    "need_id": 50,
    "time": "2026-10-31 21:36:36 +0800",
    "evidence": "新增用例 memory_usage_ledger_kind_contract 钉死契约：计价三档精确（800/2800/500 毫厘 @1M tok）、非计价档 llm_attempt/inject_items/inject_chars 恒 0、未知 kind 显式 0、tokens≤0 恒 0。变异注入（未知 kind 落 llm_input 单价）→ 该例红、旧 4 例仍绿（新增覆盖非冗余，非恒真）；全量 Total 2049 / Passed 2043 / Failed 0 / Skipped 6（macOS 2026-10-31 21:35）。同批把三档计价 kind 提为 kKindLlmInput/Output/Embed 常量，注释写明「新增计价档要改三处」。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 29,
+   "need_id": 52,
+   "time": "2026-10-31 22:04:12 +0800",
+   "evidence": "QA 独立验收通过：五组反例数字全复现（257/257、裸词 117 超集零回归、md_scanner 9、--filter= 形态 9、0 命中 rc2）、memory 域零缩水（73=69+4）、全量 2049/Failed 0、diff 干净（3 文件+方案卡）；file: 归一化覆盖相对/绝对/Windows 形态（test_main.cpp:228-236）。Windows 真机复跑反例 1/3/4 挂账（随 Windows 机，与池 16/债-19 F-08 同批）。证据 evidence/20261031-pool52-accept-{g1..g6}",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -4042,6 +4086,61 @@
    "from_status": "待验收",
    "to_status": "关闭",
    "reason": "契约选定「未知 kind 显式 0 不失败」：llm_attempt 与 inject_* 本就不计价，若 record 对未知 kind 失败会打爆既有非计价记账路径。残余缺口＝加新计价档仍靠纪律（三处注释已写明），未做机检的 kind 注册表。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 195,
+   "need_id": 52,
+   "time": "2026-10-31 21:45:01 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 196,
+   "need_id": 52,
+   "time": "2026-10-31 21:45:24 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "实现段完成（wip d6046da7，反例 0→257/257+8 项全过）；QA 独立验收派发",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 197,
+   "need_id": 52,
+   "time": "2026-10-31 22:03:55 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 198,
+   "need_id": 52,
+   "time": "2026-10-31 22:04:01 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "实现+QA 双段完成待关",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 199,
+   "need_id": 52,
+   "time": "2026-10-31 22:04:12 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
