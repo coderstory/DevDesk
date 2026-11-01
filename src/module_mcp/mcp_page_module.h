@@ -58,11 +58,13 @@ private:
     bool tryRunning() const { return tryRunning_.load(std::memory_order_acquire); }
 
     // 卡片 / 详情弹窗 / 「记忆」模块行绘制（compose 专用；id 契约 = 测试定位面）
+    // cardWidth = 本帧按内容宽算出的卡片列宽（自适应 340–420，见 .cpp 的列宽算法）
     void drawToolCard(eui::Ui& ui,
                       const std::shared_ptr<::core::mcp::IMcpTool>& tool,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& comp,
-                      bool serviceRunning);
+                      bool serviceRunning,
+                      float cardWidth);
     void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& comp);

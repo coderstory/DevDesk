@@ -271,11 +271,14 @@ REGISTER_TEST(release_task_list_empty_state_and_new_task,
                   ui.end();
                   ui.layout(screen.width, screen.height);
 
-                  const auto* empty = ui.find("release.tasks.empty");
+                  // 2026-11-01 R3：空态走 ui_kit::emptyState（图标+主句+引导+行动钮）
+                  const auto* empty = ui.find("release.tasks.empty.message");
                   DOCTEST_REQUIRE(empty != nullptr);
                   DOCTEST_CHECK_EQ(empty->text, std::string("还没有上线任务"));
+                  DOCTEST_CHECK(ui.find("release.tasks.empty.guide") != nullptr);
+                  DOCTEST_CHECK(ui.find("release.tasks.empty.icon") != nullptr);
                   DOCTEST_CHECK(ui.find("release.tasks.card.1") == nullptr);
-                  const auto* button = ui.find("release.tasks.empty.new.bg");
+                  const auto* button = ui.find("release.tasks.empty.action.bg");
                   DOCTEST_REQUIRE(button != nullptr);
                   DOCTEST_REQUIRE(button->onClick != nullptr);
                   button->onClick();
@@ -356,12 +359,12 @@ REGISTER_TEST(release_task_list_tab_filter_and_counts,
                   DOCTEST_CHECK(ui.find("release.tasks.card.1") != nullptr);
                   const auto* count = ui.find("release.tasks.tabcount");
                   DOCTEST_REQUIRE(count != nullptr);
-                  DOCTEST_CHECK_EQ(count->text, std::string("共 7 个任务"));
+                  DOCTEST_CHECK_EQ(count->text, std::string("7 个任务"));
 
                   auto clickTab = [&](int tab) {
                       // 注：lambda 内禁用 doctest 断言宏（展开含 return，与推导
                       // 返回类型冲突）；节点缺失由后续行为断言兜底。
-                      auto* node = ui.find("release.tasks.tab." + std::to_string(tab));
+                      auto* node = ui.find("release.tasks.tab." + std::to_string(tab) + ".hit");
                       if (node == nullptr || node->onClick == nullptr) return;
                       node->onClick();
                       composeOnce();
@@ -374,7 +377,7 @@ REGISTER_TEST(release_task_list_tab_filter_and_counts,
                   DOCTEST_CHECK(ui.find("release.tasks.card.6") == nullptr);
                   const auto* count1 = ui.find("release.tasks.tabcount");
                   DOCTEST_REQUIRE(count1 != nullptr);
-                  DOCTEST_CHECK_EQ(count1->text, std::string("发布中 · 3 个"));
+                  DOCTEST_CHECK_EQ(count1->text, std::string("3 个任务"));
                   // 准备中：Draft ×2
                   clickTab(2);
                   DOCTEST_CHECK(ui.find("release.tasks.card.1") != nullptr);
@@ -382,7 +385,7 @@ REGISTER_TEST(release_task_list_tab_filter_and_counts,
                   DOCTEST_CHECK(ui.find("release.tasks.card.3") == nullptr);
                   const auto* count2 = ui.find("release.tasks.tabcount");
                   DOCTEST_REQUIRE(count2 != nullptr);
-                  DOCTEST_CHECK_EQ(count2->text, std::string("准备中 · 2 个"));
+                  DOCTEST_CHECK_EQ(count2->text, std::string("2 个任务"));
                   // 已归档：Done + Voided
                   clickTab(3);
                   DOCTEST_CHECK(ui.find("release.tasks.card.6") != nullptr);
@@ -390,7 +393,7 @@ REGISTER_TEST(release_task_list_tab_filter_and_counts,
                   DOCTEST_CHECK(ui.find("release.tasks.card.1") == nullptr);
                   const auto* count3 = ui.find("release.tasks.tabcount");
                   DOCTEST_REQUIRE(count3 != nullptr);
-                  DOCTEST_CHECK_EQ(count3->text, std::string("已归档 · 2 个"));
+                  DOCTEST_CHECK_EQ(count3->text, std::string("2 个任务"));
                   return true;
               })
 
@@ -414,15 +417,15 @@ REGISTER_TEST(release_task_list_filter_empty_and_back,
                   composeOnce();
                   composeOnce();
 
-                  auto* tab = ui.find("release.tasks.tab.1");
+                  auto* tab = ui.find("release.tasks.tab.1.hit");
                   DOCTEST_REQUIRE(tab != nullptr);
                   DOCTEST_REQUIRE(tab->onClick != nullptr);
                   tab->onClick();
                   composeOnce();
-                  const auto* emptyText = ui.find("release.tasks.filterempty");
+                  const auto* emptyText = ui.find("release.tasks.filterempty.message");
                   DOCTEST_REQUIRE(emptyText != nullptr);
                   DOCTEST_CHECK_EQ(emptyText->text, std::string("暂无发布中的任务"));
-                  auto* back = ui.find("release.tasks.filterempty.all");
+                  auto* back = ui.find("release.tasks.filterempty.action.bg");
                   DOCTEST_REQUIRE(back != nullptr);
                   DOCTEST_REQUIRE(back->onClick != nullptr);
                   back->onClick();
@@ -466,7 +469,7 @@ REGISTER_TEST(release_task_list_filter_empty_page_fills_next_page,
                   DOCTEST_CHECK(ui.find("release.tasks.card.1") != nullptr);
                   DOCTEST_CHECK(ui.find("release.tasks.card.11") == nullptr);
 
-                  auto* tab = ui.find("release.tasks.tab.1");
+                  auto* tab = ui.find("release.tasks.tab.1.hit");
                   DOCTEST_REQUIRE(tab != nullptr);
                   DOCTEST_REQUIRE(tab->onClick != nullptr);
                   tab->onClick();
@@ -478,7 +481,7 @@ REGISTER_TEST(release_task_list_filter_empty_page_fills_next_page,
                                         "补页装出行卡后不得仍呈现筛选空态");
                   const auto* count = ui.find("release.tasks.tabcount");
                   DOCTEST_REQUIRE(count != nullptr);
-                  DOCTEST_CHECK_EQ(count->text, std::string("发布中 · 1 个"));
+                  DOCTEST_CHECK_EQ(count->text, std::string("1 个任务"));
                   return true;
               })
 

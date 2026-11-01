@@ -482,7 +482,7 @@ const float h = 540.0f;
             {
                 const char* kTabLabels[] = {"基础信息", "模型配置", "环境变量"};
                 const float kTabW[] = {88.0f, 88.0f, 88.0f};
-                constexpr float kTabH = 32.0f;
+                constexpr float kTabH = ui_kit::kWtabSmallHeight;
                 constexpr float kTabGap = 4.0f;
                 constexpr float kTabY = 52.0f;
                 float xPos = 28.0f;

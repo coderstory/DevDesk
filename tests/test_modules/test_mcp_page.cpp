@@ -18,6 +18,7 @@
 #include <eui/dsl.h>
 
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <thread>
@@ -185,7 +186,7 @@ REGISTER_TEST(mcp_page_registry_row,
 
 // 防：网格不渲染 / 卡片缺件（图标、名称、描述、双 chip、命中面）。
 REGISTER_TEST(mcp_page_grid_cards,
-              "mcp_page: 卡片网格按字典序出卡，名称/描述/chip/hit 齐全，卡宽 340，计数正确", {
+              "mcp_page: 卡片网格按字典序出卡，名称/描述/chip/hit 齐全，列宽自适应，计数正确", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
@@ -198,7 +199,7 @@ REGISTER_TEST(mcp_page_grid_cards,
     DOCTEST_REQUIRE(grid != nullptr);
     DOCTEST_REQUIRE_NE(ui.find("mcp.card.test_alpha_tool"), nullptr);
     DOCTEST_REQUIRE_NE(ui.find("mcp.card.test_beta_tool"), nullptr);
-    DOCTEST_CHECK_EQ(ui.find("mcp.empty"), nullptr);  // 非空态：空态提示不得建
+    DOCTEST_CHECK_EQ(ui.find("mcp.empty.message"), nullptr);  // 非空态：空态不得建
     const auto* name = ui.find("mcp.card.test_alpha_tool.name");
     DOCTEST_REQUIRE(name != nullptr);
     DOCTEST_CHECK_EQ(name->text, std::string("test_alpha_tool"));
@@ -212,23 +213,92 @@ REGISTER_TEST(mcp_page_grid_cards,
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_REQUIRE(hit->onClick != nullptr);
     const auto* card = ui.find("mcp.card.test_alpha_tool");
-    DOCTEST_CHECK_EQ(card->width.value, 340.0f);  // 上游坑：flow 子元素必须显式 size
+    // 2026-11-01 F-13：卡宽不再定死 340，改为随内容宽自适应（区间 340–420）
+    DOCTEST_CHECK((card->width.value >= 340.0f));
+    DOCTEST_CHECK((card->width.value <= 420.0f));
     const auto* count = ui.find("mcp.section.count");
     DOCTEST_REQUIRE(count != nullptr);
     DOCTEST_CHECK_EQ(count->text, std::string("2"));
     return true;
 })
 
+// 防：F-01 描述列与状态列咬合——长描述末尾「…」与「未启用」粘连成一句。
+// 判据：描述行右端到状态圆点左端 ≥ 16px。
+REGISTER_TEST(mcp_page_desc_status_gap,
+              "mcp_page: 描述列右端与状态列左端间距 ≥16px，不咬合", {
+    core::mcp::McpToolRegistry reg;
+    std::shared_ptr<FakeTool> alpha, beta;
+    seedTwoTools(reg, alpha, beta);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_gap");
+
+    const auto* desc = ui.find("mcp.card.test_alpha_tool.desc");
+    const auto* dot = ui.find("mcp.card.test_alpha_tool.status.dot");
+    DOCTEST_REQUIRE(desc != nullptr);
+    DOCTEST_REQUIRE(dot != nullptr);
+    const float descRight = desc->frame.x + desc->frame.width;
+    DOCTEST_CHECK((dot->frame.x - descRight >= 16.0f));
+    return true;
+})
+
+// 防：F-13 计数 chip 离标题太远（曾相距 700px，等于两处独立信息）。
+// 判据：计数 chip 左缘紧跟标题右缘（间距 ≤ 24px）。
+REGISTER_TEST(mcp_page_count_chip_near_title,
+              "mcp_page: 计数 chip 紧跟区标题，间距 ≤24px", {
+    core::mcp::McpToolRegistry reg;
+    std::shared_ptr<FakeTool> alpha, beta;
+    seedTwoTools(reg, alpha, beta);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_chip");
+
+    const auto* title = ui.find("mcp.section.title");
+    const auto* chip = ui.find("mcp.section.count.bg");
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_REQUIRE(chip != nullptr);
+    const float titleRight = title->frame.x + title->frame.width;
+    DOCTEST_CHECK((chip->frame.x - titleRight <= 24.0f));
+    DOCTEST_CHECK((chip->frame.x - titleRight >= 0.0f));
+    return true;
+})
+
+// 防：F-12 服务 chip 借用 purple（用户可选强调色槽位）→ 微信绿白体系里冒出唯一紫。
+// 判据：服务 chip 底色不是紫色系（蓝分量显著高于红分量）。
+REGISTER_TEST(mcp_page_no_purple_tag,
+              "mcp_page: 服务 chip 用中性灰底，不用 purple 强调色", {
+    core::mcp::McpToolRegistry reg;
+    std::shared_ptr<FakeTool> alpha, beta;
+    seedTwoTools(reg, alpha, beta);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_purple");
+
+    const auto* svc = ui.find("mcp.card.test_alpha_tool.tag.svc.bg");
+    DOCTEST_REQUIRE(svc != nullptr);
+    // 精确判定：底色就是主题的 borderMuted（中性灰），而不是 purple
+    const auto& expect = core::theme::current().colors.borderMuted;
+    const auto& c = svc->color;
+    DOCTEST_CHECK(std::fabs(c.r - expect.r) < 0.001f);
+    DOCTEST_CHECK(std::fabs(c.g - expect.g) < 0.001f);
+    DOCTEST_CHECK(std::fabs(c.b - expect.b) < 0.001f);
+    return true;
+})
+
 // 防：空注册表白页（无任何提示、计数残留旧值）。
 REGISTER_TEST(mcp_page_empty_state,
-              "mcp_page: 空注册表 → 空态提示在、无卡片、计数 0", {
+              "mcp_page: 空注册表 → 统一空态在、无卡片、计数 0", {
     core::mcp::McpToolRegistry reg;
     McpPageModule mod(reg);
     const eui::Screen screen = makeScreen();
     eui::Ui ui;
     composeFrame(mod, ui, screen, "mcp_empty");
 
-    DOCTEST_REQUIRE_NE(ui.find("mcp.empty"), nullptr);
+    DOCTEST_REQUIRE_NE(ui.find("mcp.empty.message"), nullptr);
+    DOCTEST_REQUIRE_NE(ui.find("mcp.empty.guide"), nullptr);
     DOCTEST_CHECK_EQ(ui.find("mcp.card.test_alpha_tool"), nullptr);
     const auto* count = ui.find("mcp.section.count");
     DOCTEST_REQUIRE(count != nullptr);

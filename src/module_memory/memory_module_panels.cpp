@@ -9,14 +9,14 @@ namespace module::memory {
 void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
                                float x, float w, float y) {
     const auto snap = panel_.snapshot();
-    constexpr float kCardH = 268.0f;
-    ui.rect("memory.feed.card")
-        .position(x, y)
-        .size(w, kCardH)
-        .color(ui_kit::cardSurface(t))
-        .radius(t.sizes.radiusLarge)
-        .border(1.0f, t.colors.borderDefault)
-        .build();
+    // 2026-11-01 F-02：卡高此前写死 268，空动态时是一张大半空的白盒，和上方
+    // 「最近调用记录」卡贴在一起，两卡边界不可辨（只见文字不见容器）。改为按
+    // 行数自适应，空态另走统一空态组件。
+    const bool empty = snap.feed.empty();
+    const float kCardH =
+        empty ? 132.0f
+              : 44.0f + static_cast<float>(snap.feed.size()) * 27.0f + 16.0f;
+    ui_kit::cardPanel(ui, "memory.feed.card", x, y, w, kCardH, t.sizes.radiusLarge, t);
     ui.text("memory.feed.title")
         .position(x + 16.0f, y + 12.0f)
         .size(300.0f, 22.0f)
@@ -35,16 +35,12 @@ void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
         .color(t.colors.textTertiary)
         .build();
 
-    if (snap.feed.empty()) {
-        ui.text("memory.feed.empty")
-            .position(x + 16.0f, y + 48.0f)
-            .size(w - 32.0f, 60.0f)
-            .wrap()
-            .text("还没有动态。引擎启动并产生采集 / 注入 / 提炼后，这里会滚动显示。")
-            .fontSize(core::theme::scaled(13.0f))
-            .lineHeight(20.0f)
-            .color(t.colors.textTertiary)
-            .build();
+    if (empty) {
+        ui_kit::EmptyStateOptions opts;
+        opts.message = "还没有动态";
+        opts.guide = "引擎启动并产生采集 / 注入 / 提炼后，这里会滚动显示。";
+        ui_kit::emptyState(ui, "memory.feed.empty", opts, x + 16.0f, y + 38.0f,
+                           w - 32.0f, kCardH - 50.0f, t);
         return;
     }
     auto feedColor = [&](panel::FeedItem::Kind k) {
@@ -141,13 +137,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
     // 消耗卡（今日/本月 token + 估算金额，ledger 聚合；月度预算软/硬档）
     {
         constexpr float kUsageH = 150.0f;
-        ui.rect("memory.usage.card")
-            .position(x, cy)
-            .size(w, kUsageH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.usage.card", x, cy, w, kUsageH, t.sizes.radiusLarge, t);
         ui.text("memory.usage.title")
             .position(x + 16.0f, cy + 12.0f)
             .size(320.0f, 22.0f)
@@ -228,14 +218,11 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
     {
         constexpr float kRowH = 26.0f;
         const auto rows = snap.recentLedger;
-        const float tableH = 40.0f + static_cast<float>(rows.size()) * kRowH + 14.0f;
-        ui.rect("memory.recent.card")
-            .position(x, cy)
-            .size(w, tableH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        // 空表时留出空态区高度（原为 54px，只够一行字，与下方「最近动态」卡贴成一片）
+        const float tableH =
+            rows.empty() ? 104.0f
+                          : 40.0f + static_cast<float>(rows.size()) * kRowH + 14.0f;
+        ui_kit::cardPanel(ui, "memory.recent.card", x, cy, w, tableH, t.sizes.radiusLarge, t);
         ui.text("memory.recent.title")
             .position(x + 16.0f, cy + 12.0f)
             .size(320.0f, 22.0f)
@@ -264,10 +251,13 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         const float cCountW = 120.0f;
         const float cTok = cCount + cCountW;
         const float cTokW = 120.0f;
-        colHeader("时间", cTime, 130.0f, false);
-        colHeader("类型", cKind, cKindW, false);
-        colHeader("条数/字数", cCount, cCountW, true);
-        colHeader("token · 金额", cTok, cTokW, true);
+        // 无数据时不画表头（空表配表头像坏掉的表格）
+        if (!rows.empty()) {
+            colHeader("时间", cTime, 130.0f, false);
+            colHeader("类型", cKind, cKindW, false);
+            colHeader("条数/字数", cCount, cCountW, true);
+            colHeader("token · 金额", cTok, cTokW, true);
+        }
         auto kindDisplay = [](const std::string& kind) -> std::string {
             if (kind == "llm_input") return "提炼 · 输入";
             if (kind == "llm_output") return "提炼 · 产出";
@@ -323,14 +313,12 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             ++i;
         }
         if (rows.empty()) {
-            ui.text("memory.recent.empty")
-                .position(cTime, cy + 62.0f)
-                .size(w - 32.0f, 20.0f)
-                .text("还没有调用记录。")
-                .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(20.0f)
-                .color(t.colors.textTertiary)
-                .build();
+            // 2026-11-01 R3：空表走统一空态组件（主句 + 引导句，整体居中）
+            ui_kit::EmptyStateOptions opts;
+            opts.message = "还没有调用记录";
+            opts.guide = "引擎启动后，提炼 / 向量化 / 注入的账目会逐条记在这里。";
+            ui_kit::emptyState(ui, "memory.recent.empty", opts, x + 16.0f,
+                               cy + 40.0f, w - 32.0f, tableH - 52.0f, t);
         }
         cy += tableH + kCardGap;
     }
@@ -347,13 +335,7 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
                                        const Proposal& p, bool batchable) {
     (void)snap;
     constexpr float kCardH = 232.0f;
-    ui.rect("memory.rv.card." + p.id)
-        .position(x, y)
-        .size(w, kCardH)
-        .color(ui_kit::cardSurface(t))
-        .radius(t.sizes.radiusLarge)
-        .border(1.0f, t.colors.borderDefault)
-        .build();
+    ui_kit::cardPanel(ui, "memory.rv.card." + p.id, x, y, w, kCardH, t.sizes.radiusLarge, t);
 
     // 批量勾选（仅批量模式；仅可批量类型）
     if (batchMode_) {
@@ -540,13 +522,7 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
                                       const Proposal& p, bool undone) {
     (void)snap;
     constexpr float kCardH = 92.0f;
-    ui.rect("memory.rv.done." + p.id)
-        .position(x, y)
-        .size(w, kCardH)
-        .color(ui_kit::cardSurface(t))
-        .radius(t.sizes.radiusLarge)
-        .border(1.0f, t.colors.borderDefault)
-        .build();
+    ui_kit::cardPanel(ui, "memory.rv.done." + p.id, x, y, w, kCardH, t.sizes.radiusLarge, t);
     std::string statusText;
     eui::Color statusColor = t.colors.textTertiary;
     if (p.status == "accepted") {
@@ -653,13 +629,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         const bool wrapNarrow = chipsTotal > w - kBatchZone;
         const float kBarH = wrapNarrow ? 88.0f : 56.0f;
         const float stateRowY = wrapNarrow ? 42.0f : 10.0f;
-        ui.rect("memory.rv.toolbar")
-            .position(x, cy)
-            .size(w, kBarH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radius)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.rv.toolbar", x, cy, w, kBarH, t.sizes.radius, t);
         auto chipRow = [&](const std::string& prefix, float cx, float cyRow,
                            const std::vector<std::string>& labels, int active,
                            std::function<void(int)> onPick) {
@@ -798,34 +768,15 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         }
         if (shown == 0) {
             const bool totallyEmpty = snap.pending.empty();
-            constexpr float kEmptyH = 150.0f;
-            ui.rect("memory.rv.empty")
-                .position(x, cy)
-                .size(w, kEmptyH)
-                .color(ui_kit::cardSurface(t))
-                .radius(t.sizes.radiusOverlay)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-            ui.text("memory.rv.empty.title")
-                .position(x, cy + 42.0f)
-                .size(w, 28.0f)
-                .text(totallyEmpty ? "都处理完啦！没有需要你拿主意的提案。"
-                                   : "当前筛选下没有待审提案。")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(28.0f)
-                .fontWeight(700)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(t.colors.textPrimary)
-                .build();
-            ui.text("memory.rv.empty.note")
-                .position(x, cy + 84.0f)
-                .size(w, 24.0f)
-                .text("新提案会在 Claude 帮你整理记忆时自动出现在这里，不用盯着，不急。")
-                .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(24.0f)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(t.colors.textTertiary)
-                .build();
+            // 2026-11-01 R3：空态统一走 ui_kit::emptyState，不再外套大白卡
+            // （原为 150px 高的卡包两行字，形态与其余页面不一致）。
+            ui_kit::EmptyStateOptions opts;
+            opts.message = totallyEmpty ? "没有需要你拿主意的提案"
+                                        : "当前筛选下没有待审提案";
+            opts.guide =
+                "新提案会在 Claude 帮你整理记忆时自动出现在这里，不用盯着，不急。";
+            opts.icon = 0xF0E7;  // fa-clipboard-check
+            ui_kit::emptyState(ui, "memory.rv.empty", opts, x, cy, w, 150.0f, t);
         }
     } else {
         int idx = 0;
@@ -840,15 +791,12 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             ++idx;
         }
         if (idx == 0) {
-            ui.text("memory.rv.done.empty")
-                .position(x, cy + 12.0f)
-                .size(w, 24.0f)
-                .text("还没有处理记录。")
-                .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(24.0f)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(t.colors.textTertiary)
-                .build();
+            // 2026-11-01 R3：已裁决空态同样走统一空态组件
+            ui_kit::EmptyStateOptions opts;
+            opts.message = "还没有处理记录";
+            opts.guide = "你处理过的提案会按时间倒序留在这里，方便回溯。";
+            ui_kit::emptyState(ui, "memory.rv.done.empty", opts, x, cy, w,
+                               96.0f, t);
         }
     }
 }
@@ -896,13 +844,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 大模型端点（从 DevDesk 网关 profile 一键导入；只读回显，无密钥）──
     {
         constexpr float kCardH = 176.0f;
-        ui.rect("memory.cfg.llm")
-            .position(x, cy)
-            .size(w, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.cfg.llm", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.llm.title", cy, "大模型端点（提炼）");
         ui.text("memory.cfg.llm.hint")
             .position(x + 16.0f, cy + 38.0f)
@@ -973,13 +915,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 向量化端点（本机 llama-server；零 API 费口径）──
     {
         constexpr float kCardH = 122.0f;
-        ui.rect("memory.cfg.embed")
-            .position(x, cy)
-            .size(w, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.cfg.embed", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.embed.title", cy, "向量化端点（本机）");
         ui.text("memory.cfg.embed.rows")
             .position(x + 16.0f, cy + 42.0f)
@@ -1001,13 +937,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 脱敏设置（真持久化 + 关闭走红色二次确认，设计稿逐字文案）──
     {
         constexpr float kCardH = 128.0f;
-        ui.rect("memory.cfg.mask")
-            .position(x, cy)
-            .size(w, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.cfg.mask", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.mask.title", cy, "脱敏设置");
         ui.text("memory.cfg.mask.chip")
             .position(x + 120.0f, cy + 14.0f)
@@ -1052,13 +982,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 触发线设置（阈值滑条持久化 + 基线磁贴）──
     {
         constexpr float kCardH = 218.0f;
-        ui.rect("memory.cfg.trig")
-            .position(x, cy)
-            .size(w, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.cfg.trig", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.trig.title", cy, "触发线设置");
         ui.text("memory.cfg.trig.hint")
             .position(x + 16.0f, cy + 38.0f)
@@ -1183,13 +1107,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 用量告警（需-9）：日/月两档阈值可调；月档软/硬 = 消耗卡预算同一套数 ──
     {
         constexpr float kCardH = 258.0f;
-        ui.rect("memory.cfg.usage")
-            .position(x, cy)
-            .size(w, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.cfg.usage", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.usage.title", cy, "用量告警阈值（token 估算）");
         ui.text("memory.cfg.usage.hint")
             .position(x + 16.0f, cy + 38.0f)
@@ -1283,13 +1201,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 数据与隐私（目录显示 + 导出 + 清除全部）──
     {
         constexpr float kCardH = 156.0f;
-        ui.rect("memory.cfg.data")
-            .position(x, cy)
-            .size(w, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.cfg.data", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.data.title", cy, "数据与隐私");
         ui.text("memory.cfg.data.hint")
             .position(x + 16.0f, cy + 38.0f)

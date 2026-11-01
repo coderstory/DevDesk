@@ -336,7 +336,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
             const float tabGap = 4.0f;
             const float tabW = (segW - tabGap * 3.0f) / 4.0f;
             ui.stack("md.mode")
-                .size(segW, 40.0f)
+                .size(segW, ui_kit::kWtabHeight)
                 .content([&] {
                     for (int i = 0; i < 4; ++i) {
                         ui_kit::wtab(
@@ -346,7 +346,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                                                      "预览"}[i],
                             modeOrderIndex(mode_) == i,
                             static_cast<float>(i) * (tabW + tabGap), 0.0f, tabW,
-                            40.0f, t,
+                            ui_kit::kWtabHeight, t,
                             [this, i] { setMode(modeFromOrderIndex(i)); });
                     }
                 })

@@ -323,3 +323,122 @@ REGISTER_TEST(ui_kit_toast_size_long_wraps_inside_box,
                           "长文本宽应封顶 360，实测 " + std::to_string(box.w));
     return true;
 })
+
+// ── 2026-11-01 toast 统一（R5 / F-09 / F-10 / F-11）──
+
+// 场景：无标题 + 短正文 + 非错误 → 轻反馈走居中微信式轻提示（黑半透底 + 白字），
+// 不再贴右下角当通知式弹。
+// 事故：全站 79 处调用只有 1 处走轻提示，「复制成功」居中黑条、其它成功提示贴
+// 右下角，同一语义两种形态（R5 的核心诉求）。
+REGISTER_TEST(ui_kit_toast_light_form_for_titleless_short,
+              "ui_kit toast: 无标题短正文 → 轻提示形态（黑半透底 + 白字，非通知式）", {
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    screen.scale = 1.0f;
+    ui_kit::ToastState st;
+    st.show("", "设置已保存");
+    eui::Ui ui;
+    ui.begin("w02d_t_light");
+    ui_kit::drawToast(ui, screen, "tlight", st,
+                      core::theme::componentTokensWeChat(core::theme::current()));
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* bg = ui.find("tlight.bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x00);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0x00);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x00);
+    DOCTEST_CHECK(std::fabs(bg->color.a - 0.7f) < 0.01f);
+    const auto* txt = ui.find("tlight.text");
+    DOCTEST_REQUIRE(txt != nullptr);
+    DOCTEST_CHECK_EQ(txt->text, std::string("设置已保存"));
+    // 通知式专属节点不得出现（标题 / 正文两段式）
+    DOCTEST_CHECK(ui.find("tlight.title") == nullptr);
+    DOCTEST_CHECK(ui.find("tlight.message") == nullptr);
+    return true;
+})
+
+// 场景：带标题的重要反馈仍走右下通知式（title + message 两段式在）。
+// 事故：统一化时误把重要反馈也降级成轻提示 → 用户扫不到失败/告警。
+REGISTER_TEST(ui_kit_toast_notification_form_for_titled,
+              "ui_kit toast: 带标题 → 仍走通知式（title/message 在）", {
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    screen.scale = 1.0f;
+    ui_kit::ToastState st;
+    st.show("同步失败", "远端返回 409");
+    eui::Ui ui;
+    ui.begin("w02d_t_notif");
+    ui_kit::drawToast(ui, screen, "tnotif", st,
+                      core::theme::componentTokensWeChat(core::theme::current()));
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    DOCTEST_CHECK(ui.find("tnotif.title") != nullptr);
+    DOCTEST_CHECK(ui.find("tnotif.message") != nullptr);
+    return true;
+})
+
+// 场景：错误反馈即使无标题也走通知式（不被降级成轻提示）。
+// 事故：轻提示黑底白字、无关闭钮，错误信息一闪而过，用户来不及读。
+REGISTER_TEST(ui_kit_toast_error_keeps_notification_form,
+              "ui_kit toast: 错误态即使无标题也走通知式", {
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    screen.scale = 1.0f;
+    ui_kit::ToastState st;
+    st.show("", "保存失败", ui_kit::ToastLevel::Error);
+    eui::Ui ui;
+    ui.begin("w02d_t_err");
+    ui_kit::drawToast(ui, screen, "terr", st,
+                      core::theme::componentTokensWeChat(core::theme::current()));
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    DOCTEST_CHECK(ui.find("terr.message") != nullptr);
+    // 通知式组件也有 .bg（卡底），轻提示的判据是 .text 单行节点不存在
+    DOCTEST_CHECK(ui.find("terr.text") == nullptr);
+    return true;
+})
+
+// 场景：四态 → 图标码点一一对应，全站同一态同一码点。
+// 事故：此前各站点各挑一个成功码点（0xF00C / 0xF058 / 0xF05A），同一个「成功」
+// 在不同页面长得不一样（F-09 的根因）。
+REGISTER_TEST(ui_kit_toast_level_icon_table,
+              "ui_kit toast: 四态图标码点固定（info/success/warning/error 各一）", {
+    DOCTEST_CHECK_EQ(ui_kit::kToastIconInfo, 0xF05A);
+    DOCTEST_CHECK_EQ(ui_kit::kToastIconSuccess, 0xF00C);
+    DOCTEST_CHECK_EQ(ui_kit::kToastIconWarning, 0xF071);
+    DOCTEST_CHECK_EQ(ui_kit::kToastIconError, 0xF06A);
+    // 四态互不相同（防复制粘贴时两态撞码）
+    DOCTEST_CHECK(ui_kit::kToastIconInfo != ui_kit::kToastIconSuccess);
+    DOCTEST_CHECK(ui_kit::kToastIconSuccess != ui_kit::kToastIconWarning);
+    DOCTEST_CHECK(ui_kit::kToastIconWarning != ui_kit::kToastIconError);
+    // 全站统一时长（此前 3.5 / 4.5 两档并存）
+    DOCTEST_CHECK_EQ(ui_kit::kToastDurationSec, 3.5f);
+    return true;
+})
+
+// 场景：ToastState 的 Level 四态映射 + isError 兼容镜像。
+// 事故：只有 bool isError 时，「信息」「警告」无处安放，反馈图标只能两套。
+REGISTER_TEST(ui_kit_toast_state_level_mapping,
+              "ui_kit toast: Level 四态映射 + isError 兼容镜像", {
+    ui_kit::ToastState st;
+    st.show("t", "b", ui_kit::ToastLevel::Warning);
+    DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Warning);
+    DOCTEST_CHECK(!st.isError);
+    st.show("t", "b", ui_kit::ToastLevel::Error);
+    DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Error);
+    DOCTEST_CHECK(st.isError);   // 旧调用点读此字段
+    st.show("t", "b", true);     // 旧 bool 入口 → Error
+    DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Error);
+    DOCTEST_CHECK(st.isError);
+    st.show("t", "b", false);    // 旧 bool 入口 → Success
+    DOCTEST_CHECK(st.level == ui_kit::ToastLevel::Success);
+    DOCTEST_CHECK(!st.isError);
+    return true;
+})

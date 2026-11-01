@@ -599,18 +599,23 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     }
                     if (tasks_.empty()) {
                         // S2.8 空状态标准化：ui_kit::emptyState 极简文字 + 就近按钮（§4.12 单一规格，与 todo/schedule 同源）
-                        constexpr float kEmptyWrapH = 160.0f;
+                        // 2026-11-01 R3：补图标 + 引导句，空态形态全站统一。
+                        constexpr float kEmptyWrapH = 200.0f;
                         inner.stack("agent.empty.wrap")
                             .width(cw)
                             .height(core::theme::scaled(kEmptyWrapH))
                             .content([&] {
-                                ui_kit::emptyState(
-                                    inner, "agent.empty", "暂无任务",
-                                    std::make_optional(std::make_pair(
-                                        std::string("新建任务"),
-                                        [this] { openNewTaskDialog(); })),
-                                    0.0f, 0.0f, cw,
-                                    core::theme::scaled(kEmptyWrapH), t);
+                                ui_kit::EmptyStateOptions opts;
+                                opts.message = "暂无任务";
+                                opts.guide =
+                                    "新建一个任务，让智能体按你的规则盯这件事。";
+                                opts.icon = 0xF544;  // fa-robot
+                                opts.action.emplace("新建任务",
+                                                    [this] { openNewTaskDialog(); });
+                                ui_kit::emptyState(inner, "agent.empty", opts, 0.0f,
+                                                   0.0f, cw,
+                                                   core::theme::scaled(kEmptyWrapH),
+                                                   t);
                             })
                             .build();
                         return;

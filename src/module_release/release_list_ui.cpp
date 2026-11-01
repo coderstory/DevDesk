@@ -17,6 +17,8 @@
 #include <components/theme.h>
 
 #include <eui/types.h>
+#include <ui_kit/empty_state.h>
+#include <ui_kit/wtab.h>
 
 #include <ui_kit/button.h>
 #include <ui_kit/metrics.h>
@@ -66,7 +68,6 @@ bool parseIsoDate(const std::string& isoDate, int& year, int& month, int& day) {
 constexpr float kInset = 16.0f;             // 卡内边距
 constexpr float kPageMargin = 12.0f;        // 页面外边距
 constexpr float kTabRowH = 44.0f;           // Tab 行（设计 §四）
-constexpr float kShellH = ui_kit::kHeaderH + kTabRowH + 1.0f;  // 白壳含 1px 分割线
 constexpr float kMainH = 24.0f;             // 主行高
 constexpr float kSubH = 20.0f;              // 副行高
 constexpr float kRowH = kReleaseTaskRowH;   // 64 = 10 + 24 + 20 + 10
@@ -294,59 +295,51 @@ void drawTaskRow(eui::Ui& ui, const std::string& id, float x, float y, float w,
 
 // ---------- Tab 行（模式筛选；设计 §四） ----------
 
+// Tab 行（模式筛选；设计 §四）
+//
+// 2026-11-01 统一：改走 ui_kit::wtab（块面式）。本文件原先自绘「底部 2px 绿下划线」
+// 样式，与 wtab.h「块面式……淘汰下划线式」的全局约定相悖，且同模块配置页用的是
+// wtab —— 同一模块两页两种 tab 形，切换时对撞。
+//
+// 计数从「页面最右」改为「紧跟当前选中 tab 之后」：原来贴在窗口右缘，与左侧
+// tab 组相距数百像素，关联性为零；且文案随 tab 变（「共 7 个任务」/「发布中 · 3 个」），
+// 读者要跨屏匹配才知道哪个数字属于哪个 tab。紧跟选中项后语义直接。
+
 void drawTabRow(eui::Ui& ui, float y, float screenW, int selected,
                 const std::string& countText, const core::theme::Tokens& t,
                 const std::function<void(int)>& onTab) {
     float x = kPageMargin;
+    // 计数插在「当前选中 tab」之后（语义：数字属于这个 tab），后续 tab 顺移让位。
+    // 2026-11-01 修正：原实现把计数画在选中 tab 右缘 +10，但后续 tab 的 x 是
+    // 按「无计数」排的 —— 选中「全部」时计数压在「发布中」上，两串字叠在一起。
+    const float countFont = t.sizes.fontSizeBody;
+    const float countW =
+        countText.empty() ? 0.0f : chipWidth(countText, countFont) + 8.0f;
     for (int i = 0; i < kReleaseListTabCount; ++i) {
         const char* label = releaseListTabLabel(i);
         const bool active = i == selected;
-        const float tabW = chipWidth(label, t.sizes.fontSizeBody) + 8.0f;
-        const std::string id = "release.tasks.tab." + std::to_string(i);
-        ui.rect(id)
-            .position(x, y)
-            .size(tabW, kTabRowH)
-            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-            .onClick([onTab, i] {
-                if (onTab) onTab(i);
-            })
-            .build();
-        ui.text(id + ".label")
-            .position(x, y)
-            .size(tabW, kTabRowH)
-            .text(label)
-            .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(kTabRowH)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .fontWeight(active ? 600 : 400)
-            .color(active ? t.colors.textPrimary : t.colors.textSecondary)
-            .build();
-        if (active) {
-            // 底部 2px 绿下划线：150ms 位置/透明度过渡（设计 §七动效表）
-            ui.rect("release.tasks.tab.indicator")
-                .position(x, y + kTabRowH - 2.0f)
-                .size(tabW, 2.0f)
-                .color(t.colors.primary)
-                .transition(core::Transition::make(0.15f, core::Ease::OutCubic))
-                .animate(core::AnimProperty::Frame | core::AnimProperty::Color)
+        const float tabW = chipWidth(label, ui_kit::kWtabFontSize) + 24.0f;
+        ui_kit::wtab(ui, "release.tasks.tab." + std::to_string(i), label, active,
+                     x, y + (kTabRowH - ui_kit::kWtabHeight) * 0.5f, tabW,
+                     ui_kit::kWtabHeight, t, [onTab, i] {
+                         if (onTab) onTab(i);
+                     });
+        x += tabW + 6.0f;
+        if (active && !countText.empty()) {
+            ui.text("release.tasks.tabcount")
+                .position(x, y)
+                .size(countW, kTabRowH)
+                .text(countText)
+                .fontSize(countFont)
+                .lineHeight(kTabRowH)
+                .horizontalAlign(eui::HorizontalAlign::Left)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textSecondary)
                 .build();
+            x += countW + 6.0f;
         }
-        x += tabW + 24.0f;
     }
-    // 右端计数（随筛选联动；<1100px 隐藏）
-    if (!countText.empty()) {
-        ui.text("release.tasks.tabcount")
-            .position(std::max(0.0f, screenW - kPageMargin - 200.0f), y)
-            .size(200.0f, kTabRowH)
-            .text(countText)
-            .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(kTabRowH)
-            .horizontalAlign(eui::HorizontalAlign::Right)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
-    }
+    (void)screenW;
 }
 
 // ---------- 页壳：页头 + Tab 行连体白壳，内容区灰底内滚 ----------
@@ -360,17 +353,9 @@ void composeListShell(eui::Ui& ui, const eui::Screen& screen,
     ui.stack("release.tasks.root")
         .size(screen.width, screen.height)
         .content([&] {
-            // 连体白壳（页头 + Tab 行），分割线画在 Tab 行下
-            ui.rect("release.tasks.shell")
-                .position(0.0f, 0.0f)
-                .size(screen.width, kShellH)
-                .color(t.colors.surface)
-                .build();
-            ui.rect("release.tasks.bodybg")
-                .position(0.0f, kShellH)
-                .size(std::max(0.0f, screen.width), std::max(0.0f, screen.height - kShellH))
-                .color(t.colors.background)
-                .build();
+            // 2026-11-01 R2（页头不加壳）：原先这里铺「页头+Tab 行连体不透明白壳」
+            // 与一整片不透明页面底——两者把应用的动态背景光晕挡死，本页因此是全站
+            // 唯一看不到背景层次的页面。现在标题与 Tab 行直接落在页面底上。
             ui.text("release.tasks.title")
                 .position(kPageMargin, 0.0f)
                 .size(std::max(0.0f, screen.width - kPageMargin * 2.0f - 132.0f), ui_kit::kHeaderH)
@@ -390,13 +375,8 @@ void composeListShell(eui::Ui& ui, const eui::Screen& screen,
                            ui_kit::kButtonHeight, t, options);
             drawTabRow(ui, ui_kit::kHeaderH, screen.width, selectedTab, countText, t,
                        onTab);
-            ui.rect("release.tasks.tabline")
-                .position(0.0f, kShellH - 1.0f)
-                .size(screen.width, 1.0f)
-                .color(t.colors.borderDefault)
-                .build();
 
-            const float contentY = kShellH + kPageMargin;
+            const float contentY = ui_kit::kHeaderH + kTabRowH + kPageMargin;
             const float bodyH = std::max(0.0f, screen.height - contentY - kPageMargin);
             const float availW = std::max(0.0f, screen.width - kPageMargin * 2.0f);
             const float contentW = std::min(kContentMaxW, availW);
@@ -458,66 +438,29 @@ void drawSkeletonBody(eui::Ui& ui, float contentX, float contentY, float content
 void drawAllEmptyBody(eui::Ui& ui, float contentX, float contentY, float contentW,
                       float bodyH, const core::theme::Tokens& t,
                       const ReleaseListActions& actions) {
-    const float boxH = 240.0f;
-    const float y = contentY + std::max(0.0f, (bodyH - boxH) * 0.5f);
-    drawListCardBox(ui, "release.tasks.emptybox", contentX, y, contentW, boxH, t);
-    ui.text("release.tasks.empty")
-        .position(contentX, y + boxH * 0.5f - 30.0f)
-        .size(contentW, 24.0f)
-        .text("还没有上线任务")
-        .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(24.0f)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textTertiary)
-        .build();
-    // 空态就近操作降级为次按钮：页头「新建任务」保持同视口唯一绿填充
-    ui_kit::ButtonOptions options;
-    options.onClick = actions.openNewTask;
-    ui_kit::button(ui, "release.tasks.empty.new", "新建任务",
-                   ui_kit::ButtonLevel::Secondary,
-                   std::max(0.0f, contentX + (contentW - 120.0f) * 0.5f),
-                   y + boxH * 0.5f + 2.0f, 120.0f, ui_kit::kButtonHeight, t, options);
+    // 2026-11-01 R3（空态唯一形态）：不再外套大白卡，改走 ui_kit::emptyState
+    // （图标 + 主句 + 引导句 + 行动钮，整组垂直居中）。
+    ui_kit::EmptyStateOptions opts;
+    opts.message = "还没有上线任务";
+    opts.guide = "创建一个上线任务，按日期跟进发布准备";
+    opts.icon = 0xF0AE;  // fa-rocket
+    opts.action = std::make_pair(std::string("新建任务"), actions.openNewTask);
+    ui_kit::emptyState(ui, "release.tasks.empty", opts, contentX, contentY, contentW,
+                        bodyH, t);
 }
 
 // 筛选空态：句式随 Tab + 「查看全部」文字钮切回全部。
 void drawFilterEmptyBody(eui::Ui& ui, float contentX, float contentY, float contentW,
                          float bodyH, int tab, const core::theme::Tokens& t,
                          const std::function<void()>& onBack) {
-    const float boxH = 240.0f;
-    const float y = contentY + std::max(0.0f, (bodyH - boxH) * 0.5f);
-    drawListCardBox(ui, "release.tasks.filteremptybox", contentX, y, contentW, boxH, t);
-    const std::string text =
-        std::string("暂无") + releaseListTabLabel(tab) + "的任务";
-    const float textW = chipWidth(text, t.sizes.fontSizeBody);
-    const float btnW = chipWidth("查看全部", 13.0f) + 16.0f;
-    const float totalW = textW + 8.0f + btnW;
-    const float startX = contentX + std::max(0.0f, (contentW - totalW) * 0.5f);
-    ui.text("release.tasks.filterempty")
-        .position(startX, y + boxH * 0.5f - 12.0f)
-        .size(textW, 24.0f)
-        .text(text)
-        .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(24.0f)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textTertiary)
-        .build();
-    ui.rect("release.tasks.filterempty.all")
-        .position(startX + textW + 8.0f, y + boxH * 0.5f - 14.0f)
-        .size(btnW, 28.0f)
-        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-        .onClick(onBack)
-        .build();
-    ui.text("release.tasks.filterempty.all.label")
-        .position(startX + textW + 8.0f, y + boxH * 0.5f - 14.0f)
-        .size(btnW, 28.0f)
-        .text("查看全部")
-        .fontSize(13.0f)
-        .lineHeight(28.0f)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.primaryText)
-        .build();
+    // 2026-11-01 R3：筛选空态同样走统一空态（图标 + 主句 + 引导 + 行动钮）。
+    ui_kit::EmptyStateOptions opts;
+    opts.message = std::string("暂无") + releaseListTabLabel(tab) + "的任务";
+    opts.guide = "切回「全部」查看其它任务";
+    opts.icon = 0xF0AE;  // fa-rocket
+    opts.action = std::make_pair(std::string("查看全部"), onBack);
+    ui_kit::emptyState(ui, "release.tasks.filterempty", opts, contentX, contentY,
+                        contentW, bodyH, t);
 }
 
 // 首屏失败且没有任何已加载内容：白卡内标题 + 原因一行 + 重试次按钮
@@ -971,11 +914,14 @@ std::vector<const ReleaseTaskCard*> filterRows(const std::vector<ReleaseTaskCard
     return rows;
 }
 
+// 计数文案：2026-11-01 统一为「N 个任务」。
+// 原先非零 tab 用「发布中 · 3 个」（自带 tab 名）。计数挪到当前选中 tab 之后后
+// （F-16），tab 名就在眼前，再重复一遍是噪音；且两套句式让读者需要两种解析。
 std::string tabCountText(const ReleaseListCache& cache) {
     if (!cache.countsValid) return {};
-    if (cache.tab == 0) return "共 " + std::to_string(cache.total) + " 个任务";
-    return std::string(releaseListTabLabel(cache.tab)) + " · " +
-           std::to_string(cache.groupCounts[cache.tab]) + " 个";
+    const std::size_t n =
+        cache.tab == 0 ? cache.total : cache.groupCounts[cache.tab];
+    return std::to_string(n) + " 个任务";
 }
 
 } // namespace

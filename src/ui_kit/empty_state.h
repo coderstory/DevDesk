@@ -24,14 +24,33 @@
 
 namespace ui_kit {
 
-// §4.12 空状态：极简文字居中 + 可选就近按钮。
-//  - action = {label, onClick}：若有，按钮走 W2b button helper Secondary 级
-//    （§4.1 Secondary 浅灰底 + 深灰字），就近触发对应创建操作（§5.6）
-//  - action = nullopt：只画极简文字（§4.12「全场景允许」——无操作入口的空状态
-//    如「无搜索结果」纯提示也合法）
-// 几何：(x, y, w, h) 由调用方给；文字居中于上半区，按钮居中于下半区。
-// 节点 id = `<id>.message`（text）/ `<id>.action`（W2b button stack，含
-// `<id>.action.bg` + `<id>.action.text`），单测按此定位。
+// 空态内容包（2026-11-01 新增，R3）。字段全可选：只给 message 即退化为旧形态。
+struct EmptyStateOptions {
+    // 主句：说明「这里为什么是空的」。
+    std::string message;
+    // 引导句（可选）：告诉用户下一步做什么，比主句更具体。
+    std::string guide;
+    // 图标（可选）：FontAwesome 码点，画在 40×40 主题色圆角底上。
+    std::optional<unsigned int> icon;
+    // 行动按钮（可选）：{标签, 回调}，Secondary 级。
+    std::optional<std::pair<std::string, std::function<void()>>> action;
+};
+
+// 2026-11-01：空态扩为全站唯一形态——图标 + 主句 + 引导句 + 行动按钮，
+// 四者作为一组**整体垂直居中**于给定盒内。
+//
+// 此前各模块自行拼装出四种形态：① release 列表＝大白卡包裹 ② release 配置＝裸文字
+// 两行 ③ agent＝占满剩余高度的大白卡但内容顶部对齐（下方 70% 空白，像坏了）
+// ④ todo/mcp＝单行文字。统一后一律不再外套大白卡。
+//
+// 节点 id = `<id>.icon.bg` / `<id>.icon` / `<id>.message` / `<id>.guide` /
+// `<id>.action`（含 `.action.bg` / `.action.text`），单测按此定位。
+void emptyState(eui::Ui& ui, const std::string& id,
+                const EmptyStateOptions& options,
+                float x, float y, float w, float h,
+                const core::theme::Tokens& t);
+
+// 兼容入口：等价于只填 message 的旧形态（原有调用方零改动）。
 void emptyState(eui::Ui& ui, const std::string& id, const std::string& message,
                 const std::optional<std::pair<std::string, std::function<void()>>>& action,
                 float x, float y, float w, float h,

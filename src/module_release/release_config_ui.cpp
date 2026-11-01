@@ -432,7 +432,6 @@ void drawListCard(eui::Ui& ui, float contentW, float cardH,
                   ReleaseConfigUiState& state, const Tokens& t,
                   const components::theme::ThemeColorTokens& componentTheme) {
     const bool servicesTab = state.tab == ReleaseConfigUiState::Tab::Services;
-    const float listH = std::max(0.0f, cardH - kCardHeadH);
     const std::size_t count =
         servicesTab ? state.services.size() : state.envs.size();
     const std::string contentKey = std::string("release.config.list.") +
@@ -452,16 +451,23 @@ void drawListCard(eui::Ui& ui, float contentW, float cardH,
             .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.04f,
                                               0.02f))
             .build();
-        drawListHeader(ui, contentW, state.tab, t);
-        ui.rect("release.config.card.headsep")
-            .position(kRowPadX, kCardHeadH - 1.0f)
-            .size(std::max(0.0f, contentW - kRowPadX * 2.0f), 1.0f)
-            .color(t.colors.borderMuted)
-            .build();
+        // 2026-11-01 F-18：空列表时表头是一排悬在空卡上的列名（5 列铺满整卡宽，
+        // 看着像坏掉的表格）。空列表不画表头，列表区上移占满整卡。
+        const bool listEmpty =
+            servicesTab ? state.services.empty() : state.envs.empty();
+        const float headH = listEmpty ? 0.0f : kCardHeadH;
+        if (!listEmpty) {
+            drawListHeader(ui, contentW, state.tab, t);
+            ui.rect("release.config.card.headsep")
+                .position(kRowPadX, kCardHeadH - 1.0f)
+                .size(std::max(0.0f, contentW - kRowPadX * 2.0f), 1.0f)
+                .color(t.colors.borderMuted)
+                .build();
+        }
 
         components::scrollView(ui, "release.config.list")
-            .position(0.0f, kCardHeadH)
-            .size(contentW, listH)
+            .position(0.0f, headH)
+            .size(contentW, std::max(0.0f, cardH - headH))
             .gap(0.0f)
             .step(kRowH)
             .theme(componentTheme)
@@ -482,21 +488,27 @@ void drawListCard(eui::Ui& ui, float contentW, float cardH,
                 if (empty) {
                     const std::string emptyId =
                         servicesTab ? "release.config.empty" : "release.config.env.empty";
-                    const float emptyH = std::clamp(viewportH - 40.0f, 160.0f, 260.0f);
+                    const float emptyH = std::clamp(viewportH - 40.0f, 200.0f, 300.0f);
                     inner.stack(emptyId + ".wrap").size(rowW, emptyH).content([&] {
-                        std::optional<std::pair<std::string, std::function<void()>>> action;
-                        action.emplace(servicesTab ? std::string("新增服务")
-                                                   : std::string("新增环境"),
-                                       [&state, servicesTab]() {
-                                           if (servicesTab) {
-                                               openNewService(state);
-                                           } else {
-                                               openNewEnv(state);
-                                           }
-                                       });
-                        ui_kit::emptyState(inner, emptyId,
-                                           servicesTab ? "暂无服务" : "暂无环境",
-                                           action, 0.0f, 12.0f, rowW,
+                        // 2026-11-01 R3：补图标 + 引导句，空态形态全站统一。
+                        ui_kit::EmptyStateOptions opts;
+                        opts.message = servicesTab ? "暂无服务" : "暂无环境";
+                        opts.guide = servicesTab
+                            ? "把要上线的后端服务登记进来，发布任务才有地方指向。"
+                            : "定义好环境（预发 / 正式），发布时按环境执行。";
+                        opts.icon = servicesTab ? 0xF233 : 0xF085;  // fa-server / fa-cogs
+                        opts.action.emplace(
+                            servicesTab ? std::string("新增服务")
+                                        : std::string("新增环境"),
+                            [&state, servicesTab]() {
+                                if (servicesTab) {
+                                    openNewService(state);
+                                } else {
+                                    openNewEnv(state);
+                                }
+                            });
+                        ui_kit::emptyState(inner, emptyId, opts, 0.0f, 12.0f,
+                                           rowW,
                                            std::max(0.0f, emptyH - 24.0f), t);
                     }).build();
                     return;
@@ -546,7 +558,7 @@ void drawPageHeader(eui::Ui& ui, float contentW, bool servicesTab,
 
 void drawTabs(eui::Ui& ui, float contentW, ReleaseConfigUiState& state,
               const Tokens& t) {
-    ui.stack("release.config.tabs").size(contentW, ui_kit::kHeaderH).content([&] {
+    ui.stack("release.config.tabs").size(contentW, ui_kit::kWtabHeight).content([&] {
         const char* labels[2] = {"服务目录", "环境定义"};
         float x = 0.0f;
         for (int i = 0; i < 2; ++i) {
@@ -557,7 +569,7 @@ void drawTabs(eui::Ui& ui, float contentW, ReleaseConfigUiState& state,
             const bool active =
                 (i == 0) == (state.tab == ReleaseConfigUiState::Tab::Services);
             ui_kit::wtab(ui, "release.config.tab." + std::to_string(i), labels[i],
-                         active, x, 0.0f, tabW, ui_kit::kHeaderH, t,
+                         active, x, 0.0f, tabW, ui_kit::kWtabHeight, t,
                          [&state, i]() {
                              state.tab = i == 0
                                              ? ReleaseConfigUiState::Tab::Services
@@ -1192,8 +1204,12 @@ void drawReleaseConfigPage(eui::Ui& ui, const eui::Screen& screen,
     const bool servicesTab = state.tab == ReleaseConfigUiState::Tab::Services;
     const float contentW = std::max(0.0f, screen.width - kPagePad * 2.0f);
     const float gap = t.sizes.spacingLarge;  // 16
+    // 2026-11-01：tab 行高度已由 kHeaderH(40) 统一为 ui_kit::kWtabHeight(36)，
+    // 卡高公式必须跟着改——否则 column 内容比可用高度少 4px，卡底留白变成 36
+    // （release_probe「页面下 padding」断言抓到的就是这 4px）。
     const float cardH = std::max(
-        0.0f, screen.height - kPagePad - kPageHeaderH - gap - kPageHeaderH - gap);
+        0.0f, screen.height - kPagePad - kPageHeaderH - gap -
+                  ui_kit::kWtabHeight - gap);
 
     // 页面底色 = 主窗口 clearColor（theme background #FAFAF9），不自铺不透明底。
     ui.column("release.config.page")

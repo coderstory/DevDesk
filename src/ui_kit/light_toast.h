@@ -61,6 +61,14 @@ struct LightToastState {
 void showLightToast(eui::Ui& ui, const std::string& id, const std::string& message,
                     float cx, float cy, const core::theme::Tokens& t);
 
+// 纯绘制（无状态机）：黑半透明底 + 白字 + 圆角，居中于 (cx, cy)。
+// 两处复用：showLightToast（自带 1.5s 状态机）与 ui_kit::drawToast 的轻反馈分支
+// （2026-11-01 R5：无标题的短反馈统一走居中轻提示，不再各自贴右下角）。
+// 节点 id = `<id>`（stack）/ `<id>.bg`（rect）/ `<id>.text`（text）。
+void drawLightToastPill(eui::Ui& ui, const std::string& id,
+                         const std::string& message, float cx, float cy,
+                         const core::theme::Tokens& t);
+
 // —— 测试 seam（仅测试用，仿 splash.h 的 splashDisabledForTestsFlag 模式）——
 // resetLightToastForTests：reset 内部 state（open=false, message="", startTime={}），
 //   每个测试用例开始调一次，防止单实例 state 在测试用例间泄漏（场景1/3 都用

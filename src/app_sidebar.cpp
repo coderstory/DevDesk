@@ -786,9 +786,9 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         .build();
     // 应用级 toast：row 之后顶层绘制盖过侧边栏/页面；每帧无条件调用、visible 控状态
     // M-2（UAT2 一审）：popup 类控件统一 wechat 皮肤（与五模块 toast 一致）
+    // 2026-11-01 F-09：时长与图标全站统一（此前此处 4.5s / 0xF05A 是全站唯一例外）
     ui_kit::drawToast(ui, screen, "app.notice", g_appNotice,
-                      core::theme::componentTokensWeChat(core::theme::current()),
-                      ui_kit::ToastOptions{.durationSec = 4.5f, .okIcon = 0xF05A});
+                      core::theme::componentTokensWeChat(core::theme::current()));
 }
 
 } // namespace app

@@ -11,19 +11,45 @@
 
 namespace ui_kit {
 
+// 2026-11-01 F-11：反馈四态（与 platform::notification::Level 对齐）。
+// 此前 ToastState 只有 bool isError，只能表达成功/失败两态——「信息」「警告」
+// 无处安放，反馈图标也只能在两套码点里挑。
+enum class ToastLevel { Info, Success, Warning, Error };
+
+// 四态图标槽（2026-11-01 F-09 统一）：此前各站点各挑一个码点（settings/claude
+// 用 0xF058、app.notice 用 0xF05A、其余 0xF00C），同一个「成功」在不同页面
+// 长得不一样。改为一态一码点，全站一致。
+constexpr unsigned int kToastIconInfo = 0xF05A;     // fa-circle-info
+constexpr unsigned int kToastIconSuccess = 0xF00C;  // fa-check
+constexpr unsigned int kToastIconWarning = 0xF071;  // fa-triangle-exclamation
+constexpr unsigned int kToastIconError = 0xF06A;    // fa-circle-xmark
+
+// 全站统一自动消失时长（2026-11-01 F-09：此前 3.5 / 4.5 两档并存）
+constexpr float kToastDurationSec = 3.5f;
+
+// 走「轻提示」形态的正文长度上限：短反馈居中轻提示，长反馈留在右下通知式。
+constexpr std::size_t kToastLightBodyMaxChars = 24;
+
 // toast 状态位。EUI-NEO toast 是单实例（无队列），「单实例节流」语义由这些位承载——
 // 消费方按「当前没有 toast 展示时才弹」判断。
 struct ToastState {
     bool open = false;
     std::string title;
     std::string body;
-    bool isError = false;
+    ToastLevel level = ToastLevel::Success;
+    bool isError = false;  // 兼容镜像（level == Error）；旧调用点仍读此字段
 
     // 等价于 showToast(title, msg, isError) / setStatus(msg, isError)。
     void show(std::string title, std::string body, bool isError = false) {
+        show(std::move(title), std::move(body),
+             isError ? ToastLevel::Error : ToastLevel::Success);
+    }
+
+    void show(std::string title, std::string body, ToastLevel level) {
         this->title = std::move(title);
         this->body = std::move(body);
-        this->isError = isError;
+        this->level = level;
+        this->isError = (level == ToastLevel::Error);
         open = true;
     }
 
@@ -31,12 +57,10 @@ struct ToastState {
     void dismiss() { open = false; }
 };
 
-// 各站点绘制差异项（不得改动任何站点的时长与图标）；默认值取多数站点取值，
-// 少数派在调用点显式覆盖（claude 3.5s/0xF058；md·todo 3.5s/0xF00C；app.notice 4.5s/0xF05A）。
+// 各站点绘制差异项。此前 okIcon / errorIcon 允许各站点各挑码点，是「同一个成功
+// 长得不一样」的根因，已删除：图标改由 ToastLevel 统一决定。
 struct ToastOptions {
-    float durationSec = 3.5f;         // 自动消失秒数（0 = 不自动消失）
-    unsigned int okIcon = 0xF00C;     // 成功态图标（fa-check）
-    unsigned int errorIcon = 0xF071;  // 失败态图标（fa-triangle-exclamation）
+    float durationSec = kToastDurationSec;  // 自动消失秒数（0 = 不自动消失）
     // 右下贴角的抬升量：把 toast 底沿从 screen.height 上收这么多（逻辑 px），
     // 用于避开页面底部按钮行（默认 0 = 贴底；claude 详情传动作区预留高度）。
     float bottomInset = 0.0f;

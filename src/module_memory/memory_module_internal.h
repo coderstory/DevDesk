@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "core/component_theme.h"
+#include <ui_kit/wtab.h>
 #include "core/llm_profile_source.h"
 #include "core/logging.h"
 #include "core/service_locator.h"
@@ -31,6 +32,7 @@
 #include "ui_kit/button.h"
 #include "ui_kit/card.h"
 #include "ui_kit/dialog_form.h"
+#include "ui_kit/empty_state.h"
 #include "ui_kit/metrics.h"
 #include "ui_kit/slider.h"
 #include "ui_kit/wtab.h"
@@ -42,7 +44,8 @@ using engine::TelememEngine;
 using proposals::Proposal;
 
 inline constexpr float kTitleH = 32.0f;
-inline constexpr float kTabH = 36.0f;
+// 2026-11-01 统一：页面级 tab 高度跟 ui_kit::kWtabHeight（全站单一高度）
+inline constexpr float kTabH = ui_kit::kWtabHeight;
 inline constexpr float kCardGap = 16.0f;
 
 inline constexpr int kViewConsole = 0;

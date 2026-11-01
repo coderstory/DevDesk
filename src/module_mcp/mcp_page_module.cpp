@@ -1,5 +1,5 @@
 // src/module_mcp/mcp_page_module.cpp
-// MCP 菜单页实现：页头+服务状态行 → 工具卡片网格（ui.flow，卡定宽 340）→
+// MCP 菜单页实现：页头+服务状态行 → 工具卡片网格（ui.flow，列宽自适应 340–420）→
 // 详情弹窗（components::dialog，关闭 = 按钮 + Esc + backdrop 三通道）→
 // 「试一下」（execute 后台线程 + compose 轮询收割，禁 UI 线程直调）。
 // 视觉基准 = 桌面 mcp-menu-demo.html（token 对齐，图标 FA7 码点；页内开关与
@@ -20,7 +20,11 @@
 #include <components/switch.h>
 #include <components/theme.h>
 
+#include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
+
 #include <eui/dsl.h>
+
+#include <ui_kit/empty_state.h>
 
 #include <algorithm>
 #include <utility>
@@ -29,10 +33,25 @@ namespace module::mcp {
 
 namespace {
 
-constexpr float kCardW = 340.0f;   // demo 网格 minmax(340px,1fr) 的定宽档
+// 工具卡列宽算法（2026-11-01 F-13）：
+// 原为定宽 340，1600 窗内只排 3 张（1020px），右侧空 210px。现在列宽随内容宽
+// 自适应：列数按「能放下多少列最小宽」取，卡宽 = (内容宽 - 列间距×(列数-1)) / 列数。
+// 区间锁 340–420：太窄描述挤、太宽一行字飘。
+constexpr float kCardMinW = 340.0f;
+constexpr float kCardMaxW = 420.0f;
+constexpr int kCardMaxCols = 5;
 constexpr float kCardH = 120.0f;
 constexpr float kDialogW = 600.0f;
 constexpr float kDialogH = 480.0f;
+
+// 卡内横向常量
+constexpr float kCardPad = 16.0f;       // 卡内边距
+constexpr float kCardIcon = 40.0f;      // 图标位
+constexpr float kCardTextX = 68.0f;     // 文本列起点（图标右侧 12）
+constexpr float kStatusGap = 16.0f;     // 文本列右端 ↔ 状态列左端（F-01 判据 ≥16）
+constexpr float kChipW = 40.0f;         // 标签 chip 宽
+constexpr float kChipH = 18.0f;
+constexpr float kCtaW = 120.0f;         // hover CTA 宽（右对齐）
 
 // 工具卡图标：按名字族派发 FA7 Free-Solid 码点（抓取=globe / 服务信息=server /
 // 其余=cube）；码点均在 EUI-NEO 内置 FA7 整字体覆盖内。
@@ -54,6 +73,23 @@ std::string resultDisplayText(bool running, bool hasResult, bool isError,
     if (running) return "运行中…";
     if (!hasResult) return "（尚未运行）";
     return std::string(isError ? "失败：\n" : "成功：\n") + text;
+}
+
+// 列宽算法：先取「放得下多少列最小宽」的列数，再用剩余空间把列宽撑开；
+// 撑过上限（420）就减列重算，避免宽窗里卡片被拉成横条。
+std::pair<int, float> gridColumns(float contentW, float gap) {
+    if (contentW <= 0.0f) return {1, kCardMinW};
+    int cols = 1;
+    for (int n = 1; n <= kCardMaxCols; ++n) {
+        if (contentW >= n * kCardMinW + (n - 1) * gap) cols = n;
+    }
+    float cardW = (contentW - gap * (cols - 1)) / cols;
+    if (cardW > kCardMaxW) {
+        cols = std::max(1, static_cast<int>(
+                               (contentW + gap) / (kCardMaxW + gap)));
+        cardW = (contentW - gap * (cols - 1)) / cols;
+    }
+    return {cols, cardW};
 }
 
 } // namespace
@@ -148,28 +184,38 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                     drawMemoryModuleRow(ui, contentW, t, comp);
 
                     // 区头：标题 + 计数 chip
+                    // 2026-11-01 F-13：原标题占满 contentW-40，chip 被推到页面最右，
+                    // 与左侧标题相距 700px，关联性为零。改为「量出标题实际宽度 →
+                    // chip 紧随其后」，行内间距固定 8px。
+                    const std::string sectionTitle = "注册的工具";
+                    const float titleW = core::TextPrimitive::measureTextWidth(
+                        sectionTitle, "", t.sizes.fontSizeLarge, 600);
+                    const std::string countText = std::to_string(tools.size());
+                    const float countW =
+                        core::TextPrimitive::measureTextWidth(
+                            countText, "", core::theme::scaled(11.0f), 400) +
+                        14.0f;
+
                     ui.row("mcp.section")
                         .size(contentW, core::theme::scaled(26.0f))
                         .alignItems(eui::Align::CENTER)
-                        .gap(t.sizes.spacingSmall)
+                        .gap(8.0f)
                         .content([&] {
                             ui.text("mcp.section.title")
-                                .size(std::max(0.0f, contentW - 40.0f),
-                                      core::theme::scaled(26.0f))
-                                .text("注册的工具")
+                                .size(titleW, core::theme::scaled(26.0f))
+                                .text(sectionTitle)
                                 .fontSize(t.sizes.fontSizeLarge)
                                 .fontWeight(600)
                                 .color(t.colors.textPrimary)
                                 .build();
                             ui.rect("mcp.section.count.bg")
-                                .size(28.0f, core::theme::scaled(18.0f))
+                                .size(countW, core::theme::scaled(18.0f))
                                 .radius(t.sizes.radiusPill)
                                 .color(t.colors.primarySoftBg)
                                 .build();
                             ui.text("mcp.section.count")
-                                .position(0.0f, 0.0f)
-                                .size(28.0f, core::theme::scaled(18.0f))
-                                .text(std::to_string(tools.size()))
+                                .size(countW, core::theme::scaled(18.0f))
+                                .text(countText)
                                 .fontSize(core::theme::scaled(11.0f))
                                 .color(t.colors.primaryText)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
@@ -179,20 +225,30 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                         .build();
 
                     if (tools.empty()) {
-                        // 空态：极简一行文字（§4.12 禁插画/情绪化文案）
-                        ui.text("mcp.empty")
-                            .size(contentW, core::theme::scaled(48.0f))
-                            .text("暂无已注册的 MCP 工具（工具由各模块在启动时注册）")
-                            .fontSize(core::theme::scaled(13.0f))
-                            .color(t.colors.textTertiary)
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .build();
+                        // 空态：走全站统一组件（图标 + 主句 + 引导句 + 居中）
+                        // 2026-11-01 F-14：原为单行居中文字，无图标无引导。
+                        ui_kit::EmptyStateOptions emptyOpts;
+                        emptyOpts.message = "暂无已注册的 MCP 工具";
+                        emptyOpts.guide =
+                            "工具由各模块在启动时注册；启用「记忆」等模块后，"
+                            "对应工具会自动出现在这里。";
+                        emptyOpts.icon = 0xF1B2;  // fa-cube
+                        ui_kit::emptyState(ui, "mcp.empty", emptyOpts, 0.0f,
+                                           0.0f, contentW,
+                                           core::theme::scaled(220.0f), t);
                     } else {
+                        // 网格：列宽随内容宽自适应（340–420），填满可用宽度，
+                        // 不再在右侧留大片空白（2026-11-01 F-13）。
+                        const auto [cols, cardW] =
+                            gridColumns(contentW, t.sizes.spacingLarge);
+                        (void)cols;
                         ui.flow("mcp.grid")
+                            .width(contentW)
                             .gap(t.sizes.spacingLarge)
                             .content([&] {
                                 for (const auto& tool : tools) {
-                                    drawToolCard(ui, tool, t, comp, svc.running);
+                                    drawToolCard(ui, tool, t, comp, svc.running,
+                                                 cardW);
                                 }
                             })
                             .build();
@@ -209,18 +265,29 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                                  const std::shared_ptr<core::mcp::IMcpTool>& tool,
                                  const core::theme::Tokens& t,
                                  const components::theme::ThemeColorTokens& comp,
-                                 bool serviceRunning) {
+                                 bool serviceRunning,
+                                 float cardWidth) {
     const std::string& name = tool->name();
     const std::string id = "mcp.card." + name;
     const bool hovered = hoveredCards_.count(name) > 0;
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
 
+    // 2026-11-01 自适应列宽下的卡内布局（全部由 cardWidth 推导，不再写死坐标）：
+    //   [图标 40][文本列 …… 16px ……][● 状态]  ← 状态组右对齐
+    //   [内置][服务]                        [查看详情 ›]
+    const std::string statusText = serviceRunning ? "可用" : "未启用";
+    const float statusTextW = core::TextPrimitive::measureTextWidth(
+        statusText, "", core::theme::scaled(11.0f), 400);
+    const float statusTextX = cardWidth - kCardPad - statusTextW;
+    const float statusDotX = statusTextX - 12.0f - 8.0f;
+    const float textW = std::max(0.0f, statusDotX - kCardTextX - kStatusGap);
+
     ui.stack(id)
-        .size(kCardW, kCardH)
+        .size(cardWidth, kCardH)
         .content([&] {
             // 白卡 + Sm 阴影 + 描边（settings_ui_cards.cpp 卡底同款口径）
             ui.rect(id + ".bg")
-                .size(kCardW, kCardH)
+                .size(cardWidth, kCardH)
                 .color(eui::Color{t.colors.surface.r, t.colors.surface.g,
                                   t.colors.surface.b, t.colors.surface.a})
                 .radius(t.sizes.radiusLarge)
@@ -230,14 +297,14 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
 
             // 图标位：primarySoftBg 圆角底 + FA 码点
             ui.rect(id + ".icon.bg")
-                .position(16.0f, 16.0f)
-                .size(40.0f, 40.0f)
+                .position(kCardPad, kCardPad)
+                .size(kCardIcon, kCardIcon)
                 .radius(t.sizes.radius)
                 .color(t.colors.primarySoftBg)
                 .build();
             ui.text(id + ".icon")
-                .position(16.0f, 16.0f)
-                .size(40.0f, 40.0f)
+                .position(kCardPad, kCardPad)
+                .size(kCardIcon, kCardIcon)
                 .icon(eui::utf8(toolIconGlyph(name)))
                 .fontSize(core::theme::scaled(16.0f))
                 .color(t.colors.primary)
@@ -247,8 +314,8 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
 
             // 名称 + 单行描述（Ellipsis 只在 wrap(false)+maxWidth>0 生效）
             ui.text(id + ".name")
-                .position(68.0f, 16.0f)
-                .size(178.0f, core::theme::scaled(20.0f))
+                .position(kCardTextX, kCardPad)
+                .size(textW, core::theme::scaled(20.0f))
                 .text(name)
                 .fontFamily("monospace")
                 .fontSize(core::theme::scaled(14.0f))
@@ -256,81 +323,89 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .color(t.colors.textPrimary)
                 .build();
             ui.text(id + ".desc")
-                .position(68.0f, 40.0f)
-                .size(178.0f, core::theme::scaled(16.0f))
+                .position(kCardTextX, kCardPad + 24.0f)
+                .size(textW, core::theme::scaled(16.0f))
                 .text(tool->description())
                 .fontSize(core::theme::scaled(12.0f))
                 .color(t.colors.textTertiary)
-                .maxWidth(178.0f)
+                .maxWidth(textW)
                 .wrap(false)
                 .overflow(core::TextOverflow::Ellipsis)
                 .build();
 
             // 状态点 + 文案（右上；服务运行态只读反映）
+            // 2026-11-01 F-01：状态组整体右对齐，与描述列右端保持 ≥16px 间距
+            // （原固定 x=254、描述宽 178，间距只有 8px，长描述末尾的「…」与
+            //   「未启用」粘成一句话）。
             ui.rect(id + ".status.dot")
-                .position(254.0f, 20.0f)
+                .position(statusDotX, kCardPad + 4.0f)
                 .size(8.0f, 8.0f)
                 .radius(t.sizes.radiusSmall)
                 .color(serviceRunning ? t.colors.success : t.colors.textDisabled)
                 .build();
             ui.text(id + ".status.text")
-                .position(254.0f, 32.0f)
-                .size(70.0f, core::theme::scaled(14.0f))
-                .text(serviceRunning ? "可用" : "未启用")
+                .position(statusTextX, kCardPad + 14.0f)
+                .size(statusTextW, core::theme::scaled(14.0f))
+                .text(statusText)
                 .fontSize(core::theme::scaled(11.0f))
                 .color(t.colors.textTertiary)
                 .build();
 
-            // 标签 chips：内置（primary 软底）/ 服务（purple 软底）
+            // 标签 chips：内置（primary 软底）/ 服务（中性灰底）
+            // 2026-11-01 F-12/R6：服务 chip 原用 purple 软底 + purple 字——purple
+            // 是用户可选的强调色槽位，借用为类别标签色会让微信绿白体系里凭空冒出
+            // 唯一的紫色。改中性灰底 + 主色字。
             ui.rect(id + ".tag.builtin.bg")
-                .position(16.0f, 84.0f)
-                .size(40.0f, core::theme::scaled(18.0f))
+                .position(kCardPad, 84.0f)
+                .size(kChipW, kChipH)
                 .radius(t.sizes.radiusPill)
                 .color(t.colors.primarySoftBg)
                 .build();
             ui.text(id + ".tag.builtin")
-                .position(16.0f, 84.0f)
-                .size(40.0f, core::theme::scaled(18.0f))
+                .position(kCardPad, 84.0f)
+                .size(kChipW, kChipH)
                 .text("内置")
                 .fontSize(core::theme::scaled(11.0f))
                 .color(t.colors.primaryText)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
+            const float svcChipX = kCardPad + kChipW + 6.0f;
             ui.rect(id + ".tag.svc.bg")
-                .position(62.0f, 84.0f)
-                .size(40.0f, core::theme::scaled(18.0f))
+                .position(svcChipX, 84.0f)
+                .size(kChipW, kChipH)
                 .radius(t.sizes.radiusPill)
-                .color(components::theme::withOpacity(t.colors.purple, 0.12f))
+                .color(t.colors.borderMuted)
                 .build();
             ui.text(id + ".tag.svc")
-                .position(62.0f, 84.0f)
-                .size(40.0f, core::theme::scaled(18.0f))
+                .position(svcChipX, 84.0f)
+                .size(kChipW, kChipH)
                 .text("服务")
                 .fontSize(core::theme::scaled(11.0f))
-                .color(t.colors.purple)
+                .color(t.colors.primaryText)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
 
             // hover CTA：平时 opacity 0，onHover 浮现（app_sidebar 窗控钮先例的
-            // .states+onHover 通道）；整卡可点进详情
+            // .states+onHover 通道）；整卡可点进详情。右对齐随卡宽自适应。
+            const float ctaX = cardWidth - kCardPad - kCtaW;
             ui.row(id + ".cta")
-                .position(150.0f, 84.0f)
-                .size(158.0f, core::theme::scaled(18.0f))
+                .position(ctaX, 84.0f)
+                .size(kCtaW, kChipH)
                 .alignItems(eui::Align::CENTER)
                 .gap(4.0f)
                 .opacity(hovered ? 1.0f : 0.0f)
                 .content([&] {
                     ui.text(id + ".cta.label")
-                        .size(140.0f, core::theme::scaled(18.0f))
+                        .size(kCtaW - 18.0f, kChipH)
                         .text("查看详情")
                         .fontSize(core::theme::scaled(12.0f))
                         .color(t.colors.primaryText)
                         .horizontalAlign(eui::HorizontalAlign::Right)
                         .build();
                     ui.text(id + ".cta.arrow")
-                        .size(14.0f, core::theme::scaled(18.0f))
+                        .size(14.0f, kChipH)
                         .icon(0xF061)  // fa-arrow-right
                         .fontSize(core::theme::scaled(11.0f))
                         .color(t.colors.primaryText)
@@ -340,7 +415,7 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
 
             // 命中面：透明三态 + onHover/onClick（顶层，吃整卡点击）
             ui.rect(id + ".hit")
-                .size(kCardW, kCardH)
+                .size(cardWidth, kCardH)
                 .states(kTransparent, kTransparent, kTransparent)
                 .onHover([this, name](bool h) {
                     if (h) {
@@ -504,14 +579,14 @@ void McpPageModule::drawDetailDialog(
                 .position(134.0f, 50.0f)
                 .size(40.0f, core::theme::scaled(18.0f))
                 .radius(t.sizes.radiusPill)
-                .color(components::theme::withOpacity(t.colors.purple, 0.12f))
+                .color(t.colors.borderMuted)
                 .build();
             ui.text("mcp.dialog.detail.hero.tag.svc")
                 .position(134.0f, 50.0f)
                 .size(40.0f, core::theme::scaled(18.0f))
                 .text("服务")
                 .fontSize(core::theme::scaled(11.0f))
-                .color(t.colors.purple)
+                .color(t.colors.primaryText)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();

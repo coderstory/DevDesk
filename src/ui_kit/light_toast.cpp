@@ -54,10 +54,17 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
 
     if (!s.open || s.message.empty()) return;
 
+    drawLightToastPill(ui, id, s.message, cx, cy, t);
+}
+
+void drawLightToastPill(eui::Ui& ui, const std::string& id,
+                         const std::string& message, float cx, float cy,
+                         const core::theme::Tokens& t) {
+    if (message.empty()) return;
 
     // 几何：居中于 (cx, cy)
     const float estW = std::max(kLightToastMinWidth,
-                                static_cast<float>(s.message.size()) * kLightToastCharWidthEstimate
+                                static_cast<float>(message.size()) * kLightToastCharWidthEstimate
                                 + kLightToastPadX * 2.0f);
     const float bgX = cx - estW * 0.5f;
     const float bgY = cy - kLightToastHeight * 0.5f;
@@ -77,7 +84,7 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
             // 白字（§4.10）：wechat.onPrimary=#FFFFFF（主色上的前景色，黑底白字同义）
             ui.text(id + ".text")
                 .size(estW, kLightToastHeight)
-                .text(s.message)
+                .text(message)
                 .fontSize(kLightToastFontSize)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)

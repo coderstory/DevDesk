@@ -22,4 +22,17 @@ void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
         .build();
 }
 
+void cardPanel(eui::Ui& ui, const std::string& id, float x, float y, float w,
+               float h, float radius, const core::theme::Tokens& t) {
+    ui.rect(id)
+        .position(x, y)
+        .size(w, h)
+        .color(cardSurface(t))
+        .radius(radius)
+        .border(1.0f, t.colors.borderDefault)
+        .shadow(components::theme::panelShadow(
+            ::core::theme::componentTokensWeChat(t)))
+        .build();
+}
+
 } // namespace ui_kit

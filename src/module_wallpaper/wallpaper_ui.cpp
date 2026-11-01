@@ -1155,7 +1155,7 @@ void drawTabs(eui::Ui& ui, float contentW, const Tokens& t, UiState& state) {
                     label, {}, ui_kit::kWtabFontSize, 400) +
                 32.0f;
             ui_kit::wtab(ui, "wallpaper.tabs." + std::to_string(i), label,
-                         state.tab == i, tabX, 0.0f, tabW, 40.0f, t,
+                         state.tab == i, tabX, 0.0f, tabW, ui_kit::kWtabHeight, t,
                          [&state, i] { state.tab = i; });
             tabX += tabW + 4.0f;
         }

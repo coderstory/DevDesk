@@ -21,6 +21,7 @@
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/empty_state.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
@@ -399,27 +400,33 @@ private:
                 .size(midW, bodyH)
                 .color(t.colors.background)
                 .build();
-            if (currentPath_.empty()) {
-                ui.text(columnId + ".hint")
-                    .position(24.0f, 50.0f)
-                    .size(midW - 48.0f, 40.0f)
-                    .text("从左栏选一篇笔记开始编辑")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(20.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
-                return;
-            }
-
-            // 白纸卡：包 tag 栏 + 正文（状态栏留在卡下灰底）
+            // 2026-11-01 F-17：纸卡此前只在「已选笔记」时画，空态下整列与页面底同色，
+            // 三栏边界不可辨（截图里编辑区像一片空白，只有一行提示浮着）。
+            // 纸卡改为常驻——空态也有画布边界，列的轮廓始终可见。
+            const float paperX = 8.0f;
+            const float paperY = 8.0f;
+            const float paperW = midW - 16.0f;
+            const float paperH = std::max(0.0f, bodyH - 8.0f - 30.0f);
             ui.rect(columnId + ".paper")
-                .position(8.0f, 8.0f)
-                .size(midW - 16.0f, std::max(0.0f, bodyH - 8.0f - 30.0f))
+                .position(paperX, paperY)
+                .size(paperW, paperH)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
+            if (currentPath_.empty()) {
+                // 2026-11-01 R3：空态走全站统一组件（图标 + 主句 + 引导句，整体居中）
+                ui_kit::EmptyStateOptions opts;
+                opts.message = "还没有打开笔记";
+                opts.guide = "从左栏选一篇笔记开始编辑。";
+                opts.icon = 0xF02D;  // fa-book
+                ui_kit::emptyState(ui, columnId + ".hint", opts, paperX + 16.0f,
+                                   paperY + 16.0f, paperW - 32.0f,
+                                   std::max(0.0f, paperH - 32.0f), t);
+                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
+                return;
+            }
+
             float colX = kTextColumnInsetX;
             float colW = midW - kTextColumnInsetX * 2.0f;
             // TODO(面包屑)：展示 currentPath_ 路径（§3.2.4 补充项，签认可划）。

@@ -666,7 +666,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
 
             // S3.4 块面式 Tab（wtab 替代原下划线式 components::tabs）
             const float tabY = y0 + 40.0f;
-            const float tabH = 40.0f;
+            const float tabH = ui_kit::kWtabHeight;
             const char* tabLabels[] = {"基础信息", "模型配置", "环境变量"};
             float tabX = x0;
             for (int i = 0; i < 3; ++i) {

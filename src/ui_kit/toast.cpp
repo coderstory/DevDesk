@@ -14,6 +14,8 @@
 
 #include <core/render/text.h>
 
+#include <ui_kit/light_toast.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -32,6 +34,20 @@ constexpr float kToastPadBottom = 16.0f;   // spacing.section
 constexpr float kToastMaxW = 360.0f;       // 宽上限（防巨框；同组件默认宽）
 constexpr float kToastMinW = 180.0f;      // 宽下限（极短文本仍成像完整 toast）
 constexpr float kToastMinH = 58.0f;        // 高下限（图标 20+22+竖向留白）
+
+// 轻提示在窗口内的纵向落点：水平居中、略高于中线（微信 PC 端轻提示位置）。
+constexpr float kLightPillCenterOffsetY = 120.0f;
+
+// 四态 → 图标码点（2026-11-01 F-09 统一，全站一态一码点）。
+unsigned int levelIcon(ToastLevel level) {
+    switch (level) {
+        case ToastLevel::Info: return kToastIconInfo;
+        case ToastLevel::Success: return kToastIconSuccess;
+        case ToastLevel::Warning: return kToastIconWarning;
+        case ToastLevel::Error: return kToastIconError;
+    }
+    return kToastIconInfo;
+}
 
 // 换行行数：与渲染同一引擎测量（wrap + maxWidth 下 measureTextSize 返回
 // {行宽, 行数×lineHeight}，内部带缓存）；字体不可用（高度 0）退 1 行。
@@ -55,12 +71,46 @@ void drawToast(eui::Ui& ui, const eui::Screen& screen, const std::string& id,
                ToastState& state,
                const components::theme::ThemeColorTokens& tokens,
                const ToastOptions& options) {
+    // —— 轻反馈分支（2026-11-01 F-10/R5）——
+    // 无标题 + 非错误 + 单行短正文 → 居中微信式轻提示（黑底白字）；
+    // 带标题的（重要反馈）与错误仍走右下通知式。此前全站 79 处调用只有 1 处
+    // （Claude 复制）走轻提示，「复制成功」居中、其它成功提示贴右下角，同一语义
+    // 两种形态。
+    const bool lightForm =
+        state.title.empty() && state.level != ToastLevel::Error &&
+        state.body.find('\n') == std::string::npos &&
+        state.body.size() <= kToastLightBodyMaxChars;
+    if (lightForm) {
+        const auto& t = ::core::theme::current();
+        if (state.open && !state.body.empty()) {
+            drawLightToastPill(ui, id, state.body, screen.width * 0.5f,
+                               screen.height * 0.5f - kLightPillCenterOffsetY, t);
+        } else {
+            // 关态常驻构建（opacity 0）：与 components::toast 同护栏——toast 根节点
+            // 每帧都在，关闭靠 opacity 过渡而非移除元素。
+            ui.stack(id).size(0.0f, 0.0f).opacity(0.0f).build();
+        }
+        // 自动消失：与 components::toast 同一套 onTimer 机制
+        ui.stack(id + ".timer")
+            .size(0.0f, 0.0f)
+            .content([&] {
+                if (state.open && options.durationSec > 0.0f) {
+                    ui.stack(id + ".timer.inner")
+                        .size(0.0f, 0.0f)
+                        .onTimer(options.durationSec, [&state] { state.dismiss(); })
+                        .build();
+                }
+            })
+            .build();
+        return;
+    }
+
     auto builder = components::toast(ui, id);
     builder.theme(tokens)
         .screen(screen.width, screen.height - options.bottomInset)
         .visible(state.open)
         .duration(options.durationSec)
-        .icon(state.isError ? options.errorIcon : options.okIcon)
+        .icon(levelIcon(state.level))
         .title(state.title)
         // 无条件覆盖正文（含空串）：组件默认正文是英文占位串，不覆盖会在无正文站点画出来。
         .message(state.body);

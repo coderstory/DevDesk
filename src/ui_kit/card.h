@@ -22,4 +22,11 @@ inline eui::Color cardSurface(const core::theme::Tokens& t) {
 void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
                const core::theme::Tokens& t);
 
+// 卡片底板（绝对定位版）：memory 等模块直接在页面坐标系里画卡、不套 stack 根，
+// 用它保证全站卡片同材质 + 同描边 + 同阴影。此前记忆页卡片只有 1px 浅描边、无阴影，
+// 在近白页面底上边界几乎不可辨——截图里「只见文字不见容器」（2026-11-01 F-02/F-07）。
+// id 契约 = 调用方原 id（不追加 .bg），单测定位面不变。
+void cardPanel(eui::Ui& ui, const std::string& id, float x, float y, float w,
+               float h, float radius, const core::theme::Tokens& t);
+
 } // namespace ui_kit

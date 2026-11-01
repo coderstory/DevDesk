@@ -130,13 +130,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .position(x, y)
         .size(w, 176.0f)
         .content([&] {
-    ui.rect("memory.eng.card")
-        .position(0.0f, 0.0f)
-        .size(w, 176.0f)
-        .color(ui_kit::cardSurface(t))
-        .radius(t.sizes.radiusLarge)
-        .border(1.0f, t.colors.borderDefault)
-        .build();
+    ui_kit::cardPanel(ui, "memory.eng.card", 0.0f, 0.0f, w, 176.0f, t.sizes.radiusLarge, t);
     ui.rect("memory.eng.dot")
         .position(t.sizes.spacingLarge, 22.0f)
         .size(10.0f, 10.0f)
@@ -238,13 +232,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
 
     auto cardBase = [&](int i) {
         const float cx = x + static_cast<float>(i) * (cardW + gap);
-        ui.rect("memory.health.card" + std::to_string(i))
-            .position(cx, y)
-            .size(cardW, kCardH)
-            .color(ui_kit::cardSurface(t))
-            .radius(t.sizes.radiusOverlay)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
+        ui_kit::cardPanel(ui, "memory.health.card" + std::to_string(i), cx, y, cardW, kCardH, t.sizes.radiusOverlay, t);
         return cx;
     };
     auto label = [&](const std::string& id, float cx, const char* text) {
@@ -276,14 +264,33 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
         const float cx = cardBase(0);
         label("memory.health.h0.label", cx, "脱敏闸");
         const bool on = snap.gateEnabled;
+        // 2026-11-01 F-03：四张健康卡此前只有本卡没有「数值行」，标题下直接是
+        // 状态 chip，同排四卡读作两种组件。补一级数值 + 单位行，与②③④同构。
+        ui.text("memory.health.h0.value")
+            .position(cx + 14.0f, y + 34.0f)
+            .size(cardW - 28.0f, 40.0f)
+            .text("0/110")
+            .fontSize(t.sizes.fontSizeStat)
+            .lineHeight(40.0f)
+            .fontWeight(700)
+            .color(on ? t.colors.success : t.colors.textDisabled)
+            .build();
+        ui.text("memory.health.h0.unit")
+            .position(cx + 14.0f, y + 70.0f)
+            .size(cardW - 28.0f, 18.0f)
+            .text("红队样本泄漏数（110 条攻击样本）")
+            .fontSize(core::theme::scaled(11.5f))
+            .lineHeight(18.0f)
+            .color(t.colors.textTertiary)
+            .build();
         ui.rect("memory.health.h0.chip")
-            .position(cx + 14.0f, y + 36.0f)
+            .position(cx + 14.0f, y + 94.0f)
             .size(cardW - 28.0f, 24.0f)
             .color(on ? t.colors.primarySoftBg : t.colors.active)
             .radius(t.sizes.radiusPill)
             .build();
         ui.text("memory.health.h0.chiptext")
-            .position(cx + 14.0f, y + 38.0f)
+            .position(cx + 14.0f, y + 96.0f)
             .size(cardW - 28.0f, 20.0f)
             .text(on ? "强制开启 · 已锁定" : "未启用（已二次确认）")
             .fontSize(core::theme::scaled(12.0f))
@@ -293,7 +300,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .color(on ? t.colors.primaryText : t.colors.warning)
             .build();
         ui.text("memory.health.h0.body")
-            .position(cx + 14.0f, y + 68.0f)
+            .position(cx + 14.0f, y + 126.0f)
             .size(cardW - 28.0f, 34.0f)
             .wrap()
             .text("记忆出机前自动清除密钥/手机号等敏感信息。")
@@ -301,16 +308,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .lineHeight(17.0f)
             .color(t.colors.textSecondary)
             .build();
-        ui.text("memory.health.h0.redteam")
-            .position(cx + 14.0f, y + 112.0f)
-            .size(cardW - 28.0f, 22.0f)
-            .text(on ? "红队测试 泄漏 0/110 样本" : "验证资产仍在，当前未启用")
-            .fontSize(core::theme::scaled(11.5f))
-            .lineHeight(22.0f)
-            .fontWeight(600)
-            .color(on ? t.colors.success : t.colors.textTertiary)
-            .build();
-        note("memory.health.h0.note", cx, 140.0f,
+        note("memory.health.h0.note", cx, 166.0f,
              on ? "110 条攻击样本全部被拦下；旁路会记审计日志（只含计数）。"
                 : "已关闭：内容将原样出机，旁路已记入审计（只含计数，无原文）。");
     }

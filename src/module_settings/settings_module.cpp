@@ -655,8 +655,7 @@ public:
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const core::theme::Tokens& t) {
         ui_kit::drawToast(ui, screen, "settings.toast", toast_,
-                          core::theme::componentTokensWeChat(t),
-                          ui_kit::ToastOptions{.okIcon = 0xF058});
+                          core::theme::componentTokensWeChat(t));
     }
 
     // ── GitHub Sync 操作方法 ──

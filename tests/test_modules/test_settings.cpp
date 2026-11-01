@@ -3618,7 +3618,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kDropdownPopupPadding, 12.0f);
     DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
-    DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
+    // 2026-11-01：页面级 tab 高度统一跟 ui_kit::kWtabHeight（全站单一高度）
+    DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, ui_kit::kWtabHeight);
+    DOCTEST_CHECK_EQ(ui_kit::kWtabHeight, 36.0f);
     // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
     DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
