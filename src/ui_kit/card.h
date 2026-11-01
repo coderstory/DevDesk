@@ -8,6 +8,7 @@
 #include <ui_kit/glass.h>
 #include <ui_kit/metrics.h>
 
+#include <functional>
 #include <string>
 
 namespace ui_kit {
@@ -26,7 +27,17 @@ void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
 // 用它保证全站卡片同材质 + 同描边 + 同阴影。此前记忆页卡片只有 1px 浅描边、无阴影，
 // 在近白页面底上边界几乎不可辨——截图里「只见文字不见容器」（2026-11-01 F-02/F-07）。
 // id 契约 = 调用方原 id（不追加 .bg），单测定位面不变。
+// onClick：可选点击回调（运行历史卡片点选行用；为空 = 纯展示卡）。
 void cardPanel(eui::Ui& ui, const std::string& id, float x, float y, float w,
-               float h, float radius, const core::theme::Tokens& t);
+               float h, float radius, const core::theme::Tokens& t,
+               std::function<void()> onClick = {});
+
+// 卡片底板 + 底色覆盖：弹窗内的卡片不能用默认玻璃面——弹窗底本身是 surface
+// （浅色=纯白），白卡片压在白底上会「融」（描边 #E5E7EB 太淡，边界不可辨）。
+// 调用方按主题给一档「比弹窗底可区分」的底色，描边与阴影仍走全站统一。
+void cardPanelColored(eui::Ui& ui, const std::string& id, float x, float y, float w,
+                      float h, float radius, const core::theme::Tokens& t,
+                      const eui::Color& surface,
+                      std::function<void()> onClick = {});
 
 } // namespace ui_kit

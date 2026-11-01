@@ -394,6 +394,32 @@ REGISTER_TEST(schedule_engine_once_rule_archived_no_refire,
 
 // 防：编辑规则后 next_fire_at 用旧缓存（改了时间却不生效）或 last_eval_at
 // 不刷新把历史窗口放大成误补跑（§4.4 编辑事务内重算）。
+// 防：运行历史抽屉的「重试」按钮依赖引擎手动重跑入口——rerunNow 不触发 /
+// 不落新 run 行，按钮点了没反应且历史里看不到新记录；规则不存在时必须 fail
+// （UI 层据此提示，不静默吞掉）。
+REGISTER_TEST(schedule_engine_rerun_now_fires_again,
+              "调度引擎: 手动重跑立即再触发一次并落新 run 行（运行历史重试钮入口）", {
+    auto db = openMigrated("rerun");
+    module::schedule::ScheduleStore store(db.db());
+    TestChannels channels(store, "fake_remind");
+    module::schedule::ScheduleEngine engine(db.db(), channels.registry);
+
+    auto rule = store.createRule(
+        makeIntervalRule(60, 0, "remind", "once", {channels.channelRowId})).value();
+    engine.tick(10);
+    engine.tick(60);
+    DOCTEST_REQUIRE(countRuns(db.db()) == 1);
+
+    const auto res = engine.rerunNow(rule.id, 100);
+    DOCTEST_REQUIRE(res.isOk());
+    DOCTEST_CHECK_EQ(countRuns(db.db()), static_cast<int64_t>(2));
+    DOCTEST_CHECK_EQ(countRuns(db.db(), "success"), static_cast<int64_t>(2));
+
+    // 规则不存在 → fail（不静默）
+    DOCTEST_CHECK(engine.rerunNow(999999, 110).isFail());
+    return true;
+})
+
 REGISTER_TEST(schedule_engine_edit_recomputes_next_fire,
               "调度引擎: recomputeNextFire 事务内重算 next_fire_at 并刷新 last_eval_at", {
     auto db = openMigrated("edit");

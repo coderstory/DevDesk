@@ -592,6 +592,32 @@ core::Result<void> ScheduleStore::updateRun(const RunRecord& run) {
     return core::Result<void>::ok();
 }
 
+core::Result<std::optional<RunRecord>> ScheduleStore::getRun(int64_t id) {
+    auto prep = db_.prepare(std::string("SELECT ") + kRunCols +
+                            " FROM schedule_run WHERE id = ? LIMIT 1");
+    if (prep.isFail())
+        return core::Result<std::optional<RunRecord>>::fail(prep.errorCode(),
+                                                            prep.errorMessage());
+    auto& stmt = prep.value();
+    if (auto r = stmt.bind(1, id); r.isFail())
+        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(),
+                                                            r.errorMessage());
+    auto rows = stmt.fetchAll();
+    if (rows.isFail())
+        return core::Result<std::optional<RunRecord>>::fail(rows.errorCode(),
+                                                            rows.errorMessage());
+    if (rows.value().empty()) {
+        return core::Result<std::optional<RunRecord>>::ok(std::nullopt);
+    }
+    auto r = runFromRow(rows.value().front());
+    if (r.isFail()) {
+        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(),
+                                                            r.errorMessage());
+    }
+    return core::Result<std::optional<RunRecord>>::ok(
+        std::optional<RunRecord>(std::move(r.value())));
+}
+
 core::Result<std::vector<RunRecord>> ScheduleStore::listRunsByRule(int64_t ruleId, int limit) {
     auto prep = db_.prepare(std::string("SELECT ") + kRunCols +
                             " FROM schedule_run WHERE rule_id = ? "

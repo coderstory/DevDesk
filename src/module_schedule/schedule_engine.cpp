@@ -594,8 +594,19 @@ core::Result<void> ScheduleEngine::recomputeNextFire(int64_t ruleId, int64_t now
     return store_.updateRule(rule);
 }
 
-void ScheduleEngine::drainPendingFires(int64_t nowUnix) {
-    while (!pendingFires_.empty()) {
+core::Result<void> ScheduleEngine::rerunNow(int64_t ruleId, int64_t nowUnix) {
+    auto got = store_.getRule(ruleId);
+    if (got.isFail()) return core::Result<void>::fail(got.errorCode(), got.errorMessage());
+    const RuleRecord& rule = got.value();
+    if (!rule.enabled || rule.archivedAt.has_value()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+                                        "规则已停用，无法重跑");
+    }
+    fireRule(rule, nowUnix, /*catchUp=*/false, nowUnix);
+    return core::Result<void>::ok();
+}
+
+void ScheduleEngine::drainPendingFires(int64_t nowUnix) {    while (!pendingFires_.empty()) {
         PendingFire f = pendingFires_.front();
         const int units = globalDeliveryUnits(f.rule);
         const bool blocked = runningRuleIds_.count(f.rule.id) != 0 ||

@@ -24,6 +24,8 @@
 
 namespace module::schedule {
 
+class ScheduleEngine;  // 前向声明（手动重跑入口；引擎生命周期长于列表 UI）
+
 // ---- 纯视图模型 ----
 
 // 列表行（系统项与用户项统一形状；isSystem 决定绘制差异）
@@ -74,8 +76,10 @@ class ScheduleListUi {
 public:
     // tasks 非空时 run_task 下拉候选取 taskKeys()（v1 生产注册表为空 → 下拉空态）。
     // 引擎先于本类构造（注册只在启动装配段发生），传 &engine->taskRegistry()。
+    // engine 非空时接上运行历史抽屉的「重试」按钮（手动重跑失败/错过的 run）。
     ScheduleListUi(ScheduleStore& store, ScheduleProviderRegistry& providers,
-                   InternalTaskRegistry* tasks = nullptr);
+                   InternalTaskRegistry* tasks = nullptr,
+                   ScheduleEngine* engine = nullptr);
 
     // 重装配：拉全部规则 + 系统视图 + 每条用户规则的最近一次 run。
     // 读库失败降级空列表 + errorText()（整页不因库故障崩溃）。
@@ -107,11 +111,14 @@ public:
     void setArchiveExpanded(bool expanded) { archiveExpanded_ = expanded; }
 
     // 运行历史抽屉开合态与数据（无头用例断言面；数据经 store 读取后由
-    // assembleHistory 装配，retryRun 留空 = 抽屉隐藏重试按钮）
+    // assembleHistory 装配；engine 未接入时抽屉隐藏重试按钮）
     bool historyOpen() const { return historyState_.open; }
     const std::vector<ui::RunHistoryItem>& historyItems() const {
         return historyHost_.items;
     }
+    // 手动重跑：按 run 反查规则 → 引擎按「现在」再触发一次。
+    // 失败标 error_（抽屉保持打开），成功 reload 让新记录出现在历史里。
+    void retryHistoryRun(int64_t runId);
 
     // 编辑/删除弹窗状态（无头用例断言面）
     bool editOpen() const { return editState_.open; }
@@ -136,6 +143,7 @@ private:
     ScheduleStore& store_;
     ScheduleProviderRegistry& providers_;
     InternalTaskRegistry* tasks_ = nullptr;  // 引擎持有，生命周期长于本类
+    ScheduleEngine* engine_ = nullptr;       // 同上；手动重跑入口
     ListAssembly assembly_;
     std::string error_;
     bool archiveExpanded_ = false;  // 归档折叠区默认折叠（§4.4/验收 4）

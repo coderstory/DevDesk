@@ -100,6 +100,12 @@ public:
     // （防编辑把历史窗口放大成补跑）。
     core::Result<void> recomputeNextFire(int64_t ruleId, int64_t nowUnix);
 
+    // 手动重跑（2026-11-01）：把该规则按「现在」再触发一次，走与自动触发
+    // 同一路径 fireRule（唯一索引 / 同规则串行 / 全局投递桶口径完全一致）。
+    // 运行历史抽屉的「重试」按钮入口：失败或错过的 run 立即补跑一次。
+    // 规则不存在/已停用 → fail；同秒已有同规则 run 时被唯一索引挡下（不重复执行）。
+    core::Result<void> rerunNow(int64_t ruleId, int64_t nowUnix);
+
     // 异步 run_task 收尾：任务方完成后回调；推进 run 行终态并释放串行占用、
     // 重算下次（正在跑的 run 不因编辑打断——编辑只动 next_fire_at）。
     core::Result<void> completeRun(int64_t runId, const RunOutcome& outcome,

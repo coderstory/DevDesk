@@ -119,6 +119,8 @@ public:
     // 插入运行记录；(origin, origin_key, planned_at) 已存在 → AlreadyExists
     //（errorMessage 含已有行 id）。唯一索引是硬守卫：同规则同计划时刻只有一条 run。
     core::Result<RunRecord> insertRun(const RunRecord& run);
+    // 按主键读运行记录；id 不存在 → nullopt（手动重跑按 run 反查规则用）。
+    core::Result<std::optional<RunRecord>> getRun(int64_t id);
     // 全行覆盖更新（状态机推进）；id 不存在 → NotFound。
     core::Result<void> updateRun(const RunRecord& run);
     // 某规则（或系统项 origin_key）的运行历史，planned_at 倒序；limit 条。

@@ -6,6 +6,7 @@
 #include "core/logging.h"
 #include "core/theme.h"
 #include "core/time.h"
+#include "module_schedule/schedule_engine.h"
 #include "platform/json.h"
 #include "ui_kit/dialog_form.h"
 #include "ui_kit/empty_state.h"
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <map>
 #include <utility>
 
 namespace module::schedule {
@@ -46,6 +48,16 @@ std::string runStatusZh(const std::string& status) {
     if (status == "missed") return "已错过";
     if (status == "suppressed") return "已抑制";
     return status;
+}
+
+// 渠道 kind → 中文展示名（schedule_channel.kind → 运行历史里的 chip 文案）
+std::string channelKindZh(const std::string& kind) {
+    if (kind == "fullscreen") return "全屏提醒";
+    if (kind == "toast") return "应用内提示";
+    if (kind == "os") return "系统通知";
+    if (kind == "silent") return "静默";
+    if (kind == "wecom") return "企业微信";
+    return kind;
 }
 
 std::string twoDigits(int v) {
@@ -331,10 +343,14 @@ ListAssembly assembleList(const std::vector<RuleRecord>& rules,
 
 ScheduleListUi::ScheduleListUi(ScheduleStore& store,
                                ScheduleProviderRegistry& providers,
-                               InternalTaskRegistry* tasks)
-    : store_(store), providers_(providers), tasks_(tasks) {
-    // retryRun 留空 = 抽屉隐藏重试按钮（引擎重跑入口随宿主波接，§4.5）
+                               InternalTaskRegistry* tasks,
+                               ScheduleEngine* engine)
+    : store_(store), providers_(providers), tasks_(tasks), engine_(engine) {
     historyHost_.close = [this] { historyState_.open = false; };
+    // 重试按钮：引擎在位才接（无引擎时抽屉隐藏重试按钮）。
+    if (engine_ != nullptr) {
+        historyHost_.retryRun = [this](int64_t runId) { retryHistoryRun(runId); };
+    }
     // 保存落库点（drawEditDialog 保存按钮 → host.saveRule）：编辑 = 业务字段
     // 覆盖（getRule 取现状保 created/archived 等不可写字段），新建 = createRule；
     // 成功 reload 后回空串（弹窗关闭），失败回红字（弹窗保留不丢表单）。
@@ -532,11 +548,49 @@ void ScheduleListUi::openHistory() {    error_.clear();
         }
     }
     historyHost_.items = ui::assembleHistory(runs, deliveries, kHistoryLimit);
+    // 渠道展示名：schedule_delivery.channel_id 存的是 schedule_channel.id（数字），
+    // 直接给用户看「#3」无意义——查渠道表换成可读名（自定义名优先，回落 kind 中文）。
+    std::map<int64_t, std::string> channelLabels;
+    const auto channels = store_.listChannels();
+    if (channels.isOk()) {
+        for (const auto& ch : channels.value()) {
+            channelLabels[ch.id] =
+                !ch.name.empty() ? ch.name : channelKindZh(ch.kind);
+        }
+    }
+    historyHost_.channelLabel = [channelLabels](int64_t id) -> std::string {
+        const auto it = channelLabels.find(id);
+        return it == channelLabels.end() ? std::string() : it->second;
+    };
     historyState_.open = true;
 }
 
-void ScheduleListUi::resetForTest() {
-    archiveExpanded_ = false;
+void ScheduleListUi::retryHistoryRun(int64_t runId) {
+    error_.clear();
+    if (engine_ == nullptr) {
+        error_ = "重跑入口不可用";
+        return;
+    }
+    const auto got = store_.getRun(runId);
+    if (got.isFail()) {
+        error_ = "运行记录读取失败：" + got.errorMessage();
+        return;
+    }
+    if (!got.value().has_value() || !got.value()->ruleId.has_value()) {
+        error_ = "该运行记录无关联规则，无法重跑";
+        return;
+    }
+    const auto res =
+        engine_->rerunNow(*got.value()->ruleId, static_cast<int64_t>(core::time::nowUnix()));
+    if (res.isFail()) {
+        error_ = "重跑失败：" + res.errorMessage();
+        return;
+    }
+    // 重跑会新增一条 run 行与投递记录：重装历史让用户立刻看到结果。
+    openHistory();
+}
+
+void ScheduleListUi::resetForTest() {    archiveExpanded_ = false;
     error_.clear();
     assembly_ = ListAssembly{};
     historyState_ = ui::HistoryDrawerState{};

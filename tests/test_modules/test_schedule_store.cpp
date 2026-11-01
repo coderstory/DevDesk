@@ -208,6 +208,38 @@ REGISTER_TEST(schedule_store_run_insert_no_side_effect,
     return true;
 })
 
+REGISTER_TEST(schedule_store_get_run_by_id,
+              "getRun 按主键读运行记录：命中回填行、不存在回空（防：运行历史重跑按 id 反查规则失败）", {
+    auto opened = openMigrated("getrun");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    module::schedule::ScheduleStore store(db);
+
+    module::schedule::RunRecord run;
+    run.origin = "user";
+    run.originKey = "rule:42";
+    run.ruleId = 42;
+    run.plannedAt = 1770000000;
+    run.status = "failed";
+    run.error = "接口超时";
+    auto inserted = store.insertRun(run);
+    DOCTEST_REQUIRE(inserted.isOk());
+
+    auto got = store.getRun(inserted.value().id);
+    DOCTEST_REQUIRE(got.isOk());
+    DOCTEST_REQUIRE(got.value().has_value());
+    DOCTEST_CHECK_EQ(got.value()->id, inserted.value().id);
+    DOCTEST_CHECK_EQ(got.value()->status, std::string("failed"));
+    DOCTEST_CHECK_EQ(got.value()->error, std::string("接口超时"));
+    DOCTEST_REQUIRE(got.value()->ruleId.has_value());
+    DOCTEST_CHECK_EQ(*got.value()->ruleId, static_cast<int64_t>(42));
+
+    auto missing = store.getRun(inserted.value().id + 9999);
+    DOCTEST_REQUIRE(missing.isOk());
+    DOCTEST_CHECK_FALSE(missing.value().has_value());
+    return true;
+})
+
 REGISTER_TEST(schedule_store_unique_index_blocks_duplicate,
               "唯一索引在数据库层硬挡同键重复行：绕过 store 的直接 SQL 也被拒（防：索引缺失时库层不设防）", {
     auto opened = openMigrated("uniq");

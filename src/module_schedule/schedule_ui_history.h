@@ -64,6 +64,10 @@ struct HistoryDrawerHost {
     std::vector<RunHistoryItem> items;
     std::function<void(int64_t runId)> retryRun;  // 可为空 = 隐藏重试按钮
     std::function<void()> close;
+    // 渠道配置 id → 展示名（如「全屏提醒」）。为空 = 回落「渠道 #id」。
+    // schedule_delivery.channel_id 存的是 schedule_channel.id（数字），
+    // 直接给用户看 #3 无意义，由宿主查渠道表注入可读名。
+    std::function<std::string(int64_t channelId)> channelLabel;
 };
 
 // 抽屉自身状态（打开态 + 当前选中的 run id，0 = 未选中，显示总览列表）

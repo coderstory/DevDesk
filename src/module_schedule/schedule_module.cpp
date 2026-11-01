@@ -62,7 +62,8 @@ void ScheduleModule::onStart() {
     impl_->engine = std::make_unique<ScheduleEngine>(*db, *impl_->channels);
     impl_->listUi =
         std::make_unique<ScheduleListUi>(*impl_->store, *impl_->providers,
-                                         &impl_->engine->taskRegistry());
+                                         &impl_->engine->taskRegistry(),
+                                         impl_->engine.get());
     impl_->listUi->reload(static_cast<int64_t>(core::time::nowUnix()));
     // start() 订阅唯一 1Hz 泵。
     impl_->engine->start();

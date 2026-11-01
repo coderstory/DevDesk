@@ -8,6 +8,8 @@
 #include "app_registry.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "module_schedule/channel_registry.h"
+#include "module_schedule/schedule_engine.h"
 #include "module_schedule/schedule_module.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
@@ -370,6 +372,48 @@ REGISTER_TEST(schedule_list_history_drawer_open_close_wiring,
     DOCTEST_CHECK_FALSE(listUi.historyOpen());
     composeFrame(listUi, frame, screen, "hist_wiring_closed_again");
     DOCTEST_CHECK_EQ(frame.find("schedule.history.drawer.panel")->opacity, 0.0f);
+    return true;
+})
+
+// 防：运行历史抽屉的「重试」按钮链路断在 UI↔引擎之间——宿主没接 retryRun
+// 回调时按钮永远不出现（上一版真实状态）；接了但不重跑 / 不把新记录装回抽屉，
+// 用户点了没反应、历史里也看不到补跑结果。
+REGISTER_TEST(schedule_list_history_retry_runs_again,
+              "schedule 历史抽屉：重试即按该规则重跑一次，新记录回到抽屉", {
+    auto opened = openMigrated("histretry");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+    ScheduleProviderRegistry providers;
+    module::schedule::ChannelRegistry channels;
+    module::schedule::ScheduleEngine engine(db, channels);
+    ScheduleListUi listUi(store, providers, nullptr, &engine);
+
+    const auto created = store.createRule(makeRule("重试规则", 0, 1761000000));
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t ruleId = created.value().id;
+
+    module::schedule::RunRecord run;
+    run.origin = "user";
+    run.originKey = "rule:" + std::to_string(ruleId);
+    run.ruleId = ruleId;
+    run.plannedAt = 1760001000;
+    run.status = "failed";
+    run.error = "接口超时";
+    DOCTEST_REQUIRE(store.insertRun(run).isOk());
+
+    listUi.reload(1760010000);
+    listUi.openHistory();
+    DOCTEST_REQUIRE_EQ(listUi.historyItems().size(), static_cast<size_t>(1));
+    const int64_t runId = listUi.historyItems()[0].run.id;
+
+    listUi.retryHistoryRun(runId);
+    DOCTEST_CHECK(listUi.errorText().empty());
+    // 重跑落一条新 run 行，并被重新装回抽屉
+    const auto runs = store.listRunsByRule(ruleId, 50);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_CHECK_EQ(runs.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK(listUi.historyItems().size() >= 2);
     return true;
 })
 
