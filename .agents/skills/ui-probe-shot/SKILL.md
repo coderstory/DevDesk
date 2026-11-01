@@ -10,7 +10,7 @@ description: 何时用——① UI 改完需要截图/布局证据自证（完�
 - `tests/probes/probe_harness.h`（namespace `probe`）——窗口生命周期、帧驱动、帧捕获（进程内 glReadPixels → PNG）、输入注入、布局断言
 - `tests/probes/uat62_page_shots_probe.cpp`——14 个注册页整页批拍（真 `app::compose` 装配链）
 
-用途：UI 改动自证 / QA 视觉验收 / 看图会话 / 布局数值断言。不适用：CI 无 GUI 会话（probe 自动跳过，见坑位 ⑦）；需要人工手感的走查走真机 UAT。
+用途：UI 改动自证 / QA 视觉验收 / 看图会话 / 布局数值断言。不适用：CI（`DEVDESK_BUILD_PROBES=OFF`，probe 不构建）与本地无头会话（exit 77 跳过，见坑位 ⑦）——两者成因不同；需要人工手感的走查走真机 UAT。
 
 ## 路径 A：整页快照（零代码，先试这条）
 
@@ -19,7 +19,9 @@ cd <repo>/build/tests
 ./uat62_page_shots_probe --size 1200x1000 --out /abs/path/evidence/<批次>/pages
 ```
 
-- 产物：`NN-<slug>-<窗口高>.png`，按 `kModuleRegistry` 表序（= 侧边栏序）；分组父项行与平台不支持页（非 Windows 的 wallpaper）跳过不落图，编号可能空号
+- 表序 14 行（= 侧边栏序），实拍 12 页：分组父项行与平台不支持页（macOS/Linux 的 wallpaper）跳过不落图，编号可能空号；Windows 上 wallpaper 会实拍（13 页）
+- 产物：`NN-<slug>-<窗口高>[-fs<字号%>][-sc].png`
+- 可选档位：`--font-scale 0.85~1.30`（字号缩放对照）、`--sidebar-collapsed`（折叠态侧栏）
 - 数据态 = 探针空状态（不造假数据），适合页面级视觉验收与设计走查
 - 一次跑两档尺寸更佳：`--size 1000x640` 与 `--size 1600x1000`（窄窗自适应审查）
 - 局限：只有空态整页。特定交互状态（弹层开、列表有数据、hover 态）→ 路径 B
@@ -95,14 +97,21 @@ for (const auto& root : ui.roots()) dump(*root, 0);
 
 1. **24 帧稳帧**：弹层透明度等走 `animate().transition()` 逐帧插值，只 poll 不 compose 树不更新；刚 open 就拍 = 半透明中间态，像产品缺陷其实早拍。24 帧（400ms@60fps）盖过仓库最长过渡
 2. **Element* 跨 compose 失效**：compose 每帧重建树，上一帧拿的指针/`SwapScrollCallback` guard 在下次 compose 后是悬垂——guard 必须在对应 compose 前销毁
-3. **逻辑 vs 像素**：`frame` 是逻辑 px，PNG 是 framebuffer 像素（×scale）。断言几何用 frame，断言视觉用像素
+3. **逻辑 vs 像素**：`frame` 是逻辑 px，PNG 是 framebuffer 像素（逻辑 × `capture.scale()`：macOS Retina 2x，Windows 通常 1x）。断言几何用 frame，断言视觉用像素
 4. **渲染只许 FrameCapture 干**：常规帧循环只 update/compose **不 render**；`readFrame` 内部走 beginFrame → render → glReadPixels（present 前）→ present。自己绕开写渲染循环 = 空窗黑图 / 未定义内容
 5. **窗口不可缩放是刻意的**：`makeWindow` resizable=false + pointerScale=dpiScale=1，坐标断言才不漂移
 6. **建窗失败 ≠ 环境问题**：金丝雀判据（`classifyDisplayCapability`）把「平台不可用」（跳过 77）与「代码 bug」（必须红）分开，别把后者当环境放走
-7. **无显示环境 = exit 77**：ctest 记 Skipped（需配 `SKIP_RETURN_CODE 77`，新 probe 抄现有 CMake 段）；本地有 GUI 会话必须真跑，77 不是通过
+7. **无显示环境 = exit 77**：probes/ 的 CMake GLOB 循环自动 `add_test` + `LABELS probe` + `SKIP_RETURN_CODE 77`——新 probe 零 CMake 改动；本地有 GUI 会话必须真跑，77 不是通过。CI 则根本不构建 probe（`DEVDESK_BUILD_PROBES=OFF`），与 77 跳过是两回事
 8. **图标空白 = 旧构建**：c18cef9d 后 POST_BUILD 已把图标字体复制到 `<exeDir>/assets`，截图与 cwd 无关；若仍见图标空白，先重新构建再查
-9. **不触真实用户数据**：模块页构图用 `test_support::MdHeadlessEnv`（空笔记目录+空库）+ `ScopedAppRouter`（抄 uat62_page_shots_probe 132-150 行）；临时文件用 `test_support::TempDir`（析构整棵删）
+9. **不触真实用户数据**：模块页构图用 `test_support::MdHeadlessEnv`（空笔记目录+空库）+ `ScopedAppRouter`（抄 uat62_page_shots_probe 里「数据隔离（探针默认空状态）」注释块，勿引行号——文件还在演进）；临时文件用 `test_support::TempDir`（析构整棵删）
 10. **--screenshot-seeded / --screenshot-publish**：中途状态点/发布态落图，与 `--screenshot` 相互独立可同给（语义见 `ProbeArgs` 注释）
+
+## Windows 侧差异（⚠ 待验标注：本 skill 在 Mac 机编写，Windows 实测待补，见下）
+
+- exe 同落 `build/tests/`（MinGW 单配置生成器）；MSYS2 bash 下 `./<name>` 会自动补 `.exe`
+- 显示缩放通常 =1 → PNG 尺寸 ≈ 逻辑尺寸（无 macOS 的 2x）
+- wallpaper 工厂在 Windows 返回真实例 → 路径 A 实拍 13 页（多一页 wallpaper）
+- 以上为代码接线推断（tests/CMakeLists.txt probe 段无平台门控、MSYS2 兼容 `./name`），**未实测**——Windows 机首跑路径 A 后把实测记入 evidence 并删除本条标注
 
 ## 现成参考探针（按需抄结构）
 
