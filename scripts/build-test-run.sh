@@ -2,7 +2,10 @@
 # DevDesk 一体化脚本：杀旧进程 → 增量构建 → 测试 → 启动 app
 # 输出固定结构（阶段标题 + ✅/❌ 结果行）：构建正常只打尾部、失败才打错误摘要；测试只打
 # [FAIL] 行 + Total/Passed/Failed 统计。
-# 用法：./scripts/build-test-run.sh [--clean] [--release] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串]
+# 用法：./scripts/build-test-run.sh [--clean] [--release] [--dev] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串]
+#   --dev        开发内循环形态（成本纪律 2026-11-01）：增量构建 + ①无 --filter 时连 doctest
+#                一起跳（纯构建验证）；②有 --filter 只跑命中的定向用例；③守卫链/probe/全量
+#                全部不跑、不启动 app。**收口 / QA / 发版必须不带 --dev 完整跑一次**，一道不少。
 #   --clean       全量重建（rm -rf <构建目录> 重新 configure；默认增量）
 #   --release     Release 构建（默认 Debug）。构建目录随之切到 build-release/，
 #                 与 Debug 的 build/ 互不覆盖
@@ -156,7 +159,7 @@ fi
 # 构建类型：默认 Debug；--release 或 DEVDESK_BUILD_TYPE 切别的类型。只认 Debug / Release
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
-CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""
+CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0
 # 取值 flag 用「内层 shift 吃值 + 循环尾 shift 吃 flag 名」——不能在 for arg in "$@" 里
 # shift：for 的迭代列表在循环入口展开一次，shift 只动位置参数不动列表，每轮只前进一个，
 # 带值 flag 会错位一格吃进前一个 flag（曾把 --verify-app-str 的值解析成 --install）。
@@ -164,6 +167,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --clean)    CLEAN=1 ;;
     --release)  BUILD_TYPE="Release" ;;
+    --dev)      DEV_MODE=1 ;;
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
@@ -173,6 +177,19 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# --dev 开发内循环（成本纪律 2026-11-01）：守卫链跳过（复用 DEVDESK_FAST_TEST 快路径）+
+# 不启动 app；测试按 --filter 决定——无 filter 连 doctest 一起跳（纯构建验证），有 filter
+# 只跑定向用例（probe 段本就因 FILTER 非空自动跳过）。三个「不跑」都必须出声，不静默。
+if [ "$DEV_MODE" = "1" ]; then
+  export DEVDESK_FAST_TEST=1
+  RUN_APP=0
+  if [ -z "$FILTER" ]; then
+    RUN_TEST=0
+    echo "⚠ 开发内循环（--dev）：仅增量构建——doctest/probe/守卫链/启动 全部不跑；收口 / QA / 发版前必须不带 --dev 完整跑一次"
+  else
+    echo "⚠ 开发内循环（--dev）：增量构建 + 定向用例（filter: $FILTER）——probe/守卫链/启动 不跑；收口 / QA / 发版前必须不带 --dev 完整跑一次"
+  fi
+fi
 # --verify-app-str 只在 --install 之后有东西可验。给了它却没给 --install = 出声提示
 # （不硬失败：本次构建/测试还有它自己的目的），但绝不静默——静默等于「以为验过」。
 if [ -n "$VERIFY_APP_STR" ] && [ "$INSTALL" != "1" ]; then

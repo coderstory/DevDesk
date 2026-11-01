@@ -56,9 +56,12 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 |---|---|
 | `--clean` | 全量重建（默认增量） |
 | `--release` | Release，构建目录切到 `build-release/`（与 Debug 互不覆盖） |
-| `--no-test` / `--no-run` | 跳过测试 / 不启动 app |
+| `--dev` | **开发内循环**（成本纪律 2026-11-01）：增量构建 + 定向 filter（无 filter 则纯构建）——doctest 全量/probe/守卫链/启动全不跑；**收口/QA/发版必须不带它完整跑一次** |
+| `--no-test` / `--no-run` | 跳过测试 / 不启动 app（守卫链仍跑） |
 | `--install` | 仅 macOS：重组 `.app` 装到 `/Applications`，装完校验 sha256 |
-| `--filter X` | 只跑描述含 X 的用例 |
+| `--filter X` | 只跑描述含 X 的用例（支持 `file:子串` 按源文件圈定） |
+
+**构建/测试成本纪律（2026-11-01 老板令：禁止「再跑一遍全量当安全证明」的认知偏差）**：开发内循环一律 `--dev`（±`--filter`）；同一环节不重复构建（上环节产物未失效直接复用）；全量 doctest+probe+守卫链 = 收口/QA 档，一批需求只跑一次；验证的价值在断言与证据物，不在跑的次数。
 
 其它脚本：
 - `scripts/check-module-isolation.sh` — 模块隔离静态守卫（退出码 0 通过 / 1 违规 / 2 环境错，不静默绿）
