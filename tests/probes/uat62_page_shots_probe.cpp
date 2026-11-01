@@ -34,6 +34,7 @@
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "module_settings/settings_config.h"  // applyWindowVisuals（窗口效果档）
 
 #include <cstdint>
 #include <filesystem>
@@ -121,6 +122,10 @@ int main(int argc, char* argv[]) {
     // 2026-11-01：侧栏折叠档（--sidebar-collapsed）。折叠态侧栏只有 72px，
     // 顶部品牌 logo 的占比与展开态完全不同 —— 展开态看着协调，折叠态可能失衡。
     bool sidebarCollapsed = false;
+    // 2026-11-01：窗口效果档（--window-effect off|translucent|frosted）。
+    // 此前所有离屏截图都是「关闭」档 —— 半透/磨砂两档的页面底 alpha、侧栏铺色
+    // 与卡片半透叠加都没被看过，等于两个档位从未验收过。
+    std::string windowEffect = "off";
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--out" && i + 1 < argc) {
             outDir = argv[++i];
@@ -128,6 +133,8 @@ int main(int argc, char* argv[]) {
             fontScale = std::stof(argv[++i]);
         } else if (std::string(argv[i]) == "--sidebar-collapsed") {
             sidebarCollapsed = true;
+        } else if (std::string(argv[i]) == "--window-effect" && i + 1 < argc) {
+            windowEffect = argv[++i];
         }
     }
     // 注：切档时机在每页渲染中间（模拟用户在设置里改字号），且必须在
@@ -164,6 +171,9 @@ int main(int argc, char* argv[]) {
     if (sidebarCollapsed) {
         app::setSidebarCollapsed(true, false);
     }
+    // 窗口效果档同理：settings onStart 会按配置文件恢复档位，探针指定值必须
+    // 晚于它，否则被覆盖回默认（关闭档）—— 半透/磨砂档就永远截不到。
+    module::settings::applyWindowVisuals(windowEffect);
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);
@@ -246,7 +256,11 @@ int main(int argc, char* argv[]) {
                                                               static_cast<int>(
                                                                   fontScale *
                                                                   100.0f))) +
-                                 (sidebarCollapsed ? "-sc" : "") + ".png";
+                                 (sidebarCollapsed ? "-sc" : "") +
+                                 (windowEffect == "off"
+                                      ? ""
+                                      : "-" + windowEffect) +
+                                 ".png";
         std::vector<unsigned char> rgba;
         int pw = 0;
         int ph = 0;

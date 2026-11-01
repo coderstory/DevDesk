@@ -57,6 +57,9 @@ int main(int argc, char* argv[]) {
     std::string shotList, shotEdit, shotDelete, shotHistory;
     // 2026-11-01：浅色主题档（--light）与空历史档（--empty）——运行历史抽屉
     // 两套主题都要看过，空态是独立形态（不能拿有数据态推断）。
+    // 窗口效果档不在本探针提供：半透/磨砂实现在 AppKit 层，离屏帧缓冲读不到，
+    // 观感一律走真机系统截图（见 docs/design/2026-11-01-窗口效果档验收与覆盖核对.md）；
+    // 档位切换后的布局回归用 uat62_page_shots_probe --window-effect。
     bool light = false;
     bool emptyHistory = false;
     for (int i = 1; i < argc; ++i) {
