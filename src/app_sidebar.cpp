@@ -362,7 +362,16 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
                 .content([&] {
-                    constexpr float kLogoSize = 48.0f;  // 侧栏档（展开/折叠同款）
+                    // 2026-11-01 分档：logo 尺寸随侧栏宽度走，不再一档通吃两态。
+                    // 此前折叠/展开同款 48px：折叠态栏宽只有 72，48 占 67% 把窄条
+                    // 压满，与下方 16px 导航图标落差刺眼；展开态 220 栏里 48 是
+                    // 导航图标的 3 倍（3:1 跳变），绿色实心瓦比 16px 的暗绿图标
+                    // 抢眼得多，头重脚轻。
+                    //   展开 220 栏 → 40（占 18%，对导航图标 2.5:1，仍是品牌锚点）
+                    //   折叠 72 栏  → 32（占 44%，左右各 20 留白，对导航图标 2:1）
+                    // kBrandH 保持 56 不动 → 品牌行内上下留白 8/8（展开）、12/12
+                    // （折叠），导航起点 32+56+28=116 不变，无布局连锁。
+                    const float kLogoSize = collapsed ? 32.0f : 40.0f;
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
                         (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,

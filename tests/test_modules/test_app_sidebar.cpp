@@ -288,15 +288,15 @@ REGISTER_TEST(sidebar_collapsed_compose,
 
     // brand 折叠 = 只显示居中几何 logo（图标批 2026-10-20 起 fa-laptop-code 字形退役，
     // 换 ui_kit::drawDevDeskLogo 矢量瓦，几何契约同 assets/icon.ico）。行 box 是
-    // (0, 40, 72, 56)；UAT5 logo 36→48 放大、kBrandH 32→56 随行加高——
-    // .mark 在行内居中：(72-48)/2=12、(56-48)/2=4（48 瓦上下各留 4px，无溢出）
+    // (0, 40, 72, 56)；2026-11-01 logo 分档：折叠 72 栏用 32（48 占 67% 把窄条压满）
+    // —— .mark 在行内居中：(72-32)/2=20、(56-32)/2=12（上下各留 12px，无溢出）
     const auto* collapsedBrand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(collapsedBrand != nullptr);
     const auto* collapsedMark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(collapsedMark != nullptr);
-    DOCTEST_CHECK(floatEq(collapsedMark->x, 12.0f));
-    DOCTEST_CHECK(floatEq(collapsedMark->y, 4.0f));
-    DOCTEST_CHECK(floatEq(collapsedMark->width.value, 48.0f));
+    DOCTEST_CHECK(floatEq(collapsedMark->x, 20.0f));  // (72-32)/2
+    DOCTEST_CHECK(floatEq(collapsedMark->y, 12.0f));  // (56-32)/2
+    DOCTEST_CHECK(floatEq(collapsedMark->width.value, 32.0f));
 
     // 顶部留白 = spacingLarge×2(32)，与页面主区上 padding 同档（S4.2 弹性）；折叠/展开两态必须同值，
     // 否则切换时 logo 会纵向跳
@@ -353,16 +353,17 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     // UAT3 #9 + 图标批 2026-10-20：brand 行展开态 = 折叠态同款居中几何 logo
     //（.mark 矢量瓦，同 ui_kit::drawDevDeskLogo 契约），「DevDesk」文本改由自绘
-    // 标题栏承载（app.titlebar.brand）；品牌行 y=32 防跳动（S4.2 弹性，原 40）。UAT5 logo 36→48、
-    // kBrandH 32→56：(220-48)/2=86、(56-48)/2=4（48 瓦上下各留 4px，无溢出）
+    // 标题栏承载（app.titlebar.brand）；品牌行 y=32 防跳动（S4.2 弹性，原 40）。
+    // 2026-11-01 logo 分档：展开 220 栏用 40（48 是导航图标的 3 倍、头重脚轻）
+    // —— (220-40)/2=90、(56-40)/2=8（上下各留 8px，无溢出）
     const auto* brand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(brand != nullptr);
     DOCTEST_CHECK(floatEq(brand->y, 32.0f));
     const auto* mark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(mark != nullptr);
-    DOCTEST_CHECK(floatEq(mark->x, 86.0f));  // (220-48)/2，行内水平居中
-    DOCTEST_CHECK(floatEq(mark->y, 4.0f));  // (56-48)/2，行内垂直居中
-    DOCTEST_CHECK(floatEq(mark->width.value, 48.0f));
+    DOCTEST_CHECK(floatEq(mark->x, 90.0f));  // (220-40)/2，行内水平居中
+    DOCTEST_CHECK(floatEq(mark->y, 8.0f));  // (56-40)/2，行内垂直居中
+    DOCTEST_CHECK(floatEq(mark->width.value, 40.0f));
     DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
     // 导航列表整体下移到 40 + 56 + 28
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 116.0f));

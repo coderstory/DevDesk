@@ -1,6 +1,6 @@
 ---
 name: ui-probe-shot
-description: 离屏渲染拿特定 UI 的截图 PNG 与布局 frame 数据——两条现成路径（整页批拍 / 自写探针）+ 坑位清单
+description: 何时用——① UI 改完需要截图/布局证据自证（完成=证据物）；② QA 视觉验收某页面或某弹窗；③ 看图会话对照设计稿审查；④ 排查布局缺陷（元素错位/被盖住/弹层 z 序）；⑤ 无头或 agent 会话拿不到屏幕截图时。能解决——screencapture 要屏幕录制 TCC 授权 agent 拿不到 → 进程内离屏渲染落 PNG；弹窗展开/拖拽中/列表有数据等交互态拍不到 → 交互注入 + 24 帧稳帧；布局只能目测 → element.frame 数值与 z 序断言。产出：PNG 截图 + frame 树 dump。
 ---
 
 # ui-probe-shot：特定 UI 截图 + 布局取证（离屏渲染）

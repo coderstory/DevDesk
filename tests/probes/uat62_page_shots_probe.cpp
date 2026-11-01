@@ -118,11 +118,16 @@ int main(int argc, char* argv[]) {
     // 用途：对照「哪些文本不响应设置里的字号修改」——同页跑两档，
     // 像素 diff 就能定位漏缩放的文本，不用靠目测。
     float fontScale = 1.0f;
+    // 2026-11-01：侧栏折叠档（--sidebar-collapsed）。折叠态侧栏只有 72px，
+    // 顶部品牌 logo 的占比与展开态完全不同 —— 展开态看着协调，折叠态可能失衡。
+    bool sidebarCollapsed = false;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--out" && i + 1 < argc) {
             outDir = argv[++i];
         } else if (std::string(argv[i]) == "--font-scale" && i + 1 < argc) {
             fontScale = std::stof(argv[++i]);
+        } else if (std::string(argv[i]) == "--sidebar-collapsed") {
+            sidebarCollapsed = true;
         }
     }
     // 注：切档时机在每页渲染中间（模拟用户在设置里改字号），且必须在
@@ -155,6 +160,10 @@ int main(int argc, char* argv[]) {
     }
     test_support::ScopedAppRouter scopedRouter(&router);
     router.startAll();
+    // 折叠档：必须在 startAll 之后设（settings onStart 会按配置恢复折叠态）
+    if (sidebarCollapsed) {
+        app::setSidebarCollapsed(true, false);
+    }
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);
@@ -237,7 +246,7 @@ int main(int argc, char* argv[]) {
                                                               static_cast<int>(
                                                                   fontScale *
                                                                   100.0f))) +
-                                 ".png";
+                                 (sidebarCollapsed ? "-sc" : "") + ".png";
         std::vector<unsigned char> rgba;
         int pw = 0;
         int ph = 0;
