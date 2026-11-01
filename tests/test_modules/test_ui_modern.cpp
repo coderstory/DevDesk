@@ -1009,7 +1009,9 @@ REGISTER_TEST(uiAboutLayout,
     constexpr int kRowCount = 8;   // 3+4+1=8 行（第三组「查看许可」链接行已删）
     constexpr float kFooterH = 20.0f;
     constexpr float kLabelW = 100.0f;
-    const float valueX = kPagePad + kLabelW + 16.0f;
+    // 2026-11-01：内容列限宽居中（关于页信息量小，原先平铺满页宽 → 文字缩在
+    // 左上角、分隔线横穿整页）。限宽后列心恒等于页面中线。
+    constexpr float kContentMaxW = 640.0f;
 
     // 组 gi 的组头 y（平铺流式：首组顶 = 页边距+标题+组间距；组间 = 组头+行+组间距）
     auto flatY = [&](int gi) {
@@ -1024,6 +1026,10 @@ REGISTER_TEST(uiAboutLayout,
 
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
+    const float availW = screen.width - 2.0f * kPagePad;
+    const float contentW = std::min(kContentMaxW, availW);
+    const float contentX = kPagePad + (availW - contentW) * 0.5f;
+    const float valueX = contentX + kLabelW + 16.0f;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1039,9 +1045,9 @@ REGISTER_TEST(uiAboutLayout,
         // 页标题（同 agent.title 款式）
         const auto* title = ui.find("about.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, kPagePad), px("about.title.x", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, contentX), px("about.title.x", title));
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kPageTop), px("about.title.y", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, screen.width - 2.0f * kPagePad),
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, contentW),
                               px("about.title.w", title));
         DOCTEST_CHECK(title->text == "关于");
     }
@@ -1054,7 +1060,6 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(ui.find("about.card.title") == nullptr);
     }
     {
-        const float contentW = screen.width - 2.0f * kPagePad;
         const int gRowCount[kGroupCount] = {3, 4, 1};
         for (int gi = 0; gi < kGroupCount; ++gi) {
             for (int i = 0; i < gRowCount[gi]; ++i) {
@@ -1064,7 +1069,7 @@ REGISTER_TEST(uiAboutLayout,
                 DOCTEST_REQUIRE(label != nullptr);
                 DOCTEST_REQUIRE(value != nullptr);
                 const float rowY = flatY(gi) + kGroupHdrH + i * kRowH;
-                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, kPagePad),
+                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, contentX),
                                       px(("about.info.label." + sid).c_str(), label));
                 DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
                                       px(("about.info.label." + sid).c_str(), label));
@@ -1136,8 +1141,10 @@ REGISTER_TEST(uiAboutLayout,
         const auto* link = narrow.find("about.info.link.2.0");  // 已删除：必须为空
         DOCTEST_REQUIRE(v != nullptr);
         DOCTEST_CHECK(link == nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(v->frame.width,
-                                     (narrowScreen.width - 2.0f * kPagePad) - 116.0f),
+        // 窄窗 712 < 限宽 640+64 → 内容列退化为满宽（列心仍为页面中线）
+        const float narrowAvail = narrowScreen.width - 2.0f * kPagePad;
+        const float narrowContentW = std::min(kContentMaxW, narrowAvail);
+        DOCTEST_CHECK_MESSAGE(nearPx(v->frame.width, narrowContentW - 116.0f),
                               px("about.narrow.value", v));
         DOCTEST_CHECK(v->frame.x + v->frame.width <= narrowScreen.width);
     }

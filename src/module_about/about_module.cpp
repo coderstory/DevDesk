@@ -199,6 +199,13 @@ public:
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
         constexpr float kFooterH = 20.0f;
         constexpr float kTitleH = 32.0f;       // 页标题行高（fontSizeTitle 档，同 agent.title）
+        // 2026-11-01：内容列限宽（同 release 列表页 kContentMaxW 口径）。
+        // 关于页信息量小，原先平铺满页宽 → 实际文本只占页面区左 ~25%，而组间
+        // 分隔线却横穿整页（1380px），文字缩在左上角、线条伸向远处，重心失衡。
+        // 限宽后分隔线与文本同宽，列心恒等于页面中线（页脚原本就页面居中）。
+        // 640 是量出来的：最长值行「2026-10-31 23:12:05.23@host@macOS 27.0.0」
+        // 在 14px/600 下约 350px、130% 字号档约 455px，留 524px 值列不裁字。
+        constexpr float kContentMaxW = 640.0f;
 
         // 信息行结构：按分组组织
         struct InfoGroup {
@@ -225,12 +232,16 @@ public:
 
         // S4.2 弹性：页内边距 32（spacingLarge×2）；内容固定高，最小窗 640 内不触 footer
         const float pagePad = t.sizes.spacingLarge * 2.0f;  // 32
-        const float contentW = std::max(0.0f, screen.width - pagePad * 2.0f);
+        const float availW = std::max(0.0f, screen.width - pagePad * 2.0f);
+        const float contentW = std::min(kContentMaxW, availW);
+        // 列心恒等于页面中线：contentX + contentW/2 == screen.width/2
+        // （pagePad 对称 + 居中余量），故页脚与内容列天然同轴。
+        const float contentX = pagePad + (availW - contentW) * 0.5f;
         const float footerY = screen.height - pagePad - kFooterH;
 
         // 页标题（与 agent.title 同款：fontSizeTitle 24/700、32 行高、左上）
         ui.text("about.title")
-            .position(pagePad, 0.0f)  // 标题顶格不留空（2026-10-25 拍板）
+            .position(contentX, 0.0f)  // 标题顶格不留空（2026-10-25 拍板）
             .size(contentW, kTitleH)
             .text("关于")
             .fontSize(t.sizes.fontSizeTitle)
@@ -247,7 +258,7 @@ public:
             if (gi > 0) {
                 // 组间 1px 分隔线（居中于 24 间距）
                 ui.rect("about.info.divider." + std::to_string(gi))
-                    .position(pagePad, y + kGroupGap * 0.5f - 0.5f)
+                    .position(contentX, y + kGroupGap * 0.5f - 0.5f)
                     .size(contentW, 1.0f)
                     .color(t.colors.borderDefault)
                     .build();
@@ -255,7 +266,7 @@ public:
             }
             // 分组标题：16px/600 textPrimary
             ui.text("about.info.group." + std::string(g.header))
-                .position(pagePad, y)
+                .position(contentX, y)
                 .size(contentW, kGroupHdrH)
                 .text(g.header)
                 .fontSize(t.sizes.fontSizeWeChat)  // 16px
@@ -272,7 +283,7 @@ public:
                 // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
                 ui.text("about.info.label." + std::to_string(gi) + "." +
                         std::to_string(i))
-                    .position(pagePad, rowY)
+                    .position(contentX, rowY)
                     .size(kLabelW, kRowH)
                     .text(g.rows[i].label)
                     .fontSize(t.sizes.fontSizeSmall)  // 12px
@@ -284,7 +295,7 @@ public:
                 // 右内容：14px/600，统一 textPrimary（只读，无可交互元素）
                 ui.text("about.info.value." + std::to_string(gi) + "." +
                         std::to_string(i))
-                    .position(pagePad + valueX, rowY)
+                    .position(contentX + valueX, rowY)
                     .size(contentW - valueX, kRowH)
                     .text(g.rows[i].value)
                     .fontSize(t.sizes.fontSizeBody)  // 14px
@@ -298,8 +309,8 @@ public:
 
         // 版权声明
         ui.text("about.footer")
-            .position(0.0f, footerY)
-            .size(screen.width, kFooterH)
+            .position(contentX, footerY)
+            .size(contentW, kFooterH)
             .text("© 2026 DevDesk")
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(kFooterH)
