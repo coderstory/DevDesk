@@ -476,18 +476,20 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .onClick([router, page] { router->navigateTo(page); })
                     .build();
 
-                // active 态叠 SelectionBar（§4.3：2px 左绿竖线 + selectedBg）。
+                // active 态叠 SelectionBar（§4.3：3×18 左绿竖条 + 白卡胶囊）。
                 // selectionBar 不传文字——其 .text 节点 z 序浮在 icon/label 之上导致重叠；
-                // 文字由下方 .label 画（icon 同理）。selectionBar 只负责 bg + 左 2px 绿竖线。
+                // 文字由下方 .label 画（icon 同理）。selectionBar 只负责胶囊 + 竖条。
+                // accentOffsetX=-10：竖条退到胶囊外侧的栅边留白里（原型 ::before 同位），
+                // 贴胶囊左缘那条读起来像表格行高亮。
                 if (active) {
                     ui_kit::selectionBar(ui, id + ".sel", std::string{},
                                          padX + effIndent, y,
-                                         kWidth - padX * 2.0f - effIndent, itemH, t);
+                                         kWidth - padX * 2.0f - effIndent, itemH, t,
+                                         -10.0f);
                 }
 
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
-                // 图标：active=primary，inactive=textSecondary。
-                // 标签：active=textPrimary，inactive=textSecondary。
+                // active 统一 primaryText：primary 作 16px 图标只有 2.38:1，非文本对比也过不了 3:1。
                 if (collapsed) {
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
@@ -496,7 +498,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .fontSize(t.sizes.fontSizeWeChat)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? t.colors.primary : t.colors.textSecondary)
+                        .color(active ? t.colors.primaryText : t.colors.textSecondary)
                         .build();
                 } else {
                     ui.text(id + ".icon")
@@ -505,7 +507,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeWeChat)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? t.colors.primary : t.colors.textSecondary)
+                        .color(active ? t.colors.primaryText : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".label")
                         .position(padX + kItemInset + kIconW + effIndent, y)
@@ -513,8 +515,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                               itemH)
                         .text(m->displayName())
                         .fontSize(t.sizes.fontSizeWeChat)
+                        .fontWeight(active ? 600 : 400)  // 原型 .nav-item.active 600
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? t.colors.textPrimary : t.colors.textSecondary)
+                        .color(active ? t.colors.primaryText : t.colors.textSecondary)
                         .build();
                 }
 

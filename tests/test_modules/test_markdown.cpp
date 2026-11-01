@@ -768,7 +768,10 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("inbox"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▸"));
+    // 箭头走 Icon 字体（几何字形 ▾/▸ 在正文 CJK 字体里落成一个点）
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text,
+                     ::eui::utf8(0xF054u));  // chevron-right = 折叠
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("work"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("week.md"));
 
@@ -886,11 +889,12 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(arrow != nullptr);
     DOCTEST_REQUIRE(label != nullptr);
     const float arrowFontSize = arrow->fontSize;  // 跨帧读值：重开帧后旧 Element* 失效
-    DOCTEST_CHECK_EQ(arrowFontSize, 12.0f);       // 锁定的常量值
+    // 箭头改图标码点后与同行 .ficon 同档 14（几何字形时代锁 12：小字号三角形才不显笨重）
+    DOCTEST_CHECK_EQ(arrowFontSize, 14.0f);
     DOCTEST_CHECK_MESSAGE(arrowFontSize >= 12.0f && arrowFontSize <= 14.0f,
                           "箭头 fontSize=" + std::to_string(arrowFontSize) +
                               " 不在 [12, 14]");
-    DOCTEST_CHECK(arrowFontSize < label->fontSize);   // 12 < kTreeFontSize 14
+    DOCTEST_CHECK(arrowFontSize <= label->fontSize);  // 不大于 kTreeFontSize 14
     DOCTEST_CHECK(arrowFontSize < kRowH);             // 不溢出 item 行高
     DOCTEST_CHECK_EQ(arrowFontSize, ui.find("md.tree.node.4.arrow")->fontSize);
     // 折叠态（▸）与展开态（▾）同一字号口径：点根组行的**箭头命中区**收起 →
@@ -915,7 +919,8 @@ REGISTER_TEST(md_tree_row_geometry,
     ui.layout(screen.width, screen.height);
     const auto* collapsedArrow = ui.find("md.tree.node.0.arrow");
     DOCTEST_REQUIRE(collapsedArrow != nullptr);
-    DOCTEST_CHECK_EQ(collapsedArrow->text, std::string("▸"));
+    DOCTEST_CHECK_EQ(collapsedArrow->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(collapsedArrow->text, ::eui::utf8(0xF054u));  // chevron-right = 折叠
     DOCTEST_CHECK_EQ(collapsedArrow->fontSize, arrowFontSize);
     // 点箭头只收起、不改选中：根组行底色与收起前一致
     const auto* rootRowAfter = ui.find("md.tree.node.0.row");
@@ -1387,7 +1392,9 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("工作"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▾"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text,
+                     ::eui::utf8(0xF078u));  // chevron-down = 展开
     DOCTEST_CHECK(ui.find("md.tree.node.3.name") == nullptr);  // 空文件夹无子行
     // 磁盘上目录真实存在
     DOCTEST_CHECK(fs::is_directory(env.dir / "工作"));
@@ -1511,7 +1518,9 @@ REGISTER_TEST(md_module_new_folder_parent,
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("工作"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("周报.md"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("周会"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.arrow")->text, std::string("▾"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.arrow")->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.arrow")->text,
+                     ::eui::utf8(0xF078u));  // chevron-down = 展开
     DOCTEST_CHECK(ui.find("md.tree.node.4.name") == nullptr);  // 空子夹无子行
 
     // layout 级：子夹行比顶层夹行更靠右（depth=1 缩进真实生效）
@@ -2060,7 +2069,9 @@ REGISTER_TEST(md_module_tree_empty_folders_only,
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("工作"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("周会"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▾"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text,
+                     ::eui::utf8(0xF078u));  // chevron-down = 展开
     // 空态提示不再叠在文件夹行上（「还没有笔记」只在连文件夹都没有时出）
     DOCTEST_CHECK(ui.find("md.tree.empty") == nullptr);
 

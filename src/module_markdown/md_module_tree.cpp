@@ -506,12 +506,15 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                                     openDirContextMenu(dir, ev);
                                 })
                                 .build();
+                            // 几何字形（▾/▸）在正文 CJK 字体里没有对应字形，落成一个点，
+                            // 必须走 Icon 字体码点；+2 是图标字形比同字号文字视觉小一档的补偿。
                             inner.text(id + ".arrow")
                                 .position(0.0f + indent, 0.0f)
                                 .size(16.0f, kTreeRowHeight)
-                                .text(expanded ? "▾" : "▸")
-                                .fontSize(core::theme::scaled(kTreeArrowFontSize))
+                                .icon(expanded ? 0xF078u : 0xF054u)  // chevron-down / right
+                                .fontSize(core::theme::scaled(kTreeArrowFontSize + 2.0f))
                                 .lineHeight(kTreeRowHeight)
+                                .horizontalAlign(eui::HorizontalAlign::Center)
                                 .verticalAlign(eui::VerticalAlign::Center)
                                 .color(t.colors.textTertiary)
                                 .build();

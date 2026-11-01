@@ -466,6 +466,18 @@ foreach(_probe_source ${_devdesk_probe_sources})
     elseif(MINGW)
         target_link_options(${_probe_name} PRIVATE -mconsole)
     endif()
+    # 图标字体塞到 exeDir/assets（EUI-NEO resolveProjectAssetPath 的第一候选）。
+    # 不补这步时资源只能靠 cwd 命中 <build>/assets：ctest 跑（cwd=build/tests、
+    # `../assets` 生效）图标正常，但从仓库根手跑 ./build/tests/xxx 就整片空白 ——
+    # 回退到系统符号字体，Font Awesome 码点全无字形。截图证据链必须与 cwd 无关。
+    add_custom_command(TARGET ${_probe_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:${_probe_name}>/assets"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/EUI-NEO/assets/Font Awesome 7 Free-Solid-900.otf"
+            "$<TARGET_FILE_DIR:${_probe_name}>/assets/Font Awesome 7 Free-Solid-900.otf"
+        COMMENT "Copying icon font for ${_probe_name}"
+        VERBATIM)
     add_test(NAME ${_probe_name} COMMAND ${_probe_name})
     set_tests_properties(${_probe_name} PROPERTIES LABELS "probe")
     # 无显示环境（CI runner 不在 WindowServer / 桌面会话里）→ 探针以

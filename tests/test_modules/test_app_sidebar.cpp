@@ -702,6 +702,33 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.accent") != nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.text") != nullptr);
 
+    // active 态几何：胶囊圆角 + 3×18 竖条垂直居中，且竖条在胶囊外侧的栏边留白里
+    //（原型 .nav-item.active::before 同位）。贴着胶囊左缘通高那版读作「表格行高亮」。
+    {
+        const auto& t = ::core::theme::current();
+        const auto* selBg = ui.find("app.sidebar.item.Home.sel.bg");
+        const auto* selAccent = ui.find("app.sidebar.item.Home.sel.accent");
+        DOCTEST_REQUIRE(selBg != nullptr);
+        DOCTEST_REQUIRE(selAccent != nullptr);
+        DOCTEST_CHECK(floatEq(selBg->radius, t.sizes.radiusSmall));
+        // shape 的尺寸在 width/height（SizeValue），frame 只对走过布局的文字生效
+        DOCTEST_CHECK(floatEq(selAccent->width.value, 3.0f));
+        DOCTEST_CHECK(floatEq(selAccent->height.value, 18.0f));
+        // 垂直居中：(40 − 18) / 2 = 11
+        DOCTEST_CHECK(floatEq(selAccent->y - selBg->y, 11.0f));
+        // 竖条退到留白区：比胶囊左缘再左 10px
+        DOCTEST_CHECK(floatEq(selAccent->x - selBg->x, -10.0f));
+        // active 图标/标签统一 primaryText（primary 作 16px 图标 2.38:1，非文本对比也过不了 3:1）
+        const auto* icon = ui.find("app.sidebar.item.Home.icon");
+        const auto* label = ui.find("app.sidebar.item.Home.label");
+        DOCTEST_REQUIRE(icon != nullptr);
+        DOCTEST_REQUIRE(label != nullptr);
+        // text 的颜色在 textColor（Element::color 只给 rect/image 用）
+        DOCTEST_CHECK(floatEq(icon->textColor.g, t.colors.primaryText.g));
+        DOCTEST_CHECK(floatEq(label->textColor.r, t.colors.primaryText.r));
+        DOCTEST_CHECK(floatEq(label->textColor.g, t.colors.primaryText.g));
+    }
+
     // 组间 divider 在 Home 之下（y=160 = 116 + itemH40 + gap4）
     const auto* groupdiv = ui.find("app.sidebar.groupdiv");
     DOCTEST_REQUIRE(groupdiv != nullptr);

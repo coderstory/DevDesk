@@ -17,19 +17,21 @@ namespace ui_kit {
 
 // 选中态常量（S2.5）：3px 左竖线、14px 主文字、12px 文字左 padding。
 constexpr float kSelectionBarAccentWidth = 3.0f;    // S2.5 "左侧 3px 主色竖线"
+constexpr float kSelectionBarAccentHeight = 18.0f;  // 设计稿 3×18：通高竖线读作表格行高亮
 constexpr float kSelectionBarTextPadX = 12.0f;      // 文字距竖线的视觉留白
 constexpr float kSelectionBarFontSize = 14.0f;       // S2.5 主文字
 
-// 渲染单选中条：stack(id) 内含 rect.bg（浅灰底）+ rect.accent（2px 左竖线）
-// + text（深灰文字，左对齐 + 垂直居中）。用于导航 / 列表 / 卡片选中态（W3 nav 用）。
+// 渲染单选中条：stack(id) 内含 rect.bg（白卡胶囊）+ rect.accent（3×18 竖条）
+// + text（primaryText 文字，左对齐 + 垂直居中）。用于导航 / 列表 / 卡片选中态（W3 nav 用）。
 // 几何：(x, y) 左上角，(w, h) 尺寸；调用方决定宽高。
-// 节点 id = `<id>.bg`（底色 rect）/ `<id>.accent`（左竖线 rect）/ `<id>.text`（文字），
+// accentOffsetX：竖条相对胶囊左缘的水平偏移，传负值可退到栏边留白里（原型做法）。
+// 节点 id = `<id>.bg`（底色 rect）/ `<id>.accent`（竖条 rect）/ `<id>.text`（文字），
 // 单测按此定位。
 // spec §4.3 禁止项：红色 / 橙色粗外边框作普通选中态、小对勾标记——本 helper
 // 加 border 描边（H5 白卡 elevation 代 shallow background）但不加 shadow / check，
-// 只 3px 绿竖线 + 白卡 border + 深灰文字。
+// 只 3px 绿竖条 + 白卡 border + primaryText 文字。
 void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                   float x, float y, float w, float h,
-                  const core::theme::Tokens& t);
+                  const core::theme::Tokens& t, float accentOffsetX = 0.0f);
 
 } // namespace ui_kit
