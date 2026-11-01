@@ -754,7 +754,16 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     //——开关关 / 最小化 / 藏托盘的帧零元素零泵（省电零开销），恢复可见继续。
     drawFluidBackground(ui, screen);
     const bool chrome = customTitlebarActive();
-    const float bodyTop = chrome ? titlebarHeight() : 0.0f;
+    // macOS：内容区已延伸进标题栏（FSCV，内容从窗口最顶开始）→ 系统标题栏那一条
+    // 仍浮在左上角（红绿灯 + 窗口标题），内容必须让出它，否则压住侧栏品牌块。
+    // Windows 走自绘标题栏（chrome=true），自带 40px 占位，无需在此让位。
+#ifdef __APPLE__
+    // macOS 系统标题栏那一条的高度（红绿灯所在）；内容需让出它。
+    const float kSystemTitleBarInset = 30.0f;
+#else
+    const float kSystemTitleBarInset = 0.0f;
+#endif
+    const float bodyTop = chrome ? titlebarHeight() : kSystemTitleBarInset;
     if (chrome) {
         drawTitlebar(ui, screen);
     }

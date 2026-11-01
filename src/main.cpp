@@ -924,6 +924,7 @@ const DslAppConfig& dslAppConfig() {
         ::core::theme::setChangeHandler([](bool isDark) {
             app::setTitleBarAppearance(
                 core::platform::TitleBarAppearance{isDark});
+            // macOS：内容区延伸进标题栏（动态背景覆盖标题栏）
             const module::settings::SettingsStore store(
                 ::core::appDatabase());
             module::settings::applyWindowVisuals(store.load().windowEffect);

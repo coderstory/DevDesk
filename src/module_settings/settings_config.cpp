@@ -315,6 +315,9 @@ void applyWindowVisuals(const std::string& mode) {
     appearance.colorAbgr = (channel(bg.b) << 16) | (channel(bg.g) << 8) |
                            channel(bg.r);   // COLORREF 0x00BBGGRR
     appearance.colorAlpha = windowEffectTitleBarAlpha(mode);
+    // macOS：内容区延伸进标题栏 —— 让动态背景覆盖标题栏（否则标题栏是 AppKit
+    // 非客户区，只能落一块静态底色，与窗体割裂）。
+    appearance.extendContentIntoTitleBar = true;
     app::setTitleBarAppearance(appearance);
     // backdrop 请求下一帧应用；实际生效值经 activeWindowEffect() 回查、降级由设置页提示。
     app::setWindowEffect(windowEffectRequest(mode));

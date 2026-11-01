@@ -101,6 +101,14 @@ struct FluidComposeFixture {
 
 } // namespace
 
+// macOS：内容区延伸进标题栏（FSCV）后，系统标题栏那一条（红绿灯）浮在窗口左上角，
+// 内容需让出它 —— 否则压住侧栏品牌块。Windows 走自绘标题栏，自带 40px 占位。
+#ifdef __APPLE__
+constexpr float kExpectedBodyTop = 30.0f;
+#else
+constexpr float kExpectedBodyTop = 0.0f;
+#endif
+
 REGISTER_TEST(sidebar_config_default_and_roundtrip,
               "sidebar: sidebarCollapsed 默认 false + 存取往返", {
     test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg1", /*registerAppDb=*/true);
@@ -314,7 +322,8 @@ REGISTER_TEST(sidebar_collapsed_compose,
     // 模块内容区宽度跟随侧边栏实际占宽
     DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1528.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1528.0f));
-    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight,
+                          1000.0f - kExpectedBodyTop));
 
     app::setSidebarCollapsed(false);  // 复位进程级全局态
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
@@ -409,24 +418,25 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
 
     // ① 主内容区几何：页面 y 被推下去、或窗口内容高被 titlebar 吃掉，这里立刻红
     DOCTEST_CHECK(floatEq(page->frame.x, 220.0f));
-    DOCTEST_CHECK(floatEq(page->frame.y, 0.0f));
+    DOCTEST_CHECK(floatEq(page->frame.y, kExpectedBodyTop));
     DOCTEST_CHECK(floatEq(page->frame.width, 1380.0f));
-    DOCTEST_CHECK(floatEq(page->frame.height, 1000.0f));
+    DOCTEST_CHECK(floatEq(page->frame.height, 1000.0f - kExpectedBodyTop));
     // 模块拿到的页面 Screen 高仍是整窗高（不因侧边栏留白缩水）
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1380.0f));
-    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight,
+                          1000.0f - kExpectedBodyTop));
 
     // ② 侧边栏容器 / 分隔线从 y=0 起、铺满整高（留白区仍属侧边栏区域）
-    DOCTEST_CHECK(floatEq(sidebar->frame.y, 0.0f));
-    DOCTEST_CHECK(floatEq(sidebar->frame.height, 1000.0f));
-    DOCTEST_CHECK(floatEq(divider->frame.y, 0.0f));
-    DOCTEST_CHECK(floatEq(divider->frame.height, 1000.0f));
+    DOCTEST_CHECK(floatEq(sidebar->frame.y, kExpectedBodyTop));
+    DOCTEST_CHECK(floatEq(sidebar->frame.height, 1000.0f - kExpectedBodyTop));
+    DOCTEST_CHECK(floatEq(divider->frame.y, kExpectedBodyTop));
+    DOCTEST_CHECK(floatEq(divider->frame.height, 1000.0f - kExpectedBodyTop));
 
     // 留白值 = spacingLarge×2(32)（S4.2 弹性，侧栏不再与页面 spacingXXLarge 同档），
     // 且落在容器内部（0 ≤ brand.y < 首个导航项 y）
     const float space = ::core::theme::current().sizes.spacingLarge * 2.0f;
     DOCTEST_CHECK(floatEq(space, 32.0f));
-    DOCTEST_CHECK(floatEq(brand->frame.y, space));
+    DOCTEST_CHECK(floatEq(brand->frame.y, space + kExpectedBodyTop));
     DOCTEST_CHECK(brand->frame.y >= sidebar->frame.y);
 
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
