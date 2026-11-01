@@ -190,7 +190,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .colors(t.colors.primary, t.colors.primaryHover,
                                 t.colors.primaryPressed)
                         .textColor(t.colors.onPrimary)
-                        .radius(6.0f)
+                        .radius(t.sizes.radius)
                         .onClick([cb = v.act.addTaskClicked] { cb(); })
                         .build();
                 })
@@ -737,7 +737,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .color(cardFaceColor(task.priority, t))
         .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
         .border(1.0f, t.colors.borderDefault)
-        .radius(8.0f)
+        .radius(t.sizes.radius)
         .opacity(finalCardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
         .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex, menuAnchorX](

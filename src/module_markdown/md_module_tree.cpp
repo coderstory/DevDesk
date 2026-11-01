@@ -90,7 +90,7 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                             .color(active ? t.colors.primarySoftBg
                                           : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                             .hoverColor(t.colors.hover)
-                            .radius(8.0f)
+                            .radius(t.sizes.radius)
                             .border(active ? 1.0f : 0.0f, t.colors.borderDefault)
                             .onClick([this, path] {
                                 if (path != currentPath_) openNote(path);
@@ -117,7 +117,7 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                                     .size(24.0f, 24.0f)
                                     .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                     .hoverColor(t.colors.hover)
-                                    .radius(12.0f)
+                                    .radius(t.sizes.radiusSmall)
                                     .onClick([this, path] { closeTab(path); })
                                     .build();
                                 ui.text("md.note.tab." + std::to_string(i) + ".close.icon")

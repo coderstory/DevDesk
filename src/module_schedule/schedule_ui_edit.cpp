@@ -418,7 +418,7 @@ void drawKindTab(eui::Ui& ui, const std::string& id, float x, float y, float w, 
                 on ? t.colors.primaryHover : t.colors.hover,
                 on ? t.colors.primaryPressed : t.colors.primarySoftBg)
         .textColor(on ? t.colors.onPrimary : t.colors.textPrimary)
-        .radius(8.0f)
+        .radius(t.sizes.radius)
         .border(1.0f, on ? t.colors.primary : t.colors.borderDefault)
         .onClick(std::move(onClick))
         .build();
@@ -449,7 +449,7 @@ void drawChannelChip(eui::Ui& ui, const std::string& id, float x, float y, float
                 on ? t.colors.primaryHover : t.colors.hover,
                 on ? t.colors.primaryPressed : t.colors.primarySoftBg)
         .textColor(on ? t.colors.onPrimary : t.colors.textPrimary)
-        .radius(14.0f)
+        .radius(t.sizes.radius)
         .border(1.0f, on ? t.colors.primary : t.colors.borderDefault)
         .onClick(std::move(onClick))
         .build();
@@ -518,6 +518,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .size(innerW, 36.0f)
                 .value(st.form.name)
                 .placeholder("规则名称")
+                .fontSize(t.sizes.fontSizeBody)
                 .theme(themeTokens)
                 .onChange([&st, touch](const std::string& v) {
                     st.form.name = v;
@@ -533,6 +534,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .position(x0, fy + 20.0f)
                     .size(innerW, 36.0f)
                     .value(st.form.onceAtLocal)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([&st](const std::string& v) { st.form.onceAtLocal = v; })
                     .build();
@@ -543,6 +545,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .position(x0, fy + 20.0f)
                     .size(innerW, 36.0f)
                     .value(std::to_string(st.form.intervalEverySec))
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([&st](const std::string& v) {
                         st.form.intervalEverySec = std::atoll(v.c_str());
@@ -570,6 +573,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                         .position(x0, fy + 20.0f)
                         .size(120.0f, 36.0f)
                         .value(std::to_string(st.form.calendarInterval))
+                        .fontSize(t.sizes.fontSizeBody)
                         .theme(themeTokens)
                         .onChange([&st](const std::string& v) {
                             st.form.calendarInterval = std::max(1, std::atoi(v.c_str()));
@@ -597,6 +601,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                         .position(x0, fy + 20.0f)
                         .size(innerW, 36.0f)
                         .value(st.form.calendarAnchorDate)
+                        .fontSize(t.sizes.fontSizeBody)
                         .theme(themeTokens)
                         .onChange([&st](const std::string& v) {
                             st.form.calendarAnchorDate = v;
@@ -611,6 +616,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                         .position(x0, fy + 20.0f)
                         .size(120.0f, 36.0f)
                         .value(std::to_string(st.form.calendarMonthDay))
+                        .fontSize(t.sizes.fontSizeBody)
                         .theme(themeTokens)
                         .onChange([&st](const std::string& v) {
                             st.form.calendarMonthDay = std::max(1, std::atoi(v.c_str()));
@@ -625,6 +631,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                         .position(x0 + 140.0f, fy + 20.0f)
                         .size(60.0f, 36.0f)
                         .value(std::to_string(st.form.calendarNth))
+                        .fontSize(t.sizes.fontSizeBody)
                         .theme(themeTokens)
                         .onChange([&st](const std::string& v) {
                             st.form.calendarNth = std::max(1, std::atoi(v.c_str()));
@@ -650,6 +657,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .position(x0, fy + 20.0f)
                     .size(120.0f, 36.0f)
                     .value(formatTime(st.form.calendarHour, st.form.calendarMinute))
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([&st](const std::string& v) {
                         int h = 0, mi = 0;
@@ -666,6 +674,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .position(x0, fy + 20.0f)
                     .size(innerW, 36.0f)
                     .value(st.form.cronExpr)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([&st](const std::string& v) { st.form.cronExpr = v; })
                     .build();
@@ -681,6 +690,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .position(x0, fy + 20.0f)
                     .size(innerW, 36.0f)
                     .value(names)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([&st](const std::string& v) {
                         st.form.eventNames.clear();
@@ -725,6 +735,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .position(x0, fy + 20.0f)
                     .size(innerW, 36.0f)
                     .value(actionJsonField(st.form.actionJson, "deeplink"))
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([&st](const std::string& v) {
                         st.form.actionJson =
@@ -851,7 +862,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .text("保存")
                 .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .onClick([&st, &host, &ctx] {
                     if (st.form.actionKind == "webhook_only") {
                         // 仅投递动作唯一外发渠道是企微：未勾选直接拦（防静默丢通知）
@@ -889,7 +900,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .position(x0 + 136.0f, h - 60.0f)
                 .size(120.0f, 36.0f)
                 .text("取消")
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([&host] {
                     if (host.close) host.close();

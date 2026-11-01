@@ -523,7 +523,7 @@ void AgentModule::composeTaskDialog(
                                         .colors(t.colors.background, t.colors.hover,
                                                 t.colors.primarySoftBg)
                                         .textColor(t.colors.textPrimary)
-                                        .radius(8.0f)
+                                        .radius(t.sizes.radius)
                                         .border(1.0f, t.colors.borderDefault)
                                         .onClick([this, i] { applyTaskTemplate(i); })
                                         .build();
@@ -574,7 +574,7 @@ void AgentModule::composeTaskDialog(
                                                    : t.colors.primarySoftBg)
                                         .textColor(on ? t.colors.onPrimary
                                                       : t.colors.textPrimary)
-                                        .radius(8.0f)
+                                        .radius(t.sizes.radius)
                                         .border(1.0f,
                                                 on ? t.colors.primary
                                                    : t.colors.borderDefault)
@@ -672,7 +672,7 @@ void AgentModule::composeTaskDialog(
                                         t.colors.primarySoftBg)
                                 .textColor(on ? t.colors.primaryText
                                               : t.colors.textSecondary)
-                                .radius(16.0f)
+                                .radius(t.sizes.radius)
                                 .border(1.0f,
                                         on ? eui::mixColor(t.colors.surface,
                                                           t.colors.primary, 0.24f)
@@ -724,7 +724,7 @@ void AgentModule::composeTaskDialog(
                                     t.colors.primarySoftBg,
                                     t.colors.primarySoftBg)
                             .textColor(t.colors.primary)
-                            .radius(8.0f)
+                            .radius(t.sizes.radius)
                             .border(1.0f, t.colors.primary)
                             .onClick([this] { openDraftDialog(); })
                             .build();
@@ -928,7 +928,7 @@ void AgentModule::composeTaskDialog(
                                 : t.colors.primarySoftBg)
                 .textColor(canNext ? t.colors.onPrimary
                                    : t.colors.textTertiary)
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .border(1.0f, canNext ? t.colors.primary
                                       : t.colors.borderDefault)
                 .onClick(canNext ? std::function<void()>{[this, isLastStep] {
@@ -953,7 +953,7 @@ void AgentModule::composeTaskDialog(
                             t.colors.hover,
                             t.colors.primarySoftBg)
                     .textColor(t.colors.textPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
                     .onClick([this] { currentStep_ = std::max(0, currentStep_ - 1); })
                     .build();
@@ -978,7 +978,7 @@ void AgentModule::composeTaskDialog(
                                          : t.colors.primarySoftBg)
                     .textColor(testDisabled ? t.colors.textTertiary
                                             : t.colors.primary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .border(1.0f, testDisabled ? t.colors.borderDefault
                                                : t.colors.primary)
                     .onClick(testDisabled ? std::function<void()>{}
@@ -998,7 +998,7 @@ void AgentModule::composeTaskDialog(
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
                 .textColor(t.colors.accentText)
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .border(0.0f, t.colors.borderDefault)
                 .onClick([this] { closeTaskDialog(); })
                 .build();

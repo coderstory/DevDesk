@@ -119,12 +119,12 @@ inline components::MarkdownStyle scaledPreviewStyle(
     const components::theme::ThemeColorTokens& componentTheme) {
     components::MarkdownStyle style(componentTheme);
     const float k = core::theme::fontScale();
-    style.bodySize *= k;
-    style.bodyLineHeight *= k;
-    style.h1Size *= k;
-    style.h2Size *= k;
-    style.h3Size *= k;
-    style.codeSize *= k;
+    // 2026-11-01：字号族（bodySize/h1~h3/codeSize/bodyLineHeight）取自
+    // componentTheme.metrics.typography，而 typography 槽位已在
+    // core::theme::componentTokensWeChat 里统一乘过全局档 —— 此处再乘就是双乘
+    // （h1 30 → 39 → 50.7）。故字号族不再乘。
+    // 间距侧（blockGap）取自 metrics.spacing，未参与缩放，仍需乘档：它是 syncMap
+    // 缓存键项，不乘则切档时键不变、块高备忘不重建，新字号配旧几何会裁字。
     style.blockGap *= k;
     return style;
 }

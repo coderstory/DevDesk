@@ -51,7 +51,7 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                 .fontSize(t.sizes.fontSizeSmall)
                 .theme(componentTheme, false)
                 .textColor(t.colors.textSecondary)
-                .radius(t.sizes.radius)
+                .radius(t.sizes.radiusSmall)
                 .onClick([this] { outlineOpen_ = false; })
                 .build();
 

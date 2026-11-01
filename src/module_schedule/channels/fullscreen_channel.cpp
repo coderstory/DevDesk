@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "core/logging.h"
+#include "core/theme.h"
 #include "core/time.h"
 
 namespace module::schedule {
@@ -86,7 +87,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
                 ui.text("reminder.item." + std::to_string(row))
                     .position(pad, pad + row * 88.0f)
                     .text(item.title)
-                    .fontSize(20.0f)
+                    .fontSize(::core::theme::scaled(20.0f))
                     .maxWidth(textWidth)
                     .wrap(true)
                     .build();
@@ -94,7 +95,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
                 ui.text("reminder.item." + std::to_string(row))
                     .position(pad, pad + (row - 1) * 88.0f + 30.0f)
                     .text(item.body)
-                    .fontSize(15.0f)
+                    .fontSize(::core::theme::scaled(15.0f))
                     .maxWidth(textWidth)
                     .wrap(true)
                     .build();

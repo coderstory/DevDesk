@@ -58,7 +58,7 @@ void drawSegOp(eui::Ui& ui, const std::string& id, float x, float y, float w, fl
                 on ? t.colors.primaryHover : t.colors.hover,
                 on ? t.colors.primaryPressed : t.colors.primarySoftBg)
         .textColor(on ? t.colors.onPrimary : t.colors.textPrimary)
-        .radius(8.0f)   // demo .op border-radius:8px
+        .radius(t.sizes.radius)   // demo .op border-radius:8px
         .border(1.0f, on ? t.colors.primary : t.colors.borderDefault)
         .onClick(std::move(onClick))
         .build();
@@ -114,7 +114,7 @@ void drawDialogChip(eui::Ui& ui, const std::string& id, float x, float y,
         .colors(t.colors.surface, t.colors.hover,
                 t.colors.primarySoftBg)
         .textColor(t.colors.primaryText)
-        .radius(11.0f)
+        .radius(t.sizes.radiusSmall)
         .onClick(std::move(onRemove))
         .build();
 }
@@ -137,7 +137,7 @@ void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, fl
         .colors(t.colors.background, t.colors.hover,
                 t.colors.primarySoftBg)
         .textColor(t.colors.textPrimary)
-        .radius(8.0f)
+        .radius(t.sizes.radius)
         .border(1.0f, t.colors.borderDefault)
         .onClick(std::move(onCancel))
         .build();
@@ -149,7 +149,7 @@ void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, fl
         .colors(t.colors.primary, t.colors.primaryHover,
                 t.colors.primaryPressed)
         .textColor(t.colors.onPrimary)
-        .radius(8.0f)
+        .radius(t.sizes.radius)
         .onClick(std::move(onConfirm))
         .build();
 }
@@ -892,7 +892,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                             t.colors.primarySoftBg)
                     .textColor(t.colors.textSecondary)
                     .iconColor(t.colors.textSecondary)
-                    .radius(14.0f)   // 胶囊（demo .chip border-radius:99px）
+                    .radius(t.sizes.radiusSmall)   // 胶囊（demo .chip border-radius:99px）
                     .border(1.0f, t.colors.borderDefault)
                     // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不关详情弹窗
                     .onClick([&d] {
@@ -917,7 +917,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                                    : t.colors.primaryText)
                     .iconColor(d.detail.completed ? t.colors.textSecondary
                                                    : t.colors.primaryText)
-                    .radius(14.0f)
+                    .radius(t.sizes.radiusSmall)
                     .border(1.0f, d.detail.completed
                                       ? t.colors.borderDefault
                                       : eui::mixColor(t.colors.surface,
@@ -1230,7 +1230,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .iconColor((docMissing || sourceMissing)
                                                ? t.colors.textTertiary
                                                : t.colors.textSecondary)
-                                .radius(8.0f)
+                                .radius(t.sizes.radius)
                                 .border(1.0f, t.colors.borderDefault)
                                 .disabled(docMissing || sourceMissing ||
                                           !host.openLinkedDoc)
@@ -1262,7 +1262,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .colors(t.colors.background, t.colors.hover,
                                         t.colors.primarySoftBg)
                                 .textColor(t.colors.textSecondary)
-                                .radius(8.0f)
+                                .radius(t.sizes.radius)
                                 .border(1.0f, t.colors.borderDefault)
                                 .onClick(ro ? std::function<void()>{}
                                             : [&d] {
@@ -1287,7 +1287,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .colors(t.colors.primary, t.colors.primaryHover,
                             t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .onClick([&d] {
                         d.popups.close(Popup::Detail);
                         d.detail.discardArmed = false;
@@ -1303,7 +1303,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .colors(t.colors.background, t.colors.hover,
                             t.colors.primarySoftBg)
                     .textColor(t.colors.textPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
                     // 与 backdrop/Esc 共用未存改动守卫（先警告一次，再点放弃）
                     .onClick([&d, &host] { d.detail.requestClose(d.popups, host); })
@@ -1316,7 +1316,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .colors(t.colors.primary, t.colors.primaryHover,
                             t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .onClick([&d, &host] {
                         // 表单组装 + 落库统一走 DetailDialog::save；保存失败保持弹窗
                         if (!d.detail.save(host)) return;

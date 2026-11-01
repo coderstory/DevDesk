@@ -216,6 +216,9 @@ namespace {
         sz.fontSizePage *= s;
         sz.fontSizeDisplay *= s;
         sz.fontSizeStat *= s;
+        // 2026-11-01：fontSizeWeChat 此前漏在缩放列表外 —— 侧边栏菜单文本
+        // （首页/Markdown/Todo/MCP 等 8 处）用这个 token，改字号设置后纹丝不动。
+        sz.fontSizeWeChat *= s;
     }
 
     // 按当前 isDark + g_fontScale 重建全局 token（单一来源，避免缩放叠加）

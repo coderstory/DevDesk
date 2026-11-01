@@ -33,6 +33,7 @@
 
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/theme.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -113,11 +114,23 @@ bool frameHasContent(const std::vector<unsigned char>& rgba, int width, int heig
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     std::string outDir = "UAT62-screenshots";  // 缺省 = 当前工作目录下
+    // 2026-11-01：字号缩放档位（--font-scale 0.85~1.30，缺省 1.0）。
+    // 用途：对照「哪些文本不响应设置里的字号修改」——同页跑两档，
+    // 像素 diff 就能定位漏缩放的文本，不用靠目测。
+    float fontScale = 1.0f;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--out" && i + 1 < argc) {
             outDir = argv[++i];
+        } else if (std::string(argv[i]) == "--font-scale" && i + 1 < argc) {
+            fontScale = std::stof(argv[++i]);
         }
     }
+    // 注：切档时机在每页渲染中间（模拟用户在设置里改字号），且必须在
+    // router.startAll() 之后——settings 模块 onStart 会按配置文件 fontScalePercent
+    // 调 setFontScale，把探针指定的档位覆盖回默认。
+    auto applyFontScale = [fontScale]() {
+        if (fontScale != 1.0f) core::theme::setFontScale(fontScale);
+    };
 
     if (!probe::initializeWindowBackend()) return 1;
     auto window =
@@ -202,9 +215,29 @@ int main(int argc, char* argv[]) {
                     app::compose(ui, screen);
                 });
         }
+        // 2026-11-01：切档复现「应用已开着，用户在设置里改字号」的真实路径。
+        // 只在「首次就按目标档渲染」时对照，会漏掉 runtime 复用实例导致的不响应——
+        // 真机是同一进程内改档，runtime 按 id 复用旧实例。
+        if (fontScale != 1.0f) {
+            applyFontScale();
+            for (int f = 0; f < 24; ++f) {
+                probe::composeModuleFrame(
+                    runtime, window, "shots", w, h,
+                    [&](eui::Ui& ui, const eui::Screen& screen) {
+                        app::compose(ui, screen);
+                    });
+            }
+        }
         const std::string path = outDir + "/" + twoDigit(i + 1) + "-" +
                                  kSlugs[i] + "-" +
-                                 std::to_string(args.windowH) + ".png";
+                                 std::to_string(args.windowH) +
+                                 (fontScale == 1.0f ? ""
+                                                    : "-fs" +
+                                                          std::to_string(
+                                                              static_cast<int>(
+                                                                  fontScale *
+                                                                  100.0f))) +
+                                 ".png";
         std::vector<unsigned char> rgba;
         int pw = 0;
         int ph = 0;

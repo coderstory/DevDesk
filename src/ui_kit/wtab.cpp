@@ -56,7 +56,7 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
             ui.text(id + ".text")
                 .size(w, h)
                 .text(label)
-                .fontSize(fontSize)
+                .fontSize(core::theme::scaled(fontSize))
                 .fontWeight(active ? 600 : 400)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)

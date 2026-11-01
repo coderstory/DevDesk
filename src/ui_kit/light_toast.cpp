@@ -85,7 +85,7 @@ void drawLightToastPill(eui::Ui& ui, const std::string& id,
             ui.text(id + ".text")
                 .size(estW, kLightToastHeight)
                 .text(message)
-                .fontSize(kLightToastFontSize)
+                .fontSize(core::theme::scaled(kLightToastFontSize))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.onPrimary)

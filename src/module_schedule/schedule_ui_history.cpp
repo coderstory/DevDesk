@@ -145,7 +145,7 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
                 ui.rect("schedule.history.row." + std::to_string(i))
                     .position(x0, y)
                     .size(innerW, 96.0f)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .color(selected ? t.colors.primarySoftBg : t.colors.background)
                     .border(1.0f, selected ? t.colors.primary : t.colors.borderDefault)
                     .onClick([&st, id = run.id] { st.selectedRunId = id; })
@@ -214,7 +214,7 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
                         .size(60.0f, 24.0f)
                         .text("重试")
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                        .radius(6.0f)
+                        .radius(t.sizes.radiusSmall)
                         .border(1.0f, t.colors.borderDefault)
                         .onClick([&host, id = run.id] { host.retryRun(id); })
                         .build();
@@ -226,7 +226,7 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
                 .position(x0, h - 56.0f)
                 .size(120.0f, 36.0f)
                 .text("关闭")
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([&host] {
                     if (host.close) host.close();

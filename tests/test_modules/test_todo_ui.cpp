@@ -3373,8 +3373,8 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         DOCTEST_CHECK(colorNear(bg->color, kExpectFaceColor[i]));
         // Sm 阴影已附着（shadow 字段非空 / blur > 0）
         DOCTEST_CHECK(bg->shadow.enabled);
-        // 圆角 8px
-        DOCTEST_CHECK_EQ(bg->radius, 8.0f);
+        // 圆角：2026-11-01 起统一到 radius 档（10px），此前是散落的 8px 字面量
+        DOCTEST_CHECK_EQ(bg->radius, 10.0f);
         // 注：hoverColor/pressedColor 由 button 组件 states 接管，此处不逐项断言
     }
 

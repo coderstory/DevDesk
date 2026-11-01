@@ -110,7 +110,18 @@ REGISTER_TEST(ui_kit_slider_value_mapping_and_clamp,
 
     const auto* handle = ui.find("s3.handle");
     DOCTEST_REQUIRE(handle != nullptr);
-    DOCTEST_CHECK(nearF(handle->frame.x, 0.25f * (200.0f - ui_kit::kSliderHandleSize)));
+    // 2026-11-01：手柄 compose 期 x 恒为 0 —— 位移由 EUI runtime 的 knob
+    // transform 接管（centered = clamp(w*value - knob/2, 0, w-knob)，与官方
+    // components::slider 同契约）。此前这里还叠了一层 value*(w-knob) 初值，
+    // runtime 接管后手柄被推到 2× 位置，与绿色 fill 明显分离。
+    DOCTEST_CHECK(nearF(handle->frame.x, 0.0f));
+    // fill 右缘 = w*value；运行时手柄中心应与之重合（w*value = 50，knob 半径 8 → 中心 50）
+    const auto* fill = ui.find("s3.fill");
+    DOCTEST_REQUIRE(fill != nullptr);
+    DOCTEST_CHECK(nearF(fill->frame.width, 200.0f * 0.25f));
+    // runtime 手柄左缘 = clamp(w*value - knob/2, 0, w-knob) = 42；加半径 8 后
+    // 中心落在 50 = fill 右缘，两者重合（这是「不分离」的几何判据）。
+    DOCTEST_CHECK(nearF(200.0f * 0.25f - ui_kit::kSliderHandleSize * 0.5f, 42.0f));
 
     eui::Ui ui2;
     ui2.begin("s03hi");

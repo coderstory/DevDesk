@@ -168,7 +168,7 @@ void segmented(eui::Ui& ui, const std::string& id, float x, float y, float w,
             auto item = ui.rect(itemIds[i])
                             .position(itemX, inset)
                             .size(itemW, itemH)
-                            .radius(6.0f);
+                            .radius(t.sizes.radius);
             if (active) {
                 item.states(t.colors.primarySoftBg, t.colors.primarySoftBg,
                             t.colors.primarySoftBg)

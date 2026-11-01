@@ -35,7 +35,7 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
     builder.position(options.x, options.y)
         .size(width, options.height)
         .text(text)
-        .fontSize(fontSize)
+        .fontSize(core::theme::scaled(fontSize))
         .lineHeight(options.lineHeight);
     if (options.bold) {
         builder.fontWeight(700);
@@ -79,7 +79,7 @@ void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, flo
     button.position(x, y)
         .size(width, kDialogButtonHeight)
         .text(spec.label)
-        .fontSize(spec.fontSize);
+        .fontSize(core::theme::scaled(spec.fontSize));
     switch (spec.style) {
         case DialogButtonStyle::Secondary:
             button.colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)

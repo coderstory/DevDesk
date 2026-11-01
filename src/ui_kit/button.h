@@ -29,7 +29,15 @@ enum class ButtonLevel {
 };
 
 // 统一尺寸（spec §4.1 D-12 校准）：四级按钮共用同一档，避免同视口高低错落。
-// 钉死常量保 W2c/d 一致；半径读 t.sizes.radius（v1.0 控件 8px）。
+// 钉死常量保 W2c/d 一致；半径读 t.sizes.radius。
+//
+// 2026-11-01 按钮圆角统一（全站规范，此前七档并存：8/10/6/14/16/11 + EUI 默认
+// 16/8 —— 同一页面出现两种圆角的按钮）：
+//   填充按钮（高 > 28）→ t.sizes.radius（10px）
+//   图标按钮（高 ≤ 28 的方形小按钮）→ t.sizes.radiusSmall（6px）
+//   药丸（状态 chip / 分段控件）→ t.sizes.radiusPill
+// EUI components::button 的默认圆角（按 level 取 metrics.radius.overlay/control）
+// 已由 core::theme::componentTokensWeChat 覆写为 10px，无需逐处传参。
 constexpr float kButtonHeight = 40.0f;     // 高度（S1.2 #35: v1.0 按钮 40px）
 constexpr float kButtonPaddingX = 16.0f;   // 左右 padding（S1.2 #37: v1.0 水平 16px）
 constexpr float kButtonFontSize = 14.0f;   // 字号（§4.1 / §3.3 主文字）

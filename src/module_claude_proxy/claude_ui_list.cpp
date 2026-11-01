@@ -331,7 +331,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                            : t.colors.primary)
                         .iconColor(stopped ? t.colors.onPrimary
                                            : t.colors.primary)
-                        .radius(8.0f)
+                        .radius(t.sizes.radius)
                         .border(stopped ? 0.0f : 1.0f, t.colors.primary)
                         .onClick([onToggleProxy] { onToggleProxy(); })
                         .build();
@@ -395,7 +395,7 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                     ui.rect("claude.guide.close.bg")
                         .size(18.0f, 18.0f)
                         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                        .radius(4.0f)
+                        .radius(t.sizes.radiusSmall)
                         .onClick([sp = &st] { sp->guideDismissed_ = true; })
                         .build();
                     ui.text("claude.guide.close.icon")

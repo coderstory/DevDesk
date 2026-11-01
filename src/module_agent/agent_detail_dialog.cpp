@@ -438,7 +438,7 @@ void AgentModule::composeTaskDetailDialog(
                                        : t.colors.primarySoftBg)
                             .textColor(on ? t.colors.onPrimary
                                           : t.colors.textPrimary)
-                            .radius(8.0f)
+                            .radius(t.sizes.radius)
                             .border(1.0f,
                                     on ? t.colors.primary
                                        : t.colors.borderDefault)
@@ -1514,7 +1514,7 @@ void AgentModule::composeTaskDetailDialog(
                             t.colors.hover,
                             t.colors.primarySoftBg)
                     .textColor(t.colors.textPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
                     .onClick([this] { closeTaskDetail(); })
                     .build();
@@ -1527,7 +1527,7 @@ void AgentModule::composeTaskDetailDialog(
                             t.colors.primaryHover,
                             t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .border(1.0f, t.colors.primary)
                     .onClick([this, taskId = *detailTaskId_] {
                         closeTaskDetail();

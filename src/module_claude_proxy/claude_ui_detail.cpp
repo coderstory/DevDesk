@@ -93,7 +93,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                     .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                             t.colors.primarySoftBg,
                             t.colors.hover)
-                    .radius(4.0f)
+                    .radius(t.sizes.radiusSmall)
                     .onClick([cv = copyVal] {
                         core::window::setClipboardText(cv);
                         g_copyToastMsg = "已复制";
@@ -139,7 +139,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                     .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                             t.colors.primarySoftBg,
                             t.colors.hover)
-                    .radius(4.0f)
+                    .radius(t.sizes.radiusSmall)
                     .onClick([cv = copyVal] {
                         core::window::setClipboardText(cv);
                         g_copyToastMsg = "已复制";
@@ -188,7 +188,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                     .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                             t.colors.primarySoftBg,
                             t.colors.hover)
-                    .radius(4.0f)
+                    .radius(t.sizes.radiusSmall)
                     .onClick([cv = copyVal] {
                         core::window::setClipboardText(cv);
                         g_copyToastMsg = "已复制";
@@ -546,7 +546,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
                 .textColor(t.colors.primary)
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.primary)
                 .onClick([f = a.test, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
@@ -565,7 +565,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
                 .textColor(t.colors.primary)
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.primary)
                 .onClick([f = a.edit, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
@@ -584,7 +584,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                         t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
-                .radius(8.0f)
+                .radius(t.sizes.radius)
                 .onClick([f = a.run, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("运行失败", "请先选择 Profile");

@@ -43,7 +43,7 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                 .position(kSelectionBarTextPadX, 0.0f)
                 .size(w - kSelectionBarTextPadX, h)
                 .text(label)
-                .fontSize(kSelectionBarFontSize)
+                .fontSize(core::theme::scaled(kSelectionBarFontSize))
                 .horizontalAlign(eui::HorizontalAlign::Left)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.primaryText)

@@ -920,7 +920,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                     .colors(t.colors.background, t.colors.hover,
                             t.colors.primarySoftBg)
                     .textColor(t.colors.textPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
                     .onClick([this] { cancelPendingDelete(); })
                     .build();
@@ -931,7 +931,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                     .colors(t.colors.primary, t.colors.primaryHover,
                             t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
-                    .radius(8.0f)
+                    .radius(t.sizes.radius)
                     .onClick([this] { confirmPendingDelete(); })
                     .build();
             })
