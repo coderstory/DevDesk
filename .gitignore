@@ -101,6 +101,9 @@ docs/pool/pool.db-wal
 .scratch/
 .dsh-progress/
 
+# .workbuddy 本机工作台上下文/记忆（context-*.md、memory/、overview-*.md），非仓库产物
+.workbuddy/
+
 # Python 运行缓存（tools/pool_mcp.py 等本地脚本）
 __pycache__/
 *.pyc
