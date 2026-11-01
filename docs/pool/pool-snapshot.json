@@ -1059,17 +1059,17 @@
    "pool": "need",
    "title": "UI整改IV·B1 材质登记表落地（A1 半透统一+A3 分层）",
    "priority": "P1",
-   "status": "在池",
+   "status": "进行中",
    "blocker": null,
    "owner": "ZCode主会话",
    "detail": "方案：docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §1+§10.2。范围：材质登记表落地——A1 智能体任务卡半透统一（agent_module.cpp:675 误用 t.colors.surface）+ A3 容器卡/业务卡分层（agent_module.cpp:575 列表面板降 L1 档；release_list_ui.cpp:396、wallpaper_ui.cpp:155 转 cardSurface）；新增 src/ui_kit/materials.h（containerSurface/itemSurface/itemSurfaceHover/itemSurfacePressed）。L3 内嵌盒清单（§1.3）不动。验收：离屏截图逐页半透一致性 + 像素判据（卡内/卡外采样有差）。依赖：无。来源：老板 2026-11-01 反馈 A1/A3。",
    "created": "2026-11-01 20:22:43 +0800",
-   "updated": "2026-11-01 20:22:43 +0800",
+   "updated": "2026-11-01 21:29:45 +0800",
    "body": "方案：docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §1+§10.2。范围：材质登记表落地——A1 智能体任务卡半透统一（agent_module.cpp:675 误用 t.colors.surface）+ A3 容器卡/业务卡分层（agent_module.cpp:575 列表面板降 L1 档；release_list_ui.cpp:396、wallpaper_ui.cpp:155 转 cardSurface）；新增 src/ui_kit/materials.h（containerSurface/itemSurface/itemSurfaceHover/itemSurfacePressed）。L3 内嵌盒清单（§1.3）不动。验收：离屏截图逐页半透一致性 + 像素判据（卡内/卡外采样有差）。依赖：无。来源：老板 2026-11-01 反馈 A1/A",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0,
-   "stage": ""
+   "stage": "已审计"
   },
   {
    "id": 65,
@@ -1198,10 +1198,10 @@
    "status": "在池",
    "blocker": null,
    "owner": "ZCode主会话",
-   "detail": "UI 整改批次 IV 盘点出的遗留缺陷（方案文档 docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §9.6，老板 2026-11-01 之前已反馈、本轮未展开）。现象：首页「今日 Token 用量分布」图表区大片空白，有数据也不画图。定位：home_module.cpp 图表区（chartCollapsed_ 折叠逻辑之外，展开态有数据仍不画）。修复前置：先复现定位（复现优先，写不出变红命令禁推理根因）。与 B7（折叠态）同页面不同症状，注意区分。",
+   "detail": "UI 整改批次 IV 盘点出的遗留缺陷（方案文档 docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §9.6）。现象：首页「今日 Token 用量分布」图表区大片空白，有数据也不画图。定位：home_module.cpp 图表区（chartCollapsed_ 折叠逻辑之外，展开态有数据仍不画）。修复前置：先复现定位（复现优先）。执行组织：与池 73（图标绿方块）同属首页小缺陷，执行时合并为一个批次流程（一次派发/一次验收/一次收口，各条目独立走状态机）——条目不合并不删除。",
    "created": "2026-11-01 20:23:50 +0800",
-   "updated": "2026-11-01 20:23:50 +0800",
-   "body": "UI 整改批次 IV 盘点出的遗留缺陷（方案文档 docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §9.6，老板 2026-11-01 之前已反馈、本轮未展开）。现象：首页「今日 Token 用量分布」图表区大片空白，有数据也不画图。定位：home_module.cpp 图表区（chartCollapsed_ 折叠逻辑之外，展开态有数据仍不画）。修复前置：先复现定位（复现优先，写不出变红命令禁推理根因）。与 B7（折叠态）同页面不同症状，注意区分。",
+   "updated": "2026-11-01 21:47:47 +0800",
+   "body": "UI 整改批次 IV 盘点出的遗留缺陷（方案文档 docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §9.6）。现象：首页「今日 Token 用量分布」图表区大片空白，有数据也不画图。定位：home_module.cpp 图表区（chartCollapsed_ 折叠逻辑之外，展开态有数据仍不画）。修复前置：先复现定位（复现优先）。执行组织：与池 73（图标绿方块）同属首页小缺陷，执行时合并为一个批次流程（一次派发/一次验收/一次收口，各条目独立走状态机）——条目不合并不删除。",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0,
@@ -1217,7 +1217,7 @@
    "owner": "ZCode主会话",
    "detail": "UI 整改批次 IV 盘点出的遗留缺陷（方案文档 docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §9.6）。现象：首页「切换 Claude Profile」按钮图标渲染成绿色方块——FontAwesome 字体缺字形。修复：换已验证存在的码点（项目内已用清单见方案 §10.0：0xF007/F021/F071/F078/F077/F054/F544 等）或补字形资源。与 UI整改IV·B3 的 5 个新码点（0xF05A/F044/F011/F03A/F2ED）同一坑——上线前逐个真机截图确认字形存在。",
    "created": "2026-11-01 20:23:55 +0800",
-   "updated": "2026-11-01 20:23:55 +0800",
+   "updated": "2026-11-01 21:47:36 +0800",
    "body": "UI 整改批次 IV 盘点出的遗留缺陷（方案文档 docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §9.6）。现象：首页「切换 Claude Profile」按钮图标渲染成绿色方块——FontAwesome 字体缺字形。修复：换已验证存在的码点（项目内已用清单见方案 §10.0：0xF007/F021/F071/F078/F077/F054/F544 等）或补字形资源。与 UI整改IV·B3 的 5 个新码点（0xF05A/F044/F011/F03A/F2ED）同一坑——上线前逐个真机截图确认字形存在。",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
@@ -2193,6 +2193,33 @@
    "need_id": 63,
    "time": "2026-11-01 20:22:21 +0800",
    "note": "修复完成：①多需求点拆分（N 个独立可验收改动点→N 条需求分别定级入池，禁打包罩住，既有产物只作材料引用）②存量产物合规核（先核在池/PRD 台账/独立审计三态）。落地位置 skills/ask/SKILL.md §0 分诊节",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 107,
+   "need_id": 64,
+   "time": "2026-11-01 21:29:45 +0800",
+   "note": "双独立审计通过（2026-11-01）：PRD 审计=product-manager（4 轴过，7 次调用），P2×4 已采纳升 v2（三态归属澄清/平台差异声明/548 挂 B3 前拍板/探针出处）；tech 审计=code-reviewer（4 轴过，12 次调用，API 契约与四处行号对码全命中），P2×2 已采纳升 v2（agent_module.cpp:468 同语义面板纳入 F-64-3；materials.h 显式 include eui/types.h）。开发放行。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 108,
+   "need_id": 72,
+   "time": "2026-11-01 21:45:05 +0800",
+   "note": "升级为批次条目；原 73 并入本批（首页同域小缺陷）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 109,
+   "need_id": 72,
+   "time": "2026-11-01 21:47:47 +0800",
+   "note": "撤销批次条目改造：条目独立保留，合批只在执行时（老板 2026-11-01 纠正：MCP 不修改合并）",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -5359,6 +5386,28 @@
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
+  },
+  {
+   "id": 255,
+   "need_id": 64,
+   "time": "2026-11-01 21:20:49 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 256,
+   "need_id": 64,
+   "time": "2026-11-01 21:20:55 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "personal_todo": [
@@ -5481,6 +5530,34 @@
    "created_by": "developer",
    "updated_by": "developer",
    "deleted": 0
+  },
+  {
+   "id": 3,
+   "slug": "2026-11-01-ui-batch-iv-b1-material",
+   "type": "prd",
+   "need_id": 64,
+   "title": "UI整改IV·B1 材质登记表落地（A1 半透统一+A3 分层）需求卡",
+   "content": "# UI整改IV·B1 材质登记表落地（A1 半透统一 + A3 容器/业务分层）\n\n> 来源：池 64；需求源 = 老板 2026-11-01 反馈 A1/A3；权威方案 = docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §1+§10.2（已过全量事实审计 10fe526c）。v2：采纳 PRD 审计 4 条 P2（2026-11-01，product-manager 独立审计判定通过）。\n\n## 背景\n\n半透只存在于 `ui_kit/glass.h` 的 `glassFill`（α0.72/0.92）与 `glassPanelFill`（α0.55）两个函数；任何直接写 `t.colors.surface` 的矩形完全不透明——这是「部分卡片有半透、部分没有」的机制性根因。容器卡与业务卡无材质登记表，两级混用。\n\n## 目标\n\n建立材质登记表规范并落地：L1 容器卡（glassPanelFill）/ L2 业务卡（cardSurface）/ L3 内嵌盒（不透明）三档；新增 `src/ui_kit/materials.h` 单一入口；误用处改到位。\n\n## 非目标\n\n- 不动 L3 内嵌盒清单（ui_kit/wswitch.cpp:55、slider.cpp:48、selection_bar.cpp:26、splash.cpp:222、release_dialogs.cpp:370、claude_ui_detail.cpp:76/123/172/448、mcp_page_module.cpp:617/646、md_module_preview.cpp:145、agent_detail_dialog.cpp:1323、agent_module_dialogs.cpp:391、release_detail_draw.cpp:1415/1639）\n- claude_ui_list.cpp:548 延后至 **B3（池66）开工前**由需求端拍板 L2/L3 归属（PRD 审计 P2-3）\n- 不做果冻（B2=池65）、不做智能体网格化（B3=池66）\n\n## 功能矩阵\n\n| F-ID | 功能点 | 优先级 | 状态 |\n|---|---|---|---|\n| F-64-1 | 新增 src/ui_kit/materials.h：containerSurface/itemSurface/itemSurfaceHover/itemSurfacePressed（半透底 hover/pressed 派生色用 mixColor，深浅两档） | 核心 | 待方案 |\n| F-64-2 | agent_module.cpp:675 任务卡改三态 itemSurface/itemSurfaceHover/itemSurfacePressed（**三态仅此一处**；审计 P2-1） | 核心 | 待方案 |\n| F-64-3 | agent_module.cpp:575 任务列表面板 + **:468 工具列表面板**（同语义 L1，审计采纳）降 containerSurface | 核心 | 待方案 |\n| F-64-4 | release_list_ui.cpp:396 版本卡 .color(itemSurface)（仅常态色） | 核心 | 待方案 |\n| F-64-5 | wallpaper_ui.cpp:155 壁纸选择卡 .color(itemSurface)（仅常态色） | 核心 | 待方案 |\n\n## 状态集\n\n深浅两档 × 常态/hover/pressed；三态仅 F-64-2（.states 调用），F-64-4/5 仅常态色替换；深色档 glassFill α0.92 近实心属预期（登记表现值）。**平台差异：无**——半透为自绘层，不依赖平台窗口合成，离屏探针 mac/win 同判据（审计 P2-2）。\n\n## UI 契约\n\n纯材质参数调整（设计决策已定稿于方案 §1.2 登记表，老板未提异议）——ui-ux-designer 门控裁决：跳过设计阶段（纯参数级、无布局/交互变化），理由记矩阵与汇报。\n\n## 验收标准（对应 F-ID）\n\n1. 离屏截图逐页比对：智能体任务卡/release 版本卡/壁纸选择卡底色透出页面底（浅色档「比面板亮半档」层次）。手段：`uat62_page_shots_probe --size 1600x1000`（审计 P2-4）\n2. **像素判据**：同图取「卡内空白处」与「卡外页面底」两点采样，RGB 有差即半透生效；改前两点相同=未生效\n3. 回归：todo 列容器（glassPanelFill）不变实心；md 预览/settings 卡与改前一致；L3 清单逐处不变\n\n## 关联影响\n\nB2 果冻（池65）依赖 F-64-1 的 itemSurface；B6 字号缩放完成后回头重验本条几何。",
+   "version": 2,
+   "created": "2026-11-01 21:21:22 +0800",
+   "updated": "2026-11-01 21:29:18 +0800",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 4,
+   "slug": "2026-11-01-ui-batch-iv-b1-material-tech",
+   "type": "tech",
+   "need_id": 64,
+   "title": "UI整改IV·B1 材质登记表 技术方案（F-64-1 ~ F-64-5）",
+   "content": "# UI整改IV·B1 材质登记表落地 技术方案卡（F-64-1 ~ F-64-5）\n\n> PRD：`2026-11-01-ui-batch-iv-b1-material` v2；权威源 = 方案文档 §10.0（API 契约逐条核实过）+ §10.2；双平台：macOS/Windows 同源改动（ui_kit 层无平台分支），改后双机各自实拍。v2：采纳 tech 审计 2 条 P2（2026-11-01，code-reviewer 独立审计判定通过，API 契约与四处行号均对码命中）。\n\n## F-64-1 materials.h（新增，inline 零链接成本）\n\n```cpp\n// src/ui_kit/materials.h\n#pragma once\n#include <eui/types.h>        // eui::Color / eui::mixColor 显式 include（审计 P2：不依赖 glass.h 传递可达）\n#include \"core/theme.h\"\n#include \"ui_kit/glass.h\"\n\nnamespace ui_kit {\n// L1 容器卡：装条目的面板\ninline eui::Color containerSurface(const core::theme::Tokens& t) { return glassPanelFill(t); }\n// L2 业务卡：容器内的业务条目\ninline eui::Color itemSurface(const core::theme::Tokens& t) { return glassFill(t); }\n// L2 的 hover/pressed 派生色（半透底上不能直接用 t.colors.hover —— 那是给不透明底的）\ninline eui::Color itemSurfaceHover(const core::theme::Tokens& t) {\n    return eui::mixColor(glassFill(t), eui::Color(0.0f,0.0f,0.0f,1.0f), t.isDark ? 0.10f : 0.05f);\n}\ninline eui::Color itemSurfacePressed(const core::theme::Tokens& t) {\n    return eui::mixColor(glassFill(t), eui::Color(0.0f,0.0f,0.0f,1.0f), t.isDark ? 0.16f : 0.09f);\n}\n}\n```\n\n审计核真记录：`eui::mixColor` 在 EUI-NEO/include/eui/types.h:55（三参 from/to/amount，RGBA 四通道含 alpha 插值）；`Tokens.isDark` 在 src/core/theme.h:87；mixColor 已是仓内现役 API（release_list_ui.cpp:107-111 在用）→ 不 POC。\n\n## F-64-2~5 逐处替换表\n\n| 文件:行 | 现状 | 改为 |\n|---|---|---|\n| module_agent/agent_module.cpp:675 | `.states(t.colors.surface, t.colors.hover, t.colors.primarySoftBg)`（任务卡 .bg） | `.states(ui_kit::itemSurface(t), ui_kit::itemSurfaceHover(t), ui_kit::itemSurfacePressed(t))` |\n| module_agent/agent_module.cpp:575 | `.color(ui_kit::cardSurface(t))`（\"agent.tasklist.panel\" 列表面板=L1） | `.color(ui_kit::containerSurface(t))` |\n| module_agent/agent_module.cpp:468 | `.color(ui_kit::cardSurface(t))`（\"agent.tools.list.panel\" 工具列表面板，与 575 同语义——v2 纳入，审计 P2） | `.color(ui_kit::containerSurface(t))` |\n| module_release/release_list_ui.cpp:396 | `.color(t.colors.surface)`（版本卡） | `.color(ui_kit::itemSurface(t))` |\n| module_wallpaper/wallpaper_ui.cpp:155 | `.color(t.colors.surface)`（壁纸选择卡 .bg） | `.color(ui_kit::itemSurface(t))` |\n\n行号以当前 dev 为基准（审计实测容差 0 命中），实现时以符号定位为准。\n\n## 已核实 API（审计对码确认，不再重查）\n\n- `ui_kit::glassFill`（ui_kit/glass.h:12，L2 填充 浅α0.72/深α0.92）\n- `ui_kit::glassPanelFill`（ui_kit/glass.h:20，L1 填充 α0.55）\n- `ui_kit::cardSurface`（ui_kit/card.h:17，== glassFill）\n- `eui::mixColor(from, to, amount)`（EUI-NEO/include/eui/types.h:55）\n\n## POC\n\n无外部不确定项，不 POC（审计确认 mixColor/glassFill 均仓内现役）。\n\n## 取舍\n\n- itemSurfaceHover 用黑 overlay 派生（深 10%/16%，浅 5%/9%）而非 t.colors.hover——后者是不透明底设计，叠半透底会突兀；派生色 α 上限 ≈0.762（pressed 深档），半透保持（审计数学核真）\n- claude_ui_list.cpp:548 本轮不动（PRD 非目标：B3 开工前拍板归属）\n\n## 风险未验证项\n\n深色档 glassFill α0.92 的「透出感」弱——属登记表现值，若真机观感不佳另行调档（不在本 F 范围）。",
+   "version": 2,
+   "created": "2026-11-01 21:21:43 +0800",
+   "updated": "2026-11-01 21:29:40 +0800",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "docs_history": [
@@ -5510,6 +5587,24 @@
    "content": "# 池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）\n\n> 来源：池 53（P1，2026-10-31 登记）；老板 2026-10-31 口述原话：①「发布功能里，任务详情只有编辑态，没有发布态。发布态下不能编辑，需要按流程一个一个的执行。」②「当前编辑态的 UI 不太好，不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。」\n> 定性：**L 级**——新交互形态（双模式）+ 状态机语义变更 + 详情页整体 UI 重设计。\n> 前置事实：release_detail_ui.cpp 上帝文件已于 2026-10-31（commit 5c65a645）三拆为 release_detail_ui.cpp（343 行入口）/ release_detail_draw.cpp / release_detail_logic.cpp + release_detail_internal.h。本需求在拆分后结构上做。权威全文：docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md（本条为台账镜像，内容同版）。\n\n核心结论摘录（v3：三项拍板 + 裁剪项入池均已回填）：\n\n1. 「发布态」语义澄清：老板说的编辑态=Draft（配置中），发布态=Pending+Running（待执行/执行中）合并呈现为「内容只读+流程导向执行」的独立界面形态；Done/Voided=归档态。现状 isConfigPhase 含 Pending（提交后仍可改配置，issue 06 底稿）与本需求冲突，按老板令废除。\n2. 「按流程一个一个执行」已有半套：performNextStep 固定序（提测→CAB→nacos 工单→DB 工单→公告→各环境[合并分支→配置→部署→验证]）即流程轨道，不新造顺序。顺序语义已拍板 A 软引导（2026-10-31）：下一步高亮+未解锁锁定可见，保留提前勾自由度，前置项不硬顺序；硬锁转已取舍（F-32）。\n3. 撤回提交 Pending→Draft（F-02）已拍板新增确认（2026-10-31），依据栏补老板拍板；失败不引入新状态值（记录台定位+五值编码锁定）。\n4. 分支编辑缺口已拍板本轮不做（2026-10-31），F-30 维持取舍，已入池 need-54（P2）。\n5. 编辑态病灶（控件实测）：页头 6 类元素堆叠且主动作漂移；前置 5 卡「填」与「勾」混排；步骤行 40px 挤 6 类控件；只读性无页面级声明。UI 重设计原则 5 条（模式先于控件/主动作唯一/准备执行分层/控件减负/标题承载身份），F-10~F-16 全部 ui-ux-designer 门控，F-11/F-14 须先出图。\n\n功能矩阵：F-01 三模式映射（核心）/ F-02 撤回提交（核心·已确认新增）/ F-03 发布态只读执行域（核心）/ F-04 流程轨道（核心）/ F-05 推进回退跳过失败语义收敛（核心）/ F-06 中断恢复保既有（核心）/ F-10 双模式 IA（核心·ui门控）/ F-11 页头重设计（核心·ui门控）/ F-12 前置项清单化（核心·ui门控）/ F-13 步骤行减负（核心·ui门控）/ F-14 发布态流程向导（核心·ui门控）/ F-15 弹层体系统一（边缘·ui门控）/ F-16 空态异常态（边缘·ui门控）/ F-20 提交校验保既有 / F-21 内容变更撤回对账（收敛为仅编辑态）/ F-22 日志留痕保既有。已取舍：F-30 分支编辑 UI（已入池 need-54）、F-31 列表页重设计（已入池 need-55）、F-32 严格硬锁（拍板维持取舍）、F-33 步骤失败状态值。\n\n开放问题已全部裁决（2026-10-31 老板拍板）：①顺序语义=A 软引导 ②撤回提交=新增确认 ③分支编辑=本轮不做已入池 need-54。\n\n非目标入池对应（老板令 2026-10-31「没做的按新需求处理」）：分支编辑=池 54（P2）、列表页重设计=池 55（P3）、全屏配置编辑层=池 56（P3）。\n\n开发顺序不变：F-01~F-06 状态机类先行（logic+测试，无前置依赖）→ ui-ux 出图（F-11/F-14）→ F-10/F-12/F-13 → F-15/F-16 → 门禁与截图基准收口。",
    "saved": "2026-10-31 23:01:38 +0800",
    "saved_by": "product"
+  },
+  {
+   "id": 4,
+   "doc_id": 3,
+   "version": 1,
+   "title": "UI整改IV·B1 材质登记表落地（A1 半透统一+A3 分层）需求卡",
+   "content": "# UI整改IV·B1 材质登记表落地（A1 半透统一 + A3 容器/业务分层）\n\n> 来源：池 64；需求源 = 老板 2026-11-01 反馈 A1/A3；权威方案 = docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §1+§10.2（已过全量事实审计 10fe526c）\n\n## 背景\n\n半透只存在于 `ui_kit/glass.h` 的 `glassFill`（α0.72/0.92）与 `glassPanelFill`（α0.55）两个函数；任何直接写 `t.colors.surface` 的矩形完全不透明——这是「部分卡片有半透、部分没有」的机制性根因。容器卡与业务卡无材质登记表，两级混用。\n\n## 目标\n\n建立材质登记表规范并落地：L1 容器卡（glassPanelFill）/ L2 业务卡（cardSurface）/ L3 内嵌盒（不透明）三档；新增 `src/ui_kit/materials.h` 单一入口；四处误用改到位。\n\n## 非目标\n\n- 不动 L3 内嵌盒清单（ui_kit/wswitch.cpp:55、slider.cpp:48、selection_bar.cpp:26、splash.cpp:222、release_dialogs.cpp:370、claude_ui_detail.cpp:76/123/172/448、mcp_page_module.cpp:617/646、md_module_preview.cpp:145、agent_detail_dialog.cpp:1323、agent_module_dialogs.cpp:391、release_detail_draw.cpp:1415/1639）\n- 不做果冻（B2=池65）、不做智能体网格化（B3=池66）、不改 claude_ui_list.cpp:548（待确认 L2/L3 归属，另行核实）\n\n## 功能矩阵\n\n| F-ID | 功能点 | 优先级 | 状态 |\n|---|---|---|---|\n| F-64-1 | 新增 src/ui_kit/materials.h：containerSurface/itemSurface/itemSurfaceHover/itemSurfacePressed（半透底 hover/pressed 派生色用 mixColor，深浅两档） | 核心 | 待方案 |\n| F-64-2 | agent_module.cpp:675 任务卡三态改 itemSurface/itemSurfaceHover/itemSurfacePressed | 核心 | 待方案 |\n| F-64-3 | agent_module.cpp:575 列表面板降 L1 档 containerSurface | 核心 | 待方案 |\n| F-64-4 | release_list_ui.cpp:396 版本卡 .color(itemSurface) | 核心 | 待方案 |\n| F-64-5 | wallpaper_ui.cpp:155 壁纸选择卡 .color(itemSurface) | 核心 | 待方案 |\n\n## 状态集\n\n浅色/深色两档 ×（常态/hover/pressed）；半透生效=卡内透出页面底/动态背景；深色档 glassFill α0.92 近实心属预期（登记表现值）。\n\n## UI 契约\n\n纯材质参数调整（设计决策已定稿于方案 §1.2 登记表，老板未提异议）——ui-ux-designer 门控裁决：跳过设计阶段（纯参数级、无布局/交互变化），理由记矩阵与汇报。\n\n## 验收标准（对应 F-ID）\n\n1. 离屏截图逐页比对：智能体任务卡/release 版本卡/壁纸选择卡底色透出页面底（浅色档「比面板亮半档」层次）\n2. **像素判据**：同图取「卡内空白处」与「卡外页面底」两点采样，RGB 有差即半透生效；改前两点相同=未生效\n3. 回归：todo 列容器（glassPanelFill）不变实心；md 预览/settings 卡与改前一致；L3 清单逐处不变\n\n## 关联影响\n\nB2 果冻（池65）依赖 F-64-1 的 itemSurface；B6 字号缩放完成后回头重验本条几何。",
+   "saved": "2026-11-01 21:29:18 +0800",
+   "saved_by": "ZCode主会话"
+  },
+  {
+   "id": 5,
+   "doc_id": 4,
+   "version": 1,
+   "title": "UI整改IV·B1 材质登记表 技术方案（F-64-1 ~ F-64-5）",
+   "content": "# UI整改IV·B1 材质登记表落地 技术方案卡（F-64-1 ~ F-64-5）\n\n> PRD：`2026-11-01-ui-batch-iv-b1-material`；权威源 = 方案文档 §10.0（API 契约逐条核实过）+ §10.2；双平台：macOS/Windows 同源改动（ui_kit 层无平台分支），改后双机各自实拍\n\n## F-64-1 materials.h（新增，inline 零链接成本）\n\n```cpp\n// src/ui_kit/materials.h\nnamespace ui_kit {\n// L1 容器卡：装条目的面板\ninline eui::Color containerSurface(const core::theme::Tokens& t) { return glassPanelFill(t); }\n// L2 业务卡：容器内的业务条目\ninline eui::Color itemSurface(const core::theme::Tokens& t) { return glassFill(t); }\n// L2 的 hover/pressed 派生色（半透底上不能直接用 t.colors.hover —— 那是给不透明底的）\ninline eui::Color itemSurfaceHover(const core::theme::Tokens& t) {\n    return eui::mixColor(glassFill(t), eui::Color(0.0f,0.0f,0.0f,1.0f), t.isDark ? 0.10f : 0.05f);\n}\ninline eui::Color itemSurfacePressed(const core::theme::Tokens& t) {\n    return eui::mixColor(glassFill(t), eui::Color(0.0f,0.0f,0.0f,1.0f), t.isDark ? 0.16f : 0.09f);\n}\n}\n```\n\ninclude 依赖：`ui_kit/glass.h`（glassFill/glassPanelFill）、`core/theme.h`（Tokens）、EUI Color/mixColor（经 glass.h 传递则不需额外 include，以现有 glass.h 头部为准）。\n\n## F-64-2~5 逐处替换表\n\n| 文件:行 | 现状 | 改为 |\n|---|---|---|\n| module_agent/agent_module.cpp:675 | `.states(t.colors.surface, t.colors.hover, t.colors.primarySoftBg)` | `.states(ui_kit::itemSurface(t), ui_kit::itemSurfaceHover(t), ui_kit::itemSurfacePressed(t))` |\n| module_agent/agent_module.cpp:575 | `.color(ui_kit::cardSurface(t))`（列表面板=L1） | `.color(ui_kit::containerSurface(t))` |\n| module_release/release_list_ui.cpp:396 | `.color(t.colors.surface)` | `.color(ui_kit::itemSurface(t))` |\n| module_wallpaper/wallpaper_ui.cpp:155 | `.color(t.colors.surface)` | `.color(ui_kit::itemSurface(t))` |\n\n行号以当前 dev 为基准（e2817c30），实现时以符号定位为准（行号可能漂移 1-2 行）。\n\n## 已核实 API（§10.0 原文，不再重查）\n\n- `ui_kit::glassFill`（ui_kit/glass.h:12，L2 填充 α0.72/0.92）\n- `ui_kit::glassPanelFill`（ui_kit/glass.h:20，L1 填充 α0.55）\n- `ui_kit::cardSurface`（ui_kit/card.h:17，== glassFill）\n- `eui::mixColor(base, overlay, ratio)`（overlay alpha 生效）\n\n## POC\n\n无外部不确定项，不 POC（mixColor/glassFill 均为仓内在用 API）。\n\n## 取舍\n\n- itemSurfaceHover 用黑 overlay 派生（深 5%/10%，浅 10%/16%）而非 t.colors.hover——后者是不透明底设计，叠半透底会突兀（方案 §10.2 原设计）\n- claude_ui_list.cpp:548 本轮不动（L2/L3 归属待确认，PRD 非目标）\n\n## 风险未验证项\n\n深色档 glassFill α0.92 的「透出感」弱——属登记表现值，若真机观感不佳另行调档（不在本 F 范围）。",
+   "saved": "2026-11-01 21:29:40 +0800",
+   "saved_by": "ZCode主会话"
   }
  ]
 }
