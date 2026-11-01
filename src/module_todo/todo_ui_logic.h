@@ -44,9 +44,15 @@ inline float contentCardWidth(float contentWidth) {
 }
 
 // ---- 固定四列 + 归档折叠动画的纯几何 ----
-// W = (contentW − 3×gap) / 4；归档宽 = lerp(W×25%, W, archiveT)；
+// W = (contentW − 3×gap) / 4；归档宽 = lerp(折叠宽, 展开宽, archiveT)；
 // 其余三列 = (contentW − 3×gap − 归档宽) / 3。无归档列时四列均分。
-constexpr float kArchiveCollapsedRatio = 0.25f;  // 折叠宽 = 展开列宽 × 25%
+constexpr float kArchiveCollapsedRatio = 0.25f;  // 折叠宽 = 展开列宽 × 25%，但不低于下限
+// 折叠态下限 96 = 列头 12(pad) + 6(圆点) + 6(gap) + 「已归档」3 字 ×15px + 12(pad)
+//（折叠态隐去计数 chip）。无下限时窄窗会把列名逐字压成竖排。
+constexpr float kArchiveMinCollapsedW = 96.0f;
+// 展开态 220：归档是次要信息，不必占满等分宽；span 过窄时留 45% 上限防挤死普通列
+constexpr float kArchiveExpandedW = 220.0f;
+constexpr float kArchiveExpandedMaxRatio = 0.45f;
 constexpr size_t kVirtualCardBuffer = 3;         // 虚拟化：可视区上下各 3 张缓冲
 
 struct BoardColumnWidths {
@@ -77,7 +83,10 @@ inline BoardColumnWidths boardColumnWidths(float contentW, float gap,
     out.normal = span / kColumns;
     out.archive = out.normal;
     if (archiveIndex >= 0) {
-        out.archive = uiLerp(out.normal * kArchiveCollapsedRatio, out.normal, archiveT);
+        const float collapsedW =
+            std::max(kArchiveMinCollapsedW, out.normal * kArchiveCollapsedRatio);
+        const float expandedW = std::min(kArchiveExpandedW, span * kArchiveExpandedMaxRatio);
+        out.archive = uiLerp(collapsedW, expandedW, archiveT);
         out.normal = (span - out.archive) / (kColumns - 1.0f);
     }
     return out;

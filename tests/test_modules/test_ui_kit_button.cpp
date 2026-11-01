@@ -87,7 +87,7 @@ REGISTER_TEST(ui_kit_button_secondary_not_primary,
 //（同一档，不高低错落）。事故：某级按钮高度/font/圆角与其他级不一致致同视口
 // 按钮高低错落（spec §4.1 D-12 统一尺寸「避免高低错落」）。
 REGISTER_TEST(ui_kit_button_uniform_metrics,
-              "ui_kit button: 四级 height=40 / font=14 / radius=8 统一", {
+              "ui_kit button: 四级 height=40 / font=14 / radius=10 统一", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02b_btn_uniform");
@@ -106,9 +106,9 @@ REGISTER_TEST(ui_kit_button_uniform_metrics,
         // 高度固定 40（kButtonHeight，S1.2 #35 / S2.1 按钮高度 40px）
         DOCTEST_CHECK_EQ(bg->height.value, ui_kit::kButtonHeight);
         DOCTEST_CHECK_EQ(bg->height.value, 40.0f);
-        // 圆角 8（t.sizes.radius，S1.2 #38 按钮 8px 圆角）
+        // 圆角跟随 token（设计稿 §3.4：radius=10），不写死 8
         DOCTEST_CHECK_EQ(bg->radius, t.sizes.radius);
-        DOCTEST_CHECK_EQ(bg->radius, 8.0f);
+        DOCTEST_CHECK_EQ(bg->radius, 10.0f);
 
         const auto* txt = ui.find(s + ".text");
         DOCTEST_REQUIRE_MESSAGE(txt != nullptr, std::string("缺 ") + s + ".text");

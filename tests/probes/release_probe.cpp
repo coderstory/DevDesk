@@ -628,8 +628,8 @@ int main(int argc, char* argv[]) {
         const auto* svcBg = checks.need(ui, svcBase + ".bg", "服务卡");
         checks.expectText(envName, "环境名文案", "EM");
         if (envName != nullptr) {
-            checks.expectNear("环境分组标题字号", envName->fontSize, 18.0f,
-                              "theme fontSizeLarge=18（release_detail_ui.cpp drawEnvCard .name）");
+            checks.expectNear("环境分组标题字号", envName->fontSize, 19.0f,
+                              "theme fontSizeLarge=19（release_detail_ui.cpp drawEnvCard .name）");
         }
         if (envBg != nullptr && svcBg != nullptr) {
             checks.expectNear("环境分组头高度",
@@ -640,8 +640,8 @@ int main(int argc, char* argv[]) {
         const auto* sectionTitle =
             checks.need(ui, "release.detail.env.title", "环境分组区标题");
         if (sectionTitle != nullptr) {
-            checks.expectNear("环境分组区标题字号", sectionTitle->fontSize, 18.0f,
-                              "release_detail_ui.cpp drawSectionTitle fontSizeLarge=18");
+            checks.expectNear("环境分组区标题字号", sectionTitle->fontSize, 19.0f,
+                              "release_detail_ui.cpp drawSectionTitle fontSizeLarge=19");
         }
 
         const std::string mergeRow = svcBase + ".step.merge";

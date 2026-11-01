@@ -47,7 +47,7 @@ struct ColorTokens {
     // 错误文字用本 token；红底/边框/圆点/图标继续用 error
     eui::Color errorText;
     eui::Color info;
-    eui::Color sidebarBg;       // #F0FDF7 侧栏淡绿底
+    eui::Color sidebarBg;       // #EBF6EF 侧栏淡绿底（比 background 深半档）
     // 与现有功能色同族的去饱和强调色（区别于 blue 的品牌色档位，浅色档达图形 AA）
     eui::Color purple;
     eui::Color pink;
@@ -65,19 +65,19 @@ struct SizeTokens {
     float spacingLarge;        // 16.0f
     float spacingXLarge;       // 24.0f
     float spacingXXLarge;      // 40.0f
-    float radius;              // 10.0f
+    float radius;              // 10.0f 按钮/行卡/输入框
     float radiusSmall;         // 6.0f
-    float radiusLarge;         // 12.0f
+    float radiusLarge;         // 14.0f 内容卡片
     float radiusOverlay;       // 16.0f 首页大卡片圆角（S1 圆角 16px 档）
     float radiusPill;          // 999.0f
     float fontSizeSmall;       // 12.0f
-    float fontSizeBody;        // 15.0f
-    float fontSizeLarge;       // 18.0f
+    float fontSizeBody;        // 14.0f
+    float fontSizeLarge;       // 19.0f 卡片标题
     float fontSizeTitle;       // 24.0f
     float fontSizePage;        // 24.0f
     float fontSizeDisplay;     // 48.0f
-    float fontSizeStat;          // 28.0f  首页数据数字（S1.2 字号迁移）
-    float spacingPage;            // 12.0f 页面外 padding（D-12 A3：16→12）
+    float fontSizeStat;          // 30.0f 首页数据数字（2026-11-01 重构 28→30）
+    float spacingPage;            // 20.0f 页面外 padding（2026-11-01 重构 12→20，12 贴边太紧）
     float fontSizeWeChat;         // 16.0f 微信风格正文字号（D-12 §2.4：16/18 档，18 复用既有 fontSizeLarge）
 };
 

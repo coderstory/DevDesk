@@ -19,6 +19,7 @@
 #include "module_home/home_service.h"
 // 跨模块逾期口径一致性用例需要同时问首页与 Todo 两条读取路径
 #include "module_todo/todo_service.h"
+#include "ui_kit/glass.h"
 
 #include <eui/dsl.h>
 
@@ -342,7 +343,7 @@ REGISTER_TEST(home_token_rate_card_compose,
 })
 
 // ============================================================================
-// S3.1 / S6.6 实底统计卡契约（home_module.cpp drawSolidStatCard）
+// 玻璃统计卡契约（home_module.cpp drawSolidStatCard）：底色统一 glassFill，不再五色实底
 // 防的事故：
 //  ① 五卡背景色写错/漏卡（逐卡 RGB 断言，S6.6 五色：cardGreen/cardBlue/cardOrange/cardPurple/cardCyan）
 //  ② 玻璃层组残留（.glass.* 节点应全部缺位）
@@ -366,10 +367,19 @@ double solidContrast(const eui::Color& a, const eui::Color& b) {
     return (hi + 0.05) / (lo + 0.05);
 }
 
+// 半透前景压在不透明底上的合成色（玻璃卡对比度必须按这个算，不能拿纯白凑）
+eui::Color compositeOver(const eui::Color& fg, const eui::Color& bg) {
+    const float a = fg.a;
+    return {fg.r * a + bg.r * (1.0f - a),
+            fg.g * a + bg.g * (1.0f - a),
+            fg.b * a + bg.b * (1.0f - a),
+            1.0f};
+}
+
 } // namespace
 
-REGISTER_TEST(home_solid_stat_cards,
-              "Home 实底统计卡: S6.6 五色实底 + 无玻璃残留 + 点击 + 对比度护栏", {
+REGISTER_TEST(home_glass_stat_cards,
+              "Home 玻璃统计卡: glassFill 半透 + 无旧玻璃层残留 + 点击 + 对比度护栏", {
     core::proxy_stats::resetForTest();
     core::theme::setLight();
 
@@ -378,39 +388,33 @@ REGISTER_TEST(home_solid_stat_cards,
     screen.width = 1200.0f;
     screen.height = 720.0f;
     eui::Ui ui;
-    ui.begin("home_solid");
+    ui.begin("home_glass");
     mod->compose(ui, screen);
     ui.end();
 
     const auto& t = core::theme::current();
+    const eui::Color wantBg = ui_kit::glassFill(t);
+    const char* kIds[] = {"home.stat.tokens", "home.stat.notes", "home.stat.todo",
+                          "home.stat.overdue", "home.stat.api"};
 
-    // —— ① 五卡实底色逐卡断言（S6.6：绿/蓝/橙/紫/青）——
-    struct ExpBg {
-        const char* id;
-        std::uint32_t hex;
-        float r, g, b;
-    };
-    const ExpBg kExpBgs[] = {
-        {"home.stat.tokens", 0xE6FBF2, 0.902f, 0.984f, 0.949f},   // cardGreen
-        {"home.stat.notes", 0xE0F4FF, 0.878f, 0.957f, 1.000f},     // cardBlue
-        {"home.stat.todo", 0xFFF1E0, 1.000f, 0.945f, 0.878f},      // cardOrange
-        {"home.stat.overdue", 0xF3E8FF, 0.953f, 0.910f, 1.000f},   // cardPurple
-        {"home.stat.api", 0xDFFAF6, 0.875f, 0.980f, 0.965f},       // cardCyan
-    };
-    for (const auto& e : kExpBgs) {
-        const std::string id(e.id);
+    // —— ① 五卡统一玻璃底：半透 + 数值等于 glassFill(t) ——
+    // 2026-11-01 重构去掉五色实底：那 5 色不承载状态语义，纯装饰，五个彩色焦点反而都不聚焦。
+    // 指标身份交给 label 文案与数字着色，底色统一走玻璃层。
+    for (const char* raw : kIds) {
+        const std::string id(raw);
         const auto* bgEl = ui.find(id + ".bg");
         DOCTEST_REQUIRE_MESSAGE(bgEl != nullptr, id + ": 缺卡片底色 .bg");
-        const eui::Color exp = eui::Color::fromHex(e.hex);
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bgEl->color.r - exp.r) < 1e-4f &&
-                std::fabs(bgEl->color.g - exp.g) < 1e-4f &&
-                std::fabs(bgEl->color.b - exp.b) < 1e-4f,
-            id + ": 底色 RGB 与 S6.6 设计基准不符");
-        DOCTEST_CHECK_MESSAGE(bgEl->color.a >= 0.99f,
-                              id + ": 底应为实色（a≈1），非半透");
+            std::fabs(bgEl->color.r - wantBg.r) < 1e-4f &&
+                std::fabs(bgEl->color.g - wantBg.g) < 1e-4f &&
+                std::fabs(bgEl->color.b - wantBg.b) < 1e-4f &&
+                std::fabs(bgEl->color.a - wantBg.a) < 1e-4f,
+            id + ": 卡底应等于 ui_kit::glassFill(t)");
+        // 浅色 0.72：动态背景必须能透上来，否则「玻璃感」是纯白板
+        DOCTEST_CHECK_MESSAGE(bgEl->color.a > 0.6f && bgEl->color.a < 0.85f,
+                              id + ": 浅色看板卡应为半透（0.6~0.85）");
 
-        // —— ② 玻璃层组已退役（S6.1）：.glass.* 节点全部缺位 ——
+        // —— ② 旧玻璃层组已退役（S6.1）：.glass.* 节点全部缺位 ——
         DOCTEST_CHECK(ui.find(id + ".glass.tint") == nullptr);
         DOCTEST_CHECK(ui.find(id + ".glass.hl.top") == nullptr);
         DOCTEST_CHECK(ui.find(id + ".glass.hl.side") == nullptr);
@@ -420,54 +424,39 @@ REGISTER_TEST(home_solid_stat_cards,
         // —— ③ 文字层级完整 + 点击层可用 ——
         DOCTEST_CHECK(ui.find(id + ".label") != nullptr);
         DOCTEST_CHECK(ui.find(id + ".number") != nullptr);
-        // badge 节点已并入 .label 同行（5694df44），文字层级只剩两行
         const auto* press = ui.find(id + ".press");
         DOCTEST_REQUIRE_MESSAGE(press != nullptr, id + ": 缺整卡点击层 .press");
         DOCTEST_CHECK(press->onClick != nullptr);
         DOCTEST_CHECK(press->hasStateColors);
-        // normal 态全透明
-        DOCTEST_CHECK(press->color.a < 1e-4f);
+        DOCTEST_CHECK(press->color.a < 1e-4f);   // normal 态全透明
     }
 
-    // —— ④ 对比度护栏（Solid底——alpha=1.0，只有 light/dark 两态，无窗透态）——
-    struct AuxC {
-        std::uint32_t bgHex;
-        const char* name;
-    };
-    const AuxC auxBg[] = {
-        {0xE6FBF2, "cardGreen"}, {0xE0F4FF, "cardBlue"},
-        {0xFFF1E0, "cardOrange"}, {0xF3E8FF, "cardPurple"},
-        {0xDFFAF6, "cardCyan"},
-    };
-    double minNumCt = 1e9;
-    double minLabelCt = 1e9;
-    double minRedCt = 1e9;
-    for (const auto& ac : auxBg) {
-        const eui::Color bgC = eui::Color::fromHex(ac.bgHex);
-        const double num = solidContrast(t.colors.textPrimary, bgC);
-        const double label = solidContrast(t.colors.textTertiary, bgC);
-        // 红字数字（逾期卡 accent 态）走 errorText 档，护栏随文字 token 走
-        const double red = solidContrast(t.colors.errorText, bgC);
-        minNumCt = std::min(minNumCt, num);
-        minLabelCt = std::min(minLabelCt, label);
-        minRedCt = std::min(minRedCt, red);
-        DOCTEST_CHECK_MESSAGE(num >= 4.5,
-            std::string(ac.name) + ": 数字对比度 " + std::to_string(num) + " < 4.5");
-    }
-    DOCTEST_CHECK(minNumCt < 1e8);
-    DOCTEST_CHECK(minLabelCt < 1e8);
-    DOCTEST_CHECK(minRedCt < 1e8);
+    // —— ④ 对比度护栏：半透底要按「玻璃叠页面底」的合成色算，不能拿纯白凑数 ——
+    const eui::Color effective = compositeOver(wantBg, t.colors.background);
+    const double numCt = solidContrast(t.colors.textPrimary, effective);
+    const double labelCt = solidContrast(t.colors.textTertiary, effective);
+    const double redCt = solidContrast(t.colors.errorText, effective);
+    DOCTEST_CHECK_MESSAGE(numCt >= 4.5,
+        "数字对比度 " + std::to_string(numCt) + " < 4.5");
+    DOCTEST_CHECK_MESSAGE(labelCt >= 4.5,
+        "标签对比度 " + std::to_string(labelCt) + " < 4.5");
+    DOCTEST_CHECK_MESSAGE(redCt >= 4.5,
+        "逾期红字对比度 " + std::to_string(redCt) + " < 4.5");
 
-    // —— ⑤ 深色模式：卡底不透明，文字可读 ——
+    // —— ⑤ 深色模式：玻璃底提亮到 0.92，避免深底半透透成一块灰 ——
     {
         core::theme::setDark();
         eui::Ui uiD;
-        uiD.begin("home_solid_dark");
+        uiD.begin("home_glass_dark");
         mod->compose(uiD, screen);
         uiD.end();
         const auto* bgD = uiD.find("home.stat.notes.bg");
         DOCTEST_REQUIRE(bgD != nullptr);
-        DOCTEST_CHECK(bgD->color.a >= 0.99f);  // 暗色下亦实色
+        const eui::Color wantD = ui_kit::glassFill(core::theme::current());
+        DOCTEST_CHECK(std::fabs(bgD->color.a - wantD.a) < 1e-4f);
+        DOCTEST_CHECK_MESSAGE(bgD->color.a >= 0.9f, "暗色卡底应 0.92 实感");
+        const eui::Color effD = compositeOver(wantD, core::theme::current().colors.background);
+        DOCTEST_CHECK(solidContrast(core::theme::current().colors.textPrimary, effD) >= 4.5);
         core::theme::setLight();
     }
 
@@ -682,14 +671,13 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(root != nullptr);
         // 基准 = 页头40+统计96+gap×3(60)+图220+操作44+底边距16 = 476（统计卡
         // 瘦身 144→96；操作行底边距 kHomeActionsBottomMargin 计入基准）；
-        // 余高 600−476−0.5=123.5 → 统计 96+123.5×0.18，图表 220+123.5×0.82
+        // 余高 600−476−0.5=123.5 全归图表卡（kHomeStatGrowRatio 2026-11-01 归零：
+        // 统计卡恒 96，拉高只是留白涨，数据字号并不跟着涨）
+        DOCTEST_CHECK_MESSAGE(std::fabs(stat->frame.height - 96.0f) < 0.5f,
+            "600 档统计卡高应恒为 96，实际 " + std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - (96.0f + 123.5f * 0.18f)) < 0.5f,
-            "600 档统计卡高应为 118.23，实际 " +
-                std::to_string(stat->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - (220.0f + 123.5f * 0.82f)) < 0.5f,
-            "600 档图表卡高应为 321.27，实际 " +
+            std::fabs(chart->frame.height - (220.0f + 123.5f)) < 0.5f,
+            "600 档图表卡高应为 343.5，实际 " +
                 std::to_string(chart->frame.height));
         // 卡内两行随卡高派生：仍在卡内、label 与 number 不重叠
         const float cardTop = stat->frame.y;
@@ -707,7 +695,7 @@ REGISTER_TEST(home_stat_chart_dual_tier,
     }
 
     // 960 档（1600×1000 真实页高，fs=1）：基准 476、余高 960−476−0.5=483.5 →
-    // 统计卡 96+483.5×0.18，图表卡 220+483.5×0.82（写死具体值，不用恒等式）
+    // 统计卡恒 96，图表卡 220+483.5（写死具体值，不用恒等式）
     {
         core::theme::setWindowHeight(960.0f);
         const float fs = core::theme::fontScale();
@@ -730,13 +718,11 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
+        DOCTEST_CHECK_MESSAGE(std::fabs(stat->frame.height - 96.0f) < 0.5f,
+            "960 档统计卡高应恒为 96，实际 " + std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - (96.0f + 483.5f * 0.18f)) < 0.5f,
-            "960 档统计卡高应为 183.03，实际 " +
-                std::to_string(stat->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - (220.0f + 483.5f * 0.82f)) < 0.5f,
-            "960 档图表卡高应为 616.47，实际 " +
+            std::fabs(chart->frame.height - (220.0f + 483.5f)) < 0.5f,
+            "960 档图表卡高应为 703.5，实际 " +
                 std::to_string(chart->frame.height));
         // 卡高增长后卡内两行仍居中分布、在卡内且不重叠
         const float cardTop = stat->frame.y;

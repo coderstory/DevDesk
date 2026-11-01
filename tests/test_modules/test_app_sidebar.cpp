@@ -182,16 +182,16 @@ REGISTER_TEST(fluid_background_compose_elements,
     FluidComposeFixture fx;
     fx.frame();
 
-    // 7 层晕 + 每层 2 卫星（UAT6.1: 4→7，半径缩至 60%）
+    // 7 层晕 + 每层 3 卫星（2026-11-01 重构：kSatsPerHalo 2→3）
     for (int j = 0; j < 7; ++j) {
         const auto* halo = fx.ui.find("app.fluid.halo." + std::to_string(j));
         DOCTEST_REQUIRE_MESSAGE(halo != nullptr, "缺晕 halo." + std::to_string(j));
         // 正圆（splash 墨染同款手法）：宽=高=2r、radius=r
         DOCTEST_CHECK(floatEq(halo->frame.width, halo->frame.height));
         DOCTEST_CHECK(floatEq(halo->radius, halo->frame.width * 0.5f));
-        // UAT6.1: kMaxAlpha 0.14（7 层半径缩至 60%，峰值可控）
-        DOCTEST_CHECK(halo->opacity <= 0.14f + 0.001f);
-        for (int b = 0; b < 2; ++b) {
+        // kMaxAlpha 0.19（重构前 0.11 叠上半透卡面后透不出色，玻璃感失效）
+        DOCTEST_CHECK(halo->opacity <= 0.19f + 0.001f);
+        for (int b = 0; b < 3; ++b) {
             DOCTEST_CHECK(fx.ui.find("app.fluid.sat." + std::to_string(j) +
                                       "." + std::to_string(b)) != nullptr);
         }
@@ -322,7 +322,7 @@ REGISTER_TEST(sidebar_collapsed_compose,
 })
 
 REGISTER_TEST(sidebar_expanded_compose,
-              "sidebar: 展开态 208px、brand 只留居中 logo、内容区 -208", {
+              "sidebar: 展开态 220px、brand 只留居中 logo、内容区 -220", {
     app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
@@ -340,18 +340,18 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     const auto* sidebar = ui.find("app.sidebar");
     DOCTEST_CHECK(sidebar != nullptr);
-    DOCTEST_CHECK(floatEq(sidebar->width.value, 208.0f));
+    DOCTEST_CHECK(floatEq(sidebar->width.value, 220.0f));
 
     // UAT3 #9 + 图标批 2026-10-20：brand 行展开态 = 折叠态同款居中几何 logo
     //（.mark 矢量瓦，同 ui_kit::drawDevDeskLogo 契约），「DevDesk」文本改由自绘
     // 标题栏承载（app.titlebar.brand）；品牌行 y=32 防跳动（S4.2 弹性，原 40）。UAT5 logo 36→48、
-    // kBrandH 32→56：(208-48)/2=80、(56-48)/2=4（48 瓦上下各留 4px，无溢出）
+    // kBrandH 32→56：(220-48)/2=86、(56-48)/2=4（48 瓦上下各留 4px，无溢出）
     const auto* brand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(brand != nullptr);
     DOCTEST_CHECK(floatEq(brand->y, 32.0f));
     const auto* mark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(mark != nullptr);
-    DOCTEST_CHECK(floatEq(mark->x, 80.0f));  // (208-48)/2，行内水平居中
+    DOCTEST_CHECK(floatEq(mark->x, 86.0f));  // (220-48)/2，行内水平居中
     DOCTEST_CHECK(floatEq(mark->y, 4.0f));  // (56-48)/2，行内垂直居中
     DOCTEST_CHECK(floatEq(mark->width.value, 48.0f));
     DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
@@ -366,8 +366,8 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.tip") == nullptr);
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->x, 16.0f));  // 开关左对齐 padX
-    DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1392.0f));
-    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
+    DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1380.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1380.0f));
 
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
@@ -408,12 +408,12 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     DOCTEST_REQUIRE(divider != nullptr);
 
     // ① 主内容区几何：页面 y 被推下去、或窗口内容高被 titlebar 吃掉，这里立刻红
-    DOCTEST_CHECK(floatEq(page->frame.x, 208.0f));
+    DOCTEST_CHECK(floatEq(page->frame.x, 220.0f));
     DOCTEST_CHECK(floatEq(page->frame.y, 0.0f));
-    DOCTEST_CHECK(floatEq(page->frame.width, 1392.0f));
+    DOCTEST_CHECK(floatEq(page->frame.width, 1380.0f));
     DOCTEST_CHECK(floatEq(page->frame.height, 1000.0f));
     // 模块拿到的页面 Screen 高仍是整窗高（不因侧边栏留白缩水）
-    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1380.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
 
     // ② 侧边栏容器 / 分隔线从 y=0 起、铺满整高（留白区仍属侧边栏区域）
@@ -434,7 +434,7 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
 })
 
 REGISTER_TEST(sidebar_compose_writes_page_origin,
-              "sidebar: compose 每帧写入页面区原点 x（展开 208 / 折叠 72）", {
+              "sidebar: compose 每帧写入页面区原点 x（展开 220 / 折叠 72）", {
     app::setCustomTitlebarMode(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -454,7 +454,7 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
         app::compose(ui, screen);
         ui.end();
     }
-    DOCTEST_CHECK(floatEq(router.pageOriginX(), 208.0f));
+    DOCTEST_CHECK(floatEq(router.pageOriginX(), 220.0f));
 
     // 折叠态原点随侧边栏收窄
     app::setSidebarCollapsed(true);

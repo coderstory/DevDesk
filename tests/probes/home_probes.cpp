@@ -148,9 +148,9 @@ int main(int argc, char* argv[]) {
     // spark，于是它在纵向让出 16px，数字比其余四张低一截，小窗（statH=96）时数字底边
     // 还会越出卡底。现判据（谁再让单张卡的文字位移就红）：
     //   A1 五卡 .label 顶 / .number 顶逐一对齐（容差 0.5）
-    //   A2 label→number 间隙 = 8px（numGap）
-    //   A3 数字底边不越出卡底（基准档 statH=96 时文本块 74 + 内边距 40 本就装不下，
-    //      留白只能靠抬卡高；这条只守「不溢出」）
+    //   A2 label→number 间隙 = 4px（numGap，2026-11-01 重构 8→4：96 高卡内容区只有 56，
+    //      文本块 16+4+34=54 才装得下）
+    //   A3 数字底边不越出卡底（statH=96、内边距 40 → 内容区 56；这条只守「不溢出」）
     //   A4 spark 与数字同带（顶对齐、同宽、高 = 数字高 − 4）且宽 = 内容宽（垫在数字下面）
     //   A5 spark 不得盖到 label 带（防回归成 32px 盒压住标题）
     {
@@ -197,9 +197,9 @@ int main(int argc, char* argv[]) {
                     passed = false;
                 }
                 const float gap = frameGapY(*label, *number);
-                if (std::fabs(gap - 8.0f) > 0.5f) {
+                if (std::fabs(gap - 4.0f) > 0.5f) {
                     std::cerr << "home_probes: 组 A2 FAIL——" << base
-                              << " label→number 间隙 " << gap << "px（期望 8）\n";
+                              << " label→number 间隙 " << gap << "px（期望 4）\n";
                     passed = false;
                 }
                 if (bg != nullptr) {

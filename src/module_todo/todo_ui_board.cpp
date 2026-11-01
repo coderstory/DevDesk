@@ -12,6 +12,7 @@
 #include <components/scrollview.h>
 #include <components/tooltip.h>
 #include <ui_kit/card.h>
+#include <ui_kit/glass.h>
 #include <ui_kit/empty_state.h>
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
@@ -332,13 +333,14 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     ui.rect(id + ".bg")
         .position(0.0f, 0.0f)
         .size(width, height)
-        // 列容器 = 页面结构 → 微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）；卡片白只给列内浮动卡片与按钮。
+        // 列容器 = 玻璃 L1 面板（0.55 半透）：比列内卡片更透一档，卡才浮得起来形成两层深度。
+        // 用 background 实色时列与页面底同色，列边界只能靠 1px 描边硬划。
         // H20：归档折叠态就是同一根普通列收窄，底色/边/圆角与其他列一致，不做独立白条/阴影。
         // 拖拽悬停目标列 = 浅绿底 + 主色边（原型 .column.is-drop-target）。
-        .color(dropHover ? t.colors.primarySoftBg : t.colors.background)
+        .color(dropHover ? t.colors.primarySoftBg : ui_kit::glassPanelFill(t))
         .radius(kColumnRadius)
         .border(dropHover ? 2.0f : 1.0f,
-                dropHover ? t.colors.primary : t.colors.borderDefault)
+                dropHover ? t.colors.primary : ui_kit::glassBorder(t))
         .build();
 
     auto colTasks = tasksInColumn(v.tasks, col.id);
@@ -491,23 +493,22 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .onClick([cb = v.act.archiveToggle] { cb(); })
             .build();
 
-        // EUI 无 writing-mode:vertical-rl —— 逐字居中堆叠，复现原型竖排标签
-        static constexpr const char* kCompactGlyphs[] = {"已", "归", "档", "·"};
+        // 横排「已归档」：列宽恒 ≥ kArchiveMinCollapsedW(96)，本就按横排算的
+        //（12 pad + 3 字×13 + 12 pad ≈ 63）。旧版逐字竖排是为更窄的 25% 列写的，
+        // 96 保底落地后竖排会左右各空 30px，看着像布局坏了。
         float glyphY = 16.0f;
-        for (size_t gi = 0; gi < std::size(kCompactGlyphs); ++gi) {
-            ui.text(id + ".compact.label." + std::to_string(gi))
-                .position(0.0f, glyphY)
-                .size(width, 18.0f)
-                .text(kCompactGlyphs[gi])
-                .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(core::theme::scaled(18.0f))
-                .fontWeight(600)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(labelColor)
-                .opacity(compactAlpha)
-                .build();
-            glyphY += 18.0f;
-        }
+        ui.text(id + ".compact.label")
+            .position(0.0f, glyphY)
+            .size(width, 18.0f)
+            .text("已归档")
+            .fontSize(core::theme::scaled(13.0f))
+            .lineHeight(core::theme::scaled(18.0f))
+            .fontWeight(600)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .color(labelColor)
+            .opacity(compactAlpha)
+            .build();
+        glyphY += 18.0f;
 
         // 计数 pill（#E6FBF2 底圆角）：宽随位数走，窄列钳到列宽 - 6
         const std::string countText = std::to_string(taskCount);

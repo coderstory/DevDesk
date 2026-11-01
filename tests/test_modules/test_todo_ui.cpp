@@ -1751,7 +1751,8 @@ REGISTER_TEST(todo_ui_drag_hit_variable_columns,
     using u::DragHitInput;
     const float gap = 20.0f;
     const float contentW = 860.0f;
-    // 四列、归档列 index 3：折叠 → 主列 250 / 归档 50；展开 → 四列各 200
+    // 四列、归档列 index 3：span=800 → 折叠 归档=max(96, 200*0.25)=96 / 主列 (800-96)/3；
+    // 展开 归档=min(220, 800*0.45)=220 / 主列 (800-220)/3
     const auto makeInput = [&](float archiveT, int fromCol) {
         const auto widths = u::boardColumnWidths(contentW, gap, 4, 3, archiveT);
         DragHitInput in;
@@ -1774,28 +1775,35 @@ REGISTER_TEST(todo_ui_drag_hit_variable_columns,
         return in;
     };
 
-    // 折叠：x = 0 / 270 / 540 / 810
-    const DragHitInput collapsed = makeInput(0.0f, 1);
-    DOCTEST_CHECK_EQ(collapsed.columnWidth[0], 250.0f);
-    DOCTEST_CHECK_EQ(collapsed.columnWidth[3], 50.0f);
-    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 830.0, 300.0), 3);  // 窄归档条命中
-    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 855.0, 300.0), 3);  // 归档右缘内
-    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 799.0, 300.0), -1); // 末主列↔归档缝隙
-    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 700.0, 300.0), 2);  // 末主列右半
-    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 560.0, 300.0), 2);  // 末主列左半
-    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 100.0, 300.0), 0);  // 首列
-    // 行命中同吃逐列几何：落点在归档条 → 目标列 3 有效；按主列 1 口径 → 列外
-    DOCTEST_CHECK_EQ(u::dragDropRowIndex(collapsed, 3, 830.0, 300.0, 0.0f, 2), 1);
-    DOCTEST_CHECK_EQ(u::dragDropRowIndex(collapsed, 1, 830.0, 300.0, 0.0f, 2), -1);
+    // 落点一律按实际列几何推导，列宽再变也不用改硬编码坐标
+    const auto left = [](const DragHitInput& in, int i) { return in.columnX[static_cast<size_t>(i)]; };
+    const auto wid  = [](const DragHitInput& in, int i) { return in.columnWidth[static_cast<size_t>(i)]; };
+    const auto mid  = [&](const DragHitInput& in, int i) { return left(in, i) + wid(in, i) * 0.5f; };
+    const auto gapX = [&](const DragHitInput& in, int i) { return left(in, i) - gap * 0.5f; };
 
-    // 展开：x = 0 / 220 / 440 / 660
+    // 折叠：归档压到下限 96（无下限窄窗会把列名挤成竖排），主列吃剩余
+    const DragHitInput collapsed = makeInput(0.0f, 1);
+    DOCTEST_CHECK(std::fabs(wid(collapsed, 0) - 704.0f / 3.0f) < 0.01f);
+    DOCTEST_CHECK_EQ(wid(collapsed, 3), 96.0f);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, mid(collapsed, 3), 300.0), 3);  // 窄归档条命中
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, left(collapsed, 3) + wid(collapsed, 3) - 1.0f,
+                                       300.0), 3);                                // 归档右缘内
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, gapX(collapsed, 3), 300.0), -1);// 末主列↔归档缝隙
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, mid(collapsed, 2) + 1.0f, 300.0), 2);  // 末主列右半
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, mid(collapsed, 2) - 1.0f, 300.0), 2);  // 末主列左半
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, mid(collapsed, 0), 300.0), 0);  // 首列
+    // 行命中同吃逐列几何：落点在归档条 → 目标列 3 有效；按主列 1 口径 → 列外
+    DOCTEST_CHECK_EQ(u::dragDropRowIndex(collapsed, 3, mid(collapsed, 3), 300.0, 0.0f, 2), 1);
+    DOCTEST_CHECK_EQ(u::dragDropRowIndex(collapsed, 1, mid(collapsed, 3), 300.0, 0.0f, 2), -1);
+
+    // 展开：归档展开态 220，主列平分（span 够宽时不再四等分）
     const DragHitInput expanded = makeInput(1.0f, 1);
-    DOCTEST_CHECK_EQ(expanded.columnWidth[3], 200.0f);
-    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 700.0, 300.0), 3);
-    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 500.0, 300.0), 2);
-    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 300.0, 300.0), 1);
-    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 100.0, 300.0), 0);
-    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 210.0, 300.0), -1);  // 列隙 [200,220)
+    DOCTEST_CHECK_EQ(wid(expanded, 3), 220.0f);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, mid(expanded, 3), 300.0), 3);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, mid(expanded, 2), 300.0), 2);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, mid(expanded, 1), 300.0), 1);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, mid(expanded, 0), 300.0), 0);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, gapX(expanded, 1), 300.0), -1);  // 列隙
     return true;
 })
 
@@ -5047,46 +5055,60 @@ REGISTER_TEST(todo_ui_title_ellipsis,
 })
 
 // ---- H20 四列固定与归档折叠：列宽公式（无头纯函数）----
-// 公式契约（docs/superpowers/plans/2026-10-23-UAT62-H20-...md §4）：
-//   W = (contentW − 3×gap)/4；archiveW = lerp(W×25%, W, archiveT)；
-//   其余三列 = (contentW − 3×gap − archiveW)/3。
-// 双档取原型表的内容宽口径：窗口 1000 → 712、1600 → 1312（侧栏 208 + 双侧 pad 40）。
+// 公式契约（docs/design/2026-11-01-全局界面重构-UI设计.md §D5）：
+//   W = (contentW − 3×gap)/4；
+//   折叠宽 = max(kArchiveMinCollapsedW, W×kArchiveCollapsedRatio)；
+//   展开宽 = min(kArchiveExpandedW, span×kArchiveExpandedMaxRatio)；
+//   archiveW = lerp(折叠宽, 展开宽, archiveT)；其余三列 = (span − archiveW)/3。
+// 双档取原型表的内容宽口径：窗口 1000 → 712、1600 → 1312。
 REGISTER_TEST(todo_ui_h20_column_widths,
-              "todo_ui: H20 四列宽度派生 archiveT=0/0.5/1 双档", {
+              "todo_ui: H20 四列宽度派生 archiveT=0/0.5/1 三档", {
     using namespace module::todo::ui;
     constexpr float kGap = 16.0f;
     const float presets[] = {712.0f, 1312.0f};   // 1000 / 1600 窗口
 
     for (const float contentW : presets) {
-        const float W = (contentW - 3.0f * kGap) / 4.0f;
+        const float span = contentW - 3.0f * kGap;
+        const float W = span / 4.0f;
+        const float wantCollapsed = std::max(kArchiveMinCollapsedW, W * kArchiveCollapsedRatio);
+        const float wantExpanded = std::min(kArchiveExpandedW, span * kArchiveExpandedMaxRatio);
+        DOCTEST_REQUIRE(wantCollapsed < wantExpanded);   // 前提：折叠必须窄于展开
 
-        // archiveT=0（默认折叠）：归档 = W×25%，其余三列均分剩余宽
+        // archiveT=0（默认折叠）：归档压到下限，其余三列均分剩余宽
         const BoardColumnWidths collapsed =
             boardColumnWidths(contentW, kGap, 4, 3, 0.0f);
-        DOCTEST_CHECK(std::fabs(collapsed.archive - W * 0.25f) < 0.01f);
-        const float expectedCol = (contentW - 3.0f * kGap - W * 0.25f) / 3.0f;
-        DOCTEST_CHECK(std::fabs(collapsed.normal - expectedCol) < 0.01f);
+        DOCTEST_CHECK(std::fabs(collapsed.archive - wantCollapsed) < 0.01f);
+        DOCTEST_CHECK(std::fabs(collapsed.normal - (span - wantCollapsed) / 3.0f) < 0.01f);
         // 列宽 + 间隙必须铺满内容宽（四列 = 3×gap）
         DOCTEST_CHECK(std::fabs(collapsed.archive + 3.0f * collapsed.normal +
                                 3.0f * kGap - contentW) < 0.01f);
 
-        // archiveT=1（展开）：四列等分，与普通列完全同逻辑
+        // archiveT=1（展开）：归档封顶 220，不再抢占普通列
         const BoardColumnWidths expanded =
             boardColumnWidths(contentW, kGap, 4, 3, 1.0f);
-        DOCTEST_CHECK(std::fabs(expanded.archive - W) < 0.01f);
-        DOCTEST_CHECK(std::fabs(expanded.normal - W) < 0.01f);
+        DOCTEST_CHECK(std::fabs(expanded.archive - wantExpanded) < 0.01f);
+        DOCTEST_CHECK(std::fabs(expanded.normal - (span - wantExpanded) / 3.0f) < 0.01f);
         DOCTEST_CHECK(std::fabs(expanded.archive + 3.0f * expanded.normal +
                                 3.0f * kGap - contentW) < 0.01f);
 
-        // archiveT=0.5（动画中间帧）：归档宽严格介于 W×25% 与 W 之间（线性插值中点）
+        // archiveT=0.5（动画中间帧）：线性插值中点
         const BoardColumnWidths mid = boardColumnWidths(contentW, kGap, 4, 3, 0.5f);
-        DOCTEST_CHECK(mid.archive > W * 0.25f);
-        DOCTEST_CHECK(mid.archive < W);
-        DOCTEST_CHECK(std::fabs(mid.archive - (W * 0.25f + W) * 0.5f) < 0.01f);
+        DOCTEST_CHECK(std::fabs(mid.archive - (wantCollapsed + wantExpanded) * 0.5f) < 0.01f);
         DOCTEST_CHECK(mid.normal < collapsed.normal);   // 归档吃掉的空间由三列等分
-        DOCTEST_CHECK(mid.normal > W);                  // 但三列仍宽于展开均分宽
+        DOCTEST_CHECK(mid.normal > expanded.normal);    // 但仍停在折叠与展开之间
         DOCTEST_CHECK(std::fabs(mid.archive + 3.0f * mid.normal + 3.0f * kGap -
                                 contentW) < 0.01f);
+    }
+
+    // 窄窗：span 过窄时 45% 上限先于 220 生效，普通列不被挤死
+    {
+        constexpr float kGap = 16.0f;
+        const float narrowContentW = 500.0f;                  // span = 452
+        const float narrowSpan = narrowContentW - 3.0f * kGap;
+        const BoardColumnWidths narrow = boardColumnWidths(narrowContentW, kGap, 4, 3, 1.0f);
+        DOCTEST_CHECK(std::fabs(narrow.archive - narrowSpan * kArchiveExpandedMaxRatio) < 0.01f);
+        DOCTEST_CHECK(narrow.archive < kArchiveExpandedW);
+        DOCTEST_CHECK(narrow.normal > 0.0f);
     }
 
     // 无归档列（老库/自定义列）：退回等分，不产生 25% 窄列
@@ -5156,9 +5178,10 @@ REGISTER_TEST(todo_ui_h20_board_render,
     const auto& t = core::theme::current();
     const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;  // module: pad 32×2
     const float gap = t.sizes.spacingLarge;
-    const float W = (contentW - 3.0f * gap) / 4.0f;
-    const float archiveW = W * 0.25f;
-    const float normalW = (contentW - 3.0f * gap - archiveW) / 3.0f;
+    // 期望值直接取生产公式，避免测试自带一份会漂移的列宽推导
+    const auto widths = module::todo::ui::boardColumnWidths(contentW, gap, 4, archiveIndex, 0.0f);
+    const float archiveW = widths.archive;
+    const float normalW = widths.normal;
 
     auto colId = [&](int idx) { return "todo.col." + std::to_string(idx); };
     // 四列宽度：折叠态归档 W×25%，其余三列均分剩余；x 依次递增（row 流式重排）
@@ -5189,15 +5212,15 @@ REGISTER_TEST(todo_ui_h20_board_render,
     const float colX = archiveBg->frame.x;
     const float colRight = colX + archiveBg->frame.width;
     const float colBottom = archiveBg->frame.y + archiveBg->frame.height;
-    // 竖排字/计数 pill/chevron 都必须 clip 在列内（不越界）
-    for (int gi = 0; gi < 4; ++gi) {
-        const auto* glyph = ui.find(colId(archiveIndex) + ".compact.label." +
-                                    std::to_string(gi));
-        DOCTEST_REQUIRE(glyph != nullptr);
-        DOCTEST_CHECK(glyph->frame.x >= colX - 0.01f);
-        DOCTEST_CHECK(glyph->frame.x + glyph->frame.width <= colRight + 0.01f);
-        DOCTEST_CHECK(glyph->frame.y + glyph->frame.height <= colBottom + 0.01f);
-    }
+    // 标签/计数 pill/chevron 都必须 clip 在列内（不越界）。
+    // 96 保底后列宽够横排「已归档」，逐字竖排节点已删除（竖排在 96 里左右各空 30px）。
+    const auto* compactLabel = ui.find(colId(archiveIndex) + ".compact.label");
+    DOCTEST_REQUIRE(compactLabel != nullptr);
+    DOCTEST_CHECK_EQ(compactLabel->text, std::string("已归档"));
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".compact.label.0") == nullptr);
+    DOCTEST_CHECK(compactLabel->frame.x >= colX - 0.01f);
+    DOCTEST_CHECK(compactLabel->frame.x + compactLabel->frame.width <= colRight + 0.01f);
+    DOCTEST_CHECK(compactLabel->frame.y + compactLabel->frame.height <= colBottom + 0.01f);
     const auto* pill = ui.find(colId(archiveIndex) + ".compact.pill");
     const auto* count = ui.find(colId(archiveIndex) + ".compact.count");
     const auto* chev = ui.find(colId(archiveIndex) + ".compact.chev");
@@ -5258,18 +5281,23 @@ REGISTER_TEST(todo_ui_h20_board_render,
     DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".archivetoggle.bg") != nullptr);
 
     // ---- 1000×640 最小档：内容宽按真实 pad（2×spacingLarge = 32/侧）复算 ----
-    // 展开态：四列等分 W=(contentW−3×gap)/4；onPageEnter 落目标态（不补播动画）
+    // 展开态：归档封顶 kArchiveExpandedW，普通列平分剩余；onPageEnter 落目标态（不补播动画）
     screen.width = 1000.0f;
     screen.height = 640.0f;
     mod->onPageEnter();
     layoutFrame();
     const float contentW1000 = screen.width - t.sizes.spacingLarge * 4.0f;  // 936
-    const float W1000 = (contentW1000 - 3.0f * gap) / 4.0f;                 // 222
+    const auto wExpanded = module::todo::ui::boardColumnWidths(contentW1000, gap, 4,
+                                                               archiveIndex, 1.0f);
+    DOCTEST_CHECK(std::fabs(wExpanded.archive -
+                            module::todo::ui::kArchiveExpandedW) < 0.5f);
     float right1000 = -1.0f;
     for (size_t i = 0; i < cols.value().size(); ++i) {
         const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::fabs(bg->frame.width - W1000) < 0.5f);  // 展开四列等分
+        const float expected = (static_cast<int>(i) == archiveIndex) ? wExpanded.archive
+                                                                     : wExpanded.normal;
+        DOCTEST_CHECK(std::fabs(bg->frame.width - expected) < 0.5f);
         if (right1000 >= 0.0f) {
             DOCTEST_CHECK(std::fabs(bg->frame.x - (right1000 + gap)) < 0.5f);
         }
@@ -5285,8 +5313,13 @@ REGISTER_TEST(todo_ui_h20_board_render,
     toggle->onClick();
     mod->onPageEnter();
     layoutFrame();
-    const float archiveW1000 = W1000 * 0.25f;                                     // 55.5
-    const float normalW1000 = (contentW1000 - 3.0f * gap - archiveW1000) / 3.0f;  // 277.5
+    // 折叠态：归档压到下限 96（W×25%=55.5 会被下限接管），其余三列均分剩余宽
+    const auto wCollapsed = module::todo::ui::boardColumnWidths(contentW1000, gap, 4,
+                                                                archiveIndex, 0.0f);
+    DOCTEST_CHECK(std::fabs(wCollapsed.archive -
+                            module::todo::ui::kArchiveMinCollapsedW) < 0.5f);
+    const float archiveW1000 = wCollapsed.archive;
+    const float normalW1000 = wCollapsed.normal;
     right1000 = -1.0f;
     for (size_t i = 0; i < cols.value().size(); ++i) {
         const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");

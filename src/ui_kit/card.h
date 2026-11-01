@@ -5,15 +5,16 @@
 
 #include <core/theme.h>
 #include <eui/dsl.h>
+#include <ui_kit/glass.h>
 #include <ui_kit/metrics.h>
 
 #include <string>
 
 namespace ui_kit {
 
-// H15：白卡半透表面色——t.colors.surface 叠加 kCardGlassAlpha 半透 alpha 通道
+// 卡片表面色：玻璃三件套里的「填充」一件（glassFill 单一来源，含半透 alpha + 微绿染）
 inline eui::Color cardSurface(const core::theme::Tokens& t) {
-    return {t.colors.surface.r, t.colors.surface.g, t.colors.surface.b, kCardGlassAlpha};
+    return glassFill(t);
 }
 
 // 卡片底板：表面色矩形 + 大圆角 + 1px 描边，铺在卡根 stack 的 (0,0)；几何由调用方决定。

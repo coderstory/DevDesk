@@ -308,7 +308,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             sizeof(::app::registry::kModuleRegistry) /
             sizeof(::app::registry::kModuleRegistry[0]);
         LOG_INFO("侧边栏导航已挂载（" + std::to_string(kPageEntryCount) +
-                 " 个模块入口，宽 208/72 可折叠）");
+                 " 个模块入口，宽 220/72 可折叠）");
         return true;
     }();
     (void)mounted;
@@ -412,7 +412,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
                         .icon(group.iconGlyph)
-                        .fontSize(t.sizes.fontSizeBody)
+                        .fontSize(t.sizes.fontSizeWeChat)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(holdsCurrent ? t.colors.primary
@@ -424,7 +424,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .position(padX + kItemInset, y)
                         .size(kIconW, itemH)
                         .icon(group.iconGlyph)
-                        .fontSize(t.sizes.fontSizeBody)
+                        .fontSize(t.sizes.fontSizeWeChat)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(holdsCurrent ? t.colors.primary
                                             : t.colors.textSecondary)
@@ -493,7 +493,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
-                        .fontSize(t.sizes.fontSizeBody)
+                        .fontSize(t.sizes.fontSizeWeChat)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(active ? t.colors.primary : t.colors.textSecondary)
@@ -503,7 +503,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .position(padX + kItemInset + effIndent, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
-                        .fontSize(t.sizes.fontSizeBody)
+                        .fontSize(t.sizes.fontSizeWeChat)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
@@ -512,7 +512,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .size(kWidth - padX * 2.0f - kItemInset - kIconW - effIndent,
                               itemH)
                         .text(m->displayName())
-                        .fontSize(t.sizes.fontSizeBody)
+                        .fontSize(t.sizes.fontSizeWeChat)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(active ? t.colors.textPrimary : t.colors.textSecondary)
                         .build();
@@ -618,8 +618,8 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = ::core::theme::current();
 
     constexpr int kHalos = 7;            // UAT6.1 缩小增多：4→7 个小晕流动（几大团→多小晕流）
-    constexpr float kMaxAlpha = 0.11f;   // 单层峰值（内容稀疏页上晕染存在感过强，收一档）
-    constexpr int kSatsPerHalo = 2;      // 卫星/层
+    constexpr float kMaxAlpha = 0.19f;   // 单层峰值（2026-11-01 重构 0.11→0.19：0.11 透不出卡面）
+    constexpr int kSatsPerHalo = 3;      // 卫星/层（2→3 更细碎，液体感更强）
     // 层参数表（锚点 = 窗口比例；速度 rad/s；相位 rad 防共漂；半径 = 短边比例）
     constexpr float kAnchorX[kHalos] = {0.50f, 0.50f, 0.24f, 0.76f, 0.12f, 0.88f, 0.36f};
     constexpr float kAnchorY[kHalos] = {0.46f, 0.56f, 0.30f, 0.72f, 0.80f, 0.18f, 0.88f};
@@ -642,9 +642,15 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
                              std::cos(kSpeedY[j] * phase + kPhase[j]);
         const float r = minDim * kRadiusFrac[j];
         const float alpha =
-            kMaxAlpha * (1.0f - 0.18f * static_cast<float>(j));  // 内浓外淡
+            kMaxAlpha * (1.0f - 0.13f * static_cast<float>(j));  // 内浓外淡
+        // 浅色档三色轮替：同族不同明度 → 液面深浅流动，而非一整块绿。
+        // 暗色档沿用双色（浅绿压深底会发灰光）。
+        static const eui::Color kLightHalo[3] = {eui::Color("#07C160"),
+                                                 eui::Color("#34D399"),
+                                                 eui::Color("#A7F3D0")};
         const eui::Color& color =
-            (j % 2 == 0) ? t.colors.primary : t.colors.primaryHover;
+            t.isDark ? ((j % 2 == 0) ? t.colors.primary : t.colors.primaryHover)
+                     : kLightHalo[j % 3];
         ui.rect("app.fluid.halo." + std::to_string(j))
             .position(cx - r, cy - r)
             .size(r * 2.0f, r * 2.0f)
@@ -667,7 +673,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
                 .size(br * 2.0f, br * 2.0f)
                 .color(color)
                 .radius(br)
-                .opacity(alpha * 0.55f)
+                .opacity(alpha * 0.45f)
                 .build();
         }
     }

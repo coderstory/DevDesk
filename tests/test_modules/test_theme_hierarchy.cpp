@@ -14,10 +14,13 @@
 #include "core/proxy_stats.h"
 #include "core/theme.h"
 #include "module_todo/todo_service.h"
+#include "ui_kit/card.h"
+#include "ui_kit/glass.h"
 
 #include <eui/dsl.h>
 #include <eui/types.h>
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -32,6 +35,12 @@ namespace {
 
 bool sameRgb(const eui::Color& a, const eui::Color& b) {
     return a.r == b.r && a.g == b.g && a.b == b.b;
+}
+
+// 玻璃卡/面板带 alpha，只比 RGB 会把「半透」与「实色」判成同色（暗色下 RGB 完全相同）
+bool sameRgba(const eui::Color& a, const eui::Color& b) {
+    return std::fabs(a.r - b.r) < 1e-4f && std::fabs(a.g - b.g) < 1e-4f &&
+           std::fabs(a.b - b.b) < 1e-4f && std::fabs(a.a - b.a) < 1e-4f;
 }
 
 // 无头 compose 一帧。theme 每帧从 core::theme::current() 取，切主题后必须
@@ -55,6 +64,11 @@ struct Frame {
     bool colorIs(const std::string& id, const eui::Color& expected) {
         const auto* el = ui.find(id);
         return el != nullptr && sameRgb(el->color, expected);
+    }
+    // 玻璃层：RGB+alpha 全等（alpha 是玻璃感的判据，不能被 RGB 相等蒙过去）
+    bool rgbaIs(const std::string& id, const eui::Color& expected) {
+        const auto* el = ui.find(id);
+        return el != nullptr && sameRgba(el->color, expected);
     }
     // 元素必须不存在
     bool absent(const std::string& id) { return ui.find(id) == nullptr; }
@@ -84,10 +98,11 @@ REGISTER_TEST(theme_hierarchy_todo,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("todo.pagebg"));
-        // 列容器走微信 background 浅灰底（§4.14 白卡浮起于浅灰底）
-        DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.background));
-        // 卡片 = 微信白卡 → surface（D批米黄迁移 surface→surface；D-04 dark-WeChat 延后深浅同值）
-        DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.surface));
+        // 列容器 = glass L1（比卡更透一档，让卡浮在列上形成两层深度）
+        DOCTEST_CHECK(frame.rgbaIs("todo.col.4.bg", ui_kit::glassPanelFill(t)));
+        DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", ui_kit::glassPanelFill(t)));
+        // 任务卡 = glass L2（不再是不透明白卡，否则动态背景透不上来）
+        DOCTEST_CHECK(frame.rgbaIs("todo.col.4.card.0.bg", ui_kit::cardSurface(t)));
         // 弹窗骨架 = componentTokensWeChat 的 surface 槽 = surface（popup 根治批迁移）
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
                                     t.colors.surface));
@@ -158,7 +173,8 @@ REGISTER_TEST(theme_hierarchy_markdown,
         // 编辑列壳 .bg 已恢复（W8 §4.14：右区 background 底 + 白卡浮起）
         DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
-        DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.surface));
+        // 状态条浮在页面底上，走卡面玻璃层（与纸卡同档），不再是实色 surface
+        DOCTEST_CHECK(frame.rgbaIs("md.status.bg", ui_kit::cardSurface(t)));
         return true;
     };
 
@@ -207,7 +223,7 @@ REGISTER_TEST(theme_hierarchy_claude,
 })
 
 REGISTER_TEST(theme_hierarchy_home,
-              "theme_hierarchy: home 统计卡=S6.6 辅助色实底 + 页面无自铺底（light+dark）", {
+              "theme_hierarchy: home 统计卡=玻璃半透 + 页面无自铺底（light+dark）", {
     core::proxy_stats::resetForTest();
 
     std::unique_ptr<::core::Module> mod(create_home_module());
@@ -215,12 +231,11 @@ REGISTER_TEST(theme_hierarchy_home,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("home.pagebg"));
-        // S6.6: 统计卡改辅助色实底——卡底有色、非半透白面
-        // Token速率卡 bg = cardGreen #E6FBF2（g≈0.98），不再是 surface #FFFFFF
-        DOCTEST_CHECK(!frame.colorIs("home.stat.tokens.bg", t.colors.surface));
+        // 五色实底退役：卡底统一卡面玻璃层，alpha 是唯一判据（RGB 与 surface 极近）
+        DOCTEST_CHECK(frame.rgbaIs("home.stat.tokens.bg", ui_kit::cardSurface(t)));
         const auto* bg = frame.ui.find("home.stat.tokens.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(bg->color.a > 0.9f);  // 实底非半透
+        DOCTEST_CHECK(bg->color.a < 0.99f);   // 半透：动态背景必须能透上来
         return true;
     };
 

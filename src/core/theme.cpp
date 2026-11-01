@@ -49,19 +49,19 @@ namespace {
         s.spacingLarge = 16.0f;
         s.spacingXLarge = 24.0f;
         s.spacingXXLarge = 40.0f;
-        s.radius = 8.0f;
+        s.radius = 10.0f;
         s.radiusSmall = 6.0f;
-        s.radiusLarge = 12.0f;
+        s.radiusLarge = 14.0f;
         s.radiusOverlay = 16.0f;
         s.radiusPill = 999.0f;
         s.fontSizeSmall = 12.0f;
         s.fontSizeBody = 14.0f;
-        s.fontSizeLarge = 18.0f;
+        s.fontSizeLarge = 19.0f;
         s.fontSizeTitle = 24.0f;
         s.fontSizePage = 24.0f;
         s.fontSizeDisplay = 48.0f;
-        s.fontSizeStat = 28.0f;
-        s.spacingPage = 12.0f;
+        s.fontSizeStat = 30.0f;
+        s.spacingPage = 20.0f;
         s.fontSizeWeChat = 16.0f;
         return t;
     }
@@ -70,17 +70,18 @@ namespace {
         Tokens t;
         t.isDark = false;
         auto& c = t.colors;
-        c.background = eui::Color("#FAFAF9");
+        // 微信绿白（2026-11-01 UI 重构）：底色/侧栏/交互态统一到绿族，主色换微信标准绿。
+        c.background = eui::Color("#F5FAF7");
         c.surface = eui::Color("#FFFFFF");
         c.surfaceElevated = eui::Color("#FFFFFF");
-        c.hover = eui::Color("#F3F4F6");
-        c.active = eui::Color("#E5E7EB");
-        c.primary = eui::Color("#36D399");
-        c.primaryHover = eui::Color("#2EC48F");
-        c.primaryPressed = eui::Color("#23B07F");
-        c.primarySoftBg = eui::Color("#E6FBF2");
-        c.primaryText = eui::Color("#157E4E");  // ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1（审计 F3.4 裁决）
-        c.accentText = eui::Color("#0C7E58");   // #0F9D6E 加深档：4.86:1 on #FAFAF9 ≥ 4.5（#0F9D6E 本身仅 3.31）
+        c.hover = eui::Color("#EEF6F1");
+        c.active = eui::Color("#E2F0E8");
+        c.primary = eui::Color("#07C160");
+        c.primaryHover = eui::Color("#06AD56");
+        c.primaryPressed = eui::Color("#059048");
+        c.primarySoftBg = eui::Color("#E8F8EE");
+        c.primaryText = eui::Color("#157E4E");  // ~4.99:1 on #F5FAF7 ≥ WCAG AA 4.5:1（审计 F3.4 裁决）
+        c.accentText = eui::Color("#0C7E58");   // #0F9D6E 加深档：on #F5FAF7 ≥ 4.5（#0F9D6E 本身仅 3.31）
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#1F2937");
         c.textSecondary = eui::Color("#4B5563");
@@ -93,7 +94,7 @@ namespace {
         c.error = eui::Color("#EF4444");
         c.errorText = eui::Color("#B91C1C");  // 深红档：on 白 6.47 / on #FAFAF9 6.19 / on 10% 红粉底 5.46（#EF4444 本身压粉底仅 3.18）
         c.info = eui::Color("#3B82F6");
-        c.sidebarBg = eui::Color("#F0FDF7");
+        c.sidebarBg = eui::Color("#EBF6EF");  // 比 background 深半档，保分区可见
         c.purple = eui::Color("#71639B");
         c.pink = eui::Color("#C05E86");
         c.blue = eui::Color("#12B7F5");
@@ -104,19 +105,19 @@ namespace {
         s.spacingLarge = 16.0f;
         s.spacingXLarge = 24.0f;
         s.spacingXXLarge = 40.0f;
-        s.radius = 8.0f;
+        s.radius = 10.0f;
         s.radiusSmall = 6.0f;
-        s.radiusLarge = 12.0f;
+        s.radiusLarge = 14.0f;
         s.radiusOverlay = 16.0f;
         s.radiusPill = 999.0f;
         s.fontSizeSmall = 12.0f;
         s.fontSizeBody = 14.0f;
-        s.fontSizeLarge = 18.0f;
+        s.fontSizeLarge = 19.0f;
         s.fontSizeTitle = 24.0f;
         s.fontSizePage = 24.0f;
         s.fontSizeDisplay = 48.0f;
-        s.fontSizeStat = 28.0f;
-        s.spacingPage = 12.0f;
+        s.fontSizeStat = 30.0f;
+        s.spacingPage = 20.0f;
         s.fontSizeWeChat = 16.0f;
         return t;
     }

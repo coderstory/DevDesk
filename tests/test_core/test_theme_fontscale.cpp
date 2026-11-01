@@ -15,8 +15,9 @@ REGISTER_TEST(theme_fontscale_scales_size_tokens, "theme: setFontScale scales fo
     DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizePage, 24.0f * 1.2f);
     DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeDisplay, 48.0f * 1.2f);
     DOCTEST_CHECK_EQ(core::theme::current().sizes.spacing, 8.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.radius, 8.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.radiusLarge, 12.0f);
+    // 圆角不随字号缩放（设计稿 §3.4：radius=10 / radiusLarge=14）
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.radius, 10.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.radiusLarge, 14.0f);
 
     core::theme::setFontScale(1.0f);  // fontScale 是全局态，结尾复位，否则污染后面的用例
     return true;

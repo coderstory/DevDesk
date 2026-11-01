@@ -16,6 +16,7 @@
 #include <core/component_theme.h>
 #include <core/logging.h>
 #include <core/window/window_backend.h>
+#include <ui_kit/card.h>
 #include <ui_kit/wtab.h>
 
 #include <algorithm>
@@ -689,9 +690,9 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             ui.rect("claude.detail.contentbox")
                 .position(x0 - 12.0f, boxTop)
                 .size(w0 + 24.0f, std::max(0.0f, contentBottom - boxTop))
-                // §4.14 白卡浮起于灰底（wechat.cardBg）；二级分割线边框
-                // UAT6 玻璃：换半透面 + subtle 玻璃层
-                .color(t.colors.surface)
+                // 玻璃卡面：动态背景要能透上来（2026-11-01 重构，原来是不透明白卡，
+                // 整页只有这一块把光晕挡死）
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .build();
 

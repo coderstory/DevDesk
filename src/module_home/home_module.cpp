@@ -46,7 +46,7 @@ constexpr const char* kChartCollapsedKey = "home.chart_collapsed";
 
 // 基准以上余高分给统计行的比例（S4 弹性规则）：统计行适度增高，其余全部留给
 // 图表卡吸收——避免统计卡被拉成巨块、图表仍停在 220。
-constexpr float kHomeStatGrowRatio = 0.18f;
+constexpr float kHomeStatGrowRatio = 0.0f;  // 2026-11-01 重构 0.18→0：统计卡恒 96，余高全归图表卡
 
 // 快捷按钮行距窗口底边框的最小留白（2026-10-27 真机反馈贴边）：计进 baseContentH，
 // 否则恰好装满的窗口会因这 16px 被滚动条吞掉——两处必须同改。
@@ -55,9 +55,9 @@ constexpr float kHomeActionsBottomMargin = 16.0f;
 // 图表内部几何自适应：wrap = 卡高−64（基准档 156）、plot 高 = wrap−112（44，
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 
-// S3.1 / S6.6：五色实底统计卡——辅助色纯色底 + 16px 圆角 + 20px 内边距 +
-// 指标名 14px（说明并入「笔记 · 今日」）/ 数据 44px 700 一级 两行排版。
-// 玻璃体系已退役（S6.1）。
+// 玻璃统计卡（2026-11-01 重构）：玻璃白半透底 + 16px 圆角 + 20px 内边距 +
+// 指标名 14px（说明并入「笔记 · 今日」）/ 数据 30px 700 一级 两行排版。
+// 五色实底退役（S6.6）：那 5 色不承载状态语义，五个彩色焦点互相抢，反而不聚焦。
 // numberColor/badgeColor 非空覆盖默认配色（badge 并入 label 行后 badgeColor
 // 不再参与绘制，参数保留 = 五处调用点免改；传了也不生效）。timerSeconds > 0 挂
 // 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
@@ -79,20 +79,20 @@ void drawSolidStatCard(eui::Ui& ui,
                        std::function<void(eui::Ui&, float, float)> chart =
                            nullptr,
                        std::function<void()> onTick = nullptr) {
-    const float pad = 20.0f;  // S6.6 / v1.0 §三.6：卡片内边距 20px
+    const float pad = 20.0f;  // 设计稿 §6.1：卡片内边距 20px
     const float cw = width - pad * 2.0f;
-    const float corner = t.sizes.radiusOverlay;  // 16px（S1 圆角 16px 档）
-    // 两行排版（统计卡瘦身拍板）：指标名 18px 高 + 8px 间隙 + 数字 48px 高；
-    // 说明并入指标名（「笔记 · 今日」），不再单独占一行。
-    const float labelH = 18.0f;
-    const float numGap = 8.0f;
-    const float numberH = 48.0f;
-    // 文本块（指标名 18 + 间隙 8 + 数字 48 = 74）在卡内垂直居中：五张卡同一口径。
-    // 2026-10-31 反馈：原先带 spark 的第一张卡把整块文字下移 16px，数字比其余四张低
-    // 一截，小窗（statH 恰 96）时数字底边还会越出卡底 14px。spark 改为垫在数字行同一
-    // 带、先画（压在数字下面），不再占用文字列的纵向空间。
+    const float corner = t.sizes.radiusOverlay;  // 16px
+    // 两行排版：指标名 16 行高 + 4 间隙 + 数字 34 行高 = 54，卡内内容高 96−40=56 装得下；
+    // 说明并入指标名（「笔记 · 今日」），不单独占行。
+    const float labelH = 16.0f;
+    const float numGap = 4.0f;
+    const float numberH = 34.0f;  // 30px 字号行高
+    // 文本块在「内边距以内」垂直居中（不是按卡高算——那样会多吃掉上下 pad，
+    // 96 高卡里数字底边越出卡缘，2026-11-01 重构把卡从 120 压到 96 时踩过）。
+    // spark 垫在数字行同一带先画，不占纵向空间：五张卡文字位置完全一致。
+    const float innerH = height - pad * 2.0f;
     const float textTop =
-        std::max(0.0f, (height - (labelH + numGap + numberH)) * 0.5f);
+        std::max(0.0f, (innerH - (labelH + numGap + numberH)) * 0.5f);
     const float numberY = textTop + labelH + numGap;
 
     components::card(ui, id)
@@ -114,15 +114,18 @@ void drawSolidStatCard(eui::Ui& ui,
                     .content([&] { chart(ui, cw, sparkH); })
                     .build();
             }
-            // 指标名：14px 三级字，居中；说明（badge）并入同行「笔记 · 今日」。
+            // 指标名：三级字，居中；说明（badge）并入同行「笔记 · 今日」。
             // 合并文本量宽放不下卡宽时丢弃 badge 只留指标名——badge 是弱信息，
             // 溢出会让居中文本越出卡缘（home_probes 类 6(a) 溢出判据守这条）。
+            // 量宽留 12px 余量：measureTextSize 与最终排版有 1~2% 的差（字距/取整），
+            // 卡宽 255 时「刚好装下」实测会溢出 10px 左右。再叠 maxWidth+Ellipsis+clip
+            // 兜底，量宽不准也绝不会画到卡外。
             std::string labelText = badge.empty() ? label : label + " · " + badge;
             if (!badge.empty()) {
                 core::TextStyle merged;
                 merged.text = labelText;
                 merged.fontSize = core::theme::scaled(14.0f);
-                if (core::TextPrimitive::measureTextSize(merged).x > cw) {
+                if (core::TextPrimitive::measureTextSize(merged).x + 12.0f > cw) {
                     labelText = label;
                 }
             }
@@ -134,15 +137,17 @@ void drawSolidStatCard(eui::Ui& ui,
                 .lineHeight(labelH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.textTertiary)
+                .maxWidth(cw)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
                 .build();
 
-            // 数据：44px 700 一级字，居中（卡内本地字号，不动全局 fontSizeStat——
-            // 该 token 被 别处共用，改全局波及面不可控）
+            // 数据：30px 700 一级字（2026-11-01 重构 44→30：44 在 96 高卡里压得标签无处立足）
             ui.text(id + ".number")
                 .position(0.0f, numberY)
                 .size(cw, numberH)
                 .text(number)
-                .fontSize(core::theme::scaled(44.0f))
+                .fontSize(t.sizes.fontSizeStat)
                 .lineHeight(numberH)
                 .fontWeight(700)
                 .horizontalAlign(eui::HorizontalAlign::Center)
@@ -193,24 +198,22 @@ bool moduleRegistered(::core::PageId page) {
 // 统计卡 / 快捷按钮元数据表：static 纯数据表，不带 lambda/可调用列（static 表带可调用列
 // 首次初始化只求值一次，捕获引用会冻结甚至悬垂）。行序 = 渲染序；数值/副标题文案在 compose 逐行查表外取。
 
-// 统计卡：kind = 行身份，module = 归属模块（注册态过滤），target = 点击跳转页，
-// tint = 方案一五色软染色（demo 设计基准拍板色，绿/蓝/橙/紫/青按语义顺序落卡）。
+// 统计卡：kind = 行身份，module = 归属模块（注册态过滤），target = 点击跳转页。
+// 底色统一玻璃白（2026-11-01 重构去五彩色：那 5 色不承载状态语义，纯装饰，5 个焦点
+// 抢同一层级反而都不聚焦）。指标身份靠 label 文案与数字着色，不靠底色。
 enum class StatCardKind { Tokens, Notes, TodoPending, TodoOverdue, ApiCalls };
 struct HomeStatCard {
     StatCardKind kind;
     ::core::PageId module;
     const char* title;
     ::core::PageId target;
-    eui::Color tint;
 };
-// S6.6 五色实底：绿色 cardGreen #E6FBF2 / 蓝色 cardBlue #E0F4FF /
-// 橙色 cardOrange #FFF1E0 / 紫色 cardPurple #F3E8FF / 青色 cardCyan #DFFAF6
 constexpr HomeStatCard kStatCards[] = {
-    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy, eui::Color::fromHex(0xE6FBF2)},
-    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown,    eui::Color::fromHex(0xE0F4FF)},
-    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xFFF1E0)},
-    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xF3E8FF)},
-    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy, eui::Color::fromHex(0xDFFAF6)},
+    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy},
+    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown},
+    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo},
+    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo},
+    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy},
 };
 
 // 快捷按钮：kind = 行身份，module = 归属模块，target + navPayload = 点击负载。
@@ -513,7 +516,7 @@ public:
                                         : rateOk  ? &t.colors.textPrimary
                                                   : &t.colors.textTertiary;
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.tint, card.title,
+                                                 statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  tokenNumber,
                                                  tokenBadge, false,
                                                  [this, target = card.target] {
@@ -558,7 +561,7 @@ public:
                                 }
                                 case StatCardKind::Notes:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.tint, card.title,
+                                                 statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.todayNotes),
                                                  ok ? "今日修改过的笔记"
                                                     : "加载失败",
@@ -569,7 +572,7 @@ public:
                                     break;
                                 case StatCardKind::TodoPending:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.tint, card.title,
+                                                 statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.pendingTodos),
                                                  ok ? "待办+进行中未完成" : "加载失败",
                                                  false,
@@ -579,7 +582,7 @@ public:
                                     break;
                                 case StatCardKind::TodoOverdue:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.tint, card.title,
+                                                 statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.overdueTodos),
                                                  ok ? "已过截止时间" : "加载失败",
                                                  stats_.overdueTodos > 0,
@@ -589,7 +592,7 @@ public:
                                     break;
                                 case StatCardKind::ApiCalls:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.tint, card.title,
+                                                 statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.todayApiCalls),
                                                  ok ? "今日代理调用" : "加载失败",
                                                  false,
@@ -691,12 +694,20 @@ public:
                                         const float startY = (chartWrapH - totalH) * 0.5f;
                                         float cy = startY;
 
+                                        // 图标盒 48：字形 32 + 显式 lineHeight 48 + 垂直居中
+                                        //（与 wallpaper 空态图标同款写法；只给 fontSize=盒高
+                                        // 时字形贴着默认行高落，容易顶出盒外）
                                         ui.text("home.api.chart.empty.icon")
                                             .position((wrapW - iconH) * 0.5f, cy)
                                             .size(iconH, iconH)
                                             .icon(0xF201)  // fa-line-chart
-                                            .fontSize(iconH)
-                                            .color(components::theme::withOpacity(t.colors.primary, 0.40f))
+                                            .fontSize(iconH * 2.0f / 3.0f)
+                                            .lineHeight(iconH)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .verticalAlign(eui::VerticalAlign::Center)
+                                            // 灰 @50%：绿白底上再压淡绿等于看不见（原 primary@40%）
+                                            .color(components::theme::withOpacity(
+                                                t.colors.textTertiary, 0.50f))
                                             .build();
                                         cy += iconH + gap;
 

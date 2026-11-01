@@ -9,9 +9,9 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                   float x, float y, float w, float h,
                   const core::theme::Tokens& t) {
 
-    // S2.5 + H5：选中 = 白底 elevated 卡（surface + border）+ 左 3px primary 竖线 + primary 文字。
-    // H5 把底从 primarySoftBg（#E6FBF2）改为 surface（#FFFFFF）加 border：
-    // 淡绿侧栏底（#F0FDF7）上 primarySoftBg 分不清，白卡 + 描边对比成立。
+    // 选中 = 白底 elevated 卡（surface + border）+ 左 3px primary 竖线 + primaryText 文字。
+    // 底保持白卡（H5）：侧栏底 #EBF6EF 与 primarySoftBg #E8F8EE 亮度几乎相同，软底分不清。
+    // 文字用 primaryText（on 白 5.05:1）而非 primary（2.38:1）——主色作文字不达 AA。
     ui.stack(id)
         .position(x, y)
         .size(w, h)
@@ -30,7 +30,7 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                 .color(t.colors.primary)
                 .build();
 
-            // 文字：primary（#36D399）+ 14px + 左对齐 + 垂直居中
+            // 文字：primaryText（#157E4E）+ 14px + 左对齐 + 垂直居中
             ui.text(id + ".text")
                 .position(kSelectionBarTextPadX, 0.0f)
                 .size(w - kSelectionBarTextPadX, h)
@@ -38,7 +38,7 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                 .fontSize(kSelectionBarFontSize)
                 .horizontalAlign(eui::HorizontalAlign::Left)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.primary)
+                .color(t.colors.primaryText)
                 .build();
         })
         .build();
