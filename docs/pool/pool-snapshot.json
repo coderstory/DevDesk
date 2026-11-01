@@ -1223,6 +1223,23 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 74,
+   "pool": "need",
+   "title": "devflow 0.19.0：交接信任纪律+池条目 id 派发硬门禁（老板流程优化令）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "老板 2026-11-01 指令（要求独立评估后优化插件，非 memory/AGENTS.md）：①上下文已灌入后各环节禁重复审查——简报已验证事实直接采信，仅可疑点/矛盾/待验项轮到才查证，查证结果回流台账供下游复用（根因：角色间无共享事实层，各自重建事实）；②重复事项禁重复执行（产品/调研/研发/测试各看一遍的浪费）；③开工硬门禁：凡派发（产品分析/研发写码/测试执行/修 bug）简报必含池条目 id，否则拒绝。评估结论：①②采信但保留例外——qa/reviewer 的职责内验证不免（豁免的是已验证事实重查，不是验证职责本身）；③落地三层=agent-gate.sh 硬拦（PreToolUse 检查【池条目】标记）+ask 派发纪律+角色开工登记铁律；主会话直做（S 级）硬拦不可行（拦 Edit/Bash 误伤面大）靠双登记纪律+收口池核对兕底，边界如实汇报。落地：agent-gate.sh+gate-test.sh（既有用例补标记+新增缺失被拦用例）+ask 派发纪律+7 角色交接信任条款+E4 锚点+0.18.0→0.19.0 三处+双测试全绿。",
+   "created": "2026-11-01 20:28:58 +0800",
+   "updated": "2026-11-01 20:36:39 +0800",
+   "body": "老板 2026-11-01 指令（要求独立评估后优化插件，非 memory/AGENTS.md）：①上下文已灌入后各环节禁重复审查——简报已验证事实直接采信，仅可疑点/矛盾/待验项轮到才查证，查证结果回流台账供下游复用（根因：角色间无共享事实层，各自重建事实）；②重复事项禁重复执行（产品/调研/研发/测试各看一遍的浪费）；③开工硬门禁：凡派发（产品分析/研发写码/测试执行/修 bug）简报必含池条目 id，否则拒绝。评估结论：①②采信但保留例外——qa/reviewer 的职责内验证不免（豁免的是已验证事实重查，不是验证职责本身）；③落地三层=agent-gate.sh 硬拦（PreToolUse 检查【池条目】标记）+ask 派发纪律+角色开工登记铁律；主会话直做（S 级）硬拦不可行（拦 Edit/Bash 误伤面大）靠双登记纪律+收口池核对兕底，边界如实汇报。落地：agent-gate",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": "已验收"
   }
  ],
  "dev_progress": [
@@ -2534,6 +2551,15 @@
    "need_id": 63,
    "time": "2026-11-01 20:22:32 +0800",
    "evidence": "devflow 仓 commit 7ada2d0（feat: ask 分诊补两条纪律 0.17.0→0.18.0，三处版本同步）+ 621113d（eval-log 0.18.0 PASS）；eval-run.sh 全绿（ask 行预算 48/60）+ gate-test.sh 全绿；验收口径=两条规则文本入 §0 + 版本三处一致 + 测试双绿",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 37,
+   "need_id": 74,
+   "time": "2026-11-01 20:36:39 +0800",
+   "evidence": "同待验收：devflow 6a22b09 + c9b61d2；gate-test.sh 16/16 绿 + eval-run.sh 172 项绿；验收口径=①无标记派发被硬拒 ②7 角色含交接信任节 ③ask 含标记要求与回流条款 ④版本三处 0.19.0 一致",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -5275,6 +5301,61 @@
    "from_status": null,
    "to_status": "在池",
    "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 250,
+   "need_id": 74,
+   "time": "2026-11-01 20:28:58 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 251,
+   "need_id": 74,
+   "time": "2026-11-01 20:29:06 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 252,
+   "need_id": 74,
+   "time": "2026-11-01 20:29:19 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 253,
+   "need_id": 74,
+   "time": "2026-11-01 20:36:34 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 254,
+   "need_id": 74,
+   "time": "2026-11-01 20:36:39 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
