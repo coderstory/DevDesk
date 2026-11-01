@@ -589,7 +589,7 @@ void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
         ui_kit::drawDialogTitle(ui, "claude.dialog.switch.title", w,
-                                "切换 Profile", 20.0f, t.colors.textPrimary);
+                                "切换 Profile", ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
         ui_kit::drawDialogText(
             ui, "claude.dialog.switch.msg", w,
             "切换到\"" + st.switchTargetName_ + "\"？代理配置将立即生效",

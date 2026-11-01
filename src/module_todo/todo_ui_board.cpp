@@ -237,20 +237,15 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     if (v.columns.empty()) {
         plate.columnX.clear();
         plate.columnWidth.clear();
-        ui.stack("todo.empty")
-            .size(contentW, bodyH)
-            .content([&] {
-                ui.text("todo.empty.text")
-                    .position(0.0f, bodyH / 2.0f - 12.0f)
-                    .size(contentW, 24.0f)
-                    .text("还没有任何列")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(24.0f)
-                    .horizontalAlign(eui::HorizontalAlign::Center)
-                    .color(t.colors.textTertiary)
-                    .build();
-            })
-            .build();
+        // 2026-11-01 R3：走全站统一空态组件（图标 + 主句 + 引导句，整体居中）。
+        // 此前是单行裸文字——与 release / agent / mcp / memory 各页形态都不一致。
+        ui_kit::EmptyStateOptions opts;
+        opts.message = "还没有任何列";
+        opts.guide =
+            "列是任务的分组。新建第一个任务时，系统会按你选的分类自动建出对应列。";
+        opts.icon = 0xF00B;  // fa-table-columns
+        ui_kit::emptyState(ui, "todo.empty", opts, 0.0f, 0.0f, contentW,
+                           bodyH, t);
         return;
     }
 
@@ -568,13 +563,20 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             // 空列 hoverRow 恒 0：条落卡区首卡位（列头下方），宽与非空列卡槽同源
             drawDropBar(ui, kColumnHeaderHeight, contentCardWidth(width));
         }
-        // S2.8：空态走 ui_kit::emptyState 极简文字档（14px/textSecondary 居中）
-        ui_kit::emptyState(ui, id + ".empty",
-                           v.searchQuery.empty()
-                               ? (isArchive ? "暂无归档" : "暂无任务")
-                               : "无命中任务",
-                           std::nullopt, 0.0f, height / 2.0f - 24.0f, width, 48.0f,
-                           t);
+        // S2.8：空态走 ui_kit::emptyState；2026-11-01 R3 补引导句（此前只有单行主句）
+        ui_kit::EmptyStateOptions opts;
+        if (!v.searchQuery.empty()) {
+            opts.message = "无命中任务";
+            opts.guide = "换个关键词，或清掉搜索条件。";
+        } else if (isArchive) {
+            opts.message = "暂无归档";
+            opts.guide = "完成的任务会移到这里，随时可以翻回去。";
+        } else {
+            opts.message = "暂无任务";
+            opts.guide = "点页头「新建任务」加一条。";
+        }
+        ui_kit::emptyState(ui, id + ".empty", opts, 0.0f, height / 2.0f - 36.0f,
+                           width, 72.0f, t);
         // H20：空列「+ 添加任务」入口删除——创建入口唯一（页头「新建任务」）
         return;
     }

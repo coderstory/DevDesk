@@ -888,7 +888,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
             .onOpenChange([this](bool v) { if (!v) cancelPendingDelete(); })
             .content([&] {
                 ui_kit::drawDialogTitle(ui, "schedule.list.deleteConfirm.title",
-                                        w, "删除定时规则", 20.0f,
+                                        w, "删除定时规则", ui_kit::kDialogTitleFontSize,
                                         t.colors.textPrimary,
                                         {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
                 ui_kit::drawDialogText(

@@ -132,7 +132,7 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
         .zIndex(990)
         .onOpenChange([&st](bool v) { st.open = v; })
         .content([&] {
-            ui_kit::drawDialogTitle(ui, "schedule.history.title", w, "运行历史", 20.0f,
+            ui_kit::drawDialogTitle(ui, "schedule.history.title", w, "运行历史", ui_kit::kDialogTitleFontSize,
                                     t.colors.textPrimary,
                                     {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 

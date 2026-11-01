@@ -4,6 +4,8 @@
 
 #include <components/theme.h>
 
+#include <core/render/text.h>
+
 #include <ui_kit/button.h>
 
 #include <algorithm>
@@ -78,22 +80,38 @@ void emptyState(eui::Ui& ui, const std::string& id,
             .fontSize(kEmptyStateFontSize)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
+            .maxWidth(w)
+            .wrap(false)
+            .overflow(core::TextOverflow::Ellipsis)
             .color(t.colors.textSecondary)
             .build();
         cy += kEmptyStateMsgH;
 
         if (hasGuide) {
             cy += kEmptyStateGap;
+            // 2026-11-01：窄盒（看板列 230px 那种）里引导句会横向溢出到相邻列——
+            // 文字节点宽度给了 w，但文本本身不换行也不截断。窄盒改两行换行、
+            // 宽盒保持单行；主句一律 Ellipsis 截断。
+            const float guideW = core::TextPrimitive::measureTextWidth(
+                options.guide, "", kEmptyStateGuideFontSize);
+            const bool guideWrap = guideW > w;
+            const float guideH =
+                guideWrap ? kEmptyStateGuideH * 2.0f : kEmptyStateGuideH;
             ui.text(id + ".guide")
                 .position(0.0f, cy)
-                .size(w, kEmptyStateGuideH)
+                .size(w, guideH)
                 .text(options.guide)
                 .fontSize(kEmptyStateGuideFontSize)
+                .lineHeight(kEmptyStateGuideH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
+                .maxWidth(w)
+                .wrap(guideWrap)
+                .overflow(guideWrap ? core::TextOverflow::Clip
+                                     : core::TextOverflow::Ellipsis)
                 .color(t.colors.textTertiary)
                 .build();
-            cy += kEmptyStateGuideH;
+            cy += guideH;
         }
 
         if (hasAction) {

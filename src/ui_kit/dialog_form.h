@@ -58,6 +58,11 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
                     const std::string& text, float fontSize, const eui::Color& color,
                     const DialogTextOptions& options = {});
 
+// 弹窗标题字号（2026-11-01 S10 统一）：此前 25 处 drawDialogTitle 传 20.0f，
+// 而 release 自绘弹窗标题另有两套（dialogHeading 19/600、新建任务 20/600）——
+// 同一类控件三个规格。定死为唯一来源。
+inline constexpr float kDialogTitleFontSize = 20.0f;
+
 // 标题行（宽 w-56、高 28、行高 28、700 字重）
 struct DialogTitleOptions {
     float x = kDialogInsetX;

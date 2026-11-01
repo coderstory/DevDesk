@@ -20,7 +20,7 @@ void MemoryModule::composeEditDialog(eui::Ui& ui, const eui::Screen& screen,
     };
     ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
         ui_kit::drawDialogTitle(ui, "memory.dialog.edit.title", w, "编辑后接受",
-                                20.0f, t.colors.textPrimary, {});
+                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
         ui.text("memory.dialog.edit.hint")
             .position(ui_kit::kDialogInsetX, 56.0f)
             .size(w - ui_kit::kDialogBodyInsetX, 20.0f)
@@ -77,7 +77,7 @@ void MemoryModule::composeMaskModal(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
         // 设计稿逐字文案（mask-modal）
         ui_kit::drawDialogTitle(ui, "memory.dialog.mask.title", w,
-                                "确认关闭脱敏？", 20.0f, t.colors.errorText, {});
+                                "确认关闭脱敏？", ui_kit::kDialogTitleFontSize, t.colors.errorText, {});
         ui.text("memory.dialog.mask.body")
             .position(ui_kit::kDialogInsetX, 56.0f)
             .size(w - ui_kit::kDialogBodyInsetX, 64.0f)
@@ -121,7 +121,7 @@ void MemoryModule::composeClearModal(eui::Ui& ui, const eui::Screen& screen,
     const auto snap = panel_.snapshot();
     ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
         ui_kit::drawDialogTitle(ui, "memory.dialog.clear.title", w,
-                                "清除全部记忆？", 20.0f, t.colors.errorText, {});
+                                "清除全部记忆？", ui_kit::kDialogTitleFontSize, t.colors.errorText, {});
         ui.text("memory.dialog.clear.body")
             .position(ui_kit::kDialogInsetX, 56.0f)
             .size(w - ui_kit::kDialogBodyInsetX, 64.0f)
@@ -187,7 +187,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
     const auto es = snap.engine;
     ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
         ui_kit::drawDialogTitle(ui, "memory.dialog.wizard.title", w,
-                                "首次安装向导", 20.0f, t.colors.textPrimary, {});
+                                "首次安装向导", ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
         // 步骤清单：检测 → venv+pip → 拉起 → 完成/失败（状态真接 TelememEngine）
         auto stepRow = [&](const char* id, float ry, const char* name,
                            const std::string& status, eui::Color color) {

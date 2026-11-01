@@ -28,7 +28,7 @@ void MarkdownModule::drawNewNoteDialog(eui::Ui& ui,
 
     ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
             ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
 
             // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
             const std::string newNoteParent =
@@ -108,7 +108,7 @@ void MarkdownModule::drawNewFolderDialog(eui::Ui& ui,
 
     ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
             ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
 
             // 提示行带上实际落点（= 当前上级目录），避免「显示 A 建到 B」。
             ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
@@ -527,7 +527,7 @@ void MarkdownModule::drawDeleteDialog(eui::Ui& ui,
 
     ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
             ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
             ui_kit::drawDialogText(
                 ui, "md.dialog.del.body", w,
                 "将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。",
@@ -568,7 +568,7 @@ void MarkdownModule::drawRenameDialog(eui::Ui& ui,
 
     ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
             ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
             ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
                                    "相对笔记目录；填「工作/新名」可同时移动。"
                                    "笔记一律以 .md 结尾：不写会自动补上",
@@ -717,7 +717,7 @@ void MarkdownModule::drawFolderDeleteDialog(eui::Ui& ui,
 
     ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
             ui_kit::drawDialogTitle(ui, "md.dialog.deldir.title", w, "删除文件夹",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
             ui_kit::drawDialogText(
                 ui, "md.dialog.deldir.body", w,
                 "将删除文件夹「" + dirDeleteTargetPath_ + "」及其全部子文件夹，不可恢复。",
@@ -757,7 +757,7 @@ void MarkdownModule::drawFolderRenameDialog(eui::Ui& ui,
 
     ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
             ui_kit::drawDialogTitle(ui, "md.dialog.renamedir.title", w, "重命名文件夹",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
             ui_kit::drawDialogText(ui, "md.dialog.renamedir.hint", w,
                                    "同级改名：只改文件夹名，新名不能包含 /",
                                    t.sizes.fontSizeSmall, t.colors.textTertiary,

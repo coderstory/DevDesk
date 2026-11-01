@@ -25,6 +25,7 @@
 #include <eui/types.h>
 
 #include <ui_kit/button.h>
+#include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 
 #include <algorithm>
@@ -347,15 +348,12 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
         .zIndex(1000)
         .onOpenChange([&state](bool open) { state.open = open; })
         .content([&] {
-            ui.text("release.newtask.title")
-                .position(x0, 16.0f)
-                .size(innerW, 28.0f)
-                .text("新建上线任务")
-                .fontSize(core::theme::scaled(20.0f))
-                .lineHeight(28.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
+            // 2026-11-01 S10：标题改走 ui_kit::drawDialogTitle（全站弹窗标题统一
+            // 20px/700；此前此处自绘 20px/600，是第三套规格）。
+            ui_kit::drawDialogTitle(ui, "release.newtask.title", width,
+                                    "新建上线任务",
+                                    ui_kit::kDialogTitleFontSize,
+                                    t.colors.textPrimary);
 
             // 计划上线日期（三列滚轮 picker 的提交值）
             ui.text("release.newtask.date.label")

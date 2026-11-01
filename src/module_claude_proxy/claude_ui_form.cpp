@@ -475,7 +475,7 @@ const float h = 540.0f;
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(
                 ui, "claude.dialog.form.title", w,
-                isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
+                isEdit ? "编辑 Profile" : "新建 Profile", ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
                 {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             // S3.10 弹窗级小 Tab：块面式 32px/12px/13px（淘汰下划线式 components::tabs）
@@ -544,7 +544,7 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "claude.dialog.delete.title", w, "确认删除？",
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
             // 文本 wrap + 高 60：长 Profile 名换行，避免 EUI 文本不裁剪被画出右缘
             ui_kit::drawDialogText(
                 ui, "claude.dialog.delete.msg", w,

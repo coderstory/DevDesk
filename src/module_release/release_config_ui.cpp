@@ -213,15 +213,14 @@ void fitText(eui::Ui& ui, const std::string& id, float x, float y, float w, floa
 // 弹窗标题契约：18px / 600 / 行高 24；不要换成 20/700 的通用对话框标题。
 void dialogHeading(eui::Ui& ui, const std::string& id, float width,
                    const std::string& label, const Tokens& t) {
-    ui.text(id)
-        .position(ui_kit::kDialogInsetX, 16.0f)
-        .size(std::max(0.0f, width - ui_kit::kDialogBodyInsetX), 26.0f)
-        .text(label)
-        .fontSize(t.sizes.fontSizeLarge)
-        .lineHeight(24.0f)
-        .fontWeight(600)
-        .color(t.colors.textPrimary)
-        .build();
+    // 2026-11-01 S10：改走 ui_kit::drawDialogTitle（此前自绘 19px/600，与全站
+    // 25 处 drawDialogTitle 的 20px/700 是两套规格）。行高/高度按本处原值保留。
+    ui_kit::DialogTitleOptions opts;
+    opts.height = 26.0f;
+    opts.lineHeight = 24.0f;
+    ui_kit::drawDialogTitle(ui, id, width, label,
+                            ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
+                            opts);
 }
 
 void headCell(eui::Ui& ui, const std::string& id, const std::string& label, float x,

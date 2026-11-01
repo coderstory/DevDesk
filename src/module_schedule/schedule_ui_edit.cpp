@@ -487,7 +487,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             const auto touch = [&st] { st.saveError.clear(); };
 
             ui_kit::drawDialogTitle(ui, "schedule.edit.title", w, "定时规则",
-                                    20.0f, t.colors.textPrimary,
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
                                     {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             // 类型页签（六 kind）

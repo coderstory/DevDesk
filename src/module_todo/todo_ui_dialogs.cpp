@@ -216,7 +216,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::NewTask, v); })
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
-                                    20.0f, t.colors.textPrimary,
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
                                     {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             std::string colName = "?";
@@ -459,7 +459,7 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.delcol.title", w, title,
-                                    20.0f, t.colors.textPrimary);
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
             ui_kit::drawDialogText(ui, "todo.dialog.delcol.body", w, body,
                                    t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
                                    {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f});
@@ -872,7 +872,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
                                     ro ? "任务详情（只读）" : "任务详情",
-                                    20.0f, t.colors.textPrimary,
+                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
                                     {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             // 头部右缘动作 chips（demo：🗑 删除 灰 / ✔ 标记完成 绿）——从底部按钮区上移，
@@ -1357,7 +1357,7 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
         ui_kit::drawDialogTitle(ui, "todo.dialog.docpick.title", w, "关联文档",
-                                20.0f, t.colors.textPrimary,
+                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
                                 {.x = 28.0f, .y = 16.0f, .inset = 78.0f});
         std::string hint = "选择一篇笔记作为任务的详细说明（点击即关联）";
         if (d.docPickNotes.empty()) {
