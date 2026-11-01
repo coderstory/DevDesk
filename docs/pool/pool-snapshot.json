@@ -1353,7 +1353,7 @@
    "owner": "ZCode主会话",
    "detail": "devflow 全面审计之〇（前置，老板 2026-11-01 令：第一个任务是学习研究，先出判据基线再审计）。目的：boss 认为 devflow 现有 skill「格式、流程不够好」——先研究清楚「什么是好的 skill/插件」，产出**判据基线**供审计①-⑥与后续重写共用。输入：①本地官方范例=plugin-creator 与 skill-creator 两个 SKILL.md（路径 /Users/coderstory/.zcode/cli/plugins/cache/zcode-plugins-official/{plugin-creator/0.1.1,skill-creator/0.1.0}/skills/*/SKILL.md，已核实存在）；②外部检索=Anthropic 官方 agent skills 编写最佳实践、优质开源 skill 仓库范例、ZCode skill spec（中英各检索）；③对照物=devflow 现有 11 skill + 7 agents（~/dev/zcode-plugins/devflow）。产出=「skill/插件质量判据基线」全报告落盘 docs/research/YYYY-MM-DD-skill-quality-baseline.md：格式规范（frontmatter/结构/长度上限）、流程规范（触发→渐进披露三层→按需加载 references）、description 写法（触发词覆盖与 token 经济）、写作风格（imperative/解释 why/示例胜过规则）、反模式清单（大坨正文/MUST 堆砌/过度 prescribing）+ 对 devflow 的差距预判（粗粒度逐 skill 一行，细审归池 75）。主会话已读两个官方 skill，可先验事实：渐进披露三层（metadata 常驻须短/body<500 行/references 无限按需）、description 要「略推」覆盖触发词但不冗长、示例胜规则、解释 why 胜过全大写禁令、busywork=过度 prescribing 信号。",
    "created": "2026-11-01 22:14:11 +0800",
-   "updated": "2026-11-01 22:14:11 +0800",
+   "updated": "2026-11-01 22:16:32 +0800",
    "body": "devflow 全面审计之〇（前置，老板 2026-11-01 令：第一个任务是学习研究，先出判据基线再审计）。目的：boss 认为 devflow 现有 skill「格式、流程不够好」——先研究清楚「什么是好的 skill/插件」，产出**判据基线**供审计①-⑥与后续重写共用。输入：①本地官方范例=plugin-creator 与 skill-creator 两个 SKILL.md（路径 /Users/coderstory/.zcode/cli/plugins/cache/zcode-plugins-official/{plugin-creator/0.1.1,skill-creator/0.1.0}/skills/*/SKILL.md，已核实存在）；②外部检索=Anthropic 官方 agent skills 编写最佳实践、优质开源 skill 仓库范例、ZCode skill s",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
@@ -2339,6 +2339,15 @@
    "need_id": 72,
    "time": "2026-11-01 21:47:47 +0800",
    "note": "撤销批次条目改造：条目独立保留，合批只在执行时（老板 2026-11-01 纠正：MCP 不修改合并）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 110,
+   "need_id": 81,
+   "time": "2026-11-01 22:16:32 +0800",
+   "note": "boss 定调调研框架=四问：用什么（素材与工具：官方两 skill/外部最佳实践/ZCode spec/检索手段）、做什么（交付物：判据基线报告的清单与结构）、怎么做（方法：精读→检索→交叉→对照 devflow→分档的执行顺序与深度）、怎么测（判据的可验证性：如何证明判据对——试写对照/新会话盲测/审计适用性自检）。报告按四问组织。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
