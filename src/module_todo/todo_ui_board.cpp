@@ -128,7 +128,9 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                             components::input(ui, "todo.search")
                                 .size(240.0f, 40.0f)
                                 .value(v.searchQuery)
-                                .placeholder("搜索任务…")
+                                // 2026-11-01：同 md 搜索框——固定宽度容器里
+                                // 放大后的提示文字会溢出被裁，就地收敛文案。
+                                .placeholder("搜索")
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .inset(30.0f)
                                 .theme(componentTheme)

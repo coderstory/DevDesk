@@ -201,7 +201,10 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
             .position(16.0f, 48.0f)
             .size(searchW, 40.0f)
             .value(searchQuery_)
-            .placeholder("搜索笔记…")
+            // 2026-11-01：固定宽度的输入框里，放大后的提示文字会溢出被裁
+            // （130% 档 4 个汉字 ≈ 68px > 可用文本区 64px）。就地收敛文案，
+            // 语义靠放大镜图标承载；字号仍随全局档缩放。
+            .placeholder("搜索")
             .fontSize(core::theme::scaled(kTreeFontSize))
             .inset(32.0f)
             .theme(componentTheme)

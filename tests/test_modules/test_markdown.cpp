@@ -1330,7 +1330,9 @@ REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+�
     // 就画 placeholder，与焦点无关）。🔍 用 FA 浮层 icon（fa-magnifying-glass）
     const auto* search = ui.find("md.search.text");
     DOCTEST_REQUIRE(search != nullptr);
-    DOCTEST_CHECK_EQ(search->text, std::string("搜索笔记…"));
+    // 2026-11-01：占位文案收敛为「搜索」——固定宽度的输入框里，字号放大后
+    // 4 个汉字会溢出被裁，语义改由放大镜图标承载。
+    DOCTEST_CHECK_EQ(search->text, std::string("搜索"));
     const auto* searchIcon = ui.find("md.search.icon");
     DOCTEST_REQUIRE(searchIcon != nullptr);
     DOCTEST_CHECK_EQ(searchIcon->fontFamily, std::string("Icon"));
