@@ -9,10 +9,16 @@
 #include <eui/detail/dsl_app_impl.h>
 #include "test_support.h"
 #include "core/module_interface.h"
+#include "core/component_theme.h"
+#include "core/theme.h"
+#include "module_claude_proxy/claude_ui_list.h"
+#include "module_claude_proxy/claude_ui_state.h"
+#include "module_claude_proxy/profile_repository.h"
 
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 // app:: 层桩（probe 不建应用级 UI，compose 走 probe::composeModuleFrame）
 namespace app {
@@ -28,6 +34,16 @@ extern "C" ::core::Module* create_claude_module();
 
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
+    std::string shotProfiles;
+    bool lightTheme = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--shot-profiles" && i + 1 < argc) {
+            shotProfiles = argv[++i];
+        } else if (arg == "--light") {
+            lightTheme = true;
+        }
+    }
     if (!probe::initializeWindowBackend()) return 1;
     auto window = probe::makeWindow("claude_probe", args.windowW, args.windowH);
     if (!window) {
@@ -72,6 +88,44 @@ int main(int argc, char* argv[]) {
 
     // --screenshot 落图（未传 = 零开销不写文件；传了失败→passed=false）
     probe::captureIfRequested(args, window, runtime, &passed);
+
+    // --shot-profiles：profile 列表 item 的样式取证。
+    // 模块 compose 走服务端，探针环境服务端未就绪 → 列表恒空，item 样式无从取样；
+    // 这里注入假数据直调 drawProfileListPanel（同一个绘制入口）。
+    if (!shotProfiles.empty()) {
+        std::vector<module::claude::Profile> profiles;
+        profiles.push_back({1, "生产环境", "https://api.anthropic.com"});
+        // emoji 开头的名字：旧版头像首字取「第一个 UTF-8 码点」→ 字体无该字形
+        // → ensureGlyph 失败 → 整段不渲染 → 头像圆白着（用户反馈「文字丢了」）
+        profiles.push_back({5, "\xF0\x9F\x9A\x80 \xE7\x94\x9F\xE4\xBA\xA7", "https://api.anthropic.com"});
+        profiles.push_back({2, "Personal", "https://api.anthropic.com"});
+        profiles.push_back({3, "测试环境 · 备用节点", "https://api.anthropic.com"});
+        profiles.push_back({4, "a", "https://api.anthropic.com"});
+        module::claude::ProfileListState st;
+        st.cachedHasActive_ = true;
+        st.cachedActive_ = profiles.size() > 1 ? profiles[1] : module::claude::Profile();
+        module::claude::ProfileListActions actions;
+        if (lightTheme) {
+            core::theme::setLight();
+            std::cerr << "claude_probe: lightTheme on, isDark="
+                      << (core::theme::current().isDark ? 1 : 0) << "\n";
+        }
+        const auto& t = core::theme::current();
+        const auto themeTokens = core::theme::componentTokensWeChat(t);
+        for (int f = 0; f < 4; ++f) {
+            probe::composeModuleFrame(
+                runtime, window, "claude", w, h,
+                [&](eui::Ui& u, const eui::Screen& screen) {
+                    module::claude::drawProfileListPanel(
+                        u, 320.0f, screen.height, t, themeTokens, st, profiles,
+                        std::string(), actions);
+                });
+        }
+        if (!probe::captureFramePng(window, runtime, shotProfiles)) {
+            std::cerr << "claude_probe: profile 列表落图失败 " << shotProfiles << "\n";
+            passed = false;
+        }
+    }
 
     mod->onStop();
     runtime.shutdown(false);

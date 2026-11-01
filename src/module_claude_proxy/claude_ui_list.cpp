@@ -66,32 +66,81 @@ AvatarColors avatarColorsFor(const eui::Color& base, bool isDark) {
                 eui::mixColor(base, eui::Color(1.0f, 1.0f, 1.0f), 0.45f)};
     }
     return {eui::mixColor(base, eui::Color(1.0f, 1.0f, 1.0f), 0.72f),
-            eui::mixColor(base, eui::Color(0.0f, 0.0f, 0.0f), 0.25f)};
+            eui::mixColor(base, eui::Color(0.0f, 0.0f, 0.0f), 0.35f)};
 }
 
-// 取名字首 UTF-8 码点（单取首字节会把 CJK 截成 ?）；非法 / 截断序列回退 ?
-std::string firstUtf8CharOr(const std::string& name) {
-    if (name.empty()) return "?";
-    const auto b0 = static_cast<unsigned char>(name[0]);
-    size_t len = 0;
-    if ((b0 & 0x80u) == 0x00u) {
-        len = 1;
-    } else if ((b0 & 0xE0u) == 0xC0u) {
-        len = 2;
-    } else if ((b0 & 0xF0u) == 0xE0u) {
-        len = 3;
-    } else if ((b0 & 0xF8u) == 0xF0u) {
-        len = 4;
-    } else {
-        return "?";  // 0x80-0xBF 续字节打头 / 0xF8+ 超界 → 非法序列
-    }
-    if (name.size() < len) return "?";  // 序列被截断
-    for (size_t i = 1; i < len; ++i) {
-        if ((static_cast<unsigned char>(name[i]) & 0xC0u) != 0x80u) {
-            return "?";  // 续字节不合法
+// 头像首字：取名字里第一个「字体一定覆盖得到」的字符——ASCII 字母数字或常用汉字。
+//
+// 为什么不用「取第一个 UTF-8 码点」：EUI 遇到字体里没有的字形时走
+// ensureGlyph 失败 → 跳过该 glyph（text_layout.cpp:237）→ 该行无 ink →
+// **整段文字不渲染**。名字以 emoji/生僻符号开头时（真实用户的 profile 名常是
+// "🚀 生产" 这类），头像圆就白着——2026-11-01 用户反馈「圆圈里的文字丢了」。
+// 这里显式跳过 emoji（4 字节扩展平面）、ZWJ、变体选择符、符号区、全角符号，
+// 取不到任何安全字符时由调用方落 fa-user 图标兜底（图标字体必有字形）。
+std::string avatarInitial(const std::string& name) {
+    size_t i = 0;
+    while (i < name.size()) {
+        const auto b0 = static_cast<unsigned char>(name[i]);
+        size_t len = 0;
+        std::uint32_t cp = 0;
+        if (b0 < 0x80) {
+            len = 1;
+            cp = b0;
+        } else if ((b0 & 0xE0u) == 0xC0u) {
+            len = 2;
+            cp = b0 & 0x1Fu;
+        } else if ((b0 & 0xF0u) == 0xE0u) {
+            len = 3;
+            cp = b0 & 0x0Fu;
+        } else if ((b0 & 0xF8u) == 0xF0u) {
+            len = 4;
+            cp = b0 & 0x07u;
+        } else {
+            ++i;  // 非法续字节打头：跳过
+            continue;
+        }
+        if (i + len > name.size()) break;
+        bool valid = true;
+        for (size_t k = 1; k < len; ++k) {
+            const auto b = static_cast<unsigned char>(name[i + k]);
+            if ((b & 0xC0u) != 0x80u) {
+                valid = false;
+                break;
+            }
+            cp = (cp << 6) | (b & 0x3Fu);
+        }
+        if (!valid) {
+            ++i;
+            continue;
+        }
+        i += len;
+        if (len == 4) continue;                      // emoji / 扩展平面
+        if (cp == 0x200Du || cp == 0xFE0Fu || cp == 0xFE0Eu) continue;  // ZWJ / 变体选择符
+        if (cp >= 0x2600u && cp <= 0x27BFu) continue;  // 杂项符号 / 带框数字
+        if (cp >= 0x2190u && cp <= 0x21FFu) continue;  // 箭头
+        if (cp >= 0x3000u && cp <= 0x303Fu) continue;  // CJK 标点
+        if (cp >= 0xFF00u && cp <= 0xFFEFu) continue;  // 全角符号
+        if ((cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||
+            (cp >= '0' && cp <= '9') || (cp >= 0x4E00u && cp <= 0x9FFFu)) {
+            std::string ch = name.substr(i - len, len);
+            if (cp >= 'a' && cp <= 'z') {
+                ch[0] = static_cast<char>(cp - 'a' + 'A');  // 拉丁首字母大写
+            }
+            return ch;
         }
     }
-    return name.substr(0, len);
+    return std::string();
+}
+
+// baseUrl → 主机名（去协议与路径）；无 baseUrl 落 model；都空 → 空串。
+std::string profileSubtitle(const Profile& p) {
+    std::string host = p.baseUrl;
+    const auto scheme = host.find("://");
+    if (scheme != std::string::npos) host = host.substr(scheme + 3);
+    const auto slash = host.find('/');
+    if (slash != std::string::npos) host = host.substr(0, slash);
+    if (host.empty()) host = p.model;
+    return host;
 }
 
 // Profile 卡片（点击选中，选中/激活高亮）。st 为引用：点击回调写回选中态，须指向存活到下一帧的模块状态成员
@@ -102,15 +151,26 @@ void drawProfileCard(eui::Ui& ui,
                      const core::theme::Tokens& t,
                      const Profile& p,
                      ProfileListState& st,
-                     int64_t selectedId) {
-    const float h = 56.0f;
+                     int64_t selectedId,
+                     bool isActive) {
+    // 2026-11-01 item 重设计：行高 56→60、头像 40→32、名称与副信息两行、
+    // 右侧「使用中」标记填掉原先的大片空白（旧版行右侧 60% 是空的）。
+    constexpr float kRowH = 60.0f;
+    constexpr float kAvatar = 32.0f;
+    constexpr float kPadX = 12.0f;
+    constexpr float kTextX = kPadX + kAvatar + 12.0f;  // 56
+    constexpr float kActiveChipW = 52.0f;
+    constexpr float kRightPad = 12.0f;
+    const float h = kRowH;
     const bool selected = (p.id == selectedId);
     // S2.5 选中态：primarySoftBg 底 + 左 3px primary 竖线（替代旧绿圈白勾）
     const eui::Color bgNormal = selected
         ? t.colors.primarySoftBg
         : t.colors.surface;
+    // 选中字色用 primaryText（浅色档 #157E4E on 白 4.99:1）；primary 本身仅
+    // 2.96:1，14px 小字不达 WCAG AA（与审计 F3.4 同一裁决口径）。
     const eui::Color nameColor = selected
-        ? t.colors.primary
+        ? t.colors.primaryText
         : t.colors.textPrimary;
 
     ui.rect(id + ".bg")
@@ -144,48 +204,106 @@ void drawProfileCard(eui::Ui& ui,
     }
 
     // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边；垂直居中由 (h - 头像径) 推导
-    const float avatarSize = 40.0f;
-    const float avatarY = y + (h - avatarSize) * 0.5f;
+    const float avatarY = y + (h - kAvatar) * 0.5f;
     const AvatarColors avatar = avatarColorsFor(
         kAvatarPalette[avatarHash(static_cast<std::uint64_t>(p.id)) %
                        kAvatarPaletteSize],
         t.isDark);
     ui.rect(id + ".avatar")
-        .position(16.0f, avatarY)
-        .size(avatarSize, avatarSize)
+        .position(kPadX, avatarY)
+        .size(kAvatar, kAvatar)
         .color(avatar.fill)
-        .radius(avatarSize * 0.5f)
+        .radius(kAvatar * 0.5f)
         .border(1.5f, avatar.ring)
         .build();
-    // 头像首字按 UTF-8 码点取，颜色随包边
-    const std::string initial = firstUtf8CharOr(p.name);
-    ui.text(id + ".avatar.text")
-        .position(16.0f, avatarY)
-        .size(avatarSize, avatarSize)
-        .text(initial)
-        .fontSize(core::theme::scaled(16.0f))
-        .lineHeight(avatarSize)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        // 文本盒 == 圆底高，须显式垂直居中，否则 ink 从行框顶沿起排
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(avatar.ring)
-        .fontWeight(600)
-        .build();
+
+    // 头像内容：首字（字体覆盖不到的字符已在 avatarInitial 里剔除）；
+    // 取不到安全字符 → fa-user 图标兜底（图标字体必有字形，圆圈永不空白）
+    const std::string initial = avatarInitial(p.name);
+    if (!initial.empty()) {
+        ui.text(id + ".avatar.text")
+            .position(kPadX, avatarY)
+            .size(kAvatar, kAvatar)
+            .text(initial)
+            .fontSize(core::theme::scaled(14.0f))
+            .lineHeight(kAvatar)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            // 文本盒 == 圆底高，须显式垂直居中，否则 ink 从行框顶沿起排
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(avatar.ring)
+            .fontWeight(700)
+            .build();
+    } else {
+        ui.text(id + ".avatar.icon")
+            .position(kPadX, avatarY)
+            .size(kAvatar, kAvatar)
+            .icon(eui::utf8(0xF007))  // fa-user
+            .fontSize(core::theme::scaled(13.0f))
+            .lineHeight(kAvatar)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(avatar.ring)
+            .build();
+    }
+
+    // 右侧「使用中」标记（仅激活项）——旧版行右侧全空，这一块就是用户说的「空白太多」
+    const bool showActiveChip = isActive;
+    const float nameMaxW = std::max(
+        40.0f, width - kTextX - kRightPad - (showActiveChip ? kActiveChipW + 8.0f : 0.0f));
 
     // 名称：单行截断让位右缘
     {
-        const float nameMaxW = std::max(40.0f, width - 12.0f - 64.0f);
         ui.text(id + ".name")
-            .position(64.0f, y + ((h - 20.0f) * 0.5f))
-            .size(nameMaxW, 20.0f)
+            .position(kTextX, y + 10.0f)
+            .size(nameMaxW, 18.0f)
             .maxWidth(nameMaxW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
             .text(p.name)
             .fontSize(core::theme::scaled(14.0f))
-            .lineHeight(core::theme::scaled(20.0f))
+            .lineHeight(core::theme::scaled(18.0f))
             .fontWeight(600)
             .color(nameColor)
+            .build();
+    }
+
+    // 副信息（主机名 / 模型）：第二行灰字，与名称左对齐
+    {
+        const std::string sub = profileSubtitle(p);
+        if (!sub.empty()) {
+            ui.text(id + ".subtitle")
+                .position(kTextX, y + 30.0f)
+                .size(nameMaxW, 16.0f)
+                .maxWidth(nameMaxW)
+                .wrap(false)
+                .overflow(core::TextOverflow::Ellipsis)
+                .text(sub)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
+                .color(t.colors.textTertiary)
+                .build();
+        }
+    }
+
+    if (showActiveChip) {
+        const float chipX = width - kRightPad - kActiveChipW;
+        const float chipY = y + 12.0f;
+        ui.rect(id + ".active.chip")
+            .position(chipX, chipY)
+            .size(kActiveChipW, 20.0f)
+            .radius(t.sizes.radiusPill)
+            .color(t.colors.surfaceElevated)
+            .border(1.0f, t.colors.borderDefault)
+            .build();
+        ui.text(id + ".active.text")
+            .position(chipX, chipY)
+            .size(kActiveChipW, 20.0f)
+            .text("使用中")
+            .fontSize(core::theme::scaled(11.0f))
+            .lineHeight(core::theme::scaled(20.0f))
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.primaryText)
             .build();
     }
 
@@ -487,7 +605,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .build();
             } else {
                 // virtualList：仅可见行进 slot 窗口重建，overscan 一个视口高；列表恒吃剩余高
-                const float rowPitch = 56.0f + cardGap;
+                const float rowPitch = 60.0f + cardGap;
                 const float listH = std::max(0.0f, listBottom - cardY0);
                 // 退化守门：仅 bodyH 极小时列表视口被挤没
                 if (listH < kListMinH) {
@@ -530,11 +648,11 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                         const std::string cardId =
                             "claude.profile." + std::to_string(idx);
                         inner.stack(rowId + ".card")
-                            .size(contentWidth, 56.0f)
+                            .size(contentWidth, 60.0f)
                             .content([&] {
                                 // 右键菜单锚点 = PointerEvent 原始坐标经 menuAnchorForPointer 换算（页面坐标）；st 为引用写回模块状态
                                 inner.stack(cardId + ".wrap")
-                                    .size(contentWidth, 56.0f)
+                                    .size(contentWidth, 60.0f)
                                     .onContextMenu(
                                         [sp = &st,
                                          pid = profiles[idx].id](
@@ -559,7 +677,10 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                         drawProfileCard(
                                             inner, cardId, 0.0f,
                                             contentWidth, t, profiles[idx],
-                                            st, effSelectedId);
+                                            st, effSelectedId,
+                                            st.cachedHasActive_ &&
+                                                st.cachedActive_.id ==
+                                                    profiles[idx].id);
                                     })
                                     .build();
                             })
