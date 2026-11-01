@@ -951,6 +951,74 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 58,
+   "pool": "need",
+   "title": "skill：离屏渲染拿特定 UI 截图+布局（wrap 既有 probe 设施）",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "老板需求：开发一个 skill，通过离屏渲染拿到特定 UI 的截图和布局效果；probe 已实现（tests/probes/probe_harness.h 帧捕获 + uat62_page_shots_probe 全页批拍）。交付 = .agents/skills/ 下 SKILL.md 文档：两条路径（整页批拍 / 特定 UI 状态自写探针）+ 布局访问惯例（element.frame）+ 构建运行命令 + 坑位清单（24 帧稳帧、NoDisplay 77、Retina 2x、present 前读缓冲、assets cwd 已修）。验收 = 实操跑通两路径留证据物 evidence/，不新增框架代码。",
+   "created": "2026-11-01 12:29:49 +0800",
+   "updated": "2026-11-01 12:40:15 +0800",
+   "body": "老板需求：开发一个 skill，通过离屏渲染拿到特定 UI 的截图和布局效果；probe 已实现（tests/probes/probe_harness.h 帧捕获 + uat62_page_shots_probe 全页批拍）。交付 = .agents/skills/ 下 SKILL.md 文档：两条路径（整页批拍 / 特定 UI 状态自写探针）+ 布局访问惯例（element.frame）+ 构建运行命令 + 坑位清单（24 帧稳帧、NoDisplay 77、Retina 2x、present 前读缓冲、assets cwd 已修）。验收 = 实操跑通两路径留证据物 evidence/，不新增框架代码。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": "已验收"
+  },
+  {
+   "id": 59,
+   "pool": "need",
+   "title": "ui-probe-shot skill 说明优化——description 补何时用+能解决什么（老板反馈）",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "池58 交付物验收反馈：frontmatter description 需写明触发场景（何时该用）与解决的问题（TCC 拿不到屏、交互态拍不到、布局只能目测）；其余内容不动。S 级单文件微调，主会话直做。",
+   "created": "2026-11-01 15:49:21 +0800",
+   "updated": "2026-11-01 15:51:07 +0800",
+   "body": "池58 交付物验收反馈：frontmatter description 需写明触发场景（何时该用）与解决的问题（TCC 拿不到屏、交互态拍不到、布局只能目测）；其余内容不动。S 级单文件微调，主会话直做。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": "已验收"
+  },
+  {
+   "id": 60,
+   "pool": "need",
+   "title": "独立审计：ui-probe-shot skill（池58 交付物）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "code-reviewer",
+   "detail": "老板令：对 .agents/skills/ui-probe-shot/SKILL.md 做独立审计。开发=主会话本人（S 级直做），按「需求产物过独立审计」纪律派 code-reviewer（未参与开发）。重点：①声称事实逐条对码核真（harness API/命令/坑位溯源）②项目约束符合性（构建纪律/证据物/双平台——全部实操证据仅 macOS，Windows 适用性是否缺口）③可用性（未读 harness 源码的 agent 能否走通）④冗余。只读出分级清单不代修。",
+   "created": "2026-11-01 15:51:48 +0800",
+   "updated": "2026-11-01 16:01:00 +0800",
+   "body": "老板令：对 .agents/skills/ui-probe-shot/SKILL.md 做独立审计。开发=主会话本人（S 级直做），按「需求产物过独立审计」纪律派 code-reviewer（未参与开发）。重点：①声称事实逐条对码核真（harness API/命令/坑位溯源）②项目约束符合性（构建纪律/证据物/双平台——全部实操证据仅 macOS，Windows 适用性是否缺口）③可用性（未读 harness 源码的 agent 能否走通）④冗余。只读出分级清单不代修。",
+   "created_by": "code-reviewer",
+   "updated_by": "code-reviewer",
+   "deleted": 0,
+   "stage": "已验收"
+  },
+  {
+   "id": 61,
+   "pool": "need",
+   "title": "Windows 机实测 ui-probe-shot 路径 A，验证 skill Windows 差异小节并删待验标注",
+   "priority": "P2",
+   "status": "挂起",
+   "blocker": "需 Windows 主开发机（Mac 无法实测 Windows 侧）；前置：Windows 机同步 dev 至含 744bcf64",
+   "owner": "ZCode主会话",
+   "detail": "池60 审计 P1 遗留：skill（.agents/skills/ui-probe-shot/SKILL.md）的 Windows 差异小节是代码接线推断未实测。在 Windows 主开发机执行：① bash scripts/build-test-run.sh 构建后 cd build/tests && ./uat62_page_shots_probe --size 1000x640 --out evidence/<日期>/ ② 核对：exe 可直接调（.exe 补全）、PNG≈逻辑尺寸（scale=1）、wallpaper 页实拍 13 页、图标正常 ③ 把实测结果记入 evidence 并删除 skill 中「Windows 侧差异」小节的待验标注。前置：Windows 机需同步到含 744bcf64 的 dev（font-scale flag 才存在）。",
+   "created": "2026-11-01 15:58:51 +0800",
+   "updated": "2026-11-01 15:59:00 +0800",
+   "body": "池60 审计 P1 遗留：skill（.agents/skills/ui-probe-shot/SKILL.md）的 Windows 差异小节是代码接线推断未实测。在 Windows 主开发机执行：① bash scripts/build-test-run.sh 构建后 cd build/tests && ./uat62_page_shots_probe --size 1000x640 --out evidence/<日期>/ ② 核对：exe 可直接调（.exe 补全）、PNG≈逻辑尺寸（scale=1）、wallpaper 页实拍 13 页、图标正常 ③ 把实测结果记入 evidence 并删除 skill 中「Windows 侧差异」小节的待验标注。前置：Windows 机需同步到含 744bcf64 的 dev（font-scale flag 才存在）。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [
@@ -1835,6 +1903,69 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 99,
+   "need_id": 58,
+   "time": "2026-11-01 12:29:55 +0800",
+   "note": "分诊完成：纯文档桶主会话直做（不派 developer，零框架代码改动）；已核实能力底座全貌（probe_harness.h 905 行 API、uat62_page_shots_probe、ctest -L probe、c18cef9d cwd 修复）。进入技能编写+实操验证。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 100,
+   "need_id": 58,
+   "time": "2026-11-01 12:40:06 +0800",
+   "note": "交付完成：skill 文档（两路径+布局取证+10条坑位）双路径实操验证全过；零框架代码改动。过程一次 GLOB 重配置过渡红（自愈非回归，已记证据 README）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 101,
+   "need_id": 58,
+   "time": "2026-11-01 12:40:15 +0800",
+   "note": "自验通过关单（S 级直做主会话自验收）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 102,
+   "need_id": 59,
+   "time": "2026-11-01 15:51:03 +0800",
+   "note": "description 已改为「何时用（⑤ 触发场景）+能解决（三对痛点→能力）+产出」。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 103,
+   "need_id": 59,
+   "time": "2026-11-01 15:51:07 +0800",
+   "note": "S 级直做自验收关单。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 104,
+   "need_id": 60,
+   "time": "2026-11-01 16:00:47 +0800",
+   "note": "审计闭环：初审判需修后可用 → 主会话按清单整改（P1 Windows 小节待验标注/P2×3/P3×3）→ 原审计角色复审判通过 → 残留 2 条 P3 措辞统一已随手修。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 105,
+   "need_id": 60,
+   "time": "2026-11-01 16:01:00 +0800",
+   "note": "S 级直做自验收关单。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -2154,6 +2285,33 @@
    "need_id": 55,
    "time": "2026-11-01 02:27:58 +0800",
    "evidence": "QA 独立验收通过+BUG-1 修复回归绿：release 111/111（含防回归新用例）+probe 双档+三场景截图；BUG-1 根因实证（单测先红后绿→补页判断上移判空前自愈）；行为抽验 4/4；D1-D4 裁决落点全过。Windows 双机归 CI。证据 evidence/20261101-pool55-*",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 33,
+   "need_id": 58,
+   "time": "2026-11-01 12:40:15 +0800",
+   "evidence": "evidence/2026-11-01-need58-ui-probe-shot/：路径A uat62 批拍 12 页 PNG（抽查 01-home 图标/选中态全渲染）+ 路径B 临时探针 frame dump 精确（poc-layout-dump.txt）+ 截图目验一致（poc-800x600.png，验证后探针已删）；ctest -R 定向跑写法核验通过",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 34,
+   "need_id": 59,
+   "time": "2026-11-01 15:51:07 +0800",
+   "evidence": ".agents/skills/ui-probe-shot/SKILL.md description 已落库（随 b347e4d9 入库，git log 确认该文件最后提交即当前 HEAD，工作树无未提交残留）；老板裁决：不动历史",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 35,
+   "need_id": 60,
+   "time": "2026-11-01 16:01:00 +0800",
+   "evidence": "同前：复审通过（原审计角色判定，P1/P2 全消解），残留 P3 已清（4240f03d），Windows 实测挂池 61 不悬空",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -4535,6 +4693,193 @@
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
+  },
+  {
+   "id": 217,
+   "need_id": 58,
+   "time": "2026-11-01 12:29:49 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 218,
+   "need_id": 58,
+   "time": "2026-11-01 12:29:52 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 219,
+   "need_id": 58,
+   "time": "2026-11-01 12:29:55 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "分诊完成：纯文档桶主会话直做（不派 developer，零框架代码改动）；已核实能力底座全貌（probe_harness.h 905 行 API、uat62_page_shots_probe、ctest -L probe、c18cef9d cwd 修复）。进入技能编写+实操验证。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 220,
+   "need_id": 58,
+   "time": "2026-11-01 12:40:06 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "交付完成：skill 文档（两路径+布局取证+10条坑位）双路径实操验证全过；零框架代码改动。过程一次 GLOB 重配置过渡红（自愈非回归，已记证据 README）。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 221,
+   "need_id": 58,
+   "time": "2026-11-01 12:40:15 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "自验通过关单（S 级直做主会话自验收）。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 222,
+   "need_id": 59,
+   "time": "2026-11-01 15:49:21 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 223,
+   "need_id": 59,
+   "time": "2026-11-01 15:49:23 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 224,
+   "need_id": 59,
+   "time": "2026-11-01 15:49:26 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 225,
+   "need_id": 59,
+   "time": "2026-11-01 15:51:03 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "description 已改为「何时用（⑤ 触发场景）+能解决（三对痛点→能力）+产出」。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 226,
+   "need_id": 59,
+   "time": "2026-11-01 15:51:07 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "S 级直做自验收关单。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 227,
+   "need_id": 60,
+   "time": "2026-11-01 15:51:48 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 228,
+   "need_id": 60,
+   "time": "2026-11-01 15:51:51 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 229,
+   "need_id": 60,
+   "time": "2026-11-01 15:51:54 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 230,
+   "need_id": 61,
+   "time": "2026-11-01 15:58:51 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 231,
+   "need_id": 61,
+   "time": "2026-11-01 15:59:00 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "需 Windows 主开发机（Mac 无法实测 Windows 侧）；前置：Windows 机同步 dev 至含 744bcf64",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 232,
+   "need_id": 60,
+   "time": "2026-11-01 16:00:47 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "审计闭环：初审判需修后可用 → 主会话按清单整改（P1 Windows 小节待验标注/P2×3/P3×3）→ 原审计角色复审判通过 → 残留 2 条 P3 措辞统一已随手修。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 233,
+   "need_id": 60,
+   "time": "2026-11-01 16:01:00 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "S 级直做自验收关单。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "personal_todo": [
@@ -4627,6 +4972,65 @@
    "created_by": "辛勤码农",
    "updated_by": "辛勤码农",
    "deleted": 0
+  }
+ ],
+ "docs": [
+  {
+   "id": 1,
+   "slug": "2026-10-31-pool53-release-detail-publish-state-req",
+   "type": "prd",
+   "need_id": 53,
+   "title": "池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）",
+   "content": "# 池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）\n\n> 来源：池 53（P1，2026-10-31 登记）；老板 2026-10-31 口述原话：①「发布功能里，任务详情只有编辑态，没有发布态。发布态下不能编辑，需要按流程一个一个的执行。」②「当前编辑态的 UI 不太好，不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。」\n> 定性：**L 级**——新交互形态（双模式）+ 状态机语义变更 + 详情页整体 UI 重设计。\n> 前置事实：release_detail_ui.cpp 上帝文件已于 2026-10-31（commit 5c65a645）三拆为 release_detail_ui.cpp（343 行入口）/ release_detail_draw.cpp / release_detail_logic.cpp + release_detail_internal.h。本需求在拆分后结构上做。权威全文：docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md（本条为台账镜像，内容同版）。\n\n核心结论摘录（v4：独立审计 5 项裁决已整改）：\n\n1. 「发布态」语义澄清：编辑态=Draft，发布态=Pending+Running 合并为「内容只读+流程导向执行」形态，Done/Voided=归档态；issue 06「提交后仍可改配置」按老板令废除。\n2. 顺序语义已拍板 A 软引导（下一步高亮+未解锁锁定可见，保留提前勾自由度）；硬锁转已取舍（F-32）。\n3. 撤回提交 Pending→Draft（F-02）已拍板新增；审计裁决补定：撤回=状态回退非数据清理，已勾确认项与日志原样保留（仅 F-21 内容变更才撤确认）。\n4. P0 前置步骤死锁组合裁决：F-20 提交校验扩到前置项齐备（提测+CAB 单号、按内容出现的 nacos/DB 工单单号、公告内容非空，入口防呆）+ 软引导节声明兜底出路=撤回提交（衔接 F-02）；豁免补填方案弃（保 F-03 只读）。\n5. P1 提醒落点独立成 F-23（集成域核心）：提醒「去处理」落发布态轨道当前步（滚动到位+高亮），Draft 落编辑态，跨 release_module/release_detail 两文件；非目标表与§十关联影响指向 F-23；§十一补验收；开发顺序排在 F-14 定稿后。\n6. P2b 流程轨道为发布态专属（编辑态主动作=提交不放轨道引导），写进 F-04 与§四 4.2。\n7. 编号预留：F-07~F-09（状态机域）、F-17~F-19（UI 域）。\n8. UI 重设计：病灶 4 条（页头堆叠/填勾混排/步骤行 6 类控件/只读无模式声明），原则 5 条，F-10~F-16 全部 ui-ux-designer 门控，F-11/F-14 须先出图。\n\n功能矩阵：F-01 三模式映射 / F-02 撤回提交（含保留勾选项裁决）/ F-03 发布态只读执行域 / F-04 流程轨道（发布态专属）/ F-05 推进回退跳过失败语义收敛 / F-06 中断恢复保既有 ｜ F-10 双模式 IA / F-11 页头 / F-12 前置项清单化 / F-13 步骤行减负 / F-14 发布态流程向导 / F-15 弹层体系 / F-16 空态异常态（均 ui门控）｜ F-20 提交校验（保既有·语义微调，扩前置项齐备）/ F-21 内容变更撤回对账 / F-22 日志留痕 ｜ F-23 提醒落点锚点（集成·核心）。已取舍：F-30 分支编辑（入池 need-54）/ F-31 列表页重设计（入池 need-55）/ F-32 严格硬锁 / F-33 步骤失败状态值。\n\n开放问题已全部裁决（2026-10-31 老板拍板）：①顺序语义=A 软引导 ②撤回提交=新增确认 ③分支编辑=本轮不做已入池 need-54。非目标入池：池 54（P2）/池 55（P3）/池 56（P3）。\n\n开发顺序：F-01~F-06 状态机先行 → ui-ux 出图（F-11/F-14）→ F-10/F-12/F-13 → F-15/F-16 → F-23（依赖 F-14）→ 门禁与截图基准收口。",
+   "version": 4,
+   "created": "2026-10-31 22:49:29 +0800",
+   "updated": "2026-10-31 23:01:38 +0800",
+   "created_by": "product",
+   "updated_by": "product",
+   "deleted": 0
+  },
+  {
+   "id": 2,
+   "slug": "2026-11-01-pool55-release-list-tech",
+   "type": "tech",
+   "need_id": null,
+   "title": "池 55 · 发布任务列表页重写 技术方案（F-55-1 ~ F-55-7）",
+   "content": "# 池 55 · 发布任务列表页重写 技术方案（F-55-1 ~ F-55-7）\n\n> 需求/UI 口径：`docs/design/2026-11-01-池55-发布列表页-UI设计.md`（下称「设计」）+ demo html（视觉定稿）\n> 语言基线：`docs/design/2026-10-31-池53-发布详情双模式-UI设计.md`（token 逐值继承）\n> 测试纪律：`docs/TESTING-DISCIPLINE.md`（三问 + 会红）\n> 台账镜像：正文以 `docs/superpowers/plans/2026-11-01-池55-发布列表页-技术方案.md` 为准（本条目为台账登记，slug ASCII 化）\n\n## 0. 结论速览\n\n| 项 | 结论 |\n|---|---|\n| 结构 | 瀑布流全删（releaseMasonryColumns/Layout/TotalHeight、kReleaseTaskCardMinWidth/Gap、releaseTaskCardHeight），换单列定高 64px 行卡；内容总高 = visible×64+footer，O(1)，比现状每帧 O(n) 分列更省 |\n| 数据面 | store 分页契约零变更（listTasksPage offset/limit 全量序不动，设计 §四不设排序器）；Tab 筛选 = 内存视图过滤 + 1 条组计数 COUNT；nextStepLabel = 零新增 SQL 的内存首中即停 walk（§2） |\n| 触底追加 | ReleaseTaskPager / requestLoad 去重三闸 / 帧泵 / 失败不清空契约原样保留（release_list_ui.cpp:941-957），仅几何从变高瀑布流改定高单列 |\n| chip 文案 | releaseTaskStatusText Draft「配置中」→「草稿」（release_list_ui.cpp:626，五态唯一映射点）；连带修正详情页 Draft chip（release_detail_draw.cpp:1283 共用此函数，对齐池 53 §4.4）——设计明令的顺手修 |\n| POC | 无需：下划线 Tab（transition+animate 先例 EUI-NEO components/tabs.h）、行 hover（rect .states 三态）、帧泵、contentKey 重锚、ui_kit::button 果冻，全部既有已验证能力 |\n| 平台 | 纯 module_release 自绘，无平台分支；Windows CI 构建验证 |\n\n**停等核对决策（4 项，实现前需裁决）：**\n\n| # | 议题 | 设计文本 | 仓库现状 | 推荐 |\n|---|---|---|---|---|\n| D1 | Tab 形态 | 下划线式（激活深灰字+2px 绿下划线，demo:70-82 已定稿；明文「禁实心按钮当 Tab」） | ui_kit::wtab 块面式为全局现状 7 处在用；components::tabs 下划线式注释「全局已淘汰」（release_config_ui.cpp:5） | 按设计走自绘下划线 Tab（~40 行，设计文档权威序第一 + demo 老板定稿）；wtab 其余页面不动 |\n| D2 | 页头高度 | 56px（自池 53 §4.1 继承） | 全局 kHeaderH=40（metrics.h:12）；池 53 实现同样走了 40（release_detail_draw.cpp:1232） | 用 kHeaderH=40：同模块详情页已定 40，模块间切换页头跳变更伤；Tab 行按设计 44px 新增无冲突 |\n| D3 | 指引顺序 | 与详情页「下一步」同源 | 详情拖拽序 = 回放 reorder 日志（lastReorderOrder，release_detail_logic.cpp:191）；列表复算需逐任务 +1 条日志 SQL | 列表用库序（id ASC）不复算拖拽序：指引是导航线索非操作入口，点击进详情以详情为准；偏差面 = 用户拖拽过服务序且首个未完成项恰在被拖环境 |\n| D4 | 首屏骨架 | 骨架行 ×3 | 现首屏同步装填，骨架永不可见 | 首屏改 1 帧延迟装填（本帧画骨架、下一帧泵装填，复用既有帧泵）；不人为加 100ms 假延迟 |\n\n## 1. F-ID 落点\n\n| F-ID | 落点 |\n|---|---|\n| F-55-1 页壳 | 页头（kHeaderH，标题「上线任务」17px/700 + 主按钮 36px）+ Tab 行 44px 连体白壳（下缘 1px #E5E5E5 画在 Tab 行下）+ 内容区灰底（#F7F7F7）内滚；内容列 max-width 1040 居中、页面外边距 12px；外层列表白卡 16px 圆角 1px #E5E5E5 边（废除 12px，release_list_ui.cpp:189） |\n| F-55-2 行卡 | 64px 双行（主 24+副 20+内边距 10×2）：主行 = 日期「M/D」17px/600 min-width 72（跨年 104）+ 星期 12px/600（周二/四 #157E4E 其余 #999，语义沿用 :215）+「下一步 · {步名}」14px #666 flex-1 ellipsis + 状态 chip 22px；副行 = 环境 chips 20px（11px 字 #666/#F2F2F2，间距 6，溢出「+N」先留宽后放：语义沿用 :254-281）+ 进度区右靠。Running 左缘 3px #36D399 全高竖条；Voided 内容 opacity 0.7（:173 的 0.68 统一 0.7，背景保持白）；hover #EDEDED / 按压 #E5E5E5（.states 三态，不做 scale）；整行点击 openTask；行间 1px #EDEDED，首末行无线由卡边承担 |\n| F-55-3 chip 体系 | releaseTaskStatusText 改「草稿」；状态 chip 五色复用既有 statusChipColors（与详情同源）；环境 chip 降 20px（drawChip 增高参） |\n| F-55-4 进度 | 迷你条 80×4（圆角 2，底 #E5E5E5 填充 #36D399）+「n/n」12px 右对齐定宽，间 8px；状态矩阵：Draft 整行不显示 / Done 满 / Voided 冻结 / Pending·Running 实时（复用 card.progressDone/Total）；<1100px 只留计数 |\n| F-55-5 Tab 筛选与计数 | 四 Tab 模式词映射：发布中={Pending,Running}、准备中={Draft}、已归档={Done,Voided}；激活 14px/600 #1A1A1A + 2px 下划线（150ms 过渡），非激活 14px/400 #666 hover 加深；右端计数「共 n 个任务」/「发布中 · n 个」（组 COUNT，<1100px 隐藏）；切换零 SQL：内存过滤 + contentKey 追加 tab 值重锚顶部 |\n| F-55-6 追加契约 | requestLoad/advance 帧泵/去重三闸（失败/在飞/耗尽）/失败保留已加载/retry 分流/矮窗 autoFill 全保留；触发高度改按过滤后内容高；footer 改 40px 文字行（「加载中…」12px #999 /「加载失败」12px #B91C1C+「重试」文字钮），不再冒充 84px 卡 |\n| F-55-7 nextStepLabel | release_logic 新纯函数（§2）+ ReleaseTaskCard 增 nextStepLabel 字段；Draft/Done/Voided 装配为空；行内空串留白不破版；summary 字段与摘要行退役（新设计副行无摘要） |\n\n## 2. 「下一步」装配数据源方案（性能核心）\n\n**不做逐行 collectTrackRows**（需 ReleaseDetailUiState + 全行展开 + 文案装配，过重）。方案：\n\n- release_logic.{h,cpp} 新增纯函数：\n\n```cpp\n// 列表行「下一步 · {步名}」：与详情页页头主动作同一信息源（池53 §4.2 / 设计 §5.4）。\n// 固定序 = performNextStep：提测单→CAB 单→nacos 工单(按需)→数据库工单(按需)→上线公告\n// →逐环境(库序) 逐服务(库序) 合并分支→配置 n 项→部署→验证完成。\n// 返回首个「未完成且已解锁」条目名；时间窗未开 / 单号门禁缺失 / skipped(槽位关闭)\n// 均不算；无（全完成 / 全锁定）返回空串。D3 取舍：不复算 reorder 拖拽序，用库序。\nstd::string releaseNextStepLabel(const Task& task,\n                                 const std::vector<TaskEnv>& envs,\n                                 const std::vector<TaskService>& services,\n                                 const std::vector<TaskConfig>& configs,\n                                 const std::vector<TaskStep>& steps,\n                                 int nowMinute);\n```\n\n- **零新增 SQL**：releaseLoadTaskCards（release_list_ui.cpp:771）每任务本就批量取 envs/services/configs/steps 四组向量在内存，nextStepLabel 直接消费；walk **首中即停**（停在第一个未完成项，期望 O(1)，最坏 O(任务条目数)——与同处既有的 taskProgress 全量 walk 同阶，增量成本可忽略）。nowMinute 用已导出的 planDateElapsedMinutes（release_logic.h:33）按页共用 nowUnix 快照换算。\n- 门禁上移：configGateMissing / deployGateMissing（release_detail_logic.cpp 内部）语义上移 release_logic 公共，detail 改调公共版（消两份实现）；标签文案（前置 5 名 + 合并分支/部署/验证完成）在函数内列常量，注释钉与 detail stepLabel:118 / prereqTitle:183 的文案契约（改一处必改两处）；配置名复用 configItemLabels（release_config_ui.h:26）。\n- Tab 组计数：store 增 1 条 countTasksByStatuses(vector<TaskStatus>)（COUNT + status IN，复用 taskStatusText 编码 release_store.cpp:98）；随既有 1s 陈旧刷新与弹层关闭路径同步，库值分组（Pending+Running/Draft/Done+Voided）无需派生读环境。\n\n## 3. 改动清单（文件级）\n\n| 文件 | 改动 | F-ID |\n|---|---|---|\n| src/module_release/release_list_ui.h | ReleaseTaskCard 增 nextStepLabel、删 summary；删瀑布流几何声明（kReleaseTaskCardMinWidth/Gap、releaseMasonry*、releaseTaskCardHeight）；增列表组枚举与 listGroupOf(TaskStatus)；头契约注释重写 | F-55-1/2/5/7 |\n| src/module_release/release_list_ui.cpp | 全页重写：壳（页头+Tab 行+灰底 1040 列）、自绘下划线 Tab、64px 行卡（竖条/灰化/hover/按压）、六态（骨架/空态/筛选空态/追加加载/追加失败/首屏失败）、筛选缓存与计数、分页适配定高单列；releaseTaskStatusText 草稿；骨架兼容节点 id 全保留（release.tasks.empty / .empty.new / .loading / .load.retry / .card.<id> / .scroll，test_release_basic.cpp:90 冒烟契约） | F-55-1~6 |\n| src/module_release/release_logic.h/.cpp | 增 releaseNextStepLabel + 门禁函数上移 | F-55-7 |\n| src/module_release/release_store.h/.cpp | 增 countTasksByStatuses（1 条 COUNT IN） | F-55-5 |\n| src/module_release/release_detail_logic.cpp | configGateMissing/deployGateMissing 改调公共版（签名不变） | F-55-7 |\n| src/module_release/release_module.cpp / release_dialogs.cpp | 零改动（compose 签名不变、新建弹层不动） | — |\n| tests/test_modules/test_release_logic.cpp | nextStepLabel 3 例（先行红） | F-55-7 |\n| tests/test_modules/test_release_task_ui.cpp | 改 1（chip 文案断言 :114 配置中→草稿）；改 2（瀑布流首屏/触底 2 例 :126-212 改单列定高）；新增 7（见 §5） | F-55-1~6 |\n| tests/probes/release_probe.cpp | 列表段断言改写：删 320/16 常量断言（:510-526），增 64 行高/单列/Tab 断言；4 张基准截图 | 门禁 |\n\n## 4. 失败路径\n\n| 路径 | 行为 |\n|---|---|\n| 长步名溢出 | 指引 flex 区 min-width 0 + ellipsis 不换行；1000×640 断言主行三要素不重叠、副行 chips 与进度不重叠 |\n| 追加页失败 | 底部 40px「加载失败」红字 + 8px「重试」绿字钮；已加载内容保留（:941-957 契约原样） |\n| 首屏失败且无内容 | 白卡内「无法加载任务列表」16px/600 + 原因 14px #666 + 重试次按钮（对齐池 53 §九；不冒充空态） |\n| 筛选空态 | 「暂无发布中/准备中/已归档的任务」+「查看全部」文字钮切回全部 Tab |\n| 全部空态 | 「还没有上线任务」+ 新建次按钮（页头主按钮保持同视口唯一绿填充；节点 id 契约保留） |\n| 组计数查询失败 | 计数位隐藏，不阻断列表（列表数据走既有 failed 路径） |\n| nextStepLabel 为空（全锁定/装配缺失） | 主行弹性区留白不破版（设计 §5.4 边界） |\n| 环境名超宽 | 「+N」先留宽后放兜底（沿用 :254-281 语义） |\n| 跨年日期 | 列宽 72→104 自适应 |\n\n## 5. 测试计划（三问 + 会红；logic 先行）\n\n过滤口径：`bash scripts/build-test-run.sh --filter <子串>`，研发阶段只跑 release 域定向用例，全量归收口 qa。\n\n**Logic 纯函数（test_release_logic.cpp，先行）：**\n- release_next_step_label_fixed_order_and_gates——防固定序与门禁回归：前置→步骤序取首个未完成且已解锁；删顺序段/门禁段必红。\n- release_next_step_label_locked_or_done_empty——边界：时间窗全未开 / 全部完成 → 空串（留白契约）。\n- release_next_step_label_skipped_slot_closed——边界：skipped 配置=槽位关闭（与 envProgress 口径一致），跳至部署。\n\n**装配/UI（test_release_task_ui.cpp）：**\n- release_task_cards_assembly_next_step_label——临时库造五态：Pending/Running 卡带步名、Draft/Done/Voided 空（删装配段必红）。\n- release_task_list_row_card_geometry——单列、行高 64、release.tasks.card.<id> 存在、主/副行节点在、1000 宽无横滚。\n- release_task_list_status_chip_text_draft——五态文案（改既有用例，行为该变：设计明令废「配置中」）。\n- release_task_list_tab_filter_and_counts——切 Tab 仅对应组行渲染 + 计数句式（发布中 · n 个）。\n- release_task_list_filter_empty_and_back——筛选空态文案 +「查看全部」切回全部。\n- release_task_list_append_contract_single_column——触底追加/加载占位/失败保留（既有 2 例改造，去重三闸语义不变）。\n- release_task_list_voided_running_visual——Voided 0.7 + Running 竖条节点断言。\n\n**Probe 门禁**：列表段几何断言改写 + 4 张基准截图（1600 五态全列 / 发布中 Tab / 全部空态 / 1000×640 窄窗），evidence wrapper 归档、路径回写清单卡。清单卡实现开工时出 2026-11-01-池55-发布列表页-dev-tests.md。\n\n## 6. 取舍与风险 / 未验证项\n\n- **放弃**：瀑布流几何与 summary 摘要行（新设计无消费方，代码负资产即删）；SQL 侧筛选（改 store 分页契约 + 每 Tab 缓存复杂度，内存过滤已满足）；nextStepLabel 复算拖拽序（D3）。\n- **文案契约**：release_reminder.cpp:115 的「配置中」是提醒域措辞非状态 chip，本卡不动（最小 90%）。\n- **未验证项**（实现期首帧验证，证据物回填）：① rect .states hover 与行内竖条/分割线的叠层顺序；② contentKey 追加 tab 后滚动重锚与追加泵的同帧竞争；③ 1000×640 与 1600×1000 两档实测截图；④ Windows 侧字体渲染下 11px 环境 chip +N 收纳（双机按硬约束执行）。\n- **风险**：D1/D2 与既有页面家族的视觉一致性由停等核对裁决，实现不先斩后奏。\n",
+   "version": 1,
+   "created": "2026-11-01 01:23:37 +0800",
+   "updated": "2026-11-01 01:23:37 +0800",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0
+  }
+ ],
+ "docs_history": [
+  {
+   "id": 1,
+   "doc_id": 1,
+   "version": 1,
+   "title": "池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）",
+   "content": "# 池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）\n\n> 来源：池 53（P1，2026-10-31 登记）；老板 2026-10-31 口述原话：①「发布功能里，任务详情只有编辑态，没有发布态。发布态下不能编辑，需要按流程一个一个的执行。」②「当前编辑态的 UI 不太好，不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。」\n> 定性：**L 级**——新交互形态（双模式）+ 状态机语义变更 + 详情页整体 UI 重设计。\n> 前置事实：release_detail_ui.cpp 上帝文件已于 2026-10-31（commit 5c65a645）三拆为 release_detail_ui.cpp（343 行入口）/ release_detail_draw.cpp / release_detail_logic.cpp + release_detail_internal.h。本需求在拆分后结构上做。权威全文：docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md（本条为台账镜像，内容同版）。\n\n核心结论摘录：\n\n1. 「发布态」语义澄清：老板说的编辑态=Draft（配置中），发布态=Pending+Running（待执行/执行中）合并呈现为「内容只读+流程导向执行」的独立界面形态；Done/Voided=归档态。现状 isConfigPhase 含 Pending（提交后仍可改配置，issue 06 底稿）与本需求冲突，按老板令废除。\n2. 「按流程一个一个执行」已有半套：performNextStep 固定序（提测→CAB→nacos 工单→DB 工单→公告→各环境[合并分支→配置→部署→验证]）即流程轨道，不新造顺序；默认软引导（下一步高亮+未解锁锁定可见），严格硬锁列老板拍板项 1。\n3. 状态机新增唯一转移：撤回提交 Pending→Draft（F-02，行业惯例，待拍板 2）；失败不引入新状态值（记录台定位+五值编码锁定）。\n4. 编辑态病灶（控件实测）：页头 6 类元素堆叠且主动作漂移；前置 5 卡「填」与「勾」混排；步骤行 40px 挤 6 类控件；只读性无页面级声明。UI 重设计原则 5 条（模式先于控件/主动作唯一/准备执行分层/控件减负/标题承载身份），F-10~F-16 全部 ui-ux-designer 门控，F-11/F-14 须先出图。\n\n功能矩阵：F-01 三模式映射（核心）/ F-02 撤回提交（核心）/ F-03 发布态只读执行域（核心）/ F-04 流程轨道（核心）/ F-05 推进回退跳过失败语义收敛（核心）/ F-06 中断恢复保既有（核心）/ F-10 双模式 IA（核心·ui门控）/ F-11 页头重设计（核心·ui门控）/ F-12 前置项清单化（核心·ui门控）/ F-13 步骤行减负（核心·ui门控）/ F-14 发布态流程向导（核心·ui门控）/ F-15 弹层体系统一（边缘·ui门控）/ F-16 空态异常态（边缘·ui门控）/ F-20 提交校验保既有 / F-21 内容变更撤回对账（收敛为仅编辑态）/ F-22 日志留痕保既有。已取舍：F-30 分支编辑 UI、F-31 列表页重设计、F-32 严格硬锁（待拍板 1）、F-33 步骤失败状态值。\n\n待老板拍板 3 项：①发布态顺序语义（软引导 vs 硬锁，含前置项是否也硬顺序）②撤回提交是否新增 ③分支编辑缺口是否本轮补齐。\n\n开发顺序建议：F-01~F-06 状态机类先行（logic+测试）→ ui-ux 出图（F-11/F-14）→ F-10/F-12/F-13 → F-15/F-16 → 门禁与截图基准收口。",
+   "saved": "2026-10-31 22:52:32 +0800",
+   "saved_by": "product"
+  },
+  {
+   "id": 2,
+   "doc_id": 1,
+   "version": 2,
+   "title": "池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）",
+   "content": "# 池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）\n\n> 来源：池 53（P1，2026-10-31 登记）；老板 2026-10-31 口述原话：①「发布功能里，任务详情只有编辑态，没有发布态。发布态下不能编辑，需要按流程一个一个的执行。」②「当前编辑态的 UI 不太好，不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。」\n> 定性：**L 级**——新交互形态（双模式）+ 状态机语义变更 + 详情页整体 UI 重设计。\n> 前置事实：release_detail_ui.cpp 上帝文件已于 2026-10-31（commit 5c65a645）三拆为 release_detail_ui.cpp（343 行入口）/ release_detail_draw.cpp / release_detail_logic.cpp + release_detail_internal.h。本需求在拆分后结构上做。权威全文：docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md（本条为台账镜像，内容同版）。\n\n核心结论摘录（v2：三项拍板已回填）：\n\n1. 「发布态」语义澄清：老板说的编辑态=Draft（配置中），发布态=Pending+Running（待执行/执行中）合并呈现为「内容只读+流程导向执行」的独立界面形态；Done/Voided=归档态。现状 isConfigPhase 含 Pending（提交后仍可改配置，issue 06 底稿）与本需求冲突，按老板令废除。\n2. 「按流程一个一个执行」已有半套：performNextStep 固定序（提测→CAB→nacos 工单→DB 工单→公告→各环境[合并分支→配置→部署→验证]）即流程轨道，不新造顺序。顺序语义已拍板 A 软引导（2026-10-31）：下一步高亮+未解锁锁定可见，保留提前勾自由度，前置项不硬顺序；硬锁转已取舍（F-32）。\n3. 撤回提交 Pending→Draft（F-02）已拍板新增确认（2026-10-31），依据栏补老板拍板；失败不引入新状态值（记录台定位+五值编码锁定）。\n4. 分支编辑缺口已拍板本轮不做（2026-10-31），F-30 维持取舍，另立池项跟踪。\n5. 编辑态病灶（控件实测）：页头 6 类元素堆叠且主动作漂移；前置 5 卡「填」与「勾」混排；步骤行 40px 挤 6 类控件；只读性无页面级声明。UI 重设计原则 5 条（模式先于控件/主动作唯一/准备执行分层/控件减负/标题承载身份），F-10~F-16 全部 ui-ux-designer 门控，F-11/F-14 须先出图。\n\n功能矩阵：F-01 三模式映射（核心）/ F-02 撤回提交（核心·已确认新增）/ F-03 发布态只读执行域（核心）/ F-04 流程轨道（核心）/ F-05 推进回退跳过失败语义收敛（核心）/ F-06 中断恢复保既有（核心）/ F-10 双模式 IA（核心·ui门控）/ F-11 页头重设计（核心·ui门控）/ F-12 前置项清单化（核心·ui门控）/ F-13 步骤行减负（核心·ui门控）/ F-14 发布态流程向导（核心·ui门控）/ F-15 弹层体系统一（边缘·ui门控）/ F-16 空态异常态（边缘·ui门控）/ F-20 提交校验保既有 / F-21 内容变更撤回对账（收敛为仅编辑态）/ F-22 日志留痕保既有。已取舍：F-30 分支编辑 UI（拍板另立池项）、F-31 列表页重设计、F-32 严格硬锁（拍板维持取舍）、F-33 步骤失败状态值。\n\n开放问题已全部裁决（2026-10-31 老板拍板）：①顺序语义=A 软引导 ②撤回提交=新增确认 ③分支编辑=本轮不做另立池项。\n\n开发顺序不变：F-01~F-06 状态机类先行（logic+测试，无前置依赖）→ ui-ux 出图（F-11/F-14）→ F-10/F-12/F-13 → F-15/F-16 → 门禁与截图基准收口。",
+   "saved": "2026-10-31 22:53:27 +0800",
+   "saved_by": "product"
+  },
+  {
+   "id": 3,
+   "doc_id": 1,
+   "version": 3,
+   "title": "池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）",
+   "content": "# 池 53 · 发布任务详情「补发布态 + 编辑态 UI 重设计」需求分析（L 级）\n\n> 来源：池 53（P1，2026-10-31 登记）；老板 2026-10-31 口述原话：①「发布功能里，任务详情只有编辑态，没有发布态。发布态下不能编辑，需要按流程一个一个的执行。」②「当前编辑态的 UI 不太好，不够现代化，感觉是为了凑需求要素硬堆控件，设计不合理、不够人性，体验不好。」\n> 定性：**L 级**——新交互形态（双模式）+ 状态机语义变更 + 详情页整体 UI 重设计。\n> 前置事实：release_detail_ui.cpp 上帝文件已于 2026-10-31（commit 5c65a645）三拆为 release_detail_ui.cpp（343 行入口）/ release_detail_draw.cpp / release_detail_logic.cpp + release_detail_internal.h。本需求在拆分后结构上做。权威全文：docs/superpowers/specs/2026-10-31-池53-发布任务详情发布态-需求分析.md（本条为台账镜像，内容同版）。\n\n核心结论摘录（v3：三项拍板 + 裁剪项入池均已回填）：\n\n1. 「发布态」语义澄清：老板说的编辑态=Draft（配置中），发布态=Pending+Running（待执行/执行中）合并呈现为「内容只读+流程导向执行」的独立界面形态；Done/Voided=归档态。现状 isConfigPhase 含 Pending（提交后仍可改配置，issue 06 底稿）与本需求冲突，按老板令废除。\n2. 「按流程一个一个执行」已有半套：performNextStep 固定序（提测→CAB→nacos 工单→DB 工单→公告→各环境[合并分支→配置→部署→验证]）即流程轨道，不新造顺序。顺序语义已拍板 A 软引导（2026-10-31）：下一步高亮+未解锁锁定可见，保留提前勾自由度，前置项不硬顺序；硬锁转已取舍（F-32）。\n3. 撤回提交 Pending→Draft（F-02）已拍板新增确认（2026-10-31），依据栏补老板拍板；失败不引入新状态值（记录台定位+五值编码锁定）。\n4. 分支编辑缺口已拍板本轮不做（2026-10-31），F-30 维持取舍，已入池 need-54（P2）。\n5. 编辑态病灶（控件实测）：页头 6 类元素堆叠且主动作漂移；前置 5 卡「填」与「勾」混排；步骤行 40px 挤 6 类控件；只读性无页面级声明。UI 重设计原则 5 条（模式先于控件/主动作唯一/准备执行分层/控件减负/标题承载身份），F-10~F-16 全部 ui-ux-designer 门控，F-11/F-14 须先出图。\n\n功能矩阵：F-01 三模式映射（核心）/ F-02 撤回提交（核心·已确认新增）/ F-03 发布态只读执行域（核心）/ F-04 流程轨道（核心）/ F-05 推进回退跳过失败语义收敛（核心）/ F-06 中断恢复保既有（核心）/ F-10 双模式 IA（核心·ui门控）/ F-11 页头重设计（核心·ui门控）/ F-12 前置项清单化（核心·ui门控）/ F-13 步骤行减负（核心·ui门控）/ F-14 发布态流程向导（核心·ui门控）/ F-15 弹层体系统一（边缘·ui门控）/ F-16 空态异常态（边缘·ui门控）/ F-20 提交校验保既有 / F-21 内容变更撤回对账（收敛为仅编辑态）/ F-22 日志留痕保既有。已取舍：F-30 分支编辑 UI（已入池 need-54）、F-31 列表页重设计（已入池 need-55）、F-32 严格硬锁（拍板维持取舍）、F-33 步骤失败状态值。\n\n开放问题已全部裁决（2026-10-31 老板拍板）：①顺序语义=A 软引导 ②撤回提交=新增确认 ③分支编辑=本轮不做已入池 need-54。\n\n非目标入池对应（老板令 2026-10-31「没做的按新需求处理」）：分支编辑=池 54（P2）、列表页重设计=池 55（P3）、全屏配置编辑层=池 56（P3）。\n\n开发顺序不变：F-01~F-06 状态机类先行（logic+测试，无前置依赖）→ ui-ux 出图（F-11/F-14）→ F-10/F-12/F-13 → F-15/F-16 → 门禁与截图基准收口。",
+   "saved": "2026-10-31 23:01:38 +0800",
+   "saved_by": "product"
   }
  ]
 }
