@@ -8,7 +8,7 @@ description: 何时用——① UI 改完需要截图/布局证据自证（完�
 能力底座**已实现**，本 skill 只教怎么用，不含框架改动：
 
 - `tests/probes/probe_harness.h`（namespace `probe`）——窗口生命周期、帧驱动、帧捕获（进程内 glReadPixels → PNG）、输入注入、布局断言
-- `tests/probes/uat62_page_shots_probe.cpp`——14 个注册页整页批拍（真 `app::compose` 装配链）
+- `tests/probes/uat62_page_shots_probe.cpp`——14 行注册表整页批拍（12 页可拍，真 `app::compose` 装配链）
 
 用途：UI 改动自证 / QA 视觉验收 / 看图会话 / 布局数值断言。不适用：CI（`DEVDESK_BUILD_PROBES=OFF`，probe 不构建）与本地无头会话（exit 77 跳过，见坑位 ⑦）——两者成因不同；需要人工手感的走查走真机 UAT。
 
@@ -76,7 +76,7 @@ cd build/tests && ./<name>_probe --screenshot /abs/path/out.png --size 1200x1000
 
 ## 布局取证（frame 数据，与截图同进程同状态）
 
-- 元素几何在 `element.frame{ x, y, width, height }`，**逻辑 px**（探针窗刻意 dpiScale=1，逻辑=物理坐标）；PNG 像素尺寸 = 逻辑 × `capture.scale()`（Retina 2x），两者别混
+- 元素几何在 `element.frame{ x, y, width, height }`，**逻辑 px**（探针窗刻意 dpiScale=1，逻辑=物理坐标）；PNG 像素尺寸 = 逻辑 × `capture.scale()`（macOS Retina 2x，Windows 通常 1x），两者别混
 - 按 id 取单个：`ui.find("id")->frame`；整棵树 dump（探针里加一段即可）：
 
 ```cpp
