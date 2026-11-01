@@ -6,6 +6,7 @@
 #include <components/theme.h>
 #include <eui/dsl.h>
 
+#include <cstddef>
 #include <string>
 #include <utility>
 

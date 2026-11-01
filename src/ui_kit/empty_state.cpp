@@ -6,6 +6,8 @@
 
 #include <ui_kit/button.h>
 
+#include <algorithm>
+
 namespace ui_kit {
 
 namespace {
