@@ -48,6 +48,7 @@
 #include <eui/dsl.h>
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/slider.h>
 #include <ui_kit/wswitch.h>
@@ -152,7 +153,7 @@ void segmented(eui::Ui& ui, const std::string& id, float x, float y, float w,
     ui.stack(id).position(x, y).size(w, h).content([&] {
         ui.rect(id + ".bg")
             .size(w, h)
-            .color(t.colors.surface)
+            .color(ui_kit::itemSurface(t))
             .radius(8.0f)
             .border(1.0f, t.colors.borderDefault)
             .build();

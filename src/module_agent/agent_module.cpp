@@ -27,6 +27,7 @@
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/empty_state.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
@@ -465,7 +466,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 ui.rect("agent.tools.list.panel")
                                     .position(0.0f, 0.0f)
                                     .size(contentW, toolsListH)
-                                    .color(ui_kit::cardSurface(t))
+                                    .color(ui_kit::containerSurface(t))
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .build();
@@ -572,7 +573,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     ui.rect("agent.tasklist.panel")
                         .position(0.0f, 0.0f)
                         .size(contentW, std::max(0.0f, listH))
-                        .color(ui_kit::cardSurface(t))
+                        .color(ui_kit::containerSurface(t))
                         .radius(t.sizes.radius)
                         .border(1.0f, t.colors.borderDefault)
                         .build();
@@ -672,9 +673,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 inner.rect(id + ".bg")
                                     .position(0.0f, 0.0f)
                                     .size(cw, kTaskCardH)
-                                    .states(t.colors.surface,
-                                            t.colors.hover,
-                                            t.colors.primarySoftBg)
+                                    .states(ui_kit::itemSurface(t),
+                                            ui_kit::itemSurfaceHover(t),
+                                            ui_kit::itemSurfacePressed(t))
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .onClick([this, taskId = task.id] {

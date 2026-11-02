@@ -21,6 +21,7 @@
 #include <ui_kit/wtab.h>
 
 #include <ui_kit/button.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 
 #include <algorithm>
@@ -393,7 +394,7 @@ void drawListCardBox(eui::Ui& ui, const std::string& id, float x, float y, float
     ui.rect(id)
         .position(x, y)
         .size(std::max(0.0f, w), std::max(0.0f, h))
-        .color(t.colors.surface)
+        .color(ui_kit::itemSurface(t))
         .border(1.0f, t.colors.borderDefault)
         .radius(kListCardRadius)
         .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.04f, 0.02f))
