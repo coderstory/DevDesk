@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -154,6 +155,13 @@ private:
     int64_t pendingDeleteId_ = 0;          // 非 0 = 删除确认弹窗开着
     std::string pendingDeleteName_;        // 确认弹窗正文用规则名（兼开合标志）
     bool pendingDeletePurge_ = false;      // 「彻底删除」勾选态
+    // 行卡 hover 集合（F-67-1）：透明命中面 onHover 写、jellyCard 每帧读。
+    // 必须是集合而非 bool：指针从卡移到卡内控件那一帧，两者回调同帧触发。
+    // 命中面与控件是**兄弟**（不是父子）→ 不能用单一集合：指针在卡内控件之间
+    // 移动时「控件 insert / 命中面 erase」的先后由兄弟遍历序决定，单集会互相抹掉。
+    // 两个集合并集即卡 hover：命中面一个、卡内可交互控件另一个。
+    std::set<std::string> hoveredRowIds_;         // 命中面（整卡）来源
+    std::set<std::string> hoveredRowControlIds_;  // 卡内控件来源
 };
 
 } // namespace module::schedule

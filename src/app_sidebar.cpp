@@ -411,8 +411,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .radius(t.sizes.radiusSmall)
                     .onClick([g = group.page] { toggleSidebarGroup(g); })
                     .build();
-                // 选中态与导航项同款 SelectionBar（§4.3）；文字由 label 画，不传文案
-                if (holdsCurrent) {
+                // 选中条只在「子项没被列出」时画：组展开时子项自己画一条，父项再画
+                // 就是一二级同时亮（B8 G2）；组收起时父项是当前页唯一入口，指示必须
+                // 留着（折叠侧栏同理——折叠侧栏下子项仍按展开态列出，几何与父项重叠）。
+                if (holdsCurrent && !expanded) {
                     ui_kit::selectionBar(ui, id + ".sel", std::string{}, padX, y,
                                          kWidth - padX * 2.0f, itemH, t);
                 }
@@ -428,7 +430,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                                             : t.colors.textSecondary)
                         .build();
                 } else {
-                    constexpr float kChevronW = 20.0f;
+                    // 盒宽 20→14 且左移 6：字形本身窄，居中在 20px 盒里偏左又贴右缘，
+                    // 读起来像被切掉（B8 G1）。
+                    constexpr float kChevronW = 14.0f;
                     ui.text(id + ".icon")
                         .position(padX + kItemInset, y)
                         .size(kIconW, itemH)
@@ -450,11 +454,11 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                                             : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".chevron")
-                        .position(kWidth - padX - kChevronW, y)
+                        .position(kWidth - padX - kChevronW - 6.0f, y)
                         .size(kChevronW, itemH)
                         .icon(eui::utf8(expanded ? 0xF077 : 0xF078))  // chevron-up/down
                         .fontSize(t.sizes.fontSizeBody - 3.0f)
-                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .horizontalAlign(eui::HorizontalAlign::Left)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textTertiary)
                         .build();
@@ -622,39 +626,56 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 // ── 动态背景（UAT6 主窗活体流质）：纯 DSL 层组合 ──
 // UAT6.1：7 层半径缩至原 60% 的小晕 + 每层 2 颗卫星；相位/周期错开分布，
 // 观感从「几大团」变「多小晕流动」。帧泵与门控同旧版。z 序最底，正文可读
-// 性零影响。角速度 0.035~0.083 rad/s，整圈 75~180s 液体缓流。
+// 性零影响。B5 起 14 层、角速度 0.070~0.166 rad/s（提速 ×2），整圈 38~90s。
 void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     if (!fluidBackgroundEnabled()) return;  // 开关关：零元素零泵（零成本）
     if (!fluidWindowVisible()) return;      // 铁律：最小化/藏托盘 → 不挂泵不推进
 
     const auto& t = ::core::theme::current();
 
-    constexpr int kHalos = 7;            // UAT6.1 缩小增多：4→7 个小晕流动（几大团→多小晕流）
+    constexpr int kHalos = 14;           // B5（2026-11-02）：7→14 小晕，铺满窗口不挤成一坨
     constexpr float kMaxAlpha = 0.19f;   // 单层峰值（2026-11-01 重构 0.11→0.19：0.11 透不出卡面）
     constexpr int kSatsPerHalo = 3;      // 卫星/层（2→3 更细碎，液体感更强）
     // 层参数表（锚点 = 窗口比例；速度 rad/s；相位 rad 防共漂；半径 = 短边比例）
-    constexpr float kAnchorX[kHalos] = {0.50f, 0.50f, 0.24f, 0.76f, 0.12f, 0.88f, 0.36f};
-    constexpr float kAnchorY[kHalos] = {0.46f, 0.56f, 0.30f, 0.72f, 0.80f, 0.18f, 0.88f};
-    constexpr float kSpeedX[kHalos] = {0.042f, 0.036f, 0.071f, 0.058f, 0.051f, 0.067f, 0.044f};
-    constexpr float kSpeedY[kHalos] = {0.035f, 0.049f, 0.064f, 0.083f, 0.038f, 0.055f, 0.072f};
-    constexpr float kPhase[kHalos] = {0.0f, 1.7f, 3.1f, 4.9f, 2.3f, 5.8f, 4.0f};
-    // 半径缩至原 60%：0.40→0.24, 0.50→0.30, 0.44→0.264, 0.62→0.372
-    // 新增 3 层分布补全覆盖：H4 左下(0.216) / H5 右上(0.204) / H6 底中(0.228)
-    constexpr float kRadiusFrac[kHalos] = {0.24f, 0.30f, 0.264f, 0.372f, 0.216f, 0.204f, 0.228f};
+    // B5 提速 ×2：速度翻倍后漂移周期 ~75s→~38s，振幅同步下调（0.16/0.13→0.13/0.10）
+    // 防「在绕圈」观感（方案 §10.6 拍板③，一次改完不分步）。
+    constexpr float kAnchorX[kHalos] = {
+        0.50f, 0.50f, 0.24f, 0.76f, 0.12f, 0.88f, 0.36f,   // 原 7
+        0.62f, 0.38f, 0.68f, 0.32f, 0.05f, 0.95f, 0.44f};  // 新 7 补空白区
+    constexpr float kAnchorY[kHalos] = {
+        0.46f, 0.56f, 0.30f, 0.72f, 0.80f, 0.18f, 0.88f,   // 原 7
+        0.38f, 0.66f, 0.88f, 0.24f, 0.52f, 0.42f, 0.08f};  // 新 7
+    constexpr float kSpeedX[kHalos] = {
+        0.084f, 0.072f, 0.142f, 0.116f, 0.102f, 0.134f, 0.088f,
+        0.126f, 0.098f, 0.158f, 0.110f, 0.146f, 0.092f, 0.138f};
+    constexpr float kSpeedY[kHalos] = {
+        0.070f, 0.098f, 0.128f, 0.166f, 0.076f, 0.110f, 0.144f,
+        0.120f, 0.084f, 0.152f, 0.096f, 0.136f, 0.104f, 0.078f};
+    constexpr float kPhase[kHalos] = {
+        0.0f, 1.7f, 3.1f, 4.9f, 2.3f, 5.8f, 4.0f,
+        0.9f, 2.6f, 3.7f, 5.2f, 1.4f, 6.1f, 4.5f};
+    // 半径扩到 14 个固定值（不引 hash：帧间稳定不闪）。极值 0.372/0.124 → 极值比
+    // 恒 3.0（探针按此断言）。最大圆放 j=3 而非 j=0：alpha 随 j 递减，j=0 最浓，
+    // 最大圆放最前会与最浓 alpha 叠加显得突兀（方案 §10.6 建议）。
+    constexpr float kRadiusFrac[kHalos] = {
+        0.240f, 0.124f, 0.264f, 0.372f, 0.216f, 0.204f, 0.228f,  // 原 7（最大移到 j=3）
+        0.190f, 0.330f, 0.280f, 0.150f, 0.350f, 0.210f, 0.300f}; // 新 7
 
     const float phase = fluidPhaseSeconds();
     const float minDim = std::min(screen.width, screen.height);
     for (int j = 0; j < kHalos; ++j) {
         // 漂移中心 = 锚点 + 异频异相振幅（层间不共振，慢到只有「液面在流」而无轨迹感）
         const float cx = screen.width * kAnchorX[j] +
-                         screen.width * 0.16f *
+                         screen.width * 0.13f *
                              std::sin(kSpeedX[j] * phase + kPhase[j]);
         const float cy = screen.height * kAnchorY[j] +
-                         screen.height * 0.13f *
+                         screen.height * 0.10f *
                              std::cos(kSpeedY[j] * phase + kPhase[j]);
         const float r = minDim * kRadiusFrac[j];
+        // 内浓外淡：14 层时原式 (1 - 0.13j) 在 j=13 算出负 alpha（圆不可见/渲染异常），
+        // 改每档 0.05 + 下限 0.30（方案 §10.6）。
         const float alpha =
-            kMaxAlpha * (1.0f - 0.13f * static_cast<float>(j));  // 内浓外淡
+            kMaxAlpha * std::max(0.30f, 1.0f - 0.05f * static_cast<float>(j));
         // 浅色档三色轮替：同族不同明度 → 液面深浅流动，而非一整块绿。
         // 暗色档沿用双色（浅绿压深底会发灰光）。
         static const eui::Color kLightHalo[3] = {eui::Color("#07C160"),

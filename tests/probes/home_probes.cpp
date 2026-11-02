@@ -520,6 +520,283 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // 组 L（B7 D1）：5 张统计卡正常态只留短标签（无「· 说明」后缀）；
+    // 失败态专门造一次（不 onStart 的模块 = statsLoaded_ false）验证「加载失败」仍显形。
+    {
+        for (const char* cardId : kStatCardIds) {
+            const core::dsl::Element* el =
+                ui != nullptr ? ui->find(std::string(cardId) + ".label")
+                              : nullptr;
+            if (el == nullptr) {
+                std::cerr << "home_probes: 组 L 结构缺失 '" << cardId
+                          << ".label'\n";
+                passed = false;
+                continue;
+            }
+            if (el->text.find(" · ") != std::string::npos) {
+                std::cerr << "home_probes: 组 L FAIL——'" << cardId
+                          << ".label' 正常态仍是「" << el->text
+                          << "」（应只留指标名，B7 D1）\n";
+                passed = false;
+            }
+        }
+
+        // 失败态：新模块实例不调 onStart → service_ 空、statsLoaded_ false
+        std::unique_ptr<::core::Module> failedMod(create_home_module());
+        const eui::Screen failScreen{1000.0f, 800.0f};
+        eui::Ui failUi;
+        failUi.begin("home_probe_l_failed");
+        failedMod->compose(failUi, failScreen);
+        failUi.end();
+        failUi.layout(failScreen.width, failScreen.height);
+        bool sawFailText = false;
+        for (const char* cardId : kStatCardIds) {
+            const core::dsl::Element* el =
+                failUi.find(std::string(cardId) + ".label");
+            if (el == nullptr) {
+                std::cerr << "home_probes: 组 L 失败态结构缺失 '" << cardId
+                          << ".label'\n";
+                passed = false;
+                continue;
+            }
+            if (el->text.find("加载失败") != std::string::npos) sawFailText = true;
+        }
+        if (!sawFailText) {
+            std::cerr << "home_probes: 组 L FAIL——失败态各卡标签均无「加载失败」"
+                         "（D1 只许去掉正常态说明，失败必须显形）\n";
+            passed = false;
+        }
+    }
+
+    // 组 M（B7 D2）：点标题行 → 折叠态卡高 64×字号缩放、标题改短且垂直居中；
+    // 再点一次恢复展开态（不留副作用给收尾截图）。
+    {
+        auto clickCenter = [&](const core::dsl::Element& el) {
+            const float cx = el.frame.x + el.frame.width * 0.5f;
+            const float cy = el.frame.y + el.frame.height * 0.5f;
+            core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
+                                     core::PointerAction::Press, {});
+            core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
+                                     core::PointerAction::Release, {});
+        };
+        const auto* headHit =
+            ui != nullptr ? ui->find("home.api.chart.headhit") : nullptr;
+        const auto* chartExpanded =
+            ui != nullptr ? ui->find("home.api.chart") : nullptr;
+        if (headHit == nullptr || chartExpanded == nullptr) {
+            std::cerr << "home_probes: 组 M 结构缺失（headhit/chart）\n";
+            passed = false;
+        } else {
+            const float expandedH = chartExpanded->frame.height;
+            clickCenter(*headHit);
+            composeFrame();
+            composeFrame();
+            const auto* chart =
+                ui != nullptr ? ui->find("home.api.chart") : nullptr;
+            const auto* title =
+                ui != nullptr ? ui->find("home.api.chart.title") : nullptr;
+            const float expectH = 64.0f * core::theme::fontScale();
+            if (chart == nullptr || title == nullptr) {
+                std::cerr << "home_probes: 组 M 折叠后结构缺失\n";
+                passed = false;
+            } else {
+                if (std::fabs(chart->frame.height - expectH) > 0.5f) {
+                    std::cerr << "home_probes: 组 M FAIL——折叠态卡高 "
+                              << chart->frame.height << " 期望 " << expectH
+                              << "（kHomeChartCollapsedH 64×字号缩放）\n";
+                    passed = false;
+                }
+                if (title->text != "今日 Token 分布") {
+                    std::cerr << "home_probes: 组 M FAIL——折叠态标题「"
+                              << title->text << "」，应短文案「今日 Token 分布」\n";
+                    passed = false;
+                }
+                // 垂直居中：标题盒中心 = 卡内容区中心（卡上下各 16 内边距）
+                const float titleCenter = title->frame.y + title->frame.height * 0.5f;
+                const float contentCenter =
+                    chart->frame.y + chart->frame.height * 0.5f;
+                if (std::fabs(titleCenter - contentCenter) > 1.0f) {
+                    std::cerr << "home_probes: 组 M FAIL——折叠态标题中心 "
+                              << titleCenter << " 与卡中心 " << contentCenter
+                              << " 偏差 > 1px（应垂直居中）\n";
+                    passed = false;
+                }
+                if (chart->frame.height >= expandedH) {
+                    std::cerr << "home_probes: 组 M FAIL——折叠态卡高未低于展开态（"
+                              << chart->frame.height << " >= " << expandedH
+                              << "）\n";
+                    passed = false;
+                }
+            }
+            // 折叠态落图（B7 D2 目视判据：上下留白相等 / 文案不截断）。
+            // 收 argv 里的 --shot-collapsed <路径>；不给 = 零开销。
+            for (int ai = 1; ai < argc; ++ai) {
+                if (std::string(argv[ai]) == "--shot-collapsed" &&
+                    ai + 1 < argc) {
+                    probe::captureFramePng(window, runtime, argv[ai + 1]);
+                }
+            }
+            // 恢复展开态：再点一次标题行（折叠态 headhit 仍在同位置）
+            const auto* headHitAgain =
+                ui != nullptr ? ui->find("home.api.chart.headhit") : nullptr;
+            if (headHitAgain != nullptr) {
+                clickCenter(*headHitAgain);
+                composeFrame();
+                composeFrame();
+                const auto* restored =
+                    ui != nullptr ? ui->find("home.api.chart") : nullptr;
+                if (restored != nullptr &&
+                    std::fabs(restored->frame.height - expandedH) > 0.5f) {
+                    std::cerr << "home_probes: 组 M FAIL——再点后卡高未恢复（"
+                              << restored->frame.height << " vs " << expandedH
+                              << "）\n";
+                    passed = false;
+                }
+            } else {
+                std::cerr << "home_probes: 组 M 折叠态 headhit 丢失（无法恢复）\n";
+                passed = false;
+            }
+        }
+    }
+
+    // 组 N（池72/池73 防复发）
+    //   N1 有数据时图表必须真有柱体：种子（9 时 400 / 17 时 600）→ 去头去尾 9 根柱，
+    //      bar.0 与 bar.8 高度 > 1px（1px 是零值底线，等于没画）。旧诊断口径是
+    //      「结构缺失/plot 区高」，只要不撞空态分支就绿——挡不住「有数据走空态」。
+    //   N2 「切换 Claude Profile」按钮图标不是缺字形方块：像素通道采样图标盒，
+    //      判据 = 「满行占比」（字形包围盒内宽度 > 85% 的行 / 总行数）。
+    //      ⚠ 不用 G3 的 ink/green 判据——实测缺字形的实心方块 ink=96.9%、
+    //      green=61.3%，真实字形（0xF007 fa-user）ink=99.3%、green=43.9%，
+    //      两者都满足「有墨迹且非绿主导」，判据不区分（本组实测过，会假绿）。
+    //      换成形状分布：实心方块是矩形，65% 的行顶满包围盒宽；真实字形笔画
+    //      收放，满行只占 32%。阈值 55%。
+    {
+        composeFrame();
+        // ---- N1 有数据必有柱 ----
+        const core::dsl::Element* bar0 =
+            ui != nullptr ? ui->find("home.api.chart.bars.bar.0") : nullptr;
+        const core::dsl::Element* bar8 =
+            ui != nullptr ? ui->find("home.api.chart.bars.bar.8") : nullptr;
+        const core::dsl::Element* emptyTitle =
+            ui != nullptr ? ui->find("home.api.chart.empty.title") : nullptr;
+        if (emptyTitle != nullptr) {
+            std::cerr << "home_probes: 组 N1 FAIL——种子有 token 却走了空态分支"
+                         "（图表不画图）\n";
+            passed = false;
+        } else if (bar0 == nullptr || bar8 == nullptr) {
+            std::cerr << "home_probes: 组 N1 FAIL——柱体元素缺失 (bar.0="
+                      << (bar0 != nullptr ? "ok" : "null")
+                      << ", bar.8=" << (bar8 != nullptr ? "ok" : "null")
+                      << ")——有数据仍不画图\n";
+            passed = false;
+        } else if (bar0->frame.height <= 1.5f || bar8->frame.height <= 1.5f) {
+            std::cerr << "home_probes: 组 N1 FAIL——有数据但柱高塌成零底线 (bar.0="
+                      << bar0->frame.height << ", bar.8=" << bar8->frame.height
+                      << ")\n";
+            passed = false;
+        } else {
+            std::cout << "home_probes: 组 N1 PASS 柱高 bar.0="
+                      << bar0->frame.height << " bar.8=" << bar8->frame.height
+                      << "\n";
+        }
+
+        // ---- N2 图标字形存在性（形状分布判据）----
+        const core::dsl::Element* iconEl =
+            ui != nullptr ? ui->find("home.act.claude.icon") : nullptr;
+        if (iconEl == nullptr) {
+            std::cerr << "home_probes: 组 N2 图标元素缺失 home.act.claude.icon"
+                         "（结构判据跳过像素）\n";
+            passed = false;
+        } else if (iconEl->fontFamily != "Icon" || iconEl->text.empty()) {
+            std::cerr << "home_probes: 组 N2 FAIL——图标未绑定 Icon 字体 (family="
+                      << iconEl->fontFamily << ", text.len="
+                      << iconEl->text.size() << ")\n";
+            passed = false;
+        } else {
+            probe::FrameCapture glyphCapture(window);
+            std::vector<unsigned char> rgba;
+            int imgW = 0, imgH = 0;
+            if (!glyphCapture.ok()) {
+                std::cerr << "home_probes: 组 N2 FrameCapture 不可用: "
+                          << glyphCapture.error() << "（像素判据跳过）\n";
+            } else if (!glyphCapture.readFrame(runtime, rgba, imgW, imgH)) {
+                std::cerr << "home_probes: 组 N2 读帧失败（像素判据跳过）\n";
+            } else {
+                const float pxScale = glyphCapture.scale();
+                const int x0 = static_cast<int>(
+                    std::lround(iconEl->frame.x * pxScale));
+                const int y0 = static_cast<int>(
+                    std::lround(iconEl->frame.y * pxScale));
+                const int x1 = static_cast<int>(
+                    std::lround((iconEl->frame.x + iconEl->frame.width) * pxScale));
+                const int y1 = static_cast<int>(
+                    std::lround((iconEl->frame.y + iconEl->frame.height) * pxScale));
+                if (x0 < 0 || y0 < 0 || x1 > imgW || y1 > imgH || x1 <= x0 ||
+                    y1 <= y0) {
+                    std::cerr << "home_probes: 组 N2 采样越界 (" << x0 << ","
+                              << y0 << ")-(" << x1 << "," << y1 << ")\n";
+                    passed = false;
+                } else {
+                    // 字形笔画色 = 主题 primary 绿：g 明显高于 r/b（按钮 ghost 态图标色）
+                    std::vector<std::pair<int, int>> glyphPx;
+                    for (int y = y0; y < y1; ++y) {
+                        for (int x = x0; x < x1; ++x) {
+                            const std::size_t at =
+                                (static_cast<std::size_t>(y) * imgW + x) * 4u;
+                            const int r = rgba[at], g = rgba[at + 1],
+                                      b = rgba[at + 2];
+                            if (g > 90 && g > r + 30 && g > b + 20) {
+                                glyphPx.emplace_back(x, y);
+                            }
+                        }
+                    }
+                    if (glyphPx.empty()) {
+                        std::cerr << "home_probes: 组 N2 FAIL——图标区无笔画像素"
+                                     "（缺字形/未渲染）\n";
+                        passed = false;
+                    } else {
+                        int minX = glyphPx[0].first, maxX = glyphPx[0].first;
+                        int minY = glyphPx[0].second, maxY = glyphPx[0].second;
+                        for (const auto& p : glyphPx) {
+                            minX = std::min(minX, p.first);
+                            maxX = std::max(maxX, p.first);
+                            minY = std::min(minY, p.second);
+                            maxY = std::max(maxY, p.second);
+                        }
+                        const int bboxW = maxX - minX + 1;
+                        int rows = 0, fullRows = 0;
+                        for (int y = minY; y <= maxY; ++y) {
+                            int cnt = 0;
+                            for (const auto& p : glyphPx) {
+                                if (p.second == y) ++cnt;
+                            }
+                            if (cnt == 0) continue;
+                            ++rows;
+                            if (static_cast<float>(cnt) >
+                                static_cast<float>(bboxW) * 0.85f) {
+                                ++fullRows;
+                            }
+                        }
+                        const float fullRatio =
+                            rows > 0 ? static_cast<float>(fullRows) /
+                                           static_cast<float>(rows)
+                                     : 1.0f;
+                        std::cout << "home_probes: 组 N2 字形 包围盒=" << bboxW
+                                  << "x" << (maxY - minY + 1) << " 满行占比="
+                                  << fullRatio * 100.0f << "%\n";
+                        if (fullRatio > 0.55f) {
+                            std::cerr << "home_probes: 组 N2 FAIL——图标是实心方块"
+                                         "（满行占比 "
+                                      << fullRatio * 100.0f
+                                      << "% > 55%，缺字形 fallback）\n";
+                            passed = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // 退出前落一张「当前状态图」（--screenshot <路径>）
     // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样。不传该开关时
     // captureIfRequested 立刻返回（零开销 / 不写文件）。

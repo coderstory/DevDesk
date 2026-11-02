@@ -102,6 +102,21 @@ float fontScale();
 // 令牌（t.sizes.fontSize*）在 token 重建时已乘 fontScale，勿再包一层（会双乘）
 inline float scaled(float px) { return px * fontScale(); }
 
+// 字号与行高成对缩放（scaled() 的兄弟，非第二入口——两者共用 fontScale()）。
+// 存在理由：EUI 的 text 按 lineHeight 排行盒、超出即裁，只缩字号不缩行盒 = 文字被裁。
+// ⚠️ 硬契约：baseFont / baseLineHeight 必须都是**未缩放的字面量基准**：
+//   ✅ scaledText(12.0f, 20.0f)
+//   ❌ scaledText(t.sizes.fontSizeBody, 20.0f)   ← 双乘（令牌已乘过 fontScale）
+struct ScaledText {
+    float fontSize;
+    float lineHeight;
+};
+
+inline ScaledText scaledText(float baseFont, float baseLineHeight) {
+    const float s = fontScale();
+    return {baseFont * s, baseLineHeight * s};
+}
+
 // 窗高驱动字号封顶已废止（2026-10-25 用户拍板，可读性优先）：windowScaleCap 恒不封顶，
 // fontScale() = 用户手动档；setWindowHeight 保留信号通道（app::compose 每帧喂入）。
 // 如需恢复 revert theme.cpp windowScaleCap

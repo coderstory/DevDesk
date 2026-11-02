@@ -242,6 +242,9 @@ struct ProbeArgs {
     // 可同时给）。探针收尾前常做破坏性收尾断言（清库再断言），退出点那张图拍到的
     // 是收尾后的空态；本开关让探针能在「数据还在」的中途点另拍一张。空 = 零开销。
     std::string screenshotSeedPath;
+    // --shot-list <路径>：B3 智能体列表页截图（网格化三行卡）。与上面三个出口相互
+    // 独立；空 = 零开销。
+    std::string shotListPath;
 };
 
 inline int parseLeadingInt(const std::string& text, int fallback) {
@@ -256,7 +259,8 @@ inline int parseLeadingInt(const std::string& text, int fallback) {
 }
 
 /// 解析 --frames N / --size WxH / --manual / --screenshot <路径> /
-/// --screenshot-seeded <路径>；未知参数忽略。
+/// --screenshot-publish <路径> / --screenshot-seeded <路径> / --shot-list <路径>；
+/// 未知参数忽略。
 inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
     ProbeArgs args;
     for (int i = 1; i < argc; ++i) {
@@ -276,6 +280,8 @@ inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
             args.screenshotPublishPath = argv[++i];
         } else if (arg == "--screenshot-seeded" && i + 1 < argc) {
             args.screenshotSeedPath = argv[++i];
+        } else if (arg == "--shot-list" && i + 1 < argc) {
+            args.shotListPath = argv[++i];
         } else if (arg == "--manual") {
             args.manual = true;
         }

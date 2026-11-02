@@ -55,17 +55,19 @@ int main(int argc, char* argv[]) {
                              static_cast<float>(args.windowH)};
 
     // 一次「构建树 + 布局 + 读 halo 中心」：halo 帧位由 compose 期相位派生，
-    // 布局只是把显式 position 落到 frame。
+    // 布局只是把显式 position 落到 frame。同时取半径（帧宽）供极值比断言用。
+    constexpr int kHalos = 14;   // 与 app_sidebar.cpp drawFluidBackground 同数（B5 7→14）
     const auto composeAndReadCenters = [&](std::vector<float>& cx,
-                                           std::vector<float>& cy) -> bool {
+                                           std::vector<float>& cy,
+                                           std::vector<float>& radi) -> bool {
         eui::Ui ui;
         ui.begin("h13_fluid_probe");
         app::drawFluidBackground(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        constexpr int kHalos = 7;   // 与 app_sidebar.cpp drawFluidBackground 同数
         cx.assign(kHalos, 0.0f);
         cy.assign(kHalos, 0.0f);
+        radi.assign(kHalos, 0.0f);
         for (int j = 0; j < kHalos; ++j) {
             const auto* halo = ui.find("app.fluid.halo." + std::to_string(j));
             if (halo == nullptr) {
@@ -75,22 +77,50 @@ int main(int argc, char* argv[]) {
             }
             cx[j] = halo->frame.x + halo->frame.width * 0.5f;
             cy[j] = halo->frame.y + halo->frame.height * 0.5f;
+            radi[j] = halo->frame.width * 0.5f;
+        }
+        // 数量判据（B5）：必须恰好 14 个 halo，第 15 个不得存在
+        if (ui.find("app.fluid.halo." + std::to_string(kHalos)) != nullptr) {
+            std::cerr << "FAIL: app.fluid.halo." << kHalos
+                      << " 存在——halo 数量多于 14" << std::endl;
+            return false;
         }
         return true;
     };
 
-    std::vector<float> cx1, cy1, cx2, cy2;
-    if (!composeAndReadCenters(cx1, cy1)) {
+    std::vector<float> cx1, cy1, radi1, cx2, cy2, radi2;
+    if (!composeAndReadCenters(cx1, cy1, radi1)) {
         probe::terminateWindowBackend();
         return 1;
     }
 
-    // 两次采样之间壁钟相位前进 200ms：halo 漂移速度量级为宽×0.16×角速度
-    // （约 4~9 px/s），200ms 位移 ≥ 0.8px（除各 halo 相位导数为零的罕见点；
-    // 下方取 7 halo 最大位移规避单 halo 余弦过零）。
+    // 半径极值比判据（B5）：kRadiusFrac 极值 0.372/0.124 → 3.0 精确；容差 ±0.3
+    {
+        float rMin = radi1[0];
+        float rMax = radi1[0];
+        for (float r : radi1) {
+            rMin = std::min(rMin, r);
+            rMax = std::max(rMax, r);
+        }
+        const float ratio = rMax / rMin;
+        std::cout << "H13: radius min=" << rMin << " max=" << rMax
+                  << " ratio=" << ratio << std::endl;
+        if (std::fabs(ratio - 3.0f) > 0.3f) {
+            std::cerr << "FAIL: halo 半径极值比 " << ratio
+                      << " 偏离 3.0±0.3（kRadiusFrac 极值应为 0.372/0.124）"
+                      << std::endl;
+            app::setFluidBackgroundEnabled(false);
+            probe::terminateWindowBackend();
+            return 1;
+        }
+    }
+
+    // 两次采样之间壁钟相位前进 200ms：halo 漂移速度量级为宽×振幅×角速度，
+    // B5 后约 9~17 px/s，200ms 位移 ≥ 0.8px（除各 halo 相位导数为零的罕见点；
+    // 下方取 14 halo 最大位移规避单 halo 余弦过零）。
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    if (!composeAndReadCenters(cx2, cy2)) {
+    if (!composeAndReadCenters(cx2, cy2, radi2)) {
         probe::terminateWindowBackend();
         return 1;
     }
@@ -112,6 +142,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // 位移比判据（B5，可选）：--baseline-max <px> 传入改前基线（同一窗口尺寸下
+    // 上一版的最大位移），断言 改后/基线 ∈ [1.5, 2.2]。速度 ×2 与振幅 0.81
+    // 的联合效应约 1.62 倍（方案 §10.6）；不给基线时跳过（其他用例不受影响）。
+    float baselineMax = 0.0f;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--baseline-max" && i + 1 < argc) {
+            baselineMax = static_cast<float>(std::atof(argv[i + 1]));
+        }
+    }
+
     app::setFluidBackgroundEnabled(false);
     probe::terminateWindowBackend();
 
@@ -120,6 +160,17 @@ int main(int argc, char* argv[]) {
                   << "px（halo." << maxHalo << "）< " << kMinVisualDisplacement
                   << "px：动画视觉静止或未消费相位" << std::endl;
         return 1;
+    }
+    if (baselineMax > 0.0f) {
+        const float ratio = maxDisplacement / baselineMax;
+        std::cout << "H13: displacement ratio=" << ratio
+                  << "（基线 max=" << baselineMax << "）" << std::endl;
+        if (ratio < 1.5f || ratio > 2.2f) {
+            std::cerr << "FAIL: 位移比 " << ratio
+                      << " 不在 [1.5, 2.2]——速度 ×2 / 振幅下调未按方案生效"
+                      << std::endl;
+            return 1;
+        }
     }
     std::cout << "PASS: fluid halo 可见位移 max=" << maxDisplacement
               << "px（halo." << maxHalo << "）≥ " << kMinVisualDisplacement

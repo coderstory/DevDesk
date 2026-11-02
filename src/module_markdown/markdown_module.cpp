@@ -310,21 +310,30 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
         .size(contentW, ui_kit::kHeaderH)
         .alignItems(eui::Align::CENTER)
         .content([&] {
-            const float segW = 264.0f;
-            const float actionsW = 304.0f;
+            const float actionsW = 304.0f;   // 右操作组控件定宽（按钮 112/136 字面）
+            // B6/F-69-2：标题列与模式 Tab 段随字号派生；两者都按可用宽收口
+            // （放大档三列相加可超内容宽 → 必须先夹，否则 Tab/按钮被推出页面右缘）。
+            const float segW = std::min(core::theme::scaled(264.0f),
+                                        std::max(216.0f, contentW - actionsW -
+                                                             200.0f - 16.0f));
             // 2026-10-25 用户拍板：标题列按内容收紧（原 contentW−actionsW−segW 拉满，
             // 模式 Tab 被推到最右、中间 ~400px 空隙）；Tab 左聚跟标题，spacer 推 actions 靠右
-            constexpr float kTitleColW = 240.0f;
+            const float kTitleColW =
+                std::min(core::theme::scaled(240.0f),
+                         std::max(160.0f, contentW - segW - actionsW - 16.0f));
             ui.column("md.title")
                 .size(kTitleColW, ui_kit::kHeaderH)
                 .gap(2.0f)
                 .content([&] {
                     ui.text("md.h1")
-                        .size(kTitleColW, 24.0f)
+                        .size(kTitleColW, core::theme::scaled(24.0f))
                         .text("Markdown 笔记本")
                         .fontSize(t.sizes.fontSizeTitle)
-                        .lineHeight(24.0f)
+                        .lineHeight(core::theme::scaled(24.0f))
                         .fontWeight(700)
+                        .maxWidth(kTitleColW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
                         .color(t.colors.textPrimary)
                         .build();
                 })

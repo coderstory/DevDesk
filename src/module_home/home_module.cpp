@@ -38,8 +38,9 @@ namespace {
 // 图表卡缺席时余高全给统计行。装不下时由外层 home.scroll 滚动吸收。
 constexpr float kHomeChartH = 220.0f;
 
-// 折叠态高度：只留卡片内边距 + 标题行（16 + 22 + 18），图表区整个收起。
-constexpr float kHomeChartCollapsedH = 56.0f;
+// 折叠态高度：只留卡片内边距 + 标题行，图表区整个收起。B7 起 56→64（56 时标题顶
+// 对齐、下方留 18px 空，卡片看着被压扁）；随字号缩放走 scaled()。
+constexpr float kHomeChartCollapsedH = 64.0f;
 
 // 折叠态跨会话持久化的配置键（core::appconfig 纯文本键值）
 constexpr const char* kChartCollapsedKey = "home.chart_collapsed";
@@ -84,9 +85,11 @@ void drawSolidStatCard(eui::Ui& ui,
     const float corner = t.sizes.radiusOverlay;  // 16px
     // 两行排版：指标名 16 行高 + 4 间隙 + 数字 34 行高 = 54，卡内内容高 96−40=56 装得下；
     // 说明并入指标名（「笔记 · 今日」），不单独占行。
-    const float labelH = 16.0f;
-    const float numGap = 4.0f;
-    const float numberH = 34.0f;  // 30px 字号行高
+    // B6/F-69-2：行盒/间隙随字号派生（基准字面量走 scaled，token 值不可再乘），
+    // 否则放大档「字变大行盒不变 → 数字被裁」。
+    const float labelH = core::theme::scaled(16.0f);
+    const float numGap = core::theme::scaled(4.0f);
+    const float numberH = core::theme::scaled(34.0f);  // 30px 字号行高
     // 文本块在「内边距以内」垂直居中（不是按卡高算——那样会多吃掉上下 pad，
     // 96 高卡里数字底边越出卡缘，2026-11-01 重构把卡从 120 压到 96 时踩过）。
     // spark 垫在数字行同一带先画，不占纵向空间：五张卡文字位置完全一致。
@@ -115,6 +118,8 @@ void drawSolidStatCard(eui::Ui& ui,
                     .build();
             }
             // 指标名：三级字，居中；说明（badge）并入同行「笔记 · 今日」。
+            // B7 D1（已拍板 5 张统一）：调用方正常态传空 badge → 只显示指标名；
+            // 错误态传「加载失败」→ 照旧拼出来，失败必须显形。
             // 合并文本量宽放不下卡宽时丢弃 badge 只留指标名——badge 是弱信息，
             // 溢出会让居中文本越出卡缘（home_probes 类 6(a) 溢出判据守这条）。
             // 量宽留 12px 余量：measureTextSize 与最终排版有 1~2% 的差（字距/取整），
@@ -229,7 +234,10 @@ struct HomeActionButton {
 constexpr HomeActionButton kActionButtons[] = {
     {ActionKind::NewNote,    ::core::PageId::Markdown,    "+ 新建笔记",         0,     ::core::PageId::Markdown,    "action:new_note"},
     {ActionKind::NewTodo,    ::core::PageId::Todo,        "+ 新建任务",         0,     ::core::PageId::Todo,        "action:new_task"},
-    {ActionKind::SwitchClaude, ::core::PageId::ClaudeProxy, "切换 Claude Profile", 0xF46D, ::core::PageId::ClaudeProxy, ""},
+    // 图标 0xF007 = fa-user（账号/Profile）：0xF46D 在本仓 FA7 字体里渲染成实心方块
+    // （池73，字形存在性由 home_probes 组 N 机器校验 ink 判据）。0xF007 与页头刷新
+    // 按钮的 0xF021 不撞形。
+    {ActionKind::SwitchClaude, ::core::PageId::ClaudeProxy, "切换 Claude Profile", 0xF007, ::core::PageId::ClaudeProxy, ""},
 };
 
 // 元素 id 由 kind 唯一决定（单测锁定这些 id，行序重排不飘）。
@@ -369,9 +377,12 @@ public:
             // 全关时统计区是 32 高空态行（见下方 statCount == 0 分支）。
             const float statsBlockH = hasStats ? statBaseH : 32.0f;
             const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
-            // 图表卡基准高：折叠态只留标题行，基准随之收缩（否则底部留出一整块空白）
+            // 图表卡基准高：折叠态只留标题行，基准随之收缩（否则底部留出一整块空白）。
+            // 折叠高随字号缩放（B7 D2）：字号放大后标题行更高，固定 64 会截断。
             const float chartBaseH =
-                hasChart ? (chartCollapsed_ ? kHomeChartCollapsedH : kHomeChartH)
+                hasChart ? (chartCollapsed_
+                                ? kHomeChartCollapsedH * core::theme::fontScale()
+                                : kHomeChartH)
                          : 0.0f;
             const float baseContentH =
                 40.0f + statsBlockH +   // 上下内边距 0（批L 顶格+贴底），左右 pad 不占高
@@ -409,11 +420,13 @@ public:
                             .size(std::max(280.0f, contentW - kHeaderActionsW), 40.0f)
                             .gap(2.0f)
                             .content([&] {
+                                // B6：页标题行盒随字号派生（同 settings.h1 口径）
                                 ui.text("home.h1")
-                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 24.0f)
+                                    .size(std::max(280.0f, contentW - kHeaderActionsW),
+                                          core::theme::scaled(24.0f))
                                     .text("工作台")
                                     .fontSize(t.sizes.fontSizeTitle)
-                                    .lineHeight(24.0f)
+                                    .lineHeight(core::theme::scaled(24.0f))
                                     .fontWeight(700)
                                     .color(t.colors.textPrimary)
                                     .build();
@@ -464,24 +477,18 @@ public:
                 const std::string tokenNumber =
                     rateOk ? core::call_rate::formatTps(lastRate_.tps)
                            : std::string("--");
-                // badge 文案不带「会话」二字（11px 全角在最小窗会溢出卡片）。分档：流式中「● N 路生成中」；
-                // 空闲「最近一次成功调用」/「暂无成功调用」/「加载失败」。
+                // B7 D1（已拍板 5 张统一）：正常态只留指标名，badge 传空；
+                // 唯一例外是「加载失败」——失败不能藏（流式路数由数字主色体现）。
                 const std::string tokenBadge =
-                    streaming
-                        ? "● " + std::to_string(snap.activeStreams) +
-                              " 路生成中" + (rateOk ? " · 最近一次" : "")
-                        : (rateFailed
-                               ? "加载失败"
-                               : (rateOk ? "最近一次成功调用"
-                                         : "暂无成功调用"));
+                    rateFailed ? "加载失败" : std::string{};
 
                 if (statCount == 0) {
                     // 三模块全关的空态兜底：标题区保留 + 一句极简引导。
                     ui.text("home.stats.alloff")
-                        .size(contentW, 32.0f)
+                        .size(contentW, core::theme::scaled(32.0f))
                         .text("所有工具模块已关闭")
                         .fontSize(t.sizes.fontSizeBody)
-                        .lineHeight(32.0f)
+                        .lineHeight(core::theme::scaled(32.0f))
                         .color(t.colors.textTertiary)
                         .build();
                 } else {
@@ -563,8 +570,7 @@ public:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.todayNotes),
-                                                 ok ? "今日修改过的笔记"
-                                                    : "加载失败",
+                                                 ok ? "" : "加载失败",
                                                  false,
                                                  [this, target = card.target] {
                                                      navigateTo(target);
@@ -574,7 +580,7 @@ public:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.pendingTodos),
-                                                 ok ? "待办+进行中未完成" : "加载失败",
+                                                 ok ? "" : "加载失败",
                                                  false,
                                                  [this, target = card.target] {
                                                      navigateTo(target);
@@ -584,7 +590,7 @@ public:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.overdueTodos),
-                                                 ok ? "已过截止时间" : "加载失败",
+                                                 ok ? "" : "加载失败",
                                                  stats_.overdueTodos > 0,
                                                  [this, target = card.target] {
                                                      navigateTo(target);
@@ -594,7 +600,7 @@ public:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, ui_kit::cardSurface(t), card.title,
                                                  num(stats_.todayApiCalls),
-                                                 ok ? "今日代理调用" : "加载失败",
+                                                 ok ? "" : "加载失败",
                                                  false,
                                                  [this, target = card.target] {
                                                      navigateTo(target);
@@ -632,10 +638,11 @@ public:
                     }
                     // H18 纵向弹性：图表卡吸收基准以上的余高（扣掉统计行已分走的增量），
                     // 基准档（内容刚好填满）为 220；矮于基准才由外层滚动吸收。
-                    // 折叠态：只留标题行高度（kHomeChartCollapsedH），不参与伸展。
+                    // 折叠态：只留标题行高度（kHomeChartCollapsedH × 字号缩放），不参与伸展。
                     const float chartCardH =
-                        chartCollapsed_ ? kHomeChartCollapsedH
-                                        : kHomeChartH + extraH - statsGrowH;
+                        chartCollapsed_
+                            ? kHomeChartCollapsedH * core::theme::fontScale()
+                            : kHomeChartH + extraH - statsGrowH;
                     const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 基准档 156
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
@@ -647,23 +654,43 @@ public:
                         .content([&] {
                             // 标题保持满内容宽（home_probes 类5(a) 要求左右间隙对称）；
                             // 折叠箭头叠在右端，标题文案远短于内容宽，窄窗也不会压字。
+                            // 折叠态（B7 D2）：标题改短 + 垂直居中；展开态保留全称顶对齐。
+                            // 折叠时卡内只剩标题一行，用整个内容盒高做居中盒 → 上下留白相等。
+                            const float titleLineH =
+                                core::theme::scaled(22.0f);
+                            const float titleY = chartCollapsed_ ? 0.0f : 16.0f;
+                            const float titleBoxH =
+                                chartCollapsed_
+                                    ? std::max(titleLineH,
+                                               chartCardH -
+                                                   t.sizes.spacingLarge * 2.0f)
+                                    : titleLineH;
                             ui.text("home.api.chart.title")
-                                .position(0.0f, 16.0f)
-                                .size(contentW - 32.0f, 22.0f)
-                                .text("今日 Token 用量分布（每小时输出 token 合计）")
+                                .position(0.0f, titleY)
+                                .size(contentW - 32.0f, titleBoxH)
+                                .text(chartCollapsed_
+                                          ? "今日 Token 分布"
+                                          : "今日 Token 用量分布（每小时输出 token 合计）")
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
-                                .lineHeight(22.0f)
+                                .lineHeight(titleLineH)
                                 .fontWeight(600)
+                                .verticalAlign(chartCollapsed_
+                                                   ? eui::VerticalAlign::Center
+                                                   : eui::VerticalAlign::Top)
                                 .color(t.colors.textPrimary)
                                 .build();
                             // 折叠箭头：chevron-down 展开 / chevron-right 收起
                             // （走 Icon 字体：几何符号在正文字体里会退化成小点）
+                            // 折叠态与居中后的标题同带（盒心对齐）。
                             ui.text("home.api.chart.toggle")
-                                .position(contentW - 32.0f - 20.0f, 16.0f)
-                                .size(20.0f, 22.0f)
+                                .position(contentW - 32.0f - 20.0f,
+                                          chartCollapsed_
+                                              ? (titleBoxH - titleLineH) * 0.5f
+                                              : 16.0f)
+                                .size(20.0f, titleLineH)
                                 .icon(chartCollapsed_ ? 0xF054 : 0xF078)
                                 .fontSize(core::theme::scaled(12.0f))
-                                .lineHeight(22.0f)
+                                .lineHeight(titleLineH)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
                                 .color(t.colors.textSecondary)
                                 .build();
@@ -805,7 +832,8 @@ public:
                                                 std::to_string(i))
                                                 .x(bx - 12.0f)
                                                 .y(by - 14.0f)
-                                                .size(barW + 24.0f, 14.0f)
+                                                .size(barW + 24.0f,
+                                                      core::theme::scaled(14.0f))
                                                 .text(formatTokenCount(v))
                                                 .fontSize(core::theme::scaled(10.0f))
                                                 .lineHeight(core::theme::scaled(14.0f))
@@ -819,7 +847,8 @@ public:
                                                 std::to_string(i))
                                                 .x(bx - 12.0f)
                                                 .y(chartWrapH - 22.0f)
-                                                .size(barW + 24.0f, 16.0f)
+                                                .size(barW + 24.0f,
+                                                      core::theme::scaled(16.0f))
                                                 .text(std::to_string(
                                                           range.first + i) +
                                                       "时")

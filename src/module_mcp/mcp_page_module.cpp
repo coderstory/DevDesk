@@ -25,6 +25,7 @@
 #include <eui/dsl.h>
 
 #include <ui_kit/empty_state.h>
+#include <ui_kit/grid.h>
 
 #include <algorithm>
 #include <utility>
@@ -73,23 +74,6 @@ std::string resultDisplayText(bool running, bool hasResult, bool isError,
     if (running) return "运行中…";
     if (!hasResult) return "（尚未运行）";
     return std::string(isError ? "失败：\n" : "成功：\n") + text;
-}
-
-// 列宽算法：先取「放得下多少列最小宽」的列数，再用剩余空间把列宽撑开；
-// 撑过上限（420）就减列重算，避免宽窗里卡片被拉成横条。
-std::pair<int, float> gridColumns(float contentW, float gap) {
-    if (contentW <= 0.0f) return {1, kCardMinW};
-    int cols = 1;
-    for (int n = 1; n <= kCardMaxCols; ++n) {
-        if (contentW >= n * kCardMinW + (n - 1) * gap) cols = n;
-    }
-    float cardW = (contentW - gap * (cols - 1)) / cols;
-    if (cardW > kCardMaxW) {
-        cols = std::max(1, static_cast<int>(
-                               (contentW + gap) / (kCardMaxW + gap)));
-        cardW = (contentW - gap * (cols - 1)) / cols;
-    }
-    return {cols, cardW};
 }
 
 } // namespace
@@ -240,7 +224,9 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                         // 网格：列宽随内容宽自适应（340–420），填满可用宽度，
                         // 不再在右侧留大片空白（2026-11-01 F-13）。
                         const auto [cols, cardW] =
-                            gridColumns(contentW, t.sizes.spacingLarge);
+                            ui_kit::gridColumns(contentW, t.sizes.spacingLarge,
+                                                kCardMinW, kCardMaxW,
+                                                kCardMaxCols);
                         (void)cols;
                         ui.flow("mcp.grid")
                             .width(contentW)
@@ -437,7 +423,9 @@ void McpPageModule::drawMemoryModuleRow(
     eui::Ui& ui, float contentW, const core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& comp) {
     const std::string id = "mcp.module.memory";
-    constexpr float kRowH = 64.0f;
+    // B6/F-69-2：行高与文字行盒随字号派生——放大档字变大而 64 行高不变时，
+    // 标题（scaled 18）与描述行叠字、描述底越出卡外。
+    const float kRowH = core::theme::scaled(64.0f);
     constexpr float kPad = 12.0f;
     constexpr float kIconSize = 40.0f;
     constexpr float kSwitchW = 44.0f;
@@ -480,8 +468,11 @@ void McpPageModule::drawMemoryModuleRow(
                 .color(t.colors.textPrimary)
                 .build();
             const bool hasError = !memorySaveError_.empty();
+            // 描述行顶 = 标题行底 + 4（100% = 12+18+4 = 34，与原字面 22 偏移等价）
             ui.text(id + ".desc")
-                .position(kPad + kIconSize + 12.0f, kPad + core::theme::scaled(22.0f))
+                .position(kPad + kIconSize + 12.0f,
+                          kPad + core::theme::scaled(18.0f) +
+                              core::theme::scaled(4.0f))
                 .size(textW, core::theme::scaled(16.0f))
                 .text(hasError ? "保存失败：" + memorySaveError_
                                : "将本机长期记忆以 memory_search 工具开放给 MCP 客户端查询")

@@ -37,10 +37,10 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                 .build();
             ui.text("md.outline.panel.title")
                 .position(16.0f, 10.0f)
-                .size(120.0f, 24.0f)
+                .size(120.0f, core::theme::scaled(24.0f))
                 .text("大纲")
                 .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(24.0f)
+                .lineHeight(core::theme::scaled(24.0f))
                 .fontWeight(700)
                 .color(t.colors.textPrimary)
                 .build();
@@ -58,11 +58,11 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
             if (outline_.empty()) {
                 ui.text("md.outline.panel.empty")
                     .position(16.0f, 52.0f)
-                    .size(panelW - 32.0f, 60.0f)
+                    .size(panelW - 32.0f, core::theme::scaled(60.0f))
                     .text(currentPath_.empty() ? "先打开一篇笔记"
                                                : "没有标题\n用 # 开始一行即可加入大纲")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
+                    .lineHeight(core::theme::scaled(18.0f))
                     .wrap()
                     .color(t.colors.textTertiary)
                     .build();
@@ -114,10 +114,10 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                                               0.0f)
                                     .size(std::max(0.0f, rowW - 20.0f -
                                                    static_cast<float>(h.level - 1) * 14.0f),
-                                          30.0f)
+                                          core::theme::scaled(30.0f))
                                     .text(h.title.empty() ? "(无标题)" : h.title)
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(30.0f)
+                                    .lineHeight(core::theme::scaled(30.0f))
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(current ? t.colors.primary
                                                    : t.colors.textPrimary)
@@ -168,10 +168,10 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
         if (currentPath_.empty()) {
             ui.text("md.preview.hint")
                 .position(pvX, pvY)
-                .size(pvW, 40.0f)
+                .size(pvW, core::theme::scaled(40.0f))
                 .text("选择笔记后在这里看到渲染结果")
                 .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.textTertiary)
                 .build();
             return;

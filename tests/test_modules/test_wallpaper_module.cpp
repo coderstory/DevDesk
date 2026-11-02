@@ -415,7 +415,8 @@ REGISTER_TEST(wallpaper_card_geometry,
         };
 
         const float w = 1312.0f;   // 默认窗 1600 的内容宽
-        const float h = ms::roundFs(ms::kModulesCardHeightWallpaper);
+        // B6/F-69-3：卡高内容派生（>1.15 档降单列 → 行数翻倍），与生产同源
+        const float h = ms::modulesCardHeightFor(ms::kModuleToggleCellCount(true));
         eui::Ui ui;
         ui.begin(scale < 0.9f   ? "wpg85"
                  : scale > 1.2f ? "wpg130"
@@ -435,18 +436,24 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(track != nullptr);
 
-        // 末行右列（第 4 行 col 1；格序不变量：kToggleable 表序 + 壁纸恒末格，
-        // schedule 加入后 7 开关格占满 4 行，壁纸收第 4 行右列）：
-        // 格 y = 68（字面锚）+ 3×roundFs(56)，x = 28 + cell2X
-        //（与常规格同源：cellX = 28 + col×cell2X，rowY = 68.0f + row×rowPitch，
-        // 锚不随字号缩放）
+        // 壁纸恒末格：列数按字号档（B6：>1.15 档两列降单列），末格行/列同源派生
+        const int cols = ms::modulesCardSingleColumn() ? 1 : 2;
+        const int cells = ms::kModuleToggleCellCount(true);
+        const int lastIdx = cells - 1;
+        const float lastRow = static_cast<float>(lastIdx / cols);
+        const int lastCol = lastIdx % cols;
         DOCTEST_CHECK(std::fabs(
             name->frame.y -
-            (68.0f + 3.0f * ms::roundFs(56.0f))) < 0.5f);
+            (ms::modulesGridTopY() + lastRow * ms::modulesRowPitch())) < 0.5f);
         float cellW = 0.0f;
         float cell2X = 0.0f;
         ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
-        DOCTEST_CHECK(std::fabs(name->frame.x - (28.0f + cell2X)) < 0.5f);
+        if (cols == 1) {
+            cellW = w - 56.0f;   // 单列档格宽 = 卡内可用宽
+        }
+        DOCTEST_CHECK(std::fabs(name->frame.x -
+                                (28.0f + (lastCol == 0 ? 0.0f : cell2X))) <
+                      0.5f);
 
         // 格三行都包在卡高内（0.5 容差）
         DOCTEST_CHECK(name->frame.y + name->frame.height <=
@@ -463,7 +470,8 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_CHECK_EQ(track->frame.width, 44.0f);
         DOCTEST_CHECK_EQ(track->frame.height, 24.0f);
         DOCTEST_CHECK(std::fabs(track->frame.x -
-                                (28.0f + cell2X + cellW - 44.0f)) < 0.5f);
+                                (28.0f + (lastCol == 0 ? 0.0f : cell2X) +
+                                 cellW - 44.0f)) < 0.5f);
         // 开关行内偏移 +6：track y = 格 y + 6
         DOCTEST_CHECK(std::fabs(track->frame.y - name->frame.y - 6.0f) <
                       0.5f);

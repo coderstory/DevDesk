@@ -187,10 +187,10 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
         // 头行 y 8..40；搜索框行 y 48，标签/列表基准同旧。
         ui.text("md.tree.head.title")
             .position(16.0f, 8.0f)
-            .size(sideW - 32.0f, 32.0f)
+            .size(sideW - 32.0f, core::theme::scaled(32.0f))
             .text("目录")
             .fontSize(core::theme::scaled(kTreeFontSize))
-            .lineHeight(32.0f)
+            .lineHeight(core::theme::scaled(32.0f))
             .fontWeight(700)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textPrimary)

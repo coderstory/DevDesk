@@ -16,7 +16,8 @@
 // daily 触发的派发由真 Scheduler tick 线程驱动（真实时钟，无注入）。
 //
 // 构图开关：--screenshot <png> = 任务创建弹窗（F4 填写完成态）；
-//           --screenshot-seeded <png> = run 结果区（F3 详情弹窗完成态）。
+//           --screenshot-seeded <png> = run 结果区（F3 详情弹窗完成态）；
+//           --shot-list <png> = 任务列表页（B3 网格化三行卡，F-66-6）。
 //           未传 = 零开销（probe_harness 契约）。任一流程失败单独报，不连坐。
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要，同 agent_dialog_probe）
@@ -551,6 +552,522 @@ int main(int argc, char* argv[]) {
     };
 
     composeFrame();
+    // 首帧后 refreshData 才装载 tasks_（compose 内惰性查询）→ 再稳两帧再断言
+    composeFrame();
+    composeFrame();
+    // 卡网格 / 三行结构 / 对齐 / 图标字形 / hover 驱动都在这里验：退出码裁决，
+    // 像素判据 + element 目标值双保险（B2 方法论：轮廓级变化不能用区域均值，
+    // 同色区会把差异稀释掉）。
+    {
+        const auto cardIds = [&] {
+            std::vector<int64_t> ids;
+            for (int64_t tid : {idF1, idF2, idF3, idF5}) {
+                if (tid != 0) ids.push_back(tid);
+            }
+            return ids;
+        }();
+        if (cardIds.size() < 2) {
+            std::cerr << "agent_e2e_probe: G 组跳过（种子任务不足 2 条）\n";
+            passed = false;
+        } else {
+            // 卡宽上限与方案 §10.4 同值（探针不引模块私有常量：模块侧是匿名 namespace，
+            // 这里按判据字面量复核，改档时两处一起改才叫「同步」）
+            constexpr float kTaskCardMaxW = 420.0f;
+            auto frameOf = [&](const std::string& elId, core::Rect* out) -> bool {
+                const core::dsl::Element* e = ui != nullptr ? ui->find(elId) : nullptr;
+                if (e == nullptr) return false;
+                *out = {e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+                return true;
+            };
+
+            // ---- G1 宽高比：每卡 w/h ∈ [2.5, 4.5]（目标 3.5；原单列 22:1）----
+            // ⚠️ 方案 §10.4 的窄窗退化是「内容宽 < 720 → 1 列、卡宽 = 内容宽」，
+            // 此时卡必然被拉宽（615 内容宽 → 5.1:1）。所以判据按布局形态分档：
+            // 网格态（同行 ≥2 卡）必须落在区间；单列退化态只记录不判红，
+            // 另加一条「默认窗宽下必须是多列」的强判据——那才是本次修的 22:1 回归。
+            bool g1 = true;
+            float firstCardX = 0, firstCardY = 0, firstCardH = 0;
+            // 先取全部卡 frame：多列/单列的判定必须先于宽度上限（单列退化时卡宽=内容宽，
+            // 天然超 420，那条上限只在网格态成立）
+            std::vector<core::Rect> cardFrames;
+            for (size_t i = 0; i < cardIds.size(); ++i) {
+                core::Rect f{};
+                const std::string cid = "agent.task." + std::to_string(cardIds[i]);
+                if (!frameOf(cid, &f)) {
+                    std::cerr << "agent_e2e_probe: G1 FAIL 卡缺失 " << cid << "\n";
+                    g1 = false;
+                    continue;
+                }
+                cardFrames.push_back(f);
+                const float aspect = f.height > 0.0f ? f.width / f.height : 0.0f;
+                std::cout << "G1 card " << cardIds[i] << " " << f.width << "x"
+                          << f.height << " aspect=" << aspect << "\n";
+                if (cardFrames.size() == 1) {
+                    firstCardX = f.x;
+                    firstCardY = f.y;
+                    firstCardH = f.height;
+                }
+            }
+            bool gridMultiColumn = false;
+            for (size_t i = 0; i < cardFrames.size() && !gridMultiColumn; ++i) {
+                for (size_t j = i + 1; j < cardFrames.size(); ++j) {
+                    if (std::fabs(cardFrames[i].y - cardFrames[j].y) <= 1.5f) {
+                        gridMultiColumn = true;
+                        break;
+                    }
+                }
+            }
+            if (gridMultiColumn) {
+                for (const core::Rect& f : cardFrames) {
+                    if (f.width > kTaskCardMaxW + 0.5f) {
+                        std::cerr << "agent_e2e_probe: G1 FAIL 网格态卡宽超上限 "
+                                  << f.width << " > " << kTaskCardMaxW << "\n";
+                        g1 = false;
+                    }
+                }
+            }
+            if (gridMultiColumn) {
+                for (size_t i = 0; i < cardFrames.size(); ++i) {
+                    const core::Rect& f = cardFrames[i];
+                    const float aspect = f.height > 0.0f ? f.width / f.height : 0.0f;
+                    if (aspect < 2.5f || aspect > 4.5f) {
+                        std::cerr << "agent_e2e_probe: G1 FAIL 网格态卡宽高比越界 "
+                                  << cardIds[i] << " aspect=" << aspect << "\n";
+                        g1 = false;
+                    }
+                }
+                std::cout << (g1 ? "G1 PASS" : "G1 FAIL")
+                          << " 每卡 2.5–4.5:1（3.5 目标）\n";
+            } else {
+                // 单列退化：只校验没被拉成横条（<8:1），并明确标注这是窄窗设计行为
+                for (size_t i = 0; i < cardFrames.size(); ++i) {
+                    const core::Rect& f = cardFrames[i];
+                    const float aspect = f.height > 0.0f ? f.width / f.height : 0.0f;
+                    if (aspect > 8.0f) {
+                        std::cerr << "agent_e2e_probe: G1 FAIL 单列退化仍成横条 "
+                                  << cardIds[i] << " aspect=" << aspect << "\n";
+                        g1 = false;
+                    }
+                }
+                std::cout << (g1 ? "G1 PASS" : "G1 FAIL")
+                          << "（单列退化态：窄窗内容宽不足以排 2 列，按方案退 1 列，"
+                             "宽高比区间不适用）\n";
+            }
+
+            // ---- G2 对齐：同一行内标题基线同 y（±1.5）、操作组右缘 = 卡右 −14（±1.5）----
+            // ⚠️ 窄窗下网格会换行（一行放不下两张最小宽卡），所以基线按「卡顶 y 同行」
+            // 分组比，不能假定所有卡同一行——否则正常的第二行会被判成错位。
+            bool g2 = true;
+            struct RowRef {
+                float cardY;
+                float baseline;
+            };
+            std::vector<RowRef> rows;
+            for (int64_t tid : cardIds) {
+                core::Rect card{};
+                core::Rect title{};
+                core::Rect acts{};
+                const std::string cid = "agent.task." + std::to_string(tid);
+                if (!frameOf(cid, &card) || !frameOf(cid + ".title", &title) ||
+                    !frameOf(cid + ".actions", &acts)) {
+                    std::cerr << "agent_e2e_probe: G2 FAIL 元素缺失 " << cid << "\n";
+                    g2 = false;
+                    continue;
+                }
+                const float baseline = title.y + title.height;
+                RowRef* row = nullptr;
+                for (RowRef& r : rows) {
+                    if (std::fabs(r.cardY - card.y) <= 1.5f) row = &r;
+                }
+                if (row == nullptr) {
+                    rows.push_back({card.y, baseline});
+                } else if (std::fabs(row->baseline - baseline) > 1.5f) {
+                    std::cerr << "agent_e2e_probe: G2 FAIL 同行标题基线不一致 "
+                              << tid << " " << baseline << " vs " << row->baseline
+                              << "\n";
+                    g2 = false;
+                }
+                const float actionsRight = acts.x + acts.width;
+                const float wantRight = card.x + card.width - 14.0f;
+                if (std::fabs(actionsRight - wantRight) > 1.5f) {
+                    std::cerr << "agent_e2e_probe: G2 FAIL 操作组右缘 " << tid
+                              << " 实测 " << actionsRight << " 期望 " << wantRight
+                              << "\n";
+                    g2 = false;
+                }
+                std::cout << "G2 card " << tid << " y=" << card.y
+                          << " titleBaseline=" << baseline << " actionsRight="
+                          << actionsRight << " wantRight=" << wantRight << "\n";
+            }
+            std::cout << (g2 ? "G2 PASS" : "G2 FAIL") << " 行内标题基线同 y（"
+                      << rows.size() << " 行）/ 操作组右缘=卡右−14\n";
+
+            // ---- G3 字形存在性：5 个新码点不能渲染成「绿色方块」/空白 ----
+            // 双通道：① 结构性（文本元素带具体码点且 fontFamily=Icon）；
+            // ② 像素（图标区必须有墨迹且绿色主导像素占比低——缺字形 fallback
+            // 的典型观感是整块绿）。任何一项命中即报码点。
+            struct GlyphCase {
+                const char* suffix;
+                unsigned int codepoint;
+            };
+            const GlyphCase glyphs[] = {{".detail", 0xF05A},
+                                        {".edit", 0xF044},
+                                        {".toggle", 0xF011},
+                                        {".enqueue", 0xF03A},
+                                        {".delete", 0xF2ED}};
+            bool g3 = true;
+            std::vector<unsigned char> rgba;
+            int imgW = 0, imgH = 0;
+            bool pixelsReady = false;
+            probe::FrameCapture glyphCapture(window);
+            if (glyphCapture.ok()) {
+                // ⚠️ 操作组常态 opacity 0（不可见）→ 必须先 hover 首卡把图标显出来再采，
+                // 否则整片区域与底色完全一致，墨迹率恒 0（假红）
+                const core::KeyModifiers noModsG3;
+                core::queuePointerMotion(window, firstCardX + 40.0f,
+                                         firstCardY + firstCardH - 20.0f,
+                                         core::PointerButtons{}, noModsG3);
+                for (int i = 0; i < 24; ++i) composeFrame();  // 盖过 0.18s OutBack
+                pixelsReady = glyphCapture.readFrame(runtime, rgba, imgW, imgH);
+                if (!pixelsReady) {
+                    std::cerr << "agent_e2e_probe: G3 读帧失败（像素通道跳过）\n";
+                }
+            } else {
+                std::cerr << "agent_e2e_probe: G3 FrameCapture 不可用: "
+                          << glyphCapture.error() << "（像素通道跳过）\n";
+            }
+            const float pxScale = glyphCapture.ok() ? glyphCapture.scale() : 1.0f;
+            for (const GlyphCase& gc : glyphs) {
+                const std::string iconId =
+                    "agent.task." + std::to_string(cardIds.front()) + gc.suffix;
+                const core::dsl::Element* icon =
+                    ui != nullptr ? ui->find(iconId) : nullptr;
+                if (icon == nullptr) {
+                    std::cerr << "agent_e2e_probe: G3 FAIL 图标元素缺失 " << iconId
+                              << "\n";
+                    g3 = false;
+                    continue;
+                }
+                const std::string want = eui::utf8(gc.codepoint);
+                if (icon->text != want || icon->fontFamily != "Icon") {
+                    std::cerr << "agent_e2e_probe: G3 FAIL 码点未绑定 U+"
+                              << std::hex << gc.codepoint << std::dec << " "
+                              << iconId << " text.len=" << icon->text.size()
+                              << " family=" << icon->fontFamily << "\n";
+                    g3 = false;
+                    continue;
+                }
+                if (!pixelsReady) continue;
+                const int x0 = static_cast<int>(std::lround(icon->frame.x * pxScale));
+                const int y0 = static_cast<int>(std::lround(icon->frame.y * pxScale));
+                const int x1 = static_cast<int>(
+                    std::lround((icon->frame.x + icon->frame.width) * pxScale));
+                const int y1 = static_cast<int>(
+                    std::lround((icon->frame.y + icon->frame.height) * pxScale));
+                if (x0 < 0 || y0 < 0 || x1 > imgW || y1 > imgH || x1 <= x0 || y1 <= y0) {
+                    std::cerr << "agent_e2e_probe: G3 采样越界 " << iconId << "\n";
+                    g3 = false;
+                    continue;
+                }
+                // 基准色 = 图标框「内缩 3px 的一圈边框」均值：字形笔画居中，
+                // 一般碰不到这一圈；取单点会踩中笔画或圆角外侧透明区，基准一歪
+                // 整片底色就被算成墨迹（实测单点判据会给出 0% 或 62% 的假值）
+                long sr = 0, sg = 0, sb = 0;
+                int sn = 0;
+                auto addBase = [&](int x, int y) {
+                    const std::size_t at =
+                        (static_cast<std::size_t>(y) * imgW + x) * 4u;
+                    sr += rgba[at];
+                    sg += rgba[at + 1];
+                    sb += rgba[at + 2];
+                    ++sn;
+                };
+                for (int x = x0 + 3; x < x1 - 3; ++x) {
+                    addBase(x, y0 + 3);
+                    addBase(x, y1 - 4);
+                }
+                for (int y = y0 + 4; y < y1 - 4; ++y) {
+                    addBase(x0 + 3, y);
+                    addBase(x1 - 4, y);
+                }
+                if (sn <= 0) {
+                    std::cerr << "agent_e2e_probe: G3 基准采样为空 " << iconId
+                              << "\n";
+                    g3 = false;
+                    continue;
+                }
+                const int br = static_cast<int>(sr / sn);
+                const int bg = static_cast<int>(sg / sn);
+                const int bb = static_cast<int>(sb / sn);
+                int ink = 0, green = 0, total = 0;
+                for (int y = y0; y < y1; ++y) {
+                    for (int x = x0; x < x1; ++x) {
+                        const std::size_t at =
+                            (static_cast<std::size_t>(y) * imgW + x) * 4u;
+                        const int r = rgba[at], g = rgba[at + 1], b = rgba[at + 2];
+                        ++total;
+                        if (std::abs(r - br) + std::abs(g - bg) + std::abs(b - bb) > 24) {
+                            ++ink;
+                        }
+                        if (g > r + 25 && g > b + 25) ++green;
+                    }
+                }
+                const float inkRatio =
+                    total > 0 ? static_cast<float>(ink) / total : 0.0f;
+                const float greenRatio =
+                    total > 0 ? static_cast<float>(green) / total : 0.0f;
+                std::cout << "G3 glyph U+" << std::hex << gc.codepoint << std::dec
+                          << " " << gc.suffix << " ink=" << inkRatio * 100.0f
+                          << "% green=" << greenRatio * 100.0f << "%\n";
+                if (inkRatio < 0.02f) {
+                    std::cerr << "agent_e2e_probe: G3 FAIL 图标区无墨迹（缺字形）U+"
+                              << std::hex << gc.codepoint << std::dec << "\n";
+                    g3 = false;
+                }
+                if (greenRatio > 0.40f) {
+                    std::cerr << "agent_e2e_probe: G3 FAIL 图标区绿色主导（疑似绿方块）U+"
+                              << std::hex << gc.codepoint << std::dec << "\n";
+                    g3 = false;
+                }
+            }
+            std::cout << (g3 ? "G3 PASS" : "G3 FAIL")
+                      << " 5 码点字形存在且非绿方块\n";
+
+            // ---- G4 hover 驱动：指针移入卡 → actions opacity=1 / 卡 radius=16；
+            //      移出 → 复位（读 compose 写入的 element 目标值，结构性判据）----
+            bool g4 = true;
+            const std::string hoverCardId =
+                "agent.task." + std::to_string(cardIds.front());
+            auto readPair = [&](const std::string& base, float* actionsOpacity,
+                                float* bgRadius, float* bgScale) -> bool {
+                const core::dsl::Element* acts = ui->find(base + ".actions");
+                const core::dsl::Element* bg = ui->find(base + ".bg");
+                if (acts == nullptr || bg == nullptr) return false;
+                *actionsOpacity = acts->opacity;
+                *bgRadius = bg->radius;
+                *bgScale = bg->transform.scale.x;
+                return true;
+            };
+            const core::KeyModifiers noModsG;
+            // 像素通道（B2 方法论双保险）：形变/显隐都是局部变化，区域均值会被同色区
+            // 稀释，所以按「逐像素通道差 >4 的计数」判。三态各拍一帧留到最后比对。
+            struct GrayFrame {
+                std::vector<unsigned char> rgba;
+                bool ok = false;
+            };
+            GrayFrame fNormal, fHover, fOut;
+            auto grabGray = [&](GrayFrame* out) {
+                int iw = 0, ih = 0;
+                out->ok = glyphCapture.ok() &&
+                          glyphCapture.readFrame(runtime, out->rgba, iw, ih);
+            };
+            // 逐像素差异计数：patch 用逻辑 px 给，内部按 Retina scale 换像素
+            auto diffOver = [&](const GrayFrame& a, const GrayFrame& b, float lx,
+                                float ly, float pw, float ph, int threshold) -> int {
+                if (!a.ok || !b.ok || a.rgba.size() != b.rgba.size()) return -1;
+                const int x0 = static_cast<int>(std::lround(lx * pxScale));
+                const int y0 = static_cast<int>(std::lround(ly * pxScale));
+                const int x1 = static_cast<int>(std::lround((lx + pw) * pxScale));
+                const int y1 = static_cast<int>(std::lround((ly + ph) * pxScale));
+                if (x0 < 0 || y0 < 0 || x1 > imgW || y1 > imgH || x1 <= x0 ||
+                    y1 <= y0) {
+                    return -1;
+                }
+                int over = 0;
+                for (int y = y0; y < y1; ++y) {
+                    for (int x = x0; x < x1; ++x) {
+                        const std::size_t at =
+                            (static_cast<std::size_t>(y) * imgW + x) * 4u;
+                        int m = 0;
+                        for (int c = 0; c < 3; ++c) {
+                            m = std::max(m, std::abs(static_cast<int>(a.rgba[at + c]) -
+                                                     static_cast<int>(b.rgba[at + c])));
+                        }
+                        if (m > threshold) ++over;
+                    }
+                }
+                return over;
+            };
+            // G3 采样时把指针停在了首卡上 → 先移出并稳帧，否则「常态」读到的是 hover 态
+            core::queuePointerMotion(window, w - 8.0f, 8.0f, core::PointerButtons{},
+                                     noModsG);
+            for (int i = 0; i < 24; ++i) composeFrame();
+            grabGray(&fNormal);
+            float beforeOpacity = -1, beforeRadius = -1, beforeScale = -1;
+            if (!readPair(hoverCardId, &beforeOpacity, &beforeRadius, &beforeScale)) {
+                std::cerr << "agent_e2e_probe: G4 FAIL 卡/操作组元素缺失 "
+                          << hoverCardId << "\n";
+                g4 = false;
+            } else {
+                std::cout << "G4 normal actions.opacity=" << beforeOpacity
+                          << " bg.radius=" << beforeRadius
+                          << " bg.scale=" << beforeScale << "\n";
+                if (std::fabs(beforeOpacity) > 0.01f) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL 常态操作组应隐藏\n";
+                    g4 = false;
+                }
+                if (std::fabs(beforeRadius - 12.0f) > 0.01f) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL 常态卡圆角应 12 实测 "
+                              << beforeRadius << "\n";
+                    g4 = false;
+                }
+                // 移入卡内「空白处」（底行左侧，避开操作组与启动钮）
+                core::queuePointerMotion(window, firstCardX + 40.0f,
+                                         firstCardY + firstCardH - 20.0f,
+                                         core::PointerButtons{}, noModsG);
+                for (int i = 0; i < 24; ++i) composeFrame();  // 盖过 0.18s OutBack
+                grabGray(&fHover);
+                float hovOpacity = -1, hovRadius = -1, hovScale = -1;
+                if (!readPair(hoverCardId, &hovOpacity, &hovRadius, &hovScale)) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL hover 后元素消失\n";
+                    g4 = false;
+                } else {
+                    std::cout << "G4 hover actions.opacity=" << hovOpacity
+                              << " bg.radius=" << hovRadius
+                              << " bg.scale=" << hovScale << "\n";
+                    if (std::fabs(hovOpacity - 1.0f) > 0.01f) {
+                        std::cerr << "agent_e2e_probe: G4 FAIL hover 后操作组未显现\n";
+                        g4 = false;
+                    }
+                    if (std::fabs(hovRadius - 16.0f) > 0.01f) {
+                        std::cerr << "agent_e2e_probe: G4 FAIL hover 后卡圆角应 16 实测 "
+                                  << hovRadius << "\n";
+                        g4 = false;
+                    }
+                    if (std::fabs(hovScale - 1.02f) > 0.01f) {
+                        std::cerr << "agent_e2e_probe: G4 FAIL hover 后缩放应 1.02 实测 "
+                                  << hovScale << "\n";
+                        g4 = false;
+                    }
+                }
+                // 移出到页面空白（列表卡之外）→ 复位
+                core::queuePointerMotion(window, w - 8.0f, 8.0f,
+                                         core::PointerButtons{}, noModsG);
+                for (int i = 0; i < 24; ++i) composeFrame();
+                grabGray(&fOut);
+                float outOpacity = -1, outRadius = -1, outScale = -1;
+                if (!readPair(hoverCardId, &outOpacity, &outRadius, &outScale)) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL 移出后元素消失\n";
+                    g4 = false;
+                } else {
+                    std::cout << "G4 out actions.opacity=" << outOpacity
+                              << " bg.radius=" << outRadius
+                              << " bg.scale=" << outScale << "\n";
+                    if (std::fabs(outOpacity) > 0.01f ||
+                        std::fabs(outRadius - 12.0f) > 0.01f ||
+                        std::fabs(outScale - 1.0f) > 0.01f) {
+                        std::cerr << "agent_e2e_probe: G4 FAIL 移出后未复位\n";
+                        g4 = false;
+                    }
+                }
+                // 指针「卡身 → 操作组按钮」：hover 全局唯一，父的 onHover(false) 先于
+                // 子的 onHover(true) → 用集合才不会闪没（§10.0.1 约束 3）。这条是
+                // hover 模型里最容易踩坏的路径，单验卡身 hover 不够。
+                const core::dsl::Element* delBtn =
+                    ui->find(hoverCardId + ".delete.bg");
+                if (delBtn == nullptr) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL 缺删除钮（跨元素 hover 断言）\n";
+                    g4 = false;
+                } else {
+                    core::queuePointerMotion(
+                        window, delBtn->frame.x + delBtn->frame.width * 0.5f,
+                        delBtn->frame.y + delBtn->frame.height * 0.5f,
+                        core::PointerButtons{}, noModsG);
+                    for (int i = 0; i < 24; ++i) composeFrame();
+                    float btnOpacity = -1, btnRadius = -1, btnScale = -1;
+                    if (!readPair(hoverCardId, &btnOpacity, &btnRadius, &btnScale)) {
+                        std::cerr << "agent_e2e_probe: G4 FAIL 按钮 hover 后元素消失\n";
+                        g4 = false;
+                    } else {
+                        std::cout << "G4 on-button actions.opacity=" << btnOpacity
+                                  << " bg.radius=" << btnRadius << "\n";
+                        if (std::fabs(btnOpacity - 1.0f) > 0.01f ||
+                            std::fabs(btnRadius - 16.0f) > 0.01f) {
+                            std::cerr << "agent_e2e_probe: G4 FAIL 指针在按钮上时卡态丢失"
+                                         "（集合未覆盖子元素上报）\n";
+                            g4 = false;
+                        }
+                    }
+                    core::queuePointerMotion(window, w - 8.0f, 8.0f,
+                                             core::PointerButtons{}, noModsG);
+                    for (int i = 0; i < 24; ++i) composeFrame();
+                }
+            }
+            std::cout << (g4 ? "G4 PASS" : "G4 FAIL")
+                      << " hover 驱动操作组显隐 + 卡形变/复位\n";
+
+            // ---- G4 像素通道（逐像素计数，不看均值）：结构性目标值对了不代表像素
+            //      真的变了（透明度动画没走到、命中面没接住指针都会让上一条假绿）----
+            {
+                const core::dsl::Element* actsEl = ui->find(hoverCardId + ".actions");
+                const float actsX = actsEl != nullptr ? actsEl->frame.x : 0.0f;
+                const float actsY = actsEl != nullptr ? actsEl->frame.y : 0.0f;
+                const float actsW = actsEl != nullptr ? actsEl->frame.width : 0.0f;
+                const float actsH = actsEl != nullptr ? actsEl->frame.height : 0.0f;
+                // ① hover 时操作组区域出现图标墨迹（opacity 0→1 像素级证据）
+                const int actsInk = diffOver(fHover, fNormal, actsX, actsY, actsW,
+                                             actsH, 4);
+                // ② 卡左上角 12×12：圆角 12→16 + 1.02 放大 → 轮廓移动
+                const int cornerInk = diffOver(fHover, fNormal, firstCardX,
+                                               firstCardY, 12.0f, 12.0f, 4);
+                // ③ 移出后必须逐像素回到常态（与 jelly A3 同口径）
+                const int actsBack = diffOver(fOut, fNormal, actsX, actsY, actsW,
+                                              actsH, 2);
+                const int cornerBack = diffOver(fOut, fNormal, firstCardX,
+                                                firstCardY, 12.0f, 12.0f, 2);
+                std::cout << "G4 pixel actionsInk=" << actsInk
+                          << " cornerInk=" << cornerInk
+                          << " actionsBack=" << actsBack
+                          << " cornerBack=" << cornerBack << "\n";
+                if (actsInk < 20) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL hover 后操作组区域无变化"
+                                 "（像素通道）px>4=" << actsInk << "\n";
+                    g4 = false;
+                }
+                if (cornerInk < 1) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL hover 后卡角轮廓未动"
+                                 "（像素通道）px>4=" << cornerInk << "\n";
+                    g4 = false;
+                }
+                if (actsBack != 0 || cornerBack != 0) {
+                    std::cerr << "agent_e2e_probe: G4 FAIL 移出后像素未复位 "
+                              << "actionsBack=" << actsBack
+                              << " cornerBack=" << cornerBack << "\n";
+                    g4 = false;
+                }
+                if (actsInk >= 20 && cornerInk >= 1 && actsBack == 0 &&
+                    cornerBack == 0) {
+                    std::cout << "G4 pixel PASS 操作组淡入/卡角形变/移出逐像素复位\n";
+                }
+                // hover 态留图（人的观感证据）：与 --shot-list 同目录，后缀 -hover
+                if (!args.shotListPath.empty() && fHover.ok) {
+                    std::string hoverPath = args.shotListPath;
+                    const std::size_t dot = hoverPath.rfind(".png");
+                    hoverPath = (dot == std::string::npos
+                                     ? hoverPath + "-hover.png"
+                                     : hoverPath.substr(0, dot) + "-hover.png");
+                    if (probe::writeRgbaToPng(hoverPath, fHover.rgba.data(), imgW,
+                                              imgH)) {
+                        std::cout << "shot hover " << hoverPath << "\n";
+                    } else {
+                        std::cerr << "agent_e2e_probe: hover 图落图失败: "
+                                  << hoverPath << "\n";
+                    }
+                }
+            }
+
+            // ---- 列表页截图出口（--shot-list）----
+            if (!args.shotListPath.empty()) {
+                if (!probe::captureFramePng(window, runtime, args.shotListPath)) {
+                    std::cerr << "agent_e2e_probe: --shot-list 落图失败: "
+                              << args.shotListPath << "\n";
+                    passed = false;
+                } else {
+                    std::cout << "shot list " << args.shotListPath << "\n";
+                }
+            }
+        }
+    }
 
     // ---------- F4 经真 UI 弹窗创建（once_at = now+90s 取整到分） ----------
     // UAT6 4 步向导：基础信息 → 触发 → 指令 → 执行与安全；非末步 save 只前进不创建

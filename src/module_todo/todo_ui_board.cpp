@@ -105,10 +105,10 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 .content([&] {
                     // UAT5 全局顶部收紧：headerH 64→40，标题行 24
                     ui.text("todo.h1")
-                        .size(titleW, 24.0f)
+                        .size(titleW, core::theme::scaled(24.0f))
                         .text("Todo 看板")
                         .fontSize(t.sizes.fontSizeTitle)
-                        .lineHeight(24.0f)
+                        .lineHeight(core::theme::scaled(24.0f))
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
                         .build();
@@ -212,11 +212,11 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
             .size(contentW, bodyH)
             .content([&] {
                 ui.text("todo.error.text")
-                    .position(0.0f, bodyH / 2.0f - 36.0f)
-                    .size(contentW, 24.0f)
+                    .position(0.0f, bodyH / 2.0f - core::theme::scaled(36.0f))
+                    .size(contentW, core::theme::scaled(24.0f))
                     .text(msg + "（点击重试）")
                     .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(24.0f)
+                    .lineHeight(core::theme::scaled(24.0f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .color(t.colors.errorText)
                     .build();
@@ -413,10 +413,10 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             const float titleW = width - titleX - (isArchive ? 44.0f : 16.0f);
             target.text(id + ".title")
                 .position(titleX, 16.0f)
-                .size(titleW, 20.0f)
+                .size(titleW, core::theme::scaled(20.0f))
                 .text(col.title + " (" + std::to_string(taskCount) + ")")
                 .fontSize(t.sizes.fontSizeWeChat)
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .fontWeight(600)
                 // 省略号三件套：列名 + 计数超宽时截断，不压右侧按钮
                 .maxWidth(titleW)
@@ -895,10 +895,10 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     if (done) {
         ui.text(id + ".done")
             .position(width - kCardChipPadRight - kCardDoneBadgeW, y + groupTop)
-            .size(kCardDoneBadgeW, kCardTitleLineH)
+            .size(kCardDoneBadgeW, core::theme::scaled(kCardTitleLineH))
             .icon(0xF00C)  // fa-check（✓ 字符混排正文不可行，走 icon 通道）
             .fontSize(t.sizes.fontSizeBody - 1.0f)
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(kCardTitleLineH))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .color(t.colors.success)
             .fontWeight(700)

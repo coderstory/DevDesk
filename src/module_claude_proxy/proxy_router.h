@@ -50,6 +50,19 @@ public:
     }
 
 private:
+    // 调用日志最小写入（池72）：缓冲路径写终态一行；流式路径插行 → 流末回填用量。
+    // 输出端 = claude_call_logs，它是首页「今日 Token 用量分布」与速率卡的唯一数据源。
+    // refactor ef9e9466 删掉整条落库链后图表恒走空态，故按最小面恢复写入（不含
+    // 已下线的日志查询/弹窗 UI）。NULL 语义沿用 schema.h:124：未采集写 NULL，与 0 区分。
+    // 返回 rowid（0 = 插入失败，调用方跳过回填）。
+    int64_t insertCallLogRow(const Profile& profile, const std::string& method,
+                             const std::string& path, int statusCode,
+                             int64_t latencyMs, int64_t requestBytes,
+                             int64_t responseBytes, const std::string& error);
+    void updateCallLogUsage(int64_t rowId, int64_t inputTokens,
+                            int64_t outputTokens, int64_t cacheReadTokens,
+                            int64_t cacheWriteTokens, int64_t firstEventMs);
+
     ClaudeService& service_;
     platform::http::Server& server_;
     ProfileProvider profileProvider_;   // 为空时走 service_ 默认逻辑

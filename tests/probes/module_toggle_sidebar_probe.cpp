@@ -319,6 +319,67 @@ int main(int argc, char* argv[]) {
               countId(*ui, "app.sidebar.item.Agent.hit") == 1,
           "重复 on：Agent 条目应恰好 1 份（幂等注册，不产生重复条目）");
 
+    // 5) B8 G1/G2：分组父项 chevron 右边距 + 一二级选中条不同时亮
+    // 分组树由登记表 parent 列驱动：注册 ReleaseTasks/ReleaseConfig 两个桩页，
+    // 侧边栏就会画 ReleaseGroup 父项（父项本身无实例、不进 Router）。
+    StubPageModule releaseTasks(::core::PageId::ReleaseTasks, "任务");
+    StubPageModule releaseConfig(::core::PageId::ReleaseConfig, "基础配置");
+    router.registerModule(&releaseTasks);
+    router.registerModule(&releaseConfig);
+    router.navigateTo(::core::PageId::ReleaseTasks);
+    // 展开组：默认折叠，点父项切展开（holdsCurrent 下父项不再画选中条）
+    app::toggleSidebarGroup(::core::PageId::ReleaseGroup);
+    composeFrame();
+    {
+        const auto* chevron =
+            ui != nullptr ? ui->find("app.sidebar.item.ReleaseGroup.chevron")
+                          : nullptr;
+        check(chevron != nullptr, "§5 展开态：分组父项 chevron 应存在");
+        if (chevron != nullptr) {
+            // G1 判据：chevron 盒右边界距侧栏右缘 ≥ 6px（盒宽 14 + 左移 6，
+            // 见 app_sidebar.cpp drawSidebar 分组父项分支）
+            const float sidebarW = app::sidebarWidth();
+            const float rightGap = sidebarW - (chevron->frame.x + chevron->frame.width);
+            check(rightGap >= 6.0f - 0.5f,
+                  "§5 G1：chevron 右缘距侧栏右缘 " + std::to_string(rightGap) +
+                      "px < 6（应 −padX−14−6 定位）");
+            check(chevron->horizontalAlign == eui::HorizontalAlign::Left,
+                  "§5 G1：chevron 应左对齐（盒宽 14 内在 20 盒居中会偏左）");
+        }
+        // G2 判据（展开态）：选中的是组内二级项 → 父项无选中条，二级项有
+        check(ui != nullptr &&
+                  ui->find("app.sidebar.item.ReleaseGroup.sel") == nullptr,
+              "§5 G2：展开态父项不应画选中条（一二级同时亮）");
+        check(ui != nullptr &&
+                  ui->find("app.sidebar.item.ReleaseTasks.sel.bg") != nullptr,
+              "§5 G2：展开态二级项应有选中条");
+        // 父项图标仍为主色（轻提示「当前页在此组内」）
+        const auto* groupIcon = ui != nullptr
+                                    ? ui->find("app.sidebar.item.ReleaseGroup.icon")
+                                    : nullptr;
+        const auto& colors = core::theme::current().colors;
+        check(groupIcon != nullptr &&
+                  nearEq(groupIcon->textColor.r, colors.primary.r) &&
+                  nearEq(groupIcon->textColor.g, colors.primary.g) &&
+                  nearEq(groupIcon->textColor.b, colors.primary.b),
+              "§5 G2：展开态父项图标应仍为主色（轻提示不能一起丢）");
+    }
+
+    // 折叠侧栏 + 组收起：父项是当前页唯一入口 → 选中条必须仍画
+    app::setSidebarCollapsed(true, false);
+    app::toggleSidebarGroup(::core::PageId::ReleaseGroup);  // 收起组（子项不再列出）
+    composeFrame();
+    {
+        check(ui != nullptr &&
+                  ui->find("app.sidebar.item.ReleaseGroup.sel.bg") != nullptr,
+              "§5 G2：折叠且组收起时父项必须仍画选中条（唯一入口不能丢指示）");
+        check(ui != nullptr &&
+                  ui->find("app.sidebar.item.ReleaseGroup.chevron") == nullptr,
+              "§5 折叠态：chevron 不应绘制（折叠态只画居中图标）");
+    }
+    app::setSidebarCollapsed(false, false);
+    composeFrame();
+
     // 退出前落一张「当前状态图」（--screenshot <路径>）
     // 通用看图口：跑一次 module_toggle_sidebar_probe 就能拿到此刻侧栏长什么样。
     // 不传该开关时 captureIfRequested 立刻返回（零开销 / 不写文件）。

@@ -264,7 +264,9 @@ REGISTER_TEST(release_sidebar_group_collapse_holds_current,
         composeFrame(ui, screen);
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.hit") != nullptr);
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseConfig.hit") != nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.sel.bg") != nullptr);
+        // B8 G2：组展开时子项自己画选中条，父项不再画（否则一二级同时亮）
+        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.sel.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.sel.bg") != nullptr);
     }
 
     app::toggleSidebarGroup(::core::PageId::ReleaseGroup);

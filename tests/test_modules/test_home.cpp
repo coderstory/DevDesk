@@ -323,15 +323,13 @@ REGISTER_TEST(home_token_rate_card_compose,
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.tokens.label") != nullptr);
         {
-            // badge 文案（1 路生成中）在宽窗档断言；窄窗档按设计可能丢弃
+            // B7 D1：正常态只留指标名，不再拼「· 说明」（流式路数也只由数字主色体现）。
+            // 本节未 onStart → 统计未加载 = 错误态，标签是「指标名 · 加载失败」。
             WideCompose w("home_streaming_wide");
             const auto* wl = w.find("home.stat.tokens.label");
             DOCTEST_REQUIRE(wl != nullptr);
-            DOCTEST_CHECK(wl->text.find("1 路") != std::string::npos);
-            DOCTEST_CHECK(wl->text.find("生成中") != std::string::npos);
-            DOCTEST_CHECK(wl->text.find("累计") == std::string::npos);
-            // 本节未 onStart（整页没加载）→ 数字是空态，副标题不承诺「最近一次」
-            DOCTEST_CHECK(wl->text.find("最近一次") == std::string::npos);
+            DOCTEST_CHECK_EQ(wl->text, std::string("Token 速率 (tok/s) · 加载失败"));
+            DOCTEST_CHECK(wl->text.find("路生成中") == std::string::npos);
         }
         mod->onStop();
 
@@ -514,11 +512,11 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
-        DOCTEST_CHECK(badge->text.find("暂无成功调用") != std::string::npos);
-        // 待办卡副题与 H21 口径一致（待办列 + 进行中列）
+        // B7 D1：正常态只留指标名（空态「--」也不再拼「暂无成功调用」）
+        DOCTEST_CHECK_EQ(badge->text, std::string("Token 速率 (tok/s)"));
         const auto* todoBadge = ui.find("home.stat.todo.label");
         DOCTEST_REQUIRE(todoBadge != nullptr);
-        DOCTEST_CHECK(todoBadge->text.find("待办+进行中未完成") != std::string::npos);
+        DOCTEST_CHECK_EQ(todoBadge->text, std::string("待办任务"));
         DOCTEST_CHECK(ui.find("home.api.chart.empty.title") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
         mod->onStop();
@@ -601,8 +599,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
                          std::string("123.4"));
     }
 
-    // 流式档 + 已加载：数字仍是「最近一次」的速率 → 副标题必须说出来
-    //（流式只影响副标题的实时状态前缀，不改数字口径）
+    // 流式档 + 已加载：数字仍是「最近一次」的速率；副标题（B7 D1 起）不再陈述口径
     {
         core::proxy_stats::resetForTest();
         const uint64_t sid = core::proxy_stats::beginStream();
@@ -620,12 +617,11 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("100.0"));
         {
-            // badge 文案（1 路生成中 · 最近一次）在宽窗档断言；窄窗档按设计丢弃
+            // B7 D1：正常态（含流式）标签只有指标名，无「· 说明」后缀
             WideCompose w("home_last_rate_wide", /*withStart=*/true);
             const auto* wl = w.find("home.stat.tokens.label");
             DOCTEST_REQUIRE(wl != nullptr);
-            DOCTEST_CHECK(wl->text.find("1 路生成中") != std::string::npos);
-            DOCTEST_CHECK(wl->text.find("最近一次") != std::string::npos);
+            DOCTEST_CHECK_EQ(wl->text, std::string("Token 速率 (tok/s)"));
             DOCTEST_CHECK(wl->text.find("累计") == std::string::npos);
         }
         mod->onStop();
@@ -905,9 +901,26 @@ REGISTER_TEST(home_chart_card_collapsible,
     frame("home_collapse_collapsed");
     const auto* chartShut = ui.find("home.api.chart");
     DOCTEST_REQUIRE(chartShut != nullptr);
-    DOCTEST_CHECK_MESSAGE(std::fabs(chartShut->frame.height - 56.0f) < 0.5f,
-                          "折叠档卡高应为 56，实际 " +
-                              std::to_string(chartShut->frame.height));
+    // B7 D2：折叠档卡高 56→64（且随字号缩放，本档 fs=1）
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(chartShut->frame.height -
+                  64.0f * core::theme::fontScale()) < 0.5f,
+        "折叠档卡高应为 64 × 字号缩放，实际 " +
+            std::to_string(chartShut->frame.height));
+    // 折叠态标题改短且垂直居中
+    {
+        const auto* shutTitle = ui.find("home.api.chart.title");
+        DOCTEST_REQUIRE(shutTitle != nullptr);
+        DOCTEST_CHECK_EQ(shutTitle->text, std::string("今日 Token 分布"));
+        const float titleMid =
+            shutTitle->frame.y + shutTitle->frame.height * 0.5f;
+        const float cardMid =
+            chartShut->frame.y + chartShut->frame.height * 0.5f;
+        DOCTEST_CHECK_MESSAGE(std::fabs(titleMid - cardMid) < 1.0f,
+                              "折叠态标题应垂直居中（标题心 " +
+                                  std::to_string(titleMid) + " vs 卡心 " +
+                                  std::to_string(cardMid) + "）");
+    }
     DOCTEST_CHECK(ui.find("home.api.chart.wrap") == nullptr);
     const auto* arrowShut = ui.find("home.api.chart.toggle");
     DOCTEST_REQUIRE(arrowShut != nullptr);

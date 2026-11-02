@@ -155,9 +155,11 @@ int main(int argc, char* argv[]) {
     // 卡内 hover/pressed 交互点（也是像素采样点）：卡底边上方 8px 水平居中
     const Sample hoverPt{"card1.inner", x1 + w1 * 0.5f, y1 + h1 - 8.0f};
     const Sample card2Pt{"card2.inner", x2 + w2 * 0.5f, y2 + h2 - 8.0f};
-    // 卡 1/卡 2 之间缝隙 = 面板底（containerSurface）采样点
-    const float gapY = (y1 + h1 + y2) * 0.5f;
-    const Sample panelGapPt{"panel.gap", x1 + 60.0f, gapY};
+    // 卡 1/卡 2 之间缝隙 = 面板底（containerSurface）采样点。B3 起任务卡是网格
+    //（并排），原「两卡 y 中点」公式只在单列堆叠下落在缝里；改取「卡 1 右侧 4px ×
+    // 卡 1 垂直中点」——同行时落在列间缝、异行时落在卡 1 右侧空白，两条路都必然是
+    // 面板底，不会误采进卡内。
+    const Sample panelGapPt{"panel.gap", x1 + w1 + 4.0f, y1 + h1 * 0.5f};
     // 页面底候选点：窗口右下角内缩（B1 判据「卡外页面底」）
     const Sample pageBgPt{"page.bg", w - 12.0f, h - 12.0f};
     const Sample pts[] = {hoverPt, card2Pt, panelGapPt, pageBgPt};

@@ -193,12 +193,14 @@ public:
 
         // S3.8 平铺版（2026-10-25 批J 用户拍板：彻底去卡片化，与其他页统一——
         // 页标题 + 分组内容直接铺在页面底上，无容器/描边/圆角/居中）
-        constexpr float kGroupHdrH = 24.0f;    // 分组标题行高（16px/600 档 24px）
-        constexpr float kGroupGap = 24.0f;     // 组间间距（1px 分隔线居中）
-        constexpr float kRowH = 32.0f;         // 行高（S3.8#1）
-        constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
-        constexpr float kFooterH = 20.0f;
-        constexpr float kTitleH = 32.0f;       // 页标题行高（fontSizeTitle 档，同 agent.title）
+        // B6/F-69-2：行高/组距随字号派生——行盒不缩会让放大档「组标题压首行」
+        //（实测 150% 档「构建信息」与「构建时间」叠字）。
+        const float kGroupHdrH = core::theme::scaled(24.0f);  // 分组标题行高
+        const float kGroupGap = core::theme::scaled(24.0f);   // 组间间距（1px 分隔线居中）
+        const float kRowH = core::theme::scaled(32.0f);       // 行高（S3.8#1）
+        const float kFooterH = core::theme::scaled(20.0f);
+        const float kTitleH = core::theme::scaled(32.0f);     // 页标题行高
+        constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1，列宽不随字号变）
         // 2026-11-01：内容列限宽（同 release 列表页 kContentMaxW 口径）。
         // 关于页信息量小，原先平铺满页宽 → 实际文本只占页面区左 ~25%，而组间
         // 分隔线却横穿整页（1380px），文字缩在左上角、线条伸向远处，重心失衡。
@@ -293,6 +295,8 @@ public:
                     .build();
 
                 // 右内容：14px/600，统一 textPrimary（只读，无可交互元素）
+                // B6/F-69-2：值列必须闭包——放大档（实测 ≥130%）构建时间行超出
+                // 524px 值列，EUI text 默认不裁会画到窗口右缘被硬切。
                 ui.text("about.info.value." + std::to_string(gi) + "." +
                         std::to_string(i))
                     .position(contentX + valueX, rowY)
@@ -301,6 +305,9 @@ public:
                     .fontSize(t.sizes.fontSizeBody)  // 14px
                     .lineHeight(kRowH)
                     .fontWeight(600)
+                    .maxWidth(contentW - valueX)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
                     .color(t.colors.textPrimary)
                     .build();
             }

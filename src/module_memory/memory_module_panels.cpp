@@ -6,6 +6,11 @@
 
 namespace module::memory {
 
+namespace {
+// 动态流行距（B6：随字号缩放，禁止字面量进行 y）
+constexpr float kFeedRowH = 27.0f;
+}  // namespace
+
 void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
                                float x, float w, float y) {
     const auto snap = panel_.snapshot();
@@ -14,24 +19,27 @@ void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
     // 行数自适应，空态另走统一空态组件。
     const bool empty = snap.feed.empty();
     const float kCardH =
-        empty ? 132.0f
-              : 44.0f + static_cast<float>(snap.feed.size()) * 27.0f + 16.0f;
+        empty ? core::theme::scaled(132.0f)
+              : core::theme::scaled(44.0f) +
+                    static_cast<float>(snap.feed.size()) *
+                        core::theme::scaled(kFeedRowH) +
+                    core::theme::scaled(16.0f);
     ui_kit::cardPanel(ui, "memory.feed.card", x, y, w, kCardH, t.sizes.radiusLarge, t);
     ui.text("memory.feed.title")
-        .position(x + 16.0f, y + 12.0f)
-        .size(300.0f, 22.0f)
+        .position(x + 16.0f, y + core::theme::scaled(12.0f))
+        .size(300.0f, core::theme::scaled(22.0f))
         .text("最近动态")
         .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(22.0f)
+        .lineHeight(core::theme::scaled(22.0f))
         .fontWeight(600)
         .color(t.colors.textPrimary)
         .build();
     ui.text("memory.feed.sub")
-        .position(x + 120.0f, y + 14.0f)
-        .size(300.0f, 18.0f)
+        .position(x + 120.0f, y + core::theme::scaled(14.0f))
+        .size(300.0f, core::theme::scaled(18.0f))
         .text("引擎替你做了什么，一目了然")
         .fontSize(core::theme::scaled(12.0f))
-        .lineHeight(18.0f)
+        .lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textTertiary)
         .build();
 
@@ -39,7 +47,7 @@ void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::EmptyStateOptions opts;
         opts.message = "还没有动态";
         opts.guide = "引擎启动并产生采集 / 注入 / 提炼后，这里会滚动显示。";
-        ui_kit::emptyState(ui, "memory.feed.empty", opts, x + 16.0f, y + 38.0f,
+        ui_kit::emptyState(ui, "memory.feed.empty", opts, x + 16.0f, y + core::theme::scaled(38.0f),
                            w - 32.0f, kCardH - 50.0f, t);
         return;
     }
@@ -55,29 +63,30 @@ void MemoryModule::composeFeed(eui::Ui& ui, const core::theme::Tokens& t,
     };
     int i = 0;
     for (const auto& item : snap.feed) {
-        const float ry = y + 44.0f + static_cast<float>(i) * 27.0f;
+        const float ry = y + core::theme::scaled(44.0f) +
+                         static_cast<float>(i) * core::theme::scaled(kFeedRowH);
         ui.text("memory.feed.dot" + std::to_string(i))
             .position(x + 16.0f, ry)
-            .size(14.0f, 24.0f)
+            .size(14.0f, core::theme::scaled(24.0f))
             .text("●")
             .fontSize(core::theme::scaled(9.0f))
-            .lineHeight(24.0f)
+            .lineHeight(core::theme::scaled(24.0f))
             .color(feedColor(item.kind))
             .build();
         ui.text("memory.feed.txt" + std::to_string(i))
             .position(x + 34.0f, ry)
-            .size(w - 190.0f, 24.0f)
+            .size(w - 190.0f, core::theme::scaled(24.0f))
             .text(item.text)
             .fontSize(core::theme::scaled(12.5f))
-            .lineHeight(24.0f)
+            .lineHeight(core::theme::scaled(24.0f))
             .color(t.colors.textSecondary)
             .build();
         ui.text("memory.feed.time" + std::to_string(i))
             .position(x + w - 150.0f, ry)
-            .size(134.0f, 24.0f)
+            .size(134.0f, core::theme::scaled(24.0f))
             .text(panel::formatFeedTime(item.ts))
             .fontSize(core::theme::scaled(11.5f))
-            .lineHeight(24.0f)
+            .lineHeight(core::theme::scaled(24.0f))
             .horizontalAlign(eui::HorizontalAlign::Right)
             .color(t.colors.textTertiary)
             .build();
@@ -102,16 +111,16 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             .radius(t.sizes.radius)
             .build();
         ui.text("memory.degrade.text")
-            .position(x + 14.0f, cy + 10.0f)
-            .size(w - 220.0f, 24.0f)
+            .position(x + 14.0f, cy + core::theme::scaled(10.0f))
+            .size(w - 220.0f, core::theme::scaled(24.0f))
             .text("引擎已停止——搜索与现有记忆仍可用，新增提炼暂停。")
             .fontSize(core::theme::scaled(13.0f))
-            .lineHeight(24.0f)
+            .lineHeight(core::theme::scaled(24.0f))
             .fontWeight(600)
             .color(t.colors.warning)
             .build();
         primaryButton(ui, "memory.degrade.start", "启动引擎",
-                      x + w - 180.0f, cy + 7.0f, 140.0f, 30.0f, t,
+                      x + w - 180.0f, cy + core::theme::scaled(7.0f), 140.0f, 30.0f, t,
                       [] { TelememEngine::global().startAsync(); });
         cy += 44.0f + kCardGap;
     }
@@ -120,30 +129,31 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
     if (!snap.storesOk) {
         ui.text("memory.stores.error")
             .position(x, cy)
-            .size(w, 22.0f)
+            .size(w, core::theme::scaled(22.0f))
             .text("面板数据通道异常：" + snap.storesError)
             .fontSize(core::theme::scaled(12.5f))
-            .lineHeight(22.0f)
+            .lineHeight(core::theme::scaled(22.0f))
             .color(t.colors.errorText)
             .build();
         cy += 26.0f;
     }
 
     composeEngineCard(ui, t, x, w, cy);
-    cy += 176.0f + kCardGap;
+    // B6/F-69-2：卡高随字号派生（字变大而卡高不变 = 行底溢出 / 相邻卡叠印）
+    cy += core::theme::scaled(176.0f) + kCardGap;
     composeHealthGrid(ui, t, x, w, cy);
-    cy += 236.0f + kCardGap;
+    cy += core::theme::scaled(236.0f) + kCardGap;
 
     // 消耗卡（今日/本月 token + 估算金额，ledger 聚合；月度预算软/硬档）
     {
-        constexpr float kUsageH = 150.0f;
+        const float kUsageH = core::theme::scaled(150.0f);
         ui_kit::cardPanel(ui, "memory.usage.card", x, cy, w, kUsageH, t.sizes.radiusLarge, t);
         ui.text("memory.usage.title")
-            .position(x + 16.0f, cy + 12.0f)
-            .size(320.0f, 22.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(12.0f))
+            .size(320.0f, core::theme::scaled(22.0f))
             .text("token 消耗（今日 / 本月）")
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(22.0f)
+            .lineHeight(core::theme::scaled(22.0f))
             .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
@@ -154,15 +164,15 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         usage.hardBudgetTokens = snap.settings.usageHardBudgetTokens;
         const auto phase = usage.phase();
         ui.text("memory.usage.phase")
-            .position(x + w - 240.0f, cy + 12.0f)
-            .size(224.0f, 22.0f)
+            .position(x + w - 240.0f, cy + core::theme::scaled(12.0f))
+            .size(224.0f, core::theme::scaled(22.0f))
             .text(phase == engine::TokenUsageMeter::Phase::Hard
                       ? "已触发硬档 · 提炼暂停"
                       : phase == engine::TokenUsageMeter::Phase::Soft
                             ? "逼近预算 · 软档提醒"
                             : "预算充足")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(22.0f)
+            .lineHeight(core::theme::scaled(22.0f))
             .color(phase == engine::TokenUsageMeter::Phase::Normal
                        ? t.colors.textTertiary
                        : t.colors.warning)
@@ -170,7 +180,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         const float barX = x + 16.0f;
         const float barW = w - 32.0f;
         ui.rect("memory.usage.bar")
-            .position(barX, cy + 48.0f)
+            .position(barX, cy + core::theme::scaled(48.0f))
             .size(barW, 10.0f)
             .color(t.colors.active)
             .radius(t.sizes.radiusPill)
@@ -178,7 +188,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         const float fillW = static_cast<float>(usage.monthRatio()) * barW;
         if (fillW > 1.0f) {
             ui.rect("memory.usage.fill")
-                .position(barX, cy + 48.0f)
+                .position(barX, cy + core::theme::scaled(48.0f))
                 .size(fillW, 10.0f)
                 .color(phase == engine::TokenUsageMeter::Phase::Normal
                            ? t.colors.primary
@@ -194,21 +204,21 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             snap.monthTokens, formatMilliYuan(snap.monthCostMilli).c_str(),
             usage.softBudgetTokens, usage.hardBudgetTokens);
         ui.text("memory.usage.nums")
-            .position(barX, cy + 70.0f)
-            .size(barW, 20.0f)
+            .position(barX, cy + core::theme::scaled(70.0f))
+            .size(barW, core::theme::scaled(20.0f))
             .text(numBuf)
             .fontSize(core::theme::scaled(12.5f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         ui.text("memory.usage.note")
-            .position(barX, cy + 96.0f)
+            .position(barX, cy + core::theme::scaled(96.0f))
             .size(barW, 40.0f)
             .wrap()
             .text("口径：码点数 ≈ CJK 1 字 1 token 的估算账面；单价按智谱计费页常量，"
                   "注入记账不计金额。")
             .fontSize(core::theme::scaled(11.5f))
-            .lineHeight(16.0f)
+            .lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary)
             .build();
         cy += kUsageH + kCardGap;
@@ -216,29 +226,31 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
 
     // 最近调用记录表（消耗控制第 4 条：数字与内部账面一致——直接读 ledger 行）
     {
-        constexpr float kRowH = 26.0f;
+        const float kRowH = core::theme::scaled(26.0f);
         const auto rows = snap.recentLedger;
         // 空表时留出空态区高度（原为 54px，只够一行字，与下方「最近动态」卡贴成一片）
         const float tableH =
-            rows.empty() ? 104.0f
-                          : 40.0f + static_cast<float>(rows.size()) * kRowH + 14.0f;
+            rows.empty() ? core::theme::scaled(104.0f)
+                          : core::theme::scaled(40.0f) +
+                                static_cast<float>(rows.size()) * kRowH +
+                                core::theme::scaled(14.0f);
         ui_kit::cardPanel(ui, "memory.recent.card", x, cy, w, tableH, t.sizes.radiusLarge, t);
         ui.text("memory.recent.title")
-            .position(x + 16.0f, cy + 12.0f)
-            .size(320.0f, 22.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(12.0f))
+            .size(320.0f, core::theme::scaled(22.0f))
             .text("最近调用记录")
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(22.0f)
+            .lineHeight(core::theme::scaled(22.0f))
             .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
         auto colHeader = [&](const char* text, float cx, float cw, bool right) {
             ui.text(std::string("memory.recent.h.") + text)
-                .position(cx, cy + 40.0f)
-                .size(cw, 18.0f)
+                .position(cx, cy + core::theme::scaled(40.0f))
+                .size(cw, core::theme::scaled(18.0f))
                 .text(text)
                 .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .horizontalAlign(right ? eui::HorizontalAlign::Right
                                        : eui::HorizontalAlign::Left)
                 .color(t.colors.textTertiary)
@@ -269,32 +281,32 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         };
         int i = 0;
         for (const auto& r : rows) {
-            const float ry = cy + 62.0f + static_cast<float>(i) * kRowH;
+            const float ry = cy + core::theme::scaled(62.0f) + static_cast<float>(i) * kRowH;
             const std::string rid = std::to_string(i);
             ui.text("memory.recent.r" + rid + ".time")
                 .position(cTime, ry)
-                .size(130.0f, 20.0f)
+                .size(130.0f, core::theme::scaled(20.0f))
                 .text(panel::formatFeedTime(r.ts))
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.textSecondary)
                 .build();
             ui.text("memory.recent.r" + rid + ".kind")
                 .position(cKind, ry)
-                .size(cKindW, 20.0f)
+                .size(cKindW, core::theme::scaled(20.0f))
                 .text(kindDisplay(r.kind))
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.textSecondary)
                 .build();
             char countBuf[40];
             std::snprintf(countBuf, sizeof(countBuf), "%lld", r.tokens);
             ui.text("memory.recent.r" + rid + ".count")
                 .position(cCount, ry)
-                .size(cCountW, 20.0f)
+                .size(cCountW, core::theme::scaled(20.0f))
                 .text(countBuf)
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textPrimary)
                 .build();
@@ -303,10 +315,10 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
                           formatMilliYuan(r.costMilliYuan).c_str());
             ui.text("memory.recent.r" + rid + ".tok")
                 .position(cTok, ry)
-                .size(cTokW, 20.0f)
+                .size(cTokW, core::theme::scaled(20.0f))
                 .text(tokBuf)
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textTertiary)
                 .build();
@@ -318,7 +330,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             opts.message = "还没有调用记录";
             opts.guide = "引擎启动后，提炼 / 向量化 / 注入的账目会逐条记在这里。";
             ui_kit::emptyState(ui, "memory.recent.empty", opts, x + 16.0f,
-                               cy + 40.0f, w - 32.0f, tableH - 52.0f, t);
+                               cy + core::theme::scaled(40.0f), w - 32.0f, tableH - 52.0f, t);
         }
         cy += tableH + kCardGap;
     }
@@ -341,7 +353,7 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
     if (batchMode_) {
         const bool checked = batchSel_.count(p.id) > 0;
         ui.rect("memory.rv.pick." + p.id)
-            .position(x + 12.0f, y + 14.0f)
+            .position(x + 12.0f, y + core::theme::scaled(14.0f))
             .size(18.0f, 18.0f)
             .color(checked ? t.colors.primary : t.colors.surface)
             .radius(t.sizes.radiusSmall)
@@ -362,11 +374,11 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
             .build();
         if (checked) {
             ui.text("memory.rv.pickmark." + p.id)
-                .position(x + 12.0f, y + 13.0f)
-                .size(18.0f, 18.0f)
+                .position(x + 12.0f, y + core::theme::scaled(13.0f))
+                .size(18.0f, core::theme::scaled(18.0f))
                 .text("✓")
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.onPrimary)
                 .build();
@@ -378,17 +390,17 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
     const std::string kind = kindLabel(p.kind);
     const float kindW = 2.0f * 12.0f + 20.0f;
     ui.rect("memory.rv.kindchip." + p.id)
-        .position(hx, y + 12.0f)
+        .position(hx, y + core::theme::scaled(12.0f))
         .size(kindW, 22.0f)
         .color(t.colors.active)
         .radius(t.sizes.radiusPill)
         .build();
     ui.text("memory.rv.kindtext." + p.id)
-        .position(hx, y + 13.0f)
-        .size(kindW, 20.0f)
+        .position(hx, y + core::theme::scaled(13.0f))
+        .size(kindW, core::theme::scaled(20.0f))
         .text(kind)
         .fontSize(core::theme::scaled(12.0f))
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .fontWeight(600)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .color(kindColor(t, p.kind))
@@ -406,29 +418,29 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
                                        ? "标记过期记忆：" + title
                                        : "合并重复记忆：" + title)));
     ui.text("memory.rv.title." + p.id)
-        .position(hx + kindW + 10.0f, y + 12.0f)
+        .position(hx + kindW + 10.0f, y + core::theme::scaled(12.0f))
         .size(w - (hx - x) - kindW - 200.0f, 22.0f)
         .text(titleText)
         .fontSize(core::theme::scaled(13.5f))
-        .lineHeight(22.0f)
+        .lineHeight(core::theme::scaled(22.0f))
         .fontWeight(600)
         .color(t.colors.textPrimary)
         .build();
     ui.text("memory.rv.conf." + p.id)
-        .position(x + w - 176.0f, y + 13.0f)
-        .size(76.0f, 20.0f)
+        .position(x + w - 176.0f, y + core::theme::scaled(13.0f))
+        .size(76.0f, core::theme::scaled(20.0f))
         .text("置信度 " + confidenceTier(p.confidence))
         .fontSize(core::theme::scaled(11.5f))
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .horizontalAlign(eui::HorizontalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
     ui.text("memory.rv.src." + p.id)
-        .position(x + w - 96.0f, y + 13.0f)
-        .size(84.0f, 20.0f)
+        .position(x + w - 96.0f, y + core::theme::scaled(13.0f))
+        .size(84.0f, core::theme::scaled(20.0f))
         .text("来自 " + srcLabel(p.source))
         .fontSize(core::theme::scaled(11.5f))
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .horizontalAlign(eui::HorizontalAlign::Right)
         .color(t.colors.textTertiary)
         .build();
@@ -449,12 +461,12 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
                (p.targetIds.empty() ? std::string("0") : p.targetIds.front());
     }
     ui.text("memory.rv.body." + p.id)
-        .position(x + 16.0f, y + 42.0f)
+        .position(x + 16.0f, y + core::theme::scaled(42.0f))
         .size(w - 32.0f, 56.0f)
         .wrap()
         .text(body)
         .fontSize(core::theme::scaled(12.5f))
-        .lineHeight(18.0f)
+        .lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textSecondary)
         .build();
 
@@ -470,11 +482,11 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
     }
     const bool expanded = expanded_.count(p.id) > 0;
     ui.text("memory.rv.evtoggle." + p.id)
-        .position(x + 16.0f, y + 106.0f)
-        .size(w - 32.0f, 24.0f)
+        .position(x + 16.0f, y + core::theme::scaled(106.0f))
+        .size(w - 32.0f, core::theme::scaled(24.0f))
         .text(std::string(expanded ? "▾ " : "▸ ") + evText)
         .fontSize(core::theme::scaled(11.5f))
-        .lineHeight(24.0f)
+        .lineHeight(core::theme::scaled(24.0f))
         .color(t.colors.info)
         .onClick([this, id = p.id, expanded] {
             if (expanded) {
@@ -542,30 +554,30 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
         statusColor = t.colors.textTertiary;
     }
     ui.text("memory.rv.done.status." + p.id)
-        .position(x + 16.0f, y + 10.0f)
-        .size(220.0f, 20.0f)
+        .position(x + 16.0f, y + core::theme::scaled(10.0f))
+        .size(220.0f, core::theme::scaled(20.0f))
         .text(statusText)
         .fontSize(core::theme::scaled(12.0f))
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .fontWeight(600)
         .color(statusColor)
         .build();
     ui.text("memory.rv.done.kind." + p.id)
-        .position(x + 16.0f, y + 34.0f)
+        .position(x + 16.0f, y + core::theme::scaled(34.0f))
         .size(w - 200.0f, 40.0f)
         .wrap()
         .text("「" + kindLabel(p.kind) + "」" +
               (p.resultText.empty() ? srcLabel(p.source) : p.resultText))
         .fontSize(core::theme::scaled(12.5f))
-        .lineHeight(18.0f)
+        .lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textSecondary)
         .build();
     ui.text("memory.rv.done.time." + p.id)
-        .position(x + w - 190.0f, y + 10.0f)
-        .size(174.0f, 20.0f)
+        .position(x + w - 190.0f, y + core::theme::scaled(10.0f))
+        .size(174.0f, core::theme::scaled(20.0f))
         .text(panel::formatFeedTime(p.decidedAt))
         .fontSize(core::theme::scaled(11.5f))
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .horizontalAlign(eui::HorizontalAlign::Right)
         .color(t.colors.textTertiary)
         .build();
@@ -573,7 +585,7 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
         (p.kind == "add" || p.kind == "forget")) {
         ui_kit::button(ui, "memory.rv.undo." + p.id, "撤销",
                        ui_kit::ButtonLevel::Secondary, x + w - 100.0f,
-                       y + 44.0f, 84.0f, 30.0f, t,
+                       y + core::theme::scaled(44.0f), 84.0f, 30.0f, t,
                        {[this, id = p.id] {
                            auto r = panel_.createUndoCard(id);
                            if (r.isFail()) {
@@ -595,11 +607,11 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
 
     ui.text("memory.rv.intro")
         .position(x, cy)
-        .size(w, 22.0f)
+        .size(w, core::theme::scaled(22.0f))
         .text("Claude 整理记忆前先问你一句：合并、失效、遗忘、新增，都由你拍板，"
               "不满意随时撤销。")
         .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(22.0f)
+        .lineHeight(core::theme::scaled(22.0f))
         .color(t.colors.textSecondary)
         .build();
     cy += 30.0f;
@@ -654,10 +666,10 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                     .build();
                 ui.text(id + ".t")
                     .position(cx, cyRow + 2.0f)
-                    .size(chipW, 20.0f)
+                    .size(chipW, core::theme::scaled(20.0f))
                     .text(labels[static_cast<std::size_t>(i)])
                     .fontSize(core::theme::scaled(11.5f))
-                    .lineHeight(20.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .color(i == active ? t.colors.primaryText
                                        : t.colors.textSecondary)
@@ -667,11 +679,11 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             return cx;
         };
         float cx = x + 12.0f;
-        cx = chipRow("memory.rv.chipT.", cx, cy + 10.0f,
+        cx = chipRow("memory.rv.chipT.", cx, cy + core::theme::scaled(10.0f),
                      typeLabels, filterType_,
                      [this](int v) { filterType_ = v; });
         cx += 14.0f;
-        cx = chipRow("memory.rv.chipS.", cx, cy + 10.0f,
+        cx = chipRow("memory.rv.chipS.", cx, cy + core::theme::scaled(10.0f),
                      srcLabels, filterSrc_,
                      [this](int v) { filterSrc_ = v; });
         // 窄窗：状态 chips 折第二行；宽窗：延续第一行（原版接排）
@@ -680,15 +692,15 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                      filterState_, [this](int v) { filterState_ = v; });
         // 批量模式开关（右侧；标签贴紧开关，窄窗不与 chips 行重叠）
         ui.text("memory.rv.batchlbl")
-            .position(x + w - 180.0f, cy + 14.0f)
-            .size(76.0f, 20.0f)
+            .position(x + w - 180.0f, cy + core::theme::scaled(14.0f))
+            .size(76.0f, core::theme::scaled(20.0f))
             .text("批量模式")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         ui_kit::wswitch(ui, "memory.rv.batchsw", batchMode_, x + w - 96.0f,
-                        cy + 12.0f, 44.0f, 24.0f, t,
+                        cy + core::theme::scaled(12.0f), 44.0f, 24.0f, t,
                         [this](bool on) {
                             batchMode_ = on;
                             batchSel_.clear();
@@ -713,24 +725,24 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                 .radius(t.sizes.radius)
                 .build();
             ui.text("memory.rv.batchinfo")
-                .position(x + 14.0f, cy + 12.0f)
-                .size(w - 480.0f, 20.0f)
+                .position(x + 14.0f, cy + core::theme::scaled(12.0f))
+                .size(w - 480.0f, core::theme::scaled(20.0f))
                 .text("已选 " + std::to_string(batchSel_.size()) + " 项" +
                       (batchSel_.empty()
                            ? " · 在卡片左侧勾选后可批量处理"
                            : (allOk ? " · 所选提案均支持批量接受"
                                     : " · 批量接受仅对「遗忘 / 新增」开放")))
                 .fontSize(core::theme::scaled(12.5f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.primaryText)
                 .build();
             ui_kit::button(ui, "memory.rv.batchclear", "取消选择",
                            ui_kit::ButtonLevel::Secondary, x + w - 260.0f,
-                           cy + 7.0f, 108.0f, 30.0f, t,
+                           cy + core::theme::scaled(7.0f), 108.0f, 30.0f, t,
                            {[this] { batchSel_.clear(); }});
             if (allOk) {
                 primaryButton(ui, "memory.rv.batchaccept", "批量接受",
-                              x + w - 140.0f, cy + 7.0f, 124.0f, 30.0f, t,
+                              x + w - 140.0f, cy + core::theme::scaled(7.0f), 124.0f, 30.0f, t,
                               [this] {
                                   std::vector<std::string> ids(
                                       batchSel_.begin(), batchSel_.end());
@@ -749,7 +761,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             } else {
                 ui_kit::button(ui, "memory.rv.batchaccept", "批量接受",
                                ui_kit::ButtonLevel::Secondary,
-                               x + w - 140.0f, cy + 7.0f, 124.0f, 30.0f, t, {});
+                               x + w - 140.0f, cy + core::theme::scaled(7.0f), 124.0f, 30.0f, t, {});
             }
             cy += 44.0f + 10.0f;
         }
@@ -815,10 +827,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                         const std::string& title) {
         ui.text(id)
             .position(x + 16.0f, cyCard + 12.0f)
-            .size(400.0f, 24.0f)
+            .size(400.0f, core::theme::scaled(24.0f))
             .text(title)
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(24.0f)
+            .lineHeight(core::theme::scaled(24.0f))
             .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
@@ -833,10 +845,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             .build();
         ui.text(id + ".t")
             .position(x + 26.0f, cyCard + 6.0f)
-            .size(innerW - 20.0f, 18.0f)
+            .size(innerW - 20.0f, core::theme::scaled(18.0f))
             .text(text)
             .fontSize(core::theme::scaled(11.5f))
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.warning)
             .build();
     };
@@ -847,17 +859,17 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.cfg.llm", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.llm.title", cy, "大模型端点（提炼）");
         ui.text("memory.cfg.llm.hint")
-            .position(x + 16.0f, cy + 38.0f)
-            .size(innerW, 18.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(38.0f))
+            .size(innerW, core::theme::scaled(18.0f))
             .text("Claude 的「大脑」接在哪里——一般不用手动填，从 DevDesk 网关一键带入即可。")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.textSecondary)
             .build();
         const bool imported = snap.settings.llmImportedAtSec > 0;
         primaryButton(ui, "memory.cfg.llm.import",
                       "从 DevDesk 网关一键导入当前 profile",
-                      x + 16.0f, cy + 62.0f,
+                      x + 16.0f, cy + core::theme::scaled(62.0f),
                       320.0f, ui_kit::kButtonHeight, t,
                        {[this] {
                            // 模块隔离：激活 profile 经 core::LlmProfileSource
@@ -883,18 +895,18 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                        }});
         if (imported) {
             ui.text("memory.cfg.llm.imported")
-                .position(x + 352.0f, cy + 72.0f)
-                .size(120.0f, 22.0f)
+                .position(x + 352.0f, cy + core::theme::scaled(72.0f))
+                .size(120.0f, core::theme::scaled(22.0f))
                 .text("已导入")
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(22.0f)
+                .lineHeight(core::theme::scaled(22.0f))
                 .fontWeight(600)
                 .color(t.colors.success)
                 .build();
         }
         // 只读回显（端点定案值 + 凭据通道；不回显任何密钥形态）
         ui.text("memory.cfg.llm.rows")
-            .position(x + 16.0f, cy + 112.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(112.0f))
             .size(innerW, 36.0f)
             .wrap()
             .text(std::string("端点 ") + engine::kLlmBaseUrl + " · 模型 " +
@@ -903,10 +915,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                   (imported ? " · 来源 profile " + snap.settings.llmProfileName
                             : " · 尚未导入（点击上方按钮绑定）"))
             .fontSize(core::theme::scaled(11.5f))
-            .lineHeight(16.0f)
+            .lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary)
             .build();
-        warnBar("memory.cfg.llm.warn", cy + 140.0f,
+        warnBar("memory.cfg.llm.warn", cy + core::theme::scaled(140.0f),
                 snap.gateEnabled ? "对话内容将发送至该端点（已过脱敏）"
                                  : "对话内容将发送至该端点（当前未经脱敏）");
         cy += kCardH + kCardGap;
@@ -918,7 +930,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.cfg.embed", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.embed.title", cy, "向量化端点（本机）");
         ui.text("memory.cfg.embed.rows")
-            .position(x + 16.0f, cy + 42.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(42.0f))
             .size(innerW, 36.0f)
             .wrap()
             .text(std::string("llama-server · http://127.0.0.1:") +
@@ -926,10 +938,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                   engine::kEmbedModel + " · " +
                   std::to_string(engine::kEmbedDims) + " 维（换档 = 全量重嵌）")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(17.0f)
+            .lineHeight(core::theme::scaled(17.0f))
             .color(t.colors.textSecondary)
             .build();
-        warnBar("memory.cfg.embed.warn", cy + 84.0f,
+        warnBar("memory.cfg.embed.warn", cy + core::theme::scaled(84.0f),
                 "记忆原文不出机：向量化全部落本机（零 API 费）。");
         cy += kCardH + kCardGap;
     }
@@ -940,16 +952,16 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.cfg.mask", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.mask.title", cy, "脱敏设置");
         ui.text("memory.cfg.mask.chip")
-            .position(x + 120.0f, cy + 14.0f)
-            .size(140.0f, 20.0f)
+            .position(x + 120.0f, cy + core::theme::scaled(14.0f))
+            .size(140.0f, core::theme::scaled(20.0f))
             .text(snap.gateEnabled ? "已开启" : "脱敏已关闭")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .fontWeight(600)
             .color(snap.gateEnabled ? t.colors.primaryText : t.colors.errorText)
             .build();
         ui_kit::wswitch(ui, "memory.cfg.mask.switch", snap.gateEnabled,
-                        x + 16.0f, cy + 44.0f, 44.0f, 24.0f, t,
+                        x + 16.0f, cy + core::theme::scaled(44.0f), 44.0f, 24.0f, t,
                         [this](bool on) {
                             if (!on) {
                                 maskModalOpen_ = true;  // 关闭须二次确认
@@ -959,21 +971,21 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                             }
                         });
         ui.text("memory.cfg.mask.note")
-            .position(x + 76.0f, cy + 46.0f)
-            .size(innerW - 76.0f, 20.0f)
+            .position(x + 76.0f, cy + core::theme::scaled(46.0f))
+            .size(innerW - 76.0f, core::theme::scaled(20.0f))
             .text(snap.gateEnabled
                       ? "密钥、手机号等敏感信息会在出机前被自动清除。"
                       : "已关闭：密钥、手机号等敏感信息将原样出机，风险自担。")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         ui.text("memory.cfg.mask.rule")
-            .position(x + 16.0f, cy + 84.0f)
-            .size(innerW, 20.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(84.0f))
+            .size(innerW, core::theme::scaled(20.0f))
             .text("脱敏默认开启；关闭属高危操作需二次确认，关闭后内容将原样发送给云端。")
             .fontSize(core::theme::scaled(11.5f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textTertiary)
             .build();
         cy += kCardH + kCardGap;
@@ -985,34 +997,34 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.cfg.trig", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.trig.title", cy, "触发线设置");
         ui.text("memory.cfg.trig.hint")
-            .position(x + 16.0f, cy + 38.0f)
-            .size(innerW, 18.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(38.0f))
+            .size(innerW, core::theme::scaled(18.0f))
             .text("决定「什么时候提醒你升级」和「什么样的词值得记」，默认值已经调好，可微调。")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.textSecondary)
             .build();
         // 滑条 1：升级阈值（60~95）
         {
             const int pct = snap.settings.recallThresholdPct;
             ui.text("memory.cfg.trig.s1.label")
-                .position(x + 16.0f, cy + 66.0f)
-                .size(90.0f, 18.0f)
+                .position(x + 16.0f, cy + core::theme::scaled(66.0f))
+                .size(90.0f, core::theme::scaled(18.0f))
                 .text("升级阈值")
                 .fontSize(core::theme::scaled(12.5f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
             ui.text("memory.cfg.trig.s1.sub")
-                .position(x + 96.0f, cy + 66.0f)
-                .size(innerW - 96.0f, 18.0f)
+                .position(x + 96.0f, cy + core::theme::scaled(66.0f))
+                .size(innerW - 96.0f, core::theme::scaled(18.0f))
                 .text("Recall@5 低于此值时提醒（红线 85%）")
                 .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textTertiary)
                 .build();
-            ui_kit::slider(ui, "memory.cfg.trig.s1", x + 16.0f, cy + 92.0f,
+            ui_kit::slider(ui, "memory.cfg.trig.s1", x + 16.0f, cy + core::theme::scaled(92.0f),
                            innerW - 120.0f, 20.0f,
                            static_cast<float>(pct - 60) / 35.0f, t,
                            [this](float v) {
@@ -1027,11 +1039,11 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             char vbuf[16];
             std::snprintf(vbuf, sizeof(vbuf), "%d%%", pct);
             ui.text("memory.cfg.trig.s1.val")
-                .position(x + w - 92.0f, cy + 90.0f)
-                .size(76.0f, 20.0f)
+                .position(x + w - 92.0f, cy + core::theme::scaled(90.0f))
+                .size(76.0f, core::theme::scaled(20.0f))
                 .text(vbuf)
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textPrimary)
                 .build();
@@ -1040,15 +1052,15 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         {
             const int base = snap.settings.twoWordBaseline;
             ui.text("memory.cfg.trig.s2.label")
-                .position(x + 16.0f, cy + 122.0f)
-                .size(220.0f, 18.0f)
+                .position(x + 16.0f, cy + core::theme::scaled(122.0f))
+                .size(220.0f, core::theme::scaled(18.0f))
                 .text("两字词提炼基线 · 命中次数")
                 .fontSize(core::theme::scaled(12.5f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
-            ui_kit::slider(ui, "memory.cfg.trig.s2", x + 16.0f, cy + 148.0f,
+            ui_kit::slider(ui, "memory.cfg.trig.s2", x + 16.0f, cy + core::theme::scaled(148.0f),
                            innerW - 120.0f, 20.0f,
                            static_cast<float>(base - 2) / 8.0f, t,
                            [this](float v) {
@@ -1061,11 +1073,11 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                                }
                            });
             ui.text("memory.cfg.trig.s2.val")
-                .position(x + w - 92.0f, cy + 146.0f)
-                .size(76.0f, 20.0f)
+                .position(x + w - 92.0f, cy + core::theme::scaled(146.0f))
+                .size(76.0f, core::theme::scaled(20.0f))
                 .text(std::to_string(base) + " 次")
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textPrimary)
                 .build();
@@ -1078,26 +1090,26 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             const float tw = (innerW - 2.0f * 12.0f) / 3.0f;
             const float tx = x + 16.0f + static_cast<float>(i) * (tw + 12.0f);
             ui.rect("memory.cfg.trig.tile" + std::to_string(i))
-                .position(tx, cy + 176.0f)
+                .position(tx, cy + core::theme::scaled(176.0f))
                 .size(tw, 30.0f)
                 .color(t.colors.active)
                 .radius(t.sizes.radiusSmall)
                 .build();
             ui.text("memory.cfg.trig.tilen" + std::to_string(i))
-                .position(tx + 10.0f, cy + 182.0f)
-                .size(20.0f, 18.0f)
+                .position(tx + 10.0f, cy + core::theme::scaled(182.0f))
+                .size(20.0f, core::theme::scaled(18.0f))
                 .text(nums[i])
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .fontWeight(700)
                 .color(t.colors.primaryText)
                 .build();
             ui.text("memory.cfg.trig.tilet" + std::to_string(i))
-                .position(tx + 36.0f, cy + 182.0f)
-                .size(tw - 44.0f, 18.0f)
+                .position(tx + 36.0f, cy + core::theme::scaled(182.0f))
+                .size(tw - 44.0f, core::theme::scaled(18.0f))
                 .text(tiles[i])
                 .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textSecondary)
                 .build();
         }
@@ -1110,11 +1122,11 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.cfg.usage", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.usage.title", cy, "用量告警阈值（token 估算）");
         ui.text("memory.cfg.usage.hint")
-            .position(x + 16.0f, cy + 38.0f)
-            .size(innerW, 18.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(38.0f))
+            .size(innerW, core::theme::scaled(18.0f))
             .text("今日/本月 token 越线弹一条桌面提醒（每档每天最多一条）；月档软/硬即消耗卡预算。")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.textSecondary)
             .build();
         // 行绘制：标签 + 说明 + 滑条（量化步进）+ 右侧当前值（万）。
@@ -1126,19 +1138,19 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                              std::function<void(long long)> apply) {
             ui.text(id + ".label")
                 .position(x + 16.0f, rowY)
-                .size(90.0f, 18.0f)
+                .size(90.0f, core::theme::scaled(18.0f))
                 .text(label)
                 .fontSize(core::theme::scaled(12.5f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
             ui.text(id + ".sub")
                 .position(x + 96.0f, rowY)
-                .size(innerW - 220.0f, 18.0f)
+                .size(innerW - 220.0f, core::theme::scaled(18.0f))
                 .text(sub)
                 .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textTertiary)
                 .build();
             const auto clampN = [](double v) {
@@ -1161,10 +1173,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             std::snprintf(vbuf, sizeof(vbuf), "%lld 万", cur / 10000);
             ui.text(id + ".val")
                 .position(x + w - 92.0f, rowY + 22.0f)
-                .size(76.0f, 20.0f)
+                .size(76.0f, core::theme::scaled(20.0f))
                 .text(vbuf)
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textPrimary)
                 .build();
@@ -1172,7 +1184,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         sliderRow("memory.cfg.usage.day", "日档阈值",
                   "今日 token 越线提醒（默认 50 万）",
                   snap.settings.usageDayAlertTokens, 50000, 50000, 2000000,
-                  cy + 62.0f, [this](long long q) {
+                  cy + core::theme::scaled(62.0f), [this](long long q) {
                       const auto s = panel_.snapshot().settings;
                       panel_.setUsageAlertThresholds(
                           q, s.usageSoftBudgetTokens, s.usageHardBudgetTokens);
@@ -1180,7 +1192,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         sliderRow("memory.cfg.usage.soft", "月档 · 软档",
                   "进黄档区提醒 = 消耗卡预算软档",
                   snap.settings.usageSoftBudgetTokens, 500000, 100000, 5000000,
-                  cy + 114.0f, [this](long long q) {
+                  cy + core::theme::scaled(114.0f), [this](long long q) {
                       const auto s = panel_.snapshot().settings;
                       panel_.setUsageAlertThresholds(
                           s.usageDayAlertTokens, q, s.usageHardBudgetTokens);
@@ -1188,12 +1200,12 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         sliderRow("memory.cfg.usage.hard", "月档 · 硬档",
                   "严重级提醒 = 消耗卡预算硬档",
                   snap.settings.usageHardBudgetTokens, 1000000, 100000,
-                  10000000, cy + 166.0f, [this](long long q) {
+                  10000000, cy + core::theme::scaled(166.0f), [this](long long q) {
                       const auto s = panel_.snapshot().settings;
                       panel_.setUsageAlertThresholds(
                           s.usageDayAlertTokens, s.usageSoftBudgetTokens, q);
                   });
-        warnBar("memory.cfg.usage.warn", cy + 216.0f,
+        warnBar("memory.cfg.usage.warn", cy + core::theme::scaled(216.0f),
                 "口径：token 为码点估算（非引擎真值）；判定面 = 记忆消耗账本。");
         cy += kCardH + kCardGap;
     }
@@ -1204,30 +1216,30 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.cfg.data", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.data.title", cy, "数据与隐私");
         ui.text("memory.cfg.data.hint")
-            .position(x + 16.0f, cy + 38.0f)
-            .size(innerW, 18.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(38.0f))
+            .size(innerW, core::theme::scaled(18.0f))
             .text("你的记忆都在自己电脑的这个文件夹里，随时打包带走，或一键清空重来。")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.textSecondary)
             .build();
         ui.rect("memory.cfg.data.pathbox")
-            .position(x + 16.0f, cy + 62.0f)
+            .position(x + 16.0f, cy + core::theme::scaled(62.0f))
             .size(innerW, 28.0f)
             .color(t.colors.active)
             .radius(t.sizes.radiusSmall)
             .build();
         ui.text("memory.cfg.data.path")
-            .position(x + 26.0f, cy + 66.0f)
-            .size(innerW - 20.0f, 20.0f)
+            .position(x + 26.0f, cy + core::theme::scaled(66.0f))
+            .size(innerW - 20.0f, core::theme::scaled(20.0f))
             .text(engine::memoryDataDir().generic_string() + "  ·  " +
                   formatBytes(snap.storageBytes))
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         ui_kit::button(ui, "memory.cfg.data.export", "导出全部记忆（JSON）",
-                       ui_kit::ButtonLevel::Secondary, x + 16.0f, cy + 102.0f,
+                       ui_kit::ButtonLevel::Secondary, x + 16.0f, cy + core::theme::scaled(102.0f),
                        220.0f, ui_kit::kButtonHeight, t,
                        {[this] {
                            auto r = panel_.exportAllToJson();
@@ -1238,7 +1250,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                            }
                        }});
         ui_kit::button(ui, "memory.cfg.data.clear", "清除全部…",
-                       ui_kit::ButtonLevel::Danger, x + 252.0f, cy + 102.0f,
+                       ui_kit::ButtonLevel::Danger, x + 252.0f, cy + core::theme::scaled(102.0f),
                        150.0f, ui_kit::kButtonHeight, t,
                        {[this] {
                            clearInput_.clear();
@@ -1248,11 +1260,11 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     }
 
     ui.text("memory.cfg.foot")
-        .position(x, cy + 4.0f)
-        .size(w, 20.0f)
+        .position(x, cy + core::theme::scaled(4.0f))
+        .size(w, core::theme::scaled(20.0f))
         .text("引擎侧记忆清空需引擎列举接口（A 阶段未暴露），清除全部只清本机面板库。")
         .fontSize(core::theme::scaled(11.0f))
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .color(t.colors.textDisabled)
         .build();
 }

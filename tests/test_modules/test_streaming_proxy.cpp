@@ -272,6 +272,27 @@ struct StreamEnv {
     module::claude::ClaudeService& svc() const { return *service; }
 };
 
+// 池72 回归：代理写 claude_call_logs 的断言需要用已 migrate 的库（claude_profiles
+// FK 行 + claude_call_logs 表）。与 StreamEnv 同语义，只是库来自 TestEnv。
+struct MigratedStreamEnv {
+    test_support::TestEnv env;
+    std::unique_ptr<module::claude::ClaudeService> service;
+
+    explicit MigratedStreamEnv(const std::string& tag)
+        : env("hprobe72_", tag, false) {
+        service = std::make_unique<module::claude::ClaudeService>(
+            env.db->db(), kStreamTestKeychainService);
+        // FK 前提：日志行引用 profile_id
+        env.db->db().exec(
+            "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+            "api_key_check, model, created_at, updated_at) "
+            "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'm', 0, 0)");
+    }
+
+    module::claude::ClaudeService& svc() const { return *service; }
+    core::data::SqliteDb& db() { return env.db->db(); }
+};
+
 Profile makeProfile(const std::string& baseUrl) {
     Profile p;
     p.id = 1;
@@ -1468,5 +1489,68 @@ REGISTER_TEST(json_scan_top_level_span_equivalence,
             }
         }
     }
+    return true;
+})
+
+// 池72 回归：代理必须往 claude_call_logs 写行——首页「今日 Token 用量分布」
+// 与「Token 速率」卡只读这张表；refactor ef9e9466 删掉落库链后图表恒走空态
+// （有数据也不画图）。缓冲路径的终态行在 test_proxy_router.cpp 验；此处验流式：
+// 响应头就绪插行 → 流末 onUsage 回填 output_tokens（图表纵轴 = 逐时该列合计）。
+REGISTER_TEST(proxy_writes_call_log_usage_for_streaming_path,
+              "pool72: streaming proxy path inserts row + backfills output_tokens", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    MockScript script;
+    // 必须带 usage 事件：output_tokens 只在 message_delta / message_start 里出现，
+    // 纯 content_block_delta 的脚本回填恒 NULL（那不是缺陷，是上游没给用量）。
+    script.chunks = makeSseScript(2, false);
+    script.chunks.push_back(
+        "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":321}}\n\n");
+    script.chunks.push_back("data: [DONE]\n\n");
+    upstream.onMessages(script);
+
+    MigratedStreamEnv env("streaming");
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    httplib::Client cli("127.0.0.1", proxy.actualPort());
+    cli.set_read_timeout(15, 0);
+    auto res = clientPostStream(cli, "/v1/messages",
+                                R"({"model":"claude-sonnet-4-5","stream":true})",
+                                false);
+    DOCTEST_REQUIRE(res.ok);
+    DOCTEST_REQUIRE_EQ(res.status, 200);
+
+    // 落库两阶段：插行在响应头就绪时，用量回填在 releaser（客户端读完之后几毫秒）
+    int64_t rows = 0;
+    int64_t outTokens = -1;
+    for (int attempt = 0; attempt < 100; ++attempt) {
+        auto prep = env.db().prepare(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(output_tokens), -1) AS ot "
+            "FROM claude_call_logs");
+        if (prep.isOk()) {
+            auto r = prep.value().fetchAll();
+            if (r.isOk() && !r.value().empty()) {
+                rows = r.value()[0].getInt64("n").value();
+                outTokens = r.value()[0].getInt64("ot").value();
+                if (rows > 0 && outTokens > 0) break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    DOCTEST_CHECK_EQ(rows, static_cast<int64_t>(1));
+    // 首页图表纵轴读的就是这一列：必须 > 0，否则有数据也不画图
+    DOCTEST_CHECK(outTokens > 0);
+
+    proxy.stop();
+    upstream.stop();
     return true;
 })

@@ -686,3 +686,60 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     return true;
 })
 
+
+// 池72 回归：缓冲路径必须往 claude_call_logs 写终态行。这张表是首页
+// 「今日 Token 用量分布」与「Token 速率」卡的唯一数据源；refactor ef9e9466
+// 删掉整条落库链后，首页图表恒走空态（有数据也不画图）。
+REGISTER_TEST(proxy_router_writes_call_log_row,
+              "proxy_router: buffered path persists claude_call_logs row", {
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("POST", "/v1/messages",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"id":"msg_01","type":"message","content":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    const int upstreamPort = upstream.actualPort();
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "calllog");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "Upstream", "http://127.0.0.1:" + std::to_string(upstreamPort),
+        "sk-ant-upstream-key-9999", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    const std::string reqBody =
+        R"({"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})";
+    auto r = directCall(router, "POST", "/v1/messages", reqBody);
+    DOCTEST_REQUIRE_EQ(r.status, 200);
+
+    auto prep = tdb.handle().prepare(
+        "SELECT COUNT(*) AS n, COALESCE(MAX(status_code), 0) AS sc, "
+        "COALESCE(MAX(profile_id), 0) AS pid, COALESCE(MAX(method), '') AS m "
+        "FROM claude_call_logs");
+    DOCTEST_REQUIRE(prep.isOk());
+    auto rows = prep.value().fetchAll();
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE(!rows.value().empty());
+    DOCTEST_CHECK_EQ(rows.value()[0].getInt64("n").value(),
+                     static_cast<int64_t>(1));
+    DOCTEST_CHECK_EQ(rows.value()[0].getInt64("sc").value(),
+                     static_cast<int64_t>(200));
+    DOCTEST_CHECK_EQ(rows.value()[0].getInt64("pid").value(),
+                     created.value().id);
+    DOCTEST_CHECK_EQ(rows.value()[0].getString("m").value(), std::string("POST"));
+
+    upstream.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})

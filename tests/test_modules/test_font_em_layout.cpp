@@ -57,12 +57,10 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
     DOCTEST_CHECK(textW("Token 速率 (tok/s)", labelSize) <= kHomeStatTextW);
     // 数字口径：最近一次调用速率，恒 1 位小数，三位整数 + 小数位 = 5 字符是常见上限档
     DOCTEST_CHECK(textW("999.9", numberSize, 700) <= kHomeStatTextW);
-    // badge 最坏情况：流式档与空闲档各取最长的一条
-    DOCTEST_CHECK(textW("● 999 路生成中 · 最近一次", badgeSize) <=
+    // badge（B7 D1 起只剩错误态「加载失败」）：最坏情况 = 最长指标名 + 加载失败
+    DOCTEST_CHECK(textW("Token 速率 (tok/s) · 加载失败", badgeSize) <=
                   kHomeStatTextW);
-    DOCTEST_CHECK(textW("最近一次成功调用", badgeSize) <= kHomeStatTextW);
-    DOCTEST_CHECK(textW("暂无成功调用", badgeSize) <= kHomeStatTextW);
-    DOCTEST_CHECK(textW("今日修改过的笔记", badgeSize) <= kHomeStatTextW);
+    DOCTEST_CHECK(textW("加载失败", badgeSize) <= kHomeStatTextW);
 
     // 纵向（drawGlassStatCard 绝对定位：label 16 / number 40 / badge 底对齐 height-48；
     // 最小档 fontScale=1 时 badge 顶 96、卡高 144）

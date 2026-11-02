@@ -2031,10 +2031,11 @@ REGISTER_TEST(settings_fs_derive_pure,
         // round(基准×1.3)：16→21 / 18→23 / 2→3 / 16（下边距）→21
         DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 21.0f);
         DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 23.0f);
-        // 端口行 y=40+21+16=77、行高 roundFs(36)=47 → 接管行 y=124；
-        // 无警告 124+23+21=168；2 条警告 (124+23+3)+2×21+21=213
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 168.0f);
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 213.0f);
+        // B6：desc 锚也随字号派生（标题盒 y/h 已 roundFs，desc 不缩就会压标题）——
+        // 端口行 y=roundFs(40)+21+16=89、行高 roundFs(36)=47 → 接管行 y=136；
+        // 无警告 136+23+21=180；2 条警告 (136+23+3)+2×21+21=225
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 180.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 225.0f);
     }
     return true;
 })
@@ -2126,6 +2127,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     //   ① 行盒矩形两两不重叠（同 tab 全行池化，跨卡叠印也在此被抓）
     //   ② 卡 frame 两两不重叠 + 行盒 ⊆ 所属卡 frame（卡高没跟派生即红）
     //   ③ 派生钉值：行盒高 / y 偏移 == 字面期望（at 按 scale 三档选值）
+    namespace ms = module::settings;
     const auto tabProblem = [&](eui::Ui& ui, int tab, float scale) {
         struct Rect {
             const char* id;
@@ -2214,8 +2216,9 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         if (tab == 0) {
             // E 批统一：标题盒字面 22（与 editor/modules 等卡同款、不随字号缩放），
             // desc 盒 roundFs(16) 派生
+            // B6/F-69-3：cardTitle 盒 y/h 走 roundFs(基) → 三档 19/22/29
             err = pin("appearance.title 高", heightOf("settings.card.appearance.title"),
-                      at(22.0f, 22.0f, 22.0f));
+                      at(19.0f, 22.0f, 29.0f));
             if (err.empty())
                 err = pin("appearance.desc 高",
                           heightOf("settings.card.appearance.desc"),
@@ -2247,17 +2250,16 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
             if (err.empty())
-                // UAT6 动态背景开关（活体流质）：标题带右贴行盒 28 高、字面值
-                // 不随字号缩放；与 title 盒 x 相接（重叠判定 0.01 严格收口，
-                // 贴边合法）——卡高 184 全档不动的预算回归锁
-                err = pin("appearance.fluid 开关行盒高（字面 28）",
+                // UAT6 动态背景开关（活体流质）：标题带右贴行盒。B6 起 y/盒高
+                // 随字号派生（roundFs 28/12），与 desc 行盒不叠（同 pool 重叠判定守）
+                err = pin("appearance.fluid 开关行盒高（roundFs 28）",
                           heightOf("settings.card.appearance.fluid"),
-                          at(28.0f, 28.0f, 28.0f));
+                          ms::roundFs(28.0f));
             if (err.empty())
-                err = pin("appearance.fluid 开关行顶（标题带右贴，字面 12）",
+                err = pin("appearance.fluid 开关行顶（标题带右贴，roundFs 12）",
                           yOf("settings.card.appearance.fluid") -
                               yOf("settings.card.appearance"),
-                          at(12.0f, 12.0f, 12.0f));
+                          ms::roundFs(12.0f));
             if (err.empty() && platform::autostart::supported()) {
                 // 自启动行（UAT6）：行顶 = hint 底 + roundFs(6)（三档 113/132/172），
                 // 开关 44×24 字面值不随字号缩放
@@ -2278,15 +2280,15 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("proxy 卡高（无警告）",
                           heightOf("settings.card.proxy"),
-                          at(124.0f, 138.0f, 168.0f));
+                          ms::proxyCardHeightFor(0));
         } else if (tab == 1) {
             err = pin("modules.name.0 高",
                       heightOf("settings.card.modules.name.0"),
-                      at(15.0f, 18.0f, 23.0f));
-            if (err.empty())
-                // UAT3 多列分栏：单列 4 行改卡内 2×2 格——name.0/name.1 同行异列
-                //（x 差 = 格宽+16，ui_kit::columnX 单一来源；格几何不随字号缩放，
-                // 三档同值），次行 y 差才是行距（rowPitch = roundFs(56)）。
+                      ms::modulesNameH());
+            if (err.empty() && !ms::modulesCardSingleColumn())
+                // UAT3 多列分栏：≤1.15 档卡内两列——name.0/name.1 同行异列
+                //（x 差 = 格宽+16，ui_kit::columnX 单一来源）。B6 起 >1.15 档降单列，
+                // 该列差判据只在单列档缺席时适用。
                 err = pin("modules 同行异列 x 差（格宽+16）",
                           xOf("settings.card.modules.name.1") -
                               xOf("settings.card.modules.name.0"),
@@ -2299,37 +2301,44 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                               return cell2X;
                           }());
             if (err.empty())
+                // B6/F-69-3：>1.15 档降单列（2→1 列），次行距仍是 rowPitch 但隔两格
                 err = pin("modules 次行 y 差（rowPitch=roundFs(56)）",
                           yOf("settings.card.modules.name.2") -
                               yOf("settings.card.modules.name.0"),
-                          at(48.0f, 56.0f, 73.0f));
+                          ms::modulesCardSingleColumn()
+                              ? 2.0f * ms::modulesRowPitch()
+                              : ms::modulesRowPitch());
             if (err.empty())
                 err = pin("modules 行内偏移",
                           yOf("settings.card.modules.rowdesc.0") -
                               yOf("settings.card.modules.name.0"),
-                          at(17.0f, 20.0f, 26.0f));
+                          ms::modulesRowDescDy());
             if (err.empty())
-                // schedule 加入后开关格恒 7 → 无壁纸平台也 4 行（310）；壁纸平台再加
-                // 1 格仍 4 行（310，两档收敛同值）。
-                // 4 行（68+56×3+36+38=310）：85% 264 / 100% 310 / 130% 403。
-                err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at(264.0f, 310.0f, 403.0f));
-            // 壁纸第 7 格（模块卡内末行落单，2026-10-27 拍板）：格几何随常规格
-            // 机制派生——行 y = roundFs(68)+3×roundFs(56)、开关行内偏移 +6（字面）。
+                // B6/F-69-3：卡高内容派生（列数按字号档，格数含壁纸格）
+                err = pin("modules 卡高",
+                          heightOf("settings.card.modules"),
+                          ms::modulesCardHeightFor(ms::kModuleToggleCellCount(
+                              platform::wallpaper::supported())));
+            // 壁纸末格（模块卡内末行）：格几何随常规格机制派生——
+            // 行 y = roundFs(68) + row×roundFs(56)、开关行内偏移 +6（字面）。
             if (err.empty() && platform::wallpaper::supported()) {
+                const int cols = ms::modulesCardSingleColumn() ? 1 : 2;
+                const int cells = ms::kModuleToggleCellCount(true);
+                const float lastRow = static_cast<float>((cells - 1) / cols);
                 err = pin("wallpaper.name 高（同常规格 name）",
                           heightOf("settings.card.wallpaper.name"),
-                          at(15.0f, 18.0f, 23.0f));
+                          ms::modulesNameH());
                 if (err.empty())
-                    err = pin("wallpaper 格行距（3×rowPitch）",
+                    err = pin("wallpaper 格行距（末行 × rowPitch）",
                               yOf("settings.card.wallpaper.name") -
                                   yOf("settings.card.modules.name.0"),
-                              at(144.0f, 168.0f, 219.0f));
+                              lastRow * ms::modulesRowPitch());
                 if (err.empty())
                     err = pin("wallpaper 开关行顶（格 y+6，字面偏移）",
                               yOf("settings.card.wallpaper.sw.track") -
                                   yOf("settings.card.modules"),
-                              at(208.0f, 242.0f, 313.0f));
+                              ms::modulesGridTopY() +
+                                  lastRow * ms::modulesRowPitch() + 6.0f);
                 if (err.empty())
                     err = pin("wallpaper 开关高（字面 24）",
                               heightOf("settings.card.wallpaper.sw.track"),
@@ -2573,10 +2582,10 @@ REGISTER_TEST(settings_card_pair_column_geometry,
     // ④ 85% / 130% 档「卡高包住内容」（逐卡：卡高 == roundFs(常量)，尾行/hint 底 ≤ 卡底）
     for (const float scale : {0.85f, 1.3f}) {
         FontScaleGuard g{scale};
-        const float modulesH = module::settings::roundFs(
-            ::platform::wallpaper::supported()
-                ? module::settings::kModulesCardHeightWallpaper
-                : module::settings::kModulesCardHeight);
+        // B6/F-69-3：模块卡高改内容派生（>1.15 档两列降单列），与生产同源取值
+        const float modulesH = module::settings::modulesCardHeightFor(
+            module::settings::kModuleToggleCellCount(
+                ::platform::wallpaper::supported()));
         const float editorH = module::settings::roundFs(
             module::settings::kEditorFontCardHeight);
         const float logH = module::settings::roundFs(
@@ -3629,10 +3638,11 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // 内容高对可用 372 的零滚动预算逐值保持（338/356/372 @ 0/1/2 条代理警告）。
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
-    // 模块卡：schedule 加入后开关 7 格 → 4 行，卡高 68+roundFs(56)×3+roundFs(36)=272
-    // 基准 +38 富余 → 310（三档 roundFs = 264/310/403）；壁纸格两档同值 310。
-    // 与 T01 的 kModulesCardHeight 同源，改动必须与下方布局断言同步。
+    // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
+    // 常量 310 仅留作 100% 档参考锚——断言派生值在 100% 档恰好等于 310，防基准漂移。
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 310.0f);
+    DOCTEST_CHECK_EQ(ms::modulesCardHeightFor(ms::kModuleToggleCellCount(true)),
+                     310.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 

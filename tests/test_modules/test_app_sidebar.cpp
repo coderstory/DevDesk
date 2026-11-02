@@ -181,7 +181,7 @@ REGISTER_TEST(sidebar_toggle_persists,
 // 与强度保守上限）；② 相位钟只在泵回调推进（dt 钳 0.1s，模态循环/休眠不跳变）；
 // 「不挂泵不推进」的不可见侧见 fluid_background_gate_zero_cost。
 REGISTER_TEST(fluid_background_compose_elements,
-              "fluid: 开关开+窗可见 → 7 晕+卫星+帧泵在树；相位只在泵回调推进", {
+              "fluid: 开关开+窗可见 → 14 晕+卫星+帧泵在树；相位只在泵回调推进", {
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "fluidon", true);
     app::resetFluidBackgroundForTests();       // 隔离前序用例的进程级镜像
     app::setFluidWindowVisibleMode(true);      // 钉可见（语义与平台查询解耦）
@@ -190,8 +190,9 @@ REGISTER_TEST(fluid_background_compose_elements,
     FluidComposeFixture fx;
     fx.frame();
 
-    // 7 层晕 + 每层 3 卫星（2026-11-01 重构：kSatsPerHalo 2→3）
-    for (int j = 0; j < 7; ++j) {
+    // 14 层晕 + 每层 3 卫星（B5 2026-11-02：kHalos 7→14，卫星总数 42）
+    const int kHalos = 14;
+    for (int j = 0; j < kHalos; ++j) {
         const auto* halo = fx.ui.find("app.fluid.halo." + std::to_string(j));
         DOCTEST_REQUIRE_MESSAGE(halo != nullptr, "缺晕 halo." + std::to_string(j));
         // 正圆（splash 墨染同款手法）：宽=高=2r、radius=r
@@ -204,6 +205,8 @@ REGISTER_TEST(fluid_background_compose_elements,
                                       "." + std::to_string(b)) != nullptr);
         }
     }
+    // 数量判据：恰好 14 晕，第 15 个不存在
+    DOCTEST_CHECK(fx.ui.find("app.fluid.halo." + std::to_string(kHalos)) == nullptr);
     const auto* driver = fx.ui.find("app.fluid.anim.driver");
     DOCTEST_REQUIRE(driver != nullptr);
     DOCTEST_REQUIRE(driver->onFrame != nullptr);

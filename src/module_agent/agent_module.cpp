@@ -27,6 +27,8 @@
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/empty_state.h>
+#include <ui_kit/grid.h>
+#include <ui_kit/jelly.h>
 #include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/button.h>
@@ -70,30 +72,33 @@ namespace {
 
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
-constexpr float kTaskRowH = 44.0f;
-// UAT6 任务卡片化（用户真机反馈：列表 item 卡片展示、内容四边加内边距）：
-// kTaskCardPad = 卡内内容四边内边距 12；kTaskCardInset = 卡列表在灰面板内的
-// 四边留边 10（卡宽 = 列表宽 − 2×inset，弹性契约：无固定帽，随窗口缩放）；
-// kTaskCardGap = 卡间距 8；kTaskCardH = 卡高 = 行高 + 上下内边距（step 同源，
-// 一滚一格）
+// B3（F-66-2）任务卡网格化：单列每卡 = 内容宽 −2×inset，1600 窗下 1536×68 ≈ 22:1，
+// 是横条不是卡。改多列网格锁 340–420 宽 × 120 高（≈3:1），窄窗自动退化为 1 列。
+constexpr float kCardMinW = 340.0f;
+constexpr float kCardMaxW = 420.0f;
+constexpr int kCardMaxCols = 5;
 constexpr float kTaskCardPad = 12.0f;
 constexpr float kTaskCardInset = 10.0f;
 constexpr float kTaskCardGap = 8.0f;
-constexpr float kTaskCardH = kTaskRowH + 2.0f * kTaskCardPad;
+constexpr float kTaskCardH = 120.0f;   // 三行：22 + 18 + 18 + 行距 11×2 + 上下 pad 12×2
 // 任务行「配置异常」标记宽：4 个 CJK 字 @12px = 48，留 8 余量（文案再长就换行/截断，
 // 原因全文在详情弹窗配置摘要里）
 constexpr float kTaskWarnW = 56.0f;
-// UAT6 真机反馈「启动按钮比其他按钮大」的统一规格。差异源：原启动钮走
-// components::button 派生字号 h×0.46≈14.7 且宽 72，其余 chip 字号 12、宽 48/56。
-// 行内操作钮（详情/编辑/启停/删除/[入队]/启动）统一 56×32、字号 12——同排
-// 同尺寸同级；「启动」的主操作语义用 Primary 色同尺寸表达，不用大一号。
+// hover 操作组（F-66-4）：五个 28×28 图标钮，间距 4 → 组宽 156。
+// 组右缘必须 = 卡右缘 −14（探针 G2 断言），故 actionsX = cardW −14 − kTaskActionsW
+constexpr float kTaskIconBtn = 28.0f;
+constexpr float kTaskActionsW = kTaskIconBtn * 5.0f + 4.0f * 4.0f;
+// 「启动」常驻主操作钮。原 UAT6 口径 56×32 五钮同排；B3 五钮转 hover 图标后，
+// 行内只剩这一个文字钮，仍是 56×32（探针与既有契约按此验）
 constexpr float kTaskActionW = 56.0f;
+// 卡 bg 的果冻形变参数：复用 B2 默认档（jelly.h JellyOptions 默认值同值）
+constexpr ui_kit::JellyOptions kJelly{};
 constexpr float kPageErrorH = 16.0f;
 // 页内错误行下的「去 Claude 页」引导行高（仅「LLM 配置不可用」类错误渲染）
 constexpr float kPageHintH = 16.0f;
 
 constexpr float kToolsHeaderH = 28.0f;
-constexpr float kToolCardH = 40.0f;
+constexpr float kToolCardH = 40.0f;   // 基准；运行期走 scaled(kToolCardH)（B6：行盒随字号）
 // 工具列表高锚点 = 640 档（S4.1 最小窗 1000×640）下的列表高，也是弹性下限。
 // H18-批3 起不再封顶：高窗按 body 可用高放大（公式见 compose 内 toolsListH）
 constexpr float kToolsListAnchorH = 240.0f;
@@ -105,6 +110,94 @@ constexpr float kToolsListAnchorH = 240.0f;
 std::string runLimitBadge(int maxRuns) {
     if (maxRuns <= 1) return "一次性";
     return "限" + std::to_string(maxRuns) + "次";
+}
+
+// hover 操作组里的图标按钮（F-66-4b）：components::button 没有 zIndex，
+// 而操作组按钮必须压在透明命中面之上才点得到——所以这里手搓两层
+// （.bg 命中面 + 图标文本穿透），由外层 stack 的 zIndex 抬层级。
+// onHover 必须由**真正接住指针的那个元素**上报（hover 全局唯一、只给最上层），
+// 否则指针从卡身移到按钮上时卡会以为 hover 结束 → 材质/果冻闪一下。
+void iconActionChip(::eui::Ui& ui, const std::string& id, unsigned int codepoint,
+                    float size, const components::theme::ThemeColorTokens& tokens,
+                    bool enabled, std::function<void()> onClick, float x,
+                    std::function<void(bool)> onHover) {
+    const ::core::Color base = tokens.surface;
+    ::core::Color iconColor = tokens.text;
+    if (!enabled) iconColor = components::theme::withOpacity(iconColor, 0.40f);
+    // disabled 只置灰不摘 onClick：调用方/测试按 id 直调回调时靠回调内守卫
+    //（与既有 actionChip 同口径，点击禁用钮无副作用），避免「元素在但不可点」的歧义
+    auto bg = ui.rect(id + ".bg")
+                  .position(x, 0.0f)
+                  .size(size, size)
+                  .states(base, components::theme::buttonHover(tokens, base),
+                          components::theme::buttonPressed(tokens, base))
+                  .radius(tokens.metrics.radius.overlay)
+                  .border(components::theme::buttonBorder(tokens, false))
+                  .disabled(!enabled)
+                  .onClick(onClick);
+    if (onHover) bg.onHover(onHover);
+    bg.build();
+    // 契约「id 元素带 onClick」（与 actionChip 同口径）：图标文本本身穿透命中
+    //（hitTestMode None）
+    ui.text(id)
+        .position(x, 0.0f)
+        .size(size, size)
+        .icon(::eui::utf8(codepoint))
+        .fontSize(size * 0.5f)
+        .lineHeight(size)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(iconColor)
+        .hitTestMode(::core::dsl::HitTestMode::None)
+        .onClick(onClick)
+        .build();
+}
+
+// 卡内常驻主操作钮（「启动」）：Primary 底色 + 文字，56×32。手搓而不用
+// components::button 的唯一原因是 onHover——button 的 .bg 会抢走 hover 但拿不到
+// 回调，卡片的材质/果冻会在指针移到主操作上时闪回常态。文本节点沿用
+// `<id>.text.normal` 命名，与 button 的逐态文本 id 契约保持一致。
+// shortcut: 只做「常态/hover/pressed 三态 + disabled 置灰」，上限即本函数 ~30 行；
+// 升级触发＝需要图标/按下缩放时改用 components::button 并接受 hover 丢失。
+void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
+                    float w, float h, const std::string& label, float fontSize,
+                    const components::theme::ThemeColorTokens& tokens,
+                    bool enabled, std::function<void()> onClick,
+                    std::function<void(bool)> onHover, int zIndex) {
+    const ::core::Color base = tokens.primary;
+    const ::core::Color hover = components::theme::buttonHover(tokens, base);
+    const ::core::Color pressed = components::theme::buttonPressed(tokens, base);
+    const ::core::Color textColor =
+        enabled ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f}
+                : ::core::Color{0.94f, 0.97f, 1.0f, 0.40f};
+    // 根 stack 保留 `<id>` 语义（可点 + 带文案）并承载 zIndex：命中面压在上面时
+    // 靠它把整组抬到命中面之上（同 components::button 的「外层 stack 抬层级」口径）
+    ui.stack(id)
+        .position(x, y)
+        .size(w, h)
+        .zIndex(zIndex)
+        .content([&] {
+            auto bg = ui.rect(id + ".bg")
+                          .size(w, h)
+                          .states(base, hover, pressed)
+                          .radius(tokens.metrics.radius.overlay)
+                          .disabled(!enabled)
+                          .onClick(onClick);
+            if (onHover) bg.onHover(onHover);
+            bg.build();
+            ui.text(id + ".text.normal")
+                .size(w, h)
+                .text(label)
+                .fontSize(fontSize)
+                .lineHeight(h)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(textColor)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .onClick(onClick)
+                .build();
+        })
+        .build();
 }
 
 } // namespace
@@ -353,7 +446,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     //   （最小窗 body 可用高 568×0.3 = 170.4 仍落 240，两档同时成立）。
     const float toolsBodyAvailH = screen.height - pad;
     const float toolsNaturalH =
-        static_cast<float>(toolsCache_.size()) * kToolCardH;
+        static_cast<float>(toolsCache_.size()) * core::theme::scaled(kToolCardH);
     const float toolsListH =
         toolsOpen_ ? std::min(std::max(kToolsListAnchorH, toolsBodyAvailH * 0.3f),
                               toolsNaturalH)
@@ -363,10 +456,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     const bool hasPageError = !pageError_.empty();
     const bool hasPageHint = hasPageError && needsClaudePageHint(pageError_);
     const int kPageGapCount = 2 + (hasPageError ? 1 : 0) + (hasPageHint ? 1 : 0);
+    // 错误/引导行行盒随字号派生（B6）：行盒不缩 = 字变大被裁。
+    const float pageErrorH = core::theme::scaled(kPageErrorH);
+    const float pageHintH = core::theme::scaled(kPageHintH);
     // listH S4.2 弹性：底 padding 已为 0，高仅扣 pad 一次（顶内边距）
     const float listH = screen.height - pad - kPageHeaderH - toolsH -
-                        (hasPageError ? kPageErrorH : 0.0f) -
-                        (hasPageHint ? kPageHintH : 0.0f) -
+                        (hasPageError ? pageErrorH : 0.0f) -
+                        (hasPageHint ? pageHintH : 0.0f) -
                         static_cast<float>(kPageGapCount) * t.sizes.spacingLarge;
 
     ui.column("agent.page")
@@ -380,10 +476,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 .alignItems(eui::Align::CENTER)
                 .content([&] {
                     ui.text("agent.title")
-                        .size(tasks_.empty() ? contentW : (contentW - kNewTaskBtnW - kDialogGap), 32.0f)
+                        .size(tasks_.empty() ? contentW : (contentW - kNewTaskBtnW - kDialogGap),
+                              core::theme::scaled(32.0f))
                         .text("智能体")
                         .fontSize(t.sizes.fontSizeTitle)
-                        .lineHeight(32.0f)
+                        .lineHeight(core::theme::scaled(32.0f))
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
                         .build();
@@ -402,20 +499,20 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
             // 页内错误行（有错才渲染）：弹窗之外失败的唯一可见出口
             if (hasPageError) {
                 ui.text("agent.page.error")
-                    .size(contentW, kPageErrorH)
+                    .size(contentW, pageErrorH)
                     .text(pageError_)
                     .fontSize(core::theme::scaled(12.0f))
-                    .lineHeight(kPageErrorH)
+                    .lineHeight(pageErrorH)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.errorText)
                     .build();
                 // 「去 Claude 页」引导：仅「LLM 配置不可用」类错误渲染（needsClaudePageHint 前缀钉死）
                 if (hasPageHint) {
                     ui.text("agent.page.error.hint")
-                        .size(contentW, kPageHintH)
+                        .size(contentW, pageHintH)
                         .text("去 Claude 页 →")
                         .fontSize(core::theme::scaled(12.0f))
-                        .lineHeight(kPageHintH)
+                        .lineHeight(pageHintH)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.primary)
                         .onClick([] { navigateToClaudePage(); })
@@ -441,7 +538,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         })
                         .content([&] {
                             ui.text("agent.tools.header.label")
-                                .size(contentW - 72.0f, 20.0f)
+                                .size(contentW - 72.0f, core::theme::scaled(20.0f))
                                 .text("可用工具（" +
                                       std::to_string(toolsCache_.size()) + "）")
                                 .fontSize(core::theme::scaled(13.0f))
@@ -450,7 +547,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 .color(t.colors.textPrimary)
                                 .build();
                             ui.text("agent.tools.header.hint")
-                                .size(64.0f, 20.0f)
+                                .size(64.0f, core::theme::scaled(20.0f))
                                 .text(toolsOpen_ ? "收起 ▲" : "展开 ▼")
                                 .fontSize(core::theme::scaled(12.0f))
                                 .lineHeight(core::theme::scaled(20.0f))
@@ -474,7 +571,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .position(0.0f, 0.0f)
                                     .size(contentW, toolsListH)
                                     .gap(kMsgGap)
-                                    .step(kToolCardH)
+                                    .step(core::theme::scaled(kToolCardH))
                                     .theme(themeTokens)
                                     .contentKey("agent.tools.scroll.n" +
                                                 std::to_string(toolsCache_.size()))
@@ -484,20 +581,20 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                             const std::string cid =
                                                 "agent.tools.card." + std::to_string(k);
                                             inner.stack(cid)
-                                                .size(cw, kToolCardH)
+                                                .size(cw, core::theme::scaled(kToolCardH))
                                                 .content([&] {
                                                     // 白卡背景（S6.1 实底）
                                                     inner.rect(cid + ".bg")
                                                         .position(0.0f, 0.0f)
-                                                        .size(cw, kToolCardH)
+                                                        .size(cw, core::theme::scaled(kToolCardH))
                                                         .color(ui_kit::cardSurface(t))
                                                         .radius(t.sizes.radius)
                                                         .border(1.0f, t.colors.borderDefault)
                                                         .build();
                                                     // 行1：工具名（14px 600 一级字）
                                                     inner.text(cid + ".name")
-                                                        .position(12.0f, 3.0f)
-                                                        .size(cw - 24.0f, 17.0f)
+                                                        .position(12.0f, core::theme::scaled(3.0f))
+                                                        .size(cw - 24.0f, core::theme::scaled(17.0f))
                                                         .text(tool.name)
                                                         .fontSize(core::theme::scaled(14.0f))
                                                         .lineHeight(core::theme::scaled(17.0f))
@@ -527,8 +624,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                     else
                                                         line2 = "（无描述）";
                                                     inner.text(cid + ".desc")
-                                                        .position(12.0f, 22.0f)
-                                                        .size(cw - 24.0f, 15.0f)
+                                                        .position(12.0f, core::theme::scaled(22.0f))
+                                                        .size(cw - 24.0f, core::theme::scaled(15.0f))
                                                         .text(line2)
                                                         .fontSize(core::theme::scaled(12.0f))
                                                         .lineHeight(core::theme::scaled(15.0f))
@@ -546,12 +643,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         // 可见行数按本帧弹性列表高推（H18-批3：窗口拉高后可见行变多，
                         // 提示要跟着变，不能再用固定 240 锚点算）
                         if (!toolsCache_.empty()) {
-                            const float visibleRows = toolsListH / kToolCardH;
+                            const float visibleRows =
+                                toolsListH / core::theme::scaled(kToolCardH);
                             const int total = static_cast<int>(toolsCache_.size());
                             const int visible = static_cast<int>(visibleRows);
                             if (total > visible) {
                                 ui.text("agent.tools.scrollHint")
-                                    .size(contentW, 16.0f)
+                                    .size(contentW, core::theme::scaled(16.0f))
                                     .text("还有 " + std::to_string(total - visible) + " 件")
                                     .fontSize(core::theme::scaled(11.0f))
                                     .lineHeight(core::theme::scaled(16.0f))
@@ -577,23 +675,27 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         .radius(t.sizes.radius)
                         .border(1.0f, t.colors.borderDefault)
                         .build();
-                    // 卡片列表：面板内四边留 kTaskCardInset，卡宽 = 列表宽 − 边距；
-                    // 卡高 kTaskCardH（step 同源）；行内动作：启动/详情/编辑/禁用（常驻多一个入队）
+                    // 任务卡网格（2026-11-02 F-66-2）：多列流式网格取代单列列表——
+                    // 1600 窗下单列 1536×68（22:1）是横条不是卡；网格锁 340–420×120
+                    // （≈3:1）。外层 scrollView 保留做溢出滚动（卡数超面板高时可滚），
+                    // 内层 flow 负责换行；step = 行距，一滚一格。
                     components::scrollView(ui, "agent.tasklist")
                         .position(kTaskCardInset, kTaskCardInset)
                         .size(std::max(0.0f, contentW - 2.0f * kTaskCardInset),
                               std::max(0.0f, listH - 2.0f * kTaskCardInset))
                         .gap(kTaskCardGap)
-                        .step(kTaskCardH)
+                        .step(core::theme::scaled(kTaskCardH) + kTaskCardGap)
+                        .scrollbarOverlay()
                         .theme(themeTokens)
-                        .contentKey("agent.tasklist.n" + std::to_string(tasks_.size()))
+                        .contentKey("agent.tasklist.n" + std::to_string(tasks_.size()) +
+                                    "." + std::to_string(static_cast<int>(contentW)))
                         .content([&](eui::Ui& inner, float cw, float) {
                     if (store_ == nullptr) {
                         inner.text("agent.error")
-                            .size(cw, 20.0f)
+                            .size(cw, core::theme::scaled(20.0f))
                             .text("数据库未就绪（Agent 模块服务未装配）")
                             .fontSize(t.sizes.fontSizeBody)
-                            .lineHeight(20.0f)
+                            .lineHeight(core::theme::scaled(20.0f))
                             .color(t.colors.errorText)
                             .build();
                         return;
@@ -621,6 +723,19 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .build();
                         return;
                     }
+                    // 网格列宽：cw 是滚动内容宽（可能已扣滚动条），留 0.5 余量避免
+                    // 恰好整除时浮点误差触发提前换行
+                    const auto [gridCols, cardW] =
+                        ui_kit::gridColumns(std::max(0.0f, cw - 0.5f), kTaskCardGap,
+                                            kCardMinW, kCardMaxW, kCardMaxCols);
+                    (void)gridCols;
+                    const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
+                    const int64_t nowSec = core::time::nowUnix();
+                    inner.flow("agent.tasklist.grid")
+                        .width(cw)
+                        .gap(kTaskCardGap)
+                        .lineGap(kTaskCardGap)
+                        .content([&] {
                     for (const auto& task : tasks_) {
                         const std::string id =
                             "agent.task." + std::to_string(task.id);
@@ -636,10 +751,6 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const bool runStarted =
                             it != latestRuns_.end() &&
                             it->second.status == "running";
-                        // 宽度分配（卡内行）：状态 80（圆点 8 + gap 12 + 文字 60）/
-                        // 行内操作钮统一 kTaskActionW×32（详情·编辑·启停·删除·
-                        // 启动 + [常驻入队]，UAT6 同排同尺寸）/ [配置异常·限次·
-                        // 已停用 各 kTaskWarnW]；childCount 须与实际子元素数一致
                         const bool resident = task.triggerType == "resident";
                         const bool taskOff = !task.enabled;
                         const bool hasProblem =
@@ -651,153 +762,302 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         // 「确认即终局」，先停后删会把破坏性动作拆成难收口的中间态
                         const bool runBusy =
                             isTaskRunActive(task.id) || runStarted;
-                        const float rowGap = 12.0f;
-                        const int childCount = 8 + (resident ? 1 : 0) +
-                                               (hasProblem ? 1 : 0) +
-                                               (limited ? 1 : 0) +
-                                               (taskOff ? 1 : 0);
-                        const float fixedW = 80.0f + kTaskActionW *
-                                                         (5.0f + (resident ? 1.0f : 0.0f)) +
-                                             (hasProblem ? kTaskWarnW : 0.0f) +
-                                             (limited ? kTaskWarnW : 0.0f) +
-                                             (taskOff ? kTaskWarnW : 0.0f);
-                        const float rowW = cw - 2.0f * kTaskCardPad;
+                        // hover 态（F-66-4/5）：命中面写集合，卡底每帧读它出材质与形变
+                        const bool hovered = hoveredTaskIds_.count(task.id) > 0;
+                        const bool pressed = pressedTaskIds_.count(task.id) > 0;
+
+                        // 三行内容（F-66-3）：标题+状态药丸 / 徽章+最近运行 / 触发条件。
+                        // 卡内一律绝对定位 → 必须包一层 stack 根，flow 会接管子元素 x/y。
+                        // 三行行盒与卡高随字号成对派生（B6/F-69-2）：只缩字号不缩行盒
+                        // = 字变大被裁；卡高不跟着缩放 = 第三行被挤出卡外。
+                        const auto stTitle = core::theme::scaledText(14.0f, 22.0f);
+                        const auto stSmall = core::theme::scaledText(11.0f, 18.0f);
+                        const float cardPad = core::theme::scaled(kTaskCardPad);
+                        const float rowGap = core::theme::scaled(11.0f);
+                        const float cardH = core::theme::scaled(kTaskCardH);
+                        const float pillTextW = core::TextPrimitive::measureTextWidth(
+                            status, "", stSmall.fontSize, 500);
+                        const float pillW = pillTextW + core::theme::scaled(30.0f);
                         const float titleW =
-                            rowW - fixedW - rowGap * static_cast<float>(childCount - 1);
-                        // S6.1 实底白卡（玻璃退役）：白底 + borderDefault 细边 + radius 圆角
-                        // 上层 row 内缩 kTaskCardPad 四边内边距只做布局；非交互的
-                        // row 不拦指针，子 chip 各自消费点击
+                            std::max(0.0f, cardW - cardPad * 2.0f -
+                                               kTaskActionsW - 8.0f);
+                        const float titleRowY = cardPad;
+                        const float statusRowY =
+                            titleRowY + stTitle.lineHeight + rowGap;
+                        const float triggerRowY =
+                            statusRowY + stSmall.lineHeight + rowGap;
+                        const float actionsX = cardW - 14.0f - kTaskActionsW;
+                        const float runW = kTaskActionW;
+                        const float runX = cardW - cardPad - runW;
+
                         inner.stack(id)
-                            .size(cw, kTaskCardH)
+                            .size(cardW, cardH)
                             .content([&] {
+                                // 卡底（F-66-5 材质×果冻合体）：B1 三态材质吃 hover/press
+                                // 变色，B2 每帧写 radius/scale 目标值吃 OutBack 回弹。
+                                // ⚠️ states() 只改颜色改不了圆角，圆角/缩放必须每帧
+                                // compose 出新值，动画只把上一帧的值平滑过去。
+                                const eui::Color cardSurfaceColor =
+                                    pressed ? ui_kit::itemSurfacePressed(t)
+                                            : (hovered ? ui_kit::itemSurfaceHover(t)
+                                                       : ui_kit::itemSurface(t));
                                 inner.rect(id + ".bg")
-                                    .position(0.0f, 0.0f)
-                                    .size(cw, kTaskCardH)
-                                    .states(ui_kit::itemSurface(t),
-                                            ui_kit::itemSurfaceHover(t),
-                                            ui_kit::itemSurfacePressed(t))
-                                    .radius(t.sizes.radius)
+                                    .size(cardW, cardH)
+                                    .states(cardSurfaceColor, cardSurfaceColor,
+                                            cardSurfaceColor)
+                                    .radius(pressed ? kJelly.pressedRadius
+                                                    : (hovered ? kJelly.hoverRadius
+                                                               : kJelly.radius))
+                                    .transformOrigin(0.5f, 0.5f)
+                                    .scale(pressed ? kJelly.pressedScale
+                                                   : (hovered ? kJelly.hoverScale
+                                                              : 1.0f))
                                     .border(1.0f, t.colors.borderDefault)
-                                    .onClick([this, taskId = task.id] {
-                                        openTaskDetail(taskId);
-                                    })
+                                    .shadow(components::theme::panelShadow(
+                                        core::theme::componentTokensWeChat(t)))
+                                    .transition(core::Transition::make(
+                                        0.18f, core::Ease::OutBack))
+                                    .animate(core::AnimProperty::Color |
+                                             core::AnimProperty::Radius |
+                                             core::AnimProperty::Transform)
                                     .build();
-                                inner.row(id + ".row")
-                            .position(kTaskCardPad, kTaskCardPad)
-                            .size(rowW, kTaskRowH)
-                            .alignItems(eui::Align::CENTER)
-                            .gap(rowGap)
-                            .content([&] {
+
+                                // 行 1 左：任务名（悬停时让位给右侧操作组）
                                 inner.text(id + ".title")
-                                    .size(titleW, 20.0f)
+                                    .position(cardPad, titleRowY)
+                                    .size(titleW, stTitle.lineHeight)
                                     .text(task.name)
-                                    .fontSize(t.sizes.fontSizeBody)
-                                    .lineHeight(20.0f)
+                                    .fontSize(stTitle.fontSize)
+                                    .lineHeight(stTitle.lineHeight)
+                                    .fontWeight(600)
+                                    .wrap(false)
+                                    .maxWidth(titleW)
+                                    .overflow(core::TextOverflow::Ellipsis)
                                     .color(taskOff
                                                ? components::theme::withOpacity(
                                                      t.colors.textPrimary, 0.45f)
                                                : t.colors.textPrimary)
                                     .build();
-                                // 配置异常标记：Scheduler 每跑必跳过的任务在这里必须显形
-                                //（点行本体开详情，原因在配置摘要里；标记不消费点击）
-                                if (hasProblem) {
-                                    inner.text(id + ".warn")
-                                        .size(kTaskWarnW, 20.0f)
-                                        .text("配置异常")
-                                        .fontSize(core::theme::scaled(12.0f))
-                                        .lineHeight(core::theme::scaled(20.0f))
-                                        .color(t.colors.errorText)
-                                        .build();
-                                }
-                                // 限次标记：看得出「这是一次性任务」（跑满会自动停用）
-                                if (limited) {
-                                    inner.text(id + ".limit")
-                                        .size(kTaskWarnW, 20.0f)
-                                        .text(runLimitBadge(limitIt->second))
-                                        .fontSize(core::theme::scaled(12.0f))
-                                        .lineHeight(core::theme::scaled(20.0f))
-                                        .color(t.colors.textTertiary)
-                                        .build();
-                                }
-                                // 已停用徽章：与标题置灰双通道并存（启用后两者同消）
-                                if (taskOff) {
-                                    inner.text(id + ".off")
-                                        .size(kTaskWarnW, 20.0f)
-                                        .text("已停用")
-                                        .fontSize(core::theme::scaled(12.0f))
-                                        .lineHeight(core::theme::scaled(20.0f))
-                                        .color(t.colors.textTertiary)
-                                        .build();
-                                }
+                                // 行 1 右：状态药丸（点 + 文案，软底）——hover 时让位
+                                inner.rect(id + ".pill.bg")
+                                    .position(cardW - cardPad - pillW,
+                                              titleRowY + core::theme::scaled(2.0f))
+                                    .size(pillW, stSmall.lineHeight)
+                                    .radius(t.sizes.radiusPill)
+                                    .color(components::theme::withOpacity(
+                                        statusColor, 0.16f))
+                                    .opacity(hovered ? 0.0f : 1.0f)
+                                    .build();
                                 inner.rect(id + ".status.dot")
+                                    .position(cardW - cardPad - pillW +
+                                                  core::theme::scaled(6.0f),
+                                              titleRowY + core::theme::scaled(7.0f))
                                     .size(8.0f, 8.0f)
                                     .radius(8.0f)
                                     .color(statusColor)
+                                    .opacity(hovered ? 0.0f : 1.0f)
                                     .build();
                                 inner.text(id + ".status")
-                                    .size(60.0f, 20.0f)
+                                    .position(cardW - cardPad - pillW +
+                                                  core::theme::scaled(18.0f),
+                                              titleRowY + core::theme::scaled(2.0f))
+                                    .size(std::max(0.0f,
+                                                   pillW - core::theme::scaled(24.0f)),
+                                          stSmall.lineHeight)
                                     .text(status)
-                                    .fontSize(core::theme::scaled(12.0f))
-                                    .lineHeight(core::theme::scaled(20.0f))
+                                    .fontSize(stSmall.fontSize)
+                                    .lineHeight(stSmall.lineHeight)
+                                    .fontWeight(500)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(statusColor)
+                                    .opacity(hovered ? 0.0f : 1.0f)
+                                    .build();
+                                // 行 1 右：hover 操作组（F-66-4）。zIndex 2 高于命中面，
+                                // 按钮才点得到；stack 必须给 size 才有布局盒。
+                                // ⚠️ opacity 0 不挡命中（hitTest 不看 opacity）→ 必须配合
+                                // disabled：否则卡右上角会藏着看不见的「删除」可点区。
+                                inner.stack(id + ".actions")
+                                    .position(actionsX,
+                                              titleRowY +
+                                                  (stTitle.lineHeight - 28.0f) *
+                                                      0.5f)
+                                    .size(kTaskActionsW, 28.0f)
+                                    .zIndex(2)
+                                    .opacity(hovered ? 1.0f : 0.0f)
+                                    .disabled(!hovered)
+                                    .content([&] {
+                                        const float step = kTaskIconBtn + 4.0f;
+                                        // 指针在按钮上 = 仍在卡上：按钮代报 hover（同集合）
+                                        auto keepHover = [this, taskId = task.id](bool h) {
+                                            if (h) {
+                                                hoveredTaskIds_.insert(taskId);
+                                            } else {
+                                                hoveredTaskIds_.erase(taskId);
+                                            }
+                                        };
+                                        iconActionChip(inner, id + ".detail", 0xF05A,
+                                                       kTaskIconBtn, themeTokens, true,
+                                                       [this, taskId = task.id] {
+                                                           openTaskDetail(taskId);
+                                                       }, 0.0f, keepHover);
+                                        iconActionChip(inner, id + ".edit", 0xF044,
+                                                       kTaskIconBtn, themeTokens, true,
+                                                       [this, taskId = task.id] {
+                                                           openTaskEditor(taskId);
+                                                       }, step, keepHover);
+                                        iconActionChip(inner, id + ".toggle", 0xF011,
+                                                       kTaskIconBtn, themeTokens, true,
+                                                       [this, taskCopy = task] {
+                                                           toggleTaskEnabled(taskCopy);
+                                                       }, step * 2.0f, keepHover);
+                                        // 「入队」对非常驻任务无意义（Scheduler 只对常驻
+                                        // 派生子任务），非常驻/Scheduler 未装配 → 置灰；
+                                        // 五钮恒渲染保操作组宽度恒定（G2 右缘对齐判据）
+                                        iconActionChip(inner, id + ".enqueue", 0xF03A,
+                                                       kTaskIconBtn, themeTokens,
+                                                       resident && scheduler_ != nullptr,
+                                                       [this, taskId = task.id] {
+                                                           if (scheduler_ == nullptr) {
+                                                               LOG_WARN("Agent: Scheduler 未"
+                                                                        "就绪，常驻入队被忽略");
+                                                               return;
+                                                           }
+                                                           scheduler_->enqueueResident(taskId);
+                                                       }, step * 3.0f, keepHover);
+                                        iconActionChip(inner, id + ".delete", 0xF2ED,
+                                                       kTaskIconBtn, themeTokens, !runBusy,
+                                                       [this, taskId = task.id, busy = runBusy] {
+                                                           if (busy) return;   // 禁用态点击无效果（与入队 chip 同守卫法）
+                                                           deleteConfirmTaskId_ = taskId;
+                                                       }, step * 4.0f, keepHover);
+                                    })
+                                    .build();
+
+                                // 行 2：徽章组（配置异常 / 限次 / 已停用）+ 最近运行时间右对齐
+                                float badgeX = cardPad;
+                                auto badge = [&](const std::string& suffix,
+                                                 const std::string& text,
+                                                 const eui::Color& color) {
+                                    inner.text(id + suffix)
+                                        .position(badgeX, statusRowY)
+                                        .size(kTaskWarnW, stSmall.lineHeight)
+                                        .text(text)
+                                        .fontSize(stSmall.fontSize)
+                                        .lineHeight(stSmall.lineHeight)
+                                        .color(color)
+                                        .build();
+                                    badgeX += kTaskWarnW + core::theme::scaled(6.0f);
+                                };
+                                if (hasProblem) {
+                                    badge(".warn", "配置异常", t.colors.errorText);
+                                }
+                                if (limited) {
+                                    badge(".limit", runLimitBadge(limitIt->second),
+                                          t.colors.warning);
+                                }
+                                if (taskOff) {
+                                    badge(".off", "已停用", t.colors.textTertiary);
+                                }
+                                const std::string lastRunText =
+                                    it == latestRuns_.end()
+                                        ? std::string("未运行过")
+                                        : "最近运行 " + relativeTimeText(
+                                                            it->second.startedAt, nowSec);
+                                // 起点避开左侧徽章（badgeX 已被上面的徽章推进），
+                                // 否则三枚徽章齐挂时右对齐文字会压到徽章上
+                                const float lastRunX = badgeX;
+                                const float lastRunW = std::max(
+                                    0.0f, cardW - cardPad - lastRunX);
+                                inner.text(id + ".lastrun")
+                                    .position(lastRunX, statusRowY)
+                                    .size(lastRunW, stSmall.lineHeight)
+                                    .text(lastRunText)
+                                    .fontSize(stSmall.fontSize)
+                                    .lineHeight(stSmall.lineHeight)
+                                    .wrap(false)
+                                    .maxWidth(lastRunW)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .horizontalAlign(eui::HorizontalAlign::Right)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+
+                                // 行 3：触发条件（cron 原文 / 常驻 / 一次性类型标签），
+                                // 右侧给常驻「启动」让位
+                                const std::string cron = cronTextOf(task);
+                                std::string triggerText =
+                                    cron.empty() ? triggerLabelOf(task.triggerType)
+                                                 : cron;
+                                inner.text(id + ".trigger")
+                                    .position(cardPad, triggerRowY)
+                                    .size(std::max(0.0f, runX - cardPad - 8.0f),
+                                          stSmall.lineHeight)
+                                    .text(triggerText)
+                                    .fontSize(stSmall.fontSize)
+                                    .lineHeight(stSmall.lineHeight)
+                                    .wrap(false)
+                                    .maxWidth(std::max(0.0f, runX - cardPad - 8.0f))
+                                    .overflow(core::TextOverflow::Ellipsis)
                                     .color(t.colors.textSecondary)
                                     .build();
-                                actionChip(inner, id + ".detail", "详情", kTaskActionW,
-                                           /*primary=*/false, /*enabled=*/true,
-                                               themeTokens, [this, taskId = task.id] {
-                                                   openTaskDetail(taskId);
-                                               });
-                                actionChip(inner, id + ".edit", "编辑", kTaskActionW,
-                                           /*primary=*/false, /*enabled=*/true,
-                                           themeTokens, [this, taskId = task.id] {
-                                               openTaskEditor(taskId);
-                                           });
-                                actionChip(inner, id + ".toggle",
-                                           task.enabled ? "禁用" : "启用", kTaskActionW,
-                                           /*primary=*/false, /*enabled=*/true,
-                                           themeTokens, [this, taskCopy = task] {
-                                               toggleTaskEnabled(taskCopy);
-                                           });
-                                actionChip(inner, id + ".delete", "删除", kTaskActionW,
-                                           /*primary=*/false, /*enabled=*/!runBusy,
-                                           themeTokens,
-                                           [this, taskId = task.id, busy = runBusy] {
-                                               if (busy) return;   // 禁用态点击无效果（与入队 chip 同守卫法）
-                                               deleteConfirmTaskId_ = taskId;
-                                           });
-                                if (resident) {
-                                    // Scheduler 未装配时置灰；入队跑手动子任务
-                                    actionChip(inner, id + ".enqueue", "入队", kTaskActionW,
-                                               /*primary=*/false,
-                                               /*enabled=*/scheduler_ != nullptr,
-                                               themeTokens, [this, taskId = task.id] {
-                                                   if (scheduler_ == nullptr) {
-                                                       LOG_WARN("Agent: Scheduler 未"
-                                                                "就绪，常驻入队被忽略");
-                                                       return;
-                                                   }
-                                                   scheduler_->enqueueResident(taskId);
-                                               });
-                                }
-                                // 启动 = 行内唯一主操作：Primary 绿表达主次，几何
-                                // 与其他 chip 同规格（kTaskActionW×32、字号 12——
-                                // UAT6 真机反馈「启动比其他按钮大」的统一收口）
-                                components::button(inner, id + ".run")
-                                    .size(kTaskActionW, 32.0f)
-                                    .text(runStarted ? "运行中…" : "启动")
-                                    .fontSize(core::theme::scaled(12.0f))
-                                    .theme(themeTokens)
-                                    .disabled(loop_ == nullptr || runStarted)
-                                    .onClick([this, taskId = task.id] {
+
+                                // 「启动」常驻主操作（不随 hover；Primary 表达主次），zIndex 2
+                                // 压在命中面之上。手搓而非 components::button 的原因见
+                                // textActionChip：button 的 .bg 会抢走 hover 却拿不到回调，
+                                // 指针移到「启动」上时卡的材质/果冻会闪回常态。
+                                textActionChip(
+                                    inner, id + ".run", runX,
+                                    triggerRowY - core::theme::scaled(7.0f), runW,
+                                    core::theme::scaled(32.0f),
+                                    runStarted ? "运行中…" : "启动",
+                                    core::theme::scaled(12.0f), themeTokens,
+                                    loop_ != nullptr && !runStarted,
+                                    [this, taskId = task.id] {
                                         startTask(taskId);
                                         // 启动 run 后立即开详情弹窗，随 uiPolling_ 实时更新
+                                        openTaskDetail(taskId);
+                                    },
+                                    [this, taskId = task.id](bool h) {
+                                        if (h) {
+                                            hoveredTaskIds_.insert(taskId);
+                                        } else {
+                                            hoveredTaskIds_.erase(taskId);
+                                        }
+                                    },
+                                    2);
+
+                                // 命中面（F-66-4a）：铺满整卡、三态同色、zIndex 1（高于卡内容、
+                                // 低于操作组/启动），写 hover/press 集合 + 点击开详情。
+                                // 卡底压在命中面下拿不到 hover（hover 全局唯一给最上层），
+                                // 所以 B1 三态材质由这里代报：press 由 onPress/onRelease 维护。
+                                inner.rect(id + ".hit")
+                                    .position(0.0f, 0.0f)
+                                    .size(cardW, kTaskCardH)
+                                    .zIndex(1)
+                                    .states(kTransparent, kTransparent, kTransparent)
+                                    .onHover([this, taskId = task.id](bool h) {
+                                        if (h) {
+                                            hoveredTaskIds_.insert(taskId);
+                                        } else {
+                                            hoveredTaskIds_.erase(taskId);
+                                        }
+                                    })
+                                    .onPress([this, taskId = task.id](const core::PointerEvent&,
+                                                                      const core::Rect&) {
+                                        pressedTaskIds_.insert(taskId);
+                                    })
+                                    .onRelease([this, taskId = task.id](const core::PointerEvent&,
+                                                                        const core::Rect&) {
+                                        pressedTaskIds_.erase(taskId);
+                                    })
+                                    .onClick([this, taskId = task.id] {
                                         openTaskDetail(taskId);
                                     })
                                     .build();
                             })
                             .build();
-                            })   // stack content
-                            .build();
                     }
+                        })   // agent.tasklist.grid
+                        .build();
                 })
                 .build();
                 })   // agent.tasklist.wrap 的 content 收口

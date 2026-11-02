@@ -84,6 +84,7 @@
 #include <components/input.h>   // InputState：读回弹窗内输入框真实文本（预填判据）
 #include <eui/dsl.h>
 #include <ui_kit/card.h>
+#include <ui_kit/materials.h>
 
 #include <algorithm>
 #include <atomic>
@@ -1270,10 +1271,11 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
     composeTo(ui4, mod, kScreen, "agent_ui_edit4");
     DOCTEST_CHECK(ui4.find("agent.dialog.task.goal") == nullptr);
 
-    // 启停是行内独立动作：不进编辑弹窗，文案随 enabled 翻转且落库取反
+    // 启停是行内独立动作：B3 起转 hover 图标钮（F-66-4，文案由 0xF011 电源图标承载，
+    // 语义提示在首帧 tooltip 之外不可见 → 判据钉「存在 + 可点 + 落库取反」）
     const auto* toggle = ui4.find("agent.task." + tid + ".toggle");
     DOCTEST_REQUIRE(toggle != nullptr);
-    DOCTEST_CHECK_EQ(toggle->text, std::string("禁用"));
+    DOCTEST_CHECK_EQ(toggle->fontFamily, std::string("Icon"));
     DOCTEST_REQUIRE(toggle->onClick != nullptr);
     toggle->onClick();
     auto disabled = store.getTask(created.value());
@@ -1283,7 +1285,11 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
     composeTo(ui5, mod, kScreen, "agent_ui_edit5");
     const auto* toggle2 = ui5.find("agent.task." + tid + ".toggle");
     DOCTEST_REQUIRE(toggle2 != nullptr);
-    DOCTEST_CHECK_EQ(toggle2->text, std::string("启用"));
+    DOCTEST_REQUIRE(toggle2->onClick != nullptr);
+    toggle2->onClick();   // 再点一次 → 反向启用（图标钮不再靠文案区分两态）
+    auto reenabled = store.getTask(created.value());
+    DOCTEST_REQUIRE(reenabled.isOk());
+    DOCTEST_CHECK(reenabled.value().enabled);
 
     mod.onStop();
     return true;
@@ -4615,13 +4621,15 @@ REGISTER_TEST(agent_ui_task_config_problem_badge,
         const auto* status = ui.find("agent.task." + tid + ".status");
         DOCTEST_REQUIRE(row != nullptr && title != nullptr && status != nullptr);
         DOCTEST_CHECK_MESSAGE(frameContained(*row, *warn), "徽章跑到任务行外");
+        // B3 三行卡：徽章在行 2、标题/状态药丸在行 1 → 判据改为纵向分离 + 不越卡右
         DOCTEST_CHECK_MESSAGE(
-            title->frame.x + title->frame.width <= warn->frame.x + 0.5f,
-            "标题与徽章重叠：标题右缘 " +
-                std::to_string(title->frame.x + title->frame.width) +
-                " > 徽章左缘 " + std::to_string(warn->frame.x));
-        DOCTEST_CHECK_MESSAGE(warn->frame.x + warn->frame.width <= status->frame.x + 0.5f,
-                              "徽章与状态列重叠");
+            title->frame.y + title->frame.height <= warn->frame.y + 0.5f,
+            "标题行与徽章行未分开（纵向重叠）：标题底 " +
+                std::to_string(title->frame.y + title->frame.height) +
+                " > 徽章顶 " + std::to_string(warn->frame.y));
+        DOCTEST_CHECK_MESSAGE(
+            warn->frame.x + warn->frame.width <= row->frame.x + row->frame.width,
+            "徽章越出卡右缘");
         // 徽章配色须与正文不同（否则等于没标记）
         DOCTEST_CHECK(warn->textColor.r != title->textColor.r ||
                       warn->textColor.g != title->textColor.g ||
@@ -4802,11 +4810,13 @@ REGISTER_TEST(agent_ui_task_run_limit_badge_and_detail_text,
     const auto* status = ui.find("agent.task." + tidOnce + ".status");
     DOCTEST_REQUIRE(row != nullptr && title != nullptr && status != nullptr);
     DOCTEST_CHECK_MESSAGE(frameContained(*row, *badgeOnce), "徽章跑到任务行外");
-    DOCTEST_CHECK_MESSAGE(title->frame.x + title->frame.width <= badgeOnce->frame.x + 0.5f,
-                          "标题与徽章重叠");
+    // B3 三行卡：徽章在行 2、标题/状态药丸在行 1 → 纵向分离 + 不越卡右
+    DOCTEST_CHECK_MESSAGE(title->frame.y + title->frame.height <=
+                              badgeOnce->frame.y + 0.5f,
+                          "标题行与徽章行未分开（纵向重叠）");
     DOCTEST_CHECK_MESSAGE(badgeOnce->frame.x + badgeOnce->frame.width <=
-                              status->frame.x + 0.5f,
-                          "徽章与状态列重叠");
+                              row->frame.x + row->frame.width,
+                          "徽章越出卡右缘");
     // 对照组零噪音
     for (int64_t id : {plain.value(), manualLimited.value()}) {
         DOCTEST_CHECK_MESSAGE(
@@ -5721,8 +5731,8 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     const auto& themeNow = core::theme::current();
     const auto* panel = ui.find("agent.tasklist.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, ui_kit::cardSurface(themeNow)),
-                          "列表容器应为 surface 白底面板");
+    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, ui_kit::containerSurface(themeNow)),
+                          "列表容器应为 containerSurface（B1 L1 材质）");
     // 卡列表在面板内四边留边 10（kTaskCardInset；卡宽 = 列表宽 − 边距）
     const auto* tasklist = ui.find("agent.tasklist");
     DOCTEST_REQUIRE(tasklist != nullptr);
@@ -5734,43 +5744,45 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
         nearPx(panel->frame.width - tasklist->frame.width, 20.0f),
         "卡列表应比面板窄 2×10（弹性契约：卡宽=列表宽−边距）");
 
-    // 卡本体三态：normal surface 白卡 / hover 加深 hover / pressed
-    // primarySoftBg（列表无选中语义，第三档只是按压反馈，无绿圈白勾）+ radius 圆角
-    // + 细边 + 点击开详情
+    // ---- B3 网格化卡片几何（F-66-2/3，取代 UAT6 单列 68 高口径）----
+    // B1 三态材质由命中面代报（卡底压在下层拿不到 hover），所以卡底三态同色 +
+    // hover/press 目标值由命中面写集合、卡底每帧读 → 断言集合驱动出的目标色。
     const auto* rowBg = ui.find("agent.task." + idleTid + ".bg");
     DOCTEST_REQUIRE(rowBg != nullptr);
     DOCTEST_CHECK(rowBg->hasStateColors);
-    DOCTEST_CHECK_MESSAGE(sameColor(rowBg->color, themeNow.colors.surface),
-                          "卡底应为 surface 白卡");
     DOCTEST_CHECK_MESSAGE(
-        sameColor(rowBg->hoverColor, themeNow.colors.hover),
-        "卡 hover 应加深一档 hover（原 transparent→hover 行为已随卡片化换代）");
-    DOCTEST_CHECK_MESSAGE(
-        sameColor(rowBg->pressedColor, themeNow.colors.primarySoftBg),
-        "卡按压档应为 primarySoftBg");
-    DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, themeNow.sizes.radius),
-                          "卡圆角应为 radius (8px)");
+        sameColor(rowBg->color, ui_kit::itemSurface(themeNow)),
+        "卡底常态应为 itemSurface（B1 L2 材质）");
+    DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, 12.0f),
+                          "卡圆角常态应为果冻 12");
     DOCTEST_CHECK_MESSAGE(nearPx(rowBg->border.width, 1.0f) &&
                               sameColor(rowBg->border.color,
                                         themeNow.colors.borderDefault),
                           "卡应为 1px borderDefault 细边");
-    DOCTEST_CHECK(rowBg->onClick != nullptr);
-    // 卡几何：卡高 = 行 44 + 上下内边距 12 = 68；.row 四边内缩 12
+    // 卡宽高比（F-66-2 核心判据）：340–420 宽 × 120 高 → 2.8–3.5:1
     const auto* card = ui.find("agent.task." + idleTid);
-    const auto* cardRow = ui.find("agent.task." + idleTid + ".row");
-    DOCTEST_REQUIRE(card != nullptr && cardRow != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(card->frame.height, 68.0f),
-                          "卡高应 44+2×12=68，实测 " +
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(card->frame.height, 120.0f),
+                          "卡高应 120（三行），实测 " +
                               std::to_string(card->frame.height));
-    DOCTEST_CHECK_MESSAGE(nearPx(cardRow->frame.x - card->frame.x, 12.0f),
-                          "卡内容左内边距应 12");
-    DOCTEST_CHECK_MESSAGE(nearPx(cardRow->frame.y - card->frame.y, 12.0f),
-                          "卡内容上内边距应 12");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(card->frame.width - cardRow->frame.width, 24.0f),
-        "卡内容左右内边距合计应 24");
-    DOCTEST_CHECK_MESSAGE(nearPx(cardRow->frame.height, 44.0f), "卡内行高应 44");
-    // 卡间距 8：相邻两卡 y 差 = 68 + 8 = 76（按 y 排序逐对验，不依赖 store 顺序）
+        card->frame.width >= 339.5f && card->frame.width <= 420.5f,
+        "卡宽应落在 340–420 网格档，实测 " + std::to_string(card->frame.width));
+    const float aspect = card->frame.width / card->frame.height;
+    DOCTEST_CHECK_MESSAGE(aspect >= 2.5f && aspect <= 4.5f,
+                          "卡宽高比应 2.5–4.5:1（原单列 22:1），实测 " +
+                              std::to_string(aspect));
+    // 行 1/行 2/行 3 纵向分离，且都在卡内（三行结构成立）
+    const auto* row1 = ui.find("agent.task." + idleTid + ".title");
+    const auto* row2 = ui.find("agent.task." + idleTid + ".lastrun");
+    const auto* row3 = ui.find("agent.task." + idleTid + ".trigger");
+    DOCTEST_REQUIRE(row1 != nullptr && row2 != nullptr && row3 != nullptr);
+    DOCTEST_CHECK_MESSAGE(row1->frame.y + row1->frame.height <= row2->frame.y + 0.5f,
+                          "行 1 与行 2 未纵向分离");
+    DOCTEST_CHECK_MESSAGE(row2->frame.y + row2->frame.height <= row3->frame.y + 0.5f,
+                          "行 2 与行 3 未纵向分离");
+    DOCTEST_CHECK_MESSAGE(frameContained(*card, *row3), "行 3 越出卡底");
+    // 网格化后同排同列：四张卡两两不重叠（flow 换行不能压卡）
     const std::string cardIds[] = {okTid, failTid, idleTid, offTid};
     std::vector<const core::dsl::Element*> cards;
     for (const auto& cid : cardIds) {
@@ -5778,32 +5790,53 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
         DOCTEST_REQUIRE(c != nullptr);
         cards.push_back(c);
     }
-    std::sort(cards.begin(), cards.end(),
-              [](const core::dsl::Element* a, const core::dsl::Element* b) {
-                  return a->frame.y < b->frame.y;
-              });
-    for (size_t i = 1; i < cards.size(); ++i) {
-        DOCTEST_CHECK_MESSAGE(
-            nearPx(cards[i]->frame.y - cards[i - 1]->frame.y, 76.0f),
-            "相邻卡间距应 68+8=76，实测 " +
-                std::to_string(cards[i]->frame.y - cards[i - 1]->frame.y));
+    for (size_t i = 0; i < cards.size(); ++i) {
+        for (size_t j = i + 1; j < cards.size(); ++j) {
+            const auto& a = *cards[i];
+            const auto& b = *cards[j];
+            const bool overlapX = a.frame.x < b.frame.x + b.frame.width &&
+                                  b.frame.x < a.frame.x + a.frame.width;
+            const bool overlapY = a.frame.y < b.frame.y + b.frame.height &&
+                                  b.frame.y < a.frame.y + a.frame.height;
+            DOCTEST_CHECK_MESSAGE(!(overlapX && overlapY),
+                                  "网格卡片互相重叠（flow 布局失败）");
+        }
     }
-    // 行内操作钮统一规格（真机反馈「启动比其他按钮大」的回归钉）：启动与
-    // 详情 chip 同宽 56、同高 32、字号 12——主操作只用 Primary 色表达
+    // 「启动」常驻主操作 56×32、字号 12（不随 hover 隐藏）
     const auto* runBgS = ui.find("agent.task." + idleTid + ".run.bg");
     // 按钮文字恒为逐态实现 .text.normal（core::Color 默认 alpha=1）
     const auto* runTextS = ui.find("agent.task." + idleTid + ".run.text.normal");
-    const auto* detailChipS = ui.find("agent.task." + idleTid + ".detail.chip");
-    DOCTEST_REQUIRE(runBgS != nullptr && runTextS != nullptr &&
-                    detailChipS != nullptr);
+    DOCTEST_REQUIRE(runBgS != nullptr && runTextS != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(runBgS->frame.width, 56.0f) &&
                               nearPx(runBgS->frame.height, 32.0f),
-                          "启动钮应统一 56×32");
-    DOCTEST_CHECK_MESSAGE(
-        nearPx(runBgS->frame.width, detailChipS->frame.width),
-        "启动钮与行内 chip 不同宽——同排操作钮须同尺寸（主操作不许大一号）");
+                          "启动钮应 56×32");
     DOCTEST_CHECK_MESSAGE(nearPx(runTextS->fontSize, 12.0f),
                           "启动钮字号应 12（原派生 14.7 是「大一号」根因）");
+    DOCTEST_CHECK_FALSE(runBgS->disabled);
+    // hover 操作组：常态 opacity 0，五个图标钮各 28×28、组宽 156、组右缘 = 卡右−14
+    const auto* actions = ui.find("agent.task." + idleTid + ".actions");
+    DOCTEST_REQUIRE_MESSAGE(actions != nullptr, "缺 hover 操作组 .actions");
+    DOCTEST_CHECK_MESSAGE(nearPx(actions->opacity, 0.0f),
+                          "操作组常态应 opacity 0（hover 才出）");
+    DOCTEST_CHECK_MESSAGE(nearPx(actions->frame.width, 156.0f),
+                          "操作组宽应 5×28+4×4=156，实测 " +
+                              std::to_string(actions->frame.width));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(actions->frame.x + actions->frame.width,
+               card->frame.x + card->frame.width - 14.0f),
+        "操作组右缘应 = 卡右缘 − 14");
+    for (const char* suffix : {".detail", ".edit", ".toggle", ".enqueue", ".delete"}) {
+        const auto* btn = ui.find("agent.task." + idleTid + suffix + ".bg");
+        DOCTEST_REQUIRE_MESSAGE(btn != nullptr,
+                                std::string("操作组缺按钮 ") + suffix);
+        DOCTEST_CHECK_MESSAGE(nearPx(btn->frame.width, 28.0f) &&
+                                  nearPx(btn->frame.height, 28.0f),
+                              std::string("图标钮应为 28×28: ") + suffix);
+        DOCTEST_CHECK_MESSAGE(
+            btn->frame.x + btn->frame.width <=
+                card->frame.x + card->frame.width + 0.5f,
+            std::string("图标钮越出卡右: ") + suffix);
+    }
 
     // 运行中：启动钮禁用 + 文案「运行中…」；同帧对照（没在跑的任务可用）证明
     // disabled 位来自运行判定而非 loop 未装配。终态后恢复「启动」可点。

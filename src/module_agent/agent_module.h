@@ -297,6 +297,14 @@ private:
 
     // compose 数据缓存（仅主线程读写）
     std::vector<AgentTaskRow> tasks_;
+    // 卡片 hover 集合（§10.0.1 hover 范式）：透明命中面与操作组按钮都写它，每帧 compose
+    // 读它决定操作组 opacity 与卡形变。必须是集合不能是单个 bool——指针从卡移到按钮那帧，
+    // 卡的 onHover(false) 先于按钮的 onHover(true) 触发，bool 会被覆盖成 false（按钮闪没）
+    std::set<int64_t> hoveredTaskIds_;
+    // 按下集合（同上范式）：命中面压住卡底后，卡底自己再也拿不到 hover/press
+    //（hover 全局唯一且只给最上层可交互元素），B1 三态材质要真的亮起来就得由命中面代报。
+    // 不合并进 hoveredTaskIds_：移出卡时 hover 清、press 仍留到抬起为止。
+    std::set<int64_t> pressedTaskIds_;
     std::map<int64_t, AgentRunRow> latestRuns_;     // taskId → 最近一次 run
     // 任务级「配置异常」缓存（taskId → 原因，仅非空入表）：纯函数判定（trigger_config.h，
     // 与 Scheduler 同源）。在 refreshData 里随任务列表算一次——不在每帧渲染里反复解析 JSON

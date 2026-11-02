@@ -54,16 +54,23 @@ int logLevelIndex(const std::string& level) {
 constexpr float kFontScalePctLabelW = 44.0f;
 
 // 卡内标题 / 描述行 helper：左缩进 28、字体与颜色在所有调用点一致；标题字重 600。
+// ⚠️ 入参 y / h / lineHeight 一律是**未缩放字面基准**：本 helper 内部统一走 roundFs
+// （= round(基准 × fontScale)）派生，调用点传 t.sizes.fontSize* 会双乘。
+// B6/F-69-3：此前标题字号走 token（已缩放）而行盒走字面 22、描述行 y 固定 40 ——
+// 放大档出现「标题不变 / 描述变大且上压」，是设置页「全乱」的根因，改 helper 一次修全卡。
 
 void cardTitle(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
                float y, float w, float h, float lineHeight,
                const std::string& text) {
+    const float boxY = roundFs(y);
+    const float boxH = roundFs(h);
+    const float lh = roundFs(lineHeight);
     ui.text(id + ".title")
-        .position(28.0f, y)
-        .size(w, h)
+        .position(28.0f, boxY)
+        .size(w, boxH)
         .text(text)
-        .fontSize(t.sizes.fontSizeLarge)
-        .lineHeight(lineHeight)
+        .fontSize(t.sizes.fontSizeLarge)   // 令牌在 token 重建时已乘 fontScale，勿再包
+        .lineHeight(lh)
         .fontWeight(600)
         .color(t.colors.textPrimary)
         .build();
@@ -73,12 +80,14 @@ void cardTitle(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
 // UAT3 多列分栏：卡宽可收窄到半宽列，desc 超宽一律省略号兜底（放得下时视觉不变）。
 void cardDesc(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
               float y, float w, float h, const std::string& text) {
+    const float boxY = roundFs(y);
+    const float boxH = roundFs(h);
     ui.text(id + ".desc")
-        .position(28.0f, y)
-        .size(w, h)
+        .position(28.0f, boxY)
+        .size(w, boxH)
         .text(text)
         .fontSize(fs(12.0f))
-        .lineHeight(h)
+        .lineHeight(boxH)
         .color(t.colors.textTertiary)
         // 单行省略号三件套（wrap 默认 false）：ellipsis 管排版宽、clip 管绘制范围。
         .maxWidth(w)
@@ -111,7 +120,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     // 开关盒 x 相接不叠印（settings_card_rows_scale_derived 行盒池的严格重叠
     // 判定按 < 0.01 收口，贴边合法）。desc 槽让给开关说明（规格原文），字号/
     // 窗口效果两行自带 FormRow 标签不再重复占 desc。
-    constexpr float kFluidToggleW = 150.0f;
+    // B6：盒宽随字号派生，与同卡 desc/标题同口径（字面 150 在放大档挤掉标题、
+    // 缩小档让 desc 行盒伸出右侧）
+    const float kFluidToggleW = roundFs(150.0f);
     ui.stack(id)
         .size(w, h)
         .zIndex(40)
@@ -127,13 +138,14 @@ void drawAppearanceCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
                       22.0f, "外观");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
                      "主窗口背景液态流质动画；关闭恢复静态");
 
-            // 动态背景开关（标题带右贴，y 12..40 与 desc y 40 相接不叠）
+            // 动态背景开关（标题带右贴）。B6：盒 y/高随字号派生——desc 行顶已是
+            // roundFs(40)（85% 档 34），开关盒不缩就会与 desc 行盒叠印。
             components::toggleSwitch(ui, id + ".fluid")
-                .position(w - 28.0f - kFluidToggleW, 12.0f)
-                .size(kFluidToggleW, 28.0f)
+                .position(w - 28.0f - kFluidToggleW, roundFs(12.0f))
+                .size(kFluidToggleW, roundFs(28.0f))
                 .text("动态背景")
                 .fontSize(fs(13.0f))
                 .checked(in.cfg.fluidBackgroundEnabled)
@@ -144,7 +156,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             // 主题选择器已删除（D-12/E3 去功能例外——WeChat 皮肤即主题、暗色延后 D-04）。
             // 字号缩放（§6 item 3 确认在通用 tab）+ 窗口效果用 FormRow 排列（§6 item 5）。
             const float rowH = logFieldHeight();  // 36px（与日志卡同口径）
-            const float fontRowY = 40.0f + descH + roundFs(12.0f);  // 100% = 68
+            const float fontRowY = roundFs(40.0f) + descH + roundFs(12.0f);  // 100% = 68
             const float effectRowY = fontRowY + rowH + roundFs(6.0f);
             const float formX = 28.0f;
             const float formW = w - 56.0f;  // 卡内左右各 28 padding
@@ -407,8 +419,8 @@ void drawModulesCard(const CardDrawArgs& args) {
         const char* name;
         const char* desc;
     };
-    // 标题右 MCP 开关盒宽：字面值 150，不随字号缩放（同外观卡动态背景开关口径）
-    constexpr float kMcpToggleBoxW = 150.0f;
+    // 标题右 MCP 开关盒宽：基准 150 随字号派生（B6/F-69-3，字面值在放大档挤掉标题）
+    const float kMcpToggleBoxW = roundFs(150.0f);
     static const ModuleMeta kToggleable[] = {
         {kModuleIdMarkdown, "Markdown 笔记本",
          "本地文件存储 + SQLite FTS5 全文搜索"},
@@ -451,17 +463,18 @@ void drawModulesCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f - kMcpToggleBoxW, 22.0f, 22.0f,
                       "模块");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
             // MCP 服务开关（模块 tab 标题右贴，零高度增量——不新增开关卡、不动
-            // 2×2 四格与卡高；盒宽固定 150（130% 档「MCP 服务」放得下，同外观卡
-            // kFluidToggleW 口径）。可点击元素 = <id>.hit（.track 只是视觉轨道）；
-            // 拨动走既有 applyModuleEnabled 链路，不新增生效通道。
+            // 格阵与卡高）。B6/F-69-3：盒宽改 roundFs(150) 随字号放大——字面 150
+            // 在放大档会把标题挤成省略号；标题可用宽同步扣掉派生后的盒宽。
+            // 可点击元素 = <id>.hit（.track 只是视觉轨道）；拨动走既有
+            // applyModuleEnabled 链路，不新增生效通道。
             components::toggleSwitch(ui, id + ".mcp")
-                .position(w - 28.0f - kMcpToggleBoxW, 12.0f)
-                .size(kMcpToggleBoxW, 28.0f)
+                .position(w - 28.0f - kMcpToggleBoxW, roundFs(12.0f))
+                .size(kMcpToggleBoxW, roundFs(28.0f))
                 .text("MCP 服务")
                 .fontSize(fs(13.0f))
                 .checked(moduleEnabled(in.cfg, kModuleIdMcp))
@@ -471,28 +484,33 @@ void drawModulesCard(const CardDrawArgs& args) {
                 })
                 .build();
 
-            // 开关格（2 列，壁纸末格恒最末）：行主序（0/1 同行异列，2/3 次行）；
-            // 开关控件几何沿用
-            // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
-            //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
-            const float nameH = roundFs(18.0f);
-            const float rowDescDy = nameH + roundFs(2.0f);
-            const float rowDescH = roundFs(16.0f);
-            const float rowPitch = roundFs(56.0f);
+            // 开关格（B6/F-69-3：列数/格高内容派生）：≤1.15 档两列（行主序，
+            // 0/1 同行异列）；>1.15 档降单列——放大后两列格宽放不下 name/desc。
+            // 开关控件几何沿用 44×24（UAT3 由 80×32 收敛口径），在格内垂直居中。
+            // 格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
+            const int gridCols = modulesCardSingleColumn() ? 1 : 2;
+            const float nameH = modulesNameH();
+            const float rowDescDy = modulesRowDescDy();
+            const float rowDescH = modulesRowDescH();
+            const float rowPitch = modulesRowPitch();
             const float switchW = 44.0f;
             const float switchH = 24.0f;
             const float switchGap = 12.0f;   // 格内文案与右贴开关的间距
             float cellW = 0.0f;
             float cell2X = 0.0f;
             ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
+            if (gridCols == 1) {
+                cellW = w - 56.0f;
+            }
             for (int i = 0; i < cellCount; ++i) {
                 const bool isWallpaper = wallpaperCell && i >= kToggleCount;
                 const ModuleMeta& meta =
                     isWallpaper ? kWallpaperToggle : kToggleable[i];
-                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行，奇数格=行末列
-                const int row = i / 2;
+                const int col = i % gridCols;   // 行主序
+                const int row = i / gridCols;
                 const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
-                const float rowY = 68.0f + static_cast<float>(row) * rowPitch;
+                const float rowY = modulesGridTopY() +
+                                   static_cast<float>(row) * rowPitch;
                 const float textW = cellW - switchW - switchGap;
                 // 壁纸格格元素根 id 独立于宿主卡 id（探针/测试锚不变），格内
                 // 子元素命名跟随常规格惯例（name/rowdesc/sw）。
@@ -551,8 +569,8 @@ void drawProxyCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     // 行几何随生效字号派生（helper 见 settings_ui_logic.h）；E 批统一——标题 16/22、
-    // desc y=40/h=16、端口行迁 FormRow（行 y=68 内容起始口径），接管行从端口行盒底顺延。
-    const float descH = roundFs(16.0f);
+    // desc y=40/h=16（基准字面量交给 cardDesc 内部 roundFs）、端口行迁 FormRow
+    //（行 y=68 内容起始口径），接管行从端口行盒底顺延。
     const float rowH = logFieldHeight();
     const float portRowY = proxyPortRowY();
     const float takeoverY = proxyTakeoverRowY();
@@ -612,7 +630,7 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .onChange([f = a.applyProxyAutoStart](bool v) { f(v); })
                 .build();
 
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
                      running
                          ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
                                "（仅本机可访问，无需凭据）"
@@ -748,7 +766,6 @@ void drawMcpCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    const float descH = roundFs(16.0f);
     const float rowH = logFieldHeight();
     const float portRowY = mcpPortRowY();
     const float statusY = portRowY + rowH;
@@ -777,7 +794,7 @@ void drawMcpCard(const CardDrawArgs& args) {
                 .build();
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "MCP 服务");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
                      "本机 127.0.0.1 提供 MCP 工具服务；无鉴权，仅本机可访问");
 
             // 状态三态：running / 停止（无错误）/ 启动失败（lastError 透出）
@@ -914,20 +931,23 @@ void drawReminderCard(const CardDrawArgs& args) {
                 .build();
             cardTitle(ui, id, t, 22.0f, w - 56.0f, 22.0f, 22.0f, "提醒弹窗");
             // 双开关行：左右两列各一组 label + 开关（几何 = 自启动行同款简化）；
-            // 说明并进标题行右侧（卡高 92 无第二行空间）
-            const float rowY = 44.0f;
-            const float rowH = 32.0f;
+            // 说明并进标题行右侧（卡高 92 无第二行空间）。
+            // B6：行 y/行高/说明行盒随字号派生（卡高已跟 roundFs(92) 放大，
+            // 行不缩 = 放大档行底溢出卡外）。
+            const float rowY = roundFs(44.0f);
+            const float rowH = roundFs(32.0f);
+            const float descH = roundFs(22.0f);
             const float labelW = roundFs(110.0f);
             const float swW = kAutostartSwitchW;
             const float swH = kAutostartSwitchH;
             const float col2X = 28.0f + (w - 56.0f) * 0.5f;
             const float descX = col2X;
             ui.text(id + ".title.desc")
-                .position(descX, 22.0f)
-                .size(std::max(0.0f, w - descX - 28.0f), 22.0f)
+                .position(descX, roundFs(22.0f))
+                .size(std::max(0.0f, w - descX - 28.0f), descH)
                 .text("到期事项弹全屏置顶窗（默认关，仅记日志）")
                 .fontSize(fs(12.0f))
-                .lineHeight(22.0f)
+                .lineHeight(descH)
                 .color(t.colors.textTertiary)
                 .maxWidth(std::max(0.0f, w - descX - 28.0f))
                 .overflow(core::TextOverflow::Ellipsis)
@@ -950,8 +970,11 @@ void drawReminderCard(const CardDrawArgs& args) {
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
+                // 开关 44×24 是字面值不随字号缩放：放大档行盒高于开关 → 居中
+                // （85% 档行盒更矮则贴顶，max 语义）
                 ui_kit::wswitch(ui, std::string(labelId) + ".sw", value,
-                                swX, rowY, swW, swH, t, on);
+                                swX, rowY + std::max(0.0f, (rowH - swH) * 0.5f),
+                                swW, swH, t, on);
             };
             drawSwitchRow(id + ".popup.label", "上线提醒弹窗", 28.0f,
                           28.0f + labelW + roundFs(12.0f),
@@ -1114,7 +1137,8 @@ void drawLogViewCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    const float lineH = 16.0f;
+    // 日志行距随字号派生（B6）：行盒 16 固定 + 字号放大 = 行行叠印
+    const float lineH = roundFs(16.0f);
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -1144,7 +1168,7 @@ void drawLogViewCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([f = a.requestLogTailReload] { f(); })
                 .build();
-            const float areaTop = 48.0f;
+            const float areaTop = roundFs(48.0f);
             components::scrollView(ui, id + ".scroll")
                 .position(28.0f, areaTop)
                 .size(w - 56.0f, h - areaTop - 16.0f)
@@ -1161,10 +1185,10 @@ void drawLogViewCard(const CardDrawArgs& args) {
                     if (in.logTail.empty()) {
                         inner.text(id + ".empty")
                             .position(8.0f, 8.0f)
-                            .size(cw - 16.0f, 20.0f)
+                            .size(cw - 16.0f, roundFs(20.0f))
                             .text("（暂无日志内容，或日志文件尚未生成，或均低于所选级别）")
                             .fontSize(fs(12.0f))
-                            .lineHeight(20.0f)
+                            .lineHeight(roundFs(20.0f))
                             .color(t.colors.textTertiary)
                             .build();
                         return;
@@ -1177,6 +1201,10 @@ void drawLogViewCard(const CardDrawArgs& args) {
                             .text(in.logTail[i])
                             .fontSize(fs(11.0f))
                             .lineHeight(lineH)
+                            // 日志行可能远超卡宽：放大档不裁会画到窗口右缘被硬切
+                            .maxWidth(cw - 16.0f)
+                            .overflow(core::TextOverflow::Clip)
+                            .clip()
                             .color(t.colors.textSecondary)
                             .build();
                     }

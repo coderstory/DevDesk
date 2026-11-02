@@ -35,6 +35,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "module_settings/settings_config.h"  // applyWindowVisuals（窗口效果档）
+#include "module_settings/settings_ui_logic.h"  // kSettingTabCount（B6 分 tab 落图）
 
 #include <cstdint>
 #include <filesystem>
@@ -126,11 +127,16 @@ int main(int argc, char* argv[]) {
     // 此前所有离屏截图都是「关闭」档 —— 半透/磨砂两档的页面底 alpha、侧栏铺色
     // 与卡片半透叠加都没被看过，等于两个档位从未验收过。
     std::string windowEffect = "off";
+    // B6/F-69-4：设置页分 tab 落图（缺省开）。设置页 5 tab 卡集不同，用户报
+    // 「模块 tab 全乱」那一屏不在常规十页清单里；--no-settings-tabs 可关掉。
+    bool captureSettingsTabs = true;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--out" && i + 1 < argc) {
             outDir = argv[++i];
         } else if (std::string(argv[i]) == "--font-scale" && i + 1 < argc) {
             fontScale = std::stof(argv[++i]);
+        } else if (std::string(argv[i]) == "--no-settings-tabs") {
+            captureSettingsTabs = false;
         } else if (std::string(argv[i]) == "--sidebar-collapsed") {
             sidebarCollapsed = true;
         } else if (std::string(argv[i]) == "--window-effect" && i + 1 < argc) {
@@ -280,12 +286,93 @@ int main(int argc, char* argv[]) {
                   << ")\n";
     }
 
+    // settings 分 tab 落图（B6/F-69-4）：设置页 5 个 tab 的卡集完全不同（通用 /
+    // 模块插拔 / 日志 / 同步 / 项目卡），而主循环每人只拍默认 tab —— 用户报
+    // 「模块 tab 全乱」的那一屏根本不在 uat62 十页清单里。这里用真命中分发点
+    // tab hit 区后再拍，slug 沿用 pages 语义：settings-tab<N>。
+    if (captureSettingsTabs) {
+        std::size_t settingsIdx = std::size(::app::registry::kModuleRegistry);
+        for (std::size_t i = 0; i < std::size(::app::registry::kModuleRegistry);
+             ++i) {
+            if (std::string(kSlugs[i]) == "settings") settingsIdx = i;
+        }
+        if (settingsIdx < std::size(::app::registry::kModuleRegistry) &&
+            mods[settingsIdx] != nullptr) {
+            router.navigateTo(::app::registry::kModuleRegistry[settingsIdx].page);
+            eui::Ui* ui = nullptr;
+            for (int f = 0; f < 24; ++f) {
+                probe::composeModuleFrame(
+                    runtime, window, "shots", w, h,
+                    [&](eui::Ui& u, const eui::Screen& screen) {
+                        ui = &u;
+                        app::compose(u, screen);
+                    });
+            }
+            for (int tab = 0; tab < module::settings::kSettingTabCount; ++tab) {
+                const core::dsl::Element* hit =
+                    ui != nullptr
+                        ? ui->find("settings.tabs." + std::to_string(tab) +
+                                   ".hit")
+                        : nullptr;
+                if (hit == nullptr) {
+                    std::cerr << "uat62_page_shots: settings.tabs." << tab
+                              << ".hit 不存在（设置页 tab 栏缺失？）\n";
+                    passed = false;
+                    continue;
+                }
+                // 真命中：queue press+release → pollOnce 消费 → 立即 recompose
+                probe::click(window, runtime,
+                             hit->frame.x + hit->frame.width * 0.5f,
+                             hit->frame.y + hit->frame.height * 0.5f);
+                for (int f = 0; f < 24; ++f) {
+                    probe::composeModuleFrame(
+                        runtime, window, "shots", w, h,
+                        [&](eui::Ui& u, const eui::Screen& screen) {
+                            ui = &u;
+                            app::compose(u, screen);
+                        });
+                }
+                if (fontScale != 1.0f) {
+                    applyFontScale();
+                    for (int f = 0; f < 24; ++f) {
+                        probe::composeModuleFrame(
+                            runtime, window, "shots", w, h,
+                            [&](eui::Ui& u, const eui::Screen& screen) {
+                                ui = &u;
+                                app::compose(u, screen);
+                            });
+                    }
+                }
+                const std::string path =
+                    outDir + "/" + twoDigit(settingsIdx + 1) + "-settings-tab" +
+                    std::to_string(tab) + "-" +
+                    std::to_string(args.windowH) +
+                    (fontScale == 1.0f
+                         ? ""
+                         : "-fs" + std::to_string(static_cast<int>(
+                                        fontScale * 100.0f))) +
+                    ".png";
+                std::vector<unsigned char> rgba;
+                int pw = 0;
+                int ph = 0;
+                if (!capture.readFrame(runtime, rgba, pw, ph) ||
+                    !frameHasContent(rgba, pw, ph) ||
+                    !probe::writeRgbaToPng(path, rgba.data(), pw, ph)) {
+                    passed = false;
+                    continue;
+                }
+                ++captured;
+                std::cout << "uat62_page_shots: " << path << " (" << pw << "x"
+                          << ph << ")\n";
+            }
+        }
+    }
+
     router.stopAll();
     runtime.shutdown(false);
     core::releaseInputQueue(window);
     core::window::destroyWindow(window);
     probe::terminateWindowBackend();
-
     if (!passed) {
         std::cerr << "uat62_page_shots: FAIL\n";
         return 1;

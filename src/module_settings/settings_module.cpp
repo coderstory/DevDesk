@@ -90,6 +90,7 @@ enum class CardHeightKind {
     FillRemainder,
     GithubSync,   // 恒满高（UAT4 起不按启用态折叠；UAT5 方案 A 三段式，见 kGithubSyncCardHeight）
     ProjectCards, // 需-11 项目卡：固定区 + 列表行数求和（projectCardsCardHeightFor）
+    ModulesGrid,  // 模块插拔卡：格数 × 列数派生（modulesCardHeightFor，>1.15 档降单列）
 };
 
 struct CardSpec {
@@ -123,10 +124,8 @@ const CardSpec kCardSpecs[] = {
     // MCP 配置卡：排在代理卡后；模块关 → 整卡隐藏（不占高度）。
     {kTabGeneral, "settings.card.mcp", kModuleIdMcp, CardHeightKind::McpCard,
      0.0f, false, /*half=*/false, &drawMcpCard, nullptr},
-    {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
-     ::platform::wallpaper::supported() ? kModulesCardHeightWallpaper
-                                        : kModulesCardHeight,
-     false, /*half=*/false, &drawModulesCard, nullptr},
+    {kTabModules, "settings.card.modules", nullptr, CardHeightKind::ModulesGrid,
+     0.0f, false, /*half=*/false, &drawModulesCard, nullptr},
     // 上线提醒卡（模块 tab 矮卡 92：310+16+92=418 ≤ 可用 420，零滚动不破）。
     // 无模块门控：开关语义是 release 行为而非模块启停，release 关时卡保留。
     {kTabModules, "settings.card.reminder", nullptr, CardHeightKind::Fixed,
@@ -1179,10 +1178,13 @@ public:
                         constexpr float kTabGap = 4.0f;    // S2.2 Tab 间距
                         float tabX = 0.0f;
                         for (int i = 0; i < kSettingTabCount; ++i) {
+                            // B6：量宽必须用**渲染同字号**（wtab 内部走 scaled），
+                            // 否则放大档标签比盒宽 → 溢到邻枚上（转写文字量宽与排版差同因）
                             const float tabW =
                                 core::TextPrimitive::measureTextWidth(
                                     kSettingTabLabels[i], {},
-                                    ui_kit::kWtabFontSize, 400) +
+                                    core::theme::scaled(ui_kit::kWtabFontSize),
+                                    400) +
                                 2.0f * kTabPadH;
                             ui_kit::wtab(
                                 ui,
@@ -1502,6 +1504,10 @@ private:
             return roundFs(kGithubSyncCardHeight);
         case CardHeightKind::ProjectCards:
             return projectCardsCardHeightFor(projectCards_.size());
+        case CardHeightKind::ModulesGrid:
+            // 壁纸格按平台能力增减（与 drawModulesCard 同判据，单一来源）
+            return modulesCardHeightFor(
+                kModuleToggleCellCount(::platform::wallpaper::supported()));
         }
         return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
     }
@@ -1660,10 +1666,10 @@ private:
                     .size(contentW, headerH)
                     .content([&] {
                         ui.text("settings.h1")
-                            .size(contentW, 34.0f)
+                            .size(contentW, roundFs(34.0f))
                             .text("设置")
                             .fontSize(t.sizes.fontSizePage)
-                            .lineHeight(34.0f)
+                            .lineHeight(roundFs(34.0f))
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();

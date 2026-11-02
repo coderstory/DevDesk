@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -106,6 +107,89 @@ void writeNoProfileError(platform::http::ResponseWriter& out,
 
 } // namespace
 
+// 调用日志最小写入（池72）。INSERT ... RETURNING id 原子取回 rowid——不读
+// last_insert_rowid()：多 worker 线程序列化时连接级 rowid 会被并发 INSERT 改写。
+int64_t ProxyRouter::insertCallLogRow(const Profile& profile,
+                                      const std::string& method,
+                                      const std::string& path, int statusCode,
+                                      int64_t latencyMs, int64_t requestBytes,
+                                      int64_t responseBytes,
+                                      const std::string& error) {
+    auto& db = service_.db();
+    auto prep = db.prepare(
+        "INSERT INTO claude_call_logs "
+        "(profile_id, method, path, status_code, latency_ms, request_bytes, "
+        " response_bytes, error, started_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id");
+    if (prep.isFail()) {
+        LOG_WARN("代理：调用日志插入准备失败: " + prep.errorMessage());
+        return 0;
+    }
+    auto& stmt = prep.value();
+    stmt.bind(1, static_cast<int64_t>(profile.id));
+    stmt.bind(2, method);
+    stmt.bind(3, path);
+    // status_code = 0 表示上游不可达（无响应码）：落 NULL，与真实状态码区分。
+    if (statusCode > 0) {
+        stmt.bind(4, static_cast<int64_t>(statusCode));
+    } else {
+        stmt.bind(4, nullptr);
+    }
+    stmt.bind(5, latencyMs);
+    stmt.bind(6, requestBytes);
+    stmt.bind(7, responseBytes);
+    if (error.empty()) {
+        stmt.bind(8, nullptr);
+    } else {
+        stmt.bind(8, error);
+    }
+    stmt.bind(9, static_cast<int64_t>(std::time(nullptr)));
+    auto rows = stmt.fetchAll();
+    if (rows.isFail() || rows.value().empty()) {
+        LOG_WARN(std::string("代理：调用日志插入失败") +
+                 (rows.isFail() ? ": " + rows.errorMessage() : "（无返回行）"));
+        return 0;
+    }
+    auto id = rows.value()[0].getInt64("id");
+    return id.isOk() ? id.value() : 0;
+}
+
+void ProxyRouter::updateCallLogUsage(int64_t rowId, int64_t inputTokens,
+                                     int64_t outputTokens,
+                                     int64_t cacheReadTokens,
+                                     int64_t cacheWriteTokens,
+                                     int64_t firstEventMs) {
+    if (rowId <= 0) return;
+    auto& db = service_.db();
+    auto prep = db.prepare(
+        "UPDATE claude_call_logs SET input_tokens = ?, output_tokens = ?, "
+        "cache_read_tokens = ?, cache_write_tokens = ?, first_event_ms = ? "
+        "WHERE id = ?");
+    if (prep.isFail()) {
+        LOG_WARN("代理：用量回填准备失败: " + prep.errorMessage());
+        return;
+    }
+    auto& stmt = prep.value();
+    // -1 = 该项没拿到 → NULL（与真实 0 区分），见 streaming_proxy.h:52 口径。
+    const auto bindMaybeNull = [&stmt](int idx, int64_t v) {
+        if (v < 0) {
+            stmt.bind(idx, nullptr);
+        } else {
+            stmt.bind(idx, v);
+        }
+    };
+    bindMaybeNull(1, inputTokens);
+    bindMaybeNull(2, outputTokens);
+    bindMaybeNull(3, cacheReadTokens);
+    bindMaybeNull(4, cacheWriteTokens);
+    bindMaybeNull(5, firstEventMs);
+    stmt.bind(6, rowId);
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        LOG_WARN("代理：用量回填失败: " + stepR.errorMessage());
+    }
+}
+
 ProxyRouter::ProxyRouter(ClaudeService& service, platform::http::Server& server)
     : service_(service), server_(server) {}
 
@@ -175,6 +259,9 @@ void ProxyRouter::handleRequest(
         LOG_WARN("代理：上游请求失败: " + respR.errorMessage());
         writeErrorJson(out, 502, "upstream_unreachable", respR.errorMessage());
         // 0 = 上游不可达（无响应码）
+        insertCallLogRow(profile, method, path, 0, latencyMs,
+                         static_cast<int64_t>(body.size()), 0,
+                         respR.errorMessage());
         service_.recordProxyEvent(0);
         return;
     }
@@ -205,6 +292,9 @@ void ProxyRouter::handleRequest(
     out.end();
 
     // 正常转发完成（4xx/5xx 原样透传，pet 侧按码分类文案）
+    insertCallLogRow(profile, method, path, resp.statusCode, latencyMs,
+                     static_cast<int64_t>(body.size()),
+                     static_cast<int64_t>(resp.body.size()), std::string());
     service_.recordProxyEvent(resp.statusCode);
 
     LOG_INFO("代理 " + method + " " + path + " -> " +
@@ -313,7 +403,39 @@ void ProxyRouter::handleStreamingRequest(
     out.setHeader("Connection", "keep-alive");
     out.setHeader("X-Accel-Buffering", "no");   // 反向代理场景禁用缓冲
 
-    forwardStream(out, upstreamStream, contentType);
+    // 调用日志（池72）：响应头就绪即插行（status/latency 此刻已知，token 流末才有），
+    // 流末经 onUsage 回填用量列。插行失败（返回 0）→ 跳过回填，不影响转发。
+    const auto streamStartTime = std::chrono::steady_clock::now();
+    const int64_t streamRowId =
+        insertCallLogRow(profile, method, path, upstreamStatus, 0,
+                         static_cast<int64_t>(body.size()), 0, std::string());
+
+    forwardStream(out, upstreamStream, contentType,
+                  [this, streamRowId, streamStartTime](const StreamUsage& u) {
+                      const int64_t latencyMs =
+                          std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now() - streamStartTime)
+                              .count();
+                      updateCallLogUsage(streamRowId, u.inputTokens,
+                                         u.outputTokens, u.cacheReadTokens,
+                                         u.cacheWriteTokens, u.firstEventMs);
+                      // latency_ms 在流末才有意义（受生成长度支配），与用量同批回填。
+                      if (streamRowId > 0) {
+                          auto& db = service_.db();
+                          auto prep = db.prepare(
+                              "UPDATE claude_call_logs SET latency_ms = ? "
+                              "WHERE id = ?");
+                          if (prep.isOk()) {
+                              auto& stmt = prep.value();
+                              stmt.bind(1, latencyMs);
+                              stmt.bind(2, streamRowId);
+                              if (auto r = stmt.step(); r.isFail()) {
+                                  LOG_WARN("代理：流式耗时回填失败: " +
+                                           r.errorMessage());
+                              }
+                          }
+                      }
+                  });
 
     // 流式转发完成（4xx/5xx 上游状态码原样记录，pet 侧分类文案）
     service_.recordProxyEvent(upstreamStatus);

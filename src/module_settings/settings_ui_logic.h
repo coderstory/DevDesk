@@ -112,6 +112,7 @@ inline constexpr float kEditorFontCardHeight = 184.0f;
 //（68 + 56×3 + 36 + 38）。85% 档 264 / 130% 档 403。
 inline constexpr float kModulesCardHeight = 310.0f;
 inline constexpr float kModulesCardHeightWallpaper = 310.0f;
+// 模块插拔卡几何见下方 roundFs 之后的 modules* 派生函数（B6/F-69-3）。
 // 上线提醒卡（模块 tab，插拔卡下方）：标题 22 + 开关行 32 + 下边距 16 = 92。
 // 模块 tab 预算：310 + 16 间距 + 92 = 418 ≤ 可用 420（最小窗零滚动不破）。
 inline constexpr float kReminderCardHeight = 92.0f;
@@ -140,6 +141,33 @@ inline constexpr float kGithubSyncCardHeight = 420.0f; // H28: 362→420（S4.2 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {
     return std::round(base * ::core::theme::fontScale());
+}
+
+// ── 模块插拔卡几何（B6/F-69-3 起内容派生；kModulesCardHeight 仅 100% 档参考锚）──
+// 放大档固定两列会把每格文案挤成省略号、固定格高会与放大后的字撞车：
+// >1.15 档两列降单列，格高/卡高/行距一律按 roundFs 基准派生。
+inline bool modulesCardSingleColumn() {
+    return ::core::theme::fontScale() > 1.15f;
+}
+inline int modulesCardRows(int cells) {
+    const int cols = modulesCardSingleColumn() ? 1 : 2;
+    return (cells + cols - 1) / cols;
+}
+// 开关格数 = 常规 7（kToggleable 表行数，drawModulesCard 有 static_assert 钉住）+ 壁纸格
+inline int kModuleToggleCellCount(bool wallpaperSupported) {
+    return 7 + (wallpaperSupported ? 1 : 0);
+}
+inline float modulesGridTopY() { return roundFs(68.0f); }   // 100% = 68
+inline float modulesNameH() { return roundFs(18.0f); }      // 100% = 18
+inline float modulesRowDescDy() { return modulesNameH() + roundFs(2.0f); }
+inline float modulesRowDescH() { return roundFs(16.0f); }   // 100% = 16
+inline float modulesRowPitch() { return roundFs(56.0f); }   // 100% = 56
+// 100% 档两列 4 行：68 + 3×56 + (18+2+16) + 38 = 310（对齐 kModulesCardHeight）
+inline float modulesCardHeightFor(int cells) {
+    const float cellH = modulesNameH() + roundFs(2.0f) + modulesRowDescH();
+    return modulesGridTopY() +
+           static_cast<float>(modulesCardRows(cells) - 1) * modulesRowPitch() +
+           cellH + roundFs(38.0f);
 }
 
 // 下拉贴近窗体底边向下展开可能被裁剪，用同一套几何预判、出界则置 openUp 向上；弹层三项必须与 EUI-NEO dropdown 实际渲染一致（主题覆写 metrics 时需同步）。
@@ -211,7 +239,7 @@ float fs(float base);
 // FormRow（行高 = logFieldHeight 36），行 y 从 desc 盒底（40+16）+ gap 12 派生 = 68；
 // 接管行从端口行盒底顺延，警告行从接管行盒底派生。
 inline float proxyPortRowY() {
-    return 40.0f + roundFs(16.0f) + roundFs(12.0f);               // 100% = 68
+    return roundFs(40.0f) + roundFs(16.0f) + roundFs(12.0f);     // 100% = 68
 }
 inline float proxyTakeoverRowY() {
     return proxyPortRowY() + logFieldHeight();                    // 100% = 104

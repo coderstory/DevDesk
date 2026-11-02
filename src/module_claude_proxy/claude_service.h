@@ -44,6 +44,10 @@ public:
     ClaudeService(const ClaudeService&) = delete;
     ClaudeService& operator=(const ClaudeService&) = delete;
 
+    // 底库访问（只读转发）：ProxyRouter 的调用日志写入需要同一连接（池72）。
+    // 不转移所有权；调用方不得缓存，生命周期随本服务。
+    core::data::SqliteDb& db() { return db_; }
+
     // Profile CRUD
 
     // 列出所有 profile（apiKeyPlain 均为空串）

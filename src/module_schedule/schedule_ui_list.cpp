@@ -8,8 +8,11 @@
 #include "core/time.h"
 #include "module_schedule/schedule_engine.h"
 #include "platform/json.h"
+#include "ui_kit/button.h"
 #include "ui_kit/dialog_form.h"
 #include "ui_kit/empty_state.h"
+#include "ui_kit/jelly.h"
+#include "ui_kit/materials.h"
 #include "ui_kit/metrics.h"
 
 #include <components/button.h>
@@ -33,6 +36,12 @@ namespace {
 // 页内常量（1000×640 最小档设计口径，弹性布局随屏宽伸缩）
 constexpr float kPagePad = 12.0f;      // 与 t.sizes.spacingPage 同值
 constexpr float kRowHeight = 64.0f;
+// 相邻行卡间距（= 智能体列表 kTaskCardGap 同值，全站业务卡纵向节奏一致）
+constexpr float kRowCardGap = 8.0f;
+// 行卡在内容列内的左右内缩（卡宽 = 内容宽 − 2×inset，全站 L2 卡同口径）
+constexpr float kRowCardInset = 10.0f;
+// 行卡上下的呼吸内边距（卡高 = 行高 + 2×pad，设计 §3.1 卡化口径）
+constexpr float kRowCardPad = 12.0f;
 constexpr int kHistoryLimit = 50;      // 抽屉装载与展示的 runs 上限（assembleHistory 截断）
 constexpr unsigned int kLockGlyph = 0xF023;      // fa-lock（系统段锁图标）
 constexpr unsigned int kChevronDown = 0xF107;    // fa-angle-down
@@ -601,7 +610,8 @@ void ScheduleListUi::resetForTest() {    archiveExpanded_ = false;
 void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = core::theme::current();
     const auto comp = core::theme::componentTokensWeChat(t);
-    const float pad = kPagePad;
+            const float pad = kPagePad;
+            const bool hasUserRows = !assembly_.userRows.empty();
 
     components::scrollView(ui, "schedule.list.scroll")
         .size(screen.width, screen.height)
@@ -640,44 +650,62 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
 
             // 行内绝对定位（stack 行，几何手工排布，与 settings 卡同口径）：
             // 右缘三列固定宽（下次 110 / 上次 150 / 开关或锁 40），左列弹性。
-            auto drawRowFrame = [&](const std::string& id, float w, float h) {
-                ui.rect(id + ".bg")
-                    .position(0.0f, 0.0f)
-                    .size(w, h)
-                    .color(t.colors.surfaceElevated)
-                    .radius(t.sizes.radiusLarge)
-                    .border(1.0f, t.colors.borderMuted)
-                    .build();
-            };
+            // 行卡几何（F-67-1）：L2 业务卡 = 内容列内缩 kRowCardInset 的全宽卡
+            // （不限宽：定时行信息量大）；行内容整体右移同一偏移，相对布局不变。
+            const float cardX = kRowCardInset;
+            const float cardW = std::max(0.0f, contentW - kRowCardInset * 2.0f);
+            const float rightEdge = cardX + cardW;  // 卡内右侧基准
 
             const float nextW = core::theme::scaled(110.0f);
             const float lastW = core::theme::scaled(150.0f);
             const float tailW = nextW + lastW + 20.0f;
-            const float leftW = contentW - tailW - 56.0f;
+            const float leftW = cardW - tailW - 56.0f;
             const float nameW = std::max(60.0f, leftW - 24.0f);
+            // 卡高 = 行内容高 + 2×pad（设计 §3.1）；行内绝对定位的 y 一律以 padY 为原点。
+            // B6/F-69-2：行高与内边距随字号派生——字变大而卡高不变会把二级行挤出卡外。
+            const float rowH = core::theme::scaled(kRowHeight);
+            const float rowPad = core::theme::scaled(kRowCardPad);
+            const float rowCardH = rowH + rowPad * 2.0f;
+            const float padY = rowPad;
+
+            const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
 
             // 行级文字操作（用户行专属，编辑/删除排在启停开关左侧；
-            // 「上次」列整体左移给操作让位）
+            // 「上次」列整体左移给操作让位）。rowId 用于把控件上的 hover 并入
+            // 行卡 hover 集合（指针移到文字上时卡不闪回常态，见 §10.0.1 约束 3）。
             auto drawRowAction = [&](const std::string& id, float x,
                                      const std::string& text, bool danger,
+                                     const std::string& rowId,
                                      std::function<void()> onClick) {
                 ui.text(id)
-                    .position(x, 22.0f)
+                    .position(x, padY + core::theme::scaled(22.0f))
                     .size(core::theme::scaled(34.0f), core::theme::scaled(20.0f))
                     .text(text)
                     .fontSize(t.sizes.fontSizeSmall)
                     .color(danger ? t.colors.errorText : t.colors.primaryText)
+                    .onHover([this, rowId](bool h) {
+                        if (h) hoveredRowControlIds_.insert(rowId);
+                        else hoveredRowControlIds_.erase(rowId);
+                    })
                     .onClick(std::move(onClick))
                     .build();
             };
 
+            // 卡 hover = 命中面 ∪ 卡内控件（两集合，见头文件说明）
+            auto rowHovered = [&](const std::string& id) {
+                return hoveredRowIds_.count(id) > 0 ||
+                       hoveredRowControlIds_.count(id) > 0;
+            };
+
             auto drawUserRow = [&](const ListRow& row, const std::string& id) {
+                const bool hovered = rowHovered(id);
                 ui.stack(id)
-                    .size(contentW, kRowHeight)
+                    .size(contentW, rowCardH)
                     .content([&] {
-                        drawRowFrame(id, contentW, kRowHeight);
+                        ui_kit::jellyCard(ui, id + ".bg", cardX, 0.0f, cardW,
+                                          rowCardH, t, {}, hovered);
                         ui.text(id + ".name")
-                            .position(16.0f, 10.0f)
+                            .position(cardX + 16.0f, padY + core::theme::scaled(10.0f))
                             .size(nameW, core::theme::scaled(20.0f))
                             .text(row.name)
                             .fontSize(t.sizes.fontSizeBody)
@@ -685,14 +713,14 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .color(t.colors.textPrimary)
                             .build();
                         ui.text(id + ".summary")
-                            .position(16.0f, 34.0f)
+                            .position(cardX + 16.0f, padY + core::theme::scaled(34.0f))
                             .size(nameW, core::theme::scaled(16.0f))
                             .text(row.summary)
                             .fontSize(t.sizes.fontSizeSmall)
                             .color(t.colors.textSecondary)
                             .build();
                         ui.text(id + ".next")
-                            .position(contentW - tailW - 56.0f, 22.0f)
+                            .position(rightEdge - tailW - 56.0f, padY + core::theme::scaled(22.0f))
                             .size(nextW, core::theme::scaled(20.0f))
                             .text("下次 " + nextFireText(row.nextFireAt,
                                 static_cast<int64_t>(core::time::nowUnix())))
@@ -700,23 +728,40 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .color(t.colors.textSecondary)
                             .build();
                         ui.text(id + ".last")
-                            .position(contentW - lastW - 140.0f, 22.0f)
+                            .position(rightEdge - lastW - 140.0f, padY + core::theme::scaled(22.0f))
                             .size(lastW, core::theme::scaled(20.0f))
                             .text("上次 " + lastRunText(row,
                                 static_cast<int64_t>(core::time::nowUnix())))
                             .fontSize(t.sizes.fontSizeSmall)
                             .color(t.colors.textSecondary)
                             .build();
-                        drawRowAction(id + ".edit", contentW - 124.0f, "编辑",
-                                      /*danger=*/false, [this, ruleId = row.ruleId] {
+                        // 命中面（hover 源）：铺满卡、三态同色、不接点击（点行卡无动作）。
+                        // 构建在静态内容之后、可点控件之前：EUI 兄弟命中逆序遍历，后建者先命中
+                        // → 编辑/删除/开关仍可点。cursor 显式回 Arrow（states 默认 Hand）。
+                        ui.rect(id + ".hit")
+                            .position(cardX, 0.0f)
+                            .size(cardW, rowCardH)
+                            .states(kTransparent, kTransparent, kTransparent)
+                            .cursor(core::CursorShape::Arrow)
+                            .onHover([this, rowId = id](bool h) {
+                                if (h) hoveredRowIds_.insert(rowId);
+                                else hoveredRowIds_.erase(rowId);
+                            })
+                            .build();
+                        drawRowAction(id + ".edit", rightEdge - 124.0f, "编辑",
+                                      /*danger=*/false, id,
+                                      [this, ruleId = row.ruleId] {
                                           openEditRule(ruleId);
                                       });
-                        drawRowAction(id + ".delete", contentW - 86.0f, "删除",
-                                      /*danger=*/true, [this, ruleId = row.ruleId] {
+                        drawRowAction(id + ".delete", rightEdge - 86.0f, "删除",
+                                      /*danger=*/true, id,
+                                      [this, ruleId = row.ruleId] {
                                           requestDeleteRule(ruleId);
                                       });
+                        // shortcut: 指针停在开关上时卡会短暂失 hover（SwitchBuilder 无 onHover
+                        // 钩子），EUI 给开关补 hover 回调时消除；上限 1 处，触发 = 开关 hover 观感被投诉。
                         components::toggleSwitch(ui, id + ".switch")
-                            .position(contentW - 44.0f, 20.0f)
+                            .position(rightEdge - 44.0f, padY + core::theme::scaled(20.0f))
                             .size(44.0f, 24.0f)
                             .checked(row.enabled)
                             .theme(comp)
@@ -737,19 +782,21 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
             };
 
             auto drawSystemRow = [&](const ListRow& row, const std::string& id) {
+                const bool hovered = rowHovered(id);
                 ui.stack(id)
-                    .size(contentW, kRowHeight)
+                    .size(contentW, rowCardH)
                     .content([&] {
-                        drawRowFrame(id, contentW, kRowHeight);
+                        ui_kit::jellyCard(ui, id + ".bg", cardX, 0.0f, cardW,
+                                          rowCardH, t, {}, hovered);
                         ui.text(id + ".lock")
-                            .position(16.0f, 21.0f)
+                            .position(cardX + 16.0f, padY + core::theme::scaled(21.0f))
                             .size(core::theme::scaled(16.0f),
                                   core::theme::scaled(22.0f))
                             .icon(eui::utf8(kLockGlyph))
                             .color(t.colors.textTertiary)
                             .build();
                         ui.text(id + ".name")
-                            .position(40.0f, 10.0f)
+                            .position(cardX + 40.0f, padY + core::theme::scaled(10.0f))
                             .size(nameW - 8.0f, core::theme::scaled(20.0f))
                             .text(row.name)
                             .fontSize(t.sizes.fontSizeBody)
@@ -757,15 +804,15 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .color(t.colors.textPrimary)
                             .build();
                         ui.text(id + ".summary")
-                            .position(40.0f, 34.0f)
+                            .position(cardX + 40.0f, padY + core::theme::scaled(34.0f))
                             .size(nameW - 8.0f, core::theme::scaled(16.0f))
                             .text(row.summary)
                             .fontSize(t.sizes.fontSizeSmall)
                             .color(t.colors.textSecondary)
                             .build();
                         ui.text(id + ".source")
-                            .position(contentW - tailW - 56.0f + nextW - 60.0f,
-                                      10.0f)
+                            .position(rightEdge - tailW - 56.0f + nextW - 60.0f,
+                                      padY + core::theme::scaled(10.0f))
                             .size(core::theme::scaled(60.0f),
                                   core::theme::scaled(18.0f))
                             .text(row.source)
@@ -773,7 +820,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .color(t.colors.textTertiary)
                             .build();
                         ui.text(id + ".next")
-                            .position(contentW - tailW - 56.0f, 22.0f)
+                            .position(rightEdge - tailW - 56.0f, padY + core::theme::scaled(22.0f))
                             .size(nextW, core::theme::scaled(20.0f))
                             .text("下次 " + nextFireText(row.nextFireAt,
                                 static_cast<int64_t>(core::time::nowUnix())))
@@ -781,11 +828,22 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .color(t.colors.textSecondary)
                             .build();
                         ui.text(id + ".readonly")
-                            .position(contentW - lastW - 48.0f, 22.0f)
+                            .position(rightEdge - lastW - 48.0f, padY + core::theme::scaled(22.0f))
                             .size(lastW, core::theme::scaled(20.0f))
                             .text("只读 · 执行归来源模块")
                             .fontSize(t.sizes.fontSizeSmall)
                             .color(t.colors.textTertiary)
+                            .build();
+                        // 命中面：系统行全卡无操作控件，整卡做 hover 源即可
+                        ui.rect(id + ".hit")
+                            .position(cardX, 0.0f)
+                            .size(cardW, rowCardH)
+                            .states(kTransparent, kTransparent, kTransparent)
+                            .cursor(core::CursorShape::Arrow)
+                            .onHover([this, rowId = id](bool h) {
+                                if (h) hoveredRowIds_.insert(rowId);
+                                else hoveredRowIds_.erase(rowId);
+                            })
                             .build();
                     })
                     .build();
@@ -823,12 +881,15 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                 .color(t.colors.primaryText)
                                 .onClick([this] { openHistory(); })
                                 .build();
-                            components::button(ui, "schedule.list.new")
-                                .size(core::theme::scaled(88.0f), 40.0f)
-                                .text("新建")
-                                .theme(comp)
-                                .onClick([this] { openNewRule(); })
-                                .build();
+                            // 新建入口（C2）：空态时降级 Secondary——此时用户定时空态卡
+                            // 中央已有引导钮，页头不再抢注意力；有数据保持 Primary。
+                            // 判据与用户空态卡同源（userRows 为空），保证不会同屏两个绿钮。
+                            ui_kit::button(
+                                ui, "schedule.list.new", "新建",
+                                hasUserRows ? ui_kit::ButtonLevel::Primary
+                                            : ui_kit::ButtonLevel::Secondary,
+                                0.0f, 0.0f, core::theme::scaled(88.0f), 40.0f,
+                                t, {[this] { openNewRule(); }});
                         })
                         .build();
 
@@ -849,16 +910,39 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .width(contentW)
                             .height(core::theme::scaled(64.0f))
                             .content([&] {
+                                // 空态也铺 L2 材质：段内一块空白不带底，与有数据时的
+                                // 行卡不成序列（S1 判据：卡内/卡外采样有差）。
+                                ui.rect("schedule.list.sys.empty.card")
+                                    .position(kRowCardInset, 0.0f)
+                                    .size(std::max(0.0f, contentW - kRowCardInset * 2.0f),
+                                          core::theme::scaled(64.0f))
+                                    .color(ui_kit::itemSurface(t))
+                                    .radius(t.sizes.radiusLarge)
+                                    .border(1.0f, t.colors.borderDefault)
+                                    .build();
                                 ui_kit::emptyState(
                                     ui, "schedule.list.sys.empty", "暂无系统定时",
-                                    std::nullopt, 0.0f, 0.0f, contentW,
+                                    std::nullopt, kRowCardInset, 0.0f,
+                                    std::max(0.0f, contentW - kRowCardInset * 2.0f),
                                     core::theme::scaled(64.0f), t);
                             })
                             .build();
                     }
-                    for (size_t i = 0; i < assembly_.systemRows.size(); ++i) {
-                        drawSystemRow(assembly_.systemRows[i],
-                                      "schedule.list.sys." + std::to_string(i));
+                    if (!assembly_.systemRows.empty()) {
+                        // 段内行卡同容器、间距 kRowCardGap（S3：相邻卡间距 = 全站卡间距）
+                        ui.column("schedule.list.sys.rows")
+                            .width(contentW)
+                            .height(core::SizeValue::wrapContent())
+                            .gap(kRowCardGap)
+                            .content([&] {
+                                for (size_t i = 0;
+                                     i < assembly_.systemRows.size(); ++i) {
+                                    drawSystemRow(
+                                        assembly_.systemRows[i],
+                                        "schedule.list.sys." + std::to_string(i));
+                                }
+                            })
+                            .build();
                     }
 
                     // 用户定时段
@@ -869,19 +953,39 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .width(contentW)
                             .height(core::theme::scaled(96.0f))
                             .content([&] {
+                                ui.rect("schedule.list.user.empty.card")
+                                    .position(kRowCardInset, 0.0f)
+                                    .size(std::max(0.0f, contentW - kRowCardInset * 2.0f),
+                                          core::theme::scaled(96.0f))
+                                    .color(ui_kit::itemSurface(t))
+                                    .radius(t.sizes.radiusLarge)
+                                    .border(1.0f, t.colors.borderDefault)
+                                    .build();
                                 ui_kit::emptyState(
                                     ui, "schedule.list.user.empty", "暂无用户定时",
                                     std::make_optional(std::make_pair(
                                         std::string("新建定时"),
                                         [this] { openNewRule(); })),
-                                    0.0f, 0.0f, contentW,
+                                    kRowCardInset, 0.0f,
+                                    std::max(0.0f, contentW - kRowCardInset * 2.0f),
                                     core::theme::scaled(96.0f), t);
                             })
                             .build();
                     }
-                    for (size_t i = 0; i < assembly_.userRows.size(); ++i) {
-                        drawUserRow(assembly_.userRows[i],
-                                    "schedule.list.user." + std::to_string(i));
+                    if (!assembly_.userRows.empty()) {
+                        ui.column("schedule.list.user.rows")
+                            .width(contentW)
+                            .height(core::SizeValue::wrapContent())
+                            .gap(kRowCardGap)
+                            .content([&] {
+                                for (size_t i = 0;
+                                     i < assembly_.userRows.size(); ++i) {
+                                    drawUserRow(
+                                        assembly_.userRows[i],
+                                        "schedule.list.user." + std::to_string(i));
+                                }
+                            })
+                            .build();
                     }
 
                     // 一次性已执行折叠区（§4.4：archived_at 非空默认折叠）
@@ -911,12 +1015,20 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                         })
                         .build();
                     if (archiveExpanded_) {
-                        for (size_t i = 0; i < assembly_.archivedRows.size();
-                             ++i) {
-                            drawUserRow(
-                                assembly_.archivedRows[i],
-                                "schedule.list.archive." + std::to_string(i));
-                        }
+                        ui.column("schedule.list.archive.rows")
+                            .width(contentW)
+                            .height(core::SizeValue::wrapContent())
+                            .gap(kRowCardGap)
+                            .content([&] {
+                                for (size_t i = 0;
+                                     i < assembly_.archivedRows.size(); ++i) {
+                                    drawUserRow(
+                                        assembly_.archivedRows[i],
+                                        "schedule.list.archive." +
+                                            std::to_string(i));
+                                }
+                            })
+                            .build();
                     }
                 })
                 .build();
