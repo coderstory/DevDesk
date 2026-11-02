@@ -134,6 +134,6 @@ main → module_*（Router 页面模块 + 独立子窗）
 | `.zcode/armory/evidence-capture.sh` | 薄委托插件采集器；证据归档 `evidence/`（已 git-ignore），路径写回测试清单卡 |
 | `.zcode/cheatsheets/platform-file-map.md` | 平台拆分文件映射（含 ⚠ 无 posix 兜底族），改平台代码前先查 |
 | `.zcode/lessons/<role>.md` | 角色经验沉淀：一事一行带日期与来源，与既有规则重复不记 |
-| `.claude/settings.json` | Claude Code 侧适配。⚠ 既有双机现状：`ledger-guard.py` / `uat62-whip.py` 两个 hook 写死 Windows 主机绝对路径（`D:/project/gui/DevDesk/...`），Mac 上静默失败（fail-open），属已知不对称、非 bug |
+| `.claude/settings.json` | Claude Code 侧适配（discipline-reminders / strategy-guard 等跨平台活 hook + 插件开关）。写死 Windows 路径的 ledger-guard.py / uat62-whip.py 死 hook 与 ponytail/code-modernization 启停对冲已于 2026-11-02 清理（备份 settings.json.bak-20261102） |
 
 插件源码 `~/dev/zcode-plugins/devflow`（另机 clone `coderstory/zcode-plugins`）；新项目初始化用插件的 `devflow-setup` skill。**改流程改插件，改约束改本文件 §一~§七。**

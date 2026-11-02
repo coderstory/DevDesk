@@ -1,11 +1,9 @@
 {
   "enabledPlugins": {
     "clangd-lsp@claude-plugins-official": true,
-    "code-modernization@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
     "claude-hud@claude-hud": true,
-    "cs-retro@x-rs-tools": true,
-    "ponytail@ponytail": true
+    "cs-retro@x-rs-tools": true
   },
   "hooks": {
     "PreToolUse": [
@@ -41,16 +39,6 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/strategy-guard.sh\"",
             "timeout": 30,
             "statusMessage": "战略基线累积核对"
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/PROGRA~1/Python311/python.exe D:/project/gui/DevDesk/.claude/hooks/ledger-guard.py",
-            "timeout": 30
           }
         ]
       },
@@ -98,18 +86,6 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/deliverable-gate.sh\" --mode=session-end",
             "timeout": 10,
             "statusMessage": "交付闸门存档"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/PROGRA~1/Python311/python.exe D:/project/gui/DevDesk/.claude/hooks/uat62-whip.py",
-            "timeout": 10
           }
         ]
       }
