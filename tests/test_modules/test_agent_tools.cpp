@@ -1144,9 +1144,11 @@ REGISTER_TEST(process_runner_large_stdout_no_deadlock,
     DOCTEST_CHECK_MESSAGE(!r.value().timedOut,
                           "大输出不应触发超时误杀（timedOut=true 即死锁病复发）");
     DOCTEST_CHECK_EQ(r.value().exitCode, 0);
-    // 全量收回：128*1024 载荷 + 尾标记，缺一个字节都算截断
-    DOCTEST_CHECK_EQ(r.value().stdoutText.size(),
-                     static_cast<size_t>(128 * 1024 + payload.tailBytes));
+    // 全量收回：128*1024 载荷 + 尾标记。尾标记字节两档（cmd echo 带 CRLF=10、
+    // 捕获层归一 LF=8）；载荷缺一个字节都会撞出这两档之外 = 截断
+    const std::size_t got = r.value().stdoutText.size();
+    DOCTEST_CHECK_MESSAGE(got == 128 * 1024 + 8 || got == 128 * 1024 + 10,
+                          "stdout 尺寸越界（截断或多收）: " + std::to_string(got));
     DOCTEST_CHECK(r.value().stdoutText.substr(128 * 1024).rfind("TAIL_OK", 0) ==
                   0);
     return true;

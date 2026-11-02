@@ -28,6 +28,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <atomic>
 
 namespace {
 
@@ -78,6 +79,9 @@ std::string initializeSession(int port) {
 // 在途工具：execute 睡 300ms 后返回固定文本（验证 stop 等待收敛，不硬杀）。
 class SlowTool final : public core::mcp::IMcpTool {
 public:
+    std::atomic<bool> entered{false};  // execute 已进入（2026-11-03 CI flake：盲等
+                                       // 50ms 在慢 runner 上请求还没进 execute 就
+                                       // stop 了，「stop 等在途收敛」前提不成立）
     std::string name() const override { return "devdesk_slow_probe"; }
     std::string description() const override { return "在途收敛探针"; }
     std::string inputSchemaJson() const override {
@@ -85,6 +89,7 @@ public:
     }
     core::Result<core::mcp::ToolResult> execute(
         const std::string&) override {
+        entered.store(true, std::memory_order_release);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         core::mcp::ToolResult out;
         out.text = "slow-done";
@@ -395,14 +400,21 @@ REGISTER_TEST(mcp_service_stop_waits_inflight_tool_then_converges,
     const std::string session = initializeSession(port);
     DOCTEST_REQUIRE(!session.empty());
 
-    // 在途调用与 stop 并发：stop 必须等工具跑完（≈300ms）再返回，而非中断它
+    // 在途调用与 stop 并发：stop 必须等工具跑完（≈300ms）再返回，而非中断它。
+    // 等待口径 = SlowTool 真实进入 execute（原子标志，最长 2s）——盲等固定时长
+    // 在慢 runner 上会 stop 早于请求进入，「stop 等在途收敛」前提塌掉（CI flake）
     bool callOk = false;
     std::thread caller([&] {
         Response resp = postJson(port, callBody, {{"Mcp-Session-Id", session}});
         callOk = resp.statusCode == 200 &&
                  resp.body.find("slow-done") != std::string::npos;
     });
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));  // 让请求先进入 execute
+    for (int i = 0; i < 200 && !tool->entered.load(std::memory_order_acquire);
+         ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(tool->entered.load(std::memory_order_acquire),
+                            "在途调用 2s 内未进入工具 execute");
     const auto t0 = std::chrono::steady_clock::now();
     svc.stop();
     const auto stoppedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
