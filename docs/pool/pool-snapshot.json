@@ -1637,17 +1637,17 @@
    "pool": "need",
    "title": "池 MCP 第4能力：个人 TODO 表（每人一条，skill 读写封装）",
    "priority": "P2",
-   "status": "挂起",
+   "status": "拒绝",
    "blocker": "遗留待用户裁决",
    "owner": "待分派",
    "detail": "[pool_items 需-17 遗留迁移入池（2026-11 修复迁移）] 口径三条（老板娘 10-30 定）：①池 db 加 todo 表 id/owner/content/status/updated_at；②每 agent 身份只能维护一条，写入按 MCP 身份绑定 upsert，「一条」由数据库保证；③skill 扩展读写两动作（写=覆盖自己那条，读=看全池）。半天内，今晚免费窗口合适",
    "created": "2026-11-02 09:59:04 +0800",
-   "updated": "2026-11-02 09:59:04 +0800",
+   "updated": "2026-11-02 13:00:38 +0800",
    "body": "[pool_items 需-17 遗留迁移入池（2026-11 修复迁移）] 口径三条（老板娘 10-30 定）：①池 db 加 todo 表 id/owner/content/status/updated_at；②每 agent 身份只能维护一条，写入按 MCP 身份绑定 upsert，「一条」由数据库保证；③skill 扩展读写两动作（写=覆盖自己那条，读=看全池）。半天内，今晚免费窗口合适",
    "created_by": "待分派",
    "updated_by": "待分派",
    "deleted": 0,
-   "stage": ""
+   "stage": "已否决"
   },
   {
    "id": 99,
@@ -1739,17 +1739,34 @@
    "pool": "need",
    "title": "最小化整合 ponytail 80% 核心通用能力进 devflow（依赖研读产出）",
    "priority": "P1",
-   "status": "待验收",
+   "status": "关闭",
    "blocker": "依赖研读条目（102）出整合候选清单",
    "owner": "developer",
    "detail": "老板 2026-11-02 新令第三步：以最小化修改方案整合 ponytail 80% 的能力（核心的、通用性强的）进 devflow。依赖研读条目的整合候选清单（能力→落点→最小改法→风险）。验收：逐项「最小改动」可判（每项改动行数量级记录）、整合项均为核心+通用（场景特化项明确排除并列理由）、四套验证全绿、版本递增发版。开工前置：研读条目关闭（本条与瘦身条目的先后由研读结论定：若整合本身即瘦身形态可并批，否则先瘦后整）。",
    "created": "2026-11-02 11:58:43 +0800",
-   "updated": "2026-11-02 12:48:17 +0800",
+   "updated": "2026-11-02 12:49:34 +0800",
    "body": "老板 2026-11-02 新令第三步：以最小化修改方案整合 ponytail 80% 的能力（核心的、通用性强的）进 devflow。依赖研读条目的整合候选清单（能力→落点→最小改法→风险）。验收：逐项「最小改动」可判（每项改动行数量级记录）、整合项均为核心+通用（场景特化项明确排除并列理由）、四套验证全绿、版本递增发版。开工前置：研读条目关闭（本条与瘦身条目的先后由研读结论定：若整合本身即瘦身形态可并批，否则先瘦后整）。",
    "created_by": "developer",
    "updated_by": "developer",
    "deleted": 0,
-   "stage": "测试中"
+   "stage": "已验收"
+  },
+  {
+   "id": 105,
+   "pool": "need",
+   "title": "todo_get 并入 todo_set（工具面 14→13，常驻 schema 省 ≈0.4KB）+ doc_get/doctor 两提案取舍记录",
+   "priority": "P2",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "developer",
+   "detail": "用户 2026-11-02 授权「按推荐流程走」后对 103 工具面提案的裁决执行。做：todo_get 并入 todo_set——合并为单工具 `todo(owner, content?, status?)`：不带 content/status 时=读（返回该 owner 现值），带 content=upsert 覆盖自己那条（沿用身份绑定与 DB 唯一性约束，语义不变）；同步更新 tools/pool_mcp.py 工具定义（14→13）、tests/eval-run.sh E9 冒烟清单、tests/pool-smoke.py、tests/pool-mcp-acceptance.py、skills/pool-usage/SKILL.md 工具速查、README 预算基线第三项复测（tools/list 预期 ≈8.9KB）。取舍（不做，记录理由）：①doc_get 并入 doc_list 不做——全文读与元数据列表参数语义异构，合并损调用直觉且只省 ≈0.3KB；②pool_doctor 保留 MCP 面不做降级——会话内诊断（池体检/FTS 对账）是流程刚需，CLI 同款并存已是合理形态，省 ≈0.4KB 不值。验收：四套验证全绿（E9 断言改 13 工具）、E1 版本三处一致（主会话随后 bump 0.35.1）、todo 语义回归（读空/写覆盖/单人读/全池读，沿用 29 当年验收面）。",
+   "created": "2026-11-02 13:00:55 +0800",
+   "updated": "2026-11-02 13:12:43 +0800",
+   "body": "用户 2026-11-02 授权「按推荐流程走」后对 103 工具面提案的裁决执行。做：todo_get 并入 todo_set——合并为单工具 `todo(owner, content?, status?)`：不带 content/status 时=读（返回该 owner 现值），带 content=upsert 覆盖自己那条（沿用身份绑定与 DB 唯一性约束，语义不变）；同步更新 tools/pool_mcp.py 工具定义（14→13）、tests/eval-run.sh E9 冒烟清单、tests/pool-smoke.py、tests/pool-mcp-acceptance.py、skills/pool-usage/SKILL.md 工具速查、README 预算基线第三项复测（tools/list 预期 ≈8.9KB）。取舍（不做，记录理由）：①doc_get 并入 doc_li",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0,
+   "stage": "已验收"
   }
  ],
  "dev_progress": [
@@ -3057,6 +3074,15 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 146,
+   "need_id": 105,
+   "time": "2026-11-02 13:11:08 +0800",
+   "note": "开发完成：todo_set/todo_get 并入单工具 todo(owner, content?, status?)——带 content=upsert 自己那条（身份绑定与部分唯一索引冲突目标原样）；不带 content=读（owner 给定=该人现值，缺省=全池 updated DESC）；写缺 owner 结构化拒绝（owner 转 optional 后的必要闸，防 NULL owner 绕唯一索引）。schema 走 _PARAM_META_BY_TOOL 工具专属参数描述（todo.status 不继承全局池状态枚举，与 96 批同风格）。同步面 7 文件：tools/pool_mcp.py / tests/eval-run.sh（E9 14→13）/ tests/pool-smoke.py（ALL_TOOLS + need 29 四例回归：读空/写覆盖/单人读/全池读 + 缺 owner 拒绝）/ tests/pool-mcp-acceptance.py / tests/pool-doctor-check.py（简报漏列，E10 用到必须同步）/ skills/pool-usage/SKILL.md / README ③基线。验证全绿：eval-run（评测全部通过，含 E9 冒烟 + E10 doctor）/ gate-test / py_compile×4 / venv acceptance（F-01~F-06 全过）；tools/list grep todo_get=0。README ③复测：13 工具 tools/list 行 9639 B（14 工具时 9737 B，同口径 git HEAD 对跑）——净缩仅 ~100 B，双形态描述扩写（A6.7 要求）抵消删工具缩减，未达简报预期 ≈8.9KB，实测为准。未 bump 版本（0.35.0）、未 commit、未 push。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -3671,6 +3697,24 @@
    "id": 66,
    "need_id": 103,
    "time": "2026-11-02 12:34:41 +0800",
+   "evidence": "同待验收 evidence。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 67,
+   "need_id": 104,
+   "time": "2026-11-02 12:49:34 +0800",
+   "evidence": "同待验收 evidence；ponytail 链 102→103→104 全关闭，0.35.0 发版。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 68,
+   "need_id": 105,
+   "time": "2026-11-02 13:12:43 +0800",
    "evidence": "同待验收 evidence。",
    "created_by": null,
    "updated_by": null,
@@ -8417,6 +8461,94 @@
    "reason": "ponytail 四元组整合完成（研读报告 §6 为唯一任务书）：A 六级 reuse-first 梯子落 developer.md 流程 2（3 行），researcher/tech-solution 的「现成方案优先」改为指向 developer.md 流程 2 的一行引用防双尺；B shortcut 注释约定 +1 行入 developer.md 硬约束；C code-reviewer 输出段内嵌 P0/P1 加「If we skip it（不修的后果）」+ 清单末行 Lean: -N lines possible；D baseline B.7 判据 +1 行（触发：显式枚举），pool-usage description 加触发枚举，codegraph-setup/devflow-setup/zcode-dispatch 的 when_to_use 触发词前置进 description 首句（when_to_use 保留），README 预算行 1934→2029 复测同步（口径校准通过：pre 1208/726 与基线一致）；E consolidate 新增 §三 shortcut 债务收割（git grep 收割→pool_add(pool=debt)→no-trigger 标记→不建新 skill/工具/command），纪要顺延 §四；F code-reviewer 流程段 +1 行全仓审计（建图→6 轴→≤20 条 ranked）；G 零改动（103 已达标）。eval-run E4 新增 7 条整合锚点防回退（首次跑 FAIL 系锚表内误插注释行，已修，FAIL 流水留 eval-log）。devflow 内容净增 9 行 + 锚 7 行，低于报告预估量级。未 bump 版本、未 commit、未 push、未动 hooks/工具面。",
    "created_by": "",
    "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 432,
+   "need_id": 104,
+   "time": "2026-11-02 12:49:34 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 433,
+   "need_id": 98,
+   "time": "2026-11-02 13:00:00 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 434,
+   "need_id": 98,
+   "time": "2026-11-02 13:00:38 +0800",
+   "from_status": "在池",
+   "to_status": "拒绝",
+   "reason": "遗留迁移销账：本条（pool_items 需-17）与已交付关闭的 need 29 同需求——29 的 detail/acceptance 记录 todo 表+身份绑定 upsert+skill 读写已实现并双验（2026-10-30），2026-11-02 修复迁移时因标题措辞漂移未自动匹配而重复入池。原文保留在 detail 与 pool_items，无信息丢失。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 435,
+   "need_id": 105,
+   "time": "2026-11-02 13:00:55 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 436,
+   "need_id": 105,
+   "time": "2026-11-02 13:01:00 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 437,
+   "need_id": 105,
+   "time": "2026-11-02 13:01:11 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 438,
+   "need_id": 105,
+   "time": "2026-11-02 13:11:08 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "开发完成：todo_set/todo_get 并入单工具 todo(owner, content?, status?)——带 content=upsert 自己那条（身份绑定与部分唯一索引冲突目标原样）；不带 content=读（owner 给定=该人现值，缺省=全池 updated DESC）；写缺 owner 结构化拒绝（owner 转 optional 后的必要闸，防 NULL owner 绕唯一索引）。schema 走 _PARAM_META_BY_TOOL 工具专属参数描述（todo.status 不继承全局池状态枚举，与 96 批同风格）。同步面 7 文件：tools/pool_mcp.py / tests/eval-run.sh（E9 14→13）/ tests/pool-smoke.py（ALL_TOOLS + need 29 四例回归：读空/写覆盖/单人读/全池读 + 缺 owner 拒绝）/ tests/pool-mcp-acceptance.py / tests/pool-doctor-check.py（简报漏列，E10 用到必须同步）/ skills/pool-usage/SKILL.md / README ③基线。验证全绿：eval-run（评测全部通过，含 E9 冒烟 + E10 doctor）/ gate-test / py_compile×4 / venv acceptance（F-01~F-06 全过）；tools/list grep todo_get=0。README ③复测：13 工具 tools/list 行 9639 B（14 工具时 9737 B，同口径 git HEAD 对跑）——净缩仅 ~100 B，双形态描述扩写（A6.7 要求）抵消删工具缩减，未达简报预期 ≈8.9KB，实测为准。未 bump 版本（0.35.0）、未 commit、未 push。",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 439,
+   "need_id": 105,
+   "time": "2026-11-02 13:12:43 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
    "deleted": 0
   }
  ],
