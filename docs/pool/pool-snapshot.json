@@ -1699,6 +1699,57 @@
    "updated_by": "developer",
    "deleted": 0,
    "stage": "已验收"
+  },
+  {
+   "id": 102,
+   "pool": "need",
+   "title": "研读 ponytail 插件（DietrichGebert/ponytail）——能力面/风格/与 devflow 重叠/整合候选清单",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "researcher",
+   "detail": "老板 2026-11-02 新令：研读 https://github.com/DietrichGebert/ponytail，为「用其整改 devflow 瘦身减负 + 最小化整合其 80% 核心通用能力」两步铺路。四问框架：【用什么】素材——GitHub 仓一手（README/源码/组件布局）；本地一手（本机已知装过/配置过 ponytail：全局 ~/.zcode/cli/config.json 与 settings.local.json 曾出现启用/禁用对冲记录，先查本地插件缓存与配置拿实装形态）；【做什么】产出《ponytail 研读报告》：①它是什么/解决什么问题②组件面与文件布局（skills/agents/hooks/commands/MCP 各有什么、多少行、什么风格）③能力清单逐条标「核心/边缘、通用/场景特化」④与 devflow 重叠面（哪些 devflow 已有等价物）⑤给 devflow 的瘦身判据（ponytail 用什么标准做到小而精）⑥整合候选清单：80% 核心通用能力的最小化整合方案草案（每项：能力→落点（devflow 哪个文件）→最小改法→风险）；【怎么做】本地实装优先于网络；结论先行；外部事实带 URL/路径；【怎么测】整合方案逐项可判「是否最小改动」（行数量级）与「是否通用」（零场景特化路径）。报告落盘 docs/research/2026-11-02-ponytail-study.md。禁改任何仓内文件（报告除外）。",
+   "created": "2026-11-02 11:58:43 +0800",
+   "updated": "2026-11-02 12:13:44 +0800",
+   "body": "老板 2026-11-02 新令：研读 https://github.com/DietrichGebert/ponytail，为「用其整改 devflow 瘦身减负 + 最小化整合其 80% 核心通用能力」两步铺路。四问框架：【用什么】素材——GitHub 仓一手（README/源码/组件布局）；本地一手（本机已知装过/配置过 ponytail：全局 ~/.zcode/cli/config.json 与 settings.local.json 曾出现启用/禁用对冲记录，先查本地插件缓存与配置拿实装形态）；【做什么】产出《ponytail 研读报告》：①它是什么/解决什么问题②组件面与文件布局（skills/agents/hooks/commands/MCP 各有什么、多少行、什么风格）③能力清单逐条标「核心/边缘、通用/场景特化」④与 devflow 重叠面（哪些 devflow 已有等价",
+   "created_by": "researcher",
+   "updated_by": "researcher",
+   "deleted": 0,
+   "stage": "已验收"
+  },
+  {
+   "id": 103,
+   "pool": "need",
+   "title": "devflow 瘦身减负——按 ponytail 标准整改（依赖研读产出）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": "依赖研读条目（102）出瘦身判据与整合候选清单",
+   "owner": "developer",
+   "detail": "老板 2026-11-02 新令第二步：用 ponytail 的标准/思路整改 devflow——瘦身减负。依赖研读条目的瘦身判据（ponytail 如何做到小而精：组件数/行数/披露层级/依赖面），对 devflow 0.34.0 做对照整改：候选方向（以研读结论为准）——11 skills 与 7 agents 的冗余合并/降层（references 化）、测试与工具面的重复收敛、README/模板瘦身、非必要组件退役。硬约束：整改后 eval-run/gate-test/acceptance 全绿、既有锚点同变、行为能力不丢（瘦身≠砍功能，砍的必须是冗余）。开工前置：研读条目关闭。",
+   "created": "2026-11-02 11:58:43 +0800",
+   "updated": "2026-11-02 12:34:41 +0800",
+   "body": "老板 2026-11-02 新令第二步：用 ponytail 的标准/思路整改 devflow——瘦身减负。依赖研读条目的瘦身判据（ponytail 如何做到小而精：组件数/行数/披露层级/依赖面），对 devflow 0.34.0 做对照整改：候选方向（以研读结论为准）——11 skills 与 7 agents 的冗余合并/降层（references 化）、测试与工具面的重复收敛、README/模板瘦身、非必要组件退役。硬约束：整改后 eval-run/gate-test/acceptance 全绿、既有锚点同变、行为能力不丢（瘦身≠砍功能，砍的必须是冗余）。开工前置：研读条目关闭。",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0,
+   "stage": "已验收"
+  },
+  {
+   "id": 104,
+   "pool": "need",
+   "title": "最小化整合 ponytail 80% 核心通用能力进 devflow（依赖研读产出）",
+   "priority": "P1",
+   "status": "待验收",
+   "blocker": "依赖研读条目（102）出整合候选清单",
+   "owner": "developer",
+   "detail": "老板 2026-11-02 新令第三步：以最小化修改方案整合 ponytail 80% 的能力（核心的、通用性强的）进 devflow。依赖研读条目的整合候选清单（能力→落点→最小改法→风险）。验收：逐项「最小改动」可判（每项改动行数量级记录）、整合项均为核心+通用（场景特化项明确排除并列理由）、四套验证全绿、版本递增发版。开工前置：研读条目关闭（本条与瘦身条目的先后由研读结论定：若整合本身即瘦身形态可并批，否则先瘦后整）。",
+   "created": "2026-11-02 11:58:43 +0800",
+   "updated": "2026-11-02 12:48:17 +0800",
+   "body": "老板 2026-11-02 新令第三步：以最小化修改方案整合 ponytail 80% 的能力（核心的、通用性强的）进 devflow。依赖研读条目的整合候选清单（能力→落点→最小改法→风险）。验收：逐项「最小改动」可判（每项改动行数量级记录）、整合项均为核心+通用（场景特化项明确排除并列理由）、四套验证全绿、版本递增发版。开工前置：研读条目关闭（本条与瘦身条目的先后由研读结论定：若整合本身即瘦身形态可并批，否则先瘦后整）。",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0,
+   "stage": "测试中"
   }
  ],
  "dev_progress": [
@@ -2979,6 +3030,33 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 143,
+   "need_id": 102,
+   "time": "2026-11-02 12:12:38 +0800",
+   "note": "研读完成。报告：/Users/coderstory/dev/DevDesk/docs/research/2026-11-02-ponytail-study.md。核心结论：①ponytail 常驻面仅 52 行 SKILL.md(~900 token)，其余全派生(构建脚本生成+守卫校验)+按需加载，0 MCP server；②小而精=单一事实源+派生机制+注入纪律(SessionStart 一次~1.2KB+2KB 地图，UserPromptSubmit 普通输入零注入)，非文本更短——devflow 文本量其实同量级；③80%核心=6级reuse梯子+never-cut清单+shortcut:注释约定+Not checked结尾惯例+四段式finding(含If we skip it)；④与 devflow 重叠大(理念层)，net-new 仅 5 件≤40行级小事；⑤整合候选 A-G 四元组在报告§6，建议先瘦后整；⑥本地对冲记录实证：DevDesk/.claude/settings.json=true vs settings.local.json=false，Mac 缓存无本体(以 GitHub main=v5.3.3 为底本)。供 need 103/104 直接取用，勿重查。工具调用 26/40。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 144,
+   "need_id": 103,
+   "time": "2026-11-02 12:32:51 +0800",
+   "note": "【need 103 研发完工·待验收】①常驻注入基线四项（README.md:32 已落 before=after）：session-start 注入 103 字符；11 skill+7 agent description 合计 1934 字符（skills 1208+agents 726，len() 含引号口径；批三 1880 为不同时点/口径数）；pool MCP 14 工具 tools/list 实测 9304B≈2.2K token；hooks.json 4 事件注册/5 个钩子调用全带 timeoutMs。本批改动全在非常驻面，after=before（差异 0，数字验收口径）。②auto-continue.mjs 精读+精简 691→672 行（-19）：transcript 解析重复合并（inspectTranscript/userDiscussingError 共用 lastTranscriptText，-15 行）、头注释压缩（-5）、stopContinue 单调用点内联（净+1）；行为语义不变经 6 项冒烟实证；AUTOCONTINUE_DIRECT: 前缀是活契约（commands/auto-continue.md:6 发出，BUG-2 workaround）保留；'start/stop/message' 等命令别名属命令解析语义保护面未动；Windows stdin 兼容注释链不存在（研读报告 §7 该推测项实测无）。③披露层级全过：唯一 reference 链 ui-ux-designer→agents/references/ui-style-baseline.md 共 1 层无二级引用；skills→assets/* 为模板资产非引用链。④hooks.json 判据 5/6 达标：4 事件/5 钩子全带 timeoutMs（10s/10s/5s/120s/10s）；UserPromptSubmit 仅命令直连或重置计数、零无条件注入；auto-continue 全失败路径 fail-open（stdin catch/JSON 拒解析/顶层 catch exit 0）且 cooldownMaxSec 60s < timeoutMs 120s 有注释锚定。⑤文案纪律：全库唯一哲学铺陈句已压缩（audit 原则句，48 行内）；6 agent「交接信任」段为参数化模板重复，因子代理上下文隔离设计保留不合并；description 触发词枚举缺口清单（只记录不改，归 104 候选 D）：pool-usage（无「触发：」标签）、codegraph-setup / devflow-setup / zcode-dispatch（触发词在 when_to_use 不在 description 前 250 字符）。⑥工具面频率提案（只提案未动手）：写路径佐证 pool_update 425 条 status_log+143 dev_progress 最高频、pool_add 104 条高频；低频=todo_set（personal_todo 9 行）、doc_save（docs 8+history 5）、pool_soft_delete/bugs（3 行）、pool_doctor（测试专用）；只读工具池库无痕不可测。候选：todo_get 并入 todo_set（省~0.4KB）、doc_get 并入 doc_list（省~0.3KB）、pool_doctor 降级为 CLI 子命令移出 MCP 面（省~0.4KB）合计省约 1.1KB/12% 常驻 schema；pool_fetch/pool_update 为高频主力不建议动。呈老板裁决。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 145,
+   "need_id": 104,
+   "time": "2026-11-02 12:48:17 +0800",
+   "note": "ponytail 四元组整合完成（研读报告 §6 为唯一任务书）：A 六级 reuse-first 梯子落 developer.md 流程 2（3 行），researcher/tech-solution 的「现成方案优先」改为指向 developer.md 流程 2 的一行引用防双尺；B shortcut 注释约定 +1 行入 developer.md 硬约束；C code-reviewer 输出段内嵌 P0/P1 加「If we skip it（不修的后果）」+ 清单末行 Lean: -N lines possible；D baseline B.7 判据 +1 行（触发：显式枚举），pool-usage description 加触发枚举，codegraph-setup/devflow-setup/zcode-dispatch 的 when_to_use 触发词前置进 description 首句（when_to_use 保留），README 预算行 1934→2029 复测同步（口径校准通过：pre 1208/726 与基线一致）；E consolidate 新增 §三 shortcut 债务收割（git grep 收割→pool_add(pool=debt)→no-trigger 标记→不建新 skill/工具/command），纪要顺延 §四；F code-reviewer 流程段 +1 行全仓审计（建图→6 轴→≤20 条 ranked）；G 零改动（103 已达标）。eval-run E4 新增 7 条整合锚点防回退（首次跑 FAIL 系锚表内误插注释行，已修，FAIL 流水留 eval-log）。devflow 内容净增 9 行 + 锚 7 行，低于报告预估量级。未 bump 版本、未 commit、未 push、未动 hooks/工具面。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -3576,6 +3654,24 @@
    "need_id": 96,
    "time": "2026-11-02 11:56:49 +0800",
    "evidence": "同待验收 evidence；P2 全清（六报告 P2 76 条去重后全部终态：修复/已取舍）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 65,
+   "need_id": 102,
+   "time": "2026-11-02 12:13:44 +0800",
+   "evidence": "同待验收 evidence；研读结论已回流 103/104 条目与报告。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 66,
+   "need_id": 103,
+   "time": "2026-11-02 12:34:41 +0800",
+   "evidence": "同待验收 evidence。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -8123,6 +8219,204 @@
    "reason": "",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 414,
+   "need_id": 102,
+   "time": "2026-11-02 11:58:43 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 415,
+   "need_id": 103,
+   "time": "2026-11-02 11:58:43 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 416,
+   "need_id": 104,
+   "time": "2026-11-02 11:58:43 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 417,
+   "need_id": 103,
+   "time": "2026-11-02 11:58:50 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "依赖研读条目（102）出瘦身判据与整合候选清单",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 418,
+   "need_id": 104,
+   "time": "2026-11-02 11:58:50 +0800",
+   "from_status": "在池",
+   "to_status": "挂起",
+   "reason": "依赖研读条目（102）出整合候选清单",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 419,
+   "need_id": 102,
+   "time": "2026-11-02 11:58:50 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 420,
+   "need_id": 102,
+   "time": "2026-11-02 11:58:50 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 421,
+   "need_id": 102,
+   "time": "2026-11-02 12:13:31 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 422,
+   "need_id": 102,
+   "time": "2026-11-02 12:13:44 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 423,
+   "need_id": 103,
+   "time": "2026-11-02 12:13:44 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 424,
+   "need_id": 103,
+   "time": "2026-11-02 12:13:50 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 425,
+   "need_id": 103,
+   "time": "2026-11-02 12:13:55 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 426,
+   "need_id": 103,
+   "time": "2026-11-02 12:32:51 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "【need 103 研发完工·待验收】①常驻注入基线四项（README.md:32 已落 before=after）：session-start 注入 103 字符；11 skill+7 agent description 合计 1934 字符（skills 1208+agents 726，len() 含引号口径；批三 1880 为不同时点/口径数）；pool MCP 14 工具 tools/list 实测 9304B≈2.2K token；hooks.json 4 事件注册/5 个钩子调用全带 timeoutMs。本批改动全在非常驻面，after=before（差异 0，数字验收口径）。②auto-continue.mjs 精读+精简 691→672 行（-19）：transcript 解析重复合并（inspectTranscript/userDiscussingError 共用 lastTranscriptText，-15 行）、头注释压缩（-5）、stopContinue 单调用点内联（净+1）；行为语义不变经 6 项冒烟实证；AUTOCONTINUE_DIRECT: 前缀是活契约（commands/auto-continue.md:6 发出，BUG-2 workaround）保留；'start/stop/message' 等命令别名属命令解析语义保护面未动；Windows stdin 兼容注释链不存在（研读报告 §7 该推测项实测无）。③披露层级全过：唯一 reference 链 ui-ux-designer→agents/references/ui-style-baseline.md 共 1 层无二级引用；skills→assets/* 为模板资产非引用链。④hooks.json 判据 5/6 达标：4 事件/5 钩子全带 timeoutMs（10s/10s/5s/120s/10s）；UserPromptSubmit 仅命令直连或重置计数、零无条件注入；auto-continue 全失败路径 fail-open（stdin catch/JSON 拒解析/顶层 catch exit 0）且 cooldownMaxSec 60s < timeoutMs 120s 有注释锚定。⑤文案纪律：全库唯一哲学铺陈句已压缩（audit 原则句，48 行内）；6 agent「交接信任」段为参数化模板重复，因子代理上下文隔离设计保留不合并；description 触发词枚举缺口清单（只记录不改，归 104 候选 D）：pool-usage（无「触发：」标签）、codegraph-setup / devflow-setup / zcode-dispatch（触发词在 when_to_use 不在 description 前 250 字符）。⑥工具面频率提案（只提案未动手）：写路径佐证 pool_update 425 条 status_log+143 dev_progress 最高频、pool_add 104 条高频；低频=todo_set（personal_todo 9 行）、doc_save（docs 8+history 5）、pool_soft_delete/bugs（3 行）、pool_doctor（测试专用）；只读工具池库无痕不可测。候选：todo_get 并入 todo_set（省~0.4KB）、doc_get 并入 doc_list（省~0.3KB）、pool_doctor 降级为 CLI 子命令移出 MCP 面（省~0.4KB）合计省约 1.1KB/12% 常驻 schema；pool_fetch/pool_update 为高频主力不建议动。呈老板裁决。",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0
+  },
+  {
+   "id": 427,
+   "need_id": 103,
+   "time": "2026-11-02 12:34:41 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 428,
+   "need_id": 104,
+   "time": "2026-11-02 12:34:41 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 429,
+   "need_id": 104,
+   "time": "2026-11-02 12:34:46 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 430,
+   "need_id": 104,
+   "time": "2026-11-02 12:34:51 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 431,
+   "need_id": 104,
+   "time": "2026-11-02 12:48:17 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "ponytail 四元组整合完成（研读报告 §6 为唯一任务书）：A 六级 reuse-first 梯子落 developer.md 流程 2（3 行），researcher/tech-solution 的「现成方案优先」改为指向 developer.md 流程 2 的一行引用防双尺；B shortcut 注释约定 +1 行入 developer.md 硬约束；C code-reviewer 输出段内嵌 P0/P1 加「If we skip it（不修的后果）」+ 清单末行 Lean: -N lines possible；D baseline B.7 判据 +1 行（触发：显式枚举），pool-usage description 加触发枚举，codegraph-setup/devflow-setup/zcode-dispatch 的 when_to_use 触发词前置进 description 首句（when_to_use 保留），README 预算行 1934→2029 复测同步（口径校准通过：pre 1208/726 与基线一致）；E consolidate 新增 §三 shortcut 债务收割（git grep 收割→pool_add(pool=debt)→no-trigger 标记→不建新 skill/工具/command），纪要顺延 §四；F code-reviewer 流程段 +1 行全仓审计（建图→6 轴→≤20 条 ranked）；G 零改动（103 已达标）。eval-run E4 新增 7 条整合锚点防回退（首次跑 FAIL 系锚表内误插注释行，已修，FAIL 流水留 eval-log）。devflow 内容净增 9 行 + 锚 7 行，低于报告预估量级。未 bump 版本、未 commit、未 push、未动 hooks/工具面。",
+   "created_by": "",
+   "updated_by": "",
    "deleted": 0
   }
  ],
