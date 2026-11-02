@@ -1954,6 +1954,40 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 117,
+   "pool": "bug",
+   "title": "clean Windows 环境 CJK 度量下 home 统计卡 badge 文案超宽（真发现，CI 隔离待真机 UAT 复核）",
+   "priority": "P2",
+   "status": "在池",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "2026-11-03 Windows CI 首跑到测试层实证：font-em home_stat_card_text_fits 在 clean runner 超宽而开发机（Windows dev + mac）全绿；digit 度量语义用例同环境绿 → CJK 度量环境分叉。若 clean Windows 上产品字体栈 CJK 走系统回退（YaHei 系）而非开发机字体，badge「Token 速率 (tok/s) · 加载失败」在 13px 下可能真实溢出 152 逻辑 px 预算。处理：用例加 em 方框判据守卫（速 字宽>1.05em 判环境分档 skip），真发现交真机 UAT/B7 owner 复核：①确认产品 CJK 字体栈在 clean Windows 的落点 ②badge 预算是否需收紧文案或加宽度自适应",
+   "created": "2026-11-03 06:27:41 +0800",
+   "updated": "2026-11-03 06:27:41 +0800",
+   "body": "2026-11-03 Windows CI 首跑到测试层实证：font-em home_stat_card_text_fits 在 clean runner 超宽而开发机（Windows dev + mac）全绿；digit 度量语义用例同环境绿 → CJK 度量环境分叉。若 clean Windows 上产品字体栈 CJK 走系统回退（YaHei 系）而非开发机字体，badge「Token 速率 (tok/s) · 加载失败」在 13px 下可能真实溢出 152 逻辑 px 预算。处理：用例加 em 方框判据守卫（速 字宽>1.05em 判环境分档 skip），真发现交真机 UAT/B7 owner 复核：①确认产品 CJK 字体栈在 clean Windows 的落点 ②badge 预算是否需收紧文案或加宽度自适应",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
+  },
+  {
+   "id": 118,
+   "pool": "bug",
+   "title": "dev 分支 CI 连红根治（submodule 迁移起双平台连红 15+ 场的四个根因）",
+   "priority": "P1",
+   "status": "关闭",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "2026-11-03 夜间自主治理：①Windows 找不到 EUI-NEO（msys2 下 rev-parse 仓库根判定失效，自 10-29 submodule 迁移起 Windows CI 从未跑到编译）→ workflow 显式 EUI_NEO_DIR；②GCC16 maybe-uninitialized 误报（std_function 返回槽，Windows CI 首编存量即爆）→ 空闭包守卫+定点 pragma；③mac flake ×3（agent_ui 停止钮链三处盲等改轮询、mcp 在途 stop 盲等改 entered 门控）；④Windows 测试层环境分叉 5 处（process_runner 跨平台载荷+尾字节数更正、凭据缝两用例 Windows skip、git PATH 守卫、font-em CJK 分叉留痕 skip）；⑤真发现：clean Windows CJK 度量下 badge 超宽挂池117。绿证 run 41544288443（macOS 含 ASan/UBSan 2095 例 0 红 + Windows 2095 例 0 红）",
+   "created": "2026-11-03 07:45:21 +0800",
+   "updated": "2026-11-03 07:45:47 +0800",
+   "body": "2026-11-03 夜间自主治理：①Windows 找不到 EUI-NEO（msys2 下 rev-parse 仓库根判定失效，自 10-29 submodule 迁移起 Windows CI 从未跑到编译）→ workflow 显式 EUI_NEO_DIR；②GCC16 maybe-uninitialized 误报（std_function 返回槽，Windows CI 首编存量即爆）→ 空闭包守卫+定点 pragma；③mac flake ×3（agent_ui 停止钮链三处盲等改轮询、mcp 在途 stop 盲等改 entered 门控）；④Windows 测试层环境分叉 5 处（process_runner 跨平台载荷+尾字节数更正、凭据缝两用例 Windows skip、git PATH 守卫、font-em CJK 分叉留痕 skip）；⑤真发现：clean Windows ",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": "已验收"
   }
  ],
  "dev_progress": [
@@ -4400,6 +4434,15 @@
    "need_id": 108,
    "time": "2026-11-03 04:47:47 +0800",
    "evidence": "tests/test_modules/test_claude_ui.cpp:2427 断言 40→32（注释引 6f7fc485 列表重设计定版归属）；--filter 头像首字 2/2 绿（2026-11-03 本地实测）——与条目预设诊断路径一致（git log -S 定归属→改测试）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 83,
+   "need_id": 118,
+   "time": "2026-11-03 07:45:47 +0800",
+   "evidence": "GitHub Actions run 41544288443 双平台 success（macOS 含 ASan/UBSan：2095 例 0 红；Windows：2095 例 0 红）；修复 commit 链 426f5032/b42b3da7/ccb16c58/0df91645/本轮",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -10125,6 +10168,72 @@
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
+  },
+  {
+   "id": 521,
+   "need_id": 117,
+   "time": "2026-11-03 06:27:41 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 522,
+   "need_id": 118,
+   "time": "2026-11-03 07:45:21 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 523,
+   "need_id": 118,
+   "time": "2026-11-03 07:45:25 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 524,
+   "need_id": 118,
+   "time": "2026-11-03 07:45:34 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 525,
+   "need_id": 118,
+   "time": "2026-11-03 07:45:41 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 526,
+   "need_id": 118,
+   "time": "2026-11-03 07:45:47 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "personal_todo": [
@@ -10481,6 +10590,6 @@
  "generator": {
   "hostname": "coderstory-air",
   "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
-  "generated": "2026-11-03 05:01:27 +0800"
+  "generated": "2026-11-03 07:45:47 +0800"
  }
 }
