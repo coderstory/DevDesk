@@ -6062,18 +6062,19 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
     DOCTEST_REQUIRE_MESSAGE(runClicked,
                             "启动钮 2s 内不可点（loop_ 未就绪且未自愈）");
 
-    // 运行中（在跑 ActiveRun 已同步注册）：详情弹窗标题行应出现停止钮
-    bool stopVisible = false;
+    // 运行中：详情弹窗标题行出现停止钮且**可点**（渲染≠可点——钮在 run 态同步
+    // 完成前可能短暂 disabled 无 onClick，CI 负载下 2026-11-02 二次 flake 实证：
+    // 可见性轮询过了但 clickId 因 onClick 缺失 123ms 硬挂）。可见+可点合并轮询。
+    bool stopClicked = false;
     eui::Ui ui2;
-    for (int i = 0; i < 100 && !stopVisible; ++i) {
+    for (int i = 0; i < 300 && !stopClicked; ++i) {
         composeTo(ui2, mod, kScreen, "agent_ui_stop_poll");
-        stopVisible = ui2.find("agent.dialog.detail.stop.bg") != nullptr;
-        if (!stopVisible) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        stopClicked = clickId(ui2, "agent.dialog.detail.stop.bg");
+        if (!stopClicked) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(stopVisible, "运行中详情弹窗未渲染停止钮");
+    DOCTEST_REQUIRE_MESSAGE(stopClicked, "运行中详情弹窗停止钮 3s 内不可点");
 
     // 点击停止：cancel 位经模块观测面可断言；钮切「停止中」并禁用
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.stop.bg"));
     DOCTEST_CHECK_MESSAGE(mod.isStopRequested(created.value()),
                           "点击停止后 cancel 位未置");
     eui::Ui ui3;

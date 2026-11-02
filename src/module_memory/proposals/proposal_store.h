@@ -69,11 +69,23 @@ using ProposalExecutor =
 // 其余（工具错/形态错）如实 fail → accept 判 expired（宁过期不误删）。
 // lookup 由调用方注入：生产 = TelememHttpRetriever::getMemoryVersion，
 // 测试 = 假实现
+// GCC 16（MinGW CI 工具链）对经 std::function 返回槽流转的 Result 上报
+// maybe-uninitialized 误报（std_function.h:381，clang / GCC<16 均不报，
+// 2026-11-03 Windows CI 首次编到本文件实证）——只压这一处，不放宽全局。
 inline TargetVersionFn makeTargetVersionFn(
     std::int64_t baseVersion,
     const std::function<core::Result<std::int64_t>(const std::string&)>&
         lookup) {
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
     return [baseVersion, lookup](const std::string& targetId) {
+        if (!lookup) {
+            // 空闭包=装配缺陷：按「引擎不在」放行（契约同传输不可达档），
+            // 同时给 GCC 分析器一条已初始化路径
+            return core::Result<std::int64_t>::ok(baseVersion);
+        }
         auto v = lookup(targetId);
         if (v.isOk()) return v;
         if (v.errorCode() == core::ErrorCode::NotFound) {
@@ -86,6 +98,9 @@ inline TargetVersionFn makeTargetVersionFn(
         }
         return v;
     };
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 }
 
 class ProposalStore {
