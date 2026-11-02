@@ -19,13 +19,13 @@ case "$mode" in
     esac
     case "$input" in
       *cmake\ -B*|*cmake\ --build*)
-        block "禁止手敲 cmake（cmake -B / cmake --build）。一律: bash scripts/build-test-run.sh（AGENTS.md §四）" ;;
+        block "禁止手敲 cmake（cmake -B / cmake --build）。一律: bash scripts/build-test-run.sh（AGENTS.md §五）" ;;
     esac
     ;;
   path-gate)
     case "$input" in
       */analysis/*|*/pr-bodies/*|*/splash-delivery/*|*/devdesk-agent-m1-sdd-archive/*|*/eui-neo-zpatch-copy/*|*eui-neo-dropdown-popup-z.patch*|*pr-push-eui-neo.sh*)
-        block "产物/归档目录与文件，修改前先征得用户同意（AGENTS.md §六；2026-10-29 起原件已备份至仓库外，勿在仓库内重建）" ;;
+        block "产物/归档目录与文件，修改前先征得用户同意（AGENTS.md §七；2026-10-29 起原件已备份至仓库外，勿在仓库内重建）" ;;
     esac
     ;;
 esac
