@@ -1886,6 +1886,40 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 113,
+   "pool": "need",
+   "title": "上线模块上线前实测：UI/UX+易用性走查与改进方案",
+   "priority": "P1",
+   "status": "待验收",
+   "blocker": null,
+   "owner": "qa-tester",
+   "detail": "已开发未使用状态。实测 UI 布局与易用性（冷启动空态/新建任务流/单据号门槛/校验/执行页/提醒窗），对照 spec 2026-10-27-release-module-design.md §13.3 契约，产出分级问题清单+证据+改进方案。执行方式：派 qa-tester 走查。",
+   "created": "2026-11-03 04:15:16 +0800",
+   "updated": "2026-11-03 04:23:08 +0800",
+   "body": "已开发未使用状态。实测 UI 布局与易用性（冷启动空态/新建任务流/单据号门槛/校验/执行页/提醒窗），对照 spec 2026-10-27-release-module-design.md §13.3 契约，产出分级问题清单+证据+改进方案。执行方式：派 qa-tester 走查。",
+   "created_by": "qa-tester",
+   "updated_by": "qa-tester",
+   "deleted": 0,
+   "stage": "实测完成，报告已产出"
+  },
+  {
+   "id": 114,
+   "pool": "need",
+   "title": "记忆模块闭环实测：py检测/pip维护/伪造数据测试体系与价值证明",
+   "priority": "P1",
+   "status": "待验收",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "纯技术验证：①python 检测提示链路 ②pip 包管理维护（版本未钉扎/自愈/超时文案）③伪造会话数据跑通采集→脱敏→提案→入库→检索→hook注入闭环，先预测后验证 ④recall_eval 冻结集真跑出 Recall@5 硬数字 ⑤UI 引导态文案走查。数据落独立临时数据根，真实 ~/DevDesk/memory 零污染。执行方式：POC/试错主会话直做。",
+   "created": "2026-11-03 04:15:17 +0800",
+   "updated": "2026-11-03 04:27:47 +0800",
+   "body": "纯技术验证：①python 检测提示链路 ②pip 包管理维护（版本未钉扎/自愈/超时文案）③伪造会话数据跑通采集→脱敏→提案→入库→检索→hook注入闭环，先预测后验证 ④recall_eval 冻结集真跑出 Recall@5 硬数字 ⑤UI 引导态文案走查。数据落独立临时数据根，真实 ~/DevDesk/memory 零污染。执行方式：POC/试错主会话直做。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": "测试中"
   }
  ],
  "dev_progress": [
@@ -3454,6 +3488,51 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 175,
+   "need_id": 113,
+   "time": "2026-11-03 04:15:30 +0800",
+   "note": "派发 qa-tester 后台实测（UI截图+契约断言+易用性走查），编排理由：标准 qa 实测可委派，与记忆闭环实测并行",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 176,
+   "need_id": 114,
+   "time": "2026-11-03 04:15:30 +0800",
+   "note": "POC/试错类主会话直做：拉引擎→伪造数据闭环→recall_eval 出数→pip/py 检测专项",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 177,
+   "need_id": 113,
+   "time": "2026-11-03 04:23:08 +0800",
+   "note": "【测试清单 need:113 上线模块实测 2026-11-03】验证方法=release_probe 数值断言×2 轮 + uat62_page_shots_probe 双尺寸截图 + 7 张逐图走查（对照 spec §4.0/§13.3/§10.3）。结果：①探针全绿——A 侧栏分组/B 基础配置/C 瀑布流(首屏10→触底20)/D 执行页四组全过，无 FAIL 行；②截图走查产出 BUG-113-1~6：P1 候选×1（列表滚底态卡片内容缺失，疑似探针瞬时帧，需真机滚动复核）、P2×5（锁定态伪引导文案/环境头进度与移除环境挤贴/发布态头部进度条与计数分离/双状态chip语义并存/进子页侧栏分组未自动展开）；③覆盖欠账：环境定义tab空态未落图、提醒窗E组探针未覆盖、多环境执行页未验证、双主题档不存在（probe 无主题参数）。双尺寸布局/空态引导/状态色/操作路径均达标。报告：docs/research/2026-11-03-上线模块实测报告.md。真实用户库零写入（TestEnv 临时库）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 178,
+   "need_id": 114,
+   "time": "2026-11-03 04:23:15 +0800",
+   "note": "探针 36/37 绿：采集3段/脱敏拦截(ipv4,phone,secret)/Recall@5=100%/hook注入契约全过；唯一红=createUndoCard（即本 bug）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 179,
+   "need_id": 114,
+   "time": "2026-11-03 04:27:47 +0800",
+   "note": "实测与测试体系完成：探针 36/37（唯一红=已挂 bug），Recall@5=100%，fail-open/红线全过；2 个 P1 bug 已挂池；改进方案在报告§4",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -3475,6 +3554,26 @@
    "resolved": 1,
    "created_by": "",
    "updated_by": "pool_migrate",
+   "deleted": 0
+  },
+  {
+   "id": 4,
+   "need_id": 114,
+   "time": "2026-11-03 04:23:15 +0800",
+   "note": "mac e2e 实测（need 114）：撤销链断——采集合段文本尾带\\n，telemem 存储剥尾空白，addDirect 的 findMemoryIdByText 精确匹配差 1 字符 → target_ids=[] → createUndoCard 拒绝「不可撤销」。生产常态（段尾=assistant text 块固定补 \\n）必现。修复方向：telemem_client.cpp findMemoryIdByText 两侧 trim 后比对（或 add 前统一 trim），补钉版单测（尾换行文本回填）",
+   "resolved": 0,
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 5,
+   "need_id": 114,
+   "time": "2026-11-03 04:27:19 +0800",
+   "note": "mac e2e 实测（need 114）：hook 注入无相关度门槛——改写问句与负对照「今天天气怎么样」三问返回逐字节相同的 396 字全量注入。根因：telemem search 恒返 top-k 融合段无相似度下限，且融合段无逐条 score（事后过滤不可行）→ 注入层照单全收。每次提问上下文被污染+白付 token。修复方向（先 POC）：①引擎侧阈值参数 ②DevDesk 词面预闸（inject.cpp 同落点，纯函数可单测）③面板注入总开关兑底；推荐②+③",
+   "resolved": 0,
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
    "deleted": 0
   }
  ],
@@ -9742,6 +9841,94 @@
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
+  },
+  {
+   "id": 504,
+   "need_id": 113,
+   "time": "2026-11-03 04:15:16 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 505,
+   "need_id": 114,
+   "time": "2026-11-03 04:15:17 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 506,
+   "need_id": 113,
+   "time": "2026-11-03 04:15:23 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 507,
+   "need_id": 114,
+   "time": "2026-11-03 04:15:23 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 508,
+   "need_id": 113,
+   "time": "2026-11-03 04:15:30 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "派发 qa-tester 后台实测（UI截图+契约断言+易用性走查），编排理由：标准 qa 实测可委派，与记忆闭环实测并行",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 509,
+   "need_id": 114,
+   "time": "2026-11-03 04:15:30 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "POC/试错类主会话直做：拉引擎→伪造数据闭环→recall_eval 出数→pip/py 检测专项",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 510,
+   "need_id": 113,
+   "time": "2026-11-03 04:23:08 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "【测试清单 need:113 上线模块实测 2026-11-03】验证方法=release_probe 数值断言×2 轮 + uat62_page_shots_probe 双尺寸截图 + 7 张逐图走查（对照 spec §4.0/§13.3/§10.3）。结果：①探针全绿——A 侧栏分组/B 基础配置/C 瀑布流(首屏10→触底20)/D 执行页四组全过，无 FAIL 行；②截图走查产出 BUG-113-1~6：P1 候选×1（列表滚底态卡片内容缺失，疑似探针瞬时帧，需真机滚动复核）、P2×5（锁定态伪引导文案/环境头进度与移除环境挤贴/发布态头部进度条与计数分离/双状态chip语义并存/进子页侧栏分组未自动展开）；③覆盖欠账：环境定义tab空态未落图、提醒窗E组探针未覆盖、多环境执行页未验证、双主题档不存在（probe 无主题参数）。双尺寸布局/空态引导/状态色/操作路径均达标。报告：docs/research/2026-11-03-上线模块实测报告.md。真实用户库零写入（TestEnv 临时库）。",
+   "created_by": "qa-tester",
+   "updated_by": "qa-tester",
+   "deleted": 0
+  },
+  {
+   "id": 511,
+   "need_id": 114,
+   "time": "2026-11-03 04:27:47 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "实测与测试体系完成：探针 36/37（唯一红=已挂 bug），Recall@5=100%，fail-open/红线全过；2 个 P1 bug 已挂池；改进方案在报告§4",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "personal_todo": [
@@ -10098,6 +10285,6 @@
  "generator": {
   "hostname": "coderstory-air",
   "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
-  "generated": "2026-11-03 04:01:17 +0800"
+  "generated": "2026-11-03 04:27:47 +0800"
  }
 }
