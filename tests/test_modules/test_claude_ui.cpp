@@ -2424,9 +2424,9 @@ REGISTER_TEST(claude_profile_avatar_centered,
             std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
             " != 圆形底中心 y=" +
             std::to_string(bg->frame.y + bg->frame.height * 0.5f));
-    // 圆形底尺寸不变（40×40 圆，radius 20）
-    DOCTEST_CHECK_EQ(bg->frame.width, 40.0f);
-    DOCTEST_CHECK_EQ(bg->frame.height, 40.0f);
+    // 圆形底尺寸随 6f7fc485 列表重设计定版（32×32 圆，radius 16）
+    DOCTEST_CHECK_EQ(bg->frame.width, 32.0f);
+    DOCTEST_CHECK_EQ(bg->frame.height, 32.0f);
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
