@@ -6049,9 +6049,18 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
+    // 启动钮 enabled = loop_ != nullptr；ensureLlm 允许瞬时失败（compose 每帧自愈
+    // 重试，agent_module.cpp:429）——CI 负载下首帧可能未就绪，测试同口径轮询点击，
+    // 不做首帧硬断言（2026-11-02 mac CI flake：首帧即点 38ms 硬挂）。
+    bool runClicked = false;
     eui::Ui ui;
-    composeTo(ui, mod, kScreen, "agent_ui_stop1");
-    DOCTEST_REQUIRE(clickId(ui, "agent.task." + tid + ".run.bg"));
+    for (int i = 0; i < 200 && !runClicked; ++i) {
+        composeTo(ui, mod, kScreen, "agent_ui_stop1");
+        runClicked = clickId(ui, "agent.task." + tid + ".run.bg");
+        if (!runClicked) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(runClicked,
+                            "启动钮 2s 内不可点（loop_ 未就绪且未自愈）");
 
     // 运行中（在跑 ActiveRun 已同步注册）：详情弹窗标题行应出现停止钮
     bool stopVisible = false;

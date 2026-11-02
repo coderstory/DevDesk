@@ -147,6 +147,10 @@ jobs:
         shell: msys2 {0}
         run: |
           cd DevDesk
+          # msys2 下 git rev-parse --show-toplevel 的返回值过不了脚本的 [ -f ] 仓库根
+          # 判定（Windows CI 自 EUI-NEO submodule 迁移起「找不到 EUI-NEO」连红根因，
+          # 2026-11-03 定性）：按脚本定位优先级显式给 EUI_NEO_DIR，本地 rev-parse 兜底不变。
+          export EUI_NEO_DIR="$(pwd)/EUI-NEO"
           bash scripts/build-test-run.sh --release --no-run
           echo "--- ccache ---"
           ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
