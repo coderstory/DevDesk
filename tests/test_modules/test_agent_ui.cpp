@@ -6102,7 +6102,10 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
     releaseGate.store(true, std::memory_order_release);
     bool cancelled = false;
     eui::Ui ui4;
-    for (int i = 0; i < 500 && !cancelled; ++i) {
+    // 收敛窗口 15s（2026-11-03 mac CI 实证：负载下 5s 不够——R9 耗时对账
+    // 2+3+5=10.08s 恰为三段轮询窗口和）。断言语义是「终态收敛」不是「5s 内
+    // 收敛」，窗口 = 耐心非阈值；本地常 <1s，放宽不影响回归灵敏度
+    for (int i = 0; i < 1500 && !cancelled; ++i) {
         composeTo(ui4, mod, kScreen, "agent_ui_stop_term");
         auto runs = store.listRuns(created.value(), 1);
         if (runs.isOk() && !runs.value().empty() &&
@@ -6112,7 +6115,7 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(cancelled, "放行后 5s 内 run 未落库 cancelled");
+    DOCTEST_REQUIRE_MESSAGE(cancelled, "放行后 15s 内 run 未落库 cancelled");
 
     // 列表状态列「已取消」
     eui::Ui ui5;
