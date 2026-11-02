@@ -6,8 +6,8 @@
 |---|---|---|
 | PRD（含功能矩阵） | `docs/superpowers/specs/` | 长期，随版本演进 |
 | 技术方案卡 | `docs/superpowers/plans/<slug>-tech.md` | 长期 |
-| 测试清单卡 | `docs/superpowers/plans/<slug>-tests.md` | 长期（验收后留作回归参照） |
-| 总结会纪要 | `docs/superpowers/plans/<slug>-retro.md` | 长期 |
+| 测试清单 | pool 台账 `dev_progress` note（`pool_update(note)`，note 即 markdown 文本块；`-tests` 后缀卡已废弃，历史卡只读归档） | note 活文档；历史卡冻结 |
+| 总结纪要 | pool 台账 `dev_progress` note / acceptance 子表（`-retro` 后缀卡同上废弃，历史卡只读归档） | note 活文档；历史卡冻结 |
 | 待办与剩余决策 | `docs/superpowers/plans/2026-09-22-backlog.md`、`docs/pool/` 池库 | 活文档（TODO.md 已退役删除 2026-10-31） |
 | 调研报告 | `docs/research/YYYY-MM-DD-<slug>.md` | 长期，结论过时须标注 |
 | Agent 评测任务集 | `docs/research/agent-eval-tasks.md` | 活文档 |
