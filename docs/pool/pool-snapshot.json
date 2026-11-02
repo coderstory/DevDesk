@@ -1059,17 +1059,17 @@
    "pool": "need",
    "title": "UI整改IV·B1 材质登记表落地（A1 半透统一+A3 分层）",
    "priority": "P1",
-   "status": "挂起",
+   "status": "进行中",
    "blocker": "老板令 2026-11-01：暂停项目开发，优先优化 devflow 插件；B1 developer 已完成（工作区未 commit），qa 验收因配额中断——恢复时先续跑 qa 定向验收（证据物已就位 evidence/2026-11-02-B1/），再收口",
-   "owner": "ZCode主会话",
+   "owner": "qa-tester",
    "detail": "方案：docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §1+§10.2。范围：材质登记表落地——A1 智能体任务卡半透统一（agent_module.cpp:675 误用 t.colors.surface）+ A3 容器卡/业务卡分层（agent_module.cpp:575 列表面板降 L1 档；release_list_ui.cpp:396、wallpaper_ui.cpp:155 转 cardSurface）；新增 src/ui_kit/materials.h（containerSurface/itemSurface/itemSurfaceHover/itemSurfacePressed）。L3 内嵌盒清单（§1.3）不动。验收：离屏截图逐页半透一致性 + 像素判据（卡内/卡外采样有差）。依赖：无。来源：老板 2026-11-01 反馈 A1/A3。",
    "created": "2026-11-01 20:22:43 +0800",
-   "updated": "2026-11-02 11:10:09 +0800",
+   "updated": "2026-11-02 13:26:27 +0800",
    "body": "方案：docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §1+§10.2。范围：材质登记表落地——A1 智能体任务卡半透统一（agent_module.cpp:675 误用 t.colors.surface）+ A3 容器卡/业务卡分层（agent_module.cpp:575 列表面板降 L1 档；release_list_ui.cpp:396、wallpaper_ui.cpp:155 转 cardSurface）；新增 src/ui_kit/materials.h（containerSurface/itemSurface/itemSurfaceHover/itemSurfacePressed）。L3 内嵌盒清单（§1.3）不动。验收：离屏截图逐页半透一致性 + 像素判据（卡内/卡外采样有差）。依赖：无。来源：老板 2026-11-01 反馈 A1/A",
-   "created_by": "ZCode主会话",
-   "updated_by": "ZCode主会话",
+   "created_by": "qa-tester",
+   "updated_by": "qa-tester",
    "deleted": 0,
-   "stage": "已审计"
+   "stage": "开发中"
   },
   {
    "id": 65,
@@ -1620,17 +1620,17 @@
    "pool": "need",
    "title": "免费档供应商自动切换（探测即判断：可用白嫖到底/不可用切回+余额兜底）",
    "priority": "P1",
-   "status": "挂起",
+   "status": "关闭",
    "blocker": "遗留待用户裁决",
    "owner": "待分派",
    "detail": "[pool_items 需-16 遗留迁移入池（2026-11 修复迁移）] 老板 10-30 修正口径：两次检测（23:05/9:05）同一逻辑=实际可用性判断，非死时间表——23:05 可用切免费档；9:05 还能用不切（白嫖到底），不能用才切回付费档；余额不足/token 不够同样触发切回；切换条件=可用性状态变化。骨架=定时双点探测+可用性探测+余额校验+状态变化驱动切换+失败告警兜底。落点分析：倾向 DevDesk agent 层（cron/bash.run/通知全现成），待老板拍板跨软件配置写入授权；卡点=condition（授权口径+排产点名）",
    "created": "2026-11-02 09:59:04 +0800",
-   "updated": "2026-11-02 09:59:04 +0800",
+   "updated": "2026-11-02 13:53:18 +0800",
    "body": "[pool_items 需-16 遗留迁移入池（2026-11 修复迁移）] 老板 10-30 修正口径：两次检测（23:05/9:05）同一逻辑=实际可用性判断，非死时间表——23:05 可用切免费档；9:05 还能用不切（白嫖到底），不能用才切回付费档；余额不足/token 不够同样触发切回；切换条件=可用性状态变化。骨架=定时双点探测+可用性探测+余额校验+状态变化驱动切换+失败告警兜底。落点分析：倾向 DevDesk agent 层（cron/bash.run/通知全现成），待老板拍板跨软件配置写入授权；卡点=condition（授权口径+排产点名）",
    "created_by": "待分派",
    "updated_by": "待分派",
    "deleted": 0,
-   "stage": ""
+   "stage": "已验收"
   },
   {
    "id": 98,
@@ -1654,17 +1654,17 @@
    "pool": "need",
    "title": "像素办公室 demo（Claude-Office 换皮）",
    "priority": "P2",
-   "status": "挂起",
+   "status": "关闭",
    "blocker": "遗留待用户裁决",
    "owner": "待分派",
    "detail": "[pool_items 需-26 遗留迁移入池（2026-11 修复迁移）] 来源=需求分析群 10-29 讨论 + Day-1 汇报追溯缺口补录。现状：手搓 demo 被老板判「小孩子涂鸦」，已调研到开源 W17ant/Claude-Office（300 星，等距像素+hooks+WebSocket），两道门（静态页+status.json 桥）验证中；自带 Dunder Mifflin 换肤机制。方案卡 A（像素+看板娘二期）/ B（只上像素）已报老板待拍板；需-14~16 编号顺延不冲突。",
    "created": "2026-11-02 09:59:04 +0800",
-   "updated": "2026-11-02 09:59:04 +0800",
+   "updated": "2026-11-02 13:53:45 +0800",
    "body": "[pool_items 需-26 遗留迁移入池（2026-11 修复迁移）] 来源=需求分析群 10-29 讨论 + Day-1 汇报追溯缺口补录。现状：手搓 demo 被老板判「小孩子涂鸦」，已调研到开源 W17ant/Claude-Office（300 星，等距像素+hooks+WebSocket），两道门（静态页+status.json 桥）验证中；自带 Dunder Mifflin 换肤机制。方案卡 A（像素+看板娘二期）/ B（只上像素）已报老板待拍板；需-14~16 编号顺延不冲突。",
    "created_by": "待分派",
    "updated_by": "待分派",
    "deleted": 0,
-   "stage": ""
+   "stage": "已验收"
   },
   {
    "id": 100,
@@ -3083,6 +3083,15 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 147,
+   "need_id": 64,
+   "time": "2026-11-02 13:25:06 +0800",
+   "note": "解挂恢复：暂停理由「优先插件优化」已完成（审计 75-104 全关，0.35.1 已装）；老板 2026-11-02「继续推进」。恢复路径=续 qa 定向验收（Mac 侧）→ 收口。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -3716,6 +3725,24 @@
    "need_id": 105,
    "time": "2026-11-02 13:12:43 +0800",
    "evidence": "同待验收 evidence。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 69,
+   "need_id": 97,
+   "time": "2026-11-02 13:53:18 +0800",
+   "evidence": "老板 2026-11-02 令直接关闭：backlog 撤销——未执行、无交付物（pool_items 需-16 遗留迁移条目，原文保留于 detail 与 pool_items，无信息丢失）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 70,
+   "need_id": 99,
+   "time": "2026-11-02 13:53:45 +0800",
+   "evidence": "老板 2026-11-02 令直接关闭：backlog 撤销——未执行、无交付物（pool_items 需-26「像素办公室 demo」遗留迁移条目，原文保留于 detail 与 pool_items，无信息丢失）。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -8544,6 +8571,149 @@
    "id": 439,
    "need_id": 105,
    "time": "2026-11-02 13:12:43 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 440,
+   "need_id": 64,
+   "time": "2026-11-02 13:25:06 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "解挂恢复：暂停理由「优先插件优化」已完成（审计 75-104 全关，0.35.1 已装）；老板 2026-11-02「继续推进」。恢复路径=续 qa 定向验收（Mac 侧）→ 收口。",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 441,
+   "need_id": 64,
+   "time": "2026-11-02 13:25:12 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 442,
+   "need_id": 64,
+   "time": "2026-11-02 13:25:18 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 443,
+   "need_id": 97,
+   "time": "2026-11-02 13:52:48 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 444,
+   "need_id": 97,
+   "time": "2026-11-02 13:52:58 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 445,
+   "need_id": 97,
+   "time": "2026-11-02 13:53:08 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 446,
+   "need_id": 97,
+   "time": "2026-11-02 13:53:14 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 447,
+   "need_id": 97,
+   "time": "2026-11-02 13:53:18 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 448,
+   "need_id": 99,
+   "time": "2026-11-02 13:53:24 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 449,
+   "need_id": 99,
+   "time": "2026-11-02 13:53:31 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 450,
+   "need_id": 99,
+   "time": "2026-11-02 13:53:39 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 451,
+   "need_id": 99,
+   "time": "2026-11-02 13:53:41 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 452,
+   "need_id": 99,
+   "time": "2026-11-02 13:53:45 +0800",
    "from_status": "待验收",
    "to_status": "关闭",
    "reason": "",
