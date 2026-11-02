@@ -1603,17 +1603,17 @@
    "pool": "need",
    "title": "审计 P2 清理批（6 报告合计 76 条，按 hooks/MCP/skills/数据 四域分组执行）",
    "priority": "P2",
-   "status": "在池",
+   "status": "进行中",
    "blocker": null,
-   "owner": "ZCode主会话",
+   "owner": "developer",
    "detail": "来源六份审计报告 P2 段（evidence/2026-11-02-devflow-audit/01-06，各报告 P2 段为唯一明细源，本条不复制全文；合计 76 条，去重后按文件域分组）。要点分组：hooks/gates——gate-test 两分支未覆盖、池标记空 id 放行、E4 重复锚、stopHookActive 死字段、maxRetries 8 vs 宿主上限 3、panel.html 走 ui:// 却无 ui.surfaces；MCP——快照非原子写、每写 O(全池) 重写快照、schema 无 enum/annotations、软删读口径不一致、非对象 JSON 行可杀 server、只读库连读工具都挂；skills——req-analysis/tech-solution 14 行补步骤示例与完成判据、consolidate/daily-wrapup 多职责拆分、ui-ux 风格基线 25 行拆 references、pool-usage 速查 references 化、audit 并发流程补 checklist；数据——owner 空/日期倒挂/时间戳无时区（主项已在数据修复条）。执行：按域合批派发，每批一次验收；完成即在本条 note 逐域打勾并在对应报告 P2 条目标「已修/已取舍（理由）」。验收：各域 eval-run/gate-test 绿；76 条逐条有终态标注。",
    "created": "2026-11-02 02:21:31 +0800",
-   "updated": "2026-11-02 02:21:31 +0800",
+   "updated": "2026-11-02 11:32:16 +0800",
    "body": "来源六份审计报告 P2 段（evidence/2026-11-02-devflow-audit/01-06，各报告 P2 段为唯一明细源，本条不复制全文；合计 76 条，去重后按文件域分组）。要点分组：hooks/gates——gate-test 两分支未覆盖、池标记空 id 放行、E4 重复锚、stopHookActive 死字段、maxRetries 8 vs 宿主上限 3、panel.html 走 ui:// 却无 ui.surfaces；MCP——快照非原子写、每写 O(全池) 重写快照、schema 无 enum/annotations、软删读口径不一致、非对象 JSON 行可杀 server、只读库连读工具都挂；skills——req-analysis/tech-solution 14 行补步骤示例与完成判据、consolidate/daily-wrapup 多职责拆分、ui-",
-   "created_by": "ZCode主会话",
-   "updated_by": "ZCode主会话",
+   "created_by": "developer",
+   "updated_by": "developer",
    "deleted": 0,
-   "stage": ""
+   "stage": "开发中"
   },
   {
    "id": 97,
@@ -1671,34 +1671,34 @@
    "pool": "debt",
    "title": "上下文卫生批次：重复 skill 副本/自动注入 hook/死配置/无关插件清理",
    "priority": "P2",
-   "status": "挂起",
+   "status": "关闭",
    "blocker": "执行移并 need 池条目（debt 不能承载派发），本条保留债务台账视角，随批次完成一并销账",
    "owner": "ZCode主会话",
    "detail": "老板 2026-11-02 令：降低会话上下文垃圾。六个子项：①删 78 个重复 skill 副本（.agents/skills 41 + .claude/skills 37 镜像，mattpocock 译本+devflow 旧残留），已 commit 94d496ab【已完成】；②CLAUDE.md 瘦身去重（428 行 66KB，Claude Code 侧每会话全量注入 2-3 万 token；过时六类 agent 段改七角色口径、与 AGENTS.md 重复段压缩、超长行拆分）【developer 执行中】；③全局 config 关 codegraph UserPromptSubmit hook（每条用户发言自动注入 1-3KB 检索结果，实测两次全跑偏成纯噪声；检索能力经 codegraph_explore MCP 工具保留）【主会话执行】；④.claude/settings.json 删 ledger-guard.py/uat62-whip.py 两个写死 Windows 路径的 hook（Mac 每次触发必失败 fail-open）【主会话执行】；⑤禁用 typst-workbench/image-search/node-repl-host 三插件（MCP 工具列表噪音；image-search 老板确认不可用），zcode CLI 已执行【已完成】；⑥全局 ~/.agents/skills/ 38 个已禁用目录 + config skills 段 38 条死配置清理（mattpocock 译本第三处藏身，全部 enable:false）【主会话执行】。验收：全局 config 无 hooks.UserPromptSubmit、无 skills 段；.claude/settings.json 无 C:/ D:/ 路径；CLAUDE.md 无 devdesk-builder 等死名词且体积减半量级；git 差异只含本批文件。",
    "created": "2026-11-02 10:43:25 +0800",
-   "updated": "2026-11-02 10:44:19 +0800",
+   "updated": "2026-11-02 11:33:03 +0800",
    "body": "老板 2026-11-02 令：降低会话上下文垃圾。六个子项：①删 78 个重复 skill 副本（.agents/skills 41 + .claude/skills 37 镜像，mattpocock 译本+devflow 旧残留），已 commit 94d496ab【已完成】；②CLAUDE.md 瘦身去重（428 行 66KB，Claude Code 侧每会话全量注入 2-3 万 token；过时六类 agent 段改七角色口径、与 AGENTS.md 重复段压缩、超长行拆分）【developer 执行中】；③全局 config 关 codegraph UserPromptSubmit hook（每条用户发言自动注入 1-3KB 检索结果，实测两次全跑偏成纯噪声；检索能力经 codegraph_explore MCP 工具保留）【主会话执行】；④.claude/settings.js",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0,
-   "stage": ""
+   "stage": "已验收"
   },
   {
    "id": 101,
    "pool": "need",
    "title": "上下文卫生批次（执行条目）：skill 副本/注入 hook/死配置/插件清理+CLAUDE.md 瘦身",
    "priority": "P2",
-   "status": "待验收",
+   "status": "关闭",
    "blocker": null,
    "owner": "developer",
    "detail": "debt:100 的执行条目（老板 2026-11-02 令降低上下文垃圾，debt 池不能承载派发故移此）。子项：①删 78 个重复 skill 副本，已 commit 94d496ab【已完成】；②CLAUDE.md 瘦身去重（428 行 66KB→≤35KB，过时六类 agent 段改七角色、重复段压缩、超长行拆分）【developer 派发执行】；③全局 config 删 hooks 段（codegraph 每条发言注入 1-3KB 跑偏检索）【已执行，备份 /tmp/zcode-config-backup-20261102.json】；④.claude/settings.json 删 ledger-guard.py/uat62-whip.py 两个 Windows 死路径 hook【待执行】；⑤禁用 typst-workbench/image-search/node-repl-host 插件【已执行】；⑥全局 ~/.agents/skills 38 个禁用目录+config skills 段死配置清理【已执行】。验收：全局 config 无 hooks/skills 段；.claude/settings.json 无 C:/ D:/ 路径；CLAUDE.md 无 devdesk-builder 等死名词且 ≤35KB；git 差异只含本批文件。",
    "created": "2026-11-02 10:44:19 +0800",
-   "updated": "2026-11-02 11:28:27 +0800",
+   "updated": "2026-11-02 11:31:50 +0800",
    "body": "debt:100 的执行条目（老板 2026-11-02 令降低上下文垃圾，debt 池不能承载派发故移此）。子项：①删 78 个重复 skill 副本，已 commit 94d496ab【已完成】；②CLAUDE.md 瘦身去重（428 行 66KB→≤35KB，过时六类 agent 段改七角色、重复段压缩、超长行拆分）【developer 派发执行】；③全局 config 删 hooks 段（codegraph 每条发言注入 1-3KB 跑偏检索）【已执行，备份 /tmp/zcode-config-backup-20261102.json】；④.claude/settings.json 删 ledger-guard.py/uat62-whip.py 两个 Windows 死路径 hook【待执行】；⑤禁用 typst-workbench/image-search/node-repl-h",
    "created_by": "developer",
    "updated_by": "developer",
    "deleted": 0,
-   "stage": "测试中"
+   "stage": "已验收"
   }
  ],
  "dev_progress": [
@@ -3540,6 +3540,24 @@
    "need_id": 93,
    "time": "2026-11-02 11:31:16 +0800",
    "evidence": "同待验收 evidence（五项完成+主会话复验+复用并行会话 94d496ab 避免重复删除）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 62,
+   "need_id": 101,
+   "time": "2026-11-02 11:31:50 +0800",
+   "evidence": "②CLAUDE.md 瘦身：428 行/66028B→239 行/34437B（-48%），死名词（devdesk-builder 等六类+/.zcode/agents）grep 零命中，七角色口径替换完成——主会话独立复验通过（developer 台账含逐处删改清单与 5 项待裁决保留项）。①78 个重复 skill 副本删除=commit 94d496ab。③全局 config 删 hooks 段（codegraph 每条发言注入关闭，新会话生效；备份 /tmp/zcode-config-backup-20261102.json）。⑤typst-workbench/image-search/node-repl-host 三插件禁用（zcode CLI 落 setting.json）。⑥全局 ~/.agents/skills 38 目录+config skills 段 38 条死配置清理（同备份）。④老板 2026-11-02 裁决不做（ZCode 不加载仓库 .claude/settings.json）。注：CLAUDE.md 最终态含并行会话同日的视觉规范绿系拍板改写（need 93-e 范畴），与瘦身交织不可分、门禁以最终态通过，收口 commit 已注明。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 63,
+   "need_id": 100,
+   "time": "2026-11-02 11:33:03 +0800",
+   "evidence": "执行承载于 need:101（已关闭带全量 evidence）：六子项①③⑤⑥完成+②CLAUDE.md 瘦身验收+④老板裁决不做。本条债务台账视角同步销账；与 need:93 重叠的 a/b/c 执行事实已回写 93，残余裁决项（devdesk-discipline 去留、93-d/e）仍归 need:93。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -7977,6 +7995,94 @@
    "reason": "",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 404,
+   "need_id": 96,
+   "time": "2026-11-02 11:31:38 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 405,
+   "need_id": 96,
+   "time": "2026-11-02 11:31:38 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 406,
+   "need_id": 101,
+   "time": "2026-11-02 11:31:50 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 407,
+   "need_id": 100,
+   "time": "2026-11-02 11:32:17 +0800",
+   "from_status": "挂起",
+   "to_status": "在池",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 408,
+   "need_id": 100,
+   "time": "2026-11-02 11:32:26 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 409,
+   "need_id": 100,
+   "time": "2026-11-02 11:32:37 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 410,
+   "need_id": 100,
+   "time": "2026-11-02 11:32:58 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 411,
+   "need_id": 100,
+   "time": "2026-11-02 11:33:03 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "",
+   "updated_by": "",
    "deleted": 0
   }
  ],
