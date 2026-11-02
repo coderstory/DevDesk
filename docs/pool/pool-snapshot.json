@@ -1603,17 +1603,17 @@
    "pool": "need",
    "title": "审计 P2 清理批（6 报告合计 76 条，按 hooks/MCP/skills/数据 四域分组执行）",
    "priority": "P2",
-   "status": "进行中",
+   "status": "关闭",
    "blocker": null,
    "owner": "developer",
    "detail": "来源六份审计报告 P2 段（evidence/2026-11-02-devflow-audit/01-06，各报告 P2 段为唯一明细源，本条不复制全文；合计 76 条，去重后按文件域分组）。要点分组：hooks/gates——gate-test 两分支未覆盖、池标记空 id 放行、E4 重复锚、stopHookActive 死字段、maxRetries 8 vs 宿主上限 3、panel.html 走 ui:// 却无 ui.surfaces；MCP——快照非原子写、每写 O(全池) 重写快照、schema 无 enum/annotations、软删读口径不一致、非对象 JSON 行可杀 server、只读库连读工具都挂；skills——req-analysis/tech-solution 14 行补步骤示例与完成判据、consolidate/daily-wrapup 多职责拆分、ui-ux 风格基线 25 行拆 references、pool-usage 速查 references 化、audit 并发流程补 checklist；数据——owner 空/日期倒挂/时间戳无时区（主项已在数据修复条）。执行：按域合批派发，每批一次验收；完成即在本条 note 逐域打勾并在对应报告 P2 条目标「已修/已取舍（理由）」。验收：各域 eval-run/gate-test 绿；76 条逐条有终态标注。",
    "created": "2026-11-02 02:21:31 +0800",
-   "updated": "2026-11-02 11:32:16 +0800",
+   "updated": "2026-11-02 11:56:49 +0800",
    "body": "来源六份审计报告 P2 段（evidence/2026-11-02-devflow-audit/01-06，各报告 P2 段为唯一明细源，本条不复制全文；合计 76 条，去重后按文件域分组）。要点分组：hooks/gates——gate-test 两分支未覆盖、池标记空 id 放行、E4 重复锚、stopHookActive 死字段、maxRetries 8 vs 宿主上限 3、panel.html 走 ui:// 却无 ui.surfaces；MCP——快照非原子写、每写 O(全池) 重写快照、schema 无 enum/annotations、软删读口径不一致、非对象 JSON 行可杀 server、只读库连读工具都挂；skills——req-analysis/tech-solution 14 行补步骤示例与完成判据、consolidate/daily-wrapup 多职责拆分、ui-",
    "created_by": "developer",
    "updated_by": "developer",
    "deleted": 0,
-   "stage": "开发中"
+   "stage": "已验收"
   },
   {
    "id": 97,
@@ -2970,6 +2970,15 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 142,
+   "need_id": 96,
+   "time": "2026-11-02 11:55:16 +0800",
+   "note": "P2 清理批 18 项完成：16 项修复 + 数据域 3 项（owner 空/日期倒挂/无时区）按简报记已取舍（pool_doctor notes 已覆盖、修复迁移明示不全库改写）。改动 15 文件 + 新增 agents/references/ui-style-baseline.md。四套验证全绿：gate-test rc=0（21 用例含 5 条新增）、eval-run 全部通过（E1-E11+预算，ui-ux 32 行/audit 48 行/daily-wrapup 21 行均在预算内）、py_compile rc=0、pool-mcp-acceptance F-01~F-06 全过（venv）。实操实证：chmod 444 库读工具/ro-doctor 可用且写路径仍拦、独占锁下 CLI doctor 输出结构化 FAIL、非对象 JSON 行 server 存活、快照防抖（未变跳过 mtime 不动/变了重写）、acceptance --help 缺 SDK 可达。未验证项：panel.html ui.surfaces 声明的宿主侧可见性（需 Windows/真机会话实测）；maxRetries=3 宿主行为依据官方手册未真机复测。工具调用 33 次（预算 ≤50）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -3558,6 +3567,15 @@
    "need_id": 100,
    "time": "2026-11-02 11:33:03 +0800",
    "evidence": "执行承载于 need:101（已关闭带全量 evidence）：六子项①③⑤⑥完成+②CLAUDE.md 瘦身验收+④老板裁决不做。本条债务台账视角同步销账；与 need:93 重叠的 a/b/c 执行事实已回写 93，残余裁决项（devdesk-discipline 去留、93-d/e）仍归 need:93。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 64,
+   "need_id": 96,
+   "time": "2026-11-02 11:56:49 +0800",
+   "evidence": "同待验收 evidence；P2 全清（六报告 P2 76 条去重后全部终态：修复/已取舍）。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -8083,6 +8101,28 @@
    "reason": "",
    "created_by": "",
    "updated_by": "",
+   "deleted": 0
+  },
+  {
+   "id": 412,
+   "need_id": 96,
+   "time": "2026-11-02 11:55:16 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "P2 清理批 18 项完成：16 项修复 + 数据域 3 项（owner 空/日期倒挂/无时区）按简报记已取舍（pool_doctor notes 已覆盖、修复迁移明示不全库改写）。改动 15 文件 + 新增 agents/references/ui-style-baseline.md。四套验证全绿：gate-test rc=0（21 用例含 5 条新增）、eval-run 全部通过（E1-E11+预算，ui-ux 32 行/audit 48 行/daily-wrapup 21 行均在预算内）、py_compile rc=0、pool-mcp-acceptance F-01~F-06 全过（venv）。实操实证：chmod 444 库读工具/ro-doctor 可用且写路径仍拦、独占锁下 CLI doctor 输出结构化 FAIL、非对象 JSON 行 server 存活、快照防抖（未变跳过 mtime 不动/变了重写）、acceptance --help 缺 SDK 可达。未验证项：panel.html ui.surfaces 声明的宿主侧可见性（需 Windows/真机会话实测）；maxRetries=3 宿主行为依据官方手册未真机复测。工具调用 33 次（预算 ≤50）。",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0
+  },
+  {
+   "id": 413,
+   "need_id": 96,
+   "time": "2026-11-02 11:56:49 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
    "deleted": 0
   }
  ],
