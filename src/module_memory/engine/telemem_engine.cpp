@@ -34,6 +34,19 @@ constexpr long kHealthTimeoutMs = 1500;
 // pip 安装超时：telemem 依赖链 faiss+numpy+mem0ai，慢网按十分钟上限
 constexpr long kPipTimeoutMs = 600000;
 
+// IMP-114-4：Python 探测失败文案（常量收拢一处；安装指引一句覆盖双平台——
+// 纯只读文本无行为分叉，不拆 _posix/_win 文件）
+constexpr const char* kPythonMissingMessage =
+    "未找到 Python 3.10~3.12：请安装后点「启动引擎」重试"
+    "（3.13 及以上版本暂不支持）。"
+    "macOS 可执行 brew install python@3.12 或 uv python install 3.12；"
+    "Windows 可用 python.org 官网安装器或 uv python install 3.12。";
+
+// IMP-114-3：pip 失败文案固定尾缀（网络与镜像源指路；镜像经 PIP_INDEX_URL /
+// PIP_EXTRA_INDEX_URL 环境变量配置，安装命令已透传）
+constexpr const char* kPipFailureHint =
+    "请检查网络；可在环境变量 PIP_INDEX_URL 配置镜像源后重试";
+
 std::filesystem::path venvDir() { return memoryDataDir() / "venv"; }
 std::filesystem::path configFilePath() {
     return memoryDataDir() / "telemem-config.yaml";
@@ -179,9 +192,7 @@ void TelememEngine::runPipeline() {
             snap_.pythonFound = false;
             snap_.pythonVersion.clear();
         }  // 出锁再 setState：非递归锁，持锁重入必死锁
-        setState(State::Failed,
-                 "未找到 Python 3.10~3.12：请安装后点「启动引擎」重试"
-                 "（3.13 及以上版本暂不支持）");
+        setState(State::Failed, kPythonMissingMessage);
         return;
     }
     {
@@ -213,7 +224,8 @@ void TelememEngine::runPipeline() {
         const int rc = runInstallStep(buildPipInstallArgs(venv), kPipTimeoutMs);
         if (rc != 0) {
             setState(State::Failed, "pip 安装 telemem 失败（退出码 " +
-                                        std::to_string(rc) + "），可重试");
+                                        std::to_string(rc) + "）：" +
+                                        kPipFailureHint + "，可重试");
             return;
         }
     }

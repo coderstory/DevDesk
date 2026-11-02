@@ -16,12 +16,33 @@ std::vector<std::string> buildVenvArgs(const std::string& pythonExe,
     return {pythonExe, "-m", "venv", venvDir.string()};
 }
 
-std::vector<std::string> buildPipInstallArgs(const fs::path& venvDir) {
+std::vector<std::string> buildPipInstallArgs(
+    const fs::path& venvDir, const char* pipIndexUrl,
+    const char* pipExtraIndexUrl) {
+    // IMP-114-3：钉 telemem==1.10.1（venv 实测可用版本，钉死防上游破坏性更新）。
+    // anthropic 不钉：无实测版本约束，钉错会与 telemem 元数据依赖冲突（最小意外）。
     // telemem 元数据不含 anthropic（extras 只有 all/mcp/video，且都不带）——
     // llm.provider=anthropic 在 mem0 侧 import anthropic，缺包则 add 首跑即
     // ImportError（live 实测）。与 telemem 一并显式安装。
-    return {venvPythonExe(venvDir).string(), "-m", "pip", "install",
-            "--disable-pip-version-check", "telemem", "anthropic"};
+    std::vector<std::string> args = {venvPythonExe(venvDir).string(), "-m",
+                                     "pip", "install",
+                                     "--disable-pip-version-check",
+                                     "telemem==1.10.1", "anthropic"};
+    // 镜像透传：环境变量 → pip 同义旗标（PIP_INDEX_URL 官方等价 --index-url）
+    if (pipIndexUrl != nullptr && *pipIndexUrl != '\0') {
+        args.push_back("--index-url");
+        args.push_back(pipIndexUrl);
+    }
+    if (pipExtraIndexUrl != nullptr && *pipExtraIndexUrl != '\0') {
+        args.push_back("--extra-index-url");
+        args.push_back(pipExtraIndexUrl);
+    }
+    return args;
+}
+
+std::vector<std::string> buildPipInstallArgs(const fs::path& venvDir) {
+    return buildPipInstallArgs(venvDir, std::getenv("PIP_INDEX_URL"),
+                               std::getenv("PIP_EXTRA_INDEX_URL"));
 }
 
 std::vector<std::string> buildTelememServerArgs(const fs::path& venvDir,

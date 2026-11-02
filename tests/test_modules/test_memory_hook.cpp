@@ -241,6 +241,30 @@ REGISTER_TEST(memory_hook_parser_live_envelope,
     return true;
 })
 
+// BUG-114-1 回归钉：撤销链回填文本比对两侧 trim。实证（2026-11-03 mac e2e）：
+// 采集合段文本尾带 '\n'（session_reader extractMessageText 每块固定补换行），
+// telemem 存储剥尾空白 → 库内 275 字 vs 入参 274 字，精确比对永失配 →
+// target_ids 恒空 → createUndoCard 拒绝（撤销链断）。
+REGISTER_TEST(memory_undo_text_match_trim,
+              "memory: 撤销链回填比对——尾换行采集文本 vs 引擎剥尾存储（两侧 trim）", {
+    using module::memory::gateway::memoryTextMatches;
+    // 尾换行差异（缺陷原形）：库内无尾换行 vs 采集带尾换行
+    DOCTEST_CHECK(memoryTextMatches("改完代码后用 memory_e2e_probe 验证", "改完代码后用 memory_e2e_probe 验证\n"));
+    // 反向：库内带尾空白 vs 采集无
+    DOCTEST_CHECK(memoryTextMatches("abc\n", "abc"));
+    // 双侧都有空白 + 混合空白类型
+    DOCTEST_CHECK(memoryTextMatches("  abc  ", "\tabc\r\n"));
+    // trim 不是模糊匹配：实质差异仍失配
+    DOCTEST_CHECK_FALSE(memoryTextMatches("abc", "abd"));
+    DOCTEST_CHECK_FALSE(memoryTextMatches("abc", "abc def"));
+    DOCTEST_CHECK_FALSE(memoryTextMatches("abc", "abc\n尾差"));
+    DOCTEST_CHECK_FALSE(memoryTextMatches("abc", "xabc"));
+    // 空串对空串成立；空对非空失配
+    DOCTEST_CHECK(memoryTextMatches("", ""));
+    DOCTEST_CHECK_FALSE(memoryTextMatches("", "x"));
+    return true;
+})
+
 REGISTER_TEST(memory_gateway_list_parse_and_iso_epoch,
               "memory: 清单缝解析（池31）——get_memories results 逐条化（缺 id/正文跳过、updated_at→epoch）；ISO→epoch 纯函数", {
     // POC 定案形态：content[0].text = {"results":[{id,memory,…,updated_at}]}

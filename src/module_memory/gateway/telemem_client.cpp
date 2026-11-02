@@ -2,6 +2,7 @@
 #include "telemem_client.h"
 #include <utility>
 
+#include <cctype>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -38,6 +39,24 @@ std::string lowered(std::string s) {
     }
     return s;
 }
+
+std::string trimWhitespace(const std::string& s) {
+    size_t b = 0;
+    size_t e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+}
+
+// BUG-114-2：注入相似度下限。telemem search_memories 原生 threshold 参数
+//（Optional[float] ∈ [0,1] 相似度下限，缺省 None = 不过滤）。取值 0.4 出处
+//（2026-11-03 mac e2e 校准）：0.5 时探针弱相似短语查询「增量构建」「8421」
+// 被过杀（top-5 全部 score<0.5 → S4/S7 掉档），0.3 负对照不拦（POC 实测
+// 338 字注入）；0.4 下探针全绿 + 负对照拦截（证据 run3）。校准硬门：e2e 探针
+// S6 冻结 15 查询 Recall@5 ≥85%，掉档按同法下调重校。
+// hook 注入与 recall_eval 评测共用本 search 缝，阈值口径有意一致（评测即实测
+// 注入行为）；若未来评测需独立参数，在此写明分歧理由后再拆。
+constexpr double kSearchSimilarityThreshold = 0.4;
 
 // 大小写不敏感取响应头（curl 原样保留服务器大小写；telemem/uvicorn 回小写）
 std::string headerValue(const platform::http::Response& resp,
@@ -433,6 +452,8 @@ core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
     platform::json::JsonObject args;
     args.set("query", platform::json::makeString(query));
     args.set("limit", platform::json::makeInt(limit));
+    args.set("threshold",
+             platform::json::makeDouble(kSearchSimilarityThreshold));
     const auto resp = callTool("search_memories", std::move(args), timeoutMs);
     if (resp.isFail()) {
         return core::Result<std::vector<MemoryHit>>::fail(resp.errorCode(),
@@ -441,8 +462,8 @@ core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
     return parseSearchResponse(resp.value());
 }
 
-// get_memories 清单（解析共用 parseListResponse，池31 提出）；正文精确匹配取
-// 引擎侧条目 id（撤销链回填用）。
+// get_memories 清单（解析共用 parseListResponse，池31 提出）；正文匹配取引擎侧
+// 条目 id（撤销链回填用）。
 core::Result<std::string> findMemoryIdByText(const std::string& text) {
     platform::json::JsonObject args;
     args.set("limit", platform::json::makeInt(200));
@@ -457,11 +478,19 @@ core::Result<std::string> findMemoryIdByText(const std::string& text) {
                                                items.errorMessage());
     }
     for (const MemoryListItem& item : items.value()) {
-        if (item.text == text) {
+        if (memoryTextMatches(item.text, text)) {
             return core::Result<std::string>::ok(item.id);
         }
     }
     return core::Result<std::string>::ok(std::string());
+}
+
+// BUG-114-1：撤销链回填文本比对——两侧 trim 后再比。实证（2026-11-03 mac e2e，
+// 字符级）：采集合段文本尾带 '\n'（session_reader extractMessageText 每块固定
+// 补换行），telemem 存储侧剥尾空白入库 → 库内 275 字 vs 入参 274 字，精确比对
+// 永差 1 尾字符 → target_ids 恒空 → proposal_store createUndoCard 拒绝。
+bool memoryTextMatches(const std::string& stored, const std::string& collected) {
+    return trimWhitespace(stored) == trimWhitespace(collected);
 }
 
 core::Result<std::string> TelememHttpRetriever::addDirect(

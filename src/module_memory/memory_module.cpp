@@ -386,19 +386,29 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
                             : (below ? t.colors.warning : t.colors.success))
             .build();
         const bool running = panel_.evalRunning();
+        // IMP-114-5：伪可用修复——引擎非 Running（或评测已在跑）即置灰禁点，
+        // 不再靠点击后报错兜底。禁用态沿用既有件：Secondary 底色不动、文字
+        // 覆盖 textDisabled（与引擎状态点同源令牌）、不挂 onClick。
+        const bool clickable = !running && snap.engine.state ==
+                                                   TelememEngine::State::Running;
+        ui_kit::ButtonOptions runOpts;
+        if (clickable) {
+            runOpts.onClick = [this] {
+                auto r = panel_.startEvalAsync();
+                if (r.isFail()) {
+                    showToast("评测未启动", r.errorMessage(), true);
+                } else {
+                    showToast("评测已启动",
+                              "冻结 15 查询转测引擎检索（本机 embedding，零 API 费）");
+                }
+            };
+        } else {
+            runOpts.hasTextColorOverride = true;
+            runOpts.textColorOverride = t.colors.textDisabled;
+        }
         ui_kit::button(ui, "memory.health.h1.run", running ? "评测中…" : "跑评测",
                        ui_kit::ButtonLevel::Secondary, barX, y + core::theme::scaled(142.0f), 96.0f,
-                       30.0f, t,
-                       {[this, running] {
-                           if (running) return;
-                           auto r = panel_.startEvalAsync();
-                           if (r.isFail()) {
-                               showToast("评测未启动", r.errorMessage(), true);
-                           } else {
-                               showToast("评测已启动",
-                                         "冻结 15 查询转测引擎检索（本机 embedding，零 API 费）");
-                           }
-                       }});
+                       30.0f, t, runOpts);
         // F5：评测失败与清理缺口必须有 UI 出口（不再只进日志）
         note("memory.health.h1.note", cx, core::theme::scaled(180.0f),
              !snap.lastEvalError.empty()

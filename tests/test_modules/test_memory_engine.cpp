@@ -193,11 +193,11 @@ REGISTER_TEST(memory_process_args_construction,
     DOCTEST_CHECK(venvArgs[0] == "C:/Python312/python.exe");
     DOCTEST_CHECK(venvArgs[1] == "-m");
     DOCTEST_CHECK(venvArgs[2] == "venv");
-    // pip 首跑安装
+    // pip 首跑安装（IMP-114-3：钉版）
     const auto pipArgs = buildPipInstallArgs(venv);
     DOCTEST_CHECK(contains(pipArgs, "-m"));
     DOCTEST_CHECK(contains(pipArgs, "pip"));
-    DOCTEST_CHECK(contains(pipArgs, "telemem"));
+    DOCTEST_CHECK(contains(pipArgs, "telemem==1.10.1"));
     // telemem 元数据不带 anthropic（live 实测 ImportError），必须显式同装
     DOCTEST_CHECK(contains(pipArgs, "anthropic"));
     // 服务拉起：只绑回环
@@ -245,6 +245,30 @@ REGISTER_TEST(memory_process_env_key_channel,
         }
     }
     DOCTEST_CHECK(hasNoProxy);
+    return true;
+})
+
+// IMP-114-3：镜像源透传（纯函数版，不做 getenv；旗标 = PIP_INDEX_URL 官方同义通道）
+REGISTER_TEST(memory_pip_mirror_flags,
+              "memory: pip 参数——钉版 telemem==1.10.1；PIP_INDEX_URL/PIP_EXTRA_INDEX_URL 透传为旗标", {
+    const std::filesystem::path venv = "/memdata/venv";
+    // 无镜像：不加旗标
+    const auto plain = buildPipInstallArgs(venv, nullptr, nullptr);
+    DOCTEST_CHECK(contains(plain, "telemem==1.10.1"));
+    DOCTEST_CHECK(contains(plain, "anthropic"));
+    DOCTEST_CHECK(!contains(plain, "--index-url"));
+    DOCTEST_CHECK(!contains(plain, "--extra-index-url"));
+    // 有镜像：等价透传
+    const auto mirrored = buildPipInstallArgs(venv, "https://mirrors.example/simple",
+                                              "https://extra.example/simple");
+    DOCTEST_CHECK(contains(mirrored, "--index-url"));
+    DOCTEST_CHECK(contains(mirrored, "https://mirrors.example/simple"));
+    DOCTEST_CHECK(contains(mirrored, "--extra-index-url"));
+    DOCTEST_CHECK(contains(mirrored, "https://extra.example/simple"));
+    // 空串 = 未设置：不加旗标
+    const auto emptyVal = buildPipInstallArgs(venv, "", "");
+    DOCTEST_CHECK(!contains(emptyVal, "--index-url"));
+    DOCTEST_CHECK(!contains(emptyVal, "--extra-index-url"));
     return true;
 })
 

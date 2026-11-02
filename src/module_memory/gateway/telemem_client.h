@@ -125,4 +125,10 @@ inline platform::json::JsonObject buildAddMemoryArgs(const std::string& text,
     return args;
 }
 
+// 撤销链回填文本比对（纯函数，单测钉住；BUG-114-1）：get_memories 回读正文
+//（引擎存储剥尾空白）与采集原文（session_reader 每块补尾换行）在两侧 trim 后
+// 比对——精确比对恒差 1 尾字符 → target_ids 恒空 → createUndoCard 拒绝。
+// trim 只容忍首尾空白差异：实质内容差异仍失配（不是模糊匹配）。
+bool memoryTextMatches(const std::string& stored, const std::string& collected);
+
 }  // namespace module::memory::gateway
