@@ -19,6 +19,7 @@
 #include "module_agent/agent_builtin_tools.h"
 #include "module_agent/app_stats_tool.h"
 #include "platform/http_client.h"
+#include "platform/exec_capture.h"
 #include "platform/json.h"
 #include "platform/process_runner.h"
 
@@ -1021,6 +1022,11 @@ REGISTER_TEST(builtin_bash_run_echo,
 
 REGISTER_TEST(builtin_git_smoke,
               "git.*: status smoke + commit isDestructive + bad-repo error", {
+    // runner 环境守卫（2026-11-03 CI 首跑 0ms 红）：spawn「git」解析失败即环境
+    // 缺口而非工具语义回归——git 不在 PATH 时跳过，语义由本机档把守
+    if (!platform::executableOnPath("git")) {
+        DOCTEST_SKIP("runner PATH 无 git 可执行——工具语义回归由本机档把守");
+    }
     module::agent::registerAgentBuiltinTools();
     ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
                     "bash.run", "git.clone", "git.status", "git.log", "git.diff",
@@ -1089,6 +1095,42 @@ REGISTER_TEST(builtin_schema_json_validity,
     return true;
 })
 
+// process_runner 128KB 载荷的跨平台装配（2026-11-03 CI 实证：runner 无 /bin/sh，
+// Windows 侧 CreateProcessW 解析不了 POSIX 路径）——POSIX 用 dd 现产零字节；
+// Windows 用 cmd type 输出临时文件（子进程 stdout 同样超 64KB 管道上限，死锁
+// 场景等价）。平台分支收在文件作用域 helper：REGISTER_TEST 宏参内嵌 #if 指令
+// 是未定义行为（-Werror=-Wembedded-directive 拦）。
+struct PrPayload {
+    std::vector<std::string> argv;
+    std::size_t tailBytes = 0;
+    std::filesystem::path file;  // Windows 分支的临时文件，析构即删
+    ~PrPayload() {
+        if (!file.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(file, ec);
+        }
+    }
+};
+
+inline PrPayload makePrPayload() {
+    PrPayload p;
+#if defined(_WIN32)
+    p.file = std::filesystem::temp_directory_path() / "devdesk_test_pr_128k.bin";
+    {
+        std::ofstream f(p.file, std::ios::binary);
+        const std::string block(1024, 'x');
+        for (int i = 0; i < 128; ++i) f.write(block.data(), block.size());
+    }
+    p.argv = {"cmd", "/c", "type \"" + p.file.string() + "\" & echo TAIL_OK"};
+    p.tailBytes = 10;  // "TAIL_OK\r\n"（cmd echo 带 CRLF）
+#else
+    p.argv = {"/bin/sh", "-c",
+              "dd if=/dev/zero bs=1024 count=128 2>/dev/null; echo TAIL_OK"};
+    p.tailBytes = 8;  // "TAIL_OK\n"
+#endif
+    return p;
+}
+
 REGISTER_TEST(process_runner_large_stdout_no_deadlock,
               "process_runner: 子进程输出超管道缓冲(128KB) → 全量收回、不误杀不截断", {
     // 场景：agent bash.run 跑编译/扫描类命令，输出一超 64KB 管道上限，
@@ -1096,17 +1138,16 @@ REGISTER_TEST(process_runner_large_stdout_no_deadlock,
     // 防的具体事故：设了超时 → 子进程被误杀 + 输出截断；不设 → 永久挂死。
     DOCTEST_REQUIRE(platform::processRunnerSupported());
     auto runner = platform::systemProcessRunner();
-    // 128KB 零字节 + 尾标记；2>/dev/null 隔离 dd 的进度 stderr
-    auto r = runner({"/bin/sh", "-c",
-                     "dd if=/dev/zero bs=1024 count=128 2>/dev/null; echo TAIL_OK"},
-                    "", "", 20000);
+    const PrPayload payload = makePrPayload();
+    auto r = runner(payload.argv, "", "", 20000);
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_MESSAGE(!r.value().timedOut,
                           "大输出不应触发超时误杀（timedOut=true 即死锁病复发）");
     DOCTEST_CHECK_EQ(r.value().exitCode, 0);
-    // 全量收回：128*1024 零字节 + "TAIL_OK\n"（8 字节），缺一个字节都算截断
+    // 全量收回：128*1024 载荷 + 尾标记，缺一个字节都算截断
     DOCTEST_CHECK_EQ(r.value().stdoutText.size(),
-                     static_cast<size_t>(128 * 1024 + 8));
-    DOCTEST_CHECK(r.value().stdoutText.substr(128 * 1024) == "TAIL_OK\n");
+                     static_cast<size_t>(128 * 1024 + payload.tailBytes));
+    DOCTEST_CHECK(r.value().stdoutText.substr(128 * 1024).rfind("TAIL_OK", 0) ==
+                  0);
     return true;
 })

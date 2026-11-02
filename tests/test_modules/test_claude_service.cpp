@@ -524,6 +524,18 @@ struct ScopedFailUnprotect {
     ScopedFailUnprotect& operator=(const ScopedFailUnprotect&) = delete;
 };
 
+// Windows 凭据后端（Credential Manager/DPAPI）不经 platform::credential::
+// unprotect 缝（keychain_win.cpp 零引用，2026-11-03 CI 首跑实证）——依赖
+// ScopedFailUnprotect 的「解不开」分支在 Windows 上无法注入。文件作用域
+// 运行时守卫：REGISTER_TEST 宏参内嵌 #if 指令是未定义行为（-Werror 拦）。
+inline bool credentialSeamWired() {
+#if defined(_WIN32)
+    return false;
+#else
+    return true;
+#endif
+}
+
 } // namespace
 
 // 段一（凭据三列）失败 → 旧值完好（写入前就失败，不留半截）
@@ -1609,6 +1621,10 @@ REGISTER_TEST(claude_dup_missing_key_fails,
 //   读失败（非 NotFound，如 Windows DPAPI 解不开）→ 原样透传（读不了 ≠ 没有）
 REGISTER_TEST(claude_dup_missing_key_two_states,
               "claude_service: 复制失败两态（列空 / 解不开）+ 恢复提示", {
+    if (!credentialSeamWired()) {
+        // Windows 凭据后端不经 unprotect 缝，注入不生效——缝级回归 POSIX 档把守
+        DOCTEST_SKIP("Windows 凭据后端不经 unprotect 缝，解不开分支无法注入");
+    }
     test_support::TestDb tdb(kDbPrefix, "dup2state");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     const std::string hint = "编辑该 Profile 重新填一次 API Key 即可";
@@ -1934,6 +1950,10 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
 
 REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
               "claude_service: runProfile 读凭据失败 → fail 且不落盘、不开窗", {
+    if (!credentialSeamWired()) {
+        // Windows 凭据后端不经 unprotect 缝，本分支无法模拟——缝级回归 POSIX 档
+        DOCTEST_SKIP("Windows 凭据后端不经 unprotect 缝，读失败分支无法注入");
+    }
     test_support::DataRootEnv root(kDbPrefix, "runprofile2");
     test_support::TestDb tdb(kDbPrefix, "runprofile2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
