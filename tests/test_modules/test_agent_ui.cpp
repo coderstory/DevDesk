@@ -6078,13 +6078,25 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
     DOCTEST_CHECK_MESSAGE(mod.isStopRequested(created.value()),
                           "点击停止后 cancel 位未置");
     eui::Ui ui3;
-    composeTo(ui3, mod, kScreen, "agent_ui_stop_after");
-    const auto* stopBtn = ui3.find("agent.dialog.detail.stop");
-    DOCTEST_REQUIRE(stopBtn != nullptr);
-    DOCTEST_CHECK_MESSAGE(stopBtn->text.find("停止中") != std::string::npos,
-                          "点击后未切「停止中」反馈态，实测: " + stopBtn->text);
-    DOCTEST_CHECK_MESSAGE(stopBtn->text.find("当前轮结束后生效") != std::string::npos,
-                          "停止钮文案缺生效时机说明");
+    // 「停止中」反馈态：对话框组帧在 CI 负载下可能瞬态迟到（2026-11-03 R6 mac
+    // flake：点击后 124ms 断在 stopBtn null）——同口径轮询取帧
+    bool stopFeedback = false;
+    for (int i = 0; i < 200 && !stopFeedback; ++i) {
+        composeTo(ui3, mod, kScreen, "agent_ui_stop_after");
+        const auto* stopBtn = ui3.find("agent.dialog.detail.stop");
+        if (stopBtn != nullptr) {
+            stopFeedback = true;
+            DOCTEST_CHECK_MESSAGE(stopBtn->text.find("停止中") != std::string::npos,
+                                  "点击后未切「停止中」反馈态，实测: " +
+                                      stopBtn->text);
+            DOCTEST_CHECK_MESSAGE(
+                stopBtn->text.find("当前轮结束后生效") != std::string::npos,
+                "停止钮文案缺生效时机说明");
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(stopFeedback, "点击停止后反馈态 2s 未渲染");
 
     // 放行 → 当前轮跑完 → 迭代边界取消优先于超限判定 → cancelled 落库
     releaseGate.store(true, std::memory_order_release);
