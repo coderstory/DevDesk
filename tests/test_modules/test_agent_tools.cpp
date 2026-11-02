@@ -1115,13 +1115,16 @@ struct PrPayload {
 inline PrPayload makePrPayload() {
     PrPayload p;
 #if defined(_WIN32)
-    p.file = std::filesystem::temp_directory_path() / "devdesk_test_pr_128k.bin";
+    // 文件落 cwd（测试进程 = build-release/，可写）+ 相对文件名：绝对路径经
+    // ProcessRunner 的 arg 拼接进 cmd /c 后引号嵌套被吃（2026-11-03 R5 实证
+    // got=9 = type 零输出 = 文件没找到），相对名无空格无引号绕开整个引号坑
+    p.file = std::filesystem::current_path() / "devdesk_test_pr_128k.bin";
     {
         std::ofstream f(p.file, std::ios::binary);
         const std::string block(1024, 'x');
         for (int i = 0; i < 128; ++i) f.write(block.data(), block.size());
     }
-    p.argv = {"cmd", "/c", "type \"" + p.file.string() + "\" & echo TAIL_OK"};
+    p.argv = {"cmd", "/c", "type devdesk_test_pr_128k.bin & echo TAIL_OK"};
     p.tailBytes = 10;  // "TAIL_OK\r\n"（cmd echo 带 CRLF）
 #else
     p.argv = {"/bin/sh", "-c",
