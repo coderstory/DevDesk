@@ -1550,6 +1550,17 @@ std::vector<TrackRowView> collectTrackRows(const ReleaseDetailUiState& state,
     std::vector<TrackRowView> rows;
     const TicketNeeds needs = scanTicketNeeds(state);
 
+    // 113-2：锁定行提示改陈述式（锁定态输入框已不在屏上，「请先填写」读起来像
+    // 伪引导、无从做起）；首条锁定提示补「撤回发布」指引——纯文案，不新增交互。
+    bool withdrawHintPlaced = false;
+    auto lockedHint = [&withdrawHintPlaced](const char* base) {
+        std::string text = withdrawHintPlaced
+                               ? std::string(base)
+                               : std::string(base) + "（撤回发布可回到可编辑态）";
+        withdrawHintPlaced = true;
+        return text;
+    };
+
     auto pushPrereq = [&](PrereqKey key, const std::string& value, bool checked,
                           bool gateOpen) {
         TrackRowView row;
@@ -1562,9 +1573,9 @@ std::vector<TrackRowView> collectTrackRows(const ReleaseDetailUiState& state,
                                        : TrackNodeState::Locked);
         row.statusText = checked ? std::string("已完成")
                                  : (gateOpen ? std::string()
-                                             : std::string(key == PrereqKey::Announce
-                                                               ? "请先填写公告内容"
-                                                               : "请先填写单据号"));
+                                             : lockedHint(key == PrereqKey::Announce
+                                                              ? "提交前需填写公告内容"
+                                                              : "提交前需填写单据号"));
         row.confirmable = !checked && gateOpen;
         row.revocable = checked;
         row.prereqKey = key;
@@ -1668,7 +1679,7 @@ std::vector<TrackRowView> collectTrackRows(const ReleaseDetailUiState& state,
                     row.statusText = formatPlanMinute(env.startMinute) + " 解锁";
                 } else if (!configGateMissing(state.task, cfg.kind).empty()) {
                     row.node = TrackNodeState::Locked;
-                    row.statusText = "请先填写工单单号";
+                    row.statusText = lockedHint("提交前需填写工单单号");
                 } else {
                     row.node = TrackNodeState::UnlockedTodo;
                     row.confirmable = true;
@@ -1689,7 +1700,7 @@ std::vector<TrackRowView> collectTrackRows(const ReleaseDetailUiState& state,
                     row.statusText = formatPlanMinute(env.startMinute) + " 解锁";
                 } else if (!deployGateMissing(state.task, needs).empty()) {
                     row.node = TrackNodeState::Locked;
-                    row.statusText = "请先填写工单单号";
+                    row.statusText = lockedHint("提交前需填写工单单号");
                 } else {
                     row.node = TrackNodeState::UnlockedTodo;
                     row.confirmable = true;

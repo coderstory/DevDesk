@@ -43,6 +43,10 @@ bool g_sidebarCollapsed = false;
 // 登记表增行不移动既有分组身份。渲染与 toggle 共用本轮唯一状态（sidebarGroupExpanded）。
 std::set<::core::PageId> g_expandedGroups;
 
+// 113-6 自动展开去重闩：只在「当前页变化」时补展开一次；同页手动收起不被
+// 每帧强制回展。复位跟随 resetSidebarGlobals（与展开集合一并回厂）。
+::core::PageId g_autoExpandedForPage = ::core::PageId::Home;
+
 // 应用级 toast 通知：托盘失效入口点击的解释反馈。调用方写状态，compose 顶层每帧读状态绘制
 ui_kit::ToastState g_appNotice;
 
@@ -112,7 +116,8 @@ float sidebarWidth() {
 // 纯内存不触发持久化副作用
 void resetSidebarGlobals() {
     g_sidebarCollapsed = false;
-    g_expandedGroups.clear();  // 空 = 全折叠（默认态）
+    g_expandedGroups.clear();  // 空 = 全折叠（默认态）；复位语义不变
+    g_autoExpandedForPage = ::core::PageId::Home;  // 113-6 闩回厂：复位后落位子页仍会自动展开
 }
 
 bool sidebarGroupExpanded(::core::PageId parent) {
@@ -292,6 +297,21 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
 void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
+
+    // 113-6：当前页落在分组子页时父组自动展开（进程级状态，不落库）。挂在
+    // drawSidebar 顶层 = router 负载导航与侧栏点击两路径共用；点击路径本就
+    // 展开着组，此处对其是幂等 no-op。仅在页面切换帧补一次，用户随后手动
+    // 收起不被强制回展（g_autoExpandedForPage 闩）。
+    const ::core::PageId currentPageNow = router->currentPage();
+    if (currentPageNow != g_autoExpandedForPage) {
+        for (const auto& entry : ::app::registry::kModuleRegistry) {
+            if (entry.page == currentPageNow && entry.parent.has_value()) {
+                g_expandedGroups.insert(*entry.parent);
+                break;
+            }
+        }
+        g_autoExpandedForPage = currentPageNow;
+    }
 
     const auto& t = ::core::theme::current();
     // W0.5：透明语义常量（非可主题化色，W0.5 误标为待清理字面量）。

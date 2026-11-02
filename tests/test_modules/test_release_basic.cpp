@@ -227,7 +227,8 @@ REGISTER_TEST(release_sidebar_group_geometry,
 
 // 防（审计 M3/M4）：当前页在分组内时收起无效（旧实现本帧强制展开，toggle 写入
 // 却画面不动）。收起必须生效：子项隐藏、父项保留并保持「当前页在此组内」的选中态。
-// 2026-10 起默认折叠：本用例先显式展开（展开态不再默认），再验证手动收起。
+// 113-6 起导航落位组内子页自动展开（进程级闩防每帧回展）：本用例验证落位展开 →
+// 手动收起生效且不弹回 → 再展开恢复。
 REGISTER_TEST(release_sidebar_group_collapse_holds_current,
               "release: 当前页在组内时手动收起同样生效——子项消失、父项保留且保持选中态", {
     app::setCustomTitlebarMode(false);
@@ -247,24 +248,14 @@ REGISTER_TEST(release_sidebar_group_collapse_holds_current,
 
     const eui::Screen screen{1600.0f, 1000.0f};
 
-    // 默认折叠（旧契约此用例在此断言「展开态：两个子项都在」——期望反转）
-    DOCTEST_CHECK_FALSE(app::sidebarGroupExpanded(::core::PageId::ReleaseGroup));
+    // 113-6 新契约：导航落位组内子页 → 首帧自动展开（进程级，不落库）。
+    // B8 G2 断言随行：组展开时子项自己画选中条，父项不再画（否则一二级同时亮）。
     {
         eui::Ui ui;
         composeFrame(ui, screen);
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.hit") == nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseConfig.hit") == nullptr);
-    }
-
-    // 再展开（默认态之外需显式 toggle，见 release_sidebar_group_click_parent_expands）
-    app::toggleSidebarGroup(::core::PageId::ReleaseGroup);
-    DOCTEST_REQUIRE(app::sidebarGroupExpanded(::core::PageId::ReleaseGroup));
-    {
-        eui::Ui ui;
-        composeFrame(ui, screen);
+        DOCTEST_CHECK(app::sidebarGroupExpanded(::core::PageId::ReleaseGroup));
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.hit") != nullptr);
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseConfig.hit") != nullptr);
-        // B8 G2：组展开时子项自己画选中条，父项不再画（否则一二级同时亮）
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.sel.bg") == nullptr);
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.sel.bg") != nullptr);
     }
@@ -364,10 +355,10 @@ REGISTER_TEST(release_sidebar_group_click_parent_expands,
     return true;
 })
 
-// 2026-10 新契约：当前页在组内不自动展开——子项保持隐藏，选中信息只由父项的
-// SelectionBar 承载（否则手动收起会被「本帧强制展开」弹回）。
-REGISTER_TEST(release_sidebar_group_default_collapsed_holds_current,
-              "release: 默认折叠下当前页在组内 → 父项保持选中态（子项隐藏）", {
+// 113-6 新契约：导航落位组内子页 → 父组自动展开（进程级状态，不落库），二级项
+// 自己亮选中条；离开该组后组保持展开（不自动收），选中态由当前页驱动消失。
+REGISTER_TEST(release_sidebar_group_auto_expand_on_navigate,
+              "release: 导航落位组内子页 → 父组自动展开、二级项选中；离开后选中态消失", {
     app::setCustomTitlebarMode(false);
     app::resetSidebarGlobals();
     app::setFluidBackgroundEnabled(false);
@@ -385,29 +376,29 @@ REGISTER_TEST(release_sidebar_group_default_collapsed_holds_current,
 
     const eui::Screen screen{1600.0f, 1000.0f};
 
-    // 默认折叠（未做任何 toggle）：当前页在组内 → 子项隐藏、父项选中
+    // 首帧落位：组自动展开、子项可见、二级项画选中条（父项不双亮）
     {
         eui::Ui ui;
         composeFrame(ui, screen);
-        DOCTEST_CHECK_FALSE(
-            app::sidebarGroupExpanded(::core::PageId::ReleaseGroup));
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.hit") == nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseConfig.hit") == nullptr);
+        DOCTEST_CHECK(app::sidebarGroupExpanded(::core::PageId::ReleaseGroup));
+        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.hit") != nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseConfig.hit") != nullptr);
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.hit") != nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.label") != nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.sel.bg") != nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.sel.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseTasks.sel.bg") != nullptr);
         const auto* chevron = ui.find("app.sidebar.item.ReleaseGroup.chevron");
         DOCTEST_REQUIRE(chevron != nullptr);
-        DOCTEST_CHECK_EQ(chevron->text, eui::utf8(0xF078));
+        DOCTEST_CHECK_EQ(chevron->text, eui::utf8(0xF077));  // 展开 = chevron-up
     }
 
-    // 选中态由当前页驱动而非父项恒定装饰：离开该组后选中态消失
+    // 选中态由当前页驱动而非父项恒定装饰：离开该组后选中态消失（组保持展开）
     router.navigateTo(::core::PageId::Home);
     {
         eui::Ui ui;
         composeFrame(ui, screen);
         DOCTEST_CHECK(ui.find("app.sidebar.item.ReleaseGroup.sel.bg") == nullptr);
         DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.bg") != nullptr);
+        DOCTEST_CHECK(app::sidebarGroupExpanded(::core::PageId::ReleaseGroup));
     }
 
     resetSidebarTestState();

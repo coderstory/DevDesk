@@ -25,7 +25,8 @@
 //   B 基础配置页（padding / 标题字号 / 类型 chip / 后端 5 tag / 前端无配置项）
 //   C 任务列表瀑布流（首屏 10 → 触底 20、卡宽、列/纵间距、圆角）
 //   D 执行页（环境分组头、步骤行、勾选框、状态 chip）
-//   E 提醒全屏窗——**未覆盖**，原因见 main() 末尾的说明注释。
+//   E 提醒（到期聚合 → 提醒窗内容）：数据层断言（聚合 / 档位 / 跳转负载）；
+//     全屏窗真开仍不可达，见 main() 末尾的说明注释。
 #include "probes/probe_harness.h"
 
 #include "test_support.h"
@@ -38,6 +39,7 @@
 #include "module_release/release_config_ui.h"
 #include "module_release/release_detail_ui.h"
 #include "module_release/release_list_ui.h"
+#include "module_release/release_logic.h"  // E 组：dueItems / highestLevel / planDateElapsedMinutes
 #include "module_release/release_store.h"
 #include "module_release/release_types.h"
 
@@ -48,6 +50,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <thread>
 #include <functional>
 #include <iostream>
@@ -201,10 +204,27 @@ bool seedReleaseData(module::release::ReleaseStore& store,
         return added.isOk() ? created.value() : 0;
     };
 
+    std::int64_t pendingSeedId = 0;
+    std::int64_t runningSeedId = 0;
     for (int i = 1; i <= 20; ++i) {
         char planDate[16] = {};
         std::snprintf(planDate, sizeof(planDate), "2026-09-%02d", i);
-        if (addTask(planDate) == 0) return false;
+        const std::int64_t taskId = addTask(planDate);
+        if (taskId == 0) return false;
+        if (i == 20) pendingSeedId = taskId;  // 最近两个日程，见下方状态翻转
+        if (i == 19) runningSeedId = taskId;
+    }
+    // 113 批次B：两个种子转 Pending / Running——列表首屏给「进度条 + 下一步」
+    // 可见样本。任务总量保持 20，触底分页断言（20）不变。
+    {
+        auto all = store.listTasks();
+        if (all.isFail()) return false;
+        for (auto& task : all.value()) {
+            if (task.id != pendingSeedId && task.id != runningSeedId) continue;
+            task.status = task.id == pendingSeedId ? TaskStatus::Pending
+                                                   : TaskStatus::Running;
+            if (store.updateTask(task).isFail()) return false;
+        }
     }
     *detailTaskId = addTask("2026-10-27");  // 常规发布日（周二）
     return *detailTaskId != 0;
@@ -531,6 +551,25 @@ int main(int argc, char* argv[]) {
                                   "release_list_ui.cpp kListCardRadius=16（池 53 大卡特例档）");
             }
         }
+        // 113 批次B 内容层断言：列表序 = plan_date DESC，首屏前三行 = detail
+        // （10-27，Draft）/ 09-20（Pending）/ 09-19（Running）。Draft 行无进度
+        // 元素（release_list_ui.cpp drawTaskRow：Draft 不画 .prog*）；Pending /
+        // Running 行有进度条且「下一步」指引文本非空。
+        if (cards.size() >= 3) {
+            const std::string draftCard = cards[0]->id;
+            checks.expectTrue(ui->find(draftCard + ".prog.wrap") == nullptr,
+                              "Draft 行不应渲染进度元素（设计 §5.2，无 .prog.wrap）");
+            const std::string pendingCard = cards[1]->id;
+            checks.expectTrue(ui->find(pendingCard + ".prog.wrap") != nullptr,
+                              "Pending 行应渲染进度条（.prog.wrap）");
+            const auto* pendingNext = ui->find(pendingCard + ".next");
+            checks.expectTrue(pendingNext != nullptr && !pendingNext->text.empty(),
+                              "Pending 行「下一步」指引文本应非空");
+            const std::string runningCard = cards[2]->id;
+            checks.expectTrue(ui->find(runningCard + ".prog.wrap") != nullptr,
+                              "Running 行应渲染进度条（.prog.wrap）");
+        }
+
         checks.expectTrue(ui->find("release.tasks.tab.0") != nullptr,
                           "模式筛选 Tab 行应存在（全部/发布中/准备中/已归档）");
 
@@ -743,6 +782,97 @@ int main(int argc, char* argv[]) {
                     });
     }
 
+    // ================= E. 提醒（到期聚合 → 提醒窗内容，数据层断言） =================
+    // 提醒窗真开仍不可达（独立 OS 窗口 + app 主循环帧驱动，文末原注释保留）——
+    // 按可行范围补数据层契约：dueItems 聚合、一窗档位取最高优先级、「去处理」
+    // 跳转负载（taskId + scope，契约见 release_reminder.h ReleaseReminderAction）。
+    // 放在 F2 清库之前；窗口渲染与 onHandle→Router 接线仍无自动化断言。
+    {
+        using namespace module::release;
+        const auto allTasks = store.listTasks();
+        if (allTasks.isFail()) {
+            checks.fail("E 组：读取任务失败：" + allTasks.errorMessage());
+        } else {
+            const Task* detailTask = nullptr;
+            for (const auto& task : allTasks.value()) {
+                if (task.id == detailTaskId) detailTask = &task;
+            }
+            if (detailTask == nullptr) {
+                checks.fail("E 组：种子 detail 任务缺失");
+            } else {
+                const auto envsRes = store.listTaskEnvs(detailTask->id);
+                const auto stepsRes = store.listTaskStepsByTask(detailTask->id);
+                checks.expectTrue(envsRes.isOk() && stepsRes.isOk(),
+                                  "E 组：读取环境/步骤失败");
+                std::vector<TaskService> services;
+                std::vector<TaskConfig> configs;
+                if (envsRes.isOk()) {
+                    for (const auto& env : envsRes.value()) {
+                        const auto svcRes = store.listTaskServices(env.id);
+                        if (svcRes.isFail()) continue;
+                        for (const auto& svc : svcRes.value()) {
+                            const auto cfgRes = store.listTaskConfigs(svc.id);
+                            if (cfgRes.isFail()) continue;
+                            services.push_back(svc);
+                            for (const auto& cfg : cfgRes.value()) configs.push_back(cfg);
+                        }
+                    }
+                }
+                const std::vector<TaskEnv> envs =
+                    envsRes.isOk() ? envsRes.value() : std::vector<TaskEnv>{};
+                const std::vector<TaskStep> steps =
+                    stepsRes.isOk() ? stepsRes.value() : std::vector<TaskStep>{};
+                // 时间换算走 planDateElapsedMinutes 唯一口径；种子日期均已过基准
+                //（真实时钟晚于全部种子 planDate），条目存在性断言对时钟漂移稳定。
+                std::int64_t minute = 0;
+                int nowMinute = 0;
+                if (planDateElapsedMinutes(detailTask->planDate, std::time(nullptr),
+                                           minute)) {
+                    nowMinute = static_cast<int>(minute);
+                }
+                const std::vector<DueItem> items =
+                    dueItems(*detailTask, envs, services, configs, steps, nowMinute);
+                // 聚合正确（种子：1 环境 EM × 1 后端服务，配置内容全空 → 不欠
+                // nacos/db 工单）：橙 2（提测/CAB）+ 黄 1（公告未发）+ 红 2
+                // （EM 部署未完成 + 任务未提交）。
+                int orange = 0;
+                int yellow = 0;
+                int red = 0;
+                int taskScope = 0;
+                int envScope = 0;
+                for (const DueItem& item : items) {
+                    if (item.level == RemindLevel::Orange) ++orange;
+                    if (item.level == RemindLevel::Yellow) ++yellow;
+                    if (item.level == RemindLevel::Red) ++red;
+                    if (item.scope == "task") ++taskScope;
+                    if (item.scope == "EM") ++envScope;
+                    checks.expectTrue(item.taskId == detailTaskId,
+                                      "E 组跳转负载：条目 taskId 应为所属任务 id（实际 " +
+                                          std::to_string(item.taskId) + "）");
+                }
+                checks.expectTrue(orange == 2 && yellow == 1 && red == 2,
+                                  "E 组聚合：期望 橙2/黄1/红2，实际 橙" +
+                                      std::to_string(orange) + " 黄" +
+                                      std::to_string(yellow) + " 红" +
+                                      std::to_string(red));
+                checks.expectTrue(taskScope == 4 && envScope == 1,
+                                  "E 组跳转负载：期望任务级 4 条 scope=task、环境级 1 条 "
+                                  "scope=EM，实际 task=" + std::to_string(taskScope) +
+                                      " env=" + std::to_string(envScope));
+                // 窗口级色 = 最高优先级（红 > 橙 > 黄，release_logic.h highestLevel）。
+                checks.expectTrue(highestLevel(items) == RemindLevel::Red,
+                                  "E 组：一窗档位应取最高优先级（红）");
+                std::vector<DueItem> probe;
+                probe.push_back({RemindLevel::Yellow, 1, "task", "a", "d"});
+                checks.expectTrue(highestLevel(probe) == RemindLevel::Yellow,
+                                  "E 组：纯黄清单档位应为黄");
+                probe.push_back({RemindLevel::Orange, 1, "task", "b", "d"});
+                checks.expectTrue(highestLevel(probe) == RemindLevel::Orange,
+                                  "E 组：黄+橙清单档位应为橙（优先序）");
+            }
+        }
+    }
+
     // ================= F2. 池55 空态落图（QA 验收） =================
     // --accept-shot-empty <png>：清空任务表 → 陈旧刷新重锚 → 「全部」Tab 全空态。
     // 放在 D 段之后：清库会破坏 detail 场景，必须最后执行。
@@ -797,7 +927,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "FAIL\n";
     } else {
         std::cout << "release_probe: PASS（" << args.windowW << "x"
-                  << args.windowH << "，断言分组 A/B/C/D 全过，E 未覆盖见注释）\n";
+                  << args.windowH
+                  << "，断言分组 A/B/C/D 全过；E=到期聚合数据层，全屏窗渲染不可达见注释）\n";
     }
     return checks.passed ? 0 : 1;
 }

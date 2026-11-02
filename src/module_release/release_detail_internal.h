@@ -206,7 +206,6 @@ std::vector<TrackRowView> collectTrackRows(const ReleaseDetailUiState& state, in
 float trackCurrentStepOffset(const std::vector<TrackRowView>& rows);
 float measureText(const std::string& text, float fontSize, int weight);
 float chipWidth(const std::string& text, float fontSize);
-ChipColors statusChipColors(TaskStatus status, const Tokens& t);
 float drawChip(eui::Ui& ui, const std::string& id, float x, float y, const std::string& text, const eui::Color& bg, const eui::Color& fg, const Tokens& t);
 void drawCardBackground(eui::Ui& ui, const std::string& id, float x, float y, float w, float h, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens, bool subtle);
 void drawSectionTitle(eui::Ui& ui, const std::string& id, float x, float y, const std::string& text, const Tokens& t);

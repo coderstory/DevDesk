@@ -38,24 +38,6 @@ float chipWidth(const std::string& text, float fontSize) {
     return measureText(text, fontSize, 600) + 20.0f;
 }
 
-ChipColors statusChipColors(TaskStatus status, const Tokens& t) {
-    switch (status) {
-        case TaskStatus::Draft:
-            return {t.colors.hover, t.colors.textSecondary};
-        case TaskStatus::Pending:
-            return {eui::mixColor(t.colors.surface, t.colors.info, 0.12f), t.colors.info};
-        case TaskStatus::Running:
-            return {eui::mixColor(t.colors.surface, t.colors.warning, 0.14f),
-                    t.colors.warning};
-        case TaskStatus::Done:
-            return {eui::mixColor(t.colors.surface, t.colors.success, 0.12f),
-                    t.colors.success};
-        case TaskStatus::Voided:
-            return {t.colors.hover, t.colors.textDisabled};
-    }
-    return {t.colors.hover, t.colors.textSecondary};
-}
-
 float drawChip(eui::Ui& ui, const std::string& id, float x, float y,
                const std::string& text, const eui::Color& bg, const eui::Color& fg,
                const Tokens& t) {
@@ -1055,7 +1037,9 @@ void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float wid
     // Text 级 + 错误红，点击只开二次确认，不直接写库。
     const float removeW = readOnly ? 0.0f : 64.0f;
     const float removeX = right - removeW;
-    const float topRight = right - (removeW > 0.0f ? removeW + 8.0f : 0.0f);
+    // 113-3：「移除环境」是破坏性入口，与左侧进度计数拉开 16px（原 8px 近乎贴死，
+    // 破坏性操作与进度混排易误触）。
+    const float topRight = right - (removeW > 0.0f ? removeW + 16.0f : 0.0f);
     const float chipTextW = chipWidth("已超时", t.sizes.fontSizeSmall - 1.0f);
     const float chipX = barX - 8.0f - chipTextW;
     if (overdue) {
@@ -1279,7 +1263,9 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
                                             modeKey,
                                        x, (headerH - kChipH) * 0.5f, status, t);
     x += badgeW + 8.0f;
-    const ChipColors colors = statusChipColors(status, t);
+    // 113-5：状态 chip 是时间推导态（草稿/待执行/执行中），与「发布中」模式徽标
+    // 语义重叠且互相抢主色——中性弱化（hover 底 / textTertiary 字），主色让给徽标。
+    const ChipColors colors{t.colors.hover, t.colors.textTertiary};
     const std::string statusText = releaseTaskStatusText(status);
     const float chipW = chipWidth(statusText, t.sizes.fontSizeSmall - 1.0f);
     drawChip(ui, "release.detail.status", x, (headerH - kChipH) * 0.5f, statusText,
@@ -1359,13 +1345,15 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
     }
 
     // —— 反馈进度（发布态 / 归档态：迷你进度条 + n/n；编辑态不显示）——
+    // 113-4：进度条与计数贴合成组，整组右对齐贴近「···」菜单（原计数右留 16px
+    // slack、条与计数间只有对齐盒缝，进度条孤悬、四组元素分组关系不清）。
     if (publish || readOnly) {
         const Progress progress = taskProgress(state.task, state.envs, state.services,
                                                state.configs, state.steps);
         const std::string progressText =
             std::to_string(progress.done) + "/" + std::to_string(progress.total);
         const float countW = measureText(progressText, t.sizes.fontSizeSmall, 400) + 8.0f;
-        right -= countW + 16.0f;
+        right -= countW;
         ui.text("release.detail.progress")
             .position(right, 0.0f)
             .size(countW, headerH)
@@ -1377,7 +1365,7 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
             .color(t.colors.textSecondary)
             .build();
         const float barW = 80.0f;
-        right -= barW + 4.0f;
+        right -= barW + 8.0f;  // 113-4：条与计数 8px 组内距
         const auto headerComponentTokens = core::theme::componentTokensWeChat(t);
         ui.stack("release.detail.progress.bar")
             .position(right, (headerH - 4.0f) * 0.5f)
