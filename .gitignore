@@ -107,3 +107,4 @@ docs/pool/pool.db-wal
 # Python 运行缓存（tools/pool_mcp.py 等本地脚本）
 __pycache__/
 *.pyc
+docs/pool/pool.db.bak-*
