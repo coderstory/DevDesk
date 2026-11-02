@@ -1807,17 +1807,17 @@
    "pool": "bug",
    "title": "claude_profile 头像首字垂直居中用例存量红（期望 40px 实码 32px）",
    "priority": "P2",
-   "status": "在池",
+   "status": "关闭",
    "blocker": null,
    "owner": "ZCode主会话",
    "detail": "B6 期间发现（2026-11-03）：test_claude_module 的「Profile 头像首字垂直居中」用例红——测试期望 40px、代码实际 32px；developer 用 stash 对比确认 HEAD 上即红、非 B6 字号改动引入（B6 交付报告「未验证/遗留」节在案）。修复前置：先定位是测试期望过期（某次头像改小未同步用例）还是代码回退（头像应 40 被改 32）；看 git log -S 该尺寸定归属，再定改测试还是改代码。下次触碰 claude_proxy 模块时顺带修。",
    "created": "2026-11-03 03:17:59 +0800",
-   "updated": "2026-11-03 03:17:59 +0800",
+   "updated": "2026-11-03 04:47:47 +0800",
    "body": "B6 期间发现（2026-11-03）：test_claude_module 的「Profile 头像首字垂直居中」用例红——测试期望 40px、代码实际 32px；developer 用 stash 对比确认 HEAD 上即红、非 B6 字号改动引入（B6 交付报告「未验证/遗留」节在案）。修复前置：先定位是测试期望过期（某次头像改小未同步用例）还是代码回退（头像应 40 被改 32）；看 git log -S 该尺寸定归属，再定改测试还是改代码。下次触碰 claude_proxy 模块时顺带修。",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0,
-   "stage": ""
+   "stage": "已验收"
   },
   {
    "id": 109,
@@ -1892,17 +1892,17 @@
    "pool": "need",
    "title": "上线模块上线前实测：UI/UX+易用性走查与改进方案",
    "priority": "P1",
-   "status": "待验收",
+   "status": "进行中",
    "blocker": null,
-   "owner": "qa-tester",
+   "owner": "developer",
    "detail": "已开发未使用状态。实测 UI 布局与易用性（冷启动空态/新建任务流/单据号门槛/校验/执行页/提醒窗），对照 spec 2026-10-27-release-module-design.md §13.3 契约，产出分级问题清单+证据+改进方案。执行方式：派 qa-tester 走查。",
    "created": "2026-11-03 04:15:16 +0800",
-   "updated": "2026-11-03 04:23:08 +0800",
+   "updated": "2026-11-03 05:01:27 +0800",
    "body": "已开发未使用状态。实测 UI 布局与易用性（冷启动空态/新建任务流/单据号门槛/校验/执行页/提醒窗），对照 spec 2026-10-27-release-module-design.md §13.3 契约，产出分级问题清单+证据+改进方案。执行方式：派 qa-tester 走查。",
-   "created_by": "qa-tester",
-   "updated_by": "qa-tester",
+   "created_by": "developer",
+   "updated_by": "developer",
    "deleted": 0,
-   "stage": "实测完成，报告已产出"
+   "stage": "开发中"
   },
   {
    "id": 114,
@@ -1911,15 +1911,49 @@
    "priority": "P1",
    "status": "待验收",
    "blocker": null,
-   "owner": "ZCode主会话",
+   "owner": "developer",
    "detail": "纯技术验证：①python 检测提示链路 ②pip 包管理维护（版本未钉扎/自愈/超时文案）③伪造会话数据跑通采集→脱敏→提案→入库→检索→hook注入闭环，先预测后验证 ④recall_eval 冻结集真跑出 Recall@5 硬数字 ⑤UI 引导态文案走查。数据落独立临时数据根，真实 ~/DevDesk/memory 零污染。执行方式：POC/试错主会话直做。",
    "created": "2026-11-03 04:15:17 +0800",
-   "updated": "2026-11-03 04:27:47 +0800",
+   "updated": "2026-11-03 04:47:31 +0800",
    "body": "纯技术验证：①python 检测提示链路 ②pip 包管理维护（版本未钉扎/自愈/超时文案）③伪造会话数据跑通采集→脱敏→提案→入库→检索→hook注入闭环，先预测后验证 ④recall_eval 冻结集真跑出 Recall@5 硬数字 ⑤UI 引导态文案走查。数据落独立临时数据根，真实 ~/DevDesk/memory 零污染。执行方式：POC/试错主会话直做。",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0,
+   "stage": "测试中"
+  },
+  {
+   "id": 115,
+   "pool": "debt",
+   "title": "记忆 e2e 配方脚本化 run-memory-e2e.sh 纳入回归",
+   "priority": "P2",
+   "status": "在池",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "出自 need 114 实测：伪造数据 e2e 配方已跑通（见 docs/research/2026-11-03-记忆模块实测报告.md §2），脚本化为 scripts/run-memory-e2e.sh（起引擎→探针→hook 三问含负对照→红线 grep→落 evidence），纳入阶段节点回归",
+   "created": "2026-11-03 04:32:25 +0800",
+   "updated": "2026-11-03 04:32:25 +0800",
+   "body": "出自 need 114 实测：伪造数据 e2e 配方已跑通（见 docs/research/2026-11-03-记忆模块实测报告.md §2），脚本化为 scripts/run-memory-e2e.sh（起引擎→探针→hook 三问含负对照→红线 grep→落 evidence），纳入阶段节点回归",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0,
-   "stage": "测试中"
+   "stage": ""
+  },
+  {
+   "id": 116,
+   "pool": "debt",
+   "title": "上线模块探针覆盖欠账：提醒窗外三页态与环境定义空态",
+   "priority": "P3",
+   "status": "在池",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "出自 need 113 实测明账：①环境定义 tab 空态未落图 ②多环境/多服务执行页挤压态未验证（种子仅 1 环境 8 步骤）③1600×1000 执行页无截图档。修复批次时顺带补",
+   "created": "2026-11-03 04:32:25 +0800",
+   "updated": "2026-11-03 04:32:25 +0800",
+   "body": "出自 need 113 实测明账：①环境定义 tab 空态未落图 ②多环境/多服务执行页挤压态未验证（种子仅 1 环境 8 步骤）③1600×1000 执行页无截图档。修复批次时顺带补",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [
@@ -3533,6 +3567,60 @@
    "created_by": null,
    "updated_by": null,
    "deleted": 0
+  },
+  {
+   "id": 180,
+   "need_id": 113,
+   "time": "2026-11-03 04:40:34 +0800",
+   "note": "BUG-113-1 定性完成（bug-fixer）：P1 不成立（否决）。滚底态卡片只有日期/星期/草稿chip/EM chip 是 Draft 行按设计留白：Task 结构无 title/summary 字段（release_types.h:28-31）、进度条 Draft 隐藏（release_list_ui.cpp:226 设计§5.2）、「下一步」仅发布态装配（release_list_ui.cpp:883）；种子 21 任务全 Draft。瞬时帧假设亦否定：泵 60 帧 sha1 与 10 帧/原始 seeded 逐字节一致（稳态）。残余疑点留账：探针 setScrollOffset(1000000) 双瞬移后整帧近空白，仅探针瞬移路径复现，真机增量滚动不复现该路径，建议真机复核时顺带观察。证据 evidence/2026-11-03-need113-release/bug113-pump10.png / bug113-pump60.png / bug113-rescroll10.png；定性小节已追加 docs/research/2026-11-03-上线模块实测报告.md（含探针改进建议：种子加 Pending/Running 样本 + C 组内容层断言）。探针插桩已 git checkout 还原，未 commit。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 181,
+   "need_id": 113,
+   "time": "2026-11-03 04:42:17 +0800",
+   "note": "批次B开工：113-2~113-6 UI 微调 + release_probe C/E 组补覆盖",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 182,
+   "need_id": 114,
+   "time": "2026-11-03 04:44:18 +0800",
+   "note": "批次修复完成，5 项落点：①BUG-114-1 撤销链断：telemem_client.cpp findMemoryIdByText 改走新纯函数 memoryTextMatches（telemem_client.h 声明、单测钉住）两侧 trim 比对——采集文本尾 \\n vs 引擎剥尾存储不再失配；e2e S4 createUndoCard 实测转绿。②BUG-114-2 注入无门槛：TelememHttpRetriever::search 加原生 threshold 参数，常量 kSearchSimilarityThreshold=0.4（telemem_client.cpp 匿名命名空间，注释记录校准出处：0.5 过杀探针短语查询「增量构建」「8421」，0.3 负对照不拦，0.4 全绿+负对照拦截；hook 注入与 recall_eval 共缝同口径）；e2e S6 Recall@5=100%≥85% 达标。③IMP-114-3 pip：buildPipInstallArgs（telemem_process.cpp/h）钉 telemem==1.10.1（anthropic 不钉：无实测约束，注释说明）；PIP_INDEX_URL/PIP_EXTRA_INDEX_URL 经 pip 官方同义旗标 --index-url/--extra-index-url 透传（平台执行器无 env 参数缝，三平台默认继承父环境，旗标为最小改动口）；失败文案补网络检查+镜像指路（telemem_engine.cpp kPipFailureHint）。④IMP-114-4 py 文案：kPythonMissingMessage 常量收拢（telemem_engine.cpp），追加 macOS brew/uv 与 Windows 官网安装器/uv 指引一句（纯文案不拆平台文件）。⑤IMP-114-5 UI：memory_module.cpp composeHealthGrid 跑评测按钮引擎非 Running 或评测中即置灰（textDisabled 令牌+不挂 onClick，沿用既有禁用态；startEvalAsync 后端门禁保留）。注意：e2e 环境配方补充——探针假定 <DEVDESK_DATA_ROOT>/memory 目录存在且 telemem config 的 faiss/history 路径须指向其中（探针 dirBytes 断言看该目录）；全部服务已停、端口已清。UI 灰态未截像素证据（归 QA 视觉档）。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 183,
+   "need_id": 114,
+   "time": "2026-11-03 04:47:24 +0800",
+   "note": "修复：telemem_client.cpp memoryTextMatches 两侧 trim（新纯函数+钉版单测 memory_undo_text_match_trim）；e2e 探针 S4 createUndoCard 转绿（run3/probe-run4.log ok=39 fail=0）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 184,
+   "need_id": 114,
+   "time": "2026-11-03 04:47:31 +0800",
+   "note": "修复：search 缝加 telemem 原生 threshold 参数（kSearchSimilarityThreshold=0.4，POC+探针校准：0.3 负对照不拦/0.5 弱相似正例过杀/0.4 全绿+负对照归零）；负对照实测 0 字",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 185,
+   "need_id": 113,
+   "time": "2026-11-03 05:01:27 +0800",
+   "note": "批次B落点+验证摘要（2026-11-03，developer）：①113-2 锁定行提示改陈述式+首条补「撤回发布可回到可编辑态」指引——release_detail_logic.cpp collectTrackRows lockedHint（单据号/公告内容/工单单号 三类，仅首条带指引）；编辑态 draftPrereq 的「请先填写单据号」提示属输入框在屏场景，不动。②113-3 移除环境与进度计数拉开 16px——release_detail_draw.cpp drawEnvCard topRight 8→16。③113-4 页头进度条+计数贴合成组、整组右对齐贴近「···」菜单——drawPageHeader 反馈进度块（计数右 slack 16→0、条与计数 8px 组内距）。④113-5 推导状态 chip 中性弱化（hover 底/textTertiary 字），单据模式徽标保持主色；detail::statusChipColors 失去唯一调用方已删（声明+定义，release_detail_internal.h/release_detail_draw.cpp）。⑤113-6 app_sidebar.cpp drawSidebar 顶层按登记表 parent 列自动展开父组，g_autoExpandedForPage 闩防每帧回展、resetSidebarGlobals 一并回厂（复位语义不变），router 负载导航/侧栏点击两路径共用。⑥探针 release_probe.cpp：种子 09-20→Pending、09-19→Running（总量仍 20 分页契约不变）；C 组补 Draft 行无 .prog.wrap、Pending 行 .prog.wrap+.next 非空、Running 行进度条；E 组补数据层断言（dueItems 聚合 橙2/黄1/红2、scope=task×4+EM×1、taskId 负载、highestLevel 红>橙>黄；全屏窗真开仍不可达，注释写明）。⑦test_release_basic 两用例按 113-6 新契约更新（落位自动展开/手动收起不弹回/离开组选中消失）。验证：build-test-run --dev --filter release 定向 doctest 111/111 绿；release_probe PASS（含新 C/E 断言）；uat62 双尺寸 PASS（17 页×2 落 batch-b/）；check-module-isolation.sh 通过；未跑全量（归收口）、未 commit（按禁令）。证据：evidence/2026-11-03-need113-release/batch-b/{release-probe-publish,release-probe-draft-envcard}.png + uat62 双尺寸 34 张。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
   }
  ],
  "bugs": [
@@ -3561,7 +3649,7 @@
    "need_id": 114,
    "time": "2026-11-03 04:23:15 +0800",
    "note": "mac e2e 实测（need 114）：撤销链断——采集合段文本尾带\\n，telemem 存储剥尾空白，addDirect 的 findMemoryIdByText 精确匹配差 1 字符 → target_ids=[] → createUndoCard 拒绝「不可撤销」。生产常态（段尾=assistant text 块固定补 \\n）必现。修复方向：telemem_client.cpp findMemoryIdByText 两侧 trim 后比对（或 add 前统一 trim），补钉版单测（尾换行文本回填）",
-   "resolved": 0,
+   "resolved": 1,
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
@@ -3571,7 +3659,7 @@
    "need_id": 114,
    "time": "2026-11-03 04:27:19 +0800",
    "note": "mac e2e 实测（need 114）：hook 注入无相关度门槛——改写问句与负对照「今天天气怎么样」三问返回逐字节相同的 396 字全量注入。根因：telemem search 恒返 top-k 融合段无相似度下限，且融合段无逐条 score（事后过滤不可行）→ 注入层照单全收。每次提问上下文被污染+白付 token。修复方向（先 POC）：①引擎侧阈值参数 ②DevDesk 词面预闸（inject.cpp 同落点，纯函数可单测）③面板注入总开关兑底；推荐②+③",
-   "resolved": 0,
+   "resolved": 1,
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
@@ -4303,6 +4391,15 @@
    "need_id": 62,
    "time": "2026-11-03 04:00:10 +0800",
    "evidence": "docs/design/2026-11-01-UI整改批次IV-分析与实施方案.md §10（执行手册）+ evidence/2026-11-02-B{1..8}/ + evidence/2026-11-03-bug72-73/；子需求 64-73 全部关闭（64/65/66/67/68/69/70/71=需求关闭，72/73=bug 修复关闭）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 82,
+   "need_id": 108,
+   "time": "2026-11-03 04:47:47 +0800",
+   "evidence": "tests/test_modules/test_claude_ui.cpp:2427 断言 40→32（注释引 6f7fc485 列表重设计定版归属）；--filter 头像首字 2/2 绿（2026-11-03 本地实测）——与条目预设诊断路径一致（git log -S 定归属→改测试）",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -9929,6 +10026,105 @@
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
+  },
+  {
+   "id": 512,
+   "need_id": 113,
+   "time": "2026-11-03 04:30:45 +0800",
+   "from_status": "待验收",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "bug-fixer",
+   "updated_by": "bug-fixer",
+   "deleted": 0
+  },
+  {
+   "id": 513,
+   "need_id": 114,
+   "time": "2026-11-03 04:32:09 +0800",
+   "from_status": "待验收",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0
+  },
+  {
+   "id": 514,
+   "need_id": 115,
+   "time": "2026-11-03 04:32:25 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 515,
+   "need_id": 116,
+   "time": "2026-11-03 04:32:25 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 516,
+   "need_id": 114,
+   "time": "2026-11-03 04:44:18 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "批次修复完成，5 项落点：①BUG-114-1 撤销链断：telemem_client.cpp findMemoryIdByText 改走新纯函数 memoryTextMatches（telemem_client.h 声明、单测钉住）两侧 trim 比对——采集文本尾 \\n vs 引擎剥尾存储不再失配；e2e S4 createUndoCard 实测转绿。②BUG-114-2 注入无门槛：TelememHttpRetriever::search 加原生 threshold 参数，常量 kSearchSimilarityThreshold=0.4（telemem_client.cpp 匿名命名空间，注释记录校准出处：0.5 过杀探针短语查询「增量构建」「8421」，0.3 负对照不拦，0.4 全绿+负对照拦截；hook 注入与 recall_eval 共缝同口径）；e2e S6 Recall@5=100%≥85% 达标。③IMP-114-3 pip：buildPipInstallArgs（telemem_process.cpp/h）钉 telemem==1.10.1（anthropic 不钉：无实测约束，注释说明）；PIP_INDEX_URL/PIP_EXTRA_INDEX_URL 经 pip 官方同义旗标 --index-url/--extra-index-url 透传（平台执行器无 env 参数缝，三平台默认继承父环境，旗标为最小改动口）；失败文案补网络检查+镜像指路（telemem_engine.cpp kPipFailureHint）。④IMP-114-4 py 文案：kPythonMissingMessage 常量收拢（telemem_engine.cpp），追加 macOS brew/uv 与 Windows 官网安装器/uv 指引一句（纯文案不拆平台文件）。⑤IMP-114-5 UI：memory_module.cpp composeHealthGrid 跑评测按钮引擎非 Running 或评测中即置灰（textDisabled 令牌+不挂 onClick，沿用既有禁用态；startEvalAsync 后端门禁保留）。注意：e2e 环境配方补充——探针假定 <DEVDESK_DATA_ROOT>/memory 目录存在且 telemem config 的 faiss/history 路径须指向其中（探针 dirBytes 断言看该目录）；全部服务已停、端口已清。UI 灰态未截像素证据（归 QA 视觉档）。",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0
+  },
+  {
+   "id": 517,
+   "need_id": 108,
+   "time": "2026-11-03 04:47:24 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 518,
+   "need_id": 108,
+   "time": "2026-11-03 04:47:31 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 519,
+   "need_id": 108,
+   "time": "2026-11-03 04:47:39 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 520,
+   "need_id": 108,
+   "time": "2026-11-03 04:47:47 +0800",
+   "from_status": "待验收",
+   "to_status": "关闭",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "personal_todo": [
@@ -10285,6 +10481,6 @@
  "generator": {
   "hostname": "coderstory-air",
   "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
-  "generated": "2026-11-03 04:27:47 +0800"
+  "generated": "2026-11-03 05:01:27 +0800"
  }
 }
