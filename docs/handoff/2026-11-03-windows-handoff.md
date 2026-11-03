@@ -61,3 +61,12 @@ bash scripts/build-test-run.sh                     # 全量，预期 2116+ 例 0
 - CI 分叉扫描：docs/research/2026-11-03-win-ci-divergence-scan.md
 - e2e 回归脚本：scripts/run-memory-e2e.sh（--keep 留现场）
 - 证据总目录：evidence/2026-11-03-*/（git-ignore，本机可见）
+
+## 7. Windows 侧 codegraph 接线（mac 已装 1.6.2 三件齐，Windows 需同装）
+
+在 Windows 会话里跑 `/codegraph-setup` skill（devflow 插件自带），或手动等价三件：
+1. `npm i -g @colbymchenry/codegraph`（取 `command -v codegraph` 绝对路径）；
+2. config（`%USERPROFILE%\.zcode\cli\config.json`）→ `mcp.servers.codegraph = {"type":"stdio","command":"<绝对路径>","args":["serve","--mcp"]}`（json 读改写，禁拼接）；
+3. prompt-hook：插件 `assets/codegraph-prompt-hook.sh` 填二进制路径落 `~/.zcode/hooks/`（chmod +x），config `hooks.enabled=true` + `UserPromptSubmit` 追加 command 条目（timeoutMs 10000）；
+4. 项目索引：Windows 侧首次 `codegraph init`（项目根，.codegraph/ 勿提交）；skill 全流程幂等可重跑。
+mac 侧收工前已补齐本机 hook 接线（此前只有 MCP+AGENTS.md），重启会话生效。
