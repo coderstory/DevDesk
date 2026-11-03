@@ -10,3 +10,5 @@
 - 2026-11-03（need114 批次修复）：第三方 MCP 工具先读 venv 源码再定修复路线——telemem search_memories 原生支持 threshold 参数（[0,1] 相似度下限，缺省 None），「融合段无逐条 score」只堵死后过滤不堵引擎侧截断，M 级预闸方案直接降 S 级传参；阈值必须真数据校准（POC 0.5 对 2 条记忆完美、探针 27 条库即过杀弱相似正例，终值 0.4）。
 bash 3.2 (macOS)：双引号串内 $var 紧跟全角字符（，/）等）会被误并入变量名报 unbound variable——紧跟非 ASCII 一律写 ${var}（来源：2026-11-03 run-memory-e2e.sh，3 处实撞）
 - 2026-11-03（池110 CI 红）：改 UI 几何后定向过滤词会漏跨文件用例——home 图表断言住在 test_ui_modern（词「Home Token 分布」）而非 test_home，--filter home 全绿照样 CI 红；几何类改动收尾前按「被改元素 id」反查全测试域 grep 一遍（如 grep home.api.chart tests/）再挑过滤词。
+- 2026-11-03 池140批次：tests/doctest.h 是自研极简框架（无 namespace doctest/无 Approx/REQUIRE=CHECK 别名、断言即 return false）——写测试断言禁用真 doctest API（doctest::Approx 等），浮点比较走 std::fabs(a-b)<eps 仓内口径（来源：统一QA 首红 test_schedule_ui_list.cpp 六处）
+- 2026-11-03（统一QA 三连红）：EUI column/scrollView content 里的带 position() 子件必须 .ignoreLayout() 且流式高度由占位子件贡献——三次复发（池133 release cardbox → 池140 schedule masonry 卡全贴 x=0 → 池131 about 滚动列 label/value 竖叠）；写「绝对定位子件进流式容器」时先查该容器是不是 column/scroll content，是则套行栈习语（行=流式 stack、行内子件 ignoreLayout 绝对定位）
