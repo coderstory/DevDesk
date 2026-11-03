@@ -1892,17 +1892,17 @@
    "pool": "need",
    "title": "上线模块上线前实测：UI/UX+易用性走查与改进方案",
    "priority": "P1",
-   "status": "进行中",
+   "status": "待验收",
    "blocker": null,
    "owner": "developer",
    "detail": "已开发未使用状态。实测 UI 布局与易用性（冷启动空态/新建任务流/单据号门槛/校验/执行页/提醒窗），对照 spec 2026-10-27-release-module-design.md §13.3 契约，产出分级问题清单+证据+改进方案。执行方式：派 qa-tester 走查。",
    "created": "2026-11-03 04:15:16 +0800",
-   "updated": "2026-11-03 05:01:27 +0800",
+   "updated": "2026-11-03 09:08:23 +0800",
    "body": "已开发未使用状态。实测 UI 布局与易用性（冷启动空态/新建任务流/单据号门槛/校验/执行页/提醒窗），对照 spec 2026-10-27-release-module-design.md §13.3 契约，产出分级问题清单+证据+改进方案。执行方式：派 qa-tester 走查。",
    "created_by": "developer",
    "updated_by": "developer",
    "deleted": 0,
-   "stage": "开发中"
+   "stage": "测试中"
   },
   {
    "id": 114,
@@ -1979,15 +1979,32 @@
    "priority": "P1",
    "status": "关闭",
    "blocker": null,
-   "owner": "ZCode主会话",
+   "owner": "bug-fixer",
    "detail": "2026-11-03 夜间自主治理：①Windows 找不到 EUI-NEO（msys2 下 rev-parse 仓库根判定失效，自 10-29 submodule 迁移起 Windows CI 从未跑到编译）→ workflow 显式 EUI_NEO_DIR；②GCC16 maybe-uninitialized 误报（std_function 返回槽，Windows CI 首编存量即爆）→ 空闭包守卫+定点 pragma；③mac flake ×3（agent_ui 停止钮链三处盲等改轮询、mcp 在途 stop 盲等改 entered 门控）；④Windows 测试层环境分叉 5 处（process_runner 跨平台载荷+尾字节数更正、凭据缝两用例 Windows skip、git PATH 守卫、font-em CJK 分叉留痕 skip）；⑤真发现：clean Windows CJK 度量下 badge 超宽挂池117。绿证 run 41544288443（macOS 含 ASan/UBSan 2095 例 0 红 + Windows 2095 例 0 红）",
    "created": "2026-11-03 07:45:21 +0800",
-   "updated": "2026-11-03 07:45:47 +0800",
+   "updated": "2026-11-03 08:38:33 +0800",
    "body": "2026-11-03 夜间自主治理：①Windows 找不到 EUI-NEO（msys2 下 rev-parse 仓库根判定失效，自 10-29 submodule 迁移起 Windows CI 从未跑到编译）→ workflow 显式 EUI_NEO_DIR；②GCC16 maybe-uninitialized 误报（std_function 返回槽，Windows CI 首编存量即爆）→ 空闭包守卫+定点 pragma；③mac flake ×3（agent_ui 停止钮链三处盲等改轮询、mcp 在途 stop 盲等改 entered 门控）；④Windows 测试层环境分叉 5 处（process_runner 跨平台载荷+尾字节数更正、凭据缝两用例 Windows skip、git PATH 守卫、font-em CJK 分叉留痕 skip）；⑤真发现：clean Windows ",
-   "created_by": "ZCode主会话",
-   "updated_by": "ZCode主会话",
+   "created_by": "bug-fixer",
+   "updated_by": "bug-fixer",
    "deleted": 0,
    "stage": "已验收"
+  },
+  {
+   "id": 119,
+   "pool": "need",
+   "title": "需-3 记忆类型前缀：入库打标+注入分组渲染（已裁决待实现）",
+   "priority": "P1",
+   "status": "进行中",
+   "blocker": null,
+   "owner": "developer",
+   "detail": "权威实施细则=docs/superpowers/specs/2026-10-30-需-3-记忆前缀细则.md（裁决已批，需求分析/技术判定/验收口径全部在案，完备 spec 免重复产品环节）：前缀文法 [类型|主题] 四类钉死、入库两端（直存卡文本带前缀 + infer 提炼路①/路② POC 判定）、注入分组渲染（踩坑置顶、assembleContext 内纯函数、预算常量不动）、验收=§6 三条（hook 真跑分组渲染留痕 / infer 真调+计账非零 / 存量兼容+解析契约单测）。执行者 developer，worktree DevDesk-wt-need3 分支 wt/need3-memory-prefix",
+   "created": "2026-11-03 08:18:51 +0800",
+   "updated": "2026-11-03 08:37:50 +0800",
+   "body": "权威实施细则=docs/superpowers/specs/2026-10-30-需-3-记忆前缀细则.md（裁决已批，需求分析/技术判定/验收口径全部在案，完备 spec 免重复产品环节）：前缀文法 [类型|主题] 四类钉死、入库两端（直存卡文本带前缀 + infer 提炼路①/路② POC 判定）、注入分组渲染（踩坑置顶、assembleContext 内纯函数、预算常量不动）、验收=§6 三条（hook 真跑分组渲染留痕 / infer 真调+计账非零 / 存量兼容+解析契约单测）。执行者 developer，worktree DevDesk-wt-need3 分支 wt/need3-memory-prefix",
+   "created_by": "developer",
+   "updated_by": "developer",
+   "deleted": 0,
+   "stage": "开发中"
   }
  ],
  "dev_progress": [
@@ -3652,6 +3669,69 @@
    "need_id": 113,
    "time": "2026-11-03 05:01:27 +0800",
    "note": "批次B落点+验证摘要（2026-11-03，developer）：①113-2 锁定行提示改陈述式+首条补「撤回发布可回到可编辑态」指引——release_detail_logic.cpp collectTrackRows lockedHint（单据号/公告内容/工单单号 三类，仅首条带指引）；编辑态 draftPrereq 的「请先填写单据号」提示属输入框在屏场景，不动。②113-3 移除环境与进度计数拉开 16px——release_detail_draw.cpp drawEnvCard topRight 8→16。③113-4 页头进度条+计数贴合成组、整组右对齐贴近「···」菜单——drawPageHeader 反馈进度块（计数右 slack 16→0、条与计数 8px 组内距）。④113-5 推导状态 chip 中性弱化（hover 底/textTertiary 字），单据模式徽标保持主色；detail::statusChipColors 失去唯一调用方已删（声明+定义，release_detail_internal.h/release_detail_draw.cpp）。⑤113-6 app_sidebar.cpp drawSidebar 顶层按登记表 parent 列自动展开父组，g_autoExpandedForPage 闩防每帧回展、resetSidebarGlobals 一并回厂（复位语义不变），router 负载导航/侧栏点击两路径共用。⑥探针 release_probe.cpp：种子 09-20→Pending、09-19→Running（总量仍 20 分页契约不变）；C 组补 Draft 行无 .prog.wrap、Pending 行 .prog.wrap+.next 非空、Running 行进度条；E 组补数据层断言（dueItems 聚合 橙2/黄1/红2、scope=task×4+EM×1、taskId 负载、highestLevel 红>橙>黄；全屏窗真开仍不可达，注释写明）。⑦test_release_basic 两用例按 113-6 新契约更新（落位自动展开/手动收起不弹回/离开组选中消失）。验证：build-test-run --dev --filter release 定向 doctest 111/111 绿；release_probe PASS（含新 C/E 断言）；uat62 双尺寸 PASS（17 页×2 落 batch-b/）；check-module-isolation.sh 通过；未跑全量（归收口）、未 commit（按禁令）。证据：evidence/2026-11-03-need113-release/batch-b/{release-probe-publish,release-probe-draft-envcard}.png + uat62 双尺寸 34 张。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 186,
+   "need_id": 118,
+   "time": "2026-11-03 08:07:49 +0800",
+   "note": "[agent_ui 停止钮 flake 续治] 开工：通读用例+run线程/停止链墙钟依赖盘点中；简报约束=只加note不改状态，故不动状态机。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 187,
+   "need_id": 118,
+   "time": "2026-11-03 08:11:05 +0800",
+   "note": "[bug-fixer] 后续扫修开工：条目已关闭故状态机拒绝再迁移，以 note 认领。范围=test_home.cpp today 窗口 seed 锚定 + 全仓同类扫修；禁碰 test_agent_ui/test_mcp_service/src/module_agent。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 188,
+   "need_id": 119,
+   "time": "2026-11-03 08:19:04 +0800",
+   "note": "worktree DevDesk-wt-need3 分支 wt/need3-memory-prefix，派 developer（POC 路①/② 判定→实现→验收）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 189,
+   "need_id": 118,
+   "time": "2026-11-03 08:23:01 +0800",
+   "note": "扫描线开工（qa-tester，只读+实验，worktree wt/win-ci-scan）：118 已关闭故不动状态，结论稍后以 note 回流",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 190,
+   "need_id": 118,
+   "time": "2026-11-03 08:24:53 +0800",
+   "note": "[bug-fixer] 跨午夜日期敏感用例扫修完成（只改 tests/test_modules/test_home.cpp，未动 src/，禁碰区未碰）。红绿闭环：旧码 TZ 注入本地 00:00:40 逐字复现 CI 症状 test_home.cpp:148 todayNotes!=2 → 修后同锚点+23:59:50+真实时区全绿（3/3）。修法=seed 弃 now-30/-60/-120 改锚 getStats 同源 startOfDayEpoch（今天正午侧偏移/昨日正午），断言加 sameDay 双分支守卫（翻日→0，同日→2，两支钉死不放松语义）。扫修判定——有雷仅 home_service_real_stats 1 处。无雷：test_home home_prune/home_todo_overdue_consistency（边界远/逾期无日界）、home_last_rate+home_probes+test_ui_modern:755（已 dayStart 锚定，残余执行跨零点 ms 级≈1e-6 接受）、test_schema H30（now-2d/now/midnight 锚）、test_memory_proposals（固定 ts 1769472000 同源传参）、test_memory_infer（仅小时窗）、test_usage_alert（kDay1/2 显式传日）、test_settings prune（边界远）、test_release_store/logic/config_ui（固定钟 1893456000/固定日期）、test_schedule_rule/ui_edit（固定 civil 日期/ctx 传参）、test_claude_service（freshness 传参无日窗）、test_agent_store（7d 窗同源 now 算出后传参）、test_agent_time_text/tools/scheduler/cron/draft(616)（固定锚/假钟/注入钟）、test_markdown_service（±86400 宽窗）、test_todo_service（±5s 邻刻）、test_streaming_proxy（无日窗断言）、test_proxy_stats/test_ui_modern clock（注入钟）、test_time（纯函数不变量）。极低危不修（需产品时钟缝，成本不匹配，窗口 µs-ms 级）：test_todo_ui datepicker「今天」断言、test_app_now_tool、test_notes_mcp_tools todayYmd、test_agent_draft:472——均为产品内 clock 与测试邻刻双取。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 191,
+   "need_id": 118,
+   "time": "2026-11-03 08:37:00 +0800",
+   "note": "后续扫描线完成（qa-tester，只读+实验，worktree wt/win-ci-scan @ b32c3170，报告 docs/research/2026-11-03-win-ci-divergence-scan.md）：①总判定=未发现新的高概率会红分叉；本机全量基线 2095 例 0 红 + 交叉编译 397 文件过。②静态 7 类清单 26 条定位：唯一中概率=test_file_watcher.cpp:343 交付固定睡 1500ms 无轮询（建议复用同文件 waitWatcherArmed 的 deadline+seen 范式改条件轮询）；其余=低概率记录在案（mklink junction 用例仅 Windows 实跑的覆盖不对称、runner git config 镜像依赖、test_schema:1361 零点竞窗亚毫秒级、520/1100/5200ms 正向 sleep 只耗时不致红）。③GCC16 面：std::function 返回 core::Result 存量 25 处，仅 proposal_store.h:79-82 一处定点 pragma，其余当前编译干净；交叉检查脚本对本机 3 个缺 curl 头的测试文件（test_proxy_router/test_http_client/test_http_server）是盲区，CI 实编已兜底。④动态抽查 6 项全绿：PATH=/nonexistent 下 git 用例降级 skip 不红（R3 守卫实证）、junction mac SKIP、file_watcher 6/6、process_runner 3/3、凭据缝 6/6、CI=1 零耦合。⑤建议守卫 2 条（watcher 轮询化、GCC16 模式入 review 检查单），无该修项；test_home 日期窗按口径只登记不判。",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 192,
+   "need_id": 118,
+   "time": "2026-11-03 08:38:33 +0800",
+   "note": "[agent_ui 停止钮 flake 续治·完成] 根因：非产品 bug（AgentLoop cancel 迭代边界、requestStopRun 置位、SQLite WAL+busy_timeout+进程内互斥均无饿死/丢失唤醒路径），是用例侧结构性墙钟耦合——四段轮询全部「迭代数×每轮整页 compose+refreshData(SQLite读) 成本」封顶，CI 慢 runner 单轮 20-50ms，名义 2s/3s/2s 实际 4-11s 不可控（R10 11.04s 与 15s 终态窗口矛盾：1500 迭代×≥10ms sleep≥15s，排除终态段耗尽；红点在 P1-P3 迭代数窗口溢出+三个溢出即触发的次生陷阱：①桩 5s 上限到期强放行→run 在 cancel 前收敛→chip 消失；②disabled 钮直调 onClick 成功但 startTask 静默 no-op；③cancel 于首迭代边界前生效→run 提前收敛→chip 消失→P3 硬等必红）。修法（tests/test_modules/test_agent_ui.cpp，A+C 混合）：pollUntil 墙钟截止轮询替代迭代数窗口（P1/P2/P3 10s、P4 30s、列表行 2s，状态驱动出口：P1=isTaskRunActive、P2=cancel位或run已收敛、P3=chip在场断言文案/vacuous合法跳过、P4=cancelled落库）；桩上限 5s→60s（纯防挂死）；分阶段 stopflow stderr 探针+REQUIRE 消息内联耗时；断言宏移出谓词（fail-fast return false 在 lambda 内只退谓词不退用例）。验证：单跑 72ms 绿；20 次空闲循环全绿 worst 92ms；10 次 9 核噪声+background QoS 加压全绿 worst 824ms；如实报告 CI 级挤压（160-300×）本地不可忠实复现、未复现红，置信来自窗口语义改为墙钟截止（100× 慢化下截止仍充足）。剩余风险：构建脚本测试摘要仍只摘 [FAIL] 行，stopflow/assert 现场只在原始输出可见（脚本增强归下批）；P2/P3 vacuous 路径在极端时序下跳过「停止中」文案断言（chip 可渲染时仍必查，语义损失极小）。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -10234,6 +10314,50 @@
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
+  },
+  {
+   "id": 527,
+   "need_id": 119,
+   "time": "2026-11-03 08:18:51 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 528,
+   "need_id": 119,
+   "time": "2026-11-03 08:18:56 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 529,
+   "need_id": 119,
+   "time": "2026-11-03 08:19:04 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "worktree DevDesk-wt-need3 分支 wt/need3-memory-prefix，派 developer（POC 路①/② 判定→实现→验收）",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 530,
+   "need_id": 113,
+   "time": "2026-11-03 09:08:23 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
   }
  ],
  "personal_todo": [
@@ -10590,6 +10714,6 @@
  "generator": {
   "hostname": "coderstory-air",
   "os": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
-  "generated": "2026-11-03 07:45:47 +0800"
+  "generated": "2026-11-03 09:08:23 +0800"
  }
 }
