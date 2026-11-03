@@ -169,6 +169,9 @@ class WallpaperHostMac final : public WallpaperHost {
 public:
     ~WallpaperHostMac() override { stop(); }
 
+    // start/rebuild 保持同步：调用方需要拿到 handle（非空才启动播放器），
+    // 且这两条路径由服务在**主线程**发起（模块 onStart / 换屏回调），走
+    // runOnMainThreadSync 的 isMainThread 快路径，不会发生上面那个等待环。
     bool start(std::string* error) override {
         std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
         {
@@ -198,6 +201,13 @@ public:
         });
     }
 
+    // show/hide **必须异步投递**，不得同步等主线程。
+    //
+    // 原因（2026-11-03 真机复现）：服务在持有 mu_ 时调用 show（applyVideoScanLocked
+    // → host_->show），而主线程可能正等着拿 mu_（snapshot/setMode）。同步投递两边
+    // 互等，3s 后报「显示壁纸宿主超时」。Windows 版投递到自己的宿主线程、不经过
+    // 主线程，所以没有这个倒置；macOS 的窗口操作只能在主线程，只能靠不等待来消除
+    // 这个环。可见性变化不需要与调用方同步——服务下一步装卸媒体与窗口可见性无关。
     bool show(std::string* error) override {
         DevDeskWallpaperWindow* window = nil;
         {
@@ -208,11 +218,10 @@ public:
             if (error != nullptr) *error = "壁纸宿主尚未创建";
             return false;
         }
-        const bool ok = runOnMainThreadSync([window] { [window orderFrontRegardless]; });
-        if (!ok && error != nullptr) {
-            *error = "显示壁纸宿主超时（主线程无响应）";
-        }
-        return ok;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [window orderFrontRegardless];
+        });
+        return true;
     }
 
     void hide() override {
@@ -222,9 +231,9 @@ public:
             window = window_;
         }
         if (window == nil) return;
-        // hide 不需要业务结果，但仍走同步：调用返回后状态须已生效
-        //（服务紧接着会装卸媒体）。
-        runOnMainThreadSync([window] { [window orderOut:nil]; });
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [window orderOut:nil];
+        });
     }
 
     HostHandle handle() const override {

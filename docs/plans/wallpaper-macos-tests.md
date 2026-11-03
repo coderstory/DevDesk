@@ -35,6 +35,18 @@
 - 四铺法像素分布各异：Fill 4050 / Fit 2730 / Center 8364 / Tile 12500（青绿块计数）→ 铺法真的走不同绘制路径，不是只改枚举。
 - 视频：`videoLayer.isReadyForDisplay=1` + `pos=0.94`（`renderInContext` 取不到视频帧是 AVFoundation 既定行为，改用 readiness 判据）。
 
+### F4b — 睡眠/唤醒路径实测
+真服务装配 + 真宿主 + 真播放器，注入无让路假 watcher 隔离终端全屏误报，走真 watcher 接口回调驱动：
+
+| 阶段 | paused | systemHolds | 倒计时 |
+|---|---|---|---|
+| 基线 | 0 | 0 | 299 |
+| 睡眠中 | **1** | 含 SystemSleeping | 冻结 299 |
+| 醒来 | **0** | **0** | 298（继续走） |
+| 醒来 2s 后 | 0 | 0 | 296（正常递减） |
+
+即：睡眠→暂停、醒来→恢复、轮换时钟随之继续，三者同真。
+
 ### F5 — 图片尺寸探针真机
 `/tmp/wall-test-4k.png` → `known=1 2560x1440`；`assets/icon.png` → `known=1 256x256`。
 
@@ -47,6 +59,7 @@
 | 3 | async block 捕获 `const std::string&` | 引用悬垂 → 路径变空串 →「无法识别的文件路径」 | `make_shared` 拷贝后进 block |
 | 4 | `stringWithUTF8String:` / `fileURLWithPath:` 二次解释 | 含中文的临时目录解析失败 | 统一走 `CFURLCreateFromFileSystemRepresentation` |
 | 5 | 宿主 `width/height` 用逻辑尺寸 | 契约要求物理像素 | `convertRectToBacking` |
+| 6 | `show()`/`hide()` 同步等主线程 | 服务持 `mu_` 调 show，主线程可能正等 `mu_`（snapshot/setMode）→ **互等 3s 超时「显示壁纸宿主超时」**（醒来路径实测复现） | 两者改 `dispatch_async` 投递即返回；可见性与调用方无需同步 |
 
 ## 已知非回归
 
