@@ -142,6 +142,32 @@ include(cmake/Dependencies.cmake)
 include(cmake/CompilerWarnings.cmake)
 
 # EUI-NEO 子目录：不带 DevDesk 的警告选项（曾因 -Werror 泄漏产生 517 个第三方假错）
+# ---- 终端 vterm 转译层（need:127 Phase 1，平台中立）----
+# vendored libvterm（third_party/libvterm submodule ← neovim/libvterm nvim 分支锁 commit，
+# 生成表随 fork 入库零 Perl）。仓内胶水、submodule 零写入（v1 P2-F 纪律）。
+# mac：只被 devdesk_tests 链接（转译层 doctest），不进 mac app 链接面（F-06）；
+# WIN32：由 devdesk_platform 链接（ConPTY 后端）。
+# 位置约束：须在 add_subdirectory(src/platform) 之前（其 WIN32 分支链接本目标），
+# 也须在 add_subdirectory(tests) 之前（devdesk_tests 链本目标跑转译层 doctest）。
+add_library(libvterm STATIC
+    third_party/libvterm/src/encoding.c
+    third_party/libvterm/src/keyboard.c
+    third_party/libvterm/src/mouse.c
+    third_party/libvterm/src/parser.c
+    third_party/libvterm/src/pen.c
+    third_party/libvterm/src/screen.c
+    third_party/libvterm/src/state.c
+    third_party/libvterm/src/unicode.c
+    third_party/libvterm/src/vterm.c
+)
+target_include_directories(libvterm PUBLIC ${CMAKE_SOURCE_DIR}/third_party/libvterm/include)
+
+add_library(devdesk_terminal_vterm STATIC
+    src/platform/terminal/terminal_vterm_core.cpp
+)
+target_include_directories(devdesk_terminal_vterm PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(devdesk_terminal_vterm PUBLIC libvterm)
+
 add_subdirectory(${EUI_NEO_DIR} ${CMAKE_BINARY_DIR}/_eui_neo_build EXCLUDE_FROM_ALL)
 
 # Core + Platform 是 static lib

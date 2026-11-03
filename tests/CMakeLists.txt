@@ -47,6 +47,7 @@ add_executable(devdesk_tests
     test_platform/test_utf8.cpp
     test_platform/test_file_open.cpp
     test_platform/test_terminal_launch.cpp
+    test_platform/test_terminal_vterm_core.cpp
     test_platform/test_file_watcher.cpp
     # 债-20 process_runner 真实现契约（POSIX 族；win 侧用例整体空转另行登记）
     test_platform/test_process_runner.cpp
@@ -321,6 +322,10 @@ devdesk_apply_warnings(devdesk_tests)
 if(TARGET devdesk_terminal_bridge)
     target_link_libraries(devdesk_tests PRIVATE devdesk_terminal_bridge)
 endif()
+
+# 终端 vterm 转译层 doctest（need:127 Phase 1）：平台中立目标。mac 上只进测试不进
+# mac app 链接面（F-06）；WIN32 上由 devdesk_platform 链接（terminal_backend_win）。
+target_link_libraries(devdesk_tests PRIVATE devdesk_terminal_vterm)
 
 # ---- 版本真值注入（2026-09-29）----
 # test_settings.cpp 的 aboutVersionLine 断言必须与**被测量**同源：

@@ -41,6 +41,8 @@ if(WIN32)
         terminal_backend_win.cpp        # 终端会话后端（v1 缺口补挂：此前从未进任何 WIN32 目标，
                                         # need:127 Phase 1 本 TU 换 ConPTY 真实现）
     )
+    # ConPTY 后端的 libvterm 转译层（目标定义在根 CMakeLists，platform 之前）
+    target_link_libraries(devdesk_platform PRIVATE devdesk_terminal_vterm)
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         exec_capture_posix.cpp

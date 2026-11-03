@@ -15,3 +15,13 @@
 - 打包入口：`scripts/package-windows.sh`（`MPV_BIN` 拷入 `assets/mpv/mpv.exe`；
   运行时解析见 `src/module_wallpaper/platform/mpv_controller.h` 的
   `resolveMpvExecutable`）
+
+## libvterm（Windows 终端 VT 解析）
+
+- 用途：终端模块 Windows 后端的 VT220/xterm/ECMA-48 序列解析（vendored 静态链入
+  主程序，无独立文件分发）
+- 上游源码：<https://github.com/neovim/libvterm>（nvim 分支，锁 commit `934bc2f`；
+  上游 leonerd v0.3.3 系）
+- 许可证：MIT
+- 引入方式：git submodule `third_party/libvterm` + 仓内 CMake 胶水
+  （根 `CMakeLists.txt`；submodule 零写入）

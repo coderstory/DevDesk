@@ -4,3 +4,7 @@
 [submodule "third_party/Corta"]
 	path = third_party/Corta
 	url = https://github.com/noah-qin/Corta
+[submodule "third_party/libvterm"]
+	path = third_party/libvterm
+	url = https://github.com/neovim/libvterm
+	branch = nvim
