@@ -212,13 +212,10 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     const float sideW = treePanelWidth_;
     const float gap = t.sizes.spacingLarge;
     const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
-    // 方案 A：笔记标签条高 32px（有标签时出现）；列 gap 随元素数调整以免溢出
-    constexpr float kNoteTabBarH = 32.0f;
-    const int gaps = openNotes_.empty() ? 1 : 2;
-    const float tabBarH = openNotes_.empty() ? 0.0f : kNoteTabBarH;
     constexpr float kHeaderGap = 8.0f;   // 标题下间距（2026-10-25 拍板：16→8 收紧）
-    const float bodyH = contentH - ui_kit::kHeaderH - tabBarH -
-                        kHeaderGap * static_cast<float>(gaps);
+    // 池130：tab 带 32px 不再全局扣高（原树列跟着变矮）——只从 tab 带正下方那列
+    //（编辑/实时/纯预览）顶部扣（tabBandInset），树列恒满高。
+    const float bodyH = contentH - ui_kit::kHeaderH - kHeaderGap;
 
     // 页面底色 = 主窗口 clearColor，不自铺不透明底（半透/磨砂档才生效）
 
@@ -228,10 +225,20 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
         .gap(kHeaderGap)
         .content([&] {
             drawHeader(ui, contentW, contentH, bodyH, t);
-            drawNoteTabBar(ui, contentW, t, componentTheme);
             drawBody(ui, contentW, bodyH, sideW, midW, gap, t, componentTheme);
         })
         .build();
+
+    // 池130：tab 带移出列流，按页坐标画在编辑列顶部——x = 树面板动画宽 + gap、
+    // 宽 = 编辑列宽（双栏 midW / 单栏 fullW），随 sideW lerp 逐帧连续无跳变；
+    // y = 页头下缘（root 顶距 0 → kHeaderH + kHeaderGap）。
+    if (!openNotes_.empty()) {
+        const float tabW = mode_ == ViewMode::Split
+                               ? midW
+                               : contentW - sideW - gap;
+        drawNoteTabBar(ui, pad + sideW + gap,
+                       ui_kit::kHeaderH + kHeaderGap, tabW, t, componentTheme);
+    }
 
     // 方案 A 边界把手：一颗把手管两端，取代旧 drawTreeExpandFab + md.tree.collapse
     drawTreeHandle(ui, pad, bodyH, sideW, gap, t);
@@ -325,11 +332,14 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                 .size(kTitleColW, ui_kit::kHeaderH)
                 .gap(2.0f)
                 .content([&] {
+                    // 行盒 32 = 全站页标题口径（about_module.cpp:202 kTitleH /
+                    // agent_module.cpp:480 同款）：fontSizeTitle 24 的 CJK 包围盒
+                    // ≈1.3×em，行盒 24 装不下（池138 下半被裁）。
                     ui.text("md.h1")
-                        .size(kTitleColW, core::theme::scaled(24.0f))
+                        .size(kTitleColW, core::theme::scaled(32.0f))
                         .text("Markdown 笔记本")
                         .fontSize(t.sizes.fontSizeTitle)
-                        .lineHeight(core::theme::scaled(24.0f))
+                        .lineHeight(core::theme::scaled(32.0f))
                         .fontWeight(700)
                         .maxWidth(kTitleColW)
                         .overflow(core::TextOverflow::Ellipsis)

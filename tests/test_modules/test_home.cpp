@@ -423,9 +423,10 @@ REGISTER_TEST(home_glass_stat_cards,
                 std::fabs(bgEl->color.b - wantBg.b) < 1e-4f &&
                 std::fabs(bgEl->color.a - wantBg.a) < 1e-4f,
             id + ": 卡底应等于 ui_kit::glassFill(t)");
-        // 浅色 0.72：动态背景必须能透上来，否则「玻璃感」是纯白板
-        DOCTEST_CHECK_MESSAGE(bgEl->color.a > 0.6f && bgEl->color.a < 0.85f,
-                              id + ": 浅色看板卡应为半透（0.6~0.85）");
+        // 池127（2026-11-03）「明显更实」：浅色 0.94 档——不再是旧 0.72 半透，
+        // 但保 6% 透维持玻璃呼吸感，禁回纯实 1.0（纯白板）或回旧透档
+        DOCTEST_CHECK_MESSAGE(bgEl->color.a > 0.85f && bgEl->color.a < 1.0f,
+                              id + ": 浅色看板卡应为近实半透（0.85~1.0，池127 新档）");
 
         // —— ② 旧玻璃层组已退役（S6.1）：.glass.* 节点全部缺位 ——
         DOCTEST_CHECK(ui.find(id + ".glass.tint") == nullptr);

@@ -170,11 +170,11 @@ REGISTER_TEST(theme_hierarchy_markdown,
         DOCTEST_CHECK(frame.absent("md.pagebg"));
         // 批M：树区浅灰面板（纸卡分层）
         DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.hover));
-        // 编辑列壳 .bg 已恢复（W8 §4.14：右区 background 底 + 白卡浮起）
-        DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.background));
-        DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
-        // 状态条浮在页面底上，走卡面玻璃层（与纸卡同档），不再是实色 surface
-        DOCTEST_CHECK(frame.rgbaIs("md.status.bg", ui_kit::cardSurface(t)));
+        // 池128：两列收敛单层玻璃壳（glassFill），列底/纸卡两层已删
+        DOCTEST_CHECK(frame.rgbaIs("md.editor.shell", ui_kit::glassFill(t)));
+        DOCTEST_CHECK(frame.rgbaIs("md.preview.shell", ui_kit::glassFill(t)));
+        // 池128：状态条透明依附壳，只留顶部 1px 分割线
+        DOCTEST_CHECK(frame.colorIs("md.status.divider", t.colors.borderDefault));
         return true;
     };
 

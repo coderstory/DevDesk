@@ -60,15 +60,18 @@ void MarkdownModule::drawTreeHandle(eui::Ui& ui,
 }
 
 void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
-                    float contentW,
+                    float x,
+                    float y,
+                    float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) {
-    if (openNotes_.empty()) return;  // 无标签时不创建元素，不占列 gap
-    constexpr float kTabBarH = 32.0f;       // S2.2 块面 Tab（弹窗级）
+    if (openNotes_.empty()) return;  // 无标签时不创建元素（池130：带高恒 kNoteTabBarH）
     constexpr float kTabMinW = 80.0f;
     constexpr float kTabMaxW = 200.0f;
+    // 池130：不再横跨整页——调用方按页坐标贴编辑列顶（x=树宽+gap，宽=编辑列宽）
     ui.row("md.note.tabs")
-        .size(contentW, kTabBarH)
+        .position(x, y)
+        .size(w, kNoteTabBarH)
         .gap(0.0f)
         .content([&] {
             for (size_t i = 0; i < openNotes_.size(); ++i) {
@@ -82,11 +85,11 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                 const float nameW = estimateTextWidth(name, 12.0f);
                 const float tabW = std::min(kTabMaxW, std::max(kTabMinW, nameW + 42.0f));
                 ui.stack("md.note.tab." + std::to_string(i))
-                    .size(tabW, kTabBarH)
+                    .size(tabW, kNoteTabBarH)
                     .content([&] {
                         // tab 背景（S2.2 块面 Tab：选中 primarySoftBg + H10 描边，未选中透明）
                         ui.rect("md.note.tab." + std::to_string(i) + ".bg")
-                            .size(tabW, kTabBarH)
+                            .size(tabW, kNoteTabBarH)
                             .color(active ? t.colors.primarySoftBg
                                           : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                             .hoverColor(t.colors.hover)
@@ -99,10 +102,10 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                         // tab 名称
                         ui.text("md.note.tab." + std::to_string(i) + ".name")
                             .position(8.0f, 0.0f)
-                            .size(tabW - 32.0f, kTabBarH)
+                            .size(tabW - 32.0f, kNoteTabBarH)
                             .text(name)
                             .fontSize(core::theme::scaled(13.0f))
-                            .lineHeight(kTabBarH)
+                            .lineHeight(kNoteTabBarH)
                             .verticalAlign(eui::VerticalAlign::Center)
                             .color(active ? t.colors.primary
                                           : t.colors.textSecondary)
@@ -110,7 +113,7 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                             .build();
                         // 关闭钮（×），hover 浅灰底
                         ui.stack("md.note.tab." + std::to_string(i) + ".close")
-                            .position(tabW - 28.0f, (kTabBarH - 24.0f) * 0.5f)
+                            .position(tabW - 28.0f, (kNoteTabBarH - 24.0f) * 0.5f)
                             .size(24.0f, 24.0f)
                             .content([&] {
                                 ui.rect("md.note.tab." + std::to_string(i) + ".close.bg")
@@ -245,27 +248,28 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
                 .build();
         }
         // +笔记 / +文件夹 图标按钮（从面板底部上移到搜索框右侧，§3.3.3）
-        // 0xF067 = fa-plus；onClick 接原回调不变。UAT3 D-R3-3：折叠键上移面板头后
-        // 两键贴右缘（右 padding 16 与左对称），行内不再有第三键。
+        // 池129：两键统一 FA 字形去 emoji/文本割裂——plus 0xF067 + folder-plus
+        // 0xF65E 成「新增」动词对仗；字号 14 走 scaled 口径（同树节点图标），
+        // 按钮盒 28×40/y=48/btnX 不动。iconSize 须传 scaled 值（builder scale_=1）。
         const float btnX0 = sideW - 76.0f;
         const float btnX1 = sideW - 44.0f;
         components::button(ui, "md.tree.new")
             .position(btnX0, 48.0f)
             .size(28.0f, 40.0f)
-            .text("+")
-            .fontSize(t.sizes.fontSizeBody)
+            .icon(0xF067)  // fa-plus
+            .iconSize(core::theme::scaled(14.0f))
             .theme(componentTheme, false)
-            .textColor(t.colors.textSecondary)
+            .iconColor(t.colors.textSecondary)
             .radius(t.sizes.radius)
             .onClick([this] { openNewNoteDialog(); })
             .build();
         components::button(ui, "md.tree.newfolder")
             .position(btnX1, 48.0f)
             .size(28.0f, 40.0f)
-            .text("📁")
-            .fontSize(core::theme::scaled(12.0f))
+            .icon(0xF65E)  // fa-folder-plus
+            .iconSize(core::theme::scaled(14.0f))
             .theme(componentTheme, false)
-            .textColor(t.colors.textSecondary)
+            .iconColor(t.colors.textSecondary)
             .radius(t.sizes.radius)
             .onClick([this] {
                 newFolderOpen_ = true;

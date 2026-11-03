@@ -255,6 +255,27 @@ inline ViewMode nextMode(ViewMode m) {
 constexpr float kTextColumnInsetX = 8.0f;
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
 
+// 池130：tab 带只压正下方列（编辑/实时/纯预览）顶部，树列恒满高——
+// 带高 = tab 32（S2.2 块面 Tab 档不动）+ 下距 8（与 kHeaderGap 同档）。
+constexpr float kNoteTabBarH = 32.0f;
+constexpr float kNoteTabBandH = kNoteTabBarH + 8.0f;
+
+// 池128：md 两列共用玻璃壳三件套（glassFill + radiusLarge + glassBorder + 冷阴影），
+// 取代原「列底 + 纸卡」两层；阴影几何与卡同款（panelShadow 24/8），色走 glassShadowColor。
+inline void drawGlassShell(eui::Ui& ui, const std::string& id,
+                           float x, float y, float w, float h,
+                           const core::theme::Tokens& t) {
+    ui.rect(id)
+        .position(x, y)
+        .size(w, h)
+        .color(ui_kit::glassFill(t))
+        .radius(t.sizes.radiusLarge)
+        .border(1.0f, ui_kit::glassBorder(t))
+        .shadow(core::Shadow{true, {0.0f, 8.0f}, 24.0f, 0.0f,
+                             ui_kit::glassShadowColor(t), false})
+        .build();
+}
+
 // 实时态单输入（活动块）：全局只有一个 input，切块换文本 + 搬位置，焦点永不迁移
 //（每块一个 input 会在拆/并块瞬间丢焦点）。id 不得落在 releaseStateScope 释放的前缀下。
 constexpr const char* kLiveInputId = "md.live.input";
@@ -343,10 +364,17 @@ private:
     // 方案 A 笔记标签条：已打开的笔记以 tab 行展示在头部与编辑器之间。
     // 每 tab = 笔记名 + 关闭钮；激活 tab = 块面式（primarySoftBg 底+primary 字+8px 圆角，S2.2）。
     // 关闭最后一个 tab 回到空态；数据源 = openNotes_ 向量（会话内存态）。
+    // 池130：不再横跨整页/全局扣高——由调用方按页坐标放在编辑列顶部
+    //（x=树面板动画宽+gap，宽=编辑列宽），树列恢复满高。
     void drawNoteTabBar(eui::Ui& ui,
-                        float contentW,
+                        float x,
+                        float y,
+                        float w,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) ;
+
+    // 池130：tab 带压顶量（kNoteTabBandH，无标签 = 0）。只用于与 tab 带同 x/宽的那列。
+    float tabBandInset() const { return openNotes_.empty() ? 0.0f : kNoteTabBandH; }
 
     // 关闭一个标签页：从 openNotes_ 移除，若关闭的是当前活跃笔记则切换到最后剩余项
     void closeTab(const std::string& path) ;
@@ -385,7 +413,8 @@ private:
         float h = 0.0f;  // 文本列高（已扣状态栏与底部间距，钳 >= 0）
     };
 
-    // 未选笔记（空文档）只出提示条 + 状态栏，正文回调不执行
+    // 未选笔记（空文档）只出提示条 + 状态栏，正文回调不执行。
+    // topInset = tab 带压顶量（池130）：壳顶随之下移，树列满高不受影响。
     template <typename Body>
     void drawTextColumnChrome(eui::Ui& ui,
                               const std::string& columnId,
@@ -393,36 +422,24 @@ private:
                               float midW,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& componentTheme,
+                              float topInset,
                               Body&& body) {
         ui.stack(columnId).size(midW, bodyH).content([&] {
-            // 列底 = 页面底（浅灰）；有笔记时正文区浮白纸卡（批M：灰底托纸卡分层）
-            ui.rect(columnId + ".bg")
-                .size(midW, bodyH)
-                .color(t.colors.background)
-                .build();
-            // 2026-11-01 F-17：纸卡此前只在「已选笔记」时画，空态下整列与页面底同色，
-            // 三栏边界不可辨（截图里编辑区像一片空白，只有一行提示浮着）。
-            // 纸卡改为常驻——空态也有画布边界，列的轮廓始终可见。
-            const float paperX = 8.0f;
-            const float paperY = 8.0f;
-            const float paperW = midW - 16.0f;
-            const float paperH = std::max(0.0f, bodyH - 8.0f - 30.0f);
-            ui.rect(columnId + ".paper")
-                .position(paperX, paperY)
-                .size(paperW, paperH)
-                .color(t.colors.surface)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
+            // 池128 单层玻璃壳：原「列底(不透明) + 纸卡(不透明)」两层收敛为一层——
+            // glassFill 接近实体保打字可读性，玻璃感改由 1px 高光边 + 冷阴影承担。
+            // 壳常驻（沿 2026-11-01 F-17 口径）：空态也有画布边界，列轮廓始终可见。
+            const float shellH = std::max(0.0f, bodyH - topInset);
+            drawGlassShell(ui, columnId + ".shell", 0.0f, topInset, midW,
+                           shellH, t);
             if (currentPath_.empty()) {
                 // 2026-11-01 R3：空态走全站统一组件（图标 + 主句 + 引导句，整体居中）
                 ui_kit::EmptyStateOptions opts;
                 opts.message = "还没有打开笔记";
                 opts.guide = "从左栏选一篇笔记开始编辑。";
                 opts.icon = 0xF02D;  // fa-book
-                ui_kit::emptyState(ui, columnId + ".hint", opts, paperX + 16.0f,
-                                   paperY + 16.0f, paperW - 32.0f,
-                                   std::max(0.0f, paperH - 32.0f), t);
+                ui_kit::emptyState(ui, columnId + ".hint", opts, 16.0f,
+                                   topInset + 16.0f, midW - 32.0f,
+                                   std::max(0.0f, shellH - 62.0f), t);
                 drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
                 return;
             }
@@ -431,8 +448,8 @@ private:
             float colW = midW - kTextColumnInsetX * 2.0f;
             // TODO(面包屑)：展示 currentPath_ 路径（§3.2.4 补充项，签认可划）。
             // 数据链待核——审计未覆盖路径读取链，暂不硬做。
-            drawTagBar(ui, colX, colW, t, componentTheme);
-            const float colY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
+            drawTagBar(ui, colX, topInset + 16.0f, colW, t, componentTheme);
+            const float colY = topInset + 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
             const float colH = std::max(0.0f, bodyH - colY - 22.0f - 8.0f);
 
             body(TextColumnGeometry{colX, colY, colW, colH});
@@ -465,9 +482,10 @@ private:
 
     // 标签 chip 行（显示 + × 删除）+ 内置添加输入（回车提交）。溢出直接截断。
     // W8：标签添加从红点加号改为输入框内置（§3.3.4），移除独立 addbtn 按钮。
-    // chip 样式：浅灰底 + 标签绿字（wechat 令牌）。
+    // chip 样式：浅灰底 + 标签绿字（wechat 令牌）。y 由调用方给（池128：随 tab 带压顶下移）。
     void drawTagBar(eui::Ui& ui,
                     float x,
+                    float y,
                     float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) ;

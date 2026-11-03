@@ -139,20 +139,15 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
                        const components::theme::ThemeColorTokens& componentTheme,
                        float gap) {
     (void)gap;
+    // 池130：纯预览态 tab 带压在本列顶上（与 tab 同 x/宽），Split 态 tab 只压编辑列
+    const float topInset = (mode_ == ViewMode::Preview) ? tabBandInset() : 0.0f;
     ui.stack("md.preview").size(midW, bodyH).content([&] {
-        ui.rect("md.preview.bg")
-            .size(midW, bodyH)
-            .color(t.colors.background)
-            .build();
-        // 白纸卡（批M，与编辑器列同款）；空态不铺卡
-        if (!currentPath_.empty()) {
-            ui.rect("md.preview.paper")
-                .position(8.0f, 8.0f)
-                .size(midW - 16.0f, std::max(0.0f, bodyH - 16.0f))
-                .color(ui_kit::cardSurface(t))
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
+        // 池128 单层玻璃壳（与编辑列同款三件套，见 drawGlassShell）；壳常驻——
+        // 空态也铺（编辑列壳常驻同口径，空态也有画布边界；旧 .bg 列底亦恒画）
+        {
+            const float shellH = std::max(0.0f, bodyH - topInset);
+            drawGlassShell(ui, "md.preview.shell", 0.0f, topInset, midW,
+                           shellH, t);
         }
 
         float pvX = 20.0f;
@@ -162,7 +157,7 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
             pvW = std::min(pvW, kPreviewColumnWidth);
             pvX = std::max(0.0f, (midW - pvW) * 0.5f);
         }
-        const float pvY = 16.0f;
+        const float pvY = topInset + 16.0f;
         const float pvH = std::max(0.0f, bodyH - pvY - 16.0f);
 
         if (currentPath_.empty()) {
@@ -405,8 +400,9 @@ void MarkdownModule::drawLiveColumn(eui::Ui& ui,
     // 程序化标记漏清在下帧开头清零（残留会把用户滚轮误判成程序化来源）。
     liveProgrammaticScroll_ = false;
     // 列壳与编辑态共用同一实现；两态都不钳列宽：正文列 = 栏宽 − 2×8px 留白。
+    // 池130：tab 带压在本列（实时态单栏，与 tab 同 x/宽）顶上。
     drawTextColumnChrome(
-        ui, "md.live", bodyH, midW, t, componentTheme,
+        ui, "md.live", bodyH, midW, t, componentTheme, tabBandInset(),
         [&](const TextColumnGeometry& g) {
             const components::MarkdownStyle style =
                 scaledPreviewStyle(componentTheme);

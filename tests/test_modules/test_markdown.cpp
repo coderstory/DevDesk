@@ -32,6 +32,7 @@ using module::markdown::kEditorInputId;
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
 #include <ui_kit/card.h>
+#include <ui_kit/glass.h>
 #include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
 #include <algorithm>
@@ -428,7 +429,7 @@ REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 
     DOCTEST_CHECK(ui.find("md.mode") != nullptr);        // 模式切换 segmented
     DOCTEST_CHECK(ui.find("md.tree.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.editor.hint") != nullptr);
-    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);   // 状态栏常驻
+    DOCTEST_CHECK(ui.find("md.status.divider") != nullptr);   // 状态栏常驻（池128：分割线）
 
     // 无修饰按键不消费（不能拦截正常打字）
     eui::KeyEvent plain;
@@ -1072,7 +1073,7 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     DOCTEST_REQUIRE(handleCol != nullptr);
     DOCTEST_REQUIRE(handleBg != nullptr);
     const auto* ed = ui.find("md.editor");
-    const auto* edBg = ui.find("md.editor.bg");
+    const auto* edBg = ui.find("md.editor.shell");
     const auto* input = ui.find(kEditorInputId);
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_REQUIRE(edBg != nullptr);
@@ -1247,29 +1248,43 @@ REGISTER_TEST(md_module_wechat_surfaces,
 
     const auto& wc = core::theme::current().colors;
     const eui::Color cardBg = ui_kit::cardSurface(core::theme::current());
-    // 批M（2026-10-25 拍板）：树区改浅灰面板（hover 令牌），编辑/预览白纸卡——
-    // 灰底托纸卡分层，取代旧「树/编辑同底」共面方案
+    // 批M：树区浅灰面板（hover 令牌）不动；池128：编辑/预览/实时列收敛单层玻璃壳
+    // （glassFill），列底 background 与纸卡 surface 两层已删（live 列同走 chrome）
     DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.hover));
     DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.surface));
-    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
+    const auto* edShell = ui.find("md.editor.shell");
+    DOCTEST_REQUIRE(edShell != nullptr);
+    DOCTEST_CHECK(colorEq(edShell->color,
+                          ui_kit::glassFill(core::theme::current())));
     const auto* edHit = ui.find("md.editor.input.hit");
     DOCTEST_REQUIRE(edHit != nullptr);
-    DOCTEST_CHECK(colorEq(edHit->color, wc.surface));   // 编辑面板底 = 白卡（米黄主诉点）
-    DOCTEST_CHECK(colorEq(ui.find("md.status.bg")->color, cardBg));
+    DOCTEST_CHECK(colorEq(edHit->color, eui::Color{0.0f, 0.0f, 0.0f, 0.0f}));   // input 全透明依附壳（池128）
+    const auto* statusDivider = ui.find("md.status.divider");
+    DOCTEST_REQUIRE(statusDivider != nullptr);
+    DOCTEST_CHECK(colorEq(statusDivider->color, wc.borderDefault));
 
-    // 实时态：列底浅灰 + 活动输入面白卡
+    // 实时态：live 列同款单层玻璃壳（池128；旧 md.live.bg 列底已删）
     DOCTEST_REQUIRE(cycle());   // 编辑 → 实时
     frame();
-    DOCTEST_CHECK(colorEq(ui.find("md.live.bg")->color, wc.background));
+    const auto* liveShell = ui.find("md.live.shell");
+    DOCTEST_REQUIRE(liveShell != nullptr);
+    DOCTEST_CHECK(colorEq(liveShell->color,
+                          ui_kit::glassFill(core::theme::current())));
     const auto* liveHit = ui.find("md.live.input.hit");
     DOCTEST_REQUIRE(liveHit != nullptr);
     DOCTEST_CHECK(colorEq(liveHit->color, wc.surface));
 
-    // 双栏：编辑列 + 预览列底都为浅灰 background（白卡内容浮于其上）
+    // 双栏：两列同为单层玻璃壳（池128）
     DOCTEST_REQUIRE(cycle());   // 实时 → 双栏
     frame();
-    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
-    DOCTEST_CHECK(colorEq(ui.find("md.preview.bg")->color, wc.background));
+    const auto* edShell2 = ui.find("md.editor.shell");
+    DOCTEST_REQUIRE(edShell2 != nullptr);
+    DOCTEST_CHECK(colorEq(edShell2->color,
+                          ui_kit::glassFill(core::theme::current())));
+    const auto* pvShell = ui.find("md.preview.shell");
+    DOCTEST_REQUIRE(pvShell != nullptr);
+    DOCTEST_CHECK(colorEq(pvShell->color,
+                          ui_kit::glassFill(core::theme::current())));
 
     // 大纲浮面板：底 = 白卡（曾 = surfaceElevated，米黄根源之一）；
     // 行选中浅灰 / 未选白卡。反向锁：不许回退暖橙 surfaceElevated。
@@ -2213,7 +2228,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
         // 列壳 .bg 已去（编辑列为 input 单层）——几何断言
     // 改挂列壳 stack（md.editor），宽度语义不变
     const auto* editor = ui.find("md.editor");
-    const auto* preview = ui.find("md.preview.bg");
+    const auto* preview = ui.find("md.preview");
     DOCTEST_REQUIRE(tree != nullptr);
     DOCTEST_REQUIRE(editor != nullptr);
     DOCTEST_REQUIRE(preview != nullptr);
@@ -2279,7 +2294,7 @@ REGISTER_TEST(md_module_sidebar224_split_dualres,
     // 档1：1000×640 —— 侧栏钉 224、编辑/预览列 = (contentW-sideW-2*gap)/2
     const auto* tree = ui.find("md.tree.bg");
     const auto* editor = ui.find("md.editor");
-    const auto* preview = ui.find("md.preview.bg");
+    const auto* preview = ui.find("md.preview");
     DOCTEST_REQUIRE(tree != nullptr);
     DOCTEST_REQUIRE(editor != nullptr);
     DOCTEST_REQUIRE(preview != nullptr);
@@ -2295,7 +2310,7 @@ REGISTER_TEST(md_module_sidebar224_split_dualres,
     frame();
     const auto* tree2 = ui.find("md.tree.bg");
     const auto* editor2 = ui.find("md.editor");
-    const auto* preview2 = ui.find("md.preview.bg");
+    const auto* preview2 = ui.find("md.preview");
     DOCTEST_REQUIRE(tree2 != nullptr);
     DOCTEST_REQUIRE(editor2 != nullptr);
     DOCTEST_REQUIRE(preview2 != nullptr);
@@ -2662,10 +2677,14 @@ REGISTER_TEST(md_chip_and_outline_text_centered,
     frame("cc5");
     DOCTEST_REQUIRE(ui.find("md.outline.item.0.label") != nullptr);
     collect("md.outline.item.0.label", "md.outline.item.0.row");
-    // 状态栏左右两段（B1 评审补漏：文本盒 == 状态栏底 rect 高 22、同 y）
-    DOCTEST_REQUIRE(ui.find("md.status.bg") != nullptr);
-    collect("md.status.save", "md.status.bg");
-    collect("md.status.pos", "md.status.bg");
+    // 池128：状态栏无底卡（透明+1px 分割线），左右两段文本同 y 同高 22 对齐
+    DOCTEST_REQUIRE(ui.find("md.status.divider") != nullptr);
+    const auto* statusSave = ui.find("md.status.save");
+    const auto* statusPos = ui.find("md.status.pos");
+    DOCTEST_REQUIRE(statusSave != nullptr);
+    DOCTEST_REQUIRE(statusPos != nullptr);
+    DOCTEST_CHECK_EQ(statusSave->frame.y, statusPos->frame.y);
+    DOCTEST_CHECK_EQ(statusSave->frame.height, core::theme::scaled(22.0f));
 
     DOCTEST_CHECK_MESSAGE(problems.empty(), problems);
 
@@ -4092,7 +4111,7 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     // 左树 / 顶栏动作 / 状态栏 / segmented：四态共享（零改动）
     DOCTEST_CHECK(ui.find("md.tree.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.actions") != nullptr);
-    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.status.divider") != nullptr);
     DOCTEST_CHECK(ui.find("md.mode") != nullptr);
 
     // → 双栏
@@ -4788,7 +4807,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     frame();
     DOCTEST_CHECK(ui.find("md.editor.hint") != nullptr);
     DOCTEST_CHECK(ui.find("md.tags.add.hit") == nullptr);
-    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.status.divider") != nullptr);
 
     // (2) 打开笔记 → 编辑态（单栏：正文列 = 栏宽 − 2×8px 留白，不再钳 720 居中）
     const auto* row = findFileRowByName(ui, "a.md");
@@ -4809,7 +4828,8 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     DOCTEST_CHECK_EQ(edInput->frame.x - edCol->frame.x, kInsetNow);
     DOCTEST_CHECK(kInsetNow < kInsetBefore);          // 8 < 16
     DOCTEST_CHECK(edInput->frame.width > 720.0f);     // 写作列钳已去掉
-    DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y, 48.0f);
+    // 池130：tab 带（32+8=40）压编辑列顶后，input y 偏移 = 40 + 16 顶距 + 24 chip 行 + 8 间距 = 88
+    DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y, 40.0f + 48.0f);
     const float edX = edInput->frame.x;
     const float edY = edInput->frame.y;
     const float edW = edInput->frame.width;
@@ -4825,7 +4845,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     DOCTEST_CHECK_EQ(live->frame.width, edW);
     DOCTEST_CHECK_EQ(live->frame.height, edH);
     DOCTEST_CHECK(ui.find("md.tags.add.hit") != nullptr);
-    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.status.divider") != nullptr);
 
     // (4) 宽窗口 2400：双栏态不钳（原条件 mode_ == ViewMode::Edit）——左半栏
     //     编辑器文本列贴左 8px 且宽于 720；回到编辑态列壳不变（两态同宽口径）

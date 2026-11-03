@@ -14,11 +14,27 @@ void MarkdownModule::drawEditorColumn(eui::Ui& ui,
                       float midW,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
-    (void)componentTheme;
     // 布局语义与耦合点见 drawTreeColumn 注释。
+    // 池128：input 全透明依附列壳——组件默认 surface 底/边/阴影全撤，
+    // focus 态 = 绿边（主色）+ primarySoftBg 浅染底；default 态边界只留
+    // 下方 1px 底线（下方手画），radius 6。
+    components::InputStyle inputStyle(componentTheme);
+    inputStyle.background = eui::Color{0.0f, 0.0f, 0.0f, 0.0f};
+    inputStyle.focused = t.colors.primarySoftBg;
+    inputStyle.border = eui::Color{0.0f, 0.0f, 0.0f, 0.0f};
+    inputStyle.focusBorder = t.colors.primary;
+    inputStyle.radius = 6.0f;
+    inputStyle.shadow = core::Shadow{};
     drawTextColumnChrome(
         ui, "md.editor", bodyH, midW, t,
-        componentTheme, [&](const TextColumnGeometry& g) {
+        componentTheme, tabBandInset(), [&](const TextColumnGeometry& g) {
+            // 1px 底边线（池128）：default 态唯一边界指示；focus 时组件绿边
+            // 同位覆盖（后画者在上），失焦回到底线。
+            ui.rect("md.editor.input.baseline")
+                .position(g.x, g.y + g.h - 1.0f)
+                .size(g.w, 1.0f)
+                .color(t.colors.borderDefault)
+                .build();
             components::input(ui, kEditorInputId)
                 .position(g.x, g.y)
                 .size(g.w, g.h)
@@ -29,6 +45,9 @@ void MarkdownModule::drawEditorColumn(eui::Ui& ui,
                 .fontSize(mdEditorFontSize())
                 .inset(10.0f)
                 .theme(componentTheme)
+                .style(inputStyle)
+                // focus 过渡 120ms 缓出（设计 §6 新增面标准档）
+                .transition(120.0f, core::Ease::OutCubic)
                 .onChange([this](const std::string& v) {
                     // 输入更新内存缓冲；落盘走防抖（见 flushEditorIfIdle）
                     onEditorTextChanged(v);
@@ -157,10 +176,10 @@ void MarkdownModule::setEditorText(const std::string& v) {
 
 void MarkdownModule::drawTagBar(eui::Ui& ui,
                 float x,
+                float y,
                 float w,
                 const core::theme::Tokens& t,
                 const components::theme::ThemeColorTokens& componentTheme) {
-    const float y = 16.0f;
     const float h = 24.0f;
     const float fs = 11.0f;
     float cx = x;
@@ -233,10 +252,11 @@ void MarkdownModule::drawTagBar(eui::Ui& ui,
 }
 
 void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const core::theme::Tokens& t) {
-    ui.rect("md.status.bg")
+    // 池128：状态条不再自铺半透小卡——透明铺列壳底，只留顶部 1px 分割线
+    ui.rect("md.status.divider")
         .position(x, y)
-        .size(w, 22.0f)
-        .color(ui_kit::cardSurface(t))
+        .size(w, 1.0f)
+        .color(t.colors.borderDefault)
         .build();
 
     std::string left = "未选择笔记";
@@ -267,7 +287,7 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
         .overflow(core::TextOverflow::Ellipsis)
         .clip()
         .text(left)
-        .fontSize(core::theme::scaled(11.0f))
+        .fontSize(core::theme::scaled(12.0f))
         .lineHeight(core::theme::scaled(22.0f))
         // 文本盒 == 状态栏底高，须显式垂直居中
         .verticalAlign(eui::VerticalAlign::Center)
@@ -312,7 +332,7 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
         .position(x + w - 24.0f - 220.0f, y)
         .size(220.0f, core::theme::scaled(22.0f))
         .text(right)
-        .fontSize(core::theme::scaled(11.0f))
+        .fontSize(core::theme::scaled(12.0f))
         .lineHeight(core::theme::scaled(22.0f))
         .horizontalAlign(eui::HorizontalAlign::Right)
         // 文本盒 == 状态栏底高，须显式垂直居中
