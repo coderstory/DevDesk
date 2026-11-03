@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -41,6 +42,7 @@
 #include "core/tool.h"
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/agent_time_text.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/direct_llm_client.h"
 #include "module_agent/message_blocks.h"
@@ -593,7 +595,9 @@ std::string scI(Ctx& c) {
             else if (!r.endedAt.has_value() || *r.endedAt < r.startedAt) ev = "ended_at < started_at";
             else ev.clear();
             if (ev.empty()) {
-                auto sums = c.store->listTaskRunSummaries();
+                // 与 AgentModule::refreshRunSummaries 同 7d 窗口口径
+                auto sums = c.store->listTaskRunSummaries(static_cast<int64_t>(
+                    module::agent::sevenDayWindowStart(std::time(nullptr))));
                 if (sums.isFail() || sums.value().empty()) {
                     return "listTaskRunSummaries 为空";
                 }
@@ -748,10 +752,10 @@ int main(int argc, char** argv) {
         // claude.test_connection 是一次真请求（假 key → 4xx，正好喂 G 类失败语义）
         auto p1 = c.claude->createProfile("live-a", src.profile.baseUrl,
                                           "sk-agent-live-fake-a", model,
-                                          /*activateIfNoneActive=*/true, 0, "bearer");
+                                          /*activateIfNoneActive=*/true, "bearer");
         auto p2 = c.claude->createProfile("live-b", src.profile.baseUrl,
                                           "sk-agent-live-fake-b", model,
-                                          /*activateIfNoneActive=*/false, 0, "bearer");
+                                          /*activateIfNoneActive=*/false, "bearer");
         if (p1.isFail() || p2.isFail()) {
             std::fprintf(stderr, "替身 profile 建立失败: %s / %s\n",
                          p1.errorMessage().c_str(), p2.errorMessage().c_str());
