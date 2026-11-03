@@ -49,6 +49,16 @@ public:
                                                "本实现不支持提炼入库");
     }
 
+    // 条目正文整条改写（需-3 路②补标通道：update_memory(memory_id, text)，
+    // 引擎 required=[memory_id,text] 已核实）。默认 NotImplemented 同上。
+    virtual core::Result<void> updateMemoryText(const std::string& memoryId,
+                                                const std::string& text) {
+        (void)memoryId;
+        (void)text;
+        return core::Result<void>::fail(core::ErrorCode::NotImplemented,
+                                        "本实现不支持条目改写");
+    }
+
     // 移出「自动想起」（卡片代理层执行面）：live 对账定案（2026-10-28）——
     // telemem 1.10.1 无 forgotten 过滤缝（update 打标记后 search 照回），唯一
     // 真实生效通道 = delete_memory；故 true → delete_memory，false（恢复）引擎
@@ -80,6 +90,8 @@ public:
                                                 int timeoutMs) override;
     core::Result<std::string> addDirect(const std::string& text) override;
     core::Result<std::string> addInferred(const std::string& text) override;
+    core::Result<void> updateMemoryText(const std::string& memoryId,
+                                        const std::string& text) override;
     core::Result<void> setMemoryForgotten(const std::string& memoryId,
                                           bool forgotten) override;
     core::Result<std::vector<MemoryListItem>> listAll(int limit,
@@ -122,6 +134,15 @@ inline platform::json::JsonObject buildAddMemoryArgs(const std::string& text,
     platform::json::JsonObject args;
     args.set("text", platform::json::makeString(text));
     args.set("infer", platform::json::makeBool(infer));
+    return args;
+}
+
+// update_memory 入参组装（纯函数，单测钉字段；需-3 路②补标用）
+inline platform::json::JsonObject buildUpdateMemoryArgs(
+    const std::string& memoryId, const std::string& text) {
+    platform::json::JsonObject args;
+    args.set("memory_id", platform::json::makeString(memoryId));
+    args.set("text", platform::json::makeString(text));
     return args;
 }
 

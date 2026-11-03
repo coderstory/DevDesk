@@ -101,6 +101,9 @@ REGISTER_TEST(memory_collect_pipeline_round,
                   std::string::npos);
     DOCTEST_CHECK(pending.value()[0].resultText.find("PanelState") !=
                   std::string::npos);
+    // 需-3 §2.1：卡文本构造处带前缀（默认 [踩坑|会话采集]，人审编辑框可改）
+    DOCTEST_CHECK(pending.value()[0].resultText.rfind("[踩坑|会话采集] ", 0) ==
+                  0);
 
     // 二轮幂等：水位已推进，零重产零重建卡
     auto r2 = pipeline::runCollectRound(
