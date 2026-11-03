@@ -23,6 +23,11 @@ env:
   # 注册整体不生成，probe 门禁段与探针跳过登记守卫显式跳过打 ⏭）。
   # 单测全量与静态守卫照跑；probe 真门禁靠本地（默认 ON）+ headless 断言单测。
   DEVDESK_BUILD_PROBES: "0"
+  # EUI-NEO submodule 统一定位（workflow 全局）：msys2/UCRT64 壳下脚本的
+  # git rev-parse 仓库根判定不可靠（2026-11-03 双次实证）；显式指给全部步——
+  # 构建/clang-tidy/覆盖率各步都独立跑 build 脚本，逐步 export 会漏（clang-tidy
+  # 步曾因此死在 configure）。mac 侧 rev-parse 本可用，显式值同路径无副作用。
+  EUI_NEO_DIR: ${{ github.workspace }}/DevDesk/EUI-NEO
 
 jobs:
   macos:
@@ -147,10 +152,8 @@ jobs:
         shell: msys2 {0}
         run: |
           cd DevDesk
-          # msys2 下 git rev-parse --show-toplevel 的返回值过不了脚本的 [ -f ] 仓库根
-          # 判定（Windows CI 自 EUI-NEO submodule 迁移起「找不到 EUI-NEO」连红根因，
-          # 2026-11-03 定性）：按脚本定位优先级显式给 EUI_NEO_DIR，本地 rev-parse 兜底不变。
-          export EUI_NEO_DIR="$(pwd)/EUI-NEO"
+          # EUI_NEO_DIR 已提升到 workflow 全局 env（msys2 壳下 rev-parse 仓库根
+          # 判定不可靠，且 clang-tidy/覆盖率步独立跑脚本会漏逐步 export）。
           bash scripts/build-test-run.sh --release --no-run
           echo "--- ccache ---"
           ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
