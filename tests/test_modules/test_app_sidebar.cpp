@@ -339,6 +339,10 @@ REGISTER_TEST(sidebar_fold_reserves_toggle_zone,
     // 固定，行 y 无上限）。让位线 = height−56−gap，行矩形越线整行不画。矮窗
     //（body 420）+ 8 个平铺项：只有前 5 行画得出（第 6 行 Agent 起点 336，
     // 336+40=376 > 360 越线）。
+    // 下文全部 y 是**侧栏局部坐标**（compose 内部口径）。macOS 系统标题栏让位
+    // 30px 在 compose 入口扣掉（kSystemTitleBarInset），窗口高要把它加回去，
+    // 否则局部高只有 390、让位线 330，第 5 行（行底 332）被误裁——2026-11-04
+    // 实测踩坑：此用例在 macOS 恒红，根因即窗口高按 Windows 口径（bodyTop=0）硬算。
     app::setCustomTitlebarMode(false);
     app::resetSidebarGlobals();  // 折叠/分组展开态回厂，不依赖前序用例
     RecordingModule home(::core::PageId::Home, "首页");
@@ -362,7 +366,8 @@ REGISTER_TEST(sidebar_fold_reserves_toggle_zone,
 
     eui::Screen screen;
     screen.width = 1600.0f;
-    screen.height = 420.0f;  // 矮窗：让位线 = 420−56−4 = 360
+    // 矮窗：侧栏局部高 420（让位线 = 420−56−4 = 360）；窗口高另加系统标题栏让位
+    screen.height = 420.0f + kExpectedBodyTop;
     eui::Ui ui;
     ui.begin("sidebar_fold");
     app::compose(ui, screen);
