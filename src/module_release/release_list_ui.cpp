@@ -393,6 +393,11 @@ void drawListCardBox(eui::Ui& ui, const std::string& id, float x, float y, float
     const auto componentTheme = core::theme::componentTokensWeChat(t);
     ui.rect(id)
         .position(x, y)
+        // 必须脱离流式布局：本卡画在 scrollView content 的 column 里，EUI 对未
+        // ignoreLayout 的子元素会静默忽略 position()，卡被排到 spacer 之后
+        //（y=contentH），而行是绝对定位 → 「文本在上、白卡在下」的分离
+        //（2026-11-03 池133 老板真机实证）。
+        .ignoreLayout()
         .size(std::max(0.0f, w), std::max(0.0f, h))
         .color(ui_kit::itemSurface(t))
         .border(1.0f, t.colors.borderDefault)

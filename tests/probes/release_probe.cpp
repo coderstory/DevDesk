@@ -666,6 +666,17 @@ int main(int argc, char* argv[]) {
             if (box != nullptr) {
                 checks.expectNear("列表白卡圆角", box->radius, 16.0f,
                                   "release_list_ui.cpp kListCardRadius=16（池 53 大卡特例档）");
+                // 池133 防复发：白卡必须与行内容同顶且覆盖全部行。卡在 scrollView 的
+                // content column 里，漏 .ignoreLayout() 会被流式排到 spacer 之后
+                //（y=contentH），画面表现为「文本浮在上、白卡在下」。
+                checks.expectNear(
+                    "列表白卡顶缘", box->frame.y, cards.front()->frame.y,
+                    "卡顶应与首行同顶（漏 ignoreLayout 会被流式排到内容下方）");
+                checks.expectTrue(
+                    box->frame.height + 0.5f >=
+                        static_cast<float>(cards.size()) * 64.0f,
+                    "白卡高应覆盖全部首屏行（" + std::to_string(cards.size()) +
+                        "×64），实际 " + std::to_string(box->frame.height));
             }
         }
         // 113 批次B 内容层断言：列表序 = plan_date DESC，首屏前三行 = detail
