@@ -1,28 +1,31 @@
-// schedule_ui_probe.cpp — 定时页编辑/删除入口的真窗口探针 + 构图留痕（R3）
+// schedule_ui_probe.cpp — 定时页瀑布流重设计（池140）的真窗口探针 + 构图留痕
 //
-// R3（编辑弹窗接线）的 A1/A4 真窗口证据：无头单测断言了节点存在与落库语义，
-// 但「新建按钮 / 行级编辑与删除 / 删除二次确认弹窗 / 编辑弹窗」从未有过真实
-// 渲染帧。本探针用真窗口 + 真命中分发驱动三个状态：
-//   A. 列表态：种子 2 条用户规则，断言 header「新建」、用户行 .edit/.delete/.switch
-//      齐全、系统行零操作控件（.edit/.delete 不存在）、系统段锁图标标题存在；
-//      --shot-list <png> 落列表帧。
-//   B. 编辑弹窗态：点「新建」→ 断言 schedule.edit.name/save/cancel 存在（关闭态
-//      常驻构建， existence 不够，需确认 dialog 开启后输入框仍可命中且按钮帧
-//      在窗口内）；--shot-edit <png> 落弹窗帧。
-//   C. 删除确认态：点行「删除」→ 断言 deleteConfirm 弹窗节点齐全（标题/正文/
-//      purge 开关/取消/删除）；点「取消」关弹窗且行还在；再点「删除」→ 点
-//      「删除」确认 → store.getRule 返回 NotFound（真落库验证，默认软删路径）；
-//      --shot-delete <png> 落确认弹窗帧。
-//   D. 运行历史抽屉态（2026-11-01）：种子 3 条 run（成功/失败/错过）+ 渠道投递，
-//      点页头「运行历史」→ 断言抽屉卡/状态点/渠道 chip/重试钮齐全，并断言
-//      **三个按钮右边界同基准**（右上 × / 行内重试 / 底部关闭 = 内容列右基准）；
-//      --shot-history <png> 落抽屉帧。
+// 池140（TAB + 瀑布卡片重设计）与 bug 150（命中面级果冻断言）的真窗口证据：
+// 无头单测断言节点存在与落库语义，但「TAB 切换 / 列数断点 / 整卡命中 / 果冻
+// 实机命中链路」需要真实渲染帧与真实指针命中分发。本探针用真窗口驱动：
+//   A. 系统定时 TAB（默认）：页头三件套（标题/运行历史/新建）+ 块面 TAB
+//      （选中 .bg 有、未选中无）+ 计数 + 系统卡（锁图标、来源块、零操作控件、
+//      命中面无 onClick、命中面 = 整卡几何且建在卡 stack 最后）；
+//      --shot-list <png> 落系统 TAB 帧。
+//   B. TAB 切换 + 列数断点：点「用户定时」TAB → 用户卡出现、选中态翻转；
+//      列数按当前窗口宽走 columnCountForWidth 断点，列宽 = (W−gap×(列数−1))/列数，
+//      两卡分列（x 不同）。QA 在 1000×640 / 1600×1000 两档窗口各跑一遍本探针
+//      即覆盖两档断点（--size WxH）。
+//   C. 命中面级果冻断言（bug 150）：**真实指针 motion 进卡**（不直调 onHover
+//      回调）→ tint 层出现（opacity 目标 1）、卡面圆角/缩放不变（hover 不放大）；
+//      bg.visualStateSourceId 指向 .hit 且 pressedScale≈0.965（按下果冻接线）；
+//      系统卡同法验 hover 浏览反馈（且无按下果冻接线）；指针移出 → tint 回 0。
+//   D. 点卡开编辑弹窗：弹窗「启用」开关在表单首行、编辑态左下「删除」文字钮
+//      存在；新建弹窗（页头唯一入口）无删除钮。
+//   E. 归档折叠段：点折叠头展开 → 归档卡整卡可点 + hover 反馈。
+//   G. 运行历史抽屉（原 D 段保留）：卡片/状态点/渠道 chip/重试 + 右边界同基准。
+//   F. 删除链路：编辑弹窗左下「删除」→ 既有删除确认小弹窗 → 软删落库。
 //
-// 种子走真 ScheduleStore::createRule 落库口（不绕产品代码写表）。模块经
-// core::appDatabase() 取连接 → TestEnv 以 registerAppDb=true 注册。
+// 种子走真 ScheduleStore::createRule 落库口；系统卡经 provider 注册缝挂静态
+// 来源；归档卡种一条 archivedAt 非空规则。模块经 core::appDatabase() 取连接。
 //
 // 运行：schedule_ui_probe [--shot-list <png>] [--shot-edit <png>] [--shot-delete <png>]
-//                            [--shot-history <png>]
+//                            [--shot-history <png>] [--empty-rules] [--shot-empty <png>]
 // 不带构图开关 = 纯断言门禁（ctest -L probe 跑的就是这条）。
 
 #include "probes/probe_harness.h"
@@ -32,11 +35,12 @@
 #include "core/time.h"
 #include "module_schedule/schedule_module.h"
 #include "module_schedule/schedule_store.h"
-#include "ui_kit/materials.h"
+#include "module_schedule/schedule_ui_list.h"  // columnCountForWidth（列数断点断言）
 
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace app {
@@ -57,13 +61,8 @@ bool shotRequested(const std::string& path) { return !path.empty(); }
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     std::string shotList, shotEdit, shotDelete, shotHistory;
-    // 2026-11-01：浅色主题档（--light）与空历史档（--empty）——运行历史抽屉
-    // 两套主题都要看过，空态是独立形态（不能拿有数据态推断）。
-    // 窗口效果档不在本探针提供：半透/磨砂实现在 AppKit 层，离屏帧缓冲读不到，
-    // 观感一律走真机系统截图（见 docs/design/2026-11-01-窗口效果档验收与覆盖核对.md）；
-    // 档位切换后的布局回归用 uat62_page_shots_probe --window-effect。
-    // 2026-11-02 B4：`--empty-rules` = 用户定时空态档（不播种规则），
-    // `--shot-empty` = 该档截图出口（S1 卡化与按钮降级的空态证据）。
+    // --light 浅色主题档 / --empty 空历史档 / --empty-rules 用户定时空态档
+    //（空态 = 纯文字提示，无卡无任何按钮，池137）。
     bool light = false;
     bool emptyHistory = false;
     bool emptyRules = false;
@@ -99,12 +98,12 @@ int main(int argc, char* argv[]) {
     // 注册为进程级 appDatabase：ScheduleModule::onStart 经 core::appDatabase() 取连接
     test_support::TestEnv tdb("sprobe_", "schedui", /*registerAppDb=*/true);
 
-    // 种子（真 ScheduleStore 落库口）：2 条用户一次性规则（未来 1 小时 / 2 小时，
-    // 不派发——probe 只渲染不跑调度断言）
+    // 种子（真 ScheduleStore 落库口）：2 条用户一次性规则（未来 1/2 小时）+
+    // 1 条已归档规则；系统卡经 provider 注册缝挂静态来源。
     {
         module::schedule::ScheduleStore store(tdb.handle());
         const int64_t now = static_cast<int64_t>(core::time::nowUnix());
-        // --empty-rules：不播规则（用户定时空态档）；ruleId 保 0 供历史种子跳过
+        // --empty-rules：不播规则（用户定时空态档）
         int64_t ruleId = 0;
         if (!emptyRules) {
         module::schedule::RuleRecord r1;
@@ -129,12 +128,28 @@ int main(int argc, char* argv[]) {
         r2.actionKind = "remind";
         r2.actionJson = "{}";
         r2.missedPolicy = "once";
-        auto r2res = store.createRule(r2);
-        if (r2res.isFail()) {
+        if (store.createRule(r2).isFail()) {
             std::cerr << "schedule_ui_probe: 种子 createRule(2) 失败\n";
             core::window::destroyWindow(window);
             probe::terminateWindowBackend();
             return 3;
+        }
+        // 归档卡种子：archivedAt 非空 → 用户 TAB 滚动区尾部折叠段
+        module::schedule::RuleRecord r3;
+        r3.name = "已归档提醒";
+        r3.kind = "once";
+        r3.specJson = "{\"at\":" + std::to_string(now + 10800) + "}";
+        r3.actionKind = "remind";
+        r3.actionJson = "{}";
+        r3.missedPolicy = "once";
+        auto r3res = store.createRule(r3);
+        if (r3res.isOk()) {
+            auto got = store.getRule(r3res.value().id);
+            if (got.isOk()) {
+                module::schedule::RuleRecord archived = got.value();
+                archived.archivedAt = now;
+                store.updateRule(archived);
+            }
         }
         }  // if (!emptyRules)
 
@@ -208,10 +223,36 @@ int main(int argc, char* argv[]) {
     }
 
     module::schedule::ScheduleModule mod;
-    mod.onStart();
     if (light) {
         core::theme::setLight();
     }
+    // 系统卡类别种子（池140：系统 TAB 需要一张真实系统卡供只读/命中面断言）。
+    // 必须先于 onStart 注册：reload 只在 onStart/存档操作触发，onStart 后注册的
+    // 来源要等下一次 reload 才装载（首轮探针实证：sys.0 恒缺位）。
+    {
+        struct ProbeSystemSource : module::schedule::ScheduleProvider {
+            std::vector<module::schedule::ScheduleItemView> items() const override {
+                module::schedule::ScheduleItemView v;
+                v.source = "probe";
+                v.key = "probe:task:1";
+                v.title = "探针系统任务";
+                v.summary = "系统卡只读形态（探针种子）";
+                v.nextFireAt =
+                    static_cast<int64_t>(core::time::nowUnix()) + 3600;
+                v.sourceRoute = "Probe";
+                return {v};
+            }
+        };
+        const auto reg = mod.providerRegistry().registerProvider(
+            std::make_unique<ProbeSystemSource>());
+        if (reg.isFail()) {
+            std::cerr << "schedule_ui_probe: 系统来源注册失败\n";
+            core::window::destroyWindow(window);
+            probe::terminateWindowBackend();
+            return 3;
+        }
+    }
+    mod.onStart();
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);
@@ -265,6 +306,18 @@ int main(int argc, char* argv[]) {
         }
         // 落图内部 pollOnce 会重建元素树，之后所有 find 重新 composeFrame
     };
+    // 真实指针 hover：motion 进点 → 驱帧 → 读 tint 目标值（命中面级，不直调回调）
+    const core::KeyModifiers noMods;
+    auto hoverAt = [&](float x, float y, int frames) {
+        core::queuePointerMotion(window, x, y, core::PointerButtons{}, noMods);
+        for (int i = 0; i < frames; ++i) composeFrame();
+    };
+    auto moveAway = [&]() { hoverAt(w - 8.0f, 8.0f, 6); };
+    // 点击后隔帧成对（Press 与 Release 隔帧送达——单帧只送 Press、onClick 永不
+    // 触发；home_probes 组 M 同款双帧口径）+ 弹窗过渡（~150ms）多帧收敛
+    auto settleFrames = [&](int n) {
+        for (int i = 0; i < n; ++i) composeFrame();
+    };
 
     // 颜色等同（写入 element 的目标值比对，不是像素采样）
     auto sameColor = [](const eui::Color& a, const eui::Color& b) {
@@ -272,30 +325,84 @@ int main(int argc, char* argv[]) {
                std::fabs(a.b - b.b) < 0.02f && std::fabs(a.a - b.a) < 0.02f;
     };
     // 按钮级判定：ui_kit::button 把 level 配色写进 <id>.bg 的三态 normal 色
-    // → Primary = t.colors.primary，Secondary = t.colors.hover（button.cpp 配色表）
     auto buttonLevelIs = [&](const std::string& id, bool primary) {
         const core::dsl::Element* bg = findElement(id + ".bg");
         if (bg == nullptr) return false;
         const auto& t = core::theme::current();
         return sameColor(bg->color, primary ? t.colors.primary : t.colors.hover);
     };
+    // 命中面级断言三件套（bug 150）：命中面 = 整卡几何 + 卡 stack 最后子级 +
+    // 指定 onClick 有无
+    auto expectHitSurface = [&](const std::string& cardId, bool clickable,
+                                bool* ok) {
+        const auto* card = findElement(cardId);
+        const auto* hit = findElement(cardId + ".hit");
+        if (card == nullptr || hit == nullptr) {
+            std::cerr << "schedule_ui_probe: " << cardId << " 命中面缺失\n";
+            *ok = false;
+            return;
+        }
+        if (std::fabs(hit->frame.x - card->frame.x) > 1.5f ||
+            std::fabs(hit->frame.y - card->frame.y) > 1.5f ||
+            std::fabs(hit->frame.width - card->frame.width) > 1.5f ||
+            std::fabs(hit->frame.height - card->frame.height) > 1.5f) {
+            std::cerr << "schedule_ui_probe: " << cardId
+                      << ".hit 命中面 ≠ 整卡几何\n";
+            *ok = false;
+        }
+        if (card->children.empty() ||
+            card->children.back()->id != cardId + ".hit") {
+            std::cerr << "schedule_ui_probe: " << cardId
+                      << ".hit 不是卡 stack 最后子级（EUI 兄弟命中逆序，命中面"
+                         "被截走 = 果冻/点卡实机失效，bug 150 口径）\n";
+            *ok = false;
+        }
+        if (clickable != (hit->onClick != nullptr)) {
+            std::cerr << "schedule_ui_probe: " << cardId
+                      << ".hit onClick 期望 " << (clickable ? "有" : "无")
+                      << " 实际 " << (hit->onClick != nullptr ? "有" : "无") << "\n";
+            *ok = false;
+        }
+    };
+    // hover tint 实机判定：真实 motion 进点后 tint opacity 目标 = 期望
+    auto expectTintOpacity = [&](const std::string& cardId, float want,
+                                 bool* ok) {
+        const auto* tint = findElement(cardId + ".tint");
+        if (tint == nullptr) {
+            std::cerr << "schedule_ui_probe: " << cardId << ".tint 缺失\n";
+            *ok = false;
+            return;
+        }
+        if (std::fabs(tint->opacity - want) > 0.02f) {
+            std::cerr << "schedule_ui_probe: " << cardId << ".tint opacity="
+                      << tint->opacity << " 期望 " << want
+                      << "（真实指针命中未达卡面——bug 150 形态）\n";
+            *ok = false;
+        }
+    };
 
-    // ---------- A. 列表态：四入口 + 系统段零操作控件 ----------
+    // ---------- A. 系统定时 TAB（默认）：页头 + TAB + 系统卡 ----------
     composeFrame();
 
     if (emptyRules) {
-        // ---------- S1（B4）：空态——页头钮降级 + 空态卡 L2 材质 ----------
+        // ---------- S1（池137/139）：空态 = 纯文字提示，无卡无任何按钮 ----------
         const auto& t = core::theme::current();
-        if (!buttonLevelIs("schedule.list.new", /*primary=*/false)) {
-            std::cerr << "schedule_ui_probe: S1 FAIL 空态页头新建钮不是 Secondary\n";
+        if (!buttonLevelIs("schedule.list.new", /*primary=*/true)) {
+            std::cerr << "schedule_ui_probe: S1 FAIL 页头新建钮不是 Primary"
+                         "（唯一新建入口恒主钮）\n";
             passed = false;
         }
-        if (!buttonLevelIs("schedule.list.user.empty.action", /*primary=*/false)) {
-            std::cerr << "schedule_ui_probe: S1 FAIL 空态卡中央钮不是 Secondary\n";
-            passed = false;
+        expectNode("schedule.list.sys.empty", &passed);
+        expectNoNode("schedule.list.sys.0", &passed);
+        // 用户 TAB 同口径：纯文字、无任何按钮（池137）
+        if (const auto* tab1 = findElement("schedule.list.tab.1")) {
+            clickElement(*tab1);
+            settleFrames(15);
         }
-        // 全页唯一绿钮不存在：只扫列表页子树（弹窗关闭态也常驻构建、自带 Primary
-        // 保存钮，扫全树会把看不见的弹窗按钮算进来）
+        expectNode("schedule.list.user.empty", &passed);
+        expectNoNode("schedule.list.user.empty.action", &passed);
+        expectNoNode("schedule.list.user.0", &passed);
+        // 全页（滚动区内）唯一绿钮不存在：只扫列表滚动区子树（页头新建在区外）
         int primaryFills = 0;
         std::function<void(const core::dsl::Element&)> walk =
             [&](const core::dsl::Element& el) {
@@ -309,68 +416,18 @@ int main(int argc, char* argv[]) {
                     if (child != nullptr) walk(*child);
                 }
             };
-        if (const auto* listRoot = findElement("schedule.list.scroll")) {
-            walk(*listRoot);
+        if (const auto* scrollRoot = findElement("schedule.list.scroll")) {
+            walk(*scrollRoot);
         } else {
-            std::cerr << "schedule_ui_probe: S1 FAIL 列表根节点缺失\n";
+            std::cerr << "schedule_ui_probe: S1 FAIL 滚动区根节点缺失\n";
             passed = false;
         }
         if (primaryFills != 0) {
-            std::cerr << "schedule_ui_probe: S1 FAIL 空态仍存在 " << primaryFills
-                      << " 个主色填充（应 0）\n";
+            std::cerr << "schedule_ui_probe: S1 FAIL 滚动区仍存在 "
+                      << primaryFills << " 个主色填充（应 0）\n";
             passed = false;
         }
-        // 空态卡 L2 材质：卡面写入 itemSurface（半透玻璃底），且与页面底像素有差
-        const auto* card = expectNode("schedule.list.user.empty.card", &passed);
-        if (card != nullptr && !sameColor(card->color, ui_kit::itemSurface(t))) {
-            std::cerr << "schedule_ui_probe: S1 FAIL 空态卡未用 L2 itemSurface\n";
-            passed = false;
-        }
-        // 采样先于落图：captureFramePng 会 pollOnce 重建元素树，之后上面拿到的
-        // 元素指针即作废（读到的是旧帧几何）。同理采样前也先跑稳帧，否则读到的是
-        // 首帧（布局刚落、渲染尚未跟上）的画面。
-        for (int i = 0; i < 8; ++i) composeFrame();
-        const auto* sampleCard = findElement("schedule.list.user.empty.card");
-        if (sampleCard != nullptr) {
-            probe::FrameCapture cap(window);
-            std::vector<unsigned char> rgba;
-            int iw = 0, ih = 0;
-            if (!cap.ok() || !cap.readFrame(runtime, rgba, iw, ih)) {
-                std::cerr << "schedule_ui_probe: S1 FAIL 读帧失败（材质采样）\n";
-                passed = false;
-            } else {
-                const float scale = cap.scale();
-                auto sample = [&](float lx, float ly) {
-                    const int x = static_cast<int>(std::lround(lx * scale));
-                    const int y = static_cast<int>(std::lround(ly * scale));
-                    if (x < 0 || y < 0 || x >= iw || y >= ih) return -1.0f;
-                    const std::size_t at =
-                        (static_cast<std::size_t>(y) * iw + x) * 4u;
-                    return static_cast<float>(rgba[at]) +
-                           static_cast<float>(rgba[at + 1]) +
-                           static_cast<float>(rgba[at + 2]);
-                };
-                // 卡内（左内 6px、下 6px——避文字/居中按钮/圆角）vs 卡外（左内缩
-                // gutter 同高度）。逐点比而非区块均值：卡面与页面底近色。
-                const float inX = sampleCard->frame.x + 6.0f;
-                const float outX = std::max(1.0f, sampleCard->frame.x - 5.0f);
-                const float lowY = sampleCard->frame.y + sampleCard->frame.height - 6.0f;
-                const float inV = sample(inX, lowY);
-                const float outV = sample(outX, lowY);
-                std::cout << "S1 材质采样 卡内=" << inV << " 卡外=" << outV
-                          << "（卡 @" << sampleCard->frame.x << "," << sampleCard->frame.y
-                          << " " << sampleCard->frame.width << "x"
-                          << sampleCard->frame.height << "）\n";
-                if (inV < 0.0f || outV < 0.0f) {
-                    std::cerr << "schedule_ui_probe: S1 FAIL 材质采样越界\n";
-                    passed = false;
-                } else if (std::fabs(inV - outV) < 3.0f) {
-                    std::cerr << "schedule_ui_probe: S1 FAIL 卡内外像素无差（卡未透出层次）\n";
-                    passed = false;
-                }
-            }
-        }
-        if (passed) std::cout << "S1 PASS 空态页头降级 + 空态卡 L2 材质\n";
+        if (passed) std::cout << "S1 PASS 空态纯文字无按钮 + 页头唯一新建 Primary\n";
         shot(shotEmpty);
         if (!passed) {
             std::cerr << "schedule_ui_probe: FAILED\n";
@@ -384,152 +441,193 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    expectNode("schedule.list.title", &passed);
+    expectNode("schedule.list.history", &passed);
     expectNode("schedule.list.new", &passed);
-    expectNode("schedule.list.sys.title", &passed);
-    expectNode("schedule.list.user.title", &passed);
-    expectNode("schedule.list.user.0", &passed);
-    expectNode("schedule.list.user.0.name", &passed);
-    expectNode("schedule.list.user.0.edit", &passed);
-    expectNode("schedule.list.user.0.delete", &passed);
-    expectNode("schedule.list.user.0.switch", &passed);
-    // 系统行只有锁图标与只读文案，零操作控件（A1 的「系统段无操作」判据）
+    expectNode("schedule.list.tab.0.text", &passed);
+    expectNode("schedule.list.tab.1.text", &passed);
+    expectNode("schedule.list.tabcount", &passed);
+    // 块面 TAB（wtab 契约：选中建 .bg，未选中不建）
+    expectNode("schedule.list.tab.0.bg", &passed);
+    expectNoNode("schedule.list.tab.1.bg", &passed);
+    // 系统卡：锁图标 + 来源块 + 零操作控件
+    expectNode("schedule.list.sys.0", &passed);
+    expectNode("schedule.list.sys.0.lock", &passed);
+    expectNode("schedule.list.sys.0.source", &passed);
     expectNoNode("schedule.list.sys.0.edit", &passed);
     expectNoNode("schedule.list.sys.0.delete", &passed);
     expectNoNode("schedule.list.sys.0.switch", &passed);
-    // 操作按钮帧必须落在窗口客户区内（Windows 125% / 最小窗同判据的几何前提）
-    if (const auto* del = findElement("schedule.list.user.0.delete")) {
-        if (del->frame.x < 0 || del->frame.x + del->frame.width > w ||
-            del->frame.y < 0 || del->frame.y + del->frame.height > h) {
-            std::cerr << "schedule_ui_probe: 行删除操作帧越窗 ("
-                      << del->frame.x << "," << del->frame.y << ")\n";
-            passed = false;
-        }
-    }
+    // 命中面级断言：系统卡 = 整卡 hover 面、无 onClick（bug 150 口径）
+    expectHitSurface("schedule.list.sys.0", /*clickable=*/false, &passed);
+    moveAway();
     shot(shotList);
 
-    // ---------- S2/S3（B4）：有数据态——页头 Primary + 每行一张 L2 卡 + 卡几何 ----------
+    // ---------- C0. 系统卡 hover 实机（真实 motion 进卡）----------
+    if (const auto* sysCard = findElement("schedule.list.sys.0")) {
+        hoverAt(sysCard->frame.x + sysCard->frame.width * 0.5f,
+                sysCard->frame.y + sysCard->frame.height * 0.5f, 6);
+        expectTintOpacity("schedule.list.sys.0", 1.0f, &passed);
+        // 系统卡无按下果冻接线（不可点无果冻，§4.4）
+        if (const auto* bg = findElement("schedule.list.sys.0.bg")) {
+            if (!bg->visualStateSourceId.empty()) {
+                std::cerr << "schedule_ui_probe: 系统卡 bg 不应挂按下果冻（只读）\n";
+                passed = false;
+            }
+        }
+        if (passed) std::cout << "C0 PASS 系统卡 hover 浏览反馈（实机命中链路）\n";
+        moveAway();
+    }
+
+    // ---------- B. TAB 切换 + 用户卡结构 + 列数断点 ----------
+    if (const auto* tab1 = findElement("schedule.list.tab.1")) {
+        clickElement(*tab1);
+        settleFrames(15);
+    } else {
+        passed = false;
+    }
+    expectNode("schedule.list.tab.1.bg", &passed);
+    expectNoNode("schedule.list.tab.0.bg", &passed);
+    expectNode("schedule.list.user.0.bg", &passed);
+    expectNode("schedule.list.user.1.bg", &passed);
+    expectNoNode("schedule.list.user.0.edit", &passed);
+    expectNoNode("schedule.list.user.0.delete", &passed);
+    expectNoNode("schedule.list.user.0.switch", &passed);
+    expectHitSurface("schedule.list.user.0", /*clickable=*/true, &passed);
+    // 列数断点（池140 §3.1）：列数由当前窗口内容宽推导，列宽走瀑布公式
     {
-        const auto& t = core::theme::current();
-        if (!buttonLevelIs("schedule.list.new", /*primary=*/true)) {
-            std::cerr << "schedule_ui_probe: S2 FAIL 有数据时页头新建钮不是 Primary\n";
-            passed = false;
-        }
-        const auto* c0 = expectNode("schedule.list.user.0.bg", &passed);
-        const auto* c1 = expectNode("schedule.list.user.1.bg", &passed);
+        const float contentW = w - 40.0f;  // 页 pad 20 × 2
+        const int cols = module::schedule::columnCountForWidth(contentW);
+        const float gap = 12.0f;
+        const float colW =
+            (contentW - gap * static_cast<float>(cols - 1)) /
+            static_cast<float>(cols);
+        const auto* c0 = findElement("schedule.list.user.0.bg");
+        const auto* c1 = findElement("schedule.list.user.1.bg");
         if (c0 != nullptr) {
-            if (!sameColor(c0->color, ui_kit::itemSurface(t))) {
-                std::cerr << "schedule_ui_probe: S2 FAIL 行卡未用 L2 itemSurface\n";
+            std::cout << "B 列数=" << cols << " 列宽期望=" << colW
+                      << " 实际=" << c0->frame.width << "\n";
+            if (std::fabs(c0->frame.width - colW) > 1.5f) {
+                std::cerr << "schedule_ui_probe: B FAIL 列宽 " << c0->frame.width
+                          << " ≠ 瀑布公式值 " << colW << "（列数 " << cols
+                          << "）\n";
                 passed = false;
             }
-            if (c0->radius <= 0.0f) {
-                std::cerr << "schedule_ui_probe: S2 FAIL 行卡无圆角（非 jellyCard 形态）\n";
-                passed = false;
-            }
-        }
-        // S3-1 各行卡 x/宽一致（±1.5）+ 卡宽 = 内容宽 − 2×inset（左右对称）
-        if (c0 != nullptr && c1 != nullptr) {
-            if (std::fabs(c0->frame.x - c1->frame.x) > 1.5f ||
-                std::fabs(c0->frame.width - c1->frame.width) > 1.5f) {
-                std::cerr << "schedule_ui_probe: S3 FAIL 行卡几何不一致 ("
-                          << c0->frame.x << "," << c0->frame.width << ") vs ("
-                          << c1->frame.x << "," << c1->frame.width << ")\n";
-                passed = false;
-            }
-            // S3-2 相邻卡间距 = kRowCardGap(8)
-            const float gap = c1->frame.y - (c0->frame.y + c0->frame.height);
-            std::cout << "S3 相邻卡间距=" << gap << " 卡宽=" << c0->frame.width << "\n";
-            if (std::fabs(gap - 8.0f) > 1.5f) {
-                std::cerr << "schedule_ui_probe: S3 FAIL 相邻卡间距 " << gap
-                          << "（期望 8）\n";
+            if (c1 != nullptr && cols >= 2 &&
+                std::fabs(c0->frame.x - c1->frame.x) <= 1.0f) {
+                std::cerr << "schedule_ui_probe: B FAIL 两卡未分列（x 相同）\n";
                 passed = false;
             }
         }
-        // S3-3 卡与段标题间距一致：系统段（空态卡）与用户段同口径
-        const auto* sysTitle = findElement("schedule.list.sys.title");
-        const auto* sysCard = findElement("schedule.list.sys.empty.card");
-        const auto* userTitle = findElement("schedule.list.user.title");
-        if (sysTitle != nullptr && sysCard != nullptr && userTitle != nullptr &&
-            c0 != nullptr) {
-            const float sysGap =
-                sysCard->frame.y - (sysTitle->frame.y + sysTitle->frame.height);
-            const float userGap =
-                c0->frame.y - (userTitle->frame.y + userTitle->frame.height);
-            std::cout << "S3 段标题→卡间距 系统=" << sysGap << " 用户=" << userGap
-                      << "\n";
-            if (std::fabs(sysGap - userGap) > 1.5f) {
-                std::cerr << "schedule_ui_probe: S3 FAIL 段标题→卡间距不一致 ("
-                          << sysGap << " vs " << userGap << ")\n";
-                passed = false;
-            }
-        }
-        // 卡宽与内容列对齐：卡右缘 + inset == 列右缘，卡左缘 == 列左缘 + inset
-        const auto* rowsCol = findElement("schedule.list.user.rows");
-        if (rowsCol != nullptr && c0 != nullptr) {
-            const float colLeft = rowsCol->frame.x;
-            const float colRight = rowsCol->frame.x + rowsCol->frame.width;
-            const float insetL = c0->frame.x - colLeft;
-            const float insetR = colRight - (c0->frame.x + c0->frame.width);
-            if (std::fabs(insetL - insetR) > 1.5f) {
-                std::cerr << "schedule_ui_probe: S3 FAIL 行卡左右内缩不对称 ("
-                          << insetL << " vs " << insetR << ")\n";
-                passed = false;
-            }
-        }
-        if (passed) std::cout << "S2 PASS 有数据页头 Primary + 每行 L2 卡；S3 PASS 卡几何\n";
+        if (passed) std::cout << "B PASS TAB 切换 + 列数断点（列数 " << cols
+                              << "）+ 卡面零操作钮\n";
+    }
 
-        // S4（F-67-1 hover 驱动）：指针进卡 → jellyCard 目标圆角变 hoverRadius，
-        // 移出 → 回常态。读 compose 写入的 element.radius（结构性判据，非像素）。
+    // ---------- C. 用户卡果冻命中面级断言（bug 150 核心）----------
+    {
+        const auto* c0 = findElement("schedule.list.user.0.bg");
         if (c0 != nullptr) {
-            const float cx = c0->frame.x + c0->frame.width * 0.5f;
-            const float cy = c0->frame.y + c0->frame.height * 0.5f;
-            const core::KeyModifiers noMods;
-            core::queuePointerMotion(window, cx, cy, core::PointerButtons{}, noMods);
-            for (int i = 0; i < 6; ++i) composeFrame();
-            const auto* hovBg = findElement("schedule.list.user.0.bg");
-            const float hoverRadius = hovBg != nullptr ? hovBg->radius : -1.0f;
-            const float hoverScale = hovBg != nullptr ? hovBg->transform.scale.x : -1.0f;
-            core::queuePointerMotion(window, w - 8.0f, 8.0f, core::PointerButtons{},
-                                     noMods);
-            for (int i = 0; i < 6; ++i) composeFrame();
-            const auto* outBg = findElement("schedule.list.user.0.bg");
-            const float outRadius = outBg != nullptr ? outBg->radius : -1.0f;
-            std::cout << "S4 hover 圆角 " << hoverRadius << " / 常态 " << outRadius
-                      << " 缩放 " << hoverScale << "\n";
-            if (hoverRadius <= outRadius || std::fabs(hoverScale - 1.02f) > 0.01f) {
-                std::cerr << "schedule_ui_probe: S4 FAIL 行卡 hover 未驱动果冻形变\n";
+            const float baseRadius = c0->radius;
+            const float baseScale = c0->transform.scale.x;
+            // 按下果冻接线：bg.visualStateSourceId 指向 .hit、0.965
+            if (c0->visualStateSourceId.empty() ||
+                c0->visualStateSourceId.find(".hit") ==
+                    std::string::npos) {
+                std::cerr << "schedule_ui_probe: C FAIL 用户卡 bg 未挂按下果冻"
+                             "（visualStateSource → .hit）\n";
                 passed = false;
-            } else {
-                std::cout << "S4 PASS 行卡 hover 驱动 jellyCard\n";
+            } else if (std::fabs(c0->pressedScale - 0.965f) > 0.001f) {
+                std::cerr << "schedule_ui_probe: C FAIL pressedScale="
+                          << c0->pressedScale << "（期望 0.965）\n";
+                passed = false;
             }
-
-            // S4b：指针停在卡内「编辑」文字上 → 卡仍保持 hover（双集合并集）。
-            // 单一集合会在这帧被命中面的 erase 抹掉（兄弟不继承 hover）。
-            if (const auto* edit = findElement("schedule.list.user.0.edit")) {
-                const float ex = edit->frame.x + edit->frame.width * 0.5f;
-                const float ey = edit->frame.y + edit->frame.height * 0.5f;
-                core::queuePointerMotion(window, ex, ey, core::PointerButtons{},
-                                         noMods);
-                for (int i = 0; i < 6; ++i) composeFrame();
-                const auto* ctlBg = findElement("schedule.list.user.0.bg");
-                const float ctlRadius = ctlBg != nullptr ? ctlBg->radius : -1.0f;
-                std::cout << "S4b 指针在编辑文字上 卡圆角=" << ctlRadius << "\n";
-                if (ctlRadius <= outRadius) {
-                    std::cerr << "schedule_ui_probe: S4 FAIL 指针移到行内控件上卡丢失 hover\n";
+            // 真实指针进卡（不直调 onHover）：tint 出现 + hover 不放大不变形
+            hoverAt(c0->frame.x + c0->frame.width * 0.5f,
+                    c0->frame.y + c0->frame.height * 0.5f, 6);
+            expectTintOpacity("schedule.list.user.0", 1.0f, &passed);
+            if (const auto* hov = findElement("schedule.list.user.0.bg")) {
+                std::cout << "C hover 圆角 " << hov->radius << "（常态 "
+                          << baseRadius << "）缩放 " << hov->transform.scale.x
+                          << "\n";
+                if (std::fabs(hov->radius - baseRadius) > 0.5f ||
+                    std::fabs(hov->transform.scale.x - baseScale) > 0.01f) {
+                    std::cerr << "schedule_ui_probe: C FAIL hover 改变了卡面"
+                                 "形变（§6 hover 不放大）\n";
                     passed = false;
-                } else {
-                    std::cout << "S4b PASS 卡内控件共担 hover（不移出卡）\n";
                 }
-                core::queuePointerMotion(window, w - 8.0f, 8.0f,
-                                         core::PointerButtons{}, noMods);
-                for (int i = 0; i < 6; ++i) composeFrame();
             }
+            // 指针移出 → tint 回 0
+            moveAway();
+            expectTintOpacity("schedule.list.user.0", 0.0f, &passed);
+            if (passed) std::cout << "C PASS 用户卡果冻命中面实机断言"
+                                     "（motion 进/出卡 + 按下接线）\n";
         }
     }
 
-    // ---------- D. 运行历史抽屉：卡片/状态点/渠道 chip/重试 + 按钮右边界同基准 ----------
+    // ---------- D. 点卡开编辑弹窗（启用开关 + 左下删除）----------
+    if (const auto* card = findElement("schedule.list.user.0")) {
+        clickElement(*card);
+        settleFrames(15);
+    }
+    {
+        // 弹窗开合的 opacity 目标值挂在 <id>.panel 上（components::dialog 契约）
+        const auto* panel = findElement("schedule.edit.dialog.panel");
+        if (panel == nullptr || panel->opacity < 0.5f) {
+            std::cerr << "schedule_ui_probe: D FAIL 点卡未打开编辑弹窗\n";
+            passed = false;
+        }
+        expectNode("schedule.edit.enabled", &passed);  // 表单首行「启用」开关
+        expectNode("schedule.edit.delete", &passed);   // 编辑态左下删除文字钮
+        expectNode("schedule.edit.save", &passed);
+        expectNode("schedule.edit.cancel", &passed);
+        shot(shotEdit);
+        if (const auto* cancel = findElement("schedule.edit.cancel")) {
+            clickElement(*cancel);
+            settleFrames(15);
+        }
+    }
+
+    // D2. 新建弹窗（页头唯一入口）：无删除钮（新规则无可删）
+    if (const auto* btn = findElement("schedule.list.new")) {
+        clickElement(*btn);
+        settleFrames(15);
+    }
+    {
+        const auto* panel = findElement("schedule.edit.dialog.panel");
+        if (panel == nullptr || panel->opacity < 0.5f) {
+            std::cerr << "schedule_ui_probe: D2 FAIL 页头新建未打开编辑弹窗\n";
+            passed = false;
+        }
+        expectNode("schedule.edit.enabled", &passed);
+        expectNoNode("schedule.edit.delete", &passed);
+        if (const auto* cancel = findElement("schedule.edit.cancel")) {
+            clickElement(*cancel);
+            settleFrames(15);
+        }
+    }
+
+    // ---------- E. 归档折叠段（用户 TAB 滚动区尾部）----------
+    if (const auto* header = findElement("schedule.list.archive.header")) {
+        clickElement(*header);
+        settleFrames(15);
+        expectNode("schedule.list.archive.0", &passed);
+        expectNode("schedule.list.archive.0.hit", &passed);
+        expectHitSurface("schedule.list.archive.0", /*clickable=*/true, &passed);
+        if (const auto* card = findElement("schedule.list.archive.0")) {
+            hoverAt(card->frame.x + card->frame.width * 0.5f,
+                    card->frame.y + card->frame.height * 0.5f, 6);
+            expectTintOpacity("schedule.list.archive.0", 1.0f, &passed);
+            moveAway();
+        }
+        if (passed) std::cout << "E PASS 归档折叠段整卡可点 + hover 反馈\n";
+    } else {
+        std::cerr << "schedule_ui_probe: E FAIL 归档折叠头缺失\n";
+        passed = false;
+    }
+
+    // ---------- G. 运行历史抽屉（先于删除：软删会摘走该规则的 runs）----------
     if (const auto* entry = findElement("schedule.list.history")) {
         clickElement(*entry);
-        composeFrame();
+        settleFrames(15);
     }
     expectNode("schedule.history.drawer.panel", &passed);
     expectNode("schedule.history.title", &passed);
@@ -543,7 +641,7 @@ int main(int argc, char* argv[]) {
         shot(shotHistory);
         if (const auto* close = findElement("schedule.history.close")) {
             clickElement(*close);
-            composeFrame();
+            settleFrames(15);
         }
     } else {
     expectNode("schedule.history.row.0", &passed);
@@ -582,33 +680,33 @@ int main(int argc, char* argv[]) {
         }
     }
     shot(shotHistory);
-    // 关抽屉（backdrop 盖全窗，不关会挡住后续 B/C 段的点击）
+    // 关抽屉（backdrop 盖全窗，不关会挡住后续 F 段的点击）
     if (const auto* close = findElement("schedule.history.close")) {
         clickElement(*close);
-        composeFrame();
+        settleFrames(15);
     }
     }  // else: 非空历史档
 
-    // ---------- B. 编辑弹窗态：点「新建」开弹窗 ----------
-    if (const auto* btn = findElement("schedule.list.new")) {
-        clickElement(*btn);
-        composeFrame();
-    } else {
-        passed = false;
+    // ---------- F. 删除链路：编辑弹窗左下删除 → 确认弹窗 → 软删落库 ----------
+    if (const auto* card = findElement("schedule.list.user.0")) {
+        clickElement(*card);
+        settleFrames(15);
+        const auto* del = findElement("schedule.edit.delete");
+        if (del == nullptr) {
+            std::cerr << "schedule_ui_probe: F FAIL 编辑弹窗无删除钮\n";
+            passed = false;
+        } else {
+            clickElement(*del);
+            settleFrames(15);
+        }
     }
-    expectNode("schedule.edit.name", &passed);
-    expectNode("schedule.edit.save", &passed);
-    expectNode("schedule.edit.cancel", &passed);
-    shot(shotEdit);  // 弹窗开启态构图（关掉再拍就成了列表帧）
-    if (const auto* cancel = findElement("schedule.edit.cancel")) {
-        clickElement(*cancel);
-        composeFrame();
-    }
-
-    // ---------- C. 删除确认：取消不动真格，确认后行消失 ----------
-    if (const auto* del = findElement("schedule.list.user.0.delete")) {
-        clickElement(*del);
-        composeFrame();
+    // 编辑弹窗已收、确认弹窗开
+    {
+        const auto* panel = findElement("schedule.edit.dialog.panel");
+        if (panel != nullptr && panel->opacity >= 0.5f) {
+            std::cerr << "schedule_ui_probe: F FAIL 点删除后编辑弹窗未收\n";
+            passed = false;
+        }
     }
     expectNode("schedule.list.deleteConfirm.title", &passed);
     expectNode("schedule.list.deleteConfirm.body", &passed);
@@ -616,37 +714,38 @@ int main(int argc, char* argv[]) {
     expectNode("schedule.list.deleteConfirm.cancel", &passed);
     expectNode("schedule.list.deleteConfirm.ok", &passed);
     shot(shotDelete);
-    // 取消 → 弹窗关、行还在
+    // 取消 → 弹窗关、卡还在
     if (const auto* cancel = findElement("schedule.list.deleteConfirm.cancel")) {
         clickElement(*cancel);
-        composeFrame();
+        settleFrames(15);
     }
     expectNode("schedule.list.user.0.name", &passed);
-    // 再开确认 → 点「删除」→ 默认软删路径 → 行从列表消失 + getRule=NotFound
-    if (const auto* del = findElement("schedule.list.user.0.delete")) {
+    // 再走一遍 → 确认删除 → 默认软删 → 卡消失 + listRules 少一行
+    if (const auto* card = findElement("schedule.list.user.0")) {
+        clickElement(*card);
+        settleFrames(15);
+    }
+    if (const auto* del = findElement("schedule.edit.delete")) {
         clickElement(*del);
-        composeFrame();
+        settleFrames(15);
     }
     if (const auto* ok = findElement("schedule.list.deleteConfirm.ok")) {
         clickElement(*ok);
-        composeFrame();
+        settleFrames(15);
     }
-    // 两行种子删掉一条后剩条顶到 user.0，改断言第二行消失（行数由下方 listRules 兜底）
-    expectNoNode("schedule.list.user.1.name", &passed);
+    // 两条活跃规则删掉一条后剩 1 条顶到 user.0（归档卡在折叠段，编号独立）
+    expectNoNode("schedule.list.user.1.bg", &passed);
     {
         module::schedule::ScheduleStore store(tdb.handle());
-        const int64_t now = static_cast<int64_t>(core::time::nowUnix());
-        module::schedule::RuleRecord probe;
-        probe.kind = "once";
-        probe.specJson = "{\"at\":" + std::to_string(now + 60) + "}";
-        // 上面只是占位对象；真正要查的是被删那条：经 listRules 数行数（软删后 1 条）
         auto rows = store.listRules();
         if (rows.isFail()) {
             std::cerr << "schedule_ui_probe: listRules 失败\n";
             passed = false;
-        } else if (rows.value().size() != 1) {
+        } else if (rows.value().size() != 3) {
+            // listRules 只过滤硬删（deleted_at），软删=archived_at 仍在库：
+            // 2 活跃 + 1 归档种、软删 1 活跃 → 1 活跃 + 2 归档 = 3 行
             std::cerr << "schedule_ui_probe: 软删后 listRules 行数="
-                      << rows.value().size() << "（期望 1）\n";
+                      << rows.value().size() << "（期望 3 = 1 活跃 + 2 归档）\n";
             passed = false;
         }
     }

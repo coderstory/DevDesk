@@ -14,6 +14,7 @@
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/input.h>
+#include <components/switch.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -298,7 +299,7 @@ core::Result<RuleRecord> buildRuleRecord(const EditFormState& form,
     }
     RuleRecord rec;
     rec.name = form.name;
-    rec.enabled = true;
+    rec.enabled = form.enabled;
     rec.kind = kindToText(form.kind);
     rec.specJson = specJson.value();
     rec.actionKind = form.actionKind;
@@ -326,6 +327,7 @@ core::Result<EditFormState> formFromRecord(const RuleRecord& rec) {
     EditFormState f;
     f.kind = kind.value();
     f.name = rec.name;
+    f.enabled = rec.enabled;
     f.actionKind = rec.actionKind;
     f.actionJson = rec.actionJson;
     f.channelIds = rec.channelIds;
@@ -512,6 +514,16 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
 
             float fy = 96.0f;
+            // 启用开关（池140：表单首行「启用」，启停从卡面收进编辑弹窗一步直达）
+            drawLabel(ui, "schedule.edit.enabled.label", x0, fy, "启用", t);
+            components::toggleSwitch(ui, "schedule.edit.enabled")
+                .position(x0 + 60.0f, fy + 2.0f)
+                .size(44.0f, 24.0f)
+                .checked(st.form.enabled)
+                .theme(themeTokens)
+                .onChange([&st](bool v) { st.form.enabled = v; })
+                .build();
+            fy += 44.0f;
             drawLabel(ui, "schedule.edit.name.label", x0, fy, "名称", t);
             components::input(ui, "schedule.edit.name")
                 .position(x0, fy + 20.0f)
@@ -855,9 +867,21 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
             fy += 120.0f;
 
+            // 底部操作区（池140 §5）：删除（danger 文字，左下）+ 弹性 + 取消/保存（右下）。
+            // 删除仅编辑既有规则时出现；点击 → 宿主收本弹窗并开既有删除确认小弹窗。
+            if (st.ruleId != 0 && host.requestDelete) {
+                ui.text("schedule.edit.delete")
+                    .position(x0, h - 60.0f + 8.0f)
+                    .size(48.0f, 20.0f)
+                    .text("删除")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .color(t.colors.errorText)
+                    .onClick([&st, &host] { host.requestDelete(st.ruleId); })
+                    .build();
+            }
             // 保存 / 取消：保存前 validateAndParse + 事务内重算 next_fire_at（§4.4）
             components::button(ui, "schedule.edit.save")
-                .position(x0, h - 60.0f)
+                .position(w - x0 - 120.0f, h - 60.0f)
                 .size(120.0f, 36.0f)
                 .text("保存")
                 .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
@@ -897,7 +921,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 })
                 .build();
             components::button(ui, "schedule.edit.cancel")
-                .position(x0 + 136.0f, h - 60.0f)
+                .position(w - x0 - 120.0f - 16.0f - 120.0f, h - 60.0f)
                 .size(120.0f, 36.0f)
                 .text("取消")
                 .radius(t.sizes.radius)

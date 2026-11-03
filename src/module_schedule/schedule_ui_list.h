@@ -1,11 +1,12 @@
 // src/module_schedule/schedule_ui_list.h
-// 定时列表页（波 S7a）：系统定时段（锁图标只读）+ 用户定时段（名称/规则摘要/
-// 下次时刻/上次结果/启停开关）+ 一次性已执行折叠区（默认折叠）+ 运行历史抽屉
-//（S7b 本体，经页头入口开合）。
+// 定时页（池140 瀑布流重设计）：页头（标题/运行历史/新建唯一入口）固定 +
+// 「系统定时/用户定时」块面 TAB（wtab）+ 唯一滚动区内瀑布流卡片（列数随宽
+// 断点）。卡面零操作钮：用户/归档卡整卡可点开编辑弹窗（启停/删除收进弹窗），
+// 系统卡只读不可点。一次性已执行折叠区并入用户 TAB 滚动区尾部 + 运行历史抽屉。
 //
 // 分层：装配/摘要/时刻文本是纯函数（无 IO 无时钟，「现在」由调用方注入），
 // 测试直接驱动；ScheduleListUi 持有 store/providers 引用做 IO 与绘制。
-// 系统项只读展示、执行归来源模块（§4.2）：系统行无开关、无编辑。
+// 系统项只读展示、执行归来源模块（§4.2）：系统卡无开关、无编辑。
 #pragma once
 
 #include "module_schedule/action_runner.h"
@@ -71,6 +72,10 @@ std::string nextFireText(const std::optional<int64_t>& nextFireAt, int64_t nowSe
 // 上次结果展示文本：「无记录」/「成功 · 10-28 09:00」/「失败 · 10-28 09:00」
 std::string lastRunText(const ListRow& row, int64_t nowSec);
 
+// 瀑布流列数断点（池140 §3.1，按内容列宽 W）：<520 → 1、<1080 → 2、
+// <1660 → 3、其余 4。纯函数供无头用例锁断点。
+int columnCountForWidth(float contentW);
+
 // ---- 列表页 UI（模块持有；compose 由模块 compose 转发）----
 
 class ScheduleListUi {
@@ -110,6 +115,10 @@ public:
     const std::string& errorText() const { return error_; }
     bool archiveExpanded() const { return archiveExpanded_; }
     void setArchiveExpanded(bool expanded) { archiveExpanded_ = expanded; }
+    // 分类 TAB（0 = 系统定时、1 = 用户定时）。切换即置滚动回顶与 120ms 淡入
+    // 标记，下一帧 compose 消费（setScrollOffset 帧末取件 + opacity 过渡）。
+    int activeTab() const { return activeTab_; }
+    void setTab(int tab);
 
     // 运行历史抽屉开合态与数据（无头用例断言面；数据经 store 读取后由
     // assembleHistory 装配；engine 未接入时抽屉隐藏重试按钮）
@@ -155,13 +164,16 @@ private:
     int64_t pendingDeleteId_ = 0;          // 非 0 = 删除确认弹窗开着
     std::string pendingDeleteName_;        // 确认弹窗正文用规则名（兼开合标志）
     bool pendingDeletePurge_ = false;      // 「彻底删除」勾选态
-    // 行卡 hover 集合（F-67-1）：透明命中面 onHover 写、jellyCard 每帧读。
-    // 必须是集合而非 bool：指针从卡移到卡内控件那一帧，两者回调同帧触发。
-    // 命中面与控件是**兄弟**（不是父子）→ 不能用单一集合：指针在卡内控件之间
-    // 移动时「控件 insert / 命中面 erase」的先后由兄弟遍历序决定，单集会互相抹掉。
-    // 两个集合并集即卡 hover：命中面一个、卡内可交互控件另一个。
-    std::set<std::string> hoveredRowIds_;         // 命中面（整卡）来源
-    std::set<std::string> hoveredRowControlIds_;  // 卡内控件来源
+    // 分类 TAB 状态与一次性标记（compose 消费后清零）：滚动回顶走
+    // ui.setScrollOffset 帧末取件；淡入走 opacity 目标值翻转 + 120ms 过渡。
+    int activeTab_ = 0;
+    bool pendingScrollReset_ = false;
+    bool tabFadePending_ = false;
+    // 卡 hover 集合（池140）：透明命中面 onHover 写、卡面 tint/按下果冻每帧读。
+    // 新卡面零可点控件，命中面 = 整卡唯一 hover 源，单集合即可（旧双集合随
+    // 卡内操作钮一起删除）。EUI 兄弟命中逆序遍历：命中面必须建在卡 stack 内
+    // **最后**（最上层先命中），否则指针事件被静态内容截走（bug 150 根因口径）。
+    std::set<std::string> hoveredCardIds_;
 };
 
 } // namespace module::schedule

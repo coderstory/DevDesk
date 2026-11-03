@@ -1,6 +1,7 @@
 // tests/test_modules/test_schedule_ui_list.cpp
-// 定时列表页 + 模块装配（波 S7a）。每条用例对应一个业务场景并注明防的具体事故。
-// 覆盖：列表装配排序 / 开关切换落库 / 归档折叠过滤 / 系统段空注册表不出错 /
+// 定时页 + 模块装配。每条用例对应一个业务场景并注明防的具体事故。
+// 覆盖：列表装配排序 / 启停落库 / TAB 与瀑布列数断点（池140）/ 归档折叠区挂
+// 用户 TAB / 卡片命中面接线 / 空注册表不出错 / 编辑弹窗「启用」往返 /
 // 模块注册表项完整（含 onStart/onStop 幂等与无头 compose 不崩）。
 #include "doctest.h"
 #include "test_support.h"
@@ -8,6 +9,7 @@
 #include "app_registry.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "core/time.h"
 #include "module_schedule/channel_registry.h"
 #include "module_schedule/schedule_engine.h"
 #include "module_schedule/schedule_module.h"
@@ -19,6 +21,7 @@
 
 #include <eui/dsl.h>
 
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -158,10 +161,11 @@ REGISTER_TEST(schedule_list_toggle_persists_to_db,
     return true;
 })
 
-// 防：一次性规则执行后仍混在「用户定时」主列表——归档行必须归入折叠区且
-// 默认折叠不渲染（§4.4/验收 4：列表默认折叠）；展开后归档行出现且带开关。
+// 防：一次性规则执行后仍混在「用户定时」主列表——归档折叠段只挂用户 TAB
+// 滚动区尾部（池140 §1.1）且默认折叠不渲染（§4.4）；展开后归档卡渲染且
+// 整卡可点（命中面，卡面零操作钮）。
 REGISTER_TEST(schedule_list_archive_collapsed_by_default,
-              "schedule 列表归档：归档行入折叠区默认不渲染，展开后渲染", {
+              "schedule 归档折叠段：仅用户 TAB、默认不渲染，展开后整卡可点", {
     auto opened = openMigrated("archive");
     DOCTEST_REQUIRE(opened.isOk());
     auto& db = opened.value().db();
@@ -179,54 +183,80 @@ REGISTER_TEST(schedule_list_archive_collapsed_by_default,
     DOCTEST_REQUIRE(listUi.assembly().userRows.empty());
     DOCTEST_REQUIRE_EQ(listUi.assembly().archivedRows.size(), static_cast<size_t>(1));
 
-    // 默认折叠：compose 后归档行不渲染，折叠头渲染
+    // 系统 TAB 不渲染归档折叠段
     const eui::Screen screen = makeScreen();
     eui::Ui frame;
+    listUi.setTab(0);
+    composeFrame(listUi, frame, screen, "archive_sys_tab");
+    DOCTEST_CHECK(frame.find("schedule.list.archive.header") == nullptr);
+
+    // 用户 TAB 默认折叠：compose 后归档卡不渲染，折叠头渲染
+    listUi.setTab(1);
     DOCTEST_CHECK_FALSE(listUi.archiveExpanded());
     composeFrame(listUi, frame, screen, "archive_collapsed");
     DOCTEST_CHECK(frame.find("schedule.list.archive.0") == nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.archive.header") != nullptr);
 
-    // 展开：归档行渲染且带开关
+    // 展开：归档卡渲染且整卡可点（命中面；卡面零操作钮）
     listUi.setArchiveExpanded(true);
     composeFrame(listUi, frame, screen, "archive_expanded");
     DOCTEST_CHECK(frame.find("schedule.list.archive.0") != nullptr);
-    DOCTEST_CHECK(frame.find("schedule.list.archive.0.switch") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.archive.0.hit") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.archive.0.switch") == nullptr);
     return true;
 })
 
-// 防：行卡启停开关 hover 回归（池 112）——指针停在开关上时行卡不得闪回常态。
-// SwitchBuilder.onHover（EUI 侧补齐）把回调带到 .hit 命中面，DevDesk 侧将其
-// 并入 hoveredRowControlIds_（与 drawRowAction 同口径）；回调缺失即回归。
-REGISTER_TEST(schedule_list_switch_hover_wired_to_row,
-              "schedule 列表开关：onHover 并入行卡 hover 集合（.hit 带回调）", {
-    auto opened = openMigrated("switchhover");
+// 防：卡片命中面接线回归（池140/bug 150）——卡面零控件后，命中面 = 整卡
+// 唯一 hover 与点击源：.hit 必须带 onHover/onClick、几何覆盖整卡、且建在
+// 卡 stack 兄弟**最后**（EUI 兄弟命中逆序遍历，后建者先命中；命中面被静态
+// 内容截走 = 果冻与点卡全实机失效）。
+REGISTER_TEST(schedule_list_card_hit_hover_wired,
+              "schedule 卡片命中面：整卡 .hit 带 onHover/onClick、覆盖整卡、z 序最后", {
+    auto opened = openMigrated("cardhit");
     DOCTEST_REQUIRE(opened.isOk());
     auto& db = opened.value().db();
     ScheduleStore store(db);
     ScheduleProviderRegistry providers;
     ScheduleListUi listUi(store, providers);
 
-    DOCTEST_CHECK(store.createRule(makeRule("开关hover", 0, 1761000000)).isOk());
+    DOCTEST_CHECK(store.createRule(makeRule("命中面", 0, 1761000000)).isOk());
     listUi.reload(1760000000);
     DOCTEST_REQUIRE_EQ(listUi.assembly().userRows.size(), static_cast<size_t>(1));
 
     const eui::Screen screen = makeScreen();
     eui::Ui frame;
-    composeFrame(listUi, frame, screen, "switch_hover");
-    auto* hit = frame.find("schedule.list.user.0.switch.hit");
+    listUi.setTab(1);
+    composeFrame(listUi, frame, screen, "card_hit");
+    auto* card = frame.find("schedule.list.user.0");
+    DOCTEST_REQUIRE(card != nullptr);
+    auto* hit = frame.find("schedule.list.user.0.hit");
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_CHECK(hit->onHoverChanged != nullptr);
-    // 进/出开关 hover 双向触发不崩（行卡 hover 集合维护路径贯通）
+    DOCTEST_CHECK(hit->onClick != nullptr);
+    // 命中面几何 = 整卡（卡面零控件 → 命中面即整卡）
+    DOCTEST_CHECK(std::fabs(hit->frame.x - card->frame.x) < 0.01f);
+    DOCTEST_CHECK(std::fabs(hit->frame.y - card->frame.y) < 0.01f);
+    DOCTEST_CHECK(std::fabs(hit->frame.width - card->frame.width) < 0.01f);
+    DOCTEST_CHECK(std::fabs(hit->frame.height - card->frame.height) < 0.01f);
+    // z 序：命中面是卡 stack 最后一个直接子级（后建者先命中）。
+    // children 持全路径 id（frame scope 前缀），比对尾段。
+    DOCTEST_REQUIRE(!card->children.empty());
+    const std::string wantHit = "schedule.list.user.0.hit";
+    const std::string& lastId = card->children.back()->id;
+    DOCTEST_CHECK(lastId.size() >= wantHit.size() &&
+                  lastId.compare(lastId.size() - wantHit.size(), wantHit.size(),
+                                 wantHit) == 0);
+    // 进/出 hover 双向触发不崩（卡 hover 集合维护路径贯通）
     hit->onHoverChanged(true);
     hit->onHoverChanged(false);
     return true;
 })
 
-// 防：ScheduleProviderRegistry 空注册表（本波 S8 未接任何来源）时列表页崩溃
-// 或系统段渲染异常——空态必须渲染「暂无系统定时」占位。
+// 防：ScheduleProviderRegistry 空注册表（本波 S8 未接任何来源）时页面崩溃
+// 或渲染异常——空段必须渲染「暂无系统定时/暂无用户定时」纯文字空态
+//（池137：无卡无任何按钮，唯一新建入口在页头）。
 REGISTER_TEST(schedule_list_empty_provider_registry_ok,
-              "schedule 系统段：空注册表不出错，渲染「暂无系统定时」空态", {
+              "schedule 空注册表：不出错，空段渲染纯文字提示（无卡无按钮）", {
     auto opened = openMigrated("emptyprov");
     DOCTEST_REQUIRE(opened.isOk());
     auto& db = opened.value().db();
@@ -237,13 +267,113 @@ REGISTER_TEST(schedule_list_empty_provider_registry_ok,
     DOCTEST_CHECK(providers.allItems().empty());
     listUi.reload(1760000000);
     DOCTEST_CHECK(listUi.assembly().systemRows.empty());
+    DOCTEST_CHECK(listUi.assembly().userRows.empty());
     DOCTEST_CHECK(listUi.errorText().empty());
 
     const eui::Screen screen = makeScreen();
     eui::Ui frame;
     composeFrame(listUi, frame, screen, "empty_sys");
-    DOCTEST_CHECK(frame.find("schedule.list.sys.empty.message") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.sys.empty") != nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.sys.0") == nullptr);
+    // 用户 TAB 同口径空态：纯文字、无任何按钮（池137）
+    listUi.setTab(1);
+    composeFrame(listUi, frame, screen, "empty_user");
+    DOCTEST_CHECK(frame.find("schedule.list.user.empty") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.empty.action") == nullptr);
+    return true;
+})
+
+// 防：TAB/瀑布重设计后结构回归（池140）——默认「系统定时」TAB、切换渲染
+// 用户卡、列数随内容宽断点（520/1080/1660 → 1/2/3/4 列）、卡面零操作钮、
+// 列宽 = (内容宽 − 列距×(列数−1))/列数。
+REGISTER_TEST(schedule_list_tabs_and_masonry_columns,
+              "schedule TAB 与瀑布列数：默认系统 TAB、切换渲染、断点与列宽公式", {
+    auto opened = openMigrated("tabscols");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+    ScheduleProviderRegistry providers;
+    ScheduleListUi listUi(store, providers);
+
+    DOCTEST_CHECK(store.createRule(makeRule("规则一", 0, 1761000000)).isOk());
+    DOCTEST_CHECK(store.createRule(makeRule("规则二", 0, 1762000000)).isOk());
+    listUi.reload(1760000000);
+
+    // 列数断点（池140 §3.1，按内容列宽）
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(0.0f), 1);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(519.0f), 1);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(520.0f), 2);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(1079.0f), 2);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(1080.0f), 3);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(1659.0f), 3);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(1660.0f), 4);
+    DOCTEST_CHECK_EQ(module::schedule::columnCountForWidth(2400.0f), 4);
+
+    const eui::Screen screen = makeScreen();  // 1200×800：内容宽 1160 → 3 列
+    eui::Ui frame;
+
+    // 默认 TAB 0 = 系统定时：用户卡不渲染；选中 TAB 有块面底、未选中无
+    DOCTEST_CHECK_EQ(listUi.activeTab(), 0);
+    composeFrame(listUi, frame, screen, "tabs_default");
+    DOCTEST_CHECK(frame.find("schedule.list.user.0") == nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.tab.0.bg") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.tab.1.bg") == nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.tab.1.text") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.tabcount") != nullptr);
+
+    // 切用户 TAB：卡出现，卡面零操作钮（编辑/删除/开关都收进弹窗）
+    listUi.setTab(1);
+    composeFrame(listUi, frame, screen, "tabs_user");
+    auto* card = frame.find("schedule.list.user.0");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.0.bg") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.0.edit") == nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.0.delete") == nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.0.switch") == nullptr);
+    // 列几何：内容宽 1160 → 3 列，列宽 = (1160 − 2×12)/3
+    const float expectColW = (1160.0f - 24.0f) / 3.0f;
+    DOCTEST_CHECK(std::fabs(card->frame.width - expectColW) < 0.01f);
+    auto* card1 = frame.find("schedule.list.user.1");
+    DOCTEST_REQUIRE(card1 != nullptr);
+    // 两卡等高 → 分列 0/1：x 不同、y 相同（最短列入列）
+    DOCTEST_CHECK(std::fabs(card->frame.x - card1->frame.x) > 1.0f);
+    DOCTEST_CHECK(std::fabs(card->frame.y - card1->frame.y) < 0.01f);
+
+    // 切回系统 TAB：用户卡消失
+    listUi.setTab(0);
+    composeFrame(listUi, frame, screen, "tabs_back");
+    DOCTEST_CHECK(frame.find("schedule.list.user.0") == nullptr);
+    return true;
+})
+
+// 防：启停开关收进编辑弹窗（池140）后「启用」链路断——formFromRecord 必须
+// 回填 enabled、buildRuleRecord 必须把 enabled 写进保存载荷（否则保存恒把
+// 规则重置为启用）。
+REGISTER_TEST(schedule_edit_enabled_roundtrip,
+              "schedule 编辑弹窗「启用」：formFromRecord 回填 / buildRuleRecord 落载荷", {
+    module::schedule::RuleRecord on;
+    on.kind = "once";
+    on.enabled = true;
+    on.name = "启用往返";
+    on.actionKind = "remind";   // RuleRecord 默认空串会被 validateAndParse 拒
+    on.missedPolicy = "once";
+    on.specJson = R"({"at":1761000000})";
+    const auto f1 = module::schedule::ui::formFromRecord(on);
+    DOCTEST_REQUIRE(f1.isOk());
+    DOCTEST_CHECK(f1.value().enabled);
+
+    module::schedule::RuleRecord off = on;
+    off.enabled = false;
+    const auto f2 = module::schedule::ui::formFromRecord(off);
+    DOCTEST_REQUIRE(f2.isOk());
+    DOCTEST_CHECK_FALSE(f2.value().enabled);
+
+    core::schedule::FireContext ctx;
+    ctx.nowUnix = 1760000000;
+    core::time::localTime(static_cast<std::time_t>(ctx.nowUnix), &ctx.localNow);
+    const auto rec = module::schedule::ui::buildRuleRecord(f2.value(), ctx);
+    DOCTEST_REQUIRE(rec.isOk());
+    DOCTEST_CHECK_FALSE(rec.value().enabled);
     return true;
 })
 

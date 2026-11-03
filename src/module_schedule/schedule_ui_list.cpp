@@ -10,10 +10,10 @@
 #include "platform/json.h"
 #include "ui_kit/button.h"
 #include "ui_kit/dialog_form.h"
-#include "ui_kit/empty_state.h"
+#include "ui_kit/glass.h"
 #include "ui_kit/jelly.h"
-#include "ui_kit/materials.h"
 #include "ui_kit/metrics.h"
+#include "ui_kit/wtab.h"
 
 #include <components/button.h>
 #include <components/dialog.h>
@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -33,21 +34,27 @@ namespace module::schedule {
 
 namespace {
 
-// 页内常量（1000×640 最小档设计口径，弹性布局随屏宽伸缩）
-constexpr float kPagePad = 12.0f;      // 与 t.sizes.spacingPage 同值
-constexpr float kRowHeight = 64.0f;
-// 相邻行卡间距（= 智能体列表 kTaskCardGap 同值，全站业务卡纵向节奏一致）
-constexpr float kRowCardGap = 8.0f;
-// 行卡在内容列内的左右内缩（卡宽 = 内容宽 − 2×inset，全站 L2 卡同口径）
-constexpr float kRowCardInset = 10.0f;
-// 行卡上下的呼吸内边距（卡高 = 行高 + 2×pad，设计 §3.1 卡化口径）
-constexpr float kRowCardPad = 12.0f;
+// 页面几何（池140 §1/§1.3：页 pad 20 / 页头 40 / TAB 36，固定区不滚）
+constexpr float kPagePad = 20.0f;      // 页边（§3.1：内容列宽 W = 窗宽 − 页边 40）
 constexpr int kHistoryLimit = 50;      // 抽屉装载与展示的 runs 上限（assembleHistory 截断）
-constexpr unsigned int kLockGlyph = 0xF023;      // fa-lock（系统段锁图标）
+constexpr unsigned int kLockGlyph = 0xF023;      // fa-lock（系统卡锁图标）
 constexpr unsigned int kChevronDown = 0xF107;    // fa-angle-down
 constexpr unsigned int kChevronRight = 0xF105;   // fa-angle-right
 
-// 上次结果状态 → 中文（与 schedule_run.status 值域对齐，§4.5）
+// 瀑布卡面几何（池140 §4，100% 基线；绘制时全部经 scaled() 派生）
+constexpr float kCardPad = 16.0f;        // 卡内边距（全站基线 16）
+constexpr float kNameRowH = 20.0f;       // 头区名称行
+constexpr float kSummaryTopGap = 6.0f;   // 摘要上距
+constexpr float kSummaryLineH = 18.0f;   // 摘要行高（12px 字）
+constexpr float kDataTopGap = 12.0f;     // 头区→分割线
+constexpr float kDataBottomGap = 10.0f;  // 分割线→引导字行
+constexpr float kGuideRowH = 16.0f;      // 引导字行（11px）
+constexpr float kGuideValueGap = 4.0f;   // 引导字→值行
+constexpr float kValueRowH = 22.0f;      // 值行（15px 下次 / 22 高 pill）
+constexpr int kSummaryMaxLines = 2;      // 摘要行数上限
+constexpr float kCardGap = 12.0f;        // 列间距 = 卡纵距（8px 网格半档）
+
+// 上次结果状态 → 中文（与 schedule_run.status 值域对齐，§4.3 pill 值域）
 std::string runStatusZh(const std::string& status) {
     if (status == "success") return "成功";
     if (status == "failed") return "失败";
@@ -66,6 +73,17 @@ std::string channelKindZh(const std::string& kind) {
     if (kind == "os") return "系统通知";
     if (kind == "silent") return "静默";
     if (kind == "wecom") return "企业微信";
+    return kind;
+}
+
+// 规则 kind → 卡面类型 chip 文案（池140 §4.1：单次/间隔/周期/cron/事件/常驻）
+std::string kindChipText(const std::string& kind) {
+    if (kind == "once") return "单次";
+    if (kind == "interval") return "间隔";
+    if (kind == "calendar") return "周期";
+    if (kind == "cron") return "cron";
+    if (kind == "event") return "事件";
+    if (kind == "resident") return "常驻";
     return kind;
 }
 
@@ -169,6 +187,94 @@ std::string weekdaysSummary(const std::vector<std::string>& days) {
 std::string clockFromTimeField(const std::string& time) {
     return time.size() >= 5 && time[2] == ':' ? time.substr(0, 5) : std::string();
 }
+
+// ---- 瀑布流布局辅助 ----
+
+// 文本宽度估算（release chipWidth 同式）：瀑布卡高须在绘制前确定，按内容
+// 宽掐算摘要行数用。CJK 字节 0.43 / ASCII 0.56 × 字号。
+float textWidth(const std::string& text, float fontSize) {
+    float w = fontSize * 1.6f;
+    for (unsigned char c : text) {
+        w += (c >= 0x80) ? fontSize * 0.43f : fontSize * 0.56f;
+    }
+    return w;
+}
+
+// 摘要行数估算（§4.1：最多 2 行省略）
+int estimateLines(const std::string& text, float availW, float fontSize) {
+    if (availW <= 0.0f) return kSummaryMaxLines;
+    const float w = textWidth(text, fontSize);
+    const int lines = static_cast<int>(std::ceil(w / availW));
+    return std::clamp(lines, 1, kSummaryMaxLines);
+}
+
+// 卡高（§4：头区 + 数据区，随摘要行数 140~176 档；全经 scaled 派生）
+float cardHeightForLines(int lines) {
+    const int l = std::clamp(lines, 1, kSummaryMaxLines);
+    return core::theme::scaled(
+        kCardPad + kNameRowH + kSummaryTopGap + kSummaryLineH * l +
+        kDataTopGap + 1.0f + kDataBottomGap + kGuideRowH + kGuideValueGap +
+        kValueRowH + kCardPad);
+}
+
+// 颜色混合（fg 按 α 叠在 base 上）
+eui::Color blendColor(const eui::Color& base, const eui::Color& fg, float a) {
+    return eui::Color{base.r + (fg.r - base.r) * a,
+                      base.g + (fg.g - base.g) * a,
+                      base.b + (fg.b - base.b) * a, base.a};
+}
+
+// 七态 pill 配色（池140 §4.3；中性底走 hover token，失败底 = errorText
+// 按 0.10 叠卡面）
+void runStatusPillColors(const std::string& status,
+                         const core::theme::Tokens& t, eui::Color& bg,
+                         eui::Color& fg) {
+    if (status == "success" || status == "running") {
+        bg = t.colors.primarySoftBg;
+        fg = t.colors.primaryText;
+    } else if (status == "failed") {
+        bg = blendColor(ui_kit::glassFill(t), t.colors.errorText, 0.10f);
+        fg = t.colors.errorText;
+    } else if (status == "pending") {
+        bg = t.colors.hover;
+        fg = t.colors.textSecondary;
+    } else {  // skipped / missed / suppressed
+        bg = t.colors.hover;
+        fg = t.colors.textTertiary;
+    }
+}
+
+// 瀑布卡槽位
+struct CardSlot {
+    float x = 0.0f;
+    float y = 0.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+};
+
+// 瀑布排布（§3.1 实现落点）：按列数断点分列，新卡入最短列（高度均衡）。
+// 列间距 = 卡纵距 = kCardGap；返回逐卡槽位（顺序与入参一致）。
+std::vector<CardSlot> masonryLayout(const std::vector<float>& heights,
+                                    float contentW, float gap) {
+    const int cols = columnCountForWidth(contentW);
+    const float usable =
+        std::max(0.0f, contentW - gap * static_cast<float>(cols - 1));
+    const float colW = usable / static_cast<float>(cols);
+    std::vector<float> colY(static_cast<std::size_t>(cols), 0.0f);
+    std::vector<CardSlot> slots(heights.size());
+    for (std::size_t i = 0; i < heights.size(); ++i) {
+        std::size_t best = 0;
+        for (std::size_t c = 1; c < colY.size(); ++c) {
+            if (colY[c] < colY[best]) best = c;
+        }
+        slots[i] = {static_cast<float>(best) * (colW + gap), colY[best], colW,
+                    heights[i]};
+        colY[best] += heights[i] + gap;
+    }
+    return slots;
+}
+
+const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
 
 } // namespace
 
@@ -280,6 +386,13 @@ std::string ruleSummary(const RuleRecord& rule) {
     if (rule.kind == "event") return "事件触发";
     if (rule.kind == "resident") return "常驻";
     return rule.kind;
+}
+
+int columnCountForWidth(float contentW) {
+    if (contentW < 520.0f) return 1;
+    if (contentW < 1080.0f) return 2;
+    if (contentW < 1660.0f) return 3;
+    return 4;
 }
 
 namespace {
@@ -394,6 +507,12 @@ ScheduleListUi::ScheduleListUi(ScheduleStore& store,
         editState_.open = false;
         editState_.saveError.clear();
     };
+    // 弹窗左下「删除」（池140 §5）：收编辑弹窗 → 走既有删除确认链路不变。
+    editHost_.requestDelete = [this](int64_t ruleId) {
+        editState_.open = false;
+        editState_.saveError.clear();
+        requestDeleteRule(ruleId);
+    };
 }
 
 void ScheduleListUi::reload(int64_t nowSec) {
@@ -440,6 +559,18 @@ core::Result<void> ScheduleListUi::setRuleEnabled(int64_t ruleId, bool enabled) 
         return core::Result<void>::fail(saved.errorCode(), saved.errorMessage());
     }
     return core::Result<void>::ok();
+}
+
+void ScheduleListUi::setTab(int tab) {
+    const int clamped = std::clamp(tab, 0, 1);
+    if (clamped == activeTab_) {
+        return;
+    }
+    activeTab_ = clamped;
+    // §1.2：TAB 切换 = 滚动区回顶 + 120ms 淡入；两标记由下一帧 compose 消费
+    //（setScrollOffset 帧末取件；opacity 目标值翻转走 120ms 过渡）。
+    pendingScrollReset_ = true;
+    tabFadePending_ = true;
 }
 
 void ScheduleListUi::refreshEditHost() {
@@ -599,443 +730,510 @@ void ScheduleListUi::retryHistoryRun(int64_t runId) {
     openHistory();
 }
 
-void ScheduleListUi::resetForTest() {    archiveExpanded_ = false;
+void ScheduleListUi::resetForTest() {
+    archiveExpanded_ = false;
     error_.clear();
     assembly_ = ListAssembly{};
     historyState_ = ui::HistoryDrawerState{};
     editState_ = ui::EditDialogState{};
+    activeTab_ = 0;
+    pendingScrollReset_ = false;
+    tabFadePending_ = false;
+    hoveredCardIds_.clear();
     cancelPendingDelete();
 }
 
 void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = core::theme::current();
     const auto comp = core::theme::componentTokensWeChat(t);
-            const float pad = kPagePad;
-            const bool hasUserRows = !assembly_.userRows.empty();
+    const int64_t nowSec = static_cast<int64_t>(core::time::nowUnix());
 
-    components::scrollView(ui, "schedule.list.scroll")
-        .size(screen.width, screen.height)
-        .theme(comp)
-        .content([&](eui::Ui& ui, float innerW, float innerH) {
-            (void)innerH;
-            const float contentW = std::max(0.0f, innerW - pad * 2.0f);
+    // ---- 固定区几何（池140 §1.1/§1.3）：页 pad 20 / 页头 40 / gap 8 / TAB 36 ----
+    const float pad = kPagePad;
+    const float pageW = screen.width;
+    const float contentW = std::max(0.0f, pageW - pad * 2.0f);
+    const float headerH = core::theme::scaled(ui_kit::kHeaderH);  // 40 全站口径（池139）
+    const float headerY = pad;                                    // 标题顶格，无额外顶距
+    const float newBtnW = core::theme::scaled(88.0f);
+    const float historyW = core::theme::scaled(96.0f);
+    const float tabRowH = core::theme::scaled(ui_kit::kWtabHeight);
+    const float tabY = headerY + headerH + core::theme::scaled(8.0f);
+    const float toastH = error_.empty() ? 0.0f : core::theme::scaled(20.0f);
+    const float toastGap = error_.empty() ? 0.0f : core::theme::scaled(8.0f);
+    const float scrollY = tabY + tabRowH + core::theme::scaled(8.0f) + toastH + toastGap;
+    const float scrollH = std::max(0.0f, screen.height - scrollY - pad);
 
-            // 段标题（锁图标 + 标题文本；flow 行布局）
-            auto sectionTitle = [&](const std::string& id,
-                                    const std::string& text, bool lock) {
-                ui.row(id)
-                    .size(contentW, core::theme::scaled(22.0f))
-                    .alignItems(eui::Align::CENTER)
-                    .gap(t.sizes.spacingSmall)
-                    .content([&] {
-                        if (lock) {
-                            ui.text(id + ".lock")
-                                .size(core::theme::scaled(16.0f),
-                                      core::theme::scaled(22.0f))
-                                .icon(eui::utf8(kLockGlyph))
-                                .color(t.colors.textTertiary)
-                                .build();
-                        }
-                        ui.text(id + ".text")
-                            .size(core::theme::scaled(120.0f),
-                                  core::theme::scaled(22.0f))
-                            .text(text)
-                            .fontSize(t.sizes.fontSizeLarge)
-                            .fontWeight(600)
-                            .color(t.colors.textPrimary)
-                            .build();
-                    })
+    // 瀑布卡绘制（系统/用户/归档卡同构；isSystem 决定锁图标、来源块与只读态）
+    auto drawCard = [&](const ListRow& row, const std::string& id,
+                        const CardSlot& slot) {
+        const float cardW = slot.w;
+        const float cardH = slot.h;
+        const float padX = core::theme::scaled(kCardPad);
+        const float padY = core::theme::scaled(kCardPad);
+        const bool hovered = hoveredCardIds_.count(id) > 0;
+        const bool interactive = !row.isSystem;
+        // 停用/归档灰化只罩数据区（§4.4：头区不灰，名称可读）
+        const float dataOpacity =
+            interactive ? (row.archived ? 0.70f : (row.enabled ? 1.0f : 0.55f))
+                        : 1.0f;
+        const float innerW = std::max(0.0f, cardW - padX * 2.0f);
+        const float rightX = padX + innerW * 0.55f;  // 左块 55% / 右块 45%
+        const float rightW = innerW * 0.45f;
+
+        ui.stack(id)
+            .position(slot.x, slot.y)
+            .size(cardW, cardH)
+            // 绝对定位脱离流式（池133 同款：column 静默忽略未 ignoreLayout 的 position）
+            .ignoreLayout()
+            .content([&] {
+                // 卡面（L2 glassFill）。§6/§7：hover 只混黑不放大不变形（专业感档），
+                // 按下果冻经命中面 visualStateFrom 驱动（缩至 0.965 回弹）。
+                ui_kit::JellyOptions opt;
+                opt.radius = t.sizes.radiusLarge;
+                opt.hoverRadius = t.sizes.radiusLarge;
+                opt.hoverScale = 1.0f;
+                opt.pressedScale = 0.965f;  // 设计 §7 按下缩放 0.965（默认 0.97）
+                if (interactive) opt.pressedFrom = id + ".hit";
+                ui_kit::jellyCard(ui, id + ".bg", 0.0f, 0.0f, cardW, cardH, t,
+                                  opt, hovered);
+
+                // ---- 头区：（锁）名称 + 特殊态 tag + 类型 chip 右顶 ----
+                const float chipFont = t.sizes.fontSizeSmall - 1.0f;  // 11
+                const float chipH = core::theme::scaled(20.0f);
+                const std::string chipText =
+                    interactive ? kindChipText(row.kind) : std::string();
+                const float chipW =
+                    chipText.empty()
+                        ? 0.0f
+                        : core::theme::scaled(20.0f) +
+                              textWidth(chipText, chipFont);
+                const char* tagText =
+                    row.archived ? "已归档" : (!row.enabled ? "已停用" : nullptr);
+                const float tagW =
+                    tagText != nullptr
+                        ? core::theme::scaled(16.0f) +
+                              textWidth(tagText, chipFont)
+                        : 0.0f;
+                float nameX = padX;
+                if (row.isSystem) {
+                    ui.text(id + ".lock")
+                        .position(padX, padY)
+                        .size(core::theme::scaled(16.0f),
+                              core::theme::scaled(kNameRowH))
+                        .icon(eui::utf8(kLockGlyph))
+                        .color(t.colors.textTertiary)
+                        .build();
+                    nameX += core::theme::scaled(24.0f);
+                }
+                const float nameW = std::max(
+                    core::theme::scaled(60.0f),
+                    innerW - (nameX - padX) - chipW - tagW -
+                        core::theme::scaled(tagText != nullptr ? 16.0f : 8.0f));
+                ui.text(id + ".name")
+                    .position(nameX, padY)
+                    .size(nameW, core::theme::scaled(kNameRowH))
+                    .text(row.name)
+                    .fontSize(t.sizes.fontSizeBody)
+                    .fontWeight(500)
+                    .color(t.colors.textPrimary)
                     .build();
-            };
+                if (tagText != nullptr) {
+                    const float tagX = nameX + nameW + core::theme::scaled(8.0f);
+                    const float tagH = core::theme::scaled(18.0f);
+                    ui.rect(id + ".tag")
+                        .position(tagX, padY + (core::theme::scaled(kNameRowH) - tagH) * 0.5f)
+                        .size(tagW, tagH)
+                        .color(t.colors.hover)
+                        .radius(tagH * 0.5f)
+                        .build();
+                    ui.text(id + ".tag.label")
+                        .position(tagX, padY + (core::theme::scaled(kNameRowH) - tagH) * 0.5f)
+                        .size(tagW, tagH)
+                        .text(tagText)
+                        .fontSize(chipFont)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }
+                if (!chipText.empty()) {
+                    const float chipX = cardW - padX - chipW;
+                    ui.rect(id + ".chip")
+                        .position(chipX, padY)
+                        .size(chipW, chipH)
+                        .color(t.colors.hover)
+                        .radius(chipH * 0.5f)
+                        .build();
+                    ui.text(id + ".chip.label")
+                        .position(chipX, padY)
+                        .size(chipW, chipH)
+                        .text(chipText)
+                        .fontSize(chipFont)
+                        .fontWeight(500)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textSecondary)
+                        .build();
+                }
 
-            // 行内绝对定位（stack 行，几何手工排布，与 settings 卡同口径）：
-            // 右缘三列固定宽（下次 110 / 上次 150 / 开关或锁 40），左列弹性。
-            // 行卡几何（F-67-1）：L2 业务卡 = 内容列内缩 kRowCardInset 的全宽卡
-            // （不限宽：定时行信息量大）；行内容整体右移同一偏移，相对布局不变。
-            const float cardX = kRowCardInset;
-            const float cardW = std::max(0.0f, contentW - kRowCardInset * 2.0f);
-            const float rightEdge = cardX + cardW;  // 卡内右侧基准
-
-            const float nextW = core::theme::scaled(110.0f);
-            const float lastW = core::theme::scaled(150.0f);
-            const float tailW = nextW + lastW + 20.0f;
-            const float leftW = cardW - tailW - 56.0f;
-            const float nameW = std::max(60.0f, leftW - 24.0f);
-            // 卡高 = 行内容高 + 2×pad（设计 §3.1）；行内绝对定位的 y 一律以 padY 为原点。
-            // B6/F-69-2：行高与内边距随字号派生——字变大而卡高不变会把二级行挤出卡外。
-            const float rowH = core::theme::scaled(kRowHeight);
-            const float rowPad = core::theme::scaled(kRowCardPad);
-            const float rowCardH = rowH + rowPad * 2.0f;
-            const float padY = rowPad;
-
-            const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
-
-            // 行级文字操作（用户行专属，编辑/删除排在启停开关左侧；
-            // 「上次」列整体左移给操作让位）。rowId 用于把控件上的 hover 并入
-            // 行卡 hover 集合（指针移到文字上时卡不闪回常态，见 §10.0.1 约束 3）。
-            auto drawRowAction = [&](const std::string& id, float x,
-                                     const std::string& text, bool danger,
-                                     const std::string& rowId,
-                                     std::function<void()> onClick) {
-                ui.text(id)
-                    .position(x, padY + core::theme::scaled(22.0f))
-                    .size(core::theme::scaled(34.0f), core::theme::scaled(20.0f))
-                    .text(text)
+                // ---- 摘要（12/400 textSecondary，最多 2 行省略）----
+                const int lines = estimateLines(row.summary, innerW,
+                                                t.sizes.fontSizeSmall);
+                const float sumY =
+                    padY + core::theme::scaled(kNameRowH + kSummaryTopGap);
+                const float sumH =
+                    core::theme::scaled(kSummaryLineH * lines);
+                ui.text(id + ".summary")
+                    .position(padX, sumY)
+                    .size(innerW, sumH)
+                    .text(row.summary)
                     .fontSize(t.sizes.fontSizeSmall)
-                    .color(danger ? t.colors.errorText : t.colors.primaryText)
-                    .onHover([this, rowId](bool h) {
-                        if (h) hoveredRowControlIds_.insert(rowId);
-                        else hoveredRowControlIds_.erase(rowId);
-                    })
-                    .onClick(std::move(onClick))
+                    .color(t.colors.textSecondary)
                     .build();
-            };
 
-            // 卡 hover = 命中面 ∪ 卡内控件（两集合，见头文件说明）
-            auto rowHovered = [&](const std::string& id) {
-                return hoveredRowIds_.count(id) > 0 ||
-                       hoveredRowControlIds_.count(id) > 0;
-            };
-
-            auto drawUserRow = [&](const ListRow& row, const std::string& id) {
-                const bool hovered = rowHovered(id);
-                ui.stack(id)
-                    .size(contentW, rowCardH)
-                    .content([&] {
-                        ui_kit::jellyCard(ui, id + ".bg", cardX, 0.0f, cardW,
-                                          rowCardH, t, {}, hovered);
-                        ui.text(id + ".name")
-                            .position(cardX + 16.0f, padY + core::theme::scaled(10.0f))
-                            .size(nameW, core::theme::scaled(20.0f))
-                            .text(row.name)
-                            .fontSize(t.sizes.fontSizeBody)
-                            .fontWeight(500)
-                            .color(t.colors.textPrimary)
-                            .build();
-                        ui.text(id + ".summary")
-                            .position(cardX + 16.0f, padY + core::theme::scaled(34.0f))
-                            .size(nameW, core::theme::scaled(16.0f))
-                            .text(row.summary)
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textSecondary)
-                            .build();
-                        ui.text(id + ".next")
-                            .position(rightEdge - tailW - 56.0f, padY + core::theme::scaled(22.0f))
-                            .size(nextW, core::theme::scaled(20.0f))
-                            .text("下次 " + nextFireText(row.nextFireAt,
-                                static_cast<int64_t>(core::time::nowUnix())))
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textSecondary)
-                            .build();
-                        ui.text(id + ".last")
-                            .position(rightEdge - lastW - 140.0f, padY + core::theme::scaled(22.0f))
-                            .size(lastW, core::theme::scaled(20.0f))
-                            .text("上次 " + lastRunText(row,
-                                static_cast<int64_t>(core::time::nowUnix())))
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textSecondary)
-                            .build();
-                        // 命中面（hover 源）：铺满卡、三态同色、不接点击（点行卡无动作）。
-                        // 构建在静态内容之后、可点控件之前：EUI 兄弟命中逆序遍历，后建者先命中
-                        // → 编辑/删除/开关仍可点。cursor 显式回 Arrow（states 默认 Hand）。
-                        ui.rect(id + ".hit")
-                            .position(cardX, 0.0f)
-                            .size(cardW, rowCardH)
-                            .states(kTransparent, kTransparent, kTransparent)
-                            .cursor(core::CursorShape::Arrow)
-                            .onHover([this, rowId = id](bool h) {
-                                if (h) hoveredRowIds_.insert(rowId);
-                                else hoveredRowIds_.erase(rowId);
-                            })
-                            .build();
-                        drawRowAction(id + ".edit", rightEdge - 124.0f, "编辑",
-                                      /*danger=*/false, id,
-                                      [this, ruleId = row.ruleId] {
-                                          openEditRule(ruleId);
-                                      });
-                        drawRowAction(id + ".delete", rightEdge - 86.0f, "删除",
-                                      /*danger=*/true, id,
-                                      [this, ruleId = row.ruleId] {
-                                          requestDeleteRule(ruleId);
-                                      });
-                        // 开关 hover 并入行卡 hover 集合（同 drawRowAction 口径）：
-                        // 指针停在开关上时卡不闪回常态（SwitchBuilder.onHover → .hit 命中面）。
-                        components::toggleSwitch(ui, id + ".switch")
-                            .position(rightEdge - 44.0f, padY + core::theme::scaled(20.0f))
-                            .size(44.0f, 24.0f)
-                            .checked(row.enabled)
-                            .theme(comp)
-                            .onHover([this, rowId = id](bool h) {
-                                if (h) hoveredRowControlIds_.insert(rowId);
-                                else hoveredRowControlIds_.erase(rowId);
-                            })
-                            .onChange([this, ruleId = row.ruleId](bool v) {
-                                const auto r = setRuleEnabled(ruleId, v);
-                                if (r.isFail()) {
-                                    error_ = "开关切换失败：" + r.errorMessage();
-                                    LOG_WARN("schedule 列表：开关切换失败 — " +
-                                             r.errorMessage());
-                                } else {
-                                    reload(static_cast<int64_t>(
-                                        core::time::nowUnix()));
-                                }
-                            })
-                            .build();
-                    })
+                // ---- 数据区（分割线下「下次块 + 上次块」两块横排，占满卡宽）----
+                const float divY = sumY + sumH + core::theme::scaled(kDataTopGap);
+                const float dataY = divY + 1.0f + core::theme::scaled(kDataBottomGap);
+                const float guideH = core::theme::scaled(kGuideRowH);
+                const float valueH = core::theme::scaled(kValueRowH);
+                const float valueY = dataY + guideH + core::theme::scaled(kGuideValueGap);
+                ui.rect(id + ".divider")
+                    .position(padX, divY)
+                    .size(innerW, 1.0f)
+                    .color(t.colors.borderDefault)
+                    .opacity(dataOpacity)
                     .build();
-            };
-
-            auto drawSystemRow = [&](const ListRow& row, const std::string& id) {
-                const bool hovered = rowHovered(id);
-                ui.stack(id)
-                    .size(contentW, rowCardH)
-                    .content([&] {
-                        ui_kit::jellyCard(ui, id + ".bg", cardX, 0.0f, cardW,
-                                          rowCardH, t, {}, hovered);
-                        ui.text(id + ".lock")
-                            .position(cardX + 16.0f, padY + core::theme::scaled(21.0f))
-                            .size(core::theme::scaled(16.0f),
-                                  core::theme::scaled(22.0f))
-                            .icon(eui::utf8(kLockGlyph))
-                            .color(t.colors.textTertiary)
-                            .build();
-                        ui.text(id + ".name")
-                            .position(cardX + 40.0f, padY + core::theme::scaled(10.0f))
-                            .size(nameW - 8.0f, core::theme::scaled(20.0f))
-                            .text(row.name)
-                            .fontSize(t.sizes.fontSizeBody)
-                            .fontWeight(500)
-                            .color(t.colors.textPrimary)
-                            .build();
-                        ui.text(id + ".summary")
-                            .position(cardX + 40.0f, padY + core::theme::scaled(34.0f))
-                            .size(nameW - 8.0f, core::theme::scaled(16.0f))
-                            .text(row.summary)
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textSecondary)
-                            .build();
-                        ui.text(id + ".source")
-                            .position(rightEdge - tailW - 56.0f + nextW - 60.0f,
-                                      padY + core::theme::scaled(10.0f))
-                            .size(core::theme::scaled(60.0f),
-                                  core::theme::scaled(18.0f))
-                            .text(row.source)
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textTertiary)
-                            .build();
-                        ui.text(id + ".next")
-                            .position(rightEdge - tailW - 56.0f, padY + core::theme::scaled(22.0f))
-                            .size(nextW, core::theme::scaled(20.0f))
-                            .text("下次 " + nextFireText(row.nextFireAt,
-                                static_cast<int64_t>(core::time::nowUnix())))
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textSecondary)
-                            .build();
-                        ui.text(id + ".readonly")
-                            .position(rightEdge - lastW - 48.0f, padY + core::theme::scaled(22.0f))
-                            .size(lastW, core::theme::scaled(20.0f))
-                            .text("只读 · 执行归来源模块")
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.textTertiary)
-                            .build();
-                        // 命中面：系统行全卡无操作控件，整卡做 hover 源即可
-                        ui.rect(id + ".hit")
-                            .position(cardX, 0.0f)
-                            .size(cardW, rowCardH)
-                            .states(kTransparent, kTransparent, kTransparent)
-                            .cursor(core::CursorShape::Arrow)
-                            .onHover([this, rowId = id](bool h) {
-                                if (h) hoveredRowIds_.insert(rowId);
-                                else hoveredRowIds_.erase(rowId);
-                            })
-                            .build();
-                    })
+                // 左块「下次」：15/600 textPrimary 为卡内第一数据锚；无值「—」12 灰
+                const bool hasNext =
+                    row.nextFireAt.has_value() && row.nextFireAt.value() > 0;
+                ui.text(id + ".next.guide")
+                    .position(padX, dataY)
+                    .size(core::theme::scaled(80.0f), guideH)
+                    .text("下次")
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .color(t.colors.textTertiary)
+                    .opacity(dataOpacity)
                     .build();
-            };
-
-            ui.column("schedule.list.root")
-                .width(innerW)
-                .height(core::SizeValue::wrapContent())
-                .padding(pad, 40.0f, pad, t.sizes.spacingXLarge)
-                .gap(t.sizes.spacingLarge)
-                .content([&] {
-                    // 页头：标题 + 弹性占位 + 运行历史抽屉入口 / 新建（历史靠右、新建最右）
-                    ui.row("schedule.list.header")
-                        .size(contentW, core::theme::scaled(32.0f))
-                        .alignItems(eui::Align::CENTER)
-                        .content([&] {
-                            ui.text("schedule.list.title")
-                                .width(core::SizeValue::wrapContent())
-                                .height(core::theme::scaled(32.0f))
-                                .text("定时")
-                                .fontSize(t.sizes.fontSizeTitle)
-                                .lineHeight(core::theme::scaled(32.0f))
-                                .fontWeight(600)
-                                .color(t.colors.textPrimary)
-                                .build();
-                            ui.stack("schedule.list.header.spacer")
-                                .height(core::theme::scaled(24.0f))
-                                .flexGrow(1.0f)
-                                .build();
-                            ui.text("schedule.list.history")
-                                .size(core::theme::scaled(96.0f),
-                                      core::theme::scaled(24.0f))
-                                .text("运行历史")
-                                .fontSize(t.sizes.fontSizeBody)
-                                .color(t.colors.primaryText)
-                                .onClick([this] { openHistory(); })
-                                .build();
-                            // 新建入口（C2）：空态时降级 Secondary——此时用户定时空态卡
-                            // 中央已有引导钮，页头不再抢注意力；有数据保持 Primary。
-                            // 判据与用户空态卡同源（userRows 为空），保证不会同屏两个绿钮。
-                            ui_kit::button(
-                                ui, "schedule.list.new", "新建",
-                                hasUserRows ? ui_kit::ButtonLevel::Primary
-                                            : ui_kit::ButtonLevel::Secondary,
-                                0.0f, 0.0f, core::theme::scaled(88.0f), 40.0f,
-                                t, {[this] { openNewRule(); }});
-                        })
+                ui.text(id + ".next")
+                    .position(padX, valueY)
+                    .size(std::max(0.0f, innerW * 0.55f - core::theme::scaled(8.0f)), valueH)
+                    .text(nextFireText(row.nextFireAt, nowSec))
+                    .fontSize(hasNext ? t.sizes.fontSizeBody + 1.0f
+                                      : t.sizes.fontSizeSmall)
+                    .fontWeight(hasNext ? 600 : 400)
+                    .lineHeight(valueH)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(hasNext ? t.colors.textPrimary : t.colors.textTertiary)
+                    .opacity(dataOpacity)
+                    .build();
+                if (row.isSystem) {
+                    // 系统卡右块「来源」：模块名 12 + 4 + 「只读」11（超长省略）
+                    ui.text(id + ".source.guide")
+                        .position(rightX, dataY)
+                        .size(core::theme::scaled(80.0f), guideH)
+                        .text("来源")
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .color(t.colors.textTertiary)
                         .build();
-
-                    if (!error_.empty()) {
-                        ui.text("schedule.list.toast")
-                            .size(contentW, core::theme::scaled(20.0f))
-                            .text(error_)
+                    ui.text(id + ".source")
+                        .position(rightX, valueY)
+                        .size(std::max(0.0f, rightW - core::theme::scaled(40.0f)), valueH)
+                        .text(row.source)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(valueH)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    ui.text(id + ".readonly")
+                        .position(rightX + rightW - core::theme::scaled(36.0f), valueY)
+                        .size(core::theme::scaled(36.0f), valueH)
+                        .text("只读")
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(valueH)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                } else {
+                    // 右块「上次」：七态 pill + 时间戳；无记录灰字占位
+                    ui.text(id + ".last.guide")
+                        .position(rightX, dataY)
+                        .size(core::theme::scaled(80.0f), guideH)
+                        .text("上次")
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .color(t.colors.textTertiary)
+                        .opacity(dataOpacity)
+                        .build();
+                    if (row.lastRunAt.has_value() && !row.lastRunStatus.empty()) {
+                        const std::string statusZh = runStatusZh(row.lastRunStatus);
+                        const float pillW = core::theme::scaled(20.0f) +
+                                            textWidth(statusZh, t.sizes.fontSizeSmall);
+                        eui::Color pillBg;
+                        eui::Color pillFg;
+                        runStatusPillColors(row.lastRunStatus, t, pillBg, pillFg);
+                        ui.rect(id + ".last.pill")
+                            .position(rightX, valueY)
+                            .size(pillW, valueH)
+                            .color(pillBg)
+                            .radius(valueH * 0.5f)
+                            .opacity(dataOpacity)
+                            .build();
+                        ui.text(id + ".last.status")
+                            .position(rightX, valueY)
+                            .size(pillW, valueH)
+                            .text(statusZh)
                             .fontSize(t.sizes.fontSizeSmall)
-                            .color(t.colors.errorText)
+                            .fontWeight(500)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(pillFg)
+                            .opacity(dataOpacity)
+                            .build();
+                        const std::time_t at =
+                            static_cast<std::time_t>(row.lastRunAt.value());
+                        ui.text(id + ".last.time")
+                            .position(rightX + pillW + core::theme::scaled(6.0f), valueY)
+                            .size(std::max(0.0f, rightW - pillW - core::theme::scaled(6.0f)), valueH)
+                            .text(monthDayText(at) + " " + clockText(at))
+                            .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                            .lineHeight(valueH)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textTertiary)
+                            .opacity(dataOpacity)
+                            .build();
+                    } else {
+                        ui.text(id + ".last.none")
+                            .position(rightX, valueY)
+                            .size(rightW, valueH)
+                            .text("无记录")
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .lineHeight(valueH)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textTertiary)
+                            .opacity(dataOpacity)
                             .build();
                     }
+                }
 
-                    // 系统定时段（锁图标只读）
-                    sectionTitle("schedule.list.sys.title", "系统定时",
-                                 /*lock=*/true);
-                    if (assembly_.systemRows.empty()) {
-                        ui.stack("schedule.list.sys.empty.wrap")
-                            .width(contentW)
-                            .height(core::theme::scaled(64.0f))
-                            .content([&] {
-                                // 空态也铺 L2 材质：段内一块空白不带底，与有数据时的
-                                // 行卡不成序列（S1 判据：卡内/卡外采样有差）。
-                                ui.rect("schedule.list.sys.empty.card")
-                                    .position(kRowCardInset, 0.0f)
-                                    .size(std::max(0.0f, contentW - kRowCardInset * 2.0f),
-                                          core::theme::scaled(64.0f))
-                                    .color(ui_kit::itemSurface(t))
-                                    .radius(t.sizes.radiusLarge)
-                                    .border(1.0f, t.colors.borderDefault)
-                                    .build();
-                                ui_kit::emptyState(
-                                    ui, "schedule.list.sys.empty", "暂无系统定时",
-                                    std::nullopt, kRowCardInset, 0.0f,
-                                    std::max(0.0f, contentW - kRowCardInset * 2.0f),
-                                    core::theme::scaled(64.0f), t);
-                            })
-                            .build();
-                    }
-                    if (!assembly_.systemRows.empty()) {
-                        // 段内行卡同容器、间距 kRowCardGap（S3：相邻卡间距 = 全站卡间距）
-                        ui.column("schedule.list.sys.rows")
-                            .width(contentW)
-                            .height(core::SizeValue::wrapContent())
-                            .gap(kRowCardGap)
-                            .content([&] {
-                                for (size_t i = 0;
-                                     i < assembly_.systemRows.size(); ++i) {
-                                    drawSystemRow(
-                                        assembly_.systemRows[i],
-                                        "schedule.list.sys." + std::to_string(i));
-                                }
-                            })
-                            .build();
-                    }
+                // hover 反馈层（§6：混黑 0.05，120ms 过渡；目标值每帧随命中面换）
+                ui.rect(id + ".tint")
+                    .position(0.0f, 0.0f)
+                    .size(cardW, cardH)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.05f})
+                    .radius(t.sizes.radiusLarge)
+                    .opacity(hovered ? 1.0f : 0.0f)
+                    .transition(core::Transition::make(0.12f, core::Ease::OutCubic))
+                    .animate(core::AnimProperty::Opacity)
+                    .build();
 
-                    // 用户定时段
-                    sectionTitle("schedule.list.user.title", "用户定时",
-                                 /*lock=*/false);
-                    if (assembly_.userRows.empty()) {
-                        ui.stack("schedule.list.user.empty.wrap")
-                            .width(contentW)
-                            .height(core::theme::scaled(96.0f))
-                            .content([&] {
-                                ui.rect("schedule.list.user.empty.card")
-                                    .position(kRowCardInset, 0.0f)
-                                    .size(std::max(0.0f, contentW - kRowCardInset * 2.0f),
-                                          core::theme::scaled(96.0f))
-                                    .color(ui_kit::itemSurface(t))
-                                    .radius(t.sizes.radiusLarge)
-                                    .border(1.0f, t.colors.borderDefault)
-                                    .build();
-                                ui_kit::emptyState(
-                                    ui, "schedule.list.user.empty", "暂无用户定时",
-                                    std::make_optional(std::make_pair(
-                                        std::string("新建定时"),
-                                        [this] { openNewRule(); })),
-                                    kRowCardInset, 0.0f,
-                                    std::max(0.0f, contentW - kRowCardInset * 2.0f),
-                                    core::theme::scaled(96.0f), t);
-                            })
-                            .build();
-                    }
-                    if (!assembly_.userRows.empty()) {
-                        ui.column("schedule.list.user.rows")
-                            .width(contentW)
-                            .height(core::SizeValue::wrapContent())
-                            .gap(kRowCardGap)
-                            .content([&] {
-                                for (size_t i = 0;
-                                     i < assembly_.userRows.size(); ++i) {
-                                    drawUserRow(
-                                        assembly_.userRows[i],
-                                        "schedule.list.user." + std::to_string(i));
-                                }
-                            })
-                            .build();
-                    }
+                // 命中面（池140：卡面零控件，命中面即整卡；bug 150 口径）——
+                // EUI 兄弟命中逆序遍历、后建者先命中，命中面必须建在卡 stack
+                // 内**最后**。用户/归档卡 = 点击开编辑弹窗 + cursor Hand；系统卡
+                // 只读 = 无 onClick、cursor Arrow、仅 hover 浏览反馈。
+                auto hit = ui.rect(id + ".hit")
+                               .position(0.0f, 0.0f)
+                               .size(cardW, cardH)
+                               .states(kTransparent, kTransparent, kTransparent)
+                               .cursor(interactive ? core::CursorShape::Hand
+                                                   : core::CursorShape::Arrow)
+                               .onHover([this, rowId = id](bool h) {
+                                   if (h) hoveredCardIds_.insert(rowId);
+                                   else hoveredCardIds_.erase(rowId);
+                               });
+                if (interactive) {
+                    hit.onClick([this, ruleId = row.ruleId] {
+                        openEditRule(ruleId);
+                    });
+                }
+                hit.build();
+            })
+            .build();
+    };
 
-                    // 一次性已执行折叠区（§4.4：archived_at 非空默认折叠）
-                    ui.row("schedule.list.archive.header")
-                        .size(contentW, core::theme::scaled(22.0f))
-                        .alignItems(eui::Align::CENTER)
-                        .gap(t.sizes.spacingSmall)
-                        .onClick([this] { archiveExpanded_ = !archiveExpanded_; })
+    // 段内瀑布流：卡高预排 → masonryLayout 最短列入列 → 逐卡绘制
+    auto drawMasonry = [&](const std::vector<ListRow>& rows,
+                           const std::string& idPrefix, float w) {
+        std::vector<float> heights;
+        heights.reserve(rows.size());
+        const float summaryAvailW =
+            std::max(0.0f, w - core::theme::scaled(kCardPad * 2.0f));
+        for (const auto& row : rows) {
+            heights.push_back(cardHeightForLines(
+                estimateLines(row.summary, summaryAvailW, t.sizes.fontSizeSmall)));
+        }
+        const auto slots = masonryLayout(heights, w, core::theme::scaled(kCardGap));
+        // 流式占位：卡在滚动 content 的 column 里绝对定位（ignoreLayout，池133 同款
+        // 坑——column 对未 ignoreLayout 子元素会静默忽略 position()），整块高度必须由
+        // spacer 贡献，否则滚动内容高塌 0、后续流式兄弟（归档段）叠到卡上。
+        float totalH = 0.0f;
+        for (const auto& s : slots) totalH = std::max(totalH, s.y + s.h);
+        ui.stack(idPrefix + "spacer").size(w, totalH).build();
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            drawCard(rows[i], idPrefix + std::to_string(i), slots[i]);
+        }
+    };
+
+    ui.stack("schedule.list.root")
+        .size(screen.width, screen.height)
+        .content([&] {
+            // 页头（池139：全站 kHeaderH=40、标题顶格自页 pad 20 起算，无写死顶距）
+            ui.text("schedule.list.title")
+                .position(pad, headerY)
+                .size(std::max(0.0f, contentW - newBtnW - historyW -
+                                        core::theme::scaled(32.0f)), headerH)
+                .text("定时")
+                .fontSize(t.sizes.fontSizeTitle)
+                .lineHeight(headerH)
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text("schedule.list.history")
+                .position(pageW - pad - newBtnW - core::theme::scaled(16.0f) - historyW,
+                          headerY)
+                .size(historyW, headerH)
+                .text("运行历史")
+                .fontSize(t.sizes.fontSizeBody)
+                .lineHeight(headerH)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.primaryText)
+                .onClick([this] { openHistory(); })
+                .build();
+            // 新建（池137：全页唯一新建入口；空态纯文字提示后恒 Primary）
+            ui_kit::button(ui, "schedule.list.new", "新建",
+                           ui_kit::ButtonLevel::Primary, pageW - pad - newBtnW,
+                           headerY, newBtnW, ui_kit::kButtonHeight, t,
+                           {[this] { openNewRule(); }});
+
+            // TAB 行（全站 wtab 块面式现行口径；计数紧跟选中 tab 之后）
+            const char* kTabLabels[2] = {"系统定时", "用户定时"};
+            float tabX = pad;
+            for (int i = 0; i < 2; ++i) {
+                const bool active = i == activeTab_;
+                const float tabW =
+                    textWidth(kTabLabels[i], ui_kit::kWtabFontSize) + 24.0f;
+                ui_kit::wtab(ui, "schedule.list.tab." + std::to_string(i),
+                             kTabLabels[i], active, tabX, tabY, tabW, tabRowH, t,
+                             [this, i] { setTab(i); });
+                tabX += tabW + core::theme::scaled(6.0f);
+                if (active) {
+                    const int n = i == 0
+                                      ? static_cast<int>(assembly_.systemRows.size())
+                                      : static_cast<int>(assembly_.userRows.size());
+                    const std::string countText = "共 " + std::to_string(n) + " 个";
+                    const float countW =
+                        textWidth(countText, t.sizes.fontSizeSmall) +
+                        core::theme::scaled(8.0f);
+                    ui.text("schedule.list.tabcount")
+                        .position(tabX, tabY)
+                        .size(countW, tabRowH)
+                        .text(countText)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(tabRowH)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                    tabX += countW + core::theme::scaled(6.0f);
+                }
+            }
+
+            // toast（仅 error_ 非空时插入，滚动区顶缩）
+            if (!error_.empty()) {
+                ui.text("schedule.list.toast")
+                    .position(pad, tabY + tabRowH + core::theme::scaled(8.0f))
+                    .size(contentW, toastH)
+                    .text(error_)
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .lineHeight(toastH)
+                    .color(t.colors.errorText)
+                    .build();
+            }
+
+            // 唯一滚动区（§1.2：外壳/页头/TAB 不滚，瀑布流自滚）
+            components::scrollView(ui, "schedule.list.scroll")
+                .position(pad, scrollY)
+                .size(contentW, scrollH)
+                .theme(comp)
+                .content([&](eui::Ui& ui, float innerW, float innerH) {
+                    (void)innerH;
+                    const float w = std::max(0.0f, innerW);
+                    const bool userTab = activeTab_ == 1;
+                    ui.column("schedule.list.content")
+                        .width(w)
+                        .height(core::SizeValue::wrapContent())
+                        // TAB 切换 120ms 淡入：切帧目标 0，次帧回 1 由过渡插值
+                        .opacity(tabFadePending_ ? 0.0f : 1.0f)
+                        .transition(core::Transition::make(0.12f, core::Ease::OutCubic))
+                        .animate(core::AnimProperty::Opacity)
                         .content([&] {
-                            ui.text("schedule.list.archive.chevron")
-                                .size(core::theme::scaled(16.0f),
-                                      core::theme::scaled(22.0f))
-                                .icon(eui::utf8(archiveExpanded_ ? kChevronDown
+                            const std::vector<ListRow>& rows =
+                                userTab ? assembly_.userRows : assembly_.systemRows;
+                            if (rows.empty()) {
+                                // 空态（池137）：贴左灰字纯提示，缩进 16 与卡对齐；
+                                // 无卡无任何按钮，唯一新建入口在页头
+                                ui.text(userTab ? "schedule.list.user.empty"
+                                                : "schedule.list.sys.empty")
+                                    .position(core::theme::scaled(16.0f),
+                                              core::theme::scaled(8.0f))
+                                    .size(std::max(0.0f, w - core::theme::scaled(32.0f)),
+                                          core::theme::scaled(20.0f))
+                                    .text(userTab ? "暂无用户定时" : "暂无系统定时")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+                            } else {
+                                drawMasonry(rows,
+                                            userTab ? "schedule.list.user."
+                                                    : "schedule.list.sys.",
+                                            w);
+                            }
+                            if (userTab) {
+                                // 归档折叠段（§1.1：仅用户 TAB 滚动区尾部，默认折叠）
+                                ui.row("schedule.list.archive.header")
+                                    .size(w, core::theme::scaled(32.0f))
+                                    .alignItems(eui::Align::CENTER)
+                                    .gap(t.sizes.spacingSmall)
+                                    .onClick([this] {
+                                        archiveExpanded_ = !archiveExpanded_;
+                                    })
+                                    .content([&] {
+                                        ui.text("schedule.list.archive.chevron")
+                                            .size(core::theme::scaled(16.0f),
+                                                  core::theme::scaled(22.0f))
+                                            .icon(eui::utf8(archiveExpanded_
+                                                                ? kChevronDown
                                                                 : kChevronRight))
-                                .color(t.colors.textTertiary)
-                                .build();
-                            ui.text("schedule.list.archive.label")
-                                .size(core::theme::scaled(240.0f),
-                                      core::theme::scaled(22.0f))
-                                .text("已归档 (" +
-                                      std::to_string(
-                                          assembly_.archivedRows.size()) +
-                                      ")")
-                                .fontSize(t.sizes.fontSizeBody)
-                                .color(t.colors.textSecondary)
-                                .build();
+                                            .color(t.colors.textTertiary)
+                                            .build();
+                                        ui.text("schedule.list.archive.label")
+                                            .size(core::theme::scaled(240.0f),
+                                                  core::theme::scaled(22.0f))
+                                            .text("已归档 (" +
+                                                  std::to_string(
+                                                      assembly_.archivedRows.size()) +
+                                                  ")")
+                                            .fontSize(t.sizes.fontSizeBody)
+                                            .color(t.colors.textSecondary)
+                                            .build();
+                                    })
+                                    .build();
+                                if (archiveExpanded_ &&
+                                    !assembly_.archivedRows.empty()) {
+                                    drawMasonry(assembly_.archivedRows,
+                                                "schedule.list.archive.", w);
+                                }
+                            }
                         })
                         .build();
-                    if (archiveExpanded_) {
-                        ui.column("schedule.list.archive.rows")
-                            .width(contentW)
-                            .height(core::SizeValue::wrapContent())
-                            .gap(kRowCardGap)
-                            .content([&] {
-                                for (size_t i = 0;
-                                     i < assembly_.archivedRows.size(); ++i) {
-                                    drawUserRow(
-                                        assembly_.archivedRows[i],
-                                        "schedule.list.archive." +
-                                            std::to_string(i));
-                                }
-                            })
-                            .build();
-                    }
                 })
                 .build();
+
+            // TAB 切换一次性标记消费：滚动回顶（帧末取件）+ 淡入翻回 1
+            if (pendingScrollReset_) {
+                pendingScrollReset_ = false;
+                ui.setScrollOffset("schedule.list.scroll", 0.0f);
+            }
+            if (tabFadePending_) {
+                tabFadePending_ = false;
+            }
         })
         .build();
 

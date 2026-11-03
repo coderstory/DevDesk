@@ -21,6 +21,10 @@ struct JellyOptions {
     float pressedRadius = 8.0f;   // 按下压扁
     float hoverScale = 1.02f;
     float pressedScale = 0.97f;
+    // 按压形变来源元素 id（通常 = 卡的命中面 <id>.hit，命中面是兄弟中最上层）。
+    // 非空时对卡本体挂 visualStateFrom(该 id, pressedScale)——按下果冻由运行时
+    // 依赖式驱动（源元素须同帧存在），hover 形变仍走上面每帧换值的字段。
+    std::string pressedFrom;
 };
 
 // 果冻卡：`hovered` 必须由调用方**每帧 compose 时**传（来源见方案 §10.0.1 的 hover 状态集合）。
@@ -59,6 +63,9 @@ inline void jellyCard(eui::Ui& ui, const std::string& id, float x, float y,
             ::core::theme::componentTokensWeChat(t)))
         .transition(core::Transition::make(0.18f, core::Ease::OutBack))
         .animate(core::AnimProperty::Radius | core::AnimProperty::Transform);
+    if (!opt.pressedFrom.empty()) {
+        r.visualStateFrom(opt.pressedFrom, opt.pressedScale);
+    }
     if (onClick) r.onClick(std::move(onClick));
     r.build();
 }
