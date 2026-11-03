@@ -23,11 +23,26 @@ inline constexpr int kHookSearchTimeoutMs = 800;
 // 码点计数（"字"的口径）；非法 UTF-8 按字节近似（调用方输入已过检索层）
 std::size_t countChars(const std::string& utf8);
 
+// ── 需-3 前缀文法（细则 §1.1，单测钉死）──
+// 解析 text 偏移 0 的 "[类型|主题]"：类型 ∈ {踩坑,决策,契约,环境} 精确匹配；
+// 主题 = 首个 ']' 前的非空文本。任何不合规（非 '[' 起始、无 '|'、未知类型、
+// 空主题、无闭合）→ valid=false = 未分类，解析层永不报错/拒存（§1.3）。
+// tag = 合法时偏移 0 起的 "[类型|主题]" 原文（infer 路②补标重用）。
+struct MemoryPrefix {
+    bool valid = false;
+    int group = -1;  // 0=踩坑 1=决策 2=契约 3=环境；valid=false 时无意义
+    std::string tag;
+};
+MemoryPrefix parseMemoryPrefix(const std::string& text);
+
 // 单条重排版：压成单行 + 日期来源标注 "[YYYY-MM-DD 来源:#id] 正文"
 std::string renderContextLine(const gateway::MemoryHit& hit);
 
-// 按给定序取前 N 条使合计 ≤500 字；返回拼好的一行列表（含头部声明）。
-// 一条都放不下（首条超预算）→ 空串 = 本轮不注入。
+// 分组注入（需-3 §4）：解析前缀 → 融合段切分（虚拟条目继承母 hit 日期/来源）→
+// 固定组序 踩坑→决策→契约→环境→未分类（组内保持检索相关度序）→ 组标题
+//（"⚠ 踩坑 N 条"/"📌 决策 N 条"，其余纯文字；空组不渲染）→ 预算截断
+//（组标题计字不计条；先分组后截断，组序即存活序——踩坑优先）。
+// 预算常量不动（≤5 条 ≤500 字）；一条都放不下 → 空串 = 本轮不注入。
 std::string assembleContext(const std::vector<gateway::MemoryHit>& hits);
 
 // 合法注入响应 JSON：{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit",

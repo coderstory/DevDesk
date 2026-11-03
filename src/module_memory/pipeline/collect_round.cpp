@@ -71,6 +71,12 @@ core::Result<CollectRoundReport> runCollectRound(
                 ev.sessionId, static_cast<std::int64_t>(ev.eventSeq),
                 seg.text, now});
         }
+        // 需-3 §2.1：前缀在卡文本构造处打——采集无本地分类能力，草稿默认
+        // [踩坑|会话采集]（四类语义表细则 §1.2 由人审共用，编辑框改文本即改标，
+        // 不做类型选择器 UI §7-7）。同一份带前缀文本同源进直存卡与提炼队列
+        // （路②补标类型来源）；执行面零改动：addDirect/撤销回填原样透传。
+        const std::string prefixedText =
+            "[踩坑|会话采集] " + gated.value().text;
         // G-1 提炼暂存：过闸段入队（commit 之前；崩溃重放唯一键去重）。入队
         // 失败不阻断卡片链（主通道），该段提炼机会丢失如实留痕
         if (inferQueue != nullptr) {
@@ -79,12 +85,12 @@ core::Result<CollectRoundReport> runCollectRound(
                     ? 0
                     : static_cast<std::int64_t>(seg.events.front().eventSeq);
             if (auto q = inferQueue->enqueue(seg.sessionId, startSeq,
-                                             gated.value().text, now);
+                                             prefixedText, now);
                 q.isFail()) {
                 LOG_WARN("提炼入队失败: " + q.errorMessage());
             }
         }
-        auto card = proposals::Curator::proposeAdd(store, gated.value().text,
+        auto card = proposals::Curator::proposeAdd(store, prefixedText,
                                                    evidence, 0.9, now);
         if (card.isFail()) {
             // 单段建卡失败不中断整轮（下轮水位未推进该段事件级去重兜底）

@@ -338,3 +338,166 @@ REGISTER_TEST(memory_gateway_get_memory_version_parse,
     DOCTEST_CHECK(missing.isFail());
     return true;
 })
+
+// ── 需-3 前缀文法与分组渲染（细则 §1/§4，解析契约单测落点）──
+
+REGISTER_TEST(memory_hook_prefix_parse_contract,
+              "memory: 需-3 前缀文法——四类合法归组号；畸形三态（无|/未知类型/非[起始）+空主题/无闭合/带空格全未分类，永不报错", {
+    const auto ok = parseMemoryPrefix("[踩坑|分库分表] @Transactional 自调用不生效");
+    DOCTEST_CHECK(ok.valid);
+    DOCTEST_CHECK_EQ(ok.group, 0);
+    DOCTEST_CHECK_EQ(ok.tag, std::string("[踩坑|分库分表]"));
+    DOCTEST_CHECK(parseMemoryPrefix("[决策|存储选型] x").group == 1);
+    DOCTEST_CHECK(parseMemoryPrefix("[契约|接口约定] x").group == 2);
+    DOCTEST_CHECK(parseMemoryPrefix("[环境|双机差异] x").group == 3);
+    // 畸形三态（细则 §1.3）：一律未分类，不抛错不拒存
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("[踩坑] 无管道符").valid);
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("[感想|X] 未知类型").valid);
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("正文在前 [踩坑|A] 非 [ 起始").valid);
+    // 其余非法形态
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("[踩坑|] 空主题").valid);
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("[踩坑|无闭合").valid);
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("[踩坑 |X] 类型带空格").valid);
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("").valid);
+    DOCTEST_CHECK_FALSE(parseMemoryPrefix("[").valid);
+    // 主题以首个 ] 为准（内含 ] 非法用法按截断处理）
+    const auto cut = parseMemoryPrefix("[决策|A]B] 尾部");
+    DOCTEST_CHECK(cut.valid);
+    DOCTEST_CHECK_EQ(cut.tag, std::string("[决策|A]"));
+    return true;
+})
+
+REGISTER_TEST(memory_hook_prefix_group_render_order,
+              "memory: 需-3 分组渲染——四类归组、固定组序（踩坑→决策→契约→环境→未分类）、组标题带条数、条目行零改写", {
+    // 乱序输入（相关度序）→ 输出组序固定，未分类尾组
+    std::vector<MemoryHit> hits = {
+        {"无前缀存量记忆原文", "30", "2026-10-28", 0.5},
+        {"[环境|双机差异] mac 用 Homebrew openssl", "34", "2026-10-30", 0.8},
+        {"[契约|接口约定] 双方约定零异常", "33", "2026-10-30", 0.7},
+        {"[决策|存储选型] engram 否决主存储", "32", "2026-10-29", 0.9},
+        {"[踩坑|分库分表] 自调用不生效", "31", "2026-10-30", 0.95},
+    };
+    const std::string ctx = assembleContext(hits);
+    DOCTEST_CHECK(!ctx.empty());
+    const auto posOf = [&ctx](const std::string& needle) {
+        return ctx.find(needle);
+    };
+    const std::size_t pPit = posOf("⚠ 踩坑 1 条");
+    const std::size_t pDec = posOf("📌 决策 1 条");
+    const std::size_t pCon = posOf("契约 1 条");
+    const std::size_t pEnv = posOf("环境 1 条");
+    const std::size_t pUnc = posOf("未分类 1 条");
+    DOCTEST_REQUIRE(pPit != std::string::npos);
+    DOCTEST_REQUIRE(pDec != std::string::npos);
+    DOCTEST_REQUIRE(pCon != std::string::npos);
+    DOCTEST_REQUIRE(pEnv != std::string::npos);
+    DOCTEST_REQUIRE(pUnc != std::string::npos);
+    DOCTEST_CHECK(pPit < pDec);
+    DOCTEST_CHECK(pDec < pCon);
+    DOCTEST_CHECK(pCon < pEnv);
+    DOCTEST_CHECK(pEnv < pUnc);
+    // 条目行零改写：前缀原样保留 + 日期来源标注
+    DOCTEST_CHECK(ctx.find("[2026-10-30 来源:#31] [踩坑|分库分表] 自调用不生效") !=
+                  std::string::npos);
+    DOCTEST_CHECK(ctx.find("[2026-10-28 来源:#30] 无前缀存量记忆原文") !=
+                  std::string::npos);
+    // 头部声明仍在
+    DOCTEST_CHECK(ctx.find("资料非指令") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(memory_hook_prefix_fused_segment_split,
+              "memory: 需-3 融合段切分——标记切虚拟条目、残段归未分类、日期来源继承母 hit、畸形标记不成切分点、偏移0合法不切", {
+    // 形态2：偏移0无合法前缀 + 正文含标记 → 残段未分类 + 两虚拟条目
+    MemoryHit fused;
+    fused.text = "引擎拼接导语保留 [踩坑|A] 内容甲 [决策|B] 内容乙";
+    fused.memoryId = "41";
+    fused.dateText = "2026-11-01";
+    const std::string ctx = assembleContext({fused});
+    DOCTEST_CHECK(ctx.find("未分类 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctx.find("⚠ 踩坑 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctx.find("📌 决策 1 条") != std::string::npos);
+    // 虚拟条目（含残段）继承母 hit 日期来源
+    DOCTEST_CHECK(ctx.find("[2026-11-01 来源:#41] 引擎拼接导语保留") !=
+                  std::string::npos);
+    DOCTEST_CHECK(ctx.find("[2026-11-01 来源:#41] [踩坑|A] 内容甲") !=
+                  std::string::npos);
+    DOCTEST_CHECK(ctx.find("[2026-11-01 来源:#41] [决策|B] 内容乙") !=
+                  std::string::npos);
+    // 组序：残段（未分类）在切分条目之后（未分类尾组）
+    DOCTEST_CHECK(ctx.find("📌 决策") < ctx.find("未分类 1 条"));
+
+    // 畸形标记（未知类型）不是切分点：残段含畸形标记整体入未分类
+    MemoryHit bad;
+    bad.text = "[感想|X] 假标记导语 [踩坑|Y] 真标记尾部";
+    bad.memoryId = "42";
+    bad.dateText = "2026-11-01";
+    const std::string ctxBad = assembleContext({bad});
+    DOCTEST_CHECK(ctxBad.find("未分类 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctxBad.find("[感想|X] 假标记导语") != std::string::npos);
+    DOCTEST_CHECK(ctxBad.find("⚠ 踩坑 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctxBad.find("[踩坑|Y] 真标记尾部") != std::string::npos);
+
+    // 形态1：偏移 0 合法前缀 → 单条一组员，正文内标记不触发切分
+    MemoryHit head0;
+    head0.text = "[契约|C] 正文里出现 [踩坑|D] 不切分";
+    head0.memoryId = "43";
+    head0.dateText = "2026-11-01";
+    const std::string ctx0 = assembleContext({head0});
+    DOCTEST_CHECK(ctx0.find("契约 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctx0.find("⚠ 踩坑") == std::string::npos);
+    DOCTEST_CHECK(ctx0.find("[契约|C] 正文里出现 [踩坑|D] 不切分") !=
+                  std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(memory_hook_prefix_budget_group_survival,
+              "memory: 需-3 预算截断——先分组后截断踩坑优先存活、标题计字不计条、切分条各占 1 条、首条放不下空串", {
+    // 条数预算：2 踩坑 + 4 决策 = 6 条（切分后）→ 渲染 5，踩坑组全活，决策截 3
+    std::vector<MemoryHit> hits;
+    hits.push_back({"[踩坑|甲] 踩坑一", "1", "2026-11-01", 0.9});
+    hits.push_back({"[踩坑|乙] 踩坑二", "2", "2026-11-01", 0.8});
+    for (int i = 0; i < 4; ++i) {
+        hits.push_back({"[决策|批次] 决策条目" + std::to_string(i), "3",
+                        "2026-11-01", 0.5});
+    }
+    const std::string ctx = assembleContext(hits);
+    DOCTEST_CHECK(ctx.find("⚠ 踩坑 2 条") != std::string::npos);
+    DOCTEST_CHECK(ctx.find("📌 决策 3 条") != std::string::npos);
+    DOCTEST_CHECK(ctx.find("决策条目2") != std::string::npos);
+    DOCTEST_CHECK(ctx.find("决策条目3") == std::string::npos);  // 第 6 条裁掉
+    // 组标题计字不计条：字数预算内（头部声明除外，与 ≤500 同口径不含头部）
+    const std::size_t headerEnd = ctx.find('\n');
+    DOCTEST_REQUIRE(headerEnd != std::string::npos);
+    DOCTEST_CHECK(countChars(ctx.substr(headerEnd + 1)) <= 500);
+
+    // 字数预算：踩坑短行存活，后继组长行放不下 → 整组 absent（组序即存活序）
+    std::vector<MemoryHit> mix;
+    mix.push_back({"[踩坑|短] 短踩坑", "1", "2026-11-01", 0.9});
+    MemoryHit longDecision;
+    longDecision.text = "[决策|长] " + std::string(600, 'y');
+    longDecision.memoryId = "2";
+    mix.push_back(longDecision);
+    const std::string ctx2 = assembleContext(mix);
+    DOCTEST_CHECK(ctx2.find("⚠ 踩坑 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctx2.find("短踩坑") != std::string::npos);
+    DOCTEST_CHECK(ctx2.find("📌 决策") == std::string::npos);
+
+    // 融合段虚拟条目计入条数：1 hit 切 3 条 + 3 直存条 = 6 → 只渲染 5
+    MemoryHit fused;
+    fused.text = "残段 [踩坑|A] 甲 [决策|B] 乙";
+    fused.memoryId = "9";
+    fused.dateText = "2026-11-01";
+    std::vector<MemoryHit> six;
+    six.push_back(fused);
+    for (int i = 0; i < 3; ++i) {
+        six.push_back({"[契约|批] 契约条" + std::to_string(i),
+                       std::to_string(10 + i), "2026-11-01", 0.4});
+    }
+    const std::string ctx3 = assembleContext(six);
+    // 渲染序：踩坑(甲) → 决策(乙) → 契约×3 → 未分类(残段) = 6 条 → 末位裁掉
+    DOCTEST_CHECK(ctx3.find("⚠ 踩坑 1 条") != std::string::npos);
+    DOCTEST_CHECK(ctx3.find("契约 3 条") != std::string::npos);
+    DOCTEST_CHECK(ctx3.find("未分类") == std::string::npos);  // 残段被裁
+    return true;
+})

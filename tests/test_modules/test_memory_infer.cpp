@@ -91,7 +91,7 @@ struct StepFixture {
 }  // namespace
 
 REGISTER_TEST(memory_infer_args_contract,
-              "memory: add_memory 入参契约 infer=true/false（G-1 提炼 vs 直存）", {
+              "memory: add_memory 入参契约 infer=true/false（G-1 提炼 vs 直存）+ update_memory 字段（需-3 路②）", {
     const auto inferred = gateway::buildAddMemoryArgs("正文", true);
     DOCTEST_CHECK(inferred.get("infer").isBool());
     DOCTEST_CHECK(inferred.get("infer").asBool());
@@ -99,6 +99,10 @@ REGISTER_TEST(memory_infer_args_contract,
     const auto direct = gateway::buildAddMemoryArgs("正文", false);
     DOCTEST_CHECK(direct.get("infer").isBool());
     DOCTEST_CHECK_FALSE(direct.get("infer").asBool());
+    // update_memory：required = [memory_id, text]（telemem 1.10.1 已核实）
+    const auto upd = gateway::buildUpdateMemoryArgs("uuid-1", "新正文");
+    DOCTEST_CHECK(upd.get("memory_id").asString() == "uuid-1");
+    DOCTEST_CHECK(upd.get("text").asString() == "新正文");
     return true;
 })
 
@@ -239,5 +243,161 @@ REGISTER_TEST(memory_infer_attempt_rows_isolated_from_budget,
     DOCTEST_CHECK_EQ(f.ledger.todayTokens(f.now).value(), 0);
     DOCTEST_CHECK_EQ(f.ledger.monthTokens(f.now).value(), 0);
     DOCTEST_CHECK_EQ(f.ledger.todayCostMilliYuan(f.now).value(), 0);
+    return true;
+})
+
+// ── 需-3 路②：清单差分补标（细则 §3）──
+
+namespace {
+
+// 假引擎（路②）：listAll 按调用次序出第一/第二份脚本清单（add 前快照 / 补标
+// 差分）；updateMemoryText 记录调用。addInferred 恒成功。
+class TagFakeEngine : public gateway::IMemoryRetriever {
+public:
+    std::vector<gateway::MemoryListItem> firstList;
+    std::vector<gateway::MemoryListItem> secondList;
+    int listCalls = 0;
+    bool failUpdate = false;
+    std::vector<std::pair<std::string, std::string>> updates;
+
+    core::Result<std::vector<gateway::MemoryHit>> search(const std::string&,
+                                                         int, int) override {
+        return core::Result<std::vector<gateway::MemoryHit>>::ok({});
+    }
+    core::Result<std::string> addDirect(const std::string&) override {
+        return core::Result<std::string>::ok(std::string());
+    }
+    core::Result<std::string> addInferred(const std::string&) override {
+        return core::Result<std::string>::ok(std::string());
+    }
+    core::Result<void> setMemoryForgotten(const std::string&,
+                                          bool) override {
+        return core::Result<void>::ok();
+    }
+    core::Result<std::vector<gateway::MemoryListItem>> listAll(int,
+                                                               int) override {
+        ++listCalls;
+        if (listCalls == 1) {
+            return core::Result<std::vector<gateway::MemoryListItem>>::ok(
+                firstList);
+        }
+        return core::Result<std::vector<gateway::MemoryListItem>>::ok(
+            secondList);
+    }
+    core::Result<std::int64_t> getMemoryVersion(const std::string&) override {
+        return core::Result<std::int64_t>::ok(0);
+    }
+    core::Result<void> updateMemoryText(const std::string& memoryId,
+                                        const std::string& text) override {
+        if (failUpdate) {
+            return core::Result<void>::fail(core::ErrorCode::Internal,
+                                            "update 挂了");
+        }
+        updates.push_back({memoryId, text});
+        return core::Result<void>::ok();
+    }
+};
+
+struct TagFixture {
+    std::filesystem::path dir;
+    InferQueueStore queue;
+    proposals::UsageLedger ledger;
+    TagFakeEngine engine;
+    std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+
+    explicit TagFixture(const std::string& tag)
+        : dir(tmpDir(tag)),
+          queue(InferQueueStore::open(dir / "infer_queue.db").value()),
+          ledger(proposals::UsageLedger::open(dir / "usage_ledger.db").value()) {}
+
+    core::Result<pipeline::InferStepReport> step() {
+        InferLimits limits;
+        limits.hardBudgetTokens = 3000000;
+        limits.hourlyLimit = 10;
+        return pipeline::runInferStep(queue, engine, ledger, limits,
+                                      [](const pipeline::RoundNote&) {});
+    }
+};
+
+}  // namespace
+
+REGISTER_TEST(memory_infer_route2_tags_unprefixed_product,
+              "memory: 需-3 路②——卡侧带前缀 → 差分新条目无前缀 → update_memory 补卡侧前缀；计账出队不受影响", {
+    TagFixture f("tag");
+    DOCTEST_CHECK(f.queue.enqueue("s1", 1, "[踩坑|会话采集] 源段正文", f.now)
+                      .isOk());
+    f.engine.firstList = {};  // add 前快照：空库（首次提炼常态）
+    f.engine.secondList = {
+        gateway::MemoryListItem{"n1", "云端提炼产物无前缀", 0}};
+    auto stepped = f.step();
+    DOCTEST_REQUIRE(stepped.isOk());
+    DOCTEST_CHECK(stepped.value().attempted);
+    DOCTEST_CHECK(stepped.value().succeeded);
+    // 补标：卡侧前缀 tag + 空格 + 产物原文（细则 §3 update_memory 形态）
+    DOCTEST_REQUIRE_EQ(f.engine.updates.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(f.engine.updates[0].first, std::string("n1"));
+    DOCTEST_CHECK_EQ(f.engine.updates[0].second,
+                     std::string("[踩坑|会话采集] 云端提炼产物无前缀"));
+    // 主流程不受影响：计账非零 + 出队
+    DOCTEST_CHECK(f.ledger.monthTokens(f.now).value() > 0);
+    DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);
+    return true;
+})
+
+REGISTER_TEST(memory_infer_route2_skip_states,
+              "memory: 需-3 路②——产物已带合法前缀跳过；卡未定类型不补；差分排除已知 id；补标失败不阻断出队", {
+    // ① 产物已带合法前缀 → 不 update
+    {
+        TagFixture f("skip-prefixed");
+        DOCTEST_CHECK(f.queue.enqueue("s1", 1, "[踩坑|甲] 源段", f.now).isOk());
+        f.engine.secondList = {
+            gateway::MemoryListItem{"n1", "[决策|乙] 产物自带前缀", 0}};
+        auto stepped = f.step();
+        DOCTEST_REQUIRE(stepped.isOk());
+        DOCTEST_CHECK(stepped.value().succeeded);
+        DOCTEST_CHECK(f.engine.updates.empty());
+    }
+    // ② 卡未定类型（队列条目无合法前缀）→ 不补，产物留未分类
+    {
+        TagFixture f("skip-untyped");
+        DOCTEST_CHECK(f.queue.enqueue("s1", 1, "无前缀的旧条目", f.now).isOk());
+        f.engine.secondList = {
+            gateway::MemoryListItem{"n1", "云端产物无前缀", 0}};
+        auto stepped = f.step();
+        DOCTEST_REQUIRE(stepped.isOk());
+        DOCTEST_CHECK(stepped.value().succeeded);
+        DOCTEST_CHECK(f.engine.updates.empty());
+    }
+    // ③ 差分：add 前已在库的 id 不补，只补新增
+    {
+        TagFixture f("diff");
+        DOCTEST_CHECK(f.queue.enqueue("s1", 1, "[契约|接口] 源段", f.now)
+                          .isOk());
+        f.engine.firstList = {
+            gateway::MemoryListItem{"old1", "既有条目无前缀", 0}};
+        f.engine.secondList = {
+            gateway::MemoryListItem{"old1", "既有条目无前缀", 0},
+            gateway::MemoryListItem{"n1", "新增产物无前缀", 0}};
+        auto stepped = f.step();
+        DOCTEST_REQUIRE(stepped.isOk());
+        DOCTEST_REQUIRE_EQ(f.engine.updates.size(), static_cast<std::size_t>(1));
+        DOCTEST_CHECK_EQ(f.engine.updates[0].first, std::string("n1"));
+        DOCTEST_CHECK_EQ(f.engine.updates[0].second,
+                         std::string("[契约|接口] 新增产物无前缀"));
+    }
+    // ④ update 失败 → 尽力而为：主流程 succeeded + 出队，不留队不报错
+    {
+        TagFixture f("upd-fail");
+        DOCTEST_CHECK(f.queue.enqueue("s1", 1, "[环境|本机] 源段", f.now)
+                          .isOk());
+        f.engine.secondList = {
+            gateway::MemoryListItem{"n1", "产物无前缀", 0}};
+        f.engine.failUpdate = true;
+        auto stepped = f.step();
+        DOCTEST_REQUIRE(stepped.isOk());
+        DOCTEST_CHECK(stepped.value().succeeded);
+        DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);
+        DOCTEST_CHECK(f.ledger.monthTokens(f.now).value() > 0);
+    }
     return true;
 })

@@ -30,14 +30,18 @@
 #include "module_memory/hook/hook_command.h"
 #include "module_memory/panel/panel_state.h"
 #include "module_memory/panel/recall_eval.h"
+#include "module_memory/pipeline/infer_batch.h"
+#include "module_memory/pipeline/infer_queue.h"
 #include "module_memory/proposals/curator.h"
 #include "module_memory/proposals/proposal_store.h"
+#include "module_memory/proposals/usage_ledger.h"
 #include "module_memory/sanitize/sanitize_gate.h"
 
 namespace {
 
 namespace col = module::memory::collector;
 namespace gateway = module::memory::gateway;
+namespace pipeline = module::memory::pipeline;
 namespace proposals = module::memory::proposals;
 namespace sanitize = module::memory::sanitize;
 namespace panelns = module::memory::panel;
@@ -294,6 +298,52 @@ int main(int argc, char* argv[]) {
         auto accExtra = panel.acceptProposal(extra.value().id);
         check(accExtra.isOk(), "S7 附加提案接受入库");
         check(probePhrase(std::string("8421")) >= 1, "S7 引擎检索命中 8421 记忆");
+    }
+
+    // ── S8：infer 真调 + 需-3 路②补标 + 计账（真 runInferStep 对真引擎）────
+    std::cout << "[e2e] === S8 infer + route2 tag ===" << std::endl;
+    {
+        auto queueR = pipeline::InferQueueStore::open(memDir / "infer_queue.db");
+        auto ledgerR = proposals::UsageLedger::open(memDir / "usage_ledger.db");
+        check(queueR.isOk() && ledgerR.isOk(), "S8 提炼队列/账本库打开");
+        if (queueR.isOk() && ledgerR.isOk()) {
+            auto queue = std::move(queueR.value());
+            auto ledger = std::move(ledgerR.value());
+            const std::string source =
+                "[踩坑|会话采集] DevDesk 调试中发现 ccache 目录被清空导致全量"
+                "构建耗时 40 分钟，把 CCACHE_DIR 固定到数据目录后解决。";
+            check(queue.enqueue("probe-infer", 1, source, nowSec()).isOk(),
+                  "S8 提炼入队（卡侧带前缀文本）");
+            pipeline::InferLimits limits;
+            limits.hardBudgetTokens = 3000000;
+            limits.hourlyLimit = 4;
+            const auto stepped = pipeline::runInferStep(
+                queue, engine, ledger, limits,
+                [](const pipeline::RoundNote&) {});
+            check(stepped.isOk() && stepped.value().attempted &&
+                      stepped.value().succeeded,
+                  "S8 runInferStep 真调成功（闸过 → addInferred → 记账出队）");
+            // 路②补标产物：清单含卡侧前缀开头的条目（细则 §3 update_memory 形态）
+            auto items = engine.listAll(200, 10000);
+            bool tagged = false;
+            std::string taggedText;
+            if (items.isOk()) {
+                for (const auto& it : items.value()) {
+                    if (it.text.rfind("[踩坑|会话采集] ", 0) == 0) {
+                        tagged = true;
+                        taggedText = it.text;
+                    }
+                }
+            }
+            check(tagged, "S8 清单含补标产物（[踩坑|会话采集] 前缀开头）");
+            std::cout << "[e2e] S8 产物: " << taggedText << "\n";
+            const long long month = ledger.monthTokens(nowSec()).valueOr(0);
+            check(month > 0, "S8 计账非零（llm_input+llm_output → monthTokens=" +
+                                 std::to_string(month) + "）");
+            std::cout << "[e2e] S8 monthTokens=" << month << "\n";
+            const auto depth = queue.depth();
+            check(depth.isOk() && depth.value() == 0, "S8 队列已出队");
+        }
     }
 
     std::cout << "[e2e] SUMMARY ok=" << g_ok << " fail=" << g_fail << "\n";

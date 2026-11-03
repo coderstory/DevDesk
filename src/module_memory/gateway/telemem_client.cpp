@@ -520,7 +520,8 @@ core::Result<std::string> TelememHttpRetriever::addInferred(
     const std::string& text) {
     // 提炼语义（infer=true）：实测云端往返 4.45s 为快失败形态，成功含 LLM
     // 生成 → 30s。不做 findMemoryIdByText：提炼后正文被云端改写，按原文精确
-    // 匹配拿不到产物 id（需-3 spec §3）；产物 id 走清单差分（需-3 路②，未接）。
+    // 匹配拿不到产物 id（需-3 spec §3）；产物 id 走清单差分（需-3 路②，
+    // infer_batch tagInferredProducts 消费）。
     const auto resp =
         callTool("add_memory", buildAddMemoryArgs(text, true), 30000);
     if (resp.isFail()) {
@@ -528,6 +529,23 @@ core::Result<std::string> TelememHttpRetriever::addInferred(
                                                resp.errorMessage());
     }
     return parseAddResponse(resp.value());
+}
+
+core::Result<void> TelememHttpRetriever::updateMemoryText(
+    const std::string& memoryId, const std::string& text) {
+    // update_memory(memory_id, text)：成功回 {"status":"updated",...}；
+    // 判错契约与 add/delete 共用（parseAddResponse 内 parseJsonRpcResult）
+    const auto resp =
+        callTool("update_memory", buildUpdateMemoryArgs(memoryId, text), 10000);
+    if (resp.isFail()) {
+        return core::Result<void>::fail(resp.errorCode(), resp.errorMessage());
+    }
+    const auto parsed = parseAddResponse(resp.value());
+    if (parsed.isFail()) {
+        return core::Result<void>::fail(parsed.errorCode(),
+                                        parsed.errorMessage());
+    }
+    return core::Result<void>::ok();
 }
 
 core::Result<void> TelememHttpRetriever::setMemoryForgotten(
