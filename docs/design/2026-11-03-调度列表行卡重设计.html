@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<!-- ==================================================================
+  调度页瀑布流卡片重设计 demo v4（池140 · 老板新方向全量重做）
+  本 demo 仅视觉校准，不是实现蓝图。实现以同名设计文档 §1~§5 为准。
+  自包含单文件：无框架、无外部依赖、浏览器双击直开。图标为内联 SVG（FA 同形，码点在 title）。
+
+  v4 方向对照：
+  · 顶部分类 TAB（块面式，全站 wtab 现行口径）：系统定时 / 用户定时，计数紧跟选中项
+  · 瀑布流卡片：列数随内容列宽 1/2/3/4 自适应（1000×640=2列374 / 1600×1000=3列445），
+    卡面=头区(名称+类型chip+摘要两行)+数据区(下次块55%+上次块45%)，占满卡宽无空洞
+  · 卡面零操作按钮：点卡=打开编辑弹窗（demo 弹窗为编排示意）；启停开关进弹窗首行（裁决理由见文档 §5）；
+    删除收进弹窗底部左下（danger 文字钮），链路仍走现状删除确认弹窗
+  · 滚动模型：应用页面不滚；页头 40 + TAB 行 36 固定；瀑布流滚动区唯一自滚（§1.2/§1.3 预算）
+  · 池137：唯一新建=页头，空态纯提示无按钮；池139：页头高 40 标题顶格页 pad 20
+  · 七态 pill 语义色沿用 v3 映射；停用/归档/系统特殊态保留
+  · 果冻：pointer 事件显式驱动，按住用户/归档卡或「新建」钮按下缩松开弹；系统卡只读不可点
+=================================================================== -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>调度页瀑布流卡片重设计 demo v4（池140）</title>
+<style>
+  :root{
+    --primary:#36D399; --primary-hover:#2EC48F; --primary-pressed:#23B07F;
+    --primary-soft-bg:#E8F8EE; --primary-text:#157E4E;
+    --error-text:#B91C1C; --error-soft:#F8E8E8;
+    --page:#F7F7F7; --card:rgba(255,255,255,0.94); --card-hover:rgba(240,240,240,0.96);
+    --line1:#E5E5E5; --line2:#EDEDED; --text1:#1A1A1A; --text2:#666666; --text3:#999999;
+    --hover-bg:#F2F2F2; --sidebar:#E8F0EC;
+    --glass-border:rgba(255,255,255,0.60); --glass-shadow:rgba(20,60,45,0.09);
+    --scrollbar:#D9D9D9; --scrollbar-hover:#BBBBBB;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;}
+  html,body{height:100%;}
+  body{overflow:auto; /* 应用外壳内不滚；外壳外演示注释区窄窗可滚 */
+    background:
+      radial-gradient(720px 420px at 85% -8%, rgba(54,211,153,0.16), transparent 62%),
+      radial-gradient(560px 380px at -6% 104%, rgba(54,211,153,0.10), transparent 60%),
+      var(--page);
+    color:var(--text1); display:flex; flex-direction:column;}
+
+  /* ===== 演示控制条（非应用内容） ===== */
+  .ctrl{flex:0 0 auto;max-width:1600px;width:100%;margin:14px auto 0;padding:0 16px;
+    display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text2);}
+  .ctrl b{font-size:14px;color:var(--text1);margin-right:4px;}
+  .ctrl button{height:28px;padding:0 14px;border:1px solid var(--line1);border-radius:6px;
+    background:#FFFFFF;color:var(--text2);font-size:12px;cursor:pointer;}
+  .ctrl button.on{background:var(--primary-soft-bg);color:var(--primary-text);border-color:var(--primary);font-weight:600;}
+  .ctrl .wread{color:var(--text3);}
+  .ctrl .hint{margin-left:auto;color:var(--text3);}
+
+  /* ===== 应用外壳（§1.3：三档） ===== */
+  .shell{flex:1 1 auto;min-height:0;width:min(1600px, calc(100% - 32px));margin:12px auto 14px;
+    background:var(--page);border:1px solid var(--line1);border-radius:12px;overflow:hidden;
+    display:flex;box-shadow:0 2px 12px rgba(0,0,0,0.05);}
+  .side{width:200px;flex:0 0 200px;background:var(--sidebar);padding:16px 8px;}
+  .side .brand{font-size:14px;font-weight:600;padding:4px 12px 16px;}
+  .side a{display:flex;align-items:center;height:36px;padding:0 12px;margin:2px 0;
+    font-size:13px;color:var(--text2);text-decoration:none;border-radius:6px;border-left:2px solid transparent;}
+  .side a.on{background:#E5E5E5;border-left-color:var(--primary);color:var(--text1);font-weight:600;}
+
+  /* 页面区：满高不滚（§1.2），池139 页 pad 20 */
+  .page{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;
+    padding:20px 20px;overflow:hidden;container-type:inline-size;}
+
+  /* 固定区：页头 40（标题顶格） */
+  .phead{flex:0 0 auto;height:40px;display:flex;align-items:center;}
+  .phead h1{font-size:18px;font-weight:600;}
+  .phead .sp{flex:1;}
+  .phead .link{font-size:14px;color:var(--primary-text);cursor:pointer;padding:4px 8px;border-radius:6px;
+    transition:background-color 120ms ease-out;}
+  .phead .link:hover{background:var(--hover-bg);}
+  .btn-new{width:88px;height:40px;border:none;border-radius:6px;background:var(--primary);
+    color:#FFFFFF;font-size:14px;cursor:pointer;margin-left:12px;}
+  .btn-new:hover{background:var(--primary-hover);}
+  .btn-new:active{background:var(--primary-pressed);}
+  .btn-new:focus-visible{outline:1px solid var(--primary);outline-offset:2px;}
+
+  /* 固定区：TAB 行 36（块面式，全站 wtab 口径，§2） */
+  .tabrow{flex:0 0 auto;height:36px;margin-top:8px;display:flex;align-items:center;gap:8px;}
+  .wtab{height:32px;padding:0 14px;border:1px solid transparent;border-radius:6px;background:transparent;
+    font-size:14px;color:var(--text2);cursor:pointer;transition:background-color 120ms ease-out;}
+  .wtab:hover{background:var(--hover-bg);}
+  .wtab.on{background:var(--primary-soft-bg);border-color:var(--primary);color:var(--primary-text);font-weight:600;}
+  .wtab:focus-visible{outline:1px solid var(--primary);outline-offset:2px;}
+  .tabcount{font-size:12px;color:var(--text3);margin-left:4px;}
+
+  /* 唯一滚动区：瀑布流（flex:1，自滚） */
+  .flow{flex:1 1 auto;min-height:0;overflow-y:auto;margin-top:8px;padding:2px 2px 4px;}
+  .flow::-webkit-scrollbar{width:6px;}
+  .flow::-webkit-scrollbar-track{background:transparent;}
+  .flow::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:3px;}
+  .flow::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-hover);}
+
+  /* 瀑布流容器：列数随内容列宽断点（§3.1；container=page，W=container−40） */
+  .masonry{column-count:1;column-gap:12px;}
+  @container (min-width:560px){.masonry{column-count:2;}}
+  @container (min-width:1120px){.masonry{column-count:3;}}
+  @container (min-width:1700px){.masonry{column-count:4;}}
+
+  /* ===== 瀑布卡（§4）：L2 玻璃卡 / 内边距16 / 头区+数据区占满卡宽 ===== */
+  .wcard{break-inside:avoid;margin-bottom:12px;border-radius:14px;padding:16px;
+    background:var(--card);border:1px solid var(--glass-border);box-shadow:0 1px 4px var(--glass-shadow);}
+  .wcard.clickable{cursor:pointer;}
+  .wcard.clickable:hover{background:var(--card-hover);}
+
+  /* 头区：名称行（名称左 + tag + 类型 chip 右顶） */
+  .wname{display:flex;align-items:center;gap:8px;min-width:0;height:22px;}
+  .wname .nt{flex:0 1 auto;min-width:0;font-size:14px;font-weight:500;color:var(--text1);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .wname .lockico{flex:0 0 auto;width:16px;height:16px;color:var(--text3);}
+  .wname .sp{flex:1 1 auto;}
+  .wname .sp{flex:1 1 auto;}
+  .tag{flex:0 0 auto;height:20px;line-height:20px;padding:0 8px;border-radius:10px;
+    background:var(--hover-bg);color:var(--text3);font-size:11px;font-weight:500;white-space:nowrap;}
+  .wsum{margin-top:6px;font-size:12px;color:var(--text2);line-height:16px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+  /* 数据区：分割线 + 两块横排 55/45 占满卡宽（§4.2） */
+  .wdata{margin-top:12px;padding-top:10px;border-top:1px solid var(--line2);
+    display:flex;align-items:stretch;}
+  .dcol{display:flex;flex-direction:column;justify-content:center;gap:4px;min-width:0;}
+  .dcol.left{flex:0 0 55%;}
+  .dcol.right{flex:1 1 auto;border-left:1px solid var(--line2);padding-left:12px;}
+  .dlab{font-size:11px;color:var(--text3);line-height:14px;}
+  .dnext{font-size:15px;font-weight:600;color:var(--text1);line-height:20px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dnext.none{font-size:12px;font-weight:400;color:var(--text3);}
+  .dval{display:flex;align-items:center;gap:6px;min-width:0;}
+  .dts{font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dsrc{font-size:12px;color:var(--text2);line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dsrc .ro{font-size:11px;color:var(--text3);margin-left:4px;}
+  .dnorec{font-size:12px;color:var(--text3);line-height:22px;}
+
+  /* 状态 pill（§4.3：12px / 高22 / 居中） */
+  .pill{flex:0 0 auto;height:22px;line-height:22px;padding:0 10px;border-radius:11px;
+    font-size:12px;font-weight:500;white-space:nowrap;}
+  .pill.ok{background:var(--primary-soft-bg);color:var(--primary-text);}
+  .pill.fail{background:var(--error-soft);color:var(--error-text);}
+  .pill.mid{background:var(--hover-bg);color:var(--text2);}
+  .pill.low{background:var(--hover-bg);color:var(--text3);}
+
+  /* 特殊态（§4.4）：灰化只罩数据区 */
+  .wcard.off .wdata{opacity:0.55;}
+  .wcard.archived .wdata{opacity:0.70;}
+
+  /* 归档折叠段（用户 TAB 滚动区尾） */
+  .arch-btn{display:flex;align-items:center;gap:8px;height:32px;margin:8px 0 4px;
+    padding:0 4px;cursor:pointer;border-radius:6px;}
+  .arch-btn:hover{background:var(--hover-bg);}
+  .arch-btn svg{width:16px;height:16px;color:var(--text3);transition:transform 220ms ease;}
+  .arch-btn span{font-size:14px;color:var(--text2);}
+  .arch-body{display:grid;grid-template-rows:0fr;transition:grid-template-rows 220ms ease;}
+  .arch-body.open{grid-template-rows:1fr;}
+  .arch-body>div{overflow:hidden;}
+  .arch-body .masonry{margin-top:4px;}
+
+  /* 空态（池137：贴左灰字纯提示，无按钮） */
+  .ghost{padding:24px 16px;font-size:12px;color:var(--text3);}
+
+  /* 果冻（pointer 显式驱动，v3 结论） */
+  .jelly{transform:scale(1);transition:transform 160ms cubic-bezier(.34,1.56,.64,1);}
+  .jelly.pressing{transform:scale(0.965);transition:transform 70ms ease-out;}
+
+  /* TAB 内容切换淡入 */
+  .view{animation:fadeIn 120ms ease-out;}
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+
+  /* ===== 编辑弹窗示意（§5 编排；非实现蓝图） ===== */
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:100;
+    display:none;align-items:center;justify-content:center;}
+  .mask.open{display:flex;}
+  .dialog{width:460px;max-width:calc(100% - 48px);background:#FFFFFF;border-radius:12px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.18);padding:16px;}
+  .dialog h3{font-size:16px;font-weight:600;}
+  .dialog .dname{margin-top:10px;font-size:14px;color:var(--text1);}
+  .dialog .drow{display:flex;align-items:center;height:32px;margin-top:12px;}
+  .dialog .drow .lab{font-size:14px;color:var(--text1);}
+  .dialog .drow .sp{flex:1;}
+  .dialog .dform{margin-top:12px;font-size:12px;color:var(--text3);line-height:20px;
+    padding:10px 12px;border:1px dashed var(--line1);border-radius:6px;}
+  .dialog .dfoot{display:flex;align-items:center;margin-top:16px;}
+  .dialog .del{border:none;background:transparent;font-size:12px;color:var(--error-text);
+    cursor:pointer;padding:4px 8px;border-radius:6px;}
+  .dialog .del:hover{background:var(--hover-bg);}
+  .dialog .dfoot .sp{flex:1;}
+  .btn2{width:72px;height:32px;border-radius:6px;font-size:14px;cursor:pointer;margin-left:8px;}
+  .btn2.sec{background:var(--hover-bg);border:1px solid var(--line1);color:var(--text1);}
+  .btn2.pri{background:var(--primary);border:none;color:#FFFFFF;}
+  .btn2.pri:hover{background:var(--primary-hover);}
+
+  /* 弹窗内开关 44×24（启停首行，§5 裁决） */
+  .sw{position:relative;width:44px;height:24px;cursor:pointer;flex:0 0 auto;}
+  .sw input{position:absolute;opacity:0;width:0;height:0;}
+  .sw .track{position:absolute;inset:0;border-radius:12px;background:#CCCCCC;transition:background-color 150ms ease-out;}
+  .sw:hover .track{background:#B5B5B5;}
+  .sw .knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#FFFFFF;
+    box-shadow:0 1px 2px rgba(0,0,0,0.2);transition:left 150ms ease-out;}
+  .sw input:checked ~ .track{background:var(--primary);}
+  .sw input:checked ~ .knob{left:22px;}
+
+  /* ===== 空态/交互说明（非应用内容区） ===== */
+  .demo-note{flex:0 0 auto;width:min(1600px, calc(100% - 32px));margin:0 auto 16px;
+    padding:10px 16px;border:1px dashed var(--line1);border-radius:8px;
+    font-size:12px;color:var(--text3);display:flex;gap:24px;align-items:center;flex-wrap:wrap;}
+  .demo-note b{color:var(--text2);font-weight:600;}
+</style>
+</head>
+<body>
+
+<div class="ctrl">
+  <b>池140 瀑布流重设计 demo v4</b>
+  <button onclick="setW(1000,640,this)">1000×640</button>
+  <button onclick="setW(1600,1000,this)">1600×1000</button>
+  <button class="on" onclick="setW(0,0,this)">跟随窗口</button>
+  <span class="wread" id="wread"></span>
+  <span class="hint">页面不滚：页头+TAB 固定，瀑布流区自滚；点用户卡=打开编辑弹窗示意；果冻=按住卡或「新建」钮按下缩松开弹</span>
+</div>
+
+<div class="shell" id="shell">
+  <div class="side">
+    <div class="brand">DevDesk</div>
+    <a>主页</a><a>Markdown</a><a>待办</a><a>日程</a>
+    <a class="on">定时</a><a>智能体</a><a>记忆</a><a>发布</a><a>设置</a>
+  </div>
+
+  <div class="page">
+    <!-- 固定区：页头 40（池139 标题顶格） -->
+    <div class="phead">
+      <h1>定时</h1><div class="sp"></div>
+      <span class="link">运行历史</span>
+      <button class="btn-new jelly">新建</button>
+    </div>
+
+    <!-- 固定区：TAB 行（块面式） -->
+    <div class="tabrow">
+      <button class="wtab on" id="tabSys" onclick="switchTab('sys')">系统定时</button>
+      <button class="wtab" id="tabUser" onclick="switchTab('user')">用户定时</button>
+      <span class="tabcount" id="tabCount">共 4 个</span>
+    </div>
+
+    <!-- 唯一滚动区：瀑布流 -->
+    <div class="flow" id="flow">
+      <!-- 系统定时视图 -->
+      <div class="view" id="viewSys">
+        <div class="masonry">
+          <div class="wcard">
+            <div class="wname">
+              <svg class="lockico" viewBox="0 0 448 512" fill="currentColor" title="fa-lock 0xF023"><path d="M144 144v48H304V144c0-44.2-35.8-80-80-80s-80 35.8-80 80zM80 192V144C80 64.5 144.5 0 224 0s144 64.5 144 144v48h16c35.3 0 64 28.7 64 64v192c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V256c0-35.3 28.7-64 64-64H80z"/></svg>
+              <span class="nt">发布检查</span><span class="sp"></span><span class="tag">只读</span>
+            </div>
+            <div class="wsum">每日发布状态巡检与看板刷新，异常时在发布模块顶部横幅提示</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">今天 09:00</span></div>
+              <div class="dcol right"><span class="dlab">来源</span><span class="dsrc">发布模块<span class="ro">只读</span></span></div>
+            </div>
+          </div>
+          <div class="wcard">
+            <div class="wname">
+              <svg class="lockico" viewBox="0 0 448 512" fill="currentColor" title="fa-lock 0xF023"><path d="M144 144v48H304V144c0-44.2-35.8-80-80-80s-80 35.8-80 80zM80 192V144C80 64.5 144.5 0 224 0s144 64.5 144 144v48h16c35.3 0 64 28.7 64 64v192c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V256c0-35.3 28.7-64 64-64H80z"/></svg>
+              <span class="nt">全屏唤醒</span><span class="sp"></span><span class="tag">只读</span>
+            </div>
+            <div class="wsum">久坐提醒 · 每 45 分钟全屏遮罩唤醒</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">今天 15:45</span></div>
+              <div class="dcol right"><span class="dlab">来源</span><span class="dsrc">日程<span class="ro">只读</span></span></div>
+            </div>
+          </div>
+          <div class="wcard">
+            <div class="wname">
+              <svg class="lockico" viewBox="0 0 448 512" fill="currentColor" title="fa-lock 0xF023"><path d="M144 144v48H304V144c0-44.2-35.8-80-80-80s-80 35.8-80 80zM80 192V144C80 64.5 144.5 0 224 0s144 64.5 144 144v48h16c35.3 0 64 28.7 64 64v192c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V256c0-35.3 28.7-64 64-64H80z"/></svg>
+              <span class="nt">令牌轮换</span><span class="sp"></span><span class="tag">只读</span>
+            </div>
+            <div class="wsum">接入凭据定期轮换与有效性校验，失败进入重试队列</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">明天 02:00</span></div>
+              <div class="dcol right"><span class="dlab">来源</span><span class="dsrc">智能体<span class="ro">只读</span></span></div>
+            </div>
+          </div>
+          <div class="wcard">
+            <div class="wname">
+              <svg class="lockico" viewBox="0 0 448 512" fill="currentColor" title="fa-lock 0xF023"><path d="M144 144v48H304V144c0-44.2-35.8-80-80-80s-80 35.8-80 80zM80 192V144C80 64.5 144.5 0 224 0s144 64.5 144 144v48h16c35.3 0 64 28.7 64 64v192c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V256c0-35.3 28.7-64 64-64H80z"/></svg>
+              <span class="nt">用量快照</span><span class="sp"></span><span class="tag">只读</span>
+            </div>
+            <div class="wsum">令牌用量小时级快照落库</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">今天 20:00</span></div>
+              <div class="dcol right"><span class="dlab">来源</span><span class="dsrc">令牌<span class="ro">只读</span></span></div>
+            </div>
+          </div>
+        </div>
+        <!-- 段空时在此处渲染贴左灰字纯提示「暂无系统定时」（池137，无按钮）；demo 两段有数据故不渲染 -->
+      </div>
+
+      <!-- 用户定时视图 -->
+      <div class="view" id="viewUser" style="display:none;">
+        <div class="masonry">
+          <div class="wcard clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">数据库备份</span><span class="sp"></span><span class="tag">间隔</span></div>
+            <div class="wsum">每 6 小时</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">今天 18:00</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill ok" title="上次状态：成功">成功</span><span class="dts">11-03 12:00</span></span></div>
+            </div>
+          </div>
+          <div class="wcard clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">周报提醒</span><span class="sp"></span><span class="tag">周期</span></div>
+            <div class="wsum">每周 周一、周三 09:00</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">明天 09:00</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill low" title="上次状态：已跳过">已跳过</span><span class="dts">11-02 09:00</span></span></div>
+            </div>
+          </div>
+          <div class="wcard clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">临时目录清理</span><span class="sp"></span><span class="tag">cron</span></div>
+            <div class="wsum">cron 0 3 * * *</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">11-04 03:00</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill fail" title="上次状态：失败（红=告警）">失败</span><span class="dts">11-03 03:00</span></span></div>
+            </div>
+          </div>
+          <div class="wcard clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">部署通知</span><span class="sp"></span><span class="tag">单次</span></div>
+            <div class="wsum">单次 11-05 14:30</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">11-05 14:30</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dnorec">无记录</span></div>
+            </div>
+          </div>
+          <div class="wcard clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">进度看板同步</span><span class="sp"></span><span class="tag">间隔</span></div>
+            <div class="wsum">每 30 分钟</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">今天 15:10</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill ok" title="上次状态：运行中（同成功档绿染）">运行中</span><span class="dts">11-03 10:12</span></span></div>
+            </div>
+          </div>
+          <div class="wcard off clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">日志归档上传</span><span class="sp"></span><span class="tag">已停用</span><span class="tag">周期</span></div>
+            <div class="wsum">每天 23:30</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext">今天 23:30</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill low" title="上次状态：已错过">已错过</span><span class="dts">11-02 23:30</span></span></div>
+            </div>
+          </div>
+          <div class="wcard clickable jelly" onclick="openDlg()">
+            <div class="wname"><span class="nt">进程守护</span><span class="sp"></span><span class="tag">常驻</span></div>
+            <div class="wsum">常驻</div>
+            <div class="wdata">
+              <div class="dcol left"><span class="dlab">下次</span><span class="dnext none">—</span></div>
+              <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill mid" title="上次状态：待执行">待执行</span><span class="dts">11-03 08:00</span></span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 归档折叠段：用户 TAB 滚动区尾 -->
+        <div class="arch-btn" onclick="toggleArch()">
+          <svg id="chev" viewBox="0 0 320 512" fill="currentColor" title="fa-angle-right 0xF105 / fa-angle-down 0xF107"><path d="M96 480c-8.1 0-16.3-3.2-22.4-9.4-12.5-12.5-12.5-32.8 0-45.3L242.7 256 73.6 86.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-6.2 6.2-14.3 9.4-22.4 9.4z"/></svg>
+          <span>已归档 (2)</span>
+        </div>
+        <div class="arch-body" id="archBody">
+          <div>
+            <div class="masonry">
+              <div class="wcard archived clickable jelly" onclick="openDlg()">
+                <div class="wname"><span class="nt">旧版同步任务</span><span class="tag">已归档</span><span class="sp"></span><span class="tag">周期</span></div>
+                <div class="wsum">每 2 小时</div>
+                <div class="wdata">
+                  <div class="dcol left"><span class="dlab">下次</span><span class="dnext none">—</span></div>
+                  <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill low" title="上次状态：已抑制">已抑制</span><span class="dts">10-28 16:00</span></span></div>
+                </div>
+              </div>
+              <div class="wcard archived clickable jelly" onclick="openDlg()">
+                <div class="wname"><span class="nt">邮件摘要推送</span><span class="tag">已归档</span><span class="sp"></span><span class="tag">周期</span></div>
+                <div class="wsum">工作日 08:30</div>
+                <div class="wdata">
+                  <div class="dcol left"><span class="dlab">下次</span><span class="dnext none">—</span></div>
+                  <div class="dcol right"><span class="dlab">上次</span><span class="dval"><span class="pill ok" title="上次状态：成功">成功</span><span class="dts">10-30 08:30</span></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- 段空时在此处渲染贴左灰字纯提示「暂无用户定时」（池137，无按钮）；demo 有数据故不渲染 -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 非应用内容：空态参照与交互说明 -->
+<div class="demo-note">
+  <span><b>空态参照（池137，纯提示无按钮）：</b></span>
+  <span class="ghost" style="padding:0;">暂无用户定时</span>
+  <span><b>果冻：</b>按住用户/归档卡或「新建」钮按下缩松开弹</span>
+  <span><b>点卡：</b>打开编辑弹窗（卡面零操作按钮，启停/删除均在弹窗内）</span>
+</div>
+
+<!-- 编辑弹窗示意（编排示意，非实现蓝图） -->
+<div class="mask" id="mask" onclick="if(event.target===this)closeDlg()">
+  <div class="dialog">
+    <h3>编辑定时规则</h3>
+    <div class="dname">数据库备份</div>
+    <div class="drow"><span class="lab">启用</span><span class="sp"></span>
+      <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="knob"></span></label>
+    </div>
+    <div class="dform">触发规则 / 执行动作 / 通知渠道 / 错过策略等表单字段沿用现状（demo 略）</div>
+    <div class="dfoot">
+      <button class="del" onclick="closeDlg()">删除</button>
+      <span class="sp"></span>
+      <button class="btn2 sec" onclick="closeDlg()">取消</button>
+      <button class="btn2 pri" onclick="closeDlg()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* 三档外壳（§1.3）：1000×640 钉高 / 1600×1000 钉 / 跟随窗口 */
+  function setW(w, h, btn){
+    var shell = document.getElementById('shell');
+    if (w){
+      shell.style.flex = '0 0 auto';
+      shell.style.width = w + 'px';
+      shell.style.height = h + 'px';
+    } else {
+      shell.style.flex = '1 1 auto';
+      shell.style.width = 'min(1600px, calc(100% - 32px))';
+      shell.style.height = 'auto';
+    }
+    document.querySelectorAll('.ctrl button').forEach(function(b){ b.classList.remove('on'); });
+    btn.classList.add('on');
+    readW();
+  }
+  function readW(){
+    var s = document.getElementById('shell').getBoundingClientRect();
+    document.getElementById('wread').textContent =
+      '外壳当前 ' + Math.round(s.width) + ' × ' + Math.round(s.height);
+  }
+  window.addEventListener('resize', readW); readW();
+
+  /* TAB 切换：选中态 + 计数 + 滚动回顶 + 120ms 淡入（§2） */
+  function switchTab(which){
+    var sys = which === 'sys';
+    document.getElementById('tabSys').classList.toggle('on', sys);
+    document.getElementById('tabUser').classList.toggle('on', !sys);
+    document.getElementById('viewSys').style.display = sys ? '' : 'none';
+    document.getElementById('viewUser').style.display = sys ? 'none' : '';
+    document.getElementById('tabCount').textContent = sys ? '共 4 个' : '共 7 个';
+    var flow = document.getElementById('flow');
+    flow.scrollTop = 0;
+    var view = document.getElementById(sys ? 'viewSys' : 'viewUser');
+    view.style.animation = 'none'; void view.offsetWidth; view.style.animation = '';
+  }
+
+  /* 归档折叠/展开 */
+  function toggleArch(){
+    var body = document.getElementById('archBody');
+    var chev = document.getElementById('chev');
+    var open = body.classList.toggle('open');
+    chev.style.transform = open ? 'rotate(90deg)' : 'rotate(0deg)';
+  }
+
+  /* 编辑弹窗示意（点卡打开 / 遮罩或按钮关闭） */
+  function openDlg(){ document.getElementById('mask').classList.add('open'); }
+  function closeDlg(){ document.getElementById('mask').classList.remove('open'); }
+
+  /* 果冻按压：pointer 显式驱动（不依赖 :active） */
+  document.querySelectorAll('.jelly').forEach(function(el){
+    el.addEventListener('pointerdown', function(e){
+      if (e.button !== 0) return;
+      el.classList.add('pressing');
+    });
+    var off = function(){ el.classList.remove('pressing'); };
+    el.addEventListener('pointerup', off);
+    el.addEventListener('pointercancel', off);
+    el.addEventListener('pointerleave', off);
+  });
+</script>
+</body>
+</html>
