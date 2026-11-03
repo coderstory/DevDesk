@@ -16,6 +16,7 @@
 #include "settings_config.h"
 
 #include <eui/dsl.h>
+#include <components/input.h>  // InputModel::InputState（参数输入框全选清空的测试注入用）
 
 #include <chrono>
 #include <cmath>
@@ -38,7 +39,9 @@ public:
     std::string description() const override { return desc_; }
     std::string inputSchemaJson() const override { return schema_; }
 
-    core::Result<core::mcp::ToolResult> execute(const std::string&) override {
+    core::Result<core::mcp::ToolResult> execute(
+        const std::string& argumentsJson) override {
+        lastArgs = argumentsJson;
         executeThreadId = std::this_thread::get_id();
         ++executeCalls;
         if (sleepMs > 0) {
@@ -49,7 +52,8 @@ public:
                 core::mcp::ToolResult{true, "boom:业务失败"});
         }
         return core::Result<core::mcp::ToolResult>::ok(
-            core::mcp::ToolResult{false, "ok-42:" + name_});
+            core::mcp::ToolResult{false,
+                                  okText.empty() ? "ok-42:" + name_ : okText});
     }
 
     std::string name_;
@@ -58,6 +62,8 @@ public:
     int executeCalls = 0;
     int sleepMs = 0;
     bool businessFail = false;
+    std::string lastArgs;  // 池146：记录收到的入参 JSON（组装断言）
+    std::string okText;    // 非空时替代默认成功文案（多行结果用例）
     std::thread::id executeThreadId;
 };
 
@@ -128,13 +134,25 @@ void seedTwoTools(core::mcp::McpToolRegistry& reg,
     (void)reg.registerTool(beta);
 }
 
+// bug145 后结果区按行渲染（result.line.N 单行元素入滚动区）：拼接全部行文本供断言。
+std::string resultTextAll(eui::Ui& ui) {
+    std::string joined;
+    for (int i = 0;; ++i) {
+        const auto* el =
+            ui.find("mcp.dialog.detail.result.line." + std::to_string(i));
+        if (el == nullptr) break;
+        if (!joined.empty()) joined += "\n";
+        joined += el->text;
+    }
+    return joined;
+}
+
 // 有界轮询：compose 收割是每帧协作式，worker 置 done 后由下一帧收割。
 bool pollUntilResult(McpPageModule& mod, eui::Ui& ui, const eui::Screen& screen,
                      const std::string& marker) {
     for (int i = 0; i < 200; ++i) {
         composeFrame(mod, ui, screen, "mcp_poll");
-        const auto* el = ui.find("mcp.dialog.detail.result.text");
-        if (el != nullptr && el->text.find(marker) != std::string::npos) {
+        if (resultTextAll(ui).find(marker) != std::string::npos) {
             return true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -410,9 +428,7 @@ REGISTER_TEST(mcp_page_try_runs_on_background_thread,
     DOCTEST_CHECK(pollUntilResult(mod, ui, screen, "ok-42:test_alpha_tool"));
     DOCTEST_CHECK_EQ(alpha->executeCalls, 1);
     DOCTEST_CHECK(alpha->executeThreadId != mainTid);  // 禁 UI 线程直调
-    const auto* result = ui.find("mcp.dialog.detail.result.text");
-    DOCTEST_REQUIRE(result != nullptr);
-    DOCTEST_CHECK(result->text.find("成功") != std::string::npos);
+    DOCTEST_CHECK(resultTextAll(ui).find("成功") != std::string::npos);
     return true;
 })
 
@@ -432,9 +448,122 @@ REGISTER_TEST(mcp_page_try_error_path,
     composeFrame(mod, ui, screen, "mcp_err_2");
     ui.find("mcp.dialog.detail.btn.try.bg")->onClick();
     DOCTEST_CHECK(pollUntilResult(mod, ui, screen, "boom:业务失败"));
-    const auto* result = ui.find("mcp.dialog.detail.result.text");
-    DOCTEST_REQUIRE(result != nullptr);
-    DOCTEST_CHECK(result->text.find("失败") != std::string::npos);
+    DOCTEST_CHECK(resultTextAll(ui).find("失败") != std::string::npos);
+    return true;
+})
+
+// 池146：参数表单——扁平 schema 出表单（label/输入/开关齐全、schema JSON 框退位）；
+// 缺必填拦截（execute 不发起 + 红字点名参数）；填参试跑 → execute 收到组装入参。
+REGISTER_TEST(mcp_page_param_form_validation_and_args,
+              "mcp_page: 扁平 schema → 参数表单齐全；缺必填 → 不发起且红字点名参数；填参试跑 → execute 收到组装入参", {
+    core::mcp::McpToolRegistry reg;
+    auto tool = std::make_shared<FakeTool>(
+        "test_form_tool", "带参工具",
+        R"({"type":"object","properties":{"url":{"type":"string"},"limit":{"type":"integer"},"dry":{"type":"boolean"}},"required":["url"]})");
+    (void)reg.registerTool(tool);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_form_1");
+    ui.find("mcp.card.test_form_tool.hit")->onClick();
+    composeFrame(mod, ui, screen, "mcp_form_2");
+
+    // 表单件齐全；schema JSON 框退位
+    DOCTEST_REQUIRE_NE(ui.find("mcp.dialog.detail.param.url.label"), nullptr);
+    DOCTEST_REQUIRE_NE(ui.find("mcp.dialog.detail.param.url.input"), nullptr);
+    DOCTEST_REQUIRE_NE(ui.find("mcp.dialog.detail.param.limit.input"), nullptr);
+    DOCTEST_REQUIRE_NE(ui.find("mcp.dialog.detail.param.dry.sw.track"), nullptr);
+    DOCTEST_CHECK(ui.find("mcp.dialog.detail.schema.text") == nullptr);
+
+    // 缺必填点击「试一下」：execute 不发起 + 红字点名参数
+    ui.find("mcp.dialog.detail.btn.try.bg")->onClick();
+    composeFrame(mod, ui, screen, "mcp_form_3");
+    DOCTEST_CHECK_EQ(tool->executeCalls, 0);
+    const auto* err = ui.find("mcp.dialog.detail.params.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("url") != std::string::npos);
+
+    // 填参（TextInput 注入 input 的 .hit，走真实 onChange 草稿链）+ 拨开关
+    const auto typeIn = [&](const char* param, const char* text) {
+        core::TextInputEvent ev;
+        ev.text = text;
+        ui.find(std::string("mcp.dialog.detail.param.") + param + ".input.hit")
+            ->onTextInput(ev);
+    };
+    typeIn("url", "https://example.com");
+    typeIn("limit", "7");
+    ui.find("mcp.dialog.detail.param.dry.sw.track")->onClick();
+    ui.find("mcp.dialog.detail.btn.try.bg")->onClick();
+    DOCTEST_CHECK(pollUntilResult(mod, ui, screen, "ok-42:test_form_tool"));
+    DOCTEST_CHECK_EQ(tool->executeCalls, 1);
+    DOCTEST_CHECK(tool->lastArgs.find("https://example.com") !=
+                  std::string::npos);
+    DOCTEST_CHECK(tool->lastArgs.find("limit") != std::string::npos);
+    DOCTEST_CHECK(tool->lastArgs.find("7") != std::string::npos);
+    DOCTEST_CHECK(tool->lastArgs.find("dry") != std::string::npos);
+    DOCTEST_CHECK(tool->lastArgs.find("true") != std::string::npos);
+    return true;
+})
+
+// bug145 + 池146 数字校验：integer 填非数字 → execute 不发起且文案点名参数与错因；
+// 多行结果按行渲染进滚动区（result.line.N 逐行元素、滚动区在）。
+REGISTER_TEST(mcp_page_number_validation_and_result_lines,
+              "mcp_page: integer 填非数字 → 不发起且红字点名；多行结果按行渲染进 result.scroll", {
+    core::mcp::McpToolRegistry reg;
+    auto tool = std::make_shared<FakeTool>(
+        "test_num_tool", "数字参数工具",
+        R"({"type":"object","properties":{"limit":{"type":"integer"}}})");
+    tool->okText = "l0\nl1\nl2";
+    (void)reg.registerTool(tool);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_num_1");
+    ui.find("mcp.card.test_num_tool.hit")->onClick();
+    composeFrame(mod, ui, screen, "mcp_num_2");
+
+    // 非数字：拦截 + 文案点名参数与错因
+    const auto typeIn = [&](const char* text) {
+        core::TextInputEvent ev;
+        ev.text = text;
+        ui.find("mcp.dialog.detail.param.limit.input.hit")->onTextInput(ev);
+    };
+    typeIn("abc");
+    ui.find("mcp.dialog.detail.btn.try.bg")->onClick();
+    composeFrame(mod, ui, screen, "mcp_num_3");
+    DOCTEST_CHECK_EQ(tool->executeCalls, 0);
+    const auto* err = ui.find("mcp.dialog.detail.params.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("limit") != std::string::npos);
+    DOCTEST_CHECK(err->text.find("整数") != std::string::npos);
+
+    // 改填合法值试跑：先退格清掉「abc」（TextInput 是光标插入语义，不清会拼成
+    // 「abc3」仍非法——走 input.hit 的 onKeyEvent 真实删除链），再填 3 试跑；
+    // 结果按行渲染（前缀行 + 3 数据行），滚动区在
+    // 改填合法值试跑：全选退格清掉「abc」再填 3——TextInput 注入后光标停在 0 位，
+    // 裸退格是空操作、「3」会插到最前拼成「3abc」仍非法；须经 InputState 全选
+    // 再退一格走真实删除链（test_markdown clearInput 同款）。
+    // 结果按行渲染（前缀行 + 3 数据行），滚动区在
+    {
+        auto& st = ui.state<components::input_detail::InputModel::InputState>(
+            "mcp.dialog.detail.param.limit.input");
+        st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        eui::KeyEvent bs;
+        bs.key = eui::InputKey::Backspace;
+        ui.find("mcp.dialog.detail.param.limit.input.hit")->onKeyEvent(bs);
+    }
+    typeIn("3");
+    ui.find("mcp.dialog.detail.btn.try.bg")->onClick();
+    DOCTEST_CHECK(pollUntilResult(mod, ui, screen, "l1"));
+    DOCTEST_REQUIRE_NE(ui.find("mcp.dialog.detail.result.scroll"), nullptr);
+    const auto* line0 = ui.find("mcp.dialog.detail.result.line.0");
+    DOCTEST_REQUIRE(line0 != nullptr);
+    DOCTEST_CHECK_EQ(line0->text, std::string("成功："));
+    DOCTEST_REQUIRE_NE(ui.find("mcp.dialog.detail.result.line.3"), nullptr);
+    DOCTEST_CHECK_EQ(ui.find("mcp.dialog.detail.result.line.3")->text,
+                     std::string("l2"));
+    DOCTEST_CHECK(ui.find("mcp.dialog.detail.result.line.4") == nullptr);
     return true;
 })
 
@@ -456,9 +585,8 @@ REGISTER_TEST(mcp_page_onstop_joins_running_try,
     mod.onStop();  // 立即停：必须跨过 150ms 睡眠真 join
     DOCTEST_CHECK_EQ(tool->executeCalls, 1);
     composeFrame(mod, ui, screen, "mcp_stop_3");
-    const auto* result = ui.find("mcp.dialog.detail.result.text");
-    DOCTEST_REQUIRE(result != nullptr);
-    DOCTEST_CHECK(result->text.find("ok-42:test_slow_tool") != std::string::npos);
+    DOCTEST_CHECK(resultTextAll(ui).find("ok-42:test_slow_tool") !=
+                  std::string::npos);
     return true;
 })
 

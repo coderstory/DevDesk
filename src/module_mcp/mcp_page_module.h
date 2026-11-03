@@ -10,12 +10,15 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "core/mcp_tool.h"
 #include "core/module_interface.h"
@@ -51,11 +54,23 @@ private:
     void closeDetail();
     bool detailOpen() const { return detailTool_ != nullptr; }
 
-    // 「试一下」：execute("{}") 丢后台线程，compose 每帧收割（worker 置 done 后
-    // requestUiUpdate 主动要帧，不等用户输入）
+    // 「试一下」：参数表单校验 + 组装入参 JSON 后丢后台线程，compose 每帧收割
+    //（worker 置 done 后 requestUiUpdate 主动要帧，不等用户输入）
     void startTryRun();
     void harvestTryRun();
     bool tryRunning() const { return tryRunning_.load(std::memory_order_acquire); }
+
+    // ── 参数表单（池146）──
+    // 仅当 inputSchema 的 properties 全部是 string/number/integer/boolean 扁平类型
+    // 且 ≤ 6 个时建表单；否则（结构不符/无参数/超上限）回退 schema JSON 框空参调用。
+    struct ParamSpec {
+        std::string name;
+        enum class Kind { String, Number, Integer, Bool } kind = Kind::String;
+        bool required = false;
+    };
+    void buildParamSpecs();
+    // 草稿 → 入参 JSON；校验失败返回 fail（文案点名缺哪个参数/类型错在哪）
+    ::core::Result<std::string> buildArgsJson();
 
     // 卡片 / 详情弹窗 / 「记忆」模块行绘制（compose 专用；id 契约 = 测试定位面）
     // cardWidth = 本帧按内容宽算出的卡片列宽（自适应 340–420，见 .cpp 的列宽算法）
@@ -90,6 +105,15 @@ private:
     std::mutex tryMutex_;
     std::string tryResultText_;
     std::string tryToolName_;
+    uint64_t tryRunSeq_ = 0;  // 每次发起自增：结果滚动区 measure cache 失效键（bug145）
+
+    // 参数表单态（池146，全部 UI 线程读写）：草稿键 = 参数名。boolean 带 touched
+    // 位——未拨动过的开关不写入参数 JSON（工具侧默认值语义不被显式 false 覆盖）。
+    std::vector<ParamSpec> paramSpecs_;
+    std::map<std::string, std::string> stringDrafts_;
+    std::map<std::string, bool> boolValues_;
+    std::map<std::string, bool> boolTouched_;
+    std::string paramsError_;  // 校验失败就近红字（表单下方），点击「试一下」时重验
 
     void joinTryThread();
 };

@@ -1,7 +1,9 @@
 // src/module_mcp/mcp_page_module.cpp
-// MCP 菜单页实现：页头+服务状态行 → 工具卡片网格（ui.flow，列宽自适应 340–420）→
-// 详情弹窗（components::dialog，关闭 = 按钮 + Esc + backdrop 三通道）→
-// 「试一下」（execute 后台线程 + compose 轮询收割，禁 UI 线程直调）。
+// MCP 菜单页实现：页头固定（标题/副标题/状态行/记忆模块行/区头）→ 工具卡片网格
+//（ui.flow，列宽自适应 340–420）在列表容器内自滚（池144：外壳不滚、内容区唯一
+// 自滚）→ 详情弹窗（components::dialog，关闭 = 按钮 + Esc + backdrop 三通道）→
+// 「试一下」（池146 参数表单校验 + execute 后台线程 + compose 轮询收割，禁 UI
+// 线程直调）。
 // 视觉基准 = 桌面 mcp-menu-demo.html（token 对齐，图标 FA7 码点；页内开关与
 // 关闭置灰不照抄——关闭态 = 模块门控整页注销）。
 #include "mcp_page_module.h"
@@ -16,6 +18,7 @@
 
 #include <components/button.h>
 #include <components/dialog.h>
+#include <components/input.h>
 #include <components/scrollview.h>
 #include <components/switch.h>
 #include <components/theme.h>
@@ -24,10 +27,14 @@
 
 #include <eui/dsl.h>
 
+#include <platform/json.h>  // 池146：解析 inputSchema / 组装试跑入参
+
 #include <ui_kit/empty_state.h>
 #include <ui_kit/grid.h>
+#include <ui_kit/wswitch.h>
 
 #include <algorithm>
+#include <cstdlib>  // strtoll / strtod（不抛异常的数字解析）
 #include <utility>
 
 namespace module::mcp {
@@ -76,6 +83,27 @@ std::string resultDisplayText(bool running, bool hasResult, bool isError,
     return std::string(isError ? "失败：\n" : "成功：\n") + text;
 }
 
+// 结果文本按行拆分（bug145：输出区按行滚动）；行数上限 500（超长输出防每帧
+// 元素爆炸，运行日志卡同口径），超出截断并尾注总行数。
+constexpr std::size_t kResultMaxLines = 500;
+std::vector<std::string> splitResultLines(const std::string& text) {
+    std::vector<std::string> lines;
+    std::size_t start = 0;
+    while (lines.size() < kResultMaxLines) {
+        const std::size_t pos = text.find('\n', start);
+        if (pos == std::string::npos) {
+            lines.push_back(text.substr(start));
+            return lines;
+        }
+        lines.push_back(text.substr(start, pos - start));
+        start = pos + 1;
+    }
+    const std::size_t total =
+        static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
+    lines.back() = "…（已截断，共 " + std::to_string(total) + " 行）";
+    return lines;
+}
+
 } // namespace
 
 McpPageModule::McpPageModule() : McpPageModule(::core::mcp::globalMcpTools()) {}
@@ -104,20 +132,29 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     // 服务状态行数据源：app::mcp 桥只读快照（本页不提供开关，开关在设置页）。
     const app::mcp::LiveStatus svc = app::mcp::status();
 
+    // 池144（口径 = 池140 设计 §2 滚动模型）：整页滚动废除——外壳不滚，页头五行
+    //（标题/副标题/状态行/记忆模块行/区头）固定全程可视，工具网格（或空态）是
+    // 唯一滚动区、列表容器内自滚。
+    const float contentW = std::max(0.0f, screen.width - pad * 2.0f);
+    // 固定区高 = 顶 padding(0) + 五行盒（标题32/副标题20/状态20/记忆行64/区头26，
+    // 全 scaled）+ 5 个 gap；列表区高 = 余高 − 底 padding，下限 scaled(120)（极矮
+    // 窗仍可滚不塌陷）。
+    const float headerH =
+        core::theme::scaled(32.0f) + core::theme::scaled(20.0f) +
+        core::theme::scaled(20.0f) + core::theme::scaled(64.0f) +
+        core::theme::scaled(26.0f) + t.sizes.spacingLarge * 5.0f;
+    const float listH = std::max(core::theme::scaled(120.0f),
+                                 screen.height - headerH -
+                                     t.sizes.spacingXLarge);
+
     // ⚠ 上游坑（home_module 同款）：column 流式子元素只看流式游标，flow 子元素
-    // 必须显式 size()。整页挂 scrollView 矮窗滚动吸收。
-    components::scrollView(ui, "mcp.scroll")
-        .size(screen.width, screen.height)
-        .theme(comp)
-        .content([&](eui::Ui& ui, float innerW, float innerH) {
-            (void)innerH;
-            const float contentW = std::max(0.0f, innerW - pad * 2.0f);
-            ui.column("mcp.root")
-                .width(innerW)
-                .height(core::SizeValue::wrapContent())
-                .padding(pad, 0.0f, pad, t.sizes.spacingXLarge)
-                .gap(t.sizes.spacingLarge)
-                .content([&] {
+    // 必须显式 size()。
+    ui.column("mcp.root")
+        .width(screen.width)
+        .height(core::SizeValue::wrapContent())
+        .padding(pad, 0.0f, pad, t.sizes.spacingXLarge)
+        .gap(t.sizes.spacingLarge)
+        .content([&] {
                     ui.text("mcp.title")
                         .size(contentW, core::theme::scaled(32.0f))
                         .text("MCP 服务")
@@ -208,41 +245,47 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                         })
                         .build();
 
-                    if (tools.empty()) {
-                        // 空态：走全站统一组件（图标 + 主句 + 引导句 + 居中）
-                        // 2026-11-01 F-14：原为单行居中文字，无图标无引导。
-                        ui_kit::EmptyStateOptions emptyOpts;
-                        emptyOpts.message = "暂无已注册的 MCP 工具";
-                        emptyOpts.guide =
-                            "工具由各模块在启动时注册；启用「记忆」等模块后，"
-                            "对应工具会自动出现在这里。";
-                        emptyOpts.icon = 0xF1B2;  // fa-cube
-                        ui_kit::emptyState(ui, "mcp.empty", emptyOpts, 0.0f,
-                                           0.0f, contentW,
-                                           core::theme::scaled(220.0f), t);
-                    } else {
-                        // 网格：列宽随内容宽自适应（340–420），填满可用宽度，
-                        // 不再在右侧留大片空白（2026-11-01 F-13）。
-                        const auto [cols, cardW] =
-                            ui_kit::gridColumns(contentW, t.sizes.spacingLarge,
-                                                kCardMinW, kCardMaxW,
-                                                kCardMaxCols);
-                        (void)cols;
-                        ui.flow("mcp.grid")
-                            .width(contentW)
-                            .gap(t.sizes.spacingLarge)
-                            .content([&] {
-                                for (const auto& tool : tools) {
-                                    drawToolCard(ui, tool, t, comp, svc.running,
-                                                 cardW);
-                                }
-                            })
-                            .build();
-                    }
+                    // 列表滚动区（池144 唯一滚动区）：网格 / 空态在容器内自滚，
+                    // 页头不随内容滚出视野。
+                    components::scrollView(ui, "mcp.list.scroll")
+                        .size(contentW, listH)
+                        .theme(comp)
+                        .content([&](eui::Ui& listUi, float listW, float listVh) {
+                            (void)listVh;
+                            if (tools.empty()) {
+                                // 空态：走全站统一组件（图标 + 主句 + 引导句 + 居中）
+                                // 2026-11-01 F-14：原为单行居中文字，无图标无引导。
+                                ui_kit::EmptyStateOptions emptyOpts;
+                                emptyOpts.message = "暂无已注册的 MCP 工具";
+                                emptyOpts.guide =
+                                    "工具由各模块在启动时注册；启用「记忆」等模块后，"
+                                    "对应工具会自动出现在这里。";
+                                emptyOpts.icon = 0xF1B2;  // fa-cube
+                                ui_kit::emptyState(listUi, "mcp.empty", emptyOpts,
+                                                   0.0f, 0.0f, listW,
+                                                   core::theme::scaled(220.0f), t);
+                                return;
+                            }
+                            // 网格：列宽随内容宽自适应（340–420），填满可用宽度，
+                            // 不再在右侧留大片空白（2026-11-01 F-13）。
+                            const auto [cols, cardW] = ui_kit::gridColumns(
+                                listW, t.sizes.spacingLarge, kCardMinW, kCardMaxW,
+                                kCardMaxCols);
+                            (void)cols;
+                            listUi.flow("mcp.grid")
+                                .width(listW)
+                                .gap(t.sizes.spacingLarge)
+                                .content([&] {
+                                    for (const auto& tool : tools) {
+                                        drawToolCard(listUi, tool, t, comp,
+                                                     svc.running, cardW);
+                                    }
+                                })
+                                .build();
+                        })
+                        .build();
                 })
                 .build();
-        })
-        .build();
 
     drawDetailDialog(ui, screen, t, comp);
 }
@@ -593,33 +636,112 @@ void McpPageModule::drawDetailDialog(
                 .wrap(true)
                 .build();
 
-            // inputSchemaJson：monospace 展示块（浅底 + muted 边）
-            ui.text("mcp.dialog.detail.schema.title")
-                .position(20.0f, 148.0f)
-                .size(w - 40.0f, core::theme::scaled(16.0f))
-                .text("参数 schema（JSON）")
-                .fontSize(core::theme::scaled(11.0f))
-                .color(t.colors.textTertiary)
-                .build();
-            ui.rect("mcp.dialog.detail.schema.box")
-                .position(20.0f, 168.0f)
-                .size(w - 40.0f, 118.0f)
-                .radius(t.sizes.radius)
-                .color(t.colors.background)
-                .border(1.0f, t.colors.borderMuted)
-                .build();
-            // 不变量：schema 文本按节点框 clip，折行溢出不越 schema.box 压「运行结果」标题。
-            ui.text("mcp.dialog.detail.schema.text")
-                .position(28.0f, 176.0f)
-                .size(w - 56.0f, core::theme::scaled(102.0f))
-                .text(tool->inputSchemaJson())
-                .fontFamily("monospace")
-                .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(core::theme::scaled(17.0f))
-                .color(t.colors.textSecondary)
-                .wrap(true)
-                .clip()
-                .build();
+            // 参数区（池146）：inputSchema 全部属性为扁平类型（string/number/
+            // integer/boolean）且 ≤ 6 个 → 两列镜像参数表单（行高 30 + 行距 8，
+            // 3 行占 168..274；label 110 定宽同 formRow 口径，输入/开关贴半列右缘，
+            // 镜像几何对照提醒卡池132）；否则（嵌套 schema / 无参数 / 超上限）
+            // 回退 schema JSON monospace 展示块（空参调用，原行为不变）。
+            if (!paramSpecs_.empty()) {
+                const float paramHalfW = (w - 40.0f - 16.0f) * 0.5f;
+                ui.text("mcp.dialog.detail.params.title")
+                    .position(20.0f, 148.0f)
+                    .size(w - 40.0f, core::theme::scaled(16.0f))
+                    .text("参数")
+                    .fontSize(core::theme::scaled(11.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
+                constexpr float kParamRowH = 30.0f;
+                constexpr float kParamRowGap = 8.0f;
+                constexpr float kParamLabelW = 110.0f;
+                for (std::size_t i = 0; i < paramSpecs_.size(); ++i) {
+                    const ParamSpec& spec = paramSpecs_[i];
+                    const float rowY = 168.0f + static_cast<float>(i / 2) *
+                                                   (kParamRowH + kParamRowGap);
+                    const float colX = 20.0f +
+                                       (i % 2 == 0 ? 0.0f
+                                                   : paramHalfW + 16.0f);
+                    const std::string baseId =
+                        "mcp.dialog.detail.param." + spec.name;
+                    ui.text(baseId + ".label")
+                        .position(colX, rowY)
+                        .size(kParamLabelW, kParamRowH)
+                        .text(spec.name)
+                        .fontFamily("monospace")
+                        .fontSize(core::theme::scaled(11.0f))
+                        .lineHeight(kParamRowH)
+                        .color(t.colors.textSecondary)
+                        .maxWidth(kParamLabelW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
+                        .build();
+                    if (spec.kind == ParamSpec::Kind::Bool) {
+                        // 开关贴半列右缘（44×24 字面口径）；未拨动过不写入参数 JSON
+                        ui_kit::wswitch(
+                            ui, baseId + ".sw", boolValues_[spec.name],
+                            colX + paramHalfW - 44.0f, rowY + 3.0f, 44.0f, 24.0f,
+                            t, [this, key = spec.name](bool v) {
+                                boolValues_[key] = v;
+                                boolTouched_[key] = true;
+                            });
+                        continue;
+                    }
+                    const auto draftIt = stringDrafts_.find(spec.name);
+                    components::input(ui, baseId + ".input")
+                        .position(colX + kParamLabelW + 8.0f, rowY + 2.0f)
+                        .size(paramHalfW - kParamLabelW - 8.0f, 26.0f)
+                        .value(draftIt != stringDrafts_.end() ? draftIt->second
+                                                              : std::string())
+                        .placeholder(spec.required ? "必填" : "可选")
+                        .fontSize(core::theme::scaled(12.0f))
+                        .theme(comp)
+                        .onChange([this, key = spec.name](const std::string& v) {
+                            stringDrafts_[key] = v;
+                        })
+                        .build();
+                }
+                // 校验错误就近红字（表单下方固定槽位 278..294；无错不建不占位）
+                if (!paramsError_.empty()) {
+                    ui.text("mcp.dialog.detail.params.error")
+                        .position(28.0f, 278.0f)
+                        .size(w - 56.0f, 16.0f)
+                        .text(paramsError_)
+                        .fontSize(core::theme::scaled(11.0f))
+                        .lineHeight(16.0f)
+                        .color(t.colors.errorText)
+                        .maxWidth(w - 56.0f)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
+                        .build();
+                }
+            } else {
+                // inputSchemaJson：monospace 展示块（浅底 + muted 边）
+                ui.text("mcp.dialog.detail.schema.title")
+                    .position(20.0f, 148.0f)
+                    .size(w - 40.0f, core::theme::scaled(16.0f))
+                    .text("参数 schema（JSON）")
+                    .fontSize(core::theme::scaled(11.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
+                ui.rect("mcp.dialog.detail.schema.box")
+                    .position(20.0f, 168.0f)
+                    .size(w - 40.0f, 118.0f)
+                    .radius(t.sizes.radius)
+                    .color(t.colors.background)
+                    .border(1.0f, t.colors.borderMuted)
+                    .build();
+                // 不变量：schema 文本按节点框 clip，折行溢出不越 schema.box 压「运行结果」标题。
+                ui.text("mcp.dialog.detail.schema.text")
+                    .position(28.0f, 176.0f)
+                    .size(w - 56.0f, core::theme::scaled(102.0f))
+                    .text(tool->inputSchemaJson())
+                    .fontFamily("monospace")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(17.0f))
+                    .color(t.colors.textSecondary)
+                    .wrap(true)
+                    .clip()
+                    .build();
+            }
 
             // 结果区：成功/失败前缀区分；运行中占位
             ui.text("mcp.dialog.detail.result.title")
@@ -637,17 +759,41 @@ void McpPageModule::drawDetailDialog(
                 .color(t.colors.background)
                 .border(1.0f, t.colors.borderMuted)
                 .build();
-            ui.text("mcp.dialog.detail.result.text")
+            // bug145：结果文本按行拆分入滚动区（盒内按行滚动、超长单行裁剪），
+            // 不再单文本盒直铺越框；measure cache 键 = 运行序号 + 文本长度（换轮失效）
+            const std::string display =
+                resultDisplayText(running, hasResult, isError, resultText);
+            const std::vector<std::string> resultLines = splitResultLines(display);
+            const float resultLineH = core::theme::scaled(17.0f);
+            components::scrollView(ui, "mcp.dialog.detail.result.scroll")
                 .position(28.0f, 326.0f)
                 .size(w - 56.0f, h - 326.0f - 64.0f - 16.0f)
-                .text(resultDisplayText(running, hasResult, isError, resultText))
-                .fontFamily("monospace")
-                .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(core::theme::scaled(17.0f))
-                .color(isError ? t.colors.errorText
-                               : (resultEmpty ? t.colors.textTertiary
-                                              : t.colors.textSecondary))
-                .wrap(true)
+                .gap(0.0f)
+                .step(resultLineH)
+                .theme(comp)
+                .contentKey("mcp.dialog.detail.result.v" +
+                            std::to_string(tryRunSeq_) + "." +
+                            std::to_string(resultText.size()))
+                .content([&](eui::Ui& inner, float cw, float vh) {
+                    (void)vh;
+                    for (std::size_t i = 0; i < resultLines.size(); ++i) {
+                        inner.text("mcp.dialog.detail.result.line." +
+                                   std::to_string(i))
+                            .position(0.0f, static_cast<float>(i) * resultLineH)
+                            .size(cw, resultLineH)
+                            .text(resultLines[i])
+                            .fontFamily("monospace")
+                            .fontSize(core::theme::scaled(12.0f))
+                            .lineHeight(resultLineH)
+                            .color(isError ? t.colors.errorText
+                                           : (resultEmpty ? t.colors.textTertiary
+                                                          : t.colors.textSecondary))
+                            .maxWidth(cw)
+                            .overflow(core::TextOverflow::Clip)
+                            .clip()
+                            .build();
+                    }
+                })
                 .build();
 
             // 操作行：「试一下」（运行中禁用）+「关闭」
@@ -695,6 +841,7 @@ void McpPageModule::openDetail(const std::string& name) {
     auto found = registry_->find(name);
     if (found.isFail()) return;  // 工具已被注销：不开空弹窗
     detailTool_ = found.value();
+    buildParamSpecs();  // 池146：按当前工具 inputSchema 重建参数表单规格
     // 换工具打开：清上一工具的残留结果（同工具重开保留在途/已完成态）
     if (tryToolName_ != name && !tryRunning()) {
         std::lock_guard<std::mutex> lk(tryMutex_);
@@ -702,6 +849,11 @@ void McpPageModule::openDetail(const std::string& name) {
         tryDone_.store(false, std::memory_order_release);
         tryError_.store(false, std::memory_order_release);
         tryToolName_.clear();
+        // 换工具同步清参数草稿与校验错误（同工具重开保留草稿，便于重试）
+        stringDrafts_.clear();
+        boolValues_.clear();
+        boolTouched_.clear();
+        paramsError_.clear();
     }
 }
 
@@ -712,6 +864,14 @@ void McpPageModule::startTryRun() {
     if (tryThread_.joinable()) {
         tryThread_.join();  // 上一轮已完成未收割的先收（防御重复点击竞态）
     }
+    // 池146：先校验 + 组装入参（UI 线程）；失败不发起 execute，错误就近显示
+    auto args = buildArgsJson();
+    if (args.isFail()) {
+        paramsError_ = args.errorMessage();
+        return;
+    }
+    paramsError_.clear();
+    ++tryRunSeq_;
     const auto tool = detailTool_;  // keep-alive：注销瞬间不悬垂
     tryToolName_ = tool->name();
     tryRunning_.store(true, std::memory_order_release);
@@ -721,8 +881,8 @@ void McpPageModule::startTryRun() {
         std::lock_guard<std::mutex> lk(tryMutex_);
         tryResultText_.clear();
     }
-    tryThread_ = std::thread([this, tool] {
-        auto r = tool->execute("{}");
+    tryThread_ = std::thread([this, tool, argsJson = args.value()] {
+        auto r = tool->execute(argsJson);
         bool err = false;
         std::string text;
         if (r.isFail()) {
@@ -741,6 +901,110 @@ void McpPageModule::startTryRun() {
         // worker 置 done 后主动要帧，不等用户输入（settings 后台任务同口径）
         core::platform::requestUiUpdate();
     });
+}
+
+// 池146：解析当前工具 inputSchema → 参数规格。properties 缺失/为空、含非扁平类型
+//（object/array/未知）或参数 > 6（两列 3 行上限）→ 表单不建，回退 schema JSON 框。
+// 只重建规格，不动草稿（换工具的草稿清理在 openDetail）。
+void McpPageModule::buildParamSpecs() {
+    paramSpecs_.clear();
+    if (!detailTool_) return;
+    auto parsed = platform::json::parse(detailTool_->inputSchemaJson());
+    if (parsed.isFail() || !parsed.value().isObject()) return;
+    const platform::json::JsonObject schema = parsed.value().asObject();
+    std::set<std::string> required;
+    const platform::json::JsonValue reqValue = schema.get("required");
+    if (reqValue.isArray()) {
+        for (int i = 0; i < reqValue.size(); ++i) {
+            const platform::json::JsonValue item = reqValue[i];
+            if (item.isString()) required.insert(item.asString());
+        }
+    }
+    const platform::json::JsonValue propsValue = schema.get("properties");
+    if (!propsValue.isObject()) return;  // 无参数工具：无表单（schema 框兜底）
+    const platform::json::JsonObject props = propsValue.asObject();
+    std::vector<ParamSpec> specs;
+    for (const auto& key : props.keys()) {
+        const platform::json::JsonValue propValue = props.get(key);
+        if (!propValue.isObject()) return;
+        const platform::json::JsonValue typeValue =
+            propValue.asObject().get("type");
+        if (!typeValue.isString()) return;
+        ParamSpec spec;
+        spec.name = key;
+        spec.required = required.count(key) > 0;
+        const std::string type = typeValue.asString();
+        if (type == "string") {
+            spec.kind = ParamSpec::Kind::String;
+        } else if (type == "number") {
+            spec.kind = ParamSpec::Kind::Number;
+        } else if (type == "integer") {
+            spec.kind = ParamSpec::Kind::Integer;
+        } else if (type == "boolean") {
+            spec.kind = ParamSpec::Kind::Bool;
+        } else {
+            return;  // object/array/未知类型：不可简单渲染 → 整体回退
+        }
+        specs.push_back(std::move(spec));
+    }
+    if (specs.empty() || specs.size() > 6) return;
+    paramSpecs_ = std::move(specs);
+}
+
+// 池146：草稿 → 入参 JSON 对象文本；校验失败文案点名参数与错因（可执行修正）。
+// string 空串 = 未填；boolean 未拨动 = 不写入（工具侧默认值语义不被显式 false 覆盖）。
+core::Result<std::string> McpPageModule::buildArgsJson() {
+    platform::json::JsonObject args;
+    static const std::string kEmpty;
+    for (const auto& spec : paramSpecs_) {
+        if (spec.kind == ParamSpec::Kind::Bool) {
+            const auto touched = boolTouched_.find(spec.name);
+            if (touched != boolTouched_.end() && touched->second) {
+                args.set(spec.name, platform::json::makeBool(
+                                        boolValues_[spec.name]));
+            }
+            continue;
+        }
+        const auto draftIt = stringDrafts_.find(spec.name);
+        const std::string& raw =
+            draftIt != stringDrafts_.end() ? draftIt->second : kEmpty;
+        if (raw.empty()) {
+            if (spec.required) {
+                return core::Result<std::string>::fail(
+                    core::ErrorCode::ValidationError,
+                    "缺少必填参数：" + spec.name);
+            }
+            continue;  // 可选留空 = 不写入
+        }
+        char* end = nullptr;
+        if (spec.kind == ParamSpec::Kind::Integer) {
+            const long long value = std::strtoll(raw.c_str(), &end, 10);
+            if (end == raw.c_str() || *end != '\0') {
+                return core::Result<std::string>::fail(
+                    core::ErrorCode::ValidationError,
+                    "参数 " + spec.name + " 需为整数：当前「" + raw + "」");
+            }
+            args.set(spec.name, platform::json::makeInt(
+                                    static_cast<std::int64_t>(value)));
+        } else if (spec.kind == ParamSpec::Kind::Number) {
+            const double value = std::strtod(raw.c_str(), &end);
+            if (end == raw.c_str() || *end != '\0') {
+                return core::Result<std::string>::fail(
+                    core::ErrorCode::ValidationError,
+                    "参数 " + spec.name + " 需为数字：当前「" + raw + "」");
+            }
+            args.set(spec.name, platform::json::makeDouble(value));
+        } else {
+            args.set(spec.name, platform::json::makeString(raw));
+        }
+    }
+    auto serialized = platform::json::stringify(
+        platform::json::JsonValue(std::move(args)));
+    if (serialized.isFail()) {
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                               "入参序列化失败");
+    }
+    return core::Result<std::string>::ok(serialized.value());
 }
 
 void McpPageModule::harvestTryRun() {
