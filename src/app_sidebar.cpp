@@ -413,12 +413,20 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 return nullptr;
             };
 
+            // 底部折叠开关固定预留区（141：分组展开后子项行会盖住按钮——行 hover 底
+            // 与命中区压着按钮热区，开关 z 序在其上也免不了误触观感）。让位线 =
+            // 开关上缘（height−56）再让一档 gap；导航行矩形越线即整行不画（宁可
+            // 矮窗下藏行，不让任何行压进按钮区）。
+            constexpr float kToggleZoneH = 56.0f;  // 开关区预留高（toggleY = height−56）
+            const float kNavFoldLimit = screen.height - kToggleZoneH - gap;
+
             // 分组父项行：与导航项同几何；不可导航，点击只切换展开/收起。
             // 折叠侧栏下父项同样只画居中图标，子项按展开态继续列出。
             // holdsCurrent = 当前页是本分组的子页：父项保持「当前页在此组内」的
             // 选中态（默认折叠/手动收起后子项隐藏，选中信息只由父项承载）。
             auto renderGroupHeader = [&](const ::app::registry::ModuleEntry& group,
                                          bool expanded, bool holdsCurrent) {
+                if (y + itemH > kNavFoldLimit) return;  // 底部按钮区让位（141）
                 const std::string id =
                     std::string("app.sidebar.item.") +
                     ::core::pageIdToString(group.page);
@@ -468,7 +476,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                                   kChevronW - 8.0f,
                               itemH)
                         .text(group.shortName)
-                        .fontSize(t.sizes.fontSizeBody)
+                        // 142：分组头文本与其它侧栏条目同接线（fontSizeWeChat 16 档，
+                        // token 重建时已乘 fontScale）——此前用 fontSizeBody 14 档，
+                        // 与平铺项/二级项恒差一档，字号缩放后观感即「缩放没覆盖本组」
+                        .fontSize(t.sizes.fontSizeWeChat)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(holdsCurrent ? t.colors.textPrimary
                                             : t.colors.textSecondary)
@@ -477,7 +488,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .position(kWidth - padX - kChevronW - 6.0f, y)
                         .size(kChevronW, itemH)
                         .icon(eui::utf8(expanded ? 0xF077 : 0xF078))  // chevron-up/down
-                        .fontSize(t.sizes.fontSizeBody - 3.0f)
+                        .fontSize(t.sizes.fontSizeWeChat - 3.0f)  // 随 label 同档（基准−3 口径不变）
                         .horizontalAlign(eui::HorizontalAlign::Left)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textTertiary)
@@ -490,6 +501,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // 选中条推出图标——折叠态一律按 0 参与 hit/sel 几何）
             constexpr float kChildIndent = 16.0f;
             auto renderNavItem = [&](::core::Module* m, float indent) {
+                if (y + itemH > kNavFoldLimit) return;  // 底部按钮区让位（141）
                 const ::core::PageId page = m->pageId();
                 const bool active = (page == router->currentPage());
                 const std::string id =
@@ -576,8 +588,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 const ::core::PageId page = m->pageId();
                 const bool isSystem = isSystemGroup(page);
 
-                // work → system 首次切换时画组间 divider（仅当两组都非空：sawWork && isSystem）
-                if (!groupDividerDrawn && sawWork && isSystem) {
+                // work → system 首次切换时画组间 divider（仅当两组都非空：sawWork && isSystem；
+                // divider 也让位底部开关区（141），越线不再画）
+                if (!groupDividerDrawn && sawWork && isSystem && y < kNavFoldLimit) {
                     ui.rect("app.sidebar.groupdiv")
                         .position(padX, y)
                         .size(kWidth - padX * 2.0f, 1.0f)
@@ -618,7 +631,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // toggle 底色透明（W0.5：kTransparent 语义常量，非可主题化色）；
             // hover/active 走 hover/primarySoftBg 主槽位。
             constexpr float kToggleSize = 36.0f;
-            const float toggleY = screen.height - 56.0f;
+            const float toggleY = screen.height - kToggleZoneH;
             const float toggleX =
                 collapsed ? (kWidth - kToggleSize) * 0.5f : padX;
             ui.rect("app.sidebar.toggle")

@@ -333,6 +333,61 @@ REGISTER_TEST(sidebar_collapsed_compose,
     return true;
 })
 
+REGISTER_TEST(sidebar_fold_reserves_toggle_zone,
+              "sidebar: 矮窗下导航行让位底部开关区——越线行整行不画（141）", {
+    // 141 回归缝：分组展开/行数多时导航行曾盖到底部折叠开关（toggleY=height−56
+    // 固定，行 y 无上限）。让位线 = height−56−gap，行矩形越线整行不画。矮窗
+    //（body 420）+ 8 个平铺项：只有前 5 行画得出（第 6 行 Agent 起点 336，
+    // 336+40=376 > 360 越线）。
+    app::setCustomTitlebarMode(false);
+    app::resetSidebarGlobals();  // 折叠/分组展开态回厂，不依赖前序用例
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    RecordingModule todo(::core::PageId::Todo, "待办");
+    RecordingModule schedule(::core::PageId::Schedule, "日程");
+    RecordingModule proxy(::core::PageId::ClaudeProxy, "代理");
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    RecordingModule memory(::core::PageId::Memory, "记忆");
+    RecordingModule mcp(::core::PageId::Mcp, "MCP");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&md);
+    router.registerModule(&todo);
+    router.registerModule(&schedule);
+    router.registerModule(&proxy);
+    router.registerModule(&agent);
+    router.registerModule(&memory);
+    router.registerModule(&mcp);
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 420.0f;  // 矮窗：让位线 = 420−56−4 = 360
+    eui::Ui ui;
+    ui.begin("sidebar_fold");
+    app::compose(ui, screen);
+    ui.end();
+    // compose 只建树不排版：读任何 frame 前必须 layout（本文件头部前提）
+    ui.layout(screen.width, screen.height);
+
+    // 前 5 行画得出（第 5 行 ClaudeProxy 起点 116+4×44=292，行底 332 ≤ 360）
+    const auto* lastDrawn = ui.find("app.sidebar.item.ClaudeProxy.hit");
+    DOCTEST_REQUIRE(lastDrawn != nullptr);
+    DOCTEST_CHECK(floatEq(lastDrawn->y, 292.0f));
+    // 第 6 行起越线整行不画（不半截压进开关区）
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.hit") == nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Memory.hit") == nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Mcp.hit") == nullptr);
+    // 底部开关固定原位（height−56=364），导航行矩形一律止步于其上缘之前
+    const auto* toggle = ui.find("app.sidebar.toggle");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_CHECK(floatEq(toggle->y, 364.0f));
+    DOCTEST_CHECK(292.0f + 40.0f <= 364.0f);  // 最后一行行底 ≤ 开关上缘
+
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
 REGISTER_TEST(sidebar_expanded_compose,
               "sidebar: 展开态 220px、brand 只留居中 logo、内容区 -220", {
     app::setCustomTitlebarMode(false);
