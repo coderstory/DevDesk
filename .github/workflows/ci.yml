@@ -130,7 +130,12 @@ jobs:
 
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          # 2026-11-03 UCRT64 迁移两轮翻车后回退 MINGW64（①msys2 壳下 EUI-NEO
+          # 定位连带暴露逐步 export 缺口已修；②UCRT64 环境 cmake 不可见——包
+          # 装上但 shell PATH 未带 /ucrt64/bin，传导机制待查）。消音走官方
+          # suppress 通道；UCRT64 迁移本身记池 debt 带翻车记录，有闲时再做。
+          msystem: MINGW64
+          suppress-deprecation-warnings: msystem-mingw64
           update: false
           install: >-
             mingw-w64-x86_64-gcc
