@@ -5,6 +5,7 @@
 #include "platform/json.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace module::memory::hook {
 
