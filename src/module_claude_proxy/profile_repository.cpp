@@ -312,7 +312,7 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     const std::string hint = makeApiKeyHint(apiKey);
     const std::string check = sha256Hex(apiKey);
 
-    // 凭据先过平台保护（Windows = DPAPI；macOS/POSIX = 原样），放在 INSERT 之前：保护失败一字节不落，不留半截凭据
+    // 凭据先过平台保护（2026-11-03 起全平台明文透传，保密靠文件权限/NTFS ACL），放在 INSERT 之前：保护失败一字节不落，不留半截凭据
     auto protectedKey = platform::credential::protect(apiKey);
     if (protectedKey.isFail()) {
         return core::Result<Profile>::fail(protectedKey.errorCode(),
@@ -696,31 +696,8 @@ core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
             core::ErrorCode::NotFound,
             "该 Profile 没有保存 API Key（列空）");
     }
-    auto plain = platform::credential::unprotect(stored);
-    if (plain.isOk()) return plain;
-
-    // 跨平台迁移兜底：macOS/POSIX 直接存明文，库里被双机同步搬到 Windows 后
-    // hex 与 DPAPI 都解不开（用户侧表现 = 切换 Profile 时读 token 报错）。
-    // 明文形态可识别 → 就地升级成本机 DPAPI 密文（是升级，不降级为明文）。
-    if (!platform::credential::storesPlaintext() &&
-        platform::credential::looksLikePlaintextCredential(stored)) {
-        auto prot = platform::credential::protect(stored);
-        if (prot.isOk()) {
-            auto w = writeCredentialColumns(db_, profileId, prot.value(),
-                                            makeApiKeyHint(stored),
-                                            sha256Hex(stored));
-            if (w.isFail()) {
-                LOG_WARN("凭据迁移：profile " + std::to_string(profileId) +
-                         " 已读出明文 Key，但改写密文失败（下次读取重试）: " +
-                         w.errorMessage());
-            } else {
-                LOG_INFO("凭据迁移：profile " + std::to_string(profileId) +
-                         " 的明文 Key 已升级为本机 DPAPI 密文");
-            }
-            return core::Result<std::string>::ok(stored);
-        }
-    }
-    return plain;
+    // unprotect 失败（如旧版 DPAPI 密文）直接把可执行错误原样上抛，不做迁移兜底。
+    return platform::credential::unprotect(stored);
 }
 
 core::Result<Profile> ProfileRepository::getActiveProfile() {

@@ -93,10 +93,9 @@ inline constexpr const char* kSql = R"(
     --   'api_key'——代理转发据此决定注入哪个鉴权头；未知值 / 空串读侧兜底 'both'。
     --
     -- 凭据三列（存储形态见 platform/credential_protection.h）：
-    --   api_key_encrypted 凭据本体，存储形态分平台：
-    --        macOS / POSIX = 明文，保护级别 = 文件权限 0600（core/file_perms.h 收紧
-    --                        devdesk.db + -wal + -shm，每次打开校正）
-    --        Windows       = DPAPI 密文的 hex 文本，保护级别 = 加密级
+    --   api_key_encrypted 凭据本体，全平台明文（保密靠文件权限：macOS/POSIX 0600，
+    --     Windows NTFS 默认 ACL 仅本用户；core/file_perms.h 收紧 devdesk.db +
+    --     -wal + -shm，每次打开校正，Windows 侧 no-op）。
     --     空串 = 该 profile 没有密钥（「没有」与「有但解不开」由读侧错误码区分，
     --     不靠列内容区分）。Keychain 不是凭据来源，只剩启动时的一次性残留清理
     --     （claude:<id> 前缀之外的条目保留）。
@@ -214,7 +213,7 @@ inline constexpr const char* kSql = R"(
     --
     -- settings_json **含明文 API key**（buildDirectEnv 的密钥键三态之一），
     -- 故经 platform/credential_protection 的分平台保护入库
-    -- （macOS/POSIX = 明文 + 库文件权限 0600；Windows = DPAPI 密文 hex），
+    -- （全平台 = 明文 + 库文件权限：macOS/POSIX 0600，Windows NTFS 默认 ACL），
     -- **不新写一套加密**。空串合法（「没有 env」）。
     -- written_at 供 24h 清扫与排序；file_path 记当时物化出来的文件路径
     -- （会话退出自删 + 24h 清扫后该路径已不存在，属正常）。
@@ -318,7 +317,7 @@ inline constexpr const char* kSql = R"(
     --   key 形如 `sha:notes/<名>` / `hash:notes/<名>` / `sha:data/database.sql` /
     --   `first_sync_done` / `unsynced_notice` / `token`；value 为原样文本
     --   （sha/hash/标记）。`token` 行例外：value 是 credential::protect 后形态
-    --   （明文平台 = 明文，靠 DB 文件 0600；Windows = DPAPI hex），凭据不进 dump
+    --   （全平台 = 明文，靠 DB 文件权限：0600 / NTFS ACL），凭据不进 dump
     --   正靠本表整体被剔除这一条。
     CREATE TABLE IF NOT EXISTS github_sync_state (
         key TEXT PRIMARY KEY,

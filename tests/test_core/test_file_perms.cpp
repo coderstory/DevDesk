@@ -1,8 +1,8 @@
 // 凭据落点不止主库：WAL 模式会把凭据页复制进 <db>-wal，-shm 同族。三件套必须一律
 // 0600，且每次打开都校正——-wal/-shm 在连接关闭时被 sqlite 删掉，下次打开是全新 0644
 // 文件，只在建库时设等于没设。
-// 本用例只断言 macOS / Linux 的文件权限位；Windows 走 DPAPI 加密级 + no-op，真实断言
-// 在 test_credential_protection.cpp 的 storesPlaintext 分支。
+// 本用例只断言 macOS / Linux 的文件权限位；Windows 上 NTFS 默认 ACL 由系统保证、本模块
+// no-op（见 file_perms_win.cpp），凭据形态契约在 test_credential_protection.cpp。
 #include "doctest.h"
 #include "test_support.h"
 

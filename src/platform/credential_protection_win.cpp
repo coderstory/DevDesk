@@ -1,131 +1,32 @@
 // src/platform/credential_protection_win.cpp
-// Windows：DPAPI 密文 hex 编码进文本列（TEXT 列直接存二进制会被截断/编码歧义），列里一律是密文。
-// CryptProtectData/CryptUnprotectData + CRYPTPROTECT_UI_FORBIDDEN，用户级、禁弹 UI。
+// Windows：与 POSIX 同口径——明文进列，保密靠文件权限（数据根在 %USERPROFILE% 下，
+// NTFS 默认 ACL 仅本用户 + Administrators/SYSTEM，见 core/file_perms.h 的 no-op 说明）。
+// 历史 DPAPI 加密已整体移除（2026-11-03 老板拍板）：旧库里的 dpapi: 密文不再支持解密，
+// 读取时明确报错要求重填，不做兼容。
 #include "credential_protection.h"
 
-#include <cstddef>
-#include <limits>
-#include <string>
-#include <utility>
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#include <wincrypt.h>
-
 namespace platform::credential {
-namespace {
-
-// hex 编解码（小写输出，解码大小写都收）。
-std::string hexEncode(const std::string& raw) {
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(raw.size() * 2);
-    for (char ch : raw) {
-        const unsigned char c = static_cast<unsigned char>(ch);
-        out += kHex[c >> 4];
-        out += kHex[c & 0x0F];
-    }
-    return out;
-}
-
-bool hexDecode(const std::string& hex, std::string& out) {
-    if (hex.empty() || hex.size() % 2 != 0) return false;
-    out.clear();
-    out.reserve(hex.size() / 2);
-    for (std::size_t i = 0; i < hex.size(); i += 2) {
-        unsigned char v[2] = {0, 0};
-        for (int k = 0; k < 2; ++k) {
-            const char ch = hex[i + static_cast<std::size_t>(k)];
-            if (ch >= '0' && ch <= '9') {
-                v[k] = static_cast<unsigned char>(ch - '0');
-            } else if (ch >= 'a' && ch <= 'f') {
-                v[k] = static_cast<unsigned char>(ch - 'a' + 10);
-            } else if (ch >= 'A' && ch <= 'F') {
-                v[k] = static_cast<unsigned char>(ch - 'A' + 10);
-            } else {
-                return false;
-            }
-        }
-        out += static_cast<char>((v[0] << 4) | v[1]);
-    }
-    return true;
-}
-
-std::string dpapiError(const char* what) {
-    return std::string(what) + " failed: GetLastError=" +
-           std::to_string(GetLastError());
-}
-
-} // namespace
 
 core::Result<std::string> realProtect(const std::string& plaintext) {
-    // cbData 是 DWORD：size_t 窄化超限会静默截断成短密钥而非失败，显式判一次。
-    if (plaintext.size() >
-        static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        return core::Result<std::string>::fail(
-            core::ErrorCode::Internal,
-            "待加密凭据超过 DPAPI 单块长度上限（DWORD 32 位）");
-    }
-    DATA_BLOB input{};
-    input.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()));
-    input.cbData = static_cast<DWORD>(plaintext.size());
-
-    DATA_BLOB output{};
-    if (!CryptProtectData(&input, nullptr, nullptr, nullptr, nullptr,
-                          CRYPTPROTECT_UI_FORBIDDEN, &output)) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               dpapiError("CryptProtectData"));
-    }
-    const std::string blob(reinterpret_cast<const char*>(output.pbData),
-                           output.cbData);
-    LocalFree(output.pbData);
-    return core::Result<std::string>::ok(std::string(kDpapiBlobPrefix) +
-                                        hexEncode(blob));
+    // 本平台不做内容级加密；若改成明文之外的形态，必须同步改 realStoresPlaintext()。
+    return core::Result<std::string>::ok(plaintext);
 }
 
 core::Result<std::string> realUnprotect(const std::string& stored) {
-    // 前缀可缺：早期 Windows 版存的是裸 hex，两种都得认
-    const std::string body = isDpapiBlob(stored)
-                                 ? stored.substr(std::string(kDpapiBlobPrefix).size())
-                                 : stored;
-    std::string blob;
-    if (!hexDecode(body, blob) || blob.empty()) {
-        // 形态不认识就报错：不静默回落空串（否则「密钥不可用」伪装成「没配过密钥」）
+    // 旧版 Windows DPAPI 密文：已不再支持本机解密，明确报错让用户重填，
+    // 不静默回落空串（否则「密钥不可用」伪装成「没配过密钥」）。
+    if (isDpapiBlob(stored)) {
         return core::Result<std::string>::fail(
             core::ErrorCode::Internal,
-            "凭据列形态损坏（DPAPI blob 的 hex 形态不成立）");
+            "该 Key 是旧版 Windows DPAPI 密文，已不再支持本机解密；请重新填写 API Key");
     }
-
-    // 同上：size_t 窄化 DWORD 前显式判一次，不留截断口
-    if (blob.size() > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
-        return core::Result<std::string>::fail(
-            core::ErrorCode::Internal,
-            "凭据列解出的 blob 超过 DPAPI 单块长度上限（DWORD 32 位）");
-    }
-    DATA_BLOB input{};
-    input.pbData = reinterpret_cast<BYTE*>(blob.data());
-    input.cbData = static_cast<DWORD>(blob.size());
-
-    DATA_BLOB output{};
-    if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr,
-                            CRYPTPROTECT_UI_FORBIDDEN, &output)) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               dpapiError("CryptUnprotectData"));
-    }
-    std::string plain(reinterpret_cast<char*>(output.pbData), output.cbData);
-    LocalFree(output.pbData);
-    return core::Result<std::string>::ok(std::move(plain));
+    return core::Result<std::string>::ok(stored);
 }
 
-bool realStoresPlaintext() { return false; }
+bool realStoresPlaintext() { return true; }
 
 const char* realProtectionDescription() {
-    return "本机数据库存储（DPAPI 加密，仅本机本用户可解）";
+    return "本机数据库存储（NTFS 权限仅本用户可读）";
 }
 
 } // namespace platform::credential

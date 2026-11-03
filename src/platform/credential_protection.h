@@ -1,7 +1,8 @@
 // src/platform/credential_protection.h
 // 分平台凭据保护：profile 的 API key 进 SQLite 的 claude_profiles.api_key_encrypted 列。
-// macOS/POSIX 存明文（保密靠文件权限 0600，core/file_perms.h）；Windows 存 DPAPI 密文 hex，不得降级为明文。
-// 本头平台无关，实现拆 credential_protection_{win,posix}.cpp，业务零 #ifdef。
+// 2026-11-03 起全平台统一明文口径（DPAPI 已删，不做兼容）：列里就是明文，保密靠文件权限
+// ——macOS/POSIX = 0600，Windows = 数据根 %USERPROFILE% 下 NTFS 默认 ACL（仅本用户/管理员），
+// 见 core/file_perms.h。本头平台无关，实现拆 credential_protection_{win,posix}.cpp，业务零 #ifdef。
 #pragma once
 
 #include <atomic>
@@ -15,35 +16,19 @@ namespace platform::credential {
 core::Result<std::string> realProtect(const std::string& plaintext);
 core::Result<std::string> realUnprotect(const std::string& stored);
 
-// 本平台是否直接把明文写进列；UI 文案与测试共用。
+// 本平台是否直接把明文写进列；UI 文案与测试共用（当前两平台恒 true）。
 bool realStoresPlaintext();
 
 // 面向用户的保护级别说明（UI 文案直出）。
 const char* realProtectionDescription();
 
-// Windows 写出的 DPAPI 密文带此前缀（后接 hex）。用途：库经双机同步搬到另一平台时，
-// macOS 能认出「这不是明文密钥」并明确报错，而不是把密文当 API Key 发出去吃 401。
+// 旧版 Windows 曾用 DPAPI 写库，密文带此前缀（后接 hex）。Windows 现已不再写这种形态，
+// 但旧库/双机同步搬来的库里仍可能带着它：保留前缀做跨平台识别，认出即 fail，
+// 不把密文当 API Key 发出去（那会变成难查的 401）。
 inline constexpr const char* kDpapiBlobPrefix = "dpapi:";
 
 inline bool isDpapiBlob(const std::string& stored) {
     return stored.rfind(kDpapiBlobPrefix, 0) == 0;
-}
-
-// 明文形态启发判定：可打印 ASCII、无空白、8..512 字节、含字母数字 —— 典型 API Key 明文。
-// 只在 unprotect 已失败之后使用（hex + DPAPI 都解不开），不会把密文误判成明文；
-// 目的是接住「macOS 存的明文库同步到 Windows」这条跨平台迁移路径。
-inline bool looksLikePlaintextCredential(const std::string& stored) {
-    if (stored.size() < 8 || stored.size() > 512) return false;
-    bool hasAlnum = false;
-    for (const char ch : stored) {
-        const unsigned char c = static_cast<unsigned char>(ch);
-        if (c < 0x21 || c > 0x7E) return false;  // 控制符/空白/非 ASCII 一律不算
-        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
-            (c >= 'a' && c <= 'z')) {
-            hasAlnum = true;
-        }
-    }
-    return hasAlnum;
 }
 
 // 注入缝：函数指针表，供单测替换 protect/unprotect；生产只读槽位、从不写。
@@ -73,13 +58,13 @@ inline const Backend* setBackendForTest(const Backend* b) {
                                   std::memory_order_relaxed);
 }
 
-// 明文 → 存储形态：空串→空串；macOS/POSIX 原样返回（靠文件权限），Windows → DPAPI 加密 + hex。
+// 明文 → 存储形态：空串→空串；全平台原样返回（保密靠文件权限 / NTFS ACL）。
 inline core::Result<std::string> protect(const std::string& plaintext) {
     if (plaintext.empty()) return core::Result<std::string>::ok(std::string());
     return backend().protect(plaintext);
 }
 
-// 存储形态 → 明文。解密失败/形态损坏 → fail(Internal)，不静默回落空串。
+// 存储形态 → 明文。旧 DPAPI 密文等不支持形态 → fail(Internal)，不静默回落空串。
 inline core::Result<std::string> unprotect(const std::string& stored) {
     if (stored.empty()) return core::Result<std::string>::ok(std::string());
     return backend().unprotect(stored);

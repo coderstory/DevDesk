@@ -115,7 +115,7 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     DOCTEST_REQUIRE(back.isOk());
     DOCTEST_CHECK_EQ(back.value(), key);
 
-    // 列里确实是**保护后**的形态（本平台契约：明文平台 = 明文；加密平台 = 密文）
+    // 列里存的即明文本身（全平台口径，保密靠文件权限 / NTFS ACL）
     auto prep = tdb.handle().prepare(
         "SELECT api_key_encrypted, api_key_hint, api_key_check FROM "
         "claude_profiles WHERE id = ?");
@@ -132,15 +132,9 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     const std::string hint = row.value().getString("api_key_hint").value();
     const std::string check = row.value().getString("api_key_check").value();
 
-    // 明文平台（macOS/POSIX）：protect 是确定性透传，stored == protect(key) 成立，可以比密文。
-    // 加密平台（Windows DPAPI）每次 CryptProtectData 含随机 salt/IV，同一 key 两次 protect 产不同
-    // 密文，比相等无意义——改验明文不出现在列里。往返一致性由上方 loadApiKey(id)==key 证明。
-    if (platform::credential::storesPlaintext()) {
-        DOCTEST_CHECK_EQ(stored, platform::credential::protect(key).value());
-    }
-    if (!platform::credential::storesPlaintext()) {
-        DOCTEST_CHECK(stored.find(key) == std::string::npos);   // 加密平台不得明文
-    }
+    // 全平台明文口径：protect 是确定性透传，列里就是明文本身（stored == protect(key)）。
+    // 往返一致性由上方 loadApiKey(id)==key 证明。
+    DOCTEST_CHECK_EQ(stored, platform::credential::protect(key).value());
     // hint 脱敏（前 6 + *** + 尾 4），check 全量 64 hex
     DOCTEST_CHECK(hint.find("***") != std::string::npos);
     DOCTEST_CHECK(hint.find(key) == std::string::npos);

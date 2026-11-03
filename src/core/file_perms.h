@@ -3,7 +3,8 @@
 // API key 迁进 SQLite 列后 macOS/POSIX 上列里就是明文，保护级别 = 文件权限级，故承载凭据的主库
 // 与 -wal/-shm 必须收紧到「仅属主可读写」（WAL 会把凭据页复制进 -wal；-wal/-shm 是首次写事务才
 // 落盘，故 SqliteDb::open 显式跑一次空写事务逼出三件套再收紧，且每次打开都校正）。
-// Windows：DPAPI 密文入库，文件无可读凭据、ACL 已是仅本用户，本模块是明确 no-op（返回 0）。
+// Windows：列里与 macOS/POSIX 同为明文入库，本模块是明确 no-op（返回 0）——数据根在
+// %USERPROFILE% 下，NTFS 默认 ACL 已是「仅本用户 + Administrators/SYSTEM」，与 macOS 0600 同级。
 #pragma once
 
 #include <filesystem>
