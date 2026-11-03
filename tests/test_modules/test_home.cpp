@@ -85,14 +85,23 @@ REGISTER_TEST(home_service_real_stats,
 
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     const int64_t day = 86400;
+    // 日界锚定种子（根治跨零点 flake，R10 CI run 41549502192）：「今天」seed 不再用
+    // now-30/-60/-120 这类贴 now 偏移——本地零点刚过时它们落进昨日窗，而 getStats 的
+    // 「今天」起点按运行时刻现取（home_service.cpp getStats→startOfDayEpoch），窗口
+    // 错位则 todayNotes/todayApiCalls 翻转。改为锚定 getStats 同源的日界：今天 seed
+    // 取「今日本地零点+正午侧偏移」，昨天 seed 取昨日正午，任何时刻运行都落在稳定侧。
+    const int64_t dayStart = module::home::startOfDayEpoch(
+        static_cast<std::time_t>(now));
+    const int64_t todayNoon = dayStart + 12 * 3600;  // 今天窗正中：距两侧日界均 12h
+    const int64_t yestNoon = dayStart - 12 * 3600;   // 昨日窗正中：恒在今天窗外
 
-    // 种子数据：markdown_index（a/b 今天，c 三天前）
+    // 种子数据：markdown_index（a/b 今天正午锚，c 前天正午=窗外）
     auto& sq = env.db->db();
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO markdown_index (path, title, size_bytes, modified_at, created_at) VALUES "
-        "('a.md', '笔记A', 10, " + std::to_string(now - 60) + ", " + std::to_string(now - 3600) + "), "
-        "('b.md', '笔记B', 20, " + std::to_string(now - 120) + ", " + std::to_string(now - 3600) + "), "
-        "('c.md', '笔记C', 30, " + std::to_string(now - 3 * day) + ", " + std::to_string(now - 4 * day) + ")"
+        "('a.md', '笔记A', 10, " + std::to_string(todayNoon - 60) + ", " + std::to_string(todayNoon - 3600) + "), "
+        "('b.md', '笔记B', 20, " + std::to_string(todayNoon - 120) + ", " + std::to_string(todayNoon - 3600) + "), "
+        "('c.md', '笔记C', 30, " + std::to_string(yestNoon - 2 * day) + ", " + std::to_string(yestNoon - 2 * day - day) + ")"
     ).isOk());
 
     // todo_tasks：未完成无截止 / 未完成已逾期 / 未完成未来截止 / 已完成
@@ -136,22 +145,28 @@ REGISTER_TEST(home_service_real_stats,
     ).isOk());
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO claude_call_logs (profile_id, method, path, started_at) VALUES "
-        "(1, 'POST', '/v1/messages', " + std::to_string(now - 30) + "), "
-        "(1, 'POST', '/v1/messages', " + std::to_string(now - 60) + "), "
-        "(1, 'POST', '/v1/messages', " + std::to_string(now - day) + ")"
+        "(1, 'POST', '/v1/messages', " + std::to_string(todayNoon - 30) + "), "
+        "(1, 'POST', '/v1/messages', " + std::to_string(todayNoon - 60) + "), "
+        "(1, 'POST', '/v1/messages', " + std::to_string(yestNoon) + ")"
     ).isOk());
 
     module::home::HomeService svc(sq);
     auto r = svc.getStats(5);
     DOCTEST_REQUIRE_MESSAGE(r.isOk(), "getStats 失败: " + r.errorMessage());
     const auto& s = r.value();
-    DOCTEST_CHECK_EQ(s.todayNotes, 2);        // a + b
+    // 跨零点残余守卫：种子与断言之间若恰好翻过本地日界（窗口≈语句间隙毫秒级），
+    // 「今天」窗整体平移、正午锚 seed 全部落出新窗 → 期望 0；同日 → 期望 2。
+    // 两支都钉死具体值：跨零点不再变红，也不放松断言语义（翻日支钉的是
+    // 「窗平移后旧 seed 必须出窗」的口径本身）。
+    const bool sameDay = module::home::startOfDayEpoch(
+                             static_cast<std::time_t>(std::time(nullptr))) == dayStart;
+    DOCTEST_CHECK_EQ(s.todayNotes, sameDay ? 2 : 0);        // a + b（翻日则全部出窗）
     // 待办口径 = 待办列 + 进行中列 的未完成任务：t1 t2 t3（待办列）+ t5（进行中列）
     // t4 已完成；t6 在 kind='done' 列（completed_at 脏 NULL 也不放宽）；
     // t7 归档列；t8/t9 在 kind 为空的自定义列（t9 标题为「进行中」也不按标题计入）
     DOCTEST_CHECK_EQ(s.pendingTodos, 4);
     DOCTEST_CHECK_EQ(s.overdueTodos, 1);      // t2（t4 已完成；t5-t9 无截止时间）
-    DOCTEST_CHECK_EQ(s.todayApiCalls, 2);
+    DOCTEST_CHECK_EQ(s.todayApiCalls, sameDay ? 2 : 0);
     DOCTEST_CHECK_EQ(s.recentNotes.size(), static_cast<size_t>(3));
     if (!s.recentNotes.empty()) {
         // mtime 倒序：a.md(now-60) 最新
