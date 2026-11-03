@@ -38,6 +38,8 @@ if(WIN32)
         process_host_win.cpp            # 常驻子进程托管：CreateProcessW + taskkill 树杀（memcpp S2）
         wallpaper_capability_win.cpp    # 壁纸宿主能力：WorkerW/mpv 路线可用（true）
         window_visibility_win.cpp       # 主窗可见态：EnumWindows 捕获 HWND + IsIconic/IsWindowVisible
+        terminal_backend_win.cpp        # 终端会话后端（v1 缺口补挂：此前从未进任何 WIN32 目标，
+                                        # need:127 Phase 1 本 TU 换 ConPTY 真实现）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
