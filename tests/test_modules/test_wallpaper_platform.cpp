@@ -44,25 +44,37 @@ void makePlaceholderFile(const fs::path& path) {
 // REGISTER_TEST 的用例体不能内嵌预处理指令（-Wpedantic: directive within macro
 // arguments）；平台分支放进普通函数，返回值即用例结果。
 bool checkPlatformStubBehavior() {
-#if !defined(_WIN32)
+#if defined(__APPLE__)
+    // macOS 是真实实现（AVFoundation + 桌面层窗口）。单测只验**空态与错误路径**，
+    // 不建真窗口、不拉播放器——真桌面行为归 wallpaper_probe / 真机 UAT。
     wp::MpvController controller;
     DOCTEST_CHECK(controller.takeError().empty());
-    controller.start(1234);
+    // 宿主未就绪（handlev == 0）时 start 必须失败并给出中文原因，不得崩。
+    controller.start(0);
     const std::string error = controller.takeError();
     DOCTEST_CHECK(!error.empty());
     DOCTEST_CHECK_EQ(controller.positionSec(), 0.0f);
     DOCTEST_CHECK_FALSE(controller.processAlive());
+    // macOS 路线没有播放器子进程：processId 恒 0（与 Windows 的 mpv 进程可区分）。
     DOCTEST_CHECK_EQ(controller.processId(), 0u);
+    // 幂等：未启动时 stop 是安全空操作，重复调用不崩。
     controller.stop();
+    controller.stop();
+    DOCTEST_CHECK_EQ(controller.positionSec(), 0.0f);
 
+    // 未建窗的宿主：handle 全空；show/hide/rebuild 在无窗口时安全 no-op 或返回错误。
     std::unique_ptr<wp::WallpaperHost> host = wp::createWallpaperHost();
     DOCTEST_REQUIRE(host != nullptr);
-    std::string hostError;
-    DOCTEST_CHECK_FALSE(host->start(&hostError));
-    DOCTEST_CHECK(!hostError.empty());
+    DOCTEST_CHECK(host->handle().videoChild == nullptr);
+    std::string showError;
+    DOCTEST_CHECK_FALSE(host->show(&showError));
+    DOCTEST_CHECK(!showError.empty());
+    host->hide();
+    std::string rebuildError;
+    host->rebuild(&rebuildError);  // 降级态不该被换屏唤醒：no-op
     DOCTEST_CHECK(host->handle().videoChild == nullptr);
     host->stop();
-#else
+#elif !defined(_WIN32)
     wp::MpvPlayer player;
     DOCTEST_CHECK_EQ(player.positionSec(), 0.0f);
     DOCTEST_CHECK_FALSE(player.processAlive());
@@ -216,7 +228,7 @@ REGISTER_TEST(wallpaper_platform_command_line,
 // 防：非 Windows 平台调用真实控制器/宿主时静默成功或崩溃（必须明确失败并可展示原因）。
 // Windows 分支只验证空态（构造不 spawn 进程），真进程行为由桌面探针覆盖。
 REGISTER_TEST(wallpaper_platform_stub_behavior,
-              "wallpaper platform: 非 Windows stub 行为与空态", {
+              "wallpaper platform: 平台空态与错误路径（Windows 真装配 / macOS 真实实现空态 / 其它 stub）", {
     return checkPlatformStubBehavior();
 })
 

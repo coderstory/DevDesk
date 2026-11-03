@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include "module_wallpaper/core/model.h"
+
 namespace module::wallpaper {
 
 class PlayerBackend {
@@ -26,6 +28,9 @@ public:
     virtual void setRate(float rate) = 0;
     virtual void setVolume(float volume) = 0;
     virtual void setMute(bool muted) = 0;
+    // 图片铺法（仅对静图项有意义）。默认 no-op：mpv 路线只实现「填充」
+    //（--panscan=1.0，其余三种是 deferred 决策），macOS 原生路线四种全画。
+    virtual void setImageFit(ImageFit fit) { (void)fit; }
     virtual void stop() = 0;
     // 当前播放位置（秒）。未装载/未实现时返回 0。
     virtual float positionSec() const = 0;

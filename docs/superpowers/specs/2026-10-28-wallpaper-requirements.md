@@ -90,14 +90,14 @@
 | # | 需求 | 状态 | 说明 |
 |---|---|---|---|
 | H1 | Windows 全功能交付 | ✅ | 本分支全部探针在 Windows 真机跑通 |
-| H2 | macOS 第二阶段（Objective-C++ 平台层） | ⚠️ | **本阶段口径：代码未写，非可用。** 只有恒返回 false 的能力实现与 stub 平台层保证构建通过；UAT 未过前不得宣称 macOS 交付（spec §3 口径） |
-| H3 | 其它 POSIX 平台 | ⚠️ | 同 macOS：能力 false、工厂返回空，仅保证构建 |
+| H2 | macOS 全功能交付（ObjC++ 平台层） | ✅ | **2026-11-03 交付**：CGWindowLevel 桌面层窗口 + AVFoundation 播放（视频）/ 自绘 CALayer（图片）+ 五路让路（锁屏/熄屏/睡眠/电池/全屏）+ CGImageSource 头解码。证据：`test_wallpaper_macos_platform.cpp`（17 条纯逻辑）+ `wallpaper_macos_probe`（平台层真机）+ `wallpaper_service_macos_probe`（服务端到端真机，23 项检查全过）+ 进程内图层渲染实证（四铺法像素分布各异） |
+| H3 | 其它 POSIX 平台 | ⚠️ | 能力 false、工厂返回空，仅保证构建（无原生实现） |
 
 ### I. 部分交付 / 缓做项
 
 | # | 需求 | 状态 | 说明 |
 |---|---|---|---|
-| I1 | 图片四种铺法（填充/适应/居中/平铺） | ⚠️ | **deferred（缓做，非永久不做）**：决策为图片走 mpv 直播路径，当前生效的是「填充」（mpv `--panscan=1.0`）；铺法枚举与持久化已留位，其余三种未实现（commit `62c74e1a` 决策） |
+| I1 | 图片四种铺法（填充/适应/居中/平铺） | ⚠️ 部分 | **macOS：四种全部实现**（自绘 CALayer + 纯几何层 `image_fit_geometry.h`，进程内像素实证四模式分布各异）。**Windows：仍只有填充**（mpv `--panscan=1.0`，其余三种是 deferred 决策，commit `62c74e1a`）；UI 的铺法选择器已存在，在 Windows 上改其余三种无效果 |
 
 ## 永久不做清单
 
@@ -109,11 +109,14 @@
 4. **玻璃 / 半透效果**：壁纸层不做毛玻璃、半透明等视觉特效。
 5. **独立应用与安装器**：壁纸永远是 DevDesk 的内嵌页面模块，不拆独立程序、不做自己的安装器（DevDesk 本体的安装器是另一回事，壁纸只随包走）。
 
-## macOS 本阶段口径（明确）
+## macOS 口径（2026-11-03 起更新）
 
-- 代码**未写**：没有任何 macOS 平台实现（无 .mm 文件、无能力为 true 的路径）。
-- 用户在 macOS 上：侧边栏无壁纸入口、设置里无壁纸格——一切不可达，这是**设计行为**而非缺陷。
-- 「仅保证构建通过」不等于「macOS 可用」；第二阶段（P8）需平台实现 + 真机 UAT 双过关后才可改变此口径。
+- **已交付**：macOS 与 Windows 能力对等，`platform::wallpaper::supported()` 返回 true，壁纸页与设置格均可达。
+- 实现路线与 Windows **不同且更轻**：不拉外部播放器进程，用 AVFoundation 原生硬解 + 自绘图层；
+  因此没有 mpv 进程、没有命名管道 IPC、没有 GPL 分发负担，`assets/mpv` 与 `DEVDESK_MPV_PATH` 在 macOS 上不适用。
+- 图片四种铺法（填充/适应/居中/平铺）在 macOS 上**全部实现**（Windows 仍只有填充，见 I1）。
+- 真机验证口径：`wallpaper_macos_probe`（宿主/播放/让路各组件契约）+ `wallpaper_service_macos_probe`
+  （真服务装配端到端：扫描 → 混合池 → 换片 → 图片 → 暂停 → 停止 → 二次启动）。
 
 ## 证据索引（探针与断言量级）
 

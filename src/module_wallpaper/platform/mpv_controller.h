@@ -23,6 +23,8 @@
 #include <system_error>
 #include <vector>
 
+#include "module_wallpaper/core/model.h"
+
 namespace module::wallpaper {
 
 inline constexpr const char* kMpvPathEnvVar = "DEVDESK_MPV_PATH";
@@ -232,6 +234,9 @@ public:
     void setRate(float rate);
     void setVolume(float volume);  // 0..1，内部换算为 mpv 的 0..100
     void setMute(bool muted);
+    // 图片铺法。mpv 路线只实现「填充」（--panscan=1.0，其余三种铺法是 deferred
+    // 决策，调用即 no-op）；macOS 原生路线四种铺法全部自己画。
+    void setImageFit(ImageFit fit);
 
     float positionSec() const;
     bool processAlive() const;

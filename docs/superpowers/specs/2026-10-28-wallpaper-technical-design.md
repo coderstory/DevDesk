@@ -18,7 +18,7 @@
 │             watcher 接线/扫描/轮换驱动/持久化）              │
 ├──────────────────────────────┬─────────────────────────────┤
 │ 纯逻辑 core/                 │ 平台 platform/               │
-│  model / rotation / arbiter  │  wallpaper_host(+_win/_stub) │
+│  model / rotation / arbiter  │  wallpaper_host(+_win/_macos/│
 │  availability / folder_policy│  mpv_controller(+_stub)      │
 │  image_library / video_library  mpv_player / player_backend│
 │  settings / presentation     │  yield_watchers              │
@@ -97,6 +97,27 @@
 - 安装器 `installer/windows/devdesk.iss`：`[Files]`（`:59` 起）整目录装 assets（含 mpv；`recursesubdirs`），并分发 `THIRD-PARTY-NOTICES.md`（`:61-64`）——mpv 为 GPLv2+，GPL 分发须随附许可告示（commit `a161a206`）。
 - 红线：mpv.exe 本体不进 git（handoff §6）。
 
+### 2.8 macOS 平台层（2026-11-03 交付）
+
+三个 `*_macos.mm` + 一个 `*_macos.cpp`，与 Windows 实现**同接口、不同路线**：
+
+| 文件 | 职责 | 与 Windows 的关键差异 |
+|---|---|---|
+| `wallpaper_host_macos.mm` | 桌面层窗口宿主 | `CGWindowLevelForKey(kCGDesktopWindowLevelKey)` 层级；无 WorkerW 概念；窗口操作经**主队列**同步投递（有界 3s），不建宿主线程 |
+| `mpv_controller_macos.mm` | 播放控制（同名接口） | 无 mpv 进程：视频 = `AVQueuePlayer` + `AVPlayerLooper`；图片 = 宿主自绘 `CALayer`；无 IPC/无管道 |
+| `yield_watchers_macos.mm` | 五路让路 | 分布式通知（锁屏）+ NSWorkspace（睡眠/唤醒）+ IOKit 电源源 + `CGDisplayRegisterReconfigurationCallback`（换屏）+ `CGWindowList` 覆盖率（全屏） |
+| `image_probe_macos.cpp` | 图片头解码 | `CGImageSourceCopyPropertiesAtIndex` 读 `PixelWidth/Height`，不建解码器、不解像素 |
+
+**纯逻辑层（跨平台可测）**：`image_fit_geometry.h`（四铺法落位）、`fullscreen_geometry.h`（内缩补偿 + 坐标系翻转 + 按 pid 聚合覆盖率）。
+
+三条硬约束（踩过坑，改动前必读）：
+
+1. **AVFoundation 播放必须在有 run loop 转动的进程里**。实测主线程纯 sleep 时 `AVQueuePlayer.currentTime` 恒 0（status 也是 unknown）；一旦按几十毫秒跑 run loop 就正常推进。真机 app 的 EUI-NEO 主循环本来就在转，所以生产代码不需要额外线程；**探针必须自己 `CFRunLoopRunInMode` 补上**。
+2. **watcher 的「启动即重算」必须异步**。服务在 `start()` 里持着 `mu_` 调 watcher，而重算回调链会走 `applySystemReason()` 再取同一把锁——同步就是自死锁（真机探针实测卡死在 `psynch_mutexwait`）。
+3. **C 路径 → NSURL 用 `CFURLCreateFromFileSystemRepresentation`**。`stringWithUTF8String:` 在非 UTF-8 字节上返回 nil；`stringWithFileSystemRepresentation:` 交给 `fileURLWithPath:` 会二次解释。实测含中文的临时目录两条路都退化成「无法识别的文件路径」。
+
+另：async block 捕获 `const std::string&` 参数会拿到悬垂引用，路径必须 `make_shared` 拷贝后再进 block。
+
 ## 3. 决策记录表
 
 | 日期 | 决策 | 依据 |
@@ -108,11 +129,14 @@
 | 2026-10-27 | mpv IPC 同步句柄读写互卡 → **OVERLAPPED 有界写 + 读线程常驻排空**；stop 梯子压进 3s | commit `eec88dbb`；`mpv_controller.cpp:4-12` 契约注释 |
 | 2026-10-28 | 图片播放**走 mpv 直播路径**（`--wid` 嵌入 + `--image-display-duration=inf` 常驻），自绘四铺法（Fit/Center/Tile）**deferred**（非永久不做；Fill 经 `--panscan=1.0` 生效，枚举与持久化留位） | commit `62c74e1a`；`mpv_controller.h:72-96` |
 | 2026-10-27 起（全程） | mpv.exe **不进 git**；打包期 `MPV_BIN` 源缺失即失败；GPL 告示随包 | handoff §6；commit `6914c3d6` + `a161a206` |
+| 2026-11-03 | macOS 走 **AVFoundation 原生路线**（AVQueuePlayer + 自绘 CALayer），不移植 mpv：原生硬解功耗更好、无外部进程、无 GPL 分发负担；接口层（MpvController/PlayerBackend）保持不变，服务层零改动 | 真机探针 + 进程内图层渲染实证 |
 
 ## 4. 测试与探针底稿（后续会话的验证入口）
 
 - 定向跑法：`bash scripts/build-test-run.sh --filter wallpaper`（构建纪律见仓库 CLAUDE.md：worktree 隔离、工具链 PATH 前置、禁主工作树构建）。
 - 单测：`test_wallpaper_core.cpp`（纯逻辑全矩阵） / `test_wallpaper_ui.cpp` / `test_wallpaper_module.cpp`（门控注册） / `test_wallpaper_platform.cpp`（IPC 死锁回归网） / `test_wallpaper_tray.cpp`。
+- **macOS 探针**：`wallpaper_macos_probe`（宿主/播放/让路组件契约，8 组断言；视频素材 `--video` 指定，缺省跑图片段）、`wallpaper_service_macos_probe`（真服务端到端 23 项：扫描/混合池/换片/图片/四铺法/暂停/停止/二次启动）。
+- **macOS 单测**：`test_wallpaper_macos_platform.cpp`（17 条：四铺法几何矩阵 / 全屏覆盖率聚合含同 pid 拼接与内缩补偿 / 图片探针 unknown 语义）。
 - 真机探针（`tests/probes/`）：`wallpaper_desktop_probe`（WorkerW+mpv 生命周期 5 场景） / `wallpaper_rotation_probe`（扫描/轮换/过滤端到端） / `wallpaper_image_rotation_probe`（视频↔图片自动切换） / `wallpaper_yield_probe`（让路四路真机，读 mpv IPC 实测暂停） / `wallpaper_probe`（真窗口 UI + 截图）。
 - 收口记录：2026-10-28 全量构建+全量测试收绿（Release 增量，`build-test-run.sh --release --no-run`），判据 Total 全过 0 Failed + 守卫绿；结果见当日回单。
 

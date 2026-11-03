@@ -199,6 +199,8 @@ add_executable(devdesk_tests
     test_modules/test_wallpaper_ui.cpp
     # P5 尾托盘壁纸组：spec 形状/打开页映射/托盘桥/让路态暂停语义
     test_modules/test_wallpaper_tray.cpp
+    # macOS 平台层纯逻辑：图片四铺法几何 / 全屏覆盖率聚合 / 图片尺寸头解码
+    test_modules/test_wallpaper_macos_platform.cpp
     test_modules/test_splash_contract.cpp
     test_modules/test_release_basic.cpp
     # 上线模块（Release）：纯逻辑 / 存储 / 两个页面 UI。四个源文件名由任务卡定死；

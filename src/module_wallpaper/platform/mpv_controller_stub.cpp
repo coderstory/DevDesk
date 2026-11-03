@@ -38,6 +38,8 @@ void MpvController::setVolume(float /*volume*/) {}
 
 void MpvController::setMute(bool /*muted*/) {}
 
+void MpvController::setImageFit(ImageFit /*fit*/) {}
+
 float MpvController::positionSec() const { return 0.0f; }
 
 bool MpvController::processAlive() const { return false; }

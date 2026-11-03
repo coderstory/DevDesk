@@ -26,6 +26,7 @@ public:
     void setRate(float rate) override;
     void setVolume(float volume) override;
     void setMute(bool muted) override;
+    void setImageFit(ImageFit fit) override;
     void stop() override;
     float positionSec() const override;
     bool takeError(std::string* error) override;

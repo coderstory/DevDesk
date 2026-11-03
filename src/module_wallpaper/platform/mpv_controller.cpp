@@ -548,6 +548,11 @@ void MpvController::setMute(bool muted) {
     (void)impl_->enqueue(std::move(command));
 }
 
+void MpvController::setImageFit(ImageFit /*fit*/) {
+    // mpv 路线只实现「填充」（--panscan=1.0 全局参数）：其余三种铺法是 deferred
+    // 决策（见技术方案 §3 决策记录），这里刻意 no-op，不假装支持。
+}
+
 float MpvController::positionSec() const {
     if (!impl_) return 0.0f;
     return static_cast<float>(impl_->positionMs.load(std::memory_order_relaxed)) / 1000.0f;

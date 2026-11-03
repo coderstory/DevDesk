@@ -52,6 +52,50 @@ if(WIN32)
     )
     # yield_watchers：wtsapi32（WTS 会话通知）；image_probe：ole32 + windowscodecs（COM + WIC）。
     target_link_libraries(devdesk_module_wallpaper PRIVATE wtsapi32 ole32 windowscodecs)
+elseif(APPLE)
+    # macOS 原生路线（ObjC++）：CGWindowLevel 桌面层窗口 + AVFoundation 播放 +
+    # 五路让路 watcher（锁屏/熄屏/睡眠/电池/全屏）。没有 mpv 进程——相应地不需要
+    # 分发 GPL 播放器，也没有 assets/mpv 解析路径。
+    target_sources(devdesk_module_wallpaper PRIVATE
+        platform/mpv_player.cpp
+        platform/mpv_player.h
+        platform/wallpaper_host_macos.mm
+        platform/wallpaper_host_macos_view.h
+        platform/mpv_controller_macos.mm
+        platform/yield_watchers_macos.mm
+        platform/image_probe_macos.cpp
+        # 纯几何层（跨平台，macOS 侧消费；Win 侧不消费故不编进 Win 分支）
+        platform/image_fit_geometry.h
+        platform/fullscreen_geometry.h
+    )
+    # AppKit（桌面层窗口）/ AVFoundation（AVQueuePlayer + AVPlayerLooper）/
+    # CoreGraphics（CGWindowList、显示重配置、CGImageSource）/ IOKit（电源状态）。
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
+    find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
+    find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
+    find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
+    target_link_libraries(devdesk_module_wallpaper PRIVATE
+        ${APPKIT_FRAMEWORK}
+        ${AVFOUNDATION_FRAMEWORK}
+        ${COREGRAPHICS_FRAMEWORK}
+        ${COREVIDEO_FRAMEWORK}
+        ${IOKIT_FRAMEWORK}
+        ${IMAGEIO_FRAMEWORK}
+        ${QUARTZCORE_FRAMEWORK}
+        ${COREMEDIA_FRAMEWORK}
+    )
+    # .mm 需要 ObjC++（顶层已在 APPLE 分支 enable_language(OBJCXX)）。ARC 只给
+    # 本模块的 ObjC++ 文件打开：其它 .cpp 不受影响，ObjC 内存管理在 .mm 内自洽
+    # （与 platform/notification_macos.mm 同一纪律）。
+    set_source_files_properties(
+        platform/wallpaper_host_macos.mm
+        platform/mpv_controller_macos.mm
+        platform/yield_watchers_macos.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 else()
     target_sources(devdesk_module_wallpaper PRIVATE
         platform/mpv_player.cpp

@@ -309,6 +309,11 @@ void WallpaperService::setImageFit(ImageFit fit) {
     std::lock_guard<std::mutex> lock(mu_);
     settings_.imageFit = fit;
     snapshot_.imageFit = fit;
+    {
+        // 当场生效：只翻铺法不动图（重解码在主线程是一张卡的可见卡顿）。
+        std::lock_guard<std::mutex> playerLock(playerMu_);
+        if (player_) player_->setImageFit(fit);
+    }
     persistLocked();
 }
 
@@ -769,6 +774,7 @@ void WallpaperService::applySettingsToPlayerLocked() {
     player_->setRate(settings_.rate);
     player_->setVolume(settings_.volume);
     player_->setMute(settings_.muted);
+    player_->setImageFit(settings_.imageFit);
 }
 
 void WallpaperService::persistLocked() {

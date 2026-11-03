@@ -3,7 +3,9 @@
 
 namespace platform::wallpaper {
 
-// 第二阶段 ObjC++ 平台层落地前不注册壁纸页（工厂走 nullptr 分支）。
-bool supported() { return false; }
+// macOS：AVFoundation 原生播放 + CGWindowLevel 桌面层窗口 + 五路让路 watcher
+// （锁屏/熄屏/睡眠/电池/全屏），平台层在 src/module_wallpaper/platform/*_macos.mm。
+// 与 Windows 版能力对等，因此返回 true（壁纸页可注册）。
+bool supported() { return true; }
 
 } // namespace platform::wallpaper

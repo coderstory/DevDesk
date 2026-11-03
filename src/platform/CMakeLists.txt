@@ -56,7 +56,7 @@ elseif(APPLE)
         autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
         process_runner_macos.cpp        # 进程执行器：posix_spawn + 管道全捕获（UAT6）
         process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
-        wallpaper_capability_macos.cpp  # 壁纸宿主能力：第二阶段 ObjC++ 平台层前恒 false
+        wallpaper_capability_macos.cpp  # 壁纸宿主能力：AVFoundation + 桌面层窗口，恒 true
         window_visibility_macos.cpp     # 主窗可见态：当前 GLFW 上下文窗口的 ICONIFIED/VISIBLE（无句柄 fail-open）
     )
 else()
