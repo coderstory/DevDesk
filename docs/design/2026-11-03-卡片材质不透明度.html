@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<!-- =====================================================================
+  demo 仅视觉校准，不是实现蓝图。
+  对应设计文档：docs/design/2026-11-03-卡片材质不透明度.md（池127+池128）
+  用法：浏览器直接打开；右上角切浅色/深色；拖窗缩放验证自适应
+  （≥980px 双栏对比 / <980px 单栏；最小可用 1000×640）。
+  参数与文档 §2/§4 一一对应：现状 L1=0.55/L2=0.72（暗 0.55/0.92），
+  建议 L1=0.80/L2=0.94（暗 0.78/0.95）；可选：边 0.72→0.60（暗 0.12）、
+  阴影 0.06→0.09。暗色底色为示意近似值（实现只改 alpha，RGB 不动）。
+====================================================================== -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>卡片透明度校准 demo（池127+128）</title>
+<style>
+  :root{
+    --green:#36D399; --green-soft:#E6FBF2; --green-ink:#157E4E;
+    --t1:#1A1A1A; --t2:#666666; --t3:#999999;
+    --page:#F7F7F7; --surf:248,253,250;           /* 玻璃填充色（浅色绿染白） */
+    --l1a:.55; --l2a:.72;                          /* 现状 alpha（列内覆盖） */
+    --bd:rgba(255,255,255,.72); --sh:16,54,38, .06;
+    --halo1:rgba(54,211,153,.30); --halo2:rgba(54,211,153,.16);
+    --band:rgba(54,211,153,.42);
+    --chipbg:#F2F2F2; --div:#E5E5E5;
+  }
+  body.dark{
+    --t1:#F2F5F7; --t2:#A9B4BE; --t3:#7C8792;
+    --page:#14181F; --surf:38,44,56;
+    --bd:rgba(255,255,255,.10); --sh:0,0,0,.34;
+    --halo1:rgba(54,211,153,.20); --halo2:rgba(54,211,153,.10);
+    --band:rgba(54,211,153,.22);
+    --chipbg:#2A3140; --div:#333B4A; --green-soft:rgba(54,211,153,.14);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--t1); background:var(--page); overflow-x:hidden;
+  }
+  /* 动态背景模拟：多点 halo + 一条对角高亮带（最坏可读性位） */
+  .bg{position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(560px 420px at 12% 8%,  var(--halo1), transparent 70%),
+      radial-gradient(640px 480px at 88% 22%, var(--halo2), transparent 70%),
+      radial-gradient(520px 520px at 30% 88%, var(--halo1), transparent 70%),
+      radial-gradient(420px 380px at 72% 68%, var(--halo2), transparent 70%),
+      linear-gradient(115deg, transparent 26%, var(--band) 40%, var(--band) 56%, transparent 70%),
+      var(--page);
+  }
+  body.dark .bg{background:
+      radial-gradient(560px 420px at 12% 8%,  var(--halo1), transparent 70%),
+      radial-gradient(640px 480px at 88% 22%, var(--halo2), transparent 70%),
+      radial-gradient(520px 520px at 30% 88%, var(--halo1), transparent 70%),
+      linear-gradient(115deg, transparent 26%, var(--band) 40%, var(--band) 56%, transparent 70%),
+      var(--page);
+  }
+  /* 顶栏 */
+  header{position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:16px;
+    padding:12px 24px; background:rgba(var(--surf),.94); border-bottom:1px solid var(--div);
+    backdrop-filter:none;}
+  header h1{font-size:16px; font-weight:700;}
+  header .vals{font-size:12px; color:var(--t2);}
+  header .vals b{color:var(--green-ink); font-weight:700;}
+  body.dark header .vals b{color:var(--green);}
+  .sw{margin-left:auto; display:flex; gap:0; border:1px solid var(--div); border-radius:6px; overflow:hidden;}
+  .sw button{border:0; background:transparent; color:var(--t2); font-size:12px;
+    padding:6px 14px; cursor:pointer;}
+  .sw button.on{background:var(--green-soft); color:var(--green-ink); font-weight:700;}
+  body.dark .sw button.on{color:var(--green);}
+  /* 布局 */
+  main{position:relative; z-index:1; max-width:1720px; margin:0 auto; padding:24px;
+    display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start;}
+  @media (max-width:979px){ main{grid-template-columns:1fr;} }
+  /* L1 容器面板：列内变量决定 alpha（现状 vs 建议） */
+  .col{--la:var(--l1a); --ta:var(--l2a);
+    background:rgba(var(--surf),var(--la));
+    border:1px solid var(--bd); border-radius:16px;
+    box-shadow:0 6px 20px rgba(var(--sh));
+    padding:16px; display:flex; flex-direction:column; gap:12px;}
+  .col.prop{ --la:.80; --ta:.94;
+    --bd:rgba(255,255,255,.60); --sh:16,54,38,.09; }
+  body.dark .col.prop{ --la:.78; --ta:.95;
+    --bd:rgba(255,255,255,.12); --sh:0,0,0,.34; }
+  .col.maxh{max-height:calc(100vh - 128px); overflow:auto;}
+  .chead{display:flex; align-items:baseline; gap:10px;}
+  .chead h2{font-size:16px;}
+  .chip{font-size:11px; font-family:Consolas,monospace; color:var(--t2);
+    background:var(--chipbg); border-radius:4px; padding:2px 8px;}
+  .chip.hot{color:var(--green-ink); background:var(--green-soft); font-weight:700;}
+  body.dark .chip.hot{color:var(--green);}
+  .sec{font-size:12px; color:var(--t3); margin-top:4px;}
+  /* L2 功能卡：果冻按压 */
+  .card{position:relative; background:rgba(var(--surf),var(--ta));
+    border:1px solid var(--bd); border-radius:6px;
+    box-shadow:0 2px 8px rgba(var(--sh));
+    padding:14px 16px; cursor:pointer; overflow:hidden;
+    transition:transform 160ms cubic-bezier(.34,1.56,.64,1);}
+  .card:active{transform:scale(.965); transition:transform 70ms ease-out;}
+  .card:hover{box-shadow:0 4px 14px rgba(var(--sh));}
+  .card.fx::after{content:""; position:absolute; inset:0; border-radius:inherit;
+    background:rgba(0,0,0,0); transition:background 120ms ease-out; pointer-events:none;}
+  .card.fx:hover::after{background:rgba(0,0,0,.05);}
+  .card.fx:active::after{background:rgba(0,0,0,.09);}
+  body.dark .card.fx:hover::after{background:rgba(0,0,0,.10);}
+  body.dark .card.fx:active::after{background:rgba(0,0,0,.16);}
+  .grow{display:flex; gap:12px; align-items:flex-start;}
+  .ic{width:36px; height:36px; border-radius:6px; background:var(--green-soft);
+    color:var(--green-ink); display:flex; align-items:center; justify-content:center;
+    font-size:14px; font-weight:700; flex:none;}
+  body.dark .ic{color:var(--green);}
+  .card h3{font-size:14px; font-weight:700;}
+  .card p{font-size:12px; color:var(--t2); margin-top:4px; line-height:1.5;}
+  .card .hint{font-size:12px; color:var(--t3); margin-top:2px;}
+  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:12px;}
+  .stat{position:relative; background:rgba(var(--surf),var(--ta));
+    border:1px solid var(--bd); border-radius:6px; box-shadow:0 2px 8px rgba(var(--sh));
+    padding:12px 14px; cursor:pointer; overflow:hidden;
+    transition:transform 160ms cubic-bezier(.34,1.56,.64,1);}
+  .stat:active{transform:scale(.965); transition:transform 70ms ease-out;}
+  .stat b{font-size:18px; font-weight:700;}
+  .stat span{display:block; font-size:12px; color:var(--t3); margin-top:2px;}
+  .stat .up{color:var(--green-ink); font-size:12px; font-weight:700;}
+  body.dark .stat .up{color:var(--green);}
+  /* 可读性对照块（刻意压在高亮带上） */
+  .read{border:1px dashed var(--t3); border-radius:6px; padding:12px 14px; cursor:default;
+    background:rgba(var(--surf),var(--ta));}
+  .read .row{font-size:14px; line-height:1.9;}
+  .read .row small{font-size:11px; color:var(--t3); margin-left:8px;}
+  /* md 列壳对比 */
+  .mdwrap{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  @media (max-width:1229px){ .mdwrap{grid-template-columns:1fr;} }
+  .mdbox{border-radius:6px;}
+  /* 现状：三层套娃 */
+  .md-now{background:var(--page); border:1px solid var(--div); border-radius:6px; padding:14px;}
+  .md-paper{background:#FFFFFF; border:1px solid var(--div); border-radius:16px; padding:12px;
+    color:var(--t1);}
+  body.dark .md-paper{background:#2A3140;}
+  .md-input{background:#FFFFFF; border:1px solid var(--div); border-radius:6px;
+    padding:10px 12px; font-size:13px; color:var(--t1); min-height:64px;}
+  body.dark .md-input{background:#1B212C;}
+  .md-tags{display:flex; gap:8px; margin-top:8px;}
+  .md-tag{font-size:11px; background:var(--chipbg); color:var(--t2);
+    border-radius:4px; padding:3px 10px;}
+  .md-status{margin-top:10px; border-radius:6px; padding:6px 12px; font-size:11px; color:var(--t3);
+    background:rgba(var(--surf),.72); border:1px solid var(--bd);}
+  body.dark .md-status{background:rgba(var(--surf),.72);}
+  /* 建议：单层玻璃壳 */
+  .md-one{position:relative; background:rgba(var(--surf),.94); border:1px solid rgba(255,255,255,.60);
+    border-radius:16px; box-shadow:0 6px 20px rgba(16,54,38,.09); padding:12px; color:var(--t1);}
+  body.dark .md-one{background:rgba(var(--surf),.95); border-color:rgba(255,255,255,.12);
+    box-shadow:0 6px 20px rgba(0,0,0,.34);}
+  .md-one .md-input{background:transparent; border:0; border-bottom:1px solid var(--div); border-radius:0; padding:8px 4px;}
+  .md-one .md-input:focus{outline:none; border-bottom:1.5px solid var(--green); background:var(--green-soft);}
+  .md-one .md-status{background:transparent; border:0; border-top:1px solid var(--div); border-radius:0;}
+  footer{position:relative; z-index:1; max-width:1720px; margin:0 auto; padding:0 24px 24px;
+    font-size:12px; color:var(--t3);}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<header>
+  <h1>卡片透明度校准（池127 + 池128）</h1>
+  <div class="vals">现状 L1 <b>0.55</b> / L2 <b>0.72</b>（暗 0.55/0.92）→ 建议 L1 <b>0.80</b> / L2 <b>0.94</b>（暗 0.78/0.95）｜层差 0.14 / 0.17</div>
+  <div class="sw">
+    <button id="btnL" class="on" onclick="setTheme(false)">浅色</button>
+    <button id="btnD" onclick="setTheme(true)">深色</button>
+  </div>
+</header>
+
+<main>
+  <!-- 左：现状 -->
+  <section class="col now maxh">
+    <div class="chead"><h2>现状</h2><span class="chip">L1 α=0.55</span><span class="chip">L2 α=0.72</span><span class="chip">边 白0.72</span><span class="chip">影 0.06</span></div>
+    <div class="sec">容器太虚、功能卡透出 halo——「太透」观感复现</div>
+    <div class="stats">
+      <div class="stat"><b>12,847</b><span>累计任务 <i class="up">▲ 8%</i></span></div>
+      <div class="stat"><b>96.2%</b><span>本周完成率</span></div>
+      <div class="stat"><b>32</b><span>进行中 <i class="up">▲ 5</i></span></div>
+    </div>
+    <div class="card fx grow">
+      <div class="ic">码</div>
+      <div><h3>发布工作台</h3><p>打包、校验与发版记录汇总，最近一次 2 小时前。</p><div class="hint">含 3 条待确认项</div></div>
+    </div>
+    <div class="card fx grow">
+      <div class="ic">记</div>
+      <div><h3>记忆库</h3><p>长期记忆 428 条，今日新增 6 条，去重待审 2 条。</p><div class="hint">上次整理 11-02</div></div>
+    </div>
+    <div class="sec">交互态：hover / 按压（按住感受果冻回弹）</div>
+    <div class="card fx"><h3>列表项 A（hover 提深 / 按压缩放）</h3><p>混黑 0.05 / 0.09 —— 有效加深 3.6% / 6.5%，偏弱</p></div>
+    <div class="card fx"><h3>列表项 B</h3><p>半透底上按压观感发飘</p></div>
+    <div class="read">
+      <div class="row" style="color:var(--t1)">一级文字：始终清晰<small>#1A1A1A ≈14.0:1</small></div>
+      <div class="row" style="color:var(--t2)">二级文字：高亮带处偏浅<small>#666666 ≈4.6:1</small></div>
+      <div class="row" style="color:var(--t3)">三级文字：高亮带处接近淹没<small>#999999 ≈2.3:1</small></div>
+      <div class="hint">本块刻意压在背景对角高亮带上（最坏位）</div>
+    </div>
+  </section>
+
+  <!-- 右：建议 -->
+  <section class="col prop maxh">
+    <div class="chead"><h2>建议</h2><span class="chip hot">L1 α=0.80</span><span class="chip hot">L2 α=0.94</span><span class="chip">边 白0.60（可选）</span><span class="chip">影 0.09（可选）</span></div>
+    <div class="sec">接近实体卡 + 保留 6% 玻璃呼吸；层差 0.14 深度仍在</div>
+    <div class="stats">
+      <div class="stat"><b>12,847</b><span>累计任务 <i class="up">▲ 8%</i></span></div>
+      <div class="stat"><b>96.2%</b><span>本周完成率</span></div>
+      <div class="stat"><b>32</b><span>进行中 <i class="up">▲ 5</i></span></div>
+    </div>
+    <div class="card fx grow">
+      <div class="ic">码</div>
+      <div><h3>发布工作台</h3><p>打包、校验与发版记录汇总，最近一次 2 小时前。</p><div class="hint">含 3 条待确认项</div></div>
+    </div>
+    <div class="card fx grow">
+      <div class="ic">记</div>
+      <div><h3>记忆库</h3><p>长期记忆 428 条，今日新增 6 条，去重待审 2 条。</p><div class="hint">上次整理 11-02</div></div>
+    </div>
+    <div class="sec">交互态：混黑比例不变——有效加深升至 4.7% / 8.5%，反馈更实且不脏</div>
+    <div class="card fx"><h3>列表项 A（hover 提深 / 按压缩放）</h3><p>按住对比左列：下压更笃定，回弹一致</p></div>
+    <div class="card fx"><h3>列表项 B</h3><p>实底上按压观感稳定</p></div>
+    <div class="read">
+      <div class="row" style="color:var(--t1)">一级文字：清晰<small>#1A1A1A ≈16.3:1</small></div>
+      <div class="row" style="color:var(--t2)">二级文字：达标<small>#666666 ≈5.4:1</small></div>
+      <div class="row" style="color:var(--t3)">三级文字：改善 +0.4，仍限提示用途<small>#999999 ≈2.7:1</small></div>
+      <div class="hint">同样压在高亮带上，与左列直接对照</div>
+    </div>
+  </section>
+</main>
+
+<!-- 池128：md 编辑列壳 前后对比 -->
+<main style="padding-top:0;">
+  <section class="col now" style="grid-column:1/-1;">
+    <div class="chead"><h2>md 编辑列壳：三层套娃 → 单层玻璃壳（池128，范围=编辑+预览两列）</h2></div>
+    <div class="mdwrap">
+      <div class="mdbox">
+        <div class="sec" style="margin-bottom:8px">现状：①列底不透明灰 ②纸卡不透明白+边 ③编辑框/tags/状态条再套一层</div>
+        <div class="md-now">
+          <div class="md-paper">
+            <div class="md-input" contenteditable="false" spellcheck="false"># 笔记标题<br>编辑器框（不透明白）嵌在纸卡里…</div>
+            <div class="md-tags"><span class="md-tag">工作</span><span class="md-tag">设计</span><span class="md-tag">池128</span></div>
+            <div class="md-status">第 12 行 / 308 字 · 状态条又是一层半透卡</div>
+          </div>
+        </div>
+      </div>
+      <div class="mdbox">
+        <div class="sec" style="margin-bottom:8px">建议：只留一层玻璃壳（α=0.94/0.95），编辑框与 tags 透明依附</div>
+        <div class="md-one">
+          <div class="md-input" contenteditable="true" spellcheck="false"># 笔记标题<br>编辑框全透明+底部边线，点我试 focus 绿边…</div>
+          <div class="md-tags"><span class="md-tag">工作</span><span class="md-tag">设计</span><span class="md-tag">池128</span></div>
+          <div class="md-status">第 12 行 / 308 字 · 状态条=透明+顶部分割线</div>
+        </div>
+      </div>
+    </div>
+    <div class="hint" style="font-size:12px;color:var(--t3);margin-top:8px">壳=L2 glassFill（编辑主工作面接近实体，非 L1 面板档）；①列底与②纸卡整体删除，动态背景直接透到壳后。</div>
+  </section>
+</main>
+
+<style>
+  /* ===== 追加批次（池129/130/131/132/134） ===== */
+  .mdhead{display:flex;gap:8px;align-items:center;margin-top:4px;}
+  .searchbox{flex:1;height:40px;border:1px solid var(--div);border-radius:6px;display:flex;
+    align-items:center;gap:8px;padding:0 12px;color:var(--t3);font-size:13px;
+    background:rgba(var(--surf),var(--ta));}
+  .ic-btn{width:28px;height:40px;border-radius:6px;display:flex;align-items:center;
+    justify-content:center;color:var(--t2);cursor:pointer;flex:none;border:1px solid transparent;
+    transition:all 120ms ease-out;font-size:12px;}
+  .ic-btn:hover{background:var(--chipbg);color:var(--t1);}
+  .ic-btn svg{width:15px;height:15px;display:block;}
+  .frame{position:relative;height:200px;border:1px solid var(--div);border-radius:6px;
+    background:var(--page);overflow:hidden;}
+  .frame .hd{position:absolute;left:10px;right:10px;top:8px;height:13px;border-radius:3px;
+    background:rgba(var(--surf),.9);border:1px solid var(--div);font-size:8px;color:var(--t3);
+    display:flex;align-items:center;padding:0 4px;}
+  .frame .tree{position:absolute;border-radius:4px;background:rgba(var(--surf),.80);
+    border:1px solid var(--bd);font-size:8px;color:var(--t3);padding:3px;}
+  .frame .ed{position:absolute;border-radius:4px;background:rgba(var(--surf),.94);
+    border:1px solid var(--bd);font-size:8px;color:var(--t3);padding:3px;}
+  .frame .tabs{position:absolute;height:10px;border-radius:3px;background:var(--green-soft);
+    border:1px solid var(--green);color:var(--green-ink);font-size:8px;display:flex;
+    align-items:center;justify-content:center;}
+  body.dark .frame .tabs{color:var(--green);}
+  .about-card{width:min(760px,100%);margin:0 auto;background:rgba(var(--surf),.94);
+    border:1px solid var(--bd);border-radius:16px;box-shadow:0 6px 20px rgba(var(--sh));
+    padding:16px;color:var(--t1);}
+  .about-card h4{font-size:16px;margin-bottom:12px;}
+  .about-card .grp{font-size:14px;font-weight:600;margin:10px 0 2px;}
+  .about-card .ln{display:flex;font-size:12px;line-height:32px;}
+  .about-card .ln i{font-style:normal;width:100px;color:var(--t3);text-align:right;
+    padding-right:16px;flex:none;}
+  .about-card .ln b{font-weight:400;color:var(--t1);}
+  .about-card .dv{height:1px;background:var(--div);margin:10px 0;}
+  .foot-line{text-align:center;font-size:11px;color:var(--t3);margin-top:10px;}
+  .rem-card{position:relative;height:92px;background:rgba(var(--surf),.94);
+    border:1px solid var(--bd);border-radius:12px;box-shadow:0 2px 8px rgba(var(--sh));
+    padding:22px 28px;color:var(--t1);}
+  .rem-card .rt{font-size:14px;font-weight:700;}
+  .rem-card .rd{position:absolute;top:22px;right:28px;font-size:12px;color:var(--t3);
+    text-align:right;max-width:60%;}
+  .rem-half{position:absolute;top:44px;height:32px;display:flex;align-items:center;
+    justify-content:space-between;font-size:13px;font-weight:500;}
+  .rem-half.l{left:28px;width:calc(50% - 28px);}
+  .rem-half.r{left:50%;width:calc(50% - 28px);}
+  .tgl{width:44px;height:24px;border-radius:12px;background:var(--chipbg);position:relative;
+    flex:none;cursor:pointer;transition:background 150ms;}
+  .tgl::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;
+    border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);
+    transition:left 150ms ease-out;}
+  .tgl.on{background:var(--green);}
+  .tgl.on::after{left:22px;}
+  .rls-card{background:rgba(var(--surf),var(--la));border:1px solid var(--bd);border-radius:12px;
+    padding:10px 12px;color:var(--t1);}
+  .rls-head{display:flex;gap:12px;font-size:11px;color:var(--t3);height:26px;align-items:center;
+    padding:0 16px;border-bottom:1px solid var(--div);margin-bottom:6px;}
+  .rls-head span:nth-child(1){width:90px;} .rls-head span:nth-child(2){width:90px;}
+  .rls-head span:nth-child(3){flex:1;}
+  .old-row{height:56px;display:flex;align-items:center;gap:12px;font-size:13px;
+    padding:0 16px;border-bottom:1px solid var(--div);}
+  .old-row span:nth-child(1){width:90px;font-weight:600;}
+  .old-row span:nth-child(2){width:90px;color:var(--t2);}
+  .old-row span:nth-child(3){flex:1;color:var(--t3);font-size:12px;}
+  .rc-row{height:52px;margin-bottom:4px;background:rgba(var(--surf),.94);border:1px solid var(--bd);
+    border-radius:6px;display:flex;align-items:center;gap:12px;font-size:13px;padding:0 12px;
+    transition:transform 160ms cubic-bezier(.34,1.56,.64,1);}
+  .rc-row:active{transform:scale(.99);}
+  .rc-row span:nth-child(1){width:86px;font-weight:600;}
+  .rc-row span:nth-child(2){width:86px;color:var(--t2);}
+  .rc-row span:nth-child(3){flex:1;color:var(--t3);font-size:12px;}
+  .txt-btn{font-size:12px;color:var(--green-ink);cursor:pointer;}
+  body.dark .txt-btn{color:var(--green);}
+  .txt-btn.danger{color:#EF4444;}
+</style>
+
+<main style="padding-top:0;">
+  <section class="col now">
+    <div class="chead"><h2>F1 现状</h2><span class="chip">📁 系统emoji</span><span class="chip">「+」文本</span><span class="chip">树节点 FA 0xF07B</span></div>
+    <div class="sec">三套字形混用（md_module_tree.cpp:262-277）</div>
+    <div class="mdhead">
+      <div class="searchbox">&#128269; 搜索笔记…</div>
+      <div class="ic-btn">+</div>
+      <div class="ic-btn">&#128193;</div>
+    </div>
+    <div class="card"><h3>树节点</h3><p>FA 图标 0xF07B（文件夹）——与头部 📁 不同族</p></div>
+  </section>
+  <section class="col prop">
+    <div class="chead"><h2>F1 建议</h2><span class="chip hot">plus 0xF067</span><span class="chip hot">folder-plus 0xF65E</span><span class="chip">14/40 居中</span></div>
+    <div class="sec">FA7 Free-Solid 同族（打包 OTF 字形已核实）；hover=浅灰底+文字色 textPrimary</div>
+    <div class="mdhead">
+      <div class="searchbox">&#128269; 搜索笔记…（同族 FA）</div>
+      <div class="ic-btn" title="+笔记 = plus 0xF067"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></div>
+      <div class="ic-btn" title="+文件夹 = folder-plus 0xF65E"><svg viewBox="0 0 16 16"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.4 1.6h4.6A1.5 1.5 0 0 1 14 6.1v5.4A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z" fill="currentColor"/><path d="M8 6.6v3.6M6.2 8.4h3.6" stroke="rgba(128,128,128,.35)" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg></div>
+    </div>
+    <div class="card"><h3>树节点</h3><p>0xF07B——三处同族；按钮盒 28×40 / y=48 / radius 6 不动</p></div>
+    <div class="hint">左钮 = +笔记（plus），右钮 = +文件夹（folder-plus），hover 我试试</div>
+  </section>
+</main>
+
+<main style="padding-top:0;">
+  <section class="col prop" style="grid-column:1/-1;">
+    <div class="chead"><h2>F2 笔记选项卡几何</h2><span class="chip hot">只从编辑列扣 32</span><span class="chip">树列恢复满高</span></div>
+    <div class="mdwrap" style="margin-top:4px;">
+      <div>
+        <div class="frame">
+          <div class="hd">header 40</div>
+          <div class="tree" style="left:10px;top:25px;bottom:10px;width:70px;">树列<br>满高 560</div>
+          <div class="ed" style="left:90px;right:10px;top:39px;bottom:10px;">编辑列内容 520</div>
+          <div class="tabs" style="left:90px;top:25px;width:62%;">tabBar 32（x=236，宽=编辑列 684/342）</div>
+        </div>
+        <div class="hint">1000×640：root 列体高 560｜tabBar x=sideW+gap｜双栏 342 / 单栏 684｜树折叠时 x=16、宽 904/452</div>
+      </div>
+      <div>
+        <div class="frame">
+          <div class="hd">header 40</div>
+          <div class="tree" style="left:7px;top:20px;bottom:7px;width:44px;">树列 满高 920</div>
+          <div class="ed" style="left:56px;right:7px;top:31px;bottom:7px;">编辑列 880</div>
+          <div class="tabs" style="left:56px;top:20px;width:58%;">tabBar 32（宽 1284/642）</div>
+        </div>
+        <div class="hint">1600×1000：root 列体高 920｜tabBar x=236｜双栏 642 / 单栏 1284</div>
+      </div>
+    </div>
+    <div class="hint">比例示意（非像素级）：tabBar 左缘严贴编辑列左缘，树列不再被扣 32+8。</div>
+  </section>
+</main>
+
+<main style="padding-top:0;">
+  <section class="col prop" style="grid-column:1/-1;">
+    <div class="chead"><h2>F3 关于页卡片化</h2><span class="chip hot">卡宽 min(760, w−64)</span><span class="chip">y=24 / pad 16</span><span class="chip">卡高 464 钳 540</span></div>
+    <div class="about-card">
+      <h4>关于</h4>
+      <div class="grp">版本信息</div>
+      <div class="ln"><i>版本</i><b>DevDesk 1.x（示意）</b></div>
+      <div class="ln"><i>Git commit</i><b>abc1234</b></div>
+      <div class="ln"><i>EUI-NEO</i><b>fork/main @ def5678</b></div>
+      <div class="dv"></div>
+      <div class="grp">构建信息</div>
+      <div class="ln"><i>构建时间</i><b>2026-11-03 12:00</b></div>
+      <div class="ln"><i>编译器</i><b>MinGW64 GCC</b></div>
+      <div class="dv"></div>
+      <div class="grp">许可与致谢</div>
+      <div class="ln"><i>开源协议</i><b>MIT License</b></div>
+    </div>
+    <div class="foot-line">页脚（同轴：卡心=页心=页脚心）· 最小窗 640×640 时卡底 488 &lt; footerY 588，余 100px</div>
+    <div class="hint">标题由顶格 y=0 下移至 40（卡 y=24+内边距 16）；150% 字号内容 ~648 → 卡高钳 540 卡内滚动。</div>
+  </section>
+</main>
+
+<main style="padding-top:0;">
+  <section class="col prop" style="grid-column:1/-1;">
+    <div class="chead"><h2>F4 提醒弹窗卡 · 两开关统一</h2><span class="chip hot">开关 x=colX+halfW−44</span><span class="chip">说明右对齐贴右缘</span><span class="chip">卡高 92 不变</span></div>
+    <div class="rem-card" style="max-width:720px;">
+      <div class="rt">提醒弹窗</div>
+      <div class="rd">到期事项弹全屏置顶窗（默认关，仅记日志）</div>
+      <div class="rem-half l"><span>上线提醒弹窗</span><span class="tgl on" onclick="this.classList.toggle('on')"></span></div>
+      <div class="rem-half r"><span>调度全屏弹窗</span><span class="tgl" onclick="this.classList.toggle('on')"></span></div>
+    </div>
+    <div class="hint">两开关镜像对称、各贴半列右缘（对照现状：左=紧跟 label x=150、右=贴卡缘）；说明右对齐与右列开关同缘。点开关可切换。</div>
+  </section>
+</main>
+
+<main style="padding-top:0;">
+  <section class="col now">
+    <div class="chead"><h2>F5 现状</h2><span class="chip">行=文字+1px 分割线</span><span class="chip">kRowH=56（源码，非简报 64）</span></div>
+    <div class="rls-card" style="--la:.55;">
+      <div class="rls-head"><span>名称</span><span>类型</span><span>默认分支</span><span>操作</span></div>
+      <div class="old-row"><span>api-gateway</span><span>后端</span><span>main · 5 个配置项</span><span class="txt-btn">编辑</span><span class="txt-btn danger">删除</span></div>
+      <div class="old-row"><span>web-portal</span><span>前端</span><span>— · 无配置项</span><span class="txt-btn">编辑</span><span class="txt-btn danger">删除</span></div>
+      <div class="old-row" style="border-bottom:0;"><span>ci-runner</span><span>后端</span><span>release · 5 个配置项</span><span class="txt-btn">编辑</span><span class="txt-btn danger">删除</span></div>
+    </div>
+  </section>
+  <section class="col prop">
+    <div class="chead"><h2>F5 建议</h2><span class="chip hot">itemSurface 行卡</span><span class="chip hot">h=52+间距4=节距56</span><span class="chip">radius 6 · 去分割线</span></div>
+    <div class="rls-card" style="--la:.80;">
+      <div class="rls-head" style="margin-left:0;margin-right:0;padding:0 12px;"><span>名称</span><span>类型</span><span>默认分支</span><span>操作</span></div>
+      <div class="rc-row"><span>api-gateway</span><span>后端</span><span>main · 5 个配置项</span><span class="txt-btn">编辑</span><span class="txt-btn danger">删除</span></div>
+      <div class="rc-row"><span>web-portal</span><span>前端</span><span>— · 无配置项</span><span class="txt-btn">编辑</span><span class="txt-btn danger">删除</span></div>
+      <div class="rc-row" style="margin-bottom:0;"><span>ci-runner</span><span>后端</span><span>release · 5 个配置项</span><span class="txt-btn">编辑</span><span class="txt-btn danger">删除</span></div>
+    </div>
+    <div class="hint">行高 52+间距 4 → 节距 56 与原 kRowH 一致，列表总高零变化（零滚动预算守住）；表头同参内缩对齐；行不可点故无行级 hover。父卡池127 新 alpha（0.80/0.94）。</div>
+  </section>
+</main>
+
+<footer>
+  深色底色为示意近似值——实现只改 alpha，RGB 不动｜边/阴影为可选参数｜F1~F5 为追加批次示意（几何非像素级）｜本页仅视觉校准，不是实现蓝图（详见同名 .md 设计文档）
+</footer>
+
+<script>
+function setTheme(dark){
+  document.body.classList.toggle('dark', dark);
+  document.getElementById('btnL').classList.toggle('on', !dark);
+  document.getElementById('btnD').classList.toggle('on', dark);
+}
+</script>
+</body>
+</html>
