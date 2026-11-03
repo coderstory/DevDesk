@@ -241,6 +241,13 @@ int runProbe(const std::string& videoPath, const std::string& imagePath) {
             std::cout << "wallpaper_macos_probe: yield poll battery="
                       << (onBattery ? "true" : "false")
                       << " fullscreen=" << (fullscreen ? "true" : "false") << "\n";
+            // 壁纸窗口在桌面层（实测 layer=-2147483623），**不是 layer 0**，因此天然
+            // 不会被全屏扫描枚举——不会被自己让路。这里 true 与否取决于桌面上是否
+            // 真有别的 app 铺满屏幕（探针跑在终端里时终端就是），不是缺陷。
+            // 真正要钉的是「扫描逻辑不崩且可重复」：连续两次结果一致。
+            const bool fullscreenAgain = watchers->pollFullscreenOtherProcess();
+            check(fullscreen == fullscreenAgain,
+                  "§8 全屏轮询应可重复且结果稳定（同环境连查两次一致）");
             watchers->stop();
             watchers->stop();  // 幂等
         }

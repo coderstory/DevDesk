@@ -277,6 +277,9 @@ void MpvController::load(const std::string& path, float seekSeconds) {
                 AVPlayerItem* item = [AVPlayerItem playerItemWithURL:url];
                 // 保音高必须显式设：macOS 12+ 默认 timeDomain 会变调。
                 item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
+                // 定值 3.0（沿用已验证实现）。与上面一条同理，必须在 looper 之前设：
+                // looper 的克隆体不继承 item 属性，晚设只对本次生效。
+                item.preferredForwardBufferDuration = 3.0;
 
                 // 先插后扫：队列全程非空，避免 looper 异步补位期间闪屏。
                 [box.looper disableLooping];
