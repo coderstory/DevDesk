@@ -2073,6 +2073,23 @@
    "updated_by": "ZCode主会话",
    "deleted": 0,
    "stage": ""
+  },
+  {
+   "id": 124,
+   "pool": "debt",
+   "title": "Windows 安装版覆盖更新：0.5.0 实装 → 当前构建（含 113/114 与今日修复），支撑真机验收",
+   "priority": "P1",
+   "status": "待验收",
+   "blocker": null,
+   "owner": "ZCode主会话",
+   "detail": "老板指令：软件已关闭，直接覆盖当前安装版本。执行：scripts/package-windows.sh 出 Release 安装包 → 静默覆盖安装（同 AppId，用户级 %LOCALAPPDATA%\\Programs\\DevDesk）→ 校验版本并启动。",
+   "created": "2026-11-03 13:08:35 +0800",
+   "updated": "2026-11-03 13:49:21 +0800",
+   "body": "老板指令：软件已关闭，直接覆盖当前安装版本。执行：scripts/package-windows.sh 出 Release 安装包 → 静默覆盖安装（同 AppId，用户级 %LOCALAPPDATA%\\Programs\\DevDesk）→ 校验版本并启动。",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0,
+   "stage": ""
   }
  ],
  "dev_progress": [
@@ -4133,6 +4150,33 @@
    "need_id": 123,
    "time": "2026-11-03 12:57:55 +0800",
    "note": "已修并自证：sampleRgb 补 py<imgH 界判 + 小屏窗口被钳时返回 77；ctest -L probe 27/27 过（b1 本机 Skip 77，非红）",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 230,
+   "need_id": 124,
+   "time": "2026-11-03 13:08:35 +0800",
+   "note": "打包→覆盖安装，验收前置",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 231,
+   "need_id": 124,
+   "time": "2026-11-03 13:08:35 +0800",
+   "note": "开始 Release 打包",
+   "created_by": null,
+   "updated_by": null,
+   "deleted": 0
+  },
+  {
+   "id": 232,
+   "need_id": 124,
+   "time": "2026-11-03 13:49:21 +0800",
+   "note": "完成：package-windows.sh 出 DevDesk-0.5.0-setup.exe(43M) → MSYS2_ARG_CONV_EXCL='*' 静默覆盖安装成功（install.log: Installation process succeeded）；实装 exe 24.8MB/Nov3 13:40，注册表 0.5.0，app 已启动(PID 9024)。证据 evidence/2026-11-03-win-install/（README+package.log+install.log）。坑：Git Bash 参数转换会把 /VERYSILENT 当路径，首次卡在语言选择对话框，已记 memory。",
    "created_by": null,
    "updated_by": null,
    "deleted": 0
@@ -11590,6 +11634,50 @@
    "from_status": "进行中",
    "to_status": "待验收",
    "reason": "已修并自证：sampleRgb 补 py<imgH 界判 + 小屏窗口被钳时返回 77；ctest -L probe 27/27 过（b1 本机 Skip 77，非红）",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 597,
+   "need_id": 124,
+   "time": "2026-11-03 13:08:35 +0800",
+   "from_status": null,
+   "to_status": "在池",
+   "reason": "入池",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 598,
+   "need_id": 124,
+   "time": "2026-11-03 13:08:35 +0800",
+   "from_status": "在池",
+   "to_status": "排产",
+   "reason": "打包→覆盖安装，验收前置",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 599,
+   "need_id": 124,
+   "time": "2026-11-03 13:08:35 +0800",
+   "from_status": "排产",
+   "to_status": "进行中",
+   "reason": "开始 Release 打包",
+   "created_by": "ZCode主会话",
+   "updated_by": "ZCode主会话",
+   "deleted": 0
+  },
+  {
+   "id": 600,
+   "need_id": 124,
+   "time": "2026-11-03 13:49:21 +0800",
+   "from_status": "进行中",
+   "to_status": "待验收",
+   "reason": "完成：package-windows.sh 出 DevDesk-0.5.0-setup.exe(43M) → MSYS2_ARG_CONV_EXCL='*' 静默覆盖安装成功（install.log: Installation process succeeded）；实装 exe 24.8MB/Nov3 13:40，注册表 0.5.0，app 已启动(PID 9024)。证据 evidence/2026-11-03-win-install/（README+package.log+install.log）。坑：Git Bash 参数转换会把 /VERYSILENT 当路径，首次卡在语言选择对话框，已记 memory。",
    "created_by": "ZCode主会话",
    "updated_by": "ZCode主会话",
    "deleted": 0
