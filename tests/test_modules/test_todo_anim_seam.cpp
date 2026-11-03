@@ -256,6 +256,38 @@ REGISTER_TEST(todo_anim_retrigger_after_done,
     return true;
 })
 
+// ---- 池49 对准用例：切页返回动画中断兜底落位（H20 onPageEnter 真实入口）----
+// 与 30%/收尾重触发边界同族：动画在途中离开页面 → 返回 onPageEnter 不补播、
+// 直接落目标态（advanceArchiveAnim「动画不在途但进度未落位」兜底分支的对准红靶）。
+REGISTER_TEST(todo_anim_page_enter_snap_after_interrupt,
+              "todo_anim: 展开动画中断后切页返回 → 直接落全展开，不从中断点补播", {
+    SeamGuard guard;
+    Rig rig("pageenter");
+    Frame& f = rig.frame;
+
+    // 展开动画在途（离开页面时的物理中断态）
+    DOCTEST_REQUIRE(startExpandViaUi(f));
+    DOCTEST_REQUIRE(pollFrame(f, [] {
+        const auto s = archiveAnimSnapshot();
+        return s.animating && s.progress > 0.05f && s.progress < 0.95f;
+    }));
+
+    // 切页返回：Router 真实入口 onPageEnter（H20：不补播，直接落目标态）
+    rig.mod->onPageEnter();
+    const auto snap = archiveAnimSnapshot();
+    DOCTEST_CHECK(!snap.animating);          // 动画不在途
+    DOCTEST_CHECK(snap.targetExpanded);      // 目标态保持展开（触发时已置位）
+    DOCTEST_CHECK_EQ(snap.progress, 1.0f);   // 直接落全展开，不从中断点续播
+
+    // 返回后多帧稳定：已落位进度不被兜底分支改写、不回跳不重播
+    f.refresh();
+    f.refresh();
+    const auto snap2 = archiveAnimSnapshot();
+    DOCTEST_CHECK(!snap2.animating);
+    DOCTEST_CHECK_EQ(snap2.progress, 1.0f);
+    return true;
+})
+
 // ---- F-01 错误自查：onStop 卸载（闸语义）→ 查询回空闲 ----
 REGISTER_TEST(todo_anim_idle_query_after_stop,
               "todo_anim: onStop 后查询 → 空闲快照（provider 卸载）", {

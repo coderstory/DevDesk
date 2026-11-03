@@ -767,11 +767,21 @@ public:
                                             .content([&] {
                                         // 自绘几何：常量逐项取自 barchart.h（改这里 = 改图表观感）。
                                         const float plotX = 32.0f;
-                                        const float plotY = 70.0f;
+                                        // 池110：顶留白/x 轴标签带随 wrap 高度按比例伸缩，
+                                        //（barchart.h 固定 plotY=70 只适用 236 高卡；高窗下全部
+                                        // 余高灌进 plotH → 柱体满格无上留白、标签贴卡底）。
+                                        // 钳制下限保基准档 ≈ 旧值，1200x600 最小窗不回退。
+                                        const float plotY = std::clamp(
+                                            chartWrapH * 0.30f, 56.0f, 160.0f);
                                         const float plotW =
                                             std::max(1.0f, wrapW - 64.0f);
+                                        const float labelY =
+                                            chartWrapH -
+                                            std::clamp(chartWrapH * 0.06f, 12.0f,
+                                                       40.0f) -
+                                            16.0f;
                                         const float plotH =
-                                            std::max(1.0f, chartWrapH - 112.0f);
+                                            std::max(40.0f, labelY - 20.0f - plotY);
                                         const float bottomY = plotY + plotH;
                                         const float slotW =
                                             plotW / static_cast<float>(barCount);
@@ -846,7 +856,7 @@ public:
                                                 "home.api.chart.bars.label." +
                                                 std::to_string(i))
                                                 .x(bx - 12.0f)
-                                                .y(chartWrapH - 22.0f)
+                                                .y(labelY)
                                                 .size(barW + 24.0f,
                                                       core::theme::scaled(16.0f))
                                                 .text(std::to_string(
