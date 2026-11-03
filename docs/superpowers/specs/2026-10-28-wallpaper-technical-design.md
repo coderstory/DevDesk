@@ -106,7 +106,7 @@
 
 | 文件 | 职责 | 与 Windows 的关键差异 |
 |---|---|---|
-| `wallpaper_host_macos.mm` | 桌面层窗口宿主 | `CGWindowLevelForKey(kCGDesktopWindowLevelKey)` 层级；无 WorkerW 概念；窗口操作经**主队列**同步投递（有界 3s），不建宿主线程 |
+| `wallpaper_host_macos.mm` | 桌面层窗口宿主 | `CGWindowLevelForKey(kCGDesktopWindowLevelKey)` 层级；无 WorkerW 概念；窗口操作经**主队列**投递——show/hide 是 async（锁倒置修复），start/rebuild 同步有界 3s 且产物走堆槽（超时路径零悬垂引用）；不建宿主线程 |
 | `mpv_controller_macos.mm` | 播放控制（同名接口） | 无 mpv 进程：视频 = `AVQueuePlayer` + `AVPlayerLooper`；图片 = 宿主自绘 `CALayer`；无 IPC/无管道 |
 | `yield_watchers_macos.mm` | 五路让路 | 分布式通知（锁屏）+ NSWorkspace（睡眠/唤醒）+ IOKit 电源源 + `CGDisplayRegisterReconfigurationCallback`（换屏）+ 全屏「workspace 事件（Space 切换/应用激活·失活）+ 1s 轮询」双驱动 |
 | `image_probe_macos.cpp` | 图片头解码 | `CGImageSourceCopyPropertiesAtIndex` 读 `PixelWidth/Height`，不建解码器、不解像素 |
@@ -120,6 +120,11 @@
 3. **C 路径 → NSURL 用 `CFURLCreateFromFileSystemRepresentation`**。`stringWithUTF8String:` 在非 UTF-8 字节上返回 nil；`stringWithFileSystemRepresentation:` 交给 `fileURLWithPath:` 会二次解释。实测含中文的临时目录两条路都退化成「无法识别的文件路径」。
 
 另：async block 捕获 `const std::string&` 参数会拿到悬垂引用，路径必须 `make_shared` 拷贝后再进 block。
+
+**已知取舍（2026-11-04 独立审计备忘，非缺陷、改动前先权衡）**：
+
+- rebuild（换屏重建）持服务 `mu_` 同步等主队列（3s 有界）：主线程若恰在等 `mu_` 则互等至超时——表现是换屏瞬间 UI 最多卡 3s。根治要改 async + 完成回调回路，暂不做。
+- 全屏覆盖率对**同 pid 完全重叠**的窗口按面积求和（重复计数）：两个全重叠的半屏窗会误判让路。pic 同口径；要根治需按 pid 求 union 面积。
 
 **平台差异（按实际，不强行统一）**：
 

@@ -264,7 +264,11 @@ private:
     friend struct MpvControllerTestAccess;  // 见文件尾注入缝契约
 #endif
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    // shared 所有权：异步块按值捕 impl，块在飞时 Impl 不会被析构（2026-11-04
+    // 审计 F6：图片后台解码晚到 / 析构竞态的根治）。macOS 实现专用；Windows 的
+    // Impl 生命期由 mpv 进程 IPC 管线自管，仍可继续用 unique_ptr 语义（本成员
+    // 两平台同一声明，shared_ptr 对 Windows 无额外成本）。
+    std::shared_ptr<Impl> impl_;
 };
 
 #if defined(_WIN32)

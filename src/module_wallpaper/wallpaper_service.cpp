@@ -177,8 +177,9 @@ void WallpaperService::stop() {
     tickWaitCv_.notify_all();
     if (scanThread_.joinable()) scanThread_.join();
     if (tickThread_.joinable()) tickThread_.join();
-    // 导入线程可能正在跑（几十个视频的哈希是分钟级）：置取消位后 join，
+    // 导入线程可能正在跑（几十个视频的拷贝是分钟级）：置取消位后 join，
     // 与扫描线程同纪律——stop() 返回时不得留后台线程碰已销毁的 this。
+    // 取消在候选之间生效（runHanamiImport 逐候选检查），退出至多等一个文件拷完。
     importCancel_.store(true);
     if (importThread_.joinable()) importThread_.join();
     LOG_INFO("壁纸服务已停止");
@@ -372,11 +373,8 @@ void WallpaperService::next() {
 // ---------------- 从花見导入 ----------------
 
 bool WallpaperService::hanamiImportAvailable() {
-#if defined(__APPLE__)
-    return true;
-#else
-    return false;  // 花見是 macOS App；其它平台没有这个来源目录
-#endif
+    // 能力查询走平台缝（importer_macos 真 / importer_stub false），业务层零平台宏。
+    return importer::hanamiImportAvailable();
 }
 
 void WallpaperService::importFromHanami() {
@@ -404,12 +402,14 @@ void WallpaperService::importFromHanami() {
     try {
         importThread_ = std::thread([this, folder] {
             const importer::ImportReport report = importer::runHanamiImport(
-                folder, [this](int done, int total) {
+                folder,
+                [this](int done, int total) {
                     if (importCancel_.load()) return;
                     std::lock_guard<std::mutex> lock(mu_);
                     snapshot_.importDone = done;
                     snapshot_.importTotal = total;
-                });
+                },
+                &importCancel_);
 
             std::string summary;
             if (report.sourceMissing) {

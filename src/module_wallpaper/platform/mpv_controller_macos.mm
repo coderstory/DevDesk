@@ -154,6 +154,9 @@ struct MpvController::Impl {
     // dispatch_sync 自死锁。
     void* queueKey = nullptr;
     std::atomic<bool> alive{false};
+    // 装载代次：每次 load / stop 递增。后台图片解码晚到时对不上号就丢弃（审计
+    // F6/F7：既防「stop 后图片复活」，也防「快速换片时旧图盖掉新视频」）。
+    std::atomic<std::uint64_t> loadGeneration{0};
 
     std::mutex errorMutex;
     std::string error;
@@ -191,13 +194,13 @@ struct MpvController::Impl {
     }
 };
 
-MpvController::MpvController() : impl_(std::make_unique<Impl>()) {}
+MpvController::MpvController() : impl_(std::make_shared<Impl>()) {}
 
 MpvController::~MpvController() { stop(); }
 
 void MpvController::start(std::uintptr_t windowId) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     if (windowId == 0) {
         impl->setError("壁纸宿主尚未就绪，无法挂载播放画面");
         return;
@@ -224,7 +227,9 @@ void MpvController::start(std::uintptr_t windowId) {
 
 void MpvController::stop() {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：析构后晚到的块也安全（审计 F6）
+    // 先抬代次再投停止块：在飞图片解码的贴图块对不上号 → 丢弃（不复活、不盖层）。
+    impl->loadGeneration.fetch_add(1, std::memory_order_relaxed);
     // stop 要「返回时已停」的确切语义：同步投递 + 有界等待（主队列真被堵死也
     // 不能挂死调用方）。
     auto done = std::make_shared<bool>(false);
@@ -256,15 +261,23 @@ void MpvController::stop() {
 
 void MpvController::load(const std::string& path, float seekSeconds) {
     if (!impl_ || path.empty()) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     const bool image = isImagePath(path);
+    // 每次装载新代次：只让最新一次 load 生效（旧图解码晚到 / 旧视频块晚到一律丢弃）。
+    const std::uint64_t generation =
+        impl->loadGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
 
     if (!image) {
         // 必须**拷贝**路径再进 block：path 是调用方的引用参数，block 异步执行时
         // 该引用早已失效（实测退化成空串 → "无法识别的文件路径: "）。
         auto pathCopy = std::make_shared<std::string>(path);
+        // block 隐式按值捕获 impl/pathCopy/generation/seekSeconds（均为局部量，
+        // 不捕 this）。带捕获的 C++ lambda 不能转 dispatch_block_t，必须 ^{}。
         dispatch_async(impl->queue, ^{
             @autoreleasepool {
+                if (generation != impl->loadGeneration.load(std::memory_order_relaxed)) {
+                    return;  // 已被更新的 load/stop 取代
+                }
                 DevDeskMacPlayerBox* box = impl->ensureBox();
                 if (box.player == nil) {
                     box.player = [[AVQueuePlayer alloc] init];
@@ -316,10 +329,18 @@ void MpvController::load(const std::string& path, float seekSeconds) {
     // 图片：后台解码 → 回主队列贴图。解码走独立后台队列，避免阻塞同一条串行队列
     // 上的播放控制命令。
     auto pathCopy = std::make_shared<std::string>(path);
+    // 两个 block 都隐式按值捕获局部量（impl/pathCopy/generation/decoded），
+    // 不捕 this；带捕获的 C++ lambda 不能转 dispatch_block_t，必须 ^{}。
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         CGImageRef decoded = decodeImage(*pathCopy);
         dispatch_async(impl->queue, ^{
             @autoreleasepool {
+                // 代次对不上 = 这张图已过时（stop / 更新的 load 已发生）：丢弃，
+                // 绝不贴层（否则视频播着播着被旧图翻回图片层，或 stop 后复活）。
+                if (generation != impl->loadGeneration.load(std::memory_order_relaxed)) {
+                    if (decoded != nullptr) CGImageRelease(decoded);
+                    return;
+                }
                 DevDeskMacPlayerBox* box = impl->ensureBox();
                 if (decoded == nullptr) {
                     impl->setError("图片解码失败（已跳过）: " + *pathCopy);
@@ -343,7 +364,7 @@ void MpvController::load(const std::string& path, float seekSeconds) {
 
 void MpvController::pause(bool paused) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     dispatch_async(impl->queue, ^{
         @autoreleasepool {
             DevDeskMacPlayerBox* box = impl->ensureBox();
@@ -362,7 +383,7 @@ void MpvController::pause(bool paused) {
 
 void MpvController::seek(float seconds) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     dispatch_async(impl->queue, ^{
         @autoreleasepool {
             DevDeskMacPlayerBox* box = impl->ensureBox();
@@ -376,7 +397,7 @@ void MpvController::seek(float seconds) {
 
 void MpvController::setRate(float rate) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     dispatch_async(impl->queue, ^{
         @autoreleasepool {
             DevDeskMacPlayerBox* box = impl->ensureBox();
@@ -391,7 +412,7 @@ void MpvController::setRate(float rate) {
 
 void MpvController::setVolume(float volume) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     dispatch_async(impl->queue, ^{
         @autoreleasepool {
             DevDeskMacPlayerBox* box = impl->ensureBox();
@@ -403,7 +424,7 @@ void MpvController::setVolume(float volume) {
 
 void MpvController::setMute(bool muted) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     dispatch_async(impl->queue, ^{
         @autoreleasepool {
             DevDeskMacPlayerBox* box = impl->ensureBox();
@@ -415,7 +436,7 @@ void MpvController::setMute(bool muted) {
 
 void MpvController::setImageFit(ImageFit fit) {
     if (!impl_) return;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     dispatch_async(impl->queue, ^{
         @autoreleasepool {
             DevDeskMacPlayerBox* box = impl->ensureBox();
@@ -429,7 +450,7 @@ void MpvController::setImageFit(ImageFit fit) {
 
 float MpvController::positionSec() const {
     if (!impl_) return 0.0f;
-    Impl* impl = impl_.get();
+    auto impl = impl_;  // 块按值捕 shared_ptr：Impl 与「块是否在飞」解绑
     // 直接问 AVPlayer：currentTime 是线程安全的读，不需要镜像/定时器。
     // 但 box/player 只在 queue 上读写，所以经同步投递拿值（自带「已在 queue 上」
     // 判定，避免自死锁）。静图项没有时间轴，恒 0。

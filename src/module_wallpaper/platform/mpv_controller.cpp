@@ -469,7 +469,7 @@ void MpvController::Impl::handleCommand(const Command& command) {
     }
 }
 
-MpvController::MpvController() : impl_(std::make_unique<Impl>()) {
+MpvController::MpvController() : impl_(std::make_shared<Impl>()) {
     try {
         impl_->worker = std::thread(&MpvController::Impl::run, impl_.get());
     } catch (const std::system_error& failure) {

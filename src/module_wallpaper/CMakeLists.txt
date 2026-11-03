@@ -51,6 +51,8 @@ if(WIN32)
         platform/mpv_controller.cpp
         platform/yield_watchers_win.cpp
         platform/image_probe_win.cpp
+        # 花見是 macOS App：导入在非 macOS 平台一律走 stub（available=false）
+        platform/importer_stub.cpp
     )
     # yield_watchers：wtsapi32（WTS 会话通知）；image_probe：ole32 + windowscodecs（COM + WIC）。
     target_link_libraries(devdesk_module_wallpaper PRIVATE wtsapi32 ole32 windowscodecs)
@@ -108,6 +110,7 @@ else()
         platform/mpv_controller_stub.cpp
         platform/yield_watchers_stub.cpp
         platform/image_probe_stub.cpp
+        platform/importer_stub.cpp
     )
 endif()
 

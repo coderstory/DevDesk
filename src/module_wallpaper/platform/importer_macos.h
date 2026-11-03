@@ -9,6 +9,7 @@
 // 实现方不得在里面碰 UI。
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <string>
 
@@ -16,13 +17,20 @@
 
 namespace module::wallpaper::importer {
 
+// 「从花見导入」是否可用（花見是 macOS App；其它平台 stub 返回 false，
+// service 据此决定是否构建导入按钮——业务层不写平台宏，能力查询走这里）。
+bool hanamiImportAvailable();
+
 // 花見（Huajian）App 的下载目录（容器内 Documents/Videos）。
 // 不存在或读不了时报 sourceMissing，不区分两者。
 std::string defaultHanamiSourceDirectory();
 
 // 导入到 destinationFolder。onProgress 可为空；跑完返回报告。
+// cancel 非空且被置真时，在**候选之间**尽早返回（正在拷贝的那一个会拷完）；
+// 报告携带已发生部分的计数。
 ImportReport runHanamiImport(const std::string& destinationFolder,
-                             const std::function<void(int done, int total)>& onProgress);
+                             const std::function<void(int done, int total)>& onProgress,
+                             const std::atomic<bool>* cancel = nullptr);
 
 // 墓碑库的默认落点（DevDesk 数据根下，随应用数据一起备份）。
 // 墓碑写入只有一条路径：每次导入开头把 ~/.Trash 顶层的 mp4 幂等回填进库

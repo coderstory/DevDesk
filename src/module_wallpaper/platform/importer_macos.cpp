@@ -48,8 +48,8 @@ bool signatureOf(const fs::path& path, std::string* signature) {
     return true;
 }
 
-// SQLite 墓碑台账。连接每次操作现开现关——调用点横跨后台导入与删除钩子，
-// 都是分钟级一次，现开现关的开销可忽略；持句柄反而要管生命周期与锁。
+// SQLite 墓碑台账。连接每次操作现开现关——调用点（导入路径）分钟级一次，
+// 现开现关的开销可忽略；持句柄反而要管生命周期与锁。
 class SqliteLedger final : public TombstoneLedger {
 public:
     explicit SqliteLedger(std::string databasePath) : databasePath_(std::move(databasePath)) {}
@@ -177,23 +177,30 @@ std::string defaultHanamiSourceDirectory() {
         .string();
 }
 
+bool hanamiImportAvailable() {
+    return true;
+}
+
 std::string defaultTombstoneDatabasePath() {
     return (core::paths::appDataDir() / "wallpaper" / "deleted-videos.sqlite").string();
 }
 
 ImportReport runHanamiImport(const std::string& destinationFolder,
-                             const std::function<void(int, int)>& onProgress) {
+                             const std::function<void(int, int)>& onProgress,
+                             const std::atomic<bool>* cancel) {
     ImportReport report;
     const fs::path destination(destinationFolder);
     if (destinationFolder.empty()) {
         report.sourceMissing = true;
         return report;
     }
+    std::error_code ec;
 
     SqliteLedger ledger(defaultTombstoneDatabasePath());
 
     // ① 废纸篓回填：顶层 mp4 幂等进墓碑。读不了静默跳过，不拦导入。
     {
+        if (cancel != nullptr && cancel->load()) return report;
         const char* home = std::getenv("HOME");
         if (home != nullptr && *home != '\0') {
             bool readable = false;
@@ -224,10 +231,14 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
     const int total = static_cast<int>(candidates.size());
     int done = 0;
     for (const fs::path& candidate : candidates) {
+        // 取消在候选之间生效：正在拷贝的那一个会拷完（半截由 .tmp 机制挡住）。
+        if (cancel != nullptr && cancel->load()) return report;
         const fs::path target = destination / candidate.filename();
 
         CandidateFacts facts;
-        facts.targetExists = fs::exists(target);
+        // ec 重载：stat 出非 ENOENT 错误（如 EACCES）按「不存在」走后续判定
+        // （取大小大概率同样失败 → FailStat），绝不走抛异常路径击穿导入线程。
+        facts.targetExists = fs::exists(target, ec);
         // 目标已存在就跳过，连大小都不用取（省一次 stat）。
         if (!facts.targetExists) {
             facts.signatureOk = signatureOf(candidate, &facts.signature);

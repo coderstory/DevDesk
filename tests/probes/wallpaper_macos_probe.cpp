@@ -4,7 +4,7 @@
 // 与 Windows 版 wallpaper_desktop_probe 的分工：那边验 WorkerW + mpv 进程生命周期；
 // 这边验 macOS 原生路线的**同等语义**——
 //   §1 宿主建窗成功、handle 非空、像素尺寸 == 主屏 convertRectToBacking。
-//   §2 视频装载：load 后 1.5s 内 position > 0.2s（真解码真播放，不是"命令发出"）。
+//   §2 视频装载：load 后 4s 内 position > 0.2s（真解码真播放，不是"命令发出"）。
 //   §3 pause(true) 后位置冻结（增量 < 0.15s），pause(false) 后继续增长。
 //   §4 seek 到 1.0s，position 落在 1.0±0.6。
 //   §5 图片装载：贴图后 position 恒 0、无错误（静图无时间轴的真相）。

@@ -169,9 +169,11 @@ class WallpaperHostMac final : public WallpaperHost {
 public:
     ~WallpaperHostMac() override { stop(); }
 
-    // start/rebuild 保持同步：调用方需要拿到 handle（非空才启动播放器），
-    // 且这两条路径由服务在**主线程**发起（模块 onStart / 换屏回调），走
-    // runOnMainThreadSync 的 isMainThread 快路径，不会发生上面那个等待环。
+    // start/rebuild 保持同步：调用方需要拿到 handle（非空才启动播放器）。start 由
+    // 服务线程发起（不在主线程，走 3s 有界等待）；rebuild 由换屏回调链发起
+    //（watcher 串行队列，持服务 mu_）——两条都可能真实等满 3s，主线程堵死时
+    // 按失败返回（2026-11-04 审计 F8：rebuild 持 mu_ 同步等待是已知取舍，
+    // 改 async 需要完成回调回路，暂不展开）。
     bool start(std::string* error) override {
         std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
         {
@@ -263,9 +265,10 @@ public:
         if (existing == nil) return;
 
         // 重建要保留原可见性：先记下是否在屏上，重建后按原态恢复。
-        bool wasVisible = false;
-        runOnMainThreadSync([existing, &wasVisible] {
-            wasVisible = [existing isVisible];
+        // 可见性走堆槽：超时后晚到的 block 只写堆槽，不碰本栈帧（同 buildLocked）。
+        const auto visibility = std::make_shared<bool>(false);
+        runOnMainThreadSync([existing, visibility] {
+            *visibility = [existing isVisible];
             [existing orderOut:nil];
         });
         {
@@ -278,7 +281,7 @@ public:
             height_ = 0;
         }
         if (!buildLocked(error)) return;
-        if (!wasVisible) return;
+        if (!*visibility) return;
         DevDeskWallpaperWindow* rebuilt = nil;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -291,7 +294,11 @@ public:
 
 private:
     // 建窗（全部在主线程完成，AppKit 是主线程隔离的）。持 lifecycleMutex_ 调用。
-    bool buildLocked(std::string* error) {
+    //
+    // 超时安全：产物与错误信息全部走堆槽（shared_ptr），主队列 block 按值捕获槽。
+    // 同步等待超时返回「失败」后，晚执行的 block 只会写进堆槽（栈帧已死也碰不到），
+    // 槽随 block 结束释放，ObjC 对象由 ARC 正常回收——绝无悬垂栈引用。
+    struct BuildOutcome {
         DevDeskWallpaperWindow* created = nil;
         DevDeskWallpaperHostView* hostView = nil;
         AVPlayerLayer* videoLayer = nil;
@@ -299,16 +306,19 @@ private:
         int pixelWidth = 0;
         int pixelHeight = 0;
         std::string failure;
+    };
+    bool buildLocked(std::string* error) {
+        const auto outcome = std::make_shared<BuildOutcome>();
 
-        const bool ok = runOnMainThreadSync([&]() {
+        const bool ok = runOnMainThreadSync([outcome]() {
             NSScreen* screen = [NSScreen mainScreen];
             if (screen == nil) {
-                failure = "找不到主显示器（无 GUI 会话？）";
+                outcome->failure = "找不到主显示器（无 GUI 会话？）";
                 return;
             }
             const NSRect frame = screen.frame;
             if (frame.size.width <= 0 || frame.size.height <= 0) {
-                failure = "主显示器尺寸无效";
+                outcome->failure = "主显示器尺寸无效";
                 return;
             }
 
@@ -318,7 +328,7 @@ private:
                                                             backing:NSBackingStoreBuffered
                                                               defer:NO];
             if (window == nil) {
-                failure = "创建壁纸窗口失败";
+                outcome->failure = "创建壁纸窗口失败";
                 return;
             }
             // 层级取 CoreGraphics 运行时符号：AppKit 无对应常量，写数字字面量会
@@ -357,33 +367,36 @@ private:
 
             // 契约：width/height 是物理像素，与 Windows 版（rcMonitor 物理像素）同口径。
             const NSRect backing = [screen convertRectToBacking:frame];
-            pixelWidth = (int)llround(backing.size.width);
-            pixelHeight = (int)llround(backing.size.height);
+            outcome->pixelWidth = (int)llround(backing.size.width);
+            outcome->pixelHeight = (int)llround(backing.size.height);
 
-            created = window;
-            hostView = host;
-            videoLayer = video;
-            imageLayer = image;
+            outcome->created = window;
+            outcome->hostView = host;
+            outcome->videoLayer = video;
+            outcome->imageLayer = image;
         });
 
         if (!ok) {
             if (error != nullptr) {
-                *error = failure.empty() ? "创建壁纸宿主超时（主线程无响应）" : failure;
+                *error = outcome->failure.empty() ? "创建壁纸宿主超时（主线程无响应）"
+                                                  : outcome->failure;
             }
-            return false;
+            return false;  // 晚到的主队列 block 只写堆槽，不碰本栈帧
         }
-        if (created == nil) {
-            if (error != nullptr) *error = failure.empty() ? "创建壁纸宿主失败" : failure;
+        if (outcome->created == nil) {
+            if (error != nullptr) {
+                *error = outcome->failure.empty() ? "创建壁纸宿主失败" : outcome->failure;
+            }
             return false;
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
-        window_ = created;
-        hostView_ = hostView;
-        videoLayer_ = videoLayer;
-        imageLayer_ = imageLayer;
-        width_ = pixelWidth;
-        height_ = pixelHeight;
+        window_ = outcome->created;
+        hostView_ = outcome->hostView;
+        videoLayer_ = outcome->videoLayer;
+        imageLayer_ = outcome->imageLayer;
+        width_ = outcome->pixelWidth;
+        height_ = outcome->pixelHeight;
         return true;
     }
 
