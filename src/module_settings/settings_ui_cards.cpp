@@ -419,8 +419,14 @@ void drawModulesCard(const CardDrawArgs& args) {
         const char* name;
         const char* desc;
     };
-    // 标题右 MCP 开关盒宽：基准 150 随字号派生（B6/F-69-3，字面值在放大档挤掉标题）
-    const float kMcpToggleBoxW = roundFs(150.0f);
+    // 标题行右半 MCP 开关行几何（池143：对齐提醒卡池132 两列镜像口径，卡高零增量）
+    const float mcpRowY = roundFs(12.0f);
+    const float mcpRowH = roundFs(28.0f);
+    const float mcpLabelW = roundFs(110.0f);
+    const float mcpSwW = kAutostartSwitchW;
+    const float mcpSwH = kAutostartSwitchH;
+    const float mcpHalfW = (w - 56.0f) * 0.5f;
+    const float mcpCol2X = 28.0f + mcpHalfW;
     static const ModuleMeta kToggleable[] = {
         {kModuleIdMarkdown, "Markdown 笔记本",
          "本地文件存储 + SQLite FTS5 全文搜索"},
@@ -461,28 +467,38 @@ void drawModulesCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            cardTitle(ui, id, t, 16.0f, w - 56.0f - kMcpToggleBoxW, 22.0f, 22.0f,
+            // 标题盒让位右半镜像行：宽 = 半列 − 8 间距（与 label 盒 x 相接不叠印）
+            cardTitle(ui, id, t, 16.0f, mcpCol2X - 8.0f - 28.0f, 22.0f, 22.0f,
                       "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // MCP 服务开关（模块 tab 标题右贴，零高度增量——不新增开关卡、不动
-            // 格阵与卡高）。B6/F-69-3：盒宽改 roundFs(150) 随字号放大——字面 150
-            // 在放大档会把标题挤成省略号；标题可用宽同步扣掉派生后的盒宽。
-            // 可点击元素 = <id>.hit（.track 只是视觉轨道）；拨动走既有
-            // applyModuleEnabled 链路，不新增生效通道。
-            components::toggleSwitch(ui, id + ".mcp")
-                .position(w - 28.0f - kMcpToggleBoxW, roundFs(12.0f))
-                .size(kMcpToggleBoxW, roundFs(28.0f))
+            // MCP 服务开关（模块 tab 标题行右贴，零高度增量——不新增开关卡、不动
+            // 格阵与卡高）。池143（老板「样式这么奇怪」）：原为文字嵌入式
+            // toggleSwitch（150×28 盒），与全站「label + 44×24 wswitch」开关摆放
+            // 割裂；对齐提醒卡（池132）镜像口径——label x=半列左缘/w=110/行高 28
+            //（底沿恰贴 desc 行顶 40，不触发行盒重叠），开关贴半列右缘
+            //（col2X + halfW − swW = 卡内容右缘 − 44）。拨动走既有
+            // applyModuleEnabled 链路；可点击元素 = <id>.mcp.sw.track。
+            ui.text(id + ".mcp.label")
+                .position(mcpCol2X, mcpRowY)
+                .size(mcpLabelW, mcpRowH)
                 .text("MCP 服务")
-                .fontSize(fs(13.0f))
-                .checked(moduleEnabled(in.cfg, kModuleIdMcp))
-                .theme(compThemeTop)
-                .onChange([f = a.applyModuleEnabled](bool v) {
-                    f(kModuleIdMcp, v);
-                })
+                .fontSize(t.sizes.fontSizeBody - 1.0f)
+                .lineHeight(mcpRowH)
+                .fontWeight(500)
+                .color(t.colors.textPrimary)
+                .maxWidth(mcpLabelW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
                 .build();
+            ui_kit::wswitch(ui, id + ".mcp.sw",
+                            moduleEnabled(in.cfg, kModuleIdMcp),
+                            mcpCol2X + mcpHalfW - mcpSwW,
+                            mcpRowY + std::max(0.0f, (mcpRowH - mcpSwH) * 0.5f),
+                            mcpSwW, mcpSwH, t,
+                [f = a.applyModuleEnabled](bool v) { f(kModuleIdMcp, v); });
 
             // 开关格（B6/F-69-3：列数/格高内容派生）：≤1.15 档两列（行主序，
             // 0/1 同行异列）；>1.15 档降单列——放大后两列格宽放不下 name/desc。
@@ -930,8 +946,10 @@ void drawReminderCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
             cardTitle(ui, id, t, 22.0f, w - 56.0f, 22.0f, 22.0f, "提醒弹窗");
-            // 双开关行：左右两列各一组 label + 开关（几何 = 自启动行同款简化）；
-            // 说明并进标题行右侧（卡高 92 无第二行空间）。
+            // 双开关行统一几何（池132，2026-11-03 设计 §15）：两列镜像——
+            // label x=colX、开关各贴**半列右缘**（colX + halfW − swW），
+            // 取代旧「左开关贴 label 右侧、右开关贴卡右缘」两套水平节奏；
+            // 说明行改整卡宽右对齐贴右缘 28（与标题同排、不再从半列起错位）。
             // B6：行 y/行高/说明行盒随字号派生（卡高已跟 roundFs(92) 放大，
             // 行不缩 = 放大档行底溢出卡外）。
             const float rowY = roundFs(44.0f);
@@ -940,17 +958,18 @@ void drawReminderCard(const CardDrawArgs& args) {
             const float labelW = roundFs(110.0f);
             const float swW = kAutostartSwitchW;
             const float swH = kAutostartSwitchH;
-            const float col2X = 28.0f + (w - 56.0f) * 0.5f;
-            const float descX = col2X;
+            const float halfW = (w - 56.0f) * 0.5f;
+            const float col2X = 28.0f + halfW;
             ui.text(id + ".title.desc")
-                .position(descX, roundFs(22.0f))
-                .size(std::max(0.0f, w - descX - 28.0f), descH)
+                .position(28.0f, roundFs(22.0f))
+                .size(std::max(0.0f, w - 56.0f), descH)
                 .text("到期事项弹全屏置顶窗（默认关，仅记日志）")
                 .fontSize(fs(12.0f))
                 .lineHeight(descH)
                 .color(t.colors.textTertiary)
-                .maxWidth(std::max(0.0f, w - descX - 28.0f))
+                .maxWidth(std::max(0.0f, w - 56.0f))
                 .overflow(core::TextOverflow::Ellipsis)
+                .horizontalAlign(eui::HorizontalAlign::Right)
                 .clip()
                 .build();
             const auto drawSwitchRow = [&](const std::string& labelId,
@@ -977,11 +996,11 @@ void drawReminderCard(const CardDrawArgs& args) {
                                 swW, swH, t, on);
             };
             drawSwitchRow(id + ".popup.label", "上线提醒弹窗", 28.0f,
-                          28.0f + labelW + roundFs(12.0f),
+                          28.0f + halfW - swW,
                           in.cfg.releaseReminderPopup,
                           [f = a.applyReminderPopup](bool v) { f(v); });
             drawSwitchRow(id + ".fs.label", "调度全屏弹窗", col2X,
-                          w - 28.0f - swW, in.cfg.fullscreenPopup,
+                          col2X + halfW - swW, in.cfg.fullscreenPopup,
                           [f = a.applyFullscreenPopup](bool v) { f(v); });
         })
         .build();

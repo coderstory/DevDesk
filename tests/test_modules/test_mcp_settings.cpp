@@ -283,7 +283,7 @@ REGISTER_TEST(mcp_bridge_injected_handlers_route_and_reset,
 // ────────────────── 组三：设置卡 ──────────────────
 
 REGISTER_TEST(mcp_card_modules_card_toggle_off_by_default_and_hit_wiring,
-              "mcp: 模块卡标题右 MCP 开关默认关、.hit 可点；点击即落库 + 走既有开关桥", {
+              "mcp: 模块卡标题行 MCP 开关（wswitch 44×24 贴半列右缘，池143 口径）默认关、.track 可点；点击即落库 + 走既有开关桥", {
     test_support::TestEnv env(kCfgPrefix, "toggle", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "toggle_cfg"));
@@ -297,20 +297,21 @@ REGISTER_TEST(mcp_card_modules_card_toggle_off_by_default_and_hit_wiring,
     eui::Ui ui;
     composeFrame(*mod, ui, screen, "mcp_toggle_1");
     ui.layout(screen.width, screen.height);  // frame 断言必须真 layout
-    const auto* sw = ui.find("settings.card.modules.mcp");
-    DOCTEST_REQUIRE(sw != nullptr);
-    const auto* hit = ui.find("settings.card.modules.mcp.hit");
-    DOCTEST_REQUIRE(hit != nullptr);
-    DOCTEST_REQUIRE(hit->onClick != nullptr);
-    // 标题盒收窄让位 150 开关盒（w-56-150），与开关盒相接不叠印
+    const auto* label = ui.find("settings.card.modules.mcp.label");
+    DOCTEST_REQUIRE(label != nullptr);
+    DOCTEST_CHECK_EQ(label->text, std::string("MCP 服务"));
+    const auto* track = ui.find("settings.card.modules.mcp.sw.track");
+    DOCTEST_REQUIRE(track != nullptr);
+    DOCTEST_REQUIRE(track->onClick != nullptr);
+    // 标题盒让位右半镜像行（池143）：宽 = 半列 − 8 间距（对照提醒卡池132 几何）
     const auto* title = ui.find("settings.card.modules.title");
     const auto* card = ui.find("settings.card.modules");
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_REQUIRE(card != nullptr);
     DOCTEST_CHECK(std::fabs(title->frame.width -
-                            (card->frame.width - 56.0f - 150.0f)) < 0.5f);
+                            ((card->frame.width - 56.0f) * 0.5f - 8.0f)) < 0.5f);
     // 点击 → mcp 进 enabledModules 落库 + 既有开关桥收到 ("mcp", true)
-    hit->onClick();
+    track->onClick();
     composeFrame(*mod, ui, screen, "mcp_toggle_2");
     const module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(module::settings::moduleEnabled(store.load(),
