@@ -535,7 +535,7 @@ void McpPageModule::drawDetailDialog(
                 .build();
             ui.text("mcp.dialog.detail.hero.icon")
                 .position(20.0f, 16.0f)
-                .size(52.0f, 52.0f)
+                .size(core::theme::scaled(52.0f), core::theme::scaled(52.0f))
                 .icon(eui::utf8(toolIconGlyph(tool->name())))
                 .fontSize(core::theme::scaled(20.0f))
                 .color(t.colors.primary)
@@ -585,7 +585,7 @@ void McpPageModule::drawDetailDialog(
             // 描述（可换行）
             ui.text("mcp.dialog.detail.desc")
                 .position(20.0f, 88.0f)
-                .size(w - 40.0f, 48.0f)
+                .size(w - 40.0f, core::theme::scaled(48.0f))
                 .text(tool->description())
                 .fontSize(core::theme::scaled(13.0f))
                 .lineHeight(core::theme::scaled(19.0f))
@@ -611,7 +611,7 @@ void McpPageModule::drawDetailDialog(
             // 不变量：schema 文本按节点框 clip，折行溢出不越 schema.box 压「运行结果」标题。
             ui.text("mcp.dialog.detail.schema.text")
                 .position(28.0f, 176.0f)
-                .size(w - 56.0f, 102.0f)
+                .size(w - 56.0f, core::theme::scaled(102.0f))
                 .text(tool->inputSchemaJson())
                 .fontFamily("monospace")
                 .fontSize(core::theme::scaled(12.0f))

@@ -199,7 +199,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     // UAT5：还原「名称」「认证字段」各占一整行全宽纵排（UAT3 双列 344 被用户推翻）；
     // 行节奏沿用 cols2 前布局（label 18 + 输入 40，段距 12/8），弹高四页统一 600。
     ui.text("claude.form.basic.name.label")
-        .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
+        .position(28.0f, 104.0f).size(w - 56.0f, core::theme::scaled(16.0f))
         .text("名称").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.dialog.form.name")
@@ -211,7 +211,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         .build();
 
     ui.text("claude.form.basic.url.label")
-        .position(28.0f, 174.0f).size(w - 56.0f, 16.0f)
+        .position(28.0f, 174.0f).size(w - 56.0f, core::theme::scaled(16.0f))
         .text("Base URL").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.dialog.form.url")
@@ -223,7 +223,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         .build();
 
     ui.text("claude.form.basic.key.label")
-        .position(28.0f, 244.0f).size(w - 56.0f, 16.0f)
+        .position(28.0f, 244.0f).size(w - 56.0f, core::theme::scaled(16.0f))
         .text("API Key（" + std::string(platform::credential::protectionDescription()) + "）")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
@@ -240,11 +240,11 @@ void drawFormBasicTab(eui::Ui& ui, float w,
 
     // 认证字段（鉴权头三态）还原独占一行：标签与灰字说明同行，下拉紧随全宽
     ui.text("claude.form.basic.authfield.label")
-        .position(28.0f, 314.0f).size(72.0f, 16.0f)
+        .position(28.0f, 314.0f).size(72.0f, core::theme::scaled(16.0f))
         .text("认证字段").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.authfield.hint")
-        .position(104.0f, 314.0f).size(w - 132.0f, 16.0f)
+        .position(104.0f, 314.0f).size(w - 132.0f, core::theme::scaled(16.0f))
         .text("网关只接受一种鉴权头时切换；默认两种都发")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
@@ -270,18 +270,18 @@ void drawFormBasicTab(eui::Ui& ui, float w,
 
     // 行节奏沿用原布局：hint 380 / 错误 404 / 接管警告 426（弹高 600 下按钮带 472 起，呼吸区充足）
     ui.text("claude.form.basic.hint.icon")
-        .position(28.0f, 380.0f).size(14.0f, 18.0f)
+        .position(28.0f, 380.0f).size(14.0f, core::theme::scaled(18.0f))
         .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.hint")
-        .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
+        .position(46.0f, 380.0f).size(w - 74.0f, core::theme::scaled(18.0f))
         .text("模型配置和环境变量在另外两个标签页配置")
         .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textTertiary).build();
 
     if (!f.formError_.empty()) {
         ui.text("claude.dialog.form.error")
-            .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
+            .position(28.0f, 404.0f).size(w - 56.0f, core::theme::scaled(18.0f))
             .text(f.formError_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.errorText).build();
     }
@@ -294,15 +294,15 @@ void drawFormModelsTab(eui::Ui& ui, float w,
     const auto slotTable = modelSlotTable();
 
     ui.text("claude.form.slots.h.slot")
-        .position(28.0f, 104.0f).size(110.0f, 14.0f)
+        .position(28.0f, 104.0f).size(110.0f, core::theme::scaled(14.0f))
         .text("槽位").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.h.model")
-        .position(150.0f, 104.0f).size(330.0f, 14.0f)
+        .position(150.0f, 104.0f).size(330.0f, core::theme::scaled(14.0f))
         .text("上游模型名（发往上游）").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.h.name")
-        .position(492.0f, 104.0f).size(240.0f, 14.0f)
+        .position(492.0f, 104.0f).size(240.0f, core::theme::scaled(14.0f))
         .text("显示名（CC 界面）").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
 
@@ -312,7 +312,7 @@ void drawFormModelsTab(eui::Ui& ui, float w,
         const ModelSlot& slot = f.formModels_.*row.slot;
         const std::string idx = std::to_string(i);
         ui.text("claude.form.slot.label." + idx)
-            .position(28.0f, y + 10.0f).size(110.0f, 16.0f)
+            .position(28.0f, y + 10.0f).size(110.0f, core::theme::scaled(16.0f))
             .text(row.formLabel).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textSecondary).build();
         components::input(ui, "claude.form.slot." + idx + ".model")
@@ -339,16 +339,16 @@ void drawFormModelsTab(eui::Ui& ui, float w,
     }
 
     ui.text("claude.form.slots.hint1.icon")
-        .position(28.0f, 446.0f).size(14.0f, 16.0f)
+        .position(28.0f, 446.0f).size(14.0f, core::theme::scaled(16.0f))
         .icon(0xF05A).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.hint1")
-        .position(46.0f, 446.0f).size(w - 74.0f, 16.0f)
+        .position(46.0f, 446.0f).size(w - 74.0f, core::theme::scaled(16.0f))
         .text("显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.hint2")
-        .position(28.0f, 464.0f).size(w - 56.0f, 16.0f)
+        .position(28.0f, 464.0f).size(w - 56.0f, core::theme::scaled(16.0f))
         .text("    槽位留空 = 不写入该 env 键，Claude Code 用内置映射")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
@@ -362,7 +362,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     constexpr size_t kMaxVisibleRows = 5;
 
     ui.text("claude.form.env.label")
-        .position(28.0f, 104.0f).size(348.0f, 16.0f)
+        .position(28.0f, 104.0f).size(348.0f, core::theme::scaled(16.0f))
         .text("额外环境变量（原样写入 settings.json env 块）")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
@@ -438,11 +438,11 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     if (f.formEnvRows_.size() > kMaxVisibleRows) {
         // S3.9 #6：前置 ℹ 图标（14px 信息蓝）+ 12px 三级灰字（原 11px 过浅）
         ui.text("claude.form.env.overflow.icon")
-            .position(150.0f, 322.0f).size(14.0f, 16.0f)
+            .position(150.0f, 322.0f).size(14.0f, core::theme::scaled(16.0f))
             .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.info).build();
         ui.text("claude.form.env.overflow")
-            .position(168.0f, 322.0f).size(w - 168.0f - 28.0f, 32.0f)
+            .position(168.0f, 322.0f).size(w - 168.0f - 28.0f, core::theme::scaled(32.0f))
             .text("另有 " + std::to_string(f.formEnvRows_.size() -
                                            kMaxVisibleRows) +
                   " 项已保存（保存时全量写入，列表仅显示前 " +

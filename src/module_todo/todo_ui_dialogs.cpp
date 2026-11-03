@@ -69,10 +69,10 @@ void drawFieldLabel(eui::Ui& ui, const std::string& id, float x, float y, float 
                     const std::string& text, const core::theme::Tokens& t) {
     ui.text(id)
         .position(x, y)
-        .size(w, 16.0f)
+        .size(w, core::theme::scaled(16.0f))
         .text(text)
         .fontSize(t.sizes.fontSizeSmall - 1.0f)
-        .lineHeight(16.0f)
+        .lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary)
         .build();
 }
@@ -596,7 +596,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui.text("todo.dialog.overdue.title.icon")
                 .position(28.0f, 20.0f)
-                .size(18.0f, 28.0f)
+                .size(18.0f, core::theme::scaled(28.0f))
                 .icon(0xF071)  // fa-triangle-exclamation
                 .fontSize(core::theme::scaled(20.0f))
                 .lineHeight(core::theme::scaled(28.0f))
@@ -637,10 +637,10 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     .build();
                 ui.text(rowId + ".title")
                     .position(32.0f, y + 10.0f)
-                    .size(w - 300.0f, 20.0f)
+                    .size(w - 300.0f, core::theme::scaled(20.0f))
                     .text(task.title)
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
                     .fontWeight(500)
                     // 省略号三件套：长任务名截断，不压右侧 列名/截止/逾期天 三列
                     .maxWidth(w - 300.0f)
@@ -649,29 +649,29 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     .build();
                 ui.text(rowId + ".col")
                     .position(w - 262.0f, y + 10.0f)
-                    .size(120.0f, 20.0f)
+                    .size(120.0f, core::theme::scaled(20.0f))
                     .text(col != nullptr ? col->title : "?")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.textSecondary)
                     .build();
                 ui.text(rowId + ".due")
                     .position(w - 136.0f, y + 10.0f)
-                    .size(60.0f, 20.0f)
+                    .size(60.0f, core::theme::scaled(20.0f))
                     .text(task.dueAt.has_value() ? formatDue(task.dueAt.value())
                                                  : "-")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.textSecondary)
                     .build();
                 ui.text(rowId + ".days")
                     .position(w - 68.0f, y + 10.0f)
-                    .size(48.0f, 20.0f)
+                    .size(48.0f, core::theme::scaled(20.0f))
                     // 入选按秒级，日历日差可能为 0（1 秒前到期）→ 行文案至少 1 天
                     .text("逾期" + std::to_string(
                                std::max(1, overdueDays(task.dueAt.value_or(0), now))) + "天")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.errorText)
                     .build();
             }
@@ -1245,11 +1245,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                             if (docMissing || sourceMissing) {
                                 inner.text("todo.dialog.detail.doc.missing")
                                     .position(x0 + nameW + gapW, 20.0f)
-                                    .size(missingW, 32.0f)
+                                    .size(missingW, core::theme::scaled(32.0f))
                                     .text(sourceMissing ? "模块未启用"
                                                         : "文档不存在")
                                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                                    .lineHeight(32.0f)
+                                    .lineHeight(core::theme::scaled(32.0f))
                                     .color(t.colors.textTertiary)
                                     .build();
                             }
@@ -1404,21 +1404,21 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                                     .build();
                                 inner.text(rowId + ".title")
                                     .position(32.0f, 6.0f)
-                                    .size(cw - 300.0f, 20.0f)
+                                    .size(cw - 300.0f, core::theme::scaled(20.0f))
                                     .text(note.title.empty() ? note.relPath
                                                              : note.title)
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(20.0f)
+                                    .lineHeight(core::theme::scaled(20.0f))
                                     .fontWeight(500)
                                     .color(t.colors.textPrimary)
                                     .overflow(core::TextOverflow::Ellipsis)
                                     .build();
                                 inner.text(rowId + ".path")
                                     .position(32.0f, 26.0f)
-                                    .size(cw - 80.0f, 14.0f)
+                                    .size(cw - 80.0f, core::theme::scaled(14.0f))
                                     .text(note.relPath)
                                     .fontSize(t.sizes.fontSizeSmall - 2.0f)
-                                    .lineHeight(14.0f)
+                                    .lineHeight(core::theme::scaled(14.0f))
                                     .color(t.colors.textTertiary)
                                     .overflow(core::TextOverflow::Ellipsis)
                                     .build();

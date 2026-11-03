@@ -54,7 +54,7 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             ui.text(std::string(pageKey) + ".title")
                 .position(pad, pad)
-                .size(screen.width - pad * 2.0f, 32.0f)
+                .size(screen.width - pad * 2.0f, core::theme::scaled(32.0f))
                 .text(title)
                 .fontSize(t.sizes.fontSizeTitle)
                 .fontWeight(600)
@@ -62,7 +62,7 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             ui.text(std::string(pageKey) + ".empty")
                 .position(pad, pad + 48.0f)
-                .size(screen.width - pad * 2.0f, 24.0f)
+                .size(screen.width - pad * 2.0f, core::theme::scaled(24.0f))
                 .text("暂无数据")
                 .fontSize(t.sizes.fontSizeBody)
                 .color(t.colors.textTertiary)

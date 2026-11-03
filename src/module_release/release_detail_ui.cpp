@@ -245,10 +245,10 @@ void drawErrorPage(eui::Ui& ui, const eui::Screen& screen,
                 .color(t.colors.textPrimary)
                 .build();
             ui.text("release.detail.error")
-                .size(std::max(0.0f, screen.width - pad * 2.0f), 24.0f)
+                .size(std::max(0.0f, screen.width - pad * 2.0f), core::theme::scaled(24.0f))
                 .text(state.loadError)
                 .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(24.0f)
+                .lineHeight(core::theme::scaled(24.0f))
                 .color(t.colors.errorText)
                 .build();
         })

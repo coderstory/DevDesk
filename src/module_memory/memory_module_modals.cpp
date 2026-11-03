@@ -23,10 +23,10 @@ void MemoryModule::composeEditDialog(eui::Ui& ui, const eui::Screen& screen,
                                 ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
         ui.text("memory.dialog.edit.hint")
             .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, 20.0f)
+            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(20.0f))
             .text("修改记忆正文后接受；引擎将按新正文执行。")
             .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         components::input(ui, "memory.dialog.edit.input")
@@ -80,12 +80,12 @@ void MemoryModule::composeMaskModal(eui::Ui& ui, const eui::Screen& screen,
                                 "确认关闭脱敏？", ui_kit::kDialogTitleFontSize, t.colors.errorText, {});
         ui.text("memory.dialog.mask.body")
             .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, 64.0f)
+            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(64.0f))
             .wrap()
             .text("关闭后，密钥/手机号等敏感信息将原样发送给云端大模型。"
                   "仅建议临时排查时使用，用完请及时重新开启。")
             .fontSize(core::theme::scaled(13.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         ui_kit::button(ui, "memory.dialog.mask.cancel", "取消",
@@ -124,14 +124,14 @@ void MemoryModule::composeClearModal(eui::Ui& ui, const eui::Screen& screen,
                                 "清除全部记忆？", ui_kit::kDialogTitleFontSize, t.colors.errorText, {});
         ui.text("memory.dialog.clear.body")
             .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, 64.0f)
+            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(64.0f))
             .wrap()
             .text("将删除本机面板库全部 " +
                   std::to_string(snap.proposalTotal) +
                   " 条提案记录与全部消耗账面，操作不可恢复。"
                   "如确定，请在下方输入「清除」二字。")
             .fontSize(core::theme::scaled(13.0f))
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         components::input(ui, "memory.dialog.clear.input")
@@ -193,19 +193,19 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                            const std::string& status, eui::Color color) {
             ui.text(std::string(id) + ".name")
                 .position(ui_kit::kDialogInsetX, ry)
-                .size(180.0f, 22.0f)
+                .size(180.0f, core::theme::scaled(22.0f))
                 .text(name)
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(22.0f)
+                .lineHeight(core::theme::scaled(22.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
             ui.text(std::string(id) + ".status")
                 .position(ui_kit::kDialogInsetX + 190.0f, ry)
-                .size(w - ui_kit::kDialogBodyInsetX - 190.0f, 22.0f)
+                .size(w - ui_kit::kDialogBodyInsetX - 190.0f, core::theme::scaled(22.0f))
                 .text(status)
                 .fontSize(core::theme::scaled(12.0f))
-                .lineHeight(22.0f)
+                .lineHeight(core::theme::scaled(22.0f))
                 .color(color)
                 .build();
         };
@@ -244,32 +244,32 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
         if (state == TelememEngine::State::Running) {
             ui.text("memory.dialog.wizard.done")
                 .position(ui_kit::kDialogInsetX, 148.0f)
-                .size(w - ui_kit::kDialogBodyInsetX, 44.0f)
+                .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(44.0f))
                 .wrap()
                 .text("安装完成，记忆引擎已在后台运行。关掉本向导即可正常使用。")
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(okColor)
                 .build();
         } else if (state == TelememEngine::State::Failed) {
             ui.text("memory.dialog.wizard.fail")
                 .position(ui_kit::kDialogInsetX, 148.0f)
-                .size(w - ui_kit::kDialogBodyInsetX, 60.0f)
+                .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(60.0f))
                 .wrap()
                 .text("安装失败：" + es.detail + "（可点「重试安装」再跑一轮）")
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(failColor)
                 .build();
         } else {
             ui.text("memory.dialog.wizard.intro")
                 .position(ui_kit::kDialogInsetX, 148.0f)
-                .size(w - ui_kit::kDialogBodyInsetX, 44.0f)
+                .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(44.0f))
                 .wrap()
                 .text("本向导将检测 Python、创建虚拟环境并 pip 安装 telemem，"
                       "全程只写数据目录，不捆绑解释器。")
                 .fontSize(core::theme::scaled(13.0f))
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.textSecondary)
                 .build();
         }

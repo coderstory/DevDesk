@@ -260,7 +260,7 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
     const float statusLeftW = w - 24.0f - 220.0f - 24.0f;
     ui.text("md.status.save")
         .position(x + 24.0f, y)
-        .size(statusLeftW, 22.0f)
+        .size(statusLeftW, core::theme::scaled(22.0f))
         // 超长文件名用单行省略号；显式 maxWidth 是生效前提（==0 时 runtime 回退
         // frame.width，DSL 按 maxWidth 走，两条路会分叉）；clip 兜底绘制范围。
         .maxWidth(statusLeftW)
@@ -310,7 +310,7 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
     }
     ui.text("md.status.pos")
         .position(x + w - 24.0f - 220.0f, y)
-        .size(220.0f, 22.0f)
+        .size(220.0f, core::theme::scaled(22.0f))
         .text(right)
         .fontSize(core::theme::scaled(11.0f))
         .lineHeight(core::theme::scaled(22.0f))

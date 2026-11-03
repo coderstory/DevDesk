@@ -255,7 +255,7 @@ void drawProfileCard(eui::Ui& ui,
     {
         ui.text(id + ".name")
             .position(kTextX, y + 10.0f)
-            .size(nameMaxW, 18.0f)
+            .size(nameMaxW, core::theme::scaled(18.0f))
             .maxWidth(nameMaxW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
@@ -273,7 +273,7 @@ void drawProfileCard(eui::Ui& ui,
         if (!sub.empty()) {
             ui.text(id + ".subtitle")
                 .position(kTextX, y + 30.0f)
-                .size(nameMaxW, 16.0f)
+                .size(nameMaxW, core::theme::scaled(16.0f))
                 .maxWidth(nameMaxW)
                 .wrap(false)
                 .overflow(core::TextOverflow::Ellipsis)
@@ -297,7 +297,7 @@ void drawProfileCard(eui::Ui& ui,
             .build();
         ui.text(id + ".active.text")
             .position(chipX, chipY)
-            .size(kActiveChipW, 20.0f)
+            .size(kActiveChipW, core::theme::scaled(20.0f))
             .text("使用中")
             .fontSize(core::theme::scaled(11.0f))
             .lineHeight(core::theme::scaled(20.0f))
@@ -349,10 +349,10 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                         .alignItems(eui::Align::CENTER)
                         .content([&] {
                             ui.text("claude.h1")
-                                .size(220.0f, 24.0f)
+                                .size(220.0f, core::theme::scaled(24.0f))
                                 .text("Claude 切换器")
                                 .fontSize(t.sizes.fontSizeTitle)
-                                .lineHeight(24.0f)
+                                .lineHeight(core::theme::scaled(24.0f))
                                 .fontWeight(700)
                                 .color(t.colors.textPrimary)
                                 .build();
@@ -396,7 +396,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .height(18.0f)
                                 .text(statusText)
                                 .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(18.0f)
+                                .lineHeight(core::theme::scaled(18.0f))
                                 .color(proxyRunning ? t.colors.primary
                                                     : t.colors.textTertiary)
                                 .fontWeight(500)
@@ -490,19 +490,19 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
         .alignItems(eui::Align::CENTER)
         .content([&] {
             ui.text("claude.guide.icon")
-                .size(14.0f, 18.0f)
+                .size(14.0f, core::theme::scaled(18.0f))
                 .icon(0xF05A)  // fa-circle-info
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textSecondary)
                 .build();
             ui.text("claude.guide.takeover")
-                .size(contentW - 44.0f, 18.0f)
+                .size(contentW - 44.0f, core::theme::scaled(18.0f))
                 .text("启动代理将接管 Claude Code 配置（" +
                       settings_sync::defaultPaths().settingsFile.string() +
                       " 指向本地代理），停止代理时自动还原")
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textSecondary)
                 .build();
             // 关闭按钮（×）
@@ -517,7 +517,7 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                         .onClick([sp = &st] { sp->guideDismissed_ = true; })
                         .build();
                     ui.text("claude.guide.close.icon")
-                        .size(18.0f, 18.0f)
+                        .size(core::theme::scaled(18.0f), core::theme::scaled(18.0f))
                         .icon(0xF00D)  // fa-times
                         .fontSize(core::theme::scaled(12.0f))
                         .lineHeight(core::theme::scaled(18.0f))
@@ -558,10 +558,10 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
         .content([&] {
             ui.text("claude.profiles.title")
                 .position(20.0f, 20.0f)
-                .size(leftW - 40.0f - kHeadBtnSize, 20.0f)
+                .size(leftW - 40.0f - kHeadBtnSize, core::theme::scaled(20.0f))
                 .text("Profile 列表")
                 .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
@@ -587,7 +587,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             if (!profilesError.empty()) {
                 ui.text("claude.profiles.error")
                     .position(20.0f, cardY0 + 20.0f)
-                    .size(leftW - 40.0f, 60.0f)
+                    .size(leftW - 40.0f, core::theme::scaled(60.0f))
                     .text("Profile 列表加载失败：" + profilesError)
                     .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(core::theme::scaled(20.0f))
@@ -597,7 +597,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             } else if (profiles.empty()) {
                 ui.text("claude.profiles.empty")
                     .position(20.0f, cardY0 + 20.0f)
-                    .size(leftW - 40.0f, 60.0f)
+                    .size(leftW - 40.0f, core::theme::scaled(60.0f))
                     .text("暂无 Profile，点右上角 + 新建")
                     .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(core::theme::scaled(20.0f))

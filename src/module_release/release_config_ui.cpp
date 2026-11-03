@@ -532,10 +532,10 @@ void drawPageHeader(eui::Ui& ui, float contentW, bool servicesTab,
     ui.stack("release.config.header").size(contentW, kPageHeaderH).content([&] {
         ui.text("release.page.title")
             .position(0.0f, 0.0f)
-            .size(std::max(0.0f, contentW - 140.0f), kPageHeaderH)
+            .size(std::max(0.0f, contentW - 140.0f), core::theme::scaled(kPageHeaderH))
             .text("基础配置")
             .fontSize(t.sizes.fontSizePage)
-            .lineHeight(32.0f)
+            .lineHeight(core::theme::scaled(32.0f))
             .fontWeight(700)
             .color(t.colors.textPrimary)
             .build();
@@ -823,18 +823,18 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
 
         ui.text("release.dialog.env.services.label")
             .position(innerX, 112.0f)
-            .size(160.0f, 20.0f)
+            .size(160.0f, core::theme::scaled(20.0f))
             .text("包含服务")
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textPrimary)
             .build();
         ui.text("release.dialog.env.services.count")
             .position(innerX + rowW - 140.0f, 112.0f)
-            .size(140.0f, 20.0f)
+            .size(140.0f, core::theme::scaled(20.0f))
             .text("已选 " + std::to_string(state.envServiceIds.size()) + " 个")
             .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .horizontalAlign(eui::HorizontalAlign::Right)
             .color(t.colors.textTertiary)
             .build();
@@ -853,10 +853,10 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .content([&](eui::Ui& inner, float cw, float) {
                 if (state.services.empty()) {
                     inner.text("release.dialog.env.services.empty")
-                        .size(cw, 32.0f)
+                        .size(cw, core::theme::scaled(32.0f))
                         .text("服务目录为空，请先到「服务目录」新增服务")
                         .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(32.0f)
+                        .lineHeight(core::theme::scaled(32.0f))
                         .color(t.colors.textTertiary)
                         .build();
                     return;
@@ -888,10 +888,10 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
 
         ui.text("release.dialog.env.window.label")
             .position(innerX, 292.0f)
-            .size(110.0f, 40.0f)
+            .size(110.0f, core::theme::scaled(40.0f))
             .text("时间窗")
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(40.0f)
+            .lineHeight(core::theme::scaled(40.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textPrimary)
             .build();
@@ -913,10 +913,10 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .build();
         ui.text("release.dialog.env.window.dash")
             .position(inputX + timeW, 292.0f)
-            .size(16.0f, 40.0f)
+            .size(16.0f, core::theme::scaled(40.0f))
             .text("–")
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(40.0f)
+            .lineHeight(core::theme::scaled(40.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
@@ -1017,10 +1017,10 @@ void drawDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
 
         ui.text("release.dialog.delete.message")
             .position(innerX, 52.0f)
-            .size(rowW, 88.0f)
+            .size(rowW, core::theme::scaled(88.0f))
             .text(deleteMessage(state))
             .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(22.0f)
+            .lineHeight(core::theme::scaled(22.0f))
             .wrap(true)
             .color(t.colors.textSecondary)
             .build();

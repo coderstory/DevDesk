@@ -303,7 +303,7 @@ void drawProjectCardsCard(const CardDrawArgs& args) {
                             .build();
                         ui.text(rowId + ".name")
                             .position(kItemPadX, textY)
-                            .size(nameW, 16.0f)
+                            .size(nameW, roundFs(16.0f))
                             .text(c.name)
                             .fontSize(fs(13.0f))
                             .fontWeight(selected ? 600 : 400)
@@ -315,7 +315,7 @@ void drawProjectCardsCard(const CardDrawArgs& args) {
                             .build();
                         ui.text(rowId + ".repo")
                             .position(repoX, textY + 1.0f)
-                            .size(repoW, 16.0f)
+                            .size(repoW, roundFs(16.0f))
                             .text(c.repoPath.empty() ? "（仓库路径未填写）"
                                                      : c.repoPath)
                             .fontSize(fs(12.0f))

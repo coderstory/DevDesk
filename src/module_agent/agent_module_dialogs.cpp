@@ -159,20 +159,20 @@ void AgentModule::renderMessageRow(
                 .alignItems(eui::Align::CENTER)
                 .content([&] {
                     inner.text(mid + ".badge")
-                        .size(kMsgBadgeW, 20.0f)
+                        .size(kMsgBadgeW, core::theme::scaled(20.0f))
                         .text(badge)
                         .fontSize(fsS)
-                        .lineHeight(20.0f)
+                        .lineHeight(core::theme::scaled(20.0f))
                         .fontWeight(600)
                         .color(badge == "工具" ? tokens.primary
                                               : t.colors.textSecondary)
                         .build();
                     // 头行顺序 §10：badge → time → toggle → copy（copy 仅展开态）
                     inner.text(mid + ".time")
-                        .size(kMsgTimeW, 20.0f)
+                        .size(kMsgTimeW, core::theme::scaled(20.0f))
                         .text(messageTimeText(msg.createdAt, refSec))
                         .fontSize(fsS)
-                        .lineHeight(20.0f)
+                        .lineHeight(core::theme::scaled(20.0f))
                         .wrap(false)
                         .maxWidth(kMsgTimeW)
                         .color(t.colors.textTertiary)
@@ -244,11 +244,11 @@ void AgentModule::renderMessageRow(
                     }
                     case MessageBlock::Type::ToolUse: {
                         inner.text(bid)
-                            .size(cw, 20.0f)
+                            .size(cw, core::theme::scaled(20.0f))
                             .text("工具 · " + b.toolName + "  " +
                                   toolArgsSummary(b.text, 120))
                             .fontSize(fsS)
-                            .lineHeight(20.0f)
+                            .lineHeight(core::theme::scaled(20.0f))
                             .wrap(false)
                             .color(tokens.primary)
                             .build();
@@ -370,7 +370,7 @@ void AgentModule::composeTaskDialog(
             // ✕ 关闭（带内垂直居中）
             ui.text("agent.dialog.task.close")
                 .position(w - 56.0f, 8.0f)
-                .size(28.0f, 28.0f)
+                .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
                 .text("✕")
                 .fontSize(core::theme::scaled(14.0f))
                 .lineHeight(core::theme::scaled(28.0f))
@@ -453,7 +453,7 @@ void AgentModule::composeTaskDialog(
                     // 标签 + 副标竖排（圆右 8px，块在 56 高内垂直居中）
                     ui.text(nodeId + ".label")
                         .position(44.0f, navY + 12.0f)
-                        .size(kVertNavW - 44.0f - 14.0f, 18.0f)
+                        .size(kVertNavW - 44.0f - 14.0f, core::theme::scaled(18.0f))
                         .text(kStepLabels[i])
                         .fontSize(core::theme::scaled(14.0f))
                         .lineHeight(core::theme::scaled(18.0f))
@@ -463,7 +463,7 @@ void AgentModule::composeTaskDialog(
                         .build();
                     ui.text(nodeId + ".sub")
                         .position(44.0f, navY + 30.0f)
-                        .size(kVertNavW - 44.0f - 14.0f, 14.0f)
+                        .size(kVertNavW - 44.0f - 14.0f, core::theme::scaled(14.0f))
                         .text(kStepSubs[i])
                         .fontSize(core::theme::scaled(12.0f))
                         .lineHeight(core::theme::scaled(14.0f))
@@ -863,7 +863,7 @@ void AgentModule::composeTaskDialog(
                         if (editDestructive_) {
                             ui.text("agent.dialog.task.destructive.warn")
                                 .position(x0, destructiveY)
-                                .size(20.0f, 32.0f)
+                                .size(20.0f, core::theme::scaled(32.0f))
                                 .text("⚠")
                                 .fontSize(core::theme::scaled(14.0f))
                                 .lineHeight(core::theme::scaled(32.0f))
@@ -873,7 +873,7 @@ void AgentModule::composeTaskDialog(
                         }
                         ui.text("agent.dialog.task.destructive.label")
                             .position(x0 + (editDestructive_ ? 24.0f : 0.0f), destructiveY)
-                            .size(160.0f, 32.0f)
+                            .size(160.0f, core::theme::scaled(32.0f))
                             .text("允许破坏性操作")
                             .fontSize(core::theme::scaled(12.0f))
                             .lineHeight(core::theme::scaled(32.0f))
@@ -1042,7 +1042,7 @@ void AgentModule::composeDraftDialog(
         // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
         ui.text("agent.dialog.task.draft.close")
             .position(w - 56.0f, 22.0f)
-            .size(28.0f, 28.0f)
+            .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
             .text("✕")
             .fontSize(core::theme::scaled(14.0f))
             .lineHeight(core::theme::scaled(28.0f))

@@ -696,7 +696,7 @@ void drawSectionLabel(eui::Ui& ui, const std::string& id, float x, float y,
     const float labelWidth = std::max(40.0f, width - kCardInset * 2.0f);
     ui.text(id)
         .position(x + kCardInset, y + 3.0f)
-        .size(labelWidth, 20.0f)
+        .size(labelWidth, core::theme::scaled(20.0f))
         .text(text)
         .fontSize(tokens.sizes.fontSizeSmall)
         .fontWeight(600)
@@ -725,7 +725,7 @@ void drawDueItemRow(eui::Ui& ui, const std::string& id, float x, float y,
         60.0f, width - kCardInset * 2.0f - 14.0f - kGoButtonW - 16.0f);
     ui.text(id + ".title")
         .position(textX, y + 8.0f)
-        .size(textWidth, 22.0f)
+        .size(textWidth, core::theme::scaled(22.0f))
         .text(item.title)
         .fontSize(tokens.sizes.fontSizeBody)
         .fontWeight(600)
@@ -737,7 +737,7 @@ void drawDueItemRow(eui::Ui& ui, const std::string& id, float x, float y,
     if (!item.detail.empty()) {
         ui.text(id + ".detail")
             .position(textX, y + 30.0f)
-            .size(textWidth, 18.0f)
+            .size(textWidth, core::theme::scaled(18.0f))
             .text(item.detail)
             .fontSize(tokens.sizes.fontSizeSmall)
             .color(tokens.colors.textSecondary)
@@ -785,7 +785,7 @@ void drawTaskCardBody(eui::Ui& ui, const std::string& prefix, float x, float y,
     if (!envs.empty()) head += "  ·  " + envs;
     ui.text(prefix + ".head")
         .position(x + kCardInset, y + kCardInset + 4.0f)
-        .size(headWidth, 22.0f)
+        .size(headWidth, core::theme::scaled(22.0f))
         .text(head)
         .fontSize(tokens.sizes.fontSizeBody)
         .fontWeight(600)
@@ -804,7 +804,7 @@ void drawTaskCardBody(eui::Ui& ui, const std::string& prefix, float x, float y,
         .build();
     ui.text(prefix + ".chip.text")
         .position(chipX, y + kCardInset + 2.0f)
-        .size(chipW, 22.0f)
+        .size(chipW, core::theme::scaled(22.0f))
         .text(levelChipText(group.level))
         .fontSize(tokens.sizes.fontSizeSmall - 1.0f)
         .horizontalAlign(eui::HorizontalAlign::Center)
@@ -890,7 +890,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
         std::max(120.0f, screen.width - inset * 2.0f - kCloseButtonW - 20.0f);
     ui.text("release.reminder.title")
         .position(inset, kHeaderTitleY)
-        .size(titleWidth, 40.0f)
+        .size(titleWidth, core::theme::scaled(40.0f))
         .text("上线提醒")
         .fontSize(tokens.sizes.fontSizeTitle)
         .fontWeight(700)
@@ -903,7 +903,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
         std::to_string(view.tasks.size()) + " 个任务";
     ui.text("release.reminder.subtitle")
         .position(inset, kHeaderSubtitleY)
-        .size(titleWidth, 22.0f)
+        .size(titleWidth, core::theme::scaled(22.0f))
         .text(subtitle)
         .fontSize(tokens.sizes.fontSizeBody)
         .color(tokens.colors.textSecondary)
@@ -959,7 +959,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
 
     ui.text("release.reminder.hint")
         .position(inset, std::max(0.0f, screen.height - 26.0f))
-        .size(listWidth, 18.0f)
+        .size(listWidth, core::theme::scaled(18.0f))
         .text("Esc 或右上角关闭；全部处理完成后本窗自动关闭")
         .fontSize(tokens.sizes.fontSizeSmall)
         .color(tokens.colors.textTertiary)

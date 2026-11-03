@@ -508,10 +508,10 @@ void drawEmptyCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
             .build();
         ui.text("wallpaper.empty.icon.glyph")
             .position(kCardPad, 24.0f)
-            .size(44.0f, 44.0f)
+            .size(roundFs(44.0f), roundFs(44.0f))
             .icon(0xF07B)  // FA folder-open
             .fontSize(fs(20.0f))
-            .lineHeight(44.0f)
+            .lineHeight(roundFs(44.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.primaryText)
@@ -908,18 +908,18 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
         if (configured && missing) pathText += " · 目录不见了";
         ui.text("wallpaper.folder.icon")
             .position(kCardPad, 64.0f)
-            .size(20.0f, 20.0f)
+            .size(roundFs(20.0f), roundFs(20.0f))
             .icon(0xF07B)  // FA folder-open
             .fontSize(fs(16.0f))
-            .lineHeight(20.0f)
+            .lineHeight(roundFs(20.0f))
             .color(t.colors.textTertiary)
             .build();
         auto path = ui.text("wallpaper.folder.path")
                         .position(pathX, 54.0f)
-                        .size(pathW, 40.0f)
+                        .size(pathW, roundFs(40.0f))
                         .text(pathText)
                         .fontSize(fs(14.0f))
-                        .lineHeight(40.0f)
+                        .lineHeight(roundFs(40.0f))
                         .maxWidth(pathW)
                         .overflow(core::TextOverflow::Ellipsis)
                         .clip()
@@ -976,10 +976,10 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
                 .content([&] {
                     ui.text("wallpaper.folder.scanning.icon")
                         .position(0.0f, 4.0f)
-                        .size(16.0f, 16.0f)
+                        .size(roundFs(16.0f), roundFs(16.0f))
                         .icon(0xF110)  // FA spinner
                         .fontSize(fs(12.0f))
-                        .lineHeight(16.0f)
+                        .lineHeight(roundFs(16.0f))
                         .color(t.colors.textTertiary)
                         .build();
                     ui.text("wallpaper.folder.scanning.text")
@@ -997,11 +997,11 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
             if (kind == WallpaperKind::Video) {
                 ui.text("wallpaper.folder.stat.videos")
                     .position(kCardPad, 100.0f)
-                    .size(std::max(0.0f, w - kCardPad * 2.0f), 40.0f)
+                    .size(std::max(0.0f, w - kCardPad * 2.0f), roundFs(40.0f))
                     .text(presentation::libraryCountLabel(kind,
                                                           snapshot.videoCount))
                     .fontSize(fs(18.0f))
-                    .lineHeight(40.0f)
+                    .lineHeight(roundFs(40.0f))
                     .fontWeight(600)
                     .color(t.colors.textPrimary)
                     .build();

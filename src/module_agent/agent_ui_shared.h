@@ -63,7 +63,7 @@ inline void actionChip(::eui::Ui& ui, const std::string& id, const std::string& 
                 .size(width, kChipH)
                 .text(label)
                 .fontSize(fontSize)
-                .lineHeight(20.0f)
+                .lineHeight(core::theme::scaled(20.0f))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(textColor)

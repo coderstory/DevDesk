@@ -142,7 +142,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                                 .build();
                             ui.text("todo.search.icon")
                                 .position(14.0f, 12.0f)
-                                .size(16.0f, 16.0f)
+                                .size(core::theme::scaled(16.0f), core::theme::scaled(16.0f))
                                 .icon(0xF002)  // fa-magnifying-glass
                                 .fontSize(core::theme::scaled(12.0f))
                                 .lineHeight(core::theme::scaled(16.0f))
@@ -164,7 +164,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                                 .build();
                             ui.text("todo.btn.overdue.text")
                                 .position(0.0f, 0.0f)
-                                .size(88.0f, 28.0f)
+                                .size(88.0f, core::theme::scaled(28.0f))
                                 .text("逾期 " + std::to_string(v.overdueCount))
                                 .fontSize(core::theme::scaled(12.0f))
                                 .lineHeight(core::theme::scaled(28.0f))
@@ -496,7 +496,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         float glyphY = 16.0f;
         ui.text(id + ".compact.label")
             .position(0.0f, glyphY)
-            .size(width, 18.0f)
+            .size(width, core::theme::scaled(18.0f))
             .text("已归档")
             .fontSize(core::theme::scaled(13.0f))
             .lineHeight(core::theme::scaled(18.0f))
@@ -523,7 +523,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .build();
         ui.text(id + ".compact.count")
             .position(pillX, pillY)
-            .size(pillW, 18.0f)
+            .size(pillW, core::theme::scaled(18.0f))
             .text(countText)
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(core::theme::scaled(18.0f))
@@ -537,7 +537,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         // 底部 chevron-left（14px 主色）；展开列头的收起按钮是同一图标旋转 180°
         ui.text(id + ".compact.chev")
             .position(0.0f, std::max(0.0f, height - 28.0f))
-            .size(width, 14.0f)
+            .size(width, core::theme::scaled(14.0f))
             .icon(0xF053)  // fa-chevron-left
             .fontSize(core::theme::scaled(14.0f))
             .lineHeight(core::theme::scaled(14.0f))
@@ -679,7 +679,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .build();
         ui.text(id + ".archivelimit.text")
             .position(12.0f, height - kArchiveLimitH + 6.0f)
-            .size(width - 24.0f, 32.0f)
+            .size(width - 24.0f, core::theme::scaled(32.0f))
             .text(limitText)
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(core::theme::scaled(16.0f))

@@ -307,10 +307,10 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
             float y = cardY + inset;
             ui.text("release.detail.prereq.group.docs")
                 .position(inset, y)
-                .size(width - inset * 2.0f, 18.0f)
+                .size(width - inset * 2.0f, core::theme::scaled(18.0f))
                 .text("审批单据")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textTertiary)
                 .build();
             y += 18.0f + 8.0f;
@@ -394,10 +394,10 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
             y += 8.0f;
             ui.text("release.detail.prereq.group.announce")
                 .position(inset, y)
-                .size(width - inset * 2.0f, 18.0f)
+                .size(width - inset * 2.0f, core::theme::scaled(18.0f))
                 .text("上线公告")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.textTertiary)
                 .build();
             y += 18.0f + 8.0f;
@@ -426,11 +426,11 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                 .build();
             ui.text(aid + ".count")
                 .position(inset, y + 88.0f + 8.0f)
-                .size(200.0f, 22.0f)
+                .size(200.0f, core::theme::scaled(22.0f))
                 .text("共 " + std::to_string(utf8CharCount(state.task.announceText)) +
                       " 字")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(22.0f)
+                .lineHeight(core::theme::scaled(22.0f))
                 .color(announceFlagged && !announceChecked ? t.colors.errorText
                                                            : t.colors.textTertiary)
                 .build();
@@ -696,10 +696,10 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
     }
     ui.text(id + ".name")
         .position(nameX, y + 10.0f)
-        .size(nameW, 20.0f)
+        .size(nameW, core::theme::scaled(20.0f))
         .text(svc.serviceName)
         .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(20.0f)
+        .lineHeight(core::theme::scaled(20.0f))
         .fontWeight(600)
         .maxWidth(nameW)
         .overflow(core::TextOverflow::Ellipsis)
@@ -1059,10 +1059,10 @@ void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float wid
     }
     ui.text(id + ".progress")
         .position(topRight - countW, y + 10.0f)
-        .size(countW, 16.0f)
+        .size(countW, core::theme::scaled(16.0f))
         .text(std::to_string(progress.done) + "/" + std::to_string(progress.total))
         .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(16.0f)
+        .lineHeight(core::theme::scaled(16.0f))
         .horizontalAlign(eui::HorizontalAlign::Right)
         .color(completed ? t.colors.success : t.colors.textSecondary)
         .build();
@@ -1084,10 +1084,10 @@ void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float wid
     const float nameW = std::max(0.0f, (overdue ? chipX : barX) - x - kEnvInset - 8.0f);
     ui.text(id + ".name")
         .position(x + kEnvInset, y + 8.0f)
-        .size(nameW, 24.0f)
+        .size(nameW, core::theme::scaled(24.0f))
         .text(env.envName)
         .fontSize(t.sizes.fontSizeLarge)
-        .lineHeight(24.0f)
+        .lineHeight(core::theme::scaled(24.0f))
         .fontWeight(600)
         .maxWidth(nameW)
         .overflow(core::TextOverflow::Ellipsis)
@@ -1095,10 +1095,10 @@ void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float wid
         .build();
     ui.text(id + ".window")
         .position(x + kEnvInset, y + 32.0f)
-        .size(nameW, 16.0f)
+        .size(nameW, core::theme::scaled(16.0f))
         .text(formatTimeWindow(env.startMinute, env.endMinute))
         .fontSize(t.sizes.fontSizeSmall - 1.0f)
-        .lineHeight(16.0f)
+        .lineHeight(core::theme::scaled(16.0f))
         .maxWidth(nameW)
         .overflow(core::TextOverflow::Ellipsis)
         .color(overdue ? t.colors.errorText : t.colors.textTertiary)
@@ -1160,10 +1160,10 @@ void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
             if (state.envs.empty()) {
                 ui.text("release.detail.env.empty")
                     .position(0.0f, kSectionTitleH + kSectionGap)
-                    .size(width, 48.0f)
+                    .size(width, core::theme::scaled(48.0f))
                     .text("任务还没有环境")
                     .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(48.0f)
+                    .lineHeight(core::theme::scaled(48.0f))
                     .color(t.colors.textTertiary)
                     .build();
                 if (actions.onOpenConfig) {
@@ -1618,10 +1618,10 @@ void drawPublishTrack(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                         .build();
                     ui.text(base + ".node.check")
                         .position(nodeX, nodeY)
-                        .size(14.0f, 14.0f)
+                        .size(core::theme::scaled(14.0f), core::theme::scaled(14.0f))
                         .text("✓")
                         .fontSize(core::theme::scaled(9.0f))
-                        .lineHeight(14.0f)
+                        .lineHeight(core::theme::scaled(14.0f))
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.surface)
@@ -1848,20 +1848,20 @@ void drawValidationDialog(eui::Ui& ui, const eui::Screen& screen,
     dialog.content([&, panelW, panelH] {
         ui.text("release.detail.validation.title")
             .position(24.0f, 16.0f)
-            .size(std::max(0.0f, panelW - 48.0f), 26.0f)
+            .size(std::max(0.0f, panelW - 48.0f), core::theme::scaled(26.0f))
             .text("校验未通过")
             .fontSize(t.sizes.fontSizeLarge)
-            .lineHeight(26.0f)
+            .lineHeight(core::theme::scaled(26.0f))
             .fontWeight(700)
             .color(t.colors.textPrimary)
             .build();
         ui.text("release.detail.validation.hint")
             .position(24.0f, 46.0f)
-            .size(std::max(0.0f, panelW - 48.0f), 20.0f)
+            .size(std::max(0.0f, panelW - 48.0f), core::theme::scaled(20.0f))
             .text("以下 " + std::to_string(state.validationMissing.size()) +
                   " 项不完整，补齐后再继续：")
             .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(20.0f)
+            .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
 
@@ -1880,10 +1880,10 @@ void drawValidationDialog(eui::Ui& ui, const eui::Screen& screen,
                                                        float) {
                 for (std::size_t i = 0; i < state.validationMissing.size(); ++i) {
                     inner.text("release.detail.validation.item." + std::to_string(i))
-                        .size(innerWidth, 22.0f)
+                        .size(innerWidth, core::theme::scaled(22.0f))
                         .text("• " + state.validationMissing[i])
                         .fontSize(itemFontSize)
-                        .lineHeight(22.0f)
+                        .lineHeight(core::theme::scaled(22.0f))
                         .maxWidth(innerWidth)
                         .wrap(false)
                         .overflow(core::TextOverflow::Ellipsis)

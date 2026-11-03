@@ -213,7 +213,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             .build();
         ui.text("memory.usage.note")
             .position(barX, cy + core::theme::scaled(96.0f))
-            .size(barW, 40.0f)
+            .size(barW, core::theme::scaled(40.0f))
             .wrap()
             .text("口径：码点数 ≈ CJK 1 字 1 token 的估算账面；单价按智谱计费页常量，"
                   "注入记账不计金额。")
@@ -462,7 +462,7 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
     }
     ui.text("memory.rv.body." + p.id)
         .position(x + 16.0f, y + core::theme::scaled(42.0f))
-        .size(w - 32.0f, 56.0f)
+        .size(w - 32.0f, core::theme::scaled(56.0f))
         .wrap()
         .text(body)
         .fontSize(core::theme::scaled(12.5f))
@@ -564,7 +564,7 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
         .build();
     ui.text("memory.rv.done.kind." + p.id)
         .position(x + 16.0f, y + core::theme::scaled(34.0f))
-        .size(w - 200.0f, 40.0f)
+        .size(w - 200.0f, core::theme::scaled(40.0f))
         .wrap()
         .text("「" + kindLabel(p.kind) + "」" +
               (p.resultText.empty() ? srcLabel(p.source) : p.resultText))
@@ -907,7 +907,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         // 只读回显（端点定案值 + 凭据通道；不回显任何密钥形态）
         ui.text("memory.cfg.llm.rows")
             .position(x + 16.0f, cy + core::theme::scaled(112.0f))
-            .size(innerW, 36.0f)
+            .size(innerW, core::theme::scaled(36.0f))
             .wrap()
             .text(std::string("端点 ") + engine::kLlmBaseUrl + " · 模型 " +
                   engine::kLlmModel +
@@ -931,7 +931,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         cardHead("memory.cfg.embed.title", cy, "向量化端点（本机）");
         ui.text("memory.cfg.embed.rows")
             .position(x + 16.0f, cy + core::theme::scaled(42.0f))
-            .size(innerW, 36.0f)
+            .size(innerW, core::theme::scaled(36.0f))
             .wrap()
             .text(std::string("llama-server · http://127.0.0.1:") +
                   std::to_string(engine::kEmbedServerPort) + " · 模型 " +

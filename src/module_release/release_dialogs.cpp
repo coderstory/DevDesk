@@ -358,10 +358,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
             // 计划上线日期（三列滚轮 picker 的提交值）
             ui.text("release.newtask.date.label")
                 .position(x0, 58.0f)
-                .size(innerW, 16.0f)
+                .size(innerW, core::theme::scaled(16.0f))
                 .text("计划上线日期")
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(16.0f)
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textSecondary)
                 .build();
             ui.rect("release.newtask.date")
@@ -374,10 +374,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
             const float dateChipW = chipWidth(regularDay ? "常规发布日" : "非常规发布日");
             ui.text("release.newtask.date.text")
                 .position(x0 + 12.0f, 78.0f)
-                .size(std::max(0.0f, innerW - 12.0f - dateChipW - 16.0f), 40.0f)
+                .size(std::max(0.0f, innerW - 12.0f - dateChipW - 16.0f), core::theme::scaled(40.0f))
                 .text(state.planDate + "   " + releaseWeekdayLabel(state.planDate))
                 .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(40.0f)
+                .lineHeight(core::theme::scaled(40.0f))
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textPrimary)
                 .build();
@@ -408,10 +408,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
             // 环境多选 + 时间窗（选中即预览将带入的服务）
             ui.text("release.newtask.env.label")
                 .position(x0, 134.0f)
-                .size(innerW, 16.0f)
+                .size(innerW, core::theme::scaled(16.0f))
                 .text("加入环境（可多选）")
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(16.0f)
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textSecondary)
                 .build();
             components::scrollView(ui, "release.newtask.env.scroll")
@@ -425,10 +425,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
                     (void)viewportHeight;
                     if (state.envs.empty()) {
                         inner.text("release.newtask.env.empty")
-                            .size(contentWidth, 36.0f)
+                            .size(contentWidth, core::theme::scaled(36.0f))
                             .text("基础配置里还没有环境")
                             .fontSize(t.sizes.fontSizeSmall)
-                            .lineHeight(36.0f)
+                            .lineHeight(core::theme::scaled(36.0f))
                             .color(t.colors.textTertiary)
                             .build();
                         return;
@@ -479,10 +479,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
             }
             ui.text("release.newtask.preview")
                 .position(x0, 354.0f)
-                .size(innerW, 36.0f)
+                .size(innerW, core::theme::scaled(36.0f))
                 .text(preview)
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .maxWidth(innerW)
                 .wrap(true)
                 .color(t.colors.textSecondary)
@@ -491,10 +491,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
             if (!state.error.empty()) {
                 ui.text("release.newtask.error")
                     .position(x0, 398.0f)
-                    .size(innerW, 20.0f)
+                    .size(innerW, core::theme::scaled(20.0f))
                     .text(state.error)
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
                     .maxWidth(innerW)
                     .wrap(false)
                     .overflow(core::TextOverflow::Ellipsis)

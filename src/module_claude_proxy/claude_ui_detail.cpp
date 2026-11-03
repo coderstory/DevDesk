@@ -216,7 +216,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         settings_sync::defaultPaths().settingsFile.string();
     const float toY = keyY + 56.0f;
     ui.text("claude.field.takeover.value")
-        .position(x0, toY).size(w, 16.0f)
+        .position(x0, toY).size(w, core::theme::scaled(16.0f))
         .text(ccManaged ? ("● Claude Code 已接管 " + ccPath)
                         : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
@@ -231,12 +231,12 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
             warnText += "，详见设置页）";
         }
         ui.text("claude.field.takeover.warn.icon")
-            .position(x0, toY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
+            .position(x0, toY + 16.0f).size(14.0f, core::theme::scaled(16.0f)).icon(0xF071)
             .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
         ui.text("claude.field.takeover.warn")
-            .position(x0 + 18.0f, toY + 16.0f).size(w - 18.0f, 16.0f)
+            .position(x0 + 18.0f, toY + 16.0f).size(w - 18.0f, core::theme::scaled(16.0f))
             .text(warnText)
             .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
@@ -288,7 +288,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
     // §5「1M」tooltip：hover 显示「上下文窗口 1M tokens」。TooltipBuilder 需 bounds/
     // metrics 绑定（待 EUI），暂以静态说明行落地视觉意图（不占额外行高预算外溢）。
     ui.text("claude.slot.onem.hint")
-        .position(x0, sy).size(w, 14.0f)
+        .position(x0, sy).size(w, core::theme::scaled(14.0f))
         .text("1M = 上下文窗口 1M tokens（勾选则该槽位按 1M 上下文窗口请求）")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
@@ -307,13 +307,13 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
                     t.colors.primarySoftBg)
             .radius(t.sizes.radiusLarge).build();
         ui.text("claude.slot.name." + idx)
-            .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
+            .position(x0 + 12.0f, sy).size(80.0f, core::theme::scaled(32.0f))
             .text(meta.label).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(32.0f))
             // 必须 verticalAlign=Center 才垂直居中；行框几何（32/38 已标定）不动。
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
         ui.text("claude.slot.val." + idx)
-            .position(x0 + 100.0f, sy).size(w - 112.0f - kOneMColW, 32.0f)
+            .position(x0 + 100.0f, sy).size(w - 112.0f - kOneMColW, core::theme::scaled(32.0f))
             // 显示层剥 [1M]（开关已表达 1M，值再带即重复）；只动显示，存储与发往上游仍带标记。
             .text(filled ? deriveDisplayName(slot.model)
                          : std::string("未配置"))
@@ -608,7 +608,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
     // §5「运行」副提示
     ui.text("claude.act.run.hint")
         .position(x0, actY + 44.0f)
-        .size(w, 16.0f)
+        .size(w, core::theme::scaled(16.0f))
         .text("以该 Profile 直接打开 Claude Code（不改当前设置）")
         .fontSize(core::theme::scaled(11.0f))
         .lineHeight(core::theme::scaled(16.0f))
@@ -656,10 +656,10 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             // 标题
             ui.text("claude.detail.title")
                 .position(x0, y0)
-                .size(w0, 24.0f)
+                .size(w0, core::theme::scaled(24.0f))
                 .text("当前 Profile 详情")
                 .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(24.0f)
+                .lineHeight(core::theme::scaled(24.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();

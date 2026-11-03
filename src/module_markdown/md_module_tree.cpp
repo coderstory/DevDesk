@@ -121,7 +121,7 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                                     .onClick([this, path] { closeTab(path); })
                                     .build();
                                 ui.text("md.note.tab." + std::to_string(i) + ".close.icon")
-                                    .size(24.0f, 24.0f)
+                                    .size(core::theme::scaled(24.0f), core::theme::scaled(24.0f))
                                     .text("\xC3\x97")  // ×
                                     .fontSize(core::theme::scaled(14.0f))
                                     .lineHeight(core::theme::scaled(24.0f))
@@ -215,10 +215,10 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
             .build();
         ui.text("md.search.icon")
             .position(28.0f, 59.0f)
-            .size(18.0f, 18.0f)
+            .size(core::theme::scaled(18.0f), core::theme::scaled(18.0f))
             .icon(0xF002)  // fa-magnifying-glass
             .fontSize(core::theme::scaled(kTreeFontSize))
-            .lineHeight(18.0f)
+            .lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.textTertiary)
             .build();
         // 清空按钮（补充项 §3.2.4）：搜索非空时显示「×」，点击清空。
@@ -235,7 +235,7 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
                 .build();
             ui.text("md.search.clear.icon")
                 .position(16.0f + searchW - 28.0f, 48.0f)
-                .size(28.0f, 40.0f)
+                .size(28.0f, core::theme::scaled(40.0f))
                 .text("×")
                 .fontSize(core::theme::scaled(14.0f))
                 .lineHeight(core::theme::scaled(40.0f))
@@ -282,7 +282,7 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
         if (!allTags_.empty()) {
             ui.text("md.tags.title")
                 .position(16.0f, tagY)
-                .size(sideW - 32.0f, 14.0f)
+                .size(sideW - 32.0f, core::theme::scaled(14.0f))
                 .text("标签")
                 .fontSize(core::theme::scaled(10.0f))
                 .lineHeight(core::theme::scaled(14.0f))
@@ -348,11 +348,11 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
         if (!listError_.empty()) {
             ui.text("md.tree.error")
                 .position(16.0f, listY + 8.0f)
-                .size(sideW - 32.0f, 60.0f)
+                .size(sideW - 32.0f, core::theme::scaled(60.0f))
                 .text("列表加载失败：\n" + listError_ +
                       "\n每 5 秒自动重试")
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(18.0f)
+                .lineHeight(core::theme::scaled(18.0f))
                 .wrap()
                 .color(t.colors.errorText)
                 .build();
@@ -363,10 +363,10 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
                 if (allFolders_.empty()) {
                     ui.text("md.tree.empty")
                         .position(36.0f, listY + 40.0f)
-                        .size(sideW - 48.0f, 40.0f)
+                        .size(sideW - 48.0f, core::theme::scaled(40.0f))
                         .text("还没有笔记\n点右上角 + 开始")
                         .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(18.0f)
+                        .lineHeight(core::theme::scaled(18.0f))
                         .wrap()
                         .color(t.colors.textTertiary)
                         .build();
@@ -374,10 +374,10 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
             } else {
                 ui.text("md.tree.empty")
                     .position(16.0f, listY + 8.0f)
-                    .size(sideW - 32.0f, 40.0f)
+                    .size(sideW - 32.0f, core::theme::scaled(40.0f))
                     .text("没有匹配的笔记")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
+                    .lineHeight(core::theme::scaled(18.0f))
                     .wrap()
                     .color(t.colors.textTertiary)
                     .build();

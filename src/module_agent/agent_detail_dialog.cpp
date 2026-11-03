@@ -245,7 +245,7 @@ void AgentModule::composeTaskDetailDialog(
             // ✕（与底部关闭 / 遮罩 / Esc 同一路径）
             ui.text("agent.dialog.detail.close")
                 .position(closeX, 18.0f)
-                .size(28.0f, 28.0f)
+                .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
                 .text("✕")
                 .fontSize(core::theme::scaled(14.0f))
                 .lineHeight(core::theme::scaled(28.0f))
@@ -1495,10 +1495,10 @@ void AgentModule::composeTaskDetailDialog(
                 w - ui_kit::kDialogBodyInsetX - 2.0f * 104.0f - 8.0f;
             ui.text("agent.dialog.detail.footer.hint")
                 .position(x0, footerBtnY + 12.0f)
-                .size(std::max(0.0f, footerCloseX - kDialogGap - x0), 16.0f)
+                .size(std::max(0.0f, footerCloseX - kDialogGap - x0), core::theme::scaled(16.0f))
                 .text("执行记录上限 20 条 · 详情只读，改动配置走「编辑任务」")
                 .fontSize(fsS - 2.0f)
-                .lineHeight(16.0f)
+                .lineHeight(core::theme::scaled(16.0f))
                 .wrap(false)
                 .color(t.colors.textTertiary)
                 .build();
