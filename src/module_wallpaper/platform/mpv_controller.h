@@ -82,6 +82,21 @@ inline std::vector<std::string> buildMpvArguments(std::uintptr_t windowId,
         // 静态图片常驻：mpv 默认 image-display-duration=1s 会自行切走；壁纸换片只由轮换驱动。
         "--image-display-duration=inf",
         "--hwdec=auto-safe",
+        // ── 内存/缓存收紧（壁纸场景专用）──
+        // 壁纸只循环播本地文件：不需要网络式缓冲，也不需要长途 seek 的读前量。
+        // mpv 默认为通用播放器调参（demuxer 读前缓冲按秒数×码率估，高码率 4K 可达
+        // 数百 MB），对「一直播着不换片」的壁纸是纯浪费。
+        //   demuxer-max-bytes：前向缓冲上限，32MiB 足够 4K 高码率数秒预读；
+        //   demuxer-max-back-bytes：回退缓冲，循环播放几乎不用 seek，压到 8MiB；
+        //   demuxer-readahead-secs：本地文件 5s 预读充足（默认 20s 对本地盘无意义）。
+        // 刻意**不**加 --cache=no：它管的是流式缓存，对本地文件无意义；而且不同 mpv
+        // 版本对该选项的语义有变动，未知/弃用选项会让 mpv 启动即失败、整个壁纸不可用
+        //（本仓无法在 macOS 上验证 Windows 侧 mpv 版本行为）。上面三个 demuxer 选项
+        // 自 mpv 0.29 起稳定存在。
+        // 注：唯一效果是降低 mpv 常驻内存；不改变播放行为（循环/静音/铺满/暂停语义不变）。
+        "--demuxer-max-bytes=32MiB",
+        "--demuxer-max-back-bytes=8MiB",
+        "--demuxer-readahead-secs=5",
         "--no-osc",
         "--no-input-default-bindings",
         "--no-osd-bar",

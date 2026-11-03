@@ -49,7 +49,9 @@
 
 ### 2.2 mpv 进程模型与 IPC 死锁防线（`platform/mpv_controller.*`）
 
-进程模型（`mpv_controller.h:4-12`）：`CreateProcess` 子进程 + 命名管道 JSON IPC（管道名 `\\.\pipe\devdesk-wallpaper-mpv-<pid>-<counter>`）+ Job Object kill-on-close（父进程死则 mpv 必死）。唯一控制线程拥有进程/管道/Job 句柄；命令队列投递不阻塞（stop 除外）；`time-pos` 由读线程写原子值，任意线程可读。路径解析三优先级（`mpv_controller.h:40-69`）：`DEVDESK_MPV_PATH` → `<exeDir>/assets/mpv/mpv.exe` → 开发兜底（仅非 Release）。argv 契约（`mpv_controller.h:72-96`）：`--no-config --idle=yes --wid=<n> --input-ipc-server=<pipe> --loop-file=inf --image-display-duration=inf --panscan=1.0 --pause=yes …`。
+进程模型（`mpv_controller.h:4-12`）：`CreateProcess` 子进程 + 命名管道 JSON IPC（管道名 `\\.\pipe\devdesk-wallpaper-mpv-<pid>-<counter>`）+ Job Object kill-on-close（父进程死则 mpv 必死）。唯一控制线程拥有进程/管道/Job 句柄；命令队列投递不阻塞（stop 除外）；`time-pos` 由读线程写原子值，任意线程可读。路径解析三优先级（`mpv_controller.h:40-69`）：`DEVDESK_MPV_PATH` → `<exeDir>/assets/mpv/mpv.exe` → 开发兜底（仅非 Release）。argv 契约（`mpv_controller.h:74-110`）：`--no-config --idle=yes --wid=<n> --input-ipc-server=<pipe> --loop-file=inf --image-display-duration=inf --hwdec=auto-safe --demuxer-max-bytes=32MiB --demuxer-max-back-bytes=8MiB --demuxer-readahead-secs=5 --panscan=1.0 --pause=yes …`。
+
+**内存调优（2026-11-03 加，未在 Windows 真机量过）**：三个 `demuxer-*` 选项为壁纸场景收紧缓存——壁纸只循环播本地文件，不需要网络式缓冲与长途 seek 的读前量；mpv 默认按通用播放器调参，高码率 4K 素材的读前缓冲可达数百 MB。32MiB/8MiB/5s 是「够用且不浪费」的取值。刻意不加 `--cache=no`：该选项管流式缓存、对本地文件无意义，且不同 mpv 版本语义有变动，传入未知/弃用选项会让 mpv 启动即失败（本仓在 macOS 上无法验证 Windows 侧 mpv 版本行为）。硬解已由 `--hwdec=auto-safe` 开启（软解会显著多吃内存与 CPU）。
 
 **IPC 死锁机理与防线契约（改动前必读，`mpv_controller.cpp:4-12`）**：
 
