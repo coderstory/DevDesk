@@ -546,22 +546,22 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 // 真实 kModuleRegistry 表：门控键列填错或表序漂移，在此必挂
 
 REGISTER_TEST(assembly_registry_table_shape,
-              "assembly: 真实 kModuleRegistry —— 14 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 其余十一行==kModuleId*", {
+              "assembly: 真实 kModuleRegistry —— 15 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 其余十二行==kModuleId*", {
     using ::app::registry::kModuleRegistry;
     constexpr size_t kRegistrySize =
         sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
-    // 2026-10 重排后的完整表序：调度在 Todo 之后；上线父项 + 两个子页插入 Mcp 与 Settings 之间
+    // 2026-11 terminal 插入：终端在 Mcp 之后、上线分组之前（need:122）
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,         ::core::PageId::Markdown,
         ::core::PageId::Todo,         ::core::PageId::Schedule,
         ::core::PageId::ClaudeProxy,  ::core::PageId::Agent,
         ::core::PageId::Memory,       ::core::PageId::Wallpaper,
-        ::core::PageId::Mcp,
+        ::core::PageId::Mcp,          ::core::PageId::Terminal,
         ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
         ::core::PageId::ReleaseConfig,
         ::core::PageId::Settings,     ::core::PageId::About,
     };
-    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(14));
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(15));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，这是 core_pageid_order 契约的
         // 装配侧镜像；Agent/Mcp 必须排在 Settings 之前）
@@ -591,16 +591,18 @@ REGISTER_TEST(assembly_registry_table_shape,
                      std::string(module::settings::kModuleIdWallpaper));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[8].gatingKey),
                      std::string(module::settings::kModuleIdMcp));
-    // 上线三行同属 release 门控（父项 + 两个子页；S 型多页模块）
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[9].gatingKey),
-                     std::string(module::settings::kModuleIdRelease));
+                     std::string(module::settings::kModuleIdTerminal));
+    // 上线三行同属 release 门控（父项 + 两个子页；S 型多页模块）
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[10].gatingKey),
                      std::string(module::settings::kModuleIdRelease));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[11].gatingKey),
                      std::string(module::settings::kModuleIdRelease));
-    // 设置/关于固定收尾，恒注册
-    DOCTEST_CHECK(kModuleRegistry[12].gatingKey == nullptr);
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[12].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
+    // 设置/关于固定收尾，恒注册（terminal 占 9 → 上线组 10-12 → settings 13 / about 14）
     DOCTEST_CHECK(kModuleRegistry[13].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[14].gatingKey == nullptr);
     return true;
 })
 

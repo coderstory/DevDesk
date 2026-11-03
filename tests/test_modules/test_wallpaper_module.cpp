@@ -124,12 +124,12 @@ REGISTER_TEST(wallpaper_registry_row,
         ::core::PageId::Todo,         ::core::PageId::Schedule,
         ::core::PageId::ClaudeProxy,  ::core::PageId::Agent,
         ::core::PageId::Memory,       ::core::PageId::Wallpaper,
-        ::core::PageId::Mcp,
+        ::core::PageId::Mcp,          ::core::PageId::Terminal,
         ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
         ::core::PageId::ReleaseConfig,
         ::core::PageId::Settings,     ::core::PageId::About,
     };
-    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(14));
+    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(15));
     for (std::size_t i = 0; i < kRegistrySize; ++i) {
         DOCTEST_CHECK(::app::registry::kModuleRegistry[i].page == kEnumOrder[i]);
     }
@@ -158,10 +158,10 @@ REGISTER_TEST(wallpaper_registry_row,
 
 // 防：默认被打开，首次启动冒出壁纸页。
 REGISTER_TEST(wallpaper_default_off,
-              "wallpaper: 默认清单 8 项含 memory/release/schedule 不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
+              "wallpaper: 默认清单 9 项含 memory/terminal/release/schedule 不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
     using namespace module::settings;
     const SettingsConfig cfg;
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(8));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(9));
     DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
                             kModuleIdRelease) != cfg.enabledModules.end());
     DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),

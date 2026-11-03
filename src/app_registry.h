@@ -21,6 +21,7 @@ extern "C" ::core::Module* create_about_module();
 extern "C" ::core::Module* create_agent_module();
 extern "C" ::core::Module* create_memory_module();
 extern "C" ::core::Module* create_mcp_page_module();
+extern "C" ::core::Module* create_terminal_module();
 // 平台能力不支持时返回 nullptr（装配层按空实例跳过，页面不注册）
 extern "C" ::core::Module* create_wallpaper_module();
 // 上线模块：分组父项工厂恒返回 nullptr（不可导航，不注册进 Router，只用于侧边栏树）；
@@ -54,6 +55,7 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Memory,      module::settings::kModuleIdMemory,       "记忆",   "\xEF\x97\x9C", &create_memory_module},     // U+F5DC fa-brain
     {::core::PageId::Wallpaper,   module::settings::kModuleIdWallpaper,    "壁纸",   "\xEF\x80\xBE", &create_wallpaper_module},  // U+F03E fa-image
     {::core::PageId::Mcp,         module::settings::kModuleIdMcp,          "MCP",    "\xEF\x87\xA6", &create_mcp_page_module},   // U+F1E6 fa-plug
+    {::core::PageId::Terminal,    module::settings::kModuleIdTerminal,     "终端",   "\xEF\x84\xA0", &create_terminal_module},   // U+F120 fa-terminal
     // 上线：分组父项 + 两个可导航子页（父子三行同属 release 门控；父项工厂恒 nullptr）。
     // 整组排在 Settings 之前（设置/关于固定收尾），枚举序与表序同步。
     {::core::PageId::ReleaseGroup,  module::settings::kModuleIdRelease, "上线",     "\xEF\x84\xB5", &create_release_group_module},                                   // U+F135 fa-rocket

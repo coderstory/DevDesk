@@ -39,6 +39,8 @@
 #include "mcp_service_bridge.h"
 #include "memory_mcp_bridge.h"
 #include "toast_notice_bridge.h"
+#include "terminal_fullscreen_bridge.h"
+#include "app_sidebar.h"
 #include "module_mcp/mcp_service.h"
 #include "module_mcp/mcp_tools_builtin.h"
 #include "platform/autostart.h"
@@ -237,6 +239,7 @@ bool handleDbCorruption(
 void prepareClaudeServiceBeforeModules();
 
 void assembleClaudeServiceNow();
+void assembleTerminalBridgeNow();
 void ensureClaudeServiceAssembledImpl(bool autoStart);
 
 // 窗体记忆落盘体（实现见 resolveWindowSizing 之后；getRouter 的 atexit 引用需先见声明）
@@ -323,6 +326,7 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
     // 平台能力不支持时工厂返回 nullptr：门控装配按空实例跳过（页面不注册）
     static std::unique_ptr<::core::Module> wallpaper(create_wallpaper_module());
     static std::unique_ptr<::core::Module> mcpPage(create_mcp_page_module());
+    static std::unique_ptr<::core::Module> terminalPage(create_terminal_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
     // 上线：分组父项工厂按契约返回 nullptr（不注册），两个子页各自实例
     static std::unique_ptr<::core::Module> releaseGroup(
@@ -346,6 +350,7 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                     case ::core::PageId::Memory: return memory.get();
                     case ::core::PageId::Wallpaper: return wallpaper.get();
                     case ::core::PageId::Mcp: return mcpPage.get();
+                    case ::core::PageId::Terminal: return terminalPage.get();
                     case ::core::PageId::ReleaseGroup: return releaseGroup.get();
                     case ::core::PageId::ReleaseTasks: return releaseTasks.get();
                     case ::core::PageId::ReleaseConfig: return releaseConfig.get();
@@ -633,6 +638,7 @@ void prepareClaudeServiceBeforeModules() {
         return;
     }
     assembleClaudeServiceNow();
+    assembleTerminalBridgeNow();
     if (settingsCfg.claudeProxyAutoStart) {
         startClaudeProxy();
     } else {
@@ -642,6 +648,13 @@ void prepareClaudeServiceBeforeModules() {
 }
 
 // 惰性装配单点：幂等（static 守卫；setConfiguredProxyPort/recover 重复调用均 no-op），端口自读
+// 终端桥接装配（need:122）：全屏 → 侧栏折叠缝接线（F-05；module_terminal 经桥缝调用）。
+// 独立函数：与 claude 服务装配互不名实相干（code-review P3）。
+void assembleTerminalBridgeNow() {
+    app::terminal_fullscreen::setHandler(
+        +[](bool collapsed) { app::setSidebarHiddenForFullscreen(collapsed); });
+}
+
 void assembleClaudeServiceNow() {
     auto* claudeSvc = getClaudeService();
     // 端口改值在 applyProxyPort（settings_module.cpp）与本函数两处生效，口径须同步
@@ -659,6 +672,7 @@ void assembleClaudeServiceNow() {
 // 会话内惰性装配 + auto-start（无捕获，可转函数指针）；startClaudeProxy 幂等，重复 on 不二次 bind
 void ensureClaudeServiceAssembledImpl(bool autoStart) {
     assembleClaudeServiceNow();
+    assembleTerminalBridgeNow();
     if (autoStart) {
         startClaudeProxy(/*notifyFailure=*/true);
     }

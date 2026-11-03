@@ -1,4 +1,5 @@
 add_library(devdesk_platform STATIC
+    ../terminal_fullscreen_bridge.cpp
     notification.h                      # 平台通知抽象（实现按平台选择）
     notification.cpp                    # facade：清洗/截断/去重/限速（平台无关，全平台编译）
     http_client.cpp

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.Terminal.hit",
+     "_comment": "QA122/F-01：侧边栏「终端」入口在场"},
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit",
+     "_comment": "QA122/F-01：真点侧边栏进入终端页（进页自动开会话 F-02）"},
+    {"type": "wait", "until": "exists", "id": "term.toolbar.fullscreen", "timeoutMs": 4000,
+     "_comment": "QA122：等终端页工具栏全屏按钮（id 为预期值，失败由 --keep-going 兜底继续 dump）"},
+    {"type": "dump", "path": "qa122-term-dump.txt",
+     "_comment": "QA122：当帧元素树落盘——取终端页真实元素 id 供后续场景"},
+    {"type": "screenshot", "path": "qa122-term-light.png",
+     "_comment": "QA122/F-03 亮态：终端页常规态截图（用户当前主题）"}
+  ]
+}

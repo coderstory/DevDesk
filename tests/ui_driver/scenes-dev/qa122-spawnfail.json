@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "重试", "timeoutMs": 6000,
+     "_comment": "F-07 失败注入 DEVDESK_TERMINAL_SHELL=/nonexistent：失败卡+重试按钮"},
+    {"type": "dump", "path": "qa122-spawnfail-dump.txt"},
+    {"type": "screenshot", "path": "qa122-spawnfail.png", "_comment": "F-07 失败态证据"},
+    {"type": "click", "id": "app.term.retry", "_comment": "F-07：点重试（预期 id）"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "重试", "timeoutMs": 6000,
+     "_comment": "重试后 shell 仍不存在→失败卡仍在且不崩（可重试语义）"},
+    {"type": "screenshot", "path": "qa122-spawnfail-retry.png"}
+  ]
+}

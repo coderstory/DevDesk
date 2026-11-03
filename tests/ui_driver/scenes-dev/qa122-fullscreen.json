@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "steps": [
+  {
+   "type": "click",
+   "id": "app.sidebar.item.Terminal.hit"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "app.term.fullscreen",
+   "timeoutMs": 4000
+  },
+  {
+   "type": "click",
+   "id": "app.term.fullscreen",
+   "_comment": "F-05：进全屏"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "app.term.exit.fab",
+   "timeoutMs": 4000,
+   "_comment": "F-05：悬浮半透退出按钮在场（28px）"
+  },
+  {
+   "type": "wait",
+   "ms": 120,
+   "_comment": "帧推进：sidebar 段先于 terminal 段 compose（翻转帧差一帧，实测铁证）"
+  },
+  {
+   "type": "dump",
+   "path": "qa122-fs-dump.txt",
+   "_comment": "全屏态元素树：侧栏可达性+悬浮按钮实证"
+  },
+  {
+   "type": "screenshot",
+   "path": "qa122-fs.png",
+   "_comment": "F-05 全屏态证据"
+  },
+  {
+   "type": "click",
+   "id": "app.term.exit.fab",
+   "_comment": "F-05：点悬浮按钮退全屏"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "app.term.fullscreen",
+   "timeoutMs": 4000,
+   "_comment": "F-05：工具栏+全屏按钮回场=还原"
+  },
+  {
+   "type": "assert",
+   "check": "exists",
+   "id": "app.term.badge",
+   "_comment": "徽标回场"
+  },
+  {
+   "type": "screenshot",
+   "path": "qa122-unfs.png",
+   "_comment": "F-05 还原态证据（双向可逆）"
+  }
+ ]
+}

@@ -21,6 +21,7 @@
 #include "app_registry.h"
 #include "app_sidebar.h"
 #include "module_toggle_bridge.h"  // app::toggle::setToggleHandler
+#include "terminal_fullscreen_bridge.h"  // QA122：全屏→侧栏折叠桥（对齐真机 main.cpp 装配）
 #include "settings_config.h"       // SettingsStore（门控注册读 enabledModules）
 #include "test_support.h"
 #include "ui_driver/driver_dump.h"
@@ -158,6 +159,10 @@ bool assembleApp(::core::Router& router,
     g_mods = &mods;
     g_router = &router;
     app::toggle::setToggleHandler(&driverToggleHandler);
+    // QA122：全屏桥装配对齐真机 main.cpp:654（缺装配会让探针里全屏不折叠侧栏，
+    // 误报产品缺陷——探针宿主与生产宿主装配面一致原则）
+    app::terminal_fullscreen::setHandler(
+        +[](bool collapsed) { app::setSidebarHiddenForFullscreen(collapsed); });
     return registered > 0;
 }
 
@@ -171,6 +176,7 @@ int cleanupAndReturn(::core::Router& router,
     // 悬垂（module_toggle_sidebar_probe 同款收尾）。
     (void)mods;
     app::toggle::setToggleHandler(nullptr);
+    app::terminal_fullscreen::setHandler(nullptr);  // QA122：防悬垂，同 toggle 收尾
     g_router = nullptr;
     g_mods = nullptr;
     router.stopAll();

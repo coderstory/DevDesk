@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<!--
+  终端模块 v1 视觉校准 demo（need:122 · 设计文档 docs/design/2026-11-04-terminal-module-ui-design.md）
+  demo 仅视觉校准，不是实现蓝图。单文件自包含、无外部依赖、浏览器直开；可拖窗缩放验证自适应。
+  覆盖：常规态 / 全屏态（悬浮退出+避让）/ 结束态 / 失败态 / Windows 占位态 / IME 组合 overlay /
+        亮暗主题切换 / 页面切走↔切回状态保持（后台输出持续累积）/ 工具栏按钮三态可用性。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>终端模块 v1 · 视觉校准 demo</title>
+<style>
+  /* ============ 主题 token（与设计文档 §3/§5/§6 参数一一对应） ============ */
+  :root, body[data-theme="light"] {
+    --bg: #F5FAF7;            /* 页面底 */
+    --surface: #FFFFFF;       /* 工具栏/卡片底 */
+    --surface-elevated: #FFFFFF;
+    --hover: #EEF6F1;         /* 次按钮底 */
+    --active: #E2F0E8;        /* 次按钮 hover 底 */
+    --primary: #07C160;
+    --primary-hover: #06AD56;
+    --primary-pressed: #059048;
+    --on-primary: #FFFFFF;
+    --text-1: #1F2937;
+    --text-2: #4B5563;
+    --text-3: #6B7280;
+    --text-disabled: #6B7280;
+    --border: #E5E7EB;
+    --border-muted: #F3F4F6;
+    --success: #10B981;
+    --error: #EF4444;
+    --error-text: #B91C1C;
+    --info: #3B82F6;
+    --sidebar-bg: #EBF6EF;
+    --scrim: rgba(245, 250, 247, 0.55);
+    /* 终端 */
+    --term-bg: #FFFFFF;
+    --term-fg: #1F2937;
+    --cursor: #07C160;
+    --cursor-text: #FFFFFF;
+    --sel: rgba(7, 193, 96, 0.18);
+    --ime-underline: #07C160;
+    /* ANSI 亮 */
+    --ansi-black: #1F2937; --ansi-red: #B91C1C; --ansi-green: #157E4E; --ansi-yellow: #A16207;
+    --ansi-blue: #2563EB; --ansi-magenta: #A21CAF; --ansi-cyan: #0E7490; --ansi-white: #4B5563;
+    --ansi-bblack: #6B7280; --ansi-bred: #EF4444; --ansi-bgreen: #22C55E; --ansi-byellow: #D97706;
+    --ansi-bblue: #3B82F6; --ansi-bmagenta: #C026D3; --ansi-bcyan: #0891B2; --ansi-bwhite: #111827;
+  }
+  body[data-theme="dark"] {
+    --bg: #1A1816;
+    --surface: #232120;
+    --surface-elevated: #2C2A28;
+    --hover: #353231;
+    --active: #3E3B39;
+    --primary: #36D399;
+    --primary-hover: #2EC48F;
+    --primary-pressed: #23B07F;
+    --on-primary: #FFFFFF;
+    --text-1: #FAF9F5;
+    --text-2: #C9C5BD;
+    --text-3: #9A948A;
+    --text-disabled: #908A82;
+    --border: #3A3735;
+    --border-muted: #2A2826;
+    --success: #34D399;
+    --error: #F87171;
+    --error-text: #F87171;
+    --info: #60A5FA;
+    --sidebar-bg: #0F1F18;
+    --scrim: rgba(26, 24, 22, 0.55);
+    /* 终端 */
+    --term-bg: #1A1816;
+    --term-fg: #FAF9F5;
+    --cursor: #36D399;
+    --cursor-text: #1A1816;
+    --sel: rgba(54, 211, 153, 0.30);
+    --ime-underline: #36D399;
+    /* ANSI 暗 */
+    --ansi-black: #3E3B39; --ansi-red: #F87171; --ansi-green: #34D399; --ansi-yellow: #FBBF24;
+    --ansi-blue: #60A5FA; --ansi-magenta: #DE8FB4; --ansi-cyan: #22D3EE; --ansi-white: #C9C5BD;
+    --ansi-bblack: #9A948A; --ansi-bred: #FCA5A5; --ansi-bgreen: #6EE7B7; --ansi-byellow: #FDE68A;
+    --ansi-bblue: #93C5FD; --ansi-bmagenta: #F0ABFC; --ansi-bcyan: #67E8F9; --ansi-bwhite: #FFFFFF;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text-1);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px; transition: background-color 150ms ease-out, color 150ms ease-out;
+    overflow: hidden;
+  }
+  .mono { font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace; }
+
+  /* ============ demo 控制面板（不属于被设计界面） ============ */
+  #demoCtl {
+    position: fixed; right: 12px; bottom: 12px; z-index: 999;
+    background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18); font-size: 12px; color: var(--text-2);
+    width: 208px;
+  }
+  #demoCtl b { font-size: 12px; color: var(--text-1); }
+  #demoCtl label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  #demoCtl select {
+    width: 100%; padding: 4px 6px; border-radius: 6px; font-size: 12px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-1);
+  }
+  #demoCtl .row2 { display: flex; gap: 8px; }
+  #demoCtl button {
+    flex: 1; padding: 4px 0; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--hover); color: var(--text-1); font-size: 12px; cursor: pointer;
+    transition: background-color 100ms ease-out;
+  }
+  #demoCtl button:hover { background: var(--active); }
+  #demoCtl .hint { color: var(--text-3); font-size: 11px; line-height: 1.5; }
+
+  /* ============ 应用外壳（demo 内模拟 DevDesk 主窗） ============ */
+  #stage { height: 100%; padding: 10px; display: flex; }
+  #app {
+    flex: 1; min-width: 700px; min-height: 460px;
+    display: flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+    background: var(--surface); transition: background-color 150ms ease-out;
+  }
+
+  /* 侧边栏（外壳，结构性固定栏位；全屏态隐藏） */
+  #sidebar {
+    width: 200px; flex: 0 0 200px; background: var(--sidebar-bg); border-right: 1px solid var(--border-muted);
+    padding: 12px 8px; display: flex; flex-direction: column; gap: 2px;
+    transition: background-color 150ms ease-out;
+  }
+  .side-brand { font-size: 14px; font-weight: 700; color: var(--text-1); padding: 4px 10px 12px; }
+  .side-item {
+    display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
+    border-radius: 6px; color: var(--text-2); font-size: 13px; cursor: default; position: relative;
+  }
+  .side-item.sel { background: var(--hover); color: var(--text-1); }
+  .side-item.sel::before {
+    content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+    border-radius: 1px; background: var(--primary);
+  }
+  .side-item svg { width: 14px; height: 14px; fill: currentColor; opacity: 0.8; }
+  .side-sep { height: 1px; background: var(--border-muted); margin: 8px 6px; }
+
+  /* 主区 */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+  /* ============ 终端工具栏（44px，全屏态隐藏） ============ */
+  #toolbar {
+    height: 44px; flex: 0 0 44px; display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; background: var(--surface); border-bottom: 1px solid var(--border-muted);
+    transition: background-color 150ms ease-out;
+  }
+  #statusBadge { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
+  #statusDot { width: 8px; height: 8px; border-radius: 8px; background: var(--success); transition: background-color 150ms ease-out; }
+  #statusDot.ended { background: var(--text-3); }
+  #statusDot.failed { background: var(--error); }
+  #toolbarSpacer { flex: 1; }
+  .tbtn {
+    display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+    border-radius: 6px; border: none; background: var(--hover); color: var(--text-1);
+    font-size: 14px; font-family: inherit; cursor: pointer;
+    transition: background-color 100ms ease-out, transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    transform: scale(1);
+  }
+  .tbtn:hover { background: var(--active); }
+  .tbtn:active { transform: scale(0.96); }               /* 果冻按压 */
+  .tbtn:disabled { opacity: 0.45; cursor: default; }
+  .tbtn:disabled:hover { background: var(--hover); }
+  .tbtn:disabled:active { transform: scale(1); }
+  .tbtn svg { width: 16px; height: 16px; fill: currentColor; }
+
+  /* ============ 终端内容区（唯一内滚容器） ============ */
+  #termArea {
+    flex: 1; min-height: 0; position: relative; background: var(--term-bg);
+    transition: background-color 150ms ease-out;
+  }
+  #termScroll {
+    position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden;
+    padding: 8px 12px; font-size: 13px; line-height: 20px; color: var(--term-fg);
+    transition: color 150ms ease-out;
+  }
+  #termScroll::-webkit-scrollbar { width: 8px; }
+  #termScroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  #termScroll .c-b { color: var(--ansi-black); }   .c-r { color: var(--ansi-red); }
+  #termScroll .c-g { color: var(--ansi-green); }   .c-y { color: var(--ansi-yellow); }
+  #termScroll .c-bl { color: var(--ansi-blue); }   .c-m { color: var(--ansi-magenta); }
+  #termScroll .c-c { color: var(--ansi-cyan); }    .c-w { color: var(--ansi-white); }
+  #termScroll .c-bb { color: var(--ansi-bblack); } .c-br { color: var(--ansi-bred); }
+  #termScroll .c-bg { color: var(--ansi-bgreen); } .c-by { color: var(--ansi-byellow); }
+  #termScroll .c-bbl { color: var(--ansi-bblue); } .c-bm { color: var(--ansi-bmagenta); }
+  #termScroll .c-bc { color: var(--ansi-bcyan); }  .c-bw { color: var(--ansi-bwhite); }
+
+  /* 光标（块状，闪烁 500/500ms；失焦/组合期常显降透明度） */
+  #cursor {
+    display: inline-block; width: 8px; height: 16px; vertical-align: -3px;
+    background: var(--cursor); animation: blink 1060ms steps(1) infinite;
+  }
+  #cursor.dim { animation: none; opacity: 0.5; }
+  #cursor.blur { animation: none; opacity: 0.6; }
+  @keyframes blink { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0.3; } }
+
+  /* 加载态 */
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: var(--text-3); }
+
+  /* ============ IME 组合 overlay（组合文本不进网格） ============ */
+  .ime-mark {
+    color: var(--term-fg); background: var(--sel);
+    border-bottom: 1px solid var(--ime-underline); border-radius: 2px;
+  }
+
+  /* ============ 全屏态 ============ */
+  #app.fullscreen #sidebar, #app.fullscreen #toolbar { display: none; }
+  #btnExitFs {
+    position: absolute; top: 16px; right: 16px; z-index: 50;
+    display: none; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--text-1) 12%, transparent);
+    color: color-mix(in srgb, var(--text-1) 85%, transparent);
+    font-size: 12px; font-family: inherit; cursor: pointer;
+    transition: background-color 100ms ease-out, transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1),
+                color 200ms ease-out, border-color 200ms ease-out;
+  }
+  /* D4 修复：非全屏态（含占位态）display:none 卸载，无透明渐隐残留；入场动效改 keyframes */
+  #app.fullscreen #btnExitFs { display: flex; animation: fsBtnIn 150ms ease-out; }
+  @keyframes fsBtnIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  #btnExitFs:hover { background: color-mix(in srgb, var(--text-1) 22%, transparent); }
+  #btnExitFs:active { transform: scale(0.96); }
+  #btnExitFs.yield {   /* 光标行避让：让位仍可点（设计 §4.3） */
+    background: color-mix(in srgb, var(--text-1) 6%, transparent);
+    color: color-mix(in srgb, var(--text-1) 45%, transparent);
+    border-color: color-mix(in srgb, var(--border) 50%, transparent);
+  }
+  #btnExitFs svg { width: 14px; height: 14px; fill: currentColor; }
+
+  /* ============ 覆盖层（结束/失败）——单实例互斥：display 卸载式切换，无透明残留/双卡同屏（D2/D3 修复） ============ */
+  .overlay {
+    position: absolute; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center;
+    background: var(--scrim);   /* scrim 只作用卡外遮罩层 */
+  }
+  .overlay.show { display: flex; animation: scrimIn 180ms ease-out; }
+  .ov-card {
+    background: var(--surface-elevated);   /* 卡本体恒实色（surface token），终端文本不透出 */
+    border-radius: 14px; padding: 24px;
+    max-width: 420px; width: calc(100% - 32px); box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+    text-align: left;
+  }
+  .overlay.show .ov-card { animation: cardIn 180ms ease-out; }
+  @keyframes scrimIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes cardIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+  .ov-card .ov-icon { width: 24px; height: 24px; margin-bottom: 12px; }
+  .ov-card h3 { font-size: 16px; font-weight: 700; color: var(--text-1); margin-bottom: 8px; }
+  .ov-card p { font-size: 13px; line-height: 1.6; color: var(--text-2); }
+  .ov-btn-row { margin-top: 20px; display: flex; }
+  .btn-primary {
+    height: 32px; padding: 0 16px; border-radius: 6px; border: none;
+    background: var(--primary); color: var(--on-primary); font-size: 14px; font-family: inherit; cursor: pointer;
+    transition: background-color 100ms ease-out, transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-primary:active { transform: scale(0.96); background: var(--primary-pressed); }
+
+  /* ============ Windows 占位态 ============ */
+  #winPlaceholder { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+  #winPlaceholder.show { display: flex; }
+  #winPlaceholder svg { width: 40px; height: 40px; fill: var(--text-disabled); margin-bottom: 16px; }
+  #winPlaceholder h3 { font-size: 16px; color: var(--text-1); margin-bottom: 8px; }
+  #winPlaceholder p.body { font-size: 13px; line-height: 1.6; color: var(--text-2); max-width: 420px; }
+  #winPlaceholder p.sub { font-size: 12px; color: var(--text-3); margin-top: 12px; }
+
+  /* ============ 「其它模块页」假页（页切走模拟） ============ */
+  #fakePage { position: absolute; inset: 0; display: none; padding: 20px; overflow: auto; background: var(--bg); }
+  #fakePage.show { display: block; }
+  #fakePage h2 { font-size: 18px; margin-bottom: 12px; }
+  #fakePage p { font-size: 13px; color: var(--text-2); line-height: 1.8; }
+  #fakeBack {
+    margin-top: 16px; height: 32px; padding: 0 16px; border-radius: 6px; border: none;
+    background: var(--primary); color: var(--on-primary); font-size: 14px; cursor: pointer;
+    transition: transform 150ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  #fakeBack:active { transform: scale(0.96); }
+
+  /* ============ 自适应：<1080px 工具栏按钮收图标（title 兜底提示） ============ */
+  @media (max-width: 1080px) {
+    .tbtn .tbtn-label { display: none; }
+    .tbtn { padding: 0 9px; }
+  }
+  @media (max-width: 900px) {
+    #sidebar { width: 56px; flex-basis: 56px; }
+    .side-item span, .side-brand { display: none; }
+    .side-item { justify-content: center; }
+  }
+</style>
+</head>
+<body data-theme="light">
+
+<div id="stage">
+  <div id="app">
+    <!-- 侧边栏（外壳） -->
+    <div id="sidebar">
+      <div class="side-brand">DevDesk</div>
+      <div class="side-item"><svg viewBox="0 0 384 512"><path d="M40 65C22 57 0 70 0 90v60c0 12 8 22 19 26l117 48L19 272C8 276 0 286 0 298v60c0 20 22 33 40 25l304-124c9-4 16-16 16-29s-7-25-16-29L40 65z"/></svg><span>首页</span></div>
+      <div class="side-item"><svg viewBox="0 0 512 512"><path d="M0 96c0-35 29-64 64-64h96c35 0 64 29 64 64v96c0 35-29 64-64 64H64c-35 0-64-29-64-64V96zm192 160h128c35 0 64 29 64 64v96c0 35-29 64-64 64H192c-35 0-64-29-64-64v-96c0-35 29-64 64-64z"/></svg><span>待办</span></div>
+      <div class="side-item"><svg viewBox="0 0 448 512"><path d="M128 0c17 0 32 15 32 32v32h128V32c0-17 15-32 32-32s32 15 32 32v32h32c35 0 64 29 64 64v32H0V128c0-35 29-64 64-64h32V32c0-17 15-32 32-32zM0 192h448v256c0 35-29 64-64 64H64c-35 0-64-29-64-64V192z"/></svg><span>日程</span></div>
+      <div class="side-sep"></div>
+      <div class="side-item"><svg viewBox="0 0 640 512"><path d="M180 71c-10-10-27-6-31 7l-11 33H85c-11 0-20 9-20 20v16c0 11 9 20 20 20h37l-14 42H85c-11 0-20 9-20 20v16c0 11 9 20 20 20h9L71 321c-4 12 3 24 15 27s24-3 27-15l26-79h46l26 79c4 12 16 18 27 15s19-15 15-27l-23-69h9c11 0 20-9 20-20v-16c0-11-9-20-20-20h-33l-14-42h47c11 0 20-9 20-20v-16c0-11-9-20-20-20h-71l-11-33c-2-6-7-11-13-12zM160 224h-34l17-51 17 51zm464 160V128c0-35-29-64-64-64H352c-35 0-64 29-64 64v256c0 35 29 64 64 64h208c35 0 64-29 64-64z"/></svg><span>Claude</span></div>
+      <div class="side-item"><svg viewBox="0 0 576 512"><path d="M234 8c11-11 29-11 40 0l40 40c11 11 11 29 0 40l-8 8c79 40 137 116 155 205h9c25 0 47 18 47 43v71c0 25-22 43-47 43h-8c-23 108-119 192-234 192S40 566 17 458H9c-25 0-47-18-47-43v-71c0-25 22-43 47-43h9C36 212 94 136 173 96l-8-8c-11-11-11-29 0-40l40-40c11-11 29-11 40 0l-11-11zM288 416a96 96 0 1 0 0-192 96 96 0 0 0 0 192z"/></svg><span>智能体</span></div>
+      <div class="side-sep"></div>
+      <div class="side-item"><svg viewBox="0 0 448 512"><path d="M439 55a32 32 0 0 1 5 44L252 361c-6 7-14 12-24 12h-5l-60-9 85-285c3-11 13-15 22-13l162 3c9 0 17 4 22 9l-15-20zM161 433l71 11a56 56 0 0 0 66-40l51-170h34a32 32 0 0 1 32 32v184a32 32 0 0 1-32 32H64a32 32 0 0 1-32-32V266a32 32 0 0 1 32-32h16l81 199z"/></svg><span>MCP</span></div>
+      <!-- 终端入口：注册顺序 mcp 之后、release 之前（PRD 建议） -->
+      <div class="side-item sel"><svg viewBox="0 0 576 512"><path d="M9 73c9-9 23-9 32 0l112 112c9 9 9 23 0 32L41 329c-9 9-23 9-32 0s-9-23 0-32l96-96L9 105c-9-9-9-23 0-32zM192 97h320c35 0 64 29 64 64v256c0 35-29 64-64 64H192c-35 0-64-29-64-64V161c0-35 29-64 64-64zm32 96c-18 0-32 14-32 32v160c0 18 14 32 32 32h256c18 0 32-14 32-32V225c0-18-14-32-32-32H224z"/></svg><span>终端</span></div>
+      <div class="side-item"><svg viewBox="0 0 512 512"><path d="M256 8c137 0 248 111 248 248S393 504 256 504 8 393 8 256 119 8 256 8zm-24 168v104c0 9 7 16 16 16h72c13 0 24 11 24 24s-11 24-24 24h-96c-13 0-24-11-24-24V176c0-13 11-24 24-24s24 11 24 24z"/></svg><span>发布</span></div>
+    </div>
+
+    <!-- 主区 -->
+    <div id="main">
+      <!-- 终端工具栏 -->
+      <div id="toolbar">
+        <div id="statusBadge"><span id="statusDot"></span><span id="statusText">运行中 · zsh</span></div>
+        <div id="toolbarSpacer"></div>
+        <button class="tbtn" id="btnNew" title="新建会话">
+          <svg viewBox="0 0 448 512"><path d="M256 80c0-17.7-14.3-32-32-32s-32 14.3-32 32V224H48c-17.7 0-32 14.3-32 32s14.3 32 32 32H192V432c0 17.7 14.3 32 32 32s32-14.3 32-32V288H400c17.7 0 32-14.3 32-32s-14.3-32-32-32H256V80z"/></svg>
+          <span class="tbtn-label">新建会话</span>
+        </button>
+        <button class="tbtn" id="btnFs" title="全屏">
+          <svg viewBox="0 0 448 512"><path d="M32 32C14.3 32 0 46.3 0 64v96c0 17.7 14.3 32 32 32s32-14.3 32-32V96h64c17.7 0 32-14.3 32-32s-14.3-32-32-32H32zM64 160v64c0 17.7 14.3 32 32 32h64c17.7 0 32 14.3 32 32v13.3L44.8 431.9C16 444 0 463.3 0 485.3V496c0 8.8 7.2 16 16 16h11.1c22.2 0 42.4-13.4 50.9-34l144.8-344.3C226 122 232 108.6 232 94.7 232 74.2 216 56 192 56c-10.4 0-20.5 3.8-28.3 10.7L64 160z"/></svg>
+          <span class="tbtn-label">全屏</span>
+        </button>
+      </div>
+
+      <!-- 终端内容区 -->
+      <div id="termArea">
+        <div id="termScroll" class="mono"></div>
+        <div id="loading">正在启动 shell …</div>
+
+        <!-- 退出全屏悬浮按钮（全屏态显示） -->
+        <button id="btnExitFs" title="退出全屏">
+          <svg viewBox="0 0 448 512"><path d="M0 448c0 17.7 14.3 32 32 32h96c17.7 0 32-14.3 32-32s-14.3-32-32-32H96V352c0-17.7-14.3-32-32-32s-32 14.3-32 32v96zM448 64c0-17.7-14.3-32-32-32h-96c-17.7 0-32 14.3-32 32s14.3 32 32 32h32v64c0 17.7 14.3 32 32 32s32-14.3 32-32V64z"/></svg>
+          <span>退出全屏</span>
+        </button>
+
+        <!-- 结束态覆盖卡 -->
+        <div class="overlay" id="ovEnded">
+          <div class="ov-card">
+            <svg class="ov-icon" viewBox="0 0 512 512" style="fill: var(--info);"><path d="M256 512a256 256 0 1 0 0-512 256 256 0 0 0 0 512zm0-384c13.3 0 24 10.7 24 24v112c0 13.3-10.7 24-24 24s-24-10.7-24-24V152c0-13.3 10.7-24 24-24zm32 224a32 32 0 1 1-64 0 32 32 0 0 1 64 0z"/></svg>
+            <h3>会话已结束</h3>
+            <p id="endedBody">退出码 0。输出历史已保留，可上翻查看；新建会话即可继续使用。</p>
+            <div class="ov-btn-row"><button class="btn-primary" id="btnNewFromEnded">新建会话</button></div>
+          </div>
+        </div>
+
+        <!-- 失败态覆盖卡 -->
+        <div class="overlay" id="ovFailed">
+          <div class="ov-card">
+            <svg class="ov-icon" viewBox="0 0 576 512" style="fill: var(--error-text);"><path d="M569.5 440c7.5 13.5-2.3 30-18.4 30H24.9c-16.1 0-25.9-16.5-18.4-30L255.6 68.5c8-14.5 29.9-14.5 37.9 0L569.5 440zM288 168c-13.3 0-24 10.7-24 24v104c0 13.3 10.7 24 24 24s24-10.7 24-24V192c0-13.3-10.7-24-24-24zm32 224a32 32 0 1 0-64 0 32 32 0 0 0 64 0z"/></svg>
+            <h3>终端启动失败</h3>
+            <p>shell 启动失败：无法启动默认 shell（/bin/zsh）。<br>请确认默认 shell 可用后重试，或检查 $SHELL 配置。</p>
+            <div class="ov-btn-row"><button class="btn-primary" id="btnRetry">重试</button></div>
+          </div>
+        </div>
+
+        <!-- Windows 占位态 -->
+        <div id="winPlaceholder">
+          <svg viewBox="0 0 576 512"><path d="M9 73c9-9 23-9 32 0l112 112c9 9 9 23 0 32L41 329c-9 9-23 9-32 0s-9-23 0-32l96-96L9 105c-9-9-9-23 0-32zM192 97h320c35 0 64 29 64 64v256c0 35-29 64-64 64H192c-35 0-64-29-64-64V161c0-35 29-64 64-64zm32 96c-18 0-32 14-32 32v160c0 18 14 32 32 32h256c18 0 32-14 32-32V225c0-18-14-32-32-32H224z"/></svg>
+          <h3>终端 · Windows 版开发中</h3>
+          <p class="body">macOS 版已随本版本提供完整终端能力；Windows 版正在基于同一套终端内核开发，上线后将在此页直接使用，无需额外安装。</p>
+          <p class="sub">本页暂不执行任何命令，也不占用系统资源。</p>
+        </div>
+
+        <!-- 「其它模块页」假页（页切走模拟；全屏态保持） -->
+        <div id="fakePage">
+          <h2>Markdown 笔记（模拟其它模块页）</h2>
+          <p>这是切走终端页后看到的假页面。终端会话在后台保活，输出持续累积。</p>
+          <p id="awayLog" class="mono" style="font-size:12px; color: var(--text-3);"></p>
+          <button id="fakeBack">切回终端</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- demo 控制面板（非被设计界面的一部分） -->
+<div id="demoCtl">
+  <b>demo 控制（非界面）</b>
+  <div class="row2"><button id="tglTheme">切换到暗色</button><button id="tglAway">切走页面</button></div>
+  <select id="selState">
+    <option value="running">会话态：运行中</option>
+    <option value="ended">会话态：已结束（退出码 0）</option>
+    <option value="failed">会话态：启动失败</option>
+    <option value="windows">Windows 占位态</option>
+  </select>
+  <label><input type="checkbox" id="ckFs"> 全屏态（窗体内全屏）</label>
+  <label><input type="checkbox" id="ckIme"> IME 组合期（模拟组合串）</label>
+  <label><input type="checkbox" id="ckYield"> 光标行与悬浮按钮相交（避让演示）</label>
+  <div class="hint">可拖拽浏览器窗口缩放验证自适应：&lt;1080px 按钮收图标；720×480 不破版。全屏态下「切走页面」再切回，验证全屏态与输出保持。</div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var app = $("app"), scroll = $("termScroll"), loading = $("loading");
+  var statusDot = $("statusDot"), statusText = $("statusText");
+  var ovEnded = $("ovEnded"), ovFailed = $("ovFailed"), winPh = $("winPlaceholder");
+  var fakePage = $("fakePage"), btnExitFs = $("btnExitFs");
+  var cursor = null, composing = false, lines = [], sessionSeq = 0, timer = null, tick = 0;
+
+  /* ---------- 假输出内容 ---------- */
+  var seq = [
+    'Last login: 2026-11-04 21:30:11 on ttys003',
+    '<span class="c-g">user@mac</span> <span class="c-bb">~</span> % ls --color=auto',
+    '<span class="c-bl">DevDesk</span>  <span class="c-bl">documents</span>  <span class="c-y">build.sh</span>  <span class="c-bb">notes.md</span>  <span class="c-g">main.cpp</span>',
+    '<span class="c-g">user@mac</span> <span class="c-bb">~</span> % git status',
+    'On branch <span class="c-g">dev</span>',
+    'Changes not staged for commit:',
+    '  <span class="c-r">modified:   src/core/theme.cpp</span>',
+    '<span class="c-g">user@mac</span> <span class="c-bb">~</span> % echo hello',
+    'hello',
+    '<span class="c-g">user@mac</span> <span class="c-bb">~</span> % tail -f app.log',
+    '<span class="c-bl">[info]</span> request served in 42ms',
+    '<span class="c-y">[warn]</span> retrying upstream (attempt 2/5)',
+    '<span class="c-c">[net]</span> connected via IPv6'
+  ];
+  var awaySeq = 0;
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  /* ---------- 状态模型：session(running|ended|failed|windows) × fullscreen × away × ime ---------- */
+  var st = { session: "running", fs: false, away: false, ime: false, yield: false, focused: true };
+
+  function buildCursor() {
+    return composing
+      ? '<span class="ime-mark">拼音：zhong' + (tick % 3 === 0 ? "wen" : "wen`") + '</span><span id="cursor" class="dim"></span>'
+      : '<span id="cursor" class="' + (st.focused ? "" : "blur") + '"></span>';
+  }
+
+  function renderTerminal() {
+    var html = lines.join("\n");
+    if (st.session === "running") {
+      html += '\n<span class="c-g">user@mac</span> <span class="c-bb">~</span> % ' + buildCursor();
+    }
+    scroll.innerHTML = html;
+    scroll.scrollTop = scroll.scrollHeight;
+  }
+
+  function applyState() {
+    var s = st.session;
+    // 占位态/全屏态：整条工具栏隐藏（D1 修复：内联值与 CSS 类规则同步判断，避免内联 flex 覆盖全屏隐藏）
+    var isWin = s === "windows";
+    document.getElementById("toolbar").style.display = (isWin || st.fs) ? "none" : "flex";
+    winPh.classList.toggle("show", isWin);
+    document.getElementById("termScroll").style.display = isWin ? "none" : "block";
+
+    // 页切走：假页覆盖内容区（全屏态保持——sidebar/toolbar 显隐不受影响）
+    fakePage.classList.toggle("show", st.away);
+
+    // 状态徽标
+    statusDot.className = s === "ended" ? "ended" : (s === "failed" ? "failed" : "");
+    statusText.textContent = s === "running" ? "运行中 · zsh"
+      : s === "ended" ? "已结束" : s === "failed" ? "启动失败" : "";
+    document.getElementById("statusBadge").style.visibility = isWin ? "hidden" : "visible";
+
+    // 工具栏「新建会话」三态可用性：运行中=禁用 / 已结束=可用 / 失败=禁用 / 占位=不渲染（工具栏已隐藏）
+    $("btnNew").disabled = (s !== "ended");
+    $("btnFs").disabled = isWin;
+
+    // 加载/覆盖层
+    loading.style.display = s === "loading" ? "flex" : "none";
+    ovEnded.classList.toggle("show", s === "ended");
+    ovFailed.classList.toggle("show", s === "failed");
+
+    // 光标行避让（仅全屏态）
+    btnExitFs.classList.toggle("yield", st.fs && st.yield);
+
+    renderTerminal();
+
+    // 后台输出累积（运行中，无论是否切走/全屏）
+    if (timer) { clearInterval(timer); timer = null; }
+    if (s === "running" && !isWin) {
+      timer = setInterval(function () {
+        tick++;
+        var extra = seq[tick % seq.length];
+        if (st.away) {
+          awaySeq++;
+          $("awayLog").textContent = "切走期间输出累积 " + awaySeq + " 条（最近：" + extra.replace(/<[^>]+>/g, "") + "）";
+        }
+        lines.push(extra);
+        if (lines.length > 400) lines.splice(0, 100);   // 回滚缓冲演示上限
+        renderTerminal();
+      }, 1400);
+    }
+  }
+
+  function startSession(keepHistory) {
+    sessionSeq++;
+    if (!keepHistory) lines = ["DevDesk 终端 · 会话 #" + sessionSeq + "（zsh）", ""];
+    st.session = "running";
+    applyState();
+  }
+
+  /* ---------- 控件接线 ---------- */
+  $("selState").addEventListener("change", function (e) {
+    st.session = e.target.value;
+    if (st.session === "windows") { st.fs = false; $("ckFs").checked = false; }
+    applyState();
+  });
+  $("ckFs").addEventListener("change", function (e) {
+    st.fs = e.target.checked;
+    app.classList.toggle("fullscreen", st.fs);
+    applyState();
+  });
+  $("btnFs").addEventListener("click", function () { $("ckFs").checked = true; $("ckFs").dispatchEvent(new Event("change")); });
+  btnExitFs.addEventListener("click", function () { $("ckFs").checked = false; $("ckFs").dispatchEvent(new Event("change")); });
+  $("btnNew").addEventListener("click", function () { if (!$("btnNew").disabled) startSession(false); });
+  $("btnNewFromEnded").addEventListener("click", function () { startSession(false); });
+  $("btnRetry").addEventListener("click", function () { startSession(true); });
+  $("tglTheme").addEventListener("click", function () {
+    var next = document.body.getAttribute("data-theme") === "light" ? "dark" : "light";
+    document.body.setAttribute("data-theme", next);
+    this.textContent = next === "light" ? "切换到暗色" : "切换到亮色";
+  });
+  $("tglAway").addEventListener("click", function () {
+    st.away = !st.away;
+    this.textContent = st.away ? "切回终端" : "切走页面";
+    $("tglTheme").textContent = document.body.getAttribute("data-theme") === "light" ? "切换到暗色" : "切换到亮色";
+    applyState();
+  });
+  $("fakeBack").addEventListener("click", function () {
+    st.away = false;
+    $("tglAway").textContent = "切走页面";
+    applyState();   // 切回：无动画重放，首帧直接还原（全屏态保持）
+  });
+  $("ckIme").addEventListener("change", function (e) { composing = e.target.checked; applyState(); });
+  $("ckYield").addEventListener("change", function (e) { st.yield = e.target.checked; applyState(); });
+  scroll.addEventListener("mousedown", function () { st.focused = true; renderTerminal(); });
+  document.addEventListener("mousedown", function (e) {
+    if (!scroll.contains(e.target)) { st.focused = false; renderTerminal(); }
+  });
+
+  /* ---------- 初始：进页即自动开会话（先 1.2s 加载态再运行） ---------- */
+  st.session = "loading"; applyState();
+  setTimeout(function () { startSession(false); }, 1200);
+})();
+</script>
+</body>
+</html>

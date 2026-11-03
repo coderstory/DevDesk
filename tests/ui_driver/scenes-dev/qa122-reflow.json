@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.fullscreen", "timeoutMs": 4000},
+    {"type": "click", "id": "app.term.input", "_comment": "QA122：点输入捕获层聚焦"},
+    {"type": "type", "text": "echo COLS=$COLUMNS", "_comment": "F-02 reflow：小窗 shell 列数感知"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "COLS=", "timeoutMs": 4000},
+    {"type": "dump", "path": "qa122-reflow-dump.txt", "_comment": "小窗网格行宽——与 1000 宽 dump 行宽对比证 reflow"},
+    {"type": "screenshot", "path": "qa122-reflow-small.png"}
+  ]
+}

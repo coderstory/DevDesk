@@ -54,6 +54,8 @@ inline constexpr const char* kModuleIdRelease = "release";
 // mcp：默认关闭的后台服务型模块——不是 Router 页面（不进注册表遍历），
 // 开关即时生效走 app_assembly 的 mcp 特例分发。
 inline constexpr const char* kModuleIdMcp = "mcp";
+// terminal：默认启用（macOS 终端页 need:122；Windows 占位页 Phase 2）。
+inline constexpr const char* kModuleIdTerminal = "terminal";
 
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();
@@ -63,7 +65,7 @@ std::vector<std::string> defaultEnabledModules();
 // load 会把新默认 ID 并入存储清单并回写本版本标记。版本已到位后绝不再插手，
 // 因此用户显式关掉的模块不会被迁移重新打开。新增默认启用模块时：迁移表追加
 // 一行 + 本常量 +1。
-inline constexpr int kModuleDefaultsVersion = 2;
+inline constexpr int kModuleDefaultsVersion = 3;
 
 // 窗口效果三档（档位字符串直接持久化进 app_config）
 inline constexpr const char* kWindowEffectOff = "off";

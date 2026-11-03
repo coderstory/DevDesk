@@ -178,6 +178,7 @@ add_subdirectory(src/module_about)
 add_subdirectory(src/module_wallpaper)
 add_subdirectory(src/module_release)
 add_subdirectory(src/module_mcp)
+add_subdirectory(src/module_terminal)
 # 定时调度子系统（S3 存储层先行，S7a 完成 app_registry/PageId/宿主装配接线）
 add_subdirectory(src/module_schedule)
 
@@ -252,6 +253,79 @@ endif()
 
 # 测试
 enable_testing()
+# ---- 终端桥接编排（macOS only；技术卡 §6，Phase 0 定稿 / Phase 1 接线）----
+# 审计回填：P1-E corta-exec 由桥接包 Package.swift 声明对上游 executable product 的
+# 依赖，随同一条 swift build 产出；P2-F COMMIT-STAMP 落本 build 目录，不污染 submodule。
+# Swift 后端封装成独立静态库：DevDesk 与 devdesk_tests（经 module_terminal 注册链）
+# 共链；库内含 SwiftPM 产物 .o 与运行时链接行。Phase 0 只接 Debug 档，release 档 Phase 2 回填。
+if(APPLE)
+    set(CORTA_BRIDGE_PKG ${CMAKE_SOURCE_DIR}/src/platform/terminal/swift-bridge)
+    set(CORTA_GEN_DIR ${CMAKE_BINARY_DIR}/gen/corta)
+    set(CORTA_COMMIT_STAMP ${CMAKE_BINARY_DIR}/corta-commit.stamp)
+    file(GLOB CORTA_BRIDGE_SOURCES ${CORTA_BRIDGE_PKG}/Sources/CortaBridge/*.swift)
+
+    add_custom_command(
+        OUTPUT ${CORTA_COMMIT_STAMP}
+        COMMAND sh -c "git -C ${CMAKE_SOURCE_DIR}/third_party/Corta rev-parse HEAD > ${CORTA_COMMIT_STAMP}"
+        VERBATIM)
+
+    add_custom_command(
+        OUTPUT ${CORTA_GEN_DIR}/CortaBridge.o
+               ${CORTA_GEN_DIR}/CortaTerminal.o
+               ${CORTA_GEN_DIR}/CortaPOSIX.o
+               ${CORTA_GEN_DIR}/corta-exec
+        BYPRODUCTS ${CORTA_GEN_DIR}/CortaBridge-Swift.h
+        COMMAND swift build -c $<LOWER_CASE:$<CONFIG>> --package-path ${CORTA_BRIDGE_PKG}
+                --scratch-path ${CMAKE_BINARY_DIR}/swift-build
+                -Xswiftc -cxx-interoperability-mode=default
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_BINARY_DIR}/swift-build/out/Products/$<LOWER_CASE:$<CONFIG>>
+                ${CORTA_GEN_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_BINARY_DIR}/swift-build/out/Intermediates.noindex/GeneratedModuleMaps/CortaBridge-Swift.h
+                ${CORTA_GEN_DIR}/CortaBridge-Swift.h
+        DEPENDS ${CORTA_BRIDGE_SOURCES} ${CORTA_BRIDGE_PKG}/Package.swift
+                ${CORTA_COMMIT_STAMP}
+        VERBATIM)
+
+    add_library(devdesk_terminal_bridge STATIC
+        src/platform/terminal/swift_bridge.cpp
+        src/platform/terminal/terminal_backend_mac.cpp
+        ${CORTA_GEN_DIR}/CortaBridge.o
+        ${CORTA_GEN_DIR}/CortaTerminal.o
+        ${CORTA_GEN_DIR}/CortaPOSIX.o)
+    target_include_directories(devdesk_terminal_bridge PUBLIC ${CORTA_GEN_DIR})
+    target_include_directories(devdesk_terminal_bridge PRIVATE
+        ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/platform)
+    # Swift 运行时：SDK 的 usr/lib/swift（.tbd → 系统 /usr/lib/swift dylib，随 macOS 提供）。
+    # 工具链 lib/swift-5.0/macosx 是 x86_64 遗留目录，arm64 链接禁用（踩坑实录，clue #24）。
+    set(SWIFTLIB_DIR "")
+    if(CMAKE_OSX_SYSROOT AND EXISTS "${CMAKE_OSX_SYSROOT}/usr/lib/swift/libswiftCore.tbd")
+        get_filename_component(SWIFTLIB_DIR "${CMAKE_OSX_SYSROOT}/usr/lib/swift" ABSOLUTE)
+    endif()
+    if(SWIFTLIB_DIR STREQUAL "")
+        execute_process(COMMAND xcrun --sdk macosx --show-sdk-path
+            OUTPUT_VARIABLE _sdk_path ERROR_QUIET RESULT_VARIABLE _swift_probe)
+        string(STRIP "${_sdk_path}" _sdk_path)
+        if(_swift_probe EQUAL 0 AND EXISTS "${_sdk_path}/usr/lib/swift/libswiftCore.tbd")
+            get_filename_component(SWIFTLIB_DIR "${_sdk_path}/usr/lib/swift" ABSOLUTE)
+        endif()
+    endif()
+    if(SWIFTLIB_DIR STREQUAL "")
+        message(FATAL_ERROR "terminal bridge Swift SDK ERROR: sysroot=[${CMAKE_OSX_SYSROOT}] sdk=[${_sdk_path}] (need Xcode 26.6+)")
+    endif()
+    target_link_options(devdesk_terminal_bridge PRIVATE -L${SWIFTLIB_DIR})
+    target_link_libraries(devdesk_terminal_bridge PUBLIC
+        swiftCore swiftFoundation swiftDarwin swift_Concurrency swift_Builtin_float
+        "-framework Foundation")
+    target_link_libraries(devdesk_terminal_bridge PUBLIC
+        devdesk_core devdesk_platform)
+    # corta-exec 裸跑寻址：拷到 build/ 与 DevDesk 二进制同级（Spawn.swift dladdr 上行寻址）
+    add_custom_command(TARGET devdesk_terminal_bridge POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CORTA_GEN_DIR}/corta-exec ${CMAKE_BINARY_DIR}/corta-exec)
+endif()
+
 add_subdirectory(tests)
 
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
@@ -306,8 +380,12 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_release
     devdesk_module_mcp
     devdesk_module_schedule
+    devdesk_module_terminal
     eui_neo
 )
+if(TARGET devdesk_terminal_bridge)
+    target_link_libraries(DevDesk PRIVATE devdesk_terminal_bridge)
+endif()
 target_include_directories(DevDesk PRIVATE
     src
     # 不加 src/core：src/core/time.h 会劫持系统 <time.h>/<ctime>（详见 src/core/CMakeLists.txt）
@@ -328,6 +406,7 @@ target_include_directories(DevDesk PRIVATE
     ${EUI_NEO_DIR}/3rd/yyjson-0.12.0/src
     ${EUI_NEO_DIR}/3rd/md4c/src
 )
+
 
 # 安装 / 拷贝资源
 # fonts/ 不入 git（.gitignore 按文件名忽略，下载前目录可能不存在/为空），

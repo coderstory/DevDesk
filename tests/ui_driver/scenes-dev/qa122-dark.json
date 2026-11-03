@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark"}
+      }
+    }
+  },
+  "steps": [
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit",
+     "_comment": "QA122/F-03 暗态：seed themeMode=dark 后进终端页"},
+    {"type": "wait", "until": "exists", "id": "app.term.fullscreen", "timeoutMs": 4000},
+    {"type": "dump", "path": "qa122-term-dark-dump.txt"},
+    {"type": "screenshot", "path": "qa122-term-dark.png",
+     "_comment": "QA122/F-03 暗态证据：背景/前景/光标 ANSI 暗配色（设计 §3.3 对照）"}
+  ]
+}

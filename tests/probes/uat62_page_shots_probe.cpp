@@ -49,6 +49,18 @@
 // app:: 层链接桩（dsl_app_impl.h 引用 dslAppConfig；app::compose 用真实现，
 // 来自本 probe 编译的 src/app_sidebar.cpp，不桩）
 namespace app {
+// F-03 亮暗对照：UAT62_DARK=1 → 暗主题（进程级一次性，先于首帧 compose）
+namespace {
+const bool g_uat62Dark = std::getenv("UAT62_DARK") != nullptr;
+const struct Uat62ThemeInit {
+    Uat62ThemeInit() {
+        if (g_uat62Dark) core::theme::setDark();
+        else core::theme::setLight();
+        // 终端全屏态截图注入口（F-05；页面 env 同名约定）
+    }
+} g_uat62ThemeInit;
+} // namespace
+
 const app::DslAppConfig& dslAppConfig() {
     static const DslAppConfig config =
         DslAppConfig{}.title("devdesk_uat62_page_shots_probe");
@@ -62,8 +74,8 @@ namespace {
 // 2026-10 重排：调度在 Todo 之后、上线三行在 settings 之前
 constexpr const char* kSlugs[] = {
     "home",     "markdown", "todo",          "schedule", "claude_proxy",
-    "agent",    "memory",   "wallpaper",     "mcp",      "release_group",
-    "release_tasks", "release_config", "settings", "about",
+    "agent",    "memory",   "wallpaper",     "mcp",      "terminal",
+    "release_group", "release_tasks", "release_config", "settings", "about",
 };
 static_assert(sizeof(kSlugs) / sizeof(kSlugs[0]) ==
                   sizeof(::app::registry::kModuleRegistry) /

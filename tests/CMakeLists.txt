@@ -160,7 +160,9 @@ add_executable(devdesk_tests
     # 需-11 项目卡设置卡：表单/列表/删除门控/按钮回调/卡高几何（无头 compose）
     test_modules/test_project_cards_card.cpp
     test_modules/test_local_git_probe.cpp
-    test_modules/test_settings.cpp
+    test_modules/test_settings.cpp    test_modules/test_terminal_keyencoder.cpp
+    test_modules/test_terminal_controller.cpp
+    test_modules/test_terminal_frame.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
@@ -314,6 +316,12 @@ endif()
 
 devdesk_apply_warnings(devdesk_tests)
 
+# 终端桥接（macOS）：module_terminal 注册链拉入 create_terminal_module → 需后端符号。
+# 库本体在根 CMakeLists 定义（须在 add_subdirectory(tests) 之前）。
+if(TARGET devdesk_terminal_bridge)
+    target_link_libraries(devdesk_tests PRIVATE devdesk_terminal_bridge)
+endif()
+
 # ---- 版本真值注入（2026-09-29）----
 # test_settings.cpp 的 aboutVersionLine 断言必须与**被测量**同源：
 # devdesk_module_settings 用 PRIVATE 的 DEVDESK_VERSION="${PROJECT_VERSION}"
@@ -349,6 +357,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_wallpaper
     devdesk_module_release
     devdesk_module_mcp
+    devdesk_module_terminal
     devdesk_module_schedule
 )
 
@@ -449,7 +458,11 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_wallpaper
         devdesk_module_release
         devdesk_module_schedule
+        devdesk_module_terminal
     )
+    if(TARGET devdesk_terminal_bridge)
+        target_link_libraries(${_probe_name} PRIVATE devdesk_terminal_bridge)
+    endif()
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），
     # 这里只把它的 target 显式链给探针 + 借它传递 include 路径（源目录 + 生成
@@ -560,8 +573,12 @@ target_link_libraries(devdesk_ui_driver PRIVATE
     devdesk_module_wallpaper
     devdesk_module_release
     devdesk_module_schedule
+    devdesk_module_terminal
     ${UIDRIVER_PNG_LINK}
 )
+if(TARGET devdesk_terminal_bridge)
+    target_link_libraries(devdesk_ui_driver PRIVATE devdesk_terminal_bridge)
+endif()
 devdesk_apply_warnings(devdesk_ui_driver)
 if(MSVC)
     target_link_options(devdesk_ui_driver PRIVATE /SUBSYSTEM:CONSOLE)

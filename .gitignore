@@ -108,3 +108,6 @@ docs/pool/pool.db-wal
 __pycache__/
 *.pyc
 docs/pool/pool.db.bak-*
+
+# 探针/截图产物目录（会话产物，不入库）
+UAT62-screenshots/

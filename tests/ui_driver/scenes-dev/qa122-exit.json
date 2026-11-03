@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.fullscreen", "timeoutMs": 4000},
+    {"type": "key", "name": "E", "_comment": "F-07：keyDown 链逐键 exit（driver type 与 input 层死锁，改走 keyencoder 路径）"},
+    {"type": "key", "name": "X"},
+    {"type": "key", "name": "I"},
+    {"type": "key", "name": "T"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "会话已结束", "timeoutMs": 6000,
+     "_comment": "F-07：结束态覆盖卡"},
+    {"type": "dump", "path": "qa122-exit-dump.txt", "_comment": "结束态元素树：新建按钮 id"},
+    {"type": "screenshot", "path": "qa122-exit.png", "_comment": "F-07 结束态证据"},
+    {"type": "click", "id": "app.term.overlay.new", "_comment": "F-07：新建会话（覆盖卡按钮，预期 id）"},
+    {"type": "click", "id": "app.term.new", "_comment": "F-07：兜底工具栏 +新建"},
+    {"type": "wait", "until": "missing", "id": "app.term.overlay.card", "timeoutMs": 6000,
+     "_comment": "F-07：覆盖卡退场=新会话起"},
+    {"type": "screenshot", "path": "qa122-restart.png", "_comment": "F-07 新建会话证据"}
+  ]
+}

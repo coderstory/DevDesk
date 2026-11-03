@@ -91,6 +91,18 @@ bool fluidWindowVisible() {
 
 bool sidebarCollapsed() { return g_sidebarCollapsed; }
 
+// 终端全屏隐藏态（need:122 F-05）：0 宽不可达；进入前折叠态快照供退出恢复
+bool g_sidebarFsHidden = false;
+bool g_preFullscreenCollapsed = false;
+
+void setSidebarHiddenForFullscreen(bool hidden) {
+    if (hidden && !g_sidebarFsHidden) {
+        g_preFullscreenCollapsed = g_sidebarCollapsed;
+    }
+    g_sidebarFsHidden = hidden;
+    g_sidebarCollapsed = hidden ? true : g_preFullscreenCollapsed;
+}
+
 void setSidebarCollapsed(bool collapsed, bool persist) {
     g_sidebarCollapsed = collapsed;
     if (!persist) return;
@@ -109,6 +121,7 @@ void setSidebarCollapsed(bool collapsed, bool persist) {
 }
 
 float sidebarWidth() {
+    if (g_sidebarFsHidden) return 0.0f;  // 全屏：不可达（F-05 验收=侧边栏不可达）
     return g_sidebarCollapsed ? kSidebarWidthCollapsed : kSidebarWidthExpanded;
 }
 

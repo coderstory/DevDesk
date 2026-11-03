@@ -37,6 +37,10 @@ bool sidebarCollapsed();
 // 默认 false = 只改内存（启动恢复、纯内存翻转不该顺手写库）
 void setSidebarCollapsed(bool collapsed, bool persist = false);
 
+// 终端全屏态（need:122 F-05）：侧栏压至 0 宽（不可达），退出时恢复进入前折叠态。
+// 双向记忆由壳层持有（进入前 g_sidebarCollapsed 快照），页面切走切回不丢。
+void setSidebarHiddenForFullscreen(bool hidden);
+
 // 测试缝：侧边栏宽度状态回厂（展开）+ 分组展开集合回厂（空 = 默认折叠），纯内存零持久化
 void resetSidebarGlobals();
 

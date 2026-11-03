@@ -67,6 +67,15 @@ if [ -z "$(ls -A "$MACOS_DIR/assets/shaders/shadertoy" 2>/dev/null)" ]; then
 fi
 echo "✅ assets 就位（Contents/MacOS/assets）"
 
+# corta-exec 随包（need:122）：Spawn.swift 按「宿主二进制同级/Contents/MacOS」寻址（clue #23）
+if [ -f "$BUILD_DIR/gen/corta/corta-exec" ]; then
+  cp "$BUILD_DIR/gen/corta/corta-exec" "$MACOS_DIR/corta-exec"
+  echo "✅ corta-exec 就位（Contents/MacOS/corta-exec）"
+else
+  echo "❌ 缺 $BUILD_DIR/gen/corta/corta-exec（先跑 build-test-run.sh 构建）" >&2
+  exit 1
+fi
+
 # 签名：build-app.sh 组装时已签过，但上面 rm -rf + copy_directory 补拷 assets 让封条失效了。
 # 必须在所有 bundle 写操作之后重签，签名才是最后一步（见 scripts/sign-macos-app.sh 头注释）。
 bash scripts/sign-macos-app.sh "$APP_DIR"

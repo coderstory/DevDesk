@@ -13,6 +13,7 @@
 #include "core/app_config.h"
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "app_registry.h"
 
 #include <eui/dsl.h>
 
@@ -73,13 +74,14 @@ std::string currentVersionSeed(const std::string& body) {
 REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(9));
     for (const char* id : {module::settings::kModuleIdHome,
                            module::settings::kModuleIdMarkdown,
                            module::settings::kModuleIdTodo,
                            module::settings::kModuleIdSchedule,
                            module::settings::kModuleIdClaudeProxy,
                            module::settings::kModuleIdMemory,
+                           module::settings::kModuleIdTerminal,
                            module::settings::kModuleIdSettings,
                            module::settings::kModuleIdRelease}) {
         DOCTEST_CHECK(moduleEnabled(cfg, id));
@@ -107,6 +109,47 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
 // B1（T01 审计）：存量配置升级路径。旧版本写出的清单没有 moduleDefaultsVersion
 // 标记，其缺席的 release 代表「从未存在」→ 迁移并入；用户显式关闭一定发生在
 // 迁移之后（配置已带当前标记），绝不能被重新打开。
+// need:122 P0 全链：sanitize→load→迁移并入 terminal→注册表行存在。堵「默认清单
+// size 断言更新了但白名单/迁移表漏 terminal」的覆盖缺口（code-review P0）。
+REGISTER_TEST(gating_terminal_full_chain,
+              "gating: terminal 全链——v2 存量 load 并入（迁移 v3）+ sanitize 保留 + 注册表行存在", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "terminal-chain", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+
+    // ① v2 存量形态（带 v2 标记、无 terminal）→ load 迁移并入 terminal
+    DOCTEST_REQUIRE(writeRawConfig(
+        "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
+        "\"claude_proxy\", \"settings\", \"memory\", \"release\"], "
+        "\"moduleDefaultsVersion\": 2}"));
+    const SettingsConfig upgraded = store.load();
+    DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdTerminal));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
+                                                    (std::string(SettingsStore::keyNamespace()) +
+                                                     "moduleDefaultsVersion")
+                                                        .c_str()),
+                     std::to_string(kModuleDefaultsVersion));
+
+    // ② sanitize：terminal 是合法 ID，显式关闭后 sanitized 不得自动补回
+    SettingsConfig userOff;
+    userOff.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
+                              kModuleIdClaudeProxy, kModuleIdSettings};
+    const SettingsConfig fixed = SettingsStore::sanitized(userOff);
+    DOCTEST_CHECK(!moduleEnabled(fixed, kModuleIdTerminal));
+
+    // ③ 注册表：terminal 行存在且门控键正确
+    bool hasTerminalRow = false;
+    for (const auto& entry : ::app::registry::kModuleRegistry) {
+        if (entry.page == ::core::PageId::Terminal) {
+            hasTerminalRow = entry.gatingKey != nullptr &&
+                             std::string(entry.gatingKey) == kModuleIdTerminal;
+        }
+    }
+    DOCTEST_CHECK(hasTerminalRow);
+    return true;
+})
+
 REGISTER_TEST(gating_module_defaults_migration,
               "gating: 存量 5 项配置升级 → release/schedule 默认启用并写版本标记；关掉后不再重开", {
     using namespace module::settings;
@@ -123,7 +166,7 @@ REGISTER_TEST(gating_module_defaults_migration,
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdRelease));  // 升级即开
     // v2 迁移：schedule（此前恒注册）并入存量清单
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdSchedule));
-    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(7));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(8));
     // 迁移标记已回写 → 下次 load 不再迁移
     DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
                                                     versionKey.c_str()),
@@ -233,11 +276,12 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     DOCTEST_REQUIRE(test_support::writeRawConfigRow(
         ::core::appDatabase(), kEnabledModulesRow.c_str(), "{not json at all"));
     loaded = SettingsStore(::core::appDatabase()).load();
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(9));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMemory));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdSchedule));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdRelease));
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTerminal));
     std::error_code ec;
     std::filesystem::remove(file, ec);
     return true;

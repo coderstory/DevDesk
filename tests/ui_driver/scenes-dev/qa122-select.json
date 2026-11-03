@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.fullscreen", "timeoutMs": 4000},
+    {"type": "wait", "until": "text", "op": "contains", "text": "coderstory", "timeoutMs": 4000,
+     "_comment": "F-04：提示符文本在屏（选区目标锚定）"},
+    {"type": "drag", "from": "app.term.grid.row.0", "to": "app.term.grid.row.2", "steps": 12,
+     "_comment": "F-04：跨 3 行物理拖选（隔帧链路，覆盖提示符行文本）"},
+    {"type": "screenshot", "path": "qa122-sel.png", "_comment": "F-04 选区高亮证据"},
+    {"type": "key", "name": "Cmd+C", "_comment": "F-04：复制选区到系统剪贴板"},
+    {"type": "screenshot", "path": "qa122-sel-copied.png"}
+  ]
+}

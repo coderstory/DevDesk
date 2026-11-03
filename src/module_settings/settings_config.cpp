@@ -52,7 +52,7 @@ const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
     kModuleIdSchedule, kModuleIdClaudeProxy, kModuleIdSettings,
     kModuleIdAgent, kModuleIdMemory, kModuleIdWallpaper, kModuleIdMcp,
-    kModuleIdRelease};
+    kModuleIdTerminal, kModuleIdRelease};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -71,6 +71,8 @@ struct ModuleDefaultMigration {
 constexpr ModuleDefaultMigration kModuleDefaultMigrations[] = {
     {1, kModuleIdRelease},
     {2, kModuleIdSchedule},
+    // v3：terminal（need:122）。v3 从未发版（全量本地工作），槽位安全复用。
+    {3, kModuleIdTerminal},
 };
 
 void mergeDefaultModulesSince(std::vector<std::string>& ids, int storedVersion) {
@@ -91,7 +93,7 @@ std::vector<std::string> defaultEnabledModules() {
     //（此前恒注册，开关卡补齐后存量配置经迁移 v2 并入）。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
             kModuleIdSchedule, kModuleIdClaudeProxy, kModuleIdMemory,
-            kModuleIdSettings, kModuleIdRelease};
+            kModuleIdTerminal, kModuleIdSettings, kModuleIdRelease};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {

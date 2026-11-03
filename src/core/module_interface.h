@@ -22,6 +22,7 @@ enum class PageId {
     Memory,      // 记忆页（telemem 托管面板）；插在 Wallpaper 之前 = 侧边栏「记忆」在「壁纸」上方
     Wallpaper,
     Mcp,         // 位于 Wallpaper 之后、Settings 之前 = 侧边栏顺序（work/system 分组界）
+    Terminal,    // 位于 Mcp 之后、上线分组之前 = 侧边栏顺序（need:122）
     // 上线模块（多页共用门控键 release）：ReleaseGroup 是不可导航的分组父项
     //（工厂返回 nullptr，装配期跳过注册），只承载侧边栏二级菜单的父级身份。
     // 整组排在 Settings 之前（设置/关于固定收尾在侧边栏最后）。
@@ -43,6 +44,7 @@ inline const char* pageIdToString(PageId id) {
         case PageId::Memory: return "Memory";
         case PageId::Wallpaper: return "Wallpaper";
         case PageId::Mcp: return "Mcp";
+        case PageId::Terminal: return "Terminal";
         case PageId::ReleaseGroup: return "ReleaseGroup";
         case PageId::ReleaseTasks: return "ReleaseTasks";
         case PageId::ReleaseConfig: return "ReleaseConfig";
