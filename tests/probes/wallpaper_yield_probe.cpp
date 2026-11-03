@@ -496,7 +496,7 @@ int main(int argc, char* argv[]) {
             },
             std::chrono::milliseconds(6000));
         check(held, "§2 让路：全屏窗出现后快照 paused 且 systemHolds == Fullscreen"
-                    "（watcher 轮询 250ms/拍，有界 6s）");
+                    "（被动轮询 1s/拍，有界 6s）");
 
         std::string pauseValue;
         const bool mpvPaused = waitUntil(

@@ -139,7 +139,7 @@ private:
     void applySystemReason(HoldReason reason, bool active);
     // 换屏广播：重建 WorkerW 宿主并用新句柄重装当前项。无宿主（测试装配/宿主失败）no-op。
     void handleDisplayChanged();
-    // tickLoop 周期轮询：全屏每拍（250ms）、电池每 4 拍（≈1s）。mu_ 内调用。
+    // tickLoop 周期轮询：全屏与电池统一每 4 拍（≈1s）一次。mu_ 内调用。
     void pollYieldWatchersLocked();
 
     // 视频来源扫描落库：池 = 视频 + 同目录图片（混合池），videoCount 只计视频。
@@ -172,7 +172,7 @@ private:
     std::string settingsPath_;
     std::unique_ptr<YieldWatchers> yieldWatchers_;
     bool testWatcherInjected_ = false;  // 显式注入假 watcher：测试装配下也要接线启动
-    int yieldPollCounter_ = 0;  // 电池轮询分频（mu_ 内读写；全屏每拍都查）
+    int yieldPollCounter_ = 0;  // 被动轮询分频（4 拍 = 1s；全屏与电池同频）
 
     WallpaperSettings settings_;
     WallpaperSnapshot snapshot_;

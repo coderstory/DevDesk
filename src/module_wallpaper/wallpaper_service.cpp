@@ -422,16 +422,24 @@ void WallpaperService::applySystemReason(HoldReason reason, bool active) {
 
 void WallpaperService::pollYieldWatchersLocked() {
     if (yieldWatchers_ == nullptr) return;
+    // 被动轮询 1s 一拍（4 × 250ms tick 分频）。
+    //
+    // 为什么是 1s 而不是每拍：全屏有事件驱动的平台（macOS：Space 切换 / 应用激活
+    // 失活）已能即时响应，轮询只兜「最大化·还原」这类不产生事件的动作；每 250ms
+    // 枚举一次全窗口列表（CGWindowListCopyWindowInfo / EnumWindows）在窗口多的
+    // 桌面上是纯浪费。1s 是「盖满屏 1 秒内让路」的响应上限，视觉上无感。
+    //
+    // Windows 没有全屏事件源，1s 是它唯一的响应上限——仍满足需求「秒级响应」。
+    ++yieldPollCounter_;
+    if (yieldPollCounter_ < 4) return;
+    yieldPollCounter_ = 0;
     const float position = playerPositionLocked();
-    // 全屏：每拍（250ms）查——游戏全屏进出要求秒级内响应。
     const bool fullscreen = yieldWatchers_->pollFullscreenOtherProcess();
     if (arbiter_.setSystemReason(HoldReason::Fullscreen, fullscreen, position)) {
         applyHoldDecisionLocked(nowLocked());
     }
-    // 电池：GetSystemPowerStatus 查询秒级足够，每 4 拍（≈1s）分频一次。
-    ++yieldPollCounter_;
-    if (yieldPollCounter_ < 4) return;
-    yieldPollCounter_ = 0;
+    // 电池：查询本身就是秒级足够（GetSystemPowerStatus / IOPSCopyPowerSourcesInfo），
+    // 与全屏同频 1s。
     const bool onBattery = yieldWatchers_->pollOnBattery();
     if (arbiter_.setSystemReason(HoldReason::Battery, onBattery, position)) {
         applyHoldDecisionLocked(nowLocked());

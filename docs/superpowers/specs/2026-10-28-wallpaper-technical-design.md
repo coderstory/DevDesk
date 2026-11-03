@@ -76,6 +76,7 @@
 - 接线（`wallpaper_service.h:13-16,137-143`）：事件回调任意线程可入，喂 arbiter、状态真变才落决策；换屏广播 → `handleDisplayChanged` 重建 WorkerW 宿主并重装当前项；tickLoop 内轮询兜底——全屏每拍（250ms）、电池每 4 拍 ≈1s（`wallpaper_service.cpp:421`，分频计数 `yieldPollCounter_`）。
 - 注入缝：`setYieldWatchersForTest`（`wallpaper_service.h:126`）注入假 watcher 驱动裁决矩阵（`22a99daa` 的四路矩阵单测）；显式注入假 watcher 时测试装配下也要接线启动（`testWatcherInjected_`，`:174`）。生产装配用 `createYieldWatchers()`。
 - 真机实证：`wallpaper_yield_probe`——全屏测试窗出现 → 快照 paused 且 systemHolds==Fullscreen，且经 IPC 读 mpv `pause` 属性实测为 true（暂停下达到播放器，非仅服务层状态）。
+- **被动轮询频率 = 1s**（4 × 250ms tick 分频，全屏与电池同频，2026-11-03 由「全屏每拍」下调）：有事件驱动的平台（macOS）由事件负责即时响应，轮询只兜「最大化/还原」这类不产生事件的动作；Windows 无全屏事件源，1s 即其响应上限，仍满足「秒级响应」需求。
 
 ### 2.5 图片 2K 档过滤
 
@@ -105,7 +106,7 @@
 |---|---|---|
 | `wallpaper_host_macos.mm` | 桌面层窗口宿主 | `CGWindowLevelForKey(kCGDesktopWindowLevelKey)` 层级；无 WorkerW 概念；窗口操作经**主队列**同步投递（有界 3s），不建宿主线程 |
 | `mpv_controller_macos.mm` | 播放控制（同名接口） | 无 mpv 进程：视频 = `AVQueuePlayer` + `AVPlayerLooper`；图片 = 宿主自绘 `CALayer`；无 IPC/无管道 |
-| `yield_watchers_macos.mm` | 五路让路 | 分布式通知（锁屏）+ NSWorkspace（睡眠/唤醒）+ IOKit 电源源 + `CGDisplayRegisterReconfigurationCallback`（换屏）+ 全屏「workspace 事件（Space 切换/应用激活·失活）+ 轮询」双驱动 |
+| `yield_watchers_macos.mm` | 五路让路 | 分布式通知（锁屏）+ NSWorkspace（睡眠/唤醒）+ IOKit 电源源 + `CGDisplayRegisterReconfigurationCallback`（换屏）+ 全屏「workspace 事件（Space 切换/应用激活·失活）+ 1s 轮询」双驱动 |
 | `image_probe_macos.cpp` | 图片头解码 | `CGImageSourceCopyPropertiesAtIndex` 读 `PixelWidth/Height`，不建解码器、不解像素 |
 
 **纯逻辑层（跨平台可测）**：`image_fit_geometry.h`（四铺法落位）、`fullscreen_geometry.h`（内缩补偿 + 坐标系翻转 + 按 pid 聚合覆盖率）。

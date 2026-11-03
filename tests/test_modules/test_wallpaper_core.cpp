@@ -1216,7 +1216,8 @@ REGISTER_TEST(wallpaper_core_service_yield_watchers,
     DOCTEST_CHECK(hasSeekCall(*playerRaw, 11.0f));
     DOCTEST_CHECK(hasPauseCall(*playerRaw, false));
 
-    // ② 全屏轮询通道：置位 → 下一拍（≤250ms+余量）暂停；复位 → 恢复。
+    // ② 全屏轮询通道：置位 → 1s 轮询窗口内暂停（waitForSnapshot 4s 预算内）；
+    //    复位 → 恢复。被动轮询统一 1s 一拍。
     playerRaw->clearCalls();
     playerRaw->setPositionForTest(21.0f);
     watchersRaw->setFullscreen(true);
@@ -1235,7 +1236,9 @@ REGISTER_TEST(wallpaper_core_service_yield_watchers,
     // 生效 → 暂停；关开关 → 立即恢复（watcher 仍上报电池也不让路）；重开开关 →
     // 下一拍电池位回来（契约：开门不主动置位，等下一帧轮询）。
     watchersRaw->setBattery(true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    // 门控关时必须持续不让路。等一个完整轮询窗口（>1s）再断言，否则可能在
+    // 轮询尚未执行时就把「还没跑」误判成「跑过了也不让路」。
+    std::this_thread::sleep_for(std::chrono::milliseconds(1300));
     DOCTEST_CHECK_FALSE(service.snapshot().paused);  // 门控关：持续上报也不让路
     service.setPauseOnBattery(true);
     wp::WallpaperSnapshot batterySnap = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {

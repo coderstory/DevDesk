@@ -337,7 +337,7 @@ private:
     }
 
     // 当前是否在电池上。reportFailure=true 时读失败落一行日志（事件路径），
-    // false 时静默（轮询路径：每 250ms 一拍，不能刷屏）。
+    // false 时静默（轮询路径：1s 一拍，仍不该刷屏）。
     static bool isOnBattery(bool reportFailure) {
         bool onBattery = false;
         bool failed = true;
