@@ -131,6 +131,26 @@ inline std::filesystem::path makeTempDir(const std::string& prefix,
     return dir;
 }
 
+// Windows 上 Git for Windows 会把 .git/objects 下的 loose object 标只读
+// （attrib +R，模拟 POSIX 权限），std::filesystem::remove_all 删只读文件直接
+// 报「拒绝访问」——POSIX 无此语义，所以同一条清理链在 mac/CI 绿、Windows 真机红
+//（2026-11-03 池122：notes_mcp git 自动提交用例）。递归先补 owner_write 再删；
+// 非 Windows 上补写位无害，ec 吞掉再次失败（清理是尽力而为，不参与断言）。
+inline void removeAllBestEffort(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return;
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             path, std::filesystem::directory_options::skip_permission_denied, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator();
+         it.increment(ec)) {
+        std::error_code permEc;
+        std::filesystem::permissions(it->path(),
+                                     std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::add, permEc);
+    }
+    std::filesystem::remove_all(path, ec);
+}
+
 // RAII 临时目录：构造 = 清残骸 + 建空目录（失败即抛，别让用例跑在
 // 不存在的目录上）；析构 = 整棵删掉。
 struct TempDir {
@@ -148,10 +168,7 @@ struct TempDir {
             throw std::runtime_error("temp dir create failed");
         }
     }
-    ~TempDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-    }
+    ~TempDir() { removeAllBestEffort(path); }
     TempDir(const TempDir&) = delete;
     TempDir& operator=(const TempDir&) = delete;
 

@@ -150,7 +150,7 @@ REGISTER_TEST(notes_mcp_schema_contract,
             DOCTEST_CHECK_EQ(required.size(), std::size_t{2});  // topic + content
         }
     }
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -175,7 +175,7 @@ REGISTER_TEST(notes_mcp_registry_round_trip,
 
     DOCTEST_REQUIRE(nm::registerNotesMcpTools(registry, svc, nullptr).isOk());
     DOCTEST_CHECK_EQ(registry.size(), std::size_t{3});
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -204,7 +204,7 @@ REGISTER_TEST(notes_mcp_search_cjk_substring_hit,
                           "未命中中文标题: " + text);
     DOCTEST_CHECK_MESSAGE(text.find("工作/深挖结论数据库选型.md") != std::string::npos,
                           "结果未带相对路径（notes_read 需要它）: " + text);
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -233,7 +233,7 @@ REGISTER_TEST(notes_mcp_search_miss_and_bad_args,
         DOCTEST_CHECK_MESSAGE(isError,
                               std::string("参数 ") + args + " 应判错: " + text);
     }
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -257,7 +257,7 @@ REGISTER_TEST(notes_mcp_read_returns_full_text,
                                   "{\"path\":\"会议/纪要.md\"}", &isError, &text));
     DOCTEST_CHECK_FALSE(isError);
     DOCTEST_CHECK_EQ(text, content);
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -284,7 +284,7 @@ REGISTER_TEST(notes_mcp_read_bad_path_rejected,
         DOCTEST_CHECK_MESSAGE(isError,
                               std::string("参数 ") + args + " 应判错: " + text);
     }
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -326,7 +326,7 @@ REGISTER_TEST(notes_mcp_write_new_file_fts_synced,
     DOCTEST_CHECK_FALSE(isError);
     DOCTEST_CHECK_MESSAGE(text.find(expected) != std::string::npos,
                           "FTS 未同步新文件: " + text);
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -378,7 +378,7 @@ REGISTER_TEST(notes_mcp_write_rejects_existing_file,
     DOCTEST_CHECK_TRUE(isError);
     DOCTEST_CHECK_MESSAGE(text.find("已存在") != std::string::npos,
                           "外部预建用例文案缺「已存在」: " + text);
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -419,7 +419,7 @@ REGISTER_TEST(notes_mcp_write_validates_topic,
     auto list = svc.listAll();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(list.value().size(), std::size_t{0});
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })
 
@@ -450,7 +450,7 @@ REGISTER_TEST(notes_mcp_write_triggers_git_autocommit,
     }
     if (!inited || gitSvc->disabled()) {
         std::cout << "[SKIP] git init 未完成/被禁用" << std::endl;
-        fs::remove_all(dir);
+        test_support::removeAllBestEffort(dir);
         return true;
     }
 
@@ -471,6 +471,6 @@ REGISTER_TEST(notes_mcp_write_triggers_git_autocommit,
         if (!committed) std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     DOCTEST_CHECK_MESSAGE(committed, "git log 未出现自动提交（10s 内）");
-    fs::remove_all(dir);
+    test_support::removeAllBestEffort(dir);
     return true;
 })

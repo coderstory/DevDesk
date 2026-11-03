@@ -173,12 +173,30 @@ int main(int argc, char* argv[]) {
         return 4;
     }
     const float scale = capture.scale();
+    // 小屏 / 高 DPI：显示器装不下请求的逻辑窗高时系统会钳窗口，按请求尺寸布局的
+    // 底部采样点（page.bg 在 h-12）必然落在帧外——环境不可用 → 77，不判红
+    //（与 home_probes N2 同口径；池123）。
+    const float actualLogicalH =
+        scale > 0.0f ? static_cast<float>(capture.pixelHeight()) / scale : 0.0f;
+    if (static_cast<float>(args.windowH) > actualLogicalH + 1.0f) {
+        std::cerr << "b1_material_probe: 环境不支持——请求 " << args.windowW << "x"
+                  << args.windowH << "，系统把窗口钳到 " << capture.pixelWidth()
+                  << "x" << capture.pixelHeight() << "px（逻辑高≈"
+                  << actualLogicalH << "，显示器装不下）；像素判据跳过，返回 77\n";
+        mod.onStop();
+        runtime.shutdown(false);
+        core::releaseInputQueue(window);
+        core::window::destroyWindow(window);
+        probe::terminateWindowBackend();
+        return 77;
+    }
 
     auto sampleRgb = [&](const std::vector<unsigned char>& rgba, int imgW,
-                         const Sample& pt) -> std::string {
+                         int imgH, const Sample& pt) -> std::string {
         const int px = static_cast<int>(pt.lx * scale);
         const int py = static_cast<int>(pt.ly * scale);
-        if (px < 0 || py < 0 || (px + 1) * 4 > imgW * 4) return "oob";
+        // x/y 两轴都要判：只判 x 曾让底部采样点把 py 当行下标越界（vector 断言崩溃，池123）
+        if (px < 0 || py < 0 || px >= imgW || py >= imgH) return "oob";
         const std::size_t base = (static_cast<std::size_t>(py) * imgW + px) * 4u;
         char buf[32];
         std::snprintf(buf, sizeof(buf), "%d,%d,%d", rgba[base], rgba[base + 1],
@@ -203,7 +221,7 @@ int main(int argc, char* argv[]) {
             return;
         }
         for (int k = 0; k < 4; ++k) {
-            rgb[stateIdx][k] = sampleRgb(rgba, iw, pts[k]);
+            rgb[stateIdx][k] = sampleRgb(rgba, iw, ih, pts[k]);
         }
         if (!pngPath.empty() &&
             !probe::writeRgbaToPng(pngPath, rgba.data(), iw, ih)) {
