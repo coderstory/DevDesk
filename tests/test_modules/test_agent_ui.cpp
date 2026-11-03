@@ -163,6 +163,24 @@ bool clickId(eui::Ui& ui, const std::string& id) {
     return true;
 }
 
+// 墙钟截止轮询：每 tick 求值 pred，成立即 true；超 deadline 再求值一次（不等 tick）。
+// 为什么不用「for i<N × sleep10ms」迭代封顶（2026-11-03 R10 根治）：每轮 = 整页
+// compose+layout+refreshData（SQLite 读），慢 runner 单轮可到 20-50ms——迭代数窗口
+// 的 wall 成本 = 迭代数 × 每轮成本，CI 上名义 3s 实际 6-11s 仍不够或提前耗尽；
+// 截止语义 = 状态驱动 + 耐心上限，本地每段 <100ms 不变，只对真回归慢下来。
+bool pollUntil(int deadlineMs, int tickMs, const std::function<bool()>& pred) {
+    auto t0 = std::chrono::steady_clock::now();
+    for (;;) {
+        if (pred()) return true;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count() >= deadlineMs) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
+    }
+}
+
 // 按 UTF-8 字符边界逐字符送进 input 的 onTextInput（真实 input 事件路径）
 void typeInto(core::dsl::Element* hit, const std::string& text) {
     size_t i = 0;
@@ -6027,15 +6045,18 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
     DOCTEST_REQUIRE(created.isOk());
     const std::string tid = std::to_string(created.value());
 
-    // 阻塞桩：首个 LLM 请求卡住直到放行（模拟 in-flight 迭代），上限 5s 防挂死。
-    // 响应必须是 tool_use（app.stats）而不是 end_turn——cancel 只在迭代边界（下轮 send
-    // 前）被查，end_turn 单轮 run 会在 send 返回后直接 completed break，永远吃不到 cancel
+    // 阻塞桩：首个 LLM 请求卡住直到放行（模拟 in-flight 迭代）。上限 60s 仅防挂死
+    // （原 5s：慢 runner 上测试前段未跑完就被迫放行 → run 提前收敛 → 停止 chip
+    // 消失 → 后段状态机假红，R10 形态）；releaseGate 由终态段放行，正常路径桩内
+    // 停留 <1s。响应必须是 tool_use（app.stats）而不是 end_turn——cancel 只在迭代
+    // 边界（下轮 send 前）被查，end_turn 单轮 run 会在 send 返回后直接 completed
+    // break，永远吃不到 cancel。
     std::atomic<bool> releaseGate{false};
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
     deps.profileSource = &profile;
     deps.http = [&releaseGate](const platform::http::Request&) {
-        for (int i = 0; i < 500 && !releaseGate.load(std::memory_order_acquire);
+        for (int i = 0; i < 6000 && !releaseGate.load(std::memory_order_acquire);
              ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
@@ -6049,80 +6070,151 @@ REGISTER_TEST(agent_ui_stop_button_cancel_flow,
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
+    // —— 分阶段墙钟诊断（2026-11-03 R10 根治线）：CI 摘要只露 [FAIL]+总时长，
+    // 阶段归属靠这些行（本地直跑原始输出可见；REQUIRE 消息也内联耗时，随 assert
+    // 现场落 lastFailNote）。只在阶段边界/每 50 轮打印，零热路径成本。
+    const auto stopFlowT0 = std::chrono::steady_clock::now();
+    auto stopFlowMs = [stopFlowT0]() -> long long {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - stopFlowT0)
+            .count();
+    };
+    auto stopFlowProbe = [&](const char* tag) {
+        auto runs = store.listRuns(created.value(), 1);
+        std::cerr << "[stopflow " << stopFlowMs() << "ms] " << tag
+                  << " activeRun=" << (mod.isTaskRunActive(created.value()) ? 1 : 0)
+                  << " stopReq=" << (mod.isStopRequested(created.value()) ? 1 : 0)
+                  << " latestRun="
+                  << ((runs.isOk() && !runs.value().empty())
+                          ? runs.value().front().status
+                          : std::string("(none)"))
+                  << "\n";
+    };
+
     // 启动钮 enabled = loop_ != nullptr；ensureLlm 允许瞬时失败（compose 每帧自愈
     // 重试，agent_module.cpp:429）——CI 负载下首帧可能未就绪，测试同口径轮询点击，
     // 不做首帧硬断言（2026-11-02 mac CI flake：首帧即点 38ms 硬挂）。
-    bool runClicked = false;
+    // 出口 = isTaskRunActive（内存态、零 DB 读）而非 clickId 返回值：disabled 钮
+    // onClick 仍挂（textActionChip 直调契约），点上去 startTask 对 loop_ 未就绪 /
+    // 任务行未缓存静默 no-op——「点到了」≠「跑起来了」，以 run 真在身为收敛。
+    stopFlowProbe("P1-begin");
     eui::Ui ui;
-    for (int i = 0; i < 200 && !runClicked; ++i) {
+    bool runStarted = pollUntil(10000, 10, [&] {
         composeTo(ui, mod, kScreen, "agent_ui_stop1");
-        runClicked = clickId(ui, "agent.task." + tid + ".run.bg");
-        if (!runClicked) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    DOCTEST_REQUIRE_MESSAGE(runClicked,
-                            "启动钮 2s 内不可点（loop_ 未就绪且未自愈）");
+        if (!mod.isTaskRunActive(created.value())) {
+            (void)clickId(ui, "agent.task." + tid + ".run.bg");
+            return false;
+        }
+        return true;
+    });
+    stopFlowProbe(runStarted ? "P1-run-active" : "P1-exhausted");
+    DOCTEST_REQUIRE_MESSAGE(runStarted,
+                            "启动点击后 run 未在身（loop_ 未就绪且未自愈；耗时 " +
+                                std::to_string(stopFlowMs()) + "ms）");
 
     // 运行中：详情弹窗标题行出现停止钮且**可点**（渲染≠可点——钮在 run 态同步
     // 完成前可能短暂 disabled 无 onClick，CI 负载下 2026-11-02 二次 flake 实证：
     // 可见性轮询过了但 clickId 因 onClick 缺失 123ms 硬挂）。可见+可点合并轮询。
-    bool stopClicked = false;
+    // P2 停止：出口 = cancel 位真置上（isStopRequested）或 run 已收敛——gate 未开时
+    // run 只能以 cancelled 收尾（无其他终态路径可达），即点击已生效而 run 线程先到
+    // 迭代边界。clickId 返回值不作出口：点击落在 chip disabled 无 onClick 的帧上
+    // 会静默失败（R3 实证），重试到生效为止。
+    stopFlowProbe("P2-begin");
     eui::Ui ui2;
-    for (int i = 0; i < 300 && !stopClicked; ++i) {
+    bool cancelSeen = false;
+    bool stopRequested = pollUntil(10000, 10, [&] {
         composeTo(ui2, mod, kScreen, "agent_ui_stop_poll");
-        stopClicked = clickId(ui2, "agent.dialog.detail.stop.bg");
-        if (!stopClicked) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    DOCTEST_REQUIRE_MESSAGE(stopClicked, "运行中详情弹窗停止钮 3s 内不可点");
-
-    // 点击停止：cancel 位经模块观测面可断言；钮切「停止中」并禁用
-    DOCTEST_CHECK_MESSAGE(mod.isStopRequested(created.value()),
-                          "点击停止后 cancel 位未置");
-    eui::Ui ui3;
-    // 「停止中」反馈态：对话框组帧在 CI 负载下可能瞬态迟到（2026-11-03 R6 mac
-    // flake：点击后 124ms 断在 stopBtn null）——同口径轮询取帧
-    bool stopFeedback = false;
-    for (int i = 0; i < 200 && !stopFeedback; ++i) {
-        composeTo(ui3, mod, kScreen, "agent_ui_stop_after");
-        const auto* stopBtn = ui3.find("agent.dialog.detail.stop");
-        if (stopBtn != nullptr) {
-            stopFeedback = true;
-            DOCTEST_CHECK_MESSAGE(stopBtn->text.find("停止中") != std::string::npos,
-                                  "点击后未切「停止中」反馈态，实测: " +
-                                      stopBtn->text);
-            DOCTEST_CHECK_MESSAGE(
-                stopBtn->text.find("当前轮结束后生效") != std::string::npos,
-                "停止钮文案缺生效时机说明");
-            break;
+        if (mod.isStopRequested(created.value())) {
+            cancelSeen = true;
+            return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    DOCTEST_REQUIRE_MESSAGE(stopFeedback, "点击停止后反馈态 2s 未渲染");
+        if (!mod.isTaskRunActive(created.value())) return true;
+        (void)clickId(ui2, "agent.dialog.detail.stop.bg");
+        return false;
+    });
+    stopFlowProbe(stopRequested ? (cancelSeen ? "P2-cancel-set"
+                                              : "P2-vacuous-run-done")
+                                : "P2-exhausted");
+    DOCTEST_REQUIRE_MESSAGE(stopRequested,
+                            "运行中详情弹窗停止钮点击未生效（耗时 " +
+                                std::to_string(stopFlowMs()) + "ms）");
 
-    // 放行 → 当前轮跑完 → 迭代边界取消优先于超限判定 → cancelled 落库
+    // 点击停止：cancel 位经模块观测面可断言；run 已收敛时 cancel 位随 ActiveRun
+    // 终结不可读（isStopRequested 对 done run 返 false），以「已收敛」替代。
+    DOCTEST_CHECK_MESSAGE(cancelSeen || !mod.isTaskRunActive(created.value()),
+                          "点击停止后 cancel 位未置");
+
+    // P3 「停止中」反馈态：chip 在场即断言文案；chip 不在场且 run 已终（P2 的
+    // cancel 在慢 runner 上可能先于本段首帧把 run 收敛掉——首个迭代边界即
+    // cancelled）= 反馈阶段合法跳过（vacuous）：断言对象「点击后 UI 反映
+    // stopping」已无渲染载体，硬等只会等出假红（R10 形态）。注意断言不进
+    // pollUntil 谓词（宏 fail-fast 的 return false 只退出谓词不退出用例）。
+    stopFlowProbe("P3-begin");
+    eui::Ui ui3;
+    bool chipFound = false;
+    bool feedbackVacuous = false;
+    std::string stopBtnText;
+    pollUntil(10000, 10, [&] {
+        composeTo(ui3, mod, kScreen, "agent_ui_stop_after");
+        if (const auto* stopBtn = ui3.find("agent.dialog.detail.stop")) {
+            stopBtnText = stopBtn->text;
+            chipFound = true;
+            return true;
+        }
+        if (!mod.isTaskRunActive(created.value())) {
+            feedbackVacuous = true;   // run 已终，chip 永不再渲染
+            return true;
+        }
+        return false;
+    });
+    stopFlowProbe(feedbackVacuous ? "P3-vacuous"
+                                  : (chipFound ? "P3-feedback" : "P3-exhausted"));
+    if (chipFound) {
+        DOCTEST_CHECK_MESSAGE(stopBtnText.find("停止中") != std::string::npos,
+                              "点击后未切「停止中」反馈态，实测: " + stopBtnText);
+        DOCTEST_CHECK_MESSAGE(
+            stopBtnText.find("当前轮结束后生效") != std::string::npos,
+            "停止钮文案缺生效时机说明");
+    } else {
+        DOCTEST_REQUIRE_MESSAGE(feedbackVacuous,
+                                "点击停止后反馈态未渲染且 run 未收敛（耗时 " +
+                                    std::to_string(stopFlowMs()) + "ms）");
+    }
+
+    // 放行 → 当前轮跑完 → 迭代边界取消优先于超限判定 → cancelled 落库。
+    // 30s 墙钟截止：断言语义是「终态收敛」不是「多久内收敛」，窗口 = 耐心非阈值；
+    // 本地 <100ms。
+    stopFlowProbe("gate-open");
     releaseGate.store(true, std::memory_order_release);
-    bool cancelled = false;
     eui::Ui ui4;
-    // 收敛窗口 15s（2026-11-03 mac CI 实证：负载下 5s 不够——R9 耗时对账
-    // 2+3+5=10.08s 恰为三段轮询窗口和）。断言语义是「终态收敛」不是「5s 内
-    // 收敛」，窗口 = 耐心非阈值；本地常 <1s，放宽不影响回归灵敏度
-    for (int i = 0; i < 1500 && !cancelled; ++i) {
+    bool cancelled = pollUntil(30000, 10, [&] {
         composeTo(ui4, mod, kScreen, "agent_ui_stop_term");
         auto runs = store.listRuns(created.value(), 1);
-        if (runs.isOk() && !runs.value().empty() &&
-            runs.value().front().status == "cancelled") {
-            cancelled = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    DOCTEST_REQUIRE_MESSAGE(cancelled, "放行后 15s 内 run 未落库 cancelled");
+        return runs.isOk() && !runs.value().empty() &&
+               runs.value().front().status == "cancelled";
+    });
+    stopFlowProbe(cancelled ? "P4-terminal" : "P4-exhausted");
+    DOCTEST_REQUIRE_MESSAGE(cancelled,
+                            "放行后 run 未落库 cancelled（耗时 " +
+                                std::to_string(stopFlowMs()) + "ms）");
 
-    // 列表状态列「已取消」
+    // 列表状态列「已取消」：run 终态后需一帧 refreshData 跟进（uiPolling_ 判停），
+    // 慢 runner 上给 2s 截止
+    stopFlowProbe("final-list");
     eui::Ui ui5;
-    composeTo(ui5, mod, kScreen, "agent_ui_stop_list");
-    const auto* status = ui5.find("agent.task." + tid + ".status");
-    DOCTEST_REQUIRE(status != nullptr);
-    DOCTEST_CHECK(status->text.find("已取消") != std::string::npos);
+    std::string listStatusText;
+    bool listStatusFound = pollUntil(2000, 10, [&] {
+        composeTo(ui5, mod, kScreen, "agent_ui_stop_list");
+        if (const auto* st = ui5.find("agent.task." + tid + ".status")) {
+            listStatusText = st->text;
+            return true;
+        }
+        return false;
+    });
+    DOCTEST_REQUIRE_MESSAGE(listStatusFound,
+                            "列表状态行未渲染（耗时 " +
+                                std::to_string(stopFlowMs()) + "ms）");
+    DOCTEST_CHECK(listStatusText.find("已取消") != std::string::npos);
 
     mod.onStop();
     return true;
