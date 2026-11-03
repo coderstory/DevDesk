@@ -17,12 +17,11 @@ namespace terminal {
 class TerminalPage {
 public:
     // 装配整页。onKeyBytes=键编码产物；onTextInput=IME 提交/粘贴；onCopyText=选区文本
-    //（Cmd+C 时回调，module 接剪贴板）；placeholderReason 非空=占位页（Windows）。
+    //（Cmd+C/Ctrl+C 复制时回调，module 接剪贴板）。
     GridLayout compose(eui::Ui& ui, const eui::Screen& screen, SessionController& controller,
                        const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
                        const std::function<void(const std::string&, bool paste)>& onTextInput,
-                       const std::function<void(const std::string&)>& onCopyText,
-                       const std::string& placeholderReason);
+                       const std::function<void(const std::string&)>& onCopyText);
 
     bool wantsResize() const { return pendingRows_ > 0; }
     int pendingRows() const { return pendingRows_; }

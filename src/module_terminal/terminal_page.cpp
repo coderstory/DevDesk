@@ -20,35 +20,11 @@ GridLayout TerminalPage::compose(
     eui::Ui& ui, const eui::Screen& screen, SessionController& controller,
     const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
     const std::function<void(const std::string&, bool paste)>& onTextInput,
-    const std::function<void(const std::string&)>& onCopyText,
-    const std::string& placeholderReason) {
+    const std::function<void(const std::string&)>& onCopyText) {
     const auto& t = core::theme::current();
     GridLayout layout;
     layout.rows = 0;
     layout.cols = 0;
-
-    // ---- Windows 占位页（F-06：非终端深底、无交互控件）----
-    if (!placeholderReason.empty()) {
-        ui.rect("term.placeholder.bg").size(screen.width, screen.height).color(t.colors.surface);
-        ui.column("term.placeholder.card")
-            .width(screen.width)
-            .height(screen.height)
-            .content([&] {
-                ui.text("term.placeholder.title")
-                    .size(400.0f, core::theme::scaled(24.0f))
-                    .margin(48.0f, 96.0f, 0.0f, 0.0f)
-                    .text("终端")
-                    .fontSize(t.sizes.fontSizeTitle)
-                    .color(t.colors.textPrimary);
-                ui.text("term.placeholder.body")
-                    .size(420.0f, core::theme::scaled(40.0f))
-                    .margin(48.0f, 24.0f, 0.0f, 0.0f)
-                    .text(placeholderReason)
-                    .fontSize(t.sizes.fontSizeBody)
-                    .color(t.colors.textSecondary);
-            });
-        return layout;
-    }
 
     if (!fullscreenInit_) {
         fullscreenInit_ = true;
@@ -141,8 +117,29 @@ GridLayout TerminalPage::compose(
                     hasSelection_ = false;
                     selecting_ = false;
                 })
-                .onKeyEvent([&onKeyBytes](const eui::KeyEvent& e) {
+                .onKeyEvent([&controller, &onKeyBytes, &onCopyText, this](const eui::KeyEvent& e) {
                     if (!e.isDown()) return false;
+                    // Ctrl+C 二象性（技术卡 v2 决策 4/§5）：win 惯例且选区非空 → 复制并吞
+                    // 事件；无选区/mac 惯例 → keyencoder 语义（\x03 中断，encodeKey 同值）
+                    if (e.modifiers.control && e.key == eui::InputKey::C) {
+                        std::string bytes;
+                        if (terminal::encodeCtrlC(platform::terminalKeyConventions(),
+                                                  hasSelection_, bytes)) {
+                            std::string sel;
+                            if (controller.selectionText(selARow_, selACol_, selHRow_,
+                                                         selHCol_, sel)) {
+                                onCopyText(sel);
+                                return true;
+                            }
+                            bytes.assign(1, '\x03'); // 提取失败（非 Running 等）→ 落回中断
+                        }
+                        if (!bytes.empty()) {
+                            onKeyBytes(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                       static_cast<int32_t>(bytes.size()));
+                            return true;
+                        }
+                        return false;
+                    }
                     std::string bytes;
                     if (terminal::encodeKey(e.key, e.modifiers, bytes)) {
                         onKeyBytes(reinterpret_cast<const uint8_t*>(bytes.data()),

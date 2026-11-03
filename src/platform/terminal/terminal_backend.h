@@ -73,7 +73,17 @@ public:
 // 两 TU 各自提供同名工厂与剪贴板函数，CMake 按平台选源）
 TerminalBackend* terminalBackendMac();
 
-// 选区文本写系统剪贴板（mac=NSPasteboard 经桥接；win=占位 false）
+// 选区文本写系统剪贴板（mac=NSPasteboard 经桥接；win=Win32 clipboard）
 bool clipboardCopyText(const uint8_t* bytes, int32_t count);
+
+// 键位惯例（技术卡 v2 决策 4/§5）：复制/粘贴主键的平台差异缝。
+// mac 常量=现行为原样（Cmd+C 走 module 兜底、Cmd+V 走 pasteText，无二象性）；
+// win=Ctrl+C 二象性（有选区复制/无选区 \x03，分派纯函数见 terminal_keyencoder
+// encodeCtrlC）+ Ctrl+V 粘贴（EUI pasteText 链路天然承载，page 不拦截）。
+struct TerminalKeyConventions {
+    bool ctrlCIsCopy;  // true=Win 惯例：Ctrl+C 在有选区时复制
+    bool ctrlVIsPaste; // true=Win 惯例：Ctrl+V 为粘贴主键
+};
+TerminalKeyConventions terminalKeyConventions();
 
 } // namespace platform

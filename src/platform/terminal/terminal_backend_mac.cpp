@@ -108,4 +108,10 @@ bool clipboardCopyText(const uint8_t* bytes, int32_t count) {
     return SwiftBridgeSession::copyToClipboard(bytes, count);
 }
 
+// mac 键位惯例=现行为原样（need:127 F-06 零行为变化）：Cmd+C 复制走 module 兜底、
+// Cmd+V 粘贴走 pasteText 链路，Ctrl+C 无二象性、Ctrl+V 非粘贴主键
+TerminalKeyConventions terminalKeyConventions() {
+    return TerminalKeyConventions{.ctrlCIsCopy = false, .ctrlVIsPaste = false};
+}
+
 } // namespace platform

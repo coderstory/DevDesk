@@ -125,3 +125,25 @@ REGISTER_TEST(keyencoderSilentKeys,
     DOCTEST_CHECK(out.empty());
     return true;
 })
+
+REGISTER_TEST(keyencoderCtrlCDuality,
+              "terminal keyencoder: Ctrl+C 二象性三态（技术卡 v2 决策 4/§5）", {
+    std::string out;
+    const platform::TerminalKeyConventions win{.ctrlCIsCopy = true, .ctrlVIsPaste = true};
+    const platform::TerminalKeyConventions mac{.ctrlCIsCopy = false, .ctrlVIsPaste = false};
+
+    // ① mac 惯例：恒走 keyencoder 语义（\x03），与选区无关（零行为变化锚）
+    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, false, out));
+    DOCTEST_CHECK(out == "\x03");
+    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, true, out));
+    DOCTEST_CHECK(out == "\x03");
+
+    // ② win 惯例 + 无选区 → \x03 中断
+    DOCTEST_CHECK(!terminal::encodeCtrlC(win, false, out));
+    DOCTEST_CHECK(out == "\x03");
+
+    // ③ win 惯例 + 有选区 → 复制分派（bytes 空，宿主走剪贴板）
+    DOCTEST_CHECK(terminal::encodeCtrlC(win, true, out));
+    DOCTEST_CHECK(out == "\x03"); // bytes 保持上次值不变即"未写"
+    return true;
+})

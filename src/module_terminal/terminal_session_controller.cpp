@@ -10,6 +10,15 @@ void SessionController::setBackend(platform::TerminalBackend* backend) { backend
 
 void SessionController::startNew() {
     if (backend_ == nullptr) return;
+    // 可用性前置检查（need:127 技术卡 v2 决策 6）：OS<1809 无 ConPTY → Failed 态 +
+    // unavailableReason 明确文案（复用失败覆盖卡，零新增 UI 形态）
+    if (!backend_->available()) {
+        state_ = SessionState::Failed;
+        error_ = backend_->unavailableReason() != nullptr ? backend_->unavailableReason()
+                                                          : "终端不可用";
+        LOG_ERROR("Terminal: 后端不可用: " + error_);
+        return;
+    }
     if (handle_) handle_->terminate();
     handle_.reset();
     state_ = SessionState::Idle;

@@ -49,10 +49,8 @@ bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
 }
 
 void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
-    // 占位页（F-06）：平台不支持 = 非终端深底、无交互控件、终态无分支
+    // 可用性（OS<1809 → controller.startNew 前置检查进 Failed 态，技术卡 v2 决策 6）
     const bool available = backend_ != nullptr && backend_->available();
-    const std::string placeholder =
-        available ? std::string() : std::string(backend_->unavailableReason());
 
     GridLayout layout = page_.compose(
         ui, screen, controller_,
@@ -65,8 +63,7 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         [](const std::string& text) {
             platform::clipboardCopyText(reinterpret_cast<const uint8_t*>(text.data()),
                                         static_cast<int32_t>(text.size()));
-        },
-        placeholder);
+        });
     // 全屏态变化 → 侧栏折叠缝（F-05；近似语义：折叠非隐藏，偏差已记录）
     if (page_.fullscreen() != sidebarCollapsedApplied_) {
         sidebarCollapsedApplied_ = page_.fullscreen();

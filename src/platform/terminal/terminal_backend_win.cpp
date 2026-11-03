@@ -463,7 +463,32 @@ TerminalBackend* terminalBackendMac() {
     return &backend;
 }
 
-// 剪贴板 Phase 2 接线（need:127 Phase 2：Win32 clipboard；Phase 1 保持诚实 false）
-bool clipboardCopyText(const uint8_t*, int32_t) { return false; }
+// 剪贴板：选区文本写系统剪贴板（F-03 选区复制链路闭环）。UTF-8→UTF-16 后
+// CF_UNICODETEXT；空串/失败面诚实返回 false，不伪造成功
+bool clipboardCopyText(const uint8_t* bytes, int32_t count) {
+    if (bytes == nullptr || count <= 0) return false;
+    const std::string utf8(reinterpret_cast<const char*>(bytes), size_t(count));
+    const std::wstring wide = utf8ToWide(utf8);
+    if (wide.empty()) return false;
+    if (!OpenClipboard(nullptr)) return false;
+    const SIZE_T bytesN = (wide.size() + 1) * sizeof(wchar_t);
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytesN);
+    if (mem == nullptr) {
+        CloseClipboard();
+        return false;
+    }
+    memcpy(GlobalLock(mem), wide.data(), bytesN);
+    GlobalUnlock(mem);
+    const BOOL ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+    // SetClipboardData 成功后 mem 归系统所有，失败才由我们释放
+    if (!ok) GlobalFree(mem);
+    CloseClipboard();
+    return ok != FALSE;
+}
+
+// win 键位惯例（技术卡 v2 §5）：Ctrl+C 二象性（分派在 encodeCtrlC）+ Ctrl+V 粘贴主键
+TerminalKeyConventions terminalKeyConventions() {
+    return TerminalKeyConventions{.ctrlCIsCopy = true, .ctrlVIsPaste = true};
+}
 
 } // namespace
