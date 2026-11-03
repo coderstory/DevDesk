@@ -2913,16 +2913,25 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
+    // 启动钮可点性轮询（ensureLlm 允许瞬时失败、compose 每帧自愈——同停止钮
+    // 用例口径；ASan 慢 runner 上首帧即点曾硬挂，2026-11-03 CI 实证）
+    bool runClicked = false;
     eui::Ui ui;
-    composeTo(ui, mod, kScreen, "agent_ui_failtoast1");
-    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".run.bg"),
-                            "启动按钮未渲染/不可点");
+    for (int i = 0; i < 200 && !runClicked; ++i) {
+        composeTo(ui, mod, kScreen, "agent_ui_failtoast1");
+        runClicked = clickId(ui, "agent.task." + tid + ".run.bg");
+        if (!runClicked)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(runClicked, "启动按钮 2s 内未渲染/不可点");
 
-    // 有界轮询（10ms 步进 ≤5s）+ 每轮 recompose：迁移发生的帧通知必须入队
-    //（fix round 起页面内不再画 agent.toast，通知统一由装配层取走发 app 级 toast）
+    // 有界轮询（10ms 步进 ≤20s）+ 每轮 recompose：迁移发生的帧通知必须入队
+    //（fix round 起页面内不再画 agent.toast，通知统一由装配层取走发 app 级 toast）。
+    // 窗口 5s→20s：ASan 档整体慢化 2-10×，5s 在 ASan runner 上曾耗尽
+    //（2026-11-03 CI 30.5s 红实测；断言语义=通知必达，窗口是耐心非阈值）
     bool toasted = false;
     eui::Ui ui2;
-    for (int i = 0; i < 500; ++i) {
+    for (int i = 0; i < 2000; ++i) {
         composeTo(ui2, mod, kScreen, "agent_ui_failtoast_poll");
         const auto notice = mod.takeRunEndNotice();
         if (notice.has_value()) {
@@ -2938,7 +2947,7 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(toasted, "run 失败后 5s 内未产生 run 结束通知");
+    DOCTEST_REQUIRE_MESSAGE(toasted, "run 失败后 20s 内未产生 run 结束通知");
 
     mod.onStop();
     return true;
