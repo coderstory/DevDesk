@@ -9,3 +9,4 @@
 - 2026-11-03（池72）：删功能时连根查数据写入方——删「最近调用」UI 把 claude_call_logs 唯一落库段一并删掉，下游图表静默空态三个月才暴露；「有数据不画图」类问题先复现+查数据层再查绘制层。
 - 2026-11-03（need114 批次修复）：第三方 MCP 工具先读 venv 源码再定修复路线——telemem search_memories 原生支持 threshold 参数（[0,1] 相似度下限，缺省 None），「融合段无逐条 score」只堵死后过滤不堵引擎侧截断，M 级预闸方案直接降 S 级传参；阈值必须真数据校准（POC 0.5 对 2 条记忆完美、探针 27 条库即过杀弱相似正例，终值 0.4）。
 bash 3.2 (macOS)：双引号串内 $var 紧跟全角字符（，/）等）会被误并入变量名报 unbound variable——紧跟非 ASCII 一律写 ${var}（来源：2026-11-03 run-memory-e2e.sh，3 处实撞）
+- 2026-11-03（池110 CI 红）：改 UI 几何后定向过滤词会漏跨文件用例——home 图表断言住在 test_ui_modern（词「Home Token 分布」）而非 test_home，--filter home 全绿照样 CI 红；几何类改动收尾前按「被改元素 id」反查全测试域 grep 一遍（如 grep home.api.chart tests/）再挑过滤词。

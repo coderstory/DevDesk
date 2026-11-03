@@ -17,6 +17,8 @@
 //
 // 运行：release_probe.exe [--frames N] [--size 1200x1000]
 //                        [--screenshot <png>] [--screenshot-seeded <png>]
+//                        [--screenshot-crowded <png>]
+//                        [--accept-shot-env-tab-empty <png>]
 // 数据：用 test_support::TestEnv 建已 migrate 的临时库并注册为进程级
 // appDatabase——不读写用户数据，也不依赖 DEVDESK_DATA_ROOT。
 //
@@ -24,7 +26,10 @@
 //   A 侧边栏分组树（8 个既有条目 + 「上线」父项 + 2 子项、展开/收起）
 //   B 基础配置页（padding / 标题字号 / 类型 chip / 后端 5 tag / 前端无配置项）
 //   C 任务列表瀑布流（首屏 10 → 触底 20、卡宽、列/纵间距、圆角）
-//   D 执行页（环境分组头、步骤行、勾选框、状态 chip）
+//   D 执行页（环境分组头、步骤行、勾选框、状态 chip、模式徽标色值：编辑中性 /
+//     发布中唯一绿染——池 57）
+//   D3 执行页挤压态（2 环境 × 3 服务：分组不重叠、服务卡/步骤格不越界——池 116）
+//   B2 基础配置「环境定义」Tab 空态（池 116，落图档）
 //   E 提醒（到期聚合 → 提醒窗内容）：数据层断言（聚合 / 档位 / 跳转负载）；
 //     全屏窗真开仍不可达，见 main() 末尾的说明注释。
 #include "probes/probe_harness.h"
@@ -45,6 +50,7 @@
 
 #include <eui/detail/dsl_app_impl.h>  // app::requestShow/requestUpdate 内联实现
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -101,6 +107,15 @@ bool nearPx(float actual, float expected) {
     return std::fabs(actual - expected) <= 0.5f;
 }
 
+// 色值断言按 1/255 容差逐通道比较（token 落 element 时无浮点漂移）。
+bool colorNear(const eui::Color& actual, const eui::Color& expected) {
+    const float tol = 1.0f / 255.0f;
+    return std::fabs(actual.r - expected.r) <= tol &&
+           std::fabs(actual.g - expected.g) <= tol &&
+           std::fabs(actual.b - expected.b) <= tol &&
+           std::fabs(actual.a - expected.a) <= tol;
+}
+
 // 断言收集器：每条失败都带期望/实际/token 出处，避免「看起来对」。
 struct Checks {
     bool passed = true;
@@ -141,6 +156,18 @@ struct Checks {
     void expectTrue(bool condition, const std::string& what) {
         if (!condition) fail(what);
     }
+
+    void expectColor(const char* what, const eui::Color& actual,
+                     const eui::Color& expected, const char* tokenSource) {
+        if (!colorNear(actual, expected)) {
+            std::ostringstream out;
+            out << what << "：期望 rgba(" << expected.r << "," << expected.g
+                << "," << expected.b << "," << expected.a << ")，实际 rgba("
+                << actual.r << "," << actual.g << "," << actual.b << ","
+                << actual.a << "）（token 出处：" << tokenSource << "）";
+            fail(out.str());
+        }
+    }
 };
 
 // 瀑布流卡片根节点：id = release.tasks.card.<taskId>（子孙节点多一个 '.'）
@@ -163,12 +190,27 @@ std::vector<const core::dsl::Element*> cardRoots(core::dsl::Ui& ui) {
     return out;
 }
 
+// 池116②：按 id 规则收集元素树（先根后子），供挤压态几何断言用。
+std::vector<const core::dsl::Element*> collectElements(
+    core::dsl::Ui& ui, const std::function<bool(const std::string&)>& match) {
+    std::vector<const core::dsl::Element*> out;
+    std::function<void(const core::dsl::Element&)> walk =
+        [&](const core::dsl::Element& node) {
+            if (match(node.id)) out.push_back(&node);
+            for (const auto& child : node.children) walk(*child);
+        };
+    for (const auto& root : ui.roots()) walk(*root);
+    return out;
+}
+
 // 种子数据：2 个基础配置服务（后端 + PC 前端）→ 20 条任务（列表分页口径）→
-// 1 条执行页任务（含 1 环境 × 1 后端服务，自动补齐 5 配置项步骤）。
+// 1 条执行页任务（含 1 环境 × 1 后端服务，自动补齐 5 配置项步骤）→
+// 1 条挤压态任务（2 环境 × 3 后端服务，池 116②）。
 bool seedReleaseData(module::release::ReleaseStore& store,
                      std::int64_t* backendServiceId,
                      std::int64_t* frontendServiceId,
-                     std::int64_t* detailTaskId) {
+                     std::int64_t* detailTaskId,
+                     std::int64_t* crowdedTaskId) {
     using namespace module::release;
     const auto addService = [&](const char* name, ServiceKind kind,
                                 const char* branch, int sort) -> std::int64_t {
@@ -226,6 +268,37 @@ bool seedReleaseData(module::release::ReleaseStore& store,
             if (store.updateTask(task).isFail()) return false;
         }
     }
+    // 池116②：挤压态任务 2 环境 × 3 后端服务（每服务带分支 → 合并/部署步骤
+    // 齐全）。plan_date 全表唯一：09-01..09-20 已被列表种子占用，压到 08-31
+    // 沉底，不干扰 C 组首屏前三行内容断言；总量 21 不影响首屏 10 / 触底 20。
+    {
+        Task crowded;
+        crowded.planDate = "2026-08-31";
+        crowded.status = TaskStatus::Draft;
+        const auto created = store.createTask(crowded);
+        if (created.isFail()) return false;
+        const char* envNames[2] = {"EM", "UAT"};
+        for (int e = 0; e < 2; ++e) {
+            TaskEnv env;
+            env.taskId = created.value();
+            env.envName = envNames[e];
+            env.startMinute = 9 * 60;
+            env.endMinute = 18 * 60;
+            std::vector<TaskService> services;
+            for (int s = 0; s < 3; ++s) {
+                const char suffix = static_cast<char>('A' + s);
+                TaskService svc;
+                svc.serviceName = std::string("crowd-svc-") + suffix;
+                svc.kind = ServiceKind::Backend;
+                svc.defaultBranch = "main";
+                svc.branch = std::string("feature/crowd") + suffix;
+                services.push_back(svc);
+            }
+            if (store.addTaskEnv(env, services).isFail()) return false;
+        }
+        *crowdedTaskId = created.value();
+    }
+
     *detailTaskId = addTask("2026-10-27");  // 常规发布日（周二）
     return *detailTaskId != 0;
 }
@@ -249,6 +322,11 @@ int main(int argc, char* argv[]) {
         acceptArg(argc, argv, "--accept-shot-filter-empty");
     const std::string acceptEmptyPath =
         acceptArg(argc, argv, "--accept-shot-empty");
+    // 池116：环境定义 Tab 空态落图（B2）与执行页挤压态落图（D3）
+    const std::string acceptEnvTabEmptyPath =
+        acceptArg(argc, argv, "--accept-shot-env-tab-empty");
+    const std::string crowdedShotPath =
+        acceptArg(argc, argv, "--screenshot-crowded");
     if (!probe::initializeWindowBackend()) return 1;
     // 设计语言基线为浅色微信风（池 53/55）：release 域探针固定浅色主题落图与断言
     core::theme::setLight();
@@ -268,8 +346,9 @@ int main(int argc, char* argv[]) {
     std::int64_t backendServiceId = 0;
     std::int64_t frontendServiceId = 0;
     std::int64_t detailTaskId = 0;
+    std::int64_t crowdedTaskId = 0;
     if (!seedReleaseData(store, &backendServiceId, &frontendServiceId,
-                         &detailTaskId)) {
+                         &detailTaskId, &crowdedTaskId)) {
         std::cerr << "release_probe: 种子数据写入失败（临时库迁移或 store 写入异常）\n";
         core::releaseInputQueue(window);
         core::window::destroyWindow(window);
@@ -514,6 +593,44 @@ int main(int argc, char* argv[]) {
                           "前端服务不应出现配置项 tag（类型决定配置项，恒 0 项）");
     }
 
+    // ================= B2. 池116①：环境定义 Tab 空态落图 =================
+    // 种子只有服务目录（环境定义恒 0 行）：真实 click 切到「环境定义」Tab，
+    // 断言统一空态元素已渲染、服务列表已撤下，再落图。
+    // --accept-shot-env-tab-empty <png>（未传 = 零开销）。
+    if (!acceptEnvTabEmptyPath.empty()) {
+        const auto* envTab =
+            ui != nullptr ? ui->find("release.config.tab.1") : nullptr;
+        if (envTab == nullptr) {
+            checks.fail("B2：环境定义 Tab 元素缺失（release.config.tab.1）");
+        } else {
+            probe::click(window, runtime,
+                         static_cast<double>(envTab->frame.x +
+                                             envTab->frame.width * 0.5f),
+                         static_cast<double>(envTab->frame.y +
+                                             envTab->frame.height * 0.5f));
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(200));  // wtab 激活态过渡落位
+            const auto recompose = [&] {
+                composePage("release.config", w, h,
+                            [&](eui::Ui& frameUi, const eui::Screen& screen) {
+                                configModule->compose(frameUi, screen);
+                            });
+            };
+            recompose();
+            recompose();  // onClick 消费帧 + 列表重排帧
+            checks.need(ui, "release.config.env.empty", "环境定义 Tab 空态");
+            checks.expectTrue(
+                ui->find("release.config.service." +
+                         std::to_string(frontendServiceId) + ".kind.bg") == nullptr,
+                "切到环境定义 Tab 后服务列表不应再渲染");
+            if (!probe::captureFramePng(window, runtime,
+                                        acceptEnvTabEmptyPath)) {
+                std::cerr << "release_probe: --accept-shot-env-tab-empty 落图失败\n";
+                checks.passed = false;
+            }
+        }
+    }
+
     // ================= C. 任务列表（池 55：单列 64px 行卡 + Tab） =================
     // 首屏 10 行（kReleaseTaskPageSize），触底追加一页 → 20；行高 64、内容列
     // ≤1040、外层白卡 16px 圆角（池 53 大卡特例档）。
@@ -721,6 +838,22 @@ int main(int argc, char* argv[]) {
             checks.expectNear("模式徽标高", badgeBg->frame.height, 22.0f,
                               "release_detail_draw.cpp drawModeBadge kChipH=22");
         }
+        // 池 57（edit 侧）：编辑态徽标必须中性（hover 底 / textSecondary 字），
+        // 与「发布中=页头唯一绿染」互为对照。
+        if (badgeBg != nullptr) {
+            const auto& tokens = core::theme::current();
+            checks.expectColor(
+                "编辑态徽标底色", badgeBg->color, tokens.colors.hover,
+                "release_detail_draw.cpp drawModeBadge（非发布态 bg=hover）");
+        }
+        const auto* badgeText =
+            checks.need(ui, "release.detail.modebadge.edit.text", "模式徽标文字");
+        if (badgeText != nullptr) {
+            checks.expectColor(
+                "编辑态徽标字色", badgeText->textColor,
+                core::theme::current().colors.textSecondary,
+                "release_detail_draw.cpp drawModeBadge（非发布态 fg=textSecondary）");
+        }
     }
 
     // ================= D2. 发布态分支入口门禁（池 54 F-54-1 / F-03） =================
@@ -756,6 +889,35 @@ int main(int argc, char* argv[]) {
             checks.passed = false;
         }
         checks.need(ui, "release.detail.track", "发布态流程轨道");
+        // 池 57（publish 侧）：发布中徽标 = 页头唯一绿染（primarySoftBg 底 /
+        // primaryText 字）；状态 chip 中性（113-5 主色让给徽标）。
+        {
+            const auto& tokens = core::theme::current();
+            const auto* pubBadgeBg = checks.need(ui, "release.detail.modebadge.publish",
+                                                 "发布中模式徽标底");
+            const auto* pubBadgeText =
+                checks.need(ui, "release.detail.modebadge.publish.text",
+                            "发布中模式徽标文字");
+            checks.expectText(pubBadgeText, "发布中徽标文案", "发布中");
+            if (pubBadgeBg != nullptr) {
+                checks.expectNear("发布中徽标高", pubBadgeBg->frame.height, 22.0f,
+                                  "release_detail_draw.cpp drawModeBadge kChipH=22");
+                checks.expectColor(
+                    "发布中徽标底色", pubBadgeBg->color, tokens.colors.primarySoftBg,
+                    "release_detail_draw.cpp drawModeBadge（发布态 bg=primarySoftBg）");
+            }
+            if (pubBadgeText != nullptr) {
+                checks.expectColor(
+                    "发布中徽标字色", pubBadgeText->textColor,
+                    tokens.colors.primaryText,
+                    "release_detail_draw.cpp drawModeBadge（发布态 fg=primaryText）");
+            }
+            const auto* statusChip = ui->find("release.detail.status.bg");
+            checks.expectTrue(
+                statusChip != nullptr &&
+                    colorNear(statusChip->color, tokens.colors.hover),
+                "发布态状态 chip 底应中性 hover（页头绿染唯一归模式徽标，113-5）");
+        }
         if (!args.screenshotPublishPath.empty()) {
             if (!probe::captureFramePng(window, runtime,
                                         args.screenshotPublishPath)) {
@@ -774,6 +936,137 @@ int main(int argc, char* argv[]) {
                 break;
             }
         }
+        detailState.dirty = true;
+        composePage("release.detail", w, h,
+                    [&](eui::Ui& frameUi, const eui::Screen& screen) {
+                        module::release::composeReleaseDetailPage(
+                            frameUi, screen, store, detailState);
+                    });
+    }
+
+    // ================= D3. 池116②：执行页挤压态（2 环境 × 3 服务） =================
+    // 基本几何契约：环境分组纵向不重叠；服务卡、步骤格不越出所在分组横向边界。
+    // --screenshot-crowded <png> 落挤压态图（未传 = 只断言不落图）。
+    if (crowdedTaskId != 0) {
+        detailState.taskId = std::to_string(crowdedTaskId);
+        detailState.dirty = true;
+        composePage("release.detail.crowded", w, h,
+                    [&](eui::Ui& frameUi, const eui::Screen& screen) {
+                        module::release::composeReleaseDetailPage(
+                            frameUi, screen, store, detailState);
+                    });
+        const std::string envPrefix = "release.detail.env.";
+        // composeModuleFrame 给元素 id 加页面命名空间前缀（<pageId>.<id>），
+        // ui->find 内部 resolveId 解析，裸前缀收集必须先剥前缀再匹配。
+        const std::string pageNs = "release.detail.crowded.";
+        const auto stripNs = [&pageNs](const std::string& raw) {
+            return raw.compare(0, pageNs.size(), pageNs) == 0
+                       ? raw.substr(pageNs.size())
+                       : raw;
+        };
+        const auto allDigits = [](const std::string& s) {
+            return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) {
+                return c >= '0' && c <= '9';
+            });
+        };
+        // 分组卡 = release.detail.env.<digits>.bg；服务卡 = ……env.<digits>.svc.<digits>.bg。
+        // 子元素（<env>.remove.bg / <env>.overdue.bg 等）用纯数字段规则排除。
+        const auto isEnvBg = [&](const std::string& raw) {
+            const std::string& id = stripNs(raw);
+            if (id.compare(0, envPrefix.size(), envPrefix) != 0 ||
+                id.rfind(".bg") != id.size() - 3 ||
+                id.find(".svc.") != std::string::npos) {
+                return false;
+            }
+            return allDigits(
+                id.substr(envPrefix.size(), id.size() - envPrefix.size() - 3));
+        };
+        const auto isSvcBg = [&](const std::string& raw) {
+            const std::string& id = stripNs(raw);
+            if (id.compare(0, envPrefix.size(), envPrefix) != 0 ||
+                id.rfind(".bg") != id.size() - 3 ||
+                id.find(".svc.") == std::string::npos) {
+                return false;
+            }
+            const std::string mid =
+                id.substr(envPrefix.size(), id.size() - envPrefix.size() - 3);
+            const std::size_t svcSep = mid.find(".svc.");
+            return svcSep != std::string::npos &&
+                   allDigits(mid.substr(0, svcSep)) &&
+                   allDigits(mid.substr(svcSep + 5));
+        };
+        const auto isStepLabel = [&](const std::string& raw) {
+            const std::string& id = stripNs(raw);
+            return id.compare(0, envPrefix.size(), envPrefix) == 0 &&
+                   id.find(".step.") != std::string::npos &&
+                   id.rfind(".label") == id.size() - 6;
+        };
+        const auto envBgs = collectElements(*ui, isEnvBg);
+        const auto svcBgs = collectElements(*ui, isSvcBg);
+        const auto stepLabels = collectElements(*ui, isStepLabel);
+        checks.expectTrue(envBgs.size() == std::size_t{2},
+                          "D3：期望 2 个环境分组卡（EM/UAT），实际 " +
+                              std::to_string(envBgs.size()) +
+                              "（state.envs=" +
+                              std::to_string(detailState.envs.size()) +
+                              "，loadError=" +
+                              (detailState.loadError.empty()
+                                   ? "<无>"
+                                   : detailState.loadError) +
+                              "）");
+        checks.expectTrue(svcBgs.size() == std::size_t{6},
+                          "D3：期望 6 张服务卡（2 环境 × 3 服务），实际 " +
+                              std::to_string(svcBgs.size()));
+        checks.expectTrue(stepLabels.size() >= std::size_t{12},
+                          "D3：挤压态步骤行应 ≥ 12（6 服务 × 合并+部署），实际 " +
+                              std::to_string(stepLabels.size()));
+
+        // 分组不重叠：按 y 排序后相邻分组首尾相接（后组顶 ≥ 前组底，0.5 容差）
+        std::vector<const core::dsl::Element*> sortedEnvs = envBgs;
+        std::sort(sortedEnvs.begin(), sortedEnvs.end(),
+                  [](const core::dsl::Element* a, const core::dsl::Element* b) {
+                      return a->frame.y < b->frame.y;
+                  });
+        for (std::size_t i = 1; i < sortedEnvs.size(); ++i) {
+            const float prevBottom =
+                sortedEnvs[i - 1]->frame.y + sortedEnvs[i - 1]->frame.height;
+            checks.expectTrue(
+                sortedEnvs[i]->frame.y >= prevBottom - 0.5f,
+                "D3：环境分组纵向重叠（" + sortedEnvs[i - 1]->id + " 底 " +
+                    std::to_string(prevBottom) + " vs " + sortedEnvs[i]->id +
+                    " 顶 " + std::to_string(sortedEnvs[i]->frame.y) + "）");
+        }
+
+        // 服务卡 / 步骤格不越出所属分组横向边界（id 前缀归属，0.5 容差）
+        const auto withinX = [](const core::dsl::Element* node,
+                                const core::dsl::Element* container) {
+            return node->frame.x >= container->frame.x - 0.5f &&
+                   node->frame.x + node->frame.width <=
+                       container->frame.x + container->frame.width + 0.5f;
+        };
+        for (const auto* svc : svcBgs) {
+            const std::string svcId = stripNs(svc->id);
+            const std::string envId = svcId.substr(0, svcId.find(".svc."));
+            const auto* envBg = ui->find(envId + ".bg");
+            checks.expectTrue(envBg != nullptr && withinX(svc, envBg),
+                              "D3：服务卡横向越出所属分组：" + svcId);
+        }
+        for (const auto* step : stepLabels) {
+            const std::string stepId = stripNs(step->id);
+            const std::string svcId = stepId.substr(0, stepId.find(".step."));
+            const auto* svcBg = ui->find(svcId + ".bg");
+            checks.expectTrue(svcBg != nullptr && withinX(step, svcBg),
+                              "D3：步骤格横向越出所属服务卡：" + stepId);
+        }
+
+        if (!crowdedShotPath.empty()) {
+            if (!probe::captureFramePng(window, runtime, crowdedShotPath)) {
+                std::cerr << "release_probe: --screenshot-crowded 落图失败\n";
+                checks.passed = false;
+            }
+        }
+        // 还原常规执行页（收尾 --screenshot 出口仍拍 1 环境×1 服务的基准态）
+        detailState.taskId = std::to_string(detailTaskId);
         detailState.dirty = true;
         composePage("release.detail", w, h,
                     [&](eui::Ui& frameUi, const eui::Screen& screen) {
