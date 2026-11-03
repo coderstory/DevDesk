@@ -156,33 +156,49 @@ echo "── mpv: $MPV_SRC_RAW → assets/mpv/mpv.exe ──"
 # Excludes 挡在包外）、mona-loading-default.gif / Hard drive-rafiki.svg（EUI demo 插画）、
 # icon.svg（仅 EUI 测试/示例引用，Windows 窗口图标走 icon.png 的 stbi 路径）。
 # 只清打包产物目录，不动 EUI-NEO 仓库源 assets（跨仓库改动走 patch 流程，超出本批范围）。
+# 2026-10-30 资产审计（对 0.5.0 实装目录逐项 grep 核实）追加三项：
+#   shaders/splash.frag —— D-11 反转后 splash 为纯代码绘制（ui_kit/splash.cpp），
+#     test_splash_contract 契约测试明确禁止再引用 shader 资产，零加载点。
+#   tray-icon-template.png / @2x.png —— macOS 托盘专用（tray_icon_macos.cpp，template
+#     蒙版 + EUI @2x 命名惯例），Windows 运行时零引用（Windows 走 tray-icon-win.ico）。
+#   icon.ico 不进本 rm 清单（暂存目录仍需要它喂 devdesk.iss 的 SetupIconFile），改由
+#     devdesk.iss [Files] Excludes 挡在安装载荷之外（安装器编译期内嵌，运行时零引用）。
+#   JingNanJunJunTi（2026-10-30 二次审计改判删除）：EUI kDefaultUiFontFile 兜底常量
+#   （text_shaping.cpp:34），但 resolvePreferredSystemUiFontPath 三层系统 CJK（msyh/
+#   msyhl/simhei，EUI 注释原话"必然存在"）+ resolveSystemUiFontPath 第四层兜底在前，
+#   打包字体仅当系统连黑体都没有时才加载——支持的 Win11/macOS 上永不命中，2MB 死重；
+#   且它是装饰性手写字体（2026-09-27 因此被降级出默认位），兜底位也不合风格。tests/src
+#   零引用。YouShe 映射虽存在于 EUI（text_shaping.cpp:525）但 DevDesk 全仓无
+#   fontFamily="YouShe*" 调用点，维持排除。
 # 图标批（2026-10-20 C 方案终端窗 >_）起 icon.ico / icon.png 的真身来自**本仓库 assets/ 根**
 # （上面 :112 的 DevDesk/assets 整树拷在 :110 的 EUI 拷之后 → 同名确定性覆盖）：icon.ico =
 # 安装包 SetupIconFile；icon.png = dsl_app 默认窗口图标（任务栏/alt-tab 运行态，7 档 256px PNG）。
 # 故这里零引用清单不动 icon.ico/icon.png——名字与 EUI 同名但内容已是 DevDesk 品牌图。
 rm -rf "$ASSETS_DIR_POSIX/music" \
        "$ASSETS_DIR_POSIX/shaders/shadertoy" \
+       "$ASSETS_DIR_POSIX/shaders/splash.frag" \
        "$ASSETS_DIR_POSIX/YouSheBiaoTiHei-2.ttf" \
        "$ASSETS_DIR_POSIX/NotoSansSC-VF.ttf" \
+       "$ASSETS_DIR_POSIX/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf" \
        "$ASSETS_DIR_POSIX/mona-loading-default.gif" \
        "$ASSETS_DIR_POSIX/Hard drive-rafiki.svg" \
-       "$ASSETS_DIR_POSIX/icon.svg"
+       "$ASSETS_DIR_POSIX/icon.svg" \
+       "$ASSETS_DIR_POSIX/tray-icon-template.png" \
+       "$ASSETS_DIR_POSIX/tray-icon-template@2x.png"
 
 # 断言 ①（H 批改写）：零引用资产不得混入打包目录（防回归——瘦身清单被人弄丢 /
-# 上游 EUI assets 又新增死重量时此处拦截）。原"shaders/shadertoy 非空"断言随
-# shadertoy 废弃（D-11）删除；字体/着色器/图标就位由断言 ③④ 继续钉住。
-for gone in "music" "shaders/shadertoy" "YouSheBiaoTiHei-2.ttf" "NotoSansSC-VF.ttf" \
-            "mona-loading-default.gif" "Hard drive-rafiki.svg" "icon.svg"; do
+# 上游 EUI assets 又新增死重量时此处拦截）。原"shadertoy 非空"断言随
+# shadertoy 废弃（D-11）删除；icon.ico 就位由断言 ⑤ 钉住（安装器编译期消费）。
+for gone in "music" "shaders/shadertoy" "shaders/splash.frag" "YouSheBiaoTiHei-2.ttf" "NotoSansSC-VF.ttf" \
+            "JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf" \
+            "mona-loading-default.gif" "Hard drive-rafiki.svg" "icon.svg" \
+            "tray-icon-template.png" "tray-icon-template@2x.png"; do
   if [ -e "$ASSETS_DIR_POSIX/$gone" ]; then
     echo "❌ 断言失败：零引用资产仍被拷进打包目录：$gone" >&2
     exit 1
   fi
 done
-# 断言 ③：DevDesk/assets 根文件（托盘图标 / splash 着色器），09-30 新增，缺则安装版托盘空图标 + splash 回退
-if [ ! -f "$ASSETS_DIR_POSIX/shaders/splash.frag" ]; then
-  echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/splash.frag 缺失" >&2
-  exit 1
-fi
+# 断言 ③（splash.frag 就位）随 D-11 纯代码 splash（2026-10-30 审计确认零加载点）删除。
 # 断言 ④：托盘图标，缺则安装版任务栏空图标
 if [ ! -f "$ASSETS_DIR_POSIX/tray-icon-win.ico" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/tray-icon-win.ico 缺失" >&2
@@ -204,7 +220,7 @@ if [ ! -f "$ASSETS_DIR_POSIX/mpv/mpv.exe" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/mpv/mpv.exe 缺失（mpv 未拷入打包目录）" >&2
   exit 1
 fi
-echo "✅ assets 就位（两字体 + icon.png/ico + splash.frag + 托盘图标 + mpv；零引用资产已排除）"
+echo "✅ assets 就位（Font Awesome 图标字体 + icon.png/ico + 托盘图标 + mpv；零引用资产已排除）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
 if command -v cygpath >/dev/null 2>&1; then

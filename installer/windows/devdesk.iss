@@ -62,12 +62,15 @@ Source: "{#ExeDir}\DevDesk.exe";  DestDir: "{app}"; Flags: ignoreversion
 ; 源路径走 {#SourcePath}（= 本 .iss 所在目录，含尾部反斜杠，与上面 Languages 条目同款），
 ; ..\.. 回到仓库根——文件随仓库走，任何机器的 ISCC 都能就地取材，不新增 /D 注入。
 Source: "{#SourcePath}..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
-; Excludes：排除 17MB 死重量 NotoSansSC-VF.ttf —— 该字体是变量字体，FreeType 加载不稳、
-; 当前未启用（见 DevDesk/src/main.cpp:487 注释），运行时字体走 EUI-NEO
-; core/render/text.cpp:607-625 的 fallback 链（系统 CJK 字体微软雅黑 msyh 优先，
-; 打包 JingNanJunJunTi 作兜底），排除不影响任何界面渲染。Excludes 是 [Files]
-; 的合法参数（Inno 6.7），支持通配符，多个模式用分号分隔。
-Source: "{#AssetsDir}\*";         DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "NotoSansSC-VF.ttf"
+; Excludes（2026-10-30 资产审计后扩为两项）：
+;   NotoSansSC-VF.ttf —— 17MB 死重量；变量字体 FreeType 加载不稳、全仓零引用
+;     （运行时字体走 EUI-NEO core/render/text_shaping.cpp 的 fallback 链：系统 CJK
+;     微软雅黑优先，打包 JingNanJunJunTi 作兜底），排除不影响任何界面渲染。
+;   icon.ico —— 仅安装器自身消费（上方 SetupIconFile 取暂存目录的同名文件编译期内嵌）；
+;     运行时零引用（窗口/任务栏图标走 assets/icon.png，卸载项图标走 DevDesk.exe），
+;     不必随包安装到用户目录。
+; Excludes 是 [Files] 的合法参数（Inno 6.7），支持通配符，多个模式用逗号/分号分隔。
+Source: "{#AssetsDir}\*";         DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "NotoSansSC-VF.ttf,icon.ico"
 
 [Icons]
 ; WorkingDir 必设：EUI-NEO 的 image_source.cpp 查找顺序是 cwd/assets 优先于 exeDir/assets，
