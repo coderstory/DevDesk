@@ -965,9 +965,9 @@ REGISTER_TEST(uiModernMdPreviewGradient,
         ui.begin("grad_md");
         mod->compose(ui, screen);
         ui.end();
-        const auto* bg = ui.find("md.preview.bg");
+        const auto* bg = ui.find("md.preview.shell");
         DOCTEST_REQUIRE(bg != nullptr);
-        // W8：渐变已移除（§8 #4 禁大面积渐变），改为 flat background。
+        // W8：渐变已移除（§8 #4 禁大面积渐变）；池128 单层壳为 flat glassFill。
         DOCTEST_CHECK(!bg->gradient.enabled);
         mod->onStop();
     }
@@ -1000,9 +1000,12 @@ REGISTER_TEST(uiAboutLayout,
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
-    // 与 about_module.cpp 同值镜像（批J 平铺：页边距 32 / 标题 32 / 组头 24 / 行 32 / 组间 24）
+    // 与 about_module.cpp 同值镜像（§14 卡片化：页边距 32 / 卡 y 24 / 卡内边距 16 /
+    // 标题 32 / 组头 24 / 行 32 / 组间 24；卡宽 min(760, availW)）
     constexpr float kPagePad = 32.0f;   // 水平边距
-    constexpr float kPageTop = 0.0f;    // 顶距：标题顶格（批L）
+    constexpr float kCardY = 24.0f;     // 卡顶距（页顶呼吸）
+    constexpr float kCardPad = 16.0f;   // 卡内边距
+    constexpr float kCardMaxW = 760.0f; // 卡宽上限（min(760, screenW−64)）
     constexpr float kTitleH = 32.0f;
     constexpr float kGroupHdrH = 24.0f;
     constexpr float kGroupGap = 24.0f;
@@ -1011,27 +1014,32 @@ REGISTER_TEST(uiAboutLayout,
     constexpr int kRowCount = 8;   // 3+4+1=8 行（第三组「查看许可」链接行已删）
     constexpr float kFooterH = 20.0f;
     constexpr float kLabelW = 100.0f;
-    // 2026-11-01：内容列限宽居中（关于页信息量小，原先平铺满页宽 → 文字缩在
-    // 左上角、分隔线横穿整页）。限宽后列心恒等于页面中线。
-    constexpr float kContentMaxW = 640.0f;
 
-    // 组 gi 的组头 y（平铺流式：首组顶 = 页边距+标题+组间距；组间 = 组头+行+组间距）
-    auto flatY = [&](int gi) {
-        float y = kPageTop + kTitleH + kGroupGap;
+    // 卡内内容高（标题+组间距+三组，组间 24）：100% 档 = 432 → 卡高 464
+    const float contentH = kTitleH + kGroupGap + (kGroupCount - 1) * kGroupGap +
+                           kGroupCount * kGroupHdrH + kRowCount * kRowH;
+    const float kCardH = contentH + 2.0f * kCardPad;  // 464
+
+    // 卡内滚动区原点 = 卡Y+16+标题32+组间距24；组 gi 的组头绝对 y
+    const float contentTop = kCardY + kCardPad + kTitleH + kGroupGap;
+    auto groupHdrY = [&](int gi) {
+        float y = contentTop;
         for (int g = 0; g < gi; ++g)
-            y += kGroupHdrH + (g == 0 ? 3 : 4) * kRowH + kGroupGap;
+            y += kGroupGap + kGroupHdrH + (g == 0 ? 3 : 4) * kRowH;
         return y;
     };
-    const float lastRowBottom = kPageTop + kTitleH + kGroupGap +
-                                kGroupCount * kGroupHdrH + kRowCount * kRowH +
+    const float lastRowBottom = contentTop + kGroupCount * kGroupHdrH +
+                                kRowCount * kRowH +
                                 (kGroupCount - 1) * kGroupGap;  // 末组后无组间距
 
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
     const float availW = screen.width - 2.0f * kPagePad;
-    const float contentW = std::min(kContentMaxW, availW);
-    const float contentX = kPagePad + (availW - contentW) * 0.5f;
-    const float valueX = contentX + kLabelW + 16.0f;
+    const float cardW = std::min(kCardMaxW, availW);
+    const float cardX = kPagePad + (availW - cardW) * 0.5f;
+    const float labelX = cardX + kCardPad;  // 滚动区原点 x = 卡X+16
+    const float valueX = labelX + kLabelW + 16.0f;
+    const float innerW = cardW - 2.0f * kCardPad;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1044,20 +1052,31 @@ REGISTER_TEST(uiAboutLayout,
                std::to_string(e->frame.height) + ")";
     };
     {
-        // 页标题（同 agent.title 款式）
+        // 卡底板（§14：cardSurface + radiusLarge + borderDefault + 轻阴影；
+        // 2026-11-03 拍板更替——批J「去卡片化」翻回容器卡）
+        const auto* card = ui.find("about.card");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.x, cardX), px("about.card.x", card));
+        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, kCardY), px("about.card.y", card));
+        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.width, cardW),
+                              px("about.card.w", card));
+        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.height, kCardH),
+                              px("about.card.h", card));
+    }
+    {
+        // 页标题（卡内 y = 卡Y+16 → 标题整体由 0 下移至 40）
         const auto* title = ui.find("about.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, contentX), px("about.title.x", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kPageTop), px("about.title.y", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, contentW),
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX + kCardPad),
+                              px("about.title.x", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kCardY + kCardPad),
+                              px("about.title.y", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, innerW),
                               px("about.title.w", title));
         DOCTEST_CHECK(title->text == "关于");
     }
     {
-        // 卡片载体不得回潮（批J 去卡片化）
-        DOCTEST_CHECK(ui.find("about.card") == nullptr);
-        DOCTEST_CHECK(ui.find("about.card.bg") == nullptr);
-        // Logo 时代残留仍不存在
+        // Logo 时代残留仍不存在（about.card 现为卡底板本体，子件不复活）
         DOCTEST_CHECK(ui.find("about.card.icon") == nullptr);
         DOCTEST_CHECK(ui.find("about.card.title") == nullptr);
     }
@@ -1070,8 +1089,8 @@ REGISTER_TEST(uiAboutLayout,
                 const auto* value = ui.find("about.info.value." + sid);
                 DOCTEST_REQUIRE(label != nullptr);
                 DOCTEST_REQUIRE(value != nullptr);
-                const float rowY = flatY(gi) + kGroupHdrH + i * kRowH;
-                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, contentX),
+                const float rowY = groupHdrY(gi) + kGroupHdrH + i * kRowH;
+                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, labelX),
                                       px(("about.info.label." + sid).c_str(), label));
                 DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
                                       px(("about.info.label." + sid).c_str(), label));
@@ -1083,9 +1102,9 @@ REGISTER_TEST(uiAboutLayout,
             if (gi > 0) {
                 const auto* div = ui.find("about.info.divider." + std::to_string(gi));
                 DOCTEST_REQUIRE(div != nullptr);
-                DOCTEST_CHECK_MESSAGE(nearPx(div->frame.y, flatY(gi) - kGroupGap * 0.5f - 0.5f),
+                DOCTEST_CHECK_MESSAGE(nearPx(div->frame.y, groupHdrY(gi) - kGroupGap * 0.5f - 0.5f),
                                       px(("about.info.divider." + std::to_string(gi)).c_str(), div));
-                DOCTEST_CHECK_MESSAGE(nearPx(div->frame.width, contentW),
+                DOCTEST_CHECK_MESSAGE(nearPx(div->frame.width, innerW),
                                       px(("about.info.divider." + std::to_string(gi)).c_str(), div));
             }
         }
@@ -1109,7 +1128,7 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(lastRowBottom <= footer->frame.y);  // 顶格后内容仍不叠 footer
     }
     {
-        // 最小窗：平铺内容固定高（lastRowBottom=496），640 窗不叠 footer、不出屏
+        // 最小窗：卡固定高 464 不撞页脚（640 窗余 100），内容不出卡不出屏
         const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
         eui::Ui mini;
         eui::Screen minScreen{minWin.width - 208.0f,
@@ -1124,7 +1143,7 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_REQUIRE(lastValue != nullptr);
-        DOCTEST_CHECK(title->frame.x >= kPagePad - 0.5f);
+        DOCTEST_CHECK(title->frame.x >= kPagePad + kCardPad - 0.5f);
         DOCTEST_CHECK_MESSAGE(nearPx(lastValue->frame.y + lastValue->frame.height, lastRowBottom),
                               px("about.min.lastRow", lastValue));
         DOCTEST_CHECK(lastRowBottom <= footer->frame.y);  // 内容不叠 footer
@@ -1132,7 +1151,7 @@ REGISTER_TEST(uiAboutLayout,
                              minScreen.height - kPagePad));
     }
     {
-        // 窄窗 712：内容宽收缩，行不溢出屏幕
+        // 窄窗 712 < 卡宽上限 760+64 → 卡退化满宽 min(760, 648)=648，列随卡内缩
         eui::Ui narrow;
         eui::Screen narrowScreen{712.0f, 800.0f};
         narrow.begin("about_layout_narrow");
@@ -1143,11 +1162,12 @@ REGISTER_TEST(uiAboutLayout,
         const auto* link = narrow.find("about.info.link.2.0");  // 已删除：必须为空
         DOCTEST_REQUIRE(v != nullptr);
         DOCTEST_CHECK(link == nullptr);
-        // 窄窗 712 < 限宽 640+64 → 内容列退化为满宽（列心仍为页面中线）
         const float narrowAvail = narrowScreen.width - 2.0f * kPagePad;
-        const float narrowContentW = std::min(kContentMaxW, narrowAvail);
-        DOCTEST_CHECK_MESSAGE(nearPx(v->frame.width, narrowContentW - 116.0f),
-                              px("about.narrow.value", v));
+        const float narrowCardW = std::min(kCardMaxW, narrowAvail);
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(v->frame.width,
+                   narrowCardW - 2.0f * kCardPad - kLabelW - 16.0f),
+            px("about.narrow.value", v));
         DOCTEST_CHECK(v->frame.x + v->frame.width <= narrowScreen.width);
     }
     mod->onStop();

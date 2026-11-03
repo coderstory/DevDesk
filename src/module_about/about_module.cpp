@@ -9,6 +9,9 @@
 
 #include <eui/dsl.h>
 
+#include <components/scrollview.h>
+#include <ui_kit/card.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -191,8 +194,9 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
 
-        // S3.8 平铺版（2026-10-25 批J 用户拍板：彻底去卡片化，与其他页统一——
-        // 页标题 + 分组内容直接铺在页面底上，无容器/描边/圆角/居中）
+        // F3 关于页卡片化（设计文档 2026-11-03 §14 / 池131）。
+        // 拍板更替说明：本页 2026-10-25 批J 曾拍板「彻底去卡片化」（平铺无卡），
+        // 2026-11-03 按新裁决翻回容器卡，本段几何以新拍板为准。
         // B6/F-69-2：行高/组距随字号派生——行盒不缩会让放大档「组标题压首行」
         //（实测 150% 档「构建信息」与「构建时间」叠字）。
         const float kGroupHdrH = core::theme::scaled(24.0f);  // 分组标题行高
@@ -201,13 +205,9 @@ public:
         const float kFooterH = core::theme::scaled(20.0f);
         const float kTitleH = core::theme::scaled(32.0f);     // 页标题行高
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1，列宽不随字号变）
-        // 2026-11-01：内容列限宽（同 release 列表页 kContentMaxW 口径）。
-        // 关于页信息量小，原先平铺满页宽 → 实际文本只占页面区左 ~25%，而组间
-        // 分隔线却横穿整页（1380px），文字缩在左上角、线条伸向远处，重心失衡。
-        // 限宽后分隔线与文本同宽，列心恒等于页面中线（页脚原本就页面居中）。
-        // 640 是量出来的：最长值行「2026-10-31 23:12:05.23@host@macOS 27.0.0」
-        // 在 14px/600 下约 350px、130% 字号档约 455px，留 524px 值列不裁字。
-        constexpr float kContentMaxW = 640.0f;
+        constexpr float kCardMaxW = 760.0f;    // 卡宽上限（min(760, screenW−64)）
+        constexpr float kCardPad = 16.0f;      // 卡内边距（基线卡片内边距档）
+        constexpr float kCardY = 24.0f;        // 卡顶距（页顶呼吸）
 
         // 信息行结构：按分组组织
         struct InfoGroup {
@@ -232,19 +232,39 @@ public:
             }},
         };
 
-        // S4.2 弹性：页内边距 32（spacingLarge×2）；内容固定高，最小窗 640 内不触 footer
+        // 卡几何（§14）：卡宽 min(760, screenW−64)；卡 x 同轴公式 → 卡心=页心=页脚心。
+        // 卡高 = 内容高 + 上下内边距 16×2，钳制不撞页脚——最小窗 640×640：
+        // footerY=588、卡底 488，余 100；放大档内容超出 → 钳高后卡内滚动。
         const float pagePad = t.sizes.spacingLarge * 2.0f;  // 32
         const float availW = std::max(0.0f, screen.width - pagePad * 2.0f);
-        const float contentW = std::min(kContentMaxW, availW);
-        // 列心恒等于页面中线：contentX + contentW/2 == screen.width/2
-        // （pagePad 对称 + 居中余量），故页脚与内容列天然同轴。
-        const float contentX = pagePad + (availW - contentW) * 0.5f;
+        const float cardW = std::min(kCardMaxW, availW);
+        const float cardX = pagePad + (availW - cardW) * 0.5f;
         const float footerY = screen.height - pagePad - kFooterH;
 
-        // 页标题（与 agent.title 同款：fontSizeTitle 24/700、32 行高、左上）
+        // 内容高（行盒派生公式保留）：标题+间距+三组（组头+N×行，组间 24）。
+        // 100% 档 = 32+24+(24+96)+24+(24+128)+24+(24+32) = 432 → 卡高 464。
+        float contentH = kTitleH + kGroupGap;
+        for (const auto& g : groups) {
+            contentH += kGroupHdrH + static_cast<float>(g.rows.size()) * kRowH;
+        }
+        contentH += kGroupGap * static_cast<float>(std::size(groups) - 1);
+        const float cardH = std::min(contentH + kCardPad * 2.0f,
+                                     std::max(0.0f, footerY - kCardY - 24.0f));
+        const float innerW = std::max(0.0f, cardW - kCardPad * 2.0f);
+        const float contentTop = kCardY + kCardPad + kTitleH + kGroupGap;
+        const float viewportH =
+            std::max(0.0f, kCardY + cardH - kCardPad - contentTop);
+
+        // 卡底板：cardSurface（池127 新值 0.94/0.95）+ radiusLarge + 1px
+        // borderDefault + 全站统一轻阴影（ui_kit::cardPanel 单一来源）
+        ui_kit::cardPanel(ui, "about.card", cardX, kCardY, cardW, cardH,
+                          t.sizes.radiusLarge, t);
+
+        // 页标题（卡内 y=卡Y+16 → 标题整体由 0 下移至 40；与 agent.title 同款：
+        // fontSizeTitle 24/700、32 行高）
         ui.text("about.title")
-            .position(contentX, 0.0f)  // 标题顶格不留空（2026-10-25 拍板）
-            .size(contentW, kTitleH)
+            .position(cardX + kCardPad, kCardY + kCardPad)
+            .size(innerW, kTitleH)
             .text("关于")
             .fontSize(t.sizes.fontSizeTitle)
             .lineHeight(kTitleH)
@@ -252,72 +272,96 @@ public:
             .color(t.colors.textPrimary)
             .build();
 
-        // 平铺内容：分组标题/行/分隔线直接铺页面底，ID 从 about.card.* 迁 about.info.*
+        // 组内容：卡内滚动区（100% 档恰好装满不出滚动条；放大档钳高内滚，
+        // 滚动条 overlay 悬浮、不出卡边）。分组标题/行/分隔线坐标相对滚动区
+        // 原点，ID 保持 about.info.*。
         const float valueX = kLabelW + 16.0f;
-        float y = kTitleH + kGroupGap;
-        for (size_t gi = 0; gi < std::size(groups); ++gi) {
-            const auto& g = groups[gi];
-            if (gi > 0) {
-                // 组间 1px 分隔线（居中于 24 间距）
-                ui.rect("about.info.divider." + std::to_string(gi))
-                    .position(contentX, y + kGroupGap * 0.5f - 0.5f)
-                    .size(contentW, 1.0f)
-                    .color(t.colors.borderDefault)
-                    .build();
-                y += kGroupGap;
-            }
-            // 分组标题：16px/600 textPrimary
-            ui.text("about.info.group." + std::string(g.header))
-                .position(contentX, y)
-                .size(contentW, kGroupHdrH)
-                .text(g.header)
-                .fontSize(t.sizes.fontSizeWeChat)  // 16px
-                .lineHeight(kGroupHdrH)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            y += kGroupHdrH;
+        components::scrollView(ui, "about.info.scroll")
+            .position(cardX + kCardPad, contentTop)
+            .size(innerW, viewportH)
+            .gap(0.0f)
+            .step(kRowH)
+            .theme(core::theme::componentTokensWeChat(t))
+            .scrollbarOverlay(true)
+            .contentKey("about.info")
+            .content([&](eui::Ui& inner, float w, float) {
+                // 行=流式子件（stack/裸 text），行内子件绝对定位 + ignoreLayout——
+                // 池133 习语：column 对未 ignoreLayout 子元素会静默忽略 position()，
+                // 裸 position 文本会被流式布局竖着堆（label/value 叠行的根源）。
+                for (size_t gi = 0; gi < std::size(groups); ++gi) {
+                    const auto& g = groups[gi];
+                    if (gi > 0) {
+                        // 组间 1px 分隔线（居中于 24 间距）：gap 占位 stack + 段内 1px 线
+                        inner.stack("about.info.gap." + std::to_string(gi))
+                            .size(w, kGroupGap)
+                            .content([&] {
+                                inner.rect("about.info.divider." +
+                                           std::to_string(gi))
+                                    .position(0.0f, kGroupGap * 0.5f - 0.5f)
+                                    .ignoreLayout()
+                                    .size(w, 1.0f)
+                                    .color(t.colors.borderDefault)
+                                    .build();
+                            })
+                            .build();
+                    }
+                    // 分组标题：16px/600 textPrimary（流式子件，不写 position）
+                    inner.text("about.info.group." + std::string(g.header))
+                        .size(w, kGroupHdrH)
+                        .text(g.header)
+                        .fontSize(t.sizes.fontSizeWeChat)  // 16px
+                        .lineHeight(kGroupHdrH)
+                        .fontWeight(600)
+                        .color(t.colors.textPrimary)
+                        .build();
 
-            for (size_t i = 0; i < g.rows.size(); ++i) {
-                const float rowY = y + static_cast<float>(i) * kRowH;
+                    for (size_t i = 0; i < g.rows.size(); ++i) {
+                        // 行 stack（流式占位）+ 行内 label/value 绝对定位。
+                        // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
+                        const std::string sid =
+                            std::to_string(gi) + "." + std::to_string(i);
+                        inner.stack("about.info.row." + sid)
+                            .size(w, kRowH)
+                            .content([&] {
+                                // 左标签：12px 三级字，右对齐，100px 宽
+                                inner.text("about.info.label." + sid)
+                                    .position(0.0f, 0.0f)
+                                    .ignoreLayout()
+                                    .size(kLabelW, kRowH)
+                                    .text(g.rows[i].label)
+                                    .fontSize(t.sizes.fontSizeSmall)  // 12px
+                                    .lineHeight(kRowH)
+                                    .color(t.colors.textTertiary)
+                                    .horizontalAlign(eui::HorizontalAlign::Right)
+                                    .build();
 
-                // 左标签：12px 三级字，右对齐，100px 宽
-                // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
-                ui.text("about.info.label." + std::to_string(gi) + "." +
-                        std::to_string(i))
-                    .position(contentX, rowY)
-                    .size(kLabelW, kRowH)
-                    .text(g.rows[i].label)
-                    .fontSize(t.sizes.fontSizeSmall)  // 12px
-                    .lineHeight(kRowH)
-                    .color(t.colors.textTertiary)
-                    .horizontalAlign(eui::HorizontalAlign::Right)
-                    .build();
+                                // 右内容：14px/600，统一 textPrimary（只读，无可交互元素）
+                                // B6/F-69-2：值列必须闭包——放大档（实测 ≥130%）构建时间行超出
+                                // 值列，EUI text 默认不裁会画到卡外被硬切。
+                                inner.text("about.info.value." + sid)
+                                    .position(valueX, 0.0f)
+                                    .ignoreLayout()
+                                    .size(w - valueX, kRowH)
+                                    .text(g.rows[i].value)
+                                    .fontSize(t.sizes.fontSizeBody)  // 14px
+                                    .lineHeight(kRowH)
+                                    .fontWeight(600)
+                                    .maxWidth(w - valueX)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .clip()
+                                    .color(t.colors.textPrimary)
+                                    .build();
+                            })
+                            .build();
+                    }
+                }
+            })
+            .build();
 
-                // 右内容：14px/600，统一 textPrimary（只读，无可交互元素）
-                // B6/F-69-2：值列必须闭包——放大档（实测 ≥130%）构建时间行超出
-                // 524px 值列，EUI text 默认不裁会画到窗口右缘被硬切。
-                ui.text("about.info.value." + std::to_string(gi) + "." +
-                        std::to_string(i))
-                    .position(contentX + valueX, rowY)
-                    .size(contentW - valueX, kRowH)
-                    .text(g.rows[i].value)
-                    .fontSize(t.sizes.fontSizeBody)  // 14px
-                    .lineHeight(kRowH)
-                    .fontWeight(600)
-                    .maxWidth(contentW - valueX)
-                    .overflow(core::TextOverflow::Ellipsis)
-                    .clip()
-                    .color(t.colors.textPrimary)
-                    .build();
-            }
-            y += static_cast<float>(g.rows.size()) * kRowH;
-        }
-
-        // 版权声明
+        // 版权声明（页脚与卡天然同轴：卡心=页脚心=页面中线）
         ui.text("about.footer")
-            .position(contentX, footerY)
-            .size(contentW, kFooterH)
+            .position(cardX, footerY)
+            .size(cardW, kFooterH)
             .text("© 2026 DevDesk")
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(kFooterH)

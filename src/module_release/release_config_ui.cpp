@@ -20,6 +20,7 @@
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/empty_state.h>
 #include <ui_kit/form_row.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/wtab.h>
 
@@ -40,7 +41,12 @@ using core::theme::Tokens;
 
 constexpr float kPagePad = 32.0f;        // 页面左/右/下 padding；上 = 0（页标题顶格）
 constexpr float kRowPadX = 16.0f;
-constexpr float kRowH = 56.0f;
+constexpr float kRowH = 56.0f;  // 行节距（池134 §16：行卡 52 + 行间距 4，总高零变化）
+constexpr float kRowCardH = 52.0f;     // 行卡高
+constexpr float kRowCardPadX = 12.0f;  // 行卡内左右 padding
+// 行卡内容宽 = 父卡宽 − 56（父卡 16×2 + 行内 12×2）；内容左缘 = 16+12 = 28
+constexpr float kRowCardInset = kRowPadX * 2.0f + kRowCardPadX * 2.0f;  // 56
+constexpr float kRowContentX = kRowPadX + kRowCardPadX;                 // 28
 constexpr float kCardHeadH = 40.0f;
 constexpr float kChipH = 22.0f;
 constexpr float kChipFontInset = 1.0f;
@@ -229,8 +235,13 @@ void headCell(eui::Ui& ui, const std::string& id, const std::string& label, floa
             t.colors.textTertiary);
 }
 
+// 操作区列 x：列定义与表头共用单一来源，保证表头列与行卡列对齐 ±0。
+float rowActionsX(float rowW) {
+    return kRowContentX + std::max(0.0f, rowW - kRowCardInset) - kActionsW;
+}
+
 struct ServiceColumns {
-    float nameX = kRowPadX;
+    float nameX = kRowContentX;
     float nameW = 0.0f;
     float kindX = 0.0f;
     float kindW = 88.0f;
@@ -242,23 +253,27 @@ struct ServiceColumns {
     float actionsW = kActionsW;
 };
 
+// 行卡化（池134 §16）：入参 rowW = 父卡内容宽，列按「行卡内容宽」rowW−56
+//（父卡 16×2 + 行内 12×2）分布；返回 x 均为父卡坐标系——内容左缘
+// kRowContentX(28)，操作区右贴行卡 padding 12。表头同参调用 → 列对齐 ±0。
 ServiceColumns serviceColumns(float rowW) {
     ServiceColumns c;
+    const float contentW = std::max(0.0f, rowW - kRowCardInset);
     const float minNameW = 120.0f;
-    const float reserved = kRowPadX * 2.0f + c.kindW + c.branchW + c.actionsW +
-                           kColGap * 4.0f + minNameW;
-    c.configW = std::clamp(rowW - reserved, 0.0f, 340.0f);
-    c.nameW = std::max(0.0f, rowW - kRowPadX * 2.0f - c.kindW - c.branchW -
-                                 c.actionsW - c.configW - kColGap * 4.0f);
+    const float reserved =
+        c.kindW + c.branchW + c.actionsW + kColGap * 3.0f + minNameW;
+    c.configW = std::clamp(contentW - reserved, 0.0f, 340.0f);
+    c.nameW = std::max(0.0f, contentW - c.kindW - c.branchW - c.actionsW -
+                                 c.configW - kColGap * 3.0f);
     c.kindX = c.nameX + c.nameW + kColGap;
     c.branchX = c.kindX + c.kindW + kColGap;
     c.configX = c.branchX + c.branchW + kColGap;
-    c.actionsX = rowW - kRowPadX - c.actionsW;
+    c.actionsX = rowActionsX(rowW);
     return c;
 }
 
 struct EnvColumns {
-    float nameX = kRowPadX;
+    float nameX = kRowContentX;
     float nameW = 0.0f;
     float countX = 0.0f;
     float countW = 140.0f;
@@ -270,11 +285,12 @@ struct EnvColumns {
 
 EnvColumns envColumns(float rowW) {
     EnvColumns c;
-    c.nameW = std::max(0.0f, rowW - kRowPadX * 2.0f - c.countW - c.windowW -
-                                 c.actionsW - kColGap * 4.0f);
+    const float contentW = std::max(0.0f, rowW - kRowCardInset);
+    c.nameW = std::max(0.0f, contentW - c.countW - c.windowW - c.actionsW -
+                                 kColGap * 3.0f);
     c.countX = c.nameX + c.nameW + kColGap;
     c.windowX = c.countX + c.countW + kColGap;
-    c.actionsX = rowW - kRowPadX - c.actionsW;
+    c.actionsX = rowActionsX(rowW);
     return c;
 }
 
@@ -283,7 +299,9 @@ void drawRowActions(eui::Ui& ui, const std::string& base, float x, const Tokens&
                     const std::function<void()>& onDelete) {
     ui_kit::ButtonOptions edit;
     edit.onClick = onEdit;
-    ui_kit::button(ui, base + ".edit", "编辑", ui_kit::ButtonLevel::Text, x, 8.0f,
+    // 按钮垂直居中于 52 行卡（(52−40)/2 = 6）
+    const float btnY = (kRowCardH - ui_kit::kButtonHeight) * 0.5f;
+    ui_kit::button(ui, base + ".edit", "编辑", ui_kit::ButtonLevel::Text, x, btnY,
                    kRowBtnW, ui_kit::kButtonHeight, t, edit);
 
     ui_kit::ButtonOptions remove;
@@ -291,7 +309,7 @@ void drawRowActions(eui::Ui& ui, const std::string& base, float x, const Tokens&
     remove.hasTextColorOverride = true;
     remove.textColorOverride = t.colors.errorText;
     ui_kit::button(ui, base + ".delete", "删除", ui_kit::ButtonLevel::Text,
-                   x + kRowBtnW + kRowBtnGap, 8.0f, kRowBtnW,
+                   x + kRowBtnW + kRowBtnGap, btnY, kRowBtnW,
                    ui_kit::kButtonHeight, t, remove);
 }
 
@@ -301,16 +319,26 @@ void drawServiceRow(eui::Ui& ui, const ServiceDef& service, float rowW,
     const std::string base = "release.config.service." + std::to_string(service.id);
     const bool backend = service.kind == ServiceKind::Backend;
 
+    // 行卡（池134 §16）：itemSurface + radiusSmall，x=kRowPadX / w=rowW−32 /
+    // h=52（节距仍 kRowH=56 → 行间距 4，列表总高零变化）；行不可点，不给
+    // hover/pressed，操作全走文字按钮既有态。行内文字 y=(52−22)/2=15 垂直居中。
     ui.stack(base).size(rowW, kRowH).content([&] {
-        fitText(ui, base + ".name", c.nameX, 17.0f, c.nameW, 22.0f, service.name,
+        ui.rect(base + ".card")
+            .position(kRowPadX, 0.0f)
+            .size(std::max(0.0f, rowW - kRowPadX * 2.0f), kRowCardH)
+            .color(ui_kit::itemSurface(t))
+            .radius(t.sizes.radiusSmall)
+            .build();
+
+        fitText(ui, base + ".name", c.nameX, 15.0f, c.nameW, 22.0f, service.name,
                 t.sizes.fontSizeBody, 22.0f, 600, t.colors.textPrimary);
 
-        drawChip(ui, base + ".kind", serviceKindLabel(service.kind), c.kindX, 17.0f, t,
+        drawChip(ui, base + ".kind", serviceKindLabel(service.kind), c.kindX, 15.0f, t,
                  backend ? t.colors.primarySoftBg : t.colors.hover,
                  backend ? t.colors.primaryText : t.colors.textSecondary);
 
         const bool hasBranch = !service.defaultBranch.empty();
-        fitText(ui, base + ".branch", c.branchX, 17.0f, c.branchW, 22.0f,
+        fitText(ui, base + ".branch", c.branchX, 15.0f, c.branchW, 22.0f,
                 hasBranch ? service.defaultBranch : std::string("—"),
                 t.sizes.fontSizeBody, 22.0f, 400,
                 hasBranch ? t.colors.textSecondary : t.colors.textTertiary);
@@ -318,7 +346,7 @@ void drawServiceRow(eui::Ui& ui, const ServiceDef& service, float rowW,
         // 配置项由类型固定，不逐服务勾选：后端 5 个 tag，前端只显示「无配置项」。
         const auto& items = configItemLabels(service.kind);
         if (items.empty()) {
-            fitText(ui, base + ".noConfig", c.configX, 19.0f, c.configW, 18.0f,
+            fitText(ui, base + ".noConfig", c.configX, 17.0f, c.configW, 18.0f,
                     "无配置项", t.sizes.fontSizeSmall, 18.0f, 400,
                     t.colors.textTertiary);
         } else {
@@ -339,7 +367,7 @@ void drawServiceRow(eui::Ui& ui, const ServiceDef& service, float rowW,
                     break;
                 }
                 tagX += drawChip(ui, base + ".tag." + std::to_string(i), items[i],
-                                 tagX, 17.0f, t, t.colors.hover,
+                                 tagX, 15.0f, t, t.colors.hover,
                                  t.colors.textSecondary) +
                         4.0f;
                 ++drawn;
@@ -347,7 +375,7 @@ void drawServiceRow(eui::Ui& ui, const ServiceDef& service, float rowW,
             if (drawn < items.size()) {
                 const std::string more = "+" + std::to_string(items.size() - drawn);
                 if (tagX + chipWidth(more, chipFontSize) <= tagRight) {
-                    drawChip(ui, base + ".tag.more", more, tagX, 17.0f, t,
+                    drawChip(ui, base + ".tag.more", more, tagX, 15.0f, t,
                              t.colors.hover, t.colors.textSecondary);
                 }
             }
@@ -363,11 +391,6 @@ void drawServiceRow(eui::Ui& ui, const ServiceDef& service, float rowW,
                 state.deleteError.clear();
             });
 
-        ui.rect(base + ".sep")
-            .position(kRowPadX, kRowH - 1.0f)
-            .size(std::max(0.0f, rowW - kRowPadX * 2.0f), 1.0f)
-            .color(t.colors.borderMuted)
-            .build();
     }).build();
 }
 
@@ -376,13 +399,22 @@ void drawEnvRow(eui::Ui& ui, const EnvDef& env, float rowW, const Tokens& t,
     const EnvColumns c = envColumns(rowW);
     const std::string base = "release.config.env." + std::to_string(env.id);
 
+    // 行卡同 drawServiceRow（池134 §16）：itemSurface 白卡 + radiusSmall，
+    // 节距 56 不变；文字 y=15 垂直居中。
     ui.stack(base).size(rowW, kRowH).content([&] {
-        fitText(ui, base + ".name", c.nameX, 17.0f, c.nameW, 22.0f, env.name,
+        ui.rect(base + ".card")
+            .position(kRowPadX, 0.0f)
+            .size(std::max(0.0f, rowW - kRowPadX * 2.0f), kRowCardH)
+            .color(ui_kit::itemSurface(t))
+            .radius(t.sizes.radiusSmall)
+            .build();
+
+        fitText(ui, base + ".name", c.nameX, 15.0f, c.nameW, 22.0f, env.name,
                 t.sizes.fontSizeBody, 22.0f, 600, t.colors.textPrimary);
-        fitText(ui, base + ".count", c.countX, 17.0f, c.countW, 22.0f,
+        fitText(ui, base + ".count", c.countX, 15.0f, c.countW, 22.0f,
                 std::to_string(env.serviceIds.size()) + " 个服务",
                 t.sizes.fontSizeBody, 22.0f, 400, t.colors.textSecondary);
-        fitText(ui, base + ".window", c.windowX, 17.0f, c.windowW, 22.0f,
+        fitText(ui, base + ".window", c.windowX, 15.0f, c.windowW, 22.0f,
                 formatTimeWindow(env.startMinute, env.endMinute),
                 t.sizes.fontSizeBody, 22.0f, 400, t.colors.textPrimary);
 
@@ -396,11 +428,6 @@ void drawEnvRow(eui::Ui& ui, const EnvDef& env, float rowW, const Tokens& t,
                 state.deleteError.clear();
             });
 
-        ui.rect(base + ".sep")
-            .position(kRowPadX, kRowH - 1.0f)
-            .size(std::max(0.0f, rowW - kRowPadX * 2.0f), 1.0f)
-            .color(t.colors.borderMuted)
-            .build();
     }).build();
 }
 
@@ -422,8 +449,8 @@ void drawListHeader(eui::Ui& ui, float rowW, ReleaseConfigUiState::Tab tab,
         headCell(ui, "release.config.card.head.window", "时间窗", c.windowX,
                  c.windowW, t);
     }
-    headCell(ui, "release.config.card.head.actions", "操作",
-             rowW - kRowPadX - kActionsW, kActionsW, t);
+    headCell(ui, "release.config.card.head.actions", "操作", rowActionsX(rowW),
+             kActionsW, t);
 }
 
 // 列表区。data 来自 state 快照；本函数不查库。
