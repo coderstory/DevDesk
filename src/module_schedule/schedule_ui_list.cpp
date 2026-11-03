@@ -758,13 +758,17 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                       [this, ruleId = row.ruleId] {
                                           requestDeleteRule(ruleId);
                                       });
-                        // shortcut: 指针停在开关上时卡会短暂失 hover（SwitchBuilder 无 onHover
-                        // 钩子），EUI 给开关补 hover 回调时消除；上限 1 处，触发 = 开关 hover 观感被投诉。
+                        // 开关 hover 并入行卡 hover 集合（同 drawRowAction 口径）：
+                        // 指针停在开关上时卡不闪回常态（SwitchBuilder.onHover → .hit 命中面）。
                         components::toggleSwitch(ui, id + ".switch")
                             .position(rightEdge - 44.0f, padY + core::theme::scaled(20.0f))
                             .size(44.0f, 24.0f)
                             .checked(row.enabled)
                             .theme(comp)
+                            .onHover([this, rowId = id](bool h) {
+                                if (h) hoveredRowControlIds_.insert(rowId);
+                                else hoveredRowControlIds_.erase(rowId);
+                            })
                             .onChange([this, ruleId = row.ruleId](bool v) {
                                 const auto r = setRuleEnabled(ruleId, v);
                                 if (r.isFail()) {

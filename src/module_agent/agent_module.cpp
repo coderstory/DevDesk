@@ -153,12 +153,12 @@ void iconActionChip(::eui::Ui& ui, const std::string& id, unsigned int codepoint
         .build();
 }
 
-// 卡内常驻主操作钮（「启动」）：Primary 底色 + 文字，56×32。手搓而不用
-// components::button 的唯一原因是 onHover——button 的 .bg 会抢走 hover 但拿不到
-// 回调，卡片的材质/果冻会在指针移到主操作上时闪回常态。文本节点沿用
+// 卡内常驻主操作钮（「启动」）：Primary 底色 + 文字，56×32。文本节点沿用
 // `<id>.text.normal` 命名，与 button 的逐态文本 id 契约保持一致。
 // shortcut: 只做「常态/hover/pressed 三态 + disabled 置灰」，上限即本函数 ~30 行；
-// 升级触发＝需要图标/按下缩放时改用 components::button 并接受 hover 丢失。
+// 升级触发＝需要图标/按下缩放时改用 components::button（其 onHover 已可用，
+// 原「.bg 抢走 hover 拿不到回调」障碍已消；升级仍有行为差异：按下缩放果冻为
+// 新增、zIndex 需另行透传、文案 id 变为 button 逐态契约，升级时一并处理）。
 void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
                     float w, float h, const std::string& label, float fontSize,
                     const components::theme::ThemeColorTokens& tokens,
@@ -1001,9 +1001,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .build();
 
                                 // 「启动」常驻主操作（不随 hover；Primary 表达主次），zIndex 2
-                                // 压在命中面之上。手搓而非 components::button 的原因见
-                                // textActionChip：button 的 .bg 会抢走 hover 却拿不到回调，
-                                // 指针移到「启动」上时卡的材质/果冻会闪回常态。
+                                // 压在命中面之上。手搓而非 components::button 的取舍见
+                                // textActionChip shortcut 注释（其 onHover 障碍已消，
+                                // 剩余行为差异：果冻新增/zIndex 透传/文案 id 契约）。
                                 textActionChip(
                                     inner, id + ".run", runX,
                                     triggerRowY - core::theme::scaled(7.0f), runW,

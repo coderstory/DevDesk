@@ -195,6 +195,34 @@ REGISTER_TEST(schedule_list_archive_collapsed_by_default,
     return true;
 })
 
+// 防：行卡启停开关 hover 回归（池 112）——指针停在开关上时行卡不得闪回常态。
+// SwitchBuilder.onHover（EUI 侧补齐）把回调带到 .hit 命中面，DevDesk 侧将其
+// 并入 hoveredRowControlIds_（与 drawRowAction 同口径）；回调缺失即回归。
+REGISTER_TEST(schedule_list_switch_hover_wired_to_row,
+              "schedule 列表开关：onHover 并入行卡 hover 集合（.hit 带回调）", {
+    auto opened = openMigrated("switchhover");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+    ScheduleProviderRegistry providers;
+    ScheduleListUi listUi(store, providers);
+
+    DOCTEST_CHECK(store.createRule(makeRule("开关hover", 0, 1761000000)).isOk());
+    listUi.reload(1760000000);
+    DOCTEST_REQUIRE_EQ(listUi.assembly().userRows.size(), static_cast<size_t>(1));
+
+    const eui::Screen screen = makeScreen();
+    eui::Ui frame;
+    composeFrame(listUi, frame, screen, "switch_hover");
+    auto* hit = frame.find("schedule.list.user.0.switch.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_CHECK(hit->onHoverChanged != nullptr);
+    // 进/出开关 hover 双向触发不崩（行卡 hover 集合维护路径贯通）
+    hit->onHoverChanged(true);
+    hit->onHoverChanged(false);
+    return true;
+})
+
 // 防：ScheduleProviderRegistry 空注册表（本波 S8 未接任何来源）时列表页崩溃
 // 或系统段渲染异常——空态必须渲染「暂无系统定时」占位。
 REGISTER_TEST(schedule_list_empty_provider_registry_ok,
