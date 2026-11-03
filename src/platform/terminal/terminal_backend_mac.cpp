@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <pwd.h>
+#include <utility>
 #include <unistd.h>
 
 #include "swift_bridge.h"

@@ -16,8 +16,6 @@ namespace platform {
 // 的函数指针表取址——声明与定义必须在同一匿名 ns（同 TU 内嵌于 platform）。
 namespace {
 int damageCbTramp(VTermRect rect, void* user);
-int movecursorStateTramp(VTermPos pos, VTermPos old, int visible, void* user);
-int stateResizeTramp(int rows, int cols, VTermStateFields* fields, void* user);
 int movecursorScreenTramp(VTermPos pos, VTermPos old, int visible, void* user);
 int settermpropTramp(VTermProp prop, VTermValue* val, void* user);
 int screenResizeTramp(int rows, int cols, void* user);
@@ -44,9 +42,12 @@ constexpr uint16_t kAttrStrikethrough = 1 << 7;
 constexpr uint16_t kAttrDoubleUnderline = 1 << 10;
 constexpr uint16_t kAttrCurlyUnderline = 1 << 11;
 
-uint32_t translateColor(const VTermColor& c) {
+// 规范化：libvterm 内置默认 pen 是 RGB(240,240,240)（pen.c:162，非 default tag）——
+// 等于 state 默认色的 pen 翻译成 default kind 0，widget 侧主题化契约才成立
+uint32_t translateColor(const VTermColor& c, const VTermColor& def) {
     if (VTERM_COLOR_IS_DEFAULT_FG(&c) || VTERM_COLOR_IS_DEFAULT_BG(&c))
         return kColorKindDefault;
+    if (vterm_color_is_equal(&c, &def)) return kColorKindDefault;
     if (VTERM_COLOR_IS_INDEXED(&c)) return kColorKindIndexed | c.indexed.idx;
     if (VTERM_COLOR_IS_RGB(&c))
         return kColorKindRgb | (uint32_t(c.rgb.red) << 16) | (uint32_t(c.rgb.green) << 8) |
@@ -125,22 +126,17 @@ struct VtermCore::Impl {
         vterm_set_utf8(vt, 1);
         state = vterm_obtain_state(vt);
         screen = vterm_obtain_screen(vt);
-        static const VTermStateCallbacks stateCbs = {
-            /* putglyph   */ nullptr,
-            /* movecursor */ movecursorStateTramp,
-            /* scrollrect */ nullptr,
-            /* moverect   */ nullptr,
-            /* erase      */ nullptr,
-            /* initpen    */ nullptr,
-            /* setpenattr */ nullptr,
-            /* settermprop*/ nullptr,
-            /* bell       */ nullptr,
-            /* resize     */ stateResizeTramp,
-            /* setlineinfo*/ nullptr,
-            /* sb_clear   */ nullptr,
-            /* premove    */ nullptr,
-        };
-        vterm_state_set_callbacks(state, &stateCbs, this);
+        // 官方顺序（pangoterm 同款）：hard reset 必须在 obtain_screen **之后**——
+        // reset 的 setpenattr 会转发初始化 screen 侧 pen（默认 fg=RGB(240,240,240)），
+        // screen 未建时该转发丢失 → ScreenCell pen 停在脏内存（fg=RGB(0,0,0) 实证）；
+        // 且 G0/G1 编码表也只在 reset 初始化（state.c:2141），漏 reset 则首喂 ASCII 崩
+        vterm_state_reset(state, 1);
+        vterm_state_get_default_colors(state, &defaultFg, &defaultBg);
+        // ⚠ 不注册 VTermStateCallbacks：obtain_screen 时 screen 层已把内部回调表挂进
+        // state（screen.c:903，含 putglyph→screen 转发），而 vterm_state_set_callbacks
+        // 是**整表替换**——再挂自定义表会覆盖转发链，glyph 不进网格、damage 恒零
+        // （实证：damageCbTramp 零命中、cells 全零）。宿主回调面 = VTermScreenCallbacks
+        //（damage/movecursor/settermprop/resize/sb_*）——见下方 screenCbs。
         static const VTermScreenCallbacks screenCbs = {
             /* damage      */ damageCbTramp,
             /* moverect    */ nullptr,
@@ -165,11 +161,13 @@ struct VtermCore::Impl {
 
     TerminalCell translateCell(const VTermScreenCell& sc) const {
         TerminalCell t;
-        t.cp = sc.chars[0];               // 首 scalar；组合序列 chars[1..] 降级（v1 同口径）
+        // 宽字占位：libvterm 对 width>1 glyph 的右侧格写 chars[0]=(uint32_t)-1
+        // （screen.c:197）——规范化为 cp=0 spacer（Corta BridgeCell 契约）
+        t.cp = sc.chars[0] == 0xFFFFFFFFu ? 0u : sc.chars[0]; // 首 scalar；组合序列 chars[1..] 降级
         t.width = sc.width == 2 ? uint8_t(2) : uint8_t(1);
         t.attrs = translateAttrs(sc.attrs);
-        t.fg = translateColor(sc.fg);
-        t.bg = translateColor(sc.bg);
+        t.fg = translateColor(sc.fg, defaultFg);
+        t.bg = translateColor(sc.bg, defaultBg);
         return t;
     }
 
@@ -225,9 +223,9 @@ struct VtermCore::Impl {
         static const char kSeq[] = "\x1b[?2004";
         bpTail.append(reinterpret_cast<const char*>(b), size_t(n));
         size_t pos = 0;
-        while (pos + sizeof(kSeq) /*含 \0，即 7 字节*/ - 1 + 1 <= bpTail.size()) {
+        while (pos + sizeof(kSeq) /*含 \0，即 8；全序列=7 前缀+fin*/ <= bpTail.size()) {
             if (bpTail.compare(pos, sizeof(kSeq) - 1, kSeq, sizeof(kSeq) - 1) == 0 &&
-                pos + sizeof(kSeq) < bpTail.size()) {
+                pos + sizeof(kSeq) - 1 < bpTail.size()) {
                 const char fin = bpTail[pos + sizeof(kSeq) - 1];
                 if (fin == 'h' || fin == 'l') {
                     bracketedPaste = fin == 'h';
@@ -243,6 +241,9 @@ struct VtermCore::Impl {
 
     // ---- libvterm 回调（静态自由函数见文件尾桥接块）----
 
+    VTermColor defaultFg;   // state 默认 pen 色（init 缓存，translateColor 规范化用）
+    VTermColor defaultBg;
+
     void damageCbImpl(VTermRect rect) {
         unionPending(rect);
         generation++;
@@ -253,13 +254,6 @@ struct VtermCore::Impl {
         (void)visible;
         cursorRow = pos.row;
         cursorCol = pos.col;
-    }
-
-    void stateResizeCbImpl(int r, int c, VTermStateFields* fields) {
-        // 保留 libvterm 光标，缓冲重建交给 screen 层 resize 回调（reflow 后触发）
-        (void)r;
-        (void)c;
-        (void)fields;
     }
 
     void screenResizeCbImpl(int r, int c) {
@@ -312,14 +306,6 @@ struct VtermCore::Impl {
 namespace {
 int damageCbTramp(VTermRect rect, void* user) {
     static_cast<VtermCore::Impl*>(user)->damageCbImpl(rect);
-    return 1;
-}
-int movecursorStateTramp(VTermPos pos, VTermPos old, int visible, void* user) {
-    static_cast<VtermCore::Impl*>(user)->movecursorCbImpl(pos, old, visible);
-    return 1;
-}
-int stateResizeTramp(int rows, int cols, VTermStateFields* fields, void* user) {
-    static_cast<VtermCore::Impl*>(user)->stateResizeCbImpl(rows, cols, fields);
     return 1;
 }
 int movecursorScreenTramp(VTermPos pos, VTermPos old, int visible, void* user) {

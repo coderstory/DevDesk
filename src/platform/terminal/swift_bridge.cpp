@@ -4,6 +4,8 @@
 
 #include "CortaBridge-Swift.h"
 
+#include <utility>
+
 #include "core/logging.h"
 
 #include <cstring>

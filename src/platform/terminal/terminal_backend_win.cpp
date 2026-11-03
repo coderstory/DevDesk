@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <utility>
 #include <cstdlib>
 #include <deque>
 #include <memory>
@@ -64,15 +65,6 @@ const ConPtyApi& conptyApi() {
         return a;
     }();
     return api;
-}
-
-std::string wideToUtf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0,
-                                      nullptr, nullptr);
-    std::string out(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), out.data(), n, nullptr, nullptr);
-    return out;
 }
 
 std::wstring utf8ToWide(const std::string& s) {
@@ -170,7 +162,7 @@ public:
 
         if (spawnCompleted_.wait_for(std::chrono::milliseconds(kCloseWaitMs))) {
             // ② 树杀：先例 process_host_win.cpp:172-174（taskkill /T /F + 有界 + 探活兜底）
-            ::platform::terminateTree(pid_);
+            process_host::terminateTree(pid_);
         }
 
         // ③ 有界等 reader 排空至断裂

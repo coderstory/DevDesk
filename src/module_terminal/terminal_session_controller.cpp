@@ -1,5 +1,7 @@
 #include "terminal_session_controller.h"
 
+#include <utility>
+
 #include "core/logging.h"
 
 namespace terminal {

@@ -146,6 +146,8 @@ build_incs() {
                -I "${EUI_DIR}/3rd/glfw/include")
     fi
     [ -d "${ROOT}/3rd/cpp-httplib" ] && INCS+=(-I "${ROOT}/3rd/cpp-httplib")
+    # vendored libvterm（need:127 终端转译层依赖，仓内 submodule 随 checkout 在）
+    [ -d "${ROOT}/third_party/libvterm/include" ] && INCS+=(-I "${ROOT}/third_party/libvterm/include")
     [ -n "$SQLITE_INC" ] && INCS+=(-I "$SQLITE_INC")
     [ -n "$OPENSSL_INC" ] && INCS+=(-I "$OPENSSL_INC")
     [ -n "$CURL_INC" ] && INCS+=(-I "$CURL_INC")

@@ -161,6 +161,8 @@ add_library(libvterm STATIC
     third_party/libvterm/src/vterm.c
 )
 target_include_directories(libvterm PUBLIC ${CMAKE_SOURCE_DIR}/third_party/libvterm/include)
+# 诊断期 -g：libvterm 为 vendored C99 第三方，崩溃栈须能回溯源码行（稳定后可评估移除）
+target_compile_options(libvterm PRIVATE -g)
 
 add_library(devdesk_terminal_vterm STATIC
     src/platform/terminal/terminal_vterm_core.cpp

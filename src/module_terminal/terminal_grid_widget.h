@@ -4,6 +4,7 @@
 // 纯视图逻辑不持会话；滚动偏移与 resize 量化由 page/module 编排。
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
