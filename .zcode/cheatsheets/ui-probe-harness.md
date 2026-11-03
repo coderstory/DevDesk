@@ -41,8 +41,14 @@
 | `todo_drag_probe` | 拖拽序列 |
 | `settings_dropdown_z_probe` | 弹层 z 序断言 |
 
-## Windows 侧差异（⚠ 待验：Mac 机编写，以下为代码接线推断，Windows 机首跑批拍后把实测记入 evidence 并删除本标注）
+## Windows 侧实测（2026-11-03 need 61 复核；证据 evidence/2026-11-03-need61-win/）
 
-- exe 同落 `build/tests/`（MinGW 单配置生成器）；MSYS2 bash 下 `./<name>` 自动补 `.exe`
-- 显示缩放通常 =1 → PNG 尺寸 ≈ 逻辑尺寸（无 macOS 的 2x）
-- wallpaper 工厂在 Windows 返回真实例 → 批拍实拍 13 页（多一页 wallpaper）
+- exe 同落 `build/tests/`（MinGW 单配置生成器）；`./<name>` 可直接调（`.exe` 写不写均可）；
+  直接跑须 PATH 带 `<msys2>/mingw64/bin`（缺运行库时 Git Bash 报 exit 127）
+- **PNG = 逻辑尺寸 × 显示器缩放**（与 macOS Retina 2× 同式，不是「≈逻辑尺寸」）：
+  本机 135% → `--size 1000x640` 落 1354×867；100% DPI 机器上才等于逻辑尺寸。
+  `probe::makeWindow` 已按真 app 口径做逻辑→窗口单位换算（此前漏换算 → 内容右下被裁）
+- wallpaper 工厂在 Windows 返回真实例 → 模块页里含 wallpaper（release_group 按探针
+  设计跳过）；settings 另有 5 个 tab 页，`--size 1000x640` 共 18 张
+- 显示器装不下请求的逻辑窗高时系统会钳窗口（如 1200x1000 → 1625×1065px≈786 逻辑）：
+  像素采样类探针（home_probes N2）应显式返回 77（环境不可用），不要判红

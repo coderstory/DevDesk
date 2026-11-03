@@ -15,6 +15,7 @@
 #include "core/render/render_backend.h"
 #include "core/theme.h"
 #include "core/window/window_backend.h"
+#include "core/window_layout.h"  // 逻辑→窗口单位换算（makeWindow 与真 app 同口径）
 
 #include <ui_kit/splash.h>
 
@@ -209,8 +210,30 @@ inline void terminateWindowBackend() {
 inline core::window::Handle makeWindow(const std::string& title, int width, int height) {
     core::window::WindowCreateRequest request;
     request.title = title.c_str();
-    request.width = width;
-    request.height = height;
+    // 与真 app 同口径：逻辑尺寸 → 窗口单位（core/window_layout.h：Windows=物理像素，
+    // macOS=点）。glfwCreateWindow 直接吃逻辑尺寸时，Windows 高 DPI 下 framebuffer
+    // 仍是逻辑尺寸，而 runtime 按 contentScale 放大渲染 → 内容右下被裁（2026-11-03
+    // Windows 135% 实测：uat62 首页标题被切、home_probes N2 采样越界）。macOS 的
+    // windowScaleForPoint 恒 1.0，Retina framebuffer 由 GLFW 自动放大，不受影响。
+    int workX = 0, workY = 0, workW = 0, workH = 0;
+    core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
+    const float scale =
+        (workW > 0 && workH > 0)
+            ? core::window::windowScaleForPoint(
+                  static_cast<float>(workX) + static_cast<float>(workW) * 0.5f,
+                  static_cast<float>(workY) + static_cast<float>(workH) * 0.5f)
+            : 1.0f;
+    core::window_layout::InitialWindowRequest logical;
+    logical.logicalWidth = width;
+    logical.logicalHeight = height;
+    // workArea 留空 = 不做放不下收缩（探针尺寸是测试契约，不迁就本机分辨率）；
+    // FrameInsets 同理不参与（只做单位换算）。
+    const core::window_layout::InitialWindowDecision sized =
+        core::window_layout::decideInitialWindow(
+            logical, core::window_layout::WorkArea{}, scale,
+            core::window_layout::FrameInsets{});
+    request.width = sized.width > 0 ? sized.width : width;
+    request.height = sized.height > 0 ? sized.height : height;
     request.resizable = false;
     request.renderApi = configuredRenderApi();
     core::window::Handle handle = core::window::createWindow(request);
