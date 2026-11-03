@@ -140,6 +140,15 @@ case "$BUILD_PROBES" in
   *) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON" ;;
 esac
 
+# 真机验收驱动（tests/live/*）构建开关：默认 OFF（live 不进常规构建/门禁），
+# --live 显式打开（唯一消费方 scripts/run-ghsync-live.sh 的前置）。开关变化要
+# 补 configure——与 probe 开关同一套缓存比对逻辑。
+BUILD_LIVE="${DEVDESK_BUILD_LIVE_TOOLS:-OFF}"
+case "$BUILD_LIVE" in
+  ON|on|1|true) BUILD_LIVE_CMAKE="ON" ;;
+  *) BUILD_LIVE_CMAKE="OFF" ;;
+esac
+
 # 编译缓存 ccache（可选，缺则自动降级）。三件套（CCACHE_DIR / CCACHE_BASEDIR /
 # CCACHE_NOHASHDIR）已落进 ccache 持久配置，无需环境变量。
 # 持久配置**两平台位置不同**，写错地方等于没写：
@@ -171,6 +180,7 @@ while [ $# -gt 0 ]; do
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
+    --live)     BUILD_LIVE_CMAKE="ON" ;;
     --filter)   shift; FILTER="${1:-}" ;;
     --verify-app-str) shift; VERIFY_APP_STR="${1:-}" ;;
     *)          FILTER="$1" ;;   # 裸词当 filter
@@ -387,10 +397,21 @@ elif [ "$BUILD_PROBES_CMAKE" = "OFF" ] && [ -f "$BUILD_DIR/build.ninja" ]; then
   echo "── probe 开关变化（缓存 无(老目录) → 本次 OFF），补一次 configure ──"
   NEED_CONF_PROBES=1
 fi
-if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROBES" = "1" ]; then
+NEED_CONF_LIVE=0
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+  CACHED_LIVE="$(grep -m1 "^DEVDESK_BUILD_LIVE_TOOLS:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r')"
+  if [ "$CACHED_LIVE" != "$BUILD_LIVE_CMAKE" ]; then
+    echo "── live 开关变化（缓存 ${CACHED_LIVE:-无} → 本次 ${BUILD_LIVE_CMAKE}），补一次 configure ──"
+    NEED_CONF_LIVE=1
+  fi
+elif [ -f "$BUILD_DIR/build.ninja" ]; then
+  NEED_CONF_LIVE=1
+fi
+if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROBES" = "1" ] || [ "$NEED_CONF_LIVE" = "1" ]; then
   CONF_OUT=$(cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DEUI_NEO_DIR="$EUI_DIR" \
     -DDEVDESK_BUILD_PROBES="$BUILD_PROBES_CMAKE" \
+    -DDEVDESK_BUILD_LIVE_TOOLS="$BUILD_LIVE_CMAKE" \
     "${CCACHE_ARGS[@]}" \
     "${OPENSSL_ARGS[@]}" 2>&1) || {
     echo "$CONF_OUT" | tail -30

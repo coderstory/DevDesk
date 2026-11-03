@@ -127,12 +127,26 @@ core::ErrorCode mapStatusToError(int status) {
     }
 }
 
-std::string httpStatusText(int status) {
+// GitHub 空仓库的响应体特征：refs / trees 端点用 "Git Repository is empty."、
+// contents 端点用 "This repository is empty."——两个措辞都认，防端点措辞差异漏判。
+bool isRepoEmptyBody(const std::string& body) {
+    return body.find("Git Repository is empty") != std::string::npos ||
+           body.find("This repository is empty") != std::string::npos;
+}
+
+// 409 双语义：refs/trees 端点对空仓库回 409（Git Repository is empty.），与 sha
+// 冲突同码不同义——按响应体分流文案，body 不可得（空）时保守按 sha 冲突呈现。
+// 引擎层以 isRepoEmptyError 据同一文案分流行为（httpStatusText 与它必须同步改）。
+std::string httpStatusText(int status, const std::string& body) {
     switch (status) {
         case 401: return "认证失败：令牌无效或已过期，请检查/更新 PAT（HTTP 401）";
         case 403: return "无权限（HTTP 403）";
         case 404: return "未找到（HTTP 404）";
-        case 409: return "冲突：远端 sha 与本地不一致（HTTP 409）";
+        case 409:
+            if (isRepoEmptyBody(body)) {
+                return "远端仓库为空：仓库还没有任何分支和提交（HTTP 409）";
+            }
+            return "冲突：远端 sha 与本地不一致（HTTP 409）";
         case 422: return "请求校验失败（HTTP 422）";
         case 429: return "触发限流（HTTP 429）";
         default:  return "HTTP " + std::to_string(status);
@@ -258,6 +272,14 @@ std::string maskQuery(std::string out) {
 }
 
 } // namespace
+
+// 空仓库 409 判据（头文件声明的唯一定义；若放匿名 namespace 会构成内部链接
+// 重载候选，调用点二义）。判据锚定我们自己构造的中文文案子串，该文案只由
+// httpStatusText 的 409 分流产生——两处必须同步改。
+bool isRepoEmptyError(core::ErrorCode code, const std::string& message) {
+    return code == core::ErrorCode::Conflict &&
+           message.find("远端仓库为空") != std::string::npos;
+}
 
 // ---- 构造与注入点 ----
 
@@ -445,8 +467,17 @@ core::Result<RepoInfo> GithubApi::getRepo() {
                                             "网络错误：" + a.errorMessage);
     }
     if (a.resp.statusCode != 200) {
+        // 404 单独点名（bug 107）：「未找到」不告诉用户该查什么——这里就是
+        // 仓库 URL 不存在或令牌无权限，UI 据此走「自动创建仓库」询问。
+        if (a.resp.statusCode == 404) {
+            return core::Result<RepoInfo>::fail(
+                core::ErrorCode::NotFound,
+                "仓库不存在：" + owner_ + "/" + repo_ +
+                    "（HTTP 404）。请检查仓库 URL 拼写，或确认当前令牌有访问权限");
+        }
         return core::Result<RepoInfo>::fail(mapStatusToError(a.resp.statusCode),
-                                            httpStatusText(a.resp.statusCode));
+                                            httpStatusText(a.resp.statusCode,
+                                                           a.resp.body));
     }
     const core::Result<pj::JsonValue> parsed = pj::parse(a.resp.body);
     if (parsed.isFail()) {
@@ -477,7 +508,8 @@ core::Result<std::string> GithubApi::getAuthenticatedUser() {
     }
     if (a.resp.statusCode != 200) {
         return core::Result<std::string>::fail(mapStatusToError(a.resp.statusCode),
-                                               httpStatusText(a.resp.statusCode));
+                                               httpStatusText(a.resp.statusCode,
+                                                              a.resp.body));
     }
     const core::Result<pj::JsonValue> parsed = pj::parse(a.resp.body);
     if (parsed.isFail()) {
@@ -510,7 +542,8 @@ core::Result<FileInfo> GithubApi::getFile(const std::string& path, const std::st
     }
     if (a.resp.statusCode != 200) {
         return core::Result<FileInfo>::fail(mapStatusToError(a.resp.statusCode),
-                                            httpStatusText(a.resp.statusCode));
+                                            httpStatusText(a.resp.statusCode,
+                                                           a.resp.body));
     }
 
     const core::Result<pj::JsonValue> parsed = pj::parse(a.resp.body);
@@ -543,7 +576,8 @@ core::Result<FileInfo> GithubApi::getFile(const std::string& path, const std::st
     }
     if (raw.resp.statusCode != 200) {
         return core::Result<FileInfo>::fail(mapStatusToError(raw.resp.statusCode),
-                                            httpStatusText(raw.resp.statusCode));
+                                            httpStatusText(raw.resp.statusCode,
+                                                           raw.resp.body));
     }
     info.content = raw.resp.body;
     return core::Result<FileInfo>::ok(std::move(info));
@@ -563,7 +597,8 @@ core::Result<std::vector<TreeEntry>> GithubApi::listTree(const std::string& bran
     }
     if (a.resp.statusCode != 200) {
         return core::Result<std::vector<TreeEntry>>::fail(mapStatusToError(a.resp.statusCode),
-                                                          httpStatusText(a.resp.statusCode));
+                                                          httpStatusText(a.resp.statusCode,
+                                                                         a.resp.body));
     }
     const core::Result<pj::JsonValue> parsed = pj::parse(a.resp.body);
     if (parsed.isFail() || !parsed.value().isObject()) {
@@ -625,7 +660,8 @@ core::Result<std::string> GithubApi::putFile(const std::string& path, const std:
     }
     if (a.resp.statusCode != 200 && a.resp.statusCode != 201) {
         return core::Result<std::string>::fail(mapStatusToError(a.resp.statusCode),
-                                               httpStatusText(a.resp.statusCode));
+                                               httpStatusText(a.resp.statusCode,
+                                                              a.resp.body));
     }
     const core::Result<pj::JsonValue> parsed = pj::parse(a.resp.body);
     if (parsed.isOk()) {
@@ -661,7 +697,8 @@ core::Result<void> GithubApi::deleteFile(const std::string& path, const std::str
     }
     if (a.resp.statusCode != 200) {
         return core::Result<void>::fail(mapStatusToError(a.resp.statusCode),
-                                        httpStatusText(a.resp.statusCode));
+                                        httpStatusText(a.resp.statusCode,
+                                                       a.resp.body));
     }
     return core::Result<void>::ok();
 }
@@ -689,7 +726,8 @@ core::Result<void> GithubApi::createRef(const std::string& branch, const std::st
     if (head.resp.statusCode != 200) {
         return core::Result<void>::fail(mapStatusToError(head.resp.statusCode),
                                         "读取基点分支 HEAD 失败：" +
-                                            httpStatusText(head.resp.statusCode));
+                                            httpStatusText(head.resp.statusCode,
+                                                           head.resp.body));
     }
     const core::Result<pj::JsonValue> parsed = pj::parse(head.resp.body);
     if (parsed.isFail()) {
@@ -728,7 +766,8 @@ core::Result<void> GithubApi::createRef(const std::string& branch, const std::st
             return core::Result<void>::ok();
         }
         return core::Result<void>::fail(mapStatusToError(a.resp.statusCode),
-                                        httpStatusText(a.resp.statusCode));
+                                        httpStatusText(a.resp.statusCode,
+                                                       a.resp.body));
     }
     return core::Result<void>::ok();
 }
@@ -747,7 +786,41 @@ core::Result<void> GithubApi::deleteRef(const std::string& branch) {
     }
     if (a.resp.statusCode != 200 && a.resp.statusCode != 204) {
         return core::Result<void>::fail(mapStatusToError(a.resp.statusCode),
-                                        httpStatusText(a.resp.statusCode));
+                                        httpStatusText(a.resp.statusCode,
+                                                       a.resp.body));
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> GithubApi::createRepo(bool isPrivate) {
+    pj::JsonObject body;
+    body.set("name", pj::makeString(repo_));
+    body.set("private", pj::makeBool(isPrivate));
+    // auto_init=false：建成即空仓（无 commit / 分支），首个提交由首次同步的
+    // PUT contents 产生、落在配置分支上——不残留 README 之类的初始化提交。
+    body.set("auto_init", pj::makeBool(false));
+    const core::Result<std::string> text = pj::stringify(pj::JsonValue(body));
+    if (text.isFail()) {
+        return core::Result<void>::fail(core::ErrorCode::Internal, "构造请求体失败");
+    }
+    const Attempt a = doRequest("POST", std::string(kApiBase) + "/user/repos",
+                                text.value(), kAcceptJson);
+    if (a.localError) {
+        return core::Result<void>::fail(a.errorCode, a.errorMessage);
+    }
+    if (a.networkError) {
+        return core::Result<void>::fail(core::ErrorCode::NetworkUnreachable,
+                                        "网络错误：" + a.errorMessage);
+    }
+    if (a.resp.statusCode != 201) {
+        if (a.resp.statusCode == 422) {
+            return core::Result<void>::fail(
+                core::ErrorCode::AlreadyExists,
+                "仓库已存在（或名称不可用）：" + owner_ + "/" + repo_ + "（HTTP 422）");
+        }
+        return core::Result<void>::fail(mapStatusToError(a.resp.statusCode),
+                                        httpStatusText(a.resp.statusCode,
+                                                       a.resp.body));
     }
     return core::Result<void>::ok();
 }
@@ -821,14 +894,22 @@ TestReport GithubApi::testConnection(std::function<void(const TestStep&)> onStep
 
         const core::Result<void> created = createRef(branch, repoInfo.defaultBranch);
         if (created.isFail()) {
-            step.ok = false;
-            step.detail = "创建临时分支失败：" + created.errorMessage();
-            // 兜底删除：POST 可能已被服务端受理但响应丢失（重试耗尽仍报失败）。
-            // 分支没建成时删的是 404，无害；只有删除也失败（非 404）才算真残留
-            if (const core::Result<void> removed = deleteRef(branch);
-                removed.isFail() && removed.errorCode() != core::ErrorCode::NotFound) {
-                residueHint = "临时分支 " + branch + " 删除失败（" + removed.errorMessage() +
-                              "），远端有残留，请手动删除";
+            // 空仓库：refs 端点 409（Git Repository is empty.）→ 无基点分支可建，
+            // 且任何写探针都会创建首个 commit、破坏空态 → 降级为通过。可推送权限
+            // 已由第②步 canPush 验证；分支初始化交给首次上传（PUT contents）。
+            if (isRepoEmptyError(created.errorCode(), created.errorMessage())) {
+                step.ok = true;
+                step.detail = "远端为空仓库：跳过写入探针（首次上传时初始化分支）";
+            } else {
+                step.ok = false;
+                step.detail = "创建临时分支失败：" + created.errorMessage();
+                // 兜底删除：POST 可能已被服务端受理但响应丢失（重试耗尽仍报失败）。
+                // 分支没建成时删的是 404，无害；只有删除也失败（非 404）才算真残留
+                if (const core::Result<void> removed = deleteRef(branch);
+                    removed.isFail() && removed.errorCode() != core::ErrorCode::NotFound) {
+                    residueHint = "临时分支 " + branch + " 删除失败（" + removed.errorMessage() +
+                                  "），远端有残留，请手动删除";
+                }
             }
         } else {
             const core::Result<std::string> put =

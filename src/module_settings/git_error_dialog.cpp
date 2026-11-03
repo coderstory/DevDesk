@@ -61,7 +61,9 @@ std::string formatGitLogDetail(const platform::github::ApiLogEntry& e) {
 }
 
 GitErrorDialogVariant variantForSyncFailure(
-    const std::vector<platform::github::ApiLogEntry>& logs, bool conflict) {
+    const std::vector<platform::github::ApiLogEntry>& logs, bool conflict,
+    bool repoMissing) {
+    if (repoMissing) return GitErrorDialogVariant::RepoMissing404;
     if (conflict) return GitErrorDialogVariant::Conflict409;
     for (const auto& e : logs) {
         if (e.statusCode == 401) return GitErrorDialogVariant::AuthFailed;
@@ -111,11 +113,14 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             st.variant == GitErrorDialogVariant::Conflict409;
         const bool authFailed =
             st.variant == GitErrorDialogVariant::AuthFailed;
+        const bool repoMissing =
+            st.variant == GitErrorDialogVariant::RepoMissing404;
         ui_kit::drawDialogTitle(
             ui, std::string(kDialogId) + ".title", w,
-            conflict ? "同步冲突（409）"
-                     : (authFailed ? "认证失败（Token 无效或已过期）"
-                                   : "同步失败详情"),
+            repoMissing ? "仓库不存在（404）"
+                        : conflict ? "同步冲突（409）"
+                                   : (authFailed ? "认证失败（Token 无效或已过期）"
+                                                 : "同步失败详情"),
             ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
 
         ui_kit::drawDialogText(
@@ -128,8 +133,9 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
         const bool armed = conflict && st.conflictConfirmArmed;
         ui_kit::drawDialogText(
             ui, std::string(kDialogId) + ".hint", w,
-            armed ? "再次点击将用远端覆盖本地数据库与笔记（本地库已自动备份）"
-                  : "请求日志（点击查看详情）",
+            repoMissing ? "将在当前令牌账号下创建私有仓库，创建后自动执行首次同步"
+                        : armed ? "再次点击将用远端覆盖本地数据库与笔记（本地库已自动备份）"
+                                : "请求日志（点击查看详情）",
             fs(11.0f), armed ? t.colors.warning : t.colors.textTertiary,
             {.y = kHintY, .height = roundFs(16.0f), .lineHeight = roundFs(16.0f)});
 
@@ -240,10 +246,11 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
         const float btnY = kDialogH - kBtnRowOffsetY;
         const float labelFont = t.sizes.fontSizeBody - 1.0f;
         const std::string primaryLabel =
-            conflict
-                ? (st.conflictConfirmArmed ? "确认：用远端覆盖并推送"
-                                           : "拉取远端后再推")
-                : (authFailed ? "去更新 Token" : "重试");
+            repoMissing ? "自动创建仓库"
+                        : conflict
+                              ? (st.conflictConfirmArmed ? "确认：用远端覆盖并推送"
+                                                         : "拉取远端后再推")
+                              : (authFailed ? "去更新 Token" : "重试");
 
         components::button(ui, std::string(kDialogId) + ".btn.retry")
             .position(ui_kit::kDialogInsetX, btnY)
@@ -254,7 +261,13 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             .radius(t.sizes.radius)
             // 409 = 二次确认：第一下只武装，第二下才真拉取覆盖并推送。
             .onClick([sp = &st, fRetry = a.retry, fPull = a.pullThenPush,
-                      fUpdateToken = a.updateToken] {
+                      fUpdateToken = a.updateToken, fCreateRepo = a.createRepo] {
+                // 404 仓库不存在：建库后接首次同步（建库与首同步都是全有或全无，
+                // 不需要二次确认；取消 = 关闭弹窗，干净中止）。
+                if (sp->variant == GitErrorDialogVariant::RepoMissing404) {
+                    if (fCreateRepo) fCreateRepo();
+                    return;
+                }
                 if (sp->variant == GitErrorDialogVariant::Conflict409) {
                     if (!sp->conflictConfirmArmed) {
                         sp->conflictConfirmArmed = true;

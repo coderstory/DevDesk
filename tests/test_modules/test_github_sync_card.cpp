@@ -1048,6 +1048,21 @@ REGISTER_TEST(github_error_dialog_auth_variant_decision,
     return true;
 })
 
+REGISTER_TEST(github_error_dialog_repo_missing_variant,
+              "github_sync 404 弹窗: repoMissing 优先 → RepoMissing404 变体（引导自动建库）", {
+    using V = ms::GitErrorDialogVariant;
+    const std::vector<platform::github::ApiLogEntry> none;
+    // 引擎显式标记驱动（404 是正常流程信号：getFile 探测、缺分支都回 404，
+    // 日志状态码不可靠——与 401 用日志判不同）
+    DOCTEST_CHECK(ms::variantForSyncFailure(none, false, true) == V::RepoMissing404);
+    DOCTEST_CHECK(ms::variantForSyncFailure(none, false, false) == V::Error);
+    // 缺省参兼容既有两参调用（不回归）
+    DOCTEST_CHECK(ms::variantForSyncFailure(none, false) == V::Error);
+    // repoMissing 与 conflict 同现：仓库不存在更具体，优先引导建库
+    DOCTEST_CHECK(ms::variantForSyncFailure(none, true, true) == V::RepoMissing404);
+    return true;
+})
+
 REGISTER_TEST(github_error_dialog_auth_variant,
               "github_sync 401 弹窗: 标题/主按钮走定向引导，且不触发通用重试（带通用变体对照）", {
     DialogFixture fx;

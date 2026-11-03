@@ -886,3 +886,136 @@ REGISTER_TEST(github_list_tree_404_fails_not_found,
     DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::NotFound);
     return true;
 })
+
+// ---- 409 空仓库语义分流（bug 106）----
+// refs / trees 端点对**空仓库**回 409 + "Git Repository is empty."（与 sha 冲突
+// 同码不同义）。文案必须分流成「远端仓库为空」，不再套用「远端 sha 与本地不一致」
+//（空仓库没有任何 sha，那句话既错且误导）；引擎层据 isRepoEmptyError 分流行为。
+
+REGISTER_TEST(github_create_ref_empty_repo_409_message,
+              "github createRef: 空仓库 409 → 文案「远端仓库为空」（isRepoEmptyError 可判）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(
+        409, R"({"message":"Git Repository is empty.","status":"409"})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto res = api.createRef("devdesk-test-1", "main");
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK(platform::github::isRepoEmptyError(res.errorCode(),
+                                                     res.errorMessage()));
+    DOCTEST_CHECK(res.errorMessage().find("远端仓库为空") != std::string::npos);
+    DOCTEST_CHECK(res.errorMessage().find("sha 与本地不一致") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(github_list_tree_empty_repo_409_message,
+              "github listTree: 空仓库 409 → 文案「远端仓库为空」（isRepoEmptyError 可判）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(
+        409, R"({"message":"Git Repository is empty.","status":"409"})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto res = api.listTree("main");
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK(platform::github::isRepoEmptyError(res.errorCode(),
+                                                     res.errorMessage()));
+    return true;
+})
+
+REGISTER_TEST(github_put_file_sha_conflict_409_kept,
+              "github putFile: 非 empty body 的 409 仍是 sha 冲突语义（分流不误伤）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(
+        409, R"({"message":"notes/a.md is at abc but expected def"})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto res = api.putFile("notes/a.md", "x", "m", "def", "main");
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::Conflict);
+    DOCTEST_CHECK(!platform::github::isRepoEmptyError(res.errorCode(),
+                                                      res.errorMessage()));
+    return true;
+})
+
+// ---- getRepo 404 语义（bug 107）----
+
+REGISTER_TEST(github_get_repo_missing_404_message,
+              "github getRepo: 404 → NotFound + 文案点名「仓库不存在」", {
+    Recorder rec;
+    rec.plan.push_back(okResp(404, R"({"message":"Not Found","status":"404"})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto res = api.getRepo();
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::NotFound);
+    DOCTEST_CHECK(res.errorMessage().find("仓库不存在") != std::string::npos);
+    return true;
+})
+
+// ---- createRepo（bug 107）----
+
+REGISTER_TEST(github_create_repo_request_and_ok,
+              "github createRepo: POST /user/repos，body 含 name/private/auto_init=false，201 成功", {
+    Recorder rec;
+    rec.plan.push_back(okResp(201, R"({"full_name":"owner/repo","private":true})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto res = api.createRepo(/*isPrivate=*/true);
+    DOCTEST_CHECK(res.isOk());
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(rec.reqs[0].method, std::string("POST"));
+    DOCTEST_CHECK(rec.reqs[0].url.find("/user/repos") != std::string::npos);
+    DOCTEST_CHECK(rec.reqs[0].body.find("\"name\":\"repo\"") != std::string::npos);
+    DOCTEST_CHECK(rec.reqs[0].body.find("\"private\":true") != std::string::npos);
+    DOCTEST_CHECK(rec.reqs[0].body.find("\"auto_init\":false") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(github_create_repo_422_already_exists,
+              "github createRepo: 422 → AlreadyExists（名下同名仓已存在）", {
+    Recorder rec;
+    rec.plan.push_back(
+        okResp(422, R"({"message":"name already exists on this account"})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto res = api.createRepo(true);
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::AlreadyExists);
+    return true;
+})
+
+// ---- testConnection 空仓库降级（bug 106）----
+// 空仓库无基点分支可建、写探针必留痕（PUT 会创建首个 commit，破坏空态）→
+// 第③步降级为通过；可推送权限已由第②步 canPush 验证。
+
+REGISTER_TEST(github_test_connection_empty_repo_skips_probe,
+              "github testConnection: 空仓库 → 读写探针降级通过（不发写请求、无残留）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({"login":"owner"})"));
+    rec.plan.push_back(okResp(
+        200,
+        R"({"full_name":"owner/repo","default_branch":"main","private":true,"permissions":{"push":true}})"));
+    rec.plan.push_back(okResp(
+        409, R"({"message":"Git Repository is empty.","status":"409"})"));
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+
+    const auto report = api.testConnection();
+    DOCTEST_CHECK(report.ok);
+    // 只发 3 个请求（/user、getRepo、createRef 读基点）：不写探针、不删残留
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(3));
+    return true;
+})

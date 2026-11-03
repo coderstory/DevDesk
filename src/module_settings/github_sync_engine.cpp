@@ -65,6 +65,7 @@ std::vector<std::string> buildOverwriteList(
 // push 不写 dbImported），「先到先得」与抽取前 staged_ 累计写语义一致。
 void mergeSubResult(SyncRunResult& dst, SyncRunResult src) {
     dst.conflict = dst.conflict || src.conflict;
+    dst.repoMissing = dst.repoMissing || src.repoMissing;
     dst.publicRepo = dst.publicRepo || src.publicRepo;
     dst.dbImported = dst.dbImported || src.dbImported;
     if (dst.branchHint.empty()) dst.branchHint = std::move(src.branchHint);
@@ -196,6 +197,34 @@ SyncRunResult GithubSyncEngine::run(SyncAction action,
                 mergeSubResult(out, std::move(r));
                 break;
             }
+            case SyncAction::CreateRepo: {
+                // 107：仓库不存在 → 用户确认后建库（当前令牌账号名下，private）
+                // → 接首次同步。URL owner 不是令牌账号时建了也白建（同步仍打原
+                // URL、依旧 404）——明确拒绝，不造一个用不上的仓。
+                auto user = api->getAuthenticatedUser();
+                if (user.isFail()) {
+                    summary = "识别当前账号失败：" + user.errorMessage();
+                    break;
+                }
+                if (user.value() != parts.first) {
+                    summary = "仓库 " + parts.first + "/" + parts.second +
+                              " 不存在，且不在当前令牌账号（" + user.value() +
+                              "）名下，无法自动创建；请检查仓库 URL";
+                    break;
+                }
+                auto created = api->createRepo(/*isPrivate=*/true);
+                if (created.isFail()) {
+                    summary = "创建仓库失败：" + created.errorMessage();
+                    break;
+                }
+                auto r = checkedFirstSync(*api, branch);
+                ok = r.ok;
+                publicRepo = r.publicRepo;
+                summary = ok ? "仓库已创建；" + r.summary
+                             : "仓库已创建，但首次同步失败：" + r.summary;
+                mergeSubResult(out, std::move(r));
+                break;
+            }
             case SyncAction::None:
                 break;
         }
@@ -219,6 +248,8 @@ SyncRunResult GithubSyncEngine::checkedFirstSync(
     SyncRunResult out;
     auto repo = api.getRepo();
     if (repo.isOk()) out.publicRepo = repo.value().isPrivate == false;
+    // 107：仓库不存在（404）→ 标记出，UI 据此弹「是否自动创建仓库」询问。
+    else if (repo.errorCode() == core::ErrorCode::NotFound) out.repoMissing = true;
     auto report = api.testConnection(
         [this](const platform::github::TestStep& step) {
             publish(step.name + (step.ok ? " ✓" : " ✗"));
@@ -336,10 +367,30 @@ SyncRunResult GithubSyncEngine::push(platform::github::GithubApi& api,
     if (aborted()) { out.summary = "同步已中止（退出中）"; return out; }
     auto repo = api.getRepo();
     if (repo.isFail()) {
+        // 107：仓库不存在（404）→ 标记出，UI 据此弹「是否自动创建仓库」询问。
+        if (repo.errorCode() == core::ErrorCode::NotFound) {
+            out.repoMissing = true;
+        }
         out.summary = "读取仓库信息失败：" + repo.errorMessage();
         return out;
     }
     auto tree = api.listTree(branch);
+    if (tree.isFail() &&
+        platform::github::isRepoEmptyError(tree.errorCode(), tree.errorMessage())) {
+        // 空仓库：trees 端点 409（Git Repository is empty.）——不是 sha 冲突，
+        // 也不是缺分支（缺分支是 404）：仓库还没有任何分支/提交，无树可列、
+        // 无基点可建。配置分支 == 仓库默认分支时直接首传（PUT contents 产生
+        // 首个 commit 并落配置分支）；配置分支 ≠ 默认分支时空仓库造不出新
+        // 分支 → 明确报错，绝不静默把内容写错分支。
+        if (!repo.value().defaultBranch.empty() && branch != repo.value().defaultBranch) {
+            out.summary = "远端仓库为空，且配置分支 " + branch +
+                          " 不是仓库默认分支 " + repo.value().defaultBranch +
+                          "：空仓库无法创建新分支，请先用默认分支完成首次同步";
+            return out;
+        }
+        out.branchHint = "远端为空仓库，首次上传将初始化分支";
+        tree = core::Result<std::vector<platform::github::TreeEntry>>::ok({});
+    }
     if (tree.isFail() && tree.errorCode() == core::ErrorCode::NotFound) {
         if (aborted()) { out.summary = "同步已中止（退出中）"; return out; }
         auto created = api.createRef(branch, repo.value().defaultBranch);

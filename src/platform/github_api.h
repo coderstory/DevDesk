@@ -22,6 +22,12 @@ struct FileInfo { bool exists = false; std::string content; std::string sha; };
 struct TreeEntry { std::string path; std::string sha; uint64_t size = 0; };
 struct TestStep { std::string name; bool ok = false; int durationMs = 0; std::string detail; };
 struct TestReport { bool ok = false; std::vector<TestStep> steps; std::string summary; };
+
+// 409 双语义分流判据（bug 106）：refs / trees 端点对**空仓库**也回 409（响应体
+// "Git Repository is empty."，与 sha 冲突同码不同义）。错误码不加新枚举值（core
+// 公共面加值会波及所有 switch），以「Conflict + 约定文案子串『远端仓库为空』」
+// 为判据；引擎层据此把空仓引导到首次上传路径，而不是弹 sha 冲突。
+bool isRepoEmptyError(core::ErrorCode code, const std::string& message);
 // attempts = 单次调用的**总请求数**（首次 + 重试）：默认 4 = 首次 1 次 + 重试 3 次。
 // backoffMs[i] = 第 i 次重试前的等待（毫秒），表用尽后复用末项；末次请求后不等待。
 struct RetryPolicy { int attempts = 4; std::vector<int> backoffMs{1000, 3000, 9000}; };
@@ -63,6 +69,10 @@ public:
     // git refs：测试连接用（建临时分支 → 写探针 → 删分支）。fromBranch = 基点分支（取其 HEAD sha）。
     core::Result<void> createRef(const std::string& branch, const std::string& fromBranch);
     core::Result<void> deleteRef(const std::string& branch);
+    // 创建当前令牌账号名下的仓库（POST /user/repos，bug 107）。auto_init=false：
+    // 建成即空仓（无 commit / 分支），首个提交由首次同步的 PUT contents 产生，
+    // 分支即配置分支——不会留下 README 之类的初始化提交。
+    core::Result<void> createRepo(bool isPrivate);
     TestReport testConnection(std::function<void(const TestStep&)> onStep = {});
     std::vector<ApiLogEntry> recentLog() const;                        // 环形，上限 50
     static std::pair<std::string,std::string> parseRepoUrl(const std::string& url); // → owner, repo

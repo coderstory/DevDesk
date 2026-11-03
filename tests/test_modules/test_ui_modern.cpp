@@ -868,10 +868,12 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0；批L 顶距后垂直内边距 0）：
         // baseContentH = 页头40 + 统计96（5694df44 瘦身 144→96）+ gap×3(60) + 图220 + 操作44 + 快捷底边距16 = 476；
         // extraH = 720 − 476 − 0.5 = 243.5；statsGrow = 0（2026-11-01 重构：余高全归图表卡）；
-        // chartH = 220 + 243.5 = 463.5 → wrap = 463.5 − 64 = 399.5
-        // → plot = 399.5 − 112 = 287.5。
+        // chartH = 220 + 243.5 = 463.5 → wrap = 463.5 − 64 = 399.5。
+        // 池 110 比例式几何：plotY = clamp(wrap×0.30, 56, 160) = 119.85；
+        // labelY = wrap − clamp(wrap×0.06, 12, 40) − 16 = 359.53；
+        // plotH = max(40, labelY − 20 − plotY) = 219.68（旧常量式 287.5 已废）。
         // 峰值柱（600）= plot，100/600 柱 = plot/6，300/600 柱 = plot/2。
-        constexpr float kElasticPlotH = 287.5f;
+        constexpr float kElasticPlotH = 219.68f;
         const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
         const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
         const auto* bar8 = ui.find("home.api.chart.bars.bar.8");

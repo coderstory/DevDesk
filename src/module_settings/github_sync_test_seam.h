@@ -22,6 +22,7 @@ enum class GithubSyncTestAction {
     Pull,
     PullThenPush,
     FirstSync,          // 首次方向判定（远端有库→先拉后推；无→首次上传）
+    CreateRepo,         // 建私仓后接首次同步（bug 107）
     ValidateFirstSync,  // 启用开关流程：先测试连接三步，过了才做方向判定
     Test,               // 只跑测试连接
 };
@@ -30,6 +31,7 @@ struct GithubSyncTestResult {
     bool ran = false;      // 动作真的跑完（false = 超时 / 模块未启动 / 门禁未开）
     bool ok = false;       // 引擎判定的成败
     bool conflict = false; // 走了 409 冲突路径
+    bool repoMissing = false; // getRepo 404（仓库不存在，bug 107）
     bool dbImported = false;  // 本轮导入了远端 database.sql
     std::string summary;      // 卡片摘要（成功文案）
     std::string error;        // 卡片红字（成功为空）

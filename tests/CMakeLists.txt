@@ -637,6 +637,9 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         devdesk_module_home
         devdesk_module_markdown
         devdesk_module_todo
+        devdesk_module_schedule
+        devdesk_module_release
+        devdesk_module_mcp
         devdesk_agent
         devdesk_module_memory
         devdesk_module_claude_proxy

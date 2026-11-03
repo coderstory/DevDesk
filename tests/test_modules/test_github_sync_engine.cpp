@@ -1390,3 +1390,149 @@ REGISTER_TEST(ghsync_full_chain_pull_sql_download_fails_graceful,
     DOCTEST_CHECK_MESSAGE(saw500, "请求日志应含 500 条目（弹窗详情可审计）");
     return true;
 })
+
+// ── 空仓库 409 语义分流 / 仓库不存在 404（bug 106 / 107）──
+
+REGISTER_TEST(gsync_engine_push_empty_repo_uploads_without_branch_create,
+              "gsync 引擎: 空仓库 trees 409→不建分支直接首传（branchHint 提示空仓、无 Conflict）", {
+    EngineFixture fx;
+    writeNote(fx.notesDir(), "a.md", "A\n");
+    fx.seedRepo();   // default_branch=main；空仓只允许默认分支首传
+    fx.gh.routes.push_back(
+        {"GET", "/git/trees/main",
+         {okResp(409, R"({"message":"Git Repository is empty.","status":"409"})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/data/database.sql",
+                            {okResp(201, R"({"content":{"sha":"s2"}})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/notes/a.md",
+                            {okResp(201, R"({"content":{"sha":"s3"}})")}});
+
+    const SyncRunResult r = fx.engine().push(*fx.makeApi(), "main");
+
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    DOCTEST_CHECK_MESSAGE(!r.conflict, "空仓库不是 sha 冲突，不得弹 409 覆盖清单");
+    DOCTEST_CHECK(r.branchHint.find("空仓库") != std::string::npos);
+    DOCTEST_CHECK_EQ(fx.gh.count("POST", "/git/refs"), 0);
+    DOCTEST_CHECK_EQ(fx.gh.count("PUT", "/contents/notes/a.md"), 1);
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_push_empty_repo_non_default_branch_fails,
+              "gsync 引擎: 空仓库+配置分支≠默认分支→明确报错（不静默写错分支）", {
+    EngineFixture fx;
+    writeNote(fx.notesDir(), "a.md", "A\n");
+    fx.seedRepo();   // default_branch=main，配置分支 trunk
+    fx.gh.routes.push_back(
+        {"GET", "/git/trees/trunk",
+         {okResp(409, R"({"message":"Git Repository is empty.","status":"409"})")}});
+
+    const SyncRunResult r = fx.engine().push(*fx.makeApi(), "trunk");
+
+    DOCTEST_CHECK_MESSAGE(!r.ok, "空仓库不支持创建新分支，必须失败而非假成功");
+    DOCTEST_CHECK_MESSAGE(r.summary.find("默认分支") != std::string::npos,
+                          "summary=" + r.summary);
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_firstsync_empty_repo_uploads_first,
+              "gsync 引擎: FirstSync 空仓库全链（测试连接探针降级 + 探测 404 + 首传）", {
+    EngineFixture fx;
+    writeNote(fx.notesDir(), "a.md", "A\n");
+    // testConnection 三步：① /user ② getRepo ③ createRef 读基点（空仓 409）
+    fx.gh.routes.push_back({"GET", "/user", {okResp(200, R"({"login":"owner"})")}});
+    fx.seedRepo();
+    fx.gh.routes.push_back(
+        {"GET", "/git/ref/heads/main",
+         {okResp(409, R"({"message":"Git Repository is empty.","status":"409"})")}});
+    // firstSync 探针：contents 对空仓 404 → missing → 走 Push
+    fx.gh.routes.push_back(
+        {"GET", "/contents/data/database.sql",
+         {okResp(404, R"({"message":"This repository is empty."})")}});
+    // push：trees 409-empty → 空仓首传（PUT 产生首个 commit）
+    fx.gh.routes.push_back(
+        {"GET", "/git/trees/main",
+         {okResp(409, R"({"message":"Git Repository is empty.","status":"409"})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/data/database.sql",
+                            {okResp(201, R"({"content":{"sha":"s2"}})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/notes/a.md",
+                            {okResp(201, R"({"content":{"sha":"s3"}})")}});
+
+    const SyncRunResult r = fx.engine().run(
+        SyncAction::FirstSync, "https://github.com/owner/repo", "tok", "main");
+
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    DOCTEST_CHECK_MESSAGE(!r.conflict, "summary=" + r.summary);
+    DOCTEST_CHECK(r.summary.find("首次上传") != std::string::npos);
+    DOCTEST_CHECK_EQ(fx.gh.count("POST", "/git/refs"), 0);
+    DOCTEST_CHECK_EQ(fx.gh.count("DELETE", "/git/refs/"), 0);
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_firstsync_repo_missing_flag,
+              "gsync 引擎: FirstSync 仓库不存在(404)→repoMissing 标记 + 摘要点名「仓库不存在」", {
+    EngineFixture fx;
+    writeNote(fx.notesDir(), "a.md", "A\n");
+    fx.gh.routes.push_back({"GET", "/user", {okResp(200, R"({"login":"owner"})")}});
+    fx.gh.routes.push_back({"GET", "/repos/owner/repo",
+                            {okResp(404, R"({"message":"Not Found","status":"404"})")},
+                            true});
+
+    const SyncRunResult r = fx.engine().run(
+        SyncAction::FirstSync, "https://github.com/owner/repo", "tok", "main");
+
+    DOCTEST_CHECK(!r.ok);
+    DOCTEST_CHECK(r.repoMissing);
+    DOCTEST_CHECK(r.summary.find("仓库不存在") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_create_repo_then_firstsync,
+              "gsync 引擎: CreateRepo=识别账号→建私仓(auto_init=false)→接首次同步", {
+    EngineFixture fx;
+    writeNote(fx.notesDir(), "a.md", "A\n");
+    fx.gh.routes.push_back({"GET", "/user", {okResp(200, R"({"login":"owner"})")}});
+    fx.gh.routes.push_back({"POST", "/user/repos", {okResp(201, "{}")}});
+    fx.seedRepo();   // 建库后 checkedFirstSync 的 getRepo
+    fx.gh.routes.push_back(
+        {"GET", "/git/ref/heads/main",
+         {okResp(409, R"({"message":"Git Repository is empty.","status":"409"})")}});
+    fx.gh.routes.push_back(
+        {"GET", "/contents/data/database.sql",
+         {okResp(404, R"({"message":"This repository is empty."})")}});
+    fx.gh.routes.push_back(
+        {"GET", "/git/trees/main",
+         {okResp(409, R"({"message":"Git Repository is empty.","status":"409"})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/data/database.sql",
+                            {okResp(201, R"({"content":{"sha":"s2"}})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/notes/a.md",
+                            {okResp(201, R"({"content":{"sha":"s3"}})")}});
+
+    const SyncRunResult r = fx.engine().run(
+        SyncAction::CreateRepo, "https://github.com/owner/repo", "tok", "main");
+
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    bool sawCreate = false;
+    for (const auto& req : fx.gh.reqs) {
+        if (req.method == "POST" && req.url.find("/user/repos") != std::string::npos) {
+            sawCreate = true;
+            DOCTEST_CHECK(req.body.find("\"name\":\"repo\"") != std::string::npos);
+            DOCTEST_CHECK(req.body.find("\"private\":true") != std::string::npos);
+            DOCTEST_CHECK(req.body.find("\"auto_init\":false") != std::string::npos);
+        }
+    }
+    DOCTEST_CHECK(sawCreate);
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_create_repo_owner_mismatch_rejected,
+              "gsync 引擎: CreateRepo owner≠令牌账号→拒绝（建了也 404，不造废仓）", {
+    EngineFixture fx;
+    fx.gh.routes.push_back({"GET", "/user", {okResp(200, R"({"login":"someone-else"})")}});
+
+    const SyncRunResult r = fx.engine().run(
+        SyncAction::CreateRepo, "https://github.com/owner/repo", "tok", "main");
+
+    DOCTEST_CHECK(!r.ok);
+    DOCTEST_CHECK_EQ(fx.gh.count("POST", "/user/repos"), 0);
+    DOCTEST_CHECK(r.summary.find("无法自动创建") != std::string::npos);
+    return true;
+})

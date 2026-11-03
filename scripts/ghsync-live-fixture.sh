@@ -188,6 +188,32 @@ case "${cmd}" in
         fi
         echo "OK delete-destroy ${REPO_DESTROY}"
         ;;
+    delete-repo)    # $1 = owner/repo：删任意仓（404 = 已不存在，幂等成功）
+        req DELETE "/repos/$1"
+        if [ "${CODE}" != "204" ] && [ "${CODE}" != "404" ]; then
+            echo "❌ 删除 $1 失败 HTTP ${CODE}" >&2
+            exit 1
+        fi
+        echo "OK delete-repo $1"
+        ;;
+    ensure-empty)   # $1 = owner/repo：删后重建为**空私仓**（auto_init=false）。
+        # 幂等保证空仓态（bug 106 的 409-empty 场景可重演）；对活体空仓也先删后建，
+        # 确保不留上一轮的首传内容。
+        req DELETE "/repos/$1"
+        if [ "${CODE}" != "204" ] && [ "${CODE}" != "404" ]; then
+            echo "❌ 删除 $1 失败 HTTP ${CODE}" >&2
+            exit 1
+        fi
+        payload="${TMPBODY}.repo"
+        printf '{"name":"%s","private":true,"auto_init":false}' "${1##*/}" > "${payload}"
+        req POST "/user/repos" "${payload}"
+        rm -f "${payload}"
+        if [ "${CODE}" != "201" ]; then
+            echo "❌ 创建空仓 $1 失败 HTTP ${CODE}: $(head -c 300 "${TMPBODY}")" >&2
+            exit 1
+        fi
+        echo "OK ensure-empty $1"
+        ;;
     set-note)
         put_path "${REPO}" "notes/$1" "$2" "fixture: set note $1"
         echo "OK set-note $1"

@@ -952,6 +952,7 @@ public:
                 githubSyncStagedOk_ = result.ok;
                 githubSyncStagedSummary_ = result.summary;
                 githubSyncStagedConflict_ = result.conflict;
+                githubSyncStagedRepoMissing_ = result.repoMissing;
                 githubSyncStagedPublicRepo_ = result.publicRepo;
                 githubSyncStagedBranchHint_ = result.branchHint;
                 githubSyncStagedOverwriteFiles_ = result.overwriteFiles;
@@ -999,12 +1000,14 @@ public:
         githubSyncRunning_ = false;
         githubSyncProgress_.clear();
         bool conflict = false;
+        bool repoMissing = false;
         {
             std::lock_guard<std::mutex> lk(githubSyncMutex_);
             githubSyncLogs_ = githubSyncStagedLogs_;
             githubSyncResultOk_ = githubSyncStagedOk_;
             githubSyncResultSummary_ = githubSyncStagedSummary_;
             conflict = githubSyncStagedConflict_;
+            repoMissing = githubSyncStagedRepoMissing_;
             if (githubSyncStagedPublicRepo_) githubSyncRepoPublic_ = true;
             if (!githubSyncStagedBranchHint_.empty()) {
                 githubSyncBranchHint_ = githubSyncStagedBranchHint_;
@@ -1022,6 +1025,7 @@ public:
         const bool dbImportedThisRun =
             githubSyncStagedDbImported_.exchange(false, std::memory_order_acq_rel);
         githubSyncLastConflict_ = conflict;
+        githubSyncLastRepoMissing_ = repoMissing;
         githubSyncLastDbImported_ = dbImportedThisRun;
         if (dbImportedThisRun) {
             if (githubSyncStore_) {
@@ -1038,6 +1042,7 @@ public:
                 githubSyncLastAction_ == SyncAction::Push ||
                 githubSyncLastAction_ == SyncAction::PullThenPush ||
                 githubSyncLastAction_ == SyncAction::FirstSync ||
+                githubSyncLastAction_ == SyncAction::CreateRepo ||
                 githubSyncLastAction_ == SyncAction::ValidateFirstSync;
             if (pushedToRemote) {
                 // commit 成功 → 清 dirty + 记时刻（节流窗口起点）。
@@ -1058,6 +1063,7 @@ public:
             githubSyncError_.clear();
             // 首次方向跑成功 → 落「首次已完成」（repoUrl/branch 变更时清除）。
             if ((githubSyncLastAction_ == SyncAction::FirstSync ||
+                 githubSyncLastAction_ == SyncAction::CreateRepo ||
                  githubSyncLastAction_ == SyncAction::ValidateFirstSync) &&
                 githubSyncStore_) {
                 if (auto r = githubSyncStore_->setFirstSyncDone(); r.isFail()) {
@@ -1078,7 +1084,7 @@ public:
         // 变体判定抽在 git_error_dialog 的纯函数里（可离线单测）：409 走冲突变体、
         // 401 走定向引导、其余通用。判据 = 请求日志状态码（SyncRunResult 不带错误码）。
         githubSyncErrorDialog_.variant =
-            variantForSyncFailure(githubSyncLogs_, conflict);
+            variantForSyncFailure(githubSyncLogs_, conflict, repoMissing);
         // H1: 手动失败不再自动弹弹窗——错误留在卡片内，用户点「查看详情」才弹。
         // 自动同步失败只留卡片红字 + 详情入口（无变更：本来就不弹）。
         // 启用流程的校验失败同自动路径（无变更：本来就不弹）。
@@ -1096,6 +1102,12 @@ public:
         GitErrorDialogActions a;
         a.retry = [this] { retryGithubSync(); };
         a.pullThenPush = [this] { githubSyncPullThenPush(); };
+        a.createRepo = [this] {
+            // 107：确认建库（private、令牌账号名下）→ 引擎 CreateRepo 建完直接接
+            // 首次同步。取消 = 关闭弹窗，干净中止（不动任何配置）。
+            closeGithubSyncErrorDialog();
+            startGithubSyncAction(SyncAction::CreateRepo, /*manual=*/true);
+        };
         a.updateToken = [this] {
             // 401 定向引导：关弹窗把用户送回卡片（Token 输入框就在卡片顶部），
             // 并给一句可执行的下一步。不动 githubSyncError_ —— 401 红字要留着，
@@ -1790,6 +1802,7 @@ private:
     std::string githubSyncStagedSummary_;
     bool githubSyncStagedOk_ = false;
     bool githubSyncStagedConflict_ = false;
+    bool githubSyncStagedRepoMissing_ = false;   // getRepo 404（bug 107）
     bool githubSyncStagedPublicRepo_ = false;
     std::string githubSyncStagedBranchHint_;
     // 409 时「拉取将覆盖的本地未推文件」清单（后台线程产出 → UI 搬运）。
@@ -1812,6 +1825,7 @@ private:
     // 上一轮完成的动作是否走了 409 冲突 / 是否导入过远端库：harvest 从 staged 搬来
     //（conflict 原本只进弹窗 variant、dbImported 原本被 exchange 消费掉，测试缝读不到）。
     bool githubSyncLastConflict_ = false;
+    bool githubSyncLastRepoMissing_ = false;   // 404 弹窗「自动创建仓库」变体判据
     bool githubSyncLastDbImported_ = false;
     SyncAction githubSyncLastAction_ = SyncAction::None;  // 弹窗「重试」按原动作重跑
     bool githubSyncLastManual_ = false;   // 手动失败才弹窗；自动失败只留卡片红字
@@ -1886,6 +1900,7 @@ GithubSyncTestResult SettingsModule::runGithubSyncForTest(
     // 先收掉上一轮残留：结果成员是「最近一次 harvest 的产物」，不清会把旧值当本轮。
     harvestGithubSync();
     githubSyncLastConflict_ = false;
+    githubSyncLastRepoMissing_ = false;
     githubSyncLastDbImported_ = false;
     SyncAction a = SyncAction::None;
     switch (action) {
@@ -1893,6 +1908,7 @@ GithubSyncTestResult SettingsModule::runGithubSyncForTest(
         case GithubSyncTestAction::Pull: a = SyncAction::Pull; break;
         case GithubSyncTestAction::PullThenPush: a = SyncAction::PullThenPush; break;
         case GithubSyncTestAction::FirstSync: a = SyncAction::FirstSync; break;
+        case GithubSyncTestAction::CreateRepo: a = SyncAction::CreateRepo; break;
         case GithubSyncTestAction::ValidateFirstSync:
             a = SyncAction::ValidateFirstSync;
             break;
@@ -1916,6 +1932,7 @@ GithubSyncTestResult SettingsModule::runGithubSyncForTest(
     out.summary = githubSyncResultSummary_;
     out.error = githubSyncError_;
     out.conflict = githubSyncLastConflict_;
+    out.repoMissing = githubSyncLastRepoMissing_;
     out.dbImported = githubSyncLastDbImported_;
     out.overwriteFiles = githubSyncOverwriteFiles_;
     out.branchHint = githubSyncBranchHint_;

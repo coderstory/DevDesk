@@ -481,6 +481,62 @@ void scenarioGitHistory(Report& r) {
     r.note("N/A：功能未实现（无本地 git 版本历史），无可测对象");
 }
 
+// ── 空仓库 409 语义分流 / 仓库不存在自动建库（bug 106 / 107）──
+// 这两个场景的仓库走环境变量（DEVDESK_GH_EMPTY_REPO / DEVDESK_GH_AUTOCREATE_REPO，
+// 默认 private_notes / private_notes-test-auto）：场景表 repoUrl 是编译期常量，
+// main 里用 DEVDESK_GH_REPO_OVERRIDE 把配置指到环境变量值。
+
+// 16 空仓库 FirstSync：refs/trees 端点 409（Git Repository is empty.）不得误报
+// sha 冲突——测试连接探针降级、方向判定走首次上传、PUT contents 初始化分支；
+// 测毕恢复空仓态（409 场景可重演）。
+void scenarioEmptyRepoFirstSync(Report& rep) {
+    const char* repo = std::getenv("DEVDESK_GH_EMPTY_REPO");
+    const std::string url =
+        repo != nullptr ? repo : "https://github.com/coderstory/private_notes";
+    const std::string ownerRepo = url.substr(url.find("github.com/") + 11);
+    setenv("DEVDESK_GH_REPO", ownerRepo.c_str(), 1);   // fixture 的 cat 指到空仓
+    CmdResult r0 = fixture({"ensure-empty", ownerRepo});
+    rep.check(r0.code == 0, "夹具恢复空仓态: " + r0.out);
+    rep.check(writeNote("empty1.md", "EMPTY-1\n"), "写本地笔记 empty1.md");
+    auto r = run(ms::GithubSyncTestAction::FirstSync, true);
+    rep.check(r.ran, "动作跑完（未超时）");
+    rep.check(r.ok, "FirstSync 成功（无 409 误报）: " + r.summary);
+    rep.check(!r.conflict, "未误判 409 冲突（不弹覆盖清单）");
+    rep.check(r.summary.find("首次上传") != std::string::npos,
+              "方向判定 = 首次上传（摘要含「首次上传」）");
+    rep.check(remoteCat("notes/empty1.md", "main") == "EMPTY-1\n",
+              "远端 notes/empty1.md 内容正确（分支已初始化）");
+    rep.evidence("summary=" + r.summary);
+    CmdResult back = fixture({"ensure-empty", ownerRepo});
+    rep.check(back.code == 0, "测毕恢复空仓态（409-empty 场景可重演）");
+}
+
+// 17 仓库不存在 → FirstSync 带 repoMissing 标记 +「仓库不存在」文案（UI 据此
+// 询问）→ CreateRepo 建私仓并接首同步；测毕删除临时仓。
+void scenarioRepoMissingAutoCreate(Report& rep) {
+    const char* repo = std::getenv("DEVDESK_GH_AUTOCREATE_REPO");
+    const std::string url =
+        repo != nullptr ? repo : "https://github.com/coderstory/private-notes-test-auto";
+    const std::string ownerRepo = url.substr(url.find("github.com/") + 11);
+    setenv("DEVDESK_GH_REPO", ownerRepo.c_str(), 1);
+    CmdResult pre = fixture({"delete-repo", ownerRepo});
+    rep.check(pre.code == 0, "夹具清理起点（仓不存在）: " + pre.out);
+    rep.check(writeNote("auto1.md", "AUTO-1\n"), "写本地笔记 auto1.md");
+    auto miss = run(ms::GithubSyncTestAction::FirstSync, true);
+    rep.check(miss.ran && !miss.ok, "FirstSync 失败（仓库不存在，未假成功）");
+    rep.check(miss.repoMissing, "repoMissing 标记已带出（UI 据此询问自动建库）");
+    rep.check(miss.error.find("仓库不存在") != std::string::npos,
+              "红字点名「仓库不存在」: " + miss.error);
+    auto created = run(ms::GithubSyncTestAction::CreateRepo, true);
+    rep.check(created.ran && created.ok,
+              "CreateRepo 建私仓并完成首次同步: " + created.summary);
+    rep.check(remoteCat("notes/auto1.md", "main") == "AUTO-1\n",
+              "远端 notes/auto1.md 内容正确（建库后首传落配置分支）");
+    rep.evidence("summary=" + created.summary);
+    CmdResult del = fixture({"delete-repo", ownerRepo});
+    rep.check(del.code == 0, "测毕删除临时测试仓");
+}
+
 struct Scenario {
     const char* id;
     const char* title;
@@ -516,6 +572,11 @@ const Scenario kScenarios[] = {
     {"git-unavailable", "14 本地 git 不可用（不阻断同步）", kRepoMain, "main",
      &scenarioGitUnavailable},
     {"git-history", "15 本地 git 版本历史", kRepoMain, "main", &scenarioGitHistory},
+    // 16/17：仓库 URL 运行时经 DEVDESK_GH_REPO_OVERRIDE 覆盖（见场景函数注释）
+    {"empty-repo-firstsync", "16 空仓库 FirstSync（409 分流，不误报冲突）",
+     kRepoMain, "main", &scenarioEmptyRepoFirstSync},
+    {"repo-missing-autocreate", "17 仓库不存在 → 自动建库 + 首同步",
+     kRepoMain, "main", &scenarioRepoMissingAutoCreate},
 };
 
 const Scenario* findScenario(const std::string& id) {
@@ -591,7 +652,11 @@ int main(int argc, char** argv) {
     int failedScenarios = 0;
     for (const Scenario* s : todo) {
         std::printf("\n=== SCENARIO %s — %s ===\n", s->id, s->title);
-        saveConfig(s->repoUrl, s->branch);   // 必须先于 onStart：引擎只在启动时读配置
+        // 16/17 场景的仓库走环境变量覆盖（编译期场景表装不下运行时决定的目标仓）
+        const char* repoOverride = std::getenv("DEVDESK_GH_REPO_OVERRIDE");
+        saveConfig(repoOverride != nullptr ? std::string(repoOverride)
+                                           : std::string(s->repoUrl),
+                   s->branch);   // 必须先于 onStart：引擎只在启动时读配置
         ::core::Module* mod = create_settings_module();
         mod->onStart();
         Report rep;

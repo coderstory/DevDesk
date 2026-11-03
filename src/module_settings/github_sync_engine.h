@@ -33,7 +33,8 @@ namespace module::settings {
 // 呈现——ValidateFirstSync 由启用开关触发、失败不弹窗（用户刚拨开关，弹窗等于
 // 打断）；FirstSync 由手动「立即同步」触发、失败弹窗。校验强度必须一致：首次
 // 同步要么拉远端覆盖本地库、要么上传全量，配置未经验证就动数据是不可接受的）。
-enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync, ValidateFirstSync };
+enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync, ValidateFirstSync,
+                        CreateRepo };
 
 // 一次动作的结果：引擎产出、UI 侧消费；零 UI 类型依赖（无 eui / 无卡片结构）。
 // 字段一一对应原 staged_* 暂存面（搬运语义不变：join 后由线程 lambda 搬进
@@ -42,6 +43,8 @@ struct SyncRunResult {
     bool ok = false;
     std::string summary;
     bool conflict = false;                     // 409 → UI 走冲突弹窗变体
+    // getRepo 404 → UI 走「自动创建仓库」询问变体（bug 107）。
+    bool repoMissing = false;
     bool publicRepo = false;                   // 测试连接发现 public 仓 → 黄字
     std::string branchHint;                    // 分支被自动创建提示
     std::vector<std::string> overwriteFiles;   // 409 覆盖清单（原 stashOverwriteListForConflict）
