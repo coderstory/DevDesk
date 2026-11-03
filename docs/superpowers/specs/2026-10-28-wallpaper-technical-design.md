@@ -129,6 +129,17 @@
 | 视频容器白名单 | mp4/mov/m4v | mp4/mov/m4v（**实测** mkv/webm/avi 均 `Cannot Open`） | 两平台实际可播范围相同，共用 `core/video_library.cpp` 白名单不改 |
 | 图片铺法 | 仅填充（mpv `--panscan=1.0`） | 四种全实现 | macOS 更强；差异记录见需求书 I1 |
 
+### 2.9 「从花見导入」（macOS 专属，2026-11-04 交付）
+
+照搬参考实现（pic）已验证的语义，身份判据按 DevDesk 决策改为**文件名+字节大小**：
+
+- **来源**：`~/Library/Containers/whbalzac.Huajian/Data/Documents/Videos` 顶层 mp4（跳过隐藏与符号链接，字典序）；读不了报 `sourceMissing`，不区分不存在与无权限（TCC）。
+- **身份签名** = `文件名 + \x1f + 字节大小`（`core/importer.h` 的 `makeSignature`）。不做内容哈希：视频几十上百 MB，导入是用户点一次等着的操作，读盘量能省则省；`\x1f` 消除「(a1,2) vs (a,12)」拼接歧义。**既定取舍**：内容相同但名字不同的文件照导（不去重）。
+- **判定顺序即语义**（`decide()`）：① 目标已存在（连 stat 都省）→ ② 取不到大小 → ③ 墓碑命中（不再探视频轨）→ ④ 无视频轨 → 导入。
+- **墓碑**：SQLite（`deleted_video_signature` 表，随应用数据）。DevDesk 壁纸 UI 无删除入口（永久不做清单 #2），删除走 Finder→废纸篓——**每次导入开头把 ~/.Trash 顶层 mp4 幂等回填进库，回填即删除钩子**。坏库删文件重建，读写失败一律不拦导入。
+- **拷贝**：`copy_file` → `<同名>.tmp` → `rename`（同卷原子）；`.tmp` 不在扫描白名单，半截拷贝永不会被当成品。rename 失败但目标已存在按已存在计（并发导入自愈）。
+- 纯决策层（`core/importer.h`）零 IO，判定矩阵纯单测；真文件系统动作走沙箱端到端（HOME + `DEVDESK_DATA_ROOT` 双覆盖，见测试清单卡 F6）。
+
 ## 3. 决策记录表
 
 | 日期 | 决策 | 依据 |
@@ -141,13 +152,14 @@
 | 2026-10-28 | 图片播放**走 mpv 直播路径**（`--wid` 嵌入 + `--image-display-duration=inf` 常驻），自绘四铺法（Fit/Center/Tile）**deferred**（非永久不做；Fill 经 `--panscan=1.0` 生效，枚举与持久化留位） | commit `62c74e1a`；`mpv_controller.h:72-96` |
 | 2026-10-27 起（全程） | mpv.exe **不进 git**；打包期 `MPV_BIN` 源缺失即失败；GPL 告示随包 | handoff §6；commit `6914c3d6` + `a161a206` |
 | 2026-11-03 | macOS 走 **AVFoundation 原生路线**（AVQueuePlayer + 自绘 CALayer），不移植 mpv：原生硬解功耗更好、无外部进程、无 GPL 分发负担；接口层（MpvController/PlayerBackend）保持不变，服务层零改动 | 真机探针 + 进程内图层渲染实证 |
+| 2026-11-04 | 导入身份判据 = **文件名+字节大小**，不做内容 MD5（先实现过 MD5 再主动撤掉）：内容哈希要把每个视频整读一遍，花見下载的文件名自带唯一性 | 用户决策；测试清单卡 F6 |
 
 ## 4. 测试与探针底稿（后续会话的验证入口）
 
 - 定向跑法：`bash scripts/build-test-run.sh --filter wallpaper`（构建纪律见仓库 CLAUDE.md：worktree 隔离、工具链 PATH 前置、禁主工作树构建）。
 - 单测：`test_wallpaper_core.cpp`（纯逻辑全矩阵） / `test_wallpaper_ui.cpp` / `test_wallpaper_module.cpp`（门控注册） / `test_wallpaper_platform.cpp`（IPC 死锁回归网） / `test_wallpaper_tray.cpp`。
 - **macOS 探针**：`wallpaper_macos_probe`（宿主/播放/让路组件契约，8 组断言；视频素材 `--video` 指定，缺省跑图片段）、`wallpaper_service_macos_probe`（真服务端到端 23 项：扫描/混合池/换片/图片/四铺法/暂停/停止/二次启动）。
-- **macOS 单测**：`test_wallpaper_macos_platform.cpp`（17 条：四铺法几何矩阵 / 全屏覆盖率聚合含同 pid 拼接与内缩补偿 / 图片探针 unknown 语义）。
+- **macOS 单测**：`test_wallpaper_macos_platform.cpp`（17 条：四铺法几何矩阵 / 全屏覆盖率聚合含同 pid 拼接与内缩补偿 / 图片探针 unknown 语义）+ `test_wallpaper_importer.cpp`（11 条：签名歧义消除 / 判定矩阵五分支与顺序 / 分项计数不串味）。
 - 真机探针（`tests/probes/`）：`wallpaper_desktop_probe`（WorkerW+mpv 生命周期 5 场景） / `wallpaper_rotation_probe`（扫描/轮换/过滤端到端） / `wallpaper_image_rotation_probe`（视频↔图片自动切换） / `wallpaper_yield_probe`（让路四路真机，读 mpv IPC 实测暂停） / `wallpaper_probe`（真窗口 UI + 截图）。
 - 收口记录：2026-10-28 全量构建+全量测试收绿（Release 增量，`build-test-run.sh --release --no-run`），判据 Total 全过 0 Failed + 守卫绿；结果见当日回单。
 

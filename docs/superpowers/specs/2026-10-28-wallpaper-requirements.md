@@ -46,6 +46,7 @@
 | C2 | **图片档位过滤**：低于 2K 档（2560×1440，即 368 万像素）的图片不入池；片库页显示真实的「参与轮播 / 低于档位」两个计数（不是摆设） | ✅ | commit `283fed9f`（WIC 头解码+真实计数+文案反转）；假探针过滤矩阵单测（`22a99daa`） |
 | C3 | 尺寸读不出来的图片**不过滤**（宁可放行，不误杀） | ✅ | `image_probe` 接口语义（known=false → 放行）；过滤矩阵单测覆盖 |
 | C4 | 早先「过滤尚未实现、文案不得宣称」的口径已反转——现在两格计数为真 | ✅ | handoff §6 旧口径 → `283fed9f` 落地后废除；UI 单测断言新文案 |
+| C5 | **「从花見导入」**（macOS）：一键把花見（Huajian）App 下载的视频批量拷进当前壁纸文件夹；身份判据 = **文件名+字节大小**（不做内容哈希）；墓碑库防「删一次导一次全回来」 | ✅ | 2026-11-04 交付；`test_wallpaper_importer.cpp`（11 条）+ 沙箱端到端 12 项全过（测试清单卡 F6） |
 
 ### D. 轮换
 
@@ -117,6 +118,9 @@
 - 图片四种铺法（填充/适应/居中/平铺）在 macOS 上**全部实现**（Windows 仍只有填充，见 I1）。
 - 真机验证口径：`wallpaper_macos_probe`（宿主/播放/让路各组件契约）+ `wallpaper_service_macos_probe`
   （真服务装配端到端：扫描 → 混合池 → 换片 → 图片 → 暂停 → 停止 → 二次启动）。
+- **「从花見导入」按钮**（片库页）：把花見容器里下载的视频导入当前壁纸文件夹。身份判据 = 文件名+字节大小
+  （不做内容哈希——视频几十上百 MB，导入不该整读一遍）；删除走 Finder→废纸篓，每次导入开头把
+  ~/.Trash 顶层 mp4 幂等回填进墓碑库（SQLite，随应用数据）。Windows 无此功能（花見是 macOS App）。
 
 ## 证据索引（探针与断言量级）
 
@@ -127,6 +131,10 @@
 | `test_wallpaper_module.cpp` | 门控/注册/开关/持久化 | 82 条断言 |
 | `test_wallpaper_platform.cpp` | IPC 纯逻辑+死锁回归网 | 61 条断言 |
 | `test_wallpaper_tray.cpp` | 托盘桥缝 | 54 条断言 |
+| `test_wallpaper_macos_platform.cpp` | 四铺法几何 / 全屏覆盖率聚合 / 图片探针 unknown 语义 | 17 条断言 |
+| `test_wallpaper_importer.cpp` | 导入身份签名 / 判定矩阵 / 分项计数 | 11 条断言 |
+| `wallpaper_macos_probe` | macOS 平台层组件契约（宿主/播放/让路） | 8 组检查 |
+| `wallpaper_service_macos_probe` | macOS 真服务端到端 | 23 项检查 |
 | `wallpaper_desktop_probe` | 真桌面：WorkerW+mpv 全生命周期 | 5 场景 |
 | `wallpaper_rotation_probe` | 真机：扫描/轮换/过滤端到端 | 18 处检查 |
 | `wallpaper_image_rotation_probe` | 真机：视频↔图片自动切换 | 21 处检查 |

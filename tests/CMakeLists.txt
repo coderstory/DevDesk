@@ -201,6 +201,8 @@ add_executable(devdesk_tests
     test_modules/test_wallpaper_tray.cpp
     # macOS 平台层纯逻辑：图片四铺法几何 / 全屏覆盖率聚合 / 图片尺寸头解码
     test_modules/test_wallpaper_macos_platform.cpp
+    # 从花見导入纯逻辑：零依赖 MD5（RFC 1321 向量 + 分块一致性）+ 去重判定矩阵
+    test_modules/test_wallpaper_importer.cpp
     test_modules/test_splash_contract.cpp
     test_modules/test_release_basic.cpp
     # 上线模块（Release）：纯逻辑 / 存储 / 两个页面 UI。四个源文件名由任务卡定死；

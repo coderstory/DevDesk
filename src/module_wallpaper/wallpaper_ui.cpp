@@ -899,7 +899,13 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
         // 路径行：mono、省略；目录缺失追加「· 目录不见了」。不显示任何文件名。
         const float selectW = 88.0f;
         const float rescanW = 88.0f;
-        const float actionsW = selectW + 8.0f + rescanW;
+        // 「从花見导入…」只在该平台提供动作时建（Windows 没有这个来源目录）：
+        // 不建 = 不占位，路径区宽度自然回退。
+        const bool hasImport = static_cast<bool>(actions.importVideos);
+        const float importW = 104.0f;
+        const float importGap = hasImport ? 8.0f : 0.0f;
+        const float actionsW =
+            selectW + 8.0f + rescanW + importGap + (hasImport ? importW : 0.0f);
         const float pathX = 48.0f;
         const float pathW =
             std::max(0.0f, w - kCardPad - pathX - actionsW - 16.0f);
@@ -948,6 +954,18 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
         ui_kit::button(ui, "wallpaper.folder.rescan", "重新扫描",
                        ui_kit::ButtonLevel::Text, selectX + selectW + 8.0f,
                        54.0f, rescanW, ui_kit::kButtonHeight, t, rescanOptions);
+        if (hasImport) {
+            ui_kit::ButtonOptions importOptions;
+            // 导入进行中禁用（防重入）；扫描中同样禁（扫描与导入会抢同一目录）。
+            if (!scanning && !snapshot.importing) {
+                const auto onImport = actions.importVideos;
+                importOptions.onClick = [onImport] { onImport(); };
+            }
+            ui_kit::button(ui, "wallpaper.folder.import", "从花見导入…",
+                           ui_kit::ButtonLevel::Text,
+                           selectX + selectW + 8.0f + rescanW + 8.0f, 54.0f,
+                           importW, ui_kit::kButtonHeight, t, importOptions);
+        }
         if (scanning) {
             // 扫描中按钮禁用（视觉 + 无回调）；统计暂时隐藏。
             ui.rect("wallpaper.folder.select.disabled")
@@ -969,7 +987,28 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
         }
 
         const bool showStats = configured && !missing && !scanning;
-        if (scanning) {
+        if (snapshot.importing) {
+            // 导入进行中：显示 done/total 进度条位（真数字，不是滚动动画）。
+            ui.stack("wallpaper.folder.importing")
+                .position(kCardPad, 102.0f)
+                .size(std::max(0.0f, w - kCardPad * 2.0f), 26.0f)
+                .content([&] {
+                    const std::string text =
+                        snapshot.importTotal > 0
+                            ? ("正在从花見导入… " + std::to_string(snapshot.importDone) +
+                               " / " + std::to_string(snapshot.importTotal))
+                            : std::string("正在从花見导入…");
+                    ui.text("wallpaper.folder.importing.text")
+                        .position(0.0f, 0.0f)
+                        .size(std::max(0.0f, w - kCardPad * 2.0f), roundFs(24.0f))
+                        .text(text)
+                        .fontSize(fs(14.0f))
+                        .lineHeight(roundFs(24.0f))
+                        .color(t.colors.textSecondary)
+                        .build();
+                })
+                .build();
+        } else if (scanning) {
             ui.stack("wallpaper.folder.scanning")
                 .position(kCardPad, 102.0f)
                 .size(std::max(0.0f, w - kCardPad * 2.0f), 26.0f)
@@ -1016,6 +1055,21 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
                                    std::to_string(snapshot.imageFiltered), "低于档位",
                                    t, false);
             }
+        }
+
+        if (!snapshot.importing && !snapshot.importSummary.empty()) {
+            // 最近一次导入的读数：一行等宽字，长路径/长文案省略不换行。
+            ui.text("wallpaper.folder.import.summary")
+                .position(kCardPad, showStats ? 146.0f : 132.0f)
+                .size(std::max(0.0f, w - kCardPad * 2.0f), roundFs(20.0f))
+                .text(snapshot.importSummary)
+                .fontSize(fs(12.0f))
+                .lineHeight(roundFs(20.0f))
+                .maxWidth(std::max(0.0f, w - kCardPad * 2.0f))
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .color(t.colors.textTertiary)
+                .build();
         }
 
         hintText(ui, "wallpaper.folder.hint",

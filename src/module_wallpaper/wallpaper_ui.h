@@ -35,6 +35,9 @@ struct UiActions {
     std::function<void(ImageFit)> setImageFit;
     std::function<void()> selectFolder;  // 弹出目录选择并写入服务
     std::function<void()> rescan;
+    // 「从花見导入…」：把花見 App 下载的视频批量拷进当前壁纸文件夹（带去重/墓碑）。
+    // 仅在 macOS 装配；空 = 该平台不提供此入口（按钮不建）。
+    std::function<void()> importVideos;
     std::function<void()> togglePause;
     std::function<void()> next;
 };

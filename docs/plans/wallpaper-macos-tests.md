@@ -19,7 +19,7 @@
 ### F1 — 纯逻辑单测（17 条，`tests/test_modules/test_wallpaper_macos_platform.cpp`）
 四铺法几何矩阵（Fill/Fit/Center/Tile 各自落位 + 退化输入 + 四模式确不相同）、全屏覆盖率聚合（单窗口/半屏/同 pid 拼接/异 pid 取最大/溢出封顶/空与零尺寸/内缩补偿/坐标翻转）、图片探针 unknown 语义（不存在/假 PNG/空路径）。
 
-实测：`--filter wallpaper` → **Total 67 / Failed 0**（含原有 50 条）。
+实测：`--filter wallpaper` → **Total 78 / Failed 0**（50 原有 + 平台层 17 + 导入 11，F6 交付后更新）。
 
 ### F2 — 平台层真机探针（`tests/probes/wallpaper_macos_probe.cpp`）
 §1 宿主建窗 2940×1912（1470×956@2x）· §2 视频真实播放（4s 内位置前进）· §3 暂停冻结 + 恢复续播 · §4 seek 落位 · §5 图片 position 恒 0 · §6 四铺法下发无错 · §7 stop 幂等无残留 · §8 让路 watcher 启动 + 双轮询通道。
@@ -50,6 +50,21 @@
 ### F5 — 图片尺寸探针真机
 `/tmp/wall-test-4k.png` → `known=1 2560x1440`；`assets/icon.png` → `known=1 256x256`。
 
+### F6 — 「从花見导入」（2026-11-04，身份判据 = 文件名+字节大小）
+
+纯逻辑单测（`tests/test_modules/test_wallpaper_importer.cpp`，11 条）：签名拼接与 `\x1f` 歧义消除（(a1,2) vs (a,12)）、判定矩阵五分支及顺序（目标已存在最优先 / 大小取不到 / 墓碑先于探针 / 无视频轨）、分项计数不串味、内容相同名字不同照导（既定取舍钉住，防无意识改回内容哈希）。
+
+沙箱端到端（HOME + `DEVDESK_DATA_ROOT` 双覆盖 → 花見目录/废纸篓/墓碑库全部关进沙箱，真文件系统 + 真 SQLite）：**12 项全过**——
+
+| 轮次 | 状态 | 实测 |
+|---|---|---|
+| ① 首轮导入 | imported=3（a/b/dup-of-a 名字互异全导）；notes.txt / .hidden.mp4 不入；无 .tmp 残留 | PASS |
+| ② 复跑 | skippedExisting=3 | PASS |
+| ③ 删 a→废纸篓 | seeded=1；墓碑恰好拦 a（tombstone=1），imported=0 | PASS |
+| ④ 同名不同大小 | 废纸篓的 c 比源 c 长 → **不冤枉**，c 照导（大小参与身份） | PASS |
+| ⑤ 墓碑跨轮持久 | c 删除后再导被拦（连同 a 共命中 2），dest/c.mp4 不存在 | PASS |
+| ⑥ 花見目录不存在 | sourceMissing=true | PASS |
+
 ## 期间发现并修复的真实缺陷（均由真机探针暴露，非纸面推理）
 
 | # | 缺陷 | 后果 | 修法 |
@@ -58,6 +73,7 @@
 | 2 | `NSTimer` 挂在串行队列上 | 队列线程无 run loop，位置镜像永不刷新 | 去掉镜像，`positionSec()` 直接读 `AVPlayer.currentTime` |
 | 3 | async block 捕获 `const std::string&` | 引用悬垂 → 路径变空串 →「无法识别的文件路径」 | `make_shared` 拷贝后进 block |
 | 4 | `stringWithUTF8String:` / `fileURLWithPath:` 二次解释 | 含中文的临时目录解析失败 | 统一走 `CFURLCreateFromFileSystemRepresentation` |
+| 5 | `recordVerdict` 把 `RejectNoVideoTrack` fall-through 进 `failedCopy` | `rejectedByProbe` 恒 0，分项串味（「为什么没导进来」答不出） | 分支拆开各记各的（`record_verdict_per_field` 单测抓到） |
 | 5 | 宿主 `width/height` 用逻辑尺寸 | 契约要求物理像素 | `convertRectToBacking` |
 | 6 | `show()`/`hide()` 同步等主线程 | 服务持 `mu_` 调 show，主线程可能正等 `mu_`（snapshot/setMode）→ **互等 3s 超时「显示壁纸宿主超时」**（醒来路径实测复现） | 两者改 `dispatch_async` 投递即返回；可见性与调用方无需同步 |
 

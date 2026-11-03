@@ -28,6 +28,8 @@ add_library(devdesk_module_wallpaper STATIC
     core/presentation.h
     core/folder_policy.cpp
     core/folder_policy.h
+    # 从花見导入：纯决策（去重顺序/计数/身份签名）
+    core/importer.h
     # 播放后端接口；Null 仅测试注入，生产走 platform/ 的 mpv 实现。
     platform/player_backend.h
     platform/player_null.cpp
@@ -64,6 +66,8 @@ elseif(APPLE)
         platform/mpv_controller_macos.mm
         platform/yield_watchers_macos.mm
         platform/image_probe_macos.cpp
+        platform/importer_macos.cpp
+        platform/importer_macos.h
         # 纯几何层（跨平台，macOS 侧消费；Win 侧不消费故不编进 Win 分支）
         platform/image_fit_geometry.h
         platform/fullscreen_geometry.h

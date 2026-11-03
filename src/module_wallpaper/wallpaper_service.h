@@ -76,6 +76,14 @@ struct WallpaperSnapshot {
     // 当前装载的轮换项是图片（仅 Video 来源的混合池置位；Image 来源沿用单张/轮播语义）。
     // 为真时 mpv 对该 item 无 pause/seek 语义，UI 停用暂停控件、倒计时照常。
     bool currentItemImage = false;
+    // ── 纯追加字段（从花見导入批次）──
+    // 导入进行中：UI 置灰按钮防重入。
+    bool importing = false;
+    // 最近一次导入的进度（done/total；未在导入时 total=0）。
+    int importDone = 0;
+    int importTotal = 0;
+    // 最近一次导入的摘要文案（空 = 从未跑过）。中文、可直接展示。
+    std::string importSummary;
 };
 
 class WallpaperService {
@@ -105,6 +113,11 @@ public:
     bool selectFolder(const std::string& path, std::string* error);
 
     void rescan();
+    // 「从花見导入…」：后台线程跑，完成后自动重扫。是否可用由平台能力决定
+    // （不支持的平台此函数是 no-op 且不置 importing）。
+    void importFromHanami();
+    // 平台是否提供「从花見导入」（macOS 装配为 true；其它平台 false）。
+    static bool hanamiImportAvailable();
     void toggleManualPause();
     void next();
 
@@ -193,6 +206,10 @@ private:
     std::mutex tickWaitMutex_;
     std::condition_variable tickWaitCv_;
     std::thread tickThread_;
+
+    // 从花見导入线程：join 在 stop() 里（与扫描/计时线程同纪律）。
+    std::thread importThread_;
+    std::atomic<bool> importCancel_{false};
 };
 
 } // namespace module::wallpaper

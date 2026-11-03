@@ -62,6 +62,10 @@ void WallpaperModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         }
     };
     actions.rescan = [this] { service_.rescan(); };
+    // 「从花見导入…」只在该平台提供（macOS）；不提供时留空 → UI 不建按钮。
+    if (WallpaperService::hanamiImportAvailable()) {
+        actions.importVideos = [this] { service_.importFromHanami(); };
+    }
     actions.togglePause = [this] { service_.toggleManualPause(); };
     actions.next = [this] { service_.next(); };
 

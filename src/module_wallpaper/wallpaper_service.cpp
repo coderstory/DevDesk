@@ -14,6 +14,7 @@
 #include "module_wallpaper/core/folder_policy.h"
 #include "module_wallpaper/core/presentation.h"
 #include "module_wallpaper/platform/image_probe.h"
+#include "module_wallpaper/platform/importer_macos.h"
 #include "module_wallpaper/platform/mpv_player.h"
 
 namespace module::wallpaper {
@@ -176,6 +177,10 @@ void WallpaperService::stop() {
     tickWaitCv_.notify_all();
     if (scanThread_.joinable()) scanThread_.join();
     if (tickThread_.joinable()) tickThread_.join();
+    // 导入线程可能正在跑（几十个视频的哈希是分钟级）：置取消位后 join，
+    // 与扫描线程同纪律——stop() 返回时不得留后台线程碰已销毁的 this。
+    importCancel_.store(true);
+    if (importThread_.joinable()) importThread_.join();
     LOG_INFO("壁纸服务已停止");
 }
 
@@ -362,6 +367,86 @@ void WallpaperService::next() {
     const RotationClock::time_point now = nowLocked();
     const std::optional<std::string> path = rotation_.advanceNow(now);
     if (path.has_value()) loadItemLocked(*path, now);
+}
+
+// ---------------- 从花見导入 ----------------
+
+bool WallpaperService::hanamiImportAvailable() {
+#if defined(__APPLE__)
+    return true;
+#else
+    return false;  // 花見是 macOS App；其它平台没有这个来源目录
+#endif
+}
+
+void WallpaperService::importFromHanami() {
+    if (!hanamiImportAvailable()) return;
+
+    std::string folder;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!started_ || snapshot_.importing) return;  // 防重入
+        folder = currentFolderLocked();
+        if (folder.empty()) {
+            // 没选文件夹就导入等于往虚空拷——直接给出可展示的原因。
+            snapshot_.importSummary = "请先选择壁纸文件夹";
+            return;
+        }
+        snapshot_.importing = true;
+        snapshot_.importDone = 0;
+        snapshot_.importTotal = 0;
+        snapshot_.importSummary.clear();
+        importCancel_.store(false);
+    }
+    // 上一轮线程若已结束先收尸（joinable 但已退出）。
+    if (importThread_.joinable()) importThread_.join();
+
+    try {
+        importThread_ = std::thread([this, folder] {
+            const importer::ImportReport report = importer::runHanamiImport(
+                folder, [this](int done, int total) {
+                    if (importCancel_.load()) return;
+                    std::lock_guard<std::mutex> lock(mu_);
+                    snapshot_.importDone = done;
+                    snapshot_.importTotal = total;
+                });
+
+            std::string summary;
+            if (report.sourceMissing) {
+                summary = "找不到花見下载目录（花見未安装或从未下载）";
+            } else if (report.imported > 0) {
+                summary = "已导入 " + std::to_string(report.imported) + " 个视频";
+                const int skipped = report.skippedExisting + report.skippedTombstone;
+                if (skipped > 0) {
+                    summary += "，跳过 " + std::to_string(skipped) + " 个已存在/已删过";
+                }
+                if (report.failedCopy > 0) {
+                    summary += "，" + std::to_string(report.failedCopy) + " 个拷贝失败";
+                }
+            } else if (report.skippedExisting + report.skippedTombstone > 0) {
+                summary = "没有新视频（都已导入过或已删过）";
+            } else {
+                summary = "花見目录里没有可导入的 mp4";
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                snapshot_.importing = false;
+                snapshot_.importSummary = summary;
+            }
+            LOG_INFO("壁纸: 从花見导入完成 —— " + summary);
+            // 有新文件才需要重扫（没导入时重扫是白跑一趟全盘枚举）。
+            if (report.imported > 0) {
+                std::lock_guard<std::mutex> lock(mu_);
+                requestScanLocked();
+            }
+        });
+    } catch (const std::system_error& error) {
+        LOG_ERROR(std::string("壁纸: 导入线程创建失败: ") + error.what());
+        std::lock_guard<std::mutex> lock(mu_);
+        snapshot_.importing = false;
+        snapshot_.importSummary = "导入失败：无法启动后台任务";
+    }
 }
 
 // ---------------- 测试缝 ----------------
