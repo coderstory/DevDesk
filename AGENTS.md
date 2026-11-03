@@ -44,7 +44,7 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 
 ## 四、代码检索纪律（codegraph 优先）
 
-查代码先走 codegraph（仓库根 `codegraph.json`，按符号/调用关系检索），grep 只作兜底全文扫。索引排除 `**/build/**`、`**/wt-*/**` 与 EUI-NEO；新增临时目录要同步进 exclude，别把产物灌进索引。
+查代码先走 codegraph（仓库根 `codegraph.json`，按符号/调用关系检索），grep 只作兜底全文扫。索引排除 `**/build/**`、`**/build-*/**`、`Testing/**`、`wt-*/**`；**EUI-NEO 一并索引**（跨仓查符号直查，2026-11-03 用户指令：不排除）；新增临时目录要同步进 exclude，别把产物灌进索引。
 
 ## 五、构建与测试纪律
 
@@ -62,6 +62,8 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 | `--filter X` | 只跑描述含 X 的用例（支持 `file:子串` 按源文件圈定） |
 
 **构建/测试成本纪律（2026-11-01 老板令：禁止「再跑一遍全量当安全证明」的认知偏差）**：开发内循环一律 `--dev`（±`--filter`）——改了什么测什么；同一环节不重复构建（上环节产物未失效直接复用）；**全量 doctest+probe+守卫链只在阶段节点跑**（阶段性用户需求完成 / 需求全开发完毕 / bug 全修完 / 发版——单条需求、单批次开发完不触发）；验证的价值在断言与证据物，不在跑的次数。
+
+**本机安装/更新口径（2026-11-03 老板令）**：没有特别说明时**不走 Release、不打包**——关闭 app 后直接把 Debug 产物（`build/DevDesk.exe` + `build/assets/` + `THIRD-PARTY-NOTICES.md`）覆盖复制到用户安装目录 `%LOCALAPPDATA%\Programs\DevDesk\`，装完校验并重启。Debug 产物不存在/过期就先 `bash scripts/build-test-run.sh --dev` 构建。**Release 构建与安装包（`scripts/package-windows.sh` / Inno）后续只在 CI 做**，或用户当次明确要求时才做。
 
 其它脚本：
 - `scripts/check-module-isolation.sh` — 模块隔离静态守卫（退出码 0 通过 / 1 违规 / 2 环境错，不静默绿）
