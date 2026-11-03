@@ -120,6 +120,10 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
     bool passed = true;
+    // 环境不可用 ≠ 代码 bug（skill 铁律）：显示器装不下请求的逻辑窗高时，系统会钳窗口
+    //（实测 1200x1000 请求 → 1625x1065px≈1200x787 逻辑），按请求尺寸布局的页底内容
+    // 落在帧外、像素判据无从采样 → 显式返回 77（ctest SKIP_RETURN_CODE），失败仍优先红。
+    bool envSkipped = false;
 
     core::dsl::Ui* ui = nullptr;
     // 单帧标准单元：pollOnce（输入派发 + 交互）→ compose（recompose 树 + layout），
@@ -549,7 +553,9 @@ int main(int argc, char* argv[]) {
         failedMod->compose(failUi, failScreen);
         failUi.end();
         failUi.layout(failScreen.width, failScreen.height);
-        bool sawFailText = false;
+        // 失败态：每张卡都必须显形（不是「至少一张」——短标签卡能放下会掩盖
+        // 长标签卡把 badge 丢掉：池117 的速率卡就是这样漏过来的）。
+        bool allFailedShown = true;
         for (const char* cardId : kStatCardIds) {
             const core::dsl::Element* el =
                 failUi.find(std::string(cardId) + ".label");
@@ -557,15 +563,18 @@ int main(int argc, char* argv[]) {
                 std::cerr << "home_probes: 组 L 失败态结构缺失 '" << cardId
                           << ".label'\n";
                 passed = false;
+                allFailedShown = false;
                 continue;
             }
-            if (el->text.find("加载失败") != std::string::npos) sawFailText = true;
+            if (el->text.find("加载失败") == std::string::npos) {
+                std::cerr << "home_probes: 组 L FAIL——失败态 '" << cardId
+                          << ".label' 文本为「" << el->text
+                          << "」，丢了「加载失败」（失败必须显形，池117）\n";
+                passed = false;
+                allFailedShown = false;
+            }
         }
-        if (!sawFailText) {
-            std::cerr << "home_probes: 组 L FAIL——失败态各卡标签均无「加载失败」"
-                         "（D1 只许去掉正常态说明，失败必须显形）\n";
-            passed = false;
-        }
+        (void)allFailedShown;
     }
 
     // 组 M（B7 D2）：点标题行 → 折叠态卡高 64×字号缩放、标题改短且垂直居中；
@@ -723,19 +732,66 @@ int main(int argc, char* argv[]) {
                 std::cerr << "home_probes: 组 N2 读帧失败（像素判据跳过）\n";
             } else {
                 const float pxScale = glyphCapture.scale();
-                const int x0 = static_cast<int>(
-                    std::lround(iconEl->frame.x * pxScale));
-                const int y0 = static_cast<int>(
-                    std::lround(iconEl->frame.y * pxScale));
-                const int x1 = static_cast<int>(
-                    std::lround((iconEl->frame.x + iconEl->frame.width) * pxScale));
-                const int y1 = static_cast<int>(
-                    std::lround((iconEl->frame.y + iconEl->frame.height) * pxScale));
-                if (x0 < 0 || y0 < 0 || x1 > imgW || y1 > imgH || x1 <= x0 ||
-                    y1 <= y0) {
-                    std::cerr << "home_probes: 组 N2 采样越界 (" << x0 << ","
-                              << y0 << ")-(" << x1 << "," << y1 << ")\n";
+                // frame 是内容绝对坐标，滚动位移只作用在绘制变换
+                //（scrollTransformForElement），不在 frame 上——采样坐标 = 内容 y
+                // − 当前滚动偏移。页面默认在顶部（偏移 0）；小屏/高 DPI 下窗口被系统
+                // 钳制、图标落在视口外时，先滚到底再采样（setScrollOffset 帧末消费并
+                // clamp 到 maxOffset），采样完滚回顶部还原页面状态。
+                float scrollY = 0.0f;
+                int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+                auto measureIconBox = [&]() -> bool {
+                    const core::dsl::Element* el =
+                        ui != nullptr ? ui->find("home.act.claude.icon") : nullptr;
+                    if (el == nullptr) return false;
+                    const float viewY = el->frame.y - scrollY;
+                    x0 = static_cast<int>(std::lround(el->frame.x * pxScale));
+                    y0 = static_cast<int>(std::lround(viewY * pxScale));
+                    x1 = static_cast<int>(std::lround(
+                        (el->frame.x + el->frame.width) * pxScale));
+                    y1 = static_cast<int>(std::lround(
+                        (viewY + el->frame.height) * pxScale));
+                    return true;
+                };
+                bool boxOk = measureIconBox();
+                if (boxOk && (y0 < 0 || y1 > imgH)) {
+                    const core::dsl::Element* scrollEl =
+                        ui != nullptr ? ui->find("home.scroll") : nullptr;
+                    const float maxOffset =
+                        scrollEl != nullptr ? scrollEl->scrollMaxOffset : 0.0f;
+                    if (maxOffset > 0.0f) {
+                        ui->setScrollOffset("home.scroll", maxOffset);
+                        settleFrames(3);
+                        scrollY = maxOffset;
+                        boxOk = measureIconBox();
+                        if (boxOk) {
+                            glyphCapture.readFrame(runtime, rgba, imgW, imgH);
+                        }
+                    }
+                }
+                if (!boxOk) {
+                    std::cerr << "home_probes: 组 N2 重排后图标元素丢失"
+                                 "（像素判据无法进行）\n";
                     passed = false;
+                } else if (x0 < 0 || y0 < 0 || x1 > imgW || y1 > imgH ||
+                           x1 <= x0 || y1 <= y0) {
+                    // 区分「窗口被系统钳小」与「真布局 bug」：前者是显示器装不下请求的
+                    // 逻辑窗高（帧高/scale < 请求高），属环境不可用 → 77，不是红。
+                    const float actualLogicalH =
+                        pxScale > 0.0f ? static_cast<float>(imgH) / pxScale : 0.0f;
+                    if (static_cast<float>(h) > actualLogicalH + 1.0f) {
+                        std::cerr << "home_probes: 组 N2 环境不支持——请求 "
+                                  << args.windowW << "x" << h
+                                  << "，系统把窗口钳到 " << imgW << "x" << imgH
+                                  << "px（逻辑高≈" << actualLogicalH
+                                  << "，显示器装不下）；像素判据跳过，返回 77\n";
+                        envSkipped = true;
+                    } else {
+                        std::cerr << "home_probes: 组 N2 采样越界 (" << x0 << ","
+                                  << y0 << ")-(" << x1 << "," << y1 << ")"
+                                  << " img=" << imgW << "x" << imgH
+                                  << " scrollY=" << scrollY << "\n";
+                        passed = false;
+                    }
                 } else {
                     // 字形笔画色 = 主题 primary 绿：g 明显高于 r/b（按钮 ghost 态图标色）
                     std::vector<std::pair<int, int>> glyphPx;
@@ -793,6 +849,11 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
+                // 采样期间为看图标滚过页尾：滚回顶部，收尾截图仍是首页常态
+                if (scrollY > 0.0f) {
+                    ui->setScrollOffset("home.scroll", 0.0f);
+                    settleFrames(2);
+                }
             }
         }
     }
@@ -808,5 +869,5 @@ int main(int argc, char* argv[]) {
     core::window::destroyWindow(window);
     probe::terminateWindowBackend();
     if (!passed) std::cerr << "FAIL\n";
-    return passed ? 0 : 1;
+    return passed ? (envSkipped ? 77 : 0) : 1;
 }

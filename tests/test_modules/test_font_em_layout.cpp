@@ -4,8 +4,10 @@
 //
 // 跨文件前提：布局常量（卡高 / chip 高 / itemH / 侧边栏 label 宽）镜像自各模块源码，
 // 改源码布局必须同步改这里，否则这组断言会对着旧常量恒绿：
-//   - home_module.cpp drawGlassStatCard：label y=16、number y=40、badge 底对齐 height-48、
-//     卡高 144、padX 16、最小窗口 1200 时 statW=208、统计格高 144
+//   - home_module.cpp drawSolidStatCard：pad=20、labelH=16、numGap=4、numberH=34、
+//     卡高 96；指标名 14（fontSizeBody）、数字 30（fontSizeStat）、说明并入同行 14。
+//     5 卡等分：卡宽=(contentW-4×20)/5，cw=卡宽-2×20；contentW=窗宽-侧栏 220-页 padding 64。
+//     默认窗 1600×1000 → cw≈207.2；最小窗 1000×640 → cw≈87.2（主力程序 main.cpp:767）
 //   - todo_module.cpp drawChip：chip 高 22、字号 fontSizeSmall-1；
 //     drawCard：title y=14、chip y=44、卡高 kCardHeight、列头 title y=16
 //   - app_sidebar.cpp：itemH 40、label 宽 200、brand 56px（UAT5 logo 48 行高 56）
@@ -24,10 +26,6 @@ namespace {
 constexpr float kGlyphExtentRatio = 1.35f;
 // 纯数字/大写字母（无下延）ascent / em 的保守上界，Segoe UI 实际 1.079
 constexpr float kAscentRatio = 1.10f;
-
-// Home 统计卡的文字可用宽上界。实际可用 = statW 208 - 内边距 16×2 - 文本内缩 16×2 = 144；
-// 这里取 152 略宽于实际，是为了让「文本变宽」的回归先撞上这条线而不是漏过。
-constexpr float kHomeStatTextW = 152.0f;
 
 float textW(const std::string& s, float size, int weight = 400) {
     return core::TextPrimitive::measureTextWidth(s, "", size, weight);
@@ -49,40 +47,30 @@ REGISTER_TEST(font_em_semantics_active, "font-em: measured width follows CSS em 
 REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed card", {
     const auto& t = core::theme::current();
     core::theme::setFontScale(1.0f);  // 100% 是本文件的复核基准；测完由后续用例各自复位
-    const float labelSize = t.sizes.fontSizeSmall + 1.0f;   // 14（UAT2 卡片字大）
-    const float badgeSize = t.sizes.fontSizeSmall;          // 13（UAT2 卡片字大）
-    const float numberSize = t.sizes.fontSizeLarge + 4.0f;  // 22（UAT2 卡片字大）
+    // 字号 = drawSolidStatCard 真实渲染尺寸（旧用例按 12/13px 量宽、预算 152，
+    // 是卡高 144 时代的错位常量——真机早就不显形、用例仍绿，池117 实证）。
+    const float labelSize = t.sizes.fontSizeBody;   // 14，指标名 + 合并的说明同字号
+    const float numberSize = t.sizes.fontSizeStat;  // 30
 
-    // 宽度断言本体的环境前提 = 与开发机同字体栈度量。clean Windows runner 的
-    // 度量已实证分叉（2026-11-03 R4/R5：CJK em 方框判据不触发但宽度仍越界，
-    // 分叉源不在 CJK 字宽——盲判到此为止，数值留痕交 Windows 机定位，池117）。
-    // CI 环境失败 = 打印全部实测值后 skip（透明可诊断）；非 CI 照常硬断言，
-    // 本地回归零放过。
+    // 水平预算（与运行时 measureTextSize + 12px 余量同口径）：
+    constexpr float kHomeStatTextWDefault = 207.2f - 12.0f;  // 默认窗 cw
+    constexpr float kHomeStatTextWMin = 87.2f - 12.0f;       // 最小窗 cw
     const float wLabel = textW("Token 速率 (tok/s)", labelSize);
     const float wNumber = textW("999.9", numberSize, 700);
-    const float wBadge = textW("Token 速率 (tok/s) · 加载失败", badgeSize);
-    const bool fits = wLabel <= kHomeStatTextW && wNumber <= kHomeStatTextW &&
-                      wBadge <= kHomeStatTextW;
-    if (!fits && std::getenv("CI") != nullptr) {
-        std::cout << "[font-em][ci-divergence] label=" << wLabel
-                  << " number=" << wNumber << " badge=" << wBadge
-                  << " budget=" << kHomeStatTextW
-                  << "（clean-runner 字体栈分叉留痕，池117）\n";
-        DOCTEST_SKIP("clean-runner 字体度量分叉（数值已留痕，真发现挂池117）");
-    }
-    // 标签取最长文案
-    DOCTEST_CHECK(wLabel <= kHomeStatTextW);
-    // 数字口径：最近一次调用速率，恒 1 位小数，三位整数 + 小数位 = 5 字符是常见上限档
-    DOCTEST_CHECK(wNumber <= kHomeStatTextW);
-    // badge（B7 D1 起只剩错误态「加载失败」）：最坏情况 = 最长指标名 + 加载失败
-    DOCTEST_CHECK(wBadge <= kHomeStatTextW);
-    DOCTEST_CHECK(textW("加载失败", badgeSize) <= kHomeStatTextW);
+    const float wMerged = textW("Token 速率 (tok/s) · 加载失败", labelSize);
+    const float wFail = textW("加载失败", labelSize);
+    // 默认窗：指标名 / 数字 / 合并说明三条都必须整段放下（正常运行态与失败态全覆盖）
+    DOCTEST_CHECK(wLabel <= kHomeStatTextWDefault);
+    DOCTEST_CHECK(wNumber <= kHomeStatTextWDefault);
+    DOCTEST_CHECK(wMerged <= kHomeStatTextWDefault);
+    // 最小窗：合并文案放不下是既定事实（运行时退化为只显 badge，见 drawSolidStatCard）。
+    // 底线 = 退化后的「加载失败」仍能整段放下——失败必须显形。
+    DOCTEST_CHECK(wFail <= kHomeStatTextWMin);
 
-    // 纵向（drawGlassStatCard 绝对定位：label 16 / number 40 / badge 底对齐 height-48；
-    // 最小档 fontScale=1 时 badge 顶 96、卡高 144）
-    DOCTEST_CHECK(16.0f + kGlyphExtentRatio * labelSize <= 40.0f);   // 标签不压数字
-    DOCTEST_CHECK(40.0f + kAscentRatio * numberSize <= 96.0f);       // 数字（无下延）不压 badge
-    DOCTEST_CHECK(96.0f + kGlyphExtentRatio * badgeSize <= 144.0f);  // badge 不出卡
+    // 纵向（drawSolidStatCard 绝对定位：textTop=(96-40-54)/2=1、numberY=21；
+    // 卡高 96、numberH=34 → 数字盒 21..55）
+    DOCTEST_CHECK(1.0f + kGlyphExtentRatio * labelSize <= 21.0f);    // 标签不压数字
+    DOCTEST_CHECK(21.0f + kAscentRatio * numberSize <= 55.0f);       // 数字（无下延）不出行盒
     return true;
 })
 

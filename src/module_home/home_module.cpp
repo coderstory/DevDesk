@@ -120,18 +120,19 @@ void drawSolidStatCard(eui::Ui& ui,
             // 指标名：三级字，居中；说明（badge）并入同行「笔记 · 今日」。
             // B7 D1（已拍板 5 张统一）：调用方正常态传空 badge → 只显示指标名；
             // 错误态传「加载失败」→ 照旧拼出来，失败必须显形。
-            // 合并文本量宽放不下卡宽时丢弃 badge 只留指标名——badge 是弱信息，
-            // 溢出会让居中文本越出卡缘（home_probes 类 6(a) 溢出判据守这条）。
-            // 量宽留 12px 余量：measureTextSize 与最终排版有 1~2% 的差（字距/取整），
-            // 卡宽 255 时「刚好装下」实测会溢出 10px 左右。再叠 maxWidth+Ellipsis+clip
-            // 兜底，量宽不准也绝不会画到卡外。
+            // 合并文本量宽放不下卡宽时退化为只留 badge（不放宽回指标名）：badge 现在
+            // 只剩错误态「加载失败」，丢 badge 等于把失败藏起来——这正是池117 在
+            // 1000~1394 窗口宽下暴露的缺陷（合并文案 14px≈180 > cw，旧逻辑回退成指标名，
+            // 速率卡「加载失败」不显形）。单 badge 文本在最小窗 cw≈87 仍放得下。
+            // 溢出仍由 maxWidth+Ellipsis+clip 兜底，量宽不准也绝不会画到卡外。
+            // 量宽留 12px 余量：measureTextSize 与最终排版有 1~2% 的差（字距/取整）。
             std::string labelText = badge.empty() ? label : label + " · " + badge;
             if (!badge.empty()) {
                 core::TextStyle merged;
                 merged.text = labelText;
                 merged.fontSize = core::theme::scaled(14.0f);
                 if (core::TextPrimitive::measureTextSize(merged).x + 12.0f > cw) {
-                    labelText = label;
+                    labelText = badge;
                 }
             }
             ui.text(id + ".label")
