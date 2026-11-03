@@ -1,6 +1,6 @@
 // src/module_wallpaper/platform/yield_watchers_macos.mm
 // macOS 让路事件源：锁屏 / 熄屏 / 系统睡眠走系统通知，电池走 IOKit 事件源 + 轮询，
-// 全屏走 CGWindowList 覆盖率采样。
+// 全屏走「workspace 事件（Space 切换 / 应用激活·失活）+ 服务轮询」双驱动。
 //
 // 与 Windows 版的差别：没有「消息窗 + 自建线程」这套——macOS 的通知中心、IOKit
 // run loop source、CoreGraphics 重配置回调都只能挂在主线程的 run loop 上，而 DevDesk
@@ -224,6 +224,40 @@ private:
         } else {
             // 注册失败只失去电池让路（轮询通道仍可用），不作致命处理。
             LOG_WARN("壁纸: IOKit 电源事件源注册失败（电池让路退化为轮询）");
+        }
+
+        // ── 全屏：事件源（即时响应）+ 轮询（兜底）双驱动 ──
+        //
+        // 为什么两者都要：Space 切换、切前台 app 会产生事件，事件能即时响应；但
+        // 「最大化 / 还原 / 拖动窗口」**不产生**任何事件，只能靠轮询捕捉。缺轮询
+        // 会让「窗口已经盖满屏了却还在播」悬到下一次事件；只靠轮询则每秒要枚举
+        // 几十次窗口列表（费电）。两者合起来才是 pic 已验证的形状。
+        {
+            NSNotificationCenter* workspaceCenter2 =
+                [[NSWorkspace sharedWorkspace] notificationCenter];
+            NSArray<NSNotificationName>* names = @[
+                NSWorkspaceActiveSpaceDidChangeNotification,
+                NSWorkspaceDidActivateApplicationNotification,
+                NSWorkspaceDidDeactivateApplicationNotification,
+            ];
+            for (NSNotificationName name in names) {
+                id token = [workspaceCenter2
+                    addObserverForName:name
+                                object:nil
+                                 queue:nil
+                            usingBlock:^(NSNotification* notification) {
+                                (void)notification;
+                                // 全屏状态变化不是「让路事件」而是「立即重判一次」：
+                                // 走与轮询同一条路径，结果一致。
+                                // 推一次结论，让服务不必等下一拍轮询：与轮询走同一个
+                                // 判据函数，两条路径结论必然一致。
+                                dispatch_async(queue_, ^{
+                                    fireHold(HoldReason::Fullscreen,
+                                             pollFullscreenOtherProcess());
+                                });
+                            }];
+                tokens_.push_back(token);
+            }
         }
 
         // ── 换屏：显示重配置回调 ──

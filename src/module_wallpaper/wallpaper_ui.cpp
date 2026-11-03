@@ -1037,6 +1037,8 @@ void drawFormatsCard(eui::Ui& ui, float w, const Tokens& t) {
             chip(ui, "wallpaper.formats.chip." + std::to_string(i), chipX,
                  60.0f, chipW, roundFs(28.0f), chips[i], t, false, false);
         }
+        // 两个平台的播放后端都不吃这些容器（macOS AVFoundation 实测对 mkv/webm/avi
+        // 返回 Cannot Open；Windows 的 mpv 走同一份扩展名白名单），所以文案平台无关。
         hintText(ui, "wallpaper.card.formats.hint",
                  "目录里的 MKV / AVI / WEBM 不会被扫描。需要其他格式时，请先自行转成 mp4。",
                  t, kCardPad, 100.0f,

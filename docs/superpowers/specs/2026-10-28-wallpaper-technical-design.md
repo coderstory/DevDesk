@@ -105,7 +105,7 @@
 |---|---|---|
 | `wallpaper_host_macos.mm` | 桌面层窗口宿主 | `CGWindowLevelForKey(kCGDesktopWindowLevelKey)` 层级；无 WorkerW 概念；窗口操作经**主队列**同步投递（有界 3s），不建宿主线程 |
 | `mpv_controller_macos.mm` | 播放控制（同名接口） | 无 mpv 进程：视频 = `AVQueuePlayer` + `AVPlayerLooper`；图片 = 宿主自绘 `CALayer`；无 IPC/无管道 |
-| `yield_watchers_macos.mm` | 五路让路 | 分布式通知（锁屏）+ NSWorkspace（睡眠/唤醒）+ IOKit 电源源 + `CGDisplayRegisterReconfigurationCallback`（换屏）+ `CGWindowList` 覆盖率（全屏） |
+| `yield_watchers_macos.mm` | 五路让路 | 分布式通知（锁屏）+ NSWorkspace（睡眠/唤醒）+ IOKit 电源源 + `CGDisplayRegisterReconfigurationCallback`（换屏）+ 全屏「workspace 事件（Space 切换/应用激活·失活）+ 轮询」双驱动 |
 | `image_probe_macos.cpp` | 图片头解码 | `CGImageSourceCopyPropertiesAtIndex` 读 `PixelWidth/Height`，不建解码器、不解像素 |
 
 **纯逻辑层（跨平台可测）**：`image_fit_geometry.h`（四铺法落位）、`fullscreen_geometry.h`（内缩补偿 + 坐标系翻转 + 按 pid 聚合覆盖率）。
@@ -117,6 +117,14 @@
 3. **C 路径 → NSURL 用 `CFURLCreateFromFileSystemRepresentation`**。`stringWithUTF8String:` 在非 UTF-8 字节上返回 nil；`stringWithFileSystemRepresentation:` 交给 `fileURLWithPath:` 会二次解释。实测含中文的临时目录两条路都退化成「无法识别的文件路径」。
 
 另：async block 捕获 `const std::string&` 参数会拿到悬垂引用，路径必须 `make_shared` 拷贝后再进 block。
+
+**平台差异（按实际，不强行统一）**：
+
+| 维度 | Windows | macOS | 说明 |
+|---|---|---|---|
+| 全屏判定 | 窗口矩形**精确等于**显示器矩形 | **覆盖率 ≥ 1.0** | 各自平台既有取舍；macOS 侧最大化也算，Windows 不算。业务影响一致（盖满屏就让路） |
+| 视频容器白名单 | mp4/mov/m4v | mp4/mov/m4v（**实测** mkv/webm/avi 均 `Cannot Open`） | 两平台实际可播范围相同，共用 `core/video_library.cpp` 白名单不改 |
+| 图片铺法 | 仅填充（mpv `--panscan=1.0`） | 四种全实现 | macOS 更强；差异记录见需求书 I1 |
 
 ## 3. 决策记录表
 

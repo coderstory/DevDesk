@@ -65,6 +65,44 @@
 
 - `sidebar_fold_reserves_toggle_zone`（`test_app_sidebar.cpp:337`）在**未改动的干净树**上同样失败，属既有问题（该用例按固定 8 模块/固定行号断言，与本需求无关）。已单独确认：stash 全部改动后重建、该用例仍红。
 
+## 与参考实现（pic）的逐项对照
+
+| pic 的做法 | 本实现 | 结论 |
+|---|---|---|
+| `CGWindowLevelForKey(.desktopWindow)` | `CGWindowLevelForKey(kCGDesktopWindowLevelKey)` | 一致 |
+| `collectionBehavior` 四项（跨 Space/静止/不入循环/全屏辅助） | 同上四项 | 一致 |
+| `isOpaque/hasShadow/ignoresMouseEvents/backgroundColor` | 同上 | 一致 |
+| `canBecomeKey/Main = false` | 同上 | 一致 |
+| `videoGravity = resizeAspectFill` | 一致 | 一致 |
+| 图片层 `contentsScale = backingScaleFactor` + layout 里跟屏 | 一致 | 一致 |
+| 图片层 `needsDisplayOnBoundsChange` | 一致 | 一致 |
+| 图片解码 EXIF orientation 重摆正 + `ShouldCacheImmediately` | 一致 | 一致 |
+| `audioTimePitchAlgorithm = .spectral` | 一致 | 一致 |
+| `preferredForwardBufferDuration = 3.0` | **原先漏掉，已补** | 已对齐 |
+| looper 先插后扫（队列全程非空防闪屏） | 一致 | 一致 |
+| 速度挂 player 不挂 item | 一致 | 一致 |
+| 全屏：layer==0 / alpha>0 / 排除本进程 / 按 pid 聚合 / 除以 visibleFrame / 封顶 1.0 | 一致 | 一致 |
+| 全屏：桌面层内缩实测 14/9 补偿 + 坐标翻转 | 一致 | 一致 |
+| 锁屏：分布式通知只当触发器 + 重读会话字典 `CGSSessionScreenIsLocked` | 一致 | 一致 |
+| 熄屏：每次现读 `CGDisplayIsAsleep` | 一致 | 一致 |
+| 睡眠：只由 willSleep/didWake 位驱动 | 一致 | 一致 |
+| 电池：IOKit 事件源 + 读失败不静默折值 | 一致 | 一致 |
+| 换屏：`CGDisplayRegisterReconfigurationCallback` | 一致 | 一致 |
+| 全屏**事件**源：Space 变更 + 应用激活/失活三通知 | **已接**（2026-11-03 补齐） | 一致 |
+
+**差异 3 已消除**：全屏检测现为「3 个 workspace 事件 + 服务 250ms 轮询」双驱动，与 pic 同形状（轮询更密）。事件只负责即时重判，判定函数与轮询共用同一条路径，结论必然一致；重复推送由 `HoldArbiter::setSystemReason` 的幂等守卫吸收，不会重复触发暂停/恢复。
+
+## 平台能力差异（按实际，不强行统一）
+
+**视频容器**：实测 AVFoundation 对 mkv / webm / avi 一律 `Cannot Open`（`AVURLAsset.isPlayable == NO`），
+与 Windows mpv 路线的扩展名白名单（mp4/mov/m4v）实际可播范围相同——因此 `core/video_library.cpp` 的
+共用白名单不改，UI 的「MKV/AVI/WEBM 不会被扫描」文案两平台都成立（已在 `wallpaper_ui.cpp` 注明实测依据）。
+
+**全屏判定口径（有意保留差异，不统一）**：
+- Windows：窗口矩形**精确等于**显示器矩形才算全屏（`yield_watchers_win.cpp:121-125`），最大化不算。
+- macOS：**覆盖率 ≥ 1.0** 即算（`fullscreen_geometry.h:117`），最大化也算。
+两者是各自平台生态的既有取舍（macOS 侧沿用 pic 已验证口径），业务影响一致（盖满屏就让路），不做互相迁就。
+
 ## 已知限制
 
 - 三种让路信号（锁屏/熄屏/睡眠）无法在无人值守自动化里真触发，靠事件源注册成功 + 启动即重算覆盖；真机 UAT 需人工锁屏/合盖各验一次。
