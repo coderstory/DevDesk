@@ -247,7 +247,14 @@ void reevaluateAll(const std::shared_ptr<YieldState>& state) {
 
 // ── 注册 / 注销（只跑在主队列；只触 state，不触 watcher 对象）──
 
-void registerOnMainThread(const std::shared_ptr<YieldState>& state) {
+// 形参**必须按值**收 shared_ptr：块（以及块内 dispatch_async 的内层 block）捕获的是
+// 形参本身，按引用收会把「栈上形参的引用」捕进块里——registerOnMainThread 返回后该
+// 形参随 runOnMainThreadSync 的栈帧一起销毁，之后任何一次锁屏/睡眠/电源/换屏通知
+// 触发块，读 shared_ptr 都是 stack-use-after-scope（ASan 实测复现；线上表现为
+// SIGSEGV，堆栈落在块首行 dispatch_async）。按值收 = 块持有自己的强引用副本，
+// 通知可能晚到（runOnMainThreadSync 超时后）也安全，与 start/stop 处
+// `[state = state_]` 的写法同源。见 2026-11-04 macOS 关窗后崩溃取证。
+void registerOnMainThread(std::shared_ptr<YieldState> state) {
     // ── 锁屏 / 解锁：分布式通知只当触发器，收到后重读会话字典 ──
     const char* lockName = "com.apple.screenIsLocked";
     const char* unlockName = "com.apple.screenIsUnlocked";

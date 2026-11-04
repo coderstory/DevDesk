@@ -79,15 +79,48 @@ def render_fullcolor():
 
 
 def render_template():
-    """macOS template 蒙版：黑描边窗 + 黑 >_，透明底（模板渲染只取 alpha）。"""
+    """macOS template 蒙版：黑描边窗 + 黑 >_，透明底（模板渲染只取 alpha）。
+
+    取景：原样沿用 256 画布几何只占 64%×52%，缩到 22pt 菜单栏图后内容仅
+    16×12px，在 Retina 上肉眼明显偏小（2026-11-04 真机反馈）。这里把窗口
+    几何映射到画布的 88%×71%（宽高比 1.242 不变），留出与 pic 同类图标一致
+    的呼吸边距——对齐 pics/menubar-v1.png 的 88%×75% 填充口径。
+    """
     scale = SUPER
     img = Image.new("RGBA", (DESIGN * scale, DESIGN * scale), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([46 * scale, 62 * scale, 210 * scale, 194 * scale],
-                        radius=22 * scale, outline=BLACK, width=int(22 * scale))
-    capline(d, (116, 102), (88, 126), 15, BLACK)
-    capline(d, (88, 126), (116, 150), 15, BLACK)
-    capline(d, (132, 150), (168, 150), 15, BLACK)
+
+    # 源几何（256 画布）：窗口 [46,62]-[210,194]，描边 22 居中于边框
+    src_x0, src_y0, src_x1, src_y1 = 46.0, 62.0, 210.0, 194.0
+    src_w, src_h = src_x1 - src_x0, src_y1 - src_y0
+    stroke = 22.0
+    # 描边外扩后的实际占位（描边以边框线为中心向内外各 11）
+    outer_x0, outer_y0 = src_x0 - stroke / 2, src_y0 - stroke / 2
+    outer_x1, outer_y1 = src_x1 + stroke / 2, src_y1 + stroke / 2
+    outer_w, outer_h = outer_x1 - outer_x0, outer_y1 - outer_y0
+
+    # 目标：占画布 88% 宽（高按同一倍率跟随）
+    target_w = DESIGN * 0.88
+    k = target_w / outer_w
+    # 居中放置
+    off_x = (DESIGN - outer_w * k) / 2 - outer_x0 * k
+    off_y = (DESIGN - outer_h * k) / 2 - outer_y0 * k
+
+    # 注意：X/Y 只换算设计坐标，**不乘 SUPER**——capline 内部自己乘；
+    # rounded_rectangle 不收超采样，由这里显式乘。
+    def X(v):
+        return v * k + off_x
+
+    def Y(v):
+        return v * k + off_y
+
+    d.rounded_rectangle([X(src_x0) * scale, Y(src_y0) * scale,
+                         X(src_x1) * scale, Y(src_y1) * scale],
+                        radius=22 * k * scale, outline=BLACK,
+                        width=int(stroke * k * scale))
+    capline(d, (X(116), Y(102)), (X(88), Y(126)), 15 * k, BLACK)
+    capline(d, (X(88), Y(126)), (X(116), Y(150)), 15 * k, BLACK)
+    capline(d, (X(132), Y(150)), (X(168), Y(150)), 15 * k, BLACK)
     return img.resize((DESIGN, DESIGN), Image.LANCZOS)
 
 
