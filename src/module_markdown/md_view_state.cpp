@@ -137,4 +137,20 @@ core::Result<void> MarkdownViewStateStore::save(
     return core::appconfig::set(*db_, kMarkdownViewStateKey, text.value());
 }
 
+core::Result<void> saveEditorFontSizePref(core::data::SqliteDb* db, int px) {
+    if (db == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空），字号偏好未保存");
+    }
+    // 全键 = SettingsStore::keyNamespace()（"config.json:"，settings_config.cpp
+    // :171/:330 keyFor 同源）+ "editorFontSize"（kKeyEditorFontSize）。module 互不
+    // 依赖不可 include，字面在此对齐；漂移由 md_editor_font_pref_settings_contract
+    // 用例钉住（键名/前缀任一变，SettingsStore 读回即红）。
+    // 十进制整数文本 = settings_config save 的 makeInt 序列化形态（163 契约：
+    // SettingsStore::load 经 asInt 直读）。
+    return core::appconfig::set(*db, "config.json:editorFontSize",
+                                std::to_string(px));
+}
+
 } // namespace module::markdown

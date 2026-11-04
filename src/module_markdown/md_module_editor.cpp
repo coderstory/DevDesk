@@ -5,6 +5,8 @@
 
 #include "markdown_module_internal.h"
 
+#include "core/app_config.h"  // appconfig::set（字号偏好落库，池163）
+
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
 
 namespace module::markdown {
@@ -251,7 +253,9 @@ void MarkdownModule::drawTagBar(eui::Ui& ui,
     }
 }
 
-void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const core::theme::Tokens& t) {
+void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w,
+                                   const core::theme::Tokens& t,
+                                   const components::theme::ThemeColorTokens& componentTheme) {
     // 池128：状态条不再自铺半透小卡——透明铺列壳底，只留顶部 1px 分割线
     ui.rect("md.status.divider")
         .position(x, y)
@@ -276,8 +280,11 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
             leftColor = t.colors.primary;  // 保存成功 = 绿
         }
     }
-    // 左框右缘 = 右串左缘留 24px 间距
-    const float statusLeftW = w - 24.0f - 220.0f - 24.0f;
+    // 左框右缘 = 右串左缘留 24px 间距。右端预算 = 24(边距) + 字号控件区
+    // (30 label + 6 + dd 96) + 8 + 右串 220（池163：右端加字号设置后左框收口，
+    // 极窄列钳 0 防负宽文本盒）。
+    const float statusLeftW = std::max(0.0f, w - 24.0f - 220.0f - 8.0f -
+                                                 30.0f - 6.0f - 96.0f - 24.0f);
     ui.text("md.status.save")
         .position(x + 24.0f, y)
         .size(statusLeftW, core::theme::scaled(22.0f))
@@ -329,7 +336,7 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
         right += std::to_string(notes_.size()) + " 篇笔记";
     }
     ui.text("md.status.pos")
-        .position(x + w - 24.0f - 220.0f, y)
+        .position(x + w - 24.0f - 220.0f - 8.0f - 30.0f - 6.0f - 96.0f, y)
         .size(220.0f, core::theme::scaled(22.0f))
         .text(right)
         .fontSize(core::theme::scaled(12.0f))
@@ -339,6 +346,54 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w, const
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
+
+    // 字号设置（池163）：右端「字号 label + 下拉」，复用 settings 退场的
+    // editorFontSize 通道（同键同档位；设置页 151 批删行后入口迁此）。
+    // 状态栏在列壳 stack 底缘 → 弹层 openUp 向上（dropdown 弹层 z 自逃逸）。
+    constexpr float kFontDdW = 96.0f;
+    const float fontDdX = x + w - 24.0f - kFontDdW;
+    const float labelW = 30.0f;
+    ui.text("md.status.font.label")
+        .position(fontDdX - 6.0f - labelW, y)
+        .size(labelW, core::theme::scaled(22.0f))
+        .text("字号")
+        .fontSize(core::theme::scaled(12.0f))
+        .lineHeight(core::theme::scaled(22.0f))
+        .horizontalAlign(eui::HorizontalAlign::Right)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary)
+        .build();
+    ui.stack("md.status.fontdd.wrap")
+        .position(fontDdX, y)
+        .size(kFontDdW, 22.0f)
+        .content([&] {
+            components::dropdown(ui, "md.status.fontdd")
+                .size(kFontDdW, 22.0f)
+                .items(std::vector<std::string>(
+                    kMdEditorFontPresetLabels,
+                    kMdEditorFontPresetLabels + kMdEditorFontPresetCount))
+                .selected(mdNearestEditorFontIndex(core::theme::editorFontSize()))
+                .open(editorFontDdOpen_)
+                .onOpenChange([this](bool v) { editorFontDdOpen_ = v; })
+                .openUp(true)
+                .theme(componentTheme)
+                .onChange([this](int idx) { applyEditorFontPreset(idx); })
+                .build();
+        })
+        .build();
+}
+
+// 池163：档位写入 core::theme 通道（mdEditorFontSize 链全端即时生效）+
+// 落库复用 settings 的 editorFontSize 键（saveEditorFontSizePref；下一次启动
+// 由 settings onStart 通道加载链取回）。
+void MarkdownModule::applyEditorFontPreset(int index) {
+    if (index < 0 || index >= kMdEditorFontPresetCount) return;
+    const int px = kMdEditorFontPresets[index];
+    ::core::theme::setEditorFontSize(static_cast<float>(px));
+    if (auto r = saveEditorFontSizePref(::core::appDatabase(), px); r.isFail()) {
+        LOG_ERROR(std::string("Markdown: 字号偏好落库失败: ") + r.errorMessage());
+    }
+    LOG_INFO("Markdown: 编辑器字号 → " + std::to_string(px) + "px（页内设置）");
 }
 
 void MarkdownModule::refreshTags() {

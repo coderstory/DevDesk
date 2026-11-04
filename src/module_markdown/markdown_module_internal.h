@@ -110,6 +110,29 @@ inline float mdEditorFontSize() {
     return core::theme::editorFontSize() * core::theme::fontScale();
 }
 
+// 池163：编辑器字号档位——md 编辑器页内字号设置用（设置侧 UI 行已随 151 批退场，
+// 键与通道保留）。档位字面与 module_settings/settings_ui_logic.h kEditorFontPresets
+// 保持一致（module 互不依赖不可 include，漂移以设置侧为单一来源）。
+inline constexpr int kMdEditorFontPresets[] = {13, 15, 17, 20};
+inline constexpr int kMdEditorFontPresetCount = 4;
+inline constexpr const char* kMdEditorFontPresetLabels[] = {
+    "小 13px", "标准 15px", "大 17px", "特大 20px"};
+// 落库经 md_view_state.h saveEditorFontSizePref（settings 全键同形，163）。
+
+// 生效字号（core::theme 通道值）到最近档位下标；通道钳制域 10-32 恒覆盖档位域。
+inline int mdNearestEditorFontIndex(float px) {
+    int best = 0;
+    float bestDist = -1.0f;
+    for (int i = 0; i < kMdEditorFontPresetCount; ++i) {
+        const float d = std::fabs(px - static_cast<float>(kMdEditorFontPresets[i]));
+        if (bestDist < 0.0f || d < bestDist) {
+            bestDist = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
 // 预览生效样式：字号族（body/h1/h2/h3/code + bodyLineHeight）× 档位。
 // blockGap 必须同乘——它同时是 syncMap 缓存键项（rev/width/gap/块数），不乘则
 // 切档时键不变、块高备忘不重建，新字号配旧几何会裁字。标题/代码块行高在 EUI
@@ -255,10 +278,12 @@ inline ViewMode nextMode(ViewMode m) {
 constexpr float kTextColumnInsetX = 8.0f;
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
 
-// 池130：tab 带只压正下方列（编辑/实时/纯预览）顶部，树列恒满高——
-// 带高 = tab 32（S2.2 块面 Tab 档不动）+ 下距 8（与 kHeaderGap 同档）。
-constexpr float kNoteTabBarH = 32.0f;
-constexpr float kNoteTabBandH = kNoteTabBarH + 8.0f;
+// 池130：tab 带只压正下方列（编辑/实时/纯预览）顶部，树列恒满高。
+// 池164（设计 2026-11-03 全局参数卡 F4）：带高随全站 wtab 小档
+//（ui_kit::kWtabSmallHeight；池167 TAB 放大调该常量后本带自动跟随，不写死）；
+// 带下浮空缝删除（tab 底缘贴编辑区顶缘，浏览器 tab 惯例）。
+constexpr float kNoteTabBarH = ui_kit::kWtabSmallHeight;
+constexpr float kNoteTabBandH = kNoteTabBarH;
 
 // 池128：md 两列共用玻璃壳三件套（glassFill + radiusLarge + glassBorder + 冷阴影），
 // 取代原「列底 + 纸卡」两层；阴影几何与卡同款（panelShadow 24/8），色走 glassShadowColor。
@@ -440,7 +465,7 @@ private:
                 ui_kit::emptyState(ui, columnId + ".hint", opts, 16.0f,
                                    topInset + 16.0f, midW - 32.0f,
                                    std::max(0.0f, shellH - 62.0f), t);
-                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
+                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t, componentTheme);
                 return;
             }
 
@@ -454,7 +479,7 @@ private:
 
             body(TextColumnGeometry{colX, colY, colW, colH});
 
-            drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
+            drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t, componentTheme);
         }).build();
     }
 
@@ -490,8 +515,15 @@ private:
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) ;
 
-    // 底部状态栏（§3.3.4）：12px 浅灰右对齐，字数 + 保存状态。
-    void drawStatusBar(eui::Ui& ui, float x, float y, float w, const core::theme::Tokens& t) ;
+    // 底部状态栏（§3.3.4）：12px 浅灰右对齐，字数 + 保存状态；右端字号设置
+    //（池163，复用 settings editorFontSize 键与 core::theme 通道）。
+    void drawStatusBar(eui::Ui& ui, float x, float y, float w,
+                       const core::theme::Tokens& t,
+                       const components::theme::ThemeColorTokens& componentTheme);
+
+    // 页内字号设置（池163）：档位写入 core::theme 通道 + 落库复用 settings 的
+    // editorFontSize 键（saveEditorFontSizePref，md_view_state）。
+    void applyEditorFontPreset(int index);
 
     // 右栏：预览（components::markdown 渲染成 eui 节点树）
     // 双栏态：编辑器单向驱动预览滚动；仅预览态：手动滚动，进入时对齐编辑器位置。
@@ -903,6 +935,8 @@ private:
     // 方案 A：笔记标签页列表（会话内存态，顺序 = tab 顺序；持久化仅记 lastPath）
     std::vector<std::string> openNotes_;
     std::string editorText_;           // 编辑器缓冲
+    // 状态栏字号下拉开合态（池163；dropdown 无内部状态，模块侧持 Open）
+    bool editorFontDdOpen_ = false;
     // 内容修订号（唯一写点 = setEditorText），下游缓存以它为键跨帧复用
     uint64_t editorTextRev_ = 0;
     uint64_t previewTextHash_ = std::hash<std::string>{}(std::string());

@@ -49,4 +49,11 @@ private:
     core::data::SqliteDb* db_ = nullptr;
 };
 
+// 编辑器字号偏好落库（池163）：写 settings 的 editorFontSize 键（含 settings
+// 键命名空间前缀的全键，同一键单通道；键归属 settings 域，md 页内字号设置为
+// 第二写者，不新增第二键）。值 = 十进制整数文本，与 settings_config save 的
+// makeInt 序列化同形（SettingsStore::load().editorFontSize 可直读）。
+// db 为 nullptr = 库未就绪，返回 fail。
+core::Result<void> saveEditorFontSizePref(core::data::SqliteDb* db, int px);
+
 } // namespace module::markdown

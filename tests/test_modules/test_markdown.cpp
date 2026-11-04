@@ -23,6 +23,7 @@
 #include "module_markdown/md_view_state.h"
 #include "module_markdown/md_ids.h"
 #include "module_markdown/markdown_module_test_seam.h"   // 轮询周期注入（假红根因见用例）
+#include "module_settings/settings_config.h"  // SettingsStore（163 键契约测试；测试面豁免模块隔离）
 
 using module::markdown::kEditorInputId;
 
@@ -33,6 +34,7 @@ using module::markdown::kEditorInputId;
 #include <eui/dsl.h>
 #include <ui_kit/card.h>
 #include <ui_kit/glass.h>
+#include <ui_kit/wtab.h>   // kWtabSmallHeight（池164 tab 带几何判据派生源）
 #include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
 #include <algorithm>
@@ -4203,6 +4205,28 @@ REGISTER_TEST(md_view_state_mode_live,
     return true;
 })
 
+// 池163：md 页内字号偏好与设置页契约——saveEditorFontSizePref 落库后
+// SettingsStore::load() 必须读回同值（键名 editorFontSize / 值十进制整数文本，
+// 任一漂移设置页即读丢，本用例必红）。
+REGISTER_TEST(md_editor_font_pref_settings_contract,
+              "markdown: 字号偏好复用 settings editorFontSize 键（SettingsStore 直读契约）", {
+    using module::markdown::saveEditorFontSizePref;
+    test_support::TestDb env("devdesk_test_md_font_pref_", "font");
+    core::data::SqliteDb& db = env.handle();
+
+    module::settings::SettingsStore store(&db);
+    // 缺键 = 默认 15（通道未被 md 写过时的启动基线）
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 15);
+    DOCTEST_CHECK(saveEditorFontSizePref(&db, 17).isOk());
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
+    // 同键 UPSERT 二次写覆盖
+    DOCTEST_CHECK(saveEditorFontSizePref(&db, 13).isOk());
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 13);
+    // 库未就绪如实报 fail（不是静默成功）
+    DOCTEST_CHECK(saveEditorFontSizePref(nullptr, 15).isFail());
+    return true;
+})
+
 // 实时态活动块单输入 + 内容贴合高度
 
 namespace {
@@ -4828,8 +4852,11 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     DOCTEST_CHECK_EQ(edInput->frame.x - edCol->frame.x, kInsetNow);
     DOCTEST_CHECK(kInsetNow < kInsetBefore);          // 8 < 16
     DOCTEST_CHECK(edInput->frame.width > 720.0f);     // 写作列钳已去掉
-    // 池130：tab 带（32+8=40）压编辑列顶后，input y 偏移 = 40 + 16 顶距 + 24 chip 行 + 8 间距 = 88
-    DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y, 40.0f + 48.0f);
+    // 池130/池164：tab 带压编辑列顶后，input y 偏移 = kNoteTabBandH + 16 顶距 +
+    // 24 chip 行 + 8 间距。带高随全站 wtab 小档（kWtabSmallHeight，池167 放大
+    // 后自动跟随）、带下浮空缝已删（F4），不写死字面。
+    DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y,
+                     ui_kit::kWtabSmallHeight + 48.0f);
     const float edX = edInput->frame.x;
     const float edY = edInput->frame.y;
     const float edW = edInput->frame.width;
