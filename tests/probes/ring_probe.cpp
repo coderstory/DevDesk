@@ -1,9 +1,9 @@
-// ring_probe.cpp — 池168 窗口绿白间隔圆角虚框 ring 取证探针（dev-b7）。
-// 灰底窗（非白非绿：白间隔与绿段都可辨）叠 ui_kit::drawWindowRing，进程内断言：
-//   DOM：app.ring.base / app.ring.top.0 / app.ring.left.0 存在
-//   A1 四直边绿段覆盖：top/left 边带中线扫描，绿主导（≥50%，理想 70%）
-//   A2 白间隔可见：top 边带扫描白像素成段出现（≥10%）
-//   A3 圆角弧段：45° 采样点落白底环上（无绿段干扰角弧）
+// ring_probe.cpp — 池168 窗口边框取证探针（2026-11-04 细线黑边版，绿白虚框已撤销）。
+// 灰底窗（非黑非白：黑线与底色都可辨）叠 ui_kit::drawWindowRing，进程内断言：
+//   DOM：app.ring.base 存在；撤销的绿段 id（top.0/left.0）必须不存在
+//   A1 top 边带中线扫描：黑主导（≥80%，连续细线，扣抗锯齿）
+//   A1b left 边带中线扫描：黑主导
+//   A3 45° 圆角弧点：落黑描边上
 //   --screenshot <png> 落图（GL 帧回读，锁屏期可用）
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（同 b1_material_probe）
@@ -29,11 +29,8 @@ namespace {
 struct Rgb {
     int r, g, b;
 };
-// 品牌绿（mint ~#07C160）：g 显著高于 r/b
-bool isGreenish(const Rgb& c) { return c.g > c.r + 30 && c.g > c.b + 20; }
-bool isWhitish(const Rgb& c) {
-    return c.r >= 240 && c.g >= 240 && c.b >= 240;
-}
+// 细线黑边：RGB 三通道均暗（灰底 0.45*255≈115 提供对比）
+bool isBlackish(const Rgb& c) { return c.r <= 60 && c.g <= 60 && c.b <= 60; }
 
 }  // namespace
 
@@ -51,6 +48,13 @@ int main(int argc, char* argv[]) {
 
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
+    // 探针窗真实 contentScale（与 A3 采样、FrameCapture::scale 同源同值）：
+    // drawWindowRing 渲染半径必须同口径折算 DWM 8 物理px，漏传吃默认 1.0 时
+    // 渲染半径与 A3 采样半径错位（135% 屏差 ~2 逻辑px）→ 弧点落抗锯齿边假红。
+    float probeScaleX = 1.0f, probeScaleY = 1.0f;
+    glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &probeScaleX,
+                              &probeScaleY);
+    const float probeScale = probeScaleX > 0.0f ? probeScaleX : 1.0f;
     core::dsl::Ui* ui = nullptr;
     auto composeFrame = [&]() {
         probe::composeModuleFrame(runtime, window, "ring", w, h,
@@ -70,7 +74,8 @@ int main(int argc, char* argv[]) {
                                               ui_kit::drawWindowRing(
                                                   u, s.width, s.height,
                                                   core::theme::current(),
-                                                  false);   // 探针窗恒还原态（need184③ 分支见 test_window_ring）
+                                                  false,  // 探针窗恒还原态（need184③ 分支见 test_window_ring）
+                                                  probeScale);
                                           })
                                           .build();
                                   });
@@ -111,74 +116,66 @@ int main(int argc, char* argv[]) {
 
     bool passed = true;
 
-    // DOM：ring 元素在树
-    if (ui == nullptr || ui->find("app.ring.base") == nullptr ||
-        ui->find("app.ring.top.0") == nullptr ||
-        ui->find("app.ring.left.0") == nullptr) {
-        std::cerr << "ring_probe: DOM FAIL ring 元素缺失\n";
+    // DOM：细黑边在树；撤销的绿段 id 必须不存在
+    if (ui == nullptr || ui->find("app.ring.base") == nullptr) {
+        std::cerr << "ring_probe: DOM FAIL app.ring.base 缺失\n";
+        passed = false;
+    }
+    if (ui != nullptr && (ui->find("app.ring.top.0") != nullptr ||
+                          ui->find("app.ring.left.0") != nullptr)) {
+        std::cerr << "ring_probe: DOM FAIL 绿段 id 残留（绿白虚框已撤销）\n";
         passed = false;
     }
 
-    // A1/A2：top 边带中线（band 2..4 → 中线 y=3）扫描
+    // A1：top 边带中线扫描黑主导（连续细线，≥80% 扣抗锯齿）
     const float mid = ui_kit::kWindowRingInset +
                       ui_kit::kWindowRingBorder * 0.5f;
-    int green = 0, white = 0, total = 0;
+    int black = 0, total = 0;
     for (float lx = 14.0f; lx < w - 14.0f; lx += 1.0f) {
         ++total;
-        const Rgb c = sample(lx, mid);
-        if (isGreenish(c)) ++green;
-        else if (isWhitish(c)) ++white;
+        if (isBlackish(sample(lx, mid))) ++black;
     }
-    std::cout << "scan top total=" << total << " green=" << green
-              << " white=" << white << "\n";
-    if (total <= 0 || green * 2 < total) {  // ≥50%（理想 70%）
-        std::cerr << "ring_probe: A1 FAIL top 绿段覆盖不足 green=" << green
+    std::cout << "scan top total=" << total << " black=" << black << "\n";
+    if (total <= 0 || black * 5 < total * 4) {  // ≥80%
+        std::cerr << "ring_probe: A1 FAIL top 黑线覆盖不足 black=" << black
                   << "/" << total << "\n";
         passed = false;
     } else {
-        std::cout << "A1 PASS top 边绿段覆盖 " << green << "/" << total
-                  << "\n";
-    }
-    if (white * 10 < total) {  // ≥10%（理想 30% 扣抗锯齿）
-        std::cerr << "ring_probe: A2 FAIL top 白间隔不可见 white=" << white
-                  << "/" << total << "\n";
-        passed = false;
-    } else {
-        std::cout << "A2 PASS top 边白间隔可见 " << white << "/" << total
+        std::cout << "A1 PASS top 边黑线覆盖 " << black << "/" << total
                   << "\n";
     }
 
-    // A1b：left 边带中线（x=3）纵向扫描绿主导
-    int greenL = 0, totalL = 0;
+    // A1b：left 边带中线（x=mid）纵向扫描黑主导
+    int blackL = 0, totalL = 0;
     for (float ly = 14.0f; ly < h - 14.0f; ly += 1.0f) {
         ++totalL;
-        if (isGreenish(sample(mid, ly))) ++greenL;
+        if (isBlackish(sample(mid, ly))) ++blackL;
     }
-    std::cout << "scan left total=" << totalL << " green=" << greenL << "\n";
-    if (totalL <= 0 || greenL * 2 < totalL) {
-        std::cerr << "ring_probe: A1b FAIL left 绿段覆盖不足 green=" << greenL
+    std::cout << "scan left total=" << totalL << " black=" << blackL << "\n";
+    if (totalL <= 0 || blackL * 5 < totalL * 4) {
+        std::cerr << "ring_probe: A1b FAIL left 黑线覆盖不足 black=" << blackL
                   << "/" << totalL << "\n";
         passed = false;
     } else {
-        std::cout << "A1b PASS left 边绿段覆盖 " << greenL << "/" << totalL
+        std::cout << "A1b PASS left 边黑线覆盖 " << blackL << "/" << totalL
                   << "\n";
     }
 
-    // A3：45° 圆角弧点 = 角圆心向窗角方向移 (r−0.5)·0.7071，应在白底环上
+    // A3：45° 圆角弧点 = 角圆心向窗角方向移 (r−0.5)·0.7071，应在黑描边上
+    // （r 随探针 contentScale 走 DWM 8 物理px 折算——窗口圆角贴合同款口径）
     {
-        const float r = ui_kit::kWindowRingRadius;
+        const float r = ui_kit::windowBorderRadius(scale);
         const float d = (r - 0.5f) * 0.70710678f;
         const float cx = ui_kit::kWindowRingInset + r - d;
         const float cy = ui_kit::kWindowRingInset + r - d;
         const Rgb c = sample(cx, cy);
-        const bool cornerOk = c.r >= 200 && c.g >= 200 && c.b >= 200;
         std::cout << "corner rgb=" << c.r << "," << c.g << "," << c.b << "\n";
-        if (!cornerOk) {
-            std::cerr << "ring_probe: A3 FAIL 圆角弧段非白 (" << c.r << ","
+        if (!isBlackish(c)) {
+            std::cerr << "ring_probe: A3 FAIL 圆角弧段非黑 (" << c.r << ","
                       << c.g << "," << c.b << ")\n";
             passed = false;
         } else {
-            std::cout << "A3 PASS 圆角弧段白底环\n";
+            std::cout << "A3 PASS 圆角弧段黑描边\n";
         }
     }
 
