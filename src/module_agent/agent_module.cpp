@@ -1,4 +1,5 @@
-// 智能体页模块：生命周期 + UI（工具区 / 任务列表 / 任务弹窗 / 详情弹窗）。
+// 智能体页模块：生命周期 + UI（页头工具入口钮 / 任务列表 / 任务弹窗 / 详情弹窗 /
+// 可用工具弹窗——池170，原页内工具区块已退役迁弹窗）。
 // 弹窗关闭态不建内容节点（存在性即开关状态，测试据此判开合）；可点元素契约：id 元素
 // 须带 text 与 onClick（button 的 onClick 落在 .bg 上）→ chip 手搓两层；弹窗字段标签
 // 一律 .caption：dropdown 内部占用 <id>.label，同 id 会串位。
@@ -8,6 +9,7 @@
 #include "agent_module_internal.h"   // 拆分共享件：needsClaudePageHint / kModelSlot*（本 TU 消费方）
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -72,6 +74,10 @@ namespace {
 
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
+// 页头「可用工具」入口钮（池170 §3.1）：次钮 132×40 与「+ 新建任务」同档，
+// 工具区块（原 523-663 页内可展开区块）退役后的唯一入口
+constexpr float kToolsBtnW = 132.0f;
+constexpr float kPageHeaderBtnGap = 8.0f;   // 设计 §3.1：两钮间距 8
 // B3（F-66-2）任务卡网格化：单列每卡 = 内容宽 −2×inset，1600 窗下 1536×68 ≈ 22:1，
 // 是横条不是卡。改多列网格锁 340–420 宽 × 120 高（≈3:1），窄窗自动退化为 1 列。
 constexpr float kCardMinW = 340.0f;
@@ -96,12 +102,6 @@ constexpr ui_kit::JellyOptions kJelly{};
 constexpr float kPageErrorH = 16.0f;
 // 页内错误行下的「去 Claude 页」引导行高（仅「LLM 配置不可用」类错误渲染）
 constexpr float kPageHintH = 16.0f;
-
-constexpr float kToolsHeaderH = 28.0f;
-constexpr float kToolCardH = 40.0f;   // 基准；运行期走 scaled(kToolCardH)（B6：行盒随字号）
-// 工具列表高锚点 = 640 档（S4.1 最小窗 1000×640）下的列表高，也是弹性下限。
-// H18-批3 起不再封顶：高窗按 body 可用高放大（公式见 compose 内 toolsListH）
-constexpr float kToolsListAnchorH = 240.0f;
 
 // 限次徽章文案（列表行内短标记，4 字以内）。
 // runLimitText 在 agent_ui_shared.h——详情摘要与任务弹窗共用。
@@ -398,6 +398,10 @@ void AgentModule::onStop() {
     selectedRunId_.reset();
     expandedMsgSeqs_.clear();
     autoExpandedSeq_.reset();
+    pressedMsgSeqs_.clear();
+    toolsDialogOpen_ = false;
+    hoverHolder_.clear();
+    hoverHideDueMs_.clear();
     taskDialogOpen_ = false;
     editingTaskId_.reset();
     editError_.clear();
@@ -435,32 +439,16 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
 
     ensureToolsCache(/*forceReload=*/false);
-    // 工具列表纵向弹性（H18-批3 / S4.1「锚点 1000×640 + 伸缩公式」）：
-    //   toolsListH = min(max(240 锚点, body 可用高 × 0.3), 内容自然高)
-    // ① body 可用高 = screen.height − pad：与下方 listH 同口径（页 column 底 padding
-    //    为 0，只在顶部扣一次 pad），即工具区所在 body 的真实可用高度；
-    // ② 内容自然高 = 行数 × kToolCardH：沿用既有算式（scrollView 无额外内边距，
-    //    卡间 gap 已含在 step 节奏里）；
-    // ③ 240 = 最小窗锚点（原封顶值）：大窗按真实页高 960 算 (960−32)×0.3 = 278.4
-    //    > 240，工具区随窗拉高；×0.2 时 928×0.2 = 185.6 会被锚点封死，故取 0.3
-    //   （最小窗 body 可用高 568×0.3 = 170.4 仍落 240，两档同时成立）。
-    const float toolsBodyAvailH = screen.height - pad;
-    const float toolsNaturalH =
-        static_cast<float>(toolsCache_.size()) * core::theme::scaled(kToolCardH);
-    const float toolsListH =
-        toolsOpen_ ? std::min(std::max(kToolsListAnchorH, toolsBodyAvailH * 0.3f),
-                              toolsNaturalH)
-                   : 0.0f;
-    const float toolsH = kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
-    // 页 column 子项：标题行 / [错误行] / [引导行] / tools / tasklist；子项数或行高一变，kPageGapCount 与减项必须同步
+    // 池170：页内工具区块整体退役（迁弹窗），其高度预算归还任务列表。
+    // 页 column 子项：标题行 / [错误行] / [引导行] / tasklist；子项数或行高一变，kPageGapCount 与减项必须同步
     const bool hasPageError = !pageError_.empty();
     const bool hasPageHint = hasPageError && needsClaudePageHint(pageError_);
-    const int kPageGapCount = 2 + (hasPageError ? 1 : 0) + (hasPageHint ? 1 : 0);
+    const int kPageGapCount = 1 + (hasPageError ? 1 : 0) + (hasPageHint ? 1 : 0);
     // 错误/引导行行盒随字号派生（B6）：行盒不缩 = 字变大被裁。
     const float pageErrorH = core::theme::scaled(kPageErrorH);
     const float pageHintH = core::theme::scaled(kPageHintH);
     // listH S4.2 弹性：底 padding 已为 0，高仅扣 pad 一次（顶内边距）
-    const float listH = screen.height - pad - kPageHeaderH - toolsH -
+    const float listH = screen.height - pad - kPageHeaderH -
                         (hasPageError ? pageErrorH : 0.0f) -
                         (hasPageHint ? pageHintH : 0.0f) -
                         static_cast<float>(kPageGapCount) * t.sizes.spacingLarge;
@@ -472,17 +460,35 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 .content([&] {
             ui.row("agent.page.header")
                 .size(contentW, kPageHeaderH)
-                .gap(kDialogGap)
+                .gap(kPageHeaderBtnGap)
                 .alignItems(eui::Align::CENTER)
                 .content([&] {
                     ui.text("agent.title")
-                        .size(tasks_.empty() ? contentW : (contentW - kNewTaskBtnW - kDialogGap),
+                        .size(contentW - kToolsBtnW - kPageHeaderBtnGap -
+                                  (tasks_.empty() ? 0.0f
+                                                  : kNewTaskBtnW + kPageHeaderBtnGap),
                               core::theme::scaled(32.0f))
                         .text("智能体")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(core::theme::scaled(32.0f))
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
+                        .build();
+                    // 「可用工具」入口钮（池170 §3.1）：次钮 132×40，插头图标 +
+                    // 计数；store 未装配时禁用（40% 置灰）。弹窗打开时刷新注册表快照
+                    components::button(ui, "agent.page.tools")
+                        .size(kToolsBtnW, 40.0f)
+                        .theme(themeTokens, false)
+                        .icon(0xF1E6)   // fa-plug
+                        .iconSize(core::theme::scaled(14.0f))
+                        .text("可用工具（" + std::to_string(toolsCache_.size()) + "）")
+                        .fontSize(core::theme::scaled(14.0f))
+                        .radius(6.0f)
+                        .disabled(store_ == nullptr)
+                        .onClick([this] {
+                            toolsDialogOpen_ = true;
+                            ensureToolsCache(/*forceReload=*/true);
+                        })
                         .build();
                     if (!tasks_.empty()) {
                         components::button(ui, "agent.page.newTask")
@@ -519,148 +525,6 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         .build();
                 }
             }
-
-            // 可用工具区块：收起默认、头部点击展开；卡多了由 scrollView 内滚
-            ui.column("agent.tools")
-                .size(contentW, toolsH)
-                .gap(kMsgGap)
-                .content([&] {
-                    ui.row("agent.tools.header")
-                        .size(contentW, kToolsHeaderH)
-                        .interactive(true)
-                        .gap(8.0f)
-                        .alignItems(eui::Align::CENTER)
-                        .onClick([this] {
-                            toolsOpen_ = !toolsOpen_;
-                            if (toolsOpen_) {
-                                ensureToolsCache(/*forceReload=*/true);
-                            }
-                        })
-                        .content([&] {
-                            ui.text("agent.tools.header.label")
-                                .size(contentW - 72.0f, core::theme::scaled(20.0f))
-                                .text("可用工具（" +
-                                      std::to_string(toolsCache_.size()) + "）")
-                                .fontSize(core::theme::scaled(13.0f))
-                                .lineHeight(core::theme::scaled(20.0f))
-                                .fontWeight(700)
-                                .color(t.colors.textPrimary)
-                                .build();
-                            ui.text("agent.tools.header.hint")
-                                .size(64.0f, core::theme::scaled(20.0f))
-                                .text(toolsOpen_ ? "收起 ▲" : "展开 ▼")
-                                .fontSize(core::theme::scaled(12.0f))
-                                .lineHeight(core::theme::scaled(20.0f))
-                                .color(t.colors.textTertiary)
-                                .build();
-                        })
-                        .build();
-                    if (toolsOpen_ && !toolsCache_.empty()) {
-                        // 工具列表容器：实底白卡面板（S6.1 玻璃退役）
-                        ui.stack("agent.tools.list.wrap")
-                            .size(contentW, toolsListH)
-                            .content([&] {
-                                ui.rect("agent.tools.list.panel")
-                                    .position(0.0f, 0.0f)
-                                    .size(contentW, toolsListH)
-                                    .color(ui_kit::containerSurface(t))
-                                    .radius(t.sizes.radius)
-                                    .border(1.0f, t.colors.borderDefault)
-                                    .build();
-                                components::scrollView(ui, "agent.tools.scroll")
-                                    .position(0.0f, 0.0f)
-                                    .size(contentW, toolsListH)
-                                    .gap(kMsgGap)
-                                    .step(core::theme::scaled(kToolCardH))
-                                    .theme(themeTokens)
-                                    .contentKey("agent.tools.scroll.n" +
-                                                std::to_string(toolsCache_.size()))
-                                    .content([&](eui::Ui& inner, float cw, float) {
-                                        for (size_t k = 0; k < toolsCache_.size(); ++k) {
-                                            const ToolInfo& tool = toolsCache_[k];
-                                            const std::string cid =
-                                                "agent.tools.card." + std::to_string(k);
-                                            inner.stack(cid)
-                                                .size(cw, core::theme::scaled(kToolCardH))
-                                                .content([&] {
-                                                    // 白卡背景（S6.1 实底）
-                                                    inner.rect(cid + ".bg")
-                                                        .position(0.0f, 0.0f)
-                                                        .size(cw, core::theme::scaled(kToolCardH))
-                                                        .color(ui_kit::cardSurface(t))
-                                                        .radius(t.sizes.radius)
-                                                        .border(1.0f, t.colors.borderDefault)
-                                                        .build();
-                                                    // 行1：工具名（14px 600 一级字）
-                                                    inner.text(cid + ".name")
-                                                        .position(12.0f, core::theme::scaled(3.0f))
-                                                        .size(cw - 24.0f, core::theme::scaled(17.0f))
-                                                        .text(tool.name)
-                                                        .fontSize(core::theme::scaled(14.0f))
-                                                        .lineHeight(core::theme::scaled(17.0f))
-                                                        .fontWeight(600)
-                                                        .wrap(false)
-                                                        .color(t.colors.textPrimary)
-                                                        .build();
-                                                    // 行2：描述+参数（12px 三级字）
-                                                    std::string descShort;
-                                                    if (!tool.description.empty())
-                                                        descShort = utf8Truncate(tool.description, 80);
-                                                    std::string paramsText;
-                                                    if (!tool.params.empty()) {
-                                                        paramsText = "参数：";
-                                                        for (size_t p = 0; p < tool.params.size(); ++p) {
-                                                            if (p > 0) paramsText += ", ";
-                                                            paramsText += tool.params[p];
-                                                        }
-                                                    }
-                                                    std::string line2;
-                                                    if (!descShort.empty() && !paramsText.empty())
-                                                        line2 = descShort + " · " + paramsText;
-                                                    else if (!descShort.empty())
-                                                        line2 = descShort;
-                                                    else if (!paramsText.empty())
-                                                        line2 = paramsText;
-                                                    else
-                                                        line2 = "（无描述）";
-                                                    inner.text(cid + ".desc")
-                                                        .position(12.0f, core::theme::scaled(22.0f))
-                                                        .size(cw - 24.0f, core::theme::scaled(15.0f))
-                                                        .text(line2)
-                                                        .fontSize(core::theme::scaled(12.0f))
-                                                        .lineHeight(core::theme::scaled(15.0f))
-                                                        .wrap(false)
-                                                        .color(t.colors.textTertiary)
-                                                        .build();
-                                                })
-                                        .build();
-                                }
-                            })
-                            .build();
-                            })   // agent.tools.list.wrap 的 content 收口
-                            .build();
-                        // 滚动提示：工具数多于可见行数时显示"还有 N 件"。
-                        // 可见行数按本帧弹性列表高推（H18-批3：窗口拉高后可见行变多，
-                        // 提示要跟着变，不能再用固定 240 锚点算）
-                        if (!toolsCache_.empty()) {
-                            const float visibleRows =
-                                toolsListH / core::theme::scaled(kToolCardH);
-                            const int total = static_cast<int>(toolsCache_.size());
-                            const int visible = static_cast<int>(visibleRows);
-                            if (total > visible) {
-                                ui.text("agent.tools.scrollHint")
-                                    .size(contentW, core::theme::scaled(16.0f))
-                                    .text("还有 " + std::to_string(total - visible) + " 件")
-                                    .fontSize(core::theme::scaled(11.0f))
-                                    .lineHeight(core::theme::scaled(16.0f))
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                            }
-                        }
-                    }
-                })
-                .build();
 
             // 任务列表面板（S6.1 实底白卡、玻璃退役）
             // 行级交互不变：点卡开详情、hover 加深一档；列表无选中
@@ -736,6 +600,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         .gap(kTaskCardGap)
                         .lineGap(kTaskCardGap)
                         .content([&] {
+                    // bug169 §8 离场去抖账目时钟（steady ms，每帧取一次）
+                    const int64_t hoverNowMs = std::chrono::duration_cast<
+                        std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
                     for (const auto& task : tasks_) {
                         const std::string id =
                             "agent.task." + std::to_string(task.id);
@@ -762,8 +631,21 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         // 「确认即终局」，先停后删会把破坏性动作拆成难收口的中间态
                         const bool runBusy =
                             isTaskRunActive(task.id) || runStarted;
-                        // hover 态（F-66-4/5）：命中面写集合，卡底每帧读它出材质与形变
-                        const bool hovered = hoveredTaskIds_.count(task.id) > 0;
+                        // hover 态（F-66-4/5 + bug169 §8 状态机）：hover 目标全局唯一，
+                        // 每卡记持有槽位；到期去抖账目先收割再读域。派发序实证（EUI
+                        // runtime）：低 z 元素的 onHover(false) 可晚于高 z 元素的
+                        // onHover(true)——单集合在按钮间缝隙穿越时被抹空（菜单即消失
+                        // 的根因）；持有者槽位互检 + leave 只在「持有者=自己」时入
+                        // 去抖账，任何派发序都收敛。
+                        {
+                            auto dueIt = hoverHideDueMs_.find(task.id);
+                            if (dueIt != hoverHideDueMs_.end() &&
+                                hoverNowMs >= dueIt->second) {
+                                hoverHideDueMs_.erase(dueIt);
+                                hoverHolder_.erase(task.id);
+                            }
+                        }
+                        const bool hovered = hoverHolder_.count(task.id) > 0;
                         const bool pressed = pressedTaskIds_.count(task.id) > 0;
 
                         // 三行内容（F-66-3）：标题+状态药丸 / 徽章+最近运行 / 触发条件。
@@ -885,31 +767,60 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .zIndex(2)
                                     .opacity(hovered ? 1.0f : 0.0f)
                                     .disabled(!hovered)
+                                    // bug169 §6 动效表：操作组显隐淡入/淡出 120ms
+                                    .transition(core::Transition::make(
+                                        0.12f, core::Ease::OutCubic))
+                                    .animate(core::AnimProperty::Opacity)
                                     .content([&] {
                                         const float step = kTaskIconBtn + 4.0f;
-                                        // 指针在按钮上 = 仍在卡上：按钮代报 hover（同集合）
-                                        auto keepHover = [this, taskId = task.id](bool h) {
-                                            if (h) {
-                                                hoveredTaskIds_.insert(taskId);
-                                            } else {
-                                                hoveredTaskIds_.erase(taskId);
-                                            }
+                                        // 指针在按钮上 = 仍在联合命中域内（bug169 §8）：
+                                        // enter 覆写持有槽位 + 清去抖账；leave 仅在
+                                        // 持有者=自己时擦槽位 + 入 120ms 去抖账
+                                        auto keepHover = [this,
+                                                          taskId = task.id](
+                                                             int slot) {
+                                            return [this, taskId, slot](bool h) {
+                                                // 时刻在回调现场取（帧期捕获的
+                                                // nowMs 会因跨帧陈旧把去抖窗口算短）
+                                                const int64_t nowMs =
+                                                    std::chrono::duration_cast<
+                                                        std::chrono::milliseconds>(
+                                                        std::chrono::steady_clock::
+                                                            now()
+                                                            .time_since_epoch())
+                                                        .count();
+                                                if (h) {
+                                                    hoverHolder_[taskId] = slot;
+                                                    hoverHideDueMs_.erase(taskId);
+                                                } else {
+                                                    // leave 不擦持有者（去抖窗口内
+                                                    // 仍须显），只入账；到期由 compose
+                                                    // 收割擦槽位。槽位互检挡陈旧 leave
+                                                    auto hIt =
+                                                        hoverHolder_.find(taskId);
+                                                    if (hIt != hoverHolder_.end() &&
+                                                        hIt->second == slot) {
+                                                        hoverHideDueMs_.emplace(
+                                                            taskId, nowMs + 120);
+                                                    }
+                                                }
+                                            };
                                         };
                                         iconActionChip(inner, id + ".detail", 0xF05A,
                                                        kTaskIconBtn, themeTokens, true,
                                                        [this, taskId = task.id] {
                                                            openTaskDetail(taskId);
-                                                       }, 0.0f, keepHover);
+                                                       }, 0.0f, keepHover(1));
                                         iconActionChip(inner, id + ".edit", 0xF044,
                                                        kTaskIconBtn, themeTokens, true,
                                                        [this, taskId = task.id] {
                                                            openTaskEditor(taskId);
-                                                       }, step, keepHover);
+                                                       }, step, keepHover(2));
                                         iconActionChip(inner, id + ".toggle", 0xF011,
                                                        kTaskIconBtn, themeTokens, true,
                                                        [this, taskCopy = task] {
                                                            toggleTaskEnabled(taskCopy);
-                                                       }, step * 2.0f, keepHover);
+                                                       }, step * 2.0f, keepHover(3));
                                         // 「入队」对非常驻任务无意义（Scheduler 只对常驻
                                         // 派生子任务），非常驻/Scheduler 未装配 → 置灰；
                                         // 五钮恒渲染保操作组宽度恒定（G2 右缘对齐判据）
@@ -923,13 +834,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                                return;
                                                            }
                                                            scheduler_->enqueueResident(taskId);
-                                                       }, step * 3.0f, keepHover);
+                                                       }, step * 3.0f, keepHover(4));
                                         iconActionChip(inner, id + ".delete", 0xF2ED,
                                                        kTaskIconBtn, themeTokens, !runBusy,
                                                        [this, taskId = task.id, busy = runBusy] {
                                                            if (busy) return;   // 禁用态点击无效果（与入队 chip 同守卫法）
                                                            deleteConfirmTaskId_ = taskId;
-                                                       }, step * 4.0f, keepHover);
+                                                       }, step * 4.0f, keepHover(5));
                                     })
                                     .build();
 
@@ -1018,9 +929,23 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     },
                                     [this, taskId = task.id](bool h) {
                                         if (h) {
-                                            hoveredTaskIds_.insert(taskId);
+                                            hoverHolder_[taskId] = 6;   // 启动钮槽位
+                                            hoverHideDueMs_.erase(taskId);
                                         } else {
-                                            hoveredTaskIds_.erase(taskId);
+                                            auto hIt = hoverHolder_.find(taskId);
+                                            if (hIt != hoverHolder_.end() &&
+                                                hIt->second == 6) {
+                                                // 同上：leave 只入账不擦持有者
+                                                hoverHideDueMs_.emplace(
+                                                    taskId,
+                                                    std::chrono::duration_cast<
+                                                        std::chrono::milliseconds>(
+                                                        std::chrono::steady_clock::
+                                                            now()
+                                                            .time_since_epoch())
+                                                        .count() +
+                                                        120);
+                                            }
                                         }
                                     },
                                     2);
@@ -1036,9 +961,23 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .states(kTransparent, kTransparent, kTransparent)
                                     .onHover([this, taskId = task.id](bool h) {
                                         if (h) {
-                                            hoveredTaskIds_.insert(taskId);
+                                            hoverHolder_[taskId] = 0;   // 命中面槽位
+                                            hoverHideDueMs_.erase(taskId);
                                         } else {
-                                            hoveredTaskIds_.erase(taskId);
+                                            auto hIt = hoverHolder_.find(taskId);
+                                            if (hIt != hoverHolder_.end() &&
+                                                hIt->second == 0) {
+                                                // 同上：leave 只入账不擦持有者
+                                                hoverHideDueMs_.emplace(
+                                                    taskId,
+                                                    std::chrono::duration_cast<
+                                                        std::chrono::milliseconds>(
+                                                        std::chrono::steady_clock::
+                                                            now()
+                                                            .time_since_epoch())
+                                                        .count() +
+                                                        120);
+                                            }
                                         }
                                     })
                                     .onPress([this, taskId = task.id](const core::PointerEvent&,
@@ -1071,6 +1010,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     if (taskDialogOpen_ && draftDialogOpen_) {
         composeDraftDialog(ui, screen, t, themeTokens);
     }
+    if (toolsDialogOpen_) {
+        composeToolsDialog(ui, screen, t, themeTokens);
+    }
     if (detailTaskId_) {
         composeTaskDetailDialog(ui, screen, t, themeTokens);
     }
@@ -1091,6 +1033,10 @@ bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
     if (event.key != eui::InputKey::Escape) return false;
     if (deleteConfirmTaskId_) {
         deleteConfirmTaskId_.reset();   // 确认弹窗是最上层：Esc 只关它，不碰底下弹窗
+        return true;
+    }
+    if (toolsDialogOpen_) {
+        toolsDialogOpen_ = false;   // 工具弹窗与页面弹窗互不并存（backdrop 挡页）
         return true;
     }
     if (detailTaskId_) {

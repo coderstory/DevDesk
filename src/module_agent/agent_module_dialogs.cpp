@@ -10,6 +10,9 @@
 #include "agent_module_internal.h"
 #include "module_agent/agent_task_templates.h"
 
+#include <ui_kit/glass.h>       // glassBorder（池162/170 卡面 1px 高光边）
+#include <ui_kit/materials.h>   // itemSurface（池127 L2 卡面）
+
 namespace module::agent {
 
 namespace {
@@ -130,9 +133,12 @@ void AgentModule::toggleMessageExpanded(int64_t seq) {
     ++msgScrollVersion_;
 }
 
-// 消息行渲染：.head（徽章 + 时间 + 展开/收起 + 复制 chip，头高 24）、收起态 .preview、
-// 展开态逐块 .blk.<j>；正文/预览/工具输出统一 fsS/20（spec §9.2），text 块 maxWidth
-// 必须显式给（measureTextSize 只认 element.maxWidth）
+// 消息卡渲染（池162 重设计）：卡面 = L2 itemSurface + 1px glassBorder + 果冻按压，
+// 内边距 12；.head（徽章 pill + 时间 + 弹簧 + 展开/收起 + [复制] chip 48×24，头高 24）、
+// 收起态 .preview、展开态逐块 .blk.<j>（Text/Plain 裸文本、ToolUse 浅染内嵌块 28 高、
+// ToolResult 左 3px 语义条：红仅错误）；正文/预览/工具输出统一 fsS/20（spec §9.2），
+// text 块 maxWidth 必须显式给（measureTextSize 只认 element.maxWidth）。
+// 整卡可点开合：点击落 .hit 命中面（z1），头行 chips 在 z2 各自拦截不冒泡到卡面
 void AgentModule::renderMessageRow(
     ::eui::Ui& inner, float cw, const std::string& prefix, size_t index,
     const AgentMessageRow& msg, int64_t refSec, const ::core::theme::Tokens& t,
@@ -142,142 +148,301 @@ void AgentModule::renderMessageRow(
     const float msgLh = std::max(fsS * 1.4f, 20.0f);
     const std::string mid = prefix + ".msg." + std::to_string(index);
     const bool expanded = expandedMsgSeqs_.count(msg.seq) > 0;
-    const float boxH = estimateMessageHeight(msg, expanded, cw, fsS, msgLh);
+    const float cardPad = core::theme::scaled(12.0f);
+    const float contentW = std::max(0.0f, cw - 2.0f * cardPad);
+    // 高度估算给卡内宽（文字换行按内容宽算），卡总高 = 内容高 + 2×pad
+    const float contentH =
+        estimateMessageHeight(msg, expanded, contentW, fsS, msgLh);
+    const float cardH = contentH + 2.0f * cardPad;
     const std::vector<MessageBlock> blocks =
         decodeMessageBlocks(msg.contentJson);
     const std::string badge = messageRoleBadge(msg);
-    constexpr float kMsgBadgeW = 44.0f;   // 2 CJK @13 + 余量
+    const bool toolRole = badge == "工具";
+    const bool pressed = pressedMsgSeqs_.count(msg.seq) > 0;
     constexpr float kMsgTimeW = 110.0f;   // MM-DD HH:MM:SS（14 字符）@13 ≈ 96
+    constexpr float kChipW = 48.0f;       // 展开/收起与复制同规格（§3.3 同卡同几何）
+    constexpr float kCardRadius = 6.0f;
+    const float badgeFs = core::theme::scaled(12.0f);
+    const float badgeH = core::theme::scaled(20.0f);
+    const float badgeW = core::TextPrimitive::measureTextWidth(
+                            badge, "", badgeFs, 600) +
+                        core::theme::scaled(16.0f);   // pill 内边距 8×2
+    const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
 
-    inner.column(mid)
-        .size(cw, boxH)
-        .gap(kMsgGap)
+    inner.stack(mid)
+        .size(cw, cardH)
         .content([&] {
-            inner.row(mid + ".head")
-                .size(cw, kMsgHeaderH)
-                .gap(8.0f)
-                .alignItems(eui::Align::CENTER)
+            // 卡面（L2 itemSurface，池127 档）：果冻按压 0.96 / 160ms 回弹（可点项）
+            inner.rect(mid + ".bg")
+                .size(cw, cardH)
+                .color(ui_kit::itemSurface(t))
+                .radius(kCardRadius)
+                .border(1.0f, ui_kit::glassBorder(t))
+                .transformOrigin(0.5f, 0.5f)
+                .scale(pressed ? 0.96f : 1.0f)
+                .transition(core::Transition::make(0.18f, core::Ease::OutBack))
+                .animate(core::AnimProperty::Transform)
+                .build();
+            // 命中面：整卡点击开合 + 按下集合代报（卡底每帧读出 scale 目标值）
+            inner.rect(mid + ".hit")
+                .size(cw, cardH)
+                .zIndex(1)
+                .states(kTransparent, kTransparent, kTransparent)
+                .onPress([this, seq = msg.seq](const core::PointerEvent&,
+                                               const core::Rect&) {
+                    pressedMsgSeqs_.insert(seq);
+                })
+                .onRelease([this, seq = msg.seq](const core::PointerEvent&,
+                                                 const core::Rect&) {
+                    pressedMsgSeqs_.erase(seq);
+                })
+                .onClick([this, seq = msg.seq] { toggleMessageExpanded(seq); })
+                .build();
+            inner.column(mid + ".body")
+                .position(cardPad, cardPad)
+                .size(contentW, contentH)
+                .zIndex(2)
+                .gap(kMsgGap)
                 .content([&] {
-                    inner.text(mid + ".badge")
-                        .size(kMsgBadgeW, core::theme::scaled(20.0f))
-                        .text(badge)
-                        .fontSize(fsS)
-                        .lineHeight(core::theme::scaled(20.0f))
-                        .fontWeight(600)
-                        .color(badge == "工具" ? tokens.primary
-                                              : t.colors.textSecondary)
+                    // 头行（24）：badge → time → 弹簧 → toggle → copy（copy 仅展开态）
+                    inner.row(mid + ".head")
+                        .size(contentW, kMsgHeaderH)
+                        .gap(8.0f)
+                        .alignItems(eui::Align::CENTER)
+                        .content([&] {
+                            inner.stack(mid + ".badge.wrap")
+                                .size(badgeW, badgeH)
+                                .content([&] {
+                                    inner.rect(mid + ".badge.bg")
+                                        .size(badgeW, badgeH)
+                                        .radius(t.sizes.radiusPill)
+                                        .color(toolRole ? t.colors.primarySoftBg
+                                                        : tokens.surface)
+                                        .build();
+                                    inner.text(mid + ".badge")
+                                        .size(badgeW, badgeH)
+                                        .text(badge)
+                                        .fontSize(badgeFs)
+                                        .lineHeight(badgeH)
+                                        .fontWeight(600)
+                                        .horizontalAlign(eui::HorizontalAlign::Center)
+                                        .verticalAlign(eui::VerticalAlign::Center)
+                                        .color(toolRole ? t.colors.primaryText
+                                                        : t.colors.textSecondary)
+                                        .build();
+                                })
+                                .build();
+                            inner.text(mid + ".time")
+                                .size(kMsgTimeW, badgeH)
+                                .text(messageTimeText(msg.createdAt, refSec))
+                                .fontSize(badgeFs)
+                                .lineHeight(badgeH)
+                                .wrap(false)
+                                .maxWidth(kMsgTimeW)
+                                .color(t.colors.textTertiary)
+                                .build();
+                            // 弹簧：把 chips 推到卡右缘（行无 flex，按剩余宽现算占位）
+                            const int chipCount = expanded ? 2 : 1;
+                            const float springW = std::max(
+                                0.0f,
+                                contentW - badgeW - kMsgTimeW -
+                                    static_cast<float>(chipCount) * kChipW -
+                                    static_cast<float>(2 + chipCount) * 8.0f);
+                            inner.rect(mid + ".spring")
+                                .size(springW, badgeH)
+                                .color(kTransparent)
+                                .build();
+                            actionChip(inner, mid + ".toggle",
+                                       expanded ? "收起" : "展开", kChipW,
+                                       /*primary=*/false, /*enabled=*/true, tokens,
+                                       [this, seq = msg.seq] {
+                                           toggleMessageExpanded(seq);
+                                       }, badgeFs, core::theme::scaled(24.0f));
+                            if (expanded) {
+                                actionChip(inner, mid + ".copy", "复制", kChipW,
+                                           /*primary=*/false, /*enabled=*/true, tokens,
+                                           [this, text = messagePlainText(blocks)] {
+                                               // setClipboardText 返回 void 无法校验 → LOG 留痕
+                                               core::window::setClipboardText(text);
+                                               LOG_INFO("Agent: 已复制消息全文 " +
+                                                        std::to_string(text.size()) +
+                                                        " 字节到剪贴板");
+                                               toast_.show("已复制",
+                                                           "消息全文已复制到剪贴板");
+                                           }, badgeFs, core::theme::scaled(24.0f));
+                            }
+                        })
                         .build();
-                    // 头行顺序 §10：badge → time → toggle → copy（copy 仅展开态）
-                    inner.text(mid + ".time")
-                        .size(kMsgTimeW, core::theme::scaled(20.0f))
-                        .text(messageTimeText(msg.createdAt, refSec))
-                        .fontSize(fsS)
-                        .lineHeight(core::theme::scaled(20.0f))
-                        .wrap(false)
-                        .maxWidth(kMsgTimeW)
-                        .color(t.colors.textTertiary)
-                        .build();
-                    actionChip(inner, mid + ".toggle",
-                               expanded ? "收起" : "展开", 48.0f,
-                               /*primary=*/false, /*enabled=*/true, tokens,
-                               [this, seq = msg.seq] {
-                                   toggleMessageExpanded(seq);
-                               }, fsS);
-                    if (expanded) {
-                        actionChip(inner, mid + ".copy", "复制", 48.0f,
-                                   /*primary=*/false, /*enabled=*/true, tokens,
-                                   [this, text = messagePlainText(blocks)] {
-                                       // setClipboardText 返回 void 无法校验 → LOG 留痕
-                                       core::window::setClipboardText(text);
-                                       LOG_INFO("Agent: 已复制消息全文 " +
-                                                std::to_string(text.size()) +
-                                                " 字节到剪贴板");
-                                       toast_.show("已复制",
-                                                   "消息全文已复制到剪贴板");
-                                   }, fsS);
+                    if (!expanded) {
+                        inner.text(mid + ".preview")
+                            .size(contentW, msgLh)
+                            .text(messagePreview(msg))
+                            .fontSize(fsS)
+                            .lineHeight(msgLh)
+                            .wrap(false)
+                            .maxWidth(contentW)
+                            .color(t.colors.textSecondary)
+                            .onClick([this, seq = msg.seq] {
+                                toggleMessageExpanded(seq);
+                            })
+                            .build();
+                        return;
+                    }
+                    if (blocks.empty()) {
+                        inner.text(mid + ".blk.empty")
+                            .size(contentW, msgLh)
+                            .text("（空消息）")
+                            .fontSize(fsS)
+                            .lineHeight(msgLh)
+                            .color(t.colors.textTertiary)
+                            .build();
+                        return;
+                    }
+                    for (size_t j = 0; j < blocks.size(); ++j) {
+                        const MessageBlock& b = blocks[j];
+                        const std::string bid = mid + ".blk." + std::to_string(j);
+                        switch (b.type) {
+                            case MessageBlock::Type::Text:
+                            case MessageBlock::Type::Plain: {
+                                inner.text(bid)
+                                    .size(contentW,
+                                          estimateTextBlockHeight(
+                                              b.text, contentW, fsS, msgLh))
+                                    .text(b.text)
+                                    .fontSize(fsS)
+                                    .lineHeight(msgLh)
+                                    .wrap(true)
+                                    .maxWidth(contentW)
+                                    .color(b.type == MessageBlock::Type::Plain
+                                               ? t.colors.textTertiary
+                                               : t.colors.textPrimary)
+                                    .build();
+                                break;
+                            }
+                            case MessageBlock::Type::ToolUse: {
+                                // 浅染内嵌块（§3.3）：高 28、radius 6、扳手 + 名称
+                                // 深字档 + args 摘要截 120（三级字）
+                                const float toolBlockH = core::theme::scaled(28.0f);
+                                inner.stack(bid + ".wrap")
+                                    .size(contentW, toolBlockH)
+                                    .content([&] {
+                                        inner.rect(bid + ".wrap.bg")
+                                            .size(contentW, toolBlockH)
+                                            .color(t.colors.primarySoftBg)
+                                            .radius(kCardRadius)
+                                            .build();
+                                        const float iconX = core::theme::scaled(8.0f);
+                                        const float iconW = core::theme::scaled(12.0f);
+                                        inner.text(bid + ".icon")
+                                            .position(iconX, 0.0f)
+                                            .size(iconW, toolBlockH)
+                                            .icon(::eui::utf8(0xF0AD))  // fa-wrench
+                                            .fontSize(iconW)
+                                            .lineHeight(toolBlockH)
+                                            .verticalAlign(eui::VerticalAlign::Center)
+                                            .color(t.colors.primaryText)
+                                            .hitTestMode(
+                                                ::core::dsl::HitTestMode::None)
+                                            .build();
+                                        const std::string nameLine =
+                                            "工具 · " + b.toolName;
+                                        const float nameW = std::min(
+                                            core::TextPrimitive::measureTextWidth(
+                                                nameLine, "", iconW, 600),
+                                            std::max(
+                                                0.0f,
+                                                contentW - iconX - iconW - 16.0f));
+                                        inner.text(bid)
+                                            .position(iconX + iconW +
+                                                          core::theme::scaled(8.0f),
+                                                      0.0f)
+                                            .size(nameW, toolBlockH)
+                                            .text(nameLine)
+                                            .fontSize(iconW)
+                                            .lineHeight(toolBlockH)
+                                            .fontWeight(600)
+                                            .wrap(false)
+                                            .maxWidth(nameW)
+                                            .verticalAlign(eui::VerticalAlign::Center)
+                                            .color(t.colors.primaryText)
+                                            .hitTestMode(
+                                                ::core::dsl::HitTestMode::None)
+                                            .build();
+                                        const float argsX =
+                                            iconX + iconW + core::theme::scaled(8.0f) +
+                                            nameW + core::theme::scaled(8.0f);
+                                        inner.text(bid + ".args")
+                                            .position(argsX, 0.0f)
+                                            .size(std::max(0.0f, contentW - argsX),
+                                                  toolBlockH)
+                                            .text(toolArgsSummary(b.text, 120))
+                                            .fontSize(iconW)
+                                            .lineHeight(toolBlockH)
+                                            .wrap(false)
+                                            .maxWidth(std::max(
+                                                0.0f, contentW - argsX))
+                                            .verticalAlign(eui::VerticalAlign::Center)
+                                            .color(t.colors.textTertiary)
+                                            .hitTestMode(
+                                                ::core::dsl::HitTestMode::None)
+                                            .build();
+                                    })
+                                    .build();
+                                break;
+                            }
+                            case MessageBlock::Type::ToolResult: {
+                                // 左 3px 语义条（§3.3）：正常=中性灰边、错误=红；
+                                // 红仅错误，正常输出不占用操作绿
+                                const float barW = 3.0f;
+                                const float textX = barW + core::theme::scaled(10.0f);
+                                const float textW =
+                                    std::max(0.0f, contentW - textX);
+                                const float outH = estimateTextBlockHeight(
+                                    b.text, textW, fsS, msgLh);
+                                const float blockH = msgLh + kMsgGap + outH;
+                                inner.stack(bid + ".wrap")
+                                    .size(contentW, blockH)
+                                    .content([&] {
+                                        inner.rect(bid + ".wrap.bar")
+                                            .size(barW, blockH)
+                                            .color(b.isError ? t.colors.error
+                                                             : t.colors.borderDefault)
+                                            .build();
+                                        inner.text(bid)
+                                            .position(textX, 0.0f)
+                                            .size(textW, msgLh)
+                                            .text(b.isError ? "工具输出（错误）"
+                                                            : "工具输出")
+                                            .fontSize(core::theme::scaled(12.0f))
+                                            .lineHeight(msgLh)
+                                            .wrap(false)
+                                            .maxWidth(textW)
+                                            .color(b.isError ? t.colors.errorText
+                                                             : t.colors.textTertiary)
+                                            .hitTestMode(
+                                                ::core::dsl::HitTestMode::None)
+                                            .build();
+                                        inner.text(bid + ".out")
+                                            .position(textX, msgLh + kMsgGap)
+                                            .size(textW, outH)
+                                            .text(b.text)
+                                            .fontSize(fsS)
+                                            .lineHeight(msgLh)
+                                            .wrap(true)
+                                            .maxWidth(textW)
+                                            .color(b.isError ? t.colors.errorText
+                                                             : t.colors.textSecondary)
+                                            .hitTestMode(
+                                                ::core::dsl::HitTestMode::None)
+                                            .build();
+                                    })
+                                    .build();
+                                break;
+                            }
+                        }
                     }
                 })
                 .build();
-            if (!expanded) {
-                inner.text(mid + ".preview")
-                    .size(cw, msgLh)
-                    .text(messagePreview(msg))
-                    .fontSize(fsS)
-                    .lineHeight(msgLh)
-.wrap(false)
-                    .color(t.colors.textSecondary)
-                    .onClick([this, seq = msg.seq] {
-                        toggleMessageExpanded(seq);
-                    })
-                    .build();
-                return;
-            }
-            if (blocks.empty()) {
-                inner.text(mid + ".blk.empty")
-                    .size(cw, msgLh)
-                    .text("（空消息）")
-                    .fontSize(fsS)
-                    .lineHeight(msgLh)
-                    .color(t.colors.textTertiary)
-                    .build();
-                return;
-            }
-            for (size_t j = 0; j < blocks.size(); ++j) {
-                const MessageBlock& b = blocks[j];
-                const std::string bid = mid + ".blk." + std::to_string(j);
-                switch (b.type) {
-                    case MessageBlock::Type::Text:
-                    case MessageBlock::Type::Plain: {
-                        inner.text(bid)
-                            .size(cw, estimateTextBlockHeight(b.text, cw, fsS,
-                                                              msgLh))
-                            .text(b.text)
-                            .fontSize(fsS)
-                            .lineHeight(msgLh)
-                            .wrap(true)
-                            .maxWidth(cw)
-                            .color(b.type == MessageBlock::Type::Plain
-                                       ? t.colors.textTertiary
-                                       : t.colors.textPrimary)
-                            .build();
-                        break;
-                    }
-                    case MessageBlock::Type::ToolUse: {
-                        inner.text(bid)
-                            .size(cw, core::theme::scaled(20.0f))
-                            .text("工具 · " + b.toolName + "  " +
-                                  toolArgsSummary(b.text, 120))
-                            .fontSize(fsS)
-                            .lineHeight(core::theme::scaled(20.0f))
-                            .wrap(false)
-                            .color(tokens.primary)
-                            .build();
-                        break;
-                    }
-                    case MessageBlock::Type::ToolResult: {
-                        inner.text(bid)
-                            .size(cw, msgLh)
-                            .text(b.isError ? "工具输出（错误）" : "工具输出")
-                            .fontSize(fsS)
-                            .lineHeight(msgLh)
-                            .color(b.isError ? t.colors.errorText
-                                             : t.colors.textTertiary)
-                            .build();
-                        inner.text(bid + ".out")
-                            .size(cw, estimateTextBlockHeight(b.text, cw, fsS,
-                                                              msgLh))
-                            .text(b.text)
-                            .fontSize(fsS)
-                            .lineHeight(msgLh)
-                            .wrap(true)
-                            .maxWidth(cw)
-                            .color(b.isError ? t.colors.errorText
-                                             : t.colors.textSecondary)
-                            .build();
-                        break;
-                    }
-                }
-            }
         })
         .build();
 }
@@ -1001,6 +1166,285 @@ void AgentModule::composeTaskDialog(
                 .radius(t.sizes.radius)
                 .border(0.0f, t.colors.borderDefault)
                 .onClick([this] { closeTaskDialog(); })
+                .build();
+        })
+        .build();
+}
+
+// ---- 可用工具弹窗（池170）----
+//
+// 纯查阅弹窗（无表单无 footer 主次钮）：头部 48（标题+计数 | ✕ 28×28）+ 1px 分割线 +
+// 内容区（pad 16，scrollView 内滚，2 列网格卡定高 96）。工具注册表快照同步装载
+//（ensureToolsCache），打开即 forceReload——「加载中/错误」态在同步语义下不可达
+//（listRegisteredTools 只枚举进程内注册表，不失败），状态表只落「空态/常态」。
+// 关闭 = ✕ / backdrop / Esc（components::dialog 既有契约 + 模块 onKeyEvent 分支）。
+void AgentModule::composeToolsDialog(
+    ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& themeTokens) {
+    const float w = std::min(720.0f, std::max(0.0f, screen.width - 48.0f));
+    const float h = std::min(560.0f, std::max(0.0f, screen.height - 96.0f));
+    constexpr float kHeaderH = 48.0f;
+    constexpr float kPad = 16.0f;
+    const float cardH = core::theme::scaled(96.0f);
+    const float innerW = std::max(0.0f, w - 2.0f * kPad);
+
+    components::dialog(ui, "agent.dialog.tools")
+        .open(toolsDialogOpen_)
+        .screen(screen.width, screen.height)
+        .size(w, h)
+        .theme(themeTokens)
+        .onOpenChange([this](bool v) {
+            if (!v) toolsDialogOpen_ = false;
+        })
+        .content([&] {
+            if (!toolsDialogOpen_) return;
+            // 头部（48）：「可用工具」16/700 一级字 + 「（N）」16/400 三级字，x=20
+            const float titleFs = core::theme::scaled(16.0f);
+            const float titleW = core::TextPrimitive::measureTextWidth(
+                "可用工具", "", titleFs, 700);
+            ui.text("agent.dialog.tools.title")
+                .position(20.0f, (kHeaderH - titleFs) * 0.5f)
+                .size(titleW, titleFs)
+                .text("可用工具")
+                .fontSize(titleFs)
+                .lineHeight(titleFs)
+                .fontWeight(700)
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text("agent.dialog.tools.count")
+                .position(20.0f + titleW, (kHeaderH - titleFs) * 0.5f)
+                .size(std::max(0.0f, w - 20.0f - titleW - 52.0f), titleFs)
+                .text("（" + std::to_string(toolsCache_.size()) + "）")
+                .fontSize(titleFs)
+                .lineHeight(titleFs)
+                .wrap(false)
+                .color(t.colors.textTertiary)
+                .build();
+            // ✕ 关闭（28×28，hover 底）：bg 命中 + FA 码点穿透文本
+            ui.rect("agent.dialog.tools.close.bg")
+                .position(w - 12.0f - core::theme::scaled(28.0f),
+                          (kHeaderH - core::theme::scaled(28.0f)) * 0.5f)
+                .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
+                .states(t.colors.background, t.colors.hover, t.colors.hover)
+                .radius(6.0f)
+                .onClick([this] { toolsDialogOpen_ = false; })
+                .build();
+            ui.text("agent.dialog.tools.close")
+                .position(w - 12.0f - core::theme::scaled(28.0f),
+                          (kHeaderH - core::theme::scaled(28.0f)) * 0.5f)
+                .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
+                .icon(::eui::utf8(0xF00D))  // fa-xmark
+                .fontSize(core::theme::scaled(14.0f))
+                .lineHeight(core::theme::scaled(28.0f))
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textSecondary)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .onClick([this] { toolsDialogOpen_ = false; })
+                .build();
+            ui.rect("agent.dialog.tools.divider")
+                .position(0.0f, kHeaderH)
+                .size(w, 1.0f)
+                .color(t.colors.borderDefault)
+                .build();
+
+            // 内容区（pad 16，内滚；弹窗壳不滚）
+            if (toolsCache_.empty()) {
+                ui.text("agent.dialog.tools.empty")
+                    .position(kPad, kHeaderH + 1.0f)
+                    .size(innerW,
+                          std::max(0.0f, h - kHeaderH - 1.0f - kPad))
+                    .text("暂无可用工具")
+                    .fontSize(core::theme::scaled(13.0f))
+                    .lineHeight(core::theme::scaled(20.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                return;
+            }
+            components::scrollView(ui, "agent.dialog.tools.scroll")
+                .position(kPad, kHeaderH + 1.0f + kPad)
+                .size(innerW,
+                      std::max(0.0f, h - kHeaderH - 1.0f - 2.0f * kPad))
+                .gap(8.0f)
+                .step(cardH + 8.0f)
+                .theme(themeTokens)
+                .contentKey("agent.dialog.tools.scroll.n" +
+                            std::to_string(toolsCache_.size()) + ".w" +
+                            std::to_string(static_cast<int>(innerW)))
+                .content([&](eui::Ui& inner, float cw, float) {
+                    // 2 列等宽网格：卡宽 = (内容宽−8)/2（窄档自动 1 列由 flow 兜底）
+                    const float gridCardW =
+                        std::max(0.0f, (cw - 8.0f) * 0.5f);
+                    inner.flow("agent.dialog.tools.grid")
+                        .width(cw)
+                        .gap(8.0f)
+                        .lineGap(8.0f)
+                        .content([&] {
+                            for (size_t k = 0; k < toolsCache_.size(); ++k) {
+                                const ToolInfo& tool = toolsCache_[k];
+                                const std::string cid =
+                                    "agent.dialog.tools.card." +
+                                    std::to_string(k);
+                                inner.stack(cid)
+                                    .size(gridCardW, cardH)
+                                    .content([&] {
+                                        // 卡面：L2 itemSurface + radius 6 + 1px
+                                        // glassBorder；查阅卡零交互（无果冻）
+                                        inner.rect(cid + ".bg")
+                                            .size(gridCardW, cardH)
+                                            .color(ui_kit::itemSurface(t))
+                                            .radius(6.0f)
+                                            .border(1.0f,
+                                                    ui_kit::glassBorder(t))
+                                            .build();
+                                        const float pad = core::theme::scaled(12.0f);
+                                        const float boxS = core::theme::scaled(28.0f);
+                                        // 行 1：图标盒 28×28 浅染底 + 插头图标 +
+                                        // 工具名 14/600（单行截断）
+                                        inner.rect(cid + ".icon.box")
+                                            .position(pad, pad)
+                                            .size(boxS, boxS)
+                                            .radius(6.0f)
+                                            .color(t.colors.primarySoftBg)
+                                            .build();
+                                        inner.text(cid + ".icon")
+                                            .position(pad, pad)
+                                            .size(boxS, boxS)
+                                            .icon(::eui::utf8(0xF1E6))  // fa-plug
+                                            .fontSize(core::theme::scaled(14.0f))
+                                            .lineHeight(boxS)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .verticalAlign(eui::VerticalAlign::Center)
+                                            .color(t.colors.primaryText)
+                                            .hitTestMode(::core::dsl::HitTestMode::None)
+                                            .build();
+                                        const float nameX = pad + boxS + core::theme::scaled(8.0f);
+                                        const float nameW =
+                                            std::max(0.0f, gridCardW - nameX - pad);
+                                        inner.text(cid + ".name")
+                                            .position(nameX, pad)
+                                            .size(nameW, boxS)
+                                            .text(tool.name)
+                                            .fontSize(core::theme::scaled(14.0f))
+                                            .lineHeight(boxS)
+                                            .fontWeight(600)
+                                            .wrap(false)
+                                            .maxWidth(nameW)
+                                            .overflow(core::TextOverflow::Ellipsis)
+                                            .verticalAlign(eui::VerticalAlign::Center)
+                                            .color(t.colors.textPrimary)
+                                            .hitTestMode(::core::dsl::HitTestMode::None)
+                                            .build();
+                                        // 行 2：描述——有参数单行（给行 3 让位），
+                                        // 无参数两行 wrap（行 3 不渲染，吃其高度）
+                                        const bool hasParams = !tool.params.empty();
+                                        const float descH = core::theme::scaled(
+                                            hasParams ? 18.0f : 36.0f);
+                                        const float descY = pad + boxS;
+                                        inner.text(cid + ".desc")
+                                            .position(pad, descY)
+                                            .size(std::max(0.0f, gridCardW - 2.0f * pad),
+                                                  descH)
+                                            .text(tool.description.empty()
+                                                      ? std::string("（无描述）")
+                                                      : tool.description)
+                                            .fontSize(core::theme::scaled(12.0f))
+                                            .lineHeight(core::theme::scaled(18.0f))
+                                            .wrap(!hasParams)
+                                            .maxWidth(std::max(
+                                                0.0f, gridCardW - 2.0f * pad))
+                                            .overflow(core::TextOverflow::Ellipsis)
+                                            .color(t.colors.textSecondary)
+                                            .hitTestMode(::core::dsl::HitTestMode::None)
+                                            .build();
+                                        // 行 3：参数 chips（高 20 radius 6 次底，
+                                        // 超宽截断为「+N」）；无参数不渲染
+                                        if (hasParams) {
+                                            const float chipY = descY + descH +
+                                                                core::theme::scaled(4.0f);
+                                            const float chipRight =
+                                                gridCardW - pad;
+                                            float chipX = pad;
+                                            for (size_t p = 0; p < tool.params.size();
+                                                 ++p) {
+                                                const std::string label =
+                                                    tool.params[p];
+                                                const float chipW =
+                                                    core::TextPrimitive::measureTextWidth(
+                                                        label, "",
+                                                        core::theme::scaled(11.0f),
+                                                        400) +
+                                                    core::theme::scaled(12.0f);
+                                                const bool fits =
+                                                    chipX + chipW <= chipRight;
+                                                if (!fits) {
+                                                    // 溢出（含最后一枚放不下）：
+                                                    // 剩余参数折一枚「+N」，放不下则弃渲染
+                                                    const std::string more =
+                                                        "+" +
+                                                        std::to_string(
+                                                            tool.params.size() - p);
+                                                    const float moreW =
+                                                        core::TextPrimitive::measureTextWidth(
+                                                            more, "",
+                                                            core::theme::scaled(11.0f),
+                                                            400) +
+                                                        core::theme::scaled(12.0f);
+                                                    if (chipX + moreW > chipRight) break;
+                                                    inner.rect(cid + ".chip.more")
+                                                        .position(chipX, chipY)
+                                                        .size(moreW,
+                                                              core::theme::scaled(20.0f))
+                                                        .radius(6.0f)
+                                                        .color(t.colors.hover)
+                                                        .build();
+                                                    inner.text(cid + ".chip.more.text")
+                                                        .position(chipX, chipY)
+                                                        .size(moreW,
+                                                              core::theme::scaled(20.0f))
+                                                        .text(more)
+                                                        .fontSize(core::theme::scaled(11.0f))
+                                                        .lineHeight(core::theme::scaled(20.0f))
+                                                        .horizontalAlign(eui::HorizontalAlign::Center)
+                                                        .verticalAlign(eui::VerticalAlign::Center)
+                                                        .color(t.colors.textTertiary)
+                                                        .hitTestMode(::core::dsl::HitTestMode::None)
+                                                        .build();
+                                                    break;
+                                                }
+                                                inner.rect(cid + ".chip." +
+                                                           std::to_string(p))
+                                                    .position(chipX, chipY)
+                                                    .size(chipW,
+                                                          core::theme::scaled(20.0f))
+                                                    .radius(6.0f)
+                                                    .color(t.colors.hover)
+                                                    .build();
+                                                inner.text(cid + ".chip." +
+                                                           std::to_string(p) + ".text")
+                                                    .position(chipX, chipY)
+                                                    .size(chipW,
+                                                          core::theme::scaled(20.0f))
+                                                    .text(label)
+                                                    .fontSize(core::theme::scaled(11.0f))
+                                                    .lineHeight(core::theme::scaled(20.0f))
+                                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                                    .verticalAlign(eui::VerticalAlign::Center)
+                                                    .color(t.colors.textTertiary)
+                                                    .hitTestMode(::core::dsl::HitTestMode::None)
+                                                    .build();
+                                                chipX += chipW +
+                                                         core::theme::scaled(4.0f);
+                                            }
+                                        }
+                                    })
+                                    .build();
+                            }
+                        })
+                        .build();
+                })
                 .build();
         })
         .build();

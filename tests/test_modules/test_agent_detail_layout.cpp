@@ -15,6 +15,7 @@
 #include "platform/http_client.h"
 
 #include <eui/dsl.h>
+#include <ui_kit/glass.h>   // glassBorder（池162 摘要三卡卡语言断言）
 
 #include <cmath>
 #include <string>
@@ -140,13 +141,18 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
                          8.0f));
     DOCTEST_CHECK(nearPx(lastCard->frame.width, nextCard->frame.width));
     DOCTEST_CHECK(nearPx(lastCard->frame.width, statsCard->frame.width));
-    // 三卡无边框（surfaceElevated 色块语言）
+    // 三卡补齐全局卡语言（池162 §3.3）：1px glassBorder 高光边 + cardSurface 不变
     const auto* lastBg = ui2.find("agent.dialog.detail.summary.last.bg");
     DOCTEST_REQUIRE(lastBg != nullptr);
-    DOCTEST_CHECK_MESSAGE(
-        lastBg->border.width <= 0.0f,
-        "摘要卡 .bg 不应有边框，实测 border.width=" +
-            std::to_string(lastBg->border.width));
+    {
+        const auto& tokEarly = core::theme::current();
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(lastBg->border.width, 1.0f) &&
+                nearPx(lastBg->border.color.r, ui_kit::glassBorder(tokEarly).r) &&
+                nearPx(lastBg->border.color.a, ui_kit::glassBorder(tokEarly).a),
+            "摘要卡 .bg 应有 1px glassBorder（池162 卡语言对齐），实测 border.width=" +
+                std::to_string(lastBg->border.width));
+    }
 
     // segment 三档：选中块 = 薄荷绿 primary（D-12 迁移后 primary 槽位即 #36D399，
     // 与产品码 t.colors.primary 同源）；未选块灰底

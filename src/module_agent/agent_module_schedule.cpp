@@ -951,10 +951,10 @@ void AgentModule::refreshData() {
     // run 完成通知：本次轮询 vs 上次轮询的 running→failed/limited 迁移必响；
     // completed/cancelled 静默；同一 runId 只通知一次（notifiedRunIds_）。
     // 只看 latestRuns_ 即可：刚结束的 run 必是其任务的最近一次 run，不会漏迁移。
-    // 通知不在此直发 toast：入 pendingNotices_ 队列，由装配层每帧 takeRunEndNotice()
-    // 取走后发 app 级 toast（app::showAppNotice，跨页可见）——页面无关（fix round）。
-    // 失败/受限另有系统通知通道（下方 send）：toast 4.5s 即逝，定时任务失败恰恰
-    // 发生在人不在应用前的场景，OS 通道才接得住；成功仍走全静默，两通道都不发。
+    // 通知只走 OS 系统通知（下方 send，bug161 去双重）：任务结束多发生在人不在
+    // 应用前的场景，toast 4.5s 即逝接不住，应用内与应用外并存即双重打扰；
+    // pendingNotices_ 队列仅剩 app.notify 工具系统通知失败时的降级一条入口。
+    // 成功仍走全静默，零通知。
     {
         std::map<int64_t, std::string> nowStatus;
         for (const auto& [taskId, run] : latestRuns_) {
@@ -977,16 +977,12 @@ void AgentModule::refreshData() {
             }
             if (taskName.empty()) taskName = "任务 " + std::to_string(runId);
             const std::string& st = nowStatus[runId];
-            // 同一通知的两种投递（app toast + OS 通知）共用一份文案，改文案只改这里
+            // 文案单一来源：只发 OS 系统通知（bug161 去双重，应用内通道已撤）
             const std::string title =
                 st == "failed" ? "智能体任务失败" : "智能体任务受限";
             const std::string body =
                 "「" + taskName + "」运行结束（" + runStatusText(st) + "）";
-            {
-                std::lock_guard<std::mutex> lock(pendingNoticesMu_);
-                pendingNotices_.emplace_back(title, body);
-            }
-            // 系统通知同发：受理≠展示（Focus/勿扰可能静默抑制），未受理只 LOG 不重试；
+            // 系统通知：受理≠展示（Focus/勿扰可能静默抑制），未受理只 LOG 不重试；
             // 「同一 runId 只发一次」由 notifiedRunIds_ 保证（入队侧，仍在主线程）。
             // 稳定 id 复用系统端替换语义（同 id 重发更新旧通知而非堆叠）。
             // send 挪后台线程：facade 的授权检查在 macOS 未决期可阻塞 ≤1s（平台后端

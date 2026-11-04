@@ -200,8 +200,12 @@ private:
     void toggleMessageExpanded(int64_t seq);
     // 默认展开最近一条带 text 的 assistant 消息；目标 seq 变化才动展开集，手动收起不被顶回
     void applyDefaultMessageExpansion();
-    // 「可用工具」注册表快照：惰性装载，每次展开强制重装（反映模块启停变化）
+    // 「可用工具」注册表快照：惰性装载，弹窗打开时强制重装（反映模块启停变化）
     void ensureToolsCache(bool forceReload);
+    // 可用工具弹窗（池170）：关闭态不建内容节点（同两张既有弹窗口径）
+    void composeToolsDialog(::eui::Ui& ui, const ::eui::Screen& screen,
+                            const ::core::theme::Tokens& t,
+                            const components::theme::ThemeColorTokens& themeTokens);
     // 单条消息行渲染：徽章头行（徽章+时间+展开/复制 chip）+ 收起预览 / 展开块级全文
     //（prefix = 宿主节点前缀；refSec = 选中 run 的 startedAt，消息时间同日/跨日口径的参照）
     void renderMessageRow(::eui::Ui& inner, float cw, const std::string& prefix,
@@ -297,14 +301,19 @@ private:
 
     // compose 数据缓存（仅主线程读写）
     std::vector<AgentTaskRow> tasks_;
-    // 卡片 hover 集合（§10.0.1 hover 范式）：透明命中面与操作组按钮都写它，每帧 compose
-    // 读它决定操作组 opacity 与卡形变。必须是集合不能是单个 bool——指针从卡移到按钮那帧，
-    // 卡的 onHover(false) 先于按钮的 onHover(true) 触发，bool 会被覆盖成 false（按钮闪没）
-    std::set<int64_t> hoveredTaskIds_;
-    // 按下集合（同上范式）：命中面压住卡底后，卡底自己再也拿不到 hover/press
+    // 按下集合（§10.0.1 hover 范式）：命中面压住卡底后，卡底自己再也拿不到 hover/press
     //（hover 全局唯一且只给最上层可交互元素），B1 三态材质要真的亮起来就得由命中面代报。
-    // 不合并进 hoveredTaskIds_：移出卡时 hover 清、press 仍留到抬起为止。
+    // hover 显隐不走集合走 hoverHolder_（bug169 §8，见下）——集合语义在「低 z false
+    // 晚于高 z true」的实证派发序下会被抹空，正是按钮间缝隙穿越闪没的根因。
     std::set<int64_t> pressedTaskIds_;
+    // hover 持有者（bug169 §8 状态机）：hover 目标全局唯一 → 每卡只记「当前持有
+    // 元素的槽位」（0=命中面 1..5=图标钮 6=启动钮）。enter 覆写持有者 + 清去抖账；
+    // leave 仅在持有者=自己时移交（擦槽位 + 入 120ms 去抖账）——槽位互检挡掉陈旧
+    // leave（坏序派发：低 z 的 false 晚于高 z 的 true）误清在域元素。
+    std::map<int64_t, int> hoverHolder_;
+    // 联合命中域离场去抖（bug169 §8）：leave 不立即隐藏，入账 now+120ms；期间任何
+    // 域内 enter 清账。到期由 compose 收割（擦槽位）→ 操作组才降下。
+    std::map<int64_t, int64_t> hoverHideDueMs_;
     std::map<int64_t, AgentRunRow> latestRuns_;     // taskId → 最近一次 run
     // 任务级「配置异常」缓存（taskId → 原因，仅非空入表）：纯函数判定（trigger_config.h，
     // 与 Scheduler 同源）。在 refreshData 里随任务列表算一次——不在每帧渲染里反复解析 JSON
@@ -321,6 +330,9 @@ private:
     std::vector<AgentMessageRow> detailMessages_;   // 选中 run 的消息
     // 展开全文的消息（按 seq 定位，切任务/切 run 清空）
     std::set<int64_t> expandedMsgSeqs_;
+    // 消息卡按下集合（池162 果冻按压）：命中面 onPress/onRelease 维护，卡底每帧读出
+    // scale 目标值（与任务卡 pressedTaskIds_ 同范式）
+    std::set<int64_t> pressedMsgSeqs_;
     // 自动展开那条的 seq：目标变化才重设展开集，用户手动收起后不被刷新顶回来
     std::optional<int64_t> autoExpandedSeq_;
     // scrollView contentKey 版本号：展开/收起改变内容高，bump 触发重测（MeasureCache 按 key 缓存）
@@ -334,8 +346,9 @@ private:
     bool messagesOpen_ = false;
     // 页级复制 toast（spec D13，`agent.detail.toast`）：compose() 尾部最后绘制
     ui_kit::ToastState toast_;
-    // 「可用工具」区块：收起默认，头部点击展开
-    bool toolsOpen_ = false;
+    // 「可用工具」弹窗（池170）：开 = 页头钮/弹窗关闭面互斥切换；工具注册表快照
+    // 同步装载（ensureToolsCache），打开即 forceReload
+    bool toolsDialogOpen_ = false;
     std::vector<ToolInfo> toolsCache_;      // 注册表快照（惰性装载）
     bool toolsCacheLoaded_ = false;
     // 任务弹窗：taskDialogOpen_ 控开关，editingTaskId_ 非空 = 编辑态，字段两态共用
@@ -431,10 +444,11 @@ private:
     std::string nextRunLatestStatus_;
     // 详情消息读取失败显形（spec §10：红字「消息读取失败：…」，标题保留、不展示旧消息）
     std::string detailMessagesError_;
-    // 待发通知队列（title, message）：迁移检测置入，takeRunEndNotice 取走即清。
-    // 同帧多个迁移按 runId 升序入队；app 通道 toast 单实例，后发顶替先发（接受）。
-    // 生产者有两个线程：UI 线程（run-end 迁移）+ AgentLoop 工作线程（app.notify 失败
-    // 降级），故读写都必须持锁；锁内只碰队列，不回调外部代码。
+    // 待发通知队列（title, message）：唯一生产者 = app.notify 工具的系统通知失败降级
+    // （AgentLoop 工作线程，构造接线处），takeRunEndNotice 取走即清；同帧多条按到达
+    // 序入队；app 通道 toast 单实例，后发顶替先发（接受）。run-end 迁移不入队
+    // （bug161 去双重：run 结束只走 OS 系统通知通道）。生产者在工作线程、消费者在
+    // UI 线程，故读写都必须持锁；锁内只碰队列，不回调外部代码。
     std::mutex pendingNoticesMu_;
     std::vector<std::pair<std::string, std::string>> pendingNotices_;
 

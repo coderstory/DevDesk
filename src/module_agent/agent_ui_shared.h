@@ -38,21 +38,22 @@ inline eui::Color statusDotColor(const std::string& status,
 }
 
 // 行内动作 chip：契约要求 id 落在可见文本上，故手搓两层——<id>.bg 为命中面、文本穿透。
-// fontSize 缺省 12（任务列表等既有站点不变）；详情弹窗按 spec §9.2 传 fsS，高度仍 32
+// fontSize 缺省 12（任务列表等既有站点不变）；详情弹窗按 spec §9.2 传 fsS，高度仍 32。
+// chipH 缺省 32（池162 §3.3：消息卡头行 chips 传 24——同卡控件同几何 48×24）
 inline void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
                 float width, bool primary, bool enabled,
                 const components::theme::ThemeColorTokens& tokens,
-                std::function<void()> onClick, float fontSize = 12.0f) {
-    constexpr float kChipH = 32.0f;
+                std::function<void()> onClick, float fontSize = 12.0f,
+                float chipH = 32.0f) {
     const ::core::Color base = primary ? tokens.primary : tokens.surface;
     ::core::Color textColor =
         primary ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
     if (!enabled) textColor = components::theme::withOpacity(textColor, 0.40f);
     ui.stack(id + ".chip")
-        .size(width, kChipH)
+        .size(width, chipH)
         .content([&] {
             ui.rect(id + ".bg")
-                .size(width, kChipH)
+                .size(width, chipH)
                 .states(base, components::theme::buttonHover(tokens, base),
                         components::theme::buttonPressed(tokens, base))
                 .radius(tokens.metrics.radius.overlay)
@@ -60,10 +61,10 @@ inline void actionChip(::eui::Ui& ui, const std::string& id, const std::string& 
                 .onClick(onClick)
                 .build();
             ui.text(id)
-                .size(width, kChipH)
+                .size(width, chipH)
                 .text(label)
                 .fontSize(fontSize)
-                .lineHeight(core::theme::scaled(20.0f))
+                .lineHeight(chipH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(textColor)

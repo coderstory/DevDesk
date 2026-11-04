@@ -25,6 +25,7 @@
 #include <core/window/window_backend.h>
 #include <eui/dsl.h>
 #include <ui_kit/card.h>
+#include <ui_kit/glass.h>       // glassBorder / glassShadowColor（池162 摘要三卡补齐）
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -357,6 +358,12 @@ void AgentModule::composeTaskDetailDialog(
                             .size(cw, summaryH)
                             .color(ui_kit::cardSurface(t))  // H15 轻微半透（kCardGlassAlpha）
                             .radius(t.sizes.radiusLarge)
+                            // 池162 §3.3：补 1px glassBorder + glassShadowColor，
+                            // 与全局卡片语言对齐；cardSurface/radiusLarge/内部三行几何不动
+                            .border(1.0f, ui_kit::glassBorder(t))
+                            .shadow(core::Shadow{true, {0.0f, 8.0f}, 24.0f, 0.0f,
+                                                 ui_kit::glassShadowColor(t),
+                                                 false})
                             .build();
                         ui.text(id + ".label")
                             .position(kCardPad, kCardPad)
@@ -1116,7 +1123,7 @@ void AgentModule::composeTaskDetailDialog(
                                 ui, "agent.dialog.detail.msgscroll")
                                 .position(0.0f, yMsg)
                                 .size(dw, std::max(0.0f, dh - yMsg))
-                                .gap(kMsgRowGap)
+                                .gap(8.0f)   // 池162 §3.3：消息卡间距 8
                                 .step(18.0f)
                                 .theme(themeTokens)
                                 .contentKey("agent.dialog.detail.msgscroll.v" +
@@ -1150,7 +1157,7 @@ void AgentModule::composeTaskDetailDialog(
                         components::scrollView(ui,
                                                "agent.dialog.detail.detail.scroll")
                             .size(dw, dh)
-                            .gap(kMsgRowGap)
+                            .gap(8.0f)   // 池162 §3.3：消息卡间距 8（整栏滚态同口径）
                             .step(18.0f)
                             .theme(themeTokens)
                             .contentKey("agent.dialog.detail.detail.scroll.v" +

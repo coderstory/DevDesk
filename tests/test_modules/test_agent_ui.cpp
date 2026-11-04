@@ -4,7 +4,8 @@
 //
 // 跨文件前提（节点 id 契约，agent_module.cpp 侧为准）：
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
-//          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
+//          agent.page.tools（可用工具入口钮，池170）+ agent.dialog.tools.*（工具弹窗）/
+//          agent.tasklist（scrollView）+.content /
 //          agent.tasklist.panel（UAT6 列表容器 = background 灰面板，item 白卡浮起）/
 //          agent.task.<id>（UAT6 卡片化：= 卡 stack，.bg 是白卡本体（surface+
 //          radiusWeChat+细边，hover 加深，点击开详情），.row 内缩 12px 内边距；
@@ -67,6 +68,7 @@
 
 #include "app_sidebar.h"
 #include "core/event_bus.h"
+#include "core/component_theme.h"   // componentTokensWeChat（徽章 pill 次钮底断言）
 #include "core/module_interface.h"
 #include "core/render/text.h"   // 开关标签盒容纳断言（真实字体测量）
 #include "core/router.h"
@@ -351,7 +353,10 @@ REGISTER_TEST(agent_ui_compose_skeleton,
     DOCTEST_CHECK_MESSAGE(ui.find("agent.tasklist.content") != nullptr,
                           "agent.tasklist 不是 scrollView（缺 .content 内容列）");
 
-    DOCTEST_CHECK(ui.find("agent.tools.header") != nullptr);
+    DOCTEST_CHECK(ui.find("agent.tools.header") == nullptr);   // 池170：页内工具区块退役
+    const auto* toolsBtn = ui.find("agent.page.tools.bg");
+    DOCTEST_REQUIRE_MESSAGE(toolsBtn != nullptr,
+                            "页头缺「可用工具」入口钮（agent.page.tools）");
 
     // 弹窗未打开：弹窗内容不渲染（打开/关闭状态由节点存在性直接可判）
     DOCTEST_CHECK(ui.find("agent.dialog.task.goal") == nullptr);
@@ -2223,8 +2228,8 @@ REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
     return true;
 })
 
-REGISTER_TEST(agent_ui_tools_section_toggle,
-              "agent_ui: 可用工具区块收起默认→展开列出注册表全部工具（名称+描述+参数）", {
+REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
+              "agent_ui: 可用工具弹窗（池170）——页头钮开弹窗 / 2 列网格卡 / 参数 chips / 关闭三路径 / 空态", {
     test_support::TestDb tdb("agentui", "tools");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify", "hot.list", "app.now",
@@ -2239,102 +2244,159 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
     deps.db = &tdb.handle();
     deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
-    mod.onStart();   // 注册自带五工具（测试环境干净起点）
+    mod.onStart();   // 注册自带五工具 + 14 内置（测试环境干净起点）
 
     const size_t registered =
         core::ToolRegistry::instance().listTools().size();
     DOCTEST_REQUIRE(registered >= 1);
 
+    // 关闭态：弹窗不建内容节点（存在性即开关契约）
     eui::Ui ui;
     composeTo(ui, mod, kScreen, "agent_ui_tools1");
-    const auto* header = ui.find("agent.tools.header");
-    DOCTEST_REQUIRE(header != nullptr);
-    DOCTEST_REQUIRE(header->onClick != nullptr);
-    const auto* label = ui.find("agent.tools.header.label");
-    DOCTEST_REQUIRE(label != nullptr);
+    DOCTEST_CHECK(ui.find("agent.dialog.tools.scroll") == nullptr);
+    // 页头入口钮（池170 §3.1）：次钮 132×40 + 计数文案（文案落在 button 逐态
+    // 文本子节点 .text 上——button 根 stack 不带 text，与既有契约一致）
+    const auto* toolsBtnBg = ui.find("agent.page.tools.bg");
+    DOCTEST_REQUIRE_MESSAGE(toolsBtnBg != nullptr, "页头缺 agent.page.tools 钮");
+    const auto* toolsBtn = ui.find("agent.page.tools.text.normal");
+    DOCTEST_REQUIRE(toolsBtn != nullptr);
     DOCTEST_CHECK_MESSAGE(
-        label->text.find("可用工具") != std::string::npos &&
-            label->text.find(std::to_string(registered)) != std::string::npos,
-        "头部缺「可用工具（N）」计数，实测: " + label->text);
-
-
-    DOCTEST_CHECK(ui.find("agent.tools.card.0") == nullptr);
-    header->onClick();
+        toolsBtn->text.find("可用工具") != std::string::npos &&
+            toolsBtn->text.find(std::to_string(registered)) !=
+                std::string::npos,
+        "入口钮缺「可用工具（N）」计数，实测: " + toolsBtn->text);
+    const auto& themeTools = core::theme::current();
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(toolsBtnBg->frame.width, 132.0f) &&
+            nearPx(toolsBtnBg->frame.height, 40.0f),
+        "入口钮应 132×40，实测 " + std::to_string(toolsBtnBg->frame.width) +
+            "x" + std::to_string(toolsBtnBg->frame.height));
+    DOCTEST_REQUIRE(toolsBtnBg->onClick != nullptr);
+    toolsBtnBg->onClick();
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_tools2");
+    const auto* scroll = ui2.find("agent.dialog.tools.scroll");
+    DOCTEST_REQUIRE_MESSAGE(scroll != nullptr, "打开后缺 agent.dialog.tools.scroll");
     size_t cards = 0;
     for (size_t k = 0; k < registered + 4; ++k) {
-        if (ui2.find("agent.tools.card." + std::to_string(k)) != nullptr) {
+        if (ui2.find("agent.dialog.tools.card." + std::to_string(k)) != nullptr) {
             ++cards;
         }
     }
     DOCTEST_CHECK_MESSAGE(cards == registered,
                           "工具卡数 " + std::to_string(cards) +
                               " != 注册表数 " + std::to_string(registered));
-    // listTools 是 map 序（name 字典序）：app.notify < app.now < app.stats <
-    // bash.run < fs.edit < fs.glob < fs.grep < fs.read < fs.write <
-    // git.branch < git.checkout < git.clone < git.commit < git.diff < git.log <
-    // git.pull < git.status < hot.list < net.fetch（五默认工具 + 14 内置工具）
-    const auto* name0 = ui2.find("agent.tools.card.0.name");
-    DOCTEST_REQUIRE(name0 != nullptr);
-    DOCTEST_CHECK_EQ(name0->text, std::string("app.notify"));
-    // B3 工具卡白卡面：cardSurface（H15 alpha 0.92）底 + 1px borderDefault 描边
-    const auto* toolBg = ui2.find("agent.tools.card.0.bg");
-    DOCTEST_REQUIRE(toolBg != nullptr);
-    const auto& themeTools = core::theme::current();
+    // 卡面材质（池170 §3.2）：L2 itemSurface + radius 6 + 1px glassBorder
+    const auto* cardBg = ui2.find("agent.dialog.tools.card.0.bg");
+    DOCTEST_REQUIRE(cardBg != nullptr);
     const auto sameColorL = [](const eui::Color& a, const eui::Color& b) {
         return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
     };
-    DOCTEST_CHECK_MESSAGE(sameColorL(toolBg->color, ui_kit::cardSurface(themeTools)),
-                          "工具卡底色应为 cardSurface（alpha 0.92）");
-    DOCTEST_CHECK_MESSAGE(nearPx(toolBg->border.width, 1.0f) &&
-                              sameColorL(toolBg->border.color,
-                                         themeTools.colors.borderDefault),
-                          "工具卡应有 1px borderDefault 描边");
-    const auto* name1 = ui2.find("agent.tools.card.1.name");
-    DOCTEST_REQUIRE(name1 != nullptr);
-    DOCTEST_CHECK_EQ(name1->text, std::string("app.now"));
-    const auto* name2 = ui2.find("agent.tools.card.2.name");
-    DOCTEST_REQUIRE(name2 != nullptr);
-    DOCTEST_CHECK_EQ(name2->text, std::string("app.stats"));
-    const auto* name3 = ui2.find("agent.tools.card.3.name");
-    DOCTEST_REQUIRE(name3 != nullptr);
-    DOCTEST_CHECK_EQ(name3->text, std::string("bash.run"));
-    const auto* name4 = ui2.find("agent.tools.card.4.name");
-    DOCTEST_REQUIRE(name4 != nullptr);
-    DOCTEST_CHECK_EQ(name4->text, std::string("fs.edit"));
-    // 参数文字已并入 desc（双行布局：行 1=名称，行 2=描述+参数）
-    const auto* desc0 = ui2.find("agent.tools.card.0.desc");
-    DOCTEST_REQUIRE(desc0 != nullptr);
-    DOCTEST_CHECK(desc0->text.find("参数：") != std::string::npos);
+    DOCTEST_CHECK_MESSAGE(sameColorL(cardBg->color, ui_kit::itemSurface(themeTools)),
+                          "工具卡底色应为 itemSurface（L2 档）");
+    DOCTEST_CHECK_MESSAGE(nearPx(cardBg->border.width, 1.0f),
+                          "工具卡应有 1px 描边");
+    DOCTEST_CHECK_MESSAGE(nearPx(cardBg->frame.height, 96.0f),
+                          "工具卡定高 96，实测 " +
+                              std::to_string(cardBg->frame.height));
+    // 卡 0 = 注册表字典序首个（名称断言沿用旧契约）
+    const auto* name0 = ui2.find("agent.dialog.tools.card.0.name");
+    DOCTEST_REQUIRE(name0 != nullptr);
+    DOCTEST_CHECK_EQ(name0->text, std::string("app.notify"));
+    // 零参数工具不渲染 chips（行 3 不渲染、行 2 吃高度）：动态找（app.notify 实际
+    // 带 title/body/sound 三参，不能写死「卡 0 无参」）
+    {
+        int emptyIdx = -1;
+        const auto listed = core::ToolRegistry::instance().listTools();
+        for (size_t k = 0; k < registered && emptyIdx < 0; ++k) {
+            const auto* nm = ui2.find("agent.dialog.tools.card." +
+                                      std::to_string(k) + ".name");
+            if (nm == nullptr) continue;
+            for (const auto& tool : listed) {
+                if (tool->name() == nm->text) {
+                    if (module::agent::decodeToolInfo(tool->schemaJson())
+                            .params.empty()) {
+                        emptyIdx = static_cast<int>(k);
+                    }
+                    break;
+                }
+            }
+        }
+        DOCTEST_REQUIRE_MESSAGE(emptyIdx >= 0, "注册表缺零参数工具（断言失锚）");
+        DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.tools.card." +
+                                       std::to_string(emptyIdx) + ".chip.0") ==
+                                  nullptr,
+                              "零参数工具不应渲染 chips 行，卡 " +
+                                  std::to_string(emptyIdx));
+    }
+    // 参数 chips：fs.grep（6 参数）——首 chip 命中 pattern，溢出折「+N」
+    int grepIdx = -1;
+    const auto listed = core::ToolRegistry::instance().listTools();
+    for (size_t k = 0; k < registered; ++k) {
+        const auto* nm = ui2.find("agent.dialog.tools.card." + std::to_string(k) +
+                                  ".name");
+        if (nm != nullptr && nm->text == "fs.grep") {
+            grepIdx = static_cast<int>(k);
+            break;
+        }
+    }
+    DOCTEST_REQUIRE_MESSAGE(grepIdx >= 0, "注册表缺 fs.grep（chips 断言失锚）");
+    const auto* chip0 = ui2.find("agent.dialog.tools.card." +
+                                 std::to_string(grepIdx) + ".chip.0.text");
+    DOCTEST_REQUIRE_MESSAGE(chip0 != nullptr, "有参数工具缺 chips 行");
+    // params 是 map 序（键字典序）：fs.grep 首键 glob
+    DOCTEST_CHECK_EQ(chip0->text, std::string("glob"));
+    const auto* moreChip = ui2.find("agent.dialog.tools.card." +
+                                    std::to_string(grepIdx) + ".chip.more.text");
+    DOCTEST_REQUIRE_MESSAGE(moreChip != nullptr,
+                            "6 参数卡未折「+N」截断 chip");
+    DOCTEST_CHECK(moreChip->text.rfind("+", 0) == 0);
 
-    const auto* header2 = ui2.find("agent.tools.header");
-    DOCTEST_REQUIRE(header2 != nullptr && header2->onClick != nullptr);
-    header2->onClick();
+    // 关闭路径 ①：头部 ✕
+    const auto* closeBg = ui2.find("agent.dialog.tools.close.bg");
+    DOCTEST_REQUIRE_MESSAGE(closeBg != nullptr && closeBg->onClick != nullptr,
+                            "弹窗头部缺 ✕ 关闭钮");
+    closeBg->onClick();
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_tools3");
-    DOCTEST_CHECK(ui3.find("agent.tools.card.0") == nullptr);
+    DOCTEST_CHECK(ui3.find("agent.dialog.tools.scroll") == nullptr);
+    // 关闭路径 ②：backdrop（onOpenChange(false)）——点暗处关契约
+    DOCTEST_REQUIRE(clickId(ui3, "agent.page.tools.bg"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_tools4");
+    const auto* backdrop = ui4.find("agent.dialog.tools.backdrop");
+    DOCTEST_REQUIRE_MESSAGE(backdrop != nullptr && backdrop->onClick != nullptr,
+                            "弹窗缺 backdrop 关闭面");
+    backdrop->onClick();
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_tools5");
+    DOCTEST_CHECK(ui5.find("agent.dialog.tools.scroll") == nullptr);
+    // 空态：注册表清空后重开 → 「暂无可用工具」
+    for (const auto& tool : core::ToolRegistry::instance().listTools()) {
+        core::ToolRegistry::instance().unregisterTool(tool->name());
+    }
+    DOCTEST_REQUIRE(clickId(ui5, "agent.page.tools.bg"));
+    eui::Ui ui6;
+    composeTo(ui6, mod, kScreen, "agent_ui_tools6");
+    const auto* empty = ui6.find("agent.dialog.tools.empty");
+    DOCTEST_REQUIRE_MESSAGE(empty != nullptr, "空注册表缺空态文案节点");
+    DOCTEST_CHECK_EQ(empty->text, std::string("暂无可用工具"));
+    DOCTEST_CHECK(ui6.find("agent.dialog.tools.scroll") == nullptr);
 
     mod.onStop();
     return true;
 })
 
-// H18-批3 工具区纵向弹性双档（S4.1 锚点 1000×640 / 大窗 1600×1000）。
-// 防的事故：工具列表高回退固定封顶 240——窗口拉高后工具区不增高、可见行数不增。
-// 断言钉列表容器 agent.tools.list.wrap 的布局高：最小窗真实页高 600 = 240 锚点
-// （不退），大窗 > 240（弹性生效）。自然高须先大于弹性值，否则 min(…, 自然高)
-// 会先封顶、断言失去意义——测试环境 onStart 注册 19 个工具（5 默认 + 14 内置）。
-REGISTER_TEST(agent_tools_height_dual_tier,
-              "agent_ui: 工具列表纵向弹性双档——最小窗页高 600 高=240 锚点 / 大窗 >240", {
-    test_support::TestDb tdb("agentui", "toolsh");
+// 工具弹窗几何（池170 §3.2，替代退役的 agent_tools_height_dual_tier）：
+// 防的事故：弹窗尺寸回退写死 / 内容区高度没扣头部与内边距导致网格溢出弹窗底。
+// w = min(720, 视口−48)、h = min(560, 视口−96)：kScreen 1600×1000 → 720×560；
+// 最小窗 1000×640 → 720×544。卡定高 96、2 列网格（同行两卡）。
+REGISTER_TEST(agent_ui_tools_dialog_geometry,
+              "agent_ui: 可用工具弹窗几何——720×min(560,视口−96) / 卡定高 96 / 2 列同行", {
+    test_support::TestDb tdb("agentui", "toolgeo");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify", "hot.list", "app.now",
                          "net.fetch"};
-    core::ToolRegistry::instance().unregisterTool("app.stats");
-    core::ToolRegistry::instance().unregisterTool("app.notify");
-    core::ToolRegistry::instance().unregisterTool("hot.list");
-    core::ToolRegistry::instance().unregisterTool("app.now");
-    core::ToolRegistry::instance().unregisterTool("net.fetch");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
@@ -2345,34 +2407,48 @@ REGISTER_TEST(agent_tools_height_dual_tier,
     const size_t registered = core::ToolRegistry::instance().listTools().size();
     DOCTEST_REQUIRE_MESSAGE(
         registered >= 8,
-        "工具注册数不足 8（自然高 ≤ 320 会掩盖 1000 档弹性判定），实测 " +
-            std::to_string(registered));
+        "工具注册数不足 8（2 列网格断言失锚），实测 " + std::to_string(registered));
 
-    // 展开工具区（toolsOpen_ 是模块状态，后续两档 compose 复用）
-    eui::Ui ui0;
-    composeTo(ui0, mod, kScreen, "agent_ui_toolsh0");
-    DOCTEST_REQUIRE(clickId(ui0, "agent.tools.header"));
-
-    // 1000 档：1600×1000（与 H3 双档同口径）
-    eui::Ui uiBig;
-    composeTo(uiBig, mod, kScreen, "agent_ui_toolsh_big");
-    const auto* bigWrap = uiBig.find("agent.tools.list.wrap");
-    DOCTEST_REQUIRE(bigWrap != nullptr);
+    // 1600×1000 档：720×560
+    eui::Ui ui1;
+    composeTo(ui1, mod, kScreen, "agent_ui_toolgeo1");
+    DOCTEST_REQUIRE(clickId(ui1, "agent.page.tools.bg"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_toolgeo2");
+    const auto* panel = ui2.find("agent.dialog.tools.panel");
+    DOCTEST_REQUIRE_MESSAGE(panel != nullptr, "弹窗打开后缺 agent.dialog.tools.panel");
     DOCTEST_CHECK_MESSAGE(
-        bigWrap->frame.height > 240.5f,
-        "1000 档工具列表应随窗增高 >240，实测 " +
-            std::to_string(bigWrap->frame.height));
-
-    // 最小窗真实页高：1000×640 窗口减 40 标题条 = 600——弹性公式不得抬高锚点
-    const eui::Screen kMinScreen{1000.0f, 600.0f};
-    eui::Ui uiMin;
-    composeTo(uiMin, mod, kMinScreen, "agent_ui_toolsh_min");
-    const auto* minWrap = uiMin.find("agent.tools.list.wrap");
-    DOCTEST_REQUIRE(minWrap != nullptr);
+        nearPx(panel->frame.width, 720.0f) && nearPx(panel->frame.height, 560.0f),
+        "1600×1000 下弹窗应 720×560，实测 " +
+            std::to_string(panel->frame.width) + "x" +
+            std::to_string(panel->frame.height));
+    // 网格：2 列同行（card.0 与 card.1 同 y）、卡定高 96
+    const auto* card0 = ui2.find("agent.dialog.tools.card.0");
+    const auto* card1 = ui2.find("agent.dialog.tools.card.1");
+    DOCTEST_REQUIRE(card0 != nullptr && card1 != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(card0->frame.height, 96.0f),
+                          "工具卡应定高 96，实测 " +
+                              std::to_string(card0->frame.height));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(minWrap->frame.height, 240.0f),
-        "最小窗页高 600 工具列表应保持 240 锚点，实测 " +
-            std::to_string(minWrap->frame.height));
+        std::fabs(card0->frame.y - card1->frame.y) <= 1.5f &&
+            card1->frame.x > card0->frame.x + card0->frame.width - 0.5f,
+        "前两卡应同行两列（0 左 1 右）");
+
+    // 最小窗 1000×640 档：720×544（h = min(560, 640−96)）
+    const eui::Screen kMinScreen{1000.0f, 640.0f};
+    eui::Ui ui3;
+    composeTo(ui3, mod, kMinScreen, "agent_ui_toolgeo3");
+    DOCTEST_REQUIRE(clickId(ui3, "agent.page.tools.bg"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kMinScreen, "agent_ui_toolgeo4");
+    const auto* panelMin = ui4.find("agent.dialog.tools.panel");
+    DOCTEST_REQUIRE(panelMin != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(panelMin->frame.width, 720.0f) &&
+            nearPx(panelMin->frame.height, 544.0f),
+        "1000×640 下弹窗应 720×544，实测 " +
+            std::to_string(panelMin->frame.width) + "x" +
+            std::to_string(panelMin->frame.height));
 
     mod.onStop();
     return true;
@@ -2888,8 +2964,8 @@ REGISTER_TEST(agent_run_end_notify_prune_keeps_window_only,
     return true;
 })
 
-REGISTER_TEST(agent_ui_run_failed_shows_toast,
-              "agent_ui: run 失败 → 通知入队（failed 必响，标题含失败、正文含任务名）", {
+REGISTER_TEST(agent_ui_run_failed_no_inapp_notice,
+              "agent_ui: run 失败 → 应用内零通知（bug161 去双重，只走 OS 通道）", {
     test_support::TestDb tdb("agentui", "failtoast");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -2925,29 +3001,32 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
     }
     DOCTEST_REQUIRE_MESSAGE(runClicked, "启动按钮 2s 内未渲染/不可点");
 
-    // 有界轮询（10ms 步进 ≤20s）+ 每轮 recompose：迁移发生的帧通知必须入队
-    //（fix round 起页面内不再画 agent.toast，通知统一由装配层取走发 app 级 toast）。
+    // 有界轮询（10ms 步进 ≤20s）至 run 落库 failed，再补帧确认应用内通道零通知
+    //（bug161 去双重：run 结束只走 OS 系统通知，OS 必达由 sysnotify 用例 spy 钉住）。
     // 窗口 5s→20s：ASan 档整体慢化 2-10×，5s 在 ASan runner 上曾耗尽
-    //（2026-11-03 CI 30.5s 红实测；断言语义=通知必达，窗口是耐心非阈值）
-    bool toasted = false;
+    //（2026-11-03 CI 30.5s 红实测；窗口是耐心非阈值）
+    bool failed = false;
     eui::Ui ui2;
     for (int i = 0; i < 2000; ++i) {
         composeTo(ui2, mod, kScreen, "agent_ui_failtoast_poll");
-        const auto notice = mod.takeRunEndNotice();
-        if (notice.has_value()) {
-            DOCTEST_CHECK_MESSAGE(notice->first.find("失败") != std::string::npos,
-                                   "通知标题不含「失败」，实测: " + notice->first);
-            DOCTEST_CHECK_MESSAGE(notice->second.find("会失败的任务") != std::string::npos,
-                                   "通知正文不含任务名，实测: " + notice->second);
-            const auto again = mod.takeRunEndNotice();
-            DOCTEST_CHECK_MESSAGE(!again.has_value(),
-                                  "同 runId 不应通知两次（取走即清）");
-            toasted = true;
+        auto runs = store.listRuns(taskId.value(), 1);
+        if (runs.isOk() && !runs.value().empty() &&
+            runs.value().front().status == "failed") {
+            failed = true;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(toasted, "run 失败后 20s 内未产生 run 结束通知");
+    DOCTEST_REQUIRE_MESSAGE(failed, "run 失败后 20s 内未落库 failed");
+    for (int i = 0; i < 3; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_failtoast_tail");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const auto notice = mod.takeRunEndNotice();
+    DOCTEST_CHECK_MESSAGE(!notice.has_value(),
+                          "run 失败迁移入了应用内通知队列（bug161 去双重被回退？），实测: " +
+                              (notice.has_value() ? notice->first
+                                                  : std::string("<无>")));
 
     mod.onStop();
     return true;
@@ -3056,18 +3135,21 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
     DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".run.bg"),
                             "启动按钮未渲染/不可点");
 
-    // 有界轮询至迁移帧（通知入队 = 系统通知同帧已发），再补帧确认不重发
-    bool noticed = false;
+    // 有界轮询至 run 落库 failed（bug161 后迁移不再入应用内队列，以库状态为迁移信号）；
+    // OS 发送为后台异步，落地等待在下方 spy 断言
+    bool failed = false;
     eui::Ui ui2;
     for (int i = 0; i < 500; ++i) {
         composeTo(ui2, mod, kScreen, "agent_ui_sysnotify_poll");
-        if (mod.takeRunEndNotice().has_value()) {
-            noticed = true;
+        auto runs = store.listRuns(taskId.value(), 1);
+        if (runs.isOk() && !runs.value().empty() &&
+            runs.value().front().status == "failed") {
+            failed = true;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(noticed, "run 失败后 5s 内未产生 run 结束通知");
+    DOCTEST_REQUIRE_MESSAGE(failed, "run 失败后 5s 内未落库 failed");
     // M2：OS 发送已挪后台线程，落地异步——有界等待后取 acquire 配对再读 spy 字段
     bool osSent = false;
     for (int i = 0; i < 500 && !osSent; ++i) {
@@ -3167,13 +3249,14 @@ REGISTER_TEST(agent_ui_delete_confirm_second_gate_blocks_running,
     return true;
 })
 
-// ===================== Task 1 fix round：通知走 app 级通道（页面无关） =====================
+// ===================== bug161 去双重：run-end 只走 OS，应用内通道撤除 =====================
 
-// 「非智能体页也能发通知」：run 失败迁移发生在 Home 页（非 Agent 页）时，装配层
-// 每帧拉取路径（app::compose 内 poll + take + showAppNotice）必须把通知送达
-// app.notice toast。守的是接线方向：模块只暴露状态，装配层拉取后发应用级通知。
+// 「非智能体页也不弹应用内通知」：run 失败迁移发生在 Home 页（非 Agent 页）时，装配层
+// 每帧拉取路径（app::compose 内 poll + take + showAppNotice）照常运行，但 run-end
+// 不得再进应用内 app.notice（bug161 去双重，通知只走 OS 系统通道）。守反向契约：
+// 防应用内通道借尸回归；队列仅剩 app.notify 工具降级一条生产者。
 REGISTER_TEST(agent_run_end_notice_app_channel_off_page,
-              "agent_ui: run 失败迁移在非智能体页时经装配层拉取路径弹 app.notice（跨页可见）", {
+              "agent_ui: run 失败迁移在非智能体页时不弹 app.notice（bug161 去双重，只走 OS）", {
     test_support::TestDb tdb("agentui", "appchan");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3214,37 +3297,48 @@ REGISTER_TEST(agent_run_end_notice_app_channel_off_page,
     router.navigateTo(::core::PageId::Home);
     DOCTEST_CHECK(router.currentPage() != ::core::PageId::Agent);
 
-    // 阶段三：循环 app::compose（等价装配层每帧拉取）。迁移发生的那帧，
-    // app.notice（应用级 toast，跨页可见）必须带上「失败」标题与任务名
-    bool toasted = false;
+    // 阶段三：循环 app::compose（等价装配层每帧拉取）至 run 落库 failed，再补 50 帧
+    // 确认 app.notice（应用级 toast）全程不出现——bug161 去双重后的反向契约
+    bool failed = false;
+    bool noticed = false;
     eui::Ui uiApp;
-    for (int i = 0; i < 500; ++i) {
+    for (int i = 0; i < 500 && !failed; ++i) {
         uiApp.begin("agent_appchan_frame");
         app::compose(uiApp, screen);
         uiApp.end();
         const auto* title = uiApp.find("app.notice.title");
         if (title != nullptr && !title->text.empty()) {
-            DOCTEST_CHECK_MESSAGE(title->text.find("失败") != std::string::npos,
-                                   "app 通知标题不含「失败」，实测: " + title->text);
-            const auto* msg = uiApp.find("app.notice.message");
-            DOCTEST_REQUIRE_MESSAGE(msg != nullptr, "app 通知缺正文节点");
-            DOCTEST_CHECK_MESSAGE(msg->text.find("跨页通知任务") != std::string::npos,
-                                  "app 通知正文不含任务名，实测: " + msg->text);
-            toasted = true;
+            noticed = true;
             break;
+        }
+        auto runs = store.listRuns(taskId.value(), 1);
+        if (runs.isOk() && !runs.value().empty() &&
+            runs.value().front().status == "failed") {
+            failed = true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(toasted, "非 Agent 页期间 run 失败，5s 内未弹出 app.notice");
+    DOCTEST_REQUIRE_MESSAGE(failed, "run 5s 内未落库 failed");
+    DOCTEST_CHECK_MESSAGE(!noticed, "run 失败前 app.notice 就被弹出（意外来源）");
+    for (int i = 0; i < 50 && !noticed; ++i) {
+        uiApp.begin("agent_appchan_tail");
+        app::compose(uiApp, screen);
+        uiApp.end();
+        const auto* title = uiApp.find("app.notice.title");
+        if (title != nullptr && !title->text.empty()) noticed = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_CHECK_MESSAGE(!noticed,
+                          "run 失败后 app.notice 弹出（bug161：应用内通道应已撤除）");
 
     mod.onStop();
     return true;
 })
 
-// 取走语义：takeRunEndNotice 一次取走后清空，同 runId 不重复（守 notifiedRunIds_
-// 经 app 通道的同一约束——装配层拉两帧不得收到两条）
+// bug161 去双重：run 结束零应用内通知——直写库终态迁移经 pollRunEnd 两帧取走均空
+//（防应用内通道借尸回归；takeRunEndNotice 队列仅剩 app.notify 降级一条生产者）
 REGISTER_TEST(agent_run_end_notice_take_semantics,
-              "agent_ui: takeRunEndNotice 取走即清（同 runId 两帧只取到一次）", {
+              "agent_ui: run 终态迁移不入应用内通知队列（bug161 去双重，两帧取走均空）", {
     test_support::TestDb tdb("agentui", "takenotice");
     module::agent::AgentStore store(tdb.handle());
     auto taskId = store.createTask("取走语义任务", "直接回复完成，不调用任何工具",
@@ -3262,7 +3356,8 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
         DOCTEST_CHECK(!n.has_value());
     }
 
-    // 直写一条终态 run（running → failed），再经 poll 触发迁移：take 必须恰好取到一次
+    // 直写一条终态 run（running → failed），再经 poll 触发迁移：两帧取走都必须为空
+    //（bug161 去双重：run-end 不入应用内队列；fallback 队列语义由 app.notify 降级承担）
     {
         auto runId = store.startRun(taskId.value());
         DOCTEST_REQUIRE(runId.isOk());
@@ -3275,14 +3370,14 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
 
         mod.pollRunEnd();   // 装配层等价路径：轮询检测（不依赖页面 compose）
         const auto first = mod.takeRunEndNotice();
-        DOCTEST_REQUIRE_MESSAGE(first.has_value(), "迁移发生后未取到通知");
-        DOCTEST_CHECK_MESSAGE(first->first.find("失败") != std::string::npos,
-                               "通知标题不含「失败」，实测: " + first->first);
-        DOCTEST_CHECK_MESSAGE(first->second.find("取走语义任务") != std::string::npos,
-                               "通知正文不含任务名，实测: " + first->second);
+        DOCTEST_CHECK_MESSAGE(!first.has_value(),
+                              "failed 迁移入了应用内队列（bug161 去双重被回退？），实测: " +
+                                  (first.has_value() ? first->first
+                                                     : std::string("<无>")));
+        mod.pollRunEnd();
         const auto second = mod.takeRunEndNotice();
         DOCTEST_CHECK_MESSAGE(!second.has_value(),
-                              "同 runId 第二帧不应再取到通知（取走即清）");
+                              "后续帧也不得出现应用内通知");
     }
 
     mod.onStop();
@@ -3292,9 +3387,9 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
 // 冷启动盲区兜底：三守卫条件（uiPolling_/tasksDirty_/prevAlive）全假时，外部直写库插入的
 // running run 进不了 prevRunStatuses_（prev 恒空 = 冷启动盲区），其 running→failed 迁移
 // 零通知。兜底 = pollRunEnd 在三条件全假时做低频轻查询（hasRunningRun），发现 running 即
-// refreshData 一次进入正常观测路径。
+// refreshData 一次进入正常观测路径。bug161 后可达性出口 = OS 系统通知（spy 断言）。
 REGISTER_TEST(agent_run_end_fallback_cold_start,
-              "agent_ui: 三守卫全假 + 库内新出现 running run → 兜底轻查询触发 refreshData，终态迁移产生通知", {
+              "agent_ui: 三守卫全假 + 库内新出现 running run → 兜底轻查询触发 refreshData，终态迁移经 OS 系统通知可达", {
     test_support::TestDb tdb("agentui", "fallback");
     ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
@@ -3307,6 +3402,10 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
     module::agent::AgentModule mod(deps);
+    // bug161：迁移出口 = OS 系统通知 → 兜底可达性改用 spy 断言（后台异步，有界等待）
+    platform::notify::resetForTest();
+    OsNotifySpy spy;
+    platform::notify::setBackendForTest(&spy);
     mod.onStart();
 
     // 排干 onStart 的 tasksDirty_：此后 uiPolling_/tasksDirty_/prevRunStatuses_ 全空，
@@ -3321,19 +3420,23 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
     // 兜底帧：轻查询发现 running → refreshData 一次，prevRunStatuses_ 捕获 running
     mod.pollRunEnd();
 
-    // 外部把 run 直写成终态；下一帧走正常观测路径（prevAlive）必须给出迁移通知
+    // 外部把 run 直写成终态；下一帧走正常观测路径（prevAlive）必须触发 OS 系统通知
     DOCTEST_REQUIRE(store.finishRun(runId.value(), "failed", 1,
                                     std::optional<int64_t>{},
                                     std::optional<int64_t>{},
                                     "fallback probe").isOk());
     mod.pollRunEnd();
-    const auto notice = mod.takeRunEndNotice();
-    DOCTEST_REQUIRE_MESSAGE(notice.has_value(),
-                            "冷启动盲区未兜底：外部直写库 run 结束后无通知");
-    DOCTEST_CHECK_MESSAGE(notice->first.find("失败") != std::string::npos,
-                          "通知标题不含「失败」，实测: " + notice->first);
-    DOCTEST_CHECK_MESSAGE(notice->second.find("兜底盲区任务") != std::string::npos,
-                          "通知正文不含任务名，实测: " + notice->second);
+    bool osSent = false;
+    for (int i = 0; i < 500 && !osSent; ++i) {
+        osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
+        if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(osSent,
+                            "冷启动盲区未兜底：外部直写库 run 结束后 OS 通知未发出");
+    DOCTEST_CHECK_MESSAGE(!mod.takeRunEndNotice().has_value(),
+                          "兜底迁移不得入应用内队列（bug161 去双重）");
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
 
     mod.onStop();
     return true;
@@ -3736,14 +3839,15 @@ REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
                           "引导文案缺「去 Claude 页」，实测: " + hint->text);
     DOCTEST_REQUIRE_MESSAGE(hint->onClick != nullptr, "页内引导不可点（缺 onClick）");
 
-    // 几何：引导行在错误行之下、不压工具区头部；错误+引导挤占的 listH 已扣减
-    const auto* toolsHeader = ui.find("agent.tools.header");
+    // 几何：引导行在错误行之下、不压页头工具钮所在行；错误+引导挤占的 listH 已扣减
+    //（池170：工具区块退役，页头行 = agent.page.header）
+    const auto* pageHeader = ui.find("agent.page.header");
     const auto* tasklist = ui.find("agent.tasklist");
-    DOCTEST_REQUIRE(toolsHeader != nullptr && tasklist != nullptr);
+    DOCTEST_REQUIRE(pageHeader != nullptr && tasklist != nullptr);
     DOCTEST_CHECK(pageErr->frame.y + pageErr->frame.height <=
                   hint->frame.y + 0.5f);
     DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
-                  toolsHeader->frame.y + 0.5f);
+                  tasklist->frame.y + 0.5f);   // 引导行底 ≤ 任务列表顶（下一个块）
     DOCTEST_CHECK(tasklist->frame.y + tasklist->frame.height <=
                   kScreen.height + 0.5f);
 
@@ -5893,6 +5997,288 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     const auto* runText2 = ui3.find("agent.task." + idleTid + ".run.text.normal");
     DOCTEST_REQUIRE(runText2 != nullptr);
     DOCTEST_CHECK_EQ(runText2->text, std::string("启动"));
+
+    mod.onStop();
+    return true;
+})
+
+// hover 操作组显隐状态机（bug169 / 设计文档 §8）：联合命中域 = 命中面集合 ∪ 控件
+// 集合，离场去抖 120ms、enter 即时清账。直调元素真实 onHoverChanged 回调，并按
+// 实证派发序（低 z 元素的 false 晚于高 z 元素的 true——EUI runtime_input 逐元素
+// 遍历）构造「缝隙穿越 / 按钮间移动」的坏序帧序：单集合实现在这里被抹空闪没，
+// 集合+去抖实现在两种派发序下都收敛。防的回归 = 老板上报的「按钮间移动即消失」。
+REGISTER_TEST(agent_ui_hover_union_domain_debounce,
+              "agent_ui: hover 联合命中域+离场去抖 120ms——缝隙/按钮间坏序穿越不闪没、到期收割隐藏、窗口内重入取消", {
+    test_support::TestDb tdb("agentui", "hoveru");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("hover 任务", "g", "manual", "default", 10,
+                                    false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string card = "agent.task." + std::to_string(created.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui0;
+    composeTo(ui0, mod, kScreen, "agent_ui_hoveru0");
+    const auto* hit = ui0.find(card + ".hit");
+    const auto* del = ui0.find(card + ".delete.bg");
+    const auto* edit = ui0.find(card + ".edit.bg");
+    const auto* acts0 = ui0.find(card + ".actions");
+    DOCTEST_REQUIRE_MESSAGE(
+        hit != nullptr && hit->onHoverChanged != nullptr,
+        "缺卡命中面（.hit）或其 onHover 回调");
+    DOCTEST_REQUIRE_MESSAGE(
+        del != nullptr && del->onHoverChanged != nullptr && edit != nullptr &&
+            edit->onHoverChanged != nullptr,
+        "缺操作组按钮或其 onHover 回调");
+    DOCTEST_REQUIRE_MESSAGE(acts0 != nullptr, "缺 hover 操作组");
+    DOCTEST_CHECK_MESSAGE(nearPx(acts0->opacity, 0.0f),
+                          "常态操作组应 opacity 0");
+
+    auto actionsOpacity = [&](eui::Ui& u) {
+        const auto* a = u.find(card + ".actions");
+        return a != nullptr ? a->opacity : -1.0f;
+    };
+    // 去抖到期收割依赖真实时钟（steady ms）：轮询到期望态为止（容忍 CI 调度抖动，
+    // 但「120ms 后隐藏 / 重入后不隐藏」的结果本身是钉死的）
+    auto composeUntil = [&](const std::string& tag, bool wantShown) {
+        for (int i = 0; i < 40; ++i) {
+            eui::Ui u;
+            composeTo(u, mod, kScreen, (tag + std::to_string(i)).c_str());
+            if (nearPx(actionsOpacity(u), wantShown ? 1.0f : 0.0f)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        return false;
+    };
+
+    // ① enter 命中面 → 立即显（enter 不去抖）
+    hit->onHoverChanged(true);
+    eui::Ui u1;
+    composeTo(u1, mod, kScreen, "agent_ui_hoveru1");
+    DOCTEST_CHECK_MESSAGE(nearPx(actionsOpacity(u1), 1.0f),
+                          "命中面 enter 后操作组应显");
+
+    // ② 卡身 → 按钮（坏序：按钮 true 先于命中面 false——单集合在此被抹空）
+    del->onHoverChanged(true);
+    hit->onHoverChanged(false);
+    eui::Ui u2;
+    composeTo(u2, mod, kScreen, "agent_ui_hoveru2");
+    DOCTEST_CHECK_MESSAGE(nearPx(actionsOpacity(u2), 1.0f),
+                          "指针移到操作钮上时操作组闪没（联合域未覆盖控件集合）");
+
+    // ③ 按钮间移动（delete → edit，坏序：新钮 true 先于旧钮 false——缝隙 4px 同理）
+    edit->onHoverChanged(true);
+    del->onHoverChanged(false);
+    eui::Ui u3;
+    composeTo(u3, mod, kScreen, "agent_ui_hoveru3");
+    DOCTEST_CHECK_MESSAGE(nearPx(actionsOpacity(u3), 1.0f),
+                          "按钮间移动时操作组闪没（缝隙穿越未归域内）");
+
+    // ④ 离场：全部 leave → 去抖窗口（120ms）内仍显
+    edit->onHoverChanged(false);
+    eui::Ui u4;
+    composeTo(u4, mod, kScreen, "agent_ui_hoveru4");
+    DOCTEST_CHECK_MESSAGE(nearPx(actionsOpacity(u4), 1.0f),
+                          "离场去抖窗口内操作组不应立即隐藏");
+
+    // ⑤ 到期收割 → 隐（§8：移出卡 120ms 后消失）
+    DOCTEST_CHECK_MESSAGE(composeUntil("agent_ui_hoveru5", false),
+                          "离场 120ms 去抖到期后操作组应隐藏");
+
+    // ⑥ 快速掠过：enter→leave 进去抖窗口，无重入 → 到期隐
+    hit->onHoverChanged(true);
+    hit->onHoverChanged(false);
+    {
+        eui::Ui u6;
+        composeTo(u6, mod, kScreen, "agent_ui_hoveru6");
+        DOCTEST_CHECK_MESSAGE(nearPx(actionsOpacity(u6), 1.0f),
+                              "快速掠过的去抖窗口内应保持显示");
+    }
+    DOCTEST_CHECK_MESSAGE(composeUntil("agent_ui_hoveru7", false),
+                          "快速掠过无重入应到期隐藏");
+
+    // ⑦ 窗口内重入取消隐藏（leave 不立即隐藏的另一半：重入清账）
+    hit->onHoverChanged(true);
+    hit->onHoverChanged(false);   // 进去抖窗口
+    hit->onHoverChanged(true);    // 窗口内重入 → 清账
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        eui::Ui u9;
+        composeTo(u9, mod, kScreen, "agent_ui_hoveru9");
+        DOCTEST_CHECK_MESSAGE(nearPx(actionsOpacity(u9), 1.0f),
+                              "去抖窗口内重入应取消隐藏（120ms 后仍显）");
+    }
+    hit->onHoverChanged(false);
+    DOCTEST_CHECK_MESSAGE(composeUntil("agent_ui_hoveru10", false),
+                          "重入后再离场应正常到期隐藏");
+
+    mod.onStop();
+    return true;
+})
+
+// 消息卡卡面（池162 / 设计文档 §3.3）：L2 itemSurface + 1px glassBorder + 内边距 12，
+// 角色徽章 pill 双档（工具=浅染底+深字档，用户/助手=次钮底+次级字）、chips 48×24、
+// 整卡可点开合（.hit 点击 = chip 同路径）、ToolUse 浅染内嵌块、ToolResult 左 3px
+// 语义条（红仅错误）。防的回归 = 明细「裸文本无卡面」回潮 + 红/绿语义越界。
+REGISTER_TEST(agent_ui_detail_message_card_face,
+              "agent_ui: 消息卡卡面——itemSurface+glassBorder / 徽章 pill 双档 / chips 48×24 / 整卡可点 / 工具块浅染内嵌 / 语义条红仅错误", {
+    test_support::TestDb tdb("agentui", "msgcard");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("卡面任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    const std::string longOutput(600, 'z');
+    DOCTEST_REQUIRE(store.appendMessage(r.value(), 0, "user",
+                                        R"([{"type":"text","text":"查一下"}])",
+                                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(store.appendMessage(
+                        r.value(), 1, "assistant",
+                        R"([{"type":"text","text":"我来查"},)"
+                        R"({"type":"tool_use","id":"tu1","name":"todo.list",)"
+                        R"("input":{"limit":5}}])",
+                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(store.appendMessage(
+                        r.value(), 2, "user",
+                        R"([{"type":"tool_result","tool_use_id":"tu1",)"
+                        R"("content":[{"type":"text","text":")" + longOutput +
+                        R"("}],"is_error":false}])",
+                        std::string("tu1")).isOk());
+    DOCTEST_REQUIRE(store.appendMessage(
+                        r.value(), 3, "user",
+                        R"([{"type":"tool_result","tool_use_id":"tu1",)"
+                        R"("content":[{"type":"text","text":"找不到清单"}],)"
+                        R"("is_error":true}])",
+                        std::string("tu1")).isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    const std::string base = "agent.dialog.detail";
+    const auto& th = core::theme::current();
+    const auto sameColorM = [](const eui::Color& a, const eui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_mc1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, tid));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_mc2");
+    DOCTEST_REQUIRE(clickId(ui2, base + ".nav.item.1.bg"));
+    eui::Ui ui2a;
+    composeTo(ui2a, mod, kScreen, "agent_ui_mc2a");
+    DOCTEST_REQUIRE(clickId(ui2a, base + ".msgs.toggle"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_mc3");
+
+    // 卡面：L2 itemSurface + 1px glassBorder + 内边距 12（.body 相对卡原点偏移）
+    const auto* m0 = ui3.find(base + ".msg.0");
+    DOCTEST_REQUIRE_MESSAGE(m0 != nullptr, "缺消息卡 msg.0");
+    const auto* m0bg = ui3.find(base + ".msg.0.bg");
+    DOCTEST_REQUIRE_MESSAGE(m0bg != nullptr, "消息卡缺卡面 .bg（裸文本回潮）");
+    DOCTEST_CHECK_MESSAGE(sameColorM(m0bg->color, ui_kit::itemSurface(th)),
+                          "消息卡卡面应为 itemSurface（L2 档）");
+    DOCTEST_CHECK_MESSAGE(nearPx(m0bg->border.width, 1.0f) &&
+                              sameColorM(m0bg->border.color,
+                                         ui_kit::glassBorder(th)),
+                          "消息卡应 1px glassBorder 描边");
+    const auto* m0body = ui3.find(base + ".msg.0.body");
+    DOCTEST_REQUIRE_MESSAGE(m0body != nullptr, "消息卡缺 .body 内容列");
+    DOCTEST_CHECK_MESSAGE(nearPx(m0body->frame.x - m0->frame.x, 12.0f) &&
+                              nearPx(m0body->frame.y - m0->frame.y, 12.0f),
+                          "卡内边距应 12");
+    // 徽章 pill 双档：用户 = 次钮底 + 次级字
+    const auto* badgeBg0 = ui3.find(base + ".msg.0.badge.bg");
+    const auto* badge0 = ui3.find(base + ".msg.0.badge");
+    DOCTEST_REQUIRE(badgeBg0 != nullptr && badge0 != nullptr);
+    DOCTEST_CHECK_MESSAGE(sameColorM(badgeBg0->color, th.colors.background) ||
+                              sameColorM(badgeBg0->color,
+                                         core::theme::componentTokensWeChat(th)
+                                             .surface),
+                          "用户徽章 pill 应为次钮底（非浅染绿）");
+    // 工具徽章 = 浅染底 + 深字档（绿=操作语义，仅工具角色占用）
+    const auto* badgeBg2 = ui3.find(base + ".msg.2.badge.bg");
+    const auto* badge2 = ui3.find(base + ".msg.2.badge");
+    DOCTEST_REQUIRE(badgeBg2 != nullptr && badge2 != nullptr);
+    DOCTEST_CHECK_MESSAGE(sameColorM(badgeBg2->color, th.colors.primarySoftBg),
+                          "工具徽章 pill 应为浅染底 primarySoftBg");
+    // 深字档核对：文本节点的字色在 textColor 字段（Element.color 是通用底色槽，
+    // 文本节点恒默认白——首跑误读 color 字段实测 (1,1,1) 即此坑）
+    DOCTEST_CHECK_MESSAGE(nearPx(badge2->textColor.r, th.colors.primaryText.r) &&
+                              nearPx(badge2->textColor.g, th.colors.primaryText.g) &&
+                              nearPx(badge2->textColor.b, th.colors.primaryText.b),
+                          "工具徽章字应为深字档 primaryText，节点文本=「" +
+                              badge2->text + "」实测 rgb(" +
+                              std::to_string(badge2->textColor.r) + "," +
+                              std::to_string(badge2->textColor.g) + "," +
+                              std::to_string(badge2->textColor.b) + ") 期望 rgb(" +
+                              std::to_string(th.colors.primaryText.r) + "," +
+                              std::to_string(th.colors.primaryText.g) + "," +
+                              std::to_string(th.colors.primaryText.b) + ")");
+    // chips 48×24 同几何（头行内 展开 chip）
+    const auto* toggle0 = ui3.find(base + ".msg.0.toggle");
+    DOCTEST_REQUIRE(toggle0 != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(toggle0->frame.width, 48.0f) &&
+                              nearPx(toggle0->frame.height, 24.0f),
+                          "头行 chip 应 48×24，实测 " +
+                              std::to_string(toggle0->frame.width) + "x" +
+                              std::to_string(toggle0->frame.height));
+    // 整卡可点开合：点 .hit（命中面）= 点 chip 同路径
+    DOCTEST_CHECK(ui3.find(base + ".msg.0.blk.0") == nullptr);
+    const auto* m0hit = ui3.find(base + ".msg.0.hit");
+    DOCTEST_REQUIRE_MESSAGE(m0hit != nullptr && m0hit->onClick != nullptr,
+                            "消息卡缺整卡命中面 .hit");
+    m0hit->onClick();
+    // 同帧展开 msg.2（正常工具输出卡，语义条断言需要展开态）
+    const auto* m2hit = ui3.find(base + ".msg.2.hit");
+    DOCTEST_REQUIRE_MESSAGE(m2hit != nullptr && m2hit->onClick != nullptr,
+                            "消息卡 msg.2 缺整卡命中面 .hit");
+    m2hit->onClick();
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_mc4");
+    DOCTEST_REQUIRE(ui4.find(base + ".msg.0.blk.0") != nullptr);
+    // ToolUse 浅染内嵌块：wrap.bg primarySoftBg + 名称「工具 · 」 + args 节点
+    const auto* tuWrap = ui4.find(base + ".msg.1.blk.1.wrap");
+    const auto* tuBg = ui4.find(base + ".msg.1.blk.1.wrap.bg");
+    DOCTEST_REQUIRE(tuWrap != nullptr && tuBg != nullptr);
+    DOCTEST_CHECK_MESSAGE(sameColorM(tuBg->color, th.colors.primarySoftBg),
+                          "ToolUse 内嵌块应为浅染底 primarySoftBg");
+    const auto* tuArgs = ui4.find(base + ".msg.1.blk.1.args");
+    DOCTEST_REQUIRE_MESSAGE(tuArgs != nullptr, "ToolUse 块缺 args 摘要节点");
+    // ToolResult 语义条：正常 = 中性边色（不占操作绿）
+    const auto* barOk = ui4.find(base + ".msg.2.blk.0.wrap.bar");
+    DOCTEST_REQUIRE_MESSAGE(barOk != nullptr, "ToolResult 缺语义条");
+    DOCTEST_CHECK_MESSAGE(sameColorM(barOk->color, th.colors.borderDefault),
+                          "正常工具输出语义条应为中性 borderDefault");
+    // 错误 = 红条红字（红仅告警）
+    const auto* m3hit = ui4.find(base + ".msg.3.hit");
+    DOCTEST_REQUIRE(m3hit != nullptr && m3hit->onClick != nullptr);
+    m3hit->onClick();
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_mc5");
+    const auto* barErr = ui5.find(base + ".msg.3.blk.0.wrap.bar");
+    DOCTEST_REQUIRE_MESSAGE(barErr != nullptr, "错误输出缺语义条");
+    DOCTEST_CHECK_MESSAGE(sameColorM(barErr->color, th.colors.error),
+                          "错误输出语义条应为 error 红");
+    const auto* labelErr = ui5.find(base + ".msg.3.blk.0");
+    DOCTEST_REQUIRE(labelErr != nullptr);
+    DOCTEST_CHECK_EQ(labelErr->text, std::string("工具输出（错误）"));
+    DOCTEST_CHECK_MESSAGE(sameColorM(labelErr->textColor, th.colors.errorText),
+                          "错误标签应为 errorText 深红（文本节点读 textColor）");
 
     mod.onStop();
     return true;

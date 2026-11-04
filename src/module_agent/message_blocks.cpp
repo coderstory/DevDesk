@@ -6,6 +6,7 @@
 #include <utility>
 
 #include <core/render/text.h>
+#include "core/theme.h"
 
 #include "platform/json.h"
 
@@ -240,12 +241,14 @@ float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
                                              lineHeight);
                 break;
             case MessageBlock::Type::ToolUse:
-                h += lineHeight;    // 「工具 · name + 摘要」单行文本
+                // 池162：浅染内嵌块（图标+名称+args 摘要）定高 28（scaled，渲染侧同源）
+                h += core::theme::scaled(28.0f);
                 break;
             case MessageBlock::Type::ToolResult:
                 h += lineHeight;    // 「工具输出」标签行
                 h += kMsgGap;       // 标签行与输出文本之间的列间距
-                h += estimateTextBlockHeight(b.text, contentW, fontSize,
+                // 正文左让 3px 语义条 + 10px pad（renderMessageRow textX 同源）
+                h += estimateTextBlockHeight(b.text, contentW - 13.0f, fontSize,
                                              lineHeight);
                 break;
         }

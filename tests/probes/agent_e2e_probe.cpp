@@ -835,9 +835,38 @@ int main(int argc, char* argv[]) {
 
             // ---- G4 hover 驱动：指针移入卡 → actions opacity=1 / 卡 radius=16；
             //      移出 → 复位（读 compose 写入的 element 目标值，结构性判据）----
+            // bug182 教训：模块后台刷新（调度首 tick 派 run、latestRuns 回填）会在
+            // G4 数秒窗口内重排列表/整页 reflow——开局捕获的卡 id 与按钮几何会失效，
+            // 探针拿陈旧坐标打活列表 = 间歇红（hit 留下无 enter 的死点）。每条动作腿
+            // 前重解析「当前首卡」（.hit y 最小者）与其按钮几何，断言读同一张卡。
+            struct G4Card {
+                std::string id;
+                const core::dsl::Element* del = nullptr;
+                const core::dsl::Element* enq = nullptr;
+                const core::dsl::Element* hit = nullptr;
+                bool ok() const { return !id.empty() && del != nullptr && enq != nullptr && hit != nullptr; }
+            };
+            auto resolveG4Card = [&]() -> G4Card {
+                const core::dsl::Element* best = nullptr;
+                G4Card c;
+                for (int64_t tid : cardIds) {
+                    auto* h = ui->find("agent.task." + std::to_string(tid) + ".hit");
+                    if (h == nullptr) continue;
+                    if (best == nullptr || h->frame.y < best->frame.y - 0.5f ||
+                        (std::fabs(h->frame.y - best->frame.y) <= 0.5f &&
+                         h->frame.x < best->frame.x - 0.5f)) {
+                        best = h;
+                        c.id = "agent.task." + std::to_string(tid);
+                    }
+                }
+                if (c.id.empty()) return c;
+                c.del = ui->find(c.id + ".delete.bg");
+                c.enq = ui->find(c.id + ".enqueue.bg");
+                c.hit = best;
+                return c;
+            };
             bool g4 = true;
-            const std::string hoverCardId =
-                "agent.task." + std::to_string(cardIds.front());
+            std::string hoverCardId;
             auto readPair = [&](const std::string& base, float* actionsOpacity,
                                 float* bgRadius, float* bgScale) -> bool {
                 const core::dsl::Element* acts = ui->find(base + ".actions");
@@ -889,9 +918,18 @@ int main(int argc, char* argv[]) {
                 return over;
             };
             // G3 采样时把指针停在了首卡上 → 先移出并稳帧，否则「常态」读到的是 hover 态
+            //（bug169 §8：离场走 120ms 去抖 + 120ms 淡出，帧间要睡过真实时钟）
             core::queuePointerMotion(window, w - 8.0f, 8.0f, core::PointerButtons{},
                                      noModsG);
-            for (int i = 0; i < 24; ++i) composeFrame();
+            for (int i = 0; i < 8; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                composeFrame();
+            }
+            G4Card card = resolveG4Card();
+            hoverCardId = card.id;   // 空串时 readPair 必 false → 走缺失分支
+            // 像素腿角部采样坐标 = 本腿实测首卡几何（页面 reflow 后 stale G1 坐标会采错区）
+            const float g4CornerX = card.hit != nullptr ? card.hit->frame.x : firstCardX;
+            const float g4CornerY = card.hit != nullptr ? card.hit->frame.y : firstCardY;
             grabGray(&fNormal);
             float beforeOpacity = -1, beforeRadius = -1, beforeScale = -1;
             if (!readPair(hoverCardId, &beforeOpacity, &beforeRadius, &beforeScale)) {
@@ -912,8 +950,9 @@ int main(int argc, char* argv[]) {
                     g4 = false;
                 }
                 // 移入卡内「空白处」（底行左侧，避开操作组与启动钮）
-                core::queuePointerMotion(window, firstCardX + 40.0f,
-                                         firstCardY + firstCardH - 20.0f,
+                core::queuePointerMotion(window, card.hit->frame.x + 40.0f,
+                                         card.hit->frame.y + card.hit->frame.height -
+                                             20.0f,
                                          core::PointerButtons{}, noModsG);
                 for (int i = 0; i < 24; ++i) composeFrame();  // 盖过 0.18s OutBack
                 grabGray(&fHover);
@@ -940,10 +979,14 @@ int main(int argc, char* argv[]) {
                         g4 = false;
                     }
                 }
-                // 移出到页面空白（列表卡之外）→ 复位
+                // 移出到页面空白（列表卡之外）→ 复位。bug169 §8：离场走 120ms 去抖 +
+                // 120ms 淡出——帧间必须睡过真实时钟，否则去抖未到期读到假 1
                 core::queuePointerMotion(window, w - 8.0f, 8.0f,
                                          core::PointerButtons{}, noModsG);
-                for (int i = 0; i < 24; ++i) composeFrame();
+                for (int i = 0; i < 8; ++i) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                    composeFrame();
+                }
                 grabGray(&fOut);
                 float outOpacity = -1, outRadius = -1, outScale = -1;
                 if (!readPair(hoverCardId, &outOpacity, &outRadius, &outScale)) {
@@ -963,8 +1006,9 @@ int main(int argc, char* argv[]) {
                 // 指针「卡身 → 操作组按钮」：hover 全局唯一，父的 onHover(false) 先于
                 // 子的 onHover(true) → 用集合才不会闪没（§10.0.1 约束 3）。这条是
                 // hover 模型里最容易踩坏的路径，单验卡身 hover 不够。
-                const core::dsl::Element* delBtn =
-                    ui->find(hoverCardId + ".delete.bg");
+                card = resolveG4Card();
+                hoverCardId = card.id;
+                const core::dsl::Element* delBtn = card.del;
                 if (delBtn == nullptr) {
                     std::cerr << "agent_e2e_probe: G4 FAIL 缺删除钮（跨元素 hover 断言）\n";
                     g4 = false;
@@ -990,7 +1034,107 @@ int main(int argc, char* argv[]) {
                     }
                     core::queuePointerMotion(window, w - 8.0f, 8.0f,
                                              core::PointerButtons{}, noModsG);
-                    for (int i = 0; i < 24; ++i) composeFrame();
+                    for (int i = 0; i < 8; ++i) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+                        composeFrame();
+                    }
+
+                    // ---- bug169 §8 缝隙穿越：delete → enqueue 横移（含 4px 缝隙）
+                    //      ——操作组目标 opacity 恒 1（持有者移交 + 离场去抖兜住
+                    //      「低 z false 晚于高 z true」的派发序，缝隙不得产生隐藏）
+                    card = resolveG4Card();
+                    hoverCardId = card.id;
+                    const core::dsl::Element* enqBtn = card.enq;
+                    delBtn = card.del;
+                    if (enqBtn == nullptr || delBtn == nullptr) {
+                        std::cerr << "agent_e2e_probe: G4 FAIL 缺入队钮（缝隙穿越断言）\n";
+                        g4 = false;
+                    } else {
+                        // 先落 delete 钮再滑入缝隙带、再到 enqueue 钮
+                        //（每跳前重解析：后台刷新 reflow 可发生在任何两跳之间）
+                        core::queuePointerMotion(
+                            window, delBtn->frame.x + delBtn->frame.width * 0.5f,
+                            delBtn->frame.y + delBtn->frame.height * 0.5f,
+                            core::PointerButtons{}, noModsG);
+                        for (int i = 0; i < 12; ++i) composeFrame();
+                        card = resolveG4Card();
+                        hoverCardId = card.id;
+                        core::queuePointerMotion(
+                            window,
+                            delBtn->frame.x + delBtn->frame.width + 2.0f,
+                            delBtn->frame.y + delBtn->frame.height * 0.5f,
+                            core::PointerButtons{}, noModsG);
+                        for (int i = 0; i < 12; ++i) composeFrame();
+                        card = resolveG4Card();
+                        hoverCardId = card.id;
+                        enqBtn = card.enq != nullptr ? card.enq : enqBtn;
+                        core::queuePointerMotion(
+                            window, enqBtn->frame.x + enqBtn->frame.width * 0.5f,
+                            enqBtn->frame.y + enqBtn->frame.height * 0.5f,
+                            core::PointerButtons{}, noModsG);
+                        // 到达 enqueue 后轮询读数：指针在域内则下一帧 op 目标即 1；
+                        // 慢机单帧可超 120ms 造成中间态误读——「轮询不到 1」才是红
+                        bool gapShown = false;
+                        float gapOpacity = -1;
+                        for (int i = 0; i < 20 && !gapShown; ++i) {
+                            composeFrame();
+                            float gapRadius = -1, gapScale = -1;
+                            if (readPair(hoverCardId, &gapOpacity, &gapRadius,
+                                         &gapScale)) {
+                                gapShown = std::fabs(gapOpacity - 1.0f) <= 0.01f;
+                            }
+                            if (!gapShown) {
+                                std::this_thread::sleep_for(
+                                    std::chrono::milliseconds(30));
+                            }
+                        }
+                        if (!gapShown) {
+                            std::cerr << "agent_e2e_probe: G4 FAIL 按钮间缝隙穿越闪没"
+                                         "（实测 actions.opacity="
+                                      << gapOpacity << "）\n";
+                            // bug182 诊断：失败现场几何 + 命中解析（坐标失配 vs 派发丢失）
+                            std::cerr << "b182 diag enqTarget=(" << enqBtn->frame.x << ","
+                                      << enqBtn->frame.y << ")\n";
+                            for (const int cid : cardIds) {
+                                const core::dsl::Element* h =
+                                    ui->find("agent.task." + std::to_string(cid) +
+                                             ".hit");
+                                const core::dsl::Element* e =
+                                    ui->find("agent.task." + std::to_string(cid) +
+                                             ".enqueue.bg");
+                                std::cerr << "b182 diag task." << cid << " hit="
+                                          << (h != nullptr
+                                                  ? "(" + std::to_string(h->frame.x) +
+                                                        "," + std::to_string(h->frame.y) +
+                                                        "+" + std::to_string(h->frame.width) +
+                                                        "x" + std::to_string(h->frame.height) + ")"
+                                                  : std::string("null"))
+                                          << " enq.dis="
+                                          << (e != nullptr ? std::to_string((int)e->disabled)
+                                                           : std::string("null"))
+                                          << "\n";
+                            }
+                            std::cerr << "b182 diag hit@del="
+                                      << runtime.hitTestInteractiveAt(
+                                             delBtn->frame.x +
+                                                 delBtn->frame.width * 0.5f,
+                                             delBtn->frame.y +
+                                                 delBtn->frame.height * 0.5f,
+                                             pxScale)
+                                      << " hit@enq="
+                                      << runtime.hitTestInteractiveAt(
+                                             enqBtn->frame.x +
+                                                 enqBtn->frame.width * 0.5f,
+                                             enqBtn->frame.y +
+                                                 enqBtn->frame.height * 0.5f,
+                                             pxScale)
+                                      << "\n";
+                            g4 = false;
+                        } else {
+                            std::cout << "G4 gap-sweep actions.opacity="
+                                      << gapOpacity << "（缝隙穿越不闪没）\n";
+                        }
+                    }
                 }
             }
             std::cout << (g4 ? "G4 PASS" : "G4 FAIL")
@@ -1008,13 +1152,13 @@ int main(int argc, char* argv[]) {
                 const int actsInk = diffOver(fHover, fNormal, actsX, actsY, actsW,
                                              actsH, 4);
                 // ② 卡左上角 12×12：圆角 12→16 + 1.02 放大 → 轮廓移动
-                const int cornerInk = diffOver(fHover, fNormal, firstCardX,
-                                               firstCardY, 12.0f, 12.0f, 4);
+                const int cornerInk = diffOver(fHover, fNormal, g4CornerX,
+                                               g4CornerY, 12.0f, 12.0f, 4);
                 // ③ 移出后必须逐像素回到常态（与 jelly A3 同口径）
                 const int actsBack = diffOver(fOut, fNormal, actsX, actsY, actsW,
                                               actsH, 2);
-                const int cornerBack = diffOver(fOut, fNormal, firstCardX,
-                                                firstCardY, 12.0f, 12.0f, 2);
+                const int cornerBack = diffOver(fOut, fNormal, g4CornerX,
+                                                g4CornerY, 12.0f, 12.0f, 2);
                 std::cout << "G4 pixel actionsInk=" << actsInk
                           << " cornerInk=" << cornerInk
                           << " actionsBack=" << actsBack

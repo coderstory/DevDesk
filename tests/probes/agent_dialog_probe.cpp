@@ -75,7 +75,8 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     // 本探针私有构图开关（parseProbeArgs 未知参数忽略，这里自己收）
-    std::string shotTask, shotTaskPlain, shotDetail, shotDraft, shotDraftError;
+    std::string shotTask, shotTaskPlain, shotDetail, shotDraft, shotDraftError,
+        shotTools;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-task" && i + 1 < argc) {
@@ -88,6 +89,8 @@ int main(int argc, char* argv[]) {
             shotDraft = argv[++i];
         } else if (arg == "--shot-draft-error" && i + 1 < argc) {
             shotDraftError = argv[++i];
+        } else if (arg == "--shot-tools" && i + 1 < argc) {
+            shotTools = argv[++i];
         }
     }
 
@@ -690,6 +693,133 @@ int main(int argc, char* argv[]) {
             std::cerr << "agent_dialog_probe: --shot-detail 落图失败: "
                       << shotDetail << "\n";
             passed = false;
+        }
+    }
+
+    // ---------- D. 池162 消息卡整卡命中面 + 池170 可用工具弹窗（B 段末详情弹窗开着、tab 1） ----------
+    {
+        // D1：消息卡 .hit 整卡点击开合（真指针 Press/Release 隔帧成对）。
+        // 注意 toggle 后默认展开规则会自动展开最终 assistant 消息——断言「点击翻转
+        // 展开态」而非「点击后展开」
+        const auto* msgsToggle = findElement("agent.dialog.detail.msgs.toggle");
+        if (msgsToggle == nullptr) {
+            std::cerr << "agent_dialog_probe: D1 前置缺 msgs.toggle\n";
+            passed = false;
+        } else {
+            clickElement(*msgsToggle);
+            composeFrame();
+            composeFrame();
+        }
+        const bool expandedBefore =
+            findElement("agent.dialog.detail.msg.0.blk.0") != nullptr;
+        const auto* cardHit = findElement("agent.dialog.detail.msg.0.hit");
+        if (cardHit == nullptr) {
+            std::cerr << "agent_dialog_probe: 消息卡缺整卡命中面 .hit（池162 卡面未落地？）\n";
+            passed = false;
+        } else {
+            clickElement(*cardHit);
+            composeFrame();
+            composeFrame();
+            const bool expandedAfter =
+                findElement("agent.dialog.detail.msg.0.blk.0") != nullptr;
+            if (expandedBefore == expandedAfter) {
+                std::cerr << "agent_dialog_probe: 整卡命中面点击未翻转消息卡展开态\n";
+                passed = false;
+            } else {
+                std::cout << "D1 msg.0.hit 整卡点击开合 OK（展开 "
+                          << expandedBefore << " → " << expandedAfter << "）\n";
+            }
+        }
+
+        // D2：关详情弹窗（backdrop 在面板外，点左上角落）→ 开工具弹窗
+        clickPoint(10.0f, 10.0f);
+        composeFrame();
+        if (findElement("agent.dialog.detail.msg.0") != nullptr) {
+            std::cerr << "agent_dialog_probe: backdrop 点击未关闭详情弹窗\n";
+            passed = false;
+        }
+        const auto* toolsBtn = findElement("agent.page.tools.bg");
+        if (toolsBtn == nullptr) {
+            std::cerr << "agent_dialog_probe: 页头缺 agent.page.tools 入口钮\n";
+            passed = false;
+        } else {
+            clickElement(*toolsBtn);
+            composeFrame();
+            composeFrame();
+            const auto* toolsPanel = findElement("agent.dialog.tools.panel");
+            const auto* toolsScroll = findElement("agent.dialog.tools.scroll");
+            if (toolsPanel == nullptr || toolsScroll == nullptr) {
+                std::cerr << "agent_dialog_probe: 工具弹窗未打开（缺 panel/scroll）\n";
+                passed = false;
+            } else {
+                std::cout << "D2 tools dialog panel " << toolsPanel->frame.width
+                          << "x" << toolsPanel->frame.height << "\n";
+                // 命中面级：卡 0 点击区（.bg）必须落在弹窗面板框内（网格不溢出）
+                const auto* card0 = findElement("agent.dialog.tools.card.0.bg");
+                if (card0 == nullptr) {
+                    std::cerr << "agent_dialog_probe: 工具弹窗缺卡 0\n";
+                    passed = false;
+                } else {
+                    const auto& pf = toolsPanel->frame;
+                    const auto& cf = card0->frame;
+                    const bool contained = cf.x >= pf.x - 0.5f &&
+                                           cf.y >= pf.y - 0.5f &&
+                                           cf.x + cf.width <= pf.x + pf.width + 0.5f &&
+                                           cf.y + cf.height <= pf.y + pf.height + 0.5f;
+                    if (!contained) {
+                        std::cerr << "agent_dialog_probe: 工具卡 0 越出弹窗面板框\n";
+                        passed = false;
+                    }
+                    // 2 列同行（卡 1 与卡 0 同 y 且在右侧）
+                    const auto* card1 = findElement("agent.dialog.tools.card.1");
+                    if (card1 != nullptr &&
+                        std::fabs(card1->frame.y - card0->frame.y) > 1.5f) {
+                        std::cerr << "agent_dialog_probe: 网格前两卡未同行（2 列破版）\n";
+                        passed = false;
+                    }
+                }
+                // ✕ 真点击关闭（关闭态不建内容节点）
+                const auto* closeBg = findElement("agent.dialog.tools.close.bg");
+                if (closeBg == nullptr) {
+                    std::cerr << "agent_dialog_probe: 工具弹窗缺 ✕ 关闭钮\n";
+                    passed = false;
+                } else {
+                    clickElement(*closeBg);
+                    composeFrame();
+                    if (findElement("agent.dialog.tools.scroll") != nullptr) {
+                        std::cerr << "agent_dialog_probe: ✕ 点击未关闭工具弹窗\n";
+                        passed = false;
+                    } else {
+                        std::cout << "D2 tools dialog ✕ 关闭 OK\n";
+                    }
+                }
+            }
+        }
+    }
+
+    // 构图 D：工具弹窗稳定帧（网格卡 + 头部 ✕ 同帧在场）
+    if (!shotTools.empty()) {
+        // D2 已关闭弹窗 → 复开到稳定态再落图
+        const auto* toolsBtn2 = findElement("agent.page.tools.bg");
+        if (toolsBtn2 == nullptr) {
+            std::cerr << "agent_dialog_probe: --shot-tools 复开缺入口钮\n";
+            passed = false;
+        } else {
+            clickElement(*toolsBtn2);
+            composeFrame();
+            composeFrame();
+            composeFrame();
+            if (!probe::captureFramePng(window, runtime, shotTools)) {
+                std::cerr << "agent_dialog_probe: --shot-tools 落图失败: "
+                          << shotTools << "\n";
+                passed = false;
+            }
+            // 复位：关掉弹窗再退出（下一批探针/驱动拿干净页态）
+            const auto* closeBg2 = findElement("agent.dialog.tools.close.bg");
+            if (closeBg2 != nullptr) {
+                clickElement(*closeBg2);
+                composeFrame();
+            }
         }
     }
 
