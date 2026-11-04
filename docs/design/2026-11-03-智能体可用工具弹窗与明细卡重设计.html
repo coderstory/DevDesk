@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  demo 仅视觉校准，不是实现蓝图。
+  配套文档：2026-11-03-智能体可用工具弹窗与明细卡重设计.md（池162/169/170）
+  自包含单文件：无框架、无外部依赖，浏览器双击直开；可拖窗缩放验证自适应。
+  覆盖：① 可用工具弹窗（170）② 明细消息卡+摘要卡（162）③ 任务卡 hover 显隐状态机+120ms 去抖（169）。
+  图标以内联 SVG 占位（实现侧一律 FA 字体码点 0xF1E6/0xF00D/0xF0AD）。
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能体 · 可用工具弹窗与明细卡重设计 demo</title>
+<style>
+  :root{
+    --green:#36D399; --green-hover:#2EC48F; --green-pressed:#23B07F;
+    --green-soft:#E6FBF2; --green-deep:#157E4E;
+    --red:#FA5151; --red-deep:#B91C1C;
+    --bg:#F7F7F7; --card:#FFFFFF; --border:#E5E5E5; --border2:#EDEDED;
+    --hover:#EDEDED; --subbtn:#F2F2F2; --text1:#1A1A1A; --text2:#666666; --text3:#999999;
+    --shadow:0 1px 4px rgba(31,58,47,.09);
+    --r:6px; --rl:16px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}
+  body{background:var(--bg);color:var(--text1);font-size:14px;min-width:680px;}
+
+  /* ── 外壳：侧栏 + 主区（外壳不滚，内容区内滚）────────────── */
+  .shell{display:flex;height:100vh;min-height:560px;overflow:hidden;}
+  .sidebar{width:200px;flex:0 0 200px;background:#E8F0EC;border-right:1px solid var(--border);
+    padding:16px 12px;display:flex;flex-direction:column;gap:4px;}
+  .logo{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;padding:6px 8px 18px;}
+  .logo i{width:22px;height:22px;border-radius:6px;background:var(--green);display:inline-block;}
+  .nav-item{padding:8px 10px;border-radius:6px;color:var(--text2);font-size:13px;}
+  .nav-item.on{background:#fff;color:var(--text1);font-weight:600;border-left:2px solid var(--green);}
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:12px 16px 0;gap:16px;}
+
+  /* ── 页头 ─────────────────────────────────────────────── */
+  .page-head{height:40px;flex:0 0 40px;display:flex;align-items:center;gap:8px;}
+  .page-head h1{font-size:20px;font-weight:700;flex:1;}
+  .btn{border:none;cursor:pointer;border-radius:var(--r);font-size:14px;height:40px;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    transition:background .12s ease-out,transform .16s cubic-bezier(.34,1.56,.64,1);}
+  .btn:active{transform:scale(.96);transition-duration:.07s;transition-timing-function:ease-out;}
+  .btn-primary{background:var(--green);color:#fff;width:140px;}
+  .btn-primary:hover{background:var(--green-hover);}
+  .btn-primary:active{background:var(--green-pressed);}
+  .btn-sub{background:var(--subbtn);color:var(--text1);width:132px;}
+  .btn-sub:hover{background:var(--border);}
+  .btn-sub:active{background:#D9D9D9;}
+  .btn-sub svg{width:14px;height:14px;fill:var(--green-deep);}
+
+  /* ── 任务卡网格（B3 骨架保留）─────────────────────────── */
+  .task-scroll{flex:1;overflow-y:auto;padding-bottom:12px;}
+  .task-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,420px));
+    justify-content:center;gap:12px 16px;}
+  .task-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+    height:120px;padding:12px;position:relative;cursor:pointer;
+    transition:transform .16s cubic-bezier(.34,1.56,.64,1),background .12s ease-out,box-shadow .12s ease-out;}
+  .task-card:hover{background:#FBFBFB;box-shadow:var(--shadow);}
+  .task-card:active{transform:scale(.96);transition-duration:.07s;transition-timing-function:ease-out;}
+  .t-row{display:flex;align-items:center;gap:8px;}
+  .t-name{font-size:14px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .t-row2{font-size:12px;color:var(--text2);margin-top:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .t-row3{position:absolute;left:12px;right:12px;bottom:12px;display:flex;align-items:center;gap:8px;}
+  .t-next{font-size:12px;color:var(--text3);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pill{height:22px;padding:0 8px;border-radius:11px;font-size:12px;display:inline-flex;align-items:center;gap:6px;}
+  .pill-ok{background:var(--green-soft);color:var(--green-deep);}
+  .pill-ok i{width:6px;height:6px;border-radius:50%;background:var(--green);}
+  .pill-warn{background:rgba(250,81,81,.14);border:1px solid rgba(250,81,81,.4);color:var(--red);}
+  /* hover 操作组：状态机 Hidden(opacity0+禁点)/Shown(120ms) */
+  .op-group{display:flex;gap:4px;position:absolute;top:12px;right:14px;
+    opacity:0;pointer-events:none;transition:opacity .12s ease-out;}
+  .task-card.ops-on .op-group{opacity:1;pointer-events:auto;}
+  .task-card.ops-on .t-pill-slot{opacity:0;pointer-events:none;}
+  .t-pill-slot{position:absolute;top:14px;right:14px;transition:opacity .12s ease-out;}
+  .ibtn{width:28px;height:28px;border-radius:6px;background:#fff;border:1px solid var(--border);
+    display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+    transition:background .12s ease-out,transform .16s cubic-bezier(.34,1.56,.64,1);}
+  .ibtn:hover{background:var(--hover);}
+  .ibtn:active{transform:scale(.96);transition-duration:.07s;}
+  .ibtn svg{width:13px;height:13px;fill:var(--text2);}
+  .btn-run{width:56px;height:32px;background:var(--green);color:#fff;border:none;border-radius:var(--r);
+    font-size:13px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+    transition:background .12s ease-out,transform .16s cubic-bezier(.34,1.56,.64,1);z-index:2;}
+  .btn-run:hover{background:var(--green-hover);}
+  .btn-run:active{transform:scale(.96);background:var(--green-pressed);transition-duration:.07s;}
+
+  /* ── 弹窗通用（components::dialog 契约：backdrop+关闭态常驻禁交互）── */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;
+    align-items:center;justify-content:center;z-index:1000;}
+  .overlay.open{display:flex;}
+  .overlay.anim{animation:fadeIn .16s ease-out;}
+  .overlay.closing{animation:fadeOut .12s ease-in forwards;}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  @keyframes fadeOut{from{opacity:1}to{opacity:0}}
+  .dialog{background:var(--card);border:1px solid rgba(255,255,255,.6);border-radius:var(--rl);
+    box-shadow:0 6px 24px rgba(31,58,47,.18),var(--shadow);overflow:hidden;
+    animation:pop .16s ease-out;}
+  .overlay.closing .dialog{animation:popOut .12s ease-in forwards;}
+  @keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes popOut{to{opacity:0;transform:translateY(8px)}}
+  .d-head{height:48px;display:flex;align-items:center;padding:0 12px 0 20px;
+    border-bottom:1px solid var(--border);flex:0 0 48px;}
+  .d-head h2{font-size:16px;font-weight:700;}
+  .d-head .cnt{font-weight:400;color:var(--text3);margin-left:2px;}
+  .d-head .sp{flex:1;}
+  .d-close{width:28px;height:28px;border:none;background:transparent;border-radius:var(--r);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s ease-out;}
+  .d-close:hover{background:var(--hover);}
+  .d-close svg{width:14px;height:14px;fill:var(--text2);}
+  .d-body{overflow-y:auto;}
+
+  /* ── 工具弹窗：2 列网格、定高 96 查阅卡（无果冻无 hover 变形）── */
+  .tools-dialog{width:min(720px,calc(100vw - 48px));height:min(560px,calc(100vh - 96px));display:flex;flex-direction:column;}
+  .tools-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px;}
+  .tool-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+    height:96px;padding:12px;display:flex;flex-direction:column;overflow:hidden;}
+  .tc-head{display:flex;align-items:center;gap:8px;}
+  .tc-icon{width:28px;height:28px;flex:0 0 28px;border-radius:var(--r);background:var(--green-soft);
+    display:flex;align-items:center;justify-content:center;}
+  .tc-icon svg{width:14px;height:14px;fill:var(--green-deep);}
+  .tc-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .tc-desc{font-size:12px;color:var(--text2);line-height:18px;margin-top:6px;height:36px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .tc-params{display:flex;gap:4px;margin-top:auto;height:20px;overflow:hidden;flex:0 0 20px;}
+  .tc-chip{height:20px;padding:0 6px;border-radius:var(--r);background:var(--hover);
+    color:var(--text3);font-size:11px;display:inline-flex;align-items:center;white-space:nowrap;flex:0 0 auto;}
+  .tools-empty{height:100%;display:flex;align-items:center;justify-content:center;
+    color:var(--text3);font-size:13px;}
+
+  /* ── 详情弹窗：摘要三卡 + 明细消息卡 ─────────────────── */
+  .detail-dialog{width:min(760px,calc(100vw - 48px));height:min(640px,calc(100vh - 80px));display:flex;flex-direction:column;}
+  .d-body-inner{padding:16px 20px;display:flex;flex-direction:column;gap:8px;overflow-y:auto;}
+  .sum-row{display:flex;gap:8px;}
+  .sum-card{flex:1;background:var(--card);border:1px solid var(--border);border-radius:var(--rl);
+    box-shadow:var(--shadow);padding:10px;}
+  .sum-label{font-size:12px;color:var(--text3);}
+  .sum-value{font-size:15px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .sum-sub{font-size:12px;color:var(--text3);margin-top:2px;}
+  .msgs-head{display:flex;align-items:center;height:32px;margin-top:4px;}
+  .msgs-head h3{font-size:14px;font-weight:600;flex:1;}
+  .chip{height:24px;padding:0 10px;border-radius:var(--r);background:var(--subbtn);color:var(--text1);
+    font-size:12px;border:none;cursor:pointer;display:inline-flex;align-items:center;
+    transition:background .12s ease-out,transform .16s cubic-bezier(.34,1.56,.64,1);margin-left:8px;}
+  .chip:hover{background:var(--border);}
+  .chip:active{transform:scale(.96);transition-duration:.07s;}
+  /* 明细消息卡：L2 卡面 + 头行 + 块列 */
+  .msg-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;cursor:pointer;
+    transition:transform .16s cubic-bezier(.34,1.56,.64,1),box-shadow .12s ease-out;}
+  .msg-card:hover{box-shadow:var(--shadow);}
+  .msg-card:active{transform:scale(.96);transition-duration:.07s;transition-timing-function:ease-out;}
+  .m-head{display:flex;align-items:center;gap:8px;height:24px;}
+  .m-badge{height:20px;padding:0 8px;border-radius:11px;font-size:12px;font-weight:600;
+    display:inline-flex;align-items:center;}
+  .b-user,.b-assistant{background:var(--subbtn);color:var(--text2);}
+  .b-tool{background:var(--green-soft);color:var(--green-deep);}
+  .m-time{font-size:12px;color:var(--text3);}
+  .m-head .sp{flex:1;}
+  .m-preview{font-size:13px;color:var(--text2);line-height:20px;margin-top:4px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .m-blocks{margin-top:6px;display:none;flex-direction:column;gap:6px;}
+  .msg-card.expanded .m-blocks{display:flex;animation:blkIn .12s ease-out;}
+  .msg-card.expanded .m-preview{display:none;}
+  @keyframes blkIn{from{opacity:0}to{opacity:1}}
+  .m-text{font-size:13px;color:var(--text1);line-height:20px;}
+  .m-plain{font-size:13px;color:var(--text3);line-height:20px;}
+  .m-tooluse{background:var(--green-soft);border-radius:var(--r);padding:6px 8px;
+    display:flex;align-items:center;gap:8px;font-size:12px;}
+  .m-tooluse svg{width:12px;height:12px;fill:var(--green-deep);flex:0 0 12px;}
+  .m-tooluse b{color:var(--green-deep);font-weight:600;}
+  .m-tooluse span{color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .m-result{border-left:3px solid var(--border);padding-left:10px;}
+  .m-result.err{border-left-color:var(--red);}
+  .m-result .rl{font-size:12px;color:var(--text3);}
+  .m-result.err .rl{color:var(--red-deep);}
+  .m-result .rt{font-size:12px;color:var(--text2);line-height:18px;margin-top:2px;}
+  .m-result.err .rt{color:var(--red-deep);}
+
+  /* ── 演示控制条（仅 demo 用，非设计产物）────────────── */
+  .demo-bar{position:fixed;left:212px;bottom:12px;display:flex;gap:8px;z-index:1200;}
+  .demo-bar button{height:26px;padding:0 10px;font-size:12px;border-radius:var(--r);
+    border:1px solid var(--border);background:#fff;color:var(--text2);cursor:pointer;}
+  .demo-bar button:hover{background:var(--hover);}
+
+  @media (max-width:900px){ .sidebar{display:none;} .demo-bar{left:12px;} body{min-width:0;} }
+  @media (max-width:640px){ .tools-grid{grid-template-columns:1fr;} .task-grid{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="logo"><i></i>DevDesk</div>
+    <div class="nav-item">首页</div>
+    <div class="nav-item on">智能体</div>
+    <div class="nav-item">日程</div>
+    <div class="nav-item">设置</div>
+  </aside>
+  <main class="main">
+    <div class="page-head">
+      <h1>智能体</h1>
+      <button class="btn btn-sub" onclick="openTools(false)">
+        <svg viewBox="0 0 384 512"><path d="M64 32C28.7 32 0 60.7 0 96v85.7c0 8.5 6.4 15.7 14.8 16.6C39.4 201 56 226.4 56 256s-16.6 55-41.2 57.7c-8.4 .9-14.8 8.1-14.8 16.6V416c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V330.3c0-8.5-6.4-15.7-14.8-16.6C344.6 311 328 285.6 328 256s16.6-55 41.2-57.7c8.4-.9 14.8-8.1 14.8-16.6V96c0-35.3-28.7-64-64-64H64z"/></svg>
+        可用工具（6）
+      </button>
+      <button class="btn btn-primary">+ 新建任务</button>
+    </div>
+    <div class="task-scroll">
+      <div class="task-grid" id="taskGrid"></div>
+    </div>
+  </main>
+</div>
+
+<!-- 工具弹窗（170） -->
+<div class="overlay" id="toolsOverlay" onclick="if(event.target===this)closeDlg('toolsOverlay')">
+  <div class="dialog tools-dialog" role="dialog">
+    <div class="d-head">
+      <h2>可用工具<span class="cnt" id="toolCnt">（6）</span></h2>
+      <div class="sp"></div>
+      <button class="d-close" onclick="closeDlg('toolsOverlay')">
+        <svg viewBox="0 0 352 512"><path d="M242.7 256l100.1-100.1c12.3-12.3 12.3-32.2 0-44.5s-32.2-12.3-44.5 0L198.2 211.5 98.1 111.4c-12.3-12.3-32.2-12.3-44.5 0s-12.3 32.2 0 44.5L153.7 256 53.6 356.1c-12.3 12.3-12.3 32.2 0 44.5s32.2 12.3 44.5 0l100.1-100.1 100.1 100.1c12.3 12.3 32.2 12.3 44.5 0s12.3-32.2 0-44.5L242.7 256z"/></svg>
+      </button>
+    </div>
+    <div class="d-body" style="flex:1;">
+      <div class="tools-grid" id="toolsGrid"></div>
+      <div class="tools-empty" id="toolsEmpty" style="display:none;">暂无可用工具</div>
+    </div>
+  </div>
+</div>
+
+<!-- 详情弹窗（162） -->
+<div class="overlay" id="detailOverlay" onclick="if(event.target===this)closeDlg('detailOverlay')">
+  <div class="dialog detail-dialog" role="dialog">
+    <div class="d-head">
+      <h2>运行详情 · 每日 09:00 整理待办</h2>
+      <div class="sp"></div>
+      <button class="d-close" onclick="closeDlg('detailOverlay')">
+        <svg viewBox="0 0 352 512"><path d="M242.7 256l100.1-100.1c12.3-12.3 12.3-32.2 0-44.5s-32.2-12.3-44.5 0L198.2 211.5 98.1 111.4c-12.3-12.3-32.2-12.3-44.5 0s-12.3 32.2 0 44.5L153.7 256 53.6 356.1c-12.3 12.3-12.3 32.2 0 44.5s32.2 12.3 44.5 0l100.1-100.1 100.1 100.1c12.3 12.3 32.2 12.3 44.5 0s12.3-32.2 0-44.5L242.7 256z"/></svg>
+      </button>
+    </div>
+    <div class="d-body-inner">
+      <div class="sum-row">
+        <div class="sum-card"><div class="sum-label">最近一次</div><div class="sum-value">11-03 09:00 · 成功</div><div class="sum-sub">今天 · 耗时 42 秒</div></div>
+        <div class="sum-card"><div class="sum-label">下一次</div><div class="sum-value">明天 09:00</div><div class="sum-sub">计划 0 9 * * * · 按时</div></div>
+        <div class="sum-card"><div class="sum-label">近 7 天</div><div class="sum-value">7 次 · 全部成功</div><div class="sum-sub">其中受限 0 · 0%</div></div>
+      </div>
+      <div class="msgs-head">
+        <h3>消息（3）</h3>
+        <button class="chip">复制回复</button>
+        <button class="chip">收起</button>
+      </div>
+
+      <div class="msg-card" onclick="toggleMsg(this)">
+        <div class="m-head">
+          <span class="m-badge b-user">用户</span><span class="m-time">11-03 09:00:01</span>
+          <span class="sp"></span><button class="chip" onclick="event.stopPropagation();toggleMsg(this.closest('.msg-card'))">展开</button>
+        </div>
+        <div class="m-preview">整理今天的待办清单，按优先级排序后汇总给我…</div>
+        <div class="m-blocks">
+          <div class="m-text">整理今天的待办清单，按优先级排序后汇总给我；已完成项标注完成时间。</div>
+          <div class="m-plain">（系统注入：当前待办表共 12 条，其中 3 条已逾期）</div>
+        </div>
+      </div>
+
+      <div class="msg-card expanded" onclick="toggleMsg(this)">
+        <div class="m-head">
+          <span class="m-badge b-assistant">助手</span><span class="m-time">11-03 09:00:18</span>
+          <span class="sp"></span>
+          <button class="chip" onclick="event.stopPropagation();toggleMsg(this.closest('.msg-card'))">收起</button>
+          <button class="chip" onclick="event.stopPropagation();">复制</button>
+        </div>
+        <div class="m-blocks">
+          <div class="m-text">好的，我先读取待办列表，再按「逾期 > 今天截止 > 其余」排序。</div>
+          <div class="m-tooluse">
+            <svg viewBox="0 0 512 512"><path d="M501.1 380.9L352.8 232.6c4.4-23.3 1.7-47.7-8.6-69.1-14.7-30.6-43.2-52.4-76.4-58.9-20.3-4-40.9-2.4-59.8 4.4l54.9 54.9c4.7 4.7 4.7 12.3 0 17l-39 39c-4.7 4.7-12.3 4.7-17 0l-54.9-54.9c-6.8 18.9-8.4 39.5-4.4 59.8 6.5 33.2 28.3 61.7 58.9 76.4 21.4 10.3 45.8 13 69.1 8.6l148.3 148.3c4.7 4.7 12.3 4.7 17 0l62.2-62.2c4.7-4.7 4.7-12.3 0-17z"/></svg>
+            <b>工具 · todo_list</b><span>params: {"filter":"all","limit":50}</span>
+          </div>
+          <div class="m-result">
+            <div class="rl">工具输出</div>
+            <div class="rt">返回 12 条待办：3 条逾期（11-01 截止）、4 条今天截止、5 条后续安排。</div>
+          </div>
+          <div class="m-text">汇总如下：逾期 3 项需优先处理…（最终回复全文）</div>
+        </div>
+      </div>
+
+      <div class="msg-card expanded" onclick="toggleMsg(this)">
+        <div class="m-head">
+          <span class="m-badge b-tool">工具</span><span class="m-time">11-03 09:00:31</span>
+          <span class="sp"></span>
+          <button class="chip" onclick="event.stopPropagation();toggleMsg(this.closest('.msg-card'))">收起</button>
+          <button class="chip" onclick="event.stopPropagation();">复制</button>
+        </div>
+        <div class="m-blocks">
+          <div class="m-plain">工具调用失败后的原始输出全文：</div>
+          <div class="m-result err">
+            <div class="rl">工具输出（错误）</div>
+            <div class="rt">calendar_query: 连接超时（30s）。已重试 2 次仍失败，本条 run 以受限结束。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 演示控制（非设计产物） -->
+<div class="demo-bar">
+  <button onclick="openTools(false)">工具弹窗</button>
+  <button onclick="openTools(true)">工具弹窗 · 空态</button>
+  <button onclick="show('detailOverlay')">详情弹窗预览</button>
+</div>
+
+<script>
+/* ── 170：工具卡数据（定高96 查阅卡，无果冻）────────── */
+const PLUG='<svg viewBox="0 0 384 512"><path d="M64 32C28.7 32 0 60.7 0 96v85.7c0 8.5 6.4 15.7 14.8 16.6C39.4 201 56 226.4 56 256s-16.6 55-41.2 57.7c-8.4 .9-14.8 8.1-14.8 16.6V416c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V330.3c0-8.5-6.4-15.7-14.8-16.6C344.6 311 328 285.6 328 256s16.6-55 41.2-57.7c8.4-.9 14.8-8.1 14.8-16.6V96c0-35.3-28.7-64-64-64H64z"/></svg>';
+const tools=[
+ {n:'网络抓取',d:'抓取指定 URL 的网页内容并转为纯文本，支持设置请求头与超时时间，长正文自动截断。',p:['url','headers','timeout']},
+ {n:'应用通知',d:'发送一条系统级桌面通知，可指定标题与正文。',p:['title','message']},
+ {n:'应用打开',d:'在默认浏览器或系统中打开链接/路径。',p:['target']},
+ {n:'应用统计',d:'读取 DevDesk 各模块使用统计（近 7 天）。',p:[]},
+ {n:'热门检索',d:'按关键词检索热点条目并按热度排序返回前 N 条。',p:['keyword','limit','lang','safe','region']},
+ {n:'Cron 预览',d:'解析 cron 表达式并给出未来几次触发时间。',p:['expr']}
+];
+function renderTools(){
+  document.getElementById('toolsGrid').innerHTML=tools.map(t=>{
+    const chips=t.p.map(x=>'<span class="tc-chip">'+x+'</span>').join('')
+      +(t.p.length>4?'<span class="tc-chip">+'+(t.p.length-4)+'</span>':'');
+    return '<div class="tool-card"><div class="tc-head"><span class="tc-icon">'+PLUG+
+      '</span><span class="tc-name">'+t.n+'</span></div><div class="tc-desc">'+t.d+
+      '</div>'+(t.p.length?'<div class="tc-params">'+chips+'</div>':'')+'</div>';
+  }).join('');
+  document.getElementById('toolCnt').textContent='（'+tools.length+'）';
+}
+/* ── 169：hover 显隐状态机（联合命中域=卡；离场去抖 120ms）── */
+const ICONS=['M193.9 41L41 193.9c-9.4 9.4-9.4 24.6 0 33.9L168.6 353.4 96 426l-24-24-48 48 24 24 14-14 22 22 22-22-14-14 72.6-72.6L390 445.9c9.4 9.4 24.6 9.4 33.9 0L504 262.7',/*pencil*/
+ 'M224 136.8V96h48a24 24 0 0 0 0-48H40a24 24 0 0 0 0 48h48v40.8L31.3 250.9A64 64 0 0 0 82 352h182a64 64 0 0 0 50.7-101.1L224 136.8z',/*flask*/
+ 'M256 8a248 248 0 1 0 0 496 248 248 0 0 0 0-496zm0 88a40 40 0 1 1 0 80 40 40 0 0 1 0-80z',/*clock*/
+ 'M256 8a248 248 0 1 0 248 248A248 248 0 0 0 256 8zm0 440a192 192 0 1 1 192-192 192 192 0 0 1-192 192z',/*history*/
+ 'M310.6 150.1L288 172.7 339.3 224 288 275.3l22.6 22.6L362 246.6l51.4 51.3 22.6-22.6L384.6 224l51.4-51.3-22.6-22.6L362 201.4z'];/*x-small*/
+const tasks=[
+ {n:'每日 09:00 整理待办',s:'ok',t:'每天 09:00 · 下次 明天 09:00'},
+ {n:'周报汇总（周五 17:00）',s:'ok',t:'每周五 17:00 · 下次 11-07 17:00'},
+ {n:'监控磁盘余量并告警',s:'warn',t:'每 30 分钟 · 配置异常'},
+ {n:'临时：抓取一篇文档',s:'ok',t:'一次性 · 未运行'}
+];
+function renderTasks(){
+  document.getElementById('taskGrid').innerHTML=tasks.map(t=>{
+    const pill=t.s==='ok'
+      ?'<span class="pill pill-ok"><i></i>启用</span>'
+      :'<span class="pill pill-warn">配置异常</span>';
+    return '<div class="task-card" id="tc-'+t.n+'">'+
+      '<span class="t-name">'+t.n+'</span>'+
+      '<span class="t-pill-slot">'+pill+'</span>'+
+      '<span class="op-group">'+ICONS.map((d,i)=>'<span class="ibtn" onclick="event.stopPropagation()"><svg viewBox="0 0 512 512"><path d="'+d+'"/></svg></span>').join('')+'</span>'+
+      '<div class="t-row2">'+t.t+'</div>'+
+      '<div class="t-row3"><span class="t-next">'+t.t.split(' · ')[1]+'</span>'+
+      '<button class="btn-run" onclick="event.stopPropagation()">启动</button></div></div>';
+  }).join('');
+  /* 状态机：enter 即时显示；leave 120ms 去抖后隐藏（域=卡矩形，缝隙不产生 leave）*/
+  document.querySelectorAll('.task-card').forEach(c=>{
+    let tm=null;
+    c.addEventListener('mouseenter',()=>{clearTimeout(tm);c.classList.add('ops-on');});
+    c.addEventListener('mouseleave',()=>{tm=setTimeout(()=>c.classList.remove('ops-on'),120);});
+  });
+}
+/* ── 弹窗开合（入场160ms/出场120ms）────────────────── */
+function show(id){const o=document.getElementById(id);o.classList.remove('closing');o.classList.add('open','anim');}
+function closeDlg(id){const o=document.getElementById(id);o.classList.remove('anim');o.classList.add('closing');
+  setTimeout(()=>{o.classList.remove('open','closing');},120);}
+function openTools(empty){
+  document.getElementById('toolsGrid').style.display=empty?'none':'grid';
+  document.getElementById('toolsEmpty').style.display=empty?'flex':'none';
+  show('toolsOverlay');}
+function toggleMsg(c){c.classList.toggle('expanded');
+  const b=c.querySelector('.chip');if(b)b.textContent=c.classList.contains('expanded')?'收起':'展开';}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDlg('toolsOverlay');closeDlg('detailOverlay');}});
+renderTools();renderTasks();
+</script>
+</body>
+</html>

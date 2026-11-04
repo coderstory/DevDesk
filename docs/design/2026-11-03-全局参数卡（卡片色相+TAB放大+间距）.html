@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  demo 仅视觉校准，不是实现蓝图。
+  配套设计文档：2026-11-03-全局参数卡（卡片色相+TAB放大+间距）.md
+  规格口径以文档派生式/常量为准；本文件 hex 仅为 mint 主题下的
+  换算参考值（k=0.75 → rgb(193,240,215)），验收不读本文件。
+  自包含单文件：无框架、无外部依赖、浏览器直开、可拖窗缩放验证。
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全局参数卡 demo：卡片色相 + TAB 放大 + 间距</title>
+<style>
+  :root{
+    --page-bg:#F5FAF7;
+    --primary:#07C160;
+    --primary-text:#157E4E;
+    --text-1:#1A1A1A;
+    --text-2:#666666;
+    --text-3:#999999;
+    --border:#E3E8E6;
+    /* 现状：surface 白 + 绿染3% 换算值（demo 参考） */
+    --old-base:248,253,250;
+    /* 建议：greenBase = primary×0.25 + 白×0.75（demo 参考） */
+    --new-base:193,240,215;
+    /* 更浓参考档 k=0.62（对比 4.1:1，不达标，仅裁决参照） */
+    --strong-base:161,231,195;
+    --shadow:0 2px 10px rgba(16,54,38,0.09);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    font-family:"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+    color:var(--text-1);
+    background:
+      radial-gradient(620px 380px at 12% 8%,  rgba(54,211,153,0.16), transparent 70%),
+      radial-gradient(560px 420px at 88% 22%, rgba(54,211,153,0.12), transparent 70%),
+      radial-gradient(700px 500px at 45% 95%, rgba(54,211,153,0.10), transparent 72%),
+      var(--page-bg);
+    min-width:960px;
+    padding:24px 28px 48px;
+  }
+  h1{font-size:22px;font-weight:700;margin-bottom:4px;}
+  .sub{font-size:13px;color:var(--text-3);margin-bottom:28px;}
+  h2{font-size:17px;font-weight:700;margin:36px 0 4px;}
+  .note{font-size:12.5px;color:var(--text-2);margin-bottom:14px;line-height:1.7;}
+  .cols{display:flex;gap:20px;flex-wrap:wrap;align-items:stretch;}
+  .panel{
+    flex:1 1 440px;min-width:440px;
+    border:1px solid var(--border);border-radius:12px;
+    background:rgba(255,255,255,0.55);
+    padding:16px;
+  }
+  .tag{
+    display:inline-block;font-size:11px;font-weight:600;border-radius:999px;
+    padding:2px 10px;margin-bottom:12px;
+  }
+  .tag.old{background:#EEF1F0;color:var(--text-2);}
+  .tag.new{background:rgba(7,193,96,0.14);color:var(--primary-text);border:1px solid var(--border);}
+  /* 果冻按压（基线动效：按下70ms/0.965，松手160ms回弹过冲12%） */
+  .jelly{transition:transform 160ms cubic-bezier(0.34,1.56,0.64,1);cursor:pointer;user-select:none;}
+  .jelly:active{transform:scale(0.965);transition:transform 70ms ease-out;}
+
+  /* ---------- F1 玻璃卡两层 ---------- */
+  .glassL2{
+    border-radius:16px;border:1px solid rgba(255,255,255,0.60);
+    box-shadow:var(--shadow);padding:16px;margin-bottom:14px;
+  }
+  .oldL2{background:rgba(var(--old-base),0.94);}
+  .newL2{background:rgba(var(--new-base),0.94);}
+  .strongL2{background:rgba(var(--strong-base),0.94);}
+  .glassL1{
+    border-radius:16px;border:1px solid rgba(255,255,255,0.60);
+    box-shadow:var(--shadow);padding:14px;
+  }
+  .oldL1{background:rgba(var(--old-base),0.80);}
+  .newL1{background:rgba(var(--new-base),0.80);}
+  .t1{font-size:15px;font-weight:600;color:var(--text-1);}
+  .t2{font-size:13px;color:var(--text-2);margin-top:4px;line-height:1.6;}
+  .t3{font-size:12px;color:var(--text-3);margin-top:6px;}
+  .measure{font-size:11px;color:var(--text-3);margin-top:10px;font-family:Consolas,monospace;}
+  .ok{color:var(--primary-text);font-weight:600;}
+  .warn{color:#B7791F;font-weight:600;}
+
+  /* ---------- F2 TAB（实际像素 1:1） ---------- */
+  .tabrow{display:flex;gap:4px;align-items:center;margin:8px 0 4px;}
+  .wtabs{display:flex;gap:4px;}
+  .wtab{
+    display:flex;align-items:center;justify-content:center;
+    border-radius:8px;font-weight:400;color:var(--text-2);white-space:nowrap;
+  }
+  .wtab.on{
+    background:rgba(7,193,96,0.14);
+    border:1px solid var(--border);
+    color:var(--primary-text);font-weight:600;
+  }
+  .lbl{font-size:12px;color:var(--text-2);width:150px;flex:none;}
+  .dim{font-size:11px;color:var(--text-3);font-family:Consolas,monospace;margin-left:10px;}
+
+  /* ---------- F3 MCP 网格卡距 ---------- */
+  .mcpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));}
+  .gap16{gap:16px;}
+  .gap24{column-gap:16px;row-gap:24px;}
+  .mcpcard{
+    height:120px;border-radius:16px;border:1px solid var(--border);
+    box-shadow:var(--shadow);padding:16px;position:relative;
+    background:rgba(255,255,255,0.94);
+  }
+  .mcpcard.newskin{background:rgba(var(--new-base),0.94);}
+  .mcpico{
+    width:40px;height:40px;border-radius:8px;background:rgba(7,193,96,0.14);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--primary-text);font-weight:700;font-size:16px;
+  }
+  .mcpname{position:absolute;left:68px;top:16px;font-size:14px;font-weight:600;}
+  .mcpdesc{position:absolute;left:68px;top:40px;right:16px;font-size:12px;color:var(--text-2);line-height:1.5;}
+  .mcpstatus{position:absolute;right:16px;top:16px;font-size:11px;color:var(--primary-text);}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:3px;background:var(--primary);margin-right:5px;}
+
+  /* ---------- F4 md 顶区链条（实际像素 1:1） ---------- */
+  .mdchain{border:1px dashed var(--border);border-radius:12px;padding:12px;background:rgba(255,255,255,0.45);}
+  .mdheader{
+    height:40px;display:flex;align-items:center;gap:12px;position:relative;
+  }
+  .mdtitle{font-size:16px;font-weight:700;color:var(--text-1);}
+  .mdbtn{
+    margin-left:auto;width:136px;height:40px;border-radius:8px;
+    background:var(--primary);color:#fff;font-size:14px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;flex:none;
+  }
+  .gapband{position:relative;}
+  .g8{height:8px;} .g0{height:0;}
+  .gapband .mlabel{
+    position:absolute;left:0;top:0px;font-size:10px;color:var(--text-3);
+    font-family:Consolas,monospace;background:rgba(255,255,255,0.8);padding:0 3px;border-radius:3px;
+  }
+  .notetabs{display:flex;gap:4px;align-items:flex-end;}
+  .ntab{
+    display:flex;align-items:center;justify-content:center;
+    border-radius:8px;font-size:12px;color:var(--text-2);
+    width:96px;
+  }
+  .ntab.on{
+    background:rgba(7,193,96,0.14);border:1px solid var(--border);
+    color:var(--primary-text);font-weight:600;
+  }
+  .editorbox{
+    border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow);
+    background:rgba(255,255,255,0.94);
+    padding:14px 16px;font-size:13px;color:var(--text-3);
+  }
+  .editorbox.news{background:rgba(var(--new-base),0.94);}
+  .ruler{font-size:10px;color:var(--text-3);font-family:Consolas,monospace;margin-top:2px;}
+  .footer{margin-top:40px;font-size:12px;color:var(--text-3);line-height:1.8;}
+  code{background:rgba(7,193,96,0.10);border-radius:4px;padding:1px 5px;font-size:12px;}
+</style>
+</head>
+<body>
+
+<h1>全局参数卡 demo</h1>
+<div class="sub">池 156 / 164 / 166 / 167 ｜ demo 仅视觉校准，不是实现蓝图；hex 为 mint 主题换算参考，验收以设计文档派生式为准</div>
+
+<!-- ============ F1 卡片色相 白→浓绿（L2/L1 两层） ============ -->
+<h2>F1 卡片色相：白 → 浓绿（池 166，池 127 实度零回退）</h2>
+<div class="note">派生式：<code>greenBase = primary×0.25 + 白×0.75</code>（k=0.75）；alpha 保持 0.94 / 0.80。卡面放<b>主/次/三级</b>三档文字供可读性核对：次级文字对比 4.56:1 达标（≥4.5 硬门槛），三级字 2.3:1 记录在案（限提示用途，同池 127 裁决）。卡片可按压体验果冻动效。</div>
+<div class="cols">
+  <div class="panel">
+    <span class="tag old">现状 · 白卡（绿染 3%）</span>
+    <div class="glassL2 oldL2 jelly">
+      <div class="t1">L2 功能卡 · 现状</div>
+      <div class="t2">次级说明文字：实度 alpha 0.94（池 127 定稿），基色为 surface 白 + 3% 绿染。</div>
+      <div class="t3">三级提示 · 2026-11-03 · 对比 ≈2.7:1</div>
+    </div>
+    <div class="glassL1 oldL1">
+      <div class="t1" style="font-size:14px;">L1 容器面板 · 现状（alpha 0.80）</div>
+      <div class="glassL2 oldL2 jelly" style="margin:10px 0 0;border-radius:12px;padding:12px;">
+        <div class="t1" style="font-size:13px;">L2 卡浮在 L1 面板上</div>
+        <div class="t3" style="margin-top:2px;">层差 0.94 − 0.80 = 0.14</div>
+      </div>
+    </div>
+    <div class="measure">old: rgba(248,253,250, .94 / .80) · 仅视觉校准参考</div>
+  </div>
+  <div class="panel">
+    <span class="tag new">建议 · 浓绿卡（k=0.75，alpha 不变）</span>
+    <div class="glassL2 newL2 jelly">
+      <div class="t1">L2 功能卡 · 建议</div>
+      <div class="t2">次级说明文字：同 alpha 0.94，基色换 greenBase 派生——半透后是「明显绿但不深」的一档。</div>
+      <div class="t3">三级提示 · 2026-11-03 · 对比 ≈2.3:1（−0.44 记录在案）</div>
+      <div class="measure">textPrimary 13.9:1 <span class="ok">✓</span> ｜ textSecondary 4.56:1 <span class="ok">✓ ≥4.5</span></div>
+    </div>
+    <div class="glassL1 newL1">
+      <div class="t1" style="font-size:14px;">L1 容器面板 · 建议（alpha 0.80）</div>
+      <div class="glassL2 newL2 jelly" style="margin:10px 0 0;border-radius:12px;padding:12px;">
+        <div class="t1" style="font-size:13px;">L2 卡浮在 L1 面板上</div>
+        <div class="t3" style="margin-top:2px;">层差不变 0.14，色相同调</div>
+      </div>
+    </div>
+    <div class="glassL2 strongL2 jelly" style="margin-top:14px;">
+      <div class="t1" style="font-size:13px;">更浓参考档 k=0.62（仅裁决参照）</div>
+      <div class="t2" style="font-size:12px;">次级文字对比跌至 ≈4.1:1，不满足 4.5 硬门槛；若选此档需配套「卡面次级字加深一档」另开需求。</div>
+    </div>
+    <div class="measure">new: rgba(193,240,215, .94 / .80) · strong: rgba(161,231,195, .94)</div>
+  </div>
+</div>
+
+<!-- ============ F2 TAB 放大 ============ -->
+<h2>F2 全站 TAB 放大（池 167）：页面级 36→40 / 弹窗级 32→36，字号 14→15 / 13→14</h2>
+<div class="note">以下 TAB 均<b>实际像素 1:1</b> 渲染。选中态公式不变（primary 14% 派生底 + primaryText 600 字重 + 1px 描边 + 8px 圆角）；页面级 40 与页头 kHeaderH 归一。宽度为 measureText+24 派生口径。</div>
+<div class="cols">
+  <div class="panel">
+    <span class="tag old">现状 · 36 / 32 高 · 14 / 13 号</span>
+    <div class="tabrow"><span class="lbl">页面级</span>
+      <div class="wtabs">
+        <div class="wtab on"  style="height:36px;padding:0 24px;font-size:14px;">通用</div>
+        <div class="wtab" style="height:36px;padding:0 24px;font-size:14px;">外观</div>
+        <div class="wtab" style="height:36px;padding:0 24px;font-size:14px;">快捷键</div>
+      </div><span class="dim">h36 · fs14</span>
+    </div>
+    <div class="tabrow"><span class="lbl">弹窗级（小档）</span>
+      <div class="wtabs">
+        <div class="wtab on" style="height:32px;padding:0 20px;font-size:13px;">基础</div>
+        <div class="wtab" style="height:32px;padding:0 20px;font-size:13px;">高级</div>
+      </div><span class="dim">h32 · fs13</span>
+    </div>
+    <div class="measure">两档差 4px；选中底 #07C160 @14% 参考值</div>
+  </div>
+  <div class="panel">
+    <span class="tag new">建议 · 40 / 36 高 · 15 / 14 号</span>
+    <div class="tabrow"><span class="lbl">页面级（= 页头 40 档）</span>
+      <div class="wtabs">
+        <div class="wtab on"  style="height:40px;padding:0 26px;font-size:15px;">通用</div>
+        <div class="wtab" style="height:40px;padding:0 26px;font-size:15px;">外观</div>
+        <div class="wtab" style="height:40px;padding:0 26px;font-size:15px;">快捷键</div>
+      </div><span class="dim">h40 · fs15</span>
+    </div>
+    <div class="tabrow"><span class="lbl">弹窗级（小档）</span>
+      <div class="wtabs">
+        <div class="wtab on" style="height:36px;padding:0 22px;font-size:14px;">基础</div>
+        <div class="wtab" style="height:36px;padding:0 22px;font-size:14px;">高级</div>
+      </div><span class="dim">h36 · fs14</span>
+    </div>
+    <div class="measure">紧预算页补偿：settings 组间距 16→12；release 基础配置 tab 行下 gap 8→4（见文档 §2 F2 表）</div>
+  </div>
+</div>
+
+<!-- ============ F3 MCP 卡距 ============ -->
+<h2>F3 MCP 已注册工具卡垂直间距（池 156）：垂直 16→24，水平保持 16</h2>
+<div class="note">卡 340–420 宽 × 120 高不变；垂直 24 与全站组间距档对齐，水平 16 维持列节奏。下例卡同步穿 F1 新绿皮肤供叠加观感核对。</div>
+<div class="cols">
+  <div class="panel">
+    <span class="tag old">现状 · 行列均 16</span>
+    <div class="mcpgrid gap16">
+      <div class="mcpcard jelly"><div class="mcpico">内</div><div class="mcpname">memory_search</div><div class="mcpdesc">检索本地记忆库条目，返回相关片段。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+      <div class="mcpcard jelly"><div class="mcpico">内</div><div class="mcpname">note_list</div><div class="mcpdesc">列出笔记本全部笔记与目录结构。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+      <div class="mcpcard jelly"><div class="mcpico">内</div><div class="mcpname">todo_query</div><div class="mcpdesc">按条件查询待办事项。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+      <div class="mcpcard jelly"><div class="mcpico">内</div><div class="mcpname">schedule_list</div><div class="mcpdesc">读取日程列表。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+    </div>
+    <div class="measure">row-gap 16 / col-gap 16</div>
+  </div>
+  <div class="panel">
+    <span class="tag new">建议 · 行 24 / 列 16（卡=新绿皮肤叠加观感）</span>
+    <div class="mcpgrid gap24">
+      <div class="mcpcard newskin jelly"><div class="mcpico">内</div><div class="mcpname">memory_search</div><div class="mcpdesc">检索本地记忆库条目，返回相关片段。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+      <div class="mcpcard newskin jelly"><div class="mcpico">内</div><div class="mcpname">note_list</div><div class="mcpdesc">列出笔记本全部笔记与目录结构。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+      <div class="mcpcard newskin jelly"><div class="mcpico">内</div><div class="mcpname">todo_query</div><div class="mcpdesc">按条件查询待办事项。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+      <div class="mcpcard newskin jelly"><div class="mcpico">内</div><div class="mcpname">schedule_list</div><div class="mcpdesc">读取日程列表。</div><div class="mcpstatus"><span class="dot"></span>可用</div></div>
+    </div>
+    <div class="measure">row-gap 24 / col-gap 16 · 滚动区自滚不回归</div>
+  </div>
+</div>
+
+<!-- ============ F4 md 顶区链条 ============ -->
+<h2>F4 md 顶区「新建笔记 → 编辑框」间隙（池 164）：tab 带 32→36 + 浮空缝 8→0</h2>
+<div class="note">页头口径（40 + 8）2026-10-25 已收紧，超出部分 = tab 带 32 + 带下浮空缝 8。建议：带高随 167 小档升到 36、带底直接贴编辑框顶缘（浮空缝归零）。以下链条<b>实际像素 1:1</b>。</div>
+<div class="cols">
+  <div class="panel">
+    <span class="tag old">现状 · 按钮底→输入区 48px（含 16px 空气）</span>
+    <div class="mdchain">
+      <div class="mdheader"><span class="mdtitle">Markdown 笔记本</span><div class="mdbtn jelly">新建笔记</div></div>
+      <div class="gapband g8"><span class="mlabel">8 页头缝(全站口径)</span></div>
+      <div class="notetabs">
+        <div class="ntab on" style="height:32px;">会议纪要.md</div>
+        <div class="ntab" style="height:32px;">周报.md</div>
+        <div class="ntab" style="height:32px;">设计草稿.md</div>
+      </div>
+      <div class="ruler">tab 带 32</div>
+      <div class="gapband g8"><span class="mlabel">8 浮空缝 ← 太大观感来源</span></div>
+      <div class="editorbox" style="height:96px;">编辑输入区（y=88 起）…</div>
+    </div>
+  </div>
+  <div class="panel">
+    <span class="tag new">建议 · tab 带 36 贴合，空气只剩页头 8px</span>
+    <div class="mdchain">
+      <div class="mdheader"><span class="mdtitle">Markdown 笔记本</span><div class="mdbtn jelly">新建笔记</div></div>
+      <div class="gapband g8"><span class="mlabel">8 页头缝(全站口径)</span></div>
+      <div class="notetabs">
+        <div class="ntab on" style="height:36px;">会议纪要.md</div>
+        <div class="ntab" style="height:36px;">周报.md</div>
+        <div class="ntab" style="height:36px;">设计草稿.md</div>
+      </div>
+      <div class="ruler">tab 带 36（= 新弹窗级档，随 167 放大而非缩小）</div>
+      <div class="gapband g0"></div>
+      <div class="editorbox news" style="height:96px;margin-top:0;">编辑输入区（y=84 起，带底缘直接贴合）…</div>
+    </div>
+    <div class="measure">带 y=48 与树面板卡顶同轨不变；树列满高不变（池 130 规则保持）</div>
+  </div>
+</div>
+
+<div class="footer">
+  参数速览：① 卡基色 greenBase = primary×0.25 + 白×0.75，alpha 0.94/0.80 不变（Dark 不动）；② TAB 40/36 高、15/14 号，settings 与 release 基础配置两处一比一补偿；③ MCP 卡距行 24/列 16；④ md tab 带 36 高、浮空缝归零，输入区顶 88→84。<br>
+  自适应声明：≥1080px 双栏对比，&lt;1080px 单栏纵排；最小可用窗 960×600，拖窗缩放验证不破版、不横向溢出。
+</div>
+
+</body>
+</html>

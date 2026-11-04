@@ -1,1 +1,2 @@
 - 2026-10-31（老板定调，docs/TESTING-DISCIPLINE.md 成文）：测试评审四问总纲——①防什么回归（功能×场景×边界三元组，答不出=仪式）②何时会红（构造不出触发条件=凑数）③断言行为还是实现（重构必碎=测错对象）④还活着吗（防的场景已消灭→建议退役）；不看行覆盖率，审「已钉住 vs 明账缺口」的场景/边界矩阵。
+- 2026-11-03（bug#175 全仓扫描，32/32 安全结论）：EUI scrollView 陷阱必查——content lambda 必须用形参 ui 绘制；捕获外层 compose 的 ui 会让 measureContentHeight 每帧把内容画进主树 root 直下（幽灵副本盖交互面、hitTest 兄弟逆序抢先命中→点击全吞）。全仓现收敛为两种安全习语：形参透传（inner/listUi/errInner/f）与形参同名遮蔽（home_module.cpp:364、schedule_ui_list.cpp:1166 注释自证）；新增调用点回归是主要风险面。

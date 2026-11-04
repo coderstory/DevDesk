@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<!-- =====================================================================
+  demo 仅视觉校准，不是实现蓝图。
+  对应设计文档：2026-11-03-侧栏图标与收缩按钮重整.md（bug165 / need171 / need172）
+  覆盖：品牌 logo 44 两态常量 / 高度三档间距自适应 / 让位线守卫 /
+        收缩按钮圆框+悬浮+果冻按压+弥散绿粒子（hover 进入沿一次迸发 480ms 自止）
+  色值全部走 token 命名的 CSS 变量（值为项目 theme.cpp 现值；
+  深色档带(近似)标注者为演示近似，实现一律读 t.colors.* token）。
+  侧栏宽度切换此处用 200ms 过渡便于观察；真实侧栏为瞬时切换（AnimProperty 无 Width 档）。
+===================================================================== -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>侧栏图标与收缩按钮重整 · demo</title>
+<style>
+  :root{
+    /* ── token：浅色档（theme.cpp 权威值）── */
+    --primary:#07C160; --primary-hover:#06AD56; --primary-soft:#E8F8EE;
+    --primary-text:#157E4E;            /* active 文本加深绿档（基线 ≥4.5:1） */
+    --sidebar-bg:#EBF6EF; --hover:#EEF6F1;
+    --border:#E5E5E5; --border-2:#EDEDED;
+    --text-1:#1A1A1A; --text-2:#666666; --text-3:#999999;
+    --bg:#F7F7F7; --surface:#FFFFFF;
+    --particle-c1:#07C160; --particle-c2:#34D399; --particle-c3:#A7F3D0; /* fluid kLightHalo 同款三色 */
+  }
+  .dark{
+    /* ── token：深色档（theme.cpp 已核实值；标(近似)处为演示近似）── */
+    --primary:#36D399; --primary-hover:#2EC48F; --primary-soft:#0D3326;
+    --primary-text:#36D399;
+    --sidebar-bg:#0F1F18; --hover:#353231;
+    --border:#2E3A33; --border-2:#28332C;   /* border 系(近似)：演示值，实现读 token */
+    --text-1:#E8E8E8; --text-2:#A0A0A0; --text-3:#6E6E6E;
+    --bg:#151A17; --surface:#1E2622;
+    --particle-c1:#36D399; --particle-c2:#2EC48F; --particle-c3:#36D399;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{background:#333;display:flex;align-items:center;justify-content:center;
+       font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;overflow:hidden}
+
+  /* ── 模拟窗（浏览器缩放或拖滑杆改变高度即可验证分档）── */
+  #win{width:900px;height:720px;background:var(--bg);border-radius:8px;overflow:hidden;
+       display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.45);
+       transition:height .15s ease-out;min-height:460px;max-height:100vh}
+  #titlebar{height:40px;flex:none;background:var(--surface);border-bottom:1px solid var(--border-2);
+       display:flex;align-items:center;padding:0 16px;gap:8px}
+  #titlebar .brand{font-size:14px;font-weight:700;color:var(--text-1)}
+  #titlebar .spacer{flex:1}
+  #titlebar .tbtn{width:34px;height:26px;border:none;background:transparent;border-radius:6px;
+       color:var(--text-2);cursor:pointer;font-size:12px}
+  #titlebar .tbtn:hover{background:var(--hover)}
+  #body{flex:1;display:flex;min-height:0}
+
+  /* ═══════════ 侧栏 ═══════════ */
+  #sidebar{width:220px;flex:none;background:var(--sidebar-bg);border-right:1px solid var(--border);
+       position:relative;display:flex;flex-direction:column;
+       transition:width .2s ease-out}
+  #sidebar.collapsed{width:72px}
+  /* 三档间距（设计文档 §2.2）：CSS 变量随 data-tier 切换，离散无过渡 */
+  #sidebar[data-tier="normal"] {--top-pad:32px;--brand-nav-gap:28px;--row-gap:4px;--row-h:40px;--nav-start:116px}
+  #sidebar[data-tier="compact"]{--top-pad:16px;--brand-nav-gap:16px;--row-gap:4px;--row-h:40px;--nav-start:88px}
+  #sidebar[data-tier="tight"]  {--top-pad:12px;--brand-nav-gap:12px;--row-gap:2px;--row-h:36px;--nav-start:80px}
+
+  /* 区块A 品牌锚点区：行高 56 恒定，logo 44 常量两态同值（bug165） */
+  #brand{height:56px;flex:none;margin-top:var(--top-pad);display:flex;align-items:center;justify-content:center}
+  #logo{width:44px;height:44px;border-radius:10px;background:var(--primary);
+        display:flex;align-items:center;justify-content:center;flex:none}
+  #logo svg{width:26px;height:26px;display:block}
+  #logo .term-bar{stroke:var(--surface);stroke-width:2;fill:none}
+  #logo .term-gt{stroke:var(--surface);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+  /* 区块B 导航列表：不滚，越让位线整行隐藏（守卫） */
+  #nav{margin-top:var(--brand-nav-gap);overflow:hidden;flex:1}
+  .nav-row{height:var(--row-h);margin:0 16px;margin-bottom:var(--row-gap);border-radius:6px;
+        display:flex;align-items:center;padding:0 12px;cursor:pointer;color:var(--text-2);
+        font-size:14px;white-space:nowrap}
+  .nav-row:hover{background:var(--hover)}
+  .nav-row.active{background:var(--primary-soft);color:var(--primary-text);font-weight:600}
+  .nav-row.active .ic{color:var(--primary)}
+  .nav-row.hidden-by-fold{visibility:hidden}
+  .nav-row .ic{width:28px;flex:none;display:flex;align-items:center;justify-content:center}
+  .nav-row .ic svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;
+        stroke-linecap:round;stroke-linejoin:round}
+  .nav-row .label{margin-left:8px;overflow:hidden;text-overflow:ellipsis}
+  .nav-row .chev{margin-left:auto;width:14px;display:flex;color:var(--text-3);flex:none}
+  .nav-row .chev svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+  .nav-row.child{margin-left:32px}
+  #groupdiv{height:1px;background:var(--border);margin:0 16px var(--row-gap)}
+  /* 折叠态：隐藏 label/chevron，图标居中（现行为一致） */
+  #sidebar.collapsed .nav-row{padding:0}
+  #sidebar.collapsed .nav-row .label,#sidebar.collapsed .nav-row .chev{display:none}
+  #sidebar.collapsed .nav-row{margin-left:0;margin-right:0;justify-content:center}
+  #sidebar.collapsed .nav-row.child{margin-left:0}
+  #sidebar.collapsed #groupdiv{margin:0 16px var(--row-gap)}
+
+  /* 区块C 按钮区：预留 56 恒定（守卫锚），按钮直径 40 区内垂直居中 */
+  #toggle-zone{height:56px;flex:none;position:relative}
+  #toggle{position:absolute;left:16px;top:8px;width:40px;height:40px;border-radius:50%;
+        background:transparent;border:1px solid var(--border);color:var(--text-2);cursor:pointer;
+        display:flex;align-items:center;justify-content:center;position:absolute;
+        transform-origin:center;transition:background-color .15s ease-out,border-color .15s ease-out,
+        color .15s ease-out,transform .15s ease-out}
+  #sidebar.collapsed #toggle{left:16px}   /* (72−40)/2 = 16，与展开态同值 */
+  #toggle:hover{background:var(--primary-soft);border-color:var(--primary-hover);color:var(--primary);transform:scale(1.04)}
+  #toggle:active{background:var(--primary-soft);border-color:var(--primary);color:var(--primary);
+        transform:scale(.96);transition:transform .1s ease-out}
+  #toggle.bounce{animation:jelly-bounce .18s ease-out}
+  @keyframes jelly-bounce{0%{transform:scale(.96)}60%{transform:scale(1.02)}100%{transform:scale(1)}}
+  #toggle svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.2;
+        stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+
+  /* 弥散绿粒子：hover 进入沿 JS 生成 8 颗，480ms 缓出淡去后自删；无循环无常驻动画 */
+  #burst{position:absolute;inset:0;pointer-events:none}
+  .p{position:absolute;left:50%;top:50%;width:var(--sz);height:var(--sz);border-radius:50%;
+     background:var(--c);opacity:.55;transform:translate(-50%,-50%);
+     animation:p-disperse .48s ease-out forwards}
+  @keyframes p-disperse{
+     0%{opacity:.55;transform:translate(-50%,-50%) translate(0,0) scale(1)}
+     100%{opacity:0;transform:translate(-50%,-50%) translate(var(--dx),var(--dy)) scale(.6)}
+  }
+
+  /* 页面占位区 */
+  #page{flex:1;background:var(--bg);display:flex;align-items:center;justify-content:center}
+  #page .card{background:var(--surface);border:1px solid var(--border-2);border-radius:16px;
+        padding:24px 32px;color:var(--text-3);font-size:12px;line-height:1.9;max-width:420px}
+  #page .card b{color:var(--text-2);font-size:14px}
+
+  /* demo 观测面板（demo 专用仪器，非设计产物） */
+  #meter{position:fixed;right:12px;top:12px;background:rgba(0,0,0,.72);color:#fff;border-radius:8px;
+       padding:10px 12px;font-size:12px;line-height:1.8;z-index:9}
+  #meter input[type=range]{width:140px;vertical-align:middle}
+  #meter .seg{cursor:pointer;padding:1px 6px;border-radius:4px;margin-left:4px}
+  #meter .seg.on{background:#07C160}
+</style>
+</head>
+<body>
+<div id="win">
+  <div id="titlebar">
+    <span class="brand">DevDesk</span><span class="spacer"></span>
+    <button class="tbtn" id="themeBtn" title="浅色/深色档切换">深</button>
+    <button class="tbtn">—</button><button class="tbtn">✕</button>
+  </div>
+  <div id="body">
+    <div id="sidebar" data-tier="normal">
+      <div id="brand">
+        <div id="logo" title="品牌 logo：44×44 两态常量（bug165）">
+          <!-- 终端窗 >_ ：ui_kit::drawDevDeskLogo C 方案同款几何 -->
+          <svg viewBox="0 0 26 26">
+            <rect class="term-bar" x="1" y="3" width="24" height="20" rx="4"/>
+            <path class="term-gt" d="M6 10 l4 3 -4 3"/>
+            <line class="term-gt" x1="12" y1="16" x2="17" y2="16"/>
+          </svg>
+        </div>
+      </div>
+      <div id="nav"></div>
+      <div id="toggle-zone">
+        <button id="toggle" title="收起 / 展开（need172：圆框 + 悬浮 + 弥散绿粒子）">
+          <span id="burst"></span>
+          <svg id="toggleIcon" viewBox="0 0 16 16"></svg>
+        </button>
+      </div>
+    </div>
+    <div id="page">
+      <div class="card">
+        <b>验证点</b><br>
+        1. 品牌 logo 44px：展开/折叠两态同尺寸<br>
+        2. 拖动右下滑杆或缩放浏览器窗高 → 三档间距（正常/紧凑/极紧）<br>
+        3. 矮窗下行数被让位线隐藏，按钮恒在且无行压入<br>
+        4. 悬停左下圆钮：绿框放大 + 8 颗绿粒子弥散一次；按下果冻回弹<br>
+        5. 点按钮切换 220/72 两态
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="meter">
+  窗高 <span id="hVal">720</span> · 侧栏可用高 H <span id="hBody">680</span><br>
+  档位 <span id="tierVal">正常档</span> · 让位隐藏 <span id="foldVal">0</span> 行<br>
+  <input type="range" id="hSlider" min="480" max="1000" step="4" value="720">
+  主题 <span class="seg on" id="segL">浅</span><span class="seg" id="segD">深</span>
+</div>
+
+<script>
+"use strict";
+/* ── token 注册表（12 行：9 平铺 + release 分组父项 + 2 子页 + 设置/关于）── */
+var NAV=[
+  {id:"home",label:"首页"},
+  {id:"markdown",label:"Markdown"},
+  {id:"todo",label:"待办"},
+  {id:"schedule",label:"日程"},
+  {id:"claude",label:"Claude 代理"},
+  {id:"agent",label:"智能体"},
+  {id:"memory",label:"记忆"},
+  {id:"wallpaper",label:"壁纸"},
+  {id:"mcp",label:"MCP"},
+  {id:"release",label:"发布",group:true},
+  {id:"release-task",label:"发布任务",child:"release"},
+  {id:"release-cfg",label:"基础配置",child:"release"},
+  {id:"divider"},
+  {id:"settings",label:"设置"},
+  {id:"about",label:"关于"}
+];
+/* 简单几何 SVG 占位（FA 字形离线不可用；禁 emoji） */
+var ICONS={
+  home:'<circle cx="8" cy="8" r="5.5"/>',
+  markdown:'<rect x="2" y="3.5" width="12" height="9" rx="2"/><path d="M5 10V7l2 2 2-2v3"/>',
+  todo:'<rect x="3" y="3" width="10" height="10" rx="2"/><path d="M6 8l2 2 3-3.5"/>',
+  schedule:'<rect x="2.5" y="4" width="11" height="9.5" rx="2"/><path d="M2.5 7.5h11M5.5 2.5v3M10.5 2.5v3"/>',
+  claude:'<rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.5 6.5l2 1.5-2 1.5M9 9.5h2"/>',
+  agent:'<rect x="3" y="5" width="10" height="8" rx="2"/><circle cx="6.2" cy="9" r=".6"/><circle cx="9.8" cy="9" r=".6"/><path d="M8 5V2.8"/>',
+  memory:'<circle cx="8" cy="8" r="5.5"/><path d="M8 5.5v5M5.5 8h5"/>',
+  wallpaper:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><circle cx="6" cy="7" r="1.2"/><path d="M4 12l3-3 2 2 2.5-2.5 2 2"/>',
+  mcp:'<path d="M5.5 8a2.5 2.5 0 1 1 0 .01M10.5 8a2.5 2.5 0 1 0 0 .01M8 8h0"/><path d="M8 5.5V3M8 13v-2.5"/>',
+  release:'<path d="M4 13.5V3h6l-1.5 2.5L10 8H4"/>',
+  "release-task":'<rect x="3" y="4" width="10" height="9" rx="2"/><path d="M3 7h10M6.5 9.5h3"/>',
+  "release-cfg":'<circle cx="8" cy="8" r="2.2"/><path d="M8 2.8v2M8 11.2v2M2.8 8h2M11.2 8h2M4.4 4.4l1.4 1.4M10.2 10.2l1.4 1.4M11.6 4.4l-1.4 1.4M5.8 10.2l-1.4 1.4"/>',
+  settings:'<circle cx="8" cy="8" r="2.2"/><path d="M8 2.8v2M8 11.2v2M2.8 8h2M11.2 8h2M4.4 4.4l1.4 1.4M10.2 10.2l1.4 1.4M11.6 4.4l-1.4 1.4M5.8 10.2l-1.4 1.4"/>',
+  about:'<circle cx="8" cy="8" r="5.5"/><path d="M8 7.4v3.2"/><circle cx="8" cy="5.2" r=".5"/>',
+  chev:'<path d="M3 6l5 5 5-5"/>'
+};
+var svg=function(name){return '<svg viewBox="0 0 16 16">'+ICONS[name]+'</svg>';};
+
+/* ── 渲染导航 ── */
+var nav=document.getElementById("nav");
+var expandedGroups={};           /* 分组展开集合（默认全收起） */
+var activeId="home";
+NAV.forEach(function(item){
+  if(item.id==="divider"){var d=document.createElement("div");d.id="groupdiv";nav.appendChild(d);return;}
+  var row=document.createElement("div");
+  row.className="nav-row"+(item.child?" child":"");
+  row.dataset.id=item.id; row.dataset.group=item.group?"1":""; row.dataset.child=item.child||"";
+  var html='<span class="ic">'+svg(item.id)+'</span><span class="label">'+item.label+'</span>';
+  if(item.group) html+='<span class="chev">'+svg("chev")+'</span>';
+  row.innerHTML=html;
+  row.addEventListener("click",function(){
+    if(item.group){expandedGroups[item.id]=!expandedGroups[item.id];
+      row.querySelector(".chev").style.transform=expandedGroups[item.id]?"rotate(180deg)":"";}
+    else{activeId=item.id;}
+    applyState();
+  });
+  nav.appendChild(row);
+});
+function setIcons(){document.querySelectorAll(".nav-row").forEach(function(r){
+  r.querySelector(".ic").innerHTML=svg(r.dataset.id);
+  var c=r.querySelector(".chev"); if(c) c.innerHTML=svg("chev");
+  r.classList.toggle("active",r.dataset.id===activeId);});}
+
+/* ── 档位判定 + 让位线守卫（设计文档 §2.2/§2.4）── */
+var sidebar=document.getElementById("sidebar");
+var win=document.getElementById("win");
+var TIER_NAME={normal:"正常档",compact:"紧凑档",tight:"极紧档"};
+function bodyH(){return win.clientHeight-40;}          /* 可用高 = 窗高 − 标题条 40 */
+function tierOf(h){return h>=712?"normal":h>=680?"compact":"tight";}
+function rowStep(){return parseFloat(getComputedStyle(sidebar).getPropertyValue("--row-h"))
+                     +parseFloat(getComputedStyle(sidebar).getPropertyValue("--row-gap"));}
+function navStart(){return parseFloat(getComputedStyle(sidebar).getPropertyValue("--nav-start"));}
+function applyState(){
+  var H=bodyH(), tier=tierOf(H);
+  sidebar.dataset.tier=tier;
+  var expandedRow=function(r){return !r.dataset.child||expandedGroups[r.dataset.child];};
+  var foldLimit=H-56-4;                               /* kNavFoldLimit = H−56−gap（守卫不变） */
+  var y=navStart(), hidden=0;
+  document.querySelectorAll(".nav-row").forEach(function(r){
+    var vis=expandedRow(r);
+    var step=r.classList.contains("child")&&!expandedGroups[r.dataset.child]?0:rowStep();
+    if(vis&&y+parseFloat(getComputedStyle(sidebar).getPropertyValue("--row-h"))>foldLimit){
+      r.classList.add("hidden-by-fold"); hidden++;                    /* 越线整行不画 */
+    }else r.classList.remove("hidden-by-fold");
+    if(step) y+=step;
+  });
+  document.getElementById("hVal").textContent=win.clientHeight;
+  document.getElementById("hBody").textContent=H;
+  document.getElementById("tierVal").textContent=TIER_NAME[tier];
+  document.getElementById("foldVal").textContent=hidden;
+}
+window.addEventListener("resize",applyState);
+
+/* ── 收缩/展开切换 ── */
+var toggle=document.getElementById("toggle");
+var ticon=document.getElementById("toggleIcon");
+function setToggleIcon(){ticon.innerHTML=sidebar.classList.contains("collapsed")
+  ?'<rect x="2" y="3.5" width="12" height="2" rx="1"/><rect x="2" y="7" width="12" height="2" rx="1"/><rect x="2" y="10.5" width="12" height="2" rx="1"/>'   /* fa-bars 语义 */
+  :'<path d="M9.5 4L5.5 8l4 4"/>';}                                                                                                                          /* fa-angles-left 语义 */
+toggle.addEventListener("click",function(){
+  sidebar.classList.toggle("collapsed");
+  setToggleIcon();
+  toggle.classList.remove("bounce"); void toggle.offsetWidth; toggle.classList.add("bounce");
+});
+setToggleIcon();
+
+/* ── 弥散绿粒子：hover 进入沿一次迸发 8 颗，480ms 自止自删（无常驻动画）── */
+var burst=document.getElementById("burst");
+function hash01(n){var x=Math.sin(n*127.1)*43758.5453;return x-Math.floor(x);}
+toggle.addEventListener("pointerenter",function(){
+  var colors=[["--particle-c1"],["--particle-c2"],["--particle-c3"]];
+  var dark=document.body.classList.contains("dark");
+  var list=dark?["--primary","--primary-hover"]:["--particle-c1","--particle-c2","--particle-c3"];
+  for(var i=0;i<8;i++){
+    var ang=i*Math.PI/4+(hash01(i+1)-0.5)*0.42;                 /* 45° 均布 + ±12° hash 抖动 */
+    var dist=10+hash01(i*7+3)*6;                                /* 弥散 10~16px */
+    var sz=2+hash01(i*13+5)*2;                                  /* 粒径 2~4px */
+    var p=document.createElement("span");p.className="p";
+    p.style.setProperty("--dx",(Math.cos(ang)*dist).toFixed(1)+"px");
+    p.style.setProperty("--dy",(Math.sin(ang)*dist).toFixed(1)+"px");
+    p.style.setProperty("--sz",sz.toFixed(1)+"px");
+    p.style.background="var("+list[i%list.length]+")";
+    burst.appendChild(p);
+  }
+  setTimeout(function(){burst.innerHTML="";},520);              /* 生命 480ms 后清理 */
+});
+
+/* ── 高度滑杆与主题切换（demo 仪器）── */
+var slider=document.getElementById("hSlider");
+slider.addEventListener("input",function(){win.style.height=slider.value+"px";applyState();});
+var segL=document.getElementById("segL"),segD=document.getElementById("segD");
+function setTheme(dark){document.body.classList.toggle("dark",dark);
+  segL.classList.toggle("on",!dark);segD.classList.toggle("on",dark);applyState();}
+segL.addEventListener("click",function(){setTheme(false);});
+segD.addEventListener("click",function(){setTheme(true);});
+
+setIcons();applyState();
+</script>
+</body>
+</html>
