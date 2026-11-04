@@ -124,6 +124,10 @@ int runInstallStep(const std::vector<std::string>& argv, long timeoutMs) {
 
 } // namespace
 
+bool probeEngineHealthy(std::string* reasonOut) {
+    return probeHealthy(kTelememPort, "/mcp", kTelememProbeBody, reasonOut);
+}
+
 TelememEngine& TelememEngine::global() {
     static TelememEngine instance;
     return instance;

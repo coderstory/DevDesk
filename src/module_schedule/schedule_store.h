@@ -125,6 +125,13 @@ public:
     core::Result<void> updateRun(const RunRecord& run);
     // 某规则（或系统项 origin_key）的运行历史，planned_at 倒序；limit 条。
     core::Result<std::vector<RunRecord>> listRunsByRule(int64_t ruleId, int limit);
+    // 过滤查询运行历史（schedule.runs 工具取数口，need 219 F-01）：
+    // status 空串=不过滤；sinceSec>0 = planned_at >= since；ruleId 非空=仅该规则。
+    // planned_at 倒序，limit 条。
+    core::Result<std::vector<RunRecord>> listRuns(const std::string& status,
+                                                  int64_t sinceSec,
+                                                  std::optional<int64_t> ruleId,
+                                                  int limit);
 
     // ---- 投递记录 ----
     core::Result<DeliveryRecord> insertDelivery(const DeliveryRecord& delivery);

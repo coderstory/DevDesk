@@ -2,19 +2,33 @@
 // 出厂任务模板表（agent_task_templates.h）的定向用例：每张模板一条——字段完整可建任务
 //（名称/提示词非空、触发类型合法、schedule 型 cron 非空且过 parseCron、manual 型 cron 留空），
 // 且 goal 里引用的工具名全部在生产注册清单内（防臆造工具名——模板文案改出未注册工具即红）。
-// 注册清单口径：registerAgentBuiltinTools 的 14 件 + AgentModule::onStart 同款工厂的
-// app.now / app.notify（模板当前只引用这三家；hot.list / net.fetch / app.stats 未被引用，
-// 若将来模板引用它们，在本文件补注册后再加文案）。
+// 注册清单口径（need 219 预设批后）：registerAgentBuiltinTools 14 件 + AgentModule
+// 同款工厂 app.now / app.notify / agent.runs + todo×6 / claude×3（各自模块批次类真
+// 注册）+ schedule.runs / memory.stats / memory.health / mcp.health（预设批新工具，
+// 生产工厂真注册，store 挂 TestDb 临时库——本文件只取「名字在注册清单」语义，
+// 不触发执行）。
 // 用例名前缀 agent_task_tpl_（--filter agent_task_tpl 可定向跑）。
 #include "doctest.h"
 
+#include "test_support.h"
+
 #include "core/tool.h"
 #include "module_agent/agent_builtin_tools.h"
+#include "module_agent/agent_runs_tool.h"
+#include "module_agent/agent_store.h"
 #include "module_agent/agent_task_templates.h"
 #include "module_agent/app_notify_tool.h"
 #include "module_agent/app_now_tool.h"
 #include "module_agent/cron.h"
 #include "module_agent/task_draft_job.h"
+#include "module_claude_proxy/claude_service.h"
+#include "module_claude_proxy/claude_tools.h"
+#include "module_mcp/mcp_health_tool.h"
+#include "module_memory/agent_tools.h"
+#include "module_schedule/schedule_runs_tool.h"
+#include "module_schedule/schedule_store.h"
+#include "module_todo/todo_service.h"
+#include "module_todo/todo_tools.h"
 
 #include <memory>
 #include <regex>
@@ -35,19 +49,53 @@ std::set<std::string> registeredToolNames() {
 // RAII：把本用例新注册的工具在退出（含 fail-fast 提前 return）时从进程级注册表摘除——
 // ToolRegistry 不在 resetCaseGlobals 清单里，靠快照差集兜底（已注册的同名工具不动）
 struct AgentToolRegistration {
+    test_support::TestDb tdb;
+    std::unique_ptr<module::todo::TodoService> todoSvc;
+    std::unique_ptr<module::claude::ClaudeService> claudeSvc;
+    std::unique_ptr<module::todo::TodoTools> todoTools;
+    std::unique_ptr<module::claude::ClaudeTools> claudeTools;
+    std::unique_ptr<module::schedule::ScheduleStore> scheduleStore;
+    std::unique_ptr<module::agent::AgentStore> agentStore;
     std::vector<std::string> added;
-    AgentToolRegistration() {
+    AgentToolRegistration() : tdb("agenttpl", "reg") {
         const auto before = registeredToolNames();
         module::agent::registerAgentBuiltinTools();
         core::ToolRegistry::instance().registerTool(
             std::make_shared<module::agent::NotifyTool>());
         core::ToolRegistry::instance().registerTool(module::agent::makeAppNowTool());
+        // 预设批新工具：全部走生产工厂真注册（批次类先注册自家工具；store 挂
+        // 临时库，注册阶段不触执行路径）
+        todoSvc = std::make_unique<module::todo::TodoService>(tdb.handle());
+        todoTools = std::make_unique<module::todo::TodoTools>(*todoSvc);
+        todoTools->registerAll();
+        claudeSvc = std::make_unique<module::claude::ClaudeService>(
+            tdb.handle(), "DevDeskTestAgentTpl");
+        claudeTools = std::make_unique<module::claude::ClaudeTools>(*claudeSvc);
+        claudeTools->registerAll();
+        scheduleStore =
+            std::make_unique<module::schedule::ScheduleStore>(tdb.handle());
+        core::ToolRegistry::instance().registerTool(
+            module::schedule::makeScheduleRunsTool(*scheduleStore));
+        agentStore =
+            std::make_unique<module::agent::AgentStore>(tdb.handle());
+        core::ToolRegistry::instance().registerTool(
+            module::agent::makeAgentRunsTool(*agentStore));
+        // memory 两工具路径注入（注册阶段不触文件系统，占位路径即可）
+        core::ToolRegistry::instance().registerTool(
+            module::memory::makeMemoryStatsTool("contract-tpl/proposals.db",
+                                                "contract-tpl/usage_ledger.db"));
+        core::ToolRegistry::instance().registerTool(
+            module::memory::makeMemoryHealthTool());
+        core::ToolRegistry::instance().registerTool(
+            module::mcp::makeMcpHealthTool());
         const auto after = registeredToolNames();
         for (const auto& n : after) {
             if (before.count(n) == 0) added.push_back(n);
         }
     }
     ~AgentToolRegistration() {
+        if (claudeTools) claudeTools->unregisterAll();
+        if (todoTools) todoTools->unregisterAll();
         for (const auto& n : added) {
             core::ToolRegistry::instance().unregisterTool(n);
         }
@@ -57,7 +105,8 @@ struct AgentToolRegistration {
 // goal 里的「小写字母.小写字母」记号即工具名引用；常见文件扩展名（.md 草稿路径等）
 // 不是工具名。扩展名清单刻意不含 log / h——那是 git.log 等真实工具的后缀段
 std::vector<std::string> toolRefsIn(const std::string& goal) {
-    static const std::regex re("[a-z]+\\.[a-z]+");
+    // 下划线段并入工具名（claude.list_profiles 全名匹配；无下划线工具不受影响）
+    static const std::regex re("[a-z]+\\.[a-z_]+");
     static const std::set<std::string> kFileExts = {
         "md", "txt", "html", "json", "py", "sh", "cpp"};
     std::vector<std::string> out;
@@ -75,10 +124,10 @@ std::vector<std::string> toolRefsIn(const std::string& goal) {
 
 } // namespace
 
-// 表形：恰好 4 张、名称互不相同、触发类型都是 kTriggerKeys 合法键
+// 表形：恰好 13 张（原 4 + 预设批 P-01..P-09）、名称互不相同、触发类型都是 kTriggerKeys 合法键
 REGISTER_TEST(agent_task_tpl_table_shape,
-              "出厂任务模板：4 张、名称唯一、触发类型合法", {
-    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 4);
+              "出厂任务模板：13 张、名称唯一、触发类型合法", {
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 13);
     std::set<std::string> names;
     for (int i = 0; i < module::agent::kTaskTemplateCount; ++i) {
         const auto& tpl = module::agent::kTaskTemplates[i];
@@ -169,8 +218,8 @@ REGISTER_TEST(agent_task_tpl_env_inspect,
 REGISTER_TEST(agent_task_tpl_change_radar,
               "出厂模板·变更雷达晨报：cron 钉 0 9 * * 1-5 且合法；git.status/git.log 锚点；工具引用全在注册清单", {
     AgentToolRegistration tools;
-    // 先钉表长再取下标：红态（表仍 3 张）在此 fail-fast 停住，不越界摸 kTaskTemplates[3]
-    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 4);
+    // 先钉表长再取下标：红态（表变短）在此 fail-fast 停住，不越界摸 kTaskTemplates[3]
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 13);
     const auto& tpl = module::agent::kTaskTemplates[3];
     DOCTEST_CHECK_EQ(tpl.name, std::string("变更雷达晨报"));
     DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
@@ -199,5 +248,50 @@ REGISTER_TEST(agent_task_tpl_change_radar,
         DOCTEST_CHECK_MESSAGE(registered.count(r) > 0,
                               "提示词引用了未注册工具: " + r);
     }
+    return true;
+})
+
+// 预设批（need 219 P-01..P-09，下标 4..12）：九张逐张过闸——字段完整、cron 合法、
+// 工具引用全在注册清单；P-09 一键系统晨检另钉锚点（五类检查工具全引用 + 单条通知
+// 口径 + 全正常不通知 + cron 钉 09:00）
+REGISTER_TEST(agent_task_tpl_preset_batch,
+              "出厂模板·预设批 P-01..P-09：cron 合法、工具引用全在注册清单、晨检锚点", {
+    AgentToolRegistration tools;
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 13);
+    const auto registered = registeredToolNames();
+    for (int i = 4; i < module::agent::kTaskTemplateCount; ++i) {
+        const auto& tpl = module::agent::kTaskTemplates[i];
+        DOCTEST_CHECK_MESSAGE(tpl.name != nullptr && tpl.name[0] != '\0',
+                              "预设批模板名为空");
+        DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
+                              std::string("预设批提示词为空: ") + tpl.name);
+        if (std::string(tpl.triggerType) == "schedule") {
+            DOCTEST_CHECK_MESSAGE(module::agent::parseCron(tpl.cron).isOk(),
+                                  std::string("cron 非法: ") + tpl.cron);
+        } else {
+            DOCTEST_CHECK_EQ(tpl.cron, std::string(""));
+        }
+        const auto refs = toolRefsIn(tpl.goal);
+        DOCTEST_CHECK_MESSAGE(!refs.empty(),
+                              std::string("提示词未引用任何工具: ") + tpl.name);
+        for (const auto& r : refs) {
+            DOCTEST_CHECK_MESSAGE(registered.count(r) > 0,
+                                  "提示词引用了未注册工具: " + r);
+        }
+    }
+    // P-09（下标 12）锚点
+    DOCTEST_CHECK_EQ(module::agent::kTaskTemplates[12].cron,
+                     std::string("0 9 * * *"));
+    const std::string p9(module::agent::kTaskTemplates[12].goal);
+    for (const char* toolName : {"memory.health", "mcp.health", "schedule.runs",
+                                 "agent.runs", "todo.list", "app.notify",
+                                 "fs.write"}) {
+        DOCTEST_CHECK_MESSAGE(p9.find(toolName) != std::string::npos,
+                              std::string("晨检提示词缺少工具锚点: ") + toolName);
+    }
+    DOCTEST_CHECK_MESSAGE(p9.find("只发一条") != std::string::npos,
+                          "晨检提示词缺少单条通知口径");
+    DOCTEST_CHECK_MESSAGE(p9.find("不发通知") != std::string::npos,
+                          "晨检提示词缺少全正常不通知口径");
     return true;
 })

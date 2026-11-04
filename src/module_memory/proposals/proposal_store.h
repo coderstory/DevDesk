@@ -148,6 +148,11 @@ public:
     core::Result<Proposal> get(const std::string& id) const;
     core::Result<std::vector<Proposal>> listPending() const;
 
+    // 按 status 分组计数（GROUP BY 一条 SQL；memory.stats 工具取数口，need 219
+    // F-03。1630 pending 量级下即时返回，不拉行）
+    core::Result<std::vector<std::pair<std::string, std::int64_t>>>
+    countByStatus() const;
+
     // 最近已决提案（decidedAt 降序；面板「已处理」视图 + 撤销入口取数）
     core::Result<std::vector<Proposal>> listRecentDecided(int limit) const;
 

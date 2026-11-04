@@ -514,6 +514,118 @@ Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit)
 // 任务级 run 聚合：COUNT/SUM/MAX 一条 SQL 出全任务，不拉 run 行进内存。
 // 时长口径 = 单 run (ended-started) 求和，负差钳 0（与 UI 的 runRowText 同口径），
 // running（ended NULL）计 0；last_ended_at = MAX(ended_at)，NULL 自动被 MAX 忽略
+Result<std::vector<AgentRunInfoRow>> AgentStore::listRunsFiltered(
+    const std::string& status, int64_t sinceSec, int64_t taskId,
+    const std::string& triggerType, int limit) {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    std::string sql =
+        "SELECT r.id,r.task_id,t.name AS task_name,r.status,r.started_at,"
+        "r.ended_at,r.iterations,r.error FROM agent_runs r "
+        "JOIN agent_tasks t ON t.id = r.task_id WHERE 1=1";
+    if (status.empty()) {
+        // 缺省排除 running：工具调用发生在 running run 内，排除即自指排除
+        sql += " AND r.status <> 'running'";
+    } else {
+        sql += " AND r.status = ?";
+    }
+    if (sinceSec > 0) sql += " AND r.started_at >= ?";
+    if (taskId > 0) sql += " AND r.task_id = ?";
+    if (!triggerType.empty()) sql += " AND t.trigger_type = ?";
+    // id DESC 兜底同 listRuns：秒精度并列时窗口确定
+    sql += " ORDER BY r.started_at DESC, r.id DESC LIMIT ?";
+    auto st = db_.prepare(sql);
+    if (st.isFail()) {
+        return Result<std::vector<AgentRunInfoRow>>::fail(st.errorCode(),
+                                                          st.errorMessage());
+    }
+    auto& s = st.value();
+    int idx = 1;
+    if (!status.empty()) {
+        if (auto r = s.bind(idx, status); r.isFail()) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        }
+        ++idx;
+    }
+    if (sinceSec > 0) {
+        if (auto r = s.bind(idx, sinceSec); r.isFail()) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        }
+        ++idx;
+    }
+    if (taskId > 0) {
+        if (auto r = s.bind(idx, taskId); r.isFail()) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        }
+        ++idx;
+    }
+    if (!triggerType.empty()) {
+        if (auto r = s.bind(idx, triggerType); r.isFail()) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        }
+        ++idx;
+    }
+    if (auto r = s.bind(idx, static_cast<int64_t>(limit)); r.isFail()) {
+        return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
+                                                          r.errorMessage());
+    }
+    auto rows = s.fetchAll();
+    if (rows.isFail()) {
+        return Result<std::vector<AgentRunInfoRow>>::fail(rows.errorCode(),
+                                                          rows.errorMessage());
+    }
+    std::vector<AgentRunInfoRow> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        AgentRunInfoRow r;
+        int64_t iters = 0;
+        if (auto e = rowInt(row, "id", r.id)) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "task_id", r.taskId)) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(e->first, e->second);
+        }
+        if (auto e = rowStr(row, "task_name", r.taskName)) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(e->first, e->second);
+        }
+        if (auto e = rowStr(row, "status", r.status)) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "started_at", r.startedAt)) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(e->first, e->second);
+        }
+        if (row.isNull("ended_at")) {
+            r.endedAt = std::nullopt;
+        } else {
+            int64_t v = 0;
+            if (auto e = rowInt(row, "ended_at", v)) {
+                return Result<std::vector<AgentRunInfoRow>>::fail(e->first,
+                                                                  e->second);
+            }
+            r.endedAt = v;
+        }
+        if (auto e = rowInt(row, "iterations", iters)) {
+            return Result<std::vector<AgentRunInfoRow>>::fail(e->first, e->second);
+        }
+        r.iterations = static_cast<int>(iters);
+        if (row.isNull("error")) {
+            r.error = std::nullopt;
+        } else {
+            std::string v;
+            if (auto e = rowStr(row, "error", v)) {
+                return Result<std::vector<AgentRunInfoRow>>::fail(e->first,
+                                                                  e->second);
+            }
+            r.error = v;
+        }
+        out.push_back(std::move(r));
+    }
+    return Result<std::vector<AgentRunInfoRow>>::ok(std::move(out));
+}
+
 Result<bool> AgentStore::hasRunningRun() {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare("SELECT 1 FROM agent_runs WHERE status='running' LIMIT 1");

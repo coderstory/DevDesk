@@ -263,6 +263,8 @@ private:
     // net.fetch：联网 GET 抓取（外部请求，仅 GET，10s 超时；单次调用语义，无重放/
     // 并发限制）。非破坏性只读，onStop 与其余自带工具同批注销。
     std::shared_ptr<::core::ITool> netTool_;
+    // agent.runs：运行历史只读查询（need 219 F-02），onStart 注册 / onStop 注销同批口径。
+    std::shared_ptr<::core::ITool> runsTool_;
     // 事件触发的 EventBus 订阅 token（ensureLlm 建 scheduler_ 时订阅三事件，emit 在
     // UI 主线程同步回调 → scheduler_->onEvent 轻入队）。RAII：onStop 清空即退订，
     // 不得漏——bus() 单例跨用例/跨生命周期共享（Task 1 concerns ④）

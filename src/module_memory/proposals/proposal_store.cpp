@@ -333,6 +333,41 @@ core::Result<std::vector<Proposal>> ProposalStore::listPending() const {
     return core::Result<std::vector<Proposal>>::ok(std::move(out));
 }
 
+core::Result<std::vector<std::pair<std::string, std::int64_t>>>
+ProposalStore::countByStatus() const {
+    auto stmt = db_->prepare(
+        "SELECT status, COUNT(*) FROM memory_proposals GROUP BY status");
+    if (stmt.isFail()) {
+        return core::Result<std::vector<std::pair<std::string, std::int64_t>>>::
+            fail(stmt.errorCode(), stmt.errorMessage());
+    }
+    std::vector<std::pair<std::string, std::int64_t>> out;
+    for (;;) {
+        auto step = stmt.value().step();
+        if (step.isFail()) {
+            return core::Result<std::vector<std::pair<std::string, std::int64_t>>>::
+                fail(step.errorCode(), step.errorMessage());
+        }
+        if (!step.value()) break;
+        const auto row = stmt.value().currentRow();
+        if (row.isFail()) {
+            return core::Result<std::vector<std::pair<std::string, std::int64_t>>>::
+                fail(row.errorCode(), row.errorMessage());
+        }
+        const auto& r = row.value();
+        if (r.values.size() < 2 ||
+            !std::holds_alternative<std::string>(r.values[0]) ||
+            !std::holds_alternative<std::int64_t>(r.values[1])) {
+            return core::Result<std::vector<std::pair<std::string, std::int64_t>>>::
+                fail(core::ErrorCode::Internal, "分组计数查询返回异常形状");
+        }
+        out.emplace_back(std::get<std::string>(r.values[0]),
+                         std::get<std::int64_t>(r.values[1]));
+    }
+    return core::Result<std::vector<std::pair<std::string, std::int64_t>>>::ok(
+        std::move(out));
+}
+
 core::Result<std::vector<Proposal>> ProposalStore::listRecentDecided(
     int limit) const {
     auto stmt = db_->prepare(std::string(kSelectCols) +

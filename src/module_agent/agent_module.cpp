@@ -8,6 +8,8 @@
 
 #include "agent_module_internal.h"   // 拆分共享件：needsClaudePageHint / kModelSlot*（本 TU 消费方）
 
+#include "module_agent/agent_runs_tool.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -301,6 +303,14 @@ void AgentModule::onStart() {
         LOG_ERROR("Agent: net.fetch 注册失败: " + regNet.errorMessage());
     }
 
+    // agent.runs：运行历史只读查询（need 219 F-02）；status 缺省排除 running =
+    // 自指排除。注册失败只留痕不中断，同批口径。
+    runsTool_ = makeAgentRunsTool(*store_);
+    auto regRuns = ::core::ToolRegistry::instance().registerTool(runsTool_);
+    if (regRuns.isFail()) {
+        LOG_ERROR("Agent: agent.runs 注册失败: " + regRuns.errorMessage());
+    }
+
     // 内置工具 14 件（UAT6）：fs.* / bash.* / git.* 集中注册，名称冲突只留痕不中断
     registerAgentBuiltinTools();
 
@@ -367,6 +377,7 @@ void AgentModule::onStop() {
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
     ::core::ToolRegistry::instance().unregisterTool("app.now");
     ::core::ToolRegistry::instance().unregisterTool("net.fetch");
+    ::core::ToolRegistry::instance().unregisterTool("agent.runs");
     loop_.reset();
     llm_.reset();
     store_.reset();

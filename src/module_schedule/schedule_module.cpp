@@ -12,7 +12,10 @@
 #include "module_schedule/schedule_engine.h"
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
+#include "module_schedule/schedule_runs_tool.h"
 #include "module_schedule/schedule_ui_list.h"
+
+#include "core/tool.h"
 
 #include <memory>
 
@@ -21,6 +24,9 @@ namespace module::schedule {
 struct ScheduleModule::Impl {
     bool started = false;
     std::unique_ptr<ScheduleStore> store;
+    // schedule.runs 只读查询工具（need 219 F-01）：onStart 注册 / onStop 注销，
+    // 持 store 引用必须先于 store 析构注销
+    std::shared_ptr<::core::ITool> runsTool_;
     std::unique_ptr<ChannelRegistry> channels;
     std::unique_ptr<ScheduleProviderRegistry> providers;
     // 引擎持有 store 的 DB 连接与 channels 的引用，声明放最后 = 最先析构；
@@ -55,6 +61,13 @@ void ScheduleModule::onStart() {
         return;
     }
     impl_->store = std::make_unique<ScheduleStore>(*db);
+    // schedule.runs：执行历史只读查询工具（need 219 F-01），模块禁用即注销；
+    // 注册失败只留痕不中断（agent 模块同口径）
+    impl_->runsTool_ = makeScheduleRunsTool(*impl_->store);
+    if (auto reg = ::core::ToolRegistry::instance().registerTool(impl_->runsTool_);
+        reg.isFail()) {
+        LOG_ERROR("schedule: schedule.runs 注册失败: " + reg.errorMessage());
+    }
     impl_->channels = std::make_unique<ChannelRegistry>();
     registerBuiltinChannels(*impl_->channels);
     // 引擎先于 listUi 创建：列表编辑弹窗的 run_task 载荷需要引擎暴露的
@@ -74,8 +87,11 @@ void ScheduleModule::onStart() {
 void ScheduleModule::onStop() {
     // 重入幂等：未启动的 off = no-op
     if (!impl_->started) return;
-    // 先停引擎（注销 ticker 订阅、清内存队列；落库 pending/running 行保留），
-    // 再释放它引用的 registry/store——逆序释放防悬垂引用。
+    // 先注销工具（持 store 引用，必须早于 store 释放），再停引擎（注销 ticker
+    // 订阅、清内存队列；落库 pending/running 行保留），再释放它引用的
+    // registry/store——逆序释放防悬垂引用。
+    ::core::ToolRegistry::instance().unregisterTool("schedule.runs");
+    impl_->runsTool_.reset();
     impl_->engine->stop();
     impl_->engine.reset();
     impl_->listUi.reset();

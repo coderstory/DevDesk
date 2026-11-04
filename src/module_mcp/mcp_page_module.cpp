@@ -11,6 +11,8 @@
 #include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/theme.h"
+#include "core/tool.h"
+#include "mcp_health_tool.h"
 #include "mcp_service_bridge.h"
 #include "memory_mcp_bridge.h"
 
@@ -27,6 +29,7 @@
 
 #include <eui/dsl.h>
 
+#include <platform/http_client.h>  // mcp.health 回环探活（need 219）
 #include <platform/json.h>  // 池146：解析 inputSchema / 组装试跑入参
 
 #include <ui_kit/empty_state.h>
@@ -38,6 +41,90 @@
 #include <utility>
 
 namespace module::mcp {
+
+namespace {
+
+namespace pj = ::platform::json;
+
+// mcp.health（need 219 F-05）：hub 只读诊断工具。状态源走 app::mcp 桥
+//（settings 同款函数指针缝）而非直接依赖 McpService——本 TU 被探针 /
+// ui_driver / github_sync_live 直编且链接集没有 devdesk_module_mcp，引库符号
+// 即断链。运行中时回环 POST initialize 探活（1.5s 超时，连接拒绝即失败，
+// 不挂起）；判据只看 HTTP 200（hub 为本仓实现，JSON-RPC 语义由 mcp_protocol 自管）。
+constexpr long kMcpHealthProbeTimeoutMs = 1500;
+constexpr const char* kMcpHealthProbeBody =
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+    "\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
+    "\"clientInfo\":{\"name\":\"devdesk-health\",\"version\":\"1.0\"}}}";
+
+class McpHealthTool : public ::core::ITool {
+public:
+    std::string name() const override { return "mcp.health"; }
+
+    std::string schemaJson() const override {
+        return R"({"name":"mcp.health","description":"本机 MCP 服务健康检测（监听状态 / 注册工具数 / 回环探活），只读","input_schema":{"type":"object","properties":{}}})";
+    }
+
+    ::core::Result<::core::ToolResult> execute(
+        const ::core::ToolArgs& args) override {
+        (void)args;  // 无参数
+        const auto live = app::mcp::status();  // running/port/lastError
+        const char* state = live.running ? "running"
+                            : !live.lastError.empty() ? "failed"
+                                                      : "stopped";
+
+        pj::JsonObject probe;
+        if (live.running && live.port > 0) {
+            platform::http::Request req;
+            req.method = "POST";
+            req.url = "http://127.0.0.1:" + std::to_string(live.port) + "/mcp";
+            req.body = kMcpHealthProbeBody;
+            req.headers["Content-Type"] = "application/json";
+            req.headers["Accept"] = "application/json, text/event-stream";
+            req.timeoutMs = kMcpHealthProbeTimeoutMs;
+            const auto r = platform::http::send(req);
+            if (!r.isOk()) {
+                probe.set("ok", pj::makeBool(false));
+                probe.set("reason", pj::makeString(r.errorMessage()));
+            } else {
+                const bool ok = r.value().statusCode == 200;
+                probe.set("ok", pj::makeBool(ok));
+                probe.set("reason",
+                          pj::makeString(ok ? ""
+                                            : "HTTP " + std::to_string(
+                                                          r.value().statusCode)));
+            }
+        } else {
+            probe.set("ok", pj::makeBool(false));
+            probe.set("reason",
+                      pj::makeString(!live.lastError.empty()
+                                         ? live.lastError
+                                         : "服务未启动"));
+        }
+
+        pj::JsonObject o;
+        o.set("state", pj::makeString(state));
+        o.set("port", pj::makeInt(static_cast<int64_t>(live.port)));
+        o.set("tools", pj::makeInt(static_cast<int64_t>(
+                           core::mcp::globalMcpTools().size())));
+        o.set("lastError", pj::makeString(live.lastError));
+        o.set("probe", pj::JsonValue(std::move(probe)));
+        auto text = pj::stringify(pj::JsonValue(std::move(o)));
+        if (text.isFail()) {
+            return ::core::Result<::core::ToolResult>::fail(
+                core::ErrorCode::Internal,
+                "健康结果序列化失败: " + text.errorMessage());
+        }
+        return ::core::Result<::core::ToolResult>::ok(
+            ::core::ToolResult{false, text.value()});
+    }
+};
+
+} // namespace
+
+std::shared_ptr<::core::ITool> makeMcpHealthTool() {
+    return std::make_shared<McpHealthTool>();
+}
 
 namespace {
 
@@ -856,11 +943,31 @@ bool McpPageModule::onKeyEvent(const eui::KeyEvent& event) {
     return false;
 }
 
+void McpPageModule::onStart() {
+    // mcp.health：只读诊断工具（need 219 F-05），注册跟随模块启停；
+    // 注册失败只留痕不中断（agent 模块同口径）
+    if (!healthRegistered_) {
+        healthTool_ = makeMcpHealthTool();
+        auto reg = ::core::ToolRegistry::instance().registerTool(healthTool_);
+        if (reg.isFail()) {
+            LOG_WARN("MCP: mcp.health 注册失败: " + reg.errorMessage());
+            return;
+        }
+        healthRegistered_ = true;
+    }
+}
+
 void McpPageModule::onStop() {
     // 先停后注销的 join 收束点：在途 execute 完整跑完（web_fetch 自限 10s），
     // 不硬杀不悬垂
     joinTryThread();
     tryRunning_.store(false, std::memory_order_release);
+    // mcp.health 随模块停用注销（need 219 F-05）
+    if (healthRegistered_) {
+        ::core::ToolRegistry::instance().unregisterTool("mcp.health");
+        healthRegistered_ = false;
+    }
+    healthTool_.reset();
 }
 
 void McpPageModule::openDetail(const std::string& name) {

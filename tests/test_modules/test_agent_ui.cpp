@@ -2299,10 +2299,11 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     DOCTEST_CHECK_MESSAGE(nearPx(cardBg->frame.height, 96.0f),
                           "工具卡定高 96，实测 " +
                               std::to_string(cardBg->frame.height));
-    // 卡 0 = 注册表字典序首个（名称断言沿用旧契约）
+    // 卡 0 = 注册表字典序首个（名称断言沿用旧契约；need 219 后 agent.runs 排在
+    // app.* 之前，取代原首卡 app.notify）
     const auto* name0 = ui2.find("agent.dialog.tools.card.0.name");
     DOCTEST_REQUIRE(name0 != nullptr);
-    DOCTEST_CHECK_EQ(name0->text, std::string("app.notify"));
+    DOCTEST_CHECK_EQ(name0->text, std::string("agent.runs"));
     // 零参数工具不渲染 chips（行 3 不渲染、行 2 吃高度）：动态找（app.notify 实际
     // 带 title/body/sound 三参，不能写死「卡 0 无参」）
     {

@@ -643,6 +643,58 @@ core::Result<std::vector<RunRecord>> ScheduleStore::listRunsByRule(int64_t ruleI
     return core::Result<std::vector<RunRecord>>::ok(std::move(out));
 }
 
+core::Result<std::vector<RunRecord>> ScheduleStore::listRuns(
+    const std::string& status, int64_t sinceSec, std::optional<int64_t> ruleId,
+    int limit) {
+    std::string sql =
+        std::string("SELECT ") + kRunCols + " FROM schedule_run WHERE 1=1";
+    if (!status.empty()) sql += " AND status = ?";
+    if (sinceSec > 0) sql += " AND planned_at >= ?";
+    if (ruleId.has_value()) sql += " AND rule_id = ?";
+    sql += " ORDER BY planned_at DESC, id DESC LIMIT ?";
+    auto prep = db_.prepare(sql);
+    if (prep.isFail())
+        return core::Result<std::vector<RunRecord>>::fail(prep.errorCode(),
+                                                          prep.errorMessage());
+    auto& stmt = prep.value();
+    int idx = 1;
+    if (!status.empty()) {
+        if (auto r = stmt.bind(idx, status); r.isFail())
+            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        ++idx;
+    }
+    if (sinceSec > 0) {
+        if (auto r = stmt.bind(idx, sinceSec); r.isFail())
+            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        ++idx;
+    }
+    if (ruleId.has_value()) {
+        if (auto r = stmt.bind(idx, ruleId.value()); r.isFail())
+            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        ++idx;
+    }
+    if (auto r = stmt.bind(idx, static_cast<int64_t>(limit)); r.isFail())
+        return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
+                                                          r.errorMessage());
+    auto rows = stmt.fetchAll();
+    if (rows.isFail())
+        return core::Result<std::vector<RunRecord>>::fail(rows.errorCode(),
+                                                          rows.errorMessage());
+    std::vector<RunRecord> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        auto r = runFromRow(row);
+        if (r.isFail())
+            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+        out.push_back(std::move(r.value()));
+    }
+    return core::Result<std::vector<RunRecord>>::ok(std::move(out));
+}
+
 // ---- 投递记录 ----
 
 core::Result<DeliveryRecord> ScheduleStore::insertDelivery(const DeliveryRecord& delivery) {

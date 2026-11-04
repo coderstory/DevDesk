@@ -6,6 +6,10 @@
 
 #include "memory_module_internal.h"
 
+#include "core/tool.h"
+#include "module_memory/agent_tools.h"
+#include "module_memory/engine/telemem_config.h"
+
 namespace module::memory {
 
 ::core::PageId MemoryModule::pageId() const { return ::core::PageId::Memory; }
@@ -22,12 +26,39 @@ void MemoryModule::pollUsageAlerts() { panel_.pollUsageAlerts(); }
 
 void MemoryModule::onStart() {
     LOG_INFO("记忆模块已启用：引擎未启动时页面显引导态，零后台成本");
+    // memory.stats / memory.health：只读诊断工具，注册跟随模块启用（need 219
+    // 拍板 3）。路径与 panel_.openStores 同源（memoryDataDir），不依赖页面开过。
+    if (!agentToolsRegistered_) {
+        memStatsTool_ = makeMemoryStatsTool(
+            engine::memoryDataDir() / "proposals.db",
+            engine::memoryDataDir() / "usage_ledger.db");
+        memHealthTool_ = makeMemoryHealthTool();
+        auto regStats =
+            ::core::ToolRegistry::instance().registerTool(memStatsTool_);
+        auto regHealth =
+            ::core::ToolRegistry::instance().registerTool(memHealthTool_);
+        if (regStats.isFail()) {
+            LOG_WARN("记忆: memory.stats 注册失败: " + regStats.errorMessage());
+        }
+        if (regHealth.isFail()) {
+            LOG_WARN("记忆: memory.health 注册失败: " + regHealth.errorMessage());
+        }
+        agentToolsRegistered_ = regStats.isOk() && regHealth.isOk();
+    }
     // F1 产品接线：开页即同步采集循环——引擎已 Running 则立即起跑
     //（compose 每帧 refresh 也会同步；此处覆盖"启动引擎后未再切页"的首帧）
     panel_.refresh(true);
 }
 
 void MemoryModule::onStop() {
+    // 工具随模块停用注销（先注销再放实例，避免在途调用悬垂）
+    if (agentToolsRegistered_) {
+        ::core::ToolRegistry::instance().unregisterTool("memory.stats");
+        ::core::ToolRegistry::instance().unregisterTool("memory.health");
+        agentToolsRegistered_ = false;
+    }
+    memStatsTool_.reset();
+    memHealthTool_.reset();
     // 页面关闭 ≠ 引擎停止：引擎是应用级常驻服务，生命周期归 TelememEngine。
     LOG_INFO("记忆页已关闭（引擎不受影响）");
 }

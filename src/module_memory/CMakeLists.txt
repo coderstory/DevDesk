@@ -5,6 +5,7 @@ add_library(devdesk_module_memory STATIC
     memory_module.cpp
     memory_module_panels.cpp
     memory_module_modals.cpp
+    agent_tools.cpp
     memory_module.h
     sanitize/sanitize_gate.cpp
     sanitize/sanitize_gate.h

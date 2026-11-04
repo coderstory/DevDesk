@@ -82,4 +82,9 @@ private:
     std::atomic<std::int64_t> llamaPid_{0};
 };
 
+// 回环探活（need 219 F-04 memory.health 工具取数口）：复用引擎管线同款 probe
+// 判据，对 kTelememPort /mcp 发 initialize 探测；reasonOut 非空时给中文失败
+// 原因。引擎未运行时连接拒绝即失败返回 false，任意线程可调。
+bool probeEngineHealthy(std::string* reasonOut);
+
 } // namespace module::memory::engine

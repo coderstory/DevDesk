@@ -1,5 +1,6 @@
 add_library(devdesk_module_schedule STATIC
     schedule_store.cpp
+    schedule_runs_tool.cpp
     # 波 S7b：编辑弹窗 + 运行历史抽屉（纯逻辑 + 渲染；弹窗由宿主波经 EditDialogHost/HistoryDrawerHost 挂载）
     schedule_ui_edit.cpp
     schedule_ui_history.cpp

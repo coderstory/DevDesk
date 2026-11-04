@@ -9,6 +9,7 @@
 #include <string>
 
 #include "core/module_interface.h"
+#include "core/tool.h"
 #include "module_memory/panel/panel_state.h"
 #include "ui_kit/toast.h"
 
@@ -85,6 +86,12 @@ private:
     // 数据中枢（面板库/设置/评测/引擎快照的唯一取数面）
     panel::PanelState panel_;
     ui_kit::ToastState toast_;
+
+    // agent 只读诊断工具（need 219 F-03/F-04）：onStart 注册 / onStop 注销，
+    // 跟随模块启用（拍板 3）；路径取 engine::memoryDataDir()，不依赖页面开过
+    std::shared_ptr<::core::ITool> memStatsTool_;
+    std::shared_ptr<::core::ITool> memHealthTool_;
+    bool agentToolsRegistered_ = false;
 
     // 各视图滚动偏移（settings 卡区同款手动偏移模式）
     float consoleScroll_ = 0;

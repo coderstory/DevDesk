@@ -9,6 +9,7 @@ add_library(devdesk_agent STATIC
     agent_loop.cpp
     scheduler.cpp
     app_stats_tool.cpp
+    agent_runs_tool.cpp
     app_notify_tool.cpp
     app_now_tool.cpp
     net_fetch_tool.cpp

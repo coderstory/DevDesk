@@ -23,6 +23,7 @@
 #include "core/mcp_tool.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/tool.h"
 
 #include <components/theme.h>
 
@@ -48,7 +49,14 @@ public:
     // 页面注销（模块开关关）时收割在途「试一下」线程：先停后注销的 join 收束点
     void onStop() override;
 
+    // 页面装配（need 219 F-05）：注册 mcp.health 只读诊断工具（跟随模块启停）
+    void onStart() override;
+
 private:
+    // mcp.health 只读诊断工具（need 219 F-05）：onStart 注册 / onStop 注销
+    std::shared_ptr<::core::ITool> healthTool_;
+    bool healthRegistered_ = false;
+
     // 打开详情弹窗（shared_ptr keep-alive；同名工具重开保留在途运行态）
     void openDetail(const std::string& name);
     void closeDetail();

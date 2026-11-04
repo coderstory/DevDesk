@@ -49,6 +49,17 @@ struct AgentTaskRunSummary {
     int64_t limitedRuns7d = 0;             // failedRuns7d 的子集
 };
 
+// agent.runs 工具的运行行（need 219 F-02）：JOIN agent_tasks 带任务名；
+// status 缺省排除 running = 自指排除在 store 查询层落地
+struct AgentRunInfoRow {
+    int64_t id = 0, taskId = 0;
+    std::string taskName, status;
+    int64_t startedAt = 0;
+    std::optional<int64_t> endedAt;
+    int iterations = 0;
+    std::optional<std::string> error;
+};
+
 class AgentStore {
 public:
     explicit AgentStore(core::data::SqliteDb& db);
@@ -86,6 +97,12 @@ public:
                                const std::optional<std::string>& toolCallId);
     Result<std::vector<AgentMessageRow>> listMessages(int64_t runId);   // ORDER BY seq
     Result<std::vector<AgentRunRow>> listRuns(int64_t taskId, int limit);
+    // 过滤查询运行历史（agent.runs 工具取数口，need 219 F-02）：status 空串=
+    // 排除 running（自指排除）；sinceSec>0 = started_at >= since；taskId>0/
+    // triggerType 非空按任务过滤。started_at 倒序。
+    Result<std::vector<AgentRunInfoRow>> listRunsFiltered(
+        const std::string& status, int64_t sinceSec, int64_t taskId,
+        const std::string& triggerType, int limit);
     // 库内是否存在 running run（EXISTS 语义，单条 SELECT 不拉行）：pollRunEnd 三守卫
     // 全假时冷启动兜底的唯一探测口——外部直写库插入的 running run 只能靠它发现
     Result<bool> hasRunningRun();
