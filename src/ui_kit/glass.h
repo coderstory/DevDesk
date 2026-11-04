@@ -10,24 +10,14 @@ namespace ui_kit {
 
 // 2026-11-03 池127 上调：功能卡接近实体（Light 0.94 / Dark 0.95），留少量透保玻璃呼吸感；
 // 深色同样收紧半透，避免暗底透成一块灰压掉可读性。
-// 2026-11-03 池166：Light 基色 白半透→浓绿半透。greenBase 走 primary 派生
-// （kGlassGreenMix = 绿→白收敛比；k 每降 0.05 约 −0.22 对比度，k≥0.73 保卡面
-// textSecondary 对比 ≥4.5:1），4 档强调色主题自动跟随；两层 alpha 池127 定稿一个不动。
-// Dark 深底本无白卡问题，维持 surface 半透（逐字符不变）。
-inline constexpr float kGlassGreenMix = 0.75f;
-
-inline eui::Color glassGreenBase(const core::theme::Tokens& t) {
-    const auto& p = t.colors.primary;
-    const float k = kGlassGreenMix;
-    return {p.r * (1.0f - k) + k, p.g * (1.0f - k) + k, p.b * (1.0f - k) + k,
-            1.0f};
-}
-
+// 2026-11-04 池166 撤销（老板令）：Light 基色回白半透——3% 绿染配方（白卡与
+// 绿族底同调），池127 alpha 0.94/0.80 逐字符保留；浓绿版（kGlassGreenMix 派生式）
+// 随需求撤销一并回退，绿相方案存档见
+// docs/design/2026-11-03-全局参数卡（卡片色相+TAB放大+间距）.md。
 inline eui::Color glassFill(const core::theme::Tokens& t) {
     const auto& s = t.colors.surface;
     if (t.isDark) return {s.r, s.g, s.b, 0.95f};
-    const auto g = glassGreenBase(t);
-    return {g.r, g.g, g.b, 0.94f};
+    return {s.r * 0.97f + 0.001f, s.g * 0.97f + 0.023f, s.b * 0.97f + 0.011f, 0.94f};
 }
 
 // L1 面板层（看板列 / 大面积底板）：比卡更透一档，让卡浮在面板上形成两层深度
@@ -35,8 +25,7 @@ inline eui::Color glassFill(const core::theme::Tokens& t) {
 inline eui::Color glassPanelFill(const core::theme::Tokens& t) {
     const auto& s = t.colors.surface;
     if (t.isDark) return {s.r, s.g, s.b, 0.78f};
-    const auto g = glassGreenBase(t);
-    return {g.r, g.g, g.b, 0.80f};
+    return {s.r * 0.97f + 0.001f, s.g * 0.97f + 0.023f, s.b * 0.97f + 0.011f, 0.80f};
 }
 
 // 高光边：白色带透明度，模拟玻璃边缘的反射亮线

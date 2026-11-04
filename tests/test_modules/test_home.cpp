@@ -452,12 +452,10 @@ REGISTER_TEST(home_glass_stat_cards,
     const double redCt = solidContrast(t.colors.errorText, effective);
     DOCTEST_CHECK_MESSAGE(numCt >= 4.5,
         "数字对比度 " + std::to_string(numCt) + " < 4.5");
-    // 池166 裁决（2026-11-04）：绿卡面三级字门槛按设计契约 F1 对齐——F1 明录
-    // 「三级字降至≈2.3:1 可接受、限提示类、加深属另开需求」；k=0.75 实测 3.875、
-    // k=0.62 备选档推算 ≈3.3，门槛取 3.0（契约下限 2.3 上方留回归余量）。
-    // textSecondary（numCt 之外的硬护栏）与 errorText 的 4.5 门槛不动。
-    DOCTEST_CHECK_MESSAGE(labelCt >= 3.0,
-        "标签对比度 " + std::to_string(labelCt) + " < 3.0（池166 契约门）");
+    // 池166 撤销（老板 2026-11-04 令）：白卡面三级字恢复 4.5 全门（原口径）；
+    // 曾在绿卡面按设计契约 F1 临时降至 3.0，随浓绿需求一并撤销。
+    DOCTEST_CHECK_MESSAGE(labelCt >= 4.5,
+        "标签对比度 " + std::to_string(labelCt) + " < 4.5");
     DOCTEST_CHECK_MESSAGE(redCt >= 4.5,
         "逾期红字对比度 " + std::to_string(redCt) + " < 4.5");
 
