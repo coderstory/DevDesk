@@ -660,9 +660,10 @@ void McpPageModule::drawDetailDialog(
 
             // 参数区（池146）：inputSchema 全部属性为扁平类型（string/number/
             // integer/boolean）且 ≤ 6 个 → 两列镜像参数表单（行高 30 + 行距 8，
-            // 3 行占 168..274；label 110 定宽同 formRow 口径，输入/开关贴半列右缘，
-            // 镜像几何对照提醒卡池132）；否则（嵌套 schema / 无参数 / 超上限）
-            // 回退 schema JSON monospace 展示块（空参调用，原行为不变）。
+            // 3 行占 168..274；label 110 定宽同 formRow 口径（含墨迹 Center 垂直
+            // 居中，bug216），输入/开关贴半列右缘，镜像几何对照提醒卡池132）；
+            // 否则（嵌套 schema / 无参数 / 超上限）回退 schema JSON monospace
+            // 展示块（空参调用，原行为不变）。
             if (!paramSpecs_.empty()) {
                 const float paramHalfW = (w - 40.0f - 16.0f) * 0.5f;
                 ui.text("mcp.dialog.detail.params.title")
@@ -690,7 +691,10 @@ void McpPageModule::drawDetailDialog(
                         .text(spec.name)
                         .fontFamily("monospace")
                         .fontSize(core::theme::scaled(11.0f))
-                        .lineHeight(kParamRowH)
+                        // bug216：墨迹垂直居中（ui_kit::formRow 同口径）——旧
+                        // lineHeight(30) 顶置凑数的墨迹落点与 components::input
+                        // 盒内居中不一致，参数名与输入框错位（老板 2026-11-04 实测）
+                        .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textSecondary)
                         .maxWidth(kParamLabelW)
                         .overflow(core::TextOverflow::Ellipsis)

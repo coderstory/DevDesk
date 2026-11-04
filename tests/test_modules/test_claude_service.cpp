@@ -809,6 +809,49 @@ REGISTER_TEST(claude_service_test_connection,
     return true;
 })
 
+// bug212 回归：联通测试 400 根因——model/models_config 里的 [1M] 是 DevDesk 本地
+// 上下文标记，bailian 系网关带标记回 400 InvalidParameter（实测「The model `null`
+// does not exist」），剥掉即 200。探测体必须与真实转发同源剥标记。
+REGISTER_TEST(claude_service_probe_strips_one_m_marker,
+              "claude_service: testConnection 探测体剥模型名 [1M] 本地标记（bug212）", {
+    platform::http::Server upstream("127.0.0.1", 0);
+    std::string lastBody;
+    upstream.route("POST", "/v1/messages",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       lastBody = ctx.body;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"id":"probe-1m"})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    const int port = upstream.actualPort();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    test_support::TestDb tdb(kDbPrefix, "conn_1m");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 模型名带本地 [1M] 标记（真实库 id=1 profile 同形态：bailian/glm-5.2[1M]）
+    auto created = svc.createProfile(
+        "BailianProbe", "http://127.0.0.1:" + std::to_string(port),
+        "sk-ant-probe-1m-0001", "bailian/glm-5.2[1M]");
+    DOCTEST_REQUIRE(created.isOk());
+
+    auto resp = svc.testConnection(created.value());
+    DOCTEST_REQUIRE(resp.isOk());
+    DOCTEST_CHECK_EQ(resp.value().statusCode, 200);
+
+    // 上游收到的探测体：model 无 [1M]，基础名与 1-token ping 形态保留
+    DOCTEST_CHECK_EQ(lastBody.find("[1M]"), std::string::npos);
+    DOCTEST_CHECK_NE(lastBody.find("bailian/glm-5.2"), std::string::npos);
+    DOCTEST_CHECK_NE(lastBody.find("\"max_tokens\":1"), std::string::npos);
+
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    upstream.stop();
+    return true;
+})
+
 // 探测请求必须走 UpstreamDialect，不能自己拼 x-api-key / anthropic-version：
 // 对要求 x-opencode-session、且 Cloudflare 按 UA 拦截的网关（opencode.ai/zen）自拼会误报失败，而真实转发是通的。
 REGISTER_TEST(claude_service_test_connection_uses_dialect,

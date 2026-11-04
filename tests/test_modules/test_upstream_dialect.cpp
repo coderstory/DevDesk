@@ -99,8 +99,9 @@ REGISTER_TEST(dialect_for_base_url,
                   UpstreamDialect::Kind::AnthropicDefault);
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("").kind ==
                   UpstreamDialect::Kind::AnthropicDefault);
-    // 只有 opencodeZen 剥模型标记
-    DOCTEST_CHECK_FALSE(UpstreamDialect::anthropicDefault().stripModelSuffix());
+    // 两种方言都剥（bug212 实证：[1M] 是 DevDesk 本地 1M 标记，bailian 系网关
+    // 带标记回 400 InvalidParameter「model null」，剥掉即 200；探测/转发须同源）
+    DOCTEST_CHECK_TRUE(UpstreamDialect::anthropicDefault().stripModelSuffix());
     DOCTEST_CHECK_TRUE(UpstreamDialect::opencodeZen().stripModelSuffix());
     return true;
 })
@@ -255,10 +256,10 @@ REGISTER_TEST(dialect_normalize_body_strips_model,
     DOCTEST_CHECK_TRUE(UpstreamDialect::opencodeZen().normalizeBody(b));
     DOCTEST_CHECK_EQ(b, expected);
 
-    // 默认方言不碰 body（bailian 带 [1M] 能正常返回，剥了反而改行为）
+    // 默认方言同剥（bug212 实证：bailian 系网关带 [1M] 400，剥掉 200）
     std::string b2 = body;
-    DOCTEST_CHECK_FALSE(UpstreamDialect::anthropicDefault().normalizeBody(b2));
-    DOCTEST_CHECK_EQ(b2, body);
+    DOCTEST_CHECK_TRUE(UpstreamDialect::anthropicDefault().normalizeBody(b2));
+    DOCTEST_CHECK_EQ(b2, expected);
     return true;
 })
 

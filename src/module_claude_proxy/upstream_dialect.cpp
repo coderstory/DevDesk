@@ -117,9 +117,13 @@ UpstreamDialect UpstreamDialect::forBaseUrl(const std::string& baseUrl) {
 }
 
 bool UpstreamDialect::stripModelSuffix() const {
-    // 只有明确不认该标记的网关才剥；默认方言保持透传（既有的 bailian
-    // 网关带 [1M] 能正常返回，剥了反而可能改行为）
-    return kind == Kind::OpencodeZen;
+    // [1M] 是 DevDesk 本地的 1M 上下文标记，任何上游都不认识它。bug212 实证
+    //（2026-11-04 curl 直连）：bailian 系网关（codingxrui.geely-test.com/bailian/
+    // anthropic）带标记回 400 InvalidParameter「The model `null` does not exist」，
+    // 剥掉即 200；agent 侧 direct_llm_client 同场景（星锐/百炼实测）早已自带剥标记。
+    // 旧口径「默认方言透传、bailian 带 [1M] 能正常返回」已被实测证伪。
+    // 探测/转发/流式三调用点都经本判定 → 一处翻转三处同源。
+    return true;
 }
 
 void UpstreamDialect::applyHeaders(std::map<std::string, std::string>& headers,

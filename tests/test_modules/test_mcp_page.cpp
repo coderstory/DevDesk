@@ -452,6 +452,36 @@ REGISTER_TEST(mcp_page_try_error_path,
     return true;
 })
 
+// bug216 回归：参数行 label 与输入框必须同轴。全站表单行口径（ui_kit/form_row.cpp）
+// = label 盒高=行高、墨迹 verticalAlign Center 垂直居中；旧实现用 lineHeight 顶置
+// 凑数，墨迹落点与 components::input 的盒内居中不一致（老板真机实测错位）。
+REGISTER_TEST(mcp_page_param_row_label_centered_like_formrow,
+              "mcp_page: 参数行 label 走 formRow 同款墨迹垂直居中（bug216）", {
+    core::mcp::McpToolRegistry reg;
+    auto tool = std::make_shared<FakeTool>(
+        "test_axis_tool", "对齐用工具",
+        R"({"type":"object","properties":{"url":{"type":"string"}},"required":["url"]})");
+    (void)reg.registerTool(tool);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_axis_1");
+    ui.find("mcp.card.test_axis_tool.hit")->onClick();
+    composeFrame(mod, ui, screen, "mcp_axis_2");
+
+    const auto* label = ui.find("mcp.dialog.detail.param.url.label");
+    const auto* input = ui.find("mcp.dialog.detail.param.url.input");
+    DOCTEST_REQUIRE_NE(label, nullptr);
+    DOCTEST_REQUIRE_NE(input, nullptr);
+    // DSL 契约：label 与 form_row.cpp 同款——墨迹 Center 垂直居中
+    DOCTEST_CHECK_EQ(label->verticalAlign, eui::VerticalAlign::Center);
+    // 盒级同轴：label 行盒中心与 input 盒中心同落行中（30/2 与 +2+26/2）
+    const float labelCenterY = label->frame.y + label->frame.height * 0.5f;
+    const float inputCenterY = input->frame.y + input->frame.height * 0.5f;
+    DOCTEST_CHECK(std::fabs(labelCenterY - inputCenterY) < 0.5f);
+    return true;
+})
+
 // 池146：参数表单——扁平 schema 出表单（label/输入/开关齐全、schema JSON 框退位）；
 // 缺必填拦截（execute 不发起 + 红字点名参数）；填参试跑 → execute 收到组装入参。
 REGISTER_TEST(mcp_page_param_form_validation_and_args,

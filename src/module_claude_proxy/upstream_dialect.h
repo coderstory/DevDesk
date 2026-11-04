@@ -25,14 +25,16 @@ struct UpstreamDialect {
 
     Kind kind = Kind::AnthropicDefault;
 
-    // 通用方言：x-api-key + Bearer 双发，UA 固定，不碰模型名
+    // 通用方言：x-api-key + Bearer 双发，UA 固定（模型名 [1M] 剥离两方言同口径，
+    // 见 stripModelSuffix / bug212 实证）
     static UpstreamDialect anthropicDefault();
     // opencode.ai zen：额外要求 x-opencode-session，且不认 [1M] 模型标记
     static UpstreamDialect opencodeZen();
     // 按 baseUrl 的 host 选择（opencode.ai 及子域 → opencodeZen；其余 → 通用方言）
     static UpstreamDialect forBaseUrl(const std::string& baseUrl);
 
-    // 是否剥掉模型名尾部 [1M]（本地 1M 标记，上游通常不认识，带着会被判不可用）
+    // 是否剥掉模型名尾部 [1M]（DevDesk 本地 1M 标记，上游不认识——bug212 实证
+    // bailian 系带标记 400；两种方言恒剥，探测/转发同源）
     bool stripModelSuffix() const;
 
     // 就地把请求头调整成该方言期望的形态：清掉客户端所有大小写变体凭据再按
@@ -41,8 +43,8 @@ struct UpstreamDialect {
     void applyHeaders(std::map<std::string, std::string>& headers,
                       const std::string& apiKey, AuthField authField) const;
 
-    // 就地把请求体归一化成该方言能接受的形态（当前仅 OpencodeZen 剥模型名后缀）。
-    // 返回 true 表示 body 被改写；不需要改写时 body 一个字节都不动。
+    // 就地把请求体归一化成该方言能接受的形态（顶层 model 剥 [1M] 后缀，两种方言
+    // 同口径）。返回 true 表示 body 被改写；无标记/非 JSON 时 body 一个字节都不动。
     bool normalizeBody(std::string& body) const;
 };
 
