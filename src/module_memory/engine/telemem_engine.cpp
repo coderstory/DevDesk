@@ -37,10 +37,10 @@ constexpr long kPipTimeoutMs = 600000;
 // IMP-114-4：Python 探测失败文案（常量收拢一处；安装指引一句覆盖双平台——
 // 纯只读文本无行为分叉，不拆 _posix/_win 文件）
 constexpr const char* kPythonMissingMessage =
-    "未找到 Python 3.10~3.12：请安装后点「启动引擎」重试"
-    "（3.13 及以上版本暂不支持）。"
-    "macOS 可执行 brew install python@3.12 或 uv python install 3.12；"
-    "Windows 可用 python.org 官网安装器或 uv python install 3.12。";
+    "未找到 Python 3.10~3.13：请安装后点「启动引擎」重试"
+    "（3.14 及以上版本暂不支持）。"
+    "macOS 可执行 brew install python@3.13 或 uv python install 3.13；"
+    "Windows 可用 python.org 官网安装器或 uv python install 3.13。";
 
 // IMP-114-3：pip 失败文案固定尾缀（网络与镜像源指路；镜像经 PIP_INDEX_URL /
 // PIP_EXTRA_INDEX_URL 环境变量配置，安装命令已透传）
@@ -183,8 +183,8 @@ void TelememEngine::runPipeline() {
     const std::filesystem::path dataDir = memoryDataDir();
     std::error_code ec;
 
-    // ① Python 3.10~3.12 探测（不合格在此拦截，不放行到 pip）
-    setState(State::Preparing, "探测本机 Python（需要 3.10~3.12）…");
+    // ① Python 3.10~3.13 探测（不合格在此拦截，不放行到 pip）
+    setState(State::Preparing, "探测本机 Python（需要 3.10~3.13）…");
     const auto py = findQualifiedPython(systemVersionProbe());
     if (!py.has_value()) {
         {

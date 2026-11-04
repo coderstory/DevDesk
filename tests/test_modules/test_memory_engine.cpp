@@ -2,7 +2,8 @@
 // 记忆引擎托管纯逻辑单测（S2 批次④）。全部注入假探针/假响应：不启真引擎、
 // 不碰网络、不装 pip 包（真引擎验证归 live/UAT 层）。
 // 契约红线（改动即契约变更）：
-//   - Python 合格区间 3.10~3.12（3.13+ 探测步拦截，不放行到 pip）
+//   - Python 合格区间 3.10~3.13（3.14+ 探测步拦截，不放行到 pip；
+//     bug157 实测 telemem 1.10.1 兼容 3.13 后放宽）
 //   - TELEMEM_CONFIG 恒不含密钥；key 只进子进程环境变量
 //   - 健康判据查嵌套 error（body.error / body.result.error），不能只看传输层
 #include "doctest.h"
@@ -54,12 +55,12 @@ REGISTER_TEST(memory_python_version_parse,
 })
 
 REGISTER_TEST(memory_python_version_qualified,
-              "memory: Python 合格区间 3.10~3.12（3.13+/3.9- 探测步拦截）", {
+              "memory: Python 合格区间 3.10~3.13（3.14+/3.9- 探测步拦截）", {
     DOCTEST_CHECK(pythonVersionQualified("3.10.0"));
     DOCTEST_CHECK(pythonVersionQualified("3.11.9"));
     DOCTEST_CHECK(pythonVersionQualified("3.12.4"));
     DOCTEST_CHECK(!pythonVersionQualified("3.9.7"));
-    DOCTEST_CHECK(!pythonVersionQualified("3.13.1"));
+    DOCTEST_CHECK(pythonVersionQualified("3.13.1"));  // bug157 放宽
     DOCTEST_CHECK(!pythonVersionQualified("3.14.0"));
     DOCTEST_CHECK(!pythonVersionQualified(""));
     DOCTEST_CHECK(!pythonVersionQualified("garbage"));

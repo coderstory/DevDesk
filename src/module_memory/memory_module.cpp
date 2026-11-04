@@ -72,24 +72,28 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
 
     const float bodyY = tabY + kTabH + t.sizes.spacingLarge;
 
-    // 三视图各套滚动容器（卡区总高可超小窗可视高；settings 卡区同款）
+    // 三视图各套滚动容器（卡区总高可超小窗可视高；settings 卡区同款）。
+    // bug158/160（2026-11-03）：滚动根必须 .position(pagePad, bodyY)——不设
+    // position 时根从页顶 (0,0) 铺满，scrollState 置 interactive 使整面可命中、
+    // 后建兄弟先命中，盖住 TAB 行吞点击；内容高测量也含 bodyY 偏移，滚动条
+    // 轨道从页顶起步、比例失真。内容子元素相应改 0 基相对坐标，滚动位移全交
+    // EUI scrollContentFrom 自动平移（内容里再手动减 offset = 双重平移）。
     const char* scrollIds[kViewConfig + 1] = {"memory.console.scroll",
                                               "memory.review.scroll",
                                               "memory.config.scroll"};
     const int view = activeView_;
     auto drawView = [&](eui::Ui& inner, float cw, float vh) {
-        // 画布栈：滚动内容列的子元素会被列布局重排，绝对定位必须收进一层
-        // stack（settings 卡区同款：卡根 stack 带页绝对坐标）
+        // 画布栈：滚动内容列的子元素会被列布局重排，绝对定位必须收进一层 stack
         inner.stack("memory.view.canvas")
             .width(cw)
             .height(core::SizeValue::wrapContent())
             .content([&] {
                 if (view == kViewConsole) {
-                    composeConsole(inner, t, pagePad, cw, bodyY, vh);
+                    composeConsole(inner, t, 0.0f, cw, 0.0f, vh);
                 } else if (view == kViewReview) {
-                    composeReview(inner, t, pagePad, cw, bodyY, vh);
+                    composeReview(inner, t, 0.0f, cw, 0.0f, vh);
                 } else {
-                    composeConfig(inner, t, pagePad, cw, bodyY, vh);
+                    composeConfig(inner, t, 0.0f, cw, 0.0f, vh);
                 }
             })
             .build();
@@ -97,9 +101,9 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     float* offset = view == kViewConsole
                         ? &consoleScroll_
                         : (view == kViewReview ? &reviewScroll_ : &configScroll_);
-    // 滚动根铺满窗（settings 卡区同款：内容子元素自带页绝对坐标，
-    // 滚动根不设 position——EUI 滚动状态坐标以 (0,0) 为基准）
+    // 滚动根定位于 TAB 行下方（页头/TAB 不滚；调度页同款），内容 0 基相对坐标
     components::scrollView(ui, scrollIds[view])
+        .position(pagePad, bodyY)
         .size(contentW, std::max(120.0f, screen.height - bodyY - 12.0f))
         .step(60.0f)
         .theme(ct)
@@ -183,10 +187,10 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .build();
     const std::string pythonLine =
         es.pythonFound
-            ? "Python " + es.pythonVersion + " 已检测（telemem 要求 3.10~3.12）"
+            ? "Python " + es.pythonVersion + " 已检测（telemem 要求 3.10~3.13）"
             : (es.llamaMissing
                    ? "本机模型文件缺失——embedding 档不可用，先跑首次安装向导"
-                   : "未检测到 Python 3.10~3.12——点「首次安装向导」引导安装");
+                   : "未检测到 Python 3.10~3.13——点「首次安装向导」引导安装");
     ui.text("memory.eng.python")
         .position( t.sizes.spacingLarge, core::theme::scaled(92.0f))
         .size(w - 2.0f * t.sizes.spacingLarge, core::theme::scaled(20.0f))

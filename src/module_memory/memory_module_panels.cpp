@@ -98,32 +98,13 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
                                   float x, float w, float y, float viewH) {
     (void)viewH;
     const auto snap = panel_.snapshot();
-    const float oy = y - consoleScroll_;  // 内容随滚动上移（settings 卡区同款）
+    // bug158（2026-11-03）：滚动位移由 EUI scrollContentFrom 对内容列自动平移，
+    // 内容里不再手动减 offset（双处相加 = 滚动时内容两倍速漂移）。need159
+    // （2026-11-03）：顶部降级横条及其「启动引擎」按钮删除——启动入口只保留
+    // 引擎卡一处，引擎停止态由引擎卡状态点与详情行承载。
+    const float oy = y;
 
     float cy = oy;
-    const bool degraded = snap.engine.state == TelememEngine::State::Failed ||
-                          snap.engine.state == TelememEngine::State::Stopped;
-    if (degraded) {
-        ui.rect("memory.degrade.banner")
-            .position(x, cy)
-            .size(w, 44.0f)
-            .color(t.colors.active)
-            .radius(t.sizes.radius)
-            .build();
-        ui.text("memory.degrade.text")
-            .position(x + 14.0f, cy + core::theme::scaled(10.0f))
-            .size(w - 220.0f, core::theme::scaled(24.0f))
-            .text("引擎已停止——搜索与现有记忆仍可用，新增提炼暂停。")
-            .fontSize(core::theme::scaled(13.0f))
-            .lineHeight(core::theme::scaled(24.0f))
-            .fontWeight(600)
-            .color(t.colors.warning)
-            .build();
-        primaryButton(ui, "memory.degrade.start", "启动引擎",
-                      x + w - 180.0f, cy + core::theme::scaled(7.0f), 140.0f, 30.0f, t,
-                      [] { TelememEngine::global().startAsync(); });
-        cy += 44.0f + kCardGap;
-    }
 
     // 面板库故障（可读错误，不留白）
     if (!snap.storesOk) {
@@ -602,7 +583,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                                  float x, float w, float y, float viewH) {
     (void)viewH;
     const auto snap = panel_.snapshot();
-    const float oy = y - reviewScroll_;
+    const float oy = y;  // 滚动位移交 EUI 自动平移（bug158）
     float cy = oy;
 
     ui.text("memory.rv.intro")
@@ -819,7 +800,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                                  float x, float w, float y, float viewH) {
     (void)viewH;
     const auto snap = panel_.snapshot();
-    const float oy = y - configScroll_;
+    const float oy = y;  // 滚动位移交 EUI 自动平移（bug158）
     float cy = oy;
     const float innerW = w - 32.0f;
 

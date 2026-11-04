@@ -29,7 +29,9 @@ bool pythonVersionQualified(const std::string& versionText) {
         return false;
     }
     if (major != 3) return false;
-    return minor >= 10 && minor <= 12;
+    // bug157（2026-11-03）：telemem 1.10.1 在 3.13.15 venv 实测兼容（依赖链
+    // faiss/numpy/mem0ai/mcp 全装成功 + import 通过），版本闸放宽到 3.13。
+    return minor >= 10 && minor <= 13;
 }
 
 VersionProbe systemVersionProbe() {

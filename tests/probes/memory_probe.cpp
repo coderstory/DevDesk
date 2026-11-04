@@ -261,6 +261,51 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < 8; ++i) composeFrame();  // 过渡动画收敛后落图
     shoot("memory-console.png", &A.passed);
 
+    // ── 组 D：TAB 点击命中链（bug160：滚动根曾从页顶 (0,0) 铺满，scrollState
+    // interactive 整面盖住 TAB 行吞点击）。隔帧成对口径（schedule_ui_probe
+    // 同款）：队列逐帧消费，Press/Release 隔帧；同时断言 TAB 中心命中目标 =
+    // TAB hit 面而非滚动根。──
+    auto clickTab = [&](int idx, const char* hitId) {
+        const auto* tab = A.elem("memory.tabs." + std::to_string(idx));
+        if (tab == nullptr) {
+            std::cerr << "memory_probe: FAIL——'memory.tabs." << idx
+                      << "' 缺失\n";
+            A.passed = false;
+            return;
+        }
+        const float cx = tab->frame.x + tab->frame.width * 0.5f;
+        const float cyT = tab->frame.y + tab->frame.height * 0.5f;
+        const std::string hitAtTab =
+            runtime.hitTestInteractiveAt(static_cast<double>(cx),
+                                         static_cast<double>(cyT), 1.0f);
+        if (hitAtTab != hitId) {
+            std::cerr << "memory_probe: FAIL——TAB." << idx << " 中心命中 '"
+                      << hitAtTab << "' ≠ " << hitId << "（命中链被盖）\n";
+            A.passed = false;
+        }
+        core::queuePointerMotion(window, cx, cyT, core::PointerButtons{},
+                                 core::KeyModifiers{});
+        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
+                                 core::PointerAction::Press, {});
+        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
+                                 core::PointerAction::Release, {});
+        for (int i = 0; i < 6; ++i) composeFrame();
+    };
+    {
+        clickTab(1, "memory.tabs.1.hit");
+        A.exists("memory.review.scroll");  // 视图已切到审核
+        if (A.elem("memory.console.scroll") != nullptr) {
+            std::cerr << "memory_probe: FAIL——点 TAB.1 后主控台滚动根仍在\n";
+            A.passed = false;
+        }
+        A.textHas("memory.tabs.1.text", "(3)");
+        clickTab(2, "memory.tabs.2.hit");
+        A.exists("memory.config.scroll");  // 视图已切到配置
+        A.exists("memory.cfg.mask.switch.track");
+        clickTab(0, "memory.tabs.0.hit");
+        A.exists("memory.console.scroll");  // 切回主控台
+    }
+
     // ── 组 B：审核页卡片流（3 张 pending 卡 + tab 徽章 + 逐卡操作钮）──
     {
         auto prop = module::memory::proposals::ProposalStore::open(

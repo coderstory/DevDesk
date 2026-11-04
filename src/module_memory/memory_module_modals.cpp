@@ -217,7 +217,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
         const bool idleLike = state == TelememEngine::State::Idle ||
                               state == TelememEngine::State::Stopped ||
                               state == TelememEngine::State::Failed;
-        stepRow("memory.dialog.wizard.s1", 56.0f, "① Python 3.10~3.12",
+        stepRow("memory.dialog.wizard.s1", 56.0f, "① Python 3.10~3.13",
                 es.pythonFound
                     ? ("已检测（" + es.pythonVersion + "）")
                     : std::string(idleLike ? "未检测到——安装后重试" : "检测中…"),

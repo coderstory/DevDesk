@@ -15,7 +15,6 @@
 #include "platform/folder_picker.h"
 #include "platform/json.h"
 #include "platform/notification.h"
-#include "toast_notice_bridge.h"
 #include "module_memory/engine/telemem_config.h"
 #include "module_memory/pipeline/collect_round.h"
 #include "module_memory/pipeline/infer_batch.h"
@@ -450,9 +449,8 @@ void PanelState::pollUsageAlerts() {
         const std::string title = proposals::usageAlertTitle(f.tier);
         const std::string body = proposals::usageAlertBody(f);
         LOG_INFO("[memory][usage-alert] " + title + "：" + body);
-        // 双出口都既有基建：应用级 toast（M3 同一 showAppNotice 落点，跨页可见）
-        app::toast_notice::show(title, body);
-        // 系统级（硬档 Error / 其余 Warning；facade 自带降级与限速，Accepted ≠ 看到）
+        // 只走系统级（bug179 对齐 agent 侧 161 口径：去应用内 toast 防同事件双发；
+        // 硬档 Error / 其余 Warning；facade 自带降级与限速，Accepted ≠ 看到）
         platform::notify::Notification note;
         note.id = std::string("memory.usage_alert.") +
                   proposals::usageAlertTierTag(f.tier) + "." +
