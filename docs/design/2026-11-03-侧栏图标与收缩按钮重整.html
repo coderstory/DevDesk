@@ -1,9 +1,15 @@
 <!DOCTYPE html>
 <!-- =====================================================================
   demo 仅视觉校准，不是实现蓝图。
-  对应设计文档：2026-11-03-侧栏图标与收缩按钮重整.md（bug165 / need171 / need172）
-  覆盖：品牌 logo 44 两态常量 / 高度三档间距自适应 / 让位线守卫 /
-        收缩按钮圆框+悬浮+果冻按压+弥散绿粒子（hover 进入沿一次迸发 480ms 自止）
+  对应设计文档：2026-11-03-侧栏图标与收缩按钮重整.md（bug165 / need171 / need172；§10 v2）
+  v2（2026-11-04）：logo 随窗高三档 48/44/40（两态一致） /
+        悬浮钮 32（正常）· 28（紧凑/极紧）+ 预留区 48/44 联动 + 热区外扩 4px /
+        粒子 v2：12 颗 4~6px 0.75→0 800ms+延迟 0~80ms 弥散 14~26px /
+        新增「两态×两窗高」四宫格对比视图（默认显示，右上可切单窗交互）
+  v3（2026-11-04，need186）：导航区由藏行守卫改为滚动区——溢出即滚（设计文档 §11）/
+        滚动条：溢出常显、右缘 8px 胶囊灰族（demo 为近似色，实现读 EUI scroll 四态 token track/thumb/thumbHover/thumbPressed）/
+        状态条改显「溢出 px · 滚动条显隐」+ 新增「展开发布分组」演示溢出滚动
+  v1 覆盖项：品牌 logo 44 两态常量 / 高度三档间距 / 让位线守卫 / 圆框+果冻按压
   色值全部走 token 命名的 CSS 变量（值为项目 theme.cpp 现值；
   深色档带(近似)标注者为演示近似，实现一律读 t.colors.* token）。
   侧栏宽度切换此处用 200ms 过渡便于观察；真实侧栏为瞬时切换（AnimProperty 无 Width 档）。
@@ -11,7 +17,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>侧栏图标与收缩按钮重整 · demo</title>
+<title>侧栏图标与收缩按钮重整 · demo（v2）</title>
 <style>
   :root{
     /* ── token：浅色档（theme.cpp 权威值）── */
@@ -21,7 +27,8 @@
     --border:#E5E5E5; --border-2:#EDEDED;
     --text-1:#1A1A1A; --text-2:#666666; --text-3:#999999;
     --bg:#F7F7F7; --surface:#FFFFFF;
-    --particle-c1:#07C160; --particle-c2:#34D399; --particle-c3:#A7F3D0; /* fluid kLightHalo 同款三色 */
+    --particle-c1:#07C160; --particle-c2:#34D399; --particle-c3:#06AD56; /* v2：第三色弃 #A7F3D0（近底色）改深档 */
+    --sb-thumb:rgba(26,26,26,.18); --sb-thumb-h:rgba(26,26,26,.34); --sb-thumb-a:rgba(26,26,26,.42); /* v3：滚动条 thumb 灰族（近似 EUI scroll token；实现读 theme 不写死） */
   }
   .dark{
     /* ── token：深色档（theme.cpp 已核实值；标(近似)处为演示近似）── */
@@ -32,13 +39,14 @@
     --text-1:#E8E8E8; --text-2:#A0A0A0; --text-3:#6E6E6E;
     --bg:#151A17; --surface:#1E2622;
     --particle-c1:#36D399; --particle-c2:#2EC48F; --particle-c3:#36D399;
+    --sb-thumb:rgba(232,232,232,.16); --sb-thumb-h:rgba(232,232,232,.32); --sb-thumb-a:rgba(232,232,232,.42); /* v3：(近似) */
   }
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%}
   body{background:#333;display:flex;align-items:center;justify-content:center;
        font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;overflow:hidden}
 
-  /* ── 模拟窗（浏览器缩放或拖滑杆改变高度即可验证分档）── */
+  /* ── 模拟窗（拖滑杆或缩放浏览器窗高即可验证分档）── */
   #win{width:900px;height:720px;background:var(--bg);border-radius:8px;overflow:hidden;
        display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.45);
        transition:height .15s ease-out;min-height:460px;max-height:100vh}
@@ -51,33 +59,42 @@
   #titlebar .tbtn:hover{background:var(--hover)}
   #body{flex:1;display:flex;min-height:0}
 
-  /* ═══════════ 侧栏 ═══════════ */
-  #sidebar{width:220px;flex:none;background:var(--sidebar-bg);border-right:1px solid var(--border);
+  /* ═══════════ 侧栏（.sb：单窗与四宫格 mini 共用） ═══════════ */
+  .sb{width:220px;flex:none;background:var(--sidebar-bg);border-right:1px solid var(--border);
        position:relative;display:flex;flex-direction:column;
        transition:width .2s ease-out}
-  #sidebar.collapsed{width:72px}
-  /* 三档间距（设计文档 §2.2）：CSS 变量随 data-tier 切换，离散无过渡 */
-  #sidebar[data-tier="normal"] {--top-pad:32px;--brand-nav-gap:28px;--row-gap:4px;--row-h:40px;--nav-start:116px}
-  #sidebar[data-tier="compact"]{--top-pad:16px;--brand-nav-gap:16px;--row-gap:4px;--row-h:40px;--nav-start:88px}
-  #sidebar[data-tier="tight"]  {--top-pad:12px;--brand-nav-gap:12px;--row-gap:2px;--row-h:36px;--nav-start:80px}
+  .sb.collapsed{width:72px}
+  /* 三档参数（设计文档 §2.2 + §10.1/§10.2 v2）：CSS 变量随 data-tier 切换，离散无过渡 */
+  .sb[data-tier="normal"] {--top-pad:32px;--brand-nav-gap:28px;--row-gap:4px;--row-h:40px;--nav-start:116px;
+       --logo-size:48px;--tgl:32px;--tgl-zone:48px}
+  .sb[data-tier="compact"]{--top-pad:16px;--brand-nav-gap:16px;--row-gap:4px;--row-h:40px;--nav-start:88px;
+       --logo-size:44px;--tgl:28px;--tgl-zone:44px}
+  .sb[data-tier="tight"]  {--top-pad:12px;--brand-nav-gap:12px;--row-gap:2px;--row-h:36px;--nav-start:80px;
+       --logo-size:40px;--tgl:28px;--tgl-zone:44px}
 
-  /* 区块A 品牌锚点区：行高 56 恒定，logo 44 常量两态同值（bug165） */
-  #brand{height:56px;flex:none;margin-top:var(--top-pad);display:flex;align-items:center;justify-content:center}
-  #logo{width:44px;height:44px;border-radius:10px;background:var(--primary);
+  /* 区块A 品牌锚点区：行高 56 恒定，logo 随档 48/44/40、两态一致（§10.1） */
+  .brandrow{height:56px;flex:none;margin-top:var(--top-pad);display:flex;align-items:center;justify-content:center}
+  .logo-tile{width:var(--logo-size);height:var(--logo-size);border-radius:10px;background:var(--primary);
         display:flex;align-items:center;justify-content:center;flex:none}
-  #logo svg{width:26px;height:26px;display:block}
-  #logo .term-bar{stroke:var(--surface);stroke-width:2;fill:none}
-  #logo .term-gt{stroke:var(--surface);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .logo-tile svg{width:calc(var(--logo-size)*0.59);height:calc(var(--logo-size)*0.59);display:block}
+  .logo-tile .term-bar{stroke:var(--surface);stroke-width:2;fill:none}
+  .logo-tile .term-gt{stroke:var(--surface);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
 
-  /* 区块B 导航列表：不滚，越让位线整行隐藏（守卫） */
-  #nav{margin-top:var(--brand-nav-gap);overflow:hidden;flex:1}
+  /* 区块B 导航列表：滚动区（need186 §11）——溢出即滚；品牌区/按钮区在 viewport 外锚定不滚。
+     滚动条：溢出时常显、右缘 8px 胶囊灰族；实现为 overlay 悬浮不占内容宽（demo 占槽近似，行右缘留白 16px 内无碰撞） */
+  .nav{margin-top:var(--brand-nav-gap);overflow-y:auto;overflow-x:hidden;flex:1;
+       scrollbar-width:thin;scrollbar-color:var(--sb-thumb) transparent}
+  .nav::-webkit-scrollbar{width:8px}
+  .nav::-webkit-scrollbar-track{background:transparent}          /* track 透明＝overlay 观感 */
+  .nav::-webkit-scrollbar-thumb{background:var(--sb-thumb);border-radius:4px}
+  .nav::-webkit-scrollbar-thumb:hover{background:var(--sb-thumb-h)}
+  .nav::-webkit-scrollbar-thumb:active{background:var(--sb-thumb-a)}
   .nav-row{height:var(--row-h);margin:0 16px;margin-bottom:var(--row-gap);border-radius:6px;
         display:flex;align-items:center;padding:0 12px;cursor:pointer;color:var(--text-2);
         font-size:14px;white-space:nowrap}
   .nav-row:hover{background:var(--hover)}
   .nav-row.active{background:var(--primary-soft);color:var(--primary-text);font-weight:600}
   .nav-row.active .ic{color:var(--primary)}
-  .nav-row.hidden-by-fold{visibility:hidden}
   .nav-row .ic{width:28px;flex:none;display:flex;align-items:center;justify-content:center}
   .nav-row .ic svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;
         stroke-linecap:round;stroke-linejoin:round}
@@ -85,38 +102,41 @@
   .nav-row .chev{margin-left:auto;width:14px;display:flex;color:var(--text-3);flex:none}
   .nav-row .chev svg{width:11px;height:11px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
   .nav-row.child{margin-left:32px}
-  #groupdiv{height:1px;background:var(--border);margin:0 16px var(--row-gap)}
+  .groupdiv{height:1px;background:var(--border);margin:0 16px var(--row-gap)}
   /* 折叠态：隐藏 label/chevron，图标居中（现行为一致） */
-  #sidebar.collapsed .nav-row{padding:0}
-  #sidebar.collapsed .nav-row .label,#sidebar.collapsed .nav-row .chev{display:none}
-  #sidebar.collapsed .nav-row{margin-left:0;margin-right:0;justify-content:center}
-  #sidebar.collapsed .nav-row.child{margin-left:0}
-  #sidebar.collapsed #groupdiv{margin:0 16px var(--row-gap)}
+  .sb.collapsed .nav-row{padding:0;margin-left:0;margin-right:0;justify-content:center}
+  .sb.collapsed .nav-row .label,.sb.collapsed .nav-row .chev{display:none}
+  .sb.collapsed .nav-row.child{margin-left:0}
+  .sb.collapsed .groupdiv{margin:0 16px var(--row-gap)}
 
-  /* 区块C 按钮区：预留 56 恒定（守卫锚），按钮直径 40 区内垂直居中 */
-  #toggle-zone{height:56px;flex:none;position:relative}
-  #toggle{position:absolute;left:16px;top:8px;width:40px;height:40px;border-radius:50%;
-        background:transparent;border:1px solid var(--border);color:var(--text-2);cursor:pointer;
-        display:flex;align-items:center;justify-content:center;position:absolute;
-        transform-origin:center;transition:background-color .15s ease-out,border-color .15s ease-out,
-        color .15s ease-out,transform .15s ease-out}
-  #sidebar.collapsed #toggle{left:16px}   /* (72−40)/2 = 16，与展开态同值 */
-  #toggle:hover{background:var(--primary-soft);border-color:var(--primary-hover);color:var(--primary);transform:scale(1.04)}
-  #toggle:active{background:var(--primary-soft);border-color:var(--primary);color:var(--primary);
+  /* 区块C 按钮区（§10.2）：区高随档 48/44，钮 32/28，区内垂直居中 */
+  .tz{height:var(--tgl-zone);flex:none;position:relative}
+  .tgl{position:absolute;left:16px;top:calc((var(--tgl-zone) - var(--tgl))/2);
+       width:var(--tgl);height:var(--tgl);border-radius:50%;
+       background:transparent;border:1px solid var(--border);color:var(--text-2);cursor:pointer;
+       display:flex;align-items:center;justify-content:center;
+       transform-origin:center;transition:background-color .15s ease-out,border-color .15s ease-out,
+       color .15s ease-out,transform .15s ease-out}
+  /* 折叠态水平居中（72−size)/2：正常 20 / 紧凑极紧 22；展开态 16 对齐导航左缘 */
+  .sb.collapsed .tgl{left:calc((72px - var(--tgl))/2)}
+  /* 热区 = 绘制区外扩 4px（伪元素承接命中，视觉不变，§10.2） */
+  .tgl::after{content:"";position:absolute;inset:-4px;border-radius:50%}
+  .tgl:hover{background:var(--primary-soft);border-color:var(--primary-hover);color:var(--primary);transform:scale(1.04)}
+  .tgl:active{background:var(--primary-soft);border-color:var(--primary);color:var(--primary);
         transform:scale(.96);transition:transform .1s ease-out}
-  #toggle.bounce{animation:jelly-bounce .18s ease-out}
+  .tgl.bounce{animation:jelly-bounce .18s ease-out}
   @keyframes jelly-bounce{0%{transform:scale(.96)}60%{transform:scale(1.02)}100%{transform:scale(1)}}
-  #toggle svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.2;
+  .tgl svg{width:12px;height:12px;stroke:currentColor;fill:none;stroke-width:2.2;
         stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 
-  /* 弥散绿粒子：hover 进入沿 JS 生成 8 颗，480ms 缓出淡去后自删；无循环无常驻动画 */
-  #burst{position:absolute;inset:0;pointer-events:none}
+  /* 弥散绿粒子 v2（§10.3）：hover 进入沿 JS 生成 12 颗，800ms+延迟 ≤880ms 自止自删；无循环无常驻动画 */
+  .burst{position:absolute;inset:0;pointer-events:none}
   .p{position:absolute;left:50%;top:50%;width:var(--sz);height:var(--sz);border-radius:50%;
-     background:var(--c);opacity:.55;transform:translate(-50%,-50%);
-     animation:p-disperse .48s ease-out forwards}
+     background:var(--c);opacity:.75;transform:translate(-50%,-50%);
+     animation:p-disperse .8s ease-out both;animation-delay:var(--d)}
   @keyframes p-disperse{
-     0%{opacity:.55;transform:translate(-50%,-50%) translate(0,0) scale(1)}
-     100%{opacity:0;transform:translate(-50%,-50%) translate(var(--dx),var(--dy)) scale(.6)}
+     0%{opacity:.75;transform:translate(-50%,-50%) translate(0,0) scale(1)}
+     100%{opacity:0;transform:translate(-50%,-50%) translate(var(--dx),var(--dy)) scale(.7)}
   }
 
   /* 页面占位区 */
@@ -125,12 +145,23 @@
         padding:24px 32px;color:var(--text-3);font-size:12px;line-height:1.9;max-width:420px}
   #page .card b{color:var(--text-2);font-size:14px}
 
+  /* ═══════════ 四宫格对比（两态×两窗高，§10.4；60% 缩放，粒子观感以单窗模式为准） ═══════════ */
+  #grid{position:fixed;inset:0;overflow:auto;display:none;padding:28px 16px 20px;
+        align-items:flex-start;justify-content:center}
+  #grid .gwrap{display:grid;grid-template-columns:auto auto;gap:20px 26px;align-items:end;margin:auto}
+  .gcell{display:flex;flex-direction:column;align-items:center;gap:8px}
+  .gview{overflow:hidden;border-radius:4px;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .gview .sb{transition:none}
+  .glabel{font-size:12px;color:#ddd;text-align:center;line-height:1.7}
+  .glabel b{color:#fff}
+
   /* demo 观测面板（demo 专用仪器，非设计产物） */
   #meter{position:fixed;right:12px;top:12px;background:rgba(0,0,0,.72);color:#fff;border-radius:8px;
        padding:10px 12px;font-size:12px;line-height:1.8;z-index:9}
   #meter input[type=range]{width:140px;vertical-align:middle}
   #meter .seg{cursor:pointer;padding:1px 6px;border-radius:4px;margin-left:4px}
   #meter .seg.on{background:#07C160}
+  #meter .dim{opacity:.55}
 </style>
 </head>
 <body>
@@ -141,9 +172,9 @@
     <button class="tbtn">—</button><button class="tbtn">✕</button>
   </div>
   <div id="body">
-    <div id="sidebar" data-tier="normal">
-      <div id="brand">
-        <div id="logo" title="品牌 logo：44×44 两态常量（bug165）">
+    <div id="sidebar" class="sb" data-tier="normal">
+      <div class="brandrow">
+        <div class="logo-tile" id="logo" title="品牌 logo：随窗高三档 48/44/40，两态一致（§10.1）">
           <!-- 终端窗 >_ ：ui_kit::drawDevDeskLogo C 方案同款几何 -->
           <svg viewBox="0 0 26 26">
             <rect class="term-bar" x="1" y="3" width="24" height="20" rx="4"/>
@@ -152,31 +183,37 @@
           </svg>
         </div>
       </div>
-      <div id="nav"></div>
-      <div id="toggle-zone">
-        <button id="toggle" title="收起 / 展开（need172：圆框 + 悬浮 + 弥散绿粒子）">
-          <span id="burst"></span>
+      <div id="nav" class="nav"></div>
+      <div class="tz">
+        <button id="toggle" class="tgl" title="收起 / 展开（§10.2：随档 32/28 · 热区外扩4px · 粒子 v2）">
+          <span id="burst" class="burst"></span>
           <svg id="toggleIcon" viewBox="0 0 16 16"></svg>
         </button>
       </div>
     </div>
     <div id="page">
       <div class="card">
-        <b>验证点</b><br>
-        1. 品牌 logo 44px：展开/折叠两态同尺寸<br>
-        2. 拖动右下滑杆或缩放浏览器窗高 → 三档间距（正常/紧凑/极紧）<br>
-        3. 矮窗下行数被让位线隐藏，按钮恒在且无行压入<br>
-        4. 悬停左下圆钮：绿框放大 + 8 颗绿粒子弥散一次；按下果冻回弹<br>
-        5. 点按钮切换 220/72 两态
+        <b>验证点（v2）</b><br>
+        1. logo 随窗高三档 48/44/40，展开/折叠两态一致<br>
+        2. 悬浮钮随档 32（正常）/ 28（紧凑·极紧），预留区 48/44 联动<br>
+        3. 悬停左下圆钮：12 颗 4~6px 绿粒子 0.75→0、800ms 迸发一次；按下果冻回弹；钮视觉缩小但热区外扩 4px 仍好命中<br>
+        4. 右上面板切「四宫格」看两态×两窗高对比<br>
+        5. 拖滑杆或缩放浏览器窗高 → 三档间距；导航装不下即滚动（need186 §11），滚动条溢出常显、悬浮右缘<br>
+        6. 单窗模式点右上面板「展开发布分组」→ 行数超出 → 滚动条出现，滚到底最后一行完整可达
       </div>
     </div>
   </div>
 </div>
 
+<!-- 四宫格：两态 × 两窗高（900 正常档 / 720 紧凑档），60% 缩放静态对比 -->
+<div id="grid"><div class="gwrap" id="gwrap"></div></div>
+
 <div id="meter">
-  窗高 <span id="hVal">720</span> · 侧栏可用高 H <span id="hBody">680</span><br>
-  档位 <span id="tierVal">正常档</span> · 让位隐藏 <span id="foldVal">0</span> 行<br>
+  视图 <span class="seg" id="mGrid">四宫格</span><span class="seg on" id="mSingle">单窗交互</span><br>
+  <span id="singleCtl">窗高 <span id="hVal">720</span> · 可用高 H <span id="hBody">680</span><br>
+  档位 <span id="tierVal">紧凑档</span> · <span id="foldVal">不溢出 · 滚动条隐</span><br>
   <input type="range" id="hSlider" min="480" max="1000" step="4" value="720">
+  <span class="seg" id="grpSeg" title="模拟分组展开 → 导航溢出 → 滚动条出现（need186）">展开发布分组</span></span>
   主题 <span class="seg on" id="segL">浅</span><span class="seg" id="segD">深</span>
 </div>
 
@@ -200,6 +237,8 @@ var NAV=[
   {id:"settings",label:"设置"},
   {id:"about",label:"关于"}
 ];
+/* 四宫格 mini 用的行子集（视觉对比够用，折叠守卫在单窗模式验证） */
+var MINI_NAV=["home","todo","schedule","agent","settings","about"];
 /* 简单几何 SVG 占位（FA 字形离线不可用；禁 emoji） */
 var ICONS={
   home:'<circle cx="8" cy="8" r="5.5"/>',
@@ -210,7 +249,7 @@ var ICONS={
   agent:'<rect x="3" y="5" width="10" height="8" rx="2"/><circle cx="6.2" cy="9" r=".6"/><circle cx="9.8" cy="9" r=".6"/><path d="M8 5V2.8"/>',
   memory:'<circle cx="8" cy="8" r="5.5"/><path d="M8 5.5v5M5.5 8h5"/>',
   wallpaper:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><circle cx="6" cy="7" r="1.2"/><path d="M4 12l3-3 2 2 2.5-2.5 2 2"/>',
-  mcp:'<path d="M5.5 8a2.5 2.5 0 1 1 0 .01M10.5 8a2.5 2.5 0 1 0 0 .01M8 8h0"/><path d="M8 5.5V3M8 13v-2.5"/>',
+  mcp:'<circle cx="8" cy="8" r="5.5"/>',
   release:'<path d="M4 13.5V3h6l-1.5 2.5L10 8H4"/>',
   "release-task":'<rect x="3" y="4" width="10" height="9" rx="2"/><path d="M3 7h10M6.5 9.5h3"/>',
   "release-cfg":'<circle cx="8" cy="8" r="2.2"/><path d="M8 2.8v2M8 11.2v2M2.8 8h2M11.2 8h2M4.4 4.4l1.4 1.4M10.2 10.2l1.4 1.4M11.6 4.4l-1.4 1.4M5.8 10.2l-1.4 1.4"/>',
@@ -220,12 +259,12 @@ var ICONS={
 };
 var svg=function(name){return '<svg viewBox="0 0 16 16">'+ICONS[name]+'</svg>';};
 
-/* ── 渲染导航 ── */
+/* ── 渲染单窗导航 ── */
 var nav=document.getElementById("nav");
 var expandedGroups={};           /* 分组展开集合（默认全收起） */
 var activeId="home";
 NAV.forEach(function(item){
-  if(item.id==="divider"){var d=document.createElement("div");d.id="groupdiv";nav.appendChild(d);return;}
+  if(item.id==="divider"){var d=document.createElement("div");d.className="groupdiv";nav.appendChild(d);return;}
   var row=document.createElement("div");
   row.className="nav-row"+(item.child?" child":"");
   row.dataset.id=item.id; row.dataset.group=item.group?"1":""; row.dataset.child=item.child||"";
@@ -240,39 +279,37 @@ NAV.forEach(function(item){
   });
   nav.appendChild(row);
 });
-function setIcons(){document.querySelectorAll(".nav-row").forEach(function(r){
+function setIcons(){document.querySelectorAll("#nav .nav-row").forEach(function(r){
   r.querySelector(".ic").innerHTML=svg(r.dataset.id);
   var c=r.querySelector(".chev"); if(c) c.innerHTML=svg("chev");
   r.classList.toggle("active",r.dataset.id===activeId);});}
 
-/* ── 档位判定 + 让位线守卫（设计文档 §2.2/§2.4）── */
+/* ── 档位判定 + 让位线守卫（设计文档 §2.2/§2.4/§10.2）── */
 var sidebar=document.getElementById("sidebar");
 var win=document.getElementById("win");
 var TIER_NAME={normal:"正常档",compact:"紧凑档",tight:"极紧档"};
 function bodyH(){return win.clientHeight-40;}          /* 可用高 = 窗高 − 标题条 40 */
 function tierOf(h){return h>=712?"normal":h>=680?"compact":"tight";}
-function rowStep(){return parseFloat(getComputedStyle(sidebar).getPropertyValue("--row-h"))
-                     +parseFloat(getComputedStyle(sidebar).getPropertyValue("--row-gap"));}
-function navStart(){return parseFloat(getComputedStyle(sidebar).getPropertyValue("--nav-start"));}
+function cssVar(el,name){return parseFloat(getComputedStyle(el).getPropertyValue(name));}
 function applyState(){
   var H=bodyH(), tier=tierOf(H);
   sidebar.dataset.tier=tier;
-  var expandedRow=function(r){return !r.dataset.child||expandedGroups[r.dataset.child];};
-  var foldLimit=H-56-4;                               /* kNavFoldLimit = H−56−gap（守卫不变） */
-  var y=navStart(), hidden=0;
-  document.querySelectorAll(".nav-row").forEach(function(r){
-    var vis=expandedRow(r);
-    var step=r.classList.contains("child")&&!expandedGroups[r.dataset.child]?0:rowStep();
-    if(vis&&y+parseFloat(getComputedStyle(sidebar).getPropertyValue("--row-h"))>foldLimit){
-      r.classList.add("hidden-by-fold"); hidden++;                    /* 越线整行不画 */
-    }else r.classList.remove("hidden-by-fold");
-    if(step) y+=step;
+  /* need186 §11：藏行守卫退役 → 溢出即滚；viewport = navStart → H−区高（守卫公式转义为下界锚） */
+  document.querySelectorAll("#nav .nav-row").forEach(function(r){
+    var vis=!r.dataset.child||expandedGroups[r.dataset.child];
+    r.style.display=vis?"":"none";                    /* 分组收起 = 默认 12 行口径 */
   });
+  var viewH=H-cssVar(sidebar,"--tgl-zone")-navStart();
+  var contentH=nav.scrollHeight;
+  var over=Math.max(0,Math.round(contentH-viewH));
+  nav.scrollTop=Math.min(nav.scrollTop,Math.max(0,contentH-viewH));   /* offset clamp（§11.2） */
   document.getElementById("hVal").textContent=win.clientHeight;
   document.getElementById("hBody").textContent=H;
   document.getElementById("tierVal").textContent=TIER_NAME[tier];
-  document.getElementById("foldVal").textContent=hidden;
+  document.getElementById("foldVal").textContent=over>0?("溢出 "+over+"px · 滚动条显"):"不溢出 · 滚动条隐";
 }
+function navStart(){return cssVar(sidebar,"--nav-start");}
+function rowStep(){return cssVar(sidebar,"--row-h")+cssVar(sidebar,"--row-gap");}
 window.addEventListener("resize",applyState);
 
 /* ── 收缩/展开切换 ── */
@@ -288,37 +325,109 @@ toggle.addEventListener("click",function(){
 });
 setToggleIcon();
 
-/* ── 弥散绿粒子：hover 进入沿一次迸发 8 颗，480ms 自止自删（无常驻动画）── */
-var burst=document.getElementById("burst");
+/* ── 弥散绿粒子 v2（§10.3）：hover 进入沿一次迸发 12 颗，800ms+hash 延迟 ≤880ms 自止自删（无常驻动画）
+      起点半径 = 按钮半径+2；浅色三色 07C160/34D399/06AD56，深色 primary/primaryHover ── */
 function hash01(n){var x=Math.sin(n*127.1)*43758.5453;return x-Math.floor(x);}
-toggle.addEventListener("pointerenter",function(){
-  var colors=[["--particle-c1"],["--particle-c2"],["--particle-c3"]];
+function spawnBurst(burstEl,R){
   var dark=document.body.classList.contains("dark");
   var list=dark?["--primary","--primary-hover"]:["--particle-c1","--particle-c2","--particle-c3"];
-  for(var i=0;i<8;i++){
-    var ang=i*Math.PI/4+(hash01(i+1)-0.5)*0.42;                 /* 45° 均布 + ±12° hash 抖动 */
-    var dist=10+hash01(i*7+3)*6;                                /* 弥散 10~16px */
-    var sz=2+hash01(i*13+5)*2;                                  /* 粒径 2~4px */
+  for(var i=0;i<12;i++){
+    var ang=i*Math.PI/6+(hash01(i+1)-0.5)*0.35;                 /* 30° 均布 + ±10° hash 抖动 */
+    var dist=14+hash01(i*7+3)*12;                               /* 弥散 14~26px（冲出圆框） */
+    var sz=4+hash01(i*13+5)*2;                                  /* 粒径 4~6px */
+    var d=hash01(i*3+2)*80;                                     /* 延迟 0~80ms */
     var p=document.createElement("span");p.className="p";
     p.style.setProperty("--dx",(Math.cos(ang)*dist).toFixed(1)+"px");
     p.style.setProperty("--dy",(Math.sin(ang)*dist).toFixed(1)+"px");
     p.style.setProperty("--sz",sz.toFixed(1)+"px");
+    p.style.setProperty("--d",(d/1000).toFixed(2)+"s");
     p.style.background="var("+list[i%list.length]+")";
-    burst.appendChild(p);
+    burstEl.appendChild(p);
   }
-  setTimeout(function(){burst.innerHTML="";},520);              /* 生命 480ms 后清理 */
+  setTimeout(function(){burstEl.innerHTML="";},920);            /* 800ms+最迟延迟 80ms 后清理 */
+}
+toggle.addEventListener("pointerenter",function(){
+  spawnBurst(document.getElementById("burst"),cssVar(sidebar,"--tgl")/2+2);
 });
 
-/* ── 高度滑杆与主题切换（demo 仪器）── */
+/* ── 四宫格：两态 × 两窗高（§10.4 矩阵）── */
+var GRID_CELLS=[
+  {w:220,winH:900,collapsed:false,name:"展开 220 · 900 窗"},
+  {w:72, winH:900,collapsed:true, name:"折叠 72 · 900 窗"},
+  {w:220,winH:720,collapsed:false,name:"展开 220 · 720 窗"},
+  {w:72, winH:720,collapsed:true, name:"折叠 72 · 720 窗"}
+];
+var SCALE=0.6;
+function buildMini(cfg){
+  var H=cfg.winH-40,tier=tierOf(H);
+  var tname={normal:"正常档",compact:"紧凑档"}[tier];
+  var logo={normal:48,compact:44,tight:40}[tier],tgl={normal:32,compact:28,tight:28}[tier];
+  var sb=document.createElement("div");
+  sb.className="sb"+(cfg.collapsed?" collapsed":""); sb.dataset.tier=tier;
+  sb.style.width=cfg.w+"px"; sb.style.height=H+"px";
+  var b=document.createElement("div");b.className="brandrow";
+  b.innerHTML='<div class="logo-tile"><svg viewBox="0 0 26 26">'+
+    '<rect class="term-bar" x="1" y="3" width="24" height="20" rx="4"/>'+
+    '<path class="term-gt" d="M6 10 l4 3 -4 3"/><line class="term-gt" x1="12" y1="16" x2="17" y2="16"/></svg></div>';
+  sb.appendChild(b);
+  var nv=document.createElement("div");nv.className="nav";
+  MINI_NAV.forEach(function(id,i){
+    var r=document.createElement("div");
+    r.className="nav-row"+(i===0?" active":"");
+    r.innerHTML='<span class="ic">'+svg(id)+'</span>'+(cfg.collapsed?"":'<span class="label">'+(NAV.find(function(n){return n.id===id;})||{}).label+'</span>');
+    nv.appendChild(r);
+  });
+  sb.appendChild(nv);
+  var tz=document.createElement("div");tz.className="tz";
+  var t=document.createElement("button");t.className="tgl";
+  /* 钮图标语义随态：折叠=三横条（fa-bars 语义）、展开=双左箭头（fa-angles-left 语义） */
+  t.innerHTML='<span class="burst"></span><svg viewBox="0 0 16 16">'+
+    (cfg.collapsed?'<rect x="2" y="3.5" width="12" height="2" rx="1"/><rect x="2" y="7" width="12" height="2" rx="1"/><rect x="2" y="10.5" width="12" height="2" rx="1"/>'
+                  :'<path d="M9.5 4L5.5 8l4 4"/>')+'</svg>';
+  t.addEventListener("pointerenter",function(){spawnBurst(t.querySelector(".burst"),tgl/2+2);});
+  tz.appendChild(t);sb.appendChild(tz);
+  var cell=document.createElement("div");cell.className="gcell";
+  var view=document.createElement("div");view.className="gview";
+  view.style.width=(cfg.w*SCALE)+"px";view.style.height=(H*SCALE)+"px";
+  var holder=document.createElement("div");
+  holder.style.transform="scale("+SCALE+")";holder.style.transformOrigin="0 0";
+  holder.appendChild(sb);view.appendChild(holder);
+  cell.appendChild(view);
+  var lb=document.createElement("div");lb.className="glabel";
+  lb.innerHTML="<b>"+cfg.name+"</b>（"+tname+" H="+H+"）<br>logo "+logo+" · 钮 "+tgl+" / 区 "+(tier==="normal"?48:44);
+  cell.appendChild(lb);
+  return cell;
+}
+var grid=document.getElementById("grid"),gwrap=document.getElementById("gwrap");
+GRID_CELLS.forEach(function(c){gwrap.appendChild(buildMini(c));});
+
+/* ── 视图切换 / 高度滑杆 / 主题（demo 仪器）── */
+var mGrid=document.getElementById("mGrid"),mSingle=document.getElementById("mSingle");
+function setMode(gridOn){
+  grid.style.display=gridOn?"flex":"none";
+  win.style.display=gridOn?"none":"flex";
+  mGrid.classList.toggle("on",gridOn);mSingle.classList.toggle("on",!gridOn);
+  document.getElementById("singleCtl").style.display=gridOn?"none":"block";
+}
+mGrid.addEventListener("click",function(){setMode(true);});
+mSingle.addEventListener("click",function(){setMode(false);});
 var slider=document.getElementById("hSlider");
 slider.addEventListener("input",function(){win.style.height=slider.value+"px";applyState();});
+var grpSeg=document.getElementById("grpSeg");
+grpSeg.addEventListener("click",function(){
+  expandedGroups.release=!expandedGroups.release;
+  grpSeg.classList.toggle("on",!!expandedGroups.release);
+  var chev=document.querySelector('.nav-row[data-id="release"] .chev');
+  if(chev) chev.style.transform=expandedGroups.release?"rotate(180deg)":"";
+  applyState();
+});
 var segL=document.getElementById("segL"),segD=document.getElementById("segD");
 function setTheme(dark){document.body.classList.toggle("dark",dark);
   segL.classList.toggle("on",!dark);segD.classList.toggle("on",dark);applyState();}
 segL.addEventListener("click",function(){setTheme(false);});
 segD.addEventListener("click",function(){setTheme(true);});
 
-setIcons();applyState();
+setIcons();applyState();setMode(true);   /* 默认四宫格对比；右上切回单窗交互验证粒子/果冻 */
 </script>
 </body>
 </html>

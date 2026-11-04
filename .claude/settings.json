@@ -8,12 +8,12 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
             "if": "Bash(git commit*)",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" red-green",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/discipline-reminders.sh\" red-green",
             "timeout": 15
           }
         ]
@@ -24,7 +24,7 @@
           {
             "type": "command",
             "if": "Edit(src/**)",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" plan-first",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/discipline-reminders.sh\" plan-first",
             "timeout": 15
           }
         ]
@@ -36,31 +36,31 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/strategy-guard.sh\"",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/strategy-guard.sh\"",
             "timeout": 30,
             "statusMessage": "战略基线累积核对"
           }
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
             "if": "Bash(git merge*)",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/discipline-reminders.sh\" merge-tree",
             "timeout": 15
           },
           {
             "type": "command",
             "if": "Bash(git pull*)",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/discipline-reminders.sh\" merge-tree",
             "timeout": 15
           },
           {
             "type": "command",
             "if": "Bash(git rebase*)",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/discipline-reminders.sh\" merge-tree",
             "timeout": 15
           }
         ]
@@ -71,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/deliverable-gate.sh\" --mode=stop",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/deliverable-gate.sh\" --mode=stop",
             "timeout": 10,
             "statusMessage": "交付闸门核查"
           }
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/deliverable-gate.sh\" --mode=session-end",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/.claude/hooks/deliverable-gate.sh\" --mode=session-end",
             "timeout": 10,
             "statusMessage": "交付闸门存档"
           }

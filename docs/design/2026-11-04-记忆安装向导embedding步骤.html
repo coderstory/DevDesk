@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  demo 仅视觉校准，不是实现蓝图。
+  复刻「首次安装向导」460×348（新③ embedding 本机包 + 原③顺延为④），
+  依据设计文档 docs/design/2026-11-04-记忆安装向导embedding步骤.md
+  · 色值 = 风格基线 token（浅色档）实现值，实现口径一律走主题 token
+  · 芯片切状态 + 「开始安装 / 重试」全管线演练（模拟时序，非真实引擎）
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>向导③ embedding 本机包 · 视觉校准 demo</title>
+<style>
+  :root{
+    --accent:#36D399; --accent-hover:#2EC48F; --accent-down:#23B07F;
+    --accent-tint:#E6FBF2; --accent-text:#157E4E;
+    --danger:#EF4444; --danger-text:#B91C1C;
+    --warn:#F59E0B;
+    --page:#F7F7F7; --card:#FFFFFF; --line:#E5E5E5;
+    --t1:#1A1A1A; --t2:#666666; --t3:#999999;
+    --btn2:#F2F2F2;
+    --dur:150ms;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--page); color:var(--t1);
+    font-family:"Segoe UI","Microsoft YaHei",-apple-system,sans-serif;
+    min-width:560px; display:flex; flex-direction:column; align-items:center;
+    padding:20px 24px 32px; gap:16px;
+  }
+  /* ── 状态芯片栏 ── */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:860px}
+  .chip{
+    height:30px;padding:0 12px;border:1px solid var(--line);border-radius:6px;
+    background:var(--card);color:var(--t2);font-size:12px;cursor:pointer;
+    transition:all var(--dur) ease-out;
+  }
+  .chip:hover{background:var(--btn2)}
+  .chip.on{background:var(--accent-tint);border-color:var(--accent);color:var(--accent-text);font-weight:600}
+  .hint{font-size:12px;color:var(--t3);text-align:center;line-height:18px}
+
+  /* ── 向导弹窗 460×348 ── */
+  .dialog{
+    width:460px;height:348px;background:var(--card);border:1px solid var(--line);
+    border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.08);position:relative;flex:none;
+  }
+  .title{position:absolute;left:24px;top:14px;font-size:20px;font-weight:600;color:var(--t1)}
+  /* 步骤行：名称列 180 定宽 / 状态列 222 自适应（460-48-190） */
+  .row{position:absolute;left:24px;height:22px;display:flex}
+  .r1{top:56px}.r2{top:84px}.r3{top:112px}.r4{top:140px}
+  .name{width:180px;flex:none;font-size:13px;line-height:22px;font-weight:600;color:var(--t1)}
+  .status{
+    width:222px;font-size:12px;line-height:22px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    transition:color var(--dur) ease-out;
+  }
+  .ok{color:var(--accent-text)} .doing{color:var(--warn)}
+  .fail{color:var(--danger-text)} .pend{color:var(--t3)}
+  /* 说明 / 完成 / 失败块 y=176 */
+  .block{position:absolute;left:24px;top:176px;width:412px;font-size:13px;line-height:20px;transition:color var(--dur) ease-out}
+  .block.intro{color:var(--t2)} .block.done{color:var(--accent-text)} .block.error{color:var(--danger-text)}
+  /* 按钮行 y=278，高 40，圆角 6 */
+  .btn{
+    position:absolute;top:278px;height:40px;border:none;border-radius:6px;
+    font-size:14px;cursor:pointer;font-family:inherit;
+    transition:transform 180ms cubic-bezier(.34,1.56,.64,1),background var(--dur) ease-out,color var(--dur) ease-out;
+  }
+  .btn:active:not(:disabled){transform:scale(0.96)}
+  .btn.close{left:24px;width:110px;background:var(--btn2);color:var(--t2)}
+  .btn.close:hover{background:var(--line)}
+  .btn.go{left:222px;width:190px;background:var(--accent);color:#fff;font-weight:600}
+  .btn.go:hover:not(:disabled){background:var(--accent-hover)}
+  .btn.go:active:not(:disabled){background:var(--accent-down)}
+  .btn.go:disabled{background:var(--btn2);color:var(--t3);cursor:default;font-weight:400}
+  .btn.go.done-state{background:var(--btn2);color:var(--t2);font-weight:400}
+
+  .foot{font-size:12px;color:var(--t3);max-width:680px;line-height:18px;text-align:center}
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important}
+  }
+</style>
+</head>
+<body>
+
+<div class="chips" id="chips"></div>
+<div class="hint">点芯片切换向导状态；弹窗内点「开始安装 / 重试」跑全管线（模拟时序）；长失败原因在状态列截断、完整原因下沉失败块。</div>
+
+<div class="dialog" id="dlg">
+  <div class="title">首次安装向导</div>
+  <div class="row r1"><div class="name">① Python 3.10~3.13</div><div class="status" id="s1"></div></div>
+  <div class="row r2"><div class="name">② venv + pip 安装</div><div class="status" id="s2"></div></div>
+  <div class="row r3"><div class="name">③ embedding 本机包</div><div class="status" id="s3"></div></div>
+  <div class="row r4"><div class="name">④ 引擎拉起与健康检查</div><div class="status" id="s4"></div></div>
+  <div class="block intro" id="blk"></div>
+  <button class="btn close" id="bClose">关闭</button>
+  <button class="btn go" id="bGo">开始安装 / 重试</button>
+</div>
+
+<div class="foot">
+  弹窗固定 460×348（Standard 档，高 320→348 = +28 一行行距）；名称列 180 为结构性定宽，状态列 222 自适应单行省略；<br>
+  最小可用外壳 560×460；demo 可拖窗缩放验证——弹窗不伸缩，页面出现滚动即达下限。仅视觉校准，不是实现蓝图。
+</div>
+
+<script>
+"use strict";
+/* ── 状态定义：s1~s4 行 + 说明块 + 主按钮，色槽与设计文档 §2 一致 ── */
+var S = function(txt, cls){ return {t:txt, c:cls}; };
+var STATES = {
+  "首装·未跑（缺资产）":{
+    rows:[S("未检测到——安装后重试","fail"),S("待开始","pend"),
+          S("需下载（联网，首次约 26MB）","pend"),S("待开始","pend")],
+    blk:{t:"本向导将检测 Python、创建虚拟环境并安装 telemem，检查 embedding 本机包（llama-server + 模型）就位，全程只写数据目录。",c:"intro"},
+    btn:{t:"开始安装 / 重试",cls:""}
+  },
+  "随包就位（③绿）":{
+    rows:[S("未检测到——安装后重试","fail"),S("待开始","pend"),
+          S("已就位（随包）","ok"),S("待开始","pend")],
+    blk:{t:"本向导将检测 Python、创建虚拟环境并安装 telemem，检查 embedding 本机包（llama-server + 模型）就位，全程只写数据目录。",c:"intro"},
+    btn:{t:"开始安装 / 重试",cls:""}
+  },
+  "数据根就位（旧装机）":{
+    rows:[S("已检测（3.12）","ok"),S("完成","ok"),
+          S("已就位（数据根）","ok"),S("待开始","pend")],
+    blk:{t:"本向导将检测 Python、创建虚拟环境并安装 telemem，检查 embedding 本机包（llama-server + 模型）就位，全程只写数据目录。",c:"intro"},
+    btn:{t:"开始安装 / 重试",cls:""}
+  },
+  "下载中（③黄）":{
+    rows:[S("已检测（3.12）","ok"),S("完成","ok"),
+          S("准备 embedding 模型（首次需下载）…","doing"),S("待开始","pend")],
+    blk:{t:"正在就位 embedding 本机包：首次需从模型源下载约 26MB，写入数据目录，完成后自动继续。",c:"intro"},
+    btn:{t:"安装中…",cls:"disabled"}
+  },
+  "下载失败（长原因截断）":{
+    rows:[S("已检测（3.12）","ok"),S("完成","ok"),
+          S("失败：模型下载失败（HTTP 502，服务暂不可用）（可重试）","fail"),S("待开始","pend")],
+    blk:{t:"安装失败：模型下载失败（HTTP 502，服务暂不可用）（可点「开始安装 / 重试」再跑一轮）",c:"error"},
+    btn:{t:"开始安装 / 重试",cls:""}
+  },
+  "健康超时（④红）":{
+    rows:[S("已检测（3.12）","ok"),S("完成","ok"),
+          S("已就位（随包）","ok"),S("失败：健康检查超时（10s）（可重试）","fail")],
+    blk:{t:"安装失败：引擎健康检查超时（10s），embedding 端口 :11435 未就绪（可点「开始安装 / 重试」再跑一轮）",c:"error"},
+    btn:{t:"开始安装 / 重试",cls:""}
+  },
+  "全部完成（全绿）":{
+    rows:[S("已检测（3.12）","ok"),S("完成","ok"),
+          S("已就位（随包）","ok"),S("运行中（127.0.0.1:8421）","ok")],
+    blk:{t:"安装完成，记忆引擎已在后台运行。关掉本向导即可正常使用。",c:"done"},
+    btn:{t:"重新运行安装检查",cls:"done-state"}
+  }
+};
+var cur = "首装·未跑（缺资产）";
+var simFailDownload = false; /* 演练管线时注入下载失败（重试演示用） */
+
+function $(id){ return document.getElementById(id); }
+function render(key){
+  var st = STATES[key]; if(!st) return;
+  for(var i=1;i<=4;i++){ var el=$("s"+i), r=st.rows[i-1]; el.textContent=r.t; el.className="status "+r.c; }
+  var b=$("blk"); b.textContent=st.blk.t; b.className="block "+st.blk.c;
+  var g=$("bGo"); g.textContent=st.btn.t;
+  g.disabled = st.btn.cls==="disabled";
+  g.className = "btn go"+(st.btn.cls==="done-state"?" done-state":"");
+  cur = key;
+}
+/* 芯片栏 */
+var bar = $("chips");
+Object.keys(STATES).forEach(function(k){
+  var c=document.createElement("button"); c.className="chip"; c.textContent=k;
+  c.onclick=function(){ render(k); syncChips(); };
+  bar.appendChild(c);
+});
+var fx=document.createElement("button"); fx.className="chip"; fx.id="fxChip";
+fx.textContent="演练注入：下载失败：关";
+fx.onclick=function(){ simFailDownload=!simFailDownload;
+  fx.textContent="演练注入：下载失败："+(simFailDownload?"开":"关");
+  fx.className="chip"+(simFailDownload?" on":""); };
+bar.appendChild(fx);
+function syncChips(){
+  var cs=bar.querySelectorAll(".chip");
+  Object.keys(STATES).forEach(function(k,i){ cs[i].className = "chip"+(k===cur?" on":""); });
+}
+/* 关闭 = 演示复位到首装态（真实实现为关向导） */
+$("bClose").onclick=function(){ render("首装·未跑（缺资产）"); syncChips(); };
+
+/* ── 全管线演练：①→②→③→④ 顺序，失败停步（设计文档 §3）── */
+var busy=false;
+function setRow(i,t,c){ var el=$("s"+i); el.textContent=t; el.className="status "+c; }
+$("bGo").onclick=function(){
+  if(busy) return; busy=true; syncChips();
+  var g=$("bGo"); g.disabled=true;
+  /* ① */
+  setRow(1,"检测中…","doing");
+  setTimeout(function(){ setRow(1,"已检测（3.12）","ok");
+    /* ② */
+    setRow(2,"创建虚拟环境并 pip 安装…","doing");
+    setTimeout(function(){ setRow(2,"完成","ok");
+      /* ③：随包命中秒过；缺则下载；注入失败则停步 */
+      if(STATES[cur] && cur==="随包就位（③绿）"){
+        setRow(3,"进行中…","doing");
+        setTimeout(step3ok,400);
+      }else if(simFailDownload){
+        setRow(3,"准备 embedding 模型（首次需下载）…","doing");
+        setTimeout(function(){
+          setRow(3,"失败：模型下载失败（HTTP 502）（可重试）","fail");
+          $("blk").textContent="安装失败：模型下载失败（HTTP 502，服务暂不可用）（可点「开始安装 / 重试」再跑一轮）";
+          $("blk").className="block error";
+          finishFail();
+        },1200);
+      }else{
+        setRow(3,"准备 embedding 模型（首次需下载）…","doing");
+        setTimeout(function(){ setRow(3,"下载中 40%（约 26MB）","doing");
+          setTimeout(step3ok,900);
+        },800);
+      }
+    },1100);
+  },700);
+  function step3ok(){
+    setRow(3,"已就位（数据根）","ok"); /* HF 下载落数据根 */
+    /* ④ */
+    setRow(4,"进行中…","doing");
+    setTimeout(function(){
+      setRow(4,"运行中（127.0.0.1:8421）","ok");
+      $("blk").textContent="安装完成，记忆引擎已在后台运行。关掉本向导即可正常使用。";
+      $("blk").className="block done";
+      g.textContent="重新运行安装检查"; g.className="btn go done-state"; g.disabled=false; busy=false;
+      render("全部完成（全绿）"); syncChips();
+    },1400);
+  }
+  function finishFail(){ g.textContent="开始安装 / 重试"; g.className="btn go"; g.disabled=false; busy=false; }
+};
+render(cur); syncChips();
+</script>
+</body>
+</html>
