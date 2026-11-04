@@ -763,8 +763,12 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
     const float scrollY = tabY + tabRowH + core::theme::scaled(8.0f) + toastH + toastGap;
     const float scrollH = std::max(0.0f, screen.height - scrollY - pad);
 
-    // 瀑布卡绘制（系统/用户/归档卡同构；isSystem 决定锁图标、来源块与只读态）
-    auto drawCard = [&](const ListRow& row, const std::string& id,
+    // 瀑布卡绘制（系统/用户/归档卡同构；isSystem 决定锁图标、来源块与只读态）。
+    // ⚠ ui 必须作参数逐层透传：scrollView.build() 会把 content lambda 跑到临时
+    // measureUi 上测内容高（components/scrollview.h measureContentHeight），lambda
+    // 形参 ui 遮蔽本函数同名参数——若绘制 lambda 直捕外层 ui，测量路径会把卡片
+    // 画进主树 root 直下（幽灵副本盖住页首交互面，TAB 点击被吞，bug 150）。
+    auto drawCard = [&](eui::Ui& ui, const ListRow& row, const std::string& id,
                         const CardSlot& slot) {
         const float cardW = slot.w;
         const float cardH = slot.h;
@@ -1049,9 +1053,14 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
             .build();
     };
 
-    // 段内瀑布流：卡高预排 → masonryLayout 最短列入列 → 逐卡绘制
-    auto drawMasonry = [&](const std::vector<ListRow>& rows,
-                           const std::string& idPrefix, float w) {
+    // 段内瀑布流：卡高预排 → masonryLayout 最短列入列 → 逐卡绘制（ui 透传同上⚠）。
+    // yFlowOffset = 本段卡在滚动 content 里的绝对 y 基准：卡是 ignoreLayout 绝对
+    // 定位，slot 从 (0,0) 起算——归档段若不叠加前方流式高度（用户段 spacer + 折叠
+    // 头），卡片会叠到用户卡正上方并抢先命中（点用户卡开归档卡编辑器，bug 150）。
+    // 返回本段总高（含自身 spacer），供后续段计算偏移。
+    auto drawMasonry = [&](eui::Ui& ui, const std::vector<ListRow>& rows,
+                           const std::string& idPrefix, float w,
+                           float yFlowOffset) -> float {
         std::vector<float> heights;
         heights.reserve(rows.size());
         const float summaryAvailW =
@@ -1068,8 +1077,10 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
         for (const auto& s : slots) totalH = std::max(totalH, s.y + s.h);
         ui.stack(idPrefix + "spacer").size(w, totalH).build();
         for (std::size_t i = 0; i < rows.size(); ++i) {
-            drawCard(rows[i], idPrefix + std::to_string(i), slots[i]);
+            drawCard(ui, rows[i], idPrefix + std::to_string(i),
+                     {slots[i].x, slots[i].y + yFlowOffset, slots[i].w, slots[i].h});
         }
+        return totalH;
     };
 
     ui.stack("schedule.list.root")
@@ -1166,6 +1177,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                         .content([&] {
                             const std::vector<ListRow>& rows =
                                 userTab ? assembly_.userRows : assembly_.systemRows;
+                            float userMasonryH = 0.0f;
                             if (rows.empty()) {
                                 // 空态（池137）：贴左灰字纯提示，缩进 16 与卡对齐；
                                 // 无卡无任何按钮，唯一新建入口在页头
@@ -1180,10 +1192,10 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                     .color(t.colors.textTertiary)
                                     .build();
                             } else {
-                                drawMasonry(rows,
-                                            userTab ? "schedule.list.user."
-                                                    : "schedule.list.sys.",
-                                            w);
+                                userMasonryH = drawMasonry(ui, rows,
+                                                           userTab ? "schedule.list.user."
+                                                                   : "schedule.list.sys.",
+                                                           w, 0.0f);
                             }
                             if (userTab) {
                                 // 归档折叠段（§1.1：仅用户 TAB 滚动区尾部，默认折叠）
@@ -1217,8 +1229,12 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                     .build();
                                 if (archiveExpanded_ &&
                                     !assembly_.archivedRows.empty()) {
-                                    drawMasonry(assembly_.archivedRows,
-                                                "schedule.list.archive.", w);
+                                    // 卡基线 = 用户段流高 + 折叠头高（32），见
+                                    // drawMasonry 的 yFlowOffset 注释
+                                    drawMasonry(ui, assembly_.archivedRows,
+                                                "schedule.list.archive.", w,
+                                                userMasonryH +
+                                                    core::theme::scaled(32.0f));
                                 }
                             }
                         })

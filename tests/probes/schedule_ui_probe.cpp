@@ -134,7 +134,9 @@ int main(int argc, char* argv[]) {
             probe::terminateWindowBackend();
             return 3;
         }
-        // 归档卡种子：archivedAt 非空 → 用户 TAB 滚动区尾部折叠段
+        // 归档卡种子：归档走 archiveRule 专用口——updateRule 按契约不写
+        // archived_at（归档/软删只有 archiveRule / deleteRule 入口，防误写解归档）；
+        // 直接 updateRule 塞 archivedAt 会被静默丢弃 → 归档段永远空（bug 150 收口）。
         module::schedule::RuleRecord r3;
         r3.name = "已归档提醒";
         r3.kind = "once";
@@ -144,11 +146,8 @@ int main(int argc, char* argv[]) {
         r3.missedPolicy = "once";
         auto r3res = store.createRule(r3);
         if (r3res.isOk()) {
-            auto got = store.getRule(r3res.value().id);
-            if (got.isOk()) {
-                module::schedule::RuleRecord archived = got.value();
-                archived.archivedAt = now;
-                store.updateRule(archived);
+            if (store.archiveRule(r3res.value().id).isFail()) {
+                std::cerr << "schedule_ui_probe: 种子 archiveRule 失败\n";
             }
         }
         }  // if (!emptyRules)
@@ -271,6 +270,11 @@ int main(int argc, char* argv[]) {
                                   });
     };
     auto clickPoint = [&](float cx, float cy) {
+        // 真实鼠标语义：点击前必先 motion 到点（真实指针没有瞬移）。纯瞬移按下
+        // 会让 EUI 的 hover 目标/交互捕获链路踩到陈旧捕获态——曾致删除确认弹窗
+        // 的 ok 点击被误派发到遮罩/取消路径（关窗不删，bug 150 收口实测）。
+        core::queuePointerMotion(window, cx, cy, core::PointerButtons{},
+                                 core::KeyModifiers{});
         core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
                                  core::PointerAction::Press, {});
         core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
@@ -741,11 +745,12 @@ int main(int argc, char* argv[]) {
         if (rows.isFail()) {
             std::cerr << "schedule_ui_probe: listRules 失败\n";
             passed = false;
-        } else if (rows.value().size() != 3) {
-            // listRules 只过滤硬删（deleted_at），软删=archived_at 仍在库：
-            // 2 活跃 + 1 归档种、软删 1 活跃 → 1 活跃 + 2 归档 = 3 行
+        } else if (rows.value().size() != 2) {
+            // listRules WHERE deleted_at IS NULL：软删行**被过滤**（此前注释把
+            // 软删/归档语义写反）。删前 3 行 = r1 + r2 + r3(归档在库)；软删 r1
+            // 后 = r2(活跃) + r3(归档在库) = 2 行
             std::cerr << "schedule_ui_probe: 软删后 listRules 行数="
-                      << rows.value().size() << "（期望 3 = 1 活跃 + 2 归档）\n";
+                      << rows.value().size() << "（期望 2 = 1 活跃 + 1 归档在库）\n";
             passed = false;
         }
     }
