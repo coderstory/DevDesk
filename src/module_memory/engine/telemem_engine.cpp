@@ -179,6 +179,11 @@ void TelememEngine::stopAsync() {
     LOG_INFO("记忆引擎：已请求停止");
 }
 
+void TelememEngine::setSnapshotForTest(const Snapshot& snap) {
+    std::lock_guard<std::mutex> lock(mu_);
+    snap_ = snap;
+}
+
 void TelememEngine::runPipeline() {
     const std::filesystem::path dataDir = memoryDataDir();
     std::error_code ec;

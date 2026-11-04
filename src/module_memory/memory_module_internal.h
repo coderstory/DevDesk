@@ -161,6 +161,60 @@ inline std::string formatMilliYuan(long long milli) {
     return buf;
 }
 
+// ── bug217（2026-11-04）：文本按像素预算截断 ──
+// EUI 文本溢出默认不裁剪（TextOverflow::Clip 语义 = 调用方自裁，text_types.h
+// 「超出部分由调用方自己 clip」），审核卡行盒/高度预算固定——长正文/长证据链
+// 曾全量进元素，纵向横向溢出叠印（老板实测 1629 条 pending 真库）。
+// 估宽口径与审核 chips 行同族：CJK（首字节 ≥0xC0 起）= fontSize，ASCII =
+// fontSize/2，续字节不计。budget 内原样返回；超预算按 UTF-8 码点边界截断并补
+// U+2026（省略号自身 advance 计入预算）。全文出口 = 「编辑后接受」对话框。
+inline std::string truncateByAdvance(const std::string& text, float budgetPx,
+                                     float fontSizePx) {
+    const float kEllipsisReserve = fontSizePx;  // 预留省略号宽度
+    if (budgetPx <= kEllipsisReserve) return text.empty() ? text : "…";
+    float adv = 0.0f;
+    std::size_t cut = text.size();  // 触发截断时的字节位置（码点边界）
+    bool truncated = false;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const unsigned char b = static_cast<unsigned char>(text[i]);
+        const float step = (b >= 0xC0) ? fontSizePx
+                                       : ((b < 0x80) ? fontSizePx * 0.5f : 0.0f);
+        if (step > 0.0f && adv + step > budgetPx - kEllipsisReserve) {
+            cut = i;
+            truncated = true;
+            break;
+        }
+        adv += step;
+        // 码点推进：ASCII 1 字节；≥0xC0 按首字节高位数跳续字节（防半码点切割）
+        i += (b < 0x80) ? 1
+             : (b >= 0xF0) ? 4
+             : (b >= 0xE0) ? 3
+                           : 2;
+    }
+    if (!truncated) return text;
+    std::string out = text.substr(0, cut);
+    out += "\xE2\x80\xA6";  // U+2026
+    return out;
+}
+
+// ── bug203（2026-11-04）：python 行与 embedding 行独立呈现 ──
+// 原 pythonLine 三分支（pythonFound 优先）遮蔽 llamaMissing 文案——复合态
+// （Python 在场 + 本机 llama 缺失）只显示 Python 行，embedding 引导永不可见。
+// 拆两行纯函数：compose 与 doctest 共用同一映射。
+inline std::string engineStatusPythonLine(const TelememEngine::Snapshot& es) {
+    return es.pythonFound
+               ? "Python " + es.pythonVersion + " 已检测（telemem 要求 3.10~3.13）"
+               : "未检测到 Python 3.10~3.13——点「首次安装向导」引导安装";
+}
+
+// llamaMissing 时返回醒目警示文案；其余态返回空（compose 不出该行）。
+inline std::string engineStatusEmbedLine(const TelememEngine::Snapshot& es) {
+    if (!es.llamaMissing) return {};
+    return "本机 embedding 服务缺失：记忆入库 / 检索 / 注入不可用"
+           "（将在安装向导中补齐）";
+}
+
 // Primary 按钮在滚动画布内的文字补丁：EUI 渲染端对「stack 内 states 矩形 +
 // 白字」的组合会把文字盖回底色下（定位实验见 2026-10-28 探针； Secondary /
 // Danger 不触发）。文字改为画布层后置兄弟节点，保证浮于底色之上；渲染端

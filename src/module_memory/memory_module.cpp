@@ -131,7 +131,9 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     const eui::Color stateColor = engineStateColor(t, es.state);
 
     // B6/F-69-2：卡高随字号派生（卡内文本行盒已 scaled，卡高不缩 = 按钮越出卡外）
-    const float cardH = core::theme::scaled(176.0f);
+    // bug203（2026-11-04）：176→196——python 行与 embedding 警示行拆分独立呈现，
+    // 多一行文本预算（92/112 两行 + 按钮 138）。
+    const float cardH = core::theme::scaled(196.0f);
     ui.stack("memory.eng.root")
         .position(x, y)
         .size(w, cardH)
@@ -185,12 +187,8 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .color(es.state == TelememEngine::State::Failed ? t.colors.errorText
                                                         : t.colors.textSecondary)
         .build();
-    const std::string pythonLine =
-        es.pythonFound
-            ? "Python " + es.pythonVersion + " 已检测（telemem 要求 3.10~3.13）"
-            : (es.llamaMissing
-                   ? "本机模型文件缺失——embedding 档不可用，先跑首次安装向导"
-                   : "未检测到 Python 3.10~3.13——点「首次安装向导」引导安装");
+    // bug203（2026-11-04）：python 行与 embedding 行独立——复合态两行同现
+    const std::string pythonLine = engineStatusPythonLine(es);
     ui.text("memory.eng.python")
         .position( t.sizes.spacingLarge, core::theme::scaled(92.0f))
         .size(w - 2.0f * t.sizes.spacingLarge, core::theme::scaled(20.0f))
@@ -199,12 +197,25 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .lineHeight(core::theme::scaled(20.0f))
         .color(t.colors.textTertiary)
         .build();
+    const std::string embedLine = engineStatusEmbedLine(es);
+    if (!embedLine.empty()) {
+        // llamaMissing 醒目警示行（warning 色 + 加粗；仅缺失态在场）
+        ui.text("memory.eng.embed")
+            .position( t.sizes.spacingLarge, core::theme::scaled(112.0f))
+            .size(w - 2.0f * t.sizes.spacingLarge, core::theme::scaled(18.0f))
+            .text(embedLine)
+            .fontSize(core::theme::scaled(11.5f))
+            .lineHeight(core::theme::scaled(18.0f))
+            .fontWeight(600)
+            .color(t.colors.warning)
+            .build();
+    }
 
     const bool busy = es.state == TelememEngine::State::Preparing;
     const bool running = es.state == TelememEngine::State::Running;
     ui_kit::button(ui, "memory.eng.wizard", "首次安装向导",
                    ui_kit::ButtonLevel::Secondary, x + t.sizes.spacingLarge,
-                   core::theme::scaled(122.0f), 158.0f, ui_kit::kButtonHeight, t,
+                   core::theme::scaled(138.0f), 158.0f, ui_kit::kButtonHeight, t,
                    {[this] { wizardOpen_ = true; }});
     std::function<void()> toggle;
     if (!busy) {
@@ -218,13 +229,13 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::button(ui, "memory.eng.toggle", "停止引擎",
                        ui_kit::ButtonLevel::Danger,
                        x + t.sizes.spacingLarge + 174.0f,
-                       core::theme::scaled(122.0f), 158.0f,
+                       core::theme::scaled(138.0f), 158.0f,
                        ui_kit::kButtonHeight, t, {toggle});
     } else {
         primaryButton(ui, "memory.eng.toggle",
                       busy ? "启动中…" : "启动引擎",
                       x + t.sizes.spacingLarge + 174.0f,
-                      core::theme::scaled(122.0f), 158.0f,
+                      core::theme::scaled(138.0f), 158.0f,
                       ui_kit::kButtonHeight, t, toggle);
     }
     });

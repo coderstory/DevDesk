@@ -121,7 +121,8 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
 
     composeEngineCard(ui, t, x, w, cy);
     // B6/F-69-2：卡高随字号派生（字变大而卡高不变 = 行底溢出 / 相邻卡叠印）
-    cy += core::theme::scaled(176.0f) + kCardGap;
+    // bug203（2026-11-04）：引擎卡 176→196（embedding 警示行加位，与卡高同步）
+    cy += core::theme::scaled(196.0f) + kCardGap;
     composeHealthGrid(ui, t, x, w, cy);
     cy += core::theme::scaled(236.0f) + kCardGap;
 
@@ -389,7 +390,16 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
 
     std::string title = p.resultText;
     if (title.empty() && !p.evidence.empty()) title = p.evidence.front().quoted;
-    if (title.size() > 32) title = title.substr(0, 32) + "…";
+    if (title.size() > 32) {
+        // bug217（2026-11-04）：32 字节硬切曾劈开 UTF-8 码点（标题尾部乱码 ??），
+        // 回退到码点边界再截
+        std::size_t cut = 32;
+        while (cut > 0 &&
+               (static_cast<unsigned char>(title[cut]) & 0xC0) == 0x80) {
+            --cut;
+        }
+        title = title.substr(0, cut) + "…";
+    }
     if (title.empty()) title = "（无正文）";
     const std::string titleText =
         (p.kind == "add" ? "新增记忆：" + title
@@ -398,10 +408,13 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
                                 : (p.kind == "invalidate"
                                        ? "标记过期记忆：" + title
                                        : "合并重复记忆：" + title)));
+    // bug217（2026-11-04）：行盒宽度预算截断（窄窗标题曾横向溢出压到置信度/来源）
+    const float kTitleBudget = w - (hx - x) - kindW - 200.0f;
     ui.text("memory.rv.title." + p.id)
         .position(hx + kindW + 10.0f, y + core::theme::scaled(12.0f))
-        .size(w - (hx - x) - kindW - 200.0f, 22.0f)
-        .text(titleText)
+        .size(kTitleBudget, 22.0f)
+        .text(truncateByAdvance(titleText, kTitleBudget,
+                                core::theme::scaled(13.5f)))
         .fontSize(core::theme::scaled(13.5f))
         .lineHeight(core::theme::scaled(22.0f))
         .fontWeight(600)
@@ -441,11 +454,16 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
         body = "目标条目 #" +
                (p.targetIds.empty() ? std::string("0") : p.targetIds.front());
     }
+    // bug217（2026-11-04）：正文盒 56px ≈ 3 行（lineHeight 18）——按 3 行像素
+    // 预算截断（真库均值 ~1975 CJK 字符曾纵向溢出压住证据链/操作钮/下一卡）。
+    // 全文出口 = 「编辑后接受」对话框（editText_ 载入未截断原文）。
     ui.text("memory.rv.body." + p.id)
         .position(x + 16.0f, y + core::theme::scaled(42.0f))
         .size(w - 32.0f, core::theme::scaled(56.0f))
         .wrap()
-        .text(body)
+        .text(truncateByAdvance(body, 3.0f * (w - 32.0f) -
+                                             3.0f * core::theme::scaled(12.5f),
+                                core::theme::scaled(12.5f)))
         .fontSize(core::theme::scaled(12.5f))
         .lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textSecondary)
@@ -462,10 +480,16 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
         evText = "证据链：无（扫描类提案，无会话出处）";
     }
     const bool expanded = expanded_.count(p.id) > 0;
+    // bug217（2026-11-04）：证据链单行预算截断（e.quoted 曾全文拼接，长原文
+    // 横向溢出横贯整卡）；预算扣除 ▾/▸ 前缀与省略号宽度
+    const std::string evtoggleText =
+        truncateByAdvance(std::string(expanded ? "▾ " : "▸ ") + evText,
+                          (w - 32.0f) - core::theme::scaled(11.5f) * 2.0f,
+                          core::theme::scaled(11.5f));
     ui.text("memory.rv.evtoggle." + p.id)
         .position(x + 16.0f, y + core::theme::scaled(106.0f))
         .size(w - 32.0f, core::theme::scaled(24.0f))
-        .text(std::string(expanded ? "▾ " : "▸ ") + evText)
+        .text(evtoggleText)
         .fontSize(core::theme::scaled(11.5f))
         .lineHeight(core::theme::scaled(24.0f))
         .color(t.colors.info)
@@ -543,12 +567,17 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
         .fontWeight(600)
         .color(statusColor)
         .build();
+    // bug217（2026-11-04）：已裁决卡正文盒 40px ≈ 2 行——同口径像素预算截断
+    // （resultText 长文曾纵向溢出压住撤销钮与下一卡）
     ui.text("memory.rv.done.kind." + p.id)
         .position(x + 16.0f, y + core::theme::scaled(34.0f))
         .size(w - 200.0f, core::theme::scaled(40.0f))
         .wrap()
-        .text("「" + kindLabel(p.kind) + "」" +
-              (p.resultText.empty() ? srcLabel(p.source) : p.resultText))
+        .text(truncateByAdvance(
+            "「" + kindLabel(p.kind) + "」" +
+                (p.resultText.empty() ? srcLabel(p.source) : p.resultText),
+            2.0f * (w - 200.0f) - 2.0f * core::theme::scaled(12.5f),
+            core::theme::scaled(12.5f)))
         .fontSize(core::theme::scaled(12.5f))
         .lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textSecondary)
@@ -662,15 +691,24 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         float cx = x + 12.0f;
         cx = chipRow("memory.rv.chipT.", cx, cy + core::theme::scaled(10.0f),
                      typeLabels, filterType_,
-                     [this](int v) { filterType_ = v; });
+                     [this](int v) {
+                         filterType_ = v;
+                         reviewShowLimit_ = kReviewShowLimit;  // bug190：筛选变化重置渐进加载
+                     });
         cx += 14.0f;
         cx = chipRow("memory.rv.chipS.", cx, cy + core::theme::scaled(10.0f),
                      srcLabels, filterSrc_,
-                     [this](int v) { filterSrc_ = v; });
+                     [this](int v) {
+                         filterSrc_ = v;
+                         reviewShowLimit_ = kReviewShowLimit;
+                     });
         // 窄窗：状态 chips 折第二行；宽窗：延续第一行（原版接排）
         cx = wrapNarrow ? x + 12.0f : cx + 14.0f;
         cx = chipRow("memory.rv.chipSt.", cx, cy + stateRowY, stateLabels,
-                     filterState_, [this](int v) { filterState_ = v; });
+                     filterState_, [this](int v) {
+                         filterState_ = v;
+                         reviewShowLimit_ = kReviewShowLimit;
+                     });
         // 批量模式开关（右侧；标签贴紧开关，窄窗不与 chips 行重叠）
         ui.text("memory.rv.batchlbl")
             .position(x + w - 180.0f, cy + core::theme::scaled(14.0f))
@@ -748,16 +786,41 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         }
     }
 
-    // 卡片流（按过滤 + 状态）
+    // 卡片流（按过滤 + 状态）。bug190（2026-11-04）：渲染截断于
+    // reviewShowLimit_（默认 50，筛选变化重置），matched 继续计数——上限外
+    // 不 compose 卡（单帧元素数/文本度量随 pending 线性膨胀曾致主线程冻结），
+    // 尾部「再显示 50 条」渐进加载。数据层 pending 不动（tab 徽章与筛选计数
+    // 仍报全量真值）。
     if (filterState_ == 0) {
         int shown = 0;
+        int matched = 0;
         for (const auto& p : snap.pending) {
             if (!kindMatches(filterType_, p.kind)) continue;
             if (!srcMatches(filterSrc_, p.source)) continue;
+            ++matched;
+            if (shown >= reviewShowLimit_) continue;
             composeProposalCard(ui, t, x, w, cy, snap, p,
                                 batchableKind(p.kind));
             cy += 232.0f + 12.0f;
             ++shown;
+        }
+        if (matched > shown) {
+            // 渐进加载尾行：如实报剩余量 + 按需增长（每批 kReviewShowLimit）
+            ui.text("memory.rv.more.note")
+                .position(x + 16.0f, cy + core::theme::scaled(12.0f))
+                .size(w - 190.0f, core::theme::scaled(22.0f))
+                .text("已显示前 " + std::to_string(shown) + " 条 · 还有 " +
+                      std::to_string(matched - shown) +
+                      " 条待审（也可用上方筛选缩小范围）")
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(core::theme::scaled(22.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            ui_kit::button(ui, "memory.rv.more", "再显示 50 条",
+                           ui_kit::ButtonLevel::Secondary, x + w - 150.0f, cy,
+                           134.0f, 34.0f, t,
+                           {[this] { reviewShowLimit_ += kReviewShowLimit; }});
+            cy += 44.0f + 12.0f;
         }
         if (shown == 0) {
             const bool totallyEmpty = snap.pending.empty();

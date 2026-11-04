@@ -41,6 +41,10 @@ public:
     void startAsync();  // Preparing/Running 中为 no-op（防重复拉起）
     void stopAsync();   // 幂等；杀进程树，不等待工作线程（UI 线程禁阻塞）
 
+    // 测试缝（memory_probe 组 E 用；与 MemoryModule::setActiveViewForTest 同族）：
+    // 锁内整表覆写快照供 UI 断言，不触碰 worker/进程句柄。仅测试进程调用。
+    void setSnapshotForTest(const Snapshot& snap);
+
 private:
     TelememEngine() = default;
     void runPipeline();

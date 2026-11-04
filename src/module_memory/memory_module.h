@@ -34,6 +34,9 @@ public:
 
     // 测试/探针缝：视图切换不经点击注入（probe 直驱）
     void setActiveViewForTest(int view) { activeView_ = view; }
+    // 测试/探针缝：审核视图滚动偏移直驱（bug190 探针要把视口滚到渐进加载
+    // 尾行才能点「再显示 50 条」——按钮内容位深在 50 卡 × 244px ≈ 12k px）
+    void setReviewScrollForTest(float v) { reviewScroll_ = v; }
 
 private:
     // 三视图 compose（在滚动容器 content 内绘制；y = 视口顶，x = 内容左，
@@ -92,6 +95,13 @@ private:
     int filterType_ = 0;   // 0=全部 1=合并 2=失效 3=遗忘 4=新增
     int filterSrc_ = 0;    // 0=全部 1=collect 2=整理 3=decay
     int filterState_ = 0;  // 0=待审 1=已处理
+    // 待审卡流渐进加载上限（bug190，2026-11-04）：无上限逐卡渲染时单帧
+    // compose 的元素数与文本度量量随 pending 线性膨胀（真实库曾 1630 条
+    // pending → ~2.1 万元素 + 数百万 CJK 字形度量/帧，主线程被单帧 compose
+    // 饿死 = UI 冻结）。默认渲染前 50 张，卡片流尾「再显示 50 条」按需增长；
+    // 筛选条件变化时重置。
+    static constexpr int kReviewShowLimit = 50;
+    int reviewShowLimit_ = kReviewShowLimit;
     bool batchMode_ = false;
     std::set<std::string> batchSel_;
     std::set<std::string> expanded_;

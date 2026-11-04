@@ -15,6 +15,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "module_memory/engine/telemem_config.h"
+#include "module_memory/engine/telemem_engine.h"
 #include "module_memory/memory_module.h"
 #include "module_memory/panel/recall_eval.h"
 #include "module_memory/proposals/curator.h"
@@ -28,6 +29,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -335,6 +337,103 @@ int main(int argc, char* argv[]) {
     }
     for (int i = 0; i < 8; ++i) composeFrame();
     shoot("memory-review.png", &A.passed);
+
+    // ── 组 E：引擎卡状态行独立性（bug203）+ 启动按钮命中链 ──
+    // bug203：pythonFound 优先分支曾遮蔽 llamaMissing 文案——注入「python 已检
+    // 测 + embedding 缺失」复合态，断言 python 行与 embedding 警示行同时在场。
+    // 修复前：memory.eng.embed 元素不存在 → 本组红。
+    {
+        namespace engine = module::memory::engine;
+        engine::TelememEngine::Snapshot fake;
+        fake.state = engine::TelememEngine::State::Idle;
+        fake.pythonVersion = "3.13.15";
+        fake.pythonFound = true;
+        fake.llamaMissing = true;
+        engine::TelememEngine::global().setSnapshotForTest(fake);
+        switchView(0);
+        composeFrame();
+        composeFrame();
+        A.textHas("memory.eng.python", "已检测");          // python 行独立呈现
+        A.textHas("memory.eng.embed", "embedding 服务缺失");  // 醒目警示行在场
+        // 启动按钮命中链：按钮中心命中 = 按钮本体（bug201 复验口径；非滚动根/卡底）
+        const auto* bg = A.elem("memory.eng.toggle.bg");
+        if (bg == nullptr) {
+            std::cerr << "memory_probe: FAIL——'memory.eng.toggle.bg' 缺失\n";
+            A.passed = false;
+        } else {
+            const float cx = bg->frame.x + bg->frame.width * 0.5f;
+            const float cyB = bg->frame.y + bg->frame.height * 0.5f;
+            const std::string hit = runtime.hitTestInteractiveAt(
+                static_cast<double>(cx), static_cast<double>(cyB), 1.0f);
+            if (hit != "memory.eng.toggle.bg") {
+                std::cerr << "memory_probe: FAIL——启动钮中心命中 '" << hit
+                          << "' ≠ memory.eng.toggle.bg（命中链被盖）\n";
+                A.passed = false;
+            }
+        }
+        for (int i = 0; i < 8; ++i) composeFrame();
+        shoot("memory-engine-card.png", &A.passed);
+    }
+
+    // ── 组 F：审核卡长正文/长证据链截断（bug217：~1975 CJK 长文曾溢出行盒叠印）──
+    // 修复前：body/evtoggle 文本全量进元素 → 长度断言红 + 截图可见溢出叠印。
+    {
+        std::string longText;
+        for (int i = 0; i < 2000; ++i) longText += "记";
+        auto prop2 = module::memory::proposals::ProposalStore::open(
+            dataDir / "proposals.db");
+        std::string longId;
+        if (prop2.isFail()) {
+            std::cerr << "memory_probe: FAIL——长文种子库打开失败\n";
+            A.passed = false;
+        } else {
+            using module::memory::proposals::ProposalEvidence;
+            const ProposalEvidence longEv{"demo-session-long", 7, longText,
+                                          static_cast<std::int64_t>(std::time(nullptr)) - 60};
+            auto longP = module::memory::proposals::Curator::proposeAdd(
+                prop2.value(), longText, {longEv}, 0.9,
+                static_cast<std::int64_t>(std::time(nullptr)));
+            if (longP.isFail()) {
+                std::cerr << "memory_probe: FAIL——长文提案创建失败\n";
+                A.passed = false;
+            } else {
+                longId = longP.value().id;
+            }
+        }
+        if (!longId.empty()) {
+            // 面板刷新有 1s 墙钟节流（PanelState::refresh）——先跨过再断言，
+            // 否则拿到的是种子期旧快照（伪红）
+            std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+            switchView(1);
+            composeFrame();
+            composeFrame();
+            A.textHas("memory.tabs.1.text", "(4)");
+            const auto* bodyEl = A.elem("memory.rv.body." + longId);
+            const auto* evEl = A.elem("memory.rv.evtoggle." + longId);
+            if (bodyEl == nullptr || evEl == nullptr) {
+                std::cerr << "memory_probe: FAIL——长文卡元素缺失\n";
+                A.passed = false;
+            } else {
+                // 预算 ≈ 3 行 × 卡宽；截断后正文/证据链均 <1500 字节（未截断
+                // 时 UTF-8 下 ≈6000+ 字节，断言区分度充足）
+                if (bodyEl->text.size() >= 1500 || evEl->text.size() >= 1500) {
+                    std::cerr << "memory_probe: FAIL——长文未截断（body "
+                              << bodyEl->text.size() << "B / evtoggle "
+                              << evEl->text.size() << "B，预算内应 <1500B）\n";
+                    A.passed = false;
+                }
+                const std::string kEllipsis = "\xE2\x80\xA6";  // U+2026 …
+                if (bodyEl->text.size() < 3 ||
+                    bodyEl->text.compare(bodyEl->text.size() - 3, 3,
+                                         kEllipsis) != 0) {
+                    std::cerr << "memory_probe: FAIL——截断正文未以省略号收尾\n";
+                    A.passed = false;
+                }
+            }
+            for (int i = 0; i < 8; ++i) composeFrame();
+            shoot("memory-review-longtext.png", &A.passed);
+        }
+    }
 
     // ── 组 C：配置页关键控件（脱敏开关 / 导入钮 / 清除钮 / 阈值滑条 / 数据目录）──
     {

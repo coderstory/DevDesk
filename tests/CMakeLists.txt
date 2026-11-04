@@ -96,6 +96,8 @@ add_executable(devdesk_tests
     test_modules/test_net_fetch_tool.cpp
     test_modules/test_message_blocks.cpp
     test_modules/test_memory_engine.cpp
+    # bug203/217：引擎卡状态行独立 + 审核卡文本像素预算截断 + 数据根 MSYS 陷阱
+    test_modules/test_memory_status_lines.cpp
     # 脱敏闸（S3-A）：红队夹具直读仓库数据集，DEVDESK_SOURCE_DIR 供定位
     test_modules/test_memory_sanitize.cpp
     # 采集器（S3-B）：临时目录夹具，四道过滤 + 水位幂等
