@@ -417,6 +417,12 @@ public:
             InitializeProcThreadAttributeList(attrList, 1, 0, &attrSize) &&
             UpdateProcThreadAttribute(attrList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hpc,
                                       sizeof(HPCON), nullptr, nullptr)) {
+            // bug187（2026-11-04 老板实测打回）：属性列表必须写回 si.AttributeList——
+            // 只在局部变量上建好不挂进 STARTUPINFOEX，CreateProcessW 会「成功」但
+            // PSEUDOCONSOLE 属性不生效：powershell 自行分配新控制台宿主窗（Win11
+            // 24H2 默认=Windows Terminal）→ 点按钮弹外部终端窗、内嵌 reader 永阻塞
+            // 零字节。官方样例 siEx.lpAttributeList 同位写回。
+            si.lpAttributeList = attrList;
             procOk = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE,
                                     EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr,
                                     &si.StartupInfo, &pi) != FALSE;
