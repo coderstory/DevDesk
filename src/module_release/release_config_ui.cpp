@@ -1230,12 +1230,17 @@ void drawReleaseConfigPage(eui::Ui& ui, const eui::Screen& screen,
     const bool servicesTab = state.tab == ReleaseConfigUiState::Tab::Services;
     const float contentW = std::max(0.0f, screen.width - kPagePad * 2.0f);
     const float gap = t.sizes.spacingLarge;  // 16
-    // 2026-11-01：tab 行高度已由 kHeaderH(40) 统一为 ui_kit::kWtabHeight(36)，
-    // 卡高公式必须跟着改——否则 column 内容比可用高度少 4px，卡底留白变成 36
-    // （release_probe「页面下 padding」断言抓到的就是这 4px）。
+    // 2026-11-01：tab 行高度已由 kHeaderH(40) 统一为 ui_kit::kWtabHeight，
+    // 卡高公式必须跟着改——否则 column 内容与可用高度错位（release_probe
+    // 「页面下 padding」断言抓过这 4px）。
+    // 2026-11-03 池167：tab 行 36→40，设计补偿 = tab↔卡间距收 4（设计 §2 F2
+    // 「gap 8→4」目标值 4；代码实际旧值 16，按目标值落地并上报主会话）。根列
+    // gap 均匀值做不到逐对生效，tab 行+列表卡收进内层列（内层 gap 4，根列
+    // header↔内层仍 16）；列表卡不缩反余 8px，池134 行节距零滚动方向安全。
+    constexpr float kTabListGap = 4.0f;
     const float cardH = std::max(
         0.0f, screen.height - kPagePad - kPageHeaderH - gap -
-                  ui_kit::kWtabHeight - gap);
+                  ui_kit::kWtabHeight - kTabListGap);
 
     // 页面底色 = 主窗口 clearColor（theme background #FAFAF9），不自铺不透明底。
     ui.column("release.config.page")
@@ -1244,8 +1249,14 @@ void drawReleaseConfigPage(eui::Ui& ui, const eui::Screen& screen,
         .gap(gap)
         .content([&] {
             drawPageHeader(ui, contentW, servicesTab, state, t);
-            drawTabs(ui, contentW, state, t);
-            drawListCard(ui, contentW, cardH, state, t, componentTheme);
+            ui.column("release.config.tabsblock")
+                .size(contentW, ui_kit::kWtabHeight + kTabListGap + cardH)
+                .gap(kTabListGap)
+                .content([&] {
+                    drawTabs(ui, contentW, state, t);
+                    drawListCard(ui, contentW, cardH, state, t, componentTheme);
+                })
+                .build();
         })
         .build();
 

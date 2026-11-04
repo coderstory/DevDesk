@@ -16,17 +16,18 @@
 
 namespace ui_kit {
 
-// Tab 常量（S2.2）：14px 主文字。
-constexpr float kWtabFontSize = 14.0f;         // S2.2 页面级 Tab 字号
-constexpr float kWtabSmallFontSize = 13.0f;    // S2.2 弹窗级小 Tab 字号
+// Tab 常量：2026-11-03 池167 全站放大档，主文字 15px（scaled() 自动随档）。
+constexpr float kWtabFontSize = 15.0f;         // 页面级 Tab 字号
+constexpr float kWtabSmallFontSize = 14.0f;    // 弹窗级小 Tab 字号
 
 // 2026-11-01 统一：Tab 高度此前有 32 / 36 / 40 三档并存（memory 36、settings/md/
 // wallpaper/release-config/claude-detail 40、claude-form 32），同一个组件在不同页面
-// 高度不同，跨页切换时 pill 高矮不一。定死两档：
-//   页面级 = 36（页内分区切换）
-//   弹窗级 = 32（弹窗内小 tab，如 Profile 表单的 3 档）
-constexpr float kWtabHeight = 36.0f;
-constexpr float kWtabSmallHeight = 32.0f;
+// 高度不同，跨页切换时 pill 高矮不一。定死两档。
+// 2026-11-03 池167 放大：页面级 = 40（= kHeaderH，页头归一 40 档）、弹窗级 = 36
+// （两级差恒 4，梯子 40/36）。零滚动补偿：settings 第二 gap 16→12、
+// release_config tab↔卡 gap →4（设计文档 §2 F2）。
+constexpr float kWtabHeight = 40.0f;
+constexpr float kWtabSmallHeight = 36.0f;
 
 // 选中态底色比例：以 primary 按 14% 叠在页面底上（≈#D9F5E4 on #F5FAF7）。
 // 原用不透明 primarySoftBg #E8F8EE，与页面底 #F5FAF7 的 RGB 差 < 13，
@@ -38,7 +39,7 @@ constexpr float kWtabSelectedBgOpacity = 0.14f;
 // + rect.hit（透明 hit area 挂 onClick）+ text（文字）。
 // 非 active 时不创建 bg rect，无下划线。
 // 几何：(x, y) 左上角，(w, h) 尺寸；调用方决定宽高。
-// fontSize：默认 kWtabFontSize（页面级 14px）；弹窗级小 Tab 传 kWtabSmallFontSize（13px）。
+// fontSize：默认 kWtabFontSize（页面级）；弹窗级小 Tab 传 kWtabSmallFontSize。
 // 节点 id = `<id>.bg`（active 时底色 rect，非 active 时不存在）
 // / `<id>.hit`（透明 hit rect）/ `<id>.text`（文字），单测按此定位。
 void wtab(eui::Ui& ui, const std::string& id, const std::string& label,

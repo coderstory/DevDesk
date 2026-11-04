@@ -271,14 +271,36 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                             const auto [cols, cardW] = ui_kit::gridColumns(
                                 listW, t.sizes.spacingLarge, kCardMinW, kCardMaxW,
                                 kCardMaxCols);
-                            (void)cols;
-                            listUi.flow("mcp.grid")
+                            // 池156：卡垂直间距 16→24（spacingXLarge 档，与全站组
+                            // 间距档对齐）、水平 16 不变。EUI flow 单 gap 横竖同轴、
+                            // 无 rowGap 能力 → 行包 row 容器（设计 §2 F3 路径②）：
+                            // 行内 gap 16、行间 gap 24，视觉验收以 24/16 为准。
+                            listUi.column("mcp.grid")
                                 .width(listW)
-                                .gap(t.sizes.spacingLarge)
+                                .gap(t.sizes.spacingXLarge)
                                 .content([&] {
-                                    for (const auto& tool : tools) {
-                                        drawToolCard(listUi, tool, t, comp,
-                                                     svc.running, cardW);
+                                    const int rowCount =
+                                        (static_cast<int>(tools.size()) +
+                                         cols - 1) /
+                                        cols;
+                                    for (int r = 0; r < rowCount; ++r) {
+                                        listUi.row("mcp.grid.row." +
+                                                   std::to_string(r))
+                                            .size(listW, kCardH)
+                                            .gap(t.sizes.spacingLarge)
+                                            .content([&] {
+                                                for (int c = 0; c < cols; ++c) {
+                                                    const int idx = r * cols + c;
+                                                    if (idx >= static_cast<int>(
+                                                                   tools.size()))
+                                                        break;
+                                                    drawToolCard(
+                                                        listUi, tools[idx], t,
+                                                        comp, svc.running,
+                                                        cardW);
+                                                }
+                                            })
+                                            .build();
                                     }
                                 })
                                 .build();

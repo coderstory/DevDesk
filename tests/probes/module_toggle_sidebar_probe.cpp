@@ -32,11 +32,13 @@
 #include "core/router.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>  // 粒子生命期（480ms）壁钟快进
 
 // app:: 层链接桩（dsl_app_impl.h 引用 dslAppConfig；app::compose 用真实现，
 // 来自本 probe 编译的 src/app_sidebar.cpp，不桩）
@@ -274,8 +276,12 @@ int main(int argc, char* argv[]) {
     // 2) on → 下一帧条目出现，y = 前一条目下一格 + 组间 divider（W3 §4.8）。
     // 注册序 = home, settings, agent；registerModule 按 PageId 序插入，故 Agent(4)
     // 在 Settings(10) 之前，侧边栏序 Home, Agent, [groupdiv], Settings。
-    // Agent(work) → Settings(system) 间画 groupdiv（1px + gap 4 = 5px），故
-    // Settings.y = Agent.y + itemH40 + gap4 + divider1 + gap4 = Agent.y + 49。
+    // Agent(work) → Settings(system) 间画 groupdiv（1px + gap），间距按 need171
+    // 档位：正常/紧凑档 = itemH40+gap4+1+gap4 = 49；极紧档 = itemH36+gap2+1+gap2
+    // = 41（B6：窗口高驱动分档，探针窗 700 逻辑即落极紧档）。
+    const float bodyH = static_cast<float>(args.windowH) - 40.0f;  // 自绘标题栏
+    const float strideWithDivider =
+        bodyH < 680.0f ? 41.0f : 49.0f;
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     composeFrame();
@@ -286,10 +292,12 @@ int main(int argc, char* argv[]) {
     check(agentHit != nullptr, "on 后：Agent 条目应出现");
     check(settingsHit != nullptr, "on 后：Settings 条目应存在（y 锚）");
     if (agentHit != nullptr && settingsHit != nullptr) {
-        check(nearEq(settingsHit->frame.y, agentHit->frame.y + 49.0f),
+        check(nearEq(settingsHit->frame.y,
+                     agentHit->frame.y + strideWithDivider),
               "Settings 条目 y=" + std::to_string(settingsHit->frame.y) +
-                  " 期望 " + std::to_string(agentHit->frame.y + 49.0f) +
-                  "（Agent 下一格 + 组间 divider 5px——Agent(work) 在 Settings(system) 之前）");
+                  " 期望 " +
+                  std::to_string(agentHit->frame.y + strideWithDivider) +
+                  "（Agent 下一格 + 组间 divider——Agent(work) 在 Settings(system) 之前）");
         check(ui->find("app.sidebar.item.Agent.label") != nullptr,
               "展开态 Agent label 应存在");
     }
@@ -379,6 +387,84 @@ int main(int argc, char* argv[]) {
     }
     app::setSidebarCollapsed(false, false);
     composeFrame();
+
+    // 6) B6 need172：收缩按钮几何（直径 40 正圆 + 1px 常态描边 + 56 区内居中）+
+    //    真点击切换侧栏宽度 + hover 一次性粒子（迸发/自止/重触发）。
+    //    hover 驱动走 onHoverChanged 手调（锁屏机无真实指针 move 注入；与真指针
+    //    共用同一接线，回调由 EUI 命中派发写入）。
+    composeFrame();
+    {
+        const auto* toggle =
+            ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+        check(toggle != nullptr, "§6 收缩按钮应存在");
+        if (toggle != nullptr) {
+            check(nearEq(toggle->frame.width, 40.0f) &&
+                      nearEq(toggle->frame.height, 40.0f),
+                  "§6 按钮直径应 40");
+            check(nearEq(toggle->radius, 20.0f), "§6 按钮应正圆（radius=20）");
+            check(nearEq(toggle->border.width, 1.0f),
+                  "§6 常态应有 1px 圆框描边");
+            // 56 预留区内垂直居中：按钮底距侧栏底 8px（toggleY=H−48，上下各 8）
+            const auto* sidebarEl = ui->find("app.sidebar");
+            check(sidebarEl != nullptr &&
+                      nearEq(toggle->frame.y + toggle->frame.height + 8.0f,
+                             sidebarEl->frame.y + sidebarEl->frame.height),
+                  "§6 按钮应在 56 预留区内垂直居中（底距侧栏底 8px）");
+            // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 220→72
+            clickElement(*toggle);
+            composeFrame();
+            check(nearEq(app::sidebarWidth(), 72.0f),
+                  "§6 真点击后侧栏应折叠（220→72）");
+            const auto* folded =
+                ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+            check(folded != nullptr && nearEq(folded->frame.x, 16.0f),
+                  "§6 折叠态按钮应水平居中 ((72-40)/2=16)");
+            if (folded != nullptr) {
+                clickElement(*folded);
+                composeFrame();
+            }
+            check(nearEq(app::sidebarWidth(), 220.0f),
+                  "§6 再点击应展开（72→220）");
+        }
+
+        // hover 一次性粒子：迸发 8 颗 + 泵挂树 + 描边变 primaryHover
+        const auto* t3 =
+            ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+        check(t3 != nullptr && t3->onHoverChanged != nullptr,
+              "§6 按钮 hover 回调应接线");
+        if (t3 != nullptr) t3->onHoverChanged(true);
+        composeFrame();
+        int particles = 0;
+        for (int i = 0; i < 8; ++i) {
+            if (ui->find("app.sidebar.toggle.particle." + std::to_string(i)) !=
+                nullptr) {
+                ++particles;
+            }
+        }
+        check(particles == 8, "§6 hover 后应迸发 8 颗粒子");
+        check(ui->find("app.sidebar.toggle.particle.driver") != nullptr,
+              "§6 粒子生命泵应挂树");
+        const auto* hovBtn = ui->find("app.sidebar.toggle");
+        check(hovBtn != nullptr &&
+                  nearEq(hovBtn->border.color.r,
+                         core::theme::current().colors.primaryHover.r),
+              "§6 hover 描边应变 primaryHover");
+        // hover 停留超过粒子生命（480ms）→ 自止消失（不循环判据：hover 仍 true）
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        composeFrame();
+        check(ui->find("app.sidebar.toggle.particle.0") == nullptr &&
+                  ui->find("app.sidebar.toggle.particle.driver") == nullptr,
+              "§6 粒子到期应自止（hover 停留不循环）");
+        // 移出再进 → 重触发；保持 hover 态给收尾截图（绿框 + 粒子初发段）
+        const auto* t4 = ui->find("app.sidebar.toggle");
+        if (t4 != nullptr) {
+            t4->onHoverChanged(false);
+            t4->onHoverChanged(true);
+        }
+        composeFrame();
+        check(ui->find("app.sidebar.toggle.particle.0") != nullptr,
+              "§6 移出再进粒子应重触发");
+    }
 
     // 退出前落一张「当前状态图」（--screenshot <路径>）
     // 通用看图口：跑一次 module_toggle_sidebar_probe 就能拿到此刻侧栏长什么样。
