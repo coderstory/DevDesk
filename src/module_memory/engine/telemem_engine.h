@@ -20,12 +20,28 @@ class TelememEngine {
 public:
     enum class State { Idle, Preparing, Running, Stopped, Failed };
 
+    // embedding 本机包就位态（need:202 F-04/F-05；设计 §4 四字段映射）。
+    // UI 只读这些字段渲染，不自行探测文件系统。
+    enum class EmbedSource { None, Pkg, DataRoot };
+    enum class EmbedState {
+        Unknown,      // 未探测（管线未跑、未开过向导）
+        NeedDownload, // llama 在场但模型缺（idle 引导态，可走 HF 下载）
+        Downloading,  // 管线下载中（detail 带进度）
+        Ready,        // 就位（embedSource 区分随包/数据根）
+        Failed        // 定位/下载/拉起/健康失败（embedDetail 可诊断，可重试）
+    };
+
     struct Snapshot {
         State state = State::Idle;
         std::string detail;        // 当前步/失败原因（面板可读；已过 redactSecretsForLog）
         std::string pythonVersion; // 合格解释器版本（如 "3.12.4"），未找到为空
         bool pythonFound = false;
         bool llamaMissing = false; // llama-server 定位失败（embedding 档不可用的引导态）
+        // ── embedding 本机包四字段（向导③步与主控台就绪口径共用）──
+        bool embedReady = false;
+        EmbedSource embedSource = EmbedSource::None;
+        EmbedState embedState = EmbedState::Unknown;
+        std::string embedDetail; // 进度/失败原因/就位来源（可诊断）
     };
 
     // 模块级单例：MemoryModule 与后续 hook 壳共用同一托管实例
@@ -40,6 +56,11 @@ public:
 
     void startAsync();  // Preparing/Running 中为 no-op（防重复拉起）
     void stopAsync();   // 幂等；杀进程树，不等待工作线程（UI 线程禁阻塞）
+
+    // 向导③步即时检查（need:202 F-04）：本地文件探测一次（llama 定位 + 模型定位），
+    // 只在 Idle/Stopped 下覆写 embed* 字段——Preparing/Running/Failed 下字段由管线
+    // 独占，调用是 no-op。UI 线程可调（纯 stat，几毫秒）；打开向导时触发一次。
+    void refreshEmbedProbe();
 
     // 测试缝（memory_probe 组 E 用；与 MemoryModule::setActiveViewForTest 同族）：
     // 锁内整表覆写快照供 UI 断言，不触碰 worker/进程句柄。仅测试进程调用。

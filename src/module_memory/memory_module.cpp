@@ -199,15 +199,16 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .build();
     const std::string embedLine = engineStatusEmbedLine(es);
     if (!embedLine.empty()) {
-        // llamaMissing 醒目警示行（warning 色 + 加粗；仅缺失态在场）
+        // 缺失态=醒目警示行（warning 色 + 加粗）；就绪态（F-08）=中性行不抢视觉
+        const bool embedMissing = es.llamaMissing;
         ui.text("memory.eng.embed")
             .position( t.sizes.spacingLarge, core::theme::scaled(112.0f))
             .size(w - 2.0f * t.sizes.spacingLarge, core::theme::scaled(18.0f))
             .text(embedLine)
             .fontSize(core::theme::scaled(11.5f))
             .lineHeight(core::theme::scaled(18.0f))
-            .fontWeight(600)
-            .color(t.colors.warning)
+            .fontWeight(embedMissing ? 600 : 400)
+            .color(embedMissing ? t.colors.warning : t.colors.textTertiary)
             .build();
     }
 
@@ -216,7 +217,12 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     ui_kit::button(ui, "memory.eng.wizard", "首次安装向导",
                    ui_kit::ButtonLevel::Secondary, x + t.sizes.spacingLarge,
                    core::theme::scaled(138.0f), 158.0f, ui_kit::kButtonHeight, t,
-                   {[this] { wizardOpen_ = true; }});
+                   {[this] {
+                       wizardOpen_ = true;
+                       // 向导③步即时检查（need:202 F-04）：本地文件探测一次，
+                       // idle 态下刷新 embed* 快照字段（管线态不受影响）
+                       TelememEngine::global().refreshEmbedProbe();
+                   }});
     std::function<void()> toggle;
     if (!busy) {
         if (running) {

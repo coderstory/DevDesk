@@ -3,6 +3,7 @@
 
 #include "telemem_config.h"
 #include "core/logging.h"
+#include "core/paths.h"
 #include "platform/exec_capture.h"
 #include "platform/http_client.h"
 
@@ -29,32 +30,114 @@ std::filesystem::path exeNameIn(const std::filesystem::path& dir) {
     return dir / llamaServerBinaryName();
 }
 
+// 存在且非 0 字节（0 字节视同缺失，与既有重下口径一致）
+bool usableFile(const std::filesystem::path& p) {
+    std::error_code ec;
+    if (!std::filesystem::exists(p, ec) || ec) return false;
+    const auto size = std::filesystem::file_size(p, ec);
+    return !ec && size > 0;
+}
+
 } // namespace
 
-std::filesystem::path locateLlamaServer(const std::filesystem::path& dataDir) {
-    // 1) 显式环境覆盖（诊断/自备包）
+std::filesystem::path bundledAssetsDir() {
+    const auto exeDir = core::paths::executableDir();
+    if (exeDir.empty()) return {};
+    return exeDir / "assets";
+}
+
+LlamaLocate locateLlamaServerBetween(const std::filesystem::path& assetsDir,
+                                     const std::filesystem::path& dataDir) {
+    // 1) 显式环境覆盖（诊断/自备包）——兼容两种指向：bin 目录本体（历史口径）
+    //    或含 llama/bin 的根（与数据根同布局，测试/装机脚本常见形态）
     if (const char* envDir = std::getenv("DEVDESK_LLAMA_DIR")) {
         if (*envDir != '\0') {
-            const std::filesystem::path p = exeNameIn(envDir);
             std::error_code ec;
-            if (std::filesystem::exists(p, ec) && !ec) return p;
+            const std::filesystem::path direct = exeNameIn(envDir);
+            if (std::filesystem::exists(direct, ec) && !ec) return {direct, "env"};
+            ec.clear();
+            const std::filesystem::path nested =
+                exeNameIn(std::filesystem::path(envDir) / "llama" / "bin");
+            if (std::filesystem::exists(nested, ec) && !ec) return {nested, "env"};
         }
     }
-    // 2) 数据目录（DevDesk 托管安装的落点）
+    // 2) exe 同级随包 assets（装机即达，零下载）
+    if (!assetsDir.empty()) {
+        const std::filesystem::path p = exeNameIn(assetsDir / "llama" / "bin");
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec) && !ec) return {p, "pkg"};
+    }
+    // 3) 数据目录（DevDesk 托管安装的落点，旧装机向后兼容）
     {
         const std::filesystem::path p = exeNameIn(dataDir / "llama" / "bin");
         std::error_code ec;
-        if (std::filesystem::exists(p, ec) && !ec) return p;
+        if (std::filesystem::exists(p, ec) && !ec) return {p, "dataroot"};
     }
-    // 3) PATH（平台探测：SearchPathW / 逐目录 stat）
+    // 4) PATH（平台探测：SearchPathW / 逐目录 stat）
     if (platform::executableOnPath(llamaServerBinaryName())) {
-        return std::filesystem::path(llamaServerBinaryName());
+        return {std::filesystem::path(llamaServerBinaryName()), "path"};
     }
     return {};
 }
 
+LlamaLocate locateLlamaServerDetailed(const std::filesystem::path& dataDir) {
+    return locateLlamaServerBetween(bundledAssetsDir(), dataDir);
+}
+
+std::filesystem::path locateLlamaServer(const std::filesystem::path& dataDir) {
+    return locateLlamaServerDetailed(dataDir).exePath;
+}
+
+EmbedModelLocate locateEmbedModelBetween(
+    const std::filesystem::path& assetsDir, const std::filesystem::path& dataDir) {
+    // 1) exe 同级随包 assets（assets 序优先；数据根文件不动）
+    if (!assetsDir.empty()) {
+        const std::filesystem::path p = assetsDir / "models" / kEmbedModelGguf;
+        if (usableFile(p)) return {p, "pkg"};
+    }
+    // 2) 数据根（旧装机兼容，存在即用不重下）
+    {
+        const std::filesystem::path p = dataDir / "models" / kEmbedModelGguf;
+        if (usableFile(p)) return {p, "dataroot"};
+    }
+    return {};
+}
+
+EmbedModelLocate locateEmbedModel(const std::filesystem::path& dataDir) {
+    return locateEmbedModelBetween(bundledAssetsDir(), dataDir);
+}
+
 std::filesystem::path llamaModelPath(const std::filesystem::path& dataDir) {
     return dataDir / "models" / kEmbedModelGguf;
+}
+
+std::string llamaLocateDiagnosis(const std::filesystem::path& dataDir) {
+    // 四序逐项给事实（不短路），全空时指路重装 / env
+    const char* envDir = std::getenv("DEVDESK_LLAMA_DIR");
+    std::string envState = (envDir != nullptr && *envDir != '\0')
+                               ? "已设但未命中"
+                               : "未设";
+    if (envDir != nullptr && *envDir != '\0') {
+        std::error_code ec;
+        if (std::filesystem::exists(exeNameIn(envDir), ec) && !ec)
+            envState = "命中";  // 定位已被 env 序短路时不会走到这，防御性给全事实
+    }
+    const auto assets = bundledAssetsDir();
+    const std::string pkgState = assets.empty()
+                                     ? "exe 目录未知"
+                                     : (std::filesystem::exists(
+                                            exeNameIn(assets / "llama" / "bin"))
+                                            ? "命中"
+                                            : "缺失");
+    const std::string dataState =
+        std::filesystem::exists(exeNameIn(dataDir / "llama" / "bin")) ? "命中"
+                                                                     : "缺失";
+    const std::string pathState =
+        platform::executableOnPath(llamaServerBinaryName()) ? "命中" : "未命中";
+    return "llama-server 未找到（四序检查：DEVDESK_LLAMA_DIR 环境变量=" +
+           envState + "；包内 assets/llama/bin=" + pkgState + "；数据根 memory/llama/bin=" +
+           dataState + "；PATH=" + pathState +
+           "）——可重装随包 assets 的安装包，或设 DEVDESK_LLAMA_DIR 指向本机 llama/bin";
 }
 
 std::vector<std::string> buildLlamaServerArgs(

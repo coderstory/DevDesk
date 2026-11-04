@@ -455,6 +455,10 @@ else
   echo "✅ 构建成功"
 fi
 
+# embedding 随包资产解包（need:202 交付链）：构建目录 assets 就位（stamp 幂等；
+# 缺 7z 只告警不阻断——运行时 HF 下载/数据根兜底仍在）
+bash "$(cd "$(dirname "$0")" && pwd)/unpack-memory-assets.sh" "$BUILD_DIR" || true
+
 # bundle 维护（债-19，A'「存在才维护」）：build/DevDesk.app 存在 = 有人用过它
 # （打包 / --install 留下的快照），维护义务随之成立——重组装，使 bundle 与本次构建的
 # 裸二进制一致，杜绝「裸二进制新、bundle 壳旧」的双产物假象。bundle 从未打过的纯开发树

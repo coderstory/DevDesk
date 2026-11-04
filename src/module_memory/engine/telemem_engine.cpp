@@ -179,6 +179,37 @@ void TelememEngine::stopAsync() {
     LOG_INFO("记忆引擎：已请求停止");
 }
 
+void TelememEngine::refreshEmbedProbe() {
+    // 先在锁外做文件探测（几毫秒级 stat），出结果再进锁；非 idle 态直接不出锁覆写
+    const auto dataDir = memoryDataDir();
+    const auto assets = bundledAssetsDir();
+    const auto llama = locateLlamaServerBetween(assets, dataDir);
+    const auto m = locateEmbedModelBetween(assets, dataDir);
+    std::lock_guard<std::mutex> lock(mu_);
+    if (snap_.state != State::Idle && snap_.state != State::Stopped) return;
+    snap_.llamaMissing = llama.exePath.empty();
+    if (!llama.exePath.empty() && !m.modelPath.empty()) {
+        snap_.embedReady = true;
+        snap_.embedSource = std::strcmp(m.source, "pkg") == 0
+                                ? EmbedSource::Pkg
+                                : EmbedSource::DataRoot;
+        snap_.embedState = EmbedState::Ready;
+        snap_.embedDetail = std::strcmp(m.source, "pkg") == 0
+                                ? "已就位（随包）"
+                                : "已就位（数据根）";
+    } else if (!llama.exePath.empty()) {
+        snap_.embedReady = false;
+        snap_.embedSource = EmbedSource::None;
+        snap_.embedState = EmbedState::NeedDownload;
+        snap_.embedDetail = "需下载（联网，首次约 26MB）";
+    } else {
+        snap_.embedReady = false;
+        snap_.embedSource = EmbedSource::None;
+        snap_.embedState = EmbedState::Failed;
+        snap_.embedDetail = llamaLocateDiagnosis(dataDir);
+    }
+}
+
 void TelememEngine::setSnapshotForTest(const Snapshot& snap) {
     std::lock_guard<std::mutex> lock(mu_);
     snap_ = snap;
@@ -244,20 +275,60 @@ void TelememEngine::runPipeline() {
         return;
     }
 
-    // ⑤ llama-server：定位 → 模型下载 → 拉起 → 健康。失败不拦 telemem：
+    // ⑤ llama-server：定位 → 模型 → 拉起 → 健康。失败不拦 telemem：
     // embedding 缺席时引擎可运行，add/search 报工具级错误，面板另行引导。
-    const std::filesystem::path llamaExe = locateLlamaServer(dataDir);
-    if (llamaExe.empty()) {
-        std::lock_guard<std::mutex> lock(mu_);
-        snap_.llamaMissing = true;
+    // need:202：四序定位（env→包内→数据根→PATH）+ 模型 assets 序 + Snapshot.embed* 埋点。
+    const auto llama = locateLlamaServerDetailed(dataDir);
+    std::filesystem::path modelPath;
+    if (llama.exePath.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            snap_.llamaMissing = true;
+            snap_.embedReady = false;
+            snap_.embedState = EmbedState::Failed;
+            snap_.embedDetail = llamaLocateDiagnosis(dataDir);
+        }
+        LOG_WARN("记忆引擎：" + llamaLocateDiagnosis(dataDir));
     } else {
-        setState(State::Preparing, "准备 embedding 模型（首次需下载）…");
-        const auto dl = ensureEmbedModelDownloaded(dataDir);
-        if (dl.isOk() && !stopRequested_.load()) {
+        const auto m = locateEmbedModel(dataDir);
+        if (!m.modelPath.empty()) {
+            modelPath = m.modelPath;
+            std::lock_guard<std::mutex> lock(mu_);
+            snap_.embedReady = true;
+            snap_.embedSource = std::strcmp(m.source, "pkg") == 0
+                                    ? EmbedSource::Pkg
+                                    : EmbedSource::DataRoot;
+            snap_.embedState = EmbedState::Ready;
+            snap_.embedDetail = std::strcmp(m.source, "pkg") == 0
+                                    ? "已就位（随包）"
+                                    : "已就位（数据根）";
+        } else {
+            setState(State::Preparing, "准备 embedding 模型（首次需下载）…");
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                snap_.embedState = EmbedState::Downloading;
+                snap_.embedDetail = "准备 embedding 模型（首次需下载）…";
+            }
+            const auto dl = ensureEmbedModelDownloaded(dataDir);
+            if (dl.isOk() && !stopRequested_.load()) {
+                modelPath = llamaModelPath(dataDir);
+                std::lock_guard<std::mutex> lock(mu_);
+                snap_.embedReady = true;
+                snap_.embedSource = EmbedSource::DataRoot;
+                snap_.embedState = EmbedState::Ready;
+                snap_.embedDetail = "已就位（数据根）";
+            } else if (!dl.isOk()) {
+                std::lock_guard<std::mutex> lock(mu_);
+                snap_.llamaMissing = true;
+                snap_.embedState = EmbedState::Failed;
+                snap_.embedDetail = dl.errorMessage();
+                LOG_WARN("记忆引擎：模型下载失败——" + dl.errorMessage());
+            }
+        }
+        if (!modelPath.empty() && !stopRequested_.load()) {
             setState(State::Preparing, "启动本机 embedding 服务…");
             const auto spawn = spawnDetached(
-                buildLlamaServerArgs(llamaExe, llamaModelPath(dataDir),
-                                     kEmbedServerPort),
+                buildLlamaServerArgs(llama.exePath, modelPath, kEmbedServerPort),
                 {}, (dataDir / "models").string());
             if (spawn.isOk()) {
                 llamaPid_.store(spawn.value());
@@ -268,17 +339,19 @@ void TelememEngine::runPipeline() {
                     terminateTree(llamaPid_.exchange(0));
                     std::lock_guard<std::mutex> lock(mu_);
                     snap_.llamaMissing = true;
+                    snap_.embedReady = false;
+                    snap_.embedState = EmbedState::Failed;
+                    snap_.embedDetail = "embedding 服务健康检查超时——" + healthErr;
                     LOG_WARN("记忆引擎：embedding 服务健康检查超时——" + healthErr);
                 }
             } else {
                 std::lock_guard<std::mutex> lock(mu_);
                 snap_.llamaMissing = true;
+                snap_.embedReady = false;
+                snap_.embedState = EmbedState::Failed;
+                snap_.embedDetail = "llama-server 拉起失败：" + spawn.errorMessage();
                 LOG_WARN("记忆引擎：llama-server 拉起失败——" + spawn.errorMessage());
             }
-        } else if (!dl.isOk()) {
-            std::lock_guard<std::mutex> lock(mu_);
-            snap_.llamaMissing = true;
-            LOG_WARN("记忆引擎：模型下载失败——" + dl.errorMessage());
         }
     }
     if (stopRequested_.load()) {

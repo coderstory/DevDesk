@@ -8,6 +8,8 @@
 //   - 健康判据查嵌套 error（body.error / body.result.error），不能只看传输层
 #include "doctest.h"
 
+#include "test_support.h"
+
 #include "module_memory/engine/llama_host.h"
 #include "module_memory/engine/python_locator.h"
 #include "module_memory/engine/telemem_config.h"
@@ -19,6 +21,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -391,5 +394,158 @@ REGISTER_TEST(memory_process_host_spawn_and_reap,
     DOCTEST_CHECK(terminateTree(pid).isOk());
     DOCTEST_CHECK(terminateTree(-1).isOk());
     DOCTEST_CHECK(!spawnDetached({}, {}, {}).isOk());  // 空 argv 必拒
+    return true;
+})
+
+// ── need:202 F-01/F-02/F-03：llama/模型定位链 assets 序 ──
+
+namespace {
+
+// 写入 + 存在重试：新落盘的 .exe 名文件会被 AV/索引器短暂持锁，exists(p, ec)
+// 在该窗口内带 ec 返回 false——种子不稳定会让定位链用例红绿抖动（2026-11-04 实测）
+void seedFileUntilVisible(const std::filesystem::path& p,
+                          const std::string& content) {
+    for (int i = 0; i < 50; ++i) {
+        { std::ofstream out(p, std::ios::binary); out << content; }
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec) && !ec) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
+void seedLlamaDir(const std::filesystem::path& root) {
+    std::filesystem::create_directories(root / "llama" / "bin");
+    seedFileUntilVisible(root / "llama" / "bin" / llamaServerBinaryName(), "x");
+}
+
+void seedModelDir(const std::filesystem::path& root, std::uintmax_t bytes) {
+    std::filesystem::create_directories(root / "models");
+    seedFileUntilVisible(root / "models" / "bge-small-zh-v1.5-q8_0.gguf",
+                         std::string(static_cast<std::size_t>(bytes), 'm'));
+}
+
+} // namespace
+
+REGISTER_TEST(memory_llama_locate_env_first,
+              "memory need202 F-01: llama 定位 env 序恒首；空值/不存在静默跳过", {
+    const auto assets = test_support::makeTempDir("devdesk_mem_locate_", "pkg");
+    const auto data = test_support::makeTempDir("devdesk_mem_locate_", "data");
+    seedLlamaDir(assets);
+    seedLlamaDir(data);
+    {
+        test_support::ScopedEnv noEnv("DEVDESK_LLAMA_DIR", "");
+        const auto hit = locateLlamaServerBetween(assets, data);
+        DOCTEST_CHECK_MESSAGE(std::string(hit.source) == "pkg",
+                              "env 空值须落到包内序，实测 source=" +
+                                  std::string(hit.source));
+    }
+    {
+        test_support::ScopedEnv env("DEVDESK_LLAMA_DIR", data.string());
+        // 与 locateLlamaServerBetween env 序逐字同款的前置复刻（区分「环境/路径层」
+        // 与「函数内部分支」：若这里 exists=1 而 source≠env，即函数内 getenv/路径
+        // 解析被污染，需要查链接而非查种子）
+        const char* rawChk = std::getenv("DEVDESK_LLAMA_DIR");
+        const bool inlineHit =
+            rawChk != nullptr && *rawChk != '\0' &&
+            std::filesystem::exists(
+                std::filesystem::path(rawChk) / "llama" / "bin" /
+                    llamaServerBinaryName());
+        DOCTEST_CHECK_MESSAGE(inlineHit, "env 序前置复刻须命中（env 通路本身可用）");
+        const auto hit = locateLlamaServerBetween(assets, data);
+        DOCTEST_CHECK_MESSAGE(std::string(hit.source) == "env",
+                              "env 指向 data 根须命中 env 序，实测 source=" +
+                                  std::string(hit.source));
+        DOCTEST_CHECK(hit.exePath ==
+                      data / "llama" / "bin" / llamaServerBinaryName());
+    }
+    {
+        test_support::ScopedEnv bad("DEVDESK_LLAMA_DIR",
+                                    (data / "nope").string());
+        const auto hit = locateLlamaServerBetween(assets, data);
+        DOCTEST_CHECK_MESSAGE(std::string(hit.source) == "pkg",
+                              "env 指向不存在目录须静默跳过该序");
+    }
+    return true;
+})
+
+REGISTER_TEST(memory_llama_locate_pkg_over_dataroot,
+              "memory need202 F-01: llama 定位包内序优先数据根序（旧装机兼容）", {
+    const auto assets = test_support::makeTempDir("devdesk_mem_locate_", "pkg2");
+    const auto data = test_support::makeTempDir("devdesk_mem_locate_", "data2");
+    seedLlamaDir(data);
+    {
+        test_support::ScopedEnv noEnv("DEVDESK_LLAMA_DIR", "");
+        const auto hit = locateLlamaServerBetween({}, data);  // assets 空=无包
+        DOCTEST_CHECK_EQ(std::string(hit.source), std::string("dataroot"));
+    }
+    seedLlamaDir(assets);
+    {
+        test_support::ScopedEnv noEnv("DEVDESK_LLAMA_DIR", "");
+        const auto hit = locateLlamaServerBetween(assets, data);
+        DOCTEST_CHECK_EQ(std::string(hit.source), std::string("pkg"));
+    }
+    return true;
+})
+
+REGISTER_TEST(memory_llama_locate_miss_falls_to_path_or_empty,
+              "memory need202 F-01/F-03: 四处全空→exePath 空（PATH 有则如实记 path）", {
+    const auto assets = test_support::makeTempDir("devdesk_mem_locate_", "empty");
+    const auto data = test_support::makeTempDir("devdesk_mem_locate_", "empty2");
+    test_support::ScopedEnv noEnv("DEVDESK_LLAMA_DIR", "");
+    const auto miss = locateLlamaServerBetween(assets, data);
+    DOCTEST_CHECK_MESSAGE(miss.exePath.empty() ||
+                              std::string(miss.source) == "path",
+                          "全空时只允许 PATH 命中或彻底未命中");
+    return true;
+})
+
+REGISTER_TEST(memory_embed_model_pkg_first_zero_byte_skip,
+              "memory need202 F-02: 模型定位包内优先数据根；0 字节视同缺失下沉", {
+    const auto assets = test_support::makeTempDir("devdesk_mem_model_", "pkg");
+    const auto data = test_support::makeTempDir("devdesk_mem_model_", "data");
+    {
+        // 只有数据根有模型
+        seedModelDir(data, 10);
+        const auto hit = locateEmbedModelBetween({}, data);
+        DOCTEST_CHECK_EQ(std::string(hit.source), std::string("dataroot"));
+    }
+    {
+        // 包内 0 字节 → 下沉数据根
+        seedModelDir(assets, 0);
+        const auto hit = locateEmbedModelBetween(assets, data);
+        DOCTEST_CHECK_MESSAGE(std::string(hit.source) == "dataroot",
+                              "0 字节包内模型须视同缺失下沉数据根");
+    }
+    {
+        // 包内非空 → pkg 优先，数据根文件不动
+        seedModelDir(assets, 10);
+        const auto hit = locateEmbedModelBetween(assets, data);
+        DOCTEST_CHECK_EQ(std::string(hit.source), std::string("pkg"));
+    }
+    {
+        const auto miss = locateEmbedModelBetween(
+            test_support::makeTempDir("devdesk_mem_model_", "e"),
+            test_support::makeTempDir("devdesk_mem_model_", "e2"));
+        DOCTEST_CHECK(miss.modelPath.empty());
+        DOCTEST_CHECK_EQ(std::string(miss.source), std::string(""));
+    }
+    return true;
+})
+
+REGISTER_TEST(memory_llama_locate_diagnosis_four_seqs,
+              "memory need202 F-03: 诊断文案含四序逐项与重装/env 指路", {
+    const auto data = test_support::makeTempDir("devdesk_mem_diag_", "data");
+    test_support::ScopedEnv noEnv("DEVDESK_LLAMA_DIR", "");
+    const auto diag = llamaLocateDiagnosis(data);
+    DOCTEST_CHECK_MESSAGE(diag.find("DEVDESK_LLAMA_DIR") != std::string::npos,
+                          "诊断须含 env 序检查结果");
+    DOCTEST_CHECK_MESSAGE(diag.find("包内 assets/llama/bin") != std::string::npos,
+                          "诊断须含包内序检查结果");
+    DOCTEST_CHECK_MESSAGE(diag.find("数据根 memory/llama/bin") != std::string::npos,
+                          "诊断须含数据根序检查结果");
+    DOCTEST_CHECK_MESSAGE(diag.find("PATH") != std::string::npos,
+                          "诊断须含 PATH 序检查结果");
+    DOCTEST_CHECK_MESSAGE(diag.find("重装") != std::string::npos,
+                          "诊断须给重装指路");
     return true;
 })

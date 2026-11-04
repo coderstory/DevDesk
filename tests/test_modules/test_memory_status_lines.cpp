@@ -47,10 +47,10 @@ REGISTER_TEST(memory_status_lines_composite_unmasked,
                           "python 行在复合态仍须呈现已检测文案");
     DOCTEST_CHECK_MESSAGE(py.find("Python 3.13.15") != std::string::npos,
                           "python 行携带探测版本");
-    DOCTEST_CHECK_MESSAGE(embed.find("embedding 服务缺失") != std::string::npos,
+    DOCTEST_CHECK_MESSAGE(embed.find("本机模型文件缺失") != std::string::npos,
                           "llamaMissing 醒目警示行必须在场（原实现被 pythonFound 优先分支遮蔽）");
-    DOCTEST_CHECK_MESSAGE(embed.find("将在安装向导中补齐") != std::string::npos,
-                          "警示行带指路文案");
+    DOCTEST_CHECK_MESSAGE(embed.find("见首次安装向导第③步") != std::string::npos,
+                          "警示行指路向导③步（need:202 F-06 逐字口径）");
     return true;
 })
 
@@ -65,7 +65,7 @@ REGISTER_TEST(memory_status_lines_missing_python_fallback,
     DOCTEST_CHECK(module::memory::engineStatusPythonLine(snap2)
                       .find("未检测到 Python") != std::string::npos);
     DOCTEST_CHECK(module::memory::engineStatusEmbedLine(snap2)
-                      .find("embedding 服务缺失") != std::string::npos);
+                      .find("本机模型文件缺失") != std::string::npos);
     return true;
 })
 
@@ -73,6 +73,62 @@ REGISTER_TEST(memory_status_lines_embed_cleared,
               "memory bug203: llamaMissing 清除后警示行消失", {
     const auto snap = makeSnap(true, false);
     DOCTEST_CHECK(module::memory::engineStatusEmbedLine(snap).empty());
+    return true;
+})
+
+// ── need:202 F-08：Running 完成态区分语义档就绪口径 ──
+
+REGISTER_TEST(memory_status_lines_embed_ready_running,
+              "memory need202 F-08: Running+就位区分随包/数据根；非 Running 不出就绪行", {
+    using SS = module::memory::engine::TelememEngine;
+    auto snap = makeSnap(true, false);
+    snap.state = SS::State::Running;
+    snap.embedReady = true;
+    snap.embedSource = SS::EmbedSource::Pkg;
+    DOCTEST_CHECK_EQ(module::memory::engineStatusEmbedLine(snap),
+                     std::string("语义档就绪（随包）"));
+    snap.embedSource = SS::EmbedSource::DataRoot;
+    DOCTEST_CHECK_EQ(module::memory::engineStatusEmbedLine(snap),
+                     std::string("语义档就绪（数据根）"));
+    snap.state = SS::State::Idle;
+    DOCTEST_CHECK(module::memory::engineStatusEmbedLine(snap).empty());
+    snap.embedReady = false;
+    snap.state = SS::State::Running;
+    DOCTEST_CHECK(module::memory::engineStatusEmbedLine(snap).empty());
+    return true;
+})
+
+// ── need:202 F-04：向导③步五态文案映射 ──
+
+REGISTER_TEST(memory_wizard_embed_status_five_states,
+              "memory need202 F-04: 向导③步五态文案逐字（设计 §2.2）", {
+    using SS = module::memory::engine::TelememEngine;
+    module::memory::TelememEngine::Snapshot s;
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("待开始"));  // Unknown
+    s.embedState = SS::EmbedState::NeedDownload;
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("需下载（联网，首次约 26MB）"));
+    s.embedState = SS::EmbedState::Downloading;
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("进行中…"));
+    s.embedDetail = "准备 embedding 模型（首次需下载）…";
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     s.embedDetail);
+    s.embedState = SS::EmbedState::Ready;
+    s.embedSource = SS::EmbedSource::Pkg;
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("已就位（随包）"));
+    s.embedSource = SS::EmbedSource::DataRoot;
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("已就位（数据根）"));
+    s.embedState = SS::EmbedState::Failed;
+    s.embedDetail = "下载中断: net";
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("失败：下载中断: net（可重试）"));
+    s.embedDetail.clear();
+    DOCTEST_CHECK_EQ(module::memory::wizardEmbedStatusText(s),
+                     std::string("失败：本机包缺失（可重试）"));
     return true;
 })
 

@@ -177,7 +177,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::DialogFrame frame;
     frame.id = "memory.dialog.wizard";
     frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = 320.0f;
+    frame.height = 348.0f;  // need:202：三步→四步，320+一行行距 28（设计 §9 裁定）
     frame.open = true;
     frame.onOpenChange = [this](bool v) {
         if (!v) wizardOpen_ = false;
@@ -235,15 +235,39 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                     ? doingColor
                     : (state == TelememEngine::State::Running ? okColor
                                                               : pendingColor));
-        stepRow("memory.dialog.wizard.s3", 112.0f, "③ 引擎拉起与健康检查",
-                state == TelememEngine::State::Running
-                    ? "运行中（127.0.0.1:8421）"
-                    : std::string(idleLike ? "待开始" : "进行中…"),
-                state == TelememEngine::State::Running ? okColor : doingColor);
+        // need:202 F-04：③ = embedding 本机包（四态映射设计 §4，文案/色槽见设计 §2.2）
+        const std::string embedStatus = wizardEmbedStatusText(es);
+        eui::Color embedColor = pendingColor;
+        using ES = TelememEngine::EmbedState;
+        switch (es.embedState) {
+            case ES::Ready: embedColor = okColor; break;
+            case ES::Downloading: embedColor = doingColor; break;
+            case ES::Failed: embedColor = failColor; break;
+            case ES::NeedDownload:
+            case ES::Unknown: embedColor = pendingColor; break;
+        }
+        stepRow("memory.dialog.wizard.s3", 112.0f, "③ embedding 本机包",
+                embedStatus, embedColor);
+        // ④ 引擎拉起与健康检查（原③顺延；拉起/健康失败显红，设计 §6）
+        const char* s4Status =
+            state == TelememEngine::State::Running
+                ? "运行中（127.0.0.1:8421）"
+                : (state == TelememEngine::State::Failed ? "失败（见下方说明）"
+                                                         : (idleLike ? "待开始"
+                                                                     : "进行中…"));
+        const auto s4Color =
+            state == TelememEngine::State::Running
+                ? okColor
+                : (state == TelememEngine::State::Failed
+                       ? failColor
+                       : (state == TelememEngine::State::Preparing ? doingColor
+                                                                   : pendingColor));
+        stepRow("memory.dialog.wizard.s4", 140.0f, "④ 引擎拉起与健康检查",
+                s4Status, s4Color);
         // 完成态 / 失败态 / 引导态
         if (state == TelememEngine::State::Running) {
             ui.text("memory.dialog.wizard.done")
-                .position(ui_kit::kDialogInsetX, 148.0f)
+                .position(ui_kit::kDialogInsetX, 176.0f)
                 .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(44.0f))
                 .wrap()
                 .text("安装完成，记忆引擎已在后台运行。关掉本向导即可正常使用。")
@@ -253,21 +277,22 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                 .build();
         } else if (state == TelememEngine::State::Failed) {
             ui.text("memory.dialog.wizard.fail")
-                .position(ui_kit::kDialogInsetX, 148.0f)
+                .position(ui_kit::kDialogInsetX, 176.0f)
                 .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(60.0f))
                 .wrap()
-                .text("安装失败：" + es.detail + "（可点「重试安装」再跑一轮）")
+                .text("安装失败：" + es.detail + "（可点「开始安装 / 重试」再跑一轮）")
                 .fontSize(core::theme::scaled(13.0f))
                 .lineHeight(core::theme::scaled(20.0f))
                 .color(failColor)
                 .build();
         } else {
             ui.text("memory.dialog.wizard.intro")
-                .position(ui_kit::kDialogInsetX, 148.0f)
+                .position(ui_kit::kDialogInsetX, 176.0f)
                 .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(44.0f))
                 .wrap()
-                .text("本向导将检测 Python、创建虚拟环境并 pip 安装 telemem，"
-                      "全程只写数据目录，不捆绑解释器。")
+                .text("本向导将检测 Python、创建虚拟环境并安装 telemem，"
+                      "检查 embedding 本机包（llama-server + 模型）就位，"
+                      "全程只写数据目录。")
                 .fontSize(core::theme::scaled(13.0f))
                 .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.textSecondary)
@@ -275,7 +300,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
         }
         ui_kit::button(ui, "memory.dialog.wizard.close", "关闭",
                        ui_kit::ButtonLevel::Secondary, ui_kit::kDialogInsetX,
-                       250.0f, 110.0f, ui_kit::kButtonHeight, t,
+                       278.0f, 110.0f, ui_kit::kButtonHeight, t,
                        {[this] { wizardOpen_ = false; }});
         const bool installing = state == TelememEngine::State::Preparing;
         const bool canStart =
@@ -288,7 +313,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                                   : "开始安装 / 重试"),
                        canStart ? ui_kit::ButtonLevel::Primary
                                 : ui_kit::ButtonLevel::Secondary,
-                       w - ui_kit::kDialogBodyInsetX - 190.0f, 250.0f, 190.0f,
+                       w - ui_kit::kDialogBodyInsetX - 190.0f, 278.0f, 190.0f,
                        ui_kit::kButtonHeight, t,
                        {canStart ? std::function<void()>([] {
                             TelememEngine::global().startAsync();

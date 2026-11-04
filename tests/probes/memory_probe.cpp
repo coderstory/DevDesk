@@ -449,6 +449,81 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < 8; ++i) composeFrame();
     shoot("memory-config.png", &A.passed);
 
+    // ── 组 G：向导四步（need:202 F-04/F-05）——③ embedding 本机包四态 + ④ 顺延 ──
+    // 打开向导（点 memory.eng.wizard，命中链口径同组 E），③/④ 行文案随注入的
+    // Snapshot.embed* 字段走（向导只读字段不探文件系统，设计 §4 实现约束）。
+    {
+        namespace engine = module::memory::engine;
+        switchView(0);
+        composeFrame();
+        const auto* wb = A.elem("memory.eng.wizard.bg");
+        if (wb == nullptr) {
+            std::cerr << "memory_probe: FAIL——'memory.eng.wizard.bg' 缺失\n";
+            A.passed = false;
+        } else {
+            const float cx = wb->frame.x + wb->frame.width * 0.5f;
+            const float cyW = wb->frame.y + wb->frame.height * 0.5f;
+            core::queuePointerButton(window, cx, cyW, core::PointerButton::Left,
+                                     core::PointerAction::Press, {});
+            core::queuePointerButton(window, cx, cyW, core::PointerButton::Left,
+                                     core::PointerAction::Release, {});
+            for (int i = 0; i < 6; ++i) composeFrame();
+        }
+        if (A.elem("memory.dialog.wizard.s3.name") == nullptr ||
+            A.elem("memory.dialog.wizard.s4.name") == nullptr) {
+            std::cerr << "memory_probe: FAIL——向导未现四步结构（s3/s4 缺）\n";
+            A.passed = false;
+        } else {
+            A.textHas("memory.dialog.wizard.s3.name", "③ embedding 本机包");
+            A.textHas("memory.dialog.wizard.s4.name", "④ 引擎拉起与健康检查");
+            A.textHas("memory.dialog.wizard.intro", "embedding 本机包");
+            // 态 1：idle 引导（模型缺、llama 在场）→ 需下载灰 + ④ 待开始灰
+            engine::TelememEngine::Snapshot fake;
+            fake.state = engine::TelememEngine::State::Idle;
+            fake.embedState = engine::TelememEngine::EmbedState::NeedDownload;
+            engine::TelememEngine::global().setSnapshotForTest(fake);
+            composeFrame();
+            composeFrame();
+            A.textEq("memory.dialog.wizard.s3.status",
+                     "需下载（联网，首次约 26MB）");
+            A.textEq("memory.dialog.wizard.s4.status", "待开始");
+            shoot("memory-wizard-need-download.png", &A.passed);
+            // 态 2：Running + 随包就位 → ③绿（随包）+ ④运行绿 + 完成块
+            fake = engine::TelememEngine::Snapshot{};
+            fake.state = engine::TelememEngine::State::Running;
+            fake.embedReady = true;
+            fake.embedSource = engine::TelememEngine::EmbedSource::Pkg;
+            fake.embedState = engine::TelememEngine::EmbedState::Ready;
+            engine::TelememEngine::global().setSnapshotForTest(fake);
+            composeFrame();
+            composeFrame();
+            A.textEq("memory.dialog.wizard.s3.status", "已就位（随包）");
+            A.textEq("memory.dialog.wizard.s4.status", "运行中（127.0.0.1:8421）");
+            A.textHas("memory.dialog.wizard.done", "安装完成");
+            shoot("memory-wizard-ready.png", &A.passed);
+            // 态 3：下载失败 → ③红（可重试）+ 失败块带「开始安装 / 重试」逐字
+            fake = engine::TelememEngine::Snapshot{};
+            fake.state = engine::TelememEngine::State::Failed;
+            fake.embedState = engine::TelememEngine::EmbedState::Failed;
+            fake.embedDetail = "下载中断: net";
+            engine::TelememEngine::global().setSnapshotForTest(fake);
+            composeFrame();
+            composeFrame();
+            A.textHas("memory.dialog.wizard.s3.status", "失败：下载中断: net");
+            A.textHas("memory.dialog.wizard.s3.status", "（可重试）");
+            A.textHas("memory.dialog.wizard.fail", "开始安装 / 重试");
+            shoot("memory-wizard-failed.png", &A.passed);
+            // 弹窗高度裁定（设计 §9：320→348）；元素缺失不判红（frame 实现可换 id）
+            if (const auto* dlg = A.elem("memory.dialog.wizard")) {
+                if (dlg->frame.height != 348.0f) {
+                    std::cerr << "memory_probe: FAIL——向导高度 "
+                              << dlg->frame.height << " ≠ 348\n";
+                    A.passed = false;
+                }
+            }
+        }
+    }
+
     std::cout << "memory_probe: " << (A.passed ? "PASS" : "FAIL")
               << " · 数据根 " << tmpRoot.generic_string() << " · 截图目录 "
               << outDir.generic_string() << "\n";

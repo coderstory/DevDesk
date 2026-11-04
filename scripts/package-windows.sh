@@ -126,6 +126,12 @@ cmake -E copy_directory "$EUI_DIR/assets" "$ASSETS_DIR_POSIX"
 # DevDesk/assets 根文件（托盘图标 / splash 着色器 / 模板），09-30 后才加入，与 pets 同源幂等
 cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 
+# embedding 随包资产解包（need:202 交付链）：安装包必须带 llama/bin + models——
+# --required：7z 缺失/解包失败即中止（静默产出无 embedding 的包 = 安装版记忆语义档必缺，
+# 比 mpv 同款口径）；解包后删 staging 内 7z 防 34MB 双份进安装器
+bash "$PROJECT_DIR/scripts/unpack-memory-assets.sh" "$EXE_DIR_POSIX" --required || exit 1
+rm -f "$ASSETS_DIR_POSIX/memory-embedding.7z"
+
 # mpv 打包链路（P6）：壁纸播放后端随包分发。运行时解析优先级（mpv_controller.h）：
 # DEVDESK_MPV_PATH → <exeDir>/assets/mpv/mpv.exe → 开发兜底（仅非 Release）——安装版
 # 只能走第二条，故打包期必须把 MPV_BIN 拷到 assets/mpv/mpv.exe。源缺失即失败：

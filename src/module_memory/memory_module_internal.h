@@ -208,11 +208,41 @@ inline std::string engineStatusPythonLine(const TelememEngine::Snapshot& es) {
                : "未检测到 Python 3.10~3.13——点「首次安装向导」引导安装";
 }
 
-// llamaMissing 时返回醒目警示文案；其余态返回空（compose 不出该行）。
+// llamaMissing 时返回醒目警示文案（need:202 F-06：指向向导第③步）；Running+就位时
+// 返回 F-08 就绪口径（区分随包/数据根）；其余态返回空（compose 不出该行）。
 inline std::string engineStatusEmbedLine(const TelememEngine::Snapshot& es) {
-    if (!es.llamaMissing) return {};
-    return "本机 embedding 服务缺失：记忆入库 / 检索 / 注入不可用"
-           "（将在安装向导中补齐）";
+    if (es.llamaMissing) {
+        return "本机模型文件缺失——语义档不可用，见首次安装向导第③步";
+    }
+    if (es.embedReady && es.state == TelememEngine::State::Running) {
+        return es.embedSource == TelememEngine::EmbedSource::Pkg
+                   ? "语义档就绪（随包）"
+                   : "语义档就绪（数据根）";
+    }
+    return {};
+}
+
+// 向导③步状态文案（need:202 F-04；设计 §2.2 五态逐字；compose 与 doctest 共用
+// 同一映射）。色槽映射在 compose 侧按同一 embedState 条件选（ok/pending/doing/fail）。
+inline std::string wizardEmbedStatusText(const TelememEngine::Snapshot& es) {
+    using ES = TelememEngine::EmbedState;
+    switch (es.embedState) {
+        case ES::Ready:
+            return es.embedSource == TelememEngine::EmbedSource::Pkg
+                       ? "已就位（随包）"
+                       : "已就位（数据根）";
+        case ES::NeedDownload:
+            return "需下载（联网，首次约 26MB）";
+        case ES::Downloading:
+            return es.embedDetail.empty() ? std::string("进行中…") : es.embedDetail;
+        case ES::Failed:
+            return "失败：" +
+                   (es.embedDetail.empty() ? std::string("本机包缺失") : es.embedDetail) +
+                   "（可重试）";
+        case ES::Unknown:
+            break;
+    }
+    return "待开始";
 }
 
 // Primary 按钮在滚动画布内的文字补丁：EUI 渲染端对「stack 内 states 矩形 +

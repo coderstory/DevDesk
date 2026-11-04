@@ -88,6 +88,9 @@ done
 echo "[4/6] 拷贝 assets 与第三方声明…"
 rm -rf "$TARGET/assets"
 cp -R "$REPO_ROOT/build/assets" "$TARGET/assets"
+# embedding 随包资产补解包（need:202 交付链）：build/assets 已解包则 stamp 跳过；
+# 未解包则直接从仓内 7z 解到安装目录（告警不阻断——HF 下载/数据根兜底仍在）
+bash "$REPO_ROOT/scripts/unpack-memory-assets.sh" "$TARGET" || true
 NOTICES_SRC=""
 for cand in "$REPO_ROOT/build/THIRD-PARTY-NOTICES.md" "$REPO_ROOT/THIRD-PARTY-NOTICES.md"; do
     [ -f "$cand" ] && { NOTICES_SRC="$cand"; break; }
