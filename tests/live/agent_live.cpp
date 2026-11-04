@@ -19,6 +19,16 @@
 //
 // 入口：bash scripts/run-agent-live.sh [场景名 ...]；全部场景通过 exit 0，否则 1。
 #include <atomic>
+#ifdef _WIN32
+#include <cstdlib>
+static void devdeskSetEnv(const char* key, const char* value) {
+    _putenv_s(key, value != nullptr ? value : "");
+}
+static void devdeskUnsetEnv(const char* key) { _putenv_s(key, ""); }
+#else
+static void devdeskSetEnv(const char* key, const char* value) { setenv(key, value, 1); }
+static void devdeskUnsetEnv(const char* key) { unsetenv(key); }
+#endif
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -722,13 +732,14 @@ int main(int argc, char** argv) {
         return 2;
     }
     std::printf("== 智能体真机全场景验收 ==\n  provider host = %s\n  default 槽 model = %s\n"
-                "  数据根（隔离） = %s\n", host.c_str(), model.c_str(), root.c_str());
+                "  数据根（隔离） = %s\n", host.c_str(), model.c_str(),
+                root.string().c_str());
     std::fflush(stdout);
 
     // 隔离数据根 + 应用库（进程内 setenv，exit 前还原删除）
     const char* savedRootRaw = std::getenv("DEVDESK_DATA_ROOT");
     const std::string savedRootEnv = savedRootRaw ? savedRootRaw : "";
-    setenv("DEVDESK_DATA_ROOT", root.string().c_str(), 1);
+    devdeskSetEnv("DEVDESK_DATA_ROOT", root.string().c_str());
 
     Ctx c;
     c.notesDir = root / "notes";
@@ -859,9 +870,9 @@ int main(int argc, char** argv) {
     }
     module::markdown::NoteGitAutoCommit::setEnabledForTest(true);
     if (savedRootEnv.empty()) {
-        unsetenv("DEVDESK_DATA_ROOT");
+        devdeskUnsetEnv("DEVDESK_DATA_ROOT");
     } else {
-        setenv("DEVDESK_DATA_ROOT", savedRootEnv.c_str(), 1);
+        devdeskSetEnv("DEVDESK_DATA_ROOT", savedRootEnv.c_str());
     }
     fs::remove_all(stage, ec);
     fs::remove_all(root, ec);

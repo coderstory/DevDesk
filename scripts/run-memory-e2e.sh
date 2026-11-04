@@ -29,7 +29,10 @@ PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/tests/memory_e2e_probe}"
 LLAMA_PORT=11435
 TELEMEM_PORT=8421
 DUMMY_KEY="sk-devdesk-e2e-dummy-key-not-real-000000"
-HEALTH_TIMEOUT_S=120
+# 真 LLM 覆盖（2026-11-05 老板令「LLM 配置已给你」）：E2E_LLM_KEY 非空 = 走真网关
+# （S8 提炼补标转真调）；E2E_LLM_BASE/MODEL 同步覆盖 yaml（见 §2）。
+LLM_KEY="${E2E_LLM_KEY:-$DUMMY_KEY}"
+HEALTH_TIMEOUT_S="${E2E_HEALTH_TIMEOUT:-120}"  # 真 LLM（公司网关）冷启动较慢，可调 300
 
 EVIDENCE_DIR="$REPO_ROOT/evidence/$(date +%F)-memory-e2e"
 mkdir -p "$EVIDENCE_DIR"
@@ -39,6 +42,12 @@ TEMP_ROOT="$(mktemp -d /tmp/mem-e2e.XXXXXX)"
 DATA_ROOT="$TEMP_ROOT/data"
 PROJ_ROOT="$TEMP_ROOT/cc-projects"
 mkdir -p "$DATA_ROOT/memory" "$PROJ_ROOT"   # memory/ 目录是探针前置假设
+# Windows（Git Bash/MINGW）分支（debt115 TODO(Windows) 补课）：原生二进制不认 MSYS
+# 路径（池 clue70：/tmp/... 被 std::filesystem 当盘相对路径静默落错处）——交给原生
+# 进程（telemem 配置/probe/DevDesk）的路径统一转 Windows 形态；bash 自身仍用 MSYS 路径。
+nativePath() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) cygpath -w "$1" ;; *) printf '%s' "$1" ;; esac; }
+DATA_ROOT_NATIVE="$(nativePath "$DATA_ROOT")"
+TEMP_ROOT_NATIVE="$(nativePath "$TEMP_ROOT")"
 
 LLAMA_PID=""
 TELEMEM_PID=""
@@ -67,8 +76,15 @@ for f in "$PROBE_BIN" "$DEVDESK_BIN" "$LLAMA_SERVER_BIN" "$TELEMEM_PY" "$GGUF_MO
     fail "前置缺失：${f}（probe/DevDesk 缺失先 bash scripts/build-test-run.sh 增量构建；本脚本不自动全量构建）"
   fi
 done
+portBusy() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | grep -q LISTEN
+  else
+    netstat -ano 2>/dev/null | grep -E "[:.]$1[[:space:]].*LISTENING" >/dev/null
+  fi
+}
 for p in "$LLAMA_PORT" "$TELEMEM_PORT"; do
-  if lsof -nP -iTCP:"$p" -sTCP:LISTEN | grep -q LISTEN; then
+  if portBusy "$p"; then
     fail "端口 $p 已被占用（上次运行残留？先清场再跑）"
   fi
 done
@@ -110,9 +126,9 @@ embedder:
 vector_store:
   provider: faiss
   config:
-    path: $DATA_ROOT/memory/faiss_db
+    path: $DATA_ROOT_NATIVE/memory/faiss_db
     embedding_model_dims: 512
-history_db_path: $DATA_ROOT/memory/history.db
+history_db_path: $DATA_ROOT_NATIVE/memory/history.db
 EOF
 pass "环境 yaml 写入 $TEMP_ROOT/telemem-config.yaml"
 
@@ -123,7 +139,7 @@ nohup "$LLAMA_SERVER_BIN" --host 127.0.0.1 --port "$LLAMA_PORT" \
   > "$EVIDENCE_DIR/llama-server.log" 2>&1 &
 LLAMA_PID=$!
 log "启动 telemem (:${TELEMEM_PORT})…"
-TELEMEM_CONFIG="$TEMP_ROOT/telemem-config.yaml" ANTHROPIC_API_KEY="$DUMMY_KEY" \
+TELEMEM_CONFIG="$TEMP_ROOT/telemem-config.yaml" ANTHROPIC_API_KEY="$LLM_KEY" \
   nohup "$TELEMEM_PY" -m telemem.mcp --transport streamable-http \
   --host 127.0.0.1 --port "$TELEMEM_PORT" \
   > "$EVIDENCE_DIR/telemem.log" 2>&1 &
@@ -151,7 +167,7 @@ done
   || fail "telemem ${HEALTH_TIMEOUT_S}s 未探活（详见 $EVIDENCE_DIR/telemem.log）"
 
 # ---------- 4. 探针（S3 采集脱敏 → S4 入库检索 → S5 hook 契约 → S6 冻结评测 → S7 播种） ----------
-DEVDESK_DATA_ROOT="$DATA_ROOT" "$PROBE_BIN" --projects "$TEMP_ROOT" \
+DEVDESK_DATA_ROOT="$DATA_ROOT_NATIVE" "$PROBE_BIN" --projects "$TEMP_ROOT_NATIVE" \
   > "$EVIDENCE_DIR/probe.log" 2>&1
 probe_rc=$?
 if [ "$probe_rc" = 0 ] && ! grep -q "\[e2e\] FAIL" "$EVIDENCE_DIR/probe.log"; then
@@ -162,7 +178,7 @@ fi
 
 # ---------- 5. hook 真二进制三问 ----------
 hook_ask() { # $1=stdin json $2=stdout 文件 $3=stderr 文件；回显退出码
-  DEVDESK_DATA_ROOT="$DATA_ROOT" "$DEVDESK_BIN" memory hook < "$1" > "$2" 2> "$3"
+  DEVDESK_DATA_ROOT="$DATA_ROOT_NATIVE" "$DEVDESK_BIN" memory hook < "$1" > "$2" 2> "$3"
   echo $?
 }
 make_prompt() { # $1=prompt $2=输出文件

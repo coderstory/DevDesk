@@ -646,7 +646,7 @@ endif()
 #     (cd build && ctest -L live)
 option(DEVDESK_BUILD_LIVE_TOOLS
     "构建真机验收驱动（tests/live/；真网络 + 真凭据，默认 OFF）" OFF)
-if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
+if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)  # 2026-11-05：保持 UNIX（github_sync_live 用 sys/wait.h，Windows 无此物）
     # **整体（目标 + ctest 条目）都在 if(UNIX) 里**，不只是 add_test：受编集合
     # 解析器按 if(WIN32)/if(UNIX) 划 Windows 编译面，块里有裸 add_executable 时
     # github_sync_live.cpp 被视作 Windows 必编 → CI Windows job 必红（驱动用
@@ -708,7 +708,7 @@ endif()
 #     cmake -B build ... -DDEVDESK_BUILD_LIVE_TOOLS=ON && cmake --build build --target agent_live
 #     bash scripts/run-agent-live.sh [scenario ...]
 #     (cd build && ctest -L live)
-if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
+if(DEVDESK_BUILD_LIVE_TOOLS)  # 2026-11-05：放开 Windows（agent_live 零平台宏，链接集与 probe 同构；原 AND UNIX 属矩阵审计保守门）
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号
     #（与 devdesk_tests 同款理由，见该目标注释）
     add_executable(agent_live
