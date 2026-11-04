@@ -530,9 +530,11 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
     DOCTEST_CHECK_EQ(countCI(seen, "authorization"), 1);
     // 客户端没带 anthropic-version → 补默认值
     DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
-    // 127.0.0.1 是默认方言：不注入会话头、不剥模型标记（body 原样上行）
+    // 127.0.0.1 是默认方言：不注入会话头；但 [1M] 模型标记恒剥后上行（bug212，
+    // 真实上游只认裸模型名）——原「body 原样」是旧契约。
     DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 0);
-    DOCTEST_CHECK_EQ(seenBody, reqBody);
+    DOCTEST_CHECK_EQ(seenBody,
+                     R"({"model":"deepseek-v4-flash","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})");
 
     upstream.stop();
     platform::keychain::deleteSecret(

@@ -77,7 +77,7 @@ struct Asserts {
         }
         return true;
     }
-    void expect(bool cond, const std::string& what) {
+    void check(bool cond, const std::string& what) {
         if (!cond) {
             std::cerr << "memory_freeze_probe: FAIL——" << what << "\n";
             passed = false;
@@ -168,7 +168,7 @@ int main() {
             g.text, "", g.fontSize, 400);  // 第二次 = TextSizeCache 命中路径
         std::cout << "GOLDEN width=" << std::fixed << wWarm << " cold="
                   << wCold << " size=" << g.fontSize << NL;
-        A.expect(wCold == wWarm,
+        A.check(wCold == wWarm,
                  "同串两次测量宽度不一致（缓存命中路径漂移）");
         // 逐字累加求和 = 缓存命中（逐字形）路径一致性
         const std::string s = g.text;
@@ -187,7 +187,7 @@ int main() {
             s, "", g.fontSize, 400);
         std::cout << "GOLDEN whole=" << std::fixed << whole
                   << " perCharSum=" << sum << NL;
-        A.expect(whole == sum,
+        A.check(whole == sum,
                  "整串测量 ≠ 逐字累加（shaping 高级排版 joint 语义除外，"
                  "CJK 文本应相等）");
     }
@@ -209,7 +209,7 @@ int main() {
         const double s2Ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
         std::cout << "MICRO s1Ms=" << std::fixed << s1Ms << " s2Ms=" << s2Ms
                   << " (同词表第二串，advance 缓存敏感)" << NL;
-        A.expect(s2Ms < 5.0,
+        A.check(s2Ms < 5.0,
                  "同词表第二串 shape " + std::to_string(s2Ms) +
                      "ms ≥ 5ms（advance 无缓存，逐字形 autofit 重算）");
     }
@@ -269,16 +269,16 @@ int main() {
 
     // 红判据①：卡流必须被上限截断（150 内 = 默认上限 50 可见；无上限实现 =
     // rendered == 120 = 红）
-    A.expect(rendered < kSeedPending,
+    A.check(rendered < kSeedPending,
              "审核视图未截断：rendered=" + std::to_string(rendered) +
                  " == 种子全量（bug190 卡流无上限）");
     // 红判据②：热帧必须 < 250ms（≈15 帧预算；真实规模下 TextSizeCache 超容量
     // 驱逐 = 每帧全量重 shape）；冷帧含首次字体加载/AV 噪声，放宽到 800ms
     //（红态实测 2311~3210ms，裕度 ~3x）
-    A.expect(warmMs < 250.0,
+    A.check(warmMs < 250.0,
              "热帧 compose " + std::to_string(warmMs) +
                  "ms ≥ 250ms（帧预算×15，bug190 冻结机制在）");
-    A.expect(coldMs < 800.0,
+    A.check(coldMs < 800.0,
              "冷帧 compose " + std::to_string(coldMs) +
                  "ms ≥ 800ms（红态实测 2311ms+）");
 
@@ -361,11 +361,11 @@ int main() {
                     }
                 }
                 std::cout << "CARDS afterMore=" << rendered2 << NL;
-                A.expect(rendered2 > rendered,
+                A.check(rendered2 > rendered,
                          "点「再显示 50 条」后卡数未增长：" +
                              std::to_string(rendered) + " → " +
                              std::to_string(rendered2));
-                A.expect(afterMoreMs < 250.0,
+                A.check(afterMoreMs < 250.0,
                          "加载后热帧 " + std::to_string(afterMoreMs) +
                              "ms ≥ 250ms");
             }

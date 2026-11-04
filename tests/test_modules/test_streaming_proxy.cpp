@@ -457,7 +457,7 @@ REGISTER_TEST(streaming_send_streaming_claude_passthrough,
 // 断言的是上游实际收到的头 / body（转发路径的真实效果），不是 forBaseUrl 的返回值。
 // host 是 loopback → host 推断给默认方言：无会话头 + body 逐字节不变。
 REGISTER_TEST(streaming_proxy_dialect_host_inferred,
-              "streaming: host 推断默认方言（无会话头、body 不变）", {
+              "streaming: host 推断默认方言（无会话头、body 剥 [1M] 标记）", {
     MockSseServer upstream;
     DOCTEST_REQUIRE(upstream.start());
 
@@ -482,7 +482,10 @@ REGISTER_TEST(streaming_proxy_dialect_host_inferred,
                             "stream ended with error: " + err);
 
     DOCTEST_CHECK(upstream.lastOpenCodeSession().empty());
-    DOCTEST_CHECK_EQ(upstream.lastRequestBody(), req.body);
+    // bug212（2026-11-04）：默认方言也恒剥 [1M] 模型标记（真实上游只认裸模型名），
+    // 上行 body = 剥标记后的同构 JSON；原「body 原样」是旧契约。
+    DOCTEST_CHECK_EQ(upstream.lastRequestBody(),
+                     R"({"model":"claude-sonnet-4-5","stream":true})");
     DOCTEST_CHECK_EQ(all, joinChunks(script.chunks));
 
     upstream.stop();
