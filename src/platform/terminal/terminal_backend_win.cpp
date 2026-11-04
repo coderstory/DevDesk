@@ -100,18 +100,195 @@ constexpr DWORD kCloseWaitMs = 5000;
 
 } // namespace
 
+// 会话共享态：handle（UI/主线程面）与 reader/writer/worker 线程的交界面全部收拢于此，
+// 双方仅经 shared_ptr 持有——关停 worker 与 handle 析构互不悬空（P1-2③）。
+struct SessionShared {
+    std::mutex wqMutex;
+    std::condition_variable wqCv;
+    std::deque<std::string> wq;
+    std::mutex resizeMutex;
+    TerminalSize pendingSize;
+    std::atomic<bool> resizePending{false};
+    std::atomic<bool> writerStop{false};
+    std::atomic<bool> readerExit{false}; // P1-2①：置位后 reader 不再重挂 ReadFile
+    std::atomic<bool> exited{false};
+    std::atomic<int32_t> exitCode{0};
+};
+
+// 文件级事件原语（DoneEvent 移出类：worker 与 reader/writer 线程共享）
+class DoneEvent {
+public:
+    void set() {
+        std::lock_guard<std::mutex> lock(m_);
+        done_.store(true);
+        cv_.notify_all();
+    }
+    bool peek() const { return done_.load(std::memory_order_relaxed); }
+    bool wait_for(std::chrono::milliseconds ms) {
+        std::unique_lock<std::mutex> lock(m_);
+        return cv_.wait_for(lock, ms, [this] { return done_.load(); });
+    }
+
+private:
+    std::mutex m_;
+    std::condition_variable cv_;
+    std::atomic<bool> done_{false};
+};
+
+// 关停资源包（P1-2③）：terminate 时把线程/句柄/vterm 全部 move 进来，worker 独占收尾，
+// UI 线程立即返回；task 由 shared_ptr 保活，handle 析构零等待、worker 零悬空。
+struct ShutdownTask {
+    std::thread reader;
+    std::thread writer;
+    std::shared_ptr<SessionShared> shared;
+    std::unique_ptr<VtermCore> vterm;
+    HANDLE inputWrite = nullptr;
+    HANDLE outputRead = nullptr;
+    HANDLE hProcess = nullptr;
+    HPCON hpc = nullptr;
+    int64_t pid = 0;
+    DoneEvent readerDone;
+    DoneEvent writerDone;
+    std::atomic<bool> readerRetired{false}; // reader 已退出（join/detach 决策）
+};
+
+void readerTask(ShutdownTask& t) {
+    char buf[65536];
+    std::string reply;
+    auto* shared = t.shared.get();
+    auto* vterm = t.vterm.get();
+    for (;;) {
+        if (shared->writerStop.load(std::memory_order_relaxed) ||
+            shared->readerExit.load(std::memory_order_relaxed))
+            break;
+        // 坑⑤：无读取在飞窗口内处理 pending resize（latest-wins）
+        if (shared->resizePending.exchange(false, std::memory_order_relaxed)) {
+            TerminalSize s;
+            {
+                std::lock_guard<std::mutex> lock(shared->resizeMutex);
+                s = shared->pendingSize;
+            }
+            if (t.hpc != nullptr && conptyApi().ok) {
+                COORD c;
+                c.X = SHORT(s.cols);
+                c.Y = SHORT(s.rows);
+                conptyApi().resize(t.hpc, c);
+            }
+            if (vterm != nullptr) vterm->resize(s.rows, s.cols);
+        }
+        DWORD n = 0;
+        if (!ReadFile(t.outputRead, buf, sizeof(buf), &n, nullptr)) {
+            const DWORD err = GetLastError();
+            if (err == ERROR_OPERATION_ABORTED && !shared->writerStop.load(std::memory_order_relaxed) &&
+                !shared->readerExit.load(std::memory_order_relaxed))
+                continue; // resize 唤醒（坑⑤），重回读取循环
+            (void)err;    // 断裂（坑⑦）/关停 → 退出排空循环
+            break;
+        }
+        if (n > 0 && vterm != nullptr) {
+            reply.clear();
+            vterm->feed(reinterpret_cast<const uint8_t*>(buf), int32_t(n), &reply);
+            if (!reply.empty()) {
+                {
+                    std::lock_guard<std::mutex> lock(shared->wqMutex);
+                    shared->wq.push_back(std::move(reply));
+                }
+                shared->wqCv.notify_one();
+                reply.clear();
+            }
+        }
+    }
+    // 退出码收割（有界；拿不到=约定 0）。P1-2②：收割只发生在本函数内（terminated
+    // 与句柄关闭都在 worker 持有句柄期间进行），无悬空面
+    DWORD code = 0;
+    if (t.hProcess != nullptr &&
+        WaitForSingleObject(t.hProcess, kCloseWaitMs) == WAIT_OBJECT_0) {
+        GetExitCodeProcess(t.hProcess, &code);
+    }
+    shared->exitCode.store(int32_t(code), std::memory_order_relaxed);
+    shared->exited.store(true, std::memory_order_relaxed); // 坑⑦：断裂=会话结束，宿主不崩
+    t.readerDone.set();
+}
+
+void writerTask(ShutdownTask& t) {
+    auto* shared = t.shared.get();
+    for (;;) {
+        std::string payload;
+        {
+            std::unique_lock<std::mutex> lock(shared->wqMutex);
+            shared->wqCv.wait(lock, [&shared] {
+                return shared->writerStop.load(std::memory_order_relaxed) || !shared->wq.empty();
+            });
+            if (shared->wq.empty()) break; // 停止且队列空
+            payload = std::move(shared->wq.front());
+            shared->wq.pop_front();
+        }
+        DWORD written = 0;
+        // 写失败（管道断）静默丢弃：会话即将走断裂→exited 路径
+        WriteFile(t.inputWrite, payload.data(), DWORD(payload.size()), &written, nullptr);
+    }
+    t.writerDone.set();
+}
+
+// 关停 worker（P1-2③：在后台线程执行，UI 线程 terminate 立即返回）。
+// 全链有界（先例口径 5s）：树杀 → 排空至断裂（自然断裂优先，超时才置 readerExit +
+// CancelIoEx 强断，reader 不重挂）→ ClosePseudoConsole（无读取在飞）→ 收 writer →
+// 关句柄。任何一步超时都不挂死。
+void shutdownTaskWorker(std::shared_ptr<ShutdownTask> t) {
+    auto* shared = t->shared.get();
+    process_host::terminateTree(t->pid); // 坑②：taskkill /T /F 树杀（先例，有界+探活兜底）
+
+    // 坑②排空：优先让 reader 自然读到管道断裂退出
+    if (!t->readerDone.wait_for(std::chrono::milliseconds(2000))) {
+        shared->readerExit.store(true, std::memory_order_relaxed); // P1-2①：不重挂 ReadFile
+        if (t->outputRead != nullptr) CancelIoEx(t->outputRead, nullptr);
+        t->readerDone.wait_for(std::chrono::milliseconds(1000)); // 强断兜底窗口
+    }
+
+    // ClosePseudoConsole（此时无读取在飞；残余面=句柄拆除兜底口径，宁拆不挂）
+    if (t->hpc != nullptr && conptyApi().ok) conptyApi().close(t->hpc);
+
+    shared->writerStop.store(true, std::memory_order_relaxed);
+    shared->wqCv.notify_all();
+    if (!t->writerDone.wait_for(std::chrono::milliseconds(1000))) { /* 超时走 detach 兜底 */ }
+    if (t->writer.joinable()) {
+        if (t->writerDone.peek())
+            t->writer.join();
+        else
+            t->writer.detach();
+    }
+    if (t->reader.joinable()) {
+        if (t->readerRetired.load(std::memory_order_relaxed))
+            t->reader.join();
+        else
+            t->reader.detach();
+    }
+
+    // P1-2②：句柄关闭只在 worker（独占句柄副本）内进行，收割（readerTask 尾部）与此
+    // 互斥于生命周期之外，无悬空面
+    if (t->inputWrite != nullptr) CloseHandle(t->inputWrite);
+    if (t->outputRead != nullptr) CloseHandle(t->outputRead);
+    if (t->hProcess != nullptr) CloseHandle(t->hProcess);
+}
+
 class WinSessionHandle : public TerminalSessionHandle {
 public:
     WinSessionHandle(HPCON hpc, HANDLE inputWrite, HANDLE outputRead, HANDLE hProcess,
                      int64_t pid, std::unique_ptr<VtermCore> vterm)
-        : hpc_(hpc),
-          inputWrite_(inputWrite),
-          outputRead_(outputRead),
-          hProcess_(hProcess),
-          pid_(pid),
+        : shared_(std::make_shared<SessionShared>()),
           vterm_(std::move(vterm)) {
-        reader_ = std::thread([this] { readerLoop(); });
-        writer_ = std::thread([this] { writerLoop(); });
+        // 线程与运行态装进共享包（terminate 时整体移交关停 worker）
+        task_ = std::make_shared<ShutdownTask>();
+        task_->shared = shared_;
+        task_->vterm = std::move(vterm); // vterm 移交：terminate 后 handle 判空面接管
+        task_->inputWrite = inputWrite;
+        task_->outputRead = outputRead;
+        task_->hProcess = hProcess;
+        task_->hpc = hpc;
+        task_->pid = pid;
+        task_->reader = std::thread([t = task_] { readerTask(*t); });
+        task_->writer = std::thread([t = task_] { writerTask(*t); });
+        shared_->exited.store(false);
     }
 
     ~WinSessionHandle() override { terminate(); }
@@ -122,98 +299,50 @@ public:
     core::Result<void> write(const uint8_t* bytes, int32_t count, bool paste) override {
         if (bytes == nullptr || count <= 0)
             return core::Result<void>::fail(core::ErrorCode::ValidationError, "空写入");
+        if (terminated_.load(std::memory_order_relaxed))
+            return core::Result<void>::fail(core::ErrorCode::Internal, "会话已终止");
         std::string payload(reinterpret_cast<const char*>(bytes), size_t(count));
         // bracketed paste：仅在子进程已开启 DECSET 2004 时包裹（转译层平行跟踪）
-        if (paste && vterm_ && vterm_->bracketedPasteEnabled())
+        if (vterm_ && vterm_->bracketedPasteEnabled())
             payload = "\x1b[200~" + payload + "\x1b[201~";
         {
-            std::lock_guard<std::mutex> lock(wqMutex_);
-            if (stopping_.load(std::memory_order_relaxed))
-                return core::Result<void>::fail(core::ErrorCode::Internal, "会话已终止");
-            wq_.push_back(std::move(payload));
+            std::lock_guard<std::mutex> lock(shared_->wqMutex);
+            shared_->wq.push_back(std::move(payload));
         }
-        wqCv_.notify_one();
+        shared_->wqCv.notify_one();
         return core::Result<void>::ok();
     }
 
     core::Result<void> resize(const TerminalSize& size) override {
         if (size.rows <= 0 || size.cols <= 0)
             return core::Result<void>::fail(core::ErrorCode::ValidationError, "非法尺寸");
+        if (terminated_.load(std::memory_order_relaxed))
+            return core::Result<void>::fail(core::ErrorCode::Internal, "会话已终止");
         {
-            std::lock_guard<std::mutex> lock(resizeMutex_);
-            pendingSize_ = size;
-            resizePending_.store(true, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(shared_->resizeMutex);
+            shared_->pendingSize = size;
+            shared_->resizePending.store(true, std::memory_order_relaxed);
         }
         // 坑⑤ idle 唤醒：reader 阻塞在无输出的 ReadFile 时 pending resize 永不处理
         //（shell 不重绘→无输出→reader 不醒），CancelIoEx 打断阻塞读后由 reader
         // 在无读取在飞窗口处理。
-        if (outputRead_ != nullptr) CancelIoEx(outputRead_, nullptr);
+        CancelIoEx(task_->outputRead, nullptr);
         return core::Result<void>::ok();
     }
 
-    // 关闭时序（技术卡 §3.2，全链有界无挂死面）：
-    // ① 等 spawnCompleted（坑③）→ ② taskkill /T /F 树杀（process_host 先例，快照式，
-    // 竞态逃逸由下一步兜底）→ ③ 有界等 reader 自然排空至管道断裂（坑②）→ 超时
-    // CancelIoEx 强断 → ④ ClosePseudoConsole（此时无读取在飞）→ ⑤ 有界收 writer →
-    // ⑥ 关全部句柄。任何一步超时都不挂死 UI。
+    // 关停（P1-2③）：UI 线程只做移交与触发，全链有界序列（树杀→排空→Close→join→
+    // 关句柄，技术卡 §3.2 坑②③⑦）在后台 worker 执行，立即返回不冻结。
     void terminate() override {
         bool already = terminated_.exchange(true);
         if (already) return;
-
-        if (spawnCompleted_.wait_for(std::chrono::milliseconds(kCloseWaitMs))) {
-            // ② 树杀：先例 process_host_win.cpp:172-174（taskkill /T /F + 有界 + 探活兜底）
-            process_host::terminateTree(pid_);
-        }
-
-        // ③ 有界等 reader 排空至断裂
-        if (!readerDone_.wait_for(std::chrono::milliseconds(kCloseWaitMs))) {
-            if (outputRead_ != nullptr) CancelIoEx(outputRead_, nullptr);
-            readerDone_.wait_for(std::chrono::milliseconds(1000)); // 强断兜底窗口
-        }
-
-        // ④ Close（读侧已停=无读取在飞；超时残余=句柄拆除兜底口径，宁拆不挂）
-        {
-            std::lock_guard<std::mutex> lock(apiMutex_);
-            if (hpc_ != nullptr && conptyApi().ok) conptyApi().close(hpc_);
-            hpc_ = nullptr;
-        }
-
-        // ⑤ 收 writer（线程收尾硬纪律：joinable 线程必须 join 或 detach，否则析构 std::terminate）
-        stopping_.store(true, std::memory_order_relaxed);
-        wqCv_.notify_all();
-        if (!writerDone_.wait_for(std::chrono::milliseconds(1000))) { /* 超时走 detach 兜底 */ }
-        if (writer_.joinable()) {
-            if (writerDone_.peek())
-                writer_.join();
-            else
-                writer_.detach(); // 句柄拆除后 WriteFile 必败，线程随即自然退出
-        }
-        if (reader_.joinable()) {
-            if (readerDoneEpoch_.load() != 0)
-                reader_.join(); // 已自然退出（排空至断裂或强断兜底后）
-            else
-                reader_.detach(); // 超时兜底：句柄拆除后 ReadFile 必败退出
-        }
-
-        // ⑥ 关句柄
-        if (inputWrite_ != nullptr) {
-            CloseHandle(inputWrite_);
-            inputWrite_ = nullptr;
-        }
-        if (outputRead_ != nullptr) {
-            CloseHandle(outputRead_);
-            outputRead_ = nullptr;
-        }
-        if (hProcess_ != nullptr) {
-            CloseHandle(hProcess_);
-            hProcess_ = nullptr;
-        }
-        exited_.store(true, std::memory_order_relaxed);
+        shared_->exited.store(true, std::memory_order_relaxed); // 终止语义即时生效
+        auto t = task_; // shared_ptr 保活：handle 立即放手（vterm 已移交），worker 自足收尾
+        std::thread(shutdownTaskWorker, t).detach();
     }
 
     bool exited(int32_t* exitCode) override {
-        if (!exited_.load(std::memory_order_relaxed)) return false;
-        if (exitCode != nullptr) *exitCode = exitCode_.load(std::memory_order_relaxed);
+        if (!shared_->exited.load(std::memory_order_relaxed)) return false;
+        if (exitCode != nullptr) *exitCode = shared_->exitCode.load(std::memory_order_relaxed);
         return true;
     }
 
@@ -232,131 +361,11 @@ public:
         return vterm_ ? vterm_->selectionText(rowStart, colStart, rowEnd, colEnd, out) : false;
     }
 
-    void markSpawnCompleted() { spawnCompleted_.set(); }
-
 private:
-    // ---- 线程面（同步原语走 std，等价 Win32 事件语义的有界等待）----
-
-    class DoneEvent {
-    public:
-        void set() {
-            std::lock_guard<std::mutex> lock(m_);
-            done_.store(true);
-            cv_.notify_all();
-        }
-        bool peek() const { return done_.load(std::memory_order_relaxed); }
-        bool wait_for(std::chrono::milliseconds ms) {
-            std::unique_lock<std::mutex> lock(m_);
-            return cv_.wait_for(lock, ms, [this] { return done_.load(); });
-        }
-
-    private:
-        std::mutex m_;
-        std::condition_variable cv_;
-        std::atomic<bool> done_{false};
-    };
-
-    void enqueueWriteLocked(std::string payload) {
-        {
-            std::lock_guard<std::mutex> lock(wqMutex_);
-            wq_.push_back(std::move(payload));
-        }
-        wqCv_.notify_one();
-    }
-
-    void readerLoop() {
-        char buf[65536];
-        std::string reply;
-        for (;;) {
-            if (stopping_.load(std::memory_order_relaxed)) break;
-            // 坑⑤：无读取在飞窗口内处理 pending resize（latest-wins）
-            if (resizePending_.exchange(false, std::memory_order_relaxed)) {
-                TerminalSize s;
-                {
-                    std::lock_guard<std::mutex> lock(resizeMutex_);
-                    s = pendingSize_;
-                }
-                std::lock_guard<std::mutex> lock(apiMutex_);
-                if (hpc_ != nullptr && conptyApi().ok) {
-                    COORD c;
-                    c.X = SHORT(s.cols);
-                    c.Y = SHORT(s.rows);
-                    conptyApi().resize(hpc_, c);
-                }
-                if (vterm_) vterm_->resize(s.rows, s.cols);
-            }
-            DWORD n = 0;
-            if (!ReadFile(outputRead_, buf, sizeof(buf), &n, nullptr)) {
-                const DWORD err = GetLastError();
-                if (err == ERROR_OPERATION_ABORTED && !stopping_.load(std::memory_order_relaxed))
-                    continue; // resize 唤醒（P2-2），重回读取循环
-                (void)err; // 断裂（坑⑦）/stopping → 退出排空循环
-                break;
-            }
-            if (n > 0 && vterm_) {
-                reply.clear();
-                vterm_->feed(reinterpret_cast<const uint8_t*>(buf), int32_t(n), &reply);
-                if (!reply.empty()) enqueueWriteLocked(std::move(reply)); // DSR/DA 应答回写
-            }
-        }
-        // 退出码收割（有界；拿不到=约定 0）
-        DWORD code = 0;
-        if (hProcess_ != nullptr &&
-            WaitForSingleObject(hProcess_, kCloseWaitMs) == WAIT_OBJECT_0) {
-            GetExitCodeProcess(hProcess_, &code);
-        }
-        exitCode_.store(int32_t(code), std::memory_order_relaxed);
-        exited_.store(true, std::memory_order_relaxed); // 坑⑦：断裂=会话结束，宿主不崩
-        readerDoneEpoch_.store(1, std::memory_order_relaxed);
-        readerDone_.set();
-    }
-
-    void writerLoop() {
-        for (;;) {
-            std::string payload;
-            {
-                std::unique_lock<std::mutex> lock(wqMutex_);
-                wqCv_.wait(lock, [this] {
-                    return stopping_.load(std::memory_order_relaxed) || !wq_.empty();
-                });
-                if (wq_.empty()) break; // stopping 且队列空
-                payload = std::move(wq_.front());
-                wq_.pop_front();
-            }
-            DWORD written = 0;
-            // 写失败（管道断）静默丢弃：会话即将走断裂→exited 路径
-            WriteFile(inputWrite_, payload.data(), DWORD(payload.size()), &written, nullptr);
-        }
-        writerDone_.set();
-    }
-
-    HPCON hpc_ = nullptr;
-    HANDLE inputWrite_ = nullptr;
-    HANDLE outputRead_ = nullptr;
-    HANDLE hProcess_ = nullptr;
-    int64_t pid_ = 0;
-    std::unique_ptr<VtermCore> vterm_;
-
-    std::mutex apiMutex_; // hpc_ 生命周期守护（reader resize vs terminate Close）
-
-    std::thread reader_;
-    std::thread writer_;
-    DoneEvent spawnCompleted_;
-    DoneEvent readerDone_;
-    DoneEvent writerDone_;
-    std::atomic<bool> readerDoneEpoch_{0}; // reader 是否已自然退出（detach 决策）
-    std::atomic<bool> stopping_{false};
+    std::shared_ptr<SessionShared> shared_;
+    std::shared_ptr<ShutdownTask> task_;
+    std::unique_ptr<VtermCore> vterm_; // terminate 后移入 task_（判空面接管）
     std::atomic<bool> terminated_{false};
-    std::atomic<bool> exited_{false};
-    std::atomic<int32_t> exitCode_{0};
-
-    std::mutex wqMutex_;
-    std::condition_variable wqCv_;
-    std::deque<std::string> wq_;
-
-    std::mutex resizeMutex_;
-    TerminalSize pendingSize_;
-    std::atomic<bool> resizePending_{false};
 };
 
 namespace {
@@ -376,7 +385,7 @@ public:
         // ① 同步管道 ×2（禁 OVERLAPPED，坑①官方口径）
         HANDLE inputRead = nullptr, inputWrite = nullptr;
         HANDLE outputRead = nullptr, outputWrite = nullptr;
-        SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, FALSE};
+        SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE}; // P2-1：对齐官方样例
         if (!CreatePipe(&inputRead, &inputWrite, &sa, 0) ||
             !CreatePipe(&outputRead, &outputWrite, &sa, 0))
             return failSpawn("CreatePipe", GetLastError());
@@ -430,7 +439,8 @@ public:
         auto handle = std::unique_ptr<WinSessionHandle>(new WinSessionHandle(
             hpc, inputWrite, outputRead, pi.hProcess, int64_t(pi.dwProcessId),
             std::move(vterm)));
-        handle->markSpawnCompleted(); // 坑③：起完才允许关闭路径碰 ConPTY
+        // 坑③守卫天然成立：terminate 只能经 handle 指针调（构造已完成），关停 worker
+        // 不再需要 spawnCompleted 事件等待
         CloseHandle(pi.hThread);
         return core::Result<std::unique_ptr<TerminalSessionHandle>>::ok(
             std::unique_ptr<TerminalSessionHandle>(std::move(handle)));
@@ -448,7 +458,7 @@ private:
         HANDLE c = nullptr, HANDLE d = nullptr) {
         for (HANDLE h : {a, b, c, d})
             if (h != nullptr) CloseHandle(h);
-        std::string msg = std::string("PowerShell 启动失败（") + api +
+        std::string msg = std::string("终端启动失败（") + api +
                           " err=" + std::to_string(uint64_t(err)) + "）";
         return core::Result<std::unique_ptr<TerminalSessionHandle>>::fail(
             core::ErrorCode::Internal, msg.c_str());
@@ -471,13 +481,20 @@ bool clipboardCopyText(const uint8_t* bytes, int32_t count) {
     const std::wstring wide = utf8ToWide(utf8);
     if (wide.empty()) return false;
     if (!OpenClipboard(nullptr)) return false;
+    EmptyClipboard(); // P1-1：Win32 契约——打开后立即清空，粘贴板与我们的写入原子成对
     const SIZE_T bytesN = (wide.size() + 1) * sizeof(wchar_t);
     HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytesN);
     if (mem == nullptr) {
         CloseClipboard();
         return false;
     }
-    memcpy(GlobalLock(mem), wide.data(), bytesN);
+    const void* locked = GlobalLock(mem); // P3-2：锁失败显式失败路径，不 memcpy 到 nullptr
+    if (locked == nullptr) {
+        GlobalFree(mem);
+        CloseClipboard();
+        return false;
+    }
+    memcpy(const_cast<void*>(locked), wide.data(), bytesN);
     GlobalUnlock(mem);
     const BOOL ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
     // SetClipboardData 成功后 mem 归系统所有，失败才由我们释放

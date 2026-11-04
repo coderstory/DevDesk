@@ -133,17 +133,23 @@ REGISTER_TEST(keyencoderCtrlCDuality,
     const platform::TerminalKeyConventions mac{.ctrlCIsCopy = false, .ctrlVIsPaste = false};
 
     // ① mac 惯例：恒走 keyencoder 语义（\x03），与选区无关（零行为变化锚）
-    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, false, out));
+    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, false, false, out));
     DOCTEST_CHECK(out == "\x03");
-    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, true, out));
+    DOCTEST_CHECK(!terminal::encodeCtrlC(mac, true, false, out));
     DOCTEST_CHECK(out == "\x03");
 
     // ② win 惯例 + 无选区 → \x03 中断
-    DOCTEST_CHECK(!terminal::encodeCtrlC(win, false, out));
+    DOCTEST_CHECK(!terminal::encodeCtrlC(win, false, false, out));
     DOCTEST_CHECK(out == "\x03");
 
-    // ③ win 惯例 + 有选区 → 复制分派（bytes 空，宿主走剪贴板）
-    DOCTEST_CHECK(terminal::encodeCtrlC(win, true, out));
-    DOCTEST_CHECK(out == "\x03"); // bytes 保持上次值不变即"未写"
+    // ③ win 惯例 + 有选区 → 复制分派（bytes 保持上次值不变即"未写"，宿主走剪贴板）
+    DOCTEST_CHECK(terminal::encodeCtrlC(win, true, false, out));
+    DOCTEST_CHECK(out == "\x03");
+
+    // ④ P2-2：Shift 恒中断（Ctrl+Shift+C 原终端语义，mac 零变化锚），选区不改变分派
+    DOCTEST_CHECK(!terminal::encodeCtrlC(win, true, true, out));
+    DOCTEST_CHECK(out == "\x03");
+    DOCTEST_CHECK(!terminal::encodeCtrlC(win, false, true, out));
+    DOCTEST_CHECK(out == "\x03");
     return true;
 })

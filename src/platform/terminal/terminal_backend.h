@@ -47,9 +47,11 @@ public:
     virtual void terminate() = 0;
     // 子进程已退出时返回 true 并填 exitCode（1=正常退出码；信号=128+sig 约定在桥接层折算）
     virtual bool exited(int32_t* exitCode) = 0;
-    // read 第一形态：非阻塞拉当前可视网格快照（主线程调）
+    // read 第一形态：非阻塞拉当前可视网格快照（主线程调）；exited 后仍返回末帧
+    //（win=转译层网格保留、mac=核心快照保留——「会话已结束」态展示依赖此契约）
     virtual TerminalFrame poll() = 0;
-    // 输出批次单调计数（渲染循环保养判断；macOS=子进程输出即增，Windows 占位恒 0）
+    // 输出批次单调计数（渲染循环保养判断；macOS=子进程输出即增，Windows=libvterm
+    // damage 聚合计数）
     virtual int pendingGeneration() = 0;
     virtual int scrollbackCount() = 0;
     // 读回滚行 UTF-8 文本（0=最旧已推入行）；false=越界/溢出
@@ -59,7 +61,8 @@ public:
                                std::string& out) = 0;
 };
 
-// 平台后端。macOS=Swift/Corta 桥；Windows v1=占位空实现（Phase 2，available()=false）。
+// 平台后端。macOS=Swift/Corta 桥；Windows=ConPTY 桥（available() 动态探测 1809+，
+// need:127 真实现）。
 class TerminalBackend {
 public:
     virtual ~TerminalBackend() = default;

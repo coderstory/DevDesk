@@ -17,9 +17,9 @@ namespace terminal {
 bool encodeKey(eui::InputKey key, const eui::KeyModifiers& mods, std::string& bytes);
 
 // Ctrl+C 二象性分派（技术卡 v2 决策 4/§5，纯函数可单测）：
-// win 惯例（conv.ctrlCIsCopy）且选区非空 → 返回 true、bytes 不写（宿主走复制）；
-// 其余 → 返回 false、bytes=\x03（ETX 中断，keyencoder 同语义）。
-bool encodeCtrlC(const platform::TerminalKeyConventions& conv, bool hasSelection,
+// win 惯例（conv.ctrlCIsCopy）且选区非空且非 Shift → 返回 true、bytes 不写（宿主走复制）；
+// 其余（含 Ctrl+Shift+C 恒中断，P2-2 mac 零变化锚）→ 返回 false、bytes=\x03。
+bool encodeCtrlC(const platform::TerminalKeyConventions& conv, bool hasSelection, bool shift,
                  std::string& bytes);
 
 } // namespace terminal

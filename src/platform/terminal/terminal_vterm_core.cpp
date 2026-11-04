@@ -386,7 +386,9 @@ bool VtermCore::scrollbackLine(int index, std::string& out) const {
     if (index < 0 || size_t(index) >= impl_->scrollback.size()) return false;
     out.clear();
     for (const VTermScreenCell& sc : impl_->scrollback[size_t(index)]) {
-        if (sc.chars[0] != 0) appendCodepointUtf8(out, sc.chars[0]);
+        // 跳过空白 cell 与宽字占位 cell（chars[0]=(uint32_t)-1，screen.c:197，对齐网格侧）
+        if (sc.chars[0] != 0 && sc.chars[0] != 0xFFFFFFFFu)
+            appendCodepointUtf8(out, sc.chars[0]);
     }
     return true;
 }
@@ -394,15 +396,21 @@ bool VtermCore::scrollbackLine(int index, std::string& out) const {
 bool VtermCore::selectionText(int rowStart, int colStart, int rowEnd, int colEnd,
                               std::string& out) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (rowStart < 0 || colStart < 0 || rowEnd < rowStart || colEnd < colStart ||
-        rowStart >= impl_->rows || rowEnd >= impl_->rows || colStart >= impl_->cols ||
-        colEnd >= impl_->cols)
+    // 反向拖选规范化（P1-3①）：锚/头两端的行列取 min/max——首行取左列、末行取右列
+    //（与 page 层 3 高亮 c0/c1 同口径），调用方无需自行排序
+    const int top = std::min(rowStart, rowEnd);
+    const int bottom = std::max(rowStart, rowEnd);
+    const int colL = std::min(colStart, colEnd);
+    const int colR = std::max(colStart, colEnd);
+    if (top < 0 || colL < 0 || bottom >= impl_->rows || colL >= impl_->cols ||
+        colR >= impl_->cols)
         return false;
     out.clear();
-    for (int r = rowStart; r <= rowEnd; ++r) {
-        int end = r == rowEnd ? colEnd : impl_->cols - 1;
+    for (int r = top; r <= bottom; ++r) {
+        const int c0 = r == top ? colL : 0;
+        const int c1 = r == bottom ? colR : impl_->cols - 1;
         std::string line;
-        for (int c = colStart; c <= end; ++c) {
+        for (int c = c0; c <= c1; ++c) {
             const TerminalCell& cell = impl_->cells[size_t(r) * impl_->cols + c];
             if (cell.cp == 0)
                 line.push_back(' ');
@@ -411,7 +419,7 @@ bool VtermCore::selectionText(int rowStart, int colStart, int rowEnd, int colEnd
         }
         // 行尾 trim（所见即所得口径：尾空白不进剪贴板）
         while (!line.empty() && line.back() == ' ') line.pop_back();
-        if (r > rowStart && (!out.empty() || !line.empty())) out.push_back('\n');
+        if (r > top) out.push_back('\n'); // 行间换行：纯行界判定（空白行保留为空行）
         out += line;
     }
     return true;

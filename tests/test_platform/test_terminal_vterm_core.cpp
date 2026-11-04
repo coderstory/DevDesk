@@ -157,6 +157,20 @@ REGISTER_TEST(vtermScrollbackDiffOne, "vterm core: scrollback 差一语义（cor
     return true;
 })
 
+REGISTER_TEST(vtermScrollbackCjkWide,
+              "vterm core: CJK 回滚行占位规范化（宽字 spacer 不出乱码，P1-4）", {
+    platform::VtermCore core(3, 20); // 3 行视口
+    std::string script;
+    for (int i = 0; i < 5; ++i) script += "\xe4\xbd\xa0\xe5\xa5\xbd\xe4\xb8\x96\xe7\x95\x8c\r\n"; // 你好世界
+    feed(core, script);
+    DOCTEST_CHECK(core.scrollbackCount() >= 2);
+    std::string line;
+    DOCTEST_REQUIRE(core.scrollbackLine(0, line));
+    // 宽字 spacer（chars[0]=-1）被跳过：回滚行=连续 CJK，无空隙无乱码
+    DOCTEST_CHECK(line == "\xe4\xbd\xa0\xe5\xa5\xbd\xe4\xb8\x96\xe7\x95\x8c"); // 你好世界
+    return true;
+})
+
 REGISTER_TEST(vtermResize, "vterm core: resize 行列重排 + 全量重转译", {
     platform::VtermCore core(5, 20);
     feed(core, "keep");

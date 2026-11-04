@@ -117,21 +117,30 @@ GridLayout TerminalPage::compose(
                     hasSelection_ = false;
                     selecting_ = false;
                 })
-                .onKeyEvent([&controller, &onKeyBytes, &onCopyText, this](const eui::KeyEvent& e) {
+                .onKeyEvent([&controller, &onKeyBytes, &onCopyText, &totalLines, &layout, this](
+                          const eui::KeyEvent& e) {
                     if (!e.isDown()) return false;
                     // Ctrl+C 二象性（技术卡 v2 决策 4/§5）：win 惯例且选区非空 → 复制并吞
                     // 事件；无选区/mac 惯例 → keyencoder 语义（\x03 中断，encodeKey 同值）
                     if (e.modifiers.control && e.key == eui::InputKey::C) {
                         std::string bytes;
                         if (terminal::encodeCtrlC(platform::terminalKeyConventions(),
-                                                  hasSelection_, bytes)) {
+                                                  hasSelection_, e.modifiers.shift, bytes)) {
+                            // P1-3②：拖选行列是可视行——滚动即清选区（onScroll），非滚动
+                            // 态可视行=网格行；滚动态按 frameRow 映射，越界段裁掉（不复制，
+                            // 落回中断语义）——selectionText 只服务当前可视网格
+                            const int startLine =
+                                std::max(0, totalLines - layout.rows - scrollOffset_);
+                            const int sbNow = controller.scrollbackCount();
+                            const int fR0 = selARow_ + startLine - sbNow;
+                            const int fR1 = selHRow_ + startLine - sbNow;
                             std::string sel;
-                            if (controller.selectionText(selARow_, selACol_, selHRow_,
-                                                         selHCol_, sel)) {
+                            if (fR0 >= 0 && fR1 >= 0 && fR1 < layout.rows &&
+                                controller.selectionText(fR0, selACol_, fR1, selHCol_, sel)) {
                                 onCopyText(sel);
                                 return true;
                             }
-                            bytes.assign(1, '\x03'); // 提取失败（非 Running 等）→ 落回中断
+                            bytes.assign(1, '\x03'); // 裁掉/提取失败 → 落回中断
                         }
                         if (!bytes.empty()) {
                             onKeyBytes(reinterpret_cast<const uint8_t*>(bytes.data()),

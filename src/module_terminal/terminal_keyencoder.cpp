@@ -122,10 +122,10 @@ bool encodeKey(eui::InputKey key, const eui::KeyModifiers& mods, std::string& by
     return false; // 可打印字符/IME 文本走 TextInputEvent
 }
 
-bool encodeCtrlC(const platform::TerminalKeyConventions& conv, bool hasSelection,
+bool encodeCtrlC(const platform::TerminalKeyConventions& conv, bool hasSelection, bool shift,
                  std::string& bytes) {
-    if (conv.ctrlCIsCopy && hasSelection) return true; // 宿主走复制，不发字节
-    bytes.assign(1, '\x03');                           // ETX 中断（Ctrl+C keyencoder 语义）
+    if (conv.ctrlCIsCopy && hasSelection && !shift) return true; // 宿主走复制，不发字节
+    bytes.assign(1, '\x03'); // ETX 中断（Ctrl+C / Ctrl+Shift+C 恒 keyencoder 语义，P2-2）
     return false;
 }
 
