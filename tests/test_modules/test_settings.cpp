@@ -708,11 +708,13 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.tabs.1.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.2.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
-    // 通用 tab：外观卡 + 编辑器字号卡 + Claude 代理卡（UAT5 自模块 tab 迁入，
-    // 配对行下方全宽；服务为空时代理卡仍渲染）
+    // 通用 tab：外观卡 + 通用卡 + Claude 代理卡（UAT5 自模块 tab 迁入，
+    // 配对行下方全宽；服务为空时代理卡仍渲染）。151/152 批：字号行删、
+    // 动态背景迁通用卡行 2，editor.dd 不复存在（断言对象改 editor.fluid）。
     DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.editor") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.editor.fluid.sw.track") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.log") == nullptr);
@@ -741,13 +743,12 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     return true;
 })
 
-// 动态背景开关（UAT6 主窗活体流质）落位外观卡**标题带右贴**（代理卡「随应用
-// 启动代理」同款先例）——不是卡内新行：通用 tab 零滚动预算逐值保持（0/1/2 条
-// 代理警告 338/356/372 对可用 372，+30~40 的行必破 1/2 警告档），标题带行盒
-// 零增量 → 卡高 184 不动。锁：结构 + 标签/说明文案 + onClick 接线 + 开关态色
-// 跟随配置 + 行盒高字面 28（不随字号缩放）+ 卡高不破。
+// 动态背景开关（152 批）：自外观卡标题带迁「通用」卡行 2（editor.fluid，
+// label + 说明 + 44×24 wswitch 行先例，与开机自启动行同款）——卡高 184 不动，
+// 通用 tab 零滚动预算逐值保持。锁：结构 + 标签/说明文案 + onClick 接线 +
+// 开关态色跟随配置 + 卡高不破。（用例名保留注册 id 不变，宿主卡已迁。）
 REGISTER_TEST(settings_appearance_fluid_toggle_wiring,
-              "settings: 动态背景开关 = 外观卡标题带（结构/文案/接线/开关态/卡高不破）", {
+              "settings: 动态背景开关 = 通用卡行 2（结构/文案/接线/开关态/卡高不破）", {
     test_support::TestEnv env(kCfgPrefix, "fluidcard", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fluidcard_cfg"));
 
@@ -762,25 +763,20 @@ REGISTER_TEST(settings_appearance_fluid_toggle_wiring,
     mod->compose(ui, screen);
     ui.end();
     ui.layout(screen.width, screen.height);
-    const auto* toggle = ui.find("settings.card.appearance.fluid");
-    const auto* track = ui.find("settings.card.appearance.fluid.track");
-    const auto* label = ui.find("settings.card.appearance.fluid.label");
-    const auto* hit = ui.find("settings.card.appearance.fluid.hit");
-    DOCTEST_REQUIRE(toggle != nullptr);
+    const auto* track = ui.find("settings.card.editor.fluid.sw.track");
+    const auto* label = ui.find("settings.card.editor.fluid.label");
+    const auto* desc = ui.find("settings.card.editor.fluid.desc");
     DOCTEST_REQUIRE(track != nullptr);
     DOCTEST_REQUIRE(label != nullptr);
-    DOCTEST_REQUIRE(hit != nullptr);
-    DOCTEST_CHECK(label->text == "动态背景");
-    DOCTEST_CHECK(hit->onClick != nullptr);  // toggleSwitch hit 承担拨动
-    // 说明文案 = 规格原文（「关闭恢复静态」语义不得漂移）
-    const auto* desc = ui.find("settings.card.appearance.desc");
     DOCTEST_REQUIRE(desc != nullptr);
+    DOCTEST_CHECK(label->text == "动态背景");
+    DOCTEST_CHECK(track->onClick != nullptr);  // wswitch 命中元素 .track 承担拨动
+    // 说明文案 = 规格原文（「关闭恢复静态」语义不得漂移）
     DOCTEST_CHECK(desc->text == "主窗口背景液态流质动画；关闭恢复静态");
-    // 预算锁：标题带行盒零增量——行盒高字面 28（不随字号缩放）、卡高 184 不破
-    DOCTEST_CHECK_EQ(toggle->frame.height, 28.0f);
-    const auto* card = ui.find("settings.card.appearance");
+    // 预算锁：卡高 184 不破（152 迁卡后行落既有行位，零滚动预算逐值保持）
+    const auto* card = ui.find("settings.card.editor");
     DOCTEST_REQUIRE(card != nullptr);
-    DOCTEST_CHECK_EQ(card->frame.height, module::settings::kAppearanceCardHeight);
+    DOCTEST_CHECK_EQ(card->frame.height, module::settings::kEditorFontCardHeight);
     const float onR = track->color.r;
     const float onG = track->color.g;
     const float onB = track->color.b;
@@ -796,7 +792,7 @@ REGISTER_TEST(settings_appearance_fluid_toggle_wiring,
     ui.begin("fluid_off");
     mod2->compose(ui, screen);
     ui.end();
-    const auto* trackOff = ui.find("settings.card.appearance.fluid.track");
+    const auto* trackOff = ui.find("settings.card.editor.fluid.sw.track");
     DOCTEST_REQUIRE(trackOff != nullptr);
     DOCTEST_CHECK(trackOff->color.r != onR || trackOff->color.g != onG ||
                   trackOff->color.b != onB);
@@ -2068,24 +2064,26 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         const char* card;
         std::vector<const char*> rows;
     };
-    // 开机自启动行（UAT6）按平台能力入池：win/mac 渲染、POSIX 兜底整行不建
-    std::vector<const char*> editorRows = {
-        "settings.card.editor.title", "settings.card.editor.hint",
-        "settings.card.editor.ddwrap"};
+    // 开机自启动行（UAT6）按平台能力入池：win/mac 渲染、POSIX 兜底整行不建。
+    // 151/152 批：字号行 + hint 删除；「动态背景」自外观卡迁入本卡行 2
+    //（editor.fluid，无平台门控恒建）
+    std::vector<const char*> editorRows = {"settings.card.editor.title"};
     if (platform::autostart::supported()) {
         editorRows.push_back("settings.card.editor.autostart.label");
         editorRows.push_back("settings.card.editor.autostart.desc");
         editorRows.push_back("settings.card.editor.autostart.sw.track");
     }
+    editorRows.push_back("settings.card.editor.fluid.label");
+    editorRows.push_back("settings.card.editor.fluid.desc");
+    editorRows.push_back("settings.card.editor.fluid.sw.track");
     std::vector<CardRows> kCards = {
         {0, "settings.card.appearance",
-         {"settings.card.appearance.title", "settings.card.appearance.desc",
-          "settings.card.appearance.fluid",
+         {"settings.card.appearance.title",
           "settings.card.appearance.font.label",
           "settings.card.appearance.effect.label"}},
         {0, "settings.card.editor", editorRows},
         {0, "settings.card.proxy",
-         {"settings.card.proxy.title", "settings.card.proxy.desc",
+         {"settings.card.proxy.title",
           "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
           "settings.card.proxy.takeover.label",
           "settings.card.proxy.takeover.value"}},
@@ -2219,29 +2217,35 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             // B6/F-69-3：cardTitle 盒 y/h 走 roundFs(基) → 三档 19/22/29
             err = pin("appearance.title 高", heightOf("settings.card.appearance.title"),
                       at(19.0f, 22.0f, 29.0f));
+            // 151/152 批：appearance.desc 随动态背景迁卡清退；editor 字号行
+            //（ddwrap）与 hint 删除。通用卡两行 = autostart（行 1，68 锚）+
+            // fluid（行 2 = 行 1 底 + roundFs(6) = 104；POSIX 无行 1 则顶到 68）
             if (err.empty())
-                err = pin("appearance.desc 高",
-                          heightOf("settings.card.appearance.desc"),
-                          at(14.0f, 16.0f, 21.0f));
-            // appearance.theme.label 随主题选择器删除（D-12/E3）移除
-            if (err.empty())
-                err = pin("editor.hint 高", heightOf("settings.card.editor.hint"),
-                          at(14.0f, 16.0f, 21.0f));
-            if (err.empty())
-                err = pin("editor.ddwrap 行顶（editorFontRowY=roundFs(68)）",
-                          yOf("settings.card.editor.ddwrap") -
+                err = pin("editor.autostart 行顶（editorFontRowY=roundFs(68)）",
+                          yOf("settings.card.editor.autostart.label") -
                               yOf("settings.card.editor"),
                           at(58.0f, 68.0f, 88.0f));
             if (err.empty())
-                err = pin("editor.ddwrap 高（logFieldHeight=roundFs(36)）",
-                          heightOf("settings.card.editor.ddwrap"),
-                          at(31.0f, 36.0f, 47.0f));
+                err = pin("editor.autostart 开关高（字面 24）",
+                          heightOf("settings.card.editor.autostart.sw.track"),
+                          at(24.0f, 24.0f, 24.0f));
+            if (err.empty()) {
+                if (platform::autostart::supported()) {
+                    err = pin("editor.fluid 行顶（行 1 底 + roundFs(6)=104）",
+                              yOf("settings.card.editor.fluid.label") -
+                                  yOf("settings.card.editor"),
+                              at(89.0f, 104.0f, 135.0f));
+                } else {
+                    err = pin("editor.fluid 行顶（POSIX 顶到行 1 位 68）",
+                              yOf("settings.card.editor.fluid.label") -
+                                  yOf("settings.card.editor"),
+                              at(58.0f, 68.0f, 88.0f));
+                }
+            }
             if (err.empty())
-                // UAT3 多列分栏：hint 迁下拉下方第二行（hintRowBelowY=行 y+行高+roundFs(6)）
-                err = pin("editor.hint 行顶（hintRowBelowY）",
-                          yOf("settings.card.editor.hint") -
-                              yOf("settings.card.editor"),
-                          at(94.0f, 110.0f, 143.0f));
+                err = pin("editor.fluid 开关高（字面 24）",
+                          heightOf("settings.card.editor.fluid.sw.track"),
+                          at(24.0f, 24.0f, 24.0f));
             if (err.empty())
                 // UAT6：卡内第二段加自启动行 → 144→184（与外观卡同高，配对行高不变）
                 err = pin("editor 卡高", heightOf("settings.card.editor"),
@@ -2249,29 +2253,6 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
-            if (err.empty())
-                // UAT6 动态背景开关（活体流质）：标题带右贴行盒。B6 起 y/盒高
-                // 随字号派生（roundFs 28/12），与 desc 行盒不叠（同 pool 重叠判定守）
-                err = pin("appearance.fluid 开关行盒高（roundFs 28）",
-                          heightOf("settings.card.appearance.fluid"),
-                          ms::roundFs(28.0f));
-            if (err.empty())
-                err = pin("appearance.fluid 开关行顶（标题带右贴，roundFs 12）",
-                          yOf("settings.card.appearance.fluid") -
-                              yOf("settings.card.appearance"),
-                          ms::roundFs(12.0f));
-            if (err.empty() && platform::autostart::supported()) {
-                // 自启动行（UAT6）：行顶 = hint 底 + roundFs(6)（三档 113/132/172），
-                // 开关 44×24 字面值不随字号缩放
-                err = pin("editor.autostart 行顶（autostartRowBelowY）",
-                          yOf("settings.card.editor.autostart.label") -
-                              yOf("settings.card.editor"),
-                          at(113.0f, 132.0f, 172.0f));
-                if (err.empty())
-                    err = pin("editor.autostart 开关高（字面 24）",
-                              heightOf("settings.card.editor.autostart.sw.track"),
-                              at(24.0f, 24.0f, 24.0f));
-            }
             // 代理卡（UAT5 迁入通用 tab，卡高公式不变）
             if (err.empty())
                 err = pin("proxy.takeover.label 高",
@@ -2595,22 +2576,23 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         screen.height = 1000.0f;
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));   // 通用 tab（跨迭代复位）
 
-        // 通用 tab：editor hint 底不出卡 + 配对行高随档位缩放（max 语义）
+        // 通用 tab：通用卡末行（151/152 批后 = fluid 行，POSIX 无行 1 时亦末行）
+        // 底不出卡 + 配对行高随档位缩放（max 语义）
         eui::Ui ui;
         ui.begin(scale < 0.9f ? "pairgeo85" : "pairgeo130");
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
         const auto* editor = ui.find("settings.card.editor");
-        const auto* editorHint = ui.find("settings.card.editor.hint");
+        const auto* fluidTrack = ui.find("settings.card.editor.fluid.sw.track");
         const auto* appearance = ui.find("settings.card.appearance");
         const auto* pair = ui.find("settings.cards.pair.0");
         DOCTEST_REQUIRE(editor != nullptr);
-        DOCTEST_REQUIRE(editorHint != nullptr);
+        DOCTEST_REQUIRE(fluidTrack != nullptr);
         DOCTEST_REQUIRE(appearance != nullptr);
         DOCTEST_REQUIRE(pair != nullptr);
         DOCTEST_CHECK(nearEq(editor->frame.height, editorH));
-        DOCTEST_CHECK(editorHint->frame.y + editorHint->frame.height <=
+        DOCTEST_CHECK(fluidTrack->frame.y + fluidTrack->frame.height <=
                       editor->frame.y + editor->frame.height + 0.5f);
         const float appearanceH = module::settings::roundFs(
             module::settings::kAppearanceCardHeight);
@@ -3013,36 +2995,12 @@ REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
     return true;
 })
 
-REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
-              "settings: 编辑器字号下拉点档 → core::theme 通道 + 落盘（spec缩水 B headless）", {
-    test_support::TestEnv env(kCfgPrefix, "edfontui", true);
-    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "edfontui_cfg"));
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    eui::Ui ui;
-    ui.begin("edfontui");
-    mod->compose(ui, screen);
-    ui.end();
-
-    // 编辑器字号自日志卡迁到「通用」tab 独立卡（默认 tab，无需切）
-    DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
-    // 点第 3 档「大 17px」→ 通道即时生效 + 持久化
-    const auto* item = ui.find("settings.card.editor.dd.item.2");
-    DOCTEST_REQUIRE(item != nullptr);
-    DOCTEST_REQUIRE(item->onClick != nullptr);
-    item->onClick();
-    DOCTEST_CHECK_EQ(::core::theme::editorFontSize(), 17.0f);
-    module::settings::SettingsStore store(::core::appDatabase());
-    DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
-
-    mod->onStop();
-    ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
-    ::core::theme::setDark();  // onStart 的 auto 解析可能 setLight，防串扰
-    return true;
-})
+// 151 批（2026-11-03 老板令）：设置侧「字号」行删除（被字号缩放替代；md 编辑器
+// 仍经 mdEditorFontSize() 消费 editorFontSize 通道，键与通道保留待 B4 复用）。
+// 随 UI 行一并退场的两条用例（断言对象 = 已删节点，无新宿主可迁）：
+//   - settings_editor_font_dropdown_applies_channel（编辑器字号下拉点档 → 通道+落盘）
+//   - settings_editor_font_hint_fits_all_tiers（编辑器字号 hint 四档单行适配）
+// 通道/持久化键本身的读写钳制护栏仍在 settings_editor_font_size_roundtrip_clamp。
 
 // UAT6「字号设置无效，起码没实时生效」：字号缩放滑杆（批I 改 80-130% 无级，原四档
 // 下拉退役）拖到最大档必须即时写 core::theme（token 重建当帧可见），且 apply 路径
@@ -3078,48 +3036,6 @@ REGISTER_TEST(settings_font_scale_slider_applies_live,
     mod->onStop();
     ::core::theme::setFontScale(1.0f);  // 恢复档位默认
     ::core::theme::setDark();           // onStart 的 auto 解析可能 setLight，防串扰
-    return true;
-})
-
-// UAT6「字号说明文本太长没显示全」回退锁：编辑器字号卡 hint 单行文案按四档
-// fs(12) 保守估宽必须放进最小窗 1000 的 hintW（colW 452 - 56 = 396）——旧文案
-// 30.7em 在 115%/130% 档超宽被省略号截断。文案从 compose 真身取（改文案不
-// 改测试即红，防再加长回截断）。
-REGISTER_TEST(settings_editor_font_hint_fits_all_tiers,
-              "settings: 编辑器字号 hint 文案四档单行放得下（115%/130% 不截断）", {
-    test_support::TestEnv env(kCfgPrefix, "fonthint", true);
-    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fonthint_cfg"));
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();
-    eui::Screen screen;
-    screen.width = 1000.0f;   // 最小窗宽：hintW 取最坏值
-    screen.height = 640.0f;
-    eui::Ui ui;
-    ui.begin("fonthint");
-    mod->compose(ui, screen);
-    ui.end();
-    const auto* hint = ui.find("settings.card.editor.hint");
-    DOCTEST_REQUIRE(hint != nullptr);
-    // hintW 与卡内/卡区同式：pad=spacingXXLarge、列宽 gap=spacingLarge、卡内左右各 28
-    const float pad = ::core::theme::current().sizes.spacingXXLarge;
-    const float gap = ::core::theme::current().sizes.spacingLarge;
-    const float contentW = 1000.0f - pad * 2.0f;
-    const float colW = (contentW - gap) * 0.5f;
-    const float hintW = colW - 56.0f;
-    const std::string text(hint->text);
-    const float tiers[] = {0.85f, 1.0f, 1.15f, 1.3f};
-    for (const float tier : tiers) {
-        ::core::theme::setFontScale(tier);
-        const float width =
-            module::settings::estimatedTextWidth(text, module::settings::fs(12.0f));
-        DOCTEST_CHECK_MESSAGE(width <= hintW,
-                              std::string("hint 档 ") + std::to_string(tier) +
-                                  " 估宽 " + std::to_string(width) + " > hintW " +
-                                  std::to_string(hintW));
-    }
-    ::core::theme::setFontScale(1.0f);
-    mod->onStop();
-    ::core::theme::setDark();  // 防串扰
     return true;
 })
 
@@ -3629,7 +3545,8 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     // 2026-11-01：页面级 tab 高度统一跟 ui_kit::kWtabHeight（全站单一高度）
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, ui_kit::kWtabHeight);
-    DOCTEST_CHECK_EQ(ui_kit::kWtabHeight, 36.0f);
+    // 2026-11-03 池167 放大档：36→40（= kHeaderH，页头归一），断言跟常量同步
+    DOCTEST_CHECK_EQ(ui_kit::kWtabHeight, 40.0f);
     // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
     DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
@@ -3872,9 +3789,9 @@ REGISTER_TEST(settings_editor_card_autostart_row,
         // 右贴卡内边距 28（模块插拔卡/同步卡同款右锚）
         DOCTEST_CHECK(std::fabs(track->frame.x -
                                 (w - 28.0f - ms::kAutostartSwitchW)) < 0.5f);
-        // 行 y 单一来源复算：hint 底 + 6，行盒 roundFs(30) 内垂直居中
-        const float rowY =
-            ms::autostartRowBelowY(ms::hintRowBelowY(ms::editorFontRowY()));
+        // 行 y 单一来源复算：151 批后自启动 = 通用卡行 1（内容起始 68 锚），
+        // 行盒 roundFs(30) 内垂直居中
+        const float rowY = ms::editorFontRowY();
         const float rowH = ms::autostartRowHeight();
         DOCTEST_CHECK(std::fabs(track->frame.y -
                                (rowY + (rowH - ms::kAutostartSwitchH) * 0.5f)) <
@@ -3919,7 +3836,8 @@ REGISTER_TEST(settings_editor_card_autostart_row,
             ui.find("settings.card.editor.autostart.sw.track") == nullptr);
         DOCTEST_CHECK(ui.find("settings.card.editor.autostart.label") ==
                       nullptr);
-        DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);  // 字号段不受影响
+        DOCTEST_CHECK(ui.find("settings.card.editor.fluid.sw") !=
+                      nullptr);  // 动态背景行不受影响（152 迁入本卡，POSIX 行 1 位）
     }
     ::core::theme::setDark();
     return true;
@@ -4701,13 +4619,14 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
     return true;
 })
 
-// UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）——log 卡 / editor 字号卡
-// 下拉宽窗填满卡内可用宽（240 固定帽退位）。防：宽窗下拉停在 240、卡内右侧
-// 大段空白；同时锁「窄窗让位」语义——控件区本身 <240 时随列收缩不变。
+// UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）——log 卡下拉宽窗填满卡内
+// 可用宽（240 固定帽退位）。防：宽窗下拉停在 240、卡内右侧大段空白；同时锁
+//「窄窗让位」语义——控件区本身 <240 时随列收缩不变。
+// 151 批：editor 字号卡下拉随「字号」行删除，editor 侧断言一并退场。
 // 期望链：contentW=屏宽−80；半宽卡 colW=(contentW−16)/2；卡内列 colW=(卡宽−56−16)/2；
 // 控件区 cw=行宽−110(label)−8(gap)。
 REGISTER_TEST(settings_dropdown_fill_available_width,
-              "settings: log/editor 下拉宽窗填满可用宽 + 窄窗让位保留（UAT4）", {
+              "settings: log 下拉宽窗填满可用宽 + 窄窗让位保留（UAT4）", {
     test_support::TestEnv env(kCfgPrefix, "ddfill", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "ddfill_cfg"));
@@ -4730,13 +4649,6 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // editor 半宽卡（新 pad=32）：colW=(1328−16)/2=656 → 行宽 656−56=600 → cw=600−118=482
-        DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 482.0f),
-            "editor 下拉宽 " +
-                std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
-                " 期望 482（固定帽退位填满，S4.2 pad 40→32）");
-
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));   // 日志 tab
         ui.begin("ddfill_wide_log");
         mod->compose(ui, screen);
@@ -4762,13 +4674,6 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // editor 半宽卡：S4.2 pad 40→32 → colW=(728−16)/2=356 → cw=182（H3 漂移同 log 全宽卡 +8）
-        DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 182.0f),
-            "editor 窄窗下拉宽 " +
-                std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
-                " 期望 182（窄窗让位收缩随 H3 骨架漂移）");
-
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
         ui.begin("ddfill_narrow_log");
         mod->compose(ui, screen);
@@ -4846,6 +4751,49 @@ REGISTER_TEST(settings_min_window_tabs_zero_scroll,
         }
     }
 
+    mod->onStop();
+    return true;
+})
+
+// bug181：第二写者陈旧覆盖——md 页直写 config.json:editorFontSize 后，设置页
+// 进页（onPageEnter）必须重载 cfg_，否则本页任意改动触发 persist() 整份 save
+// 会用陈旧内存值把 md 写入的字号回滚（下次启动字号静默变回旧值，163 同生缺陷）。
+REGISTER_TEST(settings_on_page_enter_reloads_external_writes,
+              "settings: 进页重载 cfg_——md 写 editorFontSize 后本页 persist 不回滚（bug181）", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "stalewriter", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "stalewriter_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();   // cfg_ 载入（editorFontSize=默认档 15）
+
+    // 模拟 md 页写字号（md_view_state saveEditorFontSizePref 同键同形：
+    // 十进制整数文本 = SettingsStore makeInt 序列化契约）
+    DOCTEST_REQUIRE(::core::appconfig::set(
+                        *::core::appDatabase(), "config.json:editorFontSize",
+                        std::to_string(17)).isOk());
+
+    mod->onPageEnter();   // 修复点：重载 cfg_ 收编外部写入
+
+    // 本页改任意项（日志级别下拉第 0 项 → Debug）→ persist() 整份 save
+    eui::Screen screen{1600.0f, 1000.0f};
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+    {
+        eui::Ui ui;
+        ui.begin("bug181_click");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* item = ui.find("settings.card.log.level.dd.item.0");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+    }
+
+    // 直读落库：persist 确实发生（级别键已变 Debug）且字号保持 md 值——
+    // 若去掉 onPageEnter 重载，persist 会把陈旧 editorFontSize=15 写回（用例即红）。
+    module::settings::SettingsStore store(::core::appDatabase());
+    const auto loaded = store.load();
+    DOCTEST_CHECK_EQ(loaded.logLevel, std::string(module::settings::kLogLevelDebug));
+    DOCTEST_CHECK_EQ(loaded.editorFontSize, 17);
     mod->onStop();
     return true;
 })

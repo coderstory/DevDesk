@@ -84,7 +84,7 @@ inline constexpr int kTabSync = 3;
 inline constexpr int kTabProjectCards = 4;  // 需-11：追加末位，既有索引（探针/测试按 settings.tabs.N.hit 点选）不动
 // 2026-11-01 统一：tab 栏高跟 ui_kit::kWtabHeight（全站页面级 tab 单一高度）
 inline constexpr float kSettingsTabHeight = ui_kit::kWtabHeight;  // tab 栏高
-inline constexpr int kLogTailMaxLines = 500;        // 日志查看 tail 行数上限
+inline constexpr int kLogTailMaxLines = 100;        // 日志查看 tail 行数上限（need154：只留最近 100 条）
 inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256KB
 
 // 卡片高度（唯一来源：注册表卡高与卡内几何同源）

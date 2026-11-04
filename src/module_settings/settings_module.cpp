@@ -44,6 +44,7 @@
 #include "mcp_service_bridge.h"
 
 #include <ui_kit/columns.h>
+#include <ui_kit/dialog_form.h>  // 155 批：同步说明弹窗（drawDialogFrame/Title/Text）
 #include <ui_kit/metrics.h>  // kHeaderH（页头行高；kSettingsHeaderH 已并入共享源）
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
@@ -275,6 +276,9 @@ public:
     }
 
     void onPageEnter() override {
+        // 重载整份 cfg_（bug181）：他页直写 app_config 的键（如 md 页 editorFontSize）
+        // 在进本页时收编，防后续 persist() 整份 save 用陈旧内存值回滚外部写入。
+        cfg_ = store_->load();
         // auto 模式的跟随点：EUI-NEO 无系统主题变更回调，只能回本页时重新解析。
         if (cfg_.themeMode == kThemeModeAuto) {
             applyThemeRuntime();
@@ -1126,6 +1130,47 @@ public:
             githubSyncErrorDialog_.logScrollOffset = v;
         };
         drawGitErrorDialog(ui, screen, t, githubSyncErrorDialog_, in, a);
+
+        // 155 批：同步「查看详细说明」弹窗（githubSyncDetailExpanded_ 语义改 =
+        // 「弹窗开」，复用同一 bool 免新状态位；弹窗契约与文案样式先例 =
+        // git_error_dialog / ui_kit::dialog_form：关闭态常驻禁交互、zIndex/
+        // 主题 token 由 drawDialogFrame 承担）。关闭 = 弹窗外点击（onOpenChange
+        // 回 false）或「关闭」文字钮，均只翻同一标志位。
+        if (githubSyncDetailExpanded_) {
+            const std::string kDlgId = "settings.github.disclosure";
+            constexpr float kDlgH = 240.0f;
+            ui_kit::DialogFrame frame;
+            frame.id = kDlgId;
+            frame.width = ui_kit::DialogWidth::Standard;
+            frame.height = kDlgH;
+            frame.open = true;
+            frame.onOpenChange =
+                [this](bool v) { githubSyncDetailExpanded_ = v; };
+            const float dlgW = frame.widthPx();
+            ui_kit::drawDialogFrame(
+                ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
+                    ui_kit::drawDialogTitle(ui, kDlgId + ".title", dlgW,
+                                            "同步说明",
+                                            ui_kit::kDialogTitleFontSize,
+                                            t.colors.textPrimary);
+                    ui_kit::drawDialogText(
+                        ui, kDlgId + ".body", dlgW, githubSyncDisclosureText(),
+                        t.sizes.fontSizeSmall, t.colors.textSecondary,
+                        {.y = 58.0f, .height = roundFs(72.0f),
+                         .lineHeight = roundFs(20.0f), .wrap = true});
+                    ui.text(kDlgId + ".btn.close")
+                        .position(dlgW - ui_kit::kDialogInsetX - 64.0f,
+                                  kDlgH - 60.0f)
+                        .size(64.0f, 40.0f)
+                        .text("关闭")
+                        .fontSize(fs(13.0f))
+                        .lineHeight(40.0f)
+                        .fontWeight(500)
+                        .color(t.colors.primary)
+                        .onClick([this] { githubSyncDetailExpanded_ = false; })
+                        .build();
+                });
+        }
     }
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
@@ -1179,80 +1224,105 @@ public:
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
 
-                // tab 栏：S2.2 页面级大 Tab——内容宽（文字实宽+水平内边距 16×2）、
-                // 枚间 4px、左对齐；等宽铺满会使单枚内边距远超 16 口径。文字实宽
-                // 与 wtab 渲染同参（14px/默认字重 400）。4 Tab 顺序 + 标签不动
-                // （kSettingTabLabels）；hit area id = settings.tabs.N.hit（测试按此点击）。
-                ui.stack("settings.tabs.wrap")
-                    .size(contentW, tabH)
-                    .content([&] {
-                        constexpr float kTabPadH = 16.0f;  // S2.2 水平内边距
-                        constexpr float kTabGap = 4.0f;    // S2.2 Tab 间距
-                        float tabX = 0.0f;
-                        for (int i = 0; i < kSettingTabCount; ++i) {
-                            // B6：量宽必须用**渲染同字号**（wtab 内部走 scaled），
-                            // 否则放大档标签比盒宽 → 溢到邻枚上（转写文字量宽与排版差同因）
-                            const float tabW =
-                                core::TextPrimitive::measureTextWidth(
-                                    kSettingTabLabels[i], {},
-                                    core::theme::scaled(ui_kit::kWtabFontSize),
-                                    400) +
-                                2.0f * kTabPadH;
-                            ui_kit::wtab(
-                                ui,
-                                std::string("settings.tabs.") +
-                                    std::to_string(i),
-                                kSettingTabLabels[i], settingsTab_ == i,
-                                tabX, 0.0f, tabW, tabH, t,
-                                [this, i]() {
-                                    settingsTab_ = i;
-                                    if (i == kTabLog) logTailDirty_ = true;
-                                    if (i == kTabModules)
-                                        refreshExternalState();
-                                });
-                            tabX += tabW + kTabGap;
-                        }
-                    })
-                    .build();
-
-                // 当前 tab 的卡区仍套 scrollView（4+ 卡总高可超小窗口可视高）。
-                const float cardsTopY = pad + headerH +
-                    t.sizes.spacingLarge + tabH + t.sizes.spacingLarge;
+                // 池167 补偿（设计 §2 F2）：tab 行 36→40 吃掉内容区 4px，设计 =
+                // 第二个 spacingLarge 16→12 找平。根列 gap 是均匀值、做不到逐对生效
+                // （header↔tab 与 tab↔卡区吃同一个 gap，只改一个会溢出 4px），tab 行
+                // +卡区收进内层列：根列 header↔tabsblock、tabsblock↔提示行仍 16，
+                // 内层 tab↔卡区 12。滚动根真实页 y 与改造前逐值一致（108）。
+                constexpr float kTabContentGap = 12.0f;
+                // cardsTopY = 可视高预算（含 pad：列 bottom padding 占高，内容正好
+                // 填满内高）；scrollRootPageY = 滚动根真实页 y（列流式布局、顶 padding
+                // =0：页头 40 + gap + tab + tabContentGap）。bug176：openUp 几何
+                // pageY 必须用后者——前者含 pad 会把 fieldBottom 判低 32px，openUp
+                // 提前翻转。滚动根本身是列流式子件（与 memory 页绝对画布不同构），
+                // 无需 .position。
+                const float cardsTopY = pad + headerH + t.sizes.spacingLarge +
+                    tabH + kTabContentGap;
+                const float scrollRootPageY = headerH + t.sizes.spacingLarge +
+                    tabH + kTabContentGap;
                 // 底部提示行（§6 item 11）：12px 三级灰居中「所有设置即时生效…」
                 const float bottomHintH = roundFs(20.0f);
                 // cardsH S4.2 弹性：底 padding 已为 0（列 .padding 底=0），cardsH 底缘贴 bottomHint 上方 gap 处
                 const float cardsH =
                     screen.height - cardsTopY - bottomHintH -
                     t.sizes.spacingLarge;
-                // 半宽配对列宽桶（.c348 / .c648 …）：换窗宽后列宽变 → 配对行高随
-                // 对内卡高变，内容高缓存必须失效重测（UAT3 多列分栏）。
-                float pairColW = contentW;
-                ui_kit::columnX(contentW, t.sizes.spacingLarge, &pairColW,
-                                nullptr);
-                components::scrollView(ui, "settings.cards.scroll")
-                    .size(contentW, cardsH)
-                    .gap(t.sizes.spacingLarge)
-                    .step(60.0f)
-                    .theme(compTheme)
-                    // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名 + 列宽桶：
-                    // 切 tab / 卡片增减 / 换窗宽（列宽桶变）时缓存失效重测。
-                    .contentKey("settings.cards.t" +
-                                std::to_string(settingsTab_) + "." +
-                                std::to_string(static_cast<int>(proxyH)) +
-                                (claudeOn ? "C" : "c") +
-                                // MCP 门控态必须进签名：模块 Tab 打开 mcp → 回通用
-                                // Tab 时命中旧内容高缓存会裁掉 514 高的开启态内容
-                                (mcpOn ? "M" : "m") +
-                                ".c" +
-                                std::to_string(static_cast<int>(pairColW +
-                                                               0.5f)))
-                    .offset(cardsScrollOffset_)
-                    .onChange([this](float v) { cardsScrollOffset_ = v; })
-                    .content([&](eui::Ui& inner, float contentWidth,
-                                 float viewportHeight) {
-                        (void)viewportHeight;
-                        drawCardRegion(inner, contentWidth, cardsTopY, cardsH,
-                                       screen.height, t, proxyH, svc);
+                ui.column("settings.tabsblock")
+                    .size(contentW, tabH + kTabContentGap + cardsH)
+                    .gap(kTabContentGap)
+                    .content([&] {
+                        // tab 栏：S2.2 页面级大 Tab——内容宽（文字实宽+水平内边距 16×2）、
+                        // 枚间 4px、左对齐；等宽铺满会使单枚内边距远超 16 口径。文字实宽
+                        // 与 wtab 渲染同参（kWtabFontSize/默认字重 400）。4 Tab 顺序 +
+                        // 标签不动（kSettingTabLabels）；hit area id =
+                        // settings.tabs.N.hit（测试按此点击）。
+                        ui.stack("settings.tabs.wrap")
+                            .size(contentW, tabH)
+                            .content([&] {
+                                constexpr float kTabPadH = 16.0f;  // S2.2 水平内边距
+                                constexpr float kTabGap = 4.0f;    // S2.2 Tab 间距
+                                float tabX = 0.0f;
+                                for (int i = 0; i < kSettingTabCount; ++i) {
+                                    // B6：量宽必须用**渲染同字号**（wtab 内部走 scaled），
+                                    // 否则放大档标签比盒宽 → 溢到邻枚上（转写文字量宽与排版差同因）
+                                    const float tabW =
+                                        core::TextPrimitive::measureTextWidth(
+                                            kSettingTabLabels[i], {},
+                                            core::theme::scaled(
+                                                ui_kit::kWtabFontSize),
+                                            400) +
+                                        2.0f * kTabPadH;
+                                    ui_kit::wtab(
+                                        ui,
+                                        std::string("settings.tabs.") +
+                                            std::to_string(i),
+                                        kSettingTabLabels[i], settingsTab_ == i,
+                                        tabX, 0.0f, tabW, tabH, t,
+                                        [this, i]() {
+                                            settingsTab_ = i;
+                                            if (i == kTabLog) logTailDirty_ = true;
+                                            if (i == kTabModules)
+                                                refreshExternalState();
+                                        });
+                                    tabX += tabW + kTabGap;
+                                }
+                            })
+                            .build();
+
+                        // 当前 tab 的卡区仍套 scrollView（4+ 卡总高可超小窗口可视高）。
+                        // 半宽配对列宽桶（.c348 / .c648 …）：换窗宽后列宽变 → 配对行高随
+                        // 对内卡高变，内容高缓存必须失效重测（UAT3 多列分栏）。
+                        float pairColW = contentW;
+                        ui_kit::columnX(contentW, t.sizes.spacingLarge,
+                                        &pairColW, nullptr);
+                        components::scrollView(ui, "settings.cards.scroll")
+                            .size(contentW, cardsH)
+                            .gap(t.sizes.spacingLarge)
+                            .step(60.0f)
+                            .theme(compTheme)
+                            // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名 + 列宽桶：
+                            // 切 tab / 卡片增减 / 换窗宽（列宽桶变）时缓存失效重测。
+                            .contentKey("settings.cards.t" +
+                                        std::to_string(settingsTab_) + "." +
+                                        std::to_string(static_cast<int>(proxyH)) +
+                                        (claudeOn ? "C" : "c") +
+                                        // MCP 门控态必须进签名：模块 Tab 打开 mcp → 回通用
+                                        // Tab 时命中旧内容高缓存会裁掉 514 高的开启态内容
+                                        (mcpOn ? "M" : "m") +
+                                        ".c" +
+                                        std::to_string(static_cast<int>(
+                                            pairColW + 0.5f)))
+                            .offset(cardsScrollOffset_)
+                            .onChange([this](float v) {
+                                cardsScrollOffset_ = v;
+                            })
+                            .content([&](eui::Ui& inner, float contentWidth,
+                                         float viewportHeight) {
+                                (void)viewportHeight;
+                                drawCardRegion(inner, contentWidth,
+                                               scrollRootPageY, cardsH,
+                                               screen.height, t, proxyH, svc);
+                            })
+                            .build();
                     })
                     .build();
 

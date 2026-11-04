@@ -109,20 +109,14 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    // E 批布局统一：标题 16/22 + desc y=40/h=16 + 内容起始 y=68（全卡统一口径，
-    // roundFs 派生见 settings_ui_logic.h；标题顶 16 = 字面锚）。
+    // E 批布局统一：标题 16/22 + 内容起始 y=68（全卡统一口径，roundFs 派生见
+    // settings_ui_logic.h；标题顶 16 = 字面锚）。
+    // 152 批：「动态背景」开关迁「通用」卡（settings.card.editor.fluid，行 2），
+    // 本卡标题带右贴位与 desc 槽随之清退；卡高 kAppearanceCardHeight 不变，
+    // 通用 tab 零滚动预算逐值保持（0/1/2 条代理警告 = 338/356/372 对可用 372）。
+    // 字号缩放/窗口效果两行 FormRow 自带标签，desc 槽留白。
     const float descH = roundFs(16.0f);
     const float hintH = roundFs(16.0f);
-    // 「动态背景」开关（UAT6 主窗活体流质）落位：标题带右贴（代理卡「随应用启动
-    // 代理」同款先例），**行盒零增量**——通用 tab 零滚动预算逐值保持（0/1/2 条
-    // 代理警告 = 338/356/372 对可用 372；任何 +30~40 的卡内新行都会破 1/2 警告档
-    // 的 372 上限，加行方案已在预算表排除）。标题盒相应收窄（w-56-150），与
-    // 开关盒 x 相接不叠印（settings_card_rows_scale_derived 行盒池的严格重叠
-    // 判定按 < 0.01 收口，贴边合法）。desc 槽让给开关说明（规格原文），字号/
-    // 窗口效果两行自带 FormRow 标签不再重复占 desc。
-    // B6：盒宽随字号派生，与同卡 desc/标题同口径（字面 150 在放大档挤掉标题、
-    // 缩小档让 desc 行盒伸出右侧）
-    const float kFluidToggleW = roundFs(150.0f);
     ui.stack(id)
         .size(w, h)
         .zIndex(40)
@@ -136,22 +130,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
-                      22.0f, "外观");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
-                     "主窗口背景液态流质动画；关闭恢复静态");
-
-            // 动态背景开关（标题带右贴）。B6：盒 y/高随字号派生——desc 行顶已是
-            // roundFs(40)（85% 档 34），开关盒不缩就会与 desc 行盒叠印。
-            components::toggleSwitch(ui, id + ".fluid")
-                .position(w - 28.0f - kFluidToggleW, roundFs(12.0f))
-                .size(kFluidToggleW, roundFs(28.0f))
-                .text("动态背景")
-                .fontSize(fs(13.0f))
-                .checked(in.cfg.fluidBackgroundEnabled)
-                .theme(compTheme)
-                .onChange([f = a.applyFluidBackgroundEnabled](bool v) { f(v); })
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "外观");
 
             // 主题选择器已删除（D-12/E3 去功能例外——WeChat 皮肤即主题、暗色延后 D-04）。
             // 字号缩放（§6 item 3 确认在通用 tab）+ 窗口效果用 FormRow 排列（§6 item 5）。
@@ -253,10 +232,13 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 档位写 core::theme::editorFontSize 通道；pageY/screenH 用于下拉弹层 openUp 几何估算。
-// UAT3 多列分栏：本卡为半宽配对右列，行内尾注放不下（formW ≈292、控件区仅 ≈174）
-// → hint 迁下拉下方第二行（行 y 单一来源 hintRowBelowY）。UAT6：卡内第二段加
-// 「开机自启动」开关行，卡高 144→184（与外观卡同高，配对行高不变，见行内注释）。
+// 151/152 批：卡内两行 = 「开机自启动（行 1） + 动态背景（行 2）」。
+// 「字号」行删除（151）：设置侧写 editorFontSize 通道的 UI 入口随老板令退场
+//（被字号缩放替代；md 编辑器经 mdEditorFontSize() 仍消费该通道，持久化键与
+// core::theme 通道保留，池163 B4 批在 md 编辑器页内重建设置复用同键）。
+// 「动态背景」自外观卡标题带迁入（152），两行同款行几何（label + 说明 + 右贴
+// 44×24 wswitch，autostart 行先例）；卡高 kEditorFontCardHeight 不变 → 配对行高
+// 与通用 tab 零滚动预算逐值保持。
 void drawEditorFontCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -265,19 +247,52 @@ void drawEditorFontCard(const CardDrawArgs& args) {
     const core::theme::Tokens& t = args.t;
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
-    const float pageY = args.pageY;
-    const float screenH = args.screenH;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    // E 批布局统一：裸 dropdown 行迁 FormRow（label 110 + dropdown），
-    // 行 y = editorFontRowY（100% = 68 内容起始口径），行高与日志卡同源（logFieldHeight）。
-    const float rowH = logFieldHeight();
-    const float rowY = editorFontRowY();
-    const float hintH = roundFs(16.0f);
-    const float hintY = hintRowBelowY(rowY);
+    const float row1Y = editorFontRowY();   // 内容起始 68 锚（100% 档）
+    const float rowH = autostartRowHeight();
+    const float row2Y = in.autostartSupported
+                            ? row1Y + rowH + roundFs(6.0f)
+                            : row1Y;   // POSIX 无行 1 → 动态背景顶到行 1 位
+    // 两行共用行绘制：label（92）+ 说明（省略号兜底）+ 右贴 44×24 wswitch，
+    // 行盒内垂直居中、开关右贴卡内边距 28（原 autostart 行同款）
+    const auto toggleRow = [&](const char* suffix, const char* label,
+                               const char* desc, float rowY, bool value,
+                               const std::function<void(bool)>& on) {
+        const float labelW = roundFs(92.0f);
+        const float descX = 28.0f + labelW + roundFs(8.0f);
+        const float descW = w - 28.0f - kAutostartSwitchW - roundFs(12.0f) - descX;
+        ui.text(id + suffix + ".label")
+            .position(28.0f, rowY)
+            .size(labelW, rowH)
+            .text(label)
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .lineHeight(rowH)
+            .fontWeight(500)
+            .color(t.colors.textPrimary)
+            .maxWidth(labelW)
+            .overflow(core::TextOverflow::Ellipsis)
+            .clip()
+            .build();
+        ui.text(id + suffix + ".desc")
+            .position(descX, rowY)
+            .size(std::max(0.0f, descW), rowH)
+            .text(desc)
+            .fontSize(fs(12.0f))
+            .lineHeight(rowH)
+            .color(t.colors.textTertiary)
+            .maxWidth(std::max(0.0f, descW))
+            .overflow(core::TextOverflow::Ellipsis)
+            .clip()
+            .build();
+        // wswitch 命中元素 = <id>.track（回调断言按此定位）
+        ui_kit::wswitch(ui, id + suffix + ".sw", value,
+                        w - 28.0f - kAutostartSwitchW,
+                        rowY + std::max(0.0f, (rowH - kAutostartSwitchH) * 0.5f),
+                        kAutostartSwitchW, kAutostartSwitchH, t, on);
+    };
     ui.stack(id)
         .size(w, h)
-        .zIndex(30)
         .content([&] {
             // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
@@ -288,116 +303,18 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            // 标题「通用」：卡内实为 字号 + 开机自启动 两件（UI 走查 P1-S1）——
-            // 通用 tab 640 档零滚动预算无空位挪卡/建卡，改名是零几何解。
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "通用");
-            ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
-                            w - 56.0f, rowH,
-                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    // UAT4 自适应：下拉填满控件区（替代 min(240,cw) 固定帽）——
-                    // 窄窗 cw 本身已收缩（让位保留），宽窗不再停在 240 留大段空白。
-                    const float ddW = cw;
-                    ui.stack(id + ".ddwrap")
-                        .position(cx, cy)
-                        .size(ddW, ch)
-                        .content([&] {
-                            const bool efontOpenUp = dropdownPopupOverflows(
-                                pageY, rowY, rowH,
-                                kEditorFontPresetCount, screenH);
-                            components::dropdown(ui, id + ".dd")
-                                .size(ddW, ch)
-                                .theme(compTheme)
-                                .items(std::vector<std::string>(
-                                    kEditorFontPresetLabels,
-                                    kEditorFontPresetLabels +
-                                        kEditorFontPresetCount))
-                                .selected(nearestIndex(in.cfg.editorFontSize,
-                                                       kEditorFontPresets,
-                                                       kEditorFontPresetCount))
-                                .openUp(efontOpenUp)
-                                .open(isDropdownOpen(in.openDropdown,
-                                                     Dropdown::EditorFont))
-                                .onOpenChange([f = a.setDropdownOpen](bool v) {
-                                    f(Dropdown::EditorFont, v);
-                                })
-                                .onChange([f = a.applyEditorFontPreset](int idx) {
-                                    f(idx);
-                                })
-                                .build();
-                        })
-                        .build();
-                }, t);
-            // hint 第二行：下拉下方全卡宽。UAT6「字号说明没显示全」：旧文案
-            // 30.7em 在 115%/130% 档（fs(12)=13.8/15.6）实宽 423/479px 超出
-            // 最小窗 1000 的 hintW 396（colW 452-56）被省略号截断。两案中取
-            // 「缩短」：换行要 +16px 行盒，配对行 184 被外观卡钉死（通用 tab
-            // 零滚动预算 372@640 无余量），只能挪 68 内容锚破坏与外观卡并排
-            // 对齐、且会顶掉 UAT6 自启动行（autostart 批 autostartRowBelowY
-            // 按 hint 单行高推导）——缩短零几何影响。「默认 15px（标准）」与
-            // 下拉选中档文案「标准 15px」重复，删之不损信息。新文案 16.6em，
-            // 四档实宽 169/199/229/259px 全档放得下（回退锁见 hint 适配用例）。
-            const float hintW = w - 56.0f;
-            ui.text(id + ".hint")
-                .position(28.0f, hintY)
-                .size(hintW, hintH)
-                .text("Markdown 正文字号；切换即时生效")
-                .fontSize(fs(12.0f))
-                .lineHeight(hintH)
-                .color(t.colors.textTertiary)
-                .maxWidth(hintW)
-                .overflow(core::TextOverflow::Ellipsis)
-                .clip()
-                .build();
-
-            // ── 开机自启动行（UAT6）：落位在本卡的配对行阴影里 ──
-            // 通用 tab 1000×640 档零滚动预算已满（配对行 184 + 代理卡 138~172 =
-            // 内容 338~372，可用 372），新建卡/加高外观卡都会破预算；唯一零增长
-            // 空位 = 配对行内矮卡（本卡原 144 → 现 184）的 40px 阴影，行落此 →
-            // 配对行高恒 max(184,184)=184 不变（85%/130% 同由 roundFs(184) 掌行高）。
-            // 几何单一来源 settings_ui_logic.h（autostartRowBelowY/autostartRowHeight/
-            // kAutostartSwitch*）；POSIX（不支持）整行不建，卡高不变（阴影留白）。
+            // 行 1：开机自启动（POSIX 不支持整行不建，卡高不变，阴影留白）
             if (in.autostartSupported) {
-                // 行盒两变量刻意异名（startRowY/startRowH）：本卡上方已有字号段的
-                // rowY/rowH（editorFontRowY/logFieldHeight），lambda 内同名会遮蔽捕获
-                const float startRowY = autostartRowBelowY(hintY);
-                const float startRowH = autostartRowHeight();
-                const float swY = startRowY + (startRowH - kAutostartSwitchH) * 0.5f;
-                const float labelW = roundFs(92.0f);
-                const float descX = 28.0f + labelW + roundFs(8.0f);
-                const float descW = w - 28.0f - kAutostartSwitchW -
-                                    roundFs(12.0f) - descX;
-                // 标签 + 说明一行 + 右贴 44×24 微信开关（行几何 = 开关右贴卡内
-                // 边距 28、行盒内垂直居中；说明超宽省略号兜底）
-                ui.text(id + ".autostart.label")
-                    .position(28.0f, startRowY)
-                    .size(labelW, startRowH)
-                    .text("开机自启动")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .lineHeight(startRowH)
-                    .fontWeight(500)
-                    .color(t.colors.textPrimary)
-                    .maxWidth(labelW)
-                    .overflow(core::TextOverflow::Ellipsis)
-                    .clip()
-                    .build();
-                ui.text(id + ".autostart.desc")
-                    .position(descX, startRowY)
-                    .size(std::max(0.0f, descW), startRowH)
-                    .text("开机后自动运行并最小化到托盘")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(startRowH)
-                    .color(t.colors.textTertiary)
-                    .maxWidth(std::max(0.0f, descW))
-                    .overflow(core::TextOverflow::Ellipsis)
-                    .clip()
-                    .build();
-                // wswitch 命中元素 = <id>.track（回调断言按此定位）；开关显示
-                // 注册真值（in.autostartRegistered），拨动 → applyAutostartEnabled
-                ui_kit::wswitch(ui, id + ".autostart.sw", in.autostartRegistered,
-                                w - 28.0f - kAutostartSwitchW, swY,
-                                kAutostartSwitchW, kAutostartSwitchH, t,
-                                [f = a.applyAutostartEnabled](bool v) { f(v); });
+                toggleRow(".autostart", "开机自启动",
+                          "开机后自动运行并最小化到托盘", row1Y,
+                          in.autostartRegistered,
+                          [f = a.applyAutostartEnabled](bool v) { f(v); });
             }
+            // 行 2：动态背景（自外观卡迁入；值/回调同原 applyFluidBackgroundEnabled 链路）
+            toggleRow(".fluid", "动态背景", "主窗口背景液态流质动画；关闭恢复静态",
+                      row2Y, in.cfg.fluidBackgroundEnabled,
+                      [f = a.applyFluidBackgroundEnabled](bool v) { f(v); });
         })
         .build();
 }
@@ -621,8 +538,6 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .build();
 
             auto* svc = in.proxy;
-            const bool running = svc && svc->isProxyRunning();
-            const int port = running ? svc->proxyPort() : 0;
 
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
@@ -646,11 +561,9 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .onChange([f = a.applyProxyAutoStart](bool v) { f(v); })
                 .build();
 
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
-                     running
-                         ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
-                               "（仅本机可访问，无需凭据）"
-                         : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）");
+            // 153 批：desc 说明文本按老板令删除（【本地代理未运行…/本地代理
+            // http://127.0.0.1:…】两态一并退场）；运行状态仍可从接管行/端口行/
+            // 模块卡观察。卡高公式不变（proxyCardHeightFor），desc 槽留白。
 
             // 代理运行中改端口自动 stop→start 重启，未运行则下次启动生效
             const std::string portText = in.proxyPortDraft.empty()
@@ -810,8 +723,8 @@ void drawMcpCard(const CardDrawArgs& args) {
                 .build();
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "MCP 服务");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
-                     "本机 127.0.0.1 提供 MCP 工具服务；无鉴权，仅本机可访问");
+            // 153 批：desc 说明文本按老板令删除（【本机 127.0.0.1 提供 MCP 工具
+            // 服务…】）；接入命令串（.command 行）非说明文本，保留。
 
             // 状态三态：running / 停止（无错误）/ 启动失败（lastError 透出）
             const bool running = in.mcpRunning;
@@ -1172,7 +1085,7 @@ void drawLogViewCard(const CardDrawArgs& args) {
 
             const float btnW = 96.0f;
             cardTitle(ui, id, t, 16.0f, w - 56.0f - btnW - 12.0f, 22.0f, 22.0f,
-                      "运行日志（末尾 500 行）");
+                      "运行日志（末尾 100 行）");
             components::button(ui, id + ".refresh")
                 .position(w - 28.0f - btnW, 14.0f)
                 .size(btnW, 28.0f)

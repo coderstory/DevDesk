@@ -249,23 +249,19 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .onClick([f = a.githubSyncShowErrorDetail] { f(); })
                 .build();
         } else {
-            // S3.7#4: 同步说明可折叠——默认紧凑摘要，展开后显示完整披露。
-            // H28: 折叠链接并入摘要行右端（与错误行「查看详情」同模，右缘 = 卡
-            // 内容右缘）。原 S3.7#4 把链接放摘要下方独立行，但行序公式未记账该
-            // 行（enableRowY 只加 summaryY+mutedH+rowGap），独立行与启用行重叠
-            // ——并入同行使披露区恒 1 行：重叠消除、零滚动预算不再为它加码。
+            // S3.7#4 → 155 批改版：说明不再卡内展开/收起——摘要恒紧凑一行，
+            // 「查看详细说明」固定文案（Ghost 风格文字链接，摘要行右端），点击开
+            // disclosure 弹窗展示完整披露（githubSyncDisclosureText()，弹窗宿主
+            // settings_module）。githubSyncDetailExpanded_ 语义随之改 = 「弹窗开」。
             if (in.githubSyncStatus.empty()) {
                 const char* compactSummary = "同步笔记与整库数据库快照到 GitHub 私有仓库";
-                std::string summaryText = in.githubSyncDetailExpanded
-                    ? githubSyncDisclosureText()
-                    : compactSummary;
                 const float toggleW = roundFs(kSummaryToggleW);
                 const float textW = std::max(
                     0.0f, summaryW - toggleW - roundFs(kSummaryToggleGap));
                 ui.text(id + ".summary")
                     .position(textL, summaryY)
                     .size(textW, mutedH)
-                    .text(summaryText)
+                    .text(compactSummary)
                     .fontSize(fs(12.0f))
                     .lineHeight(mutedH)
                     .color(t.colors.textTertiary)
@@ -273,11 +269,10 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
-                // 折叠/展开链接（Ghost 风格文字链接，摘要行右端）
                 auto toggle = ui.text(id + ".summary.toggle")
                     .position(textL + summaryW - toggleW, summaryY)
                     .size(toggleW, mutedH)
-                    .text(in.githubSyncDetailExpanded ? "收起详细说明" : "查看详细说明")
+                    .text("查看详细说明")
                     .fontSize(fs(11.0f))
                     .lineHeight(mutedH)
                     .color(t.colors.primary);

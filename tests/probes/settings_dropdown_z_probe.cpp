@@ -218,8 +218,9 @@ int main(int argc, char* argv[]) {
                             "settings.card.editor") &&
              passed;
 
-    // 4) 编辑器字号下拉：同卡同 tab，当「编辑器字号」目标开 → L2 扫描 → 关
-    passed = verifyDropdown("settings.card.editor.dd") && passed;
+    // 4) 编辑器字号下拉断言已删（163/B4）：「字号」行随 151 批退场，入口迁
+    //    md 编辑器页状态栏（md.status.fontdd，markdown_probe 断言）；本卡
+    //    settings.card.editor 仍在（自启动+动态背景），右邻卡 z 判据不悬空。
 
     // 5) 桌宠卡已于 2026-10-13 整模块摘除，此处原来对应的 z 序断言随之移除
 
