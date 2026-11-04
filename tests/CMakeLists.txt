@@ -413,6 +413,13 @@ file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
 
 foreach(_probe_source ${_devdesk_probe_sources})
     get_filename_component(_probe_name "${_probe_source}" NAME_WE)
+    # 平台专有 probe 按平台选编（平台文件映射同款纪律）：_macos_probe 后缀仅 APPLE
+    # 编。CI 无 GUI 会话 DEVDESK_BUILD_PROBES=OFF 看不见本缺口——Mac 侧 58462d40
+    # 引入 wallpaper_service_macos_probe（CoreFoundation）漏平台门，双机合并树在
+    # Windows 本机（probes=ON）构建红，此为机械补门。
+    if(_probe_name MATCHES "_macos_probe$" AND NOT APPLE)
+        continue()
+    endif()
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号，probe
     # 链接集（module_* 库）里没有 app_assembly.cpp，缝必须单独编进来
     # module_toggle_sidebar_probe / wallpaper_probe：活门控真窗口 probe 还要真

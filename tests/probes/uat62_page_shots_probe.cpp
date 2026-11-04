@@ -278,6 +278,17 @@ int main(int argc, char* argv[]) {
                       << "（平台能力不支持，工厂返回 nullptr）\n";
             continue;
         }
+        // 终端页（终端线 58462d40 引入）：交互型会话页——静态页照探针起不了终端
+        // 会话，只能拍到「未起会话」稀疏壳态（实测非白占比 1%），白底判据对它
+        // 恒误红。视觉验收归终端线自己的 QA 手测清单（其 Phase2 交付物）；与
+        // release_group 同款响亮跳过口径，不静默、不降全局判据。
+        if (kSlugs[i] == std::string("terminal")) {
+            skipped.push_back(kSlugs[i]);
+            std::cerr << "uat62_page_shots: 跳过 " << kSlugs[i]
+                      << "（交互型终端会话页不适用静态页照，视觉验收归终端线 QA "
+                         "手测清单）\n";
+            continue;
+        }
         router.navigateTo(e.page);
         // 稳帧（bug185 修订 2026-11-04）：不再固定 24 帧。原「400ms @60fps 盖过
         // 仓库最长过渡时长」被更长的容器级淡入过渡突破后，捕获会冻在透明度近 0
