@@ -15,6 +15,7 @@
 #include "module_memory/memory_module.h"  // 需-9：用量告警每帧判定驱动（M3 同款）
 #include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
 #include "settings_config.h"
+#include <components/scrollview.h>  // need186 §11：导航滚动区（EUI 全站 scrollView idiom）
 #include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
 #include <ui_kit/metrics.h>
 #include <ui_kit/selection_bar.h>  // W3：SelectionBar 选中态 helper（§4.3）
@@ -32,6 +33,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <vector>  // §11 行规划表 navPlan
 
 namespace app {
 
@@ -77,11 +79,18 @@ float fluidHash01(int n) {
     return x - std::floor(x);
 }
 
-// 浅色档三色轮替（同族不同明度）：流质晕与侧栏收缩按钮弥散粒子共用（need172
-// 2026-11-03 设计文档 §2.3「kLightHalo 同款三色口径」，自 drawFluidBackground 上提）
+// 浅色档三色轮替（同族不同明度）：流质晕专用（need172 §2.3「kLightHalo 同款三色
+// 口径」，自 drawFluidBackground 上提）。v2（§10.3）起侧栏收缩按钮粒子不再共用此
+// 表——第三色 #A7F3D0 与侧栏浅底近同亮度是粒子「观感弱」主因之一，改用下方专用表
 const eui::Color kLightHalo[3] = {eui::Color("#07C160"),
                                   eui::Color("#34D399"),
                                   eui::Color("#A7F3D0")};
+
+// 收缩按钮弥散粒子浅色档三色（need172 v2 §10.3：弃用近底色的最浅档，第三色改
+// primaryHover 深档 #06AD56 拉开明度跨度；仅粒子用，流质晕 kLightHalo 不随之改）
+const eui::Color kParticleLight[3] = {eui::Color("#07C160"),
+                                      eui::Color("#34D399"),
+                                      eui::Color("#06AD56")};
 
 // 收缩按钮 hover/按压态跨帧单值（EUI states 只管底色，border/scale/图标色要按态
 // 每帧换目标值——g_closeButtonHovered 先例）
@@ -89,6 +98,12 @@ bool g_toggleHovered = false;
 bool g_togglePressed = false;
 // 弥散绿粒子迸发起点（hover 进入沿写入一次；nullopt = 空闲零粒子零泵）
 std::optional<std::chrono::steady_clock::time_point> g_toggleParticleStart;
+
+// 导航滚动区 offset（need186 §11.2）：页面持有、compose 每帧 clamp 到
+// [0, contentH−viewportH] 收敛（窗高/档位/分组收展变化后无动画收敛）；
+// scrollView onChange 回写（滚轮/拖拽/点轨道），折叠/展开切换不触碰（viewport
+// 两态同公式，offset 保持）。测试预置口 setNavScrollOffsetForTests
+float g_navScrollOffset = 0.0f;
 
 // 可见态门控查询（compose 每帧顶层调用，铁律防线）：最小化（iconic）或藏托盘
 //（hidden）→ false。原生查询收在 platform::window_visibility（Windows =
@@ -148,6 +163,13 @@ void resetSidebarGlobals() {
     g_toggleHovered = false;  // need172 按钮 hover/按压/粒子态回厂（测试隔离）
     g_togglePressed = false;
     g_toggleParticleStart.reset();
+    g_navScrollOffset = 0.0f;  // §11 导航滚动 offset 回厂（测试隔离）
+}
+
+// 测试缝：预置导航滚动 offset（无头测试驱动「滚到底」场景）；写入值在下一次
+// compose 按 [0, contentH−viewportH] clamp（§11.2 收敛语义）
+void setNavScrollOffsetForTests(float offset) {
+    g_navScrollOffset = std::max(0.0f, offset);
 }
 
 bool sidebarGroupExpanded(::core::PageId parent) {
@@ -362,29 +384,41 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         return true;
     }();
     (void)mounted;
-    // need171 高度自适应三档（2026-11-03 设计文档 §2.2）：判定基准 = 侧栏可用高 H
-    //（drawSidebar 收到的 screen.height：窗高 − 自绘标题条 40 / macOS 系统标题栏
-    // 30，compose 的 bodyScreen 已统一扣除）。离散三档、档位切换无过渡动画：
-    //   正常档 H≥712：topPad 32 / brandNavGap 28 / gap 4 / itemH 40（导航起点 116）
+    // need171 高度自适应三档（2026-11-03 设计文档 §2.2）+ v2 动态尺寸（§10.1/§10.2）：
+    // 判定基准 = 侧栏可用高 H（drawSidebar 收到的 screen.height：窗高 − 自绘标题条
+    // 40 / macOS 系统标题栏 30，compose 的 bodyScreen 已统一扣除）。离散三档、档位
+    // 切换无过渡动画：
+    //   正常档 H≥712：topPad 32 / brandNavGap 28 / gap 4 / itemH 40（导航起点 116）；
+    //     logo 48（§10.1）、钮 32 / 预留区 48（§10.2）
     //   紧凑档 680≤H<712：16 / 16 / 4 / 40（起点 88；最小窗 1200×720 → H=680 落此
-    //     档，12 行全可见不破版——现状正常档同高会让位藏 1 行，need171 直接收益）
-    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80；H<601 起让位线守卫藏行，既有口径）
-    // 压缩顺序：先压品牌区上下留白 → 再压行距 → 最后压行高；品牌瓦 44 与品牌行 56
-    // 恒不缩（锚点不塌）。分档几何用常量不走 token：矮窗帧 theme::setWindowHeight
-    // 会重建字号 token，布局分档必须与字号档解耦。
+    //     档）；logo 44、钮 28 / 预留区 44
+    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）；logo 40、钮 28 / 预留区 44
+    // 压缩顺序：先压品牌区上下留白 → 再压行距 → 最后压行高；品牌行 56 恒不缩
+    //（锚点不塌），logo/钮径随档（两态一致不回退——bug165 裁决保持）。分档几何用
+    // 常量不走 token：矮窗帧 theme::setWindowHeight 会重建字号 token，布局分档必须
+    // 与字号档解耦。
     const float availH = screen.height;
     float topPad = 32.0f;
     float brandNavGap = 28.0f;
     float gap = 4.0f;
     float itemH = ui_kit::kNavItemH;  // 40（正常/紧凑档）
+    float logoSize = 48.0f;   // §10.1：正常档 48（两态一致）
+    float toggleSize = 32.0f;     // §10.2：正常档直径 32
+    float toggleZoneH = 48.0f;    // §10.2：正常档底部预留区 48
     if (availH < 680.0f) {
         topPad = 12.0f;
         brandNavGap = 12.0f;
         gap = 2.0f;
         itemH = 36.0f;
+        logoSize = 40.0f;
+        toggleSize = 28.0f;
+        toggleZoneH = 44.0f;
     } else if (availH < 712.0f) {
         topPad = 16.0f;
         brandNavGap = 16.0f;
+        logoSize = 44.0f;
+        toggleSize = 28.0f;
+        toggleZoneH = 44.0f;
     }
     const float padX = t.sizes.spacingLarge;
     constexpr float kIconW = 28.0f;
@@ -429,22 +463,19 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
                 .content([&] {
-                    // bug165（2026-11-03 设计文档 §2.1）：两态统一单值常量 44，
-                    // 删除 collapsed 分档——2026-11-01 的「随栏宽分档」（展开 40/
-                    // 折叠 32）被老板口径推翻：统一为同一常量档且放大，不按收缩宽
-                    // 推导。44px 在折叠 72 栏内左右各留 14（占 61%）、展开 220 栏
-                    // 内居中，对 16px 导航图标 2.75:1（低于旧展开态 3:1 跳变）。
-                    // kBrandH 56 不变 → 44 瓦上下各留 6px；导航起点连锁不动
-                    //（正常档仍 32+56+28=116，test_app_sidebar 各导航 y 断言不变）。
-                    constexpr float kLogoSize = 44.0f;
+                    // bug165 两态一致裁决（2026-11-03 §2.1）+ v2 动态三档（§10.1）：
+                    // logo 随可用高 H 分档 48/44/40（正常/紧凑/极紧），两态（展开/
+                    // 折叠）同值不回退；kBrandH 56 与导航起点（116/88/80）均不变，
+                    // test_app_sidebar 既有 brand/导航 y 断言零波及。
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
-                        (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,
-                        kLogoSize, t.colors.primary, t.colors.surface);
+                        (kWidth - logoSize) * 0.5f, (kBrandH - logoSize) * 0.5f,
+                        logoSize, t.colors.primary, t.colors.surface);
                 })
                 .build();
 
-            float y = topPad + kBrandH + brandNavGap;
+            // 导航滚动区起点（§11.2）：brand 行下缘 = viewport 顶（品牌区锚定不滚）
+            const float navStart = topPad + kBrandH + brandNavGap;
 
             // 导航项渲染：提取为 lambda（work/system 两组共用，避免重复代码）。
             // active 态视觉走 SelectionBar（§4.3：2px 左绿竖线 + selectedBg + textPrimary），
@@ -458,24 +489,123 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 return nullptr;
             };
 
-            // 底部折叠开关固定预留区（141：分组展开后子项行会盖住按钮——行 hover 底
-            // 与命中区压着按钮热区，开关 z 序在其上也免不了误触观感）。让位线 =
-            // 开关上缘（height−56）再让一档 gap；导航行矩形越线即整行不画（宁可
-            // 矮窗下藏行，不让任何行压进按钮区）。
-            constexpr float kToggleZoneH = 56.0f;  // 开关区预留高（toggleY = height−56）
-            const float kNavFoldLimit = screen.height - kToggleZoneH - gap;
+            // 底部折叠开关预留区（§11.1 转义）：旧「让位线守卫藏行」全面退役——
+            // 被藏内容不可达违背 need186 老板令（显示不全必须可滚）。守卫公式
+            // kNavFoldLimit = H − zone − gap 转义为滚动区 viewport 下界锚
+            //（viewportBottom = H − toggleZoneH）：行物理画不进按钮预留区由
+            // viewport 裁剪天然保障（141 回归缝职责继承），被裁行滚动触达。
+            //
+            // 行规划（§11.1）：先把全部导航行规划成表（规划/绘制同源，contentH 与
+            // 行几何零漂移），再在滚动画布上按表绘制；溢出即滚，不再越线不画。
+            struct NavRowPlan {
+                bool divider = false;  // 组间分割线占位（1px + gap）
+                bool groupHeader = false;
+                ::core::Module* module = nullptr;  // 导航项（groupHeader 时为空）
+                const ::app::registry::ModuleEntry* entry = nullptr;  // 父项元数据
+                bool expanded = false;
+                bool holdsCurrent = false;
+                float indent = 0.0f;
+            };
+            // 二级菜单缩进（仅展开态生效；折叠态图标居中，缩进无意义且会把命中区/
+            // 选中条推出图标——折叠态一律按 0 参与 hit/sel 几何）
+            constexpr float kChildIndent = 16.0f;
+            auto isSystemGroup = [](::core::PageId page) {
+                return page == ::core::PageId::Settings ||
+                       page == ::core::PageId::About;
+            };
+            std::vector<NavRowPlan> navPlan;
+            float contentH = 0.0f;
+            bool navHasDivider = false;
+            {
+                bool dividerPlanned = false;
+                bool sawWork = false;
+                std::set<::core::PageId> plannedGroups;
+                const auto* currentEntry = registryEntry(router->currentPage());
+                for (auto* m : router->modules()) {
+                    if (!m) continue;
+                    const ::core::PageId page = m->pageId();
+                    const bool isSystem = isSystemGroup(page);
+                    // work → system 首次切换时规划组间 divider（仅当两组都非空：
+                    // sawWork && isSystem；注册表恒有两组，实际恒规划）
+                    if (!dividerPlanned && sawWork && isSystem) {
+                        NavRowPlan d;
+                        d.divider = true;
+                        navPlan.push_back(d);
+                        contentH += 1.0f + gap;
+                        dividerPlanned = true;
+                        navHasDivider = true;
+                    }
+                    if (!isSystem) sawWork = true;
+                    // 有父级声明的模块 → 先规划父项（同组只规划一次）再规划子项；
+                    // 无父级 → 原平铺路径。展开态唯一判定 = sidebarGroupExpanded
+                    //（与 toggleSidebarGroup 同一状态源，默认折叠）
+                    const auto* row = registryEntry(page);
+                    if (row != nullptr && row->parent.has_value()) {
+                        const auto* parent = registryEntry(*row->parent);
+                        if (parent != nullptr) {
+                            const bool expanded =
+                                sidebarGroupExpanded(parent->page);
+                            const bool holdsCurrent =
+                                currentEntry != nullptr &&
+                                currentEntry->parent.has_value() &&
+                                *currentEntry->parent == parent->page;
+                            if (plannedGroups.insert(parent->page).second) {
+                                NavRowPlan h;
+                                h.groupHeader = true;
+                                h.entry = parent;
+                                h.expanded = expanded;
+                                h.holdsCurrent = holdsCurrent;
+                                navPlan.push_back(h);
+                                contentH += itemH + gap;
+                            }
+                            if (expanded) {
+                                NavRowPlan c;
+                                c.module = m;
+                                c.indent = kChildIndent;
+                                navPlan.push_back(c);
+                                contentH += itemH + gap;
+                            }
+                            continue;
+                        }
+                    }
+                    NavRowPlan f;
+                    f.module = m;
+                    navPlan.push_back(f);
+                    contentH += itemH + gap;
+                }
+            }
+            contentH = std::max(0.0f, contentH - gap);  // 末尾行距不入内容高
+
+            // §11.2 滚动区几何（两态×三档同公式）：viewport = navStart → H−zone；
+            // §11.2 offset 收敛：窗高/档位/分组收展变化后 clamp 到
+            // [0, contentH−viewportH]，无动画
+            const float viewportH =
+                std::max(0.0f, availH - toggleZoneH - navStart);
+            const float navMaxOffset =
+                std::max(0.0f, contentH - viewportH);
+            g_navScrollOffset =
+                std::clamp(g_navScrollOffset, 0.0f, navMaxOffset);
+            // contentKey：行数/档位/有无 divider 任一变化即重测（MeasureCache 缓存
+            // 其余帧的测量，避免每帧空跑一遍绘制）
+            const std::string navContentKey =
+                "sidebar.nav." + std::to_string(navPlan.size()) + "." +
+                std::to_string(static_cast<int>(itemH)) + "." +
+                (navHasDivider ? "d" : "n");
 
             // 分组父项行：与导航项同几何；不可导航，点击只切换展开/收起。
             // 折叠侧栏下父项同样只画居中图标，子项按展开态继续列出。
             // holdsCurrent = 当前页是本分组的子页：父项保持「当前页在此组内」的
             // 选中态（默认折叠/手动收起后子项隐藏，选中信息只由父项承载）。
-            auto renderGroupHeader = [&](const ::app::registry::ModuleEntry& group,
-                                         bool expanded, bool holdsCurrent) {
-                if (y + itemH > kNavFoldLimit) return;  // 底部按钮区让位（141）
+            // y 由调用方（画布行循环）按规划表推进，行不再越线让位（§11.1 藏行退役）。
+            auto renderGroupHeader = [&](eui::Ui& inner, float y,
+                                         const NavRowPlan& plan) {
+                const ::app::registry::ModuleEntry& group = *plan.entry;
+                const bool expanded = plan.expanded;
+                const bool holdsCurrent = plan.holdsCurrent;
                 const std::string id =
                     std::string("app.sidebar.item.") +
                     ::core::pageIdToString(group.page);
-                ui.rect(id + ".hit")
+                inner.rect(id + ".hit")
                     .position(padX, y)
                     .size(kWidth - padX * 2.0f, itemH)
                     .states(kTransparent,
@@ -488,11 +618,11 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 就是一二级同时亮（B8 G2）；组收起时父项是当前页唯一入口，指示必须
                 // 留着（折叠侧栏同理——折叠侧栏下子项仍按展开态列出，几何与父项重叠）。
                 if (holdsCurrent && !expanded) {
-                    ui_kit::selectionBar(ui, id + ".sel", std::string{}, padX, y,
-                                         kWidth - padX * 2.0f, itemH, t);
+                    ui_kit::selectionBar(inner, id + ".sel", std::string{}, padX,
+                                         y, kWidth - padX * 2.0f, itemH, t);
                 }
                 if (collapsed) {
-                    ui.text(id + ".icon")
+                    inner.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
                         .icon(group.iconGlyph)
@@ -506,7 +636,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     // 盒宽 20→14 且左移 6：字形本身窄，居中在 20px 盒里偏左又贴右缘，
                     // 读起来像被切掉（B8 G1）。
                     constexpr float kChevronW = 14.0f;
-                    ui.text(id + ".icon")
+                    inner.text(id + ".icon")
                         .position(padX + kItemInset, y)
                         .size(kIconW, itemH)
                         .icon(group.iconGlyph)
@@ -515,7 +645,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(holdsCurrent ? t.colors.primary
                                             : t.colors.textSecondary)
                         .build();
-                    ui.text(id + ".label")
+                    inner.text(id + ".label")
                         .position(padX + kItemInset + kIconW, y)
                         .size(kWidth - padX * 2.0f - kItemInset - kIconW -
                                   kChevronW - 8.0f,
@@ -529,7 +659,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(holdsCurrent ? t.colors.textPrimary
                                             : t.colors.textSecondary)
                         .build();
-                    ui.text(id + ".chevron")
+                    inner.text(id + ".chevron")
                         .position(kWidth - padX - kChevronW - 6.0f, y)
                         .size(kChevronW, itemH)
                         .icon(eui::utf8(expanded ? 0xF077 : 0xF078))  // chevron-up/down
@@ -539,14 +669,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(t.colors.textTertiary)
                         .build();
                 }
-                y += itemH + gap;
             };
 
-            // 二级菜单缩进（仅展开态生效；折叠态图标居中，缩进无意义且会把命中区/
-            // 选中条推出图标——折叠态一律按 0 参与 hit/sel 几何）
-            constexpr float kChildIndent = 16.0f;
-            auto renderNavItem = [&](::core::Module* m, float indent) {
-                if (y + itemH > kNavFoldLimit) return;  // 底部按钮区让位（141）
+            auto renderNavItem = [&](eui::Ui& inner, float y, ::core::Module* m,
+                                     float indent) {
                 const ::core::PageId page = m->pageId();
                 const bool active = (page == router->currentPage());
                 const std::string id =
@@ -556,7 +682,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 
                 // 命中区：normal 透明（active 时 SelectionBar 盖底；inactive 透出侧栏底）；
                 // hover/pressed：active 透明（不遮 SelectionBar），inactive 浅灰/深灰
-                ui.rect(id + ".hit")
+                inner.rect(id + ".hit")
                     .position(padX + effIndent, y)
                     .size(kWidth - padX * 2.0f - effIndent, itemH)
                     .states(kTransparent,
@@ -572,7 +698,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // accentOffsetX=-10：竖条退到胶囊外侧的栅边留白里（原型 ::before 同位），
                 // 贴胶囊左缘那条读起来像表格行高亮。
                 if (active) {
-                    ui_kit::selectionBar(ui, id + ".sel", std::string{},
+                    ui_kit::selectionBar(inner, id + ".sel", std::string{},
                                          padX + effIndent, y,
                                          kWidth - padX * 2.0f - effIndent, itemH, t,
                                          -10.0f);
@@ -581,7 +707,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
                 // active 统一 primaryText：primary 作 16px 图标只有 2.38:1，非文本对比也过不了 3:1。
                 if (collapsed) {
-                    ui.text(id + ".icon")
+                    inner.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
@@ -591,7 +717,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(active ? t.colors.primaryText : t.colors.textSecondary)
                         .build();
                 } else {
-                    ui.text(id + ".icon")
+                    inner.text(id + ".icon")
                         .position(padX + kItemInset + effIndent, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
@@ -599,7 +725,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(active ? t.colors.primaryText : t.colors.textSecondary)
                         .build();
-                    ui.text(id + ".label")
+                    inner.text(id + ".label")
                         .position(padX + kItemInset + kIconW + effIndent, y)
                         .size(kWidth - padX * 2.0f - kItemInset - kIconW - effIndent,
                               itemH)
@@ -610,81 +736,70 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(active ? t.colors.primaryText : t.colors.textSecondary)
                         .build();
                 }
-
-                y += itemH + gap;
             };
 
-            // 分两组（§4.8）：work（Home/Markdown/Todo/Schedule/ClaudeProxy/Agent/Memory/
-            // Wallpaper/Mcp + 上线分组）→ system（Settings/About）。按 PageId 枚举分类，
-            // 不依赖 modules() 顺序；router 按 PageId 序注册，天然 work 在前（上线整组
-            // 枚举位于 Settings 之前）。
-            // 组间画 app.sidebar.groupdiv（wechat.dividerPrimary #E5E5E5，宽=kWidth-2*padX，高 1px）。
-            auto isSystemGroup = [](::core::PageId page) {
-                return page == ::core::PageId::Settings ||
-                       page == ::core::PageId::About;
-            };
-
-            bool groupDividerDrawn = false;
-            bool sawWork = false;
-            std::set<::core::PageId> drawnGroups;
-            const auto* currentEntry = registryEntry(router->currentPage());
-            for (auto* m : router->modules()) {
-                if (!m) continue;
-                const ::core::PageId page = m->pageId();
-                const bool isSystem = isSystemGroup(page);
-
-                // work → system 首次切换时画组间 divider（仅当两组都非空：sawWork && isSystem；
-                // divider 也让位底部开关区（141），越线不再画）
-                if (!groupDividerDrawn && sawWork && isSystem && y < kNavFoldLimit) {
-                    ui.rect("app.sidebar.groupdiv")
-                        .position(padX, y)
-                        .size(kWidth - padX * 2.0f, 1.0f)
-                        .color(t.colors.borderDefault)
+            // 导航滚动区（need186 §11）：EUI scrollView 全站 idiom——行表在画布
+            //（固定 contentH 的 stack）上按规划绘制，viewport 裁剪溢出、滚轮/拖拽/
+            // 滚动条触达（组件内置惯性/跟手）。滚动条 token 化（§11.3）：宽度走
+            // metrics.control.scrollbar（现值 8，不传新值）、胶囊全圆角、四态色随
+            // 主题既有映射、overlay 悬浮右缘不占内容宽、溢出时常显非溢出零绘制。
+            // 滚轮 step = 行步进 itemH+gap（§11.4：44/38，一格一行）。折叠 72 态
+            // thumb 右缘 x∈[64,72]，与图标盒右缘 50 无重叠（§11.3）。
+            components::scrollView(ui, "app.sidebar.nav")
+                .position(0.0f, navStart)
+                .size(kWidth, viewportH)
+                .gap(0.0f)  // 行距由画布内绝对坐标承载（列 gap 不参与）
+                .step(itemH + gap)
+                .theme(core::theme::componentTokensWeChat(t))
+                .scrollbarOverlay(true)
+                .offset(g_navScrollOffset)
+                .onChange([](float v) { g_navScrollOffset = v; })
+                .contentKey(navContentKey)
+                .content([&](eui::Ui& inner, float innerW, float) {
+                    // 画布：单一流式子件、固定高 contentH（测量值=规划值，零漂移）；
+                    // 行在画布内绝对定位（画布局部坐标 = 旧侧栏 y − navStart）
+                    inner.stack("app.sidebar.nav.canvas")
+                        .size(innerW, contentH)
+                        .content([&] {
+                            float y = 0.0f;
+                            for (const auto& plan : navPlan) {
+                                if (plan.divider) {
+                                    inner.rect("app.sidebar.groupdiv")
+                                        .position(padX, y)
+                                        .size(innerW - padX * 2.0f, 1.0f)
+                                        .color(t.colors.borderDefault)
+                                        .build();
+                                    y += 1.0f + gap;
+                                } else if (plan.groupHeader) {
+                                    renderGroupHeader(inner, y, plan);
+                                    y += itemH + gap;
+                                } else {
+                                    renderNavItem(inner, y, plan.module,
+                                                  plan.indent);
+                                    y += itemH + gap;
+                                }
+                            }
+                        })
                         .build();
-                    y += 1.0f + gap;  // divider 高 1px + 标准 gap 到下一项
-                    groupDividerDrawn = true;
-                }
-                if (!isSystem) sawWork = true;
+                })
+                .build();
 
-                // 有父级声明的模块 → 先画父项（同组只画一次）再画子项；无父级 → 原平铺路径
-                const auto* row = registryEntry(page);
-                if (row != nullptr && row->parent.has_value()) {
-                    const auto* parent = registryEntry(*row->parent);
-                    if (parent != nullptr) {
-                        // 展开态唯一判定 = sidebarGroupExpanded（与 toggleSidebarGroup
-                        // 同一状态源）。默认折叠：首帧集合为空 → 只画父项、子项不显示。
-                        // 当前页在组内也不做本帧强制展开——那等于引入第二个状态源，且会
-                        // 让用户手动收起后立刻被自动弹回；改由父项选中态（holdsCurrent
-                        // = SelectionBar + primary 图标）承载「当前页在此组内」。
-                        const bool expanded = sidebarGroupExpanded(parent->page);
-                        const bool holdsCurrent =
-                            currentEntry != nullptr &&
-                            currentEntry->parent.has_value() &&
-                            *currentEntry->parent == parent->page;
-                        if (drawnGroups.insert(parent->page).second) {
-                            renderGroupHeader(*parent, expanded, holdsCurrent);
-                        }
-                        if (!expanded) continue;
-                        renderNavItem(m, kChildIndent);
-                        continue;
-                    }
-                }
-                renderNavItem(m, 0.0f);
-            }
-
-            // 折叠开关（底部固定）：need172（2026-11-03 设计文档 §2.3）——直径 40
-            // 正圆，56 预留区内垂直居中（toggleY=H−48，上下各 8；守卫 kToggleZoneH
-            // 与让位线逻辑不动）；水平两态均 16：折叠 (72−40)/2=16、展开 padX=16，
-            // 与导航左缘对齐。常态 1px borderDefault 圆框常显 + textSecondary 图标；
-            // hover：primarySoftBg 底 + primaryHover 描边 + primary 图标 + scale
-            // 1.04（150ms）；按压：primary 描边 + scale 0.96；移出/松手回弹 180ms
-            // OutBack。形变与变色走「每帧换目标值 + transition 平滑」（jelly 坑①②：
-            // .animate 只是允许动，目标值必须 compose 期每帧重给）。EUI 每元素单
-            // Transition，按压段 100ms Out 并入同曲线兜（jelly.h 全段单档先例）。
-            constexpr float kToggleSize = 40.0f;
-            const float toggleY = screen.height - 48.0f;  // H−56 区顶 + 8 居中
+            // 折叠开关（底部固定）：need172 v2（设计文档 §10.2）——直径按档 32/28
+            // 正圆，预留区 48/44 内垂直居中（toggleY = H−40 / H−36，上下各 8）；
+            // 水平：折叠 (72−size)/2（20/22）、展开 padX=16 对齐导航左缘。码点字号
+            // fontSizeSmall(12)（§10.5-3，随钮缩小降档）。常态 1px borderDefault
+            // 圆框常显 + textSecondary 图标；hover：primarySoftBg 底 + primaryHover
+            // 描边 + primary 图标 + scale 1.04（150ms）；按压：primary 描边 +
+            // scale 0.96；移出/松手回弹 180ms OutBack。形变与变色走「每帧换目标值
+            // + transition 平滑」（jelly 坑①②：.animate 只是允许动，目标值必须
+            // compose 期每帧重给）。EUI 每元素单 Transition，按压段 100ms Out 并入
+            // 同曲线兜（jelly.h 全段单档先例）。
+            // 热区与绘制解耦（§10.2）：hover/点击命中 = 绘制区外扩 4px
+            //（40/36 ≥32px 桌面最小可点约定），视觉缩小不牺牲命中率——交互回调
+            // 全在独立透明热区 rect（active 导航项三态全透明仍可点中先例）。
+            const float toggleY = availH - toggleZoneH + 8.0f;  // 区顶 + 8 居中
             const float toggleX =
-                collapsed ? (kWidth - kToggleSize) * 0.5f : padX;
+                collapsed ? (kWidth - toggleSize) * 0.5f : padX;
             const bool toggleHovered = g_toggleHovered;
             const bool togglePressed = g_togglePressed;
             const bool toggleActive = toggleHovered || togglePressed;
@@ -695,20 +810,41 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 toggleHovered ? core::Ease::OutCubic : core::Ease::OutBack);
             ui.rect("app.sidebar.toggle")
                 .position(toggleX, toggleY)
-                .size(kToggleSize, kToggleSize)
+                .size(toggleSize, toggleSize)
                 .color(toggleActive ? t.colors.primarySoftBg : kTransparent)
                 .border(1.0f, togglePressed  ? t.colors.primary
                               : toggleHovered ? t.colors.primaryHover
                                               : t.colors.borderDefault)
-                .radius(kToggleSize * 0.5f)  // 半径=半宽 → 正圆
+                .radius(toggleSize * 0.5f)  // 半径=半宽 → 正圆
                 .transformOrigin(0.5f, 0.5f)  // 缩放中心在按钮中心（jelly 坑③）
                 .scale(toggleScale)
                 .transition(toggleTransition)
                 .animate(core::AnimProperty::Color | core::AnimProperty::Border |
                          core::AnimProperty::Transform)
+                .build();
+            ui.text("app.sidebar.toggle.icon")
+                .position(toggleX, toggleY)
+                .size(toggleSize, toggleSize)
+                .icon(eui::utf8(collapsed ? 0xF0C9 : 0xF100))  // fa-bars / fa-angles-left
+                .fontSize(t.sizes.fontSizeSmall)  // §10.2：fontSizeSmall(12)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(toggleActive ? t.colors.primary : t.colors.textSecondary)
+                .transformOrigin(0.5f, 0.5f)
+                .scale(toggleScale)  // 图标随按钮同形变（同几何同中心）
+                .transition(toggleTransition)
+                .animate(core::AnimProperty::TextColor |
+                         core::AnimProperty::Transform)
+                .build();
+            // 热区（绘制区外扩 4px，§10.2）：置于视觉元素之后 = 本组最顶层命中；
+            // 三态全透明（不参与视觉）
+            ui.rect("app.sidebar.toggle.hot")
+                .position(toggleX - 4.0f, toggleY - 4.0f)
+                .size(toggleSize + 8.0f, toggleSize + 8.0f)
+                .states(kTransparent, kTransparent, kTransparent)
                 .onHover([](bool hovered) {
                     if (hovered && !g_toggleHovered) {
-                        // hover 进入沿触发一次（验收 5：停在上面不循环，移出再进重触发）
+                        // hover 进入沿触发一次（验收 5/10：停在上面不循环，移出再进重触发）
                         g_toggleParticleStart = std::chrono::steady_clock::now();
                     }
                     g_toggleHovered = hovered;
@@ -721,67 +857,58 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     setSidebarCollapsed(!sidebarCollapsed(), true);
                 })
                 .build();
-            ui.text("app.sidebar.toggle.icon")
-                .position(toggleX, toggleY)
-                .size(kToggleSize, kToggleSize)
-                .icon(eui::utf8(collapsed ? 0xF0C9 : 0xF100))  // fa-bars / fa-angles-left
-                .fontSize(t.sizes.fontSizeBody)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(toggleActive ? t.colors.primary : t.colors.textSecondary)
-                .transformOrigin(0.5f, 0.5f)
-                .scale(toggleScale)  // 图标随按钮同形变（同几何同中心）
-                .transition(toggleTransition)
-                .animate(core::AnimProperty::TextColor |
-                         core::AnimProperty::Transform)
-                .build();
 
-            // 弥散绿粒子（need172 §2.3 粒子表）：hover 进入沿一次性迸发 8 颗，
-            // 480ms 缓出淡去（opacity 0.55→0），起点 = 按钮圆外缘 r=20 向径向外
-            // 弥散 10~16px（hash 决定，不做整齐圆圈），粒径 2~4px 正圆，角度 =
-            // i×45° + hash 抖动 ±12°（fluidHash01 确定性散列，帧间/会话稳定不闪）。
-            // 颜色浅色档 kLightHalo 三色轮替（fluid 同款口径）、深色档
-            // primary/primaryHover 双色轮替。性能口径：hover 驱动一次性迸发
-            //（8 个矩形元素、480ms 自止），非持续动画、无常驻帧泵；非活跃帧
-            // 零粒子元素零泵（验收 7）。
+            // 弥散绿粒子 v2（need172 §10.3）：hover 进入沿一次性迸发 12 颗（30° 均布
+            // + hash ±10° 抖动），生命 800ms + 每颗 hash 延迟 0~80ms（迸发层次，
+            // ≤880ms 全灭尽自止），透明度 0.75→0、末端缩放 0.7；起点 = 钮半径+2
+            // 向径向外弥散 14~26px（冲出圆框才可见），粒径 4~6px 正圆。颜色：浅色档
+            // kParticleLight 三色轮替（第三色 #06AD56 深档拉开明度）、深色档
+            // primary/primaryHover 双色。性能口径：hover 驱动一次性迸发（≤12 个
+            // 矩形元素、880ms 自止），非持续动画、无常驻帧泵；非活跃帧零粒子零泵。
             if (g_toggleParticleStart.has_value()) {
                 const float elapsed =
                     std::chrono::duration<float>(
                         std::chrono::steady_clock::now() -
                         *g_toggleParticleStart)
                         .count();
-                if (elapsed < 0.48f) {
-                    const float tt = std::clamp(elapsed / 0.48f, 0.0f, 1.0f);
-                    const float eased = core::applyEase(core::Ease::OutCubic, tt);
-                    const float cx = toggleX + kToggleSize * 0.5f;
-                    const float cy = toggleY + kToggleSize * 0.5f;
-                    for (int i = 0; i < 8; ++i) {
+                if (elapsed < 0.88f) {
+                    const float cx = toggleX + toggleSize * 0.5f;
+                    const float cy = toggleY + toggleSize * 0.5f;
+                    for (int i = 0; i < 12; ++i) {
+                        const float delay =
+                            fluidHash01(i * 23 + 7) * 0.08f;  // 0~80ms
+                        if (elapsed <= delay) continue;  // 未起爆不建元素
+                        const float tt =
+                            std::clamp((elapsed - delay) / 0.8f, 0.0f, 1.0f);
+                        const float eased = core::applyEase(core::Ease::OutCubic, tt);
                         const float ang =
-                            (i * 45.0f +
-                             (fluidHash01(i * 13 + 1) - 0.5f) * 24.0f) *
-                            0.0174533f;  // deg→rad
+                            (i * 30.0f +
+                             (fluidHash01(i * 13 + 1) - 0.5f) * 20.0f) *
+                            0.0174533f;  // deg→rad（30° 均布 + ±10° 抖动）
                         const float spread =
-                            10.0f + 6.0f * fluidHash01(i * 17 + 2);  // 10~16px
+                            14.0f + 12.0f * fluidHash01(i * 17 + 2);  // 14~26px
                         const float pr =
-                            1.0f + fluidHash01(i * 19 + 3);  // 半宽 1~2（直径 2~4）
-                        const float d = kToggleSize * 0.5f +
-                                        spread * eased;  // 圆外缘起向外弥散
+                            2.0f + fluidHash01(i * 19 + 3);  // 半宽 2~3（直径 4~6）
+                        const float size =
+                            pr * 2.0f * (1.0f - 0.3f * eased);  // 末端缩放 0.7
+                        const float d = toggleSize * 0.5f + 2.0f +
+                                        spread * eased;  // 起点半径=钮半径+2
                         const eui::Color& pc =
                             t.isDark ? ((i % 2 == 0) ? t.colors.primary
                                                      : t.colors.primaryHover)
-                                     : kLightHalo[i % 3];
+                                     : kParticleLight[i % 3];
                         ui.rect("app.sidebar.toggle.particle." +
                                 std::to_string(i))
-                            .position(cx + std::cos(ang) * d - pr,
-                                      cy + std::sin(ang) * d - pr)
-                            .size(pr * 2.0f, pr * 2.0f)
-                            .radius(pr)  // 半径=半宽 → 正圆（fluid 卫星同款）
+                            .position(cx + std::cos(ang) * d - size * 0.5f,
+                                      cy + std::sin(ang) * d - size * 0.5f)
+                            .size(size, size)
+                            .radius(size * 0.5f)  // 半径=半宽 → 正圆（fluid 卫星同款）
                             .color(pc)
-                            .opacity(0.55f * (1.0f - eased))
+                            .opacity(0.75f * (1.0f - eased))
                             .build();
                     }
                     // 帧泵（fluid driver 同款先例）：粒子位置每帧按壁钟重算，泵只
-                    // 在 480ms 生命期内保持出帧；到期帧起本分支整体不建（自止）
+                    // 在 880ms 生命期内保持出帧；到期帧起本分支整体不建（自止）
                     ui.stack("app.sidebar.toggle.particle.driver")
                         .size(1.0f, 1.0f)
                         .onFrame([](float) {})
@@ -997,11 +1124,13 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 2026-11-01 F-09：时长与图标全站统一（此前此处 4.5s / 0xF05A 是全站唯一例外）
     ui_kit::drawToast(ui, screen, "app.notice", g_appNotice,
                       core::theme::componentTokensWeChat(core::theme::current()));
-    // 池168：窗口绿白间隔圆角虚框 ring——全窗最外缘非交互覆盖，放最后保证不被
-    // 任何内容盖住；Windows 即真实窗框位置，macOS 为系统窗框内侧内描边（系统
-    // 标题栏在 ring 外）。最大化态隐藏（need184③，fork 已暴露 mainWindowMaximized）。
+    // 池168（2026-11-04 老板撤销绿白虚框改细黑边）：窗口边框——全窗最外缘非交互
+    // 覆盖，放最后保证不被任何内容盖住；Windows 即真实窗框位置，macOS 为系统窗框
+    // 内侧内描边。圆角按 DWM 8 物理px/contentScale 折算贴窗体圆角。最大化态隐藏
+    // （need184③，fork 已暴露 mainWindowMaximized）。
     ui_kit::drawWindowRing(ui, screen.width, screen.height,
-                           core::theme::current(), app::mainWindowMaximized());
+                           core::theme::current(), app::mainWindowMaximized(),
+                           app::contentScale());
 }
 
 } // namespace app

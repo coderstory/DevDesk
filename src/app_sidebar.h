@@ -41,8 +41,14 @@ void setSidebarCollapsed(bool collapsed, bool persist = false);
 // 双向记忆由壳层持有（进入前 g_sidebarCollapsed 快照），页面切走切回不丢。
 void setSidebarHiddenForFullscreen(bool hidden);
 
-// 测试缝：侧边栏宽度状态回厂（展开）+ 分组展开集合回厂（空 = 默认折叠），纯内存零持久化
+// 测试缝：侧边栏宽度状态回厂（展开）+ 分组展开集合回厂（空 = 默认折叠）+ 导航
+// 滚动 offset 回厂（§11），纯内存零持久化
 void resetSidebarGlobals();
+
+// 测试缝：预置导航滚动区 offset（need186 §11；无头测试驱动「滚到底」场景）。
+// 写入值在下一次 drawSidebar 按 [0, contentH−viewportH] clamp（§11.2 收敛语义）；
+// 生产路径 offset 由 scrollView onChange 回写，不经此口
+void setNavScrollOffsetForTests(float offset);
 
 // ---- 侧边栏二级菜单（分组父项）----
 // 只有登记表 parent 列非空的模块才进入分组树；无 parent 的顶级模块走原平铺路径。

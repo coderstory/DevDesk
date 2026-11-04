@@ -34,6 +34,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#ifdef _WIN32
+#include <windows.h>  // §6b 真指针注入（SetCursorPos/ClientToScreen/POINT/HWND）
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -88,6 +91,10 @@ void probeToggleHandler(const std::string& moduleId, bool on) {
 
 bool nearEq(float a, float b) { return std::fabs(a - b) <= 0.5f; }
 
+// §6b TRACE 用（172 诊断临时，随结论落定后撤）：GLFW 单回调槽——链式转发须把
+// EUI 原回调存文件级静态（同 g_agent/g_router 无捕获约束先例）。
+GLFWcursorposfun g_prevCursorCb = nullptr;
+
 // 数 DOM 里同名 id 出现次数（幂等注册断言用：重复注册不得产生重复条目）
 int countId(core::dsl::Ui& ui, const std::string& id) {
     int count = 0;
@@ -109,6 +116,11 @@ int countId(core::dsl::Ui& ui, const std::string& id) {
 
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
+    bool realPointerChain = false;  // --real-pointer：§6b 真指针命中链（见段注）
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--real-pointer") realPointerChain = true;
+    }
+    (void)realPointerChain;  // 非 Windows 构建不跑 §6b
     if (!probe::initializeWindowBackend()) return 1;
     auto window = probe::makeWindow("module_toggle_probe", args.windowW,
                                     args.windowH);
@@ -388,60 +400,86 @@ int main(int argc, char* argv[]) {
     app::setSidebarCollapsed(false, false);
     composeFrame();
 
-    // 6) B6 need172：收缩按钮几何（直径 40 正圆 + 1px 常态描边 + 56 区内居中）+
-    //    真点击切换侧栏宽度 + hover 一次性粒子（迸发/自止/重触发）。
-    //    hover 驱动走 onHoverChanged 手调（锁屏机无真实指针 move 注入；与真指针
+    // 6) B6 need172 v2：收缩按钮几何（直径按档 32/28 正圆 + 1px 常态描边 + 区 48/44
+    //    内居中 + 热区外扩 4px）+ 真点击切换侧栏宽度 + hover 一次性粒子 v2
+    //（12 颗 / 4~6px / 0.75 / 800ms+延迟 0~80ms；迸发/自止/重触发）。
+    //    hover 驱动走热区 onHoverChanged 手调（锁屏机无真实指针 move 注入；与真指针
     //    共用同一接线，回调由 EUI 命中派发写入）。
     composeFrame();
     {
+        // 档位几何按 §10.2（bodyH<680 极紧 / <712 紧凑 / 其余正常）
+        const bool tierNormal = bodyH >= 712.0f;
+        const float expToggleSize = tierNormal ? 32.0f : 28.0f;
+        const float expRadius = expToggleSize * 0.5f;
         const auto* toggle =
             ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
         check(toggle != nullptr, "§6 收缩按钮应存在");
         if (toggle != nullptr) {
-            check(nearEq(toggle->frame.width, 40.0f) &&
-                      nearEq(toggle->frame.height, 40.0f),
-                  "§6 按钮直径应 40");
-            check(nearEq(toggle->radius, 20.0f), "§6 按钮应正圆（radius=20）");
+            check(nearEq(toggle->frame.width, expToggleSize) &&
+                      nearEq(toggle->frame.height, expToggleSize),
+                  "§6 按钮直径应 " + std::to_string(expToggleSize));
+            check(nearEq(toggle->radius, expRadius), "§6 按钮应正圆");
             check(nearEq(toggle->border.width, 1.0f),
                   "§6 常态应有 1px 圆框描边");
-            // 56 预留区内垂直居中：按钮底距侧栏底 8px（toggleY=H−48，上下各 8）
+            // 预留区内垂直居中：按钮底距侧栏底 8px（toggleY=H−40/H−36，上下各 8）
             const auto* sidebarEl = ui->find("app.sidebar");
             check(sidebarEl != nullptr &&
                       nearEq(toggle->frame.y + toggle->frame.height + 8.0f,
                              sidebarEl->frame.y + sidebarEl->frame.height),
-                  "§6 按钮应在 56 预留区内垂直居中（底距侧栏底 8px）");
-            // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 220→72
-            clickElement(*toggle);
-            composeFrame();
-            check(nearEq(app::sidebarWidth(), 72.0f),
-                  "§6 真点击后侧栏应折叠（220→72）");
-            const auto* folded =
-                ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
-            check(folded != nullptr && nearEq(folded->frame.x, 16.0f),
-                  "§6 折叠态按钮应水平居中 ((72-40)/2=16)");
-            if (folded != nullptr) {
-                clickElement(*folded);
-                composeFrame();
+                  "§6 按钮应在预留区内垂直居中（底距侧栏底 8px）");
+            // 热区 = 绘制区外扩 4px（§10.2）
+            const auto* hot = ui->find("app.sidebar.toggle.hot");
+            check(hot != nullptr, "§6 热区元素应存在");
+            if (hot != nullptr) {
+                check(nearEq(hot->frame.width, expToggleSize + 8.0f) &&
+                          nearEq(hot->frame.height, expToggleSize + 8.0f),
+                      "§6 热区应 40/36（绘制区外扩 4px）");
+                check(hot->onClick != nullptr, "§6 点击回调应在热区");
             }
-            check(nearEq(app::sidebarWidth(), 220.0f),
-                  "§6 再点击应展开（72→220）");
+            // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 220→72。
+            // 点击热区中心（回调已迁热区）
+            if (hot != nullptr) {
+                clickElement(*hot);
+                composeFrame();
+                check(nearEq(app::sidebarWidth(), 72.0f),
+                      "§6 真点击后侧栏应折叠（220→72）");
+                const auto* folded =
+                    ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+                const float expFoldX =
+                    (72.0f - expToggleSize) * 0.5f;  // 20（正常）/ 22（矮窗档）
+                check(folded != nullptr &&
+                          nearEq(folded->frame.x, expFoldX),
+                      "§6 折叠态按钮应水平居中 ((72-尺寸)/2=" +
+                          std::to_string(expFoldX) + ")");
+                const auto* foldedHot =
+                    ui != nullptr ? ui->find("app.sidebar.toggle.hot") : nullptr;
+                if (foldedHot != nullptr) {
+                    clickElement(*foldedHot);
+                    composeFrame();
+                }
+                check(nearEq(app::sidebarWidth(), 220.0f),
+                      "§6 再点击应展开（72→220）");
+            }
         }
 
-        // hover 一次性粒子：迸发 8 颗 + 泵挂树 + 描边变 primaryHover
+        // hover 一次性粒子 v2：迸发 12 颗（延迟 0~80ms，先候 120ms 全起爆）+
+        // 泵挂树 + 描边变 primaryHover
         const auto* t3 =
-            ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+            ui != nullptr ? ui->find("app.sidebar.toggle.hot") : nullptr;
         check(t3 != nullptr && t3->onHoverChanged != nullptr,
-              "§6 按钮 hover 回调应接线");
+              "§6 热区 hover 回调应接线");
         if (t3 != nullptr) t3->onHoverChanged(true);
         composeFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        composeFrame();
         int particles = 0;
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 12; ++i) {
             if (ui->find("app.sidebar.toggle.particle." + std::to_string(i)) !=
                 nullptr) {
                 ++particles;
             }
         }
-        check(particles == 8, "§6 hover 后应迸发 8 颗粒子");
+        check(particles == 12, "§6 hover 后应迸发 12 颗粒子");
         check(ui->find("app.sidebar.toggle.particle.driver") != nullptr,
               "§6 粒子生命泵应挂树");
         const auto* hovBtn = ui->find("app.sidebar.toggle");
@@ -449,22 +487,226 @@ int main(int argc, char* argv[]) {
                   nearEq(hovBtn->border.color.r,
                          core::theme::current().colors.primaryHover.r),
               "§6 hover 描边应变 primaryHover");
-        // hover 停留超过粒子生命（480ms）→ 自止消失（不循环判据：hover 仍 true）
-        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        // hover 停留超过粒子生命（≤880ms）→ 自止消失（不循环判据：hover 仍 true）
+        std::this_thread::sleep_for(std::chrono::milliseconds(920));
         composeFrame();
         check(ui->find("app.sidebar.toggle.particle.0") == nullptr &&
                   ui->find("app.sidebar.toggle.particle.driver") == nullptr,
               "§6 粒子到期应自止（hover 停留不循环）");
         // 移出再进 → 重触发；保持 hover 态给收尾截图（绿框 + 粒子初发段）
-        const auto* t4 = ui->find("app.sidebar.toggle");
+        const auto* t4 = ui->find("app.sidebar.toggle.hot");
         if (t4 != nullptr) {
             t4->onHoverChanged(false);
             t4->onHoverChanged(true);
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));  // > hash 延迟上限 80ms
         composeFrame();
         check(ui->find("app.sidebar.toggle.particle.0") != nullptr,
               "§6 移出再进粒子应重触发");
     }
+
+    // §6b --real-pointer：真指针命中链（bug150 口径盲区补课，池172）。§6 的 hover
+    // 断言是 onHoverChanged 手调，从未验证「真 OS 指针 → WM_MOUSEMOVE → GLFW
+    // CursorPosCallback → queuePointerMotion → runtime.update 命中派发」段——
+    // 池172 真机「特效全缺席、探针全绿」的探针侧盲区正是这里。本段默认关
+    //（无头/锁屏环境跑不了：需真桌面开窗 + 移动真实光标），显式 --real-pointer
+    // 才跑；并临时装主窗同款自绘壳子类（WM_NCHITTEST caption/边缘带），复刻
+    // 真机窗口壳层、排除「壳层吃消息」变量。
+    // ⚠ 度量纪律：GLFW glfwInit 自提 PerMonitor DPI 感知（无 manifest 也生效），
+    // 缩放屏上窗口/事件/帧缓冲全是物理像素——本段不走 pollOnce/update(1,1) 的
+    // 探针假想世界，逐帧读真窗口 metrics、按真 app 同款流驱动（update(cs,ps) +
+    // compose(fbw/cs, fbh/cs, cs)）；元素树每次 compose 重建，指针一律即取即用，
+    // 禁跨 compose 缓存（首版工装栽在悬垂 base->frame 上，坐标成垃圾值）。
+#ifdef _WIN32
+    if (realPointerChain) {
+        auto* glfwWin = static_cast<GLFWwindow*>(window);
+        auto liveContentScale = [&]() {
+            float csx = 1.0f, csy = 1.0f;
+            glfwGetWindowContentScale(glfwWin, &csx, &csy);
+            return (csx + csy) * 0.5f;
+        };
+        const float cs0 = liveContentScale();
+        core::window::setWindowCaptionHitTestHandler(
+            window,
+            [cs0](int x, int y, int width, int height, bool maximized) {
+                // 复刻 app_sidebar.cpp titlebarCaptionHit（物理→逻辑后判顶部 40
+                // 条带；EUI 回调给物理像素，真 app 在 glfw_app_main 包同款换算）
+                (void)x;
+                (void)width;
+                (void)height;
+                (void)maximized;
+                const float s = cs0 > 0.0f ? cs0 : 1.0f;
+                const float ly = static_cast<float>(y) / s;
+                return ly >= 0.0f && ly < 40.0f;
+            },
+            /*resizable=*/true);
+        glfwShowWindow(glfwWin);
+        glfwFocusWindow(glfwWin);  // 置顶：真 WM_MOUSEMOVE 只派发给光标下的窗口
+
+        // 真 app 同款度量流单帧：update(cs, ps) + compose(物理/cs 逻辑尺寸, cs)
+        auto composeReal = [&]() {
+            int ww = 0, wh = 0, fw = 0, fh = 0;
+            glfwGetWindowSize(glfwWin, &ww, &wh);
+            glfwGetFramebufferSize(glfwWin, &fw, &fh);
+            const float cs = liveContentScale();
+            const float ps = (ww > 0 && wh > 0)
+                                 ? (fw / static_cast<float>(ww) +
+                                    fh / static_cast<float>(wh)) * 0.5f
+                                 : 1.0f;
+            runtime.update(window, 1.0f / 60.0f, ps, cs);  // 签名序：pointerScale 在前、dpiScale 在后
+            runtime.compose("app", static_cast<float>(fw) / cs,
+                            static_cast<float>(fh) / cs, cs,
+                            [&](eui::Ui& u, const eui::Screen& screen) {
+                                ui = &u;
+                                app::compose(u, screen);
+                            });
+        };
+        auto pumpRealFrames = [&](int totalMs) {
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::milliseconds(totalMs);
+            while (std::chrono::steady_clock::now() < deadline) {
+                glfwPollEvents();  // 真 WM_MOUSEMOVE → GLFW 回调 → 输入队列
+                composeReal();     // update（命中派发）+ compose（树反映）
+            }
+        };
+
+        const HWND hwnd = static_cast<HWND>(
+            core::window::nativeWindowInfo(window).platformWindow);
+        POINT origin{0, 0};
+        check(ClientToScreen(hwnd, &origin) != FALSE,
+              "§6b ClientToScreen 应成功");
+        int fbw0 = 0, fbh0 = 0;
+        glfwGetFramebufferSize(glfwWin, &fbw0, &fbh0);
+        // 窗内远角（右缘内收 80 / 底缘内收 140 物理像素：避开边缘 resize 带与
+        // 底部按钮区）
+        const int farX = origin.x + fbw0 - 80;
+        const int farY = origin.y + fbh0 - 140;
+        POINT saved{};
+        GetCursorPos(&saved);
+
+        SetCursorPos(farX, farY);
+        pumpRealFrames(920);  // > 粒子生命 v2 ≤880ms：清掉 §6 手调遗留态做干净基线
+        const auto* base = ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+        check(base != nullptr, "§6b toggle 应存在");
+        check(ui->find("app.sidebar.toggle.particle.0") == nullptr,
+              "§6b 基线（指针在远角）应无粒子");
+        // 链路分段诊断 A：合成 motion（物理坐标）经同一条 cs 流 update 能否点燃
+        // hover——燃 = 队列→派发段健康，断点在 GLFW/消息层；不燃 = 派发段问题。
+        {
+            const float lcx = base->frame.x + base->frame.width * 0.5f;
+            const float lcy = base->frame.y + base->frame.height * 0.5f;
+            core::queuePointerMotion(window, lcx * cs0, lcy * cs0, {}, {});
+            composeReal();
+            const auto* st = ui->find("app.sidebar.toggle");
+            std::cout << "§6b diag A synthMotion(physical) hoverBorder="
+                      << (st != nullptr &&
+                                  nearEq(st->border.color.r,
+                                         core::theme::current()
+                                             .colors.primaryHover.r)
+                              ? "ON"
+                              : "OFF")
+                      << "\n";
+            core::queuePointerMotion(
+                window, static_cast<double>(fbw0 - 80),
+                static_cast<double>(fbh0 - 140), {}, {});
+            composeReal();  // 移出复位
+        }
+        // 诊断：坐标世界 + 双尺度命中对照（分辨率真机上 update(dpi=1) 的逻辑
+        // 边界与物理事件坐标错位会让本段伪红——故本段走 cs 流，此处打印留痕）
+        // 即取即用：diag A 已连续 compose 两帧、元素树每帧重建，baseline 段取的
+        // base 已悬垂（首版工装同坑——读到的是旧树残骸的垃圾坐标，两次跑漂移
+        // 130,313 / 1040,675 即此）——这里重取当帧元素。
+        const auto* live =
+            ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
+        if (live != nullptr) {
+            const float lcx = live->frame.x + live->frame.width * 0.5f;
+            const float lcy = live->frame.y + live->frame.height * 0.5f;
+            std::cout << "§6b diag fb=" << fbw0 << "x" << fbh0
+                      << " cs=" << cs0 << " toggleLogicalCenter=(" << lcx << ","
+                      << lcy << ") hit(dpi=cs)="
+                      << (runtime.hitTestInteractiveAt(lcx, lcy, cs0).empty()
+                              ? "MISS"
+                              : "HIT")
+                      << "\n";
+            // 防污染：diag A 合成迸发的粒子 v2 ≤880ms 生命——先泵 920ms 清零再进真
+            // 指针段（首版工装的粒子计数被合成残留顶成假绿的坑）。
+            pumpRealFrames(920);
+            // TRACE（172 诊断临时）：链式光标回调——真实 motion 到达即打印坐标再
+            // 转发 EUI 原回调。断点分判：无打印=WM_MOUSEMOVE/GLFW 层断；打印坐标
+            // ≈逻辑值（130/313 级）=DPI 虚拟化错位；坐标=物理值（176/424 级）仍不
+            // 燃=队列/派发段对真事件另有蹊跷。
+            g_prevCursorCb = glfwSetCursorPosCallback(
+                glfwWin, [](GLFWwindow* w, double x, double y) {
+                    std::cout << "§6b TRACE realMotion " << x << "," << y
+                              << "\n";
+                    if (g_prevCursorCb != nullptr) {
+                        g_prevCursorCb(w, x, y);
+                    }
+                });
+            // 真指针移入按钮中心（逻辑中心 × cs → 物理）→ hover 应由真实命中
+            // 派发点燃
+            const int bx =
+                origin.x + static_cast<int>(lcx * cs0);
+            const int by =
+                origin.y + static_cast<int>(lcy * cs0);
+            // 顶层置顶（工装强化）：SetForegroundWindow 有前台权限限制——bash/CI
+            // 派生的探针进程常常夺不动前台，被运行中的窗口盖住时真指针事件按
+            // z 序派发给别人=链路假断（windowFromPoint=other 即此伪影）。§6b
+            // 期间临时 TOPMOST 保证探针窗真在指针之下，段尾还原 NOTOPMOST。
+            ::SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            glfwShowWindow(glfwWin);
+            glfwFocusWindow(glfwWin);
+            pumpRealFrames(80);  // 置顶/焦点落地
+            // TRACE：消息归属——光标点下的窗口/前台窗是否本探针窗（被更顶层窗口
+            // 盖住时 WM_MOUSEMOVE 归别人，链路本身未必断）。
+            {
+                const POINT probePt{bx, by};
+                std::cout << "§6b TRACE windowFromPoint="
+                          << (WindowFromPoint(probePt) == hwnd ? "probe"
+                                                               : "other")
+                          << " foreground="
+                          << (GetForegroundWindow() == hwnd ? "probe"
+                                                            : "other")
+                          << "\n";
+            }
+            SetCursorPos(bx, by);
+            {
+                double gx = 0.0, gy = 0.0;
+                glfwGetCursorPos(glfwWin, &gx, &gy);
+                std::cout << "§6b TRACE glfwCursorPos=" << gx << "," << gy
+                          << " expect物理≈" << lcx * cs0 << "," << lcy * cs0
+                          << "\n";
+            }
+            pumpRealFrames(300);  // hover 过渡 150ms 内 + 粒子 880ms 窗口内计数
+            int burst = 0;
+            for (int i = 0; i < 12; ++i) {
+                if (ui->find("app.sidebar.toggle.particle." + std::to_string(i)) !=
+                    nullptr) {
+                    ++burst;
+                }
+            }
+            check(burst == 12, "§6b 真指针 hover 应迸发 12 颗粒子");
+            const auto* hov = ui->find("app.sidebar.toggle");
+            check(hov != nullptr &&
+                      nearEq(hov->border.color.r,
+                             core::theme::current().colors.primaryHover.r),
+                  "§6b 真指针 hover 描边应变 primaryHover");
+            // 移出 → hover 离开 + 粒子自止（泵 920ms > v2 生命 ≤880ms）
+            SetCursorPos(farX, farY);
+            pumpRealFrames(920);
+            check(ui->find("app.sidebar.toggle.particle.0") == nullptr &&
+                      ui->find("app.sidebar.toggle.particle.driver") == nullptr,
+                  "§6b 移出后粒子应自止");
+            SetCursorPos(saved.x, saved.y);  // 还原光标
+            glfwSetCursorPosCallback(glfwWin, g_prevCursorCb);  // TRACE 收尾还原
+            ::SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);  // 顶层还原
+        }
+        core::window::setWindowCaptionHitTestHandler(window, nullptr, true);
+        composeReal();
+    }
+#endif
 
     // 退出前落一张「当前状态图」（--screenshot <路径>）
     // 通用看图口：跑一次 module_toggle_sidebar_probe 就能拿到此刻侧栏长什么样。
