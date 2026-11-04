@@ -91,6 +91,13 @@ case "$DEVDESK_OS" in
   windows)
     # 工具链根不写死机器路径：按 MSYS2 实际安装位置探测（本机 D:/software/msys64，
     # CI 常见 C:/msys64）。cmake/ninja/g++/ccache 都在 <root>/bin 下。
+    # bug173（2026-11-03）：Git Bash 自带 MINGW_PREFIX=/mingw64 指向 Git 内置 mingw
+    # （bin 里没有 g++ 工具链）——「已存在」不代表「可用」：先验 bin 里真有 g++，
+    # 验不过一律当未设置走探测，否则前置错误 bin → 下游 cmake/ninja not found 假败。
+    if [ -n "${MINGW_PREFIX:-}" ] && [ ! -x "$(cygpath -u "$MINGW_PREFIX")/bin/g++" ]; then
+      echo "⚠ MINGW_PREFIX=${MINGW_PREFIX} 下无 g++（Git Bash 内置 mingw？）——不信任，回退 MSYS2 探测"
+      unset MINGW_PREFIX
+    fi
     if [ -z "${MINGW_PREFIX:-}" ]; then
       if command -v g++ >/dev/null 2>&1; then
         MINGW_PREFIX="$(cygpath -m "$(dirname "$(dirname "$(command -v g++)")")")"
@@ -431,14 +438,18 @@ if [ "${DEVDESK_BUILD_VERBOSE:-0}" = "1" ]; then
   cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log" || _build_rc=$?
   if [ "$_build_rc" -ne 0 ]; then
     echo "──── 错误摘要 ────"
-    grep -iE "error|FAILED" "$_build_log" | head -30 || true
+    # bug173：'command not found' 类失败不含 error/FAILED 字样——并入 'not found'。
+    grep -iE "error|FAILED|not found" "$_build_log" | head -30 || true
     echo "❌ 构建失败（上方为错误摘要）"; rm -f "$_build_log"; exit "$_build_rc"
   fi
   rm -f "$_build_log"
   echo "✅ 构建成功"
 else
   BUILD_OUT=$(cmake --build "$BUILD_DIR" 2>&1) || {
-    echo "$BUILD_OUT" | grep -iE "error|FAILED" | head -30 || true
+    # bug173：'command not found' 不含 error/FAILED——并入 'not found'；摘要仍空再兜底
+    # tail -20（非 verbose 模式全输出吞进变量，空摘要＝零错误输出假败）。
+    _sum="$(echo "$BUILD_OUT" | grep -iE "error|FAILED|not found" | head -30)" || true
+    if [ -n "$_sum" ]; then echo "$_sum"; else echo "$BUILD_OUT" | tail -20; fi
     echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
   echo "$BUILD_OUT" | tail -2
   echo "✅ 构建成功"
@@ -677,10 +688,30 @@ if [ "$RUN_TEST" = "1" ]; then
       # 跳过项全部落在该家族 = 已知平台不对称，黄牌放行；名单外任何跳过仍按
       # 「判据误判或代码 / 环境异常」报红，必须人工查。
       PROBE_SKIPPED_NAMES="$(echo "$PROBE_OUT" | grep -E '^\s*[0-9]+ - .*\(Skipped\)$' | sed -E 's/^[[:space:]]*[0-9]+ - +//; s/ \(Skipped\)$//' || true)"
-      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cv '^wallpaper_' || true)"
+      # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe / home_probes
+      # 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。LastTest.log 不收录
+      # 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——名字精确匹配 + rc=77
+      # 双验才黄牌放行；这两个探针因其它成因跳过（rc≠77）仍按红，不静默。
+      PROBE_FIT_FAM_VERIFIED=0
+      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes)$'; then
+        PROBE_FIT_FAM_VERIFIED=1
+        for _fitprobe in b1_material_probe home_probes; do
+          echo "$PROBE_SKIPPED_NAMES" | grep -qx "$_fitprobe" || continue
+          _fitrc=0
+          "$BUILD_DIR/tests/$_fitprobe$EXE_SUFFIX" >/dev/null 2>&1 || _fitrc=$?
+          [ "$_fitrc" -eq 77 ] || PROBE_FIT_FAM_VERIFIED=0
+        done
+        unset _fitprobe _fitrc
+      fi
+      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$)' || true)"
       if [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
-        echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红"
-        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+        if [ "$PROBE_FIT_FAM_VERIFIED" = "1" ]; then
+          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知小屏环境跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗，bug123 口径 77 诚实跳过——已复跑单探针验证退出码 77）——设计内跳过，不判红"
+          echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+        else
+          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红"
+          echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+        fi
       else
         echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——判定为判据误判或代码 bug，必须人工查"
         echo "──── 跳过原因 ────"

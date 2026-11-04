@@ -226,12 +226,24 @@ inline core::window::Handle makeWindow(const std::string& title, int width, int 
     core::window_layout::InitialWindowRequest logical;
     logical.logicalWidth = width;
     logical.logicalHeight = height;
-    // workArea 留空 = 不做放不下收缩（探针尺寸是测试契约，不迁就本机分辨率）；
-    // FrameInsets 同理不参与（只做单位换算）。
+    // 2026-11-04 bug185：改传真实工件区做「放不下收缩」（与真 app 启动同一条
+    // decideInitialWindow 纯函数链）。原口径「探针尺寸是测试契约，workArea 留空不
+    // 收缩」在 135% 小屏（工件区约 1625x1065 物理）上是伪影源：请求 1200x1000 逻辑
+    // → 物理 1625x1355 超出工件区，被系统钳到 1625x1065——请求与系统所授不一致，
+    // 而探针若按请求值 compose 就与实际表面错位（真机不可达态，render-cache/blit
+    // 路径随机产出整页白帧）。收缩后契约变为「放得下的前提下尽量接近请求」，仍
+    // 确定性；compose 侧由 probe::windowLogicalSize 跟随实际窗口兜底。FrameInsets
+    // 仍不参与（探针窗自绘标题栏，实测 OS 授予 client=工件区高）。
+    core::window_layout::WorkArea workArea;
+    if (workW > 0 && workH > 0) {
+        workArea.x = workX;
+        workArea.y = workY;
+        workArea.width = workW;
+        workArea.height = workH;
+    }
     const core::window_layout::InitialWindowDecision sized =
         core::window_layout::decideInitialWindow(
-            logical, core::window_layout::WorkArea{}, scale,
-            core::window_layout::FrameInsets{});
+            logical, workArea, scale, core::window_layout::FrameInsets{});
     request.width = sized.width > 0 ? sized.width : width;
     request.height = sized.height > 0 ? sized.height : height;
     request.resizable = false;
@@ -333,6 +345,26 @@ inline void composeModuleFrame(core::dsl::Runtime& runtime,
                                ComposeFn&& composeFn) {
     pollOnce(window, runtime);
     runtime.compose(pageId, logicalWidth, logicalHeight, std::forward<ComposeFn>(composeFn));
+}
+
+/// 窗口实际逻辑尺寸（2026-11-04 bug185 新增）。
+///
+/// 真 app compose 同一条换算：逻辑 = framebuffer / contentScale（EUI-NEO
+/// dsl_app_impl.h app::update 同式，主循环传 renderMetrics.framebufferWidth/Height）。
+/// 探针 compose 必须用本函数取尺寸，不能用 --size 请求值：小屏放不下收缩（或极端
+/// 情况系统钳制）后请求值 ≠ 实际值，按请求值 compose 会与实际渲染表面错位——该
+/// 错位态真机不可达（真 app compose 尺寸恒随实际窗口），render-cache/blit 路径在
+/// 错位下会随机产出整页白帧（bug185 装具伪影）。
+inline std::pair<float, float> windowLogicalSize(core::window::Handle window) {
+    int fbWidth = 0;
+    int fbHeight = 0;
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
+    glfwGetFramebufferSize(static_cast<GLFWwindow*>(window), &fbWidth, &fbHeight);
+    glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &scaleX, &scaleY);
+    const float scale = scaleX > 0.0f ? scaleX : 1.0f;
+    return {static_cast<float>(fbWidth) / scale,
+            static_cast<float>(fbHeight) / scale};
 }
 
 /// 帧捕获（--screenshot）实现
@@ -440,14 +472,22 @@ public:
     /// 真渲染 runtime 当前一帧 → glReadPixels 读回后备缓冲 → 返回 **top-down**
     /// RGBA（已翻轴，第 0 行 = 图顶）。调用方若拿宽度请用本对象的
     /// pixelWidth/pixelHeight —— 逻辑 px × scale 才是真实像素尺寸。
+    /// renderPasses（2026-11-04 bug185 新增，缺省 1 = 既有语义不变）：捕获前连续
+    /// render 的遍数。retained layer 重建有稳定帧门槛（runtime_render.h：普通层
+    /// 连续 2 帧、几何 resize 层连续 kRetainedLayerResizeStableFrames=16 帧，未达
+    /// 门槛整层不画），真 app 每帧 render 故常态无感；探针若只 render 一次就捕获，
+    /// 冷 pending 层直接缺席 → 内容层空白只剩直画元素（bug185 白帧伪影）。需要
+    /// 截图的探针传 ≥16 的遍数把 layer 稳定门槛跑满。
     bool readFrame(core::dsl::Runtime& runtime,
                    std::vector<unsigned char>& rgba,
                    int& width,
-                   int& height) {
+                   int& height,
+                   int renderPasses = 1) {
         if (!ok()) {
             std::cerr << "probe::FrameCapture::readFrame: " << error_ << "\n";
             return false;
         }
+        if (renderPasses < 1) renderPasses = 1;
         width = fbWidth_;
         height = fbHeight_;
         rgba.assign(static_cast<std::size_t>(width) *
@@ -460,8 +500,10 @@ public:
             backend_->beginFrame(core::render::RenderSurface{
                 window_, core::window::nativeWindowInfo(window_), width, height,
                 scale_});
-            runtime.render(width, height, scale_,
-                           core::theme::current().colors.background);
+            for (int pass = 0; pass < renderPasses; ++pass) {
+                runtime.render(width, height, scale_,
+                               core::theme::current().colors.background);
+            }
             // 必须落在 present() 之前：swap 之后后备缓冲内容未定义
             glPixelStorei(GL_PACK_ALIGNMENT, 1);
             glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,

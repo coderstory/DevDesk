@@ -137,19 +137,21 @@ REGISTER_TEST(menuBeautifyStyledPanelHeight, "menu: styled 面板高度行数和
     DOCTEST_CHECK_EQ(components::styledMenuPanelHeight(rows, style), expected);
     return true;
 });
-REGISTER_TEST(menuBeautifyStyledClampPosition, "menu: styled 位置钳制（贴右/上翻/贴顶/副屏/无头）", {
+REGISTER_TEST(menuBeautifyStyledClampPosition, "menu: styled 位置钳制（贴右/不护底/贴顶/副屏/无头）", {
     using components::styledMenuClampPosition;
     auto r = styledMenuClampPosition(100.0f, 100.0f, 220.0f, 200.0f, 0.0f, 0.0f, 1920.0f, 1080.0f);
     DOCTEST_CHECK_EQ(r.x, 100.0f);
     DOCTEST_CHECK_EQ(r.y, 100.0f);
     r = styledMenuClampPosition(1900.0f, 100.0f, 220.0f, 200.0f, 0.0f, 0.0f, 1920.0f, 1080.0f);
     DOCTEST_CHECK_EQ(r.x, 1700.0f);
-    // 越下 → 向上翻转（贴光标上沿）；翻转后仍越下界才二次收敛到贴顶，
-    // 两次判断都在，别把第二条当冗余删
+    // bug135（2026-11-03 托盘规格）：showStyledMenu 先折算左下角锚光标
+    // （desiredY = 光标y - 窗高），钳制只护左/右/顶——**不护底不翻转**：
+    // 护底/向上翻转会把菜单抬离光标，正是「往右上角迁移」症状的直接成因；
+    // 任务栏带光标下菜单允许伸进任务栏带。
     r = styledMenuClampPosition(100.0f, 1000.0f, 220.0f, 200.0f, 0.0f, 0.0f, 1920.0f, 1080.0f);
-    DOCTEST_CHECK_EQ(r.y, 800.0f);
-    r = styledMenuClampPosition(100.0f, 50.0f, 220.0f, 400.0f, 0.0f, 0.0f, 1920.0f, 300.0f);
-    DOCTEST_CHECK_EQ(r.y, 0.0f);
+    DOCTEST_CHECK_EQ(r.y, 1000.0f);  // 越下不翻转不护底（规格）
+    r = styledMenuClampPosition(100.0f, -50.0f, 220.0f, 400.0f, 0.0f, 0.0f, 1920.0f, 300.0f);
+    DOCTEST_CHECK_EQ(r.y, 0.0f);  // 越上仍贴顶
     // 副屏可能在左，areaX 为负：钳制是相对 areaX 而非 0
     r = styledMenuClampPosition(-1900.0f, 100.0f, 220.0f, 200.0f, -1920.0f, 0.0f, 1920.0f, 1080.0f);
     DOCTEST_CHECK_EQ(r.x, -1900.0f);

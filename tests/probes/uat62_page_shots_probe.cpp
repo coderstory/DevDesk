@@ -37,12 +37,14 @@
 #include "module_settings/settings_config.h"  // applyWindowVisuals（窗口效果档）
 #include "module_settings/settings_ui_logic.h"  // kSettingTabCount（B6 分 tab 落图）
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -91,9 +93,13 @@ std::string twoDigit(std::size_t n) {
 // 全黑/纯色帧判据（采样 8px 网格；判据口径同 screenshot_probe ⑤）：
 //  - 纯黑采样点占比 > 90% = 全黑帧（窗口没渲染 / 渲染后端没激活）
 //  - 颜色桶（R/G/B 各取高 3 位）数 < 3 = 纯色帧（空窗 / 只有底色）
+//  - bug185 补：明确非白采样占比 < 5% = 白底空帧——白底（浅色档 255）+ 细线
+//    覆盖层（如窗口环 2px 线宽）的 AA 像素能凑满 3 桶骗过前两条（NOTES 实证
+//    01-home-640 目测全白判绿）；真页面正文/图标/卡片远超 5%。
 // 返回 true = 通过；失败时 stderr 打出两个实测值。
 bool frameHasContent(const std::vector<unsigned char>& rgba, int width, int height) {
     std::size_t black = 0;
+    std::size_t nonWhite = 0;
     std::size_t samples = 0;
     std::unordered_set<std::uint32_t> buckets;
     for (int y = 0; y < height; y += 8) {
@@ -107,6 +113,12 @@ bool frameHasContent(const std::vector<unsigned char>& rgba, int width, int heig
             if (px[0] < 10 && px[1] < 10 && px[2] < 10) {
                 ++black;
             }
+            const int dr = 255 - static_cast<int>(px[0]);
+            const int dg = 255 - static_cast<int>(px[1]);
+            const int db = 255 - static_cast<int>(px[2]);
+            if (dr > 24 || dg > 24 || db > 24) {
+                ++nonWhite;
+            }
             buckets.insert((static_cast<std::uint32_t>(px[0] >> 5)) |
                            (static_cast<std::uint32_t>(px[1] >> 5) << 3) |
                            (static_cast<std::uint32_t>(px[2] >> 5) << 6));
@@ -114,13 +126,34 @@ bool frameHasContent(const std::vector<unsigned char>& rgba, int width, int heig
     }
     const bool blackFrame = samples > 0 && black * 100 / samples > 90;
     const bool solidFrame = buckets.size() < 3;
-    if (blackFrame || solidFrame) {
+    const bool whiteSkinFrame =
+        samples > 0 && nonWhite * 100 / samples < 5;  // bug185：白底+细线假绿
+    if (blackFrame || solidFrame || whiteSkinFrame) {
         std::cerr << "  FAIL——帧内容判据不过：黑点占比 " << black << "/"
                   << samples << "，颜色桶 " << buckets.size()
-                  << (blackFrame ? "（全黑帧）" : "（纯色帧）") << "\n";
+                  << "，非白占比 " << nonWhite * 100 / samples << "%"
+                  << (blackFrame  ? "（全黑帧）"
+                      : solidFrame ? "（纯色帧）"
+                                   : "（白底空帧）") << "\n";
         return false;
     }
     return true;
+}
+
+// bug185（2026-11-04）：捕获前暖场渲染遍数。retained layer 重建有稳定帧门槛
+// （runtime_render.h：普通层连续 2 帧、几何 resize 层连续 16 帧未达标整层不画）；
+// 真 app 每帧 render 无感，本探针每页只捕获一次——不跑满门槛就会拍到冷 pending
+// 的空白内容层（整页近纯白只剩直画的窗口环，135% 小屏收缩/钳制改变 layer 几何
+// 后大面积触发）。17 = 16 + 1 帧裕量。
+constexpr int kCaptureRenderPasses = 17;
+
+// TODO(bug185 临时诊断，验完即删)：树遍历统计。
+void walkTreeIds(const core::dsl::Element* e, std::size_t& total,
+                 std::string& ids) {
+    if (e == nullptr) return;
+    ++total;
+    if (ids.size() < 500) ids += (ids.empty() ? "" : ",") + e->id;
+    for (const auto& c : e->children) walkTreeIds(c.get(), total, ids);
 }
 
 }  // namespace
@@ -224,8 +257,12 @@ int main(int argc, char* argv[]) {
         return 4;
     }
 
-    const float w = static_cast<float>(args.windowW);
-    const float h = static_cast<float>(args.windowH);
+    // compose 尺寸跟随实际窗口（2026-11-04 bug185）：--size 只是创建请求，小屏放
+    // 不下收缩后请求值 ≠ 实际值；按请求值 compose 会与实际渲染表面错位（真机不可
+    // 达态，render-cache/blit 随机产出整页白帧）。真 app 的 compose 尺寸恒随实际
+    // 窗口（dsl_app_impl.h app::update），探针必须同口径。PNG 文件名后缀仍用请求
+    // 高度（--size 契约标签）；实际落图像素尺寸以每行输出的 (pw x ph) 为准。
+    const auto [w, h] = probe::windowLogicalSize(window);
     bool passed = true;
     std::size_t captured = 0;              // 实际落图页数（跳过项不计入 PASS 文案）
     std::vector<std::string> skipped;      // 平台能力不支持而无法建实例的表行 slug
@@ -242,15 +279,56 @@ int main(int argc, char* argv[]) {
             continue;
         }
         router.navigateTo(e.page);
-        // 稳帧：24 帧（400ms @60fps）盖过仓库最长过渡时长——弹层透明度等由
-        // animate().transition() 逐帧插值，只 poll 不 compose 树不更新，少跑会
-        // 拍到半透明中间态。app::compose 每帧重建树。
-        for (int f = 0; f < 24; ++f) {
+        // 稳帧（bug185 修订 2026-11-04）：不再固定 24 帧。原「400ms @60fps 盖过
+        // 仓库最长过渡时长」被更长的容器级淡入过渡突破后，捕获会冻在透明度近 0
+        // 的中间态（render 只重画不推进动画钟，多遍 render 也救不回），拍出
+        // 「白底 + ring + 极淡内容」伪帧。改为最少 24 帧 + 追到 animating 归零
+        // （封顶 240 帧 = 4s 虚拟时），与真 app「过渡播完才到稳态」同语义。
+        eui::Ui* lastUi = nullptr;
+        int settleFrames = 0;
+        for (int f = 0; f < 240; ++f) {
             probe::composeModuleFrame(
                 runtime, window, "shots", w, h,
                 [&](eui::Ui& ui, const eui::Screen& screen) {
                     app::compose(ui, screen);
+                    lastUi = &ui;
                 });
+            settleFrames = f + 1;
+            if (f + 1 >= 24 && !runtime.isAnimating()) break;
+        }
+        // TODO(bug185 临时诊断，验完即删)：捕获时刻的树快照。
+        if (std::getenv("UAT62_DBG_STATS") != nullptr) {
+            const core::dsl::Element* root =
+                lastUi != nullptr ? lastUi->find("app.root") : nullptr;
+            const core::dsl::Element* page =
+                lastUi != nullptr ? lastUi->find("app.page") : nullptr;
+            auto frameStr = [](const core::dsl::Element* e) -> std::string {
+                if (e == nullptr) return "-";
+                return std::to_string(e->frame.x) + "," +
+                       std::to_string(e->frame.y) + " " +
+                       std::to_string(e->frame.width) + "x" +
+                       std::to_string(e->frame.height);
+            };
+            const auto snapshots = 0;
+            std::size_t totalElems = 0;
+            std::string ids;
+            if (root != nullptr) walkTreeIds(root, totalElems, ids);
+            (void)snapshots;
+            std::cerr << "DBGTREE page=" << kSlugs[i]
+                      << " settle=" << settleFrames
+                      << " animating=" << runtime.isAnimating()
+                      << " elems=" << totalElems
+                      << " rootKids="
+                      << (root != nullptr
+                              ? std::to_string(root->children.size())
+                              : "-")
+                      << " pageKids="
+                      << (page != nullptr
+                              ? std::to_string(page->children.size())
+                              : "-")
+                      << " root=" << frameStr(root)
+                      << " page=" << frameStr(page)
+                      << " ids=[" << ids << "]\n";
         }
         // 2026-11-01：切档复现「应用已开着，用户在设置里改字号」的真实路径。
         // 只在「首次就按目标档渲染」时对照，会漏掉 runtime 复用实例导致的不响应——
@@ -282,9 +360,44 @@ int main(int argc, char* argv[]) {
         std::vector<unsigned char> rgba;
         int pw = 0;
         int ph = 0;
-        if (!capture.readFrame(runtime, rgba, pw, ph)) {
+        if (!capture.readFrame(runtime, rgba, pw, ph, kCaptureRenderPasses)) {
             passed = false;
             continue;
+        }
+        // TODO(bug185 临时诊断，验完即删)：render 统计——misses>0 = retained layer
+        // 稳定门槛从未跑满；misses=0 且 fullPaint=1 = 内容不在树里（compose 侧）。
+        if (std::getenv("UAT62_DBG_STATS") != nullptr) {
+            const core::render::RenderFrameStats& st =
+                core::render::lastRenderFrameStats();
+            std::cerr << "DBGSTATS page=" << kSlugs[i]
+                      << " fullPaint=" << st.fullPaint
+                      << " cache=" << st.usedRenderCache
+                      << " recreated=" << st.renderCacheRecreated
+                      << " misses=" << st.retainedLayerMisses
+                      << " rebuilds=" << st.retainedLayerRebuilds
+                      << " direct=" << st.renderDirectPasses
+                      << " clears=" << st.clearCalls << "\n";
+        }
+        // TODO(bug185 临时诊断，验完即删)：分区亮度（rgba 已翻轴 top-down）。
+        if (std::getenv("UAT62_DBG_STATS") != nullptr && pw > 0) {
+            auto bandMean = [&](int x0, int x1, int y0, int y1) {
+                double sum = 0.0;
+                int n = 0;
+                for (int yy = y0; yy < y1; yy += 5)
+                    for (int xx = x0; xx < x1; xx += 5) {
+                        const unsigned char* p =
+                            rgba.data() +
+                            (static_cast<std::size_t>(yy) * pw + xx) * 4u;
+                        sum += (p[0] + p[1] + p[2]) / 3.0;
+                        ++n;
+                    }
+                return n > 0 ? sum / n : -1.0;
+            };
+            const int sx = static_cast<int>(220.0f / w * pw);
+            std::cerr << "DBGBAND page=" << kSlugs[i]
+                      << " sidebar=" << bandMean(4, sx, 8, ph - 8)
+                      << " page=" << bandMean(sx + 4, pw - 4, 8, ph - 8)
+                      << " full=" << bandMean(0, pw, 0, ph) << "\n";
         }
         if (!frameHasContent(rgba, pw, ph)) {
             passed = false;
@@ -312,13 +425,14 @@ int main(int argc, char* argv[]) {
             mods[settingsIdx] != nullptr) {
             router.navigateTo(::app::registry::kModuleRegistry[settingsIdx].page);
             eui::Ui* ui = nullptr;
-            for (int f = 0; f < 24; ++f) {
+            for (int f = 0; f < 240; ++f) {
                 probe::composeModuleFrame(
                     runtime, window, "shots", w, h,
                     [&](eui::Ui& u, const eui::Screen& screen) {
                         ui = &u;
                         app::compose(u, screen);
                     });
+                if (f + 1 >= 24 && !runtime.isAnimating()) break;
             }
             for (int tab = 0; tab < module::settings::kSettingTabCount; ++tab) {
                 const core::dsl::Element* hit =
@@ -336,13 +450,14 @@ int main(int argc, char* argv[]) {
                 probe::click(window, runtime,
                              hit->frame.x + hit->frame.width * 0.5f,
                              hit->frame.y + hit->frame.height * 0.5f);
-                for (int f = 0; f < 24; ++f) {
+                for (int f = 0; f < 240; ++f) {
                     probe::composeModuleFrame(
                         runtime, window, "shots", w, h,
                         [&](eui::Ui& u, const eui::Screen& screen) {
                             ui = &u;
                             app::compose(u, screen);
                         });
+                    if (f + 1 >= 24 && !runtime.isAnimating()) break;
                 }
                 if (fontScale != 1.0f) {
                     applyFontScale();
@@ -367,7 +482,8 @@ int main(int argc, char* argv[]) {
                 std::vector<unsigned char> rgba;
                 int pw = 0;
                 int ph = 0;
-                if (!capture.readFrame(runtime, rgba, pw, ph) ||
+                if (!capture.readFrame(runtime, rgba, pw, ph,
+                                       kCaptureRenderPasses) ||
                     !frameHasContent(rgba, pw, ph) ||
                     !probe::writeRgbaToPng(path, rgba.data(), pw, ph)) {
                     passed = false;
