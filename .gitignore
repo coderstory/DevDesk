@@ -111,3 +111,7 @@ docs/pool/pool.db.bak-*
 
 # 探针/截图产物目录（会话产物，不入库）
 UAT62-screenshots/
+
+# 记忆 embedding 资产捆绑（老板 2026-11-04 令：随 assets 分发）
+!assets/llama/bin/*
+!assets/models/*
