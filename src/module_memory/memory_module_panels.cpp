@@ -479,11 +479,11 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
     } else {
         evText = "证据链：无（扫描类提案，无会话出处）";
     }
-    const bool expanded = expanded_.count(p.id) > 0;
-    // bug217（2026-11-04）：证据链单行预算截断（e.quoted 曾全文拼接，长原文
-    // 横向溢出横贯整卡）；预算扣除 ▾/▸ 前缀与省略号宽度
+    // bug234（2026-11-04）：原 ▾/▸ 切态只翻箭头不展全文 = 死交互；改为单行截断 +
+    // 「查看全文」入口——复用「编辑后接受」弹窗作全文出口（bug217 口径：全文出口
+    // = 编辑态查看），点整行即开。
     const std::string evtoggleText =
-        truncateByAdvance(std::string(expanded ? "▾ " : "▸ ") + evText,
+        truncateByAdvance("查看全文 ▸ " + evText,
                           (w - 32.0f) - core::theme::scaled(11.5f) * 2.0f,
                           core::theme::scaled(11.5f));
     ui.text("memory.rv.evtoggle." + p.id)
@@ -493,12 +493,9 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
         .fontSize(core::theme::scaled(11.5f))
         .lineHeight(core::theme::scaled(24.0f))
         .color(t.colors.info)
-        .onClick([this, id = p.id, expanded] {
-            if (expanded) {
-                expanded_.erase(id);
-            } else {
-                expanded_.insert(id);
-            }
+        .onClick([this, id = p.id, text = p.resultText] {
+            editingId_ = id;
+            editText_ = text;
         })
         .build();
 

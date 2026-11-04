@@ -336,6 +336,8 @@ inline bool pollOnce(core::window::Handle window,
 /// 帧循环标准单元：先 pollOnce 再 compose（成对使用——update 不重建元素树，
 /// 弹层等条件元素要 recompose 才进 DOM，requestFocus 等帧末请求也在 compose 消费）。
 /// 顺序反了会静默丢事件，不报错。
+inline std::pair<float, float> windowLogicalSize(core::window::Handle window);
+
 template <typename ComposeFn>
 inline void composeModuleFrame(core::dsl::Runtime& runtime,
                                core::window::Handle window,
@@ -344,6 +346,15 @@ inline void composeModuleFrame(core::dsl::Runtime& runtime,
                                float logicalHeight,
                                ComposeFn&& composeFn) {
     pollOnce(window, runtime);
+    // bug183：compose 尺寸统一以**实际 framebuffer 反推**为准（与真 app 同口径）——
+    // 小屏收缩/系统钳制后请求值 ≠ 实际值，按请求值 compose 会与实际渲染表面错位
+    // （bug185 白帧伪影同族；此前只有 uat62 单点采用 windowLogicalSize，其余探针
+    // 仍按请求值 compose）。尺得不可用（<=1）时退回调用方传值。
+    const auto [actualW, actualH] = windowLogicalSize(window);
+    if (actualW > 1.0f && actualH > 1.0f) {
+        runtime.compose(pageId, actualW, actualH, std::forward<ComposeFn>(composeFn));
+        return;
+    }
     runtime.compose(pageId, logicalWidth, logicalHeight, std::forward<ComposeFn>(composeFn));
 }
 

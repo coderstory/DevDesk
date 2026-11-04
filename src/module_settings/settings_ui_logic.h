@@ -74,14 +74,16 @@ inline constexpr int kLogLevelPresetCount = 4;
 inline constexpr const char* kLogLevelPresetLabels[] = {
     "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
 
-inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志", "同步",
-                                                    "项目卡"};
-inline constexpr int kSettingTabCount = 5;
+// bug189（2026-11-04 老板拍板移除）：原第 5 个 tab「项目卡」= 需-11 内部测试功能
+//（存测试库地址，GitHub 同步整表跳过），老板不认识=无用候选。UI 入口移除；
+// project_card_store/表保留（MCP project_info 工具仍在用，删除数据另行拍板）。
+inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志", "同步"};
+inline constexpr int kSettingTabCount = 4;
 inline constexpr int kTabGeneral = 0;
 inline constexpr int kTabModules = 1;
 inline constexpr int kTabLog = 2;
 inline constexpr int kTabSync = 3;
-inline constexpr int kTabProjectCards = 4;  // 需-11：追加末位，既有索引（探针/测试按 settings.tabs.N.hit 点选）不动
+// kTabProjectCards（需-11 第 5 tab）已于 2026-11-04 bug189 移除 UI 入口（见上）。
 // 2026-11-01 统一：tab 栏高跟 ui_kit::kWtabHeight（全站页面级 tab 单一高度）
 inline constexpr float kSettingsTabHeight = ui_kit::kWtabHeight;  // tab 栏高
 inline constexpr int kLogTailMaxLines = 100;        // 日志查看 tail 行数上限（need154：只留最近 100 条）

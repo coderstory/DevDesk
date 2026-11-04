@@ -104,8 +104,7 @@ private:
     int reviewShowLimit_ = kReviewShowLimit;
     bool batchMode_ = false;
     std::set<std::string> batchSel_;
-    std::set<std::string> expanded_;
-    std::string editingId_;  // 非空 = 编辑后接受弹窗打开
+    std::string editingId_;  // 非空 = 编辑后接受弹窗打开（全文出口，bug234）
     std::string editText_;
 
     // 配置页弹窗态

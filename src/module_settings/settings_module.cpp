@@ -90,7 +90,6 @@ enum class CardHeightKind {
     McpCard,      // MCP 配置卡：行几何求和（mcpCardHeightFor），不写死高度
     FillRemainder,
     GithubSync,   // 恒满高（UAT4 起不按启用态折叠；UAT5 方案 A 三段式，见 kGithubSyncCardHeight）
-    ProjectCards, // 需-11 项目卡：固定区 + 列表行数求和（projectCardsCardHeightFor）
     ModulesGrid,  // 模块插拔卡：格数 × 列数派生（modulesCardHeightFor，>1.15 档降单列）
 };
 
@@ -137,11 +136,6 @@ const CardSpec kCardSpecs[] = {
      0.0f, false, /*half=*/false, &drawLogViewCard, nullptr},
     {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::GithubSync,
      0.0f, false, /*half=*/false, &drawGithubSyncCard, nullptr},
-    // 需-11 项目卡：独立「项目卡」tab（同步 tab 有最小窗零滚动铁律 UAT6，
-    // 不能叠第二张卡）；列表 CRUD + 喂 MCP project_info，无模块门控。
-    {kTabProjectCards, "settings.card.project_cards", nullptr,
-     CardHeightKind::ProjectCards, 0.0f, false, /*half=*/false,
-     &drawProjectCardsCard, nullptr},
 };
 
 // ── GitHub Sync（纯 API 方案，无 git 依赖）──
@@ -1584,8 +1578,6 @@ private:
             // 表单区是否可交互，不参与卡高决策。UAT5 方案 A 三段式后的最坏行序
             // 复算见 kGithubSyncCardHeight 注释（settings_ui_logic.h）。
             return roundFs(kGithubSyncCardHeight);
-        case CardHeightKind::ProjectCards:
-            return projectCardsCardHeightFor(projectCards_.size());
         case CardHeightKind::ModulesGrid:
             // 壁纸格按平台能力增减（与 drawModulesCard 同判据，单一来源）
             return modulesCardHeightFor(
