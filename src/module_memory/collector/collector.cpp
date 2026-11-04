@@ -183,7 +183,7 @@ std::filesystem::path Collector::resolveProjectsRootFromEnv() {
 }
 
 core::Result<std::vector<Segment>> Collector::readSessionFile(
-    const std::filesystem::path& file) {
+    const std::filesystem::path& file, int maxSegments) {
     std::error_code ec;
     const auto size = std::filesystem::file_size(file, ec);
     if (ec) {
@@ -223,6 +223,7 @@ core::Result<std::vector<Segment>> Collector::readSessionFile(
         // 下轮从残留字节续读、水位逐轮抖动难排查
         const std::int64_t rawLen = static_cast<std::int64_t>(line.size());
         if (!line.empty() && line.back() == '\r') line.pop_back();
+        const std::int64_t preLine = consumedFrom;  // 本行消费前水位（预算回退锚）
         ++lineNo;
         consumedFrom += rawLen + 1;
         if (line.empty()) continue;
@@ -232,8 +233,18 @@ core::Result<std::vector<Segment>> Collector::readSessionFile(
                      std::to_string(lineNo));
             continue;
         }
+        bool budgetHit = false;
         for (auto& ev : events.value()) {
                     if (store.isProcessed(sessionId, ev.eventSeq)) continue;
+            // 单轮段预算（bug191 F-02）：预算用尽即停读。水位回退到本行消费前
+            //（行号同步回退，eventSeq 逐轮稳定），剩余行下轮续读——isProcessed
+            // 标记只属于 commit 成功的事件，未出段事件不会被误跳
+            if (static_cast<int>(segments.size()) +
+                    (cur.events.empty() ? 0 : 1) >=
+                maxSegments) {
+                budgetHit = true;
+                break;
+            }
             // 4KB 段装配：超目标体积即封段
             if (!cur.text.empty() &&
                 cur.text.size() + ev.text.size() > kSegmentTargetBytes) {
@@ -246,6 +257,11 @@ core::Result<std::vector<Segment>> Collector::readSessionFile(
             cur.hasUserText = cur.hasUserText || ev.narrative;
             cur.text += ev.text;
             cur.events.push_back(std::move(ev));
+        }
+        if (budgetHit) {
+            consumedFrom = preLine;
+            --lineNo;
+            break;
         }
     }
     if (!cur.events.empty() && cur.hasUserText) {  // ④
@@ -274,14 +290,20 @@ core::Result<std::vector<Segment>> Collector::pollOnce() {
             core::ErrorCode::FileReadFailed,
             "扫描根不可读: " + projectsRoot_.string());
     }
-    // 目录直接铺 .jsonl 会话文件（Claude Code 布局）；若存在项目子目录则下钻一层
+    // 目录直接铺 .jsonl 会话文件（Claude Code 布局）；若存在项目子目录则下钻一层。
+    // 全局段预算（bug191 F-02）：预算用尽即停扫，未读文件本轮不动水位、下轮续
+    auto remaining = [&all]() {
+        return kMaxSegmentsPerPoll - static_cast<int>(all.size());
+    };
     for (const auto& entry : it) {
+        if (remaining() <= 0) break;
         std::error_code ec2;
         if (entry.is_directory(ec2)) {
             for (const auto& sub : std::filesystem::directory_iterator(entry.path(), ec2)) {
                 if (ec2) break;
+                if (remaining() <= 0) break;
                 if (sub.path().extension() == ".jsonl") {
-                    auto segs = readSessionFile(sub.path());
+                    auto segs = readSessionFile(sub.path(), remaining());
                     if (segs.isFail()) return segs;
                     for (auto& s : segs.value()) all.push_back(std::move(s));
                 }
@@ -289,7 +311,7 @@ core::Result<std::vector<Segment>> Collector::pollOnce() {
             continue;
         }
         if (entry.path().extension() != ".jsonl") continue;
-        auto segs = readSessionFile(entry.path());
+        auto segs = readSessionFile(entry.path(), remaining());
         if (segs.isFail()) return segs;
         for (auto& s : segs.value()) all.push_back(std::move(s));
     }

@@ -29,11 +29,18 @@ struct RoundNote {
 };
 
 struct CollectRoundReport {
-    int segments = 0;          // 本轮出段数（含被拦截的）
+    int segments = 0;          // 本轮出段数（含被拦截的；≤kMaxSegmentsPerPoll）
     int cardsCreated = 0;      // 新增 pending 卡数
     int blocked = 0;           // 拦截段数（命中命中集 + fail-closed Error）
+    int dedupSkipped = 0;      // F-01 指纹命中跳过（不建卡不排队）
+    int lowValueSkipped = 0;   // F-03 噪声回声/极短段跳过
+    int expiredSwept = 0;      // F-04 本轮 TTL 沉降的 pending 数
     std::vector<RoundNote> notes;
 };
+
+// 极短段阈值（bug191 F-03② 拍板 2026-11-05）：有效字符 <50 拒。
+// 有效字符 = CJK 表意文字计 1 + ASCII 字母数字计 0.5（与卡面截断同宽窄口径）
+inline constexpr int kMinEffectiveUnits = 50;
 
 // 单轮采集（同步、可重入；宿主循环与测试直驱同一实现）。
 // onNote 可空（测试直驱时用返回值断言即可）。

@@ -25,6 +25,11 @@ namespace module::memory::collector {
 inline constexpr int kPollIntervalMs = 30000;
 // 段目标体积（§4.2 实测口径：清洗后按 4KB 切段）
 inline constexpr std::size_t kSegmentTargetBytes = 4096;
+// 单轮段预算（bug191 F-02 拍板 N=50，2026-11-05）：pollOnce 全局最多出 50 段。
+// 预算用尽的会话水位停在已出段边界（未消费行下轮续读，事件级幂等兜底）——
+// 水位在 readSession 内随读推进，预算必须落在读取侧才能「下轮再处理」；
+// 首轮全量回读风暴（clue59）由此硬顶住，collect_round 建卡数 ≤ 本值。
+inline constexpr int kMaxSegmentsPerPoll = 50;
 
 struct Segment {
     std::string sessionId;
@@ -77,8 +82,9 @@ public:
     core::Result<void> commit(const std::vector<Segment>& segments);
 
 private:
+    // maxSegments = 本文件本轮最多出段数（pollOnce 全局预算的剩余份额）
     core::Result<std::vector<Segment>> readSessionFile(
-        const std::filesystem::path& file);
+        const std::filesystem::path& file, int maxSegments);
 
     std::filesystem::path dbFile_;
     std::filesystem::path projectsRoot_;

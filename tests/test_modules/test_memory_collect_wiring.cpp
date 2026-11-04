@@ -41,7 +41,7 @@ void writeSession(const std::filesystem::path& file,
 }
 
 const std::string kCleanLine =
-    R"({"type":"user","sessionId":"sess-clean","message":{"role":"user","content":"DevDesk 的记忆页走 PanelState 取数"}})";
+    R"({"type":"user","sessionId":"sess-clean","message":{"role":"user","content":"DevDesk 的记忆页走 PanelState 取数，采集管线把会话事件装配为约四千字节分段，逐段过脱敏闸与低价值过滤后生成待审记忆卡，正文长度需要越过极短段门槛。"}})";
 const std::string kDirtyLine =
     R"({"type":"user","sessionId":"sess-dirty","message":{"role":"user","content":"我的手机号是 13800138000，帮我注册"}})";
 
@@ -272,5 +272,177 @@ REGISTER_TEST(memory_review_toolbar_wide_1600_anchored,
     eui::Ui ui;
     composeReviewFrame(mod, ui, 1600.0f, 1000.0f);
     if (!checkToolbarChain(ui, 1600.0f)) return false;
+    return true;
+})
+
+// ── bug191 采集风暴治理（F-01 指纹去重 / F-02 单轮上限 / F-03 低价值过滤 /
+//    F-04 TTL 接线 / F-06 confidence 未评估语义）─────────────────────
+
+namespace {
+
+std::string userLine(const std::string& sess, const std::string& text) {
+    return "{\"type\":\"user\",\"sessionId\":\"" + sess +
+           "\",\"message\":{\"role\":\"user\",\"content\":\"" + text + "\"}}";
+}
+
+// 中文正文生成（避开脱敏命中与噪声模式；足够长过极短段门槛）
+std::string prose(const std::string& seed, int rep) {
+    std::string t;
+    for (int i = 0; i < rep; ++i) t += seed;
+    return t;
+}
+
+}  // namespace
+
+REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
+              "memory: bug191 F-01——同内容段去重：同轮双段只出 1 卡；跨轮同内容零卡", {
+    const auto dir = makeTempDir("storm-dedup");
+    const auto projects = dir / "projects";
+    std::filesystem::create_directories(projects);
+    sanitize::SanitizeGate gate;
+    auto opened = proposals::ProposalStore::open(dir / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    collector::Collector collector(dir / "collector.db", projects);
+
+    // 同内容双会话（正文 ~3KB 中文，单会话单段）
+    const std::string body =
+        prose("记忆采集管线的内容级指纹去重验证正文，段落足够长以越过极短段门槛并保持语义完整。", 15);
+    writeSession(projects / "sess-a.jsonl", userLine("sess-a", body) + "\n");
+    writeSession(projects / "sess-b.jsonl", userLine("sess-b", body) + "\n");
+
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().segments, 2);
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);  // 同轮段间去重：只第一张成卡
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
+
+    // 跨轮同内容（新会话）→ 零卡（pending 指纹集命中，不建卡不排队）
+    writeSession(projects / "sess-c.jsonl", userLine("sess-c", body) + "\n");
+    auto r2 = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_EQ(r2.value().segments, 1);
+    DOCTEST_CHECK_EQ(r2.value().cardsCreated, 0);
+    auto pending2 = store.listPending();
+    DOCTEST_REQUIRE(pending2.isOk());
+    DOCTEST_CHECK_EQ(pending2.value().size(), static_cast<std::size_t>(1));
+    return true;
+})
+
+REGISTER_TEST(memory_collect_storm_round_cap,
+              "memory: bug191 F-02——单轮上限 50：首轮灌 60+ 段恰出 50 卡，剩余段下轮续产且水位不丢不重", {
+    const auto dir = makeTempDir("storm-cap");
+    const auto projects = dir / "projects";
+    std::filesystem::create_directories(projects);
+    sanitize::SanitizeGate gate;
+    auto opened = proposals::ProposalStore::open(dir / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    collector::Collector collector(dir / "collector.db", projects);
+
+    // 60 条互异长正文（各 >4KB → 一条一段封段），单会话
+    std::string jsonl;
+    for (int i = 0; i < 60; ++i) {
+        jsonl += userLine("sess-cap",
+                          "批次" + std::to_string(i) + "：" +
+                              prose("DevDesk 采集治理单轮上限验证段落，内容互不相同以避开指纹去重。", 45)) +
+                 "\n";
+    }
+    writeSession(projects / "sess-cap.jsonl", jsonl);
+
+    int totalCards = 0;
+    for (int roundIdx = 0; roundIdx < 5; ++roundIdx) {
+        auto r = pipeline::runCollectRound(collector, gate, store, {});
+        DOCTEST_REQUIRE(r.isOk());
+        totalCards += r.value().cardsCreated;
+        if (r.value().cardsCreated == 0) break;
+        if (roundIdx == 0) {
+            // 首轮硬顶在单轮上限
+            DOCTEST_CHECK_EQ(r.value().cardsCreated, 50);
+            DOCTEST_CHECK_EQ(r.value().segments, 50);
+        }
+    }
+    // 剩余段下轮续产（续产 >0 张）；总量守恒：续产无丢失无重放
+    DOCTEST_CHECK(totalCards > 50);
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_CHECK_EQ(pending.value().size(), static_cast<std::size_t>(totalCards));
+    return true;
+})
+
+REGISTER_TEST(memory_collect_storm_low_value_filter,
+              "memory: bug191 F-03——低价值过滤：hook 指令回声段与极短段零卡，正常对照段照常成卡", {
+    const auto dir = makeTempDir("storm-lowval");
+    const auto projects = dir / "projects";
+    std::filesystem::create_directories(projects);
+    sanitize::SanitizeGate gate;
+    auto opened = proposals::ProposalStore::open(dir / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    collector::Collector collector(dir / "collector.db", projects);
+
+    // ①噪声段：指令回声（>50 有效字符——区分于极短段刀）
+    writeSession(projects / "sess-noise.jsonl",
+                 userLine("sess-noise",
+                          prose("不要使用任何工具。只回复：收到。", 12)) + "\n");
+    // ②极短段：过噪声刀但有效字符 <50
+    writeSession(projects / "sess-short.jsonl",
+                 userLine("sess-short", "今天天气不错，适合写代码。") + "\n");
+    // 正常对照段（必须照常成卡——过滤不过杀）
+    writeSession(projects / "sess-ok.jsonl",
+                 userLine("sess-ok",
+                          prose("DevDesk 采集管线低价值过滤的正常对照段落，语义完整必须照常成卡。", 10)) + "\n");
+
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().segments, 3);
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);
+    DOCTEST_CHECK_EQ(r.value().blocked, 0);
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK(pending.value()[0].resultText.find("正常对照段") !=
+                  std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(memory_collect_storm_confidence_and_ttl_sweep,
+              "memory: bug191 F-04/F-06——到期 pending 一个采集轮内自动沉降；采集卡 confidence 未评估语义不再显示高置信", {
+    const auto dir = makeTempDir("storm-ttl");
+    const auto projects = dir / "projects";
+    std::filesystem::create_directories(projects);
+    sanitize::SanitizeGate gate;
+    auto opened = proposals::ProposalStore::open(dir / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    collector::Collector collector(dir / "collector.db", projects);
+
+    // 存量过期 pending（31 天前建 → expires_at = now−1d，已到期）
+    const std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
+    auto old = store.create("add", {}, "旧存量待审卡", "fact", "devdesk", {},
+                            0.9, "collect", "assistant_derived",
+                            now - 31 * 86400, -1);
+    DOCTEST_REQUIRE(old.isOk());
+
+    writeSession(projects / "sess-ok.jsonl",
+                 userLine("sess-ok",
+                          prose("DevDesk TTL 沉降与置信度语义验证段落，语义完整足够长以照常成卡。", 10)) + "\n");
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);
+
+    // F-04：到期 pending 在本轮内自动 expired（接线生效）
+    auto oldAfter = store.get(old.value().id);
+    DOCTEST_REQUIRE(oldAfter.isOk());
+    DOCTEST_CHECK_EQ(oldAfter.value().status, std::string("expired"));
+
+    // F-06：新卡 confidence 未评估（<0.5，卡面不再显示「高」置信徽章）
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK(pending.value()[0].confidence > 0.0);
+    DOCTEST_CHECK(pending.value()[0].confidence < 0.5);
     return true;
 })
