@@ -1116,13 +1116,14 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
     float h720 = 0.0f, h480 = 0.0f;
     float bigMarkY = -1.0f, bigBrandH = -1.0f, bigNavY = -1.0f;
     float foldedMark = -1.0f, foldedBrandY = -1.0f, foldedMarkY = -1.0f;
-    // 宽单调：H=1000 正常档
+    // 宽单调：H=1000 正常档（screen.height 一律 + kExpectedBodyTop 池128 口径：
+    // compose 扣 macOS 让位 30 → availH = 目标档高；不补则 H=720 落紧凑档致 logo 44）
     {
         eui::Ui ui;
         ui.begin("logo_mono_w1000");
         eui::Screen screen;
         screen.width = 1000.0f;
-        screen.height = 1000.0f;
+        screen.height = 1000.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         w1000 = ui.find("app.sidebar.brand.mark")->width.value;
@@ -1132,7 +1133,7 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
         ui.begin("logo_mono_w1600");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 1000.0f;
+        screen.height = 1000.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         w1600 = ui.find("app.sidebar.brand.mark")->width.value;
@@ -1142,7 +1143,7 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
         ui.begin("logo_mono_w1800");
         eui::Screen screen;
         screen.width = 1800.0f;
-        screen.height = 1000.0f;
+        screen.height = 1000.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         w1800 = ui.find("app.sidebar.brand.mark")->width.value;
@@ -1158,7 +1159,7 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
         ui.begin("logo_mono_h720");
         eui::Screen screen;
         screen.width = 1000.0f;
-        screen.height = 720.0f;
+        screen.height = 720.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         h720 = ui.find("app.sidebar.brand.mark")->width.value;
@@ -1168,7 +1169,7 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
         ui.begin("logo_mono_h480");
         eui::Screen screen;
         screen.width = 1000.0f;
-        screen.height = 480.0f;
+        screen.height = 480.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         h480 = ui.find("app.sidebar.brand.mark")->width.value;
@@ -1183,7 +1184,7 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
         ui.begin("logo_big_screen_sync");
         eui::Screen screen;
         screen.width = 1800.0f;
-        screen.height = 1000.0f;
+        screen.height = 1000.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         bigMarkY = ui.find("app.sidebar.brand.mark")->y;
@@ -1200,7 +1201,7 @@ REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
         ui.begin("logo_big_screen_folded");
         eui::Screen screen;
         screen.width = 1800.0f;
-        screen.height = 1000.0f;
+        screen.height = 1000.0f + kExpectedBodyTop;
         app::compose(ui, screen);
         ui.end();
         foldedMark = ui.find("app.sidebar.brand.mark")->width.value;
@@ -1236,7 +1237,9 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
 
     eui::Screen screen;
     screen.width = 1600.0f;
-    screen.height = 1000.0f;
+    // 侧栏局部高 1000（macOS 让位补偿，池128）：不加则 availH=970，粒子包络
+    // foldLimit=970−48−4=918，与断言按 1000 算的 948 不符
+    screen.height = 1000.0f + kExpectedBodyTop;
     const auto& colors = ::core::theme::current().colors;
     eui::Ui ui;
 
@@ -1317,7 +1320,9 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     DOCTEST_REQUIRE(pressed != nullptr);
     DOCTEST_CHECK(floatEq(pressed->transform.scale.x, 0.90f));  // v3.1 果冻加强
     DOCTEST_CHECK(floatEq(pressed->border.color.r, colors.primary.r));
-    DOCTEST_CHECK(!pressed->shadow.enabled);
+    // 阴影只由 hover 驱动（实现 :855 toggleHovered ? Shadow{} : 空）——按压时指针
+    // 仍在按钮上，hover 状态不撤，故阴影保持开启；断言改为「与 hover 同值」。
+    DOCTEST_CHECK(pressed->shadow.enabled == true);
 
     // 松开 → F4：回 hover 视觉；粒子不受按压影响（迸发一次未被重置）。
     // 松手回弹走 280ms 强 OutBack：目标从 0.90 回 1.09 时标准超调 ~10% 行程
@@ -1382,7 +1387,13 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     DOCTEST_CHECK(floatEq(focused->border.color.r, colors.primary.r));
     DOCTEST_CHECK(floatEq(focused->transform.scale.x, 1.0f));
     DOCTEST_CHECK(focused->color.a < 1e-3f);  // 不染色底
-    hotFocus->onFocusChanged(false);
+    // 失焦必须用**当前帧**热区（bug137）：Ui::begin() 每帧 roots_.clear() +
+    // index_.clear()（EUI-NEO core/dsl.h:1430-1440）销毁上一帧整棵树，上文的
+    // hotFocus 指针在 focused compose 后已悬垂——跨帧调悬垂元素回调即
+    // std::bad_function_call。同用例其余回调点均「当帧取当帧调」，此处曾漏。
+    const auto* hotUnfocus = ui.find("app.sidebar.toggle.hot");
+    DOCTEST_REQUIRE(hotUnfocus != nullptr);
+    hotUnfocus->onFocusChanged(false);
     ui.begin("toggle_unfocused");
     app::compose(ui, screen);
     ui.end();

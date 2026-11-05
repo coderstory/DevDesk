@@ -2373,7 +2373,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
                 it->second.description.empty() ? std::string("（无描述）")
                                                : it->second.description;
             const auto* line0 = ui2.find(cardPfx + ".desc.0");
-            CHECK_MESSAGE(line0 != nullptr,
+            DOCTEST_CHECK_MESSAGE(line0 != nullptr,
                           "卡 " + std::to_string(k) +
                               " 缺描述行 .desc.0（描述不应消失）");
             if (line0 == nullptr) continue;
@@ -2389,7 +2389,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
                                kEllipsis.size(), kEllipsis) == 0) {
                 joined.erase(joined.size() - kEllipsis.size());
             }
-            CHECK_MESSAGE(joined == body || body.rfind(joined, 0) == 0,
+            DOCTEST_CHECK_MESSAGE(joined == body || body.rfind(joined, 0) == 0,
                           "卡 " + std::to_string(k) +
                               " 描述行拼接应为全文（或 clamp 前缀），实测: " +
                               joined);
@@ -2399,12 +2399,12 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
                        nullptr) {
                     ++lines;
                 }
-                CHECK_MESSAGE(lines == 3,
+                DOCTEST_CHECK_MESSAGE(lines == 3,
                               "卡 " + std::to_string(k) +
                                   " clamp 态应恰 3 行，实测 " +
                                   std::to_string(lines));
                 const auto* tg = ui2.find(cardPfx + ".toggle");
-                CHECK_MESSAGE(tg != nullptr && tg->text == "展开",
+                DOCTEST_CHECK_MESSAGE(tg != nullptr && tg->text == "展开",
                               "clamp 卡应带「展开」钮，卡 " +
                                   std::to_string(k));
             }
@@ -2439,15 +2439,13 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     // 参数 chips（v2 §3.4：flex-wrap 全量展示，「+N」截断退役）：fs.grep 逐枚
     // 对齐注册表 params（map 序），不缺枚、不多渲、无 .chip.more
     int grepIdx = -1;
-    {
-        const auto listed = core::ToolRegistry::instance().listTools();
-        for (size_t k = 0; k < registered; ++k) {
-            const auto* nm = ui2.find("agent.dialog.tools.card." +
-                                      std::to_string(k) + ".name");
-            if (nm != nullptr && nm->text == "fs.grep") {
-                grepIdx = static_cast<int>(k);
-                break;
-            }
+    const auto listed = core::ToolRegistry::instance().listTools();
+    for (size_t k = 0; k < registered; ++k) {
+        const auto* nm = ui2.find("agent.dialog.tools.card." + std::to_string(k) +
+                                  ".name");
+        if (nm != nullptr && nm->text == "fs.grep") {
+            grepIdx = static_cast<int>(k);
+            break;
         }
     }
     DOCTEST_REQUIRE_MESSAGE(grepIdx >= 0, "注册表缺 fs.grep（chips 断言失锚）");
@@ -2465,19 +2463,19 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     for (size_t p = 0; p < grepInfo.params.size(); ++p) {
         const auto* chip =
             ui2.find(grepPfx + ".chip." + std::to_string(p) + ".text");
-        CHECK_MESSAGE(chip != nullptr,
+        DOCTEST_CHECK_MESSAGE(chip != nullptr,
                       "fs.grep 缺 chip " + std::to_string(p) +
                           "（chips 应全量展示不截断）");
         if (chip != nullptr) {
-            CHECK_MESSAGE(chip->text == grepInfo.params[p],
+            DOCTEST_CHECK_MESSAGE(chip->text == grepInfo.params[p],
                           "chip " + std::to_string(p) + " 应为 " +
                               grepInfo.params[p] + "，实测: " + chip->text);
         }
     }
-    CHECK_MESSAGE(ui2.find(grepPfx + ".chip." +
+    DOCTEST_CHECK_MESSAGE(ui2.find(grepPfx + ".chip." +
                            std::to_string(grepInfo.params.size())) == nullptr,
                   "chips 数应恰为参数数（无多余渲染）");
-    CHECK_MESSAGE(ui2.find(grepPfx + ".chip.more") == nullptr,
+    DOCTEST_CHECK_MESSAGE(ui2.find(grepPfx + ".chip.more") == nullptr,
                   "「+N」截断 chip 已退役，不应再渲染");
 
     // 关闭路径 ①：头部 ✕
@@ -2528,7 +2526,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
                nullptr) {
             ++clampLines;
         }
-        CHECK_MESSAGE(clampLines == 3, "clamp 态应恰 3 行，实测 " +
+        DOCTEST_CHECK_MESSAGE(clampLines == 3, "clamp 态应恰 3 行，实测 " +
                                            std::to_string(clampLines));
         const auto* tg = uiN2.find(expPfx + ".toggle");
         DOCTEST_REQUIRE_MESSAGE(tg != nullptr && tg->text == "展开",
@@ -2548,9 +2546,9 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
             joined += ln->text;
             ++lines;
         }
-        CHECK_MESSAGE(lines > 3, "展开后应超 3 行，实测 " + std::to_string(lines));
+        DOCTEST_CHECK_MESSAGE(lines > 3, "展开后应超 3 行，实测 " + std::to_string(lines));
         const auto* tg = uiN3.find(expPfx + ".toggle");
-        CHECK_MESSAGE(tg != nullptr && tg->text == "收起",
+        DOCTEST_CHECK_MESSAGE(tg != nullptr && tg->text == "收起",
                       "展开态钮文案应「收起」");
         // 展开态描述全文不丢：行拼接 == 原描述（含 clamp 隐去的部分）
         const auto* nm = uiN3.find(expPfx + ".name");
@@ -2563,13 +2561,13 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
                 break;
             }
         }
-        CHECK_MESSAGE(!body.empty() && joined == body,
+        DOCTEST_CHECK_MESSAGE(!body.empty() && joined == body,
                       "展开态描述行拼接应为全文（实测 len " +
                           std::to_string(joined.size()) + " vs 描述 len " +
                           std::to_string(body.size()) + "）");
         const auto* bg = uiN3.find(expPfx + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        CHECK_MESSAGE(bg->frame.height > expHBefore + 10.0f,
+        DOCTEST_CHECK_MESSAGE(bg->frame.height > expHBefore + 10.0f,
                       "展开后卡高应随内容变高（禁定高），实测 " +
                           std::to_string(expHBefore) + " → " +
                           std::to_string(bg->frame.height));
@@ -2579,7 +2577,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     composeTo(uiN4, mod, kNarrowScreen, "agent_ui_tools_n4");
     {
         const auto* tg = uiN4.find(expPfx + ".toggle");
-        CHECK_MESSAGE(tg != nullptr && tg->text == "展开",
+        DOCTEST_CHECK_MESSAGE(tg != nullptr && tg->text == "展开",
                       "再点应收回 clamp 态（开合往返）");
     }
     // 复位关闭：保住下方「空态」段「重开触发 forceReload」的时序前提
@@ -2603,12 +2601,13 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     return true;
 })
 
-// 工具弹窗几何（池170 §3.2，替代退役的 agent_tools_height_dual_tier）：
-// 防的事故：弹窗尺寸回退写死 / 内容区高度没扣头部与内边距导致网格溢出弹窗底。
-// w = min(720, 视口−48)、h = min(560, 视口−96)：kScreen 1600×1000 → 720×560；
-// 最小窗 1000×640 → 720×544。卡定高 96、2 列网格（同行两卡）。
+// 工具弹窗几何（池170 v2 §3.2，替代退役的 v1 2 列定高网格版）：
+// 防的事故：弹窗尺寸回退写死 / 内容区高度没扣头部与内边距导致列表溢出弹窗底。
+// w = min(720, 视口−48)、h = min(600, 视口−96)：kScreen 1600×1000 → 720×600；
+// 最小窗 1000×640 → 720×544。列表区 v2 §2.3 全宽单列纵向流、卡高随内容自适应
+//（实现 agent_module_dialogs.cpp:1659-1670 flow 单列 / :1763 cardH 动态）。
 REGISTER_TEST(agent_ui_tools_dialog_geometry,
-              "agent_ui: 可用工具弹窗几何——720×min(560,视口−96) / 卡定高 96 / 2 列同行", {
+              "agent_ui: 可用工具弹窗几何——720×min(600,视口−96) / 单列纵向流卡高随内容", {
     test_support::TestDb tdb("agentui", "toolgeo");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify", "hot.list", "app.now",
@@ -2634,21 +2633,31 @@ REGISTER_TEST(agent_ui_tools_dialog_geometry,
     const auto* panel = ui2.find("agent.dialog.tools.panel");
     DOCTEST_REQUIRE_MESSAGE(panel != nullptr, "弹窗打开后缺 agent.dialog.tools.panel");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(panel->frame.width, 720.0f) && nearPx(panel->frame.height, 560.0f),
-        "1600×1000 下弹窗应 720×560，实测 " +
+        nearPx(panel->frame.width, 720.0f) && nearPx(panel->frame.height, 600.0f),
+        "1600×1000 下弹窗应 720×600，实测 " +
             std::to_string(panel->frame.width) + "x" +
             std::to_string(panel->frame.height));
-    // 网格：2 列同行（card.0 与 card.1 同 y）、卡定高 96
+    // v2 §2.3 全宽单列纵向流（实现 agent_module_dialogs.cpp:1659-1670 flow 单列、
+    // :1772 size(cw, cardH) 全宽）：卡高随内容动态（:1763 cardH =
+    // 2*padY+headH+6+descH+toggleH+chipsH），v1「2 列同行定高 96」契约已退役。
+    // 不变量：两卡高 > 0、同列左对齐（x 相等）、纵向堆叠（卡 1 顶 ≥ 卡 0 底）。
     const auto* card0 = ui2.find("agent.dialog.tools.card.0");
     const auto* card1 = ui2.find("agent.dialog.tools.card.1");
     DOCTEST_REQUIRE(card0 != nullptr && card1 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(card0->frame.height, 96.0f),
-                          "工具卡应定高 96，实测 " +
-                              std::to_string(card0->frame.height));
     DOCTEST_CHECK_MESSAGE(
-        std::fabs(card0->frame.y - card1->frame.y) <= 1.5f &&
-            card1->frame.x > card0->frame.x + card0->frame.width - 0.5f,
-        "前两卡应同行两列（0 左 1 右）");
+        card0->frame.height > 0.0f && card1->frame.height > 0.0f,
+        "工具卡高度应 > 0，实测 " + std::to_string(card0->frame.height) +
+            " / " + std::to_string(card1->frame.height));
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(card0->frame.x - card1->frame.x) <= 1.5f,
+        "单列两卡应同列左对齐（x 相等），实测 " +
+            std::to_string(card0->frame.x) + " vs " +
+            std::to_string(card1->frame.x));
+    DOCTEST_CHECK_MESSAGE(
+        card0->frame.y + card0->frame.height <= card1->frame.y + 1.5f,
+        "卡 1 应堆叠在卡 0 下方（单列纵向流 + lineGap 8），实测卡 0 底 " +
+            std::to_string(card0->frame.y + card0->frame.height) + " vs 卡 1 顶 " +
+            std::to_string(card1->frame.y));
 
     // 最小窗 1000×640 档：720×544（h = min(560, 640−96)）
     const eui::Screen kMinScreen{1000.0f, 640.0f};
@@ -2722,12 +2731,13 @@ REGISTER_TEST(agent_ui_tools_search_filter_matches,
     DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, ""));
     // 名称子串 + ASCII 折叠
     DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "grep"));
-    DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "FS."));
+    // 契约：q 由调用方小写化（实现只折叠 tool 侧字段，见 toolMatchesQuery）
+    DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "fs."));
     // 说明子串（CJK 直接字节匹配，折叠不改非 ASCII 字节）
     DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "正则"));
     // 参数名折叠子串 + 部分前缀
     DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "pattern"));
-    DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "PATH"));
+    DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "path"));
     DOCTEST_CHECK(module::agent::toolMatchesQuery(tool, "pat"));
     // 全不中 → 剔除整卡
     DOCTEST_CHECK_FALSE(module::agent::toolMatchesQuery(tool, "todo"));
