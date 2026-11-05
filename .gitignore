@@ -97,6 +97,13 @@ docs/pool/pool.db
 docs/pool/pool.db-journal
 docs/pool/pool.db-wal
 
+# 台账生成物全部出 git（2026-11-05 老板令：台账永远使用本地的）。
+# 快照/报告由 pool_mcp.py 每次写操作原子重生成，内容 = 本机 pool.db 投影；
+# 双机各写本地 db 时快照必然分叉（实测 Windows 快照 253 条 vs 本机 127 条、
+# ID 122-128 撞号），git 侧「只合快照」的 merge 语义不成立。本地照常生成。
+docs/pool/pool-snapshot.json
+docs/pool/pool-report.html
+
 # Agent 工作区草稿（.scratch 交接卡/探针、.dsh-progress 会话进度日志），本机留存不入库
 .scratch/
 .dsh-progress/

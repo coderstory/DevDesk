@@ -3,7 +3,7 @@
 ## pool_mcp.py — 三池 MCP server
 
 独立 Python 进程 MCP stdio server（决策文档 `docs/specs/2026-10-29-三池mcp决策文档.md`）。
-数据 `docs/pool/pool.db`（出 git，不入库）；报告 `docs/pool/pool-report.html` 每次写操作自动重生成。
+数据 `docs/pool/pool.db`（出 git，不入库）；报告 `docs/pool/pool-report.html` 与快照 `docs/pool/pool-snapshot.json` 每次写操作自动重生成，两者同样出 git 不入库（2026-11-05 起：生成物=本机 db 投影，双机各写本地 db 必然分叉，见 `.gitignore` 注记）。
 
 ### 装机（每台开发机各一份 venv，两步）
 
