@@ -77,8 +77,12 @@ private:
 class MacTerminalBackend : public TerminalBackend {
 public:
     core::Result<std::unique_ptr<TerminalSessionHandle>> spawn(
-        const std::string& shell, const TerminalSize& size) override {
-        // shell 传空 = 默认解析（决策 6：env 注入 → $SHELL → pw_shell → /bin/zsh）
+        const std::string& shell, const TerminalSize& size,
+        const std::string& workDir) override {
+        // need250：workDir mac 侧本批忽略（Swift 桥 spawn 无目录参数，会话目录语义
+        // 不变）；shell 选名（zsh/bash/sh）直作 exe 透传，空 = 默认解析
+        //（决策 6：env 注入 → $SHELL → pw_shell → /bin/zsh）
+        (void)workDir;
         const std::string exe = shell.empty() ? resolveDefaultShell() : shell;
         auto s = SwiftBridgeSession::spawn(exe, size.rows, size.cols);
         if (!s) {

@@ -3,6 +3,7 @@
 // libvterm 调用面全部收在本 TU；头文件零 vterm.h 泄漏（pimpl）。
 #include "terminal_vterm_core.h"
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -112,6 +113,7 @@ struct VtermCore::Impl {
     bool dirty = false;
     VTermRect pending{0, 0, 0, 0};
     std::deque<std::vector<VTermScreenCell>> scrollback;
+    size_t scrollbackLimit = kScrollbackMax;  // need250：设置面板可改（改小即裁最旧）
     // bracketed paste 字节级跟踪残留（≤7 字节候选前缀）
     std::string bpTail;
 
@@ -272,7 +274,8 @@ struct VtermCore::Impl {
 
     int pushlineCbImpl(int c, const VTermScreenCell* lineCells) {
         scrollback.emplace_back(lineCells, lineCells + c);
-        if (scrollback.size() > kScrollbackMax) scrollback.pop_front();
+        // need250：上限可由设置面板动态收窄（setScrollbackLimit 写 scrollbackLimit）
+        if (scrollback.size() > scrollbackLimit) scrollback.pop_front();
         generation++;
         return 1;
     }
@@ -382,6 +385,13 @@ int VtermCore::pendingGeneration() const {
 int VtermCore::scrollbackCount() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     return int(impl_->scrollback.size());
+}
+
+// need250：改回滚上限；超限裁最旧（UI 线程锁内，与 snapshot/scrollback 读同锁）
+void VtermCore::setScrollbackLimit(size_t lines) {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->scrollbackLimit = std::max<size_t>(lines, 1);
+    while (impl_->scrollback.size() > impl_->scrollbackLimit) impl_->scrollback.pop_front();
 }
 
 bool VtermCore::scrollbackLine(int index, std::string& out) const {

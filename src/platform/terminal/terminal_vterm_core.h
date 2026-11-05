@@ -42,6 +42,8 @@ public:
     // 回滚 ring（0=最旧；差一语义对齐 corta #22 实测口径：尾部空行推送差一非缺陷）。
     int scrollbackCount() const;
     bool scrollbackLine(int index, std::string& out) const;
+    // need250：动态上限（默认 10000 不变；改小即裁最旧行，UI 线程锁内）。
+    void setScrollbackLimit(size_t lines);
 
     // 选区矩形→UTF-8 文本（所见即所得；行列=当前视口系，双端闭区间）。反向拖选由
     // 本函数内部取 min/max 规范化（P1-3①），调用方无需预排序；已接线：page Ctrl+C

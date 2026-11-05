@@ -56,6 +56,9 @@ public:
     virtual int scrollbackCount() = 0;
     // 读回滚行 UTF-8 文本（0=最旧已推入行）；false=越界/溢出
     virtual bool scrollbackLine(int index, std::string& out) = 0;
+    // 回滚上限（need250 设置面板）：改上限即裁掉最旧行。默认空实现 = 后端维持自身
+    // 固定上限（mac 桥本批不动，终端设置回滚项 mac 侧暂不生效）。
+    virtual void setScrollbackLimit(int lines) { (void)lines; }
     // 选区矩形→文本（所见即所得，核心 Selection.text；行列=当前视口系）
     virtual bool selectionText(int rowStart, int colStart, int rowEnd, int colEnd,
                                std::string& out) = 0;
@@ -66,8 +69,12 @@ public:
 class TerminalBackend {
 public:
     virtual ~TerminalBackend() = default;
+    // shell 传空 = 后端默认解析链；非空 = 设置面板选名（win=pwsh/powershell/cmd/wsl、
+    // mac=zsh/bash/sh，后端各自映射/直用）。workDir 空 = 用户主目录语义（win 解析
+    // %USERPROFILE%；mac 本批忽略沿用默认）；非空由调用方保证存在（无效回退在
+    // SessionController，need250 设计 §4.2⑤）。
     virtual core::Result<std::unique_ptr<TerminalSessionHandle>> spawn(
-        const std::string& shell, const TerminalSize& size) = 0;
+        const std::string& shell, const TerminalSize& size, const std::string& workDir = "") = 0;
     virtual bool available() const = 0;
     virtual const char* unavailableReason() const = 0;
 };
