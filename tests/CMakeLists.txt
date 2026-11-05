@@ -169,6 +169,7 @@ add_executable(devdesk_tests
     test_modules/test_local_git_probe.cpp
     test_modules/test_settings.cpp    test_modules/test_terminal_keyencoder.cpp
     test_modules/test_terminal_controller.cpp
+    test_modules/test_terminal_metrics.cpp
     test_modules/test_terminal_frame.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp

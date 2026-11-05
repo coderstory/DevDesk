@@ -232,3 +232,18 @@ REGISTER_TEST(vtermSelectionText, "vterm core: selectionText 双端闭区间 + �
     DOCTEST_CHECK_EQ(out, "abcdef");
     return true;
 })
+
+REGISTER_TEST(vtermSelectionTextCjkWide,
+              "vterm core: selectionText CJK 宽字行不插占位空格（与屏幕一致，复审 P1-2）", {
+    platform::VtermCore core(5, 20);
+    feed(core, "\xe4\xbd\xa0\xe5\xa5\xbdx"); // 你好x（col1/col3=宽字 spacer，x 落 col4）
+    std::string out;
+    DOCTEST_REQUIRE(core.selectionText(0, 0, 0, 2, out));
+    DOCTEST_CHECK_EQ(out, "\xe4\xbd\xa0\xe5\xa5\xbd"); // 你好：spacer 不落空格
+    DOCTEST_REQUIRE(core.selectionText(0, 0, 0, 4, out));
+    DOCTEST_CHECK_EQ(out, "\xe4\xbd\xa0\xe5\xa5\xbdx"); // 你好x：含尾半角，spacer 不落空格
+    // 整行选区（超内容列 trim 尾空白后）与屏幕文本一致
+    DOCTEST_REQUIRE(core.selectionText(0, 0, 0, 19, out));
+    DOCTEST_CHECK_EQ(out, "\xe4\xbd\xa0\xe5\xa5\xbdx");
+    return true;
+})

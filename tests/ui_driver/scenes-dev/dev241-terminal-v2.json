@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "need241 v2 验证：进终端页"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 4000,
+     "_comment": "v2 动作组：+新建主按钮在"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.gear.bg", "timeoutMs": 2000,
+     "_comment": "设置入口钮在"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.fs.bg", "timeoutMs": 2000,
+     "_comment": "全屏进入钮在"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "PS", "timeoutMs": 30000,
+     "_comment": "ConPTY 提示符渲染（真实度量逐列绘制）"},
+    {"type": "assert", "check": "missing", "id": "app.term.title", "_comment": "常驻标题退役"},
+    {"type": "assert", "check": "missing", "id": "app.term.badge", "_comment": "常驻运行中徽标退役"},
+    {"type": "screenshot", "path": "v2-01-single-tab.png"},
+
+    {"type": "click", "id": "app.term.act.new.bg", "_comment": "新建第二个会话 TAB"},
+    {"type": "wait", "until": "exists", "id": "app.term.tab.1.bg", "timeoutMs": 4000},
+    {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar", "_comment": "新 TAB 激活（底缘绿条）"},
+    {"type": "screenshot", "path": "v2-02-two-tabs.png"},
+
+    {"type": "click", "id": "app.term.tab.0.bg", "_comment": "切回 TAB0（激活迁移）"},
+    {"type": "assert", "check": "exists", "id": "app.term.tab.0.bar", "timeoutMs": 4000},
+    {"type": "screenshot", "path": "v2-03-switch-back.png"},
+
+    {"type": "click", "id": "app.term.act.fs.bg", "_comment": "进全屏（侧栏 0 宽全隐，clue92 终裁；72px/退出胶囊已作废）"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.fs.icon", "timeoutMs": 4000,
+     "_comment": "同槽纯图标钮仍在：expand→compress 只切图标（driver 无图标字形/0 宽断言面，视觉证据走截图）"},
+    {"type": "screenshot", "path": "v2-04-fullscreen-sidebar0.png",
+     "_comment": "全屏态：侧栏 0 宽全隐（无 logo）+ 终端全宽 + TAB 栏保留；fs 图标=compress"},
+
+    {"type": "click", "id": "app.term.act.fs.bg", "_comment": "退全屏（同槽图标切回 expand）"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.fs.bg", "timeoutMs": 4000},
+    {"type": "screenshot", "path": "v2-05-exit-fullscreen.png", "_comment": "退出后侧栏恢复"},
+
+    {"type": "drag", "from": "app.term.grid.row.0", "to": "app.term.grid.row.2", "steps": 12,
+     "_comment": "拖选 3 行（真实 cellH 坐标空间）"},
+    {"type": "screenshot", "path": "v2-06-selection.png"},
+    {"type": "key", "name": "Ctrl+C", "_comment": "Win 惯例：有选区复制"},
+
+    {"type": "click", "id": "app.term.tab.1.close.hit", "_comment": "关 TAB1（独立命中区）"},
+    {"type": "wait", "until": "missing", "id": "app.term.tab.1.bg", "timeoutMs": 4000},
+    {"type": "assert", "check": "exists", "id": "app.term.tab.0.bg", "_comment": "剩 TAB0"},
+    {"type": "screenshot", "path": "v2-07-after-close.png"},
+
+    {"type": "click", "id": "app.term.tab.0.close.hit", "_comment": "关最后一个 → 空态"},
+    {"type": "wait", "until": "exists", "id": "app.term.empty.new", "timeoutMs": 4000},
+    {"type": "screenshot", "path": "v2-08-empty-state.png"},
+    {"type": "click", "id": "app.term.empty.new", "_comment": "空态新建恢复"},
+    {"type": "wait", "until": "exists", "id": "app.term.tab.0.bg", "timeoutMs": 4000},
+    {"type": "screenshot", "path": "v2-09-recovered.png"}
+  ]
+}

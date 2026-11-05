@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "need241 输入链验证：进终端页"},
+    {"type": "wait", "until": "exists", "id": "app.term.input", "timeoutMs": 4000},
+    {"type": "wait", "until": "text", "op": "contains", "text": "PS", "timeoutMs": 8000,
+     "_comment": "pwsh 提示符在屏"},
+
+    {"type": "click", "id": "app.term.input", "_comment": "点输入层聚焦"},
+    {"type": "type", "text": "echo devdesk-v2-input", "_comment": "字符输入链（TextInputEvent→writeToActive→ConPTY）"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "devdesk-v2-input", "timeoutMs": 8000,
+     "_comment": "echo 回显=输入链路闭环"},
+    {"type": "screenshot", "path": "v2-10-typed-echo.png"},
+
+    {"type": "key", "name": "Up", "_comment": "方向键：PSReadLine 历史 recall"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "echo devdesk-v2-input", "timeoutMs": 4000},
+    {"type": "screenshot", "path": "v2-11-arrow-history.png"},
+
+    {"type": "key", "name": "Escape", "_comment": "ESC：清行（PSReadLine）"},
+    {"type": "key", "name": "Escape"},
+    {"type": "screenshot", "path": "v2-12-esc-clear.png"},
+
+    {"type": "type", "text": "exit"},
+    {"type": "key", "name": "Enter", "_comment": "退会话 → Exited 覆盖卡"},
+    {"type": "wait", "until": "exists", "id": "app.term.overlay.card", "timeoutMs": 8000,
+     "_comment": "Exited 覆盖卡（360×148 双按钮）"},
+    {"type": "assert", "check": "exists", "id": "app.term.overlay.retry"},
+    {"type": "assert", "check": "exists", "id": "app.term.overlay.close"},
+    {"type": "screenshot", "path": "v2-13-exited-overlay.png"},
+
+    {"type": "click", "id": "app.term.overlay.retry", "_comment": "重新开始 → 回 Running"},
+    {"type": "wait", "until": "missing", "id": "app.term.overlay.card", "timeoutMs": 8000},
+    {"type": "wait", "until": "text", "op": "contains", "text": "PS", "timeoutMs": 8000},
+    {"type": "screenshot", "path": "v2-14-restarted.png"}
+  ]
+}
