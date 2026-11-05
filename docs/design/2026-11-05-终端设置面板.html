@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>终端设置面板 · 视觉校准 demo（need250）</title>
+<!--
+  ═══════════════════════════════════════════════════════════════════
+  demo 仅视觉校准，不是实现蓝图。
+  设计权威：docs/design/2026-11-05-终端设置面板.md（参数以文档为准）
+  材质/token 延续 need241 v2（白卡+细黑边+glassFill 同源）。
+  覆盖：模态打开/关闭（齿轮/Esc/×/完成）、5 项设置 7 行、
+        即时生效（字号/配色/光标改动实时反映到身后 mock 终端）、
+        错误态（目录不存在红边红字 / 字号钳制）、窄窗堆叠（<560px）。
+  浅色主题；暗色 token 对照见设计文档 §9。无外部依赖，双击直开。
+  ═══════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root {
+    --background:#F5FAF7; --card-fill:rgba(255,255,255,0.94); --surface:#FFFFFF;
+    --border:#E5E7EB; --border-muted:#F3F4F6; --hover:#EEF6F1; --soft:#E8F8EE;
+    --text-1:#1F2937; --text-2:#4B5563; --text-3:#6B7280;
+    --primary:#07C160; --primary-hover:#06AD56; --primary-text:#157E4E;
+    --error:#EF4444; --error-text:#B91C1C; --sidebar-bg:#EBF6EF;
+    --panel-bg:#FFFFFF; --panel-edge:rgba(0,0,0,0.35);
+    --panel-shadow:rgba(16,54,38,0.09);
+    --secondary:#F2F2F2; --secondary-hover:#E5E5E5;
+    --mono:"Cascadia Mono","JetBrains Mono",Consolas,Menlo,"Courier New",monospace;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body { font-family:"Inter","Microsoft YaHei","PingFang SC",sans-serif; background:#DDD;
+    display:flex; align-items:center; justify-content:center; overflow:hidden; user-select:none; }
+  #app { width:100%; height:100%; min-width:420px; min-height:380px; background:var(--background);
+    display:flex; flex-direction:column; box-shadow:0 0 0 1px rgba(0,0,0,1.0); }
+
+  /* ── 标题栏/侧栏（背景板，简化）── */
+  .titlebar { height:40px; flex:0 0 40px; display:flex; align-items:center; padding:0 16px; background:var(--card-fill); }
+  .titlebar .brand { font-size:14px; font-weight:700; color:var(--text-1); }
+  .body-row { flex:1; display:flex; min-height:0; }
+  .sidebar { width:72px; flex:0 0 72px; background:var(--sidebar-bg); border-right:1px solid var(--border);
+    display:flex; flex-direction:column; align-items:center; padding-top:32px; }
+  .logo { width:40px; height:40px; border-radius:10px; background:var(--primary); display:flex;
+    align-items:center; justify-content:center; color:#fff; font-family:var(--mono); font-size:14px; font-weight:700; }
+
+  /* ── 页面区：TAB 栏带 + 网格（背景板）── */
+  .page { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--card-fill); position:relative; }
+  .tabbar { height:44px; flex:0 0 44px; display:flex; align-items:center; padding:0 12px 0 8px; border-bottom:1px solid var(--border); }
+  .tab { height:32px; min-width:120px; max-width:200px; display:flex; align-items:center; padding:0 12px;
+    border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text-1);
+    font-size:14px; position:relative; }
+  .tab::after { content:""; position:absolute; left:8px; right:8px; bottom:-1px; height:2px; border-radius:1px; background:var(--primary); }
+  .dot { width:8px; height:8px; border-radius:4px; background:var(--primary); margin-right:6px; flex:0 0 8px; }
+  .tabbar .spacer { flex:1; }
+  .divider-v { width:1px; height:20px; background:var(--border); margin:0 8px; }
+  .icon-btn { width:32px; height:32px; border-radius:6px; border:none; background:transparent;
+    display:flex; align-items:center; justify-content:center; color:var(--text-2); cursor:pointer;
+    transition:background .1s, transform .1s; }
+  .icon-btn:hover { background:var(--hover); color:var(--text-1); }
+  .icon-btn:active { transform:scale(.96); }
+  .grid-area { flex:1; min-height:0; position:relative; background:var(--surface); overflow:hidden; }
+  .term { position:absolute; inset:0; overflow:auto; scrollbar-width:none; padding:8px 12px;
+    font-family:var(--mono); font-size:13px; line-height:16.25px; color:var(--text-1);
+    white-space:pre; user-select:text; cursor:text; transition:color .1s; }
+  .term::-webkit-scrollbar { display:none; }
+  .term .dim { color:var(--text-3); }
+  .term .grn { color:var(--primary-text); }
+  /* 独立暗色 ANSI 色板 demo 态 */
+  .term.palette-dark { background:#1A1816; color:#C9C5BD; }
+  .term.palette-dark .dim { color:#9A948A; }
+  .term.palette-dark .grn { color:#6EE7B7; }
+  .caret { display:inline-block; background:var(--text-1); vertical-align:-2px; }
+  .caret.block { width:8px; height:15px; opacity:.85; }
+  .caret.bar { width:2px; height:15px; }
+  .caret.no-blink { animation:none !important; }
+  .blink-on { animation:blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  /* ── 模态面板 ── */
+  .scrim { position:absolute; inset:0; background:rgba(0,0,0,0.35); z-index:50;
+    display:none; align-items:center; justify-content:center; }
+  .scrim.show { display:flex; }
+  .panel {
+    width:480px; max-width:calc(100% - 32px);
+    max-height:calc(100% - 64px);
+    background:var(--panel-bg); border:1px solid var(--panel-edge); border-radius:14px;
+    box-shadow:0 8px 24px var(--panel-shadow);
+    display:flex; flex-direction:column; overflow:hidden;
+    animation:panelIn .2s cubic-bezier(0.215,0.61,0.355,1);
+  }
+  @keyframes panelIn { from { opacity:0; transform:translateY(8px); } }
+  .panel.closing { opacity:0; transition:opacity .15s ease-out; }
+  .panel-head { flex:0 0 auto; display:flex; align-items:center; padding:16px 16px 4px; }
+  .panel-head .title { font-size:15px; font-weight:600; color:var(--text-1); }
+  .panel-head .close-x { margin-left:auto; width:24px; height:24px; border:none; border-radius:6px;
+    background:transparent; color:var(--text-2); display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:background .1s, color .1s, transform .18s cubic-bezier(0.34,1.56,0.64,1); }
+  .panel-head .close-x:hover { background:var(--hover); color:var(--text-1); }
+  .panel-head .close-x:active { transform:scale(.96); }
+  .panel-body { flex:1 1 auto; min-height:0; overflow-y:auto; scrollbar-width:none; padding:4px 16px 8px; }
+  .panel-body::-webkit-scrollbar { display:none; }
+  .group-head { font-size:12px; color:var(--text-2); letter-spacing:1px; margin:12px 0 8px; }
+  .row { min-height:44px; display:flex; align-items:center; margin-bottom:8px; position:relative; }
+  .row .lbl { width:128px; flex:0 0 128px; font-size:14px; color:var(--text-1); }
+  .row .ctl { flex:1; min-width:0; display:flex; align-items:center; gap:8px; position:relative; }
+  .row .hint { font-size:12px; color:var(--text-3); margin-left:auto; white-space:nowrap; }
+  .row .row-err { position:absolute; left:140px; top:100%; margin-top:2px; font-size:13px;
+    color:var(--error-text); white-space:nowrap; }
+  .row.has-err .row-err { animation:fadeIn .1s ease-out; }
+  .row.has-err input.txt { border-color:var(--error) !important; }
+  @keyframes fadeIn { from { opacity:0; } }
+
+  /* 控件 */
+  select.dd, input.txt {
+    height:32px; border:1px solid var(--border); border-radius:6px; background:var(--surface);
+    color:var(--text-1); font-size:13px; padding:0 10px; outline:none;
+    transition:border-color .1s, opacity .1s cubic-bezier(0.215,0.61,0.355,1);
+  }
+  select.dd { cursor:pointer; min-width:170px; }
+  select.dd:focus, input.txt:focus { border-color:var(--primary); }
+  select.dd:disabled { opacity:.5; cursor:default; color:var(--text-3); }
+  input.txt { flex:1; min-width:0; }
+  .btn-sub2 { height:32px; padding:0 14px; border:none; border-radius:6px; background:var(--secondary);
+    color:var(--text-1); font-size:13px; cursor:pointer; flex:0 0 auto;
+    transition:background .1s, transform .1s cubic-bezier(0.215,0.61,0.355,1); }
+  .btn-sub2:hover { background:var(--secondary-hover); }
+  .btn-sub2:active { transform:scale(.96); }
+  .stepper { display:flex; align-items:center; gap:0; }
+  .stepper button { width:28px; height:32px; border:1px solid var(--border); background:var(--surface);
+    color:var(--text-2); cursor:pointer; font-size:14px; line-height:1; }
+  .stepper button:hover { background:var(--hover); color:var(--text-1); }
+  .stepper button.dec { border-radius:6px 0 0 6px; }
+  .stepper button.inc { border-radius:0 6px 6px 0; }
+  .stepper .val { min-width:56px; height:32px; border-top:1px solid var(--border); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center; font-size:13px; color:var(--text-1);
+    font-family:var(--mono); }
+  .seg { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+  .seg button { height:32px; padding:0 14px; border:none; background:var(--surface); color:var(--text-2);
+    font-size:13px; cursor:pointer; }
+  .seg button + button { border-left:1px solid var(--border); }
+  .seg button.on { background:var(--soft); color:var(--primary-text); font-weight:600; }
+  .seg.disabled { opacity:.5; pointer-events:none; }
+  .sw { position:relative; width:40px; height:22px; border-radius:11px; background:#CBD5E1; cursor:pointer;
+    transition:background .15s; flex:0 0 40px; }
+  .sw.on { background:var(--primary); }
+  .sw::after { content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:9px;
+    background:#fff; transition:left .15s cubic-bezier(0.215,0.61,0.355,1); }
+  .sw.on::after { left:20px; }
+  .cursor-group { display:flex; align-items:center; gap:16px; }
+
+  /* 底部行 sticky */
+  .panel-foot { flex:0 0 auto; border-top:1px solid var(--border-muted); padding:12px 16px 16px;
+    display:flex; align-items:center; }
+  .link-btn { border:none; background:none; color:var(--text-2); font-size:13px; cursor:pointer; padding:4px 8px;
+    border-radius:6px; transition:color .1s, transform .1s; }
+  .link-btn:hover { color:var(--text-1); background:var(--hover); }
+  .link-btn:active { transform:scale(.96); }
+  .btn-done { margin-left:auto; height:32px; padding:0 20px; border:none; border-radius:6px;
+    background:var(--secondary); color:var(--text-1); font-size:14px; cursor:pointer;
+    transition:background .1s, transform .1s cubic-bezier(0.215,0.61,0.355,1); }
+  .btn-done:hover { background:var(--secondary-hover); }
+  .btn-done:active { transform:scale(.96); }
+
+  /* ── 窄窗堆叠（页面区 <560px）：label 上移 ── */
+  .page.stack .row { flex-direction:column; align-items:stretch; min-height:0; padding-top:2px; }
+  .page.stack .row .lbl { width:auto; flex:0 0 auto; margin-bottom:4px; }
+  .page.stack .row .ctl { width:100%; }
+  .page.stack .row .hint { margin-left:0; }
+  .page.stack .row .row-err { left:0; }
+  .page.stack select.dd { width:100%; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="titlebar"><span class="brand">DevDesk</span></div>
+  <div class="body-row">
+    <aside class="sidebar"><div class="logo">&gt;_</div></aside>
+    <main class="page" id="page">
+      <!-- TAB 栏带：终端1 运行中 + 动作组（齿轮=本面板入口） -->
+      <div class="tabbar">
+        <div class="tab"><span class="dot"></span><span>终端 1</span></div>
+        <div class="spacer"></div>
+        <div class="divider-v"></div>
+        <button class="icon-btn" title="设置" id="btnGear"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.4 3.4l1.6 1.6M11 11l1.6 1.6M12.6 3.4 11 5M5 11l-1.6 1.6"/></svg></button>
+        <button class="icon-btn" title="进入全屏"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg></button>
+        <button class="icon-btn" title="新建" style="background:var(--primary);color:#fff;"><svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="6" y1="1.5" x2="6" y2="10.5"/><line x1="1.5" y1="6" x2="10.5" y2="6"/></svg></button>
+      </div>
+      <div class="grid-area">
+        <div class="term" id="term"></div>
+
+        <!-- 终端设置模态面板 -->
+        <div class="scrim" id="modalScrim">
+          <div class="panel" id="panel" role="dialog" aria-label="终端设置">
+            <div class="panel-head">
+              <span class="title">终端设置</span>
+              <button class="close-x" id="btnCloseX" title="关闭"><svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/></svg></button>
+            </div>
+            <div class="panel-body">
+              <div class="group-head">外 观</div>
+              <div class="row">
+                <span class="lbl">字体</span>
+                <div class="ctl"><select class="dd" id="ddFont">
+                  <option value="">默认（内置等宽）</option>
+                  <option value="Cascadia Mono">Cascadia Mono</option>
+                  <option value="Consolas">Consolas</option>
+                  <option value="JetBrains Mono">JetBrains Mono</option>
+                </select></div>
+              </div>
+              <div class="row">
+                <span class="lbl">字号</span>
+                <div class="ctl">
+                  <div class="stepper">
+                    <button class="dec" id="fsDec">−</button><span class="val" id="fsVal">13</span><button class="inc" id="fsInc">+</button>
+                  </div>
+                  <span class="row-err" id="fsErr" style="display:none">支持 10–24</span>
+                </div>
+              </div>
+              <div class="row">
+                <span class="lbl">配色主题</span>
+                <div class="ctl">
+                  <div class="seg" id="segMode">
+                    <button class="on" data-v="follow">跟随应用</button>
+                    <button data-v="indep">独立</button>
+                  </div>
+                  <select class="dd" id="ddPalette" disabled>
+                    <option value="light">亮色 ANSI</option>
+                    <option value="dark">暗色 ANSI</option>
+                  </select>
+                </div>
+              </div>
+              <div class="group-head">会 话</div>
+              <div class="row">
+                <span class="lbl">默认 shell</span>
+                <div class="ctl">
+                  <select class="dd" id="ddShell">
+                    <option value="pwsh" selected>pwsh</option>
+                    <option value="powershell">powershell</option>
+                    <option value="cmd">cmd</option>
+                    <option value="wsl">wsl</option>
+                  </select>
+                  <span class="hint">对新会话生效</span>
+                </div>
+              </div>
+              <div class="row" id="rowDir">
+                <span class="lbl">启动目录</span>
+                <div class="ctl">
+                  <input class="txt" id="inDir" placeholder="默认（用户主目录）" spellcheck="false">
+                  <button class="btn-sub2" id="btnBrowse">浏览</button>
+                  <span class="hint">对新会话生效</span>
+                </div>
+                <span class="row-err" id="dirErr" style="display:none">目录不存在</span>
+              </div>
+              <div class="row">
+                <span class="lbl">回滚行数</span>
+                <div class="ctl">
+                  <div class="stepper">
+                    <button class="dec" id="sbDec">−</button><span class="val" id="sbVal">1000</span><button class="inc" id="sbInc">+</button>
+                  </div>
+                  <span class="hint" id="sbHint" style="display:none">较大回滚占用内存</span>
+                </div>
+              </div>
+              <div class="row">
+                <span class="lbl">光标</span>
+                <div class="ctl cursor-group">
+                  <div class="seg" id="segCursor">
+                    <button class="on" data-v="block">块</button>
+                    <button data-v="bar">线</button>
+                  </div>
+                  <span style="font-size:12px;color:var(--text-2)">闪烁</span>
+                  <div class="sw on" id="swBlink"></div>
+                </div>
+              </div>
+            </div>
+            <div class="panel-foot">
+              <button class="link-btn" id="btnReset">恢复默认</button>
+              <button class="btn-done" id="btnDone">完成</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const DEFAULTS = { fontSize:13, scrollback:1000, mode:"follow", palette:"light",
+  cursor:"block", blink:true, shell:"pwsh", dir:"", font:"" };
+
+/* ── mock 终端内容 ── */
+function termHTML() {
+  return '<span class="dim">~ %</span> claude\n' +
+    '<span class="grn">●</span> Claude Code v2.x · 会话进行中\n\n' +
+    '  ┌──────────┬──────────────┐\n' +
+    '  │ 状态     │ 正常         │\n' +
+    '  │ 耗时     │ 3m 42s       │\n' +
+    '  └──────────┴──────────────┘\n\n' +
+    '<span class="dim">── 配色/字号/光标即时生效校准行 ──</span>\n\n' +
+    '<span class="dim">~ %</span> <span class="caret block blink-on" id="caret"></span>';
+}
+$("term").innerHTML = termHTML();
+
+/* ── 打开/关闭 ── */
+function openPanel() { $("modalScrim").classList.add("show"); }
+function closePanel() {
+  const p = $("panel");
+  p.classList.add("closing");
+  setTimeout(() => { $("modalScrim").classList.remove("show"); p.classList.remove("closing"); }, 150);
+}
+$("btnGear").addEventListener("click", openPanel);
+$("btnCloseX").addEventListener("click", closePanel);
+$("btnDone").addEventListener("click", closePanel);
+$("modalScrim").addEventListener("click", (e) => { /* 点 scrim 不关（防误触，设计 §2.1） */ });
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("modalScrim").classList.contains("show")) closePanel();
+});
+
+/* ── 即时生效：字号 ── */
+let fontSize = DEFAULTS.fontSize;
+function applyFont() {
+  const term = $("term");
+  term.style.fontSize = fontSize + "px";
+  term.style.lineHeight = (fontSize * 1.25) + "px";
+  $("fsVal").textContent = fontSize;
+}
+$("fsDec").addEventListener("click", () => { fontSize = Math.max(10, fontSize - 1); $("fsErr").style.display = "none"; applyFont(); });
+$("fsInc").addEventListener("click", () => { fontSize = Math.min(24, fontSize + 1); $("fsErr").style.display = "none"; applyFont(); });
+
+/* ── 即时生效：字体族 ── */
+$("ddFont").addEventListener("change", (e) => {
+  const v = e.target.value;
+  $("term").style.fontFamily = v ? '"' + v + '",' + "Consolas,Menlo,monospace" : "";
+});
+
+/* ── 配色：跟随应用 / 独立色板 ── */
+$("segMode").querySelectorAll("button").forEach((b) => {
+  b.addEventListener("click", () => {
+    $("segMode").querySelectorAll("button").forEach((x) => x.classList.remove("on"));
+    b.classList.add("on");
+    const indep = b.dataset.v === "indep";
+    $("ddPalette").disabled = !indep;
+    applyPalette();
+  });
+});
+$("ddPalette").addEventListener("change", applyPalette);
+function applyPalette() {
+  const indep = $("segMode").querySelector(".on").dataset.v === "indep";
+  const dark = indep && $("ddPalette").value === "dark";
+  $("term").classList.toggle("palette-dark", dark);
+}
+
+/* ── shell / 目录 ── */
+$("btnBrowse").addEventListener("click", () => {
+  /* demo：模拟目录选择回填 */
+  $("inDir").value = "C:\\Users\\demo\\projects";
+  validateDir();
+});
+function validateDir() {
+  const v = $("inDir").value.trim();
+  /* demo 模拟校验：合法盘符/~/开头视为存在，其余判不存在（实机=打开对话框/启动时校验） */
+  const ok = v === "" || /^[A-Za-z]:\\/.test(v) || v.startsWith("~") || v.startsWith("/");
+  $("rowDir").classList.toggle("has-err", !ok);
+  $("dirErr").style.display = ok ? "none" : "block";
+}
+$("inDir").addEventListener("input", validateDir);
+$("inDir").addEventListener("blur", validateDir);
+
+/* ── 回滚行数 ── */
+let scrollback = DEFAULTS.scrollback;
+function applySb() {
+  $("sbVal").textContent = scrollback;
+  $("sbHint").style.display = scrollback > 50000 ? "block" : "none";
+}
+$("sbDec").addEventListener("click", () => { scrollback = Math.max(100, scrollback - 100); applySb(); });
+$("sbInc").addEventListener("click", () => { scrollback = Math.min(100000, scrollback + 100); applySb(); });
+
+/* ── 光标 ── */
+$("segCursor").querySelectorAll("button").forEach((b) => {
+  b.addEventListener("click", () => {
+    $("segCursor").querySelectorAll("button").forEach((x) => x.classList.remove("on"));
+    b.classList.add("on");
+    applyCursor();
+  });
+});
+$("swBlink").addEventListener("click", () => { $("swBlink").classList.toggle("on"); applyCursor(); });
+function applyCursor() {
+  const c = document.getElementById("caret");
+  if (!c) return;
+  const style = $("segCursor").querySelector(".on").dataset.v;
+  const blink = $("swBlink").classList.contains("on");
+  c.className = "caret " + (style === "bar" ? "bar" : "block") + (blink ? " blink-on" : " no-blink");
+}
+
+/* ── 恢复默认（即时生效，无确认） ── */
+$("btnReset").addEventListener("click", () => {
+  fontSize = DEFAULTS.fontSize; scrollback = DEFAULTS.scrollback;
+  $("ddFont").value = DEFAULTS.font;
+  $("ddShell").value = DEFAULTS.shell;
+  $("inDir").value = DEFAULTS.dir; validateDir();
+  $("ddPalette").value = DEFAULTS.palette;
+  $("segMode").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === "follow"));
+  $("ddPalette").disabled = true;
+  $("segCursor").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x.dataset.v === DEFAULTS.cursor));
+  $("swBlink").classList.add("on");
+  applyFont(); applySb(); applyPalette(); applyCursor();
+});
+
+/* ── 窄窗堆叠断点（页面区 <560px）+ 卡高钳 ── */
+function responsive() {
+  const pageW = $("page").clientWidth;
+  $("page").classList.toggle("stack", pageW < 560);
+}
+window.addEventListener("resize", responsive);
+
+/* init */
+applyFont(); applySb(); responsive();
+</script>
+</body>
+</html>
