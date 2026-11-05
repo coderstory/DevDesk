@@ -20,7 +20,7 @@ void setWallpaperTrayBridge(WallpaperTrayStateProvider state,
 
 WallpaperTrayState wallpaperTrayState() {
     if (g_stateProvider == nullptr) {
-        return {false, false};
+        return {false, false, false};
     }
     return g_stateProvider();
 }

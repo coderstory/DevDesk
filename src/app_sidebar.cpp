@@ -371,13 +371,19 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         g_autoExpandedForPage = currentPageNow;
     }
 
+    // bug252（clue92 老板终裁：全屏 = 侧栏 0 宽全隐、不画 logo）：0 宽时整棵侧栏
+    // 子树早退。若照旧绘制，折叠态图标/品牌 logo 会按负 x 落位（(kWidth−logoSize)/2
+    // = −24），左缘露出「半截 logo」——老板否掉 72px 折叠方案的残留形态正是它。
+    // 113-6 自动展开闩已在上方推进，退出全屏后导航态不跳账。
+    if (sidebarWidth() <= 0.0f) return;
+    const float kWidth = sidebarWidth();
+
     const auto& t = ::core::theme::current();
     // W0.5：透明语义常量（非可主题化色，W0.5 误标为待清理字面量）。
     // 用途：inactive hit 底 + toggle 底 + active 遮让 SelectionBar（让 SelectionBar 盖底）。
     // 不抽到 theme.h 的 wechat.transparent 槽位（W3 不动 theme.h），保留为局部语义常量。
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
     const bool collapsed = g_sidebarCollapsed;
-    const float kWidth = sidebarWidth();
 
     static const bool mounted = [] {
         // 口径 = 登记表条目数（一行一个 Router 页面，含分组父项与子页），不写死数字、
@@ -745,12 +751,14 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             };
 
             // 导航滚动区（need186 §11）：EUI scrollView 全站 idiom——行表在画布
-            //（固定 contentH 的 stack）上按规划绘制，viewport 裁剪溢出、滚轮/拖拽/
-            // 滚动条触达（组件内置惯性/跟手）。滚动条 token 化（§11.3）：宽度走
-            // metrics.control.scrollbar（现值 8，不传新值）、胶囊全圆角、四态色随
-            // 主题既有映射、overlay 悬浮右缘不占内容宽、溢出时常显非溢出零绘制。
-            // 滚轮 step = 行步进 itemH+gap（§11.4：44/38，一格一行）。折叠 72 态
-            // thumb 右缘 x∈[64,72]，与图标盒右缘 50 无重叠（§11.3）。
+            //（固定 contentH 的 stack）上按规划绘制，viewport 裁剪溢出、滚轮/拖拽
+            // 触达（组件内置惯性/跟手）。滚轮 step = 行步进 itemH+gap（§11.4：
+            // 44/38，一格一行）。bug188（老板 2026-11-05 裁决）：滚动能力保留、
+            // 滚动条任何视觉全无——scrollbarWidth(0) 使滚动子组件及 track/thumb
+            // 零宽构建，滚轮/惯性/拖拽走滚动根 scrollState 与滚动条宽度解耦；折
+            // 叠 72 态同链生效，全屏 0 宽态在上方 sidebarWidth()<=0 早退整树不建。
+            // 设计稿顶部/底部 16px 渐隐遮罩不做：EUI 无渐变 API，纯 DSL 不可达
+            //（偏差已记池）。
             components::scrollView(ui, "app.sidebar.nav")
                 .position(0.0f, navStart)
                 .size(kWidth, viewportH)
@@ -758,6 +766,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .step(itemH + gap)
                 .theme(core::theme::componentTokensWeChat(t))
                 .scrollbarOverlay(true)
+                .scrollbarWidth(0.0f)  // bug188：滚动条视觉全无（轨道/滑块零宽不渲染）
                 .offset(g_navScrollOffset)
                 .onChange([](float v) { g_navScrollOffset = v; })
                 .contentKey(navContentKey)

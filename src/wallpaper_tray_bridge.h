@@ -13,10 +13,13 @@ enum class WallpaperTrayCommand {
 };
 
 // present 语义 = 壁纸模块实例已装配（平台能力通过）；实例在但服务已 stop 时仍为
-// true——组保留、命令由服务自身幂等守卫吞掉（toggleManualPause/next 有 started_ 守卫）。
+// true。need242：组显隐判据改由消费方按 present && 模块开关 && running 组合，
+// running = 服务已 start 且未 stop（service.isRunning() 快照，start/stop 时随查随变）——
+// 服务 stop 后壁纸组整组隐藏，不再出现「菜单项常驻、点了没反应」。
 struct WallpaperTrayState {
     bool present = false;
     bool manualPaused = false;  // 播放/暂停文案口径，与壁纸页暂停钮同源
+    bool running = false;       // 服务运行中快照；未 start / 已 stop = false
 };
 
 using WallpaperTrayStateProvider = WallpaperTrayState (*)(void);
@@ -25,7 +28,7 @@ using WallpaperTrayCommandHandler = void (*)(WallpaperTrayCommand);
 // 双槽一次注入；任一传 nullptr = 该槽回厂缺省（查询 absent / 命令 no-op+LOG_WARN）
 void setWallpaperTrayBridge(WallpaperTrayStateProvider state,
                             WallpaperTrayCommandHandler command);
-WallpaperTrayState wallpaperTrayState();  // 未装配 = {false, false}
+WallpaperTrayState wallpaperTrayState();  // 未装配 = {false, false, false}
 void dispatchWallpaperTrayCommand(WallpaperTrayCommand command);
 
 }  // namespace app::tray

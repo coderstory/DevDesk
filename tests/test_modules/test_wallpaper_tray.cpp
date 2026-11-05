@@ -75,26 +75,27 @@ REGISTER_TEST(wallpaper_tray_spec_off_equals_default,
 });
 
 // 防：组内项数/顺序漂移（styled 菜单 path 下标映射依赖它）与分隔线/action 完整性。
+// need242（2026-11-05 两组整体对调）：壁纸组在上，显示/退出垫尾，分隔线居中。
 REGISTER_TEST(wallpaper_tray_spec_on_shape,
-              "wallpaper tray: 组开 = 分隔线+播放暂停/下一张/停止/打开页 固定顺序", {
+              "wallpaper tray: 组开 = 下一张/播放暂停/停止/打开页 + 分隔线 + 显示/退出 固定顺序", {
     const auto spec = core::tray::trayMenuSpec(true, false);
     DOCTEST_REQUIRE_EQ(spec.size(), static_cast<std::size_t>(7));
-    DOCTEST_CHECK_EQ(spec[0].action, Action::ShowMainWindow);
-    DOCTEST_CHECK_EQ(spec[1].action, Action::Exit);
-    DOCTEST_CHECK_EQ(spec[2].text, std::string("-"));
-    DOCTEST_CHECK(spec[2].action == Action::None);
-    DOCTEST_CHECK_EQ(spec[3].text, std::string("暂停壁纸"));
-    DOCTEST_CHECK_EQ(spec[3].iconCodepoint, 0xF04C);
-    DOCTEST_CHECK(spec[3].action == Action::WallpaperTogglePause);
-    DOCTEST_CHECK_EQ(spec[4].text, std::string("下一张"));
-    DOCTEST_CHECK_EQ(spec[4].iconCodepoint, 0xF051);
-    DOCTEST_CHECK(spec[4].action == Action::WallpaperNext);
-    DOCTEST_CHECK_EQ(spec[5].text, std::string("停止壁纸"));
-    DOCTEST_CHECK_EQ(spec[5].iconCodepoint, 0xF04D);
-    DOCTEST_CHECK(spec[5].action == Action::WallpaperStop);
-    DOCTEST_CHECK_EQ(spec[6].text, std::string("打开壁纸页"));
-    DOCTEST_CHECK_EQ(spec[6].iconCodepoint, 0xF03E);
-    DOCTEST_CHECK(spec[6].action == Action::NavigateWallpaper);
+    DOCTEST_CHECK_EQ(spec[0].text, std::string("下一张"));
+    DOCTEST_CHECK_EQ(spec[0].iconCodepoint, 0xF051);
+    DOCTEST_CHECK(spec[0].action == Action::WallpaperNext);
+    DOCTEST_CHECK_EQ(spec[1].text, std::string("暂停壁纸"));
+    DOCTEST_CHECK_EQ(spec[1].iconCodepoint, 0xF04C);
+    DOCTEST_CHECK(spec[1].action == Action::WallpaperTogglePause);
+    DOCTEST_CHECK_EQ(spec[2].text, std::string("停止壁纸"));
+    DOCTEST_CHECK_EQ(spec[2].iconCodepoint, 0xF04D);
+    DOCTEST_CHECK(spec[2].action == Action::WallpaperStop);
+    DOCTEST_CHECK_EQ(spec[3].text, std::string("打开壁纸页"));
+    DOCTEST_CHECK_EQ(spec[3].iconCodepoint, 0xF03E);
+    DOCTEST_CHECK(spec[3].action == Action::NavigateWallpaper);
+    DOCTEST_CHECK_EQ(spec[4].text, std::string("-"));
+    DOCTEST_CHECK(spec[4].action == Action::None);
+    DOCTEST_CHECK_EQ(spec[5].action, Action::ShowMainWindow);
+    DOCTEST_CHECK_EQ(spec[6].action, Action::Exit);
     return true;
 });
 
@@ -104,16 +105,16 @@ REGISTER_TEST(wallpaper_tray_spec_pause_text_flip,
               "wallpaper tray: 文案口径 = manualPaused（让路态不翻成「继续」）", {
     const auto manual = core::tray::trayMenuSpec(true, true);
     DOCTEST_REQUIRE_EQ(manual.size(), static_cast<std::size_t>(7));
-    DOCTEST_CHECK_EQ(manual[3].text, std::string("继续壁纸"));
-    DOCTEST_CHECK_EQ(manual[3].iconCodepoint, 0xF04B);
-    DOCTEST_CHECK(manual[3].action == Action::WallpaperTogglePause);
+    DOCTEST_CHECK_EQ(manual[1].text, std::string("继续壁纸"));
+    DOCTEST_CHECK_EQ(manual[1].iconCodepoint, 0xF04B);
+    DOCTEST_CHECK(manual[1].action == Action::WallpaperTogglePause);
     // 其余壁纸项不受暂停位影响
-    DOCTEST_CHECK_EQ(manual[4].text, std::string("下一张"));
-    DOCTEST_CHECK_EQ(manual[5].text, std::string("停止壁纸"));
-    DOCTEST_CHECK_EQ(manual[6].text, std::string("打开壁纸页"));
+    DOCTEST_CHECK_EQ(manual[0].text, std::string("下一张"));
+    DOCTEST_CHECK_EQ(manual[2].text, std::string("停止壁纸"));
+    DOCTEST_CHECK_EQ(manual[3].text, std::string("打开壁纸页"));
     // held 态（手动位未开）不得驱动文案
     const auto heldOnly = core::tray::trayMenuSpec(true, false);
-    DOCTEST_CHECK_EQ(heldOnly[3].text, std::string("暂停壁纸"));
+    DOCTEST_CHECK_EQ(heldOnly[1].text, std::string("暂停壁纸"));
     return true;
 });
 
@@ -141,16 +142,18 @@ REGISTER_TEST(wallpaper_tray_bridge_roundtrip,
     const auto absent = app::tray::wallpaperTrayState();
     DOCTEST_CHECK(!absent.present);
     DOCTEST_CHECK(!absent.manualPaused);
+    DOCTEST_CHECK(!absent.running);
     app::tray::dispatchWallpaperTrayCommand(
         app::tray::WallpaperTrayCommand::TogglePause);
     DOCTEST_CHECK_EQ(trayRec().commandCalls, 0);
 
     // 注入 recording 桩：命令按序 1:1 路由
     app::tray::setWallpaperTrayBridge(&recordState, &recordCommand);
-    trayRec().state = app::tray::WallpaperTrayState{true, true};
+    trayRec().state = app::tray::WallpaperTrayState{true, true, false};
     const auto wired = app::tray::wallpaperTrayState();
     DOCTEST_CHECK(wired.present);
     DOCTEST_CHECK(wired.manualPaused);
+    DOCTEST_CHECK(!wired.running);
     app::tray::dispatchWallpaperTrayCommand(
         app::tray::WallpaperTrayCommand::TogglePause);
     app::tray::dispatchWallpaperTrayCommand(
@@ -192,6 +195,8 @@ REGISTER_TEST(wallpaper_tray_yield_pause_semantics,
     service.setPlayerForTest(std::make_unique<wp::NullPlayerBackend>());
 
     service.start();
+    // need242 托盘组显隐判据：start 后 running=true，stop 后回 false
+    DOCTEST_CHECK(service.isRunning());
     // 系统让路（等价 watcher 事件入口）：paused=true、manualPaused=false
     service.setSystemHoldForTest(wp::HoldReason::Fullscreen, true);
     const auto held = service.snapshot();
@@ -218,5 +223,6 @@ REGISTER_TEST(wallpaper_tray_yield_pause_semantics,
     DOCTEST_CHECK_FALSE(snap.manualPaused);
 
     service.stop();
+    DOCTEST_CHECK(!service.isRunning());
     return true;
 });

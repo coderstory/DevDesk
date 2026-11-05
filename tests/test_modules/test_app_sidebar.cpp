@@ -10,6 +10,7 @@
 #include "test_support.h"
 
 #include "app_sidebar.h"
+#include "terminal_fullscreen_bridge.h"  // 全屏 0 宽用例：桥 handler 注入（形态同生产装配）
 #include "settings_config.h"
 
 #include "core/module_interface.h"
@@ -1273,7 +1274,7 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll") == nullptr);
     }
     // ④ 展开 ReleaseGroup（+2 子行）→ 14 行 contentH = 14×44+1 = 617 > 548
-    //   → 滚动条出现、offset 下界 = 69
+    //   → 滚动组件出现（bug188：零宽不可见）、offset 下界 = 69
     app::toggleSidebarGroup(::core::PageId::ReleaseGroup);
     {
         eui::Ui ui;
@@ -1286,8 +1287,14 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         ui.layout(screen.width, screen.height);
         const auto* nav = ui.find("app.sidebar.nav");
         DOCTEST_REQUIRE(nav != nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll") != nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll.thumb") != nullptr);
+        // bug188：滚动条视觉全无——scroll/thumb 组件存在但零宽；滚动能力保留
+        //（scrollMaxOffset>0 = 内容可达）
+        const auto* sb = ui.find("app.sidebar.nav.scroll");
+        const auto* thumb = ui.find("app.sidebar.nav.scroll.thumb");
+        DOCTEST_REQUIRE(sb != nullptr);
+        DOCTEST_REQUIRE(thumb != nullptr);
+        DOCTEST_CHECK(floatEq(sb->frame.width, 0.0f));
+        DOCTEST_CHECK(floatEq(thumb->frame.width, 0.0f));
         DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 617.0f - 548.0f));
     }
     // ④ 收起 → contentKey 重测 12 行 → 滚动条即时消失、offset clamp 回 0
@@ -1323,8 +1330,13 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         DOCTEST_REQUIRE(nav != nullptr);
         DOCTEST_CHECK(floatEq(nav->y, 80.0f));  // navStart（极紧档）
         DOCTEST_CHECK(floatEq(nav->frame.height, 436.0f));
-        DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll") != nullptr);
-        DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll.thumb") != nullptr);
+        // bug188：滚动条零宽（视觉全无），滚动能力保留（offset/maxOffset 下方断言）
+        const auto* sb = ui.find("app.sidebar.nav.scroll");
+        const auto* thumb = ui.find("app.sidebar.nav.scroll.thumb");
+        DOCTEST_REQUIRE(sb != nullptr);
+        DOCTEST_REQUIRE(thumb != nullptr);
+        DOCTEST_CHECK(floatEq(sb->frame.width, 0.0f));
+        DOCTEST_CHECK(floatEq(thumb->frame.width, 0.0f));
         DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 457.0f - 436.0f));
         DOCTEST_CHECK(floatEq(nav->scrollOffset, 21.0f));  // clamp 收敛
         // 滚到底最后一行（About，画布 y 421..457）完整可见：
@@ -1334,6 +1346,54 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         DOCTEST_CHECK(floatEq(aboutHit->y + 36.0f, 457.0f));  // 内容底=末行底
     }
     app::setNavScrollOffsetForTests(0.0f);  // offset 复位（进程级态）
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
+// 复审 P2-1（bug252 / clue92 老板终裁）：全屏 0 宽此前只有产品代码（app_sidebar.cpp
+// `sidebarWidth()<=0` 整树早退）无自动化断言。终端页 toggleFullscreen 当帧打桥
+//（terminal_page.h → terminal_fullscreen_bridge → main.cpp:656 装配的 handler →
+// setSidebarHiddenForFullscreen 打旗标）→ 0 宽 + 侧栏整树不建——被否的 72px 折叠
+// 残留形态「半截 logo」正是靠这条早退挡住的。桥默认桩 = 未装配静默丢弃，用例内
+// 自行装配（lambda 形态同 main.cpp assembleTerminalBridgeNow），尾部拆桩 + 回厂。
+REGISTER_TEST(sidebar_fullscreen_hidden_zero_width,
+              "sidebar: 全屏旗标 → 0 宽 + 侧栏整树不建（品牌不画）；退出恢复 220", {
+    app::setCustomTitlebarMode(false);
+    app::resetSidebarGlobals();
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router = makeStubRouter(home, md);
+    test_support::ScopedAppRouter scoped(&router);
+
+    app::terminal_fullscreen::setHandler(
+        +[](bool collapsed) { app::setSidebarHiddenForFullscreen(collapsed); });
+
+    // 进全屏：桥当帧打旗标 → 0 宽
+    app::terminal_fullscreen::setCollapsed(true);
+    DOCTEST_CHECK(floatEq(app::sidebarWidth(), 0.0f));
+
+    // 当帧 compose：整棵侧栏子树早退（容器/品牌行/矢量瓦三层全不建）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("sidebar_fs_hidden");
+    app::compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(ui.find("app.sidebar") == nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.brand") == nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.brand.mark") == nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);
+    // 终端页内容区随之全宽（页宽 = windowWidth − sidebarWidth()）
+    DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1600.0f));
+
+    // 退出全屏：旗标清 + 进屏前快照（展开）恢复 → 220
+    app::terminal_fullscreen::setCollapsed(false);
+    DOCTEST_CHECK(floatEq(app::sidebarWidth(), 220.0f));
+
+    // 复位（测试隔离）：桥拆回默认桩 + 进程级旗标/折叠态回厂
+    app::terminal_fullscreen::setHandler(nullptr);
+    app::resetSidebarGlobals();
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })

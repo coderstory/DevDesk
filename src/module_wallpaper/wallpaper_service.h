@@ -99,6 +99,9 @@ public:
 
     WallpaperSnapshot snapshot() const;
 
+    // 服务是否已 start 且未 stop（need242 托盘组显隐判据；只读，mu_ 内读）。
+    bool isRunning() const;
+
     void setKind(WallpaperKind kind);
     void setMode(PlayMode mode);
     void setRotationIntervalSec(int seconds);

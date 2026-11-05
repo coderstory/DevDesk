@@ -185,6 +185,11 @@ void WallpaperService::stop() {
     LOG_INFO("壁纸服务已停止");
 }
 
+bool WallpaperService::isRunning() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return started_;  // 与 hostStarted_ 同纪律：只在 mu_ 内读写（见 stop 内注释）
+}
+
 WallpaperSnapshot WallpaperService::snapshot() const {
     std::lock_guard<std::mutex> lock(mu_);
     WallpaperSnapshot out = snapshot_;

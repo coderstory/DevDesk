@@ -443,10 +443,11 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                     static_cast<::module::wallpaper::WallpaperModule*>(
                         wallpaper.get());
                 if (wallpaperModule == nullptr) {
-                    return {false, false};
+                    return {false, false, false};
                 }
                 const auto snapshot = wallpaperModule->service().snapshot();
-                return {true, snapshot.manualPaused};
+                return {true, snapshot.manualPaused,
+                        wallpaperModule->service().isRunning()};
             },
             +[](app::tray::WallpaperTrayCommand command) {
                 auto* wallpaperModule =
@@ -679,14 +680,15 @@ void ensureClaudeServiceAssembledImpl(bool autoStart) {
 }
 
 // 托盘壁纸组开关 + 文案口径：组出现 = 设置门控开 且 桥报告模块实例已装配
-//（工厂能力失败 → nullptr → absent）；暂停字样由桥的 manualPaused 驱动
+//（工厂能力失败 → nullptr → absent） 且 服务运行中（need242：stop 后组整组隐藏，
+// 不再靠服务幂等守卫吞命令）；暂停字样由桥的 manualPaused 驱动
 //（契约见 trayMenuSpec）。原生降级菜单在 dslAppConfig 静态初始化期一次性构建
 //（早于装配，桥未在位）→ 降级路径恒无壁纸组；styled 主路径每次右键现查。
 std::vector<::core::tray::TrayMenuSpecItem> currentTraySpec() {
     const app::tray::WallpaperTrayState wallpaperTray =
         app::tray::wallpaperTrayState();
     const bool wallpaperGroupOn =
-        wallpaperTray.present &&
+        wallpaperTray.present && wallpaperTray.running &&
         module::settings::moduleEnabled(
             gatingConfigSnapshot(), module::settings::kModuleIdWallpaper);
     return ::core::tray::trayMenuSpec(wallpaperGroupOn,
