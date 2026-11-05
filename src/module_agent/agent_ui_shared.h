@@ -7,6 +7,7 @@
 
 #include "core/logging.h"
 #include "core/router.h"
+#include "core/theme.h"
 #include "module_agent/agent_store.h"
 #include "module_agent/trigger_config.h"
 
@@ -101,6 +102,25 @@ inline std::string cronTextOf(const AgentTaskRow& task) {
 inline std::string runLimitText(int maxRuns) {
     if (maxRuns <= 1) return "只跑一次";
     return "最多 " + std::to_string(maxRuns) + " 次";
+}
+
+// 「可用工具」入口钮宽度（池170 v2 §关键决策 3，bug #6）：固定 132 在工具数位数
+// 增长（9→12→108）时把图标/文本/计数压叠，改流式自适应纯函数：
+//   2×padX + 图标盒 + 6 + 「可用工具」文字 + 8 + 计数 badge（primarySoftBg pill）
+// badge 宽 = 左右内边距 8×2 + 位数×字号；文字/位数逐字按 fontSize 保守估
+//（CJK 全宽口径，同 kTaskWarnW 注释约定），实渲染更窄 → badge 只会留白不会越界。
+// 缩放跟随 core::theme::scaled；scale=1 时 N=3/19/108 → 136/150/164（设计稿验证值）。
+// 按钮右缘由页头布局锚定（title 吃剩余宽），位数增长只向左扩。
+inline float toolsEntryButtonWidth(int toolCount) {
+    const int digits =
+        static_cast<int>(std::to_string(toolCount < 0 ? 0 : toolCount).size());
+    const float font = core::theme::scaled(14.0f);
+    const float iconW = core::theme::scaled(16.0f);  // fa-plug @14 图标盒
+    const float textW = 4.0f * font;                 // 「可用工具」4 个 CJK
+    const float badgeW =
+        2.0f * core::theme::scaled(8.0f) + digits * font;  // pill 内边距 + 逐位
+    const float padX = core::theme::scaled(10.0f);
+    return 2.0f * padX + iconW + 6.0f + textW + 8.0f + badgeW;
 }
 
 } // namespace module::agent

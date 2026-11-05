@@ -76,9 +76,10 @@ namespace {
 
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
-// 页头「可用工具」入口钮（池170 §3.1）：次钮 132×40 与「+ 新建任务」同档，
-// 工具区块（原 523-663 页内可展开区块）退役后的唯一入口
-constexpr float kToolsBtnW = 132.0f;
+// 页头「可用工具」入口钮（池170）：工具区块退役后的唯一入口。宽不再固定
+//（bug #6：原 132×40 次钮在工具数位数增长 9→12→108 时压叠图标/文本），
+// 按 toolsEntryButtonWidth()（agent_ui_shared.h）流式自适应：图标 + 文字 +
+// 计数 badge，右缘锚定、向左长（title 同步让宽）。
 constexpr float kPageHeaderBtnGap = 8.0f;   // 设计 §3.1：两钮间距 8
 // B3（F-66-2）任务卡网格化：单列每卡 = 内容宽 −2×inset，1600 窗下 1536×68 ≈ 22:1，
 // 是横条不是卡。改多列网格锁 340–420 宽 × 120 高（≈3:1），窄窗自动退化为 1 列。
@@ -152,6 +153,89 @@ void iconActionChip(::eui::Ui& ui, const std::string& id, unsigned int codepoint
         .color(iconColor)
         .hitTestMode(::core::dsl::HitTestMode::None)
         .onClick(onClick)
+        .build();
+}
+
+// 页头「可用工具」入口钮（池170 v2 §关键决策 3，bug #6）：图标 −6− 文字 −8−
+// 计数 badge（primarySoftBg pill）。components::button 无 badge 槽位，按
+// iconActionChip 同款手搓两层：.bg 命中面（三态/描边/禁用/onClick）+ 内容穿透。
+// 宽度一律 toolsEntryButtonWidth()（agent_ui_shared.h）；badge 右缘贴按钮右内边距
+// ——位数增长只向左扩，页头 title 同步让宽，按钮右缘锚定不变。
+// 配色全走 token：次钮底 surface + buttonHover/Pressed（与 components 次钮同源）、
+// badge 底 primarySoftBg / 字 primary（与 Outline 变体同配对）；禁用统一 40% 置灰。
+void toolsEntryButton(::eui::Ui& ui, const std::string& id, int toolCount,
+                      const components::theme::ThemeColorTokens& tokens,
+                      bool enabled, std::function<void()> onClick) {
+    const float w = toolsEntryButtonWidth(toolCount);
+    const float h = 40.0f;
+    const float font = core::theme::scaled(14.0f);
+    const float iconW = core::theme::scaled(16.0f);
+    const float textW = 4.0f * font;
+    const float padX = core::theme::scaled(10.0f);
+    // badge 宽由同一公式反解（右缘贴 padX），改宽公式只动 toolsEntryButtonWidth 一处
+    const float badgeW = w - 2.0f * padX - iconW - 6.0f - textW - 8.0f;
+    const float badgeH = core::theme::scaled(20.0f);
+    ::core::Color fg = tokens.text;
+    if (!enabled) fg = components::theme::withOpacity(fg, 0.40f);
+    const ::core::Color base = tokens.surface;
+    const std::string countText = std::to_string(toolCount < 0 ? 0 : toolCount);
+
+    ui.stack(id)
+        .size(w, h)
+        .visualStateFrom(id + ".bg", 0.965f)  // 与 components::button pressScale 同档
+        .content([&] {
+            ui.rect(id + ".bg")
+                .size(w, h)
+                .states(base, components::theme::buttonHover(tokens, base),
+                        components::theme::buttonPressed(tokens, base))
+                .radius(6.0f)
+                .border(components::theme::buttonBorder(tokens, false))
+                .disabled(!enabled)
+                .onClick(onClick)
+                .build();
+            ui.text(id + ".icon")
+                .position(padX, 0.0f)
+                .size(iconW, h)
+                .icon(::eui::utf8(0xF1E6))  // fa-plug，与原 components 版同图标
+                .fontSize(font)
+                .lineHeight(font)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(fg)
+                .build();
+            ui.text(id + ".text")
+                .position(padX + iconW + 6.0f, 0.0f)
+                .size(textW, h)
+                .text("可用工具")
+                .fontSize(font)
+                .lineHeight(font)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(fg)
+                .build();
+            ui.stack(id + ".badge")
+                .position(w - padX - badgeW, (h - badgeH) * 0.5f)
+                .size(badgeW, badgeH)
+                .content([&] {
+                    ui.rect(id + ".badge.pill")
+                        .size(badgeW, badgeH)
+                        .color(tokens.primarySoftBg)
+                        .radius(badgeH * 0.5f)  // 全圆角 = pill
+                        .build();
+                    ui.text(id + ".badge.count")
+                        .size(badgeW, badgeH)
+                        .text(countText)
+                        .fontSize(font)
+                        .lineHeight(font)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(enabled ? tokens.primary
+                                       : components::theme::withOpacity(
+                                             tokens.primary, 0.40f))
+                        .build();
+                })
+                .build();
+        })
         .build();
 }
 
@@ -474,8 +558,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 .gap(kPageHeaderBtnGap)
                 .alignItems(eui::Align::CENTER)
                 .content([&] {
+                    // 入口钮宽随工具数位数流式生长（toolsEntryButtonWidth）；title
+                    // 吃剩余宽 → 钮右缘锚定（不含新建任务时贴 contentW 右缘），位数
+                    // 增长只把左缘向左推
+                    const float toolsBtnW =
+                        toolsEntryButtonWidth(static_cast<int>(toolsCache_.size()));
                     ui.text("agent.title")
-                        .size(contentW - kToolsBtnW - kPageHeaderBtnGap -
+                        .size(contentW - toolsBtnW - kPageHeaderBtnGap -
                                   (tasks_.empty() ? 0.0f
                                                   : kNewTaskBtnW + kPageHeaderBtnGap),
                               core::theme::scaled(32.0f))
@@ -485,22 +574,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
                         .build();
-                    // 「可用工具」入口钮（池170 §3.1）：次钮 132×40，插头图标 +
-                    // 计数；store 未装配时禁用（40% 置灰）。弹窗打开时刷新注册表快照
-                    components::button(ui, "agent.page.tools")
-                        .size(kToolsBtnW, 40.0f)
-                        .theme(themeTokens, false)
-                        .icon(0xF1E6)   // fa-plug
-                        .iconSize(core::theme::scaled(14.0f))
-                        .text("可用工具（" + std::to_string(toolsCache_.size()) + "）")
-                        .fontSize(core::theme::scaled(14.0f))
-                        .radius(6.0f)
-                        .disabled(store_ == nullptr)
-                        .onClick([this] {
-                            toolsDialogOpen_ = true;
-                            ensureToolsCache(/*forceReload=*/true);
-                        })
-                        .build();
+                    // 「可用工具」入口钮（池170 v2 §关键决策 3）：图标 + 文字 + 计数
+                    // badge；store 未装配时禁用（40% 置灰）。弹窗打开时刷新注册表快照
+                    toolsEntryButton(ui, "agent.page.tools",
+                                     static_cast<int>(toolsCache_.size()),
+                                     themeTokens, store_ != nullptr,
+                                     [this] {
+                                         toolsDialogOpen_ = true;
+                                         ensureToolsCache(/*forceReload=*/true);
+                                     });
                     if (!tasks_.empty()) {
                         components::button(ui, "agent.page.newTask")
                             .size(kNewTaskBtnW, 40.0f)

@@ -77,6 +77,7 @@
 #include "core/tool.h"
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/agent_ui_shared.h"   // toolsEntryButtonWidth（bug #6 宽度公式）
 #include "module_agent/agent_task_templates.h"
 #include "module_agent/agent_time_text.h"
 #include "module_agent/trigger_config.h"
@@ -2254,23 +2255,45 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     eui::Ui ui;
     composeTo(ui, mod, kScreen, "agent_ui_tools1");
     DOCTEST_CHECK(ui.find("agent.dialog.tools.scroll") == nullptr);
-    // 页头入口钮（池170 §3.1）：次钮 132×40 + 计数文案（文案落在 button 逐态
-    // 文本子节点 .text 上——button 根 stack 不带 text，与既有契约一致）
+    // 页头入口钮（池170 v2 §关键决策 3，bug #6）：图标 + 「可用工具」文字 + 计数
+    // badge（primarySoftBg pill），宽随位数流式生长。文案/计数分节点落在
+    // <id>.text / <id>.badge.count 上——.bg 是命中面，与既有契约一致
     const auto* toolsBtnBg = ui.find("agent.page.tools.bg");
     DOCTEST_REQUIRE_MESSAGE(toolsBtnBg != nullptr, "页头缺 agent.page.tools 钮");
-    const auto* toolsBtn = ui.find("agent.page.tools.text.normal");
-    DOCTEST_REQUIRE(toolsBtn != nullptr);
-    DOCTEST_CHECK_MESSAGE(
-        toolsBtn->text.find("可用工具") != std::string::npos &&
-            toolsBtn->text.find(std::to_string(registered)) !=
-                std::string::npos,
-        "入口钮缺「可用工具（N）」计数，实测: " + toolsBtn->text);
+    const auto* toolsLabel = ui.find("agent.page.tools.text");
+    DOCTEST_REQUIRE_MESSAGE(toolsLabel != nullptr, "入口钮缺「可用工具」文字节点");
+    DOCTEST_CHECK_MESSAGE(toolsLabel->text.find("可用工具") != std::string::npos,
+                          "入口钮文字应为「可用工具」，实测: " + toolsLabel->text);
+    const auto* toolsBadge = ui.find("agent.page.tools.badge.count");
+    DOCTEST_REQUIRE_MESSAGE(toolsBadge != nullptr, "入口钮缺计数 badge 节点");
+    DOCTEST_CHECK_MESSAGE(toolsBadge->text == std::to_string(registered),
+                          "badge 计数应 = 注册表数 " + std::to_string(registered) +
+                              "，实测: " + toolsBadge->text);
     const auto& themeTools = core::theme::current();
+    // 布线断言：compose 后 .bg 实际帧宽 == toolsEntryButtonWidth(注册表数)，
+    // 高仍 40（宽的数学正确性由下方三档绝对值断言覆盖）
     DOCTEST_CHECK_MESSAGE(
-        nearPx(toolsBtnBg->frame.width, 132.0f) &&
+        nearPx(toolsBtnBg->frame.width,
+               module::agent::toolsEntryButtonWidth(
+                   static_cast<int>(registered))) &&
             nearPx(toolsBtnBg->frame.height, 40.0f),
-        "入口钮应 132×40，实测 " + std::to_string(toolsBtnBg->frame.width) +
-            "x" + std::to_string(toolsBtnBg->frame.height));
+        "入口钮宽应随计数自适应（toolsEntryButtonWidth），实测 " +
+            std::to_string(toolsBtnBg->frame.width) + "x" +
+            std::to_string(toolsBtnBg->frame.height));
+    // 纯函数三档（bug #6 验收）：N=3/19/108 → 136/150/164（scale=1 设计稿验证值）
+    // 且随位数单调递增、badge 不越界（逐字保守估宽）
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(module::agent::toolsEntryButtonWidth(3), 136.0f) &&
+            nearPx(module::agent::toolsEntryButtonWidth(19), 150.0f) &&
+            nearPx(module::agent::toolsEntryButtonWidth(108), 164.0f),
+        "toolsEntryButtonWidth 三档应 136/150/164，实测 " +
+            std::to_string(module::agent::toolsEntryButtonWidth(3)) + "/" +
+            std::to_string(module::agent::toolsEntryButtonWidth(19)) + "/" +
+            std::to_string(module::agent::toolsEntryButtonWidth(108)));
+    DOCTEST_CHECK(module::agent::toolsEntryButtonWidth(3) <
+                  module::agent::toolsEntryButtonWidth(19));
+    DOCTEST_CHECK(module::agent::toolsEntryButtonWidth(19) <
+                  module::agent::toolsEntryButtonWidth(108));
     DOCTEST_REQUIRE(toolsBtnBg->onClick != nullptr);
     toolsBtnBg->onClick();
     eui::Ui ui2;
