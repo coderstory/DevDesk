@@ -43,8 +43,9 @@ public:
     int scrollbackCount() const;
     bool scrollbackLine(int index, std::string& out) const;
 
-    // 选区矩形→UTF-8 文本（所见即所得；行列=当前视口系，双端闭区间，端点须已
-    // 规范化 start<=end——反向拖选的规范化由 widget 侧做，Phase 2 接线）。
+    // 选区矩形→UTF-8 文本（所见即所得；行列=当前视口系，双端闭区间）。反向拖选由
+    // 本函数内部取 min/max 规范化（P1-3①），调用方无需预排序；已接线：page Ctrl+C
+    // 复制与 module 级 Cmd+C 兜底两条消费链。
     bool selectionText(int rowStart, int colStart, int rowEnd, int colEnd,
                        std::string& out) const;
 

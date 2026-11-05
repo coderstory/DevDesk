@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <utility>
 #include <cstdlib>
 #include <deque>
@@ -26,6 +27,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/logging.h"
 #include "process_host.h"
 #include "terminal_vterm_core.h"
 
@@ -97,6 +99,9 @@ std::wstring resolveShellCommandLine() {
 
 // 有界关闭等待（技术卡 §3.2：排空/Close/join 全链有界，先例口径 5s）
 constexpr DWORD kCloseWaitMs = 5000;
+// P1-3：reader 收割上界（进程退出等待）须 ≤ worker 关停链的 reader 兜底窗口——
+// worker 先析构 task 而 reader 仍在 WaitForSingleObject → vterm/句柄悬空触取
+constexpr DWORD kHarvestWaitMs = 1000;
 
 } // namespace
 
@@ -113,6 +118,11 @@ struct SessionShared {
     std::atomic<bool> readerExit{false}; // P1-2①：置位后 reader 不再重挂 ReadFile
     std::atomic<bool> exited{false};
     std::atomic<int32_t> exitCode{0};
+    // ConPTY resize 门控（need241 真机实证 2026-11-05）：首字节到达前调
+    // ResizePseudoConsole 会**永久卡死输出通道**（实证：early resize 后 generation
+    // 冻结、可见 cell 恒 0、进程不退；晚于首输出则正常——早版装机未触雷只因用户
+    // 进页晚于 pwsh 冷启动）。pending resize 由 reader 门控到首输出后再发。
+    std::atomic<bool> firstOutput{false};
 };
 
 // 文件级事件原语（DoneEvent 移出类：worker 与 reader/writer 线程共享）
@@ -157,12 +167,46 @@ void readerTask(ShutdownTask& t) {
     std::string reply;
     auto* shared = t.shared.get();
     auto* vterm = t.vterm.get();
+    // ---- TermPerf 诊断（bug248 临时，删诊断时整块移除）：只累加计数，每 5s 一条
+    static std::atomic<uint64_t> perfBytes{0};
+    static std::atomic<uint64_t> perfFeedNs{0};
+    static std::atomic<uint64_t> perfFeedMaxNs{0};
+    static std::atomic<uint64_t> perfAborted{0};
+    static std::atomic<uint64_t> perfResizes{0};
+    static std::atomic<int64_t> perfLastLogMs{0};
+    auto perfFlush = [] {
+        const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count();
+        int64_t last = perfLastLogMs.load(std::memory_order_relaxed);
+        if (last == 0) {
+            perfLastLogMs.store(nowMs, std::memory_order_relaxed);
+            return;
+        }
+        if (nowMs - last < 5000 ||
+            !perfLastLogMs.compare_exchange_strong(last, nowMs, std::memory_order_relaxed))
+            return;
+        const uint64_t b = perfBytes.exchange(0, std::memory_order_relaxed);
+        const uint64_t f = perfFeedNs.exchange(0, std::memory_order_relaxed);
+        const uint64_t fm = perfFeedMaxNs.exchange(0, std::memory_order_relaxed);
+        LOG_INFO("TermPerf: reader bytes=" + std::to_string(b) +
+                 " feedMs=" + std::to_string(f / 1000000ull) +
+                 " maxFeedMs=" + std::to_string(fm / 1000000ull) +
+                 " aborted=" + std::to_string(perfAborted.exchange(0, std::memory_order_relaxed)) +
+                 " resizes=" + std::to_string(perfResizes.exchange(0, std::memory_order_relaxed)));
+    };
     for (;;) {
+        perfFlush();
         if (shared->writerStop.load(std::memory_order_relaxed) ||
             shared->readerExit.load(std::memory_order_relaxed))
             break;
-        // 坑⑤：无读取在飞窗口内处理 pending resize（latest-wins）
-        if (shared->resizePending.exchange(false, std::memory_order_relaxed)) {
+        // 坑⑤：无读取在飞窗口内处理 pending resize（latest-wins）。
+        // need241 门控：ResizePseudoConsole 必须晚于首字节（早发=输出通道永久卡死，
+        // 见 SessionShared::firstOutput 注）——未见到首输出则保持 pending 不 exchange，
+        // 由后续循环重试。
+        if (shared->firstOutput.load(std::memory_order_relaxed) &&
+            shared->resizePending.exchange(false, std::memory_order_relaxed)) {
+            perfResizes.fetch_add(1, std::memory_order_relaxed); // TermPerf（bug248）
             TerminalSize s;
             {
                 std::lock_guard<std::mutex> lock(shared->resizeMutex);
@@ -180,14 +224,32 @@ void readerTask(ShutdownTask& t) {
         if (!ReadFile(t.outputRead, buf, sizeof(buf), &n, nullptr)) {
             const DWORD err = GetLastError();
             if (err == ERROR_OPERATION_ABORTED && !shared->writerStop.load(std::memory_order_relaxed) &&
-                !shared->readerExit.load(std::memory_order_relaxed))
+                !shared->readerExit.load(std::memory_order_relaxed)) {
+                perfAborted.fetch_add(1, std::memory_order_relaxed); // TermPerf（bug248）
                 continue; // resize 唤醒（坑⑤），重回读取循环
+            }
             (void)err;    // 断裂（坑⑦）/关停 → 退出排空循环
             break;
         }
+        if (n > 0) {
+            // resize 门控解锁点：客户端已连入（首字节过管道），此后 ResizePseudoConsole 安全
+            shared->firstOutput.store(true, std::memory_order_relaxed);
+            perfBytes.fetch_add(n, std::memory_order_relaxed); // TermPerf（bug248）
+        }
         if (n > 0 && vterm != nullptr) {
             reply.clear();
+            const auto feedT0 = std::chrono::steady_clock::now();
             vterm->feed(reinterpret_cast<const uint8_t*>(buf), int32_t(n), &reply);
+            const uint64_t feedNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - feedT0)
+                    .count());
+            perfFeedNs.fetch_add(feedNs, std::memory_order_relaxed); // TermPerf（bug248）
+            uint64_t prevMax = perfFeedMaxNs.load(std::memory_order_relaxed);
+            while (feedNs > prevMax &&
+                   !perfFeedMaxNs.compare_exchange_weak(prevMax, feedNs,
+                                                        std::memory_order_relaxed)) {
+            }
             if (!reply.empty()) {
                 {
                     std::lock_guard<std::mutex> lock(shared->wqMutex);
@@ -198,15 +260,19 @@ void readerTask(ShutdownTask& t) {
             }
         }
     }
-    // 退出码收割（有界；拿不到=约定 0）。P1-2②：收割只发生在本函数内（terminated
-    // 与句柄关闭都在 worker 持有句柄期间进行），无悬空面
+    // 退出码收割（有界 kHarvestWaitMs ≤ worker 兜底窗口，P1-3；拿不到=约定 0）。
+    // P1-2②：收割只发生在本函数内（terminated 与句柄关闭都在 worker 持有句柄期间
+    // 进行），无悬空面
     DWORD code = 0;
     if (t.hProcess != nullptr &&
-        WaitForSingleObject(t.hProcess, kCloseWaitMs) == WAIT_OBJECT_0) {
+        WaitForSingleObject(t.hProcess, kHarvestWaitMs) == WAIT_OBJECT_0) {
         GetExitCodeProcess(t.hProcess, &code);
     }
     shared->exitCode.store(int32_t(code), std::memory_order_relaxed);
     shared->exited.store(true, std::memory_order_relaxed); // 坑⑦：断裂=会话结束，宿主不崩
+    // P1-3：先置 retired 再 set done——worker 见 done 即可见 retired（DoneEvent 内
+    // mutex 建 happens-before），join 分支由此可达，join 后才析构 task
+    t.readerRetired.store(true, std::memory_order_relaxed);
     t.readerDone.set();
 }
 
@@ -223,6 +289,10 @@ void writerTask(ShutdownTask& t) {
             payload = std::move(shared->wq.front());
             shared->wq.pop_front();
         }
+        // P1（Win 专项）配套：关停中不再发起新写——writerDone 超时路径 CancelIoEx
+        // 强断后若回环重写会再次阻塞，worker 随后的 CloseHandle(inputWrite) 就打在
+        // 阻塞 I/O 上（UB 面）；正常路径 writerStop 恒 false，零影响
+        if (shared->writerStop.load(std::memory_order_relaxed)) break;
         DWORD written = 0;
         // 写失败（管道断）静默丢弃：会话即将走断裂→exited 路径
         WriteFile(t.inputWrite, payload.data(), DWORD(payload.size()), &written, nullptr);
@@ -236,13 +306,22 @@ void writerTask(ShutdownTask& t) {
 // 关句柄。任何一步超时都不挂死。
 void shutdownTaskWorker(std::shared_ptr<ShutdownTask> t) {
     auto* shared = t->shared.get();
-    process_host::terminateTree(t->pid); // 坑②：taskkill /T /F 树杀（先例，有界+探活兜底）
+    // P2（复审）：树杀前判存活——进程已退出后 taskkill /T /F 按 pid 匹配，pid 复用
+    // 窗口会误杀无关进程树。hProcess 已退出（含断裂自然收割）→ 跳过；仍 STILL_ACTIVE
+    // 才树杀。（shared->exited 在 terminate() 即置真，不构成存活判据）
+    DWORD liveCode = 0;
+    const bool alive = t->hProcess != nullptr &&
+                       GetExitCodeProcess(t->hProcess, &liveCode) != FALSE &&
+                       liveCode == STILL_ACTIVE;
+    if (alive) process_host::terminateTree(t->pid); // 坑②：taskkill /T /F 树杀（先例，有界+探活兜底）
 
-    // 坑②排空：优先让 reader 自然读到管道断裂退出
-    if (!t->readerDone.wait_for(std::chrono::milliseconds(2000))) {
+    // 坑②排空：优先让 reader 自然读到管道断裂退出。P1-3：等待上界=kCloseWaitMs
+    // （对齐 reader 全链上界，原 2s+1s=3s < reader 收割 5s → task 先析构、reader
+    // 仍触碰 vterm/句柄 = UAF）
+    if (!t->readerDone.wait_for(std::chrono::milliseconds(kCloseWaitMs))) {
         shared->readerExit.store(true, std::memory_order_relaxed); // P1-2①：不重挂 ReadFile
         if (t->outputRead != nullptr) CancelIoEx(t->outputRead, nullptr);
-        t->readerDone.wait_for(std::chrono::milliseconds(1000)); // 强断兜底窗口
+        t->readerDone.wait_for(std::chrono::milliseconds(kHarvestWaitMs)); // 强断兜底窗口（≥收割上界）
     }
 
     // ClosePseudoConsole（此时无读取在飞；残余面=句柄拆除兜底口径，宁拆不挂）
@@ -250,7 +329,14 @@ void shutdownTaskWorker(std::shared_ptr<ShutdownTask> t) {
 
     shared->writerStop.store(true, std::memory_order_relaxed);
     shared->wqCv.notify_all();
-    if (!t->writerDone.wait_for(std::chrono::milliseconds(1000))) { /* 超时走 detach 兜底 */ }
+    if (!t->writerDone.wait_for(std::chrono::milliseconds(1000))) {
+        // P1（Win 专项）：writer 可能仍阻塞在 WriteFile(inputWrite)——直接走
+        // join/detach 决策后 worker 会在下方 CloseHandle(inputWrite)，对阻塞 I/O 中
+        // 的句柄拆除 = UB。先强断挂起写（writerTask 见 writerStop 不再回环重写），
+        // 再给收割窗口，然后才决策。
+        if (t->inputWrite != nullptr) CancelIoEx(t->inputWrite, nullptr);
+        t->writerDone.wait_for(std::chrono::milliseconds(kHarvestWaitMs));
+    }
     if (t->writer.joinable()) {
         if (t->writerDone.peek())
             t->writer.join();
@@ -258,6 +344,11 @@ void shutdownTaskWorker(std::shared_ptr<ShutdownTask> t) {
             t->writer.detach();
     }
     if (t->reader.joinable()) {
+        // P1-3：retired 未置位（强断路径刚唤醒）再给一个收割窗口，让 join 分支在
+        // reader 正常退出时必达——join 后 worker 才关句柄/析构 task，悬空面闭合；
+        // 全窗口耗尽仍 wedge 才 detach（既有兜底语义）
+        if (!t->readerRetired.load(std::memory_order_relaxed))
+            t->readerDone.wait_for(std::chrono::milliseconds(kHarvestWaitMs));
         if (t->readerRetired.load(std::memory_order_relaxed))
             t->reader.join();
         else
@@ -275,12 +366,15 @@ class WinSessionHandle : public TerminalSessionHandle {
 public:
     WinSessionHandle(HPCON hpc, HANDLE inputWrite, HANDLE outputRead, HANDLE hProcess,
                      int64_t pid, std::unique_ptr<VtermCore> vterm)
-        : shared_(std::make_shared<SessionShared>()),
-          vterm_(std::move(vterm)) {
+        : shared_(std::make_shared<SessionShared>()) {
         // 线程与运行态装进共享包（terminate 时整体移交关停 worker）
         task_ = std::make_shared<ShutdownTask>();
         task_->shared = shared_;
-        task_->vterm = std::move(vterm); // vterm 移交：terminate 后 handle 判空面接管
+        // vterm 所有权只归 task_（reader 线程与关停 worker 都经 task_ 保活）；
+        // handle 只持非拥有指针——**不可先移入成员再 move 参数**：第二次 move
+        // 得到空指针，reader 拿到 nullptr 后 feed 永不执行 → 帧恒空（2026-11-05 根因）。
+        task_->vterm = std::move(vterm);
+        vterm_ = task_->vterm.get();
         task_->inputWrite = inputWrite;
         task_->outputRead = outputRead;
         task_->hProcess = hProcess;
@@ -302,8 +396,10 @@ public:
         if (terminated_.load(std::memory_order_relaxed))
             return core::Result<void>::fail(core::ErrorCode::Internal, "会话已终止");
         std::string payload(reinterpret_cast<const char*>(bytes), size_t(count));
-        // bracketed paste：仅在子进程已开启 DECSET 2004 时包裹（转译层平行跟踪）
-        if (vterm_ && vterm_->bracketedPasteEnabled())
+        // bracketed paste：只有**真正的粘贴**（paste=true）且子进程已开启 DECSET 2004
+        // 才包裹。普通键入/按键/ESC 序列必须直发——全量包裹会让 TUI 把每个按键当
+        // 粘贴文本（Claude Code 等启用 ?2004 的 TUI 进入后任何输入失效，真机实测根因）。
+        if (paste && vterm_ && vterm_->bracketedPasteEnabled())
             payload = "\x1b[200~" + payload + "\x1b[201~";
         {
             std::lock_guard<std::mutex> lock(shared_->wqMutex);
@@ -325,7 +421,11 @@ public:
         }
         // 坑⑤ idle 唤醒：reader 阻塞在无输出的 ReadFile 时 pending resize 永不处理
         //（shell 不重绘→无输出→reader 不醒），CancelIoEx 打断阻塞读后由 reader
-        // 在无读取在飞窗口处理。
+        // 在无读取在飞窗口处理。P2（复审）：CancelIoEx 前复核 terminated_——
+        // terminate() 已发起时 worker 可能正关闭句柄链，此时取消会打在已关闭/
+        // 复用的句柄上（误伤无关句柄）。
+        if (terminated_.load(std::memory_order_relaxed))
+            return core::Result<void>::fail(core::ErrorCode::Internal, "会话已终止");
         CancelIoEx(task_->outputRead, nullptr);
         return core::Result<void>::ok();
     }
@@ -336,7 +436,8 @@ public:
         bool already = terminated_.exchange(true);
         if (already) return;
         shared_->exited.store(true, std::memory_order_relaxed); // 终止语义即时生效
-        auto t = task_; // shared_ptr 保活：handle 立即放手（vterm 已移交），worker 自足收尾
+        vterm_ = nullptr; // 终止后 handle 面不再读 vterm（实体内存在 task_）
+        auto t = task_;   // shared_ptr 保活：handle 立即放手，worker 自足收尾
         std::thread(shutdownTaskWorker, t).detach();
     }
 
@@ -364,7 +465,7 @@ public:
 private:
     std::shared_ptr<SessionShared> shared_;
     std::shared_ptr<ShutdownTask> task_;
-    std::unique_ptr<VtermCore> vterm_; // terminate 后移入 task_（判空面接管）
+    VtermCore* vterm_ = nullptr; // 非拥有：实体内存在 task_->vterm（task_ 保活）
     std::atomic<bool> terminated_{false};
 };
 
@@ -396,9 +497,11 @@ public:
         c.X = SHORT(size.cols);
         c.Y = SHORT(size.rows);
         const HRESULT hr = conptyApi().create(c, inputRead, outputWrite, 0, &hpc);
-        if (FAILED(hr))
-            return failSpawn("CreatePseudoConsole", DWORD(hr), inputRead, inputWrite,
-                             outputRead, outputWrite);
+        // P2（复审）：hpc==nullptr 也按失败走 failSpawn——后续路径（CreateProcess
+        // 属性挂接、!procOk 幂等 close）都默认 hpc 非空
+        if (FAILED(hr) || hpc == nullptr)
+            return failSpawn("CreatePseudoConsole", FAILED(hr) ? DWORD(hr) : DWORD(E_FAIL),
+                             inputRead, inputWrite, outputRead, outputWrite);
 
         // ③ 属性列表挂 PSEUDOCONSOLE + CreateProcess
         std::wstring cmd = resolveShellCommandLine();

@@ -4,6 +4,7 @@ add_library(devdesk_module_terminal STATIC
     terminal_grid_widget.cpp
     terminal_session_controller.cpp
     terminal_keyencoder.cpp
+    terminal_metrics.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_terminal)

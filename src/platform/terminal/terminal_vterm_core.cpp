@@ -162,9 +162,12 @@ struct VtermCore::Impl {
     TerminalCell translateCell(const VTermScreenCell& sc) const {
         TerminalCell t;
         // 宽字占位：libvterm 对 width>1 glyph 的右侧格写 chars[0]=(uint32_t)-1
-        // （screen.c:197）——规范化为 cp=0 spacer（Corta BridgeCell 契约）
-        t.cp = sc.chars[0] == 0xFFFFFFFFu ? 0u : sc.chars[0]; // 首 scalar；组合序列 chars[1..] 降级
-        t.width = sc.width == 2 ? uint8_t(2) : uint8_t(1);
+        // （screen.c:197），get_cell 读回该格 width=1（screen.c cell 默认值）——
+        // 规范化为 cp=0 spacer（Corta BridgeCell 契约）且 width=0（零宽占位）：
+        // 计宽侧按 width 累加列前缀，占位再记 1 格会让每个 CJK 后整行右移 1 格
+        const bool spacer = sc.chars[0] == 0xFFFFFFFFu;
+        t.cp = spacer ? 0u : sc.chars[0]; // 首 scalar；组合序列 chars[1..] 降级
+        t.width = spacer ? uint8_t(0) : (sc.width == 2 ? uint8_t(2) : uint8_t(1));
         t.attrs = translateAttrs(sc.attrs);
         t.fg = translateColor(sc.fg, defaultFg);
         t.bg = translateColor(sc.bg, defaultBg);
@@ -412,10 +415,13 @@ bool VtermCore::selectionText(int rowStart, int colStart, int rowEnd, int colEnd
         std::string line;
         for (int c = c0; c <= c1; ++c) {
             const TerminalCell& cell = impl_->cells[size_t(r) * impl_->cols + c];
-            if (cell.cp == 0)
+            if (cell.cp == 0) {
+                if (cell.width == 0)
+                    continue; // P1-2：宽字占位格（CJK spacer）不入文本——选区与屏幕一致
                 line.push_back(' ');
-            else
+            } else {
                 appendCodepointUtf8(line, cell.cp);
+            }
         }
         // 行尾 trim（所见即所得口径：尾空白不进剪贴板）
         while (!line.empty() && line.back() == ' ') line.pop_back();

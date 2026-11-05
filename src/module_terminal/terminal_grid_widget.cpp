@@ -1,9 +1,13 @@
+// src/module_terminal/terminal_grid_widget.cpp
 #include "terminal_grid_widget.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 
+#include "core/logging.h"
+#include "core/render/text.h"
 #include "core/theme.h"
 
 namespace terminal {
@@ -37,8 +41,6 @@ void appendScalar(std::string& out, uint32_t cp) {
         out += static_cast<char>(0x80 | (cp & 0x3f));
     }
 }
-
-int utf8Len(uint32_t cp) { return cp < 0x80 ? 1 : (cp < 0x800 ? 2 : (cp < 0x10000 ? 3 : 4)); }
 
 } // namespace
 
@@ -97,14 +99,63 @@ std::vector<RowRun> rowRuns(const platform::TerminalCell* row, int cols, bool da
     return runs;
 }
 
+std::string rowSliceText(const platform::TerminalCell* row, int cols, int colBegin, int colEnd) {
+    std::string out;
+    const int end = std::min(colEnd, cols);
+    for (int c = colBegin; c < end; c++) {
+        appendScalar(out, row[c].cp);
+    }
+    return out;
+}
+
+// CellTrace（bug244 临时诊断）：该行是否含 CJK/框线等非 ASCII（>0x7F）
+bool rowTraceWorthy(const platform::TerminalCell* row, int cols) {
+    for (int c = 0; c < cols; c++) {
+        if (row[c].cp > 0x7F) return true;
+    }
+    return false;
+}
+
+float cellXOf(const platform::TerminalCell* row, int cols, int col, float cellW) {
+    if (row == nullptr) {
+        // 无行数据（空帧/滚动态兜底）：按半角折算，不贴 0
+        return col > 0 ? static_cast<float>(col) * cellW : 0.0f;
+    }
+    if (col < 0) return 0.0f;
+    if (cols <= 0 || col >= cols) return static_cast<float>(col) * cellW;
+    float x = 0.0f;
+    for (int c = 0; c < col; c++) {
+        // 宽字 spacer 占位 width=0（P1-1）：零宽不计列前缀；空 cell 默认 width=1 不受影响
+        x += std::max(0, static_cast<int>(row[c].width)) * cellW;
+    }
+    return x;
+}
+
+float cellSpanOf(const platform::TerminalCell* row, int cols, int colBegin, int colEnd,
+                 float cellW) {
+    if (colEnd <= colBegin) return 0.0f;
+    if (row == nullptr || cols <= 0 || colBegin >= cols) {
+        return static_cast<float>(colEnd - colBegin) * cellW;
+    }
+    float w = 0.0f;
+    const int end = std::min(colEnd, cols);
+    for (int c = colBegin; c < end; c++) {
+        w += std::max(0, static_cast<int>(row[c].width)) * cellW; // spacer 零宽（P1-1）
+    }
+    if (colEnd > cols) w += static_cast<float>(colEnd - cols) * cellW;
+    return w;
+}
+
 void TerminalGridWidget::compose(eui::Ui& ui, const platform::TerminalFrame& frame,
                                  int scrollbackCount, int scrollOffset, float availW,
                                  float availH, bool darkTheme,
+                                 const TerminalCellMetrics& metrics,
                                  const std::function<bool(int, std::string&)>& scrollbackLine,
                                  GridLayout& out) {
     const auto& t = core::theme::current();
-    const float cellH = fontSize_ * 1.25f;
-    const float cellW = fontSize_ * 0.6f;
+    // 真实度量（need241）；查询失败 metrics 内含估算回落值，布局恒可用
+    const float cellH = metrics.cellH;
+    const float cellW = metrics.cellW;
     const int viewRows = std::max(1, static_cast<int>(availH / cellH));
     const int viewCols = std::max(1, static_cast<int>(availW / cellW));
     out.rows = viewRows;
@@ -116,71 +167,81 @@ void TerminalGridWidget::compose(eui::Ui& ui, const platform::TerminalFrame& fra
     int start = totalLines - viewRows - scrollOffset;
     if (start < 0) start = 0;
 
-    std::vector<RowRun> runs;
-    std::string display;
     for (int v = 0; v < viewRows; v++) {
         const int lineIdx = start + v;
         const std::string id = "term.grid.row." + std::to_string(v);
-        if (lineIdx < scrollbackCount) {
-            // 回滚行：纯文本（核心 Line 无 cell 级导出面，v1 用主题次级色）
-            std::string text;
-            if (scrollbackLine(lineIdx, text) && !text.empty()) {
-                ui.text(id)
-                    .text(text)
-                    .fontFamily("monospace")
-                    .fontSize(fontSize_)
-                    .color(t.colors.textSecondary)
-                    .height(cellH);
-            } else {
-                ui.text(id)
-                    .text(" ")
-                    .fontFamily("monospace")
-                    .fontSize(fontSize_)
-                    .color(t.colors.textSecondary)
-                    .height(cellH);
-            }
-            continue;
-        }
-        const int frameRow = lineIdx - scrollbackCount;
-        if (frameRow >= frame.rows || frame.cells.empty()) {
-            ui.text(id)
-                .text(" ")
-                .fontFamily("monospace")
-                .fontSize(fontSize_)
-                .color(t.colors.textPrimary)
-                .height(cellH);
-            continue;
-        }
-        const platform::TerminalCell* row =
-            &frame.cells[static_cast<size_t>(frameRow) * frame.cols];
-        runs = rowRuns(row, std::min(viewCols, frame.cols), darkTheme);
-        display.clear();
-        std::vector<core::TextRun> textRuns;
-        int byteOffset = 0;
-        int colCursor = 0;
-        for (const RowRun& r : runs) {
-            for (int gap = colCursor; gap < r.colBegin; gap++) {
-                display += ' ';
-                byteOffset += 1;
-            }
-            const int runStartByte = byteOffset;
-            for (int c = r.colBegin; c < r.colEnd; c++) {
-                appendScalar(display, row[c].cp);
-                byteOffset += utf8Len(row[c].cp);
-            }
-            if (!r.defaultColor && byteOffset > runStartByte) {
-                textRuns.push_back(core::TextRun{runStartByte, byteOffset, r.color});
-            }
-            colCursor = r.colEnd;
-        }
-        if (display.empty()) display = " ";
-        auto el = ui.text(id)
-                      .text(display)
-                      .fontFamily("monospace")
-                      .fontSize(fontSize_)
-                      .color(t.colors.textPrimary)
-                      .height(cellH);
-        if (!textRuns.empty()) el.runs(textRuns);
+        // 行容器：固定高 stack，run 元素按列前缀宽绝对定位（列漂移根除）
+        ui.stack(id)
+            .size(availW, cellH)
+            .content([&] {
+                if (lineIdx < scrollbackCount) {
+                    // 回滚行：纯文本整行（核心 Line 无 cell 级导出面，v1 同口径）
+                    std::string text;
+                    if (!scrollbackLine(lineIdx, text) || text.empty()) text = " ";
+                    ui.text(id + ".sb")
+                        .size(availW, cellH)
+                        .text(text)
+                        .fontFamily("monospace")
+                        .fontSize(fontSize_)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    return;
+                }
+                const int frameRow = lineIdx - scrollbackCount;
+                if (frameRow >= frame.rows || frame.cells.empty()) return;
+                const platform::TerminalCell* cells =
+                    &frame.cells[static_cast<size_t>(frameRow) * frame.cols];
+                const int drawCols = std::min(viewCols, frame.cols);
+                // 列前缀宽（宽字 2 格；逐 run 从列起点画——CJK 回退字形 advance
+                // ≠2cellW 只影响字形间隙，不产生列漂移，设计 §4.3）
+                float runX = 0.0f;
+                int col = 0;
+                for (const RowRun& r : rowRuns(cells, drawCols, darkTheme)) {
+                    // run 起点对齐：补上 run 前空 cell 的列宽（spacer width=0 不计）
+                    float x = runX;
+                    for (int gap = col; gap < r.colBegin; gap++) {
+                        x += std::max(0, static_cast<int>(cells[gap].width)) * cellW;
+                    }
+                    float w = 0.0f;
+                    for (int c = r.colBegin; c < r.colEnd; c++) {
+                        w += std::max(0, static_cast<int>(cells[c].width)) * cellW;
+                    }
+                    std::string text = rowSliceText(cells, drawCols, r.colBegin, r.colEnd);
+                    // CellTrace（bug244 临时诊断，总量≤60 条）：含 CJK/框线行逐 run
+                    // 对照——x/advance/runW/width 四值区分取整累积/非等宽回退/宽字折算
+                    static int cellTraceN = 0;
+                    if (cellTraceN < 60 && rowTraceWorthy(cells, drawCols)) {
+                        int units = 0;
+                        for (int c = r.colBegin; c < r.colEnd; c++) {
+                            units += std::max(0, static_cast<int>(cells[c].width));
+                        }
+                        const float adv = core::TextPrimitive::measureTextWidth(
+                            text, "monospace", fontSize_, 400);
+                        char line[224];
+                        std::snprintf(line, sizeof(line),
+                                      "CellTrace: col=%d x=%.1f cellW=%.2f advance=%.2f "
+                                      "runW=%.1f width=%d",
+                                      r.colBegin, static_cast<double>(x),
+                                      static_cast<double>(cellW), static_cast<double>(adv),
+                                      static_cast<double>(w), units);
+                        LOG_INFO(line);
+                        cellTraceN++;
+                    }
+                    if (!text.empty()) {
+                        ui.text(id + ".run." + std::to_string(r.colBegin))
+                            .position(x, 0.0f)
+                            .size(std::max(w, 1.0f), cellH)
+                            .text(text)
+                            .fontFamily("monospace")
+                            .fontSize(fontSize_)
+                            .color(r.defaultColor ? t.colors.textPrimary : r.color)
+                            .build();
+                    }
+                    col = r.colEnd;
+                    runX = x + w;
+                }
+            })
+            .build();
     }
 }
 

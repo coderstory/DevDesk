@@ -1,26 +1,91 @@
+// src/module_terminal/terminal_page.cpp
 #include "terminal_page.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <utility>
 
+#include "core/logging.h"
+#include "core/platform/ime_bridge.h" // eui_ime_trace_log（ImeTrace 段1 与 EUI/win 段2/3 同落 ime-trace.log）
+#include "core/render/text.h"
 #include "core/theme.h"
 #include "terminal_keyencoder.h"
 #include "ui_kit/card.h"
+#include "ui_kit/glass.h"
 
 namespace terminal {
 
 using core::Color;
 
 namespace {
-constexpr float kToolbarH = 44.0f;
+constexpr float kToolbarH = 44.0f;   // TAB 栏带高（设计 §2.1，全屏保留）
+constexpr float kTabH = 32.0f;       // TAB 高（栏内垂直居中，上下各 6）
+constexpr float kTabY = 6.0f;
+constexpr float kTabGap = 4.0f;
+constexpr float kTabMaxW = 200.0f;
+constexpr float kTabMinW = 120.0f;       // 设计 §8：页面区 720–1199 档 TAB min 120
+constexpr float kTabMinWNarrow = 100.0f; // 设计 §8：<720 窄窗档 TAB min 100（复审 P3 两档）
+constexpr float kTabTitleMaxW = 120.0f;
+constexpr float kActionGap = 8.0f;
+constexpr float kRightPad = 12.0f;
+constexpr uint32_t kFaXmark = 0xF00D;
+// 设置钮用 sliders（0xF1DE）不用 gear（0xF013）——FA gear 在 16px 下形似「光芒小圆」
+// 与亮暗切换图标混淆（老板 2026-11-05 实测，fontTools 实证字体含 sliders 字形）
+constexpr uint32_t kFaSliders = 0xF1DE;
+constexpr uint32_t kFaExpand = 0xF065;
+constexpr uint32_t kFaCompress = 0xF066;
+constexpr uint32_t kFaPlus = 0xF067;
+constexpr uint32_t kFaCircleExclamation = 0xF06A;
+constexpr uint32_t kFaCircleCheck = 0xF058;
+constexpr uint32_t kFaTerminal = 0xF120;
+const Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
+
+// ---- TermPerf 诊断（bug248 临时，UI 侧；删诊断时整块移除）：只累加计数，5s 一条
+struct TermPerfUi {
+    std::chrono::steady_clock::time_point lastLog{};
+    std::chrono::steady_clock::time_point lastCompose{};
+    bool hasLog = false;
+    bool hasCompose = false;
+    double pollMs = 0.0;
+    double pollMaxMs = 0.0;
+    double composeMs = 0.0;
+    double composeMaxMs = 0.0;
+    double gapMs = 0.0;
+    double gapMaxMs = 0.0;
+    int frames = 0;
+};
+
+TermPerfUi& termPerfUi() {
+    static TermPerfUi s;
+    return s;
+}
+
+float textWidth(const std::string& s, float size) {
+    return core::TextPrimitive::measureTextWidth(s, {}, size, 400);
+}
+
 } // namespace
 
 GridLayout TerminalPage::compose(
     eui::Ui& ui, const eui::Screen& screen, SessionController& controller,
     const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
     const std::function<void(const std::string&, bool paste)>& onTextInput,
-    const std::function<void(const std::string&)>& onCopyText) {
+    const std::function<void(const std::string&)>& onCopyText,
+    const std::function<void()>& onOpenSettings) {
+    // TermPerf（bug248）：compose 入口时间戳 + 与上次 compose 的帧间隔
+    const auto composeT0 = std::chrono::steady_clock::now();
+    TermPerfUi& pf = termPerfUi();
+    if (pf.hasCompose) {
+        const double gap =
+            std::chrono::duration<double, std::milli>(composeT0 - pf.lastCompose).count();
+        pf.gapMs += gap;
+        pf.gapMaxMs = std::max(pf.gapMaxMs, gap);
+    }
+    pf.lastCompose = composeT0;
+    pf.hasCompose = true;
+
     const auto& t = core::theme::current();
     GridLayout layout;
     layout.rows = 0;
@@ -30,57 +95,151 @@ GridLayout TerminalPage::compose(
         fullscreenInit_ = true;
         fullscreen_ = std::getenv("DEVDESK_TERMINAL_FULLSCREEN") != nullptr;
     }
-    const float gridTop = fullscreen_ ? 0.0f : kToolbarH;
-    const float bodyH = screen.height - gridTop;
 
-    controller.poll();
-    const platform::TerminalFrame& frame = controller.frame();
-    const int sb = controller.scrollbackCount();
+    metrics_ = terminalCellMetrics(fontSize_);
+    const float cellW = metrics_.cellW;
+    const float cellH = metrics_.cellH;
+
+    const auto pollT0 = std::chrono::steady_clock::now();
+    controller.pollAll();
+    const double pollMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pollT0)
+            .count();
+    pf.pollMs += pollMs; // TermPerf（bug248）：全会话 snapshot 总耗时
+    pf.pollMaxMs = std::max(pf.pollMaxMs, pollMs);
+    if (controller.activeIndex() != lastActiveIndex_) {
+        // 切换会话：选区行列锚在旧会话可视网格上，跨会话无效；滚动余量同理。
+        // tabScroll_ 不清（P3-3）：TAB 栏横滚是栏视口态非会话态，切会话保位
+        lastActiveIndex_ = controller.activeIndex();
+        selecting_ = false;
+        hasSelection_ = false;
+        scrollRemainder_ = 0.0f;
+    }
+    Session* act = controller.active();
+    const int sessionCount = controller.count();
+    const int sb = controller.activeScrollbackCount();
+    if (sessionCount < lastTabCount_) {
+        // 关 TAB 后索引左移/越界，hover 记忆指向错 TAB（P3-6）：瞬态直接清除
+        hoveredTabIndex_ = -1;
+        hoveredCloseIndex_ = -1;
+    }
+    lastTabCount_ = sessionCount;
+
+    // 全屏 = 侧栏 0 宽全隐（clue92 终裁，72px 折叠已作废），TAB 栏带保留 → gridTop 恒 44
+    const float gridTop = kToolbarH;
+    const float bodyH = std::max(0.0f, screen.height - gridTop);
+
+    // ---- 右动作组几何（顺序写死 §4.2：分隔线→设置→全屏切换→新建；进/退全屏同槽位
+    // 纯图标钮位置不换——老板 2026-11-05 裁决，设计 §4.2「两套视觉/退出胶囊」作废）
+    const bool narrowWindow = screen.width < 720.0f;
+    const float titleFs = core::theme::scaled(14.0f);
+    const float detailFs = core::theme::scaled(12.0f);
+    const float newLabelW = textWidth("新建", titleFs);
+    const float newBtnW = narrowWindow ? 32.0f : 12.0f + 14.0f + 6.0f + newLabelW + 12.0f;
+    float sepX = 0.0f, gearX = 0.0f, midX = 0.0f, rightX = 0.0f;
+    {
+        // 从右缘向左排（两态一致）：新建（right）→ 全屏切换 32 图标钮（mid）→ 设置 → 分隔线
+        float x = screen.width - kRightPad;
+        rightX = x - newBtnW;
+        x = rightX - kActionGap;
+        midX = x - 32.0f;
+        x = midX - kActionGap;
+        gearX = x - 32.0f;
+        x = gearX - kActionGap;
+        sepX = x - 1.0f;
+    }
+    const float tabAreaX = 8.0f;
+    const float tabAreaW = std::max(0.0f, sepX - kActionGap - tabAreaX);
+
+    // ---- TAB 几何规划（内容自适应 clamp[120,200]；溢出走横滚偏移）
+    std::vector<float> tabW(static_cast<size_t>(sessionCount), 0.0f);
+    float tabsTotalW = 0.0f;
+    for (int i = 0; i < sessionCount; i++) {
+        const Session* s = controller.at(i);
+        const std::string title = "终端 " + std::to_string(s ? s->titleNumber : i + 1);
+        const float titleW = std::min(textWidth(title, titleFs) + 2.0f, kTabTitleMaxW);
+        float w = 12.0f + 8.0f + 6.0f + titleW + 6.0f + 16.0f + 12.0f;
+        w = std::clamp(w, narrowWindow ? kTabMinWNarrow : kTabMinW, kTabMaxW);
+        tabW[static_cast<size_t>(i)] = w;
+        tabsTotalW += w + (i > 0 ? kTabGap : 0.0f);
+    }
+    const float maxTabScroll = std::max(0.0f, tabsTotalW - tabAreaW);
+    tabScroll_ = std::clamp(tabScroll_, 0.0f, maxTabScroll);
+
+    const platform::TerminalFrame emptyFrame;
+    const platform::TerminalFrame& frame = act ? act->frame : emptyFrame;
     const int totalLines = sb + frame.rows;
-    // 单根 stack：绝对坐标层叠（顶层=页面坐标系，非自动 flow——bug:124 根因）
+
     ui.stack("term.root")
         .size(screen.width, screen.height)
         .content([&] {
-            // 层 0：终端底（设计 §3.2：暗 #1A1816=background token；亮=surface 白卡）
+            // 层 0：容器卡（唯一卡面，glassFill 单一来源；TAB 栏带=卡的上段，§3 一张卡两段式）
             ui.rect("term.bg")
                 .size(screen.width, screen.height)
+                .color(ui_kit::glassFill(t));
+
+            // 层 0.5：网格底（文字区实色，可读性优先 §3 层2b）
+            ui.rect("term.gridbg")
+                .position(0.0f, gridTop)
+                .size(screen.width, bodyH)
                 .color(t.isDark ? t.colors.background : t.colors.surface);
 
-            // 层 1：网格体
+            // 层 0.6：TAB 栏带/网格区分割线
+            ui.rect("term.divider")
+                .position(0.0f, gridTop - 1.0f)
+                .size(screen.width, 1.0f)
+                .color(t.colors.borderDefault);
+
+            // 层 1：网格体（逐 run 定位，真实度量）
             ui.column("term.body")
                 .width(screen.width)
                 .height(bodyH)
                 .margin(0.0f, gridTop, 0.0f, 0.0f)
                 .content([&] {
                     grid_.compose(
-                        ui, frame, sb, scrollOffset_, screen.width, bodyH, t.isDark,
+                        ui, frame, sb, act ? act->scrollOffset : 0, screen.width, bodyH, t.isDark,
+                        metrics_,
                         [&controller](int idx, std::string& out) {
-                            return controller.scrollbackLine(idx, out);
+                            return controller.activeScrollbackLine(idx, out);
                         },
                         layout);
                 });
-            pendingRows_ = layout.rows;
-            pendingCols_ = layout.cols;
+            // resize 量化：激活会话与视口行列不一致时回填（切换会话也自动补 resize）
+            if (act != nullptr && layout.rows > 0 &&
+                (act->rows != layout.rows || act->cols != layout.cols)) {
+                pendingRows_ = layout.rows;
+                pendingCols_ = layout.cols;
+            } else {
+                pendingRows_ = 0;
+                pendingCols_ = 0;
+            }
 
-            // 层 2：交互层（拖选/滚轮/键盘/IME）——近透明可点击，浮于网格行上。
-            // 坐标：Press/Release=物理（除 scale），Move=逻辑（input_types.h 契约）
+            // 行/列 → 逻辑像素（选区/IME/光标共用；真实 cell 度量——bug243/245 错位根因）
+            const float gridTopV = gridTop;
+            const float cellHV = cellH;
+            const auto rowOf = [gridTopV, cellHV](double logicalY) {
+                return static_cast<int>((logicalY - gridTopV) / cellHV);
+            };
+            const auto colOf = [cellW](double logicalX) {
+                return std::max(0, static_cast<int>(logicalX / cellW));
+            };
+            // Press/Release=物理（除 scale），Move=逻辑（input_types.h 契约）——统一折算
+            // 到逻辑坐标再进 rowOf/colOf
             auto toLogical = [](const eui::PointerEvent& e) {
                 const double s = e.scale > 0.0 ? static_cast<double>(e.scale) : 1.0;
                 const bool physical = e.space != eui::PointerSpace::Logical;
                 return std::pair<double, double>(physical ? e.x / s : e.x,
                                                  physical ? e.y / s : e.y);
             };
-            const auto rowOf = [&](double logicalY) {
-                return static_cast<int>((logicalY - gridTop) / (fontSize_ * 1.25f));
-            };
-            const auto colOf = [&](double logicalX) {
-                return std::max(0, static_cast<int>(logicalX / (fontSize_ * 0.6f)));
-            };
+            SessionController* ctrl = &controller;
+
+            // 层 2：交互层（IBeam 文本光标，bug243 现象 1；拖选/滚轮/键盘/IME）
             ui.rect("term.input")
                 .size(screen.width, bodyH)
                 .margin(0.0f, gridTop, 0.0f, 0.0f)
                 .color(Color{0, 0, 0, 0.01f})
-                .onPress([&](const eui::PointerEvent& e, const eui::Rect&) {
+                .onPress([this, ctrl, toLogical, rowOf, colOf](const eui::PointerEvent& e,
+                                                              const eui::Rect&) {
                     auto [lx, ly] = toLogical(e);
                     selecting_ = true;
                     hasSelection_ = false;
@@ -89,14 +248,15 @@ GridLayout TerminalPage::compose(
                     selHRow_ = selARow_;
                     selHCol_ = selACol_;
                 })
-                .onMove([&](const eui::PointerEvent& e, const eui::Rect&) {
+                .onMove([this, rowOf, colOf](const eui::PointerEvent& e, const eui::Rect&) {
                     if (!selecting_) return false;
                     selHRow_ = rowOf(e.y);
                     selHCol_ = colOf(e.x);
                     hasSelection_ = true;
                     return true;
                 })
-                .onRelease([&](const eui::PointerEvent& e, const eui::Rect&) {
+                .onRelease([this, toLogical, rowOf, colOf](const eui::PointerEvent& e,
+                                                          const eui::Rect&) {
                     if (!selecting_) return;
                     selecting_ = false;
                     auto [lx, ly] = toLogical(e);
@@ -104,39 +264,41 @@ GridLayout TerminalPage::compose(
                     selHCol_ = colOf(lx);
                     hasSelection_ = !(selARow_ == selHRow_ && selACol_ == selHCol_);
                 })
-                .onScroll([this, &controller](const core::ScrollEvent& e) {
+                .onScroll([this, ctrl, cellHV](const core::ScrollEvent& e) {
+                    Session* s = ctrl->active();
+                    if (s == nullptr) return;
                     scrollRemainder_ += static_cast<float>(e.y);
-                    const float cellH = fontSize_ * 1.25f;
-                    const int lines = static_cast<int>(scrollRemainder_ / cellH);
+                    const int lines = static_cast<int>(scrollRemainder_ / cellHV);
                     if (lines == 0) return;
-                    scrollRemainder_ -= lines * cellH;
-                    const int maxOffset = std::max(0, controller.scrollbackCount());
-                    scrollOffset_ = std::clamp(scrollOffset_ - lines, 0, maxOffset);
-                    // 滚动即清选区：选区行列锚在拖选时可视网格上，滚动后 startLine
-                    // 漂移会使旧行列号指向错行（重锚复杂度不值；终端惯例=滚动放弃选择）
+                    scrollRemainder_ -= static_cast<float>(lines) * cellHV;
+                    const int maxOffset = ctrl->activeScrollbackCount();
+                    s->scrollOffset = std::clamp(s->scrollOffset - lines, 0, maxOffset);
+                    // 滚动即清选区：选区行列锚在拖选时可视网格上（终端惯例）
                     hasSelection_ = false;
                     selecting_ = false;
                 })
-                .onKeyEvent([&controller, &onKeyBytes, &onCopyText, &totalLines, &layout, this](
-                          const eui::KeyEvent& e) {
+                .onKeyEvent([this, ctrl, onKeyBytes, onCopyText,
+                             layout](const eui::KeyEvent& e) {
                     if (!e.isDown()) return false;
                     // Ctrl+C 二象性（技术卡 v2 决策 4/§5）：win 惯例且选区非空 → 复制并吞
-                    // 事件；无选区/mac 惯例 → keyencoder 语义（\x03 中断，encodeKey 同值）
+                    // 事件；无选区/mac 惯例 → keyencoder 语义（\x03 中断）
                     if (e.modifiers.control && e.key == eui::InputKey::C) {
                         std::string bytes;
                         if (terminal::encodeCtrlC(platform::terminalKeyConventions(),
                                                   hasSelection_, e.modifiers.shift, bytes)) {
-                            // P1-3②：拖选行列是可视行——滚动即清选区（onScroll），非滚动
-                            // 态可视行=网格行；滚动态按 frameRow 映射，越界段裁掉（不复制，
-                            // 落回中断语义）——selectionText 只服务当前可视网格
+                            // P3-2：映射全用事件期现值——compose 捕获的 totalLines 在
+                            // 新输出（scrollback push）后已过期，选区行号会被平移
+                            Session* sNow = ctrl->active();
+                            const int sbNow = ctrl->activeScrollbackCount();
+                            const int totalNow = sbNow + (sNow ? sNow->frame.rows : 0);
                             const int startLine =
-                                std::max(0, totalLines - layout.rows - scrollOffset_);
-                            const int sbNow = controller.scrollbackCount();
+                                std::max(0, totalNow - layout.rows -
+                                                (sNow ? sNow->scrollOffset : 0));
                             const int fR0 = selARow_ + startLine - sbNow;
                             const int fR1 = selHRow_ + startLine - sbNow;
                             std::string sel;
                             if (fR0 >= 0 && fR1 >= 0 && fR1 < layout.rows &&
-                                controller.selectionText(fR0, selACol_, fR1, selHCol_, sel)) {
+                                ctrl->activeSelectionText(fR0, selACol_, fR1, selHCol_, sel)) {
                                 onCopyText(sel);
                                 return true;
                             }
@@ -151,186 +313,517 @@ GridLayout TerminalPage::compose(
                     }
                     std::string bytes;
                     if (terminal::encodeKey(e.key, e.modifiers, bytes)) {
-                        onKeyBytes(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                   static_cast<int32_t>(bytes.size()));
+                        ctrl->writeToActive(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                            static_cast<int32_t>(bytes.size()));
                         return true;
                     }
                     return false;
                 })
-                .onTextInput([&onTextInput](const eui::TextInputEvent& e) {
+                .onTextInput([ctrl, onTextInput](const eui::TextInputEvent& e) {
                     if (!e.text.empty()) onTextInput(e.text, false);
                     if (!e.pasteText.empty()) onTextInput(e.pasteText, true);
-                });
+                })
+                // IBeam 必须在全部 on* 绑定之后设置——dsl 的交互绑定会把 cursor 置
+                // Hand（dsl.h on* 通道），后设覆盖先设（bug243 现象 1 根修）
+                .cursor(eui::CursorShape::IBeam);
 
-            // 层 3：选区高亮 rects（可视行段；primary α0.30 暗 / α0.18 亮，§3.3）。
-            // 列→像素按 cell.width 折算：半角 1 格、宽字 2 格（CJK 精确列布局，不做近似）
-            const auto cellX = [&frame](int row, int col, float cw) {
-                float x = 0;
-                if (row >= 0 && row < frame.rows &&
-                    static_cast<size_t>(row) * frame.cols < frame.cells.size()) {
-                    const platform::TerminalCell* r =
-                        &frame.cells[static_cast<size_t>(row) * frame.cols];
-                    for (int c = 0; c < col && c < frame.cols; c++) {
-                        x += std::max(1, static_cast<int>(r[c].width)) * cw;
-                    }
-                } else {
-                    x = static_cast<float>(col) * cw;
-                }
-                return x;
-            };
-            const auto cellSpan = [&frame](int row, int c0, int c1, float cw) {
-                float w = 0;
-                if (row >= 0 && row < frame.rows &&
-                    static_cast<size_t>(row) * frame.cols < frame.cells.size()) {
-                    const platform::TerminalCell* r =
-                        &frame.cells[static_cast<size_t>(row) * frame.cols];
-                    for (int c = c0; c < c1 && c < frame.cols; c++) {
-                        w += std::max(1, static_cast<int>(r[c].width)) * cw;
-                    }
-                } else {
-                    w = static_cast<float>(c1 - c0) * cw;
-                }
-                return w;
-            };
-            if (hasSelection_) {
-                const float cellW = fontSize_ * 0.6f;
-                const float cellH = fontSize_ * 1.25f;
+            // 层 3：选区高亮 rects（primary α0.30 暗 / α0.18 亮；列→像素按 width 折算）
+            if (hasSelection_ && act != nullptr && !frame.cells.empty() && frame.cols > 0) {
                 const int top = std::min(selARow_, selHRow_);
                 const int bottom = std::max(selARow_, selHRow_);
                 const float selAlpha = t.isDark ? 0.30f : 0.18f;
+                const int startLine = std::max(0, totalLines - layout.rows - act->scrollOffset);
                 for (int r = std::max(top, 0); r <= bottom && r < layout.rows; r++) {
                     const int c0 = (r == top) ? std::min(selACol_, selHCol_) : 0;
                     const int c1 =
                         (r == bottom) ? std::max(selACol_, selHCol_) : std::max(1, layout.cols);
                     if (c1 <= c0) continue;
-                    const int frameRow = r + std::max(0, totalLines - layout.rows - scrollOffset_) - sb;
+                    const int frameRow = r + startLine - sb;
+                    if (frameRow < 0 || frameRow >= frame.rows) continue;
+                    const platform::TerminalCell* row =
+                        &frame.cells[static_cast<size_t>(frameRow) * frame.cols];
                     ui.rect("term.sel." + std::to_string(r))
-                        .size(cellSpan(frameRow, c0, c1, cellW), cellH)
-                        .margin(cellX(frameRow, c0, cellW),
-                                gridTop + static_cast<float>(r) * cellH, 0.0f, 0.0f)
+                        .position(cellXOf(row, frame.cols, c0, cellW),
+                                  gridTop + static_cast<float>(r) * cellH)
+                        .size(cellSpanOf(row, frame.cols, c0, c1, cellW), cellH)
                         .color(Color{t.colors.primary.r, t.colors.primary.g, t.colors.primary.b,
                                      selAlpha});
                 }
             }
 
-            // 层 4：IME 锚定（POC-5 收尾）：光标 cell 可视坐标上报 imeRect
-            if (!frame.cells.empty() && layout.rows > 0) {
-                const float cellW = fontSize_ * 0.6f;
-                const float cellH = fontSize_ * 1.25f;
-                const int startLine = std::max(0, totalLines - layout.rows - scrollOffset_);
-                const int visRow = (sb + frame.cursorRow) - startLine;
-                if (visRow >= 0 && visRow < layout.rows) {
-                    const int frameRow = visRow + startLine - sb;
-                    const float ix = cellX(frameRow, frame.cursorCol, cellW);
-                    const float iy = gridTop + static_cast<float>(visRow) * cellH;
-                    ui.rect("term.ime.anchor")
+            // 层 3.5：光标块（Running 且光标在可视区；静态块——IME 验收锚位）
+            if (act != nullptr && act->state == SessionState::Running && !frame.cells.empty() &&
+                frame.cols > 0 && layout.rows > 0) {
+                const int visRow = (sb + frame.cursorRow) -
+                                   std::max(0, totalLines - layout.rows - act->scrollOffset);
+                if (visRow >= 0 && visRow < layout.rows && frame.cursorCol < frame.cols) {
+                    const platform::TerminalCell* crow =
+                        &frame.cells[static_cast<size_t>(
+                                         std::min(frame.cursorRow, frame.rows - 1)) *
+                                     frame.cols];
+                    ui.rect("term.cursor")
+                        .position(cellXOf(crow, frame.cols, frame.cursorCol, cellW),
+                                  gridTop + static_cast<float>(visRow) * cellH)
                         .size(cellW, cellH)
-                        .margin(ix, iy, 0.0f, 0.0f)
-                        .color(Color{0, 0, 0, 0})
-                        .imeRect(ix, iy, cellW, cellH);
+                        .color(Color{t.colors.textPrimary.r, t.colors.textPrimary.g,
+                                     t.colors.textPrimary.b, 0.35f});
                 }
             }
 
-            // 层 5：工具栏 44px（全屏态隐藏，F-05）
-            if (!fullscreen_) {
-                std::string badge = "待启动";
-                Color badgeColor = t.colors.textSecondary;
-                switch (controller.state()) {
-                    case SessionState::Running: badge = "运行中"; badgeColor = t.colors.primary; break;
-                    case SessionState::Exited:
-                        badge = "已结束 (" + std::to_string(controller.exitCode()) + ")";
-                        break;
-                    case SessionState::Failed: badge = "启动失败"; badgeColor = t.colors.error; break;
-                    case SessionState::Idle: break;
+            // 层 4：IME 锚定：光标 cell 可视坐标上报 imeRect（真实度量，bug245）
+            if (act != nullptr && !frame.cells.empty() && layout.rows > 0 && frame.cols > 0) {
+                const int startLine = std::max(0, totalLines - layout.rows - act->scrollOffset);
+                const int visRow = (sb + frame.cursorRow) - startLine;
+                if (visRow >= 0 && visRow < layout.rows && frame.cursorCol < frame.cols) {
+                    const int frameRow = visRow + startLine - sb;
+                    const platform::TerminalCell* row =
+                        frameRow >= 0 && frameRow < frame.rows
+                            ? &frame.cells[static_cast<size_t>(frameRow) * frame.cols]
+                            : nullptr;
+                    const float ix = cellXOf(row, frame.cols, frame.cursorCol, cellW);
+                    const float iy = gridTop + static_cast<float>(visRow) * cellH;
+                    // ImeTrace 段1（bug245 临时诊断，≤30 条；光标变位或每 120 帧一条，
+                    // 与段2/3 同落 ime-trace.log 对齐阅读）
+                    {
+                        static int imeTraceN = 0;
+                        static int imeTraceFrame = 0;
+                        static int lastCr = -1;
+                        static int lastCc = -1;
+                        static int lastSb = -1;
+                        ++imeTraceFrame;
+                        const bool changed = frame.cursorRow != lastCr ||
+                                             frame.cursorCol != lastCc ||
+                                             act->scrollOffset != lastSb;
+                        if (imeTraceN < 30 && (changed || imeTraceFrame % 120 == 0)) {
+                            ++imeTraceN;
+                            lastCr = frame.cursorRow;
+                            lastCc = frame.cursorCol;
+                            lastSb = act->scrollOffset;
+                            char line[192];
+                            std::snprintf(line, sizeof(line),
+                                          "ImeTrace: src ix=%.1f iy=%.1f cellW=%.2f cellH=%.2f "
+                                          "cursorRow=%d cursorCol=%d scrollOffset=%d",
+                                          static_cast<double>(ix), static_cast<double>(iy),
+                                          static_cast<double>(cellW), static_cast<double>(cellH),
+                                          frame.cursorRow, frame.cursorCol, act->scrollOffset);
+                            eui_ime_trace_log(line);
+                        }
+                    }
+                    // P1-2：imeRect 是 element.frame 之上的偏移（runtime_geometry.h
+                    // 最终矩形=frame+imeRect 再过变换），position 已把坐标编进 frame
+                    // ——再传 (ix,iy) 即双计，候选窗飞出光标区。偏移恒 (0,0,cellW,cellH)
+                    ui.rect("term.ime.anchor")
+                        .position(ix, iy)
+                        .size(cellW, cellH)
+                        .color(kTransparent)
+                        .imeRect(0.0f, 0.0f, cellW, cellH);
                 }
-                ui.text("term.title")
-                    .size(56.0f, core::theme::scaled(20.0f))
-                    .margin(t.sizes.spacingLarge, 12.0f, 0.0f, 0.0f)
-                    .text("终端")
-                    .fontSize(14.0f)
-                    .color(t.colors.textPrimary);
-                ui.text("term.badge")
-                    .size(130.0f, core::theme::scaled(20.0f))
-                    .margin(72.0f, 12.0f, 0.0f, 0.0f)
-                    .text(badge)
-                    .fontSize(12.0f)
-                    .color(badgeColor);
-                ui.text("term.new")
-                    .size(70.0f, core::theme::scaled(20.0f))
-                    .margin(screen.width - 220.0f, 12.0f, 0.0f, 0.0f)
-                    .text("+ 新建")
-                    .fontSize(12.0f)
-                    .color(t.colors.textPrimary)
-                    .onClick([&controller]() { controller.startNew(); });
-                ui.text("term.fullscreen")
-                    .size(28.0f, core::theme::scaled(20.0f))
-                    .margin(screen.width - 44.0f, 12.0f, 0.0f, 0.0f)
-                    .text("\uF065")  // fa-expand（字形核验项 §13）
-                    .fontSize(12.0f)
+            }
+
+            // 层 5：TAB 栏带 44px（全屏保留）
+            {
+                // 分隔竖线
+                ui.rect("term.act.sep")
+                    .position(sepX, (kToolbarH - 20.0f) * 0.5f)
+                    .size(1.0f, 20.0f)
+                    .color(t.colors.borderDefault);
+
+                // 设置（32×32 图标钮；导航到全局设置页——模块经 core::appRouter 跳转，
+                // module 间零依赖）
+                ui.rect("term.act.gear.bg")
+                    .position(gearX, (kToolbarH - 32.0f) * 0.5f)
+                    .size(32.0f, 32.0f)
+                    .radius(6.0f)
+                    .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                    .onClick([onOpenSettings]() {
+                        if (onOpenSettings) onOpenSettings();
+                    });
+                ui.text("term.act.gear.icon")
+                    .position(gearX, (kToolbarH - 32.0f) * 0.5f)
+                    .size(32.0f, 32.0f)
+                    .icon(kFaSliders)
+                    .fontSize(core::theme::scaled(16.0f))
                     .color(t.colors.textSecondary)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center);
+
+                // 全屏切换钮（纯图标，进/退同槽位同尺寸，只切图标——老板 2026-11-05 裁决）
+                ui.rect("term.act.fs.bg")
+                    .position(midX, (kToolbarH - 32.0f) * 0.5f)
+                    .size(32.0f, 32.0f)
+                    .radius(6.0f)
+                    .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
                     .onClick([this]() { toggleFullscreen(); });
-            } else {
-                // 悬浮退出钮：右上 28/28 半透（设计 §4.2 16/16 参数，近似实现）
-                ui.rect("term.exit.fab")
-                    .size(28.0f, 28.0f)
-                    .margin(screen.width - 44.0f, 16.0f, 0.0f, 0.0f)
-                    .color(Color{1.0f, 1.0f, 1.0f, 0.35f})
-                    .onClick([this]() { toggleFullscreen(); });
-                ui.text("term.exit.icon")
-                    .size(28.0f, core::theme::scaled(20.0f))
-                    .margin(screen.width - 44.0f, 20.0f, 0.0f, 0.0f)
-                    .text("\uF06E")  // fa-compress
-                    .fontSize(12.0f)
-                    .color(t.colors.textPrimary);
+                ui.text("term.act.fs.icon")
+                    .position(midX, (kToolbarH - 32.0f) * 0.5f)
+                    .size(32.0f, 32.0f)
+                    .icon(fullscreen_ ? kFaCompress : kFaExpand)
+                    .fontSize(core::theme::scaled(16.0f))
+                    .color(t.colors.textSecondary)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center);
+
+                // + 新建主按钮（唯一鲜艳色；窄窗收缩 32×32 图标钮 §8）。
+                // 两态恒锚动作组最右（rightX）——全屏切换钮固定 mid 槽后位置不再互换
+                {
+                    const float newX = rightX;
+                    const std::string bgId = "term.act.new";
+                    ui.rect(bgId + ".bg")
+                        .position(newX, kTabY)
+                        .size(newBtnW, kTabH)
+                        .radius(6.0f)
+                        .states(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                        .onClick([ctrl]() { ctrl->startSession(); });
+                    if (narrowWindow) {
+                        ui.text(bgId + ".icon")
+                            .position(newX, kTabY)
+                            .size(32.0f, kTabH)
+                            .icon(kFaPlus)
+                            .fontSize(core::theme::scaled(16.0f))
+                            .color(t.colors.onPrimary)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .verticalAlign(eui::VerticalAlign::Center);
+                    } else {
+                        ui.text(bgId + ".icon")
+                            .position(newX + 12.0f, kTabY)
+                            .size(14.0f, kTabH)
+                            .icon(kFaPlus)
+                            .fontSize(core::theme::scaled(14.0f))
+                            .color(t.colors.onPrimary)
+                            .verticalAlign(eui::VerticalAlign::Center);
+                        ui.text(bgId + ".label")
+                            .position(newX + 12.0f + 14.0f + 6.0f, kTabY)
+                            .size(newLabelW + 4.0f, kTabH)
+                            .text("新建")
+                            .fontSize(titleFs)
+                            .color(t.colors.onPrimary)
+                            .verticalAlign(eui::VerticalAlign::Center);
+                    }
+                }
+
+                // TAB 区（clip 横滚；空白区滚轮横滚）
+                if (sessionCount > 0) {
+                    ui.rect("term.tabs.scroll")
+                        .position(tabAreaX, 0.0f)
+                        .size(tabAreaW, kToolbarH)
+                        .color(kTransparent)
+                        .onScroll([this](const core::ScrollEvent& e) {
+                            tabScroll_ += static_cast<float>(e.y) * 24.0f;
+                            tabScroll_ = std::max(0.0f, tabScroll_);
+                        })
+                        .cursor(eui::CursorShape::Arrow);
+                }
+                ui.stack("term.tabs.clip")
+                    .position(tabAreaX, kTabY)
+                    .size(tabAreaW, kTabH)
+                    .clip()
+                    .content([&] {
+                        float x = -tabScroll_;
+                        for (int i = 0; i < sessionCount; i++) {
+                            const Session* s = controller.at(i);
+                            const bool isActive = i == controller.activeIndex();
+                            const float w = tabW[static_cast<size_t>(i)];
+                            if (x + w > 0.0f && x < tabAreaW) {
+                                const std::string id = "term.tab." + std::to_string(i);
+                                const std::string title =
+                                    "终端 " + std::to_string(s ? s->titleNumber : i + 1);
+                                const float titleW = std::min(
+                                    textWidth(title, titleFs) + 2.0f, kTabTitleMaxW);
+                                ui.stack(id)
+                                    .position(x, 0.0f)
+                                    .size(w, kTabH)
+                                    .content([&, id, i, w, isActive, title, titleW, s] {
+                                        // TAB 底（激活=surface 实色+1px 边+底缘绿条；
+                                        // 非激活=透明/hover/press 三态）
+                                        ui.rect(id + ".bg")
+                                            .size(w, kTabH)
+                                            .radius(6.0f)
+                                            .border(isActive ? 1.0f : 0.0f,
+                                                    isActive ? t.colors.borderDefault
+                                                             : kTransparent)
+                                            .states(isActive
+                                                        ? (t.isDark ? t.colors.surface
+                                                                    : t.colors.surface)
+                                                        : kTransparent,
+                                                    isActive ? (t.isDark ? t.colors.surface
+                                                                         : t.colors.surface)
+                                                             : t.colors.hover,
+                                                    isActive
+                                                        ? (t.isDark ? t.colors.surface
+                                                                    : t.colors.surface)
+                                                        : t.colors.primarySoftBg)
+                                            .onHover([this, i](bool h) {
+                                                if (h) hoveredTabIndex_ = i;
+                                                else if (hoveredTabIndex_ == i) hoveredTabIndex_ = -1;
+                                            })
+                                            .onClick([ctrl, i]() { ctrl->setActive(i); });
+                                        if (isActive) {
+                                            ui.rect(id + ".bar")
+                                                .position(0.0f, kTabH - 2.0f)
+                                                .size(w, 2.0f)
+                                                .radius(1.0f)
+                                                .color(t.colors.primary);
+                                        }
+                                        // 状态点 8×8（绿=运行/空心=待启动/灰=结束/红=失败）
+                                        const Color dotColor =
+                                            s == nullptr ? t.colors.textTertiary
+                                            : s->state == SessionState::Running ? t.colors.primary
+                                            : s->state == SessionState::Failed ? t.colors.error
+                                            : s->state == SessionState::Exited
+                                                ? t.colors.textTertiary
+                                                : kTransparent;
+                                        ui.rect(id + ".dot")
+                                            .position(12.0f, (kTabH - 8.0f) * 0.5f)
+                                            .size(8.0f, 8.0f)
+                                            .radius(4.0f)
+                                            .border(s != nullptr &&
+                                                            s->state == SessionState::Idle
+                                                        ? 1.0f
+                                                        : 0.0f,
+                                                    s != nullptr &&
+                                                            s->state == SessionState::Idle
+                                                        ? t.colors.textTertiary
+                                                        : kTransparent)
+                                            .color(dotColor);
+                                        // 标题（激活 textPrimary / 非激活 textSecondary）
+                                        ui.text(id + ".title")
+                                            .position(12.0f + 8.0f + 6.0f, 0.0f)
+                                            .size(titleW, kTabH)
+                                            .text(title)
+                                            .fontSize(titleFs)
+                                            .overflow(core::TextOverflow::Ellipsis)
+                                            .color(isActive ? t.colors.textPrimary
+                                                            : t.colors.textSecondary)
+                                            .verticalAlign(eui::VerticalAlign::Center);
+                                        // 关闭钮视觉 16×16（激活常显/非激活 hover 淡入；
+                                        // 红警示 §4.1.3 只看关闭钮自身 hover——P2-5：
+                                        // 悬停 TAB 其余区域不得红，红底由 hit 三态自带）
+                                        const bool closeVisible =
+                                            isActive || hoveredTabIndex_ == i ||
+                                            hoveredCloseIndex_ == i;
+                                        const bool closeHover = hoveredCloseIndex_ == i;
+                                        if (closeVisible) {
+                                            ui.text(id + ".close.icon")
+                                                .position(w - 12.0f - 16.0f,
+                                                          (kTabH - 16.0f) * 0.5f)
+                                                .size(16.0f, 16.0f)
+                                                .icon(kFaXmark)
+                                                .fontSize(core::theme::scaled(10.0f))
+                                                .color(closeHover ? t.colors.errorText
+                                                                  : t.colors.textTertiary)
+                                                .horizontalAlign(eui::HorizontalAlign::Center)
+                                                .verticalAlign(eui::VerticalAlign::Center);
+                                        }
+                                        // 关闭钮独立命中区 20×20（z 序最上，点击不触发切换；
+                                        // hover 独立维护，不与 TAB hover 互写）
+                                        ui.rect(id + ".close.hit")
+                                            .position(w - 12.0f - 16.0f - 2.0f,
+                                                      (kTabH - 20.0f) * 0.5f)
+                                            .size(20.0f, 20.0f)
+                                            .states(kTransparent,
+                                                    Color{t.colors.error.r, t.colors.error.g,
+                                                          t.colors.error.b, 0.10f},
+                                                    Color{t.colors.error.r, t.colors.error.g,
+                                                          t.colors.error.b, 0.18f})
+                                            .onHover([this, i](bool h) {
+                                                if (h) hoveredCloseIndex_ = i;
+                                                else if (hoveredCloseIndex_ == i)
+                                                    hoveredCloseIndex_ = -1;
+                                            })
+                                            .onClick([ctrl, i]() { ctrl->closeSession(i); });
+                                    });
+                            }
+                            x += w + kTabGap;
+                        }
+                    });
             }
 
-            // 层 6：覆盖卡（Exited/Failed）
-            if (controller.state() == SessionState::Exited ||
-                controller.state() == SessionState::Failed) {
+            // 层 6：空态（0 TAB，§4.5）
+            if (sessionCount == 0) {
+                const float iconY = gridTop + bodyH * 0.5f - 60.0f;
+                ui.text("term.empty.icon")
+                    .position(0.0f, iconY)
+                    .size(screen.width, 24.0f)
+                    .icon(kFaTerminal)
+                    .fontSize(24.0f)
+                    .color(t.colors.textTertiary)
+                    .horizontalAlign(eui::HorizontalAlign::Center);
+                ui.text("term.empty.text")
+                    .position(0.0f, iconY + 24.0f + 8.0f)
+                    .size(screen.width, 20.0f)
+                    .text("没有终端会话")
+                    .fontSize(core::theme::scaled(14.0f))
+                    .color(t.colors.textSecondary)
+                    .horizontalAlign(eui::HorizontalAlign::Center);
+                const float linkW = textWidth("+ 新建会话", core::theme::scaled(14.0f)) + 8.0f;
+                ui.text("term.empty.new")
+                    .position((screen.width - linkW) * 0.5f, iconY + 24.0f + 8.0f + 12.0f)
+                    .size(linkW, 20.0f)
+                    .text("+ 新建会话")
+                    .fontSize(core::theme::scaled(14.0f))
+                    .color(t.colors.primaryText)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .onClick([ctrl]() { ctrl->startSession(); });
+            }
+
+            // 层 7：覆盖卡（激活会话 Exited/Failed，§4.4；语义跟 TAB 走）
+            if (act != nullptr &&
+                (act->state == SessionState::Exited || act->state == SessionState::Failed)) {
+                const bool failed = act->state == SessionState::Failed;
+                const int activeIdx = controller.activeIndex();
                 const std::string title =
-                    controller.state() == SessionState::Exited
-                        ? "会话已结束，退出码 " + std::to_string(controller.exitCode())
-                        : "终端启动失败";
-                const std::string detail = controller.state() == SessionState::Failed
-                                               ? controller.errorMessage()
-                                               : "输出已保留，可重新开始或新建会话";
-                const float cx = (screen.width - 320.0f) / 2.0f;
-                const float cy = (bodyH - 140.0f) / 2.0f + gridTop;
+                    failed ? "终端启动失败"
+                           : "会话已结束，退出码 " + std::to_string(act->exitCode);
+                const std::string detail =
+                    failed ? (act->error.empty() ? "未知错误" : act->error)
+                           : "输出已保留，可重新开始或新建会话";
+                const float cardW = 360.0f, cardH = 148.0f;
+                const float cx = (screen.width - cardW) * 0.5f;
+                const float cy = gridTop + (bodyH - cardH) * 0.5f;
                 ui.rect("term.overlay.scrim")
-                    .size(screen.width, screen.height)
+                    .position(0.0f, gridTop)
+                    .size(screen.width, bodyH)
                     .color(Color{0.0f, 0.0f, 0.0f, 0.35f});
-                ui_kit::cardPanel(ui, "term.overlay.card", cx, cy, 320.0f, 140.0f,
+                ui_kit::cardPanel(ui, "term.overlay.card", cx, cy, cardW, cardH,
                                   t.sizes.radiusLarge, t);
                 ui.column("term.overlay.card.body")
-                    .width(320.0f)
-                    .height(140.0f)
+                    .width(cardW)
+                    .height(cardH)
                     .padding(cx + t.sizes.spacingLarge, cy + t.sizes.spacingLarge, 0.0f, 0.0f)
                     .content([&] {
-                        ui.text("term.overlay.title")
-                            .size(300.0f, core::theme::scaled(20.0f))
-                            .text(title)
-                            .fontSize(15.0f)
-                            .color(t.colors.textPrimary);
+                        ui.row("term.overlay.title.row")
+                            .size(cardW - 2.0f * t.sizes.spacingLarge, 22.0f)
+                            .gap(8.0f)
+                            .alignItems(eui::Align::CENTER)
+                            .content([&] {
+                                ui.text("term.overlay.icon")
+                                    .size(16.0f, 22.0f)
+                                    .icon(failed ? kFaCircleExclamation : kFaCircleCheck)
+                                    .fontSize(16.0f)
+                                    .color(failed ? t.colors.error : t.colors.textTertiary);
+                                ui.text("term.overlay.title")
+                                    .size(cardW - 2.0f * t.sizes.spacingLarge - 24.0f, 22.0f)
+                                    .text(title)
+                                    .fontSize(15.0f)
+                                    .color(t.colors.textPrimary);
+                            });
                         ui.text("term.overlay.detail")
-                            .size(300.0f, core::theme::scaled(18.0f))
+                            .size(cardW - 2.0f * t.sizes.spacingLarge,
+                                  core::theme::scaled(36.0f))
                             .text(detail)
-                            .fontSize(12.0f)
-                            .color(t.colors.textSecondary);
-                        ui.text("term.overlay.retry")
-                            .size(90.0f, core::theme::scaled(18.0f))
-                            .text(controller.state() == SessionState::Failed ? "重试"
-                                                                             : "重新开始")
-                            .fontSize(13.0f)
-                            .color(t.colors.primary)
-                            .onClick([&controller]() { controller.startNew(); });
+                            .fontSize(detailFs)
+                            .color(t.colors.textSecondary)
+                            .overflow(core::TextOverflow::Clip);
+                        // 按钮行：主（重新开始/重试）+ 次（关闭标签），§4.4
+                        const float btnH = 28.0f;
+                        const float retryLabelW =
+                            textWidth(failed ? "重试" : "重新开始", core::theme::scaled(13.0f));
+                        const float retryW = retryLabelW + 24.0f;
+                        const float closeLabelW =
+                            textWidth("关闭标签", core::theme::scaled(13.0f));
+                        const float closeW = closeLabelW + 24.0f;
+                        ui.row("term.overlay.btns")
+                            .size(cardW - 2.0f * t.sizes.spacingLarge, btnH)
+                            .gap(8.0f)
+                            .content([&] {
+                                ui.stack("term.overlay.retry.unit")
+                                    .size(retryW, btnH)
+                                    .content([&, retryW, failed] {
+                                        ui.rect("term.overlay.retry")
+                                            .size(retryW, btnH)
+                                            .radius(6.0f)
+                                            .states(t.colors.primary, t.colors.primaryHover,
+                                                    t.colors.primaryPressed)
+                                            .onClick([this, ctrl, activeIdx]() {
+                                                scrollRemainder_ = 0.0f; // P3-1：重启=全新输出流
+                                                ctrl->restartSession(activeIdx);
+                                            });
+                                        ui.text("term.overlay.retry.label")
+                                            .size(retryW, btnH)
+                                            .text(failed ? "重试" : "重新开始")
+                                            .fontSize(core::theme::scaled(13.0f))
+                                            .color(t.colors.onPrimary)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .verticalAlign(eui::VerticalAlign::Center);
+                                    });
+                                ui.stack("term.overlay.close.unit")
+                                    .size(closeW, btnH)
+                                    .content([&, closeW] {
+                                        ui.rect("term.overlay.close")
+                                            .size(closeW, btnH)
+                                            .radius(6.0f)
+                                            .states(t.isDark ? t.colors.hover
+                                                             : Color{0.95f, 0.95f, 0.95f, 1.0f},
+                                                    t.colors.hover, t.colors.hover)
+                                            .onClick([ctrl, activeIdx]() {
+                                                ctrl->closeSession(activeIdx);
+                                            });
+                                        ui.text("term.overlay.close.label")
+                                            .size(closeW, btnH)
+                                            .text("关闭标签")
+                                            .fontSize(core::theme::scaled(13.0f))
+                                            .color(t.colors.textPrimary)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .verticalAlign(eui::VerticalAlign::Center);
+                                    });
+                            });
                     });
+            }
+
+            // 层 8：按需出帧泵（bug249）：任一会话 Running 期间挂 1×1 onFrame 元素——
+            // EUI 契约 onFrame 每帧置 composeRequested/animating（runtime_update.h），
+            // reader 新输出因此自动重组上屏，无需点击唤醒；无 Running 会话不挂 →
+            // 空闲零空转。回调体空，重组由下一帧 compose（含 pollAll）完成。
+            bool anyRunning = false;
+            for (int i = 0; i < sessionCount; i++) {
+                const Session* s = controller.at(i);
+                if (s != nullptr && s->state == SessionState::Running) {
+                    anyRunning = true;
+                    break;
+                }
+            }
+            if (anyRunning) {
+                ui.rect("term.framepump")
+                    .position(0.0f, 0.0f)
+                    .size(1.0f, 1.0f)
+                    .color(kTransparent)
+                    .onFrame([](float) {});
             }
         });
 
+    // TermPerf UI 侧 5s 汇总（bug248 临时诊断）
+    {
+        const auto composeT1 = std::chrono::steady_clock::now();
+        const double ms =
+            std::chrono::duration<double, std::milli>(composeT1 - composeT0).count();
+        pf.composeMs += ms;
+        pf.composeMaxMs = std::max(pf.composeMaxMs, ms);
+        pf.frames++;
+        if (!pf.hasLog) {
+            pf.lastLog = composeT1;
+            pf.hasLog = true;
+        } else if (composeT1 - pf.lastLog >= std::chrono::seconds(5)) {
+            char line[256];
+            const double avgGap = pf.frames > 1 ? pf.gapMs / static_cast<double>(pf.frames - 1)
+                                                : 0.0;
+            std::snprintf(line, sizeof(line),
+                          "TermPerf: composeMs=%.1f maxComposeMs=%.1f frames=%d "
+                          "pollMs=%.1f maxPollMs=%.1f frameGapMs=%.1f/%.1f",
+                          pf.composeMs, pf.composeMaxMs, pf.frames, pf.pollMs, pf.pollMaxMs,
+                          avgGap, pf.gapMaxMs);
+            LOG_INFO(line);
+            pf.composeMs = 0.0;
+            pf.pollMs = 0.0;
+            pf.gapMs = 0.0;
+            pf.composeMaxMs = 0.0;
+            pf.pollMaxMs = 0.0;
+            pf.gapMaxMs = 0.0;
+            pf.frames = 0;
+            pf.lastLog = composeT1;
+        }
+    }
+
     // Cmd+C 兜底路径：module 级 onKeyEvent 捕 super+C → onCopyText（见 module_terminal.cpp）
-    (void)onKeyBytes;
-    (void)onTextInput;
-    (void)onCopyText;
     return layout;
 }
 

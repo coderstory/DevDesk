@@ -7,8 +7,8 @@
 
 namespace terminal {
 
-TerminalModule::TerminalModule() {
-    backend_ = platform::terminalBackendMac();
+TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
+    backend_ = injectedBackend != nullptr ? injectedBackend : platform::terminalBackendMac();
     controller_.setBackend(backend_);
 }
 
@@ -18,13 +18,18 @@ std::string TerminalModule::shortName() const { return "终端"; }
 std::string TerminalModule::iconGlyph() const { return "\xEF\x84\xA0"; }  // U+F120 fa-terminal
 
 void TerminalModule::ensureBackend() {
-    if (controller_.state() == terminal::SessionState::Idle) controller_.startNew();
+    if (controller_.empty()) controller_.startSession();
 }
 
 void TerminalModule::onPageEnter() { ensureBackend(); }
-void TerminalModule::onStart() { ensureBackend(); }
+// bug247：开机不建会话——onStart 不再 ensureBackend（应用启动不占 ConPTY 进程/
+// 不出「终端 1」）；首个会话由 onPageEnter 建（ensureBackend 内 empty 检查即幂等）
+void TerminalModule::onStart() {}
 void TerminalModule::onStop() {
-    controller_.stop();
+    // 全会话终止（模块停用=会话生命周期终点）；v2 多会话无单例句柄语义
+    while (!controller_.empty()) {
+        controller_.closeSession(0);
+    }
     if (page_.fullscreen()) {
         page_.toggleFullscreen();
         app::terminal_fullscreen::setCollapsed(false);
@@ -39,7 +44,7 @@ bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
         int r0 = page_.selARow(), c0 = page_.selACol();
         int r1 = page_.selHRow(), c1 = page_.selHCol();
         if (page_.hasSelection() &&
-            controller_.selectionText(r0, c0, r1, c1, text)) {
+            controller_.activeSelectionText(r0, c0, r1, c1, text)) {
             platform::clipboardCopyText(reinterpret_cast<const uint8_t*>(text.data()),
                                         static_cast<int32_t>(text.size()));
             return true;
@@ -49,29 +54,44 @@ bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
 }
 
 void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
-    // 可用性（OS<1809 → controller.startNew 前置检查进 Failed 态，技术卡 v2 决策 6）
+    // 可用性（OS<1809 → startSession 前置检查进 Failed 态占位，技术卡 v2 决策 6）
     const bool available = backend_ != nullptr && backend_->available();
 
     GridLayout layout = page_.compose(
         ui, screen, controller_,
-        [this](const uint8_t* bytes, int32_t n) { controller_.writeToSession(bytes, n); },
+        [this](const uint8_t* bytes, int32_t n) { controller_.writeToActive(bytes, n); },
         [this](const std::string& text, bool paste) {
             // paste=true → 核心带 bracketed paste 语义（writePaste，技术卡 §5.4）
-            controller_.writeToSession(reinterpret_cast<const uint8_t*>(text.data()),
+            controller_.writeToActive(reinterpret_cast<const uint8_t*>(text.data()),
                                        static_cast<int32_t>(text.size()), paste);
         },
         [](const std::string& text) {
             platform::clipboardCopyText(reinterpret_cast<const uint8_t*>(text.data()),
                                         static_cast<int32_t>(text.size()));
+        },
+        // 设置钮 → 全局设置页（home_module 同款：core::appRouter 单例桥，module 间零依赖；
+        // 未注册=无头测试态，跳过导航）。P1（复审）：全屏态侧栏隐藏旗标唯一复位点在
+        // 终端页 compose——直接导航去设置页后终端不再 compose，旗标恒真 → 侧栏恒 0 宽
+        // 且设置页无导航入口 = 交互死锁。故导航前先退全屏并**同步**复位旗标（不等
+        // 下次终端 compose；序列与 onStop 同款）。
+        [this]() {
+            if (page_.fullscreen()) {
+                page_.toggleFullscreen();
+                app::terminal_fullscreen::setCollapsed(false);
+            }
+            if (auto* router = ::core::appRouter())
+                router->navigateTo(core::PageId::Settings);
         });
-    // 全屏态变化 → 侧栏折叠缝（F-05；近似语义：折叠非隐藏，偏差已记录）
+    // 全屏态变化 → 侧栏全隐缝（F-05；v2 终裁 clue92：全屏=侧栏 0 宽全隐、不画 logo，
+    // 「折叠 72px 非隐藏」方案已作废）
     if (page_.fullscreen() != sidebarCollapsedApplied_) {
         sidebarCollapsedApplied_ = page_.fullscreen();
         app::terminal_fullscreen::setCollapsed(page_.fullscreen());
     }
-    // widget 量化 → resize 会话（先 reflow 后 TIOCSWINSZ，核心语义）
+    // widget 量化 → resize 激活会话（先 reflow 后 TIOCSWINSZ，核心语义）；
+    // 切换会话后尺寸不一致时 page 会重新挂 pending（自动补 resize）
     if (available && page_.wantsResize()) {
-        controller_.resizeGrid(page_.pendingRows(), page_.pendingCols());
+        controller_.resizeActive(page_.pendingRows(), page_.pendingCols());
         page_.clearPendingResize();
     }
     (void)layout;
