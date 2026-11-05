@@ -775,11 +775,14 @@ int main(int argc, char* argv[]) {
                         std::cerr << "agent_dialog_probe: 工具卡 0 越出弹窗面板框\n";
                         passed = false;
                     }
-                    // 2 列同行（卡 1 与卡 0 同 y 且在右侧）
+                    // v2 §2.3 全宽单列纵向流（need170）：卡 1 应堆叠在卡 0 下方且同列
+                    // 左对齐。v1 的「2 列同行」契约已退役（实现 flow 单列）。
                     const auto* card1 = findElement("agent.dialog.tools.card.1");
                     if (card1 != nullptr &&
-                        std::fabs(card1->frame.y - card0->frame.y) > 1.5f) {
-                        std::cerr << "agent_dialog_probe: 网格前两卡未同行（2 列破版）\n";
+                        (card1->frame.y + 1.5f <
+                             card0->frame.y + card0->frame.height ||
+                         std::fabs(card1->frame.x - card0->frame.x) > 1.5f)) {
+                        std::cerr << "agent_dialog_probe: 网格前两卡未纵向堆叠（单列破版）\n";
                         passed = false;
                     }
                 }
