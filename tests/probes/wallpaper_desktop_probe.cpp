@@ -3,7 +3,7 @@
 //
 // 断言（需求 §6.1/§6.2/§9）：
 //   §1 host.start 成功、videoChild 非空、宿主尺寸 == 主屏 rcMonitor 物理像素。
-//   §2 播放器以 videoChild 为 --wid 启动并 load clip-a.mp4，1.5s 内 position > 0.2s。
+//   §2 播放器以 videoChild 为 --wid 启动并 load clip-a.mp4，4s 内 position > 0.2s。
 //   §3 pause(true) 后 0.8s 位置增量 < 0.15s；pause(false) 后继续增长。
 //   §4 seek 到 1.0s，position 落在 1.0±0.5。
 //   §5 stop 后进程退出（≤3s，按本次 pid 判残留）；宿主窗口销毁；无错误残留。
@@ -178,10 +178,12 @@ int main(int argc, char* argv[]) {
     player.load(clipPath);
 
     const auto playStarted = Clock::now();
+    // 裕量 4s（QA 门 2026-11-05 复跑绿=flake：mpv 冷启动耗时随宿主负载波动，
+    // 1.5s 偏紧；断言意图=「播放确实前进」，不卡启动耗时）
     const bool grew = waitUntil(
-        [&player]() { return player.positionSec() > 0.2f; }, std::chrono::milliseconds(1500));
+        [&player]() { return player.positionSec() > 0.2f; }, std::chrono::milliseconds(4000));
     const float positionAfterStart = player.positionSec();
-    check(grew, "§2 播放：1.5s 内 position > 0.2s（实测 " +
+    check(grew, "§2 播放：4s 内 position > 0.2s（实测 " +
                     std::to_string(positionAfterStart) + "s）");
     if (!grew) {
         std::string playerError;

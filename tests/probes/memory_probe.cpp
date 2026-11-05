@@ -354,7 +354,9 @@ int main(int argc, char* argv[]) {
         composeFrame();
         composeFrame();
         A.textHas("memory.eng.python", "已检测");          // python 行独立呈现
-        A.textHas("memory.eng.embed", "embedding 服务缺失");  // 醒目警示行在场
+        // need:202（fb55fc65）后 llamaMissing 文案=本机模型文件缺失 + 指路向导③步
+        A.textHas("memory.eng.embed", "本机模型文件缺失");   // 醒目警示行在场
+        A.textHas("memory.eng.embed", "首次安装向导第③步");  // 缺资产指路明确
         // 启动按钮命中链：按钮中心命中 = 按钮本体（bug201 复验口径；非滚动根/卡底）
         const auto* bg = A.elem("memory.eng.toggle.bg");
         if (bg == nullptr) {
@@ -513,8 +515,10 @@ int main(int argc, char* argv[]) {
             A.textHas("memory.dialog.wizard.s3.status", "（可重试）");
             A.textHas("memory.dialog.wizard.fail", "开始安装 / 重试");
             shoot("memory-wizard-failed.png", &A.passed);
-            // 弹窗高度裁定（设计 §9：320→348）；元素缺失不判红（frame 实现可换 id）
-            if (const auto* dlg = A.elem("memory.dialog.wizard")) {
+            // 弹窗高度裁定（设计 §9：320→348）；元素缺失不判红（frame 实现可换 id）。
+            // ui_kit::drawDialogFrame（EUI-NEO components::dialog）的 <id> 落在整屏
+            // 根 stack，面板是 <id>.panel——高度断言必须量 .panel（量根恒=整屏高）。
+            if (const auto* dlg = A.elem("memory.dialog.wizard.panel")) {
                 if (dlg->frame.height != 348.0f) {
                     std::cerr << "memory_probe: FAIL——向导高度 "
                               << dlg->frame.height << " ≠ 348\n";

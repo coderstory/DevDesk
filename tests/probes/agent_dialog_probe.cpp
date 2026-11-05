@@ -168,8 +168,13 @@ int main(int argc, char* argv[]) {
     runtime.initialize(window);
 
     const std::string pageId = "agent";
-    const float w = static_cast<float>(args.windowW);
-    const float h = static_cast<float>(args.windowH);
+    // 断言基线跟 compose 同口径（probe_harness bug183/185：composeModuleFrame 按
+    // framebuffer 反推实际逻辑尺寸布局；窗口被工作区钳制后请求值 ≠ 实际值，遮罩
+    // 「全屏」断言按 --size 请求值比对会假红）。取不到（≤1）时退回请求值，与
+    // harness 兜底一致。
+    const auto [logicalW, logicalH] = probe::windowLogicalSize(window);
+    const float w = logicalW > 1.0f ? logicalW : static_cast<float>(args.windowW);
+    const float h = logicalH > 1.0f ? logicalH : static_cast<float>(args.windowH);
     bool passed = true;
 
     core::dsl::Ui* ui = nullptr;

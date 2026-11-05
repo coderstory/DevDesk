@@ -407,8 +407,14 @@ int main(int argc, char* argv[]) {
     //    共用同一接线，回调由 EUI 命中派发写入）。
     composeFrame();
     {
-        // 档位几何按 §10.2（bodyH<680 极紧 / <712 紧凑 / 其余正常）
-        const bool tierNormal = bodyH >= 712.0f;
+        // 档位几何按 §10.2（availH<680 极紧 / <712 紧凑 / 其余正常）。判据跟产品
+        // 同源：availH = 侧栏根实高（bodyScreen = compose 高 − 40 自绘标题条），
+        // 不能按 args.windowH−40 推——窗口被工作区钳制后请求值 ≠ 实际值
+        //（probe_harness bug183/185 口径），本机 1000 请求钳到 ~726 实际即落紧凑档。
+        const auto* sidebarRoot = ui != nullptr ? ui->find("app.sidebar") : nullptr;
+        const float availHActual =
+            sidebarRoot != nullptr ? sidebarRoot->frame.height : bodyH;
+        const bool tierNormal = availHActual >= 712.0f;
         const float expToggleSize = tierNormal ? 32.0f : 28.0f;
         const float expRadius = expToggleSize * 0.5f;
         const auto* toggle =
