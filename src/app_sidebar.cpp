@@ -120,7 +120,8 @@ bool fluidWindowVisible() {
 
 bool sidebarCollapsed() { return g_sidebarCollapsed; }
 
-// 终端全屏隐藏态（need:122 F-05）：0 宽不可达；进入前折叠态快照供退出恢复
+// 终端全屏隐藏态（clue92 老板终裁：侧栏 0 宽全隐；72px 折叠方案已作废）；
+// 进入前折叠态快照供退出恢复
 bool g_sidebarFsHidden = false;
 bool g_preFullscreenCollapsed = false;
 
@@ -150,7 +151,10 @@ void setSidebarCollapsed(bool collapsed, bool persist) {
 }
 
 float sidebarWidth() {
-    if (g_sidebarFsHidden) return 0.0f;  // 全屏：不可达（F-05 验收=侧边栏不可达）
+    // 终端全屏态（老板 2026-11-05 再裁决，作废 v2 的 72px 折叠方案）：完全隐藏
+    // （0 宽，不画 logo——老板嫌弃的是「半截 logo」本身）；终端页内容区随之全宽
+    // （页宽=windowWidth−sidebarWidth()，本函数归零即自动生效）；退出恢复进屏前态
+    if (g_sidebarFsHidden) return 0.0f;
     return g_sidebarCollapsed ? kSidebarWidthCollapsed : kSidebarWidthExpanded;
 }
 
@@ -158,6 +162,8 @@ float sidebarWidth() {
 // 纯内存不触发持久化副作用
 void resetSidebarGlobals() {
     g_sidebarCollapsed = false;
+    g_sidebarFsHidden = false;        // 终端全屏全隐旗标回厂（复审 P3：测试隔离）
+    g_preFullscreenCollapsed = false; // 进全屏前折叠态快照回厂
     g_expandedGroups.clear();  // 空 = 全折叠（默认态）；复位语义不变
     g_autoExpandedForPage = ::core::PageId::Home;  // 113-6 闩回厂：复位后落位子页仍会自动展开
     g_toggleHovered = false;  // need172 按钮 hover/按压/粒子态回厂（测试隔离）
