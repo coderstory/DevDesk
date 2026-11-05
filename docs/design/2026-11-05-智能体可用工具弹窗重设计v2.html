@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  demo 仅视觉校准，不是实现蓝图。
+  池170 v2：智能体「可用工具」弹窗重设计（2026-11-05 驳回重做）。
+  校准面：① 弹窗壳/工具卡卡片效果（白卡+细黑边+冷阴影）② 说明文本完整展示
+  （默认全文，>3行 clamp+展开/收起）③ 入口按钮图标/文字/计数自适应（0/3/32/108 四档）
+  ④ 全文搜索框（标题下通栏：名称+说明+参数名子串过滤、关键词高亮、无结果空态、
+  框内右侧「n / 全量」计数、Esc 先清搜索后关弹窗；入口 badge 恒显全量）。
+  图标为占位几何 SVG（自包含零外部依赖）；实现侧按设计文档 §3.4/§3.6 用 FA5 码点。
+  交互：入口钮开弹窗（重开即重置搜索）；✕ / 点 backdrop / Esc（先清搜索）关闭；
+  长文卡点击开合；搜索即时过滤；顶栏可切浅/暗主题与工具数场景；窗口可拖缩验证自适应。
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>池170 可用工具弹窗重设计 v2 · 视觉校准 demo</title>
+<style>
+/* ===== token 对照（浅色主 / 暗色按设计文档 §9 表） ===== */
+:root{
+  --background:#F5FAF7;
+  --glass-dialog:rgba(255,250,252,0.94);      /* glassFill：白微绿染 α0.94 */
+  --card:#FFFFFF;                              /* surface */
+  --border:#E5E7EB;                            /* borderDefault */
+  --float-border:rgba(0,0,0,0.35);             /* 浮层细黑边 */
+  --shadow:rgba(16,54,38,0.09);                /* glassShadowColor */
+  --card-shadow:rgba(16,54,38,0.05);
+  --hover:#EEF6F1;
+  --active:#E2F0E8;
+  --btn2:#F2F2F2;                              /* 次钮底 / chips 底 */
+  --t1:#1F2937; --t2:#4B5563; --t3:#6B7280;
+  --primary:#07C160;
+  --primary-soft:#E8F8EE;
+  --primary-text:#157E4E;
+  --on-primary:#FFFFFF;
+  --scrim:rgba(0,0,0,0.40);
+}
+[data-theme="dark"]{
+  --background:#1A1816;
+  --glass-dialog:rgba(35,33,32,0.95);
+  --card:#2C2A28;                              /* surfaceElevated */
+  --border:#3A3735;
+  --float-border:#3A3735;
+  --shadow:rgba(0,0,0,0.34);
+  --card-shadow:transparent;
+  --hover:#353231;
+  --active:#3E3B39;
+  --btn2:#353231;
+  --t1:#FAF9F5; --t2:#C9C5BD; --t3:#9A948A;
+  --primary:#36D399;
+  --primary-soft:#0D3326;
+  --primary-text:#36D399;
+  --on-primary:#FFFFFF;
+  --scrim:rgba(0,0,0,0.40);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--background);color:var(--t1);
+  transition:background .2s;
+}
+button{font-family:inherit;border:none;background:none;cursor:pointer;color:inherit}
+svg{display:block}
+
+/* ===== demo 控制条（非设计对象） ===== */
+.demo-bar{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:10px 16px;border-bottom:1px solid var(--border);
+  font-size:12px;color:var(--t2);position:relative;z-index:5;
+  background:var(--background);
+}
+.demo-bar b{color:var(--t1);font-weight:600}
+.demo-chip{
+  padding:3px 10px;border-radius:999px;border:1px solid var(--border);
+  font-size:12px;color:var(--t2);transition:all .12s;
+}
+.demo-chip:hover{border-color:var(--primary-text);color:var(--primary-text)}
+.demo-chip.on{background:var(--primary-soft);border-color:transparent;color:var(--primary-text);font-weight:600}
+.demo-note{margin-left:auto;color:var(--t3)}
+
+/* ===== 模拟智能体页（弹窗背后的页面底） ===== */
+.mock-page{padding:20px 20px 0}
+.mock-header{display:flex;align-items:center;gap:8px;height:40px}
+.mock-title{font-size:24px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ===== 3.1 入口钮：图标+文字+计数 badge 流式自适应（修 bug #6） ===== */
+.entry-btn{
+  display:inline-flex;align-items:center;height:40px;flex:none;
+  padding:0 12px;border-radius:6px;background:var(--btn2);
+  color:var(--t1);font-size:14px;
+  transition:background .12s cubic-bezier(0,0,.2,1),transform 160ms cubic-bezier(.34,1.56,.64,1);
+}
+.entry-btn:hover{background:var(--hover)}
+.entry-btn:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+.entry-btn.disabled{opacity:.4;pointer-events:none}
+.entry-btn .ic{color:var(--t2);flex:none}
+.entry-btn .lb{margin-left:6px;white-space:nowrap}
+.entry-btn .cnt{
+  margin-left:8px;min-width:18px;padding:0 5px;height:18px;border-radius:999px;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:var(--primary-soft);color:var(--primary-text);
+  font-size:12px;font-weight:600;
+}
+.new-btn{
+  display:inline-flex;align-items:center;height:40px;flex:none;
+  padding:0 14px;border-radius:6px;background:var(--primary);
+  color:var(--on-primary);font-size:14px;
+  transition:background .12s,transform 160ms cubic-bezier(.34,1.56,.64,1);
+}
+.new-btn:hover{background:color-mix(in srgb,var(--primary) 88%,#000)}
+.new-btn:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+
+/* ===== 3.2 弹窗壳：白卡+细黑边+冷阴影+radiusLarge 14 ===== */
+.overlay{
+  position:fixed;inset:0;z-index:50;display:none;
+  align-items:center;justify-content:center;
+}
+.overlay.open{display:flex}
+.scrim{position:absolute;inset:0;background:var(--scrim);animation:fadeIn 160ms ease-out}
+.dialog{
+  position:relative;width:min(720px,calc(100vw - 48px));height:min(600px,calc(100vh - 96px));
+  background:var(--glass-dialog);
+  border:1px solid var(--float-border);border-radius:14px;
+  box-shadow:0 4px 24px var(--shadow);
+  display:flex;flex-direction:column;overflow:hidden;
+  animation:popIn 160ms cubic-bezier(0,0,.2,1);
+}
+.overlay.closing .scrim{animation:fadeOut 120ms ease-in forwards}
+.overlay.closing .dialog{animation:popOut 120ms ease-in forwards}
+@keyframes popIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes popOut{to{opacity:0;transform:translateY(4px)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes fadeOut{to{opacity:0}}
+
+/* ===== 3.3 头部 56 ===== */
+.d-head{
+  flex:none;display:flex;align-items:center;gap:8px;
+  height:56px;padding:0 12px 0 20px;
+  border-bottom:1px solid var(--border);
+}
+.d-title{font-size:16px;font-weight:700;color:var(--t1)}
+.d-count{
+  height:20px;padding:0 6px;border-radius:999px;
+  display:inline-flex;align-items:center;
+  background:var(--primary-soft);color:var(--primary-text);
+  font-size:12px;font-weight:600;
+}
+.d-close{
+  margin-left:auto;width:28px;height:28px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;color:var(--t2);
+  transition:background .12s,transform 160ms cubic-bezier(.34,1.56,.64,1);
+}
+.d-close:hover{background:var(--hover)}
+.d-close:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+
+/* ===== 3.4 列表区：唯一内滚容器（搜索区加入后顶部 pad 让位给搜索区下间距） ===== */
+.d-body{flex:1;min-height:0;padding:8px 16px 16px;overflow-y:auto}
+.d-body::-webkit-scrollbar{width:6px}
+.d-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.d-body::-webkit-scrollbar-thumb:hover{background:var(--t3)}
+.tool-list{display:flex;flex-direction:column;gap:8px}
+
+.tool-card{
+  background:var(--card);border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 2px 8px var(--card-shadow);
+  padding:12px 14px;
+}
+.tool-card.expandable{cursor:pointer;transition:background .12s cubic-bezier(0,0,.2,1),border-color .12s,transform 160ms cubic-bezier(.34,1.56,.64,1)}
+.tool-card.expandable:hover{background:var(--hover);border-color:var(--active)}
+.tool-card.expandable:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+
+.tc-head{display:flex;align-items:center;gap:8px;height:28px}
+.tc-icon{
+  flex:none;width:28px;height:28px;border-radius:6px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--primary-soft);color:var(--primary-text);
+}
+.tc-name{font-size:14px;font-weight:600;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-chev{margin-left:auto;color:var(--t3);opacity:0;transition:transform 150ms ease-out,opacity 120ms;flex:none}
+.tool-card.expandable .tc-chev{opacity:1}
+.tool-card.expanded .tc-chev{transform:rotate(180deg)}
+
+.tc-descwrap{overflow:hidden;margin-top:6px}
+.tc-desc{font-size:13px;line-height:20px;color:var(--t2);overflow:hidden}
+.tool-card.clamped .tc-desc{
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+}
+.tc-toggle{
+  display:none;align-items:center;gap:2px;height:24px;margin-top:2px;
+  font-size:12px;font-weight:500;color:var(--primary-text);
+  border-radius:4px;padding:0 4px;
+  transition:background .12s,transform 160ms cubic-bezier(.34,1.56,.64,1);
+}
+.tool-card.expandable .tc-toggle{display:inline-flex}
+.tc-toggle:hover{background:var(--hover)}
+.tc-toggle:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+.tc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.tc-chip{
+  height:20px;padding:0 8px;border-radius:6px;
+  display:inline-flex;align-items:center;
+  background:var(--btn2);color:var(--t2);
+  font-size:11px;font-weight:500;font-family:ui-monospace,Consolas,monospace;
+}
+
+/* ===== 3.5 空态（工具注册表空 / 搜索无结果共用壳） ===== */
+.d-empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--t3)}
+.d-empty .big{color:var(--t3);margin-bottom:8px}
+.d-empty .l1{font-size:13px;color:var(--t2)}
+.d-empty .l2{font-size:12px;color:var(--t3);margin-top:4px}
+.d-empty .link-btn{
+  margin-top:10px;height:26px;padding:0 10px;border-radius:6px;
+  display:inline-flex;align-items:center;
+  font-size:12px;font-weight:500;color:var(--primary-text);
+  transition:background .12s cubic-bezier(0,0,.2,1),transform 160ms cubic-bezier(.34,1.56,.64,1);
+}
+.d-empty .link-btn:hover{background:var(--hover)}
+.d-empty .link-btn:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+
+/* ===== 3.6 搜索框：头部下通栏锚顶（不滚），过滤/高亮/计数/清除 ===== */
+.d-search{flex:none;padding:12px 16px 8px}
+.search-box{
+  position:relative;height:36px;border-radius:8px;
+  background:var(--btn2);border:1px solid transparent;
+  display:flex;align-items:center;
+  transition:border-color 120ms cubic-bezier(0,0,.2,1),background 120ms cubic-bezier(0,0,.2,1);
+}
+.search-box:focus-within{border-color:var(--primary);background:var(--card)}
+.search-ic{position:absolute;left:11px;color:var(--t3);pointer-events:none;display:flex}
+.search-input{
+  flex:1;min-width:0;height:100%;border:none;background:transparent;outline:none;
+  padding:0 92px 0 35px;font-size:13px;color:var(--t1);font-family:inherit;
+}
+.search-input::placeholder{color:var(--t3)}
+.search-count{
+  position:absolute;right:36px;font-size:12px;color:var(--t3);
+  font-variant-numeric:tabular-nums;display:none;
+}
+.search-count.show{display:block}
+.search-clear{
+  position:absolute;right:4px;width:28px;height:28px;border-radius:6px;
+  display:none;align-items:center;justify-content:center;color:var(--t3);
+  transition:background .12s cubic-bezier(0,0,.2,1),transform 160ms cubic-bezier(.34,1.56,.64,1);
+}
+.search-clear.show{display:flex}
+.search-clear:hover{background:var(--hover);color:var(--t1)}
+.search-clear:active{transform:scale(.96);transition:transform 70ms cubic-bezier(0,0,.2,1)}
+/* 关键词高亮：仅文字底色（primarySoftBg），不给卡片描边 */
+mark.hl{background:var(--primary-soft);color:inherit;border-radius:2px}
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <b>demo 控制（非设计对象）</b>
+  <button class="demo-chip on" data-theme="light" onclick="setTheme('light',this)">浅色主题</button>
+  <button class="demo-chip" data-theme="dark" onclick="setTheme('dark',this)">暗色 token</button>
+  <span style="color:var(--t3)">｜</span>
+  <span>工具数场景：</span>
+  <button class="demo-chip on" data-n="32" onclick="setCount(32,this)">32（真实满额）</button>
+  <button class="demo-chip" data-n="3" onclick="setCount(3,this)">3</button>
+  <button class="demo-chip" data-n="108" onclick="setCount(108,this)">108（三位数压测）</button>
+  <button class="demo-chip" data-n="0" onclick="setCount(0,this)">0（空态）</button>
+  <span class="demo-note">拖缩窗口验证自适应；Esc 先清搜索、空时关弹窗</span>
+</div>
+
+<!-- 模拟智能体页头：入口钮右侧锚定、向左生长 -->
+<div class="mock-page">
+  <div class="mock-header">
+    <div class="mock-title">智能体</div>
+    <button class="entry-btn" id="entryBtn" onclick="openDialog()">
+      <span class="ic" id="ic-plug"></span>
+      <span class="lb">可用工具</span>
+      <span class="cnt" id="entryCnt">32</span>
+    </button>
+    <button class="new-btn"><span id="ic-plus" style="margin-right:6px"></span>新建任务</button>
+  </div>
+</div>
+
+<!-- 可用工具弹窗 -->
+<div class="overlay" id="overlay">
+  <div class="scrim" onclick="closeDialog()"></div>
+  <div class="dialog" role="dialog" aria-label="可用工具">
+    <div class="d-head">
+      <span class="d-title">可用工具</span>
+      <span class="d-count" id="headCnt">32 个</span>
+      <button class="d-close" onclick="closeDialog()" id="ic-x"></button>
+    </div>
+    <div class="d-search" id="dSearch">
+      <div class="search-box">
+        <span class="search-ic" id="ic-search"></span>
+        <input class="search-input" id="searchInput" type="text" placeholder="搜索工具名称或说明" autocomplete="off" spellcheck="false">
+        <span class="search-count" id="searchCount"></span>
+        <button class="search-clear" id="searchClear" title="清空搜索" tabindex="-1"><span id="ic-sclear"></span></button>
+      </div>
+    </div>
+    <div class="d-body" id="dBody"></div>
+  </div>
+</div>
+
+<script>
+/* ===== 占位几何图标（实现侧按设计文档 §3.4 用 FA5 码点） ===== */
+const P = {
+  plug:'M9 7V3m6 4V3M7 7h10v4a5 5 0 0 1-10 0V7zm5 9v5',
+  plus:'M12 5v14M5 12h14',
+  x:'M6 6l12 12M18 6L6 18',
+  chev:'M6 9l6 6 6-6',
+  folder:'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z',
+  branch:'M6 3v12m12-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm12-12a9 9 0 0 1-9 9',
+  file:'M6 2h9l5 5v15H6V2zm8 0v6h6M9 12h6M9 16h6',
+  cpu:'M9 9h6v6H9V9zM5 5h14v14H5V5zM9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3',
+  globe:'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20',
+  cube:'M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8',
+  bot:'M12 2v3M5 8h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zM9 13h.01M15 13h.01M2 12v4M22 12v4',
+  tasks:'M4 6l1.5 1.5L8 5M4 12l1.5 1.5L8 11M4 18l1.5 1.5L8 17M11 6h9M11 12h9M11 18h9',
+  clock:'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2',
+  term:'M4 17l6-5-6-5M12 19h8',
+  search:'M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zm4.8 11.3L20 20',
+};
+function icon(name,size){
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="'+P[name]+'"/></svg>';
+}
+document.getElementById('ic-plug').innerHTML = icon('plug',14);
+document.getElementById('ic-plus').innerHTML = icon('plus',14);
+document.getElementById('ic-x').innerHTML = icon('x',14);
+document.getElementById('ic-search').innerHTML = icon('search',14);
+document.getElementById('ic-sclear').innerHTML = icon('x',10);
+
+/* ===== 真实工具数据（摘自 agent_builtin_tools.cpp / markdown_tools.cpp 等 schema） ===== */
+const TOOLS = [
+ {n:'app.now',d:'获取当前本地时间：ISO 8601 时间戳、日期、时刻、中文星期、epoch 毫秒。无参数',p:[]},
+ {n:'app.stats',d:'查询应用统计（待办任务数 / 笔记数 / 智能体任务数），只读',p:[]},
+ {n:'app.notify',d:'向用户发送系统通知，用于逾期待办提醒、闹钟到点提醒；不要滥用。',p:['message']},
+ {n:'app.read_settings',d:'读取应用设置（主题模式 / 深浅档 / 字号缩放 / 编辑器字号 / 日志保留 / 代理端口 / 窗口效果 / 侧边栏折叠 / 已启用模块），只读',p:[]},
+ {n:'agent.runs',d:'查询智能体任务运行历史（只读，agent_runs 表）；status 缺省排除运行中的记录（含当前自查）',p:['status']},
+ {n:'bash.run',d:'执行 shell 命令：在当前工作目录下通过系统默认 shell 执行命令（Windows 用 Git Bash、macOS 用 zsh、Linux 用 sh），stdout/stderr 全捕获，输出上限 10 MiB',p:['command']},
+ {n:'claude.list_profiles',d:'列出全部 Claude API Profile，并标出当前激活的那一个（只读，无入参）',p:[]},
+ {n:'claude.switch_profile',d:'切换当前激活的 Claude API Profile（破坏性：会改写本地代理的接管配置，代理运行中立即影响 Claude Code 的上游）',p:['id']},
+ {n:'claude.test_connection',d:'对某个 Profile 的上游发一次连通性测试（POST /v1/messages 发 1-token ping，会消耗 1 token）。不传 id 则测当前激活的 Profile',p:['id']},
+ {n:'fs.edit',d:'精确字符串替换（编辑文件）：在文件中查找并替换唯一匹配的 old_string 为 new_string；零命中或多命中（且未开 replace_all）报错',p:['path','old_string','new_string']},
+ {n:'fs.glob',d:'文件通配搜索：按 glob 模式匹配工作目录下的文件路径（** 递归、* 匹配文件名不含路径分隔符、? 匹配单字符、{a,b} 大括号展开），按修改时间降序排列，上限 1000 条',p:['pattern','path']},
+ {n:'fs.grep',d:'文件内容正则搜索：按模式扫描工作目录下的文本文件（UTF-8 优先、GBK 回退），支持文件粒度过滤和行号输出',p:['pattern','path']},
+ {n:'fs.read',d:'读取文件内容：返回带行号的文本（默认上限 2000 行 / 256KB，缺失文件或目录给清晰错误）',p:['path']},
+ {n:'fs.write',d:'写入文件：原子写（先写临时文件再 rename），自动创建父目录，覆盖已有文件',p:['path','content']},
+ {n:'git.branch',d:'Git 分支列表：显示本地分支（当前分支标 *）',p:[]},
+ {n:'git.checkout',d:'Git 切换分支或检出：切换到指定 ref（分支名 / tag / 提交哈希），拒绝以 \'-\' 开头的 ref（防 dwim 建分支）',p:['ref']},
+ {n:'git.clone',d:'克隆 Git 仓库：将远程仓库克隆到当前工作目录下的子目录（默认目录名 = URL 尾段去 .git），不覆盖非空目录',p:['url']},
+ {n:'git.commit',d:'Git 提交：提交指定的文件列表（显式 pathspec，不自动 -A），提交信息为必填',p:['files','message']},
+ {n:'git.diff',d:'Git 差异：显示工作区未暂存的改动（unstaged），或暂存区改动（cached），或指定文件改动',p:['scope']},
+ {n:'git.log',d:'Git 提交日志：显示最近 N 条提交（哈希、作者、日期、消息）',p:['count']},
+ {n:'git.pull',d:'Git 拉取更新：git pull --ff-only（仅快进合并，避免自动 merge 冲突）',p:[]},
+ {n:'git.status',d:'Git 仓库状态：显示当前分支名、领先/落后提交数、工作区状态（porcelain 格式，含未跟踪文件）',p:[]},
+ {n:'md.create',d:'新建一篇笔记（路径已存在时拒绝，不覆盖既有内容）',p:['path','content']},
+ {n:'md.delete',d:'删除一篇笔记（不可恢复的破坏性操作）',p:['path']},
+ {n:'md.list_tags',d:'列出全部标签及各自的笔记数（只读，无入参）',p:[]},
+ {n:'md.read',d:'读取一篇笔记的全文（UTF-8）',p:['path']},
+ {n:'md.search',d:'全文搜索笔记（FTS5，返回命中笔记的路径与标题）',p:['query']},
+ {n:'memory.health',d:'记忆引擎健康检测（运行状态 / venv 与 Python 定位 / 8421 回环探活），只读',p:[]},
+ {n:'memory.stats',d:'记忆模块统计（提案分组计数 / token 用量账面 / 引擎状态一行），只读，不依赖引擎进程存活',p:[]},
+ {n:'net.fetch',d:'联网抓取：GET 一个 http/https URL，返回响应文本（超 32KB 截断）。外部请求，仅 GET，10 秒超时',p:['url']},
+ {n:'schedule.runs',d:'查询定时任务执行历史（只读，schedule_runs 表）',p:['status']},
+ {n:'todo.list',d:'列出待办任务（含 id/标题/列/优先级/完成态）；可按完成态或逾期过滤',p:['filter']},
+];
+/* 设计文档 §3.4 族图标映射（demo 用占位几何，实现侧 FA5 码点） */
+const FAMILY = {
+  fs:'folder', git:'branch', md:'file', memory:'cpu', net:'globe',
+  app:'cube', claude:'bot', todo:'tasks', schedule:'clock', agent:'term', bash:'term',
+};
+
+let curCount = 32;
+function familyIcon(name){ return FAMILY[name.split('.')[0]] || 'plug'; }
+
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ===== 3.6 全文搜索：名称+说明+参数名，不区分大小写子串匹配 ===== */
+let query = '';
+const norm = (s) => s.toLowerCase();
+function hitTool(t, q){
+  return norm(t.n).indexOf(q) >= 0 || norm(t.d).indexOf(q) >= 0 ||
+         t.p.some(function(p){ return norm(p).indexOf(q) >= 0; });
+}
+/* 高亮：先 esc 防注入，再对 esc 后文本做大小写不敏感子串标记（仅文字底色） */
+function hlText(s, q){
+  const t = esc(s);
+  if (!q) return t;
+  const eq = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return t.replace(new RegExp('(' + eq + ')', 'ig'), '<mark class="hl">$1</mark>');
+}
+function setQuery(v){ query = v; renderList(); }
+function clearSearch(){
+  query = '';
+  document.getElementById('searchInput').value = '';
+  renderList();
+  document.getElementById('searchInput').focus();
+}
+
+function renderEntry(){
+  const btn = document.getElementById('entryBtn');
+  document.getElementById('entryCnt').textContent = curCount;
+  btn.classList.toggle('disabled', curCount === 0);
+}
+function renderHead(){
+  document.getElementById('headCnt').textContent = curCount + ' 个';
+}
+function renderList(){
+  const body = document.getElementById('dBody');
+  const searchWrap = document.getElementById('dSearch');
+  searchWrap.style.display = (curCount === 0) ? 'none' : 'block';
+  if (curCount === 0){
+    body.innerHTML =
+      '<div class="d-empty"><div class="big">'+icon('plug',24)+'</div>'+
+      '<div class="l1">暂无可用工具</div><div class="l2">智能体未装配任何工具</div></div>';
+    return;
+  }
+  const q = norm(query.trim());
+  const list = TOOLS.slice(0, Math.min(curCount, TOOLS.length));
+  const hit = q ? list.filter(function(t){ return hitTool(t, q); }) : list;
+  /* 计数联动：搜索框内右端「n / 全量」；无输入不显示。入口/头部 badge 恒为全量，不在此处 */
+  const cnt = document.getElementById('searchCount');
+  if (q){ cnt.textContent = hit.length + ' / ' + list.length; cnt.classList.add('show'); }
+  else  { cnt.classList.remove('show'); }
+  document.getElementById('searchClear').classList.toggle('show', q.length > 0);
+  /* 搜索无结果空态 */
+  if (hit.length === 0){
+    body.innerHTML =
+      '<div class="d-empty"><div class="big">'+icon('search',24)+'</div>'+
+      '<div class="l1">未找到匹配工具</div><div class="l2">试试其他关键词</div>'+
+      '<button class="link-btn" onclick="clearSearch()">清空搜索</button></div>';
+    return;
+  }
+  body.innerHTML = '<div class="tool-list">' + hit.map(function(t){
+    const chips = t.p.length
+      ? '<div class="tc-chips">' + t.p.map(function(p){
+          return '<span class="tc-chip">'+hlText(p,q)+'</span>'; }).join('') + '</div>'
+      : '';
+    return '<div class="tool-card" data-name="'+esc(t.n)+'" onclick="toggleCard(this)">'+
+      '<div class="tc-head">'+
+        '<span class="tc-icon">'+icon(familyIcon(t.n),14)+'</span>'+
+        '<span class="tc-name">'+hlText(t.n,q)+'</span>'+
+        '<span class="tc-chev">'+icon('chev',12)+'</span>'+
+      '</div>'+
+      '<div class="tc-descwrap"><div class="tc-desc">'+hlText(t.d,q)+'</div></div>'+
+      '<button class="tc-toggle" tabindex="-1"><span class="tl">展开</span><span class="ti">'+icon('chev',12)+'</span></button>'+
+      chips +
+    '</div>';
+  }).join('') + '</div>';
+  classifyCards();
+}
+/* 判定长文卡：描述实测超过 3 行（60px）→ clamp + 展开 + 整卡可点（修 bug #7 的完整展示路径） */
+function classifyCards(){
+  document.querySelectorAll('.tool-card').forEach(function(card){
+    const desc = card.querySelector('.tc-desc');
+    card.classList.add('clamped');
+    const full = desc.scrollHeight;
+    if (full > 62){
+      card.classList.add('expandable');
+    } else {
+      card.classList.remove('clamped','expandable','expanded');
+    }
+  });
+}
+function toggleCard(card){
+  if (!card.classList.contains('expandable')) return;
+  const desc = card.querySelector('.tc-desc');
+  const wrap = card.querySelector('.tc-descwrap');
+  const lbl  = card.querySelector('.tc-toggle .tl');
+  if (card.classList.contains('expanded')){
+    card.classList.remove('expanded');
+    wrap.style.maxHeight = '60px';
+    lbl.textContent = '展开';
+    setTimeout(function(){
+      if (!card.classList.contains('expanded')) card.classList.add('clamped');
+    }, 200);
+  } else {
+    card.classList.add('expanded');
+    card.classList.remove('clamped');
+    wrap.style.maxHeight = desc.scrollHeight + 'px';
+    lbl.textContent = '收起';
+  }
+}
+
+/* ===== 弹窗开合：✕ / backdrop / Esc 三通道 ===== */
+const overlay = document.getElementById('overlay');
+function openDialog(){
+  query = '';
+  document.getElementById('searchInput').value = '';
+  renderHead(); renderList();
+  overlay.classList.remove('closing');
+  overlay.classList.add('open');
+}
+function closeDialog(){
+  overlay.classList.add('closing');
+  setTimeout(function(){
+    overlay.classList.remove('open','closing');
+    document.querySelectorAll('.tool-card.expanded').forEach(function(c){
+      c.classList.remove('expanded','clamped');
+      c.querySelector('.tc-descwrap').style.maxHeight = '';
+      c.querySelector('.tc-toggle .tl').textContent = '展开';
+    });
+    classifyCards();
+  }, 120);
+}
+/* Esc 优先级：搜索有内容 → 先清空搜索（焦点回输入框）；无内容 → 才关弹窗 */
+document.addEventListener('keydown', function(e){
+  if (e.key !== 'Escape' || !overlay.classList.contains('open')) return;
+  if (query.trim()) { clearSearch(); return; }
+  closeDialog();
+});
+document.getElementById('searchInput').addEventListener('input', function(){ setQuery(this.value); });
+document.getElementById('searchClear').addEventListener('click', clearSearch);
+
+/* ===== demo 控制 ===== */
+function setTheme(mode, btn){
+  document.documentElement.setAttribute('data-theme', mode);
+  document.querySelectorAll('.demo-bar [data-theme]').forEach(function(b){ b.classList.remove('on'); });
+  btn.classList.add('on');
+}
+function setCount(n, btn){
+  curCount = n;
+  document.querySelectorAll('.demo-bar [data-n]').forEach(function(b){ b.classList.remove('on'); });
+  btn.classList.add('on');
+  renderEntry();
+  if (overlay.classList.contains('open')){ renderHead(); renderList(); }
+}
+renderEntry();
+</script>
+</body>
+</html>

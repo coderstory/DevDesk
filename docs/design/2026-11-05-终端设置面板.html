@@ -9,9 +9,11 @@
   demo 仅视觉校准，不是实现蓝图。
   设计权威：docs/design/2026-11-05-终端设置面板.md（参数以文档为准）
   材质/token 延续 need241 v2（白卡+细黑边+glassFill 同源）。
-  覆盖：模态打开/关闭（齿轮/Esc/×/完成）、5 项设置 7 行、
+  修订 v2（2026-11-05 老板评审）：入口图标 gear→sliders（FA U+F1DE）、卡宽 480→520、
+        窄窗堆叠断点 <560→<600。
+  覆盖：模态打开/关闭（设置钮 sliders/Esc/×/完成）、5 项设置 7 行、
         即时生效（字号/配色/光标改动实时反映到身后 mock 终端）、
-        错误态（目录不存在红边红字 / 字号钳制）、窄窗堆叠（<560px）。
+        错误态（目录不存在红边红字 / 字号钳制）、窄窗堆叠（<600px）。
   浅色主题；暗色 token 对照见设计文档 §9。无外部依赖，双击直开。
   ═══════════════════════════════════════════════════════════════════
 -->
@@ -81,7 +83,7 @@
     display:none; align-items:center; justify-content:center; }
   .scrim.show { display:flex; }
   .panel {
-    width:480px; max-width:calc(100% - 32px);
+    width:520px; max-width:calc(100% - 32px);
     max-height:calc(100% - 64px);
     background:var(--panel-bg); border:1px solid var(--panel-edge); border-radius:14px;
     box-shadow:0 8px 24px var(--panel-shadow);
@@ -161,7 +163,7 @@
   .btn-done:hover { background:var(--secondary-hover); }
   .btn-done:active { transform:scale(.96); }
 
-  /* ── 窄窗堆叠（页面区 <560px）：label 上移 ── */
+  /* ── 窄窗堆叠（页面区 <600px）：label 上移 ── */
   .page.stack .row { flex-direction:column; align-items:stretch; min-height:0; padding-top:2px; }
   .page.stack .row .lbl { width:auto; flex:0 0 auto; margin-bottom:4px; }
   .page.stack .row .ctl { width:100%; }
@@ -176,12 +178,13 @@
   <div class="body-row">
     <aside class="sidebar"><div class="logo">&gt;_</div></aside>
     <main class="page" id="page">
-      <!-- TAB 栏带：终端1 运行中 + 动作组（齿轮=本面板入口） -->
+      <!-- TAB 栏带：终端1 运行中 + 动作组（设置钮 sliders=本面板入口） -->
       <div class="tabbar">
         <div class="tab"><span class="dot"></span><span>终端 1</span></div>
         <div class="spacer"></div>
         <div class="divider-v"></div>
-        <button class="icon-btn" title="设置" id="btnGear"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.4 3.4l1.6 1.6M11 11l1.6 1.6M12.6 3.4 11 5M5 11l-1.6 1.6"/></svg></button>
+        <!-- 入口图标：fa-sliders（FA 码点 U+F1DE；实现侧已由 gear 0xF013 更换，demo 同步）——三横线滑杆+三圆钮，SVG 占位 -->
+        <button class="icon-btn" title="设置" id="btnGear"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><line x1="1.5" y1="3.5" x2="14.5" y2="3.5"/><line x1="1.5" y1="8" x2="14.5" y2="8"/><line x1="1.5" y1="12.5" x2="14.5" y2="12.5"/><circle cx="10.2" cy="3.5" r="1.9" fill="currentColor" stroke="none"/><circle cx="5.8" cy="8" r="1.9" fill="currentColor" stroke="none"/><circle cx="10.9" cy="12.5" r="1.9" fill="currentColor" stroke="none"/></svg></button>
         <button class="icon-btn" title="进入全屏"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg></button>
         <button class="icon-btn" title="新建" style="background:var(--primary);color:#fff;"><svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="6" y1="1.5" x2="6" y2="10.5"/><line x1="1.5" y1="6" x2="10.5" y2="6"/></svg></button>
       </div>
@@ -406,10 +409,10 @@ $("btnReset").addEventListener("click", () => {
   applyFont(); applySb(); applyPalette(); applyCursor();
 });
 
-/* ── 窄窗堆叠断点（页面区 <560px）+ 卡高钳 ── */
+/* ── 窄窗堆叠断点（页面区 <600px）+ 卡高钳 ── */
 function responsive() {
   const pageW = $("page").clientWidth;
-  $("page").classList.toggle("stack", pageW < 560);
+  $("page").classList.toggle("stack", pageW < 600);
 }
 window.addEventListener("resize", responsive);
 

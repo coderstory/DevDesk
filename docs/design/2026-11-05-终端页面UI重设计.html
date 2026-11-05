@@ -11,7 +11,8 @@
   覆盖三关键态（全部可交互到达）：
     ① 多 TAB 运行中（初始态：终端1/2 Running 绿点，终端3 Exited 灰点+覆盖卡）
     ② 单 TAB 空态（把 TAB 逐个关闭：Idle 空网格光标态 / 0 TAB 空态引导）
-    ③ 全屏折叠态（点 ⛶：侧栏折叠 72px logo 完整居中，退出=浮层胶囊两套视觉）
+    ③ 全屏态（点 ⛶ 进入：侧栏 0 宽全隐不画 logo——clue92 终裁；进/退同槽 32×32
+       纯图标钮 expand⇄compress 只切图标，无胶囊无文字）
   自适应：拖窗缩放验证——页面区 <720px 新建收图标钮、TAB 溢出横滚+渐隐遮罩。
   浅色主题；暗色 token 对照见设计文档 §11。无外部依赖，双击直开。
   ═══════════════════════════════════════════════════════════════════
@@ -97,7 +98,7 @@
   }
   .nav-item:hover { background:var(--hover); }
   .nav-item.active { background:var(--surface); color:var(--primary-text); font-weight:600; }
-  .nav-item.active::before {           /* 左 2px 绿竖线，退到胶囊外留白 */
+  .nav-item.active::before {           /* 左 2px 绿竖线，退到导航项底色外留白 */
     content:""; position:absolute; left:-10px; top:11px; width:3px; height:18px;
     border-radius:2px; background:var(--primary);
   }
@@ -200,33 +201,13 @@
   }
   .primary-btn:hover { background:var(--primary-hover); }
   .primary-btn:active { background:var(--primary-pressed); transform:scale(.96); }
-  /* 退出全屏浮层胶囊（两套视觉之一：实底+细黑边+阴影+带字） */
-  .exit-pill {
-    height:32px; padding:0 12px; margin-left:8px; border-radius:16px;
-    background:var(--surface-elevated); border:1px solid var(--edge-dark);
-    box-shadow:0 4px 24px var(--shadow-card);
-    color:var(--text-1); font-size:12px;
-    display:none; align-items:center; gap:6px; cursor:pointer; flex:0 0 auto;
-    transition:background .1s, transform .15s cubic-bezier(0.215,0.61,0.355,1);
-  }
-  .exit-pill:hover { background:var(--hover); transform:scale(1.02); }
-  .exit-pill:active { transform:scale(.96); }
 
-  /* ── 全屏折叠态 ── */
-  #app.fullscreen .sidebar { width:72px; flex-basis:72px; }
-  #app.fullscreen .logo { width:40px; height:40px; font-size:14px; }   /* 72 带内完整居中 */
-  #app.fullscreen .nav-item .lbl { display:none; }
-  #app.fullscreen .nav-item { justify-content:center; padding:0; }
-  #app.fullscreen .nav-item svg { flex:0 0 auto; }
-  #app.fullscreen .nav-item.active::before { left:0; }
-  #app.fullscreen .nav-divider { margin:4px 16px; }
-  #app.fullscreen .collapse-btn { align-self:center; }
-  #app.fullscreen .nav-fade { left:0; right:0; }
-  #app.fullscreen #btnFullscreen { display:none; }   /* 进入钮不绘制 */
-  #app.fullscreen .exit-pill { display:flex; }       /* 浮层胶囊出现 */
-  #app.fullscreen .sidebar .nav { padding:4px 8px 8px; }
-  #app.fullscreen .sidebar .nav-item .lbl,
-  #app.fullscreen .sidebar .brand-text-hidden { display:none; }
+  /* ── 全屏态（clue92 终裁：侧栏 0 宽全隐不画 logo；同槽图标钮只切图标） ── */
+  #app.fullscreen .sidebar { display:none; }          /* 0 宽全隐，非折叠 72 */
+  /* 同槽 32×32 图标钮：expand ⇄ compress 直切，无交叉淡化 */
+  #btnFullscreen .ic-compress { display:none; }
+  #app.fullscreen #btnFullscreen .ic-expand  { display:none; }
+  #app.fullscreen #btnFullscreen .ic-compress { display:block; }
 
   /* ── 终端网格区（层2b 实色，唯一内滚）── */
   .grid-area { flex:1; min-height:0; position:relative; background:var(--surface); overflow:hidden; }
@@ -291,8 +272,6 @@
   /* ── 窄窗收缩（页面区 <720px）── */
   #app.compact .primary-btn .lbl { display:none; }
   #app.compact .primary-btn { width:32px; padding:0; justify-content:center; }
-  #app.compact .exit-pill .lbl { display:none; }
-  #app.compact .exit-pill { width:32px; padding:0; justify-content:center; border-radius:6px; }
   #app.compact .tab { min-width:100px; }
 
   /* svg 图标基线 */
@@ -345,9 +324,8 @@
         </div>
         <div class="divider-v"></div>
         <button class="icon-btn" id="btnSettings" title="设置（入口预留）"><svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2.2M8 12.3v2.2M1.5 8h2.2M12.3 8h2.2M3.4 3.4l1.6 1.6M11 11l1.6 1.6M12.6 3.4 11 5M5 11l-1.6 1.6"/></svg></button>
-        <button class="icon-btn" id="btnFullscreen" title="进入全屏"><svg class="ic" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg></button>
+        <button class="icon-btn" id="btnFullscreen" title="进入全屏"><svg class="ic ic-expand" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg><svg class="ic ic-compress" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6.5 6.5 2.5 2.5M6.5 2.8v3.7H2.8M9.5 9.5l4 4M9.5 13.2V9.5h3.7"/></svg></button>
         <button class="primary-btn pressable" id="btnNew"><svg class="ic" width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="6" y1="1.5" x2="6" y2="10.5"/><line x1="1.5" y1="6" x2="10.5" y2="6"/></svg><span class="lbl">新建</span></button>
-        <button class="exit-pill pressable" id="btnExitFs" title="退出全屏"><svg class="ic" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 2l4.5 4.5M6.5 3.5v3h-3"/><path d="M14 14l-4.5-4.5M9.5 12.5v-3h3"/></svg><span class="lbl">退出全屏</span></button>
       </div>
 
       <!-- 终端网格区 -->
@@ -488,10 +466,13 @@ function newTab() {
 }
 $("btnNew").addEventListener("click", newTab);
 $("btnEmptyNew").addEventListener("click", newTab);
-$("btnFullscreen").addEventListener("click", () => app.classList.add("fullscreen"));
-$("btnExitFs").addEventListener("click", () => app.classList.remove("fullscreen"));
+$("btnFullscreen").addEventListener("click", () => {
+  /* 同槽图标钮：进/退全屏同一位，只切 expand⇄compress（clue92 终裁，无胶囊） */
+  const on = app.classList.toggle("fullscreen");
+  $("btnFullscreen").title = on ? "退出全屏" : "进入全屏";
+});
 $("btnCollapse").addEventListener("click", () => {
-  /* demo：折叠/展开只在非全屏态演示（全屏态=强制折叠 72，设计 §4.6） */
+  /* demo：手动折叠/展开只在非全屏态演示（全屏态=侧栏 0 宽全隐不画 logo，设计 §4.6 终裁） */
   if (!app.classList.contains("fullscreen"))
     app.classList.toggle("sidebar-collapsed");
 });
