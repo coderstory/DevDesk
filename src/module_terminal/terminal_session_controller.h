@@ -69,6 +69,11 @@ public:
     // 重试/重新开始：把第 i 个会话回到 Running（Exited/Failed 复位重建）
     void restartSession(int index);
 
+    // need250 设置面板：新会话参数（shell/目录仅新会话生效）；回滚上限即时作用于
+    // 全部既有会话（超限裁最旧）。shell/workDir 空 = 平台默认/主目录语义。
+    void setNewSessionOptions(const std::string& shell, const std::string& workDir,
+                              int scrollbackLimit);
+
 private:
     int spawnInto_(Session& s);
 
@@ -76,6 +81,10 @@ private:
     std::vector<Session> sessions_;
     int activeIndex_ = -1;
     int nextTitleNumber_ = 1;
+    // 新会话参数（need250 面板写、spawnInto_ 消费）
+    std::string newSessionShell_;
+    std::string newSessionWorkDir_;
+    int newSessionScrollback_ = 1000;
 };
 
 } // namespace terminal

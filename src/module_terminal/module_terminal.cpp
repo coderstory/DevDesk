@@ -1,5 +1,6 @@
 #include "module_terminal.h"
 
+#include "core/database.h"
 #include "core/logging.h"
 #include "core/theme.h"
 #include "platform/terminal/terminal_backend.h"
@@ -10,6 +11,9 @@ namespace terminal {
 TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
     backend_ = injectedBackend != nullptr ? injectedBackend : platform::terminalBackendMac();
     controller_.setBackend(backend_);
+    // need250：载入持久化设置并铺到新会话参数（db 未就绪/键缺失 → 默认值）
+    settings_ = loadTerminalSettings(::core::appDatabase());
+    controller_.setNewSessionOptions(settings_.shell, settings_.workDir, settings_.scrollback);
 }
 
 core::PageId TerminalModule::pageId() const { return core::PageId::Terminal; }
@@ -36,8 +40,13 @@ void TerminalModule::onStop() {
     }
 }
 
-// 模块级键盘兜底：Cmd+C（encodeKey 对 super 系返回 false）→ 选区文本 → 剪贴板（F-04）
+// 模块级键盘兜底：Esc 关设置面板（need250 关闭通道之一；settings/release 模块同款
+// module 级 Esc 先例）→ Cmd+C（encodeKey 对 super 系返回 false）→ 选区文本 → 剪贴板（F-04）
 bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
+    if (event.isDown() && event.key == eui::InputKey::Escape && page_.settingsOpen()) {
+        page_.closeSettings();
+        return true;
+    }
     if (event.isDown() && event.modifiers.super && event.key == eui::InputKey::C) {
         std::string text;
         // 行列=page 记录的拖选范围（视口系，Selection.text 同系）
@@ -69,21 +78,19 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
             platform::clipboardCopyText(reinterpret_cast<const uint8_t*>(text.data()),
                                         static_cast<int32_t>(text.size()));
         },
-        // 设置钮 → 全局设置页（home_module 同款：core::appRouter 单例桥，module 间零依赖；
-        // 未注册=无头测试态，跳过导航）。P1（复审）：全屏态侧栏隐藏旗标唯一复位点在
-        // 终端页 compose——直接导航去设置页后终端不再 compose，旗标恒真 → 侧栏恒 0 宽
-        // 且设置页无导航入口 = 交互死锁。故导航前先退全屏并**同步**复位旗标（不等
-        // 下次终端 compose；序列与 onStop 同款）。
+        settings_,
+        // need250：面板任意改动 → 新会话参数同步 + 落库（即时生效项靠 settings_ 单一
+        // 数据源在下一帧 compose 直接可见；db 未就绪 save fail 只记日志不阻断）
         [this]() {
-            if (page_.fullscreen()) {
-                page_.toggleFullscreen();
-                app::terminal_fullscreen::setCollapsed(false);
-            }
-            if (auto* router = ::core::appRouter())
-                router->navigateTo(core::PageId::Settings);
+            controller_.setNewSessionOptions(settings_.shell, settings_.workDir,
+                                             settings_.scrollback);
+            auto r = saveTerminalSettings(::core::appDatabase(), settings_);
+            if (r.isFail()) LOG_WARN("Terminal: 设置保存失败: " + r.errorMessage());
         });
     // 全屏态变化 → 侧栏全隐缝（F-05；v2 终裁 clue92：全屏=侧栏 0 宽全隐、不画 logo，
-    // 「折叠 72px 非隐藏」方案已作废）
+    // 「折叠 72px 非隐藏」方案已作废）。主通道 = TerminalPage::toggleFullscreen 内的
+    // 当帧打桥（bug252 根修）；此处差值检查保留，兜 DEVDESK_TERMINAL_FULLSCREEN env
+    // 注入初始化（不经 toggle）的态同步，幂等无害。
     if (page_.fullscreen() != sidebarCollapsedApplied_) {
         sidebarCollapsedApplied_ = page_.fullscreen();
         app::terminal_fullscreen::setCollapsed(page_.fullscreen());

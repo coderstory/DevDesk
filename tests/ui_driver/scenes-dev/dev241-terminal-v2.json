@@ -20,17 +20,22 @@
     {"type": "screenshot", "path": "v2-02-two-tabs.png"},
 
     {"type": "click", "id": "app.term.tab.0.bg", "_comment": "切回 TAB0（激活迁移）"},
-    {"type": "assert", "check": "exists", "id": "app.term.tab.0.bar", "timeoutMs": 4000},
+    {"type": "wait", "until": "exists", "id": "app.term.tab.0.bar", "timeoutMs": 4000,
+     "_comment": "debt254：driver 的 click 只泵 update 不重组树——必须先 wait 泵一次重组，断言才读到点击后的新树"},
+    {"type": "assert", "check": "exists", "id": "app.term.tab.0.bar", "_comment": "TAB0 激活（绿条）"},
     {"type": "screenshot", "path": "v2-03-switch-back.png"},
 
     {"type": "click", "id": "app.term.act.fs.bg", "_comment": "进全屏（侧栏 0 宽全隐，clue92 终裁；72px/退出胶囊已作废）"},
     {"type": "wait", "until": "exists", "id": "app.term.act.fs.icon", "timeoutMs": 4000,
      "_comment": "同槽纯图标钮仍在：expand→compress 只切图标（driver 无图标字形/0 宽断言面，视觉证据走截图）"},
+    {"type": "dump", "path": "v2-fs-tree.txt",
+     "_comment": "debt254：几何断言走 dump 免渲染伪影——判 app.sidebar.* 行宽应为 0/消失（w=220=未折叠）"},
     {"type": "screenshot", "path": "v2-04-fullscreen-sidebar0.png",
      "_comment": "全屏态：侧栏 0 宽全隐（无 logo）+ 终端全宽 + TAB 栏保留；fs 图标=compress"},
 
     {"type": "click", "id": "app.term.act.fs.bg", "_comment": "退全屏（同槽图标切回 expand）"},
     {"type": "wait", "until": "exists", "id": "app.term.act.fs.bg", "timeoutMs": 4000},
+    {"type": "dump", "path": "v2-fs-exit-tree.txt", "_comment": "debt254：退出后侧栏宽度应恢复 220"},
     {"type": "screenshot", "path": "v2-05-exit-fullscreen.png", "_comment": "退出后侧栏恢复"},
 
     {"type": "drag", "from": "app.term.grid.row.0", "to": "app.term.grid.row.2", "steps": 12,

@@ -7,6 +7,7 @@
 
 #include "terminal_page.h"
 #include "terminal_session_controller.h"
+#include "terminal_settings.h"
 
 namespace terminal {
 
@@ -39,6 +40,8 @@ private:
     TerminalPage page_;
     platform::TerminalBackend* backend_ = nullptr;
     bool sidebarCollapsedApplied_ = false;
+    // need250：终端设置单一数据源（构造时载入，面板改动即持久化）
+    TerminalSettings settings_;
 };
 
 } // namespace terminal

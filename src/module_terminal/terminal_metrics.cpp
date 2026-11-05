@@ -39,21 +39,22 @@ TerminalCellMetrics metricsFromAdvance(float advance, float naturalLineHeight, f
     return m;
 }
 
-TerminalCellMetrics terminalCellMetrics(float fontSize) {
-    // fontSize 档位数有限（页面常量 13，字号设置后续需求），map 缓存即稳态零查询
+TerminalCellMetrics terminalCellMetrics(float fontSize, const std::string& fontFamily) {
+    // fontSize 档位有限 + fontFamily 选项有限（need250 设置面板），复合键 map 缓存
+    // 即稳态零查询
     static std::mutex mu;
-    static std::unordered_map<int, TerminalCellMetrics> cache;
-    const int key = static_cast<int>(std::lround(fontSize));
+    static std::unordered_map<std::string, TerminalCellMetrics> cache;
+    const std::string key = fontFamily + "/" + std::to_string(static_cast<int>(std::lround(fontSize)));
     {
         std::lock_guard<std::mutex> lock(mu);
         const auto it = cache.find(key);
         if (it != cache.end()) return it->second;
     }
-    // 主字体半角 advance：monospace 族解析在 EUI（Win=Cascadia Mono→Consolas、
-    // mac=Menlo，text_shaping resolveSystemMonospaceFontPath）
+    // 主字体半角 advance：字体解析在 EUI（"monospace" = 内置等宽 token：Win=Cascadia
+    // Mono→Consolas、mac=Menlo；具名族直传，解析失败走估算回落 valid=false）
     const float advance = core::TextPrimitive::measureTextWidth(
-        kAdvanceSample, "monospace", fontSize, 400) / 10.0f;
-    const auto line = core::TextPrimitive::measureFontLineMetrics("monospace", fontSize, 400);
+        kAdvanceSample, fontFamily, fontSize, 400) / 10.0f;
+    const auto line = core::TextPrimitive::measureFontLineMetrics(fontFamily, fontSize, 400);
     const float naturalLineH = line.ascent - line.descent + line.lineGap;
     TerminalCellMetrics m = metricsFromAdvance(advance, naturalLineH, fontSize);
     // CellTrace 头（bug244 临时诊断，一次性）：实际字体文件路径 + advance 取整前后

@@ -11,32 +11,49 @@
 
 #include <eui/dsl.h>
 
+#include "terminal_fullscreen_bridge.h"
 #include "terminal_grid_widget.h"
 #include "terminal_metrics.h"
 #include "terminal_session_controller.h"
+#include "terminal_settings.h"
 
 namespace terminal {
 
 class TerminalPage {
 public:
     // 装配整页。onKeyBytes=键编码产物；onTextInput=IME 提交/粘贴；onCopyText=选区文本
-    //（Ctrl/Cmd+C 复制时回调，module 接剪贴板）；onOpenSettings=设置钮回调（module
-    // 接 core::appRouter 导航，module 间零依赖）。
+    //（Ctrl/Cmd+C 复制时回调，module 接剪贴板）。settings=面板单一数据源（module 持有
+    // + 持久化，need250）；onSettingsChanged=面板任意改动回调（module 落库 + 同步
+    // controller 新会话参数）。设置钮 = 页内模态面板（openSettings），不再外跳导航。
     GridLayout compose(eui::Ui& ui, const eui::Screen& screen, SessionController& controller,
                        const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
                        const std::function<void(const std::string&, bool paste)>& onTextInput,
                        const std::function<void(const std::string&)>& onCopyText,
-                       const std::function<void()>& onOpenSettings = nullptr);
+                       TerminalSettings& settings,
+                       const std::function<void()>& onSettingsChanged);
+
+    // 设置面板开合（齿轮钮 / Esc / × / 完成 三通道关闭；点 scrim 不关，设计 §2.1）
+    void openSettings() { settingsOpen_ = true; }
+    void closeSettings() { settingsOpen_ = false; }
+    bool settingsOpen() const { return settingsOpen_; }
 
     bool wantsResize() const { return pendingRows_ > 0; }
     int pendingRows() const { return pendingRows_; }
     int pendingCols() const { return pendingCols_; }
     void clearPendingResize() { pendingRows_ = 0; pendingCols_ = 0; }
 
-    // 全屏态（env 注入口 DEVDESK_TERMINAL_FULLSCREEN=1 初始化；两套视觉钮切换）。
-    // 返回值变化时 module 调 sidebar 折叠缝。
+    // 全屏态（env 注入口 DEVDESK_TERMINAL_FULLSCREEN=1 初始化；同槽图标钮切换）。
     bool fullscreen() const { return fullscreen_; }
-    void toggleFullscreen() { fullscreen_ = !fullscreen_; }
+    // bug252 根修（clue92 终裁：全屏 = 侧栏 0 宽全隐）：翻转的**当帧**打桥置位
+    // g_sidebarFsHidden。原先桥在 module compose 尾部（drawSidebar 已按旧宽画完、
+    // 页面已按旧 pageW 布局之后）才触发 → 过渡帧 =「侧栏旧宽 + 页已全屏」不一致态
+    //（qa v2-04 截图侧栏仍完整可见即抓到该帧），侧栏比页面晚一帧折叠。toggle 即时
+    // 打桥后，同一次 compose 里 drawSidebar/pageW 与页面同读同态，一帧对齐。
+    // 未装配 handler（单测/无头 compose）时桥为默认桩静默丢弃，安全。
+    void toggleFullscreen() {
+        fullscreen_ = !fullscreen_;
+        app::terminal_fullscreen::setCollapsed(fullscreen_);
+    }
     // 拖选范围（module Cmd+C 经 controller.activeSelectionText 提取）
     bool hasSelection() const { return hasSelection_; }
     int selARow() const { return selARow_; }
@@ -45,14 +62,15 @@ public:
     int selHCol() const { return selHCol_; }
 
 private:
-    float fontSize_ = 13.0f;
-    TerminalCellMetrics metrics_{};  // 每帧刷新（fontSize 档缓存）
+    TerminalCellMetrics metrics_{};  // 每帧刷新（(fontFamily,fontSize) 复合键缓存）
     TerminalGridWidget grid_;
     float scrollRemainder_ = 0.0f;
     int pendingRows_ = 0;
     int pendingCols_ = 0;
     bool fullscreen_ = false;
     bool fullscreenInit_ = false;
+    bool settingsOpen_ = false;      // need250 设置面板开合
+    float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 拖选（可视网格行列）
     bool selecting_ = false;

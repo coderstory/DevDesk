@@ -5,7 +5,15 @@ add_library(devdesk_module_terminal STATIC
     terminal_session_controller.cpp
     terminal_keyencoder.cpp
     terminal_metrics.cpp
+    terminal_settings.cpp
 )
+
+# 终端设置选项表按平台拆（need250：字体/shell 选项各写死一套，AGENTS §三）
+if(WIN32)
+    target_sources(devdesk_module_terminal PRIVATE terminal_settings_platform_win.cpp)
+else()
+    target_sources(devdesk_module_terminal PRIVATE terminal_settings_platform_posix.cpp)
+endif()
 
 devdesk_apply_warnings(devdesk_module_terminal)
 

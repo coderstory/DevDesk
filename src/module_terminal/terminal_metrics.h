@@ -5,6 +5,8 @@
 // 纯函数部分 doctest 直测（无字体依赖）。
 #pragma once
 
+#include <string>
+
 namespace terminal {
 
 struct TerminalCellMetrics {
@@ -17,7 +19,9 @@ struct TerminalCellMetrics {
 // 非法输入（advance/行高 ≤0）返回 valid=false 的估算回落值。
 TerminalCellMetrics metricsFromAdvance(float advance, float naturalLineHeight, float fontSize);
 
-// 运行时查询（EUI 度量 + 按 fontSize 缓存；每帧调用零成本）。
-TerminalCellMetrics terminalCellMetrics(float fontSize);
+// 运行时查询（EUI 度量 + 按 (fontFamily, fontSize) 复合键缓存；每帧调用零成本）。
+// need250：空族/"monospace" = 内置等宽 token；具名族（Cascadia Mono/Consolas/…）
+// 直传 EUI 解析，失败走 valid=false 估算回落。
+TerminalCellMetrics terminalCellMetrics(float fontSize, const std::string& fontFamily = "monospace");
 
 } // namespace terminal

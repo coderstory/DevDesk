@@ -55,7 +55,7 @@ public:
     FakeHandle* last = nullptr;
 
     core::Result<std::unique_ptr<platform::TerminalSessionHandle>> spawn(
-        const std::string&, const platform::TerminalSize&) override {
+        const std::string&, const platform::TerminalSize&, const std::string&) override {
         if (failSpawn) {
             return core::Result<std::unique_ptr<platform::TerminalSessionHandle>>::fail(
                 core::ErrorCode::Internal, "spawn 注入失败");

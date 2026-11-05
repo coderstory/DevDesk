@@ -73,6 +73,44 @@ REGISTER_TEST(terminalCellGeometry,
     return true;
 })
 
+REGISTER_TEST(terminalBoxGlyphGridGeometry,
+              "terminal metrics: 框线行绝对网格（bug244/clue103）——第 4 列 x==4*cellW + 矢量码点分类", {
+    namespace pt = platform;
+    // 行：┌ ─ 中 spacer ┐（框线码点 + 宽字混合；widths 1 1 2 0 1），cellW=8
+    pt::TerminalCell row[5];
+    row[0].cp = 0x250C; row[0].width = 1;  // ┌
+    row[1].cp = 0x2500; row[1].width = 1;  // ─
+    row[2].cp = 0x4E2D; row[2].width = 2;  // 中
+    row[3].cp = 0;      row[3].width = 0;  // 宽字 spacer 占位
+    row[4].cp = 0x2510; row[4].width = 1;  // ┐
+    constexpr float kCellW = 8.0f;
+    // 框线码点不改变布局口径：列位仍=前缀宽和×cellW，第 4 列恰在 4*cellW
+    DOCTEST_CHECK_EQ(terminal::cellXOf(row, 5, 2, kCellW), 2.0f * kCellW);
+    DOCTEST_CHECK_EQ(terminal::cellXOf(row, 5, 4, kCellW), 4.0f * kCellW);
+    DOCTEST_CHECK_EQ(terminal::cellSpanOf(row, 5, 0, 2, kCellW), 2.0f * kCellW);
+
+    // 矢量自绘分类器：单/重/双框线 + 半行线 + 八分/四分/阴影块 = true
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x2500));  // ─
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x250C));  // ┌
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x254B));  // ╋ 重
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x256C));  // ╬ 双
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x2575));  // ╵ 半行
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x2588));  // █
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x2591));  // ░
+    DOCTEST_CHECK(terminal::isVectorGlyphCp(0x259E));  // ▞ 四分
+    // 不入表（画错比字体更糟）：圆角/对角线/虚线/单双混合/普通字符
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x256D));  // ╭ 圆角
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x2571));  // ╱ 对角线
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x2504));  // ┄ 虚线
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x2552));  // ╒ 单双混合
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x257C));  // ╼ 重虚线
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp('A'));
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x4E2D));
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x24FF));
+    DOCTEST_CHECK(!terminal::isVectorGlyphCp(0x25A0));
+    return true;
+})
+
 REGISTER_TEST(terminalRowSliceText,
               "terminal metrics: rowSliceText 按 cell 区间拼 UTF-8（run 文本组装）", {
     namespace pt = platform;

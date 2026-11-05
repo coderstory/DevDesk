@@ -47,6 +47,8 @@ add_executable(devdesk_tests
     test_platform/test_utf8.cpp
     test_platform/test_file_open.cpp
     test_platform/test_terminal_launch.cpp
+    # debt246：ConPTY v2 redist 三级查找顺序判定（terminal_conpty_lookup.h 纯函数，全平台编译）
+    test_platform/test_terminal_conpty_lookup.cpp
     test_platform/test_terminal_vterm_core.cpp
     test_platform/test_file_watcher.cpp
     # 债-20 process_runner 真实现契约（POSIX 族；win 侧用例整体空转另行登记）
@@ -170,6 +172,7 @@ add_executable(devdesk_tests
     test_modules/test_settings.cpp    test_modules/test_terminal_keyencoder.cpp
     test_modules/test_terminal_controller.cpp
     test_modules/test_terminal_metrics.cpp
+    test_modules/test_terminal_settings.cpp
     test_modules/test_terminal_frame.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp

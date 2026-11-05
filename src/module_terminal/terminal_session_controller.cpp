@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "core/logging.h"
+#include "terminal_settings.h"
 
 namespace terminal {
 
@@ -25,8 +26,16 @@ int SessionController::spawnInto_(Session& s) {
         LOG_ERROR("Terminal: 后端不可用: " + s.error);
         return -1;
     }
-    // shell 传空 = 后端默认解析（mac：决策 6 四段链；win：pwsh→powershell→COMSPEC）
-    auto result = backend_->spawn("", {s.rows > 0 ? s.rows : 24, s.cols > 0 ? s.cols : 80});
+    // shell/workDir 空 = 后端默认（mac：决策 6 四段链；win：pwsh→powershell→COMSPEC）；
+    // 非空 = 设置面板选值（need250）。目录无效静默回退主目录（设计 §4.2⑤ 容错）
+    std::string workDir = newSessionWorkDir_;
+    if (!workDir.empty() && !workDirUsableForSpawn(workDir)) {
+        LOG_WARN("Terminal: 启动目录不存在，回退用户主目录: " + workDir);
+        workDir.clear();
+    }
+    auto result = backend_->spawn(newSessionShell_,
+                                  {s.rows > 0 ? s.rows : 24, s.cols > 0 ? s.cols : 80},
+                                  workDir);
     if (result.isFail()) {
         s.state = SessionState::Failed;
         s.error = result.errorMessage();
@@ -34,6 +43,7 @@ int SessionController::spawnInto_(Session& s) {
         return -1;
     }
     s.handle = std::move(result.value());
+    s.handle->setScrollbackLimit(newSessionScrollback_); // need250：新会话按设置分配回滚
     s.state = SessionState::Running;
     s.lastGeneration = -1;
     s.error.clear();
@@ -88,6 +98,19 @@ void SessionController::restartSession(int index) {
     s.scrollOffset = 0;      // P3-1：重启=全新输出流，回滚偏移归零
     s.scrollRemainder = 0.0f;
     spawnInto_(s);
+}
+
+// need250：shell/目录存成员（仅新会话消费）；回滚即时改既有会话上限（裁最旧）。
+// handle 默认空实现（mac 桥）安全无害。
+void SessionController::setNewSessionOptions(const std::string& shell,
+                                             const std::string& workDir,
+                                             int scrollbackLimit) {
+    newSessionShell_ = shell;
+    newSessionWorkDir_ = workDir;
+    newSessionScrollback_ = scrollbackLimit > 0 ? scrollbackLimit : 1000;
+    for (Session& s : sessions_) {
+        if (s.handle) s.handle->setScrollbackLimit(newSessionScrollback_);
+    }
 }
 
 Session* SessionController::active() { return at(activeIndex_); }
