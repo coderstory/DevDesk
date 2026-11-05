@@ -305,8 +305,8 @@ GridLayout TerminalPage::compose(
                 .size(screen.width, bodyH)
                 .margin(0.0f, gridTop, 0.0f, 0.0f)
                 .color(Color{0, 0, 0, 0.01f})
-                .onPress([this, ctrl, toLogical, rowOf, colOf](const eui::PointerEvent& e,
-                                                              const eui::Rect&) {
+                .onPress([this, toLogical, rowOf, colOf](const eui::PointerEvent& e,
+                                                        const eui::Rect&) {
                     auto [lx, ly] = toLogical(e);
                     selecting_ = true;
                     hasSelection_ = false;
@@ -386,7 +386,7 @@ GridLayout TerminalPage::compose(
                     }
                     return false;
                 })
-                .onTextInput([ctrl, onTextInput](const eui::TextInputEvent& e) {
+                .onTextInput([onTextInput](const eui::TextInputEvent& e) {
                     if (!e.text.empty()) onTextInput(e.text, false);
                     if (!e.pasteText.empty()) onTextInput(e.pasteText, true);
                 })

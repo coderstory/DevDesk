@@ -211,11 +211,14 @@ REGISTER_TEST(controllerCloseInactiveKeepsFocus,
     DOCTEST_CHECK(h2->writeCount == 0);
 
     // 关非激活右邻（现 idx1）：焦点不动
+    // 计数走静态累计：closeSession 已 reset handle → 上面的 h2 是悬垂指针，
+    // 读它等于读已释放内存（曾在本机与 CI 上随机红/绿）。
+    const int terminatedBefore = FakeHandle::terminatedTotal;
     c.closeSession(1);
     DOCTEST_CHECK(c.count() == 1);
     DOCTEST_CHECK(c.activeIndex() == 0);
     DOCTEST_CHECK(c.at(0)->titleNumber == 2);
-    DOCTEST_CHECK(h2->terminateCount == 1);
+    DOCTEST_CHECK(FakeHandle::terminatedTotal == terminatedBefore + 1);
 
     // 关激活末位 → 空态
     c.closeSession(0);

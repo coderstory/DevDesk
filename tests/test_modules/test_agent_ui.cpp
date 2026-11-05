@@ -2439,13 +2439,15 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     // 参数 chips（v2 §3.4：flex-wrap 全量展示，「+N」截断退役）：fs.grep 逐枚
     // 对齐注册表 params（map 序），不缺枚、不多渲、无 .chip.more
     int grepIdx = -1;
-    const auto listed = core::ToolRegistry::instance().listTools();
-    for (size_t k = 0; k < registered; ++k) {
-        const auto* nm = ui2.find("agent.dialog.tools.card." + std::to_string(k) +
-                                  ".name");
-        if (nm != nullptr && nm->text == "fs.grep") {
-            grepIdx = static_cast<int>(k);
-            break;
+    {
+        const auto listed = core::ToolRegistry::instance().listTools();
+        for (size_t k = 0; k < registered; ++k) {
+            const auto* nm = ui2.find("agent.dialog.tools.card." +
+                                      std::to_string(k) + ".name");
+            if (nm != nullptr && nm->text == "fs.grep") {
+                grepIdx = static_cast<int>(k);
+                break;
+            }
         }
     }
     DOCTEST_REQUIRE_MESSAGE(grepIdx >= 0, "注册表缺 fs.grep（chips 断言失锚）");

@@ -428,6 +428,14 @@ foreach(_probe_source ${_devdesk_probe_sources})
     if(_probe_name MATCHES "_macos_probe$" AND NOT APPLE)
         continue()
     endif()
+    # 对称的另一半：_win_probe 后缀仅 WIN32 编。terminal_conpty_win_probe 是
+    # ConPTY CreateProcessW + powershell 真起验证（池187 复验），macOS/Linux 上
+    # TerminalBackend::spawn 走非 Windows 分支必报「executable path must be
+    # absolute」——不加这道门，完整门禁（ctest -L probe）在 Mac 本机与 CI mac
+    # 档恒红（池131，2026-11-05 实测）。
+    if(_probe_name MATCHES "_win_probe$" AND NOT WIN32)
+        continue()
+    endif()
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号，probe
     # 链接集（module_* 库）里没有 app_assembly.cpp，缝必须单独编进来
     # module_toggle_sidebar_probe / wallpaper_probe：活门控真窗口 probe 还要真

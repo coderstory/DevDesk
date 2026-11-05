@@ -93,7 +93,10 @@ bool nearEq(float a, float b) { return std::fabs(a - b) <= 0.5f; }
 
 // §6b TRACE 用（172 诊断临时，随结论落定后撤）：GLFW 单回调槽——链式转发须把
 // EUI 原回调存文件级静态（同 g_agent/g_router 无捕获约束先例）。
+// 唯一使用点在同一 _WIN32 段内（真指针链只在 Windows 跑），非 Windows 不声明防 -Wunused。
+#ifdef _WIN32
 GLFWcursorposfun g_prevCursorCb = nullptr;
+#endif
 
 // 数 DOM 里同名 id 出现次数（幂等注册断言用：重复注册不得产生重复条目）
 int countId(core::dsl::Ui& ui, const std::string& id) {

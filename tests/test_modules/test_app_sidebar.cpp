@@ -279,7 +279,10 @@ REGISTER_TEST(sidebar_collapsed_compose,
 
     eui::Screen screen;
     screen.width = 1600.0f;
-    screen.height = 1000.0f;
+    // 窗口高 = 侧栏局部高 1000 + 系统标题栏让位：compose 入口在 macOS 扣掉
+    // kSystemTitleBarInset，不加回来侧栏局部高只有 970，底钮 y 全线偏 30
+    //（同 60ca9baa 嘴窗用例的补偿口径，池128 同根因）。
+    screen.height = 1000.0f + kExpectedBodyTop;
     eui::Ui ui;
     ui.begin("sidebar_collapsed");
     app::compose(ui, screen);
@@ -345,8 +348,8 @@ REGISTER_TEST(sidebar_collapsed_compose,
     // 模块内容区宽度跟随侧边栏实际占宽
     DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1528.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1528.0f));
-    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight,
-                          1000.0f - kExpectedBodyTop));
+    // 窗口高已加 kExpectedBodyTop → compose 扣掉让位后页面区高恰为 1000
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
 
     app::setSidebarCollapsed(false);  // 复位进程级全局态
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
@@ -443,7 +446,7 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     eui::Screen screen;
     screen.width = 1600.0f;
-    screen.height = 1000.0f;
+    screen.height = 1000.0f + kExpectedBodyTop;  // 侧栏局部高 1000（macOS 让位补偿）
     eui::Ui ui;
     ui.begin("sidebar_expanded");
     app::compose(ui, screen);
@@ -984,8 +987,10 @@ REGISTER_TEST(sidebar_custom_titlebar_compose,
 // need171（2026-11-03 设计文档 §2.2）：侧栏可用高驱动的离散三档间距——
 // 正常档 H≥712（topPad 32/brandNavGap 28/行高 40/行距 4）、紧凑档 680≤H<712
 //（16/16/40/4）、极紧档 H<680（12/12/36/2）。本文件用例钉 customTitlebarActive
-//= false，Windows 路径 bodyTop=0 → H 恰等于 screen.height。导航起点连锁：正常档
-// W=1600 → bug165 宽档 56 → 块高 72、topPad/gap −4 → 起点 124；紧凑 88 / 极紧 80。
+//= false，**但 macOS 仍会扣系统标题栏让位 kSystemTitleBarInset**——窗口高必须
+// 按「目标侧栏局部高 + kExpectedBodyTop」给，否则档位整体下落一档（池128 根因）。
+// 导航起点连锁：正常档 W=1600 → bug165 宽档 56 → 块高 72、topPad/gap −4 → 起点 124；
+// 紧凑 88 / 极紧 80。
 REGISTER_TEST(sidebar_height_adaptive_tiers,
               "sidebar: 高度三档间距（H=1000 正常/H=700 紧凑/H=660 极紧）", {
     app::setCustomTitlebarMode(false);
@@ -1002,7 +1007,7 @@ REGISTER_TEST(sidebar_height_adaptive_tiers,
         ui.begin("tier_normal");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 1000.0f;
+        screen.height = 1000.0f + kExpectedBodyTop;  // 侧栏局部高 1000
         app::compose(ui, screen);
         ui.end();
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 28.0f));  // 32−4 块加高补偿
@@ -1019,7 +1024,7 @@ REGISTER_TEST(sidebar_height_adaptive_tiers,
         ui.begin("tier_compact");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 700.0f;
+        screen.height = 700.0f + kExpectedBodyTop;  // 侧栏局部高 700（紧凑档）
         app::compose(ui, screen);
         ui.end();
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 16.0f));
@@ -1035,7 +1040,7 @@ REGISTER_TEST(sidebar_height_adaptive_tiers,
         ui.begin("tier_tight");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 660.0f;
+        screen.height = 660.0f + kExpectedBodyTop;  // 侧栏局部高 660（极紧档）
         app::compose(ui, screen);
         ui.end();
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 12.0f));
@@ -1074,7 +1079,7 @@ REGISTER_TEST(sidebar_logo_three_tier_two_state,
                      "_state" + std::to_string(s));
             eui::Screen screen;
             screen.width = 1600.0f;
-            screen.height = heights[tier];
+            screen.height = heights[tier] + kExpectedBodyTop;  // 侧栏局部高 = 目标档高
             app::compose(ui, screen);
             ui.end();
             const float logo =
@@ -1462,7 +1467,7 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         ui.begin("scroll_680_collapsed");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 680.0f;
+        screen.height = 680.0f + kExpectedBodyTop;  // 侧栏局部高 680（紧凑档）
         app::compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
@@ -1480,7 +1485,7 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         ui.begin("scroll_680_expanded");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 680.0f;
+        screen.height = 680.0f + kExpectedBodyTop;  // 侧栏局部高 680（紧凑档）
         app::compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
@@ -1503,7 +1508,7 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         ui.begin("scroll_680_recollapsed");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 680.0f;
+        screen.height = 680.0f + kExpectedBodyTop;  // 侧栏局部高 680（紧凑档）
         app::compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
@@ -1521,7 +1526,7 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         ui.begin("scroll_560_overflow");
         eui::Screen screen;
         screen.width = 1600.0f;
-        screen.height = 560.0f;
+        screen.height = 560.0f + kExpectedBodyTop;  // 侧栏局部高 560（极紧档）
         app::compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
