@@ -10,8 +10,11 @@
 #include "agent_module_internal.h"
 #include "module_agent/agent_task_templates.h"
 
-#include <ui_kit/glass.h>       // glassBorder（池162/170 卡面 1px 高光边）
+#include <ui_kit/glass.h>       // glassFill/glassShadowColor（池170 v2 弹窗壳）
 #include <ui_kit/materials.h>   // itemSurface（池127 L2 卡面）
+
+#include <cstddef>
+#include <core/str_util.h>      // toLowerAscii（搜索不区分大小写折叠）
 
 namespace module::agent {
 
@@ -1171,39 +1174,197 @@ void AgentModule::composeTaskDialog(
         .build();
 }
 
-// ---- 可用工具弹窗（池170）----
+// ---- 池170 v2 工具弹窗 TU 私有助手 ----
+
+constexpr float kToolsHeaderH = 56.0f;           // §3.3 头部区
+constexpr float kToolsSearchBoxH = 36.0f;        // §3.6 搜索框高
+constexpr float kToolsDescLh = 20.0f;            // 描述行盒（13px/20）
+constexpr std::size_t kToolsDescClampLines = 3;  // 描述 >3 行才 clamp+展开（§3.4）
+
+// UTF-8 单码点字节长（首字节口径；坏字节按 1 兜底，只影响一处断行）
+std::size_t utf8CodepointLen(const std::string& s, std::size_t i) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    if (c >= 0xF0) return 4;
+    if (c >= 0xE0) return 3;
+    if (c >= 0xC0) return 2;
+    return 1;
+}
+
+// 按码点贪心换行：与渲染同引擎测量（measureTextWidth，内部带缓存），CJK 逐字断行。
+// 返回各行原文切片；渲染逐行走 wrap(false) 文本节点，与测量天然一致。
+std::vector<std::string> wrapToolDescLines(const std::string& text, float maxWidth,
+                                           float fontSize) {
+    std::vector<std::string> lines;
+    if (text.empty()) return lines;
+    std::string line;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::size_t len = utf8CodepointLen(text, i);
+        const std::string cp =
+            text.substr(i, std::min(len, text.size() - i));
+        if (!line.empty() &&
+            core::TextPrimitive::measureTextWidth(line + cp, "", fontSize,
+                                                  400) > maxWidth) {
+            lines.push_back(std::move(line));
+            line.clear();
+        }
+        line += cp;
+        i += len;
+    }
+    if (!line.empty()) lines.push_back(std::move(line));
+    return lines;
+}
+
+// 单行末尾塞省略号：整行（含 …）不超 maxWidth 的最长截断（同 message_blocks 口径）
+std::string ellipsizeToolLine(const std::string& line, float maxWidth,
+                              float fontSize) {
+    if (core::TextPrimitive::measureTextWidth(line + "…", "", fontSize, 400) <=
+        maxWidth) {
+        return line + "…";
+    }
+    std::string cut = line;
+    while (!cut.empty()) {
+        while (!cut.empty() &&
+               (static_cast<unsigned char>(cut.back()) & 0xC0) == 0x80) {
+            cut.pop_back();  // 丢 UTF-8 续字节
+        }
+        if (!cut.empty()) cut.pop_back();  // 丢首字节
+        if (core::TextPrimitive::measureTextWidth(cut + "…", "", fontSize,
+                                                  400) <= maxWidth) {
+            return cut + "…";
+        }
+    }
+    return "…";
+}
+
+// 命中区间（字节偏移，升序不重叠；haystack 已小写化，needle 非空）
+std::vector<std::pair<std::size_t, std::size_t>> findMatchRanges(
+    const std::string& lowerHay, const std::string& needle) {
+    std::vector<std::pair<std::size_t, std::size_t>> out;
+    if (needle.empty()) return out;
+    std::size_t pos = 0;
+    while ((pos = lowerHay.find(needle, pos)) != std::string::npos) {
+        out.emplace_back(pos, pos + needle.size());
+        pos += needle.size();
+    }
+    return out;
+}
+
+// 过滤口径（§3.6）：名称 + 说明全文 + 参数名，不区分大小写子串，命中任一即保留整卡
+bool toolMatchesQuery(const ToolInfo& tool, const std::string& q) {
+    if (q.empty()) return true;
+    if (core::str::toLowerAscii(tool.name).find(q) != std::string::npos) {
+        return true;
+    }
+    if (core::str::toLowerAscii(tool.description).find(q) !=
+        std::string::npos) {
+        return true;
+    }
+    for (const auto& p : tool.params) {
+        if (core::str::toLowerAscii(p).find(q) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 族图标映射（§3.4，全 FA5 实心集码点禁 emoji；前缀族，兜底 plug）
+unsigned int toolFamilyIconGlyph(const std::string& name) {
+    const auto startsWith = [&name](const char* p) {
+        return name.rfind(p, 0) == 0;
+    };
+    if (startsWith("fs.")) return 0xF07B;        // folder
+    if (startsWith("git.")) return 0xF126;       // code-branch
+    if (startsWith("md.")) return 0xF15C;        // file-alt
+    if (startsWith("memory.")) return 0xF5DC;    // brain
+    if (startsWith("net.")) return 0xF0AC;       // globe
+    if (startsWith("app.")) return 0xF1B2;       // cube
+    if (startsWith("claude.")) return 0xF544;    // robot
+    if (startsWith("todo.")) return 0xF0AE;      // tasks
+    if (startsWith("schedule.")) return 0xF017;  // clock
+    if (startsWith("bash.") || startsWith("agent.")) return 0xF120;  // terminal
+    return 0xF1E6;                               // plug 兜底
+}
+
+// 次钮底档（§9：light #F2F2F2 / dark #353231）。light 无该 token 实值，取最接近
+// 的 borderMuted #F3F4F6（Δ1/255，禁新增裸 hex）；dark 即 hover 档 #353231（精确）
+eui::Color toolNeutralFill(const ::core::theme::Tokens& t) {
+    return t.isDark ? t.colors.hover : t.colors.borderMuted;
+}
+
+// 弹窗浮层细黑边（§9：light rgba(0,0,0,0.35) / dark borderDefault——暗色纯黑边
+// 深底不可见降档，终端页覆盖卡同口径）
+eui::Color toolsShellBorder(const ::core::theme::Tokens& t) {
+    return t.isDark ? t.colors.borderDefault
+                    : eui::Color{0.0f, 0.0f, 0.0f, 0.35f};
+}
+
+// 工具卡极淡阴影（§3.4：light rgba(16,54,38,0.05) blur8 offsetY2 / dark 无）
+core::Shadow toolCardShadow(const ::core::theme::Tokens& t) {
+    core::Shadow s;
+    s.enabled = !t.isDark;
+    s.offset = {0.0f, 2.0f};
+    s.blur = 8.0f;
+    s.color = {16.0f / 255.0f, 54.0f / 255.0f, 38.0f / 255.0f, 0.05f};
+    return s;
+}
+
+// ---- 可用工具弹窗（池170 v2，取代 v1 2 列定高网格版）----
 //
-// 纯查阅弹窗（无表单无 footer 主次钮）：头部 48（标题+计数 | ✕ 28×28）+ 1px 分割线 +
-// 内容区（pad 16，scrollView 内滚，2 列网格卡定高 96）。工具注册表快照同步装载
-//（ensureToolsCache），打开即 forceReload——「加载中/错误」态在同步语义下不可达
-//（listRegisteredTools 只枚举进程内注册表，不失败），状态表只落「空态/常态」。
-// 关闭 = ✕ / backdrop / Esc（components::dialog 既有契约 + 模块 onKeyEvent 分支）。
+// 纯查阅弹窗（无表单无 footer 主次钮）：弹窗壳 w=min(720,可用宽−48)
+// h=min(600,可用高−96)（glassFill + 1px 细黑边 + 冷阴影 blur24 + radiusLarge 14，
+// §3.2 白卡+细黑边老板裁决）→ 头部 56（标题 + 「N 个」badge 恒全量 | ✕ 28×28）+
+// 1px 分割线 + 搜索区（锚顶固定不滚，§3.6：框高 36、左 fa-search、右计数/清除）+
+// 列表区（唯一内滚，全宽单列卡、高随内容自适应；描述全文展示 >3 行 clamp+展开，
+// 修 bug #7）。N=0 搜索区不渲染走 §3.5 空态；搜索 0 命中走 §3.6 搜索空态。
+// 关闭 = ✕ / backdrop / Esc（Esc 有输入先清搜索——模块 onKeyEvent 分支 + 输入框
+// onCancel 同语义）。工具注册表快照同步装载（ensureToolsCache），打开即 forceReload
+// ——「加载中/错误」态在同步语义下不可达（listRegisteredTools 只枚举进程内注册表，
+// 不失败），状态表只落「空态/搜索空态/常态」。
 void AgentModule::composeToolsDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
     const float w = std::min(720.0f, std::max(0.0f, screen.width - 48.0f));
-    const float h = std::min(560.0f, std::max(0.0f, screen.height - 96.0f));
-    constexpr float kHeaderH = 48.0f;
-    constexpr float kPad = 16.0f;
-    const float cardH = core::theme::scaled(96.0f);
-    const float innerW = std::max(0.0f, w - 2.0f * kPad);
+    const float h = std::min(600.0f, std::max(0.0f, screen.height - 96.0f));
+    const float innerW = std::max(0.0f, w - 32.0f);  // 通栏 pad 16×2
+    const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
+    const std::string queryLower = core::str::toLowerAscii(toolsSearch_);
+    const bool searchActive = !toolsSearch_.empty() && !toolsCache_.empty();
+
+    // 过滤（名称+说明+参数名子串；30+ 条同步过滤，每字符即时生效无需防抖；
+    // 空词 = 全量——toolMatchesQuery 对空 q 恒真）
+    std::vector<const ToolInfo*> visible;
+    for (const auto& tool : toolsCache_) {
+        if (toolMatchesQuery(tool, queryLower)) visible.push_back(&tool);
+    }
+
+    // 弹窗壳（§3.2）：glassFill + 细黑边 + 冷阴影 blur24 offsetY4 + radiusLarge 14
+    components::DialogStyle shell(themeTokens);
+    shell.surface = ui_kit::glassFill(t);
+    shell.border = toolsShellBorder(t);
+    shell.backdrop = components::theme::color(0.0f, 0.0f, 0.0f, 0.40f);
+    shell.shadow.enabled = true;
+    shell.shadow.offset = {0.0f, 4.0f};
+    shell.shadow.blur = 24.0f;
+    shell.shadow.color = ui_kit::glassShadowColor(t);
+    shell.radius = t.sizes.radiusLarge;
 
     components::dialog(ui, "agent.dialog.tools")
         .open(toolsDialogOpen_)
         .screen(screen.width, screen.height)
         .size(w, h)
-        .theme(themeTokens)
+        .style(shell)
         .onOpenChange([this](bool v) {
             if (!v) toolsDialogOpen_ = false;
         })
         .content([&] {
             if (!toolsDialogOpen_) return;
-            // 头部（48）：「可用工具」16/700 一级字 + 「（N）」16/400 三级字，x=20
+            // 头部 56（§3.3）：「可用工具」16/700 + badge「N 个」（恒全量不随搜索变）
             const float titleFs = core::theme::scaled(16.0f);
             const float titleW = core::TextPrimitive::measureTextWidth(
                 "可用工具", "", titleFs, 700);
             ui.text("agent.dialog.tools.title")
-                .position(20.0f, (kHeaderH - titleFs) * 0.5f)
+                .position(20.0f, (kToolsHeaderH - titleFs) * 0.5f)
                 .size(titleW, titleFs)
                 .text("可用工具")
                 .fontSize(titleFs)
@@ -1211,236 +1372,299 @@ void AgentModule::composeToolsDialog(
                 .fontWeight(700)
                 .color(t.colors.textPrimary)
                 .build();
-            ui.text("agent.dialog.tools.count")
-                .position(20.0f + titleW, (kHeaderH - titleFs) * 0.5f)
-                .size(std::max(0.0f, w - 20.0f - titleW - 52.0f), titleFs)
-                .text("（" + std::to_string(toolsCache_.size()) + "）")
-                .fontSize(titleFs)
-                .lineHeight(titleFs)
-                .wrap(false)
-                .color(t.colors.textTertiary)
+            const float badgeFs = core::theme::scaled(12.0f);
+            const float badgeH = core::theme::scaled(20.0f);
+            const std::string badgeText =
+                std::to_string(toolsCache_.size()) + " 个";
+            const float badgeW =
+                core::TextPrimitive::measureTextWidth(badgeText, "", badgeFs,
+                                                      600) +
+                core::theme::scaled(12.0f);  // pill 内边距 6×2
+            const float badgeY = (kToolsHeaderH - badgeH) * 0.5f;
+            ui.rect("agent.dialog.tools.badge")
+                .position(20.0f + titleW + 8.0f, badgeY)
+                .size(badgeW, badgeH)
+                .color(t.colors.primarySoftBg)
+                .radius(t.sizes.radiusPill)
                 .build();
-            // ✕ 关闭（28×28，hover 底）：bg 命中 + FA 码点穿透文本
+            ui.text("agent.dialog.tools.badge.text")
+                .position(20.0f + titleW + 8.0f, badgeY)
+                .size(badgeW, badgeH)
+                .text(badgeText)
+                .fontSize(badgeFs)
+                .lineHeight(badgeH)
+                .fontWeight(600)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.primaryText)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .build();
+            // ✕ 关闭（28×28 右缘内 12，hover 底）：bg 命中面 + FA 码点穿透文本
+            const float closeS = core::theme::scaled(28.0f);
+            const float closeX = w - 12.0f - closeS;
+            const float closeY = (kToolsHeaderH - closeS) * 0.5f;
             ui.rect("agent.dialog.tools.close.bg")
-                .position(w - 12.0f - core::theme::scaled(28.0f),
-                          (kHeaderH - core::theme::scaled(28.0f)) * 0.5f)
-                .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
-                .states(t.colors.background, t.colors.hover, t.colors.hover)
+                .position(closeX, closeY)
+                .size(closeS, closeS)
+                .states(kTransparent, t.colors.hover, t.colors.hover)
                 .radius(6.0f)
                 .onClick([this] { toolsDialogOpen_ = false; })
                 .build();
             ui.text("agent.dialog.tools.close")
-                .position(w - 12.0f - core::theme::scaled(28.0f),
-                          (kHeaderH - core::theme::scaled(28.0f)) * 0.5f)
-                .size(core::theme::scaled(28.0f), core::theme::scaled(28.0f))
+                .position(closeX, closeY)
+                .size(closeS, closeS)
                 .icon(::eui::utf8(0xF00D))  // fa-xmark
                 .fontSize(core::theme::scaled(14.0f))
-                .lineHeight(core::theme::scaled(28.0f))
+                .lineHeight(closeS)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .hitTestMode(::core::dsl::HitTestMode::None)
                 .onClick([this] { toolsDialogOpen_ = false; })
                 .build();
+            // 分割线（§3.3：头部下 1px 通宽 borderDefault）
             ui.rect("agent.dialog.tools.divider")
-                .position(0.0f, kHeaderH)
+                .position(0.0f, kToolsHeaderH)
                 .size(w, 1.0f)
                 .color(t.colors.borderDefault)
                 .build();
 
-            // 内容区（pad 16，内滚；弹窗壳不滚）
+            // N=0 → §3.5 空态居中；搜索区整体不渲染（无内容可搜，留框即无效控件）
+            const float listY = kToolsHeaderH + 1.0f + 12.0f +
+                                kToolsSearchBoxH + 8.0f + 8.0f;
             if (toolsCache_.empty()) {
+                const float areaY = kToolsHeaderH + 1.0f;
+                const float areaH =
+                    std::max(0.0f, h - areaY - 16.0f);
+                const float iconFs = core::theme::scaled(24.0f);
+                const float row1 = core::theme::scaled(20.0f);
+                const float row2 = core::theme::scaled(18.0f);
+                const float totalH = iconFs + 8.0f + row1 + 4.0f + row2;
+                float ey = areaY + std::max(0.0f, (areaH - totalH) * 0.5f);
+                ui.text("agent.dialog.tools.empty.icon")
+                    .position(16.0f, ey)
+                    .size(innerW, iconFs)
+                    .icon(::eui::utf8(0xF1E6))  // fa-plug
+                    .fontSize(iconFs)
+                    .lineHeight(iconFs)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .build();
+                ey += iconFs + 8.0f;
                 ui.text("agent.dialog.tools.empty")
-                    .position(kPad, kHeaderH + 1.0f)
-                    .size(innerW,
-                          std::max(0.0f, h - kHeaderH - 1.0f - kPad))
+                    .position(16.0f, ey)
+                    .size(innerW, row1)
                     .text("暂无可用工具")
                     .fontSize(core::theme::scaled(13.0f))
-                    .lineHeight(core::theme::scaled(20.0f))
+                    .lineHeight(row1)
                     .horizontalAlign(eui::HorizontalAlign::Center)
-                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textSecondary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .build();
+                ey += row1 + 4.0f;
+                ui.text("agent.dialog.tools.empty.hint")
+                    .position(16.0f, ey)
+                    .size(innerW, row2)
+                    .text("智能体未装配任何工具")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(row2)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
                     .color(t.colors.textTertiary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
                     .build();
                 return;
             }
+
+            // 搜索区（§3.6，锚顶固定不滚）：框高 36 radius 8 通栏；底=次钮底档，
+            // 无边框，focus 1px primary 描边（组件底色不随 focus 切换——见偏差清单）
+            const float searchY = kToolsHeaderH + 1.0f + 12.0f;
+            components::InputStyle searchStyle(themeTokens);
+            searchStyle.background = toolNeutralFill(t);
+            searchStyle.focused = t.colors.surface;
+            searchStyle.border = toolNeutralFill(t);  // 与底同色 = 视觉无边框
+            searchStyle.focusBorder = t.colors.primary;
+            searchStyle.text = t.colors.textPrimary;
+            searchStyle.placeholder = t.colors.textTertiary;
+            searchStyle.cursor = t.colors.primary;
+            searchStyle.radius = 8.0f;
+            searchStyle.shadow = core::Shadow{};
+            components::input(ui, "agent.dialog.tools.search")
+                .position(16.0f, searchY)
+                .size(innerW, kToolsSearchBoxH)
+                .value(toolsSearch_)
+                .placeholder("搜索工具名称或说明")
+                .fontSize(core::theme::scaled(13.0f))
+                .inset(35.0f)  // 左图标位；组件 inset 左右对称（右 92 不可达）
+                .style(searchStyle)
+                .transition(0.12f, core::Ease::OutCubic)
+                .onChange([this](const std::string& v) { toolsSearch_ = v; })
+                .onCancel([this] {
+                    // Esc 优先级（§3.6）：有输入先清搜索（弹窗不关），空输入关弹窗
+                    if (!toolsSearch_.empty()) {
+                        toolsSearch_.clear();
+                    } else {
+                        toolsDialogOpen_ = false;
+                    }
+                })
+                .build();
+            // 左装饰图标（纯装饰 pointer 穿透；FA5 search 0xF002）
+            ui.text("agent.dialog.tools.search.icon")
+                .position(16.0f + 11.0f, searchY)
+                .size(core::theme::scaled(14.0f), kToolsSearchBoxH)
+                .icon(::eui::utf8(0xF002))
+                .fontSize(core::theme::scaled(14.0f))
+                .lineHeight(kToolsSearchBoxH)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textTertiary)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .build();
+            // 右端：计数「n / 全量」（仅过滤生效时显示）+ 清除 ×（有输入才显示）
+            if (searchActive) {
+                const float clearS = core::theme::scaled(28.0f);
+                const float clearX = 16.0f + innerW - 12.0f - clearS;
+                const float clearY =
+                    searchY + (kToolsSearchBoxH - clearS) * 0.5f;
+                const auto clearSearch = [this, &ui] {
+                    toolsSearch_.clear();
+                    ui.requestFocus("agent.dialog.tools.search.hit");  // 回焦
+                };
+                const std::string countText =
+                    std::to_string(visible.size()) + " / " +
+                    std::to_string(toolsCache_.size());
+                const float countFs = core::theme::scaled(12.0f);
+                const float countW = core::TextPrimitive::measureTextWidth(
+                                        countText, "", countFs, 400) +
+                                    8.0f;
+                ui.text("agent.dialog.tools.search.count")
+                    .position(clearX - 8.0f - countW, searchY)
+                    .size(countW, kToolsSearchBoxH)
+                    .text(countText)
+                    .fontSize(countFs)
+                    .lineHeight(kToolsSearchBoxH)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .build();
+                ui.rect("agent.dialog.tools.search.clear.bg")
+                    .position(clearX, clearY)
+                    .size(clearS, clearS)
+                    .states(kTransparent, t.colors.hover, t.colors.hover)
+                    .radius(6.0f)
+                    .onClick(clearSearch)
+                    .build();
+                ui.text("agent.dialog.tools.search.clear")
+                    .position(clearX, clearY)
+                    .size(clearS, clearS)
+                    .icon(::eui::utf8(0xF00D))
+                    .fontSize(core::theme::scaled(10.0f))
+                    .lineHeight(clearS)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .onClick(clearSearch)
+                    .build();
+            }
+
+            // 搜索空态（§3.6，0 命中）：search 图标 + 文案 + 「清空搜索」钮居中
+            if (searchActive && visible.empty()) {
+                const float areaH = std::max(0.0f, h - listY - 16.0f);
+                const float iconFs = core::theme::scaled(24.0f);
+                const float row1 = core::theme::scaled(20.0f);
+                const float row2 = core::theme::scaled(18.0f);
+                const float btnFs = core::theme::scaled(12.0f);
+                const float btnH = core::theme::scaled(26.0f);
+                const float btnW = core::TextPrimitive::measureTextWidth(
+                                       "清空搜索", "", btnFs, 500) +
+                                   core::theme::scaled(16.0f);
+                const float totalH =
+                    iconFs + 8.0f + row1 + 4.0f + row2 + 10.0f + btnH;
+                float ey = listY + std::max(0.0f, (areaH - totalH) * 0.5f);
+                ui.text("agent.dialog.tools.noresult.icon")
+                    .position(16.0f, ey)
+                    .size(innerW, iconFs)
+                    .icon(::eui::utf8(0xF002))
+                    .fontSize(iconFs)
+                    .lineHeight(iconFs)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .build();
+                ey += iconFs + 8.0f;
+                ui.text("agent.dialog.tools.noresult.title")
+                    .position(16.0f, ey)
+                    .size(innerW, row1)
+                    .text("未找到匹配工具")
+                    .fontSize(core::theme::scaled(13.0f))
+                    .lineHeight(row1)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .color(t.colors.textSecondary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .build();
+                ey += row1 + 4.0f;
+                ui.text("agent.dialog.tools.noresult.hint")
+                    .position(16.0f, ey)
+                    .size(innerW, row2)
+                    .text("试试其他关键词")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(row2)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .build();
+                ey += row2 + 10.0f;
+                const float btnX = 16.0f + (innerW - btnW) * 0.5f;
+                const auto clearAndRefocus = [this, &ui] {
+                    toolsSearch_.clear();
+                    ui.requestFocus("agent.dialog.tools.search.hit");
+                };
+                ui.rect("agent.dialog.tools.noresult.btn.bg")
+                    .position(btnX, ey)
+                    .size(btnW, btnH)
+                    .states(kTransparent, t.colors.hover, t.colors.hover)
+                    .radius(6.0f)
+                    .onClick(clearAndRefocus)
+                    .build();
+                ui.text("agent.dialog.tools.noresult.btn")
+                    .position(btnX, ey)
+                    .size(btnW, btnH)
+                    .text("清空搜索")
+                    .fontSize(btnFs)
+                    .lineHeight(btnH)
+                    .fontWeight(500)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.primaryText)
+                    .hitTestMode(::core::dsl::HitTestMode::None)
+                    .onClick(clearAndRefocus)
+                    .build();
+                return;
+            }
+            // 列表区（§2.2 唯一内滚容器；pad 8 顶 16 底，头部/分割线/搜索区锚顶）
             components::scrollView(ui, "agent.dialog.tools.scroll")
-                .position(kPad, kHeaderH + 1.0f + kPad)
-                .size(innerW,
-                      std::max(0.0f, h - kHeaderH - 1.0f - 2.0f * kPad))
+                .position(16.0f, listY)
+                .size(innerW, std::max(0.0f, h - listY - 16.0f))
                 .gap(8.0f)
-                .step(cardH + 8.0f)
+                .step(core::theme::scaled(96.0f))
                 .theme(themeTokens)
                 .contentKey("agent.dialog.tools.scroll.n" +
-                            std::to_string(toolsCache_.size()) + ".w" +
-                            std::to_string(static_cast<int>(innerW)))
+                            std::to_string(visible.size()) + ".w" +
+                            std::to_string(static_cast<int>(innerW)) +
+                            ".q" + toolsSearch_ +
+                            ".e" + std::to_string(toolsListVersion_))
                 .content([&](eui::Ui& inner, float cw, float) {
-                    // 2 列等宽网格：卡宽 = (内容宽−8)/2（窄档自动 1 列由 flow 兜底）
-                    const float gridCardW =
-                        std::max(0.0f, (cw - 8.0f) * 0.5f);
-                    inner.flow("agent.dialog.tools.grid")
+                    // 全宽单列垂直流（§2.3）：卡高随内容自适应，禁定高网格
+                    inner.flow("agent.dialog.tools.list")
                         .width(cw)
                         .gap(8.0f)
                         .lineGap(8.0f)
                         .content([&] {
-                            for (size_t k = 0; k < toolsCache_.size(); ++k) {
-                                const ToolInfo& tool = toolsCache_[k];
-                                const std::string cid =
-                                    "agent.dialog.tools.card." +
-                                    std::to_string(k);
-                                inner.stack(cid)
-                                    .size(gridCardW, cardH)
-                                    .content([&] {
-                                        // 卡面：L2 itemSurface + radius 6 + 1px
-                                        // glassBorder；查阅卡零交互（无果冻）
-                                        inner.rect(cid + ".bg")
-                                            .size(gridCardW, cardH)
-                                            .color(ui_kit::itemSurface(t))
-                                            .radius(6.0f)
-                                            .border(1.0f,
-                                                    ui_kit::glassBorder(t))
-                                            .build();
-                                        const float pad = core::theme::scaled(12.0f);
-                                        const float boxS = core::theme::scaled(28.0f);
-                                        // 行 1：图标盒 28×28 浅染底 + 插头图标 +
-                                        // 工具名 14/600（单行截断）
-                                        inner.rect(cid + ".icon.box")
-                                            .position(pad, pad)
-                                            .size(boxS, boxS)
-                                            .radius(6.0f)
-                                            .color(t.colors.primarySoftBg)
-                                            .build();
-                                        inner.text(cid + ".icon")
-                                            .position(pad, pad)
-                                            .size(boxS, boxS)
-                                            .icon(::eui::utf8(0xF1E6))  // fa-plug
-                                            .fontSize(core::theme::scaled(14.0f))
-                                            .lineHeight(boxS)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .verticalAlign(eui::VerticalAlign::Center)
-                                            .color(t.colors.primaryText)
-                                            .hitTestMode(::core::dsl::HitTestMode::None)
-                                            .build();
-                                        const float nameX = pad + boxS + core::theme::scaled(8.0f);
-                                        const float nameW =
-                                            std::max(0.0f, gridCardW - nameX - pad);
-                                        inner.text(cid + ".name")
-                                            .position(nameX, pad)
-                                            .size(nameW, boxS)
-                                            .text(tool.name)
-                                            .fontSize(core::theme::scaled(14.0f))
-                                            .lineHeight(boxS)
-                                            .fontWeight(600)
-                                            .wrap(false)
-                                            .maxWidth(nameW)
-                                            .overflow(core::TextOverflow::Ellipsis)
-                                            .verticalAlign(eui::VerticalAlign::Center)
-                                            .color(t.colors.textPrimary)
-                                            .hitTestMode(::core::dsl::HitTestMode::None)
-                                            .build();
-                                        // 行 2：描述——有参数单行（给行 3 让位），
-                                        // 无参数两行 wrap（行 3 不渲染，吃其高度）
-                                        const bool hasParams = !tool.params.empty();
-                                        const float descH = core::theme::scaled(
-                                            hasParams ? 18.0f : 36.0f);
-                                        const float descY = pad + boxS;
-                                        inner.text(cid + ".desc")
-                                            .position(pad, descY)
-                                            .size(std::max(0.0f, gridCardW - 2.0f * pad),
-                                                  descH)
-                                            .text(tool.description.empty()
-                                                      ? std::string("（无描述）")
-                                                      : tool.description)
-                                            .fontSize(core::theme::scaled(12.0f))
-                                            .lineHeight(core::theme::scaled(18.0f))
-                                            .wrap(!hasParams)
-                                            .maxWidth(std::max(
-                                                0.0f, gridCardW - 2.0f * pad))
-                                            .overflow(core::TextOverflow::Ellipsis)
-                                            .color(t.colors.textSecondary)
-                                            .hitTestMode(::core::dsl::HitTestMode::None)
-                                            .build();
-                                        // 行 3：参数 chips（高 20 radius 6 次底，
-                                        // 超宽截断为「+N」）；无参数不渲染
-                                        if (hasParams) {
-                                            const float chipY = descY + descH +
-                                                                core::theme::scaled(4.0f);
-                                            const float chipRight =
-                                                gridCardW - pad;
-                                            float chipX = pad;
-                                            for (size_t p = 0; p < tool.params.size();
-                                                 ++p) {
-                                                const std::string label =
-                                                    tool.params[p];
-                                                const float chipW =
-                                                    core::TextPrimitive::measureTextWidth(
-                                                        label, "",
-                                                        core::theme::scaled(11.0f),
-                                                        400) +
-                                                    core::theme::scaled(12.0f);
-                                                const bool fits =
-                                                    chipX + chipW <= chipRight;
-                                                if (!fits) {
-                                                    // 溢出（含最后一枚放不下）：
-                                                    // 剩余参数折一枚「+N」，放不下则弃渲染
-                                                    const std::string more =
-                                                        "+" +
-                                                        std::to_string(
-                                                            tool.params.size() - p);
-                                                    const float moreW =
-                                                        core::TextPrimitive::measureTextWidth(
-                                                            more, "",
-                                                            core::theme::scaled(11.0f),
-                                                            400) +
-                                                        core::theme::scaled(12.0f);
-                                                    if (chipX + moreW > chipRight) break;
-                                                    inner.rect(cid + ".chip.more")
-                                                        .position(chipX, chipY)
-                                                        .size(moreW,
-                                                              core::theme::scaled(20.0f))
-                                                        .radius(6.0f)
-                                                        .color(t.colors.hover)
-                                                        .build();
-                                                    inner.text(cid + ".chip.more.text")
-                                                        .position(chipX, chipY)
-                                                        .size(moreW,
-                                                              core::theme::scaled(20.0f))
-                                                        .text(more)
-                                                        .fontSize(core::theme::scaled(11.0f))
-                                                        .lineHeight(core::theme::scaled(20.0f))
-                                                        .horizontalAlign(eui::HorizontalAlign::Center)
-                                                        .verticalAlign(eui::VerticalAlign::Center)
-                                                        .color(t.colors.textTertiary)
-                                                        .hitTestMode(::core::dsl::HitTestMode::None)
-                                                        .build();
-                                                    break;
-                                                }
-                                                inner.rect(cid + ".chip." +
-                                                           std::to_string(p))
-                                                    .position(chipX, chipY)
-                                                    .size(chipW,
-                                                          core::theme::scaled(20.0f))
-                                                    .radius(6.0f)
-                                                    .color(t.colors.hover)
-                                                    .build();
-                                                inner.text(cid + ".chip." +
-                                                           std::to_string(p) + ".text")
-                                                    .position(chipX, chipY)
-                                                    .size(chipW,
-                                                          core::theme::scaled(20.0f))
-                                                    .text(label)
-                                                    .fontSize(core::theme::scaled(11.0f))
-                                                    .lineHeight(core::theme::scaled(20.0f))
-                                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                                    .verticalAlign(eui::VerticalAlign::Center)
-                                                    .color(t.colors.textTertiary)
-                                                    .hitTestMode(::core::dsl::HitTestMode::None)
-                                                    .build();
-                                                chipX += chipW +
-                                                         core::theme::scaled(4.0f);
-                                            }
-                                        }
-                                    })
-                                    .build();
+                            for (size_t k = 0; k < visible.size(); ++k) {
+                                renderToolCard(inner, cw, k, *visible[k],
+                                               queryLower, t);
                             }
                         })
                         .build();
@@ -1448,6 +1672,409 @@ void AgentModule::composeToolsDialog(
                 .build();
         })
         .build();
+
+    // Esc 清搜索后的焦点回填：Runtime 帧末消费（md 编辑器同款补发口；模块
+    // onKeyEvent 分支无 Ui&，置 toolsSearchFocusPending_ 由本函数补发）
+    if (toolsDialogOpen_ && toolsSearchFocusPending_) {
+        toolsSearchFocusPending_ = false;
+        ui.requestFocus("agent.dialog.tools.search.hit");
+    }
+}
+
+// ---- 工具卡（池170 v2 §3.4）----
+//
+// 全宽单列、高随内容自适应（禁定高）：pad 12 14 → 头行 28（图标盒 + 族图标 +
+// 名 14/600 单行省略 + [chevron]）→ 6 → 描述块（13px/20 wrap，默认全文展示；
+// >3 行 clamp 3 行 + 末行省略号 + 「展开/收起」文字钮，整卡点击开合）→ 6 →
+// 参数 chips 行（11px/500 flex-wrap 全量，+N 截断退役；无参数不渲染整行）。
+// 仅长文卡有 hover（底 hover + 边框加深 active）/按下果冻 0.96/点击态；短文
+// 查阅卡零交互。命中词在名称/描述/chips 内原位 primarySoftBg 底色标记（先画
+// 底 rect 再画字，字色继承原层级）。
+void AgentModule::renderToolCard(
+    ::eui::Ui& inner, float cw, size_t visibleIdx, const ToolInfo& tool,
+    const std::string& queryLower, const ::core::theme::Tokens& t) {
+    const std::string cid =
+        "agent.dialog.tools.card." + std::to_string(visibleIdx);
+    const float padY = core::theme::scaled(12.0f);
+    const float padX = core::theme::scaled(14.0f);
+    const float headH = core::theme::scaled(28.0f);
+    const float lh = core::theme::scaled(kToolsDescLh);
+    const float descFs = core::theme::scaled(13.0f);
+    const float bodyW = std::max(0.0f, cw - 2.0f * padX);
+    const float hlH = core::theme::scaled(15.0f);  // 高亮底条高（行盒内垂直居中）
+    const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
+
+    // 描述换行 → 行数定长文卡与卡高（§3.4：默认全文展示，>3 行才 clamp）
+    const std::string descText =
+        tool.description.empty() ? std::string("（无描述）") : tool.description;
+    const std::vector<std::string> allLines =
+        wrapToolDescLines(descText, bodyW, descFs);
+    const bool expandable = allLines.size() > kToolsDescClampLines;
+    const bool expanded = toolsExpandedNames_.count(tool.name) > 0;
+    const bool clamped = expandable && !expanded;
+    std::vector<std::string> showLines;
+    if (allLines.empty()) {
+        showLines.push_back("");  // 至少一行占位（空描述画「（无描述）」单行）
+    } else {
+        const std::size_t n = clamped ? std::min(allLines.size(),
+                                                 kToolsDescClampLines)
+                                      : allLines.size();
+        showLines.assign(allLines.begin(),
+                         allLines.begin() + static_cast<std::ptrdiff_t>(n));
+        if (clamped) {
+            showLines.back() =
+                ellipsizeToolLine(showLines.back(), bodyW, descFs);
+        }
+    }
+    const float descH =
+        static_cast<float>(showLines.size()) * lh;
+
+    // 参数 chips 逐枚测宽换行（flex-wrap 全量展示；首枚超宽也放行防死循环）
+    const float chipFs = core::theme::scaled(11.0f);
+    const float chipH = core::theme::scaled(20.0f);
+    const float chipPadX = core::theme::scaled(8.0f);
+    const float chipGap = core::theme::scaled(4.0f);
+    struct ChipPlace {
+        std::size_t idx;
+        float x;
+        float y;
+        float w;
+    };
+    std::vector<ChipPlace> chipPlaces;
+    float chipCursorX = 0.0f;
+    float chipCursorY = 0.0f;
+    for (std::size_t p = 0; p < tool.params.size(); ++p) {
+        const float chipW =
+            core::TextPrimitive::measureTextWidth(tool.params[p], "", chipFs,
+                                                  500) +
+            2.0f * chipPadX;
+        if (chipCursorX > 0.0f && chipCursorX + chipW > bodyW) {
+            chipCursorX = 0.0f;
+            chipCursorY += chipH + chipGap;
+        }
+        chipPlaces.push_back({p, chipCursorX, chipCursorY, chipW});
+        chipCursorX += chipW + chipGap;
+    }
+    const bool hasParams = !tool.params.empty();
+    const float chipsH = hasParams ? chipCursorY + chipH : 0.0f;
+
+    const float toggleH =
+        expandable ? core::theme::scaled(24.0f) : 0.0f;
+    const float cardH = 2.0f * padY + headH + core::theme::scaled(6.0f) +
+                        descH + toggleH +
+                        (hasParams ? core::theme::scaled(6.0f) + chipsH : 0.0f);
+
+    // 交互态（仅长文卡）：hover 底/边框加深 + 按下果冻，短文卡零交互态
+    const bool hovered = expandable && toolsHoverCard_ == tool.name;
+    const bool pressed = expandable && toolsPressedCards_.count(tool.name) > 0;
+    const eui::Color cardBase = t.colors.surfaceElevated;  // 暗 #2C2A28 比壳浅半档
+
+    inner.stack(cid)
+        .size(cw, cardH)
+        .content([&] {
+            inner.rect(cid + ".bg")
+                .size(cw, cardH)
+                .states(cardBase,
+                        expandable ? t.colors.hover : cardBase,
+                        expandable ? t.colors.hover : cardBase)
+                .radius(8.0f)
+                .border(1.0f, expandable && hovered ? t.colors.active
+                                                    : t.colors.borderDefault)
+                .shadow(toolCardShadow(t))
+                .transformOrigin(0.5f, 0.5f)
+                .scale(pressed ? 0.96f : 1.0f)
+                .transition(core::Transition::make(0.18f, core::Ease::OutBack))
+                .animate(core::AnimProperty::Transform)
+                .build();
+            if (expandable) {
+                // 命中面：整卡开合 + hover/按下集合代报（bg 每帧读出目标值）
+                inner.rect(cid + ".hit")
+                    .size(cw, cardH)
+                    .zIndex(1)
+                    .states(kTransparent, kTransparent, kTransparent)
+                    .onHover([this, name = tool.name](bool h) {
+                        if (h) {
+                            toolsHoverCard_ = name;
+                        } else if (toolsHoverCard_ == name) {
+                            toolsHoverCard_.clear();
+                        }
+                    })
+                    .onPress([this, name = tool.name](const core::PointerEvent&,
+                                                      const core::Rect&) {
+                        toolsPressedCards_.insert(name);
+                    })
+                    .onRelease([this, name = tool.name](const core::PointerEvent&,
+                                                        const core::Rect&) {
+                        toolsPressedCards_.erase(name);
+                    })
+                    .onClick([this, name = tool.name] {
+                        toggleToolCardExpanded(name);
+                    })
+                    .build();
+            }
+            inner.column(cid + ".body")
+                .position(padX, padY)
+                .size(bodyW, std::max(0.0f, cardH - 2.0f * padY))
+                .zIndex(2)
+                .gap(core::theme::scaled(6.0f))
+                .content([&] {
+                    // 头行 28：图标盒 28×28 radius 6 primarySoftBg + 族图标 +
+                    // 名（单行省略兜底）+ [chevron（仅长文卡，展开旋转 180°）]
+                    const float boxS = headH;
+                    const float chevW =
+                        expandable ? core::theme::scaled(16.0f) : 0.0f;
+                    const float nameW = std::max(
+                        0.0f, bodyW - boxS - core::theme::scaled(8.0f) - chevW);
+                    inner.row(cid + ".head")
+                        .size(bodyW, headH)
+                        .gap(core::theme::scaled(8.0f))
+                        .alignItems(eui::Align::CENTER)
+                        .content([&] {
+                            inner.stack(cid + ".icon.wrap")
+                                .size(boxS, boxS)
+                                .content([&] {
+                                    inner.rect(cid + ".icon.box")
+                                        .size(boxS, boxS)
+                                        .radius(6.0f)
+                                        .color(t.colors.primarySoftBg)
+                                        .build();
+                                    inner.text(cid + ".icon")
+                                        .size(boxS, boxS)
+                                        .icon(::eui::utf8(
+                                            toolFamilyIconGlyph(tool.name)))
+                                        .fontSize(core::theme::scaled(14.0f))
+                                        .lineHeight(boxS)
+                                        .horizontalAlign(
+                                            eui::HorizontalAlign::Center)
+                                        .verticalAlign(eui::VerticalAlign::Center)
+                                        .color(t.colors.primaryText)
+                                        .hitTestMode(
+                                            ::core::dsl::HitTestMode::None)
+                                        .build();
+                                })
+                                .build();
+                            // 名称 + 命中高亮（clip 防省略号态高亮溢出名字区）
+                            inner.stack(cid + ".name.wrap")
+                                .size(nameW, headH)
+                                .clip()
+                                .content([&] {
+                                    const std::string nameLower =
+                                        core::str::toLowerAscii(tool.name);
+                                    for (const auto& [ms, me] :
+                                         findMatchRanges(nameLower, queryLower)) {
+                                        const float px =
+                                            core::TextPrimitive::measureTextWidth(
+                                                tool.name.substr(0, ms), "",
+                                                core::theme::scaled(14.0f), 600);
+                                        const float pw =
+                                            core::TextPrimitive::measureTextWidth(
+                                                tool.name.substr(ms, me - ms),
+                                                "", core::theme::scaled(14.0f),
+                                                600);
+                                        inner.rect(cid + ".name.hl." +
+                                                   std::to_string(ms))
+                                            .position(px, (headH - hlH) * 0.5f)
+                                            .size(pw, hlH)
+                                            .radius(2.0f)
+                                            .color(t.colors.primarySoftBg)
+                                            .build();
+                                    }
+                                    inner.text(cid + ".name")
+                                        .size(nameW, headH)
+                                        .text(tool.name)
+                                        .fontSize(core::theme::scaled(14.0f))
+                                        .lineHeight(headH)
+                                        .fontWeight(600)
+                                        .wrap(false)
+                                        .maxWidth(nameW)
+                                        .overflow(core::TextOverflow::Ellipsis)
+                                        .verticalAlign(eui::VerticalAlign::Center)
+                                        .color(t.colors.textPrimary)
+                                        .hitTestMode(
+                                            ::core::dsl::HitTestMode::None)
+                                        .build();
+                                })
+                                .build();
+                            if (expandable) {
+                                inner.text(cid + ".chevron")
+                                    .size(chevW, headH)
+                                    .icon(::eui::utf8(0xF078))  // fa-chevron-down
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .lineHeight(headH)
+                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(t.colors.textTertiary)
+                                    .rotate(expanded ? 3.14159265f : 0.0f)
+                                    .transition(0.15f, core::Ease::OutCubic)
+                                    .animate(core::AnimProperty::Transform)
+                                    .hitTestMode(::core::dsl::HitTestMode::None)
+                                    .build();
+                            }
+                        })
+                        .build();
+                    // 描述块（修 bug #7）：逐行渲染（换行测量与渲染同引擎）；
+                    // 命中词 primarySoftBg 底条原位标记，clamp 态末行塞省略号
+                    inner.stack(cid + ".desc")
+                        .size(bodyW, descH)
+                        .content([&] {
+                            const std::vector<std::pair<std::size_t, std::size_t>>
+                                hayRanges = findMatchRanges(
+                                    core::str::toLowerAscii(descText), queryLower);
+                            std::size_t consumed = 0;  // 原文中已消费字节（逐行推进）
+                            for (std::size_t li = 0; li < showLines.size(); ++li) {
+                                const std::string& line = showLines[li];
+                                const float lineY =
+                                    static_cast<float>(li) * lh;
+                                const std::size_t lineStart = consumed;
+                                const std::size_t lineEnd = consumed + line.size();
+                                for (const auto& [ms, me] : hayRanges) {
+                                    if (ms >= lineEnd || me <= lineStart) continue;
+                                    const std::size_t s =
+                                        std::max(ms, lineStart) - lineStart;
+                                    const std::size_t e =
+                                        std::min(me, lineEnd) - lineStart;
+                                    const float px =
+                                        core::TextPrimitive::measureTextWidth(
+                                            line.substr(0, s), "", descFs, 400);
+                                    const float pw =
+                                        core::TextPrimitive::measureTextWidth(
+                                            line.substr(s, e - s), "", descFs,
+                                            400);
+                                    inner.rect(cid + ".desc.hl." +
+                                               std::to_string(li) + "." +
+                                               std::to_string(ms))
+                                        .position(px,
+                                                  lineY + (lh - hlH) * 0.5f)
+                                        .size(pw, hlH)
+                                        .radius(2.0f)
+                                        .color(t.colors.primarySoftBg)
+                                        .build();
+                                }
+                                inner.text(cid + ".desc." + std::to_string(li))
+                                    .position(0.0f, lineY)
+                                    .size(bodyW, lh)
+                                    .text(line.empty() ? std::string(" ") : line)
+                                    .fontSize(descFs)
+                                    .lineHeight(lh)
+                                    .wrap(false)
+                                    .color(t.colors.textSecondary)
+                                    .hitTestMode(::core::dsl::HitTestMode::None)
+                                    .build();
+                                consumed = lineEnd;
+                            }
+                        })
+                        .build();
+                    if (expandable) {
+                        // 「展开/收起」文字钮（描述块下方；点击与整卡同一开关）
+                        inner.stack(cid + ".toggle")
+                            .size(bodyW, toggleH)
+                            .content([&] {
+                                const std::string label =
+                                    expanded ? std::string("收起")
+                                             : std::string("展开");
+                                const float toggleFs = core::theme::scaled(12.0f);
+                                const float toggleW =
+                                    core::TextPrimitive::measureTextWidth(
+                                        label, "", toggleFs, 500) +
+                                    core::theme::scaled(16.0f);
+                                inner.rect(cid + ".toggle.bg")
+                                    .size(toggleW, toggleH)
+                                    .states(kTransparent, t.colors.hover,
+                                            t.colors.hover)
+                                    .radius(6.0f)
+                                    .onClick([this, name = tool.name] {
+                                        toggleToolCardExpanded(name);
+                                    })
+                                    .build();
+                                inner.text(cid + ".toggle")
+                                    .size(toggleW, toggleH)
+                                    .text(label)
+                                    .fontSize(toggleFs)
+                                    .lineHeight(toggleH)
+                                    .fontWeight(500)
+                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(t.colors.primaryText)
+                                    .hitTestMode(::core::dsl::HitTestMode::None)
+                                    .onClick([this, name = tool.name] {
+                                        toggleToolCardExpanded(name);
+                                    })
+                                    .build();
+                            })
+                            .build();
+                    }
+                    if (hasParams) {
+                        // 参数 chips（高 20 radius 6 次钮底档；命中词原位高亮）
+                        inner.stack(cid + ".chips")
+                            .size(bodyW, chipsH)
+                            .content([&] {
+                                for (const auto& place : chipPlaces) {
+                                    const std::string& label =
+                                        tool.params[place.idx];
+                                    const std::string chid = cid + ".chip." +
+                                                             std::to_string(
+                                                                 place.idx);
+                                    inner.rect(chid)
+                                        .position(place.x, place.y)
+                                        .size(place.w, chipH)
+                                        .radius(6.0f)
+                                        .color(toolNeutralFill(t))
+                                        .build();
+                                    for (const auto& [ms, me] :
+                                         findMatchRanges(
+                                             core::str::toLowerAscii(label),
+                                             queryLower)) {
+                                        const float px =
+                                            core::TextPrimitive::measureTextWidth(
+                                                label.substr(0, ms), "", chipFs,
+                                                500);
+                                        const float pw =
+                                            core::TextPrimitive::measureTextWidth(
+                                                label.substr(ms, me - ms), "",
+                                                chipFs, 500);
+                                        inner.rect(chid + ".hl." +
+                                                   std::to_string(ms))
+                                            .position(
+                                                place.x + chipPadX + px,
+                                                place.y + (chipH - hlH) * 0.5f)
+                                            .size(pw, hlH)
+                                            .radius(2.0f)
+                                            .color(t.colors.primarySoftBg)
+                                            .build();
+                                    }
+                                    inner.text(chid + ".text")
+                                        .position(place.x, place.y)
+                                        .size(place.w, chipH)
+                                        .text(label)
+                                        .fontSize(chipFs)
+                                        .lineHeight(chipH)
+                                        .fontWeight(500)
+                                        .horizontalAlign(
+                                            eui::HorizontalAlign::Center)
+                                        .verticalAlign(eui::VerticalAlign::Center)
+                                        .color(t.colors.textSecondary)
+                                        .hitTestMode(
+                                            ::core::dsl::HitTestMode::None)
+                                        .build();
+                                }
+                            })
+                            .build();
+                    }
+                })
+                .build();
+        })
+        .build();
+}
+
+// 长文卡展开/收起（按工具名定位——搜索过滤后下标漂移，名字稳定）；bump 版本号
+// 触发 scrollView 内容重测（contentKey 已编入）
+void AgentModule::toggleToolCardExpanded(const std::string& name) {
+    if (toolsExpandedNames_.count(name) > 0) {
+        toolsExpandedNames_.erase(name);
+    } else {
+        toolsExpandedNames_.insert(name);
+    }
+    ++toolsListVersion_;
 }
 
 // ---- AI 草稿子弹窗（T7b）----

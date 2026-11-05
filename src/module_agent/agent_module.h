@@ -206,6 +206,13 @@ private:
     void composeToolsDialog(::eui::Ui& ui, const ::eui::Screen& screen,
                             const ::core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& themeTokens);
+    // 工具卡渲染（池170 v2）：全宽单列、高随内容自适应；长文卡（描述 >3 行）才有
+    // hover/按下/展开态，短文查阅卡零交互
+    void renderToolCard(::eui::Ui& inner, float cw, size_t visibleIdx,
+                        const ToolInfo& tool, const std::string& queryLower,
+                        const ::core::theme::Tokens& t);
+    // 长文卡展开/收起（按工具名定位——搜索过滤后下标会漂移，名字稳定）
+    void toggleToolCardExpanded(const std::string& name);
     // 单条消息行渲染：徽章头行（徽章+时间+展开/复制 chip）+ 收起预览 / 展开块级全文
     //（prefix = 宿主节点前缀；refSec = 选中 run 的 startedAt，消息时间同日/跨日口径的参照）
     void renderMessageRow(::eui::Ui& inner, float cw, const std::string& prefix,
@@ -353,6 +360,13 @@ private:
     bool toolsDialogOpen_ = false;
     std::vector<ToolInfo> toolsCache_;      // 注册表快照（惰性装载）
     bool toolsCacheLoaded_ = false;
+    // 池170 v2 搜索/卡片态（全部仅主线程；弹窗每次打开重置）
+    std::string toolsSearch_;                   // 搜索输入（空 = 全量）
+    std::set<std::string> toolsExpandedNames_;  // 长文卡展开集（按工具名）
+    std::string toolsHoverCard_;                // hover 中的长文卡（边框加深档每帧读）
+    std::set<std::string> toolsPressedCards_;   // 按下中的长文卡（果冻 0.96 每帧读）
+    bool toolsSearchFocusPending_ = false;      // Esc 清搜索后焦点回输入框（帧内消费）
+    uint64_t toolsListVersion_ = 0;             // 展开/收起 bump → scrollView 重测
     // 任务弹窗：taskDialogOpen_ 控开关，editingTaskId_ 非空 = 编辑态，字段两态共用
     bool taskDialogOpen_ = false;
     int currentStep_ = 0;            // 当前步骤索引（0=基础 1=触发 2=指令 3=执行与安全）

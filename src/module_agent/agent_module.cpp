@@ -495,6 +495,11 @@ void AgentModule::onStop() {
     autoExpandedSeq_.reset();
     pressedMsgSeqs_.clear();
     toolsDialogOpen_ = false;
+    toolsSearch_.clear();
+    toolsExpandedNames_.clear();
+    toolsPressedCards_.clear();
+    toolsHoverCard_.clear();
+    toolsSearchFocusPending_ = false;
     hoverHolder_.clear();
     hoverHideDueMs_.clear();
     taskDialogOpen_ = false;
@@ -580,6 +585,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                      static_cast<int>(toolsCache_.size()),
                                      themeTokens, store_ != nullptr,
                                      [this] {
+                                         // 池170 v2 §3.6：弹窗每次打开搜索态重置
+                                         //（空输入 + 全量列表 + 卡片全部收起）
+                                         toolsSearch_.clear();
+                                         toolsExpandedNames_.clear();
+                                         toolsHoverCard_.clear();
+                                         toolsPressedCards_.clear();
+                                         toolsSearchFocusPending_ = false;
                                          toolsDialogOpen_ = true;
                                          ensureToolsCache(/*forceReload=*/true);
                                      });
@@ -1129,6 +1141,14 @@ bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
         return true;
     }
     if (toolsDialogOpen_) {
+        // 池170 v2 §3.6 Esc 优先级：搜索框有输入先清搜索（弹窗不关，焦点回输入框，
+        // compose 帧内 requestFocus），空输入才关弹窗。输入框聚焦时 Esc 在组件内
+        // 消费（onCancel 同语义），本分支兜的是焦点在卡面/页面的情况。
+        if (!toolsSearch_.empty()) {
+            toolsSearch_.clear();
+            toolsSearchFocusPending_ = true;
+            return true;
+        }
         toolsDialogOpen_ = false;   // 工具弹窗与页面弹窗互不并存（backdrop 挡页）
         return true;
     }
