@@ -459,6 +459,75 @@ fi
 # 缺 7z 只告警不阻断——运行时 HF 下载/数据根兜底仍在）
 bash "$(cd "$(dirname "$0")" && pwd)/unpack-memory-assets.sh" "$BUILD_DIR" || true
 
+# 装机提速（debt193）：Windows Debug 构建成功后一次性产出 strip 副本，install-win-debug.sh
+# 优先拷它（装机 ~5min → 秒级）。build/DevDesk.exe 原样不动（构建产物语义与缓存不变）；
+# 发布形态守卫只扫 DevDesk.exe / *.dll / conpty 白名单，副本与其 .sha256 不入扫描面。
+# 新鲜度判据 = 清单两行哈希全验（标准 sha256sum 格式：第一行源 DevDesk.exe、第二行
+# 副本 DevDesk.stripped.exe 自身——debt253：副本被截断/改写时哈希必不符，install
+# 快路径 sha256sum -c 当场识破回退现场 strip），与 mtime 无关（cp/touch 可造任意 mtime）。
+# 任一步失败：清残留副本 + 只告警不阻断构建（install 侧自动回退现场 strip 全链路）。
+if [ "$DEVDESK_OS" = "windows" ] && [ "$BUILD_TYPE" = "Debug" ] && [ -f "$BUILD_DIR/DevDesk$EXE_SUFFIX" ]; then
+  if ! command -v objcopy >/dev/null 2>&1 || ! command -v strip >/dev/null 2>&1; then
+    echo "⚠ 装机提速跳过：strip/objcopy 不可用（install-win-debug.sh 将回退现场 strip）"
+  else
+    _ds_copy="$BUILD_DIR_ABS/DevDesk.stripped$EXE_SUFFIX"
+    _ds_hash="$BUILD_DIR_ABS/DevDesk.stripped.sha256"
+    _ds_need=1
+    if [ -f "$_ds_copy" ] && [ -f "$_ds_hash" ] \
+       && grep -qF "DevDesk.stripped$EXE_SUFFIX" "$_ds_hash" \
+       && (cd "$BUILD_DIR_ABS" && sha256sum -c DevDesk.stripped.sha256 >/dev/null 2>&1); then
+      _ds_need=0
+    fi
+    if [ "$_ds_need" = "0" ]; then
+      echo "⏭ 装机提速：strip 副本哈希一致已是最新，跳过（install 走秒级快路径）"
+    else
+      echo "── 装机提速：产出 strip 副本（debt193）──"
+      _ds_t0=$SECONDS
+      _ds_sym="${DEVDESK_DATA_ROOT:-$(cygpath -u "$USERPROFILE")/DevDesk}/debug-symbols"
+      _ds_fail=0
+      if ! mkdir -p "$_ds_sym" 2>/dev/null; then _ds_fail=1; fi
+      if [ "$_ds_fail" = "0" ]; then
+        rm -f "$_ds_sym/DevDesk.exe.debug"
+        if objcopy --only-keep-debug "$BUILD_DIR_ABS/DevDesk$EXE_SUFFIX" "$_ds_sym/DevDesk.exe.debug" 2>/dev/null \
+           && cp -f "$BUILD_DIR_ABS/DevDesk$EXE_SUFFIX" "$_ds_copy"; then
+          _ds_strip=0
+          for _ds_i in 1 2 3; do   # AV 对新写大 PE 的瞬时锁，重试兜底（同 install 口径，clue#30）
+            if strip --strip-debug "$_ds_copy" 2>/dev/null; then _ds_strip=1; break; fi
+            sleep 2
+          done
+          if [ "$_ds_strip" = "1" ]; then
+            _ds_link=0
+            for _ds_i in 1 2 3; do
+              if objcopy --add-gnu-debuglink="$_ds_sym/DevDesk.exe.debug" "$_ds_copy" 2>/dev/null; then _ds_link=1; break; fi
+              sleep 2
+            done
+            [ "$_ds_link" = "1" ] || echo "  ⚠ debuglink 三次失败（不影响运行；gdb 手动 symbol-file 加载符号）"
+            # 两行标准 sha256sum 清单（debt253）：第一行源 exe、第二行副本自身——
+            # install 快路径 sha256sum -c 据此同时校验「源哈希一致 + 副本字节级完整」
+            if (cd "$BUILD_DIR_ABS" \
+                && sha256sum "DevDesk$EXE_SUFFIX" "DevDesk.stripped$EXE_SUFFIX" \
+                > "DevDesk.stripped.sha256"); then
+              echo "✅ strip 副本就绪（耗时 $((SECONDS - _ds_t0))s，$(du -h "$_ds_copy" 2>/dev/null | cut -f1)）——install-win-debug.sh 将秒级拷贝"
+            else
+              rm -f "$_ds_copy" "$_ds_hash"
+              echo "⚠ 源哈希记录失败——清掉副本，install 将回退现场 strip"
+            fi
+          else
+            rm -f "$_ds_copy" "$_ds_hash"
+            echo "⚠ strip 三次失败（AV 瞬时锁未解除？）——清掉副本，install 将回退现场 strip"
+          fi
+        else
+          rm -f "$_ds_copy" "$_ds_hash"
+          echo "⚠ objcopy/cp 失败——清掉残留，install 将回退现场 strip"
+        fi
+      else
+        echo "⚠ 符号目录创建失败（$_ds_sym）——跳过 strip 副本，install 将回退现场 strip"
+      fi
+      unset _ds_copy _ds_hash _ds_need _ds_t0 _ds_sym _ds_fail _ds_strip _ds_link _ds_i
+    fi
+  fi
+fi
+
 # bundle 维护（债-19，A'「存在才维护」）：build/DevDesk.app 存在 = 有人用过它
 # （打包 / --install 留下的快照），维护义务随之成立——重组装，使 bundle 与本次构建的
 # 裸二进制一致，杜绝「裸二进制新、bundle 壳旧」的双产物假象。bundle 从未打过的纯开发树
@@ -526,6 +595,39 @@ else
   done < <(objdump -p $BUILD_DIR/DevDesk$EXE_SUFFIX 2>/dev/null | awk '/DLL Name:/{print $3}')
   if [ -n "$BAD_DLLS" ]; then
     echo "❌ 发布形态：DevDesk$EXE_SUFFIX 依赖非系统 DLL:${BAD_DLLS}（期望单 exe 零外部 DLL）"
+    exit 1
+  fi
+  # conpty/ 子目录白名单（debt246）：唯一允许的随包 DLL 形态 = exe 旁 conpty\ 携带
+  # ConPTY v2 redist（conpty.dll + OpenConsole.exe 成对——缺对运行时会静默回落 inbox，
+  # wtmux 实证）。白名单外：conpty\ 里的陌生文件、exe 旁散落 DLL，一律红。
+  # 注：conpty.dll 动态加载不入导入表，上方 objdump 断言管不到它，故在此单独立规。
+  if [ -d "$BUILD_DIR/conpty" ]; then
+    CONPTY_BAD=""
+    while IFS= read -r f; do
+      case "$(basename "$f")" in
+        conpty.dll|OpenConsole.exe) ;;
+        *) CONPTY_BAD="$CONPTY_BAD $(basename "$f")" ;;
+      esac
+    done < <(find "$BUILD_DIR/conpty" -type f 2>/dev/null)
+    if [ -n "$CONPTY_BAD" ]; then
+      echo "❌ 发布形态：conpty/ 白名单外文件:${CONPTY_BAD}（仅允许 conpty.dll + OpenConsole.exe）"
+      exit 1
+    fi
+    for req in conpty.dll OpenConsole.exe; do
+      if [ ! -f "$BUILD_DIR/conpty/$req" ]; then
+        echo "❌ 发布形态：conpty/ 不完整（缺 $req——缺对运行时静默回落 inbox）"
+        exit 1
+      fi
+    done
+    echo "✅ 发布形态：conpty/ 白名单命中（ConPTY v2 redist 成对随包）"
+  fi
+  STRAY_DLLS=""
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    STRAY_DLLS="$STRAY_DLLS $(basename "$d")"
+  done < <(find "$BUILD_DIR" -maxdepth 1 -name '*.dll' 2>/dev/null)
+  if [ -n "$STRAY_DLLS" ]; then
+    echo "❌ 发布形态：exe 旁散落 DLL:${STRAY_DLLS}（随包 DLL 只允许进 conpty/ 白名单目录）"
     exit 1
   fi
   if grep -q "DEVDESK_STATIC:BOOL=ON" $BUILD_DIR/CMakeCache.txt; then
