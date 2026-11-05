@@ -115,3 +115,8 @@ UAT62-screenshots/
 # 记忆 embedding 资产捆绑（老板 2026-11-04 令：随 assets 分发）
 !assets/llama/bin/*
 !assets/models/*
+
+# ConPTY v2 redist（debt246）：pinned 随包资产，手工放包后**刻意入 git**（版本 pin 靠
+# 仓内二进制钉死；放包/校验契约见 third_party/conpty/README.md）
+!third_party/conpty/conpty.dll
+!third_party/conpty/OpenConsole.exe

@@ -8,8 +8,11 @@
 //        ClosePseudoConsole）；坑④ CreateProcess 成功立即关传入侧句柄；
 //   坑⑤ resize 在无读取在飞窗口内同步调 + CancelIoEx 唤醒阻塞读（idle 不冻结）；
 //   坑⑥ 老 conhost 吞吐=PRD 已入账残留风险；坑⑦ 管道断裂→exited（会话结束态，宿主不崩）。
-// ConPTY 三函数走 GetProcAddress 动态解析（typedef+GetModuleHandleW）——老 OS 缺导出时
-// available()=false 给明确文案，不做导入期链接（导入缺失会让进程载入直接失败）。
+// ConPTY 三函数走 GetProcAddress 动态解析（typedef）——三级查找（debt246）：
+// DEVDESK_CONPTY_DIR → exe 旁 conpty\（conpty.dll + OpenConsole.exe 成对，v2 redist）
+// → 系统 kernel32 inbox；redist 不可用不崩、WARN 回落 inbox，来源入启动日志一条。
+// 老 OS 缺导出时 available()=false 给明确文案，不做导入期链接（导入缺失会让进程
+// 载入直接失败）。
 #include "terminal_backend.h"
 
 #include <windows.h>
@@ -18,6 +21,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cwchar>
 #include <utility>
 #include <cstdlib>
 #include <deque>
@@ -29,6 +33,7 @@
 
 #include "core/logging.h"
 #include "process_host.h"
+#include "terminal_conpty_lookup.h"
 #include "terminal_vterm_core.h"
 
 #ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
@@ -39,31 +44,153 @@ namespace platform {
 
 namespace {
 
-// ---- ConPTY API 动态解析（老 OS 探测：任一缺失即不支持）----
+// ---- ConPTY API 动态解析（debt246 三级查找：DEVDESK_CONPTY_DIR → exe 旁 conpty\ →
+//      系统 kernel32 inbox；redist 缺文件/缺导出不崩，明确降级回落 inbox）----
 
 using FnCreatePseudoConsole = HRESULT(WINAPI*)(COORD, HANDLE, HANDLE, DWORD, HPCON*);
 using FnResizePseudoConsole = HRESULT(WINAPI*)(HPCON, COORD);
 using FnClosePseudoConsole = void(WINAPI*)(HPCON);
+// v2 新增（microsoft/terminal PR#14544）：拆除 pseudoconsole 不等待客户端退出——
+// 关停链先树杀后调用，正好规避 inbox ClosePseudoConsole 挂死类（terminal#17688）。
+// typedef + GetProcAddress 动态取，不硬编码任何 v2 专属符号；v1 无此导出 → 回落 close。
+using FnReleasePseudoConsole = void(WINAPI*)(HPCON);
 
 struct ConPtyApi {
     FnCreatePseudoConsole create = nullptr;
     FnResizePseudoConsole resize = nullptr;
     FnClosePseudoConsole close = nullptr;
+    FnReleasePseudoConsole release = nullptr; // 装载完成时恒非空（缺失=close）
     bool ok = false;
 };
+
+// UTF-16 → UTF-8（本 TU 局部版，与 file_open_win 同实现口径；本 TU 惯例 = 匿名空间本地助手）
+std::string wideToUtf8(const wchar_t* wstr, int wlen) {
+    if (wstr == nullptr || wlen <= 0) return {};
+    const int needed = WideCharToMultiByte(CP_UTF8, 0, wstr, wlen, nullptr, 0, nullptr, nullptr);
+    if (needed <= 0) return {};
+    std::string out(size_t(needed), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wstr, wlen, out.data(), needed, nullptr, nullptr);
+    return out;
+}
+
+// 文件面校验：目录下 conpty.dll + OpenConsole.exe **成对**存在才可用（只带 dll 不带
+// OpenConsole 会静默回落 inbox conhost——wtmux 实证坑，加载前必须拦下，clue105）
+bool conptyPairPresent(const std::wstring& dir) {
+    const auto present = [&dir](const wchar_t* name) {
+        const DWORD attr = GetFileAttributesW((dir + L"\\" + name).c_str());
+        return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+    };
+    return present(L"conpty.dll") && present(L"OpenConsole.exe");
+}
+
+// conpty.dll 版本资源 → "x.y.z…"（启动日志一条，供 TermPerf/验收区分 pin 版本）
+std::string conptyFileVersion(const std::wstring& dllPath) {
+    const DWORD size = GetFileVersionInfoSizeW(dllPath.c_str(), nullptr);
+    if (size == 0) return {};
+    std::vector<BYTE> data(size);
+    if (!GetFileVersionInfoW(dllPath.c_str(), 0, size, data.data())) return {};
+    struct LangCodePage { WORD lang; WORD codePage; };
+    LangCodePage* trans = nullptr;
+    UINT transLen = 0;
+    if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation",
+                        reinterpret_cast<void**>(&trans), &transLen) ||
+        trans == nullptr || transLen < sizeof(LangCodePage))
+        return {};
+    wchar_t sub[64];
+    swprintf(sub, 64, L"\\StringFileInfo\\%04x%04x\\FileVersion", trans[0].lang,
+             trans[0].codePage);
+    wchar_t* value = nullptr;
+    UINT valueLen = 0;
+    if (VerQueryValueW(data.data(), sub, reinterpret_cast<void**>(&value), &valueLen) &&
+        value != nullptr && valueLen > 1)
+        return wideToUtf8(value, int(valueLen) - 1);
+    return {};
+}
 
 const ConPtyApi& conptyApi() {
     static const ConPtyApi api = [] {
         ConPtyApi a;
-        HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-        if (k32 == nullptr) return a;
-        a.create = reinterpret_cast<FnCreatePseudoConsole>(
-            reinterpret_cast<void*>(GetProcAddress(k32, "CreatePseudoConsole")));
-        a.resize = reinterpret_cast<FnResizePseudoConsole>(
-            reinterpret_cast<void*>(GetProcAddress(k32, "ResizePseudoConsole")));
-        a.close = reinterpret_cast<FnClosePseudoConsole>(
-            reinterpret_cast<void*>(GetProcAddress(k32, "ClosePseudoConsole")));
-        a.ok = a.create != nullptr && a.resize != nullptr && a.close != nullptr;
+        // 三核心导出齐才 ok；release 缺失回落 close。半残 redist 卸载并清位，
+        // 由调用方落 inbox——不带病绑定（函数指针悬在已 FreeLibrary 的模块上）。
+        auto finalize = [&a](HMODULE redist) {
+            if (a.create != nullptr && a.resize != nullptr && a.close != nullptr) {
+                if (a.release == nullptr) a.release = a.close;
+                a.ok = true;
+                return true;
+            }
+            if (redist != nullptr) FreeLibrary(redist);
+            a = ConPtyApi{};
+            return false;
+        };
+
+        // exe 目录（②级候选基底）
+        wchar_t exePath[MAX_PATH];
+        std::wstring exeDir;
+        if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
+            const std::wstring dir(exePath);
+            const size_t slash = dir.find_last_of(L"\\/");
+            if (slash != std::wstring::npos) exeDir = dir.substr(0, slash);
+        }
+        // ①级候选：DEVDESK_CONPTY_DIR（顺序判定在 terminal_conpty_lookup.h 纯函数，单测面）
+        wchar_t envBuf[MAX_PATH];
+        const DWORD envLen = GetEnvironmentVariableW(L"DEVDESK_CONPTY_DIR", envBuf, MAX_PATH);
+        const std::wstring envRaw =
+            (envLen > 0 && envLen < MAX_PATH) ? std::wstring(envBuf) : std::wstring();
+        const bool envSet = envRaw.find_first_not_of(L" \t\"'") != std::wstring::npos;
+        const std::wstring candidate = terminal::conptyDirCandidate(envRaw, exeDir);
+
+        bool fromRedist = false;
+        std::string redistVer;
+        std::wstring redistDir;
+        if (!candidate.empty() && conptyPairPresent(candidate)) {
+            const std::wstring dllPath = candidate + L"\\conpty.dll";
+            // 全路径 LoadLibrary（裸名会走系统搜索序，可能绑到陌生同名 dll）；
+            // 句柄刻意不卸——函数指针被各会话线程长期持有，进程生命周期 = 模块生命周期
+            HMODULE redist = LoadLibraryW(dllPath.c_str());
+            if (redist != nullptr) {
+                a.create = reinterpret_cast<FnCreatePseudoConsole>(
+                    reinterpret_cast<void*>(GetProcAddress(redist, "CreatePseudoConsole")));
+                a.resize = reinterpret_cast<FnResizePseudoConsole>(
+                    reinterpret_cast<void*>(GetProcAddress(redist, "ResizePseudoConsole")));
+                a.close = reinterpret_cast<FnClosePseudoConsole>(
+                    reinterpret_cast<void*>(GetProcAddress(redist, "ClosePseudoConsole")));
+                a.release = reinterpret_cast<FnReleasePseudoConsole>(
+                    reinterpret_cast<void*>(GetProcAddress(redist, "ReleasePseudoConsole")));
+                if (finalize(redist)) {
+                    fromRedist = true;
+                    redistVer = conptyFileVersion(dllPath);
+                    redistDir = candidate;
+                }
+            }
+        }
+        if (!fromRedist) {
+            // 显式配置（env）或目录存在但不可用 → WARN；exe 旁目录整体缺席 = 常态
+            //（开发树未放资产），静默走 inbox。wtmux 坑：缺 OpenConsole 的半目录在
+            // conptyPairPresent 已拦，不会静默半绑。
+            if (envSet ||
+                (!candidate.empty() &&
+                 GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)) {
+                LOG_WARN("ConPTY: conpty redist 不可用，回落 inbox：" +
+                         wideToUtf8(candidate.c_str(), int(candidate.size())) +
+                         "（需 conpty.dll + OpenConsole.exe 成对且导出完整）");
+            }
+            HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+            if (k32 == nullptr) return a;
+            a.create = reinterpret_cast<FnCreatePseudoConsole>(
+                reinterpret_cast<void*>(GetProcAddress(k32, "CreatePseudoConsole")));
+            a.resize = reinterpret_cast<FnResizePseudoConsole>(
+                reinterpret_cast<void*>(GetProcAddress(k32, "ResizePseudoConsole")));
+            a.close = reinterpret_cast<FnClosePseudoConsole>(
+                reinterpret_cast<void*>(GetProcAddress(k32, "ClosePseudoConsole")));
+            finalize(nullptr);
+        }
+        if (fromRedist) {
+            LOG_INFO("ConPTY: v2 redist " +
+                     (redistVer.empty() ? std::string("(版本资源缺失)") : redistVer) + " @ " +
+                     wideToUtf8(redistDir.c_str(), int(redistDir.size())));
+        } else if (a.ok) {
+            LOG_INFO("ConPTY: inbox kernel32 CreatePseudoConsole（未发现可用 conpty/ redist）");
+        }
         return a;
     }();
     return api;
@@ -82,10 +209,10 @@ std::wstring quoted(const std::wstring& path) { return L"\"" + path + L"\""; }
 // 默认 shell：DEVDESK_TERMINAL_SHELL（失败注入口，与 mac 对齐）→ pwsh.exe →
 // powershell.exe → %COMSPEC%（技术卡决策 3）。TERM 不注入（Windows Terminal 同口径，
 // SSH terminfo 差异记 F-05 已知差异清单）。
-std::wstring resolveShellCommandLine() {
-    if (const char* injected = std::getenv("DEVDESK_TERMINAL_SHELL")) {
-        if (injected[0] != '\0') return utf8ToWide(injected);
-    }
+// need250：shellChoice 非空 = 设置面板选名（pwsh/powershell/cmd/wsl），映射后探测
+// 不可得（如未装 wsl）→ 回默认链（设计 §4.3「无效值回退平台默认」；启动失败呈现
+// 走既有 Failed 卡，面板不预校验）。
+std::wstring defaultShellCommandLine() {
     wchar_t path[MAX_PATH];
     if (SearchPathW(nullptr, L"pwsh.exe", nullptr, MAX_PATH, path, nullptr) > 0)
         return quoted(path) + L" -NoLogo";
@@ -95,6 +222,39 @@ std::wstring resolveShellCommandLine() {
     DWORD n = GetEnvironmentVariableW(L"COMSPEC", comspec, MAX_PATH);
     if (n > 0 && n < MAX_PATH) return quoted(comspec);
     return L"cmd.exe";
+}
+
+std::wstring resolveShellCommandLine(const std::string& shellChoice) {
+    if (const char* injected = std::getenv("DEVDESK_TERMINAL_SHELL")) {
+        if (injected[0] != '\0') return utf8ToWide(injected);
+    }
+    wchar_t path[MAX_PATH];
+    if (shellChoice == "powershell") {
+        if (SearchPathW(nullptr, L"powershell.exe", nullptr, MAX_PATH, path, nullptr) > 0)
+            return quoted(path) + L" -NoLogo";
+        return defaultShellCommandLine();
+    }
+    if (shellChoice == "cmd") {
+        wchar_t comspec[MAX_PATH];
+        DWORD n = GetEnvironmentVariableW(L"COMSPEC", comspec, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) return quoted(comspec);
+        return defaultShellCommandLine();
+    }
+    if (shellChoice == "wsl") {
+        if (SearchPathW(nullptr, L"wsl.exe", nullptr, MAX_PATH, path, nullptr) > 0)
+            return quoted(path);
+        return defaultShellCommandLine();
+    }
+    return defaultShellCommandLine(); // ""/pwsh/未知 → 默认链
+}
+
+// spawn 工作目录（need250）：设置面板空值 = 用户主目录（%USERPROFILE%，与
+// terminal_launch_win 同源口径）；未设环境变量的罕见态回退 nullptr（继承进程 cwd）。
+std::wstring resolveWorkingDirectory(const std::string& workDir) {
+    if (!workDir.empty()) return utf8ToWide(workDir);
+    const char* profile = std::getenv("USERPROFILE");
+    if (profile != nullptr && profile[0] != '\0') return utf8ToWide(profile);
+    return L"";
 }
 
 // 有界关闭等待（技术卡 §3.2：排空/Close/join 全链有界，先例口径 5s）
@@ -324,8 +484,10 @@ void shutdownTaskWorker(std::shared_ptr<ShutdownTask> t) {
         t->readerDone.wait_for(std::chrono::milliseconds(kHarvestWaitMs)); // 强断兜底窗口（≥收割上界）
     }
 
-    // ClosePseudoConsole（此时无读取在飞；残余面=句柄拆除兜底口径，宁拆不挂）
-    if (t->hpc != nullptr && conptyApi().ok) conptyApi().close(t->hpc);
+    // 拆 pseudoconsole（此时无读取在飞；残余面=句柄拆除兜底口径，宁拆不挂）。
+    // release 优先（v2：不等客户端退出即拆除，terminal#17688 挂死类已由树杀+排空
+    // 兜住；inbox 无此导出，api.release 装载时已回落 close，语义不变）
+    if (t->hpc != nullptr && conptyApi().ok) conptyApi().release(t->hpc);
 
     shared->writerStop.store(true, std::memory_order_relaxed);
     shared->wqCv.notify_all();
@@ -462,6 +624,11 @@ public:
         return vterm_ ? vterm_->selectionText(rowStart, colStart, rowEnd, colEnd, out) : false;
     }
 
+    // need250 回滚上限：转发 VtermCore（deque 裁最旧）；终止后 vterm_ 为空即忽略
+    void setScrollbackLimit(int lines) override {
+        if (vterm_ && lines > 0) vterm_->setScrollbackLimit(static_cast<size_t>(lines));
+    }
+
 private:
     std::shared_ptr<SessionShared> shared_;
     std::shared_ptr<ShutdownTask> task_;
@@ -474,8 +641,9 @@ namespace {
 class WinTerminalBackend : public TerminalBackend {
 public:
     core::Result<std::unique_ptr<TerminalSessionHandle>> spawn(
-        const std::string& shell, const TerminalSize& size) override {
-        (void)shell; // 默认 shell 由本后端解析（技术卡决策 3）；显式 shell 经 env 注入口
+        const std::string& shell, const TerminalSize& size,
+        const std::string& workDir) override {
+        (void)shell; // 选名映射在 resolveShellCommandLine（need250；默认链为空串语义）
         if (!conptyApi().ok)
             return core::Result<std::unique_ptr<TerminalSessionHandle>>::fail(
                 core::ErrorCode::NotImplemented, "终端需要 Windows 10 1809+（ConPTY 不可用）");
@@ -504,9 +672,11 @@ public:
                              inputRead, inputWrite, outputRead, outputWrite);
 
         // ③ 属性列表挂 PSEUDOCONSOLE + CreateProcess
-        std::wstring cmd = resolveShellCommandLine();
+        std::wstring cmd = resolveShellCommandLine(shell);
         std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
         cmdBuf.push_back(L'\0');
+        const std::wstring workDirW = resolveWorkingDirectory(workDir);
+        LPCWSTR workDirPtr = workDirW.empty() ? nullptr : workDirW.c_str();
         STARTUPINFOEXW si{};
         si.StartupInfo.cb = sizeof(si);
         SIZE_T attrSize = 0;
@@ -527,7 +697,7 @@ public:
             // 零字节。官方样例 siEx.lpAttributeList 同位写回。
             si.lpAttributeList = attrList;
             procOk = CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE,
-                                    EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr,
+                                    EXTENDED_STARTUPINFO_PRESENT, nullptr, workDirPtr,
                                     &si.StartupInfo, &pi) != FALSE;
             if (!procOk) attrHr = HRESULT_FROM_WIN32(GetLastError());
         }

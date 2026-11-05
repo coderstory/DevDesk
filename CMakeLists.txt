@@ -496,6 +496,27 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying app icons to build directory"
 )
 
+# ConPTY v2 redist（debt246，仅 Windows）：third_party/conpty/ 的 conpty.dll +
+# OpenConsole.exe **成对**拷到 exe 旁 conpty\（运行时三级查找第二级，terminal_backend_win.cpp；
+# 缺对会静默回落 inbox conhost——wtmux 实证，故两文件齐才拷）。资产不入 git 自动下载链，
+# 手工放包与 SHA256 校验见 third_party/conpty/README.md；缺席 = 不拷不报错，运行时
+# 静态回落 inbox。EXISTS 是 configure 期判定：放包/删包后需重新 configure 生效。
+if(WIN32
+   AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/conpty/conpty.dll"
+   AND EXISTS "${CMAKE_SOURCE_DIR}/third_party/conpty/OpenConsole.exe")
+    add_custom_command(TARGET DevDesk POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:DevDesk>/conpty"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/third_party/conpty/conpty.dll"
+            "$<TARGET_FILE_DIR:DevDesk>/conpty/conpty.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/third_party/conpty/OpenConsole.exe"
+            "$<TARGET_FILE_DIR:DevDesk>/conpty/OpenConsole.exe"
+        COMMENT "Copying ConPTY v2 redist (conpty.dll + OpenConsole.exe) to build directory"
+    )
+endif()
+
 # exe 内嵌图标 + 版本资源（仅 Windows；资源管理器文件图标 / 桌面快捷方式 /
 # 「应用和功能」卸载项全靠它。macOS 无内嵌资源一说，.app 图标走 build-app.sh）。
 # windres 解析 .rc 里的相对路径按调用 CWD，不可靠——沿用 EUI-NEO eui_app_icon.rc

@@ -25,3 +25,17 @@
 - 许可证：MIT
 - 引入方式：git submodule `third_party/libvterm` + 仓内 CMake 胶水
   （根 `CMakeLists.txt`；submodule 零写入）
+
+## ConPTY v2 redist（Windows 终端伪控制台宿主）
+
+- 用途：终端模块 Windows 后端的 pinned 伪控制台（`conpty.dll` + `OpenConsole.exe`
+  成对随包，落安装目录 `conpty\`；运行时三级查找，不可用回落系统 inbox ConPTY）
+- 上游源码：<https://github.com/microsoft/terminal>（ConPTY 组件）
+- 版本 pin：随 node-pty 的 pinned 副本（研究核证时点 1.25.260303002）；确切版本与
+  SHA256 以 `third_party/conpty/README.md` 回填表为准
+- 获取渠道：node-pty 树内 `third_party/conpty/`（主）/ NuGet 包
+  `Microsoft.Windows.Console.ConPTY`（备）
+- 许可证：MIT
+- 引入方式：手工放包 `third_party/conpty/`（版本 pin 靠仓内二进制钉死，构建/打包/
+  装机链拷至 exe 旁 `conpty\`；发布形态守卫白名单覆盖）
+

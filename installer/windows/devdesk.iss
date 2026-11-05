@@ -71,6 +71,13 @@ Source: "{#SourcePath}..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ig
 ;     不必随包安装到用户目录。
 ; Excludes 是 [Files] 的合法参数（Inno 6.7），支持通配符，多个模式用逗号/分号分隔。
 Source: "{#AssetsDir}\*";         DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "NotoSansSC-VF.ttf,icon.ico"
+; ConPTY v2 redist（debt246）：conpty.dll + OpenConsole.exe 成对随包，落 exe 旁
+; conpty 子目录（运行时三级查找第二级，terminal_backend_win.cpp conptyApi）。
+; 本段整段包在 ISPP 条件里：打包脚本只在确认成对资产后才注入该定义；手工编译
+; 不传该定义时跳过本段（缺 redist = 运行时回落 inbox ConPTY，正式降级路径）。
+#ifdef ConptyDir
+Source: "{#ConptyDir}\conpty\*";  DestDir: "{app}\conpty"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 [Icons]
 ; WorkingDir 必设：EUI-NEO 的 image_source.cpp 查找顺序是 cwd/assets 优先于 exeDir/assets，

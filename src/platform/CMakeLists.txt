@@ -105,7 +105,9 @@ target_include_directories(devdesk_platform PUBLIC
 # CI 链接期炸（ld: library 'ws2_32' not found）。用变量占位保序：WIN32 下展开五个库、
 # 其他平台展开为空（CMake 丢弃空 list 项，不产生空 -l）
 if(WIN32)
-    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi)
+    # version：terminal_backend_win.cpp 的 conptyFileVersion（GetFileVersionInfoW/
+    #   VerQueryValueW，debt246 redist 版本日志）——紧跟同列，别在别处再声明
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version)
 endif()
 
 target_link_libraries(devdesk_platform

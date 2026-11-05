@@ -153,6 +153,27 @@ mkdir -p "$ASSETS_DIR_POSIX/mpv"
 cp -f "$MPV_SRC" "$ASSETS_DIR_POSIX/mpv/mpv.exe"
 echo "── mpv: $MPV_SRC_RAW → assets/mpv/mpv.exe ──"
 
+# ConPTY v2 redist（debt246）：third_party/conpty/ 的成对资产拷到 exe 旁 conpty\
+#（注意落点是 <build-release>/conpty/，**不是** assets/——运行时三级查找第二级按
+# exe 旁 conpty\ 解析，见 terminal_backend_win.cpp conptyApi）。与 mpv 不同，缺席
+# 不阻断出包：运行时回落 inbox ConPTY 是正式降级路径（老板 2026-11-05 裁决允许
+# 随包携带，缺包=性能/序列保真回退，功能不受损）；但半目录（只拷到一个文件）必须
+# 拦——缺 OpenConsole.exe 会静默回落 inbox conhost，wtmux 实证坑。
+CONPTY_SRC_DIR="$PROJECT_DIR/third_party/conpty"
+if [ -f "$CONPTY_SRC_DIR/conpty.dll" ] && [ -f "$CONPTY_SRC_DIR/OpenConsole.exe" ]; then
+  mkdir -p "$EXE_DIR_POSIX/conpty"
+  cp -f "$CONPTY_SRC_DIR/conpty.dll" "$EXE_DIR_POSIX/conpty/conpty.dll"
+  cp -f "$CONPTY_SRC_DIR/OpenConsole.exe" "$EXE_DIR_POSIX/conpty/OpenConsole.exe"
+  echo "── conpty redist: third_party/conpty → build-release/conpty（sha256 见下）──"
+  sha256sum "$CONPTY_SRC_DIR/conpty.dll" "$CONPTY_SRC_DIR/OpenConsole.exe" | sed 's/^/    /'
+elif [ -e "$CONPTY_SRC_DIR/conpty.dll" ] || [ -e "$CONPTY_SRC_DIR/OpenConsole.exe" ]; then
+  echo "❌ third_party/conpty/ 只有半个目录（conpty.dll 与 OpenConsole.exe 必须成对）" >&2
+  echo "   放包契约见 third_party/conpty/README.md；或删掉半份资产回落 inbox 出包" >&2
+  exit 1
+else
+  echo "⚠ third_party/conpty/ 资产缺席——本包不带 ConPTY v2 redist，运行时回落 inbox（放包契约见 third_party/conpty/README.md）" >&2
+fi
+
 # H 批（UAT2 2026-10-20）资产瘦身：上游 copy_directory 是全量拷，DevDesk 运行时实际只用
 # EUI 的两字体（JingNanJunJunTi + Font Awesome，EUI core/render/text.cpp 默认 UI/icon 字体）+
 # icon.png（EUI 默认窗口图标 dsl_app.h iconPathValue，兼托盘兜底）+ icon.ico（devdesk.iss
@@ -226,6 +247,17 @@ if [ ! -f "$ASSETS_DIR_POSIX/mpv/mpv.exe" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/mpv/mpv.exe 缺失（mpv 未拷入打包目录）" >&2
   exit 1
 fi
+# 断言 ⑦（conpty redist，debt246）：只在拷贝段确认成对后钉落点；资产缺席时两个
+# 文件都必须不在场（半份 = 安装器会带残包，静默回落 inbox 的坑）
+if [ -f "$EXE_DIR_POSIX/conpty/conpty.dll" ] || [ -f "$EXE_DIR_POSIX/conpty/OpenConsole.exe" ]; then
+  for req in conpty.dll OpenConsole.exe; do
+    if [ ! -f "$EXE_DIR_POSIX/conpty/$req" ]; then
+      echo "❌ 断言失败：build-release/conpty/$req 缺失（redist 半目录——缺对会静默回落 inbox）" >&2
+      exit 1
+    fi
+  done
+  echo "✅ 断言 ⑦：conpty redist 成对就位（build-release/conpty）"
+fi
 echo "✅ assets 就位（Font Awesome 图标字体 + icon.png/ico + 托盘图标 + mpv；零引用资产已排除）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
@@ -247,10 +279,13 @@ echo "── 版本: $APP_VERSION ──"
 
 # MSYS2_ARG_CONV_EXCL 按前缀排除 Git Bash 的参数路径转换（否则 /DExeDir=... 可能被改写）
 mkdir -p installer/windows/out
+# ConPTY redist 成对就位才向 .iss 注入该定义（.iss 侧 #ifdef 整段跳过），半份/缺席不出红包
+ISCC_ARGS=("/DExeDir=$EXE_DIR_WIN" "/DAssetsDir=$ASSETS_DIR_WIN" "/DMyAppVersion=$APP_VERSION")
+if [ -f "$EXE_DIR_POSIX/conpty/conpty.dll" ]; then
+  ISCC_ARGS+=("/DConptyDir=$EXE_DIR_WIN")
+fi
 ISCC_OUT=$(MSYS2_ARG_CONV_EXCL='/D' "$ISCC_BIN" \
-  "/DExeDir=$EXE_DIR_WIN" \
-  "/DAssetsDir=$ASSETS_DIR_WIN" \
-  "/DMyAppVersion=$APP_VERSION" \
+  "${ISCC_ARGS[@]}" \
   "installer/windows/devdesk.iss" 2>&1) || {
   echo "$ISCC_OUT" | tail -30
   echo "❌ ISCC 编译失败（上方为错误摘要）"; exit 1; }
