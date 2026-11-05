@@ -15,9 +15,10 @@
 // 数据隔离：DEVDESK_DATA_ROOT 进程内指临时目录（memory_probe 同款），不碰真实根。
 // 运行：memory_freeze_probe.exe（无参数；截图不走本探针，计时即证据）。
 #include "probes/probe_harness.h"
+#include <chrono>
 #include <cstdio>
 #include <ctime>
-#include <chrono>
+#include <ratio>
 #include <system_error>
 #include "app_registry.h"
 #include "core/module_interface.h"

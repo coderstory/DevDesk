@@ -36,6 +36,9 @@ struct InferStepReport {
     bool paused = false;       // true = 硬档暂停（区别于节流顺延）
     bool attempted = false;    // 本步发生云端尝试
     bool succeeded = false;    // 尝试成功并出队
+    bool productMissing = false;  // add 回包成功但引擎清单零新增（bug239：云端
+                                  // 异常被吞或去重合并）——照常出队不重试，但
+                                  // 经 LOG+动态流 note 显式上浮，不得静默成功
 };
 
 // 单步提炼（同步；宿主 = collectLoopMain 采集轮后置，每轮 1 步）。至多取队首

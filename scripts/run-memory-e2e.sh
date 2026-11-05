@@ -30,8 +30,11 @@ LLAMA_PORT=11435
 TELEMEM_PORT=8421
 DUMMY_KEY="sk-devdesk-e2e-dummy-key-not-real-000000"
 # 真 LLM 覆盖（2026-11-05 老板令「LLM 配置已给你」）：E2E_LLM_KEY 非空 = 走真网关
-# （S8 提炼补标转真调）；E2E_LLM_BASE/MODEL 同步覆盖 yaml（见 §2）。
+# （S8 提炼补标转真调）；BASE/MODEL 同步覆盖 yaml（§2 heredoc，bug239 修复——
+# 旧版注释声称覆盖但 §2 硬编码 bigmodel/glm-5.3-flash，真 key 发错网关 401）。
 LLM_KEY="${E2E_LLM_KEY:-$DUMMY_KEY}"
+LLM_BASE="${E2E_LLM_BASE:-https://open.bigmodel.cn/api/anthropic}"
+LLM_MODEL="${E2E_LLM_MODEL:-glm-5.3-flash}"
 HEALTH_TIMEOUT_S="${E2E_HEALTH_TIMEOUT:-120}"  # 真 LLM（公司网关）冷启动较慢，可调 300
 
 EVIDENCE_DIR="$REPO_ROOT/evidence/$(date +%F)-memory-e2e"
@@ -109,12 +112,14 @@ EOF
 pass "伪造 3 会话写入 $PROJ_ROOT"
 
 # ---------- 2. 环境 yaml（faiss/history 指向本次临时数据根，禁复用旧库） ----------
+# bug239：base/model 走 E2E_LLM_BASE/E2E_LLM_MODEL 覆盖（默认=旧硬编码值）；
+# key 走 ANTHROPIC_API_KEY env（mem0 llms/anthropic.py:40 config 空 → env 兜底）
 cat > "$TEMP_ROOT/telemem-config.yaml" <<EOF
 llm:
   provider: anthropic
   config:
-    anthropic_base_url: https://open.bigmodel.cn/api/anthropic
-    model: glm-5.3-flash
+    anthropic_base_url: $LLM_BASE
+    model: $LLM_MODEL
     api_key: ""
 embedder:
   provider: openai
@@ -139,6 +144,9 @@ nohup "$LLAMA_SERVER_BIN" --host 127.0.0.1 --port "$LLAMA_PORT" \
   > "$EVIDENCE_DIR/llama-server.log" 2>&1 &
 LLAMA_PID=$!
 log "启动 telemem (:${TELEMEM_PORT})…"
+if [ -n "${E2E_LLM_KEY:-}" ]; then
+  log "真 LLM 轮：base=$LLM_BASE model=$LLM_MODEL（key 走 ANTHROPIC_API_KEY env）"
+fi
 TELEMEM_CONFIG="$TEMP_ROOT/telemem-config.yaml" ANTHROPIC_API_KEY="$LLM_KEY" \
   nohup "$TELEMEM_PY" -m telemem.mcp --transport streamable-http \
   --host 127.0.0.1 --port "$TELEMEM_PORT" \

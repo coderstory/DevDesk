@@ -18,6 +18,7 @@ using namespace module::memory::hook;
 using module::memory::gateway::IMemoryRetriever;
 using module::memory::gateway::parseSearchResponse;
 using module::memory::gateway::parseListResponse;
+using module::memory::gateway::parseAddResponse;
 using module::memory::gateway::parseGetMemoryResponse;
 using module::memory::gateway::isoToEpochSec;
 using module::memory::gateway::MemoryHit;
@@ -336,6 +337,35 @@ REGISTER_TEST(memory_gateway_get_memory_version_parse,
     auto missing = parseGetMemoryResponse(
         R"({"result":{"content":[{"text":"{\"id\":\"uuid-9\"}"}]}})");
     DOCTEST_CHECK(missing.isFail());
+    return true;
+})
+
+REGISTER_TEST(memory_gateway_add_error_envelope_fail,
+              "memory: add 缝解析（bug239）——telemem _call 异常兜底 {error,detail} 回 200 → parseAddResponse 判负不静默；stored 正常形态不受影响", {
+    // bug239 真机实证形态（2026-11-05）：云端 LLM 401 → telemem mcp/server.py
+    // _call 兜底 {"error","detail"} 普通字典（非 isError）→ MCP HTTP 200；
+    // 旧实现忽略 error 键 → 静默 ok("") → 记账出队但引擎零产物。
+    auto failed = parseAddResponse(
+        "event: message\n"
+        "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[{"
+        "\"text\":\"{\\\"error\\\":\\\"AuthenticationError\\\","
+        "\\\"detail\\\":\\\"Error code: 401 - 令牌已过期或验证不正确\\\"}\"}],"
+        "\"isError\":false}}");
+    DOCTEST_REQUIRE(failed.isFail());
+    DOCTEST_CHECK(failed.errorCode() == core::ErrorCode::HttpError);
+    DOCTEST_CHECK(failed.errorMessage().find("AuthenticationError") !=
+                  std::string::npos);
+    DOCTEST_CHECK(failed.errorMessage().find("401") != std::string::npos);
+    // 正常 stored 形态（无 error 键）仍 ok 空 id（既有契约）
+    auto good = parseAddResponse(
+        R"({"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"{\"status\":\"stored\"}"}]}})");
+    DOCTEST_REQUIRE(good.isOk());
+    DOCTEST_CHECK(good.value().empty());
+    // 未来带 id 形态仍 ok 取 id
+    auto withId = parseAddResponse(
+        R"({"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"{\"id\":\"uuid-3\"}"}]}})");
+    DOCTEST_REQUIRE(withId.isOk());
+    DOCTEST_CHECK_EQ(withId.value(), std::string("uuid-3"));
     return true;
 })
 

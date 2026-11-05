@@ -322,6 +322,23 @@ core::Result<std::string> parseAddResponse(const std::string& httpBody) {
             const auto inner = platform::json::parse(
                 first.asObject().get("text").asString());
             if (inner.isOk() && inner.value().isObject()) {
+                // telemem _call 异常兜底（其 mcp/server.py:113-120）：工具内异常
+                // 以普通 dict {"error","detail"} 回 HTTP 200（非 isError 信封），
+                // 必须在此判负——否则云端 401/超时被静默成 ok("")，记账出队但
+                // 零产物（bug239 真机实证形态；与 get_memory 的 not_found
+                // fail-closed 同一判负先例）
+                const JsonValue err = inner.value().asObject().get("error");
+                if (!err.isNull()) {
+                    std::string msg =
+                        err.isString() ? err.asString() : std::string("unknown");
+                    const JsonValue detail =
+                        inner.value().asObject().get("detail");
+                    if (detail.isString() && !detail.asString().empty()) {
+                        msg += ": " + detail.asString();
+                    }
+                    return core::Result<std::string>::fail(
+                        core::ErrorCode::HttpError, "引擎工具异常: " + msg);
+                }
                 const JsonValue idv = inner.value().asObject().get("id");
                 if (idv.isString()) id = idv.asString();
             }

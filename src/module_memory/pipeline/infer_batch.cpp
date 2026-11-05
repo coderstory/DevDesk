@@ -19,15 +19,17 @@ constexpr int kInferListTimeoutMs = 10000;
 
 // 需-3 路②补标：add 前快照 → 差分新条目 → 无合法前缀的补卡侧前缀。
 // 尽力而为：快照/补标失败只 LOG，不影响提炼主流程（未分类是细则 §1.3 合法态）。
-void tagInferredProducts(
+// 返回差分新条目数；清单不可得返回 -1（≠零产物，调用方不计 productMissing）。
+int tagInferredProducts(
     gateway::IMemoryRetriever& engine, const hook::MemoryPrefix& cardPrefix,
     const std::vector<std::string>& beforeIds) {
     auto after =
         engine.listAll(kInferDiffListLimit, kInferListTimeoutMs);
     if (after.isFail()) {
         LOG_WARN("提炼补标跳过（清单不可得）: " + after.errorMessage());
-        return;
+        return -1;
     }
+    int freshItems = 0;
     for (const gateway::MemoryListItem& item : after.value()) {
         if (item.id.empty()) continue;
         bool known = false;
@@ -38,6 +40,7 @@ void tagInferredProducts(
             }
         }
         if (known) continue;  // 差分：只看本次提炼新增
+        ++freshItems;
         if (hook::parseMemoryPrefix(item.text).valid) continue;  // 已带合法前缀
         auto upd = engine.updateMemoryText(
             item.id, cardPrefix.tag + " " + item.text);
@@ -46,6 +49,7 @@ void tagInferredProducts(
                      upd.errorMessage());
         }
     }
+    return freshItems;
 }
 
 }  // namespace
@@ -123,7 +127,20 @@ core::Result<InferStepReport> runInferStep(
         return core::Result<InferStepReport>::ok(report);  // 留队，下轮补跑
     }
     if (cardPrefix.valid && beforeSnapshotted) {
-        tagInferredProducts(engine, cardPrefix, beforeIds);
+        const int freshItems =
+            tagInferredProducts(engine, cardPrefix, beforeIds);
+        if (freshItems == 0) {
+            // bug239：add 回包 ok 但引擎清单零新增 = 云端提炼静默零产物
+            //（异常被引擎兜成 200 或内容被去重合并）。照常出队不重试
+            //（重试同文本无意义），但必须 LOG + 动态流 note 显式上浮。
+            report.productMissing = true;
+            LOG_WARN("提炼零产物：add 成功但引擎清单无新增（云端异常被吞或去重合并）");
+            if (onNote) {
+                onNote(RoundNote{true, entry.sessionId,
+                                 "提炼 · 云端回包成功但引擎侧零新增条目"
+                                 "（可能异常被吞或被去重合并）"});
+            }
+        }
     } else if (cardPrefix.valid) {
         LOG_WARN("提炼补标跳过（add 前清单快照失败）");
     }

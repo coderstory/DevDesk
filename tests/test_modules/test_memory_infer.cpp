@@ -333,6 +333,7 @@ REGISTER_TEST(memory_infer_route2_tags_unprefixed_product,
     DOCTEST_REQUIRE(stepped.isOk());
     DOCTEST_CHECK(stepped.value().attempted);
     DOCTEST_CHECK(stepped.value().succeeded);
+    DOCTEST_CHECK(stepped.value().productMissing == false);  // 产物已落库
     // 补标：卡侧前缀 tag + 空格 + 产物原文（细则 §3 update_memory 形态）
     DOCTEST_REQUIRE_EQ(f.engine.updates.size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK_EQ(f.engine.updates[0].first, std::string("n1"));
@@ -399,5 +400,37 @@ REGISTER_TEST(memory_infer_route2_skip_states,
         DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);
         DOCTEST_CHECK(f.ledger.monthTokens(f.now).value() > 0);
     }
+    return true;
+})
+
+REGISTER_TEST(memory_infer_route2_zero_product_visible,
+              "memory: 需-3 路②零产物上浮（bug239）——add ok 但清单差分零新增 → productMissing + 动态流 note，照常出队不静默", {
+    // bug239 真机形态复现钉：add 回包 ok（异常被引擎兜成 200）→ 记账出队，
+    // 但清单差分零新增。旧实现三查全绿、产物静默缺失；修复后必须显式上浮。
+    TagFixture f("zero-product");
+    DOCTEST_CHECK(f.queue.enqueue("s1", 1, "[踩坑|会话采集] 源段正文", f.now)
+                      .isOk());
+    f.engine.firstList = {};   // add 前快照：空库
+    f.engine.secondList = {};  // add 后清单仍空：云端零产物
+    pipeline::InferLimits limits;
+    limits.hardBudgetTokens = 3000000;
+    limits.hourlyLimit = 10;
+    pipeline::RoundNote noted;
+    int noteCount = 0;
+    const auto stepped = pipeline::runInferStep(
+        f.queue, f.engine, f.ledger, limits,
+        [&noted, &noteCount](const pipeline::RoundNote& n) {
+            noted = n;
+            ++noteCount;
+        });
+    DOCTEST_REQUIRE(stepped.isOk());
+    DOCTEST_CHECK(stepped.value().attempted);
+    DOCTEST_CHECK(stepped.value().succeeded);       // add 成功：出队语义不变
+    DOCTEST_CHECK(stepped.value().productMissing);  // 零产物显式上浮
+    DOCTEST_REQUIRE_EQ(noteCount, 1);               // 动态流有告警 note
+    DOCTEST_CHECK(noted.blocked);
+    DOCTEST_CHECK(noted.text.find("零新增") != std::string::npos);
+    DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);   // 照常出队（重试无意义）
+    DOCTEST_CHECK(f.ledger.monthTokens(f.now).value() > 0);
     return true;
 })
