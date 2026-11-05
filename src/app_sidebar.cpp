@@ -92,10 +92,11 @@ const eui::Color kParticleLight[3] = {eui::Color("#07C160"),
                                       eui::Color("#34D399"),
                                       eui::Color("#06AD56")};
 
-// 收缩按钮 hover/按压态跨帧单值（EUI states 只管底色，border/scale/图标色要按态
-// 每帧换目标值——g_closeButtonHovered 先例）
+// 收缩按钮 hover/按压/focus 态跨帧单值（EUI states 只管底色，border/scale/图标色
+// 要按态每帧换目标值——g_closeButtonHovered 先例）
 bool g_toggleHovered = false;
 bool g_togglePressed = false;
+bool g_toggleFocused = false;  // need172 v3：focusable 热区 onFocusChanged 写、compose 读
 // 弥散绿粒子迸发起点（hover 进入沿写入一次；nullopt = 空闲零粒子零泵）
 std::optional<std::chrono::steady_clock::time_point> g_toggleParticleStart;
 
@@ -166,8 +167,9 @@ void resetSidebarGlobals() {
     g_preFullscreenCollapsed = false; // 进全屏前折叠态快照回厂
     g_expandedGroups.clear();  // 空 = 全折叠（默认态）；复位语义不变
     g_autoExpandedForPage = ::core::PageId::Home;  // 113-6 闩回厂：复位后落位子页仍会自动展开
-    g_toggleHovered = false;  // need172 按钮 hover/按压/粒子态回厂（测试隔离）
+    g_toggleHovered = false;  // need172 按钮 hover/按压/focus/粒子态回厂（测试隔离）
     g_togglePressed = false;
+    g_toggleFocused = false;
     g_toggleParticleStart.reset();
     g_navScrollOffset = 0.0f;  // §11 导航滚动 offset 回厂（测试隔离）
 }
@@ -400,21 +402,20 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     // 判定基准 = 侧栏可用高 H（drawSidebar 收到的 screen.height：窗高 − 自绘标题条
     // 40 / macOS 系统标题栏 30，compose 的 bodyScreen 已统一扣除）。离散三档、档位
     // 切换无过渡动画：
-    //   正常档 H≥712：topPad 32 / brandNavGap 28 / gap 4 / itemH 40（导航起点 116）；
-    //     logo 48（§10.1）、钮 32 / 预留区 48（§10.2）
+    //   正常档 H≥712：topPad 32 / brandNavGap 28 / gap 4 / itemH 40（导航起点见
+    //     navStart）、钮 32 / 预留区 48（§10.2）
     //   紧凑档 680≤H<712：16 / 16 / 4 / 40（起点 88；最小窗 1200×720 → H=680 落此
-    //     档）；logo 44、钮 28 / 预留区 44
-    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）；logo 40、钮 28 / 预留区 44
-    // 压缩顺序：先压品牌区上下留白 → 再压行距 → 最后压行高；品牌行 56 恒不缩
-    //（锚点不塌），logo/钮径随档（两态一致不回退——bug165 裁决保持）。分档几何用
-    // 常量不走 token：矮窗帧 theme::setWindowHeight 会重建字号 token，布局分档必须
-    // 与字号档解耦。
+    //     档）、钮 28 / 预留区 44
+    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）、钮 28 / 预留区 44
+    // logo 不再随高三档写死（bug165 v3 = need241 §9.3，见下方公式）；钮径/预留区
+    // 仍随高三档（两态一致不回退）。压缩顺序：先压品牌区上下留白 → 再压行距 →
+    // 最后压行高。分档几何用常量不走 token：矮窗帧 theme::setWindowHeight 会重建
+    // 字号 token，布局分档必须与字号档解耦。
     const float availH = screen.height;
     float topPad = 32.0f;
     float brandNavGap = 28.0f;
     float gap = 4.0f;
     float itemH = ui_kit::kNavItemH;  // 40（正常/紧凑档）
-    float logoSize = 48.0f;   // §10.1：正常档 48（两态一致）
     float toggleSize = 32.0f;     // §10.2：正常档直径 32
     float toggleZoneH = 48.0f;    // §10.2：正常档底部预留区 48
     if (availH < 680.0f) {
@@ -422,22 +423,43 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         brandNavGap = 12.0f;
         gap = 2.0f;
         itemH = 36.0f;
-        logoSize = 40.0f;
         toggleSize = 28.0f;
         toggleZoneH = 44.0f;
     } else if (availH < 712.0f) {
         topPad = 16.0f;
         brandNavGap = 16.0f;
-        logoSize = 44.0f;
         toggleSize = 28.0f;
         toggleZoneH = 44.0f;
     }
+    // bug165（need241 设计 §9.3）：logo 随窗口自适应 = clamp(min(宽度档, 高度档),
+    // 40, 64)，手动折叠态（72px 带）追加上限 48。宽度档按窗口逻辑宽 W（本函数
+    // 的 screen 即 bodyScreen 全宽）：<1440→48 / 1440~1727→56 / ≥1728→64；高度
+    // 档沿用既有阈值作短窗钳制：<680→40 / 680~711→44 / ≥712 不设限（封顶交钳位
+    // 64）。解释偏离说明：设计表高度档顶值写 48，但 48 ≤ 宽度档下限 48 会让
+    // min 恒等高度档、宽度档成死代码，与同节「大屏 logo 诉求是 bug165 本意」
+    // 「钳 [40,64]」及老板「窗口拉大 logo 应自动变大」直接矛盾——按意图读法
+    // 正常档不设限；W<1440 与短窗结果与设计表完全一致，仅 W≥1440 且正常档时
+    // 为 56/64（即放大点）。
+    const float widthTier = screen.width >= 1728.0f   ? 64.0f
+                            : screen.width >= 1440.0f ? 56.0f
+                                                      : 48.0f;
+    const float heightTier =
+        availH < 680.0f ? 40.0f : availH < 712.0f ? 44.0f : 64.0f;
+    float logoSize = std::clamp(std::min(widthTier, heightTier), 40.0f, 64.0f);
+    if (collapsed) logoSize = std::min(logoSize, 48.0f);  // §9.3 折叠态上限
     const float padX = t.sizes.spacingLarge;
     constexpr float kIconW = 28.0f;
     constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距
 
-    // 品牌块高 56 恒定（三档都不缩：锚点不塌）
-    constexpr float kBrandH = 56.0f;
+    // 品牌块高随 logo 同步（need241 §9.3 修正条款）：logo <56 时恒 56（既有锚点
+    // 不塌，48 瓦上下各留 4px）；logo ≥56（大屏档）块加高至 logo+16（上下各 8px
+    // 呼吸位），本档 topPad/brandNavGap 相应 −4 补偿
+    float brandH = 56.0f;
+    if (logoSize >= 56.0f) {
+        brandH = logoSize + 16.0f;
+        topPad -= 4.0f;
+        brandNavGap -= 4.0f;
+    }
 
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
@@ -466,28 +488,22 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // brand 行（UAT3 #9 + 图标批 2026-10-20）：折叠/展开两态统一为居中几何
             // logo——C 方案终端窗 >_（ui_kit::drawDevDeskLogo 矢量绘制，几何契约与
             // assets/icon.ico 同源；fa-laptop-code 字形退役）。行元素仍是整行 box
-            // (0, topPad, kWidth, kBrandH)：test_app_sidebar 钉的 brand frame.y=40
-            // 防跳动断言不动；品牌文本由自绘标题栏承载。
-            // UAT5：logo 36→48 按用户拍板放大（「不够大」），行高 32→56 随之加高
-            //（48 瓦在 56 行内居中上下各留 4px，不再溢出），首个导航起点
-            // 32+56+28=116 连锁（test_app_sidebar 各导航 y 断言同步）。
+            // (0, topPad, kWidth, brandH)；品牌文本由自绘标题栏承载。
+            // bug165 v3（need241 §9.3）：logo 随窗口宽高自适应（公式见上方分档处），
+            // 品牌块行高随 logo 同步（≥56 加高至 logo+16）；折叠态恒 ≤48，块高回 56。
             ui.stack("app.sidebar.brand")
                 .position(0.0f, topPad)
-                .size(kWidth, kBrandH)
+                .size(kWidth, brandH)
                 .content([&] {
-                    // bug165 两态一致裁决（2026-11-03 §2.1）+ v2 动态三档（§10.1）：
-                    // logo 随可用高 H 分档 48/44/40（正常/紧凑/极紧），两态（展开/
-                    // 折叠）同值不回退；kBrandH 56 与导航起点（116/88/80）均不变，
-                    // test_app_sidebar 既有 brand/导航 y 断言零波及。
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
-                        (kWidth - logoSize) * 0.5f, (kBrandH - logoSize) * 0.5f,
+                        (kWidth - logoSize) * 0.5f, (brandH - logoSize) * 0.5f,
                         logoSize, t.colors.primary, t.colors.surface);
                 })
                 .build();
 
             // 导航滚动区起点（§11.2）：brand 行下缘 = viewport 顶（品牌区锚定不滚）
-            const float navStart = topPad + kBrandH + brandNavGap;
+            const float navStart = topPad + brandH + brandNavGap;
 
             // 导航项渲染：提取为 lambda（work/system 两组共用，避免重复代码）。
             // active 态视觉走 SelectionBar（§4.3：2px 左绿竖线 + selectedBg + textPrimary），
@@ -799,16 +815,19 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 })
                 .build();
 
-            // 折叠开关（底部固定）：need172 v2（设计文档 §10.2）——直径按档 32/28
-            // 正圆，预留区 48/44 内垂直居中（toggleY = H−40 / H−36，上下各 8）；
-            // 水平：折叠 (72−size)/2（20/22）、展开 padX=16 对齐导航左缘。码点字号
+            // 折叠开关（底部固定）：need172 v2（设计文档 §10.2）+ v3（§2/§3）——直径
+            // 按档 32/28 正圆，预留区 48/44 内垂直居中（toggleY = H−40 / H−36，上
+            // 下各 8）；水平：折叠 (72−size)/2（20/22）、展开 padX=16 对齐导航左缘
+            //（两态水平位移 ≤6px、垂直零位移，宽度无动画档瞬时切换）。码点字号
             // fontSizeSmall(12)（§10.5-3，随钮缩小降档）。常态 1px borderDefault
             // 圆框常显 + textSecondary 图标；hover：primarySoftBg 底 + primaryHover
-            // 描边 + primary 图标 + scale 1.04（150ms）；按压：primary 描边 +
-            // scale 0.96；移出/松手回弹 180ms OutBack。形变与变色走「每帧换目标值
-            // + transition 平滑」（jelly 坑①②：.animate 只是允许动，目标值必须
-            // compose 期每帧重给）。EUI 每元素单 Transition，按压段 100ms Out 并入
-            // 同曲线兜（jelly.h 全段单档先例）。
+            // 描边 + primary 图标 + scale 1.09（150ms）+ 单层阴影浮起（§3）；按压：
+            // primary 描边 + scale 0.90、阴影消失；focus：1.5px primary 描边环；
+            // 移出/松手回弹 280ms 强 OutBack（超调 ~1.11 再回落，老板令「果冻要
+            // 明显」）。形变与变色走「每帧换目标值 + transition
+            // 平滑」（jelly 坑①②：.animate 只是允许动，目标值必须 compose 期每帧
+            // 重给）。EUI 每元素单 Transition，按压段 100ms Out 并入同曲线兜
+            //（jelly.h 全段单档先例）。
             // 热区与绘制解耦（§10.2）：hover/点击命中 = 绘制区外扩 4px
             //（40/36 ≥32px 桌面最小可点约定），视觉缩小不牺牲命中率——交互回调
             // 全在独立透明热区 rect（active 导航项三态全透明仍可点中先例）。
@@ -817,25 +836,46 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 collapsed ? (kWidth - toggleSize) * 0.5f : padX;
             const bool toggleHovered = g_toggleHovered;
             const bool togglePressed = g_togglePressed;
+            const bool toggleFocused = g_toggleFocused;  // v3：focus 态
             const bool toggleActive = toggleHovered || togglePressed;
+            // 果冻加明显（2026-11-05 老板令，need172 v3.1）：hover 1.09、按压 0.90，
+            // 回弹 280ms 强 OutBack——松手回弹时从 0.90 冲过目标超调至 ~1.11 再回
+            // 落（OutBack 标准超调 ~10% 行程），肉眼可见的弹性。仅此钮（jellyCard
+            // 同一 idiom：坑①② 每帧换目标值 + transition/animate 平滑），不扩散
+            // 导航项。
             const float toggleScale =
-                togglePressed ? 0.96f : toggleHovered ? 1.04f : 1.0f;
+                togglePressed ? 0.90f : toggleHovered ? 1.09f : 1.0f;
             const core::Transition toggleTransition = core::Transition::make(
-                toggleHovered ? 0.15f : 0.18f,
+                toggleHovered ? 0.15f : 0.28f,
                 toggleHovered ? core::Ease::OutCubic : core::Ease::OutBack);
+            // 悬浮阴影（v3 §3/§9-4）：仅 hover 态浮起 blur8/offsetY2/黑 10%，
+            // pressed/常态贴回桌面无阴影——「悬浮」语义与操作反馈同源；圆形描边
+            // 图标钮非填充按钮，基线「填充按钮禁阴影」不适用。
+            const core::Shadow toggleShadow =
+                toggleHovered
+                    ? core::Shadow{true, {0.0f, 2.0f}, 8.0f, 0.0f,
+                                   eui::Color{0.102f, 0.102f, 0.102f,
+                                              0.10f}}  // rgba(26,26,26,.10)
+                    : core::Shadow{};
             ui.rect("app.sidebar.toggle")
                 .position(toggleX, toggleY)
                 .size(toggleSize, toggleSize)
                 .color(toggleActive ? t.colors.primarySoftBg : kTransparent)
-                .border(1.0f, togglePressed  ? t.colors.primary
-                              : toggleHovered ? t.colors.primaryHover
-                                              : t.colors.borderDefault)
+                .border(toggleFocused ? 1.5f : 1.0f,
+                        // v3 focus 态：1.5px primary 描边环（focus+hover 叠加同值，
+                        // pressed 优先级最高）；不染色底不变图标色
+                        togglePressed || toggleFocused
+                            ? t.colors.primary
+                            : toggleHovered ? t.colors.primaryHover
+                                            : t.colors.borderDefault)
                 .radius(toggleSize * 0.5f)  // 半径=半宽 → 正圆
+                .shadow(toggleShadow)
                 .transformOrigin(0.5f, 0.5f)  // 缩放中心在按钮中心（jelly 坑③）
                 .scale(toggleScale)
                 .transition(toggleTransition)
                 .animate(core::AnimProperty::Color | core::AnimProperty::Border |
-                         core::AnimProperty::Transform)
+                         core::AnimProperty::Transform |
+                         core::AnimProperty::Shadow | core::AnimProperty::Blur)
                 .build();
             ui.text("app.sidebar.toggle.icon")
                 .position(toggleX, toggleY)
@@ -852,11 +892,14 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                          core::AnimProperty::Transform)
                 .build();
             // 热区（绘制区外扩 4px，§10.2）：置于视觉元素之后 = 本组最顶层命中；
-            // 三态全透明（不参与视觉）
+            // 三态全透明（不参与视觉）。onFocusChanged 自带 focusable=true（dsl.h
+            // 通用 builder）：v3 focus 态入口（键盘/程序化聚焦 → 1.5px primary 环）
             ui.rect("app.sidebar.toggle.hot")
                 .position(toggleX - 4.0f, toggleY - 4.0f)
                 .size(toggleSize + 8.0f, toggleSize + 8.0f)
                 .states(kTransparent, kTransparent, kTransparent)
+                .onFocusChanged(
+                    [](bool focused) { g_toggleFocused = focused; })
                 .onHover([](bool hovered) {
                     if (hovered && !g_toggleHovered) {
                         // hover 进入沿触发一次（验收 5/10：停在上面不循环，移出再进重触发）
@@ -873,57 +916,73 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 })
                 .build();
 
-            // 弥散绿粒子 v2（need172 §10.3）：hover 进入沿一次性迸发 12 颗（30° 均布
-            // + hash ±10° 抖动），生命 800ms + 每颗 hash 延迟 0~80ms（迸发层次，
-            // ≤880ms 全灭尽自止），透明度 0.75→0、末端缩放 0.7；起点 = 钮半径+2
-            // 向径向外弥散 14~26px（冲出圆框才可见），粒径 4~6px 正圆。颜色：浅色档
-            // kParticleLight 三色轮替（第三色 #06AD56 深档拉开明度）、深色档
-            // primary/primaryHover 双色。性能口径：hover 驱动一次性迸发（≤12 个
-            // 矩形元素、880ms 自止），非持续动画、无常驻帧泵；非活跃帧零粒子零泵。
+            // 弥散绿粒子 v3（need172 §5 + 2026-11-05 老板反馈「太短暂」升版）：hover
+            // 进入沿一次性迸发 12 颗（30° 均布 + hash ±10° 抖动），生命 1600ms +
+            // 每颗 hash 延迟 0~80ms（迸发层次，≤1760ms 全灭尽自止）。透明度衰减
+            // 放平缓（老板令②）：0.75×(1−InQuad(tt))——前段保浓度（半程仍 ~56%）、
+            // 后段渐隐，替代旧 0.75×(1−OutCubic) 的早期即淡；位移仍 OutCubic（同
+            // 行程铺到 1600ms，速度减半 = 「不嗖一下就没了」）。v3 几何（§5.1）：
+            // dy×0.55 垂直压缩 + 中心钳包络 [3, W−3]×[foldLimit, H−3]（修复 v2 上
+            // 向越让位线 ~16px / 展开态左向越缘 ~12px）；折叠态弥散降档 10~16px。
+            // 起点 = 钮半径+2 向外弥散 14~26px（冲出圆框才可见），粒径 4~6px 正圆、
+            // 末端缩放 0.7。颜色：浅色档 kParticleLight 三色轮替（第三色 #06AD56
+            // 深档拉开明度）、深色档 primary/primaryHover 双色。性能口径不变（老板
+            // 令③）：hover 驱动一次性迸发（每帧 ≤12 个矩形元素、1760ms 自止），
+            // 非持续动画、无常驻帧泵；非活跃帧零粒子零泵。
             if (g_toggleParticleStart.has_value()) {
                 const float elapsed =
                     std::chrono::duration<float>(
                         std::chrono::steady_clock::now() -
                         *g_toggleParticleStart)
                         .count();
-                if (elapsed < 0.88f) {
+                if (elapsed < 1.76f) {
                     const float cx = toggleX + toggleSize * 0.5f;
                     const float cy = toggleY + toggleSize * 0.5f;
+                    // 让位线（§1.1）：foldLimit = H − 区高 − 4（粒子禁越线顶边）
+                    const float foldLimit = availH - toggleZoneH - 4.0f;
                     for (int i = 0; i < 12; ++i) {
                         const float delay =
                             fluidHash01(i * 23 + 7) * 0.08f;  // 0~80ms
                         if (elapsed <= delay) continue;  // 未起爆不建元素
                         const float tt =
-                            std::clamp((elapsed - delay) / 0.8f, 0.0f, 1.0f);
+                            std::clamp((elapsed - delay) / 1.6f, 0.0f, 1.0f);
                         const float eased = core::applyEase(core::Ease::OutCubic, tt);
+                        const float fade = core::applyEase(core::Ease::InQuad, tt);
                         const float ang =
                             (i * 30.0f +
                              (fluidHash01(i * 13 + 1) - 0.5f) * 20.0f) *
                             0.0174533f;  // deg→rad（30° 均布 + ±10° 抖动）
                         const float spread =
-                            14.0f + 12.0f * fluidHash01(i * 17 + 2);  // 14~26px
+                            collapsed
+                                ? 10.0f + 6.0f * fluidHash01(i * 17 + 2)  // 10~16 折叠降档（§5.2）
+                                : 14.0f + 12.0f * fluidHash01(i * 17 + 2);  // 14~26 展开
                         const float pr =
                             2.0f + fluidHash01(i * 19 + 3);  // 半宽 2~3（直径 4~6）
                         const float size =
                             pr * 2.0f * (1.0f - 0.3f * eased);  // 末端缩放 0.7
                         const float d = toggleSize * 0.5f + 2.0f +
                                         spread * eased;  // 起点半径=钮半径+2
+                        // 垂直压缩 Ky=0.55：上向最大触达压入让位线内，横向全幅保
+                        // 「弥漫」；中心钳包络兜底拦个别 1~4px 漂移（§5.1）
+                        const float px = std::clamp(cx + std::cos(ang) * d,
+                                                    3.0f, kWidth - 3.0f);
+                        const float py = std::clamp(cy + std::sin(ang) * d * 0.55f,
+                                                    foldLimit, availH - 3.0f);
                         const eui::Color& pc =
                             t.isDark ? ((i % 2 == 0) ? t.colors.primary
                                                      : t.colors.primaryHover)
                                      : kParticleLight[i % 3];
                         ui.rect("app.sidebar.toggle.particle." +
                                 std::to_string(i))
-                            .position(cx + std::cos(ang) * d - size * 0.5f,
-                                      cy + std::sin(ang) * d - size * 0.5f)
+                            .position(px - size * 0.5f, py - size * 0.5f)
                             .size(size, size)
                             .radius(size * 0.5f)  // 半径=半宽 → 正圆（fluid 卫星同款）
                             .color(pc)
-                            .opacity(0.75f * (1.0f - eased))
+                            .opacity(0.75f * (1.0f - fade))
                             .build();
                     }
                     // 帧泵（fluid driver 同款先例）：粒子位置每帧按壁钟重算，泵只
-                    // 在 880ms 生命期内保持出帧；到期帧起本分支整体不建（自止）
+                    // 在 1760ms 生命期内保持出帧；到期帧起本分支整体不建（自止）
                     ui.stack("app.sidebar.toggle.particle.driver")
                         .size(1.0f, 1.0f)
                         .onFrame([](float) {})

@@ -493,8 +493,8 @@ int main(int argc, char* argv[]) {
                   nearEq(hovBtn->border.color.r,
                          core::theme::current().colors.primaryHover.r),
               "§6 hover 描边应变 primaryHover");
-        // hover 停留超过粒子生命（≤880ms）→ 自止消失（不循环判据：hover 仍 true）
-        std::this_thread::sleep_for(std::chrono::milliseconds(920));
+        // hover 停留超过粒子生命（v3.1 ≤1760ms）→ 自止消失（不循环判据：hover 仍 true）
+        std::this_thread::sleep_for(std::chrono::milliseconds(1900));
         composeFrame();
         check(ui->find("app.sidebar.toggle.particle.0") == nullptr &&
                   ui->find("app.sidebar.toggle.particle.driver") == nullptr,
@@ -591,7 +591,7 @@ int main(int argc, char* argv[]) {
         GetCursorPos(&saved);
 
         SetCursorPos(farX, farY);
-        pumpRealFrames(920);  // > 粒子生命 v2 ≤880ms：清掉 §6 手调遗留态做干净基线
+        pumpRealFrames(1900);  // > 粒子生命 v3.1 ≤1760ms：清掉 §6 手调遗留态做干净基线
         const auto* base = ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
         check(base != nullptr, "§6b toggle 应存在");
         check(ui->find("app.sidebar.toggle.particle.0") == nullptr,
@@ -634,9 +634,9 @@ int main(int argc, char* argv[]) {
                               ? "MISS"
                               : "HIT")
                       << "\n";
-            // 防污染：diag A 合成迸发的粒子 v2 ≤880ms 生命——先泵 920ms 清零再进真
+            // 防污染：diag A 合成迸发的粒子 v3.1 ≤1760ms 生命——先泵 1900ms 清零再进真
             // 指针段（首版工装的粒子计数被合成残留顶成假绿的坑）。
-            pumpRealFrames(920);
+            pumpRealFrames(1900);
             // TRACE（172 诊断临时）：链式光标回调——真实 motion 到达即打印坐标再
             // 转发 EUI 原回调。断点分判：无打印=WM_MOUSEMOVE/GLFW 层断；打印坐标
             // ≈逻辑值（130/313 级）=DPI 虚拟化错位；坐标=物理值（176/424 级）仍不
@@ -684,7 +684,7 @@ int main(int argc, char* argv[]) {
                           << " expect物理≈" << lcx * cs0 << "," << lcy * cs0
                           << "\n";
             }
-            pumpRealFrames(300);  // hover 过渡 150ms 内 + 粒子 880ms 窗口内计数
+            pumpRealFrames(300);  // hover 过渡 150ms 内 + 粒子 1760ms 窗口内计数
             int burst = 0;
             for (int i = 0; i < 12; ++i) {
                 if (ui->find("app.sidebar.toggle.particle." + std::to_string(i)) !=
@@ -698,9 +698,9 @@ int main(int argc, char* argv[]) {
                       nearEq(hov->border.color.r,
                              core::theme::current().colors.primaryHover.r),
                   "§6b 真指针 hover 描边应变 primaryHover");
-            // 移出 → hover 离开 + 粒子自止（泵 920ms > v2 生命 ≤880ms）
+            // 移出 → hover 离开 + 粒子自止（泵 1900ms > v3.1 生命 ≤1760ms）
             SetCursorPos(farX, farY);
-            pumpRealFrames(920);
+            pumpRealFrames(1900);
             check(ui->find("app.sidebar.toggle.particle.0") == nullptr &&
                       ui->find("app.sidebar.toggle.particle.driver") == nullptr,
                   "§6b 移出后粒子应自止");

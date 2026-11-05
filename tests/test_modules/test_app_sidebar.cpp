@@ -293,8 +293,8 @@ REGISTER_TEST(sidebar_collapsed_compose,
 
     // brand 折叠 = 只显示居中几何 logo（图标批 2026-10-20 起 fa-laptop-code 字形退役，
     // 换 ui_kit::drawDevDeskLogo 矢量瓦，几何契约同 assets/icon.ico）。行 box 是
-    // (0, 40, 72, 56)；§10.1 logo 三档：H=1000 落正常档 → 48，两态一致——
-    // .mark 行内居中：(72-48)/2=12、(56-48)/2=4（上下各留 4px）
+    // (0, 40, 72, 56)；bug165 宽×高自适应 + 折叠上限 48：W=1600→宽档 56、H=1000
+    // 正常档不设限 → min=56 → 折叠钳 48——.mark 行内居中：(72-48)/2=12、(56-48)/2=4
     const auto* collapsedBrand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(collapsedBrand != nullptr);
     const auto* collapsedMark = ui.find("app.sidebar.brand.mark");
@@ -455,18 +455,20 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     // UAT3 #9 + 图标批 2026-10-20：brand 行展开态 = 折叠态同款居中几何 logo
     //（.mark 矢量瓦，同 ui_kit::drawDevDeskLogo 契约），「DevDesk」文本改由自绘
-    // 标题栏承载（app.titlebar.brand）；品牌行 y=32 防跳动（正常档 topPad）。
-    // §10.1 logo 三档：H=1000 正常档 → 48，两态一致——(220-48)/2=86、(56-48)/2=4
+    // 标题栏承载（app.titlebar.brand）。
+    // bug165：W=1600→宽档 56 × H=1000 正常档不设限 → logo 56；品牌块加高 72
+    //（=56+16）、topPad −4=28——(220-56)/2=82、(72-56)/2=8
     const auto* brand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(brand != nullptr);
-    DOCTEST_CHECK(floatEq(brand->y, 32.0f));
+    DOCTEST_CHECK(floatEq(brand->y, 28.0f));
     const auto* mark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(mark != nullptr);
-    DOCTEST_CHECK(floatEq(mark->x, 86.0f));  // (220-48)/2，行内水平居中
-    DOCTEST_CHECK(floatEq(mark->y, 4.0f));   // (56-48)/2，行内垂直居中
-    DOCTEST_CHECK(floatEq(mark->width.value, 48.0f));
+    DOCTEST_CHECK(floatEq(mark->x, 82.0f));  // (220-56)/2，行内水平居中
+    DOCTEST_CHECK(floatEq(mark->y, 8.0f));   // (72-56)/2，行内垂直居中
+    DOCTEST_CHECK(floatEq(mark->width.value, 56.0f));
     DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
-    // 导航起点仍 40+56+28=116；§11 行 y 为画布坐标（−navStart），首行贴视口顶
+    // 导航起点 28+72+24=124（logo≥56 块加高 + topPad/gap −4 补偿链）；§11 行 y 为
+    // 画布坐标（−navStart），首行贴视口顶
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 0.0f));
     const auto* label = ui.find("app.sidebar.item.Home.label");
     DOCTEST_CHECK(label != nullptr);
@@ -536,10 +538,9 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     DOCTEST_CHECK(floatEq(divider->frame.y, kExpectedBodyTop));
     DOCTEST_CHECK(floatEq(divider->frame.height, 1000.0f - kExpectedBodyTop));
 
-    // 留白值 = 正常档 topPad 32（need171 分档常量，H=1000 落正常档；数值恰与
-    // spacingLarge×2 同值但已与字号 token 脱钩），且落在容器内部
-    //（0 ≤ brand.y < 首个导航项 y）
-    DOCTEST_CHECK(floatEq(brand->frame.y, 32.0f + kExpectedBodyTop));
+    // 留白值 = 正常档 topPad 32 −4 = 28（need171 分档常量 + bug165 logo≥56 块加
+    // 高补偿；W=1600 → logo 56），且落在容器内部（0 ≤ brand.y < 首个导航项 y）
+    DOCTEST_CHECK(floatEq(brand->frame.y, 28.0f + kExpectedBodyTop));
     DOCTEST_CHECK(brand->frame.y >= sidebar->frame.y);
 
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
@@ -983,8 +984,8 @@ REGISTER_TEST(sidebar_custom_titlebar_compose,
 // need171（2026-11-03 设计文档 §2.2）：侧栏可用高驱动的离散三档间距——
 // 正常档 H≥712（topPad 32/brandNavGap 28/行高 40/行距 4）、紧凑档 680≤H<712
 //（16/16/40/4）、极紧档 H<680（12/12/36/2）。本文件用例钉 customTitlebarActive
-//= false，Windows 路径 bodyTop=0 → H 恰等于 screen.height。导航起点连锁：
-// 116 / 88 / 80；品牌行 56 与 logo 44 三档恒不缩（锚点不塌）。
+//= false，Windows 路径 bodyTop=0 → H 恰等于 screen.height。导航起点连锁：正常档
+// W=1600 → bug165 宽档 56 → 块高 72、topPad/gap −4 → 起点 124；紧凑 88 / 极紧 80。
 REGISTER_TEST(sidebar_height_adaptive_tiers,
               "sidebar: 高度三档间距（H=1000 正常/H=700 紧凑/H=660 极紧）", {
     app::setCustomTitlebarMode(false);
@@ -994,7 +995,8 @@ REGISTER_TEST(sidebar_height_adaptive_tiers,
     ::core::Router router = makeStubRouter(home, md);
     test_support::ScopedAppRouter scoped(&router);
 
-    // 正常档：起点 116、步进 44；logo 48、钮 32/区 48（§10.1/§10.2）
+    // 正常档：W=1600 → logo 56（宽档主导，钳内）→ 块高 72、topPad/gap −4 →
+    // 起点 28+72+24=124；步进 44；钮 32/区 48（§10.2）
     {
         eui::Ui ui;
         ui.begin("tier_normal");
@@ -1003,15 +1005,15 @@ REGISTER_TEST(sidebar_height_adaptive_tiers,
         screen.height = 1000.0f;
         app::compose(ui, screen);
         ui.end();
-        DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 32.0f));
-        DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand.mark")->width.value, 48.0f));
+        DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 28.0f));  // 32−4 块加高补偿
+        DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand.mark")->width.value, 56.0f));  // 宽档 56
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 0.0f));
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Markdown.hit")->y, 44.0f));
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->y, 960.0f));   // H−40
         DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->width.value, 32.0f));
     }
     // 紧凑档：topPad/brandNavGap 16 → 起点 88；行高/行距不变 → 步进仍 44；
-    // logo 44、钮 28/区 44
+    // 高档 44 < 宽档 56 → logo 44（块高恒 56）、钮 28/区 44
     {
         eui::Ui ui;
         ui.begin("tier_compact");
@@ -1048,10 +1050,11 @@ REGISTER_TEST(sidebar_height_adaptive_tiers,
     return true;
 })
 
-// §10.1（need165 v2）：logo 三档 48/44/40 随可用高 H 离散切换，且展开/折叠两态
-// 同值不回退（bug165 裁决保持）；档位切换离散无过渡。
+// bug165 v3（need241 §9.3）：logo 随窗口宽高自适应——W=1600 宽档 56 与高三档取小
+// 钳 [40,64]；折叠态追加上限 48（两态不再恒同值：大屏展开 > 折叠是设计明文「采纳
+// 上限 64 时折叠态仍恒 ≤48」）。档位切换离散无过渡；块高随 logo 同步（≥56 加高）。
 REGISTER_TEST(sidebar_logo_three_tier_two_state,
-              "sidebar: logo 三档 48/44/40 两态一致（§10.5-5）", {
+              "sidebar: logo 宽×高自适应（56/44/40）+ 折叠上限 48 两态矩阵", {
     app::setCustomTitlebarMode(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -1059,7 +1062,9 @@ REGISTER_TEST(sidebar_logo_three_tier_two_state,
     test_support::ScopedAppRouter scoped(&router);
 
     const float heights[3] = {1000.0f, 700.0f, 660.0f};  // 正常/紧凑/极紧
-    const float logos[3] = {48.0f, 44.0f, 40.0f};
+    // W=1600 → 宽档 56：正常档高档不设限 → 56；紧凑/极紧高档 44/40 < 56 → 44/40
+    const float logoExpanded[3] = {56.0f, 44.0f, 40.0f};
+    const float logoCollapsed[3] = {48.0f, 44.0f, 40.0f};  // 折叠钳 48（仅正常档生效）
     for (int tier = 0; tier < 3; ++tier) {
         const bool states[2] = {false, true};  // 展开/折叠
         for (int s = 0; s < 2; ++s) {
@@ -1072,14 +1077,17 @@ REGISTER_TEST(sidebar_logo_three_tier_two_state,
             screen.height = heights[tier];
             app::compose(ui, screen);
             ui.end();
+            const float logo =
+                states[s] ? logoCollapsed[tier] : logoExpanded[tier];
+            const float brandH = logo >= 56.0f ? logo + 16.0f : 56.0f;
             const float w = static_cast<float>(states[s] ? 72.0f : 220.0f);  // states: false=展开 / true=折叠
             const auto* mark = ui.find("app.sidebar.brand.mark");
             DOCTEST_REQUIRE_MESSAGE(mark != nullptr, "缺 brand.mark");
-            DOCTEST_CHECK(floatEq(mark->width.value, logos[tier]));
+            DOCTEST_CHECK(floatEq(mark->width.value, logo));
             DOCTEST_CHECK(floatEq(mark->width.value, mark->height.value));
-            // 行内居中：折叠 (72−logo)/2 / 展开 (220−logo)/2
-            DOCTEST_CHECK(floatEq(mark->x, (w - logos[tier]) * 0.5f));
-            DOCTEST_CHECK(floatEq(mark->y, (56.0f - logos[tier]) * 0.5f));
+            // 行内居中：水平 (w−logo)/2；垂直 (brandH−logo)/2（块高 56 恒 / logo≥56 加高档）
+            DOCTEST_CHECK(floatEq(mark->x, (w - logo) * 0.5f));
+            DOCTEST_CHECK(floatEq(mark->y, (brandH - logo) * 0.5f));
         }
     }
     app::setSidebarCollapsed(false);  // 复位进程级全局态
@@ -1087,15 +1095,133 @@ REGISTER_TEST(sidebar_logo_three_tier_two_state,
     return true;
 })
 
-// need172 v2（2026-11-04 设计文档 §10.2/§10.3）：收缩按钮态视觉 + 加强弥散绿粒子。
-// hover/press 驱动走热区（app.sidebar.toggle.hot）onHoverChanged/onPress/onRelease
-// 回调手调（无头无指针，与真指针共用同一接线）。判据：常态 1px borderDefault 圆框
-// scale 1 且零粒子零泵；hover → primaryHover 描边/primary 图标/primarySoftBg 底/
-// scale 1.04 + 12 颗正圆粒子（直径 4~6、opacity≤0.75、800ms+hash 延迟 0~80ms）
-// + 生命泵；hover 停留超过粒子生命（≤880ms）→ 粒子自止消失（迸发一次不循环）；
-// 移出再进 → 重触发；按压 scale 0.96 + primary 描边；码点 fontSizeSmall(12)。
+// bug165 验收（任务简报⑥）：logo 随窗口宽/高的单调性 + 钳上下限 + 折叠态上限 +
+// 标题区行高同步。宽单调（H=1000 正常档高档不设限 → 宽档主导）：W=1000→48 <
+// W=1600→56 < W=1800→64（钳上限）；高单调（W=1000 宽档恒 48）：H=720（正常档）
+// →48 > H=480（极紧档）→40（钳下限域）；折叠态大屏仍钳 48（块高回 56 不加高）。
+REGISTER_TEST(sidebar_logo_window_adaptive_monotonic,
+              "sidebar: logo 单调性（1600>1000 宽 / 720>480 高）+ 钳 [40,64] + 折叠 48", {
+    app::setCustomTitlebarMode(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router = makeStubRouter(home, md);
+    test_support::ScopedAppRouter scoped(&router);
+
+    float w1000 = 0.0f, w1600 = 0.0f, w1800 = 0.0f;
+    float h720 = 0.0f, h480 = 0.0f;
+    float bigMarkY = -1.0f, bigBrandH = -1.0f, bigNavY = -1.0f;
+    float foldedMark = -1.0f, foldedBrandY = -1.0f, foldedMarkY = -1.0f;
+    // 宽单调：H=1000 正常档
+    {
+        eui::Ui ui;
+        ui.begin("logo_mono_w1000");
+        eui::Screen screen;
+        screen.width = 1000.0f;
+        screen.height = 1000.0f;
+        app::compose(ui, screen);
+        ui.end();
+        w1000 = ui.find("app.sidebar.brand.mark")->width.value;
+    }
+    {
+        eui::Ui ui;
+        ui.begin("logo_mono_w1600");
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        app::compose(ui, screen);
+        ui.end();
+        w1600 = ui.find("app.sidebar.brand.mark")->width.value;
+    }
+    {
+        eui::Ui ui;
+        ui.begin("logo_mono_w1800");
+        eui::Screen screen;
+        screen.width = 1800.0f;
+        screen.height = 1000.0f;
+        app::compose(ui, screen);
+        ui.end();
+        w1800 = ui.find("app.sidebar.brand.mark")->width.value;
+    }
+    DOCTEST_CHECK(floatEq(w1000, 48.0f));  // W<1440
+    DOCTEST_CHECK(floatEq(w1600, 56.0f));  // 1440~1727
+    DOCTEST_CHECK(floatEq(w1800, 64.0f));  // ≥1728 = 钳上限
+    DOCTEST_CHECK(w1000 < w1600);
+    DOCTEST_CHECK(w1600 < w1800);
+    // 高单调：W=1000（宽档恒 48）
+    {
+        eui::Ui ui;
+        ui.begin("logo_mono_h720");
+        eui::Screen screen;
+        screen.width = 1000.0f;
+        screen.height = 720.0f;
+        app::compose(ui, screen);
+        ui.end();
+        h720 = ui.find("app.sidebar.brand.mark")->width.value;
+    }
+    {
+        eui::Ui ui;
+        ui.begin("logo_mono_h480");
+        eui::Screen screen;
+        screen.width = 1000.0f;
+        screen.height = 480.0f;
+        app::compose(ui, screen);
+        ui.end();
+        h480 = ui.find("app.sidebar.brand.mark")->width.value;
+    }
+    DOCTEST_CHECK(floatEq(h720, 48.0f));  // 正常档（≥712）
+    DOCTEST_CHECK(floatEq(h480, 40.0f));  // 极紧档（<680，钳下限域）
+    DOCTEST_CHECK(h480 < h720);
+    // 标题区行高随 logo 同步：W=1800 → logo 64、块高 80（=64+16）、mark 垂直居中
+    // (80−64)/2=8、topPad 32−4=28、导航起点 28+80+24=132
+    {
+        eui::Ui ui;
+        ui.begin("logo_big_screen_sync");
+        eui::Screen screen;
+        screen.width = 1800.0f;
+        screen.height = 1000.0f;
+        app::compose(ui, screen);
+        ui.end();
+        bigMarkY = ui.find("app.sidebar.brand.mark")->y;
+        bigBrandH = ui.find("app.sidebar.brand")->height.value;
+        bigNavY = ui.find("app.sidebar.nav")->y;
+    }
+    DOCTEST_CHECK(floatEq(bigBrandH, 80.0f));  // 64+16
+    DOCTEST_CHECK(floatEq(bigMarkY, 8.0f));    // (80−64)/2
+    DOCTEST_CHECK(floatEq(bigNavY, 132.0f));   // 28+80+24
+    // 折叠态大屏钳 48：块高回 56（48<56 不加高）、topPad 回 32
+    app::setSidebarCollapsed(true);
+    {
+        eui::Ui ui;
+        ui.begin("logo_big_screen_folded");
+        eui::Screen screen;
+        screen.width = 1800.0f;
+        screen.height = 1000.0f;
+        app::compose(ui, screen);
+        ui.end();
+        foldedMark = ui.find("app.sidebar.brand.mark")->width.value;
+        foldedBrandY = ui.find("app.sidebar.brand")->y;
+        foldedMarkY = ui.find("app.sidebar.brand.mark")->y;
+    }
+    app::setSidebarCollapsed(false);  // 复位进程级全局态
+    DOCTEST_CHECK(floatEq(foldedMark, 48.0f));  // 折叠上限
+    DOCTEST_CHECK(floatEq(foldedBrandY, 32.0f));  // topPad 回 32
+    DOCTEST_CHECK(floatEq(foldedMarkY, 4.0f));  // (56−48)/2
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
+// need172 v3/v3.1（设计文档 §3/§5 + §12 老板 2026-11-05 两条反馈）：收缩按钮悬浮
+// 样式（阴影/focus/果冻加强）+ 弥散绿粒子（1600ms/InQuad 平缓衰减/包络钳制）。
+// hover/press/focus 驱动走热区（app.sidebar.toggle.hot）onHoverChanged/onPress/
+// onRelease/onFocusChanged 回调手调（无头无指针，与真指针共用同一接线）。判据：
+// 常态 1px borderDefault 圆框 scale 1、零粒子零泵、无阴影；hover → primaryHover
+// 描边/primary 图标/primarySoftBg 底/scale 1.09 + 阴影 blur8/offsetY2 + 12 颗正圆
+// 粒子（直径 4~6、opacity≤0.75 前浓后隐、中心钳包络 [3,W−3]×[foldLimit,H−3]）+
+// 生命泵；生命 1600ms+延迟 ≤1760ms 自止（迸发一次不循环）；移出再进 → 重触发；
+// 按压 scale 0.90 + primary 描边无阴影；focus 1.5px primary 环；折叠态粒子降档
+// 仍在包络内；码点 fontSizeSmall(12)。
 REGISTER_TEST(sidebar_toggle_button_states_and_particles,
-              "sidebar: 收缩按钮 hover/按压态 + 粒子 v2 一次性迸发/自止/重触发", {
+              "sidebar: 收缩按钮 hover/按压/focus 态 + 粒子 v3 迸发/包络/自止/重触发", {
     app::setCustomTitlebarMode(false);
     app::resetSidebarGlobals();  // 按钮 hover/粒子态回厂（不依赖前序用例）
     RecordingModule home(::core::PageId::Home, "首页");
@@ -1121,6 +1247,7 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     DOCTEST_CHECK(floatEq(idle->border.color.r, colors.borderDefault.r));
     DOCTEST_CHECK(floatEq(idle->transform.scale.x, 1.0f));
     DOCTEST_CHECK(idle->color.a < 1e-3f);  // 常态透明底
+    DOCTEST_CHECK(!idle->shadow.enabled);  // v3：常态贴桌面无阴影
     const auto* idleIcon = ui.find("app.sidebar.toggle.icon");
     DOCTEST_REQUIRE(idleIcon != nullptr);
     DOCTEST_CHECK(floatEq(idleIcon->fontSize, 12.0f));  // §10.2 fontSizeSmall
@@ -1137,7 +1264,10 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     const auto* hov = ui.find("app.sidebar.toggle");
     DOCTEST_REQUIRE(hov != nullptr);
     DOCTEST_CHECK(floatEq(hov->border.color.r, colors.primaryHover.r));
-    DOCTEST_CHECK(floatEq(hov->transform.scale.x, 1.04f));
+    DOCTEST_CHECK(floatEq(hov->transform.scale.x, 1.09f));  // v3.1 果冻加强
+    DOCTEST_CHECK(hov->shadow.enabled);  // v3：hover 阴影浮起
+    DOCTEST_CHECK(floatEq(hov->shadow.blur, 8.0f));
+    DOCTEST_CHECK(floatEq(hov->shadow.offset.y, 2.0f));
     const auto* hovIcon = ui.find("app.sidebar.toggle.icon");
     DOCTEST_REQUIRE(hovIcon != nullptr);
     DOCTEST_CHECK(floatEq(hovIcon->textColor.r, colors.primary.r));
@@ -1160,10 +1290,18 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
         DOCTEST_CHECK(floatEq(p->radius, p->width.value * 0.5f));
         DOCTEST_CHECK(p->opacity <= 0.75f + 1e-3f);
         DOCTEST_CHECK(p->opacity > 0.0f);
+        // v3 包络（§5.1）：中心钳 [3, W−3]×[foldLimit, H−3]（W=220、正常档
+        // foldLimit=1000−48−4=948）——上不入导航区、左不越侧栏缘、下不出底
+        const float pcx = p->x + p->width.value * 0.5f;
+        const float pcy = p->y + p->height.value * 0.5f;
+        DOCTEST_CHECK(pcx >= 3.0f - 0.01f);
+        DOCTEST_CHECK(pcx <= 217.0f + 0.01f);
+        DOCTEST_CHECK(pcy >= 948.0f - 0.01f);
+        DOCTEST_CHECK(pcy <= 997.0f + 0.01f);
     }
     DOCTEST_CHECK(particleCount == 12);
 
-    // 按压 → F3：scale 0.96 + primary 描边（pressed 描边比 hover 深一档）
+    // 按压 → F3：scale 0.90 + primary 描边 + 阴影消失（贴回桌面）
     const auto* hotNow = ui.find("app.sidebar.toggle.hot");
     DOCTEST_REQUIRE(hotNow != nullptr);
     hotNow->onPress(core::PointerEvent{}, core::Rect{});
@@ -1172,10 +1310,13 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     ui.end();
     const auto* pressed = ui.find("app.sidebar.toggle");
     DOCTEST_REQUIRE(pressed != nullptr);
-    DOCTEST_CHECK(floatEq(pressed->transform.scale.x, 0.96f));
+    DOCTEST_CHECK(floatEq(pressed->transform.scale.x, 0.90f));  // v3.1 果冻加强
     DOCTEST_CHECK(floatEq(pressed->border.color.r, colors.primary.r));
+    DOCTEST_CHECK(!pressed->shadow.enabled);
 
-    // 松开 → F4：回 hover 视觉；粒子不受按压影响（迸发一次未被重置）
+    // 松开 → F4：回 hover 视觉；粒子不受按压影响（迸发一次未被重置）。
+    // 松手回弹走 280ms 强 OutBack：目标从 0.90 回 1.09 时标准超调 ~10% 行程
+    //（峰值 ~1.11 再回落），此处只断言终值目标，超调属 transition 曲线行为
     const auto* hotReleased = ui.find("app.sidebar.toggle.hot");
     DOCTEST_REQUIRE(hotReleased != nullptr);
     hotReleased->onRelease(core::PointerEvent{}, core::Rect{});
@@ -1184,20 +1325,28 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     ui.end();
     const auto* released = ui.find("app.sidebar.toggle");
     DOCTEST_REQUIRE(released != nullptr);
-    DOCTEST_CHECK(floatEq(released->transform.scale.x, 1.04f));
+    DOCTEST_CHECK(floatEq(released->transform.scale.x, 1.09f));
     DOCTEST_CHECK(ui.find("app.sidebar.toggle.particle.0") != nullptr);
 
-    // hover 停留超过粒子生命（800ms+延迟 80ms ≤880ms）→ F5：粒子自止消失、零泵
+    // hover 停留：生命内（~1.1s）粒子仍在（v3.1 生命 1600ms——旧 800ms 版此处
+    // 已灭，此处即「太短暂」修复的回归判据）
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    ui.begin("toggle_hold_midlife");
+    app::compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(ui.find("app.sidebar.toggle.particle.0") != nullptr);
+    const auto* stillHover = ui.find("app.sidebar.toggle");
+    DOCTEST_REQUIRE(stillHover != nullptr);
+    DOCTEST_CHECK(floatEq(stillHover->transform.scale.x, 1.09f));  // hover 视觉保持
+
+    // 超过粒子生命（1600ms+延迟 80ms ≤1760ms）→ F5：粒子自止消失、零泵
     //（不循环判据；hover 仍保持 true——若每帧重触发这里会重现粒子）
-    std::this_thread::sleep_for(std::chrono::milliseconds(920));
+    std::this_thread::sleep_for(std::chrono::milliseconds(900));
     ui.begin("toggle_hold_after_life");
     app::compose(ui, screen);
     ui.end();
     DOCTEST_CHECK(ui.find("app.sidebar.toggle.particle.0") == nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.toggle.particle.driver") == nullptr);
-    const auto* stillHover = ui.find("app.sidebar.toggle");
-    DOCTEST_REQUIRE(stillHover != nullptr);
-    DOCTEST_CHECK(floatEq(stillHover->transform.scale.x, 1.04f));  // hover 视觉保持
 
     // 移出再进（false→true 沿）→ F6：粒子重新触发
     const auto* hotRe = ui.find("app.sidebar.toggle.hot");
@@ -1211,10 +1360,60 @@ REGISTER_TEST(sidebar_toggle_button_states_and_particles,
     DOCTEST_CHECK(ui.find("app.sidebar.toggle.particle.0") != nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.toggle.particle.driver") != nullptr);
 
-    // 复位：hover/粒子/进程级态不还原会污染后续用例
+    // focus 态（v3 §3，§9-5）：热区 onFocusChanged → 1.5px primary 描边环；
+    // 不染色底、不变图标色、不缩放（focus 单独成立时其余同常态）。先移出 hover
+    // 再聚焦，断言 focus 单独态视觉
+    const auto* hotFocus = ui.find("app.sidebar.toggle.hot");
+    DOCTEST_REQUIRE(hotFocus != nullptr);
+    DOCTEST_CHECK(hotFocus->onFocusChanged != nullptr);  // v3 焦点接线在热区
+    hotFocus->onHoverChanged(false);
+    hotFocus->onFocusChanged(true);
+    ui.begin("toggle_focused");
+    app::compose(ui, screen);
+    ui.end();
+    const auto* focused = ui.find("app.sidebar.toggle");
+    DOCTEST_REQUIRE(focused != nullptr);
+    DOCTEST_CHECK(floatEq(focused->border.width, 1.5f));
+    DOCTEST_CHECK(floatEq(focused->border.color.r, colors.primary.r));
+    DOCTEST_CHECK(floatEq(focused->transform.scale.x, 1.0f));
+    DOCTEST_CHECK(focused->color.a < 1e-3f);  // 不染色底
+    hotFocus->onFocusChanged(false);
+    ui.begin("toggle_unfocused");
+    app::compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->border.width, 1.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->border.color.r,
+                          colors.borderDefault.r));
+
+    // 折叠态 hover（v3 §5：弥散降档 10~16px + 包络兜底）：粒子存在且中心仍在
+    // 包络内（W=72 → x∈[3,69]；正常档折叠 foldLimit 仍 =1000−48−4=948）
+    app::setSidebarCollapsed(true);
+    const auto* hotFold = ui.find("app.sidebar.toggle.hot");
+    DOCTEST_REQUIRE(hotFold != nullptr);
+    hotFold->onHoverChanged(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    ui.begin("toggle_collapsed_hover");
+    app::compose(ui, screen);
+    ui.end();
+    int foldedParticles = 0;
+    for (int i = 0; i < 12; ++i) {
+        const auto* fp =
+            ui.find("app.sidebar.toggle.particle." + std::to_string(i));
+        if (fp == nullptr) continue;
+        ++foldedParticles;
+        const float fcx = fp->x + fp->width.value * 0.5f;
+        const float fcy = fp->y + fp->height.value * 0.5f;
+        DOCTEST_CHECK(fcx >= 3.0f - 0.01f);
+        DOCTEST_CHECK(fcx <= 69.0f + 0.01f);   // W=72 −3
+        DOCTEST_CHECK(fcy >= 948.0f - 0.01f);
+        DOCTEST_CHECK(fcy <= 997.0f + 0.01f);
+    }
+    DOCTEST_CHECK(foldedParticles > 0);  // 折叠态粒子链整体工作（clue79③ 计数口径）
+
+    // 复位：hover/focus/粒子/折叠/进程级态不还原会污染后续用例
     const auto* lastHot = ui.find("app.sidebar.toggle.hot");
     if (lastHot != nullptr && lastHot->onHoverChanged) lastHot->onHoverChanged(false);
-    app::resetSidebarGlobals();
+    app::resetSidebarGlobals();  // 含折叠态/hover/focus/粒子起点回厂
     app::setCustomTitlebarMode(std::nullopt);
     return true;
 })
