@@ -17,10 +17,19 @@
 
 | 断言 | 方法 | 结果 |
 |---|---|---|
-| ① 体积 | `du` on 子集产物 | 3,371,564B = **3.22MB** ≤ 4MB **PASS** |
-| ② 度量不变 | 全量 7150 码点 hmtx advance 与源字体逐一对 | **零差异 PASS** |
+| ① 体积 | `du` on 子集产物 | Regular 3,371,564B = **3.22MB** / Bold 3,460,232B = **3.30MB**（双字重合计 6.52MB + mono 0.26MB = **6.8MB**）≤ 目标 **PASS** |
+| ② 度量不变 | 全量 7150 码点 hmtx advance 与源字体逐一对 | Regular/Bold **均零差异 PASS** |
 | ③ unitsPerEm | head 表 | 1000 = 1000 **PASS** |
 | ④ 覆盖率 | unicodes.txt 每码点在子集 cmap | 缺失 18 / 7150 **FAIL** → 归因见下 |
+
+**双字重实测（2026-11-06 补测，技术卡 P1-2 裁决配套）**：
+
+| 字重 | 源 | 子集 | 比例 | 改名 | RFN 残留 | advance 差异 |
+|---|---|---|---|---|---|---|
+| Regular | 16,437,364B | 3,371,576B | 20.5% | DevDesk Sans SC ✓ | 无 ✓ | 0 ✓ |
+| Bold | 17,002,248B | 3,460,232B | 20.4% | DevDesk Sans SC ✓ | 无 ✓ | 0 ✓ |
+
+→ 技术卡 §1.3「双字重总目标 ≤8MB（Bold 预期同量级）」实测确认：**6.52MB**，在目标内。
 
 ## 覆盖率缺口归因（关键）
 
@@ -65,7 +74,9 @@ curl -sL -o notosans.zip https://github.com/notofonts/noto-cjk/releases/download
 
 ## 未覆盖 / 遗留
 
-- 未验证 JetBrains Mono（F-02）——本 POC 只跑中文字体。
+- **已完成补充（2026-11-06）**：Bold 子集同管线实测（3.30MB / 改名 ✓ / advance 零差异 ✓），双字重合计 6.52MB；JetBrains Mono 实测 273,900B、upem 1000、1339 字形 advance 全 600（真等宽 0.6em）、CJK 覆盖 0。
+- 符号字体候选实测（clue 56）：Noto Emoji 4/10、Apple Symbols 4/10、Arial Unicode 7/10，无单一字体全覆盖 → 技术卡 v4 裁决方案 (b) 收窄验收。
 - 未验证 pyftsubset 输出字节级确定性（技术卡 §3 断言④）——本轮未重跑比对。
 - 未验证真实渲染观感（hinting/抗锯齿）——需设备上屏截图，属实现期。
 - 未验证 Windows 侧同字体加载——本机 macOS，须 CI 或真机。
+- 管线脚本已入库 `scripts/make_font_subset.py`（commit 5616956e），本报告数据全部由该版本产出。
