@@ -205,9 +205,11 @@ public:
         const float kFooterH = core::theme::scaled(20.0f);
         const float kTitleH = core::theme::scaled(32.0f);     // 页标题行高
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1，列宽不随字号变）
-        constexpr float kCardMaxW = 760.0f;    // 卡宽上限（min(760, screenW−64)）
+        constexpr float kCardMaxW = 880.0f;    // 卡宽上限（2026-11-06 老板：760→880）
         constexpr float kCardPad = 16.0f;      // 卡内边距（基线卡片内边距档）
-        constexpr float kCardY = 24.0f;        // 卡顶距（页顶呼吸）
+        // 2026-11-06 老板：卡再大一点 + 下移一点。kCardY 24→48（下移 24）；
+        // 宽上限 760→880（更大）。
+        constexpr float kCardY = 48.0f;
 
         // 信息行结构：按分组组织
         struct InfoGroup {
@@ -255,10 +257,13 @@ public:
         const float viewportH =
             std::max(0.0f, kCardY + cardH - kCardPad - contentTop);
 
-        // 卡底板：cardSurface（池127 新值 0.94/0.95）+ radiusLarge + 1px
-        // borderDefault + 全站统一轻阴影（ui_kit::cardPanel 单一来源）
-        ui_kit::cardPanel(ui, "about.card", cardX, kCardY, cardW, cardH,
-                          t.sizes.radiusLarge, t);
+        // 卡底板（2026-11-06 老板：补半透效果）：cardSurface 基础上降 alpha
+        // （浅色 0.78 / 深色 0.72），让背景透出一点、与窗材质联动；仍保留
+        // radiusLarge + 1px borderDefault + 全站统一轻阴影（cardPanelColored 单源）
+        eui::Color aboutSurface = ui_kit::cardSurface(t);
+        aboutSurface.a = t.isDark ? 0.72f : 0.78f;
+        ui_kit::cardPanelColored(ui, "about.card", cardX, kCardY, cardW, cardH,
+                                 t.sizes.radiusLarge, t, aboutSurface);
 
         // 页标题（卡内 y=卡Y+16 → 标题整体由 0 下移至 40；与 agent.title 同款：
         // fontSizeTitle 24/700、32 行高）
@@ -306,11 +311,13 @@ public:
                             .build();
                     }
                     // 分组标题：16px/600 textPrimary（流式子件，不写 position）
+                    // 2026-11-06 老板「大字下面留点空隙」：文字行高让出 8px（文字仍
+                    // 顶对齐、底部留白），组标题区总高仍 kGroupHdrH 保持行盒契约
                     inner.text("about.info.group." + std::string(g.header))
                         .size(w, kGroupHdrH)
                         .text(g.header)
                         .fontSize(t.sizes.fontSizeWeChat)  // 16px
-                        .lineHeight(kGroupHdrH)
+                        .lineHeight(kGroupHdrH - 8.0f)
                         .fontWeight(600)
                         .color(t.colors.textPrimary)
                         .build();
