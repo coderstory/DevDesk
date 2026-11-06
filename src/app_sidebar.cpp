@@ -515,8 +515,12 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     const float widthTier = screen.width >= 1728.0f   ? 64.0f
                             : screen.width >= 1440.0f ? 56.0f
                                                       : 48.0f;
-    const float heightTier =
-        availH < 680.0f ? 40.0f : availH < 712.0f ? 44.0f : 64.0f;
+    // 高度档只作**极端矮窗**的保护（原 680/712 三档是导航行高的档位，logo 不该
+    // 跟着被压到 44——2026-11-06 老板实测「侧栏展开态 mac logo 仍很小」：
+    // 窗口 1470×737 → availH=697 落紧凑档 → min(56,44)=44，观感明显偏小）。
+    // 改为只保留极紧档兜底（availH<680 → 48），其余沿用宽度档：
+    //   W≥1728 → 64 / W≥1440 → 56 / 其他 → 48；矮窗最低 48 而非 44。
+    const float heightTier = availH < 680.0f ? 48.0f : 64.0f;
     float logoSize = std::clamp(std::min(widthTier, heightTier), 40.0f, 64.0f);
     if (collapsed) logoSize = std::min(logoSize, 48.0f);  // §9.3 折叠态上限
     const float padX = t.sizes.spacingLarge;

@@ -19,6 +19,15 @@ namespace ui_kit {
 // 边框几何（2026-11-04 细线口径）：线宽 1（细线）、内缩 1。
 constexpr float kWindowRingInset = 1.0f;
 constexpr float kWindowRingBorder = 1.0f;
+// 边框线宽口径（2026-11-06 老板实测「四个角细线变淡、没显示全」）：
+// EUI 的 .border(width) 语义是**物理像素**（SDF 里 distanceToEdge 走物理像素空间），
+// 而本应用全部布局是逻辑坐标。Retina 2x 下传 1 只画出 0.5 逻辑px → 半透明变淡；
+// 圆角弧段梯度更陡、覆盖像素更少，故四角尤其明显。
+// 修法：传边框时按 contentScale 放大回物理像素（逻辑 1px 在 2x = 物理 2px）。
+inline float windowRingBorderWidthPhysical(float contentScaleParam) {
+    const float scale = contentScaleParam > 0.0f ? contentScaleParam : 1.0f;
+    return kWindowRingBorder * scale;
+}
 // 圆角半径（老板 2026-11-04「黑框需要考虑窗体的圆角」；2026-11-06 修 mac 贴边）：
 // 平台差异由调用方以 windowCornerRadiusParam 传入（业务层禁 #ifdef，见
 // AGENTS.md §三；app_sidebar.cpp 按平台算好传进来）：
@@ -47,6 +56,10 @@ inline void drawWindowRing(eui::Ui& ui, float w, float h,
                            float cornerRadiusLogical = 8.0f) {
     (void)t;  // 黑色恒定不随主题（撤销绿白虚框后无主题联动参数）
     if (maximized) return;   // 最大化直角贴屏缘不绘（见文件头）
+    // 内缩同样按物理口径：边框画在 rect 内侧、宽度是物理像素，若内缩仍按 1 逻辑px
+    // 则在 2x 屏上线条会压到窗口最外缘之外（视觉被裁掉一半 = 变淡）。故内缩取
+    // 「1 逻辑px 对应的物理像素 / scale 后仍为逻辑 1」——用逻辑值保持布局不变，
+    // 仅把 border 宽度按 scale 放大即可让线条完整落在 1 逻辑px 带内。
     const float x0 = kWindowRingInset;
     const float y0 = kWindowRingInset;
     const float w0 = w - 2.0f * x0;
@@ -62,7 +75,8 @@ inline void drawWindowRing(eui::Ui& ui, float w, float h,
         .size(w0, h0)
         .radius(windowBorderRadius(cornerRadiusLogical, contentScaleParam))
         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-        .border(kWindowRingBorder, eui::Color{0.0f, 0.0f, 0.0f, 1.0f})
+        .border(windowRingBorderWidthPhysical(contentScaleParam),
+                eui::Color{0.0f, 0.0f, 0.0f, 1.0f})
         .build();
 }
 
