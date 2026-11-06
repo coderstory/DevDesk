@@ -1003,9 +1003,9 @@ REGISTER_TEST(uiAboutLayout,
     // 与 about_module.cpp 同值镜像（§14 卡片化：页边距 32 / 卡 y 24 / 卡内边距 16 /
     // 标题 32 / 组头 24 / 行 32 / 组间 24；卡宽 min(760, availW)）
     constexpr float kPagePad = 32.0f;   // 水平边距
-    constexpr float kCardY = 24.0f;     // 卡顶距（页顶呼吸）
+    constexpr float kCardY = 48.0f;     // 卡顶距（bug147 4d0d6edd：24→48 下移）
     constexpr float kCardPad = 16.0f;   // 卡内边距
-    constexpr float kCardMaxW = 760.0f; // 卡宽上限（min(760, screenW−64)）
+    constexpr float kCardMaxW = 880.0f; // 卡宽上限（bug147 4d0d6edd：760→880；min(880, screenW−64)）
     constexpr float kTitleH = 32.0f;
     constexpr float kGroupHdrH = 24.0f;
     constexpr float kGroupGap = 24.0f;
@@ -1128,7 +1128,8 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(lastRowBottom <= footer->frame.y);  // 顶格后内容仍不叠 footer
     }
     {
-        // 最小窗：卡固定高 464 不撞页脚（640 窗余 100），内容不出卡不出屏
+        // 最小窗：卡固定高 464 不撞页脚（kCardY 48 后卡底 512、余量仍足，4d0d6edd），
+        // 内容不出卡不出屏
         const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
         eui::Ui mini;
         eui::Screen minScreen{minWin.width - 208.0f,
@@ -1151,7 +1152,7 @@ REGISTER_TEST(uiAboutLayout,
                              minScreen.height - kPagePad));
     }
     {
-        // 窄窗 712 < 卡宽上限 760+64 → 卡退化满宽 min(760, 648)=648，列随卡内缩
+        // 窄窗 712 < 卡宽上限 880+64 → 卡退化满宽 min(880, 648)=648，列随卡内缩
         eui::Ui narrow;
         eui::Screen narrowScreen{712.0f, 800.0f};
         narrow.begin("about_layout_narrow");
