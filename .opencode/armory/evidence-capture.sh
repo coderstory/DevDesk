@@ -1,7 +1,7 @@
 #!/bin/sh
 # devflow 项目适配 wrapper（0.38.14 起自包含）：采集逻辑内嵌，零插件源码/缓存路径依赖
 # setup 时填充：EVIDENCE_ROOT = 归档根目录；重跑 setup 幂等刷新本副本（逻辑以插件 scripts/evidence-capture.sh 为准）
-export EVIDENCE_ROOT="/Users/coderstory/dev/DevDesk"
+export EVIDENCE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 slug="${1:?用法: evidence-capture.sh <slug> [--shot] [-- <命令>]}"
 case "$slug" in *[!A-Za-z0-9_-]*) echo "slug 仅允许 [A-Za-z0-9_-]：$slug" >&2; exit 1;; esac
 shift
