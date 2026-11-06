@@ -58,7 +58,7 @@ int main(int argc, char* argv[]) {
     // 窗体真实圆角（与宿主 app_sidebar.cpp 同口径）：mac = AppKit 原生 12 逻辑pt，
     // 其他 = DWM 8 物理px 折回逻辑。2026-11-06 老板实测「黑线没贴窗口边缘」修复。
 #ifdef __APPLE__
-    const float probeCornerRadius = 12.0f;
+    const float probeCornerRadius = 10.0f;
 #else
     const float probeCornerRadius = 8.0f / probeScale;
 #endif
@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
     // A3：45° 圆角弧点 = 角圆心向窗角方向移 (r−0.5)·0.7071，应在黑描边上
     // （r 随探针 contentScale 走 DWM 8 物理px 折算——窗口圆角贴合同款口径）
     {
-        const float r = ui_kit::windowBorderRadius(probeCornerRadius, scale);
+        const float r = ui_kit::windowBorderRadius(probeCornerRadius);
         const float d = (r - 0.5f) * 0.70710678f;
         const float cx = ui_kit::kWindowRingInset + r - d;
         const float cy = ui_kit::kWindowRingInset + r - d;

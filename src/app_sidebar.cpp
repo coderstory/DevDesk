@@ -488,20 +488,20 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     float brandNavGap = 28.0f;
     float gap = 4.0f;
     float itemH = ui_kit::kNavItemH;  // 40（正常/紧凑档）
-    float toggleSize = 32.0f;     // §10.2：正常档直径 32
-    float toggleZoneH = 48.0f;    // §10.2：正常档底部预留区 48
+    float toggleSize = 36.0f;     // §10.2 正常档直径；2026-11-06 老板实测偏小 → 32→36
+    float toggleZoneH = 52.0f;    // 正常档底部预留区（随钮放大 +4）
     if (availH < 680.0f) {
         topPad = 12.0f;
         brandNavGap = 12.0f;
         gap = 2.0f;
         itemH = 36.0f;
-        toggleSize = 28.0f;
-        toggleZoneH = 44.0f;
+        toggleSize = 32.0f;       // 极紧档 28→32（老板实测 mac 上偏小）
+        toggleZoneH = 48.0f;
     } else if (availH < 712.0f) {
         topPad = 16.0f;
         brandNavGap = 16.0f;
-        toggleSize = 28.0f;
-        toggleZoneH = 44.0f;
+        toggleSize = 32.0f;       // 紧凑档 28→32
+        toggleZoneH = 48.0f;
     }
     // bug165（need241 设计 §9.3）：logo 随窗口自适应 = clamp(min(宽度档, 高度档),
     // 40, 64)，手动折叠态（72px 带）追加上限 48。宽度档按窗口逻辑宽 W（本函数
@@ -1289,7 +1289,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     //   macOS   = AppKit 原生圆角约 12 逻辑pt（系统绘制，EUI 不设 cornerRadius）。
     const float scale = app::contentScale();
 #ifdef __APPLE__
-    const float cornerRadiusLogical = 12.0f;
+    // macOS 圆角：app_sidebar.cpp 传逻辑值；2026-11-06 像素实测校准——
+    // 窗口左上角灰度扫描显示系统弧从 (0,0) 走到 (20,20) 物理px（2x）才到直边，
+    // 即半径 ≈20 物理 = 10 逻辑pt（原传 12 偏大 2pt，弧与窗缘错位致角部线被裁）。
+    const float cornerRadiusLogical = 10.0f;
 #else
     const float cornerRadiusLogical = 8.0f / (scale > 0.0f ? scale : 1.0f);
 #endif
