@@ -1293,13 +1293,16 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 覆盖，放最后保证不被任何内容盖住。最大化态隐藏（need184③）。
     // 圆角按平台真实窗体圆角传入（2026-11-06 修 mac 贴边）：
     //   Windows = DWM 固定 8 物理px → 逻辑值 = 8/contentScale；
-    //   macOS   = AppKit 原生圆角约 12 逻辑pt（系统绘制，EUI 不设 cornerRadius）。
+    //   macOS   = AppKit 原生圆角 16 逻辑pt（系统绘制，EUI 不设 cornerRadius）。
     const float scale = app::contentScale();
 #ifdef __APPLE__
-    // macOS 圆角：app_sidebar.cpp 传逻辑值；2026-11-06 像素实测校准——
-    // 窗口左上角灰度扫描显示系统弧从 (0,0) 走到 (20,20) 物理px（2x）才到直边，
-    // 即半径 ≈20 物理 = 10 逻辑pt（原传 12 偏大 2pt，弧与窗缘错位致角部线被裁）。
-    const float cornerRadiusLogical = 10.0f;
+    // macOS 圆角 = 16 逻辑pt（2026-11-07 AppKit 内省实证：标准 titled 窗
+    // [NSWindow valueForKey:@"_cornerRadius"] == 16.0，系统自报值）。
+    // 此前两轮全错：12 偏大 2pt→弧带被裁「变淡不完整」；10 源自一次误测
+    // （像素扫描扫到的是旧 ring 自身弧/阴影带，非窗口裁剪弧）→ r=9 的弧带
+    // 整体落在 45° 裁剪线内 → 四角黑线全消（bug145，池197）。16 → 描边弧
+    // r=15 与窗口裁剪弧同心、整体内侧 1px，四角弧带完整可见。
+    const float cornerRadiusLogical = 16.0f;
 #else
     const float cornerRadiusLogical = 8.0f / (scale > 0.0f ? scale : 1.0f);
 #endif

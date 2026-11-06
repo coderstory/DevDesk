@@ -49,16 +49,18 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
     // 探针窗真实 contentScale（与 A3 采样、FrameCapture::scale 同源同值）：
-    // drawWindowRing 与 A3 采样必须同口径传平台真实圆角（mac 12 逻辑pt /
+    // drawWindowRing 与 A3 采样必须同口径传平台真实圆角（mac 16 逻辑pt /
     // Windows 8 物理px 折算），漏传或口径不一 → 弧点落抗锯齿边假红。
     float probeScaleX = 1.0f, probeScaleY = 1.0f;
     glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &probeScaleX,
                               &probeScaleY);
     const float probeScale = probeScaleX > 0.0f ? probeScaleX : 1.0f;
-    // 窗体真实圆角（与宿主 app_sidebar.cpp 同口径）：mac = AppKit 原生 12 逻辑pt，
-    // 其他 = DWM 8 物理px 折回逻辑。2026-11-06 老板实测「黑线没贴窗口边缘」修复。
+    // 窗体真实圆角（与宿主 app_sidebar.cpp 同口径）：mac = AppKit 原生 16 逻辑pt
+    // （2026-11-07 AppKit 内省实证 [NSWindow valueForKey:@"_cornerRadius"]==16.0；
+    // 旧值 10 系像素误测，致描边弧带整体被窗口圆角裁剪、四角黑线全消 bug145），
+    // 其他 = DWM 8 物理px 折回逻辑。
 #ifdef __APPLE__
-    const float probeCornerRadius = 10.0f;
+    const float probeCornerRadius = 16.0f;
 #else
     const float probeCornerRadius = 8.0f / probeScale;
 #endif
