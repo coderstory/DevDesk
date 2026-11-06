@@ -9,11 +9,6 @@
 
 namespace module::memory::engine {
 
-namespace {
-// 版本探针小脚本：只吐主.次.补丁，避免平台横幅混入（stderr 另行捕获不拼进结果）
-constexpr const char* kVersionScript = "import sys;print('%d.%d.%d'%sys.version_info[:3])";
-} // namespace
-
 std::string parsePythonVersionOutput(const std::string& stdoutText) {
     // 首个形如 3.X[.Z] 的版本段；补丁位可缺
     static const std::regex kVersion(R"re(3\.\d{1,2}(\.\d+)?)re");
@@ -39,7 +34,7 @@ VersionProbe systemVersionProbe() {
         const platform::ProcessRunner runner = platform::systemProcessRunner();
         if (!runner) return std::string();
         const core::Result<platform::ProcessResult> r =
-            runner({exe, "-c", kVersionScript}, "", "", 10000);
+            runner({exe, "-c", kVersionProbeScript}, "", "", 10000);
         if (!r.isOk() || r.value().exitCode != 0) return std::string();
         return r.value().stdoutText;
     };

@@ -14,9 +14,11 @@
 #include "module_memory/engine/python_locator.h"
 #include "module_memory/engine/telemem_config.h"
 #include "module_memory/engine/telemem_process.h"
+#include "module_memory/engine/telemem_engine.h"
 #include "module_memory/engine/token_usage.h"
 #include "platform/exec_capture.h"
 #include "platform/process_host.h"
+#include "platform/process_runner.h"
 #include "core/module_interface.h"
 
 #include <chrono>
@@ -41,6 +43,138 @@ bool contains(const std::vector<std::string>& v, const std::string& item) {
     }
     return false;
 }
+
+// ── bug202 管线级夹具：安装链 stub runner + 引擎端态轮询 ──
+// runPipeline 的一切子进程（系统 py 探测 / venv 自检 / pip / 版本脚本）都经
+// platform::systemProcessRunner()——测试缝接管后按 argv 特征分发，零真进程。
+struct InstallRunnerStub {
+    int venvImportRc = 0;                 // `-c "import telemem"` 退出码（1=坏 venv）
+    std::string versionOut = "3.12.4\n";  // 版本脚本 stdout
+    std::string venvPyPath;               // venv 解释器全路径（区分 venv/系统候选）
+    int venvImportCalls = 0;
+    int versionProbeCalls = 0;
+    int systemVersionProbeCalls = 0;  // 版本探针里 venv 解释器之外的（= 系统 Python 闸）
+    int pipInstallCalls = 0;
+
+    platform::ProcessRunner runner() {
+        return [this](const std::vector<std::string>& argv, const std::string&,
+                      const std::string&, long) {
+            platform::ProcessResult r;
+            const bool isVenvPy =
+                !venvPyPath.empty() && !argv.empty() && argv[0] == venvPyPath;
+            const bool isVersionScript =
+                argv.size() >= 3 && argv[1] == "-c" &&
+                argv[2].find("version_info") != std::string::npos;
+            const bool isVenvImport = argv.size() >= 3 && argv[1] == "-c" &&
+                                      argv[2] == "import telemem";
+            if (isVersionScript) {
+                ++versionProbeCalls;
+                if (!isVenvPy) ++systemVersionProbeCalls;
+                r.exitCode = 0;
+                r.stdoutText = versionOut;
+            } else if (isVenvImport) {
+                ++venvImportCalls;
+                r.exitCode = venvImportRc;
+            } else if (argv.size() >= 3 && argv[1] == "-m" && argv[2] == "pip") {
+                ++pipInstallCalls;
+                r.exitCode = 0;
+            } else {
+                r.exitCode = 0;
+            }
+            return core::Result<platform::ProcessResult>::ok(r);
+        };
+    }
+
+    int totalCalls() const {
+        return venvImportCalls + versionProbeCalls + pipInstallCalls;
+    }
+};
+
+// RAII：接管 systemProcessRunner，析构还原（不污染同进程后续用例）
+struct ScopedRunnerOverride {
+    platform::ProcessRunner prev;
+    explicit ScopedRunnerOverride(platform::ProcessRunner r)
+        : prev(platform::systemProcessRunnerForTest()) {
+        platform::systemProcessRunnerForTest() = std::move(r);
+    }
+    ~ScopedRunnerOverride() {
+        platform::systemProcessRunnerForTest() = std::move(prev);
+    }
+    ScopedRunnerOverride(const ScopedRunnerOverride&) = delete;
+    ScopedRunnerOverride& operator=(const ScopedRunnerOverride&) = delete;
+};
+
+// 轮询引擎端态（管线在 worker 线程跑）：先等新管线起跑（Preparing 出现或已有
+// stub 调用，防读到上一轮残留端态），再等收敛到非 Preparing。
+bool waitForPipelineTerminal(const InstallRunnerStub& stub) {
+    for (int waited = 0; waited < 5000 && stub.totalCalls() == 0; waited += 20) {
+        if (TelememEngine::global().snapshot().state ==
+            TelememEngine::State::Preparing) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    for (int waited = 0; waited < 15000; waited += 50) {
+        if (TelememEngine::global().snapshot().state !=
+            TelememEngine::State::Preparing) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
+}
+
+// 候选序断言的平台分叉收在普通函数里（#if 不得出现在 REGISTER_TEST 宏实参内）
+#if defined(_WIN32)
+bool assertCandidateOrderForPlatform(const std::vector<std::string>& candidates) {
+    int pyIdx = -1, pathIdx = -1;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (candidates[i] == "py.exe") pyIdx = static_cast<int>(i);
+        if (candidates[i] == "python.exe" && pathIdx < 0) {
+            pathIdx = static_cast<int>(i);
+        }
+    }
+    DOCTEST_CHECK(pyIdx >= 0);
+    DOCTEST_CHECK(pathIdx > pyIdx);  // Windows 序不动：py 启动器仍在 PATH python.exe 前
+    return true;
+}
+#else
+bool assertCandidateOrderForPlatform(const std::vector<std::string>& candidates) {
+    // Homebrew 两条根 × 3.13/3.12/3.11/python3 共 8 候选无条件入列（缺失候选
+    // 由版本探针步落选；存在性门会破坏清单确定性，单测按清单断言）
+    for (const char* root : {"/opt/homebrew/bin", "/usr/local/bin"}) {
+        for (const char* exe :
+             {"python3.13", "python3.12", "python3.11", "python3"}) {
+            const std::string want = std::string(root) + "/" + exe;
+            DOCTEST_CHECK_MESSAGE(contains(candidates, want), "候选缺 " + want);
+        }
+    }
+    // 序：uv（cpython-3.12）→ Homebrew → 裸 PATH（python3.12/python3）
+    const auto firstIdxOf = [&candidates](const std::string& sub) -> int {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (candidates[i].find(sub) != std::string::npos) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    const int uvIdx = firstIdxOf("cpython-3.12");
+    const int optIdx = firstIdxOf("/opt/homebrew/bin/python3.13");
+    const int localIdx = firstIdxOf("/usr/local/bin/python3.13");
+    int bareIdx = -1;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (candidates[i] == "python3.12" || candidates[i] == "python3") {
+            bareIdx = static_cast<int>(i);
+            break;
+        }
+    }
+    DOCTEST_CHECK(bareIdx >= 0);
+    if (optIdx >= 0 && localIdx >= 0) DOCTEST_CHECK(optIdx < localIdx);
+    if (uvIdx >= 0 && optIdx >= 0) DOCTEST_CHECK(uvIdx < optIdx);
+    if (optIdx >= 0 && bareIdx >= 0) DOCTEST_CHECK(optIdx < bareIdx);
+    return true;
+}
+#endif
 
 } // namespace
 
@@ -108,6 +242,14 @@ REGISTER_TEST(memory_python_locator_picks_qualified_candidate,
     if (uvIdx != candidates.size() && pathIdx != candidates.size()) {
         DOCTEST_CHECK(uvIdx < pathIdx);
     }
+    return true;
+})
+
+REGISTER_TEST(memory_python_candidates_homebrew_order,
+              "memory bug202: 候选序 POSIX 段补 Homebrew 两根（uv→homebrew→PATH），Windows 序不动", {
+    const std::vector<std::string> candidates = pythonCandidatePaths();
+    DOCTEST_REQUIRE(!candidates.empty());
+    DOCTEST_CHECK(assertCandidateOrderForPlatform(candidates));
     return true;
 })
 
@@ -547,5 +689,62 @@ REGISTER_TEST(memory_llama_locate_diagnosis_four_seqs,
                           "诊断须含 PATH 序检查结果");
     DOCTEST_CHECK_MESSAGE(diag.find("重装") != std::string::npos,
                           "诊断须给重装指路");
+    return true;
+})
+
+// ── bug202：venv 快路径 / 自检失败回落（管线级；stub runner 零真进程）──
+// 环境：DataRootEnv 隔离数据根 + DEVDESK_LLAMA_DIR 清空——单测二进制 exeDir 下无
+// assets，⑤步 llama 定位天然落空（不拉进程不触网），管线在⑥前快速收敛到 Failed。
+
+REGISTER_TEST(memory_engine_venv_fastpath_skips_system_python,
+              "memory bug202: venv 就绪+import 自检通过 → 零系统 Python 探测、不装 pip、直接就绪", {
+    test_support::DataRootEnv root("bug202", "fastpath");
+    test_support::ScopedEnv noLlamaEnv("DEVDESK_LLAMA_DIR", "");
+    // ⑤⑥ 收敛钉：剥宿主 PATH（宿主 /opt/homebrew/bin/llama-server 会被⑤真命中
+    // 进模型下载网络等待）；HOME/APPDATA 隔离（⑥无 key 在 spawn 前快速 Failed）
+    test_support::ScopedEnv minimalPath("PATH", "/usr/bin:/bin");
+    test_support::AppDataEnv appData("bug202");
+    const auto venvPy = venvPythonExe(memoryDataDir() / "venv");
+    // 假 venv 解释器（普通文件、非可执行：stub 接管下不会被真跑）
+    DOCTEST_REQUIRE(test_support::writeTextFile(venvPy, ""));
+    InstallRunnerStub stub;
+    stub.venvPyPath = venvPy.string();
+    ScopedRunnerOverride runnerGuard(stub.runner());
+
+    TelememEngine::global().startAsync();
+    DOCTEST_REQUIRE(waitForPipelineTerminal(stub));
+    const auto snap = TelememEngine::global().snapshot();
+    DOCTEST_CHECK_EQ(stub.systemVersionProbeCalls, 0);  // 系统 Python 闸零调用
+    DOCTEST_CHECK_EQ(stub.venvImportCalls, 1);          // 只一次 venv 自检
+    DOCTEST_CHECK_EQ(stub.pipInstallCalls, 0);          // 不重装
+    DOCTEST_CHECK(snap.pythonFound);
+    DOCTEST_CHECK_EQ(snap.pythonVersion,
+                     std::string("3.12.4"));  // 版本取自 venv 解释器
+    DOCTEST_CHECK(snap.detail.find("未找到 Python") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(memory_engine_broken_venv_falls_back,
+              "memory bug202: venv 自检失败 → 回落旧管线（系统闸执行、venv 不重建、缺才装）", {
+    test_support::DataRootEnv root("bug202", "fallback");
+    test_support::ScopedEnv noLlamaEnv("DEVDESK_LLAMA_DIR", "");
+    // ⑤⑥ 收敛钉（同 fastpath：剥 PATH 上真 llama-server；⑥无 key 快速 Failed）
+    test_support::ScopedEnv minimalPath("PATH", "/usr/bin:/bin");
+    test_support::AppDataEnv appData("bug202");
+    const auto venvPy = venvPythonExe(memoryDataDir() / "venv");
+    DOCTEST_REQUIRE(test_support::writeTextFile(venvPy, ""));
+    InstallRunnerStub stub;
+    stub.venvPyPath = venvPy.string();
+    stub.venvImportRc = 1;  // venv 内 import telemem 失败（坏 venv）
+    ScopedRunnerOverride runnerGuard(stub.runner());
+
+    TelememEngine::global().startAsync();
+    DOCTEST_REQUIRE(waitForPipelineTerminal(stub));
+    const auto snap = TelememEngine::global().snapshot();
+    DOCTEST_CHECK(stub.systemVersionProbeCalls >= 1);  // 回落后系统 Python 闸执行
+    DOCTEST_CHECK_EQ(stub.pipInstallCalls, 1);         // ③缺才装（venv 在位不重建）
+    DOCTEST_CHECK(snap.pythonFound);
+    DOCTEST_CHECK_EQ(snap.pythonVersion, std::string("3.12.4"));
+    DOCTEST_CHECK(snap.detail.find("未找到 Python") == std::string::npos);
     return true;
 })

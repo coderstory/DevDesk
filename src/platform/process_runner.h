@@ -36,6 +36,15 @@ using ProcessRunner = std::function<core::Result<ProcessResult>(
 // 生产 runner：按平台 spawn 真进程
 ProcessRunner systemProcessRunner();
 
+// 测试缝（bug202）：非空 = 单测注入的假 runner 接管 systemProcessRunner()——
+// 所有经此 spawn 的子进程（telemem 安装链、python 版本探测等）走假实现，零真
+// 进程。各平台 systemProcessRunner() 实现头部消费本槽；生产代码禁写。
+// 用法：保存旧值 → 覆写 → 作用域结束还原（std::function 空 = 未接管）。
+inline ProcessRunner& systemProcessRunnerForTest() {
+    static ProcessRunner slot;
+    return slot;
+}
+
 // bash.run 专用：探测本平台默认 shell 路径
 // Windows：优先取 PATH 里的 bash.exe（排除 System32\\bash.exe = WSL），再兜底常见安装路径
 // macOS：/bin/zsh

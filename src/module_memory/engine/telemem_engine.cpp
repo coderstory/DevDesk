@@ -33,6 +33,8 @@ constexpr int kStartupWindowMs = 60000;
 constexpr long kHealthTimeoutMs = 1500;
 // pip 安装超时：telemem 依赖链 faiss+numpy+mem0ai，慢网按十分钟上限
 constexpr long kPipTimeoutMs = 600000;
+// venv 快路径自检超时（bug202-A）：`import telemem` 自检毫秒级，10s 余量足够
+constexpr long kVenvSelfCheckMs = 10000;
 
 // IMP-114-4：Python 探测失败文案（常量收拢一处；安装指引一句覆盖双平台——
 // 纯只读文本无行为分叉，不拆 _posix/_win 文件）
@@ -222,51 +224,82 @@ void TelememEngine::setSnapshotForTest(const Snapshot& snap) {
 void TelememEngine::runPipeline() {
     const std::filesystem::path dataDir = memoryDataDir();
     std::error_code ec;
-
-    // ① Python 3.10~3.13 探测（不合格在此拦截，不放行到 pip）
-    setState(State::Preparing, "探测本机 Python（需要 3.10~3.13）…");
-    const auto py = findQualifiedPython(systemVersionProbe());
-    if (!py.has_value()) {
-        {
-            std::lock_guard<std::mutex> lock(mu_);
-            snap_.pythonFound = false;
-            snap_.pythonVersion.clear();
-        }  // 出锁再 setState：非递归锁，持锁重入必死锁
-        setState(State::Failed, kPythonMissingMessage);
-        return;
-    }
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        snap_.pythonFound = true;
-        snap_.pythonVersion = py->versionText;
-    }
-
-    // ② venv 建在用户数据目录（随 DEVDESK_DATA_ROOT 隔离）
-    std::filesystem::create_directories(dataDir, ec);
     const std::filesystem::path venv = venvDir();
-    if (!std::filesystem::exists(venvPythonExe(venv), ec)) {
-        setState(State::Preparing, "创建虚拟环境（venv）…");
-        const int rc = runInstallStep(buildVenvArgs(py->exePath, venv), kPipTimeoutMs);
-        if (rc != 0) {
-            setState(State::Failed, "创建 venv 失败（退出码 " + std::to_string(rc) +
-                                        "），可点「启动引擎」重试");
-            return;
+
+    // ⓪ venv 快路径（bug202-A）：venv 内解释器在位时先自检一次 `import telemem`——
+    // 通过即整段环境就绪，直接进④启动段，跳过①系统 Python 闸/②建 venv/③装
+    // telemem。机制：GUI 拉起进程的 PATH 常缺用户级 Python（macOS Finder/Dock
+    // 只给系统目录，/usr/bin/python3=3.9.6 恒不合格），而 venv 解释器是绝对路径
+    // 调用、本就不依赖系统 Python；自检毫秒级（10s 上限），重探测+快路径每次
+    // 结论正确、不新增持久化。自检失败 → 回落下方完整管线（②「venv 在位即跳过
+    // 创建」与③「缺才装」保证不重复执行）。
+    bool venvReady = false;
+    if (std::filesystem::exists(venvPythonExe(venv), ec)) {
+        setState(State::Preparing, "venv 就绪，自检记忆引擎…");
+        const int selfCheckRc = runInstallStep(
+            {venvPythonExe(venv).string(), "-c", "import telemem"},
+            kVenvSelfCheckMs);
+        if (selfCheckRc == 0) {
+            venvReady = true;
+            // 版本号取自 venv 解释器（跑版本脚本；解析失败只空版本，不回闸）
+            const std::string versionOut =
+                systemVersionProbe()(venvPythonExe(venv).string());
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                snap_.pythonFound = true;
+                snap_.pythonVersion = parsePythonVersionOutput(versionOut);
+            }  // 出锁再 setState：非递归锁，持锁重入必死锁
+            setState(State::Preparing, "venv 就绪，启动引擎…");
         }
     }
 
-    // ③ telemem 首跑安装（缺才装；进度口径 = 阶段文本，失败可重试）
-    setState(State::Preparing, "检查 telemem 安装状态…");
-    const int importRc =
-        runInstallStep({venvPythonExe(venv).string(), "-c", "import telemem"},
-                       30000);
-    if (importRc != 0) {
-        setState(State::Preparing, "安装 telemem（首次约几分钟，取决于网速）…");
-        const int rc = runInstallStep(buildPipInstallArgs(venv), kPipTimeoutMs);
-        if (rc != 0) {
-            setState(State::Failed, "pip 安装 telemem 失败（退出码 " +
-                                        std::to_string(rc) + "）：" +
-                                        kPipFailureHint + "，可重试");
+    if (!venvReady) {
+        // ① Python 3.10~3.13 探测（不合格在此拦截，不放行到 pip）
+        setState(State::Preparing, "探测本机 Python（需要 3.10~3.13）…");
+        const auto py = findQualifiedPython(systemVersionProbe());
+        if (!py.has_value()) {
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                snap_.pythonFound = false;
+                snap_.pythonVersion.clear();
+            }  // 出锁再 setState：非递归锁，持锁重入必死锁
+            setState(State::Failed, kPythonMissingMessage);
             return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            snap_.pythonFound = true;
+            snap_.pythonVersion = py->versionText;
+        }
+
+        // ② venv 建在用户数据目录（随 DEVDESK_DATA_ROOT 隔离）
+        std::filesystem::create_directories(dataDir, ec);
+        if (!std::filesystem::exists(venvPythonExe(venv), ec)) {
+            setState(State::Preparing, "创建虚拟环境（venv）…");
+            const int rc =
+                runInstallStep(buildVenvArgs(py->exePath, venv), kPipTimeoutMs);
+            if (rc != 0) {
+                setState(State::Failed,
+                         "创建 venv 失败（退出码 " + std::to_string(rc) +
+                             "），可点「启动引擎」重试");
+                return;
+            }
+        }
+
+        // ③ telemem 首跑安装（缺才装；进度口径 = 阶段文本，失败可重试）
+        setState(State::Preparing, "检查 telemem 安装状态…");
+        const int importRc =
+            runInstallStep({venvPythonExe(venv).string(), "-c", "import telemem"},
+                           30000);
+        if (importRc != 0) {
+            setState(State::Preparing, "安装 telemem（首次约几分钟，取决于网速）…");
+            const int rc = runInstallStep(buildPipInstallArgs(venv), kPipTimeoutMs);
+            if (rc != 0) {
+                setState(State::Failed, "pip 安装 telemem 失败（退出码 " +
+                                            std::to_string(rc) + "）：" +
+                                            kPipFailureHint + "，可重试");
+                return;
+            }
         }
     }
 

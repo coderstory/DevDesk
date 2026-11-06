@@ -119,6 +119,7 @@ std::string defaultShellPath() {
 }
 
 ProcessRunner systemProcessRunner() {
+    if (ProcessRunner& injected = systemProcessRunnerForTest()) return injected;
     return [](const std::vector<std::string>& argv, const std::string& stdinText,
               const std::string& cwd, long timeoutMs) -> core::Result<ProcessResult> {
         if (argv.empty()) {

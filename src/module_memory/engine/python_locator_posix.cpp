@@ -31,7 +31,17 @@ std::vector<std::string> pythonCandidatePaths() {
             }
         }
     }
-    // 2) PATH
+    // 2) Homebrew（bug202：macOS Finder/Dock 拉起进程 PATH 只有系统目录，
+    //    /usr/bin/python3=3.9.6 恒不合格——brew 的 3.11~3.13 在这两条根下；
+    //    arm 默认 /opt/homebrew，Intel/旧布局 /usr/local。无条件入列保持清单
+    //    确定性（单测按清单断言），缺失候选在版本探针步 exec 失败天然落选）
+    for (const char* root : {"/opt/homebrew/bin", "/usr/local/bin"}) {
+        out.push_back(std::string(root) + "/python3.13");
+        out.push_back(std::string(root) + "/python3.12");
+        out.push_back(std::string(root) + "/python3.11");
+        out.push_back(std::string(root) + "/python3");
+    }
+    // 3) PATH
     out.push_back("python3.12");
     out.push_back("python3");
     return out;

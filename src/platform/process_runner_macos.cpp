@@ -108,6 +108,7 @@ bool processRunnerSupported() { return true; }
 std::string defaultShellPath() { return "/bin/zsh"; }
 
 ProcessRunner systemProcessRunner() {
+    if (ProcessRunner& injected = systemProcessRunnerForTest()) return injected;
     return [](const std::vector<std::string>& argv, const std::string& stdinText,
               const std::string& cwd, long timeoutMs) -> core::Result<ProcessResult> {
         if (argv.empty()) {

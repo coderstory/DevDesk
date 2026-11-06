@@ -20,6 +20,12 @@ struct PythonInfo {
 // 取首个形如 X.Y.Z 的数字段；无匹配 → 空串。
 std::string parsePythonVersionOutput(const std::string& stdoutText);
 
+// 版本探针脚本（bug202 收拢共享）：`<exe> -c <脚本>` → stdout "3.12.4" 形态，
+// 只吐主.次.补丁避免平台横幅混入。生产探测（python_locator.cpp）与 venv 快路径
+//（telemem_engine.cpp）同源一处，解析统一走 parsePythonVersionOutput。
+inline constexpr const char* kVersionProbeScript =
+    "import sys;print('%d.%d.%d'%sys.version_info[:3])";
+
 // 合格判定：3.10 ≤ 版本 ≤ 3.13（bug157 放宽：telemem 1.10.1 对 3.13 venv
 // 实测兼容；3.14+ 与 3.9- 仍在探测步拦截）。空/残缺版本串 → false。
 bool pythonVersionQualified(const std::string& versionText);
@@ -30,7 +36,8 @@ using VersionProbe = std::function<std::string(const std::string& exe)>;
 
 // 平台候选清单（_win/_posix 实现；序即优先级）：
 //   Windows：uv 管的 cpython-3.12（%LOCALAPPDATA%\uv\python\）→ 官方安装器目录 → PATH python/python3
-//   POSIX：uv 管的 cpython-3.12（~/.local/share/uv/python/）→ PATH python3.12/python3
+//   POSIX：uv 管的 cpython-3.12（~/.local/share/uv/python/）→ Homebrew（/opt/homebrew/bin
+//     与 /usr/local/bin 的 python3.13/3.12/3.11/python3，bug202）→ PATH python3.12/python3
 std::vector<std::string> pythonCandidatePaths();
 
 // 生产探针：真跑 `<exe> -c "import sys;print(...)"`（exec_capture 同步等待；
