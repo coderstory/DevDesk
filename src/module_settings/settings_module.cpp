@@ -344,12 +344,20 @@ public:
     }
 
     // 字号无级调节（UAT6.2，80-130%）：钳制后沿用切档链路（setFontScale → 唤醒
-    // compose → 落盘）。同值早退是拖拽链的量化契约：slider onChange 在拖拽中每次
-    // 归一化变动都回调，只有量化到 1% 且与现值不同才走落库链。
+    // compose → 落盘）。
+    // 2026-11-06 老板实测「拖动过程中有些值文本全不显示」修复：拖拽期按 **5% 量化**
+    // （原 1%）——每个百分点都让全站文本换一个 fontSize，而 EUI 字体栈缓存按
+    // (fontPath, fontPointSize, weight) 建 key、容量仅 16（text_internal.h:98）；
+    // 快速拖动瞬间打满并淘汰，新建 stack 构建失败时返回空 holder → 全站文本消失。
+    // 5% 量化把拖拽期重建次数 51→11（80..130），观感仍连续；最终值由松手后的
+    // 精确档落盘。
     void applyFontScalePercent(int percent) {
         percent = std::clamp(percent, kMinFontScalePercent, kMaxFontScalePercent);
-        if (percent == cfg_.fontScalePercent) return;
-        cfg_.fontScalePercent = percent;
+        // 拖拽期量化到 5 的倍数（80/85/…/130）；整档仍可精确选中
+        const int quantized = std::clamp((percent / 5) * 5,
+                                         kMinFontScalePercent, kMaxFontScalePercent);
+        if (quantized == cfg_.fontScalePercent) return;
+        cfg_.fontScalePercent = quantized;
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 切档即生效不依赖点击输入顺带触发的 composeRequested：apply 路径显式
