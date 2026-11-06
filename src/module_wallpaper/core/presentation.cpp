@@ -186,4 +186,38 @@ std::string libraryCountLabel(WallpaperKind kind, int count) {
     return std::to_string(count) + " 个视频";
 }
 
+std::string hanamiImportSummary(const importer::ImportReport& report) {
+    // 无权限：主提示由无权限弹窗承载，摘要行给真实归因（不冒充「目录缺失」）。
+    if (report.sourceNoAccess) {
+        return "花見目录存在但无法读取（未授予完全磁盘访问权限）";
+    }
+    if (report.sourceMissing) {
+        return "找不到花見下载目录（花見未安装或从未下载）";
+    }
+    // 每一分支都携带真实数字；分项不合并（与 recordVerdict 同纪律）。
+    std::string text = report.imported > 0
+                           ? "已导入 " + std::to_string(report.imported) + " 个视频"
+                           : "导入 0 个";
+    if (report.skippedExisting > 0) {
+        text += "，已存在跳过 " + std::to_string(report.skippedExisting) + " 个";
+    }
+    if (report.skippedTombstone > 0) {
+        text += "，已删过跳过 " + std::to_string(report.skippedTombstone) + " 个";
+    }
+    if (report.rejectedByProbe > 0) {
+        text += "，" + std::to_string(report.rejectedByProbe) + " 个无视频轨";
+    }
+    if (report.failedCopy > 0) {
+        text += "，失败 " + std::to_string(report.failedCopy) + " 个";
+    }
+    // 全零 = 目录里确实一条候选都没有（旧文案不带数字，违反口径——现在
+    // 先报「导入 0 个」再归因）。
+    if (report.imported == 0 && report.skippedExisting == 0 &&
+        report.skippedTombstone == 0 && report.rejectedByProbe == 0 &&
+        report.failedCopy == 0) {
+        text += "：花見目录里没有可导入的 mp4";
+    }
+    return text;
+}
+
 } // namespace module::wallpaper::presentation

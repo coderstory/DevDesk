@@ -7,12 +7,17 @@
 #include "doctest.h"
 
 #include "module_wallpaper/core/importer.h"
+#include "module_wallpaper/core/presentation.h"
 
 #include <string>
 
 namespace {
 
 namespace wp = module::wallpaper;
+
+bool contains(const std::string& haystack, const std::string& needle) {
+    return haystack.find(needle) != std::string::npos;
+}
 
 } // namespace
 
@@ -148,5 +153,70 @@ REGISTER_TEST(wallpaper_importer_record_import_not_counted,
     wp::importer::recordVerdict(wp::importer::CandidateVerdict::Import, report);
     DOCTEST_CHECK_EQ(report.imported, 0);
     DOCTEST_CHECK_EQ(report.failedCopy, 0);
+    return true;
+})
+
+// ── 摘要文案（bug200 症状②）：老板验收口径 = 导入完成提示必须始终显示真实数字 ──
+// 防：计数正确但摘要丢数字——旧文案在 imported==0 且有跳过时只说
+// 「没有新视频（都已导入过或已删过）」，不带任何数字，用户无法核对到底发生什么。
+
+REGISTER_TEST(wallpaper_importer_summary_existing_carries_numbers,
+              "wallpaper importer: 摘要=目标已有同名文件 → 带「已存在跳过 N」真实数字（老板场景）", {
+    wp::importer::ImportReport report;
+    report.skippedExisting = 2;
+    const std::string text = wp::presentation::hanamiImportSummary(report);
+    DOCTEST_CHECK_MESSAGE(contains(text, "已存在跳过 2 个"), text);
+    // 旧的无数字表述禁再出现（正是要修的点）。
+    DOCTEST_CHECK_MESSAGE(!contains(text, "没有新视频"), text);
+    return true;
+})
+
+REGISTER_TEST(wallpaper_importer_summary_mixed_counts_all_present,
+              "wallpaper importer: 摘要=分项各带各的数字（导入/已存在/已删过/无视频轨/失败）", {
+    wp::importer::ImportReport report;
+    report.imported = 3;
+    report.skippedExisting = 2;
+    report.skippedTombstone = 1;
+    report.rejectedByProbe = 4;
+    report.failedCopy = 1;
+    const std::string text = wp::presentation::hanamiImportSummary(report);
+    DOCTEST_CHECK_MESSAGE(contains(text, "已导入 3 个视频"), text);
+    DOCTEST_CHECK_MESSAGE(contains(text, "已存在跳过 2 个"), text);
+    DOCTEST_CHECK_MESSAGE(contains(text, "已删过跳过 1 个"), text);
+    DOCTEST_CHECK_MESSAGE(contains(text, "4 个无视频轨"), text);
+    DOCTEST_CHECK_MESSAGE(contains(text, "失败 1 个"), text);
+    return true;
+})
+
+REGISTER_TEST(wallpaper_importer_summary_zero_import_carries_details,
+              "wallpaper importer: 摘要=导入 0 个时明细仍带数字；全零也无无数字表述", {
+    wp::importer::ImportReport report;
+    report.skippedTombstone = 4;
+    report.failedCopy = 1;
+    const std::string text = wp::presentation::hanamiImportSummary(report);
+    DOCTEST_CHECK_MESSAGE(contains(text, "导入 0 个"), text);
+    DOCTEST_CHECK_MESSAGE(contains(text, "已删过跳过 4 个"), text);
+    DOCTEST_CHECK_MESSAGE(contains(text, "失败 1 个"), text);
+    // 全零（空目录）：同样以「导入 0 个」开头再归因。
+    const std::string empty =
+        wp::presentation::hanamiImportSummary(wp::importer::ImportReport{});
+    DOCTEST_CHECK_MESSAGE(contains(empty, "导入 0 个"), empty);
+    return true;
+})
+
+REGISTER_TEST(wallpaper_importer_summary_source_states_distinguished,
+              "wallpaper importer: 摘要=目录缺失与无权限两态分文案；sourceNoAccess 默认 false", {
+    DOCTEST_CHECK_FALSE(wp::importer::ImportReport{}.sourceNoAccess);
+    wp::importer::ImportReport missing;
+    missing.sourceMissing = true;
+    const std::string missingText = wp::presentation::hanamiImportSummary(missing);
+    DOCTEST_CHECK_MESSAGE(contains(missingText, "找不到花見下载目录"), missingText);
+    wp::importer::ImportReport noAccess;
+    noAccess.sourceNoAccess = true;
+    const std::string noAccessText = wp::presentation::hanamiImportSummary(noAccess);
+    DOCTEST_CHECK_MESSAGE(contains(noAccessText, "无法读取"), noAccessText);
+    DOCTEST_CHECK_MESSAGE(contains(noAccessText, "完全磁盘访问"), noAccessText);
+    // 两态不合并（正是要修的点）：无权限文案不冒充「目录缺失」。
+    DOCTEST_CHECK_MESSAGE(!contains(noAccessText, "找不到花見下载目录"), noAccessText);
     return true;
 })

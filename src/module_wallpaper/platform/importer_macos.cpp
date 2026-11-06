@@ -107,12 +107,23 @@ private:
 };
 
 // 顶层枚举：只认 RegularFile、跳过符号链接与隐藏文件，字典序。
-std::vector<fs::path> listTopLevelMp4(const fs::path& directory, bool* readable) {
+// noAccess 出参（可空）：目录存在但枚举被拒（TCC）置真——与「不存在」区分开，
+// 不再同一降级（bug200 症状①）。
+std::vector<fs::path> listTopLevelMp4(const fs::path& directory, bool* readable,
+                                      bool* noAccess) {
     std::vector<fs::path> out;
     std::error_code ec;
     if (readable != nullptr) *readable = false;
+    if (noAccess != nullptr) *noAccess = false;
     fs::directory_iterator it(directory, ec);
-    if (ec) return out;  // 不存在 / 无权限（TCC）一律同一降级
+    if (ec) {
+        // 枚举失败的归因：目录还存在 = 有东西读不了（TCC）；目录都没了 = 未安装。
+        std::error_code existsEc;
+        if (noAccess != nullptr && fs::exists(directory, existsEc)) {
+            *noAccess = true;
+        }
+        return out;
+    }
     if (readable != nullptr) *readable = true;
 
     for (const fs::directory_entry& entry : it) {
@@ -181,6 +192,27 @@ bool hanamiImportAvailable() {
     return true;
 }
 
+SourceDirectoryStatus probeHanamiSourceDirectory(const std::string& directory) {
+    SourceDirectoryStatus status;
+    bool noAccess = false;
+    listTopLevelMp4(fs::path(directory), &status.readable, &noAccess);
+    status.noAccess = noAccess;
+    return status;
+}
+
+void openFullDiskAccessSettings() {
+    // 用户点「打开系统设置」才走到这里（禁自动打开）。旧串 macOS 13+ 可能失效：
+    // open 退出码非 0 时回退新串。经 std::system/posix 兜底，无 GUI 依赖。
+    if (std::system(
+            "open \"x-apple.systempreferences:com.apple.preference.security?"
+            "Privacy_AllFiles\"") == 0) {
+        return;
+    }
+    std::system(
+        "open \"x-apple.systempreferences:com.apple.settings.privacy?"
+        "Privacy_AllFiles\"");
+}
+
 std::string defaultTombstoneDatabasePath() {
     return (core::paths::appDataDir() / "wallpaper" / "deleted-videos.sqlite").string();
 }
@@ -205,7 +237,7 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
         if (home != nullptr && *home != '\0') {
             bool readable = false;
             const std::vector<fs::path> trashed =
-                listTopLevelMp4(fs::path(home) / ".Trash", &readable);
+                listTopLevelMp4(fs::path(home) / ".Trash", &readable, nullptr);
             if (readable) {
                 for (const fs::path& item : trashed) {
                     std::string signature;
@@ -218,12 +250,17 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
         }
     }
 
-    // ② 候选枚举。
+    // ② 候选枚举。区分「不存在」（未安装）与「存在但被 TCC 拒」（无权限）。
     bool sourceReadable = false;
-    const std::vector<fs::path> candidates =
-        listTopLevelMp4(fs::path(defaultHanamiSourceDirectory()), &sourceReadable);
+    bool sourceNoAccess = false;
+    const std::vector<fs::path> candidates = listTopLevelMp4(
+        fs::path(defaultHanamiSourceDirectory()), &sourceReadable, &sourceNoAccess);
     if (!sourceReadable) {
-        report.sourceMissing = true;
+        if (sourceNoAccess) {
+            report.sourceNoAccess = true;
+        } else {
+            report.sourceMissing = true;
+        }
         return report;
     }
 

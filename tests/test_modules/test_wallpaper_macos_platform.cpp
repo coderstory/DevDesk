@@ -9,6 +9,7 @@
 #include "module_wallpaper/platform/fullscreen_geometry.h"
 #include "module_wallpaper/platform/image_fit_geometry.h"
 #include "module_wallpaper/platform/image_probe.h"
+#include "module_wallpaper/platform/importer_macos.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -252,5 +253,39 @@ REGISTER_TEST(wallpaper_macos_image_probe_empty_path,
               "wallpaper macOS: 图片探针对空路径返回 known=false", {
     const auto result = module::wallpaper::probeImageSize("");
     DOCTEST_CHECK_FALSE(result.known);
+    return true;
+})
+
+// ── 花見源目录可达性（bug200 症状①）：「存在但无权限（TCC）」与「不存在」可区分 ──
+// 防：旧实现两者同一降级 → 用户装了花見但没给完全磁盘访问权限时，看到的是
+// 「找不到花見下载目录（花見未安装或从未下载）」的误导文案。
+REGISTER_TEST(wallpaper_macos_importer_source_no_access_distinguished,
+              "wallpaper macOS: 花見源目录「存在但无权限」与「不存在」可区分（TCC 场景）", {
+    namespace fs = std::filesystem;
+    using module::wallpaper::importer::hanamiImportAvailable;
+    using module::wallpaper::importer::probeHanamiSourceDirectory;
+    if (!hanamiImportAvailable()) return true;  // stub 平台无此缝（恒 missing）
+    std::error_code ec;
+    const fs::path dir = fs::temp_directory_path() / "devdesk_hanami_tcc_probe";
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    // 可读态。
+    const auto readable = probeHanamiSourceDirectory(dir.string());
+    DOCTEST_CHECK(readable.readable);
+    DOCTEST_CHECK_FALSE(readable.noAccess);
+    // 无权限态：目录存在、枚举被拒（chmod 000 模拟 TCC；root 环境拦不住枚举
+    // → 该半断言条件化，不因环境假红）。
+    fs::permissions(dir, fs::perms::none, ec);
+    const auto denied = probeHanamiSourceDirectory(dir.string());
+    if (!denied.readable) {
+        DOCTEST_CHECK_MESSAGE(denied.noAccess,
+                              "目录存在且枚举失败应判 noAccess（TCC）");
+    }
+    fs::permissions(dir, fs::perms::owner_all, ec);  // 恢复以便清理
+    // 不存在态：missing，不是 noAccess。
+    const auto missing = probeHanamiSourceDirectory(dir.string() + ".missing");
+    DOCTEST_CHECK_FALSE(missing.readable);
+    DOCTEST_CHECK_FALSE(missing.noAccess);
+    fs::remove_all(dir, ec);
     return true;
 })

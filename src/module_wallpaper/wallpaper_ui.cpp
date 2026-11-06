@@ -23,8 +23,12 @@
 //       wallpaper.folder.stat.videos；图片两格 .stat.passing（参与轮播，accent）/
 //       .stat.filtered（低于档位）——像素档过滤已落地，两格为真实计数。
 //       wallpaper.folder.scanning（扫描中）
+//       wallpaper.folder.import.summary 导入摘要行（提示行 wallpaper.folder.hint
+//         随其存在性 y=172/154，两行不相交——bug200 症状③，test_wallpaper_ui 钉住）
 //     wallpaper.card.formats          视频格式卡
 //     wallpaper.card.resolution / .fit 图片分辨率 + 适配（一行两卡）
+//   弹窗（页面级常驻，关闭态也构建）：wallpaper.dialog.import.noaccess
+//     （.title / .body / .cancel / .confirm——花見无权限双原因 + 打开系统设置）
 //
 // 几何（100% 档；字号档走 roundFs，卡片高度同步缩放）：
 //   页面左右 32、底部 32、页头 40、Tab 40、区块间距 16；卡内 20；卡圆角 12；
@@ -48,6 +52,7 @@
 #include <eui/dsl.h>
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
+#include <ui_kit/dialog_form.h>
 #include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/slider.h>
@@ -1057,8 +1062,9 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
             }
         }
 
-        if (!snapshot.importing && !snapshot.importSummary.empty()) {
-            // 最近一次导入的读数：一行等宽字，长路径/长文案省略不换行。
+        // 最近一次导入的读数：一行等宽字，长路径/长文案省略不换行。
+        const bool showSummary = !snapshot.importing && !snapshot.importSummary.empty();
+        if (showSummary) {
             ui.text("wallpaper.folder.import.summary")
                 .position(kCardPad, showStats ? 146.0f : 132.0f)
                 .size(std::max(0.0f, w - kCardPad * 2.0f), roundFs(20.0f))
@@ -1072,11 +1078,13 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
                 .build();
         }
 
+        // 提示行 y 随摘要存在性下移（bug200 症状③：摘要行 y=146+20 底缘 166
+        // 压住固定 y=154 的提示）。y=172 + 高 34 = 206，kFolderCardH=208 装得下。
         hintText(ui, "wallpaper.folder.hint",
                  kind == WallpaperKind::Image
                      ? "仅扫描 jpg / jpeg / png / webp / heic；低于分辨率档位的图片不参与轮播。"
                      : "仅扫描 mp4 / mov / m4v；其他格式不会出现在片库，也不会自动转码。",
-                 t, kCardPad, 154.0f,
+                 t, kCardPad, showSummary ? 172.0f : 154.0f,
                  std::max(0.0f, w - kCardPad * 2.0f), roundFs(34.0f));
     });
 }
@@ -1219,6 +1227,58 @@ void drawTabs(eui::Ui& ui, float contentW, const Tokens& t, UiState& state) {
     });
 }
 
+// 花見无权限弹窗（bug200 症状①，范式照 todo_ui_dialogs.cpp 的确认弹窗）：
+// 「花見未安装完整」与「未授予完全磁盘访问权限」双原因 + 「打开系统设置」按钮
+//（平台缝经 UiActions 注入，本层不碰 platform；用户点了才开，禁自动打开）。
+// 关一次驻留关闭（importNoAccessDismissed），新一轮导入（快照置回 false）重新武装。
+void drawImportNoAccessDialog(eui::Ui& ui, const eui::Screen& screen,
+                              const Tokens& t, const WallpaperSnapshot& snapshot,
+                              const UiActions& actions, UiState& state) {
+    if (!snapshot.importNoAccess) {
+        state.importNoAccessDismissed = false;  // 无权限态解除 = 重新武装
+        return;
+    }
+    const auto themeTokens = ::core::theme::componentTokensWeChat(t);
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
+    const float h = 220.0f;
+
+    ui_kit::DialogFrame frame;
+    frame.id = "wallpaper.dialog.import.noaccess";
+    frame.width = ui_kit::DialogWidth::Standard;
+    frame.height = h;
+    frame.open = !state.importNoAccessDismissed;
+    frame.onOpenChange = [&state](bool v) {
+        if (!v) state.importNoAccessDismissed = true;
+    };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        ui_kit::drawDialogTitle(ui, "wallpaper.dialog.import.noaccess.title", w,
+                                "无法读取花見", ui_kit::kDialogTitleFontSize,
+                                t.colors.textPrimary);
+        ui_kit::drawDialogText(
+            ui, "wallpaper.dialog.import.noaccess.body", w,
+            "花見可能未安装完整，或未授予「完全磁盘访问权限」。\n"
+            "安装完整或授权后，重新点击「从花見导入…」即可。",
+            t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
+            {.y = 60.0f, .height = 44.0f, .lineHeight = 22.0f, .wrap = true});
+
+        ui_kit::DialogButtonSpec cancel;
+        cancel.label = "关闭";
+        cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
+        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+        cancel.onClick = [&state] { state.importNoAccessDismissed = true; };
+        ui_kit::DialogButtonSpec confirm;
+        confirm.label = "打开系统设置";
+        confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
+        confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
+        confirm.onClick = [&actions] {
+            if (actions.openPrivacySettings) actions.openPrivacySettings();
+        };
+        ui_kit::drawDialogButtons(ui, "wallpaper.dialog.import.noaccess", w, h,
+                                  cancel, confirm, t, themeTokens);
+    });
+}
+
 } // namespace
 
 void composeWallpaperUi(eui::Ui& ui, const eui::Screen& screen,
@@ -1278,6 +1338,9 @@ void composeWallpaperUi(eui::Ui& ui, const eui::Screen& screen,
                 .build();
         })
         .build();
+
+    // 花見无权限弹窗：页面级常驻节点（关闭态也构建，与 todo 弹窗同范式）。
+    drawImportNoAccessDialog(ui, screen, t, snapshot, actions, state);
 }
 
 } // namespace module::wallpaper

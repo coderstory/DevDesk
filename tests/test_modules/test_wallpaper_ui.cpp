@@ -899,6 +899,75 @@ REGISTER_TEST(wallpaper_ui_library_folder_states,
     return true;
 })
 
+// 防（bug200 症状③）：导入摘要行（showStats 时 y=146、行高 20）压住固定 y=154 的
+// 格式提示行——两行 y 区间相交导致文字重叠。摘要存在时提示行必须整体下移。
+REGISTER_TEST(wallpaper_ui_import_summary_hint_no_overlap,
+              "wallpaper_ui: 导入摘要行与格式提示行 y 区间不相交（摘要存在时提示下移）", {
+    // 两态都要装得下：showStats（统计行在，摘要 y=146）与未配置（摘要 y=132）。
+    for (const bool configured : {true, false}) {
+        wp::UiState state;
+        state.tab = 1;
+        wp::WallpaperSnapshot snapshot = makeSnapshot(
+            wp::WallpaperKind::Video,
+            configured ? wp::Availability::Playing
+                       : wp::Availability::FolderUnconfigured);
+        snapshot.importSummary = "已导入 3 个视频";
+        eui::Ui ui;
+        composeFrame(ui, kPage1600x1000, snapshot, {}, state);
+        const auto* summary = ui.find("wallpaper.folder.import.summary");
+        const auto* hint = ui.find("wallpaper.folder.hint");
+        DOCTEST_REQUIRE(summary != nullptr);
+        DOCTEST_REQUIRE(hint != nullptr);
+        const float summaryBottom = summary->frame.y + summary->frame.height;
+        DOCTEST_CHECK_MESSAGE(summaryBottom <= hint->frame.y + 0.5f,
+                              "摘要行底 " + std::to_string(summaryBottom) +
+                                  " 压过提示行顶 " +
+                                  std::to_string(hint->frame.y));
+    }
+    return true;
+})
+
+// 防（bug200 症状①）：花見无权限 = 双原因文案 + 「打开系统设置」按钮（点击才开，
+// 本层只经 UiActions 出口，不碰平台）；关闭一次驻留，新一轮导入重新武装。
+REGISTER_TEST(wallpaper_ui_import_no_access_dialog,
+              "wallpaper_ui: 花見无权限弹窗（双原因文案/打开系统设置按钮/关闭驻留）", {
+    int openSettingsCalls = 0;
+    wp::UiActions actions;
+    actions.openPrivacySettings = [&openSettingsCalls] { ++openSettingsCalls; };
+    wp::UiState state;
+    state.tab = 1;
+    wp::WallpaperSnapshot snapshot =
+        makeSnapshot(wp::WallpaperKind::Video, wp::Availability::Playing);
+    snapshot.importNoAccess = true;
+    snapshot.importSummary = "花見目录存在但无法读取（未授予完全磁盘访问权限）";
+    eui::Ui ui;
+    composeFrame(ui, kPage1600x1000, snapshot, actions, state);
+    DOCTEST_CHECK(ui.find("wallpaper.dialog.import.noaccess") != nullptr);
+    const std::string body =
+        elementText(ui, "wallpaper.dialog.import.noaccess.body");
+    // 双原因都在（禁把无权限与未安装合并回一个原因——正是要修的点）。
+    DOCTEST_CHECK_MESSAGE(contains(body, "未安装完整"), body);
+    DOCTEST_CHECK_MESSAGE(contains(body, "完全磁盘访问"), body);
+    // 打开系统设置 = 经 UiActions 出口（平台缝注入）。
+    auto* confirmEl = ui.find("wallpaper.dialog.import.noaccess.confirm.bg");
+    DOCTEST_REQUIRE(confirmEl != nullptr);
+    DOCTEST_REQUIRE(static_cast<bool>(confirmEl->onClick));
+    confirmEl->onClick();
+    DOCTEST_CHECK_EQ(openSettingsCalls, 1);
+    // 关闭一次 → 驻留；同快照再组合不重置（不会每帧重弹）。
+    DOCTEST_CHECK(fireClick(ui, "wallpaper.dialog.import.noaccess.cancel.bg"));
+    DOCTEST_CHECK(state.importNoAccessDismissed);
+    eui::Ui ui2;
+    composeFrame(ui2, kPage1600x1000, snapshot, actions, state);
+    DOCTEST_CHECK(state.importNoAccessDismissed);
+    // 无权限解除（新一轮导入）→ 弹窗重新武装。
+    snapshot.importNoAccess = false;
+    eui::Ui ui3;
+    composeFrame(ui3, kPage1600x1000, snapshot, actions, state);
+    DOCTEST_CHECK_FALSE(state.importNoAccessDismissed);
+    return true;
+})
+
 // 防：壁纸页回潮出删除/维护/转码/队列入口（需求 §7.4 明确没有），以及页内出现
 // 文件名（本页面只应显示文件夹路径）。
 REGISTER_TEST(wallpaper_ui_no_maintenance_entry,

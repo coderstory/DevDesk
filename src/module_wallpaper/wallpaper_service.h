@@ -84,6 +84,8 @@ struct WallpaperSnapshot {
     int importTotal = 0;
     // 最近一次导入的摘要文案（空 = 从未跑过）。中文、可直接展示。
     std::string importSummary;
+    // 最近一次导入因花見目录无权限被拒（TCC）：UI 据此弹「打开系统设置」弹窗。
+    bool importNoAccess = false;
 };
 
 class WallpaperService {

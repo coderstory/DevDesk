@@ -2,6 +2,7 @@
 #include "wallpaper_module.h"
 
 #include "core/logging.h"
+#include "module_wallpaper/platform/importer_macos.h"
 #include "platform/folder_picker.h"
 #include "platform/wallpaper_capability.h"
 
@@ -65,6 +66,9 @@ void WallpaperModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     // 「从花見导入…」只在该平台提供（macOS）；不提供时留空 → UI 不建按钮。
     if (WallpaperService::hanamiImportAvailable()) {
         actions.importVideos = [this] { service_.importFromHanami(); };
+        // 无权限弹窗的「打开系统设置」：平台缝内实现（std::system open 面板），
+        // 用户点击才执行，禁自动打开。
+        actions.openPrivacySettings = [] { importer::openFullDiskAccessSettings(); };
     }
     actions.togglePause = [this] { service_.toggleManualPause(); };
     actions.next = [this] { service_.next(); };

@@ -26,7 +26,8 @@ struct ImportReport {
     int skippedExisting = 0;   // 目标目录已有同名文件
     int rejectedByProbe = 0;   // 探针判定没有视频轨
     int failedCopy = 0;        // 拷不动 / 取不到文件大小
-    bool sourceMissing = false;  // 花見目录不存在或读不了（两者不区分）
+    bool sourceMissing = false;  // 花見目录不存在（未安装或从未下载）
+    bool sourceNoAccess = false;  // 花見目录存在但读不了（TCC 未授予完全磁盘访问）
 };
 
 // 单条候选的判定结果。纯决策，不做 IO。

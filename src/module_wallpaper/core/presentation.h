@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 
+#include "module_wallpaper/core/importer.h"
 #include "module_wallpaper/core/model.h"
 
 namespace module::wallpaper::presentation {
@@ -73,5 +74,11 @@ std::optional<EmptyStateCopy> emptyStateCopy(Availability availability, Wallpape
 
 // 统计单位：视频「N 个视频」、图片「N 张可用图片」。
 std::string libraryCountLabel(WallpaperKind kind, int count);
+
+// 花見导入完成摘要（bug200 症状②）。验收口径：导入完成提示必须**始终显示真实
+// 数字**（导入了 N 个 / 已存在跳过 N 个 / 已删过 M 个 / 失败 K 个），禁止出现
+// 不带数字的「没有导入 / 没有新视频」式表述——计数在 report 里都是真的，
+// 旧文案只是把数字丢了。无权限（sourceNoAccess）走弹窗分流，摘要行给归因句。
+std::string hanamiImportSummary(const importer::ImportReport& report);
 
 } // namespace module::wallpaper::presentation

@@ -38,6 +38,9 @@ struct UiActions {
     // 「从花見导入…」：把花見 App 下载的视频批量拷进当前壁纸文件夹（带去重/墓碑）。
     // 仅在 macOS 装配；空 = 该平台不提供此入口（按钮不建）。
     std::function<void()> importVideos;
+    // 打开 macOS「完全磁盘访问」设置面板（无权限弹窗按钮；平台缝经装配层注入，
+    // 本层不碰 platform）。空 = 无动作。
+    std::function<void()> openPrivacySettings;
     std::function<void()> togglePause;
     std::function<void()> next;
 };
@@ -52,6 +55,8 @@ struct UiState {
     bool kindDraftValid = false;
     WallpaperKind kindDraft = WallpaperKind::Video;
     float scrollOffset = 0.0f;    // 折叠展开后可滚动；会话内保留位置
+    // 花見无权限弹窗已关闭（驻留）：关一次不再自动弹，新一轮导入重新武装。
+    bool importNoAccessDismissed = false;
 };
 
 // 组装整页。节点 id 契约见 .cpp 文件头。

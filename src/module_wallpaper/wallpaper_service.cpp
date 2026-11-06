@@ -416,28 +416,16 @@ void WallpaperService::importFromHanami() {
                 },
                 &importCancel_);
 
-            std::string summary;
-            if (report.sourceMissing) {
-                summary = "找不到花見下载目录（花見未安装或从未下载）";
-            } else if (report.imported > 0) {
-                summary = "已导入 " + std::to_string(report.imported) + " 个视频";
-                const int skipped = report.skippedExisting + report.skippedTombstone;
-                if (skipped > 0) {
-                    summary += "，跳过 " + std::to_string(skipped) + " 个已存在/已删过";
-                }
-                if (report.failedCopy > 0) {
-                    summary += "，" + std::to_string(report.failedCopy) + " 个拷贝失败";
-                }
-            } else if (report.skippedExisting + report.skippedTombstone > 0) {
-                summary = "没有新视频（都已导入过或已删过）";
-            } else {
-                summary = "花見目录里没有可导入的 mp4";
-            }
+            // 摘要文案统一走 presentation（bug200 症状②：各分支必须携带真实数字，
+            // 禁止「没有新视频」这类不带数字的表述；分项不合并）。
+            const std::string summary = presentation::hanamiImportSummary(report);
 
             {
                 std::lock_guard<std::mutex> lock(mu_);
                 snapshot_.importing = false;
                 snapshot_.importSummary = summary;
+                // 无权限分流：UI 据此弹「打开系统设置」弹窗（不再冒充目录缺失）。
+                snapshot_.importNoAccess = report.sourceNoAccess;
             }
             LOG_INFO("壁纸: 从花見导入完成 —— " + summary);
             // 有新文件才需要重扫（没导入时重扫是白跑一趟全盘枚举）。

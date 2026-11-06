@@ -22,8 +22,21 @@ namespace module::wallpaper::importer {
 bool hanamiImportAvailable();
 
 // 花見（Huajian）App 的下载目录（容器内 Documents/Videos）。
-// 不存在或读不了时报 sourceMissing，不区分两者。
+// 不存在报 sourceMissing；存在但读不了（TCC）报 sourceNoAccess——两者分 fields。
 std::string defaultHanamiSourceDirectory();
+
+// 源目录可达性（bug200 症状①）：「未安装」与「无权限」原来是同一降级，
+// 用户看到的都是「找不到花見下载目录」——TCC 拒绝时给的是误导文案。
+// 现在区分：目录存在但枚举被拒 = noAccess（service 弹窗分流「未授予完全磁盘访问」）。
+struct SourceDirectoryStatus {
+    bool readable = false;  // 可枚举
+    bool noAccess = false;  // 目录存在但枚举被拒（TCC）
+};
+SourceDirectoryStatus probeHanamiSourceDirectory(const std::string& directory);
+
+// 打开 macOS「完全磁盘访问」设置面板（无权限弹窗按钮的落点；用户点了才开，
+// 禁止自动打开）。旧 URL 串在新 macOS 失效时回退新串；其它平台 stub 为 no-op。
+void openFullDiskAccessSettings();
 
 // 导入到 destinationFolder。onProgress 可为空；跑完返回报告。
 // cancel 非空且被置真时，在**候选之间**尽早返回（正在拷贝的那一个会拷完）；
