@@ -488,20 +488,20 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     float brandNavGap = 28.0f;
     float gap = 4.0f;
     float itemH = ui_kit::kNavItemH;  // 40（正常/紧凑档）
-    float toggleSize = 36.0f;     // §10.2 正常档直径；2026-11-06 老板实测偏小 → 32→36
-    float toggleZoneH = 52.0f;    // 正常档底部预留区（随钮放大 +4）
+    float toggleSize = 40.0f;     // 2026-11-06 老板三轮实测：32→36→40（mac 观感仍偏小）
+    float toggleZoneH = 56.0f;    // 预留区随钮同步 +4（钮径 + 上下各 8）
     if (availH < 680.0f) {
         topPad = 12.0f;
         brandNavGap = 12.0f;
         gap = 2.0f;
         itemH = 36.0f;
-        toggleSize = 32.0f;       // 极紧档 28→32（老板实测 mac 上偏小）
-        toggleZoneH = 48.0f;
+        toggleSize = 36.0f;
+        toggleZoneH = 52.0f;
     } else if (availH < 712.0f) {
         topPad = 16.0f;
         brandNavGap = 16.0f;
-        toggleSize = 32.0f;       // 紧凑档 28→32
-        toggleZoneH = 48.0f;
+        toggleSize = 36.0f;
+        toggleZoneH = 52.0f;
     }
     // bug165（need241 设计 §9.3）：logo 随窗口自适应 = clamp(min(宽度档, 高度档),
     // 40, 64)，手动折叠态（72px 带）追加上限 48。宽度档按窗口逻辑宽 W（本函数
@@ -907,9 +907,15 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // 热区与绘制解耦（§10.2）：hover/点击命中 = 绘制区外扩 4px
             //（40/36 ≥32px 桌面最小可点约定），视觉缩小不牺牲命中率——交互回调
             // 全在独立透明热区 rect（active 导航项三态全透明仍可点中先例）。
-            const float toggleY = availH - toggleZoneH + 8.0f;  // 区顶 + 8 居中
+            // 2026-11-06 老板第三轮实测修正三件：
+            // ① 位置太靠左下 → toggleY 由「区顶+8」改为「区顶+区高一半居中后上提 4」，
+            //    toggleX 展开态 padX(16) → padX+8（右移 8，不贴侧栏左缘）。
+            // ② mac 尺寸仍小 → toggleSize 三档再放大（见上方档位定义）。
+            // ③ 非 hover 态要有阴影 → 常态给一层很淡的渲染阴影（非全无），
+            //    hover 加深上浮，pressed 收起。
+            const float toggleY = availH - toggleZoneH + 4.0f;
             const float toggleX =
-                collapsed ? (kWidth - toggleSize) * 0.5f : padX;
+                collapsed ? (kWidth - toggleSize) * 0.5f : padX + 8.0f;
             const bool toggleHovered = g_toggleHovered;
             const bool togglePressed = g_togglePressed;
             const bool toggleFocused = g_toggleFocused;  // v3：focus 态
@@ -924,15 +930,18 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             const core::Transition toggleTransition = core::Transition::make(
                 toggleHovered ? 0.15f : 0.28f,
                 toggleHovered ? core::Ease::OutCubic : core::Ease::OutBack);
-            // 悬浮阴影（v3 §3/§9-4）：仅 hover 态浮起 blur8/offsetY2/黑 10%，
-            // pressed/常态贴回桌面无阴影——「悬浮」语义与操作反馈同源；圆形描边
-            // 图标钮非填充按钮，基线「填充按钮禁阴影」不适用。
+            // 悬浮阴影（v3 §3/§9-4；2026-11-06 老板第三轮：常态也要有阴影）：
+            //   常态 = 极淡贴地阴影（blur4/offsetY1/8%）—— 有「浮起」暗示但不抢眼
+            //   hover = 加深上浮（blur8/offsetY2/10%）
+            //   pressed = 收起（按下贴回）
             const core::Shadow toggleShadow =
-                toggleHovered
-                    ? core::Shadow{true, {0.0f, 2.0f}, 8.0f, 0.0f,
-                                   eui::Color{0.102f, 0.102f, 0.102f,
-                                              0.10f}}  // rgba(26,26,26,.10)
-                    : core::Shadow{};
+                togglePressed
+                    ? core::Shadow{}
+                    : toggleHovered
+                          ? core::Shadow{true, {0.0f, 2.0f}, 8.0f, 0.0f,
+                                         eui::Color{0.102f, 0.102f, 0.102f, 0.10f}}
+                          : core::Shadow{true, {0.0f, 1.0f}, 4.0f, 0.0f,
+                                         eui::Color{0.102f, 0.102f, 0.102f, 0.08f}};
             ui.rect("app.sidebar.toggle")
                 .position(toggleX, toggleY)
                 .size(toggleSize, toggleSize)
@@ -957,10 +966,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .position(toggleX, toggleY)
                 .size(toggleSize, toggleSize)
                 .icon(eui::utf8(collapsed ? 0xF0C9 : 0xF100))  // fa-bars / fa-angles-left
-                // 图标尺寸按钮径比例（2026-11-06 老板实测 mac 偏小）：原沿
-                // fontSizeSmall=12 在 28-32px 圆钮内留白过多；改 56% 钮径（正常档
-                // 32→18、紧凑/极紧档 28→16），并走 scaled() 跟随全局字号缩放。
-                .fontSize(core::theme::scaled(toggleSize * 0.56f))
+                // 图标 = 钮径 50%（钮放大到 40/36 后 56% 会显得拥挤；50% 视觉更平衡）
+                .fontSize(core::theme::scaled(toggleSize * 0.50f))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(toggleActive ? t.colors.primary : t.colors.textSecondary)
