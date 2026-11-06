@@ -66,6 +66,8 @@ Source: "{#SourcePath}..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ig
 ;   NotoSansSC-VF.ttf —— 17MB 死重量；变量字体 FreeType 加载不稳、全仓零引用
 ;     （运行时字体走 EUI-NEO core/render/text_shaping.cpp 的 fallback 链：系统 CJK
 ;     微软雅黑优先，打包 JingNanJunJunTi 作兜底），排除不影响任何界面渲染。
+;     2026-11-06 字体统一线（need:132）已在 EUI-NEO 阶段 1 删除该文件，本 Excludes
+;     保留为防上游 EUI assets 回流的无害防御（排除不存在文件幂等）。
 ;   icon.ico —— 仅安装器自身消费（上方 SetupIconFile 取暂存目录的同名文件编译期内嵌）；
 ;     运行时零引用（窗口/任务栏图标走 assets/icon.png，卸载项图标走 DevDesk.exe），
 ;     不必随包安装到用户目录。

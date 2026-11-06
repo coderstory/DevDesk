@@ -1,0 +1,35 @@
+# 随包字体修改声明（FONT MODIFICATIONS，OFL 1.1 条款 2/3 合规文件）
+
+本目录随 DevDesk 应用分发的字体资产及其修改情况声明（need:132 字体统一线）。
+
+## 1. DevDeskSansSC-Regular.otf / DevDeskSansSC-Bold.otf（子集+改名）
+
+- 源字体：Noto Sans CJK SC（Sans2.004，notofonts/noto-cjk release
+  `08_NotoSansCJKsc.zip`，OFL 1.1）
+- 源许可全文：`OFL-NotoSansCJK.txt`（本目录）
+- 修改内容：
+  - 子集化：字符集 = GB2312 全集（6763 汉字，5 个未指派码位跳过）+ DevDesk
+    源码非 ASCII 码点（1638）+ 可打印 ASCII + 常用全角标点/符号段（U+3000-3040、
+    U+FF00-FF60），合并去重 7150 码点；字符集清单见同目录 `.unicodes.txt`
+  - 改名（OFL 条款 3，Modified Version 不得使用 Reserved Font Name）：
+    family 主名 `Noto Sans CJK SC` → `DevDesk Sans SC`，文件名同步改为
+    `DevDeskSansSC-Regular.otf` / `DevDeskSansSC-Bold.otf`，不含任何 RFN 词根
+- 子集工具：fontTools（pyftsubset + ttLib name 表改写）；管线脚本
+  `scripts/make_font_subset.py`，校验脚本 `scripts/verify_font_subset.py`
+  （度量不变/零丢字/体积/upem/RFN 五项断言）
+- 产物体积与指纹（2026-11-06 生成）：
+  - Regular：3,371,576 B，SHA256 `69706360ad87154ec111be408a7d5c6adffc9288254f3ef8ace8162457da02b2`
+  - Bold：3,460,232 B，SHA256 `607562eef8a691220da373b81e626df2a04547952b4bea4ff27c9934023dd82b`
+
+## 2. JetBrainsMono-Regular.ttf（原文件捆绑，未修改）
+
+- 源字体：JetBrains Mono v2.304（https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304）
+- 许可：OFL 1.1，全文见 `OFL-JetBrainsMono.txt`（本目录）
+- 修改内容：无（Original Version 原文件捆绑，OFL 条款 3 RFN 约束不适用）
+- 体积与指纹：273,900 B，SHA256 `a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f`
+
+## 3. 已知覆盖边界（非缺陷，运行时回退链兜底）
+
+emoji/符号码点（U+2705 ✅、U+2714 ✔、U+25B8 ▸ 等 18 个 UI 在用码点）源字体
+Noto Sans CJK 本身不含，子集不做补偿；运行时由 EUI 字体栈回退链落系统
+emoji/符号字体。JetBrains Mono 无 CJK 覆盖，终端/代码块内 CJK 恒走系统回退。

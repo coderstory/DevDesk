@@ -231,6 +231,15 @@ if [ ! -f "$ASSETS_DIR_POSIX/tray-icon-win.ico" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/tray-icon-win.ico 缺失" >&2
   exit 1
 fi
+# 断言 ⑥（need:132 字体统一线）：随包字体 + 许可文件就位（6 文件经 :112 本仓库
+# assets 整树拷自动进暂存目录，此处防打包链断链/误删；上方 rm 零引用清单不含这些名字）
+for present in "DevDeskSansSC-Regular.otf" "DevDeskSansSC-Bold.otf" "JetBrainsMono-Regular.ttf" \
+               "OFL-NotoSansCJK.txt" "OFL-JetBrainsMono.txt" "FONT-MODIFICATIONS.txt"; do
+  if [ ! -f "$ASSETS_DIR_POSIX/$present" ]; then
+    echo "❌ 断言失败：随包字体/许可缺失：$ASSETS_DIR_POSIX/$present" >&2
+    exit 1
+  fi
+done
 # 断言 ⑤（图标批 2026-10-20）：安装包 SetupIconFile 的 icon.ico 必须是本仓库 assets/ 的
 # 品牌图——内容全等比对挡「同名被 EUI-NEO 旧 icon.ico 反扑」（拷贝序倒挂时这里红）。
 if [ ! -f "$ASSETS_DIR_POSIX/icon.ico" ]; then

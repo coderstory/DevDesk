@@ -39,3 +39,23 @@
 - 引入方式：手工放包 `third_party/conpty/`（版本 pin 靠仓内二进制钉死，构建/打包/
   装机链拷至 exe 旁 `conpty\`；发布形态守卫白名单覆盖）
 
+## Noto Sans CJK SC（子集随包，UI 正文字体）
+
+- 用途：跨平台 UI 正文字体统一（need:132，`assets/DevDeskSansSC-Regular.otf` +
+  `assets/DevDeskSansSC-Bold.otf`，family 改名 `DevDesk Sans SC`）
+- 上游项目：<https://github.com/notofonts/noto-cjk>（release Sans2.004，
+  `08_NotoSansCJKsc.zip`）
+- 许可证：SIL Open Font License 1.1，全文随包 `assets/OFL-NotoSansCJK.txt`
+- 修改声明：子集化（GB2312 全集+源码码点，7150 码点）+ 改名避开 OFL Reserved
+  Font Name，详见随包 `assets/FONT-MODIFICATIONS.txt` 与
+  `scripts/make_font_subset.py`
+
+## JetBrains Mono（原文件随包，等宽字体）
+
+- 用途：终端 / 代码块等宽字体统一（need:132，`assets/JetBrainsMono-Regular.ttf`，
+  原文件捆绑未修改）
+- 上游项目：<https://github.com/JetBrains/JetBrainsMono>（v2.304）
+- 许可证：SIL Open Font License 1.1，全文随包 `assets/OFL-JetBrainsMono.txt`
+- 修改声明：无修改（Original Version），说明见随包 `assets/FONT-MODIFICATIONS.txt`
+
+

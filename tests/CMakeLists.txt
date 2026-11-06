@@ -560,6 +560,36 @@ foreach(_probe_source ${_devdesk_probe_sources})
     endif()
 endforeach()
 
+# ---- need:132 F-06：font_metrics_probe 随包字体接线 ----
+# 三个随包字体拷到 exeDir/assets（resolveFontFilePath 第一候选，与上面图标字体
+# 同款 cwd 无关纪律）；DEVDESK_PROBE_OS 供 JSON 文件名 <os> 段——由 CMake 给值，
+# 源码不写平台宏。
+if(TARGET font_metrics_probe)
+    if(APPLE)
+        set(_font_probe_os "macos")
+    elseif(WIN32)
+        set(_font_probe_os "windows")
+    else()
+        set(_font_probe_os "linux")
+    endif()
+    target_compile_definitions(font_metrics_probe
+        PRIVATE DEVDESK_PROBE_OS="${_font_probe_os}")
+    add_custom_command(TARGET font_metrics_probe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:font_metrics_probe>/assets"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/DevDeskSansSC-Regular.otf"
+            "$<TARGET_FILE_DIR:font_metrics_probe>/assets/DevDeskSansSC-Regular.otf"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/DevDeskSansSC-Bold.otf"
+            "$<TARGET_FILE_DIR:font_metrics_probe>/assets/DevDeskSansSC-Bold.otf"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/assets/JetBrainsMono-Regular.ttf"
+            "$<TARGET_FILE_DIR:font_metrics_probe>/assets/JetBrainsMono-Regular.ttf"
+        COMMENT "Copying bundled fonts for font_metrics_probe"
+        VERBATIM)
+endif()
+
 # ==================== 债-18：UI 自动化驱动入口（场景驱动 CLI）====================
 # devdesk_ui_driver：tests/ui_driver/ 六组装件（底层 4 头零 probe_harness 依赖 +
 # 编排 2 头）+ ui_driver_main.cpp。链接集 = module_toggle_sidebar_probe 同款

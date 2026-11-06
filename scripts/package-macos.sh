@@ -65,6 +65,16 @@ if [ -z "$(ls -A "$MACOS_DIR/assets/shaders/shadertoy" 2>/dev/null)" ]; then
   echo "❌ 断言失败：$MACOS_DIR/assets/shaders/shadertoy 为空" >&2
   exit 1
 fi
+# 随包字体就位断言（need:132 字体统一线）：6 文件（双字重子集 + JetBrains Mono +
+# 两份 OFL + 修改声明）必须随包；来源=构建树 assets（CMake POST_BUILD 逐文件拷），
+# 经上方整树 copy 进 .app，缺任一 = 打包链断了
+for fontfile in DevDeskSansSC-Regular.otf DevDeskSansSC-Bold.otf JetBrainsMono-Regular.ttf \
+                OFL-NotoSansCJK.txt OFL-JetBrainsMono.txt FONT-MODIFICATIONS.txt; do
+  if [ ! -f "$MACOS_DIR/assets/$fontfile" ]; then
+    echo "❌ 断言失败：随包字体/许可缺失：$MACOS_DIR/assets/$fontfile" >&2
+    exit 1
+  fi
+done
 echo "✅ assets 就位（Contents/MacOS/assets）"
 
 # corta-exec 随包（need:122）：Spawn.swift 按「宿主二进制同级/Contents/MacOS」寻址（clue #23）

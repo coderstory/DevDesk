@@ -935,7 +935,24 @@ const DslAppConfig& dslAppConfig() {
         ::core::paths::ensureDirectoriesExist();
         setupLogging();
         openAppDatabase();
-        // 不调 setDefaultFontFiles：override 会压过系统 CJK；且变量字体 FreeType 加载不稳 → 测宽≠渲染，启用前需换静态字体
+        // 字体统一（need:132 技术卡 v4）：启动注入随包子集字体（DevDeskSansSC-Regular/Bold
+        // + JetBrainsMono-Regular）。override 按字重分派：<600→Regular，≥600→Bold；缺字由
+        // EUI font stack 回退链兜底（打包主面 → 系统 CJK，同一代码路径）。已知已接受差异：
+        // emoji/符号码点源主字体不含，两端落系统 emoji 字体（字形/宽度允许分叉，符号一致性
+        // 独立条目跟进）；mono 线 CJK 恒走回退同理。用静态子集而非 VF：FreeType 默认实例
+        // 本是确定性状态，真风险是 measure/render 两路径坐标不一致；去掉 VF 即去掉这个坐
+        // 标状态维度。两端一致性由 font_metrics_probe advance hash 门禁钉住（weight
+        // 400/600/700 三档，正文段）。应急降级：DEVDESK_SYSTEM_FONTS=1 跳过注入走系统字
+        // 体解析。
+        const char* sysFonts = std::getenv("DEVDESK_SYSTEM_FONTS");
+        const bool useBundledFonts = !(sysFonts && std::string(sysFonts) == "1");
+        if (useBundledFonts) {
+            // iconFontFile 传空 = 不设 icon override，走 EUI 原图标字体（Font Awesome），
+            // text_shaping.cpp resolveDefaultIconFontPath 对空 override 落 kDefaultIconFontFile
+            core::TextPrimitive::setDefaultFontFiles("DevDeskSansSC-Regular.otf", "");
+            core::TextPrimitive::setDefaultBoldUiFontFile("DevDeskSansSC-Bold.otf");
+            core::TextPrimitive::setDefaultMonospaceFontFile("JetBrainsMono-Regular.ttf");
+        }
         // 标题栏/底色随主题：先装回调再恢复主题，启动与运行时切换同路径；标题栏仅 Windows 生效
         ::core::theme::setChangeHandler([](bool isDark) {
             app::setTitleBarAppearance(

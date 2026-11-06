@@ -496,6 +496,36 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying app icons to build directory"
 )
 
+# 随包字体（need:132 字体统一线）：6 文件平铺 assets 根——EUI resolveFontFilePath
+# 只按 filename 在 exeDir/assets 等候选命中，assets 子目录不命中。DevDesk assets
+# 非整树同步（本文件只对托盘/应用图标逐文件 copy；EUI bulk copy 只拷 EUI 自己的
+# assets），故这里逐文件拷。文件均入 git，无需平台守卫；两份 OFL 与
+# FONT-MODIFICATIONS.txt 为 OFL 条款 2 合规随包件（声明见后者）。
+# shortcut: 字体资产直存 git, 任一字体文件超 10MB 时评估 LFS
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:DevDesk>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/DevDeskSansSC-Regular.otf"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/DevDeskSansSC-Regular.otf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/DevDeskSansSC-Bold.otf"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/DevDeskSansSC-Bold.otf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/JetBrainsMono-Regular.ttf"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/JetBrainsMono-Regular.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/OFL-NotoSansCJK.txt"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/OFL-NotoSansCJK.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/OFL-JetBrainsMono.txt"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/OFL-JetBrainsMono.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/FONT-MODIFICATIONS.txt"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/FONT-MODIFICATIONS.txt"
+    COMMENT "Copying bundled fonts + licenses to build directory"
+)
+
 # ConPTY v2 redist（debt246，仅 Windows）：third_party/conpty/ 的 conpty.dll +
 # OpenConsole.exe **成对**拷到 exe 旁 conpty\（运行时三级查找第二级，terminal_backend_win.cpp；
 # 缺对会静默回落 inbox conhost——wtmux 实证，故两文件齐才拷）。资产不入 git 自动下载链，
