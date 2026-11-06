@@ -493,6 +493,11 @@ foreach(_probe_source ${_devdesk_probe_sources})
     if(TARGET devdesk_terminal_bridge)
         target_link_libraries(${_probe_name} PRIVATE devdesk_terminal_bridge)
     endif()
+    # memory_install_probe（need:159 qa 全链路实测驱动）：mcpserve 子命令要真
+    # module::mcp::globalMcpService（HTTP MCP 服务），链接 devdesk_module_mcp
+    if(_probe_name STREQUAL "memory_install_probe")
+        target_link_libraries(${_probe_name} PRIVATE devdesk_module_mcp)
+    endif()
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），
     # 这里只把它的 target 显式链给探针 + 借它传递 include 路径（源目录 + 生成
