@@ -953,7 +953,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .position(toggleX, toggleY)
                 .size(toggleSize, toggleSize)
                 .icon(eui::utf8(collapsed ? 0xF0C9 : 0xF100))  // fa-bars / fa-angles-left
-                .fontSize(t.sizes.fontSizeSmall)  // §10.2：fontSizeSmall(12)
+                // 图标尺寸按钮径比例（2026-11-06 老板实测 mac 偏小）：原沿
+                // fontSizeSmall=12 在 28-32px 圆钮内留白过多；改 56% 钮径（正常档
+                // 32→18、紧凑/极紧档 28→16），并走 scaled() 跟随全局字号缩放。
+                .fontSize(core::theme::scaled(toggleSize * 0.56f))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(toggleActive ? t.colors.primary : t.colors.textSecondary)
