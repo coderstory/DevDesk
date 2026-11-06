@@ -262,9 +262,18 @@ void setCustomTitlebarMode(std::optional<bool> mode) {
     g_titlebarModeOverride = std::move(mode);
 }
 
-// 窗口钮热区：右缘两钮（关/最小），每钮 46×标题条高（UAT4：最大化钮按用户
-// 拍板移除——最大化/还原只留标题栏双击一条路径）
+// 窗口钮热区：每钮 46×标题条高。
+// Windows：右缘两钮（关/最小）——UAT4 按用户拍板移除最大化钮，最大化/还原只留
+// 标题栏双击一条路径。
+// macOS：右缘三钮（关/最小/最大化）——need:140 老板 2026-11-06 改口径为
+// 「Windows 同款自绘钮」，三钮齐全（红绿灯彩点方案已废止）。
 constexpr float kWindowButtonW = 46.0f;
+
+// 标题条右缘钮数量（Windows 2 / macOS 2）——老板 2026-11-06 最终口径：两端都
+// 只有关闭+最小化两钮（Windows 侧亦无全屏钮），全屏走双击标题栏。
+int titlebarButtonCount() {
+    return 2;
+}
 
 // eui::Color → 0xRRGGBBAA（macOS 自绘钮皮肤注入用；EUI 覆盖层零硬编码色）
 std::uint32_t rgba32(const eui::Color& c) {
@@ -276,34 +285,35 @@ std::uint32_t rgba32(const eui::Color& c) {
            channel(c.a);
 }
 
-// macOS 自绘钮皮肤（need:140 路线 B，设计文档 2026-11-06 §5 状态表）：色值全
-// token，描边=各钮 hover 档；符号色关闭=onPrimary 白、最小化/全屏=底色挖空
-//（EUI 覆盖层以填充色画符号，无须单独 token）。深浅主题切换后重注入
+// macOS 自绘钮皮肤（need:140 路线 B；老板 2026-11-06 改口径 = Windows 同款）：
+// 常态不铺底（0 = 透明）、hover 灰底（关闭钮 hover 红底）、图标色 textSecondary，
+// 关闭钮 hover 时白叉。色值全取 theme token，深浅主题切换后重注入。
 core::platform::CustomTitlebarSkin titlebarSkinFromTheme(const ::core::theme::Tokens& t) {
     core::platform::CustomTitlebarSkin skin;
-    const auto button = [](const eui::Color& normal, const eui::Color& hover,
-                           const eui::Color& pressed) {
+    const auto button = [](const eui::Color& hover, const eui::Color& pressed) {
         core::platform::CustomTitlebarButtonSkin s;
-        s.normal = rgba32(normal);
+        s.normal = 0;  // Windows 同款：常态透明
         s.hover = rgba32(hover);
         s.pressed = rgba32(pressed);
-        s.stroke = rgba32(hover);
+        s.stroke = 0;  // 无描边
         return s;
     };
-    skin.close = button(t.colors.error, t.colors.titlebarCloseHover,
-                        t.colors.titlebarClosePressed);
-    skin.minimize = button(t.colors.warning, t.colors.titlebarMinimizeHover,
-                           t.colors.titlebarMinimizePressed);
-    skin.fullscreen = button(t.colors.primary, t.colors.primaryHover,
-                             t.colors.primaryPressed);
-    skin.closeSymbol = rgba32(t.colors.onPrimary);
+    skin.close = button(t.colors.error, t.colors.error);
+    skin.minimize = button(t.colors.hover, t.colors.primarySoftBg);
+    skin.fullscreen = button(t.colors.hover, t.colors.primarySoftBg);
+    skin.closeSymbol = rgba32(eui::Color{1.0f, 1.0f, 1.0f, 1.0f});  // hover 时白叉
     skin.unfocused = rgba32(t.colors.textDisabled);
+    skin.iconNormal = rgba32(t.colors.textSecondary);  // 常态图标色（Windows 同款）
+    // hover 态非关闭钮图标：hover 底是浅灰（亮）/深灰（暗），图标取高对比前景色
+    skin.iconHover = rgba32(t.colors.textPrimary);
     return skin;
 }
 
 bool titlebarCaptionHit(const CaptionHitQuery& query) {
-    // 拖拽区 = 标题条带内、右缘两钮热区左侧之外（品牌文本区可拖）。
-    // 标题条贴边处的八向 resize 热区在 EUI-NEO 层优先于本回调，此处不管边缘
+    // 拖拽区 = 标题条带内、右缘钮热区左侧之外（品牌文本区可拖）。
+    // 标题条贴边处的八向 resize 热区在 EUI-NEO 层优先于本回调，此处不管边缘。
+    // mac 侧三钮（Windows 同款，need:140 2026-11-06 改口径）占右缘 3×46，
+    // Windows 侧两钮占 2×46——按平台分档由 kTitlebarButtonCount 决定。
     if (!customTitlebarActive()) {
         return false;
     }
@@ -313,7 +323,8 @@ bool titlebarCaptionHit(const CaptionHitQuery& query) {
     if (query.x < 0.0f || query.x > query.width) {
         return false;
     }
-    return query.x < query.width - kWindowButtonW * 2.0f;
+    const float buttonZone = kWindowButtonW * static_cast<float>(titlebarButtonCount());
+    return query.x < query.width - buttonZone;
 }
 
 // 自绘标题条：左品牌文本、右两钮（关/最小）；不铺底色——半透/磨砂的 clearColor +
@@ -324,10 +335,12 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
     const float h = titlebarHeight();
 
-    // macOS 自绘壳（need:140 路线 B）：三钮（红绿灯彩点）由 EUI NSView 覆盖层
-    // 渲染与交互，色值经 setCustomTitlebarSkin 注入（主题 token，EUI 层零硬编码
-    // 色）；DSL 只画品牌文本，左缘 x<138 三钮热区让位给系统层（设计 §4：品牌
-    // 起点 x=154 = 热区 138 + 16）。Windows 构图（下方）零改动（F-09 门禁）。
+    // macOS 自绘壳（need:140 路线 B）：三钮由 EUI NSView 覆盖层渲染与交互，色值
+    // 经 setCustomTitlebarSkin 注入（主题 token，EUI 层零硬编码色）；DSL 只画品牌
+    // 文本，右缘三钮热区（3×46）让位给系统层。
+    // 老板 2026-11-06 改口径：视觉从红绿灯彩点改为 **Windows 同款**（右缘连排、
+    // 常态透明底、灰线性图标、关闭 hover 红底白叉、最大化走方框图标）；品牌起点
+    // 回到 16 与 Windows 构图一致。Windows 分支（下方）零改动（F-09 门禁）。
     // 主题指纹（深浅）变化才注入，主题切换即时生效
     if (customWindowChromeButtonsNative()) {
         static std::optional<bool> injectedDark;
@@ -336,7 +349,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             injectedDark = t.isDark;
         }
         ui.text("app.titlebar.brand")
-            .position(154.0f, 0.0f)
+            .position(16.0f, 0.0f)
             .size(160.0f, h)
             .text("DevDesk")
             .fontSize(t.sizes.fontSizeBody)
@@ -1223,8 +1236,12 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
 #else
     const float kSystemTitleBarInset = 0.0f;
 #endif
-    const float bodyTop = chrome ? titlebarHeight() : kSystemTitleBarInset;
-    if (chrome) {
+    // 全屏态（老板 2026-11-06）：mac 原生全屏下标题条整条退场，内容铺满全窗 →
+    // bodyTop=0、不画标题条。非全屏保持 chrome ? 40 : 回退 inset。
+    const bool inFullscreen = app::mainWindowFullscreen();
+    const float bodyTop = inFullscreen ? 0.0f
+                                       : (chrome ? titlebarHeight() : kSystemTitleBarInset);
+    if (chrome && !inFullscreen) {
         drawTitlebar(ui, screen);
     }
     eui::Screen bodyScreen;
