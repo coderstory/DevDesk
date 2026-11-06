@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  macOS 自绘标题栏 demo（need:140 路线 B）——仅视觉校准，不是实现蓝图。
+  配套设计文档：2026-11-06-macos-custom-titlebar-design.md
+  覆盖：方案 A/B 切换 / 深浅主题 / 三档材质 / 失焦态 / 全屏态 / 极窄窗 /
+        拖拽热区 / 双击缩放语义 / 果冻按压。零外部依赖，浏览器直开。
+  色值全部取自 DevDesk theme token（见设计文档 §5 表）。
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>macOS 自绘标题栏 demo — DevDesk need:140</title>
+<style>
+  /* ---------- 主题 token（theme.cpp 实读值） ---------- */
+  :root, body[data-theme="dark"] {
+    --bg: #1A1816; --surface: #232120; --sidebar: #0F1F18;
+    --hover: #353231; --primary-soft: #0D3326;
+    --primary: #36D399; --primary-hover: #2EC48F; --primary-pressed: #23B07F;
+    --error: #F87171; --error-hover: #EF4444; --error-pressed: #DC2626;
+    --warning: #FBBF24; --warning-hover: #F59E0B; --warning-pressed: #D97706;
+    --text-1: #FAF9F5; --text-2: #C9C5BD; --text-disabled: #908A82;
+    --border: #3A3735; --on-primary: #FFFFFF;
+    --glyph-dig: #1A1816; /* 黄/绿符号挖空色 = background */
+    --mat-alpha: 1;
+  }
+  body[data-theme="light"] {
+    --bg: #F5FAF7; --surface: #FFFFFF; --sidebar: #EBF6EF;
+    --hover: #EEF6F1; --primary-soft: #E8F8EE;
+    --primary: #07C160; --primary-hover: #06AD56; --primary-pressed: #059048;
+    --error: #EF4444; --error-hover: #DC2626; --error-pressed: #B91C1C;
+    --warning: #F59E0B; --warning-hover: #D97706; --warning-pressed: #B45309;
+    --text-1: #1F2937; --text-2: #4B5563; --text-disabled: #6B7280;
+    --border: #E5E7EB; --on-primary: #FFFFFF;
+    --glyph-dig: #F5FAF7;
+    --mat-alpha: 1;
+  }
+  /* 材质档：半透/磨砂下调窗口底 alpha，磨砂另加 backdrop blur */
+  body[data-material="translucent"] { --mat-alpha: .62; }
+  body[data-material="frosted"]     { --mat-alpha: .55; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    /* 假桌面壁纸：环境模拟，非 app UI */
+    background:
+      radial-gradient(1100px 700px at 78% 18%, #7C6FA3 0%, transparent 55%),
+      radial-gradient(900px 600px at 18% 85%, #12B7F5 0%, transparent 50%),
+      linear-gradient(160deg, #2B2530 0%, #1A2030 100%);
+  }
+
+  /* ---------- 控制面板 ---------- */
+  #panel {
+    position: fixed; top: 16px; right: 16px; z-index: 50;
+    background: rgba(20, 20, 24, .88); color: #E8E6E1;
+    border: 1px solid rgba(255,255,255,.12); border-radius: 10px;
+    padding: 12px 14px; font-size: 12px; line-height: 1.5;
+    width: 232px; backdrop-filter: blur(10px);
+  }
+  #panel h1 { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
+  #panel .cap { color: #9A948A; font-size: 11px; margin-bottom: 10px; }
+  #panel .grp { margin-bottom: 9px; }
+  #panel .lbl { color: #9A948A; margin-bottom: 3px; }
+  #panel .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  #panel button {
+    flex: 1 1 auto; min-width: 56px;
+    background: rgba(255,255,255,.08); color: #E8E6E1;
+    border: 1px solid rgba(255,255,255,.14); border-radius: 6px;
+    padding: 4px 8px; font-size: 12px; cursor: pointer;
+    transition: background 120ms ease-out;
+  }
+  #panel button:hover { background: rgba(255,255,255,.16); }
+  #panel button.on { background: #2EC48F; border-color: #2EC48F; color: #fff; font-weight: 600; }
+  #panel .hint { color: #9A948A; font-size: 11px; border-top: 1px solid rgba(255,255,255,.1); padding-top: 8px; margin-top: 2px; }
+  #panel kbd { background: rgba(255,255,255,.12); border-radius: 3px; padding: 0 4px; font-size: 11px; }
+
+  /* ---------- 模拟窗 ---------- */
+  #sim {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(880px, 78vw); height: min(560px, 72vh); min-width: 420px;
+    display: flex; flex-direction: column;
+    border-radius: 10px; overflow: hidden;
+    color: var(--text-1);
+    background: var(--bg);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.28), 0 24px 64px rgba(0,0,0,.5);
+    transition: background-color 150ms ease-out;
+  }
+  body[data-material="translucent"] #sim,
+  body[data-material="frosted"] #sim {
+    background: color-mix(in srgb, var(--bg) calc(var(--mat-alpha) * 100%), transparent);
+  }
+  body[data-material="frosted"] #sim { backdrop-filter: blur(18px) saturate(1.2); }
+  #sim.blurred { box-shadow: 0 0 0 1px rgba(0,0,0,.22), 0 12px 32px rgba(0,0,0,.38); }
+
+  /* ---------- 标题条 40px ---------- */
+  #titlebar {
+    height: 40px; flex: 0 0 40px; display: flex; align-items: stretch;
+    position: relative; user-select: none; cursor: default;
+  }
+  body.fullscreen #sim { border-radius: 0; box-shadow: none; }
+  body.fullscreen #titlebar { display: none; }
+  body.fullscreen #wallTag { opacity: 0; }
+
+  /* 方案 A：红绿灯彩点（46×40 热区 ×3 连排） */
+  .btn-a, .btn-b {
+    width: 46px; height: 40px; flex: 0 0 46px;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; cursor: default; border: 0; padding: 0;
+    background: transparent;
+    transition: transform 150ms ease-out;
+  }
+  .btn-a:active, .btn-b:active { transform: scale(.96); }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%; position: relative;
+    transition: background-color 120ms ease-out, box-shadow 120ms ease-out;
+  }
+  /* 1px 描边 = 各自 hover 深档（设计 §5）；失焦去描边 */
+  #btnClose .dot { background: var(--error); box-shadow: 0 0 0 1px var(--error-hover); }
+  #btnMin   .dot { background: var(--warning); box-shadow: 0 0 0 1px var(--warning-hover); }
+  #btnZoom  .dot { background: var(--primary); box-shadow: 0 0 0 1px var(--primary-hover); }
+
+  /* 符号：CSS 绘制，默认 opacity 0，hover/pressed 淡入 120ms */
+  .sym { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 120ms ease-out; }
+  .btn-a:hover .sym, .btn-a:active .sym { opacity: 1; }
+  .sym .bar { background: var(--on-primary); border-radius: 1px; }
+  #symClose { transform: rotate(0deg); }
+  #symClose .bar:nth-child(1) { width: 8px; height: 1.4px; position: absolute; transform: rotate(45deg); }
+  #symClose .bar:nth-child(2) { width: 8px; height: 1.4px; position: absolute; transform: rotate(-45deg); }
+  #symMin .bar { width: 7px; height: 1.4px; background: var(--glyph-dig); }
+  .tri { width: 0; height: 0; position: absolute; }
+  #symZoom .tri.t1 { border-left: 3.4px solid transparent; border-right: 3.4px solid transparent; border-bottom: 5.6px solid var(--glyph-dig); transform: translate(-3.2px, -2.6px) rotate(0deg); }
+  #symZoom .tri.t2 { border-left: 3.4px solid transparent; border-right: 3.4px solid transparent; border-top: 5.6px solid var(--glyph-dig); transform: translate(3.2px, 2.6px); }
+
+  #btnClose:hover .dot, #btnClose:active .dot { background: var(--error-hover); }
+  #btnClose:active .dot { background: var(--error-pressed); }
+  #btnMin:hover .dot, #btnMin:active .dot { background: var(--warning-hover); }
+  #btnMin:active .dot { background: var(--warning-pressed); }
+  #btnZoom:hover .dot, #btnZoom:active .dot { background: var(--primary-hover); }
+  #btnZoom:active .dot { background: var(--primary-pressed); }
+
+  /* 失焦：全灰、去描边、符号死 */
+  #sim.blurred .dot { background: var(--text-disabled) !important; box-shadow: none !important; }
+  #sim.blurred .sym { opacity: 0 !important; }
+
+  /* 方案 B：DevDesk 统一线性钮（与 Windows 同构，位置左移） */
+  .btn-b { display: none; }
+  body[data-plan="b"] .btn-a { display: none; }
+  body[data-plan="b"] .btn-b { display: flex; }
+  .btn-b .icon { width: 12px; height: 12px; position: relative; }
+  .btn-b .lbar { position: absolute; background: var(--text-2); border-radius: 1px; transition: background 120ms ease-out; }
+  .btn-b .lbar.x1 { width: 10px; height: 1.4px; transform: rotate(45deg); }
+  .btn-b .lbar.x2 { width: 10px; height: 1.4px; transform: rotate(-45deg); }
+  .btn-b .lbar.mi { width: 9px; height: 1.4px; }
+  .btn-b .lbar.z1 { width: 7px; height: 1.4px; transform: rotate(-45deg) translate(-2.5px, -1px); }
+  .btn-b .lbar.z2 { width: 7px; height: 1.4px; transform: rotate(-45deg) translate(2.5px, 1px); }
+  .btn-b:hover { background: var(--hover); }
+  .btn-b:active { background: var(--primary-soft); }
+  #btnCloseB:hover { background: var(--error); }
+  #btnCloseB:hover .lbar { background: var(--on-primary); }
+  #btnCloseB:active { background: var(--error); }
+  #btnCloseB:active .lbar { background: var(--on-primary); }
+  #sim.blurred .btn-b { pointer-events: none; }
+  #sim.blurred .btn-b .lbar { background: var(--text-disabled); }
+
+  /* 品牌文本 x=154 起（三钮热区 138 + 16）；超宽截断 */
+  #brand {
+    position: absolute; left: 154px; top: 0; height: 40px; max-width: calc(100% - 170px);
+    display: flex; align-items: center;
+    font-size: 14px; font-weight: 700; color: var(--text-1);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  body[data-plan="b"] #brand { left: 154px; }
+  #dragzone {
+    position: absolute; left: 138px; right: 0; top: 0; height: 40px; cursor: default;
+  }
+
+  /* ---------- 内容区（侧栏 + 页面占位） ---------- */
+  #row { flex: 1; display: flex; min-height: 0; }
+  #sidebar {
+    width: 220px; flex: 0 0 220px; background: var(--sidebar);
+    transition: width 200ms ease-out, background-color 150ms ease-out;
+    display: flex; flex-direction: column; padding: 16px 8px;
+  }
+  #row.narrow #sidebar { width: 72px; flex-basis: 72px; }
+  .nav {
+    display: flex; align-items: center; gap: 8px; height: 40px;
+    border-radius: 6px; padding: 0 12px; color: var(--text-2);
+    font-size: 14px; margin-bottom: 4px; white-space: nowrap; overflow: hidden;
+  }
+  .nav.on { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+  .nav .sq { width: 14px; height: 14px; border-radius: 4px; background: currentColor; opacity: .55; flex: 0 0 14px; }
+  #row.narrow .nav span { display: none; }
+  #page { flex: 1; background: var(--bg); padding: 24px; overflow: auto; transition: background-color 150ms ease-out; }
+  #page h2 { font-size: 16px; margin-bottom: 8px; }
+  #page p { font-size: 14px; color: var(--text-2); line-height: 1.7; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin-top: 12px; font-size: 14px; color: var(--text-2); }
+
+  /* 窗宽拖拽手柄（右缘 6px） */
+  #resizer { position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: ew-resize; z-index: 5; }
+
+  /* 全屏指示 */
+  #fsTag {
+    position: fixed; left: 50%; top: 20px; transform: translateX(-50%);
+    background: rgba(20,20,24,.85); color: #E8E6E1; border-radius: 8px;
+    font-size: 12px; padding: 6px 14px; display: none; z-index: 60;
+  }
+  body.fullscreen #fsTag { display: block; }
+  #wallTag {
+    position: fixed; left: 16px; bottom: 14px; color: rgba(255,255,255,.55);
+    font-size: 12px; z-index: 40; transition: opacity 200ms ease-out;
+  }
+</style>
+</head>
+<body data-theme="dark" data-material="off" data-plan="a">
+
+  <div id="fsTag">全屏中 — 自绘条与三钮整体退场（点击下方「退出全屏」还原）</div>
+  <div id="wallTag">点壁纸 = 失焦 / 点窗口 = 激活 ｜ 标题条拖拽区可拖窗 ｜ 双击拖拽区 = 缩放演示</div>
+
+  <div id="panel">
+    <h1>macOS 自绘标题栏 demo</h1>
+    <div class="cap">need:140 路线 B · 仅视觉校准</div>
+    <div class="grp"><div class="lbl">视觉方案</div>
+      <div class="seg">
+        <button id="pA" class="on">A 红绿灯（推荐）</button>
+        <button id="pB">B 统一线性</button>
+      </div>
+    </div>
+    <div class="grp"><div class="lbl">主题</div>
+      <div class="seg">
+        <button id="tDark" class="on">深</button>
+        <button id="tLight">浅</button>
+      </div>
+    </div>
+    <div class="grp"><div class="lbl">窗口材质（三档）</div>
+      <div class="seg">
+        <button id="mOff" class="on">关闭</button>
+        <button id="mTrans">半透</button>
+        <button id="mFrost">磨砂</button>
+      </div>
+    </div>
+    <div class="grp"><div class="lbl">窗口状态</div>
+      <div class="seg">
+        <button id="sBlur">失焦态</button>
+        <button id="sFs">全屏态</button>
+        <button id="sNarrow">压到最窄</button>
+        <button id="sReset">重置</button>
+      </div>
+    </div>
+    <div class="hint">
+      验证点：三钮热区 46×40 固定 · 极窄不挤压 · hover 深档+符号 ·
+      按压果冻 0.96 · 失焦全灰 · 材质 6 组合可辨 · <kbd>Esc</kbd> 退全屏
+    </div>
+  </div>
+
+  <div id="sim">
+    <div id="titlebar">
+      <!-- 方案 A：三颗彩点，热区 46×40 无缝连排（圆心 x=23/69/115） -->
+      <button class="btn-a" id="btnClose" aria-label="关闭"><span class="dot"></span>
+        <span class="sym" id="symClose"><span class="bar"></span><span class="bar"></span></span></button>
+      <button class="btn-a" id="btnMin" aria-label="最小化"><span class="dot"></span>
+        <span class="sym" id="symMin"><span class="bar"></span></span></button>
+      <button class="btn-a" id="btnZoom" aria-label="全屏"><span class="dot"></span>
+        <span class="sym" id="symZoom"><span class="tri t1"></span><span class="tri t2"></span></span></button>
+      <!-- 方案 B：DevDesk 统一线性钮（Windows 同构左移） -->
+      <button class="btn-b" id="btnCloseB" aria-label="关闭"><span class="icon"><span class="lbar x1"></span><span class="lbar x2"></span></span></button>
+      <button class="btn-b" id="btnMinB" aria-label="最小化"><span class="icon"><span class="lbar mi"></span></span></button>
+      <button class="btn-b" id="btnZoomB" aria-label="全屏"><span class="icon"><span class="lbar z1"></span><span class="lbar z2"></span></span></button>
+      <div id="brand">DevDesk</div>
+      <div id="dragzone"></div>
+    </div>
+    <div id="row">
+      <div id="sidebar">
+        <div class="nav on"><span class="sq"></span><span>主页</span></div>
+        <div class="nav"><span class="sq"></span><span>任务</span></div>
+        <div class="nav"><span class="sq"></span><span>日程</span></div>
+        <div class="nav"><span class="sq"></span><span>设置</span></div>
+      </div>
+      <div id="page">
+        <h2>页面内容区（占位）</h2>
+        <p>顶部条高 40px，与 Windows 端 bodyTop 同值；本区从 y=40 起。切换材质到「半透 / 磨砂」后，标题条不铺底、壁纸直透条区——验收「条区与 app 顶区融合」。</p>
+        <div class="card">左缘三钮热区 x∈[0,138) 固定：拖右缘把窗压到最窄，三钮不挤压不换行；品牌文本自适应收窄至截断。</div>
+        <div class="card">失焦（点壁纸）后三钮全灰、描边消失、符号隐藏——macOS 原生非激活语义。</div>
+      </div>
+    </div>
+    <div id="resizer"></div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var body = document.body;
+  var sim = document.getElementById('sim');
+  var row = document.getElementById('row');
+  var brand = document.getElementById('brand');
+
+  function setOn(id, on) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('on', on);
+  }
+
+  /* 方案 A/B */
+  function plan(p) {
+    body.setAttribute('data-plan', p);
+    setOn('pA', p === 'a');
+    setOn('pB', p === 'b');
+  }
+  document.getElementById('pA').addEventListener('click', function () { plan('a'); });
+  document.getElementById('pB').addEventListener('click', function () { plan('b'); });
+
+  /* 主题 */
+  function theme(t) {
+    body.setAttribute('data-theme', t);
+    setOn('tDark', t === 'dark');
+    setOn('tLight', t === 'light');
+  }
+  document.getElementById('tDark').addEventListener('click', function () { theme('dark'); });
+  document.getElementById('tLight').addEventListener('click', function () { theme('light'); });
+
+  /* 材质三档 */
+  function material(m) {
+    body.setAttribute('data-material', m);
+    setOn('mOff', m === 'off');
+    setOn('mTrans', m === 'translucent');
+    setOn('mFrost', m === 'frosted');
+  }
+  document.getElementById('mOff').addEventListener('click', function () { material('off'); });
+  document.getElementById('mTrans').addEventListener('click', function () { material('translucent'); });
+  document.getElementById('mFrost').addEventListener('click', function () { material('frosted'); });
+
+  /* 失焦 / 激活：点壁纸失焦，点窗口激活；按钮强制切换 */
+  function blurWin(b) { sim.classList.toggle('blurred', b); }
+  document.getElementById('sBlur').addEventListener('click', function () {
+    blurWin(!sim.classList.contains('blurred'));
+  });
+  document.addEventListener('mousedown', function (e) {
+    if (body.classList.contains('fullscreen')) return;
+    blurWin(!sim.contains(e.target));
+  });
+
+  /* 全屏态：条与钮整体退场 */
+  function fs(on) { body.classList.toggle('fullscreen', on); }
+  document.getElementById('sFs').addEventListener('click', function () {
+    fs(!body.classList.contains('fullscreen'));
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') fs(false);
+  });
+
+  /* 极窄 / 重置 */
+  document.getElementById('sNarrow').addEventListener('click', function () {
+    sim.style.width = '420px';
+    row.classList.add('narrow');
+  });
+  document.getElementById('sReset').addEventListener('click', function () {
+    sim.style.width = '';
+    row.classList.remove('narrow');
+    fs(false);
+    blurWin(false);
+  });
+
+  /* 窗宽拖拽（右缘手柄，下限 420 = demo 比例模拟；实际最小宽 1200 归实现钳制） */
+  var rz = document.getElementById('resizer');
+  var dragging = false;
+  rz.addEventListener('mousedown', function (e) {
+    dragging = true;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    var rect = sim.getBoundingClientRect();
+    var w = e.clientX - rect.left;
+    if (w < 420) w = 420;
+    if (w > window.innerWidth - 24) w = window.innerWidth - 24;
+    sim.style.width = w + 'px';
+    /* 窗宽 < 640 时演示侧栏折叠（72px），品牌文本随窗宽截断 */
+    row.classList.toggle('narrow', w < 640);
+  });
+  document.addEventListener('mouseup', function () { dragging = false; });
+
+  /* 标题条拖拽移动窗口 + 双击缩放演示（钮热区不参与） */
+  var dz = document.getElementById('dragzone');
+  var moveDrag = null;
+  dz.addEventListener('mousedown', function (e) {
+    var rect = sim.getBoundingClientRect();
+    moveDrag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, n: 0, t: Date.now() };
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!moveDrag) return;
+    var rect = sim.getBoundingClientRect();
+    var left = e.clientX - moveDrag.dx;
+    var top = e.clientY - moveDrag.dy;
+    if (left < -rect.width + 120) left = -rect.width + 120;
+    if (top < 0) top = 0;
+    if (left > window.innerWidth - 120) left = window.innerWidth - 120;
+    if (top > window.innerHeight - 80) top = window.innerHeight - 80;
+    sim.style.left = left + 'px';
+    sim.style.top = top + 'px';
+    sim.style.transform = 'none';
+    moveDrag.n += 1;
+  });
+  document.addEventListener('mouseup', function () {
+    moveDrag = null;
+  });
+  dz.addEventListener('dblclick', function () {
+    /* 双击拖拽区 = 缩放演示（zoom）；钮热区 x<138 双击绝不触发 */
+    if (sim.style.width && parseInt(sim.style.width, 10) >= window.innerWidth - 40) {
+      sim.style.width = '';
+      sim.style.height = '';
+      sim.style.left = '50%';
+      sim.style.top = '50%';
+      sim.style.transform = 'translate(-50%, -50%)';
+    } else {
+      sim.style.width = (window.innerWidth - 24) + 'px';
+      sim.style.height = (window.innerHeight - 24) + 'px';
+      sim.style.left = '12px';
+      sim.style.top = '12px';
+      sim.style.transform = 'none';
+    }
+  });
+
+  /* 钮点击语义演示：关闭/最小化在 demo 内不做真实动作，仅按压反馈；全屏钮=真实切换全屏态 */
+  document.getElementById('btnZoom').addEventListener('click', function (e) { e.stopPropagation(); fs(true); });
+  document.getElementById('btnZoomB').addEventListener('click', function (e) { e.stopPropagation(); fs(true); });
+  document.getElementById('btnClose').addEventListener('click', function (e) { e.stopPropagation(); });
+  document.getElementById('btnMin').addEventListener('click', function (e) { e.stopPropagation(); });
+  document.getElementById('btnCloseB').addEventListener('click', function (e) { e.stopPropagation(); });
+  document.getElementById('btnMinB').addEventListener('click', function (e) { e.stopPropagation(); });
+})();
+</script>
+</body>
+</html>
