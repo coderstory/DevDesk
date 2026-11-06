@@ -19,20 +19,32 @@ namespace ui_kit {
 // 边框几何（2026-11-04 细线口径）：线宽 1（细线）、内缩 1。
 constexpr float kWindowRingInset = 1.0f;
 constexpr float kWindowRingBorder = 1.0f;
-// 圆角半径（老板 2026-11-04「黑框需要考虑窗体的圆角」）：Win11 DWM 窗口圆角
-// = 固定 8 物理px（不随 DPI 缩放）→ 逻辑半径 = 8 / contentScale；描边路径在
-// inset 处要贴住 DWM 裁剪弧（近似同心），取 逻辑半径 − inset。此前按「8 逻辑」
-// 写死 10，135% 屏上弧过圆、角落黑线内凹离窗缘。
-inline float windowBorderRadius(float contentScaleParam) {
+// 圆角半径（老板 2026-11-04「黑框需要考虑窗体的圆角」；2026-11-06 修 mac 贴边）：
+// 平台差异由调用方以 windowCornerRadiusParam 传入（业务层禁 #ifdef，见
+// AGENTS.md §三；app_sidebar.cpp 按平台算好传进来）：
+//   Windows = Win11 DWM 固定 8 物理px（不随 DPI 缩放）→ 传 8.0f；
+//   macOS   = AppKit 原生窗口圆角（EUI 从不设 layer.cornerRadius，系统绘制），
+//             macOS 26/27 实测约 12 逻辑pt 且不随 backingScale → 传 12.0f；
+//   Linux   同 Windows 口径。
+// 描边路径在 inset 处要贴住裁剪弧（近似同心），故再减 inset。
+// contentScaleParam：物理/逻辑比（Windows 上圆角是物理px，需除回逻辑）。
+inline float windowBorderRadius(float cornerRadiusLogical,
+                                float contentScaleParam) {
     const float scale = contentScaleParam > 0.0f ? contentScaleParam : 1.0f;
-    return std::max(2.0f, 8.0f / scale - kWindowRingInset);
+    const float base = cornerRadiusLogical > 0.0f ? cornerRadiusLogical : 8.0f;
+    // macOS 传的是逻辑 pt（scale 不参与）；Windows 传物理 px（需 /scale）。
+    // 由调用方传「已换算到逻辑」的值，这里不再二次归一 —— 保持单一口径。
+    (void)scale;
+    return std::max(2.0f, base - kWindowRingInset);
 }
 
 // 在窗口整幅 bounds 上叠边框；调用点 = 应用 compose 根最后（最顶层）。
-// contentScaleParam：物理/逻辑比（调用方传 eui::app::contentScale()；测试传 1.0）。
+// cornerRadiusLogical：窗体真实圆角（逻辑px，调用方按平台给：mac 12 / Win 8/scale）。
+// contentScaleParam：保留参数位（历史调用兼容），当前不参与半径计算。
 inline void drawWindowRing(eui::Ui& ui, float w, float h,
                            const core::theme::Tokens& t, bool maximized,
-                           float contentScaleParam = 1.0f) {
+                           float contentScaleParam = 1.0f,
+                           float cornerRadiusLogical = 8.0f) {
     (void)t;  // 黑色恒定不随主题（撤销绿白虚框后无主题联动参数）
     if (maximized) return;   // 最大化直角贴屏缘不绘（见文件头）
     const float x0 = kWindowRingInset;
@@ -48,7 +60,7 @@ inline void drawWindowRing(eui::Ui& ui, float w, float h,
     ui.rect("app.ring.base")
         .position(x0, y0)
         .size(w0, h0)
-        .radius(windowBorderRadius(contentScaleParam))
+        .radius(windowBorderRadius(cornerRadiusLogical, contentScaleParam))
         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
         .border(kWindowRingBorder, eui::Color{0.0f, 0.0f, 0.0f, 1.0f})
         .build();

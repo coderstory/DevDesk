@@ -49,12 +49,19 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
     // 探针窗真实 contentScale（与 A3 采样、FrameCapture::scale 同源同值）：
-    // drawWindowRing 渲染半径必须同口径折算 DWM 8 物理px，漏传吃默认 1.0 时
-    // 渲染半径与 A3 采样半径错位（135% 屏差 ~2 逻辑px）→ 弧点落抗锯齿边假红。
+    // drawWindowRing 与 A3 采样必须同口径传平台真实圆角（mac 12 逻辑pt /
+    // Windows 8 物理px 折算），漏传或口径不一 → 弧点落抗锯齿边假红。
     float probeScaleX = 1.0f, probeScaleY = 1.0f;
     glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &probeScaleX,
                               &probeScaleY);
     const float probeScale = probeScaleX > 0.0f ? probeScaleX : 1.0f;
+    // 窗体真实圆角（与宿主 app_sidebar.cpp 同口径）：mac = AppKit 原生 12 逻辑pt，
+    // 其他 = DWM 8 物理px 折回逻辑。2026-11-06 老板实测「黑线没贴窗口边缘」修复。
+#ifdef __APPLE__
+    const float probeCornerRadius = 12.0f;
+#else
+    const float probeCornerRadius = 8.0f / probeScale;
+#endif
     core::dsl::Ui* ui = nullptr;
     auto composeFrame = [&]() {
         probe::composeModuleFrame(runtime, window, "ring", w, h,
@@ -75,7 +82,8 @@ int main(int argc, char* argv[]) {
                                                   u, s.width, s.height,
                                                   core::theme::current(),
                                                   false,  // 探针窗恒还原态（need184③ 分支见 test_window_ring）
-                                                  probeScale);
+                                                  probeScale,
+                                                  probeCornerRadius);
                                           })
                                           .build();
                                   });
@@ -164,7 +172,7 @@ int main(int argc, char* argv[]) {
     // A3：45° 圆角弧点 = 角圆心向窗角方向移 (r−0.5)·0.7071，应在黑描边上
     // （r 随探针 contentScale 走 DWM 8 物理px 折算——窗口圆角贴合同款口径）
     {
-        const float r = ui_kit::windowBorderRadius(scale);
+        const float r = ui_kit::windowBorderRadius(probeCornerRadius, scale);
         const float d = (r - 0.5f) * 0.70710678f;
         const float cx = ui_kit::kWindowRingInset + r - d;
         const float cy = ui_kit::kWindowRingInset + r - d;

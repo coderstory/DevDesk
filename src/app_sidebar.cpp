@@ -1276,12 +1276,19 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     ui_kit::drawToast(ui, screen, "app.notice", g_appNotice,
                       core::theme::componentTokensWeChat(core::theme::current()));
     // 池168（2026-11-04 老板撤销绿白虚框改细黑边）：窗口边框——全窗最外缘非交互
-    // 覆盖，放最后保证不被任何内容盖住；Windows 即真实窗框位置，macOS 为系统窗框
-    // 内侧内描边。圆角按 DWM 8 物理px/contentScale 折算贴窗体圆角。最大化态隐藏
-    // （need184③，fork 已暴露 mainWindowMaximized）。
+    // 覆盖，放最后保证不被任何内容盖住。最大化态隐藏（need184③）。
+    // 圆角按平台真实窗体圆角传入（2026-11-06 修 mac 贴边）：
+    //   Windows = DWM 固定 8 物理px → 逻辑值 = 8/contentScale；
+    //   macOS   = AppKit 原生圆角约 12 逻辑pt（系统绘制，EUI 不设 cornerRadius）。
+    const float scale = app::contentScale();
+#ifdef __APPLE__
+    const float cornerRadiusLogical = 12.0f;
+#else
+    const float cornerRadiusLogical = 8.0f / (scale > 0.0f ? scale : 1.0f);
+#endif
     ui_kit::drawWindowRing(ui, screen.width, screen.height,
                            core::theme::current(), app::mainWindowMaximized(),
-                           app::contentScale());
+                           scale, cornerRadiusLogical);
 }
 
 } // namespace app
