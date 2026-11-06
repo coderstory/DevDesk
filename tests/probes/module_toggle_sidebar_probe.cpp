@@ -403,8 +403,9 @@ int main(int argc, char* argv[]) {
     app::setSidebarCollapsed(false, false);
     composeFrame();
 
-    // 6) B6 need172 v2：收缩按钮几何（直径按档 32/28 正圆 + 1px 常态描边 + 区 48/44
-    //    内居中 + 热区外扩 4px）+ 真点击切换侧栏宽度 + hover 一次性粒子 v2
+    // 6) B6 need172 v2：收缩按钮几何（直径按档 40/36 正圆 + 1px 常态描边 + 区 56/52
+    //    上偏 4px 定位 + 热区外扩 4px；2026-11-06 bug146 dd0f28db 定稿）+ 真点击切换
+    //    侧栏宽度 + hover 一次性粒子 v2
     //（12 颗 / 4~6px / 0.75 / 800ms+延迟 0~80ms；迸发/自止/重触发）。
     //    hover 驱动走热区 onHoverChanged 手调（锁屏机无真实指针 move 注入；与真指针
     //    共用同一接线，回调由 EUI 命中派发写入）。
@@ -418,7 +419,9 @@ int main(int argc, char* argv[]) {
         const float availHActual =
             sidebarRoot != nullptr ? sidebarRoot->frame.height : bodyH;
         const bool tierNormal = availHActual >= 712.0f;
-        const float expToggleSize = tierNormal ? 32.0f : 28.0f;
+        // 2026-11-06 老板三轮实测定稿（bug146，dd0f28db）：正常档 32→36→40、
+        // 紧凑/极紧 28→36；预留区 56/52（随钮 +4）。
+        const float expToggleSize = tierNormal ? 40.0f : 36.0f;
         const float expRadius = expToggleSize * 0.5f;
         const auto* toggle =
             ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
@@ -430,19 +433,20 @@ int main(int argc, char* argv[]) {
             check(nearEq(toggle->radius, expRadius), "§6 按钮应正圆");
             check(nearEq(toggle->border.width, 1.0f),
                   "§6 常态应有 1px 圆框描边");
-            // 预留区内垂直居中：按钮底距侧栏底 8px（toggleY=H−40/H−36，上下各 8）
+            // 预留区内定位（bug146 dd0f28db）：toggleY = H − zone + 4（区内上偏
+            // 4px）→ 按钮底距侧栏底 = zone − 4 − 钮径 = 12（正常 56/紧凑 52 同值）
             const auto* sidebarEl = ui->find("app.sidebar");
             check(sidebarEl != nullptr &&
-                      nearEq(toggle->frame.y + toggle->frame.height + 8.0f,
+                      nearEq(toggle->frame.y + toggle->frame.height + 12.0f,
                              sidebarEl->frame.y + sidebarEl->frame.height),
-                  "§6 按钮应在预留区内垂直居中（底距侧栏底 8px）");
+                  "§6 按钮应在预留区内（底距侧栏底 12px，dd0f28db）");
             // 热区 = 绘制区外扩 4px（§10.2）
             const auto* hot = ui->find("app.sidebar.toggle.hot");
             check(hot != nullptr, "§6 热区元素应存在");
             if (hot != nullptr) {
                 check(nearEq(hot->frame.width, expToggleSize + 8.0f) &&
                           nearEq(hot->frame.height, expToggleSize + 8.0f),
-                      "§6 热区应 40/36（绘制区外扩 4px）");
+                      "§6 热区应 48/44（绘制区外扩 4px，dd0f28db）");
                 check(hot->onClick != nullptr, "§6 点击回调应在热区");
             }
             // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 220→72。
@@ -455,7 +459,7 @@ int main(int argc, char* argv[]) {
                 const auto* folded =
                     ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
                 const float expFoldX =
-                    (72.0f - expToggleSize) * 0.5f;  // 20（正常）/ 22（矮窗档）
+                    (72.0f - expToggleSize) * 0.5f;  // 16（正常）/ 18（矮窗档）
                 check(folded != nullptr &&
                           nearEq(folded->frame.x, expFoldX),
                       "§6 折叠态按钮应水平居中 ((72-尺寸)/2=" +

@@ -323,8 +323,13 @@ int cmdMcpServe(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "用法: memory_install_probe <install|collect|mcpserve> [参数]\n";
-        return 2;
+        // 裸调用（ctest 守卫链 add_test 无参注册）退 77 = SKIP_RETURN_CODE 跳过：
+        // 本探针归 QA 显式子命令驱动（install 需网络 pip / mcpserve 起真 HTTP
+        // 服务，都不能进守卫链自动跑）；argless 退 2 会令守卫链恒红（池199）。
+        std::cout << "memory_install_probe: 裸调用跳过（ctest 77）；"
+                     "用法: memory_install_probe <install|collect|mcpserve> "
+                     "[参数]\n";
+        return 77;
     }
     const std::string cmd = argv[1];
     if (cmd == "install") return cmdInstall(argc, argv);
