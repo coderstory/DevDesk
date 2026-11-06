@@ -995,9 +995,12 @@ const DslAppConfig& dslAppConfig() {
         .resizable(true)
         // 自绘窗口壳（UAT3 D-R3-1）：Windows undecorated + 自绘标题栏（拖拽/双击
         // 最大化/边缘 resize 走 EUI-NEO 窗口壳钩子；半透/磨砂随客户区铺满全窗，
-        // 不再被系统标题栏挡一条）；macOS 保系统标题栏（GLFW borderless 无红绿灯、
-        // 不可 resize、不可拖拽——能力查询恒 false，业务层零平台宏）
-        .decorated(!customWindowChromeSupported())
+        // 不再被系统标题栏挡一条）。macOS 自绘壳（need:140 路线 B）= PRD 子方案①：
+        // **保留** Titled mask（decorated=true），原生三钮由 EUI setHidden 隐藏
+        //（禁 removeFromSuperview；真 Borderless 是 N1 明确不做项）；Linux 无壳 =
+        // 有边框。业务层零平台宏，全走能力查询。
+        .decorated(!customWindowChromeSupported() ||
+                   customWindowChromeButtonsNative())
         // 自绘标题栏命中回调（物理→逻辑换算在 EUI-NEO 主循环安装点完成）：
         // 标题条带内、窗口钮左侧之外 = 拖拽区
         .onCaptionHitTest(&titlebarCaptionHit)

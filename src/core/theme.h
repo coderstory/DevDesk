@@ -46,6 +46,16 @@ struct ColorTokens {
     // 仅 3.18:1，低于 WCAG AA 4.5:1。浅色档 = 深红；深色档 = error 同值。
     // 错误文字用本 token；红底/边框/圆点/图标继续用 error
     eui::Color errorText;
+    // macOS 自绘标题栏钮（need:140 路线 B，设计文档 2026-11-06 §5 状态表落库；
+    // 推导档不许在业务代码裸写，全部走槽位）：关闭钮 hover/pressed 加深档、
+    // 最小化钮 hover/pressed 加深档。全屏钮三态 = 既有 primary/primaryHover/
+    // primaryPressed；描边色 = 各钮 hover 档；失焦灰 = textDisabled；符号色 =
+    // onPrimary（关闭白叉）或底色挖空（最小化/全屏）。这些组合在 app_sidebar
+    // 注入 EUI 覆盖层（EUI 层零硬编码色）
+    eui::Color titlebarCloseHover;
+    eui::Color titlebarClosePressed;
+    eui::Color titlebarMinimizeHover;
+    eui::Color titlebarMinimizePressed;
     eui::Color info;
     eui::Color sidebarBg;       // #EBF6EF 侧栏淡绿底（比 background 深半档）
     // 与现有功能色同族的去饱和强调色（区别于 blue 的品牌色档位，浅色档达图形 AA）
