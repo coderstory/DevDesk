@@ -781,33 +781,44 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .size(cardW, cardH)
                             .content([&] {
                                 // 卡底（F-66-5 材质×果冻合体）：B1 三态材质吃 hover/press
-                                // 变色，B2 每帧写 radius/scale 目标值吃 OutBack 回弹。
+                                // 变色，need201 v2 每帧写 radius/scale 目标值吃
+                                // 压扁-拉伸-回弹时间线（jellyFrame 公开缝供值——
+                                // 材质走 states 不能整卡换 jellyCard；kJelly 默认档
+                                // radius=12 与缝的基线口径无缝）。pressed 优先级
+                                // 维持 pressedRadius/pressedScale，时间线在缝内
+                                // 后台推进不中断。
                                 // ⚠️ states() 只改颜色改不了圆角，圆角/缩放必须每帧
                                 // compose 出新值，动画只把上一帧的值平滑过去。
                                 const eui::Color cardSurfaceColor =
                                     pressed ? ui_kit::itemSurfacePressed(t)
                                             : (hovered ? ui_kit::itemSurfaceHover(t)
                                                        : ui_kit::itemSurface(t));
-                                inner.rect(id + ".bg")
+                                const ui_kit::JellyPose jelly =
+                                    ui_kit::jellyFrame(id, hovered);
+                                auto cardBg = inner.rect(id + ".bg")
                                     .size(cardW, cardH)
                                     .states(cardSurfaceColor, cardSurfaceColor,
                                             cardSurfaceColor)
                                     .radius(pressed ? kJelly.pressedRadius
-                                                    : (hovered ? kJelly.hoverRadius
-                                                               : kJelly.radius))
+                                                    : jelly.radius)
                                     .transformOrigin(0.5f, 0.5f)
-                                    .scale(pressed ? kJelly.pressedScale
-                                                   : (hovered ? kJelly.hoverScale
-                                                              : 1.0f))
+                                    .scale(pressed ? kJelly.pressedScale : jelly.sx,
+                                           pressed ? kJelly.pressedScale : jelly.sy)
                                     .border(1.0f, t.colors.borderDefault)
                                     .shadow(components::theme::panelShadow(
                                         core::theme::componentTokensWeChat(t)))
-                                    .transition(core::Transition::make(
-                                        0.18f, core::Ease::OutBack))
+                                    .transition(jelly.active
+                                                    ? core::Transition::make(
+                                                          0.035f, core::Ease::Linear)
+                                                    : core::Transition::make(
+                                                          0.18f, core::Ease::OutBack))
                                     .animate(core::AnimProperty::Color |
                                              core::AnimProperty::Radius |
-                                             core::AnimProperty::Transform)
-                                    .build();
+                                             core::AnimProperty::Transform);
+                                if (jelly.active) {
+                                    cardBg.zIndex(20);  // 动画进行中盖过邻卡
+                                }
+                                cardBg.build();
 
                                 // 行 1 左：任务名（悬停时让位给右侧操作组）
                                 inner.text(id + ".title")
