@@ -1,6 +1,14 @@
 {
-  "setupVersion": "0.39.0",
   "maxConcurrentSubagents": 3,
   "peakWindowEnabled": true,
-  "poolDir": "docs/pool/"
+  "poolDir": "docs/pool/",
+  "setupVersion": "0.39.0",
+  "features": [
+    "skills",
+    "agents",
+    "pool",
+    "plugin",
+    "gate",
+    "wrapper"
+  ]
 }
