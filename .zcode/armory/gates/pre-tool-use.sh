@@ -23,15 +23,17 @@ case "$mode" in
     esac
     ;;
   path-gate)
-    # 产物目录（2026-11-06 池134 补）：AGENTS.md §十一 声明「写产物目录 ❌」，
-    # 原实现只拦归档目录、漏了构建目录——Edit/Write 直写 build/ 实测放行。
-    # 不误伤构建：本 gate 只挂 Edit|Write matcher，Bash 走 bash-gate，
-    # 构建脚本经 Bash 写 build/ 不受此约束。
-    case "$input" in
+    # 池135 修正（2026-11-06）：只对 file_path 字段值做匹配，不再对整段 JSON 原文
+    # 子串匹配——旧法在编辑「内容里合法提及归档路径字面量的文件」（门禁脚本自身/
+    # AGENTS.md 等）时误伤，逼出绕道写盘（门禁只防老实人）。取首个命中（file_path
+    # 先于 content 序列化）；提取失败=空值=不命中放行（与旧法对非 Edit/Write 结构
+    # 输入的行为一致）；JSON 转义反斜杠统一翻正为 / 再匹配（Windows 路径两端通吃）。
+    file_path=$(printf '%s\n' "$input" | grep -o '"file_path" *: *"[^"]*"' | head -1 | sed 's/^"file_path" *: *"//; s/"$//; s#\\\\#/#g')
+    case "$file_path" in
       */build/*|*/build-release/*)
         block "构建产物目录不可直接写入（AGENTS.md §十一）。构建一律: bash scripts/build-test-run.sh" ;;
     esac
-    case "$input" in
+    case "$file_path" in
       */analysis/*|*/pr-bodies/*|*/splash-delivery/*|*/devdesk-agent-m1-sdd-archive/*|*/eui-neo-zpatch-copy/*|*eui-neo-dropdown-popup-z.patch*|*pr-push-eui-neo.sh*)
         block "产物/归档目录与文件，修改前先征得用户同意（AGENTS.md §七；2026-10-29 起原件已备份至仓库外，勿在仓库内重建）" ;;
     esac
