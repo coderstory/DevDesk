@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "devflow-pool": {
+        "type": "local",
+        "command": ["node", "/Users/coderstory/dev/zcode-plugins/devflow/tools/pool_mcp_launch.mjs"],
+        "cwd": "/Users/coderstory/dev/DevDesk",
+        "environment": {
+          "POOL_DB": "/Users/coderstory/dev/DevDesk/docs/pool/pool.db",
+          "POOL_REPORT": "/Users/coderstory/dev/DevDesk/docs/pool/pool-report.html"
+        },
+        "timeout": { "startup": 30000 }
+      }
+    }
+  },
+  "plugins": ["/Users/coderstory/dev/zcode-plugins/devflow/hosts/opencode/plugin"]
+}

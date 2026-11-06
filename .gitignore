@@ -127,3 +127,7 @@ UAT62-screenshots/
 # 仓内二进制钉死；放包/校验契约见 third_party/conpty/README.md）
 !third_party/conpty/conpty.dll
 !third_party/conpty/OpenConsole.exe
+
+# devflow OpenCode 生成物（按机器生成，跑 devflow-setup 重建）
+.opencode/skills/
+.opencode/devflow-root
