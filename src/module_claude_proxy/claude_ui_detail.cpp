@@ -381,12 +381,14 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     // 行带 1 = round(键字号×1.7)，行带 2 = round(说明字号×1.6)，行卡 = 4+带1+2+带2+4，
     // 行距 = 行卡+6；键/值同带、来源/说明同带，两带 y 区间不相交。
     const float fs = core::theme::fontScale();
-    const float keyFs = 12.0f * fs;    // 键名 / 值字号（设计基准 12px）
-    const float smallFs = 11.0f * fs;  // 来源 / 说明 / 空态小字（设计基准 11px）
+    // bug176 放大档：键/值 12→14、来源/说明 11→12、行卡内距 4→8 / 带距 2→4、
+    // 行距 6→10（行卡 48→63 高）；全部随 fontScale 派生，不写死 100% 像素。
+    const float keyFs = 14.0f * fs;    // 键名 / 值字号（设计基准 14px）
+    const float smallFs = 12.0f * fs;  // 来源 / 说明 / 空态小字（设计基准 12px）
     const float line1H = std::round(keyFs * 1.7f);
     const float line2H = std::round(smallFs * 1.6f);
-    const float rowH = 4.0f + line1H + 2.0f + line2H + 4.0f;
-    const float pitch = rowH + 6.0f;
+    const float rowH = 8.0f + line1H + 4.0f + line2H + 8.0f;
+    const float pitch = rowH + 10.0f;
     const float overflowH = line2H + 2.0f;
     const float line1Y = 4.0f;                  // 行带 1 顶（相对行卡顶）
     const float line2Y = 4.0f + line1H + 2.0f;  // 行带 2 顶
@@ -404,7 +406,8 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         if (rows != nullptr) *rows = PaneRows{0, 0};
         return y0 + emptyH;
     }
-    const float keyColW = std::min(220.0f, w * 0.45f);
+    // bug176：键列 220→240 配 14px 键名（少截一档），列占比上限不变
+    const float keyColW = std::min(240.0f, w * 0.45f);
     // 键名超宽走单行省略号（显式 maxWidth 是前提），clip 作几何兜底；来源列
     // 宽 120 够放标签，超出由 clip 硬裁。
     constexpr float kSrcColW = 120.0f;
@@ -420,6 +423,16 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         --shownRows;
     }
     const bool envOverflow = envMap.size() > shownRows;
+    // bug175：行不满框时行距均匀拉伸填满内容框（去掉行下方大块空白）。拉伸只
+    // 增不减（行数预算保证 availH ≥ shownRows×pitch ⇒ fillPitch ≥ pitch），
+    // 上限 = 自然行距 1.8 倍（少行不无限稀疏，超出部分仍由垂直居中分摊）；
+    // 溢出态（要画「另有 N 项」）不拉伸，维持紧凑预算。
+    float pitchDraw = pitch;
+    if (!envOverflow && shownRows > 1) {
+        const float fillPitch =
+            (availH - rowH) / static_cast<float>(shownRows - 1);
+        pitchDraw = std::min(fillPitch, pitch * 1.8f);
+    }
     float ey = y0;
     size_t ei2 = 0;
     for (const auto& kv : envMap) {
@@ -491,7 +504,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             .fontSize(smallFs).lineHeight(line2H)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
-        ey += pitch;
+        ey += pitchDraw;
         ++ei2;
     }
     if (envOverflow) {

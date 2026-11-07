@@ -11,6 +11,7 @@
 #include "core/module_interface.h"
 #include "core/component_theme.h"
 #include "core/theme.h"
+#include "module_claude_proxy/claude_ui_detail.h"
 #include "module_claude_proxy/claude_ui_form.h"
 #include "module_claude_proxy/claude_ui_list.h"
 #include "module_claude_proxy/claude_ui_state.h"
@@ -37,6 +38,7 @@ int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     std::string shotProfiles;
     std::string shotForm;
+    std::string shotDetail;  // bug175/176 详情面板「环境变量」页签截图路径
     std::string formState;   // fail = 预检失败态文案
     bool lightTheme = false;
     for (int i = 1; i < argc; ++i) {
@@ -45,6 +47,8 @@ int main(int argc, char* argv[]) {
             shotProfiles = argv[++i];
         } else if (arg == "--shot-form" && i + 1 < argc) {
             shotForm = argv[++i];
+        } else if (arg == "--shot-detail" && i + 1 < argc) {
+            shotDetail = argv[++i];
         } else if (arg == "--form-state" && i + 1 < argc) {
             formState = argv[++i];
         } else if (arg == "--light") {
@@ -157,9 +161,13 @@ int main(int argc, char* argv[]) {
         profiles.push_back({2, "Personal", "https://api.anthropic.com"});
         profiles.push_back({3, "测试环境 · 备用节点", "https://api.anthropic.com"});
         profiles.push_back({4, "a", "https://api.anthropic.com"});
+        // bug174 长名对照项：激活项挂长名，对照「使用中」标记挤占名字宽度的截断差异
+        profiles.push_back({9, "生产环境 · 华东主节点 · 双活集群",
+                            "https://api.anthropic.com"});
         module::claude::ProfileListState st;
         st.cachedHasActive_ = true;
-        st.cachedActive_ = profiles.size() > 1 ? profiles[1] : module::claude::Profile();
+        st.cachedActive_ = profiles.size() > 1 ? profiles.back()
+                                               : module::claude::Profile();
         module::claude::ProfileListActions actions;
         if (lightTheme) {
             core::theme::setLight();
@@ -211,6 +219,45 @@ int main(int argc, char* argv[]) {
         }
         if (!probe::captureFramePng(window, runtime, shotForm)) {
             std::cerr << "claude_probe: 表单弹窗落图失败 " << shotForm << "\n";
+            passed = false;
+        }
+    }
+
+    // --shot-detail：详情面板「环境变量」页签取证（bug175/176 before/after）。
+    // 模块 compose 走服务端，探针环境详情无数据 → 构造同构 DetailView 直调
+    // drawDetailPanel（同一绘制入口），detailTab_=2 落在环境变量页。
+    if (!shotDetail.empty()) {
+        const auto& t = core::theme::current();
+        const auto themeTokens = core::theme::componentTokensWeChat(t);
+        module::claude::Profile p;
+        p.id = 7;
+        p.name = "生产环境";
+        p.baseUrl = "https://api.anthropic.com";
+        p.apiKeyHint = "sk-ant-***0001";
+        p.extraEnvJson =
+            "{\"ANTHROPIC_AUTH_TOKEN\":\"sk-ant-test-0001-abcdef123456\","
+            "\"ANTHROPIC_SMALL_FAST_MODEL\":\"claude-3-5-haiku-20241022\","
+            "\"HTTP_PROXY\":\"http://127.0.0.1:7890\","
+            "\"API_TIMEOUT_MS\":\"600000\"}";
+        module::claude::DetailState st;
+        st.detailTab_ = 2;  // 环境变量
+        module::claude::DetailView v;
+        v.shown = &p;
+        v.nameValue = p.name;
+        v.urlValue = p.baseUrl;
+        v.tokenValue = p.apiKeyHint;
+        module::claude::DetailActions a;  // 截图态不点击，空缝
+        for (int f = 0; f < 4; ++f) {
+            probe::composeModuleFrame(
+                runtime, window, "claude", w, h,
+                [&](eui::Ui& u, const eui::Screen& screen) {
+                    module::claude::drawDetailPanel(u, w - 40.0f, screen.height,
+                                                    20.0f, t, themeTokens, st,
+                                                    v, a);
+                });
+        }
+        if (!probe::captureFramePng(window, runtime, shotDetail)) {
+            std::cerr << "claude_probe: 详情面板落图失败 " << shotDetail << "\n";
             passed = false;
         }
     }

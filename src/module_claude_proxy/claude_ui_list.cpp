@@ -155,6 +155,7 @@ void drawProfileCard(eui::Ui& ui,
                      bool isActive) {
     // 2026-11-01 item 重设计：行高 56→60、头像 40→32、名称与副信息两行、
     // 右侧「使用中」标记填掉原先的大片空白（旧版行右侧 60% 是空的）。
+    // bug174：标记改悬浮半透明徽标，不再占名字布局位（见函数尾 showActiveChip）。
     constexpr float kRowH = 60.0f;
     constexpr float kAvatar = 32.0f;
     constexpr float kPadX = 12.0f;
@@ -246,10 +247,10 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // 右侧「使用中」标记（仅激活项）——旧版行右侧全空，这一块就是用户说的「空白太多」
+    // 右侧「使用中」标记（仅激活项）：bug174 改悬浮半透明徽标——不再从名字宽
+    // 里扣布局位（旧版扣 60px 致长名截断），名字恢复全宽；徽标绘制见函数尾。
     const bool showActiveChip = isActive;
-    const float nameMaxW = std::max(
-        40.0f, width - kTextX - kRightPad - (showActiveChip ? kActiveChipW + 8.0f : 0.0f));
+    const float nameMaxW = std::max(40.0f, width - kTextX - kRightPad);
 
     // 名称：单行截断让位右缘
     {
@@ -286,14 +287,19 @@ void drawProfileCard(eui::Ui& ui,
     }
 
     if (showActiveChip) {
+        // bug174 悬浮态：右上角锚定 + 半透明 primary 底（浮在 item 上、不占布局
+        // 位）；长名尾段从徽标下方透出仍可辨。文字用 onPrimary 保徽标本体对比
+        //（R6：悬浮不得盖死关键文本——半透明 + 角落锚定双保险）。
         const float chipX = width - kRightPad - kActiveChipW;
-        const float chipY = y + 12.0f;
+        const float chipY = y + 8.0f;
+        eui::Color chipBg = t.colors.primary;
+        chipBg.a = 0.78f;
         ui.rect(id + ".active.chip")
             .position(chipX, chipY)
             .size(kActiveChipW, 20.0f)
             .radius(t.sizes.radiusPill)
-            .color(t.colors.surfaceElevated)
-            .border(1.0f, t.colors.borderDefault)
+            .color(chipBg)
+            .border(1.0f, t.colors.primary)
             .build();
         ui.text(id + ".active.text")
             .position(chipX, chipY)
@@ -303,7 +309,7 @@ void drawProfileCard(eui::Ui& ui,
             .lineHeight(core::theme::scaled(20.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.primaryText)
+            .color(t.colors.onPrimary)
             .build();
     }
 
