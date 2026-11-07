@@ -501,7 +501,7 @@ int main(int argc, char* argv[]) {
     {
         const float contentW = w - 40.0f;  // 页 pad 20 × 2
         const int cols = module::schedule::columnCountForWidth(contentW);
-        const float gap = 12.0f;
+        const float gap = 8.0f;  // need219 §4.3 卡间距统一档 8px（与 schedule_ui_list kCardGap 同步）
         const float colW =
             (contentW - gap * static_cast<float>(cols - 1)) /
             static_cast<float>(cols);

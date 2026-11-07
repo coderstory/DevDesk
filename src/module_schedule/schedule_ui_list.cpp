@@ -52,7 +52,7 @@ constexpr float kGuideRowH = 16.0f;      // 引导字行（11px）
 constexpr float kGuideValueGap = 4.0f;   // 引导字→值行
 constexpr float kValueRowH = 22.0f;      // 值行（15px 下次 / 22 高 pill）
 constexpr int kSummaryMaxLines = 2;      // 摘要行数上限
-constexpr float kCardGap = 12.0f;        // 列间距 = 卡纵距（8px 网格半档）
+constexpr float kCardGap = 8.0f;         // 列间距 = 卡纵距（need219 §4.3 卡间距统一档 8px）
 
 // 上次结果状态 → 中文（与 schedule_run.status 值域对齐，§4.3 pill 值域）
 std::string runStatusZh(const std::string& status) {
@@ -838,7 +838,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                     .size(nameW, core::theme::scaled(kNameRowH))
                     .text(row.name)
                     .fontSize(t.sizes.fontSizeBody)
-                    .fontWeight(500)
+                    .fontWeight(600)
                     .color(t.colors.textPrimary)
                     .build();
                 if (tagText != nullptr) {
@@ -873,7 +873,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                         .size(chipW, chipH)
                         .text(chipText)
                         .fontSize(chipFont)
-                        .fontWeight(500)
+                        .fontWeight(400)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textSecondary)
@@ -986,7 +986,7 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                             .size(pillW, valueH)
                             .text(statusZh)
                             .fontSize(t.sizes.fontSizeSmall)
-                            .fontWeight(500)
+                            .fontWeight(600)
                             .horizontalAlign(eui::HorizontalAlign::Center)
                             .verticalAlign(eui::VerticalAlign::Center)
                             .color(pillFg)

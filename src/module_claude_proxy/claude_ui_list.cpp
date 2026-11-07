@@ -9,6 +9,7 @@
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/materials.h>
 #include <components/scrollview.h>
 #include <components/tooltip.h>
 #include <components/virtuallist.h>
@@ -167,7 +168,7 @@ void drawProfileCard(eui::Ui& ui,
     // S2.5 选中态：primarySoftBg 底 + 左 3px primary 竖线（替代旧绿圈白勾）
     const eui::Color bgNormal = selected
         ? t.colors.primarySoftBg
-        : t.colors.surface;
+        : ui_kit::itemSurface(t);  // need219 §5.2-1：卡面玻璃 itemSurface（原不透明 surface）
     // 选中字色用 primaryText（浅色档 #157E4E on 白 4.99:1）；primary 本身仅
     // 2.96:1，14px 小字不达 WCAG AA（与审计 F3.4 同一裁决口径）。
     const eui::Color nameColor = selected
@@ -232,7 +233,7 @@ void drawProfileCard(eui::Ui& ui,
             // 文本盒 == 圆底高，须显式垂直居中，否则 ink 从行框顶沿起排
             .verticalAlign(eui::VerticalAlign::Center)
             .color(avatar.ring)
-            .fontWeight(700)
+            .fontWeight(600)
             .build();
     } else {
         ui.text(id + ".avatar.icon")
@@ -364,7 +365,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .text("Claude 配置")
                                 .fontSize(t.sizes.fontSizeTitle)
                                 .lineHeight(core::theme::scaled(24.0f))
-                                .fontWeight(700)
+                                .fontWeight(600)
                                 .color(t.colors.textPrimary)
                                 .build();
                         })
@@ -410,7 +411,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .lineHeight(core::theme::scaled(18.0f))
                                 .color(proxyRunning ? t.colors.primary
                                                     : t.colors.textTertiary)
-                                .fontWeight(500)
+                                .fontWeight(600)
                                 .build();
                         })
                         .build();
@@ -598,7 +599,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .build();
 
             const float cardY0 = kListTopY;
-            const float cardGap = 12.0f;
+            const float cardGap = 8.0f;  // need219 §4.3 卡与卡纵向间距统一 8px
 
             // 列表底 = 面板底内距（底部按钮行已取消，空间回收给列表）
             const float listBottom = bodyH - kListBottomGap;

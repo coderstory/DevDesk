@@ -330,8 +330,8 @@ REGISTER_TEST(schedule_list_tabs_and_masonry_columns,
     DOCTEST_CHECK(frame.find("schedule.list.user.0.edit") == nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.user.0.delete") == nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.user.0.switch") == nullptr);
-    // 列几何：内容宽 1160 → 3 列，列宽 = (1160 − 2×12)/3
-    const float expectColW = (1160.0f - 24.0f) / 3.0f;
+    // 列几何：内容宽 1160 → 3 列，列宽 = (1160 − 2×8)/3（卡距 8，need219 §4.3）
+    const float expectColW = (1160.0f - 16.0f) / 3.0f;
     DOCTEST_CHECK(std::fabs(card->frame.width - expectColW) < 0.01f);
     auto* card1 = frame.find("schedule.list.user.1");
     DOCTEST_REQUIRE(card1 != nullptr);
