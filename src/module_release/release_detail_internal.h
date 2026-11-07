@@ -169,7 +169,9 @@ bool markAnnouncementSent(ReleaseStore& store, ReleaseDetailUiState& state);
 bool ensureServiceConfigs(ReleaseStore& store, ReleaseDetailUiState& state, std::int64_t serviceId);
 bool markStepCompleted(ReleaseStore& store, ReleaseDetailUiState& state, std::int64_t serviceId, StepKind kind, const TaskEnv& env, int nowMinute);
 bool markConfigCompleted(ReleaseStore& store, ReleaseDetailUiState& state, std::int64_t serviceId, ConfigKind kind, const TaskEnv& env, int nowMinute);
-void moveConfig(ReleaseStore& store, ReleaseDetailUiState& state, std::int64_t serviceId, ConfigKind kind, int delta);
+void openCompletionGate(ReleaseDetailUiState& state, const std::string& subject,
+                        const std::string& impact, const std::string& titleLabel,
+                        std::function<void(ReleaseStore&, ReleaseDetailUiState&)> apply);
 std::vector<TaskConfig> configsForValidation(const ReleaseDetailUiState& state);
 bool serviceBranchFlagged(const ReleaseDetailUiState& state, const std::string& name);
 bool serviceConfigFlagged(const ReleaseDetailUiState& state, const std::string& name, ConfigKind kind);
@@ -224,7 +226,8 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state, bo
 float serviceCardHeight(const ReleaseDetailUiState& state, const TaskService& svc);
 float envCardHeight(const ReleaseDetailUiState& state, const TaskEnv& env);
 float envSectionHeight(const ReleaseDetailUiState& state, float width);
-void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float width, const StepRowView& row, bool current, bool readOnly, bool configurable, bool readOnlyViewAllowed, bool menuOpen, const Tokens& t, const std::function<void()>& onRowClick, const std::function<void()>& onView, const std::function<void()>& onToggleMenu);
+void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float width, const StepRowView& row, bool current, bool readOnly, bool configurable, bool readOnlyViewAllowed, const Tokens& t, const std::function<void()>& onRowClick, const std::function<void()>& onView, const std::function<void()>& onSkip);
+void drawStepGateDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseDetailUiState& state, ReleaseStore& store, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens);
 void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float width, const TaskEnv& env, const TaskService& svc, ReleaseDetailUiState& state, bool readOnly, bool configurable, int nowMinute, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens, ReleaseStore& store);
 void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float width, const TaskEnv& env, ReleaseDetailUiState& state, bool readOnly, bool configurable, int nowMinute, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens, ReleaseStore& store);
 void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state, bool readOnly, bool configurable, int nowMinute, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens, ReleaseStore& store, const ReleaseDetailActions& actions);

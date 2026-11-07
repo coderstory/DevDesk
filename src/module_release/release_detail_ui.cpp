@@ -126,7 +126,11 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
         state.branchEditServiceId = 0;
         state.branchEditText.clear();
         state.menuOpen = false;
-        state.openMenuRowKey.clear();
+        state.gateTitle.clear();
+        state.gateSubject.clear();
+        state.gateImpact.clear();
+        state.gateInput.clear();
+        state.gateApply = nullptr;
     }
     state.loadedTaskId = state.taskId;
     state.dirty = false;

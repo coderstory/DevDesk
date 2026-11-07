@@ -605,59 +605,6 @@ bool markConfigCompleted(ReleaseStore& store, ReleaseDetailUiState& state,
     return true;
 }
 
-// 配置顺序：先补行并把 order 归一化成 0..n-1，再交换目标项与邻居。
-
-void moveConfig(ReleaseStore& store, ReleaseDetailUiState& state,
-                std::int64_t serviceId, ConfigKind kind, int delta) {
-    if (!isEditMode(state.displayStatus) || isReadOnly(state.displayStatus)) {
-        setNotice(state, "发布中任务不能调整配置顺序，请撤回提交或作废后操作", true);
-        return;
-    }
-    if (!ensureServiceConfigs(store, state, serviceId)) return;
-
-    std::vector<TaskConfig> list;
-    for (const auto& cfg : state.configs) {
-        if (cfg.taskServiceId == serviceId) list.push_back(cfg);
-    }
-    std::sort(list.begin(), list.end(), [](const TaskConfig& a, const TaskConfig& b) {
-        if (a.order != b.order) return a.order < b.order;
-        return a.id < b.id;
-    });
-    if (list.empty()) return;
-    std::size_t index = list.size();
-    for (std::size_t i = 0; i < list.size(); ++i) {
-        if (list[i].kind == kind) {
-            index = i;
-            break;
-        }
-    }
-    if (index >= list.size()) return;
-    const std::ptrdiff_t target =
-        static_cast<std::ptrdiff_t>(index) + static_cast<std::ptrdiff_t>(delta);
-    if (target < 0 || target >= static_cast<std::ptrdiff_t>(list.size())) {
-        setNotice(state, "已到配置顺序边界", false);
-        return;
-    }
-
-    std::vector<int> orders(list.size());
-    for (std::size_t i = 0; i < orders.size(); ++i) {
-        orders[i] = static_cast<int>(i);
-    }
-    std::swap(orders[index], orders[static_cast<std::size_t>(target)]);
-    for (std::size_t i = 0; i < list.size(); ++i) {
-        TaskConfig cfg = list[i];
-        cfg.order = orders[i];
-        auto result = store.upsertTaskConfig(cfg);
-        if (result.isFail()) {
-            setNotice(state, "保存配置顺序失败：" + result.errorMessage(), true);
-            state.dirty = true;
-            return;
-        }
-    }
-    state.dirty = true;
-    setNotice(state, "已调整配置顺序", false);
-}
-
 // 服务卡高度在绘制段定义；拖拽命中换算需要它（与绘制同源，禁止另写一套步进值）。
 
 std::vector<TaskConfig> configsForValidation(const ReleaseDetailUiState& state) {

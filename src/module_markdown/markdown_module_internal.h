@@ -713,7 +713,12 @@ private:
     bool onKeyEvent(const eui::KeyEvent& key) override ;
 
     // 新建笔记弹窗统一入口：打开前重置草稿名与错误行。
+    // （need192 批解阻塞：md_scrim_probe 以此为探针入口，wip d5dfb254 后声明落
+    // 在 private 段致共享构建断头——提为 public，语义不变。）
+public:
     void openNewNoteDialog() ;
+
+private:
 
     // 大纲当前节：光标行所在的上一个标题；预览态沿用 activeOutlineIdx_，
     // 实时态用 liveCursorByte_（编辑器输入不在实时态帧树）。

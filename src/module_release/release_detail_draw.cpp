@@ -17,6 +17,7 @@
 #include <components/scrollview.h>
 
 #include <ui_kit/button.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 
@@ -161,6 +162,134 @@ void drawReadOnlyValue(eui::Ui& ui, const std::string& id, float x, float y,
         .verticalAlign(multiline ? eui::VerticalAlign::Top : eui::VerticalAlign::Center)
         .color(value.empty() ? t.colors.textTertiary : t.colors.textSecondary)
         .build();
+}
+
+// ==================== 强确认门（need192 §6） ====================
+
+// 完成类动作统一挂门：先把落态动作暂存进 state（二次确认前不写库契约不变），
+// 弹 420 逐字「确认」门（drawStepGateDialog），匹配后 gateApply 才执行。
+// impact 按步骤类型给「完成后系统将」文案（设计 §6.3 三要素之二）。
+
+void openCompletionGate(ReleaseDetailUiState& state, const std::string& subject,
+                        const std::string& impact, const std::string& titleLabel,
+                        std::function<void(ReleaseStore&, ReleaseDetailUiState&)> apply) {
+    state.confirm = ReleaseDetailConfirm::StepComplete;
+    state.gateTitle = "执行确认 · " + titleLabel;
+    state.gateSubject = subject;
+    state.gateImpact = impact;
+    state.gateInput.clear();
+    state.gateApply = std::move(apply);
+}
+
+std::string stepGateImpact(StepKind kind) {
+    return kind == StepKind::Deploy ? "判定后续步骤与触发完成提醒" : "计入任务完成度";
+}
+
+void drawStepGateDialog(eui::Ui& ui, const eui::Screen& screen,
+                        ReleaseDetailUiState& state, ReleaseStore& store,
+                        const Tokens& t,
+                        const components::theme::ThemeColorTokens& themeTokens) {
+    const std::string id = "release.detail.stepgate";
+    const bool matched = trimmed(state.gateInput) == "确认";
+    ui_kit::DialogShellSpec spec;
+    spec.id = id;
+    spec.width = ui_kit::DialogWidth::Compact;  // 420 档（设计 §6.2）
+    spec.height = 340.0f;
+    spec.open = true;
+    spec.title = state.gateTitle;
+    spec.cancel = ui_kit::DialogShellButton{
+        "取消", [&state] { state.confirm = ReleaseDetailConfirm::None; }, true};
+    spec.confirm = ui_kit::DialogShellButton{
+        "确认执行",
+        [&store, &state] {
+            auto apply = state.gateApply;
+            state.confirm = ReleaseDetailConfirm::None;
+            state.gateApply = nullptr;
+            if (apply) apply(store, state);
+        },
+        matched};  // 不匹配主钮禁用（规范 §4.3 禁用档）
+    spec.onOpenChange = [&state](bool open) {
+        if (!open) state.confirm = ReleaseDetailConfirm::None;
+    };
+    ui_kit::drawDialogShell(ui, screen, spec, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        float y = area.y + 8.0f;
+        ui.text(id + ".lead")
+            .position(area.x, y)
+            .size(area.w, core::theme::scaled(20.0f))
+            .text("即将标记完成：")
+            .fontSize(core::theme::scaled(14.0f))
+            .lineHeight(core::theme::scaled(20.0f))
+            .color(t.colors.textPrimary)
+            .build();
+        y += 22.0f;
+        ui.text(id + ".subject")
+            .position(area.x, y)
+            .size(area.w, core::theme::scaled(22.0f))
+            .text(state.gateSubject)
+            .fontSize(core::theme::scaled(14.0f))
+            .lineHeight(core::theme::scaled(22.0f))
+            .fontWeight(600)
+            .maxWidth(area.w)
+            .wrap(false)
+            .overflow(core::TextOverflow::Ellipsis)
+            .color(t.colors.textPrimary)
+            .build();
+        y += 28.0f;
+        ui.text(id + ".impact")
+            .position(area.x, y)
+            .size(area.w, core::theme::scaled(20.0f))
+            .text("完成后系统将：" + state.gateImpact)
+            .fontSize(core::theme::scaled(13.0f))
+            .lineHeight(core::theme::scaled(20.0f))
+            .color(t.colors.textSecondary)
+            .build();
+        y += 24.0f;
+        ui.text(id + ".risk")
+            .position(area.x, y)
+            .size(area.w, core::theme::scaled(18.0f))
+            .text("⚠ 完成后需撤回才能修改，撤回记入任务日志")
+            .fontSize(core::theme::scaled(12.0f))
+            .lineHeight(core::theme::scaled(18.0f))
+            .color(t.colors.errorText)
+            .build();
+        y += 26.0f;
+        ui.text(id + ".prompt")
+            .position(area.x, y)
+            .size(area.w, core::theme::scaled(18.0f))
+            .text("输入「确认」以继续")
+            .fontSize(core::theme::scaled(12.0f))
+            .lineHeight(core::theme::scaled(18.0f))
+            .color(t.colors.textSecondary)
+            .build();
+        y += 22.0f;
+        components::input(ui, id + ".input")
+            .position(area.x, y)
+            .size(area.w, 36.0f)
+            .value(state.gateInput)
+            .placeholder("确认")
+            .fontSize(core::theme::scaled(14.0f))
+            .theme(themeTokens)
+            .onChange([&state](const std::string& value) { state.gateInput = value; })
+            .onEnter([&store, &state] {
+                if (trimmed(state.gateInput) != "确认") return;
+                auto apply = state.gateApply;
+                state.confirm = ReleaseDetailConfirm::None;
+                state.gateApply = nullptr;
+                if (apply) apply(store, state);
+            })
+            .build();
+        if (!state.gateInput.empty() && !matched) {
+            ui.text(id + ".error")
+                .position(area.x, y + 42.0f)
+                .size(area.w, core::theme::scaled(18.0f))
+                .text("请输入「确认」二字")
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(core::theme::scaled(18.0f))
+                .color(t.colors.errorText)
+                .build();
+        }
+    });
 }
 
 // ==================== 任务级前置卡 ====================
@@ -380,13 +509,20 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                 std::function<void()> onCheck;
                 const std::string code = prereqCode(key);
                 const std::string label = prereqCheckLabel(key);
-                onCheck = [&store, &state, key, code, label]() {
+                onCheck = [&state, key, code, label]() {
                     if (isReadOnly(state.displayStatus)) return;
                     if (prereqChecked(state, key)) {
                         openRevokePrereq(state, code, label, false);
                         return;
                     }
-                    markPrereqCompleted(store, state, code, prereqTitle(key));
+                    // need192 §6.1：前置带完成勾同走强确认门（确认前不写库）。
+                    const std::string title = prereqTitle(key);
+                    openCompletionGate(state, title, "计入前置完成度并解锁提交校验",
+                                       title,
+                                       [code, title](ReleaseStore& s,
+                                                     ReleaseDetailUiState& st) {
+                                           markPrereqCompleted(s, st, code, title);
+                                       });
                 };
                 drawReleaseCheckboxAt(ui, id + ".check",
                                       width - inset - checkW, y + (rowH - kCheckSize) * 0.5f,
@@ -447,14 +583,18 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
             acheck.height = kCheckSize;
             acheck.inset = 0.0f;
             acheck.gap = 6.0f;
-            std::function<void()> aOnCheck = [&store, &state]() {
+            std::function<void()> aOnCheck = [&state]() {
                 if (isReadOnly(state.displayStatus)) return;
                 if (prereqChecked(state, PrereqKey::Announce)) {
                     openRevokePrereq(state, "announce", prereqCheckLabel(PrereqKey::Announce),
                                      true);
                     return;
                 }
-                markAnnouncementSent(store, state);
+                openCompletionGate(state, "上线公告", "计入前置完成度并解锁提交校验",
+                                   "上线公告",
+                                   [](ReleaseStore& s, ReleaseDetailUiState& st) {
+                                       markAnnouncementSent(s, st);
+                                   });
             };
             drawReleaseCheckboxAt(ui, aid + ".check", width - inset - 72.0f,
                                   y + 88.0f + 8.0f + (22.0f - kCheckSize) * 0.5f,
@@ -467,15 +607,11 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
 
 float serviceCardHeight(const ReleaseDetailUiState& state, const TaskService& svc) {
     const float rows = static_cast<float>(3 + orderedConfigs(state, svc).size());
-    // 步骤行「···」次行展开时占一行（键前缀 = 服务 id，见 drawServiceCard）。
-    const std::string prefix = std::to_string(svc.id) + ":";
-    const float menuExtra = state.openMenuRowKey.rfind(prefix, 0) == 0
-                                ? kStepRowH + kStepRowGap
-                                : 0.0f;
     // 池 54（F-54-1）：编辑态分支行从 16px 只读行升级为 kStepRowH 表单行（+28）；
-    // 发布/归档态维持只读行高度。
+    // 发布/归档态维持只读行高度。need192 §4.5：「···」次行整体裁撤（跳过常显
+    // 复选框 + 拖拽排序），无展开高度。
     const float branchExtra = isEditMode(state.displayStatus) ? kStepRowH - 16.0f : 0.0f;
-    return 68.0f + branchExtra + rows * kStepRowH + (rows - 1.0f) * kStepRowGap + menuExtra;
+    return 68.0f + branchExtra + rows * kStepRowH + (rows - 1.0f) * kStepRowGap;
 }
 
 float envCardHeight(const ReleaseDetailUiState& state, const TaskEnv& env) {
@@ -499,18 +635,17 @@ float envSectionHeight(const ReleaseDetailUiState& state, float width) {
     return height;
 }
 
-// 步骤行（F-13 四要素）：状态点 + 名称 + 状态字 + 完成（整行点击）；行尾只留
-// 「填写/查看」（配置行）与「···」（编辑态配置行，上移/下移/跳过收进次行，
-// 由 drawServiceCard 在本行下方绘制）。原 40px 六类控件布局退役。
+// 步骤行（F-13 四要素 + need192 §4.4 锚点链）：状态点 + 名称（L2 15px）+ 状态字 +
+// 完成（整行点击）；行尾右锚组 = [填写/查看] + [跳过□]（配置行常显复选框，
+// need192 §4.5；「···」菜单整体裁撤——上移/下移走拖拽、跳过常显、查看行内钮）。
 
 void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float width,
                  const StepRowView& row, bool current, bool readOnly,
-                 bool configurable, bool readOnlyViewAllowed, bool menuOpen,
+                 bool configurable, bool readOnlyViewAllowed,
                  const Tokens& t,
                  const std::function<void()>& onRowClick,
                  const std::function<void()>& onView,
-                 const std::function<void()>& onToggleMenu) {
-    (void)menuOpen;  // 次行由调用方绘制；此参仅供命中避让扩展
+                 const std::function<void()>& onSkip) {
     const float rowX = x + 8.0f;
     const float rowW = std::max(0.0f, width - 16.0f);
     if (current) {
@@ -553,18 +688,18 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
     const float dotY = y + (kStepRowH - kStepDot) * 0.5f;
     drawStepDot(ui, id + ".status", dotX, dotY, row.done, row.skipped, t);
 
-    // 行尾操作区（右缘向左排）：···(28) + 填写/查看(56)。
+    // 行尾操作区（右缘向左排）：跳过□（配置行常显，need192 §4.5）+ 填写/查看(56)。
     const bool showView = row.config && onView != nullptr;
-    const bool showMore = row.config && configurable && !row.done;  // 跳过行保留入口（取消跳过）
-    const float moreW = showMore ? 28.0f : 0.0f;
+    const bool showSkip = row.config && !row.done && onSkip != nullptr;
+    const float skipW = showSkip ? 76.0f : 0.0f;
     const float viewX = showView ? rowX + rowW - 8.0f - kViewButtonW -
-                                       (showMore ? moreW + 4.0f : 0.0f)
+                                       (showSkip ? skipW + 8.0f : 0.0f)
                                  : rowX + rowW;
     // 可排序的配置行在最左侧预留拖拽手柄位（⋮⋮）；手柄由 drawServiceCard 叠加绘制。
     const bool showDragHandle = row.config && configurable;
     const float nameX = dotX + kStepDot +
                         (showDragHandle ? kDragHandleW + kDragHandleGap : 10.0f);
-    const float nameRight = viewX - (showView ? 8.0f : 0.0f) - moreW;
+    const float nameRight = viewX - (showView ? 8.0f : 0.0f) - skipW;
     const float statusW = 88.0f;
     const float nameW = std::max(0.0f, nameRight - statusW - 8.0f - nameX);
 
@@ -577,7 +712,7 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
         .position(nameX, y)
         .size(nameW, kStepRowH)
         .text(row.label)
-        .fontSize(t.sizes.fontSizeBody)
+        .fontSize(core::theme::scaled(15.0f))  // §4.2 L2：步骤/配置名 13→15
         .lineHeight(kStepRowH)
         .maxWidth(nameW)
         .wrap(false)
@@ -614,11 +749,21 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
                        readOnly ? "查看" : "填写", ui_kit::ButtonLevel::Text, viewX, y,
                        kViewButtonW, kStepRowH, t, options);
     }
-    if (showMore && onToggleMenu) {
-        ui_kit::ButtonOptions options;
-        options.onClick = onToggleMenu;
-        ui_kit::button(ui, id + ".more", "···", ui_kit::ButtonLevel::Text,
-                       rowX + rowW - 8.0f - moreW, y, moreW, kStepRowH, t, options);
+    if (showSkip) {
+        // 跳过常显复选框：未跳=空心框；已跳=灰底横线+label 划线（release_checkbox
+        // skipped 视觉契约）；已完成的行不显示（先取消完成才能跳过，与旧菜单一致）。
+        ReleaseCheckboxOptions skip;
+        skip.checked = row.skipped;
+        skip.skipped = row.skipped;
+        skip.label = row.skipped ? "已跳过" : "跳过";
+        skip.boxSize = kCheckSize;
+        skip.fontSize = t.sizes.fontSizeSmall - 1.0f;
+        skip.width = skipW;
+        skip.height = kStepRowH;
+        skip.inset = 0.0f;
+        skip.gap = 6.0f;
+        drawReleaseCheckboxAt(ui, id + ".skip", rowX + rowW - 8.0f - skipW, y, skip,
+                              onSkip, t);
     }
 }
 
@@ -701,9 +846,9 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         .position(nameX, y + 10.0f)
         .size(nameW, core::theme::scaled(20.0f))
         .text(svc.serviceName)
-        .fontSize(t.sizes.fontSizeBody)
+        .fontSize(core::theme::scaled(18.0f))  // §4.2 L1：服务名 15→18
         .lineHeight(core::theme::scaled(20.0f))
-        .fontWeight(600)
+        .fontWeight(700)
         .maxWidth(nameW)
         .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)
@@ -831,15 +976,14 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         const StepRowView& row = rows[i];
         const std::string rowId = id + ".step." + row.id;
         rowYs.push_back(rowY);
-        const std::string menuKey = std::to_string(svc.id) + ":" + row.id;
-        const bool menuOpen = state.openMenuRowKey == menuKey;
 
         std::function<void()> onRowClick;
         if (!row.done) {
             if (row.config) {
-                onRowClick = [&store, &state, serviceId = svc.id, kind = row.configKind,
+                onRowClick = [&state, serviceId = svc.id, kind = row.configKind,
                               timeReady = row.timeReady, envCopy = env,
-                              envName = env.envName, nowMinute] {
+                              envName = env.envName, svcName = svc.serviceName,
+                              nowMinute] {
                     if (isReadOnly(state.displayStatus)) return;
                     if (!timeReady) {
                         setNotice(state,
@@ -855,12 +999,22 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
                         setNotice(state, "请先填写：" + joinMissing(missing), true);
                         return;
                     }
-                    markConfigCompleted(store, state, serviceId, kind, envCopy, nowMinute);
+                    // need192 §6：完成类动作先过强确认门，确认才落态。
+                    openCompletionGate(
+                        state,
+                        envName + " / " + svcName + " / " + configLabel(kind),
+                        "计入任务完成度", configLabel(kind),
+                        [serviceId, kind, envCopy, nowMinute](
+                            ReleaseStore& s, ReleaseDetailUiState& st) {
+                            markConfigCompleted(s, st, serviceId, kind, envCopy,
+                                                nowMinute);
+                        });
                 };
             } else {
-                onRowClick = [&store, &state, serviceId = svc.id, kind = row.stepKind,
+                onRowClick = [&state, serviceId = svc.id, kind = row.stepKind,
                               timeReady = row.timeReady, envCopy = env,
-                              envName = env.envName, nowMinute] {
+                              envName = env.envName, svcName = svc.serviceName,
+                              nowMinute] {
                     if (isReadOnly(state.displayStatus)) return;
                     if (!timeReady) {
                         setNotice(state,
@@ -876,7 +1030,14 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
                             return;
                         }
                     }
-                    markStepCompleted(store, state, serviceId, kind, envCopy, nowMinute);
+                    openCompletionGate(
+                        state,
+                        envName + " / " + svcName + " / " + stepLabel(kind),
+                        stepGateImpact(kind), stepLabel(kind),
+                        [serviceId, kind, envCopy, nowMinute](
+                            ReleaseStore& s, ReleaseDetailUiState& st) {
+                            markStepCompleted(s, st, serviceId, kind, envCopy, nowMinute);
+                        });
                 };
             }
         }
@@ -906,62 +1067,15 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
             };
         }
 
-        std::function<void()> onToggleMenu;
-        std::function<void()> onMoveUp;
-        std::function<void()> onMoveDown;
         std::function<void()> onSkipToggle;
         if (row.config && !readOnly) {
-            onToggleMenu = [&state, menuKey] {
-                state.openMenuRowKey = state.openMenuRowKey == menuKey
-                                           ? std::string()
-                                           : menuKey;
-            };
-            onMoveUp = [&store, &state, serviceId = svc.id, kind = row.configKind] {
-                moveConfig(store, state, serviceId, kind, -1);
-            };
-            onMoveDown = [&store, &state, serviceId = svc.id, kind = row.configKind] {
-                moveConfig(store, state, serviceId, kind, 1);
-            };
             onSkipToggle = [&store, &state, serviceId = svc.id, kind = row.configKind] {
                 toggleConfigSkip(store, state, serviceId, kind);
             };
         }
         drawStepRow(ui, rowId, x, rowY, width, row, i == currentIndex, readOnly,
-                    configurable, true, menuOpen, t, onRowClickWithRevoke, onView,
-                    onToggleMenu);
+                    configurable, true, t, onRowClickWithRevoke, onView, onSkipToggle);
         rowY += kStepRowH + kStepRowGap;
-
-        // 「···」次行：上移 / 下移 / 跳过（编辑态配置行收纳处，F-13）。
-        if (menuOpen) {
-            const float menuX = x + 8.0f;
-            const float menuW = std::max(0.0f, width - 16.0f);
-            ui.rect(rowId + ".menu.bg")
-                .position(menuX, rowY)
-                .size(menuW, kStepRowH)
-                .color(t.colors.hover)
-                .radius(t.sizes.radius)
-                .build();
-            float btnX = menuX + 8.0f;
-            const auto menuBtn = [&](const std::string& btnId, const std::string& text,
-                                     const std::function<void()>& onClick,
-                                     bool danger = false) {
-                ui_kit::ButtonOptions options;
-                options.onClick = onClick;
-                if (danger) {
-                    options.hasTextColorOverride = true;
-                    options.textColorOverride = t.colors.errorText;
-                }
-                ui_kit::button(ui, rowId + ".menu." + btnId, text,
-                               ui_kit::ButtonLevel::Text, btnX,
-                               rowY + (kStepRowH - 24.0f) * 0.5f, 72.0f, 24.0f, t,
-                               options);
-                btnX += 80.0f;
-            };
-            menuBtn("up", "上移", onMoveUp);
-            menuBtn("down", "下移", onMoveDown);
-            menuBtn("skip", row.skipped ? "取消跳过" : "跳过此项", onSkipToggle, true);
-            rowY += kStepRowH + kStepRowGap;
-        }
 
         if (row.config && configurable) {
             const float handleX = x + 8.0f + 10.0f + kStepDot + 4.0f;
@@ -1704,27 +1818,61 @@ void drawPublishTrack(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                     const TaskEnv* env = findEnv(state, row.envId);
                     ui_kit::ButtonOptions options;
                     if (row.isAnnounce) {
-                        options.onClick = [&store, &state] {
-                            markAnnouncementSent(store, state);
+                        options.onClick = [&state] {
+                            openCompletionGate(state, "上线公告",
+                                               "计入前置完成度并解锁提交校验", "上线公告",
+                                               [](ReleaseStore& s,
+                                                  ReleaseDetailUiState& st) {
+                                                   markAnnouncementSent(s, st);
+                                               });
                         };
                     } else if (row.serviceId == 0) {
-                        options.onClick = [&store, &state, key = row.prereqKey] {
-                            markPrereqCompleted(store, state, prereqCode(key),
-                                                prereqTitle(key));
+                        options.onClick = [&state, key = row.prereqKey] {
+                            const std::string title = prereqTitle(key);
+                            openCompletionGate(state, title,
+                                               "计入前置完成度并解锁提交校验", title,
+                                               [code = prereqCode(key), title](
+                                                   ReleaseStore& s,
+                                                   ReleaseDetailUiState& st) {
+                                                   markPrereqCompleted(s, st, code,
+                                                                       title);
+                                               });
                         };
                     } else if (row.config && env != nullptr) {
-                        options.onClick = [&store, &state, serviceId = row.serviceId,
+                        options.onClick = [&state, serviceId = row.serviceId,
                                            kind = row.configKind, envCopy = *env,
                                            nowMinute] {
-                            markConfigCompleted(store, state, serviceId, kind, envCopy,
-                                                nowMinute);
+                            openCompletionGate(
+                                state,
+                                envCopy.envName + " / " +
+                                    (findService(state, serviceId) != nullptr
+                                         ? findService(state, serviceId)->serviceName
+                                         : "服务") +
+                                    " / " + configLabel(kind),
+                                "计入任务完成度", configLabel(kind),
+                                [serviceId, kind, envCopy, nowMinute](
+                                    ReleaseStore& s, ReleaseDetailUiState& st) {
+                                    markConfigCompleted(s, st, serviceId, kind, envCopy,
+                                                        nowMinute);
+                                });
                         };
                     } else if (env != nullptr) {
-                        options.onClick = [&store, &state, serviceId = row.serviceId,
+                        options.onClick = [&state, serviceId = row.serviceId,
                                            kind = row.stepKind, envCopy = *env,
                                            nowMinute] {
-                            markStepCompleted(store, state, serviceId, kind, envCopy,
-                                              nowMinute);
+                            openCompletionGate(
+                                state,
+                                envCopy.envName + " / " +
+                                    (findService(state, serviceId) != nullptr
+                                         ? findService(state, serviceId)->serviceName
+                                         : "服务") +
+                                    " / " + stepLabel(kind),
+                                stepGateImpact(kind), stepLabel(kind),
+                                [serviceId, kind, envCopy, nowMinute](
+                                    ReleaseStore& s, ReleaseDetailUiState& st) {
+                                    markStepCompleted(s, st, serviceId, kind, envCopy,
+                                                      nowMinute);
+                                });
                         };
                     }
                     if (options.onClick) {
@@ -1769,7 +1917,7 @@ void drawPublishTrack(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                         .position(0.0f, y)
                         .size(width, row.height)
                         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                        .onClick([&store, &state, row, nowMinute]() {
+                        .onClick([&state, row, nowMinute]() {
                             const TaskEnv* env = row.envId != 0 ? findEnv(state, row.envId) : nullptr;
                             if (row.revocable) {
                                 if (row.serviceId == 0) {
@@ -1791,16 +1939,56 @@ void drawPublishTrack(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                             }
                             if (env == nullptr) return;
                             if (row.isAnnounce) {
-                                markAnnouncementSent(store, state);
+                                openCompletionGate(state, "上线公告",
+                                                   "计入前置完成度并解锁提交校验",
+                                                   "上线公告",
+                                                   [](ReleaseStore& s,
+                                                      ReleaseDetailUiState& st) {
+                                                       markAnnouncementSent(s, st);
+                                                   });
                             } else if (row.serviceId == 0) {
-                                markPrereqCompleted(store, state, prereqCode(row.prereqKey),
-                                                    prereqTitle(row.prereqKey));
+                                const std::string title = prereqTitle(row.prereqKey);
+                                openCompletionGate(state, title,
+                                                   "计入前置完成度并解锁提交校验", title,
+                                                   [code = prereqCode(row.prereqKey),
+                                                    title](ReleaseStore& s,
+                                                           ReleaseDetailUiState& st) {
+                                                       markPrereqCompleted(s, st, code,
+                                                                           title);
+                                                   });
                             } else if (row.config) {
-                                markConfigCompleted(store, state, row.serviceId,
-                                                    row.configKind, *env, nowMinute);
+                                openCompletionGate(
+                                    state,
+                                    env->envName + " / " +
+                                        (findService(state, row.serviceId) != nullptr
+                                             ? findService(state, row.serviceId)
+                                                   ->serviceName
+                                             : "服务") +
+                                        " / " + configLabel(row.configKind),
+                                    "计入任务完成度", configLabel(row.configKind),
+                                    [serviceId = row.serviceId,
+                                     kind = row.configKind, envCopy = *env, nowMinute](
+                                        ReleaseStore& s, ReleaseDetailUiState& st) {
+                                        markConfigCompleted(s, st, serviceId, kind,
+                                                            envCopy, nowMinute);
+                                    });
                             } else {
-                                markStepCompleted(store, state, row.serviceId,
-                                                  row.stepKind, *env, nowMinute);
+                                openCompletionGate(
+                                    state,
+                                    env->envName + " / " +
+                                        (findService(state, row.serviceId) != nullptr
+                                             ? findService(state, row.serviceId)
+                                                   ->serviceName
+                                             : "服务") +
+                                        " / " + stepLabel(row.stepKind),
+                                    stepGateImpact(row.stepKind),
+                                    stepLabel(row.stepKind),
+                                    [serviceId = row.serviceId,
+                                     kind = row.stepKind, envCopy = *env, nowMinute](
+                                        ReleaseStore& s, ReleaseDetailUiState& st) {
+                                        markStepCompleted(s, st, serviceId, kind,
+                                                          envCopy, nowMinute);
+                                    });
                             }
                         })
                         .build();
@@ -2057,6 +2245,10 @@ void drawConfirmDialogs(eui::Ui& ui, const eui::Screen& screen,
     if (state.confirm == ReleaseDetailConfirm::None) return;
     if (state.confirm == ReleaseDetailConfirm::ValidationReport) {
         drawValidationDialog(ui, screen, state, t, themeTokens);
+        return;
+    }
+    if (state.confirm == ReleaseDetailConfirm::StepComplete) {
+        drawStepGateDialog(ui, screen, state, store, t, themeTokens);
         return;
     }
 

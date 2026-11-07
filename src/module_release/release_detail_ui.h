@@ -54,7 +54,8 @@ enum class ReleaseDetailConfirm {
     RemoveService,
     RemoveEnv,
     ValidationReport,
-    WithdrawSubmission
+    WithdrawSubmission,
+    StepComplete  // 强确认门（need192 §6）：步骤/配置/前置完成前的逐字「确认」校验
 };
 
 // 撤回目标类型。
@@ -142,8 +143,15 @@ struct ReleaseDetailUiState {
     std::string pendingAnchor;
     // 页头「···」菜单展开态（Draft=作废 / Pending·Running=校验+作废）。
     bool menuOpen = false;
-    // 步骤行「···」次行展开键（编辑态配置行：上移/下移/跳过收纳处）。
-    std::string openMenuRowKey;
+
+    // 强确认门（need192 §6）：完成类动作先弹 420 逐字确认，确认才落态（二次确认
+    // 前不写库契约不变）。gateApply 暂存落态动作，输入 trim 后逐字匹配「确认」才
+    // 可执行；取消 / Esc / 遮罩关闭一律无副作用。切任务由 loadDetail 清空。
+    std::string gateTitle;    // 弹窗标题：「执行确认 · 合并分支」
+    std::string gateSubject;  // 即将标记完成：{环境} / {服务} / {步骤名}
+    std::string gateImpact;   // 完成后系统将：…
+    std::string gateInput;    // 逐字校验输入缓冲
+    std::function<void(ReleaseStore&, ReleaseDetailUiState&)> gateApply;
     // notice 写入时刻（nowUnix 秒）：3 秒自动消失的判据，0 = 不自动消失。
     std::int64_t noticeAt = 0;
     // 轨道组折叠记忆（键 = 组 id）：缺省 = 完成组收起、当前步所在组强制展开；

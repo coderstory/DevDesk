@@ -258,13 +258,11 @@ REGISTER_TEST(release_detail_skip_toggle_label_and_cancel,
     const std::string row2 = "release.detail.env." + std::to_string(ids.envId) +
                              ".svc." + std::to_string(ids.serviceId) +
                              ".step.config.2";  // cron（已完成）
-    // 跳过入口在「···」次行（F-13 收纳）：展开后点「跳过此项」
-    DOCTEST_REQUIRE(frame.ui.find(row0 + ".more") != nullptr);
-    // 已完成行无「···」入口
-    DOCTEST_CHECK(frame.ui.find(row2 + ".more") == nullptr);
-    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".more.bg"));
-    frame.refresh(store, state, actions);
-    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".menu.skip.bg"));
+    // 跳过入口 = 行内常显复选框（need192 §4.5：「···」菜单已裁撤）
+    DOCTEST_REQUIRE(frame.ui.find(row0 + ".skip.hit") != nullptr);
+    // 已完成行无跳过勾选框
+    DOCTEST_CHECK(frame.ui.find(row2 + ".skip.hit") == nullptr);
+    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".skip.hit"));
     rel::TaskConfig afterSkip;
     DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
                                  &afterSkip));
@@ -274,9 +272,9 @@ REGISTER_TEST(release_detail_skip_toggle_label_and_cancel,
     DOCTEST_REQUIRE(stateText != nullptr);
     DOCTEST_CHECK_EQ(stateText->text, std::string("已跳过"));
 
-    // 次行保持展开（openMenuRowKey 跨重读存活）→ 「取消跳过」恢复
+    // 已跳过行勾选框保持可点 → 点击恢复
     frame.refresh(store, state, actions);
-    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".menu.skip.bg"));
+    DOCTEST_REQUIRE(clickNode(frame.ui, row0 + ".skip.hit"));
     rel::TaskConfig afterUnskip;
     DOCTEST_REQUIRE(configByKind(store, ids.serviceId, rel::ConfigKind::Nacos,
                                  &afterUnskip));
@@ -287,6 +285,79 @@ REGISTER_TEST(release_detail_skip_toggle_label_and_cancel,
     // 内容 "x" 仍在：状态字是「已填 n 字」；断言核心是「不再是已完成/已跳过」
     DOCTEST_CHECK(stateTextAfter->text.find("已完成") == std::string::npos);
     DOCTEST_CHECK(stateTextAfter->text.find("已跳过") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(release_detail_step_gate_confirm_flow,
+              "强确认门：完成行点击只开 420 逐字确认门、确认前不落库；输入「确认」"
+              "匹配后主钮才可确认并落态，未匹配点击无效，取消路径零副作用"
+              "（need192 §6，防：误点即完成 / 未匹配可确认 / 确认后不落库）", {
+    ThemeGuard guard;
+    test_support::TestDb tdb("releasedetail", "gate");
+    rel::ReleaseStore store(tdb.handle());
+    // 计划日取过去：nowMinute > 环境开窗，行点击才能走到确认门（时间窗守卫不拦）
+    const Seed ids = seedDetailTask(store, rel::TaskStatus::Draft, "2020-01-01");
+    DOCTEST_REQUIRE(ids.taskId != 0);
+
+    rel::ReleaseDetailUiState state;
+    state.taskId = std::to_string(ids.taskId);
+    state.dirty = true;
+    rel::ReleaseDetailActions actions;
+    Frame frame;
+    frame.refresh(store, state, actions);
+
+    const std::string base = "release.detail.env." + std::to_string(ids.envId) +
+                             ".svc." + std::to_string(ids.serviceId) + ".step.";
+    // 行点击 → 只开门（ReleaseDetailConfirm::StepComplete），不落库
+    DOCTEST_REQUIRE(clickNode(frame.ui, base + "merge.hit"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::StepComplete);
+    DOCTEST_CHECK(state.gateSubject.find("合并分支") != std::string::npos);
+    // 弹窗只在下一帧 compose 出现：先 refresh 再断言节点
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(frame.ui.find("release.detail.stepgate.title") != nullptr);
+    DOCTEST_REQUIRE(frame.ui.find("release.detail.stepgate.confirm.bg") != nullptr);
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        for (const auto& s : steps.value()) DOCTEST_CHECK(s.doneAt == 0);
+    }
+    // 未匹配（gateInput="确定"）：主钮无 onClick，点击无效、仍不落库
+    state.gateInput = "确定";
+    frame.refresh(store, state, actions);
+    DOCTEST_CHECK(!clickNode(frame.ui, "release.detail.stepgate.confirm.bg"));
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        for (const auto& s : steps.value()) DOCTEST_CHECK(s.doneAt == 0);
+    }
+    // 逐字匹配「确认」：主钮可点 → 落态 + 关门
+    state.gateInput = "确认";
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.stepgate.confirm.bg"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::None);
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        bool mergeDone = false;
+        for (const auto& s : steps.value()) {
+            if (s.kind == rel::StepKind::MergeBranch) mergeDone = s.doneAt != 0;
+            else DOCTEST_CHECK(s.doneAt == 0);
+        }
+        DOCTEST_CHECK(mergeDone);
+    }
+    // 取消路径：verify 行开门 → 点副按钮关门，零副作用
+    DOCTEST_REQUIRE(clickNode(frame.ui, base + "verify.hit"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::StepComplete);
+    frame.refresh(store, state, actions);
+    DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.stepgate.cancel.bg"));
+    DOCTEST_CHECK(state.confirm == rel::ReleaseDetailConfirm::None);
+    {
+        auto steps = store.listTaskSteps(ids.serviceId);
+        DOCTEST_REQUIRE(steps.isOk());
+        for (const auto& s : steps.value()) {
+            if (s.kind == rel::StepKind::Verify) DOCTEST_CHECK(s.doneAt == 0);
+        }
+    }
     return true;
 })
 
@@ -671,10 +742,8 @@ REGISTER_TEST(release_detail_skip_failure_notice,
     const std::string row = "release.detail.env." + std::to_string(ids.envId) +
                             ".svc." + std::to_string(ids.serviceId) +
                             ".step.config.0";
-    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".more.bg"));
-    frame.refresh(store, state, actions);
     DOCTEST_REQUIRE(tdb.handle().exec("PRAGMA query_only = ON").isOk());
-    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".menu.skip.bg"));
+    DOCTEST_REQUIRE(clickNode(frame.ui, row + ".skip.hit"));
 
     DOCTEST_CHECK(state.noticeIsError);
     DOCTEST_CHECK(state.notice.find("保存跳过状态失败") != std::string::npos);
