@@ -377,7 +377,8 @@ private:
 
     // 方案 A 边界把手：一颗把手管两端——树展开时把手位于树与编辑区之间（树右缘）垂直居中，
     // 树收起后同颗把手出现在编辑区左缘同一垂直位置。绿底白箭头门把手样式，箭头方向随
-    // 两态翻转形成镜像对称。页面级元素（zIndex 6，低于大纲 10 / 弹窗 1000），
+    // 两态翻转形成镜像对称。页面级元素（zIndex 30，bug162：须高于页内 dropdown
+    // 字段档 20，否则命中序被整页子树上界压过；仍低于弹窗 1000），
     // 常驻 id md.tree.handle（含 .bg 子件）。取代旧 drawTreeExpandFab + md.tree.collapse。
     void drawTreeHandle(eui::Ui& ui,
                         float pad,

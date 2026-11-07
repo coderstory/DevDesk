@@ -243,6 +243,28 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     // 方案 A 边界把手：一颗把手管两端，取代旧 drawTreeExpandFab + md.tree.collapse
     drawTreeHandle(ui, pad, bodyH, sideW, gap, t);
 
+    // 帮助钮 tooltip 绑定（claude.title.help 同款现成 hint 机制）：hover 弹回
+    // 快捷键说明（文案源 = onKeyEvent 的快捷键注释口径，防「问号钮看着可点
+    // 却无解释」回归）。必须在**根作用域**构建——tooltip 组件是普通 in-flow
+    // stack，画进 md.root 列闭包会占流内槽位把 body 下压 48px（bug149）。
+    // 锚点可静态推算——md.actions 行（宽 304）justify END 打包：help 24 +
+    // gap 4 + 大纲 112 + gap 4 + 新建 124 = 268，左余 36 → help 中心 = 行内
+    // x 48；行起点 x = contentW - 304（title/mode/actions 三段宽和恒 =
+    // contentW），故锚点 x = contentW - 256，y = kHeaderH/2。bounds 取页头
+    // 行使气泡恒落钮下方；面板宽放宽到 560——本句 4 组快捷键（约 19 全角 +
+    // 37 ASCII，估宽 ≈505px）远长于 claude 的 15 字档（320），tooltip 默认
+    // 86-112 是 barchart 短标签档必截断；最窄窗（1000，contentW 920）右限 =
+    // 920-560-12 = 348，锚点 664 居中 clamp 到 348，右缘 908 ≤ 920 仍在列内。
+    components::tooltip(ui, "md.help.icon.tooltip")
+        .theme(componentTheme)
+        .source("md.help.icon.bg")
+        .value("快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层")
+        .anchor(contentW - 304.0f + 48.0f, ui_kit::kHeaderH * 0.5f)
+        .bounds(contentW, ui_kit::kHeaderH)
+        .minWidth(560.0f)
+        .maxWidth(560.0f)
+        .build();
+
     // UAT5 真机收敛泵：lerp 只在 compose 里推进，而真机主循环是事件驱动——无输入
     // 即 glfwWaitEvents 睡眠，且 runtime 的 animating 位只认 DSL 管理的动画
     //（onFrame/过渡/GIF/滚动惯性），本手搓 treePanelWidth_ lerp 对它不可见。
@@ -437,26 +459,11 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
         })
         .build();
 
-    // 帮助钮 tooltip 绑定（claude.title.help 同款现成 hint 机制）：hover 弹回
-    // 快捷键说明（文案源 = onKeyEvent 的快捷键注释口径，防「问号钮看着可点
-    // 却无解释」回归）。锚点可静态推算——md.actions 行（宽 304）justify END
-    // 打包：help 24 + gap 4 + 大纲 112 + gap 4 + 新建 124 = 268，左余 36 →
-    // help 中心 = 行内 x 48；行起点 x = contentW - 304（title/mode/actions
-    // 三段宽和恒 = contentW），故锚点 x = contentW - 256，y = kHeaderH/2。
-    // bounds 取页头行使气泡恒落钮下方；面板宽放宽到 560——本句 4 组快捷键
-    //（约 19 全角 + 37 ASCII，估宽 ≈505px）远长于 claude 的 15 字档（320），
-    // tooltip 默认 86-112 是 barchart 短标签档必截断；最窄窗（1000，contentW
-    // 920）右限 = 920-560-12 = 348，锚点 664 居中 clamp 到 348，右缘 908 ≤ 920
-    // 仍在列内。
-    components::tooltip(ui, "md.help.icon.tooltip")
-        .theme(componentTheme)
-        .source("md.help.icon.bg")
-        .value("快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层")
-        .anchor(contentW - 304.0f + 48.0f, ui_kit::kHeaderH * 0.5f)
-        .bounds(contentW, ui_kit::kHeaderH)
-        .minWidth(560.0f)
-        .maxWidth(560.0f)
-        .build();
+    // 帮助钮 tooltip 绑定已移出本函数：tooltip 组件是普通 in-flow stack（无
+    // ignoreLayout），画在 md.root 列内容闭包里会占走一个 40px 流内槽位 +
+    // 8px gap，把 md.body 整体下压 48px、列底溢出窗口（bug149，2026-11-07
+    // 探针实测 md.help.icon.tooltip frame=(32,48) 560x40 幽灵占位）。现挂
+    // compose 根作用域（claude.title.help 同款），见 compose 内 tooltip 绑定。
 }
 
 void MarkdownModule::drawBody(eui::Ui& ui,

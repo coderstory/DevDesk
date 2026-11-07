@@ -30,7 +30,14 @@ void MarkdownModule::drawTreeHandle(eui::Ui& ui,
     ui.stack("md.tree.handle")
         .position(handleX, handleY)
         .size(kTreeHandleW, kTreeHandleH)
-        .zIndex(6)
+        // zIndex 30（bug162，2026-11-07）：命中序按子树 zIndex 上界排序（EUI
+        // dsl.h rebuildOrderedElements 逆序取最高），页内任一 closed dropdown
+        // 字段栈自带 zIndex 20（EUI-NEO components/dropdown.h:124）把 md.root
+        // 子树上界抬到 20 > 旧值 6 → 整页命中先于把手，把手与树滚动容器重叠的
+        // 22px 点击全被滚动容器吃掉（把手中心实测命中 md.tree.scroll）。30 高于
+        // 页内 dropdown 档 20 / tooltip 10 / 大纲 10，仍低于 dialog 1000 /
+        // contextmenu 1050 / toast 1100（模态层照常盖住把手）。
+        .zIndex(30)
         .content([&] {
             // UAT6 MDA：把手底——品牌绿底（wechat.primary #36D399），hover 加深
             const float hoverBrighter = 0.08f;
