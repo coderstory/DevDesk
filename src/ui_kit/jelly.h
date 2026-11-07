@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <ratio>
 #include <string>
 #include <unordered_map>
 #include <utility>

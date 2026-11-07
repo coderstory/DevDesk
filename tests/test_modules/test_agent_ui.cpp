@@ -3502,7 +3502,7 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
     // OS 发送为后台异步，落地等待在下方 spy 断言
     bool failed = false;
     eui::Ui ui2;
-    for (int i = 0; i < 500; ++i) {
+    for (int i = 0; i < 1500; ++i) {
         composeTo(ui2, mod, kScreen, "agent_ui_sysnotify_poll");
         auto runs = store.listRuns(taskId.value(), 1);
         if (runs.isOk() && !runs.value().empty() &&
@@ -3512,14 +3512,15 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(failed, "run 失败后 5s 内未落库 failed");
-    // M2：OS 发送已挪后台线程，落地异步——有界等待后取 acquire 配对再读 spy 字段
+    DOCTEST_REQUIRE_MESSAGE(failed, "run 失败后 15s 内未落库 failed");
+    // M2：OS 发送已挪后台线程，落地异步——有界等待后取 acquire 配对再读 spy 字段；
+    // 窗口 1500 迭代（CI 慢化 2-10×，池203：8375ms 耗尽 500 预算的 flake 实证）
     bool osSent = false;
-    for (int i = 0; i < 500 && !osSent; ++i) {
+    for (int i = 0; i < 1500 && !osSent; ++i) {
         osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
         if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(osSent, "OS 系统通知后台发送 5s 内未落地");
+    DOCTEST_REQUIRE_MESSAGE(osSent, "OS 系统通知后台发送 15s 内未落地");
     DOCTEST_CHECK_MESSAGE(spy.senderId != std::this_thread::get_id(),
                           "OS 系统通知在 UI 主线程发送（M2 后台化未生效）");
     DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);

@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <ratio>
 #include <string>
 #include <unistd.h>
 #include <thread>
