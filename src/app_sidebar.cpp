@@ -25,6 +25,7 @@
 
 #include <eui/app.h>  // app::closeMainWindow（--minimized 首帧藏主窗）
 #include <eui/types.h>
+#include <core/render/render_backend.h>  // need217：fluid-fps 日志聚合 RenderFrameStats
 
 #include <algorithm>
 #include <atomic>
@@ -1185,6 +1186,15 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
 
     const float phase = fluidPhaseSeconds();
     const float minDim = std::min(screen.width, screen.height);
+    // need217 实测修正：retained 兄弟 run 扫描只发生在「同一父容器的连续子元素」上
+    //（renderElementChildren），本函数顶层直建的 56 rect 是 56 个独立 root——
+    // renderDirect 逐 root 调 renderElement 不经过 run 扫描，opt-in 永不生效（实测
+    // hits/miss/rebuild 全零）。包一层全窗非交互 stack：子元素绝对坐标与 z 序不变，
+    // run 在其子序列上成形。
+    ui.stack("app.fluid.root")
+        .position(0.0f, 0.0f)
+        .size(screen.width, screen.height)
+        .content([&] {
     for (int j = 0; j < kHalos; ++j) {
         // 漂移中心 = 锚点 + 异频异相振幅（层间不共振，慢到只有「液面在流」而无轨迹感）
         const float cx = screen.width * kAnchorX[j] +
@@ -1210,6 +1220,8 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
             .color(color)
             .radius(r)  // 半径 = 半宽 → 正圆（splash 墨染同款手法）
             .opacity(alpha)
+            .retainedLayerScale(0.5f)  // need217 F-3：56 rect 统一低清离屏+陈旧复用（方案卡 doc 35）
+            .retainedLayerReuseFrames(10)
             .build();
         // 确定性 hash 卫星：层心外慢轨道漂移的墨点，角度/距离/大小全由索引
         // hash 定死，帧间稳定不闪烁（漂移只来自相位项）
@@ -1227,9 +1239,12 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
                 .color(color)
                 .radius(br)
                 .opacity(alpha * 0.45f)
+                .retainedLayerScale(0.5f)  // need217 F-3：与晕层同参（run 扫描要求一致）
+                .retainedLayerReuseFrames(10)
                 .build();
         }
     }
+        });
     // 帧泵元素已退役（bug#194）：原常驻 1x1 onFrame 驱动（app.fluid.anim.driver，
     // md.tree.anim.driver 同款先例）令 runtime 置 animating_ 满刷新率持续出帧，
     // 是动态背景持续吃 GPU 的主因；出帧改由文件头 FluidPump 20Hz 自持泵线程驱动，
@@ -1241,20 +1256,40 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     if (kFpsLog) {
         static int frames = 0;
         static long long buildUsTotal = 0;
+        // need217 F-4：聚合上帧 RenderFrameStats（compose 时刻读到的是上一已完帧）；
+        // renderDirectCpuNs 摊到每帧——低清接入前后帧耗对比数据源。
+        static long long rectTotal = 0, hitsTotal = 0, missTotal = 0;
+        static long long rebuildTotal = 0, layerDrawTotal = 0, directNsTotal = 0;
         static auto windowStart = std::chrono::steady_clock::now();
         ++frames;
         buildUsTotal += std::chrono::duration_cast<std::chrono::microseconds>(
                             std::chrono::steady_clock::now() - fpsT0).count();
+        const auto& st = ::core::render::lastRenderFrameStats();
+        rectTotal += st.rectDraws;
+        hitsTotal += st.retainedLayerHits;
+        missTotal += st.retainedLayerMisses;
+        rebuildTotal += st.retainedLayerRebuilds;
+        layerDrawTotal += st.retainedLayerDraws;
+        directNsTotal += static_cast<long long>(st.renderDirectCpuNs);
         const auto now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now - windowStart).count();
         if (elapsed >= 5.0) {
             LOG_INFO("[fluid-fps] rate=" + std::to_string(frames / elapsed) +
                      "fps avg_build=" +
                      std::to_string(static_cast<double>(buildUsTotal) / frames) +
-                     "us frames=" + std::to_string(frames) + " window=" +
+                     "us rect_total=" + std::to_string(rectTotal) +
+                     " hits_total=" + std::to_string(hitsTotal) +
+                     " miss_total=" + std::to_string(missTotal) +
+                     " rebuild_total=" + std::to_string(rebuildTotal) +
+                     " layerDraw_total=" + std::to_string(layerDrawTotal) +
+                     " direct_cpu=" +
+                     std::to_string(static_cast<double>(directNsTotal) / frames / 1000.0) +
+                     "us_per_frame frames=" + std::to_string(frames) + " window=" +
                      std::to_string(elapsed) + "s");
             frames = 0;
             buildUsTotal = 0;
+            rectTotal = hitsTotal = missTotal = 0;
+            rebuildTotal = layerDrawTotal = directNsTotal = 0;
             windowStart = now;
         }
     }
