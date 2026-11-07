@@ -350,51 +350,49 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     const float summaryY = y0 + titleH + ms::roundFs(4.0f);  // H28: 1→4（超小间距令牌）
     DOCTEST_CHECK(std::fabs(summary->frame.y - summaryY) < 0.5f);
     DOCTEST_CHECK(std::fabs(summary->frame.x - title->frame.x) < 0.5f);
-    // 启用/自动推送两整行（N 项: 两开关统一 44×24、行盒 24）：行 y =
-    // 摘要底+8 / 启用行底(max(行盒/文本/开关))+8；开关钉卡右内边距、行盒内
-    // 垂直居中（H28: 行距 6→8）
+    // 启用/自动推送同行两半列（池153，2026-11-07：两开关统一 44×24、列距 16，
+    // 提醒卡两列镜像范式）：左半列「启用」label 贴卡左缘、开关贴半列右缘；
+    // 右半列「自动推送」label 在半列 2 x、开关贴卡内容右缘（=右半列右缘）。
+    // 行盒内垂直居中；行 y = 摘要底+8（H28: 行距 6→8）。
     const float labelH = ms::roundFs(18.0f);
     const float headTextBottom = summaryY + mutedH;
-    const float enableRowY = headTextBottom + rowGap;
-    const float enableTextBottom = enableRowY + (toggleRowH + labelH) * 0.5f;
-    const float enableSwY = enableRowY + (toggleRowH - 24.0f) * 0.5f;  // N 项: 28→24
-    const float autoRowY =
-        std::max(enableRowY + toggleRowH,
-                 std::max(enableTextBottom, enableSwY + 24.0f)) + rowGap;  // N 项: 28→24
-    const float autoTextBottom = autoRowY + (toggleRowH + labelH) * 0.5f;
-    const float autoSwY = autoRowY + (toggleRowH - 24.0f) * 0.5f;
+    const float halfColGap = ms::roundFs(16.0f);
+    const float halfW = (kW - padX * 2.0f - halfColGap) * 0.5f;
+    const float halfCol2X = padX + halfW + halfColGap;
+    const float toggleRowY = headTextBottom + rowGap;
+    const float enableTextBottom = toggleRowY + (toggleRowH + labelH) * 0.5f;
+    const float swY = toggleRowY + (toggleRowH - 24.0f) * 0.5f;
     DOCTEST_CHECK_EQ(enLabel->text, std::string("启用"));
     DOCTEST_CHECK_EQ(autoLabel->text, std::string("自动推送"));
-    DOCTEST_CHECK(std::fabs(enSw->frame.x - (kW - padX - 44.0f)) < 0.5f);  // N 项: 52→44
-    DOCTEST_CHECK(std::fabs(enSw->frame.y - enableSwY) < 0.5f);
-    DOCTEST_CHECK_EQ(enSw->frame.width, 44.0f);  // N 项: 52→44
-    DOCTEST_CHECK_EQ(enSw->frame.height, 24.0f);  // N 项: 28→24
-    DOCTEST_CHECK(std::fabs(enSw->frame.x + enSw->frame.width - (kW - padX)) <
-                  0.5f);
+    DOCTEST_CHECK(std::fabs(enSw->frame.x - (padX + halfW - 44.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(enSw->frame.y - swY) < 0.5f);
+    DOCTEST_CHECK_EQ(enSw->frame.width, 44.0f);
+    DOCTEST_CHECK_EQ(enSw->frame.height, 24.0f);
+    DOCTEST_CHECK(std::fabs(enSw->frame.x + enSw->frame.width -
+                            (padX + halfW)) < 0.5f);
     DOCTEST_CHECK(std::fabs(autoSw->frame.x - (kW - padX - 44.0f)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(autoSw->frame.y - autoSwY) < 0.5f);
+    DOCTEST_CHECK(std::fabs(autoSw->frame.y - swY) < 0.5f);
     DOCTEST_CHECK_EQ(autoSw->frame.width, 44.0f);
     DOCTEST_CHECK_EQ(autoSw->frame.height, 24.0f);
-    // label 左块：贴卡左缘（x=28）、行盒内垂直居中；宽度 = 卡内宽 − 开关 − 8（弹性）。
-    // 说明文案行已删（零滚动收口）：desc 元素不得再出现（防「顺手加回来」）。
-    const float enTextW = kW - padX * 2.0f - 44.0f - ms::roundFs(8.0f);  // N 项: 52→44
-    const float autoTextW = kW - padX * 2.0f - 44.0f - ms::roundFs(8.0f);
+    // label 左块：启用贴卡左缘（x=28）、自动推送在半列 2 x，行盒内垂直居中；
+    // 宽度 = 半列宽 − 开关 − 8（弹性）。说明文案行已删（零滚动收口）：desc
+    // 元素不得再出现（防「顺手加回来」）。
+    const float halfTextW = std::max(0.0f, halfW - 44.0f - ms::roundFs(8.0f));
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.desc") == nullptr);
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".autopush.desc") == nullptr);
-    for (const auto* lbl : {enLabel, autoLabel}) {
-        DOCTEST_CHECK(std::fabs(lbl->frame.x - padX) < 0.5f);
-    }
+    DOCTEST_CHECK(std::fabs(enLabel->frame.x - padX) < 0.5f);
+    DOCTEST_CHECK(std::fabs(autoLabel->frame.x - halfCol2X) < 0.5f);
     DOCTEST_CHECK(std::fabs(enLabel->frame.y -
-                            (enableRowY +
+                            (toggleRowY +
                              (toggleRowH - labelH) * 0.5f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(autoLabel->frame.y -
-                            (autoRowY + (toggleRowH - labelH) * 0.5f)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(enLabel->frame.width - enTextW) < 0.5f);
-    DOCTEST_CHECK(std::fabs(autoLabel->frame.width - autoTextW) < 0.5f);
-    // 第一段分段线：头部内容底 = 自动推送行底（max(行盒/文本块/开关)）+ 12（H28: 5→12）
-    const float headBottom = std::max(autoRowY + toggleRowH,
-                                      std::max(autoTextBottom,
-                                               autoSwY + 24.0f));
+                            (toggleRowY + (toggleRowH - labelH) * 0.5f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(enLabel->frame.width - halfTextW) < 0.5f);
+    DOCTEST_CHECK(std::fabs(autoLabel->frame.width - halfTextW) < 0.5f);
+    // 第一段分段线：头部内容底 = 同行开关行底（max(行盒/文本块/开关)）+ 12（H28: 5→12）
+    const float headBottom = std::max(toggleRowY + toggleRowH,
+                                      std::max(enableTextBottom,
+                                               swY + 24.0f));
     DOCTEST_CHECK(std::fabs(divHead->frame.y - (headBottom + secGap)) < 0.5f);
     DOCTEST_CHECK(std::fabs(divHead->frame.x - padX) < 0.5f);
     // 配置组：组题行已删（零滚动收口）——URL 全宽行直接跟分段线；group.config
@@ -486,21 +484,24 @@ REGISTER_TEST(github_sync_card_fill_full_width,
                                 (28.0f + colW)) < 0.5f);
         DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width -
                                 (kW - 28.0f - 24.0f)) < 0.5f);
-        // 开关右缘钉卡右内边距（N 项: 两开关统一 44×24）
+        // 开关右缘（池153 同行两半列）：启用钉左半列右缘（28+halfW）、自动推送
+        // 钉卡内容右缘（kW−28）——两开关统一 44×24
+        const float halfW = (formW - ms::roundFs(16.0f)) * 0.5f;
         DOCTEST_CHECK(std::fabs(autoSw->frame.x + autoSw->frame.width -
                                 (kW - 28.0f)) < 0.5f);
         DOCTEST_CHECK(std::fabs(enSw->frame.x + enSw->frame.width -
-                                (kW - 28.0f)) < 0.5f);
+                                (28.0f + halfW)) < 0.5f);
         DOCTEST_CHECK_EQ(autoSw->frame.width, 44.0f);
-        DOCTEST_CHECK_EQ(enSw->frame.width, 44.0f);  // N 项: 52→44
-        // 开关行文本块宽随窗宽弹性（= 卡内宽 − 开关 − 8，无固定帽）且贴卡左缘
-        //（UAT6 行宽=卡内宽契约；旧右侧纵排定宽标签盒已废，此处钉住不回归）
+        DOCTEST_CHECK_EQ(enSw->frame.width, 44.0f);
+        // 开关行文本块宽随窗宽弹性（= 半列宽 − 开关 − 8，无固定帽）：启用贴卡
+        // 左缘、自动推送在半列 2 x（池153 两半列镜像；旧右侧纵排定宽标签盒已废）
         DOCTEST_CHECK(std::fabs(enLabel->frame.x - 28.0f) < 0.5f);
-        DOCTEST_CHECK(std::fabs(autoLabel->frame.x - 28.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(autoLabel->frame.x -
+                                (28.0f + halfW + ms::roundFs(16.0f))) < 0.5f);
         DOCTEST_CHECK(std::fabs(enLabel->frame.width -
-                                (formW - 44.0f - ms::roundFs(8.0f))) < 0.5f);  // N 项: 52→44
+                                (halfW - 44.0f - ms::roundFs(8.0f))) < 0.5f);
         DOCTEST_CHECK(std::fabs(autoLabel->frame.width -
-                                (formW - 44.0f - ms::roundFs(8.0f))) < 0.5f);
+                                (halfW - 44.0f - ms::roundFs(8.0f))) < 0.5f);
     }
     return true;
 })

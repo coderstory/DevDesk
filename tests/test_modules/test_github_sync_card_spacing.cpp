@@ -112,11 +112,17 @@ REGISTER_TEST(github_sync_card_spacing_rhythm,
                             (1520.0f - 28.0f)) < 0.5f);
     DOCTEST_CHECK(toggle->frame.y + toggle->frame.height <=
                   enSw->frame.y + gapOk);
-    // 摘要 → 启用行 / 启用 → 自动推送 ≥ 8（小间距令牌；100% 档开关顶 = 行顶）
+    // 摘要 → 开关行 ≥ 8（小间距令牌；100% 档开关顶 = 行顶）。池153 同行两半列
+    // 后「启用→自动推送」无纵向行距——改为同行钉（y 相等）+ 两开关右缘钉各自
+    // 半列（列距 16 = 池152 口径；旧纵向 ≥8 判据随重排废除）
     DOCTEST_CHECK(enSw->frame.y - (summary->frame.y + summary->frame.height) >=
                   8.0f - gapOk);
-    DOCTEST_CHECK(autoSw->frame.y - (enSw->frame.y + enSw->frame.height) >=
-                  8.0f - gapOk);
+    DOCTEST_CHECK(std::fabs(autoSw->frame.y - enSw->frame.y) < 0.5f);
+    DOCTEST_CHECK(std::fabs(enSw->frame.x + enSw->frame.width -
+                            (28.0f + (1520.0f - 56.0f - ms::roundFs(16.0f)) *
+                                        0.5f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(autoSw->frame.x + autoSw->frame.width -
+                            (1520.0f - 28.0f)) < 0.5f);
     // 分段线上下留白 ≥ 12（中间距令牌）
     DOCTEST_CHECK(divHead->frame.y - (autoSw->frame.y + autoSw->frame.height) >=
                   12.0f - gapOk);

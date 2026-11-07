@@ -93,9 +93,12 @@ std::string twoDigit(std::size_t n) {
 // 全黑/纯色帧判据（采样 8px 网格；判据口径同 screenshot_probe ⑤）：
 //  - 纯黑采样点占比 > 90% = 全黑帧（窗口没渲染 / 渲染后端没激活）
 //  - 颜色桶（R/G/B 各取高 3 位）数 < 3 = 纯色帧（空窗 / 只有底色）
-//  - bug185 补：明确非白采样占比 < 5% = 白底空帧——白底（浅色档 255）+ 细线
-//    覆盖层（如窗口环 2px 线宽）的 AA 像素能凑满 3 桶骗过前两条（NOTES 实证
-//    01-home-640 目测全白判绿）；真页面正文/图标/卡片远超 5%。
+//  - bug185 补：白底空帧判据按主题自适应（池230 BUG-5）——暗页口径不变（非白
+//    采样占比 < 5%）：白底（255）+ 细线覆盖层（如窗口环 2px 线宽）的 AA 像素
+//    能凑满 3 桶骗过前两条（NOTES 实证 01-home-640 目测全白判绿）。亮页底色
+//    本就是白、正文稀疏页实测非白占比仅 1–3%（qa230 全量 13/16 页误报，直拍
+//    证页面完整渲染），亮页改联合判据「非白 < 5% 且 颜色桶 < 10」：真渲染亮页
+//    颜色桶 30–51 远超阈，未渲染白窗只有窗口环细线凑不满 10 桶。
 // 返回 true = 通过；失败时 stderr 打出两个实测值。
 bool frameHasContent(const std::vector<unsigned char>& rgba, int width, int height) {
     std::size_t black = 0;
@@ -126,8 +129,13 @@ bool frameHasContent(const std::vector<unsigned char>& rgba, int width, int heig
     }
     const bool blackFrame = samples > 0 && black * 100 / samples > 90;
     const bool solidFrame = buckets.size() < 3;
+    // bug185「白底+细线假绿」判据按主题自适应（池230 BUG-5）：暗页只看非白占比；
+    // 亮页非白占比天然低（正文稀疏页 1–3%），加颜色桶联合判据——真渲染页桶 30+，
+    // 未渲染白窗只有窗口环细线凑不满 10 桶
+    const bool darkPage = app::g_uat62Dark;
     const bool whiteSkinFrame =
-        samples > 0 && nonWhite * 100 / samples < 5;  // bug185：白底+细线假绿
+        samples > 0 && nonWhite * 100 / samples < 5 &&
+        (darkPage || buckets.size() < 10);
     if (blackFrame || solidFrame || whiteSkinFrame) {
         std::cerr << "  FAIL——帧内容判据不过：黑点占比 " << black << "/"
                   << samples << "，颜色桶 " << buckets.size()

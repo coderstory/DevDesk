@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
+#include <utility>
 
 namespace layout_guard {
 namespace {

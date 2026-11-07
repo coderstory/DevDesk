@@ -155,7 +155,15 @@ std::vector<std::string> scanForTokens(const std::filesystem::path& root,
             }
             const std::string rel =
                 std::filesystem::relative(it->path(), root, fec).generic_string();
-            if (fec || rel == kGuardFileRelPath) continue;
+            // tests/probes/ 豁免：探针的 G.expect( 是布局守卫 kit 的断言助手 DSL
+            //（need221），不是 Result 取值口语境——.expect( 子串撞车（35 处全在
+            // layout_guard_probe.cpp）。不选词边界匹配：Result 链式取值
+            // obj.expect( 与 DSL 助手同为「标识符.expect(」形态，词边界区分不了
+            // 两者，只会把真实误用一起豁免；护栏继续全覆盖 src/** 与 tests/ 手写用例。
+            if (fec || rel == kGuardFileRelPath ||
+                rel.rfind("tests/probes/", 0) == 0) {
+                continue;
+            }
             std::ifstream in(it->path());
             if (!in) continue;
             std::string line;
