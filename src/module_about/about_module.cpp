@@ -331,6 +331,10 @@ public:
                             .size(w, kRowH)
                             .content([&] {
                                 // 左标签：12px 三级字，右对齐，100px 宽
+                                // bug157：label(12px)/value(14px) 同 lineHeight 顶对齐时
+                                // 墨迹基线随字号下沉不同 → value 偏低；两列统一按墨迹盒
+                                // 在同一 kRowH 行盒内垂直居中（EUI text_layout
+                                // VerticalAlign::Center），保证同一水平线。
                                 inner.text("about.info.label." + sid)
                                     .position(0.0f, 0.0f)
                                     .ignoreLayout()
@@ -338,6 +342,7 @@ public:
                                     .text(g.rows[i].label)
                                     .fontSize(t.sizes.fontSizeSmall)  // 12px
                                     .lineHeight(kRowH)
+                                    .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textTertiary)
                                     .horizontalAlign(eui::HorizontalAlign::Right)
                                     .build();
@@ -352,6 +357,7 @@ public:
                                     .text(g.rows[i].value)
                                     .fontSize(t.sizes.fontSizeBody)  // 14px
                                     .lineHeight(kRowH)
+                                    .verticalAlign(eui::VerticalAlign::Center)
                                     .fontWeight(600)
                                     .maxWidth(w - valueX)
                                     .overflow(core::TextOverflow::Ellipsis)
