@@ -748,7 +748,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                             batchMode_ = on;
                             batchSel_.clear();
                         });
-        cy += kBarH + 10.0f;
+        cy += kBarH + 8.0f;  // need219 §4.3：卡间距 8px（工具条卡→列表）
 
         // 批量操作条
         if (batchMode_) {
@@ -806,7 +806,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                                ui_kit::ButtonLevel::Secondary,
                                x + w - 140.0f, cy + core::theme::scaled(7.0f), 124.0f, 30.0f, t, {});
             }
-            cy += 44.0f + 10.0f;
+            cy += 44.0f + 8.0f;  // need219 §4.3：卡间距 8px（批量条→列表）
         }
     }
 
@@ -825,7 +825,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             if (shown >= reviewShowLimit_) continue;
             composeProposalCard(ui, t, x, w, cy, snap, p,
                                 batchableKind(p.kind));
-            cy += 232.0f + 12.0f;
+            cy += 232.0f + 8.0f;  // need219 §4.3：审核卡间距 8px
             ++shown;
         }
         if (matched > shown) {
@@ -867,7 +867,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             const bool undone =
                 i < snap.decidedUndone.size() && snap.decidedUndone[i];
             composeDecidedCard(ui, t, x, w, cy, snap, p, undone);
-            cy += 92.0f + 12.0f;
+            cy += 92.0f + 8.0f;  // need219 §4.3：已裁决卡间距 8px
             ++idx;
         }
         if (idx == 0) {
@@ -1170,8 +1170,8 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                                 "11 天窗口内有效"};
         const char* nums[3] = {"5", "3", "11"};
         for (int i = 0; i < 3; ++i) {
-            const float tw = (innerW - 2.0f * 12.0f) / 3.0f;
-            const float tx = x + 16.0f + static_cast<float>(i) * (tw + 12.0f);
+            const float tw = (innerW - 2.0f * 8.0f) / 3.0f;
+            const float tx = x + 16.0f + static_cast<float>(i) * (tw + 8.0f);  // need219 §4.3：磁贴 gap 8px
             ui.rect("memory.cfg.trig.tile" + std::to_string(i))
                 .position(tx, cy + core::theme::scaled(192.0f))
                 .size(tw, core::theme::scaled(30.0f))
@@ -1185,7 +1185,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .text(nums[i])
                 .fontSize(core::theme::scaled(13.0f))
                 .lineHeight(core::theme::scaled(18.0f))
-                .fontWeight(700)
+                .fontWeight(600)  // need219 §2.1：磁贴命中数 600（原 700）
                 .color(t.colors.primaryText)
                 .build();
             ui.text("memory.cfg.trig.tilet" + std::to_string(i))

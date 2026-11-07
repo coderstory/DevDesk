@@ -169,6 +169,16 @@ int main(int argc, char* argv[]) {
     }
 
     core::theme::setLight();  // 对照实验：浅色档下 Primary 按钮文字是否可见
+    // --theme dark / --fs <scale>：证据批拍开关（need224 批6 亮暗+140% 抽查）；
+    // 缺省不传 = 行为与历史完全一致（浅色 1.0）
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--theme" && i + 1 < argc && std::string(argv[i + 1]) == "dark") {
+            core::theme::setDark();
+        } else if (arg == "--fs" && i + 1 < argc) {
+            core::theme::setFontScale(std::strtof(argv[++i], nullptr));
+        }
+    }
     std::unique_ptr<::core::Module> mod(create_memory_module());
     mod->onStart();
 

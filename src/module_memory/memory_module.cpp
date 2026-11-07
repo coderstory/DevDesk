@@ -82,7 +82,7 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         .text("记忆")
         .fontSize(t.sizes.fontSizeTitle)
         .lineHeight(kTitleH)
-        .fontWeight(700)
+        .fontWeight(600)  // need219 列表统一规范 §2.1：页头两档制 600，无 700
         .color(t.colors.textPrimary)
         .build();
 
@@ -183,7 +183,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .text("telemem 记忆引擎")
         .fontSize(t.sizes.fontSizeLarge)
         .lineHeight(core::theme::scaled(28.0f))
-        .fontWeight(700)
+        .fontWeight(600)  // need219 §2.1：行首标题 600
         .color(t.colors.textPrimary)
         .build();
     ui.text("memory.eng.version")
@@ -329,7 +329,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .text("0/110")
             .fontSize(t.sizes.fontSizeStat)
             .lineHeight(core::theme::scaled(40.0f))
-            .fontWeight(700)
+            .fontWeight(600)  // need219 §2.1：关键数值 600（原 700）
             .color(on ? t.colors.success : t.colors.textDisabled)
             .build();
         ui.text("memory.health.h0.unit")
@@ -384,7 +384,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .text(hasEval ? std::to_string(pct) : "—")
             .fontSize(t.sizes.fontSizeStat)
             .lineHeight(core::theme::scaled(40.0f))
-            .fontWeight(700)
+            .fontWeight(600)  // need219 §2.1：关键数值 600（原 700）
             .color(hasEval ? (below ? t.colors.warning : t.colors.success)
                            : t.colors.textDisabled)
             .build();
@@ -486,7 +486,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .text(std::to_string(items) + "/5 条")
             .fontSize(t.sizes.fontSizeStat)
             .lineHeight(core::theme::scaled(40.0f))
-            .fontWeight(700)
+            .fontWeight(600)  // need219 §2.1：关键数值 600（原 700）
             .color(t.colors.textPrimary)
             .build();
         const float barX = cx + 14.0f;
@@ -537,7 +537,7 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .text(formatInt(snap.collectorEvents))
             .fontSize(t.sizes.fontSizeStat)
             .lineHeight(core::theme::scaled(40.0f))
-            .fontWeight(700)
+            .fontWeight(600)  // need219 §2.1：关键数值 600（原 700）
             .color(t.colors.textPrimary)
             .build();
         ui.text("memory.health.h3.unit")

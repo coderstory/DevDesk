@@ -46,7 +46,7 @@ using proposals::Proposal;
 inline constexpr float kTitleH = 32.0f;
 // 2026-11-01 统一：页面级 tab 高度跟 ui_kit::kWtabHeight（全站单一高度）
 inline constexpr float kTabH = ui_kit::kWtabHeight;
-inline constexpr float kCardGap = 16.0f;
+inline constexpr float kCardGap = 8.0f;  // need219 §4.3：卡间距统一 8px 档（原 16）
 
 inline constexpr int kViewConsole = 0;
 inline constexpr int kViewReview = 1;
