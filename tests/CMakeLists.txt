@@ -254,6 +254,9 @@ add_executable(devdesk_tests
     test_modules/test_ui_driver_keys.cpp
     test_modules/test_ui_driver_checks.cpp
     test_modules/test_ui_driver_report.cpp
+    # need:132 审查打回轮：字体度量本端门禁 doctest（资产指纹/测宽 hash/回退链序
+    # 三件断言，见文件头注释；hash 基线常量变更须显式过 review）
+    unit/font_metrics_gate.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -404,6 +407,25 @@ add_custom_command(TARGET devdesk_tests POST_BUILD
     COMMENT "Copying tray icon assets for devdesk_tests"
 )
 
+# need:132 字体门禁（tests/unit/font_metrics_gate.cpp）：三随包字体拷到
+# exeDir/assets——EUI resolveFontFilePath 第一候选，cwd 无关（与上方 probe 接线
+# 同款纪律）；font_metrics_gate ①的资产指纹断言与注入解析都消费这里的副本。
+add_custom_command(TARGET devdesk_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:devdesk_tests>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/DevDeskSansSC-Regular.otf"
+        "$<TARGET_FILE_DIR:devdesk_tests>/assets/DevDeskSansSC-Regular.otf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/DevDeskSansSC-Bold.otf"
+        "$<TARGET_FILE_DIR:devdesk_tests>/assets/DevDeskSansSC-Bold.otf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/JetBrainsMono-Regular.ttf"
+        "$<TARGET_FILE_DIR:devdesk_tests>/assets/JetBrainsMono-Regular.ttf"
+    COMMENT "Copying bundled fonts for devdesk_tests font gate"
+    VERBATIM
+)
+
 # ==================== 独立 probe 可执行（probes/ 目录） =============# probes/ 下每个 .cpp 是独立小程序（如 dropdown z 可视化验证），不属于
 # devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
 # 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
@@ -453,6 +475,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
        _probe_name STREQUAL "wallpaper_probe" OR
        _probe_name STREQUAL "h13_fluid_background_probe" OR
        _probe_name STREQUAL "uat62_page_shots_probe" OR
+       _probe_name STREQUAL "bug148_167_sweep_probe" OR
+       _probe_name STREQUAL "bug142_click_chain_probe" OR
        _probe_name STREQUAL "release_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
