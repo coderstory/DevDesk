@@ -350,7 +350,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                         .content([&] {
                             ui.text("claude.h1")
                                 .size(220.0f, core::theme::scaled(24.0f))
-                                .text("Claude 切换器")
+                                .text("Claude 配置")
                                 .fontSize(t.sizes.fontSizeTitle)
                                 .lineHeight(core::theme::scaled(24.0f))
                                 .fontWeight(700)

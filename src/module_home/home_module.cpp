@@ -215,7 +215,7 @@ struct HomeStatCard {
     ::core::PageId target;
 };
 constexpr HomeStatCard kStatCards[] = {
-    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy},
+    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率", ::core::PageId::ClaudeProxy},
     {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown},
     {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo},
     {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo},

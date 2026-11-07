@@ -359,7 +359,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                     // ≈1.3×em，行盒 24 装不下（池138 下半被裁）。
                     ui.text("md.h1")
                         .size(kTitleColW, core::theme::scaled(32.0f))
-                        .text("Markdown 笔记本")
+                        .text("Markdown")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(core::theme::scaled(32.0f))
                         .fontWeight(700)

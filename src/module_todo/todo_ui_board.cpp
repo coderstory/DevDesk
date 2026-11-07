@@ -565,17 +565,16 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             // 空列 hoverRow 恒 0：条落卡区首卡位（列头下方），宽与非空列卡槽同源
             drawDropBar(ui, kColumnHeaderHeight, contentCardWidth(width));
         }
-        // S2.8：空态走 ui_kit::emptyState；2026-11-01 R3 补引导句（此前只有单行主句）
+        // S2.8：空态走 ui_kit::emptyState；2026-11-07 池170：空列只留单行主句
+        //（引导句按老板令移除；搜索无命中态保留 guide——非「空列」语义）
         ui_kit::EmptyStateOptions opts;
         if (!v.searchQuery.empty()) {
             opts.message = "无命中任务";
             opts.guide = "换个关键词，或清掉搜索条件。";
         } else if (isArchive) {
             opts.message = "暂无归档";
-            opts.guide = "完成的任务会移到这里，随时可以翻回去。";
         } else {
             opts.message = "暂无任务";
-            opts.guide = "点页头「新建任务」加一条。";
         }
         ui_kit::emptyState(ui, id + ".empty", opts, 0.0f, height / 2.0f - 36.0f,
                            width, 72.0f, t);

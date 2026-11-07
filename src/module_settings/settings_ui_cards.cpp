@@ -345,7 +345,7 @@ void drawModulesCard(const CardDrawArgs& args) {
     const float mcpHalfW = (w - 56.0f) * 0.5f;
     const float mcpCol2X = 28.0f + mcpHalfW;
     static const ModuleMeta kToggleable[] = {
-        {kModuleIdMarkdown, "Markdown 笔记本",
+        {kModuleIdMarkdown, "Markdown",
          "本地文件存储 + SQLite FTS5 全文搜索"},
         {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
         {kModuleIdSchedule, "定时",

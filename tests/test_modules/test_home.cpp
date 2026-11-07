@@ -343,7 +343,7 @@ REGISTER_TEST(home_token_rate_card_compose,
             WideCompose w("home_streaming_wide");
             const auto* wl = w.find("home.stat.tokens.label");
             DOCTEST_REQUIRE(wl != nullptr);
-            DOCTEST_CHECK_EQ(wl->text, std::string("Token 速率 (tok/s) · 加载失败"));
+            DOCTEST_CHECK_EQ(wl->text, std::string("Token 速率 · 加载失败"));
             DOCTEST_CHECK(wl->text.find("路生成中") == std::string::npos);
         }
         mod->onStop();
@@ -531,7 +531,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
         // B7 D1：正常态只留指标名（空态「--」也不再拼「暂无成功调用」）
-        DOCTEST_CHECK_EQ(badge->text, std::string("Token 速率 (tok/s)"));
+        DOCTEST_CHECK_EQ(badge->text, std::string("Token 速率"));
         const auto* todoBadge = ui.find("home.stat.todo.label");
         DOCTEST_REQUIRE(todoBadge != nullptr);
         DOCTEST_CHECK_EQ(todoBadge->text, std::string("待办任务"));
@@ -639,7 +639,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
             WideCompose w("home_last_rate_wide", /*withStart=*/true);
             const auto* wl = w.find("home.stat.tokens.label");
             DOCTEST_REQUIRE(wl != nullptr);
-            DOCTEST_CHECK_EQ(wl->text, std::string("Token 速率 (tok/s)"));
+            DOCTEST_CHECK_EQ(wl->text, std::string("Token 速率"));
             DOCTEST_CHECK(wl->text.find("累计") == std::string::npos);
         }
         mod->onStop();

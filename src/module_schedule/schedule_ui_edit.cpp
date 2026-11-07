@@ -497,7 +497,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 {core::schedule::RuleKind::Once, "一次性"},
                 {core::schedule::RuleKind::Interval, "间隔"},
                 {core::schedule::RuleKind::Calendar, "周期"},
-                {core::schedule::RuleKind::Cron, "日程"},
+                {core::schedule::RuleKind::Cron, "表达式"},
                 {core::schedule::RuleKind::Event, "事件"},
                 {core::schedule::RuleKind::Resident, "常驻"},
             };

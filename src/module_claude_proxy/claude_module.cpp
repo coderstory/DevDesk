@@ -38,7 +38,7 @@ namespace module::claude {
 class ClaudeModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::ClaudeProxy; }
-    std::string displayName() const override { return "Claude 切换器"; }
+    std::string displayName() const override { return "Claude 配置"; }
     std::string shortName() const override { return "Claude"; }
     std::string iconGlyph() const override { return eui::utf8(0xF021); }  // fa-arrows-rotate
 
