@@ -86,6 +86,71 @@ else
   exit 1
 fi
 
+# llama-server 随包（bug #225）：引擎 pkg 定位序 = exe 旁 assets/llama/bin
+# （llama_host.cpp locateLlamaServerBetween 序 2，位于 dataroot/brew/PATH 之前 → 包内优先，
+# 开箱确定性：用户机不装 brew llama 也能跑；env 覆盖序仍最前，开发机行为不变）。
+# brew 版 llama-server 的依赖 = @rpath（解到 llama.cpp lib）+ 绝对路径（ggml/openssl@4/libomp），
+# 裸拷到没装 Homebrew 依赖的用户机 dyld 必炸：把依赖闭包整体拷进同一目录，并把全部非系统
+# install name 重写为 @loader_path/<basename>，包内自洽；随后 sign-macos-app.sh 会逐个预签
+# Contents/MacOS 下常规文件（install_name_tool 使原签名失效，必须重签，由签名脚本兜住）。
+# 打包机没装 llama-server → 跳过随包（不阻断打包），装机运行期回落既有 brew/PATH 定位序。
+if command -v llama-server >/dev/null 2>&1; then
+  LLAMA_DIR="$MACOS_DIR/assets/llama/bin"
+  mkdir -p "$LLAMA_DIR"
+  # fixpoint 闭包：队列存源侧路径；每个文件 cp -L 拷入（解 Homebrew symlink），非系统依赖
+  # 逐条解析（@rpath 用源文件自己的 LC_RPATH）→ 补拷 → 重写为 @loader_path/<basename>
+  llama_q=("$(realpath "$(command -v llama-server)")")
+  while [ "${#llama_q[@]}" -gt 0 ]; do
+    llama_src="${llama_q[0]}"; llama_q=("${llama_q[@]:1}")
+    llama_dst="$LLAMA_DIR/$(basename "$llama_src")"
+    # 同一 dylib 可能经 Cellar/opt 两条路径重复入队；且 brew 源文件 0444，重复 cp 覆盖必炸
+    if [ -f "$llama_dst" ]; then continue; fi
+    cp -L "$llama_src" "$llama_dst"
+    case "$llama_src" in
+      *.dylib) install_name_tool -id "@loader_path/$(basename "$llama_src")" "$llama_dst" ;;
+    esac
+    while IFS= read -r dep; do
+      case "$dep" in /usr/lib/*|/System/*) continue ;; esac
+      llama_res=""
+      case "$dep" in
+        @rpath/*)
+          llama_tail="${dep#@rpath}"
+          while IFS= read -r rp; do
+            case "$rp" in
+              @loader_path/*) llama_cand="${llama_src%/*}/${rp#@loader_path/}${llama_tail}" ;;
+              /*) llama_cand="${rp}${llama_tail}" ;;
+              *) continue ;;
+            esac
+            if [ -e "$llama_cand" ]; then llama_res="$llama_cand"; break; fi
+          done < <(otool -l "$llama_src" | awk '/LC_RPATH/{getline; getline; print $2}')
+          ;;
+        @loader_path/*) llama_res="${llama_src%/*}/${dep#@loader_path/}" ;;
+        @executable_path/*) continue ;;
+        /*) llama_res="$dep" ;;
+        *) continue ;;
+      esac
+      if [ -z "$llama_res" ] || [ ! -e "$llama_res" ]; then
+        echo "❌ llama 依赖闭包解析失败：$llama_src → $dep" >&2
+        exit 1
+      fi
+      llama_base="$(basename "$llama_res")"
+      # 自引用（dylib 的 id 行）或已拷过的依赖不再入队
+      if [ ! -f "$LLAMA_DIR/$llama_base" ]; then
+        llama_q+=("$llama_res")
+      fi
+      install_name_tool -change "$dep" "@loader_path/$llama_base" "$llama_dst"
+    done < <(otool -L "$llama_src" | tail -n +2 | awk '{print $1}')
+  done
+  # 防残留断言：闭包内任一文件残留 @rpath 依赖或 Homebrew 绝对路径 = 用户机 dyld 会炸
+  if otool -L "$LLAMA_DIR/llama-server" "$LLAMA_DIR"/*.dylib | grep -E "@rpath/|/opt/homebrew" >/dev/null; then
+    echo "❌ 断言失败：包内 llama 依赖仍有 @rpath/Homebrew 绝对路径残留" >&2
+    exit 1
+  fi
+  echo "✅ llama-server 随包就位（Contents/MacOS/assets/llama/bin，$(ls "$LLAMA_DIR" | wc -l | tr -d ' ') 个文件）"
+else
+  echo "⚠️ 打包机未装 llama-server，跳过随包（装机后走 brew/PATH 定位序）"
+fi
+
 # 签名：build-app.sh 组装时已签过，但上面 rm -rf + copy_directory 补拷 assets 让封条失效了。
 # 必须在所有 bundle 写操作之后重签，签名才是最后一步（见 scripts/sign-macos-app.sh 头注释）。
 bash scripts/sign-macos-app.sh "$APP_DIR"
