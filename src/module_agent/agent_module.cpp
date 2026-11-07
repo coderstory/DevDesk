@@ -760,7 +760,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const auto stTitle = core::theme::scaledText(14.0f, 22.0f);
                         const auto stSmall = core::theme::scaledText(11.0f, 18.0f);
                         const float cardPad = core::theme::scaled(kTaskCardPad);
-                        const float rowGap = core::theme::scaled(11.0f);
+                                                // bug154①：行距 11→12——22+18+32（启动钮）+ 行距 12×2
+                        // + pad 12×2 = 120 正好填满卡高，消除行间/底部空白袋
+                        const float rowGap = core::theme::scaled(12.0f);
                         const float cardH = core::theme::scaled(kTaskCardH);
                         const float pillTextW = core::TextPrimitive::measureTextWidth(
                             status, "", stSmall.fontSize, 500);

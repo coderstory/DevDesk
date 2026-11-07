@@ -565,12 +565,18 @@ void AgentModule::composeTaskDialog(
                     .build();
 
                 constexpr float kVertNavItemH = 56.0f;
+                // bug154③：节点条间原 0 间隙贴死成整条色带——上下 12 / 相邻 8
+                // （theme spacing token），节点块独立可辨
+                constexpr float kVertNavTopPad = 12.0f;
+                constexpr float kVertNavGap = 8.0f;
                 constexpr float kVertNumD = 22.0f;   // 序号圆直径（r=11）
                 constexpr const char* kStepSubs[] = {
                     "任务名称", "六类 + cron", "目标 / 系统提示词", "模型 / 限次 / 安全组"};
                 for (int i = 0; i < kStepCount; ++i) {
                     std::string nodeId = "agent.dialog.task.step." + std::to_string(i);
-                    const float navY = kContentY + static_cast<float>(i) * kVertNavItemH;
+                    const float navY = kContentY + kVertNavTopPad +
+                                       static_cast<float>(i) *
+                                           (kVertNavItemH + kVertNavGap);
                     // 当前步校验失败 → 节点标红（#EF4444 10% 底 + errorText 红字 + !）
                     const bool stepInvalid = (i == currentStep_) && !stepValidFor(i);
                     const bool done = i < currentStep_;
@@ -672,20 +678,26 @@ void AgentModule::composeTaskDialog(
                                      "出厂模板（点击套用，可再修改）", x0,
                                      kTplCaptionY, kContentW, 16.0f,
                                      t.colors.textSecondary);
+                        // bug179①：模板按钮改流式排布——原等分单行在模板数增长后
+                        // 每格 <30px，4 字文本全部互相叠写成一片涂鸦。按文字实测
+                        // 宽给按钮宽，flow 自动换行，间距用 spacing token 8。
                         constexpr float kTplGap = 8.0f;
-                        const float tplW = (kContentW - kTplGap * (kTaskTemplateCount - 1)) /
-                                           static_cast<float>(kTaskTemplateCount);
-                        ui.stack("agent.dialog.task.tpl")
+                        ui.flow("agent.dialog.task.tpl")
                             .position(x0, kTplCaptionY + 24.0f)
-                            .size(kContentW, 32.0f)
+                            .width(kContentW)
+                            .gap(kTplGap)
+                            .lineGap(kTplGap)
                             .content([&] {
                                 for (int i = 0; i < kTaskTemplateCount; ++i) {
+                                    const float itemW =
+                                        core::TextPrimitive::measureTextWidth(
+                                            kTaskTemplates[i].name, "",
+                                            core::theme::scaled(12.0f), 500) +
+                                        core::theme::scaled(24.0f);
                                     components::button(
                                         ui, "agent.dialog.task.tpl.item." +
                                                 std::to_string(i))
-                                        .position(static_cast<float>(i) * (tplW + kTplGap),
-                                                  0.0f)
-                                        .size(tplW, 32.0f)
+                                        .size(itemW, 32.0f)
                                         .text(kTaskTemplates[i].name)
                                         .fontSize(core::theme::scaled(12.0f))
                                         .colors(t.colors.background, t.colors.hover,
@@ -703,15 +715,9 @@ void AgentModule::composeTaskDialog(
 
                 // --- Step 1: 触发 ---
                 if (currentStep_ == 1) {
-                    // 内容区垂直居中：本步只有两行控件，顶格会留下大片底部空白；
-                    // 居中让空隙上下均分（kStep1BlockH = 标题 16 + 行距 4 + segment 32
-                    // + 行距 8 + 配置行 32 + 行距 12 + 预览行 12）
-                    constexpr float kStep1BlockH = 116.0f;
-                    const float step1ContentH =
-                        h - kContentY * 2.0f - kVertContentPad * 2.0f;
-                    const float step1CenterDy =
-                        std::max(0.0f, (step1ContentH - kStep1BlockH) * 0.5f);
-                    const float s1y = kContentY + kVertContentPad + step1CenterDy;
+                    // bug179②：原垂直居中在 432 高内容区里给两行控件上方留出
+                    // ~140px 大空白——表单语义应顶格上对齐，余白自然沉底
+                    const float s1y = kContentY + kVertContentPad;
                     // 触发 segment（六类触发平分整行；保持旧 id）
                     fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式",
                                  x0, s1y, kDialogLabelW, 16.0f,
@@ -855,21 +861,21 @@ void AgentModule::composeTaskDialog(
                     ui_kit::drawDialogText(ui, "agent.dialog.task.trigger.hint", w,
                                            triggerHint, t.sizes.fontSizeSmall,
                                            t.colors.textTertiary,
-                                           {.x = x0, .y = hintY, .height = 12.0f,
+                                           {.x = x0, .y = hintY, .width = kContentW, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
                     ui_kit::drawDialogText(ui, "agent.dialog.task.cron.preview", w,
                                            cronPreview_,
                                            t.sizes.fontSizeSmall,
                                            cronPreviewIsError_ ? t.colors.errorText
                                                                : t.colors.textTertiary,
-                                           {.x = x0, .y = hintY, .height = 12.0f,
+                                           {.x = x0, .y = hintY, .width = kContentW, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
                     ui_kit::drawDialogText(ui, "agent.dialog.task.once.preview", w,
                                            oncePreview_,
                                            t.sizes.fontSizeSmall,
                                            oncePreviewIsError_ ? t.colors.errorText
                                                                : t.colors.textTertiary,
-                                           {.x = x0, .y = hintY, .height = 12.0f,
+                                           {.x = x0, .y = hintY, .width = kContentW, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
                 }
 
@@ -1008,15 +1014,19 @@ void AgentModule::composeTaskDialog(
 
                     // meta 提示（保持 "受限" "高危" 关键词）
                     const float hintY = s3y + 52.0f;
+                    // bug154④：drawDialogText 宽度缺省 = w-48（自对话框左缘起算），
+                    // 而本行 x=x0=180 → 文本右缘冲出弹窗 132px、且与「安全」组标题
+                    // 竖向重叠。显式给 kContentW + wrap 两行盒，组标题顺延让位。
                     ui_kit::drawDialogText(
                         ui, "agent.dialog.task.meta.hint", w,
                         "迭代＝单次运行的最多轮数，跑满以「受限」结束、不再重试；"
                         "破坏性操作＝允许删除文件等高危工具，不勾则被拒",
                         t.sizes.fontSizeSmall, t.colors.textTertiary,
-                        {.x = x0, .y = hintY, .height = 12.0f, .lineHeight = 12.0f});
+                        {.x = x0, .y = hintY, .width = kContentW, .height = 30.0f,
+                         .lineHeight = 15.0f, .wrap = true});
 
                     // 安全组
-                    const float safeY = hintY + 18.0f;
+                    const float safeY = hintY + 36.0f;
                     ui.text("agent.dialog.task.group.danger")
                         .position(x0, safeY)
                         .size(kContentW, kGroupTitleH)
@@ -1054,6 +1064,14 @@ void AgentModule::composeTaskDialog(
                                         editDestructive_,
                                         x0 + 200.0f, destructiveY + 4.0f, 44.0f, 24.0f, t,
                                         [this](bool v) { editDestructive_ = v; });
+                        // bug179⑤：「允许破坏性操作」语义不清——开关旁补说明行
+                        // （破坏性指什么、默认行为如何），只加文案不改行为
+                        ui_kit::drawDialogText(
+                            ui, "agent.dialog.task.destructive.sub", w,
+                            "勾选后允许任务执行删除文件等高危工具；默认拒绝并留痕",
+                            t.sizes.fontSizeSmall, t.colors.textTertiary,
+                            {.x = x0, .y = destructiveY + 36.0f, .width = kContentW,
+                             .height = 14.0f, .lineHeight = 14.0f});
                         // 自动记录开关已移除（W4 C3）：行为固定为开启，字段五处清链
                     }
                 }
@@ -1064,14 +1082,14 @@ void AgentModule::composeTaskDialog(
             ui_kit::drawDialogText(
                 ui, "agent.dialog.task.test.result", w, testRunResult_,
                 t.sizes.fontSizeSmall, t.colors.success,
-                {.x = x0, .y = h - kContentY - 18.0f, .height = 14.0f,
+                {.x = x0, .y = h - kContentY - 18.0f, .width = kContentW, .height = 14.0f,
                  .lineHeight = 14.0f, .skipIfEmpty = true});
 
             // ====== 底部按钮区（W4 C1 重做：40px 高、8px 间距、居中文字；按钮顺序从右到左：下一步 Filled 最右 → 上一步 Outline → 测试 Outline → 取消 Ghost 最左） ======
-            const float btnY = h - kContentY;   // 底栏带 (164, H-44) 高 44，按钮右对齐
-            const float btnH = 40.0f;
-            const float bw = 96.0f;
-            const float testW = 112.0f;
+            const float btnY = h - kContentY + 6.0f;  // 底栏带高 44：32 钮上下各留 6
+            const float btnH = 32.0f;  // bug179④：40 过大，收到与行控件一致的 32
+            const float bw = 88.0f;
+            const float testW = 104.0f;
             const float kBtnGap = 8.0f;
             const float rightEdge = w - kVertContentPad;   // 与内容区共用右留 16px
 

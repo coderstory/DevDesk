@@ -195,7 +195,7 @@ void AgentModule::composeTaskDetailDialog(
             constexpr float kKickerW = 56.0f;   // 「任务详情」4 CJK @13
             constexpr float kStatusW = 64.0f;  // 「● 已取消」@13 + 余量
             ui.text("agent.dialog.detail.header.kicker")
-                .position(x0, 34.0f)
+                .position(x0, 44.0f)  // bug154②：34 与标题行盒（10+26=36）重叠，让至 44
                 .size(kKickerW, lhS)
                 .text("任务详情")
                 .fontSize(fsS)
@@ -203,7 +203,7 @@ void AgentModule::composeTaskDetailDialog(
                 .color(t.colors.textTertiary)
                 .build();
             ui.text("agent.dialog.detail.header.status")
-                .position(x0 + kKickerW + 8.0f, 34.0f)
+                .position(x0 + kKickerW + 8.0f, 44.0f)  // bug154② 同步让位
                 .size(kStatusW, lhS)
                 .text("● " + statusText)
                 .fontSize(fsS)
@@ -233,7 +233,7 @@ void AgentModule::composeTaskDetailDialog(
                 metaColor = t.colors.errorText;
             }
             ui.text("agent.dialog.detail.header.meta")
-                .position(metaX, 34.0f)
+                .position(metaX, 44.0f)  // bug154② 同步让位
                 .size(metaW, lhS)
                 .text(metaText)
                 .fontSize(fsS)

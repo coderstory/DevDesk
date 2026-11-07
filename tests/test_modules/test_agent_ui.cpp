@@ -2881,7 +2881,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     const auto* step0 = ui2.find("agent.dialog.task.step.0.bg");
     DOCTEST_REQUIRE(step0 != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 0.0f), "step.0.bg x 应=0（贴弹窗左缘），实测 " + std::to_string(step0->frame.x - px));
-    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, 44.0f), "step.0.bg y 应=44");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, 56.0f), "step.0.bg y 应=56（bug154③ 顶部留白 12）");
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.width, 160.0f), "step.0.bg w 应=160");
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, 56.0f), "step.0.bg h 应=56");
 
@@ -2911,7 +2911,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
                               "segment 第 " + std::to_string(i) + " 项宽应 " +
                                   std::to_string(opW));
         DOCTEST_CHECK(nearPx(op->frame.height, 32.0f));
-        DOCTEST_CHECK_MESSAGE(nearPx(op->frame.y - py, 222.0f), "segment y-py 应 222（step1 垂直居中 dy=142）实测 " + std::to_string(op->frame.y - py));
+        DOCTEST_CHECK_MESSAGE(nearPx(op->frame.y - py, 80.0f), "segment y-py 应 80（bug179②：step1 顶格 60 + caption 20）实测 " + std::to_string(op->frame.y - py));
     }
     const auto* segLast = ui2s1.find("agent.dialog.task.trigger.item.5.bg");
     DOCTEST_REQUIRE(segLast != nullptr);
@@ -3913,8 +3913,8 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     composeTo(ui3s3, mod, kScreen, "agent_ui_crontpl3s3");
     const auto* metaRow3 = ui3s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 158.0f),
-                          "破坏性行 y 应恒为面板顶 +158（s3y=60+52+18+组标 20，开关本体 +4），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 176.0f),
+                          "破坏性行 y 应恒为面板顶 +176（bug154④：meta 提示改两行盒，组标题顺延 +18），实测 " +
                               std::to_string(metaRow3->frame.y));
     // cron 为空 → 预览行不渲染（skipIfEmpty）
     DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.preview") == nullptr);
@@ -4574,8 +4574,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_sysprompt_within_bounds,
     composeTo(ui2s3, mod, kScreen, "agent_ui_notegeo2s3");
     const auto* metaRow = ui2s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 158.0f),
-                          "破坏性行 y 应恒为面板顶 +158，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 176.0f),
+                          "破坏性行 y 应恒为面板顶 +176（bug154④ 同步），实测 " +
                               std::to_string(metaRow->frame.y));
 
     mod.onStop();
@@ -5414,8 +5414,8 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     DOCTEST_CHECK_MESSAGE(nearPx(limit->frame.y - panel3->frame.y, 60.0f),
                           "只跑一次应在 step 3 首行（面板局部 y=60），实测 y=" +
                               std::to_string(limit->frame.y - panel3->frame.y));
-    DOCTEST_CHECK_MESSAGE(nearPx(destructive->frame.y - panel3->frame.y, 158.0f),
-                          "破坏性开关应在安全组（面板局部 y=158），实测 y=" +
+    DOCTEST_CHECK_MESSAGE(nearPx(destructive->frame.y - panel3->frame.y, 176.0f),
+                          "破坏性开关应在安全组（面板局部 y=176，bug154④ 同步），实测 y=" +
                               std::to_string(destructive->frame.y - panel3->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(limit->frame.x + limit->frame.width,

@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     // 本探针私有构图开关（parseProbeArgs 未知参数忽略，这里自己收）
     std::string shotTask, shotTaskPlain, shotDetail, shotDraft, shotDraftError,
-        shotTools;
+        shotTools, shotPage, shotEdit, shotStep0, shotStep3;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-task" && i + 1 < argc) {
@@ -91,6 +91,14 @@ int main(int argc, char* argv[]) {
             shotDraftError = argv[++i];
         } else if (arg == "--shot-tools" && i + 1 < argc) {
             shotTools = argv[++i];
+        } else if (arg == "--shot-page" && i + 1 < argc) {
+            shotPage = argv[++i];
+        } else if (arg == "--shot-edit" && i + 1 < argc) {
+            shotEdit = argv[++i];
+        } else if (arg == "--shot-step0" && i + 1 < argc) {
+            shotStep0 = argv[++i];
+        } else if (arg == "--shot-step3" && i + 1 < argc) {
+            shotStep3 = argv[++i];
         }
     }
 
@@ -200,6 +208,63 @@ int main(int argc, char* argv[]) {
         return ui != nullptr ? ui->find(id) : nullptr;
     };
 
+    // ---------- P0. 卡片列表页（bug154① 布局取证：种子任务在场的整页帧） ----------
+    // 任务列表走 AgentStore 异步装载（onStart 置 dirty，update 收割）——先泵
+    // 24 帧稳态再取证（ui-probe-shot 坑位：不稳帧拍 = 空页假象）
+    for (int i = 0; i < 24; ++i) probe::pollOnce(window, runtime);
+    composeFrame();
+    if (!shotPage.empty() &&
+        !probe::captureFramePng(window, runtime, shotPage)) {
+        std::cerr << "agent_dialog_probe: --shot-page 落图失败: " << shotPage
+                  << "\n";
+        passed = false;
+    }
+
+    // ---------- P1. 编辑弹窗（bug154③ 侧边步骤区取证）：卡片编辑 chip 开
+    // 编辑态弹窗（step 0 基础信息），落图后取消关闭，还原页面态
+    if (!shotEdit.empty()) {
+        const std::string editChipId =
+            "agent.task." + std::to_string(taskId) + ".edit";
+        const auto* editChip = findElement(editChipId);
+        if (editChip == nullptr) {
+            std::cerr << "agent_dialog_probe: '" << editChipId
+                      << "' 编辑 chip 缺失\n";
+            passed = false;
+        } else {
+            // 操作组 hover 门禁（.actions 常态 opacity 0 + disabled）——真指针
+            // 路径下命中面小且受去抖时序影响，改按 test_agent_ui clickId 同款：
+            // 直调元素 onClick（chip 存在性断言保留——卡上编辑入口必须在）
+            editChip->onClick();
+            composeFrame();
+            composeFrame();
+            if (findElement("agent.dialog.task") == nullptr) {
+                std::cerr << "agent_dialog_probe: 编辑弹窗未打开\n";
+                passed = false;
+            } else {
+                if (!probe::captureFramePng(window, runtime, shotEdit)) {
+                    std::cerr << "agent_dialog_probe: --shot-edit 落图失败: "
+                              << shotEdit << "\n";
+                    passed = false;
+                }
+                const auto* editCancel = findElement("agent.dialog.task.cancel");
+                if (editCancel == nullptr) {
+                    std::cerr << "agent_dialog_probe: 编辑弹窗取消钮缺失\n";
+                    passed = false;
+                } else {
+                    clickElement(*editCancel);
+                    composeFrame();
+                }
+                if (findElement("agent.dialog.task") != nullptr) {
+                    std::cerr << "agent_dialog_probe: 编辑弹窗未关\n";
+                    passed = false;
+                }
+                // 指针停到页面左上安全区：别停在卡片区，避免残留 hover 影响 A 段
+                core::queuePointerMotion(window, 20.0f, 20.0f,
+                                         core::PointerButtons{}, core::KeyModifiers{});
+            }
+        }
+    }
+
     // ---------- A. 任务弹窗：定时分支 + 模板下拉展开 + 预览行 ----------
     composeFrame();
     const auto* newTaskBtn = findElement("agent.page.newTask");
@@ -211,6 +276,43 @@ int main(int argc, char* argv[]) {
         composeFrame();
         if (findElement("agent.dialog.task") == nullptr) {
             std::cerr << "agent_dialog_probe: 任务弹窗未打开\n";
+            passed = false;
+        }
+    }
+
+    // ---------- P2. 新建弹窗 step 0 基础信息（bug179① 取证） ----------
+    if (!shotStep0.empty() &&
+        !probe::captureFramePng(window, runtime, shotStep0)) {
+        std::cerr << "agent_dialog_probe: --shot-step0 落图失败: " << shotStep0
+                  << "\n";
+        passed = false;
+    }
+
+    // 几何断言（bug154③ / bug179① / bug179④ 红绿门）：
+    // a. 侧边步骤节点相邻项间距 ≥8（原 0 间隙贴死）
+    // b. 模板按钮不叠写：item.1 左缘 ≥ item.0 右缘（原等分单行文本全叠）
+    // c. 底栏主按钮高 = 32（原 40 过大）
+    {
+        const auto* nav0 = findElement("agent.dialog.task.step.0.bg");
+        const auto* nav1 = findElement("agent.dialog.task.step.1.bg");
+        if (nav0 != nullptr && nav1 != nullptr &&
+            nav1->frame.y < nav0->frame.y + nav0->frame.height + 7.5f) {
+            std::cerr << "agent_dialog_probe: 步骤节点条相邻项间距 <8（bug154③"
+                         "回归）\n";
+            passed = false;
+        }
+        const auto* tpl0 = findElement("agent.dialog.task.tpl.item.0");
+        const auto* tpl1 = findElement("agent.dialog.task.tpl.item.1");
+        if (tpl0 != nullptr && tpl1 != nullptr &&
+            tpl1->frame.x < tpl0->frame.x + tpl0->frame.width - 0.5f) {
+            std::cerr << "agent_dialog_probe: 出厂模板按钮横向叠写（bug179①"
+                         "回归）\n";
+            passed = false;
+        }
+        const auto* saveBtn = findElement("agent.dialog.task.save");
+        if (saveBtn != nullptr && !floatEq(saveBtn->frame.height, 32.0f)) {
+            std::cerr << "agent_dialog_probe: 底栏主按钮高应为 32，实测 "
+                      << saveBtn->frame.height << "（bug179④回归）\n";
             passed = false;
         }
     }
@@ -274,6 +376,27 @@ int main(int argc, char* argv[]) {
                          "「下次触发：…」（实测 '"
                       << (preview != nullptr ? preview->text : std::string("<无>"))
                       << "'）\n";
+            passed = false;
+        }
+    }
+
+    // ---------- P3. step 3 执行与安全（bug154④ 文本溢出 / bug179⑤ 文案取证） ----------
+    gotoStep(3);
+    if (!shotStep3.empty() &&
+        !probe::captureFramePng(window, runtime, shotStep3)) {
+        std::cerr << "agent_dialog_probe: --shot-step3 落图失败: " << shotStep3
+                  << "\n";
+        passed = false;
+    }
+    // 几何断言（bug154④ 红绿门）：meta 提示行右缘不得越出弹窗面板
+    {
+        const auto* panel = findElement("agent.dialog.task.panel");
+        const auto* metaHint = findElement("agent.dialog.task.meta.hint");
+        if (panel != nullptr && metaHint != nullptr &&
+            metaHint->frame.x + metaHint->frame.width >
+                panel->frame.x + panel->frame.width + 0.5f) {
+            std::cerr << "agent_dialog_probe: 「执行与安全」meta 提示越出弹窗"
+                         "右缘（bug154④回归）\n";
             passed = false;
         }
     }
@@ -610,6 +733,16 @@ int main(int argc, char* argv[]) {
             std::cerr << "agent_dialog_probe: 头部应显示真实任务名（方案 A），实测 '"
                       << (detailTitle != nullptr ? detailTitle->text : "<缺失>")
                       << "'\n";
+            passed = false;
+        }
+        // bug154② 红绿门：状态行（kicker）顶缘 ≥ 标题行盒底缘（原 34 < 36 重叠）
+        const auto* detailKicker =
+            findElement("agent.dialog.detail.header.kicker");
+        if (detailTitle != nullptr && detailKicker != nullptr &&
+            detailKicker->frame.y <
+                detailTitle->frame.y + detailTitle->frame.height - 0.5f) {
+            std::cerr << "agent_dialog_probe: 详情头部状态行与标题重叠"
+                         "（bug154②回归）\n";
             passed = false;
         }
         for (int i = 0; i < 3; ++i) {
