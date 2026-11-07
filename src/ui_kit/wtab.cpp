@@ -7,6 +7,8 @@
 
 #include <components/theme.h>
 
+#include <cstddef>
+
 namespace ui_kit {
 
 void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
