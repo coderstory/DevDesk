@@ -221,3 +221,105 @@ REGISTER_TEST(markdown_editor_preview_fontscale_linkage,
     std::filesystem::remove(dbPath, ec);
     return true;
 })
+
+// need161：页内字号步进对（状态栏 A-/A+）——控件节点 + 通道传递链 + [12,24]
+// 边界 disabled + 落库 settings 同键。点击经元素 onClick 直调（headless 无输入
+// 队列）；disabled 按钮不点击（直调会绕过 runtime 的 disabled 拦截，只断
+// disabled 标志）。步进通道是进程级全局态，用例首尾都复位。
+REGISTER_TEST(markdown_editor_font_stepper_entry,
+              "markdown: 页内 A-/A+ 字号步进——节点/通道链/12-24 边界禁用/落库（need161）", {
+    // 夹具与首用例同款：隔离笔记目录 + 临时 DB + 选中 note.md
+    const auto dir = test_temp::tempPath("devdesk_efont_step");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    {
+        std::ofstream f(dir / "note.md", std::ios::trunc);
+        f << "# 标题\n正文\n";
+    }
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
+
+    const auto dbPath = test_temp::tempPath("devdesk_efont_step.db");
+    std::filesystem::remove(dbPath, ec);
+    auto r = core::Database::open(dbPath);
+    DOCTEST_REQUIRE(r.isOk());
+    auto db = std::make_unique<core::Database>(std::move(r.value()));
+    DOCTEST_REQUIRE(db->migrate().isOk());
+    core::registerAppDatabase(&db->db());
+
+    // 前置复位（防上例串味）
+    core::theme::setEditorFontSize(15.0f);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame("fs1");
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame("fs2");
+    DOCTEST_REQUIRE(ui.find(kEditorInputId) != nullptr);
+
+    // 节点断言：步进按钮（onClick 载体 = .bg）+ 当前值标签
+    const auto* minusBg = ui.find("md.status.fontminus.bg");
+    const auto* plusBg = ui.find("md.status.fontplus.bg");
+    DOCTEST_REQUIRE(minusBg != nullptr);
+    DOCTEST_REQUIRE(plusBg != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.status.fontval") != nullptr);
+    DOCTEST_REQUIRE(minusBg->onClick != nullptr);
+    DOCTEST_REQUIRE(plusBg->onClick != nullptr);
+    // 15 在域内：两侧均可用
+    DOCTEST_CHECK_EQ(minusBg->disabled, false);
+    DOCTEST_CHECK_EQ(plusBg->disabled, false);
+
+    // 传递链①：点 A+ → 通道 16 + 落库 settings 同键（163 键契约）
+    plusBg->onClick();
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 16.0f);
+    auto saved = core::appconfig::get(db->db(), "config.json:editorFontSize");
+    DOCTEST_REQUIRE(saved.isOk());
+    DOCTEST_CHECK_EQ(saved.value(), std::string("16"));
+
+    // 传递链②：点 A− → 回 15（指针未跨帧，仍有效）
+    minusBg->onClick();
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 15.0f);
+
+    // 边界：顶到 24 → A+ disabled、A− 可用（重建帧后取新元素防悬垂）
+    core::theme::setEditorFontSize(24.0f);
+    frame("fs3");
+    const auto* plusAtMax = ui.find("md.status.fontplus.bg");
+    const auto* minusAtMax = ui.find("md.status.fontminus.bg");
+    DOCTEST_REQUIRE(plusAtMax != nullptr);
+    DOCTEST_REQUIRE(minusAtMax != nullptr);
+    DOCTEST_CHECK_EQ(plusAtMax->disabled, true);
+    DOCTEST_CHECK_EQ(minusAtMax->disabled, false);
+
+    // 落到 12 → A− disabled、A+ 可用
+    core::theme::setEditorFontSize(12.0f);
+    frame("fs4");
+    const auto* minusAtMin = ui.find("md.status.fontminus.bg");
+    const auto* plusAtMin = ui.find("md.status.fontplus.bg");
+    DOCTEST_REQUIRE(minusAtMin != nullptr);
+    DOCTEST_REQUIRE(plusAtMin != nullptr);
+    DOCTEST_CHECK_EQ(minusAtMin->disabled, true);
+    DOCTEST_CHECK_EQ(plusAtMin->disabled, false);
+
+    // 复位不可省：通道是进程级全局态
+    core::theme::setEditorFontSize(15.0f);
+    mod->onStop();
+    core::registerAppDatabase(nullptr);
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::remove(dbPath, ec);
+    return true;
+})

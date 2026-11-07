@@ -7,6 +7,8 @@
 
 #include "core/app_config.h"  // appconfig::set（字号偏好落库，池163）
 
+#include <components/button.h>  // 字号步进对（need161）
+
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
 
 namespace module::markdown {
@@ -283,8 +285,9 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w,
     // 左框右缘 = 右串左缘留 24px 间距。右端预算 = 24(边距) + 字号控件区
     // (30 label + 6 + dd 96) + 8 + 右串 220（池163：右端加字号设置后左框收口，
     // 极窄列钳 0 防负宽文本盒）。
+    // 右端保留 = 字号步进块 120（label30+gap6+A-24+gap4+值28+gap4+A+24，need161）
     const float statusLeftW = std::max(0.0f, w - 24.0f - 220.0f - 8.0f -
-                                                 30.0f - 6.0f - 96.0f - 24.0f);
+                                                 120.0f - 24.0f);
     ui.text("md.status.save")
         .position(x + 24.0f, y)
         .size(statusLeftW, core::theme::scaled(22.0f))
@@ -347,14 +350,20 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w,
         .color(t.colors.textTertiary)
         .build();
 
-    // 字号设置（池163）：右端「字号 label + 下拉」，复用 settings 退场的
-    // editorFontSize 通道（同键同档位；设置页 151 批删行后入口迁此）。
-    // 状态栏在列壳 stack 底缘 → 弹层 openUp 向上（dropdown 弹层 z 自逃逸）。
-    constexpr float kFontDdW = 96.0f;
-    const float fontDdX = x + w - 24.0f - kFontDdW;
+    // 字号步进（need161）：右端「字号 label + A- / 当前px / A+」，复用池163 的
+    // editorFontSize 通道与落库键；步长 1px，域 [12,24]，边界按钮 disabled。
+    const int curPx = static_cast<int>(core::theme::editorFontSize() + 0.5f);
+    const bool atMin = curPx <= kEditorFontMinPx;
+    const bool atMax = curPx >= kEditorFontMaxPx;
+    constexpr float kStepBtnW = 24.0f;
+    constexpr float kStepValW = 28.0f;
+    // 右缘排布（右→左）：margin24 | A+ 24 | gap4 | 值 28 | gap4 | A- 24 | gap6 | label 30
+    const float plusX = x + w - 24.0f - kStepBtnW;
+    const float valX = plusX - 4.0f - kStepValW;
+    const float minusX = valX - 4.0f - kStepBtnW;
     const float labelW = 30.0f;
     ui.text("md.status.font.label")
-        .position(fontDdX - 6.0f - labelW, y)
+        .position(minusX - 6.0f - labelW, y)
         .size(labelW, core::theme::scaled(22.0f))
         .text("字号")
         .fontSize(core::theme::scaled(12.0f))
@@ -363,37 +372,51 @@ void MarkdownModule::drawStatusBar(eui::Ui& ui, float x, float y, float w,
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
-    ui.stack("md.status.fontdd.wrap")
-        .position(fontDdX, y)
-        .size(kFontDdW, 22.0f)
-        .content([&] {
-            components::dropdown(ui, "md.status.fontdd")
-                .size(kFontDdW, 22.0f)
-                .items(std::vector<std::string>(
-                    kMdEditorFontPresetLabels,
-                    kMdEditorFontPresetLabels + kMdEditorFontPresetCount))
-                .selected(mdNearestEditorFontIndex(core::theme::editorFontSize()))
-                .open(editorFontDdOpen_)
-                .onOpenChange([this](bool v) { editorFontDdOpen_ = v; })
-                .openUp(true)
-                .theme(componentTheme)
-                .onChange([this](int idx) { applyEditorFontPreset(idx); })
-                .build();
-        })
+    components::button(ui, "md.status.fontminus")
+        .position(minusX, y)
+        .size(kStepBtnW, 22.0f)
+        .text("A-")
+        .fontSize(core::theme::scaled(12.0f))
+        .theme(componentTheme, components::ButtonVariant::Ghost)
+        .disabled(atMin)
+        .onClick([this] { stepEditorFontSize(-1); })
+        .build();
+    ui.text("md.status.fontval")
+        .position(valX, y)
+        .size(kStepValW, core::theme::scaled(22.0f))
+        .text(std::to_string(curPx))
+        .fontSize(core::theme::scaled(12.0f))
+        .lineHeight(core::theme::scaled(22.0f))
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary)
+        .build();
+    components::button(ui, "md.status.fontplus")
+        .position(plusX, y)
+        .size(kStepBtnW, 22.0f)
+        .text("A+")
+        .fontSize(core::theme::scaled(12.0f))
+        .theme(componentTheme, components::ButtonVariant::Ghost)
+        .disabled(atMax)
+        .onClick([this] { stepEditorFontSize(+1); })
         .build();
 }
 
-// 池163：档位写入 core::theme 通道（mdEditorFontSize 链全端即时生效）+
+// need161：±1px 步进写入 core::theme 通道（mdEditorFontSize 链全端即时生效）+
 // 落库复用 settings 的 editorFontSize 键（saveEditorFontSizePref；下一次启动
-// 由 settings onStart 通道加载链取回）。
-void MarkdownModule::applyEditorFontPreset(int index) {
-    if (index < 0 || index >= kMdEditorFontPresetCount) return;
-    const int px = kMdEditorFontPresets[index];
-    ::core::theme::setEditorFontSize(static_cast<float>(px));
-    if (auto r = saveEditorFontSizePref(::core::appDatabase(), px); r.isFail()) {
+// 由 settings onStart 通道加载链取回）。钳 [kEditorFontMinPx, kEditorFontMaxPx]；
+// 边界处重复步进（按钮已 disabled，此为兜底）零写入零落库零日志。
+void MarkdownModule::stepEditorFontSize(int delta) {
+    const int cur = static_cast<int>(core::theme::editorFontSize() + 0.5f);
+    int next = cur + delta;
+    if (next < kEditorFontMinPx) next = kEditorFontMinPx;
+    if (next > kEditorFontMaxPx) next = kEditorFontMaxPx;
+    if (next == cur) return;
+    ::core::theme::setEditorFontSize(static_cast<float>(next));
+    if (auto r = saveEditorFontSizePref(::core::appDatabase(), next); r.isFail()) {
         LOG_ERROR(std::string("Markdown: 字号偏好落库失败: ") + r.errorMessage());
     }
-    LOG_INFO("Markdown: 编辑器字号 → " + std::to_string(px) + "px（页内设置）");
+    LOG_INFO("Markdown: 编辑器字号 → " + std::to_string(next) + "px（页内步进）");
 }
 
 void MarkdownModule::refreshTags() {

@@ -72,8 +72,9 @@ int main(int argc, char* argv[]) {
         passed = false;
     }
 
-    // 池163：状态栏字号设置端到端（入口存在 → 开 → 选档 → 通道生效 + 落库
-    // settings 同键 → 弹层收起）。删 dd / 摘 onChange / 摘落库任一环必红。
+    // need161：状态栏字号步进端到端（入口存在 → A+ → 通道生效 + 落库 settings
+    // 同键 → A− 回落 → 12/24 边界 disabled）。删钮 / 摘 onClick / 摘落库 /
+    // 摘边界 disabled 任一环必红。
     {
         auto clickElement = [&](const core::dsl::Element& e) {
             core::queuePointerButton(window, e.frame.x + e.frame.width * 0.5f,
@@ -87,8 +88,13 @@ int main(int argc, char* argv[]) {
         };
 
         // 基线：通道默认 15，入口存在（空态状态栏也绘制，internal.h 空态分支）
-        if (ui != nullptr && ui->find("md.status.fontdd") == nullptr) {
-            std::cerr << "markdown_probe: md.status.fontdd 不存在（字号设置"
+        if (ui != nullptr && ui->find("md.status.fontminus") == nullptr) {
+            std::cerr << "markdown_probe: md.status.fontminus 不存在（字号步进"
+                         "入口缺失）\n";
+            passed = false;
+        }
+        if (ui != nullptr && ui->find("md.status.fontplus") == nullptr) {
+            std::cerr << "markdown_probe: md.status.fontplus 不存在（字号步进"
                          "入口缺失）\n";
             passed = false;
         }
@@ -97,50 +103,74 @@ int main(int argc, char* argv[]) {
             std::cerr << "markdown_probe: 基线字号非 15（探针前置污染）\n";
             passed = false;
         }
-        // 开下拉 → 点第 3 档「大 17px」→ 收起
         if (ui != nullptr && passed) {
-            if (const core::dsl::Element* field =
-                    ui->find("md.status.fontdd.field");
-                field != nullptr) {
-                clickElement(*field);
+            const core::dsl::Element* plus = ui->find("md.status.fontplus.bg");
+            if (plus == nullptr) {
+                std::cerr << "markdown_probe: 步进按钮 .bg 缺失（onClick 载体）\n";
+                passed = false;
+            } else {
+                // A+ → 16：通道生效 + settings 全键形态落库（163 契约）
+                clickElement(*plus);
                 composeFrame();
-                const core::dsl::Element* item = ui->find("md.status.fontdd.item.2");
-                if (item == nullptr) {
-                    std::cerr << "markdown_probe: 弹层未出（md.status.fontdd."
-                                 "item.2 缺失，openUp/开合链路断）\n";
+                if (core::theme::editorFontSize() != 16.0f) {
+                    std::cerr << "markdown_probe: A+ 后通道字号 "
+                              << core::theme::editorFontSize()
+                              << " != 16（onClick 链断）\n";
+                    passed = false;
+                }
+                auto raw = core::appconfig::get(
+                    tdb.handle(), "config.json:editorFontSize");
+                if (raw.isFail() || raw.value() != "16") {
+                    std::cerr << "markdown_probe: 落库值 \"16\" 缺失/不符（raw="
+                              << (raw.isOk() ? raw.value() : "<fail>")
+                              << "，与 settings 键契约断）\n";
+                    passed = false;
+                }
+                // A− → 回 15。元素每帧重建（W3.5 悬垂教训）：A+ 后已 compose 过
+                // 新帧，minus 必须重新 find，旧指针 = 悬垂（frame 读出垃圾坐标）。
+                const core::dsl::Element* minus = ui->find("md.status.fontminus.bg");
+                if (minus == nullptr) {
+                    std::cerr << "markdown_probe: md.status.fontminus.bg 缺失\n";
                     passed = false;
                 } else {
-                    clickElement(*item);
-                    composeFrame();
-                    if (core::theme::editorFontSize() != 17.0f) {
-                        std::cerr << "markdown_probe: 选档后通道字号 "
-                                  << core::theme::editorFontSize()
-                                  << " != 17（onChange 链断）\n";
-                        passed = false;
-                    }
-                    // settings 全键形态（命名空间前缀 + editorFontSize，163 契约）
-                    auto raw = core::appconfig::get(
-                        tdb.handle(), "config.json:editorFontSize");
-                    if (raw.isFail() || raw.value() != "17") {
-                        std::cerr << "markdown_probe: 落库值 \"17\" 缺失/不符（raw="
-                                  << (raw.isOk() ? raw.value() : "<fail>")
-                                  << "，与 settings 键契约断）\n";
-                        passed = false;
-                    }
-                    const core::dsl::Element* closedItem =
-                        ui->find("md.status.fontdd.item.2");
-                    if (closedItem == nullptr || !closedItem->disabled) {
-                        std::cerr << "markdown_probe: 选档后弹层未收起\n";
-                        passed = false;
-                    }
+                clickElement(*minus);
+                composeFrame();
+                if (core::theme::editorFontSize() != 15.0f) {
+                    std::cerr << "markdown_probe: A- 后通道字号 "
+                              << core::theme::editorFontSize()
+                              << " != 15（onClick 链断）\n";
+                    passed = false;
                 }
-            } else {
-                std::cerr << "markdown_probe: md.status.fontdd.field 缺失\n";
-                passed = false;
+                // 边界 disabled：顶到 24 → A+ 灰；落到 12 → A− 灰
+                core::theme::setEditorFontSize(24.0f);
+                composeFrame();
+                const core::dsl::Element* plusAtMax =
+                    ui->find("md.status.fontplus.bg");
+                if (plusAtMax == nullptr || !plusAtMax->disabled) {
+                    std::cerr << "markdown_probe: 24px 处 A+ 未 disabled\n";
+                    passed = false;
+                }
+                core::theme::setEditorFontSize(12.0f);
+                composeFrame();
+                const core::dsl::Element* minusAtMin =
+                    ui->find("md.status.fontminus.bg");
+                if (minusAtMin == nullptr || !minusAtMin->disabled) {
+                    std::cerr << "markdown_probe: 12px 处 A- 未 disabled\n";
+                    passed = false;
+                }
+                core::theme::setEditorFontSize(15.0f);
+                }
             }
             composeFrame();
         }
     }
+
+    // 截图前把虚拟指针挪离步进钮：E2E 末次点击的合成指针悬停停在 A- 上，hover
+    // 视觉会被冻进截图（帧捕获 = glReadPixels 后备缓冲，不含真实光标）。挪到
+    // 窗口角落再稳两帧，截「静止态」。
+    core::queuePointerMotion(window, 8.0, 8.0, {}, {});
+    composeFrame();
+    composeFrame();
 
     // --screenshot 落图（未传 = 零开销不写文件；传了失败→passed=false）
     probe::captureIfRequested(args, window, runtime, &passed);

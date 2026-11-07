@@ -110,28 +110,12 @@ inline float mdEditorFontSize() {
     return core::theme::editorFontSize() * core::theme::fontScale();
 }
 
-// 池163：编辑器字号档位——md 编辑器页内字号设置用（设置侧 UI 行已随 151 批退场，
-// 键与通道保留）。档位字面与 module_settings/settings_ui_logic.h kEditorFontPresets
-// 保持一致（module 互不依赖不可 include，漂移以设置侧为单一来源）。
-inline constexpr int kMdEditorFontPresets[] = {13, 15, 17, 20};
-inline constexpr int kMdEditorFontPresetCount = 4;
-inline constexpr const char* kMdEditorFontPresetLabels[] = {
-    "小 13px", "标准 15px", "大 17px", "特大 20px"};
+// need161：编辑器字号步进域——页内 A-/A+ 步进对的钳制范围（步长 1px）。
+// 通道本身钳 10-32（core/theme.cpp setEditorFontSize），本域更紧；到达边界时
+// 对应按钮 disabled（drawStatusBar）。
+inline constexpr int kEditorFontMinPx = 12;
+inline constexpr int kEditorFontMaxPx = 24;
 // 落库经 md_view_state.h saveEditorFontSizePref（settings 全键同形，163）。
-
-// 生效字号（core::theme 通道值）到最近档位下标；通道钳制域 10-32 恒覆盖档位域。
-inline int mdNearestEditorFontIndex(float px) {
-    int best = 0;
-    float bestDist = -1.0f;
-    for (int i = 0; i < kMdEditorFontPresetCount; ++i) {
-        const float d = std::fabs(px - static_cast<float>(kMdEditorFontPresets[i]));
-        if (bestDist < 0.0f || d < bestDist) {
-            bestDist = d;
-            best = i;
-        }
-    }
-    return best;
-}
 
 // 预览生效样式：字号族（body/h1/h2/h3/code + bodyLineHeight）× 档位。
 // blockGap 必须同乘——它同时是 syncMap 缓存键项（rev/width/gap/块数），不乘则
@@ -516,15 +500,15 @@ private:
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) ;
 
-    // 底部状态栏（§3.3.4）：12px 浅灰右对齐，字数 + 保存状态；右端字号设置
-    //（池163，复用 settings editorFontSize 键与 core::theme 通道）。
+    // 底部状态栏（§3.3.4）：12px 浅灰右对齐，字数 + 保存状态；右端字号步进
+    //（need161 A-/A+，复用 settings editorFontSize 键与 core::theme 通道）。
     void drawStatusBar(eui::Ui& ui, float x, float y, float w,
                        const core::theme::Tokens& t,
                        const components::theme::ThemeColorTokens& componentTheme);
 
-    // 页内字号设置（池163）：档位写入 core::theme 通道 + 落库复用 settings 的
-    // editorFontSize 键（saveEditorFontSizePref，md_view_state）。
-    void applyEditorFontPreset(int index);
+    // 页内字号步进（need161）：±1px 写入 core::theme 通道 + 落库复用 settings 的
+    // editorFontSize 键（saveEditorFontSizePref，md_view_state）；钳 [12,24]。
+    void stepEditorFontSize(int delta);
 
     // 右栏：预览（components::markdown 渲染成 eui 节点树）
     // 双栏态：编辑器单向驱动预览滚动；仅预览态：手动滚动，进入时对齐编辑器位置。
@@ -936,8 +920,6 @@ private:
     // 方案 A：笔记标签页列表（会话内存态，顺序 = tab 顺序；持久化仅记 lastPath）
     std::vector<std::string> openNotes_;
     std::string editorText_;           // 编辑器缓冲
-    // 状态栏字号下拉开合态（池163；dropdown 无内部状态，模块侧持 Open）
-    bool editorFontDdOpen_ = false;
     // 内容修订号（唯一写点 = setEditorText），下游缓存以它为键跨帧复用
     uint64_t editorTextRev_ = 0;
     uint64_t previewTextHash_ = std::hash<std::string>{}(std::string());
