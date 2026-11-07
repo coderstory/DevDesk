@@ -365,7 +365,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                         .text("Markdown")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(core::theme::scaled(32.0f))
-                        .fontWeight(700)
+                        .fontWeight(600)
                         .maxWidth(kTitleColW)
                         .overflow(core::TextOverflow::Ellipsis)
                         .clip()

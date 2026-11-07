@@ -206,7 +206,7 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
             .text("目录")
             .fontSize(core::theme::scaled(kTreeFontSize))
             .lineHeight(core::theme::scaled(32.0f))
-            .fontWeight(700)
+            .fontWeight(600)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textPrimary)
             .build();
@@ -302,7 +302,7 @@ void MarkdownModule::drawTreeColumn(eui::Ui& ui,
                 .text("标签")
                 .fontSize(core::theme::scaled(10.0f))
                 .lineHeight(core::theme::scaled(14.0f))
-                .fontWeight(700)
+                .fontWeight(600)
                 .color(t.colors.textTertiary)
                 .build();
             const float fs = 11.0f;
@@ -557,7 +557,7 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                                 .verticalAlign(eui::VerticalAlign::Center)
                                 // 同文件行：深字（S2.5 primary 字冲突待裁决）
                                 .color(t.colors.textPrimary)
-                                .fontWeight(700)
+                                .fontWeight(600)
                                 .build();
                         })
                         .build();

@@ -133,7 +133,7 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(current ? t.colors.primary
                                                    : t.colors.textPrimary)
-                                    .fontWeight(current ? 700 : 400)
+                                    .fontWeight(current ? 600 : 400)
                                     .build();
                             })
                             .build();

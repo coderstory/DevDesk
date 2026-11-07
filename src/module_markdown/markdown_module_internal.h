@@ -195,7 +195,7 @@ inline void drawFileTreeItem(eui::Ui& ui,
                 .verticalAlign(eui::VerticalAlign::Center)
                 // 选中/未选中同色（深字）=与侧栏一致；S2.5「primary 文字」冲突待用户裁决
                 .color(t.colors.textPrimary)
-                .fontWeight(active ? 700 : 400);
+                .fontWeight(active ? 600 : 400);
             if (!highlight.empty()) {
                 std::vector<core::TextRun> runs;
                 size_t pos = 0;
