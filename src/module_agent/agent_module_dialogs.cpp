@@ -12,6 +12,8 @@
 
 #include <ui_kit/glass.h>       // glassFill/glassShadowColor（池170 v2 弹窗壳）
 #include <ui_kit/materials.h>   // itemSurface（池127 L2 卡面）
+#include <components/theme.h>      // panelShadow（need219 §5.2-2 弹窗内卡描边阴影统一）
+#include <core/component_theme.h>  // componentTokensWeChat（panelShadow 入参）
 
 #include <cstddef>
 #include <core/str_util.h>      // toLowerAscii（搜索不区分大小写折叠）
@@ -1357,16 +1359,6 @@ eui::Color toolsShellBorder(const ::core::theme::Tokens& t) {
                     : eui::Color{0.0f, 0.0f, 0.0f, 0.35f};
 }
 
-// 工具卡极淡阴影（§3.4：light rgba(16,54,38,0.05) blur8 offsetY2 / dark 无）
-core::Shadow toolCardShadow(const ::core::theme::Tokens& t) {
-    core::Shadow s;
-    s.enabled = !t.isDark;
-    s.offset = {0.0f, 2.0f};
-    s.blur = 8.0f;
-    s.color = {16.0f / 255.0f, 54.0f / 255.0f, 38.0f / 255.0f, 0.05f};
-    return s;
-}
-
 // ---- 可用工具弹窗（池170 v2，取代 v1 2 列定高网格版）----
 //
 // 纯查阅弹窗（无表单无 footer 主次钮）：弹窗壳 w=min(720,可用宽−48)
@@ -1692,7 +1684,7 @@ void AgentModule::composeToolsDialog(
                     .text("清空搜索")
                     .fontSize(btnFs)
                     .lineHeight(btnH)
-                    .fontWeight(500)
+                    .fontWeight(400)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.primaryText)
@@ -1832,7 +1824,9 @@ void AgentModule::renderToolCard(
     // 交互态（仅长文卡）：hover 底/边框加深 + 按下果冻，短文卡零交互态
     const bool hovered = expandable && toolsHoverCard_ == tool.name;
     const bool pressed = expandable && toolsPressedCards_.count(tool.name) > 0;
-    const eui::Color cardBase = t.colors.surfaceElevated;  // 暗 #2C2A28 比壳浅半档
+    // 弹窗内豁免档（need219 §5.2-2 cardPanelColored 通路）：底=调用方可辨底色
+    // （surfaceElevated 比壳 glassFill 浅半档），描边阴影走全站统一
+    const eui::Color cardBase = t.colors.surfaceElevated;
 
     inner.stack(cid)
         .size(cw, cardH)
@@ -1845,7 +1839,8 @@ void AgentModule::renderToolCard(
                 .radius(8.0f)
                 .border(1.0f, expandable && hovered ? t.colors.active
                                                     : t.colors.borderDefault)
-                .shadow(toolCardShadow(t))
+                .shadow(components::theme::panelShadow(
+                    core::theme::componentTokensWeChat(t)))
                 .transformOrigin(0.5f, 0.5f)
                 .scale(pressed ? 0.96f : 1.0f)
                 .transition(core::Transition::make(0.18f, core::Ease::OutBack))
@@ -2056,7 +2051,7 @@ void AgentModule::renderToolCard(
                                     .text(label)
                                     .fontSize(toggleFs)
                                     .lineHeight(toggleH)
-                                    .fontWeight(500)
+                                    .fontWeight(400)
                                     .horizontalAlign(eui::HorizontalAlign::Center)
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.primaryText)
@@ -2113,7 +2108,7 @@ void AgentModule::renderToolCard(
                                         .text(label)
                                         .fontSize(chipFs)
                                         .lineHeight(chipH)
-                                        .fontWeight(500)
+                                        .fontWeight(400)
                                         .horizontalAlign(
                                             eui::HorizontalAlign::Center)
                                         .verticalAlign(eui::VerticalAlign::Center)

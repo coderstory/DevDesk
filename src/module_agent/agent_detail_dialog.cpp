@@ -543,7 +543,7 @@ void AgentModule::composeTaskDetailDialog(
                                             .text(dayText)
                                             .fontSize(fsS)
                                             .lineHeight(lhS)
-                                            .fontWeight(600)
+                                            .fontWeight(400)
                                             .color(t.colors.textTertiary)
                                             .build();
                                     }

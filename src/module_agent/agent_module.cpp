@@ -576,7 +576,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         .text("智能体")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(core::theme::scaled(32.0f))
-                        .fontWeight(700)
+                        .fontWeight(600)
                         .color(t.colors.textPrimary)
                         .build();
                     // 「可用工具」入口钮（池170 v2 §关键决策 3）：图标 + 文字 + 计数
@@ -867,7 +867,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .text(status)
                                     .fontSize(stSmall.fontSize)
                                     .lineHeight(stSmall.lineHeight)
-                                    .fontWeight(500)
+                                    .fontWeight(600)
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(statusColor)
                                     .opacity(hovered ? 0.0f : 1.0f)

@@ -99,6 +99,13 @@ int main(int argc, char* argv[]) {
             shotStep0 = argv[++i];
         } else if (arg == "--shot-step3" && i + 1 < argc) {
             shotStep3 = argv[++i];
+        } else if (arg == "--theme" && i + 1 < argc) {
+            // 亮暗两态落图对照（同 release_probe --theme dark）
+            if (std::string(argv[++i]) == "dark") {
+                core::theme::setDark();
+            } else {
+                core::theme::setLight();
+            }
         }
     }
 
