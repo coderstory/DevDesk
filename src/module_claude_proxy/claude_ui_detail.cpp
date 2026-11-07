@@ -17,6 +17,7 @@
 #include <core/logging.h>
 #include <core/window/window_backend.h>
 #include <ui_kit/card.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/wtab.h>
 
 #include <algorithm>
@@ -73,7 +74,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.name.bg")
         .position(x0, y0 + core::theme::scaled(18.0f)).size(w * 0.5f - 8.0f, core::theme::scaled(24.0f))
-        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
+        .color(ui_kit::itemSurface(t)).radius(t.sizes.radiusLarge).build();
     // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.name.value")
         .position(x0 + 12.0f, y0 + core::theme::scaled(18.0f))
@@ -120,7 +121,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.url.bg")
         .position(x0, urlY + core::theme::scaled(18.0f)).size(w, core::theme::scaled(28.0f))
-        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
+        .color(ui_kit::itemSurface(t)).radius(t.sizes.radiusLarge).build();
     // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.url.value")
         .position(x0 + 12.0f, urlY + core::theme::scaled(18.0f)).size(w - 40.0f, core::theme::scaled(28.0f))
@@ -169,7 +170,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.token.bg")
         .position(x0, keyY + core::theme::scaled(18.0f)).size(w, core::theme::scaled(32.0f))
-        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
+        .color(ui_kit::itemSurface(t)).radius(t.sizes.radiusLarge).build();
     // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.token.value")
         .position(x0 + 12.0f, keyY + core::theme::scaled(18.0f)).size(w - 40.0f, core::theme::scaled(32.0f))
@@ -458,7 +459,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         const float valW = std::max(40.0f, w - keyColW - 48.0f);
         ui.rect(std::string("claude.env.row.bg.") + rid)
             .position(x0, ey).size(w, rowH)
-            .color(t.colors.surface).radius(t.sizes.radiusLarge)
+            .color(ui_kit::itemSurface(t)).radius(t.sizes.radiusLarge)
             .border(hint ? 0.0f : 1.0f, hint ? eui::Color{0.0f,0.0f,0.0f,0.0f} : t.colors.error)
             .build();
         // 行带 1：键名 | 值（同带 Center 对齐）；长文本走省略号 + clip，不换行不撑高。
