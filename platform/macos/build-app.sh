@@ -65,18 +65,19 @@ else
     echo "    或 plutil 写入失败 —— .app 将报 Info.plist 里的占位值 0.1.0" >&2
 fi
 
-# 图标：产出 Contents/Resources/DevDesk.icns（Info.plist 的 CFBundleIconFile=DevDesk）。
+# 图标：产出 Contents/Resources/AppIcon.icns（Info.plist 的 CFBundleIconFile=AppIcon）。
 # 两个来源，已入库的高质量产物优先：
-#   * installer/macos/DevDesk.icns —— doc/scripts/gen_app_icns.sh 的交付物（从 1024 源图
-#     sips 缩到 16…1024 各档，质量最好；本仓当前未入库，故默认走下面一条）；
+#   * installer/macos/AppIcon.icns —— doc/scripts/gen_app_icns.sh 的交付物（从 1024 源图
+#     sips 缩到 16…1024 各档，质量最好；2026-11-07 bug#158 由 DevDesk.icns 改名以击穿
+#     macOS 图标缓存——同名原地换图 Dock 会一直渲染旧满幅图）；
 #   * $BUILD_DIR/assets/icon.png —— 构建时 POST_BUILD 从 EUI-NEO assets 拷来的
 #     icon.png，零手工步骤、每次打包必然可得；与 Windows 侧 Inno 拿 assets/icon.ico
 #     当 SetupIconFile 是同一份素材，两平台图标自此同源。
 # 生成链：doc/scripts/pad_icon_canvas.py 补画布留白（Pillow，见该脚本头部）→
 # sips 缩到 10 档 → iconutil 打包。除 Pillow 外不依赖仓库外路径、不需要手工准备源图。
 # 补留白那步失败只降级为「满幅图标 + 明确警告」，不阻断打包（图标属外观，不该拦部署）。
-ICON_OUT="$APP_DIR/Contents/Resources/DevDesk.icns"
-ICON_SRC_ICNS="$PROJECT_DIR/installer/macos/DevDesk.icns"
+ICON_OUT="$APP_DIR/Contents/Resources/AppIcon.icns"
+ICON_SRC_ICNS="$PROJECT_DIR/installer/macos/AppIcon.icns"
 ICON_SRC_PNG="$BUILD_DIR/assets/icon.png"
 ICON_PAD_HELPER="$PROJECT_DIR/doc/scripts/pad_icon_canvas.py"
 ICON_PYTHON="${DEVDESK_PYTHON:-python3}"
@@ -89,15 +90,15 @@ elif [ -f "$ICON_SRC_PNG" ] && command -v sips >/dev/null 2>&1 && command -v ico
     ICONSET_DIR="$ICONSET_ROOT/DevDesk.iconset"
     mkdir -p "$ICONSET_DIR"
     ICON_FAIL=0
-    # 缩放前先补画布留白：把源图等比缩到最长边 82% 居中放进 1024 透明画布，
-    # 10 档全部从这张母图派生（理由见 doc/scripts/pad_icon_canvas.py 头部）。
+    # 缩放前先补画布留白：内容（alpha bbox）缩到恰好 824px 居中放进 1024 透明画布
+    # （= HIG 网格 824/1024 ≈ 80.5%，理由见 doc/scripts/pad_icon_canvas.py 头部）。
     # sips 的 --padColor 只吃 6 位十六进制 = 只能补不透明色，补不了透明留白，故走 Pillow。
     ICON_MASTER="$ICONSET_ROOT/icon-master-1024.png"
     ICON_RESIZE_SRC="$ICON_SRC_PNG"
     if [ -f "$ICON_PAD_HELPER" ] && command -v "$ICON_PYTHON" >/dev/null 2>&1 \
-       && "$ICON_PYTHON" "$ICON_PAD_HELPER" "$ICON_SRC_PNG" "$ICON_MASTER" >/dev/null 2>&1; then
+       && "$ICON_PYTHON" "$ICON_PAD_HELPER" "$ICON_SRC_PNG" "$ICON_MASTER" --target-px 824 >/dev/null 2>&1; then
         ICON_RESIZE_SRC="$ICON_MASTER"
-        echo "ℹ️  图标已补画布留白（内容 82%，Dock 里与其他应用等大）"
+        echo "ℹ️  图标已补画布留白（内容 824/1024，Dock 里与其他应用等大）"
     else
         echo "⚠️  图标未补画布留白（缺 python3/Pillow 或 ${ICON_PAD_HELPER}）——" >&2
         echo "    Dock 里 DevDesk 图标会比别的应用显得大；装上 Pillow 后重跑本脚本即可" >&2

@@ -22,7 +22,10 @@
 #     缺了给中文提示退出，不生成满幅图标。可用 DEVDESK_PYTHON=<python> 换解释器）
 #
 # 产物（均入库交付，spec §4.4 第 1 项）：
-#   - installer/macos/DevDesk.icns      —— App 图标（.app bundle 的 CFBundleIconFile 用）
+#   - installer/macos/AppIcon.icns      —— App 图标（.app bundle 的 CFBundleIconFile=AppIcon 用；
+#                                          2026-11-07 bug#158 由 DevDesk.icns 改名——
+#                                          同名原地换图不触发 macOS 图标缓存失效，
+#                                          Dock 会一直渲染旧满幅图，见 clue 库）
 #   - installer/macos/.VolumeIcon.icns  —— DMG 卷图标（打包脚本拷到 DMG 根目录并命名
 #                                           为 .VolumeIcon.icns 后，Finder 显示为卷图标）
 #
@@ -34,12 +37,12 @@
 #   16 / 32 / 128 / 256 / 512 各一张，及各自 @2x == 32 / 64 / 256 / 512 / 1024；
 #   即 iconset 文件名为 icon_{16,16@2x,32,32@2x,128,128@2x,256,256@2x,512,512@2x}.png
 #
-# 画布留白（2026-10-02 加，修「Dock 里比别的应用大」）：
-#   缩放前先把源图等比缩到最长边 82% 并居中放进 1024×1024 的**透明**画布
-#   （doc/scripts/pad_icon_canvas.py，比例见下方 PAD_RATIO），下面 10 档全部从
-#   这张 1024 母图派生。Dock 用同一格子绘制所有应用图标，苹果自家图标内容约占
-#   格子 80%、四周留白；满幅内容在同样格子里就显得大一圈 —— 补留白即可，尺寸
-#   参数一个都没动。
+# 画布留白（2026-10-02 加，修「Dock 里比别的应用大」；2026-11-07 bug#158 精确化）：
+#   缩放前先把源图**内容**（alpha bbox）等比缩到恰好 824px 并居中放进 1024×1024 的
+#   **透明**画布（doc/scripts/pad_icon_canvas.py --target-px，见下方 PAD_TARGET_PX），
+#   下面 10 档全部从这张 1024 母图派生。824/1024 ≈ 80.5% = Apple HIG 图标网格规定
+#   的内容占比；旧版按 PNG 最长边 82% 缩放，源图自带透明边时留白被算了两次
+#   （实测内容只有 79.0%）。按 bbox 计算后与规范零偏差。
 #   不另加圆角：现用源图本身已是圆角方形（超椭圆 n≈3.4），再叠一层只会切边或
 #   无效，理由写在 pad_icon_canvas.py 头部。
 # =============================================================================
@@ -97,7 +100,9 @@ trap 'rm -rf "${TMP_ROOT}"' EXIT
 # 先补画布留白得到 1024 母图，再让 10 档全部派生自它（见文件头「画布留白」）。
 # sips 的 --padColor 只吃 6 位十六进制 = 只能补不透明色，补不了透明留白，
 # 所以这一步必须走 Pillow（与 doc/scripts/gen_dmg_background.py 同一依赖）。
-PAD_RATIO="${DEVDESK_ICON_PAD_RATIO:-0.82}"
+# 2026-11-07 bug#158：改为 --target-px 824 精确对齐 HIG 网格（内容 bbox 最长边
+# 恰好 824/1024 ≈ 80.5%，按 bbox 缩放居中，源图自带透明边不再导致留白被算两次）。
+PAD_TARGET_PX="${DEVDESK_ICON_CONTENT_PX:-824}"
 PAD_HELPER="${SCRIPT_DIR}/pad_icon_canvas.py"
 PYTHON_BIN="${DEVDESK_PYTHON:-python3}"
 MASTER_PNG="${TMP_ROOT}/icon-master-1024.png"
@@ -110,7 +115,7 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
   echo "[ERROR] 找不到 python3（补画布留白需要 Pillow；可用 DEVDESK_PYTHON=<python> 指定）" >&2
   exit 1
 fi
-if ! "${PYTHON_BIN}" "${PAD_HELPER}" "${SRC_PNG}" "${MASTER_PNG}" --ratio "${PAD_RATIO}"; then
+if ! "${PYTHON_BIN}" "${PAD_HELPER}" "${SRC_PNG}" "${MASTER_PNG}" --target-px "${PAD_TARGET_PX}"; then
   echo "[ERROR] 画布留白步骤失败（缺 Pillow 时执行: python3 -m pip install Pillow）" >&2
   exit 1
 fi
@@ -152,19 +157,19 @@ PYCHECK
 # ---------- iconutil 打包为 .icns（App 图标与 DMG 卷图标两份产物） ----------
 mkdir -p "${OUT_DIR}"
 
-iconutil -c icns -o "${OUT_DIR}/DevDesk.icns" "${ICONSET_DIR}"
+iconutil -c icns -o "${OUT_DIR}/AppIcon.icns" "${ICONSET_DIR}"
 iconutil -c icns -o "${OUT_DIR}/.VolumeIcon.icns" "${ICONSET_DIR}"
 
 # ---------- 产物校验：存在且非空才算成功 ----------
-for f in "${OUT_DIR}/DevDesk.icns" "${OUT_DIR}/.VolumeIcon.icns"; do
+for f in "${OUT_DIR}/AppIcon.icns" "${OUT_DIR}/.VolumeIcon.icns"; do
   if [ ! -s "${f}" ]; then
     echo "[ERROR] 产物缺失或为空: ${f}" >&2
     exit 1
   fi
 done
 
-echo "[OK] 已生成（$(wc -c < "${OUT_DIR}/DevDesk.icns") bytes）："
-echo "    ${OUT_DIR}/DevDesk.icns"
+echo "[OK] 已生成（$(wc -c < "${OUT_DIR}/AppIcon.icns") bytes）："
+echo "    ${OUT_DIR}/AppIcon.icns"
 echo "    ${OUT_DIR}/.VolumeIcon.icns"
 echo "Mac 侧打包时将 .VolumeIcon.icns 放入 DMG 根目录即可显示卷图标。"
-echo "记得显式入库：git add installer/macos/DevDesk.icns installer/macos/.VolumeIcon.icns"
+echo "记得显式入库：git add installer/macos/AppIcon.icns installer/macos/.VolumeIcon.icns"

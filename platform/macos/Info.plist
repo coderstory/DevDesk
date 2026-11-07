@@ -20,10 +20,12 @@
     <string>0.1.0</string>
     <key>CFBundleExecutable</key>
     <string>DevDesk</string>
-    <!-- App 图标：文件 = Contents/Resources/DevDesk.icns（此处只写文件名，不含扩展名）。
-         icns 由 build-app.sh 在打包时放入，来源见该脚本「图标」段。 -->
+    <!-- App 图标：文件 = Contents/Resources/AppIcon.icns（此处只写文件名，不含扩展名）。
+         icns 由 build-app.sh 在打包时放入，来源见该脚本「图标」段。
+         2026-11-07 bug#158：由 DevDesk 改名 AppIcon——同名原地换 .icns 不会触发
+         macOS 图标缓存失效，Dock/Finder 会一直渲染旧满幅图；换文件名强制重新渲染。 -->
     <key>CFBundleIconFile</key>
-    <string>DevDesk</string>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>
