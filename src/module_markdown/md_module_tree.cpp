@@ -130,11 +130,16 @@ void MarkdownModule::drawNoteTabBar(eui::Ui& ui,
                                     .radius(t.sizes.radiusSmall)
                                     .onClick([this, path] { closeTab(path); })
                                     .build();
+                                // bug150：盒/行高固定 24 与外层 stack、hover rect
+                                // 严格重合（修前用 scaled(24)，非 100% 字号档行盒
+                                // 溢出 stack → 图标 ink 中心漂移 12·(s-1) px，
+                                // 130% 档实测偏 3.6px）；字号仍随档缩放，EUI 按
+                                // ink 盒居中，任意档视觉居中。
                                 ui.text("md.note.tab." + std::to_string(i) + ".close.icon")
-                                    .size(core::theme::scaled(24.0f), core::theme::scaled(24.0f))
+                                    .size(24.0f, 24.0f)
                                     .text("\xC3\x97")  // ×
                                     .fontSize(core::theme::scaled(14.0f))
-                                    .lineHeight(core::theme::scaled(24.0f))
+                                    .lineHeight(24.0f)
                                     .horizontalAlign(eui::HorizontalAlign::Center)
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textTertiary)

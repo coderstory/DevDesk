@@ -16,11 +16,23 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
     if (!outlineOpen_) return;
     const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
     const float panelW = 264.0f;
-    // 2026-10-25 批G 同拍板：大纲浮面板不再底贴底，补 32 下距与主体对齐
-    const float panelH = screen.height - pad - ui_kit::kHeaderH -
-                         t.sizes.spacingLarge - pad;
     const float x = screen.width - pad - panelW;
     const float y = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
+    // bug164：高度内容驱动，上限 = 原满高档（2026-10-25 批G：底补 32 下距与
+    // 主体对齐——修前三态恒满高 681，空/少内容也占满整列）。
+    const float panelMaxH = screen.height - pad - ui_kit::kHeaderH -
+                            t.sizes.spacingLarge - pad;
+    float panelContentH = 0.0f;
+    if (outline_.empty()) {
+        // 空态收最小：提示文案行数（未开笔记 1 行 / 有笔记无标题 2 行）+ 底距
+        const int emptyLines = currentPath_.empty() ? 1 : 2;
+        panelContentH = 52.0f + static_cast<float>(emptyLines) * 18.0f + 16.0f;
+    } else {
+        // 标题区 44 + 行高 30×条数 + 底距 16
+        panelContentH = 44.0f +
+                        static_cast<float>(outline_.size()) * 30.0f + 16.0f;
+    }
+    const float panelH = std::min(panelMaxH, panelContentH);
 
     ui.stack("md.outline.panel")
         .position(x, y)
