@@ -734,7 +734,9 @@ void McpPageModule::drawDetailDialog(
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
 
-            // 描述（可换行）
+            // 描述（可换行）。bug180：固定高盒（88..136）+ wrap，长描述折行溢出
+            // 须按节点框 clip——不变量同 schema.text（折行溢出不越盒压参数区），
+            // 否则墨迹直铺压到 148 的「参数 schema」标题/框。
             ui.text("mcp.dialog.detail.desc")
                 .position(20.0f, 88.0f)
                 .size(w - 40.0f, core::theme::scaled(48.0f))
@@ -743,6 +745,7 @@ void McpPageModule::drawDetailDialog(
                 .lineHeight(core::theme::scaled(19.0f))
                 .color(t.colors.textSecondary)
                 .wrap(true)
+                .clip()
                 .build();
 
             // 参数区（池146）：inputSchema 全部属性为扁平类型（string/number/

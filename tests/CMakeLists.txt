@@ -521,7 +521,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
     endif()
     # memory_install_probe（need:159 qa 全链路实测驱动）：mcpserve 子命令要真
     # module::mcp::globalMcpService（HTTP MCP 服务），链接 devdesk_module_mcp
-    if(_probe_name STREQUAL "memory_install_probe")
+    # mcp_dialog_probe（bug180 两态对照）：McpPageModule + McpToolRegistry 真类型
+    if(_probe_name STREQUAL "memory_install_probe" OR
+       _probe_name STREQUAL "mcp_dialog_probe")
         target_link_libraries(${_probe_name} PRIVATE devdesk_module_mcp)
     endif()
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由

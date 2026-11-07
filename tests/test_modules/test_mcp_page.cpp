@@ -362,6 +362,43 @@ REGISTER_TEST(mcp_page_card_click_opens_dialog,
     return true;
 })
 
+// bug180：弹窗描述区是固定高（y=88 h=48）+ wrap 多行盒。长描述折行溢出若不按
+// 节点框 clip，墨迹越过 88..136 盒直铺，压到 148 的「参数 schema」标题/框——
+// 「固定高度/绝对坐标 + 内容自增溢出」族（同 bug145 schema.text 的不变量：
+// 折行溢出不越框压后续区）。节点帧不随溢出变化，可检验代理 = desc 节点 clip
+// 置位；用 6 行长描述构造溢出态。
+REGISTER_TEST(mcp_page_dialog_desc_clip_overflow,
+              "mcp_page: 弹窗长描述折行溢出按节点框 clip（bug180），不越 desc 盒压参数 schema 区", {
+    core::mcp::McpToolRegistry reg;
+    const std::string longDesc =
+        "这是一个用于回归的超长工具描述：第一行内容足够长会折行；"
+        "第二行继续铺满整行宽度迫使换行；第三行仍在增长，"
+        "用来把墨迹推出 48 高的固定盒；第四行、第五行、第六行继续加码，"
+        "确保溢出量远超一行，足以压到下方的参数 schema 展示区。";
+    auto fat = std::make_shared<FakeTool>("test_fat_desc_tool", longDesc,
+                                          R"({"type":"object","properties":{}})");
+    (void)reg.registerTool(fat);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_desc_1");
+    const auto* hit = ui.find("mcp.card.test_fat_desc_tool.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    hit->onClick();
+    composeFrame(mod, ui, screen, "mcp_desc_2");
+
+    const auto* desc = ui.find("mcp.dialog.detail.desc");
+    DOCTEST_REQUIRE(desc != nullptr);
+    DOCTEST_CHECK_EQ(desc->text, longDesc);
+    // 红证锚点：修前 desc 无 clip（溢出墨迹直铺）；修后必须按节点框 clip。
+    DOCTEST_CHECK(desc->clip);
+    // 几何不随内容漂移：desc 盒固定，下方 schema 标题不与其重叠。
+    const auto* schemaTitle = ui.find("mcp.dialog.detail.schema.title");
+    DOCTEST_REQUIRE(schemaTitle != nullptr);
+    DOCTEST_CHECK((schemaTitle->frame.y >= desc->frame.y + desc->frame.height));
+    return true;
+})
+
 // 防：弹窗只能开不能关（关闭按钮通道）。
 REGISTER_TEST(mcp_page_dialog_close_button,
               "mcp_page: 弹窗「关闭」按钮 → backdrop opacity 0", {
