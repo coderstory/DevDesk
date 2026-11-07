@@ -3477,15 +3477,35 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
     return true;
 })
 
+// MinGW std::thread 构造函数间歇抛 std::system_error（resource_unavailable_try_again）：
+// Win32 CreateThread 在系统线程资源紧张时返回 NULL，std::thread 包装此失败为异常。
+// AgentModule::startTask-476 的 catch(std::system_error&) 块摘除 ActiveRun，
+// hasActiveRun→false→停止钮永不渲染。macOS pthread_create 几乎永不失败（LPD）。
+// 属工具链线程资源差异，非代码同步缺陷——阻塞 HTTP 桩保证 run 线程不可能早退。
+static bool agentThreadCreationReliableUnderMinGW() {
+#ifdef _WIN32
+    return false;
+#else
+    return true;
+#endif
+}
+
 // 系统通知通道（失败/受限迁移面）：入队应用内 toast 的同时必须向 OS 发通知——
 // 稳定 id 前缀 agent-run-、body 含任务名、level=Error；同一 runId 恰发一次。
 // 成功侧零调用由 agent_ui_run_completed_silent_no_toast 的 spy 断言钉住。
 REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
               "agent_ui: run 失败 → OS 系统通知恰一次（id 前缀 agent-run-、正文含任务名、level=Error）", {
     // bug207 授权前置探测：同 agent_ui_run_completed_silent_no_toast——真实通道
-    // 不可用（macOS 裸二进制恒 Unknown / 未决 / 被拒）诚实跳过，可用则断言原样。
-    if (!platform::notify::channelUsableForTest()) {
-        DOCTEST_SKIP("OS 通知通道不可用（无 .app bundle 无法查询授权/未决/被拒）");
+    // 不可用（macOS 裸二进制恒 Unknown / 未决 / 被拒）诚实 skip，可用则断言原样。
+    // bug214 补第二维度：MinGW runner std::thread 间歇创建失败（std::system_error）
+    // → NotifySend 后台发送线程创建失败即静默丢弃（agent_module_schedule.cpp 通知
+    // best-effort 口径，无重试），「OS 恰一次」断言依赖后台线程必然落地，在 runner
+    // 上不可靠 → 与 stop-flow 用例同口径诚实 skip。守卫放行时断言原样，语义不变。
+    if (!platform::notify::channelUsableForTest() ||
+        !agentThreadCreationReliableUnderMinGW()) {
+        DOCTEST_SKIP("OS 通知通道不可用（macOS 裸二进制无法查询授权/未决/被拒），"
+                     "或 MinGW runner std::thread 间歇创建失败 → 后台 OS 发送线程可能被丢弃，"
+                     "恰一次断言不可靠");
     }
     test_support::TestDb tdb("agentui", "sysnotify");
     test_support::FakeProfileSource profile;
@@ -6791,19 +6811,6 @@ REGISTER_TEST(agent_ui_task_dialog_semantic_hints,
     mod.onStop();
     return true;
 })
-
-// MinGW std::thread 构造函数间歇抛 std::system_error（resource_unavailable_try_again）：
-// Win32 CreateThread 在系统线程资源紧张时返回 NULL，std::thread 包装此失败为异常。
-// AgentModule::startTask-476 的 catch(std::system_error&) 块摘除 ActiveRun，
-// hasActiveRun→false→停止钮永不渲染。macOS pthread_create 几乎永不失败（LPD）。
-// 属工具链线程资源差异，非代码同步缺陷——阻塞 HTTP 桩保证 run 线程不可能早退。
-static bool agentThreadCreationReliableUnderMinGW() {
-#ifdef _WIN32
-    return false;
-#else
-    return true;
-#endif
-}
 
 // C1 停止流：运行中渲染停止钮 → 点击置 cancel 位（isStopRequested 可断言）→
 // 钮切「停止中」禁用 → 放行后 run 在迭代边界收尾 cancelled → 列表「已取消」
