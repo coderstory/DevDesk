@@ -283,7 +283,7 @@ REGISTER_TEST(mcp_bridge_injected_handlers_route_and_reset,
 // ────────────────── 组三：设置卡 ──────────────────
 
 REGISTER_TEST(mcp_card_modules_card_toggle_off_by_default_and_hit_wiring,
-              "mcp: 模块卡标题行 MCP 开关（wswitch 44×24 贴半列右缘，池143 口径）默认关、.track 可点；点击即落库 + 走既有开关桥", {
+              "mcp: 模块卡常规格 MCP 开关（池151 归位常规格）默认关、.track 可点；点击即落库 + 走既有开关桥", {
     test_support::TestEnv env(kCfgPrefix, "toggle", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "toggle_cfg"));
@@ -297,23 +297,37 @@ REGISTER_TEST(mcp_card_modules_card_toggle_off_by_default_and_hit_wiring,
     eui::Ui ui;
     composeFrame(*mod, ui, screen, "mcp_toggle_1");
     ui.layout(screen.width, screen.height);  // frame 断言必须真 layout
-    const auto* label = ui.find("settings.card.modules.mcp.label");
-    DOCTEST_REQUIRE(label != nullptr);
-    DOCTEST_CHECK_EQ(label->text, std::string("MCP 服务"));
-    const auto* track = ui.find("settings.card.modules.mcp.sw.track");
+    // 池151：MCP 开关从标题行归位模块格阵常规格，格节点 = name/rowdesc/sw.<i>。
+    // 不钉死格位（kToggleable 表序随模块增删漂移）：按格数上界扫 name 文本定位
+    // MCP 格（上界 kModuleToggleCellCount(true)，壁纸格节点根独立不干扰），
+    // 格位再挪本用例不红。
+    int mcpCell = -1;
+    for (int i = 0; i < module::settings::kModuleToggleCellCount(true); ++i) {
+        const auto* n = ui.find("settings.card.modules.name." +
+                                std::to_string(i));
+        if (n != nullptr && n->text == "MCP") {
+            mcpCell = i;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(mcpCell >= 0);
+    const auto* track = ui.find("settings.card.modules.sw." +
+                                std::to_string(mcpCell) + ".track");
     DOCTEST_REQUIRE(track != nullptr);
     DOCTEST_REQUIRE(track->onClick != nullptr);
-    // 标题盒让位右半镜像行（池143）：宽 = 半列 − 8 间距（对照提醒卡池132 几何）
+    // 标题行不再让位右半镜像（池151 起开关归位常规格，标题恢复全内容宽 w−56）
     const auto* title = ui.find("settings.card.modules.title");
     const auto* card = ui.find("settings.card.modules");
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_REQUIRE(card != nullptr);
     DOCTEST_CHECK(std::fabs(title->frame.width -
-                            ((card->frame.width - 56.0f) * 0.5f - 8.0f)) < 0.5f);
-    // 点击 → mcp 进 enabledModules 落库 + 既有开关桥收到 ("mcp", true)
+                            (card->frame.width - 56.0f)) < 0.5f);
+    // 出厂态默认关；点击 → mcp 进 enabledModules 落库 + 既有开关桥收到 ("mcp", true)
+    const module::settings::SettingsStore store(::core::appDatabase());
+    DOCTEST_CHECK(!module::settings::moduleEnabled(
+        store.load(), module::settings::kModuleIdMcp));
     track->onClick();
     composeFrame(*mod, ui, screen, "mcp_toggle_2");
-    const module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(module::settings::moduleEnabled(store.load(),
                                                   module::settings::kModuleIdMcp));
     DOCTEST_CHECK_EQ(g_mcpToggle.calls, 1);
