@@ -1,7 +1,8 @@
 // src/platform/window_visibility.h
 // 主窗口可见态查询（平台无关接口）：实现按平台拆文件
 // （_win = EnumWindows 捕获 HWND + IsIconic/IsWindowVisible 原生查询；
-//  _macos = 当前 GLFW 上下文窗口的 GLFW_ICONIFIED/GLFW_VISIBLE），
+//  _macos = 当前 GLFW 上下文窗口的 GLFW_ICONIFIED/GLFW_VISIBLE + NSWindow
+//  occlusionState（bug#218：锁屏/完全遮挡判不可见）），
 // 业务代码（app_sidebar 动态背景门控）零平台宏。
 #pragma once
 

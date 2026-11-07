@@ -118,7 +118,10 @@ REGISTER_TEST(splash_no_hardcoded_literals, "splash.cpp: 不含硬编码色字�
 // 不拉 splash.cpp.o）。防：时长档漂出用户 1~1.5s、前沿半径非单调/不达满圆、
 // 浓度包络不归零（终态残留墨染 ≠ 静态底色，W 批底色断言会被动态层遮蔽）
 REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 easeOut 单调达满 / 浓度稀释归零）", {
-    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 2.184f);  // 2026-10-25 拍板 ×1.3（进度 ×0.6 → 1.68s）
+    // #196（2026-11-07 裁决）：splash 期间零加载工作（clue 139：模块 onStart 全部
+    // 先于 splash 完成），纯常量延时压到体验最小档——总长 1.2s，墨染=总长全程播完
+    //（旧 2.184s 被 1.68s 淡出截断从未播完，与日志文案一起退役）。
+    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 1.2f);
     // 前沿半径：0 → 0、单调升、1 → 1（铺满全屏，最远角也吃到墨）
     DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(0.0f), 0.0f);
     DOCTEST_CHECK(ui_kit::inkFrontFraction(0.0f) < ui_kit::inkFrontFraction(0.25f));
@@ -136,6 +139,26 @@ REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 e
     DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(1.0f), 0.0f);
     DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(1.5f), 0.0f);
     DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(-1.0f), 1.0f);
+    return true;
+})
+
+// #196（2026-11-07）：淡入 + 交叉淡化契约——防「splash 淡出回退成黑屏硬切主界面」：
+// 头文件必须暴露 splashCrossfadeActive / drawSplashOverlay 两件套，实现侧必须有
+// 淡入常量与盖顶元素命名域，调用方 compose 尾部必须接 drawSplashOverlay 盖顶
+//（交叉淡化期主界面照画、splash 递减叠顶）。
+REGISTER_TEST(splash_crossfade_contract, "splash: 淡入+交叉淡化接线（API + 盖顶元素 + compose 接线）", {
+    const std::string h = readSourceFile("src/ui_kit/splash.h");
+    DOCTEST_CHECK(!h.empty());
+    DOCTEST_CHECK(contains(h, "bool splashCrossfadeActive();"));
+    DOCTEST_CHECK(contains(h, "void drawSplashOverlay(eui::Ui& ui, const eui::Screen& screen);"));
+    const std::string src = readSourceFile("src/ui_kit/splash.cpp");
+    DOCTEST_CHECK(!src.empty());
+    DOCTEST_CHECK(contains(src, "kFadeInSec"));       // 淡入补齐（0.2s smoothstep）
+    DOCTEST_CHECK(contains(src, "splash.overlay"));  // 盖顶阶段元素命名域
+    DOCTEST_CHECK(contains(src, "requestUpdate"));    // 交叉淡化期每帧驱动重绘
+    const std::string sidebar = readSourceFile("src/app_sidebar.cpp");
+    DOCTEST_CHECK(!sidebar.empty());
+    DOCTEST_CHECK(contains(sidebar, "ui_kit::drawSplashOverlay(ui, screen)"));  // compose 尾部盖顶
     return true;
 })
 

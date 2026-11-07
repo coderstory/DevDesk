@@ -1150,6 +1150,15 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     // 门控即泵联动（bug#194）：可见且开启才画元素并维持 20Hz 泵激活；否则零元素
     // 且泵挂起——主循环回空闲等事件，零出帧零渲染（铁律语义不变）。
     const bool pumpActive = fluidBackgroundEnabled() && fluidWindowVisible();
+    // 门控翻转边沿日志（#218 occlusion 证据面）：挂起/恢复各留一条痕，锁屏/遮挡
+    // 态的「泵已停」可直接从日志判读；值不变零输出，不刷屏。首评必留痕
+    //（optional：覆盖「首帧即遮挡」场景，static bool 初值会吞掉第一次挂起）。
+    static std::optional<bool> s_lastPumpGateLogged;
+    if (!s_lastPumpGateLogged.has_value() || *s_lastPumpGateLogged != pumpActive) {
+        s_lastPumpGateLogged = pumpActive;
+        LOG_INFO(pumpActive ? "流质帧泵恢复（开关开 + 窗可见）"
+                            : "流质帧泵挂起（开关关或窗不可见/最小化/遮挡）");
+    }
     fluidPump().setActive(pumpActive);
     if (!pumpActive) return;
     const auto fpsT0 = std::chrono::steady_clock::now();  // bug#194 单帧耗时口径
@@ -1311,7 +1320,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
                                        app::mainWindowMaximized());
     // H19 窗高驱动字号封顶：每帧喂窗口逻辑高；封顶档变化时 theme 内部重建 token + 广播
     ::core::theme::setWindowHeight(screen.height);
-    // 启动 splash：2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
+    // 启动 splash（#196 裁决 2026-11-07）：总长 1.2s = 0.2s 淡入 + 0.9s 进度 +
+    // 0.3s 交叉淡化（墨染 1.2s 全程播完）。全遮盖期（0~0.9s）返回 true → 跳过
+    // 主界面布局；交叉淡化期（0.9~1.2s）返回 false → 主界面照画，splash 由
+    // compose 尾部 drawSplashOverlay 盖顶递减（见本函数末尾）。
     if (ui_kit::drawSplashIfNeeded(ui, screen)) {
         return;
     }
@@ -1428,6 +1440,9 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     ui_kit::drawWindowRing(ui, screen.width, screen.height,
                            core::theme::current(), app::mainWindowMaximized(),
                            scale, cornerRadiusLogical);
+    // #196 交叉淡化盖顶：主界面帧画完后，splash 以递减透明度叠顶（0.9~1.2s 窗口期；
+    // 窗口期外零元素零开销）。放最顶：淡化期间 splash 覆盖含窗口边框在内的全部内容。
+    ui_kit::drawSplashOverlay(ui, screen);
 }
 
 } // namespace app
