@@ -45,6 +45,10 @@ int main(int argc, char* argv[]) {
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);
+    // 本 probe 专拍 splash：解除断言 initializeWindowBackend 的全局禁用
+    //（probe_harness.h:175 对所有 probe 统一置位；不解除则 splash 全程短路，
+    // 序列帧全退化成主界面替身——2026-11-07 实证过这个坑）
+    ui_kit::setSplashDisabledForTests(false);
 
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
