@@ -4,6 +4,7 @@
 // 引擎托管逻辑在 engine/ 子层，本类只做 UI 编排。密钥/记忆正文不进日志。
 #pragma once
 
+#include <array>
 #include <memory>
 #include <set>
 #include <string>
@@ -35,6 +36,12 @@ public:
 
     // 测试/探针缝：视图切换不经点击注入（probe 直驱）
     void setActiveViewForTest(int view) { activeView_ = view; }
+    // 测试/探针缝：配置折叠组展开态直驱（140% 档组头会被推到视口外，
+    // 点击注入不可达——probe 组 C 用它展开后再断言组内控件）
+    void setConfigGroupOpenForTest(int gi, bool v) {
+        if (gi >= 0 && gi < static_cast<int>(cfgOpen_.size()))
+            cfgOpen_[static_cast<std::size_t>(gi)] = v;
+    }
     // 测试/探针缝：审核视图滚动偏移直驱（bug190 探针要把视口滚到渐进加载
     // 尾行才能点「再显示 50 条」——按钮内容位深在 50 卡 × 244px ≈ 12k px）
     void setReviewScrollForTest(float v) { reviewScroll_ = v; }
@@ -54,8 +61,6 @@ private:
                            float w, float y);
     void composeHealthGrid(eui::Ui& ui, const core::theme::Tokens& t, float x,
                            float w, float y);
-    void composeFeed(eui::Ui& ui, const core::theme::Tokens& t, float x,
-                     float w, float y);
     void composeProposalCard(eui::Ui& ui, const core::theme::Tokens& t,
                              float x, float w, float y,
                              const panel::PanelSnapshot& snap,
@@ -76,6 +81,14 @@ private:
     void composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                             const core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& ct);
+    // need:181 三 TAB 分层（2026-11-07 设计 §2.6/§3）：引擎详情弹窗 + 审核卡
+    // 全文只读弹窗（#183：多行只读滚动可复制，改动不落状态）
+    void composeEngineDetailModal(eui::Ui& ui, const eui::Screen& screen,
+                                  const core::theme::Tokens& t,
+                                  const components::theme::ThemeColorTokens& ct);
+    void composeFullTextDialog(eui::Ui& ui, const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& ct);
 
     void showToast(const std::string& title, const std::string& body,
                    bool error = false);
@@ -113,6 +126,19 @@ private:
     std::set<std::string> batchSel_;
     std::string editingId_;  // 非空 = 编辑后接受弹窗打开（全文出口，bug234）
     std::string editText_;
+
+    // need:181 三 TAB 分层状态：主控台「运行明细」折叠区（默认收起，L3）/
+    // 引擎详情弹窗（L3）/ 配置页三折叠组（0 提炼端点 1 触发线 2 用量告警）
+    bool consoleDetailsOpen_ = false;
+    bool engineDetailOpen_ = false;
+    std::array<bool, 3> cfgOpen_ = {};
+    // need:183：审核筛选同类收进下拉（类型/来源），开合态显式托管
+    bool rvTypeDdOpen_ = false;
+    bool rvSrcDdOpen_ = false;
+    // need:183：查看全文只读弹窗（多行滚动可复制；onChange 不挂 = 只读）
+    bool textDialogOpen_ = false;
+    std::string textDialogTitle_;
+    std::string textDialogBody_;
 
     // 配置页弹窗态
     bool maskModalOpen_ = false;

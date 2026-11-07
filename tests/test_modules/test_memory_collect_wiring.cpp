@@ -185,21 +185,19 @@ bool checkToolbarChain(eui::Ui& ui, float screenW) {
     const float contentW = screenW - 64.0f;  // pagePad = spacingLarge×2 = 32
     const auto* toolbar = ui.find("memory.rv.toolbar");
     const auto* lastChip = ui.find("memory.rv.chipSt.1");
-    const auto* srcChip = ui.find("memory.rv.chipS.3");
-    const auto* label = ui.find("memory.rv.batchlbl");
-    const auto* track = ui.find("memory.rv.batchsw.track");
+    const auto* srcDd = ui.find("memory.rv.srcdd");
+    const auto* batchBtn = ui.find("memory.rv.batchbtn.bg");
     DOCTEST_REQUIRE(toolbar != nullptr);
     DOCTEST_REQUIRE(lastChip != nullptr);
-    DOCTEST_REQUIRE(srcChip != nullptr);
-    DOCTEST_REQUIRE(label != nullptr);
-    DOCTEST_REQUIRE(track != nullptr);
+    DOCTEST_REQUIRE(srcDd != nullptr);
+    DOCTEST_REQUIRE(batchBtn != nullptr);
 
     DOCTEST_CHECK_MESSAGE(
         std::fabs(toolbar->frame.width - contentW) < 0.5f,
         "工具条内容宽 " + std::to_string(toolbar->frame.width) +
             " ≠ 窗宽 " + std::to_string(screenW) + " − 64");
-    // 高度按窗宽分档：1000 折两行 88 / 1200+ 单行 56（chips 一旦换行必增高）
-    const float expectH = (screenW < 1100.0f) ? 88.0f : 56.0f;
+    // 高度按内容区分档（need:181 §3.2 定高 52；<860 折两行 88 分支保留）
+    const float expectH = (contentW < 860.0f) ? 88.0f : 52.0f;
     DOCTEST_CHECK_MESSAGE(std::fabs(toolbar->frame.height - expectH) < 0.5f,
                           "工具条高 " + std::to_string(toolbar->frame.height) +
                               " ≠ " + std::to_string(expectH));
@@ -211,22 +209,18 @@ bool checkToolbarChain(eui::Ui& ui, float screenW) {
             std::to_string(lastChip->frame.x + lastChip->frame.width) +
             " 越出工具条右缘 " +
             std::to_string(toolbar->frame.x + toolbar->frame.width));
-    // chips 行不压批量标签（TODO §A P2 重叠消除；≥12 中间距令牌）
+    // 状态 chips 不压「批量处理」按钮（≥12 中间距令牌；need:183 开关→按钮）
     DOCTEST_CHECK_MESSAGE(
-        label->frame.x - (lastChip->frame.x + lastChip->frame.width) >=
+        batchBtn->frame.x - (lastChip->frame.x + lastChip->frame.width) >=
             12.0f,
-        "批量标签左缘 " + std::to_string(label->frame.x) + " 与 chips 右缘 " +
+        "批量按钮左缘 " + std::to_string(batchBtn->frame.x) + " 与 chips 右缘 " +
             std::to_string(lastChip->frame.x + lastChip->frame.width) +
             " 间距不足 12");
-    DOCTEST_CHECK(srcChip->frame.x + srcChip->frame.width <= label->frame.x);
-    // 标签不盖开关、贴 8px；开关钉 toolbar 右缘 −52（右锚群组，三档同值）
-    DOCTEST_CHECK(label->frame.x + label->frame.width <= track->frame.x);
-    DOCTEST_CHECK(std::fabs(track->frame.x -
-                            (label->frame.x + label->frame.width) - 8.0f) <
-                  0.5f);
+    // 来源下拉（第一行）不压批量按钮；按钮钉 toolbar 右缘 −16（右锚群组）
+    DOCTEST_CHECK(srcDd->frame.x + srcDd->frame.width <= batchBtn->frame.x);
     DOCTEST_CHECK(
         std::fabs((toolbar->frame.x + toolbar->frame.width) -
-                  (track->frame.x + track->frame.width) - 52.0f) < 0.5f);
+                  (batchBtn->frame.x + batchBtn->frame.width) - 16.0f) < 0.5f);
     return true;
 }
 
@@ -242,13 +236,13 @@ REGISTER_TEST(memory_review_toolbar_narrow_1200_no_overlap,
     return true;
 })
 
-REGISTER_TEST(memory_review_toolbar_min_window_1000_wrap_two_rows,
-              "memory: 审核工具条——最小窗 1000×640 状态 chips 折第二行（工具条 88 高）不裁切、不压批量开关标签", {
+REGISTER_TEST(memory_review_toolbar_min_window_800_wrap_two_rows,
+              "memory: 审核工具条——内容区 <860（800×640 窗）状态 chips 折第二行（工具条 88 高）不裁切、不压批量按钮", {
     MemoryModule mod;
     mod.setActiveViewForTest(1);
     eui::Ui ui;
-    composeReviewFrame(mod, ui, 1000.0f, 640.0f);
-    if (!checkToolbarChain(ui, 1000.0f)) return false;
+    composeReviewFrame(mod, ui, 800.0f, 640.0f);
+    if (!checkToolbarChain(ui, 800.0f)) return false;
     // 折行证据：工具条 88 高；状态 chips 在第二行（y = toolbar.y + 42）
     const auto* toolbar = ui.find("memory.rv.toolbar");
     const auto* stateChip = ui.find("memory.rv.chipSt.0");

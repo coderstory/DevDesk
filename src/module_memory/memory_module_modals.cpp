@@ -3,6 +3,8 @@
 
 #include "memory_module_internal.h"
 
+#include <ui_kit/dialog_shell.h>
+
 namespace module::memory {
 
 void MemoryModule::composeEditDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -320,6 +322,131 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                         })
                                  : std::function<void()>()});
     });
+}
+
+// need:181（设计 §2.6）：引擎详情弹窗（#156 Standard 档）——说明文案 /
+// 版本 / Python / 语义档 / 数据目录五段信息从状态带移入；语义档缺失行
+// warning 加粗（异常态在弹窗内可见）；主操作（启停）留在状态带不进弹窗。
+void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& screen,
+                                            const core::theme::Tokens& t,
+                                            const components::theme::ThemeColorTokens& ct) {
+    if (!engineDetailOpen_) return;
+    const auto snap = panel_.snapshot();
+    const auto es = snap.engine;
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
+    ui_kit::DialogFrame frame;
+    frame.id = "memory.dialog.engine";
+    frame.width = ui_kit::DialogWidth::Standard;
+    frame.height = 320.0f;
+    frame.open = true;
+    frame.onOpenChange = [this](bool v) {
+        if (!v) engineDetailOpen_ = false;
+    };
+    ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
+        ui_kit::drawDialogTitle(ui, "memory.dialog.engine.title", w,
+                                "telemem 记忆引擎",
+                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
+        ui.text("memory.dialog.engine.desc")
+            .position(ui_kit::kDialogInsetX, 56.0f)
+            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(40.0f))
+            .wrap()
+            .text(es.detail.empty()
+                      ? std::string("它替 Claude 记住你的偏好和项目背景，聊天时自动带上，"
+                                    "不用每次重复交代。")
+                      : es.detail)
+            .fontSize(core::theme::scaled(13.0f))
+            .lineHeight(core::theme::scaled(19.0f))
+            .color(es.state == TelememEngine::State::Failed ? t.colors.errorText
+                                                            : t.colors.textSecondary)
+            .build();
+        // 分组行：标签 12 textTertiary + 值 12.5 textSecondary；语义档缺失 = warning 600
+        auto row = [&](const std::string& id, float ry, const std::string& k,
+                       const std::string& v, bool warnValue) {
+            ui.text(id + ".k")
+                .position(ui_kit::kDialogInsetX, ry)
+                .size(90.0f, core::theme::scaled(20.0f))
+                .text(k)
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(core::theme::scaled(20.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            ui.text(id + ".v")
+                .position(ui_kit::kDialogInsetX + 90.0f, ry)
+                .size(w - ui_kit::kDialogBodyInsetX - 90.0f,
+                      core::theme::scaled(20.0f))
+                .text(v)
+                .fontSize(core::theme::scaled(12.5f))
+                .lineHeight(core::theme::scaled(20.0f))
+                .fontWeight(warnValue ? 600 : 400)
+                .color(warnValue ? t.colors.warning : t.colors.textSecondary)
+                .build();
+        };
+        float ry = 104.0f;
+        row("memory.dialog.engine.ver", ry, "版本", "v1.10.1", false);
+        ry += core::theme::scaled(24.0f);
+        row("memory.dialog.engine.python", ry, "Python",
+            engineStatusPythonLine(es), false);
+        ry += core::theme::scaled(24.0f);
+        const std::string embedLine = engineStatusEmbedLine(es);
+        row("memory.dialog.engine.embed", ry, "语义档",
+            embedLine.empty() ? std::string("待引擎启动后就绪") : embedLine,
+            es.llamaMissing);
+        ry += core::theme::scaled(24.0f);
+        row("memory.dialog.engine.dir", ry, "数据目录",
+            truncateByAdvance(engine::memoryDataDir().generic_string(),
+                              w - ui_kit::kDialogBodyInsetX - 90.0f -
+                                  core::theme::scaled(12.5f),
+                              core::theme::scaled(12.5f)),
+            false);
+        // 底区：右锚 [关闭]；未安装态追加 [首次安装向导]
+        const bool uninstalled = !es.embedReady || es.llamaMissing || !es.pythonFound;
+        if (uninstalled) {
+            ui_kit::button(ui, "memory.dialog.engine.wizard", "首次安装向导",
+                           ui_kit::ButtonLevel::Secondary,
+                           ui_kit::kDialogInsetX, 252.0f, 158.0f,
+                           ui_kit::kButtonHeight, t,
+                           {[this] {
+                               engineDetailOpen_ = false;
+                               wizardOpen_ = true;
+                               TelememEngine::global().refreshEmbedProbe();
+                           }});
+        }
+        ui_kit::button(ui, "memory.dialog.engine.close", "关闭",
+                       ui_kit::ButtonLevel::Secondary,
+                       w - ui_kit::kDialogBodyInsetX - 110.0f, 252.0f, 110.0f,
+                       ui_kit::kButtonHeight, t,
+                       {[this] { engineDetailOpen_ = false; }});
+    });
+}
+
+// need:183：审核卡「查看全文」只读弹窗——多行滚动可复制；不挂 onChange =
+// 改动不落任何状态（编辑通路仍走「编辑后接受」弹窗）。
+// need156：壳改走标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮）。
+void MemoryModule::composeFullTextDialog(eui::Ui& ui, const eui::Screen& screen,
+                                         const core::theme::Tokens& t,
+                                         const components::theme::ThemeColorTokens& ct) {
+    if (!textDialogOpen_) return;
+    ui_kit::DialogShellSpec shell;
+    shell.id = "memory.dialog.fulltext";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 420.0f;
+    shell.open = true;
+    shell.title = textDialogTitle_.empty() ? "提案全文" : textDialogTitle_;
+    shell.cancel = {"关闭", [this] { textDialogOpen_ = false; }};
+    shell.onOpenChange = [this](bool v) {
+        if (!v) textDialogOpen_ = false;
+    };
+    ui_kit::drawDialogShell(ui, screen, shell, t, ct,
+                            [&](const ui_kit::DialogContentArea& area) {
+                                components::input(ui, "memory.dialog.fulltext.body")
+                                    .position(area.x, area.y)
+                                    .size(area.w, area.h)
+                                    .value(textDialogBody_)
+                                    .multiline(true)
+                                    .fontSize(core::theme::scaled(13.0f))
+                                    .theme(ct)
+                                    .build();
+                            });
 }
 
 } // namespace module::memory

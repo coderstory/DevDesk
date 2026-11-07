@@ -8,8 +8,10 @@
 #include "memory_module.h"
 #include <utility>
 
+#include <components/dropdown.h>
 #include <components/input.h>
 #include <components/scrollview.h>
+#include <components/tooltip.h>
 #include <eui/dsl.h>
 
 #include <algorithm>

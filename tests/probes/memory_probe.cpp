@@ -277,6 +277,24 @@ int main(int argc, char* argv[]) {
     // interactive 整面盖住 TAB 行吞点击）。隔帧成对口径（schedule_ui_probe
     // 同款）：队列逐帧消费，Press/Release 隔帧；同时断言 TAB 中心命中目标 =
     // TAB hit 面而非滚动根。──
+    // need:181 分层后通用点击助手：折叠组头/详情按钮/向导入口都走这里
+    auto clickEl = [&](const char* id) {
+        const auto* el = A.elem(id);
+        if (el == nullptr) {
+            std::cerr << "memory_probe: FAIL——'" << id << "' 缺失\n";
+            A.passed = false;
+            return;
+        }
+        const float cx = el->frame.x + el->frame.width * 0.5f;
+        const float cyT = el->frame.y + el->frame.height * 0.5f;
+        core::queuePointerMotion(window, cx, cyT, core::PointerButtons{},
+                                 core::KeyModifiers{});
+        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
+                                 core::PointerAction::Press, {});
+        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
+                                 core::PointerAction::Release, {});
+        for (int i = 0; i < 6; ++i) composeFrame();
+    };
     auto clickTab = [&](int idx, const char* hitId) {
         const auto* tab = A.elem("memory.tabs." + std::to_string(idx));
         if (tab == nullptr) {
@@ -342,7 +360,7 @@ int main(int argc, char* argv[]) {
                 A.exists("memory.rv.reject." + p.id);
                 A.exists("memory.rv.edit." + p.id);
             }
-            A.exists("memory.rv.batchsw.track");
+            A.exists("memory.rv.batchbtn.bg");  // need:183：批量开关→次级按钮
         }
     }
     for (int i = 0; i < 8; ++i) composeFrame();
@@ -363,10 +381,20 @@ int main(int argc, char* argv[]) {
         switchView(0);
         composeFrame();
         composeFrame();
-        A.textHas("memory.eng.python", "已检测");          // python 行独立呈现
+        // need:181 分层（设计 §2.2）：python/embed 检测行移入「详情」弹窗；
+        // 异常态（llamaMissing）警示短语前置到状态带（L1 可见）
+        A.textHas("memory.eng.warn", "本机模型文件缺失");
+        clickEl("memory.eng.detail.bg");  // 开引擎详情弹窗
+        composeFrame();
+        composeFrame();
+        A.textHas("memory.dialog.engine.python.v", "已检测");  // python 行独立呈现
         // need:202（fb55fc65）后 llamaMissing 文案=本机模型文件缺失 + 指路向导③步
-        A.textHas("memory.eng.embed", "本机模型文件缺失");   // 醒目警示行在场
-        A.textHas("memory.eng.embed", "首次安装向导第③步");  // 缺资产指路明确
+        A.textHas("memory.dialog.engine.embed.v", "本机模型文件缺失");
+        A.textHas("memory.dialog.engine.embed.v", "首次安装向导第③步");
+        A.exists("memory.dialog.engine.wizard.bg");  // 未安装态弹窗内向导入口
+        clickEl("memory.dialog.engine.close.bg");    // 关闭弹窗回状态带
+        composeFrame();
+        composeFrame();
         // 启动按钮命中链：按钮中心命中 = 按钮本体（bug201 复验口径；非滚动根/卡底）
         const auto* bg = A.elem("memory.eng.toggle.bg");
         if (bg == nullptr) {
@@ -448,8 +476,22 @@ int main(int argc, char* argv[]) {
     }
 
     // ── 组 C：配置页关键控件（脱敏开关 / 导入钮 / 清除钮 / 阈值滑条 / 数据目录）──
+    // need:181 分层：三组默认收起——先点组头展开再断言组内控件；安全与隐私
+    // 常显组（脱敏开关/清除钮/数据目录）无需展开
     {
         switchView(2);
+        composeFrame();
+        composeFrame();
+        // 组头点击真实展开 grp0（视口顶部恒可达）；grp1/grp2 在 140% 档会被
+        // 推到视口外，走模块测试缝直驱展开（setActiveViewForTest 同款口径）
+        clickEl("memory.cfg.grp0.head");
+        if (auto* mem = dynamic_cast<module::memory::MemoryModule*>(mod.get())) {
+            mem->setConfigGroupOpenForTest(1, true);
+            mem->setConfigGroupOpenForTest(2, true);
+        } else {
+            std::cerr << "memory_probe: FAIL——模块类型转换失败\n";
+            A.passed = false;
+        }
         composeFrame();
         composeFrame();
         A.exists("memory.cfg.mask.switch.track");
@@ -479,7 +521,7 @@ int main(int argc, char* argv[]) {
         }
     }
     {
-        const auto* card = A.elem("memory.cfg.trig");
+        const auto* card = A.elem("memory.cfg.grp1.body");  // 触发线折叠组体
         const auto* tile2 = A.elem("memory.cfg.trig.tile2");
         const auto* num2 = A.elem("memory.cfg.trig.tilen2");
         if (card == nullptr || tile2 == nullptr || num2 == nullptr) {
@@ -534,8 +576,8 @@ int main(int argc, char* argv[]) {
             const char* name;
         };
         const CardCheck checks[2] = {
-            {"memory.cfg.mask", "memory.cfg.mask.rule", "脱敏卡"},
-            {"memory.cfg.usage", "memory.cfg.usage.warn", "用量卡"},
+            {"memory.cfg.grp3.body", "memory.cfg.data.clear", "安全隐私组"},
+            {"memory.cfg.grp2.body", "memory.cfg.usage.warn", "用量组"},
         };
         for (const auto& c : checks) {
             const auto* card = A.elem(c.card);
@@ -606,25 +648,15 @@ int main(int argc, char* argv[]) {
     }
 
     // ── 组 G：向导四步（need:202 F-04/F-05）——③ embedding 本机包四态 + ④ 顺延 ──
-    // 打开向导（点 memory.eng.wizard，命中链口径同组 E），③/④ 行文案随注入的
-    // Snapshot.embed* 字段走（向导只读字段不探文件系统，设计 §4 实现约束）。
+    // need:181 分层后向导入口 = 引擎详情弹窗底区「首次安装向导」（未安装态）。
+    // ③/④ 行文案随注入的 Snapshot.embed* 字段走（向导只读字段不探文件系统，
+    // 设计 §4 实现约束）。
     {
         namespace engine = module::memory::engine;
         switchView(0);
         composeFrame();
-        const auto* wb = A.elem("memory.eng.wizard.bg");
-        if (wb == nullptr) {
-            std::cerr << "memory_probe: FAIL——'memory.eng.wizard.bg' 缺失\n";
-            A.passed = false;
-        } else {
-            const float cx = wb->frame.x + wb->frame.width * 0.5f;
-            const float cyW = wb->frame.y + wb->frame.height * 0.5f;
-            core::queuePointerButton(window, cx, cyW, core::PointerButton::Left,
-                                     core::PointerAction::Press, {});
-            core::queuePointerButton(window, cx, cyW, core::PointerButton::Left,
-                                     core::PointerAction::Release, {});
-            for (int i = 0; i < 6; ++i) composeFrame();
-        }
+        clickEl("memory.eng.detail.bg");               // 开详情弹窗
+        clickEl("memory.dialog.engine.wizard.bg");     // 弹窗内取向导
         if (A.elem("memory.dialog.wizard.s3.name") == nullptr ||
             A.elem("memory.dialog.wizard.s4.name") == nullptr) {
             std::cerr << "memory_probe: FAIL——向导未现四步结构（s3/s4 缺）\n";
