@@ -163,6 +163,32 @@ jobs:
           echo "--- ccache ---"
           ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
 
+      # 字体度量汇交（need132 技术卡 §5 F-06）：Windows 侧 JSON artifact，供与 mac
+      # 基线（evidence/font-metrics/font_metrics_macos.json）比对——比对=font_sha256
+      # 三文件 + advances_sha256 三档/mono 逐字节相等（收口裁决，记测试清单卡）。
+      # CI 全局 DEVDESK_BUILD_PROBES=0（不编 12 个 probe 省链接），这里同目录
+      # reconfigure 只为 font_metrics_probe 一个目标开闸（缓存温热零重编）；
+      # headless 跑：runner 基础显示驱动 GL 1.1 建不了 3.3 Core 探测窗，度量路径
+      # 是 FreeType 纯定点不渲染帧，headless 与带窗 hash 逐字节相等（池203 实证）。
+      - name: 字体度量汇交（need132 F-06，headless）
+        if: success()
+        shell: msys2 {0}
+        run: |
+          cd DevDesk
+          cmake -B build-release -DDEVDESK_BUILD_PROBES=ON
+          cmake --build build-release --target font_metrics_probe
+          DEVDESK_PROBE_HEADLESS=1 ./build-release/tests/font_metrics_probe.exe \
+            --out evidence/font-metrics/font_metrics_windows.json
+          cat evidence/font-metrics/font_metrics_windows.json
+
+      - name: 上传字体度量 JSON（need132 F-06）
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: font-metrics-windows
+          path: DevDesk/evidence/font-metrics/font_metrics_windows.json
+          if-no-files-found: error
+
       # clang-tidy 报告模式（05 号票，计划 T5）：runner（windows-2025 镜像）预装 LLVM
       # 于 C:\Program Files\LLVM\bin，读 compile_commands.json 扫 bugprone-*/cert-*/*
       # clang-analyzer-*，只报告不阻断 —— **存量清零后转 blocking，见 06 号票**。

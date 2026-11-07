@@ -38,6 +38,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -250,15 +251,26 @@ int main(int argc, char* argv[]) {
     static_assert(kMetricDpiScale == 1.0f,
                   "font metrics must be collected at 100% DPI baseline");
 
-    if (!probe::initializeWindowBackend()) return 1;
-    auto window = probe::makeWindow("font_metrics_probe", 480, 320);
-    if (!window) {
-        probe::terminateWindowBackend();
-        return 2;
-    }
+    // headless 汇交模式（need:132 F-06，CI 汇交通道）：CI runner 基础显示驱动仅
+    // GDI Generic（GL 1.1），GLFW 3.3 Core 探测窗建不出来；度量路径是 FreeType
+    // 纯定点（不渲染帧，窗口仅用于读 contentScale 记录字段）。DEVDESK_PROBE_HEADLESS=1
+    // 跳过建窗按 1.0 记录（GitHub runner 桌面恒 100% 缩放），JSON 标 headless 溯源；
+    // 本地/带窗环境不设该变量走原建窗路径。
+    const char* headlessEnv = std::getenv("DEVDESK_PROBE_HEADLESS");
+    const bool headless = headlessEnv != nullptr &&
+                          std::string(headlessEnv) == "1";
+    core::window::Handle window = nullptr;
     float contentScaleX = 1.0f, contentScaleY = 1.0f;
-    glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &contentScaleX,
-                              &contentScaleY);
+    if (!headless) {
+        if (!probe::initializeWindowBackend()) return 1;
+        window = probe::makeWindow("font_metrics_probe", 480, 320);
+        if (!window) {
+            probe::terminateWindowBackend();
+            return 2;
+        }
+        glfwGetWindowContentScale(static_cast<GLFWwindow*>(window), &contentScaleX,
+                                  &contentScaleY);
+    }
     const float windowContentScale = contentScaleX > 0.0f ? contentScaleX : 1.0f;
 
     bool passed = true;
@@ -396,6 +408,7 @@ int main(int argc, char* argv[]) {
           << fmprobe::jsonEscape(monoPath) << "\"},\n";
         o << "  \"dpi_scale\": {\"window_content_scale\": " << windowContentScale
           << ", \"metric_scale\": 1.0},\n";
+        o << "  \"headless\": " << (headless ? "true" : "false") << ",\n";
         o << "  \"f01_injection_proof\": {\"path_before\": \""
           << fmprobe::jsonEscape(pathBefore) << "\", \"path_after\": \""
           << fmprobe::jsonEscape(regularPath)
@@ -443,8 +456,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    core::window::destroyWindow(window);
-    probe::terminateWindowBackend();
+    if (!headless) {
+        core::window::destroyWindow(window);
+        probe::terminateWindowBackend();
+    }
 
     if (!passed) {
         std::cerr << "font_metrics_probe: FAIL\n";
