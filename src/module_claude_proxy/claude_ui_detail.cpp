@@ -596,11 +596,17 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         })
         .build();
 
-    // S3.4 「运行」tooltip 区分语义
+    // S3.4 「运行」tooltip 区分语义。bug177 同族修正：不传 anchor 即默认 (0,0)
+    // （TooltipBuilder 无 auto-position），气泡钉死 overlay 左上。锚取「运行」
+    // 钮（三连钮第 3 颗）中心：x = x0 + 2*(actW+actGap) + actW/2，y = actY+20；
+    // bounds 高取 actY+54 使 bottomLimit=actY——气泡恒走锚上方（wantedY =
+    // actY-20，气泡底恰贴按钮顶），不被 44 topLimit 语义误钳。
     components::tooltip(ui, "claude.act.run.tooltip")
         .theme(core::theme::componentTokensWeChat(t))
         .source("claude.act.run")
         .value("以该 Profile 直接打开 Claude Code 会话（不改全局设置）")
+        .anchor(x0 + 2.0f * (actW + actGap) + actW * 0.5f, actY + 20.0f)
+        .bounds(w, actY + 54.0f)
         .minWidth(280.0f)
         .maxWidth(320.0f)
         .build();

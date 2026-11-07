@@ -282,6 +282,40 @@ int main(int argc, char* argv[]) {
         passed = false;
     }
 
+    // —— D. tooltip 锚定（bug163）：问号钮气泡须钉页头正下方、中心贴近按钮 ——
+    // 气泡 560 宽右贴边 clamp 后中心与按钮中心天然差 ~24px（指针尖才对准按钮），
+    // 阈值 40 容忍布局级抖动、仍能抓住锚点漂移（修前实测偏差 ~56px）。
+    clickById("md.help.icon.bg");  // Press+Release 后指针留驻源上 → hover 保持
+    for (int i = 0; i < 3; ++i) composeFrame();
+    FR helpBtnF{}, helpTipF{};
+    const bool dHave = frameOf("md.help.icon", helpBtnF) &&
+                       frameOf("md.help.icon.tooltip", helpTipF);
+    std::cout << "== D. tooltip 锚定: help=(" << helpBtnF.x << ","
+              << helpBtnF.y << ") " << helpBtnF.width << "x" << helpBtnF.height
+              << " tip=(" << helpTipF.x << "," << helpTipF.y << ") "
+              << helpTipF.width << "x" << helpTipF.height << " ==\n";
+    if (!dHave) {
+        std::cerr << "bug163: md.help.icon / md.help.icon.tooltip 缺帧\n";
+        passed = false;
+    } else {
+        const float btnCx = helpBtnF.x + helpBtnF.width * 0.5f;
+        const float tipCx = helpTipF.x + helpTipF.width * 0.5f;
+        if (std::fabs(helpTipF.y - 44.0f) > 2.0f) {
+            std::cerr << "bug163: tooltip y=" << helpTipF.y
+                      << " 应钉页头正下 44\n";
+            passed = false;
+        }
+        if (std::fabs(tipCx - btnCx) > 40.0f) {
+            std::cerr << "bug163: tooltip 中心 " << tipCx << " 偏离按钮中心 "
+                      << btnCx << " >40（锚定漂移）\n";
+            passed = false;
+        }
+    }
+    if (!probe::captureFramePng(window, runtime,
+                                (outDir / "d-tooltip-hover.png").string())) {
+        passed = false;
+    }
+
     mod->onStop();
     runtime.shutdown(false);
     core::releaseInputQueue(window);

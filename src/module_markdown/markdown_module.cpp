@@ -247,20 +247,23 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     // 快捷键说明（文案源 = onKeyEvent 的快捷键注释口径，防「问号钮看着可点
     // 却无解释」回归）。必须在**根作用域**构建——tooltip 组件是普通 in-flow
     // stack，画进 md.root 列闭包会占流内槽位把 body 下压 48px（bug149）。
-    // 锚点可静态推算——md.actions 行（宽 304）justify END 打包：help 24 +
-    // gap 4 + 大纲 112 + gap 4 + 新建 124 = 268，左余 36 → help 中心 = 行内
-    // x 48；行起点 x = contentW - 304（title/mode/actions 三段宽和恒 =
-    // contentW），故锚点 x = contentW - 256，y = kHeaderH/2。bounds 取页头
-    // 行使气泡恒落钮下方；面板宽放宽到 560——本句 4 组快捷键（约 19 全角 +
-    // 37 ASCII，估宽 ≈505px）远长于 claude 的 15 字档（320），tooltip 默认
-    // 86-112 是 barchart 短标签档必截断；最窄窗（1000，contentW 920）右限 =
-    // 920-560-12 = 348，锚点 664 居中 clamp 到 348，右缘 908 ≤ 920 仍在列内。
+    // 锚点静态推算（bug163 修正，旧算两处漂移）——①坐标空间：本 tooltip 挂
+    // compose 根作用域，x/y 是窗口坐标，而 md.root 有左 pad，content 坐标须
+    // +pad 才是窗口 x（tab 带/把手同口径）；②行内偏移：md.actions 行（宽
+    // 304）justify END 实装 help 24 + gap 4(spacingSmall) + 大纲 112 + gap 4 +
+    // 新建 136（旧算 124 已漂移）= 280，左余 24 → help 中心 = 行内 x 36。行
+    // 起点窗口 x = pad + (contentW - 304)，故锚点 x = pad + contentW - 268。
+    // bounds 取窗口口径：右限 = screen.width - pad - 560 - 12，气泡 560 宽
+    // clamp 右贴后指针尖（anchorX - tooltipX）恰落按钮中心正下方；y 向
+    // topLimit 44 把气泡钉页头正下。面板宽 560——本句 4 组快捷键（约 19 全角
+    // + 37 ASCII，估宽 ≈505px）远长于 claude 的 15 字档（320），tooltip 默认
+    // 86-112 是 barchart 短标签档必截断。
     components::tooltip(ui, "md.help.icon.tooltip")
         .theme(componentTheme)
         .source("md.help.icon.bg")
         .value("快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层")
-        .anchor(contentW - 304.0f + 48.0f, ui_kit::kHeaderH * 0.5f)
-        .bounds(contentW, ui_kit::kHeaderH)
+        .anchor(pad + contentW - 304.0f + 36.0f, ui_kit::kHeaderH * 0.5f)
+        .bounds(screen.width - pad, screen.height)
         .minWidth(560.0f)
         .maxWidth(560.0f)
         .build();

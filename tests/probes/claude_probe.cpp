@@ -86,6 +86,55 @@ int main(int argc, char* argv[]) {
         passed = false;
     }
 
+    // —— tooltip 锚定取证（bug177）：问号钮 hover 后气泡须钉页头下方 ±60px ——
+    // 气泡 320 宽、指针尖在锚点正下（气泡内 x≈206 右偏），中心与按钮中心天然差
+    // ~46px；阈值 60 容忍之、仍能抓住「钉死容器左上」的跑位（修前偏差 ~800px）。
+    if (ui != nullptr) {
+        if (const core::dsl::Element* hoverBtn =
+                ui->find("claude.title.help.bg")) {
+            const float cx = hoverBtn->frame.x + hoverBtn->frame.width * 0.5f;
+            const float cy = hoverBtn->frame.y + hoverBtn->frame.height * 0.5f;
+            core::queuePointerButton(window, cx, cy,
+                                     core::PointerButton::Left,
+                                     core::PointerAction::Press, {});
+            core::queuePointerButton(window, cx, cy,
+                                     core::PointerButton::Left,
+                                     core::PointerAction::Release, {});
+            composeFrame();
+            composeFrame();
+            std::cout << "== tooltip 锚定 ==\n";
+            auto dumpTip = [&](const char* id) {
+                if (const core::dsl::Element* e = ui->find(id)) {
+                    std::cout << "  frame " << id << " = (" << e->frame.x
+                              << "," << e->frame.y << ") " << e->frame.width
+                              << "x" << e->frame.height << "\n";
+                } else {
+                    std::cout << "  frame " << id << " = <缺失>\n";
+                }
+            };
+            dumpTip("claude.title.help");
+            dumpTip("claude.title.help.tooltip");
+            const core::dsl::Element* tip =
+                ui->find("claude.title.help.tooltip");
+            const core::dsl::Element* btn = ui->find("claude.title.help");
+            if (tip != nullptr && btn != nullptr) {
+                const float btnCx = btn->frame.x + btn->frame.width * 0.5f;
+                const float tipCx = tip->frame.x + tip->frame.width * 0.5f;
+                std::cout << "  中心偏差 = " << std::fabs(tipCx - btnCx)
+                          << "\n";
+                if (tip->frame.y < btn->frame.y + btn->frame.height - 2.0f ||
+                    std::fabs(tipCx - btnCx) > 60.0f) {
+                    std::cerr << "bug177: 气泡未锚定在问号钮下方 ±60px（跑到"
+                                 "别处）\n";
+                    passed = false;
+                }
+            } else {
+                std::cerr << "bug177: claude.title.help(.tooltip) 缺帧\n";
+                passed = false;
+            }
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销不写文件；传了失败→passed=false）
     probe::captureIfRequested(args, window, runtime, &passed);
 

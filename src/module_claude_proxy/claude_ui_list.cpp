@@ -307,11 +307,16 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // S3.4 名称 tooltip
+    // S3.4 名称 tooltip。bug177 同族修正：不传 anchor 即默认 (0,0)（TooltipBuilder
+    // 无 auto-position），气泡钉死卡片左上。锚取名称文本盒中心（与 .name 同一
+    // stack 作用域、同一坐标空间）：x = kTextX + nameMaxW/2，y = 名称行垂直中
+    // （y+10 + 18/2）；bounds=卡片盒，气泡钳在卡内、指向名称行。
     components::tooltip(ui, id + ".name.tooltip")
         .theme(core::theme::componentTokensWeChat(t))
         .source(id + ".name")
         .value(p.name)
+        .anchor(kTextX + nameMaxW * 0.5f, y + 19.0f)
+        .bounds(width, h)
         .minWidth(200.0f)
         .maxWidth(320.0f)
         .build();
@@ -459,11 +464,17 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
         .build();
 
     // 帮助钮 tooltip 绑定（现成 hint 机制）：UAT6 副题横扫时收起的一句话摘要
-    // 在 hover 弹回。Q 项：去掉手算锚位 / 页面 bounds，改为跟随 source 元素
-    // 当前实际位置（claude.form.env 同款默认锚 auto-position 先例），不再硬编码
-    // helpBtnX / headerH 推算——任何按钮位置变动不用改 tooltip。
+    // 在 hover 弹回。bug177 修正：原注释声称「跟随 source 元素实际位置」的
+    // auto-position 在 TooltipBuilder（EUI-NEO/components/tooltip.h:32-151）里
+    // 并不存在——不传 anchor 即默认 (0,0)，气泡恒钉容器左上 (12,44)。实际锚定
+    // 用右缘静态推算（status 行 wrapContent 宽不可静态知，但 justify END 下
+    // 钮位从右缘数恒定）：actions 行（kHeaderActionsW=360，gap 4）右起
+    // 启动代理 110 → help 24，故 help 中心 = 行内 x 234；行起点 x =
+    // contentW - 360（header 行 gap=0、title 列恰占余宽）。bounds=页头行使
+    // 气泡钉 header 正下（topLimit 44）。
     // H17：tooltip 画在 header row 之外会被列布局当子项排入、占用 40px+16gap，
-    // 裹进 ignoreLayout 栈防它参与 root column 流式布局。
+    // 裹进 ignoreLayout 栈防它参与 root column 流式布局（bug210 后 ignoreLayout
+    // 语义下本包裹仍必要：overlay 定位原点=root 内容盒）。
     ui.stack("__tooltip_ignore")
         .ignoreLayout()
         .content([&] {
@@ -472,6 +483,8 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                 .source("claude.title.help.bg")
                 .value(proxyRunning ? "本地代理运行中，管理多套 Claude API 配置"
                                      : "管理多套 Claude API 配置")
+                .anchor(contentW - kHeaderActionsW + 234.0f, headerH * 0.5f)
+                .bounds(contentW, headerH)
                 .minWidth(320.0f)
                 .maxWidth(320.0f)
                 .build();
