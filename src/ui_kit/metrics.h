@@ -43,8 +43,4 @@ inline float dialogWidthPx(DialogWidth width) {
 inline constexpr float kDialogInsetX = 24.0f;
 inline constexpr float kDialogBodyInsetX = 48.0f;
 
-// 卡片半透 alpha（2026-11-01 重构：0.92→0.72）。0.92 的白压在近白底上等同纯白，
-// 玻璃感 = 底层对比 × 上层透明度，底层加强后必须同步降卡面才透得出来。
-inline constexpr float kCardGlassAlpha = 0.72f;
-
 } // namespace ui_kit
