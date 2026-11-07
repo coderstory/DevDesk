@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<!-- =====================================================================
+  记忆模块三 TAB 信息分层重设计 demo（池 need 181 / need 195）
+  ⚠ demo 仅视觉校准，不是实现蓝图。实现按设计文档参数由 developer 落地：
+    docs/design/2026-11-07-记忆模块三TAB信息分层.md
+    docs/design/2026-11-07-全站卡片设计基准.md
+  自包含单文件：样式内联、无框架、无外部依赖、浏览器直开；可拖窗缩放验证自适应。
+  形态红线自查（2026-11-07 老板令「禁又细又长的布局设计」）：通过——
+  ① 全页无「高:宽>3:1 且宽<200px」竖条内容容器（区块全为横带/宽卡）；
+  ② 条形仪表/进度带统一 12px 横带胶囊档（滑条 6px 档），初版 9 处发丝细条已全部重构；
+  ③ TAB/工具条/状态带在侧栏窄窗档（~460px）可换行成多行横带，不产生破碎窄条。
+  判定与豁免口径见卡片设计基准 §3 R6。
+  ===================================================================== -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆模块三 TAB 信息分层 · demo（仅视觉校准）</title>
+<style>
+  /* ---- token：与 src/core/theme.cpp 实值一致（暗 theme.cpp:14-49 / 亮 :74-111） ---- */
+  :root{
+    --bg:#F5FAF7; --surface:#FFFFFF; --surfaceElevated:#FFFFFF;
+    --hover:#EEF6F1; --active:#E2F0E8;
+    --primary:#07C160; --primaryHover:#06AD56; --primaryPressed:#059048;
+    --primarySoftBg:#E8F8EE; --onPrimary:#FFFFFF; --primaryText:#157E4E;
+    --text1:#1F2937; --text2:#4B5563; --text3:#6B7280; --textDisabled:#6B7280;
+    --border:#E5E7EB; --borderMuted:#F3F4F6;
+    --success:#10B981; --warning:#F59E0B; --info:#3B82F6; --errorText:#B91C1C;
+    --shadow:0 3px 24px rgba(0,0,0,.06);
+    --radiusBtn:10px; --radiusCard:14px; --radiusOverlay:16px;
+  }
+  .dark{
+    --bg:#1A1816; --surface:#232120; --surfaceElevated:#2C2A28;
+    --hover:#353231; --active:#3E3B39;
+    --primary:#36D399; --primaryHover:#2EC48F; --primaryPressed:#23B07F;
+    --primarySoftBg:#0D3326; --onPrimary:#FFFFFF; --primaryText:#36D399;
+    --text1:#FAF9F5; --text2:#C9C5BD; --text3:#9A948A; --textDisabled:#908A82;
+    --border:#3A3735; --borderMuted:#2A2826;
+    --success:#34D399; --warning:#FBBF24; --info:#60A5FA; --errorText:#F87171;
+    --shadow:0 8px 24px rgba(0,0,0,.28);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg); color:var(--text1);
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    font-size:14px; -webkit-font-smoothing:antialiased;
+  }
+  /* ---- 外壳：页头 + TAB 不滚，内容区内滚（对齐全站滚动模型） ---- */
+  .shell{display:flex; flex-direction:column; height:100vh;}
+  .pagehead{flex:0 0 auto; padding:0 32px;}
+  .pagehead h1{font-size:24px; font-weight:700; line-height:32px; padding:8px 0 0;
+    display:flex; align-items:center; justify-content:space-between;}
+  .tabs{display:flex; flex-wrap:wrap; gap:4px; padding:16px 32px 0;
+    border-bottom:1px solid var(--borderMuted);}
+  .tab{flex:0 1 132px; min-width:96px; height:40px; border:none; background:transparent;
+    cursor:pointer; font-size:14px; color:var(--text2); border-radius:8px 8px 0 0; font-family:inherit;}
+  .tab:hover{color:var(--text1); background:var(--hover);}
+  .tab.on{color:var(--text1); font-weight:600; background:var(--surface);
+    box-shadow:0 -1px 0 var(--border) inset, 1px 0 0 var(--border) inset, -1px 0 0 var(--border) inset;}
+  .content{flex:1 1 auto; overflow-y:auto; padding:16px 32px 12px;}
+  section.view{display:none; max-width:1200px;}
+  section.view.on{display:block; animation:fadein .12s cubic-bezier(.22,1,.36,1);}
+  @keyframes fadein{from{opacity:0} to{opacity:1}}
+
+  .card{background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radiusCard); box-shadow:var(--shadow);}
+
+  /* ---- 通用按钮：果冻三段式（hover 1.02 / 按下 0.96） ---- */
+  .btn{height:36px; padding:0 18px; border:none; border-radius:var(--radiusBtn);
+    font-size:14px; font-family:inherit; cursor:pointer;
+    transition:transform .18s cubic-bezier(.22,1,.36,1), background .12s, opacity .12s;}
+  .btn:hover{transform:scale(1.02);}
+  .btn:active{transform:scale(.96);}
+  .btn-p{background:var(--primary); color:var(--onPrimary);}
+  .btn-p:hover{background:var(--primaryHover);}
+  .btn-s{background:var(--surfaceElevated); color:var(--text1); border:1px solid var(--border);}
+  .btn-s:hover{background:var(--hover);}
+  .btn-d{background:var(--errorText); color:#fff;}
+  .btn-t{background:transparent; color:var(--text2); height:32px;}
+  .btn-t:hover{color:var(--text1); background:var(--hover);}
+  .btn[disabled]{opacity:.45; pointer-events:none;}
+
+  /* ---- L2 hover 浮层（透明命中区 + 悬停显隐） ---- */
+  .tip{position:relative;}
+  .tipbox{position:absolute; top:calc(100% + 4px); left:0; z-index:40; width:max-content; max-width:300px;
+    background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    box-shadow:var(--shadow); padding:8px 12px; font-size:12px; line-height:18px; color:var(--text2);
+    opacity:0; transform:translateY(2px); pointer-events:none;
+    transition:opacity .12s cubic-bezier(.22,1,.36,1), transform .12s cubic-bezier(.22,1,.36,1);}
+  .tip:hover .tipbox{opacity:1; transform:translateY(0);}
+  .tip.right .tipbox{left:auto; right:0;}
+
+  /* ---- 折叠组（L3）：组头 44 + 高度插值 160ms ---- */
+  .fold{margin-bottom:8px;}
+  .fold-head{display:flex; align-items:center; height:44px; padding:0 16px; cursor:pointer;
+    border-radius:var(--radiusBtn); transition:background .12s;}
+  .fold-head:hover{background:var(--hover);}
+  .fold-head .ft{font-size:14px; font-weight:600; flex:0 0 auto;}
+  .fold-head .fs{font-size:12px; color:var(--text3); margin-left:12px;
+    flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .fold-head .chev{margin-left:auto; color:var(--text3); flex:0 0 auto;
+    transition:transform .16s cubic-bezier(.22,1,.36,1); font-size:12px;}
+  .fold.open .chev{transform:rotate(90deg);}
+  .fold-body{max-height:0; overflow:hidden;
+    transition:max-height .16s cubic-bezier(.22,1,.36,1);}
+  .fold.open .fold-body{max-height:760px;}
+  .fold-panel{border:1px solid var(--border); border-radius:10px; background:var(--surface);
+    padding:16px; margin-top:4px;}
+
+  /* ============ TAB1 主控台 ============ */
+  /* 引擎状态带 64px（原 196px 引擎卡降维）；窄窗可换行成两行横带 */
+  .engstrip{display:flex; flex-wrap:wrap; align-items:center; min-height:64px;
+    padding:8px 16px; gap:6px 8px;}
+  .dot{width:10px; height:10px; border-radius:999px; background:var(--success);}
+  .eng-name{font-size:14px; font-weight:600;}
+  .eng-state{font-size:12px; font-weight:600; color:var(--success);}
+  .eng-ver{font-size:11px; color:var(--text3);}
+  .eng-actions{margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; align-items:center;}
+
+  /* 健康四格 132px；条带 = 12px 横带胶囊（R6②：禁发丝条） */
+  .health{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:16px;}
+  .hcell{height:132px; padding:10px 14px; position:relative;}
+  .hcell .hl{font-size:12px; font-weight:600; color:var(--text2); height:18px;}
+  .hcell .hv{font-size:28px; font-weight:700; line-height:36px; margin-top:2px;}
+  .hcell .hs{font-size:12px; font-weight:600; height:20px; margin-top:4px;}
+  .hcell .mini{height:12px; border-radius:999px; background:var(--active); margin-top:6px; position:relative; overflow:visible;}
+  .hcell .mini i{position:absolute; left:0; top:0; bottom:0; border-radius:999px; background:var(--primary);}
+  .hcell .mini s{position:absolute; top:-3px; bottom:-3px; width:3px; background:var(--errorText);}
+  @media (max-width:1000px){ .health{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:560px){ .health{grid-template-columns:1fr;} .hcell{height:auto; min-height:132px;} }
+
+  /* 消耗带 104px；条带 12px 档 */
+  .usage{margin-top:16px; padding:12px 16px; height:104px;}
+  .usage .ut{display:flex; align-items:center;}
+  .usage .ut b{font-size:14px; font-weight:600;}
+  .usage .phase{margin-left:auto; font-size:12px; color:var(--text3);}
+  .usage .bar{height:12px; border-radius:999px; background:var(--active); margin-top:7px; overflow:hidden;}
+  .usage .bar i{display:block; height:100%; border-radius:999px; background:var(--primary);}
+  .usage .nums{margin-top:7px; font-size:12.5px; color:var(--text2);}
+
+  /* 运行明细折叠体 */
+  .sec-title{font-size:12px; font-weight:600; color:var(--text2); margin:14px 0 6px;}
+  table.ledger{width:100%; border-collapse:collapse; font-size:12px;}
+  table.ledger th{color:var(--text3); font-weight:400; text-align:left; height:26px; border-bottom:1px solid var(--borderMuted);}
+  table.ledger td{height:26px; color:var(--text2); border-bottom:1px solid var(--borderMuted);}
+  table.ledger th.r, table.ledger td.r{text-align:right;}
+  .feedrow{display:flex; align-items:center; height:24px; font-size:12.5px; color:var(--text2);}
+  .feedrow .fdot{width:14px; font-size:9px;}
+  .feedrow .ftime{margin-left:auto; font-size:11.5px; color:var(--text3);}
+
+  /* ============ TAB2 记忆审核 ============ */
+  .toolbar{display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px;
+    min-height:52px; padding:8px 12px; margin-bottom:10px;}
+  .chips{display:flex; flex-wrap:wrap; gap:6px;}
+  .chip{height:24px; padding:0 12px; border-radius:999px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text2); font-size:11.5px; cursor:pointer; font-family:inherit;}
+  .chip.on{background:var(--primarySoftBg); border-color:var(--primary); color:var(--primaryText); font-weight:600;}
+  .pcard{height:176px; padding:10px 16px; margin-bottom:12px; position:relative;}
+  .kindchip{display:inline-block; height:22px; padding:0 12px; border-radius:999px;
+    background:var(--active); color:var(--success); font-size:12px; font-weight:600; line-height:22px; vertical-align:middle;}
+  .ptitle{font-size:13.5px; font-weight:600; margin-left:10px; vertical-align:middle;
+    max-width:calc(100% - 220px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .pmeta{position:absolute; right:16px; top:12px; font-size:11.5px; color:var(--text3); cursor:default;}
+  .pbody{margin-top:6px; font-size:12.5px; line-height:17px; color:var(--text2); height:52px; overflow:hidden;}
+  .pev{margin-top:4px; font-size:11.5px; line-height:22px; color:var(--info);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; height:22px;}
+  .pacts{position:absolute; left:16px; right:16px; bottom:10px; display:flex; flex-wrap:wrap;
+    gap:8px; align-items:center; min-height:32px;}
+  .pacts .btn{height:32px; padding:0 14px;}
+  .pacts .accept{margin-left:auto;}
+  .check{display:none; width:18px; height:18px; border:1px solid var(--border); border-radius:4px;
+    margin-right:10px; vertical-align:middle; cursor:pointer; background:var(--surface);}
+  body.batch .check{display:inline-block;}
+  .batchbar{display:none; flex-wrap:wrap; align-items:center; gap:6px; min-height:44px;
+    padding:6px 14px; border-radius:var(--radiusBtn);
+    background:var(--primarySoftBg); color:var(--primaryText); font-size:12.5px; margin-bottom:10px;}
+  body.batch .batchbar{display:flex;}
+  .dcard{height:92px; padding:10px 16px; margin-bottom:12px; position:relative;}
+  .dcard .dst{font-size:12px; font-weight:600; color:var(--success);}
+  .dcard .dbody{margin-top:4px; font-size:12.5px; line-height:18px; color:var(--text2); height:40px; overflow:hidden; max-width:calc(100% - 200px);}
+  .dcard .dtime{position:absolute; right:16px; top:10px; font-size:11.5px; color:var(--text3);}
+  .dcard .btn{position:absolute; right:16px; bottom:10px; height:30px;}
+
+  /* ============ TAB3 配置 ============ */
+  .switchrow{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .sw{width:44px; height:24px; border-radius:999px; background:var(--active); position:relative; cursor:pointer; transition:background .12s; flex:0 0 auto;}
+  .sw i{position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:999px; background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .16s cubic-bezier(.22,1,.36,1);}
+  .sw.on{background:var(--primary);} .sw.on i{left:22px;}
+  .pathbox{height:28px; border-radius:6px; background:var(--active); color:var(--text2);
+    font-size:12px; line-height:28px; padding:0 10px; margin:12px 0;}
+  .slider{display:flex; align-items:center; gap:12px; margin:10px 0;}
+  .slider .sl{width:90px; font-size:12.5px; font-weight:600; flex:0 0 auto;}
+  .slider .track{flex:1; height:6px; border-radius:999px; background:var(--active); position:relative;}
+  .slider .track i{position:absolute; left:0; top:0; bottom:0; width:45%; background:var(--primary); border-radius:999px;}
+  .slider .track u{position:absolute; top:-5px; width:14px; height:14px; border-radius:999px; background:#fff;
+    border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,.2);}
+  .slider .sv{width:70px; text-align:right; font-size:13px; flex:0 0 auto;}
+  .warn{min-height:30px; border-radius:6px; background:var(--active); color:var(--warning);
+    font-size:11.5px; line-height:18px; padding:6px 10px; margin-top:10px;}
+
+  /* ---- 弹窗（#156 规范：头 69 / 内容弹性 / 底 73，右锚按钮） ---- */
+  .mask{position:fixed; inset:0; background:rgba(0,0,0,.28); display:none;
+    align-items:center; justify-content:center; z-index:100;}
+  .dark .mask{background:rgba(0,0,0,.46);}
+  .mask.on{display:flex;}
+  .dialog{width:460px; max-width:calc(100vw - 96px); max-height:calc(100vh - 96px);
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radiusOverlay);
+    box-shadow:var(--shadow); display:flex; flex-direction:column;
+    animation:dpop .16s cubic-bezier(.22,1,.36,1);}
+  @keyframes dpop{from{opacity:0; transform:scale(.965) translateY(14px);} to{opacity:1; transform:none;}}
+  .d-head{padding:16px 24px 0; flex:0 0 auto;}
+  .d-head h2{font-size:20px; font-weight:700; line-height:28px;}
+  .d-head hr{border:none; border-top:1px solid var(--border); margin:8px 0 0;}
+  .d-body{padding:16px 24px; overflow-y:auto; font-size:14px; line-height:24px; color:var(--text2);}
+  .d-body .kv{display:flex; margin:4px 0; font-size:12.5px; line-height:20px;}
+  .d-body .kv b{width:88px; color:var(--text3); font-weight:400; flex:0 0 auto;}
+  .d-foot{padding:0 24px 16px; flex:0 0 auto;}
+  .d-foot hr{border:none; border-top:1px solid var(--borderMuted); margin-bottom:16px;}
+  .d-foot .row{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;}
+  .d-foot .btn{height:40px; min-width:96px;}
+
+  .note{padding:4px 0 0; font-size:11px; color:var(--textDisabled);}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="pagehead">
+    <h1>记忆
+      <span style="display:flex;gap:8px;align-items:center;">
+        <span style="font-size:11px;font-weight:400;color:var(--text3);">demo · 仅视觉校准</span>
+        <button class="btn btn-s" style="height:28px;padding:0 12px;font-size:12px;" onclick="toggleTheme()">亮/暗</button>
+      </span>
+    </h1>
+  </div>
+  <div class="tabs">
+    <button class="tab on" id="tabbtn0" onclick="switchTab(0)">主控台</button>
+    <button class="tab" id="tabbtn1" onclick="switchTab(1)">记忆审核 (2)</button>
+    <button class="tab" id="tabbtn2" onclick="switchTab(2)">配置</button>
+  </div>
+
+  <div class="content">
+    <!-- ============ TAB1 主控台 ============ -->
+    <section class="view on" id="view0">
+      <!-- L1 引擎状态带（原 196px 引擎卡降维，大胆单点） -->
+      <div class="card engstrip">
+        <span class="dot"></span>
+        <span class="eng-name">telemem 记忆引擎</span>
+        <span class="eng-state">运行中</span>
+        <span class="eng-ver tip">v1.10.1
+          <span class="tipbox">版本 v1.10.1 · 状态词 hover 出版本与摘要（L2）</span>
+        </span>
+        <div class="eng-actions">
+          <button class="btn btn-t" onclick="openDlg()">详情</button>
+          <button class="btn btn-d">停止引擎</button>
+        </div>
+      </div>
+
+      <!-- L1 健康四格（236→132，说明文案收 hover 浮层；条带 12px 横带胶囊档） -->
+      <div class="health">
+        <div class="card hcell tip">
+          <div class="hl">脱敏闸</div>
+          <div class="hv" style="color:var(--success);">0/110</div>
+          <div class="hs" style="color:var(--primaryText);">强制开启 · 已锁定</div>
+          <div class="mini"><i style="width:100%;"></i></div>
+          <span class="tipbox">红队样本泄漏数（110 条攻击样本全部被拦）；旁路会记审计日志（只含计数）。</span>
+        </div>
+        <div class="card hcell tip">
+          <div class="hl">触发线 · 记得牢不牢</div>
+          <div class="hv" style="color:var(--success);">92</div>
+          <div class="hs" style="color:var(--success);">当前 92% · 达标</div>
+          <div class="mini"><i style="width:92%;"></i><s style="left:85%;"></s></div>
+          <span class="tipbox">Recall@5 评测（冻结 15 查询、本机 embedding 零 API 费）；红线 85%，低于提醒升级。</span>
+        </div>
+        <div class="card hcell tip">
+          <div class="hl">注入预算 · 今日</div>
+          <div class="hv">3/5 <span style="font-size:12px;font-weight:400;color:var(--text3);">条</span></div>
+          <div class="hs" style="color:var(--text2);">212/500 字</div>
+          <div class="mini"><i style="width:60%;"></i></div>
+          <span class="tipbox">每次对话最多带 5 条、合计 500 字记忆给 Claude，防止喧宾夺主。</span>
+        </div>
+        <div class="card hcell tip">
+          <div class="hl">存储概览</div>
+          <div class="hv">12,418</div>
+          <div class="hs" style="color:var(--text2);">1.8 MB · 36 个会话</div>
+          <div class="mini"><i style="width:34%;"></i></div>
+          <span class="tipbox">条已采集事件（collector 水位）；提案 2 待审 / 31 已处理；记忆都存在本机，配置页可导出。</span>
+        </div>
+      </div>
+
+      <!-- L1 消耗带（150→104，口径收 hover；条带 12px 档） -->
+      <div class="card usage tip right">
+        <div class="ut"><b>token 消耗（今日 / 本月）</b><span class="phase">预算充足</span></div>
+        <div class="bar"><i style="width:32%;"></i></div>
+        <div class="nums">今日 8,432 tk · 0.085 元 · 本月 96,120 tk · 1.14 元</div>
+        <span class="tipbox">预算档：软档 300 万 / 硬档 500 万。口径：码点数 ≈ CJK 1 字 1 token 的估算账面；单价按计费页常量。</span>
+      </div>
+
+      <!-- L3 运行明细折叠区（默认收起） -->
+      <div class="fold" id="foldRun">
+        <div class="fold-head" onclick="toggleFold('foldRun')">
+          <span class="ft">运行明细</span>
+          <span class="fs">最近 12:03 提炼 · 输入 3,204 tk</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="fold-body">
+          <div class="fold-panel">
+            <div class="sec-title">最近调用记录</div>
+            <table class="ledger">
+              <tr><th>时间</th><th>类型</th><th class="r">条数/字数</th><th class="r">token · 金额</th></tr>
+              <tr><td>11-07 12:03</td><td>提炼 · 输入</td><td class="r">3,204</td><td class="r">3,204 · 0.031 元</td></tr>
+              <tr><td>11-07 12:03</td><td>注入 · 条数</td><td class="r">3</td><td class="r">3 · 记账不计金额</td></tr>
+              <tr><td>11-07 11:41</td><td>hook 检索</td><td class="r">2</td><td class="r">2 · 记账不计金额</td></tr>
+              <tr><td>11-07 11:40</td><td>向量化</td><td class="r">128</td><td class="r">128 · 0.000 元</td></tr>
+            </table>
+            <div class="sec-title" style="border-top:1px solid var(--borderMuted);padding-top:10px;">最近动态</div>
+            <div class="feedrow"><span class="fdot" style="color:var(--success);">●</span>采集 12 条会话片段（2 条命中敏感规则已脱敏）<span class="ftime">11-07 12:03</span></div>
+            <div class="feedrow"><span class="fdot" style="color:var(--info);">●</span>注入 3 条记忆 · 212 字（会话 8f21）<span class="ftime">11-07 12:01</span></div>
+            <div class="feedrow"><span class="fdot" style="color:var(--primary);">●</span>整理完成：合并 2 条重复记忆<span class="ftime">11-07 11:41</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TAB2 记忆审核 ============ -->
+    <section class="view" id="view1">
+      <div class="card toolbar">
+        <div class="chips">
+          <button class="chip on">全部</button><button class="chip">合并</button><button class="chip">失效</button><button class="chip">遗忘</button><button class="chip">新增</button>
+        </div>
+        <div class="chips">
+          <button class="chip on">全部来源</button><button class="chip">Claude 对话</button><button class="chip">整理</button><button class="chip">遗忘扫描</button>
+        </div>
+        <div class="chips">
+          <button class="chip on">待审</button><button class="chip">已处理</button>
+        </div>
+        <button class="btn btn-s" style="margin-left:auto;height:32px;" id="batchBtn" onclick="toggleBatch()">批量处理</button>
+      </div>
+      <div class="batchbar">已选 1 项 · 所选提案均支持批量接受
+        <button class="btn btn-s" style="margin-left:auto;height:30px;">取消选择</button>
+        <button class="btn btn-p" style="height:30px;">批量接受</button>
+      </div>
+
+      <!-- 提案卡 232→176：置信度/来源收 hover -->
+      <div class="card pcard">
+        <span class="check"></span>
+        <span class="kindchip">新增</span><span class="ptitle">新增记忆：用户偏好周末不安排会议，周一只排轻任务</span>
+        <span class="pmeta tip right">高置信 · 来自对话
+          <span class="tipbox">置信度 高（0.86）<br>来源：Claude 对话<br>观察于 11-06 21:14</span>
+        </span>
+        <div class="pbody">将新增：周末（周六/周日）尽量不安排会议；周一上午只排轻量任务，重活放在周二/周四。</div>
+        <div class="pev">查看全文 ▸ 证据链：来自 11-06 21:14 · 会话 8f21c2｜「以后周末别给我排会，周一也轻一点」</div>
+        <div class="pacts">
+          <button class="btn btn-t">拒绝</button>
+          <button class="btn btn-s">编辑后接受</button>
+          <button class="btn btn-p accept">接受</button>
+        </div>
+      </div>
+      <div class="card pcard">
+        <span class="check"></span>
+        <span class="kindchip" style="color:var(--info);">合并</span><span class="ptitle">合并重复记忆：构建命令两条重复条目</span>
+        <span class="pmeta tip right">中置信 · 来自整理
+          <span class="tipbox">置信度 中（0.63）<br>来源：整理（dedupe）<br>观察于 11-07 09:02</span>
+        </span>
+        <div class="pbody">合并结果（将生成）：构建一律走 bash scripts/build-test-run.sh --dev；禁止手敲 cmake。</div>
+        <div class="pev">查看全文 ▸ 证据链：来自 11-07 09:02 · 会话 3d90aa｜「每次都提醒我用统一脚本构建」</div>
+        <div class="pacts">
+          <button class="btn btn-t">拒绝</button>
+          <button class="btn btn-s">编辑后接受</button>
+          <button class="btn btn-p accept">接受</button>
+        </div>
+      </div>
+      <!-- 已裁决卡 92px（状态筛选=已处理时出现，此处示例） -->
+      <div class="card dcard">
+        <div class="dst">已接受 · 可撤销</div>
+        <div class="dbody">「新增」构建脚本统一走 bash scripts/build-test-run.sh</div>
+        <div class="dtime">11-06 22:10</div>
+        <button class="btn btn-s">撤销</button>
+      </div>
+    </section>
+
+    <!-- ============ TAB3 配置 ============ -->
+    <section class="view" id="view2">
+      <!-- L3 折叠组：提炼端点 -->
+      <div class="fold" id="foldLlm">
+        <div class="fold-head" onclick="toggleFold('foldLlm')">
+          <span class="ft">提炼端点</span>
+          <span class="fs">已导入 · 智谱端点</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="fold-body">
+          <div class="fold-panel">
+            <div class="switchrow" style="margin-bottom:10px;">
+              <button class="btn btn-p" style="height:40px;">从 DevDesk 网关一键导入当前 profile</button>
+              <span style="font-size:12px;font-weight:600;color:var(--success);">已导入</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text3);line-height:16px;">端点 https://open.bigmodel.cn · 模型 glm-5.3 · 凭据 Claude 设置（网关托管，不写配置与日志） · 来源 profile bigmodel</div>
+            <div class="warn">对话内容将发送至该端点（已过脱敏）</div>
+            <div style="font-size:11.5px;color:var(--text3);line-height:17px;margin-top:10px;">向量化端点（本机）：llama-server · http://127.0.0.1:8734 · 模型 bge-m3 · 1024 维（换档 = 全量重嵌）</div>
+            <div class="warn">记忆原文不出机：向量化全部落本机（零 API 费）。</div>
+          </div>
+        </div>
+      </div>
+      <!-- L3 折叠组：触发线 -->
+      <div class="fold" id="foldTrig">
+        <div class="fold-head" onclick="toggleFold('foldTrig')">
+          <span class="ft">触发线</span>
+          <span class="fs">升级线 85% · 基线 5 次</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="fold-body">
+          <div class="fold-panel">
+            <div class="slider"><span class="sl">升级阈值</span><span class="track"><i style="width:71%;"></i><u style="left:calc(71% - 7px);"></u></span><span class="sv">85%</span></div>
+            <div class="slider"><span class="sl">两字词基线</span><span class="track"><i style="width:37.5%;"></i><u style="left:calc(37.5% - 7px);"></u></span><span class="sv">5 次</span></div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;">
+              <div style="flex:1;min-width:180px;height:30px;border-radius:6px;background:var(--active);font-size:11px;color:var(--text2);line-height:30px;padding-left:10px;"><b style="color:var(--primaryText);">5</b> 命中 5 次 → 候选</div>
+              <div style="flex:1;min-width:180px;height:30px;border-radius:6px;background:var(--active);font-size:11px;color:var(--text2);line-height:30px;padding-left:10px;"><b style="color:var(--primaryText);">3</b> 复现 3 轮 → 确认</div>
+              <div style="flex:1;min-width:180px;height:30px;border-radius:6px;background:var(--active);font-size:11px;color:var(--text2);line-height:30px;padding-left:10px;"><b style="color:var(--primaryText);">11</b> 天窗口内有效</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- L3 折叠组：用量告警 -->
+      <div class="fold" id="foldUsage">
+        <div class="fold-head" onclick="toggleFold('foldUsage')">
+          <span class="ft">用量告警</span>
+          <span class="fs">日 50 万 · 月软 300 万 / 硬 500 万</span>
+          <span class="chev">›</span>
+        </div>
+        <div class="fold-body">
+          <div class="fold-panel">
+            <div class="slider"><span class="sl">日档阈值</span><span class="track"><i style="width:24%;"></i><u style="left:calc(24% - 7px);"></u></span><span class="sv">50 万</span></div>
+            <div class="slider"><span class="sl">月档 · 软档</span><span class="track"><i style="width:52%;"></i><u style="left:calc(52% - 7px);"></u></span><span class="sv">300 万</span></div>
+            <div class="slider"><span class="sl">月档 · 硬档</span><span class="track"><i style="width:40%;"></i><u style="left:calc(40% - 7px);"></u></span><span class="sv">500 万</span></div>
+            <div class="warn">口径：token 为码点估算（非引擎真值）；判定面 = 记忆消耗账本。</div>
+          </div>
+        </div>
+      </div>
+      <!-- L1 常显组：安全与隐私 -->
+      <div class="fold open">
+        <div class="fold-head" style="cursor:default;">
+          <span class="ft">安全与隐私</span><span class="fs">脱敏与数据随时可及</span>
+        </div>
+        <div class="fold-body">
+          <div class="fold-panel">
+            <div class="switchrow">
+              <div class="sw on" onclick="this.classList.toggle('on')"><i></i></div>
+              <span style="font-size:12px;font-weight:600;color:var(--primaryText);" id="maskTxt">已开启</span>
+              <span style="font-size:12px;color:var(--text2);">密钥、手机号等敏感信息会在出机前被自动清除。</span>
+            </div>
+            <div class="warn">脱敏默认开启；关闭属高危操作需二次确认，关闭后内容将原样发送给云端。</div>
+            <hr style="border:none;border-top:1px solid var(--borderMuted);margin:12px 0;">
+            <div style="font-size:12px;font-weight:600;color:var(--text2);">数据与隐私</div>
+            <div class="pathbox">~/DevDesk/memory · 1.8 MB</div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;">
+              <button class="btn btn-s">导出全部记忆（JSON）</button>
+              <button class="btn btn-d">清除全部…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="note">引擎侧记忆清空需引擎列举接口（A 阶段未暴露），清除全部只清本机面板库。</div>
+    </section>
+  </div>
+</div>
+
+<!-- 引擎详情弹窗（#156 规范：头69/内容弹性/底73） -->
+<div class="mask" id="dlgMask" onclick="if(event.target===this)closeDlg()">
+  <div class="dialog" role="dialog" aria-modal="true">
+    <div class="d-head"><h2>telemem 记忆引擎</h2><hr></div>
+    <div class="d-body">
+      它替 Claude 记住你的偏好和项目背景，聊天时自动带上，不用每次重复交代。
+      <div style="height:8px;"></div>
+      <div class="kv"><b>版本</b><span>v1.10.1</span></div>
+      <div class="kv"><b>Python</b><span>Python 3.12.4 已检测（telemem 要求 3.10~3.13）</span></div>
+      <div class="kv"><b>语义档</b><span>语义档就绪（随包）</span></div>
+      <div class="kv"><b>数据目录</b><span>~/DevDesk/memory</span></div>
+    </div>
+    <div class="d-foot"><hr>
+      <div class="row">
+        <button class="btn btn-s">首次安装向导</button>
+        <button class="btn btn-s" onclick="closeDlg()">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function switchTab(i){
+    for(let k=0;k<3;k++){
+      document.getElementById('tabbtn'+k).classList.toggle('on', k===i);
+      document.getElementById('view'+k).classList.toggle('on', k===i);
+    }
+  }
+  function toggleTheme(){ document.body.classList.toggle('dark'); }
+  function toggleFold(id){ document.getElementById(id).classList.toggle('open'); }
+  function openDlg(){ document.getElementById('dlgMask').classList.add('on'); }
+  function closeDlg(){ document.getElementById('dlgMask').classList.remove('on'); }
+  function toggleBatch(){
+    document.body.classList.toggle('batch');
+    const on = document.body.classList.contains('batch');
+    document.getElementById('batchBtn').textContent = on ? '退出批量' : '批量处理';
+  }
+  document.addEventListener('keydown', e => { if(e.key==='Escape') closeDlg(); });
+</script>
+</body>
+</html>

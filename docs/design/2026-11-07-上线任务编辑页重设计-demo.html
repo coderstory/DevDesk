@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<!--
+  上线任务编辑详情页重设计 demo（need 192）
+  demo 仅视觉校准，不是实现蓝图。实现按《2026-11-07-上线任务编辑页重设计.md》参数由 developer 落地。
+  自包含：无框架、无外部依赖、浏览器直开；支持拖窗缩放自适应（最小 1200×720 档）。
+  覆盖：焦点式双栏 / 索引切换 / 拖拽排序示意 / 强确认门 / 公告摘要弹窗 / 查询内联条 / 跳过复选框 / 半透卡片 / 亮暗切换。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>上线任务编辑详情页 · 重设计 demo</title>
+<style>
+  :root{
+    /* 暗色 token（theme.cpp 实值 + surfaceTranslucent 新增档） */
+    --bg:#1A1816; --surface:rgba(35,33,32,.72); --surface-solid:#232120;
+    --elev:#2C2A28; --hover:#353231; --active:#3E3B39;
+    --primary:#36D399; --primary-hover:#2EC48F; --primary-pressed:#23B07F; --primary-soft:#0D3326;
+    --on-primary:#FFFFFF;
+    --text-1:#FAF9F5; --text-2:#C9C5BD; --text-3:#9A948A; --text-dis:#908A82;
+    --border:#3A3735; --border-muted:#2A2826;
+    --error:#F87171; --warn:#FBBF24; --info:#60A5FA; --success:#34D399;
+    --shadow:0 3px 10px rgba(0,0,0,.10),0 1px 3px rgba(0,0,0,.06);
+  }
+  body.light{
+    --bg:#F5FAF7; --surface:rgba(255,255,255,.78); --surface-solid:#FFFFFF;
+    --elev:#FFFFFF; --hover:#EEF6F1; --active:#E2F0E8;
+    --primary:#07C160; --primary-hover:#06AD56; --primary-pressed:#059048; --primary-soft:#E8F8EE;
+    --on-primary:#FFFFFF;
+    --text-1:#1F2937; --text-2:#4B5563; --text-3:#6B7280; --text-dis:#6B7280;
+    --border:#E5E7EB; --border-muted:#F3F4F6;
+    --error:#EF4444; --warn:#F59E0B; --info:#3B82F6; --success:#10B981;
+    --shadow:0 3px 10px rgba(0,0,0,.06),0 1px 3px rgba(0,0,0,.04);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    /* 模拟壁纸背景（半透卡片透出层） */
+    background:radial-gradient(1200px 800px at 20% 10%,#2b4a3e 0%,transparent 55%),
+               radial-gradient(1000px 700px at 85% 90%,#3a2f4a 0%,transparent 55%),
+               var(--bg);
+    color:var(--text-1); overflow:hidden;
+  }
+  body.light{background:radial-gradient(1200px 800px at 20% 10%,#d6e8de 0%,transparent 55%),
+             radial-gradient(1000px 700px at 85% 90%,#e6ddf0 0%,transparent 60%),var(--bg)}
+  .shell{height:100vh;display:flex;flex-direction:column;min-width:1200px}
+
+  /* ── 页头 56px ── */
+  .pagehead{height:56px;flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;
+    background:var(--surface);backdrop-filter:blur(18px);border-bottom:1px solid var(--border)}
+  .icon-btn{width:32px;height:32px;border:none;border-radius:8px;background:transparent;color:var(--text-2);
+    font-size:16px;cursor:pointer;transition:background .12s cubic-bezier(.33,1,.68,1)}
+  .icon-btn:hover{background:var(--hover)}
+  .task-title{font-size:18px;font-weight:700}
+  .chip{display:inline-flex;align-items:center;height:22px;padding:0 10px;border-radius:11px;
+    font-size:13px;font-weight:600}
+  .chip.running{background:rgba(251,191,36,.14);color:var(--warn)}
+  .chip.pending{background:rgba(96,165,250,.12);color:var(--info)}
+  .chip.done{background:rgba(52,211,153,.12);color:var(--success)}
+  .head-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .btn{height:36px;padding:0 16px;border:none;border-radius:8px;font-size:14px;cursor:pointer;
+    transition:background .12s cubic-bezier(.33,1,.68,1),transform .16s cubic-bezier(.33,1,.68,1)}
+  .btn:active{transform:scale(.96)}
+  .btn-primary{background:var(--primary);color:var(--on-primary)}
+  .btn-primary:hover{background:var(--primary-hover)}
+  .btn-secondary{background:var(--elev);color:var(--text-1);border:1px solid var(--border)}
+  .btn-secondary:hover{background:var(--hover)}
+  .btn-text{background:transparent;color:var(--primary);padding:0 8px}
+  .btn-text.danger{color:var(--error)}
+  .btn[disabled]{background:var(--primary-soft);color:var(--text-dis);cursor:not-allowed;transform:none}
+  /* 危险填充变体（demo 未用到，保留口径：确认门类危险主按钮才用红填充） */
+
+  /* ── 警示带 40px（条件显示）── */
+  .alert-band{height:40px;flex:none;display:none;align-items:center;gap:8px;padding:0 20px;
+    background:rgba(248,113,113,.10);color:var(--error);font-size:13px}
+  body.light .alert-band{background:rgba(239,68,68,.08);color:#B91C1C}
+  .alert-band.show{display:flex}
+  .alert-band .fix{margin-left:auto;color:var(--error);background:none;border:none;font-size:13px;
+    font-weight:600;cursor:pointer}
+
+  /* ── 前置折叠带 44px ── */
+  .prereq-band{flex:none;background:var(--surface);backdrop-filter:blur(18px);
+    border-bottom:1px solid var(--border)}
+  .prereq-head{height:44px;display:flex;align-items:center;gap:10px;padding:0 20px;cursor:pointer;
+    font-size:15px;user-select:none}
+  .prereq-head:hover{background:var(--hover)}
+  .prereq-head .arrow{transition:transform .2s cubic-bezier(.33,1,.68,1);color:var(--text-3);font-size:12px}
+  .prereq-band.open .arrow{transform:rotate(90deg)}
+  .prereq-head .sum{font-size:12px;color:var(--text-3)}
+  .prereq-body{display:none;padding:4px 20px 12px}
+  .prereq-band.open .prereq-body{display:block}
+  .prereq-row{display:flex;align-items:center;gap:12px;height:44px}
+  .prereq-row label{width:96px;flex:none;font-size:15px;color:var(--text-1)}
+  .prereq-row label.err{color:var(--error)}
+  .prereq-row input[type=text]{flex:1;height:36px;background:var(--surface-solid);
+    border:1px solid var(--border);border-radius:8px;padding:0 12px;color:var(--text-1);font-size:15px}
+  .prereq-row input[type=text]:focus{outline:none;border-color:var(--primary)}
+  .announce-row{display:flex;align-items:center;gap:12px;height:44px}
+  .announce-row label{width:96px;flex:none;font-size:15px}
+  .announce-summary{flex:1;font-size:15px;color:var(--text-1);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .announce-summary .count{font-size:12px;color:var(--text-3);margin-left:6px}
+  .announce-summary.empty{color:var(--text-3)}
+
+  /* ── 主体双栏 ── */
+  .main{flex:1;display:flex;gap:16px;padding:16px 20px;min-height:0}
+  .idx-col{width:264px;flex:none;display:flex;flex-direction:column;min-height:0;
+    background:var(--surface);backdrop-filter:blur(18px);border:1px solid var(--border);
+    border-radius:12px;box-shadow:var(--shadow);overflow-y:auto;padding:8px}
+  .idx-group{height:32px;display:flex;align-items:center;gap:8px;padding:0 12px;
+    font-size:13px;font-weight:600;color:var(--text-2);flex:none}
+  .idx-group .gcount{margin-left:auto;font-size:12px;font-weight:400;color:var(--text-3)}
+  .idx-item{position:relative;padding:8px 12px;border-radius:8px;cursor:pointer;
+    transition:background .12s cubic-bezier(.33,1,.68,1)}
+  .idx-item:hover{background:var(--hover)}
+  .idx-item.current{background:var(--primary-soft)}
+  .idx-item.current::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:2px;
+    border-radius:1px;background:var(--primary)}
+  .idx-item .nm{display:flex;align-items:center;height:24px;font-size:15px;font-weight:600}
+  .idx-item .nm .cnt{margin-left:auto;font-size:12px;font-weight:400;color:var(--text-3)}
+  .idx-item .nm .cnt.ok{color:var(--success)}
+  .idx-item .sub{display:flex;align-items:center;gap:8px;height:20px;font-size:12px;color:var(--text-3)}
+  .mini-bar{width:32px;height:4px;border-radius:2px;background:var(--border-muted);overflow:hidden}
+  .mini-bar i{display:block;height:100%;background:var(--primary);border-radius:2px}
+  .idx-item.voided{opacity:.7}
+
+  .focus-col{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;
+    background:var(--surface);backdrop-filter:blur(18px);border:1px solid var(--border);
+    border-radius:12px;box-shadow:var(--shadow)}
+  .focus-scroll{flex:1;overflow-y:auto;padding:20px}
+  .svc-head{display:flex;align-items:center;gap:12px;height:48px;margin-bottom:12px}
+  .svc-head h2{font-size:18px;font-weight:700}
+  .svc-head .env{height:20px;padding:0 8px;border-radius:10px;font-size:11px;font-weight:600;
+    background:var(--elev);color:var(--text-2);border:1px solid var(--border)}
+  .svc-head .prog{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}
+  .svc-head .prog .mini-bar{width:80px}
+
+  /* 步骤行 44px */
+  .step-row{display:flex;align-items:center;gap:12px;height:44px;border-radius:8px;padding:0 12px;
+    position:relative;transition:background .12s cubic-bezier(.33,1,.68,1),opacity .12s}
+  .step-row:hover{background:var(--hover)}
+  .dot{width:12px;height:12px;border-radius:50%;flex:none;border:1.5px solid var(--border)}
+  .dot.done{background:var(--success);border-color:var(--success)}
+  .dot.doing{background:var(--warn);border-color:var(--warn)}
+  .dot.skip{background:var(--border-muted);border-color:var(--border-muted);border-radius:3px}
+  .step-name{font-size:15px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .step-name .bad{display:inline-block;height:18px;padding:0 6px;margin-left:8px;border-radius:9px;
+    font-size:13px;font-weight:600;background:rgba(248,113,113,.10);color:var(--error);vertical-align:1px}
+  .step-row .chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer;
+    user-select:none;flex:none}
+  .step-row .chk .box,.cfg-row .chk .box{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--text-3);
+    background:var(--surface-solid);display:inline-flex;align-items:center;justify-content:center;
+    font-size:11px;color:transparent;transition:all .12s}
+  .cfg-row .chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-2);cursor:pointer;
+    user-select:none;flex:none}
+  .step-row .chk.on .box{background:var(--success);border-color:var(--success);color:#0b241a}
+  .step-row .chk.skipchk.on .box{background:var(--border-muted);border-color:var(--border-muted);color:var(--text-3)}
+  .step-row .chk.skipchk.on{color:var(--text-3);text-decoration:line-through}
+  .drag-handle{width:24px;height:32px;flex:none;display:flex;align-items:center;justify-content:center;
+    border-radius:4px;color:var(--text-3);cursor:grab;font-size:14px;letter-spacing:-1px}
+  .drag-handle:hover{background:rgba(250,249,245,.06)}
+  body.light .drag-handle:hover{background:rgba(31,41,55,.06)}
+  .drag-handle.hidden{visibility:hidden}
+  body.dragging{cursor:grabbing}
+  body.dragging *{cursor:grabbing!important}
+
+  /* 配置行 40px */
+  .cfg-row{display:flex;align-items:center;gap:12px;height:40px;border-radius:8px;padding:0 12px;
+    margin-top:2px;position:relative;transition:background .12s}
+  .cfg-row:hover{background:var(--hover)}
+  .cfg-name{font-size:15px;width:160px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cfg-summary{font-size:12px;color:var(--text-3);flex:1;min-width:0;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .divider{height:1px;background:var(--border-muted);margin:8px 0}
+
+  /* 查询结果条 */
+  .query-panel{display:none;margin:4px 0 8px 36px;max-height:160px;overflow-y:auto;
+    background:var(--elev);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+  .query-panel.open{display:block}
+  .query-meta{font-size:12px;color:var(--text-3);margin-bottom:6px;display:flex;gap:8px;align-items:center}
+  .query-meta .ops{margin-left:auto;display:flex;gap:8px}
+  .query-meta .ops button{background:none;border:none;color:var(--primary);font-size:12px;cursor:pointer}
+  .q-line{display:flex;align-items:center;gap:8px;font-size:13px;height:24px;color:var(--text-1)}
+
+  /* 操作行 */
+  .op-row{display:flex;align-items:center;gap:8px;padding:12px 12px 0}
+
+  /* ── 弹窗（#156 三段式）── */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.46);display:none;align-items:center;
+    justify-content:center;z-index:1000}
+  body.light .overlay{background:rgba(0,0,0,.28)}
+  .overlay.show{display:flex;animation:fadein .16s cubic-bezier(.33,1,.68,1)}
+  @keyframes fadein{from{opacity:0}to{opacity:1}}
+  .dialog{background:var(--surface-solid);border:1px solid var(--border);border-radius:16px;
+    box-shadow:0 8px 24px rgba(0,0,0,.28);width:420px;max-height:calc(100vh - 96px);
+    display:flex;flex-direction:column;animation:pop .16s cubic-bezier(.33,1,.68,1)}
+  .dialog.w640{width:640px}
+  @keyframes pop{from{opacity:0;transform:scale(.965) translateY(14px)}to{opacity:1;transform:none}}
+  .dlg-head{flex:none;padding:16px 24px 8px;border-bottom:1px solid var(--border)}
+  .dlg-head h3{font-size:20px;font-weight:700;height:28px;line-height:28px}
+  .dlg-body{flex:1;overflow-y:auto;padding:16px 24px}
+  .dlg-foot{flex:none;padding:16px 24px;border-top:1px solid var(--border-muted);
+    display:flex;justify-content:flex-end;gap:8px}
+  .dlg-body p{font-size:14px;line-height:24px;color:var(--text-1)}
+  .dlg-body p.sub{color:var(--text-2)}
+  .dlg-body p.risk{font-size:13px;color:var(--error);margin-top:4px}
+  .dlg-body .path{font-weight:600}
+  .confirm-input{margin-top:14px}
+  .confirm-input .hint{font-size:12px;color:var(--text-3);margin-bottom:6px}
+  .confirm-input input{width:100%;height:36px;background:var(--elev);border:1px solid var(--border);
+    border-radius:8px;padding:0 12px;color:var(--text-1);font-size:14px}
+  .confirm-input input:focus{outline:none;border-color:var(--primary)}
+  .confirm-input .err{display:none;font-size:12px;color:var(--error);margin-top:6px}
+  .confirm-input.bad .err{display:block}
+  .btn-danger-fill{background:var(--error);color:#fff}
+  textarea{width:100%;min-height:200px;background:var(--elev);border:1px solid var(--border);
+    border-radius:8px;padding:12px;color:var(--text-1);font-size:14px;line-height:22px;resize:vertical;
+    font-family:inherit}
+  textarea:focus{outline:none;border-color:var(--primary)}
+
+  /* 拖拽 */
+  .placeholder-line{height:2px;background:var(--primary);border-radius:1px;margin:0 12px}
+  .drag-ghost{position:fixed;z-index:2000;pointer-events:none;opacity:.45;transform:scale(1.02);
+    background:var(--elev);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+
+  /* toast */
+  .toast{position:fixed;left:50%;bottom:48px;transform:translateX(-50%);background:rgba(0,0,0,.75);
+    color:#fff;font-size:13px;padding:8px 16px;border-radius:8px;display:none;z-index:3000}
+  body.light .toast{background:rgba(31,41,55,.85)}
+  .toast.show{display:block;animation:fadein .15s}
+
+  /* 主题切换 */
+  .theme-toggle{position:fixed;right:16px;bottom:16px;z-index:900;height:32px;padding:0 12px;
+    border-radius:8px;border:1px solid var(--border);background:var(--surface-solid);
+    color:var(--text-2);font-size:12px;cursor:pointer}
+
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- 页头 56 -->
+  <div class="pagehead">
+    <button class="icon-btn" title="返回">←</button>
+    <span class="task-title">11/10 周二 · 双系统灰度发布</span>
+    <span class="chip running">执行中</span>
+    <div class="head-right">
+      <button class="btn btn-secondary" onclick="toast('校验通过：全部必填项就绪')">校验</button>
+      <button class="btn btn-primary">提交</button>
+      <button class="icon-btn" title="更多（作废/恢复/日志）">···</button>
+    </div>
+  </div>
+
+  <!-- 警示带 40（页级警示统一位） -->
+  <div class="alert-band show" id="alertBand">
+    <span>⚠</span><span id="alertText">校验未通过：order-service 单据号未填写</span>
+    <button class="fix" onclick="document.getElementById('prereqBand').classList.add('open')">
+      去处理
+    </button>
+  </div>
+
+  <!-- 前置折叠带 44 -->
+  <div class="prereq-band open" id="prereqBand">
+    <div class="prereq-head" onclick="this.parentNode.classList.toggle('open')">
+      <span class="arrow">▶</span><span>任务前置</span>
+      <span class="sum" id="prereqSum">完成 1/3 · 有未完成项默认展开</span>
+    </div>
+    <div class="prereq-body">
+      <div class="prereq-row">
+        <label class="err">审批单号</label>
+        <input type="text" placeholder="填写单号" value="" oninput="prereqInput(this)">
+        <span class="chk skipchk" style="font-size:12px;color:var(--text-3)">填写后可勾选完成</span>
+      </div>
+      <div class="prereq-row">
+        <label>变更单号</label>
+        <input type="text" value="CHG-2026-1107-01">
+        <label class="chk" style="width:auto" onclick="fakeCheck(event,this)"><span class="box">✓</span>完成</label>
+      </div>
+      <div class="announce-row">
+        <label>上线公告</label>
+        <div class="announce-summary" id="announceSummary">本次发布包含订单系统灰度切流与网关配置变更，请相关方关注 20:00-21:00 时间窗…<span class="count">共 486 字</span></div>
+        <button class="btn btn-text" onclick="openAnnounce()">查看 / 编辑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主体双栏 -->
+  <div class="main">
+    <!-- 节点索引列 264 -->
+    <div class="idx-col" id="idxCol"></div>
+    <!-- 焦点区 -->
+    <div class="focus-col">
+      <div class="focus-scroll" id="focusScroll"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 确认门弹窗（420 Compact，#156 三段式） -->
+<div class="overlay" id="confirmGate">
+  <div class="dialog">
+    <div class="dlg-head"><h3 id="cgTitle">执行确认 · 合并分支</h3></div>
+    <div class="dlg-body">
+      <p>即将标记完成：</p>
+      <p class="path" id="cgPath">生产环境 / order-service / 合并分支</p>
+      <p class="sub" id="cgEffect">完成后系统将：计入任务完成度</p>
+      <p class="risk">⚠ 完成后需撤回才能修改，撤回将记入任务日志</p>
+      <div class="confirm-input" id="cgInputWrap">
+        <div class="hint">输入「确认」以继续</div>
+        <input type="text" id="cgInput" placeholder="输入「确认」以继续">
+        <div class="err">请输入「确认」二字</div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-secondary" onclick="closeGate(false)">取消</button>
+      <button class="btn btn-primary" id="cgOk" disabled onclick="closeGate(true)">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<!-- 公告弹窗（640 Wide） -->
+<div class="overlay" id="announceDlg">
+  <div class="dialog w640">
+    <div class="dlg-head"><h3>上线公告</h3></div>
+    <div class="dlg-body">
+      <textarea id="announceText">本次发布包含订单系统灰度切流与网关配置变更，请相关方关注 20:00-21:00 时间窗。灰度比例 10% → 50% → 100%，每档观察 15 分钟。异常回滚预案见变更单 CHG-2026-1107-01 附件。</textarea>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-secondary" onclick="hide('announceDlg')">取消</button>
+      <button class="btn btn-primary" onclick="saveAnnounce()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<button class="theme-toggle" onclick="document.body.classList.toggle('light')">亮 / 暗切换</button>
+
+<script>
+/* ── 数据 ── */
+const ENVS=[
+  {name:"生产环境",services:[
+    {name:"order-service",done:2,total:4,status:"running",steps:[
+      {kind:"MergeBranch",name:"合并分支",state:"done"},
+      {kind:"Config",name:"配置检查",state:"done"},
+      {kind:"Deploy",name:"部署服务",state:"doing"},
+      {kind:"Verify",name:"验证服务",state:"todo"}],
+     cfgs:[{name:"application.yml",summary:"灰度开关 gw.gray=false → true，共 12 处变更"},
+           {name:"logback.xml",summary:"日志级别 INFO，采样率 100%"}]},
+    {name:"gateway-service",done:1,total:3,status:"pending",steps:[
+      {kind:"Config",name:"配置检查",state:"todo"},
+      {kind:"Deploy",name:"部署服务",state:"todo"},
+      {kind:"Verify",name:"验证服务",state:"todo"}],
+     cfgs:[{name:"routes.json",summary:"路由表新增 /gray 前缀，共 3 条"}]}]},
+  {name:"灰度环境",services:[
+    {name:"order-service",done:3,total:3,status:"done",steps:[
+      {kind:"MergeBranch",name:"合并分支",state:"done"},
+      {kind:"Deploy",name:"部署服务",state:"done"},
+      {kind:"Verify",name:"验证服务",state:"done"}],
+     cfgs:[{name:"application.yml",summary:"灰度环境全量生效"}]}]}
+];
+const EFFECT={MergeBranch:"计入任务完成度",Config:"计入任务完成度并解锁提交校验",
+  Deploy:"判定后续步骤与触发完成提醒",Verify:"计入任务完成度"};
+const QUERYABLE=["Deploy","Verify"];
+let cur={e:0,s:0};
+
+/* ── 索引列 ── */
+function renderIdx(){
+  const col=document.getElementById("idxCol");col.innerHTML="";
+  ENVS.forEach((env,ei)=>{
+    const g=document.createElement("div");g.className="idx-group";
+    const gd=env.services.reduce((a,s)=>a+s.done,0),gt=env.services.reduce((a,s)=>a+s.total,0);
+    g.innerHTML=`${env.name}<span class="gcount">${gd}/${gt}</span>`;col.appendChild(g);
+    env.services.forEach((s,si)=>{
+      const it=document.createElement("div");
+      it.className="idx-item"+(cur.e===ei&&cur.s===si?" current":"")+(env.name==="已作废"?" voided":"");
+      const full=s.done===s.total;
+      it.innerHTML=`<div class="nm">${s.name}<span class="cnt ${full?"ok":""}">${full?"已完成":s.done+"/"+s.total}</span></div>
+        <div class="sub">${env.name}<span class="mini-bar"><i style="width:${s.total?s.done/s.total*100:0}%"></i></span></div>`;
+      it.onclick=()=>{cur={e:ei,s:si};renderIdx();renderFocus();};
+      col.appendChild(it);
+    });
+  });
+}
+
+/* ── 焦点区 ── */
+function renderFocus(){
+  const env=ENVS[cur.e],svc=env.services[cur.s];
+  const fs=document.getElementById("focusScroll");
+  fs.innerHTML=`
+    <div class="svc-head"><h2>${svc.name}</h2><span class="env">${env.name}</span>
+      <span class="prog"><span class="mini-bar"><i style="width:${svc.done/svc.total*100}%"></i></span>${svc.done}/${svc.total}</span></div>
+    <div id="stepList"></div><div class="divider"></div><div id="cfgList"></div>
+    <div class="op-row"><button class="btn btn-text danger">移除服务</button></div>`;
+  const sl=fs.querySelector("#stepList");
+  svc.steps.forEach((st,i)=>{
+    const row=document.createElement("div");row.className="step-row";row.dataset.i=i;
+    const dotCls=st.state==="done"?"done":st.state==="doing"?"doing":st.state==="skip"?"skip":"";
+    row.innerHTML=`<div class="dot ${dotCls}"></div>
+      <div class="step-name">${st.name}${st.state==="invalid"?'<span class="bad">异常</span>':""}</div>
+      ${QUERYABLE.includes(st.kind)?`<button class="btn btn-text" style="font-size:13px" onclick="toggleQuery(this)">查询</button>`:""}
+      <span class="chk skipchk" onclick="toggleSkip(event,this,${i})"><span class="box">—</span>跳过</span>
+      <span class="chk ${st.state==="done"?"on":""}" onclick="askDone(event,'${st.kind}','${st.name}',${i})"><span class="box">✓</span>完成</span>`;
+    sl.appendChild(row);
+  });
+  const cl=fs.querySelector("#cfgList");
+  const locked=!("拖拽".length&&env&&svc)&&false;
+  svc.cfgs.forEach((c,i)=>{
+    const row=document.createElement("div");row.className="cfg-row";row.dataset.ci=i;
+    row.innerHTML=`<div class="drag-handle" title="拖拽排序">⋮⋮</div>
+      <div class="cfg-name">${c.name}</div><div class="cfg-summary">${c.summary}</div>
+      <button class="btn btn-text" style="font-size:13px">查看 / 编辑</button>
+      <span class="chk skipchk" onclick="toggleSkip(event,this,null)"><span class="box">—</span>跳过</span>`;
+    cl.appendChild(row);bindDrag(row,".cfg-row");
+  });
+}
+
+/* ── 完成勾 → 强确认门 ── */
+let gateTarget=null;
+function askDone(ev,kind,name,stepIdx){
+  ev.stopPropagation();
+  gateTarget={e:cur.e,s:cur.s,i:stepIdx};
+  const env=ENVS[cur.e];
+  document.getElementById("cgTitle").textContent="执行确认 · "+name;
+  document.getElementById("cgPath").textContent=env.name+" / "+env.services[cur.s].name+" / "+name;
+  document.getElementById("cgEffect").textContent="完成后系统将："+(EFFECT[kind]||"计入任务完成度");
+  const inp=document.getElementById("cgInput");inp.value="";
+  document.getElementById("cgInputWrap").classList.remove("bad");
+  document.getElementById("cgOk").disabled=true;
+  show("confirmGate");setTimeout(()=>inp.focus(),50);
+}
+document.getElementById("cgInput").addEventListener("input",function(){
+  const v=this.value.trim(),ok=v==="确认";
+  document.getElementById("cgOk").disabled=!ok;
+  document.getElementById("cgInputWrap").classList.toggle("bad",!ok&&v.length>0);
+});
+function closeGate(ok){
+  hide("confirmGate");
+  if(ok&&gateTarget){
+    const st=ENVS[gateTarget.e].services[gateTarget.s].steps[gateTarget.i];
+    if(st.state!=="done"){st.state="done";ENVS[gateTarget.e].services[gateTarget.s].done++;}
+    renderIdx();renderFocus();toast("已完成 · 已记入任务日志");
+  }
+  gateTarget=null;
+}
+document.getElementById("confirmGate").addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&!document.getElementById("cgOk").disabled)closeGate(true);
+});
+
+/* ── 跳过复选框（常显） ── */
+function toggleSkip(ev,el,stepIdx){
+  ev.stopPropagation();
+  el.classList.toggle("on");
+  if(stepIdx!==null){
+    const st=ENVS[cur.e].services[cur.s].steps[stepIdx];
+    st.state=el.classList.contains("on")?"skip":"todo";
+    renderFocus();
+  }
+  toast(el.classList.contains("on")?"已标记跳过":"已取消跳过");
+}
+function fakeCheck(ev,el){ev.stopPropagation();el.classList.toggle("on");
+  el.querySelector(".box").style.cssText=el.classList.contains("on")
+    ?"background:var(--success);border-color:var(--success);color:#0b241a":"";}
+
+/* ── 公告摘要 ── */
+function openAnnounce(){show("announceDlg")}
+function saveAnnounce(){
+  const t=document.getElementById("announceText").value.trim();
+  const el=document.getElementById("announceSummary");
+  el.classList.toggle("empty",!t);
+  el.innerHTML=(t?t.slice(0,30)+"…":"未填写公告")+`<span class="count">共 ${t.length} 字</span>`;
+  hide("announceDlg");toast("公告已保存");
+}
+function prereqInput(inp){/* 单号填写后解锁完成勾（hint 语义演示位） */}
+
+/* ── 查询内联条 ── */
+function toggleQuery(btn){
+  const row=btn.closest(".step-row");
+  let p=row.nextElementSibling;
+  if(p&&p.classList.contains("query-panel")&&p.classList.contains("open")){p.classList.remove("open");return;}
+  document.querySelectorAll(".query-panel.open").forEach(x=>x.classList.remove("open"));
+  if(!p||!p.classList.contains("query-panel")){
+    p=document.createElement("div");p.className="query-panel";
+    p.innerHTML=`<div class="query-meta">查询于 20:14:32 · Nacos 服务状态<span class="ops">
+      <button onclick="toast('已刷新')">刷新</button><button onclick="this.closest('.query-panel').classList.remove('open')">收起</button></span></div>
+      <div class="q-line">order-service-prod<span class="chip pending" style="height:18px;font-size:11px;margin-left:auto">健康 · 3/3 实例</span></div>
+      <div class="q-line">order-service-gray<span class="chip running" style="height:18px;font-size:11px;margin-left:auto">灰度中 · 1/2 实例</span></div>`;
+    row.after(p);
+  }
+  p.classList.add("open");
+}
+
+/* ── 拖拽排序（元素级自实现示意，对应 DragState 契约）── */
+let drag=null;
+function bindDrag(row,selector){
+  const h=row.querySelector(".drag-handle");if(!h)return;
+  h.addEventListener("pointerdown",ev=>{
+    ev.preventDefault();
+    drag={row,selector,startY:ev.clientY,active:false,list:row.parentNode};
+    document.body.classList.add("dragging");
+  });
+}
+window.addEventListener("pointermove",ev=>{
+  if(!drag)return;
+  if(!drag.active){
+    if(Math.abs(ev.clientY-drag.startY)<8)return; // dragThreshold 8px
+    drag.active=true;
+    const r=drag.row.getBoundingClientRect();
+    drag.ghost=drag.row.cloneNode(true);
+    drag.ghost.className="drag-ghost";drag.ghost.style.width=r.width+"px";
+    drag.ghost.style.left=r.left+"px";document.body.appendChild(drag.ghost);
+    drag.row.style.opacity="0.25";
+  }
+  drag.ghost.style.top=(ev.clientY-20)+"px";
+  // 落点判定：指针 Y 对可视序列逐行求中线（dragDropTarget 纯函数换算 targetIndex）
+  const rows=[...drag.list.querySelectorAll(drag.selector)].filter(r=>r!==drag.row);
+  let idx=rows.length;drag.targetRow=null;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i].getBoundingClientRect();
+    if(ev.clientY<r.top+r.height/2){idx=i;drag.targetRow=rows[i];break;}
+  }
+  let line=drag.list.querySelector(".placeholder-line");
+  if(!line){line=document.createElement("div");line.className="placeholder-line";drag.list.insertBefore(line,drag.list.firstChild);}
+  if(drag.targetRow)drag.list.insertBefore(line,drag.targetRow);else drag.list.appendChild(line);
+  drag.targetIdx=idx;
+});
+window.addEventListener("pointerup",ev=>{
+  if(!drag)return;
+  document.body.classList.remove("dragging");
+  if(drag.active){
+    drag.ghost.remove();drag.row.style.opacity="";
+    drag.list.querySelectorAll(".placeholder-line").forEach(x=>x.remove());
+    if(drag.targetIdx!==undefined&&drag.targetRow!==drag.row){ // 松手才落位（写库点）
+      drag.list.insertBefore(drag.row,drag.targetRow||null);
+      toast("顺序已更新 · 记 TaskLog step=reorder"); // demo 视觉示意
+    }
+  }
+  drag=null;
+});
+window.addEventListener("keydown",ev=>{
+  if(ev.key==="Escape"){
+    if(drag&&drag.active){drag.ghost.remove();drag.row.style.opacity="";
+      drag.list.querySelectorAll(".placeholder-line").forEach(x=>x.remove());drag=null;
+      document.body.classList.remove("dragging");toast("已取消拖拽");}
+    document.querySelectorAll(".overlay.show").forEach(o=>{o.classList.remove("show");gateTarget=null;});
+  }
+});
+
+/* ── 工具 ── */
+function show(id){document.getElementById(id).classList.add("show")}
+function hide(id){document.getElementById(id).classList.remove("show")}
+let toastTimer=null;
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),1500);}
+renderIdx();renderFocus();
+</script>
+</body>
+</html>

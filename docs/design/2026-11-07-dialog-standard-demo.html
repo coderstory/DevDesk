@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<!--
+  docs/design/2026-11-07-dialog-standard-demo.html
+  demo 仅视觉校准，不是实现蓝图。实现按《2026-11-07-dialog-standard-design.md》参数落地。
+  自包含单文件：样式内联、零外部依赖、浏览器直开。覆盖：亮暗切换 / 表单型(760) /
+  确认型(420x240=最小尺寸边界) / 内容型(640) / 果冻按压 / focus-visible / 拖窄窗口收缩。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全站弹窗基础样式统一规范 · 视觉 demo</title>
+<style>
+  /* ===== token 对照（src/core/theme.cpp 实值，见设计文档 §5） ===== */
+  :root, body.dark {
+    --bg: #1A1816; --surface: #232120; --surface-elevated: #2C2A28;
+    --hover: #353231; --active: #3E3B39;
+    --primary: #36D399; --primary-hover: #2EC48F; --primary-pressed: #23B07F;
+    --primary-soft: #0D3326; --on-primary: #FFFFFF;
+    --text-primary: #FAF9F5; --text-secondary: #C9C5BD;
+    --text-tertiary: #9A948A; --text-disabled: #908A82;
+    --border-default: #3A3735; --border-muted: #2A2826;
+    --error: #F87171; --error-text: #F87171;
+    --backdrop: rgba(0,0,0,0.46);
+    --panel-shadow: 0 8px 24px rgba(0,0,0,0.28);
+    --panel-border: rgba(58,55,53,0.82); /* borderDefault 82% 框架推导档 */
+  }
+  body.light {
+    --bg: #F5FAF7; --surface: #FFFFFF; --surface-elevated: #FFFFFF;
+    --hover: #EEF6F1; --active: #E2F0E8;
+    --primary: #07C160; --primary-hover: #06AD56; --primary-pressed: #059048;
+    --primary-soft: #E8F8EE; --on-primary: #FFFFFF;
+    --text-primary: #1F2937; --text-secondary: #4B5563;
+    --text-tertiary: #6B7280; --text-disabled: #6B7280;
+    --border-default: #E5E7EB; --border-muted: #F3F4F6;
+    --error: #EF4444; --error-text: #B91C1C;
+    --backdrop: rgba(0,0,0,0.28);
+    --panel-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    --panel-border: rgba(229,231,235,0.82);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text-primary);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; transition: background 160ms cubic-bezier(.215,.61,.355,1);
+  }
+
+  /* ===== 页面工具条（demo 画布，非规范对象） ===== */
+  .stage { padding: 24px; }
+  .stage h1 { font-size: 20px; font-weight: 700; line-height: 28px; }
+  .stage p.desc { color: var(--text-secondary); font-size: 12px; line-height: 20px; margin-top: 8px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+
+  /* ===== 按钮（规范 §4.3：高40 最小宽96 圆角10 字14，果冻按压） ===== */
+  .btn {
+    height: 40px; min-width: 96px; padding: 0 24px;
+    border-radius: 10px; border: none; cursor: pointer;
+    font-size: 14px; font-family: inherit;
+    transition: transform 160ms cubic-bezier(.215,.61,.355,1), background 120ms cubic-bezier(.215,.61,.355,1);
+  }
+  .btn:active { transform: scale(0.96); } /* 果冻：按压缩至 0.96，松手平滑回弹 */
+  .btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .btn-primary { background: var(--primary); color: var(--on-primary); }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-primary:active { background: var(--primary-pressed); transform: scale(0.96); }
+  .btn-secondary { background: var(--surface-elevated); color: var(--text-primary); border: 1px solid var(--border-default); }
+  .btn-secondary:hover { background: var(--hover); }
+  .btn-secondary:active { background: var(--active); transform: scale(0.96); }
+  .btn-danger { background: var(--error); color: var(--on-primary); }
+  .btn:disabled { background: var(--primary-soft); color: var(--text-disabled); cursor: default; }
+  .btn-secondary:disabled { background: var(--surface-elevated); }
+  .btn-danger:disabled { background: var(--error); }
+  .btn:disabled:active { transform: none; }
+
+  /* ===== 弹窗骨架（规范 §1.2/§3：三段式，头53含线+底73含线，内容区唯一内滚） ===== */
+  .overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--backdrop);
+    opacity: 0; visibility: hidden;
+    transition: opacity 160ms cubic-bezier(.215,.61,.355,1), visibility 160ms;
+    z-index: 1000;
+  }
+  .overlay.open { opacity: 1; visibility: visible; }
+  .panel {
+    display: flex; flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--panel-border); border-radius: 16px;
+    box-shadow: var(--panel-shadow);
+    transform: translateY(14px) scale(0.965);
+    transition: transform 160ms cubic-bezier(.215,.61,.355,1);
+  }
+  .overlay.open .panel { transform: translateY(0) scale(1); }
+
+  /* 头区：上16 + 标题28 + 隙8 = 52，分隔线1px（y=52），全宽 */
+  .dlg-head { flex: 0 0 auto; padding: 16px 24px 8px; border-bottom: 1px solid var(--border-default); }
+  .dlg-head .badge { float: right; font-size: 12px; line-height: 28px; font-weight: 400; color: var(--text-tertiary); }
+  .dlg-title { font-size: 20px; font-weight: 700; line-height: 28px; color: var(--text-primary); }
+
+  /* 内容区：线下隙16（padding-top）+ 左右24 + 内容底至细线隙16（padding-bottom），唯一内滚 */
+  .dlg-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 24px; }
+
+  /* 底区：细线1px（y=h-73）+ 隙16 + 按钮40 + 底距16 = 73，按钮靠右 gap8 */
+  .dlg-foot {
+    flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 8px;
+    padding: 16px 24px 16px; border-top: 1px solid var(--border-muted);
+  }
+
+  /* ===== 表单行（G1 表单型：label 定宽 120，控件行高 40） ===== */
+  .form-row { margin-bottom: 16px; }
+  .form-row label { display: block; font-size: 14px; line-height: 20px; margin-bottom: 8px; color: var(--text-secondary); }
+  .form-row input, .form-row textarea, .form-row select {
+    width: 100%; background: var(--surface-elevated); color: var(--text-primary);
+    border: 1px solid var(--border-default); border-radius: 10px;
+    font-size: 14px; font-family: inherit; padding: 8px 12px;
+  }
+  .form-row input, .form-row select { height: 40px; }
+  .form-row textarea { min-height: 96px; resize: vertical; line-height: 28px; }
+  .form-row input:focus-visible, .form-row textarea:focus-visible, .form-row select:focus-visible {
+    outline: none; border-color: var(--primary); /* 输入框 focus 变绿边 */
+  }
+  .err-line { font-size: 12px; line-height: 20px; color: var(--error-text); margin-top: 4px; display: none; }
+  .err-line.show { display: block; }
+
+  /* ===== 内容型日志（G3：唯一内滚区） ===== */
+  .log { font-size: 12px; line-height: 24px; color: var(--text-secondary); }
+  .log .ok { color: var(--primary); }
+  .log .warn { color: var(--error-text); }
+
+  /* 空态/加载示例（规范 §6） */
+  .state-line { text-align: center; color: var(--text-tertiary); font-size: 12px; line-height: 28px; padding: 8px 0; }
+
+  /* 尺寸角标（demo 校准辅助，非规范对象） */
+  .size-tag { position: absolute; top: 8px; right: 12px; font-size: 11px; color: var(--text-tertiary); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+    .btn:active { transform: none; }
+  }
+</style>
+</head>
+<body class="dark">
+<div class="stage">
+  <h1>全站弹窗基础样式统一规范 · 视觉 demo</h1>
+  <p class="desc">三段式：标题区（20/700 + 分隔线 1px borderDefault + 线下隙 16）· 内容区（左右 24，唯一内滚）· 按钮区（细线 1px borderMuted + 右锚主/副按钮，高 40 最小宽 96 圆角 10 字 14，gap 8，底距 16）。最小尺寸 420×240。拖窄窗口可验证视口 clamp（宽高 ≤ 视口−96）。</p>
+  <div class="toolbar">
+    <button class="btn btn-primary" data-open="dlg-form">表单型 · 智能体新建（760）</button>
+    <button class="btn btn-secondary" data-open="dlg-confirm">确认型 · 删除确认（420×240 最小档）</button>
+    <button class="btn btn-secondary" data-open="dlg-content">内容型 · MCP 执行（640）</button>
+    <button class="btn btn-secondary" id="theme-toggle" aria-label="切换亮暗主题">切换亮暗</button>
+  </div>
+</div>
+
+<!-- G1 表单型 = 智能体新建（Form 档 760） -->
+<div class="overlay" id="dlg-form" role="dialog" aria-modal="true" aria-labelledby="dlg-form-title">
+  <div class="panel" style="width: min(760px, calc(100vw - 96px)); height: min(520px, calc(100vh - 96px));">
+    <div class="dlg-head"><div class="dlg-title" id="dlg-form-title">新建智能体任务</div></div>
+    <div class="dlg-body">
+      <div class="form-row">
+        <label for="f-name">任务名称（必填）</label>
+        <input id="f-name" type="text" placeholder="例如：每日整理待办摘要">
+        <div class="err-line" id="f-name-err">任务名称不能为空</div>
+      </div>
+      <div class="form-row">
+        <label for="f-model">模型</label>
+        <select id="f-model"><option>GLM-5.3-Flash</option><option>GLM-4.7</option></select>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <label for="f-prompt">任务提示词</label>
+        <textarea id="f-prompt" placeholder="描述这个任务每次运行时要做什么"></textarea>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-secondary" data-close>取消</button>
+      <button class="btn btn-primary" id="f-submit" disabled>创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- G2 确认型 = 删除确认（Compact 档 420×240 = 最小尺寸边界演示） -->
+<div class="overlay" id="dlg-confirm" role="dialog" aria-modal="true" aria-labelledby="dlg-confirm-title">
+  <div class="panel" style="width: min(420px, calc(100vw - 96px)); height: min(240px, calc(100vh - 96px)); position: relative;">
+    <div class="size-tag">420 × 240（最小档）</div>
+    <div class="dlg-head"><div class="dlg-title" id="dlg-confirm-title">删除确认</div></div>
+    <div class="dlg-body">
+      <div style="font-size:14px; line-height:28px;">删除代理「claude-proxy-01」？删除后其运行记录将一并清除，此操作不可撤销。</div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-secondary" data-close>取消</button>
+      <button class="btn btn-danger" data-close>删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- G3 内容型 = MCP 执行（Wide 档 640，内容区内滚） -->
+<div class="overlay" id="dlg-content" role="dialog" aria-modal="true" aria-labelledby="dlg-content-title">
+  <div class="panel" style="width: min(640px, calc(100vw - 96px)); height: min(560px, calc(100vh - 96px));">
+    <div class="dlg-head"><div class="dlg-title" id="dlg-content-title">MCP 执行详情 · fetch_page</div></div>
+    <div class="dlg-body" id="log-body"><div class="log" id="log"></div></div>
+    <div class="dlg-foot">
+      <button class="btn btn-secondary" data-close>关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // 亮暗切换（token 对照 §5）
+  var body = document.body;
+  document.getElementById('theme-toggle').addEventListener('click', function () {
+    body.classList.toggle('dark'); body.classList.toggle('light');
+  });
+
+  // 开/关：遮罩点击=取消路径、Esc=取消、副按钮/主按钮 data-close
+  var opened = null;
+  function open(id) {
+    var ov = document.getElementById(id);
+    ov.classList.add('open'); opened = ov;
+    var panel = ov.querySelector('.panel');
+    if (panel) { panel.setAttribute('tabindex', '-1'); panel.focus({ preventScroll: true }); }
+  }
+  function close(ov) {
+    ov.classList.remove('open');
+    if (opened === ov) { opened = null; }
+  }
+  document.querySelectorAll('[data-open]').forEach(function (btn) {
+    btn.addEventListener('click', function () { open(btn.getAttribute('data-open')); });
+  });
+  document.querySelectorAll('.overlay').forEach(function (ov) {
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov || e.target.hasAttribute('data-close')) { close(ov); }
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && opened) { close(opened); }
+  });
+
+  // G1 校验：必填空 → 主按钮禁用（primarySoftBg/textDisabled）+ 就近红字
+  var name = document.getElementById('f-name');
+  var nameErr = document.getElementById('f-name-err');
+  var submit = document.getElementById('f-submit');
+  function refresh() {
+    var ok = name.value.trim().length > 0;
+    submit.disabled = !ok;
+    nameErr.classList.toggle('show', !ok && name.value.length > 0 ? false : !ok && name.dataset.touched === '1');
+  }
+  name.addEventListener('blur', function () { name.dataset.touched = '1'; refresh(); });
+  name.addEventListener('input', refresh);
+  submit.addEventListener('click', function () { if (opened) { close(opened); } });
+
+  // G3 日志：200 行内滚演示（滚动只发生在内容区）
+  var log = document.getElementById('log');
+  var html = [];
+  for (var i = 1; i <= 200; i++) {
+    var cls = i % 17 === 0 ? 'warn' : (i % 5 === 0 ? 'ok' : '');
+    html.push('<div class="' + cls + '">[' + String(i).padStart(3, '0') + '] GET https://mcp.local/tools/fetch_page → 200 · 42ms · 1.2KB</div>');
+  }
+  log.innerHTML = html.join('');
+  document.getElementById('log-body').scrollTop = 0;
+})();
+</script>
+</body>
+</html>
