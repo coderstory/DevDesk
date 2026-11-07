@@ -32,6 +32,7 @@
 #include <components/dropdown.h>
 #include <components/input.h>
 #include <components/scrollview.h>
+#include <components/virtualmasonry.h>
 #include <components/segmented.h>
 #include <components/switch.h>
 #include <core/window/window_backend.h>

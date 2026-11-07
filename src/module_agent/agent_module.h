@@ -206,11 +206,15 @@ private:
     void composeToolsDialog(::eui::Ui& ui, const ::eui::Screen& screen,
                             const ::core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& themeTokens);
-    // 工具卡渲染（池170 v2）：全宽单列、高随内容自适应；长文卡（描述 >3 行）才有
-    // hover/按下/展开态，短文查阅卡零交互
-    void renderToolCard(::eui::Ui& inner, float cw, size_t visibleIdx,
-                        const ToolInfo& tool, const std::string& queryLower,
+    // 工具卡渲染（池170 v2 / need178 v3）：瀑布流内按 masonry 给定 frame 绘制，
+    // 高随内容自适应；长文卡（描述 >3 行）才有 hover/按下/展开态，短文查阅卡零交互
+    void renderToolCard(::eui::Ui& inner, float cw, float cardH,
+                        size_t visibleIdx, const ToolInfo& tool,
+                        const std::string& queryLower,
                         const ::core::theme::Tokens& t);
+    // 工具卡内容高测量（need178 瀑布流）：masonry 分配前按列宽测高，
+    // 与 renderToolCard 同口径（含展开态）
+    float measureToolCardHeight(const ToolInfo& tool, float cardW) const;
     // 长文卡展开/收起（按工具名定位——搜索过滤后下标会漂移，名字稳定）
     void toggleToolCardExpanded(const std::string& name);
     // 单条消息行渲染：徽章头行（徽章+时间+展开/复制 chip）+ 收起预览 / 展开块级全文

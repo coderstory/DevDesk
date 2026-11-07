@@ -1255,6 +1255,46 @@ std::string ellipsizeToolLine(const std::string& line, float maxWidth,
     return "…";
 }
 
+// 参数 chips 弹性换行布局（need178：测高与渲染共用，杜绝两处口径漂移）；
+// 逐枚测宽 flex-wrap，首枚超宽也放行防死循环。places 非空时高 = 末枚 y + chipH。
+struct ToolChipPlace {
+    std::size_t idx;
+    float x;
+    float y;
+    float w;
+};
+
+std::vector<ToolChipPlace> layoutToolChips(const ToolInfo& tool, float bodyW) {
+    const float chipFs = core::theme::scaled(11.0f);
+    const float chipH = core::theme::scaled(20.0f);
+    const float chipPadX = core::theme::scaled(8.0f);
+    const float chipGap = core::theme::scaled(4.0f);
+    std::vector<ToolChipPlace> places;
+    float cursorX = 0.0f;
+    float cursorY = 0.0f;
+    for (std::size_t p = 0; p < tool.params.size(); ++p) {
+        const float chipW =
+            core::TextPrimitive::measureTextWidth(tool.params[p], "", chipFs,
+                                                  500) +
+            2.0f * chipPadX;
+        if (cursorX > 0.0f && cursorX + chipW > bodyW) {
+            cursorX = 0.0f;
+            cursorY += chipH + chipGap;
+        }
+        places.push_back({p, cursorX, cursorY, chipW});
+        cursorX += chipW + chipGap;
+    }
+    return places;
+}
+
+// need178 瀑布流列数：按内容区宽自适应（列最小宽 300），窄窗退化 1 列（=v2 形态）
+int toolsMasonryColumns(float innerW) {
+    const float gap = core::theme::scaled(8.0f);
+    const float minCardW = core::theme::scaled(300.0f);
+    return std::max(1, std::min(3, static_cast<int>(
+        (innerW + gap) / (minCardW + gap))));
+}
+
 // 命中区间（字节偏移，升序不重叠；haystack 已小写化，needle 非空）
 std::vector<std::pair<std::size_t, std::size_t>> findMatchRanges(
     const std::string& lowerHay, const std::string& needle) {
@@ -1661,31 +1701,28 @@ void AgentModule::composeToolsDialog(
                     .build();
                 return;
             }
-            // 列表区（§2.2 唯一内滚容器；pad 8 顶 16 底，头部/分割线/搜索区锚顶）
-            components::scrollView(ui, "agent.dialog.tools.scroll")
+            // 列表区（need178 瀑布流 v3，取代 v2 单列流）：虚拟 masonry 多列、
+            // 卡高按内容自适应、每卡入当前最短列；列数随弹窗宽自适应，窄窗退化
+            // 1 列即 v2 形态。itemHeight 与渲染同口径测高（measureToolCardHeight）。
+            components::virtualMasonry(ui, "agent.dialog.tools.masonry")
                 .position(16.0f, listY)
                 .size(innerW, std::max(0.0f, h - listY - 16.0f))
+                .itemCount(static_cast<std::int64_t>(visible.size()))
+                .columns(toolsMasonryColumns(innerW))
+                .overscanViewports(99.0f)  // 弹窗内列表量级小（30±），禁虚拟化裁剪保持 v2 全量渲染契约
                 .gap(8.0f)
                 .step(core::theme::scaled(96.0f))
                 .theme(themeTokens)
-                .contentKey("agent.dialog.tools.scroll.n" +
-                            std::to_string(visible.size()) + ".w" +
-                            std::to_string(static_cast<int>(innerW)) +
-                            ".q" + toolsSearch_ +
-                            ".e" + std::to_string(toolsListVersion_))
-                .content([&](eui::Ui& inner, float cw, float) {
-                    // 全宽单列垂直流（§2.3）：卡高随内容自适应，禁定高网格
-                    inner.flow("agent.dialog.tools.list")
-                        .width(cw)
-                        .gap(8.0f)
-                        .lineGap(8.0f)
-                        .content([&] {
-                            for (size_t k = 0; k < visible.size(); ++k) {
-                                renderToolCard(inner, cw, k, *visible[k],
-                                               queryLower, t);
-                            }
-                        })
-                        .build();
+                .itemHeight([this, &visible](std::int64_t idx, float itemW) {
+                    return measureToolCardHeight(
+                        *visible[static_cast<std::size_t>(idx)], itemW);
+                })
+                .item([&](::eui::Ui& inner, const std::string&,
+                          std::int64_t idx, float itemW, float itemH) {
+                    renderToolCard(inner, itemW, itemH,
+                                   static_cast<std::size_t>(idx),
+                                   *visible[static_cast<std::size_t>(idx)],
+                                   queryLower, t);
                 })
                 .build();
         })
@@ -1699,6 +1736,37 @@ void AgentModule::composeToolsDialog(
     }
 }
 
+// 工具卡内容高测量（need178 瀑布流：masonry 分配前按列宽测高；与 renderToolCard
+// 同一套 wrap/chips 口径，测高与渲染一致由共享 layoutToolChips/wrapToolDescLines 保证）
+float AgentModule::measureToolCardHeight(const ToolInfo& tool,
+                                         float cardW) const {
+    const float padY = core::theme::scaled(12.0f);
+    const float headH = core::theme::scaled(28.0f);
+    const float lh = core::theme::scaled(kToolsDescLh);
+    const float descFs = core::theme::scaled(13.0f);
+    const float bodyW = std::max(0.0f, cardW - 2.0f * core::theme::scaled(14.0f));
+    const std::string descText =
+        tool.description.empty() ? std::string("（无描述）") : tool.description;
+    const std::vector<std::string> allLines =
+        wrapToolDescLines(descText, bodyW, descFs);
+    const bool expandable = allLines.size() > kToolsDescClampLines;
+    const bool expanded = toolsExpandedNames_.count(tool.name) > 0;
+    std::size_t n = std::max<std::size_t>(1u, allLines.size());
+    if (expandable && !expanded) n = kToolsDescClampLines;
+    const float descH = static_cast<float>(n) * lh;
+    const bool hasParams = !tool.params.empty();
+    float chipsH = 0.0f;
+    if (hasParams) {
+        const auto places = layoutToolChips(tool, bodyW);
+        if (!places.empty()) {
+            chipsH = places.back().y + core::theme::scaled(20.0f);
+        }
+    }
+    const float toggleH = expandable ? core::theme::scaled(24.0f) : 0.0f;
+    return 2.0f * padY + headH + core::theme::scaled(6.0f) + descH + toggleH +
+           (hasParams ? core::theme::scaled(6.0f) + chipsH : 0.0f);
+}
+
 // ---- 工具卡（池170 v2 §3.4）----
 //
 // 全宽单列、高随内容自适应（禁定高）：pad 12 14 → 头行 28（图标盒 + 族图标 +
@@ -1709,8 +1777,9 @@ void AgentModule::composeToolsDialog(
 // 查阅卡零交互。命中词在名称/描述/chips 内原位 primarySoftBg 底色标记（先画
 // 底 rect 再画字，字色继承原层级）。
 void AgentModule::renderToolCard(
-    ::eui::Ui& inner, float cw, size_t visibleIdx, const ToolInfo& tool,
-    const std::string& queryLower, const ::core::theme::Tokens& t) {
+    ::eui::Ui& inner, float cw, float cardH, size_t visibleIdx,
+    const ToolInfo& tool, const std::string& queryLower,
+    const ::core::theme::Tokens& t) {
     const std::string cid =
         "agent.dialog.tools.card." + std::to_string(visibleIdx);
     const float padY = core::theme::scaled(12.0f);
@@ -1747,40 +1816,18 @@ void AgentModule::renderToolCard(
     const float descH =
         static_cast<float>(showLines.size()) * lh;
 
-    // 参数 chips 逐枚测宽换行（flex-wrap 全量展示；首枚超宽也放行防死循环）
+    // 参数 chips 逐枚测宽换行（need178：布局与测高共用 layoutToolChips）
     const float chipFs = core::theme::scaled(11.0f);
     const float chipH = core::theme::scaled(20.0f);
     const float chipPadX = core::theme::scaled(8.0f);
-    const float chipGap = core::theme::scaled(4.0f);
-    struct ChipPlace {
-        std::size_t idx;
-        float x;
-        float y;
-        float w;
-    };
-    std::vector<ChipPlace> chipPlaces;
-    float chipCursorX = 0.0f;
-    float chipCursorY = 0.0f;
-    for (std::size_t p = 0; p < tool.params.size(); ++p) {
-        const float chipW =
-            core::TextPrimitive::measureTextWidth(tool.params[p], "", chipFs,
-                                                  500) +
-            2.0f * chipPadX;
-        if (chipCursorX > 0.0f && chipCursorX + chipW > bodyW) {
-            chipCursorX = 0.0f;
-            chipCursorY += chipH + chipGap;
-        }
-        chipPlaces.push_back({p, chipCursorX, chipCursorY, chipW});
-        chipCursorX += chipW + chipGap;
-    }
+    const std::vector<ToolChipPlace> chipPlaces =
+        layoutToolChips(tool, bodyW);
     const bool hasParams = !tool.params.empty();
-    const float chipsH = hasParams ? chipCursorY + chipH : 0.0f;
+    const float chipsH =
+        hasParams && !chipPlaces.empty() ? chipPlaces.back().y + chipH : 0.0f;
 
     const float toggleH =
         expandable ? core::theme::scaled(24.0f) : 0.0f;
-    const float cardH = 2.0f * padY + headH + core::theme::scaled(6.0f) +
-                        descH + toggleH +
-                        (hasParams ? core::theme::scaled(6.0f) + chipsH : 0.0f);
 
     // 交互态（仅长文卡）：hover 底/边框加深 + 按下果冻，短文卡零交互态
     const bool hovered = expandable && toolsHoverCard_ == tool.name;

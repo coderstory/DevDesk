@@ -885,8 +885,9 @@ int main(int argc, char* argv[]) {
             composeFrame();
             composeFrame();
             const auto* toolsPanel = findElement("agent.dialog.tools.panel");
-            const auto* toolsScroll = findElement("agent.dialog.tools.scroll");
-            if (toolsPanel == nullptr || toolsScroll == nullptr) {
+            const auto* toolsMasonry =
+                findElement("agent.dialog.tools.masonry");
+            if (toolsPanel == nullptr || toolsMasonry == nullptr) {
                 std::cerr << "agent_dialog_probe: 工具弹窗未打开（缺 panel/scroll）\n";
                 passed = false;
             } else {
@@ -908,15 +909,35 @@ int main(int argc, char* argv[]) {
                         std::cerr << "agent_dialog_probe: 工具卡 0 越出弹窗面板框\n";
                         passed = false;
                     }
-                    // v2 §2.3 全宽单列纵向流（need170）：卡 1 应堆叠在卡 0 下方且同列
-                    // 左对齐。v1 的「2 列同行」契约已退役（实现 flow 单列）。
+                    // need178 瀑布流（v3）：卡 0/1 等宽（同列宽）；两卡或同列
+                    // 纵向堆叠（窄窗 1 列）或同行异列（宽窗多列）。v2 全宽单列
+                    // 契约与 v1 「2 列同行定高」契约均已退役。
                     const auto* card1 = findElement("agent.dialog.tools.card.1");
-                    if (card1 != nullptr &&
-                        (card1->frame.y + 1.5f <
-                             card0->frame.y + card0->frame.height ||
-                         std::fabs(card1->frame.x - card0->frame.x) > 1.5f)) {
-                        std::cerr << "agent_dialog_probe: 网格前两卡未纵向堆叠（单列破版）\n";
-                        passed = false;
+                    if (card1 != nullptr) {
+                        const auto& f0 = card0->frame;
+                        const auto& f1 = card1->frame;
+                        if (std::fabs(f0.width - f1.width) > 1.0f) {
+                            std::cerr << "agent_dialog_probe: 瀑布流前两卡列宽不等\n";
+                            passed = false;
+                        } else {
+                            const bool sameCol =
+                                std::fabs(f0.x - f1.x) <= 1.0f;
+                            const bool stacked =
+                                f1.y >= f0.y + f0.height - 1.0f;
+                            const bool sideBySide =
+                                std::fabs(f0.y - f1.y) <= 1.0f &&
+                                f1.x > f0.x + f0.width + 4.0f;
+                            if (sameCol ? !stacked : !sideBySide) {
+                                std::cerr << "agent_dialog_probe: 瀑布流前两卡既未"
+                                             "同行异列也未同列堆叠\n";
+                                passed = false;
+                            } else {
+                                std::cout << "D2 tools masonry cards "
+                                          << (sameCol ? "stacked(1列)"
+                                                      : "side-by-side(多列)")
+                                          << " colW=" << f0.width << "\n";
+                            }
+                        }
                     }
                 }
                 // ✕ 真点击关闭（关闭态不建内容节点）
@@ -927,7 +948,7 @@ int main(int argc, char* argv[]) {
                 } else {
                     clickElement(*closeBg);
                     composeFrame();
-                    if (findElement("agent.dialog.tools.scroll") != nullptr) {
+                    if (findElement("agent.dialog.tools.masonry") != nullptr) {
                         std::cerr << "agent_dialog_probe: ✕ 点击未关闭工具弹窗\n";
                         passed = false;
                     } else {

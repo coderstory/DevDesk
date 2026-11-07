@@ -2254,7 +2254,7 @@ REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
 })
 
 REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
-              "agent_ui: 可用工具弹窗（池170 v2）——页头钮开弹窗 / 全宽单列卡 / 描述逐行全文（>3 行 clamp+展开） / 参数 chips 全量（+N 退役） / 关闭三路径 / 空态", {
+              "agent_ui: 可用工具弹窗（池170 v2 / need178 v3）——页头钮开弹窗 / 瀑布流多列卡 / 描述逐行全文（>3 行 clamp+展开） / 参数 chips 全量（+N 退役） / 关闭三路径 / 空态", {
     test_support::TestDb tdb("agentui", "tools");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify", "hot.list", "app.now",
@@ -2278,7 +2278,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     // 关闭态：弹窗不建内容节点（存在性即开关契约）
     eui::Ui ui;
     composeTo(ui, mod, kScreen, "agent_ui_tools1");
-    DOCTEST_CHECK(ui.find("agent.dialog.tools.scroll") == nullptr);
+    DOCTEST_CHECK(ui.find("agent.dialog.tools.masonry") == nullptr);
     // 页头入口钮（池170 v2 §关键决策 3，bug #6）：图标 + 「可用工具」文字 + 计数
     // badge（primarySoftBg pill），宽随位数流式生长。文案/计数分节点落在
     // <id>.text / <id>.badge.count 上——.bg 是命中面，与既有契约一致
@@ -2322,8 +2322,8 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     toolsBtnBg->onClick();
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_tools2");
-    const auto* scroll = ui2.find("agent.dialog.tools.scroll");
-    DOCTEST_REQUIRE_MESSAGE(scroll != nullptr, "打开后缺 agent.dialog.tools.scroll");
+    const auto* scroll = ui2.find("agent.dialog.tools.masonry");
+    DOCTEST_REQUIRE_MESSAGE(scroll != nullptr, "打开后缺 agent.dialog.tools.masonry");
     size_t cards = 0;
     for (size_t k = 0; k < registered + 4; ++k) {
         if (ui2.find("agent.dialog.tools.card." + std::to_string(k)) != nullptr) {
@@ -2485,7 +2485,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     closeBg->onClick();
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_tools3");
-    DOCTEST_CHECK(ui3.find("agent.dialog.tools.scroll") == nullptr);
+    DOCTEST_CHECK(ui3.find("agent.dialog.tools.masonry") == nullptr);
     // 关闭路径 ②：backdrop（onOpenChange(false)）——点暗处关契约
     DOCTEST_REQUIRE(clickId(ui3, "agent.page.tools.bg"));
     eui::Ui ui4;
@@ -2496,7 +2496,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     backdrop->onClick();
     eui::Ui ui5;
     composeTo(ui5, mod, kScreen, "agent_ui_tools5");
-    DOCTEST_CHECK(ui5.find("agent.dialog.tools.scroll") == nullptr);
+    DOCTEST_CHECK(ui5.find("agent.dialog.tools.masonry") == nullptr);
 
     // 窄窗 clamp/展开收起（v2 §3.4 修 bug #7 的核心场景）：420×600 下弹窗缩到
     // 372 宽，卡内宽 ≈312px，最长描述（fs.glob ≈110 字符）必然 >3 行 → 恰有卡
@@ -2595,7 +2595,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     const auto* empty = ui6.find("agent.dialog.tools.empty");
     DOCTEST_REQUIRE_MESSAGE(empty != nullptr, "空注册表缺空态文案节点");
     DOCTEST_CHECK_EQ(empty->text, std::string("暂无可用工具"));
-    DOCTEST_CHECK(ui6.find("agent.dialog.tools.scroll") == nullptr);
+    DOCTEST_CHECK(ui6.find("agent.dialog.tools.masonry") == nullptr);
 
     mod.onStop();
     return true;
@@ -2604,10 +2604,10 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
 // 工具弹窗几何（池170 v2 §3.2，替代退役的 v1 2 列定高网格版）：
 // 防的事故：弹窗尺寸回退写死 / 内容区高度没扣头部与内边距导致列表溢出弹窗底。
 // w = min(720, 视口−48)、h = min(600, 视口−96)：kScreen 1600×1000 → 720×600；
-// 最小窗 1000×640 → 720×544。列表区 v2 §2.3 全宽单列纵向流、卡高随内容自适应
-//（实现 agent_module_dialogs.cpp:1659-1670 flow 单列 / :1763 cardH 动态）。
+// 最小窗 1000×640 → 720×544。列表区 need178 v3 瀑布流（virtualMasonry 多列、
+// 卡高随内容自适应、每卡入最短列；列数随宽自适应，窄窗退化 1 列）。
 REGISTER_TEST(agent_ui_tools_dialog_geometry,
-              "agent_ui: 可用工具弹窗几何——720×min(600,视口−96) / 单列纵向流卡高随内容", {
+              "agent_ui: 可用工具弹窗几何——720×min(600,视口−96) / 瀑布流卡高随内容", {
     test_support::TestDb tdb("agentui", "toolgeo");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify", "hot.list", "app.now",
@@ -2637,10 +2637,10 @@ REGISTER_TEST(agent_ui_tools_dialog_geometry,
         "1600×1000 下弹窗应 720×600，实测 " +
             std::to_string(panel->frame.width) + "x" +
             std::to_string(panel->frame.height));
-    // v2 §2.3 全宽单列纵向流（实现 agent_module_dialogs.cpp:1659-1670 flow 单列、
-    // :1772 size(cw, cardH) 全宽）：卡高随内容动态（:1763 cardH =
-    // 2*padY+headH+6+descH+toggleH+chipsH），v1「2 列同行定高 96」契约已退役。
-    // 不变量：两卡高 > 0、同列左对齐（x 相等）、纵向堆叠（卡 1 顶 ≥ 卡 0 底）。
+    // need178 瀑布流 v3（实现 virtualMasonry + measureToolCardHeight 同口径测高）：
+    // 卡高随内容动态，v1「2 列同行定高 96」与 v2「全宽单列」契约均已退役。
+    // 不变量：两卡高 > 0、等列宽；两卡或同行异列（宽窗多列，x1>x0 且 y 近似等）
+    // 或同列纵向堆叠（窄窗退化 1 列，卡 1 顶 ≥ 卡 0 底）。
     const auto* card0 = ui2.find("agent.dialog.tools.card.0");
     const auto* card1 = ui2.find("agent.dialog.tools.card.1");
     DOCTEST_REQUIRE(card0 != nullptr && card1 != nullptr);
@@ -2649,15 +2649,24 @@ REGISTER_TEST(agent_ui_tools_dialog_geometry,
         "工具卡高度应 > 0，实测 " + std::to_string(card0->frame.height) +
             " / " + std::to_string(card1->frame.height));
     DOCTEST_CHECK_MESSAGE(
-        std::fabs(card0->frame.x - card1->frame.x) <= 1.5f,
-        "单列两卡应同列左对齐（x 相等），实测 " +
-            std::to_string(card0->frame.x) + " vs " +
-            std::to_string(card1->frame.x));
+        std::fabs(card0->frame.width - card1->frame.width) <= 1.5f,
+        "瀑布流两卡应等列宽，实测 " +
+            std::to_string(card0->frame.width) + " vs " +
+            std::to_string(card1->frame.width));
+    const bool sameCol =
+        std::fabs(card0->frame.x - card1->frame.x) <= 1.5f;
+    const bool sideBySide =
+        card1->frame.x > card0->frame.x + 1.5f &&
+        std::fabs(card0->frame.y - card1->frame.y) <= 1.5f;
     DOCTEST_CHECK_MESSAGE(
-        card0->frame.y + card0->frame.height <= card1->frame.y + 1.5f,
-        "卡 1 应堆叠在卡 0 下方（单列纵向流 + lineGap 8），实测卡 0 底 " +
-            std::to_string(card0->frame.y + card0->frame.height) + " vs 卡 1 顶 " +
-            std::to_string(card1->frame.y));
+        sameCol
+            ? (card0->frame.y + card0->frame.height <= card1->frame.y + 1.5f)
+            : sideBySide,
+        "瀑布流两卡应同行异列或同列堆叠，实测卡 0 (x" +
+            std::to_string(card0->frame.x) + " y" +
+            std::to_string(card0->frame.y) + ") 卡 1 (x" +
+            std::to_string(card1->frame.x) + " y" +
+            std::to_string(card1->frame.y) + ")");
 
     // 最小窗 1000×640 档：720×544（h = min(560, 640−96)）
     const eui::Screen kMinScreen{1000.0f, 640.0f};
