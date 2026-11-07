@@ -148,14 +148,14 @@ void drawSolidStatCard(eui::Ui& ui,
                 .clip()
                 .build();
 
-            // 数据：30px 700 一级字（2026-11-01 重构 44→30：44 在 96 高卡里压得标签无处立足）
+            // 数据：30px 600 一级字（2026-11-01 重构 44→30：44 在 96 高卡里压得标签无处立足）
             ui.text(id + ".number")
                 .position(0.0f, numberY)
                 .size(cw, numberH)
                 .text(number)
                 .fontSize(t.sizes.fontSizeStat)
                 .lineHeight(numberH)
-                .fontWeight(700)
+                .fontWeight(600)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(numberColor ? *numberColor
                                    : (accent ? t.colors.errorText
@@ -344,7 +344,7 @@ public:
         // ⚠ contentW 不在这里定义：整页挂在 home.scroll 下，内容宽只有 scrollView 的 content
         // 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。kHeaderActionsW + 标题列 = contentW。
         constexpr float kHeaderActionsW = 100.0f;  // W9 仅保留刷新按钮（设置按钮已移除）
-        const float cardGap = 20.0f;
+        const float cardGap = 8.0f;  // 全站卡间距统一档 8px（列表统一规范 §4.3）
         // 统计行高在下方 scrollView 的 content 回调内派生（需要视口高 innerH），见那里。
 
         // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
@@ -428,7 +428,7 @@ public:
                                     .text("工作台")
                                     .fontSize(t.sizes.fontSizeTitle)
                                     .lineHeight(core::theme::scaled(24.0f))
-                                    .fontWeight(700)
+                                    .fontWeight(600)
                                     .color(t.colors.textPrimary)
                                     .build();
                             })

@@ -110,7 +110,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .text("Todo 看板")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(core::theme::scaled(24.0f))
-                        .fontWeight(700)
+                        .fontWeight(600)
                         .color(t.colors.textPrimary)
                         .build();
                 })

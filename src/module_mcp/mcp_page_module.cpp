@@ -34,6 +34,7 @@
 
 #include <ui_kit/empty_state.h>
 #include <ui_kit/grid.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
@@ -356,15 +357,14 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                             // 网格：列宽随内容宽自适应（340–420），填满可用宽度，
                             // 不再在右侧留大片空白（2026-11-01 F-13）。
                             const auto [cols, cardW] = ui_kit::gridColumns(
-                                listW, t.sizes.spacingLarge, kCardMinW, kCardMaxW,
+                                listW, 8.0f, kCardMinW, kCardMaxW,
                                 kCardMaxCols);
-                            // 池156：卡垂直间距 16→24（spacingXLarge 档，与全站组
-                            // 间距档对齐）、水平 16 不变。EUI flow 单 gap 横竖同轴、
-                            // 无 rowGap 能力 → 行包 row 容器（设计 §2 F3 路径②）：
-                            // 行内 gap 16、行间 gap 24，视觉验收以 24/16 为准。
+                            // 卡间距统一档 8px（列表统一规范 §4.3，need224）：EUI flow
+                            // 单 gap 横竖同轴、无 rowGap 能力 → 行包 row 容器（设计 §2 F3
+                            // 路径②）：行内/行间 gap 均 8。
                             listUi.column("mcp.grid")
                                 .width(listW)
-                                .gap(t.sizes.spacingXLarge)
+                                .gap(8.0f)
                                 .content([&] {
                                     const int rowCount =
                                         (static_cast<int>(tools.size()) +
@@ -374,7 +374,7 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                                         listUi.row("mcp.grid.row." +
                                                    std::to_string(r))
                                             .size(listW, kCardH)
-                                            .gap(t.sizes.spacingLarge)
+                                            .gap(8.0f)
                                             .content([&] {
                                                 for (int c = 0; c < cols; ++c) {
                                                     const int idx = r * cols + c;
@@ -423,11 +423,11 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
     ui.stack(id)
         .size(cardWidth, kCardH)
         .content([&] {
-            // 白卡 + Sm 阴影 + 描边（settings_ui_cards.cpp 卡底同款口径）
+            // 玻璃卡面（itemSurface=glassFill 半透，规范 §5.2-1 手绘卡面换取色、
+            // 圆角/描边/阴影参数不变；settings_ui_cards.cpp 卡底同款口径）
             ui.rect(id + ".bg")
                 .size(cardWidth, kCardH)
-                .color(eui::Color{t.colors.surface.r, t.colors.surface.g,
-                                  t.colors.surface.b, t.colors.surface.a})
+                .color(ui_kit::itemSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(comp, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)

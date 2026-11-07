@@ -641,7 +641,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     .text(task.title)
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(core::theme::scaled(20.0f))
-                    .fontWeight(500)
+                    .fontWeight(600)
                     // 省略号三件套：长任务名截断，不压右侧 列名/截止/逾期天 三列
                     .maxWidth(w - 300.0f)
                     .overflow(core::TextOverflow::Ellipsis)
@@ -1409,7 +1409,7 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                                                              : note.title)
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(core::theme::scaled(20.0f))
-                                    .fontWeight(500)
+                                    .fontWeight(600)
                                     .color(t.colors.textPrimary)
                                     .overflow(core::TextOverflow::Ellipsis)
                                     .build();
