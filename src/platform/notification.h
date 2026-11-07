@@ -122,4 +122,11 @@ void setClockForTest(NowFn now);
 // 清限速/去重/时钟覆盖、复位 initialize 幂等标记并恢复默认后端。
 void resetForTest();
 
+// 仅测试调用（bug207）：真实平台通知通道可用性探测——恒查 defaultBackend()，
+// 不经 backendSlot（不受 setBackendForTest 影响）。Authorized 才算可用；
+// Unknown（裸测试二进制无 .app bundle，macOS 无法查询授权）/ NotDetermined /
+// Denied 一律视为不可用。负载敏感的 OS 通知通道用例据此前置诚实 skip；
+// Windows 无应用级授权模型（见 notification_win.cpp），恒返回 true。
+bool channelUsableForTest();
+
 } // namespace platform::notify

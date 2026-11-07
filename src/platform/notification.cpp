@@ -400,4 +400,8 @@ void resetForTest() {
     resetBackendForTest();
 }
 
+bool channelUsableForTest() {
+    return defaultBackend().authorizationStatus() == Authorization::Authorized;
+}
+
 } // namespace platform::notify

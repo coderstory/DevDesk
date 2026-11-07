@@ -3397,6 +3397,12 @@ REGISTER_TEST(agent_ui_run_failed_no_inapp_notice,
 
 REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
               "agent_ui: run 成功 → 不产生 run 结束通知（completed 静默）", {
+    // bug207 授权前置探测：真实 OS 通知通道不可用（裸测试二进制 macOS 恒 Unknown /
+    // 授权未决或被拒）→ 诚实跳过（Skipped 单独计，不计失败）；可用则下方 spy
+    // 断言原样。探测恒查 defaultBackend，与 setBackendForTest 互不干扰。
+    if (!platform::notify::channelUsableForTest()) {
+        DOCTEST_SKIP("OS 通知通道不可用（无 .app bundle 无法查询授权/未决/被拒）");
+    }
     test_support::TestDb tdb("agentui", "silentok");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3467,6 +3473,11 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
 // 成功侧零调用由 agent_ui_run_completed_silent_no_toast 的 spy 断言钉住。
 REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
               "agent_ui: run 失败 → OS 系统通知恰一次（id 前缀 agent-run-、正文含任务名、level=Error）", {
+    // bug207 授权前置探测：同 agent_ui_run_completed_silent_no_toast——真实通道
+    // 不可用（macOS 裸二进制恒 Unknown / 未决 / 被拒）诚实跳过，可用则断言原样。
+    if (!platform::notify::channelUsableForTest()) {
+        DOCTEST_SKIP("OS 通知通道不可用（无 .app bundle 无法查询授权/未决/被拒）");
+    }
     test_support::TestDb tdb("agentui", "sysnotify");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
