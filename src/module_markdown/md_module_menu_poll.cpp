@@ -5,6 +5,8 @@
 
 #include "markdown_module_internal.h"
 
+#include <ui_kit/dialog_shell.h>  // bug165：新建笔记弹窗迁标准壳（need156）
+
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
 
 namespace module::markdown {
@@ -13,38 +15,47 @@ void MarkdownModule::drawNewNoteDialog(eui::Ui& ui,
                        const eui::Screen& screen,
                        const core::theme::Tokens& t,
                        const components::theme::ThemeColorTokens& componentTheme) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 220.0f;
+    (void)componentTheme;  // 壳与内容统一吃 wechat 令牌（页面暖橙 componentTheme 只喂页面主体）
     // M-1（UAT2 一审）：弹窗内控件统一 wechat 皮肤；页面暖橙 componentTheme
     // 有意只喂页面主体（compose/drawHeader 两处页面变量），popup 控件就地取 wechat 令牌。
     const auto wcTheme = core::theme::componentTokensWeChat(t);
 
-    ui_kit::DialogFrame frame;
-    frame.id = "md.dialog.new";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = newNoteOpen_;
-    frame.onOpenChange = [this](bool v) { newNoteOpen_ = v; };
+    // bug165（need156 弹窗规范）：旧 DialogFrame 自排壳退役，迁标准壳
+    // drawDialogShell（36b1f602 同 release 试点）：宽五档 Wide 640、头区分隔线 +
+    // 底区细线 + 右锚按钮对、内容区 y=69 起；遮罩语义单一出口（components::dialog
+    // 内置 backdrop）。节点 id 不变（.title/.input/.error/.confirm/.cancel/.panel/
+    // .backdrop），测试面零迁移。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "md.dialog.new";
+    shell.width = ui_kit::DialogWidth::Wide;
+    shell.height = 256.0f;
+    shell.open = newNoteOpen_;
+    shell.onOpenChange = [this](bool v) { newNoteOpen_ = v; };
+    shell.title = "新建笔记";
+    shell.cancel = {"取消", [this] { newNoteOpen_ = false; }};
+    shell.confirm = {"创建", [this, &ui] { commitNewNote(ui); }};
 
-    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-            ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
+    ui_kit::drawDialogShell(ui, screen, shell, t, wcTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+            const float x0 = area.x;      // 24：内容区内边距（规范 §3.2）
+            const float innerW = area.w;  // w-48
+            const float yBase = area.y;   // 69：内容区顶
 
             // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
             const std::string newNoteParent =
                 dirExistsOnDisk(newItemTargetDir_) ? newItemTargetDir_ : std::string();
-            ui_kit::drawDialogText(ui, "md.dialog.new.hint", w,
+            ui_kit::drawDialogText(ui, "md.dialog.new.hint", innerW + 2.0f * x0,
                                    "保存到：" +
                                        (newNoteParent.empty()
                                             ? std::string("根目录")
                                             : newNoteParent) +
                                        " · 名字可带子目录，如 工作/周会.md",
                                    t.sizes.fontSizeSmall, t.colors.textTertiary,
-                                   {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+                                   {.y = yBase, .height = 18.0f, .lineHeight = 18.0f});
 
             components::input(ui, "md.dialog.new.input")
-                .position(28.0f, 84.0f)
-                .size(w - 56.0f, 44.0f)
+                .position(x0, yBase + 26.0f)
+                .size(innerW, 44.0f)
                 .value(newNoteName_)
                 .placeholder("笔记名，可用 / 分文件夹，如 工作/周会")
                 .fontSize(t.sizes.fontSizeBody)
@@ -59,23 +70,10 @@ void MarkdownModule::drawNewNoteDialog(eui::Ui& ui,
                 .build();
 
             // 内嵌红字错误行（校验/创建失败不走 toast）
-            ui_kit::drawDialogText(ui, "md.dialog.new.error", w, newNoteError_, 12.0f,
-                                   t.colors.errorText,
-                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [this] { newNoteOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "创建";
-            confirm.fontSize = t.sizes.fontSizeBody;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [this, &ui] { commitNewNote(ui); };
-            ui_kit::drawDialogButtons(ui, "md.dialog.new", w, h, cancel, confirm, t,
-                                      core::theme::componentTokensWeChat(t));
+            ui_kit::drawDialogText(ui, "md.dialog.new.error", innerW + 2.0f * x0,
+                                   newNoteError_, 12.0f, t.colors.errorText,
+                                   {.y = yBase + 76.0f, .height = 18.0f,
+                                    .lineHeight = 18.0f, .skipIfEmpty = true});
     });
 }
 
