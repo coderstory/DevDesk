@@ -423,6 +423,13 @@ int main(int argc, char* argv[]) {
         o << "  \"entries\": [\n";
         std::size_t total = 0;
         for (int wi = 0; wi < 3; ++wi) {
+            // 守卫（池132 P2-1）：该档 holder 加载失败时 bodyByWeight[wi] 为空，
+            // 直接 [i] 越界 UB——报缺档跳过该档（mono 侧同款守卫模式）。
+            if (bodyByWeight[wi].size() != body.size()) {
+                fail("weight " + std::to_string(kWeights[wi]) +
+                     " 采样缺失（holder 加载失败），entries 缺档");
+                continue;
+            }
             for (std::size_t i = 0; i < body.size(); ++i, ++total) {
                 o << "    {\"id\": \"" << body[i].id << "@" << kWeights[wi]
                   << "\", \"family\": \"\", \"weight\": " << kWeights[wi]
