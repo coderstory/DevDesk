@@ -73,6 +73,9 @@ struct FormState {
     std::string formKey_;
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
+    // 导入可用性预检（仅新建）：true = 后台验证中，确认钮转「预检中…」且重复
+    // 提交无操作；结果由模块 harvest 回写（通过→自动建，失败→formError_ 明确原因）
+    bool formPrechecking_ = false;
     AuthField formAuthField_ = AuthField::Both;  // 认证字段（鉴权头三态）
     bool formAuthFieldOpen_ = false;             // 下拉展开态
     ModelsConfig formModels_;  // 槽位表全行（默认模型 = def 槽位）

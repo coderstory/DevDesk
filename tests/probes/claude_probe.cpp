@@ -11,6 +11,7 @@
 #include "core/module_interface.h"
 #include "core/component_theme.h"
 #include "core/theme.h"
+#include "module_claude_proxy/claude_ui_form.h"
 #include "module_claude_proxy/claude_ui_list.h"
 #include "module_claude_proxy/claude_ui_state.h"
 #include "module_claude_proxy/profile_repository.h"
@@ -35,11 +36,17 @@ extern "C" ::core::Module* create_claude_module();
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     std::string shotProfiles;
+    std::string shotForm;
+    std::string formState;   // fail = 预检失败态文案
     bool lightTheme = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-profiles" && i + 1 < argc) {
             shotProfiles = argv[++i];
+        } else if (arg == "--shot-form" && i + 1 < argc) {
+            shotForm = argv[++i];
+        } else if (arg == "--form-state" && i + 1 < argc) {
+            formState = argv[++i];
         } else if (arg == "--light") {
             lightTheme = true;
         }
@@ -172,6 +179,38 @@ int main(int argc, char* argv[]) {
         }
         if (!probe::captureFramePng(window, runtime, shotProfiles)) {
             std::cerr << "claude_probe: profile 列表落图失败 " << shotProfiles << "\n";
+            passed = false;
+        }
+    }
+
+    // --shot-form：导入卡（新建 Profile 表单弹窗）取证（need185 before/after）。
+    // 模块内 state_.form 不可直触，构造同构 FormState 直调 drawProfileFormDialog
+    // （同一绘制入口）；--form-state fail 驱动预检失败文案态。
+    if (!shotForm.empty()) {
+        const auto& t = core::theme::current();
+        const auto themeTokens = core::theme::componentTokensWeChat(t);
+        module::claude::FormState f;
+        module::claude::openCreateForm(f);
+        f.formName_ = "生产环境";
+        f.formUrl_ = "https://api.anthropic.com";
+        f.formKey_ = "sk-ant-test-0001";
+        if (formState == "fail") {
+            f.formError_ =
+                "预检未通过：凭证无效——上游返回 HTTP 401（API Key 被拒绝）";
+        } else if (formState == "precheck") {
+            f.formPrechecking_ = true;   // 预检进行中：状态槽进度文案 + 确认钮转「预检中…」
+        }
+        for (int fr = 0; fr < 3; ++fr) {
+            probe::composeModuleFrame(
+                runtime, window, "claude", w, h,
+                [&](eui::Ui& u, const eui::Screen& screen) {
+                    module::claude::FormSubmitHooks hooks;  // 截图态不点击，空缝
+                    module::claude::drawProfileFormDialog(u, screen, t,
+                                                          themeTokens, f, hooks);
+                });
+        }
+        if (!probe::captureFramePng(window, runtime, shotForm)) {
+            std::cerr << "claude_probe: 表单弹窗落图失败 " << shotForm << "\n";
             passed = false;
         }
     }

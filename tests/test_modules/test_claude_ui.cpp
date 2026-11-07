@@ -9,6 +9,7 @@
 #include "test_support.h"
 
 #include "claude_service.h"
+#include "claude_ui_form.h"   // need185：FormState / submitForm / createProfileFromForm
 #include "claude_ui_logic.h"
 #include "core/app_config.h"
 #include "core/database.h"
@@ -982,6 +983,31 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         n->onTextInput(ev);
     };
 
+    // need185：新建提交先过导入可用性预检——本地假端点 200 让预检必过（零真网络），
+    // 收割在后续 compose 帧。pumpFormClosed = 有界轮询 compose 至建档+表单关闭。
+    int respStatus = 200;
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.route("POST", "/v1/messages",
+              [&](const platform::http::RequestCtx&,
+                  platform::http::ResponseWriter& w) {
+                  w.setStatus(respStatus);
+                  w.write("{}");
+                  w.end();
+              });
+    DOCTEST_CHECK(srv.start());
+    const std::string kBase =
+        "http://127.0.0.1:" + std::to_string(srv.actualPort());
+    auto pumpFormClosed = [&](const char* tag) {
+        for (int i = 0; i < 300; ++i) {
+            eui::Ui ui;
+            compose(ui, tag);
+            const auto* panel = ui.find("claude.dialog.form.panel");
+            if (panel != nullptr && panel->opacity == 0.0f) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    };
+
     // 1) Ctrl+N 打开新建表单（dialog 子节点常驻构建树，开合用 panel opacity 判定）
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::N)));
     {
@@ -1003,23 +1029,17 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         const auto* name = ui.find("claude.dialog.form.name.text");
         DOCTEST_REQUIRE(name != nullptr);
         DOCTEST_CHECK_EQ(name->text, std::string("快捷键建档"));
-        type(ui, "claude.dialog.form.url.hit", "https://kbd.example.com");
+        type(ui, "claude.dialog.form.url.hit", kBase);
         type(ui, "claude.dialog.form.key.hit", "sk-ant-kbd-00001");
     }
-    // 3) Ctrl+S = 点「保存/创建」按钮：建档落库、表单关闭
+    // 3) Ctrl+S = 点「创建」：先过导入预检（need185），收割帧建档并关表单
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::S)));
+    DOCTEST_CHECK(pumpFormClosed("ks3"));
     auto listed = env.svc->listProfiles();
     DOCTEST_REQUIRE(listed.isOk());
     DOCTEST_CHECK_EQ(listed.value().size(), 1u);
     DOCTEST_CHECK_EQ(listed.value()[0].name, std::string("快捷键建档"));
     const int64_t pid = listed.value()[0].id;
-    {
-        eui::Ui ui;
-        compose(ui, "ks3");
-        const auto* panel = ui.find("claude.dialog.form.panel");
-        DOCTEST_REQUIRE(panel != nullptr);
-        DOCTEST_CHECK_EQ(panel->opacity, 0.0f);   // 提交成功后表单关闭
-    }
     // 4) 表单外 Ctrl+S（无保存对象）、未注册组合、裸键、Alt 修饰、Release 全不消费，
     //    且不得开表单。
     DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::S)));
@@ -1654,6 +1674,19 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         return true;
     };
 
+    // need185：新建提交先过导入预检——本地假端点 200 必过，收割在后续 compose 帧
+    int respStatus = 200;
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.route("POST", "/v1/messages",
+              [&](const platform::http::RequestCtx&,
+                  platform::http::ResponseWriter& w) {
+                  w.setStatus(respStatus);
+                  w.write("{}");
+                  w.end();
+              });
+    DOCTEST_CHECK(srv.start());
+    const std::string kBase =
+        "http://127.0.0.1:" + std::to_string(srv.actualPort());
     {
         eui::Ui ui;
         compose(ui, "authfield_c1");
@@ -1663,8 +1696,7 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         eui::Ui ui;
         compose(ui, "authfield_c2");
         DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "认证字段建档"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit",
-                           "https://af.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", kBase));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-af-00001"));
     }
     {
@@ -1687,6 +1719,16 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
     {
+        // need185：确认 → 预检（假端点 200）→ 收割帧建档，有界轮询至表单关闭
+        bool closed = false;
+        for (int i = 0; i < 300 && !closed; ++i) {
+            eui::Ui ui;
+            compose(ui, "authfield_c6");
+            const auto* panel = ui.find("claude.dialog.form.panel");
+            closed = (panel != nullptr && panel->opacity == 0.0f);
+            if (!closed) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        DOCTEST_CHECK(closed);
         auto list = env.svc->listProfiles();
         DOCTEST_REQUIRE(list.isOk());
         DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
@@ -3488,5 +3530,135 @@ REGISTER_TEST(claude_module_ui_set_active_captures_settings,
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, a.value().id);
     cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+// ---- need185 导入可用性预检 ----
+
+REGISTER_TEST(claude_import_precheck_classify,
+              "claude_import: 预检状态码分类——2xx 可用/401 403 凭证/404 接口/其余上游异常", {
+    using P = module::claude::ClaudeService::ImportPrecheckResult;
+    const P ok = module::claude::ClaudeService::classifyImportProbe(200);
+    DOCTEST_CHECK(ok.ok);
+    DOCTEST_CHECK(module::claude::ClaudeService::classifyImportProbe(204).ok);
+    const P cred = module::claude::ClaudeService::classifyImportProbe(401);
+    DOCTEST_CHECK_FALSE(cred.ok);
+    DOCTEST_CHECK(cred.reason.find("凭证") != std::string::npos);
+    const P cred3 = module::claude::ClaudeService::classifyImportProbe(403);
+    DOCTEST_CHECK_FALSE(cred3.ok);
+    DOCTEST_CHECK(cred3.reason.find("凭证") != std::string::npos);
+    const P ep = module::claude::ClaudeService::classifyImportProbe(404);
+    DOCTEST_CHECK_FALSE(ep.ok);
+    DOCTEST_CHECK(ep.reason.find("接口不存在") != std::string::npos);
+    const P other = module::claude::ClaudeService::classifyImportProbe(500);
+    DOCTEST_CHECK_FALSE(other.ok);
+    DOCTEST_CHECK(other.reason.find("500") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(claude_import_precheck_loopback,
+              "claude_import: validateProfileUsable 回环——URL 格式/200 通过/401 凭证/拒连连不上", {
+    TestEnv env;
+    using R = module::claude::ClaudeService::ImportPrecheckResult;
+    // 第 0 步 URL 格式（本地零网络）：无 scheme 挡下
+    const R badUrl = env.svc->validateProfileUsable(
+        "api.example.com", "sk-x", "both", "", "");
+    DOCTEST_CHECK_FALSE(badUrl.ok);
+    DOCTEST_CHECK(badUrl.reason.find("URL 格式错误") != std::string::npos);
+
+    // 本地假端点：200 → 通过；401 → 凭证；未监听端口 → 连不上
+    int respStatus = 200;   // 假端点应答码（用例内改写驱动 200/401 分支）
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.route("POST", "/v1/messages",
+              [&](const platform::http::RequestCtx&,
+                  platform::http::ResponseWriter& w) {
+                  w.setStatus(respStatus);
+                  w.write("{}");
+                  w.end();
+              });
+    DOCTEST_CHECK(srv.start());
+    const int port = srv.actualPort();
+    DOCTEST_CHECK(port > 0);
+    const std::string base = "http://127.0.0.1:" + std::to_string(port);
+
+    respStatus = 200;
+    const R good = env.svc->validateProfileUsable(base, "sk-good", "both", "", "");
+    DOCTEST_CHECK(good.ok);
+
+    respStatus = 401;
+    const R denied = env.svc->validateProfileUsable(base, "sk-bad", "both", "", "");
+    DOCTEST_CHECK_FALSE(denied.ok);
+    DOCTEST_CHECK(denied.reason.find("凭证") != std::string::npos);
+
+    srv.stop();
+    const R refused = env.svc->validateProfileUsable(base, "sk-x", "both", "", "");
+    DOCTEST_CHECK_FALSE(refused.ok);
+    DOCTEST_CHECK(refused.reason.find("连不上") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(claude_import_precheck_form_interception,
+              "claude_import: 新建提交被预检拦截——受理不建库/收割段建库/预检中重复提交无操作", {
+    TestEnv env;
+    module::claude::FormState f;
+    module::claude::openCreateForm(f);
+    f.formName_ = "预检拦截";
+    f.formUrl_ = "https://precheck.example.com";
+    f.formKey_ = "sk-precheck-1";
+
+    auto before = env.svc->listProfiles();
+    DOCTEST_REQUIRE(before.isOk());
+    const size_t countBefore = before.value().size();
+
+    int hookCalls = 0;
+    module::claude::FormSubmitHooks hooks;
+    hooks.toast = [](const std::string&, const std::string&, bool) {};
+    hooks.markDataDirty = [] {};
+    hooks.selectProfile = [](int64_t) {};
+    hooks.importPrecheck = [&](module::claude::FormState&) {
+        ++hookCalls;
+        return true;   // 模拟模块受理（后台验证中）
+    };
+
+    // 受理：不建库、表单保持打开、进入预检态
+    module::claude::submitForm(f, hooks);
+    DOCTEST_CHECK_EQ(hookCalls, 1);
+    auto after = env.svc->listProfiles();
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_CHECK_EQ(after.value().size(), countBefore);   // 未落库 = 拦截生效
+    DOCTEST_CHECK(f.formOpen_);
+    DOCTEST_CHECK(f.formPrechecking_);
+
+    // 预检中重复提交（确认钮连点 / Ctrl+S）：无操作
+    module::claude::submitForm(f, hooks);
+    DOCTEST_CHECK_EQ(hookCalls, 1);
+
+    // 收割通过段（模块 harvest 同一入口）：此时才建库
+    DOCTEST_CHECK(module::claude::createProfileFromForm(f, hooks));
+    auto final = env.svc->listProfiles();
+    DOCTEST_REQUIRE(final.isOk());
+    DOCTEST_CHECK_EQ(final.value().size(), countBefore + 1);
+    DOCTEST_CHECK_FALSE(f.formOpen_);
+    DOCTEST_CHECK_FALSE(f.formPrechecking_);
+
+    // 缝未接（hook 空）= 旧直建路径兼容
+    module::claude::FormState f2;
+    module::claude::openCreateForm(f2);
+    f2.formName_ = "直建兼容";
+    f2.formUrl_ = "https://direct.example.com";
+    f2.formKey_ = "sk-direct-1";
+    module::claude::FormSubmitHooks bare;
+    bare.toast = [](const std::string&, const std::string&, bool) {};
+    bare.markDataDirty = [] {};
+    bare.selectProfile = [](int64_t) {};
+    module::claude::submitForm(f2, bare);
+    auto legacy = env.svc->listProfiles();
+    DOCTEST_REQUIRE(legacy.isOk());
+    DOCTEST_CHECK_EQ(legacy.value().size(), countBefore + 2);
+    DOCTEST_CHECK_FALSE(f2.formOpen_);
+
+    cleanupProfileKey(kTestKeychainService, final.value().back().id);
+    cleanupProfileKey(kTestKeychainService,
+                      legacy.value()[legacy.value().size() - 2].id);
     return true;
 })

@@ -51,6 +51,7 @@ void openCreateForm(FormState& f) {
     f.formEnvRows_.clear();
     f.formAuthField_ = AuthField::Both;
     f.formAuthFieldOpen_ = false;
+    f.formPrechecking_ = false;
     f.formOpen_ = true;
 }
 
@@ -67,6 +68,7 @@ void openEditForm(FormState& f, const Profile& p) {
     // 认证字段：编辑必须回显现状，否则用户误以为是默认值、一保存即覆盖
     f.formAuthField_ = authFieldFromText(p.authField);
     f.formAuthFieldOpen_ = false;
+    f.formPrechecking_ = false;   // 预检仅挂在新建路径，开编辑顺手清残留
     // env 行：非法 JSON 读路径容错为空表
     f.formEnvRows_.clear();
     auto ee = parseExtraEnv(p.extraEnvJson);
@@ -112,7 +114,65 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     return true;
 }
 
+// 预检通过后的实际建库段（submitForm 新建分支与模块预检收割共用同一入口，防双源漂移）。
+// 成功 = 关表单 + 选中 + toast，返回 true。
+bool createProfileFromForm(FormState& f, const FormSubmitHooks& hooks) {
+    ClaudeService* svc = ClaudeService::global();
+    if (!svc) {
+        setFormError(f, "服务未就绪（ClaudeService 未注册）");
+        return false;
+    }
+    hooks.markDataDirty();   // 写操作前即标脏（失败也不伤，下帧重查）
+    if (f.formName_.empty() || f.formUrl_.empty()) {
+        setFormError(f, "名称和 Base URL 不能为空");
+        return false;
+    }
+    std::string modelsJson;
+    std::string envJson;
+    if (!serializeFormData(f, &modelsJson, &envJson)) return false;
+    if (f.formKey_.empty()) {
+        setFormError(f, "新建 Profile 必须填写 API Key");
+        return false;
+    }
+    // activateIfNoneActive=true：无激活 Profile 时自动激活这条；已有激活不抢占
+    auto r = svc->createProfile(f.formName_, f.formUrl_, f.formKey_,
+                                f.formModels_.def.model, /*activateIfNoneActive=*/true,
+                                authFieldToText(f.formAuthField_));
+    if (r.isFail()) {
+        setFormError(f, r.errorMessage());
+        return false;
+    }
+    // createProfile 无槽位/env 参数，二段补写
+    if (!modelsJson.empty() || !envJson.empty()) {
+        Profile p = r.value();
+        p.model = f.formModels_.def.model;
+        p.modelsConfigJson = modelsJson;
+        p.extraEnvJson = envJson;
+        auto u = svc->updateProfile(p);
+        if (u.isFail()) {
+            setFormError(f, "已创建，但模型/env 写入失败: " +
+                              u.errorMessage());
+            return false;
+        }
+    }
+    f.formOpen_ = false;
+    f.formPrechecking_ = false;
+    hooks.selectProfile(r.value().id);
+    // 按是否自动激活分文案（只说「已保存」会让用户以为点「启动代理」就能用）
+    if (r.value().isActive) {
+        hooks.toast("已创建并启用",
+                    "Profile「" + f.formName_ + "」已设为激活（ACTIVE）",
+                    false);
+    } else {
+        hooks.toast("已保存",
+                    "右键该 Profile 选择『设为当前』使其生效",
+                    false);
+    }
+    return true;
+}
+
 void submitForm(FormState& f, const FormSubmitHooks& hooks) {
+    if (f.formPrechecking_) return;   // 预检进行中：确认钮/Ctrl+S 重复提交无操作
     ClaudeService* svc = ClaudeService::global();
     if (!svc) {
         setFormError(f, "服务未就绪（ClaudeService 未注册）");
@@ -132,39 +192,15 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks) {
             setFormError(f, "新建 Profile 必须填写 API Key");
             return;
         }
-        // activateIfNoneActive=true：无激活 Profile 时自动激活这条；已有激活不抢占
-        auto r = svc->createProfile(f.formName_, f.formUrl_, f.formKey_,
-                                    f.formModels_.def.model, /*activateIfNoneActive=*/true,
-                                    authFieldToText(f.formAuthField_));
-        if (r.isFail()) {
-            setFormError(f, r.errorMessage());
+        // 导入可用性预检（need185）：新建即导入——连不上/凭证无效/接口不存在一律
+        // 挡在库外，失败原因写 formError_（红字可见，禁静默）。缝未接（hook 空）
+        // = 旧直建路径（既有测试与降级形态兼容）。
+        if (hooks.importPrecheck && hooks.importPrecheck(f)) {
+            f.formPrechecking_ = true;   // 受理：结果经模块 harvest 回写本表单
+            f.formError_.clear();
             return;
         }
-        // createProfile 无槽位/env 参数，二段补写
-        if (!modelsJson.empty() || !envJson.empty()) {
-            Profile p = r.value();
-            p.model = f.formModels_.def.model;
-            p.modelsConfigJson = modelsJson;
-            p.extraEnvJson = envJson;
-            auto u = svc->updateProfile(p);
-            if (u.isFail()) {
-                setFormError(f, "已创建，但模型/env 写入失败: " +
-                                  u.errorMessage());
-                return;
-            }
-        }
-        f.formOpen_ = false;
-        hooks.selectProfile(r.value().id);
-        // 按是否自动激活分文案（只说「已保存」会让用户以为点「启动代理」就能用）
-        if (r.value().isActive) {
-            hooks.toast("已创建并启用",
-                        "Profile「" + f.formName_ + "」已设为激活（ACTIVE）",
-                        false);
-        } else {
-            hooks.toast("已保存",
-                        "右键该 Profile 选择『设为当前』使其生效",
-                        false);
-        }
+        (void)createProfileFromForm(f, hooks);
     } else {
         // 编辑：先取现有行（保留凭据/片段绑定），再覆盖表单值
         auto got = svc->getProfile(f.formEditId_);
@@ -268,21 +304,22 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         })
         .build();
 
-    // 行节奏沿用原布局：hint 380 / 错误 404 / 接管警告 426（弹高 600 下按钮带 472 起，呼吸区充足）
-    ui.text("claude.form.basic.hint.icon")
-        .position(28.0f, 380.0f).size(14.0f, core::theme::scaled(18.0f))
-        .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
-        .color(t.colors.textTertiary).build();
-    ui.text("claude.form.basic.hint")
-        .position(46.0f, 380.0f).size(w - 74.0f, core::theme::scaled(18.0f))
-        .text("模型配置和环境变量在另外两个标签页配置")
-        .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
-        .color(t.colors.textTertiary).build();
-
-    if (!f.formError_.empty()) {
+    // 预检/错误状态槽（need185）：固定 y=384 单一占位——预检中=info 进度文案，
+    // 失败=error 明确原因（wrap 两行防长原因截断），空闲不画。替代旧「hint 380 +
+    // 错误 404」双位散排——旧布局内容止于 398、按钮带 472 起之间 ~70px 无主空带
+    //（#195 反样本「中间大段空白」），且错误行只在出错时出现、无预检进度容身位。
+    if (f.formPrechecking_) {
+        ui.text("claude.form.basic.precheck")
+            .position(28.0f, 384.0f).size(w - 56.0f, core::theme::scaled(36.0f))
+            .text("正在验证可用性（连通性/凭证，最长 5 秒）…通过后自动创建")
+            .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
+            .wrap(true)
+            .color(t.colors.info).build();
+    } else if (!f.formError_.empty()) {
         ui.text("claude.dialog.form.error")
-            .position(28.0f, 404.0f).size(w - 56.0f, core::theme::scaled(18.0f))
+            .position(28.0f, 384.0f).size(w - 56.0f, core::theme::scaled(36.0f))
             .text(f.formError_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
+            .wrap(true)
             .color(t.colors.errorText).build();
     }
 }
@@ -428,9 +465,10 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // S3.9 #4：「+ 添加变量」改 Outline 次按钮 32px 高（白底绿边绿字，hover 淡绿底）
+    // S3.9 #4：「+ 添加变量」改 Outline 次按钮 32px 高（白底绿边绿字，hover 淡绿底）。
+    // y=320：可见行上限 5 行时末行底 = 124+4×38+40 = 316，原 314 压行 2px（need185 顺手修）。
     components::button(ui, "claude.form.env.add", components::ButtonVariant::Outline)
-        .position(28.0f, 314.0f).size(120.0f, 32.0f)
+        .position(28.0f, 320.0f).size(120.0f, 32.0f)
         .text("+ 添加变量").fontSize(core::theme::scaled(12.0f))
         .theme(themeTokens)
         .onClick([fp = &f] { fp->formEnvRows_.emplace_back(); })
@@ -438,11 +476,11 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     if (f.formEnvRows_.size() > kMaxVisibleRows) {
         // S3.9 #6：前置 ℹ 图标（14px 信息蓝）+ 12px 三级灰字（原 11px 过浅）
         ui.text("claude.form.env.overflow.icon")
-            .position(150.0f, 322.0f).size(14.0f, core::theme::scaled(16.0f))
+            .position(150.0f, 328.0f).size(14.0f, core::theme::scaled(16.0f))
             .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.info).build();
         ui.text("claude.form.env.overflow")
-            .position(168.0f, 322.0f).size(w - 168.0f - 28.0f, core::theme::scaled(32.0f))
+            .position(168.0f, 328.0f).size(w - 168.0f - 28.0f, core::theme::scaled(32.0f))
             .text("另有 " + std::to_string(f.formEnvRows_.size() -
                                            kMaxVisibleRows) +
                   " 项已保存（保存时全量写入，列表仅显示前 " +
@@ -504,10 +542,15 @@ const float h = 540.0f;
                 drawFormEnvTab(ui, w, t, themeTokens, f);
             }
 
-            // 错误信息（基础页之外也要看得到校验错误）
+            // 预检进度/错误（基础页之外也要看得到：预检期间允许停在模型/env 页）
             if (f.formTab_ != 0) {
-                ui_kit::drawDialogText(ui, "claude.dialog.form.error", w, f.formError_,
-                                       12.0f, t.colors.errorText,
+                const std::string statusLine = f.formPrechecking_
+                    ? std::string("正在验证可用性（连通性/凭证，最长 5 秒）…")
+                    : f.formError_;
+                ui_kit::drawDialogText(ui, "claude.dialog.form.error", w, statusLine,
+                                       12.0f,
+                                       f.formPrechecking_ ? t.colors.info
+                                                          : t.colors.errorText,
                                        {.y = h - 104.0f, .height = 18.0f,
                                         .lineHeight = 18.0f, .skipIfEmpty = true});
             }
@@ -518,7 +561,8 @@ const float h = 540.0f;
             cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [fp = &f] { fp->formOpen_ = false; };
             ui_kit::DialogButtonSpec confirm;
-            confirm.label = isEdit ? "保存" : "创建";
+            confirm.label = isEdit ? "保存"
+                                   : (f.formPrechecking_ ? "预检中…" : "创建");
             confirm.fontSize = 14.0f;
             confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
             confirm.onClick = [fp = &f, hooks] { submitForm(*fp, hooks); };

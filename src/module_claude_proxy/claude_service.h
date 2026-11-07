@@ -102,6 +102,26 @@ public:
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);
 
+    // 导入可用性预检结果：ok=false 时 reason 指明失败步骤
+    //（URL 格式 / 连不上 / 凭证被拒 / 接口不存在 / 上游异常），UI 原样展示不静默
+    struct ImportPrecheckResult {
+        bool ok = false;
+        std::string reason;
+    };
+
+    // 预检状态码分类（纯函数可单测）：2xx=可用；401/403=凭证被拒；
+    // 404=接口不存在；其余=上游异常
+    static ImportPrecheckResult classifyImportProbe(int statusCode);
+
+    // 新建/导入前可用性预检：URL 格式本地校验 → POST /v1/messages 探测（明文 key，
+    // 表单态 profile 无库凭据）→ classifyImportProbe 分类。不得在 UI 线程同步调用。
+    static constexpr int kImportPrecheckTimeoutMs = 5000;
+    ImportPrecheckResult validateProfileUsable(
+        const std::string& baseUrl, const std::string& keyPlain,
+        const std::string& authField, const std::string& modelsConfigJson,
+        const std::string& fallbackModel,
+        int probeTimeoutMs = kImportPrecheckTimeoutMs);
+
     // 最近代理请求事件（气泡内容源）
     // ProxyRouter 在每条请求终态记一次 statusCode 进单槽（后写覆盖先写）：
     // 0 = 上游不可达。takeProxyEvent() 读走即清；滞留超 kProxyEventFreshSec 过期丢弃。
@@ -209,8 +229,10 @@ private:
     void syncRestore();
 
     // testConnection 的探测体（testConnection 恒 15s，前置校验传短超时）。
-    core::Result<platform::http::Response> probeProfile(const Profile& profile,
-                                                        int timeoutMs);
+    // keyPlainOverride 非空 = 用明文 key（导入预检的表单态 profile，id=0 无库凭据）。
+    core::Result<platform::http::Response> probeProfile(
+        const Profile& profile, int timeoutMs,
+        const std::string& keyPlainOverride = std::string());
     static constexpr int kTestConnectionTimeoutMs = 15000;
 
     // 反向同步：读 settings.json 的 env → 对齐到激活 profile（覆盖/缺席清空/守卫键不写也不清）。

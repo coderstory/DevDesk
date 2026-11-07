@@ -235,15 +235,21 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
 }
 
 core::Result<platform::http::Response>
-ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
-    // 无 key 也允许：UI 可用未授权请求触发 401 作验证
-    auto keyResult = loadApiKey(profile.id);
+ClaudeService::probeProfile(const Profile& profile, int timeoutMs,
+                            const std::string& keyPlainOverride) {
     std::string key;
-    if (keyResult.isOk()) {
-        key = keyResult.value();
+    if (!keyPlainOverride.empty()) {
+        // 导入预检：表单明文 key 直用（profile 尚未入库，loadApiKey(0) 必失败）
+        key = keyPlainOverride;
     } else {
-        LOG_WARN("testConnection: 无法读取 API key (" +
-                 keyResult.errorMessage() + ")，将发未授权请求");
+        // 无 key 也允许：UI 可用未授权请求触发 401 作验证
+        auto keyResult = loadApiKey(profile.id);
+        if (keyResult.isOk()) {
+            key = keyResult.value();
+        } else {
+            LOG_WARN("testConnection: 无法读取 API key (" +
+                     keyResult.errorMessage() + ")，将发未授权请求");
+        }
     }
 
     platform::http::Request req;
@@ -292,6 +298,47 @@ core::Result<platform::http::Response>
 ClaudeService::testConnection(const Profile& profile) {
     // 探测体在 probeProfile（前置校验传短超时）；本方法超时恒为 15000
     return probeProfile(profile, kTestConnectionTimeoutMs);
+}
+
+ClaudeService::ImportPrecheckResult
+ClaudeService::classifyImportProbe(int statusCode) {
+    if (statusCode >= 200 && statusCode < 300) {
+        return {true, ""};
+    }
+    const std::string code = std::to_string(statusCode);
+    if (statusCode == 401 || statusCode == 403) {
+        return {false, "凭证无效——上游返回 HTTP " + code +
+                           "（API Key 被拒绝，检查 Key 是否正确/有效）"};
+    }
+    if (statusCode == 404) {
+        return {false, "接口不存在——HTTP 404（Base URL 下没有 /v1/messages，"
+                       "检查是否为 Anthropic 兼容网关地址）"};
+    }
+    return {false, "上游返回 HTTP " + code +
+                       "（网关可达但请求未成功，检查 Base URL 与模型配置）"};
+}
+
+ClaudeService::ImportPrecheckResult ClaudeService::validateProfileUsable(
+    const std::string& baseUrl, const std::string& keyPlain,
+    const std::string& authField, const std::string& modelsConfigJson,
+    const std::string& fallbackModel, int probeTimeoutMs) {
+    // 第 0 步（本地零网络）：URL 格式。无 scheme 无法成请求，先挡给明确原因
+    if (baseUrl.rfind("http://", 0) != 0 && baseUrl.rfind("https://", 0) != 0) {
+        return {false, "URL 格式错误——Base URL 需以 http:// 或 https:// 开头"};
+    }
+    // 第 1 步：连通探测（表单态 profile：id=0，明文 key 走 override）
+    Profile probe{};
+    probe.baseUrl = baseUrl;
+    probe.authField = authField;
+    probe.modelsConfigJson = modelsConfigJson;
+    probe.model = fallbackModel;
+    auto resp = probeProfile(probe, probeTimeoutMs, keyPlain);
+    // 第 2 步：连不上（网络层失败，含超时/DNS/拒连）
+    if (resp.isFail()) {
+        return {false, "连不上——" + resp.errorMessage()};
+    }
+    // 第 3 步：按状态码分类（凭证/接口/其他）
+    return classifyImportProbe(resp.value().statusCode);
 }
 
 core::Result<void> ClaudeService::validateProxyPreconditions(int probeTimeoutMs) {

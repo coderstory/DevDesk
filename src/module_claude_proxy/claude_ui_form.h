@@ -23,6 +23,10 @@ struct FormSubmitHooks {
                        bool isError)> toast;
     std::function<void()> markDataDirty;         // 写操作标脏
     std::function<void(int64_t id)> selectProfile;  // 新建成功后的选中态
+    // 导入可用性预检（仅新建路径）：返回 true = 已受理（后台验证中，表单保持
+    // 打开、formPrechecking_=true，结果由模块 harvest 回写：通过→自动建，
+    // 失败→formError_）；返回 false = 缝未接（无服务），走直建旧路径
+    std::function<bool(FormState& f)> importPrecheck;
 };
 
 // 表单状态机
@@ -32,6 +36,8 @@ void openEditForm(FormState& f, const Profile& p);
 // 失败写 f.formError_ 并返回 false
 bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJson);
 void submitForm(FormState& f, const FormSubmitHooks& hooks);
+// 预检通过后的实际建库段（submitForm 新建分支与模块 harvest 共用；成功关表单）
+bool createProfileFromForm(FormState& f, const FormSubmitHooks& hooks);
 
 // 绘制
 // 新建/编辑表单弹窗。

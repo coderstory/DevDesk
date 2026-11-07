@@ -45,6 +45,7 @@ public:
     ~ClaudeModule() override {
         // 必须 join 干净（留 joinable 即 std::terminate）。
         if (testThread_.joinable()) testThread_.join();
+        if (precheckThread_.joinable()) precheckThread_.join();
     }
 
     // 测试缝：开关切换确认弹窗（调用后选卡不弹窗，直走选中路径）
@@ -164,6 +165,7 @@ public:
         drawSwitchConfirmDialog(ui, screen, t, themeTokens,
                                   state_.list);
         harvestTestResult();
+        harvestImportPrecheck();
         drawToast(ui, screen, themeTokens);
 
         drawProfileContextMenu(ui, screen, themeTokens, state_.list, profiles,
@@ -291,6 +293,8 @@ private:
         h.toast = toastHook();
         h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
         h.selectProfile = [this](int64_t id) { state_.list.selectedId_ = id; };
+        // 导入可用性预检缝（need185）：true = 已受理后台验证（结果经 harvest 回写表单）
+        h.importPrecheck = [this](FormState& f) { return beginImportPrecheck(f); };
         return h;
     }
 
@@ -618,6 +622,76 @@ private:
         showToast(testResultTitle_, testResultMsg_, testResultIsError_);
     }
 
+    // ---- 导入可用性预检（need185）：新建表单提交 → 后台验证 → compose 收割回写 ----
+    // 范式与 doTestConnection 同源（后台线程 + 原子标志 + 收割点 join，UI 线程零阻塞）。
+
+    // 受理预检：true = 已起后台线程；false = 服务缺/忙（调用方落直建旧路径）。
+    // f 为 state_.form（模块成员，存活期覆盖线程窗）。
+    bool beginImportPrecheck(FormState& f) {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) {
+            f.formError_ = "服务未就绪（ClaudeService 未注册）";
+            return false;
+        }
+        harvestImportPrecheck();   // 先收上一轮（含 join，防叠线程）
+        if (precheckThread_.joinable()) {   // 防御：上一轮仍在跑（正常流不可达）
+            showToast("操作进行中", "上一次预检仍在进行，请稍候", false);
+            return false;
+        }
+        f.formError_.clear();
+        precheckForm_ = &f;
+        precheckUrl_ = f.formUrl_;
+        precheckKey_ = f.formKey_;
+        // 表单态 profile（id=0 无库凭据）：明文 key 走 override，模型取 default 槽位
+        Profile probe{};
+        probe.baseUrl = f.formUrl_;
+        probe.model = f.formModels_.def.model;
+        probe.authField = authFieldToText(f.formAuthField_);
+        std::string modelsJson;
+        std::string envJson;
+        if (serializeFormData(f, &modelsJson, &envJson)) {
+            probe.modelsConfigJson = modelsJson;
+        }
+        showToast("预检中", "正在验证 Profile 可用性（连通性/凭证，最长 5 秒）…",
+                  false);
+        precheckThread_ = std::thread([this, probe, key = f.formKey_, svc] {
+            auto v = svc->validateProfileUsable(probe.baseUrl, key,
+                                                probe.authField,
+                                                probe.modelsConfigJson,
+                                                probe.model);
+            precheckOk_ = v.ok;
+            precheckReason_ = std::move(v.reason);
+            precheckDone_.store(true, std::memory_order_release);
+            core::platform::requestUiUpdate();
+        });
+        return true;
+    }
+
+    // 收割预检结果：join 后回写表单——通过（且字段未被改）→ createProfileFromForm
+    // 自动建库；字段被改 → 以当前值重新预检（收敛循环，关窗即止）；失败 →
+    // formError_ 明确原因（红字 + toast，禁静默吞）。预检期间表单被关 = 结果作废。
+    void harvestImportPrecheck() {
+        if (!precheckThread_.joinable()) return;
+        if (!precheckDone_.load(std::memory_order_acquire)) return;  // 还在跑
+        precheckThread_.join();
+        precheckDone_.store(false);
+        FormState* f = precheckForm_;
+        precheckForm_ = nullptr;
+        if (f == nullptr) return;
+        f->formPrechecking_ = false;
+        if (!f->formOpen_) return;
+        if (precheckOk_) {
+            if (f->formUrl_ != precheckUrl_ || f->formKey_ != precheckKey_) {
+                beginImportPrecheck(*f);
+                return;
+            }
+            (void)createProfileFromForm(*f, formHooks());
+        } else {
+            f->formError_ = precheckReason_;
+            showToast("预检未通过", precheckReason_, true);
+        }
+    }
+
     ClaudeUiState state_;
 
     ui_kit::ToastState toast_;
@@ -633,6 +707,17 @@ private:
     std::string testResultMsg_;
     bool testResultIsError_ = false;
     bool testResultStartProxy_ = false;
+
+    // 导入预检（need185）后台线程：范式同 testThread_（release/acquire + 收割 join）。
+    // precheckForm_ 指 state_.form（模块成员存活期覆盖线程窗）；Url/Key 为提交快照，
+    // 收割时发现字段被改则以当前值重新预检（收敛循环，关窗即止）。
+    std::thread precheckThread_;
+    std::atomic<bool> precheckDone_{false};
+    bool precheckOk_ = false;
+    std::string precheckReason_;
+    std::string precheckUrl_;
+    std::string precheckKey_;
+    FormState* precheckForm_ = nullptr;
 
     // 智能体工具集（claude.* 三工具）；onStart 注册 / onStop 先注销
     std::unique_ptr<ClaudeTools> claudeTools_;
