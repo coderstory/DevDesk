@@ -2267,28 +2267,48 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                       heightOf("settings.card.modules.name.0"),
                       ms::modulesNameH());
             if (err.empty() && !ms::modulesCardSingleColumn())
-                // UAT3 多列分栏：≤1.15 档卡内两列——name.0/name.1 同行异列
-                //（x 差 = 格宽+16，ui_kit::columnX 单一来源）。B6 起 >1.15 档降单列，
-                // 该列差判据只在单列档缺席时适用。
+                // UAT3 多列分栏：同行异列 x 差 = 格宽+16。池151 起列数与生产
+                // 同源（modulesCardCols）：9 格 3 列等分 + gap16，其余两列走
+                // columnX。>1.15 档降单列，该判据在单列档缺席。
                 err = pin("modules 同行异列 x 差（格宽+16）",
                           xOf("settings.card.modules.name.1") -
                               xOf("settings.card.modules.name.0"),
                           [&] {
+                              const float contentW =
+                                  widthOf("settings.card.modules") - 56.0f;
+                              if (ms::modulesCardCols(
+                                      ms::kModuleToggleCellCount(platform::
+                                                                     wallpaper::
+                                                                         supported())) ==
+                                  3) {
+                                  return (contentW - 2.0f * 16.0f) / 3.0f +
+                                         16.0f;
+                              }
                               float cellW = 0.0f;
                               float cell2X = 0.0f;
-                              ui_kit::columnX(widthOf("settings.card.modules") -
-                                                  56.0f,
-                                              16.0f, &cellW, &cell2X);
+                              ui_kit::columnX(contentW, 16.0f, &cellW,
+                                              &cell2X);
                               return cell2X;
                           }());
-            if (err.empty())
-                // B6/F-69-3：>1.15 档降单列（2→1 列），次行距仍是 rowPitch 但隔两格
+            if (err.empty()) {
+                // B6/F-69-3：次行距 rowPitch。次行格 = 行主序下一行首格
+                // name.<cols>（2 列→name.2；池151 起 9 格 3 列→name.3；
+                // >1.15 档降单列隔两格→name.2 距 2×rowPitch）。
+                const int colsN =
+                    ms::modulesCardCols(
+                        ms::kModuleToggleCellCount(
+                            platform::wallpaper::supported()));
+                const int nextRowCell =
+                    ms::modulesCardSingleColumn() ? 2 : colsN;
                 err = pin("modules 次行 y 差（rowPitch=roundFs(56)）",
-                          yOf("settings.card.modules.name.2") -
+                          yOf(("settings.card.modules.name." +
+                               std::to_string(nextRowCell))
+                                  .c_str()) -
                               yOf("settings.card.modules.name.0"),
                           ms::modulesCardSingleColumn()
                               ? 2.0f * ms::modulesRowPitch()
                               : ms::modulesRowPitch());
+            }
             if (err.empty())
                 err = pin("modules 行内偏移",
                           yOf("settings.card.modules.rowdesc.0") -
@@ -2303,7 +2323,9 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             // 壁纸末格（模块卡内末行）：格几何随常规格机制派生——
             // 行 y = roundFs(68) + row×roundFs(56)、开关行内偏移 +6（字面）。
             if (err.empty() && platform::wallpaper::supported()) {
-                const int cols = ms::modulesCardSingleColumn() ? 1 : 2;
+                // 池151：列数与生产同源（9 格 3 列时末行 row = (cells-1)/cols）
+                const int cols = ms::modulesCardCols(
+                    ms::kModuleToggleCellCount(true));
                 const int cells = ms::kModuleToggleCellCount(true);
                 const float lastRow = static_cast<float>((cells - 1) / cols);
                 err = pin("wallpaper.name 高（同常规格 name）",
@@ -3556,10 +3578,11 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
     // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
-    // 常量 310 仅留作 100% 档参考锚——断言派生值在 100% 档恰好等于 310，防基准漂移。
+    // 常量 310 仅留作 100% 档参考锚。池151 起 MCP 归位常规格：9 格（含壁纸）
+    // 3 列 3 行派生值 254，8 格（无壁纸）两列 4 行仍 310。
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 310.0f);
     DOCTEST_CHECK_EQ(ms::modulesCardHeightFor(ms::kModuleToggleCellCount(true)),
-                     310.0f);
+                     254.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 

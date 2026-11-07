@@ -336,14 +336,6 @@ void drawModulesCard(const CardDrawArgs& args) {
         const char* name;
         const char* desc;
     };
-    // 标题行右半 MCP 开关行几何（池143：对齐提醒卡池132 两列镜像口径，卡高零增量）
-    const float mcpRowY = roundFs(12.0f);
-    const float mcpRowH = roundFs(28.0f);
-    const float mcpLabelW = roundFs(110.0f);
-    const float mcpSwW = kAutostartSwitchW;
-    const float mcpSwH = kAutostartSwitchH;
-    const float mcpHalfW = (w - 56.0f) * 0.5f;
-    const float mcpCol2X = 28.0f + mcpHalfW;
     static const ModuleMeta kToggleable[] = {
         {kModuleIdMarkdown, "Markdown",
          "本地文件存储 + SQLite FTS5 全文搜索"},
@@ -356,6 +348,8 @@ void drawModulesCard(const CardDrawArgs& args) {
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
         {kModuleIdMemory, "记忆",
          "telemem 记忆引擎面板（引擎未安装时仅显示引导，无后台成本）"},
+        // 池151：MCP 开关从标题行归位常规格（第 8 格）
+        {kModuleIdMcp, "MCP", "MCP 服务器接入配置与管理"},
         // 上线：一个开关控制「任务」+「基础配置」两个子页（多页模块共用门控键）
         {kModuleIdRelease, "上线",
          "任务执行与基础配置（两个子页同开同关）"},
@@ -384,44 +378,16 @@ void drawModulesCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            // 标题盒让位右半镜像行：宽 = 半列 − 8 间距（与 label 盒 x 相接不叠印）
-            cardTitle(ui, id, t, 16.0f, mcpCol2X - 8.0f - 28.0f, 22.0f, 22.0f,
-                      "模块");
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, 16.0f,
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
-
-            // MCP 服务开关（模块 tab 标题行右贴，零高度增量——不新增开关卡、不动
-            // 格阵与卡高）。池143（老板「样式这么奇怪」）：原为文字嵌入式
-            // toggleSwitch（150×28 盒），与全站「label + 44×24 wswitch」开关摆放
-            // 割裂；对齐提醒卡（池132）镜像口径——label x=半列左缘/w=110/行高 28
-            //（底沿恰贴 desc 行顶 40，不触发行盒重叠），开关贴半列右缘
-            //（col2X + halfW − swW = 卡内容右缘 − 44）。拨动走既有
-            // applyModuleEnabled 链路；可点击元素 = <id>.mcp.sw.track。
-            ui.text(id + ".mcp.label")
-                .position(mcpCol2X, mcpRowY)
-                .size(mcpLabelW, mcpRowH)
-                .text("MCP 服务")
-                .fontSize(t.sizes.fontSizeBody - 1.0f)
-                .lineHeight(mcpRowH)
-                .fontWeight(500)
-                .color(t.colors.textPrimary)
-                .maxWidth(mcpLabelW)
-                .overflow(core::TextOverflow::Ellipsis)
-                .clip()
-                .build();
-            ui_kit::wswitch(ui, id + ".mcp.sw",
-                            moduleEnabled(in.cfg, kModuleIdMcp),
-                            mcpCol2X + mcpHalfW - mcpSwW,
-                            mcpRowY + std::max(0.0f, (mcpRowH - mcpSwH) * 0.5f),
-                            mcpSwW, mcpSwH, t,
-                [f = a.applyModuleEnabled](bool v) { f(kModuleIdMcp, v); });
 
             // 开关格（B6/F-69-3：列数/格高内容派生）：≤1.15 档两列（行主序，
             // 0/1 同行异列）；>1.15 档降单列——放大后两列格宽放不下 name/desc。
             // 开关控件几何沿用 44×24（UAT3 由 80×32 收敛口径），在格内垂直居中。
             // 格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
-            const int gridCols = modulesCardSingleColumn() ? 1 : 2;
+            const int gridCols = modulesCardCols(cellCount);
             const float nameH = modulesNameH();
             const float rowDescDy = modulesRowDescDy();
             const float rowDescH = modulesRowDescH();
@@ -434,6 +400,8 @@ void drawModulesCard(const CardDrawArgs& args) {
             ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
             if (gridCols == 1) {
                 cellW = w - 56.0f;
+            } else if (gridCols == 3) {
+                cellW = ((w - 56.0f) - 2.0f * 16.0f) / 3.0f;
             }
             for (int i = 0; i < cellCount; ++i) {
                 const bool isWallpaper = wallpaperCell && i >= kToggleCount;
@@ -441,7 +409,11 @@ void drawModulesCard(const CardDrawArgs& args) {
                     isWallpaper ? kWallpaperToggle : kToggleable[i];
                 const int col = i % gridCols;   // 行主序
                 const int row = i / gridCols;
-                const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
+                // 2 列沿用 columnX 单一来源；1/3 列等分 + gap 16 直算
+                const float cellX =
+                    28.0f + (gridCols == 2 ? (col == 0 ? 0.0f : cell2X)
+                                           : static_cast<float>(col) *
+                                                 (cellW + 16.0f));
                 const float rowY = modulesGridTopY() +
                                    static_cast<float>(row) * rowPitch;
                 const float textW = cellW - switchW - switchGap;
@@ -872,7 +844,9 @@ void drawReminderCard(const CardDrawArgs& args) {
             const float swW = kAutostartSwitchW;
             const float swH = kAutostartSwitchH;
             const float halfW = (w - 56.0f) * 0.5f;
-            const float col2X = 28.0f + halfW;
+            // 池152：两列间加显式列距 16（原零列距——左列开关右缘恰贴右列
+            // label 左缘粘连错位）；右列开关仍贴卡内容右缘（w−28−swW）不随移。
+            const float col2X = 28.0f + halfW + 16.0f;
             ui.text(id + ".title.desc")
                 .position(28.0f, roundFs(22.0f))
                 .size(std::max(0.0f, w - 56.0f), descH)
@@ -913,7 +887,7 @@ void drawReminderCard(const CardDrawArgs& args) {
                           in.cfg.releaseReminderPopup,
                           [f = a.applyReminderPopup](bool v) { f(v); });
             drawSwitchRow(id + ".fs.label", "调度全屏弹窗", col2X,
-                          col2X + halfW - swW, in.cfg.fullscreenPopup,
+                          28.0f + halfW * 2.0f - swW, in.cfg.fullscreenPopup,
                           [f = a.applyFullscreenPopup](bool v) { f(v); });
         })
         .build();

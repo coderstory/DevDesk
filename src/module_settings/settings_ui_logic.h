@@ -151,20 +151,28 @@ inline float roundFs(float base) {
 inline bool modulesCardSingleColumn() {
     return ::core::theme::fontScale() > 1.15f;
 }
+// 列数派生：>1.15 档降单列；其余档 cells>8 时 3 列（池151：MCP 归位后 9 格 2 列
+// 撑 5 行，模块卡 366+16+92=474>420 破模块 tab 零滚动 → 3×3 恰 3 行），其余两列。
+inline int modulesCardCols(int cells) {
+    if (modulesCardSingleColumn()) return 1;
+    return cells > 8 ? 3 : 2;
+}
 inline int modulesCardRows(int cells) {
-    const int cols = modulesCardSingleColumn() ? 1 : 2;
+    const int cols = modulesCardCols(cells);
     return (cells + cols - 1) / cols;
 }
-// 开关格数 = 常规 7（kToggleable 表行数，drawModulesCard 有 static_assert 钉住）+ 壁纸格
+// 开关格数 = 常规 8（kToggleable 表行数；2026-11-07 MCP 开关从模块卡标题行
+// 归位常规格，池151）+ 壁纸格
 inline int kModuleToggleCellCount(bool wallpaperSupported) {
-    return 7 + (wallpaperSupported ? 1 : 0);
+    return 8 + (wallpaperSupported ? 1 : 0);
 }
 inline float modulesGridTopY() { return roundFs(68.0f); }   // 100% = 68
 inline float modulesNameH() { return roundFs(18.0f); }      // 100% = 18
 inline float modulesRowDescDy() { return modulesNameH() + roundFs(2.0f); }
 inline float modulesRowDescH() { return roundFs(16.0f); }   // 100% = 16
 inline float modulesRowPitch() { return roundFs(56.0f); }   // 100% = 56
-// 100% 档两列 4 行：68 + 3×56 + (18+2+16) + 38 = 310（对齐 kModulesCardHeight）
+// 100% 档：8 格（壁纸不支持）两列 4 行 = 310（对齐 kModulesCardHeight）；
+// 9 格（含壁纸格）3 列 3 行 = 68 + 2×56 + (18+2+16) + 38 = 254。
 inline float modulesCardHeightFor(int cells) {
     const float cellH = modulesNameH() + roundFs(2.0f) + modulesRowDescH();
     return modulesGridTopY() +

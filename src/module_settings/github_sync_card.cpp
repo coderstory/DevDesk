@@ -295,25 +295,25 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             }
         }
 
-        // ── 启用 / 自动推送：各成一整行（UAT6，模块插拔卡开关行先例）──
-        // 行宽 = 卡内宽（弹性契约，无固定帽）：label 左块贴卡左缘、右缘让
-        // 位开关（间距 8），开关钉卡内容右缘、行盒内垂直居中。启用行在上（总
-        // 开关，不加 lock——始终可点，是重新启用的入口）；自动推送行在下，整行
-        // 经 lock 包装层置灰禁用（disabled 子树不可命中/不可聚焦 + opacity 调暗）。
-        // UAT6 零滚动收口：说明文案行删除（label 自承担语义，开关行语义不变），
-        // 行盒 36→28 贴主开关高。行底仍取 max(行盒, 文本块, 开关)——防小字号档
-        // roundFs 舍入把 28 高主开关挤出缩放后的行盒。
+        // ── 启用 / 自动推送：同行两半列（池153，2026-11-07；原 UAT6 各成一整行，
+        // 提醒卡两列镜像范式）──列距 16 对齐池152 口径：左半列 label 贴卡左缘、
+        // 开关贴半列右缘；右半列 label 在 col2X、开关贴卡内容右缘（=右半列右缘）。
+        // 启用（总开关，不加 lock——始终可点，是重新启用的入口）居左；自动推送
+        // 整半列经 lock 包装层置灰禁用（disabled 子树不可命中/不可聚焦 + opacity
+        // 调暗）。行盒 = max(行盒, 文本块, 开关)——防小字号档 roundFs 舍入把
+        // 24 高主开关挤出缩放后的行盒。同行后 y 游标少一行，卡高 420 常量不动。
         const float rowH = roundFs(kRowH);
         const float toggleRowH = roundFs(kToggleRowH);
         const float rowGap = roundFs(kRowGap);
         const float toggleLabelH = roundFs(kToggleLabelH);
+        const float halfColGap = roundFs(16.0f);
+        const float halfW = (w - kCardPaddingX * 2.0f - halfColGap) * 0.5f;
+        const float halfCol2X = kCardPaddingX + halfW + halfColGap;
         const auto toggleRowText = [&](const char* suffix, const char* label,
-                                       float swW, float rowY) {
-            const float textW =
-                std::max(0.0f, w - kCardPaddingX * 2.0f - swW -
-                                   roundFs(kSwitchLabelGap));
+                                       float labelX, float textW, float swW,
+                                       float rowY) {
             ui.text(id + suffix + ".label")
-                .position(kCardPaddingX,
+                .position(labelX,
                           rowY + (toggleRowH - toggleLabelH) * 0.5f)
                 .size(textW, toggleLabelH)
                 .text(label)
@@ -330,16 +330,14 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         const float enableRowY = summaryY + mutedH + rowGap;
         const float enableSwY = enableRowY + (toggleRowH - kMainSwitchH) * 0.5f;
         const float enableTextBottom = toggleRowText(
-            ".enabled", "启用", kMainSwitchW, enableRowY);
+            ".enabled", "启用", kCardPaddingX,
+            std::max(0.0f, halfW - kMainSwitchW - roundFs(kSwitchLabelGap)),
+            kMainSwitchW, enableRowY);
         ui_kit::wswitch(ui, id + ".enabled.sw", in.githubSyncEnabled,
-                        w - kCardPaddingX - kMainSwitchW, enableSwY,
+                        kCardPaddingX + halfW - kMainSwitchW, enableSwY,
                         kMainSwitchW, kMainSwitchH, t,
                         [f = a.applyGithubSyncEnabled](bool v) { f(v); });
-        const float autoRowY =
-            std::max(enableRowY + toggleRowH,
-                     std::max(enableTextBottom, enableSwY + kMainSwitchH)) +
-            rowGap;
-        const float autoSwY = autoRowY + (toggleRowH - kAutoSwitchH) * 0.5f;
+        const float autoSwY = enableRowY + (toggleRowH - kAutoSwitchH) * 0.5f;
         const float autoSwX = w - kCardPaddingX - kAutoSwitchW;
         float autoTextBottom = 0.0f;
         ui.stack(id + ".autopush.lock")
@@ -348,7 +346,10 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
             .content([&] {
                 autoTextBottom = toggleRowText(
-                    ".autopush", "自动推送", kAutoSwitchW, autoRowY);
+                    ".autopush", "自动推送", halfCol2X,
+                    std::max(0.0f, halfW - kAutoSwitchW -
+                                       roundFs(kSwitchLabelGap)),
+                    kAutoSwitchW, enableRowY);
                 ui_kit::wswitch(ui, id + ".autopush.sw", in.githubSyncAutoPush,
                                 autoSwX, autoSwY, kAutoSwitchW, kAutoSwitchH, t,
                                 [f = a.applyGithubSyncAutoPush](bool v) {
@@ -357,9 +358,11 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             })
             .build();
 
-        // 纵向游标：头部内容底 = 自动推送行底（已含 max(行盒/文本块/开关)）。
-        float y = std::max(autoRowY + toggleRowH,
-                           std::max(autoTextBottom, autoSwY + kAutoSwitchH));
+        // 纵向游标：头部内容底 = 同行开关行底（max(两半列 行盒/文本块/开关)）。
+        float y = std::max(std::max(enableRowY + toggleRowH, enableTextBottom),
+                           std::max(enableSwY + kMainSwitchH,
+                                    std::max(autoTextBottom,
+                                             autoSwY + kAutoSwitchH)));
         const float formW = w - kCardPaddingX * 2.0f;
         // 双列几何沿用：列间距 = 行距（kRowGap = 小间距令牌 8，H28 恢复）；每列宽 =
         // (formW − 列距)/2，右列外缘与全宽行同贴卡内容右缘；label 走 formRow 定宽 110。
