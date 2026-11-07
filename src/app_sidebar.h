@@ -76,6 +76,10 @@ void setFluidWindowVisibleMode(std::optional<bool> mode);
 // 测试缝：复位动态背景全部进程级状态（镜像/可见态覆写/相位钟），纯内存零持久化
 void resetFluidBackgroundForTests();
 
+// 测试缝：20fps 泵当前是否应激活（bug#194；drawFluidBackground 每帧按门控写入，
+// 旧 onFrame 驱动元素已退役，树内无泵元素可断言）
+bool fluidPumpActiveForTests();
+
 // 当前侧边栏宽度 / 模块内容区宽度（compose 布局与单测共用同一真值）
 float sidebarWidth();
 float pageContentWidth(float windowWidth);

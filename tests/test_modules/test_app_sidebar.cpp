@@ -219,17 +219,13 @@ REGISTER_TEST(fluid_background_compose_elements,
     }
     // 数量判据：恰好 14 晕，第 15 个不存在
     DOCTEST_CHECK(fx.ui.find("app.fluid.halo." + std::to_string(kHalos)) == nullptr);
-    const auto* driver = fx.ui.find("app.fluid.anim.driver");
-    DOCTEST_REQUIRE(driver != nullptr);
-    DOCTEST_REQUIRE(driver->onFrame != nullptr);
+    // bug#194：树内帧泵元素退役——20Hz 出帧由自持泵线程负责（app_sidebar.cpp
+    // FluidPump），树内不再有 app.fluid.anim.driver；可见门控即泵激活。
+    DOCTEST_CHECK(fx.ui.find("app.fluid.anim.driver") == nullptr);
+    DOCTEST_CHECK(app::fluidPumpActiveForTests());
 
-    // 相位钟由壁钟驱动（H13 fix）：onFrame 泵仍在树提供帧回调，但相位不依赖 dt 累加
-    const float before = app::fluidPhaseSeconds();
-    driver->onFrame(0.04f);
-    driver->onFrame(2.0f);
-    const float after = app::fluidPhaseSeconds();
-    DOCTEST_CHECK(after >= before);
-    DOCTEST_CHECK(before > 0.0f);
+    // 相位钟由壁钟驱动（H13 fix 不变）：泵只决定何时出帧，相位不依赖帧回调
+    DOCTEST_CHECK(app::fluidPhaseSeconds() > 0.0f);
 
     app::resetFluidBackgroundForTests();  // 复位：进程级状态不还原会污染后续用例
     return true;
@@ -254,15 +250,14 @@ REGISTER_TEST(fluid_background_gate_zero_cost,
     DOCTEST_CHECK(fx.ui.find("app.fluid.halo.0") == nullptr);
     DOCTEST_CHECK(fx.ui.find("app.fluid.sat.0.0") == nullptr);
     DOCTEST_CHECK(fx.ui.find("app.fluid.anim.driver") == nullptr);
+    DOCTEST_CHECK(!app::fluidPumpActiveForTests());  // bug#194：不可见泵挂起
 
     // 恢复可见：元素与帧泵回归；不可见期间相位零推进（从冻结处继续）
     const float phaseFrozen = app::fluidPhaseSeconds();
     app::setFluidWindowVisibleMode(true);
     fx.frame();
     DOCTEST_CHECK(fx.ui.find("app.fluid.halo.0") != nullptr);
-    const auto* driver = fx.ui.find("app.fluid.anim.driver");
-    DOCTEST_REQUIRE(driver != nullptr);
-    DOCTEST_REQUIRE(driver->onFrame != nullptr);
+    DOCTEST_CHECK(app::fluidPumpActiveForTests());  // bug#194：恢复可见泵回归
     DOCTEST_CHECK(floatEq(app::fluidPhaseSeconds(), phaseFrozen));
 
     // 开关关：同样零成本（背景恢复静态 = 流质整体不画）
@@ -270,6 +265,7 @@ REGISTER_TEST(fluid_background_gate_zero_cost,
     fx.frame();
     DOCTEST_CHECK(fx.ui.find("app.fluid.halo.0") == nullptr);
     DOCTEST_CHECK(fx.ui.find("app.fluid.anim.driver") == nullptr);
+    DOCTEST_CHECK(!app::fluidPumpActiveForTests());  // bug#194：开关关泵挂起
 
     app::resetFluidBackgroundForTests();
     return true;

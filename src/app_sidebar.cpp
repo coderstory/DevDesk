@@ -27,11 +27,16 @@
 #include <eui/types.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <cstdlib>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <set>
+#include <thread>
 #include <utility>
 #include <vector>  // §11 行规划表 navPlan
 
@@ -71,6 +76,56 @@ std::optional<bool> g_fluidVisibleMode;
 // 只写死状态已随 W3.5 审计 B（F4）移除。注意：壁钟模式下最小化/藏托盘期间相位
 // 照走、休眠恢复会跳变——原「隐藏冻结 + dt 钳 0.1s」语义待 elapsed helper 收口。
 static std::chrono::steady_clock::time_point g_fluidEpoch = std::chrono::steady_clock::now();
+
+// ── 20fps 限帧泵（bug#194，老板定值 note326）─────────────────────────────
+// 旧方案：常驻 1x1 onFrame 驱动元素让 runtime 置 animating_ → 主循环按刷新率
+// 满帧出帧（实测 60fps，动态背景是唯一持续动画时帧循环被它独占吃满）。
+// 新方案：守护线程 50ms 节拍调 core::platform::requestFrame()（线程安全，EUI
+// async worker 同款先例）唤醒恰好一帧 compose——流质位置走壁钟相位，50ms 一帧
+// 即推进；其余时间主循环回空闲等事件（SDL_WaitEventTimeout），零出帧零渲染。
+// 交互/其它动画不受限：它们各自驱动满帧率，流质只是搭车多画几帧。
+constexpr int kFluidPumpPeriodMs = 50;  // 20fps（老板定值）
+struct FluidPump {
+    std::mutex m;
+    std::condition_variable cv;
+    std::atomic<bool> active{false};  // atomic：compose 线程写、泵线程判读，跨线程语义不走侥幸
+    std::atomic<bool> stop{false};
+    std::thread t;
+    FluidPump() : t([this] { run(); }) {}
+    ~FluidPump() {
+        stop.store(true);
+        cv.notify_all();
+        t.join();
+    }
+    void run() {
+        std::unique_lock<std::mutex> lk(m);
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (!active.load(std::memory_order_relaxed)) {
+                cv.wait(lk, [this] { return active.load(std::memory_order_relaxed) || stop.load(); });
+                continue;
+            }
+            if (cv.wait_for(lk, std::chrono::milliseconds(kFluidPumpPeriodMs)) ==
+                std::cv_status::timeout) {
+                if (active.load(std::memory_order_relaxed) && !stop.load()) {
+                    // requestUiUpdate（claude 后台任务同款唤醒出口，生产验证过）：
+                    // 置 ui+frame 双请求旗标并 postEmptyEvent——单 requestFrame 的
+                    // 唤醒在本机 GLFW/Cocoa 上实测不生效（2026-11-07 bug#194）
+                    ::core::platform::requestUiUpdate();
+                }
+            }
+        }
+    }
+    void setActive(bool a) {
+        if (active.exchange(a) == a) return;  // compose 每帧都调：值不变零 notify
+        ::core::platform::setFramePacerActive(a);  // EUI 主循环空闲限时等待的开关（见 glfw_app_main）
+        cv.notify_all();
+    }
+    bool isActive() const { return active.load(std::memory_order_relaxed); }
+};
+FluidPump& fluidPump() {
+    static FluidPump p;
+    return p;
+}
 
 // 确定性 0~1 hash（splash.cpp 墨染同款 sin 散列取小数）：卫星的角度/距离/大小
 // 全由索引 hash 决定——帧间稳定不闪烁，只随相位缓慢漂移（有机噪声感）
@@ -224,7 +279,12 @@ void resetFluidBackgroundForTests() {
     g_fluidEnabled.reset();
     g_fluidVisibleMode.reset();
     g_fluidEpoch = std::chrono::steady_clock::now();
+    fluidPump().setActive(false);  // 泵随门控回厂（bug#194）：用例间不残留激活态
 }
+
+// 测试缝：20fps 泵当前门控态（drawFluidBackground 每帧按「开关开 && 窗可见」写入，
+// bug#194 门控语义断言用；旧 onFrame 驱动元素已退役，树内无泵可断言）
+bool fluidPumpActiveForTests() { return fluidPump().isActive(); }
 
 void showAppNotice(const std::string& title, const std::string& message) {
     g_appNotice.show(title, message, false);
@@ -1086,8 +1146,12 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 // 观感从「几大团」变「多小晕流动」。帧泵与门控同旧版。z 序最底，正文可读
 // 性零影响。B5 起 14 层、角速度 0.070~0.166 rad/s（提速 ×2），整圈 38~90s。
 void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
-    if (!fluidBackgroundEnabled()) return;  // 开关关：零元素零泵（零成本）
-    if (!fluidWindowVisible()) return;      // 铁律：最小化/藏托盘 → 不挂泵不推进
+    // 门控即泵联动（bug#194）：可见且开启才画元素并维持 20Hz 泵激活；否则零元素
+    // 且泵挂起——主循环回空闲等事件，零出帧零渲染（铁律语义不变）。
+    const bool pumpActive = fluidBackgroundEnabled() && fluidWindowVisible();
+    fluidPump().setActive(pumpActive);
+    if (!pumpActive) return;
+    const auto fpsT0 = std::chrono::steady_clock::now();  // bug#194 单帧耗时口径
 
     const auto& t = ::core::theme::current();
 
@@ -1166,14 +1230,34 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
                 .build();
         }
     }
-    // 帧泵（md.tree.anim.driver / splash.ink.anim.driver 同款先例）：常驻 1x1 空
-    // onFrame 元素——只借它让 runtime 置 animating_/composeRequested_ 保持持续
-    // 出帧（流质背景须逐帧重渲）。相位推进不再在此回调：71ce7d4c 起相位走壁钟
-    // fluidPhaseSeconds()，回调体只写死 g_fluidPhase 已随 W3.5 审计 B（F4）清空。
-    ui.stack("app.fluid.anim.driver")
-        .size(1.0f, 1.0f)
-        .onFrame([](float) {})
-        .build();
+    // 帧泵元素已退役（bug#194）：原常驻 1x1 onFrame 驱动（app.fluid.anim.driver，
+    // md.tree.anim.driver 同款先例）令 runtime 置 animating_ 满刷新率持续出帧，
+    // 是动态背景持续吃 GPU 的主因；出帧改由文件头 FluidPump 20Hz 自持泵线程驱动，
+    // 树内不再有帧泵元素。相位不受影响：仍走壁钟 fluidPhaseSeconds()（71ce7d4c，
+    // g_fluidPhase 写死状态已随 W3.5 审计 B（F4）清空）。
+    // bug#194 帧率自证（DEVDESK_FLUID_FPS_LOG=1 才产出，生产零成本）：每 5s 记
+    // 「流质可见帧」实际出帧率与单帧 compose 建元素耗时——限帧前后对比数据源。
+    static const bool kFpsLog = std::getenv("DEVDESK_FLUID_FPS_LOG") != nullptr;
+    if (kFpsLog) {
+        static int frames = 0;
+        static long long buildUsTotal = 0;
+        static auto windowStart = std::chrono::steady_clock::now();
+        ++frames;
+        buildUsTotal += std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - fpsT0).count();
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - windowStart).count();
+        if (elapsed >= 5.0) {
+            LOG_INFO("[fluid-fps] rate=" + std::to_string(frames / elapsed) +
+                     "fps avg_build=" +
+                     std::to_string(static_cast<double>(buildUsTotal) / frames) +
+                     "us frames=" + std::to_string(frames) + " window=" +
+                     std::to_string(elapsed) + "s");
+            frames = 0;
+            buildUsTotal = 0;
+            windowStart = now;
+        }
+    }
 }
 
 void compose(eui::Ui& ui, const eui::Screen& screen) {
