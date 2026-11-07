@@ -1033,8 +1033,12 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     }
 
     // ── 触发线设置（阈值滑条持久化 + 基线磁贴）──
+    // bug187（2026-11-07）：卡高随字号派生（B6/F-69-2 同款）——固定 218 + 内容
+    // 偏移全走 scaled() = 字号放大档基线磁贴坠出卡底（140% 档实测坠出 58px）；
+    // 数字盒宽固定 20px 时「11」大档位截断成「1」（老板读作 5/3/1）。磁贴行
+    // 补一行小标注（含义随卡可读）；三磁贴横带并排，不过 R6。
     {
-        constexpr float kCardH = 218.0f;
+        const float kCardH = core::theme::scaled(232.0f);
         ui_kit::cardPanel(ui, "memory.cfg.trig", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.trig.title", cy, "触发线设置");
         ui.text("memory.cfg.trig.hint")
@@ -1123,7 +1127,16 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .color(t.colors.textPrimary)
                 .build();
         }
-        // 基线磁贴（5 / 3 / 11，定案 7 自研基线）
+        // 标注行（bug187：数字卡片含义随卡可读——三步记词门槛的总说明）
+        ui.text("memory.cfg.trig.tiles-cap")
+            .position(x + 16.0f, cy + core::theme::scaled(172.0f))
+            .size(innerW, core::theme::scaled(16.0f))
+            .text("记词基线 · 一个词过完这三步才会被长期记住：")
+            .fontSize(core::theme::scaled(11.0f))
+            .lineHeight(core::theme::scaled(16.0f))
+            .color(t.colors.textTertiary)
+            .build();
+        // 基线磁贴（5 / 3 / 11，定案 7 自研基线）；几何全走 scaled（bug187）
         const char* tiles[3] = {"命中 5 次 → 候选", "复现 3 轮 → 确认",
                                 "11 天窗口内有效"};
         const char* nums[3] = {"5", "3", "11"};
@@ -1131,14 +1144,15 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             const float tw = (innerW - 2.0f * 12.0f) / 3.0f;
             const float tx = x + 16.0f + static_cast<float>(i) * (tw + 12.0f);
             ui.rect("memory.cfg.trig.tile" + std::to_string(i))
-                .position(tx, cy + core::theme::scaled(176.0f))
-                .size(tw, 30.0f)
+                .position(tx, cy + core::theme::scaled(192.0f))
+                .size(tw, core::theme::scaled(30.0f))
                 .color(t.colors.active)
                 .radius(t.sizes.radiusSmall)
                 .build();
             ui.text("memory.cfg.trig.tilen" + std::to_string(i))
-                .position(tx + 10.0f, cy + core::theme::scaled(182.0f))
-                .size(20.0f, core::theme::scaled(18.0f))
+                .position(tx + core::theme::scaled(10.0f),
+                          cy + core::theme::scaled(198.0f))
+                .size(core::theme::scaled(24.0f), core::theme::scaled(18.0f))
                 .text(nums[i])
                 .fontSize(core::theme::scaled(13.0f))
                 .lineHeight(core::theme::scaled(18.0f))
@@ -1146,8 +1160,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .color(t.colors.primaryText)
                 .build();
             ui.text("memory.cfg.trig.tilet" + std::to_string(i))
-                .position(tx + 36.0f, cy + core::theme::scaled(182.0f))
-                .size(tw - 44.0f, core::theme::scaled(18.0f))
+                .position(tx + core::theme::scaled(40.0f),
+                          cy + core::theme::scaled(198.0f))
+                .size(tw - core::theme::scaled(48.0f),
+                      core::theme::scaled(18.0f))
                 .text(tiles[i])
                 .fontSize(core::theme::scaled(11.0f))
                 .lineHeight(core::theme::scaled(18.0f))

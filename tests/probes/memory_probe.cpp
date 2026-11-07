@@ -451,6 +451,56 @@ int main(int argc, char* argv[]) {
     for (int i = 0; i < 8; ++i) composeFrame();
     shoot("memory-config.png", &A.passed);
 
+    // ── 组 C2：字号放大档（140%）触发线基线磁贴（bug187，2026-11-07）──
+    // 错位只在非 100% 档显形：触发线卡高若不随字号派生，磁贴行（scaled 偏移）
+    // 会坠出卡底；数字盒宽若固定 20px，「11」在大档位截断成「1」（老板读作
+    // 5/3/1）。断言：磁贴底 ≤ 卡底 - 2px、数字盒宽随档缩放、标注行随卡可读。
+    core::theme::setFontScale(1.4f);
+    composeFrame();
+    composeFrame();
+    // 滚到页底让基线磁贴入镜（setScrollOffset 帧末消费并 clamp 到 maxOffset，
+    // home_probes 同款口径）
+    if (A.ui != nullptr) {
+        const auto* sc = A.ui->find("memory.config.scroll");
+        if (sc != nullptr && sc->scrollMaxOffset > 0.0f) {
+            A.ui->setScrollOffset("memory.config.scroll", sc->scrollMaxOffset);
+            composeFrame();
+            composeFrame();
+        }
+    }
+    {
+        const auto* card = A.elem("memory.cfg.trig");
+        const auto* tile2 = A.elem("memory.cfg.trig.tile2");
+        const auto* num2 = A.elem("memory.cfg.trig.tilen2");
+        if (card == nullptr || tile2 == nullptr || num2 == nullptr) {
+            std::cerr << "memory_probe: FAIL——触发线卡/磁贴元素缺失（140% 档）\n";
+            A.passed = false;
+        } else {
+            const float tileBottom = tile2->frame.y + tile2->frame.height;
+            const float cardBottom = card->frame.y + card->frame.height;
+            std::cout << "DBG trig card bottom=" << cardBottom
+                      << " tile2 bottom=" << tileBottom
+                      << " num2 w=" << num2->frame.width << NL;
+            if (tileBottom > cardBottom - 2.0f) {
+                std::cerr << "memory_probe: FAIL——基线磁贴坠出触发线卡底（140% 档）\n";
+                A.passed = false;
+            }
+            if (num2->frame.width <= 22.0f) {
+                std::cerr << "memory_probe: FAIL——数字盒宽未随字号缩放（「11」截断风险）\n";
+                A.passed = false;
+            }
+        }
+        A.textHas("memory.cfg.trig.tiles-cap", "记词基线");
+    }
+    for (int i = 0; i < 8; ++i) composeFrame();
+    shoot("memory-config-scale140.png", &A.passed);
+    core::theme::setFontScale(1.0f);
+    if (A.ui != nullptr) {
+        A.ui->setScrollOffset("memory.config.scroll", 0.0f);  // 还原页顶
+    }
+    composeFrame();
+    composeFrame();
+
     // ── 组 G：向导四步（need:202 F-04/F-05）——③ embedding 本机包四态 + ④ 顺延 ──
     // 打开向导（点 memory.eng.wizard，命中链口径同组 E），③/④ 行文案随注入的
     // Snapshot.embed* 字段走（向导只读字段不探文件系统，设计 §4 实现约束）。
