@@ -72,6 +72,11 @@ struct SettingsCardsIn {
     std::string projectCardSelectedName;      // 选中卡名（列表高亮 + 删除/改名目标）
     std::string projectCardStatus;            // 反馈行文案（空 = 空白占位）
     bool projectCardStatusError = false;      // true = 红字；false = 三级字
+
+    // 代理端口行反馈位（need155 §5.2，机制=MCP 端口行同款；追加末尾——本结构
+    // compose 侧按位置聚合初始化，中段插字段会错位）
+    std::string proxyPortFeedback;             // 非空 = 端口行反馈位文案（替代静态提示）
+    bool proxyPortFeedbackError = false;       // true = 红字；false = 三级字
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）

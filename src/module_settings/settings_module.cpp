@@ -502,17 +502,20 @@ public:
                  std::string(on ? "true" : "false"));
     }
 
-    // 应用代理端口：重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
+    // 应用代理端口（need155：反馈位在卡内说明列，机制=MCP 端口行同款；setStatus
+    // 无页头渲染面，不再作反馈通道）。重启失败时代理已停、sidecar 已还原。
     void applyProxyPort() {
         int port = 0;
         if (!parseProxyPortInput(proxyPortDraft_, port)) {
-            setStatus("端口无效：请输入 " + std::to_string(kMinProxyPort) +
-                          " - " + std::to_string(kMaxProxyPort) + " 的纯数字",
-                      true);
+            proxyPortFeedback_ =
+                "端口无效：请输入 " + std::to_string(kMinProxyPort) + " - " +
+                std::to_string(kMaxProxyPort) + " 的纯数字";
+            proxyPortFeedbackError_ = true;
             return;
         }
         if (port == cfg_.proxyPort) {
-            setStatus("代理端口未变化（" + std::to_string(port) + "）");
+            proxyPortFeedback_ = "端口未变化（" + std::to_string(port) + "）";
+            proxyPortFeedbackError_ = false;
             return;
         }
         const int oldPort = cfg_.proxyPort;
@@ -526,9 +529,10 @@ public:
         }
         if (!svc || !svc->isProxyRunning()) {
             // 端口生效时机两处必须同步：① main.cpp assembleClaudeServiceNow 装配注入；② 会话内启用 claude 模块时的惰性装配。
-            setStatus("代理端口已保存：" + std::to_string(oldPort) + " → " +
-                      std::to_string(port) +
-                      "（代理未运行：手动启动代理，或启用 claude 模块时生效）");
+            proxyPortFeedback_ = "已保存：" + std::to_string(oldPort) + " → " +
+                                 std::to_string(port) +
+                                 "（代理未运行：启动后生效）";
+            proxyPortFeedbackError_ = false;
             LOG_INFO("Settings: 代理端口 " + std::to_string(oldPort) + " → " +
                      std::to_string(port) +
                      "（代理未运行；手动启动代理 / 本会话内启用 claude 模块时生效）");
@@ -539,15 +543,16 @@ public:
         // stop→start 会改写/删除 sidecar；就地刷新快照（成败都刷）。
         refreshExternalState();
         if (r.isFail()) {
-            setStatus("端口已保存为 " + std::to_string(port) +
-                          "，但代理重启失败（" + r.errorMessage() +
-                          "）；代理已停止，可换端口或释放占用后在 Claude 页重启",
-                      true);
+            proxyPortFeedback_ = "已保存 " + std::to_string(port) +
+                                 "，重启失败（" + r.errorMessage() + "）";
+            proxyPortFeedbackError_ = true;
             LOG_ERROR("Settings: 代理端口改 " + std::to_string(port) +
                       " 重启失败: " + r.errorMessage());
             return;
         }
-        setStatus("代理端口已改为 " + std::to_string(port) + " 并自动重启");
+        // 成功 → 反馈位回静态提示
+        proxyPortFeedback_.clear();
+        proxyPortFeedbackError_ = false;
         LOG_INFO("Settings: 代理端口 " + std::to_string(oldPort) + " → " +
                  std::to_string(port) + "，代理已自动重启");
     }
@@ -565,6 +570,9 @@ public:
 
     void setProxyPortDraft(const std::string& v) {
         proxyPortDraft_ = v;
+        // 输入变化即清反馈位（回静态提示，红字不跨输入存活；MCP 端口行同款）。
+        proxyPortFeedback_.clear();
+        proxyPortFeedbackError_ = false;
         // 校验错误态随下一次输入清除（UAT5 页头小字删除后 status* 仅内部状态，
         // 无渲染面；清错逻辑保留给后续可能的新反馈通道）。
         if (statusIsError_) {
@@ -1618,6 +1626,9 @@ private:
         in.takeoverManaged = takeoverManaged_;
         in.openDropdown = openDropdown_;
         in.proxy = svc;
+        // 代理端口行反馈位（need155，机制=MCP 端口行同款）
+        in.proxyPortFeedback = proxyPortFeedback_;
+        in.proxyPortFeedbackError = proxyPortFeedbackError_;
         // 开机自启动（UAT6）：注册真值快照（POSIX 兜底 false → 行整行不建）
         in.autostartSupported = autostartSupported_;
         in.autostartRegistered = autostartRegistered_;
@@ -1928,6 +1939,8 @@ private:
     int openDropdown_ = -1;
     // 代理端口输入草稿：空 = 未编辑（compose 显示 cfg_.proxyPort），应用成功后刷新。
     std::string proxyPortDraft_;
+    std::string proxyPortFeedback_;           // 端口行反馈位（need155，卡内说明列）
+    bool proxyPortFeedbackError_ = false;     // true = 红字
     // MCP 端口行（草稿 + 卡内反馈位）与桥状态快照（compose 每帧刷新）。
     std::string mcpPortDraft_;
     std::string mcpPortFeedback_;             // 非空 = 反馈位文案（替代静态提示）

@@ -859,7 +859,7 @@ REGISTER_TEST(settings_form_flex_dual_tier,
         const char* page;
         float cardW = 0.0f;
         float hintW = 0.0f;
-        float valueW = 0.0f;
+        float pillW = 0.0f;           // 接管状态胶囊（内容实宽，定宽不伸）
         float inputW = 0.0f;
         float applyW = 0.0f;
         float applyRightGap = 0.0f;   // 按钮右缘 → 卡右缘
@@ -880,17 +880,17 @@ REGISTER_TEST(settings_form_flex_dual_tier,
         const auto* hint = ui.find("settings.card.proxy.port.hint");
         const auto* input = ui.find("settings.card.proxy.port.input");
         const auto* apply = ui.find("settings.card.proxy.port.apply.bg");
-        const auto* value = ui.find("settings.card.proxy.takeover.value");
+        const auto* pill = ui.find("settings.card.proxy.pill.takeover");
         const auto* autostart = ui.find("settings.card.proxy.autostart");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_REQUIRE(input != nullptr);
         DOCTEST_REQUIRE(apply != nullptr);
-        DOCTEST_REQUIRE(value != nullptr);
+        DOCTEST_REQUIRE(pill != nullptr);
         DOCTEST_REQUIRE(autostart != nullptr);
         tier.cardW = card->frame.width;
         tier.hintW = hint->frame.width;
-        tier.valueW = value->frame.width;
+        tier.pillW = pill->frame.width;
         tier.inputW = input->frame.width;
         tier.applyW = apply->frame.width;
         tier.applyRightGap = (card->frame.x + card->frame.width) -
@@ -909,13 +909,14 @@ REGISTER_TEST(settings_form_flex_dual_tier,
         // 自启动开关盒宽 = 内容实宽（轨+字），右缘同钉 28——盒宽超出即右侧死区
         DOCTEST_CHECK(std::fabs(tier.autoRightGap - 28.0f) < 0.5f);
     }
-    // 说明列 flex：卡宽增量全归说明列（1000 档提示/状态值显著更宽）
+    // 状态胶囊（need155）：内容实宽定宽不伸（两档同宽，宽窗增量全归说明列）
+    DOCTEST_CHECK(tiers[0].pillW > 0.0f);
+    DOCTEST_CHECK(std::fabs(tiers[1].pillW - tiers[0].pillW) < 0.5f);
+    // 说明列 flex：卡宽增量全归说明列（1000 档提示显著更宽）
     DOCTEST_CHECK(tiers[1].cardW > tiers[0].cardW + 500.0f);
     DOCTEST_CHECK(tiers[1].hintW > tiers[0].hintW + 500.0f);
-    DOCTEST_CHECK(tiers[1].valueW > tiers[0].valueW + 500.0f);
-    // 640 档列宽公式复算：hint = (卡宽 − 174) − 96 − 8 − 64 − 12；value = 卡宽 − 218
+    // 640 档列宽公式复算：hint = (卡宽 − 174) − 96 − 8 − 64 − 12
     DOCTEST_CHECK(std::fabs(tiers[0].hintW - (tiers[0].cardW - 354.0f)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(tiers[0].valueW - (tiers[0].cardW - 218.0f)) < 0.5f);
 
     mod->onStop();
     ::core::theme::setDark();
@@ -1294,12 +1295,12 @@ REGISTER_TEST(settings_takeover_status_row,
     // UAT5：接管状态行随代理卡在「通用」tab
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     // DOCTEST_CHECK 宏内含 return false，不能进返回 string 的 lambda——故用 out 参数收敛
-    auto composeTakeoverText = [&](std::string* out) -> bool {
+    auto composeTakeoverPill = [&](std::string* out) -> bool {
         eui::Ui ui;
         ui.begin("takeover_status");
         mod->compose(ui, screen);
         ui.end();
-        const auto* v = ui.find("settings.card.proxy.takeover.value");
+        const auto* v = ui.find("settings.card.proxy.pill.takeover.label");
         if (v == nullptr) return false;
         *out = v->text;
         return true;
@@ -1308,11 +1309,11 @@ REGISTER_TEST(settings_takeover_status_row,
     // 启动前：未接管
     {
         std::string text;
-        DOCTEST_CHECK(composeTakeoverText(&text));
+        DOCTEST_CHECK(composeTakeoverPill(&text));
         DOCTEST_CHECK(text.find("未接管") != std::string::npos);
     }
 
-    // 启动代理 → takeOver → 已接管 + 路径 + 覆盖警告行
+    // 启动代理 → takeOver → 已接管（路径收 tooltip，need155 D4）+ 覆盖警告带
     auto start = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(start.isOk());
     // 接管状态是只读快照（compose 不每帧 stat sidecar）。刷新点 = onStart / 进页面 /
@@ -1320,14 +1321,18 @@ REGISTER_TEST(settings_takeover_status_row,
     mod->onPageEnter();
     {
         std::string text;
-        DOCTEST_CHECK(composeTakeoverText(&text));
+        DOCTEST_CHECK(composeTakeoverPill(&text));
         DOCTEST_CHECK(text.find("已接管") != std::string::npos);
-        DOCTEST_CHECK(text.find("settings.json") != std::string::npos);
         eui::Ui ui;
         ui.begin("takeover_warn");
         mod->compose(ui, screen);
         ui.end();
-        const auto* warn = ui.find("settings.card.proxy.takeover.warn.0");
+        // 路径收 tooltip：tooltip 文本含接管文件路径
+        const auto* tip =
+            ui.find("settings.card.proxy.pill.takeover.tooltip.text");
+        DOCTEST_REQUIRE(tip != nullptr);
+        DOCTEST_CHECK(tip->text.find("settings.json") != std::string::npos);
+        const auto* warn = ui.find("settings.card.proxy.warn.text.0");
         DOCTEST_REQUIRE(warn != nullptr);   // overlay 含同名 env 键 → 命中
         DOCTEST_CHECK(warn->text.find("ANTHROPIC_BASE_URL") !=
                       std::string::npos);
@@ -1338,7 +1343,7 @@ REGISTER_TEST(settings_takeover_status_row,
     mod->onPageEnter();
     {
         std::string text;
-        DOCTEST_CHECK(composeTakeoverText(&text));
+        DOCTEST_CHECK(composeTakeoverPill(&text));
         DOCTEST_CHECK(text.find("未接管") != std::string::npos);
     }
 
@@ -1402,11 +1407,11 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     ui.begin("warn_unmanaged");
     mod->compose(ui, screen);
     ui.end();
-    const auto* warn = ui.find("settings.card.proxy.takeover.warn.0");
+    const auto* warn = ui.find("settings.card.proxy.warn.text.0");
     DOCTEST_REQUIRE(warn != nullptr);
     DOCTEST_CHECK(warn->text.find("接管失败") != std::string::npos);
-        // 状态行仍如实写「未接管」（managed 只决定文案与色）
-    const auto* value = ui.find("settings.card.proxy.takeover.value");
+        // 状态胶囊仍如实写「未接管」（managed 只决定文案与色）
+    const auto* value = ui.find("settings.card.proxy.pill.takeover.label");
     DOCTEST_REQUIRE(value != nullptr);
     DOCTEST_CHECK(value->text.find("未接管") != std::string::npos);
 
@@ -2015,23 +2020,24 @@ REGISTER_TEST(settings_fs_derive_pure,
     };
     {
         FontScaleGuard g{1.0f};
-    // 零回归锚：E 批统一后字面公式（接管行 y=104；无警告 104+18+16=138，
-        // n 条警告 124+16n+16）
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 138.0f);
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 172.0f);
+        // 零回归锚：need155 三带布局字面公式（带2 y=16+28+12=56；无警告
+        // 56+36+16=108；警告带 y=56+36+10=102，2 条容器 12+32+2=46 → 102+46+16=164）
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 108.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(1), 146.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 164.0f);
         DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 16.0f);
-        DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 18.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(28.0f), 28.0f);
     }
     {
         FontScaleGuard g{1.3f};
-        // round(基准×1.3)：16→21 / 18→23 / 2→3 / 16（下边距）→21
+        // round(基准×1.3)：16→21 / 28→36 / 12→16 / 36→47 / 10→13 / 6→8 /
+        // 2→3 / 16（下边距）→21
         DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 21.0f);
-        DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 23.0f);
-        // B6：desc 锚也随字号派生（标题盒 y/h 已 roundFs，desc 不缩就会压标题）——
-        // 端口行 y=roundFs(40)+21+16=89、行高 roundFs(36)=47 → 接管行 y=136；
-        // 无警告 136+23+21=180；2 条警告 (136+23+3)+2×21+21=225
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 180.0f);
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 225.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(28.0f), 36.0f);
+        // 带2 y=21+36+16=73；无警告 73+47+21=141；警告带 y=73+47+13=133，
+        // 2 条容器 8×2+2×21+1×3=61 → 133+61+21=215
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 141.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 215.0f);
     }
     return true;
 })
@@ -2085,8 +2091,9 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         {0, "settings.card.proxy",
          {"settings.card.proxy.title",
           "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
-          "settings.card.proxy.takeover.label",
-          "settings.card.proxy.takeover.value"}},
+          "settings.card.proxy.pill.run",
+          "settings.card.proxy.pill.takeover",
+          "settings.card.proxy.autostart"}},
         {1, "settings.card.modules",
          {"settings.card.modules.title", "settings.card.modules.desc",
           "settings.card.modules.name.0", "settings.card.modules.rowdesc.0",
@@ -2253,11 +2260,11 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
-            // 代理卡（UAT5 迁入通用 tab，卡高公式不变）
+            // 代理卡（UAT5 迁入通用 tab；need155 起胶囊行盒随 roundFs 派生）
             if (err.empty())
-                err = pin("proxy.takeover.label 高",
-                          heightOf("settings.card.proxy.takeover.label"),
-                          at(15.0f, 18.0f, 23.0f));
+                err = pin("proxy.pill.run.bg 高（胶囊行盒 22）",
+                          heightOf("settings.card.proxy.pill.run.bg"),
+                          at(19.0f, 22.0f, 29.0f));
             if (err.empty())
                 err = pin("proxy 卡高（无警告）",
                           heightOf("settings.card.proxy"),
@@ -3868,10 +3875,11 @@ REGISTER_TEST(settings_editor_card_autostart_row,
 
 // 通用 tab 零滚动预算（UAT6 开机自启动行落位的依据，也是护栏）：1000×640 窗
 //（Windows 自绘壳 → 页区高 600）下 cardsH = 600-152-40-20-16 = 372；内容 =
-// 配对行 184 + 16 + 代理卡（0/1/2 条警告 = 138/156/172）。行落编辑器字号卡
-// 阴影后配对行高恒 184 → 最坏 2 警告态 184+16+172 = 372 恰满可用（零滚动保住）。
+// 配对行 184 + 16 + 代理卡（0/1/2 条警告 = 108/146/164，need155）。行落编辑器
+// 字号卡阴影后配对行高恒 184 → 最坏 2 警告态 184+16+164 = 364 ≤ 可用 372
+//（零滚动保住，较重设计前富余 +8）。
 REGISTER_TEST(settings_general_tab_zero_scroll_budget,
-              "settings: 通用 tab 1000×640 零滚动预算——配对行高 184 不变 + 最坏代理态恰满可用 372", {
+              "settings: 通用 tab 1000×640 零滚动预算——配对行高 184 不变 + 最坏代理态 364 ≤ 可用 372", {
     namespace ms = module::settings;
     struct FontScaleGuard {
         float prev;
@@ -3885,14 +3893,14 @@ REGISTER_TEST(settings_general_tab_zero_scroll_budget,
 
     // ① 纯件：配对行掌高者不变量（editor == appearance → max 恒 appearance 档）
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
-    // 最坏代理态（2 条警告）逐值复算：内容 == 可用（刀口等式，超 1px 即破）
-    DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 172.0f);
+    // 最坏代理态（2 条警告）逐值复算：内容 ≤ 可用（364 ≤ 372，超 1px 即破）
+    DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 164.0f);
     DOCTEST_CHECK_EQ(ms::roundFs(ms::kAppearanceCardHeight) +
                          16.0f + ms::proxyCardHeightFor(2),
-                     372.0f);
+                     364.0f);
     // ② compose 实测（headless 无代理服务 → 0 警告态）：配对行/代理卡节点高与
-    // 纯件一致，内容高 338 ≤ 可用 372（页级滚动条断言由同库
-    // settings_min_window_tabs_zero_scroll 承担，本用例钉刀口等式与掌高者不变量）
+    // 纯件一致，内容高 308 ≤ 可用 372（页级滚动条断言由同库
+    // settings_min_window_tabs_zero_scroll 承担，本用例钉预算等式与掌高者不变量）
     test_support::TestEnv env(kCfgPrefix, "autostartbudget", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "autostartbudget_cfg"));

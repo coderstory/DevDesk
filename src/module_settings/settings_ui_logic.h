@@ -93,7 +93,7 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
 // UAT6 动态背景开关（活体流质）落位外观卡**标题带右贴**（代理卡「随应用启动代理」
 // 同款先例，settings.card.appearance.fluid），不是卡内新行——通用 tab 零滚动预算
-// 逐值保持的硬约束：0/1/2 条代理警告 = 内容 338/356/372 对可用 372，任何 +30~40
+// 逐值保持的硬约束：0/1/2 条代理警告 = 内容 308/346/364 对可用 372，任何 +30~40
 // 的开关行都会把 1/2 警告档顶破 372（加行方案已在预算表排除），标题带方案
 // 行盒零增量、卡高 184 全字号档不动（四档 85/100/115/130 卡高 156/184/212/239
 // 逐档保持，见 settings_card_rows_scale_derived 的 appearance 卡高钉值）。
@@ -102,7 +102,7 @@ inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 
 // 字号段行底 hintRowBelowY(68)+roundFs(16)=126，自启动行顶 126+roundFs(6)=132、
 // 行盒 roundFs(30)=30 → 行底 162，+ 边距 16 → 184，与外观卡同高。**配对行高
 // 184 全档不变**（max(184,184)，外观卡继续掌行高）→ 通用 tab 内容高
-// 338/356/372（0/1/2 条代理警告）对可用 372 的零滚动预算逐值保持。
+// 308/346/364（0/1/2 条代理警告）对可用 372 的零滚动预算逐值保持。
 // 85% 档卡高 156（自启动行底 139，下边距 17）/130% 档 239（行底 211，下边距 28），
 // 下边距全档 ≥16（卡内边距契约）。历史：UAT5 时 144（hint 行底 126+16）。
 inline constexpr float kEditorFontCardHeight = 184.0f;
@@ -245,34 +245,44 @@ int nearestIndex(int value, const int* presets, int count);
 // 非 token 的硬编码字号跟随全局缩放（token 字号已在 theme 层缩放，勿再包一层）。
 float fs(float base);
 
-// 代理卡行几何（drawProxyCard 与 proxyCardHeightFor 单一来源）：E 批统一——端口行迁
-// FormRow（行高 = logFieldHeight 36），行 y 从 desc 盒底（40+16）+ gap 12 派生 = 68；
-// 接管行从端口行盒底顺延，警告行从接管行盒底派生。
-inline float proxyPortRowY() {
-    return roundFs(40.0f) + roundFs(16.0f) + roundFs(12.0f);     // 100% = 68
+// 代理卡带几何（need155 重设计 2026-11-08，drawProxyCard 与 proxyCardHeightFor 单一
+// 来源；设计 docs/design/2026-11-07-设置通用代理卡重设计.md §2.3/§5）：三带布局——
+// 带1 标题+状态胶囊（y=16、行盒 28）→ 带2 配置行（带距 12、FormRow 行高
+// = logFieldHeight 36）→ 条件带3 警告染底容器（带距 10、内边距 6、行高 16、条距 2）。
+// 接管行撤除（D7）：接管状态并入带1 胶囊，路径/机制说明收 tooltip。
+inline float proxyBand1Y() { return roundFs(16.0f); }             // 100% = 16
+inline float proxyBand1H() { return roundFs(28.0f); }             // 100% = 28
+inline float proxyBand2Y() {                                      // 100% = 56
+    return proxyBand1Y() + proxyBand1H() + roundFs(12.0f);
 }
-inline float proxyTakeoverRowY() {
-    return proxyPortRowY() + logFieldHeight();                    // 100% = 104
+inline float proxyWarnBandY() {                                   // 100% = 102
+    return proxyBand2Y() + logFieldHeight() + roundFs(10.0f);
 }
-inline float proxyTakeoverRowHeight() { return roundFs(18.0f); }  // 100% = 18
 inline float proxyWarnRowHeight() { return roundFs(16.0f); }      // 100% = 16
-inline float proxyWarnRowTop() {
-    return proxyTakeoverRowY() + proxyTakeoverRowHeight() + roundFs(2.0f);  // 100% = 124
+inline float proxyWarnRowGap() { return roundFs(2.0f); }          // 100% = 2
+// 警告染底容器高 = 内边距 6×2 + n×行高 + (n−1)×条距（n ≤ 2，截断在调用方）。
+inline float proxyWarnContainerH(std::size_t warnLines) {
+    const float n = static_cast<float>(warnLines);
+    return roundFs(6.0f) * 2.0f + n * proxyWarnRowHeight() +
+           (warnLines > 1 ? (n - 1.0f) * proxyWarnRowGap() : 0.0f);
 }
-// 代理卡高 = 内容底沿 + roundFs(16) 下边距（100% 档：无警告 138 / n 条 124+16n+16）。
+// 卡高（100% 档 0/1/2 条警告 = 108/146/164）= 内容底沿 + 下边距（下限 16，85% 档
+// roundFs(16)=14 不满足下边距 ≥16，同 MCP 卡口径抬底）。
 inline float proxyCardHeightFor(std::size_t warnLines) {
     const float bottom =
         warnLines > 0
-            ? proxyWarnRowTop() +
-                  static_cast<float>(warnLines) * proxyWarnRowHeight()
-            : proxyTakeoverRowY() + proxyTakeoverRowHeight();
-    return bottom + roundFs(16.0f);
+            ? proxyWarnBandY() + proxyWarnContainerH(warnLines)
+            : proxyBand2Y() + logFieldHeight();
+    return bottom + std::max(16.0f, roundFs(16.0f));
 }
 
 // MCP 配置卡行几何（drawMcpCard 与 mcpCardHeightFor 单一来源）：端口行 = FormRow
-//（行 y = proxyPortRowY、行高 = logFieldHeight），状态行 / 命令行依次从行盒底派生，
-// 卡高不写死——85% 档 roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。
-inline float mcpPortRowY() { return proxyPortRowY(); }            // 100% = 68
+//（行高 = logFieldHeight），状态行 / 命令行依次从行盒底派生，卡高不写死——85% 档
+// roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。MCP 卡不在 need155 重设计域，
+// 行 y 维持旧「desc 槽」口径（40+16+12=68），不随代理卡带几何走。
+inline float mcpPortRowY() {
+    return roundFs(40.0f) + roundFs(16.0f) + roundFs(12.0f);      // 100% = 68
+}
 inline float mcpStatusRowHeight() { return roundFs(18.0f); }      // 100% = 18
 inline float mcpCommandRowY() {
     return mcpPortRowY() + logFieldHeight() + mcpStatusRowHeight() +

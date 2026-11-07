@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置 → 通用 → 「Claude 代理」卡重设计 · demo</title>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  参数唯一来源：docs/design/2026-11-07-设置通用代理卡重设计.md（§2 构图 / §5 规格表 / §8 动效 / §11 G1-G6）。
+  自包含零外部依赖：无 CDN / 无外部字体，图标为内联 SVG；字体走系统栈。
+  token 实值锚 src/core/theme.cpp（暗 :14-72 / 亮 :74-130）；FormRow 家族口径锚 src/ui_kit/form_row.cpp（label 110 / 14px / textPrimary / 间距 8）。
+  亮暗双主题：右上按钮或 URL 参数 ?theme=dark。G2 拖窗验证：卡宽实时读数在页眉。
+-->
+<style>
+/* ── token 表：亮/暗实值（theme.cpp 直锚）────────────────────────── */
+:root{
+  --bg:#F5FAF7;            /* background :79 */
+  --surface:#FFFFFF;       /* surface :80 */
+  --surface-elev:#FFFFFF;  /* surfaceElevated :81 */
+  --hover:#EEF6F1;         /* hover :82 */
+  --active:#E2F0E8;        /* active :83 */
+  --primary:#07C160;       /* primary :84 */
+  --text1:#1F2937;         /* textPrimary :91 */
+  --text2:#4B5563;         /* textSecondary :92 */
+  --text3:#6B7280;         /* textTertiary :93 */
+  --border:#E5E7EB;        /* borderDefault :95 */
+  --success:#10B981;       /* success :97 */
+  --warning:#F59E0B;       /* warning :98 */
+  --error-text:#B91C1C;    /* errorText :100 */
+  --success-tint:#E2F6EF;  /* mix(surface,success,12%) 文档 §5.1 亮值 */
+  --warning-tint:#FEF3E2;  /* mix(surface,warning,12%) 文档 §5.3 亮值 */
+}
+html[data-theme="dark"]{
+  --bg:#1A1816;            /* :18 */
+  --surface:#232120;       /* :19 */
+  --surface-elev:#2C2A28;  /* :20 */
+  --hover:#353231;         /* :21 */
+  --active:#3E3B39;        /* :22 */
+  --primary:#36D399;       /* :23 */
+  --text1:#FAF9F5;         /* :30 */
+  --text2:#C9C5BD;         /* :31 */
+  --text3:#9A948A;         /* :32 */
+  --border:#3A3735;        /* :34 */
+  --success:#34D399;       /* :36 */
+  --warning:#FBBF24;       /* :37 */
+  --error-text:#F87171;    /* :39 */
+  --success-tint:#25362F;  /* 文档 §5.1 暗值 */
+  --warning-tint:#3A3323;  /* 文档 §5.3 暗值 */
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--bg); color:var(--text1);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI","Microsoft YaHei",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ── demo 脚手架页眉（非设计产物）────────────────────────────────── */
+.demo-bar{
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  padding:10px 24px; border-bottom:1px solid var(--border);
+  background:var(--surface); position:sticky; top:0; z-index:50;
+}
+.demo-bar .t{font-size:14px; font-weight:600;}
+.demo-bar .note{font-size:11px; color:var(--text3);}
+.demo-bar .spacer{flex:1;}
+.demo-bar .w-read{font-size:11px; color:var(--text2); font-variant-numeric:tabular-nums;}
+.ctrl-bar{
+  display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+  padding:8px 24px; font-size:12px; color:var(--text2);
+  border-bottom:1px dashed var(--border); background:var(--surface);
+}
+.ctrl-bar .grp{display:flex; align-items:center; gap:6px;}
+.ctrl-bar .lbl{color:var(--text3);}
+.ctrl-bar button, .demo-bar button{
+  font:inherit; font-size:12px; padding:3px 10px; border-radius:6px;
+  border:1px solid var(--border); background:var(--surface-elev); color:var(--text1); cursor:pointer;
+  transition:background 120ms cubic-bezier(0.33,1,0.68,1);
+}
+.ctrl-bar button:hover, .demo-bar button:hover{background:var(--hover);}
+.ctrl-bar button.on{background:var(--hover); border-color:var(--primary); color:var(--text1); font-weight:600;}
+
+/* ── 设置页语境（外壳固定不滚 · 通用 tab）────────────────────────── */
+.shell{max-width:1280px; margin:0 auto; padding:0 24px;}
+.page-head{height:40px; display:flex; align-items:center; font-size:16px; font-weight:600;}
+.tab-row{height:36px; display:flex; gap:28px; align-items:stretch; border-bottom:1px solid var(--border); font-size:13px; color:var(--text2);}
+.tab-row .tab{display:flex; align-items:center; border-bottom:2px solid transparent; padding:0 2px;}
+.tab-row .tab.active{color:var(--primary); font-weight:600; border-bottom-color:var(--primary);}
+.content{padding:16px 0 8px;}
+.ghost{
+  height:184px; margin-top:16px; border:1px dashed var(--border); border-radius:14px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:12px; color:var(--text3);
+}
+
+/* ── 卡容器（§5.0）──────────────────────────────────────────────── */
+.proxy-card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:14px;                 /* radiusLarge */
+  box-shadow:0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);  /* shadow(3,1,0.04,0.02) 家族同款 */
+  padding:16px 28px;                  /* 顶/底 16 · 内嵌 x=28 / w−28 */
+}
+/* 卡高由带序自然推导：16+28+12+36+16 = 108；+10+(6+16+6)=146；+10+(6+16+2+16+6)=164 */
+
+/* ── 带1 标题+状态带（y=16，行盒 28，§5.1）──────────────────────── */
+.band1{height:28px; display:flex; align-items:center;}
+.title{font-size:19px; font-weight:600; line-height:28px; color:var(--text1); margin:0;}  /* fontSizeLarge 19 */
+.chain{display:flex; align-items:center; min-width:0;}
+.pill{
+  height:22px; display:inline-flex; align-items:center; gap:6px;
+  padding:0 10px; border-radius:999px;   /* radiusPill */
+  font-size:11px; font-weight:600; line-height:22px; white-space:nowrap;
+  transition:background-color 120ms cubic-bezier(0.33,1,0.68,1), color 120ms cubic-bezier(0.33,1,0.68,1);
+  cursor:default; position:relative; flex-shrink:0;
+}
+.pill .dot{width:6px; height:6px; border-radius:50%; flex-shrink:0;}
+.pill.on{background:var(--success-tint); color:var(--success);}
+.pill.on .dot{background:var(--success);}
+.pill.off{background:var(--hover); color:var(--text3);}
+.pill.off .dot{background:var(--text3);}
+.pill-run{margin-left:12px;}   /* 标题→12→运行胶囊（R1 左链显式常量） */
+.pill-take{margin-left:8px;}   /* 运行胶囊→8→接管胶囊 */
+
+/* tooltip（路径/机制收纳，§3 L4；长文收帮助浮层） */
+.tip::after{
+  content:attr(data-tip);
+  position:absolute; bottom:calc(100% + 6px); left:0; z-index:60;
+  max-width:360px; padding:6px 8px; border-radius:6px;
+  background:var(--text1); color:var(--surface);
+  font-size:11px; font-weight:400; line-height:1.5; white-space:normal; word-break:break-all;
+  opacity:0; visibility:hidden; transform:translateY(2px);
+  transition:opacity 120ms cubic-bezier(0.33,1,0.68,1), transform 120ms cubic-bezier(0.33,1,0.68,1);
+  pointer-events:none;
+}
+.tip:hover::after, .tip:focus-visible::after{opacity:1; visibility:visible; transform:translateY(0);}
+
+/* 右锚组：label→8→开关 44×24，右缘钉 w−28（R3） */
+.right-anchor{margin-left:auto; display:flex; align-items:center; gap:8px; flex-shrink:0;}
+.auto-label{font-size:13px; font-weight:400; color:var(--text2);}
+.switch{
+  width:44px; height:24px; border-radius:12px; border:none; padding:0;
+  background:var(--border); position:relative; cursor:pointer; flex-shrink:0;
+  transition:background 120ms cubic-bezier(0.33,1,0.68,1);
+}
+.switch[aria-checked="true"]{background:var(--primary);}   /* 绿轨白滑块，家族字面值 */
+.switch .knob{
+  position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%;
+  background:#FFFFFF; box-shadow:0 1px 2px rgba(0,0,0,0.15);
+  transition:left 160ms cubic-bezier(0.33,1,0.68,1);
+}
+.switch[aria-checked="true"] .knob{left:22px;}
+
+/* ── 带2 配置带（y=56，行盒 36，§5.2）──────────────────────────── */
+.band2{height:36px; margin-top:12px; display:flex; align-items:center;}
+.frow-label{width:110px; flex-shrink:0; font-size:14px; color:var(--text1);}  /* FormRow 家族：label 110 / 14 / textPrimary（form_row.cpp:25,28） */
+.desc-col{flex:1; min-width:0; margin-right:12px;}             /* 说明列 flex-1，与右锚控件组间距 12 */
+.desc{display:block; font-size:12px; color:var(--text3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.desc.err{color:var(--error-text);}                             /* 红字错误态 */
+.desc.same{color:var(--text3);}
+.port-input{
+  width:96px; height:28px; flex-shrink:0;
+  border:1px solid var(--border); border-radius:6px;            /* radiusSmall 6 */
+  background:var(--surface-elev); color:var(--text1);
+  font:inherit; font-size:13px; padding:0 8px;
+}
+.port-input::placeholder{color:var(--text3);}
+.port-input:focus{outline:none; border-color:var(--primary);}   /* focus 绿边（组件 theme 自带） */
+.btn-apply{
+  width:64px; height:28px; flex-shrink:0; margin-left:8px;
+  border-radius:6px;                                             /* radiusSmall */
+  background:var(--surface-elev); border:1px solid var(--border); color:var(--text1);
+  font:inherit; font-size:13px; cursor:pointer;
+  transition:background 120ms cubic-bezier(0.33,1,0.68,1);       /* hover 120ms OutCubic */
+}
+.btn-apply:hover{background:var(--hover);}
+.btn-apply:active{background:var(--active);}
+
+/* ── 带3 警告带（条件，带距 10，§5.3）──────────────────────────── */
+.warn-wrap{max-height:0; opacity:0; overflow:hidden; margin-top:0;
+  transition:max-height 200ms cubic-bezier(0.33,1,0.68,1), opacity 200ms cubic-bezier(0.33,1,0.68,1), margin-top 200ms cubic-bezier(0.33,1,0.68,1);}
+.warn-wrap.open{max-height:80px; opacity:1; margin-top:10px;}
+.warn-box{background:var(--warning-tint); border-radius:6px; padding:6px; display:flex; flex-direction:column; gap:2px;}
+.warn-row{height:16px; display:flex; align-items:center; gap:6px;}
+.warn-row svg{width:12px; height:12px; flex-shrink:0; display:block;}
+.warn-label{font-size:11px; font-weight:600; color:var(--warning); flex-shrink:0;}
+.warn-text{flex:1; min-width:0; font-size:12px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}  /* maxWidth+Ellipsis+clip 三件套（治 D6） */
+
+/* ── 果冻按压（§8：按下 scale .96/120ms OutCubic → 回弹 OutBack 180ms）── */
+.jelly{transition:transform 120ms cubic-bezier(0.33,1,0.68,1);}
+.jelly.pressed{transform:scale(0.96);}
+.jelly.released{animation:jellyBack 180ms cubic-bezier(0.34,1.56,0.64,1);}
+@keyframes jellyBack{from{transform:scale(0.96);} to{transform:scale(1);}}
+
+/* ── 校验台（G1-G6 · 非设计产物脚手架）────────────────────────── */
+.bench{max-width:1280px; margin:0 auto; padding:8px 24px 48px;}
+.bench h2{font-size:14px; font-weight:600; color:var(--text2); margin:24px 0 12px;}
+.bench .v{margin-bottom:18px;}
+.bench .cap{font-size:11px; color:var(--text3); margin:0 0 6px 2px;}
+.bench .v .proxy-card{max-width:none;}
+.bench .v.narrow .proxy-card{width:720px; max-width:100%;}
+
+/* ── 减弱动态效果（§8 全局约定）────────────────────────────────── */
+@media (prefers-reduced-motion: reduce){
+  *{transition:none !important; animation:none !important;}
+}
+</style>
+</head>
+<body>
+
+<header class="demo-bar">
+  <span class="t">设置 → 通用 → 「Claude 代理」卡重设计 · demo</span>
+  <span class="note">demo 仅视觉校准，不是实现蓝图 · 拖窗验证自适应（G2）</span>
+  <span class="spacer"></span>
+  <span class="w-read">卡宽：<b id="wRead">—</b>px</span>
+  <button id="themeBtn" type="button">切换暗主题</button>
+</header>
+
+<div class="ctrl-bar">
+  <span class="lbl">校验控制（demo 脚手架，非设计产物）：</span>
+  <span class="grp"><span class="lbl">运行</span>
+    <button type="button" data-run="1" class="on">运行中</button>
+    <button type="button" data-run="0">已停止</button>
+  </span>
+  <span class="grp"><span class="lbl">接管</span>
+    <button type="button" data-take="1" class="on">已接管</button>
+    <button type="button" data-take="0">未接管</button>
+  </span>
+  <span class="grp"><span class="lbl">警告注入</span>
+    <button type="button" data-warn="0" class="on">0</button>
+    <button type="button" data-warn="1">1</button>
+    <button type="button" data-warn="2">2</button>
+    <button type="button" data-warn="3">3（截2）</button>
+  </span>
+  <span class="grp"><button type="button" id="resetBtn">恢复常态</button></span>
+  <span class="lbl">G6：端口草稿 Esc 丢弃 / Enter 提交 / 非法值红字反馈，试输入 0 或 abc</span>
+</div>
+
+<main class="shell">
+  <div class="page-head">设置</div>
+  <div class="tab-row">
+    <span class="tab active">通用</span>
+    <span class="tab">外观</span>
+    <span class="tab">编辑器</span>
+    <span class="tab">快捷键</span>
+    <span class="tab">MCP</span>
+  </div>
+  <div class="content">
+
+    <!-- ═══ 设计主体：Claude 代理卡（interactive 主卡）═══ -->
+    <section class="proxy-card" id="mainCard" aria-label="Claude 代理">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run off jelly" id="pillRun" role="status">
+            <i class="dot"></i><span id="pillRunText">未运行</span>
+          </span>
+          <span class="pill pill-take off jelly tip" id="pillTake" tabindex="0" data-tip="启动代理后自动接管 Claude Code，停止时还原原配置">
+            <span id="pillTakeText">未接管</span>
+          </span>
+        </div>
+        <div class="right-anchor">
+          <label class="auto-label" id="autoLabel" for="autoStart">随应用启动代理</label>
+          <button class="switch jelly" id="autoStart" role="switch" aria-checked="true" aria-labelledby="autoLabel" type="button">
+            <span class="knob"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="band2">
+        <label class="frow-label" for="portInput">代理端口</label>
+        <div class="desc-col"><span class="desc" id="portFeedback">改后回车或点「应用」；运行中自动重启</span></div>
+        <input class="port-input" id="portInput" value="8888" placeholder="8888" inputmode="numeric" autocomplete="off">
+        <button class="btn-apply jelly" id="applyBtn" type="button">应用</button>
+      </div>
+
+      <div class="warn-wrap" id="warnWrap">
+        <div class="warn-box" id="warnBox"></div>
+      </div>
+    </section>
+
+    <div class="ghost">（demo 占位）外观 / 编辑器字号配对行 184px —— 零滚动预算语境参照，非本卡范围</div>
+  </div>
+</main>
+
+<!-- ═══ 校验台：G1-G6 状态矩阵（随主题切换，覆盖 G4）═══ -->
+<section class="bench">
+  <h2>校验台 · G3 状态矩阵 / G5 形态红线 / G6 文本边界（随主题切换）</h2>
+
+  <div class="v">
+    <p class="cap">B1 常态：运行中 :8888 ＋ 已接管 ＋ 0 警告 → 卡高 108</p>
+    <section class="proxy-card">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run on"><i class="dot"></i><span>运行中 :8888</span></span>
+          <span class="pill pill-take on tip" tabindex="0" data-tip="接管文件：~/.claude/settings.json"><span>已接管</span></span>
+        </div>
+        <div class="right-anchor"><span class="auto-label">随应用启动代理</span><span class="switch" aria-checked="true"><span class="knob"></span></span></div>
+      </div>
+      <div class="band2">
+        <span class="frow-label">代理端口</span>
+        <div class="desc-col"><span class="desc">改后回车或点「应用」；运行中自动重启</span></div>
+        <span class="port-input">8888</span><span class="btn-apply" style="display:inline-flex;align-items:center;justify-content:center;">应用</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="v">
+    <p class="cap">B2 已停止：未运行 ＋ 未接管（灰×2，G3 状态矩阵）→ 卡高 108</p>
+    <section class="proxy-card">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run off"><i class="dot"></i><span>未运行</span></span>
+          <span class="pill pill-take off tip" tabindex="0" data-tip="启动代理后自动接管 Claude Code，停止时还原原配置"><span>未接管</span></span>
+        </div>
+        <div class="right-anchor"><span class="auto-label">随应用启动代理</span><span class="switch" aria-checked="false"><span class="knob"></span></span></div>
+      </div>
+      <div class="band2">
+        <span class="frow-label">代理端口</span>
+        <div class="desc-col"><span class="desc">改后回车或点「应用」；运行中自动重启</span></div>
+        <span class="port-input">8888</span><span class="btn-apply" style="display:inline-flex;align-items:center;justify-content:center;">应用</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="v">
+    <p class="cap">B3 运行中 ＋ 未接管（瞬态）＋ 1 条警告 → 卡高 146</p>
+    <section class="proxy-card">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run on"><i class="dot"></i><span>运行中 :8888</span></span>
+          <span class="pill pill-take off tip" tabindex="0" data-tip="启动代理后自动接管 Claude Code，停止时还原原配置"><span>未接管</span></span>
+        </div>
+        <div class="right-anchor"><span class="auto-label">随应用启动代理</span><span class="switch" aria-checked="true"><span class="knob"></span></span></div>
+      </div>
+      <div class="band2">
+        <span class="frow-label">代理端口</span>
+        <div class="desc-col"><span class="desc">改后回车或点「应用」；运行中自动重启</span></div>
+        <span class="port-input">8888</span><span class="btn-apply" style="display:inline-flex;align-items:center;justify-content:center;">应用</span>
+      </div>
+      <div class="warn-wrap open">
+        <div class="warn-box">
+          <div class="warn-row">
+            <svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5zM8 6v4M8 11.8v.2" stroke="var(--warning)" stroke-width="0" /><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>
+            <span class="warn-label">同步警告</span>
+            <span class="warn-text">接管 settings.json 时发现未知键 user.devdeskBackup，已跳过</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="v">
+    <p class="cap">B4 已停止 ＋ 2 条警告（历史警告保留口径，G3）→ 卡高 164</p>
+    <section class="proxy-card">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run off"><i class="dot"></i><span>未运行</span></span>
+          <span class="pill pill-take off tip" tabindex="0" data-tip="启动代理后自动接管 Claude Code，停止时还原原配置"><span>未接管</span></span>
+        </div>
+        <div class="right-anchor"><span class="auto-label">随应用启动代理</span><span class="switch" aria-checked="false"><span class="knob"></span></span></div>
+      </div>
+      <div class="band2">
+        <span class="frow-label">代理端口</span>
+        <div class="desc-col"><span class="desc">改后回车或点「应用」；运行中自动重启</span></div>
+        <span class="port-input">8888</span><span class="btn-apply" style="display:inline-flex;align-items:center;justify-content:center;">应用</span>
+      </div>
+      <div class="warn-wrap open">
+        <div class="warn-box">
+          <div class="warn-row">
+            <svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5z"/><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>
+            <span class="warn-label">同步警告</span>
+            <span class="warn-text">接管 settings.json 时发现未知键 user.devdeskBackup，已跳过</span>
+          </div>
+          <div class="warn-row">
+            <svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5z"/><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>
+            <span class="warn-label">同步警告</span>
+            <span class="warn-text">写入还原备份失败：settings.json.devdesk-bak 只读</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="v">
+    <p class="cap">B5 超长警告省略号（首条超长，G6 三件套兜底）；注入 3 条 → 截 2 展示（第三条不入版面，卡内无 +N 文案）</p>
+    <section class="proxy-card">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run on"><i class="dot"></i><span>运行中 :8888</span></span>
+          <span class="pill pill-take on tip" tabindex="0" data-tip="接管文件：~/.claude/settings.json"><span>已接管</span></span>
+        </div>
+        <div class="right-anchor"><span class="auto-label">随应用启动代理</span><span class="switch" aria-checked="true"><span class="knob"></span></span></div>
+      </div>
+      <div class="band2">
+        <span class="frow-label">代理端口</span>
+        <div class="desc-col"><span class="desc">改后回车或点「应用」；运行中自动重启</span></div>
+        <span class="port-input">8888</span><span class="btn-apply" style="display:inline-flex;align-items:center;justify-content:center;">应用</span>
+      </div>
+      <div class="warn-wrap open">
+        <div class="warn-box">
+          <div class="warn-row">
+            <svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5z"/><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>
+            <span class="warn-label">同步警告</span>
+            <span class="warn-text">接管 settings.json 时发现未知键 user.devdeskBackup，已跳过；本条为超长警告样例，用于验证 maxWidth+Ellipsis+clip 省略号三件套兜底是否生效，完整详情在 claude_proxy 模块页与日志可查</span>
+          </div>
+          <div class="warn-row">
+            <svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5z"/><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>
+            <span class="warn-label">同步警告</span>
+            <span class="warn-text">写入还原备份失败：settings.json.devdesk-bak 只读</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="v narrow">
+    <p class="cap">B6 窄卡 720：控件/胶囊/开关不缩、警告正文省略号、右锚恒钉 w−28（G2 挤压顺序静态证据）</p>
+    <section class="proxy-card">
+      <div class="band1">
+        <div class="chain">
+          <h3 class="title">Claude 代理</h3>
+          <span class="pill pill-run on"><i class="dot"></i><span>运行中 :8888</span></span>
+          <span class="pill pill-take on tip" tabindex="0" data-tip="接管文件：~/.claude/settings.json"><span>已接管</span></span>
+        </div>
+        <div class="right-anchor"><span class="auto-label">随应用启动代理</span><span class="switch" aria-checked="true"><span class="knob"></span></span></div>
+      </div>
+      <div class="band2">
+        <span class="frow-label">代理端口</span>
+        <div class="desc-col"><span class="desc">改后回车或点「应用」；运行中自动重启</span></div>
+        <span class="port-input">8888</span><span class="btn-apply" style="display:inline-flex;align-items:center;justify-content:center;">应用</span>
+      </div>
+      <div class="warn-wrap open">
+        <div class="warn-box">
+          <div class="warn-row">
+            <svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5z"/><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>
+            <span class="warn-label">同步警告</span>
+            <span class="warn-text">接管 settings.json 时发现未知键 user.devdeskBackup，已跳过；本条为超长警告样例，用于验证窄卡下省略号兜底</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</section>
+
+<script>
+(function(){
+  'use strict';
+  var $ = function(id){ return document.getElementById(id); };
+
+  /* ── 主题（G4）：按钮 + URL 参数 ── */
+  var themeBtn = $('themeBtn');
+  function setTheme(t){
+    document.documentElement.dataset.theme = t;
+    themeBtn.textContent = (t === 'dark') ? '切换亮主题' : '切换暗主题';
+  }
+  var q = new URLSearchParams(location.search);
+  setTheme(q.get('theme') === 'dark' ? 'dark' : 'light');
+  themeBtn.addEventListener('click', function(){
+    setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+
+  /* ── 卡宽实时读数（G2 证据）── */
+  var mainCard = $('mainCard'), wRead = $('wRead');
+  if (window.ResizeObserver){
+    new ResizeObserver(function(){
+      wRead.textContent = mainCard.offsetWidth;   /* 卡宽 = border-box，与设计 w 口径一致 */
+    }).observe(mainCard);
+  } else {
+    setInterval(function(){ wRead.textContent = mainCard.offsetWidth; }, 300);
+  }
+
+  /* ── 果冻按压（§8）：按下 .96/120ms → 回弹 OutBack 180ms ── */
+  document.addEventListener('pointerdown', function(e){
+    var el = e.target.closest('.jelly');
+    if (!el) return;
+    el.classList.remove('released'); el.classList.add('pressed');
+  });
+  document.addEventListener('pointerup', function(e){
+    var el = e.target.closest('.jelly.pressed');
+    if (!el) return;
+    el.classList.remove('pressed'); el.classList.add('released');
+    el.addEventListener('animationend', function h(){ el.classList.remove('released'); el.removeEventListener('animationend', h); });
+  });
+
+  /* ── 主卡状态机（G3：运行 × 接管 × 警告 0/1/2/3）── */
+  var WARN_POOL = [
+    '接管 settings.json 时发现未知键 user.devdeskBackup，已跳过',
+    '写入还原备份失败：settings.json.devdesk-bak 只读',
+    '同步被并发修改跳过一次（写入者：外部编辑器）'
+  ];
+  var state = { running:true, takeover:true, port:8888, warns:[] };
+  var pillRun = $('pillRun'), pillRunText = $('pillRunText');
+  var pillTake = $('pillTake'), pillTakeText = $('pillTakeText');
+  var warnWrap = $('warnWrap'), warnBox = $('warnBox');
+  var portInput = $('portInput'), portFeedback = $('portFeedback');
+  var IDLE_HINT = '改后回车或点「应用」；运行中自动重启';
+
+  var ICON = '<svg viewBox="0 0 16 16" fill="var(--warning)"><path d="M8 1.5 15.5 14.5H.5L8 1.5z"/><path d="M7.2 5.6h1.6v4.2H7.2zM7.2 11h1.6v1.6H7.2z" fill="var(--surface)"/></svg>';
+
+  function renderPills(){
+    if (state.running){
+      pillRun.className = 'pill pill-run on jelly';   /* 运行胶囊无 tooltip，仅接管胶囊有（§5.1） */
+      pillRunText.textContent = '运行中 :' + state.port;
+    } else {
+      pillRun.className = 'pill pill-run off jelly';
+      pillRunText.textContent = '未运行';
+    }
+    if (state.takeover){
+      pillTake.className = 'pill pill-take on jelly tip';
+      pillTakeText.textContent = '已接管';
+      pillTake.dataset.tip = '接管文件：~/.claude/settings.json';
+    } else {
+      pillTake.className = 'pill pill-take off jelly tip';
+      pillTakeText.textContent = '未接管';
+      pillTake.dataset.tip = '启动代理后自动接管 Claude Code，停止时还原原配置';
+    }
+  }
+
+  function renderWarns(){
+    var shown = state.warns.slice(0, 2);   /* 最多 2 条（n>2 截断，卡内无 +N 文案） */
+    warnBox.innerHTML = shown.map(function(w){
+      return '<div class="warn-row">' + ICON +
+        '<span class="warn-label">同步警告</span>' +
+        '<span class="warn-text"></span></div>';
+    }).join('');
+    var texts = warnBox.querySelectorAll('.warn-text');
+    for (var i = 0; i < texts.length; i++) texts[i].textContent = shown[i];
+    warnWrap.classList.toggle('open', shown.length > 0);   /* 出现/消失 200ms OutCubic */
+  }
+
+  /* 校验控制按钮 */
+  function bindGroup(attr, fn){
+    var btns = document.querySelectorAll('[data-' + attr + ']');
+    btns.forEach(function(b){
+      b.addEventListener('click', function(){
+        btns.forEach(function(x){ x.classList.remove('on'); });
+        b.classList.add('on');
+        fn(b.dataset[attr] === '1');
+        if (attr === 'run') renderPills();
+        if (attr === 'take') renderPills();
+        if (attr === 'warn') renderWarns();
+      });
+    });
+  }
+  bindGroup('run',  function(v){ state.running = v; });
+  bindGroup('take', function(v){ state.takeover = v; });
+  bindGroup('warn', function(v){ state.warns = []; });
+  /* warn 组特殊：按数值注入 */
+  (function(){
+    var btns = document.querySelectorAll('[data-warn]');
+    btns.forEach(function(b){
+      b.addEventListener('click', function(){
+        btns.forEach(function(x){ x.classList.remove('on'); });
+        b.classList.add('on');
+        var n = parseInt(b.dataset.warn, 10);
+        state.warns = WARN_POOL.slice(0, n);
+        if (n >= 3) state.warns = [WARN_POOL[0], WARN_POOL[1], WARN_POOL[2]];
+        renderWarns();
+      });
+    });
+  })();
+  $('resetBtn').addEventListener('click', function(){
+    state.running = true; state.takeover = true; state.warns = []; state.port = 8888;
+    portInput.value = '8888'; portFeedback.textContent = IDLE_HINT;
+    portFeedback.className = 'desc';
+    [['run','1'],['take','1'],['warn','0']].forEach(function(p){
+      document.querySelectorAll('[data-' + p[0] + ']').forEach(function(x){
+        x.classList.toggle('on', x.dataset[p[0]] === p[1]);
+      });
+    });
+    renderPills(); renderWarns();
+  });
+
+  /* ── 端口草稿链路（G6）：Enter 提交 / Esc 丢弃 / 反馈位三态 ── */
+  function feedback(cls, text){
+    portFeedback.textContent = text;
+    portFeedback.className = 'desc' + (cls ? ' ' + cls : '');
+  }
+  function applyPort(){
+    var v = portInput.value.trim();
+    if (!/^\d+$/.test(v) || +v < 1 || +v > 65535){
+      feedback('err', '端口需为 1-65535 的数字');   /* 红字错误（errorText） */
+      return;
+    }
+    if (+v === state.port){ feedback('same', '端口未变化'); return; }
+    state.port = +v;
+    portInput.value = String(state.port);
+    feedback('', IDLE_HINT);
+    renderPills();   /* 运行胶囊端口联动 */
+  }
+  portInput.addEventListener('keydown', function(e){
+    if (e.key === 'Enter'){ applyPort(); portInput.blur(); }
+    if (e.key === 'Escape'){
+      portInput.value = String(state.port);   /* 丢弃草稿，回落已应用端口 */
+      feedback('', IDLE_HINT);
+      portInput.blur();
+    }
+  });
+  $('applyBtn').addEventListener('click', applyPort);
+
+  renderPills(); renderWarns();
+})();
+</script>
+</body>
+</html>

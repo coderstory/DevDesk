@@ -19,6 +19,7 @@
 #include <components/input.h>
 #include <components/scrollview.h>
 #include <components/switch.h>
+#include <components/tooltip.h>
 
 #include <components/theme.h>
 #include <ui_kit/card.h>
@@ -96,6 +97,46 @@ void cardDesc(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
         .build();
 }
 
+// 状态胶囊（need155 §5.1 L3）：高 22、字 fs(11)/600、radiusPill，左置 6px 圆点
+//（点色 = 字色：success 态绿点、中性态灰点）。宽 = 左右 10 + 点 6 + 点距 6 +
+// 文本实宽（运行期测量，同开关文字口径）。
+void statusPill(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
+                float x, float y, const std::string& text, const core::Color& bg,
+                const core::Color& fg, float* outW) {
+    const float pillH = roundFs(22.0f);
+    const float textW =
+        core::TextPrimitive::measureTextWidth(text, {}, fs(11.0f), 600);
+    const float pillW = 10.0f + 6.0f + 6.0f + textW + 10.0f;
+    ui.stack(id)
+        .position(x, y)
+        .size(pillW, pillH)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f)
+                .size(pillW, pillH)
+                .color(bg)
+                .radius(t.sizes.radiusPill)
+                .build();
+            ui.rect(id + ".dot")
+                .position(10.0f, (pillH - 6.0f) * 0.5f)
+                .size(6.0f, 6.0f)
+                .color(fg)
+                .radius(3.0f)
+                .build();
+            ui.text(id + ".label")
+                .position(10.0f + 6.0f + 6.0f, 0.0f)
+                .size(textW + 4.0f, pillH)
+                .text(text)
+                .fontSize(fs(11.0f))
+                .fontWeight(600)
+                .lineHeight(pillH)
+                .color(fg)
+                .build();
+        })
+        .build();
+    if (outW) *outW = pillW;
+}
+
 } // namespace
 
 // zIndex(40)：下拉弹层需整卡抬层才能盖过下方卡片（zIndex 只在兄弟间排序），同一 tab 带下拉的卡靠前者必须 z 更高。
@@ -113,7 +154,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     // settings_ui_logic.h；标题顶 16 = 字面锚）。
     // 152 批：「动态背景」开关迁「通用」卡（settings.card.editor.fluid，行 2），
     // 本卡标题带右贴位与 desc 槽随之清退；卡高 kAppearanceCardHeight 不变，
-    // 通用 tab 零滚动预算逐值保持（0/1/2 条代理警告 = 338/356/372 对可用 372）。
+    // 通用 tab 零滚动预算逐值保持（need155 起 0/1/2 条代理警告 = 308/346/364 对可用 372）。
     // 字号缩放/窗口效果两行 FormRow 自带标签，desc 槽留白。
     const float descH = roundFs(16.0f);
     const float hintH = roundFs(16.0f);
@@ -481,28 +522,25 @@ void drawProxyCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    // 行几何随生效字号派生（helper 见 settings_ui_logic.h）；E 批统一——标题 16/22、
-    // desc y=40/h=16（基准字面量交给 cardDesc 内部 roundFs）、端口行迁 FormRow
-    //（行 y=68 内容起始口径），接管行从端口行盒底顺延。
+    // 三带几何（need155 重设计，单一来源 settings_ui_logic.h）：带1 标题+状态胶囊
+    //（y=16、行盒 28）→ 带2 配置行（y=56、FormRow 行高 36）→ 条件带3 警告染底容器
+    //（y=102 起）。接管行撤除（D7）：状态并入带1 胶囊、路径/机制收 tooltip。
+    const float band1Y = proxyBand1Y();
+    const float band1H = proxyBand1H();
+    const float band2Y = proxyBand2Y();
+    const float warnBandY = proxyWarnBandY();
     const float rowH = logFieldHeight();
-    const float portRowY = proxyPortRowY();
-    const float takeoverY = proxyTakeoverRowY();
     const float hintH = roundFs(16.0f);
-    const float takeoverH = proxyTakeoverRowHeight();
-    const float warnY0 = proxyWarnRowTop();
     const float warnH = proxyWarnRowHeight();
 
-    // H18 横向弹性锚（S4.1：1000×640 为锚点，向上按伸缩公式）：
-    // 固定控件（开关/输入/按钮）各持定宽，控件组右缘钉卡内容右缘（w − 28）；
-    // 说明列（端口提示 / 接管状态值）宽 = 卡内可用宽 − label 宽 − 控件宽 − 间距，
-    // 宽窗增量只进说明列——各列宽与改前逐值一致（仅控件组按右锚重排次序），
-    // 不产生右侧死区。
+    // H18 横向弹性锚（S4.1）：固定控件（开关/输入/按钮/胶囊）各持定宽，控件组右缘
+    // 钉卡内容右缘（w − 28）；说明列宽 = 卡内可用宽 − label 宽 − 控件宽 − 间距，
+    // 宽窗增量只进说明列，不产生右侧死区（设计 §9：挤压顺序说明列先饿）。
     constexpr float kPortInputW = 96.0f;         // 端口输入框（数值定宽）
     constexpr float kPortApplyW = 64.0f;         // 「应用」按钮
     constexpr float kPortCtrlGap = 8.0f;         // 输入框 → 按钮
     constexpr float kPortHintGap = 12.0f;        // 说明列 → 控件组
-    constexpr float kTakeoverLabelW = 150.0f;    // 接管行 label（固定列）
-    constexpr float kTakeoverGap = 12.0f;        // label → 状态值（说明列）
+    constexpr float kPillGap = 8.0f;             // 运行胶囊 → 接管胶囊
 
     ui.stack(id)
         .size(w, h)
@@ -519,12 +557,17 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             auto* svc = in.proxy;
 
-            cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
+            // 带1 左链：标题 →12→ 运行胶囊 →8→ 接管胶囊（R1 显式常量）；中缝 =
+            // 分组留白（设计 §2.1② R2 豁免：该行确无高频内容可挂）。
+            const float titleW = core::TextPrimitive::measureTextWidth(
+                "Claude 代理", {}, t.sizes.fontSizeLarge, 600);
+            cardTitle(ui, id, t, 16.0f, titleW + 8.0f, 28.0f, 28.0f,
+                      "Claude 代理");
 
-            // 随应用启动代理（默认关）放卡片右上：SwitchBuilder 盒内左排（轨左字右）
-            // 且不感知盒宽，盒宽须=内容实宽（左内距+轨道+间距+文字实宽），文字右缘
-            // 才恰钉卡内容右缘 28（H18）；盒宽超出即右侧死区、控件组视觉脱离锚线。
-            // 文字实宽随生效字号缩放，须运行期测量（同 SwitchBuilder 度量口径）。
+            // 随应用启动代理（默认关）降入带1 右锚（D2）：SwitchBuilder 盒内左排
+            //（轨左字右）且不感知盒宽，盒宽须=内容实宽（左内距+轨道+间距+文字实宽），
+            // 文字右缘才恰钉卡内容右缘 28（H18）。文字实宽随生效字号缩放，须运行期
+            // 测量（同 SwitchBuilder 度量口径）。
             const float autoStartTextW = core::TextPrimitive::measureTextWidth(
                 "随应用启动代理", {}, fs(13.0f), 400);
             const float autoStartBoxW = compTheme.metrics.spacing.control
@@ -532,7 +575,8 @@ void drawProxyCard(const CardDrawArgs& args) {
                 + compTheme.metrics.spacing.control
                 + autoStartTextW;
             components::toggleSwitch(ui, id + ".autostart")
-                .position(w - 28.0f - autoStartBoxW, 12.0f)
+                .position(w - 28.0f - autoStartBoxW,
+                          band1Y + (band1H - 28.0f) * 0.5f)
                 .size(autoStartBoxW, 28.0f)
                 .text("随应用启动代理")
                 .fontSize(fs(13.0f))
@@ -541,25 +585,64 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .onChange([f = a.applyProxyAutoStart](bool v) { f(v); })
                 .build();
 
-            // 153 批：desc 说明文本按老板令删除（【本地代理未运行…/本地代理
-            // http://127.0.0.1:…】两态一并退场）；运行状态仍可从接管行/端口行/
-            // 模块卡观察。卡高公式不变（proxyCardHeightFor），desc 槽留白。
+            // 带1 状态胶囊（D2/D4）：运行状态（含实际端口）+ 接管状态；范式=基准
+            // §4.3 胶囊（高 22、字 fs(11)/600、radiusPill、左置 6px 圆点）。
+            const bool running = svc && svc->isProxyRunning();
+            const bool managed = in.takeoverManaged;
+            const float pillH = roundFs(22.0f);
+            const float pillY = band1Y + (band1H - pillH) * 0.5f;
+            const float runX = 28.0f + titleW + 12.0f;
+            float runW = 0.0f;
+            statusPill(ui, id + ".pill.run", t, runX, pillY,
+                       running
+                           ? ("运行中 :" + std::to_string(svc->proxyPort()))
+                           : std::string("未运行"),
+                       running
+                           ? eui::mixColor(t.colors.surface, t.colors.success,
+                                           0.12f)
+                           : t.colors.hover,
+                       running ? t.colors.success : t.colors.textTertiary,
+                       &runW);
+            float takeW = 0.0f;
+            statusPill(ui, id + ".pill.takeover", t, runX + runW + kPillGap,
+                       pillY, managed ? "已接管" : "未接管",
+                       managed
+                           ? eui::mixColor(t.colors.surface, t.colors.success,
+                                           0.12f)
+                           : t.colors.hover,
+                       managed ? t.colors.success : t.colors.textTertiary,
+                       &takeW);
+            // 接管路径/机制收 tooltip（D4，不入版面）：已接管=接管文件路径；
+            // 未接管=接管机制一句话。锚=胶囊中心（同 stack 作用域坐标）、
+            // bounds=卡盒（气泡钳卡内），写法=claude_ui_list 名称 tooltip 先例。
+            components::tooltip(ui, id + ".pill.takeover.tooltip")
+                .theme(compTheme)
+                .source(id + ".pill.takeover")
+                .value(managed
+                           ? ("接管文件：" +
+                              (svc ? svc->settingsFilePath() : std::string()))
+                           : std::string(
+                                 "启动代理后自动接管 Claude Code，停止时还原原配置"))
+                .anchor(runX + runW + kPillGap + takeW * 0.5f,
+                        pillY + pillH * 0.5f)
+                .bounds(w, h)
+                .minWidth(200.0f)
+                .maxWidth(360.0f)
+                .build();
 
-            // 代理运行中改端口自动 stop→start 重启，未运行则下次启动生效
+            // ── 带2 配置行（y=56）：FormRow label 110 + 说明列（兼反馈位）+ 右锚
+            // 控件组（input 96 + 8 + 「应用」64）。
             const std::string portText = in.proxyPortDraft.empty()
                 ? std::to_string(in.cfg.proxyPort)
                 : in.proxyPortDraft;
-            // E 批统一：端口行 = FormRow（label 110）+ 说明列 + 右侧固定控件组
-            //（input/应用按钮，H18 右锚）。
-            ui_kit::formRow(ui, id + ".port", "代理端口", 28.0f, portRowY,
+            ui_kit::formRow(ui, id + ".port", "代理端口", 28.0f, band2Y,
                             w - 56.0f, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
                     const float inputH = 28.0f;
                     const float ctrlY = cy + (ch - inputH) * 0.5f;
                     // H18：固定控件组（输入 96 + 间距 8 + 应用 64）右锚控件区
                     // 右缘（cx+cw = 卡内容右缘 w−28）；说明列 flex 从 label 右缘
-                    // 起，宽 = cw − 96 − 8 − 64 − 12（任一宽度下均与改前盒宽同值，
-                    // 宽窗增量全归说明列）。
+                    // 起，宽 = cw − 96 − 8 − 64 − 12。
                     const float applyX = cx + cw - kPortApplyW;
                     const float inputX = applyX - kPortCtrlGap - kPortInputW;
                     components::input(ui, id + ".port.input")
@@ -576,85 +659,105 @@ void drawProxyCard(const CardDrawArgs& args) {
                         // Esc=丢弃端口草稿（回落已应用端口，不触发 applyProxyPort）
                         .onCancel([f = a.discardProxyPortDraft] { f(); })
                         .build();
-                    // UAT3 W2-M1：core 橘（#D97757 三态）残留 → 与 github 卡主按钮
-                    //（btn.push「立即同步」）完全同款：componentTokensWeChat 的
-                    // primary=#36D399 绿，不再覆写 colors/textColor
+                    // D5：「应用」降次按钮（主按钮同视口唯一=github 卡「立即同步」）；
+                    // 家族实锚=日志卡刷新按钮（surfaceElevated 底 + borderDefault）。
                     components::button(ui, id + ".port.apply")
                         .position(applyX, ctrlY)
                         .size(kPortApplyW, inputH)
                         .text("应用")
                         .fontSize(fs(13.0f))
-                        .theme(compTheme, /*primary=*/true)
+                        .theme(compTheme, /*primary=*/false)
+                        .colors(t.colors.surfaceElevated, t.colors.hover,
+                                t.colors.active)
+                        .textColor(t.colors.textPrimary)
                         .radius(t.sizes.radiusSmall)
+                        .border(1.0f, t.colors.borderDefault)
                         .onClick([f = a.applyProxyPort] { f(); })
                         .build();
+                    // 说明列兼反馈位（三态：静默提示/红字错误/「端口未变化」，
+                    // 机制=MCP 卡先例）；省略号三件套（G2 挤压时说明列先饿）。
                     const float hintX = cx;
                     const float hintW =
                         std::max(0.0f, inputX - kPortHintGap - hintX);
+                    const bool hasFeedback = !in.proxyPortFeedback.empty();
                     ui.text(id + ".port.hint")
                         .position(hintX, cy + (ch - hintH) * 0.5f)
                         .size(hintW, hintH)
-                        .text("改后回车或点「应用」；代理运行中自动重启")
+                        .text(hasFeedback
+                                  ? in.proxyPortFeedback
+                                  : std::string("改后回车或点「应用」；运行中自动重启"))
                         .fontSize(fs(12.0f))
                         .lineHeight(hintH)
-                        .color(t.colors.textTertiary)
+                        .color(hasFeedback && in.proxyPortFeedbackError
+                                   ? t.colors.errorText
+                                   : t.colors.textTertiary)
+                        .maxWidth(hintW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
                         .build();
                 }, t);
 
-            // Claude Code 接管状态：sidecar 是否存在推导，让还原机制对用户可见。
-            const bool managed = in.takeoverManaged;
-            // H18：label 150 为固定列；状态值列（说明列）起点由 28 + label + 12
-            // 派生（旧写死 190，改 label 宽即漂），宽 = w − 起点 − 28（与原式
-            // 等价；宽窗增量同进状态值列）。
-            const float takeoverValueX =
-                28.0f + kTakeoverLabelW + kTakeoverGap;
-            ui.text(id + ".takeover.label")
-                .position(28.0f, takeoverY)
-                .size(kTakeoverLabelW, takeoverH)
-                .text("Claude Code 接管")
-                .fontSize(fs(12.0f))
-                .lineHeight(takeoverH)
-                .color(t.colors.textSecondary)
-                .build();
-            // 路径读 Claude 运行面内存态（main 启动期注入，即接管实际使用的路径）。
-            const std::string ccPath =
-                svc ? svc->settingsFilePath() : std::string();
-            ui.text(id + ".takeover.value")
-                .position(takeoverValueX, takeoverY)
-                .size(w - takeoverValueX - 28.0f, takeoverH)
-                .text(managed
-                      ? ("● 已接管 " + ccPath)
-                      : std::string("○ 未接管（启动代理后自动接管，停止时还原）"))
-                .fontSize(fs(12.0f))
-                .lineHeight(takeoverH)
-                .color(managed ? t.colors.success : t.colors.textTertiary)
-                .build();
-            // 渲染门与卡高计算同源（svc 而非 managed）：未接管但警告非空时行必须画出来，否则卡高留了位。
+            // ── 带3 条件警告带（D6 治理）：染底容器（mix surface/warning 12%、
+            // radiusSmall、内边距 6）+ 图标/短标签固定左列 + 正文省略号三件套。
+            // 渲染门与卡高计算同源（svc 而非 managed）：未接管但警告非空时带必须
+            // 画出来，否则卡高留了位。最多 2 条、条距 2（更多在模块页/日志可查）。
             if (svc) {
                 // 按值快照（写者可能是 agent 线程），不是活引用
                 const std::vector<std::string> warns = svc->lastSyncWarnings();
-                // 最多展示 2 条（卡片高度约束），更多警告在日志可查；图标 / 文字拆两个元素。
-                const size_t shown =
-                    std::min<size_t>(warns.size(), 2);
-                for (size_t i = 0; i < shown; ++i) {
-                    const float warnY =
-                        warnY0 + static_cast<float>(i) * warnH;
-                    ui.text(id + ".takeover.warn.icon." + std::to_string(i))
-                        .position(28.0f, warnY)
-                        .size(12.0f, warnH)
+                const size_t shown = std::min<size_t>(warns.size(), 2);
+                if (shown > 0) {
+                    const float contX = 28.0f;
+                    const float contW = w - 56.0f;
+                    const float contH = proxyWarnContainerH(shown);
+                    const float pad = roundFs(6.0f);
+                    ui.rect(id + ".warn.bg")
+                        .position(contX, warnBandY)
+                        .size(contW, contH)
+                        .color(eui::mixColor(t.colors.surface, t.colors.warning,
+                                             0.12f))
+                        .radius(t.sizes.radiusSmall)
+                        .build();
+                    const float iconX = contX + pad;
+                    ui.text(id + ".warn.icon")
+                        .position(iconX, warnBandY)
+                        .size(12.0f, contH)
                         .icon(0xF071)  // fa-triangle-exclamation
-                        .fontSize(fs(11.0f))
-                        .lineHeight(warnH)
+                        .fontSize(fs(12.0f))
+                        .fontWeight(600)
+                        .lineHeight(contH)
                         .color(t.colors.warning)
                         .build();
-                    ui.text(id + ".takeover.warn." + std::to_string(i))
-                        .position(42.0f, warnY)
-                        .size(w - 42.0f - 28.0f, warnH)
-                        .text(warns[i])
+                    const float labelX = iconX + 12.0f + 4.0f;
+                    ui.text(id + ".warn.label")
+                        .position(labelX, warnBandY)
+                        .size(48.0f, contH)
+                        .text("同步警告")
                         .fontSize(fs(11.0f))
-                        .lineHeight(warnH)
+                        .fontWeight(600)
+                        .lineHeight(contH)
                         .color(t.colors.warning)
                         .build();
+                    // 正文行 flex：宽窗增量只进正文列（R2）；条距 2。
+                    const float textX = labelX + 48.0f + 8.0f;
+                    const float textW =
+                        std::max(0.0f, contX + contW - pad - textX);
+                    for (size_t i = 0; i < shown; ++i) {
+                        const float rowY =
+                            warnBandY + pad +
+                            static_cast<float>(i) *
+                                (warnH + proxyWarnRowGap());
+                        ui.text(id + ".warn.text." + std::to_string(i))
+                            .position(textX, rowY)
+                            .size(textW, warnH)
+                            .text(warns[i])
+                            .fontSize(fs(12.0f))
+                            .lineHeight(warnH)
+                            .color(t.colors.textSecondary)
+                            .maxWidth(textW)
+                            .overflow(core::TextOverflow::Ellipsis)
+                            .clip()
+                            .build();
+                    }
                 }
             }
         })
