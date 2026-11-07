@@ -312,9 +312,10 @@ void TelememEngine::runPipeline() {
         return;
     }
 
-    // ⑤ llama-server：定位 → 模型 → 拉起 → 健康。失败不拦 telemem：
-    // embedding 缺席时引擎可运行，add/search 报工具级错误，面板另行引导。
-    // need:202：四序定位（env→包内→数据根→PATH）+ 模型 assets 序 + Snapshot.embed* 埋点。
+    // ⑤ llama-server：定位 → 模型 → 拉起 → 健康。bug182（2026-11-07）定案：
+    // embedding 就绪是 Running 前置——本段失败置 Failed（见 ⑥ 前闸），不再
+    // 「半装好也 Running」。need:202：定位序（env→包内→数据根→brew→PATH）
+    // + 模型 assets 序 + Snapshot.embed* 埋点。
     const auto llama = locateLlamaServerDetailed(dataDir);
     std::filesystem::path modelPath;
     if (llama.exePath.empty()) {
@@ -355,11 +356,15 @@ void TelememEngine::runPipeline() {
                 snap_.embedState = EmbedState::Ready;
                 snap_.embedDetail = "已就位（数据根）";
             } else if (!dl.isOk()) {
+                // bug182：下载失败给重试 + 手动放置引导（HF 不可达时的出路）
+                const std::string dlMsg =
+                    dl.errorMessage() + "；也可手动放置模型到 " +
+                    llamaModelPath(dataDir).string() + " 后点「启动引擎」重试";
                 std::lock_guard<std::mutex> lock(mu_);
                 snap_.llamaMissing = true;
                 snap_.embedState = EmbedState::Failed;
-                snap_.embedDetail = dl.errorMessage();
-                LOG_WARN("记忆引擎：模型下载失败——" + dl.errorMessage());
+                snap_.embedDetail = dlMsg;
+                LOG_WARN("记忆引擎：模型下载失败——" + dlMsg);
             }
         }
         if (!modelPath.empty() && !stopRequested_.load()) {
@@ -394,6 +399,23 @@ void TelememEngine::runPipeline() {
     if (stopRequested_.load()) {
         setState(State::Stopped, "引擎已停止");
         return;
+    }
+
+    // bug182（2026-11-07）：⑤ 未就绪（llama 缺失/下载/拉起/健康失败）= 引擎未
+    // 装好，不得进 Running——老板视角「未装好却显示关闭引擎」的根因在此。
+    // 改判 Failed 给引导，按钮态自然回落「启动引擎」（卡对 Failed 的绑定本就正确）。
+    {
+        std::string embedGap;
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (snap_.embedState != EmbedState::Ready) {
+                embedGap = snap_.embedDetail;
+            }
+        }
+        if (!embedGap.empty()) {
+            setState(State::Failed, "embedding 本机包未就绪：" + embedGap);
+            return;
+        }
     }
 
     // ⑥ telemem 拉起（TELEMEM_CONFIG + key 环境注入）→ 回环 8421 健康

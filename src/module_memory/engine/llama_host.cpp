@@ -73,7 +73,15 @@ LlamaLocate locateLlamaServerBetween(const std::filesystem::path& assetsDir,
         std::error_code ec;
         if (std::filesystem::exists(p, ec) && !ec) return {p, "dataroot"};
     }
-    // 4) PATH（平台探测：SearchPathW / 逐目录 stat）
+    // 4) 显式绝对目录（bug182：macOS GUI 进程 PATH 只给系统目录，brew 装的
+    //    llama-server 在 Finder/Dock 拉起下 PATH 序恒 miss——与 bug202 Python
+    //    候选同款处理；目录不存在 stat 天然落选，Windows 无害）
+    for (const char* dir : {"/opt/homebrew/bin", "/usr/local/bin"}) {
+        std::error_code ec;
+        const std::filesystem::path p = exeNameIn(std::filesystem::path(dir));
+        if (std::filesystem::exists(p, ec) && !ec) return {p, "brew"};
+    }
+    // 5) PATH（平台探测：SearchPathW / 逐目录 stat）
     if (platform::executableOnPath(llamaServerBinaryName())) {
         return {std::filesystem::path(llamaServerBinaryName()), "path"};
     }
@@ -132,11 +140,17 @@ std::string llamaLocateDiagnosis(const std::filesystem::path& dataDir) {
     const std::string dataState =
         std::filesystem::exists(exeNameIn(dataDir / "llama" / "bin")) ? "命中"
                                                                      : "缺失";
+    const bool brewHit = [&] {
+        std::error_code ec;
+        return (std::filesystem::exists(exeNameIn("/opt/homebrew/bin"), ec) && !ec) ||
+               (std::filesystem::exists(exeNameIn("/usr/local/bin"), ec) && !ec);
+    }();
     const std::string pathState =
-        platform::executableOnPath(llamaServerBinaryName()) ? "命中" : "未命中";
+        (platform::executableOnPath(llamaServerBinaryName()) || brewHit) ? "命中"
+                                                                        : "未命中";
     return "llama-server 未找到（四序检查：DEVDESK_LLAMA_DIR 环境变量=" +
            envState + "；包内 assets/llama/bin=" + pkgState + "；数据根 memory/llama/bin=" +
-           dataState + "；PATH=" + pathState +
+           dataState + "；PATH/brew=" + pathState +
            "）——可重装随包 assets 的安装包，或设 DEVDESK_LLAMA_DIR 指向本机 llama/bin";
 }
 

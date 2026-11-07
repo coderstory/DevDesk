@@ -401,13 +401,20 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
         title = title.substr(0, cut) + "…";
     }
     if (title.empty()) title = "（无正文）";
+    // bug184（2026-11-07）：诚实降级——采集路径未提炼的 add 卡（resultType 空，
+    // 存量占位 "fact" 同判）不虚标「新增记忆：」，按原始片段标注保证可辨识
+    const bool unrefinedAdd = p.kind == "add" &&
+                              (p.resultType.empty() || p.resultType == "fact");
     const std::string titleText =
-        (p.kind == "add" ? "新增记忆：" + title
-                         : (p.kind == "forget"
-                                ? "遗忘过时记忆：" + title
-                                : (p.kind == "invalidate"
-                                       ? "标记过期记忆：" + title
-                                       : "合并重复记忆：" + title)));
+        unrefinedAdd
+            ? "原始片段（未分类）：" + title
+            : (p.kind == "add"
+                   ? "新增记忆：" + title
+                   : (p.kind == "forget"
+                          ? "遗忘过时记忆：" + title
+                          : (p.kind == "invalidate"
+                                 ? "标记过期记忆：" + title
+                                 : "合并重复记忆：" + title)));
     // bug217（2026-11-04）：行盒宽度预算截断（窄窗标题曾横向溢出压到置信度/来源）
     const float kTitleBudget = w - (hx - x) - kindW - 200.0f;
     ui.text("memory.rv.title." + p.id)
@@ -441,7 +448,11 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
 
     // 正文（add/merge = 将生成/合并结果；forget/invalidate = 拟处理原文）
     std::string body;
-    if (p.kind == "add") {
+    if (unrefinedAdd) {
+        // 价值摘要如实：未提炼无归纳，给处理建议代替虚假摘要
+        body = "原始片段（未经 AI 提炼，建议「编辑后接受」整理成完整记忆）：";
+        body += p.resultText;
+    } else if (p.kind == "add") {
         body = "将新增：" + p.resultText;
     } else if (p.kind == "merge") {
         body = "合并结果（将生成）：" + p.resultText;
@@ -622,6 +633,22 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         .color(t.colors.textSecondary)
         .build();
     cy += 30.0f;
+
+    // bug184（2026-11-07）：引擎未运行 = 提炼链未跑，现存卡全是原始片段——
+    // 如实降级口径（不虚标「已分类」），并说明出路
+    if (TelememEngine::global().snapshot().state !=
+        TelememEngine::State::Running) {
+        ui.text("memory.rv.degraded")
+            .position(x, cy)
+            .size(w, core::theme::scaled(20.0f))
+            .text("记忆引擎未运行：以下为采集的原始片段，未经 AI 提炼分类；"
+                  "启动引擎后新提案将自动归纳类型。")
+            .fontSize(core::theme::scaled(12.0f))
+            .lineHeight(core::theme::scaled(20.0f))
+            .color(t.colors.warning)
+            .build();
+        cy += 26.0f;
+    }
 
     // 工具条：类型 / 来源 / 状态 chips + 批量模式
     {

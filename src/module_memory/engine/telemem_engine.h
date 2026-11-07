@@ -4,6 +4,8 @@
 // 状态迁移契约（UI 依赖，勿改语义）：
 //   Idle →(startAsync)→ Preparing →(全绿)→ Running
 //   Preparing 途中任何步失败 → Failed（detail 面板可读，重试 = 再按启动）
+//   bug182（2026-11-07）：Running 前置 = embedding 链就绪（llama-server + 模型）——
+//   embedding 缺席时置 Failed + 引导文案，不再「半装好也 Running」
 //   Running 中进程被外杀 → snapshot 探活发现 → Failed（一键重启 = startAsync）
 //   stopAsync → Stopped（幂等；Preparing 中调用 = 中止请求，工作线程自检后落 Stopped）
 #pragma once
@@ -65,6 +67,11 @@ public:
     // 测试缝（memory_probe 组 E 用；与 MemoryModule::setActiveViewForTest 同族）：
     // 锁内整表覆写快照供 UI 断言，不触碰 worker/进程句柄。仅测试进程调用。
     void setSnapshotForTest(const Snapshot& snap);
+
+    // 测试缝（同族）：worker 线程是否已退出（startAsync 可再拉起）。端态 setState
+    // 之后 worker 收尾清 workerActive_ 才算真正空闲——「端态可见」≠「可重启」，
+    // 连跑两条管线测试时需要后者。
+    bool workerIdleForTest() const { return !workerActive_.load(); }
 
 private:
     TelememEngine() = default;

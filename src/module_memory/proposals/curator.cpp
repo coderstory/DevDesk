@@ -17,7 +17,9 @@ core::Result<Proposal> Curator::proposeAdd(
                                             "新增提案正文为空");
     }
     // add 类无目标 → baseVersion 恒 -1（无前置校验对象）
-    return store.create("add", {}, text, "fact", "devdesk", evidence,
+    // bug184（2026-11-07）：未提炼不虚标类型——resultType 留空，审核卡按
+    // 「原始片段（未分类）」如实呈现；语义类型由引擎提炼链回填（#181 范畴）
+    return store.create("add", {}, text, "", "devdesk", evidence,
                         confidence, "collect", "assistant_derived", nowSec,
                         -1);
 }

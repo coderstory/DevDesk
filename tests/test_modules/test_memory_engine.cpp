@@ -104,26 +104,6 @@ struct ScopedRunnerOverride {
     ScopedRunnerOverride& operator=(const ScopedRunnerOverride&) = delete;
 };
 
-// 轮询引擎端态（管线在 worker 线程跑）：先等新管线起跑（Preparing 出现或已有
-// stub 调用，防读到上一轮残留端态），再等收敛到非 Preparing。
-bool waitForPipelineTerminal(const InstallRunnerStub& stub) {
-    for (int waited = 0; waited < 5000 && stub.totalCalls() == 0; waited += 20) {
-        if (TelememEngine::global().snapshot().state ==
-            TelememEngine::State::Preparing) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    for (int waited = 0; waited < 15000; waited += 50) {
-        if (TelememEngine::global().snapshot().state !=
-            TelememEngine::State::Preparing) {
-            return true;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    return false;
-}
-
 // 候选序断言的平台分叉收在普通函数里（#if 不得出现在 REGISTER_TEST 宏实参内）
 #if defined(_WIN32)
 bool assertCandidateOrderForPlatform(const std::vector<std::string>& candidates) {
@@ -630,14 +610,16 @@ REGISTER_TEST(memory_llama_locate_pkg_over_dataroot,
 })
 
 REGISTER_TEST(memory_llama_locate_miss_falls_to_path_or_empty,
-              "memory need202 F-01/F-03: 四处全空→exePath 空（PATH 有则如实记 path）", {
+              "memory need202 F-01/F-03: 前三序全空→只允许 brew/PATH 命中或彻底未命中", {
     const auto assets = test_support::makeTempDir("devdesk_mem_locate_", "empty");
     const auto data = test_support::makeTempDir("devdesk_mem_locate_", "empty2");
     test_support::ScopedEnv noEnv("DEVDESK_LLAMA_DIR", "");
     const auto miss = locateLlamaServerBetween(assets, data);
+    // bug182：brew 序（/opt/homebrew、/usr/local）加入后，brew 机器上如实记 "brew"
     DOCTEST_CHECK_MESSAGE(miss.exePath.empty() ||
-                              std::string(miss.source) == "path",
-                          "全空时只允许 PATH 命中或彻底未命中");
+                              std::string(miss.source) == "path" ||
+                              std::string(miss.source) == "brew",
+                          "前三序全空时只允许 brew/PATH 命中或彻底未命中");
     return true;
 })
 
@@ -692,18 +674,62 @@ REGISTER_TEST(memory_llama_locate_diagnosis_four_seqs,
     return true;
 })
 
+// bug182 后 ⑤ 桩 llama spawn「成功」（孙 pid 在 exec 前回传）而 exec 即死 →
+// 健康轮询要等 kStartupWindowMs（60s）才落 Failed。两测只断言 ⓪-③ 的
+// venv/Python 面：stub 计数收敛即断言，随后 stopAsync 让管线在最近检查点
+// 快速落 Stopped（≤1 轮询周期），不等 60s 慢尾。
+bool waitVenvFaceSettled(const InstallRunnerStub& stub, int minPipCalls,
+                         int minImportCalls) {
+    for (int waited = 0; waited < 15000; waited += 20) {
+        if (stub.pipInstallCalls >= minPipCalls &&
+            stub.venvImportCalls >= minImportCalls &&
+            TelememEngine::global().snapshot().pythonFound) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+bool waitEngineNotPreparing() {
+    for (int waited = 0; waited < 10000; waited += 20) {
+        // 端态可见 ≠ worker 已退出（setState 后还有收尾清 workerActive_）：
+        // 不同时 idle，下一条管线测试的 startAsync 会撞 no-op
+        if (TelememEngine::global().snapshot().state !=
+                TelememEngine::State::Preparing &&
+            TelememEngine::global().workerIdleForTest()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
 // ── bug202：venv 快路径 / 自检失败回落（管线级；stub runner 零真进程）──
-// 环境：DataRootEnv 隔离数据根 + DEVDESK_LLAMA_DIR 清空——单测二进制 exeDir 下无
-// assets，⑤步 llama 定位天然落空（不拉进程不触网），管线在⑥前快速收敛到 Failed。
+// 环境：DataRootEnv 隔离数据根 + DEVDESK_LLAMA_DIR 桩不可执行假 llama-server +
+// 数据根假模型（bug182 后 ⑤ 就绪是 Running 前置：如此桩定不触网下载、不真拉
+// 进程）；⑤⑥ 慢尾处理见上方 waitVenvFaceSettled 说明。
 
 REGISTER_TEST(memory_engine_venv_fastpath_skips_system_python,
               "memory bug202: venv 就绪+import 自检通过 → 零系统 Python 探测、不装 pip、直接就绪", {
     test_support::DataRootEnv root("bug202", "fastpath");
     test_support::ScopedEnv noLlamaEnv("DEVDESK_LLAMA_DIR", "");
-    // ⑤⑥ 收敛钉：剥宿主 PATH（宿主 /opt/homebrew/bin/llama-server 会被⑤真命中
-    // 进模型下载网络等待）；HOME/APPDATA 隔离（⑥无 key 在 spawn 前快速 Failed）
+    // ⑤⑥ 收敛钉（bug182 后升级）：brew 序不认 PATH 剥离——env 序桩一只不可执行
+    // 假 llama-server + 数据根假模型，⑤ 定位命中且拉起快速失败（不触网、不真拉
+    // 进程），管线照旧在 embedding 闸收敛 Failed；HOME/APPDATA 隔离保持
     test_support::ScopedEnv minimalPath("PATH", "/usr/bin:/bin");
     test_support::AppDataEnv appData("bug202");
+    const auto llamaStub =
+        test_support::makeTempDir("devdesk_mem_llama_", "bug182");
+    DOCTEST_REQUIRE(test_support::writeTextFile(
+        llamaStub / llamaServerBinaryName(), ""));
+    test_support::ScopedEnv llamaEnv("DEVDESK_LLAMA_DIR", llamaStub.string());
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(memoryDataDir() / "models", ec);
+        DOCTEST_REQUIRE(
+            test_support::writeTextFile(llamaModelPath(memoryDataDir()), "m"));
+    }
     const auto venvPy = venvPythonExe(memoryDataDir() / "venv");
     // 假 venv 解释器（普通文件、非可执行：stub 接管下不会被真跑）
     DOCTEST_REQUIRE(test_support::writeTextFile(venvPy, ""));
@@ -712,7 +738,8 @@ REGISTER_TEST(memory_engine_venv_fastpath_skips_system_python,
     ScopedRunnerOverride runnerGuard(stub.runner());
 
     TelememEngine::global().startAsync();
-    DOCTEST_REQUIRE(waitForPipelineTerminal(stub));
+    // ⑤⑥ 慢尾不等（60s 健康轮询）：⓪-③ 计数收敛即断言，再收尾落 Stopped
+    DOCTEST_REQUIRE(waitVenvFaceSettled(stub, 0, 1));
     const auto snap = TelememEngine::global().snapshot();
     DOCTEST_CHECK_EQ(stub.systemVersionProbeCalls, 0);  // 系统 Python 闸零调用
     DOCTEST_CHECK_EQ(stub.venvImportCalls, 1);          // 只一次 venv 自检
@@ -721,6 +748,8 @@ REGISTER_TEST(memory_engine_venv_fastpath_skips_system_python,
     DOCTEST_CHECK_EQ(snap.pythonVersion,
                      std::string("3.12.4"));  // 版本取自 venv 解释器
     DOCTEST_CHECK(snap.detail.find("未找到 Python") == std::string::npos);
+    TelememEngine::global().stopAsync();
+    DOCTEST_CHECK(waitEngineNotPreparing());
     return true;
 })
 
@@ -728,9 +757,20 @@ REGISTER_TEST(memory_engine_broken_venv_falls_back,
               "memory bug202: venv 自检失败 → 回落旧管线（系统闸执行、venv 不重建、缺才装）", {
     test_support::DataRootEnv root("bug202", "fallback");
     test_support::ScopedEnv noLlamaEnv("DEVDESK_LLAMA_DIR", "");
-    // ⑤⑥ 收敛钉（同 fastpath：剥 PATH 上真 llama-server；⑥无 key 快速 Failed）
+    // ⑤⑥ 收敛钉（同 fastpath：env 桩假 llama + 数据根假模型，⑤ 快速失败不触网）
     test_support::ScopedEnv minimalPath("PATH", "/usr/bin:/bin");
     test_support::AppDataEnv appData("bug202");
+    const auto llamaStub2 =
+        test_support::makeTempDir("devdesk_mem_llama_", "bug182b");
+    DOCTEST_REQUIRE(test_support::writeTextFile(
+        llamaStub2 / llamaServerBinaryName(), ""));
+    test_support::ScopedEnv llamaEnv2("DEVDESK_LLAMA_DIR", llamaStub2.string());
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(memoryDataDir() / "models", ec);
+        DOCTEST_REQUIRE(
+            test_support::writeTextFile(llamaModelPath(memoryDataDir()), "m"));
+    }
     const auto venvPy = venvPythonExe(memoryDataDir() / "venv");
     DOCTEST_REQUIRE(test_support::writeTextFile(venvPy, ""));
     InstallRunnerStub stub;
@@ -739,12 +779,15 @@ REGISTER_TEST(memory_engine_broken_venv_falls_back,
     ScopedRunnerOverride runnerGuard(stub.runner());
 
     TelememEngine::global().startAsync();
-    DOCTEST_REQUIRE(waitForPipelineTerminal(stub));
+    // ⑤⑥ 慢尾不等（60s 健康轮询）：③ pip 装完即断言，再收尾落 Stopped
+    DOCTEST_REQUIRE(waitVenvFaceSettled(stub, 1, 1));
     const auto snap = TelememEngine::global().snapshot();
     DOCTEST_CHECK(stub.systemVersionProbeCalls >= 1);  // 回落后系统 Python 闸执行
     DOCTEST_CHECK_EQ(stub.pipInstallCalls, 1);         // ③缺才装（venv 在位不重建）
     DOCTEST_CHECK(snap.pythonFound);
     DOCTEST_CHECK_EQ(snap.pythonVersion, std::string("3.12.4"));
     DOCTEST_CHECK(snap.detail.find("未找到 Python") == std::string::npos);
+    TelememEngine::global().stopAsync();
+    DOCTEST_CHECK(waitEngineNotPreparing());
     return true;
 })

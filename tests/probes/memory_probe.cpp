@@ -569,6 +569,32 @@ int main(int argc, char* argv[]) {
     composeFrame();
     composeFrame();
 
+    // ── 组 F2：引擎卡运行态（bug182 两态证据的另一侧）——Running →「停止引擎」；
+    // 未装好态（组 E / 主控台组）→「启动引擎」，按钮态与引擎真实状态绑定。
+    // 放在全部待审计数断言之后：Running 态下面板 tick 会推进采集→提案
+    // （放组 E 后曾把组 F 的「记忆审核 (4)」冲成 (49)，计数断言被污染）。
+    {
+        namespace engine = module::memory::engine;
+        engine::TelememEngine::Snapshot fake;
+        fake.state = engine::TelememEngine::State::Running;
+        fake.pythonVersion = "3.13.15";
+        fake.pythonFound = true;
+        fake.embedReady = true;
+        fake.detail = "运行中（127.0.0.1:8421）";
+        engine::TelememEngine::global().setSnapshotForTest(fake);
+        switchView(0);
+        composeFrame();
+        composeFrame();
+        A.textHas("memory.eng.toggle.text", "停止引擎");
+        A.textHas("memory.eng.state", "运行中");
+        for (int i = 0; i < 8; ++i) composeFrame();
+        shoot("memory-engine-card-running.png", &A.passed);
+        // 还原 Idle 兜底；向导组自设自己的快照
+        fake.state = engine::TelememEngine::State::Idle;
+        fake.embedReady = false;
+        engine::TelememEngine::global().setSnapshotForTest(fake);
+    }
+
     // ── 组 G：向导四步（need:202 F-04/F-05）——③ embedding 本机包四态 + ④ 顺延 ──
     // 打开向导（点 memory.eng.wizard，命中链口径同组 E），③/④ 行文案随注入的
     // Snapshot.embed* 字段走（向导只读字段不探文件系统，设计 §4 实现约束）。
