@@ -36,7 +36,7 @@ using core::theme::Tokens;
 
 inline constexpr float kSectionTitleH = 24.0f;
 inline constexpr float kSectionGap = 12.0f;
-inline constexpr float kPrereqGap = 16.0f;
+inline constexpr float kPrereqGap = 8.0f;  // need219 §4.3 卡间距统一档 8px
 inline constexpr float kEnvHeaderH = 56.0f;
 inline constexpr float kEnvInset = 16.0f;
 inline constexpr float kServiceGap = 12.0f;

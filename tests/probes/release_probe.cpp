@@ -19,6 +19,8 @@
 //                        [--screenshot <png>] [--screenshot-seeded <png>]
 //                        [--screenshot-crowded <png>]
 //                        [--accept-shot-env-tab-empty <png>]
+//                        [--shot-detail <png>] [--shot-track <png>]
+//                        [--shot-newtask <png>] [--theme dark]
 // 数据：用 test_support::TestEnv 建已 migrate 的临时库并注册为进程级
 // appDatabase——不读写用户数据，也不依赖 DEVDESK_DATA_ROOT。
 //
@@ -327,9 +329,24 @@ int main(int argc, char* argv[]) {
         acceptArg(argc, argv, "--accept-shot-env-tab-empty");
     const std::string crowdedShotPath =
         acceptArg(argc, argv, "--screenshot-crowded");
+    // 列表统一批（need 224 批2）before/after 证据落图开关（未传 = 零开销）
+    const std::string detailShotPath = acceptArg(argc, argv, "--shot-detail");
+    const std::string trackShotPath = acceptArg(argc, argv, "--shot-track");
+    const std::string newTaskShotPath = acceptArg(argc, argv, "--shot-newtask");
     if (!probe::initializeWindowBackend()) return 1;
-    // 设计语言基线为浅色微信风（池 53/55）：release 域探针固定浅色主题落图与断言
-    core::theme::setLight();
+    // 设计语言基线为浅色微信风（池 53/55）；--theme dark 供亮暗两态落图对照
+    //（断言全为 token 相对比对，暗色不假红）。
+    bool probeDarkTheme = false;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--theme") {
+            probeDarkTheme = std::string(argv[i + 1]) == "dark";
+        }
+    }
+    if (probeDarkTheme) {
+        core::theme::setDark();
+    } else {
+        core::theme::setLight();
+    }
     auto window = probe::makeWindow("release_probe", args.windowW, args.windowH);
     if (!window) {
         probe::terminateWindowBackend();
@@ -780,6 +797,30 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ================= C3. 新建任务弹窗落图（need 224 批2 材质证据） =================
+    if (!newTaskShotPath.empty()) {
+        composeList();
+        composeList();
+        const auto* newBtn = ui->find("release.tasks.new.bg");
+        if (newBtn == nullptr) {
+            checks.fail("C3：新建任务按钮缺失（release.tasks.new.bg）");
+        } else {
+            probe::click(window, runtime,
+                         static_cast<double>(newBtn->frame.x +
+                                             newBtn->frame.width * 0.5f),
+                         static_cast<double>(newBtn->frame.y +
+                                             newBtn->frame.height * 0.5f));
+            for (int i = 0; i < 4; ++i) {
+                composeList();  // 打开沿（wasOpen 翻转）+ 弹窗装填帧
+            }
+            checks.need(ui, "release.newtask.title", "新建上线任务弹窗已渲染");
+            if (!probe::captureFramePng(window, runtime, newTaskShotPath)) {
+                std::cerr << "release_probe: --shot-newtask 落图失败\n";
+                checks.passed = false;
+            }
+        }
+    }
+
     // ================= D. 执行页 =================
     // 环境分组头高 56、标题 18；步骤行高 44（池 53 设计档）、勾选框 18；状态 chip 22/11/999。
     module::release::ReleaseDetailUiState detailState;
@@ -872,6 +913,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // 编辑态详情页落图（need 224 批2：环境卡/前置卡材质对照）
+    if (!detailShotPath.empty() &&
+        !probe::captureFramePng(window, runtime, detailShotPath)) {
+        std::cerr << "release_probe: --shot-detail 落图失败\n";
+        checks.passed = false;
+    }
+
     // ================= D2. 发布态分支入口门禁（池 54 F-54-1 / F-03） =================
     // 提交转 Pending：分支输入框必须消失（发布态只读铁律），页面切流程轨道；
     // 落一张发布态基准图后回到 Draft，保证退出落图仍是编辑态（与池 53 基准同态）。
@@ -897,6 +945,12 @@ int main(int argc, char* argv[]) {
                         module::release::composeReleaseDetailPage(
                             frameUi, screen, store, detailState);
                     });
+        // 发布态流程轨道落图（need 224 批2：裸行分隔线对照）
+        if (!trackShotPath.empty() &&
+            !probe::captureFramePng(window, runtime, trackShotPath)) {
+            std::cerr << "release_probe: --shot-track 落图失败\n";
+            checks.passed = false;
+        }
         const std::string svcBase =
             "release.detail.env." + std::to_string(detailEnvId) +
             ".svc." + std::to_string(detailServiceId);

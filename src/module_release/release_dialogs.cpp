@@ -25,6 +25,7 @@
 #include <eui/types.h>
 
 #include <ui_kit/button.h>
+#include <ui_kit/card.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 
@@ -357,13 +358,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
                 .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textSecondary)
                 .build();
-            ui.rect("release.newtask.date")
-                .position(x0, 78.0f)
-                .size(innerW, 40.0f)
-                .color(t.colors.surface)
-                .border(1.0f, t.colors.borderDefault)
-                .radius(t.sizes.radius)
-                .build();
+            // 弹窗内豁免档（need219 §5.2-2）：cardPanelColored，底色比弹窗白底可辨
+            ui_kit::cardPanelColored(ui, "release.newtask.date", x0, 78.0f, innerW,
+                                     40.0f, t.sizes.radius, t,
+                                     t.colors.surfaceElevated);
             const float dateChipW = chipWidth(regularDay ? "常规发布日" : "非常规发布日");
             ui.text("release.newtask.date.text")
                 .position(x0 + 12.0f, 78.0f)

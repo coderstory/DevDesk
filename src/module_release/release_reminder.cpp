@@ -24,6 +24,7 @@
 #include <eui/dsl_app.h>
 #include <eui/types.h>
 #include <ui_kit/button.h>
+#include <ui_kit/card.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -68,7 +69,7 @@ constexpr float kCardInset = 18.0f;
 constexpr float kCardHeaderH = 30.0f;
 constexpr float kSectionH = 30.0f;
 constexpr float kItemRowH = 58.0f;
-constexpr float kCardGap = 14.0f;
+constexpr float kCardGap = 8.0f;  // need219 §4.3 卡与卡纵向间距统一 8px
 constexpr float kCardBottomPad = 14.0f;
 constexpr float kGoButtonW = 88.0f;
 constexpr float kGoButtonH = 34.0f;
@@ -767,13 +768,10 @@ void drawTaskCardBody(eui::Ui& ui, const std::string& prefix, float x, float y,
                       const std::shared_ptr<ReminderWindowState>& state,
                       const core::theme::Tokens& tokens) {
     const float height = reminderCardHeight(group);
-    ui.rect(prefix + ".bg")
-        .position(x, y)
-        .size(width, height)
-        .color(tokens.colors.surfaceElevated)
-        .radius(tokens.sizes.radiusLarge)
-        .border(1.0f, tokens.colors.borderMuted)
-        .build();
+    // 弹窗内豁免档（need219 §5.2-2）：cardPanelColored 通路，描边阴影走全站统一
+    ui_kit::cardPanelColored(ui, prefix + ".bg", x, y, width, height,
+                             tokens.sizes.radiusLarge, tokens,
+                             tokens.colors.surfaceElevated);
 
     const eui::Color accent = levelAccent(group.level);
     const float chipW = 88.0f;

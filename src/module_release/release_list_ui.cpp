@@ -200,7 +200,7 @@ void drawTaskRow(eui::Ui& ui, const std::string& id, float x, float y, float w,
                 .text(releaseWeekdayLabel(card.planDate))
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(kMainH)
-                .fontWeight(600)
+                .fontWeight(400)
                 .color(regularDay ? t.colors.primaryText : t.colors.textTertiary)
                 .opacity(opacity)
                 .build();
@@ -340,7 +340,7 @@ void composeListShell(eui::Ui& ui, const eui::Screen& screen,
                 .text("上线任务")
                 .fontSize(t.sizes.fontSizeTitle)
                 .lineHeight(ui_kit::kHeaderH)
-                .fontWeight(700)
+                .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();

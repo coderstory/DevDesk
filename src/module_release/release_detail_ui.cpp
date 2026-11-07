@@ -241,7 +241,7 @@ void drawErrorPage(eui::Ui& ui, const eui::Screen& screen,
                 .text("上线任务")
                 .fontSize(t.sizes.fontSizeTitle)
                 .lineHeight(ui_kit::kHeaderH)
-                .fontWeight(700)
+                .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
             ui.text("release.detail.error")

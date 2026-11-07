@@ -17,6 +17,7 @@
 #include <components/scrollview.h>
 
 #include <ui_kit/button.h>
+#include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 
 #include <algorithm>
@@ -69,10 +70,12 @@ void drawCardBackground(eui::Ui& ui, const std::string& id, float x, float y,
                         bool subtle) {
     // 卡片统一 12 圆角 + 1px #E5E7EB 描边（视觉契约）；嵌套服务卡只用浅底区分层级，
     // 不改圆角档，避免同页出现 8/12 两套卡圆角。
+    // 卡面材质（need219 §5.2-1）：非 subtle 主卡走玻璃 itemSurface，subtle 嵌套浅底维持
+    // background 层级档不属卡面材质。
     ui.rect(id)
         .position(x, y)
         .size(w, h)
-        .color(subtle ? t.colors.background : t.colors.surface)
+        .color(subtle ? t.colors.background : ui_kit::itemSurface(t))
         .border(1.0f, t.colors.borderDefault)
         .radius(t.sizes.radiusLarge)
         .shadow(subtle ? core::Shadow{}
@@ -1229,14 +1232,14 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
         x = 40.0f + 8.0f;
     }
     const std::string titleText = "上线任务 " + planDateShortLabel(state.task.planDate);
-    const float titleW = measureText(titleText, t.sizes.fontSizeTitle, 700) + 8.0f;
+    const float titleW = measureText(titleText, t.sizes.fontSizeTitle, 600) + 8.0f;
     ui.text("release.detail.title")
         .position(x, 0.0f)
         .size(titleW, headerH)
         .text(titleText)
         .fontSize(t.sizes.fontSizeTitle)
         .lineHeight(headerH)
-        .fontWeight(700)
+        .fontWeight(600)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary)
         .build();
@@ -1400,7 +1403,7 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
         ui.rect("release.detail.menu.panel")
             .position(panelX, panelY)
             .size(menuW, panelH)
-            .color(t.colors.surface)
+            .color(ui_kit::itemSurface(t))
             .border(1.0f, t.colors.borderDefault)
             .radius(6.0f)
             .shadow(8.0f, 2.0f, eui::Color{0.0f, 0.0f, 0.0f, 0.10f})
@@ -1505,9 +1508,20 @@ void drawPublishTrack(eui::Ui& ui, float width, ReleaseDetailUiState& state,
         .content([&] {
             float y = 0.0f;
             std::string lastGroup;
+            bool firstVisibleRow = true;
             for (const auto& row : rows) {
                 if (row.hidden) continue;
                 const std::string base = "release.detail.track." + std::to_string(&row - rows.data());
+                // 裸行分隔口径（need219 §4.4-1）：有容器裸行一律 1px borderMuted、首行不画，
+                // 画在行间 gap 中点、行内容之下，行底 hover/current 染色可覆盖。
+                if (!firstVisibleRow) {
+                    ui.rect(base + ".sep")
+                        .position(0.0f, y - kTrackRowGap * 0.5f)
+                        .size(width, 1.0f)
+                        .color(t.colors.borderMuted)
+                        .build();
+                }
+                firstVisibleRow = false;
                 if (row.kind == TrackRowKind::EnvGroupHeader) {
                     // 组头：展开态标题 + 时间窗 + 超时 chip + 进度 + 折叠箭头。
                     ui.rect(base + ".hit")

@@ -563,7 +563,7 @@ void drawPageHeader(eui::Ui& ui, float contentW, bool servicesTab,
             .text("基础配置")
             .fontSize(t.sizes.fontSizePage)
             .lineHeight(core::theme::scaled(32.0f))
-            .fontWeight(700)
+            .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
 
