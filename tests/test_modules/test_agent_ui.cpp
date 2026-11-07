@@ -2478,10 +2478,10 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     DOCTEST_CHECK_MESSAGE(ui2.find(grepPfx + ".chip.more") == nullptr,
                   "「+N」截断 chip 已退役，不应再渲染");
 
-    // 关闭路径 ①：头部 ✕
-    const auto* closeBg = ui2.find("agent.dialog.tools.close.bg");
+    // 关闭路径 ①：底区「关闭」钮（need156 标准壳：头部 ✕ 退役，关闭归底区右锚副钮）
+    const auto* closeBg = ui2.find("agent.dialog.tools.cancel.bg");
     DOCTEST_REQUIRE_MESSAGE(closeBg != nullptr && closeBg->onClick != nullptr,
-                            "弹窗头部缺 ✕ 关闭钮");
+                            "弹窗底区缺「关闭」钮");
     closeBg->onClick();
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_tools3");
@@ -2583,7 +2583,7 @@ REGISTER_TEST(agent_ui_tools_dialog_open_grid_close,
     // 复位关闭：保住下方「空态」段「重开触发 forceReload」的时序前提
     eui::Ui uiN5;
     composeTo(uiN5, mod, kNarrowScreen, "agent_ui_tools_n5");
-    DOCTEST_CHECK(clickId(uiN5, "agent.dialog.tools.close.bg"));
+    DOCTEST_CHECK(clickId(uiN5, "agent.dialog.tools.cancel.bg"));
 
     // 空态：注册表清空后重开 → 「暂无可用工具」
     for (const auto& tool : core::ToolRegistry::instance().listTools()) {

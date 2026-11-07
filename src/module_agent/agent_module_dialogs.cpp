@@ -10,7 +10,7 @@
 #include "agent_module_internal.h"
 #include "module_agent/agent_task_templates.h"
 
-#include <ui_kit/glass.h>       // glassFill/glassShadowColor（池170 v2 弹窗壳）
+#include <ui_kit/dialog_shell.h>  // need156 标准弹窗壳（可用工具弹窗）
 #include <ui_kit/materials.h>   // itemSurface（池127 L2 卡面）
 #include <components/theme.h>      // panelShadow（need219 §5.2-2 弹窗内卡描边阴影统一）
 #include <core/component_theme.h>  // componentTokensWeChat（panelShadow 入参）
@@ -1196,7 +1196,6 @@ void AgentModule::composeTaskDialog(
 
 // ---- 池170 v2 工具弹窗 TU 私有助手 ----
 
-constexpr float kToolsHeaderH = 56.0f;           // §3.3 头部区
 constexpr float kToolsSearchBoxH = 36.0f;        // §3.6 搜索框高
 constexpr float kToolsDescLh = 20.0f;            // 描述行盒（13px/20）
 constexpr std::size_t kToolsDescClampLines = 3;  // 描述 >3 行才 clamp+展开（§3.4）
@@ -1352,31 +1351,22 @@ eui::Color toolNeutralFill(const ::core::theme::Tokens& t) {
     return t.isDark ? t.colors.hover : t.colors.borderMuted;
 }
 
-// 弹窗浮层细黑边（§9：light rgba(0,0,0,0.35) / dark borderDefault——暗色纯黑边
-// 深底不可见降档，终端页覆盖卡同口径）
-eui::Color toolsShellBorder(const ::core::theme::Tokens& t) {
-    return t.isDark ? t.colors.borderDefault
-                    : eui::Color{0.0f, 0.0f, 0.0f, 0.35f};
-}
-
-// ---- 可用工具弹窗（池170 v2，取代 v1 2 列定高网格版）----
+// ---- 可用工具弹窗（池170 v2 布局；need156 壳改标准弹窗壳）----
 //
-// 纯查阅弹窗（无表单无 footer 主次钮）：弹窗壳 w=min(720,可用宽−48)
-// h=min(600,可用高−96)（glassFill + 1px 细黑边 + 冷阴影 blur24 + radiusLarge 14，
-// §3.2 白卡+细黑边老板裁决）→ 头部 56（标题 + 「N 个」badge 恒全量 | ✕ 28×28）+
-// 1px 分割线 + 搜索区（锚顶固定不滚，§3.6：框高 36、左 fa-search、右计数/清除）+
-// 列表区（唯一内滚，全宽单列卡、高随内容自适应；描述全文展示 >3 行 clamp+展开，
-// 修 bug #7）。N=0 搜索区不渲染走 §3.5 空态；搜索 0 命中走 §3.6 搜索空态。
-// 关闭 = ✕ / backdrop / Esc（Esc 有输入先清搜索——模块 onKeyEvent 分支 + 输入框
-// onCancel 同语义）。工具注册表快照同步装载（ensureToolsCache），打开即 forceReload
+// 纯查阅弹窗（无表单主钮）：标准壳 ExtraWide=720 / 高 600（need156：面板、
+// 头区标题 20/700+分隔线、底区细线+「关闭」右锚钮统一走 ui_kit::drawDialogShell，
+// 原 glassFill 自绘壳与 ✕ 关闭退役）→ 头区 badge「N 个」恒全量 +
+// 搜索区（锚顶固定不滚，§3.6：框高 36、左 fa-search、右计数/清除）+
+// 列表区（唯一内滚，masonry 多列卡、高随内容自适应；描述全文展示 >3 行
+// clamp+展开，修 bug #7）。N=0 搜索区不渲染走 §3.5 空态；搜索 0 命中走
+// §3.6 搜索空态。关闭 = 底区「关闭」/ backdrop / Esc（Esc 有输入先清搜索
+// ——模块 onKeyEvent 分支 + 输入框 onCancel 同语义）。工具注册表快照同步装载
+// （ensureToolsCache），打开即 forceReload
 // ——「加载中/错误」态在同步语义下不可达（listRegisteredTools 只枚举进程内注册表，
 // 不失败），状态表只落「空态/搜索空态/常态」。
 void AgentModule::composeToolsDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
-    const float w = std::min(720.0f, std::max(0.0f, screen.width - 48.0f));
-    const float h = std::min(600.0f, std::max(0.0f, screen.height - 96.0f));
-    const float innerW = std::max(0.0f, w - 32.0f);  // 通栏 pad 16×2
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
     const std::string queryLower = core::str::toLowerAscii(toolsSearch_);
     const bool searchActive = !toolsSearch_.empty() && !toolsCache_.empty();
@@ -1388,40 +1378,30 @@ void AgentModule::composeToolsDialog(
         if (toolMatchesQuery(tool, queryLower)) visible.push_back(&tool);
     }
 
-    // 弹窗壳（§3.2）：glassFill + 细黑边 + 冷阴影 blur24 offsetY4 + radiusLarge 14
-    components::DialogStyle shell(themeTokens);
-    shell.surface = ui_kit::glassFill(t);
-    shell.border = toolsShellBorder(t);
-    shell.backdrop = components::theme::color(0.0f, 0.0f, 0.0f, 0.40f);
-    shell.shadow.enabled = true;
-    shell.shadow.offset = {0.0f, 4.0f};
-    shell.shadow.blur = 24.0f;
-    shell.shadow.color = ui_kit::glassShadowColor(t);
-    shell.radius = t.sizes.radiusLarge;
-
-    components::dialog(ui, "agent.dialog.tools")
-        .open(toolsDialogOpen_)
-        .screen(screen.width, screen.height)
-        .size(w, h)
-        .style(shell)
-        .onOpenChange([this](bool v) {
-            if (!v) toolsDialogOpen_ = false;
-        })
-        .content([&] {
+    // need156：壳改走标准弹窗壳（宽五档 ExtraWide=720 / 高 600）。原池170 v2
+    // 自绘玻璃壳 + ✕ 关闭退役：面板/头区/底区归规范统一，关闭走底区「关闭」
+    // 钮 / 遮罩 / Esc（规范 §6 关闭路径三选一）；masonry 列表行为不回退（4d353b5b）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "agent.dialog.tools";
+    shell.width = ui_kit::DialogWidth::ExtraWide;
+    shell.height = 600.0f;
+    shell.open = toolsDialogOpen_;
+    shell.title = "可用工具";
+    shell.cancel = {"关闭", [this] { toolsDialogOpen_ = false; }};
+    shell.onOpenChange = [this](bool v) {
+        if (!v) toolsDialogOpen_ = false;
+    };
+    ui_kit::drawDialogShell(
+        ui, screen, shell, t, themeTokens,
+        [&](const ui_kit::DialogContentArea& area) {
             if (!toolsDialogOpen_) return;
-            // 头部 56（§3.3）：「可用工具」16/700 + badge「N 个」（恒全量不随搜索变）
-            const float titleFs = core::theme::scaled(16.0f);
+            const float x0 = area.x;      // 24（原通栏 pad 16 归一规范 inset）
+            const float innerW = area.w;  // w-48
+            const float contentBottom = area.y + area.h;  // h-89（细线上隙 16）
+            // 头区 badge「N 个」（恒全量不随搜索变）：标题右侧、标题行（y=16 高 28）垂直居中
+            const float titleFs = core::theme::scaled(20.0f);
             const float titleW = core::TextPrimitive::measureTextWidth(
                 "可用工具", "", titleFs, 700);
-            ui.text("agent.dialog.tools.title")
-                .position(20.0f, (kToolsHeaderH - titleFs) * 0.5f)
-                .size(titleW, titleFs)
-                .text("可用工具")
-                .fontSize(titleFs)
-                .lineHeight(titleFs)
-                .fontWeight(700)
-                .color(t.colors.textPrimary)
-                .build();
             const float badgeFs = core::theme::scaled(12.0f);
             const float badgeH = core::theme::scaled(20.0f);
             const std::string badgeText =
@@ -1430,15 +1410,15 @@ void AgentModule::composeToolsDialog(
                 core::TextPrimitive::measureTextWidth(badgeText, "", badgeFs,
                                                       600) +
                 core::theme::scaled(12.0f);  // pill 内边距 6×2
-            const float badgeY = (kToolsHeaderH - badgeH) * 0.5f;
+            const float badgeY = 16.0f + (28.0f - badgeH) * 0.5f;
             ui.rect("agent.dialog.tools.badge")
-                .position(20.0f + titleW + 8.0f, badgeY)
+                .position(x0 + titleW + 8.0f, badgeY)
                 .size(badgeW, badgeH)
                 .color(t.colors.primarySoftBg)
                 .radius(t.sizes.radiusPill)
                 .build();
             ui.text("agent.dialog.tools.badge.text")
-                .position(20.0f + titleW + 8.0f, badgeY)
+                .position(x0 + titleW + 8.0f, badgeY)
                 .size(badgeW, badgeH)
                 .text(badgeText)
                 .fontSize(badgeFs)
@@ -1449,50 +1429,19 @@ void AgentModule::composeToolsDialog(
                 .color(t.colors.primaryText)
                 .hitTestMode(::core::dsl::HitTestMode::None)
                 .build();
-            // ✕ 关闭（28×28 右缘内 12，hover 底）：bg 命中面 + FA 码点穿透文本
-            const float closeS = core::theme::scaled(28.0f);
-            const float closeX = w - 12.0f - closeS;
-            const float closeY = (kToolsHeaderH - closeS) * 0.5f;
-            ui.rect("agent.dialog.tools.close.bg")
-                .position(closeX, closeY)
-                .size(closeS, closeS)
-                .states(kTransparent, t.colors.hover, t.colors.hover)
-                .radius(6.0f)
-                .onClick([this] { toolsDialogOpen_ = false; })
-                .build();
-            ui.text("agent.dialog.tools.close")
-                .position(closeX, closeY)
-                .size(closeS, closeS)
-                .icon(::eui::utf8(0xF00D))  // fa-xmark
-                .fontSize(core::theme::scaled(14.0f))
-                .lineHeight(closeS)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
-                .hitTestMode(::core::dsl::HitTestMode::None)
-                .onClick([this] { toolsDialogOpen_ = false; })
-                .build();
-            // 分割线（§3.3：头部下 1px 通宽 borderDefault）
-            ui.rect("agent.dialog.tools.divider")
-                .position(0.0f, kToolsHeaderH)
-                .size(w, 1.0f)
-                .color(t.colors.borderDefault)
-                .build();
 
             // N=0 → §3.5 空态居中；搜索区整体不渲染（无内容可搜，留框即无效控件）
-            const float listY = kToolsHeaderH + 1.0f + 12.0f +
-                                kToolsSearchBoxH + 8.0f + 8.0f;
+            const float listY = area.y + 12.0f + kToolsSearchBoxH + 8.0f + 8.0f;
             if (toolsCache_.empty()) {
-                const float areaY = kToolsHeaderH + 1.0f;
-                const float areaH =
-                    std::max(0.0f, h - areaY - 16.0f);
+                const float areaY = area.y;
+                const float areaH = area.h;
                 const float iconFs = core::theme::scaled(24.0f);
                 const float row1 = core::theme::scaled(20.0f);
                 const float row2 = core::theme::scaled(18.0f);
                 const float totalH = iconFs + 8.0f + row1 + 4.0f + row2;
                 float ey = areaY + std::max(0.0f, (areaH - totalH) * 0.5f);
                 ui.text("agent.dialog.tools.empty.icon")
-                    .position(16.0f, ey)
+                    .position(x0, ey)
                     .size(innerW, iconFs)
                     .icon(::eui::utf8(0xF1E6))  // fa-plug
                     .fontSize(iconFs)
@@ -1503,7 +1452,7 @@ void AgentModule::composeToolsDialog(
                     .build();
                 ey += iconFs + 8.0f;
                 ui.text("agent.dialog.tools.empty")
-                    .position(16.0f, ey)
+                    .position(x0, ey)
                     .size(innerW, row1)
                     .text("暂无可用工具")
                     .fontSize(core::theme::scaled(13.0f))
@@ -1514,7 +1463,7 @@ void AgentModule::composeToolsDialog(
                     .build();
                 ey += row1 + 4.0f;
                 ui.text("agent.dialog.tools.empty.hint")
-                    .position(16.0f, ey)
+                    .position(x0, ey)
                     .size(innerW, row2)
                     .text("智能体未装配任何工具")
                     .fontSize(core::theme::scaled(12.0f))
@@ -1528,7 +1477,7 @@ void AgentModule::composeToolsDialog(
 
             // 搜索区（§3.6，锚顶固定不滚）：框高 36 radius 8 通栏；底=次钮底档，
             // 无边框，focus 1px primary 描边（组件底色不随 focus 切换——见偏差清单）
-            const float searchY = kToolsHeaderH + 1.0f + 12.0f;
+            const float searchY = area.y + 12.0f;
             components::InputStyle searchStyle(themeTokens);
             searchStyle.background = toolNeutralFill(t);
             searchStyle.focused = t.colors.surface;
@@ -1540,7 +1489,7 @@ void AgentModule::composeToolsDialog(
             searchStyle.radius = 8.0f;
             searchStyle.shadow = core::Shadow{};
             components::input(ui, "agent.dialog.tools.search")
-                .position(16.0f, searchY)
+                .position(x0, searchY)
                 .size(innerW, kToolsSearchBoxH)
                 .value(toolsSearch_)
                 .placeholder("搜索工具名称或说明")
@@ -1560,7 +1509,7 @@ void AgentModule::composeToolsDialog(
                 .build();
             // 左装饰图标（纯装饰 pointer 穿透；FA5 search 0xF002）
             ui.text("agent.dialog.tools.search.icon")
-                .position(16.0f + 11.0f, searchY)
+                .position(x0 + 11.0f, searchY)
                 .size(core::theme::scaled(14.0f), kToolsSearchBoxH)
                 .icon(::eui::utf8(0xF002))
                 .fontSize(core::theme::scaled(14.0f))
@@ -1573,7 +1522,7 @@ void AgentModule::composeToolsDialog(
             // 右端：计数「n / 全量」（仅过滤生效时显示）+ 清除 ×（有输入才显示）
             if (searchActive) {
                 const float clearS = core::theme::scaled(28.0f);
-                const float clearX = 16.0f + innerW - 12.0f - clearS;
+                const float clearX = x0 + innerW - 12.0f - clearS;
                 const float clearY =
                     searchY + (kToolsSearchBoxH - clearS) * 0.5f;
                 const auto clearSearch = [this, &ui] {
@@ -1621,7 +1570,7 @@ void AgentModule::composeToolsDialog(
 
             // 搜索空态（§3.6，0 命中）：search 图标 + 文案 + 「清空搜索」钮居中
             if (searchActive && visible.empty()) {
-                const float areaH = std::max(0.0f, h - listY - 16.0f);
+                const float areaH = std::max(0.0f, contentBottom - listY);
                 const float iconFs = core::theme::scaled(24.0f);
                 const float row1 = core::theme::scaled(20.0f);
                 const float row2 = core::theme::scaled(18.0f);
@@ -1634,7 +1583,7 @@ void AgentModule::composeToolsDialog(
                     iconFs + 8.0f + row1 + 4.0f + row2 + 10.0f + btnH;
                 float ey = listY + std::max(0.0f, (areaH - totalH) * 0.5f);
                 ui.text("agent.dialog.tools.noresult.icon")
-                    .position(16.0f, ey)
+                    .position(x0, ey)
                     .size(innerW, iconFs)
                     .icon(::eui::utf8(0xF002))
                     .fontSize(iconFs)
@@ -1645,7 +1594,7 @@ void AgentModule::composeToolsDialog(
                     .build();
                 ey += iconFs + 8.0f;
                 ui.text("agent.dialog.tools.noresult.title")
-                    .position(16.0f, ey)
+                    .position(x0, ey)
                     .size(innerW, row1)
                     .text("未找到匹配工具")
                     .fontSize(core::theme::scaled(13.0f))
@@ -1656,7 +1605,7 @@ void AgentModule::composeToolsDialog(
                     .build();
                 ey += row1 + 4.0f;
                 ui.text("agent.dialog.tools.noresult.hint")
-                    .position(16.0f, ey)
+                    .position(x0, ey)
                     .size(innerW, row2)
                     .text("试试其他关键词")
                     .fontSize(core::theme::scaled(12.0f))
@@ -1666,7 +1615,7 @@ void AgentModule::composeToolsDialog(
                     .hitTestMode(::core::dsl::HitTestMode::None)
                     .build();
                 ey += row2 + 10.0f;
-                const float btnX = 16.0f + (innerW - btnW) * 0.5f;
+                const float btnX = x0 + (innerW - btnW) * 0.5f;
                 const auto clearAndRefocus = [this, &ui] {
                     toolsSearch_.clear();
                     ui.requestFocus("agent.dialog.tools.search.hit");
@@ -1697,8 +1646,8 @@ void AgentModule::composeToolsDialog(
             // 卡高按内容自适应、每卡入当前最短列；列数随弹窗宽自适应，窄窗退化
             // 1 列即 v2 形态。itemHeight 与渲染同口径测高（measureToolCardHeight）。
             components::virtualMasonry(ui, "agent.dialog.tools.masonry")
-                .position(16.0f, listY)
-                .size(innerW, std::max(0.0f, h - listY - 16.0f))
+                .position(x0, listY)
+                .size(innerW, std::max(0.0f, contentBottom - listY))
                 .itemCount(static_cast<std::int64_t>(visible.size()))
                 .columns(toolsMasonryColumns(innerW))
                 .overscanViewports(99.0f)  // 弹窗内列表量级小（30±），禁虚拟化裁剪保持 v2 全量渲染契约
@@ -1717,8 +1666,7 @@ void AgentModule::composeToolsDialog(
                                    queryLower, t);
                 })
                 .build();
-        })
-        .build();
+        });
 
     // Esc 清搜索后的焦点回填：Runtime 帧末消费（md 编辑器同款补发口；模块
     // onKeyEvent 分支无 Ui&，置 toolsSearchFocusPending_ 由本函数补发）

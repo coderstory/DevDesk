@@ -39,8 +39,22 @@ inline float dialogWidthPx(DialogWidth width) {
     return 460.0f;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
 }
 
-// 对话框内缩：标题 / 正文 / 按钮一律自 x = 28 起；正文行宽 = 弹窗宽 - 56。
+// 对话框内缩：标题 / 正文 / 按钮一律自 x = 24 起；正文行宽 = 弹窗宽 - 48。
 inline constexpr float kDialogInsetX = 24.0f;
 inline constexpr float kDialogBodyInsetX = 48.0f;
+
+// 标准弹窗壳三段几何（2026-11-07 弹窗规范 need156，docs/design/
+// 2026-11-07-dialog-standard-design.md §3）：头区固定 69（16+28+8+1+16）、
+// 底区固定 73（1+16+40+16）、内容区 = 高 - 158（唯一内滚区）。
+inline constexpr float kDialogHeaderH = 69.0f;
+inline constexpr float kDialogFooterH = 73.0f;
+
+// 弹窗最小尺寸下限（规范 §3.4）：防内容挤扁；视口极窄时框架 clamp 优先（可低于下限）。
+inline constexpr float kDialogMinW = 420.0f;
+inline constexpr float kDialogMinH = 240.0f;
+
+// 弹窗按钮：高 40、最小宽 96（文字超出自适应加宽）、间距 8、右缘内缩 24（规范 §3.3）。
+inline constexpr float kDialogButtonMinW = 96.0f;
+inline constexpr float kDialogButtonGap = 8.0f;
 
 } // namespace ui_kit

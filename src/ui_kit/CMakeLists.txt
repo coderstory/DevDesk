@@ -11,6 +11,8 @@ add_library(devdesk_ui_kit STATIC
     dialog_form.cpp
     card.cpp
     splash.cpp
+    # 标准弹窗壳（2026-11-07 弹窗规范 need156）：三段式壳 + 右锚按钮对 + 最小尺寸。
+    dialog_shell.cpp
     # W2b 新增（§4.1/§4.15）：四级按钮 helper + 表单栅格 helper。新组件并存，
     # 既有 button 调用不动，W5-W10 逐页切换调新组件。
     button.cpp

@@ -170,7 +170,7 @@ REGISTER_TEST(release_new_task_reopen_resets_stale_session,
                   DOCTEST_REQUIRE(envHit != nullptr);
                   DOCTEST_REQUIRE(envHit->onClick != nullptr);
                   envHit->onClick();
-                  const auto* create = ui.find("release.newtask.create.bg");
+                  const auto* create = ui.find("release.newtask.dialog.confirm.bg");
                   DOCTEST_REQUIRE(create != nullptr);
                   DOCTEST_REQUIRE(create->onClick != nullptr);
                   create->onClick();
@@ -186,7 +186,7 @@ REGISTER_TEST(release_new_task_reopen_resets_stale_session,
                                             dialog.planDate);
                   DOCTEST_CHECK(dialog.selectedEnvIds.empty());
                   // 复现点：再点「创建任务」不得打开上一个任务（旧日期残留会触发同日复用）
-                  const auto* create2 = ui.find("release.newtask.create.bg");
+                  const auto* create2 = ui.find("release.newtask.dialog.confirm.bg");
                   DOCTEST_REQUIRE(create2 != nullptr);
                   DOCTEST_REQUIRE(create2->onClick != nullptr);
                   create2->onClick();
@@ -196,7 +196,7 @@ REGISTER_TEST(release_new_task_reopen_resets_stale_session,
                   // 路径② 选日期→取消→再新建：取消不留脏日期，重开仍是今天
                   pickDate(2020, 6, 2);
                   composeOnce();
-                  const auto* cancel = ui.find("release.newtask.cancel.bg");
+                  const auto* cancel = ui.find("release.newtask.dialog.cancel.bg");
                   DOCTEST_REQUIRE(cancel != nullptr);
                   DOCTEST_REQUIRE(cancel->onClick != nullptr);
                   cancel->onClick();

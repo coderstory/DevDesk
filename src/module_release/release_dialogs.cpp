@@ -19,14 +19,13 @@
 #include <core/time.h>
 
 #include <components/datepicker.h>
-#include <components/dialog.h>
 #include <components/scrollview.h>
 
 #include <eui/types.h>
 
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
-#include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/metrics.h>
 
 #include <algorithm>
@@ -40,9 +39,8 @@ namespace module::release {
 
 namespace {
 
-constexpr float kDialogW = 560.0f;
+// 弹窗宽走规范宽五档 Wide=640（need156）；高 540 保留（内容区随壳扣头/底 158）。
 constexpr float kDialogH = 540.0f;
-constexpr float kInset = 24.0f;
 constexpr float kEnvRowH = 36.0f;
 constexpr float kEnvRowGap = 4.0f;
 constexpr float kChipH = 22.0f;
@@ -328,85 +326,85 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     if (!state.dataLoaded) loadDialogData(store, state);
 
-    const float width = std::min(kDialogW, std::max(0.0f, screen.width - 48.0f));
-    const float height = std::min(kDialogH, std::max(0.0f, screen.height - 48.0f));
-    const float innerW = std::max(0.0f, width - kInset * 2.0f);
-    const float x0 = kInset;
     const bool regularDay = releaseIsRegularReleaseDay(state.planDate);
 
-    components::dialog(ui, "release.newtask.dialog")
-        .open(true)
-        .screen(screen.width, screen.height)
-        .size(width, height)
-        .theme(themeTokens)
-        .zIndex(1000)
-        .onOpenChange([&state](bool open) { state.open = open; })
-        .content([&] {
-            // 2026-11-01 S10：标题改走 ui_kit::drawDialogTitle（全站弹窗标题统一
-            // 20px/700；此前此处自绘 20px/600，是第三套规格）。
-            ui_kit::drawDialogTitle(ui, "release.newtask.title", width,
-                                    "新建上线任务",
-                                    ui_kit::kDialogTitleFontSize,
-                                    t.colors.textPrimary);
+    // need156：壳改走标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮对）；宽 560
+    // 归入宽五档 Wide（640），内容区自 y=69 起（原 58，整体 +11 平移）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "release.newtask.dialog";
+    shell.width = ui_kit::DialogWidth::Wide;
+    shell.height = kDialogH;
+    shell.open = true;
+    shell.zIndex = 1000;
+    shell.title = "新建上线任务";
+    shell.cancel = {"取消", [&state] { state.open = false; }};
+    shell.confirm = {"创建任务",
+                     [&store, &state, openTask] { submitNewTask(store, state, openTask); }};
+    shell.onOpenChange = [&state](bool open) { state.open = open; };
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        const float x0 = area.x;
+        const float innerW = area.w;
+        const float yBase = area.y;  // 69：内容区顶（规范 §3.2）
 
-            // 计划上线日期（三列滚轮 picker 的提交值）
-            ui.text("release.newtask.date.label")
-                .position(x0, 58.0f)
-                .size(innerW, core::theme::scaled(16.0f))
-                .text("计划上线日期")
-                .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(t.colors.textSecondary)
-                .build();
-            // 弹窗内豁免档（need219 §5.2-2）：cardPanelColored，底色比弹窗白底可辨
-            ui_kit::cardPanelColored(ui, "release.newtask.date", x0, 78.0f, innerW,
-                                     40.0f, t.sizes.radius, t,
-                                     t.colors.surfaceElevated);
-            const float dateChipW = chipWidth(regularDay ? "常规发布日" : "非常规发布日");
-            ui.text("release.newtask.date.text")
-                .position(x0 + 12.0f, 78.0f)
-                .size(std::max(0.0f, innerW - 12.0f - dateChipW - 16.0f), core::theme::scaled(40.0f))
-                .text(state.planDate + "   " + releaseWeekdayLabel(state.planDate))
-                .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(core::theme::scaled(40.0f))
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textPrimary)
-                .build();
-            drawDialogChip(ui, "release.newtask.date.chip",
-                           x0 + innerW - dateChipW - 8.0f, 87.0f,
-                           regularDay ? "常规发布日" : "非常规发布日",
-                           regularDay ? t.colors.primarySoftBg
-                                      : eui::mixColor(t.colors.surface, t.colors.warning, 0.14f),
-                           regularDay ? t.colors.primaryText : t.colors.warning, t);
-            // 透明命中层压在文字/chip 之上：整块日期框都可点开滚轮
-            ui.rect("release.newtask.date.hit")
-                .position(x0, 78.0f)
-                .size(innerW, 40.0f)
-                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                .onClick([&state] {
-                    int year = 0;
-                    int month = 0;
-                    int day = 0;
-                    if (parseDateParts(state.planDate, year, month, day)) {
-                        state.year = year;
-                        state.month = month;
-                        state.day = day;
-                    }
-                    state.pickerOpen = true;
-                })
-                .build();
+        // 计划上线日期（三列滚轮 picker 的提交值）
+        ui.text("release.newtask.date.label")
+            .position(x0, yBase)
+            .size(innerW, core::theme::scaled(16.0f))
+            .text("计划上线日期")
+            .fontSize(t.sizes.fontSizeSmall)
+            .lineHeight(core::theme::scaled(16.0f))
+            .color(t.colors.textSecondary)
+            .build();
+        // 弹窗内豁免档（need219 §5.2-2）：cardPanelColored，底色比弹窗白底可辨
+        ui_kit::cardPanelColored(ui, "release.newtask.date", x0, yBase + 20.0f, innerW,
+                                 40.0f, t.sizes.radius, t,
+                                 t.colors.surfaceElevated);
+        const float dateChipW = chipWidth(regularDay ? "常规发布日" : "非常规发布日");
+        ui.text("release.newtask.date.text")
+            .position(x0 + 12.0f, yBase + 20.0f)
+            .size(std::max(0.0f, innerW - 12.0f - dateChipW - 16.0f), core::theme::scaled(40.0f))
+            .text(state.planDate + "   " + releaseWeekdayLabel(state.planDate))
+            .fontSize(t.sizes.fontSizeBody)
+            .lineHeight(core::theme::scaled(40.0f))
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textPrimary)
+            .build();
+        drawDialogChip(ui, "release.newtask.date.chip",
+                       x0 + innerW - dateChipW - 8.0f, yBase + 29.0f,
+                       regularDay ? "常规发布日" : "非常规发布日",
+                       regularDay ? t.colors.primarySoftBg
+                                  : eui::mixColor(t.colors.surface, t.colors.warning, 0.14f),
+                       regularDay ? t.colors.primaryText : t.colors.warning, t);
+        // 透明命中层压在文字/chip 之上：整块日期框都可点开滚轮
+        ui.rect("release.newtask.date.hit")
+            .position(x0, yBase + 20.0f)
+            .size(innerW, 40.0f)
+            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+            .onClick([&state] {
+                int year = 0;
+                int month = 0;
+                int day = 0;
+                if (parseDateParts(state.planDate, year, month, day)) {
+                    state.year = year;
+                    state.month = month;
+                    state.day = day;
+                }
+                state.pickerOpen = true;
+            })
+            .build();
 
-            // 环境多选 + 时间窗（选中即预览将带入的服务）
-            ui.text("release.newtask.env.label")
-                .position(x0, 134.0f)
-                .size(innerW, core::theme::scaled(16.0f))
-                .text("加入环境（可多选）")
-                .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(t.colors.textSecondary)
-                .build();
-            components::scrollView(ui, "release.newtask.env.scroll")
-                .position(x0, 154.0f)
+        // 环境多选 + 时间窗（选中即预览将带入的服务）
+        ui.text("release.newtask.env.label")
+            .position(x0, yBase + 76.0f)
+            .size(innerW, core::theme::scaled(16.0f))
+            .text("加入环境（可多选）")
+            .fontSize(t.sizes.fontSizeSmall)
+            .lineHeight(core::theme::scaled(16.0f))
+            .color(t.colors.textSecondary)
+            .build();
+        components::scrollView(ui, "release.newtask.env.scroll")
+            .position(x0, yBase + 96.0f)
                 .size(innerW, 168.0f)
                 .step(60.0f)
                 .theme(themeTokens)
@@ -469,7 +467,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
                 }
             }
             ui.text("release.newtask.preview")
-                .position(x0, 354.0f)
+                .position(x0, yBase + 296.0f)
                 .size(innerW, core::theme::scaled(36.0f))
                 .text(preview)
                 .fontSize(t.sizes.fontSizeSmall)
@@ -481,7 +479,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
 
             if (!state.error.empty()) {
                 ui.text("release.newtask.error")
-                    .position(x0, 398.0f)
+                    .position(x0, yBase + 340.0f)
                     .size(innerW, core::theme::scaled(20.0f))
                     .text(state.error)
                     .fontSize(t.sizes.fontSizeSmall)
@@ -492,24 +490,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
                     .color(t.colors.errorText)
                     .build();
             }
-
-            const float buttonY = std::max(0.0f, height - 56.0f);
-            const float createX = std::max(x0, width - kInset - 110.0f);
-            const float cancelX = std::max(x0, createX - 8.0f - 110.0f);
-            ui_kit::ButtonOptions cancelOptions;
-            cancelOptions.onClick = [&state] { state.open = false; };
-            ui_kit::button(ui, "release.newtask.cancel", "取消",
-                           ui_kit::ButtonLevel::Secondary, cancelX, buttonY, 110.0f,
-                           ui_kit::kButtonHeight, t, cancelOptions);
-            ui_kit::ButtonOptions createOptions;
-            createOptions.onClick = [&store, &state, openTask] {
-                submitNewTask(store, state, openTask);
-            };
-            ui_kit::button(ui, "release.newtask.create", "创建任务",
-                           ui_kit::ButtonLevel::Primary, createX, buttonY, 110.0f,
-                           ui_kit::kButtonHeight, t, createOptions);
-        })
-        .build();
+        });
 
     // 日期滚轮（模态，z 高于弹层、低于确认层）
     if (state.pickerOpen) {
@@ -532,25 +513,33 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
             .build();
     }
 
-    // 非常规发布日二次确认：取消只关本层，回到日期选择
-    components::dialog(ui, "release.newtask.confirm")
-        .open(state.irregularConfirmOpen)
-        .screen(screen.width, screen.height)
-        .size(460.0f, 220.0f)
-        .theme(themeTokens)
-        .zIndex(1300)
-        .title("非常规发布日")
-        .message("所选日期不是周二/周四，确定要建吗？")
-        .primaryText("确定要建")
-        .secondaryText("取消")
-        .onPrimary([&store, &state, openTask] {
-            state.irregularConfirmed = true;
-            state.irregularConfirmOpen = false;
-            submitNewTask(store, state, openTask);
-        })
-        .onSecondary([&state] { state.irregularConfirmOpen = false; })
-        .onOpenChange([&state](bool open) { state.irregularConfirmOpen = open; })
-        .build();
+    // 非常规发布日二次确认：取消只关本层，回到日期选择（need156：标准壳）
+    ui_kit::DialogShellSpec confirmShell;
+    confirmShell.id = "release.newtask.confirm";
+    confirmShell.width = ui_kit::DialogWidth::Standard;
+    confirmShell.height = ui_kit::kDialogMinH;  // 240（规范 §3.4 下限，原 220）
+    confirmShell.open = state.irregularConfirmOpen;
+    confirmShell.zIndex = 1300;
+    confirmShell.title = "非常规发布日";
+    confirmShell.cancel = {"取消", [&state] { state.irregularConfirmOpen = false; }};
+    confirmShell.confirm = {"确定要建", [&store, &state, openTask] {
+        state.irregularConfirmed = true;
+        state.irregularConfirmOpen = false;
+        submitNewTask(store, state, openTask);
+    }};
+    confirmShell.onOpenChange = [&state](bool open) { state.irregularConfirmOpen = open; };
+    ui_kit::drawDialogShell(ui, screen, confirmShell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+                                if (!state.irregularConfirmOpen) return;
+                                ui.text("release.newtask.confirm.message")
+                                    .position(area.x, area.y)
+                                    .size(area.w, core::theme::scaled(28.0f))
+                                    .text("所选日期不是周二/周四，确定要建吗？")
+                                    .fontSize(t.sizes.fontSizeBody)
+                                    .lineHeight(core::theme::scaled(28.0f))
+                                    .color(t.colors.textPrimary)
+                                    .build();
+                            });
 }
 
 void drawFullConfigEditorDialog(eui::Ui& ui) { (void)ui; }

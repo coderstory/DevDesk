@@ -813,7 +813,7 @@ int main(int argc, char* argv[]) {
             for (int i = 0; i < 4; ++i) {
                 composeList();  // 打开沿（wasOpen 翻转）+ 弹窗装填帧
             }
-            checks.need(ui, "release.newtask.title", "新建上线任务弹窗已渲染");
+            checks.need(ui, "release.newtask.dialog.title", "新建上线任务弹窗已渲染（need156 标准壳）");
             if (!probe::captureFramePng(window, runtime, newTaskShotPath)) {
                 std::cerr << "release_probe: --shot-newtask 落图失败\n";
                 checks.passed = false;
