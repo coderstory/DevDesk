@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace ui_kit {
 
@@ -47,5 +48,25 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           const core::theme::Tokens& t,
           const std::function<void()>& onClick = {},
           float fontSize = kWtabFontSize);
+
+// 「Tab 行 + 右端固定计数」参数化形态（池191/171 统一范式，后续页面复用）：
+//  - tabs 紧排左对齐，间距 = spacing 8 档（scaled）；计数不再插进 tab 流，
+//    tab 组不被数字撑散（release 任务页四 tab 散开的根因即此）。
+//  - countText 固定画在行右缘（右对齐，右缘 = x + rowW），不随激活态位移；
+//    数字内容仍属于当前选中 tab（由调用方按 selected 传入），位置恒定不抖。
+//    计数字号 fontSizeSmall / 色 textSecondary，为两页旧值（body/secondary 与
+//    small/tertiary）的统一档。
+//  - countText 为空则不画计数。
+//  - tab pill 高固定 kWtabHeight，在行高 h 内垂直居中（release 行高 44 /
+//    schedule 行高 40 两档均归此式）。
+//  节点 id：tab = `<idBase>.tab.<i>`（bg/hit/text 子节点同 wtab）、
+//  计数 = `<idBase>.tabcount`；release（idBase="release.tasks"）与
+//  schedule（idBase="schedule.list"）既有单测节点 id 不变。
+void wtabRow(eui::Ui& ui, const std::string& idBase,
+             const std::vector<std::string>& labels, int selected,
+             const std::string& countText, float x, float y, float rowW,
+             float h, const core::theme::Tokens& t,
+             const std::function<void(int)>& onTab,
+             float fontSize = kWtabFontSize);
 
 } // namespace ui_kit

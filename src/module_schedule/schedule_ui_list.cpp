@@ -1114,37 +1114,18 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                            headerY, newBtnW, ui_kit::kButtonHeight, t,
                            {[this] { openNewRule(); }});
 
-            // TAB 行（全站 wtab 块面式现行口径；计数紧跟选中 tab 之后）
+            // TAB 行（池171：计数从 tab 流剥离，钉在行右缘不随激活态位移；
+            // 与 release 任务页同走 ui_kit::wtabRow 统一范式。数字内容仍 =
+            // 当前选中 tab 的行数，由下方按 activeTab_ 计算。）
             const char* kTabLabels[2] = {"系统定时", "用户定时"};
-            float tabX = pad;
-            for (int i = 0; i < 2; ++i) {
-                const bool active = i == activeTab_;
-                const float tabW =
-                    textWidth(kTabLabels[i], ui_kit::kWtabFontSize) + 24.0f;
-                ui_kit::wtab(ui, "schedule.list.tab." + std::to_string(i),
-                             kTabLabels[i], active, tabX, tabY, tabW, tabRowH, t,
-                             [this, i] { setTab(i); });
-                tabX += tabW + core::theme::scaled(6.0f);
-                if (active) {
-                    const int n = i == 0
-                                      ? static_cast<int>(assembly_.systemRows.size())
-                                      : static_cast<int>(assembly_.userRows.size());
-                    const std::string countText = "共 " + std::to_string(n) + " 个";
-                    const float countW =
-                        textWidth(countText, t.sizes.fontSizeSmall) +
-                        core::theme::scaled(8.0f);
-                    ui.text("schedule.list.tabcount")
-                        .position(tabX, tabY)
-                        .size(countW, tabRowH)
-                        .text(countText)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(tabRowH)
-                        .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.textTertiary)
-                        .build();
-                    tabX += countW + core::theme::scaled(6.0f);
-                }
-            }
+            const int tabCount =
+                activeTab_ == 0 ? static_cast<int>(assembly_.systemRows.size())
+                                : static_cast<int>(assembly_.userRows.size());
+            ui_kit::wtabRow(ui, "schedule.list",
+                            {std::string(kTabLabels[0]), std::string(kTabLabels[1])},
+                            activeTab_, "共 " + std::to_string(tabCount) + " 个",
+                            pad, tabY, pageW - pad * 2.0f, tabRowH, t,
+                            [this](int i) { setTab(i); });
 
             // toast（仅 error_ 非空时插入，滚动区顶缩）
             if (!error_.empty()) {

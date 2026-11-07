@@ -302,45 +302,22 @@ void drawTaskRow(eui::Ui& ui, const std::string& id, float x, float y, float w,
 // 样式，与 wtab.h「块面式……淘汰下划线式」的全局约定相悖，且同模块配置页用的是
 // wtab —— 同一模块两页两种 tab 形，切换时对撞。
 //
-// 计数从「页面最右」改为「紧跟当前选中 tab 之后」：原来贴在窗口右缘，与左侧
-// tab 组相距数百像素，关联性为零；且文案随 tab 变（「共 7 个任务」/「发布中 · 3 个」），
-// 读者要跨屏匹配才知道哪个数字属于哪个 tab。紧跟选中项后语义直接。
+// 2026-11-06 池191：改走 ui_kit::wtabRow（「紧排 tabs + 右端固定计数」统一范式，
+// 与 schedule 列表页同款）。撤销 2026-11-01 的「计数紧跟选中 tab」——计数插在
+// tab 流里把四个 tab 撑散、且换 tab 时数字跳位（老板判「反人类」）；数字仍属于
+// 当前选中 tab（文案随筛选变），但位置钉在行右缘、与「新建任务」按钮右对齐。
 
 void drawTabRow(eui::Ui& ui, float y, float screenW, int selected,
                 const std::string& countText, const core::theme::Tokens& t,
                 const std::function<void(int)>& onTab) {
-    float x = kPageMargin;
-    // 计数插在「当前选中 tab」之后（语义：数字属于这个 tab），后续 tab 顺移让位。
-    // 2026-11-01 修正：原实现把计数画在选中 tab 右缘 +10，但后续 tab 的 x 是
-    // 按「无计数」排的 —— 选中「全部」时计数压在「发布中」上，两串字叠在一起。
-    const float countFont = t.sizes.fontSizeBody;
-    const float countW =
-        countText.empty() ? 0.0f : chipWidth(countText, countFont) + 8.0f;
+    std::vector<std::string> labels;
+    labels.reserve(kReleaseListTabCount);
     for (int i = 0; i < kReleaseListTabCount; ++i) {
-        const char* label = releaseListTabLabel(i);
-        const bool active = i == selected;
-        const float tabW = chipWidth(label, ui_kit::kWtabFontSize) + 24.0f;
-        ui_kit::wtab(ui, "release.tasks.tab." + std::to_string(i), label, active,
-                     x, y + (kTabRowH - ui_kit::kWtabHeight) * 0.5f, tabW,
-                     ui_kit::kWtabHeight, t, [onTab, i] {
-                         if (onTab) onTab(i);
-                     });
-        x += tabW + 6.0f;
-        if (active && !countText.empty()) {
-            ui.text("release.tasks.tabcount")
-                .position(x, y)
-                .size(countW, kTabRowH)
-                .text(countText)
-                .fontSize(countFont)
-                .lineHeight(kTabRowH)
-                .horizontalAlign(eui::HorizontalAlign::Left)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
-                .build();
-            x += countW + 6.0f;
-        }
+        labels.emplace_back(releaseListTabLabel(i));
     }
-    (void)screenW;
+    ui_kit::wtabRow(ui, "release.tasks", labels, selected, countText,
+                    kPageMargin, y, screenW - kPageMargin * 2.0f, kTabRowH, t,
+                    onTab);
 }
 
 // ---------- 页壳：页头 + Tab 行连体白壳，内容区灰底内滚 ----------

@@ -66,4 +66,52 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
         .build();
 }
 
+// ---- Tab 行 + 右端固定计数（池191/171 统一范式，规格见 wtab.h） ----
+
+// 文本宽度估算：release chipWidth / schedule textWidth 同式（CJK 0.43 /
+// ASCII 0.56 × 字号 + 1.6 字号基宽；略偏大只多留白、不裁字）。
+float wtabTextWidth(const std::string& text, float fontSize) {
+    float w = fontSize * 1.6f;
+    for (unsigned char c : text) {
+        w += (c >= 0x80) ? fontSize * 0.43f : fontSize * 0.56f;
+    }
+    return w;
+}
+
+void wtabRow(eui::Ui& ui, const std::string& idBase,
+             const std::vector<std::string>& labels, int selected,
+             const std::string& countText, float x, float y, float rowW,
+             float h, const core::theme::Tokens& t,
+             const std::function<void(int)>& onTab, float fontSize) {
+    const float tabH = kWtabHeight;
+    const float tabY = y + (h - tabH) * 0.5f;
+    const float gap = core::theme::scaled(8.0f);  // spacing 8 档
+    float cx = x;
+    for (std::size_t i = 0; i < labels.size(); ++i) {
+        const bool active = static_cast<int>(i) == selected;
+        const float tabW = wtabTextWidth(labels[i], fontSize) + 24.0f;
+        wtab(ui, idBase + ".tab." + std::to_string(i), labels[i], active, cx,
+             tabY, tabW, tabH, t,
+             [onTab, i] {
+                 if (onTab) onTab(static_cast<int>(i));
+             },
+             fontSize);
+        cx += tabW + gap;
+    }
+
+    if (countText.empty()) return;
+    const float countFont = t.sizes.fontSizeSmall;
+    const float countW = wtabTextWidth(countText, countFont);
+    ui.text(idBase + ".tabcount")
+        .position(x + rowW - countW, y)
+        .size(countW, h)
+        .text(countText)
+        .fontSize(countFont)
+        .lineHeight(h)
+        .horizontalAlign(eui::HorizontalAlign::Right)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textSecondary)
+        .build();
+}
+
 } // namespace ui_kit
