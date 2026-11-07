@@ -179,10 +179,13 @@ int main(int argc, char* argv[]) {
                      "（点击文件行未打开笔记？）\n";
         passed = false;
     } else {
-        // 代码预期几何（1200x800）：body 行 y=48、列高 720；topInset=32；
-        // 输入框 y = 48+32+48 = 128、h = 720-80-22-8 = 610、底 = 738 ≤ 列底 768。
-        const float expectY = 132.0f;  // 48 body 顶 + 36 tab 带 + 48 chip 区（bug149 修复后值）
-        const float expectBottom = 738.0f;
+        // 代码预期几何：body 顶 y=48、tab 带 36、chip 区 48 → 输入框顶
+        // y=132（bug149 修复后值，与窗高无关）；输入框底 = 列底(窗高-32)
+        // - 30 = 窗高-62（800 窗→738、1000 窗→938）。原写死 738 只对 800
+        // 窗成立，ctest 缺省 1200x1000 会误报 bug149（2026-11-07 改随窗高
+        // 推导，bug210 波及面验证时发现）。
+        const float expectY = 132.0f;
+        const float expectBottom = static_cast<float>(args.windowH) - 62.0f;
         if (std::fabs(input.y - expectY) > 2.0f) {
             std::cerr << "bug149 嫌疑: 编辑区 y=" << input.y << " 预期≈"
                       << expectY << "（与目录树顶对齐关系破坏？）\n";
