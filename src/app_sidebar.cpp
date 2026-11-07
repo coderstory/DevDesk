@@ -536,10 +536,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     // 40 / macOS 系统标题栏 30，compose 的 bodyScreen 已统一扣除）。离散三档、档位
     // 切换无过渡动画：
     //   正常档 H≥712：topPad 32 / brandNavGap 28 / gap 4 / itemH 40（导航起点见
-    //     navStart）、钮 32 / 预留区 48（§10.2）
+    //     navStart）、钮 40 / 预留区 56（§10.2；bug144/146 两轮放大定稿 dd0f28db）
     //   紧凑档 680≤H<712：16 / 16 / 4 / 40（起点 88；最小窗 1200×720 → H=680 落此
-    //     档）、钮 28 / 预留区 44
-    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）、钮 28 / 预留区 44
+    //     档）、钮 36 / 预留区 52
+    //   极紧档 H<680：12 / 12 / 2 / 36（起点 80）、钮 36 / 预留区 52
     // logo 不再随高三档写死（bug165 v3 = need241 §9.3，见下方公式）；钮径/预留区
     // 仍随高三档（两态一致不回退）。压缩顺序：先压品牌区上下留白 → 再压行距 →
     // 最后压行高。分档几何用常量不走 token：矮窗帧 theme::setWindowHeight 会重建
@@ -953,8 +953,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .build();
 
             // 折叠开关（底部固定）：need172 v2（设计文档 §10.2）+ v3（§2/§3）——直径
-            // 按档 32/28 正圆，预留区 48/44 内垂直居中（toggleY = H−40 / H−36，上
-            // 下各 8）；水平：折叠 (72−size)/2（20/22）、展开 padX=16 对齐导航左缘
+            // 按档 40/36 正圆，预留区 56/52 内垂直居中（toggleY = H−zone+4，上
+            // 下各 8）；水平：折叠 (72−size)/2（16/18）、展开 padX=16 对齐导航左缘
             //（两态水平位移 ≤6px、垂直零位移，宽度无动画档瞬时切换）。码点字号
             // fontSizeSmall(12)（§10.5-3，随钮缩小降档）。常态 1px borderDefault
             // 圆框常显 + textSecondary 图标；hover：primarySoftBg 底 + primaryHover

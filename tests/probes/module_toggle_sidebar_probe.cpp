@@ -145,6 +145,16 @@ int main(int argc, char* argv[]) {
     StubPageModule home(::core::PageId::Home, "首页");
     StubPageModule agent(::core::PageId::Agent, "智能体");
     g_agent = &agent;
+    // §7 bug168 用：补桩模块把导航内容高撑过 viewport（触发真实溢出/滚动到底）
+    StubPageModule markdown(::core::PageId::Markdown, "笔记");
+    StubPageModule todo(::core::PageId::Todo, "待办");
+    StubPageModule schedule(::core::PageId::Schedule, "日程");
+    StubPageModule proxy(::core::PageId::ClaudeProxy, "代理");
+    StubPageModule memory(::core::PageId::Memory, "记忆");
+    StubPageModule wallpaper(::core::PageId::Wallpaper, "壁纸");
+    StubPageModule mcp(::core::PageId::Mcp, "MCP");
+    StubPageModule terminal(::core::PageId::Terminal, "终端");
+    StubPageModule about(::core::PageId::About, "关于");
 
     std::unique_ptr<::core::Module> settings(create_settings_module());
     settings->onStart();  // 读 ScopedConfigPath 指到的临时 config（settings_cards_probes 同序）
@@ -516,6 +526,111 @@ int main(int argc, char* argv[]) {
         composeFrame();
         check(ui->find("app.sidebar.toggle.particle.0") != nullptr,
               "§6 移出再进粒子应重触发");
+    }
+
+    // §7 bug168：滚到底后末行文本不得压进悬浮收缩按钮区（need186 §11.2 契约：
+    // viewport 底 = H−toggleZoneH、按钮顶 = H−zone+4 → 恒 ≥4px 空隙，viewport
+    // .clip() 保证行物理画不进预留区）。补桩模块撑爆内容高 + 预置超界 offset
+    //（drawSidebar 侧按 [0, contentH−viewportH] clamp 收敛），断言末行文本底
+    // ≤ 按钮顶，且内容溢出时末行确实贴到裁剪边界（不是靠内容太短蒙混）。
+    {
+        router.registerModule(&markdown);
+        router.registerModule(&todo);
+        router.registerModule(&schedule);
+        router.registerModule(&proxy);
+        router.registerModule(&memory);
+        router.registerModule(&wallpaper);
+        router.registerModule(&mcp);
+        router.registerModule(&terminal);
+        router.registerModule(&about);
+        // 展开 ReleaseGroup（§5 收起过）→ 子行列出，矮窗下内容高必超 viewport
+        app::toggleSidebarGroup(::core::PageId::ReleaseGroup);
+        app::setNavScrollOffsetForTests(1.0e6f);
+        composeFrame();
+        // 真用户流（滚轮滚到底）：setNavScrollOffsetForTests 强制预置会与滚动态
+        // 回写环互搏（强制值被回写清零，测试钩子 quirk 非产品路径）——改走真输入
+        // 链：指针移进导航区 → 滚轮向下 12 格（step=itemH+gap）→ 壁钟等过 120ms
+        // 滚动过渡（scrollview.h transition_ 默认档）→ 稳帧。
+        composeFrame();
+        const auto* navView0 =
+            ui != nullptr ? ui->find("app.sidebar.nav") : nullptr;
+        check(navView0 != nullptr, "§7 滚动区应存在");
+        if (navView0 != nullptr) {
+            const float cx =
+                navView0->frame.x + navView0->frame.width * 0.5f;
+            const float cy =
+                navView0->frame.y + navView0->frame.height * 0.5f;
+            core::queuePointerMotion(window, cx, cy, {}, {});
+            composeFrame();
+            for (int i = 0; i < 12; ++i) {
+                probe::queueScroll(window, runtime, 0.0, -1.0);
+                composeFrame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            composeFrame();
+            composeFrame();
+        }
+        // 断言（用户可见面，bug168 验收口径）：
+        // ① §11.2 区位契约：viewport 底 = 按钮顶 − 4（预留区让位恒有空隙）；
+        // ② 任何 label 的可见底（frame ∩ viewport 裁剪域）≤ 按钮顶——frame 越
+        //    界段被 scissor 裁剪不参与视觉（runtime_render clip 段），不存在
+        //    「文本画进按钮区」的像素事实。
+        const auto* navView =
+            ui != nullptr ? ui->find("app.sidebar.nav") : nullptr;
+        const auto* canvas =
+            ui != nullptr ? ui->find("app.sidebar.nav.canvas") : nullptr;
+        const auto* toggle7 = ui != nullptr ? ui->find("app.sidebar.toggle")
+                                            : nullptr;
+        check(navView != nullptr && canvas != nullptr && toggle7 != nullptr,
+              "§7 滚动区/画布/按钮应存在");
+        if (navView != nullptr && canvas != nullptr && toggle7 != nullptr) {
+            const float viewBottom =
+                navView->frame.y + navView->frame.height;
+            const float toggleTop = toggle7->frame.y;
+            const bool overflow =
+                canvas->frame.height > navView->frame.height + 0.5f;
+            check(std::fabs(viewBottom - (toggleTop - 4.0f)) <= 0.5f,
+                  "§7 §11.2 区位契约：viewport 底 " +
+                      std::to_string(viewBottom) + " 应 = 按钮顶 " +
+                      std::to_string(toggleTop) + " − 4");
+            const core::dsl::Element* last = nullptr;
+            float lastBottom = -1.0f;
+            for (const auto& root : ui->roots()) {
+                std::vector<const core::dsl::Element*> stack{root.get()};
+                while (!stack.empty()) {
+                    const core::dsl::Element* node = stack.back();
+                    stack.pop_back();
+                    const std::string& id = node->id;
+                    if (id.rfind("app.sidebar.item.", 0) == 0 &&
+                        id.size() > 6 &&
+                        id.compare(id.size() - 6, 6, ".label") == 0) {
+                        const float bottom =
+                            node->frame.y + node->frame.height;
+                        if (bottom > lastBottom) {
+                            lastBottom = bottom;
+                            last = node;
+                        }
+                    }
+                    for (const auto& child : node->children) {
+                        stack.push_back(child.get());
+                    }
+                }
+            }
+            check(last != nullptr, "§7 应存在侧栏条目 label（展开态）");
+            if (last != nullptr) {
+                const float visibleBottom = std::min(lastBottom, viewBottom);
+                check(visibleBottom <= toggleTop + 0.5f,
+                      "§7 末行文本可见底 " + std::to_string(visibleBottom) +
+                          " 不得低于按钮顶 " + std::to_string(toggleTop) +
+                          "（文本不许被按钮遮住，bug168）");
+                std::cout << "§7 bug168 末行frame底=" << lastBottom
+                          << " 可见底=" << visibleBottom
+                          << " viewport底=" << viewBottom
+                          << " 按钮顶=" << toggleTop
+                          << " overflow=" << (overflow ? 1 : 0) << "\n";
+            }
+        }
     }
 
     // §6b --real-pointer：真指针命中链（bug150 口径盲区补课，池172）。§6 的 hover
