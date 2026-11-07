@@ -268,7 +268,7 @@ void drawEditorFontCard(const CardDrawArgs& args) {
             .text(label)
             .fontSize(t.sizes.fontSizeBody - 1.0f)
             .lineHeight(rowH)
-            .fontWeight(500)
+            .fontWeight(600)
             .color(t.colors.textPrimary)
             .maxWidth(labelW)
             .overflow(core::TextOverflow::Ellipsis)
@@ -310,6 +310,14 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                           "开机后自动运行并最小化到托盘", row1Y,
                           in.autostartRegistered,
                           [f = a.applyAutostartEnabled](bool v) { f(v); });
+                // 裸行分隔（规范 §4.4-1）：行间 1px borderMuted、首行不画——
+                // 行 1 存在才画（POSIX 无行 1 → 行 2 即首行，无分隔对象）
+                ui.rect(id + ".rowdiv")
+                    .position(28.0f, row1Y + rowH +
+                                  (row2Y - row1Y - rowH) * 0.5f)
+                    .size(w - 56.0f, 1.0f)
+                    .color(t.colors.borderMuted)
+                    .build();
             }
             // 行 2：动态背景（自外观卡迁入；值/回调同原 applyFluidBackgroundEnabled 链路）
             toggleRow(".fluid", "动态背景", "主窗口背景液态流质动画；关闭恢复静态",
@@ -429,7 +437,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .text(meta.name)
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .lineHeight(nameH)
-                    .fontWeight(500)
+                    .fontWeight(600)
                     .color(t.colors.textPrimary)
                     .maxWidth(textW)
                     .overflow(core::TextOverflow::Ellipsis)
@@ -870,7 +878,7 @@ void drawReminderCard(const CardDrawArgs& args) {
                     .text(labelText)
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .lineHeight(rowH)
-                    .fontWeight(500)
+                    .fontWeight(600)
                     .color(t.colors.textPrimary)
                     .maxWidth(labelW)
                     .overflow(core::TextOverflow::Ellipsis)

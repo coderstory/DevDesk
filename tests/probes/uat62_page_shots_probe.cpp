@@ -222,6 +222,10 @@ int main(int argc, char* argv[]) {
     if (sidebarCollapsed) {
         app::setSidebarCollapsed(true, false);
     }
+    // UAT62_DARK 补偿（2026-11-07）：settings onStart 会按临时配置把主题覆回
+    // 默认档，静态 init 的 setDark 被冲掉（批7 raw-dark 实拍为亮色即此因）——
+    // 与 fontScale/windowEffect 同款「探针指定值必须晚于 settings onStart」时序。
+    if (app::g_uat62Dark) core::theme::setDark();
     // 窗口效果档同理：settings onStart 会按配置文件恢复档位，探针指定值必须
     // 晚于它，否则被覆盖回默认（关闭档）—— 半透/磨砂档就永远截不到。
     module::settings::applyWindowVisuals(windowEffect);
@@ -493,10 +497,20 @@ int main(int argc, char* argv[]) {
                 std::vector<unsigned char> rgba;
                 int pw = 0;
                 int ph = 0;
-                if (!capture.readFrame(runtime, rgba, pw, ph,
-                                       kCaptureRenderPasses) ||
-                    !frameHasContent(rgba, pw, ph) ||
-                    !probe::writeRgbaToPng(path, rgba.data(), pw, ph)) {
+                // need224 批3：判据失败也落图（-debug 后缀）——白帧/空帧肉眼可诊，
+                // 探针不静默吞帧；判据语义不变（失败仍置 passed=false）。
+                const bool ok = capture.readFrame(runtime, rgba, pw, ph,
+                                                  kCaptureRenderPasses) &&
+                    frameHasContent(rgba, pw, ph) &&
+                    probe::writeRgbaToPng(path, rgba.data(), pw, ph);
+                if (!ok) {
+                    if (!rgba.empty()) {
+                        const std::string dbg = path.substr(0, path.size() - 4) +
+                            "-debug.png";
+                        probe::writeRgbaToPng(dbg, rgba.data(), pw, ph);
+                        std::cerr << "uat62_page_shots: 判据失败，诊断图 " << dbg
+                                  << "\n";
+                    }
                     passed = false;
                     continue;
                 }

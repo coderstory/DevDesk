@@ -1167,7 +1167,7 @@ public:
                         .text("关闭")
                         .fontSize(fs(13.0f))
                         .lineHeight(40.0f)
-                        .fontWeight(500)
+                        .fontWeight(600)
                         .color(t.colors.primary)
                         .onClick([this] { githubSyncDetailExpanded_ = false; })
                         .build();
@@ -1298,7 +1298,7 @@ public:
                                         &pairColW, nullptr);
                         components::scrollView(ui, "settings.cards.scroll")
                             .size(contentW, cardsH)
-                            .gap(t.sizes.spacingLarge)
+                            .gap(t.sizes.spacing)  // 卡间距 8px（§4.3），与卡推进 gapY 同值
                             .step(60.0f)
                             .theme(compTheme)
                             // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名 + 列宽桶：
@@ -1312,7 +1312,10 @@ public:
                                         (mcpOn ? "M" : "m") +
                                         ".c" +
                                         std::to_string(static_cast<int>(
-                                            pairColW + 0.5f)))
+                                            pairColW + 0.5f)) +
+                                        // 卡间距档签名：卡间 gap 变 → 内容总高变，
+                                        // 旧缓存高失真（need224 批3 gapY 16→8）
+                                        ".g8")
                             .offset(cardsScrollOffset_)
                             .onChange([this](float v) {
                                 cardsScrollOffset_ = v;
@@ -1652,7 +1655,9 @@ private:
         in.projectCardStatus = projectCardStatus_;
         in.projectCardStatusError = projectCardStatusError_;
         const SettingsCardActions a = cardActions();
-        const float gapY = t.sizes.spacingLarge;
+        // 卡与卡纵向间距统一 8px（列表统一规范 §4.3：禁 ≥16 松散档）；
+        // 半宽配对横向列距同值（columnX 单一来源口径，注释见 :1661）
+        const float gapY = t.sizes.spacing;
         float cardY = 0.0f;
         // 越界 tab（不可达）回落通用页
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
@@ -1752,7 +1757,7 @@ private:
                             .text("设置")
                             .fontSize(t.sizes.fontSizePage)
                             .lineHeight(roundFs(34.0f))
-                            .fontWeight(700)
+                            .fontWeight(600)
                             .color(t.colors.textPrimary)
                             .build();
                     })

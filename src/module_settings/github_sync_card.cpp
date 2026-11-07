@@ -244,7 +244,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .text("查看详情")
                 .fontSize(fs(12.0f))
                 .lineHeight(mutedH)
-                .fontWeight(500)
+                .fontWeight(400)
                 .color(t.colors.primary)
                 .onClick([f = a.githubSyncShowErrorDetail] { f(); })
                 .build();
@@ -319,7 +319,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .text(label)
                 .fontSize(fs(13.0f))
                 .lineHeight(toggleLabelH)
-                .fontWeight(500)
+                .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .maxWidth(textW)
                 .overflow(core::TextOverflow::Ellipsis)
@@ -371,11 +371,12 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         const float col2X = kCardPaddingX + colW + colGap;
 
         // 分段线（方案 A 三段间的 1px 分隔）：上下各留 kSectionGapY。
+        // 色值对齐列表统一规范 §4.4-1 裸行分隔口径（borderMuted）
         const auto sectionDivider = [&](const char* suffix) {
             ui.rect(id + suffix)
                 .position(kCardPaddingX, y + roundFs(kSectionGapY))
                 .size(formW, 1.0f)
-                .color(t.colors.borderDefault)
+                .color(t.colors.borderMuted)
                 .build();
             y += roundFs(kSectionGapY) + 1.0f + roundFs(kSectionGapY);
         };

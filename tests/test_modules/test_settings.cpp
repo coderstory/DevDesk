@@ -2502,7 +2502,7 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
 //   ① 两档窗口宽的列宽（ui_kit::columnX 单一来源）：最小窗 1000 → 页宽 792 →
 //     contentW=712 → colW=348；默认窗 1600 → 页宽 1392 → contentW=1312 → colW=648；
 //   ② 配对行：行宽 = contentW、行高 = max(对内卡高)（右卡矮于行高时下方留白不拉伸）；
-//     右卡 x = 左卡 x + colW + 16；
+//     右卡 x = 左卡 x + colW + 8（need224 批3：卡间距统一档 8，规范 §4.3）；
 //   ③ modules 卡（UAT4 按用户拍板全宽撑满，原 cols1 批落单半宽）：宽 = contentW；
 //   ④ 85% / 130% 档「卡高包住内容」：modules（2×2 格）/ editor（hint 下移）/
 //     log（hint 并一行）三卡高随 roundFs 同缩放且内容底不出卡。
@@ -2542,7 +2542,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
 
         const float contentW = pageW - 64.0f;   // pad = spacingLarge×2 = 32×2（S4.2 弹性）
         float colWant = 0.0f;
-        ui_kit::columnX(contentW, 16.0f, &colWant, nullptr);
+        ui_kit::columnX(contentW, 8.0f, &colWant, nullptr);  // 卡间距统一档 8（§4.3）
         const auto* pair = ui.find("settings.cards.pair.0");
         const auto* appearance = ui.find("settings.card.appearance");
         const auto* editor = ui.find("settings.card.editor");
@@ -2555,7 +2555,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
                                   " 期望 " + std::to_string(colWant));
         DOCTEST_CHECK(nearEq(editor->frame.width, colWant));
         DOCTEST_CHECK(nearEq(editor->frame.x,
-                             appearance->frame.x + colWant + 16.0f));
+                             appearance->frame.x + colWant + 8.0f));
         DOCTEST_CHECK(nearEq(pair->frame.width, contentW));
         // 行高 = max(对内卡高)：UAT6 自启动行入 editor 后两卡同高（184|184）→
         // 行高 184，与 UAT5 前 max(184,144)=184 逐值不变（零滚动预算不动）
