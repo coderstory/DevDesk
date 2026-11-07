@@ -445,6 +445,12 @@ file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
 
 foreach(_probe_source ${_devdesk_probe_sources})
     get_filename_component(_probe_name "${_probe_source}" NAME_WE)
+    # layout_guard_kit（池 #221）：布局病断言库公共实现，无 main——file(GLOB)
+    # 会把它当 probe 源捡成独立可执行（链接必败），这里跳过；它作为额外源码
+    # 编进 layout_guard_probe 目标（见下方 elseif 分支）。
+    if(_probe_name STREQUAL "layout_guard_kit")
+        continue()
+    endif()
     # 平台专有 probe 按平台选编（平台文件映射同款纪律）：_macos_probe 后缀仅 APPLE
     # 编。CI 无 GUI 会话 DEVDESK_BUILD_PROBES=OFF 看不见本缺口——Mac 侧 58462d40
     # 引入 wallpaper_service_macos_probe（CoreFoundation）漏平台门，双机合并树在
@@ -486,6 +492,15 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
+    elseif(_probe_name STREQUAL "layout_guard_probe")
+        # 池 #221：布局病守卫 kit——kit 实现随本目标一起编（layout_guard_kit.h
+        # 为纯声明，layout_guard_kit.cpp 无 main，见上方 continue() 说明）
+        add_executable(${_probe_name} "${_probe_source}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/probes/layout_guard_kit.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp")
     else()
         # mcp_service_bridge.cpp：probe 全体链 devdesk_module_settings，settings 引用
         # app::mcp::* 桥符号后缝必须单独编进来（与 module_toggle_bridge.cpp 同款理由）
