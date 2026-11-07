@@ -7764,9 +7764,10 @@ REGISTER_TEST(md_module_live_outline_jump,
     // ④ 编辑器输入未被写：实时态光标权威 = liveCursorByte_（点击写了即红）
     //    kEditorInputId → 本行变 11）
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).cursor, 0);
-    // ⑤ 大纲高亮随跳转换节：item.0 失焦、item.1 加粗
+    // ⑤ 大纲高亮随跳转换节：item.0 失焦、item.1 加重（两档制 600/400，
+    //    池224 md 批：原 700 收敛 600）
     DOCTEST_CHECK_EQ(e.ui->find("md.outline.item.0.label")->fontWeight, 400);
-    DOCTEST_CHECK_EQ(e.ui->find("md.outline.item.1.label")->fontWeight, 700);
+    DOCTEST_CHECK_EQ(e.ui->find("md.outline.item.1.label")->fontWeight, 600);
 
     mod->onStop();
     return true;
