@@ -10,8 +10,10 @@
 //      POST_BUILD 拷贝未跑」的盲区（copy_if_different 只在目标重建时执行）。
 //   ② 自有控制串（CJK+Latin，**非** probe 的 59 条 corpus）weight 400/600/700 +
 //      mono 测宽定点化（×64）后取 hash 与基线常量比对（度量路径任何漂移必改
-//      hash）。基线常量由本文件控制串首跑输出回填（首跑红、失败消息带实际值，
-//      填常量后复跑绿），与 probe advances_sha256 无关（控制串不同 hash 必不同，
+//      hash）。基线常量回填走未武装态 arming 诊断直打（见 ② 的 skip 分支，一次
+//      运行取齐四档），不依赖断言失败消息——自研 shim 断言 fail-fast（tests/
+//      doctest.h:64-72 CHECK_MESSAGE 失败即 return false，单失败即停、一用例
+//      只报首条），与 probe advances_sha256 无关（控制串不同 hash 必不同，
 //      禁止照抄）。
 //   ③ 回退链序：注入后 lazyFallbackPaths[0] == 系统 CJK（技术卡 §8 链序门禁
 //      主断言）。resolvePreferredSystemUiFontPath 在 text_shaping.cpp 匿名命名
@@ -32,6 +34,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -169,12 +172,16 @@ const GateEntry kGateMono[] = {
 };
 
 // ② 测宽 hash 基线（种子格式与 probe 同构："id:fixed\n" 串联后 SHA-256；本文件
-//    控制串首跑回填，非 probe corpus 口径——首跑失败消息带实际值，逐项填入后
-//    复跑绿）。
-constexpr const char* kBodyAdvancesSha400 = "";
-constexpr const char* kBodyAdvancesSha600 = "";
-constexpr const char* kBodyAdvancesSha700 = "";
-constexpr const char* kMonoAdvancesSha = "";
+//    控制串口径，非 probe corpus——控制串不同 hash 必不同。重录基线走未武装态
+//    arming 诊断直打取值，不依赖断言失败消息，shim fail-fast 语义见文件头②）。
+constexpr const char* kBodyAdvancesSha400 =
+    "a77b6d1ad0413172fb131c2f92a5832f05eb92cfeba6863a28541490452021ec";
+constexpr const char* kBodyAdvancesSha600 =
+    "15145a5922b3561c2232404e7863ca28fa5039c0af98d0b8e23a5df46007b43f";
+constexpr const char* kBodyAdvancesSha700 =
+    "15145a5922b3561c2232404e7863ca28fa5039c0af98d0b8e23a5df46007b43f";
+constexpr const char* kMonoAdvancesSha =
+    "c940f7e32a3bd6444ebabb329ab84f3c2d66ade5d1b23ff5ab98bb981dd7a044";
 
 }  // namespace
 
@@ -249,8 +256,15 @@ REGISTER_TEST(font_metrics_gate_measure_width_hash,
     // 基线未回填=门禁未武装（#132 P1 暂停中）：跳过断言防全量跑恒红；
     // 回填后本分支自动失效（常量首字符非空即武装）。
     if (kBodyAdvancesSha400[0] == '\0') {
+        // arming 诊断（未武装态才执行，武装后本分支不再进入、零运行开销）：直打
+        // 四档实际 hash 供基线回填，一次取齐——shim 断言 fail-fast（tests/
+        // doctest.h:64-72）一次只报首条失败，失败消息凑不齐四档，故不依赖它。
+        std::cout << "[font-metrics-gate arming] body@400=" << body400 << "\n"
+                  << "[font-metrics-gate arming] body@600=" << body600 << "\n"
+                  << "[font-metrics-gate arming] body@700=" << body700 << "\n"
+                  << "[font-metrics-gate arming] mono    =" << monoSha << std::endl;
         DOCTEST_CHECK_MESSAGE(true,
-                              "font-metrics gate ② 基线未回填，测宽门禁未武装（自研 doctest shim 仅上报首个失败，回填后须逐档核验）");
+                              "font-metrics gate ② 基线未回填，测宽门禁未武装（arming 诊断已直打四档实际 hash，回填常量后复跑即武装）");
         return true;
     }
     DOCTEST_CHECK_MESSAGE(body400 == kBodyAdvancesSha400,
