@@ -92,6 +92,51 @@ inline BoardColumnWidths boardColumnWidths(float contentW, float gap,
     return out;
 }
 
+// 全列折叠泛化（池 need#169）：ts 与列序对齐（0=折叠 1=展开）。归档列公式与
+// boardColumnWidths 完全同源；普通列折叠宽 = max(96, baseline×25%)（与归档列同参数），
+// 展开宽 E = (span − 归档当帧宽 − Σ折叠列占宽) / Σt，即剩余空间仍由展开态普通列均分——
+// 仅归档折叠（ts 全 1）时 E = (span − archiveW)/3，与 boardColumnWidths 逐字节同值。
+// 每列宽 = lerp(折叠宽, E, t_i)，Σ列宽恒等于 span（回流无空洞/重叠由构造保证）。
+inline std::vector<float> boardColumnWidthsFlex(float contentW, float gap,
+                                                size_t columnCount, int archiveIndex,
+                                                float archiveT,
+                                                const std::vector<float>& ts) {
+    if (columnCount == 0 || ts.size() < columnCount) return {};
+    const bool hasArchive = archiveIndex >= 0 &&
+                            static_cast<size_t>(archiveIndex) < columnCount;
+    const float span = contentW - gap * 3.0f;
+    const float baseline = span / 4.0f;
+    const float collapsedW =
+        std::max(kArchiveMinCollapsedW, baseline * kArchiveCollapsedRatio);
+    float archiveW = baseline;
+    if (hasArchive) {
+        const float expandedW = std::min(kArchiveExpandedW, span * kArchiveExpandedMaxRatio);
+        archiveW = uiLerp(collapsedW, expandedW, archiveT);
+    }
+    const float normalPool = span - (hasArchive ? archiveW : 0.0f);
+    float sumT = 0.0f;
+    float collapsedTake = 0.0f;
+    for (size_t i = 0; i < columnCount; ++i) {
+        if (hasArchive && static_cast<int>(i) == archiveIndex) continue;
+        const float ti = std::clamp(ts[i], 0.0f, 1.0f);
+        sumT += ti;
+        collapsedTake += collapsedW * (1.0f - ti);
+    }
+    // Σt≈0（普通列全折叠）时 E 无意义，取 baseline 兜底；E 不得为负（窄窗多列折叠钳 0）
+    const float expandedW = sumT > 0.0005f
+        ? std::max(0.0f, (normalPool - collapsedTake) / sumT)
+        : baseline;
+    std::vector<float> out(columnCount, 0.0f);
+    for (size_t i = 0; i < columnCount; ++i) {
+        if (hasArchive && static_cast<int>(i) == archiveIndex) {
+            out[i] = archiveW;
+        } else {
+            out[i] = uiLerp(collapsedW, expandedW, std::clamp(ts[i], 0.0f, 1.0f));
+        }
+    }
+    return out;
+}
+
 // 虚拟化窗口 [first, last)：按列滚动偏移与可视高算首/末张，上下各 kVirtualCardBuffer 张缓冲。
 // 卡片定高 pitch = kCardHeight + kCardGap，因此索引 = floor(offset / pitch)。
 inline std::pair<size_t, size_t> virtualCardRange(size_t taskCount, float scrollOffset,

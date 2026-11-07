@@ -58,8 +58,9 @@ constexpr float kTodoTintAlpha = 0.12f;
 
 // 归档折叠竖条的 hover / focus 态：回调写、compose 读（同 app_sidebar 关闭钮先例）。
 // 只是视觉态不是模块状态；同一时刻至多一根归档列，单 bool 足够。
-bool gArchiveCompactHovered = false;
-bool gArchiveCompactFocused = false;
+// 折叠窄态 hover/focus 记忆（need#169 起按列记：多列同时折叠互不串态）
+std::map<size_t, bool> gCompactHovered;
+std::map<size_t, bool> gCompactFocused;
 
 inline eui::Color cardFaceColor(Priority p, const core::theme::Tokens& t) {
     const eui::Color* src = nullptr;
@@ -263,6 +264,16 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     }
     const BoardColumnWidths widths = boardColumnWidths(
         contentW, colGap, v.columns.size(), archiveIndex, v.archiveT);
+    // need#169 全列折叠泛化：普通列折叠进度取 v.columnCollapseT（缺省展开），归档位仍以
+    // v.archiveT 为准（模块同源）。Σ列宽恒等于 span，回流无空洞/重叠由函数构造保证。
+    std::vector<float> ts(v.columns.size(), 1.0f);
+    for (size_t ci = 0; ci < v.columns.size(); ++ci) {
+        if (static_cast<int>(ci) != archiveIndex && ci < v.columnCollapseT.size()) {
+            ts[ci] = v.columnCollapseT[ci];
+        }
+    }
+    const std::vector<float> colWs = boardColumnWidthsFlex(
+        contentW, colGap, v.columns.size(), archiveIndex, v.archiveT, ts);
 
     // 板面几何快照（拖拽命中换算用；compose 每帧刷新）。
     // 逐列实际几何（含归档折叠动画宽度）写入 columnX/columnWidth
@@ -271,9 +282,7 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     plate.columnWidth.resize(v.columns.size());
     float cursorX = 0.0f;
     for (size_t ci = 0; ci < v.columns.size(); ++ci) {
-        const float colW = (static_cast<int>(ci) == archiveIndex)
-                               ? widths.archive
-                               : widths.normal;
+        const float colW = ci < colWs.size() ? colWs[ci] : widths.normal;
         plate.columnX[ci] = cursorX;
         plate.columnWidth[ci] = colW;
         cursorX += colW + colGap;
@@ -353,36 +362,37 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const auto& renderTasks = isArchive ? archiveFiltered : colTasks;
     const size_t taskCount = renderTasks.size();
 
-    // ---- 归档折叠动画：archiveT 是唯一进度输入（模块侧驱动）----
-    // 窄态 <0.5；展开列头 0.5→0.65 淡入。
-    const float archiveT = std::clamp(v.archiveT, 0.0f, 1.0f);
-    const float compactAlpha =
-        isArchive ? 1.0f - smoothStep(0.35f, 0.5f, archiveT) : 0.0f;
-    const float headAlpha =
-        isArchive ? smoothStep(0.5f, 0.65f, archiveT) : 1.0f;
-    // archiveT 已含 easeOutCubic；反解出线性时间 p（展开 240ms / 收起 200ms），
+    // ---- 列折叠动画（need#169 全列泛化；曲线/时长/阈值与 H20 归档列同一组）----
+    // 进度输入：归档位 = v.archiveT（H20 口径不变），普通列 = v.columnCollapseT[colIndex]。
+    // 窄态 <0.5；展开列头 0.5→0.65 淡入。展开态普通列各 alpha 与旧「非归档恒 1」逐值相同。
+    const float colT = isArchive
+        ? std::clamp(v.archiveT, 0.0f, 1.0f)
+        : (colIndex < v.columnCollapseT.size()
+               ? std::clamp(v.columnCollapseT[colIndex], 0.0f, 1.0f)
+               : 1.0f);
+    const bool expanded = isArchive
+        ? v.archiveExpanded
+        : (colIndex < v.columnExpanded.size() ? v.columnExpanded[colIndex] : true);
+    const float compactAlpha = 1.0f - smoothStep(0.35f, 0.5f, colT);
+    const float headAlpha = smoothStep(0.5f, 0.65f, colT);
+    // colT 已含 easeOutCubic；反解出线性时间 p（展开 240ms / 收起 200ms），
     // 内容淡入按 p∈[0.4,0.9]、收起按 p<0.3 淡出，与原型时长对齐。
-    const float easedT = std::clamp(
-        v.archiveExpanded ? archiveT : 1.0f - archiveT, 0.0f, 1.0f);
+    const float easedT = std::clamp(expanded ? colT : 1.0f - colT, 0.0f, 1.0f);
     const float linearP = 1.0f - std::cbrt(1.0f - easedT);
-    const float contentAlpha =
-        isArchive ? (v.archiveExpanded ? smoothStep(0.4f, 0.9f, linearP)
-                                       : 1.0f - smoothStep(0.0f, 0.3f, linearP))
-                  : 1.0f;
+    const float contentAlpha = expanded ? smoothStep(0.4f, 0.9f, linearP)
+                                        : 1.0f - smoothStep(0.0f, 0.3f, linearP);
     // 结构口径（目标态为真时即便动画帧未推进也保留展开结构，供无头用例/首帧落位）：
-    const bool archiveHeaderOn =
-        !isArchive || v.archiveExpanded || archiveT >= 0.5f;
-    const bool archiveCardsOn =
-        !isArchive || v.archiveExpanded || archiveT >= 0.4f;
+    const bool headerOn = expanded || colT >= 0.5f;
+    const bool cardsOn = expanded || colT >= 0.4f;
     // 窄态元素在交叉淡化后移除时框架不会补发 hover(false)：此处主动复位，
     // 防下次折叠回来文字停在主色 hover 态。
-    if (isArchive && compactAlpha <= 0.01f) {
-        gArchiveCompactHovered = false;
-        gArchiveCompactFocused = false;
+    if (compactAlpha <= 0.01f) {
+        gCompactHovered.erase(colIndex);
+        gCompactFocused.erase(colIndex);
     }
 
-    // 列头（归档折叠窄态不画普通列头，整列让位给竖排条）
-    if (archiveHeaderOn) {
+    // 列头（折叠窄态不画普通列头，整列让位给窄态条）
+    if (headerOn) {
         // 列头热区保留；透明底防深色主题刷白（右键菜单入口已随固定四列删除）。
         // 归档列整条列头即折叠开关（2026-10-31 反馈：原先只有右侧 32px 箭头可点）；
         // 箭头保留自身热区与 hover，命中优先级更高（顶层优先），不会双触发。
@@ -394,6 +404,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         if (isArchive) {
             head.hoverColor(t.colors.primarySoftBg)
                 .onClick([cb = v.act.archiveToggle] { cb(); });
+        } else {
+            // need#169：普通列整条列头同为折叠开关（与归档列同口径，热区整宽）。
+            // 按值捕获回调（元素可能跨帧持有）；cb 空时静默（测试手搓 BoardActions 场景）。
+            head.hoverColor(t.colors.primarySoftBg)
+                .onClick([cb = v.act.columnToggle, colIndex] {
+                    if (cb) cb(colIndex);
+                });
         }
         head.build();
 
@@ -460,14 +477,25 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         }
     }
 
-    // 归档折叠窄态：竖排「已归档 · N」+ 计数 pill + chevron-left；整列可点、hover 浅绿底 + 主色字。
+    // 折叠窄态（need#169 全列泛化）：竖排「列名 / 已归档」+ 计数 pill + chevron-left；
+    // 整列可点、hover 浅绿底 + 主色字。归档位回调/文案保持 H20 原样（无头用例契约）。
     // 容器仍是同一根普通列（列 bg 已画），这里只是列内内容层，不做独立白条/阴影。
-    if (isArchive && compactAlpha > 0.01f) {
-        const bool hover = gArchiveCompactHovered;
+    if (compactAlpha > 0.01f) {
+        const bool hover = gCompactHovered[colIndex];
         const eui::Color labelColor =
             hover ? t.colors.primary : t.colors.textSecondary;
         const eui::Color countColor =
             hover ? t.colors.primary : t.colors.textPrimary;
+        // 归档列走 archiveToggle（H20 口径），普通列走 columnToggle(列下标)。
+        // 回调一律按值拷进 std::function：元素生命周期可能长于本帧 BoardView，禁按引用捕获。
+        std::function<void()> toggleNow;
+        if (isArchive) {
+            toggleNow = v.act.archiveToggle;
+        } else {
+            std::function<void(size_t)> cb = v.act.columnToggle;
+            const size_t idx = colIndex;
+            toggleNow = [cb, idx] { if (cb) cb(idx); };
+        }
 
         // 整列命中层：hover 浅绿底，键盘 Enter/Space 切换，focus 画 2px 主色框
         ui.rect(id + ".expand.bg")
@@ -476,18 +504,18 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
             .hoverColor(t.colors.primarySoftBg)
             .radius(kColumnRadius)
-            .border(gArchiveCompactFocused ? 2.0f : 0.0f, t.colors.primary)
-            .onHover([](bool hovered) { gArchiveCompactHovered = hovered; })
-            .onFocusChanged([](bool focused) { gArchiveCompactFocused = focused; })
-            .onKeyEvent([cb = v.act.archiveToggle](const eui::KeyEvent& ev) {
+            .border(gCompactFocused[colIndex] ? 2.0f : 0.0f, t.colors.primary)
+            .onHover([colIndex](bool hovered) { gCompactHovered[colIndex] = hovered; })
+            .onFocusChanged([colIndex](bool focused) { gCompactFocused[colIndex] = focused; })
+            .onKeyEvent([toggleNow](const eui::KeyEvent& ev) {
                 if (ev.action != eui::KeyAction::Press) return false;
                 if (ev.key != eui::InputKey::Enter && ev.key != eui::InputKey::Space) {
                     return false;
                 }
-                cb();
+                toggleNow();
                 return true;
             })
-            .onClick([cb = v.act.archiveToggle] { cb(); })
+            .onClick([toggleNow] { toggleNow(); })
             .build();
 
         // 横排「已归档」：列宽恒 ≥ kArchiveMinCollapsedW(96)，本就按横排算的
@@ -497,7 +525,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         ui.text(id + ".compact.label")
             .position(0.0f, glyphY)
             .size(width, core::theme::scaled(18.0f))
-            .text("已归档")
+            .text(isArchive ? std::string("已归档") : col.title)
             .fontSize(core::theme::scaled(13.0f))
             .lineHeight(core::theme::scaled(18.0f))
             .fontWeight(600)
@@ -551,10 +579,11 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .source(id + ".expand.bg")
             .anchor(width * 0.5f, 36.0f)
             .bounds(width, height)
-            .value("展开归档")
+            .value(isArchive ? std::string("展开归档")
+                             : "展开「" + col.title + "」")
             .build();
 
-        if (!archiveCardsOn) return;
+        if (!cardsOn) return;
     }
 
 
@@ -586,7 +615,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const auto componentTheme = core::theme::componentTokensWeChat(t);
     // 归档超出 20 张时列底留一行提示（计入容器高度，不遮卡片）
     const bool showArchiveLimit =
-        isArchive && archiveCardsOn && taskCount > kArchiveRenderLimit;
+        isArchive && cardsOn && taskCount > kArchiveRenderLimit;
     const float cardsH =
         height - kColumnHeaderHeight - (showArchiveLimit ? kArchiveLimitH : 0.0f);
     // 列内容容器 = 卡片落位淡入载体：opacity 门控 dragActive（跟手中整列 0.6 调暗，松手 0.6→1.0 淡回），
@@ -615,7 +644,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                     // 卡槽几何（卡与占位条唯一来源）：宽 = 内容宽 - 双侧 inset，x = inset
                     const float cardW = contentCardWidth(contentWidth);
                     // 归档展开最多渲染最近 20 张；其余列全量进入虚拟化窗口
-                    const size_t renderLimit = (isArchive && archiveCardsOn)
+                    const size_t renderLimit = (isArchive && cardsOn)
                                                    ? std::min(taskCount, kArchiveRenderLimit)
                                                    : (isArchive ? size_t(0) : taskCount);
                     // H20 虚拟化：卡片定高 pitch，只构建可视区 + 上下各 3 张缓冲。

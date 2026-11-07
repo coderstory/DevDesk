@@ -5342,6 +5342,151 @@ REGISTER_TEST(todo_ui_h20_board_render,
     return true;
 })
 
+// ---- need#169 全列折叠泛化：宽度派生纯几何 ----
+REGISTER_TEST(todo_ui_need169_flex_widths,
+              "todo_ui: need169 全列折叠宽度派生（Σ=span / 退化同 H20 / 折叠列回流）", {
+    const float contentW = 936.0f;
+    const float gap = 24.0f;
+    const float span = contentW - gap * 3.0f;  // 864
+    auto sum = [](const std::vector<float>& ws) {
+        float s = 0.0f;
+        for (const float w : ws) s += w;
+        return s;
+    };
+
+    // 1) 全展开（ts 全 1）：与 H20 boardColumnWidths 逐值相等——归档公式不变、
+    //    普通列退化为「span−archiveW 均分」同口径（只泛化不回归的锚）
+    const std::vector<float> allExpanded = module::todo::ui::boardColumnWidthsFlex(
+        contentW, gap, 4, 3, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f});
+    const auto h20 = module::todo::ui::boardColumnWidths(contentW, gap, 4, 3, 1.0f);
+    DOCTEST_REQUIRE_EQ(allExpanded.size(), static_cast<size_t>(4));
+    DOCTEST_CHECK(std::fabs(allExpanded[3] - h20.archive) < 0.01f);
+    for (int i = 0; i < 3; ++i) {
+        DOCTEST_CHECK(std::fabs(allExpanded[i] - h20.normal) < 0.01f);
+    }
+    DOCTEST_CHECK(std::fabs(sum(allExpanded) - span) < 0.5f);
+
+    // 2) 普通列折叠（col0 折叠、归档缺省折叠）：col0 = 折叠下限，其余展开列均分回流，Σ = span
+    const std::vector<float> oneFold = module::todo::ui::boardColumnWidthsFlex(
+        contentW, gap, 4, 3, 0.0f, {0.0f, 1.0f, 1.0f, 0.0f});
+    DOCTEST_CHECK(std::fabs(oneFold[0] - module::todo::ui::kArchiveMinCollapsedW) < 0.01f);
+    DOCTEST_CHECK(std::fabs(oneFold[1] - oneFold[2]) < 0.01f);
+    DOCTEST_CHECK(std::fabs(sum(oneFold) - span) < 0.5f);
+    DOCTEST_CHECK(oneFold[1] > allExpanded[0]);  // 折叠列让出的宽度真的回流了
+
+    // 3) 动画中间帧（col0 t=0.5）：Σ 恒等 span——回流无空洞/重叠是构造保证，动画全程成立
+    const std::vector<float> mid = module::todo::ui::boardColumnWidthsFlex(
+        contentW, gap, 4, 3, 0.0f, {0.5f, 1.0f, 1.0f, 0.0f});
+    DOCTEST_CHECK(std::fabs(sum(mid) - span) < 0.5f);
+    DOCTEST_CHECK(mid[0] > oneFold[0]);
+    DOCTEST_CHECK(mid[0] < allExpanded[0]);
+
+    // 4) 普通列全折叠（Σt=0 兜底）：不产生负宽/NaN。剩余空间无回流载体（全部列都已
+    //    收窄），行尾留白是折叠语义的必然，只断言不越界
+    const std::vector<float> allFold = module::todo::ui::boardColumnWidthsFlex(
+        contentW, gap, 4, 3, 0.0f, {0.0f, 0.0f, 0.0f, 0.0f});
+    for (const float w : allFold) {
+        DOCTEST_CHECK(std::isfinite(w));
+        DOCTEST_CHECK(w >= 0.0f);
+    }
+    DOCTEST_CHECK(sum(allFold) <= span + 0.5f);
+    return true;
+})
+
+// ---- need#169 普通列折叠：列头点击切换 + 其余列回流（无头）----
+REGISTER_TEST(todo_ui_need169_column_toggle,
+              "todo_ui: need169 普通列列头点击折叠/展开（结构切换 + 回流无空洞）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE_EQ(cols.value().size(), static_cast<size_t>(4));
+    int archiveIndex = -1;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        if (cols.value()[i].kind == "archive") {
+            archiveIndex = static_cast<int>(i);
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(archiveIndex >= 0);
+    const int normalIdx = (archiveIndex == 0) ? 1 : 0;
+    const std::string normalTitle = cols.value()[static_cast<size_t>(normalIdx)].title;
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto layoutFrame = [&]() {
+        ui.begin("todo_need169_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    layoutFrame();
+    const auto& t = core::theme::current();
+    const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;
+    const float gap = t.sizes.spacingLarge;
+    auto colId = [&](int idx) { return "todo.col." + std::to_string(idx); };
+
+    // 点击普通列列头 → 目标态折叠（onPageEnter 落位，无头不补播动画）
+    const auto* head = ui.find(colId(normalIdx) + ".head");
+    DOCTEST_REQUIRE(head != nullptr);
+    DOCTEST_REQUIRE(head->onClick != nullptr);
+    head->onClick();
+    mod->onPageEnter();
+    layoutFrame();
+
+    // 结构：窄态条出现（label = 列名），普通列头让位；归档列不受影响
+    DOCTEST_CHECK(ui.find(colId(normalIdx) + ".expand.bg") != nullptr);
+    DOCTEST_CHECK(ui.find(colId(normalIdx) + ".title") == nullptr);
+    const auto* label = ui.find(colId(normalIdx) + ".compact.label");
+    DOCTEST_REQUIRE(label != nullptr);
+    DOCTEST_CHECK_EQ(label->text, normalTitle);
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".expand.bg") != nullptr);  // 缺省折叠原样
+
+    // 几何：各列宽取生产公式（ts：目标列 0，其余普通列 1，归档 0）；x 连续无缝、右缘贴 pad
+    std::vector<float> ts(4, 1.0f);
+    ts[static_cast<size_t>(archiveIndex)] = 0.0f;
+    ts[static_cast<size_t>(normalIdx)] = 0.0f;
+    const auto ws = module::todo::ui::boardColumnWidthsFlex(contentW, gap, 4, archiveIndex, 0.0f, ts);
+    float prevRight = -1.0f;
+    for (size_t i = 0; i < 4; ++i) {
+        const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::fabs(bg->frame.width - ws[i]) < 0.5f);
+        if (prevRight >= 0.0f) {
+            DOCTEST_CHECK(std::fabs(bg->frame.x - (prevRight + gap)) < 0.5f);
+        }
+        prevRight = bg->frame.x + bg->frame.width;
+    }
+    DOCTEST_CHECK(std::fabs(prevRight - (1600.0f - t.sizes.spacingLarge * 2.0f)) < 0.5f);
+
+    // 点窄态条展开回来：结构还原、宽度回全展开口径
+    const auto* reExpand = ui.find(colId(normalIdx) + ".expand.bg");
+    DOCTEST_REQUIRE(reExpand != nullptr);
+    DOCTEST_REQUIRE(reExpand->onClick != nullptr);
+    reExpand->onClick();
+    mod->onPageEnter();
+    layoutFrame();
+    DOCTEST_CHECK(ui.find(colId(normalIdx) + ".title") != nullptr);
+    DOCTEST_CHECK(ui.find(colId(normalIdx) + ".expand.bg") == nullptr);
+    std::vector<float> tsBack(4, 1.0f);
+    tsBack[static_cast<size_t>(archiveIndex)] = 0.0f;
+    const auto wsBack = module::todo::ui::boardColumnWidthsFlex(
+        contentW, gap, 4, archiveIndex, 0.0f, tsBack);
+    for (size_t i = 0; i < 4; ++i) {
+        const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::fabs(bg->frame.width - wsBack[i]) < 0.5f);
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // 逾期弹窗行标题省略号三件套
 REGISTER_TEST(todo_ui_overdue_row_ellipsis,
               "todo_ui: 逾期弹窗行标题省略号三件套（headless）", {

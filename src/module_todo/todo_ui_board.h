@@ -44,6 +44,8 @@ struct BoardActions {
     std::function<void(double, double, double, double)> cardDragged;
     std::function<void(double, double, bool)> cardReleased;
     std::function<void()> archiveToggle;
+    // 普通列列头点击切换折叠（need#169）：参数 = 列下标；归档列仍走 archiveToggle（H20 口径不变）
+    std::function<void(size_t)> columnToggle;
 };
 
 // 看板绘制的只读输入（模块每帧组装一次）：容器是模块成员的引用（不拷贝），拖拽中间态与标量取当帧快照
@@ -73,6 +75,10 @@ struct BoardView {
     // H20 归档折叠动画进度（0=折叠，1=展开）：宽度插值 / 窄态与展开头交叉淡化 / 卡片内容淡入
     // 的唯一输入。动画由模块侧驱动（archiveExpanded 是目标态），本单元只按当帧值布局。
     float archiveT = 0.0f;
+    // 全列折叠泛化（need#169）：与 columns 对齐的普通列折叠进度/目标态；归档位以
+    // archiveT/archiveExpanded 为准（同一模块状态源填入，仅口径不同）。构造后赋值。
+    std::vector<float> columnCollapseT;
+    std::vector<bool> columnExpanded;
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 新建任务；H20 起「+ 列」入口删除）

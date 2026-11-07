@@ -91,7 +91,8 @@ public:
         // 池15 归档动画观察缝（测试驱动设施）：onStart 装 / onStop 卸（闸语义）；
         // db 未注册的早退路径也要已装配（缝是模块级设施，不依赖数据）。
         obs::setArchiveAnimProvider([this]() -> obs::ArchiveAnimSnapshot {
-            return {archiveAnimating_, archiveExpanded_, archiveT_};
+            const ColCollapseState& arch = colState(archiveColId(), true);
+            return {arch.animating, arch.expanded, arch.t};
         });
         auto* db = ::core::appDatabase();
         if (!db) {
@@ -115,9 +116,13 @@ public:
     // H20：切页回来不补播离开时中断的归档折叠动画——直接落目标态（首帧同口径）；
     // 拖拽悬停计时随页面离开作废（残留的 hover 列不再参与 300ms 自动展开）
     void onPageEnter() override {
-        archiveAnimating_ = false;
+        // need#169：切页回来不补播任何列被中断的折叠动画——全部直接落目标态（首帧同口径）；
+        // 拖拽悬停计时随页面离开作废（残留的 hover 列不再参与 300ms 自动展开）
+        for (auto& [colId, st] : colCollapse_) {
+            st.animating = false;
+            st.t = st.expanded ? 1.0f : 0.0f;
+        }
         archiveHoverArmed_ = false;
-        archiveT_ = archiveExpanded_ ? 1.0f : 0.0f;
         drag_ = DragState{};   // 离开时拖拽被物理中断，锚点一并作废
         // 离开时的拖拽会被物理中断（收不到 release）：本次悬停自动展开按拖离收回收尾
         if (archiveAutoExpanded_ && archiveAutoCollapseAtMs_ == 0) {
@@ -163,6 +168,14 @@ public:
         for (const auto& c : columns_) liveIds.push_back(c.id);
         if (TodoViewStateStore::pruneScrolls(columnScrolls_, liveIds) > 0) {
             viewDirty_ = true;
+        }
+        // 折叠状态同样按列 id 记忆（need#169）：剪掉已不存在列的条目防膨胀
+        for (auto it = colCollapse_.begin(); it != colCollapse_.end();) {
+            if (std::find(liveIds.begin(), liveIds.end(), it->first) == liveIds.end()) {
+                it = colCollapse_.erase(it);
+            } else {
+                ++it;
+            }
         }
         // 拖拽中任务被外部删除 → 锚点失效，复位防悬垂
         if (drag_.active && ui::findTask(tasks_, drag_.taskId) == nullptr) {
@@ -398,8 +411,9 @@ public:
             colTasks = ui::filterBySearch(colTasks, searchMatchIds_, searching);
             size_t count = colTasks.size();
             if (col.kind == "archive") {
-                const bool cardsOn = archiveExpanded_ || archiveT_ >= 0.4f;
-                count = cardsOn ? std::min(count, size_t{20}) : size_t{0};
+                const ColCollapseState& st = colState(col.id, true);
+                count = (st.expanded || st.t >= 0.4f) ? std::min(count, size_t{20})
+                                                      : size_t{0};
             }
             const float maxScroll =
                 std::max(0.0f, ui::columnContentHeight(count) - lastColumnViewportH_);
@@ -613,9 +627,36 @@ public:
         dialogs_.popups.open(ui::Popup::NewTask);
     }
 
-    // ---- H20 归档折叠动画 / 拖拽与搜索联动状态机 ----
-    // 目标态 archiveExpanded_ 与当前进度 archiveT_ 分离：点击只改目标并给动画定起点，
-    // 每帧由壁钟推进 archiveT_（board 侧只读这两个值做宽度插值与内容淡入淡出）。
+    // ---- 列折叠动画 / 拖拽与搜索联动状态机（need#169 全列泛化；H20 归档列并入同一映射）----
+    // 目标态 expanded 与当前进度 t 分离：点击只改目标并给动画定起点，
+    // 每帧由壁钟推进 t（board 侧只读这两个值做宽度插值与内容淡入淡出）。
+    struct ColCollapseState {
+        bool expanded = true;
+        float t = 1.0f;
+        bool animating = false;   // 动画在途（compose 每帧推进；在途挂帧泵）
+        float from = 1.0f;        // 本次起点进度（反向点击 = 当前 t，不回跳）
+        float to = 1.0f;          // 本次终点进度（= 目标态）
+        int64_t startMs = 0;      // 起始壁钟（steady_clock ms）
+        float durationMs = 0.0f;  // 本次时长（240/200 × 剩余行程比例）
+    };
+
+    // 归档列 id（0 = 无归档列）。kind 权威，不按标题判
+    int64_t archiveColId() const { return ui::findColumnByKind(columns_, "archive"); }
+
+    // 折叠状态条目（缺省：普通列展开 t=1；归档列折叠 t=0，H20 缺省口径不变）。
+    // colId=0（无归档列时的占位键）不与真实列冲突（列 id 恒非 0）。
+    ColCollapseState& colState(int64_t colId, bool archive) {
+        auto it = colCollapse_.find(colId);
+        if (it == colCollapse_.end()) {
+            ColCollapseState st;
+            if (archive) {
+                st.expanded = false;
+                st.t = 0.0f;
+            }
+            it = colCollapse_.emplace(colId, st).first;
+        }
+        return it->second;
+    }
 
     // 归档列下标（kind='archive'；无归档列 → -1）。kind 权威，不按标题判
     int archiveColumnIndex() const {
@@ -639,27 +680,32 @@ public:
         return n;
     }
 
-    // 启动一段动画：起点取当前 archiveT_（在途反向点击从当前进度回插，不回跳）。
+    // 启动一段动画：起点取当前 t（在途反向点击从当前进度回插，不回跳）。
     // 时长 = 设计定值（展开 240 / 收起 200）× 剩余行程比例——全程 0↔1 恰为 240/200ms，
-    // 反向只走半程时不出现「短距离慢爬」。
-    void beginArchiveAnim(bool expand) {
-        archiveExpanded_ = expand;
-        archiveAnimFrom_ = archiveT_;
-        archiveAnimTo_ = expand ? 1.0f : 0.0f;
-        const float dist = std::fabs(archiveAnimTo_ - archiveAnimFrom_);
+    // 反向只走半程时不出现「短距离慢爬」。全列共用（need#169），时长/曲线不另起灶。
+    void beginColAnim(int64_t colId, bool expand) {
+        if (colId == 0) return;
+        ColCollapseState& st = colState(colId, colId == archiveColId());
+        st.expanded = expand;
+        st.from = st.t;
+        st.to = expand ? 1.0f : 0.0f;
+        const float dist = std::fabs(st.to - st.from);
         if (dist <= 0.001f) {  // 已在目标态：直接落位，不播空动画
-            archiveT_ = archiveAnimTo_;
-            archiveAnimating_ = false;
+            st.t = st.to;
+            st.animating = false;
             return;
         }
-        archiveAnimStartMs_ = steadyNowMs();
-        archiveAnimDurationMs_ = (expand ? kArchiveExpandMs : kArchiveCollapseMs) * dist;
-        archiveAnimating_ = true;
+        st.startMs = steadyNowMs();
+        st.durationMs = (expand ? kArchiveExpandMs : kArchiveCollapseMs) * dist;
+        st.animating = true;
         // 重绘请求双保险：帧泵（todo.archive.anim.driver）管持续出帧，本调用确保
         // 起播当帧即使错过输入事件的 compose 调度也会立刻被主循环捞起。
         // 走 core::platform 而非 app::requestUpdate（后者只编进 app main TU，探针/无头链接不过）。
         ::core::platform::requestUiUpdate();
     }
+
+    // 归档列动画入口（H20 语义；搜索联动/拖拽悬停/Esc 仍只作用于归档列）
+    void beginArchiveAnim(bool expand) { beginColAnim(archiveColId(), expand); }
 
     // 点击折叠竖条任意位置 / 展开态收起按钮 / Esc（无弹窗时）共用。
     // 手动操作优先：清掉自动展开标记与待收回截止，避免自动逻辑稍后回滚用户刚做的选择。
@@ -668,7 +714,17 @@ public:
         archiveAutoCollapseAtMs_ = 0;
         archiveHoverArmed_ = false;
         searchAutoExpanded_ = false;
-        beginArchiveAnim(!archiveExpanded_);
+        beginArchiveAnim(!colState(archiveColId(), true).expanded);
+    }
+
+    // 普通列列头点击切换（need#169）：直接反转目标态。归档列保持 H20 手动口径
+    //（清自动标记防回滚），经 onArchiveToggle 同一入口。
+    void onColumnToggle(int64_t colId) {
+        if (colId == archiveColId()) {
+            onArchiveToggle();
+            return;
+        }
+        beginColAnim(colId, !colState(colId, false).expanded);
     }
 
     // 搜索联动（设计 §5.5/§5.7）：归档命中 > 0 → 自动展开并记住展开前目标态；
@@ -679,43 +735,49 @@ public:
         const size_t hits = archiveHitCount();
         if (searching && hits > 0) {
             if (!searchAutoExpanded_) {
-                searchExpandPrev_ = archiveExpanded_;
                 searchAutoExpanded_ = true;
-                if (!archiveExpanded_) beginArchiveAnim(true);
+                const bool cur = colState(archiveColId(), true).expanded;
+                searchExpandPrev_ = cur;
+                if (!cur) beginArchiveAnim(true);
             }
         } else if (searchAutoExpanded_) {
             searchAutoExpanded_ = false;
-            if (archiveExpanded_ != searchExpandPrev_) beginArchiveAnim(searchExpandPrev_);
+            if (colState(archiveColId(), true).expanded != searchExpandPrev_) {
+                beginArchiveAnim(searchExpandPrev_);
+            }
         }
     }
 
     // 每帧推进（compose 首步调用）：progress = 已过壁钟 / 本次时长，与帧率解耦；
     // 动画/悬停计时/待收回在途时由帧泵（todo.archive.anim.driver）保证持续出帧。
-    void advanceArchiveAnim() {
+    void advanceColAnims() {
         const int64_t now = steadyNowMs();
-        if (archiveAnimating_) {
-            const float p = archiveAnimDurationMs_ > 0.0f
-                ? std::clamp(static_cast<float>(now - archiveAnimStartMs_) /
-                                 archiveAnimDurationMs_,
-                             0.0f, 1.0f)
-                : 1.0f;
-            archiveT_ = archiveAnimFrom_ +
-                        (archiveAnimTo_ - archiveAnimFrom_) * easeOutCubic(p);
-            if (p >= 1.0f) {
-                archiveT_ = archiveAnimTo_;
-                archiveAnimating_ = false;
+        for (auto& [colId, st] : colCollapse_) {
+            if (st.animating) {
+                const float p = st.durationMs > 0.0f
+                    ? std::clamp(static_cast<float>(now - st.startMs) /
+                                     st.durationMs,
+                                 0.0f, 1.0f)
+                    : 1.0f;
+                st.t = st.from + (st.to - st.from) * easeOutCubic(p);
+                if (p >= 1.0f) {
+                    st.t = st.to;
+                    st.animating = false;
+                }
+            } else if (std::fabs(st.t - (st.expanded ? 1.0f : 0.0f)) > 0.0005f) {
+                // 首帧/切页回来兜底：动画不在途但进度未落位（离开页面时被打断）→ 直接落目标态
+                st.t = st.expanded ? 1.0f : 0.0f;
             }
-        } else if (std::fabs(archiveT_ - (archiveExpanded_ ? 1.0f : 0.0f)) > 0.0005f) {
-            // 首帧/切页回来兜底：动画不在途但进度未落位（离开页面时被打断）→ 直接落目标态
-            archiveT_ = archiveExpanded_ ? 1.0f : 0.0f;
         }
 
+        // ---- 以下为归档列专属联动（H20 §5.3/§5.5/§5.7），不随泛化作用于普通列 ----
+        const ColCollapseState& arch = colState(archiveColId(), true);
         // 拖卡悬停折叠归档列 300ms → 自动展开。只认折叠态且无动画在途；
         // 计时起点取指针首次落在竖条上的那一帧（拖拽中指针可能静止，靠帧泵推进）
         const int archCol = archiveColumnIndex();
         const bool hoverArchive = drag_.active && archCol >= 0 &&
                                   drag_.hoverColIndex == archCol &&
-                                  !archiveExpanded_ && !archiveAnimating_;
+                                  !arch.expanded && !arch.animating;
         if (hoverArchive) {
             if (!archiveHoverArmed_) {
                 archiveHoverArmed_ = true;
@@ -740,8 +802,11 @@ public:
     }
 
     // 动画/悬停计时/待收回在途 → 挂 1x1 空 onFrame 帧泵（见 compose）
-    bool archiveNeedsFrame() const {
-        return archiveAnimating_ || archiveHoverArmed_ || archiveAutoCollapseAtMs_ != 0;
+    bool colAnimsNeedFrame() const {
+        for (const auto& [colId, st] : colCollapse_) {
+            if (st.animating) return true;
+        }
+        return archiveHoverArmed_ || archiveAutoCollapseAtMs_ != 0;
     }
 
     void openDetailDialog(const Task& task) {
@@ -852,9 +917,9 @@ public:
 
         consumeNavPayload();
 
-        // H20 归档折叠：compose 首步按壁钟推进 archiveT_（含拖拽悬停 300ms 计时与
-        // 拖离后 200ms 自动收回），再装配 boardView 给看板绘制读「目标态 + 当前进度」
-        advanceArchiveAnim();
+        // 列折叠（need#169 全列）：compose 首步按壁钟推进各列进度（含归档拖拽悬停
+        // 300ms 计时与拖离后 200ms 自动收回），再装配 boardView 供看板读「目标态 + 当前进度」
+        advanceColAnims();
 
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
@@ -878,6 +943,7 @@ public:
         // 看板绘制入参（容器是成员引用，不每帧拷贝）。H20：archiveExpanded 给目标态
         //（列头/内容阈值），archiveT 给当前动画进度（宽度插值）。archiveT 用构造后赋值，
         // 与 BoardView 新增字段的声明位置解耦（todo_ui_board.h 由并行子任务改）。
+        const ColCollapseState& archSt = colState(archiveColId(), true);
         ui::BoardView boardView{
             .columns = columns_,
             .tasks = tasks_,
@@ -896,8 +962,17 @@ public:
             .hasService = service_ != nullptr,
             .loadError = loadError_,
             .act = boardActions_,
-            .archiveExpanded = archiveExpanded_};
-        boardView.archiveT = archiveT_;
+            .archiveExpanded = archSt.expanded};
+        boardView.archiveT = archSt.t;
+        // need#169：全列折叠进度/目标态按列序装配（归档位同源填充；board 归档路径仍读 archiveT）
+        boardView.columnCollapseT.assign(columns_.size(), 1.0f);
+        boardView.columnExpanded.assign(columns_.size(), true);
+        for (size_t ci = 0; ci < columns_.size(); ++ci) {
+            const ColCollapseState& st =
+                colState(columns_[ci].id, columns_[ci].kind == "archive");
+            boardView.columnCollapseT[ci] = st.t;
+            boardView.columnExpanded[ci] = st.expanded;
+        }
         page.column("todo.root")
             .size(screen.width, screen.height)
             .padding(pad, 0.0f, pad, pad)  // 上=0 标题顶格（2026-10-25 拍板）——EUI padding 序=(left,top,right,bottom)
@@ -909,7 +984,7 @@ public:
                 // 真机主循环事件驱动，指针静止时无输入即不 compose；动画/300ms 悬停计时/
                 // 200ms 待收回在途挂本元素，runtime 每帧置 animating_ 持续出帧推进，
                 // 收敛后不再挂载自动剪除，零常驻功耗。
-                if (archiveNeedsFrame()) {
+                if (colAnimsNeedFrame()) {
                     page.stack("todo.archive.anim.driver")
                         .size(1.0f, 1.0f)
                         .onFrame([](float) {})
@@ -940,7 +1015,7 @@ public:
         if (event.key == eui::InputKey::Escape) {
             if (closeTopmostPopup()) return true;
             // H20 §5.1：无弹窗时 Esc 收起展开态的归档列（与点收起按钮同走手动切换）
-            if (archiveExpanded_) {
+            if (colState(archiveColId(), true).expanded) {
                 onArchiveToggle();
                 return true;
             }
@@ -1070,6 +1145,9 @@ private:
             finishDrag(target);
         },
         .archiveToggle = [this] { onArchiveToggle(); },
+        .columnToggle = [this](size_t colIndex) {
+            if (colIndex < columns_.size()) onColumnToggle(columns_[colIndex].id);
+        },
     };
 
     ui::DialogHost dialogHost_{
@@ -1150,16 +1228,11 @@ private:
     // 数据加载错误（空 = 正常；与空态区分）
     std::string loadError_;
 
-    // ---- H20 归档折叠动画 / 联动状态机 ----
-    // archiveExpanded_ = 目标态（唯一语义口径；BoardView.archiveExpanded 传它）
-    // archiveT_ = 当前进度 0..1（壁钟推进；BoardView.archiveT 传它，看板按它插值列宽与内容透明度）
-    bool archiveExpanded_ = false;
-    float archiveT_ = 0.0f;
-    bool archiveAnimating_ = false;        // 动画在途（compose 每帧推进；在途挂帧泵）
-    float archiveAnimFrom_ = 0.0f;         // 本次起点进度（反向点击 = 当前 archiveT_，不回跳）
-    float archiveAnimTo_ = 0.0f;           // 本次终点进度（= 目标态）
-    int64_t archiveAnimStartMs_ = 0;       // 起始壁钟（steady_clock ms）
-    float archiveAnimDurationMs_ = 0.0f;   // 本次时长（240/200 × 剩余行程比例）
+    // ---- 列折叠动画 / 联动状态机（need#169 全列泛化；H20 归档列并入同一映射）----
+    // expanded = 目标态（唯一语义口径），t = 当前进度 0..1（壁钟推进）；
+    // BoardView.archiveExpanded/archiveT 传归档位，columnCollapseT/columnExpanded 按列序传全体。
+    // 列 id → 折叠状态（按列 id 记忆，重排/删列不串列；缺省口径见 colState）
+    std::map<int64_t, ColCollapseState> colCollapse_;
     // 拖拽悬停 300ms 自动展开（只对折叠态；指针离开竖条重新计时）
     bool archiveHoverArmed_ = false;
     int64_t archiveHoverStartMs_ = 0;
