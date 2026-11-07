@@ -14,9 +14,12 @@
 
 #include <eui/dsl.h>
 
+#include <core/time.h>
+
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -113,6 +116,97 @@ REGISTER_TEST(release_new_task_same_date_opens_existing,
                   DOCTEST_CHECK(again.action ==
                                 ReleaseNewTaskDateAction::ConfirmIrregular);
                   DOCTEST_CHECK_EQ(again.existingTaskId, std::int64_t{0});
+                  return true;
+              })
+
+REGISTER_TEST(release_new_task_reopen_resets_stale_session,
+              "release 新建任务：重开弹层 = 空表单语义（日期重置为今天、环境清空），"
+              "上一次会话的旧日期不得残留——否则点「创建任务」触发同日复用打开旧任务"
+              "（防池 BUG 212：点「创建任务」打开的是上一个任务的编辑界面）", {
+                  test_support::TestEnv tdb("releaselist", "newtaskreopen",
+                                            /*registerAppDb=*/true);
+                  rel::ReleaseStore store(tdb.handle());
+                  rel::EnvDef env;
+                  env.name = "EM";
+                  DOCTEST_REQUIRE(store.upsertEnv(env).isOk());
+                  const eui::Screen screen = testScreen();
+                  eui::Ui ui;
+                  rel::ReleaseNewTaskDialogState dialog;
+                  std::vector<std::int64_t> opened;
+                  rel::ReleaseListActions actions;
+                  actions.openTask = [&opened](std::int64_t taskId) {
+                      opened.push_back(taskId);
+                  };
+
+                  auto composeOnce = [&] {
+                      composeStore(ui, screen, store, dialog, actions);
+                  };
+                  // picker onChange 的写入面（release_dialogs.cpp:532-538）：
+                  // 测试用它模拟用户在滚轮里选了旧日期
+                  auto pickDate = [&](int year, int month, int day) {
+                      dialog.year = year;
+                      dialog.month = month;
+                      dialog.day = day;
+                      char buffer[11] = {};
+                      std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
+                                    year, month, day);
+                      dialog.planDate = buffer;
+                  };
+                  // 期望的「今天」（open 沿重置锚点，core::time 平台口径一致）
+                  std::tm local{};
+                  core::time::localTime(core::time::nowUnix(), &local);
+                  char todayBuf[11] = {};
+                  std::snprintf(todayBuf, sizeof(todayBuf), "%04d-%02d-%02d",
+                                local.tm_year + 1900, local.tm_mon + 1,
+                                local.tm_mday);
+
+                  // 路径③ 新建→编辑 B：选旧日期（2020-06-02 周二·常规发布日），
+                  // 选环境，创建成功 → openTask(B)，弹层关闭
+                  dialog.open = true;
+                  composeOnce();  // 打开沿：表单重置为今天
+                  pickDate(2020, 6, 2);
+                  composeOnce();
+                  const auto* envHit = ui.find("release.newtask.env.1.check.hit");
+                  DOCTEST_REQUIRE(envHit != nullptr);
+                  DOCTEST_REQUIRE(envHit->onClick != nullptr);
+                  envHit->onClick();
+                  const auto* create = ui.find("release.newtask.create.bg");
+                  DOCTEST_REQUIRE(create != nullptr);
+                  DOCTEST_REQUIRE(create->onClick != nullptr);
+                  create->onClick();
+                  DOCTEST_REQUIRE_EQ(opened.size(), std::size_t{1});
+                  DOCTEST_CHECK_FALSE(dialog.open);
+                  composeOnce();  // 关闭帧：真实 app 关弹层后仍会渲染（wasOpen 落 false）
+
+                  // 路径① 创建完→再新建：重开弹层必须空表单（日期=今天、环境清空）
+                  dialog.open = true;
+                  composeOnce();
+                  DOCTEST_CHECK_MESSAGE(dialog.planDate == std::string(todayBuf),
+                                        "重开弹层日期未重置为今天，残留上一次会话值: " +
+                                            dialog.planDate);
+                  DOCTEST_CHECK(dialog.selectedEnvIds.empty());
+                  // 复现点：再点「创建任务」不得打开上一个任务（旧日期残留会触发同日复用）
+                  const auto* create2 = ui.find("release.newtask.create.bg");
+                  DOCTEST_REQUIRE(create2 != nullptr);
+                  DOCTEST_REQUIRE(create2->onClick != nullptr);
+                  create2->onClick();
+                  DOCTEST_CHECK_MESSAGE(opened.size() == 1,
+                                        "重开弹层后点「创建任务」打开了上一个任务（BUG 212）");
+
+                  // 路径② 选日期→取消→再新建：取消不留脏日期，重开仍是今天
+                  pickDate(2020, 6, 2);
+                  composeOnce();
+                  const auto* cancel = ui.find("release.newtask.cancel.bg");
+                  DOCTEST_REQUIRE(cancel != nullptr);
+                  DOCTEST_REQUIRE(cancel->onClick != nullptr);
+                  cancel->onClick();
+                  DOCTEST_CHECK_FALSE(dialog.open);
+                  composeOnce();  // 关闭帧：wasOpen 落 false，重开才有打开沿
+                  dialog.open = true;
+                  composeOnce();
+                  DOCTEST_CHECK_MESSAGE(dialog.planDate == std::string(todayBuf),
+                                        "取消后重开弹层日期未重置为今天: " +
+                                            dialog.planDate);
                   return true;
               })
 

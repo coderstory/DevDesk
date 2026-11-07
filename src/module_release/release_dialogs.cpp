@@ -311,17 +311,10 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen, ReleaseStore& sto
         state.irregularConfirmed = false;
         state.dataLoaded = false;
         state.selectedEnvIds.clear();
-        // 日期锚点必须与 picker 初值同步：调用方可能只预填 planDate 而未填 y/m/d
-        int year = 0;
-        int month = 0;
-        int day = 0;
-        if (parseDateParts(state.planDate, year, month, day)) {
-            state.year = year;
-            state.month = month;
-            state.day = day;
-        } else {
-            setToday(state);
-        }
+        // 空表单语义 = 新建草稿：日期锚点重置为今天（池 BUG 212：残留上一次
+        // 会话的 planDate 会让「创建任务」命中同日复用，打开上一个任务的执行页。
+        // 现无调用方预填 planDate，见 clue devdesk:bug212-newtask-stale-date）。
+        setToday(state);
     }
     state.wasOpen = state.open;
     if (!state.open) {
