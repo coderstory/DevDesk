@@ -2,7 +2,7 @@
 # DevDesk 一体化脚本：杀旧进程 → 增量构建 → 测试 → 启动 app
 # 输出固定结构（阶段标题 + ✅/❌ 结果行）：构建正常只打尾部、失败才打错误摘要；测试只打
 # [FAIL] 行 + Total/Passed/Failed 统计。
-# 用法：./scripts/build-test-run.sh [--clean] [--release] [--dev] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串]
+# 用法：./scripts/build-test-run.sh [--clean] [--release] [--dev] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串] [--probes-on] [--target 目标名]
 #   --dev        开发内循环形态（成本纪律 2026-11-01）：增量构建 + ①无 --filter 时连 doctest
 #                一起跳（纯构建验证）；②有 --filter 只跑命中的定向用例；③守卫链/probe/全量
 #                全部不跑、不启动 app。**收口 / QA / 发版必须不带 --dev 完整跑一次**，一道不少。
@@ -20,6 +20,12 @@
 #                 域关键词的也不漏）。多词逗号分隔 = OR（--filter file:test_md_,md_git）。
 #                 0 命中仍按失败处理（退出码 2）。注意中文关键词经 Git Bash 传参
 #                 可能有编码问题，建议用 ASCII 词
+#   --probes-on  强制开闸 probe 目标（单次覆盖环境变量 DEVDESK_BUILD_PROBES=0）：
+#                 CI 全局 PROBES=0 的运行里要单编某个 probe 时用（配 --target，
+#                 如字体度量汇交步）。开关变化复用下方「probe 开关漂移 → 补一次
+#                 configure」机制，后续不带它的运行自动重配回去，无需清缓存
+#   --target X   只编单个目标（透传 cmake --build --target X）。单编形态只保证
+#                 该目标在位，必须搭配 --no-test（测试段产物不完整，硬失败拒绝跑）
 #   --verify-app-str S   仅 --install 后生效（macOS）：装完对已装二进制
 #                 `LC_ALL=C grep -a -c S`，0 命中 = 装的包不含该特征（= 旧包 / 构建未含
 #                 本次修复）→ exit 1。sha 断言只证明「装的是本次产物」；本参数补上
@@ -31,7 +37,8 @@
 #           独立目录时用它）；
 #           DEVDESK_INSTALL_DIR 安装目标（仅 --install 用；默认 /Applications/DevDesk.app，
 #           必须是绝对路径）；
-#           DEVDESK_BUILD_PROBES=0 → 不编 probe 目标、probe 门禁段显式跳过（见下）；
+#           DEVDESK_BUILD_PROBES=0 → 不编 probe 目标、probe 门禁段显式跳过
+#           （--probes-on 可单次覆盖，见下）；
 #           DEVDESK_BUILD_VERBOSE=1 → 构建输出实时流式（默认关，见下）；
 #           DEVDESK_EUI_API_CHECK=1 → 启用 EUI-NEO 版本前置校验（默认 0，见 0b 段）；
 #           ccache 配置已落 ccache.conf（无需环境变量），临时覆盖才 source scripts/ccache-env.sh
@@ -175,7 +182,7 @@ fi
 # 构建类型：默认 Debug；--release 或 DEVDESK_BUILD_TYPE 切别的类型。只认 Debug / Release
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
-CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0
+CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""; DEV_MODE=0; BUILD_TARGET=""
 # 取值 flag 用「内层 shift 吃值 + 循环尾 shift 吃 flag 名」——不能在 for arg in "$@" 里
 # shift：for 的迭代列表在循环入口展开一次，shift 只动位置参数不动列表，每轮只前进一个，
 # 带值 flag 会错位一格吃进前一个 flag（曾把 --verify-app-str 的值解析成 --install）。
@@ -187,6 +194,10 @@ while [ $# -gt 0 ]; do
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
+    # --probes-on：在 env 判定（上方 BUILD_PROBES 段）之后覆盖——CI 全局 PROBES=0
+    # 的运行里只为汇交类单编步骤开闸，平时构建不受影响
+    --probes-on) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON" ;;
+    --target)   shift; BUILD_TARGET="${1:-}" ;;
     --live)     BUILD_LIVE_CMAKE="ON" ;;
     --filter)   shift; FILTER="${1:-}" ;;
     --verify-app-str) shift; VERIFY_APP_STR="${1:-}" ;;
@@ -211,6 +222,12 @@ fi
 # （不硬失败：本次构建/测试还有它自己的目的），但绝不静默——静默等于「以为验过」。
 if [ -n "$VERIFY_APP_STR" ] && [ "$INSTALL" != "1" ]; then
   echo "⚠ --verify-app-str 只在 --install 流程里生效：本次未带 --install，特征串验不会跑" >&2
+fi
+# --target 单编形态的互斥语义：只保证单个目标在位，doctest/probe 段若照跑会拿
+# 旧产物 / 缺产物 → 假绿温床，前置硬失败（与 --install 平台守卫同款拦截风格）
+if [ -n "$BUILD_TARGET" ] && [ "$RUN_TEST" = "1" ]; then
+  echo "❌ --target 单编形态必须搭配 --no-test（只保证单个目标在位，测试段产物不完整）" >&2
+  exit 1
 fi
 case "$BUILD_TYPE" in
   Debug|Release) ;;
@@ -425,7 +442,11 @@ if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROB
     echo "❌ configure 失败（上方为错误摘要）"; exit 1; }
   echo "✅ configure 完成"
 fi
-echo "── 构建（增量）──"
+# 单编形态（--target X）：透传给两处 cmake --build 调用点；默认全量（空数组展开安全，
+# 本脚本未开 set -u）
+BUILD_TARGET_ARGS=()
+[ -n "$BUILD_TARGET" ] && BUILD_TARGET_ARGS=(--target "$BUILD_TARGET")
+echo "── 构建（增量${BUILD_TARGET:+ · 单编 ${BUILD_TARGET}}）──"
 # DEVDESK_BUILD_VERBOSE=1 → 构建输出**实时流式**打印（默认关）。默认把 ninja 输出整个吞进
 # 变量、只在结束时打尾两行，本地看着清爽，但在 CI 里整个构建阶段一行不刷 —— 十几分钟的编译
 # 看起来像卡死。CI 里设这个变量即可看到实时进度。
@@ -435,7 +456,7 @@ if [ "${DEVDESK_BUILD_VERBOSE:-0}" = "1" ]; then
   #   变量，又豁免 set -e —— 错误摘要与「❌ 构建失败」得以在 exit 前打印（裸跑管道时
   #   set -e 会在摘要打印前把脚本杀掉，诊断全丢）。
   _build_rc=0
-  cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log" || _build_rc=$?
+  cmake --build "$BUILD_DIR" "${BUILD_TARGET_ARGS[@]}" 2>&1 | tee "$_build_log" || _build_rc=$?
   if [ "$_build_rc" -ne 0 ]; then
     echo "──── 错误摘要 ────"
     # bug173：'command not found' 类失败不含 error/FAILED 字样——并入 'not found'。
@@ -445,7 +466,7 @@ if [ "${DEVDESK_BUILD_VERBOSE:-0}" = "1" ]; then
   rm -f "$_build_log"
   echo "✅ 构建成功"
 else
-  BUILD_OUT=$(cmake --build "$BUILD_DIR" 2>&1) || {
+  BUILD_OUT=$(cmake --build "$BUILD_DIR" "${BUILD_TARGET_ARGS[@]}" 2>&1) || {
     # bug173：'command not found' 不含 error/FAILED——并入 'not found'；摘要仍空再兜底
     # tail -20（非 verbose 模式全输出吞进变量，空摘要＝零错误输出假败）。
     _sum="$(echo "$BUILD_OUT" | grep -iE "error|FAILED|not found" | head -30)" || true

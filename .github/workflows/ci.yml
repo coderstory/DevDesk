@@ -166,8 +166,10 @@ jobs:
       # 字体度量汇交（need132 技术卡 §5 F-06）：Windows 侧 JSON artifact，供与 mac
       # 基线（evidence/font-metrics/font_metrics_macos.json）比对——比对=font_sha256
       # 三文件 + advances_sha256 三档/mono 逐字节相等（收口裁决，记测试清单卡）。
-      # CI 全局 DEVDESK_BUILD_PROBES=0（不编 12 个 probe 省链接），这里同目录
-      # reconfigure 只为 font_metrics_probe 一个目标开闸（缓存温热零重编）；
+      # CI 全局 DEVDESK_BUILD_PROBES=0（不编 12 个 probe 省链接），--probes-on 在
+      # 本步重配开闸 probe 目标、--target 只单编 font_metrics_probe（缓存温热零
+      # 重编；debt205 起收编进脚本，不再手敲 cmake）。DEVDESK_FAST_TEST=1 跳过
+      # 3b 守卫链——守卫已在上面「构建 + 测试」步完整跑过，本步非门禁步不重复付费；
       # headless 跑：runner 基础显示驱动 GL 1.1 建不了 3.3 Core 探测窗，度量路径
       # 是 FreeType 纯定点不渲染帧，headless 与带窗 hash 逐字节相等（池203 实证）。
       - name: 字体度量汇交（need132 F-06，headless）
@@ -175,8 +177,7 @@ jobs:
         shell: msys2 {0}
         run: |
           cd DevDesk
-          cmake -B build-release -DDEVDESK_BUILD_PROBES=ON
-          cmake --build build-release --target font_metrics_probe
+          DEVDESK_FAST_TEST=1 bash scripts/build-test-run.sh --release --no-test --no-run --probes-on --target font_metrics_probe
           DEVDESK_PROBE_HEADLESS=1 ./build-release/tests/font_metrics_probe.exe \
             --out evidence/font-metrics/font_metrics_windows.json
           cat evidence/font-metrics/font_metrics_windows.json

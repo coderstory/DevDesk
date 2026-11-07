@@ -143,6 +143,11 @@ build_incs() {
                # 债-18：ui_driver 键名表（tests/ui_driver/driver_keys.h）只引
                # GLFW_KEY_*/GLFW_MOD_* 常量（GLFW_INCLUDE_NONE）；eui_neo PUBLIC
                # 链 glfw，CMake 侧经传递 include 可达，这里静态补同一路径
+               # bug208：font_metrics_gate.cpp:31 直引 EUI 内部头 text_internal.h，
+               # 其 :16 #include <ft2build.h>——freetype 头随 EUI-NEO submodule
+               # vendored（3rd/freetype/include，与 dependencies.cmake 拉取源同布局），
+               # CMake 构建经 Freetype::Freetype 传递 include 可达，这里静态补同一路径
+               -I "${EUI_DIR}/3rd/freetype/include"
                -I "${EUI_DIR}/3rd/glfw/include")
     fi
     [ -d "${ROOT}/3rd/cpp-httplib" ] && INCS+=(-I "${ROOT}/3rd/cpp-httplib")
@@ -394,6 +399,10 @@ if [ "$SELF_TEST" -eq 0 ]; then
     FLAGS_STR="$(
         printf '%s ' "${CXXFLAGS[@]}"
         printf -- '-DDEVDESK_VERSION="%s" ' "$DEV_VERSION"
+        # bug208：tests/CMakeLists.txt:355 对 devdesk_tests 注入 DEVDESK_SOURCE_DIR
+        # （font_metrics_gate.cpp:194 用它定位随仓基线资产），守卫同款补齐，否则
+        # 门禁把「自己少传一个宏」误报成源码编译失败（与 DEVDESK_VERSION 同理）
+        printf -- '-DDEVDESK_SOURCE_DIR="%s" ' "$ROOT"
     )"
     INCS_STR="${INCS[*]}"
     cat > "$TMP/worker.sh" <<'WORKER_EOF'
