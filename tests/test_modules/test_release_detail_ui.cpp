@@ -1101,16 +1101,27 @@ REGISTER_TEST(release_detail_next_step_track_order_and_window_gate,
         if (tasks.isFail() || tasks.value().empty()) return rel::Task{};
         return tasks.value()[0];
     };
+    // need192 §6.1：「下一步」每步过强确认门——开门后逐字确认才落库。
+    auto confirmGate = [&frame, &state, &actions, &store]() {
+        state.gateInput = "确认";
+        frame.refresh(store, state, actions);
+        clickNode(frame.ui, "release.detail.stepgate.confirm.bg");
+        frame.refresh(store, state, actions);
+    };
     DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    confirmGate();
     DOCTEST_CHECK(taskInDb().pretestOk);
     frame.refresh(store, state, actions);
     DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    confirmGate();
     DOCTEST_CHECK(taskInDb().cabOk);
     frame.refresh(store, state, actions);
     DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    confirmGate();
     DOCTEST_CHECK(taskInDb().announceSentAt != 0);
     frame.refresh(store, state, actions);
     DOCTEST_REQUIRE(clickNode(frame.ui, "release.detail.next.bg"));
+    confirmGate();
     // 合并分支不受时间窗限制（既有语义）
     {
         auto steps = store.listTaskSteps(ids.serviceId);

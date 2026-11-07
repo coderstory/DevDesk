@@ -152,6 +152,15 @@ struct ReleaseDetailUiState {
     std::string gateImpact;   // 完成后系统将：…
     std::string gateInput;    // 逐字校验输入缓冲
     std::function<void(ReleaseStore&, ReleaseDetailUiState&)> gateApply;
+
+    // —— need192 §1.2 焦点式双栏（编辑态）——
+    // 焦点区当前服务；0 = 未选（绘制时兜底首个 live 服务并写回）。切任务由
+    // loadDetail 清零。
+    std::int64_t focusedServiceId = 0;
+
+    // —— need192 §4.6 公告弹窗（640 Wide，draft 缓冲保存才落 task）——
+    bool announceEditorOpen = false;
+    std::string announceEditText;
     // notice 写入时刻（nowUnix 秒）：3 秒自动消失的判据，0 = 不自动消失。
     std::int64_t noticeAt = 0;
     // 轨道组折叠记忆（键 = 组 id）：缺省 = 完成组收起、当前步所在组强制展开；

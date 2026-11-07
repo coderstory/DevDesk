@@ -131,6 +131,9 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
         state.gateImpact.clear();
         state.gateInput.clear();
         state.gateApply = nullptr;
+        state.focusedServiceId = 0;
+        state.announceEditorOpen = false;
+        state.announceEditText.clear();
     }
     state.loadedTaskId = state.taskId;
     state.dirty = false;
@@ -295,6 +298,10 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
         state.noticeAt = 0;
     }
     const bool hasNotice = !state.notice.empty();
+    // need192 §4.3 页级警示带：无操作反馈且校验未通过时显示（同一时刻只一条，
+    // notice 反馈优先）；「去处理」开校验清单。
+    const bool hasWarning = !hasNotice && state.validationActive &&
+                            !state.validationMissing.empty();
     // F-23 锚点：发布态进页一次性滚动定位当前步（设计 §6.4；240ms 缓动因框架
     // 无毫秒时钟降级为瞬时定位，欠债已登记清单卡）。消费后立即清空。
     if (isPublishMode(state.displayStatus) && !state.pendingAnchor.empty()) {
@@ -304,7 +311,8 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
         ui.setScrollOffset("release.detail.scroll", trackCurrentStepOffset(anchorRows));
     }
     // 反馈条固定在页头下方（不随内容滚动），用户在清单底部操作失败时也能看到原因。
-    const float noticeBlockH = hasNotice ? kNoticeH + t.sizes.spacingLarge : 0.0f;
+    const float noticeBlockH =
+        (hasNotice || hasWarning) ? kNoticeH + t.sizes.spacingLarge : 0.0f;
     const float bodyH = std::max(
         0.0f, screen.height - pad - ui_kit::kHeaderH - t.sizes.spacingLarge - noticeBlockH);
 
@@ -325,6 +333,7 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
         std::to_string(state.configs.size()) + "." +
         std::to_string(state.steps.size()) + "." +
         (needs.nacos ? "1" : "0") + (needs.db ? "1" : "0") + "." +
+        std::to_string(state.focusedServiceId) + "." +
         releaseTaskStatusText(state.displayStatus);
 
     ui.column("release.detail.root")
@@ -341,6 +350,8 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
 
             if (hasNotice) {
                 drawNotice(ui, contentW, state, t);
+            } else if (hasWarning) {
+                drawPageWarningBand(ui, contentW, state, t);
             }
 
             components::scrollView(ui, "release.detail.scroll")
@@ -353,11 +364,12 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
                 .content([&](eui::Ui& inner, float innerWidth, float viewportHeight) {
                     (void)viewportHeight;
                     if (editMode) {
-                        // 编辑态：发布准备（单据式表单流）+ 环境与服务（F-10 双形态之一）。
+                        // 编辑态：发布准备（单据式表单流）+ 焦点式双栏
+                        //（need192 §1.2：左索引 264 一级概览 + 右焦点区二级明细）。
                         drawPrereqSection(inner, innerWidth, state, readOnly, nowMinute,
                                           t, themeTokens, store);
-                        drawEnvSection(inner, innerWidth, state, readOnly, editMode,
-                                       nowMinute, t, themeTokens, store, actions);
+                        drawFocusLayout(inner, innerWidth, state, readOnly, nowMinute,
+                                        t, themeTokens, store, actions);
                     } else {
                         // 发布态 / 归档态：流程轨道（F-14；前置并入轨道）。
                         drawPublishTrack(inner, innerWidth, state, nowMinute, t,
@@ -372,6 +384,7 @@ void composeReleaseDetailPage(eui::Ui& ui, const eui::Screen& screen,
     if (state.editorOpen) {
         drawConfigEditor(ui, screen, state, store, t, themeTokens);
     }
+    drawAnnounceDialog(ui, screen, state, store, t, themeTokens);
 }
 
 }  // namespace module::release

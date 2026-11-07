@@ -506,26 +506,58 @@ bool ensureServiceConfigs(ReleaseStore& store, ReleaseDetailUiState& state,
     return true;
 }
 
-bool markStepCompleted(ReleaseStore& store, ReleaseDetailUiState& state,
-                       std::int64_t serviceId, StepKind kind, const TaskEnv& env,
-                       int nowMinute) {
+// need192 §6：完成类动作共享守卫（mark* 直调与「下一步」挂门共用一套口径，
+// 防止门内门外两套判据漂移）。命中即已 setNotice。
+
+bool stepCompletionBlocked(ReleaseDetailUiState& state, StepKind kind,
+                           const TaskEnv& env, int nowMinute) {
     if (isReadOnly(state.displayStatus)) {
         setNotice(state, "任务已只读，不能确认步骤", true);
-        return false;
+        return true;
     }
     if (kind != StepKind::MergeBranch && (nowMinute < 0 || nowMinute < env.startMinute)) {
         setNotice(state, "环境「" + env.envName + "」时间窗未开始，暂时不能执行该步骤",
                   true);
-        return false;
+        return true;
     }
     if (kind == StepKind::Deploy) {
         const std::vector<std::string> missing =
             deployGateMissing(state.task, scanTicketNeeds(state));
         if (!missing.empty()) {
             setNotice(state, "请先填写：" + joinMissing(missing), true);
-            return false;
+            return true;
         }
     }
+    return false;
+}
+
+bool configCompletionBlocked(ReleaseDetailUiState& state, ConfigKind kind,
+                             const TaskEnv& env, int nowMinute) {
+    if (isReadOnly(state.displayStatus)) {
+        setNotice(state, "任务已只读，不能确认步骤", true);
+        return true;
+    }
+    if (nowMinute < 0 || nowMinute < env.startMinute) {
+        setNotice(state, "环境「" + env.envName + "」时间窗未开始，暂时不能执行该步骤",
+                  true);
+        return true;
+    }
+    const std::vector<std::string> missing = configGateMissing(state.task, kind);
+    if (!missing.empty()) {
+        setNotice(state, "请先填写：" + joinMissing(missing), true);
+        return true;
+    }
+    return false;
+}
+
+std::string stepGateImpact(StepKind kind) {
+    return kind == StepKind::Deploy ? "判定后续步骤与触发完成提醒" : "计入任务完成度";
+}
+
+bool markStepCompleted(ReleaseStore& store, ReleaseDetailUiState& state,
+                       std::int64_t serviceId, StepKind kind, const TaskEnv& env,
+                       int nowMinute) {
+    if (stepCompletionBlocked(state, kind, env, nowMinute)) return false;
     if (stepDone(state, serviceId, kind)) return true;  // 幂等
     const std::int64_t at = static_cast<std::int64_t>(core::time::nowUnix());
     auto result = store.setStepDone(serviceId, kind, at);
@@ -561,20 +593,7 @@ bool markStepCompleted(ReleaseStore& store, ReleaseDetailUiState& state,
 bool markConfigCompleted(ReleaseStore& store, ReleaseDetailUiState& state,
                          std::int64_t serviceId, ConfigKind kind, const TaskEnv& env,
                          int nowMinute) {
-    if (isReadOnly(state.displayStatus)) {
-        setNotice(state, "任务已只读，不能确认步骤", true);
-        return false;
-    }
-    if (nowMinute < 0 || nowMinute < env.startMinute) {
-        setNotice(state, "环境「" + env.envName + "」时间窗未开始，暂时不能执行该步骤",
-                  true);
-        return false;
-    }
-    const std::vector<std::string> missing = configGateMissing(state.task, kind);
-    if (!missing.empty()) {
-        setNotice(state, "请先填写：" + joinMissing(missing), true);
-        return false;
-    }
+    if (configCompletionBlocked(state, kind, env, nowMinute)) return false;
     if (!ensureServiceConfigs(store, state, serviceId)) return false;
     const TaskConfig* current = findConfig(state, serviceId, kind);
     if (current == nullptr) {
@@ -1431,25 +1450,44 @@ void performNextStep(ReleaseStore& store, ReleaseDetailUiState& state, int nowMi
                   true);
         return;
     }
+    // need192 §6.1：「下一步」推进的每一步同样过强确认门；门槛未过不开门、
+    // 直接给守卫提示（与行级挂门同一套守卫口径，见 stepCompletionBlocked）。
     if (!state.task.pretestOk) {
-        markPrereqCompleted(store, state, "pretest", "提测单");
+        openCompletionGate(state, "提测单", "计入前置完成度并解锁提交校验", "提测单",
+                           [](ReleaseStore& s, ReleaseDetailUiState& st) {
+                               markPrereqCompleted(s, st, "pretest", "提测单");
+                           });
         return;
     }
     if (!state.task.cabOk) {
-        markPrereqCompleted(store, state, "cab", "CAB 单");
+        openCompletionGate(state, "CAB 单", "计入前置完成度并解锁提交校验", "CAB 单",
+                           [](ReleaseStore& s, ReleaseDetailUiState& st) {
+                               markPrereqCompleted(s, st, "cab", "CAB 单");
+                           });
         return;
     }
     const TicketNeeds needs = scanTicketNeeds(state);
     if (needs.nacos && !state.task.ticketNacosOk) {
-        markPrereqCompleted(store, state, "nacos", "nacos 工单");
+        openCompletionGate(state, "nacos 工单", "计入前置完成度并解锁提交校验",
+                           "nacos 工单",
+                           [](ReleaseStore& s, ReleaseDetailUiState& st) {
+                               markPrereqCompleted(s, st, "nacos", "nacos 工单");
+                           });
         return;
     }
     if (needs.db && !state.task.ticketDbOk) {
-        markPrereqCompleted(store, state, "db", "数据库工单");
+        openCompletionGate(state, "数据库工单", "计入前置完成度并解锁提交校验",
+                           "数据库工单",
+                           [](ReleaseStore& s, ReleaseDetailUiState& st) {
+                               markPrereqCompleted(s, st, "db", "数据库工单");
+                           });
         return;
     }
     if (state.task.announceSentAt == 0) {
-        markAnnouncementSent(store, state);
+        openCompletionGate(state, "上线公告", "计入前置完成度并解锁提交校验", "上线公告",
+                           [](ReleaseStore& s, ReleaseDetailUiState& st) {
+                               markAnnouncementSent(s, st);
+                           });
         return;
     }
 
@@ -1461,22 +1499,58 @@ void performNextStep(ReleaseStore& store, ReleaseDetailUiState& state, int nowMi
         for (const TaskService* service : services) {
             const TaskService& svc = *service;
             if (!stepDone(state, svc.id, StepKind::MergeBranch)) {
-                markStepCompleted(store, state, svc.id, StepKind::MergeBranch, env,
-                                  nowMinute);
+                if (stepCompletionBlocked(state, StepKind::MergeBranch, env, nowMinute))
+                    return;
+                openCompletionGate(state,
+                                   env.envName + " / " + svc.serviceName + " / 合并分支",
+                                   stepGateImpact(StepKind::MergeBranch), "合并分支",
+                                   [serviceId = svc.id, envCopy = env, nowMinute](
+                                       ReleaseStore& s, ReleaseDetailUiState& st) {
+                                       markStepCompleted(s, st, serviceId,
+                                                         StepKind::MergeBranch, envCopy,
+                                                         nowMinute);
+                                   });
                 return;
             }
             const std::vector<TaskConfig> configs = orderedConfigs(state, svc);
             for (const auto& cfg : configs) {
                 if (cfg.skipped || cfg.doneAt != 0) continue;
-                markConfigCompleted(store, state, svc.id, cfg.kind, env, nowMinute);
+                if (configCompletionBlocked(state, cfg.kind, env, nowMinute)) return;
+                openCompletionGate(state,
+                                   env.envName + " / " + svc.serviceName + " / " +
+                                       configLabel(cfg.kind),
+                                   "计入任务完成度", configLabel(cfg.kind),
+                                   [serviceId = svc.id, kind = cfg.kind, envCopy = env,
+                                    nowMinute](ReleaseStore& s, ReleaseDetailUiState& st) {
+                                       markConfigCompleted(s, st, serviceId, kind,
+                                                           envCopy, nowMinute);
+                                   });
                 return;
             }
             if (!stepDone(state, svc.id, StepKind::Deploy)) {
-                markStepCompleted(store, state, svc.id, StepKind::Deploy, env, nowMinute);
+                if (stepCompletionBlocked(state, StepKind::Deploy, env, nowMinute)) return;
+                openCompletionGate(state,
+                                   env.envName + " / " + svc.serviceName + " / 部署",
+                                   stepGateImpact(StepKind::Deploy), "部署",
+                                   [serviceId = svc.id, envCopy = env, nowMinute](
+                                       ReleaseStore& s, ReleaseDetailUiState& st) {
+                                       markStepCompleted(s, st, serviceId,
+                                                         StepKind::Deploy, envCopy,
+                                                         nowMinute);
+                                   });
                 return;
             }
             if (!stepDone(state, svc.id, StepKind::Verify)) {
-                markStepCompleted(store, state, svc.id, StepKind::Verify, env, nowMinute);
+                if (stepCompletionBlocked(state, StepKind::Verify, env, nowMinute)) return;
+                openCompletionGate(state,
+                                   env.envName + " / " + svc.serviceName + " / 验证",
+                                   stepGateImpact(StepKind::Verify), "验证",
+                                   [serviceId = svc.id, envCopy = env, nowMinute](
+                                       ReleaseStore& s, ReleaseDetailUiState& st) {
+                                       markStepCompleted(s, st, serviceId,
+                                                         StepKind::Verify, envCopy,
+                                                         nowMinute);
+                                   });
                 return;
             }
         }

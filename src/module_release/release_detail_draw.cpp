@@ -181,10 +181,6 @@ void openCompletionGate(ReleaseDetailUiState& state, const std::string& subject,
     state.gateApply = std::move(apply);
 }
 
-std::string stepGateImpact(StepKind kind) {
-    return kind == StepKind::Deploy ? "判定后续步骤与触发完成提醒" : "计入任务完成度";
-}
-
 void drawStepGateDialog(eui::Ui& ui, const eui::Screen& screen,
                         ReleaseDetailUiState& state, ReleaseStore& store,
                         const Tokens& t,
@@ -406,7 +402,7 @@ float prereqSectionHeight(const ReleaseDetailUiState& state) {
     const float rowH = kStepRowH;
     const float inner = 16.0f + 18.0f + 8.0f +
                         static_cast<float>(docRows) * (rowH + 8.0f) - 8.0f +
-                        16.0f + 18.0f + 8.0f + 88.0f + 8.0f + 22.0f + 16.0f;
+                        16.0f + 44.0f + 16.0f;
     return kSectionTitleH + kSectionGap + inner;
 }
 
@@ -531,55 +527,76 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
             }
 
             y += 8.0f;
-            ui.text("release.detail.prereq.group.announce")
-                .position(inset, y)
-                .size(width - inset * 2.0f, core::theme::scaled(18.0f))
-                .text("上线公告")
-                .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(core::theme::scaled(18.0f))
-                .color(t.colors.textTertiary)
-                .build();
-            y += 18.0f + 8.0f;
+            // 公告摘要行（need192 §4.6）：首行截断 + 字数 + [查看/编辑] → 640 弹窗
+            // multiline；长文本不再内联撑表单。label 红字保留前置带「必填未填」一景。
             const std::string aid = "release.detail.prereq.announce";
             const bool announceChecked = prereqChecked(state, PrereqKey::Announce);
             const bool announceGate = prereqGateOpen(state, PrereqKey::Announce);
             const bool announceFlagged = prereqFlagged(state, PrereqKey::Announce);
-            components::input(ui, aid + ".input")
+            const std::string announceText = state.task.announceText;
+            std::string firstLine = announceText;
+            const std::size_t newlineAt = announceText.find('\n');
+            if (newlineAt != std::string::npos) firstLine = announceText.substr(0, newlineAt);
+            const bool announceEmpty = trimmed(announceText).empty();
+            const float announceRowH = kStepRowH;
+            const float checkW = 72.0f;
+            const float viewW = 72.0f;
+            const float countW = 56.0f;
+            const float summaryX = inset + kFormLabelW + 12.0f;
+            const float summaryW = std::max(
+                0.0f, width - inset * 2.0f - kFormLabelW - 12.0f - viewW - 8.0f -
+                          checkW - 8.0f - countW);
+            ui.text(aid + ".label")
                 .position(inset, y)
-                .size(width - inset * 2.0f - 84.0f, 88.0f)
-                .value(state.task.announceText)
-                .placeholder("填写上线公告")
+                .size(kFormLabelW, announceRowH)
+                .text("上线公告")
                 .fontSize(t.sizes.fontSizeBody)
-                .multiline(true)
-                .scrollbar(true)
-                .inset(8.0f)
-                .theme(themeTokens)
-                .onChange([&state](const std::string& value) {
-                    setPrereqValue(state, PrereqKey::Announce, value);
-                })
-                .onFocus([&store, &state](bool focused) {
-                    if (!focused) saveTask(store, state);
-                })
-                .onEnter([&store, &state]() { saveTask(store, state); })
-                .onCancel([&store, &state]() { saveTask(store, state); })
+                .lineHeight(announceRowH)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(announceFlagged && !announceChecked ? t.colors.errorText
+                                                           : t.colors.textPrimary)
+                .build();
+            ui.text(aid + ".summary")
+                .position(summaryX, y)
+                .size(summaryW, announceRowH)
+                .text(announceEmpty ? "未填写公告" : firstLine)
+                .fontSize(t.sizes.fontSizeBody)
+                .lineHeight(announceRowH)
+                .maxWidth(summaryW)
+                .wrap(false)
+                .overflow(core::TextOverflow::Ellipsis)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(announceEmpty ? t.colors.textTertiary : t.colors.textSecondary)
                 .build();
             ui.text(aid + ".count")
-                .position(inset, y + 88.0f + 8.0f)
-                .size(200.0f, core::theme::scaled(22.0f))
-                .text("共 " + std::to_string(utf8CharCount(state.task.announceText)) +
-                      " 字")
+                .position(summaryX + summaryW + 8.0f, y)
+                .size(countW, announceRowH)
+                .text(announceEmpty
+                          ? ""
+                          : std::to_string(utf8CharCount(announceText)) + " 字")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(core::theme::scaled(22.0f))
-                .color(announceFlagged && !announceChecked ? t.colors.errorText
-                                                           : t.colors.textTertiary)
+                .lineHeight(announceRowH)
+                .horizontalAlign(eui::HorizontalAlign::Right)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textTertiary)
                 .build();
+            {
+                ui_kit::ButtonOptions options;
+                options.onClick = [&state] {
+                    state.announceEditText = state.task.announceText;
+                    state.announceEditorOpen = true;
+                };
+                ui_kit::button(ui, aid + ".edit", "查看/编辑", ui_kit::ButtonLevel::Text,
+                               width - inset - checkW - 8.0f - viewW, y, viewW,
+                               announceRowH, t, options);
+            }
             ReleaseCheckboxOptions acheck;
             acheck.checked = announceChecked;
             acheck.enabled = announceGate || announceChecked;
             acheck.label = prereqCheckLabel(PrereqKey::Announce);
             acheck.boxSize = kCheckSize;
             acheck.fontSize = t.sizes.fontSizeSmall;
-            acheck.width = 72.0f;
+            acheck.width = checkW;
             acheck.height = kCheckSize;
             acheck.inset = 0.0f;
             acheck.gap = 6.0f;
@@ -596,9 +613,10 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                                        markAnnouncementSent(s, st);
                                    });
             };
-            drawReleaseCheckboxAt(ui, aid + ".check", width - inset - 72.0f,
-                                  y + 88.0f + 8.0f + (22.0f - kCheckSize) * 0.5f,
+            drawReleaseCheckboxAt(ui, aid + ".check", width - inset - checkW,
+                                  y + (announceRowH - kCheckSize) * 0.5f,
                                   acheck, aOnCheck, t);
+            y += announceRowH;
         })
         .build();
 }
@@ -707,7 +725,10 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
                              : (row.skipped ? t.colors.textDisabled
                                             : (current ? t.colors.textPrimary
                                                        : t.colors.textSecondary));
-    if (row.invalid) labelColor = t.colors.errorText;
+    if (row.invalid) {
+        // need192 §4.3：废止正文标签整名变红——invalid 以浅红底 + 行尾状态字
+        //（字段级就近）表达，名字保持常规色。
+    }
     ui.text(id + ".label")
         .position(nameX, y)
         .size(nameW, kStepRowH)
@@ -770,7 +791,7 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
 void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
                      const TaskEnv& env, const TaskService& svc,
                      ReleaseDetailUiState& state, bool readOnly, bool configurable,
-                     int nowMinute, const Tokens& t,
+                     bool allowServiceDrag, int nowMinute, const Tokens& t,
                      const components::theme::ThemeColorTokens& themeTokens,
                      ReleaseStore& store) {
     const float height = serviceCardHeight(state, svc);
@@ -812,8 +833,11 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
                        x + width - inset - removeW, y + 12.0f, removeW, 22.0f, t,
                        options);
     }
-    // 服务顺序拖拽只在配置中 / 待执行可用；单服务没有排序意义，不画手柄。
-    const bool showOrderHandle = configurable && countLiveServices(state, env) > 1;
+    // 服务顺序拖拽只在配置中 / 待执行可用；单服务没有排序意义，不画手柄；
+    // 焦点式双栏下（allowServiceDrag=false）焦点区单卡无序列感，把柄隐藏，
+    // 落库契约与逻辑函数不变（need192 §1.2 断点：双栏拖拽入口后批补）。
+    const bool showOrderHandle =
+        configurable && allowServiceDrag && countLiveServices(state, env) > 1;
     const float nameX = x + inset + (showOrderHandle ? kDragHandleW + kDragHandleGap : 0.0f);
     const float nameW = std::max(
         0.0f, width - inset * 2.0f - chipW - 8.0f -
@@ -877,7 +901,8 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
             .fontSize(t.sizes.fontSizeBody)
             .lineHeight(kStepRowH)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(branchFlagged ? t.colors.errorText : t.colors.textPrimary)
+            // need192 §4.3：标签红字废止，flagged 由浅红底（branch.flag）承载。
+            .color(t.colors.textPrimary)
             .build();
         const bool editingThis = state.branchEditServiceId == svc.id;
         components::input(ui, id + ".branch.input")
@@ -1234,7 +1259,8 @@ void drawEnvCard(eui::Ui& ui, const std::string& id, float x, float y, float wid
         serviceHeights.push_back(cardHeight);
         drawServiceCard(ui, id + ".svc." + std::to_string(svc.id),
                         x + kEnvInset, serviceY, width - kEnvInset * 2.0f, env, svc,
-                        state, readOnly, configurable, nowMinute, t, themeTokens, store);
+                        state, readOnly, configurable, true, nowMinute, t, themeTokens,
+                        store);
         serviceY += cardHeight + kServiceGap;
     }
 
@@ -1302,6 +1328,371 @@ void drawEnvSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                             themeTokens, store);
                 envY += envCardHeight(state, env) + kPrereqGap;
             }
+        })
+        .build();
+}
+
+// ==================== 焦点式双栏（need192 §1.2，编辑态） ====================
+//
+// 左节点索引列 264px（一级概览：环境分组头 + 服务精简条目，点击切焦点）+
+// 右焦点区（二级明细：当前服务的步骤/配置全量，唯一放大展示区）。节点=服务，
+// 环境是分组头。服务排序拖拽在双栏下的入口重设计未定（焦点区单卡无序列感），
+// allowServiceDrag 置 false 隐藏把柄；落库契约与逻辑函数保持不变（池 192 断点）。
+
+// 索引条目 mini 进度的装饰档计数：服务内未跳过行中已完成行数。进度判定唯一
+// 判据仍是 release_logic::envProgress（环境级），此处不参与任何业务判定。
+void serviceRowCounts(const ReleaseDetailUiState& state, const TaskService& svc,
+                      int* done, int* total) {
+    *done = 0;
+    *total = 0;
+    if (stepDone(state, svc.id, StepKind::MergeBranch)) ++*done;
+    ++*total;
+    for (const auto& cfg : orderedConfigs(state, svc)) {
+        if (cfg.skipped) continue;
+        ++*total;
+        if (cfg.doneAt != 0) ++*done;
+    }
+    if (stepDone(state, svc.id, StepKind::Deploy)) ++*done;
+    ++*total;
+    if (stepDone(state, svc.id, StepKind::Verify)) ++*done;
+    ++*total;
+}
+
+void drawFocusLayout(eui::Ui& ui, float width, ReleaseDetailUiState& state,
+                     bool readOnly, int nowMinute, const Tokens& t,
+                     const components::theme::ThemeColorTokens& themeTokens,
+                     ReleaseStore& store, const ReleaseDetailActions& actions) {
+    constexpr float kIndexW = 264.0f;   // §1.2：索引列定宽（>R6 门槛 200）
+    constexpr float kColumnGap = 16.0f;
+    constexpr float kEntryH = 56.0f;    // §3.1 条目 56 双行
+    constexpr float kGroupH = 32.0f;    // §3.1 分组头 32
+    constexpr float kFocusX = kIndexW + kColumnGap;
+
+    struct IndexEntry {
+        const TaskEnv* env;
+        const TaskService* svc;
+    };
+    std::vector<IndexEntry> entries;
+    for (const auto& env : state.envs) {
+        for (const TaskService* svc : liveServices(state, env)) {
+            entries.push_back({&env, svc});
+        }
+    }
+    // 分组头（环境名 + 移除环境入口）：环境内服务全被移除时仍渲染组头，
+    // 「移除环境」入口不随服务清空而消失（节点 id 与旧 envCard 一致）。
+    auto drawGroupHeader = [&](const TaskEnv& env, float gy) {
+        ui.text("release.detail.index.env." + std::to_string(env.id) + ".label")
+            .position(12.0f, gy)
+            .size(kIndexW - 130.0f, kGroupH)
+            .text(env.envName)
+            .fontSize(t.sizes.fontSizeSmall)
+            .lineHeight(kGroupH)
+            .maxWidth(kIndexW - 130.0f)
+            .wrap(false)
+            .overflow(core::TextOverflow::Ellipsis)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .fontWeight(600)
+            .color(t.colors.textSecondary)
+            .build();
+        if (!readOnly) {
+            ui_kit::ButtonOptions options;
+            options.onClick = [&state, envId = env.id, name = env.envName] {
+                openRemoveEnv(state, envId, name);
+            };
+            options.hasTextColorOverride = true;
+            options.textColorOverride = t.colors.errorText;
+            ui_kit::button(ui, "release.detail.env." + std::to_string(env.id) +
+                                   ".remove",
+                           "移除环境", ui_kit::ButtonLevel::Text, kIndexW - 76.0f,
+                           gy + (kGroupH - 24.0f) * 0.5f, 64.0f, 24.0f, t, options);
+        }
+    };
+    if (entries.empty()) {
+        const float emptyH = kSectionTitleH + kSectionGap +
+                             static_cast<float>(state.envs.size()) * kGroupH + 48.0f;
+        ui.stack("release.detail.focus")
+            .size(width, emptyH)
+            .content([&] {
+                drawSectionTitle(ui, "release.detail.focus.title", 0.0f, 0.0f,
+                                 "环境与服务", t);
+                float y = kSectionTitleH + kSectionGap;
+                ui.rect("release.detail.index.bg")
+                    .position(0.0f, y)
+                    .size(kIndexW, emptyH - y)
+                    .color(ui_kit::itemSurface(t))
+                    .border(1.0f, t.colors.borderDefault)
+                    .radius(t.sizes.radiusLarge)
+                    .build();
+                y += 8.0f;
+                for (const auto& env : state.envs) {
+                    drawGroupHeader(env, y);
+                    y += kGroupH;
+                }
+                // 无环境 = 任务级空态（文案与「去基础配置」链接沿用旧契约 id）；
+                // 有环境无服务 = 索引空态。
+                const bool noEnvs = state.envs.empty();
+                ui.text(noEnvs ? "release.detail.env.empty"
+                               : "release.detail.focus.empty")
+                    .position(12.0f, y)
+                    .size(kIndexW - 24.0f, core::theme::scaled(48.0f))
+                    .text(noEnvs ? "任务还没有环境" : "暂无服务")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .lineHeight(core::theme::scaled(48.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
+                if (noEnvs && actions.onOpenConfig) {
+                    ui_kit::ButtonOptions options;
+                    options.onClick = actions.onOpenConfig;
+                    options.hasTextColorOverride = true;
+                    options.textColorOverride = t.colors.primaryText;
+                    ui_kit::button(ui, "release.detail.env.openconfig", "去基础配置",
+                                   ui_kit::ButtonLevel::Text, 12.0f, y + 44.0f, 88.0f,
+                                   28.0f, t, options);
+                }
+            })
+            .build();
+        return;
+    }
+    // 焦点兜底：focusedServiceId 失效（未选/已移除）→ 首个 live 服务写回。
+    bool focused = false;
+    for (const auto& e : entries) {
+        if (e.svc->id == state.focusedServiceId) focused = true;
+    }
+    if (!focused) state.focusedServiceId = entries.front().svc->id;
+    const TaskEnv* focusEnv = nullptr;
+    const TaskService* focusSvc = nullptr;
+    for (const auto& e : entries) {
+        if (e.svc->id == state.focusedServiceId) {
+            focusEnv = e.env;
+            focusSvc = e.svc;
+            break;
+        }
+    }
+
+    float leftH = 8.0f;
+    {
+        std::int64_t lastEnvId = 0;
+        for (const auto& e : entries) {
+            if (e.env->id != lastEnvId) {
+                leftH += kGroupH;
+                lastEnvId = e.env->id;
+            }
+            leftH += kEntryH + 6.0f;
+        }
+    }
+    const float totalH = std::max(std::max(leftH, serviceCardHeight(state, *focusSvc)),
+                                  200.0f);
+
+    ui.stack("release.detail.focus")
+        .size(width, totalH)
+        .content([&] {
+            // —— 左：节点索引列 ——
+            ui.rect("release.detail.index.bg")
+                .position(0.0f, 0.0f)
+                .size(kIndexW, totalH)
+                .color(ui_kit::itemSurface(t))
+                .border(1.0f, t.colors.borderDefault)
+                .radius(t.sizes.radiusLarge)
+                .build();
+            float y = 8.0f;
+            std::int64_t lastEnvId = 0;
+            for (const auto& e : entries) {
+                if (e.env->id != lastEnvId) {
+                    lastEnvId = e.env->id;
+                    drawGroupHeader(*e.env, y);
+                    y += kGroupH;
+                }
+                const bool selected = e.svc->id == state.focusedServiceId;
+                const std::string eid =
+                    "release.detail.index.svc." + std::to_string(e.svc->id);
+                if (selected) {
+                    // 选中态：primarySoftBg + 左 2px 竖条（基线选中态规范）。
+                    ui.rect(eid + ".sel")
+                        .position(4.0f, y)
+                        .size(kIndexW - 8.0f, kEntryH)
+                        .color(t.colors.primarySoftBg)
+                        .radius(t.sizes.radius)
+                        .build();
+                    ui.rect(eid + ".sel.bar")
+                        .position(4.0f, y)
+                        .size(2.0f, kEntryH)
+                        .color(t.colors.primary)
+                        .build();
+                }
+                ui.rect(eid + ".hit")
+                    .position(4.0f, y)
+                    .size(kIndexW - 8.0f, kEntryH)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .onClick([&state, serviceId = e.svc->id] {
+                        state.focusedServiceId = serviceId;
+                    })
+                    .build();
+                int done = 0;
+                int total = 0;
+                serviceRowCounts(state, *e.svc, &done, &total);
+                const bool allDone = total > 0 && done == total;
+                ui.text(eid + ".name")
+                    .position(16.0f, y + 8.0f)
+                    .size(kIndexW - 78.0f, core::theme::scaled(20.0f))
+                    .text(e.svc->serviceName)
+                    .fontSize(core::theme::scaled(15.0f))
+                    .lineHeight(core::theme::scaled(20.0f))
+                    .fontWeight(600)
+                    .maxWidth(kIndexW - 78.0f)
+                    .wrap(false)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text(eid + ".count")
+                    .position(kIndexW - 58.0f, y + 8.0f)
+                    .size(46.0f, core::theme::scaled(20.0f))
+                    .text(allDone ? std::string("已完成")
+                                  : std::to_string(done) + "/" + std::to_string(total))
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .lineHeight(core::theme::scaled(20.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Right)
+                    .color(allDone ? t.colors.success : t.colors.textSecondary)
+                    .build();
+                ui.text(eid + ".envname")
+                    .position(16.0f, y + 32.0f)
+                    .size(120.0f, core::theme::scaled(16.0f))
+                    .text(e.env->envName)
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .lineHeight(core::theme::scaled(16.0f))
+                    .maxWidth(120.0f)
+                    .wrap(false)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .color(t.colors.textTertiary)
+                    .build();
+                // mini 进度 32×4（右锚小部件档，R6 合规）。
+                ui.stack(eid + ".mini")
+                    .position(kIndexW - 48.0f, y + 38.0f)
+                    .size(32.0f, 4.0f)
+                    .content([&ui, eid, done, total, allDone, &t] {
+                        ui.rect(eid + ".mini.track")
+                            .size(32.0f, 4.0f)
+                            .color(t.colors.borderDefault)
+                            .radius(2.0f)
+                            .build();
+                        ui.rect(eid + ".mini.fill")
+                            .size(total > 0
+                                      ? 32.0f * static_cast<float>(done) /
+                                            static_cast<float>(total)
+                                      : 0.0f,
+                                  4.0f)
+                            .color(allDone ? t.colors.success : t.colors.primary)
+                            .radius(2.0f)
+                            .build();
+                    })
+                    .build();
+                y += kEntryH + 6.0f;
+            }
+
+            // —— 右：焦点区（当前服务全量明细；服务卡节点 id 与旧清单同构，
+            // 无头测试行路径不漂移）——
+            drawServiceCard(ui, "release.detail.env." + std::to_string(focusEnv->id) +
+                                    ".svc." + std::to_string(focusSvc->id),
+                            kFocusX, 0.0f, std::max(0.0f, width - kFocusX), *focusEnv,
+                            *focusSvc, state, readOnly, !readOnly, false, nowMinute, t,
+                            themeTokens, store);
+        })
+        .build();
+}
+
+// 公告弹窗（need192 §4.6，#156 640 Wide 档）：multiline 编辑 + 字数 +
+// 取消(次)/保存(主)。draft 缓冲，保存才落 task（saveTask 契约不变）。
+
+void drawAnnounceDialog(eui::Ui& ui, const eui::Screen& screen,
+                        ReleaseDetailUiState& state, ReleaseStore& store,
+                        const Tokens& t,
+                        const components::theme::ThemeColorTokens& themeTokens) {
+    if (!state.announceEditorOpen) return;
+    const std::string id = "release.detail.announce";
+    ui_kit::DialogShellSpec spec;
+    spec.id = id;
+    spec.width = ui_kit::DialogWidth::Wide;  // 640 档（设计 §4.6）
+    spec.height = 480.0f;
+    spec.open = true;
+    spec.title = "上线公告";
+    spec.cancel = ui_kit::DialogShellButton{
+        "取消", [&state] { state.announceEditorOpen = false; }, true};
+    spec.confirm = ui_kit::DialogShellButton{
+        "保存",
+        [&store, &state] {
+            state.task.announceText = state.announceEditText;
+            state.announceEditorOpen = false;
+            saveTask(store, state);
+        },
+        true};
+    spec.onOpenChange = [&state](bool open) {
+        if (!open) state.announceEditorOpen = false;
+    };
+    ui_kit::drawDialogShell(
+        ui, screen, spec, t, themeTokens,
+        [&](const ui_kit::DialogContentArea& area) {
+            components::input(ui, id + ".input")
+                .position(area.x, area.y + 4.0f)
+                .size(area.w, std::max(200.0f, area.h - 46.0f))
+                .value(state.announceEditText)
+                .placeholder("填写上线公告")
+                .fontSize(core::theme::scaled(14.0f))
+                .multiline(true)
+                .scrollbar(true)
+                .inset(10.0f)
+                .theme(themeTokens)
+                .onChange([&state](const std::string& value) {
+                    state.announceEditText = value;
+                })
+                .build();
+            ui.text(id + ".count")
+                .position(area.x, area.y + area.h - 28.0f)
+                .size(240.0f, core::theme::scaled(22.0f))
+                .text("共 " + std::to_string(utf8CharCount(state.announceEditText)) +
+                      " 字")
+                .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                .lineHeight(core::theme::scaled(22.0f))
+                .color(t.colors.textTertiary)
+                .build();
+        });
+}
+
+// 页级警示带（need192 §4.3）：校验未通过时页头下方横贯一条（error 10% 浅染底）
+// + 「去处理」文字钮开校验清单；同一时刻只显示一条（notice 反馈优先，见 compose）。
+
+void drawPageWarningBand(eui::Ui& ui, float width, ReleaseDetailUiState& state,
+                         const Tokens& t) {
+    const std::string text = "校验未通过：还有 " +
+                             std::to_string(state.validationMissing.size()) +
+                             " 项不完整";
+    ui.stack("release.detail.warning")
+        .size(width, kNoticeH)
+        .content([&] {
+            ui.rect("release.detail.warning.bg")
+                .size(width, kNoticeH)
+                .color(eui::mixColor(t.colors.surface, t.colors.error, 0.10f))
+                .radius(t.sizes.radius)
+                .build();
+            ui.text("release.detail.warning.text")
+                .position(12.0f, 0.0f)
+                .size(std::max(0.0f, width - 84.0f), kNoticeH)
+                .text(text)
+                .fontSize(t.sizes.fontSizeSmall)
+                .lineHeight(kNoticeH)
+                .maxWidth(std::max(0.0f, width - 84.0f))
+                .wrap(false)
+                .overflow(core::TextOverflow::Ellipsis)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.errorText)
+                .build();
+            ui_kit::ButtonOptions options;
+            options.onClick = [&state] {
+                state.confirm = ReleaseDetailConfirm::ValidationReport;
+            };
+            options.hasTextColorOverride = true;
+            options.textColorOverride = t.colors.errorText;
+            ui_kit::button(ui, "release.detail.warning.go", "去处理",
+                           ui_kit::ButtonLevel::Text, width - 60.0f, 0.0f, 52.0f,
+                           kNoticeH, t, options);
         })
         .build();
 }
