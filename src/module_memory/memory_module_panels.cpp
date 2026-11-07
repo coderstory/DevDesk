@@ -988,8 +988,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     }
 
     // ── 脱敏设置（真持久化 + 关闭走红色二次确认，设计稿逐字文案）──
+    // bug215（2026-11-07）：卡高随字号派生（592def76 / B6 同款）——固定 128 +
+    // 内容偏移全 scaled()，140% 档 rule 行坠出卡底（probe 实测溢 17.6px）。
     {
-        constexpr float kCardH = 128.0f;
+        const float kCardH = core::theme::scaled(128.0f);
         ui_kit::cardPanel(ui, "memory.cfg.mask", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.mask.title", cy, "脱敏设置");
         ui.text("memory.cfg.mask.chip")
@@ -1174,8 +1176,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     }
 
     // ── 用量告警（需-9）：日/月两档阈值可调；月档软/硬 = 消耗卡预算同一套数 ──
+    // bug215（2026-11-07）：卡高随字号派生（592def76 / B6 同款）——固定 258 +
+    // 行内滑条/值偏移固定，140% 档 warn 条坠出卡底（probe 实测溢 74.4px）。
     {
-        constexpr float kCardH = 258.0f;
+        const float kCardH = core::theme::scaled(258.0f);
         ui_kit::cardPanel(ui, "memory.cfg.usage", x, cy, w, kCardH, t.sizes.radiusLarge, t);
         cardHead("memory.cfg.usage.title", cy, "用量告警阈值（token 估算）");
         ui.text("memory.cfg.usage.hint")
@@ -1218,7 +1222,8 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                        static_cast<double>(hi - lo));
             const double steps = static_cast<double>(hi - lo) /
                                  static_cast<double>(step);
-            ui_kit::slider(ui, id, x + 16.0f, rowY + 24.0f, innerW - 120.0f,
+            ui_kit::slider(ui, id, x + 16.0f,
+                           rowY + core::theme::scaled(24.0f), innerW - 120.0f,
                            20.0f, static_cast<float>(norm), t,
                            [apply, lo, step, steps](float v) {
                                const long long q =
@@ -1229,7 +1234,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             char vbuf[24];
             std::snprintf(vbuf, sizeof(vbuf), "%lld 万", cur / 10000);
             ui.text(id + ".val")
-                .position(x + w - 92.0f, rowY + 22.0f)
+                .position(x + w - 92.0f, rowY + core::theme::scaled(22.0f))
                 .size(76.0f, core::theme::scaled(20.0f))
                 .text(vbuf)
                 .fontSize(core::theme::scaled(13.0f))

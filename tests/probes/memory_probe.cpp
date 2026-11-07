@@ -501,6 +501,74 @@ int main(int argc, char* argv[]) {
     composeFrame();
     composeFrame();
 
+    // ── 组 C3：字号放大档（140%）脱敏卡/用量卡（bug215，2026-11-07）──
+    // 错位只在非 100% 档显形：两卡卡高若不随字号派生（脱敏 128 / 用量 258 固定）
+    // 而 scaled 偏移的内容行不变，140% 档内容会坠出卡底（脱敏溢 ~18px、用量
+    // 溢 ~74px）。断言：卡内最底内容行底 ≤ 卡底 - 2px（脱敏卡=rule 文本、
+    // 用量卡=warn 条）。setScrollOffset 帧末消费，改档/改滚后各补两帧再 find。
+    core::theme::setFontScale(1.4f);
+    composeFrame();
+    composeFrame();
+    if (A.ui != nullptr) {
+        const auto* sc = A.ui->find("memory.config.scroll");
+        if (sc != nullptr && sc->scrollMaxOffset > 0.0f) {
+            A.ui->setScrollOffset("memory.config.scroll", sc->scrollMaxOffset);
+            composeFrame();
+            composeFrame();
+        }
+    }
+    {
+        struct CardCheck {
+            const char* card;
+            const char* bottomRow;
+            const char* name;
+        };
+        const CardCheck checks[2] = {
+            {"memory.cfg.mask", "memory.cfg.mask.rule", "脱敏卡"},
+            {"memory.cfg.usage", "memory.cfg.usage.warn", "用量卡"},
+        };
+        for (const auto& c : checks) {
+            const auto* card = A.elem(c.card);
+            const auto* row = A.elem(c.bottomRow);
+            if (card == nullptr || row == nullptr) {
+                std::cerr << "memory_probe: FAIL——" << c.name
+                          << "/卡内最底内容元素缺失（140% 档）\n";
+                A.passed = false;
+                continue;
+            }
+            const float rowBottom = row->frame.y + row->frame.height;
+            const float cardBottom = card->frame.y + card->frame.height;
+            std::cout << "DBG " << c.name << " card bottom=" << cardBottom
+                      << " content bottom=" << rowBottom << NL;
+            if (rowBottom > cardBottom - 2.0f) {
+                std::cerr << "memory_probe: FAIL——" << c.name
+                          << " 内容坠出卡底（140% 档）\n";
+                A.passed = false;
+            }
+        }
+    }
+    for (int i = 0; i < 8; ++i) composeFrame();
+    shoot("memory-cards-scale140.png", &A.passed);
+    // 100% 档回归：滚底同机位截一张（卡高逐值同旧口径的形态留证），再还原页顶
+    core::theme::setFontScale(1.0f);
+    composeFrame();
+    composeFrame();
+    if (A.ui != nullptr) {
+        const auto* sc = A.ui->find("memory.config.scroll");
+        if (sc != nullptr && sc->scrollMaxOffset > 0.0f) {
+            A.ui->setScrollOffset("memory.config.scroll", sc->scrollMaxOffset);
+            composeFrame();
+            composeFrame();
+        }
+    }
+    for (int i = 0; i < 8; ++i) composeFrame();
+    shoot("memory-cards-scale100.png", &A.passed);
+    if (A.ui != nullptr) {
+        A.ui->setScrollOffset("memory.config.scroll", 0.0f);  // 还原页顶
+    }
+    composeFrame();
+    composeFrame();
+
     // ── 组 G：向导四步（need:202 F-04/F-05）——③ embedding 本机包四态 + ④ 顺延 ──
     // 打开向导（点 memory.eng.wizard，命中链口径同组 E），③/④ 行文案随注入的
     // Snapshot.embed* 字段走（向导只读字段不探文件系统，设计 §4 实现约束）。
