@@ -151,6 +151,26 @@ else
   echo "⚠️ 打包机未装 llama-server，跳过随包（装机后走 brew/PATH 定位序）"
 fi
 
+# embedding 模型随包（need:241 / debt226）：模型 pkg 定位序 = exe 旁 assets/models（
+# llama_host.cpp locateEmbedModelBetween 序 1，先于数据根与 HF 下载）。随包后首次装机的
+# 记忆模块无需联网下载 26MB 模型；下载链仍保留为最后兜底（老板明确不让动）。
+# 源 = 仓内 assets/models/<gguf>（.gitignore:124 已白名单，随 assets 分发）。
+# 与 Windows 侧 unpack-memory-assets.sh --required 同口径：打包链缺模型即中止——
+# 静默产出无模型的 .app，用户机上记忆模块必走网络下载，比打不了包严重。
+EMBED_MODEL_NAME="bge-small-zh-v1.5-q8_0.gguf"
+EMBED_MODEL_SRC="$PROJECT_DIR/assets/models/$EMBED_MODEL_NAME"
+if [ ! -f "$EMBED_MODEL_SRC" ]; then
+  echo "❌ 缺随包 embedding 模型：$EMBED_MODEL_SRC" >&2
+  echo "   获取：curl -L -o '$EMBED_MODEL_SRC' \\" >&2
+  echo "     https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/$EMBED_MODEL_NAME" >&2
+  echo "   （或从仓内 assets/memory-embedding.7z 抽出同路径文件）" >&2
+  exit 1
+fi
+mkdir -p "$MACOS_DIR/assets/models"
+cp -f "$EMBED_MODEL_SRC" "$MACOS_DIR/assets/models/$EMBED_MODEL_NAME"
+# bash 3.2 把紧跟变量的 UTF-8 全角标点首字节并进变量名（实测输出乱码），必须用 ${}
+echo "✅ embedding 模型随包就位（Contents/MacOS/assets/models/${EMBED_MODEL_NAME}，$(wc -c < "$MACOS_DIR/assets/models/$EMBED_MODEL_NAME" | tr -d ' ') 字节）"
+
 # 主二进制非系统依赖随包（bug #239，发布阻断）：mac 侧 OpenSSL 走 Homebrew 动态库
 # （与 Windows 的 DEVDESK_STATIC 静态链不同），未收编时主二进制硬链
 # /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib —— 用户机没装 Homebrew openssl@3
@@ -235,16 +255,22 @@ mkdir -p installer/macos/out
 DMG="installer/macos/out/DevDesk-$APP_VERSION.dmg"
 # --overwrite 必加：否则第二次运行会失败
 # 每个进 DMG 的条目都必须给 --icon 坐标：没坐标的项会被 Finder 甩出可视区，用户看不到会以为文件缺失
+# ⚠️ 这些坐标必须与 doc/scripts/gen_dmg_background.py 的 LOGICAL_SIZE / ICON_* 常量
+# 严格同值——背景图上的箭头位置是按图标几何算出来的，两边不同步就会出现「箭头指向
+# 空白处」。池 bug#243 重排：窗口 700×440→700×460，辅助文件 y 68→150（原值太靠上，
+# Finder 标题栏占用后标签被裁），主图标 y 210→300、x 190/510→215/485、icon-size 120→110。
+# 二次修正（实测）：辅助文件 x 贴到窗口两侧（95/605）给长文件名留出换行空间——
+# 「首次运行（去隔离）.command」在 110px 图标宽度下会被折成两行超出图标视觉边界。
 create-dmg \
   --overwrite \
   --volname "DevDesk" \
   --window-pos 200 120 \
-  --window-size 700 440 \
-  --icon-size 120 \
-  --icon "DevDesk.app" 190 210 \
-  --icon "首次运行（去隔离）.command" 110 68 \
-  --icon "安装说明.txt" 590 68 \
-  --app-drop-link 510 210 \
+  --window-size 700 460 \
+  --icon-size 110 \
+  --icon "DevDesk.app" 215 300 \
+  --icon "首次运行（去隔离）.command" 75 150 \
+  --icon "安装说明.txt" 625 150 \
+  --app-drop-link 485 300 \
   --hide-extension "DevDesk.app" \
   --background "installer/macos/background.png" \
   --no-internet-enable \

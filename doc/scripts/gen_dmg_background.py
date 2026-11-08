@@ -47,18 +47,25 @@ def _print(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 逻辑画布与版面（全部是 700×440 下的逻辑像素）
+# 逻辑画布与版面（全部是 700×460 下的逻辑像素）
 # ---------------------------------------------------------------------------
-LOGICAL_SIZE = (700, 440)  # create-dmg --window-size 700 440，背景图必须严格等于此尺寸
-ICON_LEFT_X = 190  # --icon "DevDesk.app" 190 210 的 x
-ICON_RIGHT_X = 510  # --app-drop-link 510 210 的 x
-ICON_CENTER_Y = 210  # 两个图标的 y
-ICON_SIZE = 120  # --icon-size 120
+# 2026-11-08 重排（池 bug#243）：原 700×440 版把两个辅助文件（去隔离脚本 / 安装说明）
+# 摆在 y=68，图标上沿顶到 y=8 —— Finder 标题栏占掉顶部后标签被裁；同时说明文字
+# y=262 与主图标标签（y≈280）重叠。改为：窗口 700×460；辅助文件降到 y=150（两侧），
+# 主图标降到 y=300（居中偏下），说明文字落到 y=390。
+# ⚠️ 二次修正（实测截图）：Finder 窗口内容区比 --window-size 指定值矮约 25-30px
+# （工具栏占位），背景图底部会被裁 → 说明文字不能贴着 434 的色带上沿放，
+# 收到 y=390 留出被裁余量。
+LOGICAL_SIZE = (700, 460)  # create-dmg --window-size 700 460，背景图必须严格等于此尺寸
+ICON_LEFT_X = 215  # --icon "DevDesk.app" 215 300 的 x
+ICON_RIGHT_X = 485  # --app-drop-link 485 300 的 x
+ICON_CENTER_Y = 300  # 两个主图标的 y
+ICON_SIZE = 110  # --icon-size 110
 
 ICON_HALF = ICON_SIZE // 2
-ARROW_EDGE_GAP = 40  # 箭头两端距图标边缘的留白
-ARROW_X0 = ICON_LEFT_X + ICON_HALF + ARROW_EDGE_GAP  # 290
-ARROW_X1 = ICON_RIGHT_X - ICON_HALF - ARROW_EDGE_GAP  # 410
+ARROW_EDGE_GAP = 36  # 箭头两端距图标边缘的留白
+ARROW_X0 = ICON_LEFT_X + ICON_HALF + ARROW_EDGE_GAP  # 306
+ARROW_X1 = ICON_RIGHT_X - ICON_HALF - ARROW_EDGE_GAP  # 394
 ARROW_LINE_W = 3  # 线宽（克制：细线 + 小箭头，不做粗重实心箭头）
 ARROW_HEAD_LEN = 15
 ARROW_HEAD_DEG = 32
@@ -66,7 +73,9 @@ ARROW_ALPHA = 153  # 约 60% 不透明度（255 × 0.6）
 
 TEXT = "拖入「应用程序」文件夹完成安装"
 TEXT_PX = 13  # spec §4.2
-TEXT_CENTER = (LOGICAL_SIZE[0] // 2, 262)  # 箭头正下方居中
+# 主图标标签基线 ≈ ICON_CENTER_Y + ICON_HALF + 18 = 373；文字放它下方 y=390，
+# 距底部色带（BAND_H=26 → 上沿 434）留 44px 余量，抵消 Finder 内容区裁切
+TEXT_CENTER = (LOGICAL_SIZE[0] // 2, 390)
 FONT_PATH = Path("C:/Windows/Fonts/msyh.ttc")  # 微软雅黑；缺失时退化为无文字版本
 
 BAND_H = 26  # 底部收边色带高度
@@ -130,16 +139,28 @@ def _vertical_gradient(size: tuple[int, int], top: tuple[int, int, int],
 
 @lru_cache(maxsize=None)
 def _load_font(font_px: int):
-    """加载中文字体；缺失/加载失败时返回 None（退化为无文字版本，只提示一次）。"""
-    if not FONT_PATH.exists():
-        _print(f"[WARN] 未找到中文字体 {FONT_PATH}，本次生成不带说明文字的版本")
-        _print("       需要文字请在 Windows 上运行本脚本，或修改脚本里的 FONT_PATH 常量")
-        return None
-    try:
-        return ImageFont.truetype(str(FONT_PATH), font_px)
-    except OSError as exc:
-        _print(f"[WARN] 字体加载失败（{exc}），本次生成不带说明文字的版本")
-        return None
+    """加载中文字体；缺失/加载失败时返回 None（退化为无文字版本，只提示一次）。
+
+    候选序：FONT_PATH（Windows 微软雅黑）→ macOS 系统中文（PingFang / 苹方）→
+    仓库自带 DevDeskSansSC。加 macOS 与仓库内候选是因为本脚本在 mac 机上也要能跑出
+    带文字的图（原实现只在 Windows 有字体，mac 上静默退化成无文字版本）。
+    """
+    candidates = [
+        FONT_PATH,                                              # Windows 微软雅黑
+        Path("/System/Library/Fonts/PingFang.ttc"),             # macOS 苹方
+        Path("/System/Library/Fonts/Hiragino Sans GB.ttc"),     # macOS 冬青黑（较老系统）
+        Path(__file__).resolve().parents[2] / "assets" / "DevDeskSansSC-Regular.otf",
+    ]
+    for cand in candidates:
+        if not cand.exists():
+            continue
+        try:
+            return ImageFont.truetype(str(cand), font_px)
+        except OSError:
+            continue
+    _print(f"[WARN] 未找到可用中文字体（试过 {len(candidates)} 个候选），"
+           f"本次生成不带说明文字的版本")
+    return None
 
 
 # ---------------------------------------------------------------------------
