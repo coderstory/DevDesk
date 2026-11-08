@@ -947,19 +947,20 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
-                // ✕ 真点击关闭（关闭态不建内容节点）
-                const auto* closeBg = findElement("agent.dialog.tools.close.bg");
+                // 底区「关闭」钮真点击关闭（need156 迁壳后 ✕ 已退役，关闭走
+                // 壳 .cancel；关闭态不建内容节点）
+                const auto* closeBg = findElement("agent.dialog.tools.cancel.bg");
                 if (closeBg == nullptr) {
-                    std::cerr << "agent_dialog_probe: 工具弹窗缺 ✕ 关闭钮\n";
+                    std::cerr << "agent_dialog_probe: 工具弹窗缺底区关闭钮\n";
                     passed = false;
                 } else {
                     clickElement(*closeBg);
                     composeFrame();
                     if (findElement("agent.dialog.tools.masonry") != nullptr) {
-                        std::cerr << "agent_dialog_probe: ✕ 点击未关闭工具弹窗\n";
+                        std::cerr << "agent_dialog_probe: 关闭钮点击未关闭工具弹窗\n";
                         passed = false;
                     } else {
-                        std::cout << "D2 tools dialog ✕ 关闭 OK\n";
+                        std::cout << "D2 tools dialog 关闭 OK\n";
                     }
                 }
             }
@@ -984,7 +985,7 @@ int main(int argc, char* argv[]) {
                 passed = false;
             }
             // 复位：关掉弹窗再退出（下一批探针/驱动拿干净页态）
-            const auto* closeBg2 = findElement("agent.dialog.tools.close.bg");
+            const auto* closeBg2 = findElement("agent.dialog.tools.cancel.bg");
             if (closeBg2 != nullptr) {
                 clickElement(*closeBg2);
                 composeFrame();

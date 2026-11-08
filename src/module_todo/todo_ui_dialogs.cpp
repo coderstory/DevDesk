@@ -579,6 +579,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
         std::min(kMaxDialogH, 182.0f + rowH * static_cast<float>(shown));
 
     // need156：迁标准弹窗壳。旧版无按钮（行点击跳详情 / 遮罩 / Esc 关），壳两槽留空。
+    // 警告三角与 errorText 标题色经壳 titleIcon/titleColor 承接（need156 批B收尾）。
     ui_kit::DialogShellSpec shell;
     shell.id = "todo.dialog.overdue";
     shell.width = ui_kit::DialogWidth::Wide;
@@ -586,6 +587,8 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
     shell.open = d.popups.isOpen(Popup::Overdue);
     shell.zIndex = d.popups.zOf(Popup::Overdue);
     shell.title = "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）";
+    shell.titleIcon = 0xF071;  // fa-triangle-exclamation
+    shell.titleColor = t.colors.errorText;
     shell.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Overdue, v); };
 
     ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,

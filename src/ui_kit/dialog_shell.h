@@ -15,6 +15,7 @@
 #include <ui_kit/metrics.h>
 
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace ui_kit {
@@ -41,7 +42,12 @@ struct DialogShellSpec {
     float height = 0.0f;  // 请求高；低于 kDialogMinH 抬到下限（框架再做视口 clamp）
     bool open = false;
     int zIndex = kDialogZIndexUnset;  // kDialogZIndexUnset = 不调 .zIndex()（默认 1000）
-    std::string title;                // 头区标题（20/700 textPrimary）
+    std::string title;                // 头区标题（20/700，色见 titleColor）
+    // 头区可选图标（FontAwesome codepoint；0 = 不画）。画在标题左侧 x=24，标题
+    // 随之右移让位（x=50、inset=78，与 todo 逾期弹窗原自绘一致）。
+    unsigned int titleIcon = 0;
+    // 标题色（缺省 textPrimary）。警示类弹窗传 errorText 提强度。
+    std::optional<eui::Color> titleColor;
     DialogShellButton cancel;         // 副按钮（左）：关闭/取消
     DialogShellButton confirm;        // 主按钮（右）：应用/确认
     bool dangerConfirm = false;       // 危险变体：confirm 底 error（删除确认类，规范 §3.3）

@@ -89,8 +89,22 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
     builder.onOpenChange(spec.onOpenChange)
         .content([&] {
             // 头区（固定 69）：标题 20/700（y=16，x=24）+ 分隔线 1px y=52 全宽。
+            // 有图标时图标占 x=24（18 宽），标题右移让位（x=50、inset=78）。
+            DialogTitleOptions titleOpts;
+            if (spec.titleIcon != 0) {
+                ui.text(spec.id + ".title.icon")
+                    .position(kDialogInsetX, 20.0f)
+                    .size(18.0f, core::theme::scaled(28.0f))
+                    .icon(spec.titleIcon)
+                    .fontSize(core::theme::scaled(kDialogTitleFontSize))
+                    .lineHeight(core::theme::scaled(28.0f))
+                    .color(t.colors.error)
+                    .build();
+                titleOpts.x = 50.0f;
+                titleOpts.inset = 78.0f;
+            }
             drawDialogTitle(ui, spec.id + ".title", w, spec.title, kDialogTitleFontSize,
-                            t.colors.textPrimary, {});
+                            spec.titleColor.value_or(t.colors.textPrimary), titleOpts);
             ui.rect(spec.id + ".title.line")
                 .position(0.0f, 52.0f)
                 .size(w, 1.0f)
