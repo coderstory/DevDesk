@@ -274,7 +274,20 @@ std::vector<RowRun> rowRuns(const platform::TerminalCell* row, int cols, bool da
             }
         }
         int j = i;
-        while (j < cols && row[j].cp != 0 && row[j].fg == fg) j++;
+        // 池 bug248：合并同色相邻 cell 时，宽字占位格（cp==0 **且 width==0**）必须
+        // 跟着 lead 一起走，不能切断 run。宽字布局 = 杭/占位/州/占位，旧条件
+        // `row[j].cp != 0` 一遇占位格就断 → 每个汉字自成一个 run → 下游每 run 各建
+        // 一个 ui.text → 任意文本节点都不含完整 "杭州" → 中文连续匹配（UI 自动化
+        // 断言、文本提取）全部失效，而 UI 渲染看不出异样。
+        // ⚠️ 不能「cp==0 一律跳过」：真空白 cell 也是 cp==0，但 width==1，它占一格、
+        // 必须切断 run（既有契约 frameRunBoundaries / frameDefaultColorSingleRun
+        // 钉住了这条）。宽字占位格才是 width==0。
+        while (j < cols) {
+            if (row[j].cp == 0 && row[j].width == 0) { j++; continue; }  // 宽字占位：跟随 lead
+            if (row[j].cp == 0) break;   // 真空白 cell：切断（既有契约）
+            if (row[j].fg != fg) break;  // 换色：切断
+            j++;
+        }
         RowRun r;
         r.colBegin = start;
         r.colEnd = j;
@@ -290,6 +303,13 @@ std::string rowSliceText(const platform::TerminalCell* row, int cols, int colBeg
     std::string out;
     const int end = std::min(colEnd, cols);
     for (int c = colBegin; c < end; c++) {
+        // 池 bug248：宽字右侧占位格 cp=0（terminal_vterm_core.cpp:172 把 libvterm 的
+        // (uint32_t)-1 规范化成 0），旧实现直接 appendScalar(out, 0) → cp<0x80 分支
+        // 往字符串里塞了一个 **NUL 字节**。后果：逻辑上 "杭州" 变成 "杭\0州\0"，
+        // std::string::find("杭州") 永远不命中（内嵌 NUL 参与比较），而 find("杭")
+        // 能命中——表现为「中文无法连续匹配」，UI 渲染正常但文本提取是脏的。
+        // 占位格本就无字符，跳过即可（与 cellXOf/cellSpanOf 的 width==0 零宽口径一致）。
+        if (row[c].cp == 0) continue;
         appendScalar(out, row[c].cp);
     }
     return out;

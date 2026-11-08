@@ -127,3 +127,29 @@ REGISTER_TEST(terminalRowSliceText,
     DOCTEST_CHECK(terminal::rowSliceText(row, 3, 2, 2).empty());
     return true;
 })
+
+// 池 bug248：宽字右侧占位格（cp=0）不得在文本里留下 NUL 字节。
+// 背景：terminal_vterm_core.cpp:172 把 libvterm 的 (uint32_t)-1 规范化成 cp=0 spacer，
+// 旧 rowSliceText 逐 cell appendScalar(0) → cp<0x80 分支写入 '\0'，于是 "杭州" 实际
+// 存成 "杭\0州\0"。UI 渲染看不出异常（字形照画），但 std::string::find("杭州")
+// 永不命中——UI 自动化断言与任何文本提取都因此失效。此用例钉住「宽字行拼出的文本
+// 必须是干净的连续 UTF-8」。
+REGISTER_TEST(terminalRowSliceTextWideSpacer,
+              "terminal metrics: rowSliceText 跳过宽字占位格（无内嵌 NUL）", {
+    namespace pt = platform;
+    // 「杭州」在 cells 里的真实形态：杭 / spacer / 州 / spacer
+    pt::TerminalCell row[4];
+    row[0].cp = 0x676D;  // 杭
+    row[0].width = 2;
+    row[1].cp = 0;       // 宽字右侧占位格
+    row[1].width = 0;
+    row[2].cp = 0x5DDE;  // 州
+    row[2].width = 2;
+    row[3].cp = 0;
+    row[3].width = 0;
+    const std::string s = terminal::rowSliceText(row, 4, 0, 4);
+    DOCTEST_CHECK(s.find('\0') == std::string::npos);   // 无内嵌 NUL
+    DOCTEST_CHECK(s.find("杭州") != std::string::npos);  // 连续子串可命中
+    DOCTEST_CHECK(s.size() == 6);                        // 两个 CJK 各 3 字节
+    return true;
+})

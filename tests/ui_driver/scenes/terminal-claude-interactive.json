@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit",
+     "_comment": "进终端页（onPageEnter 起会话）"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000,
+     "_comment": "会话 ready：光标元素只在 Running 且首帧 cells 非空时建（跨平台判据，不依赖提示符字形）"},
+    {"type": "screenshot", "path": "claude-01-terminal-ready.png"},
+
+    {"type": "type", "text": "claude --version", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "Claude Code", "timeoutMs": 20000,
+     "_comment": "先验最轻的一条命：claude 二进制可执行 + 版本输出上屏（排除 TUI 因素）"},
+    {"type": "screenshot", "path": "claude-02-version.png"},
+
+    {"type": "type", "text": "claude -p '杭州今天天气怎么样？请简短回答'", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "ms": 1000,
+     "_comment": "占位等待。⚠️ 本场景不指定任何模型（老板 2026-11-08 令：用 claude 时别自己定模型）——命令里没有 --model，走用户自己的默认配置。实测首次调用耗时约 60s，故下方给 180s 超时"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "°C", "timeoutMs": 200000,
+     "_comment": "关键判据：等回答正文出现温度读数「°C」——命令行与提示符里都没有这个符号，只能是模型输出的天气内容。⚠️ 不要用 contains \"杭州\"（命令回显自带，假绿）；也不要绑定模型具体措辞如「出门建议」（本次实测模型改说「按旧缓存…建议看 App」，措辞每次不同）"},
+    {"type": "screenshot", "path": "claude-03-answer.png"},
+
+    {"type": "type", "text": "echo claude-interactive-done", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "claude-interactive-done", "timeoutMs": 10000,
+     "_comment": "答完后 shell 仍可用 = 会话未被长输出/阻塞拖死"},
+    {"type": "screenshot", "path": "claude-04-after.png"}
+  ]
+}

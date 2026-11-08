@@ -72,7 +72,20 @@ bool SwiftBridgeSession::snapshotCells(int32_t* rows, int32_t* cols, int32_t* cu
     out.resize(static_cast<size_t>(*rows) * static_cast<size_t>(*cols));
     for (size_t i = 0; i < out.size(); i++) {
         const CortaBridge::BridgeCell& c = impl_->cells[i];
-        out[i] = TerminalCell{c.getCp(), c.getFg(), c.getBg(), c.getAttrs(), c.getWidth()};
+        // 池 bug248：宽字右侧占位格归一成 cp=0 spacer，与 libvterm 后端
+        // （terminal_vterm_core.cpp:171 translateCell）保持同一契约。
+        // Corta 侧 Swift 用「CJK 占两格」模型（CortaBridge.swift:188
+        // bc.width = grapheme.isNone ? 1 : 2），宽字右侧那格不是 0xFFFFFFFF，
+        // 而是真实空格 scalar(0x20)，于是两条后端产出的 cell 流不一致：
+        //   libvterm：杭 / cp=0   / 州 / cp=0    → rowSliceText 拼出 "杭州"
+        //   Corta   ：杭 / cp=0x20 / 州 / cp=0x20 → rowSliceText 拼出 "杭 州"
+        // 下游 rowSliceText（terminal_grid_widget.cpp）按契约跳过 cp==0 的占位格，
+        // 于是 Corta 机器（macOS 主力路径）上中文永远无法连续匹配。此处只对
+        // width==0 的占位格置 0，不动真实半角空格。
+        uint32_t cp = c.getCp();
+        const uint8_t w = c.getWidth();
+        if (w == 0 && cp != 0) cp = 0;
+        out[i] = TerminalCell{cp, c.getFg(), c.getBg(), c.getAttrs(), w};
     }
     return true;
 }

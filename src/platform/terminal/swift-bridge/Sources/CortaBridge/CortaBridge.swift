@@ -181,11 +181,25 @@ public final class CortaBridgeSession: @unchecked Sendable {
             for c in 0..<cols {
                 let cell = grid[r, c]
                 var bc = BridgeCell()
-                bc.cp = cell.scalar
+                // 池 bug248：宽字对（.wide lead + .wideSpacer）必须映射成
+                //   lead  → cp=汉字,  width=2
+                //   spacer→ cp=0,     width=0
+                // 与 libvterm 后端（terminal_vterm_core.cpp translateCell）同一契约，
+                // 下游 rowSliceText 靠「跳过 cp==0 的零宽占位格」拼出连续的 "杭州"。
+                //
+                // 旧实现用 `cell.grapheme.isNone ? 1 : 2` 判宽——错了：Corta 的
+                // 宽字 lead 与 spacer **都** 满足 grapheme.isNone（grapheme 只标记
+                // 超出单 scalar 的 cluster），于是两者都被记成 width=1，而 spacer
+                // 的 scalar 是真实 0x20 空格 → 终端文本变成 "杭 州 今 天 天 气"，
+                // 中文永远无法连续匹配（UI 渲染看不出，只有文本提取是脏的）。
+                // 正确判据是 Corta 自己打的属性位：.wide / .wideSpacer。
+                let isSpacer = cell.attributes.contains(.wideSpacer)
+                let isWide = cell.attributes.contains(.wide)
+                bc.cp = isSpacer ? 0 : cell.scalar
                 bc.fg = cell.foreground.rawValue
                 bc.bg = cell.background.rawValue
                 bc.attrs = cell.attributes.rawValue
-                bc.width = cell.grapheme.isNone ? 1 : 2
+                bc.width = isSpacer ? 0 : (isWide ? 2 : 1)
                 cellsOut[r * cols + c] = bc
             }
         }
