@@ -52,7 +52,7 @@
 #include <eui/dsl.h>
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
-#include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/materials.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/slider.h>
@@ -1239,43 +1239,34 @@ void drawImportNoAccessDialog(eui::Ui& ui, const eui::Screen& screen,
         return;
     }
     const auto themeTokens = ::core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 220.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "wallpaper.dialog.import.noaccess";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = !state.importNoAccessDismissed;
-    frame.onOpenChange = [&state](bool v) {
+    // need156：壳改走标准弹窗壳；原高 220 低于壳最小 240 抬到下限（规范 §3.4）；
+    // 「关闭」→ .cancel、「打开系统设置」→ .confirm，内容区自 area.y=69 起。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "wallpaper.dialog.import.noaccess";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = !state.importNoAccessDismissed;
+    shell.title = "无法读取花見";
+    shell.cancel = {"关闭", [&state] { state.importNoAccessDismissed = true; }};
+    shell.confirm = {"打开系统设置", [&actions] {
+        if (actions.openPrivacySettings) actions.openPrivacySettings();
+    }};
+    shell.onOpenChange = [&state](bool v) {
         if (!v) state.importNoAccessDismissed = true;
     };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        ui_kit::drawDialogTitle(ui, "wallpaper.dialog.import.noaccess.title", w,
-                                "无法读取花見", ui_kit::kDialogTitleFontSize,
-                                t.colors.textPrimary);
-        ui_kit::drawDialogText(
-            ui, "wallpaper.dialog.import.noaccess.body", w,
-            "花見可能未安装完整，或未授予「完全磁盘访问权限」。\n"
-            "安装完整或授权后，重新点击「从花見导入…」即可。",
-            t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
-            {.y = 60.0f, .height = 44.0f, .lineHeight = 22.0f, .wrap = true});
-
-        ui_kit::DialogButtonSpec cancel;
-        cancel.label = "关闭";
-        cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-        cancel.onClick = [&state] { state.importNoAccessDismissed = true; };
-        ui_kit::DialogButtonSpec confirm;
-        confirm.label = "打开系统设置";
-        confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-        confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-        confirm.onClick = [&actions] {
-            if (actions.openPrivacySettings) actions.openPrivacySettings();
-        };
-        ui_kit::drawDialogButtons(ui, "wallpaper.dialog.import.noaccess", w, h,
-                                  cancel, confirm, t, themeTokens);
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        ui.text("wallpaper.dialog.import.noaccess.body")
+            .position(area.x, area.y)
+            .size(area.w, 44.0f)
+            .wrap()
+            .text("花見可能未安装完整，或未授予「完全磁盘访问权限」。\n"
+                  "安装完整或授权后，重新点击「从花見导入…」即可。")
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .lineHeight(22.0f)  // 原 drawDialogText 直传 lineHeight/height（不缩放）
+            .color(t.colors.textSecondary)
+            .build();
     });
 }
 

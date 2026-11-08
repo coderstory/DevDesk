@@ -158,26 +158,37 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                                       const core::theme::Tokens& t,
                                       const components::theme::ThemeColorTokens& ct) {
     if (!wizardOpen_) return;
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    ui_kit::DialogFrame frame;
-    frame.id = "memory.dialog.wizard";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = 348.0f;  // need:202：三步→四步，320+一行行距 28（设计 §9 裁定）
-    frame.open = true;
-    frame.onOpenChange = [this](bool v) {
-        if (!v) wizardOpen_ = false;
-    };
     panel_.refresh(true);  // 向导打开期间快步刷新，步骤文案跟着引擎状态走
     const auto snap = panel_.snapshot();
     const auto es = snap.engine;
-    ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
-        ui_kit::drawDialogTitle(ui, "memory.dialog.wizard.title", w,
-                                "首次安装向导", ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
+    const auto state = es.state;
+    const bool installing = state == TelememEngine::State::Preparing;
+    const bool canStart = !installing && state != TelememEngine::State::Running;
+    // need156：壳改走标准弹窗壳；原「关闭」/「开始安装 / 重试」两钮归底区
+    // （.cancel / .confirm），内容区自 area.y=69 起、相对原 y=56 基线平移。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "memory.dialog.wizard";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 348.0f;  // need:202：三步→四步，320+一行行距 28（设计 §9 裁定）
+    shell.open = true;
+    shell.title = "首次安装向导";
+    shell.cancel = {"关闭", [this] { wizardOpen_ = false; }};
+    shell.confirm.label =
+        installing ? "安装中…"
+                   : (state == TelememEngine::State::Running ? "重新运行安装检查"
+                                                            : "开始安装 / 重试");
+    shell.confirm.enabled = canStart;
+    shell.confirm.onClick = [] { TelememEngine::global().startAsync(); };
+    shell.onOpenChange = [this](bool v) {
+        if (!v) wizardOpen_ = false;
+    };
+    ui_kit::drawDialogShell(ui, screen, shell, t, ct,
+                            [&](const ui_kit::DialogContentArea& area) {
         // 步骤清单：检测 → venv+pip → 拉起 → 完成/失败（状态真接 TelememEngine）
         auto stepRow = [&](const char* id, float ry, const char* name,
                            const std::string& status, eui::Color color) {
             ui.text(std::string(id) + ".name")
-                .position(ui_kit::kDialogInsetX, ry)
+                .position(area.x, area.y + ry)
                 .size(180.0f, core::theme::scaled(22.0f))
                 .text(name)
                 .fontSize(core::theme::scaled(13.0f))
@@ -186,15 +197,14 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                 .color(t.colors.textPrimary)
                 .build();
             ui.text(std::string(id) + ".status")
-                .position(ui_kit::kDialogInsetX + 190.0f, ry)
-                .size(w - ui_kit::kDialogBodyInsetX - 190.0f, core::theme::scaled(22.0f))
+                .position(area.x + 190.0f, area.y + ry)
+                .size(area.w - 190.0f, core::theme::scaled(22.0f))
                 .text(status)
                 .fontSize(core::theme::scaled(12.0f))
                 .lineHeight(core::theme::scaled(22.0f))
                 .color(color)
                 .build();
         };
-        const auto state = es.state;
         const auto pendingColor = t.colors.textTertiary;
         const auto okColor = t.colors.success;
         const auto doingColor = t.colors.warning;
@@ -202,7 +212,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
         const bool idleLike = state == TelememEngine::State::Idle ||
                               state == TelememEngine::State::Stopped ||
                               state == TelememEngine::State::Failed;
-        stepRow("memory.dialog.wizard.s1", 56.0f, "① Python 3.10~3.13",
+        stepRow("memory.dialog.wizard.s1", 0.0f, "① Python 3.10~3.13",
                 es.pythonFound
                     ? ("已检测（" + es.pythonVersion + "）")
                     : std::string(idleLike ? "未检测到——安装后重试" : "检测中…"),
@@ -210,7 +220,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                     ? okColor
                     : (state == TelememEngine::State::Preparing ? doingColor
                                                                 : failColor));
-        stepRow("memory.dialog.wizard.s2", 84.0f, "② venv + pip 安装",
+        stepRow("memory.dialog.wizard.s2", 28.0f, "② venv + pip 安装",
                 state == TelememEngine::State::Preparing
                     ? (es.detail.empty() ? std::string("进行中…") : es.detail)
                     : (state == TelememEngine::State::Running
@@ -231,7 +241,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
             case ES::NeedDownload:
             case ES::Unknown: embedColor = pendingColor; break;
         }
-        stepRow("memory.dialog.wizard.s3", 112.0f, "③ embedding 本机包",
+        stepRow("memory.dialog.wizard.s3", 56.0f, "③ embedding 本机包",
                 embedStatus, embedColor);
         // ④ 引擎拉起与健康检查（原③顺延；拉起/健康失败显红，设计 §6）
         const char* s4Status =
@@ -247,13 +257,13 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                        ? failColor
                        : (state == TelememEngine::State::Preparing ? doingColor
                                                                    : pendingColor));
-        stepRow("memory.dialog.wizard.s4", 140.0f, "④ 引擎拉起与健康检查",
+        stepRow("memory.dialog.wizard.s4", 84.0f, "④ 引擎拉起与健康检查",
                 s4Status, s4Color);
-        // 完成态 / 失败态 / 引导态
+        // 完成态 / 失败态 / 引导态（内容区相对原 y=176 基线平移）
         if (state == TelememEngine::State::Running) {
             ui.text("memory.dialog.wizard.done")
-                .position(ui_kit::kDialogInsetX, 176.0f)
-                .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(44.0f))
+                .position(area.x, area.y + 120.0f)
+                .size(area.w, core::theme::scaled(44.0f))
                 .wrap()
                 .text("安装完成，记忆引擎已在后台运行。关掉本向导即可正常使用。")
                 .fontSize(core::theme::scaled(13.0f))
@@ -262,8 +272,8 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                 .build();
         } else if (state == TelememEngine::State::Failed) {
             ui.text("memory.dialog.wizard.fail")
-                .position(ui_kit::kDialogInsetX, 176.0f)
-                .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(60.0f))
+                .position(area.x, area.y + 120.0f)
+                .size(area.w, core::theme::scaled(60.0f))
                 .wrap()
                 .text("安装失败：" + es.detail + "（可点「开始安装 / 重试」再跑一轮）")
                 .fontSize(core::theme::scaled(13.0f))
@@ -272,8 +282,8 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                 .build();
         } else {
             ui.text("memory.dialog.wizard.intro")
-                .position(ui_kit::kDialogInsetX, 176.0f)
-                .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(44.0f))
+                .position(area.x, area.y + 120.0f)
+                .size(area.w, core::theme::scaled(44.0f))
                 .wrap()
                 .text("本向导将检测 Python、创建虚拟环境并安装 telemem，"
                       "检查 embedding 本机包（llama-server + 模型）就位，"
@@ -283,27 +293,6 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
                 .color(t.colors.textSecondary)
                 .build();
         }
-        ui_kit::button(ui, "memory.dialog.wizard.close", "关闭",
-                       ui_kit::ButtonLevel::Secondary, ui_kit::kDialogInsetX,
-                       278.0f, 110.0f, ui_kit::kButtonHeight, t,
-                       {[this] { wizardOpen_ = false; }});
-        const bool installing = state == TelememEngine::State::Preparing;
-        const bool canStart =
-            !installing && state != TelememEngine::State::Running;
-        ui_kit::button(ui, "memory.dialog.wizard.go",
-                       installing
-                           ? "安装中…"
-                           : (state == TelememEngine::State::Running
-                                  ? "重新运行安装检查"
-                                  : "开始安装 / 重试"),
-                       canStart ? ui_kit::ButtonLevel::Primary
-                                : ui_kit::ButtonLevel::Secondary,
-                       w - ui_kit::kDialogBodyInsetX - 190.0f, 278.0f, 190.0f,
-                       ui_kit::kButtonHeight, t,
-                       {canStart ? std::function<void()>([] {
-                            TelememEngine::global().startAsync();
-                        })
-                                 : std::function<void()>()});
     });
 }
 
@@ -316,22 +305,23 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
     if (!engineDetailOpen_) return;
     const auto snap = panel_.snapshot();
     const auto es = snap.engine;
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    ui_kit::DialogFrame frame;
-    frame.id = "memory.dialog.engine";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = 320.0f;
-    frame.open = true;
-    frame.onOpenChange = [this](bool v) {
+    // need156：壳改走标准弹窗壳；「关闭」归底区 .cancel，内容区自 area.y=69 起
+    //（原 y=56 基线整体 +13 平移，行距不变）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "memory.dialog.engine";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 320.0f;
+    shell.open = true;
+    shell.title = "telemem 记忆引擎";
+    shell.cancel = {"关闭", [this] { engineDetailOpen_ = false; }};
+    shell.onOpenChange = [this](bool v) {
         if (!v) engineDetailOpen_ = false;
     };
-    ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
-        ui_kit::drawDialogTitle(ui, "memory.dialog.engine.title", w,
-                                "telemem 记忆引擎",
-                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
+    ui_kit::drawDialogShell(ui, screen, shell, t, ct,
+                            [&](const ui_kit::DialogContentArea& area) {
         ui.text("memory.dialog.engine.desc")
-            .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(40.0f))
+            .position(area.x, area.y)
+            .size(area.w, core::theme::scaled(40.0f))
             .wrap()
             .text(es.detail.empty()
                       ? std::string("它替 Claude 记住你的偏好和项目背景，聊天时自动带上，"
@@ -346,7 +336,7 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
         auto row = [&](const std::string& id, float ry, const std::string& k,
                        const std::string& v, bool warnValue) {
             ui.text(id + ".k")
-                .position(ui_kit::kDialogInsetX, ry)
+                .position(area.x, area.y + ry)
                 .size(90.0f, core::theme::scaled(20.0f))
                 .text(k)
                 .fontSize(core::theme::scaled(12.0f))
@@ -354,9 +344,8 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                 .color(t.colors.textTertiary)
                 .build();
             ui.text(id + ".v")
-                .position(ui_kit::kDialogInsetX + 90.0f, ry)
-                .size(w - ui_kit::kDialogBodyInsetX - 90.0f,
-                      core::theme::scaled(20.0f))
+                .position(area.x + 90.0f, area.y + ry)
+                .size(area.w - 90.0f, core::theme::scaled(20.0f))
                 .text(v)
                 .fontSize(core::theme::scaled(12.5f))
                 .lineHeight(core::theme::scaled(20.0f))
@@ -364,7 +353,7 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                 .color(warnValue ? t.colors.warning : t.colors.textSecondary)
                 .build();
         };
-        float ry = 104.0f;
+        float ry = 48.0f;
         row("memory.dialog.engine.ver", ry, "版本", "v1.10.1", false);
         ry += core::theme::scaled(24.0f);
         row("memory.dialog.engine.python", ry, "Python",
@@ -377,16 +366,17 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
         ry += core::theme::scaled(24.0f);
         row("memory.dialog.engine.dir", ry, "数据目录",
             truncateByAdvance(engine::memoryDataDir().generic_string(),
-                              w - ui_kit::kDialogBodyInsetX - 90.0f -
-                                  core::theme::scaled(12.5f),
+                              area.w - 90.0f - core::theme::scaled(12.5f),
                               core::theme::scaled(12.5f)),
             false);
-        // 底区：右锚 [关闭]；未安装态追加 [首次安装向导]
+        // 未安装态追加 [首次安装向导]：壳只提供 .cancel/.confirm 两槽，该入口是
+        // 第三个动作，故仍走 ui_kit::button 并落在壳按钮行左缘
+        //（area.y+area.h+17 = h−56，与壳 .cancel 同基线）。
         const bool uninstalled = !es.embedReady || es.llamaMissing || !es.pythonFound;
         if (uninstalled) {
             ui_kit::button(ui, "memory.dialog.engine.wizard", "首次安装向导",
                            ui_kit::ButtonLevel::Secondary,
-                           ui_kit::kDialogInsetX, 252.0f, 158.0f,
+                           area.x, area.y + area.h + 17.0f, 158.0f,
                            ui_kit::kButtonHeight, t,
                            {[this] {
                                engineDetailOpen_ = false;
@@ -394,11 +384,6 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                                TelememEngine::global().refreshEmbedProbe();
                            }});
         }
-        ui_kit::button(ui, "memory.dialog.engine.close", "关闭",
-                       ui_kit::ButtonLevel::Secondary,
-                       w - ui_kit::kDialogBodyInsetX - 110.0f, 252.0f, 110.0f,
-                       ui_kit::kButtonHeight, t,
-                       {[this] { engineDetailOpen_ = false; }});
     });
 }
 

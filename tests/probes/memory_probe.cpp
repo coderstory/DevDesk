@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
         A.textHas("memory.dialog.engine.embed.v", "本机模型文件缺失");
         A.textHas("memory.dialog.engine.embed.v", "首次安装向导第③步");
         A.exists("memory.dialog.engine.wizard.bg");  // 未安装态弹窗内向导入口
-        clickEl("memory.dialog.engine.close.bg");    // 关闭弹窗回状态带
+        clickEl("memory.dialog.engine.cancel.bg");   // 关闭弹窗回状态带（need156 壳 .cancel）
         composeFrame();
         composeFrame();
         // 启动按钮命中链：按钮中心命中 = 按钮本体（bug201 复验口径；非滚动根/卡底）
