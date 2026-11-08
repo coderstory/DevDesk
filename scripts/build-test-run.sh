@@ -839,6 +839,27 @@ if [ "$RUN_TEST" = "1" ]; then
         unset _fitprobe _fitrc
       fi
       PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$|memory_install_probe$)' || true)"
+      # 双验失败必须单独判红（bug234，code-reviewer 复审 P1）：上面 rc=77 复跑把
+      # PROBE_FIT_FAM_VERIFIED 置 0 的语义是「名字在名单里，但跳过成因不是设计内
+      # 的那个」——例如探针产物缺失 rc=127、或该探针因其它 bug 退其它码。此时
+      # 若顺流落到下面的 else 黄牌分支，它会用「跳过项全部属已知能力门控家族
+      # （wallpaper_*）」这句**错误的理由**放行（名单里明明有 b1_material 之类），
+      # 把假红换成静默假绿，与 :820 注释「rc≠77 仍按红，不静默」正相反。
+      # 故本判据必须排在家族放行之前，且只对「名单内探针确实被跳过」时生效。
+      PROBE_FIT_FAM_HAS_MEMBER=0
+      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe)$'; then
+        PROBE_FIT_FAM_HAS_MEMBER=1
+      fi
+      if [ "$PROBE_FIT_FAM_HAS_MEMBER" = "1" ] && [ "$PROBE_FIT_FAM_VERIFIED" != "1" ]; then
+        echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——名单内探针的跳过成因不是设计内那一个（复跑退出码非 77），必须人工查"
+        echo "   名单内探针（b1_material_probe / home_probes / memory_install_probe）被跳过时"
+        echo "   必须是其设计内成因（小屏钳窗 / argless 手动驱动）才放行；退出码非 77 说明"
+        echo "   探针产物缺失、崩溃或该探针自身出了新问题——不是能力门控，不能黄牌放行。"
+        echo "──── 跳过清单 ────"
+        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+        echo "   （复现: cd $BUILD_DIR && ./tests/<探针名>; echo \$?）"
+        exit 1
+      fi
       if [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
         if [ "$PROBE_FIT_FAM_VERIFIED" = "1" ]; then
           echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知环境/驱动跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；memory_install_probe：归 QA 显式子命令驱动，argless 即退 77——均已复跑单探针验证退出码 77）——设计内跳过，不判红"
