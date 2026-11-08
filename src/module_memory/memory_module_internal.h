@@ -50,6 +50,14 @@ inline constexpr float kTitleH = 32.0f;
 inline constexpr float kTabH = ui_kit::kWtabHeight;
 inline constexpr float kCardGap = 8.0f;  // need219 §4.3：卡间距统一 8px 档（原 16）
 
+// need189（2026-11-08）：主控台三段带高单一来源——原来 64/132/104 三个字面量
+// 在 memory_module.cpp 与 memory_module_panels.cpp 各写一遍，改高度必两边同步。
+// 健康格 118 = 内容底 110（条带 y98+12）+ 8 档底距；消耗带 86 = 数字行底 78 + 8。
+// 底距统一 8（原 22 / 26 空腹），临界窗高随之下降（444→412·fs 口径见 evidence）。
+inline constexpr float kEngineBandH = 64.0f;
+inline constexpr float kHealthGridH = 118.0f;
+inline constexpr float kUsageBandH = 86.0f;
+
 inline constexpr int kViewConsole = 0;
 inline constexpr int kViewReview = 1;
 inline constexpr int kViewConfig = 2;

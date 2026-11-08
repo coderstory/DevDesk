@@ -34,20 +34,22 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             .lineHeight(core::theme::scaled(22.0f))
             .color(t.colors.errorText)
             .build();
-        cy += 26.0f;
+        cy += core::theme::scaled(26.0f);
     }
 
     composeEngineCard(ui, t, x, w, cy);
-    // need:181 分层高度链（设计 §1.5 预算）：状态带 64 + 健康格 132 + 消耗带
-    // 104 + 折叠组头 44 = 392px（L1 一屏），展开运行明细后内滚
-    cy += core::theme::scaled(64.0f) + kCardGap;
+    // need:181 分层高度链（设计 §1.5 预算）+ need189 单一来源：
+    // 状态带 64 + 健康格 118 + 消耗带 86 + 折叠组头 44 = 312px（L1 一屏），
+    // 展开运行明细后内滚。need189 把健康格/消耗带底距从 22/26 压到 8 档
+    // （规范 §4.3 间距档），整链在 130% 字号下也低于最小窗可视高。
+    cy += core::theme::scaled(kEngineBandH) + kCardGap;
     composeHealthGrid(ui, t, x, w, cy);
-    cy += core::theme::scaled(132.0f) + kCardGap;
+    cy += core::theme::scaled(kHealthGridH) + kCardGap;
 
-    // 消耗带 104px（设计 §2.4）：标题行 + 12px 横带进度 + 数字行；
+    // 消耗带 86px（设计 §2.4）：标题行 + 12px 横带进度 + 数字行；
     // 软/硬档数字与口径 note → L2 hover 浮层
     {
-        const float kUsageH = core::theme::scaled(104.0f);
+        const float kUsageH = core::theme::scaled(kUsageBandH);
         ui_kit::cardPanel(ui, "memory.usage.card", x, cy, w, kUsageH, t.sizes.radiusLarge, t);
         ui.text("memory.usage.title")
             .position(x + 16.0f, cy + core::theme::scaled(12.0f))
@@ -705,7 +707,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.warning)
             .build();
-        cy += 26.0f;
+        cy += core::theme::scaled(26.0f);
     }
 
     // 工具条（need:181 §3.2 定高 52 + need:183 筛选同类收进下拉）：类型/来源

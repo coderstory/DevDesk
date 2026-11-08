@@ -166,7 +166,7 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     // need:181 三 TAB 分层（设计 §2.2）：引擎卡 196 → 64px 状态带。低频内容
     // （说明文案 / python 检测 / 语义档 / 版本号）移入「详情」弹窗（L3）；
     // 异常态前置警示短语到带上（L1 可见，细节进弹窗）。
-    const float bandH = core::theme::scaled(64.0f);
+    const float bandH = core::theme::scaled(kEngineBandH);
     ui.stack("memory.eng.root")
         .position(x, y)
         .size(w, bandH)
@@ -267,7 +267,9 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
     // need:181 三 TAB 分层（设计 §2.3）：健康四格 236 → 132px。格内节奏 =
     // 标签 y10 → 数值 y30 → 状态行 y72 → 12px 横带胶囊 y98；口径/说明类
     // note 全部降 L2 hover 浮层（components::tooltip，挂整卡透明命中）。
-    const float kCardH = core::theme::scaled(132.0f);
+    // need189：118px = 条带内容底 110 + 8 档底距（原 132 留 22 空腹）；
+    // 格内节奏一字未动，只收卡底留白。
+    const float kCardH = core::theme::scaled(kHealthGridH);
 
     auto cardBase = [&](int i) {
         const float cx = x + static_cast<float>(i) * (cardW + gap);
