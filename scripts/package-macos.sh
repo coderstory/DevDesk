@@ -151,6 +151,50 @@ else
   echo "⚠️ 打包机未装 llama-server，跳过随包（装机后走 brew/PATH 定位序）"
 fi
 
+# 主二进制非系统依赖随包（bug #239，发布阻断）：mac 侧 OpenSSL 走 Homebrew 动态库
+# （与 Windows 的 DEVDESK_STATIC 静态链不同），未收编时主二进制硬链
+# /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib —— 用户机没装 Homebrew openssl@3
+# 时 dyld 加载失败、.app 直接启不来。llama 段的闭包处理只覆盖 llama 自己的依赖树，
+# 管不到主二进制，故单开本段。
+#
+# 实测闭包：主二进制非系统依赖 = libssl.3 + libcrypto.3；libssl 又依赖 libcrypto
+# （写成 **Cellar 版本化路径** /opt/homebrew/Cellar/openssl@3/3.5.9/lib/...，与 opt/
+# 软链是两个不同字符串）；libcrypto 无再下游。主二进制无 LC_RPATH。
+# ⚠️ 必须递归处理拷入的 dylib 自身依赖——只改主二进制的直接依赖会漏掉 libssl 里
+# 那条 Cellar 路径（实测踩过：主二进制已全 @loader_path，libssl 仍指 Cellar）。
+# 顺序：必须在 sign-macos-app.sh 之前（install_name_tool 让原签名失效，签名脚本兜改）。
+MAIN_BIN="$MACOS_DIR/DevDesk"
+if [ -f "$MAIN_BIN" ]; then
+  # 以主二进制为根做小 fixpoint：队列存「待扫描的源路径」，拷入后扫它自己的非系统依赖
+  main_q=("$MAIN_BIN")
+  while [ "${#main_q[@]}" -gt 0 ]; do
+    main_src="${main_q[0]}"; main_q=("${main_q[@]:1}")
+    while IFS= read -r main_dep; do
+      case "$main_dep" in /usr/lib/*|/System/*|@loader_path/*|@rpath/*|@executable_path/*) continue ;; esac
+      main_base="$(basename "$main_dep")"
+      main_dst="$MACOS_DIR/$main_base"
+      # cp -L 解 Homebrew 软链拿实体；同一 dylib 经 Cellar/opt 两条路径重复入队时跳过重复拷贝
+      if [ ! -f "$main_dst" ]; then
+        cp -L "$main_dep" "$main_dst"
+        install_name_tool -id "@loader_path/$main_base" "$main_dst"
+        main_q+=("$main_dst")  # 递归扫描它自己的依赖
+      fi
+      install_name_tool -change "$main_dep" "@loader_path/$main_base" "$main_src"
+    done < <(otool -L "$main_src" | tail -n +2 | awk '{print $1}')
+  done
+  unset main_q main_src main_dep main_base main_dst
+  # 防残留断言（与 llama 段同款）：bundle 内主二进制/dylib 仍留 Homebrew 绝对路径 = 用户机 dyld 会炸
+  if otool -L "$MAIN_BIN" "$MACOS_DIR"/*.dylib 2>/dev/null | grep -E "/opt/homebrew|/usr/local/opt" >/dev/null; then
+    echo "❌ 断言失败：主二进制或随包 dylib 仍有 Homebrew 绝对路径残留（bug239 回归）" >&2
+    otool -L "$MAIN_BIN" "$MACOS_DIR"/*.dylib 2>/dev/null | grep -E "/opt/homebrew|/usr/local/opt" >&2
+    exit 1
+  fi
+  echo "✅ 主二进制非系统依赖已随包收编（$(ls "$MACOS_DIR"/*.dylib 2>/dev/null | wc -l | tr -d ' ') 个 dylib 于 Contents/MacOS）"
+else
+  echo "❌ 缺主二进制 $MAIN_BIN" >&2
+  exit 1
+fi
+
 # 签名：build-app.sh 组装时已签过，但上面 rm -rf + copy_directory 补拷 assets 让封条失效了。
 # 必须在所有 bundle 写操作之后重签，签名才是最后一步（见 scripts/sign-macos-app.sh 头注释）。
 bash scripts/sign-macos-app.sh "$APP_DIR"
