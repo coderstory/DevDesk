@@ -116,10 +116,11 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
                 buildShellButton(ui, spec.id + ".cancel", xRight - bw, rowY, bw,
                                  spec.cancel, false, false, t);
             }
-            // 内容区（唯一内滚区）：y=69 至细线上隙 16（底 = h-89）。
+            // 内容区（唯一内滚区）：y=69 至细线上隙 16（底 = h−89 → 高 = h−158，
+            // 规范 §3.2/§3.4）。此前漏减呼吸隙，内容区底顶到细线。
             if (content) {
                 content({kDialogInsetX, kDialogHeaderH, w - kDialogBodyInsetX,
-                         h - kDialogHeaderH - kDialogFooterH});
+                         h - kDialogHeaderH - kDialogFooterH - kDialogContentBottomGap});
             }
         })
         .build();

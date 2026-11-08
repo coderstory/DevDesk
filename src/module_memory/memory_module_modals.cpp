@@ -370,13 +370,13 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                               core::theme::scaled(12.5f)),
             false);
         // 未安装态追加 [首次安装向导]：壳只提供 .cancel/.confirm 两槽，该入口是
-        // 第三个动作，故仍走 ui_kit::button 并落在壳按钮行左缘
-        //（area.y+area.h+17 = h−56，与壳 .cancel 同基线）。
+        // 第三个动作，故仍走 ui_kit::button 并落在壳按钮行左缘（与壳 .cancel 同基线
+        // y=h−56）。area 底 = h−89，+33 跨过呼吸隙 16 与细线 1 到按钮行基线 17。
         const bool uninstalled = !es.embedReady || es.llamaMissing || !es.pythonFound;
         if (uninstalled) {
             ui_kit::button(ui, "memory.dialog.engine.wizard", "首次安装向导",
                            ui_kit::ButtonLevel::Secondary,
-                           area.x, area.y + area.h + 17.0f, 158.0f,
+                           area.x, area.y + area.h + 33.0f, 158.0f,
                            ui_kit::kButtonHeight, t,
                            {[this] {
                                engineDetailOpen_ = false;

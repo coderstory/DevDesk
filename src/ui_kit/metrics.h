@@ -48,6 +48,9 @@ inline constexpr float kDialogBodyInsetX = 48.0f;
 // 底区固定 73（1+16+40+16）、内容区 = 高 - 158（唯一内滚区）。
 inline constexpr float kDialogHeaderH = 69.0f;
 inline constexpr float kDialogFooterH = 73.0f;
+// 内容区底至底区细线的呼吸隙 16（规范 §3.2「内容区底 = h−89」）。
+// 69 + 73 + 16 = 158 → 内容区高 = h − 158。
+inline constexpr float kDialogContentBottomGap = 16.0f;
 
 // 弹窗最小尺寸下限（规范 §3.4）：防内容挤扁；视口极窄时框架 clamp 优先（可低于下限）。
 inline constexpr float kDialogMinW = 420.0f;
