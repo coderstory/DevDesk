@@ -9,6 +9,7 @@
 #include <core/theme.h>
 #include <core/ui_geometry.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/metrics.h>
 
 #include <components/button.h>
@@ -443,39 +444,32 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                              const core::theme::Tokens& t, DialogSet& d,
                              const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 200.0f;
     const std::string title = "删除任务";
     const std::string body = "将删除任务「" + d.confirm.taskTitle + "」，不可恢复。";
 
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.delcol";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::Confirm);
+    // need156：迁标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮对）；危险主钮走
+    // dangerConfirm（原 DialogButtonStyle::DangerThemed）。高 200 < 下限 240 → 抬到 240。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "todo.dialog.delcol";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = d.popups.isOpen(Popup::Confirm);
     // 从详情发起的删除确认叠在详情之上（z 由打开顺序给出）
-    frame.zIndex = d.popups.zOf(Popup::Confirm);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Confirm, v); };
+    shell.zIndex = d.popups.zOf(Popup::Confirm);
+    shell.title = title;
+    shell.cancel = {"取消", [&d] { d.popups.close(Popup::Confirm); }};
+    shell.confirm = {"删除", [&d, &host] { d.confirm.confirm(d, host); }};
+    shell.dangerConfirm = true;
+    shell.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Confirm, v); };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "todo.dialog.delcol.title", w, title,
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
-            ui_kit::drawDialogText(ui, "todo.dialog.delcol.body", w, body,
-                                   t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
-                                   {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [&d] { d.popups.close(Popup::Confirm); };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "删除";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
-            confirm.onClick = [&d, &host] { d.confirm.confirm(d, host); };
-            ui_kit::drawDialogButtons(ui, "todo.dialog.delcol", w, h, cancel, confirm,
-                                      t, themeTokens);
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        // drawDialogText 的 dialogWidth 口径 = 文本宽 + 48（旧「宽 = 传参 − 48」）
+        ui_kit::drawDialogText(ui, "todo.dialog.delcol.body",
+                               area.w + ui_kit::kDialogBodyInsetX, body,
+                               t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
+                               {.x = area.x, .y = area.y, .height = 40.0f,
+                                .lineHeight = 20.0f});
     });
 }
 
@@ -575,56 +569,47 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                        const core::theme::Tokens& t, DialogSet& d,
                        const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
     const float rowH = 44.0f;
-    constexpr float kMaxDialogH = 552.0f;     // UAT6 弹窗收口：bodyH=600→avail≈552，原 640→552（10 行）
-    // 行数按封顶高度截断（标题保留总数，提示行标注截断）
-    const size_t maxRows =
-        static_cast<size_t>((kMaxDialogH - 96.0f) / rowH);  // = 12
+    constexpr float kMaxDialogH = 552.0f;     // UAT6 弹窗收口：bodyH=600→avail≈552
+    // need156 壳几何：内容区净高 = h−158；提示行 16 + 隙 8 后逐行 44 → h = 182 + 44n。
+    // 行数按封顶高度截断（标题保留总数，提示行标注截断）。
+    const size_t maxRows = static_cast<size_t>((kMaxDialogH - 182.0f) / rowH);  // = 8
     const size_t shown = std::min(d.overdue.tasks.size(), maxRows);
     const float h =
-        std::min(kMaxDialogH, 96.0f + rowH * static_cast<float>(shown));
+        std::min(kMaxDialogH, 182.0f + rowH * static_cast<float>(shown));
 
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.overdue";
-    frame.width = ui_kit::DialogWidth::Wide;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::Overdue);
-    frame.zIndex = d.popups.zOf(Popup::Overdue);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Overdue, v); };
+    // need156：迁标准弹窗壳。旧版无按钮（行点击跳详情 / 遮罩 / Esc 关），壳两槽留空。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "todo.dialog.overdue";
+    shell.width = ui_kit::DialogWidth::Wide;
+    shell.height = h;
+    shell.open = d.popups.isOpen(Popup::Overdue);
+    shell.zIndex = d.popups.zOf(Popup::Overdue);
+    shell.title = "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）";
+    shell.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Overdue, v); };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui.text("todo.dialog.overdue.title.icon")
-                .position(28.0f, 20.0f)
-                .size(18.0f, core::theme::scaled(28.0f))
-                .icon(0xF071)  // fa-triangle-exclamation
-                .fontSize(core::theme::scaled(20.0f))
-                .lineHeight(core::theme::scaled(28.0f))
-                .color(t.colors.error)
-                .build();
-            ui_kit::drawDialogTitle(
-                ui, "todo.dialog.overdue.title", w,
-                "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）",
-                20.0f, t.colors.errorText,
-                {.x = 50.0f, .y = 16.0f, .inset = 78.0f});
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
             std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
             if (d.overdue.tasks.size() > shown) {
                 hint += "（仅显示前 " + std::to_string(shown) + " 条）";
             }
-            ui_kit::drawDialogText(ui, "todo.dialog.overdue.hint", w, hint,
+            ui_kit::drawDialogText(ui, "todo.dialog.overdue.hint",
+                                   area.w + ui_kit::kDialogBodyInsetX, hint,
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 50.0f, .height = 16.0f, .lineHeight = 16.0f});
+                                   {.x = area.x, .y = area.y, .height = 16.0f,
+                                    .lineHeight = 16.0f});
 
             const int64_t now = static_cast<int64_t>(std::time(nullptr));
             for (size_t i = 0; i < shown; ++i) {
                 const Task& task = d.overdue.tasks[i];
-                const float y = 74.0f + static_cast<float>(i) * rowH;
+                const float y = area.y + 24.0f + static_cast<float>(i) * rowH;
                 const std::string rowId =
                     "todo.dialog.overdue.row." + std::to_string(i);
                 const Column* col = findColumn(*host.columns, task.columnId);
                 ui.rect(rowId)
-                    .position(20.0f, y)
-                    .size(w - 40.0f, rowH - 6.0f)
+                    .position(area.x, y)
+                    .size(area.w, rowH - 6.0f)
                     .states(t.colors.hover, t.colors.hover,
                             t.colors.primarySoftBg)
                     .radius(t.sizes.radius)
@@ -636,19 +621,19 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     })
                     .build();
                 ui.text(rowId + ".title")
-                    .position(32.0f, y + 10.0f)
-                    .size(w - 300.0f, core::theme::scaled(20.0f))
+                    .position(area.x + 12.0f, y + 10.0f)
+                    .size(area.w - 260.0f, core::theme::scaled(20.0f))
                     .text(task.title)
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(core::theme::scaled(20.0f))
                     .fontWeight(600)
                     // 省略号三件套：长任务名截断，不压右侧 列名/截止/逾期天 三列
-                    .maxWidth(w - 300.0f)
+                    .maxWidth(area.w - 260.0f)
                     .overflow(core::TextOverflow::Ellipsis)
                     .color(t.colors.textPrimary)
                     .build();
                 ui.text(rowId + ".col")
-                    .position(w - 262.0f, y + 10.0f)
+                    .position(area.x + area.w - 242.0f, y + 10.0f)
                     .size(120.0f, core::theme::scaled(20.0f))
                     .text(col != nullptr ? col->title : "?")
                     .fontSize(t.sizes.fontSizeSmall)
@@ -656,7 +641,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     .color(t.colors.textSecondary)
                     .build();
                 ui.text(rowId + ".due")
-                    .position(w - 136.0f, y + 10.0f)
+                    .position(area.x + area.w - 116.0f, y + 10.0f)
                     .size(60.0f, core::theme::scaled(20.0f))
                     .text(task.dueAt.has_value() ? formatDue(task.dueAt.value())
                                                  : "-")
@@ -665,7 +650,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     .color(t.colors.textSecondary)
                     .build();
                 ui.text(rowId + ".days")
-                    .position(w - 68.0f, y + 10.0f)
+                    .position(area.x + area.w - 48.0f, y + 10.0f)
                     .size(48.0f, core::theme::scaled(20.0f))
                     // 入选按秒级，日历日差可能为 0（1 秒前到期）→ 行文案至少 1 天
                     .text("逾期" + std::to_string(
@@ -1338,34 +1323,36 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                          const DialogHost& host) {
     (void)host;
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
     const float rowH = 44.0f;
     constexpr float kMaxDialogH = 552.0f;
     const size_t n = d.docPickNotes.size();
-    // 视口 = 全部行高与 (552−96) 上限取小；内容 = 全部行高（超视口即滚动可达）
-    const float viewportH =
-        std::min(rowH * static_cast<float>(n), kMaxDialogH - 96.0f);
-    const float h = 96.0f + viewportH;
+    // 内容区净高 = h−158：提示行 16 + 隙 8 + 视口；视口 = 全部行高与封顶剩余取小
+    //（内容 = 全部行高，超视口即滚动可达）。
+    const float viewportH = std::min(
+        rowH * static_cast<float>(n), kMaxDialogH - 182.0f);
+    const float h = 182.0f + viewportH;
 
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.docpick";
-    frame.width = ui_kit::DialogWidth::Wide;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::DocPick);
-    frame.zIndex = d.popups.zOf(Popup::DocPick);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::DocPick, v); };
+    // need156：迁标准弹窗壳。列表仍装进 scrollView（内容区唯一内滚区），行数不截断。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "todo.dialog.docpick";
+    shell.width = ui_kit::DialogWidth::Wide;
+    shell.height = h;
+    shell.open = d.popups.isOpen(Popup::DocPick);
+    shell.zIndex = d.popups.zOf(Popup::DocPick);
+    shell.title = "关联文档";
+    shell.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::DocPick, v); };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        ui_kit::drawDialogTitle(ui, "todo.dialog.docpick.title", w, "关联文档",
-                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
-                                {.x = 28.0f, .y = 16.0f, .inset = 78.0f});
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
         std::string hint = "选择一篇笔记作为任务的详细说明（点击即关联）";
         if (d.docPickNotes.empty()) {
             hint = "无可用笔记（Markdown 模块未启用或笔记目录为空）";
         }
-        ui_kit::drawDialogText(ui, "todo.dialog.docpick.hint", w, hint,
+        ui_kit::drawDialogText(ui, "todo.dialog.docpick.hint",
+                               area.w + ui_kit::kDialogBodyInsetX, hint,
                                t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                               {.y = 52.0f, .height = 16.0f, .lineHeight = 16.0f});
+                               {.x = area.x, .y = area.y, .height = 16.0f,
+                                .lineHeight = 16.0f});
         if (n > 0) {
             // 测量缓存键：行数 + 逐行 relPath 字节数（内容高随两者变）
             std::string scrollKey =
@@ -1374,8 +1361,8 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                 scrollKey += "." + std::to_string(note.relPath.size());
             }
             components::scrollView(ui, "todo.dialog.docpick.scroll")
-                .position(0.0f, 76.0f)
-                .size(w, viewportH)
+                .position(area.x, area.y + 24.0f)
+                .size(area.w, viewportH)
                 .theme(themeTokens)
                 .contentKey(scrollKey)
                 .content([&](eui::Ui& inner, float cw, float) {
@@ -1389,8 +1376,8 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                                 const bool isCurrent =
                                     (note.relPath == d.detail.docPath);
                                 inner.rect(rowId)
-                                    .position(20.0f, 0.0f)
-                                    .size(cw - 40.0f, rowH - 6.0f)
+                                    .position(0.0f, 0.0f)
+                                    .size(cw, rowH - 6.0f)
                                     .states(t.colors.hover, t.colors.hover,
                                             t.colors.primarySoftBg)
                                     .radius(t.sizes.radius)
@@ -1403,8 +1390,8 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                                     })
                                     .build();
                                 inner.text(rowId + ".title")
-                                    .position(32.0f, 6.0f)
-                                    .size(cw - 300.0f, core::theme::scaled(20.0f))
+                                    .position(12.0f, 6.0f)
+                                    .size(cw - 280.0f, core::theme::scaled(20.0f))
                                     .text(note.title.empty() ? note.relPath
                                                              : note.title)
                                     .fontSize(t.sizes.fontSizeSmall)
@@ -1414,8 +1401,8 @@ void drawDocPickerDialog(eui::Ui& ui, const eui::Screen& screen,
                                     .overflow(core::TextOverflow::Ellipsis)
                                     .build();
                                 inner.text(rowId + ".path")
-                                    .position(32.0f, 26.0f)
-                                    .size(cw - 80.0f, core::theme::scaled(14.0f))
+                                    .position(12.0f, 26.0f)
+                                    .size(cw - 60.0f, core::theme::scaled(14.0f))
                                     .text(note.relPath)
                                     .fontSize(t.sizes.fontSizeSmall - 2.0f)
                                     .lineHeight(core::theme::scaled(14.0f))

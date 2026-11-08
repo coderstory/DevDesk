@@ -18,6 +18,7 @@
 #include <ui_kit/button.h>
 #include <ui_kit/card.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/empty_state.h>
 #include <ui_kit/form_row.h>
 #include <ui_kit/materials.h>
@@ -214,19 +215,6 @@ void fitText(eui::Ui& ui, const std::string& id, float x, float y, float w, floa
         .clip()
         .color(color)
         .build();
-}
-
-// 弹窗标题契约：18px / 600 / 行高 24；不要换成 20/700 的通用对话框标题。
-void dialogHeading(eui::Ui& ui, const std::string& id, float width,
-                   const std::string& label, const Tokens& t) {
-    // 2026-11-01 S10：改走 ui_kit::drawDialogTitle（此前自绘 19px/600，与全站
-    // 25 处 drawDialogTitle 的 20px/700 是两套规格）。行高/高度按本处原值保留。
-    ui_kit::DialogTitleOptions opts;
-    opts.height = 26.0f;
-    opts.lineHeight = 24.0f;
-    ui_kit::drawDialogTitle(ui, id, width, label,
-                            ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
-                            opts);
 }
 
 void headCell(eui::Ui& ui, const std::string& id, const std::string& label, float x,
@@ -688,31 +676,34 @@ void drawServiceDialog(eui::Ui& ui, const eui::Screen& screen,
                        ReleaseConfigUiState& state,
                        const ReleaseConfigActions& actions, const Tokens& t,
                        const components::theme::ThemeColorTokens& componentTheme) {
-    ui_kit::DialogFrame frame;
-    frame.id = "release.dialog.service";
-    frame.width = ui_kit::DialogWidth::Standard;  // 460
-    frame.height = 360.0f;
-    frame.open = state.form == ReleaseConfigUiState::Form::Service;
-    frame.onOpenChange = [&state](bool open) {
-        if (!open) {
-            closeForm(state);
-        }
-    };
-
-    const float w = frame.widthPx();
-    const float innerX = ui_kit::kDialogInsetX;  // 24
-    const float rowW = w - ui_kit::kDialogBodyInsetX;
+    // need156：迁标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮对）；高 360 保持，
+    // 内容全部按内容区 area 相对定位。
     const auto upsertService = actions.upsertService;
     // 弹窗外框圆角取 16（主题组件默认 18）；只改对话框的本地副本。
     auto dialogTheme = componentTheme;
     dialogTheme.metrics.radius.section = t.sizes.radiusOverlay;
 
-    ui_kit::drawDialogFrame(ui, screen, frame, dialogTheme, [&] {
-        dialogHeading(ui, "release.dialog.service.title", w,
-                      state.editingService ? "编辑服务" : "新增服务", t);
+    ui_kit::DialogShellSpec shell;
+    shell.id = "release.dialog.service";
+    shell.width = ui_kit::DialogWidth::Standard;  // 460
+    shell.height = 360.0f;
+    shell.open = state.form == ReleaseConfigUiState::Form::Service;
+    shell.title = state.editingService ? "编辑服务" : "新增服务";
+    shell.cancel = {"取消", [&state]() { closeForm(state); }};
+    shell.confirm = {"保存", [&state, upsertService]() { saveServiceDraft(state, upsertService); }};
+    shell.onOpenChange = [&state](bool open) {
+        if (!open) {
+            closeForm(state);
+        }
+    };
+
+    ui_kit::drawDialogShell(ui, screen, shell, t, dialogTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+        const float x0 = area.x;
+        const float rowW = area.w;
 
         ui_kit::formRow(
-            ui, "release.dialog.service.name", "名称", innerX, 60.0f, rowW, 40.0f,
+            ui, "release.dialog.service.name", "名称", x0, area.y, rowW, 40.0f,
             [&](eui::Ui& u, float cx, float cy, float cw, float ch) {
                 components::input(u, "release.dialog.service.name.input")
                     .position(cx, cy)
@@ -731,7 +722,7 @@ void drawServiceDialog(eui::Ui& ui, const eui::Screen& screen,
             t);
 
         ui_kit::formRow(
-            ui, "release.dialog.service.kind", "类型", innerX, 116.0f, rowW, 40.0f,
+            ui, "release.dialog.service.kind", "类型", x0, area.y + 56.0f, rowW, 40.0f,
             [&](eui::Ui& u, float cx, float cy, float cw, float ch) {
                 u.stack("release.dialog.service.kind.wrap")
                     .position(cx, cy)
@@ -759,7 +750,7 @@ void drawServiceDialog(eui::Ui& ui, const eui::Screen& screen,
             t);
 
         ui_kit::formRow(
-            ui, "release.dialog.service.branch", "默认分支", innerX, 172.0f, rowW,
+            ui, "release.dialog.service.branch", "默认分支", x0, area.y + 112.0f, rowW,
             40.0f,
             [&](eui::Ui& u, float cx, float cy, float cw, float ch) {
                 components::input(u, "release.dialog.service.branch.input")
@@ -782,24 +773,12 @@ void drawServiceDialog(eui::Ui& ui, const eui::Screen& screen,
             state.serviceKind == ServiceKind::Backend
                 ? "该类型固定 5 项配置：nacos · 数据库 · 定时任务 · 菜单 · 网关"
                 : "该类型无配置项";
-        fitText(ui, "release.dialog.service.hint", innerX, 224.0f, rowW, 18.0f, hint,
-                t.sizes.fontSizeSmall, 18.0f, 400, t.colors.textTertiary);
+        fitText(ui, "release.dialog.service.hint", x0, area.y + 156.0f, rowW, 18.0f,
+                hint, t.sizes.fontSizeSmall, 18.0f, 400, t.colors.textTertiary);
 
-        fitText(ui, "release.dialog.service.error", innerX, 248.0f, rowW, 18.0f,
+        fitText(ui, "release.dialog.service.error", x0, area.y + 180.0f, rowW, 18.0f,
                 state.serviceError, t.sizes.fontSizeSmall, 18.0f, 400,
                 t.colors.errorText);
-
-        ui_kit::drawDialogButtons(
-            ui, frame.id, w, frame.height,
-            {.label = "取消",
-             .style = ui_kit::DialogButtonStyle::Secondary,
-             .onClick = [&state]() { closeForm(state); }},
-            {.label = "保存",
-             .style = ui_kit::DialogButtonStyle::Primary,
-             .onClick = [&state, upsertService]() {
-                 saveServiceDraft(state, upsertService);
-             }},
-            t, dialogTheme);
     });
 }
 
@@ -807,30 +786,33 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
                    ReleaseConfigUiState& state,
                    const ReleaseConfigActions& actions, const Tokens& t,
                    const components::theme::ThemeColorTokens& componentTheme) {
-    ui_kit::DialogFrame frame;
-    frame.id = "release.dialog.env";
-    frame.width = ui_kit::DialogWidth::Wide;  // 640
-    frame.height = 460.0f;
-    frame.open = state.form == ReleaseConfigUiState::Form::Env;
-    frame.onOpenChange = [&state](bool open) {
+    // need156：迁标准弹窗壳。高 460 保持 → 内容区净高 302（h−158），旧绝对坐标
+    // 累积到 384 会压底区细线，故六段行距按内容区重排（控件高/宽不变）。
+    const auto upsertEnv = actions.upsertEnv;
+    auto dialogTheme = componentTheme;
+    dialogTheme.metrics.radius.section = t.sizes.radiusOverlay;  // 16
+
+    ui_kit::DialogShellSpec shell;
+    shell.id = "release.dialog.env";
+    shell.width = ui_kit::DialogWidth::Wide;  // 640
+    shell.height = 460.0f;
+    shell.open = state.form == ReleaseConfigUiState::Form::Env;
+    shell.title = state.editingEnv ? "编辑环境" : "新增环境";
+    shell.cancel = {"取消", [&state]() { closeForm(state); }};
+    shell.confirm = {"保存", [&state, upsertEnv]() { saveEnvDraft(state, upsertEnv); }};
+    shell.onOpenChange = [&state](bool open) {
         if (!open) {
             closeForm(state);
         }
     };
 
-    const float w = frame.widthPx();
-    const float innerX = ui_kit::kDialogInsetX;  // 24
-    const float rowW = w - ui_kit::kDialogBodyInsetX;
-    const auto upsertEnv = actions.upsertEnv;
-    auto dialogTheme = componentTheme;
-    dialogTheme.metrics.radius.section = t.sizes.radiusOverlay;  // 16
-
-    ui_kit::drawDialogFrame(ui, screen, frame, dialogTheme, [&] {
-        dialogHeading(ui, "release.dialog.env.title", w,
-                      state.editingEnv ? "编辑环境" : "新增环境", t);
+    ui_kit::drawDialogShell(ui, screen, shell, t, dialogTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+        const float x0 = area.x;
+        const float rowW = area.w;
 
         ui_kit::formRow(
-            ui, "release.dialog.env.name", "名称", innerX, 60.0f, rowW, 40.0f,
+            ui, "release.dialog.env.name", "名称", x0, area.y, rowW, 40.0f,
             [&](eui::Ui& u, float cx, float cy, float cw, float ch) {
                 components::input(u, "release.dialog.env.name.input")
                     .position(cx, cy)
@@ -849,7 +831,7 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             t);
 
         ui.text("release.dialog.env.services.label")
-            .position(innerX, 112.0f)
+            .position(x0, area.y + 48.0f)
             .size(160.0f, core::theme::scaled(20.0f))
             .text("包含服务")
             .fontSize(t.sizes.fontSizeBody)
@@ -857,7 +839,7 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .color(t.colors.textPrimary)
             .build();
         ui.text("release.dialog.env.services.count")
-            .position(innerX + rowW - 140.0f, 112.0f)
+            .position(x0 + rowW - 140.0f, area.y + 48.0f)
             .size(140.0f, core::theme::scaled(20.0f))
             .text("已选 " + std::to_string(state.envServiceIds.size()) + " 个")
             .fontSize(t.sizes.fontSizeSmall)
@@ -868,8 +850,8 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
 
         // 复选列表：自绘勾选框支持禁用态；服务目录项没有禁用条件，此处全部可用。
         components::scrollView(ui, "release.dialog.env.services.scroll")
-            .position(innerX, 136.0f)
-            .size(rowW, 144.0f)
+            .position(x0, area.y + 72.0f)
+            .size(rowW, 136.0f)
             .gap(2.0f)
             .step(34.0f)
             .theme(componentTheme)
@@ -914,7 +896,7 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .build();
 
         ui.text("release.dialog.env.window.label")
-            .position(innerX, 292.0f)
+            .position(x0, area.y + 216.0f)
             .size(110.0f, core::theme::scaled(40.0f))
             .text("时间窗")
             .fontSize(t.sizes.fontSizeBody)
@@ -923,10 +905,10 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .color(t.colors.textPrimary)
             .build();
 
-        const float inputX = innerX + 110.0f + t.sizes.spacing;  // label 110 + 8
+        const float inputX = x0 + 110.0f + t.sizes.spacing;  // label 110 + 8
         const float timeW = 120.0f;
         components::input(ui, "release.dialog.env.start.input")
-            .position(inputX, 292.0f)
+            .position(inputX, area.y + 216.0f)
             .size(timeW, 40.0f)
             .value(state.envStartText)
             .placeholder("HH:MM")
@@ -939,7 +921,7 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .onCancel([&state]() { closeForm(state); })
             .build();
         ui.text("release.dialog.env.window.dash")
-            .position(inputX + timeW, 292.0f)
+            .position(inputX + timeW, area.y + 216.0f)
             .size(16.0f, core::theme::scaled(40.0f))
             .text("–")
             .fontSize(t.sizes.fontSizeBody)
@@ -949,7 +931,7 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .color(t.colors.textTertiary)
             .build();
         components::input(ui, "release.dialog.env.end.input")
-            .position(inputX + timeW + 16.0f, 292.0f)
+            .position(inputX + timeW + 16.0f, area.y + 216.0f)
             .size(timeW, 40.0f)
             .value(state.envEndText)
             .placeholder("HH:MM")
@@ -963,26 +945,17 @@ void drawEnvDialog(eui::Ui& ui, const eui::Screen& screen,
             .build();
         fitText(ui, "release.dialog.env.window.note", inputX + timeW + 16.0f + timeW +
                                                           t.sizes.spacing,
-               292.0f, std::max(0.0f, innerX + rowW - (inputX + timeW * 2.0f + 24.0f)),
+                area.y + 216.0f,
+                std::max(0.0f, x0 + rowW - (inputX + timeW * 2.0f + 24.0f)),
                 40.0f, "结束 ≤ 开始 = 次日", t.sizes.fontSizeSmall, 40.0f, 400,
                 t.colors.textTertiary);
 
-        fitText(ui, "release.dialog.env.hint", innerX, 340.0f, rowW, 18.0f,
+        fitText(ui, "release.dialog.env.hint", x0, area.y + 262.0f, rowW, 18.0f,
                 "跨零点示例：22:00–02:00 显示为 22:00–02:00(次日)；09:00–09:00 = 24 小时窗",
                 t.sizes.fontSizeSmall, 18.0f, 400, t.colors.textTertiary);
-        fitText(ui, "release.dialog.env.error", innerX, 366.0f, rowW, 18.0f,
+        fitText(ui, "release.dialog.env.error", x0, area.y + 282.0f, rowW, 18.0f,
                 state.envError, t.sizes.fontSizeSmall, 18.0f, 400,
                 t.colors.errorText);
-
-        ui_kit::drawDialogButtons(
-            ui, frame.id, w, frame.height,
-            {.label = "取消",
-             .style = ui_kit::DialogButtonStyle::Secondary,
-             .onClick = [&state]() { closeForm(state); }},
-            {.label = "保存",
-             .style = ui_kit::DialogButtonStyle::Primary,
-             .onClick = [&state, upsertEnv]() { saveEnvDraft(state, upsertEnv); }},
-            t, dialogTheme);
     });
 }
 
@@ -1018,55 +991,25 @@ void drawDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                       ReleaseConfigUiState& state,
                       const ReleaseConfigActions& actions, const Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
-    ui_kit::DialogFrame frame;
-    frame.id = "release.dialog.delete";
-    frame.width = ui_kit::DialogWidth::Standard;  // 460
-    frame.height = 240.0f;
-    frame.open = state.confirmDelete;
-    frame.onOpenChange = [&state](bool open) {
-        if (!open) {
-            state.confirmDelete = false;
-            state.deleteError.clear();
-        }
-    };
-
-    const float w = frame.widthPx();
-    const float innerX = ui_kit::kDialogInsetX;
-    const float rowW = w - ui_kit::kDialogBodyInsetX;
+    // need156：迁标准弹窗壳；删除属危险类 → dangerConfirm（原 DialogButtonStyle::Danger）。
+    // 高 240 = 壳下限保持，内容区净高 82。
     const auto deleteService = actions.deleteService;
     const auto deleteEnv = actions.deleteEnv;
     auto dialogTheme = componentTheme;
     dialogTheme.metrics.radius.section = t.sizes.radiusOverlay;  // 16
 
-    ui_kit::drawDialogFrame(ui, screen, frame, dialogTheme, [&] {
-        dialogHeading(ui, "release.dialog.delete.title", w,
-                      state.deleteIsService ? "删除服务" : "删除环境", t);
-
-        ui.text("release.dialog.delete.message")
-            .position(innerX, 52.0f)
-            .size(rowW, core::theme::scaled(88.0f))
-            .text(deleteMessage(state))
-            .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(core::theme::scaled(22.0f))
-            .wrap(true)
-            .color(t.colors.textSecondary)
-            .build();
-
-        fitText(ui, "release.dialog.delete.error", innerX, 144.0f, rowW, 18.0f,
-                state.deleteError, t.sizes.fontSizeSmall, 18.0f, 400,
-                t.colors.errorText);
-
-        ui_kit::drawDialogButtons(
-            ui, frame.id, w, frame.height,
-            {.label = "取消",
-             .style = ui_kit::DialogButtonStyle::Secondary,
-             .onClick = [&state]() {
-                 state.confirmDelete = false;
-                 state.deleteError.clear();
-             }},
-            {.label = "删除",
-             .style = ui_kit::DialogButtonStyle::Danger,
-             .onClick = [&state, deleteService, deleteEnv]() {
+    ui_kit::DialogShellSpec shell;
+    shell.id = "release.dialog.delete";
+    shell.width = ui_kit::DialogWidth::Standard;  // 460
+    shell.height = 240.0f;
+    shell.open = state.confirmDelete;
+    shell.title = state.deleteIsService ? "删除服务" : "删除环境";
+    shell.cancel = {"取消",
+                    [&state]() {
+                        state.confirmDelete = false;
+                        state.deleteError.clear();
+                    }};
+    shell.confirm = {"删除", [&state, deleteService, deleteEnv]() {
                  if (!state.confirmDelete) {
                      return;
                  }
@@ -1096,8 +1039,34 @@ void drawDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                  state.deleteError.clear();
                  state.deleteId = 0;
                  state.dirty = true;
-             }},
-            t, dialogTheme);
+             }};
+    shell.dangerConfirm = true;
+    shell.onOpenChange = [&state](bool open) {
+        if (!open) {
+            state.confirmDelete = false;
+            state.deleteError.clear();
+        }
+    };
+
+    ui_kit::drawDialogShell(ui, screen, shell, t, dialogTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+        const float x0 = area.x;
+        const float rowW = area.w;
+
+        ui.text("release.dialog.delete.message")
+            .position(x0, area.y)
+            // 内容区净高 82：正文块 66（3 行 × 22）+ 错误行 16 正好贴满
+            .size(rowW, core::theme::scaled(66.0f))
+            .text(deleteMessage(state))
+            .fontSize(t.sizes.fontSizeBody)
+            .lineHeight(core::theme::scaled(22.0f))
+            .wrap(true)
+            .color(t.colors.textSecondary)
+            .build();
+
+        fitText(ui, "release.dialog.delete.error", x0, area.y + 66.0f, rowW, 16.0f,
+                state.deleteError, t.sizes.fontSizeSmall, 16.0f, 400,
+                t.colors.errorText);
     });
 }
 
