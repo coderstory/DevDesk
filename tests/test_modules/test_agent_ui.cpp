@@ -5599,13 +5599,14 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     DOCTEST_CHECK_MESSAGE(nearPx(dinput->frame.height, 140.0f),
                           "草稿输入框应加高到 140，实测 " +
                               std::to_string(dinput->frame.height));
-    // 按钮带：两钮同排整体居中（组中心 == 面板中心）、行底距弹窗底 20（y=h-60）
+    // 按钮带：两钮同排整体居中（组中心 == 面板中心）、行底距弹窗底 16
+    //（need156 壳按钮行 y=h−56、高 40，底区细线 + 隙 16 统一口径）
     DOCTEST_CHECK_MESSAGE(nearPx(genBtn->frame.y, dismissBtn->frame.y),
                           "生成/关闭两钮应同排");
     DOCTEST_CHECK_MESSAGE(
         nearPx(genBtn->frame.y + genBtn->frame.height,
-               dpanel->frame.y + dpanel->frame.height - 20.0f),
-        "按钮带行底应距弹窗底 20（y=h-60），实测按钮底 " +
+               dpanel->frame.y + dpanel->frame.height - 16.0f),
+        "按钮带行底应距弹窗底 16（壳按钮行 y=h-56），实测按钮底 " +
             std::to_string(genBtn->frame.y + genBtn->frame.height));
     const float groupCenter =
         (genBtn->frame.x + dismissBtn->frame.x + dismissBtn->frame.width) * 0.5f;

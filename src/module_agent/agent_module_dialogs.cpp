@@ -47,15 +47,15 @@ std::string messagePreview(const AgentMessageRow& m) {
 constexpr float kTaskDialogH = 520.0f;        // UAT6 竖向导航案：标题栏/底栏各 44 带 + 内容区 432
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
-// AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）。
-// UAT6 重排：输入加高 88→140、结果行让位下移、按钮组迁底部按钮带（行顶 y=h-60、
-// 行底距弹窗底 20，与 dialog_form 同口径）并整体居中。
+// AI 草稿子弹窗几何（Standard 460 宽；内容 y 相对壳内容区顶 area.y）。
+// UAT6 重排：输入加高 88→140、结果行让位下移；need156 壳迁移：头/底区归标准
+// 弹窗壳，「生成草稿」是弹窗内动作（非底区确认钮）→ 保留自绘并落壳按钮行左缘。
 constexpr float kDraftDialogH = 380.0f;
 constexpr float kDraftInputH = 140.0f;
-constexpr float kDraftBtnH = 40.0f;          // 底部按钮带按钮高（dialog_form 同档）
+constexpr float kDraftBtnH = 40.0f;          // 壳按钮行高（与 .cancel 同档）
 constexpr float kDraftBtnW = 110.0f;
 constexpr float kDraftBtnGap = 12.0f;
-constexpr float kDraftResultY = 244.0f;      // 结果行顶（输入底 232 + 12 呼吸）
+constexpr float kDraftResultRelY = 175.0f;   // 结果行顶（area.y+175 = 面板内 244）
 
 // 迭代上限容错解析：非数字忽略（输入中间态）、>1000 截断防溢出、无数字 → 0（保存时 clamp）
 int parseIterInput(const std::string& text) {
@@ -2098,25 +2098,25 @@ void AgentModule::composeDraftDialog(
     const components::theme::ThemeColorTokens& themeTokens) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = kDraftDialogH;
-    const float x0 = ui_kit::kDialogInsetX;
-    const float innerW = w - ui_kit::kDialogBodyInsetX;
     const bool generating = draftPhase_ == DraftPhase::Generating;
 
-    ui_kit::DialogFrame frame;
-    frame.id = "agent.dialog.task.draft";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = draftDialogOpen_;
-    frame.zIndex = 1100;   // 叠在任务弹窗（组件默认 1000）之上；遮罩同时挡住外层
-    frame.onOpenChange = [this](bool v) {
+    // need156：头/底区归标准弹窗壳。两动作的节点 id 是测试契约（.generate /
+    // .dismiss），壳两槽（.cancel/.confirm）无法沿用 → 保留自绘并落壳按钮行
+    // 基线（area 底 + 33 = h−56）；✕ 是标题行右侧动作，壳无该槽亦保留自绘。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "agent.dialog.task.draft";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = h;
+    shell.open = draftDialogOpen_;
+    shell.zIndex = 1100;   // 叠在任务弹窗（组件默认 1000）之上；遮罩同时挡住外层
+    shell.title = "AI 生成草稿";
+    shell.onOpenChange = [this](bool v) {
         if (!v) closeDraftDialog();
     };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
         if (!draftDialogOpen_) return;
-        ui_kit::drawDialogTitle(ui, "agent.dialog.task.draft.title", w,
-                                "AI 生成草稿", ui_kit::kDialogTitleFontSize,
-                                t.colors.textPrimary, {.y = 16.0f});
 
         // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
         ui.text("agent.dialog.task.draft.close")
@@ -2132,14 +2132,15 @@ void AgentModule::composeDraftDialog(
             .build();
 
         ui_kit::drawDialogText(
-            ui, "agent.dialog.task.draft.caption", w,
+            ui, "agent.dialog.task.draft.caption",
+            area.w + ui_kit::kDialogBodyInsetX,
             "用一句话描述这个任务，AI 生成表单草稿；结果只预填，保存仍由你确认",
             t.sizes.fontSizeSmall, t.colors.textSecondary,
-            {.x = x0, .y = 64.0f, .height = 18.0f, .lineHeight = 18.0f});
+            {.x = area.x, .y = area.y, .height = 18.0f, .lineHeight = 18.0f});
 
         components::input(ui, "agent.dialog.task.draft.input")
-            .position(x0, 92.0f)
-            .size(innerW, kDraftInputH)
+            .position(area.x, area.y + 23.0f)
+            .size(area.w, kDraftInputH)
             .value(draftInput_)
             .placeholder("例如：每天早上 8 点看一下热榜，有大新闻就通知我")
             .fontSize(t.sizes.fontSizeBody)
@@ -2150,9 +2151,9 @@ void AgentModule::composeDraftDialog(
             .onCancel([this] { closeDraftDialog(); })   // 输入框内 Esc = 关子弹窗
             .build();
 
-        // 底部按钮带（UAT6 重排）：生成=Primary 微信绿（核心确认）、关闭=Secondary
-        //（次要），两钮同排整体居中、行顶 y=h-60（与 dialog_form 按钮带同口径）。
-        const float btnY = h - 60.0f;
+        // 按钮带：生成=Primary 微信绿（核心确认）、关闭=Secondary（次要），两钮
+        // 同排整体居中；行顶取壳按钮行基线 h−56（底区线 + 隙 16，全站统一）。
+        const float btnY = area.y + area.h + 33.0f;
         const float btnX0 = (w - (kDraftBtnW * 2.0f + kDraftBtnGap)) * 0.5f;
         components::button(ui, "agent.dialog.task.draft.generate")
             .position(btnX0, btnY)
@@ -2180,19 +2181,23 @@ void AgentModule::composeDraftDialog(
         // 结果行（Done → notice+warnings；Failed → error；同一槽位互斥渲染）。
         // 错误行走 wechat.warningRed（UAT6 微信化）；警告保留 amber t.colors.warning
         //（微信档无 amber 槽位，WeChat 化模块同款先例：claude_ui_detail 警示行）。
-        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.notice", w, draftNotice_,
-                               t.sizes.fontSizeSmall, t.colors.textSecondary,
-                               {.x = x0, .y = kDraftResultY, .height = 18.0f,
+        const float textDialogW = area.w + ui_kit::kDialogBodyInsetX;
+        const float resultY = area.y + kDraftResultRelY;
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.notice", textDialogW,
+                               draftNotice_, t.sizes.fontSizeSmall,
+                               t.colors.textSecondary,
+                               {.x = area.x, .y = resultY, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
-        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.warnings", w,
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.warnings", textDialogW,
                                draftWarnings_, t.sizes.fontSizeSmall,
                                t.colors.warning,
-                               {.x = x0, .y = kDraftResultY + 18.0f, .height = 44.0f,
+                               {.x = area.x, .y = resultY + 18.0f, .height = 44.0f,
                                 .lineHeight = 16.0f, .wrap = true,
                                 .skipIfEmpty = true});
-        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error", w, draftError_,
-                               t.sizes.fontSizeSmall, t.colors.errorText,
-                               {.x = x0, .y = kDraftResultY, .height = 18.0f,
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error", textDialogW,
+                               draftError_, t.sizes.fontSizeSmall,
+                               t.colors.errorText,
+                               {.x = area.x, .y = resultY, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
     });
 }
@@ -2228,52 +2233,46 @@ void AgentModule::closeDraftDialog() {
 void AgentModule::composeDeleteConfirmDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
-    const float h = 190.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "agent.dialog.delete";
-    frame.width = ui_kit::DialogWidth::Compact;
-    frame.height = h;
-    frame.open = deleteConfirmTaskId_.has_value();
-    frame.zIndex = 1100;   // 叠在任务/详情弹窗（默认 1000）之上，同草稿子弹窗
-    frame.onOpenChange = [this](bool v) {
+    // need156：底区危险确认钮由壳 .confirm + dangerConfirm 承担（原 DangerThemed
+    // 按钮对退役）；高 190 低于壳下限 240 → 抬到 240（规范 §3.4）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "agent.dialog.delete";
+    shell.width = ui_kit::DialogWidth::Compact;
+    shell.height = 240.0f;
+    shell.open = deleteConfirmTaskId_.has_value();
+    shell.zIndex = 1100;   // 叠在任务/详情弹窗（默认 1000）之上，同草稿子弹窗
+    shell.title = "确认删除？";
+    shell.cancel = {"取消", [this] { deleteConfirmTaskId_.reset(); }};
+    shell.confirm = {"确认删除", [this] {
+                         if (deleteConfirmTaskId_) {
+                             performDeleteTask(*deleteConfirmTaskId_);
+                         }
+                     }};
+    shell.dangerConfirm = true;
+    shell.onOpenChange = [this](bool v) {
         if (!v) deleteConfirmTaskId_.reset();
     };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        if (!deleteConfirmTaskId_) return;
-        // 名字现查 tasks_：待删任务已不存在（他处删了）时如实显示读取失败
-        std::string name = "（读取失败）";
-        for (const auto& task : tasks_) {
-            if (task.id == *deleteConfirmTaskId_) {
-                name = task.name;
-                break;
+    ui_kit::drawDialogShell(
+        ui, screen, shell, t, themeTokens,
+        [&](const ui_kit::DialogContentArea& area) {
+            if (!deleteConfirmTaskId_) return;
+            // 名字现查 tasks_：待删任务已不存在（他处删了）时如实显示读取失败
+            std::string name = "（读取失败）";
+            for (const auto& task : tasks_) {
+                if (task.id == *deleteConfirmTaskId_) {
+                    name = task.name;
+                    break;
+                }
             }
-        }
-        ui_kit::drawDialogTitle(ui, "agent.dialog.delete.title", w, "确认删除？",
-                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {.y = 16.0f});
-        ui_kit::drawDialogText(
-            ui, "agent.dialog.delete.msg", w,
-            "将删除任务「" + name + "」及其全部运行记录，不可恢复。",
-            t.sizes.fontSizeSmall, t.colors.errorText,
-            {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f, .wrap = true});
-
-        ui_kit::DialogButtonSpec cancel;
-        cancel.label = "取消";
-        cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-        cancel.onClick = [this] { deleteConfirmTaskId_.reset(); };
-        ui_kit::DialogButtonSpec confirm;
-        confirm.label = "确认删除";
-        confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
-        confirm.onClick = [this] {
-            if (deleteConfirmTaskId_) performDeleteTask(*deleteConfirmTaskId_);
-        };
-        ui_kit::drawDialogButtons(ui, "agent.dialog.delete", w, h, cancel, confirm,
-                                  t, themeTokens);
-    });
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.delete.msg",
+                area.w + ui_kit::kDialogBodyInsetX,
+                "将删除任务「" + name + "」及其全部运行记录，不可恢复。",
+                t.sizes.fontSizeSmall, t.colors.errorText,
+                {.x = area.x, .y = area.y, .height = 60.0f,
+                 .lineHeight = 20.0f, .wrap = true});
+        });
 }
 
 // 确认后的真删除（E1）：store 单事务级联清 runs/messages；关确认弹窗与可能开着的详情

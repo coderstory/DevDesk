@@ -44,7 +44,8 @@
 #include "mcp_service_bridge.h"
 
 #include <ui_kit/columns.h>
-#include <ui_kit/dialog_form.h>  // 155 批：同步说明弹窗（drawDialogFrame/Title/Text）
+#include <ui_kit/dialog_form.h>  // 155 批：同步说明弹窗正文（drawDialogText）
+#include <ui_kit/dialog_shell.h>  // need156：标准弹窗壳（同步说明弹窗）
 #include <ui_kit/metrics.h>  // kHeaderH（页头行高；kSettingsHeaderH 已并入共享源）
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
@@ -1142,43 +1143,28 @@ public:
         drawGitErrorDialog(ui, screen, t, githubSyncErrorDialog_, in, a);
 
         // 155 批：同步「查看详细说明」弹窗（githubSyncDetailExpanded_ 语义改 =
-        // 「弹窗开」，复用同一 bool 免新状态位；弹窗契约与文案样式先例 =
-        // git_error_dialog / ui_kit::dialog_form：关闭态常驻禁交互、zIndex/
-        // 主题 token 由 drawDialogFrame 承担）。关闭 = 弹窗外点击（onOpenChange
-        // 回 false）或「关闭」文字钮，均只翻同一标志位。
+        // 「弹窗开」，复用同一 bool 免新状态位）。need156：壳改标准弹窗壳——
+        // 原自绘「关闭」文字钮退役，改由壳 .cancel 承担（唯一动作，confirm 留空）。
         if (githubSyncDetailExpanded_) {
-            const std::string kDlgId = "settings.github.disclosure";
-            constexpr float kDlgH = 240.0f;
-            ui_kit::DialogFrame frame;
-            frame.id = kDlgId;
-            frame.width = ui_kit::DialogWidth::Standard;
-            frame.height = kDlgH;
-            frame.open = true;
-            frame.onOpenChange =
+            ui_kit::DialogShellSpec shell;
+            shell.id = "settings.github.disclosure";
+            shell.width = ui_kit::DialogWidth::Standard;
+            shell.height = 240.0f;
+            shell.open = true;
+            shell.title = "同步说明";
+            shell.cancel = {"关闭", [this] { githubSyncDetailExpanded_ = false; }};
+            shell.onOpenChange =
                 [this](bool v) { githubSyncDetailExpanded_ = v; };
-            const float dlgW = frame.widthPx();
-            ui_kit::drawDialogFrame(
-                ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-                    ui_kit::drawDialogTitle(ui, kDlgId + ".title", dlgW,
-                                            "同步说明",
-                                            ui_kit::kDialogTitleFontSize,
-                                            t.colors.textPrimary);
+            ui_kit::drawDialogShell(
+                ui, screen, shell, t, core::theme::componentTokensWeChat(t),
+                [&](const ui_kit::DialogContentArea& area) {
                     ui_kit::drawDialogText(
-                        ui, kDlgId + ".body", dlgW, githubSyncDisclosureText(),
-                        t.sizes.fontSizeSmall, t.colors.textSecondary,
-                        {.y = 58.0f, .height = roundFs(72.0f),
+                        ui, "settings.github.disclosure.body",
+                        area.w + ui_kit::kDialogBodyInsetX,
+                        githubSyncDisclosureText(), t.sizes.fontSizeSmall,
+                        t.colors.textSecondary,
+                        {.x = area.x, .y = area.y, .height = roundFs(72.0f),
                          .lineHeight = roundFs(20.0f), .wrap = true});
-                    ui.text(kDlgId + ".btn.close")
-                        .position(dlgW - ui_kit::kDialogInsetX - 64.0f,
-                                  kDlgH - 60.0f)
-                        .size(64.0f, 40.0f)
-                        .text("关闭")
-                        .fontSize(fs(13.0f))
-                        .lineHeight(40.0f)
-                        .fontWeight(600)
-                        .color(t.colors.primary)
-                        .onClick([this] { githubSyncDetailExpanded_ = false; })
-                        .build();
                 });
         }
     }
