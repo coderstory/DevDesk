@@ -81,8 +81,6 @@ void MarkdownModule::drawNewFolderDialog(eui::Ui& ui,
                          const eui::Screen& screen,
                          const core::theme::Tokens& t,
                          const components::theme::ThemeColorTokens& componentTheme) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 320.0f;
     // M-1（UAT2 一审）：弹窗内控件（下拉/输入框）统一 wechat 皮肤。
     const auto wcTheme = core::theme::componentTokensWeChat(t);
 
@@ -94,39 +92,46 @@ void MarkdownModule::drawNewFolderDialog(eui::Ui& ui,
     // 已不在候选 → 0 = 根目录（显示 == 行为）
     const int parentIdx = folderParentIndexFor(candidates, newFolderParentDir_);
 
-    ui_kit::DialogFrame frame;
-    frame.id = "md.dialog.newfolder";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = newFolderOpen_;
-    frame.onOpenChange = [this](bool v) {
+    // need156：迁标准弹窗壳。高 320 保持（≥240 不抬），内容区实高 h−158=162，
+    // 六段行距按内容区收紧（末尾错误行落在呼吸隙上方，不压底区细线）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "md.dialog.newfolder";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 320.0f;
+    shell.open = newFolderOpen_;
+    shell.title = "新建文件夹";
+    shell.cancel = {"取消", [this] { newFolderOpen_ = false; }};
+    shell.confirm = {"创建", [this] { commitNewFolder(); }};
+    shell.onOpenChange = [this](bool v) {
         newFolderOpen_ = v;
         if (!v) newFolderParentOpen_ = false;  // 关弹窗顺手收下拉
     };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-            ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
+    ui_kit::drawDialogShell(ui, screen, shell, t, wcTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+            // 文本行沿用 drawDialogText 的 dialogWidth 口径：宽 = 传入值 − 48 = area.w
+            const float textW = area.w + ui_kit::kDialogBodyInsetX;
 
             // 提示行带上实际落点（= 当前上级目录），避免「显示 A 建到 B」。
-            ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
+            ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", textW,
                                    "创建在：" +
                                        parents[static_cast<size_t>(parentIdx)] +
                                        "/ · 空文件夹也会显示在树里",
                                    t.sizes.fontSizeSmall, t.colors.textTertiary,
-                                   {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+                                   {.y = area.y, .height = 18.0f, .lineHeight = 18.0f});
 
-            ui_kit::drawDialogText(ui, "md.dialog.newfolder.parent.label", w, "父目录",
+            ui_kit::drawDialogText(ui, "md.dialog.newfolder.parent.label", textW, "父目录",
                                    12.0f, t.colors.textTertiary,
-                                   {.y = 84.0f, .height = 16.0f, .lineHeight = 16.0f});
+                                   {.y = area.y + 20.0f, .height = 16.0f,
+                                    .lineHeight = 16.0f});
 
-            // 下拉弹层自带 zIndex=20，包一层定位 stack 即可
+            // 下拉弹层自带 zIndex=20，包一层定位 stack 即可（随弹窗内容区平移）
             ui.stack("md.dialog.newfolder.parent")
-                .position(28.0f, 102.0f)
-                .size(w - 56.0f, 40.0f)
+                .position(area.x, area.y + 36.0f)
+                .size(area.w, 40.0f)
                 .content([&] {
                     components::dropdown(ui, "md.dialog.newfolder.parent.dd")
-                        .size(w - 56.0f, 40.0f)
+                        .size(area.w, 40.0f)
                         .items(parents)
                         .selected(parentIdx)
                         .placeholder("根目录")
@@ -146,13 +151,14 @@ void MarkdownModule::drawNewFolderDialog(eui::Ui& ui,
                 })
                 .build();
 
-            ui_kit::drawDialogText(ui, "md.dialog.newfolder.name.label", w, "文件夹名",
+            ui_kit::drawDialogText(ui, "md.dialog.newfolder.name.label", textW, "文件夹名",
                                    12.0f, t.colors.textTertiary,
-                                   {.y = 156.0f, .height = 16.0f, .lineHeight = 16.0f});
+                                   {.y = area.y + 80.0f, .height = 16.0f,
+                                    .lineHeight = 16.0f});
 
             components::input(ui, "md.dialog.newfolder.input")
-                .position(28.0f, 174.0f)
-                .size(w - 56.0f, 44.0f)
+                .position(area.x, area.y + 96.0f)
+                .size(area.w, 44.0f)
                 .value(newFolderName_)
                 .placeholder("文件夹名，如 工作")
                 .fontSize(t.sizes.fontSizeBody)
@@ -167,23 +173,10 @@ void MarkdownModule::drawNewFolderDialog(eui::Ui& ui,
                 .build();
 
             // 内嵌红字错误行，同新建笔记弹窗
-            ui_kit::drawDialogText(ui, "md.dialog.newfolder.error", w, newFolderError_,
+            ui_kit::drawDialogText(ui, "md.dialog.newfolder.error", textW, newFolderError_,
                                    12.0f, t.colors.errorText,
-                                   {.y = 228.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [this] { newFolderOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "创建";
-            confirm.fontSize = t.sizes.fontSizeBody;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [this] { commitNewFolder(); };
-            ui_kit::drawDialogButtons(ui, "md.dialog.newfolder", w, h, cancel, confirm, t,
-                                      core::theme::componentTokensWeChat(t));
+                                   {.y = area.y + 142.0f, .height = 18.0f,
+                                    .lineHeight = 18.0f, .skipIfEmpty = true});
     });
 }
 
@@ -513,37 +506,28 @@ void MarkdownModule::drawDeleteDialog(eui::Ui& ui,
                       const eui::Screen& screen,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 200.0f;
+    // need156：迁标准弹窗壳；高 200 低于下限 → 按规范 §3.4 抬到 240。
+    // 确认钮走壳危险变体（原 DangerThemed，语义同源）。
+    const auto wcTheme = core::theme::componentTokensWeChat(t);
+    ui_kit::DialogShellSpec shell;
+    shell.id = "md.dialog.del";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = deleteConfirmOpen_;
+    shell.title = "删除笔记";
+    shell.dangerConfirm = true;
+    shell.cancel = {"取消", [this] { deleteConfirmOpen_ = false; }};
+    shell.confirm = {"删除", [this] { doDeleteNote(); }};
+    shell.onOpenChange = [this](bool v) { deleteConfirmOpen_ = v; };
 
-    ui_kit::DialogFrame frame;
-    frame.id = "md.dialog.del";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = deleteConfirmOpen_;
-    frame.onOpenChange = [this](bool v) { deleteConfirmOpen_ = v; };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-            ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
+    ui_kit::drawDialogShell(ui, screen, shell, t, wcTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+            // 文本行沿用 drawDialogText 的 dialogWidth 口径：宽 = 传入值 − 48 = area.w
             ui_kit::drawDialogText(
-                ui, "md.dialog.del.body", w,
+                ui, "md.dialog.del.body", area.w + ui_kit::kDialogBodyInsetX,
                 "将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。",
                 t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
-                {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f, .wrap = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [this] { deleteConfirmOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "删除";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
-            confirm.onClick = [this] { doDeleteNote(); };
-            ui_kit::drawDialogButtons(ui, "md.dialog.del", w, h, cancel, confirm, t,
-                                      core::theme::componentTokensWeChat(t));
+                {.y = area.y, .height = 40.0f, .lineHeight = 20.0f, .wrap = true});
     });
 }
 
@@ -551,30 +535,33 @@ void MarkdownModule::drawRenameDialog(eui::Ui& ui,
                       const eui::Screen& screen,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 220.0f;
     // M-1（UAT2 一审）：同类的第七处——重命名弹窗输入框此前也漏吃页面暖橙，
     // 逐处 Read 核对 popup 控件时补上（frame/buttons 本已是 wechat）。
     const auto wcTheme = core::theme::componentTokensWeChat(t);
 
-    ui_kit::DialogFrame frame;
-    frame.id = "md.dialog.rename";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = renameOpen_;
-    frame.onOpenChange = [this](bool v) { renameOpen_ = v; };
+    // need156：迁标准弹窗壳；高 220 低于下限 → 抬到 240（内容区实高 h−158=82）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "md.dialog.rename";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = renameOpen_;
+    shell.title = "重命名笔记";
+    shell.cancel = {"取消", [this] { renameOpen_ = false; }};
+    shell.confirm = {"重命名", [this] { commitRenameNote(); }};
+    shell.onOpenChange = [this](bool v) { renameOpen_ = v; };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-            ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
-            ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
+    ui_kit::drawDialogShell(ui, screen, shell, t, wcTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+            // 文本行沿用 drawDialogText 的 dialogWidth 口径：宽 = 传入值 − 48 = area.w
+            const float textW = area.w + ui_kit::kDialogBodyInsetX;
+            ui_kit::drawDialogText(ui, "md.dialog.rename.hint", textW,
                                    "相对笔记目录；填「工作/新名」可同时移动。"
                                    "笔记一律以 .md 结尾：不写会自动补上",
                                    t.sizes.fontSizeSmall, t.colors.textTertiary,
-                                   {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+                                   {.y = area.y, .height = 18.0f, .lineHeight = 18.0f});
             components::input(ui, "md.dialog.rename.input")
-                .position(28.0f, 84.0f)
-                .size(w - 56.0f, 44.0f)
+                .position(area.x, area.y + 20.0f)
+                .size(area.w, 44.0f)
                 .value(renameInput_)
                 .placeholder("新名字或新路径")
                 .fontSize(t.sizes.fontSizeBody)
@@ -588,22 +575,10 @@ void MarkdownModule::drawRenameDialog(eui::Ui& ui,
                 .onCancel([this] { renameOpen_ = false; })
                 .build();
             // 校验/落盘失败内嵌红字，弹窗保持打开让用户改输入
-            ui_kit::drawDialogText(ui, "md.dialog.rename.error", w, renameError_,
+            ui_kit::drawDialogText(ui, "md.dialog.rename.error", textW, renameError_,
                                    12.0f, t.colors.errorText,
-                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [this] { renameOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "重命名";
-            confirm.fontSize = t.sizes.fontSizeBody;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [this] { commitRenameNote(); };
-            ui_kit::drawDialogButtons(ui, "md.dialog.rename", w, h, cancel, confirm, t,
-                                      core::theme::componentTokensWeChat(t));
+                                   {.y = area.y + 64.0f, .height = 18.0f,
+                                    .lineHeight = 18.0f, .skipIfEmpty = true});
     });
 }
 
@@ -702,38 +677,28 @@ void MarkdownModule::drawFolderDeleteDialog(eui::Ui& ui,
                              const eui::Screen& screen,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& componentTheme) {
-    // 复用笔记删除确认弹窗同款 ui_kit 基建（frame/title/text/buttons 四件）
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 200.0f;
+    // need156：迁标准弹窗壳（原复用的笔记删除弹窗同款基建）；高 200 低于下限 →
+    // 抬到 240。确认钮走壳危险变体（原 DangerThemed）。
+    const auto wcTheme = core::theme::componentTokensWeChat(t);
+    ui_kit::DialogShellSpec shell;
+    shell.id = "md.dialog.deldir";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = dirDeleteConfirmOpen_;
+    shell.title = "删除文件夹";
+    shell.dangerConfirm = true;
+    shell.cancel = {"取消", [this] { dirDeleteConfirmOpen_ = false; }};
+    shell.confirm = {"删除", [this] { doDeleteFolder(); }};
+    shell.onOpenChange = [this](bool v) { dirDeleteConfirmOpen_ = v; };
 
-    ui_kit::DialogFrame frame;
-    frame.id = "md.dialog.deldir";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = dirDeleteConfirmOpen_;
-    frame.onOpenChange = [this](bool v) { dirDeleteConfirmOpen_ = v; };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-            ui_kit::drawDialogTitle(ui, "md.dialog.deldir.title", w, "删除文件夹",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
+    ui_kit::drawDialogShell(ui, screen, shell, t, wcTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+            // 文本行沿用 drawDialogText 的 dialogWidth 口径：宽 = 传入值 − 48 = area.w
             ui_kit::drawDialogText(
-                ui, "md.dialog.deldir.body", w,
+                ui, "md.dialog.deldir.body", area.w + ui_kit::kDialogBodyInsetX,
                 "将删除文件夹「" + dirDeleteTargetPath_ + "」及其全部子文件夹，不可恢复。",
                 t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
-                {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f, .wrap = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [this] { dirDeleteConfirmOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "删除";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
-            confirm.onClick = [this] { doDeleteFolder(); };
-            ui_kit::drawDialogButtons(ui, "md.dialog.deldir", w, h, cancel, confirm, t,
-                                      core::theme::componentTokensWeChat(t));
+                {.y = area.y, .height = 40.0f, .lineHeight = 20.0f, .wrap = true});
     });
 }
 
@@ -741,28 +706,31 @@ void MarkdownModule::drawFolderRenameDialog(eui::Ui& ui,
                              const eui::Screen& screen,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& componentTheme) {
-    // 复用笔记重命名弹窗同款 ui_kit 基建；差异只在标题/提示/同级改名校验
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 220.0f;
+    // 复用笔记重命名弹窗同款基建；差异只在标题/提示/同级改名校验
     const auto wcTheme = core::theme::componentTokensWeChat(t);
 
-    ui_kit::DialogFrame frame;
-    frame.id = "md.dialog.renamedir";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = dirRenameOpen_;
-    frame.onOpenChange = [this](bool v) { dirRenameOpen_ = v; };
+    // need156：迁标准弹窗壳；高 220 低于下限 → 抬到 240（内容区实高 h−158=82）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "md.dialog.renamedir";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = dirRenameOpen_;
+    shell.title = "重命名文件夹";
+    shell.cancel = {"取消", [this] { dirRenameOpen_ = false; }};
+    shell.confirm = {"重命名", [this] { commitRenameFolder(); }};
+    shell.onOpenChange = [this](bool v) { dirRenameOpen_ = v; };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
-            ui_kit::drawDialogTitle(ui, "md.dialog.renamedir.title", w, "重命名文件夹",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
-            ui_kit::drawDialogText(ui, "md.dialog.renamedir.hint", w,
+    ui_kit::drawDialogShell(ui, screen, shell, t, wcTheme,
+                            [&](const ui_kit::DialogContentArea& area) {
+            // 文本行沿用 drawDialogText 的 dialogWidth 口径：宽 = 传入值 − 48 = area.w
+            const float textW = area.w + ui_kit::kDialogBodyInsetX;
+            ui_kit::drawDialogText(ui, "md.dialog.renamedir.hint", textW,
                                    "同级改名：只改文件夹名，新名不能包含 /",
                                    t.sizes.fontSizeSmall, t.colors.textTertiary,
-                                   {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+                                   {.y = area.y, .height = 18.0f, .lineHeight = 18.0f});
             components::input(ui, "md.dialog.renamedir.input")
-                .position(28.0f, 84.0f)
-                .size(w - 56.0f, 44.0f)
+                .position(area.x, area.y + 20.0f)
+                .size(area.w, 44.0f)
                 .value(dirRenameInput_)
                 .placeholder("新文件夹名")
                 .fontSize(t.sizes.fontSizeBody)
@@ -776,22 +744,10 @@ void MarkdownModule::drawFolderRenameDialog(eui::Ui& ui,
                 .onCancel([this] { dirRenameOpen_ = false; })
                 .build();
             // 校验/落盘失败内嵌红字，弹窗保持打开让用户改输入
-            ui_kit::drawDialogText(ui, "md.dialog.renamedir.error", w, dirRenameError_,
+            ui_kit::drawDialogText(ui, "md.dialog.renamedir.error", textW, dirRenameError_,
                                    12.0f, t.colors.errorText,
-                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [this] { dirRenameOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "重命名";
-            confirm.fontSize = t.sizes.fontSizeBody;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [this] { commitRenameFolder(); };
-            ui_kit::drawDialogButtons(ui, "md.dialog.renamedir", w, h, cancel, confirm, t,
-                                      core::theme::componentTokensWeChat(t));
+                                   {.y = area.y + 64.0f, .height = 18.0f,
+                                    .lineHeight = 18.0f, .skipIfEmpty = true});
     });
 }
 
