@@ -33,6 +33,7 @@
 #include <platform/json.h>  // 池146：解析 inputSchema / 组装试跑入参
 
 #include <ui_kit/empty_state.h>
+#include <ui_kit/glass.h>  // glassBorder / glassShadowColor（池235：卡底补齐玻璃三件套）
 #include <ui_kit/grid.h>
 #include <ui_kit/materials.h>
 #include <ui_kit/wswitch.h>
@@ -423,14 +424,21 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
     ui.stack(id)
         .size(cardWidth, kCardH)
         .content([&] {
-            // 玻璃卡面（itemSurface=glassFill 半透，规范 §5.2-1 手绘卡面换取色、
-            // 圆角/描边/阴影参数不变；settings_ui_cards.cpp 卡底同款口径）
+            // 玻璃三件套（池235 裁决：补齐 glassBorder + glassShadowColor）。
+            // 规范 §5.2-1 原写「手绘卡面换取色、圆角/描边/阴影参数不变」，§6-C
+            // 又写「→ itemSurface + glassBorder + glassShadowColor」，两处互相
+            // 矛盾；老板 2026-11-08 拍板按 §6-C 补齐——全站玻璃卡只在填色上
+            // 同源、而边缘仍是灰线 + 近乎无影，视觉上会掉出「玻璃」语言掉成
+            // 实色块。此处取 §6-C 口径，§5.2-1 相应措辞已在规范文档修订。
             ui.rect(id + ".bg")
                 .size(cardWidth, kCardH)
                 .color(ui_kit::itemSurface(t))
                 .radius(t.sizes.radiusLarge)
-                .shadow(components::theme::shadow(comp, 3.0f, 1.0f, 0.04f, 0.02f))
-                .border(1.0f, t.colors.borderDefault)
+                // 阴影几何与 md 玻璃壳 / agent 摘要卡同款（24 模糊 / 8 偏移），
+                // 色走 glassShadowColor（亮档冷绿黑，纯黑压绿白底会发灰）
+                .shadow(core::Shadow{true, {0.0f, 8.0f}, 24.0f, 0.0f,
+                                     ui_kit::glassShadowColor(t), false})
+                .border(1.0f, ui_kit::glassBorder(t))
                 .build();
 
             // 图标位：primarySoftBg 圆角底 + FA 码点
@@ -486,6 +494,9 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .size(statusTextW, core::theme::scaled(14.0f))
                 .text(statusText)
                 .fontSize(core::theme::scaled(11.0f))
+                // 状态词两档制=600（规范 §2.1；池235 收编：原先无 fontWeight
+                // 渲染 400，与 agent/schedule/claude 三页同语义 600 漂移）
+                .fontWeight(600)
                 .color(t.colors.textTertiary)
                 .build();
 

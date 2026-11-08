@@ -1035,7 +1035,10 @@ void AgentModule::composeTaskDialog(
                         .text("安全")
                         .fontSize(core::theme::scaled(14.0f))
                         .lineHeight(kGroupTitleH)
-                        .fontWeight(700)
+                        // 分组题两档制=600（规范 §2.1；池235 收编：原 700 属列表域
+                        // 第三档，且弹窗内「分组题」不属 §2.3 豁免——豁免的是弹窗
+                        // 「标题」不是分组题。同语义 settings:75 / memory 区题均 600）
+                        .fontWeight(600)
                         .color(t.colors.textPrimary)
                         .build();
                     {
