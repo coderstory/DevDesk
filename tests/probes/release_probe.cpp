@@ -28,9 +28,10 @@
 //   A 侧边栏分组树（8 个既有条目 + 「上线」父项 + 2 子项、展开/收起）
 //   B 基础配置页（padding / 标题字号 / 类型 chip / 后端 5 tag / 前端无配置项）
 //   C 任务列表瀑布流（首屏 10 → 触底 20、卡宽、列/纵间距、圆角）
-//   D 执行页（环境分组头、步骤行、勾选框、状态 chip、模式徽标色值：编辑中性 /
-//     发布中唯一绿染——池 57）
-//   D3 执行页挤压态（2 环境 × 3 服务：分组不重叠、服务卡/步骤格不越界——池 116）
+//   D 执行页（焦点式双栏：索引列分组头 / 服务索引项 / 焦点区服务卡、步骤行、
+//     勾选框、状态 chip、模式徽标色值：编辑中性 / 发布中唯一绿染——池 57）
+//   D3 执行页挤压态（2 环境 × 3 服务：索引列分组头与条目纵向堆叠不重叠、
+//     焦点区仅 1 张服务卡且不越界——池 116，need192 焦点式双栏语义）
 //   B2 基础配置「环境定义」Tab 空态（池 116，落图档）
 //   E 提醒（到期聚合 → 提醒窗内容）：数据层断言（聚合 / 档位 / 跳转负载）；
 //     全屏窗真开仍不可达，见 main() 末尾的说明注释。
@@ -822,7 +823,10 @@ int main(int argc, char* argv[]) {
     }
 
     // ================= D. 执行页 =================
-    // 环境分组头高 56、标题 18；步骤行高 44（池 53 设计档）、勾选框 18；状态 chip 22/11/999。
+    // need192 §1.2 焦点式双栏（release_detail_draw.cpp drawFocusLayout:1361-1600）：
+    // 左索引列 264 定宽（kIndexW，:1365）+ 右焦点区（kFocusX = kIndexW + 16，:1369）。
+    // 环境名 = 索引列分组头（32 高 / fontSizeSmall / 600 / textSecondary），
+    // 服务明细唯一渲染在右焦点区（当前聚焦服务 1 张卡，id 与旧清单同构）。
     module::release::ReleaseDetailUiState detailState;
     detailState.taskId = std::to_string(detailTaskId);
     detailState.dirty = true;
@@ -836,25 +840,75 @@ int main(int argc, char* argv[]) {
             "release.detail.env." + std::to_string(detailEnvId);
         const std::string svcBase =
             envBase + ".svc." + std::to_string(detailServiceId);
-        const auto* envBg = checks.need(ui, envBase + ".bg", "环境分组卡");
-        const auto* envName = checks.need(ui, envBase + ".name", "环境分组标题");
-        const auto* svcBg = checks.need(ui, svcBase + ".bg", "服务卡");
-        checks.expectText(envName, "环境名文案", "EM");
-        if (envName != nullptr) {
-            checks.expectNear("环境分组标题字号", envName->fontSize, 19.0f,
-                              "theme fontSizeLarge=19（release_detail_ui.cpp drawEnvCard .name）");
-        }
-        if (envBg != nullptr && svcBg != nullptr) {
-            checks.expectNear("环境分组头高度",
-                              svcBg->frame.y - envBg->frame.y, 56.0f,
-                              "release_detail_ui.cpp kEnvHeaderH=56");
+        const std::string indexEnvLabel =
+            "release.detail.index.env." + std::to_string(detailEnvId) + ".label";
+        const std::string indexSvc =
+            "release.detail.index.svc." + std::to_string(detailServiceId);
+
+        // 双栏区容器：release.detail.focus（draw.cpp:1486；服务非空的常规路径）。
+        // 注：分组区标题 drawSectionTitle("release.detail.focus.title") 只在
+        // drawFocusLayout 的空态分支渲染（draw.cpp:1416，entries.empty()），
+        // 常规路径无标题节点——旧 D 段的 release.detail.env.title（:1302，已不在
+        // 详情页渲染链上）连同标题字号断言一并裁撤，改钉容器存在性。
+        checks.need(ui, "release.detail.focus", "双栏区容器");
+
+        // 左索引列底：定宽 264（need192 §1.2 >R6 门槛 200）。出处
+        // release_detail_draw.cpp:1365 kIndexW=264、:1490 索引列底节点。
+        const auto* indexBg = checks.need(ui, "release.detail.index.bg", "索引列底");
+        if (indexBg != nullptr) {
+            checks.expectNear("索引列宽", indexBg->frame.width, 264.0f,
+                              "release_detail_draw.cpp:1365 kIndexW=264");
         }
 
-        const auto* sectionTitle =
-            checks.need(ui, "release.detail.env.title", "环境分组区标题");
-        if (sectionTitle != nullptr) {
-            checks.expectNear("环境分组区标题字号", sectionTitle->fontSize, 19.0f,
-                              "release_detail_ui.cpp drawSectionTitle fontSizeLarge=19");
+        // 环境分组头 = 索引列分组头（旧「环境分组卡 + 19px 标题」已裁撤）：
+        // 14px 档 fontSizeSmall(12)/600/textSecondary/垂直居中/行盒 kGroupH。
+        // 出处 release_detail_draw.cpp:1368 kGroupH=32、:1384-1396 drawGroupHeader。
+        const auto* envLabel = checks.need(ui, indexEnvLabel, "索引列环境分组头");
+        if (envLabel != nullptr) {
+            checks.expectText(envLabel, "环境分组头文案", "EM");
+            checks.expectNear("环境分组头行盒高", envLabel->frame.height, 32.0f,
+                              "release_detail_draw.cpp:1368 kGroupH=32");
+            checks.expectNear("环境分组头字号", envLabel->fontSize,
+                              core::theme::current().sizes.fontSizeSmall,
+                              "release_detail_draw.cpp:1388 fontSizeSmall"
+                              "（theme.cpp:62 = 12）");
+            checks.expectTrue(envLabel->fontWeight == 600,
+                              "环境分组头字重应为 600（release_detail_draw.cpp:1394）");
+            checks.expectTrue(envLabel->verticalAlign == eui::VerticalAlign::Center,
+                              "环境分组头应垂直居中（release_detail_draw.cpp:1393）");
+            checks.expectColor("环境分组头字色", envLabel->textColor,
+                               core::theme::current().colors.textSecondary,
+                               "release_detail_draw.cpp:1395 textSecondary");
+        }
+        // 「移除环境」入口保留原节点 id（release_detail_draw.cpp:1404）。
+        checks.need(ui, envBase + ".remove", "移除环境入口");
+
+        // 服务索引项：选中态（焦点默认兜底首个 live 服务，:1456-1461）含
+        // .sel/.sel.bar，双行内容 .name/.envname + 右锚 .count + .mini。
+        // 出处 release_detail_draw.cpp:1505-1588（selected → :1510 .sel/:1516 .sel.bar）。
+        const auto* indexHit = checks.need(ui, indexSvc + ".hit", "服务索引项命中区");
+        checks.need(ui, indexSvc + ".sel", "服务索引项选中底");
+        checks.need(ui, indexSvc + ".sel.bar", "服务索引项左竖条");
+        checks.need(ui, indexSvc + ".count", "服务索引项进度计数");
+        checks.need(ui, indexSvc + ".mini", "服务索引项 mini 进度");
+        const auto* indexName = checks.need(ui, indexSvc + ".name", "服务索引项名称");
+        checks.expectText(indexName, "服务索引项名称文案", "release-svc");
+        checks.need(ui, indexSvc + ".envname", "服务索引项环境名");
+        if (indexHit != nullptr) {
+            checks.expectNear("服务索引项行高", indexHit->frame.height, 56.0f,
+                              "release_detail_draw.cpp:1367 kEntryH=56（§3.1 双行条目）");
+        }
+
+        // 焦点区服务卡：服务卡仍在，id 与旧清单同构（release_detail_draw.cpp:1593）
+        const auto* svcBg = checks.need(ui, svcBase + ".bg", "焦点区服务卡");
+        // 双栏分界：焦点区左缘 = 索引列宽 + 列间距（原「环境分组头高度 56」
+        // 断言在新布局下已无对应语义，改钉双栏几何）。
+        // 出处 release_detail_draw.cpp:1366 kColumnGap=16、:1369 kFocusX。
+        if (indexBg != nullptr && svcBg != nullptr) {
+            checks.expectNear("焦点区左缘 = 索引列宽 + 16 列间距",
+                              svcBg->frame.x - indexBg->frame.x, 280.0f,
+                              "release_detail_draw.cpp:1365/1366/1369 "
+                              "kFocusX = kIndexW(264) + kColumnGap(16)");
         }
 
         const std::string mergeRow = svcBase + ".step.merge";
@@ -1015,7 +1069,11 @@ int main(int argc, char* argv[]) {
     }
 
     // ================= D3. 池116②：执行页挤压态（2 环境 × 3 服务） =================
-    // 基本几何契约：环境分组纵向不重叠；服务卡、步骤格不越出所在分组横向边界。
+    // need192 §1.2 焦点式双栏后语义重写：不再有横向排列的环境分组卡，也不再
+    // 全量渲染 6 张服务卡——左索引列纵向堆叠「环境分组头 + 服务精简条目」，
+    // 右焦点区只画当前聚焦的 1 张服务卡。
+    // 几何契约：索引列分组头 / 条目纵向不重叠且不越出索引列；焦点卡不越出焦点区；
+    // 步骤格不越出焦点服务卡。出处 release_detail_draw.cpp drawFocusLayout:1361-1600。
     // --screenshot-crowded <png> 落挤压态图（未传 = 只断言不落图）。
     if (crowdedTaskId != 0) {
         detailState.taskId = std::to_string(crowdedTaskId);
@@ -1025,7 +1083,6 @@ int main(int argc, char* argv[]) {
                         module::release::composeReleaseDetailPage(
                             frameUi, screen, store, detailState);
                     });
-        const std::string envPrefix = "release.detail.env.";
         // composeModuleFrame 给元素 id 加页面命名空间前缀（<pageId>.<id>），
         // ui->find 内部 resolveId 解析，裸前缀收集必须先剥前缀再匹配。
         const std::string pageNs = "release.detail.crowded.";
@@ -1039,18 +1096,34 @@ int main(int argc, char* argv[]) {
                 return c >= '0' && c <= '9';
             });
         };
-        // 分组卡 = release.detail.env.<digits>.bg；服务卡 = ……env.<digits>.svc.<digits>.bg。
-        // 子元素（<env>.remove.bg / <env>.overdue.bg 等）用纯数字段规则排除。
-        const auto isEnvBg = [&](const std::string& raw) {
+        // 环境分组头 = release.detail.index.env.<digits>.label（draw.cpp:1384）。
+        const std::string idxEnvPrefix = "release.detail.index.env.";
+        const auto isIndexGroupHeader = [&](const std::string& raw) {
             const std::string& id = stripNs(raw);
-            if (id.compare(0, envPrefix.size(), envPrefix) != 0 ||
-                id.rfind(".bg") != id.size() - 3 ||
-                id.find(".svc.") != std::string::npos) {
+            static const std::string suf = ".label";
+            if (id.compare(0, idxEnvPrefix.size(), idxEnvPrefix) != 0 ||
+                id.rfind(suf) != id.size() - suf.size()) {
                 return false;
             }
             return allDigits(
-                id.substr(envPrefix.size(), id.size() - envPrefix.size() - 3));
+                id.substr(idxEnvPrefix.size(),
+                          id.size() - idxEnvPrefix.size() - suf.size()));
         };
+        // 服务索引项 = release.detail.index.svc.<digits>.hit（draw.cpp:1507/1522）。
+        const std::string idxSvcPrefix = "release.detail.index.svc.";
+        const auto isIndexSvcHit = [&](const std::string& raw) {
+            const std::string& id = stripNs(raw);
+            static const std::string suf = ".hit";
+            if (id.compare(0, idxSvcPrefix.size(), idxSvcPrefix) != 0 ||
+                id.rfind(suf) != id.size() - suf.size()) {
+                return false;
+            }
+            return allDigits(
+                id.substr(idxSvcPrefix.size(),
+                          id.size() - idxSvcPrefix.size() - suf.size()));
+        };
+        // 焦点区服务卡 = release.detail.env.<digits>.svc.<digits>.bg（draw.cpp:1593）。
+        const std::string envPrefix = "release.detail.env.";
         const auto isSvcBg = [&](const std::string& raw) {
             const std::string& id = stripNs(raw);
             if (id.compare(0, envPrefix.size(), envPrefix) != 0 ||
@@ -1065,62 +1138,142 @@ int main(int argc, char* argv[]) {
                    allDigits(mid.substr(0, svcSep)) &&
                    allDigits(mid.substr(svcSep + 5));
         };
+        // 步骤行名 = <svcBase>.step.<rowId>.label（release_detail_draw.cpp:1002/732），
+        // <rowId> 是 merge / deploy / verify 或 config.<n>（:929-983）；带其它
+        // 额外段的是行尾控件（如 .skip.label，:786 跳过复选框），必须排除。
         const auto isStepLabel = [&](const std::string& raw) {
             const std::string& id = stripNs(raw);
-            return id.compare(0, envPrefix.size(), envPrefix) == 0 &&
-                   id.find(".step.") != std::string::npos &&
-                   id.rfind(".label") == id.size() - 6;
+            static const std::string stepMark = ".step.";
+            static const std::string suf = ".label";
+            static const std::string cfgMark = "config.";
+            if (id.compare(0, envPrefix.size(), envPrefix) != 0) return false;
+            const std::size_t mark = id.find(stepMark);
+            if (mark == std::string::npos) return false;
+            if (id.rfind(suf) != id.size() - suf.size()) return false;
+            const std::size_t rowStart = mark + stepMark.size();
+            const std::string rowId = id.substr(rowStart, id.size() - suf.size() - rowStart);
+            if (rowId.compare(0, cfgMark.size(), cfgMark) == 0) {
+                return allDigits(rowId.substr(cfgMark.size()));
+            }
+            return !rowId.empty() && rowId.find('.') == std::string::npos;
         };
-        const auto envBgs = collectElements(*ui, isEnvBg);
+        const auto groupHeaders = collectElements(*ui, isIndexGroupHeader);
+        const auto indexEntries = collectElements(*ui, isIndexSvcHit);
         const auto svcBgs = collectElements(*ui, isSvcBg);
         const auto stepLabels = collectElements(*ui, isStepLabel);
-        checks.expectTrue(envBgs.size() == std::size_t{2},
-                          "D3：期望 2 个环境分组卡（EM/UAT），实际 " +
-                              std::to_string(envBgs.size()) +
-                              "（state.envs=" +
-                              std::to_string(detailState.envs.size()) +
-                              "，loadError=" +
-                              (detailState.loadError.empty()
-                                   ? "<无>"
-                                   : detailState.loadError) +
-                              "）");
-        checks.expectTrue(svcBgs.size() == std::size_t{6},
-                          "D3：期望 6 张服务卡（2 环境 × 3 服务），实际 " +
+        const auto* indexBg = ui->find("release.detail.index.bg");
+
+        // 索引列分组头数 == 环境数（2：EM / UAT），纵向堆叠取代横向分组卡。
+        checks.expectTrue(
+            groupHeaders.size() == detailState.envs.size(),
+            "D3：索引列环境分组头数应 == 环境数（" +
+                std::to_string(detailState.envs.size()) + "），实际 " +
+                std::to_string(groupHeaders.size()) + "（state.envs=" +
+                std::to_string(detailState.envs.size()) + "，loadError=" +
+                (detailState.loadError.empty() ? "<无>" : detailState.loadError) +
+                "）");
+        // 索引服务项数 == 全部 live 服务数（2 环境 × 3 服务 = 6），一级概览不裁剪。
+        checks.expectTrue(
+            indexEntries.size() == std::size_t{6},
+            "D3：服务索引项应 == 6（2 环境 × 3 服务），实际 " +
+                std::to_string(indexEntries.size()));
+        // 焦点区只渲染当前聚焦的 1 张服务卡（draw.cpp:1593 传 focusEnv/focusSvc）。
+        checks.expectTrue(svcBgs.size() == std::size_t{1},
+                          "D3：焦点区服务卡应 == 1（仅当前聚焦服务），实际 " +
                               std::to_string(svcBgs.size()));
-        checks.expectTrue(stepLabels.size() >= std::size_t{12},
-                          "D3：挤压态步骤行应 ≥ 12（6 服务 × 合并+部署），实际 " +
+
+        // 焦点服务卡步骤行数 = 3（合并/部署/校验）+ 配置行数；后端服务的配置项由
+        // orderedConfigs 补齐至 5 类（release_detail_logic.cpp:283-292），行装配见
+        // release_detail_draw.cpp:926-984。旧断言「≥12 = 6 服务 × 2 步」已失效。
+        std::size_t focusConfigs = 0;
+        for (const auto& cfg : detailState.configs) {
+            if (cfg.taskServiceId == detailState.focusedServiceId) ++focusConfigs;
+        }
+        const std::size_t focusRows = 3 + (focusConfigs < 5 ? std::size_t{5}
+                                                            : focusConfigs);
+        checks.expectTrue(stepLabels.size() == focusRows,
+                          "D3：焦点服务步骤行应 == " + std::to_string(focusRows) +
+                              "（3 + 配置 5），实际 " +
                               std::to_string(stepLabels.size()));
 
-        // 分组不重叠：按 y 排序后相邻分组首尾相接（后组顶 ≥ 前组底，0.5 容差）
-        std::vector<const core::dsl::Element*> sortedEnvs = envBgs;
-        std::sort(sortedEnvs.begin(), sortedEnvs.end(),
+        // 分组头纵向不重叠：按 y 排序后相邻首尾相接（后头顶 >= 前头底，0.5 容差）。
+        // kGroupH=32（draw.cpp:1368），组头在索引列内逐 32 下推（:1502-1503）。
+        std::vector<const core::dsl::Element*> sortedGroups = groupHeaders;
+        std::sort(sortedGroups.begin(), sortedGroups.end(),
                   [](const core::dsl::Element* a, const core::dsl::Element* b) {
                       return a->frame.y < b->frame.y;
                   });
-        for (std::size_t i = 1; i < sortedEnvs.size(); ++i) {
+        for (std::size_t i = 1; i < sortedGroups.size(); ++i) {
             const float prevBottom =
-                sortedEnvs[i - 1]->frame.y + sortedEnvs[i - 1]->frame.height;
+                sortedGroups[i - 1]->frame.y + sortedGroups[i - 1]->frame.height;
             checks.expectTrue(
-                sortedEnvs[i]->frame.y >= prevBottom - 0.5f,
-                "D3：环境分组纵向重叠（" + sortedEnvs[i - 1]->id + " 底 " +
-                    std::to_string(prevBottom) + " vs " + sortedEnvs[i]->id +
-                    " 顶 " + std::to_string(sortedEnvs[i]->frame.y) + "）");
+                sortedGroups[i]->frame.y >= prevBottom - 0.5f,
+                "D3：索引列分组头纵向重叠（" + sortedGroups[i - 1]->id + " 底 " +
+                    std::to_string(prevBottom) + " vs " + sortedGroups[i]->id +
+                    " 顶 " + std::to_string(sortedGroups[i]->frame.y) + "）");
+        }
+        for (const auto* header : groupHeaders) {
+            checks.expectNear("D3：索引列分组头行盒高", header->frame.height, 32.0f,
+                              "release_detail_draw.cpp:1368 kGroupH=32");
         }
 
-        // 服务卡 / 步骤格不越出所属分组横向边界（id 前缀归属，0.5 容差）
+        // 索引服务项纵向不重叠（kEntryH=56 + 6 间距，draw.cpp:1367/1588），
+        // 且不越出索引列左右边界（.hit x=4 / w=kIndexW-8，draw.cpp:1522-1524）。
+        std::vector<const core::dsl::Element*> sortedEntries = indexEntries;
+        std::sort(sortedEntries.begin(), sortedEntries.end(),
+                  [](const core::dsl::Element* a, const core::dsl::Element* b) {
+                      return a->frame.y < b->frame.y;
+                  });
+        for (std::size_t i = 1; i < sortedEntries.size(); ++i) {
+            const float prevBottom =
+                sortedEntries[i - 1]->frame.y + sortedEntries[i - 1]->frame.height;
+            checks.expectTrue(
+                sortedEntries[i]->frame.y >= prevBottom - 0.5f,
+                "D3：索引服务项纵向重叠（" + sortedEntries[i - 1]->id + " 底 " +
+                    std::to_string(prevBottom) + " vs " + sortedEntries[i]->id +
+                    " 顶 " + std::to_string(sortedEntries[i]->frame.y) + "）");
+        }
         const auto withinX = [](const core::dsl::Element* node,
                                 const core::dsl::Element* container) {
             return node->frame.x >= container->frame.x - 0.5f &&
                    node->frame.x + node->frame.width <=
                        container->frame.x + container->frame.width + 0.5f;
         };
-        for (const auto* svc : svcBgs) {
-            const std::string svcId = stripNs(svc->id);
-            const std::string envId = svcId.substr(0, svcId.find(".svc."));
-            const auto* envBg = ui->find(envId + ".bg");
-            checks.expectTrue(envBg != nullptr && withinX(svc, envBg),
-                              "D3：服务卡横向越出所属分组：" + svcId);
+        checks.expectTrue(indexBg != nullptr, "D3：索引列底缺失（release.detail.index.bg）");
+        if (indexBg != nullptr) {
+            checks.expectNear("D3：索引列宽", indexBg->frame.width, 264.0f,
+                              "release_detail_draw.cpp:1365 kIndexW=264");
+            for (const auto* entry : indexEntries) {
+                checks.expectTrue(withinX(entry, indexBg),
+                                  "D3：服务索引项横向越出索引列：" +
+                                      stripNs(entry->id));
+            }
+            for (const auto* header : groupHeaders) {
+                checks.expectTrue(withinX(header, indexBg),
+                                  "D3：分组头横向越出索引列：" +
+                                      stripNs(header->id));
+            }
         }
+
+        // 焦点卡不越出焦点区（焦点区 = 索引列右侧 kColumnGap 起的剩余宽度，
+        // draw.cpp:1595 width - kFocusX）：卡左缘 >= 索引列右缘 + 16，右缘 <= 焦点区右缘。
+        const auto* focusStack = ui->find("release.detail.focus");
+        for (const auto* svc : svcBgs) {
+            if (indexBg != nullptr) {
+                checks.expectNear(
+                    "D3：焦点卡左缘 = 索引列宽 + 列间距",
+                    svc->frame.x - indexBg->frame.x, 280.0f,
+                    "release_detail_draw.cpp:1365/1366/1369 "
+                    "kFocusX = kIndexW(264) + kColumnGap(16)");
+            }
+            if (focusStack != nullptr) {
+                const float focusRight = focusStack->frame.x + focusStack->frame.width;
+                checks.expectTrue(
+                    svc->frame.x + svc->frame.width <= focusRight + 0.5f,
+                    "D3：焦点卡横向越出焦点区：" + stripNs(svc->id));
+            }
+        }
+        // 步骤格不越出所属（焦点区唯一）服务卡。
         for (const auto* step : stepLabels) {
             const std::string stepId = stripNs(step->id);
             const std::string svcId = stepId.substr(0, stepId.find(".step."));
