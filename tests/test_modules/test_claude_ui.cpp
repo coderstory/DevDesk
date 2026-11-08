@@ -1562,15 +1562,16 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
         DOCTEST_CHECK(floatEq(panel->frame.width, 760.0f));
         DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
 
-        // 单列纵排：名称行在认证行上方（y=104 < 314）；两标签同 x=28
+        // 单列纵排：名称行在认证行上方（need156 壳迁移后 y=121 < 331，内容区
+        // 自头区 69 起、tab 行原 52 系坐标整体 +17）；两标签同 x=28
         const auto* nameLabel = ui.find("claude.form.basic.name.label");
         const auto* authLabel = ui.find("claude.form.basic.authfield.label");
         DOCTEST_REQUIRE(nameLabel != nullptr);
         DOCTEST_REQUIRE(authLabel != nullptr);
         DOCTEST_CHECK(floatEq(nameLabel->frame.x - px, 28.0f));
-        DOCTEST_CHECK(floatEq(nameLabel->frame.y - py, 104.0f));
+        DOCTEST_CHECK(floatEq(nameLabel->frame.y - py, 121.0f));
         DOCTEST_CHECK(floatEq(authLabel->frame.x - px, 28.0f));
-        DOCTEST_CHECK(floatEq(authLabel->frame.y - py, 314.0f));
+        DOCTEST_CHECK(floatEq(authLabel->frame.y - py, 331.0f));
         DOCTEST_CHECK(authLabel->frame.y > nameLabel->frame.y);
 
         // 名称输入 / 认证下拉：全宽 704（= 760-56），右缘 == 内容右缘
@@ -1582,8 +1583,8 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
         DOCTEST_CHECK(floatEq(nameInput->frame.width, 704.0f));
         DOCTEST_CHECK(floatEq(ddwrap->frame.x - px, 28.0f));
         DOCTEST_CHECK(floatEq(ddwrap->frame.width, 704.0f));
-        DOCTEST_CHECK(floatEq(nameInput->frame.y - py, 122.0f));
-        DOCTEST_CHECK(floatEq(ddwrap->frame.y - py, 332.0f));
+        DOCTEST_CHECK(floatEq(nameInput->frame.y - py, 139.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.y - py, 349.0f));
         DOCTEST_CHECK(nameInput->frame.x + nameInput->frame.width <=
                       px + 760.0f - 28.0f + 0.5f);
         DOCTEST_CHECK(ddwrap->frame.x + ddwrap->frame.width <=

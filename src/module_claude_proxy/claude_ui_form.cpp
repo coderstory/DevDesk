@@ -12,6 +12,7 @@
 #include <components/tabs.h>
 #include <components/tooltip.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/wtab.h>
 
 #include <algorithm>
@@ -375,17 +376,19 @@ void drawFormModelsTab(eui::Ui& ui, float w,
             .build();
     }
 
+    // need156 壳迁移：hint 两行自 446/464 上移贴槽位网格（原视觉位压底区细线/
+    // 按钮带；顺带消除网格下 128px 空带——#195 反样本「中间大段空白」）。
     ui.text("claude.form.slots.hint1.icon")
-        .position(28.0f, 446.0f).size(14.0f, core::theme::scaled(16.0f))
+        .position(28.0f, 330.0f).size(14.0f, core::theme::scaled(16.0f))
         .icon(0xF05A).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.hint1")
-        .position(46.0f, 446.0f).size(w - 74.0f, core::theme::scaled(16.0f))
+        .position(46.0f, 330.0f).size(w - 74.0f, core::theme::scaled(16.0f))
         .text("显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.hint2")
-        .position(28.0f, 464.0f).size(w - 56.0f, core::theme::scaled(16.0f))
+        .position(28.0f, 348.0f).size(w - 56.0f, core::theme::scaled(16.0f))
         .text("    槽位留空 = 不写入该 env 键，Claude Code 用内置映射")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
@@ -503,19 +506,28 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
 const float h = 540.0f;
     const bool isEdit = (f.formEditId_ != 0);
 
-    ui_kit::DialogFrame frame;
-    frame.id = "claude.dialog.form";
-    frame.width = ui_kit::DialogWidth::Form;
-    frame.height = h;
-    frame.open = f.formOpen_;
-    frame.onOpenChange = [fp = &f](bool v) { fp->formOpen_ = v; };
+    // need156：壳改走标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮对）。内容区自
+    // y=69 起（原 tab 行 y=52，整体 +17 平移）：tab 行与三页内容包进 body stack
+    // 按原坐标系平移（stack 子元素相对栈原点定位，同 authfield ddwrap 用法），
+    // 栈内行布局字面量零改动。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "claude.dialog.form";
+    shell.width = ui_kit::DialogWidth::Form;
+    shell.height = h;
+    shell.open = f.formOpen_;
+    shell.title = isEdit ? "编辑 Profile" : "新建 Profile";
+    shell.cancel = {"取消", [fp = &f] { fp->formOpen_ = false; }};
+    shell.confirm.label =
+        isEdit ? "保存" : (f.formPrechecking_ ? "预检中…" : "创建");
+    shell.confirm.onClick = [fp = &f, hooks] { submitForm(*fp, hooks); };
+    shell.onOpenChange = [fp = &f](bool v) { fp->formOpen_ = v; };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(
-                ui, "claude.dialog.form.title", w,
-                isEdit ? "编辑 Profile" : "新建 Profile", ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
-                {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
-
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        ui.stack("claude.dialog.form.body")
+            .position(0.0f, area.y - 52.0f)
+            .size(w, h - (area.y - 52.0f))
+            .content([&] {
             // S3.10 弹窗级小 Tab：块面式 32px/12px/13px（淘汰下划线式 components::tabs）
             {
                 const char* kTabLabels[] = {"基础信息", "模型配置", "环境变量"};
@@ -542,7 +554,8 @@ const float h = 540.0f;
                 drawFormEnvTab(ui, w, t, themeTokens, f);
             }
 
-            // 预检进度/错误（基础页之外也要看得到：预检期间允许停在模型/env 页）
+            // 预检进度/错误（基础页之外也要看得到：预检期间允许停在模型/env 页）；
+            // h−121：栈内坐标（视觉位 = +17 平移后的原 h−104）
             if (f.formTab_ != 0) {
                 const std::string statusLine = f.formPrechecking_
                     ? std::string("正在验证可用性（连通性/凭证，最长 5 秒）…")
@@ -551,23 +564,11 @@ const float h = 540.0f;
                                        12.0f,
                                        f.formPrechecking_ ? t.colors.info
                                                           : t.colors.errorText,
-                                       {.y = h - 104.0f, .height = 18.0f,
+                                       {.y = h - 121.0f, .height = 18.0f,
                                         .lineHeight = 18.0f, .skipIfEmpty = true});
             }
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = 14.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [fp = &f] { fp->formOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = isEdit ? "保存"
-                                   : (f.formPrechecking_ ? "预检中…" : "创建");
-            confirm.fontSize = 14.0f;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [fp = &f, hooks] { submitForm(*fp, hooks); };
-            ui_kit::drawDialogButtons(ui, "claude.dialog.form", w, h, cancel, confirm, t,
-                                      themeTokens);
+            })
+            .build();
     });
 }
 
@@ -577,43 +578,35 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                              FormState& f,
                              const std::function<void(int64_t id)>& onConfirmDelete) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
-    const float h = 190.0f;
+    // need156：壳改走标准弹窗壳；190 低于壳最小 240 抬到下限（规范 §3.4），
+    // 确认删除走壳危险变体（原 DangerSoft 级，语义同源）。
+    const float h = 240.0f;
 
-    ui_kit::DialogFrame frame;
-    frame.id = "claude.dialog.delete";
-    frame.width = ui_kit::DialogWidth::Compact;
-    frame.height = h;
-    frame.open = f.deleteConfirmOpen_;
-    frame.onOpenChange = [fp = &f](bool v) { fp->deleteConfirmOpen_ = v; };
+    ui_kit::DialogShellSpec shell;
+    shell.id = "claude.dialog.delete";
+    shell.width = ui_kit::DialogWidth::Compact;
+    shell.height = h;
+    shell.open = f.deleteConfirmOpen_;
+    shell.title = "确认删除？";
+    shell.dangerConfirm = true;
+    shell.cancel = {"取消", [fp = &f] { fp->deleteConfirmOpen_ = false; }};
+    shell.confirm = {"确认删除", [fp = &f, onConfirmDelete] {
+        const int64_t id = fp->deleteTargetId_;
+        fp->deleteConfirmOpen_ = false;
+        onConfirmDelete(id);
+    }};
+    shell.onOpenChange = [fp = &f](bool v) { fp->deleteConfirmOpen_ = v; };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "claude.dialog.delete.title", w, "确认删除？",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
             // 文本 wrap + 高 60：长 Profile 名换行，避免 EUI 文本不裁剪被画出右缘
             ui_kit::drawDialogText(
                 ui, "claude.dialog.delete.msg", w,
                 "将删除 Profile「" + f.deleteTargetName_ +
                     "」及其保存的 API Key，不可恢复。",
                 t.sizes.fontSizeSmall, t.colors.textSecondary,
-                {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f,
+                {.y = area.y, .height = 60.0f, .lineHeight = 20.0f,
                  .wrap = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = 14.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [fp = &f] { fp->deleteConfirmOpen_ = false; };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "确认删除";
-            confirm.fontSize = 14.0f;
-            confirm.style = ui_kit::DialogButtonStyle::DangerSoftThemed;
-            confirm.onClick = [fp = &f, onConfirmDelete] {
-                const int64_t id = fp->deleteTargetId_;
-                fp->deleteConfirmOpen_ = false;
-                onConfirmDelete(id);
-            };
-            ui_kit::drawDialogButtons(ui, "claude.dialog.delete", w, h, cancel, confirm,
-                                      t, themeTokens);
     });
 }
 

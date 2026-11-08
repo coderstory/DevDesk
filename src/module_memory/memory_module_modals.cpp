@@ -11,29 +11,42 @@ void MemoryModule::composeEditDialog(eui::Ui& ui, const eui::Screen& screen,
                                      const core::theme::Tokens& t,
                                      const components::theme::ThemeColorTokens& ct) {
     if (editingId_.empty()) return;
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    ui_kit::DialogFrame frame;
-    frame.id = "memory.dialog.edit";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = 240.0f;
-    frame.open = true;
-    frame.onOpenChange = [this](bool v) {
+    // need156：壳改走标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮对）；内容区
+    // 自 y=69 起，按钮归底区（旧 .go 主钮 → 壳 .confirm，节点语义同源）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "memory.dialog.edit";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = true;
+    shell.title = "编辑后接受";
+    shell.cancel = {"取消", [this] { editingId_.clear(); }};
+    shell.confirm = {"接受", [this] {
+        const std::string id = editingId_;
+        const std::string text = editText_;
+        editingId_.clear();
+        auto r = panel_.editThenAccept(id, text);
+        if (r.isFail()) {
+            showToast("未能执行", r.errorMessage(), true);
+        } else {
+            showToast("已接受", "编辑后的记忆已执行");
+        }
+    }};
+    shell.onOpenChange = [this](bool v) {
         if (!v) editingId_.clear();
     };
-    ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
-        ui_kit::drawDialogTitle(ui, "memory.dialog.edit.title", w, "编辑后接受",
-                                ui_kit::kDialogTitleFontSize, t.colors.textPrimary, {});
+    ui_kit::drawDialogShell(ui, screen, shell, t, ct,
+                            [&](const ui_kit::DialogContentArea& area) {
         ui.text("memory.dialog.edit.hint")
-            .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(20.0f))
+            .position(area.x, area.y)
+            .size(area.w, core::theme::scaled(20.0f))
             .text("修改记忆正文后接受；引擎将按新正文执行。")
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
         components::input(ui, "memory.dialog.edit.input")
-            .position(ui_kit::kDialogInsetX, 84.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, 40.0f)
+            .position(area.x, area.y + 28.0f)
+            .size(area.w, 40.0f)
             .value(editText_)
             .placeholder("记忆正文")
             .fontSize(core::theme::scaled(14.0f))
@@ -41,25 +54,6 @@ void MemoryModule::composeEditDialog(eui::Ui& ui, const eui::Screen& screen,
             .onChange([this](const std::string& v) { editText_ = v; })
             .onCancel([this] { editingId_.clear(); })
             .build();
-        ui_kit::button(ui, "memory.dialog.edit.cancel", "取消",
-                       ui_kit::ButtonLevel::Secondary, ui_kit::kDialogInsetX,
-                       150.0f, 110.0f, ui_kit::kButtonHeight, t,
-                       {[this] { editingId_.clear(); }});
-        ui_kit::button(ui, "memory.dialog.edit.go", "接受",
-                       ui_kit::ButtonLevel::Primary,
-                       w - ui_kit::kDialogBodyInsetX - 110.0f, 150.0f, 110.0f,
-                       ui_kit::kButtonHeight, t,
-                       {[this] {
-                           const std::string id = editingId_;
-                           const std::string text = editText_;
-                           editingId_.clear();
-                           auto r = panel_.editThenAccept(id, text);
-                           if (r.isFail()) {
-                               showToast("未能执行", r.errorMessage(), true);
-                           } else {
-                               showToast("已接受", "编辑后的记忆已执行");
-                           }
-                       }});
     });
 }
 
@@ -67,22 +61,30 @@ void MemoryModule::composeMaskModal(eui::Ui& ui, const eui::Screen& screen,
                                     const core::theme::Tokens& t,
                                     const components::theme::ThemeColorTokens& ct) {
     if (!maskModalOpen_) return;
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    ui_kit::DialogFrame frame;
-    frame.id = "memory.dialog.mask";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = 220.0f;
-    frame.open = true;
-    frame.onOpenChange = [this](bool v) {
+    // need156：壳改走标准弹窗壳；220 低于壳最小 240 抬到下限（规范 §3.4），
+    // 确认钮走壳危险变体（原 Danger 级，语义同源）。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "memory.dialog.mask";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 240.0f;
+    shell.open = true;
+    shell.title = "确认关闭脱敏？";
+    shell.dangerConfirm = true;
+    shell.cancel = {"取消", [this] { maskModalOpen_ = false; }};
+    shell.confirm = {"仍要关闭", [this] {
+        maskModalOpen_ = false;
+        panel_.setSanitizeEnabled(false);
+        showToast("脱敏已关闭", "内容将原样出机，用完请尽快重新开启", true);
+    }};
+    shell.onOpenChange = [this](bool v) {
         if (!v) maskModalOpen_ = false;
     };
-    ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
+    ui_kit::drawDialogShell(ui, screen, shell, t, ct,
+                            [&](const ui_kit::DialogContentArea& area) {
         // 设计稿逐字文案（mask-modal）
-        ui_kit::drawDialogTitle(ui, "memory.dialog.mask.title", w,
-                                "确认关闭脱敏？", ui_kit::kDialogTitleFontSize, t.colors.errorText, {});
         ui.text("memory.dialog.mask.body")
-            .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(64.0f))
+            .position(area.x, area.y)
+            .size(area.w, core::theme::scaled(64.0f))
             .wrap()
             .text("关闭后，密钥/手机号等敏感信息将原样发送给云端大模型。"
                   "仅建议临时排查时使用，用完请及时重新开启。")
@@ -90,20 +92,6 @@ void MemoryModule::composeMaskModal(eui::Ui& ui, const eui::Screen& screen,
             .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)
             .build();
-        ui_kit::button(ui, "memory.dialog.mask.cancel", "取消",
-                       ui_kit::ButtonLevel::Secondary, ui_kit::kDialogInsetX,
-                       150.0f, 110.0f, ui_kit::kButtonHeight, t,
-                       {[this] { maskModalOpen_ = false; }});
-        ui_kit::button(ui, "memory.dialog.mask.confirm", "仍要关闭",
-                       ui_kit::ButtonLevel::Danger,
-                       w - ui_kit::kDialogBodyInsetX - 130.0f, 150.0f, 130.0f,
-                       ui_kit::kButtonHeight, t,
-                       {[this] {
-                           maskModalOpen_ = false;
-                           panel_.setSanitizeEnabled(false);
-                           showToast("脱敏已关闭",
-                                     "内容将原样出机，用完请尽快重新开启", true);
-                       }});
     });
 }
 
@@ -111,22 +99,39 @@ void MemoryModule::composeClearModal(eui::Ui& ui, const eui::Screen& screen,
                                      const core::theme::Tokens& t,
                                      const components::theme::ThemeColorTokens& ct) {
     if (!clearModalOpen_) return;
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    ui_kit::DialogFrame frame;
-    frame.id = "memory.dialog.clear";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = 260.0f;
-    frame.open = true;
-    frame.onOpenChange = [this](bool v) {
+    const auto snap = panel_.snapshot();
+    // need156：壳改走标准弹窗壳；输入校验未武装（未输入「清除」）时主钮禁用
+    //（规范 §4.3），武装后走壳危险变体。280 = 原 260 抬高：正文 64 + 输入 40
+    // 在壳内容区（h−158）内放不下。
+    const bool armed = clearInput_ == "清除";
+    ui_kit::DialogShellSpec shell;
+    shell.id = "memory.dialog.clear";
+    shell.width = ui_kit::DialogWidth::Standard;
+    shell.height = 280.0f;
+    shell.open = true;
+    shell.title = "清除全部记忆？";
+    shell.dangerConfirm = true;
+    shell.cancel = {"取消", [this] { clearModalOpen_ = false; }};
+    shell.confirm.label = "确认清除";
+    shell.confirm.enabled = armed;
+    shell.confirm.onClick = [this, armed] {
+        if (!armed) return;
+        clearModalOpen_ = false;
+        auto r = panel_.clearAllOwnStores();
+        if (r.isFail()) {
+            showToast("清除失败", r.errorMessage(), true);
+        } else {
+            showToast("已清除", "面板库已清空（引擎侧记忆不在本操作范围）", true);
+        }
+    };
+    shell.onOpenChange = [this](bool v) {
         if (!v) clearModalOpen_ = false;
     };
-    const auto snap = panel_.snapshot();
-    ui_kit::drawDialogFrame(ui, screen, frame, ct, [&] {
-        ui_kit::drawDialogTitle(ui, "memory.dialog.clear.title", w,
-                                "清除全部记忆？", ui_kit::kDialogTitleFontSize, t.colors.errorText, {});
+    ui_kit::drawDialogShell(ui, screen, shell, t, ct,
+                            [&](const ui_kit::DialogContentArea& area) {
         ui.text("memory.dialog.clear.body")
-            .position(ui_kit::kDialogInsetX, 56.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, core::theme::scaled(64.0f))
+            .position(area.x, area.y)
+            .size(area.w, core::theme::scaled(64.0f))
             .wrap()
             .text("将删除本机面板库全部 " +
                   std::to_string(snap.proposalTotal) +
@@ -137,8 +142,8 @@ void MemoryModule::composeClearModal(eui::Ui& ui, const eui::Screen& screen,
             .color(t.colors.textSecondary)
             .build();
         components::input(ui, "memory.dialog.clear.input")
-            .position(ui_kit::kDialogInsetX, 128.0f)
-            .size(w - ui_kit::kDialogBodyInsetX, 40.0f)
+            .position(area.x, area.y + 72.0f)
+            .size(area.w, 40.0f)
             .value(clearInput_)
             .placeholder("输入：清除")
             .fontSize(core::theme::scaled(14.0f))
@@ -146,28 +151,6 @@ void MemoryModule::composeClearModal(eui::Ui& ui, const eui::Screen& screen,
             .onChange([this](const std::string& v) { clearInput_ = v; })
             .onCancel([this] { clearModalOpen_ = false; })
             .build();
-        ui_kit::button(ui, "memory.dialog.clear.cancel", "取消",
-                       ui_kit::ButtonLevel::Secondary, ui_kit::kDialogInsetX,
-                       190.0f, 110.0f, ui_kit::kButtonHeight, t,
-                       {[this] { clearModalOpen_ = false; }});
-        const bool armed = clearInput_ == "清除";
-        ui_kit::button(ui, "memory.dialog.clear.go", "确认清除",
-                       armed ? ui_kit::ButtonLevel::Danger
-                             : ui_kit::ButtonLevel::Secondary,
-                       w - ui_kit::kDialogBodyInsetX - 130.0f, 190.0f, 130.0f,
-                       ui_kit::kButtonHeight, t,
-                       {[this, armed] {
-                           if (!armed) return;
-                           clearModalOpen_ = false;
-                           auto r = panel_.clearAllOwnStores();
-                           if (r.isFail()) {
-                               showToast("清除失败", r.errorMessage(), true);
-                           } else {
-                               showToast("已清除",
-                                         "面板库已清空（引擎侧记忆不在本操作范围）",
-                                         true);
-                           }
-                       }});
     });
 }
 

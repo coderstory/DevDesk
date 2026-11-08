@@ -9,6 +9,7 @@
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/materials.h>
 #include <components/scrollview.h>
 #include <components/tooltip.h>
@@ -719,40 +720,30 @@ void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& themeTokens,
                               ProfileListState& st) {
-    constexpr float h = 156.0f;
+    // need156：壳改走标准弹窗壳；156 低于壳最小 240 抬到下限（规范 §3.4）。
+    constexpr float h = 240.0f;
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
-    ui_kit::DialogFrame frame;
-    frame.id = "claude.dialog.switch";
-    frame.width = ui_kit::DialogWidth::Compact;
-    frame.height = h;
-    frame.open = st.switchConfirmOpen_;
-    frame.onOpenChange = [sp = &st](bool v) { sp->switchConfirmOpen_ = v; };
+    ui_kit::DialogShellSpec shell;
+    shell.id = "claude.dialog.switch";
+    shell.width = ui_kit::DialogWidth::Compact;
+    shell.height = h;
+    shell.open = st.switchConfirmOpen_;
+    shell.title = "切换 Profile";
+    shell.cancel = {"取消", [sp = &st] { sp->switchConfirmOpen_ = false; }};
+    shell.confirm = {"确认切换", [sp = &st] {
+        sp->selectedId_ = sp->switchTargetId_;
+        sp->switchConfirmOpen_ = false;
+    }};
+    shell.onOpenChange = [sp = &st](bool v) { sp->switchConfirmOpen_ = v; };
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        ui_kit::drawDialogTitle(ui, "claude.dialog.switch.title", w,
-                                "切换 Profile", ui_kit::kDialogTitleFontSize, t.colors.textPrimary);
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
         ui_kit::drawDialogText(
             ui, "claude.dialog.switch.msg", w,
             "切换到\"" + st.switchTargetName_ + "\"？代理配置将立即生效",
             14.0f, t.colors.textSecondary,
-            {.y = 56.0f, .height = 40.0f, .lineHeight = 20.0f,
+            {.y = area.y, .height = 40.0f, .lineHeight = 20.0f,
              .wrap = true});
-
-        ui_kit::DialogButtonSpec cancel;
-        cancel.label = "取消";
-        cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-        cancel.onClick = [sp = &st] { sp->switchConfirmOpen_ = false; };
-        ui_kit::DialogButtonSpec confirm;
-        confirm.label = "确认切换";
-        confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-        confirm.onClick = [sp = &st] {
-            sp->selectedId_ = sp->switchTargetId_;
-            sp->switchConfirmOpen_ = false;
-        };
-        ui_kit::drawDialogButtons(ui, "claude.dialog.switch", w, h, cancel,
-                                  confirm, t, themeTokens);
     });
 }
 
