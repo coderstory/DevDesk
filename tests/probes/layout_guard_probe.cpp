@@ -464,10 +464,19 @@ int main(int argc, char* argv[]) {
                     const core::dsl::Element* picker =
                         ui->find("release.newtask.datepicker");
                     const core::dsl::Element* hit2 = ui->find("release.newtask.date.hit");
+
                     if (picker != nullptr && hit2 != nullptr) {
-                        // run2 实测：release.newtask.datepicker 是全幅层（y≈0），
-                        // 真日历面板 = 层内面积最大的子元素（同弹窗 backdrop 口径）
-                        const core::dsl::Element* pickerPanel = resolvePanel(picker);
+                        // datepicker 根是全幅层（backdrop 撑满 1200×801 @0,0），真日历
+                        // 面板是它的兄弟子元素。**按 id 直取**，不要用「面积最大的
+                        // 子元素」启发式——backdrop 面积必然远大于面板（1200×801 vs
+                        // 380×260），启发式会稳定选中 backdrop，于是 gap 算成
+                        // 「0 − 触发器底」的负值假红（池 bug240 实测：真实面板
+                        // y=270.5 对上 date.hit 底 259.5，gap=11px 合规）。
+                        const core::dsl::Element* pickerPanel =
+                            ui->find("release.newtask.datepicker.panel");
+                        if (pickerPanel == nullptr) {
+                            pickerPanel = ui->find("release.newtask.datepicker.panel.bg");
+                        }
                         if (pickerPanel == nullptr) pickerPanel = picker;
                         Violation v4;
                         // 日历面板天然比触发器高得多（run1：中心 dy=172 被中心距

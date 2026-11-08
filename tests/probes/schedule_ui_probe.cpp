@@ -37,11 +37,13 @@
 #include "module_schedule/schedule_store.h"
 #include "module_schedule/schedule_ui_list.h"  // columnCountForWidth（列数断点断言）
 
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace app {
 const app::DslAppConfig& dslAppConfig() {
@@ -544,9 +546,18 @@ int main(int argc, char* argv[]) {
                           << c0->pressedScale << "（期望 0.965）\n";
                 passed = false;
             }
-            // 真实指针进卡（不直调 onHover）：tint 出现 + hover 不放大不变形
+            // 真实指针进卡（不直调 onHover）：tint 出现 + hover 终态不放大不变形。
+            // ⚠️ 果冻 v2（need201）把 hover 从「终态式 1.02」改成**一次性 560ms
+            // 压扁-拉伸-回弹时间线**：动画窗内必然出现形变中间帧（P1 压扁段
+            // radius 14→10、scaleY 0.90）。原断言等 6 帧后取样，正好落在 P1 段
+            // → 全量档下偶发红（池 bug240）。
+            // ⚠️ 关键：jellyFrame 的 elapsed 用 **steady_clock 真实时间**（jelly.h:166-175），
+            // 不是帧计数——连续 compose 40 帧只过几毫秒，等帧数等不到动画结束。
+            // 必须按墙钟等过 kTotalMs(560ms) 再取样，随后 compose 让新目标值落到元素上。
             hoverAt(c0->frame.x + c0->frame.width * 0.5f,
                     c0->frame.y + c0->frame.height * 0.5f, 6);
+            std::this_thread::sleep_for(std::chrono::milliseconds(650));
+            settleFrames(2);
             expectTintOpacity("schedule.list.user.0", 1.0f, &passed);
             if (const auto* hov = findElement("schedule.list.user.0.bg")) {
                 std::cout << "C hover 圆角 " << hov->radius << "（常态 "
