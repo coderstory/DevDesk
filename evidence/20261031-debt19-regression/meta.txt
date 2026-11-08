@@ -1,0 +1,4 @@
+slug: debt19-regression
+date: 2026-10-31 17:53:34
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  bash /Users/coderstory/dev/DevDesk/scripts/build-test-run.sh --no-run 

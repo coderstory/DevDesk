@@ -1,0 +1,14 @@
+[0m
+> build · iceman-contributor-free
+[0m⚙ [0mexecute {"code":"await tools.search({ query: \"pool_stats devflow\" });"} 
+[0m→ [0mSkill "pool-usage" 
+[0m✱ [0mGlob "**/*devflow*pool*" [90m0 matches[0m
+[0m$ [0mfind /Users/coderstory -name "*devflow*pool*" -not -path "*/node_modules/*" 2>/dev/null | head -15
+(no output)
+> build · iceman-contributor-free
+[0m⚙ [0mexecute {"code":"await tools.search({ query: \"pool_stats\", namespace: \"devflow-pool\" });"} 
+> build · iceman-contributor-free
+[0m⚙ [0mexecute {"code":"await tools[\"devflow-pool\"].pool_stats({});"} 
+> build · iceman-contributor-free
+total 139（open 17）：关闭 111 / 挂起 10 / 拒绝 11 / 在池 3 / 待验收 2 / 进行中 2
+# Skill: pool-usage

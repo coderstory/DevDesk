@@ -1,0 +1,15 @@
+[1/13] PASS assert missing app.sidebar.item.Memory.hit
+[2/13] PASS assert exists app.sidebar.item.Todo.hit
+[3/13] PASS click app.sidebar.item.Settings.hit（命中回读: app.sidebar.item.Settings.hit）
+[4/13] PASS wait exists settings.tabs.1.hit
+[5/13] PASS click settings.tabs.1.hit（命中回读: app.settings.tabs.1.hit）
+[6/13] PASS wait exists settings.card.modules.sw.4.track
+[7/13] PASS click settings.card.modules.sw.4.track（命中回读: app.settings.card.modules.sw.4.track）
+[8/13] PASS wait exists app.sidebar.item.Agent.hit
+[9/13] PASS assert exists app.sidebar.item.Agent.hit
+[10/13] PASS click settings.card.modules.sw.4.track（命中回读: app.settings.card.modules.sw.4.track）
+[11/13] PASS wait missing app.sidebar.item.Agent.hit
+[12/13] PASS assert missing app.sidebar.item.Agent.hit
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/settings-toggle.png (2400x2000)
+[13/13] PASS screenshot settings-toggle.png（截图: /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/settings-toggle.png）
+ui_driver: 退出码 0（13 步）

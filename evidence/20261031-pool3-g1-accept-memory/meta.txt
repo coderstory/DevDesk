@@ -1,0 +1,4 @@
+slug: pool3-g1-accept-memory
+date: 2026-10-31 19:49:42
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  bash scripts/build-test-run.sh --filter memory --no-run 

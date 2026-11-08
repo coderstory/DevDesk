@@ -1,0 +1,4 @@
+slug: pool52-accept-g1-filemd
+date: 2026-10-31 22:01:33
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  build/tests/devdesk_tests file:test_markdown,file:test_md_ 

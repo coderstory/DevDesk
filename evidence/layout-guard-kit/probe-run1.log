@@ -1,0 +1,25 @@
+── §0 kit 自检 ──
+layout_guard_probe: FAIL——自检①（红例构造，验证返回 false）内容底 302 > 298
+── §1 settings 域 ──
+  [settings.card.modules] 卡 1136x254 @tab1
+layout_guard_probe: FAIL——settings.card.modules 100% 档内容底 : 字号溢出 content@32.0 内容底 362.0 > 卡底-余量 360.0（卡 y=108.0 h=254.0，余量 2.0）
+  [settings.card.reminder] 卡 1136x92 @tab1
+layout_guard_probe: FAIL——settings.card.reminder 100% 档内容底 : 字号溢出 content@32.0 内容底 470.0 > 卡底-余量 468.0（卡 y=378.0 h=92.0，余量 2.0）
+layout_guard_probe: FAIL——settings.card.modules 140% 档内容底 : 字号溢出 content@32.0 内容底 930.0 > 卡底-余量 928.0（卡 y=108.0 h=822.0，余量 2.0）
+layout_guard_probe: FAIL——settings.card.reminder 140% 档内容底 : 字号溢出 content@32.0 内容底 1075.0 > 卡底-余量 1073.0（卡 y=946.0 h=129.0，余量 2.0）
+── §2 release 域 ──
+  任务行卡 38 张
+layout_guard_probe: FAIL——release.tasks.card.2.prog.wrap 发丝条 : 发丝条 release.tasks.card.2.prog.track 全宽条 80.0x4.0 高度 < 下限 10.0 且 > 豁免 2.0（y=202.0）
+layout_guard_probe: FAIL——release.tasks.card.2.prog 发丝条 : 发丝条 release.tasks.card.2.prog.track 全宽条 80.0x4.0 高度 < 下限 10.0 且 > 豁免 2.0（y=202.0）
+layout_guard_probe: FAIL——release.tasks.card.2.prog.track 发丝条 : 发丝条 release.tasks.card.2.prog.track 全宽条 80.0x4.0 高度 < 下限 10.0 且 > 豁免 2.0（y=202.0）
+layout_guard_probe: FAIL——release.tasks.card.1.prog.wrap 发丝条 : 发丝条 release.tasks.card.1.prog.track 全宽条 80.0x4.0 高度 < 下限 10.0 且 > 豁免 2.0（y=266.0）
+layout_guard_probe: FAIL——release.tasks.card.1.prog 发丝条 : 发丝条 release.tasks.card.1.prog.track 全宽条 80.0x4.0 高度 < 下限 10.0 且 > 豁免 2.0（y=266.0）
+layout_guard_probe: FAIL——release.tasks.card.1.prog.track 发丝条 : 发丝条 release.tasks.card.1.prog.track 全宽条 80.0x4.0 高度 < 下限 10.0 且 > 豁免 2.0（y=266.0）
+layout_guard_probe: FAIL——新建任务弹窗 100% 档内容底 : 字号溢出 content@0.0 内容底 1000.0 > 卡底-余量 998.0（卡 y=0.0 h=1000.0，余量 2.0）
+layout_guard_probe: FAIL——新建任务弹窗 140% 档内容底 : 字号溢出 content@0.0 内容底 1000.0 > 卡底-余量 998.0（卡 y=0.0 h=1000.0，余量 2.0）
+layout_guard_probe: FAIL——datepicker 相对 date.hit 锚定 : 浮层锚定 overlay@0.0 弹层中心偏移 dx=0.0 / dy=172.0 超上限 ±40.0/±60.0
+  [未验证] 详情页未进入（点行卡无跳转）
+── §3 人为违规演示（红→还原→绿）──
+  [未验证] 演示素材缺失（settings.card.modules）
+layout_guard_probe: checks=72 passed=0
+FAIL

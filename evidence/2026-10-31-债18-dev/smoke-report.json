@@ -1,0 +1,107 @@
+{
+  "exitCode": 0,
+  "scene": "smoke-navigate.json",
+  "steps": [
+    {
+      "elapsedMs": 0.077667,
+      "error": "",
+      "hitId": "",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.sidebar.item.Home.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.649625,
+      "error": "",
+      "hitId": "app.sidebar.item.Todo.hit",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Todo.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 9.684042,
+      "error": "",
+      "hitId": "",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.h1",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.155917,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.h1",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 1.463042,
+      "error": "",
+      "hitId": "app.sidebar.item.Settings.hit",
+      "index": 5,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Settings.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 8.219458,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists settings.tabs.1.hit",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.103708,
+      "error": "",
+      "hitId": "",
+      "index": 7,
+      "passed": true,
+      "screenshot": "",
+      "target": "text '设置'",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.100584,
+      "error": "",
+      "hitId": "",
+      "index": 8,
+      "passed": true,
+      "screenshot": "",
+      "target": "geometry app.sidebar",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 428.948833,
+      "error": "",
+      "hitId": "",
+      "index": 9,
+      "passed": true,
+      "screenshot": "/Users/coderstory/dev/DevDesk/../../evidence/2026-10-31-债18-dev/smoke-settings.png",
+      "target": "smoke-settings.png",
+      "type": "screenshot"
+    },
+    {
+      "elapsedMs": 0.659458,
+      "error": "",
+      "hitId": "",
+      "index": 10,
+      "passed": true,
+      "screenshot": "",
+      "target": "smoke-dump.txt",
+      "type": "dump"
+    }
+  ],
+  "total": 10
+}

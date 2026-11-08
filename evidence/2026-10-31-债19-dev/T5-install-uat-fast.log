@@ -1,0 +1,159 @@
+=== T5 终跑（DEVDESK_FAST_TEST=1 跳 3b 守卫链——并行债-18 WIP 令 std include 守卫红，与本债无关；3c 安装段不受快路径影响）===
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 1.2.2 -> 1.2.3
+✅ 构建成功
+⏭ bundle 维护跳过（--install 流程稍后自行重组，避免同一次运行重组两遍）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+⚠️ 迭代快路径（DEVDESK_FAST_TEST=1）：跳过 3b 守卫链与守卫自检——收口前必须完整跑一次（不带此开关）
+── 安装（重组 .app → 补 assets → 覆盖 /tmp/debt19-uat/DevDesk.app）──
+✅ 版本号: 0.5.0（已写入打包产物 Info.plist）
+✅ 图标: /Users/coderstory/dev/DevDesk/installer/macos/DevDesk.icns（已入库 .icns）
+✅ 资源: /Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets
+⏭️  跳过签名（DEVDESK_SKIP_SIGN=1）——调用方必须在所有资源写完后自行签名
+⏭️  跳过 LaunchServices 注册（DEVDESK_SKIP_LSREGISTER=1）
+✅ App bundle: /Users/coderstory/dev/DevDesk/build/DevDesk.app
+
+测试：在 Finder 右击 .md 文件 → '打开方式' → 应能看到 DevDesk
+✅ assets 就位（Contents/MacOS/assets）
+✅ 版本 0.5.0（bundle Info.plist 与本次构建一致）
+✅ 防陈旧断言（bundle 内二进制（签名前））：sha256 179742278297… 与本次构建产物一致
+── 预签嵌套代码（Contents/MacOS 下常规文件）──
+── 签名（ad-hoc）: /Users/coderstory/dev/DevDesk/build/DevDesk.app ──
+/Users/coderstory/dev/DevDesk/build/DevDesk.app: replacing existing signature
+── 校验签名（codesign --verify --strict）──
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/beat-analysis-1788522548546.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/Les Gordon - IKB (Audio).mp3
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/Les Gordon - IKB (Audio).mp3
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/beat-analysis-1788522548546.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Hard drive-rafiki.svg
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.ico
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.svg
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Hard drive-rafiki.svg
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.ico
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.svg
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/mona-loading-default.gif
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template@2x.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/NotoSansSC-VF.ttf
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template@2x.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/mona-loading-default.gif
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/NotoSansSC-VF.ttf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Font Awesome 7 Free-Solid-900.otf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fluid/LDR_LLL1_0.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Font Awesome 7 Free-Solid-900.otf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/demo.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fluid/LDR_LLL1_0.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/demo.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/eui-shadertoy.schema.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/eui-shadertoy.schema.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/color_noise.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/color_noise.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/london.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/1.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/1.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/london.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/1.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/1.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/3.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/3.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/4.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/config.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/4.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/config.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/2.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/5.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/config.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/2.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/5.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/config.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/YouSheBiaoTiHei-2.ttf
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/YouSheBiaoTiHei-2.ttf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/2.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/splash.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/2.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/splash.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-win.ico
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-win.ico
+/Users/coderstory/dev/DevDesk/build/DevDesk.app: valid on disk
+/Users/coderstory/dev/DevDesk/build/DevDesk.app: satisfies its Designated Requirement
+✅ 签名有效：/Users/coderstory/dev/DevDesk/build/DevDesk.app（Identifier=com.devdesk.app，ad-hoc）
+✅ 防陈旧断言（已安装二进制（签名后））：sha256 85eada141a0d… 与本次构建产物一致
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/tray-icon-template.png
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/tray-icon-template.png
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/music/Les Gordon - IKB (Audio).mp3
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/icon.svg
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/music/Les Gordon - IKB (Audio).mp3
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/icon.svg
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/icon.png
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/icon.png
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/music/beat-analysis-1788522548546.json
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/music/beat-analysis-1788522548546.json
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/tray-icon-template@2x.png
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/Hard drive-rafiki.svg
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/tray-icon-template@2x.png
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/Hard drive-rafiki.svg
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/NotoSansSC-VF.ttf
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/icon.ico
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/NotoSansSC-VF.ttf
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/icon.ico
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/mona-loading-default.gif
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/mona-loading-default.gif
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/Font Awesome 7 Free-Solid-900.otf
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/Font Awesome 7 Free-Solid-900.otf
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/eui-shadertoy.schema.json
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fluid/LDR_LLL1_0.png
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/eui-shadertoy.schema.json
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fluid/LDR_LLL1_0.png
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/demo.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/demo.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/color_noise.png
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/color_noise.png
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/5.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/config.json
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/5.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/config.json
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/london.png
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/3.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/1.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/london.png
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/3.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/1.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/2.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/2.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/4.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/4.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/2.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/2.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/config.json
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/config.json
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/splash.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/splash.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/1.frag
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/1.frag
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/tray-icon-win.ico
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/YouSheBiaoTiHei-2.ttf
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/tray-icon-win.ico
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/YouSheBiaoTiHei-2.ttf
+--prepared:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf
+--validated:/private/tmp/debt19-uat/DevDesk.app/Contents/MacOS/assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf
+/tmp/debt19-uat/DevDesk.app: valid on disk
+/tmp/debt19-uat/DevDesk.app: satisfies its Designated Requirement
+✅ 已安装副本签名有效
+✅ 已安装：/tmp/debt19-uat/DevDesk.app（版本 0.5.0，二进制与 build/DevDesk 逐字节一致）
+real 0.92
+user 0.52
+sys 0.30
+exit=0

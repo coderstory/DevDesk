@@ -1,0 +1,25 @@
+✅ 构建成功
+✅ bundle 已与本次构建同步（/Users/coderstory/dev/DevDesk/build/DevDesk.app）
+Total:  2030 Passed: 2024 Failed: 0 
+✅ 测试全绿
+100% tests passed out of 25
+⚠️  UI probe 部分跳过（5/25），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红
+  ✅ probe 跳过登记守卫通过（CTestTestfile.cmake 里每个 probe 测试都带 77）
+✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）
+✅ Windows CI 源文件集合（389 个）交叉编译全通过
+✅ 全部 720 个文件：直接使用的 std 符号都有显式 include（本文件或它直接 include 的项目头里）
+✅ 玻璃体系守卫通过（无 drawGlassCardLayers 调用 / 无 glass_card.h include）
+  ✅ 无 Guard{{ 形态（tests/ 全扫）
+  ✅ 好树（真实仓库树逐字节拷贝）：绿
+  ✅ 坏树 [agent_include_sibling]：红 —— module_agent include 兄弟模块头（C5）
+  ✅ 坏树 [tool_ref_agent]：红 —— todo_tools 回依赖 module_agent（C6）
+  ✅ 树 [benign_style]：绿 —— 写法不同但合规：注释含裸模块名
+✅ --self-test 通过：好树绿 / 2 棵坏树各红 / 反向树绿 —— 非恒真
+  ✅ 好树：绿
+  ✅ 坏树 [badA]：红
+  ✅ 坏树 [badB]：红
+  ✅ 坏树 [badC]：红
+  ✅ 坏树 [badD]：红
+  ✅ 坏树 E：绿（非 probe 测试缺登记不算违规 —— 判据只盯 probe 标签）
+✅ --self-test 通过：好树绿 / 坏树 A·B·C·D 红 / 坏树 E 绿 —— 非恒真
+  ✅ 好树：真实源码 0 违规

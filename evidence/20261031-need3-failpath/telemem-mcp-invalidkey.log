@@ -1,0 +1,190 @@
+INFO:     Started server process [36076]
+INFO:     Waiting for application startup.
+INFO mcp.server.streamable_http_manager | StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8421 (Press CTRL+C to quit)
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: b0c551eae36e4097a4988724a0c22607
+INFO:     127.0.0.1:52596 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52597 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52598 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.vector_stores.faiss | Loaded FAISS index from /Users/coderstory/DevDesk/memory/faiss_db/mem0.faiss with 0 vectors (JSON format)
+WARNING mem0.memory.main | The 'faiss' vector store does not support keyword search. Hybrid (BM25) scoring will be disabled and search will use semantic similarity only. To enable hybrid search, switch to a store with keyword_search support (e.g. qdrant, elasticsearch, pgvector).
+INFO telemem.mcp | TeleMem initialized (config=/Users/coderstory/DevDesk/memory/telemem-config.yaml)
+INFO httpx2 | HTTP Request: POST https://open.bigmodel.cn/api/anthropic/v1/messages "HTTP/1.1 401 Unauthorized"
+ERROR telemem.mcp | TeleMem MCP tool failed
+Traceback (most recent call last):
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 117, in _call
+    result = action(_get_memory())
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 219, in action
+    memory.add(
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 340, in add
+    mem_buffer = self._extract_summary_from_messages(user_id, messages, metadata, filters, infer, prompt=prompt)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 494, in _extract_summary_from_messages
+    response = self.llm.generate_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/llms/anthropic.py", line 140, in generate_response
+    response = self.client.messages.create(**params)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/anthropic/_utils/_utils.py", line 294, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/anthropic/resources/messages/messages.py", line 1070, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/anthropic/_base_client.py", line 1679, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/anthropic/_base_client.py", line 1230, in request
+    return self._request(cast_to, options, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/anthropic/_base_client.py", line 1333, in _request
+    raise self._make_status_error_from_response(response) from None
+anthropic.AuthenticationError: Error code: 401 - {'error': {'message': '令牌已过期或验证不正确', 'type': '401'}}
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: a5da3a5d51744879a65144d8f8bec632
+INFO:     127.0.0.1:52677 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52678 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52679 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+WARNING mem0.utils.spacy_models | Failed to load spaCy lemma model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 72d4585cd4074cca9614d64f716a7a9e
+INFO:     127.0.0.1:52682 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52683 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52684 - "POST /mcp HTTP/1.1" 200 OK
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: eeff4bee06d640ab8edf816549af0ef9
+INFO:     127.0.0.1:52687 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52688 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52689 - "POST /mcp HTTP/1.1" 200 OK
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: a30d6838b28c458ab532ae53a33e4d12
+INFO:     127.0.0.1:52690 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52691 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52692 - "POST /mcp HTTP/1.1" 200 OK
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: ce8057f7b8d045909a89816e852cf246
+INFO:     127.0.0.1:52695 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52696 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52697 - "POST /mcp HTTP/1.1" 200 OK
+WARNING mem0.utils.spacy_models | Failed to load spaCy full model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 87b7a586fcf149b7b0de2447539cc95a
+INFO:     127.0.0.1:52703 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52704 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52705 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+INFO openai._base_client | Retrying request in 0.490571 seconds (retry 1 of 2)
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+INFO openai._base_client | Retrying request in 0.761078 seconds (retry 2 of 2)
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+ERROR telemem.mcp | TeleMem MCP tool failed
+Traceback (most recent call last):
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 117, in _call
+    result = action(_get_memory())
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 219, in action
+    memory.add(
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 338, in add
+    return {"results": self._add_raw_memories(messages, metadata)}
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 358, in _add_raw_memories
+    memory_id = self._create_memory(data=content, existing_embeddings={}, metadata=meta)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/memory/main.py", line 1966, in _create_memory
+    embeddings = self.embedding_model.embed(data, memory_action="add")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/embeddings/openai.py", line 55, in embed
+    return self.client.embeddings.create(**kwargs).data[0].embedding
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/resources/embeddings.py", line 113, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/_base_client.py", line 1474, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/_base_client.py", line 1248, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.InternalServerError: Error code: 502
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 7297ddcc923149a9bcdfbef42824f64d
+INFO:     127.0.0.1:52743 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52744 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52745 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+INFO openai._base_client | Retrying request in 0.417704 seconds (retry 1 of 2)
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+INFO openai._base_client | Retrying request in 0.758782 seconds (retry 2 of 2)
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+ERROR telemem.mcp | TeleMem MCP tool failed
+Traceback (most recent call last):
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 117, in _call
+    result = action(_get_memory())
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 219, in action
+    memory.add(
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 338, in add
+    return {"results": self._add_raw_memories(messages, metadata)}
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 358, in _add_raw_memories
+    memory_id = self._create_memory(data=content, existing_embeddings={}, metadata=meta)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/memory/main.py", line 1966, in _create_memory
+    embeddings = self.embedding_model.embed(data, memory_action="add")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/embeddings/openai.py", line 55, in embed
+    return self.client.embeddings.create(**kwargs).data[0].embedding
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/resources/embeddings.py", line 113, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/_base_client.py", line 1474, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/_base_client.py", line 1248, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.InternalServerError: Error code: 502
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: aecce890632b467d874d7b855cf2147e
+INFO:     127.0.0.1:52782 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52783 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52784 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+INFO openai._base_client | Retrying request in 0.403700 seconds (retry 1 of 2)
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+INFO openai._base_client | Retrying request in 0.911098 seconds (retry 2 of 2)
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 502 Bad Gateway"
+ERROR telemem.mcp | TeleMem MCP tool failed
+Traceback (most recent call last):
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 117, in _call
+    result = action(_get_memory())
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 259, in <lambda>
+    memory.search(
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 659, in search
+    memories = self._search_vector_store(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/memory/main.py", line 1638, in _search_vector_store
+    embeddings = self.embedding_model.embed(query, "search")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/mem0/embeddings/openai.py", line 55, in embed
+    return self.client.embeddings.create(**kwargs).data[0].embedding
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/resources/embeddings.py", line 113, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/_base_client.py", line 1474, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/coderstory/DevDesk/memory/venv/lib/python3.12/site-packages/openai/_base_client.py", line 1248, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.InternalServerError: Error code: 502
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 0e45cecc487448f09a832770f27b90dc
+INFO:     127.0.0.1:52846 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52847 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:52848 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 58dbd7cf07f74d8d89fcef625c190887
+INFO:     127.0.0.1:53581 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53582 - "POST /mcp HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:53583 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"

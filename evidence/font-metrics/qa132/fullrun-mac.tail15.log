@@ -1,0 +1,15 @@
+[1/2] Bumping build version
+-- Build version: 5.7.5 -> 5.7.6
+✅ 构建成功
+⚠ 未找到 7z（DEVDESK_SEVENZIP / C:/Program Files/7-Zip/7z.exe / PATH 7z|7zz 全落空）——跳过 embedding 资产解包（运行时走 HF 下载/数据根兜底；打包链须设 DEVDESK_SEVENZIP）
+── bundle 维护（检测到既有 DevDesk.app，重组装）──
+✅ bundle 已与本次构建同步（/Users/coderstory/dev/DevDesk/build/DevDesk.app）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 测试 ──
+[FAIL] agent_ui: run 失败 → OS 系统通知恰一次（id 前缀 agent-run-、正文含任务名、level=Error） [21078ms]
+Total:  2259 Passed: 2252 Failed: 1 
+❌ 测试有失败（退出码 ��上方为 FAIL 摘要；要看完整输出跑: /Users/coderstory/dev/DevDesk/build/tests/devdesk_tests）
+EXIT=1

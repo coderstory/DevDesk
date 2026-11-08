@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"帮我修一下 pool 看板的软删过滤"},"timestamp":"2026-10-31T01:00:00Z","cwd":"/Users/coderstory/dev/DevDesk"}
+["合法 JSON 但非 dict 行", 42]
+"字符串行"
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"已修复:Datasette 出全量,页面侧滤 deleted=1。"}]},"timestamp":"2026-10-31T01:01:00Z","cwd":"/Users/coderstory/dev/DevDesk"}
+{"not json line"}

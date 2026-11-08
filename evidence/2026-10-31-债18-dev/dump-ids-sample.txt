@@ -1,0 +1,152 @@
+app.fluid.anim.driver	0,0 1x1	
+app.fluid.halo.0	360,349 480x480	
+app.fluid.halo.1	490,242 600x600	
+app.fluid.halo.2	30,-93 528x528	
+app.fluid.halo.3	351,373 744x744	
+app.fluid.halo.4	70,497 432x432	
+app.fluid.halo.5	763,91 408x408	
+app.fluid.halo.6	58,567 456x456	opacity0
+app.fluid.sat.0.0	764,498 36x36	
+app.fluid.sat.0.1	609,792 27x27	
+app.fluid.sat.1.0	976,471 37x37	
+app.fluid.sat.1.1	969,574 36x36	
+app.fluid.sat.2.0	432,337 36x36	
+app.fluid.sat.2.1	57,71 39x39	
+app.fluid.sat.3.0	652,1043 59x59	
+app.fluid.sat.3.1	967,898 65x65	
+app.fluid.sat.4.0	108,604 30x30	
+app.fluid.sat.4.1	177,854 35x35	
+app.fluid.sat.5.0	1079,143 34x34	
+app.fluid.sat.5.1	983,117 26x26	
+app.fluid.sat.6.0	407,863 35x35	opacity0
+app.fluid.sat.6.1	407,684 37x37	opacity0
+app.home.act.claude	869,939 298x44	
+app.home.act.claude.bg	869,939 298x44	interactive
+app.home.act.claude.content	869,939 298x44	
+app.home.act.claude.icon	885,939 14x44	
+app.home.act.claude.text.hover	906,939 245x44	
+app.home.act.claude.text.normal	906,939 245x44	
+app.home.act.claude.text.states	906,939 245x44	
+app.home.act.newnote	240,939 298x44	
+app.home.act.newnote.bg	240,939 298x44	interactive
+app.home.act.newnote.content	240,939 298x44	
+app.home.act.newnote.text.hover	240,939 298x44	
+app.home.act.newnote.text.normal	240,939 298x44	
+app.home.act.newnote.text.states	240,939 298x44	
+app.home.act.newtodo	554,939 298x44	
+app.home.act.newtodo.bg	554,939 298x44	interactive
+app.home.act.newtodo.content	554,939 298x44	
+app.home.act.newtodo.text.hover	554,939 298x44	
+app.home.act.newtodo.text.normal	554,939 298x44	
+app.home.act.newtodo.text.states	554,939 298x44	
+app.home.actions	240,939 928x44	
+app.home.api.chart	240,270 928x649	
+app.home.api.chart.bg	240,270 928x649	
+app.home.api.chart.content	256,286 896x617	
+app.home.api.chart.empty.desc	256,660 896x18	
+app.home.api.chart.empty.icon	680,574 48x48	
+app.home.api.chart.empty.title	256,630 896x22	
+app.home.api.chart.title	256,302 896x22	
+app.home.api.chart.wrap	256,334 896x585	
+app.home.btn.refresh	1068,0 100x40	
+app.home.btn.refresh.bg	1068,0 100x40	interactive
+app.home.btn.refresh.content	1068,0 100x40	
+app.home.btn.refresh.icon	1084,0 14x40	
+app.home.btn.refresh.text.hover	1104,0 47x40	
+app.home.btn.refresh.text.normal	1104,0 47x40	
+app.home.btn.refresh.text.states	1104,0 47x40	
+app.home.greeting	240,0 828x40	
+app.home.h1	240,0 828x24	
+app.home.header	240,0 928x40	
+app.home.header.actions	1068,0 100x40	
+app.home.root	208,0 992x999	
+app.home.scroll	208,0 992x1000	interactive clip
+app.home.scroll.content	208,0 992x999	
+app.home.stat.api	998,60 169x190	
+app.home.stat.api.bg	998,60 169x190	
+app.home.stat.api.content	1018,80 129x150	
+app.home.stat.api.label	1018,80 129x18	
+app.home.stat.api.number	1018,153 129x48	
+app.home.stat.api.press	998,60 169x190	interactive
+app.home.stat.notes	429,60 169x190	
+app.home.stat.notes.bg	429,60 169x190	
+app.home.stat.notes.content	449,80 129x150	
+app.home.stat.notes.label	449,80 129x18	
+app.home.stat.notes.number	449,153 129x48	
+app.home.stat.notes.press	429,60 169x190	interactive
+app.home.stat.overdue	808,60 169x190	
+app.home.stat.overdue.bg	808,60 169x190	
+app.home.stat.overdue.content	828,80 129x150	
+app.home.stat.overdue.label	828,80 129x18	
+app.home.stat.overdue.number	828,153 129x48	
+app.home.stat.overdue.press	808,60 169x190	interactive
+app.home.stat.todo	619,60 169x190	
+app.home.stat.todo.bg	619,60 169x190	
+app.home.stat.todo.content	639,80 129x150	
+app.home.stat.todo.label	639,80 129x18	
+app.home.stat.todo.number	639,153 129x48	
+app.home.stat.todo.press	619,60 169x190	interactive
+app.home.stat.tokens	240,60 169x190	
+app.home.stat.tokens.bg	240,60 169x190	
+app.home.stat.tokens.content	260,80 129x150	
+app.home.stat.tokens.label	260,96 129x18	
+app.home.stat.tokens.number	260,169 129x48	
+app.home.stat.tokens.press	240,60 169x190	interactive
+app.home.stat.tokens.spark	260,80 73x16	
+app.home.stat.tokens.sparkwrap	260,80 73x16	
+app.home.stats	240,60 928x190	
+app.notice	992,914 180x58	opacity0 zIndex=1100
+app.notice.bg	992,914 180x58	
+app.notice.close	1132,931 28x28	
+app.notice.close.hit	1132,926 28x28	interactive disabled
+app.notice.icon	1012,934 22x22	
+app.notice.message	1048,958 74x8	
+app.notice.timer	992,914 0x0	
+app.notice.title	1048,930 74x24	
+app.page	208,0 992x1000	clip
+app.root	0,0 1200x1000	
+app.sidebar	0,0 208x1000	
+app.sidebar.bg	0,0 208x1000	
+app.sidebar.brand	0,32 208x56	
+app.sidebar.brand.mark	80,36 48x48	
+app.sidebar.brand.mark.gt1	94,53 8x7	
+app.sidebar.brand.mark.gt2	94,58 8x7	
+app.sidebar.brand.mark.tile	80,36 48x48	
+app.sidebar.brand.mark.us	103,63 9x2	
+app.sidebar.brand.mark.win	87,46 32x26	
+app.sidebar.divider	207,0 1x1000	
+app.sidebar.groupdiv	16,424 176x1	
+app.sidebar.item.About.hit	16,473 176x40	interactive
+app.sidebar.item.About.icon	28,473 28x40	
+app.sidebar.item.About.label	56,473 136x40	
+app.sidebar.item.ClaudeProxy.hit	16,292 176x40	interactive
+app.sidebar.item.ClaudeProxy.icon	28,292 28x40	
+app.sidebar.item.ClaudeProxy.label	56,292 136x40	
+app.sidebar.item.Home.hit	16,116 176x40	interactive
+app.sidebar.item.Home.icon	28,116 28x40	
+app.sidebar.item.Home.label	56,116 136x40	
+app.sidebar.item.Home.sel	16,116 176x40	
+app.sidebar.item.Home.sel.accent	16,116 3x40	
+app.sidebar.item.Home.sel.bg	16,116 176x40	
+app.sidebar.item.Home.sel.text	28,116 164x40	
+app.sidebar.item.Markdown.hit	16,160 176x40	interactive
+app.sidebar.item.Markdown.icon	28,160 28x40	
+app.sidebar.item.Markdown.label	56,160 136x40	
+app.sidebar.item.Memory.hit	16,336 176x40	interactive
+app.sidebar.item.Memory.icon	28,336 28x40	
+app.sidebar.item.Memory.label	56,336 136x40	
+app.sidebar.item.ReleaseGroup.chevron	172,380 20x40	
+app.sidebar.item.ReleaseGroup.hit	16,380 176x40	interactive
+app.sidebar.item.ReleaseGroup.icon	28,380 28x40	
+app.sidebar.item.ReleaseGroup.label	56,380 108x40	
+app.sidebar.item.Schedule.hit	16,248 176x40	interactive
+app.sidebar.item.Schedule.icon	28,248 28x40	
+app.sidebar.item.Schedule.label	56,248 136x40	
+app.sidebar.item.Settings.hit	16,429 176x40	interactive
+app.sidebar.item.Settings.icon	28,429 28x40	
+app.sidebar.item.Settings.label	56,429 136x40	
+app.sidebar.item.Todo.hit	16,204 176x40	interactive
+app.sidebar.item.Todo.icon	28,204 28x40	
+app.sidebar.item.Todo.label	56,204 136x40	
+app.sidebar.toggle	16,944 36x36	interactive
+app.sidebar.toggle.icon	16,944 36x36	

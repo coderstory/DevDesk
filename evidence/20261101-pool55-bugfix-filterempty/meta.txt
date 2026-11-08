@@ -1,0 +1,4 @@
+slug: pool55-bugfix-filterempty
+date: 2026-11-01 02:24:48
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  ./build/tests/release_probe --accept-shot-tab /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-bugfix-filterempty/accept-tab.png --accept-shot-filter-empty /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-bugfix-filterempty/accept-filter-empty.png --accept-shot-empty /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-bugfix-filterempty/accept-empty.png 

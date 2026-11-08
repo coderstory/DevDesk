@@ -1,0 +1,25 @@
+=== 假绿抽查1: --filter font_metrics_gate ===
+[PASS] font-metrics-gate: bundled font sha256 == repo baseline (asset fingerprint) [933ms]
+[PASS] font-metrics-gate: measure-width hash stable (gate corpus, body 400/600/700 + mono) [6ms]
+[PASS] font-metrics-gate: lazy fallback chain [0] == system CJK (chain order) [1ms]
+
+=== Summary ===
+Total:  3
+Passed: 3
+Failed: 0
+Skipped: 0
+Filter: --filter(0),font_metrics_gate(3) -> 3 例
+
+Top-3 slowest:
+  933ms  font-metrics-gate: bundled font sha256 == repo baseline (asset fingerprint)
+  6ms  font-metrics-gate: measure-width hash stable (gate corpus, body 400/600/700 + mono)
+  1ms  font-metrics-gate: lazy fallback chain [0] == system CJK (chain order)
+=== 假绿抽查2: --filter font ===
+  23ms  markdown: 编辑器字号读 core::theme 通道（spec缩水 B 消费端 headless）
+  19ms  markdown: 切档后编辑器/预览字号与块高同乘 fontScale（1.0 恒等 + 1.3 档）
+  18ms  todo_ui: 模块字号经 token 派生，全局缩放生效（headless）
+  16ms  todo_ui: 标签 chip 字号 10→12 / 高 18→22（不裁字、不溢出卡宽）
+  13ms  markdown: 字号偏好复用 settings editorFontSize 键（SettingsStore 直读契约）
+  6ms  settings: legacy font scale keys reset to 100
+  5ms  settings: editorFontSize 默认 15/读写往返/越界钳制（spec缩水 B）
+  5ms  wallpaper_ui: 130% 字号档 1000×640 首屏显式允许滚动（卡片高 135/192/73 同步缩放）

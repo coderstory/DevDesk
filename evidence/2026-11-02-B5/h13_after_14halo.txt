@@ -1,0 +1,17 @@
+H13: radius min=124 max=372 ratio=3
+H13: halo.0 dx=2.6499 dy=-0.0100098 dist=2.64992
+H13: halo.1 dx=-0.309082 dy=-1.96271 dist=1.9869
+H13: halo.2 dx=-4.47809 dy=-0.0741425 dist=4.4787
+H13: halo.3 dx=0.72467 dy=3.28705 dist=3.36598
+H13: halo.4 dx=-2.16864 dy=-1.13824 dist=2.4492
+H13: halo.5 dx=3.76965 dy=1.01154 dist=3.90301
+H13: halo.6 dx=-1.7959 dy=2.23138 dist=2.86432
+H13: halo.7 dx=2.43103 dy=-1.9191 dist=3.09723
+H13: halo.8 dx=-2.66492 dy=-0.863281 dist=2.80126
+H13: halo.9 dx=-4.18457 dy=1.66852 dist=4.50495
+H13: halo.10 dx=1.65985 dy=1.70624 dist=2.38041
+H13: halo.11 dx=0.715759 dy=-2.71643 dist=2.80915
+H13: halo.12 dx=2.85876 dy=0.361389 dist=2.88152
+H13: halo.13 dx=-0.858246 dy=1.54453 dist=1.76696
+H13: displacement ratio=1.6355（基线 max=2.75448）
+PASS: fluid halo 可见位移 max=4.50495px（halo.9）≥ 0.3px

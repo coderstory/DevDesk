@@ -1,0 +1,4 @@
+slug: pool3-g1-dev
+date: 2026-10-31 19:38:07
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  bash scripts/build-test-run.sh --no-run --filter 用量 

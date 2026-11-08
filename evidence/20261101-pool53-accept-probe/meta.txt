@@ -1,0 +1,4 @@
+slug: pool53-accept-probe
+date: 2026-11-01 00:16:58
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  ./build/tests/release_probe 

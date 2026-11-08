@@ -1,0 +1,17 @@
+todo_drag_probe 数据诊断: columns=4 tasks=6
+todo_drag_probe: 种子 DOM 自检通过（root/col0/card0/col1 全部在场）
+F1 PASS: 跨列拖拽 col0→col1（任务A colId=2 pos=0）
+F2 PASS: 列内重排 pos 2→0
+F3 PASS: 空列追加（col2 现含 1 卡）
+R1 PASS: 板外松手 → 不崩
+R2 PASS: ESC 中断拖拽 → 位置不变
+R3 PASS: 归档列拖拽无效化 → position 不变
+R4 PASS: 拖拽中外部删卡 → 不崩、卡已删
+S1 PASS: 搜索命中归档 → 自动展开（宽 96→193）
+S2 PASS: 清空搜索 → 还原折叠（宽 96）
+H1 PASS: 拖卡悬停窄条自动展开（悬停前宽 96→155）
+H3 PASS: 拖离取消 → 自动收回折叠（宽 96）
+H2a PASS: 展开动画有中间态（折叠 96 → 中间 139 → 终态 220，采样 20 帧）
+H2b PASS: 收起动画中间帧连续（216→132→96）
+R5 PASS: 极窄 6 列（列宽≈181px）→ 拖拽不崩、落库到列 id=10
+todo_drag_probe: PASS（1200x1000）

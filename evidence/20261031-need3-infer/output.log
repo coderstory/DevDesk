@@ -1,0 +1,21 @@
+== F-02/F-03 infer=true 云端真调（telemem 1.10.1 @ 127.0.0.1:8421，真 key 环境） ==
+-- add_memory infer=true，耗时与响应（18:46:04-09）--
+[initialize] HTTP 200 in 0.02s session=yes
+[add] HTTP 200 in 4.45s
+data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\n  \"error\": \"RateLimitError\",\n  \"detail\": \"Error code: 429 - {'type': 'error', 'error': {'type': 'rate_limit_error', 'code': '1310', 'message': '[1310][您已达到每周/每月使用上限，您的限额将在 2026-11-04 19:18:20 重置。][2026103118460996f44467da9744be]'}, 'request_id': '2026103118460996f44467da9744be'}\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"error":"RateLimitError","detail":"Error code: 429 - ... 'request_id': '2026103118460996f44467da9744be'}"}}}
+-- 解读：4.45s 往返（对照 initialize 0.02s / 直存 0.28s），智谱侧真实 429 配额错误（含 request_id 与重置时间）= 云端往返确证、key 鉴权通过、套餐周/月配额已耗尽（2026-11-04 19:18:20 重置）；提炼落库形态当日不可验--
+
+-- 对照组 infer=false 直存（生产 addDirect 形态，0.28s，零云端）--
+[add] HTTP 200 in 0.28s
+data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\n  \"status\": \"stored\",\n  \"scope\": {\"user_id\": \"telemem-mcp\"}\n}","type":"text"}]...}}
+
+-- get_memories 落库形态（infer=false 原文直存；infer=true 因配额无条目可验）--
+"results":[{"id":"1f0b2bc5-b421-4c08-a3ed-7dc3361fce06","memory":"池3基线：DevDesk发布日期推迟到11月15日（张伟2026-10-31周会决定）。","hash":"42f2f093d3eb8c8a9115edb216dc241e","metadata":null,"created_at":"2026-10-31T10:47:49.518617+00:00","updated_at":"2026-10-31T10:47:49.518617+00:00","user_id":"telemem-mcp","role":"user"}]}}}}
+
+
+-- 正向 search（embedding 活跃，0.03s，契约信封 {query,memories}）--
+
+
+== 密钥红线 ==
+config api_key 行: 2:# 密钥红线：api_key 恒为空（空串走 mem0 的环境回退），真实 key 由拉起方 9:    api_key: "" 15:    api_key: "local" 
+key 前缀在 config/日志/faiss/history.db/证据目录命中数: 0（实测扫描）

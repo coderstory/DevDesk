@@ -1,0 +1,17 @@
+=== uat62_page_shots_probe --size 1600x1000 --out uat62 ===
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/01-home-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/02-markdown-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/03-todo-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/04-schedule-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/05-claude_proxy-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/06-agent-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/07-memory-1000.png (3200x2000)
+uat62_page_shots: 跳过 wallpaper（平台能力不支持，工厂返回 nullptr）
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/09-mcp-1000.png (3200x2000)
+uat62_page_shots: 跳过 release_group（平台能力不支持，工厂返回 nullptr）
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/11-release_tasks-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/12-release_config-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/13-settings-1000.png (3200x2000)
+uat62_page_shots: /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/uat62/14-about-1000.png (3200x2000)
+uat62_page_shots: PASS（1600x1000，12 页落图；跳过 2 页: wallpaper release_group）
+exit=0

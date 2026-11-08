@@ -1,0 +1,897 @@
+Start testing: Nov 07 17:01 CST
+----------------------------------------------------------
+2/42 Testing: about_probe
+2/42 Test: about_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/about_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"about_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+about_probe: PASS（1200x1000）
+<end of output>
+Test time =   0.94 sec
+----------------------------------------------------------
+Test Passed.
+"about_probe" end time: Nov 07 17:01 CST
+"about_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/42 Testing: agent_dialog_probe
+3/42 Test: agent_dialog_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/agent_dialog_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"agent_dialog_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+D1 msg.0.hit 整卡点击开合 OK（展开 0 → 1）
+D2 tools dialog panel 720x600
+D2 tools masonry cards side-by-side(多列) colW=328
+D2 tools dialog ✕ 关闭 OK
+<end of output>
+Test time =   0.82 sec
+----------------------------------------------------------
+Test Passed.
+"agent_dialog_probe" end time: Nov 07 17:01 CST
+"agent_dialog_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/42 Testing: b1_material_probe
+5/42 Test: b1_material_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/b1_material_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"b1_material_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+frame card1 42 66 366.5 120
+frame card2 416.5 66 366.5 120
+frame panel 32 56 1136 713
+b1_material_probe: 环境不支持——请求 1200x1000，系统把窗口钳到 2400x1602px（逻辑高≈801，显示器装不下）；像素判据跳过，返回 77
+<end of output>
+Test time =   0.62 sec
+----------------------------------------------------------
+Test Passed.
+"b1_material_probe" end time: Nov 07 17:01 CST
+"b1_material_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/42 Testing: bug142_click_chain_probe
+6/42 Test: bug142_click_chain_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/bug142_click_chain_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"bug142_click_chain_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+PASS §0 侧栏 Settings 条目 hit 区应存在
+PASS §0 初始首页：设置页内容不应在 DOM
+DUMP app.sidebar.item.Settings.hit frame{x=16,y=645,w=188,h=40}
+shot bug142-click-chain/01-home-initial.png 2400x1602
+PASS 链路1 真点击侧栏 Settings：设置页应当帧入 DOM（点击响应）
+DUMP settings.tabs.wrap frame{x=252,y=96,w=916,h=40}
+shot bug142-click-chain/02-settings-after-sidebar-click.png 2400x1602
+DUMP settings.tabs.1.hit frame{x=318,y=96,w=62.0002,h=40}
+DIAG cardsBefore=0 cardsAfter=0 modulesCard=0
+FAIL 链路2a 真点击「模块」tab：卡区 id 集应变化（点击响应：tab 切换生效）
+FAIL 链路2b 真点击设置页「模块」tab：模块卡片应入 DOM（点击响应，命中 0 个 settings.card.modules* 元素）
+shot bug142-click-chain/03-settings-modules-tab.png 2400x1602
+PASS 链路3 真点击侧栏 Home：应返回首页（设置页内容退出 DOM）
+FAIL
+<end of output>
+Test time =   2.24 sec
+----------------------------------------------------------
+Test Failed.
+"bug142_click_chain_probe" end time: Nov 07 17:01 CST
+"bug142_click_chain_probe" time elapsed: 00:00:02
+----------------------------------------------------------
+
+7/42 Testing: bug148_167_sweep_probe
+7/42 Test: bug148_167_sweep_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/bug148_167_sweep_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"bug148_167_sweep_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+  PASS 01-home-fs123-presweep-light titleInk=0.0443652 sidebarInk=0.0619881 -> bug148-167-sweep/01-home-fs123-presweep-light.png
+  PASS 02-home-fs123-postsweep-light titleInk=0.0443652 sidebarInk=0.0619881 -> bug148-167-sweep/02-home-fs123-postsweep-light.png
+  PASS 03-memory-fs123-postsweep-light titleInk=0.0332314 sidebarInk=0.0621825 -> bug148-167-sweep/03-memory-fs123-postsweep-light.png
+  PASS 04-home-fs100-back-light titleInk=0.0296837 sidebarInk=0.041313 -> bug148-167-sweep/04-home-fs100-back-light.png
+  PASS 05-memory-fs100-back-light titleInk=0.0228714 sidebarInk=0.0412075 -> bug148-167-sweep/05-memory-fs100-back-light.png
+bug148_167_sweep PASS [light]
+<end of output>
+Test time =   5.52 sec
+----------------------------------------------------------
+Test Passed.
+"bug148_167_sweep_probe" end time: Nov 07 17:01 CST
+"bug148_167_sweep_probe" time elapsed: 00:00:05
+----------------------------------------------------------
+
+8/42 Testing: claude_probe
+8/42 Test: claude_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/claude_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"claude_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+== tooltip 锚定 ==
+  frame claude.title.help = (1030,8) 24x24
+  frame claude.title.help.tooltip = (836,44) 320x40
+  中心偏差 = 46
+claude_probe: PASS（1200x1000）
+<end of output>
+Test time =   0.66 sec
+----------------------------------------------------------
+Test Passed.
+"claude_probe" end time: Nov 07 17:01 CST
+"claude_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/42 Testing: font_metrics_probe
+9/42 Test: font_metrics_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/font_metrics_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"font_metrics_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+font_metrics_probe: 注入前主面=/System/Library/Fonts/SFNS.ttf 控制串宽(fixed)=13735
+font_metrics_probe: 注入后主面=/Users/coderstory/dev/DevDesk/build/tests/assets/DevDeskSansSC-Regular.otf bold=/Users/coderstory/dev/DevDesk/build/tests/assets/DevDeskSansSC-Bold.otf mono=/Users/coderstory/dev/DevDesk/build/tests/assets/JetBrainsMono-Regular.ttf 控制串宽(fixed)=13767（注入前 13735，已改变）
+font_metrics_probe: JSON 已写 evidence/font-metrics/font_metrics_macos.json
+font_metrics_probe: PASS（advances_sha256@400=b72907fba59eabacfd0532cc132a46c592569cd63e05960d7aab7c6a887bc541 @600=732a072bd1a18695879ffb6392a461ade749d55a7faa546a8483b7b80aab97ac @700=732a072bd1a18695879ffb6392a461ade749d55a7faa546a8483b7b80aab97ac mono=1cefdf2a4e7b69c36be30d7334d062807c328bee7dd0bcc8679f3c1d1e12d07d）
+<end of output>
+Test time =   1.03 sec
+----------------------------------------------------------
+Test Passed.
+"font_metrics_probe" end time: Nov 07 17:01 CST
+"font_metrics_probe" time elapsed: 00:00:01
+----------------------------------------------------------
+
+10/42 Testing: h13_fluid_background_probe
+10/42 Test: h13_fluid_background_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/h13_fluid_background_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"h13_fluid_background_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+H13: radius min=124 max=372 ratio=3
+H13: halo.0 dx=2.63745 dy=-0.00994873 dist=2.63747
+H13: halo.1 dx=-0.307495 dy=-1.95349 dist=1.97754
+H13: halo.2 dx=-4.45703 dy=-0.0739288 dist=4.45764
+H13: halo.3 dx=0.721069 dy=3.27167 dist=3.35019
+H13: halo.4 dx=-2.15836 dy=-1.13287 dist=2.4376
+H13: halo.5 dx=3.75183 dy=1.00687 dist=3.88459
+H13: halo.6 dx=-1.78754 dy=2.22076 dist=2.8508
+H13: halo.7 dx=2.41974 dy=-1.91 dist=3.08273
+H13: halo.8 dx=-2.65234 dy=-0.859314 dist=2.78807
+H13: halo.9 dx=-4.1651 dy=1.66052 dist=4.4839
+H13: halo.10 dx=1.65193 dy=1.69821 dist=2.36914
+H13: halo.11 dx=0.712662 dy=-2.70367 dist=2.79602
+H13: halo.12 dx=2.84521 dy=0.359741 dist=2.86787
+H13: halo.13 dx=-0.854431 dy=1.53725 dist=1.75874
+PASS: fluid halo 可见位移 max=4.4839px（halo.9）≥ 0.3px
+<end of output>
+Test time =   1.00 sec
+----------------------------------------------------------
+Test Passed.
+"h13_fluid_background_probe" end time: Nov 07 17:01 CST
+"h13_fluid_background_probe" time elapsed: 00:00:01
+----------------------------------------------------------
+
+11/42 Testing: home_probes
+11/42 Test: home_probes
+Command: "/Users/coderstory/dev/DevDesk/build/tests/home_probes"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"home_probes" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+home_probes: 组 N1 PASS 柱高 bar.0=181.013 bar.8=271.52
+home_probes: 组 N2 字形 包围盒=21x25 满行占比=31.8182%
+<end of output>
+Test time =   0.73 sec
+----------------------------------------------------------
+Test Passed.
+"home_probes" end time: Nov 07 17:01 CST
+"home_probes" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/42 Testing: home_probes_min_window
+12/42 Test: home_probes_min_window
+Command: "/Users/coderstory/dev/DevDesk/build/tests/home_probes" "--size" "1200x600"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"home_probes_min_window" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+home_probes: 组 N1 PASS 柱高 bar.0=95.2533 bar.8=142.88
+home_probes: 组 N2 字形 包围盒=21x25 满行占比=31.8182%
+<end of output>
+Test time =   0.28 sec
+----------------------------------------------------------
+Test Passed.
+"home_probes_min_window" end time: Nov 07 17:01 CST
+"home_probes_min_window" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/42 Testing: jelly_probe
+13/42 Test: jelly_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/jelly_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"jelly_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+frame jelly.card 240 200 400 200
+shot jelly-normal.png .verify-screenshots/jelly-normal.png
+shot jelly-squash.png .verify-screenshots/jelly-squash.png
+shot jelly-hover.png .verify-screenshots/jelly-hover.png
+shot jelly-restored.png .verify-screenshots/jelly-restored.png
+rgb normal corner 34.5,32.4,31.0
+rgb normal center 34.0,32.0,31.0
+state normal radius=12 scale=1,1 zIndex=0 elapsed=-1
+rgb squash corner 32.4,30.3,28.7
+rgb squash center 34.0,32.0,31.0
+state squash radius=10.3934 scale=1.03213,0.919668 zIndex=20 elapsed=50.0901
+rgb hover corner 25.3,23.3,21.4
+rgb hover center 34.0,32.0,31.0
+state hover radius=12.2875 scale=1.03473,0.935879 zIndex=20 elapsed=150.637
+rgb restored corner 34.5,32.4,31.0
+rgb restored center 34.0,32.0,31.0
+state restored radius=12 scale=1,1 zIndex=0 elapsed=-1
+A0v2 PASS 每帧目标=时间线值（动画期 z20，常态 z0）
+A1 PASS 角部形变可辨 maxDiff=32 px>4=295/400
+A2 PASS 中心不漂 maxDiff=0
+A3 PASS 复位（corner/center 逐像素一致）
+A4 PASS 压扁显著 meanDiff=2.14417（旧版 ~0.95） maxDiff=32 px>4=144/400
+jelly_probe: PASS
+<end of output>
+Test time =   2.11 sec
+----------------------------------------------------------
+Test Passed.
+"jelly_probe" end time: Nov 07 17:01 CST
+"jelly_probe" time elapsed: 00:00:02
+----------------------------------------------------------
+
+14/42 Testing: markdown_probe
+14/42 Test: markdown_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/markdown_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"markdown_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+markdown_probe: PASS（1200x1000）
+<end of output>
+Test time =   0.83 sec
+----------------------------------------------------------
+Test Passed.
+"markdown_probe" end time: Nov 07 17:01 CST
+"markdown_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+15/42 Testing: mcp_dialog_probe
+15/42 Test: mcp_dialog_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/mcp_dialog_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"mcp_dialog_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+probe: PASS
+<end of output>
+Test time =   0.96 sec
+----------------------------------------------------------
+Test Passed.
+"mcp_dialog_probe" end time: Nov 07 17:01 CST
+"mcp_dialog_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+16/42 Testing: md_layout_collapse_probe
+16/42 Test: md_layout_collapse_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/md_layout_collapse_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"md_layout_collapse_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+== A. 空态帧几何 ==
+  md.root children:
+    child id="markdown.md.header" frame=(32,0) 1136x40
+    child id="markdown.md.body" frame=(32,48) 1136x721
+  frame md.root = (0,0) 1200x801 z=0 subtreeMaxZ=0
+  frame md.header = (32,0) 1136x40 z=0 subtreeMaxZ=0
+  frame md.h1 = (32,0) 240x32 z=0 subtreeMaxZ=0
+  frame md.mode = (272,0) 264x40 z=0 subtreeMaxZ=0
+  frame md.tree = (32,48) 224x721 z=0 subtreeMaxZ=0
+  frame md.tree.handle.bg = (232,424.5) 24x48 z=0 subtreeMaxZ=0
+  frame md.body = (32,48) 1136x721 z=0 subtreeMaxZ=0
+== A. 开笔记后帧几何 ==
+  frame md.tree = (32,48) 224x721 z=0 subtreeMaxZ=0
+  frame md.note.tabs = (272,48) 896x36 z=0 subtreeMaxZ=0
+  frame md.editor = (272,48) 896x721 z=0 subtreeMaxZ=0
+  frame md.editor.input = (280,132) 880x607 z=0 subtreeMaxZ=0
+  frame md.editor.shell = (272,84) 896x685 z=0 subtreeMaxZ=0
+probe: screenshot md_probe_shots/a-open.png (2400x1602)
+  hitTest(234,448.5) = "markdown.md.tree.handle.bg"
+  hitTest(238,448.5) = "markdown.md.tree.handle.bg"
+  hitTest(242,448.5) = "markdown.md.tree.handle.bg"
+  hitTest(244,448.5) = "markdown.md.tree.handle.bg"
+  hitTest(246,448.5) = "markdown.md.tree.handle.bg"
+  hitTest(250,448.5) = "markdown.md.tree.handle.bg"
+  hitTest(254,448.5) = "markdown.md.tree.handle.bg"
+== B. 把手折叠: md.tree 宽 224 -> 0 ==
+  frame md.tree.handle.bg = (48,424.5) 24x48 z=0 subtreeMaxZ=0
+probe: screenshot md_probe_shots/b-collapsed.png (2400x1602)
+== B. 把手展开: md.tree 宽 = 224 ==
+== C. 目录折叠: rows 4 -> 3 ==
+probe: screenshot md_probe_shots/c-folder-collapsed.png (2400x1602)
+== C. 目录展开: rows = 4 ==
+== D. tooltip 锚定: help=(888,8) 24x24 tip=(596,44) 560x40 ==
+probe: screenshot md_probe_shots/d-tooltip-hover.png (2400x1602)
+md_layout_collapse_probe: PASS（1200x1000）
+<end of output>
+Test time =   2.17 sec
+----------------------------------------------------------
+Test Passed.
+"md_layout_collapse_probe" end time: Nov 07 17:01 CST
+"md_layout_collapse_probe" time elapsed: 00:00:02
+----------------------------------------------------------
+
+18/42 Testing: memory_freeze_probe
+18/42 Test: memory_freeze_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/memory_freeze_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"memory_freeze_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+GOLDEN-BEGIN
+GOLDEN width=567.919067 cold=567.919067 size=12.750000
+GOLDEN whole=567.919067 perCharSum=567.919067
+GOLDEN width=276.917053 cold=276.917053 size=12.500000
+GOLDEN whole=276.917053 perCharSum=276.917053
+GOLDEN width=105.244568 cold=105.244568 size=13.500000
+GOLDEN whole=105.244568 perCharSum=105.244568
+GOLDEN-END
+MICRO s1Ms=0.955708 s2Ms=0.264417 (同词表第二串，advance 缓存敏感)
+COMPOSE coldMs=2.176208
+COMPOSE warmMs=2.157459
+CARDS rendered=50 seeded=120 elementsPerCard=17 accounting=850
+SCROLLDBG scrollEl=found offset=11546.000000 maxOffset=11546.000000 stateId=set
+SCROLL moreLayoutY=12400.000000 appliedOffset=11546.000000
+HIT more.bg.center -> memory.rv.more.bg
+COMPOSE scrolledMs=2.153250
+COMPOSE afterMoreMs=4.162250
+CARDS afterMore=100
+memory_freeze_probe: PASS · 数据根 /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/memory-freeze-probe-243387395706875
+<end of output>
+Test time =   0.70 sec
+----------------------------------------------------------
+Test Passed.
+"memory_freeze_probe" end time: Nov 07 17:01 CST
+"memory_freeze_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+19/42 Testing: memory_install_probe
+19/42 Test: memory_install_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/memory_install_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"memory_install_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+memory_install_probe: 裸调用跳过（ctest 77）；用法: memory_install_probe <install|collect|mcpserve> [参数]
+<end of output>
+Test time =   0.35 sec
+----------------------------------------------------------
+Test Passed.
+"memory_install_probe" end time: Nov 07 17:01 CST
+"memory_install_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+20/42 Testing: memory_probe
+20/42 Test: memory_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/memory_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"memory_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+memory_probe: 逻辑窗口 1200x1000（--size 口径 = 逻辑像素，逻辑 = 物理）
+DBG memory.console.scroll : (32,104 1136x884)
+DBG memory.view.canvas : (32,104 1112x1079)
+DBG memory.eng.card : (32,104 1112x196)
+DBG memory.health.card0 : (32,316 266x236)
+DBG memory.health.card3 : (878,316 266x236)
+DBG onPrimary=(1,1,1) primary=(0.027451,0.756863,0.376471)
+DBG toggle.text='' color=(1,1,1,1) fontSize=14 at(222,242 158x40)
+probe: screenshot .verify-screenshots/memory-console.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-review.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-engine-card.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-review-longtext.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-config.png (2400x1602)
+DBG trig card bottom=954 tile2 bottom=940 num2 w=33.6
+probe: screenshot .verify-screenshots/memory-config-scale140.png (2400x1602)
+DBG 脱敏卡 card bottom=613.2 content bottom=579.6
+DBG 用量卡 card bottom=1331.2 content bottom=1302.4
+probe: screenshot .verify-screenshots/memory-cards-scale140.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-cards-scale100.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-wizard-need-download.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-wizard-ready.png (2400x1602)
+probe: screenshot .verify-screenshots/memory-wizard-failed.png (2400x1602)
+memory_probe: PASS · 数据根 /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/memcpp-probe-root-243388042362958 · 截图目录 .verify-screenshots
+<end of output>
+Test time =   5.91 sec
+----------------------------------------------------------
+Test Passed.
+"memory_probe" end time: Nov 07 17:01 CST
+"memory_probe" time elapsed: 00:00:05
+----------------------------------------------------------
+
+21/42 Testing: module_toggle_sidebar_probe
+21/42 Test: module_toggle_sidebar_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/module_toggle_sidebar_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"module_toggle_sidebar_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+module_toggle_probe: PASS（1200x1000）
+<end of output>
+Test time =   2.99 sec
+----------------------------------------------------------
+Test Passed.
+"module_toggle_sidebar_probe" end time: Nov 07 17:01 CST
+"module_toggle_sidebar_probe" time elapsed: 00:00:02
+----------------------------------------------------------
+
+22/42 Testing: release_probe
+22/42 Test: release_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/release_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"release_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+release_probe: PASS（1200x1000，断言分组 A/B/C/D 全过；E=到期聚合数据层，全屏窗渲染不可达见注释）
+<end of output>
+Test time =   0.82 sec
+----------------------------------------------------------
+Test Passed.
+"release_probe" end time: Nov 07 17:01 CST
+"release_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+23/42 Testing: ring_probe
+23/42 Test: ring_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/ring_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"ring_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+scan top total=1172 black=1172
+A1 PASS top 边黑线覆盖 1172/1172
+scan left total=972 black=961
+A1b PASS left 边黑线覆盖 961/972
+corner rgb=14,14,14
+A3 PASS 圆角弧段黑描边
+ring_probe: PASS
+<end of output>
+Test time =   0.64 sec
+----------------------------------------------------------
+Test Passed.
+"ring_probe" end time: Nov 07 17:01 CST
+"ring_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+24/42 Testing: schedule_ui_probe
+24/42 Test: schedule_ui_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/schedule_ui_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"schedule_ui_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+C0 PASS 系统卡 hover 浏览反馈（实机命中链路）
+B 列数=3 列宽期望=378.667 实际=378.667
+B PASS TAB 切换 + 列数断点（列数 3）+ 卡面零操作钮
+C hover 圆角 13.8049（常态 14）缩放 1.0039
+C PASS 用户卡果冻命中面实机断言（motion 进/出卡 + 按下接线）
+E PASS 归档折叠段整卡可点 + hover 反馈
+schedule_ui_probe: PASS
+<end of output>
+Test time =   0.87 sec
+----------------------------------------------------------
+Test Passed.
+"schedule_ui_probe" end time: Nov 07 17:01 CST
+"schedule_ui_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+25/42 Testing: screenshot_probe
+25/42 Test: screenshot_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/screenshot_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"screenshot_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+probe::writeRgbaToPng: 写 PNG 失败 '/Users/coderstory/dev/DevDesk/build/testtmp/devdesk_test_shot_1-30201-0/no_such_dir/deeper/x.png': No such file or directory
+probe::writeRgbaToPng: 非法参数 (rgba=null, 4x4)
+probe::writeRgbaToPng: 非法参数 (rgba=ok, 0x4)
+screenshot_probe: framebuffer 2400x1602 scale 2
+probe: screenshot /Users/coderstory/dev/DevDesk/build/testtmp/devdesk_test_shot_1-30201-0/live.png (2400x1602)
+screenshot_probe: PASS
+<end of output>
+Test time =   1.02 sec
+----------------------------------------------------------
+Test Passed.
+"screenshot_probe" end time: Nov 07 17:01 CST
+"screenshot_probe" time elapsed: 00:00:01
+----------------------------------------------------------
+
+26/42 Testing: screenshot_probe_screenshot_switch
+26/42 Test: screenshot_probe_screenshot_switch
+Command: "/Users/coderstory/dev/DevDesk/build/tests/screenshot_probe" "--screenshot" "/Users/coderstory/dev/DevDesk/build/tests/probe-screenshot.png"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"screenshot_probe_screenshot_switch" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+probe::writeRgbaToPng: 写 PNG 失败 '/Users/coderstory/dev/DevDesk/build/testtmp/devdesk_test_shot_1-30204-0/no_such_dir/deeper/x.png': No such file or directory
+probe::writeRgbaToPng: 非法参数 (rgba=null, 4x4)
+probe::writeRgbaToPng: 非法参数 (rgba=ok, 0x4)
+screenshot_probe: framebuffer 2400x1602 scale 2
+probe: screenshot /Users/coderstory/dev/DevDesk/build/testtmp/devdesk_test_shot_1-30204-0/live.png (2400x1602)
+screenshot_probe: --screenshot /Users/coderstory/dev/DevDesk/build/tests/probe-screenshot.png
+probe: screenshot /Users/coderstory/dev/DevDesk/build/tests/probe-screenshot.png (2400x1602)
+screenshot_probe: PASS
+<end of output>
+Test time =   1.08 sec
+----------------------------------------------------------
+Test Passed.
+"screenshot_probe_screenshot_switch" end time: Nov 07 17:01 CST
+"screenshot_probe_screenshot_switch" time elapsed: 00:00:01
+----------------------------------------------------------
+
+27/42 Testing: settings_dropdown_z_probe
+27/42 Test: settings_dropdown_z_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/settings_dropdown_z_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"settings_dropdown_z_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.62 sec
+----------------------------------------------------------
+Test Passed.
+"settings_dropdown_z_probe" end time: Nov 07 17:01 CST
+"settings_dropdown_z_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+28/42 Testing: todo_collapse_probe
+28/42 Test: todo_collapse_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/todo_collapse_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"todo_collapse_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+N0 PASS: 缺省态 = 普通列全展开（col0=330px）+ 归档折叠（96px）
+N1 PASS: col0 列头点击 → 折叠条（宽 96px）
+N2 PASS: 回流（col1 330→448px，col2 330→448px，seam=16）
+N3 PASS: 双列折叠共存，col2 回流至 800px
+N4 PASS: col0 展开还原（宽 448px = col2），col1 折叠不受影响
+todo_collapse_probe: PASS（1200x1000）
+<end of output>
+Test time =   1.86 sec
+----------------------------------------------------------
+Test Passed.
+"todo_collapse_probe" end time: Nov 07 17:01 CST
+"todo_collapse_probe" time elapsed: 00:00:01
+----------------------------------------------------------
+
+29/42 Testing: todo_drag_probe
+29/42 Test: todo_drag_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/todo_drag_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"todo_drag_probe" start time: Nov 07 17:01 CST
+Output:
+----------------------------------------------------------
+todo_drag_probe 数据诊断: columns=4 tasks=6
+todo_drag_probe: 种子 DOM 自检通过（root/col0/card0/col1 全部在场）
+F1 PASS: 跨列拖拽 col0→col1（任务A colId=2 pos=0）
+F2 PASS: 列内重排 pos 2→0
+F3 PASS: 空列追加（col2 现含 1 卡）
+R1 PASS: 板外松手 → 不崩
+R2 PASS: ESC 中断拖拽 → 位置不变
+R3 PASS: 归档列拖拽无效化 → position 不变
+R4 PASS: 拖拽中外部删卡 → 不崩、卡已删
+S1 PASS: 搜索命中归档 → 自动展开（宽 96→193）
+S2 PASS: 清空搜索 → 还原折叠（宽 96）
+H1 PASS: 拖卡悬停窄条自动展开（悬停前宽 96→155）
+H3 PASS: 拖离取消 → 自动收回折叠（宽 96）
+H2a PASS: 展开动画有中间态（折叠 96 → 中间 133 → 终态 220，采样 20 帧）
+H2b PASS: 收起动画中间帧连续（216→131→96）
+R5 PASS: 极窄 6 列（列宽≈181px）→ 拖拽不崩、落库到列 id=10
+todo_drag_probe: PASS（1200x1000）
+<end of output>
+Test time =   3.92 sec
+----------------------------------------------------------
+Test Passed.
+"todo_drag_probe" end time: Nov 07 17:02 CST
+"todo_drag_probe" time elapsed: 00:00:03
+----------------------------------------------------------
+
+30/42 Testing: uat62_page_shots_probe
+30/42 Test: uat62_page_shots_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/uat62_page_shots_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"uat62_page_shots_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+uat62_page_shots: UAT62-screenshots/01-home-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/02-markdown-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/03-todo-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/04-schedule-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/05-claude_proxy-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/06-agent-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/07-memory-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/08-wallpaper-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/09-mcp-1000.png (2400x1602)
+uat62_page_shots: 跳过 terminal（交互型终端会话页不适用静态页照，视觉验收归终端线 QA 手测清单）
+uat62_page_shots: 跳过 release_group（平台能力不支持，工厂返回 nullptr）
+uat62_page_shots: UAT62-screenshots/12-release_tasks-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/13-release_config-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/14-settings-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/15-about-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/14-settings-tab0-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/14-settings-tab1-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/14-settings-tab2-1000.png (2400x1602)
+uat62_page_shots: UAT62-screenshots/14-settings-tab3-1000.png (2400x1602)
+uat62_page_shots: PASS（1200x1000，17 页落图；跳过 2 页: terminal release_group）
+<end of output>
+Test time =   8.38 sec
+----------------------------------------------------------
+Test Passed.
+"uat62_page_shots_probe" end time: Nov 07 17:02 CST
+"uat62_page_shots_probe" time elapsed: 00:00:08
+----------------------------------------------------------
+
+31/42 Testing: wallpaper_desktop_probe
+31/42 Test: wallpaper_desktop_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_desktop_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_desktop_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+wallpaper_desktop_probe: 非 Windows 平台，跳过（WorkerW/mpv 仅 Windows） exit=77
+<end of output>
+Test time =   0.28 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_desktop_probe" end time: Nov 07 17:02 CST
+"wallpaper_desktop_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+32/42 Testing: wallpaper_image_rotation_probe
+32/42 Test: wallpaper_image_rotation_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_image_rotation_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_image_rotation_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+wallpaper_image_rotation_probe: 非 Windows 平台，跳过（WorkerW/mpv 仅 Windows） exit=77
+<end of output>
+Test time =   0.28 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_image_rotation_probe" end time: Nov 07 17:02 CST
+"wallpaper_image_rotation_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+33/42 Testing: wallpaper_macos_probe
+33/42 Test: wallpaper_macos_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_macos_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_macos_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+wallpaper_macos_probe: host 2940x1912
+wallpaper_macos_probe: 跳过视频段（未提供可解码视频，用 --video <路径> 指定）
+wallpaper_macos_probe: yield poll battery=false fullscreen=true
+wallpaper_macos_probe: PASS
+<end of output>
+Test time =   1.43 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_macos_probe" end time: Nov 07 17:02 CST
+"wallpaper_macos_probe" time elapsed: 00:00:01
+----------------------------------------------------------
+
+34/42 Testing: wallpaper_probe
+34/42 Test: wallpaper_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+2026-11-07 17:02:12.374 wallpaper_probe[30265:4481655] TSM AdjustCapsLockLEDForKeyTransitionHandling - _ISSetPhysicalKeyboardCapsLockLED Inhibit
+wallpaper_probe: contentScale=2x2 framebuffer=4800x4000 effLogical=2400x2000
+wallpaper_probe: PASS（请求 1200x1000，实际逻辑 2400x2000，framebuffer 4800x4000）
+<end of output>
+Test time =   0.96 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_probe" end time: Nov 07 17:02 CST
+"wallpaper_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+35/42 Testing: wallpaper_rotation_probe
+35/42 Test: wallpaper_rotation_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_rotation_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_rotation_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+wallpaper_rotation_probe: 非 Windows 平台，跳过（WorkerW/mpv 仅 Windows） exit=77
+<end of output>
+Test time =   0.27 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_rotation_probe" end time: Nov 07 17:02 CST
+"wallpaper_rotation_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+36/42 Testing: wallpaper_service_macos_probe
+36/42 Test: wallpaper_service_macos_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_service_macos_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_service_macos_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+[PASS] §1 测试图片应生成成功（2560×1440，过 2K 档）: /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/devdesk-wallpaper-macos-probe-30269/wall-2k.png
+[PASS] §1 图片扫描：恰 1 张 png（total=1）
+[PASS] §1 图片档位：2560×1440 应通过 2K 线（passing=1）
+[PASS] §2 selectFolder 应成功: 
+[PASS] §2 服务应进入 Playing（availability=3）
+[PASS] §2 不应有播放错误: 
+[PASS] §5 图片来源选目录应成功: 
+[PASS] §5 图片来源应进入 Playing
+[PASS] §5 图片来源 passing 应为 1（实测 1）
+[PASS] §5 图片来源不应有错误: 
+[PASS] §5 四种铺法切换不应报错
+[PASS] §5 最后一次铺法应为 Fill（快照与设置同源）
+[PASS] §6 手动暂停后快照应为暂停（paused/manualPaused 同真）
+[PASS] §6 暂停不应产生错误
+[PASS] §6 恢复后手动暂停位应清除
+[PASS] §6 paused 应恒等于「存在系统让路原因」（manualPaused=false，systemHolds=0）
+[PASS] §6 无系统原因时恢复后快照应为播放
+[PASS] §7 停止后不应有错误残留: 
+[PASS] §7 二次启动应能重新扫描完成
+wallpaper_service_macos_probe: PASS
+<end of output>
+Test time =   1.45 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_service_macos_probe" end time: Nov 07 17:02 CST
+"wallpaper_service_macos_probe" time elapsed: 00:00:01
+----------------------------------------------------------
+
+37/42 Testing: wallpaper_yield_probe
+37/42 Test: wallpaper_yield_probe
+Command: "/Users/coderstory/dev/DevDesk/build/tests/wallpaper_yield_probe"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"wallpaper_yield_probe" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+wallpaper_yield_probe: 非 Windows 平台，跳过（WorkerW/WTS 仅 Windows） exit=77
+<end of output>
+Test time =   0.29 sec
+----------------------------------------------------------
+Test Passed.
+"wallpaper_yield_probe" end time: Nov 07 17:02 CST
+"wallpaper_yield_probe" time elapsed: 00:00:00
+----------------------------------------------------------
+
+39/42 Testing: ui_driver_smoke-navigate
+39/42 Test: ui_driver_smoke-navigate
+Command: "/Users/coderstory/dev/DevDesk/build/tests/devdesk_ui_driver" "--script" "/Users/coderstory/dev/DevDesk/tests/ui_driver/scenes/smoke-navigate.json" "--out-dir" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots" "--report-json" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/smoke-navigate-report.json"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"ui_driver_smoke-navigate" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+[1/10] PASS assert exists app.sidebar.item.Home.hit
+[2/10] PASS click app.sidebar.item.Todo.hit（命中回读: app.sidebar.item.Todo.hit）
+[3/10] PASS wait exists todo.h1
+[4/10] PASS assert exists todo.h1
+[5/10] PASS click app.sidebar.item.Settings.hit（命中回读: app.sidebar.item.Settings.hit）
+[6/10] PASS wait exists settings.tabs.1.hit
+[7/10] PASS assert text '设置'
+[8/10] PASS assert geometry app.sidebar
+probe: screenshot /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/smoke-settings.png (2400x1602)
+[9/10] PASS screenshot smoke-settings.png（截图: /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/smoke-settings.png）
+[10/10] PASS dump smoke-dump.txt
+ui_driver: 退出码 0（10 步）
+<end of output>
+Test time =   1.26 sec
+----------------------------------------------------------
+Test Passed.
+"ui_driver_smoke-navigate" end time: Nov 07 17:02 CST
+"ui_driver_smoke-navigate" time elapsed: 00:00:01
+----------------------------------------------------------
+
+40/42 Testing: ui_driver_todo-new-task
+40/42 Test: ui_driver_todo-new-task
+Command: "/Users/coderstory/dev/DevDesk/build/tests/devdesk_ui_driver" "--script" "/Users/coderstory/dev/DevDesk/tests/ui_driver/scenes/todo-new-task.json" "--out-dir" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots" "--report-json" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/todo-new-task-report.json"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"ui_driver_todo-new-task" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+[1/12] PASS click app.sidebar.item.Todo.hit（命中回读: app.sidebar.item.Todo.hit）
+[2/12] PASS wait exists todo.btn.add
+[3/12] PASS click todo.btn.add（命中回读: app.todo.btn.add.bg）
+[4/12] PASS wait exists todo.dialog.newtask.input
+[5/12] PASS click todo.dialog.newtask.input（命中回读: app.todo.dialog.newtask.input.hit）
+[6/12] PASS type '缴费'
+[7/12] PASS key Enter
+[8/12] PASS wait exists todo.col.0.card.0.wrap
+[9/12] PASS assert text todo.col.0.card.0.title
+[10/12] PASS scroll dx=0 dy=3
+[11/12] PASS assert text '缴费'
+probe: screenshot /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/todo-new.png (2400x1602)
+[12/12] PASS screenshot todo-new.png（截图: /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/todo-new.png）
+ui_driver: 退出码 0（12 步）
+<end of output>
+Test time =   0.88 sec
+----------------------------------------------------------
+Test Passed.
+"ui_driver_todo-new-task" end time: Nov 07 17:02 CST
+"ui_driver_todo-new-task" time elapsed: 00:00:00
+----------------------------------------------------------
+
+41/42 Testing: ui_driver_settings-toggle
+41/42 Test: ui_driver_settings-toggle
+Command: "/Users/coderstory/dev/DevDesk/build/tests/devdesk_ui_driver" "--script" "/Users/coderstory/dev/DevDesk/tests/ui_driver/scenes/settings-toggle.json" "--out-dir" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots" "--report-json" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/settings-toggle-report.json"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"ui_driver_settings-toggle" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+[1/13] PASS assert missing app.sidebar.item.Memory.hit
+[2/13] PASS assert exists app.sidebar.item.Todo.hit
+[3/13] PASS click app.sidebar.item.Settings.hit（命中回读: app.sidebar.item.Settings.hit）
+[4/13] PASS wait exists settings.tabs.1.hit
+[5/13] PASS click settings.tabs.1.hit（命中回读: app.settings.tabs.1.hit）
+[6/13] PASS wait exists settings.card.modules.sw.4.track
+[7/13] PASS click settings.card.modules.sw.4.track（命中回读: app.settings.card.modules.sw.4.track）
+[8/13] PASS wait exists app.sidebar.item.Agent.hit
+[9/13] PASS assert exists app.sidebar.item.Agent.hit
+[10/13] PASS click settings.card.modules.sw.4.track（命中回读: app.settings.card.modules.sw.4.track）
+[11/13] PASS wait missing app.sidebar.item.Agent.hit
+[12/13] PASS assert missing app.sidebar.item.Agent.hit
+probe: screenshot /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/settings-toggle.png (2400x1602)
+[13/13] PASS screenshot settings-toggle.png（截图: /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/settings-toggle.png）
+ui_driver: 退出码 0（13 步）
+<end of output>
+Test time =   0.88 sec
+----------------------------------------------------------
+Test Passed.
+"ui_driver_settings-toggle" end time: Nov 07 17:02 CST
+"ui_driver_settings-toggle" time elapsed: 00:00:00
+----------------------------------------------------------
+
+42/42 Testing: ui_driver_todo-drag-move
+42/42 Test: ui_driver_todo-drag-move
+Command: "/Users/coderstory/dev/DevDesk/build/tests/devdesk_ui_driver" "--script" "/Users/coderstory/dev/DevDesk/tests/ui_driver/scenes/todo-drag-move.json" "--out-dir" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots" "--report-json" "/Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/todo-drag-move-report.json"
+Directory: /Users/coderstory/dev/DevDesk/build/tests
+"ui_driver_todo-drag-move" start time: Nov 07 17:02 CST
+Output:
+----------------------------------------------------------
+[1/13] PASS click app.sidebar.item.Todo.hit（命中回读: app.sidebar.item.Todo.hit）
+[2/13] PASS wait exists todo.btn.add
+[3/13] PASS click todo.btn.add（命中回读: app.todo.btn.add.bg）
+[4/13] PASS wait exists todo.dialog.newtask.input
+[5/13] PASS click todo.dialog.newtask.input（命中回读: app.todo.dialog.newtask.input.hit）
+[6/13] PASS type '拖拽演示'
+[7/13] PASS key Enter
+[8/13] PASS wait exists todo.col.0.card.0.bg
+[9/13] PASS drag todo.col.0.card.0.bg → todo.col.1
+[10/13] PASS wait exists todo.col.1.card.0.wrap
+[11/13] PASS assert missing todo.col.0.card.0.bg
+[12/13] PASS assert exists todo.col.1.card.0.wrap
+probe: screenshot /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/todo-drag.png (2400x1602)
+[13/13] PASS screenshot todo-drag.png（截图: /Users/coderstory/dev/DevDesk/build/tests/ui-drive-shots/todo-drag.png）
+ui_driver: 退出码 0（13 步）
+<end of output>
+Test time =   0.90 sec
+----------------------------------------------------------
+Test Passed.
+"ui_driver_todo-drag-move" end time: Nov 07 17:02 CST
+"ui_driver_todo-drag-move" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Nov 07 17:02 CST
+
+probe =  57.95 sec*proc
+

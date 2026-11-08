@@ -1,0 +1,4 @@
+slug: pool52-accept-g2-bareword
+date: 2026-10-31 22:02:13
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  build/tests/devdesk_tests markdown 

@@ -1,0 +1,9 @@
+
+=== Summary ===
+Total:  0
+Passed: 0
+Failed: 0
+Skipped: 0
+Filter: zzz_no_such_term_52(0) -> 0 例
+[ERROR] 未命中任何用例（过滤词 "zzz_no_such_term_52"）—— 视为失败（退出码 2），防上层脚本误判「全绿」
+[warn] 命令退出码非 0，完整输出见本文件

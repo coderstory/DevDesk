@@ -1,0 +1,11 @@
+── §0 kit 自检 ──
+── §1 settings 域 ──
+  [settings.card.modules] 卡 1136x254 @tab1
+  [settings.card.reminder] 卡 1136x92 @tab1
+── §2 release 域 ──
+  任务行卡 3 张
+  [未验证] 详情页未进入（点行卡无跳转）
+── §3 人为违规演示（红→还原→绿）──
+【演示-红】演示① 内容底越卡底+8 坠出 → 断言拦截 ✓
+【演示-红】演示③ 全宽 5px 发丝条 → 断言拦截 ✓
+layout_guard_probe: checks=36 passed=1

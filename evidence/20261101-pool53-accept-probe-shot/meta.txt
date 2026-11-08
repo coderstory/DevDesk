@@ -1,0 +1,4 @@
+slug: pool53-accept-probe-shot
+date: 2026-11-01 00:18:04
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  ./build/tests/release_probe --screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool53-accept-probe-shot/shot.png 

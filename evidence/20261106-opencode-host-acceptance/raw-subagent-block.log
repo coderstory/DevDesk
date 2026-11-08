@@ -1,0 +1,9 @@
+[0m
+> build · iceman-contributor-free
+[0m✗ [0msay hi failed
+[91m[1mError: [0m[devflow 门禁] 派发简报缺池条目 id：必含「[pool:need:<id>]」或「[pool:bug:<id>]」标记（无条目先 pool_add/pool_search 查重登记、排产置进行中再派——ask 排期制：池=唯一执行许可）
+> build · iceman-contributor-free
+BLOCKED
+
+Error (quoted from tool response):
+> `[devflow 门禁] 派发简报缺池条目 id：必含「[pool:need:<id>]」或「[pool:bug:<id>]」标记（无条目先 pool_add/pool_search 查重登记、排产置进行中再派——ask 排期制：池=唯一执行许可）`

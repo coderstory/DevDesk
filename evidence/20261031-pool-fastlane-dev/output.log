@@ -1,0 +1,32 @@
+=== 修后复验（关键项重跑，mac arm64）===
+--- 反例1: file:test_markdown,file:test_md_（期望 257/257，修前 114）---
+Total:  257
+Failed: 0
+Skipped: 1
+Filter: file:test_markdown(151),file:test_md_(106) -> 257 例
+--- 反例2: markdown（旧语义，期望>=114 严格超集）---
+Total:  117
+Filter: markdown(117) -> 117 例
+--- 反例3: file:nonexistent_（期望 rc=2）---
+rc=2
+Filter: file:nonexistent_(0) -> 0 例
+--- 反例4: --filter=md_scanner（修前 0 → 期望 9）---
+Total:  9
+Filter: md_scanner(9) -> 9 例
+--- 反例4b: agent_task_tpl（注释承诺，修前 0 → 期望 5）---
+Total:  5
+Filter: agent_task_tpl(5) -> 5 例
+--- 反例5: file:test_md_folder_tree,folder_note_count_recursive（并集 4）---
+Total:  4
+Filter: file:test_md_folder_tree(4),folder_note_count_recursive(1) -> 4 例
+--- 全量（修前 Total=2048 报告口径 / 修后 2049 零失败）---
+Total:  2049
+Passed: 2043
+Failed: 0
+Skipped: 6
+--- 反例7: Windows 形态 POC ---
+POC ALL PASS
+--- lane 实测耗时 ---
+md lane 257 例 = 41.0s；标准组合 587 例 = 25.7s
+=== 修前基线（旧二进制实测，改动前采集）===
+markdown=114；file:test_markdown,file:test_md_=0命中(rc2)；--filter=md_scanner=0命中(rc2)；agent_task_tpl=0命中

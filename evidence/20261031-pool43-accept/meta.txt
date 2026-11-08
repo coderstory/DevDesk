@@ -1,0 +1,4 @@
+slug: pool43-accept
+date: 2026-10-31 17:57:04
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  sh -c L="/Users/coderstory/Library/Application Support/dsh-tauri/logs/desktop.log"; printf "total_lines=%s\n" "$(wc -l < "$L")"; printf "after_0312_total=%s\n" "$(awk "\$1\" \"\$2 >= \"2026-10-31 03:12\"" "$L" | wc -l)"; printf "after_0312_pool_mcp_err=%s\n" "$(awk "\$1\" \"\$2 >= \"2026-10-31 03:12\" && (/pool_mcp/ || /Errno 2/ || /can.t open file/)" "$L" | wc -l)"; printf "last_pool_mcp_ts="; grep "pool_mcp" "$L" | tail -n 1 | cut -c1-24 

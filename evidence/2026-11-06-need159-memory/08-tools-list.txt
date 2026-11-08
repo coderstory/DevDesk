@@ -1,0 +1,1 @@
+{"id":2,"jsonrpc":"2.0","result":{"tools":[{"description":"检索 DevDesk 本机长期记忆（构建约定、环境事实、项目结论等已沉淀条目），返回按相关度融合的记忆段落","inputSchema":{"properties":{"limit":{"description":"返回条数上限，默认 5，范围 1..10","type":"integer"},"query":{"description":"检索词，用自然语言描述要找的记忆","type":"string"}},"required":["query"],"type":"object"},"name":"memory_search"}]}}

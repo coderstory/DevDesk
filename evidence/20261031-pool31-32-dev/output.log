@@ -1,0 +1,88 @@
+.[SKIP] stress: memory sampling is Windows-only (psapi)
+[PASS] SqliteDb: open in-memory [1ms]
+[PASS] memory: Python 版本串提取（取首个 3.X[Y.Z] 段；杂讯/无版本回空） [0ms]
+[PASS] memory: Python 合格区间 3.10~3.12（3.13+/3.9- 探测步拦截） [0ms]
+[PASS] memory: 探测器注入假探针——全候选 3.14 全拒（不起真进程） [0ms]
+[PASS] memory: 探测器按候选序选首个合格者（候选[0] 合格即中；uv 存在时必先于 PATH） [0ms]
+[PASS] memory: TELEMEM_CONFIG 内容契约（anthropic/智谱端点/回环 embedding） [0ms]
+[PASS] memory: 密钥红线——生成的配置恒不含 key（api_key 恒空，key 走环境） [0ms]
+[PASS] memory: settings.json 取 key（PROXY_MANAGED 占位非凭据；坏 JSON 回空） [0ms]
+[PASS] memory: 日志脱敏——密钥原文替换 <redacted>，空密钥原样 [0ms]
+[PASS] memory: telemem/llama 进程参数构造（回环 + 端口 + venv 解释器） [0ms]
+[PASS] memory: 拉起环境——TELEMEM_CONFIG 注入；key 只经环境变量、空 key 不注入 [0ms]
+[PASS] memory: llama-server 参数构造（回环 + 端口 + 模型 + 仅嵌入档） [0ms]
+[PASS] memory: 健康判据——200 且嵌套 error（result.error）必判不健康 [0ms]
+[PASS] memory: 健康判据——网络错/非 200/非 JSON 一律不健康 [0ms]
+[PASS] memory: token 计量表——软/硬档判定与占比钳制（硬档满刻度，异常配置不产生负宽） [0ms]
+[PASS] memory: 三视图骨架——默认主控台 compose 出引擎卡/启停钮/计量条，Tab 三枚在场 [14ms]
+[PASS] memory: process_host 拉起短命进程可探活消亡；树杀幂等 [0ms]
+[PASS] memory: 红队夹具 110 条——泄漏 0 / 误杀 0 / 幂等（样本数下限钉死） [3ms]
+[PASS] memory: preview 等长全遮蔽——全 '*' 且不含任何原文片段 [0ms]
+[PASS] memory: fail-closed——非法 UTF-8 返回 Error（绝不当无命中放行） [0ms]
+[PASS] memory: 闸默认开；关闭=旁路直通+审计行（行内无内容） [0ms]
+[PASS] memory: 六类检测抽检——kv/Bearer/私钥/JWT/校验位/allowlist [0ms]
+[PASS] memory: 会话行四道过滤——角色/注入块丢弃、错误工具留摘要、截断 [0ms]
+[PASS] memory: 采集水位幂等——同文件二次 poll 不出段；commit 后事件不重复 [11ms]
+[PASS] memory: 段级跳过——整段无 user 正文（仅错误工具摘要）不出段 [2ms]
+[PASS] memory: 扫描根 env 覆盖优先；文件截断时水位归零重读 [6ms]
+[PASS] memory: hook 输出契约——additionalContext 在 hookSpecificOutput 内且事件名正确 [0ms]
+[PASS] memory: 预算拼装——≤5 条 ≤500 字、日期来源格式、资料非指令声明、超预算条目裁剪 [0ms]
+[PASS] memory: 失败开放——stdin 非法/检索失败/事件不符一律空输出 + exit 0（绝无 2） [0ms]
+[PASS] memory: 检索缝解析——SSE 信封/嵌套 error/融合段落/mem0 逐条四形态 [0ms]
+[PASS] memory: hooks 配置写入/还原——键级 diff、幂等、不碰用户既有 hook [0ms]
+[PASS] memory: 检索缝 live 对账钉版——telemem search 真实信封 {query,memories} 取正文，空段落=无命中，绝不注入 JSON 原文 [0ms]
+[PASS] memory: 清单缝解析（池31）——get_memories results 逐条化（缺 id/正文跳过、updated_at→epoch）；ISO→epoch 纯函数 [0ms]
+[PASS] memory: 版本缝解析（池32）——updated_at→epoch（直返/results 包裹两形态）；not_found→NotFound；缺字段 fail-closed [0ms]
+[PASS] memory: 状态机——pending 唯一起点；accept/reject 终态幂等；TTL 过期回收 [3ms]
+[PASS] memory: baseVersion 失配自动过期；执行失败保持待审且失败原因可见 [2ms]
+[PASS] memory: 撤销链——undoOf 指回原卡、同一 undoOf 至多一张未决卡、撤销执行为逆动作 [2ms]
+[PASS] memory: 整理器两类提案——新增必审卡；遗忘按闲置天数扫描且不重复建卡 [2ms]
+[PASS] memory: 注入账与成本账分轨——inject_* 不进 token/金额聚合、注入今日读数、最近行 [2ms]
+[PASS] memory: 消耗计量——token 累计落库、金额估算按调研单价、今日/本月口径 [2ms]
+[PASS] memory: live 对账钉版——UUID 串 id 原样回填；遗忘撤销=按原卡证据重录入；undo 卡透传证据 [3ms]
+[PASS] memory: 池32 版本校验闭包——真值如实/NotFound→-1/传输不可达放行/其余如实fail；分流集成（目标被改→expired，遗忘撤销重录入→放行） [3ms]
+[PASS] memory: F1 接线——管线单轮：干净段出 pending 卡；敏感段拦截（审计行+动态流 note，零卡）；二轮幂等 [9ms]
+[PASS] memory: F1/F3 接线——decay 扫描周期体：UUID 清单缝出真形态 forget 卡；清单缝缺席 fail-closed 零卡 [3ms]
+[PASS] memory: 审核工具条（TODO §A P2）——1200 窄窗 chips 不裁切、不压批量开关标签 [4ms]
+[PASS] memory: 审核工具条——最小窗 1000×640 状态 chips 折第二行（工具条 88 高）不裁切、不压批量开关标签 [0ms]
+[PASS] memory: 审核工具条——1600 宽窗单行不变：chips 不重叠 + 开关右锚不漂移 [0ms]
+[PASS] memory: add_memory 入参契约 infer=true/false（G-1 提炼 vs 直存） [0ms]
+[PASS] memory: inferGateDecision 恰等越线 + 阈值≤0 关闭档 [0ms]
+[PASS] memory: 暂存队列 FIFO / 唯一键去重（崩溃重放）/ 出队 [5ms]
+[PASS] memory: 提炼步 Normal 放行 → 记账非零 + 出队（G-2 计数路径） [5ms]
+[PASS] memory: 每小时节流 → 达上限顺延留队，不报错不丢数据 [5ms]
+[PASS] memory: 硬档暂停 → 零云端出机，队列滞留（新采集入队暂存语义） [5ms]
+[PASS] memory: 云端失败 → attempt 已计数、留队、token 聚合不受影响 [5ms]
+[PASS] memory: llm_attempt 行不进 token/金额聚合，跨小时窗口不计当前 [5ms]
+[PASS] memory_search: schema 合法 JSON 对象，query 必填 string、limit integer [0ms]
+[PASS] memory_search: 非 JSON/空 query/非字符串 query → isError 且不触检索 [0ms]
+[PASS] memory_search: limit 缺省 5/超界钳 1..10/非整数（含浮点 3.7）忽略取默认、整值 double 采纳，timeout=3000 [0ms]
+[PASS] memory_search: 命中 → isError=false，融合段落原文回传不二次加工 [0ms]
+[PASS] memory_search: 引擎在但空命中 → isError=false「未命中任何记忆」 [0ms]
+[PASS] memory_search: 检索超时（NetworkTimeout）→ 专项超时文案 [0ms]
+[PASS] memory_search: 连接失败 → 连接失败文案透传底层原因并指向记忆页 [0ms]
+[PASS] memory_search: 输出超 20000 码点 → UTF-8 边界截断 + 附注 [0ms]
+[PASS] memory_search: 局部注册表注册→查找→注销→再注销 no-op→再注册 [0ms]
+[PASS] memory_search: 持久化往返 + setSearchEnabled 开关联动注册态 + 缺键默认 true + 写盘失败不注册 [0ms]
+[PASS] memory_mcp 桥: 未装配走默认桩；注入后转发并复位 [0ms]
+[SKIP] stress: memory bounded over 20x10MB streams [0ms]
+[PASS] assembly: 注册顺序 home→markdown→todo→schedule→claude→memory→settings 且 preStart 先于一切 onStart [1ms]
+[PASS] wallpaper: 默认清单 8 项含 memory/release/schedule 不含 wallpaper、moduleEnabled false、sanitized 不自动补 [0ms]
+
+=== Summary ===
+Total:  69
+Passed: 68
+Failed: 0
+Skipped: 1
+
+Top-10 slowest:
+  14ms  memory: 三视图骨架——默认主控台 compose 出引擎卡/启停钮/计量条，Tab 三枚在场
+  11ms  memory: 采集水位幂等——同文件二次 poll 不出段；commit 后事件不重复
+  9ms  memory: F1 接线——管线单轮：干净段出 pending 卡；敏感段拦截（审计行+动态流 note，零卡）；二轮幂等
+  6ms  memory: 扫描根 env 覆盖优先；文件截断时水位归零重读
+  5ms  memory: 暂存队列 FIFO / 唯一键去重（崩溃重放）/ 出队
+  5ms  memory: 提炼步 Normal 放行 → 记账非零 + 出队（G-2 计数路径）
+  5ms  memory: 每小时节流 → 达上限顺延留队，不报错不丢数据
+  5ms  memory: 硬档暂停 → 零云端出机，队列滞留（新采集入队暂存语义）
+  5ms  memory: 云端失败 → attempt 已计数、留队、token 聚合不受影响
+  5ms  memory: llm_attempt 行不进 token/金额聚合，跨小时窗口不计当前

@@ -1,0 +1,44 @@
+agent_e2e_probe: 生产凭据列已原样读出（不打印内容；baseUrl/keyEnc 列长度 44/46）
+agent_e2e_probe: 密文搬运完成（scratch 库激活 profile 已指向生产上游）
+G1 card 1 366.5x120 aspect=3.05417
+G1 card 2 366.5x120 aspect=3.05417
+G1 card 3 366.5x120 aspect=3.05417
+G1 card 4 366.5x120 aspect=3.05417
+G1 PASS 每卡 2.5–4.5:1（3.5 目标）
+G2 card 1 y=110 titleBaseline=144 actionsRight=394.5 wantRight=394.5
+G2 card 2 y=110 titleBaseline=144 actionsRight=769 wantRight=769
+G2 card 3 y=110 titleBaseline=144 actionsRight=1143.5 wantRight=1143.5
+G2 card 4 y=238 titleBaseline=272 actionsRight=394.5 wantRight=394.5
+G2 PASS 行内标题基线同 y（2 行）/ 操作组右缘=卡右−14
+G3 glyph U+f05a .detail ink=30.4209% green=0%
+G3 glyph U+f044 .edit ink=24.4898% green=0%
+G3 glyph U+f011 .toggle ink=21.875% green=0%
+G3 glyph U+f03a .enqueue ink=21.588% green=0%
+G3 glyph U+f2ed .delete ink=27.3278% green=0%
+G3 PASS 5 码点字形存在且非绿方块
+G4 normal actions.opacity=0 bg.radius=12 bg.scale=1
+G4 hover actions.opacity=1 bg.radius=16 bg.scale=1.02
+G4 out actions.opacity=0 bg.radius=12 bg.scale=1
+G4 on-button actions.opacity=1 bg.radius=16
+G4 PASS hover 驱动操作组显隐 + 卡形变/复位
+G4 pixel actionsInk=6347 cornerInk=177 actionsBack=0 cornerBack=0
+G4 pixel PASS 操作组淡入/卡角形变/移出逐像素复位
+shot hover evidence/2026-11-02-B3/agent-list-hover.png
+probe: screenshot evidence/2026-11-02-B3/agent-list.png (2400x2000)
+shot list evidence/2026-11-02-B3/agent-list.png
+agent_e2e_probe: run<1> error 原文: 上游 HTTP 400: {"error":{"code":"InvalidSubscription","message":"Your account (2123272471) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com
+agent_e2e_probe: run<2> error 原文: 上游 HTTP 400: {"error":{"code":"InvalidSubscription","message":"Your account (2123272471) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com
+agent_e2e_probe: run<3> error 原文: 上游 HTTP 400: {"error":{"code":"InvalidSubscription","message":"Your account (2123272471) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com
+agent_e2e_probe: run<5> error 原文: 上游 HTTP 400: {"error":{"code":"InvalidSubscription","message":"Your account (2123272471) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com
+agent_e2e_probe: run<4> error 原文: 上游 HTTP 400: {"error":{"code":"InvalidSubscription","message":"Your account (2123272471) does not have a valid CodingPlan subscription, or your subscription has expired. Please visit https://console.volcengine.com
+agent_e2e_probe: ===== 五流程结论 =====
+  [败] F1 逾期todo通知 — run 状态=failed（期望 completed）
+  [败] F2 每日流水笔记 — 未找到 2026-11-03.md 或内容缺「# 今日待办」（实际路径=/var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/devdesk_agent_e2e_notes_2406/流水/2026-11-03.md）
+  [败] F3 热点top10 — run 消息里没有 hot.list 的 tool_use
+  [败] F5 连通检测 — run 消息里没有 claude.test_connection 的 tool_use
+  [败] F4 闹钟通知 — run 收尾（failed）但通知缺 'E2E闹钟Z9'
+  LLM 腿: 密文搬运成功（生产凭据列原样复制，未打印）
+  通知 spy 收到 send: 2 条
+  probe 总耗时: 73s
+agent_e2e_probe: scratch 保留于 /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/devdesk_agent_e2e_root_2406（下次运行前自清）
+FAIL

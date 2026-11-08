@@ -1,0 +1,3 @@
+probe: screenshot p1000.png (2000x1280)
+probe: screenshot e1000.png (2000x1280)
+release_probe: PASS（1000x640，断言分组 A/B/C/D 全过，E 未覆盖见注释）

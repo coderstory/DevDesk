@@ -1,0 +1,5 @@
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-list-20rows.png (2400x2000)
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-tab.png (2400x2000)
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-filter-empty.png (2400x2000)
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-empty.png (2400x2000)
+release_probe: PASS（1200x1000，断言分组 A/B/C/D 全过，E 未覆盖见注释）

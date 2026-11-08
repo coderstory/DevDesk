@@ -1,0 +1,4 @@
+FAIL [../tests/test_modules/test_release_task_ui.cpp:186] dialog.planDate == std::string(todayBuf) — 重开弹层日期未重置为今天，残留上一次会话值: 2020-06-02
+[FAIL] release 新建任务：重开弹层 = 空表单语义（日期重置为今天、环境清空），上一次会话的旧日期不得残留——否则点「创建任务」触发同日复用打开旧任务（防池 BUG 212：点「创建任务」打开的是上一个任务的编辑界面） [27ms]
+Total:  1 Passed: 0 Failed: 1 
+❌ 测试有失败（退出码 ��上方为 FAIL 摘要；要看完整输出跑: /Users/coderstory/dev/DevDesk/build/tests/devdesk_tests）

@@ -1,0 +1,4 @@
+slug: pool15-accept2
+date: 2026-10-31 19:19:01
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  bash scripts/build-test-run.sh --filter todo_anim --no-run 

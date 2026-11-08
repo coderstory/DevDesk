@@ -1,0 +1,27 @@
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 杀旧进程 ──
+✅ 旧进程已清（仅本 build 目录下的产物）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 7.5.2 -> 7.5.3
+✅ 构建成功
+⚠ 未找到 7z（DEVDESK_SEVENZIP / C:/Program Files/7-Zip/7z.exe / PATH 7z|7zz 全落空）——跳过 embedding 资产解包（运行时走 HF 下载/数据根兜底；打包链须设 DEVDESK_SEVENZIP）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 测试 ──
+FAIL [../tests/test_core/test_result.cpp:224] report.empty() — src/ + tests/ 又出现了已删的取值口（35 处）——可能失败的取值一律走 valueOr()、不可能失败的走 value()：
+FAIL [../tests/test_modules/test_github_sync_card.cpp:493] std::fabs(enSw->frame.x + enSw->frame.width - (kW - 28.0f)) < 0.5f
+FAIL [../tests/test_modules/test_github_sync_card_spacing.cpp:119] autoSw->frame.y - (enSw->frame.y + enSw->frame.height) >= 8.0f - gapOk
+[FAIL] Result 取值口收敛护栏：全仓不得再出现 unsafeValue / .expect( [172ms]
+[FAIL] github_sync 卡片: 方案 A 三段几何（头部/开关两行/配置组/操作组） [0ms]
+[FAIL] github_sync 卡片: URL 拉满卡右缘 + 分支/Token 撑满列 + 开关行文本块弹性 + 开关钉右缘（两档窗宽） [0ms]
+[FAIL] github_sync H28: 关键行间距 ≥ 设计系统 v1.0 令牌（4/8/12/16）+ 折叠链接并入摘要行不重叠 [0ms]
+[FAIL] wallpaper: 壁纸末格（插拔卡内）85/100/130% 几何——末行右列、44×24 开关右贴格、行底留边≥16、回调带 id [5ms]
+Total:  2268 Passed: 2255 Failed: 5 
+❌ 测试有失败（退出码 ��上方为 FAIL 摘要；要看完整输出跑: /Users/coderstory/dev/DevDesk/build/tests/devdesk_tests）
+EXIT=1

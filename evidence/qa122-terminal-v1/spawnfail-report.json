@@ -1,0 +1,77 @@
+{
+  "exitCode": 1,
+  "scene": "qa122-spawnfail.json",
+  "steps": [
+    {
+      "elapsedMs": 0.881708,
+      "error": "",
+      "hitId": "app.sidebar.item.Terminal.hit",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Terminal.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 2.515208,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "text '重试'",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.451958,
+      "error": "",
+      "hitId": "",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "qa122-spawnfail-dump.txt",
+      "type": "dump"
+    },
+    {
+      "elapsedMs": 459.702917,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-spawnfail.png",
+      "target": "qa122-spawnfail.png",
+      "type": "screenshot"
+    },
+    {
+      "elapsedMs": 429.600542,
+      "error": "id 'app.term.retry' 不在当前页元素树——独立子窗 / OS 原生控件不在驱动射程",
+      "hitId": "",
+      "index": 5,
+      "passed": false,
+      "screenshot": "/tmp/qa122-out/fail-5.png",
+      "target": "app.term.retry",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 0.844291,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "text '重试'",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 430.192625,
+      "error": "",
+      "hitId": "",
+      "index": 7,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-spawnfail-retry.png",
+      "target": "qa122-spawnfail-retry.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 7
+}

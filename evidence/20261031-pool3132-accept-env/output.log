@@ -1,0 +1,11 @@
+llama-server /health:
+200
+telemem initialize:
+HTTP/1.1 200 OK
+mcp-session-id: f04b6d01316e4d1b9c06c00049d3d24e
+telemem-server.log tail:
+INFO:     Uvicorn running on http://127.0.0.1:8421 (Press CTRL+C to quit)
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 9144233988414a6986cd1b38c2a280de
+INFO:     127.0.0.1:49260 - "POST /mcp HTTP/1.1" 200 OK
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: f04b6d01316e4d1b9c06c00049d3d24e
+INFO:     127.0.0.1:49281 - "POST /mcp HTTP/1.1" 200 OK

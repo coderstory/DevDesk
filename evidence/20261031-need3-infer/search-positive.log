@@ -1,0 +1,7 @@
+[initialize] HTTP 200 in 0.02s session=yes
+[initialize] server={'icons': [{'mimeType': 'image/png', 'src': 'https://raw.githubusercontent.com/TeleAI-UAGI/telemem/main/assets/TeleMem.png'}], 'name': 'telemem', 'title': 'TeleMem', 'version': '1.10.1', 'websiteUrl': 'https://teleai-uagi.github.io/telemem/'}
+[search] HTTP 200 in 0.03s
+event: message
+data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\n  \"query\": \"发布日期推迟\",\n  \"memories\": \"池3基线：DevDesk发布日期推迟到11月15日（张伟2026-10-31周会决定）。\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"query":"发布日期推迟","memories":"池3基线：DevDesk发布日期推迟到11月15日（张伟2026-10-31周会决定）。"}}}}
+
+

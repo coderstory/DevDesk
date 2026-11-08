@@ -1,0 +1,6 @@
+[spike 275430.990] auto-open alarm window（此刻前台应为终端）
+[spike 275430.997] POC-1 alarm window created handle=0x7c6d351800
+[spike 275430.999] POC-2 alarm compose frame=1 phase=0
+[spike 275442.792] POC-2 alarm compose frame=31 phase=1
+[spike 275450.976] auto-close alarm window
+[spike 275450.977] alarm window destroyed

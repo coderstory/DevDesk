@@ -1,0 +1,73 @@
+✅ 版本号: 0.5.0（已写入打包产物 Info.plist）
+✅ 图标: /Users/coderstory/dev/DevDesk/installer/macos/DevDesk.icns（已入库 .icns）
+✅ 资源: /Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets
+── 预签嵌套代码（Contents/MacOS 下常规文件）──
+── 签名（ad-hoc）: /Users/coderstory/dev/DevDesk/build/DevDesk.app ──
+/Users/coderstory/dev/DevDesk/build/DevDesk.app: replacing existing signature
+── 校验签名（codesign --verify --strict）──
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/beat-analysis-1788522548546.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/Les Gordon - IKB (Audio).mp3
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/beat-analysis-1788522548546.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/music/Les Gordon - IKB (Audio).mp3
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Hard drive-rafiki.svg
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template@2x.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.svg
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Hard drive-rafiki.svg
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-template@2x.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.svg
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.ico
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/NotoSansSC-VF.ttf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/mona-loading-default.gif
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/icon.ico
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/NotoSansSC-VF.ttf--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/mona-loading-default.gif
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Font Awesome 7 Free-Solid-900.otf
+
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/Font Awesome 7 Free-Solid-900.otf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/demo.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/eui-shadertoy.schema.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fluid/LDR_LLL1_0.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/demo.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/eui-shadertoy.schema.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fluid/LDR_LLL1_0.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/config.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/color_noise.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/london.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/config.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/color_noise.png
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/1.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/london.png
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/1.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/1.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/2.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/3.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/1.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/2.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/3.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/4.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/5.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/config.json
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/5.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/blackhole/4.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/config.json
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/YouSheBiaoTiHei-2.ttf
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/YouSheBiaoTiHei-2.ttf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/splash.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/2.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/splash.frag
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/shaders/shadertoy/fish/2.frag
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf
+--prepared:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-win.ico
+--validated:/Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets/tray-icon-win.ico
+/Users/coderstory/dev/DevDesk/build/DevDesk.app: valid on disk
+/Users/coderstory/dev/DevDesk/build/DevDesk.app: satisfies its Designated Requirement
+✅ 签名有效：/Users/coderstory/dev/DevDesk/build/DevDesk.app（Identifier=com.devdesk.app，ad-hoc）
+⏭️  跳过 LaunchServices 注册（DEVDESK_SKIP_LSREGISTER=1）
+✅ App bundle: /Users/coderstory/dev/DevDesk/build/DevDesk.app
+
+测试：在 Finder 右击 .md 文件 → '打开方式' → 应能看到 DevDesk
+exit=0

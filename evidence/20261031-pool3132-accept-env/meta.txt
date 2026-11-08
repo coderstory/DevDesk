@@ -1,0 +1,4 @@
+slug: pool3132-accept-env
+date: 2026-10-31 20:07:22
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  cat /tmp/pool3132-accept/step0-env.txt 

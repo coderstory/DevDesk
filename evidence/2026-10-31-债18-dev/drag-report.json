@@ -1,0 +1,137 @@
+{
+  "exitCode": 0,
+  "scene": "todo-drag-move.json",
+  "steps": [
+    {
+      "elapsedMs": 0.682292,
+      "error": "",
+      "hitId": "app.sidebar.item.Todo.hit",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Todo.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 9.875334,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.btn.add",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 1.500584,
+      "error": "",
+      "hitId": "app.todo.btn.add.bg",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "todo.btn.add",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.468209,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.dialog.newtask.input",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 1.315083,
+      "error": "",
+      "hitId": "app.todo.dialog.newtask.input.hit",
+      "index": 5,
+      "passed": true,
+      "screenshot": "",
+      "target": "todo.dialog.newtask.input",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.428666,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "'拖拽演示'",
+      "type": "type"
+    },
+    {
+      "elapsedMs": 3.671125,
+      "error": "",
+      "hitId": "",
+      "index": 7,
+      "passed": true,
+      "screenshot": "",
+      "target": "Enter",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 1.522834,
+      "error": "",
+      "hitId": "",
+      "index": 8,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.col.0.card.0.bg",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 6.434583,
+      "error": "",
+      "hitId": "",
+      "index": 9,
+      "passed": true,
+      "screenshot": "",
+      "target": "todo.col.0.card.0.bg → todo.col.1",
+      "type": "drag"
+    },
+    {
+      "elapsedMs": 1.5805,
+      "error": "",
+      "hitId": "",
+      "index": 10,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.col.1.card.0.wrap",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.157917,
+      "error": "",
+      "hitId": "",
+      "index": 11,
+      "passed": true,
+      "screenshot": "",
+      "target": "missing todo.col.0.card.0.bg",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.15675,
+      "error": "",
+      "hitId": "",
+      "index": 12,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.col.1.card.0.wrap",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 441.374917,
+      "error": "",
+      "hitId": "",
+      "index": 13,
+      "passed": true,
+      "screenshot": "/Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/todo-drag.png",
+      "target": "todo-drag.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 13
+}

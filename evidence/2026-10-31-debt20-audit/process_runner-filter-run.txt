@@ -1,0 +1,7 @@
+
+=== Summary ===
+Total:  0
+Passed: 0
+Failed: 0
+Skipped: 0
+[ERROR] 未命中任何用例（过滤词 "--filter=process_runner"）—— 视为失败（退出码 2），防上层脚本误判「全绿」

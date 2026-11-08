@@ -1,0 +1,7 @@
+probe: screenshot evidence/dialog-migrate-b/agent/agent_draft_dialog.png (2400x2000)
+probe: screenshot evidence/dialog-migrate-b/agent/agent_draft_error.png (2400x2000)
+D1 msg.0.hit 整卡点击开合 OK（展开 0 → 1）
+D2 tools dialog panel 720x600
+D2 tools masonry cards side-by-side(多列) colW=320
+agent_dialog_probe: 工具弹窗缺 ✕ 关闭钮
+FAIL

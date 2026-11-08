@@ -1,0 +1,18 @@
+=== schedule_ui_probe --empty-rules --shot-empty ===
+S1 材质采样 卡内=97 卡外=72（卡 @22,244 1156x96）
+S1 PASS 空态页头降级 + 空态卡 L2 材质
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/b4-sched-empty.png (2400x2000)
+schedule_ui_probe: PASS
+exit=0
+
+=== schedule_ui_probe --shot-list ===
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B4/b4-sched-full.png (2400x2000)
+S3 相邻卡间距=8 卡宽=1156
+S3 段标题→卡间距 系统=16 用户=16
+S2 PASS 有数据页头 Primary + 每行 L2 卡；S3 PASS 卡几何
+S4 hover 圆角 16 / 常态 12 缩放 1.02
+S4 PASS 行卡 hover 驱动 jellyCard
+S4b 指针在编辑文字上 卡圆角=16
+S4b PASS 卡内控件共担 hover（不移出卡）
+schedule_ui_probe: PASS
+exit=0

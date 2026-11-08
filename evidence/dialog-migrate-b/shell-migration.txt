@@ -1,0 +1,32 @@
+need156 批B 波4 — 壳迁移归零证据（2026-11-08 10:56:53）
+
+## grep -c drawDialogFrame
+src/module_settings/git_error_dialog.cpp:0
+src/module_settings/settings_module.cpp:0
+src/module_agent/agent_module_dialogs.cpp:0
+
+## grep -c drawDialogButtons
+src/module_settings/git_error_dialog.cpp:0
+src/module_agent/agent_module_dialogs.cpp:0
+src/module_settings/settings_module.cpp:0
+
+## grep -c drawDialogShell
+src/module_settings/git_error_dialog.cpp:1
+src/module_agent/agent_module_dialogs.cpp:4
+src/module_settings/settings_module.cpp:1
+
+## zIndex 1100 保留
+2111:    shell.zIndex = 1100;   // 叠在任务弹窗（组件默认 1000）之上；遮罩同时挡住外层
+2243:    shell.zIndex = 1100;   // 叠在任务/详情弹窗（默认 1000）之上，同草稿子弹窗
+
+## 节点 id 保留（.generate/.dismiss/.close/.logs/.btn.*）
+src/module_agent/agent_module_dialogs.cpp:2122:agent.dialog.task.draft.close
+src/module_agent/agent_module_dialogs.cpp:2135:agent.dialog.task.draft.caption
+src/module_agent/agent_module_dialogs.cpp:2141:agent.dialog.task.draft.input
+src/module_agent/agent_module_dialogs.cpp:2158:agent.dialog.task.draft.generate
+src/module_agent/agent_module_dialogs.cpp:2169:agent.dialog.task.draft.dismiss
+src/module_agent/agent_module_dialogs.cpp:2186:agent.dialog.task.draft.notice
+src/module_agent/agent_module_dialogs.cpp:2191:agent.dialog.task.draft.warnings
+src/module_agent/agent_module_dialogs.cpp:2197:agent.dialog.task.draft.error
+src/module_agent/agent_module_dialogs.cpp:2269:agent.dialog.delete.msg
+src/module_settings/settings_module.cpp:1162:settings.github.disclosure.body

@@ -1,0 +1,77 @@
+{
+  "exitCode": 1,
+  "scene": "qa122-reflow.json",
+  "steps": [
+    {
+      "elapsedMs": 0.846583,
+      "error": "",
+      "hitId": "app.sidebar.item.Terminal.hit",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Terminal.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.469,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.fullscreen",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.876,
+      "error": "",
+      "hitId": "",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "'echo COLS=$COLUMNS'",
+      "type": "type"
+    },
+    {
+      "elapsedMs": 0.958,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "Enter",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 4202.391375,
+      "error": "等待 'text' 超时 4000ms（目标 'COLS='）",
+      "hitId": "",
+      "index": 5,
+      "passed": false,
+      "screenshot": "/tmp/qa122-out/fail-5.png",
+      "target": "text 'COLS='",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.454166,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "qa122-reflow-dump.txt",
+      "type": "dump"
+    },
+    {
+      "elapsedMs": 169.034917,
+      "error": "",
+      "hitId": "",
+      "index": 7,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-reflow-small.png",
+      "target": "qa122-reflow-small.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 7
+}

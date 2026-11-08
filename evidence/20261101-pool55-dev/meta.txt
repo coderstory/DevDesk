@@ -1,0 +1,4 @@
+slug: pool55-dev
+date: 2026-11-01 01:54:39
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  build/tests/release_probe --frames 200 --screenshot-seeded /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-dev/pool55-list-20rows-1200x1000.png --screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-dev/pool55-final-1200x1000.png 

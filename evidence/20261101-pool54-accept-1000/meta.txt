@@ -1,0 +1,4 @@
+slug: pool54-accept-1000
+date: 2026-11-01 00:56:32
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  build/tests/release_probe --size 1000x640 --screenshot e1000.png --screenshot-publish p1000.png 

@@ -1,0 +1,8 @@
+H13: halo.0 dx=1.63 dy=-0.00323486 dist=1.63001
+H13: halo.1 dx=-0.185059 dy=-1.27606 dist=1.28941
+H13: halo.2 dx=-2.75385 dy=-0.0590515 dist=2.75448
+H13: halo.3 dx=0.4328 dy=2.13928 dist=2.18262
+H13: halo.4 dx=-1.32635 dy=-0.742065 dist=1.51983
+H13: halo.5 dx=2.31067 dy=0.664337 dist=2.40427
+H13: halo.6 dx=-1.11041 dy=1.4408 dist=1.81904
+PASS: fluid halo 可见位移 max=2.75448px（halo.2）≥ 0.3px

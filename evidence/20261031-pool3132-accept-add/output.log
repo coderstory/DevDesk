@@ -1,0 +1,12 @@
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"status\": \"stored\",\n  \"scope\": {\n    \"user_id\": \"telemem-mcp\"\n  }\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"status":"stored","scope":{"user_id":"telemem-mcp"}}}}}
+
+
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"status\": \"stored\",\n  \"scope\": {\n    \"user_id\": \"telemem-mcp\"\n  }\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"status":"stored","scope":{"user_id":"telemem-mcp"}}}}}
+
+
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"status\": \"stored\",\n  \"scope\": {\n    \"user_id\": \"telemem-mcp\"\n  }\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"status":"stored","scope":{"user_id":"telemem-mcp"}}}}}
+
+

@@ -1,0 +1,57 @@
+{
+  "exitCode": 0,
+  "scene": "qa122-dark.json",
+  "steps": [
+    {
+      "elapsedMs": 0.1,
+      "error": "",
+      "hitId": "",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.sidebar.item.Terminal.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.8995,
+      "error": "",
+      "hitId": "app.sidebar.item.Terminal.hit",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Terminal.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.615542,
+      "error": "",
+      "hitId": "",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.fullscreen",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.461833,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "qa122-term-dark-dump.txt",
+      "type": "dump"
+    },
+    {
+      "elapsedMs": 476.055375,
+      "error": "",
+      "hitId": "",
+      "index": 5,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-term-dark.png",
+      "target": "qa122-term-dark.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 5
+}

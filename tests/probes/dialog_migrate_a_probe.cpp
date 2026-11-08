@@ -21,6 +21,7 @@
 #include "module_memory/proposals/curator.h"
 #include "module_memory/proposals/proposal_store.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>

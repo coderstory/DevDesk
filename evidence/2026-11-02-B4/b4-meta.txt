@@ -1,0 +1,32 @@
+B4（池 67）定时页卡片化 + 新建按钮降级 —— 证据清单
+HEAD: d2be9ce6 + 本地改动（未提交）
+平台: macOS arm64 Debug（build/），构建入口 bash scripts/build-test-run.sh --dev
+
+1) b4-sched-full.png      有数据态（2 条用户规则）：页头新建 = Primary 绿钮，每行一张 L2 果冻卡
+2) b4-sched-empty.png     空态（--empty-rules）：页头新建降级 Secondary（灰），空态卡中央仅 Secondary 引导钮
+3) uat62/04-schedule-1000.png  uat62 全页批的定时页回归图（1600x1000 浅色）
+4) b4-probe.log           schedule_ui_probe 运行日志（S1/S2/S3/S4 断言行 + PASS）
+5) uat62-full.log         uat62_page_shots_probe 运行日志
+
+断言口径（exit 裁决，读 compose 写入的 element 目标值，不靠人眼）：
+S1 空态：页头钮非 Primary（element.color == t.colors.hover = Secondary 配色）
+         + 空态卡中央钮 Secondary + 列表子树内主色填充矩形数 = 0
+         + 空态卡 L2 材质（卡面 = ui_kit::itemSurface，卡内/卡外像素差 >= 3）
+S2 有数据：页头钮 Primary + 每行 .bg 一张 L2 卡（itemSurface + 圆角 > 0）
+S3 几何：各行卡 x/宽一致 (±1.5)、相邻卡间距 = 8（kRowCardGap）、
+         段标题→卡间距系统/用户一致 (±1.5)、行卡左右内缩对称 (±1.5)
+S4 hover：指针进卡 → 行卡圆角 12→16、缩放 1.02（jellyCard 全参），移出回 12
+
+已知未验证项：
+- hover 观感（真机鼠标移入/移出）离屏无法验，只验了 compose 目标值
+- 指针停在行内「编辑/删除」文字上时卡保持 hover（已接 onHover 并入集合）；
+  停在启停开关上会短暂失 hover（SwitchBuilder 无 onHover 钩子，已在代码留 shortcut 注释）
+
+补记（实现期发现并已修）：
+- hover 双集合：行卡命中面与卡内「编辑/删除」文字是兄弟元素，EUI 兄弟 hover 不互相继承，
+  单一集合在「卡→控件」那一帧会被先到的 erase 抹掉 → 改 hoveredRowIds_（命中面）+
+  hoveredRowControlIds_（卡内控件）并集，探针 S4b 断言指针停在「编辑」上卡仍保持 hover（16）。
+- 采样时序：首帧布局刚落地渲染未跟上，像素采样读到旧帧（卡内外同为 72）。采样前先跑
+  8 帧稳帧，并在采样后重新 find 元素（captureFramePng 内部 pollOnce 会重建树）。
+- shortcut 遗留（已留注释）：指针停在启停开关上卡会短暂失 hover，SwitchBuilder 无 onHover 钩子；
+  上限 1 处，触发条件 = 开关 hover 观感被投诉。

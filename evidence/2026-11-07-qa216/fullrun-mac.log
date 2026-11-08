@@ -1,0 +1,58 @@
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 杀旧进程 ──
+✅ 旧进程已清（仅本 build 目录下的产物）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 6.7.5 -> 6.7.6
+✅ 构建成功
+⚠ 未找到 7z（DEVDESK_SEVENZIP / C:/Program Files/7-Zip/7z.exe / PATH 7z|7zz 全落空）——跳过 embedding 资产解包（运行时走 HF 下载/数据根兜底；打包链须设 DEVDESK_SEVENZIP）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 测试 ──
+Total:  2267 Passed: 2259 Failed: 0 
+✅ 测试全绿
+── UI probe ──
+97% tests passed, 1 tests failed out of 38
+	  6 - bug142_click_chain_probe (Failed)                 probe
+──── probe 失败原因（前 60 行）────
+Test project /Users/coderstory/dev/DevDesk/build
+PASS §0 侧栏 Settings 条目 hit 区应存在
+PASS §0 初始首页：设置页内容不应在 DOM
+DUMP app.sidebar.item.Settings.hit frame{x=16,y=645,w=188,h=40}
+shot bug142-click-chain/01-home-initial.png 2400x1602
+PASS 链路1 真点击侧栏 Settings：设置页应当帧入 DOM（点击响应）
+DUMP settings.tabs.wrap frame{x=252,y=96,w=916,h=40}
+shot bug142-click-chain/02-settings-after-sidebar-click.png 2400x1602
+DUMP settings.tabs.1.hit frame{x=318,y=96,w=62.0002,h=40}
+DIAG cardsBefore=0 cardsAfter=0 modulesCard=0
+FAIL 链路2a 真点击「模块」tab：卡区 id 集应变化（点击响应：tab 切换生效）
+FAIL 链路2b 真点击设置页「模块」tab：模块卡片应入 DOM（点击响应，命中 0 个 settings.card.modules* 元素）
+shot bug142-click-chain/03-settings-modules-tab.png 2400x1602
+PASS 链路3 真点击侧栏 Home：应返回首页（设置页内容退出 DOM）
+FAIL
+
+
+97% tests passed, 1 tests failed out of 38
+
+Label Time Summary:
+probe    =  57.95 sec*proc (38 tests)
+
+Total Test time (real) =  57.97 sec
+
+The following tests did not run:
+	  5 - b1_material_probe (Skipped)
+	 19 - memory_install_probe (Skipped)
+	 31 - wallpaper_desktop_probe (Skipped)
+	 32 - wallpaper_image_rotation_probe (Skipped)
+	 35 - wallpaper_rotation_probe (Skipped)
+	 37 - wallpaper_yield_probe (Skipped)
+
+The following tests FAILED:
+	  6 - bug142_click_chain_probe (Failed)                 probe
+Errors while running CTest
+❌ UI probe 有失败（上方为失败清单与原因；本地复现: cd build && ctest -L probe --output-on-failure）

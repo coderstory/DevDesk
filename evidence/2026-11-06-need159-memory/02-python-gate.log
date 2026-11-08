@@ -1,0 +1,9 @@
+[probe] === install: 触发产品安装链 startAsync ===
+[probe] state=Idle pythonFound=0 pythonVersion= llamaMissing=0 embedState=0 embedReady=0
+[probe] detail=
+[probe] t+0.0s Idle|
+[probe] t+0.5s Failed|未找到 Python 3.10~3.13：请安装后点「启动引擎」重试（3.14 及以上版本暂不支持）。macOS 可执行 brew install python@3.13 或 uv python install 3.13；Windows 可用 python.org 官网安装器或 uv python install 3.13。
+[probe] FAIL 安装链 Failed
+[probe] state=Failed pythonFound=0 pythonVersion= llamaMissing=0 embedState=0 embedReady=0
+[probe] detail=未找到 Python 3.10~3.13：请安装后点「启动引擎」重试（3.14 及以上版本暂不支持）。macOS 可执行 brew install python@3.13 或 uv python install 3.13；Windows 可用 python.org 官网安装器或 uv python install 3.13。
+[probe] SUMMARY ok=0 fail=0

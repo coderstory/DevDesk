@@ -1,0 +1,19 @@
+frame card1 42 110 1516 68
+frame card2 42 186 1516 68
+frame panel 32 100 1536 868
+rgb normal card1.inner 35,33,32
+rgb normal card2.inner 35,33,32
+rgb normal panel.gap 31,29,28
+rgb normal page.bg 26,24,22
+rgb hover card1.inner 32,30,29
+rgb hover card2.inner 35,33,32
+rgb hover panel.gap 31,29,28
+rgb hover page.bg 26,24,22
+rgb pressed card1.inner 30,28,27
+rgb pressed card2.inner 35,33,32
+rgb pressed panel.gap 31,29,28
+rgb pressed page.bg 26,24,22
+A1 PASS 三态可辨 normal=35,33,32 hover=32,30,29 pressed=30,28,27
+A2 PASS 控制点不漂 card2.inner=35,33,32
+LAYER PASS panel.gap=31,29,28 != card1.inner=35,33,32（分层生效）
+b1_material_probe: PASS

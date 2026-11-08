@@ -1,0 +1,144 @@
+app.fluid.anim.driver	0,0 1x1	
+app.fluid.halo.0	291,189 288x288	
+app.fluid.halo.1	420,231 148x148	
+app.fluid.halo.10	104,100 180x180	
+app.fluid.halo.11	-75,79 420x420	
+app.fluid.halo.12	654,184 251x251	
+app.fluid.halo.13	74,-125 360x360	
+app.fluid.halo.2	-20,-31 316x316	
+app.fluid.halo.3	303,254 446x446	
+app.fluid.halo.4	8,298 259x259	
+app.fluid.halo.5	588,45 244x244	
+app.fluid.halo.6	53,384 273x273	
+app.fluid.halo.7	484,124 228x228	
+app.fluid.halo.8	120,139 396x396	
+app.fluid.halo.9	278,337 336x336	
+app.fluid.sat.0.0	538,292 21x21	
+app.fluid.sat.0.1	424,455 16x16	
+app.fluid.sat.0.2	511,355 17x17	
+app.fluid.sat.1.0	541,292 9x9	
+app.fluid.sat.1.1	537,317 9x9	
+app.fluid.sat.1.2	482,349 9x9	
+app.fluid.sat.10.0	257,209 16x16	
+app.fluid.sat.10.1	139,242 9x9	
+app.fluid.sat.10.2	196,241 16x16	
+app.fluid.sat.11.0	251,310 35x35	
+app.fluid.sat.11.1	93,127 24x24	
+app.fluid.sat.11.2	-41,355 34x34	
+app.fluid.sat.12.0	866,342 16x16	
+app.fluid.sat.12.1	787,203 16x16	
+app.fluid.sat.12.2	858,240 20x20	
+app.fluid.sat.13.0	144,106 31x31	
+app.fluid.sat.13.1	302,168 27x27	
+app.fluid.sat.13.2	155,-89 29x29	
+app.fluid.sat.2.0	209,236 21x21	
+app.fluid.sat.2.1	1,53 23x23	
+app.fluid.sat.2.2	0,160 28x28	
+app.fluid.sat.3.0	467,653 35x35	
+app.fluid.sat.3.1	661,584 39x39	
+app.fluid.sat.3.2	349,567 29x29	
+app.fluid.sat.4.0	38,351 18x18	
+app.fluid.sat.4.1	62,506 21x21	
+app.fluid.sat.4.2	40,374 23x23	
+app.fluid.sat.5.0	786,85 20x20	
+app.fluid.sat.5.1	731,64 15x15	
+app.fluid.sat.5.2	625,197 20x20	
+app.fluid.sat.6.0	257,569 21x21	
+app.fluid.sat.6.1	268,463 22x22	
+app.fluid.sat.6.2	271,571 15x15	
+app.fluid.sat.7.0	519,252 14x14	
+app.fluid.sat.7.1	516,282 20x20	
+app.fluid.sat.7.2	553,305 21x21	
+app.fluid.sat.8.0	162,391 35x35	
+app.fluid.sat.8.1	375,195 36x36	
+app.fluid.sat.8.2	199,425 29x29	
+app.fluid.sat.9.0	457,344 29x29	
+app.fluid.sat.9.1	540,606 21x21	
+app.fluid.sat.9.2	490,582 27x27	
+app.notice	0,0 0x0	opacity0
+app.notice.timer	0,0 0x0	
+app.page	220,30 580x570	clip
+app.root	0,30 800x570	
+app.sidebar	0,30 220x570	
+app.sidebar.bg	0,30 220x570	
+app.sidebar.brand	0,62 220x56	
+app.sidebar.brand.mark	90,70 40x40	
+app.sidebar.brand.mark.gt1	102,84 6x6	
+app.sidebar.brand.mark.gt2	102,88 6x6	
+app.sidebar.brand.mark.tile	90,70 40x40	
+app.sidebar.brand.mark.us	109,92 8x2	
+app.sidebar.brand.mark.win	96,79 27x22	
+app.sidebar.divider	219,30 1x570	
+app.sidebar.groupdiv	16,498 188x1	
+app.sidebar.item.ClaudeProxy.hit	16,322 188x40	interactive
+app.sidebar.item.ClaudeProxy.icon	28,322 28x40	
+app.sidebar.item.ClaudeProxy.label	56,322 148x40	
+app.sidebar.item.Home.hit	16,146 188x40	interactive
+app.sidebar.item.Home.icon	28,146 28x40	
+app.sidebar.item.Home.label	56,146 148x40	
+app.sidebar.item.Markdown.hit	16,190 188x40	interactive
+app.sidebar.item.Markdown.icon	28,190 28x40	
+app.sidebar.item.Markdown.label	56,190 148x40	
+app.sidebar.item.Memory.hit	16,366 188x40	interactive
+app.sidebar.item.Memory.icon	28,366 28x40	
+app.sidebar.item.Memory.label	56,366 148x40	
+app.sidebar.item.ReleaseGroup.chevron	184,454 14x40	
+app.sidebar.item.ReleaseGroup.hit	16,454 188x40	interactive
+app.sidebar.item.ReleaseGroup.icon	28,454 28x40	
+app.sidebar.item.ReleaseGroup.label	56,454 126x40	
+app.sidebar.item.Schedule.hit	16,278 188x40	interactive
+app.sidebar.item.Schedule.icon	28,278 28x40	
+app.sidebar.item.Schedule.label	56,278 148x40	
+app.sidebar.item.Terminal.hit	16,410 188x40	interactive
+app.sidebar.item.Terminal.icon	28,410 28x40	
+app.sidebar.item.Terminal.label	56,410 148x40	
+app.sidebar.item.Terminal.sel	16,410 188x40	
+app.sidebar.item.Terminal.sel.accent	6,421 3x18	
+app.sidebar.item.Terminal.sel.bg	16,410 188x40	
+app.sidebar.item.Terminal.sel.text	28,410 176x40	
+app.sidebar.item.Todo.hit	16,234 188x40	interactive
+app.sidebar.item.Todo.icon	28,234 28x40	
+app.sidebar.item.Todo.label	56,234 148x40	
+app.sidebar.toggle	16,544 36x36	interactive
+app.sidebar.toggle.icon	16,544 36x36	
+app.term.badge	292,42 130x20	
+app.term.bg	220,30 580x570	
+app.term.body	220,74 580x526	
+app.term.fullscreen	756,42 28x20	interactive
+app.term.grid.row.0	220,74 594x16	
+app.term.grid.row.1	220,90 594x16	
+app.term.grid.row.10	220,236 594x16	
+app.term.grid.row.11	220,252 594x16	
+app.term.grid.row.12	220,269 594x16	
+app.term.grid.row.13	220,285 594x16	
+app.term.grid.row.14	220,301 594x16	
+app.term.grid.row.15	220,317 594x16	
+app.term.grid.row.16	220,334 594x16	
+app.term.grid.row.17	220,350 594x16	
+app.term.grid.row.18	220,366 594x16	
+app.term.grid.row.19	220,382 594x16	
+app.term.grid.row.2	220,106 594x16	
+app.term.grid.row.20	220,399 594x16	
+app.term.grid.row.21	220,415 594x16	
+app.term.grid.row.22	220,431 594x16	
+app.term.grid.row.23	220,447 594x16	
+app.term.grid.row.24	220,464 594x16	
+app.term.grid.row.25	220,480 594x16	
+app.term.grid.row.26	220,496 594x16	
+app.term.grid.row.27	220,512 594x16	
+app.term.grid.row.28	220,529 594x16	
+app.term.grid.row.29	220,545 594x16	
+app.term.grid.row.3	220,122 594x16	
+app.term.grid.row.30	220,561 594x16	
+app.term.grid.row.31	220,577 594x16	
+app.term.grid.row.4	220,139 594x16	
+app.term.grid.row.5	220,155 594x16	
+app.term.grid.row.6	220,171 594x16	
+app.term.grid.row.7	220,187 594x16	
+app.term.grid.row.8	220,204 594x16	
+app.term.grid.row.9	220,220 594x16	
+app.term.ime.anchor	485,74 7x16	
+app.term.input	220,74 580x526	interactive
+app.term.new	580,42 70x20	interactive
+app.term.root	220,30 580x570	
+app.term.title	236,42 56x20	

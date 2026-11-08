@@ -1,0 +1,4 @@
+slug: debt7-accept
+date: 2026-10-31 18:35:39
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  sh -c open /Users/coderstory/dev/DevDesk/build/DevDesk.app; sleep 3; echo "== before-kill =="; pgrep -fl "[D]evDesk.app/Contents/MacOS/DevDesk" || echo NO-MATCH; pkill -f "[D]evDesk.app/Contents/MacOS/DevDesk"; sleep 1; echo "== after-kill =="; pgrep -fl "[D]evDesk.app/Contents/MacOS/DevDesk" && echo RESIDUE-FOUND || echo ZERO-RESIDUE 

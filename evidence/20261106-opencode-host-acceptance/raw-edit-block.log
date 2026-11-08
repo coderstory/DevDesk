@@ -1,0 +1,13 @@
+[0m
+> build · iceman-contributor-free
+[0m✗ [0mWrite zz_raw_probe.txt failed
+[91m[1mError: [0m[devflow 门禁] 本轮发言后的任务尚未入池登记（B+ 口径）：先 pool_add/pool_update 落台账（S 级直做同样要登记——ask 双登记铁律），登记后自动放行；纯文档/项目外路径不受限；若本条确非执行任务，如实答复用户即可（需要执行时再登记）。
+> build · iceman-contributor-free
+BLOCKED
+
+原因（来自写入 `zz_raw_probe.txt` 时的 devflow 门禁拦截）：
+```text
+[devflow 门禁] 本轮发言后的任务尚未入池登记（B+ 口径）：先 pool_add/pool_update 落台账（S 级直做同样要登记——ask 双登记铁律），登记后自动放行；纯文档/项目外路径不受限；若本条确非执行任务，如实答复用户即可（需要执行时再登记）。
+```
+
+按你的要求，未入池、未调用池工具，文件未创建。

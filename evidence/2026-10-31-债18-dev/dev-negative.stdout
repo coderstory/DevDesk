@@ -1,0 +1,3 @@
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/fail-1.png (2400x2000)
+[1/1] FAIL assert exists app.sidebar.item.Absent.hit（截图: /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/fail-1.png） —— 断言失败：元素 'app.sidebar.item.Absent.hit' 不存在（相近候选: app.sidebar） [耗时 419ms]
+ui_driver: 退出码 1（1 步）

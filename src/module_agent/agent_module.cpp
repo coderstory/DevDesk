@@ -801,6 +801,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .size(cardW, cardH)
                                     .states(cardSurfaceColor, cardSurfaceColor,
                                             cardSurfaceColor)
+                                    // ⚠️ states() 内部会把 interactive 置 true（dsl.h
+                                    // states 实现），而动画期本元素被抬到 zIndex(20)
+                                    // 盖过 .hit（z=1）——不关掉就会顶替掉整卡的 hover/
+                                    // press/click 处理者：hover 一进入即被劫走 → .hit 收
+                                    // onHover(false) → 去抖后 hover 失效 → 果冻退出 →
+                                    // 事件回 .hit，形成抖动且点击打不开详情。三态色
+                                    // 已由本帧显式传入（上三行 states 同色），不需要它
+                                    // 自己参与交互判定。
+                                    .interactive(false)
                                     .radius(pressed ? kJelly.pressedRadius
                                                     : jelly.radius)
                                     .transformOrigin(0.5f, 0.5f)

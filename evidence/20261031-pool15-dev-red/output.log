@@ -1,0 +1,24 @@
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 构建（增量）──
+[27/28] Linking CXX executable tests/devdesk_ui_driver
+ld: warning: ignoring duplicate libraries: '_eui_neo_build/_deps/libpng-bundled-build/libpng16d.a'
+✅ 构建成功
+── bundle 维护（检测到既有 DevDesk.app，重组装）──
+✅ bundle 已与本次构建同步（/Users/coderstory/dev/DevDesk/build/DevDesk.app）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 测试 ──
+FAIL [../tests/test_modules/test_todo_anim_seam.cpp:195] snap.animating
+FAIL [../tests/test_modules/test_todo_anim_seam.cpp:222] snap.animating
+FAIL [../tests/test_modules/test_todo_anim_seam.cpp:248] snap.animating
+[FAIL] todo_anim: 30% 处反向重触发 → 仍单一在途段、进度未回零 [33ms]
+[FAIL] todo_anim: 收尾 ≥95% 重触发 → 仍单一在途段、进度未回零 [164ms]
+[FAIL] todo_anim: 刚完成瞬时重触发 → 放行新动画（目标翻转、起步推进） [253ms]
+Total:  7 Passed: 4 Failed: 3 
+❌ 测试有失败（退出码 ��上方为 FAIL 摘要；要看完整输出跑: /Users/coderstory/dev/DevDesk/build/tests/devdesk_tests）
+[warn] 命令退出码非 0，完整输出见本文件

@@ -1,0 +1,14 @@
+[1/12] PASS click app.sidebar.item.Todo.hit（命中回读: app.sidebar.item.Todo.hit）
+[2/12] PASS wait exists todo.btn.add
+[3/12] PASS click todo.btn.add（命中回读: app.todo.btn.add.bg）
+[4/12] PASS wait exists todo.dialog.newtask.input
+[5/12] PASS click todo.dialog.newtask.input（命中回读: app.todo.dialog.newtask.input.hit）
+[6/12] PASS type '缴费'
+[7/12] PASS key Enter
+[8/12] PASS wait exists todo.col.0.card.0.wrap
+[9/12] PASS assert text todo.col.0.card.0.title
+[10/12] PASS scroll dx=0 dy=3
+[11/12] PASS assert text '缴费'
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/todo-new.png (2400x2000)
+[12/12] PASS screenshot todo-new.png（截图: /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/todo-new.png）
+ui_driver: 退出码 0（12 步）

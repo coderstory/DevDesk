@@ -1,0 +1,20 @@
+== F-05 预算硬档判定实证（/tmp/need3-scripts/budget_harness.cpp 编译运行） ==
+[F-05] TokenUsageMeter 档位判定（默认软 2000000 / 硬 3000000）
+  PASS 月账面 0 -> Normal
+  PASS 1999999 -> Normal
+  PASS 2000000(恰等软阈值) -> Soft
+  PASS 2999999 -> Soft
+  PASS 3000000(恰等硬阈值) -> Hard
+  PASS 远超硬阈值 -> Hard
+  PASS ratio 1.5M/3M = 0.5
+  PASS 超硬档 ratio 截到 1.0
+  PASS 账面 0 ratio = 0
+  PASS 硬阈值<=0 异常配置 ratio 恒 0（不产生 NaN）
+[F-05] 结果: 全绿（fails=0）
+
+== F-06/F-04 消费点与执行点核实（代码证据） ==
+-- 硬档判定唯一消费点 = 面板展示（memory_module.cpp:840-872，'已触发硬档 · 提炼暂停' 文案 + 预算环 fill）--
+-- 账面数据源真实接线：panel_state.cpp:291 monthTokens = ledger_->monthTokens（usage_ledger.db，memoryDataDir）--
+-- 提炼暂停执行点：全仓 grep 无（src/module_memory 下无 throttle/每小时上限/硬档闸对提炼的拦截）；infer 通道未接线（IMemoryRetriever 无 addInferred，telemem_client.h:21-38）→ 硬档暂停动作当前无执行对象 = spec 已知态（overview §2.3 行64'随提炼启用时再接'）--
+-- 检索不受影响：TelememHttpRetriever::search（telemem_client.cpp:314）与 hook 注入路径无任何预算闸；实测 search 在任意档位语义下正常（need3-infer 正向检索 0.03s）--
+-- ledger 单测覆盖：tests/test_modules/test_memory_proposals.cpp:263 memory_usage_ledger_injection_and_cost_split --

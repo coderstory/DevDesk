@@ -1,0 +1,29 @@
+  探针文件：src/module_claude_proxy/claude_tools.cpp
+  ❌ 好树：真实源码竟有违规 —— 先修好树，否则下面的红没有意义
+       tests/probes/bug150_164_probe.cpp:118: 直接使用 std::initializer_list，但本文件与它直接 include 的项目头都没显式 include <initializer_list>（靠标准库内部传递包含才可见）
+       tests/probes/layout_guard_kit.cpp:138: 直接使用 std::pair，但本文件与它直接 include 的项目头都没显式 include <utility>（靠标准库内部传递包含才可见）
+       tests/probes/layout_guard_kit.cpp:266: 直接使用 std::move，但本文件与它直接 include 的项目头都没显式 include <utility>（靠标准库内部传递包含才可见）
+       UNMAPPED src/core/atomic_write_win.cpp:27: 未登记符号 std::system_category
+       UNMAPPED src/core/sql_dump.cpp:182: 未登记符号 std::char_traits
+       UNMAPPED src/core/sqlite_db.cpp:403: 未登记符号 std::uncaught_exceptions
+       UNMAPPED src/main.cpp:192: 未登记符号 std::_Exit
+       UNMAPPED src/module_agent/agent_builtin_tools.cpp:319: 未登记符号 std::regex_error
+       UNMAPPED src/module_agent/agent_builtin_tools.cpp:373: 未登记符号 std::regex_search
+       UNMAPPED src/module_mcp/mcp_page_module.cpp:1117: 未登记符号 std::strtoll
+       UNMAPPED src/module_memory/engine/python_locator.cpp:16: 未登记符号 std::regex_search
+       UNMAPPED src/module_schedule/schedule_ui_list.cpp:686: 未登记符号 std::make_move_iterator
+       UNMAPPED src/module_todo/todo_ui_board.cpp:381: 未登记符号 std::cbrt
+       UNMAPPED src/module_wallpaper/core/rotation.cpp:224: 未登记符号 std::shuffle
+       UNMAPPED src/platform/github_api.cpp:89: 未登记符号 std::strtol
+       UNMAPPED src/platform/process_host_win.cpp:87: 未登记符号 std::wcslen
+       UNMAPPED src/platform/process_host_win.cpp:174: 未登记符号 std::to_wstring
+       UNMAPPED src/platform/process_runner_win.cpp:114: 未登记符号 std::wcslen
+       UNMAPPED tests/frame_env.h:38: 未登记符号 std::is_void_v
+       UNMAPPED tests/frame_env.h:39: 未登记符号 std::invoke_result_t
+  ✅ 坏树 A：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.yq7Mg79KNX/badA/probe.cpp:66: 直接使用 std::optional，但本文件与它直接
+  ✅ 坏树 B：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.yq7Mg79KNX/badB/probe.cpp:66: 直接使用 std::optional，但本文件与它直接
+  ✅ 坏树 C：绿（声明由项目头显式提供 → 判为既有风格，不报）—— 豁免真在生效
+  ✅ 坏树 D：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.yq7Mg79KNX/badD/probe.cpp:4: 直接使用 std::optional，但本文件与它直接 
+  ✅ 坏树 E：绿（std::ios 由 <fstream> 经标准强制关系带出 → 不算缺头）—— 豁免真在生效
+  ✅ 坏树 F：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.yq7Mg79KNX/badF/probe.cpp:4: 直接使用 std::istream，但本文件与它直接 i
+❌ --self-test 失败：守卫不能自证有效

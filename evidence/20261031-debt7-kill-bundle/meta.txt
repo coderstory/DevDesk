@@ -1,0 +1,12 @@
+slug: debt7-kill-bundle
+date: 2026-10-31 18:21:34
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  sh -c 
+P=/Users/coderstory/dev/DevDesk; BUNDLE="$P/build/DevDesk.app/Contents/MacOS/DevDesk"
+echo "== 既有 bundle 实例 =="; pgrep -fl "$BUNDLE" || echo "无"
+echo "== open 启动 =="; open "$P/build/DevDesk.app"; sleep 3
+PID=$(pgrep -f "$BUNDLE" | head -1); echo "命中 PID=$PID"
+ps -p "$PID" -o command= 2>/dev/null
+echo "== 杀 =="; pkill -f "$BUNDLE"; sleep 1
+pgrep -f "$BUNDLE" >/dev/null && echo "仍存活=FAIL" || echo "已杀=PASS"
+ 

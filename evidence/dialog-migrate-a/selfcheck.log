@@ -1,0 +1,49 @@
+SELF-CHECK memory.dialog.edit.panel present
+SELF-CHECK memory.dialog.edit.title.line present
+SELF-CHECK memory.dialog.edit.footer.line present
+SELF-CHECK memory.dialog.edit.confirm present
+probe: screenshot evidence/dialog-migrate-a/memory-edit-light.png (2400x2000)
+probe: screenshot memory-edit-light.png
+SELF-CHECK memory.dialog.mask.panel present
+SELF-CHECK memory.dialog.mask.title.line present
+SELF-CHECK memory.dialog.mask.footer.line present
+SELF-CHECK memory.dialog.mask.confirm present
+probe: screenshot evidence/dialog-migrate-a/memory-mask-light.png (2400x2000)
+probe: screenshot memory-mask-light.png
+SELF-CHECK memory.dialog.clear.panel present
+SELF-CHECK memory.dialog.clear.title.line present
+SELF-CHECK memory.dialog.clear.footer.line present
+SELF-CHECK memory.dialog.clear.confirm present
+probe: screenshot evidence/dialog-migrate-a/memory-clear-light.png (2400x2000)
+probe: screenshot memory-clear-light.png
+SELF-CHECK claude.dialog.form.panel present
+SELF-CHECK claude.dialog.form.title.line present
+SELF-CHECK claude.dialog.form.footer.line present
+SELF-CHECK claude.dialog.form.confirm present
+probe: screenshot evidence/dialog-migrate-a/claude-form-light.png (2400x2000)
+probe: screenshot claude-form-light.png
+SELF-CHECK memory.dialog.edit.panel present
+SELF-CHECK memory.dialog.edit.title.line present
+SELF-CHECK memory.dialog.edit.footer.line present
+SELF-CHECK memory.dialog.edit.confirm present
+probe: screenshot evidence/dialog-migrate-a/memory-edit-dark.png (2400x2000)
+probe: screenshot memory-edit-dark.png
+SELF-CHECK memory.dialog.mask.panel present
+SELF-CHECK memory.dialog.mask.title.line present
+SELF-CHECK memory.dialog.mask.footer.line present
+SELF-CHECK memory.dialog.mask.confirm present
+probe: screenshot evidence/dialog-migrate-a/memory-mask-dark.png (2400x2000)
+probe: screenshot memory-mask-dark.png
+SELF-CHECK memory.dialog.clear.panel present
+SELF-CHECK memory.dialog.clear.title.line present
+SELF-CHECK memory.dialog.clear.footer.line present
+SELF-CHECK memory.dialog.clear.confirm present
+probe: screenshot evidence/dialog-migrate-a/memory-clear-dark.png (2400x2000)
+probe: screenshot memory-clear-dark.png
+SELF-CHECK claude.dialog.form.panel present
+SELF-CHECK claude.dialog.form.title.line present
+SELF-CHECK claude.dialog.form.footer.line present
+SELF-CHECK claude.dialog.form.confirm present
+probe: screenshot evidence/dialog-migrate-a/claude-form-dark.png (2400x2000)
+probe: screenshot claude-form-dark.png
+probe: PASS

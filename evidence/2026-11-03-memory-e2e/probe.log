@@ -1,0 +1,55 @@
+[e2e] === S3 collect/sanitize/propose ===
+[e2e] PASS S3 pollOnce 成功
+[e2e] 段数=3
+[e2e]   session=session-c-secret events=2 bytes=159
+[e2e]   session=session-a-build events=4 bytes=571
+[e2e]   session=session-b-telemem events=4 bytes=405
+[e2e] PASS S3 三个会话各出一段（4KB 内合段）
+[e2e] PASS S3 提案库打开
+[e2e][audit] sanitize:applied hits=3 bytes=159
+[e2e] 拦截段 session=session-c-secret 类别=ipv4,phone,secret,
+[e2e][audit] sanitize:applied hits=0 bytes=571
+[e2e] PASS S3 干净段生成新增提案 (session-a-build)
+[e2e][audit] sanitize:applied hits=0 bytes=405
+[e2e] PASS S3 干净段生成新增提案 (session-b-telemem)
+[e2e] PASS S3 水位/事件记账 commit
+[e2e] PASS S3 恰好 1 段被拦截（含手机号+密钥的会话）
+[e2e] PASS S3 拦截类别命中 phone/secret
+[e2e] PASS S3 脱敏段无原文泄漏
+[e2e] PASS S3 pending 提案 = 2（两个干净会话）
+[e2e] PASS S3 提案 prop_20261103_000001 status=pending source=collect
+[e2e] PASS S3 提案 prop_20261103_000001 来源会话正确 (session-a-build)
+[e2e] PASS S3 提案 prop_20261103_000001 createdAt 贴当前时间
+[e2e] PASS S3 提案 prop_20261103_000001 正文零敏感原文
+[e2e] PASS S3 提案 prop_20261103_000002 status=pending source=collect
+[e2e] PASS S3 提案 prop_20261103_000002 来源会话正确 (session-b-telemem)
+[e2e] PASS S3 提案 prop_20261103_000002 createdAt 贴当前时间
+[e2e] PASS S3 提案 prop_20261103_000002 正文零敏感原文
+[e2e] === S4 review/apply/undo ===
+[e2e] PASS S4 接受前引擎检索 0 命中
+[e2e] PASS S4 acceptProposal(prop_20261103_000001) 成功（真引擎 add）
+[e2e] PASS S4 接受后引擎检索命中已入库记忆 (1)
+[e2e] PASS S4 faiss 落盘变化 0B → 4532B
+[e2e] PASS S4 rejectProposal(prop_20261103_000002) 成功
+[e2e] PASS S4 拒绝项未入库（检索 0 命中）
+[e2e] === S5 hook inject (in-probe) ===
+[e2e] PASS S5 hook exitCode 恒 0
+[e2e] PASS S5 stdout 含 hookSpecificOutput.additionalContext
+[e2e] PASS S5 注入命中已入库记忆
+[e2e] PASS S5 注入条数 2 ≤5
+[e2e] PASS S5 注入字数 293 ≤500
+[e2e] PASS S5 注入行带日期/来源标注
+[e2e] === S4 undo chain ===
+[e2e] PASS S4 createUndoCard 成功
+[e2e] PASS S4 撤销卡接受成功（引擎 delete 通道）
+[e2e] PASS S4 撤销后引擎检索 0 命中（真删除）
+[e2e] === S6 frozen eval (15 queries) ===
+[e2e] PASS S6 runFrozenEval 完成
+[e2e] Recall@5 = 100% (15/15)
+[e2e] PASS S6 参评查询 = 15
+[e2e] PASS S6 Recall@5 100% ≥ 85% 触发线
+[e2e] === S7 seed memory for binary hook ===
+[e2e] PASS S7 附加提案创建
+[e2e] PASS S7 附加提案接受入库
+[e2e] PASS S7 引擎检索命中 8421 记忆
+[e2e] SUMMARY ok=39 fail=0

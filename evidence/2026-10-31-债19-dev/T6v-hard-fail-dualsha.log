@@ -1,0 +1,19 @@
+=== T6 变体（Contents/MacOS chmod 555，二进制存活→双 sha 形态）===
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 1.2.5 -> 1.2.6
+✅ 构建成功
+── bundle 维护（检测到既有 DevDesk.app，重组装）──
+rm: /Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/DevDesk: Permission denied
+rm: /Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS/assets: Permission denied
+rm: /Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents/MacOS: Directory not empty
+rm: /Users/coderstory/dev/DevDesk/build/DevDesk.app/Contents: Directory not empty
+rm: /Users/coderstory/dev/DevDesk/build/DevDesk.app: Directory not empty
+❌ bundle 重组失败——/Users/coderstory/dev/DevDesk/build/DevDesk.app 可能停在半组装态，验收勿拿它当最新产物
+   诊断：裸二进制 sha=17974227829712068d05f1a32b2c6b6418fe526eef243e02c6509c2269ec2532 / bundle 内二进制 sha=85eada141a0d522b6bc788f0894e51010459c10c19118854f3d1eddb788d29bc
+   → 处置：查磁盘空间与权限；rm -rf /Users/coderstory/dev/DevDesk/build/DevDesk.app 后重跑构建（bundle 缺席 = 纯开发树安全态，需要时 --install 重建）
+T6v_exit=1

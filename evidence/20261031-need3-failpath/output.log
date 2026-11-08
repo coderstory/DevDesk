@@ -1,0 +1,17 @@
+== F-07 失败路径三形态（全部工具级结构化错误，不静默） ==
+-- ① 无效 key（401 鉴权失败，1.07s）--
+[add] HTTP 200 in 1.07s
+data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\n  \"error\": \"AuthenticationError\",\n  \"detail\": \"Error code: 401 - {'error': {'message': '令牌已过期或验证不正确', 'type': '401'}}\"\n}","type":"text"}]...}}
+-- ② 真 key 配额耗尽（429，见 need3-infer）--
+-- ③ embedding 缺席（llama-server 停止后，add 与 search 均 8-10s 后报错）--
+[add] HTTP 200 in 10.41s  {"error": "InternalServerError", "detail": "Error code: 502"}
+[search] HTTP 200 in 8.12s {"error": "InternalServerError", "detail": "Error code: 502"}
+注：本机有系统级透明代理，对无监听端口代答 502 而非连接拒绝（环境特征，见 meta）；错误语义 = mem0 openai 客户端调 127.0.0.1:11435 失败，工具级结构化错误如实上报，符合 telemem_engine.cpp:230 预期
+
+-- telemem 引擎侧 traceback 关键行（telemem-mcp-invalidkey.log）--
+    return self.client.embeddings.create(**kwargs).data[0].embedding
+openai.InternalServerError: Error code: 502
+    return self.client.embeddings.create(**kwargs).data[0].embedding
+openai.InternalServerError: Error code: 502
+
+-- lsof 外联采样：31 次采样未捕获非回环 ESTABLISHED（连接窗口短/子进程句柄），云端往返以智谱侧真实响应文（429/401 中文报文+request_id）为准

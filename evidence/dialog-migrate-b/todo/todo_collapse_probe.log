@@ -1,0 +1,6 @@
+N0 PASS: 缺省态 = 普通列全展开（col0=330px）+ 归档折叠（96px）
+N1 PASS: col0 列头点击 → 折叠条（宽 96px）
+N2 PASS: 回流（col1 330→448px，col2 330→448px，seam=16）
+N3 PASS: 双列折叠共存，col2 回流至 800px
+N4 PASS: col0 展开还原（宽 448px = col2），col1 折叠不受影响
+todo_collapse_probe: PASS（1200x1000）

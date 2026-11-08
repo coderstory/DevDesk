@@ -1,0 +1,10 @@
+Total Test time (real) =   5.91 sec
+
+The following tests FAILED:
+	 12 - button_disabled_color (Failed)                    unit
+	 30 - input_line_styles (Failed)                        unit
+	 33 - input_scrollbar (Failed)                          unit
+	 55 - ui_set_scroll_offset (Failed)                     unit
+Errors while running CTest
+Output from these tests are in: /Users/coderstory/dev/DevDesk/EUI-NEO/build-unit/Testing/Temporary/LastTest.log
+Use "--rerun-failed --output-on-failure" to re-run the failed cases verbosely.

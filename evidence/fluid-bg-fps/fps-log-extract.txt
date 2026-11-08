@@ -1,0 +1,5 @@
+[2026-11-07 15:48:11.056] [INFO ] [fluid-fps] rate=59.972107fps avg_build=82.650000us frames=300 window=5.002326s (../src/app_sidebar.cpp:1196)
+[2026-11-07 15:48:16.056] [INFO ] [fluid-fps] rate=59.999658fps avg_build=82.966667us frames=300 window=5.000028s (../src/app_sidebar.cpp:1196)
+[2026-11-07 15:48:21.072] [INFO ] [fluid-fps] rate=60.001456fps avg_build=78.807309us frames=301 window=5.016545s (../src/app_sidebar.cpp:1196)
+[2026-11-07 16:11:54.690] [INFO ] [fluid-fps] rate=0.115869fps avg_build=124.000000us frames=2 window=17.260836s (../src/app_sidebar.cpp:1251)
+[2026-11-07 16:19:08.524] [INFO ] [fluid-fps] rate=18.374059fps avg_build=130.935484us frames=93 window=5.061484s (../src/app_sidebar.cpp:1255)

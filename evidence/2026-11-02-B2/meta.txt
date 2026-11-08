@@ -1,0 +1,4 @@
+slug: 2026-11-02-B2
+date: 2026-11-02 23:16:48
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  bash -c cd build/tests && ./jelly_probe --size 1000x700 --out /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B2; echo "EXIT=$?" 

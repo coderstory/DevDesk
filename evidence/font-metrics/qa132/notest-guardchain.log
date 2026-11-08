@@ -1,0 +1,38 @@
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 杀旧进程 ──
+✅ 旧进程已清（仅本 build 目录下的产物）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 5.7.6 -> 5.7.7
+✅ 构建成功
+⚠ 未找到 7z（DEVDESK_SEVENZIP / C:/Program Files/7-Zip/7z.exe / PATH 7z|7zz 全落空）——跳过 embedding 资产解包（运行时走 HF 下载/数据根兜底；打包链须设 DEVDESK_SEVENZIP）
+── bundle 维护（检测到既有 DevDesk.app，重组装）──
+✅ bundle 已与本次构建同步（/Users/coderstory/dev/DevDesk/build/DevDesk.app）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 探针跳过登记守卫 ──
+探针跳过登记：每个 probe 测试必须在 configure 产物里登记 SKIP_RETURN_CODE = harness 的 kSkipExitCode
+  ✅ probe 跳过登记守卫通过（CTestTestfile.cmake 里每个 probe 测试都带 77）
+── 模块隔离守卫 ──
+✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）
+── Windows 交叉编译守卫 ──
+Windows 源文件交叉编译守卫：/Users/coderstory/.local/llvm-mingw-20260922-ucrt-macos-universal/bin/x86_64-w64-mingw32-g++
+  clang version 23.1.2 (https://github.com/llvm/llvm-project.git 85ac560262434c9ccfc0c183ec22d4138ed647fb)
+  受编集合：从 CMakeLists 的 WIN32 分支解析出 427 个源文件（src + tests，含共享文件）
+  EUI-NEO：/Users/coderstory/dev/DevDesk/EUI-NEO
+  ⚠ 边界：本机是 clang + libc++，CI 是 MSYS2 GCC + libstdc++。
+        标准库不同 ⇒ 传递包含边界不同 ⇒「本机编得过」推不出「CI 编得过」。
+        缺标准头那一类由 scripts/check-std-includes.sh 用与标准库无关的静态判据守。
+  ── 编过 426 / 共 427（含 0 个因缺第三方头跳过）
+❌ 1 个 Windows 源文件交叉编译失败：
+     · tests/unit/font_metrics_gate.cpp
+         /Users/coderstory/dev/DevDesk/EUI-NEO/core/render/text_internal.h:16:10: fatal error: 'ft2build.h' file not found
+   注意：这**只**说明编不过。DPAPI 密文正确性、DPAPI 解密能否还原等运行时
+   行为，交叉编译一概验不到，仍需 Windows 真机。
+❌ Windows 交叉编译守卫失败（某个 Windows 源文件编不过；上方为 file:line + 错因）
+EXIT=1

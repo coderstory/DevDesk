@@ -1,0 +1,3 @@
+poc.bg  frame=(0,0 800x600) z=0
+poc.card  frame=(40,60 320x180) z=0
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-11-01-need58-ui-probe-shot/poc-800x600.png (1600x1200)

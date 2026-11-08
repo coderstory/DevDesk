@@ -1,0 +1,27 @@
+== bug#158 canvas 内容占比实测（alpha bbox / canvas）==
+
+-- BEFORE DevDesk.icns (旧) --
+  icon_128x128.png       old.iconset/icon_128x128.png: canvas=128px content_ratio=0.8125 bbox=(12, 12, 116, 116)
+  icon_128x128@2x.png    old.iconset/icon_128x128@2x.png: canvas=256px content_ratio=0.7930 bbox=(27, 27, 230, 230)
+  icon_16x16.png         old.iconset/icon_16x16.png: canvas=16px content_ratio=1.0000 bbox=(0, 0, 16, 16)
+  icon_16x16@2x.png      old.iconset/icon_16x16@2x.png: canvas=32px content_ratio=0.9375 bbox=(1, 1, 31, 31)
+  icon_256x256.png       old.iconset/icon_256x256.png: canvas=256px content_ratio=0.7930 bbox=(27, 27, 230, 230)
+  icon_256x256@2x.png    old.iconset/icon_256x256@2x.png: canvas=512px content_ratio=0.7910 bbox=(54, 54, 459, 459)
+  icon_32x32.png         old.iconset/icon_32x32.png: canvas=32px content_ratio=1.0000 bbox=(0, 0, 32, 32)
+  icon_32x32@2x.png      old.iconset/icon_32x32@2x.png: canvas=64px content_ratio=0.8438 bbox=(5, 5, 59, 59)
+  icon_512x512.png       old.iconset/icon_512x512.png: canvas=512px content_ratio=0.7910 bbox=(54, 54, 459, 459)
+  icon_512x512@2x.png    old.iconset/icon_512x512@2x.png: canvas=1024px content_ratio=0.7900 bbox=(108, 108, 917, 917)
+-- AFTER AppIcon.icns (新) --
+  icon_128x128.png       new.iconset/icon_128x128.png: canvas=128px content_ratio=0.8125 bbox=(12, 13, 116, 114)
+  icon_128x128@2x.png    new.iconset/icon_128x128@2x.png: canvas=256px content_ratio=0.8047 bbox=(25, 27, 231, 229)
+  icon_16x16.png         new.iconset/icon_16x16.png: canvas=16px content_ratio=0.8750 bbox=(1, 1, 15, 15)
+  icon_16x16@2x.png      new.iconset/icon_16x16@2x.png: canvas=32px content_ratio=0.8125 bbox=(3, 3, 29, 29)
+  icon_256x256.png       new.iconset/icon_256x256.png: canvas=256px content_ratio=0.8047 bbox=(25, 27, 231, 229)
+  icon_256x256@2x.png    new.iconset/icon_256x256@2x.png: canvas=512px content_ratio=0.8047 bbox=(50, 55, 462, 457)
+  icon_32x32.png         new.iconset/icon_32x32.png: canvas=32px content_ratio=0.8125 bbox=(3, 3, 29, 29)
+  icon_32x32@2x.png      new.iconset/icon_32x32@2x.png: canvas=64px content_ratio=0.8125 bbox=(6, 7, 58, 57)
+  icon_512x512.png       new.iconset/icon_512x512.png: canvas=512px content_ratio=0.8047 bbox=(50, 55, 462, 457)
+  icon_512x512@2x.png    new.iconset/icon_512x512@2x.png: canvas=1024px content_ratio=0.8047 bbox=(100, 110, 924, 913)
+
+Apple HIG 规范: 824/1024 = 0.8047
+同机 Dock 邻居基线: ZCode 0.8320 / ClashVerge 0.8203 / WallpaperMonster 0.8516 / Vorssaint 1.0000(满幅)

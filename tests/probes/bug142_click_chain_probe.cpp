@@ -46,6 +46,9 @@ constexpr int kStableFrames = 24;          // 过渡/稳帧门槛（skill 24 帧
 constexpr int kCaptureRenderPasses = 17;   // bug185 retained layer 稳帧门槛
 
 // id 前缀计数（模块卡片当帧入 DOM 的判据：模块 tab 点开后 settings.card.modules.* 出现）
+// ⚠️ 元素 id 存的是 Ui::resolveId 解析后的全名（pageId 前缀已拼上，本探针 compose
+// 传 "app" → 实存 "app.settings.card.modules"）。Ui::find 会自动补前缀所以直觉上
+// 能对上，但手工遍历树走的是裸 id 比较 → 必须调用方给全名前缀（池 bug232）。
 int countIdPrefix(core::dsl::Ui& ui, const std::string& prefix) {
     int count = 0;
     for (const auto& root : ui.roots()) {
@@ -178,17 +181,18 @@ int main(int argc, char* argv[]) {
     shotAt(outDir + "/02-settings-after-sidebar-click.png");
 
     // 链路2：页内按钮（真点击「模块」tab → 模块卡片入 DOM）
+    // 树遍历用全名前缀（pageId="app"，见 countIdPrefix 注释）
     const int cardsBefore =
-        ui != nullptr ? countIdPrefix(*ui, "settings.card.") : -1;
+        ui != nullptr ? countIdPrefix(*ui, "app.settings.card.") : -1;
     if (const auto* tab = ui->find("settings.tabs.1.hit")) {
         dumpElement(*ui, "settings.tabs.1.hit");
         clickElement(*tab);
         pump(3);
     }
     const int cardsAfter =
-        ui != nullptr ? countIdPrefix(*ui, "settings.card.") : -1;
+        ui != nullptr ? countIdPrefix(*ui, "app.settings.card.") : -1;
     const int moduleCards =
-        ui != nullptr ? countIdPrefix(*ui, "settings.card.modules") : 0;
+        ui != nullptr ? countIdPrefix(*ui, "app.settings.card.modules") : 0;
     std::cout << "DIAG cardsBefore=" << cardsBefore
               << " cardsAfter=" << cardsAfter
               << " modulesCard=" << moduleCards << "\n";

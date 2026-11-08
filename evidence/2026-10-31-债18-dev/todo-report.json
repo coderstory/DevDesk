@@ -1,0 +1,127 @@
+{
+  "exitCode": 0,
+  "scene": "todo-new-task.json",
+  "steps": [
+    {
+      "elapsedMs": 0.677917,
+      "error": "",
+      "hitId": "app.sidebar.item.Todo.hit",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Todo.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 9.732708,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.btn.add",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 1.501834,
+      "error": "",
+      "hitId": "app.todo.btn.add.bg",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "todo.btn.add",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.459875,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.dialog.newtask.input",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 1.303958,
+      "error": "",
+      "hitId": "app.todo.dialog.newtask.input.hit",
+      "index": 5,
+      "passed": true,
+      "screenshot": "",
+      "target": "todo.dialog.newtask.input",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.393666,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "'缴费'",
+      "type": "type"
+    },
+    {
+      "elapsedMs": 3.59625,
+      "error": "",
+      "hitId": "",
+      "index": 7,
+      "passed": true,
+      "screenshot": "",
+      "target": "Enter",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 1.506917,
+      "error": "",
+      "hitId": "",
+      "index": 8,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists todo.col.0.card.0.wrap",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.159584,
+      "error": "",
+      "hitId": "",
+      "index": 9,
+      "passed": true,
+      "screenshot": "",
+      "target": "text todo.col.0.card.0.title",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 1.540042,
+      "error": "",
+      "hitId": "",
+      "index": 10,
+      "passed": true,
+      "screenshot": "",
+      "target": "dx=0 dy=3",
+      "type": "scroll"
+    },
+    {
+      "elapsedMs": 0.164958,
+      "error": "",
+      "hitId": "",
+      "index": 11,
+      "passed": true,
+      "screenshot": "",
+      "target": "text '缴费'",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 455.510708,
+      "error": "",
+      "hitId": "",
+      "index": 12,
+      "passed": true,
+      "screenshot": "/Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/todo-new.png",
+      "target": "todo-new.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 12
+}

@@ -1,0 +1,12 @@
+[1/10] PASS assert exists app.sidebar.item.Home.hit
+[2/10] PASS click app.sidebar.item.Todo.hit（命中回读: app.sidebar.item.Todo.hit）
+[3/10] PASS wait exists todo.h1
+[4/10] PASS assert exists todo.h1
+[5/10] PASS click app.sidebar.item.Settings.hit（命中回读: app.sidebar.item.Settings.hit）
+[6/10] PASS wait exists settings.tabs.1.hit
+[7/10] PASS assert text '设置'
+[8/10] PASS assert geometry app.sidebar
+probe: screenshot /Users/coderstory/dev/DevDesk/../../evidence/2026-10-31-债18-dev/smoke-settings.png (2400x2000)
+[9/10] PASS screenshot smoke-settings.png（截图: /Users/coderstory/dev/DevDesk/../../evidence/2026-10-31-债18-dev/smoke-settings.png）
+[10/10] PASS dump smoke-dump.txt
+ui_driver: 退出码 0（10 步）

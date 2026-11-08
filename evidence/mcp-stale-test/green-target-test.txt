@@ -1,0 +1,11 @@
+[PASS] mcp: 模块卡常规格 MCP 开关（池151 归位常规格）默认关、.track 可点；点击即落库 + 走既有开关桥 [44ms]
+
+=== Summary ===
+Total:  1
+Passed: 1
+Failed: 0
+Skipped: 0
+Filter: 模块卡常规格(1) -> 1 例
+
+Top-1 slowest:
+  44ms  mcp: 模块卡常规格 MCP 开关（池151 归位常规格）默认关、.track 可点；点击即落库 + 走既有开关桥

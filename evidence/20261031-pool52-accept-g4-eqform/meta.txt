@@ -1,0 +1,4 @@
+slug: pool52-accept-g4-eqform
+date: 2026-10-31 22:02:46
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  build/tests/devdesk_tests --filter=md_scanner 

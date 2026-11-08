@@ -1,0 +1,15 @@
+[probe] === install: 触发产品安装链 startAsync ===
+[probe] state=Idle pythonFound=0 pythonVersion= llamaMissing=0 embedState=0 embedReady=0
+[probe] detail=
+[probe] t+0.0s Idle|
+[probe] t+0.5s Preparing|安装 telemem（首次约几分钟，取决于网速）…
+[probe] t+57.5s Preparing|启动本机 embedding 服务…
+[probe] t+69.5s Preparing|启动记忆引擎…
+[probe] t+73.0s Running|运行中（127.0.0.1:8421）
+[probe] PASS 引擎 Running（安装链全绿）
+[probe] state=Running pythonFound=1 pythonVersion=3.12.14 llamaMissing=0 embedState=3 embedReady=1
+[probe] detail=运行中（127.0.0.1:8421）
+[probe] embedDetail=已就位（数据根）
+[probe] hold: 持有中，删除 /tmp/devdesk-mem-e2e-159/hold.eng 收口
+[probe] hold: 收口信号收到
+[probe] SUMMARY ok=0 fail=0

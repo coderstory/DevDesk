@@ -1,0 +1,7 @@
+Total:  2063 Passed: 2057 Failed: 0 
+✅ 测试全绿
+── UI probe ──
+⚠️  UI probe 部分跳过（5/25），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红
+  ✅ probe 跳过登记守卫通过（CTestTestfile.cmake 里每个 probe 测试都带 77）
+✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）
+✅ 玻璃体系守卫通过（无 drawGlassCardLayers 调用 / 无 glass_card.h include）

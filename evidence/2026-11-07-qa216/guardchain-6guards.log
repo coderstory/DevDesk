@@ -1,0 +1,29 @@
+── check-probe-skip-gate ──
+探针跳过登记：每个 probe 测试必须在 configure 产物里登记 SKIP_RETURN_CODE = harness 的 kSkipExitCode
+  ✅ probe 跳过登记守卫通过（CTestTestfile.cmake 里每个 probe 测试都带 77）
+RC_OK check-probe-skip-gate
+── check-module-isolation ──
+✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）
+RC_OK check-module-isolation
+── check-windows-cross-compile ──
+  ── 编过 427 / 共 427（含 0 个因缺第三方头跳过）
+✅ Windows CI 源文件集合（427 个）交叉编译全通过
+   ⚠ 但这不等于「CI 一定绿」：本机 clang+libc++ ≠ CI 的 GCC+libstdc++（见文件头）。
+RC_OK check-windows-cross-compile
+── check-std-includes ──
+std include 守卫：扫描 807 个文件（/Users/coderstory/dev/DevDesk/src + /Users/coderstory/dev/DevDesk/tests）
+✅ 全部 807 个文件：直接使用的 std 符号都有显式 include（本文件或它直接 include 的项目头里）
+RC_OK check-std-includes
+── check-no-glass ──
+✅ 玻璃体系守卫通过（无 drawGlassCardLayers 调用 / 无 glass_card.h include）
+RC_OK check-no-glass
+── check-toolguard-braces ──
+ToolGuard 双层花括号守卫：tests/ 下 Guard 具名对象 + {{ 即违规（string 迭代器对构造 UB）
+  ✅ 无 Guard{{ 形态（tests/ 全扫）
+RC_OK check-toolguard-braces
+── 守卫自检 ──
+SELFTEST_OK check-module-isolation
+SELFTEST_OK check-probe-skip-gate
+SELFTEST_OK check-std-includes
+SELFTEST_OK check-no-glass
+SELFTEST_OK check-toolguard-braces

@@ -1,0 +1,30 @@
+[probe] === collect: 真实会话 S3 链 ===
+[probe] PASS pollOnce 成功
+[probe] 采集段数=4
+[probe]   session=25adb177-fb73-4031-8184-e4db6758f287 events=2 bytes=175
+[probe]   session=01eae5e6-9f56-4403-90fb-268319e56d26 events=2 bytes=166
+[probe]   session=7c980960-f855-426f-8dc4-d560a32db1ef events=2 bytes=227
+[probe]   session=d9b4f0d4-3f67-4f14-ae55-f69033a93a0d events=2 bytes=168
+[probe] PASS 真实会话切出至少 1 段
+[probe] PASS 提案库打开
+[probe] PASS 提案生成 (25adb177-fb73-4031-8184-e4db6758f287)
+[probe] PASS 提案生成 (01eae5e6-9f56-4403-90fb-268319e56d26)
+[probe] PASS 提案生成 (7c980960-f855-426f-8dc4-d560a32db1ef)
+[probe] PASS 提案生成 (d9b4f0d4-3f67-4f14-ae55-f69033a93a0d)
+[probe] PASS 水位/事件记账 commit
+[probe] PASS listPending 成功
+[probe] pending=4 blocked=0
+[probe] PASS 真实会话产出待审提案 ≥1
+[probe] === collect: S4 accept-all + 检索回验 ===
+[probe] 已入库 id=prop_20261106_000001 bytes=175 检索回验命中=1
+[probe] 已入库 id=prop_20261106_000002 bytes=166 检索回验命中=1
+[probe] 已入库 id=prop_20261106_000003 bytes=227 检索回验命中=1
+[probe] 已入库 id=prop_20261106_000004 bytes=168 检索回验命中=1
+[probe] PASS 接受提案 ≥1（真引擎 add）
+[probe] PASS 检索回验全召回 (4/4)
+[probe] faiss_db 0B → 11202B
+[probe] PASS faiss 落盘增长
+[probe] faiss_db 文件清单：
+[probe]   mem0.faiss
+[probe]   mem0.json
+[probe] SUMMARY ok=13 fail=0

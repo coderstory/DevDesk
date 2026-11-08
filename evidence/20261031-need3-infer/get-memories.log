@@ -1,0 +1,7 @@
+[initialize] HTTP 200 in 0.02s session=yes
+[initialize] server={'icons': [{'mimeType': 'image/png', 'src': 'https://raw.githubusercontent.com/TeleAI-UAGI/telemem/main/assets/TeleMem.png'}], 'name': 'telemem', 'title': 'TeleMem', 'version': '1.10.1', 'websiteUrl': 'https://teleai-uagi.github.io/telemem/'}
+[get] HTTP 200 in 0.00s
+event: message
+data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"text":"{\n  \"results\": [\n    {\n      \"id\": \"1f0b2bc5-b421-4c08-a3ed-7dc3361fce06\",\n      \"memory\": \"池3基线：DevDesk发布日期推迟到11月15日（张伟2026-10-31周会决定）。\",\n      \"hash\": \"42f2f093d3eb8c8a9115edb216dc241e\",\n      \"metadata\": null,\n      \"created_at\": \"2026-10-31T10:47:49.518617+00:00\",\n      \"updated_at\": \"2026-10-31T10:47:49.518617+00:00\",\n      \"user_id\": \"telemem-mcp\",\n      \"role\": \"user\"\n    }\n  ]\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"results":[{"id":"1f0b2bc5-b421-4c08-a3ed-7dc3361fce06","memory":"池3基线：DevDesk发布日期推迟到11月15日（张伟2026-10-31周会决定）。","hash":"42f2f093d3eb8c8a9115edb216dc241e","metadata":null,"created_at":"2026-10-31T10:47:49.518617+00:00","updated_at":"2026-10-31T10:47:49.518617+00:00","user_id":"telemem-mcp","role":"user"}]}}}}
+
+

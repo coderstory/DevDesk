@@ -820,9 +820,17 @@ if [ "$RUN_TEST" = "1" ]; then
       # 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——名字精确匹配 + rc=77
       # 双验才黄牌放行；这两个探针因其它成因跳过（rc≠77）仍按红，不静默。
       PROBE_FIT_FAM_VERIFIED=0
-      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes)$'; then
+      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe)$'; then
+        # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe /
+        # home_probes 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。
+        # LastTest.log 不收录 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——
+        # 名字精确匹配 + rc=77 双验才黄牌放行；这些探针因其它成因跳过（rc≠77）仍按红。
+        # memory_install_probe（bug233）同族：它归 QA 显式子命令驱动（install 要网络
+        # pip / mcpserve 起真 HTTP 服务，不能进守卫链自动跑），argless 登记即退 77
+        # （tests/probes/memory_install_probe.cpp:331 + tests/CMakeLists.txt:576/583）；
+        # 漏名单会让完整档恒报「必须人工查」，收口/发版档假红。
         PROBE_FIT_FAM_VERIFIED=1
-        for _fitprobe in b1_material_probe home_probes; do
+        for _fitprobe in b1_material_probe home_probes memory_install_probe; do
           echo "$PROBE_SKIPPED_NAMES" | grep -qx "$_fitprobe" || continue
           _fitrc=0
           "$BUILD_DIR/tests/$_fitprobe$EXE_SUFFIX" >/dev/null 2>&1 || _fitrc=$?
@@ -830,10 +838,10 @@ if [ "$RUN_TEST" = "1" ]; then
         done
         unset _fitprobe _fitrc
       fi
-      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$)' || true)"
+      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$|memory_install_probe$)' || true)"
       if [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
         if [ "$PROBE_FIT_FAM_VERIFIED" = "1" ]; then
-          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知小屏环境跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗，bug123 口径 77 诚实跳过——已复跑单探针验证退出码 77）——设计内跳过，不判红"
+          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知环境/驱动跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；memory_install_probe：归 QA 显式子命令驱动，argless 即退 77——均已复跑单探针验证退出码 77）——设计内跳过，不判红"
           echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
         else
           echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红"

@@ -1,0 +1,3 @@
+slug: pool53-accept-full-regression
+date: 2026-11-01 00:21:07
+cmd:  bash scripts/build-test-run.sh --no-run（后台完整输出拷贝）

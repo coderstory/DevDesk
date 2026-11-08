@@ -1,0 +1,7 @@
+[probe] === mcpserve: 注册真 memory_search + 起 DevDesk MCP HTTP ===
+[probe] PASS memory_search 已在 DevDesk MCP 工具注册表
+[probe] PASS MCP HTTP 服务监听 :18421
+[probe] 验证命令（外部 curl）：POST /mcp initialize → tools/list → tools/call memory_search
+[probe] hold: 持有中，删除 /tmp/devdesk-mem-e2e-159/hold.mcp 收口
+[probe] hold: 收口信号收到
+[probe] SUMMARY ok=1 fail=0

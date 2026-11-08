@@ -1,0 +1,15 @@
+=== 定向验证（DEVDESK_FAST_TEST=1 跳 3b 守卫链——并行债-18 WIP std include 红，与本债无关）===
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 构建（增量）──
+CMake Error at tests/CMakeLists.txt:284 (message):
+-- Configuring incomplete, errors occurred!
+FAILED: [code=1] build.ninja /Users/coderstory/dev/DevDesk/build/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/_eui_neo_build/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/_eui_neo_build/_deps/glfw-bundled-build/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/_eui_neo_build/_deps/glfw-bundled-build/src/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/_eui_neo_build/_deps/libpng-bundled-build/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/_eui_neo_build/_deps/freetype-bundled-build/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/core/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/platform/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/ui_kit/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_home/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_markdown/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_todo/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_agent/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_memory/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_claude_proxy/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_settings/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_about/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_wallpaper/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_release/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_mcp/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/src/module_schedule/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/tests/cmake_install.cmake /Users/coderstory/dev/DevDesk/build/CTestTestfile.cmake /Users/coderstory/dev/DevDesk/build/tests/CTestTestfile.cmake 
+ninja: error: rebuilding 'build.ninja': subcommand failed
+❌ 构建失败（上方为错误摘要）
+real 0.37
+user 0.18
+sys 0.13
+exit=1

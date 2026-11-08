@@ -1,0 +1,13 @@
+── §0 kit 自检 ──
+── §1 settings 域 ──
+  [settings.card.modules] 卡 1136x254 @tab1
+  [settings.card.reminder] 卡 1136x92 @tab1
+── §2 release 域 ──
+  任务行卡 3 张
+layout_guard_probe: FAIL——datepicker 附着于 date.hit 下方 : 浮层锚定 overlay@0.0 附着式弹层 gap=-348.0（容许 [-4,40.0]）水平覆盖 100.0%（要求 ≥ 50.0%）
+  [未验证] 详情页未进入（点行卡无跳转）
+── §3 人为违规演示（红→还原→绿）──
+layout_guard_probe: FAIL——演示失败（应红未红）：演示① 内容盒 y+12 坠出卡底
+layout_guard_probe: FAIL——演示失败（应红未红）：演示③ 全宽 5px 发丝条
+layout_guard_probe: checks=36 passed=0
+FAIL

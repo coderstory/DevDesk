@@ -252,6 +252,19 @@ int main(int argc, char* argv[]) {
                              core::PointerAction::Release, noMods);
     composeFrame();
 
+    // A3 点击链路未被果冻劫持（池 bug232 回归守卫）：hover+press+release 后
+    // 详情弹窗应入 DOM。果冻动画期 .bg 若参与命中（states() 隐式 interactive
+    // 未关）会顶替 .hit 的 onClick → 本断言红而 A1 也同时红。
+    for (int i = 0; i < 6; ++i) composeFrame();
+    const bool a3 = ui != nullptr && ui->find("agent.dialog.detail") != nullptr;
+    if (!a3) {
+        std::cerr << "b1_material_probe: A3 FAIL 点击卡片未打开详情弹窗"
+                     "（动画期命中被 .bg 劫持？）\n";
+        passed = false;
+    } else {
+        std::cout << "A3 PASS 点击链路正常（详情弹窗入 DOM）\n";
+    }
+
     if (!shotOk) passed = false;
 
     // 断言输出

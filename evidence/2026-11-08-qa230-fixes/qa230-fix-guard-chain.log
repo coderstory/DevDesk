@@ -1,0 +1,69 @@
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 7.5.8 -> 7.5.9
+✅ 构建成功
+⚠ 未找到 7z（DEVDESK_SEVENZIP / C:/Program Files/7-Zip/7z.exe / PATH 7z|7zz 全落空）——跳过 embedding 资产解包（运行时走 HF 下载/数据根兜底；打包链须设 DEVDESK_SEVENZIP）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 探针跳过登记守卫 ──
+探针跳过登记：每个 probe 测试必须在 configure 产物里登记 SKIP_RETURN_CODE = harness 的 kSkipExitCode
+  ✅ probe 跳过登记守卫通过（CTestTestfile.cmake 里每个 probe 测试都带 77）
+── 模块隔离守卫 ──
+✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）
+── Windows 交叉编译守卫 ──
+Windows 源文件交叉编译守卫：/Users/coderstory/.local/llvm-mingw-20260922-ucrt-macos-universal/bin/x86_64-w64-mingw32-g++
+  clang version 23.1.2 (https://github.com/llvm/llvm-project.git 85ac560262434c9ccfc0c183ec22d4138ed647fb)
+  受编集合：从 CMakeLists 的 WIN32 分支解析出 427 个源文件（src + tests，含共享文件）
+  EUI-NEO：/Users/coderstory/dev/DevDesk/EUI-NEO
+  ⚠ 边界：本机是 clang + libc++，CI 是 MSYS2 GCC + libstdc++。
+        标准库不同 ⇒ 传递包含边界不同 ⇒「本机编得过」推不出「CI 编得过」。
+        缺标准头那一类由 scripts/check-std-includes.sh 用与标准库无关的静态判据守。
+  ── 编过 427 / 共 427（含 0 个因缺第三方头跳过）
+✅ Windows CI 源文件集合（427 个）交叉编译全通过
+   ⚠ 但这不等于「CI 一定绿」：本机 clang+libc++ ≠ CI 的 GCC+libstdc++（见文件头）。
+── std include 守卫 ──
+std include 守卫：扫描 812 个文件（/Users/coderstory/dev/DevDesk/src + /Users/coderstory/dev/DevDesk/tests）
+✅ 全部 812 个文件：直接使用的 std 符号都有显式 include（本文件或它直接 include 的项目头里）
+── 玻璃体系守卫 ──
+✅ 玻璃体系守卫通过（无 drawGlassCardLayers 调用 / 无 glass_card.h include）
+── ToolGuard 双层花括号守卫 ──
+ToolGuard 双层花括号守卫：tests/ 下 Guard 具名对象 + {{ 即违规（string 迭代器对构造 UB）
+  ✅ 无 Guard{{ 形态（tests/ 全扫）
+── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──
+  ✅ 好树（真实仓库树逐字节拷贝）：绿
+  ✅ 坏树 [agent_include_sibling]：红 —— module_agent include 兄弟模块头（C5）
+  ✅ 坏树 [tool_ref_agent]：红 —— todo_tools 回依赖 module_agent（C6）
+  ✅ 树 [benign_style]：绿 —— 写法不同但合规：注释含裸模块名
+✅ --self-test 通过：好树绿 / 2 棵坏树各红 / 反向树绿 —— 非恒真
+  ✅ 好树：绿
+  ✅ 坏树 [badA]：红
+  ✅ 坏树 [badB]：红
+  ✅ 坏树 [badC]：红
+  ✅ 坏树 [badD]：红
+  ✅ 坏树 E：绿（非 probe 测试缺登记不算违规 —— 判据只盯 probe 标签）
+✅ --self-test 通过：好树绿 / 坏树 A·B·C·D 红 / 坏树 E 绿 —— 非恒真
+  探针文件：src/module_claude_proxy/claude_tools.cpp
+  ✅ 好树：真实源码 0 违规
+  ✅ 坏树 A：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.u4DkdzgrIC/badA/probe.cpp:66: 直接使用 std::optional，但本文件与它直接
+  ✅ 坏树 B：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.u4DkdzgrIC/badB/probe.cpp:66: 直接使用 std::optional，但本文件与它直接
+  ✅ 坏树 C：绿（声明由项目头显式提供 → 判为既有风格，不报）—— 豁免真在生效
+  ✅ 坏树 D：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.u4DkdzgrIC/badD/probe.cpp:4: 直接使用 std::optional，但本文件与它直接 
+  ✅ 坏树 E：绿（std::ios 由 <fstream> 经标准强制关系带出 → 不算缺头）—— 豁免真在生效
+  ✅ 坏树 F：红 — /var/folders/qc/yhfbgj4s1cv0j95x0qgfyb000000gn/T/tmp.u4DkdzgrIC/badF/probe.cpp:4: 直接使用 std::istream，但本文件与它直接 i
+✅ --self-test 通过：好树绿 / 坏树 A·B·D·F 红 / 坏树 C·E 绿（豁免生效）—— 非恒真
+  ✅ 好树（真实仓库树逐字节拷贝）：绿
+  ✅ 坏树 [bad_draw]：红 —— 非注释行出现 drawGlassCardLayers
+  ✅ 坏树 [bad_include]：红 —— 非注释行 #include glass_card.h
+  ✅ 树 [benign_comment]：绿 —— 注释里提 drawGlassCardLayers（散文提及不算违规）
+✅ --self-test 通过：好树绿 / 2 棵坏树各红 / 反向树绿 —— 非恒真
+  ✅ 好树：绿（单层花括号 + pair 双层均不拦）
+  ✅ 坏树 [bad1]：红
+  ✅ 坏树 [bad2]：红
+✅ --self-test 通过：好树绿 / 坏树红 —— 非恒真
+✅ 守卫自检全过（5 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）

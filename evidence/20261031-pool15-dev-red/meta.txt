@@ -1,0 +1,4 @@
+slug: pool15-dev-red
+date: 2026-10-31 19:07:23
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  bash scripts/build-test-run.sh --filter todo_anim --no-run 

@@ -1,0 +1,338 @@
+INFO:     Started server process [93534]
+INFO:     Waiting for application startup.
+INFO mcp.server.streamable_http_manager | StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8421 (Press CTRL+C to quit)
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: d07b47d04d64416bb6781ba6a424fd51
+INFO:     127.0.0.1:55273 - "POST /mcp HTTP/1.1" 200 OK
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 8adfe99dbc9b4578b8305be67d17cc49
+INFO:     127.0.0.1:55274 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55275 - "POST /mcp HTTP/1.1" 200 OK
+WARNING mem0.memory.main | The 'faiss' vector store does not support keyword search. Hybrid (BM25) scoring will be disabled and search will use semantic similarity only. To enable hybrid search, switch to a store with keyword_search support (e.g. qdrant, elasticsearch, pgvector).
+INFO telemem.mcp | TeleMem initialized (config=/tmp/mem-e2e.7PU3Vu/telemem-config.yaml)
+WARNING mem0.utils.spacy_models | Failed to load spaCy lemma model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+WARNING mem0.utils.spacy_models | Failed to load spaCy full model: spaCy is not installed. Install it with: pip install mem0ai[nlp]
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55277 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55278 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55279 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55280 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55281 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55282 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55283 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55284 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='5a43c93a-fb45-4939-89eb-24c41fe2eda1'
+INFO mem0.vector_stores.faiss | Deleted vector 5a43c93a-fb45-4939-89eb-24c41fe2eda1 from collection mem0
+INFO:     127.0.0.1:55285 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55286 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55287 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55288 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55289 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55290 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55291 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55292 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55293 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55294 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55295 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55296 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55297 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55298 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55299 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55300 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55301 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55302 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55303 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55304 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55305 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55306 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55307 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55308 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55309 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55310 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55311 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55312 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55313 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55314 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55315 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55316 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55317 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55318 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55319 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55320 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55321 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55322 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55323 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55324 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55325 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55326 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55327 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55328 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55329 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55330 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55331 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55332 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55334 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55335 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55336 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55337 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55338 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55339 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55340 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55341 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55342 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55343 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55344 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55345 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55346 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55347 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55348 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55349 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55350 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55351 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55352 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55353 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55354 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55355 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55356 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='d3e37596-2ccf-42af-9d03-fbf230f96901'
+INFO mem0.vector_stores.faiss | Deleted vector d3e37596-2ccf-42af-9d03-fbf230f96901 from collection mem0
+INFO:     127.0.0.1:55357 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='1a6ff401-fc87-42f8-89e4-04e5b5365684'
+INFO mem0.vector_stores.faiss | Deleted vector 1a6ff401-fc87-42f8-89e4-04e5b5365684 from collection mem0
+INFO:     127.0.0.1:55358 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='bb82152b-2620-4f51-8425-1fb879df0719'
+INFO mem0.vector_stores.faiss | Deleted vector bb82152b-2620-4f51-8425-1fb879df0719 from collection mem0
+INFO:     127.0.0.1:55359 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='94bb32d3-ab51-4359-9fd8-6a9ef9f93669'
+INFO mem0.vector_stores.faiss | Deleted vector 94bb32d3-ab51-4359-9fd8-6a9ef9f93669 from collection mem0
+INFO:     127.0.0.1:55360 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='331d2c63-5ea9-401b-b672-7602c97d3012'
+INFO mem0.vector_stores.faiss | Deleted vector 331d2c63-5ea9-401b-b672-7602c97d3012 from collection mem0
+INFO:     127.0.0.1:55361 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='9c951aaa-b313-42b9-b595-0e52821b5fec'
+INFO mem0.vector_stores.faiss | Deleted vector 9c951aaa-b313-42b9-b595-0e52821b5fec from collection mem0
+INFO:     127.0.0.1:55362 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='07184cf5-0630-40f9-8c7f-ee714857c035'
+INFO mem0.vector_stores.faiss | Deleted vector 07184cf5-0630-40f9-8c7f-ee714857c035 from collection mem0
+INFO:     127.0.0.1:55363 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='cd86cf75-f83e-40c0-a37d-9309821aff49'
+INFO mem0.vector_stores.faiss | Deleted vector cd86cf75-f83e-40c0-a37d-9309821aff49 from collection mem0
+INFO:     127.0.0.1:55364 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='3446a6da-13d6-41f8-98dd-b56eaff2262e'
+INFO mem0.vector_stores.faiss | Deleted vector 3446a6da-13d6-41f8-98dd-b56eaff2262e from collection mem0
+INFO:     127.0.0.1:55365 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='e370fa41-34da-44d6-bada-f85250f3d4e2'
+INFO mem0.vector_stores.faiss | Deleted vector e370fa41-34da-44d6-bada-f85250f3d4e2 from collection mem0
+INFO:     127.0.0.1:55366 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='64041405-0ab5-4acb-86ad-74e08bb6acbe'
+INFO mem0.vector_stores.faiss | Deleted vector 64041405-0ab5-4acb-86ad-74e08bb6acbe from collection mem0
+INFO:     127.0.0.1:55367 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='9e3ec780-c0ee-4801-bcb9-de53460f2ad4'
+INFO mem0.vector_stores.faiss | Deleted vector 9e3ec780-c0ee-4801-bcb9-de53460f2ad4 from collection mem0
+INFO:     127.0.0.1:55368 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='da8b5a3c-09c6-48eb-b2cc-e7c3ebd6d113'
+INFO mem0.vector_stores.faiss | Deleted vector da8b5a3c-09c6-48eb-b2cc-e7c3ebd6d113 from collection mem0
+INFO:     127.0.0.1:55369 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='543dace5-b547-4d29-9e1a-d82aeea9b0b7'
+INFO mem0.vector_stores.faiss | Deleted vector 543dace5-b547-4d29-9e1a-d82aeea9b0b7 from collection mem0
+INFO:     127.0.0.1:55370 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='86555900-b1ef-42c3-adc6-331e813aff35'
+INFO mem0.vector_stores.faiss | Deleted vector 86555900-b1ef-42c3-adc6-331e813aff35 from collection mem0
+INFO:     127.0.0.1:55371 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='b74883d8-dcab-49ea-b62c-1303c32a2db1'
+INFO mem0.vector_stores.faiss | Deleted vector b74883d8-dcab-49ea-b62c-1303c32a2db1 from collection mem0
+INFO:     127.0.0.1:55372 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='e544ac85-44aa-43d9-b523-ef79b7779d68'
+INFO mem0.vector_stores.faiss | Deleted vector e544ac85-44aa-43d9-b523-ef79b7779d68 from collection mem0
+INFO:     127.0.0.1:55373 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='6f9dda8a-d26f-4fdc-8c28-4713dc0640b3'
+INFO mem0.vector_stores.faiss | Deleted vector 6f9dda8a-d26f-4fdc-8c28-4713dc0640b3 from collection mem0
+INFO:     127.0.0.1:55374 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='2709773e-50eb-44d0-9e31-9a75b48ceb18'
+INFO mem0.vector_stores.faiss | Deleted vector 2709773e-50eb-44d0-9e31-9a75b48ceb18 from collection mem0
+INFO:     127.0.0.1:55375 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='3a047f29-56bc-47e6-b3b1-a3b4e21c7556'
+INFO mem0.vector_stores.faiss | Deleted vector 3a047f29-56bc-47e6-b3b1-a3b4e21c7556 from collection mem0
+INFO:     127.0.0.1:55376 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='9dad3e7a-d930-4a7c-b782-c2f76dc798ea'
+INFO mem0.vector_stores.faiss | Deleted vector 9dad3e7a-d930-4a7c-b782-c2f76dc798ea from collection mem0
+INFO:     127.0.0.1:55377 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='43d1b1b0-b559-4c6c-8f29-681369828265'
+INFO mem0.vector_stores.faiss | Deleted vector 43d1b1b0-b559-4c6c-8f29-681369828265 from collection mem0
+INFO:     127.0.0.1:55378 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='7f010c77-8e16-4004-ad15-be6771d79107'
+INFO mem0.vector_stores.faiss | Deleted vector 7f010c77-8e16-4004-ad15-be6771d79107 from collection mem0
+INFO:     127.0.0.1:55379 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='3740ea0d-f3b3-4ad2-9b6e-90da1189c357'
+INFO mem0.vector_stores.faiss | Deleted vector 3740ea0d-f3b3-4ad2-9b6e-90da1189c357 from collection mem0
+INFO:     127.0.0.1:55380 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='1fb2e03e-7e2d-47e3-bc5d-4b2d12eba9da'
+INFO mem0.vector_stores.faiss | Deleted vector 1fb2e03e-7e2d-47e3-bc5d-4b2d12eba9da from collection mem0
+INFO:     127.0.0.1:55381 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='e1eff9db-c703-4ef1-aedf-dbc84f55527c'
+INFO mem0.vector_stores.faiss | Deleted vector e1eff9db-c703-4ef1-aedf-dbc84f55527c from collection mem0
+INFO:     127.0.0.1:55382 - "POST /mcp HTTP/1.1" 200 OK
+INFO mem0.memory.main | Deleting memory with memory_id='229b2fec-547e-4d22-8342-5b4a7219a0c5'
+INFO mem0.vector_stores.faiss | Deleted vector 229b2fec-547e-4d22-8342-5b4a7219a0c5 from collection mem0
+INFO:     127.0.0.1:55383 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mem0.vector_stores.faiss | Inserted 1 vectors into collection mem0
+INFO:     127.0.0.1:55384 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55385 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     127.0.0.1:55386 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55387 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST https://open.bigmodel.cn/api/anthropic/v1/messages "HTTP/1.1 401 Unauthorized"
+ERROR telemem.mcp | TeleMem MCP tool failed
+Traceback (most recent call last):
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 117, in _call
+    result = action(_get_memory())
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/telemem/mcp/server.py", line 219, in action
+    memory.add(
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 340, in add
+    mem_buffer = self._extract_summary_from_messages(user_id, messages, metadata, filters, infer, prompt=prompt)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/telemem/mem0.py", line 494, in _extract_summary_from_messages
+    response = self.llm.generate_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/mem0/llms/anthropic.py", line 140, in generate_response
+    response = self.client.messages.create(**params)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/anthropic/_utils/_utils.py", line 294, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/anthropic/resources/messages/messages.py", line 1247, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/anthropic/_base_client.py", line 1687, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/anthropic/_base_client.py", line 1238, in request
+    return self._request(cast_to, options, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/devdesk-mem-e2e-159/data/memory/venv/lib/python3.12/site-packages/anthropic/_base_client.py", line 1341, in _request
+    raise self._make_status_error_from_response(response) from None
+anthropic.AuthenticationError: Error code: 401 - {'error': {'message': '令牌已过期或验证不正确', 'type': '401'}}
+INFO:     127.0.0.1:55389 - "POST /mcp HTTP/1.1" 200 OK
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: dcb5644012614b45bda09f0df33db6f2
+INFO:     127.0.0.1:55390 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55391 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: 1827a4a89e2443ebbd2d6fcee13c0592
+INFO:     127.0.0.1:55392 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55393 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO mcp.server.streamable_http_manager | Created new transport with session ID: fcc72eba29f047afb796429792a82992
+INFO:     127.0.0.1:55394 - "POST /mcp HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55395 - "POST /mcp HTTP/1.1" 200 OK
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO httpx2 | HTTP Request: POST http://127.0.0.1:11435/v1/embeddings "HTTP/1.1 200 OK"
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO mcp.server.streamable_http_manager | StreamableHTTP session manager shutting down
+INFO mcp.server.streamable_http | Terminating session: fcc72eba29f047afb796429792a82992
+INFO mcp.server.streamable_http | Terminating session: 8adfe99dbc9b4578b8305be67d17cc49
+INFO mcp.server.streamable_http | Terminating session: d07b47d04d64416bb6781ba6a424fd51
+INFO mcp.server.streamable_http | Terminating session: 1827a4a89e2443ebbd2d6fcee13c0592
+INFO mcp.server.streamable_http | Terminating session: dcb5644012614b45bda09f0df33db6f2
+INFO:     Application shutdown complete.
+INFO:     Finished server process [93534]

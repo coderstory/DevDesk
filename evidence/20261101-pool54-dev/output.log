@@ -1,0 +1,3 @@
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool54-dev/publish-1000x640.png (2000x1280)
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool54-dev/edit-1000x640.png (2000x1280)
+release_probe: PASS（1000x640，断言分组 A/B/C/D 全过，E 未覆盖见注释）

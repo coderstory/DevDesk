@@ -1,0 +1,8 @@
+probe: screenshot evidence/dialog-migrate-b/release/shot-newtask.png (2400x2000)
+release_probe: FAIL — 结构缺失：环境分组卡（id=release.detail.env.23.bg）
+release_probe: FAIL — 结构缺失：环境分组标题（id=release.detail.env.23.name）
+release_probe: FAIL — 结构缺失：环境分组区标题（id=release.detail.env.title）
+release_probe: FAIL — D3：期望 2 个环境分组卡（EM/UAT），实际 0（state.envs=2，loadError=<无>）
+release_probe: FAIL — D3：期望 6 张服务卡（2 环境 × 3 服务），实际 1
+release_probe: FAIL — D3：服务卡横向越出所属分组：release.detail.env.21.svc.21.bg
+FAIL

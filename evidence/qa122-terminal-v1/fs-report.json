@@ -1,0 +1,107 @@
+{
+  "exitCode": 0,
+  "scene": "qa122-fullscreen.json",
+  "steps": [
+    {
+      "elapsedMs": 0.900416,
+      "error": "",
+      "hitId": "app.sidebar.item.Terminal.hit",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Terminal.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.629125,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.fullscreen",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.659958,
+      "error": "",
+      "hitId": "app.term.fullscreen",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.term.fullscreen",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.636875,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.exit.fab",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.454791,
+      "error": "",
+      "hitId": "",
+      "index": 5,
+      "passed": true,
+      "screenshot": "",
+      "target": "qa122-fs-dump.txt",
+      "type": "dump"
+    },
+    {
+      "elapsedMs": 438.355875,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-fs.png",
+      "target": "qa122-fs.png",
+      "type": "screenshot"
+    },
+    {
+      "elapsedMs": 0.799541,
+      "error": "",
+      "hitId": "app.term.exit.fab",
+      "index": 7,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.term.exit.fab",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.642625,
+      "error": "",
+      "hitId": "",
+      "index": 8,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.fullscreen",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.071625,
+      "error": "",
+      "hitId": "",
+      "index": 9,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.badge",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 414.444958,
+      "error": "",
+      "hitId": "",
+      "index": 10,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-unfs.png",
+      "target": "qa122-unfs.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 10
+}

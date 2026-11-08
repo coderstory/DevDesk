@@ -1,0 +1,147 @@
+{
+  "exitCode": 1,
+  "scene": "qa122-exit.json",
+  "steps": [
+    {
+      "elapsedMs": 0.885167,
+      "error": "",
+      "hitId": "app.sidebar.item.Terminal.hit",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Terminal.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.635833,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.term.fullscreen",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 2.389542,
+      "error": "",
+      "hitId": "",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "E",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 1.146375,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "X",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 1.148,
+      "error": "",
+      "hitId": "",
+      "index": 5,
+      "passed": true,
+      "screenshot": "",
+      "target": "I",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 1.157583,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "T",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 1.139625,
+      "error": "",
+      "hitId": "",
+      "index": 7,
+      "passed": true,
+      "screenshot": "",
+      "target": "Enter",
+      "type": "key"
+    },
+    {
+      "elapsedMs": 6454.695,
+      "error": "等待 'text' 超时 6000ms（目标 '会话已结束'）",
+      "hitId": "",
+      "index": 8,
+      "passed": false,
+      "screenshot": "/tmp/qa122-out/fail-8.png",
+      "target": "text '会话已结束'",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.526833,
+      "error": "",
+      "hitId": "",
+      "index": 9,
+      "passed": true,
+      "screenshot": "",
+      "target": "qa122-exit-dump.txt",
+      "type": "dump"
+    },
+    {
+      "elapsedMs": 425.973458,
+      "error": "",
+      "hitId": "",
+      "index": 10,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-exit.png",
+      "target": "qa122-exit.png",
+      "type": "screenshot"
+    },
+    {
+      "elapsedMs": 417.311125,
+      "error": "id 'app.term.overlay.new' 不在当前页元素树——独立子窗 / OS 原生控件不在驱动射程",
+      "hitId": "",
+      "index": 11,
+      "passed": false,
+      "screenshot": "/tmp/qa122-out/fail-11.png",
+      "target": "app.term.overlay.new",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 5.402166,
+      "error": "",
+      "hitId": "app.term.new",
+      "index": 12,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.term.new",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 1.545375,
+      "error": "",
+      "hitId": "",
+      "index": 13,
+      "passed": true,
+      "screenshot": "",
+      "target": "missing app.term.overlay.card",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 424.024916,
+      "error": "",
+      "hitId": "",
+      "index": 14,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-restart.png",
+      "target": "qa122-restart.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 14
+}

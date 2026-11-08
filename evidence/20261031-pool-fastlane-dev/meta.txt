@@ -1,0 +1,28 @@
+slug: pool-fastlane-dev
+date: 2026-10-31 21:41:33
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  sh -c 
+export DEVDESK_TEST_TMPDIR="$PWD/build/testtmp"
+echo "=== 修后复验（关键项重跑，mac arm64）==="
+echo "--- 反例1: file:test_markdown,file:test_md_（期望 257/257，修前 114）---"
+./build/tests/devdesk_tests "file:test_markdown,file:test_md_" 2>/dev/null | grep -E "^(Total|Failed|Skipped):|Filter:"
+echo "--- 反例2: markdown（旧语义，期望>=114 严格超集）---"
+./build/tests/devdesk_tests markdown 2>/dev/null | grep -E "^Total:|Filter:"
+echo "--- 反例3: file:nonexistent_（期望 rc=2）---"
+./build/tests/devdesk_tests "file:nonexistent_" >/dev/null 2>&1; echo "rc=$?"
+./build/tests/devdesk_tests "file:nonexistent_" 2>/dev/null | grep "Filter:"
+echo "--- 反例4: --filter=md_scanner（修前 0 → 期望 9）---"
+./build/tests/devdesk_tests --filter=md_scanner 2>/dev/null | grep -E "^Total:|Filter:"
+echo "--- 反例4b: agent_task_tpl（注释承诺，修前 0 → 期望 5）---"
+./build/tests/devdesk_tests agent_task_tpl 2>/dev/null | grep -E "^Total:|Filter:"
+echo "--- 反例5: file:test_md_folder_tree,folder_note_count_recursive（并集 4）---"
+./build/tests/devdesk_tests "file:test_md_folder_tree,folder_note_count_recursive" 2>/dev/null | grep -E "^Total:|Filter:"
+echo "--- 全量（修前 Total=2048 报告口径 / 修后 2049 零失败）---"
+grep -E "^(Total|Passed|Failed|Skipped):" /tmp/fastlane-verify/full.txt
+echo "--- 反例7: Windows 形态 POC ---"
+/tmp/fastlane-verify/poc_winpath | tail -1
+echo "--- lane 实测耗时 ---"
+echo "md lane 257 例 = 41.0s；标准组合 587 例 = 25.7s"
+echo "=== 修前基线（旧二进制实测，改动前采集）==="
+echo "markdown=114；file:test_markdown,file:test_md_=0命中(rc2)；--filter=md_scanner=0命中(rc2)；agent_task_tpl=0命中"
+ 

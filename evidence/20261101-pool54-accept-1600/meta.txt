@@ -1,0 +1,4 @@
+slug: pool54-accept-1600
+date: 2026-11-01 00:56:42
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  build/tests/release_probe --size 1600x1000 --screenshot /Users/coderstory/dev/DevDesk/evidence/20261101-pool54-accept-1600/e1600.png --screenshot-publish /Users/coderstory/dev/DevDesk/evidence/20261101-pool54-accept-1600/p1600.png 

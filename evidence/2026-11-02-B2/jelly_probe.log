@@ -1,0 +1,19 @@
+frame jelly.card 240 200 400 200
+shot jelly-normal.png /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B2/jelly-normal.png
+shot jelly-hover.png /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B2/jelly-hover.png
+shot jelly-restored.png /Users/coderstory/dev/DevDesk/evidence/2026-11-02-B2/jelly-restored.png
+rgb normal corner 34.4,32.4,30.9
+rgb normal center 34.0,32.0,31.0
+state normal radius=12 scale=1
+rgb hover corner 35.1,33.0,31.9
+rgb hover center 34.0,32.0,31.0
+state hover radius=16 scale=1.02
+rgb restored corner 34.4,32.4,30.9
+rgb restored center 34.0,32.0,31.0
+state restored radius=12 scale=1
+A0 PASS 每帧目标值 normal=12/1.0 hover=16/1.02
+A1 PASS 角部形变可辨 maxDiff=31 px>4=160/400
+A2 PASS 中心不漂 maxDiff=0
+A3 PASS 复位（corner/center 逐像素一致）
+jelly_probe: PASS
+EXIT=0

@@ -1,0 +1,27 @@
+[PASS] md_line_scanner: ATX 标题层级与标题文本 [0ms]
+[PASS] md_line_scanner: # 后无空格不是标题 [0ms]
+[PASS] md_line_scanner: 围栏代码块内不算标题 [0ms]
+[PASS] md_line_scanner: ~~~ 与 ``` 各自配对 [0ms]
+[PASS] md_line_scanner: 围栏开闭语义与 md4c 对齐 [0ms]
+[PASS] md_line_scanner: CRLF 与中文标题 [0ms]
+[PASS] md_line_scanner: 空文本 / 裸 # / 文尾无换行 [0ms]
+[PASS] md_line_scanner: 行号/偏移换算 + UTF-8 计数 [0ms]
+[PASS] md_line_scanner: scanFences 围栏区间 [0ms]
+
+=== Summary ===
+Total:  9
+Passed: 9
+Failed: 0
+Skipped: 0
+Filter: md_scanner(9) -> 9 例
+
+Top-9 slowest:
+  0ms  md_line_scanner: ATX 标题层级与标题文本
+  0ms  md_line_scanner: # 后无空格不是标题
+  0ms  md_line_scanner: 围栏代码块内不算标题
+  0ms  md_line_scanner: ~~~ 与 ``` 各自配对
+  0ms  md_line_scanner: 围栏开闭语义与 md4c 对齐
+  0ms  md_line_scanner: CRLF 与中文标题
+  0ms  md_line_scanner: 空文本 / 裸 # / 文尾无换行
+  0ms  md_line_scanner: 行号/偏移换算 + UTF-8 计数
+  0ms  md_line_scanner: scanFences 围栏区间

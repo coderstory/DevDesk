@@ -1,0 +1,57 @@
+{
+  "exitCode": 1,
+  "scene": "qa122-recon.json",
+  "steps": [
+    {
+      "elapsedMs": 0.093916,
+      "error": "",
+      "hitId": "",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.sidebar.item.Terminal.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.85975,
+      "error": "",
+      "hitId": "app.sidebar.item.Terminal.hit",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Terminal.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 4440.5175,
+      "error": "等待 'exists' 超时 4000ms（目标 term.toolbar.fullscreen）",
+      "hitId": "",
+      "index": 3,
+      "passed": false,
+      "screenshot": "/tmp/qa122-out/fail-3.png",
+      "target": "exists term.toolbar.fullscreen",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.563416,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "qa122-term-dump.txt",
+      "type": "dump"
+    },
+    {
+      "elapsedMs": 411.440375,
+      "error": "",
+      "hitId": "",
+      "index": 5,
+      "passed": true,
+      "screenshot": "/tmp/qa122-out/qa122-term-light.png",
+      "target": "qa122-term-light.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 5
+}

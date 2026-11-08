@@ -1,0 +1,22 @@
+# DevDesk 生成（勿手改：每次引擎启动重写）。
+# 密钥红线：api_key 恒为空（空串走 mem0 的环境回退），真实 key 由拉起方
+# 经环境变量 ANTHROPIC_API_KEY 注入，不落盘不进日志。
+llm:
+  provider: anthropic
+  config:
+    anthropic_base_url: https://open.bigmodel.cn/api/anthropic
+    model: glm-5.3-flash
+    api_key: ""
+embedder:
+  provider: openai
+  config:
+    openai_base_url: http://127.0.0.1:11435/v1
+    model: bge-small-zh-v1.5
+    api_key: "local"
+    embedding_dims: 512
+vector_store:
+  provider: faiss
+  config:
+    path: /Users/coderstory/DevDesk/memory/faiss_db
+    embedding_model_dims: 512
+history_db_path: /Users/coderstory/DevDesk/memory/history.db

@@ -1,0 +1,30 @@
+== get_memory id=e1a6a798-0bcb-4449-bed2-65dee6c478f4 ==
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"id\": \"e1a6a798-0bcb-4449-bed2-65dee6c478f4\",\n  \"memory\": \"QA验收记忆甲：池31回归测试样例\",\n  \"hash\": \"6d6cab9a71e187b6f562cd7cc82b4e9b\",\n  \"metadata\": null,\n  \"score\": null,\n  \"created_at\": \"2026-10-31T12:06:14.456218+00:00\",\n  \"updated_at\": \"2026-10-31T12:06:14.456218+00:00\",\n  \"user_id\": \"telemem-mcp\",\n  \"role\": \"user\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"id":"e1a6a798-0bcb-4449-bed2-65dee6c478f4","memory":"QA验收记忆甲：池31回归测试样例","hash":"6d6cab9a71e187b6f562cd7cc82b4e9b","metadata":null,"score":null,"created_at":"2026-10-31T12:06:14.456218+00:00","updated_at":"2026-10-31T12:06:14.456218+00:00","user_id":"telemem-mcp","role":"user"}}}}
+
+
+== get_memory bogus id (not_found form) ==
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"error\": \"not_found\",\n  \"memory_id\": \"00000000-0000-0000-0000-000000000000\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"error":"not_found","memory_id":"00000000-0000-0000-0000-000000000000"}}}}
+
+
+== update_memory id=e1a6a798-0bcb-4449-bed2-65dee6c478f4 ==
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"Error executing tool update_memory: 1 validation error for update_memoryArguments\ntext\n  Field required [type=missing, input_value={'memory_id': 'e1a6a798-0...被 update 刷新）'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.14/v/missing","type":"text"}],"isError":true}}
+
+
+== get_memory 复读 ==
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"id\": \"e1a6a798-0bcb-4449-bed2-65dee6c478f4\",\n  \"memory\": \"QA验收记忆甲：池31回归测试样例\",\n  \"hash\": \"6d6cab9a71e187b6f562cd7cc82b4e9b\",\n  \"metadata\": null,\n  \"score\": null,\n  \"created_at\": \"2026-10-31T12:06:14.456218+00:00\",\n  \"updated_at\": \"2026-10-31T12:06:14.456218+00:00\",\n  \"user_id\": \"telemem-mcp\",\n  \"role\": \"user\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"id":"e1a6a798-0bcb-4449-bed2-65dee6c478f4","memory":"QA验收记忆甲：池31回归测试样例","hash":"6d6cab9a71e187b6f562cd7cc82b4e9b","metadata":null,"score":null,"created_at":"2026-10-31T12:06:14.456218+00:00","updated_at":"2026-10-31T12:06:14.456218+00:00","user_id":"telemem-mcp","role":"user"}}}}
+
+
+== update_memory(text) id=e1a6a798-0bcb-4449-bed2-65dee6c478f4 ==
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"message\": \"Memory updated successfully!\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"message":"Memory updated successfully!"}}}}
+
+
+== get_memory 复读 ==
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\n  \"id\": \"e1a6a798-0bcb-4449-bed2-65dee6c478f4\",\n  \"memory\": \"QA验收记忆甲：池31回归测试样例（已被 update 刷新）\",\n  \"hash\": \"f17c843dbf47bd87a8a451988b4bb167\",\n  \"metadata\": null,\n  \"score\": null,\n  \"created_at\": \"2026-10-31T12:06:14.456218+00:00\",\n  \"updated_at\": \"2026-10-31T12:07:11.052245+00:00\",\n  \"user_id\": \"telemem-mcp\",\n  \"role\": \"user\"\n}","type":"text"}],"isError":false,"structuredContent":{"result":{"id":"e1a6a798-0bcb-4449-bed2-65dee6c478f4","memory":"QA验收记忆甲：池31回归测试样例（已被 update 刷新）","hash":"f17c843dbf47bd87a8a451988b4bb167","metadata":null,"score":null,"created_at":"2026-10-31T12:06:14.456218+00:00","updated_at":"2026-10-31T12:07:11.052245+00:00","user_id":"telemem-mcp","role":"user"}}}}
+
+

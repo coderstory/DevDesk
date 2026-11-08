@@ -1,0 +1,15 @@
+[1/13] PASS click app.sidebar.item.Todo.hit（命中回读: app.sidebar.item.Todo.hit）
+[2/13] PASS wait exists todo.btn.add
+[3/13] PASS click todo.btn.add（命中回读: app.todo.btn.add.bg）
+[4/13] PASS wait exists todo.dialog.newtask.input
+[5/13] PASS click todo.dialog.newtask.input（命中回读: app.todo.dialog.newtask.input.hit）
+[6/13] PASS type '拖拽演示'
+[7/13] PASS key Enter
+[8/13] PASS wait exists todo.col.0.card.0.bg
+[9/13] PASS drag todo.col.0.card.0.bg → todo.col.1
+[10/13] PASS wait exists todo.col.1.card.0.wrap
+[11/13] PASS assert missing todo.col.0.card.0.bg
+[12/13] PASS assert exists todo.col.1.card.0.wrap
+probe: screenshot /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/todo-drag.png (2400x2000)
+[13/13] PASS screenshot todo-drag.png（截图: /Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/todo-drag.png）
+ui_driver: 退出码 0（13 步）

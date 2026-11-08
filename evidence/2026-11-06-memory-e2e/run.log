@@ -1,0 +1,15 @@
+[e2e-run] 临时数据根：/tmp/mem-e2e.7PU3Vu
+[e2e-run] PASS: 伪造 3 会话写入 /tmp/mem-e2e.7PU3Vu/cc-projects
+[e2e-run] PASS: 环境 yaml 写入 /tmp/mem-e2e.7PU3Vu/telemem-config.yaml
+[e2e-run] 启动 llama-server (:11435)…
+[e2e-run] 启动 telemem (:8421)…
+[e2e-run] PASS: llama-server 探活 /health=200 (:11435)
+[e2e-run] PASS: telemem 探活 initialize=200 (:8421)
+[e2e-run] FAIL: 探针 rc=1 或有 FAIL（详见 /Users/coderstory/dev/DevDesk/evidence/2026-11-06-memory-e2e/probe.log）
+[e2e-run] PASS: hook 改写问①「改完代码怎么验证」命中注入
+[e2e-run] PASS: hook 改写问②「记忆服务监听哪个端口」命中注入
+[e2e-run] PASS: hook 负对照「今天天气怎么样」0 注入（threshold 生效）
+[e2e-run] PASS: fail-open：引擎停后 stdout 空 + exit 0
+[e2e-run] PASS: 红线 grep 零命中（phone/secret/ipv4）
+[e2e-run] ————————————————————
+[e2e-run] 结论：1 项 FAIL（evidence: /Users/coderstory/dev/DevDesk/evidence/2026-11-06-memory-e2e）

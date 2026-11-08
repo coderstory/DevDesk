@@ -1,0 +1,14 @@
+# 判据 A：.lineHeight(裸数字)（行盒不随字号缩放 → 文字被裁）
+src/module_schedule/schedule_ui_edit.cpp:434:        .lineHeight(16.0f)
+src/module_schedule/schedule_ui_edit.cpp:852:                    .lineHeight(18.0f)
+
+# 判据 B：.size(<任意>, 裸数字) 且同一元素链含 .text(（文本盒高不随字号缩放）
+src/module_schedule/schedule_module.cpp:92:         ui.text("schedule.list.unstarted")
+src/module_schedule/schedule_ui_edit.cpp:429:     ui.text(id)
+src/module_schedule/schedule_ui_edit.cpp:761:                     ui.text("schedule.edit.action.task.empty")
+src/module_schedule/schedule_ui_edit.cpp:847:                 ui.text("schedule.edit.preview")
+src/module_schedule/schedule_ui_list.cpp:1072:                 ui.text("schedule.list.deleteConfirm.purge.label")
+src/module_settings/github_sync_card.cpp:221:             ui.text(id + ".error.icon")
+src/module_settings/github_sync_card.cpp:460:                         auto eye = ui.text(id + ".token.eye")
+
+# 合计：判据 A = 2 处，判据 B = 7 处

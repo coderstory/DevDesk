@@ -1,0 +1,137 @@
+{
+  "exitCode": 0,
+  "scene": "settings-toggle.json",
+  "steps": [
+    {
+      "elapsedMs": 0.077125,
+      "error": "",
+      "hitId": "",
+      "index": 1,
+      "passed": true,
+      "screenshot": "",
+      "target": "missing app.sidebar.item.Memory.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.069792,
+      "error": "",
+      "hitId": "",
+      "index": 2,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.sidebar.item.Todo.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.696709,
+      "error": "",
+      "hitId": "app.sidebar.item.Settings.hit",
+      "index": 3,
+      "passed": true,
+      "screenshot": "",
+      "target": "app.sidebar.item.Settings.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 10.294167,
+      "error": "",
+      "hitId": "",
+      "index": 4,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists settings.tabs.1.hit",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.963,
+      "error": "",
+      "hitId": "app.settings.tabs.1.hit",
+      "index": 5,
+      "passed": true,
+      "screenshot": "",
+      "target": "settings.tabs.1.hit",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 3.694833,
+      "error": "",
+      "hitId": "",
+      "index": 6,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists settings.card.modules.sw.4.track",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.953375,
+      "error": "",
+      "hitId": "app.settings.card.modules.sw.4.track",
+      "index": 7,
+      "passed": true,
+      "screenshot": "",
+      "target": "settings.card.modules.sw.4.track",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 0.98775,
+      "error": "",
+      "hitId": "",
+      "index": 8,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.sidebar.item.Agent.hit",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.085458,
+      "error": "",
+      "hitId": "",
+      "index": 9,
+      "passed": true,
+      "screenshot": "",
+      "target": "exists app.sidebar.item.Agent.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 0.77625,
+      "error": "",
+      "hitId": "app.settings.card.modules.sw.4.track",
+      "index": 10,
+      "passed": true,
+      "screenshot": "",
+      "target": "settings.card.modules.sw.4.track",
+      "type": "click"
+    },
+    {
+      "elapsedMs": 0.832458,
+      "error": "",
+      "hitId": "",
+      "index": 11,
+      "passed": true,
+      "screenshot": "",
+      "target": "missing app.sidebar.item.Agent.hit",
+      "type": "wait"
+    },
+    {
+      "elapsedMs": 0.096,
+      "error": "",
+      "hitId": "",
+      "index": 12,
+      "passed": true,
+      "screenshot": "",
+      "target": "missing app.sidebar.item.Agent.hit",
+      "type": "assert"
+    },
+    {
+      "elapsedMs": 459.407709,
+      "error": "",
+      "hitId": "",
+      "index": 13,
+      "passed": true,
+      "screenshot": "/Users/coderstory/dev/DevDesk/evidence/2026-10-31-债18-dev/settings-toggle.png",
+      "target": "settings-toggle.png",
+      "type": "screenshot"
+    }
+  ],
+  "total": 13
+}

@@ -1,0 +1,2 @@
+Windows · 构建 + 测试	构建 + 测试	2026-11-07T07:33:52.6551843Z [FAIL] agent_ui: run 失败 → OS 系统通知恰一次（id 前缀 agent-run-、正文含任务名、level=Error） [24683ms]
+Windows · 构建 + 测试	构建 + 测试	2026-11-07T07:33:52.6964039Z Total:  2264 Passed: 2247 Failed: 1 

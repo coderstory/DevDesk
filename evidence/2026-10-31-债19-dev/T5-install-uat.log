@@ -1,0 +1,49 @@
+=== T5 --install 隔离（DEVDESK_INSTALL_DIR=/tmp/debt19-uat/DevDesk.app）===
+── 构建: Debug → build/ ──
+── EUI-NEO: /Users/coderstory/dev/DevDesk/EUI-NEO ──
+── EUI-NEO 版本前置校验 ──
+⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）
+── 构建（增量）──
+[1/2] Bumping build version
+-- Build version: 1.2.0 -> 1.2.1
+✅ 构建成功
+⏭ bundle 维护跳过（--install 流程稍后自行重组，避免同一次运行重组两遍）
+⚠ 发布形态（darwin 上降级为警告）：DevDesk 依赖非系统库： /opt/homebrew/opt/openssl@3/lib/libssl.3.dylib /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib
+   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关
+   （cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 平台不适用，故不硬失败
+⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目
+── 探针跳过登记守卫 ──
+探针跳过登记：每个 probe 测试必须在 configure 产物里登记 SKIP_RETURN_CODE = harness 的 kSkipExitCode
+  ✅ probe 跳过登记守卫通过（CTestTestfile.cmake 里每个 probe 测试都带 77）
+── 模块隔离守卫 ──
+✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）
+── Windows 交叉编译守卫 ──
+Windows 源文件交叉编译守卫：/Users/coderstory/.local/llvm-mingw-20260922-ucrt-macos-universal/bin/x86_64-w64-mingw32-g++
+  clang version 23.1.2 (https://github.com/llvm/llvm-project.git 85ac560262434c9ccfc0c183ec22d4138ed647fb)
+  受编集合：从 CMakeLists 的 WIN32 分支解析出 385 个源文件（src + tests，含共享文件）
+  EUI-NEO：/Users/coderstory/dev/DevDesk/EUI-NEO
+  ⚠ 边界：本机是 clang + libc++，CI 是 MSYS2 GCC + libstdc++。
+        标准库不同 ⇒ 传递包含边界不同 ⇒「本机编得过」推不出「CI 编得过」。
+        缺标准头那一类由 scripts/check-std-includes.sh 用与标准库无关的静态判据守。
+  ── 编过 380 / 共 385（含 5 个因缺第三方头跳过）
+  ── 编不到（如实列出，**未验证**；装上对应的头即自动纳入）：
+     · src/platform/http_client_ca_win.cpp —— 缺 curl/curl.h 的头（本机没装该库，**未验证**）
+     · src/platform/http_client.cpp —— 缺 curl/curl.h 的头（本机没装该库，**未验证**）
+     · tests/test_modules/test_proxy_router.cpp —— 缺 curl/curl.h 的头（本机没装该库，**未验证**）
+     · tests/test_platform/test_http_client.cpp —— 缺 curl/curl.h 的头（本机没装该库，**未验证**）
+     · tests/test_platform/test_http_server.cpp —— 缺 curl/curl.h 的头（本机没装该库，**未验证**）
+✅ Windows CI 源文件集合（385 个）交叉编译全通过
+   ⚠ 但这不等于「CI 一定绿」：本机 clang+libc++ ≠ CI 的 GCC+libstdc++（见文件头）。
+── std include 守卫 ──
+std include 守卫：扫描 712 个文件（/Users/coderstory/dev/DevDesk/src + /Users/coderstory/dev/DevDesk/tests）
+  ❌ tests/ui_driver/driver_keys.h:62: 直接使用 std::size_t，但本文件与它直接 include 的项目头都没显式 include <cstddef> 或 <cstdio> 或 <cstdlib> 或 <cstring> 或 <ctime>（靠标准库内部传递包含才可见）
+  ❌ tests/ui_driver/driver_report.h:66: 直接使用 std::move，但本文件与它直接 include 的项目头都没显式 include <utility>（靠标准库内部传递包含才可见）
+❌ 有文件「直接用了 std 符号，却只靠标准库内部传递包含才看得见声明」
+   修法：给该文件补上列出的一行标准头 include。
+❌ std include 守卫失败（有文件直接用了 std 符号却只靠标准库内部传递包含才看得见）
+real 49.28
+user 169.53
+sys 17.95
+exit=1
+=== T5 重试1（原样）===
+retry1 exit=1

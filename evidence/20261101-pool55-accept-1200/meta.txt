@@ -1,0 +1,4 @@
+slug: pool55-accept-1200
+date: 2026-11-01 02:10:23
+cwd:  /Users/coderstory/dev/DevDesk
+cmd:  /Users/coderstory/dev/DevDesk/build/tests/release_probe --size 1200x1000 --screenshot-seeded /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-list-20rows.png --accept-shot-tab /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-tab.png --accept-shot-filter-empty /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-filter-empty.png --accept-shot-empty /Users/coderstory/dev/DevDesk/evidence/20261101-pool55-accept-1200/pool55-accept-empty.png 
