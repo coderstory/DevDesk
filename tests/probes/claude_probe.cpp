@@ -41,6 +41,7 @@ int main(int argc, char* argv[]) {
     std::string shotDetail;  // bug175/176 详情面板「环境变量」页签截图路径
     std::string formState;   // fail = 预检失败态文案
     bool lightTheme = false;
+    float fontScale = 1.0f;  // need236：字号档（0.80~1.30）
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-profiles" && i + 1 < argc) {
@@ -53,6 +54,10 @@ int main(int argc, char* argv[]) {
             formState = argv[++i];
         } else if (arg == "--light") {
             lightTheme = true;
+        } else if (arg == "--font-scale" && i + 1 < argc) {
+            // need236：字号档（0.80~1.30，缺省 1.0）。徽标下界钳制需在放大档
+            // 验证——100% 档下 chip 顶恰好贴名字行底，容差内区分不出回归。
+            fontScale = std::stof(argv[++i]);
         }
     }
     if (!probe::initializeWindowBackend()) return 1;
@@ -71,6 +76,12 @@ int main(int argc, char* argv[]) {
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);
+
+    // need236：字号档在 compose 前生效（settings 模块 onStart 会按配置文件回写档位，
+    // 故本探针在它之后覆盖，与本模块 UI 几何无关——只影响全局 scaled()）
+    if (fontScale != 1.0f) {
+        core::theme::setFontScale(fontScale);
+    }
 
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
@@ -188,6 +199,46 @@ int main(int argc, char* argv[]) {
         if (!probe::captureFramePng(window, runtime, shotProfiles)) {
             std::cerr << "claude_probe: profile 列表落图失败 " << shotProfiles << "\n";
             passed = false;
+        }
+
+        // need236 布局守卫：「使用中」悬浮徽标不得遮住 profile 名字。
+        // 背景：need174 把徽标改悬浮后曾与名字行 100% 重叠，长名尾字被 0.78α
+        // 绿底压住；need236 把徽标下移到副标题行带并加放大档下界钳制。
+        // 判据 = 徽标顶 ≥ 名字行底（垂直不相交即不遮挡）且徽标底 ≤ 卡底。
+        // ⚠️ 必须在**真实布局**（composeModuleFrame 已跑完整帧）后取 frame：
+        // headless 纯 compose 下 frame 恒 0，断言会变恒真（本条目踩过）。
+        if (ui != nullptr) {
+            const std::string cardId =
+                "claude.profile." + std::to_string(profiles.size() - 1);
+            const auto* chip = ui->find(cardId + ".active.chip");
+            const auto* name = ui->find(cardId + ".name");
+            const auto* wrap = ui->find(cardId + ".wrap");
+            if (chip == nullptr || name == nullptr || wrap == nullptr) {
+                std::cerr << "claude_probe: need236 FAIL 元素缺失 chip="
+                          << (chip != nullptr) << " name=" << (name != nullptr)
+                          << " wrap=" << (wrap != nullptr) << "\n";
+                passed = false;
+            } else {
+                const float nameBottom = name->frame.y + name->frame.height;
+                const float chipTop = chip->frame.y;
+                const float chipBottom = chip->frame.y + chip->frame.height;
+                const float wrapBottom = wrap->frame.y + wrap->frame.height;
+                const bool noOverlap = chipTop + 0.5f >= nameBottom;
+                const bool inCard = chipBottom <= wrapBottom + 0.5f;
+                if (!noOverlap || !inCard) {
+                    std::cerr << "claude_probe: need236 FAIL 徽标遮挡名字 "
+                              << "chip.y=" << chipTop << " chip底=" << chipBottom
+                              << " name底=" << nameBottom
+                              << " 卡底=" << wrapBottom
+                              << "（不重叠=" << noOverlap
+                              << " 卡内=" << inCard << "）\n";
+                    passed = false;
+                } else {
+                    std::cout << "claude_probe: need236 PASS 徽标不遮名字（"
+                              << cardId << " chip.y=" << chipTop
+                              << " name底=" << nameBottom << "）\n";
+                }
+            }
         }
     }
 

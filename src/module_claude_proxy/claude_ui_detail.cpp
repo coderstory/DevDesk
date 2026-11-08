@@ -379,8 +379,8 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         }
     }
     // 行几何：全部从 fontScale 派生，禁写死像素
-    // 行带 1 = round(键字号×1.7)，行带 2 = round(说明字号×1.6)，行卡 = 4+带1+2+带2+4，
-    // 行距 = 行卡+6；键/值同带、来源/说明同带，两带 y 区间不相交。
+    // 行带 1 = round(键字号×1.7)，行带 2 = round(说明字号×1.6)，行卡 = 8+带1+4+带2+8，
+    // 行距 = 行卡+10；键/值同带、来源/说明同带，两带 y 区间不相交。
     const float fs = core::theme::fontScale();
     // bug176 放大档：键/值 12→14、来源/说明 11→12、行卡内距 4→8 / 带距 2→4、
     // 行距 6→10（行卡 48→63 高）；全部随 fontScale 派生，不写死 100% 像素。
@@ -388,11 +388,15 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     const float smallFs = 12.0f * fs;  // 来源 / 说明 / 空态小字（设计基准 12px）
     const float line1H = std::round(keyFs * 1.7f);
     const float line2H = std::round(smallFs * 1.6f);
-    const float rowH = 8.0f + line1H + 4.0f + line2H + 8.0f;
+    // need236：行卡内距/带距提成具名常量，rowH 与两带 y 同源（旧版 rowH 改 8/4
+    // 而 line1Y/line2Y 仍留 4/2，致文字块贴卡上沿、卡底空 14px）。
+    constexpr float kRowPadV = 8.0f;    // 行卡上下内距
+    constexpr float kRowBandGap = 4.0f; // 带 1 与带 2 间距
+    const float rowH = kRowPadV + line1H + kRowBandGap + line2H + kRowPadV;
     const float pitch = rowH + 10.0f;
     const float overflowH = line2H + 2.0f;
-    const float line1Y = 4.0f;                  // 行带 1 顶（相对行卡顶）
-    const float line2Y = 4.0f + line1H + 2.0f;  // 行带 2 顶
+    const float line1Y = kRowPadV;                          // 行带 1 顶（相对行卡顶）
+    const float line2Y = kRowPadV + line1H + kRowBandGap;   // 行带 2 顶
     if (envMap.empty()) {
         // 空态两种成因分开说：未选 Profile vs 键全被模型过滤（后者当前不可达，保留分支）
         const float emptyH = line1H;

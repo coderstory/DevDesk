@@ -251,8 +251,13 @@ void drawProfileCard(eui::Ui& ui,
 
     // 右侧「使用中」标记（仅激活项）：bug174 改悬浮半透明徽标——不再从名字宽
     // 里扣布局位（旧版扣 60px 致长名截断），名字恢复全宽；徽标绘制见函数尾。
+    // need236：徽标从名字行（10..28）下移到副标题行带（30..46），名字行零遮挡；
+    // 副标题在激活卡上右缩让出徽标宽。
     const bool showActiveChip = isActive;
     const float nameMaxW = std::max(40.0f, width - kTextX - kRightPad);
+    const float subMaxW = showActiveChip
+        ? std::max(40.0f, nameMaxW - (kActiveChipW + 8.0f))
+        : nameMaxW;
 
     // 名称：单行截断让位右缘
     {
@@ -276,8 +281,8 @@ void drawProfileCard(eui::Ui& ui,
         if (!sub.empty()) {
             ui.text(id + ".subtitle")
                 .position(kTextX, y + 30.0f)
-                .size(nameMaxW, core::theme::scaled(16.0f))
-                .maxWidth(nameMaxW)
+                .size(subMaxW, core::theme::scaled(16.0f))
+                .maxWidth(subMaxW)
                 .wrap(false)
                 .overflow(core::TextOverflow::Ellipsis)
                 .text(sub)
@@ -289,11 +294,20 @@ void drawProfileCard(eui::Ui& ui,
     }
 
     if (showActiveChip) {
-        // bug174 悬浮态：右上角锚定 + 半透明 primary 底（浮在 item 上、不占布局
-        // 位）；长名尾段从徽标下方透出仍可辨。文字用 onPrimary 保徽标本体对比
-        //（R6：悬浮不得盖死关键文本——半透明 + 角落锚定双保险）。
+        // need236 落位：徽标锚在副标题行带内垂直居中（y+30 起、行高 scaled(16)），
+        // 徽标高 20 → 100% 档占 28..48；名字行 10..28 零重叠、卡底 60 有余量。
+        // 半透明 primary 底 + 角落锚定保对比。
+        // 放大档下界钳制：kRowH 是硬编码 60 不随 fontScale 缩放（本条目禁改骨架
+        // 常量），而名字行高 scaled(18) 会随档增长——fs=1.3 时名字行伸到 33.4，
+        // 与「副标题带居中」算出的徽标顶 30.4 产生 3px 重叠。取「名字行底」作
+        // 徽标顶的下界（再加 2px 呼吸），保证任意字号档徽标都不压名字行；卡底
+        // 越界风险随之消失（顶更晚了但徽标仅 20 高，fs≥1.15 时已贴卡底内沿）。
+        const float nameRowBottom =
+            y + 10.0f + core::theme::scaled(18.0f);
         const float chipX = width - kRightPad - kActiveChipW;
-        const float chipY = y + 8.0f;
+        const float chipY = std::max(
+            y + 30.0f + (core::theme::scaled(16.0f) - 20.0f) * 0.5f,
+            nameRowBottom + 2.0f);
         eui::Color chipBg = t.colors.primary;
         chipBg.a = 0.78f;
         ui.rect(id + ".active.chip")
