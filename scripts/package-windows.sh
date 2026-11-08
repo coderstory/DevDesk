@@ -132,6 +132,29 @@ cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 bash "$PROJECT_DIR/scripts/unpack-memory-assets.sh" "$EXE_DIR_POSIX" --required || exit 1
 rm -f "$ASSETS_DIR_POSIX/memory-embedding.7z"
 
+# embedding 模型随包断言（need:241 / debt226）：模型 pkg 定位序 = exe 旁 assets/models
+# （llama_host.cpp locateEmbedModelBetween 序 1，先于数据根与 HF 下载）。正式来源是上面
+# 7z 解包（档案内自带 assets/models/<gguf>），这里再兜一层**单文件**来源——仓内散文件
+# assets/models/ 与 mac 侧打包脚本共用同一落位，7z 档案后续若剔掉模型仍能出包。
+# 缺失即中止（与 mac 侧同口径）：静默产出无模型的安装包 = 记忆模块首启必走网络下载。
+EMBED_MODEL_NAME="bge-small-zh-v1.5-q8_0.gguf"
+EMBED_MODEL_DST="$ASSETS_DIR_POSIX/models/$EMBED_MODEL_NAME"
+if [ ! -f "$EMBED_MODEL_DST" ]; then
+  EMBED_MODEL_SRC="$PROJECT_DIR/assets/models/$EMBED_MODEL_NAME"
+  if [ -f "$EMBED_MODEL_SRC" ]; then
+    mkdir -p "$ASSETS_DIR_POSIX/models"
+    cp -f "$EMBED_MODEL_SRC" "$EMBED_MODEL_DST"
+    echo "── embedding 模型：仓内散文件补齐 → assets/models/$EMBED_MODEL_NAME ──"
+  else
+    echo "❌ 缺随包 embedding 模型：$EMBED_MODEL_DST（7z 解包未产出，仓内散文件亦缺）" >&2
+    echo "   获取：curl -L -o '$EMBED_MODEL_SRC' \\" >&2
+    echo "     https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/resolve/main/$EMBED_MODEL_NAME" >&2
+    exit 1
+  fi
+fi
+# bash 3.2 把紧跟变量的 UTF-8 全角标点首字节并进变量名（实测输出乱码），必须用 ${}
+echo "✅ embedding 模型随包就位（assets/models/${EMBED_MODEL_NAME}，$(wc -c < "$EMBED_MODEL_DST" | tr -d ' ') 字节）"
+
 # mpv 打包链路（P6）：壁纸播放后端随包分发。运行时解析优先级（mpv_controller.h）：
 # DEVDESK_MPV_PATH → <exeDir>/assets/mpv/mpv.exe → 开发兜底（仅非 Release）——安装版
 # 只能走第二条，故打包期必须把 MPV_BIN 拷到 assets/mpv/mpv.exe。源缺失即失败：

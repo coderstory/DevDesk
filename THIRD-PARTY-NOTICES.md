@@ -112,3 +112,23 @@
 - 许可证：Apache-2.0 WITH LLVM-exception（LLVM Project 标准条款；⚠ 待补：仓库内尚无
   vendored LICENSE 副本，许可名称依据打包机同版本组件自带 `LICENSE.TXT`）
 - 引入方式：随 `scripts/package-macos.sh` 的 llama 依赖闭包拷入，无独立引入步骤
+
+## bge-small-zh-v1.5（记忆模块本地 embedding 模型，GGUF Q8_0）
+
+- 用途：记忆模块的本地向量化模型（`assets/models/bge-small-zh-v1.5-q8_0.gguf`，
+  26,472,640 字节，SHA-256 `5a88d266870fbd27c6f329df60de80e2d4cf3bbd5e6f080bd5c1b2e5abb12039`，
+  随包分发，need:241；运行时定位序见 `src/module_memory/engine/llama_host.cpp` 的
+  `locateEmbedModelBetween`：exe 旁 `assets/models` → 数据根 → HF 下载兜底）
+- 上游模型主页：<https://huggingface.co/BAAI/bge-small-zh-v1.5>（BAAI，原模型）
+- GGUF 量化发布方：<https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf>
+  （第三方转换，非 BAAI 官方；模型卡自述 `Source model:` 指向上游 BAAI）
+- 版本 pin：Q8_0 量化，`bge-small-zh-v1.5-q8_0.gguf`（512 维，索引维度在建索引前定死）
+- 许可证：MIT（实查 2026-11-08：两份模型卡 YAML 均为 `license: mit`——
+  `https://huggingface.co/BAAI/bge-small-zh-v1.5/raw/main/README.md` 首行与
+  `https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/raw/main/README.md` 首行；
+  BAAI 卡正文另述 FlagEmbedding 为 MIT 且「released models can be used for commercial
+  purposes free of charge」。⚠ 待补：仓库内尚无 vendored LICENSE 原文副本）
+- 引入方式：仓内 `assets/models/`（`.gitignore:124` 白名单）随 assets 分发；
+  macOS 由 `scripts/package-macos.sh` 的 embedding 模型段拷入 `Contents/MacOS/assets/models/`；
+  Windows 由 `scripts/unpack-memory-assets.sh` 从 `assets/memory-embedding.7z` 解出，
+  `scripts/package-windows.sh` 另做单文件兜底
