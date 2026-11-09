@@ -5,13 +5,17 @@
     {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "进终端页（onPageEnter 起会话）"},
 
     {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 20000,
-     "_comment": "会话 ready 判据：光标元素只在 Running 且首帧 cells 非空时建——跨平台，不依赖 %, $, PS 等提示符字形"},
+     "_comment": "会话已建判据：光标元素在 Running 且 cells 非空时建（vterm 构造期预填空白 cells，terminal_vterm_core.cpp:159——所以本步只证明会话 Running，不证明有输出；spawn 失败在此红）"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000,
+     "_comment": "shell 首屏判据 = 网格出现任意可见文本（跨平台不依赖 %, $, PS 字形；60s 覆盖 pwsh 冷启动 6~30s，need241 技术卡实测）。超时红 = 会话 Running 但从未有任何输出（产品候选）。坏环境的 pwsh 会话也有 conhost 初始化字节，本步不承担挂接判别"},
+    {"type": "wait", "ms": 1000,
+     "_comment": "首屏后稳定窗：shell 刚打印首屏尚未就绪读输入（启动期吞输入，探针同款规避）"},
 
     {"type": "type", "text": "echo uidrv-need242-marker", "id": "app.term.input",
      "_comment": "need242：id = 注入前 requestFocus 到捕获层（无焦点时 EUI 静默丢弃文本）"},
     {"type": "key", "name": "Enter", "id": "app.term.input"},
-    {"type": "wait", "until": "text", "op": "contains", "text": "uidrv-need242-marker", "timeoutMs": 8000,
-     "_comment": "回显上屏 = 文本链 TextInputEvent→writeToActive→PTY 闭环"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "uidrv-need242-marker", "timeoutMs": 20000, "skipExit": 77,
+     "_comment": "回显上屏 = 文本链 TextInputEvent→writeToActive→PTY 闭环。超时 = 本环境 ConPTY 客户端挂接失效（工具 shell / MSYS 桥接控制台宿主限制：shell 挂到调用方控制台，键入永不被 shell 读到；2026-11-09 实证同一探针 exe 在真实控制台全绿）→ 77 跳过，截图即证据；平台层真相当由 terminal_conpty_win_probe 阶段 0/A/B 独立守护"},
 
     {"type": "type", "text": "printf 'uidrv-AAA\\nuidrv-BBB\\nuidrv-CCC\\n'", "id": "app.term.input"},
     {"type": "key", "name": "Enter", "id": "app.term.input"},

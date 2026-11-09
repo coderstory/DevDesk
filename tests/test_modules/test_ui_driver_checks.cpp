@@ -110,3 +110,35 @@ REGISTER_TEST(uiDriverChecksTextPresent, "uidrv/checks: 文本 contains/equals�
     DOCTEST_CHECK_FALSE(textPresent(tree, card.id, TextOp::Contains, ""));
     return true;
 })
+
+REGISTER_TEST(uiDriverChecksTextPresentNonEmpty, "uidrv/checks: nonempty 可见文本判据（终端就绪门）", {
+    static Element blank;
+    blank.id = "app.page.blank";
+    blank.text = "   ";  // 纯空白 = 无可见字符
+    static Element visible;
+    visible.id = "app.page.visible";
+    visible.text = "PS D:\\proj>";  // 提示符样例
+    static Element cjk;
+    cjk.id = "app.page.cjk";
+    cjk.text = "终端";  // UTF-8 多字节字节级可见
+    TreeView tree = makeSampleTree();
+    tree.byId[blank.id] = &blank;
+    tree.byId[visible.id] = &visible;
+    tree.byId[cjk.id] = &cjk;
+    tree.leaves.push_back(&blank);
+    tree.leaves.push_back(&visible);
+    tree.leaves.push_back(&cjk);
+
+    // 定点：空白元素不可见；提示符元素可见
+    DOCTEST_CHECK_FALSE(textPresent(tree, blank.id, TextOp::NonEmpty, ""));
+    DOCTEST_CHECK(textPresent(tree, visible.id, TextOp::NonEmpty, ""));
+    DOCTEST_CHECK(textPresent(tree, cjk.id, TextOp::NonEmpty, ""));
+    // 全页扫描：任一叶子有可见字符即真
+    DOCTEST_CHECK(textPresent(tree, "", TextOp::NonEmpty, ""));
+    // 空树（无可见叶子）= false——终端就绪门在空白网格上超时的形态
+    TreeView emptyTree = makeSampleTree();
+    emptyTree.leaves.clear();
+    emptyTree.leaves.push_back(&blank);
+    DOCTEST_CHECK_FALSE(textPresent(emptyTree, "", TextOp::NonEmpty, ""));
+    return true;
+})

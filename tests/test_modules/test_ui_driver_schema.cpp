@@ -197,3 +197,37 @@ REGISTER_TEST(uiDriverSchemaLoadMissingFile, "uidrv/schema: 文件不存在退�
     DOCTEST_CHECK(r.errorMessage().find("场景文件不存在") != std::string::npos);
     return true;
 })
+
+REGISTER_TEST(uiDriverSchemaWaitSkipExitAndNonEmpty, "uidrv/schema: wait.skipExit=77 与 op=nonempty（宿主限制跳过语义）", {
+    // 正例：nonempty 无需 text；skipExit=77 合法
+    Scene okScene;
+    if (!parseOk(R"({"version":1,"steps":[
+        {"type":"wait","until":"text","op":"nonempty","timeoutMs":60000,"skipExit":77}
+    ]})", &okScene)) return false;
+    DOCTEST_CHECK_EQ(okScene.steps[0].skipExit, 77);
+    // 负例：skipExit 非 77 值拒绝
+    std::string err;
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"wait","until":"exists","id":"a","skipExit":1}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("skipExit") != std::string::npos);
+    // 负例：skipExit 搭配固定 ms 等待（无超时语义）拒绝
+    err.clear();
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"wait","ms":400,"skipExit":77}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("until") != std::string::npos);
+    // 负例：op=nonempty 之外的未知 op 照旧拒绝
+    err.clear();
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"wait","until":"text","op":"startswith","text":"x"}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("op") != std::string::npos);
+    // contains/equals 缺 text 照旧拒绝（nonempty 是唯一豁免）
+    err.clear();
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"wait","until":"text"}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("text") != std::string::npos);
+    return true;
+})

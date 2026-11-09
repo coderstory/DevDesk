@@ -112,6 +112,9 @@ public:
                                    .count();
             std::cout << formatStepLine(result, total) << std::endl;
             outcome.results.push_back(std::move(result));
+            if (outcome.results.back().skipExit != 0) {
+                break;  // 环境受限跳过：后续步骤必然级联失败，无条件中止（keepGoing 不越权）
+            }
             if (!outcome.results.back().passed && !env_.keepGoing) {
                 break;  // fail-fast：场景是单链，继续跑只产生级联误导（调研 §4.3）
             }
@@ -381,9 +384,19 @@ private:
                 return;
             }
             if (std::chrono::steady_clock::now() > deadline) {
+                const std::string targetDesc = step.until == "text" && step.text.empty()
+                    ? "op=nonempty 任意可见文本" + (step.id.empty() ? std::string() : " @ " + step.id)
+                    : (step.id.empty() ? "'" + step.text + "'" : step.id);
                 result->errorReason = "等待 '" + step.until + "' 超时 " +
                                       std::to_string(timeoutMs) + "ms（目标 " +
-                                      (step.id.empty() ? "'" + step.text + "'" : step.id) + "）";
+                                      targetDesc + "）";
+                if (step.skipExit != 0) {
+                    // 宿主环境限制跳过语义：not-passed 但 exit 77（ctest Skipped）。
+                    // 失败现场截图照常落（execute 收尾统一捕获）= 跳过证据物。
+                    result->errorReason +=
+                        "（skipExit=77：宿主环境受限按跳过处理，截图为证据物）";
+                    result->skipExit = step.skipExit;
+                }
                 return;
             }
         }

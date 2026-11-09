@@ -18,22 +18,13 @@
 #include <utility>
 #include <vector>
 
-// 序列帧直落证据目录（git-ignored，evidence-capture 口径）。
-// 跨平台：优先 SPLASH_SEQ_OUT 环境变量；否则从可执行路径反推仓库根
-// （build/tests/<exe> 上三级），落 <仓库根>/evidence/sidebar-splash-occlusion；
-// 反推失败退回当前目录相对路径。历史硬编码 Mac 绝对路径已退役（Windows/CI 可跑）。
-static std::string splashSeqOutDir(const char* argv0) {
-    namespace fs = std::filesystem;
+// 序列帧输出目录：优先 SPLASH_SEQ_OUT 环境变量（evidence-capture 需要归档时显式指定）；
+// 否则落当前工作目录下 splash-occlusion-shots/（ctest 工作目录 = build/）。
+// 历史硬编码 Mac 绝对证据路径已退役——它会把跑测产物写进仓库受版本控制的 evidence/，
+// Windows/CI 也直接失败。
+static std::string splashSeqOutDir() {
     if (const char* env = std::getenv("SPLASH_SEQ_OUT"); env != nullptr && *env != '\0') {
         return env;
-    }
-    std::error_code ec;
-    const fs::path exe = fs::absolute(fs::path(argv0 != nullptr ? argv0 : ""), ec);
-    if (!ec && !exe.empty()) {
-        const fs::path root = exe.parent_path().parent_path().parent_path();
-        if (fs::exists(root / "CMakeLists.txt", ec)) {
-            return (root / "evidence" / "sidebar-splash-occlusion").string();
-        }
     }
     return "splash-occlusion-shots";
 }
@@ -71,7 +62,7 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
 
-    const std::string outDir = splashSeqOutDir(argc > 0 ? argv[0] : nullptr);
+    const std::string outDir = splashSeqOutDir();
     {
         std::error_code ec;
         std::filesystem::create_directories(outDir, ec);

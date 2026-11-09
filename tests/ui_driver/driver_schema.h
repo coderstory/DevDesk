@@ -49,6 +49,9 @@ struct Step {
     std::string otherId;     // assert geometry intersects 的 "other"
     int ms = 0;              // wait 固定模拟帧等待（动画兜底，非首选）
     int timeoutMs = 0;       // wait 覆写默认超时（0 = 用 settings 默认）
+    int skipExit = 0;        // wait 超时后的跳过语义：仅支持 77（ctest SKIP_RETURN_CODE；
+                             // 0 = 不跳过）。宿主环境限制（如 Windows 工具 shell 控制台
+                             // 上下文破坏 ConPTY 客户端挂接）按跳过处理并留证据，不硬红
     std::string path;        // screenshot / dump 落盘路径（相对 --out-dir）
 };
 
@@ -72,7 +75,7 @@ inline std::vector<std::string> stepKeyVocabulary(const std::string& type) {
     if (type == "key") return {"name", "id", "_comment", "timeoutMs"};
     if (type == "scroll") return {"dx", "dy", "id", "_comment", "timeoutMs"};
     if (type == "drag") return {"from", "to", "steps", "_comment", "timeoutMs"};
-    if (type == "wait") return {"until", "id", "text", "op", "ms", "_comment", "timeoutMs"};
+    if (type == "wait") return {"until", "id", "text", "op", "ms", "skipExit", "_comment", "timeoutMs"};
     if (type == "assert") return {"check", "id", "text", "op", "other", "_comment", "timeoutMs"};
     if (type == "screenshot") return {"path", "_comment"};
     if (type == "dump") return {"path", "_comment"};
@@ -468,6 +471,7 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
         if (auto r = getString("text", &out->text); r.isFail()) return r;
         if (auto r = getString("op", &out->op); r.isFail()) return r;
         if (auto r = getInt("ms", &out->ms); r.isFail()) return r;
+        if (auto r = getInt("skipExit", &out->skipExit); r.isFail()) return r;
         if (out->until.empty() && out->ms <= 0) {
             return failStep(index1, "wait 需要 'until'（exists/missing/text）或 'ms'（固定等待）");
         }
@@ -478,11 +482,19 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
         if ((out->until == "exists" || out->until == "missing") && out->id.empty()) {
             return failStep(index1, "wait.until=exists/missing 需要 'id'");
         }
-        if (out->until == "text" && out->text.empty()) {
-            return failStep(index1, "wait.until=text 需要 'text'");
+        // nonempty = 任意可见文本判据（不读 text 字段）；contains/equals 才需要 text
+        if (out->until == "text" && out->op != "nonempty" && out->text.empty()) {
+            return failStep(index1, "wait.until=text 需要 'text'（op=nonempty 除外）");
         }
-        if (out->until == "text" && !out->op.empty() && out->op != "contains" && out->op != "equals") {
-            return failStep(index1, "wait 文本 op 仅支持 contains / equals");
+        if (out->until == "text" && !out->op.empty() && out->op != "contains" &&
+            out->op != "equals" && out->op != "nonempty") {
+            return failStep(index1, "wait 文本 op 仅支持 contains / equals / nonempty");
+        }
+        if (out->skipExit != 0 && out->skipExit != 77) {
+            return failStep(index1, "wait.skipExit 仅支持 77（ctest SKIP_RETURN_CODE 语义）");
+        }
+        if (out->skipExit != 0 && out->until.empty()) {
+            return failStep(index1, "wait.skipExit 需搭配 until 条件（固定 ms 等待没有超时语义）");
         }
         return core::Result<void>::ok();
     }

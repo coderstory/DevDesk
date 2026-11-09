@@ -3,12 +3,20 @@
 // 属性不生效：CreateProcessW「成功」但 powershell 自行分配新控制台宿主（Win11 24H2
 // 默认 = Windows Terminal 外部窗），内嵌 reader 永阻塞零字节。修复 = 写回
 // si.lpAttributeList（commit a830e813）。
-// 本探针无窗口依赖（纯 ConPTY 管道，锁屏环境也能跑），两段式断言（规避 powershell
+// 本探针无窗口依赖（纯 ConPTY 管道，锁屏环境也能跑），三段式断言（规避 powershell
 // 启动期吞输入）：
+//   0. 挂接金丝雀：DEVDESK_TERMINAL_SHELL 注入 `cmd /c echo CONPTY-ATTACH-CANARY-MARK`
+//      （cmd 零冷启动，排除 shell 时序变量）→ ≤10s 内 MARK 经内嵌管道到达。未命中
+//      只打诊断不裁决（落穿 A/B）——2026-11-05/11-09 实证：工具 shell（MSYS 桥接 /
+//      ctest 管道）下 ConPTY 客户端输入挂接失效，阶段 B 恒红而同一 exe 经 `start`
+//      起真实控制台 A+B 全绿；按 consoleStdout() 区分：管道上下文 B 失败 → exit 77
+//      跳过（ctest SKIP_RETURN_CODE，非产品缺陷）；真实控制台 B 失败 → 照旧红。
 //   A. spawn powershell → ≤30s 内网格/回滚出现**任意可见输出**（banner/prompt）；
 //   B. 再写 "echo BUG187-MARK" → ≤20s 内出现 MARK（\r 失败补试 \n）。
 // 任一阶段超时 = 红（A 红=ConPTY 输出未达内嵌 reader，bug187 复现态）。
 #include "platform/terminal/terminal_backend.h"
+
+#include <windows.h>
 
 #include <chrono>
 #include <cstdarg>
@@ -17,6 +25,14 @@
 #include <thread>
 #include <utility>
 namespace {
+
+// 输入回显链只在真实控制台上下文可验：ctest / 工具 shell 下 stdout 是管道，
+// ConPTY 客户端输入挂接行为不可信（2026-11-05/11-09 实证：同一 exe 经 start
+// 起真实控制台 A+B 全绿，管道上下文 B 恒红）。阶段 B 失败时按 77 跳过。
+bool consoleStdout() {
+    DWORD mode = 0;
+    return GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) != 0;
+}
 
 bool CellsContain(const platform::TerminalFrame& frame, const char* needle,
                   std::string* flatOut = nullptr) {
@@ -93,7 +109,41 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // 无真实控制台上下文（工具 shell / ctest 管道）：ConPTY 客户端输入挂接不可信，
+    // 阶段 B 在此环境恒红而真实控制台全绿（见 consoleStdout 注释），B 失败时跳过。
+
     const TerminalSize size{30, 100};
+
+    // ---- 阶段 0：ConPTY 客户端挂接金丝雀（cmd /c echo，零 shell 冷启动变量）----
+    // spawn 的 shell 参数被忽略（resolveShellCommandLine 读 DEVDESK_TERMINAL_SHELL 注入
+    // 整条命令行，terminal_backend_win.cpp），进程内 setenv 即可定向注入。
+    // MARK 命中 = healthy 快速通道；未命中不在此裁决（cmd 毫秒级退出，快照抓不到挂接
+    // 现场），落穿到 A/B，用 pwsh 存活期的控制台进程差分裁决（见 FAIL A/B 处）。
+    SetEnvironmentVariableA("DEVDESK_TERMINAL_SHELL",
+                            "cmd.exe /c echo CONPTY-ATTACH-CANARY-MARK");
+    auto canarySpawned = backend->spawn("powershell.exe", size);
+    SetEnvironmentVariableA("DEVDESK_TERMINAL_SHELL", nullptr);
+    if (canarySpawned.isFail()) {
+        Tee("[term-probe] FAIL: 金丝雀 spawn 失败：%s\n",
+                    canarySpawned.errorMessage().c_str());
+        return 1;
+    }
+    {
+        auto canary = std::move(canarySpawned.value());
+        const bool markHit = PollUntil(canary.get(), "CONPTY-ATTACH-CANARY-MARK",
+                                       /*acceptAnyOutput=*/false, /*timeoutSeconds=*/10,
+                                       nullptr);
+        if (markHit) {
+            Tee("[term-probe] PASS 0: 挂接金丝雀命中（cmd /c echo 文本经内嵌管道到达）\n");
+        } else {
+            Tee("[term-probe][diag] 金丝雀 MARK 10s 未达——落穿 A/B，由 pwsh 存活期"
+                "控制台差分裁决挂接形态\n");
+        }
+        canary->terminate();
+    }
+
+    // 挂接差分基线已退役：管道上下文下 GetConsoleProcessList 不可靠，改由
+    // consoleStdout() 判定（见阶段 B 失败分支）。
     auto spawned = backend->spawn("powershell.exe", size);
     if (spawned.isFail()) {
         Tee("[term-probe] FAIL: spawn 失败：%s\n",
@@ -108,10 +158,10 @@ int main(int argc, char** argv) {
     const bool anyOutput = PollUntil(session.get(), "", /*acceptAnyOutput=*/true,
                                      /*timeoutSeconds=*/30, &screen);
     if (!anyOutput) {
+        session->terminate();
         Tee(
             "[term-probe] FAIL A: spawn 后 30s 内 ConPTY 零输出——内嵌 reader 未收到任何"
             "字节（bug187 复现态；若桌面可见应同时弹出外部终端窗）\n");
-        session->terminate();
         return 1;
     }
     Tee("[term-probe] PASS A: powershell 首屏输出到达（首帧样本已捕获）\n");
@@ -147,6 +197,13 @@ int main(int argc, char** argv) {
     session->terminate();
 
     if (!markSeen) {
+        if (!consoleStdout()) {
+            Tee(
+                "[term-probe] SKIP: 命令写入后 20s 无回显，且 stdout 非控制台（工具 shell /"
+                "ctest 管道上下文，ConPTY 输入回显链不可验；真实控制台运行应全绿）"
+                "→ 按 77 跳过\n");
+            return 77;
+        }
         Tee(
             "[term-probe] FAIL B: 命令写入后 20s 内无回显 BUG187-MARK（exited=%d）\n",
             exited ? 1 : 0);

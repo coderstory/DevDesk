@@ -19,11 +19,21 @@ struct TreeView {
     std::vector<const core::dsl::Element*> leaves;
 };
 
-enum class TextOp { Contains, Equals };
+enum class TextOp { Contains, Equals, NonEmpty };
 
 inline bool textOpFromName(const std::string& name, TextOp* out) {
     if (name.empty() || name == "contains") { *out = TextOp::Contains; return true; }
     if (name == "equals") { *out = TextOp::Equals; return true; }
+    if (name == "nonempty") { *out = TextOp::NonEmpty; return true; }
+    return false;
+}
+
+// 非 ASCII 空白的可见字符（字节级近似，对齐探针 HasAnyVisible 的 cp>0x20 口径；
+// UTF-8 多字节序列所有字节 >0x20，CJK/框线一律算可见）
+inline bool textHasVisibleChar(const std::string& value) {
+    for (char c : value) {
+        if (static_cast<unsigned char>(c) > 0x20) return true;
+    }
     return false;
 }
 
@@ -48,8 +58,21 @@ inline bool elementExists(const TreeView& tree, const std::string& resolvedId) {
 }
 
 // 文本匹配：resolvedId 非空 = 该元素 text；空 = 全页叶子扫描（任一叶子命中即真）。
+// nonempty = 「存在任意可见文本」（不比较 text 字段）：终端页「shell 首屏已到达」
+// 的跨平台就绪判据——不依赖 %, $, PS 等提示符字形（场景原 cursor 判据在 vterm
+// 构造期预填空白 cells 后恒真，测不出「有输出」）。
 inline bool textPresent(const TreeView& tree, const std::string& resolvedId,
                         TextOp op, const std::string& text) {
+    if (op == TextOp::NonEmpty) {
+        if (!resolvedId.empty()) {
+            const auto it = tree.byId.find(resolvedId);
+            return it != tree.byId.end() && textHasVisibleChar(it->second->text);
+        }
+        for (const core::dsl::Element* leaf : tree.leaves) {
+            if (textHasVisibleChar(leaf->text)) return true;
+        }
+        return false;
+    }
     if (text.empty()) return false;
     auto matches = [op, &text](const std::string& value) {
         if (op == TextOp::Equals) return value == text;
