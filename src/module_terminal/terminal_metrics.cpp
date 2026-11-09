@@ -40,11 +40,16 @@ TerminalCellMetrics metricsFromAdvance(float advance, float naturalLineHeight, f
 }
 
 TerminalCellMetrics terminalCellMetrics(float fontSize, const std::string& fontFamily) {
+    // "" = 内置等宽（与 terminal_grid_widget.h setTypography 同口径）。空串必须在这里
+    // 归一为 "monospace"：直接把 "" 传进 EUI 会解析成默认 UI **比例**字体，M 宽
+    // ≈1.5× 等宽 advance → cellW 虚胖，光标/IME/选区列坐标整体右漂（老板 2026-11-09
+    // 「打开终端光标跑右侧」根因；绘制侧 setTypography 已归一，两侧口径必须一致）。
+    const std::string family = fontFamily.empty() ? std::string("monospace") : fontFamily;
     // fontSize 档位有限 + fontFamily 选项有限（need250 设置面板），复合键 map 缓存
     // 即稳态零查询
     static std::mutex mu;
     static std::unordered_map<std::string, TerminalCellMetrics> cache;
-    const std::string key = fontFamily + "/" + std::to_string(static_cast<int>(std::lround(fontSize)));
+    const std::string key = family + "/" + std::to_string(static_cast<int>(std::lround(fontSize)));
     {
         std::lock_guard<std::mutex> lock(mu);
         const auto it = cache.find(key);
@@ -53,15 +58,15 @@ TerminalCellMetrics terminalCellMetrics(float fontSize, const std::string& fontF
     // 主字体半角 advance：字体解析在 EUI（"monospace" = 内置等宽 token：Win=Cascadia
     // Mono→Consolas、mac=Menlo；具名族直传，解析失败走估算回落 valid=false）
     const float advance = core::TextPrimitive::measureTextWidth(
-        kAdvanceSample, fontFamily, fontSize, 400) / 10.0f;
-    const auto line = core::TextPrimitive::measureFontLineMetrics(fontFamily, fontSize, 400);
+        kAdvanceSample, family, fontSize, 400) / 10.0f;
+    const auto line = core::TextPrimitive::measureFontLineMetrics(family, fontSize, 400);
     const float naturalLineH = line.ascent - line.descent + line.lineGap;
     TerminalCellMetrics m = metricsFromAdvance(advance, naturalLineH, fontSize);
     // CellTrace 头（bug244 临时诊断，一次性）：实际字体文件路径 + advance 取整前后
     static bool cellTraceHeadDone = false;
     if (!cellTraceHeadDone) {
         cellTraceHeadDone = true;
-        const std::string fontPath = core::TextPrimitive::resolveFontPath("monospace", 400);
+        const std::string fontPath = core::TextPrimitive::resolveFontPath(family, 400);
         char lineBuf[320];
         std::snprintf(lineBuf, sizeof(lineBuf),
                       "CellTrace: font=%s advanceRaw=%.3f cellW=%.1f cellH=%.1f valid=%d",
