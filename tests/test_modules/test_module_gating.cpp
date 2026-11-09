@@ -171,7 +171,9 @@ REGISTER_TEST(gating_module_defaults_migration,
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdRelease));  // 升级即开
     // v2 迁移：schedule（此前恒注册）并入存量清单
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdSchedule));
-    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(8));
+    // 池 bug249：memory 也登了迁移行 → 存量漂移机器升级即补开（本单要的效果）
+    DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdMemory));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(9));
     // 迁移标记已回写 → 下次 load 不再迁移
     DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
                                                     versionKey.c_str()),
@@ -184,12 +186,13 @@ REGISTER_TEST(gating_module_defaults_migration,
     userOff.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
                               kModuleIdClaudeProxy, kModuleIdSettings};
     userOff.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
-                                   kModuleIdTerminal};
+                                   kModuleIdTerminal, kModuleIdMemory};
     DOCTEST_REQUIRE(store.save(userOff).isOk());
     const SettingsConfig reloaded = store.load();
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdRelease));
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdSchedule));
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdTerminal));
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdMemory));
     DOCTEST_CHECK_EQ(reloaded.enabledModules.size(), static_cast<size_t>(5));
 
     // ③ 旧配置里用户关掉的既有模块也不得被迁移连带重开
@@ -316,6 +319,50 @@ REGISTER_TEST(gating_reconcile_drift_not_laundered_into_exemption,
     return true;
 })
 
+// 池 bug249：memory 是「后转默认」模块（f343f436 改默认清单时漏登迁移行），漂移
+// 机器一直补不回。登行后与 terminal 同语义：自校验补回 + 豁免集尊重（两钉分列）。
+REGISTER_TEST(gating_reconcile_memory_missing_readded,
+              "gating: bug249——版本到位清单缺 memory 且无豁免 → load 自校验补回", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "reconcile-mem", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+
+    // 漂移态：版本号到位、清单缺 memory、无豁免记录（种子形态同 bug246 钉子）
+    DOCTEST_REQUIRE(writeRawConfig(
+        "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
+        "\"claude_proxy\", \"settings\", \"release\", \"schedule\"], "
+        "\"moduleDefaultsVersion\": " +
+        std::to_string(kModuleDefaultsVersion) + "}"));
+    DOCTEST_CHECK(moduleEnabled(store.load(), kModuleIdMemory));
+    // 既有迁移行同一次 load 一并核对，不受新行影响
+    DOCTEST_CHECK(moduleEnabled(store.load(), kModuleIdTerminal));
+    return true;
+})
+
+REGISTER_TEST(gating_reconcile_memory_exempt_stays_off,
+              "gating: bug249——用户显式关闭 memory（豁免集含 memory）→ load 不重开", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "reconcile-mem-off", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+
+    // 模拟用户关闭动作双写（清单删 ID + 豁免集加 ID，同 settings_module 契约）
+    SettingsConfig cfg;
+    cfg.enabledModules.erase(
+        std::remove(cfg.enabledModules.begin(), cfg.enabledModules.end(),
+                    std::string(kModuleIdMemory)),
+        cfg.enabledModules.end());
+    cfg.userDisabledModules.push_back(kModuleIdMemory);
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+
+    const SettingsConfig reloaded = store.load();
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdMemory));
+    // 其它默认模块不被连带重开/误伤
+    DOCTEST_CHECK(moduleEnabled(reloaded, kModuleIdTerminal));
+    DOCTEST_CHECK(moduleEnabled(reloaded, kModuleIdRelease));
+    DOCTEST_CHECK(moduleEnabled(reloaded, kModuleIdSchedule));
+    return true;
+})
+
 // 钉子③：正常路径（清单已完整）零写放大——load 不得因自校验触发任何库写入。
 // 判据 = SqliteDb 写版本号（每次真写 +1，读/只读语句不动）。
 REGISTER_TEST(gating_reconcile_no_write_amplification,
@@ -351,9 +398,9 @@ REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往�
     const auto file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     SettingsConfig cfg;
     cfg.enabledModules = {kModuleIdMarkdown, kModuleIdHome, kModuleIdSettings};
-    // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246）
+    // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246/249）
     cfg.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
-                               kModuleIdTerminal};
+                               kModuleIdTerminal, kModuleIdMemory};
     const SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
@@ -374,11 +421,11 @@ REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽�
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "unknown");
     // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项。
-    // 默认模块（release/schedule/terminal）缺席要显式记进豁免集，否则 load 的
-    // 内容自校验（池 bug246）会把它们补回来，下面的条数断言就测不到过滤本意了。
+    // 默认模块（release/schedule/terminal/memory）缺席要显式记进豁免集，否则 load 的
+    // 内容自校验（池 bug246/249）会把它们补回来，下面的条数断言就测不到过滤本意了。
     DOCTEST_REQUIRE(writeRawConfig(currentVersionSeed(
         "\"enabledModules\": [\"home\", \"todo\", \"bogus\", \"todo\"], "
-        "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\"]")));
+        "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\", \"memory\"]")));
     const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
@@ -452,9 +499,9 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     const auto file = test_support::tempConfigFile(kCfgPrefix, "registration");
     SettingsConfig cfg;
     cfg.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdSettings};
-    // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246）
+    // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246/249）
     cfg.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
-                               kModuleIdTerminal};
+                               kModuleIdTerminal, kModuleIdMemory};
     DOCTEST_CHECK(SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
     // 复制 main.cpp getRouter() 的装配门控；那边改了这里不会自动跟

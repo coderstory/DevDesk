@@ -3,13 +3,14 @@
   "settings": {
     "seed": {
       "config": {
-        "config.json:": {"enabledModules": ["markdown", "todo", "claude_proxy"]}
+        "config.json:": {"enabledModules": ["markdown", "todo", "claude_proxy"],
+                          "userDisabledModules": ["memory"]}
       }
     }
   },
   "steps": [
     {"type": "assert", "check": "missing", "id": "app.sidebar.item.Memory.hit",
-     "_comment": "种子真实生效的证明：seed 关 memory（默认开）→ 条目不在场"},
+     "_comment": "种子真实生效的证明：seed 关 memory（显式豁免，池 bug249 起自校验尊重豁免集）→ 条目不在场"},
     {"type": "assert", "check": "exists", "id": "app.sidebar.item.Todo.hit",
      "_comment": "种子证明：seed 开 todo"},
     {"type": "click", "id": "app.sidebar.item.Settings.hit"},

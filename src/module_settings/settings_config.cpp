@@ -75,6 +75,10 @@ constexpr ModuleDefaultMigration kModuleDefaultMigrations[] = {
     {2, kModuleIdSchedule},
     // v3：terminal（need:122）。v3 从未发版（全量本地工作），槽位安全复用。
     {3, kModuleIdTerminal},
+    // v3：memory（池 bug249）——f343f436 引入「记忆默认开」时漏登迁移行，漂移机器
+    // 一直补不回。自校验不看版本号，登行即被内容核对覆盖；豁免集语义同其它行
+    //（#246 前的历史显式关闭会被一次性补开，再关一次即落豁免集——老板 2026-11-09 拍板接受）。
+    {3, kModuleIdMemory},
 };
 
 // 是否「后加的默认启用模块」（可被自校验补回，也可被用户显式关闭豁免）。
