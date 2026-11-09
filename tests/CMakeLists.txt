@@ -698,7 +698,8 @@ endif()
 add_test(NAME ui_driver_usage_error COMMAND devdesk_ui_driver)
 set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # 正路径场景：真窗 + 临时数据根 + 真 app::compose（截图/dump 落 build/，gitignore）
-foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move)
+# need242：terminal-input = 终端页输入注入（type 聚焦 / key 达 PTY / 拖选+复制）
+foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input)
     add_test(NAME ui_driver_${_ui_scene}
         COMMAND devdesk_ui_driver
             --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"

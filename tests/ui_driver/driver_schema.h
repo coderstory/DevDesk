@@ -66,8 +66,10 @@ inline std::vector<std::string> stepTypeVocabulary() {
 
 inline std::vector<std::string> stepKeyVocabulary(const std::string& type) {
     if (type == "click") return {"id", "button", "force", "readback", "point", "_comment", "timeoutMs"};
-    if (type == "type") return {"text", "_comment", "timeoutMs"};
-    if (type == "key") return {"name", "_comment", "timeoutMs"};
+    // need242：type/key 可选 id = 注入前先聚焦该元素。终端页 app.term.input 是焦点式
+    // 输入层（EUI Runtime 只把 TextInput/Key 派给 focusedId），无焦点时事件被静默丢弃
+    if (type == "type") return {"text", "id", "_comment", "timeoutMs"};
+    if (type == "key") return {"name", "id", "_comment", "timeoutMs"};
     if (type == "scroll") return {"dx", "dy", "id", "_comment", "timeoutMs"};
     if (type == "drag") return {"from", "to", "steps", "_comment", "timeoutMs"};
     if (type == "wait") return {"until", "id", "text", "op", "ms", "_comment", "timeoutMs"};
@@ -431,10 +433,12 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
     }
     if (type == "type") {
         if (auto r = getString("text", &out->text, /*required=*/true); r.isFail()) return r;
+        if (auto r = getString("id", &out->id); r.isFail()) return r;
         return core::Result<void>::ok();
     }
     if (type == "key") {
         if (auto r = getString("name", &out->keyName, /*required=*/true); r.isFail()) return r;
+        if (auto r = getString("id", &out->id); r.isFail()) return r;
         const KeySpec spec = lookupKeyName(out->keyName);
         if (!spec.known) {
             return failStep(index1, "未知键名 '" + out->keyName + "'" +

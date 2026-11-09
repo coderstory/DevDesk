@@ -243,7 +243,30 @@ private:
         }
     }
 
+    // need242：可选的注入前聚焦。type/key 的可达性完全取决于 EUI Runtime 的
+    // focusedId（runtime_input.h updateTextInput/updateKeyInput 无焦点即静默丢弃），
+    // 终端页 app.term.input 这类捕获层不点它就收不到字。用 requestFocus（非点击）
+    // 聚焦：不破坏已有选区（Cmd+C 复制链路要求选区存活），也不推进 hover 态。
+    bool focusBeforeInject(const Step& step, StepResult* result) {
+        if (step.id.empty()) return true;
+        core::dsl::Ui* ui = currentUi();
+        if (ui == nullptr) {
+            result->errorReason = "compose 未执行（ui 为空）";
+            return false;
+        }
+        if (ui->find(step.id) == nullptr) {
+            const TreeView tree = detail::walkTreeView(*ui);
+            result->errorReason = "聚焦目标 '" + step.id + "' 不在当前页元素树" +
+                                  detail::candidatesSuffixForIds(step.id, tree);
+            return false;
+        }
+        ui->requestFocus(step.id);
+        composeFrame();  // 帧末消费 requestFocus（Runtime::compose），focusedId 落地
+        return true;
+    }
+
     void execType(const Step& step, StepResult* result) {
+        if (!focusBeforeInject(step, result)) return;
         probe::queueText(env_.window, *env_.runtime, step.text);
         composeFrame();  // update 消费文本 + compose 反映
         result->passed = true;
@@ -255,6 +278,7 @@ private:
             result->errorReason = "未知键名 '" + step.keyName + "'（加载期应已拦截）";
             return;
         }
+        if (!focusBeforeInject(step, result)) return;
         int mods = spec.modifiers;
         if (spec.shortcut) {
             // Shortcut+ → 平台判定（EUI-NEO KeyModifiers::shortcut() 当唯一判据，

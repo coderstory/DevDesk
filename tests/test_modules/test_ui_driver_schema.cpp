@@ -37,8 +37,8 @@ REGISTER_TEST(uiDriverSchemaPositiveFullScene, "uidrv/schema: 全字段正例解
         "steps": [
             {"type": "click", "id": "todo.btn.add", "button": "left",
              "force": false, "readback": true, "_comment": "新建任务"},
-            {"type": "type", "text": "缴费"},
-            {"type": "key", "name": "Ctrl+S"},
+            {"type": "type", "text": "缴费", "id": "app.input"},
+            {"type": "key", "name": "Ctrl+S", "id": "app.input"},
             {"type": "scroll", "dx": 0, "dy": -3, "id": "todo.root"},
             {"type": "drag", "from": "a", "to": "b", "steps": 6},
             {"type": "wait", "until": "exists", "id": "todo.item.x", "timeoutMs": 900},
@@ -67,6 +67,9 @@ REGISTER_TEST(uiDriverSchemaPositiveFullScene, "uidrv/schema: 全字段正例解
     DOCTEST_CHECK(scene.steps[0].readback);
     DOCTEST_CHECK_EQ(scene.steps[0].comment, std::string("新建任务"));
     DOCTEST_CHECK_EQ(scene.steps[2].keyName, std::string("Ctrl+S"));
+    // need242：type/key 的 id = 注入前聚焦目标（终端页捕获层必需）
+    DOCTEST_CHECK_EQ(scene.steps[1].id, std::string("app.input"));
+    DOCTEST_CHECK_EQ(scene.steps[2].id, std::string("app.input"));
     DOCTEST_CHECK_EQ(scene.steps[5].timeoutMs, 900);
     DOCTEST_CHECK_EQ(scene.steps[7].ms, 400);
     DOCTEST_CHECK_EQ(scene.steps[9].op, std::string("within-window"));

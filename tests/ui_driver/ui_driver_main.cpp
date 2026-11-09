@@ -248,6 +248,13 @@ int main(int argc, char* argv[]) {
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);
+    // need242：app 级按键兜底与真 app 同构（src/main.cpp:1027 同款接线）——焦点元素
+    // 未消费的键走 Router 派发当前页模块。不接这段时终端页模块级 Cmd+C 复制
+    // （module_terminal.cpp:45 onKeyEvent）在驱动侧永久不可达：按键落到空
+    // keyEventHandler_ 后静默丢弃，表现为「key 不达」。
+    runtime.setKeyEventHandler([](const eui::KeyEvent& key) {
+        if (auto* router = ::core::appRouter()) router->dispatchKeyEvent(key);
+    });
     // 内联定义落地本 TU：GLFW 初始化后调用安全（见文件头说明）
     app::requestUpdate();
     app::requestShow();
