@@ -639,6 +639,17 @@ public:
         } else {
             return;  // 状态没变（重复点击），不写盘
         }
+        // 用户显式关闭默认模块 → 记进自校验豁免集（池 bug246）：否则下次 load 的
+        // 内容自校验会把它当「漂移掉了」重开。重新打开 → 从豁免集移除。
+        // 只在**用户动作**处记账（不靠 save 反推）：save 也被侧栏折叠/退出存窗体
+        // 等后台路径调用，那些路径上的清单缺席可能是漂移，不能当成用户意愿。
+        auto& exempt = cfg_.userDisabledModules;
+        auto eit = std::find(exempt.begin(), exempt.end(), moduleId);
+        if (!on && eit == exempt.end()) {
+            exempt.push_back(moduleId);
+        } else if (on && eit != exempt.end()) {
+            exempt.erase(eit);
+        }
         persist();
         app::toggle::onModuleToggled(moduleId, on);   // 即时生效（桥内处理反馈）
         setStatus((on ? "模块已开启：" : "模块已关闭：") + moduleId);

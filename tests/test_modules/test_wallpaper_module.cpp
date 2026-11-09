@@ -231,12 +231,15 @@ REGISTER_TEST(wallpaper_toggle_persist,
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdTodo));
 
     // 手改配置：wallpaper 保留、未知 ID 过滤、恒启用项补齐（home/settings + wallpaper = 3）。
-    // 带当前迁移版本 = 模拟本版本写出的配置，避免 B1 的存量迁移把 release 并进来污染计数。
+    // 带当前迁移版本 = 模拟本版本写出的配置；默认模块缺席显式记进豁免集，否则
+    // 池 bug246 的内容自校验会把 release/schedule/terminal 补回来污染计数。
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), SettingsStore::keyNamespace(),
         "{\"moduleDefaultsVersion\": " +
             std::to_string(module::settings::kModuleDefaultsVersion) +
-            ", \"enabledModules\": [\"wallpaper\", \"bogus_module\"]}"));
+            ", \"userDisabledModules\": [\"release\", \"schedule\", "
+            "\"terminal\"], \"enabledModules\": [\"wallpaper\", "
+            "\"bogus_module\"]}"));
     const SettingsConfig raw = store.load();
     DOCTEST_CHECK(moduleEnabled(raw, kModuleIdWallpaper));
     DOCTEST_CHECK(!moduleEnabled(raw, "bogus_module"));

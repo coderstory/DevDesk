@@ -38,6 +38,8 @@ constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 // 默认模块清单迁移标记：键缺失 = 旧版本配置（见 kModuleDefaultsVersion）
 constexpr const char* kKeyModuleDefaultsVersion = "moduleDefaultsVersion";
+// 用户显式关闭的默认模块（自校验豁免集，见 kModuleDefaultsVersion 注释）
+constexpr const char* kKeyUserDisabledModules = "userDisabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 constexpr const char* kKeyAccentTheme = "accentTheme";
 // 窗体记忆（UAT6）：还原态尺寸 0 = 无记录；sanitized 负值/越此上限归 0
@@ -62,8 +64,8 @@ bool isKnownModuleId(const std::string& id) {
 }
 
 // 版本化默认模块迁移表：一行 = 「该版本起新增的默认启用模块」。
-// 只并入这些 ID、绝不整体重置清单——存量的缺席按版本判定为「从未存在」，
-// 用户显式关闭的模块（配置已带当前版本标记）不会被重新打开。
+// 只并入这些 ID、绝不整体重置清单。本表同时是**内容自校验**的唯一来源
+//（池 bug246）：默认启用模块里「可能因漂移而缺席」的就是这些后加的模块。
 struct ModuleDefaultMigration {
     int version;
     const char* moduleId;
@@ -75,13 +77,32 @@ constexpr ModuleDefaultMigration kModuleDefaultMigrations[] = {
     {3, kModuleIdTerminal},
 };
 
-void mergeDefaultModulesSince(std::vector<std::string>& ids, int storedVersion) {
+// 是否「后加的默认启用模块」（可被自校验补回，也可被用户显式关闭豁免）。
+// 判据 = 在迁移表里；markdown/todo/claude_proxy 这类从首版就在默认清单的模块
+// 不在表内——它们的缺席只可能来自用户关闭，不需要（也不该）自校验。
+bool isMigratedDefaultModule(const std::string& id) {
     for (const auto& m : kModuleDefaultMigrations) {
-        if (m.version <= storedVersion) continue;
-        if (std::find(ids.begin(), ids.end(), m.moduleId) == ids.end()) {
-            ids.push_back(m.moduleId);
+        if (id == m.moduleId) return true;
+    }
+    return false;
+}
+
+// 默认模块清单内容自校验（池 bug246）：迁移表里每个默认 ID 逐个核对是否在清单，
+// 缺则补回；exempt = 用户显式关闭的集合，命中即跳过（绝不重开用户关掉的）。
+// 判据纯内容、不看版本号——「版本已到位但清单漂移少模块」（某次 save 把不含该
+// 模块的内存态写回磁盘）只有内容核对能自愈。返回是否真的补了（零改动 → 零写盘）。
+bool reconcileDefaultModules(std::vector<std::string>& ids,
+                             const std::vector<std::string>& exempt) {
+    bool changed = false;
+    for (const auto& m : kModuleDefaultMigrations) {
+        const std::string id = m.moduleId;
+        if (std::find(exempt.begin(), exempt.end(), id) != exempt.end()) continue;
+        if (std::find(ids.begin(), ids.end(), id) == ids.end()) {
+            ids.push_back(id);
+            changed = true;
         }
     }
+    return changed;
 }
 } // namespace
 
@@ -239,6 +260,24 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
         }
     }
     out.enabledModules = std::move(modules);
+    // 豁免集归一（池 bug246）：只保留「迁移表里的默认模块 + 当前不在启用清单」的
+    // ID，去重。写入方是**用户关闭动作**（settings_module::applyModuleEnabled），
+    // 这里只做清理：重新打开 → 清单里有它 → 自动移出豁免集，避免残留误豁免。
+    // 刻意不在此处「从清单缺席反推新豁免」——那会把漂移态（某次 save 写回了不含
+    // 该模块的内存态）永久固化成「用户的选择」，正是本 bug 要修的成因。
+    std::vector<std::string> userDisabled;
+    for (const auto& id : out.userDisabledModules) {
+        if (!isMigratedDefaultModule(id)) continue;
+        if (std::find(out.enabledModules.begin(), out.enabledModules.end(), id) !=
+            out.enabledModules.end()) {
+            continue;
+        }
+        if (std::find(userDisabled.begin(), userDisabled.end(), id) ==
+            userDisabled.end()) {
+            userDisabled.push_back(id);
+        }
+    }
+    out.userDisabledModules = std::move(userDisabled);
     return out;
 }
 
@@ -553,9 +592,33 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             enabledModulesStored = true;
         }
     }
-    // 默认模块清单一次性迁移（B1：存量配置升级后 release 不启用）：
-    // 标记缺失/落后 + 存储清单存在 → 并入该版本新增的默认 ID，只回写受影响的
-    // 两行（不借 load 重写整份配置）。已到位则原样保留，绝不重开用户关掉的模块。
+    // 用户显式关闭的默认模块（自校验豁免集）。未知 ID / 非默认模块一律丢弃——
+    // 只有迁移表里的默认启用模块需要豁免，其余模块的缺席本来就是默认态。
+    if (auto raw = readRow(kKeyUserDisabledModules); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyUserDisabledModules), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isArray()) {
+            std::vector<std::string> disabled;
+            for (int i = 0; i < v.value().size(); ++i) {
+                platform::json::JsonValue item = v.value()[i];
+                if (!item.isString()) continue;
+                const std::string id = item.asString();
+                if (!isMigratedDefaultModule(id)) continue;
+                if (std::find(disabled.begin(), disabled.end(), id) ==
+                    disabled.end()) {
+                    disabled.push_back(id);
+                }
+            }
+            cfg.userDisabledModules = std::move(disabled);
+        }
+    }
+    // 默认模块清单内容自校验（池 bug246；替代原先「只在版本号落后时迁移」的判据）：
+    // 逐个核对迁移表的每个默认 ID 是否在清单，缺则补——豁免用户显式关闭的
+    //（userDisabledModules）。这同时覆盖老路径「版本号落后 → 并入新默认模块」：
+    // 落后处必然「清单缺该模块且无豁免记录」，结果一致。
+    // 版本号只作为回写标记保留（表示本配置已见过该档默认清单）。
+    // 无缺失则一个键都不写（零写放大）；只回写受影响的键，不借 load 重写整份配置。
     int storedDefaultsVersion = 0;
     if (auto raw = readRow(kKeyModuleDefaultsVersion); raw.isOk()) {
         auto v = parseRow(configKey(kKeyModuleDefaultsVersion), raw.value());
@@ -566,25 +629,34 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
         }
     }
     cfg.moduleDefaultsVersion = std::max(storedDefaultsVersion, kModuleDefaultsVersion);
-    if (enabledModulesStored && storedDefaultsVersion < kModuleDefaultsVersion) {
-        mergeDefaultModulesSince(cfg.enabledModules, storedDefaultsVersion);
-        const auto modsText = encodeRow(
-            kKeyEnabledModules, platform::json::makeStringArray(cfg.enabledModules));
-        const auto versionText = encodeRow(
-            kKeyModuleDefaultsVersion, platform::json::makeInt(kModuleDefaultsVersion));
-        if (modsText.isFail() || versionText.isFail()) {
-            LOG_WARN("Settings: 模块默认清单迁移文本编码失败（本次会话内存态已生效，"
-                     "下次启动重试）");
-        } else {
-            std::vector<core::appconfig::Entry> entries = {
-                {configKey(kKeyEnabledModules), modsText.value(), 0},
-                {configKey(kKeyModuleDefaultsVersion), versionText.value(), 0}};
-            auto wrote = db_->transaction([&]() -> core::Result<void> {
-                return core::appconfig::setMany(*db_, entries);
-            });
-            if (wrote.isFail()) {
-                LOG_WARN("Settings: 模块默认清单迁移回写失败（本次会话内存态已生效，"
-                         "下次启动重试）: " + wrote.errorMessage());
+    if (enabledModulesStored) {
+        const bool reconciled =
+            reconcileDefaultModules(cfg.enabledModules, cfg.userDisabledModules);
+        const bool versionBehind = storedDefaultsVersion < kModuleDefaultsVersion;
+        if (reconciled) {
+            LOG_WARN("Settings: enabledModules 清单缺默认启用模块，已自校验补回");
+        }
+        if (reconciled || versionBehind) {
+            const auto modsText = encodeRow(
+                kKeyEnabledModules,
+                platform::json::makeStringArray(cfg.enabledModules));
+            const auto versionText = encodeRow(
+                kKeyModuleDefaultsVersion,
+                platform::json::makeInt(kModuleDefaultsVersion));
+            if (modsText.isFail() || versionText.isFail()) {
+                LOG_WARN("Settings: 模块默认清单迁移文本编码失败（本次会话内存态已生效，"
+                         "下次启动重试）");
+            } else {
+                std::vector<core::appconfig::Entry> entries = {
+                    {configKey(kKeyEnabledModules), modsText.value(), 0},
+                    {configKey(kKeyModuleDefaultsVersion), versionText.value(), 0}};
+                auto wrote = db_->transaction([&]() -> core::Result<void> {
+                    return core::appconfig::setMany(*db_, entries);
+                });
+                if (wrote.isFail()) {
+                    LOG_WARN("Settings: 模块默认清单迁移回写失败（本次会话内存态已生效，"
+                             "下次启动重试）: " + wrote.errorMessage());
+                }
             }
         }
     }
@@ -627,6 +699,8 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyEnabledModules,
          platform::json::makeStringArray(cfg.enabledModules)},
         {kKeyModuleDefaultsVersion, platform::json::makeInt(cfg.moduleDefaultsVersion)},
+        {kKeyUserDisabledModules,
+         platform::json::makeStringArray(cfg.userDisabledModules)},
     };
 
     std::vector<core::appconfig::Entry> entries;

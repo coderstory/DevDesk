@@ -17,7 +17,9 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -118,13 +120,16 @@ REGISTER_TEST(gating_terminal_full_chain,
     const SettingsStore store(::core::appDatabase());
 
     // ① v2 存量形态（带 v2 标记、无 terminal）→ load 迁移并入 terminal
+    // 池 bug246 起自校验按内容核对：本清单连 v2 引入的 schedule 也缺（漂移态），
+    // 所以 schedule + terminal 一起补 = 9 项，而不是旧实现的「只补 terminal」8 项。
     DOCTEST_REQUIRE(writeRawConfig(
         "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
         "\"claude_proxy\", \"settings\", \"memory\", \"release\"], "
         "\"moduleDefaultsVersion\": 2}"));
     const SettingsConfig upgraded = store.load();
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdTerminal));
-    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(8));
+    DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdSchedule));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(9));
     DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
                                                     (std::string(SettingsStore::keyNamespace()) +
                                                      "moduleDefaultsVersion")
@@ -172,14 +177,19 @@ REGISTER_TEST(gating_module_defaults_migration,
                                                     versionKey.c_str()),
                      std::to_string(kModuleDefaultsVersion));
 
-    // ② 用户显式关掉 release/schedule 后落盘（save 持久化当前版本标记）→ 再 load 不得重开
+    // ② 用户显式关掉 release/schedule/terminal 后落盘 → 再 load 不得重开。
+    // 池 bug246 起「显式关闭」是两笔写入（清单删 ID + 豁免集加 ID，由
+    // applyModuleEnabled 一次完成），这里按同一契约模拟。
     SettingsConfig userOff;
     userOff.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
                               kModuleIdClaudeProxy, kModuleIdSettings};
+    userOff.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
+                                   kModuleIdTerminal};
     DOCTEST_REQUIRE(store.save(userOff).isOk());
     const SettingsConfig reloaded = store.load();
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdRelease));
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdSchedule));
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdTerminal));
     DOCTEST_CHECK_EQ(reloaded.enabledModules.size(), static_cast<size_t>(5));
 
     // ③ 旧配置里用户关掉的既有模块也不得被迁移连带重开
@@ -192,6 +202,146 @@ REGISTER_TEST(gating_module_defaults_migration,
     return true;
 })
 
+// ── 池 bug246：默认清单内容自校验（版本号到位但清单漂移少模块也能自愈）──
+
+// 钉子①：version 已到位（== 当前值）但清单缺 terminal → load 必须补回并回写。
+// 这是线上真实形态（某次 save 把不含 terminal 的内存态整份写回，版本号已是 3）；
+// 旧实现只在 version 落后时迁移，此态永不修复。
+REGISTER_TEST(gating_reconcile_when_version_up_to_date,
+              "gating: bug246——moduleDefaultsVersion 已到位但清单缺 terminal → load 自校验补回并回写", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "reconcile", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+
+    DOCTEST_REQUIRE(writeRawConfig(
+        "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
+        "\"claude_proxy\", \"memory\", \"settings\", \"release\", "
+        "\"schedule\"], \"moduleDefaultsVersion\": " +
+        std::to_string(kModuleDefaultsVersion) + "}"));
+    const SettingsConfig loaded = store.load();
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTerminal));   // 补回
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(9));
+    // 内存态之外还要真回写：重启后不再依赖再次自校验
+    const std::string modsRow =
+        test_support::readRawConfigRow(
+            ::core::appDatabase(),
+            (std::string(SettingsStore::keyNamespace()) + "enabledModules")
+                .c_str());
+    DOCTEST_CHECK(modsRow.find("terminal") != std::string::npos);
+    return true;
+})
+
+// 钉子②：用户显式关闭的默认模块不被自校验重开。豁免记录（userDisabledModules）
+// 由**用户关闭动作**写入（settings_module::applyModuleEnabled 双写：清单删 ID +
+// 豁免集加 ID）；这里按同一契约模拟该动作，再走 save → load 全链。
+REGISTER_TEST(gating_reconcile_respects_user_disabled,
+              "gating: bug246——用户显式关闭 terminal（清单删+豁免加）→ 再 load 不重开", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "reconcile-useroff", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+
+    // 先落一份完整默认清单（含 terminal），再模拟用户关掉 terminal 后 save
+    DOCTEST_REQUIRE(store.save(SettingsConfig{}).isOk());
+    SettingsConfig userOff = store.load();
+    DOCTEST_REQUIRE(moduleEnabled(userOff, kModuleIdTerminal));
+    userOff.enabledModules.erase(
+        std::remove(userOff.enabledModules.begin(), userOff.enabledModules.end(),
+                    std::string(kModuleIdTerminal)),
+        userOff.enabledModules.end());
+    userOff.userDisabledModules.push_back(kModuleIdTerminal);   // 用户动作的第二笔
+    DOCTEST_REQUIRE(store.save(userOff).isOk());
+
+    // 豁免集已落库
+    const std::string exemptRow = test_support::readRawConfigRow(
+        ::core::appDatabase(),
+        (std::string(SettingsStore::keyNamespace()) + "userDisabledModules")
+            .c_str());
+    DOCTEST_CHECK(exemptRow.find("terminal") != std::string::npos);
+
+    // 重新 load：terminal 仍是关的（自校验跳过豁免项）
+    const SettingsConfig reloaded = store.load();
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdTerminal));
+    // 同一次 load 的其它默认模块不受影响（没有顺手把整表重开）
+    DOCTEST_CHECK(moduleEnabled(reloaded, kModuleIdRelease));
+    DOCTEST_CHECK(moduleEnabled(reloaded, kModuleIdSchedule));
+
+    // 用户又重新打开 terminal → 豁免自动失效（sanitized 归一），关它就还能正常关
+    SettingsConfig back = store.load();
+    back.enabledModules.push_back(kModuleIdTerminal);
+    DOCTEST_REQUIRE(store.save(back).isOk());
+    DOCTEST_CHECK(moduleEnabled(store.load(), kModuleIdTerminal));
+    const std::string exemptAfter = test_support::readRawConfigRow(
+        ::core::appDatabase(),
+        (std::string(SettingsStore::keyNamespace()) + "userDisabledModules")
+            .c_str());
+    DOCTEST_CHECK(exemptAfter.find("terminal") == std::string::npos);
+    return true;
+})
+
+// 钉子②补：漂移态不得被当成「用户选择」固化——清单缺 terminal 且**无**豁免记录时，
+// save（被侧栏折叠/退出存窗体等后台路径调用）不能替用户生成豁免，否则自校验会
+// 永远放弃补回该模块（正是 bug246 的成因）。
+REGISTER_TEST(gating_reconcile_drift_not_laundered_into_exemption,
+              "gating: bug246——清单漂移缺 terminal 且无豁免 → save 不自动生成豁免，随后 load 补回", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "reconcile-drift", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+
+    // 漂移态：版本号到位、清单缺 terminal、无豁免记录
+    const std::string drifted =
+        "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
+        "\"claude_proxy\", \"memory\", \"settings\", \"release\", "
+        "\"schedule\"], \"moduleDefaultsVersion\": " +
+        std::to_string(kModuleDefaultsVersion) + "}";
+    DOCTEST_REQUIRE(writeRawConfig(drifted));
+
+    // 后台路径的典型写法：load → 改无关字段 → save（此处的 load 会先自校验补回，
+    // 因此再按漂移态重铺一次，模拟「读到的就是缺 terminal 的快照」）
+    DOCTEST_REQUIRE(writeRawConfig(drifted));
+    SettingsConfig snap;
+    snap.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
+                           kModuleIdClaudeProxy, kModuleIdMemory,
+                           kModuleIdSettings, kModuleIdRelease,
+                           kModuleIdSchedule};
+    snap.sidebarCollapsed = true;   // 无关字段，模拟侧栏折叠的 save
+    DOCTEST_REQUIRE(store.save(snap).isOk());
+    const std::string exemptRow = test_support::readRawConfigRow(
+        ::core::appDatabase(),
+        (std::string(SettingsStore::keyNamespace()) + "userDisabledModules")
+            .c_str());
+    DOCTEST_CHECK(exemptRow.find("terminal") == std::string::npos);  // 未替用户记账
+
+    // 随后 load 照常自校验补回
+    DOCTEST_CHECK(moduleEnabled(store.load(), kModuleIdTerminal));
+    return true;
+})
+
+// 钉子③：正常路径（清单已完整）零写放大——load 不得因自校验触发任何库写入。
+// 判据 = SqliteDb 写版本号（每次真写 +1，读/只读语句不动）。
+REGISTER_TEST(gating_reconcile_no_write_amplification,
+              "gating: bug246——清单完整时 load 自校验零写盘（写版本号不变）", {
+    using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "reconcile-nowrite", /*registerAppDb=*/true);
+    const SettingsStore store(::core::appDatabase());
+    DOCTEST_REQUIRE(store.save(SettingsConfig{}).isOk());  // 完整默认清单
+
+    const uint64_t before = env.handle().writeVersion();
+    const SettingsConfig loaded = store.load();
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTerminal));
+    DOCTEST_CHECK_EQ(env.handle().writeVersion(), before);   // 零写
+
+    // 反证：缺模块的库 load 必须真写（否则上一断言可能是「根本没写路径」）
+    DOCTEST_REQUIRE(writeRawConfig(
+        "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
+        "\"claude_proxy\", \"memory\", \"settings\", \"release\", "
+        "\"schedule\"], \"moduleDefaultsVersion\": " +
+        std::to_string(kModuleDefaultsVersion) + "}"));
+    const uint64_t beforeFix = env.handle().writeVersion();
+    (void)store.load();
+    DOCTEST_CHECK(env.handle().writeVersion() > beforeFix);
+    return true;
+})
+
 REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往返", {
     using namespace module::settings;
     // registerAppDb 不可省：SettingsStore 无参构造经 ::core::appDatabase() 取连接，
@@ -201,6 +351,9 @@ REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往�
     const auto file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     SettingsConfig cfg;
     cfg.enabledModules = {kModuleIdMarkdown, kModuleIdHome, kModuleIdSettings};
+    // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246）
+    cfg.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
+                               kModuleIdTerminal};
     const SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
@@ -220,9 +373,12 @@ REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽�
     test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "unknown");
-    // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项
+    // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项。
+    // 默认模块（release/schedule/terminal）缺席要显式记进豁免集，否则 load 的
+    // 内容自校验（池 bug246）会把它们补回来，下面的条数断言就测不到过滤本意了。
     DOCTEST_REQUIRE(writeRawConfig(currentVersionSeed(
-        "\"enabledModules\": [\"home\", \"todo\", \"bogus\", \"todo\"]")));
+        "\"enabledModules\": [\"home\", \"todo\", \"bogus\", \"todo\"], "
+        "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\"]")));
     const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
@@ -296,6 +452,9 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     const auto file = test_support::tempConfigFile(kCfgPrefix, "registration");
     SettingsConfig cfg;
     cfg.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdSettings};
+    // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246）
+    cfg.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
+                               kModuleIdTerminal};
     DOCTEST_CHECK(SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
     // 复制 main.cpp getRouter() 的装配门控；那边改了这里不会自动跟

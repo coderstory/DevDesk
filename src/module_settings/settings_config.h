@@ -62,9 +62,13 @@ std::vector<std::string> defaultEnabledModules();
 
 // enabledModules 默认清单的迁移版本（当前值）。语义：配置里记录的版本 < 本值，
 // 说明该配置写于新增默认模块（release/schedule）之前——此时它的缺席代表「从未存在」，
-// load 会把新默认 ID 并入存储清单并回写本版本标记。版本已到位后绝不再插手，
-// 因此用户显式关掉的模块不会被迁移重新打开。新增默认启用模块时：迁移表追加
+// load 会把新默认 ID 并入存储清单并回写本版本标记。新增默认启用模块时：迁移表追加
 // 一行 + 本常量 +1。
+//
+// 版本号之外 load 还做一次**内容自校验**（池 bug246）：迁移表里每个默认启用 ID
+// 都逐个核对是否在清单里，缺了就补回。只比版本号时，「版本已到位但清单漂移少了
+// 模块」的库会永久卡死（某次 save 把不含该模块的内存态写回磁盘即形成此态）。
+// 豁免 = userDisabledModules 记录集（用户显式关闭的模块绝不重开）。
 inline constexpr int kModuleDefaultsVersion = 3;
 
 // 窗口效果三档（档位字符串直接持久化进 app_config）
@@ -130,6 +134,11 @@ struct SettingsConfig {
     // 本配置已应用过的「新增默认启用模块」迁移版本（见 kModuleDefaultsVersion）：
     // 键缺失 = 0 = 旧版本写出的配置；load 迁移后回写，save 原样持久化。
     int moduleDefaultsVersion = kModuleDefaultsVersion;
+    // 用户显式关闭过的**默认启用**模块 ID（池 bug246 自校验豁免集）：
+    // 只记录 kModuleDefaultMigrations 里的模块——用户关掉默认模块后，内容自校验
+    // 不得把它当「漂移掉了」重新打开。非默认模块（agent/wallpaper/mcp）永不进此集
+    //（它们的缺席就是默认态，无需豁免）。键缺失 = 空集 = 旧版本配置。
+    std::vector<std::string> userDisabledModules;
 };
 
 // 模块开关判定（home/settings 恒 true，未知 ID 恒 false）；装配门控与卡片显隐共用。
@@ -190,10 +199,11 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：19 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    // 写入配置：全部顶层键（22 个）在一个事务里 UPSERT，并清掉本轮不再写出的旧键
     //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
-    // 批加 fluidBackgroundEnabled，键口径 17 个；默认模块迁移加
-    // moduleDefaultsVersion，MCP 批加 mcpPort，键口径自此 19 个）。
+    // 批加 fluidBackgroundEnabled；默认模块迁移加 moduleDefaultsVersion；MCP 批
+    // 加 mcpPort → 21；池 bug246 加 userDisabledModules → 22。键数断言同步在
+    // test_mcp_settings mcp_settings_save_load_roundtrip_19_keys（用例名保留）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;
 

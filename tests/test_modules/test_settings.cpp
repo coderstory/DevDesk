@@ -9,6 +9,7 @@
 #include "settings_ui_cards.h"   // 卡片直绘夹具（开机自启动行断言，UAT6）
 #include "github_sync_card.h"    // 同步卡直绘（H18 按钮组右锚双档断言）
 #include "settings_ui_logic.h"
+#include "module_toggle_bridge.h"   // app::toggle::setToggleHandler（bug246 端到端桩）
 
 #include "claude_service.h"
 #include "core/claude_proxy_service.h"
@@ -1728,6 +1729,67 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     return true;
 })
 
+
+// 池 bug246 端到端：用户真的点设置页开关关掉默认模块 → 豁免随 save 落库 → 重启
+// （新模块实例重新 onStart + load）不得被自校验重开。钉的是「用户动作记账」这条链，
+// 不是 SettingsStore 单点语义（那条由 test_module_gating 覆盖）。
+// 选 release 作靶：terminal 没有模块卡开关格（不在 kToggleable 表内），点不到。
+REGISTER_TEST(settings_module_toggle_records_exemption_and_survives_reload,
+              "settings: bug246——点开关关上线(release) → 豁免落库 → 重启不重开", {
+    namespace ms = module::settings;
+    test_support::TestEnv env(kCfgPrefix, "bug246e2e", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "bug246e2e_cfg"));
+    // 桥不需要真的分发：只验持久化语义，桩掉 onModuleToggled 的副作用
+    // （默认勾子为空表时 setToggleHandler(nullptr) 即「不接任何接收方」）
+    app::toggle::setToggleHandler(nullptr);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    {
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, ms::kTabModules));
+        eui::Ui ui;
+        ui.begin("bug246e2e_off");
+        mod->compose(ui, screen);
+        ui.end();
+        // 按格内 name 文案定位「上线」格（release = 迁移表 v1 模块，用户可关）
+        int releaseCell = -1;
+        for (int i = 0; i < ms::kModuleToggleCellCount(true); ++i) {
+            const auto* n = ui.find("settings.card.modules.name." +
+                                    std::to_string(i));
+            if (n != nullptr && n->text == "上线") {
+                releaseCell = i;
+                break;
+            }
+        }
+        DOCTEST_REQUIRE(releaseCell >= 0);
+        const auto* track = ui.find("settings.card.modules.sw." +
+                                    std::to_string(releaseCell) + ".track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_REQUIRE(track->onClick != nullptr);
+        track->onClick();   // on → off（真走 applyModuleEnabled → persist）
+        mod->onStop();
+    }
+
+    // 豁免已落库
+    const std::string exemptRow = test_support::readRawConfigRow(
+        ::core::appDatabase(),
+        (std::string(ms::SettingsStore::keyNamespace()) + "userDisabledModules")
+            .c_str());
+    DOCTEST_CHECK(exemptRow.find("release") != std::string::npos);
+
+    // "重启"：新 store 实例 load（onStart 同路径）→ release 仍是关的
+    const ms::SettingsConfig reloaded =
+        ms::SettingsStore(::core::appDatabase()).load();
+    DOCTEST_CHECK_FALSE(ms::moduleEnabled(reloaded, ms::kModuleIdRelease));
+    // 未被牵连的默认模块保持开启（自校验没有整表重开）
+    DOCTEST_CHECK(ms::moduleEnabled(reloaded, ms::kModuleIdTerminal));
+    DOCTEST_CHECK(ms::moduleEnabled(reloaded, ms::kModuleIdSchedule));
+    return true;
+})
 
 REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（7 行模块开关）", {
     test_support::TestEnv env(kCfgPrefix, "modcard", true);
@@ -4074,10 +4136,12 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
         std::string("{\n") +
-            // 带当前迁移版本：模拟本版本写出的配置，避免 B1 存量迁移把 release
-            // 并入 enabledModules，污染下面的条目数/顺序断言
+            // 带当前迁移版本 + 显式豁免默认模块：模拟本版本写出的配置。否则池
+            // bug246 的内容自校验会把 release/schedule/terminal 补回 enabledModules，
+            // 污染下面的条目数/顺序断言。
             "\"moduleDefaultsVersion\": " +
             std::to_string(module::settings::kModuleDefaultsVersion) + ",\n" +
+            "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\"],\n" +
             "\"fontScalePercentV3\": 9999,\n" +
             "\"logRetentionDays\": -5,\n" +
             "\"claudeProxyPort\": 70000,\n" + "\"themeMode\": \"neon\",\n" +
