@@ -202,6 +202,27 @@ inline void terminateWindowBackend() {
     glfwTerminate();
 }
 
+/// 探针窗口是否真弹到屏幕上。**默认隐藏**（2026-11-09 老板令：跑一次测试弹 N 个窗口
+/// 抢焦点，无法接受）。
+///
+/// 隐藏建窗为什么可行——实测（2026-11-09，macOS arm64 / Apple M5）：
+///   · 裸 GLFW 金丝雀对照：GLFW_VISIBLE=FALSE 建成 GL 4.1、framebuffer 800x600、
+///     glReadPixels 像素值精确正确、多帧 swap 后回读仍正确；
+///   · 真实 probe 全量 `ctest -L probe`：46/46 与可见模式全等，跳过集合一致；
+///   · uat62 17 页截图 A/B：19 张 PNG 逐字节 identical（cmp 零差异）。
+/// 即隐藏窗不影响渲染结果——探针本来走进程内 glReadPixels 读自己的后备缓冲，与窗口
+/// 是否合成到屏幕无关。
+///
+/// 边界（与 [[离屏探针合成盲区]] 同源）：窗口服务器圆角裁剪 / 合成态本来就不在
+/// 回读覆盖内，隐藏化不会让它变差；窗口形状、边缘类改动仍需真机目检。
+///
+/// 需要肉眼盯某一帧（调试染色 / 观察动画 / 排查真实合成态）时设
+/// `DEVDESK_PROBE_VISIBLE=1` 恢复可见建窗 + 抢焦点。
+inline bool probeWindowVisible() {
+    const char* v = std::getenv("DEVDESK_PROBE_VISIBLE");
+    return v != nullptr && v[0] != '\0' && std::strcmp(v, "0") != 0;
+}
+
 /// 创建探针窗口：不可缩放 + OpenGL；失败返回 nullptr。
 ///
 /// 金丝雀此时**已经**建成了，所以这里的失败**不是**环境问题：能造出金丝雀窗却造不出
@@ -247,6 +268,11 @@ inline core::window::Handle makeWindow(const std::string& title, int width, int 
     request.width = sized.width > 0 ? sized.width : width;
     request.height = sized.height > 0 ? sized.height : height;
     request.resizable = false;
+    // 默认隐藏建窗（不弹屏、不抢焦点）；DEVDESK_PROBE_VISIBLE=1 时才可见。
+    // 判据与实测依据见 probeWindowVisible() 上方注释。
+    const bool visible = probeWindowVisible();
+    request.visible = visible;
+    request.focusOnShow = visible;
     request.renderApi = configuredRenderApi();
     core::window::Handle handle = core::window::createWindow(request);
     if (handle == nullptr) {
@@ -445,9 +471,13 @@ public:
         // Handle 即 GLFWwindow*（core::window 的 GLFW 后端语义）。不可改用
         // nativeWindowInfo()：它在 macOS 给的是 NSWindow*，两者不可混用。
         auto* glfwWin = static_cast<GLFWwindow*>(window);
-        // 裸 GLFW 探针窗可能没被置前，先 show+focus 再取尺寸（满屏应用下尤其重要）
-        glfwShowWindow(glfwWin);
-        glfwFocusWindow(glfwWin);
+        // 裸 GLFW 探针窗可能没被置前，先 show+focus 再取尺寸（满屏应用下尤其重要）。
+        // 仅可见模式需要这两步：窗口本就是隐藏建的时，show 会把窗口弹出来（正是要避免的），
+        // 且实测 framebuffer 尺寸在隐藏态下同样有效——不需要映射即可读。
+        if (probeWindowVisible()) {
+            glfwShowWindow(glfwWin);
+            glfwFocusWindow(glfwWin);
+        }
         glfwGetFramebufferSize(glfwWin, &fbWidth_, &fbHeight_);
         float scaleX = 1.0f;
         float scaleY = 1.0f;
