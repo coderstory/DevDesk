@@ -110,6 +110,54 @@
 - 操作：装好后看 Dock 中 DevDesk 图标，与旁边其它 app（ Finder / 浏览器等）对比大小；必要时重启 Dock（`killall Dock`）
 - 期望：图标视觉尺寸与系统其它 app 等大（HIG 824 网格对齐，无缩水/发虚）；DMG 卷窗口图标同步为新图。
 
+## 十、2026-11-08 新批次补录（HEAD=`aea3945d`）
+
+> 新增批次：#144+168 / #174-176 / #182-184 / #196+218 / #217 / #225 / #229 / 全站列表统一批 1·3·4·5·6·7·markdown 补批。
+> #161 字号步进、#169 全列折叠已在上方 M-1 / T-1 在列（HEAD `0e634533` 批次已含），不重复追加。
+
+### X-1 Profiles 卡重设观感（#174/175/176）
+- [ ] 入口：侧栏「启动代理 Claude」→ Profiles 列表卡 → 任一 profile 详情（含环境变量卡）
+- 操作：亮 / 暗主题各看一遍列表卡与详情环境变量卡
+- 期望：新卡设计落地——层级清晰、亮暗两态均无对比度 / 溢出问题（机器面对照：`evidence/profiles-batch/` 8 图）。
+
+### X-2 引擎按钮态与审核卡标注（#182/184）
+- [ ] 入口：记忆页 → 引擎卡 → 审核 tab
+- 操作：
+  1. 找未装好 embedding 的环境（或删引擎组件）看引擎卡按钮态
+  2. 引擎未运行时打开审核页
+  3. 看一条未提炼的采集提案卡
+- 期望：未装好**不再误显「关闭引擎」**，显失败态 + 修复引导（模型下载失败给手动放置路径）；审核页未运行时出降级横幅；未分类片段标「原始片段（未分类）」并给处理建议，不再虚标 fact。
+
+### X-3 splash 1.2s 过渡观感（#196）
+- [ ] 入口：完全退出 DevDesk → 重新启动
+- 操作：连续重启两三次观察启动序列
+- 期望：淡入 → 进度保持 → 交叉淡化 → 主界面，总时长约 1.2s（原 1.93s），序列连贯无黑帧 / 跳变（机器面序列帧：`evidence/sidebar-splash-occlusion/splash-seq-01..09`）。
+
+### X-4 全站玻璃卡与 8px 间距巡览（#217+池224 批 2/4/5/6/7+markdown 补批）
+- [ ] 入口：定时 / 启动代理 / Agent / 记忆 / MCP / 首页 / 待办 / 设置 / Markdown 逐页巡览
+- 操作：亮暗两态各过一遍，重点看卡面材质与卡间距、页头字重
+- 期望：卡面统一玻璃材质通路（无突兀实色卡）；卡垂直间距 8px 一致；页头 / 统计大数 600、佐证 400 两档制，无残留 700 加粗页头；无内容挤压重叠。
+
+### X-5 真锁屏 CPU 安静（#218）
+- [ ] 入口：开动态背景 → 锁屏（合盖或 Ctrl+Cmd+Q）
+- 操作：锁屏保持 1 分钟 → 解锁 → 活动监视器看 DevDesk CPU，对照解锁后数值
+- 期望：锁屏（窗口遮挡态）期间流质泵挂起、CPU 明显回落接近空闲，解锁后恢复。需真人锁屏；机器面已验 occlusion 接线（`evidence/sidebar-splash-occlusion/occlusion-pump-evidence.log`）。
+
+### X-6 新装机 llama 零下载（#225）
+- [ ] 入口：DMG 新装 → 记忆页 → 引擎启用向导
+- 操作：用打包产物（见 X-7）全新装机走引擎向导
+- 期望：llama-server 从包内 `Contents/MacOS/assets/llama/bin` 命中，**不需要** brew 安装或运行时额外下载；模型权重首次仍需下载（属预期）。（机器面：`evidence/llama-bundle/` 三件套）
+
+### X-7 DMG 转正打包（#225 配套，老板终端执行）
+- [ ] 入口：终端（老板本人）
+- 操作：`bash scripts/package-macos.sh` 跑一次打包，完成后开 DMG 看 app
+- 期望：脚本 exit 0 无红；DMG 内 app 含 `Contents/MacOS/assets/llama/bin`；装机后可复验 X-6。
+
+### X-8 MCP 三列格阵位置确认（#151）
+- [ ] 入口：侧栏「MCP」→ 工具格阵页
+- 操作：正常宽度与拖宽窗口各看一次
+- 期望：三列格阵位置符合预期（批 7 网格行间 24→8 / 行内 16→8），间距收紧后三列仍在位，无重叠 / 溢出 / 错行。
+
 ## 无手测项条目（机器面已覆盖）
 
 | 池号 | 内容 | 为什么不用手测 |
@@ -136,3 +184,17 @@
 | 214 | `evidence/agent-ui-notification-ci/`（两轮 CI 红记录 + timeline） |
 | 215 | `evidence/memory-cards-scale/after/memory-config*.png`（clue 134 同族修法，commit 0e634533） |
 | 本轮 QA | `evidence/2026-11-07-qa216/`（fullrun-mac.log / guardchain-6guards.log / probe-ctest-LastTest.log / probe-bug142-knownfail-shot.png） |
+| #144+168 | `evidence/sidebar-toggle-batch/`（四档窗口 toggle 截图） |
+| 池224/need219 批1 | `evidence/unify-batch1/`（ui_kit 核对结论 md，零改动批） |
+| 批3 | `evidence/unify-batch3/`（settings before/after × 亮暗） |
+| 批4 | `evidence/unify-batch4/`（schedule+claude 12 图） |
+| 批5 | `evidence/unify-batch5/`（agent 12 图） |
+| 批6 | `evidence/unify-batch6/`（memory 亮暗 / fs140 前后 6 组） |
+| 批7 | `evidence/unify-batch7/`（mcp/home/todo 22 图） |
+| markdown 补批 | `evidence/unify-md/`（21 文件含 raw-after） |
+| #196+218 | `evidence/sidebar-splash-occlusion/`（splash 9 帧 + occlusion-pump-evidence.log） |
+| #217 | `evidence/fluid-lowres/`（before-sharp/after-lowres）+ `evidence/fluid-bg-fps/`（fps 日志扩容） |
+| #225 | `evidence/llama-bundle/`（bundle-list / otool-closure / isolation-run） |
+| #182+184 | `evidence/memory-engine-batch/`（12 图：向导 / 引擎卡 / 审核卡） |
+| #229 | `evidence/mcp-stale-test/`（red-before-fix + 3 green） |
+| #174-176 | `evidence/profiles-batch/`（list / detail-env 亮暗前后 8 图） |
