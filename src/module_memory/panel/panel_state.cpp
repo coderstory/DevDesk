@@ -565,19 +565,26 @@ core::Result<void> PanelState::acceptProposal(const std::string& id) {
         return core::Result<void>::fail(current.errorCode(),
                                         current.errorMessage());
     }
+    std::string executorError;
     auto decided = proposalStore_->accept(
         id, static_cast<std::int64_t>(std::time(nullptr)),
-        realTargetVersion(current.value().baseVersion), makeExecutor());
+        realTargetVersion(current.value().baseVersion), makeExecutor(),
+        &executorError);
     if (decided.isFail()) {
         return core::Result<void>::fail(decided.errorCode(),
                                         decided.errorMessage());
     }
     if (decided.value().appliedAt <= 0) {
-        // 代理执行失败：保持待审 + 失败原因进审计（面板可见，重试 = 再接受）
+        // 代理执行失败：保持待审 + 失败原因进审计（面板可见，重试 = 再接受）。
+        // bug254：文案带执行器真实原因（embedding 500/400 等），不再一律
+        // 「引擎未运行或不可达」。
         refresh(true);
         return core::Result<void>::fail(
             core::ErrorCode::Internal,
-            "引擎执行失败：提案保持待审（引擎未运行或不可达，可再点接受重试）");
+            "引擎执行失败：" +
+                (executorError.empty() ? std::string("引擎未运行或不可达")
+                                       : executorError) +
+                "（提案保持待审，可再点接受重试）");
     }
     refresh(true);
     return core::Result<void>::ok();

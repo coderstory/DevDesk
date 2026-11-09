@@ -56,6 +56,25 @@ std::string extractLlmKeyFromSettingsJson(const std::string& settingsJsonText);
 // 读取失败静默返回空串——密钥有无只反映在引擎能否提炼，不打日志（内容红线）。
 std::string readLlmKeyFromClaudeSettings();
 
+// ── need256：提炼 key 的 UI 配置通道（本机钥匙串）──
+// service/account 沿 keychain 模块命名惯例（devdesk.<域>）；独立 service 命名
+// 空间，孤儿清理白名单（claude: 前缀）永不触及。key 通道仍是「钥匙串 → 子进程
+// 环境」一条线，不写配置文件/数据库/日志。
+inline constexpr const char* kLlmKeychainService = "devdesk.memory";
+inline constexpr const char* kLlmKeychainAccount = "llm-key";
+
+// 掩码（纯函数）：前 3 + "****" + 后 4；不足 8 字符一律 "****"；空入空出。
+std::string maskLlmKey(const std::string& key);
+
+// 钥匙串存/取/清（模块层薄封装）。存：空 key 拒存；读：未存/失败回空（内容红线
+// ——失败原因不打日志）；清：条目不存在也算成功（幂等，同 keychain 删除语义）。
+bool saveLlmKeyToKeychain(const std::string& key);
+std::string readLlmKeyFromKeychain();
+bool clearLlmKeyFromKeychain();
+
+// 引擎取 key 统一出口：钥匙串优先（记忆页配置），回落 Claude settings（既有通道）。
+std::string readLlmKey();
+
 // 日志脱敏：text 中的 secret 原文替换为 "<redacted>"；secret 为空原样返回。
 // 任何可能携带密钥的文本进日志前必须过这道（单测钉：密钥原文不得出现在输出）。
 std::string redactSecretsForLog(const std::string& text, const std::string& secret);

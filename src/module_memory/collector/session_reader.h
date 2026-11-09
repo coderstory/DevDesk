@@ -18,8 +18,9 @@
 
 namespace module::memory::collector {
 
-// 单事件上限（§4.2 实测口径：单事件可达 86.5KB，必须按事件截断）
-inline constexpr std::size_t kMaxEventBytes = 4096;
+// 单事件上限（bug254 定案：与 kSegmentTargetBytes 同为 embedding 预算）。
+// 单事件独占整段时若超预算，embedding 必 500/400（bge n_ctx=512 token 硬上限）。
+inline constexpr std::size_t kMaxEventBytes = 1024;
 // 错误工具结果保留的摘要上限（§4.2「只在错误/失败时保留摘要」）
 inline constexpr std::size_t kToolErrorSummaryBytes = 200;
 

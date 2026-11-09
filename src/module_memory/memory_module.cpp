@@ -48,6 +48,7 @@ void MemoryModule::onStart() {
     // F1 产品接线：开页即同步采集循环——引擎已 Running 则立即起跑
     //（compose 每帧 refresh 也会同步；此处覆盖"启动引擎后未再切页"的首帧）
     panel_.refresh(true);
+    refreshLlmKeyState();  // need256：钥匙串 → 掩码缓存（配置卡两态数据源）
 }
 
 void MemoryModule::onStop() {
@@ -66,6 +67,34 @@ void MemoryModule::onStop() {
 void MemoryModule::showToast(const std::string& title, const std::string& body,
                              bool error) {
     toast_.show(title, body, error);
+}
+
+// ── need256：提炼 API key 配置卡（钥匙串通道）──
+
+void MemoryModule::refreshLlmKeyState() {
+    llmKeyMask_ = engine::maskLlmKey(engine::readLlmKeyFromKeychain());
+    if (llmKeyMask_.empty()) llmKeyEditing_ = true;  // 未配置默认展开输入行
+}
+
+void MemoryModule::saveConfiguredLlmKey() {
+    if (llmKeyInput_.empty()) {
+        showToast("未保存", "请先粘贴 API key 再点保存", true);
+        return;
+    }
+    if (engine::saveLlmKeyToKeychain(llmKeyInput_)) {
+        llmKeyInput_.clear();
+        llmKeyEditing_ = false;
+        refreshLlmKeyState();
+        showToast("已保存", "提炼 API key 已存入本机钥匙串");
+    } else {
+        showToast("保存失败", "钥匙串写入失败，请重试", true);
+    }
+}
+
+void MemoryModule::clearConfiguredLlmKey() {
+    engine::clearLlmKeyFromKeychain();
+    refreshLlmKeyState();
+    showToast("已清除", "提炼 API key 已从钥匙串删除");
 }
 
 void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {

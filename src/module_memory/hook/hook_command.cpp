@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "core/str_util.h"
+#include "module_memory/collector/session_reader.h"
 #include "module_memory/hook/inject.h"
 #include "platform/json.h"
 
@@ -39,7 +40,10 @@ HookOutcome runMemoryHook(const std::string& stdinJson,
     prompt = core::str::trimAscii(prompt);
     if (prompt.size() < 4) return bail();  // 过短提问没有检索价值，零开销放行
     if (prompt.size() > kMaxQueryChars) {
-        prompt = prompt.substr(0, kMaxQueryChars);
+        // bug255：按 UTF-8 码点边界截断。字节 substr 会劈开多字节字符 → telemem
+        // 侧 JSON 解析失败回 400 → 检索 fail → 本 hook 静默零注入（fail-open
+        // 掩盖了真因，2026-11-10 实测坐实）。
+        prompt = collector::truncateUtf8(prompt, kMaxQueryChars);
     }
 
     auto hits = retriever->search(prompt, kSearchLimit, kHookSearchTimeoutMs);

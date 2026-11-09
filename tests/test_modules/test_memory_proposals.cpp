@@ -578,3 +578,36 @@ REGISTER_TEST(memory_proposal_target_version_fn_branches,
         DOCTEST_CHECK_EQ(engine.calls.back(), std::string("add:被遗忘的原文"));
         return true;
     })
+
+REGISTER_TEST(memory_proposal_accept_executor_error_out,
+              "memory: bug254 接受失败文案——executor 真实原因经 executorError 透出（不再一律「引擎未运行或不可达」）", {
+    auto opened = ProposalStore::open(tmpDb("execerr"));
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    const std::int64_t now = 1769472000;
+    auto add = store.create("add", {}, "超预算长文提案", "fact", "devdesk", {},
+                            0.9, "collect", "assistant_derived", now, -1);
+    DOCTEST_REQUIRE(add.isOk());
+    ProposalExecutor boom = [](const Proposal&) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NetworkUnreachable,
+            "embedding 500: input too large to process");
+    };
+    std::string err;
+    auto failed = store.accept(
+        add.value().id, now + 5,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(0); },
+        boom, &err);
+    DOCTEST_REQUIRE(failed.isOk());
+    DOCTEST_CHECK(failed.value().appliedAt < 0);
+    DOCTEST_CHECK_EQ(failed.value().status, std::string("pending"));
+    DOCTEST_CHECK(err.find("embedding 500") != std::string::npos);
+    // 不传 out-param：行为不变（保持 pending）
+    auto failed2 = store.accept(
+        add.value().id, now + 6,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(0); },
+        boom);
+    DOCTEST_REQUIRE(failed2.isOk());
+    DOCTEST_CHECK(failed2.value().appliedAt < 0);
+    return true;
+})

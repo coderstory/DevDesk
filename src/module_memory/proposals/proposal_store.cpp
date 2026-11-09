@@ -428,7 +428,8 @@ core::Result<void> ProposalStore::updateResultText(const std::string& id,
 core::Result<Proposal> ProposalStore::accept(const std::string& id,
                                              std::int64_t nowSec,
                                              const TargetVersionFn& targetVersion,
-                                             const ProposalExecutor& executor) {
+                                             const ProposalExecutor& executor,
+                                             std::string* executorError) {
     auto current = get(id);
     if (current.isFail()) return current;
     Proposal p = current.value();
@@ -486,6 +487,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
     // 代理执行（失败重试 = 再次接受；保持 pending，失败原因进审计）
     auto applied = executor(p);
     if (applied.isFail()) {
+        if (executorError != nullptr) *executorError = applied.errorMessage();
         if (auto a = audit(id, nowSec, "apply_failed",
                            applied.errorMessage()); a.isFail()) {
             return core::Result<Proposal>::fail(a.errorCode(),

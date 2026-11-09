@@ -123,10 +123,12 @@ public:
 
     // 接受（含代理执行）：TTL/baseVersion 校验 → executor → accepted + appliedAt。
     // executor 失败 → 保持 pending，错误信息进审计（返回 ok，appliedAt=-1 表达未落库；
-    // 硬失败如库错误才返回 fail）。
+    // 硬失败如库错误才返回 fail）。executorError 非空时回传执行器真实失败原因
+    //（bug254：面板失败文案不再用「引擎未运行或不可达」以偏概全）。
     core::Result<Proposal> accept(const std::string& id, std::int64_t nowSec,
                                   const TargetVersionFn& targetVersion,
-                                  const ProposalExecutor& executor);
+                                  const ProposalExecutor& executor,
+                                  std::string* executorError = nullptr);
 
     // 拒绝（留档）
     core::Result<Proposal> reject(const std::string& id, std::int64_t nowSec);

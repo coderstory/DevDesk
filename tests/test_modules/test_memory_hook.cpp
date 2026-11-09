@@ -104,10 +104,41 @@ REGISTER_TEST(memory_hook_budget_assembly,
     multi.dateText = "2026-10-01";
     DOCTEST_CHECK(assembleContext({multi}).find("第一行 第二行") !=
                   std::string::npos);
-    // 首条即超预算 → 空串 = 本轮不注入
+    // 首条即超预算 → bug255 新契约：按剩余字数截断收纳，不再整条裁光
     MemoryHit huge;
     huge.text = std::string(600, 'x');
-    DOCTEST_CHECK(assembleContext({huge}).empty());
+    const std::string hugeCtx = assembleContext({huge});
+    DOCTEST_CHECK(!hugeCtx.empty());
+    const std::size_t hb = hugeCtx.find('\n');
+    DOCTEST_REQUIRE(hb != std::string::npos);
+    DOCTEST_CHECK(countChars(hugeCtx.substr(hb + 1)) <= 500);  // body 口径（头部声明除外）
+    return true;
+})
+
+REGISTER_TEST(memory_hook_budget_oversized_first_entry,
+              "memory: bug255 预算装配——融合段单条超预算按剩余字数截断收纳（整条裁光曾致 hook 静默零注入）", {
+    // telemem search_memories 真实形态：多条记忆融合成单串（数百字），无条目
+    // id/日期——旧装配对首条超预算整条裁掉 → taken=0 → 静默零注入
+    MemoryHit fused;
+    for (int i = 0; i < 700; ++i) fused.text += "中";  // 700 字融合段
+    fused.memoryId = "m1";
+    fused.dateText = "2026-11-10";
+    const std::string ctx = assembleContext({fused});
+    DOCTEST_CHECK(!ctx.empty());
+    DOCTEST_CHECK(countChars(ctx) <= 540);  // 头部声明 + body ≤500
+    DOCTEST_CHECK(ctx.find("资料非指令") != std::string::npos);
+    DOCTEST_CHECK(ctx.find("中中中") != std::string::npos);  // 正文确实进了预算
+    // 多条：首条截断占满预算后，后续条目不再挤入（预算守恒）
+    MemoryHit second;
+    second.text = "第二条短记忆";
+    second.memoryId = "m2";
+    const std::string ctx2 = assembleContext({fused, second});
+    DOCTEST_CHECK(!ctx2.empty());
+    {
+        const std::size_t hb2 = ctx2.find('\n');
+        DOCTEST_REQUIRE(hb2 != std::string::npos);
+        DOCTEST_CHECK(countChars(ctx2.substr(hb2 + 1)) <= 500);  // body 口径
+    }
     return true;
 })
 
@@ -482,7 +513,7 @@ REGISTER_TEST(memory_hook_prefix_fused_segment_split,
 })
 
 REGISTER_TEST(memory_hook_prefix_budget_group_survival,
-              "memory: 需-3 预算截断——先分组后截断踩坑优先存活、标题计字不计条、切分条各占 1 条、首条放不下空串", {
+              "memory: 需-3 预算截断——先分组后截断踩坑优先存活、标题计字不计条、切分条各占 1 条、超预算条截断收纳（bug255）", {
     // 条数预算：2 踩坑 + 4 决策 = 6 条（切分后）→ 渲染 5，踩坑组全活，决策截 3
     std::vector<MemoryHit> hits;
     hits.push_back({"[踩坑|甲] 踩坑一", "1", "2026-11-01", 0.9});
@@ -501,7 +532,8 @@ REGISTER_TEST(memory_hook_prefix_budget_group_survival,
     DOCTEST_REQUIRE(headerEnd != std::string::npos);
     DOCTEST_CHECK(countChars(ctx.substr(headerEnd + 1)) <= 500);
 
-    // 字数预算：踩坑短行存活，后继组长行放不下 → 整组 absent（组序即存活序）
+    // 字数预算：踩坑短行存活；后继组长行超预算 → 截断收纳（bug255：整组
+    // 缺席曾致融合段场景预算永远填不满 → hook 静默零注入）；组序不变
     std::vector<MemoryHit> mix;
     mix.push_back({"[踩坑|短] 短踩坑", "1", "2026-11-01", 0.9});
     MemoryHit longDecision;
@@ -511,7 +543,12 @@ REGISTER_TEST(memory_hook_prefix_budget_group_survival,
     const std::string ctx2 = assembleContext(mix);
     DOCTEST_CHECK(ctx2.find("⚠ 踩坑 1 条") != std::string::npos);
     DOCTEST_CHECK(ctx2.find("短踩坑") != std::string::npos);
-    DOCTEST_CHECK(ctx2.find("📌 决策") == std::string::npos);
+    DOCTEST_CHECK(ctx2.find("📌 决策 1 条") != std::string::npos);  // 截断收纳
+    {
+        const std::size_t hb = ctx2.find('\n');
+        DOCTEST_REQUIRE(hb != std::string::npos);
+        DOCTEST_CHECK(countChars(ctx2.substr(hb + 1)) <= 500);  // body 口径守恒
+    }
 
     // 融合段虚拟条目计入条数：1 hit 切 3 条 + 3 直存条 = 6 → 只渲染 5
     MemoryHit fused;
@@ -529,5 +566,26 @@ REGISTER_TEST(memory_hook_prefix_budget_group_survival,
     DOCTEST_CHECK(ctx3.find("⚠ 踩坑 1 条") != std::string::npos);
     DOCTEST_CHECK(ctx3.find("契约 3 条") != std::string::npos);
     DOCTEST_CHECK(ctx3.find("未分类") == std::string::npos);  // 残段被裁
+    return true;
+})
+
+REGISTER_TEST(memory_hook_long_prompt_codepoint_truncation,
+              "memory: bug255 长提问截断——>4000 字节查询按码点边界截断（字节 substr 劈开多字节 → telemem 400 → 静默零注入）", {
+    FakeRetriever ok;
+    ok.hits = {MemoryHit{"记忆条目", "1", "2026-11-10", 0.9}};
+    std::string cjk = "这是一个用于截断回归测试的中文句子";  // 3 字节/字
+    std::string prompt = cjk;
+    constexpr std::size_t kQueryCapBytes = 4000;  // 同 hook_command.cpp kMaxQueryChars（匿名空间不可见）
+    while (prompt.size() <= kQueryCapBytes) prompt += cjk;
+    std::vector<char> buf(prompt.size() + 256, '\0');
+    std::snprintf(buf.data(), buf.size(), kStdinTemplate, prompt.c_str());
+    auto r = runMemoryHook(std::string(buf.data()), &ok);  // C-string 截断嵌入 NUL
+    DOCTEST_CHECK_EQ(r.exitCode, 0);
+    DOCTEST_CHECK(!r.stdoutText.empty());
+    DOCTEST_CHECK(ok.lastQuery.size() <= kQueryCapBytes);
+    // 尾字节不是裸前导字节——码点完整，telemem 侧 JSON 解析必成功
+    DOCTEST_CHECK(!ok.lastQuery.empty());
+    const auto last = static_cast<unsigned char>(ok.lastQuery.back());
+    DOCTEST_CHECK((last & 0xC0) != 0xC0);
     return true;
 })

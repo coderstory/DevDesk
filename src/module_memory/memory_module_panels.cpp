@@ -1057,7 +1057,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                   imported ? "已导入 · 智谱端点" : "未导入——提炼不可用",
                   !imported);
         if (cfgOpen_[0]) {
-            const float bodyH = core::theme::scaled(300.0f);
+            // need256：组 0 并入提炼 key 卡——体高随「已配置态展开输入行（修改）」
+            // 派生两档；全部内容坐标经 scaled 累加（clue 134：禁定值偏移）
+            const float bodyH = core::theme::scaled(
+                (llmKeyEditing_ && !llmKeyMask_.empty()) ? 484.0f : 464.0f);
             groupBody(0, bodyH);
             float by = cy + 16.0f;
             // LLM 端点（原端点卡内容原样迁入）
@@ -1127,6 +1130,94 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                                      : "对话内容将发送至该端点（当前未经脱敏）");
             by += core::theme::scaled(38.0f);
             ui.rect("memory.cfg.grp0.sep")
+                .position(x + 16.0f, by)
+                .size(innerW, 1.0f)
+                .color(t.colors.borderMuted)
+                .build();
+            by += core::theme::scaled(17.0f);
+            // need256：提炼 API key 卡（钥匙串通道）。两态——未配置=引导+输入行；
+            // 已配置=掩码+修改/清除。密钥原文只存在于输入框瞬时值与钥匙串，
+            // 模块态只存掩码（telemem_config.h 密钥红线）。
+            ui.text("memory.cfg.key.subtitle")
+                .position(x + 16.0f, by)
+                .size(320.0f, core::theme::scaled(18.0f))
+                .text("提炼 API key（本机钥匙串）")
+                .fontSize(core::theme::scaled(12.5f))
+                .lineHeight(core::theme::scaled(18.0f))
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            by += core::theme::scaled(24.0f);
+            const auto ct = core::theme::componentTokensWeChat(t);
+            if (llmKeyMask_.empty() || llmKeyEditing_) {
+                ui.text("memory.cfg.key.hint")
+                    .position(x + 16.0f, by)
+                    .size(innerW, core::theme::scaled(18.0f))
+                    .text(llmKeyMask_.empty()
+                              ? "尚未配置——粘贴 API key，仅存本机钥匙串，不写配置与日志。"
+                              : "粘贴新的 API key，保存后替换现有 key。")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(18.0f))
+                    .color(t.colors.textSecondary)
+                    .build();
+                by += core::theme::scaled(26.0f);
+                components::input(ui, "memory.cfg.key.input")
+                    .position(x + 16.0f, by)
+                    .size(innerW - 104.0f, 40.0f)
+                    .value(llmKeyInput_)
+                    .placeholder("sk-…（智谱 API key）")
+                    .fontSize(core::theme::scaled(13.0f))
+                    .theme(ct)
+                    .onChange([this](const std::string& v) { llmKeyInput_ = v; })
+                    .onCancel([this] { llmKeyInput_.clear(); })
+                    .build();
+                primaryButton(ui, "memory.cfg.key.save", "保存",
+                              x + 16.0f + innerW - 96.0f, by + 4.0f, 88.0f,
+                              32.0f, t, {[this] { saveConfiguredLlmKey(); }});
+                by += 52.0f;
+                if (!llmKeyMask_.empty()) {
+                    ui_kit::button(ui, "memory.cfg.key.canceledit", "取消修改",
+                                   ui_kit::ButtonLevel::Text, x + 16.0f, by,
+                                   92.0f, 28.0f, t,
+                                   {[this] {
+                                       llmKeyInput_.clear();
+                                       llmKeyEditing_ = false;
+                                   }});
+                    by += core::theme::scaled(34.0f);
+                }
+            } else {
+                ui.text("memory.cfg.key.mask")
+                    .position(x + 16.0f, by)
+                    .size(200.0f, core::theme::scaled(24.0f))
+                    .text(llmKeyMask_)
+                    .fontSize(core::theme::scaled(13.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui_kit::button(ui, "memory.cfg.key.edit", "修改",
+                               ui_kit::ButtonLevel::Secondary, x + 224.0f, by,
+                               68.0f, 28.0f, t,
+                               {[this] {
+                                   llmKeyInput_.clear();
+                                   llmKeyEditing_ = true;
+                               }});
+                ui_kit::button(ui, "memory.cfg.key.clear", "清除",
+                               ui_kit::ButtonLevel::Danger, x + 300.0f, by,
+                               68.0f, 28.0f, t,
+                               {[this] { clearConfiguredLlmKey(); }});
+                by += core::theme::scaled(36.0f);
+            }
+            ui.text("memory.cfg.key.note")
+                .position(x + 16.0f, by)
+                .size(innerW, core::theme::scaled(16.0f))
+                .text("key 仅存本机钥匙串，引擎启动时注入子进程环境；不出现在配置文件与日志。")
+                .fontSize(core::theme::scaled(11.5f))
+                .lineHeight(core::theme::scaled(16.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            by += core::theme::scaled(22.0f);
+            ui.rect("memory.cfg.key.sep")
                 .position(x + 16.0f, by)
                 .size(innerW, 1.0f)
                 .color(t.colors.borderMuted)

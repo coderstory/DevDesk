@@ -174,3 +174,37 @@ REGISTER_TEST(memory_collector_root_resolution_and_truncation,
                      static_cast<std::uint64_t>(1));
     return true;
 })
+
+REGISTER_TEST(memory_collector_embedding_budget_segments,
+              "memory: bug254 切段预算——多事件合段不超 embedding 预算；单事件码点边界截断", {
+    const auto dir = makeTempDir("budget");
+    const auto root = dir / "projects";
+    std::filesystem::create_directories(root);
+    // 两个 >kSegmentTargetBytes 的纯中文事件：合段必超预算 → 封段；事件本身
+    // 被 session_reader ③ 截断到预算内（码点边界）
+    const std::string cjk = "项目记忆采集切段的中文正文样本";
+    std::string big;
+    while (big.size() < kSegmentTargetBytes + 300) big += cjk;
+    auto userLine = [](const std::string& body) {
+        return "{\"type\":\"user\",\"sessionId\":\"s-bug254\",\"message\":"
+               "{\"role\":\"user\",\"content\":\"" + body + "\"}}";
+    };
+    writeFile(root / "sess-bug254.jsonl",
+              userLine(big) + "\n" + userLine(big) + "\n", false);
+
+    Collector c(dir / "collector.db", root);
+    auto segs = c.pollOnce();
+    DOCTEST_REQUIRE(segs.isOk());
+    DOCTEST_REQUIRE(segs.value().size() >= static_cast<std::size_t>(2));
+    for (const auto& s : segs.value()) {
+        DOCTEST_CHECK(s.hasUserText);
+        // 每段正文 ≤ embedding 预算（bge n_ctx=512 token，见 collector.h 定案）
+        DOCTEST_CHECK(s.text.size() <= kSegmentTargetBytes);
+        // 尾字节不是裸前导字节（11xxxxxx）——码点完整，不产生非法查询/正文
+        DOCTEST_CHECK(!s.text.empty());
+        const auto last = static_cast<unsigned char>(s.text.back());
+        DOCTEST_CHECK((last & 0xC0) != 0xC0);
+    }
+    DOCTEST_CHECK(c.commit(segs.value()).isOk());
+    return true;
+})

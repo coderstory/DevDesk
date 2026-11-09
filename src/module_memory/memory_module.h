@@ -45,6 +45,12 @@ public:
     // 测试/探针缝：审核视图滚动偏移直驱（bug190 探针要把视口滚到渐进加载
     // 尾行才能点「再显示 50 条」——按钮内容位深在 50 卡 × 244px ≈ 12k px）
     void setReviewScrollForTest(float v) { reviewScroll_ = v; }
+    // 测试/探针缝：提炼 key 卡两态直驱（probe 不触真钥匙串；喂非空掩码即收敛
+    // 输入行——onStart 的 refreshLlmKeyState 会对未配置态置 editing，缝必须可逆）
+    void setLlmKeyMaskForTest(const std::string& mask) {
+        llmKeyMask_ = mask;
+        if (!mask.empty()) llmKeyEditing_ = false;
+    }
 
 private:
     // 三视图 compose（在滚动容器 content 内绘制；y = 视口顶，x = 内容左，
@@ -92,6 +98,11 @@ private:
 
     void showToast(const std::string& title, const std::string& body,
                    bool error = false);
+
+    // need256：提炼 API key 配置卡（钥匙串存储；模块态只存掩码，原文即刻丢弃）
+    void refreshLlmKeyState();
+    void saveConfiguredLlmKey();
+    void clearConfiguredLlmKey();
 
     // 当前视图下标：0=主控台 1=记忆审核 2=配置
     int activeView_ = 0;
@@ -145,6 +156,11 @@ private:
     bool clearModalOpen_ = false;
     bool wizardOpen_ = false;
     std::string clearInput_;  // 输入「清除」解锁（设计稿契约）
+
+    // need256：提炼 API key 配置卡状态（掩码缓存；原文只存在于输入框瞬时值）
+    std::string llmKeyMask_;      // 空 = 未配置；值形如 sk-****last4
+    bool llmKeyEditing_ = false;  // 输入行显隐（已配置态点「修改」展开）
+    std::string llmKeyInput_;     // 输入框草稿（onChange 同步）
 };
 
 } // namespace module::memory

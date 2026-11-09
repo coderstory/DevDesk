@@ -472,6 +472,24 @@ int main(int argc, char* argv[]) {
             }
             for (int i = 0; i < 8; ++i) composeFrame();
             shoot("memory-review-longtext.png", &A.passed);
+            // need:159 复检（2026-11-09）：长文提案的「提案全文」只读弹窗与
+            // 「编辑后接受」弹窗逐环取证（老板抱怨③ 长文本不处理/跑边界）。
+            clickEl(("memory.rv.evtoggle." + longId).c_str());
+            composeFrame();
+            composeFrame();
+            A.exists("memory.dialog.fulltext.body");
+            for (int i = 0; i < 8; ++i) composeFrame();
+            shoot("memory-review-longtext-fulltext.png", &A.passed);
+            clickEl("memory.dialog.fulltext.cancel.bg");
+            composeFrame();
+            clickEl(("memory.rv.edit." + longId + ".bg").c_str());
+            composeFrame();
+            composeFrame();
+            A.exists("memory.dialog.edit.input");
+            for (int i = 0; i < 8; ++i) composeFrame();
+            shoot("memory-review-longtext-edit.png", &A.passed);
+            clickEl("memory.dialog.edit.cancel.bg");
+            composeFrame();
         }
     }
 
@@ -499,6 +517,36 @@ int main(int argc, char* argv[]) {
         A.exists("memory.cfg.data.clear");
         A.exists("memory.cfg.trig.s1");
         A.textHas("memory.cfg.data.path", dataDir.generic_string());
+        // need256：提炼 key 卡两态（掩码态经测试缝直驱，probe 不触真钥匙串）+
+        // 卡底不溢出组 0 体（clue 134 同族断言；130% 档由 --fs 重跑覆盖）
+        if (auto* mem2 =
+                dynamic_cast<module::memory::MemoryModule*>(mod.get())) {
+            mem2->setLlmKeyMaskForTest("");  // 未配置态：引导 + 输入行
+            composeFrame();
+            composeFrame();
+            A.exists("memory.cfg.key.subtitle");
+            A.exists("memory.cfg.key.input");
+            A.exists("memory.cfg.key.save.label");
+            shoot("memory-config-key-unset.png", &A.passed);
+            mem2->setLlmKeyMaskForTest("sk-****1234");  // 已配置态：掩码+修改/清除
+            composeFrame();
+            composeFrame();
+            A.textHas("memory.cfg.key.mask", "sk-****1234");
+            A.exists("memory.cfg.key.edit.bg");
+            A.exists("memory.cfg.key.clear.bg");
+            const auto* body = A.elem("memory.cfg.grp0.body");
+            const auto* note = A.elem("memory.cfg.key.note");
+            if (body == nullptr || note == nullptr) {
+                std::cerr << "memory_probe: FAIL——key 卡/组 0 体元素缺失\n";
+                A.passed = false;
+            } else if (note->frame.y + note->frame.height >
+                       body->frame.y + body->frame.height - 2.0f) {
+                std::cerr << "memory_probe: FAIL——key 卡溢出组 0 体（当前字号档）\n";
+                A.passed = false;
+            }
+            shoot("memory-config-key-set.png", &A.passed);
+            mem2->setLlmKeyMaskForTest("");  // 还原，不污染后续组
+        }
     }
     for (int i = 0; i < 8; ++i) composeFrame();
     shoot("memory-config.png", &A.passed);

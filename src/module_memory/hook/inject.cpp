@@ -92,6 +92,22 @@ std::size_t countChars(const std::string& utf8) {
     return n;
 }
 
+// 按字数（UTF-8 码点）截断到 ≤maxChars 字，码点边界安全（bug255 配套：
+// telemem 融合段是「多条记忆空格拼接的整串」，单条即可超全预算）
+std::string truncChars(const std::string& utf8, std::size_t maxChars) {
+    if (countChars(utf8) <= maxChars) return utf8;
+    std::size_t chars = 0;
+    std::size_t cut = 0;
+    while (cut < utf8.size()) {
+        if ((static_cast<unsigned char>(utf8[cut]) & 0xC0) != 0x80) {
+            if (chars >= maxChars) break;
+            ++chars;
+        }
+        ++cut;
+    }
+    return utf8.substr(0, cut);
+}
+
 MemoryPrefix parseMemoryPrefix(const std::string& text) {
     MemoryPrefix p;
     if (text.size() < 2 || text[0] != '[') return p;
@@ -142,20 +158,30 @@ std::string assembleContext(const std::vector<gateway::MemoryHit>& hits) {
     std::size_t idx = 0;
     for (int g = 0; g < 5 && taken < kMaxItems && idx < entries.size(); ++g) {
         if (entries[idx].group != g) continue;  // 空组：无标题不渲染
-        // 标题成本（计字不计条）：N ≤ kMaxItems=5 恒单数字 → 成本与 N 无关
-        const std::size_t titleCost = countChars(kGroupTitlePrefix[g]) + 3;
+        // 标题成本（计字不计条）：N ≤ kMaxItems=5 恒单数字 → 成本与 N 无关。
+        // +4 = 数字(1) + " 条\n"(3)——bug255 修正：原 +3 少计分隔空格 1 字，
+        // 截断收纳把预算填满后差 1 字现形（body 501 > 500）
+        const std::size_t titleCost = countChars(kGroupTitlePrefix[g]) + 4;
         std::vector<std::string> lines;
         while (idx < entries.size() && entries[idx].group == g &&
                taken < kMaxItems) {
-            const std::string line = renderContextLine(entries[idx].hit);
-            const std::size_t cost = countChars(line) + 1;  // +1 = 分隔换行
-            const std::size_t next =
-                usedChars + (lines.empty() ? titleCost : 0) + cost;
-            if (next > kMaxChars) break;  // 预算尽：组序即存活序（踩坑优先）
+            std::string line = renderContextLine(entries[idx].hit);
+            std::size_t cost = countChars(line) + 1;  // +1 = 分隔换行
+            const std::size_t budgetLeft =
+                kMaxChars - usedChars - (lines.empty() ? titleCost : 0);
+            if (cost > budgetLeft) {
+                // bug255：融合段单条超预算 → 按剩余字数截断收纳（预算不再
+                // 永远填不满导致 hook 静默零注入）；截断版占满预算即止
+                if (budgetLeft <= 1) break;  // 剩余放不下「截断版+换行」
+                line = truncChars(line, budgetLeft - 1);
+                cost = budgetLeft;
+            }
+            const bool firstLine = lines.empty();
             lines.push_back(std::move(line));
-            usedChars = next;
+            usedChars += (firstLine ? titleCost : 0) + cost;
             ++taken;
             ++idx;
+            if (usedChars >= kMaxChars) break;  // 预算尽
         }
         if (lines.empty()) break;  // 首条即放不下 → 整体截断（旧口径）
         body += std::string(kGroupTitlePrefix[g]) +

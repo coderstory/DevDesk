@@ -4,6 +4,7 @@
 #include "core/logging.h"
 #include "core/paths.h"
 #include "platform/json.h"
+#include "platform/keychain.h"
 
 #include <fstream>
 #include <system_error>
@@ -104,6 +105,39 @@ std::string redactSecretsForLog(const std::string& text,
         pos += 11;  // strlen("<redacted>")
     }
     return out;
+}
+
+// ── need256：提炼 key 钥匙串通道（见 telemem_config.h 契约）──
+
+std::string maskLlmKey(const std::string& key) {
+    if (key.empty()) return {};
+    if (key.size() < 8) return "****";
+    return key.substr(0, 3) + "****" + key.substr(key.size() - 4);
+}
+
+bool saveLlmKeyToKeychain(const std::string& key) {
+    if (key.empty()) return false;  // 空 key 无意义，拒存
+    return platform::keychain::storeSecret(kLlmKeychainService,
+                                           kLlmKeychainAccount, key)
+        .isOk();
+}
+
+std::string readLlmKeyFromKeychain() {
+    const auto r =
+        platform::keychain::loadSecret(kLlmKeychainService, kLlmKeychainAccount);
+    return r.isOk() ? r.value() : std::string{};
+}
+
+bool clearLlmKeyFromKeychain() {
+    return platform::keychain::deleteSecret(kLlmKeychainService,
+                                            kLlmKeychainAccount)
+        .isOk();
+}
+
+std::string readLlmKey() {
+    std::string key = readLlmKeyFromKeychain();
+    if (!key.empty()) return key;
+    return readLlmKeyFromClaudeSettings();
 }
 
 } // namespace module::memory::engine

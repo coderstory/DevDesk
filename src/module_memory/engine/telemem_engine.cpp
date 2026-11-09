@@ -419,11 +419,13 @@ void TelememEngine::runPipeline() {
     }
 
     // ⑥ telemem 拉起（TELEMEM_CONFIG + key 环境注入）→ 回环 8421 健康
+    // need256：key 来源改为「钥匙串（记忆页配置）优先，回落 Claude settings」
     setState(State::Preparing, "启动记忆引擎…");
-    const std::string llmKey = readLlmKeyFromClaudeSettings();
+    const std::string llmKey = readLlmKey();
     if (llmKey.empty()) {
         setState(State::Failed,
-                 "未读取到智谱 API key：请确认 Claude 设置（settings.json）中已配置");
+                 "未配置提炼 API key：请在记忆页「提炼 API key」卡录入（存本机"
+                 "钥匙串），或确认 Claude 设置（settings.json）已含 key");
         return;
     }
     const auto spawn = spawnDetached(

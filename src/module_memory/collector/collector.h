@@ -23,8 +23,12 @@ namespace module::memory::collector {
 
 // 轮询间隔常量（首版固定值；面板可调属后续批次）
 inline constexpr int kPollIntervalMs = 30000;
-// 段目标体积（§4.2 实测口径：清洗后按 4KB 切段）
-inline constexpr std::size_t kSegmentTargetBytes = 4096;
+// 段目标体积（bug254 定案：embedding 预算切段）。bge-small-zh-v1.5 上下文
+// 512 token 硬上限（llama-server n_ctx=512，抬 --ubatch-size 只会把 500 换成
+// 400 "larger than the max context size"，2026-11-10 POC 实测），中文 ≈1 字
+// 1 token；1024B≈341 汉字≈343 token 安全入模。QA 实测 ≤1.1KB 段 4/4 入库
+// 成功、1599B 起必败（evidence/2026-11-09-memory-flow-audit）。
+inline constexpr std::size_t kSegmentTargetBytes = 1024;
 // 单轮段预算（bug191 F-02 拍板 N=50，2026-11-05）：pollOnce 全局最多出 50 段。
 // 预算用尽的会话水位停在已出段边界（未消费行下轮续读，事件级幂等兜底）——
 // 水位在 readSession 内随读推进，预算必须落在读取侧才能「下轮再处理」；

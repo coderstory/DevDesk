@@ -308,6 +308,30 @@ REGISTER_TEST(memory_redact_secrets_for_log,
     return true;
 })
 
+REGISTER_TEST(memory_llm_key_keychain_channel,
+              "memory: need256 钥匙串 key 通道——掩码 + 存/取/清 + 钥匙串优先回落", {
+    const std::string kFake = "sk-test-fake-1234";
+    // 掩码纯函数契约（前3 + **** + 后4；<8 一律 ****；空入空出）
+    DOCTEST_CHECK_EQ(maskLlmKey(kFake), std::string("sk-****1234"));
+    DOCTEST_CHECK_EQ(maskLlmKey("short"), std::string("****"));
+    DOCTEST_CHECK_EQ(maskLlmKey(""), std::string());
+    // 空串拒存（红线：空 key 无意义）
+    DOCTEST_CHECK_FALSE(saveLlmKeyToKeychain(""));
+    // 钥匙串真实后端 roundtrip（独立 service 命名空间 devdesk.memory，不碰
+    // claude profile 条目；测毕必清）
+    DOCTEST_CHECK(saveLlmKeyToKeychain(kFake));
+    DOCTEST_CHECK_EQ(readLlmKeyFromKeychain(), kFake);
+    // 引擎统一出口：钥匙串优先——即便本机 settings.json 也有 key，取钥匙串值
+    DOCTEST_CHECK_EQ(readLlmKey(), kFake);
+    // 清除幂等（含条目不存在态）+ 回落 Claude settings 通道（等值断言，
+    // 不依赖本机是否配置过 settings key）
+    DOCTEST_CHECK(clearLlmKeyFromKeychain());
+    DOCTEST_CHECK(clearLlmKeyFromKeychain());
+    DOCTEST_CHECK_EQ(readLlmKeyFromKeychain(), std::string());
+    DOCTEST_CHECK_EQ(readLlmKey(), readLlmKeyFromClaudeSettings());
+    return true;
+})
+
 // ── 进程参数构造（不起真引擎）──
 
 REGISTER_TEST(memory_process_args_construction,

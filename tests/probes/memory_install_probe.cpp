@@ -32,6 +32,7 @@
 #include "core/mcp_tool.h"
 #include "module_mcp/mcp_service.h"
 #include "module_memory/collector/collector.h"
+#include "module_memory/engine/telemem_config.h"
 #include "module_memory/engine/telemem_engine.h"
 #include "module_memory/gateway/telemem_client.h"
 #include "module_memory/mcp/search_tool.h"
@@ -252,8 +253,10 @@ int cmdCollect(int argc, char* argv[]) {
                 continue;
             }
             ++accepted;
-            // 逐条检索回验：正文前 12 字节做探针短语（融合段应含已入库正文）
-            const std::string phrase = p.resultText.substr(0, 12);
+            // 逐条检索回验：正文前 12 字节做探针短语（融合段应含已入库正文）。
+            // bug255：必须按码点边界截取——字节 substr 劈开多字节字符产生非法
+            // UTF-8，telemem JSON 解析失败回 400，回验恒败（2026-11-10 实测）。
+            const std::string phrase = col::truncateUtf8(p.resultText, 12);
             auto r = eng.search(phrase, 5, 8000);
             int hits = 0;
             if (r.isOk()) {
@@ -323,6 +326,84 @@ int cmdMcpServe(int argc, char* argv[]) {
 
 }  // namespace
 
+// need256 E2E：假 key 走真实钥匙串通道 → 引擎 Running（启动透传生效）→
+// add_memory(infer=true) 真实出机 → 云端 401 fail-closed 文案可见（bug254
+// 口径：真因透传）。key 值只进内存/钥匙串，绝不打印（密钥红线，出参过脱敏）。
+int cmdKeyE2e(int argc, char* argv[]) {
+    int timeoutSec = 900;
+    for (int i = 2; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--timeout-sec") == 0 && i + 1 < argc) {
+            timeoutSec = std::atoi(argv[++i]);
+        }
+    }
+    const std::string kFakeKey = "sk-e2e-fake-need256";
+    if (!engine::saveLlmKeyToKeychain(kFakeKey)) {
+        std::cout << "[probe] FAIL 假 key 存钥匙串失败\n";
+        g_fail++;
+        return finish();
+    }
+    std::cout << "[probe] 假 key 已存钥匙串（devdesk.memory/llm-key，值不打印）\n";
+    struct KeyGuard {  // 出口保证：测毕必清（真钥匙串不残留测试凭据）
+        ~KeyGuard() { engine::clearLlmKeyFromKeychain(); }
+    } guard;
+    auto& eng = engine::TelememEngine::global();
+    eng.startAsync();
+    std::string lastLine;
+    bool running = false;
+    for (int i = 0; i < timeoutSec * 2; ++i) {
+        const auto snap = eng.snapshot();
+        const std::string line =
+            std::string(stateName(snap.state)) + "|" + snap.detail;
+        if (line != lastLine) {
+            std::cout << "[probe] t+" << (i / 2) << "." << (i % 2 ? 5 : 0)
+                      << "s " << line << "\n";
+            std::fflush(stdout);
+            lastLine = line;
+        }
+        if (snap.state == engine::TelememEngine::State::Running) {
+            running = true;
+            std::cout << "[probe] PASS 引擎 Running（钥匙串 key 启动透传生效）\n";
+            break;
+        }
+        if (snap.state == engine::TelememEngine::State::Failed) {
+            std::cout << "[probe] FAIL 引擎 Failed（key 通道未透传？）\n";
+            printSnapshot(snap);
+            g_fail++;
+            return finish();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (!running) {
+        std::cout << "[probe] FAIL " << timeoutSec << "s 未达 Running\n";
+        g_fail++;
+        return finish();
+    }
+    // 提炼步真实出机（与面板 runInferStep 同一执行器 addInferred）：假 key
+    // 必失败且文案含 401 真因（fail-closed）
+    gateway::TelememHttpRetriever inferEngine;
+    const auto r = inferEngine.addInferred(
+        "need256 e2e 烟测：假 key 提炼调用，预期 401 fail-closed");
+    if (r.isOk()) {
+        std::cout << "[probe] FAIL 假 key 提炼意外成功（fail-closed 失效）\n";
+        g_fail++;
+        return finish();
+    }
+    const std::string msg =
+        engine::redactSecretsForLog(r.errorMessage(), kFakeKey);
+    std::cout << "[probe] 提炼调用已真实发出，fail-closed 文案: " << msg << "\n";
+    std::fflush(stdout);
+    const bool looks401 = msg.find("401") != std::string::npos ||
+                          msg.find("authentication") != std::string::npos ||
+                          msg.find("Unauthorized") != std::string::npos;
+    if (!looks401) {
+        std::cout << "[probe] FAIL 错误文案未透传 401 真因\n";
+        g_fail++;
+        return finish();
+    }
+    std::cout << "[probe] PASS need256 key 通道 E2E（配置→透传→提炼→401 fail-closed）\n";
+    return finish();
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         // 裸调用（ctest 守卫链 add_test 无参注册）退 77 = SKIP_RETURN_CODE 跳过：
@@ -337,6 +418,7 @@ int main(int argc, char* argv[]) {
     if (cmd == "install") return cmdInstall(argc, argv);
     if (cmd == "collect") return cmdCollect(argc, argv);
     if (cmd == "mcpserve") return cmdMcpServe(argc, argv);
+    if (cmd == "key-e2e") return cmdKeyE2e(argc, argv);
     std::cerr << "未知子命令: " << cmd << "\n";
     return 2;
 }
