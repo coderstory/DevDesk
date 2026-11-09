@@ -20,8 +20,8 @@
 
     {"type": "drag", "from": "app.term.grid.row.0", "to": "app.term.grid.row.1", "steps": 12,
      "_comment": "物理拖选 2 行（press→逐段 move→release，每段一帧）"},
-    {"type": "assert", "check": "exists", "id": "app.term.sel.3",
-     "_comment": "选区高亮 rect 落树 = 拖选链路走通（真死锁时此步不返回）。注意 id 是视觉行号，当前指针→行映射存在 +40px（窗口标题带）偏移，拖 row.0→row.1 落在 sel.3/sel.4；该偏移是独立缺陷，修正时此处需同步"},
+    {"type": "assert", "check": "exists", "id": "app.term.sel.0",
+     "_comment": "选区高亮 rect 落树 = 拖选链路走通（真死锁时此步不返回）。id 是视觉行号；bug245 修后指针→行映射已按页面原点对齐，拖 row.0→row.1 落 sel.0/sel.1"},
     {"type": "screenshot", "path": "terminal-input-02-selection.png"},
 
     {"type": "key", "name": "Shortcut+C", "id": "app.term.input",

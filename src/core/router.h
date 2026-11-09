@@ -25,10 +25,13 @@ public:
     void navigateTo(PageId page, const std::string& payload = "");
     PageId currentPage() const;
 
-    // 页面区原点 x（窗口坐标）：row(侧边栏, app.page) 使模块内坐标原点是页面区左上而非窗口左上，
-    // 模块换算指针位置时减去本值（y 方向原点恒 0）。app 层每帧写入
+    // 页面区原点（窗口坐标）：row(侧边栏, app.page) 使模块内坐标原点是页面区左上而非窗口左上，
+    // 模块换算指针位置时减去本值。x = 侧边栏占宽；y = 标题条带高 bodyTop（chrome 40 / 回退
+    // inset / 全屏 0——bug245 实证指针 y 含标题带，「y 恒 0」旧口径作废）。app 层每帧写入
     float pageOriginX() const { return pageOriginX_; }
     void setPageOriginX(float x) { pageOriginX_ = x; }
+    float pageOriginY() const { return pageOriginY_; }
+    void setPageOriginY(float y) { pageOriginY_ = y; }
 
     // 已注册模块的只读访问（侧边栏渲染用）
     const std::vector<Module*>& modules() const { return modules_; }
@@ -57,6 +60,7 @@ private:
     std::vector<Module*> modules_;
     PageId current_ = PageId::Home;
     float pageOriginX_ = 0.0f;  // 页面区原点 x（app_sidebar compose 每帧写入）
+    float pageOriginY_ = 0.0f;  // 页面区原点 y（同上；标题条带高，全屏 0）
 
     // 跨模块跳转负载（单槽）：同一时刻最多一个挂起负载
     PageId pendingPayloadPage_ = PageId::Home;

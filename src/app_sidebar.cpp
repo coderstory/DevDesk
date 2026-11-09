@@ -1401,6 +1401,8 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
             const float pageW = pageContentWidth(screen.width);
             // 页面区原点 x = 侧边栏实际占宽；模块把窗口坐标指针位置换算成页面坐标时经 Router 取本值
             router->setPageOriginX(sidebarWidth());
+            // y 同缝（bug245）：页面区顶 = 标题条带底，指针 y 是窗口绝对含标题带
+            router->setPageOriginY(bodyTop);
             ui.stack("app.page")
                 .size(pageW, bodyScreen.height)
                 .clip()

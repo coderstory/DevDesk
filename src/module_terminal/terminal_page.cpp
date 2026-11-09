@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include "core/logging.h"
+#include "core/router.h"  // bug245：指针窗口坐标→页面坐标经 Router 页面原点换算
 #include "core/platform/ime_bridge.h" // eui_ime_trace_log（ImeTrace 段1 与 EUI/win 段2/3 同落 ime-trace.log）
 #include "core/render/text.h"
 #include "core/component_theme.h"
@@ -281,22 +282,29 @@ GridLayout TerminalPage::compose(
                 pendingCols_ = 0;
             }
 
-            // 行/列 → 逻辑像素（选区/IME/光标共用；真实 cell 度量——bug243/245 错位根因）
+            // 行/列 → 逻辑像素（选区/IME/光标共用；真实 cell 度量——bug243/245 错位根因）。
+            // bug245：折算后仍是窗口绝对坐标（含侧栏宽 + 标题条带），而 gridTop 是页面局部
+            // 常量——先经 Router 页面原点（app_sidebar 每帧写入）落到页面坐标再进 rowOf/colOf
+            //（与 todo 拖拽 windowToCompose 同缝）；读一次捕获值，勿在指针回调里现取
+            const core::Router* router = ::core::appRouter();
+            const float pageOriginX = router != nullptr ? router->pageOriginX() : 0.0f;
+            const float pageOriginY = router != nullptr ? router->pageOriginY() : 0.0f;
             const float gridTopV = gridTop;
             const float cellHV = cellH;
-            const auto rowOf = [gridTopV, cellHV](double logicalY) {
-                return static_cast<int>((logicalY - gridTopV) / cellHV);
+            const auto rowOf = [gridTopV, cellHV](double pageY) {
+                return static_cast<int>((pageY - gridTopV) / cellHV);
             };
-            const auto colOf = [cellW](double logicalX) {
-                return std::max(0, static_cast<int>(logicalX / cellW));
+            const auto colOf = [cellW](double pageX) {
+                return std::max(0, static_cast<int>(pageX / cellW));
             };
             // Press/Release=物理（除 scale），Move=逻辑（input_types.h 契约）——统一折算
-            // 到逻辑坐标再进 rowOf/colOf
-            auto toLogical = [](const eui::PointerEvent& e) {
+            // 到页面坐标再进 rowOf/colOf
+            auto toPage = [pageOriginX, pageOriginY](const eui::PointerEvent& e) {
                 const double s = e.scale > 0.0 ? static_cast<double>(e.scale) : 1.0;
                 const bool physical = e.space != eui::PointerSpace::Logical;
-                return std::pair<double, double>(physical ? e.x / s : e.x,
-                                                 physical ? e.y / s : e.y);
+                return std::pair<double, double>(
+                    (physical ? e.x / s : e.x) - pageOriginX,
+                    (physical ? e.y / s : e.y) - pageOriginY);
             };
             SessionController* ctrl = &controller;
 
@@ -305,9 +313,9 @@ GridLayout TerminalPage::compose(
                 .size(screen.width, bodyH)
                 .margin(0.0f, gridTop, 0.0f, 0.0f)
                 .color(Color{0, 0, 0, 0.01f})
-                .onPress([this, toLogical, rowOf, colOf](const eui::PointerEvent& e,
-                                                        const eui::Rect&) {
-                    auto [lx, ly] = toLogical(e);
+                .onPress([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
+                                                     const eui::Rect&) {
+                    auto [lx, ly] = toPage(e);
                     selecting_ = true;
                     hasSelection_ = false;
                     selARow_ = rowOf(ly);
@@ -315,18 +323,19 @@ GridLayout TerminalPage::compose(
                     selHRow_ = selARow_;
                     selHCol_ = selACol_;
                 })
-                .onMove([this, rowOf, colOf](const eui::PointerEvent& e, const eui::Rect&) {
+                .onMove([this, toPage, rowOf, colOf](const eui::PointerEvent& e, const eui::Rect&) {
                     if (!selecting_) return false;
-                    selHRow_ = rowOf(e.y);
-                    selHCol_ = colOf(e.x);
+                    auto [lx, ly] = toPage(e);  // Move 已是逻辑，仅补页面原点（bug245）
+                    selHRow_ = rowOf(ly);
+                    selHCol_ = colOf(lx);
                     hasSelection_ = true;
                     return true;
                 })
-                .onRelease([this, toLogical, rowOf, colOf](const eui::PointerEvent& e,
-                                                          const eui::Rect&) {
+                .onRelease([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
+                                                        const eui::Rect&) {
                     if (!selecting_) return;
                     selecting_ = false;
-                    auto [lx, ly] = toLogical(e);
+                    auto [lx, ly] = toPage(e);
                     selHRow_ = rowOf(ly);
                     selHCol_ = colOf(lx);
                     hasSelection_ = !(selARow_ == selHRow_ && selACol_ == selHCol_);
