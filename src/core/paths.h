@@ -47,6 +47,11 @@ std::filesystem::path claudeSettingsFile();
 // 调用方走各平台 home 默认分支
 std::filesystem::path claudeConfigDirOverride();
 
+// Claude Code 用户级全局配置 ~/.claude.json（顶层 mcpServers 所在文件）。
+// DEVDESK_CLAUDE_CONFIG_DIR 可覆盖为 <env>/.claude.json（测试隔离，与
+// claudeSettingsFile 同源覆盖变量）；同样不随 DEVDESK_DATA_ROOT 迁移
+std::filesystem::path claudeConfigFile();
+
 // Claude Code 企业托管 managed-settings.json（上层覆盖检测用，只读不写）。Windows
 // C:\ProgramData\ClaudeCode\；macOS /Library/Application Support/ClaudeCode/；POSIX /etc/claude-code/
 std::filesystem::path claudeManagedSettingsFile();

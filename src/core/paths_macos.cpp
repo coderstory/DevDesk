@@ -48,6 +48,17 @@ fs::path claudeSettingsFile() {
     return base / ".claude" / "settings.json";
 }
 
+fs::path claudeConfigFile() {
+    // 覆盖分支复用同一 env：override 返回 <env>/settings.json，取其父目录
+    const fs::path overridePath = claudeConfigDirOverride();
+    if (!overridePath.empty()) {
+        return overridePath.parent_path() / ".claude.json";
+    }
+    const char* home = std::getenv("HOME");
+    fs::path base(home ? home : "");
+    return base / ".claude.json";
+}
+
 fs::path claudeManagedSettingsFile() {
     return fs::path("/Library/Application Support/ClaudeCode/managed-settings.json");
 }

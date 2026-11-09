@@ -13,6 +13,7 @@ add_library(devdesk_module_mcp STATIC
     mcp_http_handler.cpp
     mcp_tools_builtin.cpp
     html_to_markdown.cpp
+    claude_mcp_config.cpp
     mcp_page_module.cpp
 )
 

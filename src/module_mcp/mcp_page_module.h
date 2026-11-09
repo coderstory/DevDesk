@@ -24,6 +24,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/tool.h"
+#include "claude_mcp_config.h"
 
 #include <components/theme.h>
 
@@ -94,6 +95,27 @@ private:
     void drawMemoryModuleRow(eui::Ui& ui, float contentW,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& comp);
+
+    // ── 「安装到 Claude Code」（need244）──
+    // 三态 = 未装可装 / 已装可卸 / 不可操作（服务未运行或无 ~/.claude.json）。
+    // 状态在详情页每次打开时现读文件（不跨会话缓存、不逐帧读 105KB 大文件），
+    // 安装/卸载后立即重读刷新按钮态；写失败原因留在 ccError_ 供就地红字。
+    struct CcButtonState {
+        bool filePresent = false;
+        bool installed = false;
+        bool serviceRunning = false;  // running 且 port > 0
+        bool actionable() const { return filePresent && serviceRunning; }
+    };
+    void refreshClaudeInstallState();
+    void toggleClaudeInstall();
+    void drawClaudeInstallButton(eui::Ui& ui, float x, float y,
+                                 const CcButtonState& st,
+                                 const core::theme::Tokens& t,
+                                 const components::theme::ThemeColorTokens& comp);
+
+    CcButtonState ccState_;
+    std::string ccError_;   // 安装/卸载失败原因（成功帧清空）
+    std::string ccNotice_;  // 审计 P1-4：安装成功的「需重启 Claude Code 生效」提示（重开弹窗清）
 
     ::core::mcp::McpToolRegistry* registry_;
 

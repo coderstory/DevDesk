@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {
+          "enabledModules": [
+            "home",
+            "markdown",
+            "todo",
+            "schedule",
+            "claude_proxy",
+            "memory",
+            "mcp",
+            "settings"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Mcp.hit",
+      "_comment": "真点击切 MCP 页"
+    },
+    {
+      "type": "wait",
+      "until": "exists",
+      "id": "mcp.grid"
+    },
+    {
+      "type": "click",
+      "id": "mcp.card.notes_read.hit",
+      "_comment": "真点击开工具详情弹窗"
+    },
+    {
+      "type": "wait",
+      "until": "exists",
+      "id": "mcp.dialog.detail.btn.claude.bg"
+    },
+    {
+      "type": "assert",
+      "check": "exists",
+      "id": "mcp.dialog.detail.btn.claude.bg",
+      "_comment": "need244：安装钮在详情页操作行"
+    },
+    {
+      "type": "assert",
+      "check": "exists",
+      "id": "mcp.dialog.detail.btn.try.bg"
+    },
+    {
+      "type": "assert",
+      "check": "exists",
+      "id": "mcp.dialog.detail.btn.close.bg"
+    },
+    {
+      "type": "assert",
+      "check": "geometry",
+      "id": "mcp.dialog.detail.btn.claude.bg",
+      "op": "within-window",
+      "_comment": "安装钮不越窗口"
+    },
+    {
+      "type": "wait",
+      "ms": 400,
+      "_comment": "等弹窗淡入动画收敛再落图"
+    },
+    {
+      "type": "screenshot",
+      "path": "need244-detail-claude-btn.png"
+    },
+    {
+      "type": "dump",
+      "path": "need244-detail-dump.txt",
+      "_comment": "当帧元素树（含安装钮/提示槽几何）"
+    }
+  ]
+}

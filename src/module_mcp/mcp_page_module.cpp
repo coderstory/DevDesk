@@ -10,6 +10,7 @@
 
 #include "core/component_theme.h"
 #include "core/logging.h"
+#include "core/paths.h"  // need244：~/.claude.json 定位（claudeConfigFile）
 #include "core/theme.h"
 #include "core/tool.h"
 #include "mcp_health_tool.h"
@@ -660,6 +661,55 @@ void McpPageModule::drawMemoryModuleRow(
         .build();
 }
 
+void McpPageModule::refreshClaudeInstallState() {
+    const cc::ConfigState st = cc::readConfigState(core::paths::claudeConfigFile());
+    ccState_.filePresent = st.filePresent;
+    ccState_.installed = st.installed;
+    const auto live = app::mcp::status();
+    ccState_.serviceRunning = live.running && live.port > 0;
+    if (!st.error.empty()) ccError_ = st.error;
+}
+
+void McpPageModule::toggleClaudeInstall() {
+    if (!ccState_.actionable()) return;  // 置灰态点击不生效（防御：disabled 已拦）
+    const auto file = core::paths::claudeConfigFile();
+    core::Result<void> r;
+    if (ccState_.installed) {
+        r = cc::removeServerFile(file);
+    } else {
+        // 端点拼法同既有先例（手册 §3.8）：单一 HTTP 服务 + /mcp
+        const auto live = app::mcp::status();
+        r = cc::installServerFile(
+            file, "http://127.0.0.1:" + std::to_string(live.port) + "/mcp");
+    }
+    ccError_ = r.isFail() ? r.errorMessage() : std::string();
+    // 审计 P1-4：写入成功 ≠ 立即生效（Claude Code 启动时读配置）——就地提示重启
+    if (r.isOk() && !ccState_.installed) {
+        ccNotice_ = "已写入，重启 Claude Code 后生效";
+    } else {
+        ccNotice_.clear();
+    }
+    refreshClaudeInstallState();  // 立即重读，按钮态与文件同步
+    core::platform::requestUiUpdate();
+}
+
+void McpPageModule::drawClaudeInstallButton(
+    eui::Ui& ui, float x, float y, const CcButtonState& st,
+    const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp) {
+    // 文案三态：未装=安装 / 已装=卸载；不可操作时保留当前语义文案但置灰
+    const std::string label = st.installed ? "从 Claude Code 卸载" : "安装到 Claude Code";
+    components::button(ui, "mcp.dialog.detail.btn.claude")
+        .theme(comp, false)  // 次要操作：与「关闭」同级灰底，不抢「试一下」主色
+        .position(x, y)
+        .size(160.0f, 32.0f)
+        .text(label)
+        .fontSize(core::theme::scaled(12.0f))
+        .disabled(!st.actionable())
+        .onClick([this] { toggleClaudeInstall(); })
+        .build();
+}
+
 void McpPageModule::drawDetailDialog(
     eui::Ui& ui, const eui::Screen& screen, const core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& comp) {
@@ -923,7 +973,41 @@ void McpPageModule::drawDetailDialog(
                 })
                 .build();
 
-            // 操作行：「试一下」（运行中禁用）+「关闭」
+            // 操作行：「安装到 Claude Code」（need244）+「试一下」（运行中禁用）+「关闭」。
+            // 三个钮同行不重叠：claude 20..180、hint 188..396、close 404..476、
+            // try 484..580（w=600，右缘留 20）。
+            const CcButtonState cc = ccState_;
+            drawClaudeInstallButton(ui, 20.0f, h - 52.0f, cc, t, comp);
+            {
+                // 就地提示槽：无 .claude.json / 服务未运行 / 写失败 / 安装成功待重启，四选一
+                std::string hint;
+                bool isError = false;
+                if (!cc.filePresent) {
+                    hint = "未检测到 Claude Code（~/.claude.json 不存在）";
+                } else if (!cc.serviceRunning) {
+                    hint = "请先启动 MCP 服务";
+                } else if (!ccError_.empty()) {
+                    hint = ccError_;
+                    isError = true;
+                } else if (!ccNotice_.empty()) {
+                    hint = ccNotice_;
+                }
+                if (!hint.empty()) {
+                    const float hintW = 404.0f - 8.0f - 188.0f;
+                    ui.text("mcp.dialog.detail.claude.hint")
+                        .position(188.0f, h - 52.0f)
+                        .size(hintW, 32.0f)
+                        .text(hint)
+                        .fontSize(core::theme::scaled(11.0f))
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(isError ? t.colors.errorText
+                                       : t.colors.textTertiary)
+                        .maxWidth(hintW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
+                        .build();
+                }
+            }
             components::button(ui, "mcp.dialog.detail.btn.try")
                 .theme(comp, true)
                 .position(w - 20.0f - 96.0f, h - 52.0f)
@@ -989,6 +1073,11 @@ void McpPageModule::openDetail(const std::string& name) {
     if (found.isFail()) return;  // 工具已被注销：不开空弹窗
     detailTool_ = found.value();
     buildParamSpecs();  // 池146：按当前工具 inputSchema 重建参数表单规格
+    // need244：详情页每次打开都重读 ~/.claude.json（不跨会话缓存），并清上一轮写
+    // 失败原因与「已写入」提示（提示只属于本次点击后的窗口期，重开视为过期）
+    ccError_.clear();
+    ccNotice_.clear();
+    refreshClaudeInstallState();
     // 换工具打开：清上一工具的残留结果（同工具重开保留在途/已完成态）
     if (tryToolName_ != name && !tryRunning()) {
         std::lock_guard<std::mutex> lk(tryMutex_);
