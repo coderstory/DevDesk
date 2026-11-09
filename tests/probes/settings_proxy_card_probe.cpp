@@ -4,7 +4,7 @@
 // 参数注入的代理运行面（运行/接管/警告 0-2 条）构图一帧落 PNG。
 //
 // 用法：
-//   settings_proxy_card_probe --theme light --warns 2 --size 1000x640 \
+//   settings_proxy_card_probe --theme light --warns 2 --size 1000x640
 //       --out evidence/unify-155/after --tag after-light-w2
 //   --theme light|dark（缺省 light）  --warns 0|1|2（缺省 0）
 //   --stopped（未运行/未接管态；缺省运行+已接管常态）

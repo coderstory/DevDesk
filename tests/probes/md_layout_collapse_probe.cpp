@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
     const char* made = mkdtemp(tmpl);
     if (made == nullptr) return 2;
     const fs::path notesDir = made;
-    setenv("DEVDESK_NOTES_DIR", notesDir.string().c_str(), 1);
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", notesDir.string());
     writeFile(notesDir / "Alpha.md", "# Alpha\n\n第一段。\n\n## 小节\n\n正文。\n");
     writeFile(notesDir / "Sub" / "Beta.md", "# Beta\n\n子目录笔记。\n");
 

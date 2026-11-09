@@ -11,14 +11,32 @@
 #include <ui_kit/splash.h>
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
 
-// 序列帧直落证据目录（git-ignored，evidence-capture 口径）
-static const char* kSplashSeqOutDir =
-    "/Users/coderstory/dev/DevDesk/evidence/sidebar-splash-occlusion";
+// 序列帧直落证据目录（git-ignored，evidence-capture 口径）。
+// 跨平台：优先 SPLASH_SEQ_OUT 环境变量；否则从可执行路径反推仓库根
+// （build/tests/<exe> 上三级），落 <仓库根>/evidence/sidebar-splash-occlusion；
+// 反推失败退回当前目录相对路径。历史硬编码 Mac 绝对路径已退役（Windows/CI 可跑）。
+static std::string splashSeqOutDir(const char* argv0) {
+    namespace fs = std::filesystem;
+    if (const char* env = std::getenv("SPLASH_SEQ_OUT"); env != nullptr && *env != '\0') {
+        return env;
+    }
+    std::error_code ec;
+    const fs::path exe = fs::absolute(fs::path(argv0 != nullptr ? argv0 : ""), ec);
+    if (!ec && !exe.empty()) {
+        const fs::path root = exe.parent_path().parent_path().parent_path();
+        if (fs::exists(root / "CMakeLists.txt", ec)) {
+            return (root / "evidence" / "sidebar-splash-occlusion").string();
+        }
+    }
+    return "splash-occlusion-shots";
+}
 
 // app:: 层桩（probe 不建应用级 UI；dsl_app_impl 模板引用 dslAppConfig）
 namespace app {
@@ -52,6 +70,12 @@ int main(int argc, char* argv[]) {
 
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
+
+    const std::string outDir = splashSeqOutDir(argc > 0 ? argv[0] : nullptr);
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(outDir, ec);
+    }
 
     // 采样点：淡入中段(0.05/0.15) / 全遮盖(0.3/0.5/0.7) / 交叉淡化(0.95/1.05/1.15)
     // / 收尾(1.25=主界面)
@@ -100,7 +124,7 @@ int main(int argc, char* argv[]) {
             passed = false;
             break;
         }
-        const std::string path = std::string(kSplashSeqOutDir) + "/" + name + ".png";
+        const std::string path = outDir + "/" + name + ".png";
         if (!probe::writeRgbaToPng(path, rgba.data(), iw, ih)) {
             std::cerr << "FAIL: PNG 落盘失败 " << path << std::endl;
             passed = false;
