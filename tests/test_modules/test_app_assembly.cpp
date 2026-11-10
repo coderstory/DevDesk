@@ -28,6 +28,7 @@
 #include "platform/wallpaper_capability.h"  // wallpaper 行空工厂的唯一合法条件
 
 #include <eui/dsl.h>
+#include <eui/app.h>  // consumeWindowRequests：查看器分支向进程级窗口请求队列入队，用例尾清仓
 
 #include <algorithm>
 #include <chrono>
@@ -389,13 +390,18 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
 
     // 7. 空路径 / 空 Router → 原地不动、不崩（空 router 先于查看器分支返回——
-    //    OS 漏斗约定调用方必须持有 Router）
+    //    OS 漏斗约定调用方必须持有 Router）。页面断言取相对值：6b 已切到
+    //    Markdown，此处只断言「空路径不切页」这一行为本身
+    const auto pageBefore7 = jsonRouter.currentPage();
     app::assembly::dispatchFileOpen(&jsonRouter, "", notesDir);
-    DOCTEST_CHECK_EQ(jsonRouter.currentPage(), ::core::PageId::ClaudeProxy);
+    DOCTEST_CHECK_EQ(jsonRouter.currentPage(), pageBefore7);
     app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
     DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
 
     module::markdown::resetViewerSessionsForTest();
+    // 用例卫生：本用例查看器分支向 EUI-NEO 进程级窗口请求队列入过队（session
+    // 缝清不掉它），取走即弃——不把残留状态留给下游用例
+    app::consumeWindowRequests();
     std::filesystem::remove_all(notesDir, ec);
     return true;
 })
