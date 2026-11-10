@@ -183,10 +183,14 @@ int main(int argc, char* argv[]) {
             std::cerr << "md_viewer_probe: FAIL——命中矩形未绘制（查询缝断？）\n";
             passed = false;
         }
-        // Enter ×4：逐跳 scrollOffset 回读单调推进（首跳允许原地，之后必须推进）
+        // Enter ×4：逐跳 scrollOffset 回读单调推进（首跳允许原地，之后必须推进）。
+        // 读前补一帧 settle：setScrollOffset 帧末消费写的是滚动状态，元素
+        // scrollOffset 字段要等下一帧 build 才反映新值——首版探针读到的恒是
+        // 上一帧 build 值（滞后一跳），把正常的 Shift 反向误报成 964>496
         float prev = -1.0f;
         for (int step = 0; step < 4 && passed; ++step) {
             reqs[0].onKeyEvent(pressKey(eui::InputKey::Enter));
+            composeFrame(reqs[0]);
             composeFrame(reqs[0]);
             const float off =
                 ui->find(module::markdown::kViewerScrollId)->scrollOffset;
@@ -200,6 +204,7 @@ int main(int argc, char* argv[]) {
         // Shift+Enter 回退：offset 不增
         if (passed) {
             reqs[0].onKeyEvent(pressKey(eui::InputKey::Enter, false, /*shift=*/true));
+            composeFrame(reqs[0]);
             composeFrame(reqs[0]);
             const float off =
                 ui->find(module::markdown::kViewerScrollId)->scrollOffset;
