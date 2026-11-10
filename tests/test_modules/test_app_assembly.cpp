@@ -354,6 +354,14 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
                                     notesDir);
     DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(2));
 
+    // 4c. 大写扩展名（OS 关联送达大小写不敏感）→ 同查看器分支（文件不在盘上
+    //     也照建 session——B7 占位在窗内呈现，路由语义与文件存在性无关）
+    app::assembly::dispatchFileOpen(&router, (notesDir / "README.MD").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
+    app::assembly::dispatchFileOpen(&router, "c.Markdown", notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(4));
+
     // 5. Markdown 被关（未注册）→ 查看器分支照常开窗（独立窗不依赖 Router 注册态），
     //    Router 原地不动且不往关掉的模块投递负载
     ::core::Router gatedRouter;
@@ -366,7 +374,7 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(gatedRouter.currentPage(), gatedBefore);  // 主窗原地（旧为回退 Home）
     DOCTEST_CHECK_EQ(gatedRouter.consumePendingPayload(::core::PageId::Markdown),
                      std::string());  // 不往关掉的模块投递
-    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(5));
 
     // 6. .json → Claude 页（无负载切页，且不碰笔记目录）
     ::core::Router jsonRouter;
@@ -387,7 +395,7 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     app::assembly::dispatchFileOpen(&jsonRouter, (notesDir / "x.txt").string(),
                                     notesDir);
     DOCTEST_CHECK_EQ(jsonRouter.currentPage(), ::core::PageId::Markdown);
-    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(5));
 
     // 7. 空路径 / 空 Router → 原地不动、不崩（空 router 先于查看器分支返回——
     //    OS 漏斗约定调用方必须持有 Router）。页面断言取相对值：6b 已切到
@@ -396,7 +404,7 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     app::assembly::dispatchFileOpen(&jsonRouter, "", notesDir);
     DOCTEST_CHECK_EQ(jsonRouter.currentPage(), pageBefore7);
     app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(5));
 
     module::markdown::resetViewerSessionsForTest();
     // 用例卫生：本用例查看器分支向 EUI-NEO 进程级窗口请求队列入过队（session
