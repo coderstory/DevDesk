@@ -5,6 +5,7 @@
 #include "md_viewer_window.h"
 
 #include "markdown_module_internal.h"
+#include "md_file_open.h"  // readFileUtf8：UTF-8 路径宽打开（BUG-1 修复缝）
 #include "md_block_model.h"
 #include "md_viewer_search.h"
 
@@ -452,18 +453,17 @@ void openViewerWindow(const std::string& path) {
         session->pageId = session->title + " #" + std::to_string(n);
     }
 
-    // 流程 B5/B7：读文件失败仍开窗，窗内错误占位；窗口照开照关
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec) || ec) {
-        session->loadError = "文件不存在或已被移动";
+    // 流程 B5/B7：读文件失败仍开窗，窗内错误占位；窗口照开照关。
+    // 读取走 readFileUtf8 缝：std::ifstream 的 std::string 重载在 Windows 走窄
+    // 字符 ANSI fopen，中文路径必败（BUG-1 根因）；缝内经 fs::path 宽打开。
+    auto loaded = readFileUtf8(path);
+    if (loaded.isFail()) {
+        session->loadError =
+            loaded.errorCode() == core::ErrorCode::FileNotFound
+                ? "文件不存在或已被移动"
+                : "无读取权限或打开失败";
     } else {
-        std::ifstream f(path, std::ios::binary);
-        if (!f.is_open()) {
-            session->loadError = "无读取权限或打开失败";
-        } else {
-            session->content.assign(std::istreambuf_iterator<char>(f),
-                                    std::istreambuf_iterator<char>());
-        }
+        session->content = loaded.value();
     }
     session->contentHash = mdBlockHash(session->content);
     if (session->loadError.empty() && !session->content.empty()) {

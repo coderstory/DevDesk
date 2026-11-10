@@ -84,6 +84,26 @@ REGISTER_TEST(md_open_external_copied_as_md,
     return true;
 })
 
+REGISTER_TEST(md_open_read_utf8_path_viewer_load,
+              "md_file_open: 中文路径文件读取走宽打开（BUG-1：窄 ANSI ifstream 会红）", {
+    const auto tmp = test_support::makeTempDir("devdesk_mdopen_test_", "utf8read");
+    // "中文测试.md" 的 UTF-8 字节序列（显式转义，避开源码/shell 编码差异）
+    const fs::path file =
+        tmp / fs::path("\xE4\xB8\xAD\xE6\x96\x87\xE6\xB5\x8B\xE8\xAF\x95.md");
+    DOCTEST_REQUIRE(writeTextFile(file, "# 中文标题\n正文ABC\n"));
+
+    auto r = module::markdown::readFileUtf8(file.string());
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value(), std::string("# 中文标题\n正文ABC\n"));
+
+    // 不存在 → FileNotFound（查看器「文件不存在或已被移动」态）
+    auto r2 = module::markdown::readFileUtf8((tmp / "ghost.md").string());
+    DOCTEST_REQUIRE(r2.isFail());
+
+    fs::remove_all(tmp);
+    return true;
+})
+
 REGISTER_TEST(md_open_rejects_bad_inputs,
               "md_file_open: 不存在/目录/空路径拒绝；笔记目录缺失时自动创建", {
     const auto tmp = test_support::makeTempDir("devdesk_mdopen_test_", "reject");
