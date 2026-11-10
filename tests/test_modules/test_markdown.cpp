@@ -8995,10 +8995,14 @@ REGISTER_TEST(md_viewer_window_title_and_blank,
             --back;
         }
         DOCTEST_REQUIRE(back > 0);
-        const unsigned char lead = static_cast<unsigned char>(ctrunc[back - 1]);
+        // 循环退出时 back 停在「lead 字节的下一位」（[back-1] 为首个非续字节）
+        // → lead 位 = back-1，码点占 [back-1, back-1+len)，恰终止于 ell。
+        // （首版写 back+len 多加一——back 已含 lead 位偏移，off-by-one 假红）
+        const size_t leadPos = back - 1;
+        const unsigned char lead = static_cast<unsigned char>(ctrunc[leadPos]);
         const size_t len =
             lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
-        DOCTEST_CHECK_EQ(back + len, ell);  // 码点恰好终止于省略号前沿
+        DOCTEST_CHECK_EQ(leadPos + len, ell);  // 码点恰好终止于省略号前沿
         if (ell + 3 < ctrunc.size()) {      // 后沿：省略号后必为 lead 字节
             DOCTEST_CHECK((static_cast<unsigned char>(ctrunc[ell + 3]) & 0xC0) !=
                           0x80);
