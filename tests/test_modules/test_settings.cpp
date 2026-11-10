@@ -3726,8 +3726,7 @@ REGISTER_TEST(settings_card_registry_order,
         mod->onStart();
         const std::vector<std::string> wantGeneral = {
             "settings.cards.pair.0",
-            "settings.card.proxy",
-            "settings.card.md_assoc"};   // UAT5：代理卡迁通用 tab（配对行下方全宽）；F-10：.md 关联卡尾随
+            "settings.card.proxy"};   // UAT5：代理卡迁通用 tab（配对行下方全宽）；F-10 卡在模块 tab（零滚动预算，见 settings_module 注册表注释）
         const auto t0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
         const auto pairChildren = pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
@@ -3743,6 +3742,7 @@ REGISTER_TEST(settings_card_registry_order,
         if (platform::wallpaper::supported()) {
             wantModulesAll.push_back("settings.card.wallpaper");
         }
+        wantModulesAll.push_back("settings.card.md_assoc");  // F-10：无门控恒显，壁纸卡之后
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -3769,13 +3769,13 @@ REGISTER_TEST(settings_card_registry_order,
         if (platform::wallpaper::supported()) {
             wantModulesGated.push_back("settings.card.wallpaper");
         }
+        wantModulesGated.push_back("settings.card.md_assoc");  // F-10：无门控恒显
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
-        // claude 关 → 代理卡（已迁通用 tab）随 gate 整卡隐藏；.md 关联卡无门控恒显
+        // claude 关 → 代理卡（已迁通用 tab）随 gate 整卡隐藏；F-10 卡在模块 tab
         const std::vector<std::string> wantGeneralGated = {
-            "settings.cards.pair.0",
-            "settings.card.md_assoc"};
+            "settings.cards.pair.0"};
         const auto g0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（claude 关） 实测：" + join(g0));
         mod->onStop();
@@ -4771,7 +4771,8 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
 //      "settings.cards.scroll.scroll" 必须查无（生产同一条判定路径，不是旁路估算）；
 //   ② 内容列实测高 ≤ 视口高（belt：frame 级双保险）。
 // 期望内容高（100% / 85%，含卡间距 16）：通用 338/296（无警告代理卡）、模块
-// 198/168、日志 372/375（FillRemainder 恰好填满）、同步 372/316。
+// 198+128+48+16×2=406/约 345（F-10 无标题单行卡进模块 tab，见注册表注释）、
+// 日志 372/375（FillRemainder 恰好填满）、同步 372/316。
 REGISTER_TEST(settings_min_window_tabs_zero_scroll,
               "settings: 最小窗 1000×640 四 tab 零滚动（100%/85% 档，headless）", {
     struct FontScaleGuard {

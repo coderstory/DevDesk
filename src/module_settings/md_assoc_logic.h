@@ -31,15 +31,20 @@ MdAssocHealAction mdAssocHealAction(bool enabled,
 // 状态字文案（None → 空串，调用方按空判断不建元素）。
 const char* mdAssocStatusLabel(MdAssocStatusKind kind);
 
-// 卡高（100% 档基准，运行期 roundFs 包裹）：标题 20 + 行距 4 + 行盒 40 + 上下
-// 留白 6×2 = 78（设计文档 §3.5：行盒 40 = label 18 + 间距 4 + 说明 16 + 余 2；
-// 留白/行距自首稿 8/6 收缩至 6/4——通用 tab 1000×640 最小窗 100% 档零滚动
-// 不变量：卡高 82 时 tab 内容高 375 > 可用 372 溢出 3px，收缩 4px 留余量）。
-inline constexpr float kMdAssocCardHeight = 78.0f;
-// 未生效引导行：距行盒 2。文字档（macOS 文字指引）行盒 16 → 78+2+16 = 96；
-// 按钮档（Windows 一键按钮，高 28 字面值不随字号缩放、主导行高）→ 78+2+28 = 108。
-inline constexpr float kMdAssocCardHeightTextGuide = 96.0f;
-inline constexpr float kMdAssocCardHeightBtnGuide = 108.0f;
+// 卡高（100% 档基准，运行期 roundFs 包裹）：无标题单行卡——上下留白 4×2 +
+// 行盒 40 = 48（设计文档 §3.5 行盒 40 = label 18 + 间距 4 + 说明 16 + 余 2；
+// label「关联 .md 文件」自承卡语义，无独立标题行——github 卡 UAT6「label
+// 自承担语义」同源先例）。砍标题的硬因 = 设置页四 tab 最小窗（页区 600 →
+// 可用 420）零滚动预算：带标题卡 ≥72px 在四 tab 均溢出（模块 tab 默认态
+// 198+128+48+32 = 406 ≤ 420；硬因全录 settings_module.cpp 注册表注释）。
+inline constexpr float kMdAssocCardHeight = 48.0f;
+// 未生效引导行：距行盒 2。文字档（macOS 文字指引）行盒 16 → 48+2+16 = 66；
+// 按钮档（Windows 一键按钮，高 28 字面值不随字号缩放、主导行高）→ 48+2+28 = 78。
+// 引导态属错误短暂态（未生效→用户处理即消失）：100% 最小窗下模块 tab 引导档
+// 424/436 > 420 会出页级滚动条——接受（默认态恒零滚动是不变量；真实窗页区
+// 600 同约束，引导态滚 4~16px 优于砍说明行/塞他人卡）。
+inline constexpr float kMdAssocCardHeightTextGuide = 66.0f;
+inline constexpr float kMdAssocCardHeightBtnGuide = 78.0f;
 inline float mdAssocCardHeight(bool guide, bool oneClickButton) {
     if (!guide) return kMdAssocCardHeight;
     return oneClickButton ? kMdAssocCardHeightBtnGuide
