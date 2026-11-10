@@ -84,7 +84,7 @@ REGISTER_TEST(file_association_registry_roundtrip,
     const core::Result<bool> first = setAsDefaultForMd(cfg);
     DOCTEST_REQUIRE(first.isOk());
     DOCTEST_CHECK(first.value());
-    DOCTEST_CHECK_GE(g_spyCalls, 1);  // 写完必调 SHChangeNotify（官方 must-call）
+    DOCTEST_CHECK(g_spyCalls >= 1);  // 写完必调 SHChangeNotify（官方 must-call）
 
     // HKCU 键值直读断言（不经被测查询通路）：ProgId 三件套 + 扩展名指向
     const std::string exe = platform::autostart::executablePath();
@@ -109,7 +109,7 @@ REGISTER_TEST(file_association_registry_roundtrip,
     const core::Result<bool> second = setAsDefaultForMd(cfg);
     DOCTEST_REQUIRE(second.isOk());
     DOCTEST_CHECK(second.value());
-    DOCTEST_CHECK_GE(g_spyCalls, 2);
+    DOCTEST_CHECK(g_spyCalls >= 2);
     DOCTEST_REQUIRE(readDefaultSz(
         L"Software\\Classes\\DevDeskTest.md\\shell\\open\\command", &v));
     DOCTEST_CHECK_EQ(v, buildOpenCommandValue(exe));
