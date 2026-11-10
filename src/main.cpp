@@ -22,6 +22,7 @@
 #include "module_home/home_service.h"
 #include "module_toggle_bridge.h"
 #include "platform/message_box.h"
+#include "platform/file_open.h"
 #include "platform/tray_icon.h"
 #include "github_sync_exit_hook.h"
 #include "platform/single_instance.h"
@@ -626,8 +627,12 @@ namespace app {
 const DslAppConfig& dslAppConfig() {
     // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
     if (!platform::single_instance::acquireInstanceLock()) {
-        platform::single_instance::notifyExistingInstance();
-        LOG_INFO("已有实例运行中，已发送唤起信号，本进程退出");
+        // F-01：退出前把 argv 文件路径带给首实例（持发送互斥写共享 section → 唤醒 →
+        // 等专名 ack 封顶 5s）。送达失败（首实例僵死等）也要退——单实例不变式优先，
+        // 路径丢弃 = 改造前退化行为
+        platform::single_instance::notifyExistingInstance(
+            {platform::file_open::openFileFromArgv()});
+        LOG_INFO("已有实例运行中，已发送唤起信号与文件路径，本进程退出");
         std::exit(0);
     }
 
@@ -720,6 +725,16 @@ const DslAppConfig& dslAppConfig() {
 
     static bool initialized = []() {
         using namespace core;
+        // F-01 接线（两处都须先于首个 compose 帧）：
+        // ① OS 打开漏斗：第二实例送达路径的 drain 走 handleAppleEventOpenFile 同一漏斗
+        app::assembly::setOsOpenFunnel(
+            [](const std::string& path) { handleAppleEventOpenFile(path); });
+        // ② 单实例监听线程路径回调 → app_assembly 队列（回调在监听线程跑，enqueue
+        // 内部加锁，主线程只经 compose drain 消费）
+        platform::single_instance::setOpenPathsHandler(
+            [](const std::vector<std::string>& paths) {
+                app::assembly::enqueueSecondInstancePaths(paths);
+            });
         // 须在 setupLogging() 之后（内部有 LOG_INFO）
         app::assembly::captureOpenFileFromArgv();
         // --minimized 旗标捕获（UAT6 开机自启动）：命中 → 主窗保持托盘态（compose 首帧执行）
