@@ -22,6 +22,8 @@
 #include "module_markdown/md_tree.h"
 #include "module_markdown/md_view_state.h"
 #include "module_markdown/md_ids.h"
+#include "module_markdown/md_viewer_search.h"    // F-05 搜索状态机纯逻辑（直驱）
+#include "module_markdown/md_viewer_window.h"    // F-04 查看器窗口 session 缝
 #include "module_markdown/markdown_module_test_seam.h"   // 轮询周期注入（假红根因见用例）
 #include "module_markdown/markdown_module_internal.h"    // U2 渲染核直驱（mdDrawBlockFlowCore/区间→rect 查询缝）
 
@@ -32,6 +34,7 @@ using module::markdown::kEditorInputId;
 #include <components/theme.h>      // withAlpha（活动块边框色口径）
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
+#include <eui/detail/dsl_app_impl.h>   // app::consumeWindowRequests（F-04 窗口规格断言）
 #include <ui_kit/card.h>
 #include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
@@ -8864,5 +8867,191 @@ REGISTER_TEST(md_module_statusbar_save_error,
     DOCTEST_REQUIRE(!pec);
 
     mod->onStop();
+    return true;
+})
+
+// ─── U4/F-05：页内搜索状态机纯逻辑（md_viewer_search.h 直驱）──────────────
+// 全序列 + 边界：Idle⇄Active、换词重算归 0、Enter/Shift+Enter 首尾回绕、
+// 0/0 无操作（PRD 硬边界）、清除保留 query、再唤起回填。区间口径 = 块源码
+// 字节偏移（与渲染核查询缝同口径，直接 substr 可索引断言）。
+REGISTER_TEST(md_viewer_search_state_machine,
+              "markdown_module: F-05 搜索状态机全序列（回绕/0/0 无操作/保留词/块局部偏移）", {
+    using namespace module::markdown;
+    const std::string doc =
+        "# 指标一\n"
+        "\n"
+        "alpha beta gamma\n"
+        "\n"
+        "二次指标与AB指标\n"
+        "\n"
+        "结尾 ab 与 Ab\n";
+    MdBlockModel model;
+    model.update(doc);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() == size_t(4));  // 空行终结段落 → 4 块
+
+    // —— findMatches：命中数 / 块序号 / 块局部字节偏移可直索引块源码
+    const auto ms = viewerSearchFindMatches(blocks, doc, "指标");
+    DOCTEST_CHECK_EQ(ms.size(), size_t(3));  // 标题×1 + 段落×2
+    DOCTEST_CHECK_EQ(ms[0].block, size_t(0));
+    const std::string b0 =
+        doc.substr(blocks[0].start, blocks[0].end - blocks[0].start);
+    DOCTEST_CHECK_EQ(b0.find("指标"), ms[0].begin);  // 与 find 同位（块局部口径）
+    DOCTEST_CHECK_EQ(b0.substr(ms[0].begin, ms[0].end - ms[0].begin),
+                     std::string("指标"));
+    DOCTEST_CHECK_EQ(ms[1].block, size_t(2));  // 第二处落第三块
+
+    const auto ab = viewerSearchFindMatches(blocks, doc, "aB");  // query 混合大小写
+    DOCTEST_CHECK_EQ(ab.size(), size_t(3));  // AB / ab / Ab 全折配
+    DOCTEST_CHECK(viewerSearchFindMatches(blocks, doc, "").empty());      // 空 query
+    DOCTEST_CHECK(viewerSearchFindMatches(blocks, doc, "不存在词").empty());
+
+    // —— 状态机序列：备词（Idle）→ 唤起 → 逐跳回绕 → 换词归 0 → 清除 → 再唤起
+    ViewerSearchState s;
+    DOCTEST_CHECK(s.phase == ViewerSearchPhase::Idle);
+    viewerSearchApplyQuery(s, "指标", blocks, doc);
+    DOCTEST_CHECK_EQ(s.matches.size(), size_t(3));
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+    viewerSearchActivate(s);
+    DOCTEST_CHECK(s.phase == ViewerSearchPhase::Active);
+    DOCTEST_CHECK(s.everActivated);
+    DOCTEST_CHECK(s.hasFocusPending);  // C1：光标已在输入框
+    s.hasFocusPending = false;
+    DOCTEST_CHECK_EQ(s.query, std::string("指标"));
+
+    // Enter 下一处；末处回绕回首处（浏览器惯例）
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(1));
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(2));
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(0));
+    // Shift+Enter 上一处；首处回绕到末处
+    DOCTEST_CHECK_EQ(viewerSearchPrev(s), size_t(2));
+    DOCTEST_CHECK_EQ(viewerSearchPrev(s), size_t(1));
+
+    // 换词：重算 + cur 归 1（cur=0）
+    viewerSearchApplyQuery(s, "aB", blocks, doc);
+    DOCTEST_CHECK_EQ(s.matches.size(), size_t(3));
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+    DOCTEST_CHECK_EQ(s.query, std::string("aB"));
+
+    // 0/0 边界：Enter / Shift+Enter 均无操作（PRD F-05 硬边界）
+    viewerSearchApplyQuery(s, "zzz", blocks, doc);
+    DOCTEST_CHECK(s.matches.empty());
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), kViewerSearchNoMatch);
+    DOCTEST_CHECK_EQ(viewerSearchPrev(s), kViewerSearchNoMatch);
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+
+    // 清除（Esc/×）：回阅读态、命中与计数清空、query/everActivated 保留
+    viewerSearchApplyQuery(s, "指标", blocks, doc);
+    viewerSearchClear(s);
+    DOCTEST_CHECK(s.phase == ViewerSearchPhase::Idle);
+    DOCTEST_CHECK(s.matches.empty());
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+    DOCTEST_CHECK_EQ(s.query, std::string("指标"));
+    DOCTEST_CHECK(s.everActivated);
+
+    // 再唤起：保留关键词 + 焦点待请求；重算命中后续跳正常
+    viewerSearchActivate(s);
+    DOCTEST_CHECK_EQ(s.query, std::string("指标"));
+    DOCTEST_CHECK(s.hasFocusPending);
+    viewerSearchApplyQuery(s, s.query, blocks, doc);
+    DOCTEST_CHECK_EQ(s.matches.size(), size_t(3));
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(1));
+    return true;
+})
+
+// ─── U3/F-04：窗口标题截断 + 空内容判定（纯助手）──────────────────────────
+REGISTER_TEST(md_viewer_window_title_and_blank,
+              "markdown_module: F-04 标题中段省略号（保头尾/UTF-8 码点边界/路径不外泄）+ 空文件判定", {
+    using namespace module::markdown;
+    // 文件名含扩展名；路径永不出现在标题（D-3）
+    DOCTEST_CHECK_EQ(mdViewerWindowTitle("D:/x/notes/a.md"), std::string("a.md"));
+    DOCTEST_CHECK_EQ(mdViewerWindowTitle("a.md"), std::string("a.md"));
+    DOCTEST_CHECK_EQ(mdViewerWindowTitle("/tmp/目录/笔记.md"), std::string("笔记.md"));
+
+    // 超长 ASCII 名：中段省略号、保头尾、无路径分隔符
+    const std::string longName = std::string(120, 'x') + ".md";
+    const std::string trunc = mdViewerWindowTitle("/p/" + longName);
+    DOCTEST_CHECK(trunc.find('/') == std::string::npos);
+    DOCTEST_CHECK(trunc.find("…") != std::string::npos);
+    DOCTEST_CHECK(trunc.size() < longName.size());
+    DOCTEST_CHECK(trunc.front() == 'x');
+    DOCTEST_CHECK(trunc.back() == 'd');
+
+    // UTF-8 边界：CJK 名截断后省略号两侧均为完整码点（相邻字节非续字节 10xxxxxx）
+    std::string cjkName;
+    for (int i = 0; i < 40; ++i) cjkName += "汉";  // 120 字节有效 UTF-8
+    const std::string ctrunc = mdViewerWindowTitle("/d/" + cjkName + ".md");
+    DOCTEST_CHECK(ctrunc.size() < cjkName.size() + 3);
+    const size_t ell = ctrunc.find("…");
+    DOCTEST_REQUIRE(ell != std::string::npos);
+    if (ell > 0) {
+        DOCTEST_CHECK((static_cast<unsigned char>(ctrunc[ell - 1]) & 0xC0) != 0x80);
+    }
+    DOCTEST_CHECK(ctrunc.back() == 'd');
+
+    // 空内容判定（PRD §八「空」态）：0 字节 / 全 ASCII 空白 = 空；有内容字节非空
+    DOCTEST_CHECK(mdViewerContentBlank(""));
+    DOCTEST_CHECK(mdViewerContentBlank(" \t\r\n"));
+    DOCTEST_CHECK_FALSE(mdViewerContentBlank("a"));
+    DOCTEST_CHECK_FALSE(mdViewerContentBlank("汉"));
+    return true;
+})
+
+// ─── U3/F-04：查看器窗口规格与 session 注册表────────────────────────────
+// 窗口请求断言经 app::consumeWindowRequests 消费 EUI-NEO openWindow 队列
+//（测试进程无主循环，请求无人消费，测试内取走即清）。回退会红：openViewerWindow
+// 不建 session / 规格偏离 D-3 / 同名双开不加后缀，任一发生本用例即红。
+REGISTER_TEST(md_viewer_session_registry,
+              "markdown_module: F-04 窗口规格（900×640/可缩放/系统默认位）+ session 注册表 + 同名双开后缀 + 缺文件照开（B7）", {
+    using namespace module::markdown;
+    resetViewerSessionsForTest();
+    DOCTEST_CHECK(viewerSessionCountForTest() == size_t(0));
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());  // 清残留窗口请求
+
+    const std::filesystem::path dir =
+        test_support::makeTempDir("mdviewer_", "session");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    {
+        std::ofstream f(dir / "a.md", std::ios::trunc);
+        f << "# 查看器\n\n正文段落。\n";
+    }
+    const std::string aPath = (dir / "a.md").string();
+
+    // 1. 正常文件 → session + 窗口请求（D-3 规格逐项）
+    openViewerWindow(aPath);
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(1));
+    DOCTEST_CHECK_EQ(viewerSessionPageIdForTest(0), std::string("a.md"));
+    const auto reqs = app::consumeWindowRequests();
+    DOCTEST_REQUIRE(reqs.size() == size_t(1));
+    DOCTEST_CHECK_EQ(reqs[0].title, std::string("a.md"));
+    DOCTEST_CHECK_EQ(reqs[0].pageId, std::string("a.md"));
+    DOCTEST_CHECK_EQ(reqs[0].width, 900);
+    DOCTEST_CHECK_EQ(reqs[0].height, 640);
+    DOCTEST_CHECK(reqs[0].resizable);
+    DOCTEST_CHECK_FALSE(reqs[0].positionSet);  // 系统默认位（不调 windowPosition）
+    DOCTEST_CHECK(static_cast<bool>(reqs[0].compose));
+    DOCTEST_CHECK(static_cast<bool>(reqs[0].onKeyEvent));  // 窗口级键路由（不进主窗 Router）
+
+    // 2. 同一文件再开 = 再开一窗（D-1），pageId 加序号后缀、标题保持文件名
+    openViewerWindow(aPath);
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(2));
+    DOCTEST_CHECK_EQ(viewerSessionPageIdForTest(1), std::string("a.md #2"));
+    const auto reqs2 = app::consumeWindowRequests();
+    DOCTEST_REQUIRE(reqs2.size() == size_t(1));
+    DOCTEST_CHECK_EQ(reqs2[0].title, std::string("a.md"));
+    DOCTEST_CHECK_EQ(reqs2[0].pageId, std::string("a.md #2"));
+
+    // 3. 缺文件照开（流程 B7：错误占位在 compose 呈现，session/窗口照建照关）
+    openViewerWindow((dir / "missing.md").string());
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(3));
+    DOCTEST_CHECK_EQ(app::consumeWindowRequests().size(), size_t(1));
+
+    // 4. 注销缝：清空注册表（测试进程无窗口销毁路径，直接复位）
+    resetViewerSessionsForTest();
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(0));
+
+    std::filesystem::remove_all(dir, ec);
     return true;
 })

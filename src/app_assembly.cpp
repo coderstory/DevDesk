@@ -5,6 +5,7 @@
 #include "core/logging.h"
 #include "core/database.h"
 #include "module_markdown/md_file_open.h"
+#include "module_markdown/md_viewer_window.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
 #include "platform/file_open.h"
@@ -214,6 +215,21 @@ void resetSecondInstanceFilesForTest() {
     g_osOpenFunnel = nullptr;
 }
 
+namespace {
+
+// .md/.markdown 判据（大小写敏感，与既有 dispatchPageForFile 同源同口径）。
+// F-02 语义分叉：本判据命中且入口为 OS 漏斗 → 独立查看器窗；应用内不受影响。
+bool pathHasMarkdownExtension(const std::string& path) {
+    auto endsWith = [&path](const char* suffix) {
+        size_t n = std::string(suffix).size();
+        return path.size() >= n &&
+               path.compare(path.size() - n, n, suffix) == 0;
+    };
+    return endsWith(".md") || endsWith(".markdown");
+}
+
+} // namespace
+
 ::core::PageId dispatchPageForFile(const std::string& path) {
     auto endsWith = [&](const char* suffix) {
         size_t n = std::string(suffix).size();
@@ -230,6 +246,15 @@ void resetSecondInstanceFilesForTest() {
 void dispatchFileOpen(::core::Router* router, const std::string& path,
                       const std::filesystem::path& notesDir) {
     if (router == nullptr || path.empty()) return;
+    // F-02：OS 语义漏斗里 .md/.markdown → 独立只读查看器窗（开原文件，绕开
+    // captureFileIntoNotesDir 拷贝）。判据=调用点即漏斗：全仓 OS 入口（main 启动
+    // argv / Apple Event / F-01 第二实例 drain）都汇于本函数，应用内笔记走
+    // markdown_module 的 "open:" 通道不经此处 → 应用内行为零改动自动成立。
+    // 查看器窗不依赖 Markdown 页注册态（独立窗不进 Router）。
+    if (pathHasMarkdownExtension(path)) {
+        module::markdown::openViewerWindow(path);
+        return;
+    }
     const ::core::PageId target = dispatchPageForFile(path);
     if (target == ::core::PageId::Markdown &&
         router->isRegistered(::core::PageId::Markdown)) {
