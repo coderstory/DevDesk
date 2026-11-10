@@ -112,10 +112,6 @@ const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
      CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard,
      nullptr},
-    // 「关联 .md 文件」卡（F-10）：通用 tab 代理卡之后全宽；卡高动态（引导行
-    // 有无 / 平台档），compose 按状态字四态算好传 mdAssocH。
-    {kTabGeneral, "settings.card.md_assoc", nullptr, CardHeightKind::MdAssoc,
-     0.0f, false, /*half=*/false, &drawMdAssocCard, nullptr},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, /*half=*/false, &drawModulesCard, nullptr},
     // 壁纸卡：平台能力不支持时整卡不建（不是禁用态）——visible 在卡区入口判定，
@@ -123,6 +119,14 @@ const CardSpec kCardSpecs[] = {
     {kTabModules, "settings.card.wallpaper", nullptr, CardHeightKind::Fixed,
      kWallpaperCardHeight, false, /*half=*/false, &drawWallpaperCard,
      &::platform::wallpaper::supported},
+    // 「关联 .md 文件」卡（F-10）：模块 tab 壁纸卡之后全宽（应用级能力开关，
+    // 与壁纸卡同 tab 语义先例）。不放通用 tab 的硬因：通用 tab 最小窗零滚动
+    // 预算结构性已满（pair 184 + proxy 138 + gap 16 = 338，1000×640 页区可用
+    // 高 420——追加 ≥66px 的卡必出页级滚动条，收缩卡高救不了）；模块 tab
+    // 预算富余（198+16+78+16 = 308 ≤ 420）。卡高动态（引导行有无/平台档），
+    // compose 按状态字四态算好传 mdAssocH。
+    {kTabModules, "settings.card.md_assoc", nullptr, CardHeightKind::MdAssoc,
+     0.0f, false, /*half=*/false, &drawMdAssocCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,

@@ -33,9 +33,7 @@ namespace {
 // 卡内几何常量（100% 档基准；行盒/字号走 roundFs/fs 缩放，开关/按钮为设计稿
 // 字面值不缩放——与 github 卡口径一致）
 inline constexpr float kCardPaddingX = 28.0f;
-inline constexpr float kCardPaddingY = 6.0f;  // 首稿 8→6：通用 tab 最小窗零滚动收缩（见 md_assoc_logic.h 卡高注释）
-inline constexpr float kTitleH = 20.0f;       // 卡标题行高（github 卡同值）
-inline constexpr float kTitleRowGapY = 4.0f;  // 标题底与开关行盒顶间距（首稿 6→4，同上收缩）
+inline constexpr float kCardPaddingY = 4.0f;  // 无标题单行卡：上下留白 4×2 + 行盒 40 = 卡高 48（见 md_assoc_logic.h）
 inline constexpr float kRowH = 40.0f;         // 开关行行盒（设计文档 §3.5）
 inline constexpr float kLabelH = 18.0f;       // label 行高
 inline constexpr float kLabelHintGapY = 4.0f; // label 与说明行间距（设计 §3.5）
@@ -85,19 +83,8 @@ void drawMdAssocCard(const CardDrawArgs& args) {
 
         const float padX = roundFs(kCardPaddingX);
         const float padY = roundFs(kCardPaddingY);
-        const float rowY = padY + roundFs(kTitleH) + roundFs(kTitleRowGapY);
+        const float rowY = padY;
         const float rowH = roundFs(kRowH);
-
-        // 卡标题（设置页各卡一致：15px 加粗）
-        ui.text(id + ".title")
-            .position(padX, padY)
-            .size(w - 2.0f * padX, roundFs(kTitleH))
-            .text("文件关联")
-            .fontSize(fs(15.0f))
-            .lineHeight(roundFs(kTitleH))
-            .fontWeight(600)
-            .color(t.colors.textPrimary)
-            .build();
 
         // 开关（钉行右缘，行盒内垂直居中；字面 44×24）
         const float swX = w - padX - kSwitchW;
