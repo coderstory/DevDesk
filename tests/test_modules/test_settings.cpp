@@ -31,7 +31,6 @@
 #include <core/platform/platform.h>  // requestUiUpdate/consumeUiUpdate（字号档 apply 路径显式唤醒断言）
 
 #include <eui/app.h>
-#include <eui/detail/dsl_app_impl.h>
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
@@ -53,15 +52,6 @@
 
 extern "C" ::core::Module* create_settings_module();
 
-// app API 的实现 TU（glfw_app_main）只编进 DevDesk 主程序，测试侧靠包含
-// dsl_app_impl.h 自带实现（与 EUI-NEO 自身单测相同的注入方式）。app::compose 用
-// src/app_sidebar.cpp 的真实现，该 TU 已直接编进测试二进制。
-namespace app {
-const app::DslAppConfig& dslAppConfig() {
-    static const DslAppConfig config = DslAppConfig{}.title("devdesk_test_settings");
-    return config;
-}
-} // namespace app
 
 namespace {
 
