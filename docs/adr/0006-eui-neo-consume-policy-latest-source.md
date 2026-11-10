@@ -39,3 +39,7 @@ DevDesk 消费 GUI 框架 EUI-NEO。历史上曾用 git rev 做版本对齐：�
 ## 2026-10-29 更新注记（用户拍板）
 
 承载形态由「同级源码目录」改为**仓内 git submodule**（`EUI-NEO/`，url 指向 coderstory fork，见 `.gitmodules`），上文「为什么不转 submodule」一节的前提（多 worktree 同步成本）随仓库单根化不再成立，该节论断作废。政策本体保持：configure 期不做 rev 校验、版本匹配以 `scripts/check-eui-neo-version.sh` 内容级守卫为唯一权威判据；gitlink 记录推进基线，升 submodule 指针 = 消费新源码。CI 取框架随之改为 checkout `submodules: recursive`。
+
+## 2026-11-09 更新注记（用户拍板）
+
+**不锁 gitlink**：上条注记里「gitlink 记录推进基线，升 submodule 指针 = 消费新源码」作废。gitlink 只是历史记录，不作为取框架依据——`.gitmodules` 声明 `branch = main`，CI 检出后强制 `git submodule update --remote -- EUI-NEO` 取 fork/main 最新，本地同步 = 子仓 `fetch` + `ff-only` main；「升 submodule 指针」不再是版本管理动作。政策本体（不锁版本、每次最新；内容级守卫为唯一权威判据）不变。

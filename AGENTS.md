@@ -9,8 +9,9 @@ DevDesk 开发主仓库的 AI agent 入口：先读这份，再按需进子文�
 - 依赖方向只有一个：**DevDesk → EUI-NEO**，反向不存在。
 - 接线方式：`add_subdirectory`，路径由 `EUI_NEO_DIR` 指定（默认即仓内 `EUI-NEO/`，脚本与 CMake 自动定位）。
 - EUI-NEO 用的是 **coderstory fork**（远多于上游的本地提交：原生标题栏主题联动、窗口材质贯通、`setScrollOffset`、嵌套弹层 z 序逃逸、dropdown `openUp` 等）。**直接用上游 `sudoevolve/EUI-NEO` 会编译失败**。
-- EUI-NEO 仓内 remote：`origin` = 上游 sudoevolve（**只读，永不 push**，2026-09-28 决策）、`fork` = coderstory（同步远端，双机与 CI 的构建源）。
+- EUI-NEO 仓内 remote：子仓 `origin` = coderstory fork（唯一 remote，`.gitmodules` 所指；双机与 CI 的构建源）。上游 sudoevolve **只作参考、永不 push**（2026-09-28 决策）。
 - **跨仓耦合警告**：DevDesk 硬依赖 EUI-NEO 默认分支 HEAD、不锁版本。**先推 EUI-NEO → `fork`，再推 DevDesk → `origin`**；顺序反了 CI 会在 DevDesk 报一个指向错误文件的编译错误（真实发生过）。
+- **不锁版本**（2026-11-09 老板令）：gitlink 只是历史记录，取框架一律 `fork/main` 最新——CI 检出后强制 `git submodule update --remote -- EUI-NEO`（`.gitmodules` 已声明 `branch = main`），本地同步 `fetch` + `ff-only`；**不把「升 submodule 指针」当版本管理动作**。
 - EUI-NEO 遇到能力缺失，优先在 `EUI-NEO/` 里修（fork），不要在 DevDesk 自造 workaround。EUI-NEO 内有多个历史 feature/fix 分支，动之前先确认所在分支。
 
 ## 二、双机同步协议（submodule 版）
@@ -19,7 +20,7 @@ DevDesk 开发主仓库的 AI agent 入口：先读这份，再按需进子文�
 
 ```sh
 git fetch --all --prune && git pull --ff-only    # DevDesk ← origin/dev
-git submodule update --init                       # EUI-NEO ← fork/main（.gitmodules 已指 fork）
+git submodule update --init --remote              # EUI-NEO ← fork/main 最新（--remote 必带：不锁 gitlink）
 ```
 
 用户口径：**以远端为准**；确要丢弃本地改动前，先把 `git diff` 备份成 patch 放到仓库外。同步就是同步，发现的问题只报告不动手。

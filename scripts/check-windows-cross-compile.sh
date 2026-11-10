@@ -159,7 +159,7 @@ build_incs() {
 }
 
 # EUI-NEO 定位（与 scripts/build-test-run.sh 同一套优先级，避免两边各认一份）：
-#   显式参数 → $EUI_NEO_DIR → 仓库根 ./EUI-NEO（gitlink submodule，git rev-parse
+#   显式参数 → $EUI_NEO_DIR → 仓库根 ./EUI-NEO（仓内 submodule，git rev-parse
 #   --show-toplevel 拼接；worktree 下 show-toplevel 即 worktree 根，同样命中）
 find_eui() {
     local c

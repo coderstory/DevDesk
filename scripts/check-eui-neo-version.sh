@@ -4,8 +4,8 @@
 #
 # ── 它在守什么 ─────────────────────────────────────────────────────
 # DevDesk 与 EUI-NEO 是**两个仓库**（EUI-NEO 以仓内 submodule 承载，2026-10-29 起；
-# CI 经 checkout 的 submodules 参数拉取 fork HEAD，不锁死内容——gitlink 记录的是
-# 推进时的基线，见 ADR 0006 与 scripts/check-eui-neo-version.sh 同名守卫的消费政策）。
+# 不锁版本：CI 检出后 `git submodule update --remote` 拉 fork/main 最新、本地同步
+# fetch+ff，gitlink 只是历史记录——见 ADR 0006 2026-11-09 注记）。
 # 于是框架版本不匹配以编译错误的形式出现，而**报错文件是错的**（那一行代码本身
 # 没问题），排查方向被带偏。本守卫把它从「编到一半才发现、且报错指错文件」提前成
 # 「构建之前就红，并明确说：EUI-NEO 版本不匹配」。
@@ -234,7 +234,7 @@ report_mismatch_head() {
     echo "❌ EUI-NEO 版本不匹配：DevDesk 现在写的代码在克隆到的 EUI-NEO 上编不过。"
     echo "   这**不是**上方那些 DevDesk 文件写错了 —— 错的是框架版本。"
     echo "   典型形态：某个新 API（如 TextBuilder::overflow）还没落到 fork 上。"
-    echo "   处置：把 EUI-NEO 推到 fork（$EUI_DIR 所在仓库）并升 submodule 指针后重跑；"
+    echo "   处置：把 EUI-NEO 推到 fork（$EUI_DIR 所在仓库），确认 CI/本机取到含该 API 的 main 后重跑；"
     echo "        或先等 CI 检出到含该 API 的 HEAD。判据细节见本脚本文件头。"
 }
 
@@ -342,7 +342,7 @@ echo "EUI-NEO 版本前置校验：克隆到的框架是否满足 DevDesk 当前
 [ -f "$ROOT/CMakeLists.txt" ] || { echo "❌ 环境错误：不可读 $ROOT/CMakeLists.txt" >&2; exit 2; }
 [ -d "$ROOT/src" ] || { echo "❌ 环境错误：目录不存在：$ROOT/src" >&2; exit 2; }
 
-# EUI-NEO 定位：--eui-dir > $EUI_NEO_DIR > 仓库根 ./EUI-NEO（gitlink submodule）
+# EUI-NEO 定位：--eui-dir > $EUI_NEO_DIR > 仓库根 ./EUI-NEO（仓内 submodule）
 if [ -z "$EUI_DIR" ]; then EUI_DIR="${EUI_NEO_DIR:-}"; fi
 if [ -z "$EUI_DIR" ] && [ -f "$ROOT/EUI-NEO/CMakeLists.txt" ]; then
     EUI_DIR="$ROOT/EUI-NEO"

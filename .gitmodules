@@ -1,6 +1,9 @@
 [submodule "EUI-NEO"]
 	path = EUI-NEO
 	url = https://github.com/coderstory/EUI-NEO.git
+	# 不锁版本（2026-11-09 老板令）：gitlink 只是历史记录，取框架一律 fork/main
+	# 最新——CI 检出后强制 --remote，本地同步 fetch+ff；升指针≠版本管理动作
+	branch = main
 [submodule "third_party/Corta"]
 	path = third_party/Corta
 	url = https://github.com/noah-qin/Corta

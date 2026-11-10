@@ -67,17 +67,19 @@ else()
 endif()
 
 # EUI-NEO 是仓内 submodule（./EUI-NEO，见 .gitmodules）；-DEUI_NEO_DIR 可覆盖
+# 不锁版本（2026-11-09 老板令）：取框架一律 fork/main 最新，gitlink 只是历史记录
 # 注意：必须在 include(Dependencies.cmake) 之前定义——ZLIB 查找提示要引用自带 zlib 头
 set(EUI_NEO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/EUI-NEO" CACHE PATH "EUI-NEO source dir")
 if(NOT EXISTS "${EUI_NEO_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "EUI-NEO not found at ${EUI_NEO_DIR}（submodule 未检出？git submodule update --init EUI-NEO）")
+    message(FATAL_ERROR "EUI-NEO not found at ${EUI_NEO_DIR}（未检出？git submodule update --init --remote EUI-NEO，取 fork/main 最新）")
 endif()
 
 # ---- 构建期信息注入（2026-09-28 about 页设计；消费方 = src/module_about）----
 # EUI-NEO 消费政策（ADR 0006，2026-10-25 用户拍板；2026-10-29 起以仓内 submodule
-# 承载）：版本由 gitlink 记录，推进 = 升 submodule 指针——configure 期不做任何基于
-# git rev 的版本校验（旧「最低依赖 rev」软校验已于 2026-10-26 政策性删除：其 rev 基准在 EUI-NEO 历史
-# 重写后已蒸发，检查每次 configure 都在误告警）。版本匹配的唯一权威判据 =
+# 承载；2026-11-09 不锁 gitlink）：取框架一律 fork/main 最新，gitlink 只是历史
+# 记录——configure 期不做任何基于 git rev 的版本校验（旧「最低依赖 rev」软校验已
+# 于 2026-10-26 政策性删除：其 rev 基准在 EUI-NEO 历史重写后已蒸发，检查每次
+# configure 都在误告警）。版本匹配的唯一权威判据 =
 # scripts/check-eui-neo-version.sh 的内容级 API 守卫。此处仅取 EUI-NEO 当前检出
 # rev 供关于页信息展示（非门槛）。DevDesk 自身 git rev：非 git 环境（源码 zip
 # 下载等）回退 "unknown"，不 fail configure（D-03）。用 -C 显式指定仓库，不依赖

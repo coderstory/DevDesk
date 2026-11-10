@@ -276,7 +276,7 @@ if [ -z "$EUI_DIR" ]; then
 fi
 if [ -z "$EUI_DIR" ]; then
   echo "❌ 找不到 EUI-NEO（试过 \$EUI_NEO_DIR / 仓库根 ./EUI-NEO submodule）" >&2
-  echo "   submodule 未检出先跑：git submodule update --init EUI-NEO" >&2
+  echo "   submodule 未检出先跑：git submodule update --init --remote EUI-NEO（取 fork/main 最新）" >&2
   echo "   或 EUI_NEO_DIR=<EUI-NEO 路径> bash scripts/build-test-run.sh 显式指定" >&2
   exit 1
 fi

@@ -66,7 +66,7 @@ cmake --build build && cd build && ctest --output-on-failure
 **macOS 侧脚本（跨平台）**：`scripts/build-test-run.sh` / `ccache-env.sh` / `check-consistency.sh` 已支持 macOS/Linux（PATH 与 openssl 按 `DEVDESK_OS` 分支，Windows 行为不变）。`check-consistency.sh` 的 `screencapture` 需「屏幕录制」TCC（已授予），但 OpenGL 窗口可能抓旧帧；**agent 会话拿不到该 TCC 授权**（launchd 拉起）——出图用探针 `--screenshot`（见六阶段·阶段 4）。旧文档的 `./scripts/dev.sh` / `test.sh` / `screenshot.sh` / `reset-db.sh` **本仓库不存在**，别照抄。
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`EUI-NEO/`（**仓内 git submodule**，`.gitmodules` 指 coderstory fork；`EUI_NEO_DIR` 默认仓内路径、`add_subdirectory` 集成，可覆盖）。消费政策（**ADR 0006**）：版本基线由 gitlink 记录、推进 = 升 submodule 指针，无最低 rev、configure 期零校验；版本匹配唯一权威判据 = `scripts/check-eui-neo-version.sh` 的**内容级 API 守卫**（全部消费编译单元 `-fsyntax-only`）。EUI-NEO 内 `origin` = 上游 sudoevolve，**永不 push**；用了新 API 先推 fork、再升 submodule 指针推 DevDesk。
+EUI-NEO 依赖：`EUI-NEO/`（**仓内 git submodule**，`.gitmodules` 指 coderstory fork + `branch = main`；`EUI_NEO_DIR` 默认仓内路径、`add_subdirectory` 集成，可覆盖）。消费政策（**ADR 0006**）：**不锁版本**——取框架一律 fork/main 最新（CI 检出后 `git submodule update --remote`，本地同步 fetch+ff；gitlink 只是历史记录），无最低 rev、configure 期零校验；版本匹配唯一权威判据 = `scripts/check-eui-neo-version.sh` 的**内容级 API 守卫**（全部消费编译单元 `-fsyntax-only`）。EUI-NEO 子仓 `origin` = coderstory fork（唯一 remote，`.gitmodules` 所指）；上游 sudoevolve **永不 push**。用了新 API 先推 fork、再推 DevDesk（不为此升 submodule 指针）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -156,7 +156,7 @@ main → 13 个 Router 页面（枚举见「项目概况」）
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（历史存档，方案 B 已废弃）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `EUI-NEO/` | 上游 GUI 框架（**仓内 submodule**，`EUI_NEO_DIR` + `add_subdirectory` 集成）；消费政策见 ADR 0006 与「常用命令」段；submodule url = coderstory fork（CI 经 checkout submodules 检出） |
+| `EUI-NEO/` | 上游 GUI 框架（**仓内 submodule**，`EUI_NEO_DIR` + `add_subdirectory` 集成）；消费政策见 ADR 0006 与「常用命令」段；submodule url = coderstory fork（CI 检出后 `--remote` 取 fork/main 最新，不锁 gitlink） |
 | `docs/superpowers/specs/2026-09-27-*.md` | 09-27 批次 specs：wave1-fix / god-class-refactor / shared-config-and-failover |
 | `docs/superpowers/specs/2026-09-28-*.md` | 09-28 批次 specs：installer-and-dmg / devdesk-probes / r8-assembly-layer / tin06-test-scaffold-migration / setscrolloffset-upstream-m6-refactor / md01-reload-block-mapping / macos-three-features / ui-modernization / profile-run |
 
