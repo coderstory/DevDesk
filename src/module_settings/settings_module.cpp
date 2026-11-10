@@ -16,6 +16,9 @@
 #include "github_sync_test_seam.h"
 #include "local_git_probe.h"
 #include "settings_ui_logic.h"
+#include "md_assoc_card.h"        // drawMdAssocCard（F-10 开关行卡）
+#include "md_assoc_logic.h"       // 状态字四态 / 卡高契约（F-10/F-11 判定）
+#include "platform/open_settings.h"  // oneClickAvailable（引导行卡高平台档）
 
 #include "core/claude_proxy_service.h"
 #include "core/database.h"
@@ -82,6 +85,8 @@ enum class CardHeightKind {
     ProxyWarnings,
     FillRemainder,
     GithubSync,   // 恒满高（UAT4 起不按启用态折叠；UAT5 方案 A 三段式，见 kGithubSyncCardHeight）
+    MdAssoc,      // 动态高（F-10）：状态字未生效时引导行有无 + 平台档（Win 按钮
+                  // 行盒 28 / mac 文字行盒 16）→ compose 按四态算好传 mdAssocH
 };
 
 struct CardSpec {
@@ -107,6 +112,10 @@ const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
      CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard,
      nullptr},
+    // 「关联 .md 文件」卡（F-10）：通用 tab 代理卡之后全宽；卡高动态（引导行
+    // 有无 / 平台档），compose 按状态字四态算好传 mdAssocH。
+    {kTabGeneral, "settings.card.md_assoc", nullptr, CardHeightKind::MdAssoc,
+     0.0f, false, /*half=*/false, &drawMdAssocCard, nullptr},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, /*half=*/false, &drawModulesCard, nullptr},
     // 壁纸卡：平台能力不支持时整卡不建（不是禁用态）——visible 在卡区入口判定，
@@ -557,6 +566,46 @@ public:
     }
 
     // ── GitHub Sync 操作方法 ──
+
+    // ── 「关联 .md 文件」开关（F-10）──
+    // 开 = 恢复登记（platform setAsDefaultForMd）→ 写后回查 isDefaultForMd，
+    // 回读归本应用才显「已关联」；仍非 ours（others/unknown）→「未生效」+
+    // 平台引导（F-07 判定规则：写入成功≠行为生效，一切以查询回读为准）。
+    // 关 = 仅落盘停自愈，不注销已有关联（D-4）；mdAssocEverEnabled 只置位不
+    // 翻转（关+曾开过=「已停止自动维护」判据）。
+    void applyMdAssocEnabled(bool on) {
+        if (on) {
+            if (auto w = platform::file_association::setAsDefaultForMd();
+                w.isFail()) {
+                LOG_WARN("Settings: .md 关联恢复登记失败: " + w.errorMessage());
+            }
+            if (auto q = platform::file_association::isDefaultForMd();
+                q.isOk()) {
+                mdAssocState_ = q.value();
+            }
+            mdAssocQueryAtSec_ = nowSec();
+            cfg_.mdAssocEnabled = true;
+            cfg_.mdAssocEverEnabled = true;
+        } else {
+            cfg_.mdAssocEnabled = false;
+        }
+        if (auto r = store_->save(cfg_); r.isFail()) {
+            LOG_WARN("Settings: 保存 .md 关联开关失败: " + r.errorMessage());
+        }
+        LOG_INFO(std::string("Settings: 关联 .md 文件已") +
+                 (on ? "开启（已请求恢复登记，状态以回读为准）" : "关闭（停止启动自愈）"));
+    }
+
+    // F-10 回显节流回查（PRD §八「打开设置页/重获焦点时回读校正」）：见 compose
+    // 调用点 POC 结论注释。查询失败保持上次快照（PRD §八错误态：显示本地已知值）。
+    void updateMdAssocStateIfStale() {
+        const int64_t now = nowSec();
+        if (now - mdAssocQueryAtSec_ < 1) return;
+        mdAssocQueryAtSec_ = now;
+        if (auto q = platform::file_association::isDefaultForMd(); q.isOk()) {
+            mdAssocState_ = q.value();
+        }
+    }
 
     void applyGithubSyncEnabled(bool on) {
         githubSyncCfg_.enabled = on;
@@ -1047,6 +1096,18 @@ public:
                 svc->lastSyncWarnings().size(), 2);
         }
         const float proxyH = proxyCardHeightFor(warnLines);
+        // F-10 回显（PRD §八）：设置页可见期间以平台回读校正状态字（先显本地值
+        // 同帧用回读值画，无加载态）。POC 结论（实现期核实）：EUI-NEO 有
+        // core::window::windowIsFocused（window_backend.h:53），但 DevDesk 侧
+        // 模块拿不到 runtime 句柄（src 全仓零消费先例）→ 降级 = compose 节流
+        // 重查：设置页 compose 只在本页可见时发生，注册表查询毫秒级，1s 节流
+        // 下用户在页期间的归属漂移 ≤1s 被校正，可观察行为与焦点方案一致。
+        updateMdAssocStateIfStale();
+        const bool mdAssocGuide =
+            mdAssocStatusKind(cfg_.mdAssocEnabled, cfg_.mdAssocEverEnabled,
+                              mdAssocState_) == MdAssocStatusKind::NotEffective;
+        const float mdAssocH = roundFs(mdAssocCardHeight(
+            mdAssocGuide, platform::open_settings::oneClickAvailable()));
         // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
         // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 只签 claude。
         const bool claudeOn =
@@ -1118,6 +1179,7 @@ public:
                                 std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
                                 (claudeOn ? "C" : "c") +
+                                (mdAssocGuide ? "M" : "m") +
                                 ".c" +
                                 std::to_string(static_cast<int>(pairColW +
                                                                0.5f)))
@@ -1127,7 +1189,8 @@ public:
                                  float viewportHeight) {
                         (void)viewportHeight;
                         drawCardRegion(inner, contentWidth, cardsTopY, cardsH,
-                                       screen.height, t, proxyH, svc);
+                                       screen.height, t, proxyH, mdAssocH,
+                                       svc);
                     })
                     .build();
 
@@ -1184,6 +1247,7 @@ private:
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
         a.applyAutostartEnabled = [this](bool on) { applyAutostartEnabled(on); };
         a.applyFluidBackgroundEnabled = [this](bool on) { applyFluidBackgroundEnabled(on); };
+        a.applyMdAssocEnabled = [this](bool on) { applyMdAssocEnabled(on); };
         a.requestLogTailReload = [this] { logTailDirty_ = true; };
         a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };
 
@@ -1220,13 +1284,17 @@ private:
     }
 
     // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 警告行数推导；FillRemainder = 剩余视口高。
-    static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
+    static float cardHeight(const CardSpec& spec, float proxyH,
+                            float mdAssocH, float remain) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
             // spec.height 是 100% 档基准，运行期随生效字号放大：卡高不同步放大就会把尾行挤出卡外。
             return roundFs(spec.height);
         case CardHeightKind::ProxyWarnings:
             return proxyH;
+        case CardHeightKind::MdAssoc:
+            // F-10：compose 按状态字四态 + 平台档算好（roundFs 已含）
+            return mdAssocH;
         case CardHeightKind::FillRemainder:
             // UAT6 零滚动收口：日志 tab 在最小窗（1000×640 → 卡区可用高 372）下
             // remain = 372 − roundFs(144) − gap 16 = 212——旧下限 260 > 212 把日志
@@ -1255,7 +1323,7 @@ private:
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
-                        ::core::IClaudeProxyService* svc) {
+                        float mdAssocH, ::core::IClaudeProxyService* svc) {
         // logTail_ 保持原始不预过滤——过滤在装配期做，切档零额外磁盘 IO、下一帧立即生效；
         // 若在 readLogTailLines/applyLogTail 里过滤，切到低级别要重读磁盘才能看到更多行。
         auto filteredLogTail = filterLogTailByLevel(logTail_, parseLogLevel(cfg_.logLevel));
@@ -1288,6 +1356,8 @@ private:
         in.githubSyncDeleteSkipHint = githubSyncDeleteSkipHint_;
         in.githubSyncTokenVisible = githubSyncTokenVisible_;
         in.githubSyncDetailExpanded = githubSyncDetailExpanded_;
+        // .md 文件关联（F-10）：回读归属快照（compose 节流查询写入）
+        in.mdAssocState = mdAssocState_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -1305,7 +1375,7 @@ private:
         // 落单半宽卡：直接作内容列子元素（列起始对齐 START → x=0，宽 = colW）。
         auto flushLoneHalf = [&]() {
             if (pendingHalf == nullptr) return;
-            const float h = cardHeight(*pendingHalf, proxyH,
+            const float h = cardHeight(*pendingHalf, proxyH, mdAssocH,
                                       cardsH - cardY);
             CardDrawArgs args{ui, pendingHalf->id, colW, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
@@ -1318,9 +1388,9 @@ private:
         // 右卡矮于行高时下方自然留白，不拉伸）。对内两卡 pageY 同为行顶（openUp 几何一致）。
         auto flushHalfPair = [&](const CardSpec& rightSpec) {
             const CardSpec& leftSpec = *pendingHalf;
-            const float hL = cardHeight(leftSpec, proxyH,
+            const float hL = cardHeight(leftSpec, proxyH, mdAssocH,
                                         cardsH - cardY);
-            const float hR = cardHeight(rightSpec, proxyH,
+            const float hR = cardHeight(rightSpec, proxyH, mdAssocH,
                                         cardsH - cardY);
             const float rowH = std::max(hL, hR);
             const float rowY = cardY;
@@ -1361,7 +1431,7 @@ private:
             }
             flushLoneHalf();   // 全宽卡先清掉挂起的半宽游标
             const float h =
-                cardHeight(spec, proxyH, cardsH - cardY);
+                cardHeight(spec, proxyH, mdAssocH, cardsH - cardY);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
                               in, a};
@@ -1493,6 +1563,10 @@ private:
 
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
+    // .md 文件关联（F-10）：回读归属快照 + 节流戳（仅 UI 线程读写，compose 消费）
+    platform::file_association::AssocState mdAssocState_ =
+        platform::file_association::AssocState::Unknown;
+    int64_t mdAssocQueryAtSec_ = 0;  // 上次回读时刻（nowSec 秒）；0=从未查过（首帧即查）
     // GitHub Sync
     std::unique_ptr<GithubSyncStore> githubSyncStore_;
     GithubSyncConfig githubSyncCfg_;

@@ -34,6 +34,7 @@ if(WIN32)
         process_runner_win.cpp          # 进程执行器：CreateProcess + 管道全捕获（UAT6）
         wallpaper_capability_win.cpp    # 壁纸宿主能力：WorkerW/mpv 路线可用（true）
         file_association_win.cpp        # .md 文件关联：HKCU ProgId 登记写/查/清（F-06，注入缝见 file_association.h）
+        open_settings_win.cpp           # 系统默认应用设置页一键直达：ms-settings:defaultapps（F-10 引导）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -53,6 +54,7 @@ elseif(APPLE)
         autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
         process_runner_macos.cpp        # 进程执行器：posix_spawn + 管道全捕获（UAT6）
         wallpaper_capability_macos.cpp  # 壁纸宿主能力：第二阶段 ObjC++ 平台层前恒 false
+        open_settings_macos.cpp         # 无按类型默认页直达：恒 false，UI 走文字指引（F-10）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -72,6 +74,7 @@ else()
         autostart_posix.cpp            # 开机自启动兜底：恒不支持（UAT6）
         process_runner_posix.cpp        # 进程执行器：fork/exec + 管道全捕获（UAT6）
         wallpaper_capability_posix.cpp  # 壁纸宿主能力：无原生实现，恒 false
+        open_settings_posix.cpp         # POSIX 兜底：恒不支持（F-10）
     )
 endif()
 
@@ -127,9 +130,7 @@ if(APPLE)
         COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
-# Windows 系统库：Winsock2（网络）+ Crypt32（TLS 证书链）+ Shell32（file_open_win.cpp
 # CommandLineToArgvW / file_association_win.cpp SHChangeNotify）+ Advapi32（system_theme_win.cpp
-# RegGetValueW，spec 缩水 A）+ Shlwapi（folder_picker_win.cpp 路径解析）+ Ole32
 #（file_association_win.cpp CoCreateInstance/CoTaskMemFree，QueryCurrentDefault 关联查询）。
 # 统一经上方 WIN32 变量占位
 # ${DEVDESK_WIN_SYSTEM_LIBS} 排在 CURL::libcurl 之后；早位声明会被 CMake 去重保首位

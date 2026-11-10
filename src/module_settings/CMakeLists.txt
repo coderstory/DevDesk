@@ -7,6 +7,8 @@ add_library(devdesk_module_settings STATIC
     github_sync_config.cpp
     github_sync_engine.cpp
     github_sync_card.cpp
+    md_assoc_logic.cpp
+    md_assoc_card.cpp
     github_sync_logic.cpp
     git_error_dialog.cpp
 )
