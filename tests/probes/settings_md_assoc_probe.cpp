@@ -88,7 +88,6 @@ int main(int argc, char* argv[]) {
     core::dsl::Runtime runtime;
     runtime.initialize(window);
 
-    const float cardH = static_cast<float>(args.windowH);
     bool passed = true;
 
     for (const CaseSpec& c : kCases) {
