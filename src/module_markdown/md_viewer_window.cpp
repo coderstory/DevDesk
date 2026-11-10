@@ -296,7 +296,8 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         return;
     }
 
-    // 正文列宽：min(窗宽−80, 760) 居中（设计 §3.2；窗宽 ≤840 时 = 窗宽−80）
+    // 正文列宽：min(窗宽−80, 760) 居中（设计 §3.2）；滚动区=该列本身（编辑器
+    // 预览同款 pvX/pvW 形态：测量 pass 与渲染同宽，滚动条贴列右缘）
     const float pvW =
         std::max(0.0f, std::min(screen.width - 80.0f, 760.0f));
     const float pvX = std::max(0.0f, (screen.width - pvW) * 0.5f);
@@ -315,8 +316,8 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
                          /*drawCodeBlock=*/{}};  // 空 = CodeFence 走默认 markdown
                                                  // 渲染（查看器无高亮自绘形态）
     components::scrollView(ui, kViewerScrollId)
-        .position(0.0f, 0.0f)
-        .size(screen.width, screen.height)
+        .position(pvX, 0.0f)
+        .size(pvW, screen.height)
         .gap(style.blockGap)
         .step(56.0f)  // 滚轮步进 56px（与预览 scrollView 同值，设计 §3.2）
         .theme(componentTheme)
@@ -367,7 +368,7 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
                 const float normalAlpha = light ? 0.22f : 0.26f;
                 const float curAlpha = light ? 0.30f : 0.38f;
                 for (size_t i = 0; i < s.curBlockRects.size(); ++i) {
-                    const FrameRect& fr = s.curBlockRects[i];
+                    const ViewerSession::FrameRect& fr = s.curBlockRects[i];
                     // id 含块序号：不同块的命中矩形同帧共存，元素 id 不得跨块撞名
                     const std::string base = "md.viewer.hit." + std::to_string(k) +
                                              "." + std::to_string(i);
