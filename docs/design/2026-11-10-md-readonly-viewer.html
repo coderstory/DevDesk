@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  只读 MD 查看器 — 视觉校准 demo（伴生文档：2026-11-10-md-readonly-viewer.md）
+  demo 仅视觉校准用，不是实现蓝图：本文件不约束实现技术，
+  全部参数以设计文档 §3 规格表为准（token 来源 theme.cpp 实值）。
+  自包含单文件：无外部依赖、离线可双击打开。
+  底部「DEMO 控制台」为演示工具，非产品 UI。
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sample.md — DevDesk 只读查看器（demo）</title>
+<style>
+  /* ── token（src/core/theme.cpp:18-44 Dark / 73-99 Light 实值）── */
+  :root, [data-theme="dark"] {
+    --bg: #1A1816; --surface: #232120; --elevated: #2C2A28;
+    --hover: #353231; --active: #3E3B39;
+    --primary: #36D399; --primary-hover: #2EC48F; --primary-pressed: #23B07F;
+    --soft: #0D3326; --on-primary: #FFFFFF;
+    --text-p: #FAF9F5; --text-s: #C9C5BD; --text-t: #9A948A;
+    --border: #3A3735; --border-m: #2A2826;
+    --success: #34D399; --warning: #FBBF24; --err-text: #F87171; --info: #60A5FA;
+    /* 预览派生色（MarkdownStyle 构造默认：textPrimary 按不透明度派生） */
+    --md-text: rgba(250,249,245,.78); --md-heading: rgba(250,249,245,.96);
+    --md-muted: rgba(250,249,245,.58);
+    --md-code-bg: #14171C; --md-code-text: #E0F0FF;
+    --md-quote-bg: rgba(54,211,153,.12);
+    --md-divider: rgba(58,55,53,.82);
+    --md-code-plain: #34D399; --md-num: #36D399;
+    /* 命中高亮（设计文档 §3.4） */
+    --hit-normal: rgba(251,191,36,.26); --hit-cur: rgba(54,211,153,.38);
+    /* wswitch 关态轨道 = borderDefault × 0.91（wswitch.cpp:17-22） */
+    --track-off: #353230;
+  }
+  [data-theme="light"] {
+    --bg: #FAFAF9; --surface: #FFFFFF; --elevated: #FFFFFF;
+    --hover: #F3F4F6; --active: #E5E7EB;
+    --soft: #E6FBF2;
+    --text-p: #1F2937; --text-s: #4B5563; --text-t: #6B7280;
+    --border: #E5E7EB; --border-m: #F3F4F6;
+    --success: #10B981; --warning: #F59E0B; --err-text: #B91C1C; --info: #3B82F6;
+    --md-text: rgba(31,41,55,.78); --md-heading: rgba(31,41,55,.96);
+    --md-muted: rgba(31,41,55,.58);
+    --md-code-bg: #EDF0F5; --md-code-text: #1A212E;
+    --md-quote-bg: rgba(54,211,153,.08);
+    --md-divider: rgba(229,231,235,.82);
+    --md-code-plain: #10B981; --md-num: #157E4E;
+    --hit-normal: rgba(245,158,11,.22); --hit-cur: rgba(54,211,153,.30);
+    --track-off: #D1D5DB;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text-p);
+    font-family: "Inter", "Microsoft YaHei", "PingFang SC", sans-serif;
+    font-size: 16px; overflow: hidden;          /* 外壳不滚 */
+    min-width: 560px; min-height: 400px;        /* 查看器最小窗（设计文档 §3.1） */
+  }
+
+  /* ── 模拟标题栏（真实实现为系统绘制；demo 用于演示文件名中段省略）── */
+  #titlebar {
+    height: 36px; display: flex; align-items: center;
+    padding: 0 16px; background: var(--surface);
+    border-bottom: 1px solid var(--border-m);
+    position: relative; flex: none;
+  }
+  #titlebar .demo-tag {
+    font-size: 11px; color: var(--text-t); border: 1px solid var(--border);
+    border-radius: 999px; padding: 1px 8px; margin-right: 12px; flex: none;
+  }
+  #titleText {
+    font-size: 13px; color: var(--text-s); white-space: nowrap;
+    overflow: hidden; flex: 1; text-align: center;
+  }
+
+  /* ── 查看器正文区（唯一滚动容器）── */
+  #viewerScroll {
+    position: absolute; top: 36px; left: 0; right: 0; bottom: 0;
+    overflow-y: auto; overflow-x: hidden;
+  }
+  #viewerScroll::-webkit-scrollbar { width: 8px; }
+  #viewerScroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  #viewerScroll::-webkit-scrollbar-track { background: transparent; }
+  #mdColumn { max-width: 760px; margin: 0 auto; padding: 32px 40px 40px; }
+
+  /* ── 占位（空文件 / 错误）：居中一行文字，无按钮无图标（设计文档 §3.3）── */
+  .placeholder {
+    position: absolute; top: 36px; left: 0; right: 0; bottom: 0;
+    display: none; align-items: center; justify-content: center;
+    font-size: 15px;
+  }
+  .placeholder.show { display: flex; }
+  .placeholder.empty { color: var(--text-t); }
+  .placeholder.error { color: var(--err-text); }
+
+  /* ── Markdown 预览排版（值=设计文档 §3.2，MarkdownStyle 实测）── */
+  #mdBody { color: var(--md-text); font-size: 16px; line-height: 24px; }
+  #mdBody h1 { font-size: 30px; line-height: 36px; color: var(--md-heading); margin: 0 0 12px; }
+  #mdBody h2 { font-size: 24px; line-height: 30px; color: var(--md-heading); margin: 24px 0 12px; }
+  #mdBody h3 { font-size: 20px; line-height: 26px; color: var(--md-heading); margin: 24px 0 12px; }
+  #mdBody p { margin: 0 0 12px; }
+  #mdBody a { color: var(--primary); text-decoration: none; }
+  #mdBody ul { margin: 0 0 12px; padding-left: 22px; }       /* listIndent 22 */
+  #mdBody li { margin-bottom: 4px; }
+  #mdBody strong { color: var(--md-heading); }
+  #mdBody blockquote {
+    background: var(--md-quote-bg); border-radius: 6px;
+    padding: 12px; margin: 0 0 12px;
+  }
+  #mdBody blockquote p { margin: 0; }
+  #mdBody hr { border: none; border-top: 1px solid var(--md-divider); margin: 12px 0; }
+  #mdBody code {
+    font-family: "JetBrains Mono", Consolas, monospace;
+    font-size: 14px; color: var(--md-code-text);
+    background: var(--md-code-bg); border-radius: 6px; padding: 12px;
+    display: block; margin: 0 0 12px; white-space: pre-wrap; word-break: break-all;
+  }
+  #mdBody p code, #mdBody li code {
+    display: inline; padding: 1px 5px;
+  }
+  #mdBody .kw { color: var(--info); }
+  #mdBody .str { color: var(--warning); }
+  #mdBody .cmt { color: var(--text-t); }
+  #mdBody .num { color: var(--md-num); }
+  #mdBody table { border-collapse: collapse; margin: 0 0 12px; width: 100%; }
+  #mdBody th, #mdBody td {
+    border: 1px solid var(--md-divider);
+    padding: 12px; text-align: left; font-size: 16px; line-height: 24px;
+  }
+  #mdBody th { color: var(--md-heading); }
+
+  /* ── 搜索命中（设计文档 §3.4）── */
+  .hit { background: var(--hit-normal); border-radius: 2px; }
+  .hit.cur { background: var(--hit-normal); position: relative; }
+  .hit.cur::after {
+    content: ""; position: absolute; inset: 0;
+    background: var(--hit-cur); border-radius: 2px; pointer-events: none;
+  }
+
+  /* ── 搜索浮层（设计文档 §3.4）── */
+  #searchBar {
+    position: fixed; top: 48px; right: 16px; z-index: 20;
+    display: flex; align-items: center; gap: 8px;
+    min-width: 360px; padding: 6px;
+    background: var(--elevated); border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.06);
+    opacity: 0; transform: translateY(-4px); pointer-events: none;
+    transition: opacity 150ms ease-out, transform 150ms ease-out; /* 150ms ease-out 档 */
+  }
+  #searchBar.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  #searchInput {
+    width: 220px; height: 28px; padding: 0 8px;
+    background: var(--surface); color: var(--text-p);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px; font-family: inherit; outline: none;
+  }
+  #searchInput:focus { border-color: var(--primary); }
+  #searchInput::placeholder { color: var(--text-t); }
+  #searchCount { font-size: 12px; color: var(--text-s); min-width: 32px; text-align: right; white-space: nowrap; }
+  #searchEmpty { font-size: 12px; color: var(--text-t); white-space: nowrap; display: none; }
+  #searchEmpty.show { display: inline; }
+  #searchClear {
+    width: 24px; height: 24px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 6px;
+    color: var(--text-t); font-size: 12px; cursor: pointer;
+    transition: background 150ms ease-out;
+  }
+  #searchClear:hover { background: var(--hover); }
+  #searchClear:active { background: var(--active); }
+
+  /* ── 设置页视图 ── */
+  #settingsView { display: none; position: absolute; top: 36px; left: 0; right: 0; bottom: 0; }
+  body[data-view="settings"] #settingsView { display: flex; }
+  body[data-view="settings"] #viewerScroll { display: none; }
+  #fakeSidebar {
+    width: 208px; flex: none; background: var(--surface);
+    border-right: 1px solid var(--border-m); padding: 16px 12px;
+    font-size: 13px; color: var(--text-t);
+  }
+  #fakeSidebar .side-active {
+    background: var(--soft); color: var(--primary); border-radius: 6px;
+    padding: 8px 12px; margin-bottom: 4px;
+  }
+  #fakeSidebar .side-item { padding: 8px 12px; border-radius: 6px; margin-bottom: 4px; }
+  #settingsMain { flex: 1; overflow-y: auto; padding: 12px; }   /* 页面外 padding 12（theme.h spacingPage） */
+  #settingsMain::-webkit-scrollbar { width: 8px; }
+  #settingsMain::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  .page-title { font-size: 32px; line-height: 38px; margin: 28px 0 24px; }  /* 页面标题 32px */
+  .card {
+    max-width: 792px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    padding: 24px 28px;
+  }
+  .card-title { font-size: 20px; line-height: 26px; margin-bottom: 16px; }
+
+  /* ── 开关行（设计文档 §3.5）── */
+  #assocRow { min-height: 40px; display: flex; align-items: center; margin-bottom: 8px; }
+  #assocLeft { flex: 1; min-width: 0; padding-right: 8px; }
+  #assocLabel { font-size: 13px; line-height: 18px; color: var(--text-p); }
+  #assocDesc { font-size: 12px; line-height: 16px; color: var(--text-t); margin-top: 4px; }
+  #assocTail { display: flex; align-items: center; flex: none; }
+  #assocStatus { font-size: 12px; line-height: 16px; margin-right: 8px; white-space: nowrap; }
+  #assocStatus.st-linked { color: var(--success); }
+  #assocStatus.st-notok { color: var(--warning); }
+  #assocStatus.st-stopped { color: var(--text-t); }
+  /* 44×24 wswitch：开=primary 圆角 12、滑块 20×20 距边 2；关=borderDefault×0.91 */
+  #assocSwitch {
+    width: 44px; height: 24px; flex: none; position: relative;
+    background: var(--track-off); border-radius: 12px;
+    border: none; cursor: pointer; padding: 0;
+  }
+  #assocSwitch .thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 20px; height: 20px; border-radius: 10px;
+    background: var(--surface);
+    transition: none;               /* 与现有 wswitch 一致：无位移动画 */
+  }
+  #assocSwitch.on { background: var(--primary); }
+  #assocSwitch.on .thumb { left: 22px; }
+  /* 引导行（未生效态追加，警告行先例：icon 11 + 文字 11 warning，行高 16） */
+  #guideRow { display: none; align-items: center; gap: 6px; margin-top: 2px; }
+  #guideRow.show { display: flex; }
+  #guideRow .warn-icon { color: var(--warning); font-size: 11px; flex: none; }
+  #guideText { font-size: 11px; line-height: 16px; color: var(--warning); }
+  #guideBtn {
+    height: 28px; padding: 0 12px; flex: none;
+    background: var(--primary); color: var(--on-primary);
+    border: none; border-radius: 6px;
+    font-size: 13px; font-family: inherit; cursor: pointer;
+    transition: background 150ms ease-out;
+  }
+  #guideBtn:hover { background: var(--primary-hover); }
+  #guideBtn:active { background: var(--primary-pressed); }
+
+  /* ── DEMO 控制台（非产品 UI）── */
+  #demoConsole {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 30; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    justify-content: center; max-width: 94vw;
+    background: var(--elevated); border: 1px dashed var(--border);
+    border-radius: 10px; padding: 6px 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.06);
+  }
+  #demoConsole .lbl { font-size: 11px; color: var(--text-t); white-space: nowrap; }
+  #demoConsole button {
+    height: 24px; padding: 0 10px;
+    background: var(--surface); color: var(--text-s);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; font-family: inherit; cursor: pointer;
+    white-space: nowrap;
+  }
+  #demoConsole button:hover { background: var(--hover); }
+  #demoConsole button.cur { border-color: var(--primary); color: var(--primary); }
+</style>
+</head>
+<body data-view="viewer" data-theme="dark">
+
+  <!-- 模拟标题栏 -->
+  <div id="titlebar">
+    <span class="demo-tag">模拟系统标题栏</span>
+    <span id="titleText">sample.md</span>
+  </div>
+
+  <!-- 面 1 + 面 2：查看器正文 + 搜索浮层 -->
+  <div id="viewerScroll">
+    <div id="mdColumn"><div id="mdBody"></div></div>
+  </div>
+  <div id="emptyPh" class="placeholder empty"><span>（空文件）</span></div>
+  <div id="errorPh" class="placeholder error"><span>无法打开：文件不存在或已被移动</span></div>
+
+  <div id="searchBar">
+    <input id="searchInput" type="text" placeholder="查找" autocomplete="off">
+    <span id="searchCount"></span>
+    <span id="searchEmpty">无匹配</span>
+    <button id="searchClear" title="清除并收起（Esc）">✕</button>
+  </div>
+
+  <!-- 面 3：设置页开关行 -->
+  <div id="settingsView">
+    <div id="fakeSidebar">
+      <div class="side-item">首页</div>
+      <div class="side-item">笔记</div>
+      <div class="side-item">待办</div>
+      <div class="side-item">Claude</div>
+      <div class="side-item">智能体</div>
+      <div class="side-active">设置</div>
+      <div class="side-item">关于</div>
+    </div>
+    <div id="settingsMain">
+      <div class="page-title">设置</div>
+      <div class="card">
+        <div class="card-title">文件关联</div>
+        <div id="assocRow">
+          <div id="assocLeft">
+            <div id="assocLabel">关联 .md 文件</div>
+            <div id="assocDesc">双击 .md 文件时用 DevDesk 只读查看器打开</div>
+            <div id="guideRow">
+              <span class="warn-icon">▲</span>
+              <span id="guideText"></span>
+              <button id="guideBtn">打开系统默认应用设置</button>
+            </div>
+          </div>
+          <div id="assocTail">
+            <span id="assocStatus"></span>
+            <button id="assocSwitch" aria-label="关联 .md 文件">
+              <span class="thumb"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DEMO 控制台（非产品 UI） -->
+  <div id="demoConsole">
+    <span class="lbl">DEMO 控制台（非产品 UI）</span>
+    <button id="cViewer" class="cur">查看器</button>
+    <button id="cSettings">设置开关行</button>
+    <span class="lbl">场景</span>
+    <button id="cNormal" class="cur">示例内容</button>
+    <button id="cEmpty">空文件</button>
+    <button id="cError">无法打开</button>
+    <span class="lbl">开关行状态</span>
+    <button id="cInit">初始</button>
+    <button id="cLinked">已关联</button>
+    <button id="cNotWin">未生效 Win</button>
+    <button id="cNotMac">未生效 macOS</button>
+    <button id="cStopped">已停止</button>
+    <span class="lbl">主题</span>
+    <button id="cTheme">深/浅</button>
+    <button id="cSearch">唤起搜索</button>
+  </div>
+
+  <template id="tplSample">
+    <h1>第二季度产品指标评审</h1>
+    <p>本文汇总 2026 年 Q2 各条线的核心数据，供季度评审会使用。数据口径与一季度保持一致，环比基线取 3 月末值。完整的口径定义见附录。</p>
+    <h2>一、总体结论</h2>
+    <p>三条主线中两条达标：<strong>研发效能</strong>与<strong>交付质量</strong>均超预期，<a href="#">增长曲线</a>低于预期 4 个百分点，需要专项跟进。</p>
+    <ul>
+      <li>研发效能：需求平均交付周期缩短 18%，超出目标 8 个百分点</li>
+      <li>交付质量：线上缺陷率下降至 0.8/千行，达到历史最好水平</li>
+      <li>用户增长：月活跃指标未达标，环比仅提升 2.1%，详见下表</li>
+    </ul>
+    <h2>二、核心数据</h2>
+    <table>
+      <tr><th>指标</th><th>Q1 实际</th><th>Q2 目标</th><th>Q2 实际</th><th>结论</th></tr>
+      <tr><td>交付周期（天）</td><td>11.2</td><td>10.0</td><td>9.2</td><td>达标</td></tr>
+      <tr><td>线上缺陷率（/千行）</td><td>1.4</td><td>1.0</td><td>0.8</td><td>达标</td></tr>
+      <tr><td>月活跃增长率</td><td>3.5%</td><td>6.0%</td><td>2.1%</td><td>未达标</td></tr>
+    </table>
+    <h2>三、口径说明</h2>
+    <blockquote>
+      <p>所有数据均取自然月最后一个工作日的日终快照；跨区团队按 UTC+8 折算。若某项数据当月存在回填修正，以修正后值为准并在脚注标注。</p>
+    </blockquote>
+    <h2>四、取数脚本</h2>
+    <p>评审数据由统一脚本产出，任何人可复核：</p>
+    <code><span class="cmt"># 取数入口：按季度聚合各条线指标</span>
+<span class="kw">def</span> load_quarter(q):
+    rows = db.query(<span class="str">"select metric, value from stats where quarter = ?"</span>, q)
+    <span class="kw">return</span> {r[<span class="num">0</span>]: r[<span class="num">1</span>] <span class="kw">for</span> r <span class="kw">in</span> rows}</code>
+    <hr>
+    <p>附录中的指标字典由数据组维护，修订需双人复核。</p>
+  </template>
+
+<script>
+(function () {
+  "use strict";
+  var isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ── 场景：查看器内容 ── */
+  var scene = "normal";
+  function renderScene() {
+    $("emptyPh").classList.remove("show");
+    $("errorPh").classList.remove("show");
+    $("viewerScroll").style.display = "";
+    if (scene === "normal") {
+      $("mdBody").innerHTML = $("tplSample").innerHTML;
+    } else {
+      $("mdBody").innerHTML = "";
+      if (scene === "empty") $("emptyPh").classList.add("show");
+      if (scene === "error") $("errorPh").classList.add("show");
+    }
+    closeSearch(true);                       // 换场景清搜索态
+    document.title = scene === "error" ? "broken.md — DevDesk 只读查看器（demo）"
+                   : scene === "empty" ? "empty.md — DevDesk 只读查看器（demo）"
+                   : "sample.md — DevDesk 只读查看器（demo）";
+    fitTitle();
+  }
+
+  /* ── 标题中段省略（保头尾，设计文档 §3.1）── */
+  function fitTitle() {
+    var el = $("titleText");
+    var full = document.title.split(" — ")[0];
+    el.textContent = full;
+    el.style.visibility = "hidden";
+    var overflow = el.scrollWidth > el.clientWidth;
+    el.style.visibility = "";
+    if (!overflow) return;
+    var head = full.slice(0, 10), tail = full.slice(-10);
+    el.textContent = head + "…" + tail;
+    while (el.scrollWidth > el.clientWidth && head.length > 2) {
+      head = head.slice(0, -1);
+      el.textContent = head + "…" + tail;
+    }
+  }
+
+  /* ── 搜索（交互口径 = PRD D-2）── */
+  var barOpen = false, hits = [], cur = -1, lastWord = "";
+  function clearHits() {
+    hits.forEach(function (s) {
+      var p = s.parentNode;
+      if (!p) return;
+      p.replaceChild(document.createTextNode(s.textContent), s);
+      p.normalize();
+    });
+    hits = []; cur = -1;
+  }
+  function runSearch() {
+    clearHits();
+    var word = $("searchInput").value;
+    $("searchEmpty").classList.remove("show");
+    if (!word) {                             // 清空输入 = 无关键词：高亮清、计数空
+      $("searchCount").textContent = "";
+      return;
+    }
+    var walker = document.createTreeWalker($("mdBody"), NodeFilter.SHOW_TEXT, null);
+    var nodes = [], n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    var lower = word.toLowerCase();
+    nodes.forEach(function (node) {
+      var text = node.nodeValue, low = text.toLowerCase(), idx = low.indexOf(lower);
+      if (idx < 0) return;
+      var frag = document.createDocumentFragment(), pos = 0, m;
+      while ((m = low.indexOf(lower, pos)) >= 0) {
+        if (m > pos) frag.appendChild(document.createTextNode(text.slice(pos, m)));
+        var span = document.createElement("span");
+        span.className = "hit";
+        span.textContent = text.slice(m, m + word.length);
+        frag.appendChild(span);
+        hits.push(span);
+        pos = m + word.length;
+      }
+      if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+      node.parentNode.replaceChild(frag, node);
+    });
+    if (hits.length === 0) {                 // 无命中：0/0 + 无匹配，Enter 无操作
+      $("searchCount").textContent = "0/0";
+      $("searchEmpty").classList.add("show");
+      return;
+    }
+    setCurrent(0, false);
+  }
+  function setCurrent(i, scroll) {
+    if (cur >= 0 && hits[cur]) hits[cur].classList.remove("cur");
+    cur = i;
+    hits[cur].classList.add("cur");
+    $("searchCount").textContent = (cur + 1) + "/" + hits.length;
+    if (scroll !== false) {                  // 视图滚至命中处垂直居中（即时，无平滑动画）
+      var sc = $("viewerScroll");
+      var top = hits[cur].getBoundingClientRect().top - sc.getBoundingClientRect().top
+                + sc.scrollTop - sc.clientHeight / 2 + hits[cur].offsetHeight / 2;
+      sc.scrollTop = Math.max(0, top);
+    }
+  }
+  function step(dir) {
+    if (hits.length === 0) return;           // 0/0：Enter 无操作
+    setCurrent((cur + dir + hits.length) % hits.length, true);
+  }
+  function openSearch() {
+    barOpen = true;
+    $("searchBar").classList.add("open");
+    var input = $("searchInput");
+    if (lastWord) { input.value = lastWord; } // 再唤起保留上次关键词并全选
+    input.focus();
+    if (lastWord) input.select();
+  }
+  function closeSearch(silent) {
+    barOpen = false;
+    $("searchBar").classList.remove("open");
+    clearHits();
+    $("searchCount").textContent = "";
+    $("searchEmpty").classList.remove("show");
+    if (silent !== true) $("searchInput").blur();
+  }
+  $("searchInput").addEventListener("input", function () {
+    lastWord = this.value;
+    runSearch();
+  });
+  $("searchInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); step(-1); }
+    else if (e.key === "Enter") { e.preventDefault(); step(1); }
+    else if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+  });
+  $("searchClear").addEventListener("click", function () { closeSearch(); });
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+      if (document.body.dataset.view !== "viewer") return;
+      e.preventDefault();
+      if (!barOpen) openSearch();            // 再唤起=保留并全选
+      else { $("searchInput").focus(); $("searchInput").select(); }
+    } else if (e.key === "Escape" && barOpen) {
+      closeSearch();
+    }
+  });
+  $("cSearch").addEventListener("click", function () {
+    if (document.body.dataset.view !== "viewer") switchView("viewer");
+    if (!barOpen) openSearch();
+    else { $("searchInput").focus(); $("searchInput").select(); }
+  });
+
+  /* ── 设置开关行状态机（状态口径 = PRD §八）── */
+  var st = {
+    init:     { on: false, cls: "",           text: "",               guide: "" },
+    linked:   { on: true,  cls: "st-linked", text: "已关联",          guide: "" },
+    notwin:   { on: true,  cls: "st-notok",  text: "未生效",          guide: "win" },
+    notmac:   { on: true,  cls: "st-notok",  text: "未生效",          guide: "mac" },
+    stopped:  { on: false, cls: "st-stopped", text: "已停止自动维护",  guide: "" }
+  };
+  var curState = "init";
+  function applyState(name) {
+    curState = name;
+    var s = st[name];
+    $("assocSwitch").classList.toggle("on", s.on);
+    $("assocStatus").className = s.cls;
+    $("assocStatus").textContent = s.text;
+    var guide = $("guideRow");
+    if (s.guide === "win") {
+      guide.classList.add("show");
+      $("guideBtn").style.display = "";
+      $("guideText").textContent = "Windows 提示当前默认程序未指向 DevDesk，点击右侧按钮修复。";
+    } else if (s.guide === "mac") {
+      guide.classList.add("show");
+      $("guideBtn").style.display = "none";
+      $("guideText").textContent =
+        "macOS 无一键入口：Finder 右键任一 .md → 显示简介 → 打开方式 → 选 DevDesk → 全部更改";
+    } else {
+      guide.classList.remove("show");
+    }
+    markCur("cInit,cLinked,cNotWin,cNotMac,cStopped", {
+      init: "cInit", linked: "cLinked", notwin: "cNotWin",
+      notmac: "cNotMac", stopped: "cStopped"
+    }[name]);
+  }
+  $("assocSwitch").addEventListener("click", function () {
+    /* 真实交互链（幂等）：关→开=执行关联（demo 模拟成功）；开→关=不注销仅停自愈（D-4） */
+    if (curState === "init" || curState === "stopped") applyState("linked");
+    else applyState("stopped");
+  });
+
+  /* ── 控制台 ── */
+  function markCur(ids, curId) {
+    ids.split(",").forEach(function (id) {
+      $(id).classList.toggle("cur", id === curId);
+    });
+  }
+  function switchView(v) {
+    document.body.dataset.view = v;
+    closeSearch(true);               // 搜索条属查看器窗；离开该窗即不可见
+    $("cViewer").classList.toggle("cur", v === "viewer");
+    $("cSettings").classList.toggle("cur", v === "settings");
+    $("cNormal").style.display = v === "viewer" ? "" : "none";
+    $("cEmpty").style.display = v === "viewer" ? "" : "none";
+    $("cError").style.display = v === "viewer" ? "" : "none";
+    if (v === "viewer") document.title =
+      (scene === "normal" ? "sample.md" : scene === "empty" ? "empty.md" : "broken.md")
+      + " — DevDesk 只读查看器（demo）";
+    else document.title = "DevDesk 设置（主窗示意，demo）";
+    fitTitle();
+  }
+  function setScene(s) {
+    scene = s;
+    switchView("viewer");
+    renderScene();
+    markCur("cNormal,cEmpty,cError", { normal: "cNormal", empty: "cEmpty", error: "cError" }[s]);
+  }
+  $("cViewer").addEventListener("click", function () { switchView("viewer"); });
+  $("cSettings").addEventListener("click", function () { switchView("settings"); });
+  $("cNormal").addEventListener("click", function () { setScene("normal"); });
+  $("cEmpty").addEventListener("click", function () { setScene("empty"); });
+  $("cError").addEventListener("click", function () { setScene("error"); });
+  $("cInit").addEventListener("click", function () { applyState("init"); });
+  $("cLinked").addEventListener("click", function () { applyState("linked"); });
+  $("cNotWin").addEventListener("click", function () { applyState("notwin"); });
+  $("cNotMac").addEventListener("click", function () { applyState("notmac"); });
+  $("cStopped").addEventListener("click", function () { applyState("stopped"); });
+  $("cTheme").addEventListener("click", function () {
+    var b = document.body;
+    b.dataset.theme = b.dataset.theme === "dark" ? "light" : "dark";
+  });
+
+  /* ── 启动 ── */
+  window.addEventListener("resize", fitTitle);
+  renderScene();
+  applyState("init");
+})();
+</script>
+</body>
+</html>
