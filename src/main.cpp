@@ -684,7 +684,7 @@ const DslAppConfig& dslAppConfig() {
                 ? platform::file_association::isDefaultForMd().valueOr(
                       platform::file_association::AssocState::Unknown)
                 : platform::file_association::AssocState::Unknown;
-        if (mdAssocHealAction(cfg.mdAssocEnabled, state) ==
+        if (module::settings::mdAssocHealAction(cfg.mdAssocEnabled, state) ==
             module::settings::MdAssocHealAction::Skip) {
             return true;
         }
