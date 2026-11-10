@@ -31,13 +31,15 @@ MdAssocHealAction mdAssocHealAction(bool enabled,
 // 状态字文案（None → 空串，调用方按空判断不建元素）。
 const char* mdAssocStatusLabel(MdAssocStatusKind kind);
 
-// 卡高（100% 档基准，运行期 roundFs 包裹）：标题 20 + 行距 6 + 行盒 40 + 上下
-// 留白 8×2 = 82（设计文档 §3.5：行盒 40 = label 18 + 间距 4 + 说明 16 + 余 2）。
-inline constexpr float kMdAssocCardHeight = 82.0f;
-// 未生效引导行：距行盒 2。文字档（macOS 文字指引）行盒 16 → 82+2+16 = 100；
-// 按钮档（Windows 一键按钮，高 28 字面值不随字号缩放、主导行高）→ 82+2+28 = 112。
-inline constexpr float kMdAssocCardHeightTextGuide = 100.0f;
-inline constexpr float kMdAssocCardHeightBtnGuide = 112.0f;
+// 卡高（100% 档基准，运行期 roundFs 包裹）：标题 20 + 行距 4 + 行盒 40 + 上下
+// 留白 6×2 = 78（设计文档 §3.5：行盒 40 = label 18 + 间距 4 + 说明 16 + 余 2；
+// 留白/行距自首稿 8/6 收缩至 6/4——通用 tab 1000×640 最小窗 100% 档零滚动
+// 不变量：卡高 82 时 tab 内容高 375 > 可用 372 溢出 3px，收缩 4px 留余量）。
+inline constexpr float kMdAssocCardHeight = 78.0f;
+// 未生效引导行：距行盒 2。文字档（macOS 文字指引）行盒 16 → 78+2+16 = 96；
+// 按钮档（Windows 一键按钮，高 28 字面值不随字号缩放、主导行高）→ 78+2+28 = 108。
+inline constexpr float kMdAssocCardHeightTextGuide = 96.0f;
+inline constexpr float kMdAssocCardHeightBtnGuide = 108.0f;
 inline float mdAssocCardHeight(bool guide, bool oneClickButton) {
     if (!guide) return kMdAssocCardHeight;
     return oneClickButton ? kMdAssocCardHeightBtnGuide
