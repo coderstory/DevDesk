@@ -7,6 +7,8 @@
 // SettingsCardActions。
 #pragma once
 
+#include "platform/file_association.h"
+
 #include "settings_config.h"
 #include "settings_ui_logic.h"
 
@@ -54,6 +56,11 @@ struct SettingsCardsIn {
     std::string githubSyncDeleteSkipHint;        // 删远端跳过提示 → 黄字
     bool githubSyncTokenVisible = false;          // S3.7#6 Token 显隐切换
     bool githubSyncDetailExpanded = false;        // S3.7#4 同步说明折叠展开
+
+    // .md 文件关联（F-10）：回读归属快照（设置页 compose 节流查询写入，
+    // 见 settings_module::updateMdAssocStateIfStale 的 POC 结论注释）
+    platform::file_association::AssocState mdAssocState =
+        platform::file_association::AssocState::Unknown;
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -72,6 +79,7 @@ struct SettingsCardActions {
     std::function<void(int)> applyEditorFontPreset;           // 编辑器字号档
     std::function<void(bool)> applyAutostartEnabled;          // 开机自启动开关（UAT6）
     std::function<void(bool)> applyFluidBackgroundEnabled;   // 动态背景开关（UAT6 活体流质）
+    std::function<void(bool)> applyMdAssocEnabled;            // 关联 .md 文件开关（F-10）
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
 
