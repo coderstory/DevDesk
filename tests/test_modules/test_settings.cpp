@@ -3726,7 +3726,8 @@ REGISTER_TEST(settings_card_registry_order,
         mod->onStart();
         const std::vector<std::string> wantGeneral = {
             "settings.cards.pair.0",
-            "settings.card.proxy"};   // UAT5：代理卡迁通用 tab（配对行下方全宽）
+            "settings.card.proxy",
+            "settings.card.md_assoc"};   // UAT5：代理卡迁通用 tab（配对行下方全宽）；F-10：.md 关联卡尾随
         const auto t0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
         const auto pairChildren = pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
@@ -3771,9 +3772,10 @@ REGISTER_TEST(settings_card_registry_order,
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
-        // claude 关 → 代理卡（已迁通用 tab）随 gate 整卡隐藏，只剩配对行
+        // claude 关 → 代理卡（已迁通用 tab）随 gate 整卡隐藏；.md 关联卡无门控恒显
         const std::vector<std::string> wantGeneralGated = {
-            "settings.cards.pair.0"};
+            "settings.cards.pair.0",
+            "settings.card.md_assoc"};
         const auto g0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（claude 关） 实测：" + join(g0));
         mod->onStop();
