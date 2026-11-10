@@ -374,9 +374,13 @@ void mdDrawBlockFlowCore(eui::Ui& ui,
                                 onBlockTap(k, static_cast<float>(ev.y));
                             });
                         }
-                        hit.onHover([&deps, sid = b.stableId](bool h) {
-                               if (h) deps.hover.enter(sid);
-                               else deps.hover.leave(sid);
+                        // onHover 回调是帧后事件（构建期已返回），禁引用捕获
+                        // 栈上 deps——按值捕 hover 状态指针（所指对象 = 调用方
+                        // 成员态，寿命覆盖 lambda），原 [this, sid] 等价形态。
+                        hit.onHover([hv = &deps.hover,
+                                     sid = b.stableId](bool h) {
+                               if (h) hv->enter(sid);
+                               else hv->leave(sid);
                            })
                             .build();
                         // 注入点收尾：实时态活动块在此关覆盖层命中，
