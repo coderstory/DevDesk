@@ -75,8 +75,15 @@ HANDLE g_mutexHandle = nullptr;
 // 进程退出时 OS 回收线程；线程启动即 detach，静态析构期不存在 joinable 线程）。
 std::atomic<bool> g_listenerRunning{false};
 
-// 路径接收回调（app::assembly 注册）：监听线程校验载荷后触发，见头文件线程契约
-platform::single_instance::PathsHandler g_pathsHandler;
+// 路径接收回调槽（启动装配期由 main 注册一次后不更换，见头文件线程契约）。
+// 堆持有永不析构（有意泄漏）：监听线程 detach、静态析构期可能仍在跑，std::function
+// 析构与监听线程调用竞态 = UAF——堆持有对齐「进程级单例永不析构」纪律
+//（tests/test_main.cpp resetCaseGlobals 清单注记同款理由）
+platform::single_instance::PathsHandler& openPathsSlot() {
+    static platform::single_instance::PathsHandler* slot =
+        new platform::single_instance::PathsHandler();
+    return *slot;
+}
 
 void listenerLoop() {
     HANDLE hEvent = CreateEventW(nullptr, TRUE, FALSE, eventName().c_str());
@@ -144,7 +151,7 @@ bool acquireInstanceLock() {
     return isFirst;
 }
 
-void setOpenPathsHandler(PathsHandler handler) { g_pathsHandler = std::move(handler); }
+void setOpenPathsHandler(PathsHandler handler) { openPathsSlot() = std::move(handler); }
 
 bool consumeSectionSignalOnce() {
     HANDLE section = OpenFileMappingW(FILE_MAP_READ, FALSE, sectionName().c_str());
@@ -176,8 +183,8 @@ bool consumeSectionSignalOnce() {
         LOG_WARN("单实例：载荷专名 ack 事件不存在（发送方已超时退出），路径仍投递");
     }
 
-    if (g_pathsHandler) {
-        g_pathsHandler(payload.paths);
+    if (PathsHandler& slot = openPathsSlot(); slot) {
+        slot(payload.paths);
     } else {
         LOG_WARN("单实例：路径接收回调未注册，本次送达的 " +
                  std::to_string(payload.paths.size()) + " 个路径丢弃");
@@ -280,10 +287,10 @@ void setSingleInstanceRootForTest(const std::string& root) {
 
 bool writeSectionForTest(const std::string& bytes) {
     if (bytes.size() > kMaxPayloadBytes) return false;
-    // 持句柄保活命名 section：页文件 backed section 随最后一句柄关闭即销毁——写完即关
-    // 会让 consumeSectionSignalOnce 的 OpenFileMappingW 落空返回 false（garbage 用例因此
-    // 碰巧通过、pairing 用例正向断言翻红）。真发送方持句柄到 ack/超时，本缝对齐该语义：
-    // 同根名重复写先放上一把句柄再开新把，对象全程存活到下一次写或进程退出
+    // 持句柄保活命名 section：页文件 backed section 随最后一句柄关闭即销毁——写完
+    // 即关会让 consumeSectionSignalOnce 的 OpenFileMappingW 落空。真发送方持句柄到
+    // ack/超时，本缝对齐该语义：同根名重复写先放上一把句柄再开新把，对象全程存活
+    // 到下一次写或进程退出
     static HANDLE kept = nullptr;
     if (kept) CloseHandle(kept);
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
