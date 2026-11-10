@@ -15,6 +15,8 @@
 #include <eui/dsl_app.h>
 
 #include <cstdlib>
+#include <iterator>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -165,6 +167,51 @@ void resetMinimizedFlagForTest() {
 
 bool consumePendingMinimizedStartup() {
     return std::exchange(g_minimizedStartupPending, false);
+}
+
+// ── F-01 第二实例路径队列 ──
+// 线程契约见 app_assembly.h：写 = 单实例监听线程，读 = 主线程 compose drain。
+// 漏斗在锁外调用（drain 先整批取走再逐个转发，漏斗重入不会死锁）
+namespace {
+std::mutex g_secondInstanceFilesMutex;
+std::vector<std::string> g_secondInstanceFiles;
+std::function<void(const std::string&)> g_osOpenFunnel;
+} // namespace
+
+void enqueueSecondInstancePaths(std::vector<std::string> paths) {
+    if (paths.empty()) return;
+    {
+        std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
+        g_secondInstanceFiles.insert(g_secondInstanceFiles.end(),
+                                     std::make_move_iterator(paths.begin()),
+                                     std::make_move_iterator(paths.end()));
+    }
+    LOG_INFO("单实例：第二实例送达 " + std::to_string(paths.size()) +
+             " 个文件路径，待主线程分发");
+}
+
+void setOsOpenFunnel(std::function<void(const std::string& path)> funnel) {
+    g_osOpenFunnel = std::move(funnel);
+}
+
+void drainPendingSecondInstanceFiles() {
+    // 漏斗未注册（极早帧）：保留队列不消费，注册后的下一帧再送达
+    if (!g_osOpenFunnel) return;
+    std::vector<std::string> paths;
+    {
+        std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
+        paths = std::exchange(g_secondInstanceFiles, {});
+    }
+    for (const auto& path : paths) {
+        LOG_INFO("单实例：分发第二实例送达文件 — " + path);
+        g_osOpenFunnel(path);
+    }
+}
+
+void resetSecondInstanceFilesForTest() {
+    std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
+    g_secondInstanceFiles.clear();
+    g_osOpenFunnel = nullptr;
 }
 
 ::core::PageId dispatchPageForFile(const std::string& path) {

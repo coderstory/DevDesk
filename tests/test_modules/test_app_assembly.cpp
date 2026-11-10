@@ -1149,3 +1149,41 @@ REGISTER_TEST(assembly_wires_notification_initialize_once,
     platform::notify::resetForTest();
     return true;
 })
+
+// ── F-01 第二实例路径队列：drain 保序取走即清 + 漏斗未注入时保留（主线程单测，
+//   无平台对象；跨线程互斥行为由监听线程侧用例 si_chain_full_inprocess 覆盖）──
+REGISTER_TEST(si_paths_queue_drain_order,
+              "app_assembly: 第二实例路径队列——drain 保序取走即清，漏斗未注入保留", {
+    app::assembly::resetSecondInstanceFilesForTest();
+
+    // 漏斗未注入：drain 保留队列不消费（极早帧不丢路径，注册后的下一帧送达）
+    app::assembly::enqueueSecondInstancePaths({"a.md"});
+    app::assembly::drainPendingSecondInstanceFiles();
+
+    static std::vector<std::string> got;
+    got.clear();
+    app::assembly::setOsOpenFunnel([](const std::string& path) {
+        got.push_back(path);
+    });
+
+    // 注入前那一条仍在 + 新入队两条：一次 drain 全部按送达序过漏斗
+    app::assembly::enqueueSecondInstancePaths({"b.md", "c.md"});
+    app::assembly::drainPendingSecondInstanceFiles();
+    DOCTEST_REQUIRE_EQ(got.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(got[0], std::string("a.md"));
+    DOCTEST_CHECK_EQ(got[1], std::string("b.md"));
+    DOCTEST_CHECK_EQ(got[2], std::string("c.md"));
+
+    // 取走即清：再 drain 无声无息
+    got.clear();
+    app::assembly::drainPendingSecondInstanceFiles();
+    DOCTEST_CHECK(got.empty());
+
+    // 空入队 no-op
+    app::assembly::enqueueSecondInstancePaths({});
+    app::assembly::drainPendingSecondInstanceFiles();
+    DOCTEST_CHECK(got.empty());
+
+    app::assembly::resetSecondInstanceFilesForTest();
+    return true;
+})
