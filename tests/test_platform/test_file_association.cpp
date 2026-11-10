@@ -156,6 +156,13 @@ REGISTER_TEST(file_association_cleanup_tolerates_foreign_children,
                                        0, nullptr, REG_OPTION_NON_VOLATILE,
                                        KEY_WRITE, nullptr, &k, nullptr),
                        static_cast<LSTATUS>(ERROR_SUCCESS));
+    // 道具键写实值（空键读默认值 = FILE_NOT_FOUND，「保留」断言判据失真）
+    const std::wstring foreign = L"Foreign content";
+    DOCTEST_REQUIRE_EQ(
+        RegSetValueExW(k, nullptr, 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(foreign.c_str()),
+                       static_cast<DWORD>((foreign.size() + 1) * sizeof(wchar_t))),
+        static_cast<LSTATUS>(ERROR_SUCCESS));
     RegCloseKey(k);
 
     // 清理：返回 ok（HAS_CHILDREN 容忍）；我们的默认值清掉，他者子键原样保留
