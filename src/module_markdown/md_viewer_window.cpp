@@ -15,8 +15,7 @@
 #include <core/component_theme.h>
 #include <core/input/input_types.h>
 #include <core/theme.h>
-#include <eui/dsl_app.h>
-#include <eui/detail/dsl_app_impl.h>  // openWindow/requestUpdate 内联定义（app.h 只声明）
+#include <eui/dsl_app.h>  // openWindow/requestUpdate 声明（定义在 EUI-NEO 库 glfw_app_main TU，链接期解析；禁含 detail/dsl_app_impl.h——非 inline 定义重复链接撞）
 
 #include <algorithm>
 #include <cstdio>
