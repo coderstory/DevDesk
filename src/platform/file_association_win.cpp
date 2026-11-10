@@ -203,9 +203,6 @@ core::Result<void> removeRegistrationForTest(const AssocConfig& config) {
     const std::wstring extKey = extSubkey(config);
     st = RegDeleteKeyValueW(HKEY_CURRENT_USER, extKey.c_str(),
                             nullptr);  // null = 键默认值
-    const std::wstring extKey = extSubkey(config);
-    st = RegDeleteKeyValueW(HKEY_CURRENT_USER, extKey.c_str(),
-                            nullptr);  // null = 键默认值
     if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND) {
         return core::Result<void>::fail(
             core::ErrorCode::Internal,
