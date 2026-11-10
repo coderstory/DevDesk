@@ -34,7 +34,9 @@ using module::markdown::kEditorInputId;
 #include <components/theme.h>      // withAlpha（活动块边框色口径）
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
-#include <eui/detail/dsl_app_impl.h>   // app::consumeWindowRequests（F-04 窗口规格断言）
+#include <eui/app.h>   // app::consumeWindowRequests/DslWindowRequest 声明（app.h:206，定义在
+                       // EUI-NEO 库、链接期解析；禁含 detail/dsl_app_impl.h——devdesk_tests 链
+                       // glfw_app_main.obj，实现头非 inline 定义必撞 multiple definition）
 #include <ui_kit/card.h>
 #include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
