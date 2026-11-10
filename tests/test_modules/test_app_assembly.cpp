@@ -15,6 +15,7 @@
 #include "app_assembly.h"
 #include "app_sidebar.h"  // app::showAppNotice / appNotice*（toast 断言）
 #include "claude_service.h"  // 惰性装配真服务桩（devdesk_tests 链 claude_proxy 库）
+#include "module_markdown/md_viewer_window.h"  // F-02 路由缝观察（viewer session 测试缝）
 #include "module_toggle_bridge.h"
 #include "settings_config.h"
 
@@ -284,7 +285,7 @@ REGISTER_TEST(assembly_exit_hook_armed_idempotent,
 })
 
 REGISTER_TEST(assembly_dispatch_and_tray_mapping,
-              "assembly: dispatchFileOpen / pageForTrayAction 既有语义", {
+              "assembly: dispatchFileOpen（F-02 .md 查看器分支 + 既有扩展名路由）/ pageForTrayAction", {
     test_support::ScopedAppRouter scoped;
 
     // 1. 扩展名 → 目标页（纯映射）
@@ -317,7 +318,9 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::ClaudeProxy)), std::string("Claude"));
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::Settings)), std::string("设置"));
 
-    // 4. dispatchFileOpen：笔记目录内文件 → "open:<相对路径>" 负载 + 切页
+    // 4. dispatchFileOpen：.md → F-02 查看器窗分支——不切页、不投递 "open:" 负载、
+    //    不经 captureFileIntoNotesDir（独立窗开原文件）；session 建立（pageId=文件名）
+    module::markdown::resetViewerSessionsForTest();
     const std::filesystem::path notesDir =
         test_support::makeTempDir(kNotesDirPrefix, "tray");
     std::error_code ec;
@@ -336,21 +339,33 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
                                     app::assembly::PreStartHook{});
     DOCTEST_REQUIRE(router.isRegistered(::core::PageId::Markdown));
 
+    const auto pageBefore = router.currentPage();
     app::assembly::dispatchFileOpen(&router, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK_EQ(router.currentPage(), pageBefore);  // 独立窗不进 Router，主窗原地
     DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
-                     std::string("open:note.md"));
+                     std::string());  // 不走 "open:" 内嵌通道
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(1));
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionPageIdForTest(0),
+                     std::string("note.md"));  // 标题=文件名含扩展名（D-3）
 
-    // 5. Markdown 被关（未注册）→ Router 回退 Home 且不投递负载
+    // 4b. .markdown 同判据同分支
+    app::assembly::dispatchFileOpen(&router, (notesDir / "b.markdown").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(2));
+
+    // 5. Markdown 被关（未注册）→ 查看器分支照常开窗（独立窗不依赖 Router 注册态），
+    //    Router 原地不动且不往关掉的模块投递负载
     ::core::Router gatedRouter;
     StubModules gatedMods;
     app::assembly::assembleAndStart(gatedRouter, allToolsOffConfig(),
                                     gatedMods.homeSettingsOnly(),
                                     app::assembly::PreStartHook{});
+    const auto gatedBefore = gatedRouter.currentPage();
     app::assembly::dispatchFileOpen(&gatedRouter, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(gatedRouter.currentPage(), ::core::PageId::Home);  // 自带回退
+    DOCTEST_CHECK_EQ(gatedRouter.currentPage(), gatedBefore);  // 主窗原地（旧为回退 Home）
     DOCTEST_CHECK_EQ(gatedRouter.consumePendingPayload(::core::PageId::Markdown),
                      std::string());  // 不往关掉的模块投递
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
 
     // 6. .json → Claude 页（无负载切页，且不碰笔记目录）
     ::core::Router jsonRouter;
@@ -363,11 +378,24 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(jsonRouter.consumePendingPayload(::core::PageId::ClaudeProxy),
                      std::string());
 
-    // 7. 空路径 / 空 Router → 原地不动、不崩
+    // 6b. 非 .md 扩展名路由原样（F-02 只分流 .md/.markdown）：.txt 仍走内嵌通道
+    {
+        std::ofstream f(notesDir / "x.txt", std::ios::trunc);
+        f << "text\n";
+    }
+    app::assembly::dispatchFileOpen(&jsonRouter, (notesDir / "x.txt").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(jsonRouter.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
+
+    // 7. 空路径 / 空 Router → 原地不动、不崩（空 router 先于查看器分支返回——
+    //    OS 漏斗约定调用方必须持有 Router）
     app::assembly::dispatchFileOpen(&jsonRouter, "", notesDir);
     DOCTEST_CHECK_EQ(jsonRouter.currentPage(), ::core::PageId::ClaudeProxy);
     app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
 
+    module::markdown::resetViewerSessionsForTest();
     std::filesystem::remove_all(notesDir, ec);
     return true;
 })
