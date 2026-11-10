@@ -626,12 +626,12 @@ namespace app {
 // 常驻侧边栏 + 根布局在 app_sidebar
 const DslAppConfig& dslAppConfig() {
     // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
-    if (!platform::single_instance::acquireInstanceLock()) {
+    if (!::platform::single_instance::acquireInstanceLock()) {
         // F-01：退出前把 argv 文件路径带给首实例（持发送互斥写共享 section → 唤醒 →
         // 等专名 ack 封顶 5s）。送达失败（首实例僵死等）也要退——单实例不变式优先，
         // 路径丢弃 = 改造前退化行为
-        platform::single_instance::notifyExistingInstance(
-            {platform::file_open::openFileFromArgv()});
+        ::platform::single_instance::notifyExistingInstance(
+            {::platform::file_open::openFileFromArgv()});
         LOG_INFO("已有实例运行中，已发送唤起信号与文件路径，本进程退出");
         std::exit(0);
     }
@@ -730,8 +730,9 @@ const DslAppConfig& dslAppConfig() {
         app::assembly::setOsOpenFunnel(
             [](const std::string& path) { handleAppleEventOpenFile(path); });
         // ② 单实例监听线程路径回调 → app_assembly 队列（回调在监听线程跑，enqueue
-        // 内部加锁，主线程只经 compose drain 消费）
-        platform::single_instance::setOpenPathsHandler(
+        // 内部加锁，主线程只经 compose drain 消费）。:: 全限定：本 lambda 处于
+        // using namespace core; 作用域，core::platform 与 ::platform 歧义
+        ::platform::single_instance::setOpenPathsHandler(
             [](const std::vector<std::string>& paths) {
                 app::assembly::enqueueSecondInstancePaths(paths);
             });
