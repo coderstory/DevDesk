@@ -53,6 +53,7 @@ elseif(APPLE)
         autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
         process_runner_macos.cpp        # 进程执行器：posix_spawn + 管道全捕获（UAT6）
         wallpaper_capability_macos.cpp  # 壁纸宿主能力：第二阶段 ObjC++ 平台层前恒 false
+        file_association_macos.mm      # .md 文件关联：LS/NSWorkspace 双路径（F-09，版本分支收敛单文件；ObjC++ 落点偏差见文件头）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -121,9 +122,9 @@ if(APPLE)
         ${USER_NOTIFICATIONS_FRAMEWORK}
     )
 
-    # notification_macos.mm 单独开 ARC：只影响该源文件，不给整个 target 打开
-    #（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
-    set_source_files_properties(notification_macos.mm PROPERTIES
+    # notification_macos.mm / file_association_macos.mm 单独开 ARC：只影响该源文件，
+    # 不给整个 target 打开（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
+    set_source_files_properties(notification_macos.mm file_association_macos.mm PROPERTIES
         COMPILE_OPTIONS "-fobjc-arc")
 endif()
 

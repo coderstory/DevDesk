@@ -43,6 +43,8 @@ add_executable(devdesk_tests
     test_platform/test_autostart.cpp
     # .md 文件关联平台层（F-06）：注入缝配置（DevDeskTest.md/.mdtest）实登记链路，禁触真实 .md
     test_platform/test_file_association.cpp
+    # .md 文件关联 mac 版本映射（F-09）：纯逻辑（11=LS/12+=NSWorkspace），win 可编译运行
+    test_platform/test_file_association_api_map.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_markdown_tools.cpp
