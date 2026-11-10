@@ -46,6 +46,7 @@ struct ViewerSession {
     MdSyncMap syncMap;
     MdPreviewHoverState hover;
     uint64_t textRev = 0;
+    uint64_t contentHash = 0;  // 内容指纹：装载时算一次（内容不可变；contentKey 逐帧引用）
 
     // 滚动态（F-05 跳转通路，md_module_preview.cpp 先例同款三件）
     float scrollOffset = 0.0f;        // 用户滚动回写（onChange）
@@ -126,14 +127,17 @@ void viewerHandleKey(ViewerSession& s, const eui::KeyEvent& key) {
     const bool shortcut = key.modifiers.shortcut() && !key.modifiers.shift &&
                           !key.modifiers.alt;
     if (shortcut && key.key == eui::InputKey::F) {
-        viewerSearchActivate(s.search);  // 再唤起保留关键词（query 不动）+ 重聚焦
+        // 错误/空文件占位窗无搜索面：内容不可变恒零命中，且占位分支不建搜索条，
+        // 激活即成不可见僵尸态 → 不进状态机
+        if (!s.loadError.empty() || mdViewerContentBlank(s.content)) return;
+        viewerSearchActivate(s.search);  // 再唤起保留关键词 + 重聚焦
         app::requestUpdate();
         return;
     }
     if (s.search.phase != ViewerSearchPhase::Active) return;
     if (key.key == eui::InputKey::Enter) {
         // 阅读态（输入框未聚焦）同 C3 口径：Enter 下一处 / Shift+Enter 上一处，
-        // 方向判据与输入框 onKeyEvent 一致（修前此处漏 shift 分支把反向键走成正向）
+        // 方向判据与输入框 onKeyEvent 一致
         viewerJumpTo(s, key.modifiers.shift ? viewerSearchPrev(s.search)
                                             : viewerSearchNext(s.search));
         app::requestUpdate();
@@ -325,7 +329,7 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         .theme(componentTheme)
         .offset(s.scrollOffset)
         .contentKey("md.viewer.scroll." + s.path + "." +
-                    std::to_string(mdBlockHash(s.content)))
+                    std::to_string(s.contentHash))
         .onChange([&s](float v) {
             if (s.programmaticScroll) {
                 // 程序化来源（跳转落地 echo）：只记账，不当作用户滚动态
@@ -407,7 +411,7 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         const float blockH = s.syncMap.blockHeight(k);
         float target = topY - std::max(0.0f, s.viewportH - blockH) * 0.5f;
         // 上限：元素 scrollMaxOffset 优先；取不到（缺失/0）退几何表全高−视口，
-        // 兜底防未钳跳转把 offset 写越内容末端（探针 964>496 异常的容错面）
+        // 跳转目标恒不出内容末端（元素字段滞后期内的兜底）
         float maxOff = 0.0f;
         if (const auto* el = ui.find(kViewerScrollId)) {
             maxOff = el->scrollMaxOffset;
@@ -461,6 +465,7 @@ void openViewerWindow(const std::string& path) {
                                     std::istreambuf_iterator<char>());
         }
     }
+    session->contentHash = mdBlockHash(session->content);
     if (session->loadError.empty() && !session->content.empty()) {
         session->blockModel.update(session->content);
         ++session->textRev;

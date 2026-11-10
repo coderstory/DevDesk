@@ -15,6 +15,7 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <cctype>
 #include <cstdlib>
 #include <iterator>
 #include <mutex>
@@ -217,15 +218,23 @@ void resetSecondInstanceFilesForTest() {
 
 namespace {
 
-// .md/.markdown 判据（大小写敏感，与既有 dispatchPageForFile 同源同口径）。
-// F-02 语义分叉：本判据命中且入口为 OS 漏斗 → 独立查看器窗；应用内不受影响。
+// .md/.markdown 判据——大小写不敏感：OS 关联送达扩展名大小写不定
+// （README.MD / notes.MARKDOWN），查看器分支与 OS 行为对齐。刻意与
+// dispatchPageForFile 不同源：那是主窗内嵌通道页面路由的既有语义（.MD→Home 不变）。
 bool pathHasMarkdownExtension(const std::string& path) {
-    auto endsWith = [&path](const char* suffix) {
-        size_t n = std::string(suffix).size();
-        return path.size() >= n &&
-               path.compare(path.size() - n, n, suffix) == 0;
+    auto endsWithIgnoreCase = [&path](const char* suffix) {
+        const size_t n = std::string(suffix).size();
+        if (path.size() < n) return false;
+        for (size_t i = 0; i < n; ++i) {
+            const char a = static_cast<char>(std::tolower(
+                static_cast<unsigned char>(path[path.size() - n + i])));
+            const char b = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(suffix[i])));
+            if (a != b) return false;
+        }
+        return true;
     };
-    return endsWith(".md") || endsWith(".markdown");
+    return endsWithIgnoreCase(".md") || endsWithIgnoreCase(".markdown");
 }
 
 } // namespace
