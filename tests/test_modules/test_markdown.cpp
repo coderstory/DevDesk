@@ -23,6 +23,7 @@
 #include "module_markdown/md_view_state.h"
 #include "module_markdown/md_ids.h"
 #include "module_markdown/markdown_module_test_seam.h"   // 轮询周期注入（假红根因见用例）
+#include "module_markdown/markdown_module_internal.h"    // U2 渲染核直驱（mdDrawBlockFlowCore/区间→rect 查询缝）
 
 using module::markdown::kEditorInputId;
 
@@ -4946,6 +4947,166 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     return true;
 })
 
+// U2 抽核直驱守卫：渲染核（mdDrawBlockFlowCore）hooks 全显式参数化的行为断言。
+// 与 md_module_blockflow_hook_contrast（走 compose 全通路）互补：这里绕开模块
+// 成员态直驱核本体——wrapHeight 覆盖真实落进几何、drawContent 接管跳过默认
+// 渲染、afterHitOverlay 逐块回调，三处注入在核内各自生效才绿（抽核改丢即红）。
+REGISTER_TEST(md_module_blockflow_core_hooks_guard,
+              "markdown_module: 块流渲染核 hooks 直驱守卫（U2 抽核：wrapHeight/drawContent/afterHitOverlay）", {
+    const std::string text = "# 核守卫\n\nfirst para\n\nsecond para\n";
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() >= 3);
+
+    const float kCoreWidth = 400.0f;
+    const components::MarkdownStyle style;
+    const core::theme::Tokens t = core::theme::current();
+    module::markdown::MdSyncMap map;
+    map.rebuild(text, blocks, /*rev=*/1, kCoreWidth, style.blockGap,
+                [&](const module::markdown::MdBlock& b) {
+                    return components::MarkdownBuilder::estimateHeight(
+                        text.substr(b.start, b.end - b.start), kCoreWidth,
+                        style);
+                });
+    module::markdown::MdPreviewCodeCache cache;
+    module::markdown::MdPreviewHoverState hover;
+    module::markdown::MdBlockFlowDeps deps{
+        blocks, text, cache, map, hover, /*drawCodeBlock=*/{}};
+
+    int wrapCalls = 0;
+    int drawCalls = 0;
+    int overlayCalls = 0;
+    module::markdown::BlockFlowHooks hooks;
+    hooks.wrapHeight =
+        [&](size_t k, const module::markdown::MdBlock&, float geometryHeight,
+            float) {
+            ++wrapCalls;
+            return k == 0 ? geometryHeight + 40.0f : geometryHeight;
+        };
+    hooks.drawContent = [&](eui::Ui&, size_t k, const module::markdown::MdBlock&,
+                            const std::string&, float, float) {
+        ++drawCalls;
+        return k == 1;   // 第二块特判接管（默认渲染必须被跳过）
+    };
+    hooks.afterHitOverlay = [&](eui::Ui&, size_t, const std::string&) {
+        ++overlayCalls;
+    };
+
+    test_support::HeadlessFrame e("corehook");
+    e.frame([&](eui::Ui& u) {
+        module::markdown::mdDrawBlockFlowCore(u, kCoreWidth, t, style,
+                                              "t.core", /*onBlockTap=*/nullptr,
+                                              deps, hooks);
+    });
+
+    DOCTEST_CHECK_EQ(wrapCalls, static_cast<int>(blocks.size()));
+    DOCTEST_CHECK_EQ(drawCalls, static_cast<int>(blocks.size()));
+    DOCTEST_CHECK_EQ(overlayCalls, static_cast<int>(blocks.size()));
+    // wrapHeight 覆盖真实落进几何：第 0 块包裹高 = 几何表 H_0 + 40
+    const auto* wrap0 = e.ui->find(std::string("t.core.blk.") +
+                                   std::to_string(blocks[0].stableId));
+    DOCTEST_REQUIRE(wrap0 != nullptr);
+    DOCTEST_CHECK(std::fabs(wrap0->frame.height -
+                            (map.blockHeight(0) + 40.0f)) <= 0.01f);
+    // drawContent 接管跳过默认渲染：第二块无默认节点，其余块默认节点都在
+    for (size_t k = 0; k < blocks.size(); ++k) {
+        const std::string node =
+            "t.core.block." + std::to_string(blocks[k].stableId);
+        if (k == 1) {
+            DOCTEST_CHECK(e.ui->find(node) == nullptr);
+        } else {
+            DOCTEST_CHECK(e.ui->find(node) != nullptr);
+        }
+    }
+    return true;
+})
+
+// U2 查询缝 POC：「块序号+字符区间 → rect」数值断言（审计 P1-2 主通路判据）。
+// 判据：已知区间 → 非空矩形，横向落 [0, contentWidth] 带、纵向落块包裹内；
+// 另验折行解析（长段中部区间的 y 进入第二行带）。
+REGISTER_TEST(md_module_blockflow_range_rect_poc,
+              "markdown_module: 区间→rect 查询缝 POC 数值断言（U2：非空矩形∈块边界）", {
+    const float kWidth = 400.0f;
+    const components::MarkdownStyle style;
+    const core::theme::Tokens t = core::theme::current();
+    const std::string text =
+        "alpha beta gamma delta\n\n" + std::string(160, 'x') + " tail\n";
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() >= 2);
+    module::markdown::MdSyncMap map;
+    map.rebuild(text, blocks, /*rev=*/1, kWidth, style.blockGap,
+                [&](const module::markdown::MdBlock& b) {
+                    return components::MarkdownBuilder::estimateHeight(
+                        text.substr(b.start, b.end - b.start), kWidth, style);
+                });
+    module::markdown::MdPreviewCodeCache cache;
+    module::markdown::MdPreviewHoverState hover;
+    module::markdown::MdBlockFlowDeps deps{
+        blocks, text, cache, map, hover, /*drawCodeBlock=*/{}};
+
+    // 已知区间 1：第 0 块（纯段落单行）中的 "beta"
+    const std::string blk0 =
+        text.substr(blocks[0].start, blocks[0].end - blocks[0].start);
+    const size_t beg = blk0.find("beta");
+    DOCTEST_REQUIRE(beg != std::string::npos);
+    const size_t fin = beg + 4;
+
+    struct Got {
+        size_t k;
+        size_t begin;
+        size_t end;
+        float x;
+        float y;
+        float w;
+        float h;
+    };
+    std::vector<Got> got;
+    module::markdown::BlockFlowHooks hooks;
+    hooks.pendingRangeQuery = [&](size_t k) {
+        std::vector<module::markdown::MdRangeSpan> spans;
+        if (k == 0) spans.push_back({beg, fin});
+        if (k == 1) {
+            // 已知区间 2：长段中部（必折多行），验折行解析
+            const std::string blk1 =
+                text.substr(blocks[1].start, blocks[1].end - blocks[1].start);
+            const size_t mid = blk1.size() / 2;
+            spans.push_back({mid, mid + 8});
+        }
+        return spans;
+    };
+    hooks.onRangeRect =
+        [&](size_t k, const module::markdown::MdRangeSpan& s,
+            const module::markdown::MdHitRect& r) {
+            got.push_back({k, s.begin, s.end, r.x, r.y, r.w, r.h});
+        };
+
+    test_support::HeadlessFrame e("rrpoc");
+    e.frame([&](eui::Ui& u) {
+        module::markdown::mdDrawBlockFlowCore(u, kWidth, t, style, "t.rr",
+                                              /*onBlockTap=*/nullptr, deps,
+                                              hooks);
+    });
+
+    DOCTEST_REQUIRE(got.size() == 2);
+    const Got& g0 = got[0];
+    DOCTEST_CHECK(g0.k == 0);
+    DOCTEST_CHECK(g0.begin == beg);
+    DOCTEST_CHECK(g0.end == fin);
+    DOCTEST_CHECK(g0.w > 0.0f && g0.h > 0.0f);                        // 非空矩形
+    DOCTEST_CHECK(g0.x >= 0.0f && g0.x + g0.w <= kWidth + 0.5f);      // 横向带内
+    DOCTEST_CHECK(g0.y >= 0.0f && g0.y + g0.h <= map.blockHeight(0) + 0.5f);  // 块界内
+    const Got& g1 = got[1];
+    DOCTEST_CHECK(g1.k == 1);
+    DOCTEST_CHECK(g1.w > 0.0f && g1.h > 0.0f);                        // 非空矩形
+    DOCTEST_CHECK(g1.x >= 0.0f && g1.x + g1.w <= kWidth + 0.5f);      // 横向带内
+    DOCTEST_CHECK(g1.y + g1.h <= map.blockHeight(1) + 0.5f);          // 块界内（纵向钳制）
+    DOCTEST_CHECK(g1.y >= style.bodyLineHeight - 0.5f);               // 折行进第二行带
+    return true;
+})
+
 // 源码守卫（只读断言）
 // 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
 // __FILE__（ccache 会把绝对路径相对化）；定位 / 取体失败一律大声失败，不静默绿。
@@ -5053,27 +5214,59 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK(src.find("struct BlockFlowHooks") != std::string::npos);
     DOCTEST_CHECK(src.find("const BlockFlowHooks& hooks)") != std::string::npos);
 
-    // (2) drawBlockFlow 本体：视图态特判的符号一个都不许在（分支长回来即变红）
-    // 拆分第一步后定义带 MarkdownModule:: 限定（头文件里是无限定声明）——两形态都试
+    // (2) 委托薄化（U2 抽核后形态）：drawBlockFlow 本体只剩状态组装 + 核委托。
+    // 定义带 MarkdownModule:: 限定（头文件里是无限定声明）——两形态都试
     std::string body = mdFunctionBody(src, "MarkdownModule::drawBlockFlow(");
     if (body.empty()) body = mdFunctionBody(src, "void drawBlockFlow(");
     DOCTEST_CHECK_MESSAGE(!body.empty(),
                           "取不到 drawBlockFlow 函数体（签名或括号被改？）");
     for (const char* bad :
          {"isActive", "activeBlock", "LiveBlockCtx", "live->", "liveBlockText",
-          "liveFitHeight", "drawLiveInputBlock", "codeDrawn"}) {
+          "liveFitHeight", "drawLiveInputBlock", "codeDrawn",
+          "hooks.wrapHeight", "hooks.drawContent", "hooks.afterHitOverlay",
+          "components::markdown(", "syncMap_.blockHeight"}) {
         DOCTEST_CHECK_MESSAGE(body.find(bad) == std::string::npos,
-                              std::string("drawBlockFlow 内又出现视图态特判：") + bad);
+                              std::string("drawBlockFlow 委托体不再保持薄形态：") + bad);
     }
-    // 三处决策都在本体里走 hooks（缺一 = 注入点没接线）
+    DOCTEST_CHECK_MESSAGE(body.find("mdDrawBlockFlowCore(") != std::string::npos,
+                          "drawBlockFlow 未委托渲染核 mdDrawBlockFlowCore");
+    DOCTEST_CHECK_MESSAGE(body.find("rebuildSyncMap(") != std::string::npos,
+                          "委托体丢了几何表重建（渲染核只读表值，重建留在调用侧）");
+    DOCTEST_CHECK_MESSAGE(body.find("blockModel_.update(") != std::string::npos,
+                          "委托体丢了块模型防御同步");
+
+    // (2b) 渲染核本体：注入点接线 + 默认路径仍在 + 视图态特判符号禁入。
+    // 核定义（.cpp）与声明/委托调用同签名前缀，逐个候选花括号体找含接线符号的那个。
+    std::string coreBody;
+    for (size_t at = src.find("mdDrawBlockFlowCore("); at != std::string::npos;
+         at = src.find("mdDrawBlockFlowCore(", at + 1)) {
+        const size_t open = src.find('{', at);
+        if (open == std::string::npos) break;
+        const std::string candidate = mdBalanced(src, open, '{', '}');
+        if (candidate.find("hooks.wrapHeight") != std::string::npos) {
+            coreBody = candidate;
+            break;
+        }
+    }
+    DOCTEST_CHECK_MESSAGE(!coreBody.empty(),
+                          "取不到 mdDrawBlockFlowCore 函数体（签名或括号被改？）");
+    for (const char* bad :
+         {"isActive", "activeBlock", "LiveBlockCtx", "live->", "liveBlockText",
+          "liveFitHeight", "drawLiveInputBlock", "codeDrawn"}) {
+        DOCTEST_CHECK_MESSAGE(coreBody.find(bad) == std::string::npos,
+                              std::string("渲染核内又出现视图态特判：") + bad);
+    }
+    // 三处绘制决策 + 查询缝成对都在核里走 hooks（缺一 = 注入点没接线）
     for (const char* wired : {"hooks.wrapHeight", "hooks.drawContent",
-                              "hooks.afterHitOverlay"}) {
-        DOCTEST_CHECK_MESSAGE(body.find(wired) != std::string::npos,
+                              "hooks.afterHitOverlay",
+                              "hooks.pendingRangeQuery", "hooks.onRangeRect",
+                              "mdResolveBlockRangeRect("}) {
+        DOCTEST_CHECK_MESSAGE(coreBody.find(wired) != std::string::npos,
                               std::string("注入点未接线：") + wired);
     }
     // 默认路径仍在：包裹高缺省 = 几何表 H_k、渲染通路仍是上游 markdown
-    DOCTEST_CHECK(body.find("syncMap_.blockHeight(k)") != std::string::npos);
-    DOCTEST_CHECK(body.find("components::markdown(") != std::string::npos);
+    DOCTEST_CHECK(coreBody.find("deps.syncMap.blockHeight(k)") != std::string::npos);
+    DOCTEST_CHECK(coreBody.find("components::markdown(") != std::string::npos);
 
     // (3) 两条调用路径分别传入：预览态传空实现、实时态传自己的特判
     constexpr size_t kNameLen = sizeof("drawBlockFlow") - 1;
