@@ -259,6 +259,12 @@ void setSingleInstanceRootForTest(const std::string& root) {
 
 bool writeSectionForTest(const std::string& bytes) {
     if (bytes.size() > kMaxPayloadBytes) return false;
+    // 持句柄保活命名 section：页文件 backed section 随最后一句柄关闭即销毁——写完即关
+    // 会让 consumeSectionSignalOnce 的 OpenFileMappingW 落空返回 false（garbage 用例因此
+    // 碰巧通过、pairing 用例正向断言翻红）。真发送方持句柄到 ack/超时，本缝对齐该语义：
+    // 同根名重复写先放上一把句柄再开新把，对象全程存活到下一次写或进程退出
+    static HANDLE kept = nullptr;
+    if (kept) CloseHandle(kept);
     HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
                                         PAGE_READWRITE, 0, kMaxPayloadBytes,
                                         sectionName().c_str());
@@ -270,7 +276,7 @@ bool writeSectionForTest(const std::string& bytes) {
     }
     if (!bytes.empty()) memcpy(view, bytes.data(), bytes.size());
     UnmapViewOfFile(view);
-    CloseHandle(section);
+    kept = section;  // 故意不关：保活给监听侧读（测试进程生命周期，无需回收）
     return true;
 }
 
