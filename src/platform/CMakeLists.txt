@@ -33,6 +33,7 @@ if(WIN32)
         autostart_win.cpp              # 开机自启动：HKCU Run 注册表写/删/查（UAT6）
         process_runner_win.cpp          # 进程执行器：CreateProcess + 管道全捕获（UAT6）
         wallpaper_capability_win.cpp    # 壁纸宿主能力：WorkerW/mpv 路线可用（true）
+        file_association_win.cpp        # .md 文件关联：HKCU ProgId 登记写/查/清（F-06，注入缝见 file_association.h）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -86,7 +87,7 @@ target_include_directories(devdesk_platform PUBLIC
 # CI 链接期炸（ld: library 'ws2_32' not found）。用变量占位保序：WIN32 下展开五个库、
 # 其他平台展开为空（CMake 丢弃空 list 项，不产生空 -l）
 if(WIN32)
-    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi)
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi ole32)
 endif()
 
 target_link_libraries(devdesk_platform
@@ -127,8 +128,10 @@ if(APPLE)
 endif()
 
 # Windows 系统库：Winsock2（网络）+ Crypt32（TLS 证书链）+ Shell32（file_open_win.cpp
-# CommandLineToArgvW）+ Advapi32（system_theme_win.cpp RegGetValueW，spec 缩水 A）
-# + Shlwapi（folder_picker_win.cpp 路径解析）。统一经上方 WIN32 变量占位
+# CommandLineToArgvW / file_association_win.cpp SHChangeNotify）+ Advapi32（system_theme_win.cpp
+# RegGetValueW，spec 缩水 A）+ Shlwapi（folder_picker_win.cpp 路径解析）+ Ole32
+#（file_association_win.cpp CoCreateInstance/CoTaskMemFree，QueryCurrentDefault 关联查询）。
+# 统一经上方 WIN32 变量占位
 # ${DEVDESK_WIN_SYSTEM_LIBS} 排在 CURL::libcurl 之后；早位声明会被 CMake 去重保首位
 # ——别在别处再声明 Windows 系统库
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）

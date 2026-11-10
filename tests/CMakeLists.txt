@@ -41,6 +41,8 @@ add_executable(devdesk_tests
     test_platform/test_notification.cpp
     # 开机自启动平台层（UAT6）：注入缝假 writer 断言注册内容/注销/回读，headless 不写系统
     test_platform/test_autostart.cpp
+    # .md 文件关联平台层（F-06）：注入缝配置（DevDeskTest.md/.mdtest）实登记链路，禁触真实 .md
+    test_platform/test_file_association.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_markdown_tools.cpp
