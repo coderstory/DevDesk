@@ -174,6 +174,7 @@ REGISTER_TEST(si_section_garbage_dropped,
     platform::single_instance::setSingleInstanceRootForTest("DevDesk.Tests.SI.Garbage");
     platform::single_instance::setOpenPathsHandler(nullptr);  // 防其它用例残留回调
 
+    using platform::single_instance::PathPayload;
     using platform::single_instance::consumeSectionSignalOnce;
     using platform::single_instance::encodePathPayload;
     using platform::single_instance::writeSectionForTest;
