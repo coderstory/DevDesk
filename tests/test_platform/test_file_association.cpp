@@ -129,4 +129,52 @@ REGISTER_TEST(file_association_registry_roundtrip,
     setShellNotifySink(oldSink);
     return true;
 })
+
+REGISTER_TEST(file_association_cleanup_tolerates_foreign_children,
+              "fileassoc: 清理缝容忍残留他者子键（默认值清、他者内容留、返回 ok）", {
+    using namespace platform::file_association;
+    const AssocConfig cfg = testConfig();
+    DOCTEST_REQUIRE(removeRegistrationForTest(cfg).isOk());  // 清场
+
+    // 造残留态：.mdtest 有默认值指向 + 他者子键（模拟 shell 添子键后键非空）
+    HKEY k = nullptr;
+    DOCTEST_REQUIRE_EQ(RegCreateKeyExW(HKEY_CURRENT_USER,
+                                       L"Software\\Classes\\.mdtest", 0, nullptr,
+                                       REG_OPTION_NON_VOLATILE, KEY_WRITE,
+                                       nullptr, &k, nullptr),
+                       static_cast<LSTATUS>(ERROR_SUCCESS));
+    const std::wstring ours = L"DevDeskTest.md";
+    DOCTEST_REQUIRE_EQ(
+        RegSetValueExW(k, nullptr, 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(ours.c_str()),
+                       static_cast<DWORD>((ours.size() + 1) * sizeof(wchar_t))),
+        static_cast<LSTATUS>(ERROR_SUCCESS));
+    RegCloseKey(k);
+    k = nullptr;
+    DOCTEST_REQUIRE_EQ(RegCreateKeyExW(HKEY_CURRENT_USER,
+                                       L"Software\\Classes\\.mdtest\\ForeignProgId",
+                                       0, nullptr, REG_OPTION_NON_VOLATILE,
+                                       KEY_WRITE, nullptr, &k, nullptr),
+                       static_cast<LSTATUS>(ERROR_SUCCESS));
+    RegCloseKey(k);
+
+    // 清理：返回 ok（HAS_CHILDREN 容忍）；我们的默认值清掉，他者子键原样保留
+    DOCTEST_REQUIRE(removeRegistrationForTest(cfg).isOk());
+    std::string v;
+    DOCTEST_CHECK_FALSE(readDefaultSz(L"Software\\Classes\\.mdtest", &v));
+    wchar_t buf[256] = {};
+    DWORD sz = sizeof(buf);
+    DOCTEST_CHECK_EQ(RegGetValueW(HKEY_CURRENT_USER,
+                                  L"Software\\Classes\\.mdtest\\ForeignProgId",
+                                  nullptr, RRF_RT_REG_SZ, nullptr, buf, &sz),
+                     static_cast<LSTATUS>(ERROR_SUCCESS));
+
+    // 终清（只清本用例造的他者物）：删子键→键空→整键删
+    DOCTEST_REQUIRE_EQ(RegDeleteKeyW(HKEY_CURRENT_USER,
+                                     L"Software\\Classes\\.mdtest\\ForeignProgId"),
+                       static_cast<LSTATUS>(ERROR_SUCCESS));
+    DOCTEST_CHECK_EQ(RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\Classes\\.mdtest"),
+                     static_cast<LSTATUS>(ERROR_SUCCESS));
+    return true;
+})
 #endif // _WIN32

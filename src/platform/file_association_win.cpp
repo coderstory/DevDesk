@@ -197,8 +197,12 @@ core::Result<void> removeRegistrationForTest(const AssocConfig& config) {
             "删 HKCU 关联 ProgId 键失败 (RegDeleteTreeW=" +
                 std::to_string(static_cast<long>(st)) + ")");
     }
-    // 扩展名键：先删默认值；整键仅当清空后才删（键内他者内容保留）——
-    // RegDeleteKeyW 遇残留子键会失败，视为已达成「不毁他者登记」
+    // 扩展名键：先删默认值；整键仅当清空后才删——残留他者子键
+    //（ERROR_KEY_HAS_CHILDREN，旧版系统表现为 ERROR_ACCESS_DENIED）与他者内容
+    // 一律保留，清掉我们的默认值即达成清理目标，不算失败
+    const std::wstring extKey = extSubkey(config);
+    st = RegDeleteKeyValueW(HKEY_CURRENT_USER, extKey.c_str(),
+                            nullptr);  // null = 键默认值
     const std::wstring extKey = extSubkey(config);
     st = RegDeleteKeyValueW(HKEY_CURRENT_USER, extKey.c_str(),
                             nullptr);  // null = 键默认值
@@ -210,7 +214,7 @@ core::Result<void> removeRegistrationForTest(const AssocConfig& config) {
     }
     st = RegDeleteKeyW(HKEY_CURRENT_USER, extKey.c_str());
     if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND &&
-        st != ERROR_ACCESS_DENIED) {
+        st != ERROR_ACCESS_DENIED && st != ERROR_KEY_HAS_CHILDREN) {
         return core::Result<void>::fail(
             core::ErrorCode::Internal,
             "删 HKCU 关联扩展名键失败 (RegDeleteKeyW=" +
