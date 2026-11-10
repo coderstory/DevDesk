@@ -23,15 +23,19 @@
 namespace platform::file_association {
 namespace {
 
-// CLSID/IID 手写 SDK 固定值：不依赖 __uuidof/libuuid（MSVC 与 MinGW 双通）
-// CLSID_ApplicationAssociationRegistration {4DB5ADFE-2257-4B1D-9029-2F02AF3BB2DC}
+// CLSID/IID 手写固定值（不依赖 __uuidof/libuuid）：按本工具链 mingw 头核对
+//（shobjidl.h:32607 coclass / :23340 interface）+ HKCR 注册项 + 实机探针
+//（写 .mdtest→QueryCurrentDefault 回读 DevDeskTest.md）三方验证。
+// 注意：MSVC SDK 的 interface IID 不同（4e5f4267-…），切工具链须重核；
+// mingw gcc 的 __uuidof 实测取值不可靠（探针 E_NOINTERFACE），禁用。
+// CLSID_ApplicationAssociationRegistration {591209C7-767B-42B2-9FBA-44EE4615F2C7}
 constexpr CLSID kAssocRegistrationClsid = {
-    0x4DB5ADFE, 0x2257, 0x4B1D,
-    {0x90, 0x29, 0x2F, 0x02, 0xAF, 0x3B, 0xB2, 0xDC}};
-// IID_IApplicationAssociationRegistration {4E5F4267-9A01-4A4F-A76D-8B75A1D0D5B6}
+    0x591209C7, 0x767B, 0x42B2,
+    {0x9F, 0xBA, 0x44, 0xEE, 0x46, 0x15, 0xF2, 0xC7}};
+// IID_IApplicationAssociationRegistration {4E530B0A-E611-4C77-A3AC-9031D022281B}
 constexpr IID kAssocRegistrationIid = {
-    0x4E5F4267, 0x9A01, 0x4A4F,
-    {0xA7, 0x6D, 0x8B, 0x75, 0xA1, 0xD0, 0xD5, 0xB6}};
+    0x4E530B0A, 0xE611, 0x4C77,
+    {0xA3, 0xAC, 0x90, 0x31, 0xD0, 0x22, 0x28, 0x1B}};
 
 constexpr wchar_t kClassesRoot[] = L"Software\\Classes";
 
