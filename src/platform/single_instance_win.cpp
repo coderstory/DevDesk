@@ -187,6 +187,27 @@ bool consumeSectionSignalOnce() {
 
 bool notifyExistingInstance(const std::vector<std::string>& paths,
                             unsigned ackTimeoutMs) {
+    // 纯唤起分流：argv 无文件参数的第二实例（如任务栏固定图标再点一次）路径元素为
+    // 空串，而零长路径在解码端判非法（零填充残渣同判）→ 送了必 5s 等不到 ack。此处
+    // 过滤后无可送路径就退回「只 SetEvent 唤醒、不写 section、不等 ack」的旧版语义
+    std::vector<std::string> valid;
+    valid.reserve(paths.size());
+    for (const auto& p : paths) {
+        if (!p.empty()) valid.push_back(p);
+    }
+    if (valid.empty()) {
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            HANDLE wake = OpenEventW(EVENT_MODIFY_STATE, FALSE, eventName().c_str());
+            if (wake) {
+                SetEvent(wake);
+                CloseHandle(wake);
+                return true;  // 唤醒已送达（无路径，无 ack 环节）
+            }
+            Sleep(50);
+        }
+        return false;
+    }
+
     // ack 专名：前缀 + pid + tick + 进程内序号——同 pid 同 tick 重入也不撞名
     static std::atomic<uint32_t> ackSeq{0};
     const std::wstring ackName =
@@ -196,7 +217,7 @@ bool notifyExistingInstance(const std::vector<std::string>& paths,
     HANDLE ackEvent = CreateEventW(nullptr, TRUE, FALSE, ackName.c_str());
     if (!ackEvent) return false;
     const std::string payload =
-        encodePathPayload(PathPayload{wideToUtf8(ackName), paths});
+        encodePathPayload(PathPayload{wideToUtf8(ackName), valid});
     if (payload.empty()) {
         // 超上界（整包 > 32KB / 路径数 > 256）：不可投递
         CloseHandle(ackEvent);

@@ -34,12 +34,11 @@ REGISTER_TEST(si_payload_codec_roundtrip,
     using platform::single_instance::encodePathPayload;
     using platform::single_instance::kMaxPayloadBytes;
 
-    // 0 路径 + 空 ack 名（最小编码）
+    // 0 路径 + 空 ack 名：解码端契约拒收（发送方永不产生；零填充残渣同判——
+    // 悬垂半包的合法头 + 全零尾曾解出 0 路径被放行，U1 集成实测踩中）
     {
         PathPayload out;
-        DOCTEST_CHECK(decodePathPayload(encodePathPayload(PathPayload{"", {}}), out));
-        DOCTEST_CHECK(out.ackName.empty());
-        DOCTEST_CHECK(out.paths.empty());
+        DOCTEST_CHECK_FALSE(decodePathPayload(encodePathPayload(PathPayload{"", {}}), out));
     }
     // 单路径：中文 + 空格
     {
@@ -51,9 +50,10 @@ REGISTER_TEST(si_payload_codec_roundtrip,
         DOCTEST_CHECK_EQ(out.paths.size(), in.paths.size());
         DOCTEST_CHECK_EQ(out.paths[0], in.paths[0]);
     }
-    // 多路径保序 + 空串路径 + 非法 UTF-8 字节原样搬运（传输层不校验，上层 B7 兜底）
+    // 多路径保序 + 非法 UTF-8 字节原样搬运（传输层不校验，上层 B7 兜底；
+    // 路径元素一律非空——零长属解码端拒收契约，不在往返面）
     {
-        const PathPayload in{"ack-x", {"a.md", "", "b.md", "\xFF\xFE 坏字节.md", "c.md"}};
+        const PathPayload in{"ack-x", {"a.md", "b.md", "\xFF\xFE 坏字节.md", "c.md"}};
         PathPayload out;
         DOCTEST_CHECK(decodePathPayload(encodePathPayload(in), out));
         DOCTEST_CHECK_EQ(out.paths.size(), in.paths.size());
@@ -119,6 +119,14 @@ REGISTER_TEST(si_payload_codec_reject,
         std::string p = encodePathPayload(PathPayload{"", {"x.md"}});
         const unsigned char big[4] = {0x00, 0x00, 0x01, 0x00};
         std::memcpy(p.data() + 12, big, 4);
+        PathPayload out;
+        DOCTEST_CHECK_FALSE(decodePathPayload(p, out));
+    }
+    // 零长路径（len=0）：解码端契约拒收——section 零填充残渣读出的形态，
+    // 放行即误消费悬垂半包（U1 集成实测踩中；len 字段位于 offset 13，ack 名单字节）
+    {
+        std::string p = encodePathPayload(PathPayload{"a", {"x.md"}});
+        std::memset(p.data() + 13, 0, 4);  // len 字段实际位于 offset 13
         PathPayload out;
         DOCTEST_CHECK_FALSE(decodePathPayload(p, out));
     }
