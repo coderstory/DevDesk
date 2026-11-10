@@ -132,7 +132,10 @@ void viewerHandleKey(ViewerSession& s, const eui::KeyEvent& key) {
     }
     if (s.search.phase != ViewerSearchPhase::Active) return;
     if (key.key == eui::InputKey::Enter) {
-        viewerJumpTo(s, viewerSearchNext(s.search));
+        // 阅读态（输入框未聚焦）同 C3 口径：Enter 下一处 / Shift+Enter 上一处，
+        // 方向判据与输入框 onKeyEvent 一致（修前此处漏 shift 分支把反向键走成正向）
+        viewerJumpTo(s, key.modifiers.shift ? viewerSearchPrev(s.search)
+                                            : viewerSearchNext(s.search));
         app::requestUpdate();
     } else if (key.key == eui::InputKey::Escape) {
         viewerClearSearch(s);
@@ -403,11 +406,16 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         const float topY = s.syncMap.blockTopY(k);
         const float blockH = s.syncMap.blockHeight(k);
         float target = topY - std::max(0.0f, s.viewportH - blockH) * 0.5f;
+        // 上限：元素 scrollMaxOffset 优先；取不到（缺失/0）退几何表全高−视口，
+        // 兜底防未钳跳转把 offset 写越内容末端（探针 964>496 异常的容错面）
+        float maxOff = 0.0f;
         if (const auto* el = ui.find(kViewerScrollId)) {
-            target = std::clamp(target, 0.0f, el->scrollMaxOffset);
-        } else {
-            target = std::max(0.0f, target);
+            maxOff = el->scrollMaxOffset;
         }
+        if (maxOff <= 0.0f) {
+            maxOff = std::max(0.0f, s.syncMap.totalHeight() - s.viewportH);
+        }
+        target = std::clamp(target, 0.0f, maxOff);
         s.scrollOffset = target;
         s.programmaticScroll = true;  // onChange 回声抑制（同帧消费，下帧开头兜底清）
         ui.setScrollOffset(kViewerScrollId, target);
