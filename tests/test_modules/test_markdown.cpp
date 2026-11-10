@@ -8979,15 +8979,30 @@ REGISTER_TEST(md_viewer_window_title_and_blank,
     DOCTEST_CHECK(trunc.front() == 'x');
     DOCTEST_CHECK(trunc.back() == 'd');
 
-    // UTF-8 边界：CJK 名截断后省略号两侧均为完整码点（相邻字节非续字节 10xxxxxx）
+    // UTF-8 边界：省略号两侧均为完整码点。前沿判据 = 自 ell-1 回退到首个非续
+    // 字节必为 lead 字节，且该码点长度恰好终止于 ell（完整 3 字节汉字的末字节
+    // 本身就是续字节——「ell-1 非续字节」是错误不变量，首版用例在此假红）
     std::string cjkName;
     for (int i = 0; i < 40; ++i) cjkName += "汉";  // 120 字节有效 UTF-8
     const std::string ctrunc = mdViewerWindowTitle("/d/" + cjkName + ".md");
     DOCTEST_CHECK(ctrunc.size() < cjkName.size() + 3);
     const size_t ell = ctrunc.find("…");
     DOCTEST_REQUIRE(ell != std::string::npos);
-    if (ell > 0) {
-        DOCTEST_CHECK((static_cast<unsigned char>(ctrunc[ell - 1]) & 0xC0) != 0x80);
+    {
+        size_t back = ell;
+        while (back > 0 &&
+               (static_cast<unsigned char>(ctrunc[back - 1]) & 0xC0) == 0x80) {
+            --back;
+        }
+        DOCTEST_REQUIRE(back > 0);
+        const unsigned char lead = static_cast<unsigned char>(ctrunc[back - 1]);
+        const size_t len =
+            lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+        DOCTEST_CHECK_EQ(back + len, ell);  // 码点恰好终止于省略号前沿
+        if (ell + 3 < ctrunc.size()) {      // 后沿：省略号后必为 lead 字节
+            DOCTEST_CHECK((static_cast<unsigned char>(ctrunc[ell + 3]) & 0xC0) !=
+                          0x80);
+        }
     }
     DOCTEST_CHECK(ctrunc.back() == 'd');
 
@@ -9008,7 +9023,8 @@ REGISTER_TEST(md_viewer_session_registry,
     using namespace module::markdown;
     resetViewerSessionsForTest();
     DOCTEST_CHECK(viewerSessionCountForTest() == size_t(0));
-    DOCTEST_CHECK(app::consumeWindowRequests().empty());  // 清残留窗口请求
+    app::consumeWindowRequests();  // 取走即弃跨用例残留（队列进程级，不假设其他
+                                   // 用例清过仓——只断言本用例自己的入队量）
 
     const std::filesystem::path dir =
         test_support::makeTempDir("mdviewer_", "session");
