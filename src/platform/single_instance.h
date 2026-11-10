@@ -70,9 +70,9 @@ inline std::string encodePathPayload(const PathPayload& payload) {
 }
 
 // 任何越界 / 魔数错 / 零长字段 → false 且 out 置空。尾部剩余字节忽略（section 复用
-// 残留，不判非法）。零长路径 / 零路径数 / 空 ack 名判非法的依据：发送方契约只产非空
-// 路径与专名 ack；且 section 未覆写区是零填充——截断半包的合法头之后全零尾会解出
-// 「count 个零长路径」，放行即误消费悬垂包（U1 集成实测踩中）
+// 残留，不判非法）。零长路径 / 零路径数 / 空 ack 名判非法 = 契约：发送方只产非空
+// 路径与专名 ack，且 section 未覆写区恒零填充——截断半包的合法头接全零尾恰解出
+// 「零长路径」，放行即误消费悬垂包
 inline bool decodePathPayload(const std::string& bytes, PathPayload& out) {
     out = PathPayload{};
     if (bytes.size() > kMaxPayloadBytes) return false;
