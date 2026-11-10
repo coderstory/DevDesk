@@ -127,7 +127,7 @@ REGISTER_TEST(md_assoc_store_roundtrip, "md_assoc: 持久化往返 + 默认值�
 })
 
 // ── 卡高契约（设计文档 §3.5：引导行行盒动态增高，卡高同源重算）──
-REGISTER_TEST(md_assoc_card_height, "md_assoc: 卡高三档（无引导 82 / mac 文字 100 / Win 按钮 112）", {
+REGISTER_TEST(md_assoc_card_height, "md_assoc: 卡高三档（无引导 48 / mac 文字 66 / Win 按钮 78）", {
     DOCTEST_CHECK(module::settings::mdAssocCardHeight(false, true) ==
                   module::settings::kMdAssocCardHeight);
     DOCTEST_CHECK(module::settings::mdAssocCardHeight(true, false) ==
