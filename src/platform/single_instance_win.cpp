@@ -78,6 +78,7 @@ HANDLE g_mutexHandle = nullptr;
 // 静态析构被销毁 = std::terminate（退出期 "terminate called without an active
 // exception" 尾巴、退出码非 0 的根因）。
 std::atomic<bool> g_listenerRunning{false};
+std::thread g_listenerThread;
 
 // 路径接收回调槽（启动装配期由 main 注册一次后不更换，见头文件线程契约）。
 // 堆持有永不析构（有意泄漏）：监听线程退出期才被 shutdownListener join，回调
