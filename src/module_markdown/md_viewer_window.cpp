@@ -19,7 +19,10 @@
 #include <eui/dsl_app.h>  // openWindow/requestUpdate 声明（定义在 EUI-NEO 库 glfw_app_main TU，链接期解析；禁含 detail/dsl_app_impl.h——非 inline 定义重复链接撞）
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -48,6 +51,21 @@ struct ViewerSession {
     MdPreviewHoverState hover;
     uint64_t textRev = 0;
     uint64_t contentHash = 0;  // 内容指纹：装载时算一次（内容不可变；contentKey 逐帧引用）
+    float viewerMeasureWidth = 0.0f;  // 几何表当前测量宽（= 最近一帧渲染 contentWidth）
+    // contentHeightProvider 每帧被两种宽度各调一次（全宽判定滚动 + 窄宽定总高），
+    // 列宽 16px 量化下窗宽抖动会引入 2 个 pvW 档 × 2 个减滚动条档 = 4 个乒乓宽度；
+    // 4 槽（键 = 样式指纹×宽度）→总高缓存让稳态帧（含 resize 乒乓稳态）零重建
+    // （旧单路径每帧全量重测，bug259-C 实测单帧 ~1s 的主根因之一）。样式指纹
+    // （复核 P2）：字号档/gap/主题度量变化后仅凭宽度命中会回旧总高短路重建 →
+    // 底部内容以新形态复发，故键必须含影响排版高度的样式字段。
+    struct ProviderSlot {
+        uint64_t styleKey = 0;
+        float width = -1.0f;
+        float total = 0.0f;
+    };
+    ProviderSlot providerSlots[4];
+    int providerSlotNext = 0;
+    uint64_t providerStyleKey = 0;  // 每帧由 compose 依当前 style 重算（FNV-1a）
 
     // 滚动态（F-05 跳转通路，md_module_preview.cpp 先例同款三件）
     float scrollOffset = 0.0f;        // 用户滚动回写（onChange）
@@ -63,6 +81,10 @@ struct ViewerSession {
     std::string appliedQuery;
     bool releaseSearchInputPending = false;  // 清除后的 input 状态换代释放点
                                              //（liveInputStateFresh_ 同款，防旧词残留）
+
+    // 性能诊断资产（bug259）：DEVDESK_MDVIEWER_PERF=1 时启用（见 viewerCompose）
+    std::vector<long long> perfFrameUs;   // 5s 窗口内逐帧 compose 耗时（P95/max）
+    int perfLastBuiltBlocks = 0;          // 最近一帧实际建元块数（视口裁剪生效量）
 
     // 命中矩形收集：onRangeRect 与 afterHitOverlay 在同一块包裹内先后配对，
     // 同帧同块缓冲（渲染核顺序保证见 mdDrawBlockFlowCore 查询缝注释）
@@ -97,12 +119,16 @@ ViewerSession* findSessionByPath(const std::string& path) {
 }
 
 // matches 与 query 保持一致（activate 后首帧 / 注入缝后统一走这里；onChange 已
-// 同步应用时本函数幂等跳过）
+// 同步应用时本函数幂等跳过）。搜索域 = 块显示文本（bug259-G），缝注入 EUI 真实现。
+const ViewerDisplayTextFn kViewerDisplayTextOf = [](const std::string& btext) {
+    return components::MarkdownBuilder::displayTextOf(btext);
+};
+
 void viewerEnsureMatchesFresh(ViewerSession& s) {
     if (s.search.phase != ViewerSearchPhase::Active) return;
     if (s.appliedQuery == s.search.query) return;
     viewerSearchApplyQuery(s.search, s.search.query, s.blockModel.blocks(),
-                           s.content);
+                           s.content, kViewerDisplayTextOf);
     s.appliedQuery = s.search.query;
 }
 
@@ -186,7 +212,7 @@ void drawSearchOverlay(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen,
                 .theme(componentTheme)
                 .onChange([&s](const std::string& v) {
                     viewerSearchApplyQuery(s.search, v, s.blockModel.blocks(),
-                                           s.content);
+                                           s.content, kViewerDisplayTextOf);
                     s.appliedQuery = v;
                     app::requestUpdate();
                 })
@@ -268,6 +294,21 @@ void drawSearchOverlay(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen,
 
 // ── compose：外壳固定、单一内容区滚动（设计 §1.1）──────────────────────
 void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
+    // 性能诊断资产（bug259 取证口径）：DEVDESK_MDVIEWER_PERF=1 时每 5s 一条
+    // [viewer-perf]（compose 分位 / 建元块数 / 高度表热度），默认零开销。
+    static const bool perfEnabled = [] {
+        const char* v = std::getenv("DEVDESK_MDVIEWER_PERF");
+        return v != nullptr && *v != '\0';
+    }();
+    const auto perfT0 = perfEnabled ? std::chrono::steady_clock::now()
+                                    : std::chrono::steady_clock::time_point{};
+    struct PerfAgg {
+        std::chrono::steady_clock::time_point windowStart = std::chrono::steady_clock::now();
+        int frames = 0;
+        long long composeUs = 0;
+    };
+    static PerfAgg perf;
+    if (perfEnabled) ++perf.frames;
     const core::theme::Tokens t = core::theme::current();
     const auto componentTheme = core::theme::componentTokensWeChat(t);
     // 程序化滚动残留标志兜底（:556-557 同款：漏清残留会把下帧用户滚轮误判成程序化）
@@ -305,18 +346,53 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
 
     // 正文列宽：窗宽−80 自适应（2026-11-11 用户拍板：全屏后正文须随窗宽缩放，
     // 旧 760 定宽在最大化下留大片空白，池 bug#4）；滚动区=该列本身（编辑器
-    // 预览同款 pvX/pvW 形态：测量 pass 与渲染同宽，滚动条贴列右缘）
-    const float pvW = std::max(0.0f, screen.width - 80.0f);
+    // 预览同款 pvX/pvW 形态）。列宽按 16px 步进量化（bug259-C）：拖拽 resize
+    // 时相邻帧常落同一档，几何表 memo 与 inline 布局缓存持续命中，不再逐帧
+    // 全量重测；列本身居中，量化不改变阅读体验。
+    constexpr float kPvWStep = 16.0f;
+    const float pvW =
+        std::max(0.0f, std::floor(std::max(0.0f, screen.width - 80.0f) / kPvWStep) * kPvWStep);
     const float pvX = std::max(0.0f, (screen.width - pvW) * 0.5f);
     const components::MarkdownStyle style = scaledPreviewStyle(componentTheme);
-    // 几何表重建（rebuildSyncMap 同式：测量 = MarkdownBuilder::estimateHeight，
-    // 与渲染通路同源；块间隙 = style.blockGap 与渲染核内 blocks 列 gap 同值）
-    s.syncMap.rebuild(
-        s.content, s.blockModel.blocks(), s.textRev, pvW, style.blockGap,
-        [&](const MdBlock& b) {
-            return components::MarkdownBuilder::estimateHeight(
-                s.content.substr(b.start, b.end - b.start), pvW, style);
-        });
+    // 样式指纹（复核 P2）：provider 槽键的样式半边。取所有影响排版高度的样式
+    // 字段做 FNV-1a；字号档/gap/主题度量一动指纹即翻新，槽自然失配。
+    {
+        uint64_t h = 1469598103934665603ULL;
+        auto mixF = [&h](float v) {
+            static_assert(sizeof(float) == sizeof(uint32_t));
+            uint32_t b = 0;
+            std::memcpy(&b, &v, sizeof(b));
+            h ^= b;
+            h *= 1099511628211ULL;
+        };
+        mixF(style.bodySize);
+        mixF(style.bodyLineHeight);
+        mixF(style.h1Size);
+        mixF(style.h2Size);
+        mixF(style.h3Size);
+        mixF(style.codeSize);
+        mixF(style.blockGap);
+        mixF(style.listIndent);
+        mixF(style.codePadding);
+        mixF(style.quotePadding);
+        mixF(style.tableCellPadding);
+        s.providerStyleKey = h;
+    }
+    // 几何表测量函数（= MarkdownBuilder::estimateHeight，与渲染通路同源；块间隙
+    // = style.blockGap 与渲染核内 blocks 列 gap 同值）。重建时机移到 scrollview
+    // contentHeightProvider / content 回调内、按【实际渲染宽 contentWidth】执行
+    // （bug259-D/F 根因修复：旧实现在 pvW 上测量、在 contentWidth=pvW−滚动条占位
+    // 上渲染，折行差一列 ⇒ 块包裹高偏短 ⇒ 相邻块互相侵入 + 底部内容到不了）。
+    const MdSyncMap::HeightFn heightFn = [&s, &style](const MdBlock& b) {
+        return components::MarkdownBuilder::estimateHeight(
+            s.content.substr(b.start, b.end - b.start),
+            s.viewerMeasureWidth, style);
+    };
+    const auto rebuildSyncMapAt = [&](float contentWidth) {
+        s.viewerMeasureWidth = contentWidth;
+        s.syncMap.rebuild(s.content, s.blockModel.blocks(), s.textRev,
+                          contentWidth, style.blockGap, heightFn);
+    };
 
     MdBlockFlowDeps deps{s.blockModel.blocks(), s.content, s.codeCache,
                          s.syncMap, s.hover,
@@ -331,6 +407,27 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         .offset(s.scrollOffset)
         .contentKey("md.viewer.scroll." + s.path + "." +
                     std::to_string(s.contentHash))
+        // 滚动总高供给缝（bug259-C）：以几何表 totalHeight 替代 scrollview 的
+        // 整篇 scratch 测量 pass（旧路径每帧把全部块在 scratch Ui 上建一遍 +
+        // layout，104 块实测单帧 ~1s）。与渲染同源 ⇒ 总高即真实排版高。
+        // 4 槽缓存键 = (样式指纹, contentWidth)：同键调用直接回缓存值，稳态帧
+        // 零重建；字号档/gap/主题度量变化使指纹翻新 → 旧槽自然失配不回旧总高
+        // （复核 P2）。
+        .contentHeightProvider([&](float contentWidth, float /*viewportHeight*/) {
+            const uint64_t key = s.providerStyleKey;
+            for (int i = 0; i < 4; ++i) {
+                if (s.providerSlots[i].styleKey == key &&
+                    s.providerSlots[i].width == contentWidth) {
+                    return s.providerSlots[i].total;
+                }
+            }
+            rebuildSyncMapAt(contentWidth);
+            const float total = s.syncMap.totalHeight();
+            const int slot = s.providerSlotNext;
+            s.providerSlots[slot] = {key, contentWidth, total};
+            s.providerSlotNext = (slot + 1) % 4;
+            return total;
+        })
         .onChange([&s](float v) {
             if (s.programmaticScroll) {
                 // 程序化来源（跳转落地 echo）：只记账，不当作用户滚动态
@@ -342,8 +439,26 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         })
         .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
             s.viewportH = viewportHeight;
+            // 幂等：provider 已按同宽重建则零重算；宽度在此处才最终确定
+            rebuildSyncMapAt(contentWidth);
             s.curBlockRects.clear();
             BlockFlowHooks hooks;
+            // 视口裁剪（bug259-C）：只建可视区附近的块，余量上 1 屏 / 下 2 屏
+            //（cullTop = offset−vh、cullBottom = offset+2vh；下偏重——向下滚动
+            // 是主阅读方向，多留防快滚露白）。scrollOffset 用本帧回写值（滚轮
+            // 事件先于 compose 落账）。
+            const float cullVh = std::max(viewportHeight, 480.0f);
+            const float cullTop = s.scrollOffset - cullVh;
+            const float cullBottom = s.scrollOffset + cullVh * 2.0f;
+            int builtBlocks = 0;  // bug259 性能诊断：本帧实际建元块数（视口裁剪生效量）
+            hooks.blockVisible = [&s, cullTop, cullBottom, &builtBlocks](size_t k) {
+                const float top = s.syncMap.blockTopY(k);
+                const bool vis =
+                    top + s.syncMap.blockHeight(k) >= cullTop &&
+                    top <= cullBottom;
+                if (vis) ++builtBlocks;
+                return vis;
+            };
             // F-05 高亮主通路：渲染核内算矩形（每块内容建完后向本回调取待查区间）
             hooks.pendingRangeQuery =
                 [&s](size_t k) -> std::vector<MdRangeSpan> {
@@ -398,6 +513,7 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
             };
             mdDrawBlockFlowCore(inner, contentWidth, t, style, "md.viewer",
                                 /*onBlockTap=*/{}, deps, hooks);
+            s.perfLastBuiltBlocks = builtBlocks;  // 性能诊断（DEVDESK_MDVIEWER_PERF）
         })
         .build();
     // 直写实例 offset（绕开 .offset() init-only 守卫；编辑器 Preview 同款 :221-223，
@@ -428,6 +544,54 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
 
     if (s.search.phase == ViewerSearchPhase::Active) {
         drawSearchOverlay(s, ui, screen, t, componentTheme);
+    }
+
+    if (perfEnabled) {
+        const long long frameUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - perfT0)
+                .count();
+        perf.composeUs += frameUs;
+        s.perfFrameUs.push_back(frameUs);
+        const auto elapsed = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - perf.windowStart);
+        if (elapsed.count() >= 5.0) {
+            auto& us = s.perfFrameUs;
+            long long maxUs = 0;
+            long long p95Us = 0;
+            if (!us.empty()) {
+                const size_t idx95 =
+                    std::min(us.size() - 1, (us.size() * 95 + 99) / 100 - 1);
+                std::vector<long long> sorted(us);
+                std::nth_element(sorted.begin(), sorted.begin() + idx95,
+                                 sorted.end());
+                p95Us = sorted[idx95];
+                maxUs = *std::max_element(us.begin(), us.end());
+            }
+            LOG_INFO("[viewer-perf] frames=" + std::to_string(perf.frames) +
+                     " compose_avg_us=" +
+                     std::to_string(perf.composeUs / (perf.frames ? perf.frames : 1)) +
+                     " compose_p95_us=" + std::to_string(p95Us) +
+                     " compose_max_us=" + std::to_string(maxUs) +
+                     " elements=" + std::to_string(ui.elementCount()) +
+                     " built_blocks=" + std::to_string(s.perfLastBuiltBlocks) +
+                     "/" + std::to_string(s.syncMap.blockCount()) +
+                     " rebuild_total=" + std::to_string(s.syncMap.rebuildCount()) +
+                     " height_computes=" + std::to_string(s.syncMap.heightComputes()) +
+                     " blocks=" + std::to_string(s.syncMap.blockCount()) +
+                     " est_total_h=" +
+                     std::to_string(s.syncMap.totalHeight()) +
+                     " win_w=" + std::to_string(screen.width) +
+                     " win_h=" + std::to_string(screen.height) +
+                     " code_cache=" + std::to_string(s.codeCache.size()) +
+                     " code_hits=" + std::to_string(s.codeCache.hits()) +
+                     " code_misses=" + std::to_string(s.codeCache.misses()) +
+                     " window_s=" + std::to_string(elapsed.count()));
+            perf.frames = 0;
+            perf.composeUs = 0;
+            s.perfFrameUs.clear();
+            perf.windowStart = std::chrono::steady_clock::now();
+        }
     }
 }
 
@@ -506,7 +670,7 @@ bool viewerSearchInjectForTest(const std::string& path,
     ViewerSession* s = findSessionByPath(path);
     if (s == nullptr) return false;
     viewerSearchApplyQuery(s->search, query, s->blockModel.blocks(),
-                           s->content);
+                           s->content, kViewerDisplayTextOf);
     s->appliedQuery = query;
     return true;
 }

@@ -1049,6 +1049,10 @@ const DslAppConfig& dslAppConfig() {
         // 左键唤起主窗口，右键弹 styled 菜单；原生 trayMenu 为降级数据源（keepDefault=false）
         .tray(true)
         .trayTitle("DevDesk")
+        // 托盘态启动缝（bug259-A）：OS 关联启动 .md / --minimized 命中时首帧不
+        // show 主窗（EUI-NEO firstFrame ready 查询），消除「主窗闪现一帧再藏」。
+        // 闩值在捕获期置位（app_assembly），此处只读。
+        .mainWindowStartHidden([] { return app::assembly::mainWindowStartsHidden(); })
         // macOS 用 22×22 纯黑+alpha template 蒙版（彩色图标退化为实心方块）；Windows 只认 .ico。相对路径经
         // resolveIconPath 候选链解析
         .trayIcon(platform::tray::defaultIconPath())

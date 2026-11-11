@@ -37,6 +37,7 @@ bool g_argvCaptureDone = false;
 // --minimized 捕获门（与 openFile 同款幂等）+ 待执行旗标（命中后由 compose 首帧取走）
 bool g_minimizedCaptureDone = false;
 bool g_minimizedStartupPending = false;
+bool g_mainWindowStartHidden = false;  // bug259-A：首帧不 show 闩值（mainWindowStartsHidden）
 
 // 捕获落点：写进程级 pending 路径；空路径（无文件参数/只有 flag）不写。
 // source 只进日志，区分 argv 与平台队列两条来源。
@@ -182,6 +183,7 @@ bool captureMinimizedFlagFromArgv(const std::vector<std::string>& utf8Args) {
     g_minimizedCaptureDone = true;
     if (platform::autostart::parseMinimizedFlag(utf8Args)) {
         g_minimizedStartupPending = true;
+        g_mainWindowStartHidden = true;
         LOG_INFO("--minimized 启动：窗口保持托盘态");
     }
     return g_minimizedStartupPending;
@@ -190,6 +192,7 @@ bool captureMinimizedFlagFromArgv(const std::vector<std::string>& utf8Args) {
 void resetMinimizedFlagForTest() {
     g_minimizedCaptureDone = false;
     g_minimizedStartupPending = false;
+    g_mainWindowStartHidden = false;
 }
 
 bool consumePendingMinimizedStartup() {
@@ -324,9 +327,12 @@ void dispatchFileOpen(::core::Router* router, const std::string& path,
 void armTrayIfViewerOnlyLaunch() {
     if (g_argvCaptureDone && pathHasMarkdownExtension(pendingOpenFilePath())) {
         g_minimizedStartupPending = true;
+        g_mainWindowStartHidden = true;  // bug259-A：首帧不 show（闩值，见头文件）
         LOG_INFO("关联启动（.md argv）：主窗保持托盘态，仅查看器窗");
     }
 }
+
+bool mainWindowStartsHidden() { return g_mainWindowStartHidden; }
 
 std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;

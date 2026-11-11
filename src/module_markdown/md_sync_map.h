@@ -7,6 +7,7 @@
 //   未变块零重测；任意行 O(log n) 查询，锚 = 每个块。纯数学 + 注入测量，不依赖 EUI-NEO。
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -64,6 +65,15 @@ private:
         float gap = -1.0f;    // 字号联动：切档后 memo 须随 blockGap 一同失效（旧高用旧档）
         float height = 0.0f;
     };
+    // 多槽 memo（bug259-C）：scrollview 每帧以「全宽 + 减滚动条窄宽」各查一次总高，
+    // 加 16px 列宽量化，稳态宽度集合 = 少量档位乒乓（实测 3 个窗态 × 2 宽 = 6 档，
+    // resize 收敛后活跃档 ≤ 4）；单槽会在宽度翻转时把其它宽度块高全部打掉 → 每帧
+    // 全量重测。4 槽 + 全局 LRU 戳 + 【miss 也整体搬运旧槽】让乒乓宽度互相保活。
+    static constexpr size_t kMemoSlots = 4;
+    struct MemoSlot {
+        MemoEntry e{};
+        uint64_t tick = 0;  // 全局递增戳：命中/写入盖戳，淘汰取更久未用的槽
+    };
 
     bool built_ = false;
     uint64_t rev_ = 0;
@@ -74,7 +84,8 @@ private:
     std::vector<int> lineCount_;   // 块占编辑器行数（≥1，含块尾空行）
     std::vector<float> height_;    // 块预览高度（>0）
     std::vector<float> topY_;      // 块预览顶 y（含 gap 累计）
-    std::unordered_map<int, MemoEntry> memo_;  // stableId → (宽度, 高度)
+    std::unordered_map<int, std::array<MemoSlot, kMemoSlots>> memo_;  // stableId → 多槽 (宽度, 高度)
+    uint64_t memoTick_ = 0;
 
     uint64_t rebuildCount_ = 0;
     uint64_t heightComputes_ = 0;

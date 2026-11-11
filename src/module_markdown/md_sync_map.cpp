@@ -2,6 +2,7 @@
 #include "md_sync_map.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace module::markdown {
 
@@ -44,9 +45,10 @@ void MdSyncMap::rebuild(const std::string& text,
     height_.assign(n_, 0.0f);
     topY_.assign(n_, 0.0f);
 
-    // stableId ↔ 内容一一对应（前后缀对齐继承，新块取新 id）；按 (stableId, width) 备忘
-    // 块高度：未变块跨 rebuild 零重测，死亡 id 随 swap 淘汰，不无界增长。
-    std::unordered_map<int, MemoEntry> nextMemo;
+    // stableId ↔ 内容一一对应（前后缀对齐继承，新块取新 id）；按 (stableId, width)
+    // 双槽备忘块高度（bug259-C，见头文件 MemoSlot 注释）：未变块跨 rebuild 零重测，
+    // 宽度乒乓互不挤兑；只拷贝当前块集合 → 死亡 id 随重建淘汰，不无界增长。
+    std::unordered_map<int, std::array<MemoSlot, kMemoSlots>> nextMemo;
     nextMemo.reserve(n_ * 2 + 1);
 
     int curLine = 0;
@@ -61,20 +63,44 @@ void MdSyncMap::rebuild(const std::string& text,
         bool have = false;
         if (b.stableId >= 0) {
             auto it = memo_.find(b.stableId);
-            if (it != memo_.end() && it->second.width == width && it->second.gap == blockGap) {
-                h = it->second.height;
-                have = true;
+            if (it != memo_.end()) {
+                for (int s = 0; s < int(kMemoSlots); ++s) {
+                    if (it->second[s].e.width == width &&
+                        it->second[s].e.gap == blockGap) {
+                        h = it->second[s].e.height;
+                        have = true;
+                        break;
+                    }
+                }
             }
         }
-        if (!have) {
-            h = heightFn(b);
-            ++heightComputes_;
-            if (!(h > 0.0f)) h = 0.001f;  // 防御：除零/负高不可入表
-            if (b.stableId >= 0) {
-                nextMemo[b.stableId] = MemoEntry{width, blockGap, h};
+        if (b.stableId >= 0) {
+            auto& slots = nextMemo[b.stableId];
+            // 【命中与否都】整体搬运旧槽（bug259-C 修正第二刀：miss 不搬运会把
+            // 其它宽度的高每帧清掉 → 宽度一多就退化为逐帧全量重测），命中槽盖
+            // 新鲜戳；miss 时再把最久未用槽替换为本次测得的高。
+            if (b.stableId >= 0 && memo_.count(b.stableId) > 0) {
+                slots = memo_[b.stableId];
             }
-        } else if (b.stableId >= 0) {
-            nextMemo[b.stableId] = MemoEntry{width, blockGap, h};
+            for (auto& sl : slots) {
+                if (sl.e.width == width && sl.e.gap == blockGap) {
+                    sl.tick = ++memoTick_;
+                    break;
+                }
+            }
+            if (!have) {
+                h = heightFn(b);
+                ++heightComputes_;
+                if (!(h > 0.0f)) h = 0.001f;  // 防御：除零/负高不可入表
+                int victim = 0;
+                for (int s = 1; s < int(kMemoSlots); ++s) {
+                    if (slots[victim].e.width >= 0.0f &&
+                        (slots[s].e.width < 0.0f || slots[s].tick < slots[victim].tick)) {
+                        victim = s;
+                    }
+                }
+                slots[victim] = {MemoEntry{width, blockGap, h}, ++memoTick_};
+            }
         }
         height_[k] = h;
         topY_[k] = curY;

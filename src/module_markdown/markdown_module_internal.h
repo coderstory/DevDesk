@@ -323,7 +323,9 @@ inline core::MenuAnchor menuAnchorForPointerInPage(const eui::PointerEvent& ev,
 
 // ─── 块流渲染核注入面（U2 抽核：类型提升到命名空间作用域，编辑器/查看器共用）───
 
-// 「区间→rect」查询缝载荷：块源码内的字符区间（字节偏移，UTF-8 码点对齐）。
+// 「区间→rect」查询缝载荷：块【显示文本】内的码点区间（bug259-G：源码字节域
+// 下按近似行模型反推矩形对 CJK 整行错位，故改到与渲染同源的显示域；显示文本
+// 定义见 EUI MarkdownBuilder::displayTextOf）。
 struct MdRangeSpan {
     size_t begin = 0;
     size_t end = 0;
@@ -339,10 +341,11 @@ struct MdHitRect {
 
 // 块流注入点
 // 视图态对单块的特判经本注入点传入，新增视图态只传自己的 hooks。
-// 三个绘制回调均可空（空 = 走默认）；k = 块下标、b = 块、wrapId = 包裹 stack id。
+// 绘制回调均可空（空 = 走默认）；k = 块下标、b = 块、wrapId = 包裹 stack id。
 // 查询缝两回调须成对在位（缺一 = 缝不启用）：渲染核在每块内容（含文本度量）
-// 建完后向 pendingRangeQuery 取本块待查区间，逐区间经 mdResolveBlockRangeRect
-// （渲染同源度量）解析矩形并回吐 onRangeRect；矩形纵向钳到块包裹内。
+// 建完后向 pendingRangeQuery 取本块待查区间，逐区间经 EUI
+// MarkdownBuilder::hitRectsForDisplayRange（真实 inline 布局，渲染同源零漂移）
+// 解析矩形并回吐 onRangeRect；矩形纵向钳到块包裹内。
 struct BlockFlowHooks {
     std::function<float(size_t k, const MdBlock& b, float geometryHeight,
                         float contentWidth)>
@@ -353,8 +356,14 @@ struct BlockFlowHooks {
         drawContent;
     std::function<void(eui::Ui& ui, size_t k, const std::string& hitId)>
         afterHitOverlay;
+    // 视口裁剪（性能，bug259-C）：非空时返回 false 的块整块不建元素。滚动总高
+    // 不依赖逐块建元（scrollview contentHeightProvider 以几何表供给）。非空时
+    // 渲染核根容器切换为绝对定位 stack（高 = totalHeight，可见块包裹 y =
+    // blockTopY(k)）：流式 column 下跳块会让后续可见块上移、与滚动总高脱钩，
+    // 绝对定位保证裁剪后可见块几何与几何表严格同源。
+    std::function<bool(size_t k)> blockVisible;
     // 「区间→rect」查询缝（审计 P1-2 主通路；U2 落缝、U4 搜索高亮/跳转消费）。
-    // 区间口径 = 块源码字节偏移（与「块序号+字符区间」的 matches 同一口径）。
+    // 区间口径 = 块显示文本码点偏移（与 matches 同口径，见 MdRangeSpan 注释）。
     std::function<std::vector<MdRangeSpan>(size_t k)> pendingRangeQuery;
     std::function<void(size_t k, const MdRangeSpan& span, const MdHitRect& rect)>
         onRangeRect;
@@ -387,17 +396,9 @@ struct MdBlockFlowDeps {
         drawCodeBlock;
 };
 
-// 「区间→rect」查询缝的几何解析（渲染同源度量，自由函数供渲染核与单测共用）。
-// 行切分与几何表估算同式（\n 分段、段内按码点数 ÷ charsPerLine 折行，字符宽度
-// 系数同 estimateMarkdownTextHeight）；行内 x/w 用真文本度量
-// （components::detail::measureMarkdownTextWidth），横向钳到 [0, contentWidth]；
-// 纵向由渲染核钳到块包裹内。近似契约：行号是估算切分而非逐字形排版，POC 判据
-// = 已知区间 → 非空矩形 ∈ 块边界（数值断言见 test_markdown 直驱用例）。
-// 返回 false = 几何不可达（空块/区间非法/零宽）。
-bool mdResolveBlockRangeRect(const std::string& blockText, size_t begin,
-                             size_t end, float contentWidth,
-                             const components::MarkdownStyle& style,
-                             MdHitRect* out);
+// （「区间→rect」几何解析原 mdResolveBlockRangeRect 已于 bug259-G 移除：近似行
+// 模型对 CJK/词边界折行整行错位，改用 EUI MarkdownBuilder::hitRectsForDisplayRange
+// 在真实 inline 布局上反解，渲染核内直调。）
 
 // 逐块渲染核（预览 / 实时 / 查看器共用同一条通路；U2 自 MarkdownModule::drawBlockFlow
 // 原样抽出，编辑器侧经薄委托零行为变化）。

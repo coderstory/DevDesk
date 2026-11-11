@@ -87,6 +87,13 @@ bool consumePendingMinimizedStartup();
 //（.txt/.json 等在主窗内打开，主窗必须正常弹出）。
 void armTrayIfViewerOnlyLaunch();
 
+// 主窗「启动即托盘态」闩值（bug259-A）：armTrayIfViewerOnlyLaunch /
+// captureMinimizedFlagFromArgv 命中时置位，进程内不清。消费方 = EUI-NEO 首帧
+// ready 缝（mainWindowStartHiddenProvider）——首帧【不 show】主窗直接落托盘态。
+// 不复用 g_minimizedStartupPending：那一位在 compose 首帧被取走，首帧 ready 回调
+// 晚于 compose 读不到。宿主须在 app run 前完成两个捕获。
+bool mainWindowStartsHidden();
+
 // ── F-01 第二实例路径队列（Windows 单实例监听线程送达）──
 // 线程契约：写入 = 单实例监听线程（platform::single_instance::setOpenPathsHandler 回调
 // 送达），读取 = 主线程 compose 顶部 drain。跨线程 → 实现内互斥；「取走即清」形态同

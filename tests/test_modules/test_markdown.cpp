@@ -5140,10 +5140,15 @@ REGISTER_TEST(md_module_blockflow_range_rect_poc,
         std::vector<module::markdown::MdRangeSpan> spans;
         if (k == 0) spans.push_back({beg, fin});
         if (k == 1) {
-            // 已知区间 2：长段中部（必折多行），验折行解析
+            // 已知区间 2：长段中部（必折多行），验折行解析。
+            // bug259-G：查询缝区间口径 = 块【显示文本】码点偏移（与渲染同源
+            // 反解），中点须从 displayTextOf 取——源码字节域含块界换行，直取
+            // size()/2 会落到显示 run 之外（矩形为空）。
             const std::string blk1 =
                 text.substr(blocks[1].start, blocks[1].end - blocks[1].start);
-            const size_t mid = blk1.size() / 2;
+            const std::string disp1 =
+                components::MarkdownBuilder::displayTextOf(blk1);
+            const size_t mid = disp1.size() / 2;
             spans.push_back({mid, mid + 8});
         }
         return spans;
@@ -5161,20 +5166,39 @@ REGISTER_TEST(md_module_blockflow_range_rect_poc,
                                               hooks);
     });
 
-    DOCTEST_REQUIRE(got.size() == 2);
-    const Got& g0 = got[0];
-    DOCTEST_CHECK(g0.k == 0);
-    DOCTEST_CHECK(g0.begin == beg);
-    DOCTEST_CHECK(g0.end == fin);
-    DOCTEST_CHECK(g0.w > 0.0f && g0.h > 0.0f);                        // 非空矩形
-    DOCTEST_CHECK(g0.x >= 0.0f && g0.x + g0.w <= kWidth + 0.5f);      // 横向带内
-    DOCTEST_CHECK(g0.y >= 0.0f && g0.y + g0.h <= map.blockHeight(0) + 0.5f);  // 块界内
-    const Got& g1 = got[1];
-    DOCTEST_CHECK(g1.k == 1);
-    DOCTEST_CHECK(g1.w > 0.0f && g1.h > 0.0f);                        // 非空矩形
-    DOCTEST_CHECK(g1.x >= 0.0f && g1.x + g1.w <= kWidth + 0.5f);      // 横向带内
-    DOCTEST_CHECK(g1.y + g1.h <= map.blockHeight(1) + 0.5f);          // 块界内（纵向钳制）
-    DOCTEST_CHECK(g1.y >= style.bodyLineHeight - 0.5f);               // 折行进第二行带
+    // 诊断（域判据核对）：记录每条回吐的 (块, 区间, 矩形)
+    std::string gotDiag;
+    for (const Got& g : got) {
+        gotDiag += " [k=" + std::to_string(g.k) +
+                   " span=" + std::to_string(g.begin) + "-" +
+                   std::to_string(g.end) + " x=" + std::to_string(g.x) +
+                   " y=" + std::to_string(g.y) + " w=" + std::to_string(g.w) +
+                   " h=" + std::to_string(g.h) + "]";
+    }
+    // bug259-G 契约：真实 inline 布局反解下，一个 span 跨 segment 时按段拆
+    // 多矩形（词边界/空格分段），故判据 = 每 span ≥1 矩形 + 逐矩形块界/带内，
+    // 不再假设「一 span 恰一矩形」。
+    std::vector<Got> g0s;
+    std::vector<Got> g1s;
+    for (const Got& g : got) (g.k == 0 ? g0s : g1s).push_back(g);
+    DOCTEST_REQUIRE_MESSAGE(!g0s.empty() && !g1s.empty(),
+                            "got=" + std::to_string(got.size()) + gotDiag);
+    for (const Got& g : g0s) {
+        DOCTEST_CHECK(g.begin == beg);
+        DOCTEST_CHECK(g.end == fin);
+        DOCTEST_CHECK(g.w > 0.0f && g.h > 0.0f);                        // 非空矩形
+        DOCTEST_CHECK(g.x >= 0.0f && g.x + g.w <= kWidth + 0.5f);       // 横向带内
+        DOCTEST_CHECK(g.y >= 0.0f &&
+                      g.y + g.h <= map.blockHeight(0) + 0.5f);          // 块界内
+    }
+    bool sawWrapped = false;
+    for (const Got& g : g1s) {
+        DOCTEST_CHECK(g.w > 0.0f && g.h > 0.0f);                        // 非空矩形
+        DOCTEST_CHECK(g.x >= 0.0f && g.x + g.w <= kWidth + 0.5f);       // 横向带内
+        DOCTEST_CHECK(g.y + g.h <= map.blockHeight(1) + 0.5f);          // 块界内（纵向钳制）
+        if (g.y >= style.bodyLineHeight - 0.5f) sawWrapped = true;      // 折行进第二行带
+    }
+    DOCTEST_CHECK(sawWrapped);
     return true;
 })
 
@@ -5328,10 +5352,12 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
                               std::string("渲染核内又出现视图态特判：") + bad);
     }
     // 三处绘制决策 + 查询缝成对都在核里走 hooks（缺一 = 注入点没接线）
+    // bug259-G/C：区间→rect 改走 EUI 真实 inline 布局反解；视口裁剪钩子接线。
     for (const char* wired : {"hooks.wrapHeight", "hooks.drawContent",
                               "hooks.afterHitOverlay",
                               "hooks.pendingRangeQuery", "hooks.onRangeRect",
-                              "mdResolveBlockRangeRect("}) {
+                              "hooks.blockVisible",
+                              "hitRectsForDisplayRange("}) {
         DOCTEST_CHECK_MESSAGE(coreBody.find(wired) != std::string::npos,
                               std::string("注入点未接线：") + wired);
     }
@@ -9090,8 +9116,9 @@ REGISTER_TEST(md_folder_row_h29_h27,
 
 // ─── U4/F-05：页内搜索状态机纯逻辑（md_viewer_search.h 直驱）──────────────
 // 全序列 + 边界：Idle⇄Active、换词重算归 0、Enter/Shift+Enter 首尾回绕、
-// 0/0 无操作（PRD 硬边界）、清除保留 query、再唤起回填。区间口径 = 块源码
-// 字节偏移（与渲染核查询缝同口径，直接 substr 可索引断言）。
+// 0/0 无操作（PRD 硬边界）、清除保留 query、再唤起回填。区间口径 = 块【显示
+// 文本】码点偏移（bug259-G：与渲染核 hitRectsForDisplayRange 同域；find 返回
+// 字节偏移已在 viewerSearchFindMatches 内换算成码点）。
 REGISTER_TEST(md_viewer_search_state_machine,
               "markdown_module: F-05 搜索状态机全序列（回绕/0/0 无操作/保留词/块局部偏移）", {
     using namespace module::markdown;
@@ -9108,16 +9135,44 @@ REGISTER_TEST(md_viewer_search_state_machine,
     const auto& blocks = model.blocks();
     DOCTEST_REQUIRE(blocks.size() == size_t(4));  // 空行终结段落 → 4 块
 
-    // —— findMatches：命中数 / 块序号 / 块局部字节偏移可直索引块源码
+    // 码点切片助手（显示文本按 [cpBegin, cpEnd) 切段——域判据的关键：
+    // 「二次指标…」中 指标 码点 2 / 字节 6，两者不相等才证明换算真做了）
+    auto cpSlice = [](const std::string& s, size_t cpBegin, size_t cpEnd) {
+        std::string out;
+        size_t i = 0;
+        size_t cp = 0;
+        while (i < s.size()) {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            const size_t step =
+                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1;
+            const size_t next = std::min(i + step, s.size());
+            if (cp >= cpBegin && cp < cpEnd) out += s.substr(i, next - i);
+            i = next;
+            ++cp;
+        }
+        return out;
+    };
+
+    // —— findMatches：命中数 / 块序号 / 块局部显示码点偏移可切片显示文本
     const auto ms = viewerSearchFindMatches(blocks, doc, "指标");
     DOCTEST_CHECK_EQ(ms.size(), size_t(3));  // 标题×1 + 段落×2
     DOCTEST_CHECK_EQ(ms[0].block, size_t(0));
+    // 缺省（恒等显示域）下偏移 = 块源码文本的【码点】偏移。域判据：「# 指标一」
+    // 中 指标 字节偏移 6，码点偏移 2——begin==2 证明字节→码点换算真做了。
     const std::string b0 =
         doc.substr(blocks[0].start, blocks[0].end - blocks[0].start);
-    DOCTEST_CHECK_EQ(b0.find("指标"), ms[0].begin);  // 与 find 同位（块局部口径）
-    DOCTEST_CHECK_EQ(b0.substr(ms[0].begin, ms[0].end - ms[0].begin),
-                     std::string("指标"));
+    DOCTEST_CHECK_MESSAGE(
+        cpSlice(b0, ms[0].begin, ms[0].end) == std::string("指标"),
+        "b0='" + b0 + "' ms0=" + std::to_string(ms[0].begin) + "-" +
+            std::to_string(ms[0].end));
+    DOCTEST_CHECK_EQ(ms[0].begin, size_t(2));  // 字节 6 → 码点 2（域换算证据）
     DOCTEST_CHECK_EQ(ms[1].block, size_t(2));  // 第二处落第三块
+    const std::string b2 =
+        doc.substr(blocks[2].start, blocks[2].end - blocks[2].start);
+    DOCTEST_CHECK_MESSAGE(
+        cpSlice(b2, ms[1].begin, ms[1].end) == std::string("指标"),
+        "b2='" + b2 + "' ms1=" + std::to_string(ms[1].begin) + "-" +
+            std::to_string(ms[1].end));
 
     const auto ab = viewerSearchFindMatches(blocks, doc, "aB");  // query 混合大小写
     DOCTEST_CHECK_EQ(ab.size(), size_t(3));  // AB / ab / Ab 全折配

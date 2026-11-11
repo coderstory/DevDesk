@@ -274,12 +274,15 @@ void mdDrawBlockFlowCore(eui::Ui& ui,
     std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
     // UAT3 T1：块 hover 底衬随页面主体 wechat 化（浅灰，同 surfaceHover 口径）。
     const eui::Color hoverTint = t.colors.hover;
-    ui.column(prefix + ".blocks")
-        .width(contentWidth)
-        .gap(style.blockGap)
-        .content([&] {
-            for (size_t k = 0; k < blocks.size(); ++k) {
-                const MdBlock& b = blocks[k];
+    // 视口裁剪（bug259-C）：blockVisible 在位 = 裁剪模式，根容器改【绝对定位
+    // stack】（高 = 几何表 totalHeight，与 scrollview contentHeightProvider 同源），
+    // 可见块包裹按 blockTopY(k) 定 y——流式 column 下跳块会让后续可见块上移、
+    // 与滚动总高脱钩（几何表与实际渲染错位），绝对定位保证裁剪后几何不变。
+    // 默认（无钩子）路径保持流式 column 零行为变化（预览/编辑器）。
+    const bool culledFlow = hooks.blockVisible != nullptr;
+    // 单块渲染（含查询缝发射）；absY = 裁剪模式下包裹按几何表 topY 绝对定位。
+    auto renderBlock = [&](size_t k, bool absY) {
+        const MdBlock& b = blocks[k];
                 const bool hovered = deps.hover.hovered(b.stableId);
                 const float hk = deps.syncMap.blockHeight(k);
                 // 包裹高默认取几何表 H_k，注入点可覆盖：实时态活动块改取 input
@@ -292,10 +295,13 @@ void mdDrawBlockFlowCore(eui::Ui& ui,
                 // 内容居中、透明 MouseArea 覆盖层最上；透明 mouseArea 不劫持滚动。
                 const std::string wrapId =
                     prefix + ".blk." + std::to_string(b.stableId);
-                ui.stack(wrapId)
+                auto wrap = ui.stack(wrapId)
                     .width(contentWidth)
-                    .height(wrapH)
-                    .content([&] {
+                    .height(wrapH);
+                if (absY) {
+                    wrap.y(deps.syncMap.blockTopY(k));
+                }
+                wrap.content([&] {
                         // hover 底衬（CodeFence bg 不透明，走混色参数由块自身呈现）
                         ui.rect(wrapId + ".hl")
                             .size(contentWidth, wrapH)
@@ -350,21 +356,29 @@ void mdDrawBlockFlowCore(eui::Ui& ui,
                                 .build();
                         }
                         // 「区间→rect」查询缝：内容（含文本度量）已建，块局部
-                        // 坐标此时可解析。纵向钳到块包裹内（估算行号与实际排版
-                        // 的残差不出块界）。
+                        // 坐标此时可解析。矩形在真实 inline 布局上反解（渲染同源
+                        // 零漂移，bug259-G），区间口径 = 显示文本码点；纵向钳到块
+                        // 包裹内。
                         if (hooks.pendingRangeQuery && hooks.onRangeRect) {
                             const std::string btext =
                                 deps.docText.substr(b.start, b.end - b.start);
                             for (const MdRangeSpan& span :
                                  hooks.pendingRangeQuery(k)) {
-                                MdHitRect r;
-                                if (mdResolveBlockRangeRect(
-                                        btext, span.begin, span.end,
-                                        contentWidth, style, &r)) {
+                                for (const auto& hr :
+                                     components::MarkdownBuilder::
+                                         hitRectsForDisplayRange(
+                                             btext, contentWidth, style,
+                                             span.begin, span.end)) {
+                                    MdHitRect r{hr.x, hr.y, hr.w, hr.h};
                                     if (r.y + r.h > wrapH) {
                                         r.h = std::max(0.0f, wrapH - r.y);
                                     }
-                                    hooks.onRangeRect(k, span, r);
+                                    // 纵向钳制后可能剩 0 高（块尾残条）：
+                                    // 不回吐，避免 afterHitOverlay 画隐形占位
+                                    // 矩形（复核 P3；w<=0 同理不回吐）。
+                                    if (r.h > 0.0f && r.w > 0.0f) {
+                                        hooks.onRangeRect(k, span, r);
+                                    }
                                 }
                             }
                         }
@@ -394,112 +408,39 @@ void mdDrawBlockFlowCore(eui::Ui& ui,
                         }
                     })
                     .build();
-            }
-        })
-        .build();
-    deps.codeCache.pruneActive(activeCodeIds);
-}
-
-// ─── 「区间→rect」查询缝几何解析（U2，契约见头文件声明处）────────────────
-bool mdResolveBlockRangeRect(const std::string& blockText, size_t begin,
-                             size_t end, float contentWidth,
-                             const components::MarkdownStyle& style,
-                             MdHitRect* out) {
-    if (out == nullptr || blockText.empty() || contentWidth <= 0.0f) {
-        return false;
-    }
-    if (begin >= end || end > blockText.size()) {
-        return false;
-    }
-    const float lineHeight = style.bodyLineHeight > 0.0f
-                                 ? style.bodyLineHeight
-                                 : style.bodySize + 6.0f;
-    const float averageCharWidth = std::max(1.0f, style.bodySize * 0.56f);
-    const int charsPerLine = std::max(
-        1, static_cast<int>(std::floor(contentWidth / averageCharWidth)));
-
-    // 码点起点表（UTF-8 逐码点字节偏移；截断的续字节序列按 1 字节兜底）
-    std::vector<size_t> cpBegin;
-    cpBegin.reserve(blockText.size());
-    for (size_t i = 0; i < blockText.size();) {
-        cpBegin.push_back(i);
-        const unsigned char c = static_cast<unsigned char>(blockText[i]);
-        size_t step = 1;
-        if (c >= 0xF0U) {
-            step = 4;
-        } else if (c >= 0xE0U) {
-            step = 3;
-        } else if (c >= 0xC0U) {
-            step = 2;
-        }
-        i += (i + step <= blockText.size()) ? step : 1;
-    }
-    // 字节偏移 → 码点序号（落在码点中间 = 归属该码点）
-    const auto cpIndexAt = [&cpBegin](size_t bytePos) {
-        size_t lo = 0;
-        size_t hi = cpBegin.size();
-        while (lo < hi) {
-            const size_t mid = lo + (hi - lo) / 2;
-            if (cpBegin[mid] < bytePos) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if (lo < cpBegin.size() && cpBegin[lo] == bytePos) return lo;
-        return lo > 0 ? lo - 1 : 0;
     };
-
-    // 虚拟行表：与 estimateMarkdownTextHeight 同式（\n 分段、段内按
-    // charsPerLine 切行；空段计 1 行）——保证行号与几何表同源不自相矛盾。
-    std::vector<size_t> lineStartCp;
-    lineStartCp.push_back(0);
-    int cpInLine = 0;
-    for (size_t ci = 0; ci < cpBegin.size(); ++ci) {
-        if (blockText[cpBegin[ci]] == '\n') {
-            lineStartCp.push_back(ci + 1);  // 新段首
-            cpInLine = 0;
-            continue;
-        }
-        ++cpInLine;
-        if (cpInLine > charsPerLine) {
-            lineStartCp.push_back(ci);  // 段内折行
-            cpInLine = 1;
-        }
+    if (culledFlow) {
+        ui.stack(prefix + ".blocks")
+            .width(contentWidth)
+            .height(deps.syncMap.totalHeight())
+            .content([&] {
+                for (size_t k = 0; k < blocks.size(); ++k) {
+                    if (!hooks.blockVisible(k)) {
+                        continue;
+                    }
+                    renderBlock(k, /*absY=*/true);
+                }
+            })
+            .build();
+    } else {
+        ui.column(prefix + ".blocks")
+            .width(contentWidth)
+            .gap(style.blockGap)
+            .content([&] {
+                for (size_t k = 0; k < blocks.size(); ++k) {
+                    renderBlock(k, /*absY=*/false);
+                }
+            })
+            .build();
     }
-    size_t li = lineStartCp.size() - 1;
-    for (size_t back = lineStartCp.size(); back > 0; --back) {
-        if (lineStartCp[back - 1] <= cpIndexAt(begin)) {
-            li = back - 1;
-            break;
-        }
+    // 代码高亮缓存回收（复核 P1 硬门，bug259-C）：默认路径全量建元，帧帧活跃集
+    // 完整，「本帧不活跃即删」正确；culled 模式屏外块不进活跃集，逐帧 prune 会
+    // 把滚出视口的代码块高亮删掉 → 每次重入视口重跑 md4c+tokenize（滚动复卡，
+    // 直接对冲裁剪收益）。裁剪模式跳过 prune：文档内容不可变（hash 键守卫），
+    // 缓存上界 = 全文档代码块数，会话内有界；setColors 主题切换仍整表作废。
+    if (!culledFlow) {
+        deps.codeCache.pruneActive(activeCodeIds);
     }
-    const size_t lineStartByte = cpBegin[lineStartCp[li]];
-    const std::string linePrefix =
-        blockText.substr(lineStartByte, begin - lineStartByte);
-    const std::string target = blockText.substr(begin, end - begin);
-
-    // 行内 x/w：真文本度量（与渲染通路同一 measureTextWidth 源）。
-    const int kBodyWeight = 400;  // 正常字重；粗体内联 run 的加权度量属 U4 打磨
-    float x = components::detail::measureMarkdownTextWidth(
-        linePrefix, style.fontFamily, style.bodySize, kBodyWeight);
-    float w = components::detail::measureMarkdownTextWidth(
-        target, style.fontFamily, style.bodySize, kBodyWeight);
-    if (w <= 0.0f) {
-        return false;
-    }
-    // 横向钳制：命中矩形恒落在 [0, contentWidth] 带内（真度量超估算行宽也不出块）。
-    if (x < 0.0f) {
-        x = 0.0f;
-    }
-    if (x + w > contentWidth) {
-        x = std::max(0.0f, contentWidth - w);
-    }
-    out->x = x;
-    out->y = static_cast<float>(li) * lineHeight;
-    out->w = w;
-    out->h = lineHeight;
-    return true;
 }
 
 int MarkdownModule::liveCaretDisplayLine(const MdBlock& b, const std::string& blockText,
