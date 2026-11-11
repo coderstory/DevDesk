@@ -165,11 +165,8 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
 
         float pvX = 20.0f;
         float pvW = midW - 40.0f;
-        if (mode_ == ViewMode::Preview) {
-            // 阅读态：内容列 clamp 760px 居中
-            pvW = std::min(pvW, kPreviewColumnWidth);
-            pvX = std::max(0.0f, (midW - pvW) * 0.5f);
-        }
+        // 阅读态列宽随列宽自适应（2026-11-11 用户拍板：废 760 定宽阅读列，
+        // 全屏/最大化后正文须铺满列宽，池 bug#4；Split 态本就无 clamp，两态同径）
         const float pvY = topInset + 16.0f;
         const float pvH = std::max(0.0f, bodyH - pvY - 16.0f);
 

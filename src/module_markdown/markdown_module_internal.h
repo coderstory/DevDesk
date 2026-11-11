@@ -260,7 +260,7 @@ inline ViewMode nextMode(ViewMode m) {
 // [[maybe_unused]] 不可删：本 TU 无引用，clang -Wunused-const-variable 会报。
 [[maybe_unused]] constexpr float kDefaultEditorFontSize = 15.0f;
 constexpr float kTextColumnInsetX = 8.0f;
-constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
+// kPreviewColumnWidth(760) 已废（池 bug#4：预览列宽改随窗宽自适应，2026-11-11 拍板）
 
 // 池130：tab 带只压正下方列（编辑/实时/纯预览）顶部，树列恒满高。
 // 池164（设计 2026-11-03 全局参数卡 F4）：带高随全站 wtab 小档

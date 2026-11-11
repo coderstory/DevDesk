@@ -7,7 +7,7 @@
 //
 // 断言面（headless 可达部分；真 OS 双击多窗/真焦点键盘归 UAT）：
 //   ① 渲染对照：session compose 经 U2 渲染核建出块流（blk 包裹 id 在树）+ 正文列
-//      宽 min(窗宽-80, 760)；
+//      宽 窗宽-80（池 bug#4 后自适应定宽，旧 760 上限已废）；
 //   ② 无编辑入口：kEditorInputId 不在查看器树（只读构造性保证）+ Idle 无搜索条；
 //   ③ 搜索键盘全流程：窗口级 onKeyEvent 直驱（Ctrl+F → 0/0 Enter 无操作 → 注入
 //      query 高亮 → Enter 逐跳 scrollOffset 回读单调推进 → Shift+Enter 回退 →

@@ -303,10 +303,10 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         return;
     }
 
-    // 正文列宽：min(窗宽−80, 760) 居中（设计 §3.2）；滚动区=该列本身（编辑器
+    // 正文列宽：窗宽−80 自适应（2026-11-11 用户拍板：全屏后正文须随窗宽缩放，
+    // 旧 760 定宽在最大化下留大片空白，池 bug#4）；滚动区=该列本身（编辑器
     // 预览同款 pvX/pvW 形态：测量 pass 与渲染同宽，滚动条贴列右缘）
-    const float pvW =
-        std::max(0.0f, std::min(screen.width - 80.0f, 760.0f));
+    const float pvW = std::max(0.0f, screen.width - 80.0f);
     const float pvX = std::max(0.0f, (screen.width - pvW) * 0.5f);
     const components::MarkdownStyle style = scaledPreviewStyle(componentTheme);
     // 几何表重建（rebuildSyncMap 同式：测量 = MarkdownBuilder::estimateHeight，
