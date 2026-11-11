@@ -81,6 +81,12 @@ void resetMinimizedFlagForTest();
 // 首帧一次性取走「--minimized 启动」待执行请求（取走即清，compose 侧每帧调用无害）
 bool consumePendingMinimizedStartup();
 
+// OS 关联启动（首实例 argv 带 .md → 仅查看器窗，用户双击文件场景）：pendingOpenFilePath
+// 命中 markdown 扩展名时置 minimized 待执行旗标（复用 --minimized 同一状态位，compose
+// 首帧藏主窗）。须在 captureOpenFileFromArgv 之后、首帧之前调用；未捕获/非 .md 不置旗标
+//（.txt/.json 等在主窗内打开，主窗必须正常弹出）。
+void armTrayIfViewerOnlyLaunch();
+
 // ── F-01 第二实例路径队列（Windows 单实例监听线程送达）──
 // 线程契约：写入 = 单实例监听线程（platform::single_instance::setOpenPathsHandler 回调
 // 送达），读取 = 主线程 compose 顶部 drain。跨线程 → 实现内互斥；「取走即清」形态同

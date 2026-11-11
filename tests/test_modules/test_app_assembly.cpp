@@ -514,6 +514,56 @@ REGISTER_TEST(assembly_capture_minimized_flag_from_argv,
     return true;
 })
 
+// 关联启动裁决（need:5）：.md argv → 主窗保持托盘态（复用 --minimized 状态位）。
+// armTrayIfViewerOnlyLaunch 依赖 argv 捕获门（未捕获不置旗标），须与捕获缝联动复位。
+REGISTER_TEST(assembly_arm_tray_if_viewer_only_launch,
+              "assembly: 关联启动置 minimized 旗标（.md→置 / .txt 不置 / 未捕获不置 / 取走一次）", {
+    using app::assembly::armTrayIfViewerOnlyLaunch;
+    using app::assembly::captureOpenFileFromArgv;
+    using app::assembly::consumePendingMinimizedStartup;
+    using app::assembly::pendingOpenFilePath;
+    using app::assembly::resetArgvCaptureForTest;
+    using app::assembly::resetMinimizedFlagForTest;
+
+    // 1. .md argv → 置旗标；取走一次即清（compose 首帧一次性）
+    resetArgvCaptureForTest();
+    resetMinimizedFlagForTest();
+    captureOpenFileFromArgv({"devdesk.exe", "note.md"});
+    armTrayIfViewerOnlyLaunch();
+    DOCTEST_CHECK(consumePendingMinimizedStartup());
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 2. .markdown 同判（大小写不敏感同 pathHasMarkdownExtension 语义）
+    resetArgvCaptureForTest();
+    resetMinimizedFlagForTest();
+    pendingOpenFilePath().clear();
+    captureOpenFileFromArgv({"devdesk.exe", "README.MARKDOWN"});
+    armTrayIfViewerOnlyLaunch();
+    DOCTEST_CHECK(consumePendingMinimizedStartup());
+
+    // 3. 非 .md（.txt 走主窗内嵌 Markdown 页）→ 不置旗标，主窗正常弹出
+    resetArgvCaptureForTest();
+    resetMinimizedFlagForTest();
+    pendingOpenFilePath().clear();
+    captureOpenFileFromArgv({"devdesk.exe", "note.txt"});
+    armTrayIfViewerOnlyLaunch();
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 4. 无 argv（正常桌面图标启动）→ 捕获门未翻出有效路径，不置旗标
+    resetArgvCaptureForTest();
+    resetMinimizedFlagForTest();
+    pendingOpenFilePath().clear();
+    captureOpenFileFromArgv({"devdesk.exe"});
+    armTrayIfViewerOnlyLaunch();
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 收尾：不留进程级状态
+    resetArgvCaptureForTest();
+    resetMinimizedFlagForTest();
+    pendingOpenFilePath().clear();
+    return true;
+})
+
 // 空态兜底渲染的注入接线：core 侧的 Router 不自行绘制「无页面」占位（eui::Ui 只可透传，
 // 文案与样式不能住在 core），占位搬到装配段注入。本用例证明装配后「当前页无模块」真的会
 // 画出 app 层的那一块。

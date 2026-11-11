@@ -318,6 +318,16 @@ void dispatchFileOpen(::core::Router* router, const std::string& path,
     router->navigateTo(target);
 }
 
+// 关联启动裁决（need:5）：.md argv → 查看器窗即全部 UI，主窗保持托盘态。复用
+// --minimized 同一状态位（compose 首帧 closeMainWindow 同款路径，托盘左键可唤起），
+// 不另造平行机制。前置=argv 捕获门已翻（无参数启动不置旗标，主窗正常弹出零回归）
+void armTrayIfViewerOnlyLaunch() {
+    if (g_argvCaptureDone && pathHasMarkdownExtension(pendingOpenFilePath())) {
+        g_minimizedStartupPending = true;
+        LOG_INFO("关联启动（.md argv）：主窗保持托盘态，仅查看器窗");
+    }
+}
+
 std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;
     switch (action) {

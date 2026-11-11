@@ -1089,6 +1089,9 @@ const DslAppConfig& dslAppConfig() {
             });
         // 须在 setupLogging() 之后（内部有 LOG_INFO）
         app::assembly::captureOpenFileFromArgv();
+        // OS 关联启动（argv 带 .md）：查看器窗即全部 UI，主窗保持托盘态——复用
+        // --minimized 同一状态位（compose 首帧 closeMainWindow 藏托盘，托盘可唤起）
+        app::assembly::armTrayIfViewerOnlyLaunch();
         // --minimized 旗标捕获（UAT6 开机自启动）：命中 → 主窗保持托盘态（compose 首帧执行）
         app::assembly::captureMinimizedFlagFromArgv();
         LOG_INFO("DevDesk 启动中...");
