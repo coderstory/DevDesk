@@ -15,6 +15,7 @@
 
 ## 登记簿
 
+- 2026-11-10 | 审计 | 只读 MD 查看器 QA 收口 @ wt/mdv-int 6c30ea90 — 半成品：全量回归 1523 单测 Failed 0 + 探针 17/18 绿（agent_e2e 环境前置）；真机主路径可用但新缺陷 BUG-1（P1：中文路径 .md 打开失败，ASCII 对照正常）；假绿抽查 3 条变异全红过；mac 全域+真双击+真注册表链未验 | docs/research/2026-11-10-md-viewer-qa-report.md
 - 2026-11-10 | 调查 | F-07 前置验证 POC：Win10 静默写 .md 关联生效性 — 部分生效：HKCU 注册表写入可持久化/回读/幂等，但 ShellExecute 双击实测两次均弹 OpenWith 选择器、notepad 零次拉起，生效默认未变；接管需用户显式选择 | docs/research/2026-11-10-f07-win-userchoice-poc.md
 - 2026-11-10 | 调研 | 只读 MD 查看器·平台文件关联 + EUI-NEO 多窗口承载 — Win 单实例已有但第二实例路径丢失是最大缺口；macOS AppleEvent 链路已全通；EUI-NEO openWindow/scrollview 能力确认可用零上游缺口；Info.plist 缺有效 UTI 声明需补 UTImportedTypeDeclarations | docs/research/2026-11-10-md-viewer-file-assoc-multiwindow.md
 - 2026-10-27 | 审计 | 壁纸 P3a @ eec88dbb | PASS：2M7L2I（最重=死锁修复无自动回归网）；限定复审计 @ ef5bdf79+dce4a25a 通过（11 条全处置，新增仅 3 Info）| docs/superpowers/plans/2026-10-27-wallpaper-p3a-audit.md
