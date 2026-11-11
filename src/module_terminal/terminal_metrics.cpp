@@ -29,7 +29,10 @@ TerminalCellMetrics metricsFromAdvance(float advance, float naturalLineHeight, f
         m.cellH = std::round(fontSize * kCellHFactorFallback);
         return m; // valid=false：估算回落
     }
-    m.cellW = std::round(advance);
+    // bug265：cellW 保留小数（0.01 精度），不 round——网格 run 文本按字体真实 advance
+    // 流排（JB Mono 13px ≈7.8），round→8 后光标/IME/选区列位每列累计右漂 ≈0.2px
+    //（27 列≈5px）。两位小数量化截断浮点噪声，不参与布局。
+    m.cellW = std::round(advance * 100.0f) / 100.0f;
     if (m.cellW < 1.0f) m.cellW = 1.0f;
     const float lo = fontSize * 1.20f;
     const float hi = fontSize * 1.35f;

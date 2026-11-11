@@ -130,24 +130,30 @@ TermPerfUi& termPerfUi() {
 // bug248：measureTextWidth（EUI text_measure）无缓存、每帧对同批字符串完整 shaping
 // ——TAB 标题/固定文案（「新建」「终端 N」「恢复默认」等）逐帧重复测量。键空间小且
 // 有界（TAB 数有限），超 64 键整体清空防膨胀。
-float textWidth(const std::string& s, float size) {
+// bug267-P3b：缓存键补字体族口径——现调用方都走默认族（空串），防御性入键，
+// 防未来调用方传具名族时复用错族宽度（TAB 几何按错字体规划）。
+float textWidth(const std::string& s, float size, const std::string& family = {}) {
     struct Key {
         float size;
+        std::string family;
         std::string s;
-        bool operator==(const Key& o) const { return size == o.size && s == o.s; }
+        bool operator==(const Key& o) const {
+            return size == o.size && family == o.family && s == o.s;
+        }
     };
     struct KeyHash {
         std::size_t operator()(const Key& k) const {
-            return std::hash<std::string>{}(k.s) ^
-                   (std::hash<float>{}(k.size) * 0x9e3779b9ULL);
+            return (std::hash<std::string>{}(k.s) ^
+                    (std::hash<std::string>{}(k.family) * 0x9e3779b9ULL)) ^
+                   (std::hash<float>{}(k.size) * 0xc2b2ae3dULL);
         }
     };
     static std::unordered_map<Key, float, KeyHash> cache;
     if (cache.size() >= 64) cache.clear();
-    Key key{size, s};
+    Key key{size, family, s};
     const auto it = cache.find(key);
     if (it != cache.end()) return it->second;
-    const float w = core::TextPrimitive::measureTextWidth(s, {}, size, 400);
+    const float w = core::TextPrimitive::measureTextWidth(s, family, size, 400);
     cache.emplace(std::move(key), w);
     return w;
 }
@@ -204,6 +210,11 @@ GridLayout TerminalPage::compose(
         selecting_ = false;
         hasSelection_ = false;
         scrollRemainder_ = 0.0f;
+        // bug267-P3a：切会话清 resize 去抖态——pendingSince_ 锚在旧会话的 resize 帧，
+        // 新会话若复用旧计时器，wantsResize() 直接视为已超时 → 去抖窗口缩水成 0ms，
+        // ConPTY resize 退化回逐帧抖动（bug248 去抖本意失效）。清掉后下方 pending
+        // 块对新会话重新武装完整 100ms 窗口。
+        clearPendingResize();
     }
     Session* act = controller.active();
     const int sessionCount = controller.count();
@@ -212,6 +223,9 @@ GridLayout TerminalPage::compose(
         // 关 TAB 后索引左移/越界，hover 记忆指向错 TAB（P3-6）：瞬态直接清除
         hoveredTabIndex_ = -1;
         hoveredCloseIndex_ = -1;
+        // bug267-P3a：关会话同口径——激活索引可能不变但会话已换（关掉的就是激活 TAB
+        // 时 activeIndex 原地顶移），旧 pendingSince_ 同样造成 0ms 去抖窗口
+        clearPendingResize();
     }
     lastTabCount_ = sessionCount;
 

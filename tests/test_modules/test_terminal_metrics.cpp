@@ -6,15 +6,22 @@
 #include "platform/terminal/terminal_backend.h"
 
 REGISTER_TEST(terminalMetricsFromAdvance,
-              "terminal metrics: advance 折算取整 + 行高 clamp[1.20,1.35]×fs + 估算回落", {
+              "terminal metrics: advance 折算 0.01 精度量化（bug265）+ 行高 clamp[1.20,1.35]×fs + 估算回落", {
     using terminal::metricsFromAdvance;
     using terminal::TerminalCellMetrics;
 
-    // 正常：advance 7.8→cellW 8；行高 16.9 在 [15.6,17.55] 内→17
+    // bug265：cellW 保留小数不再取整——advance 7.8 → cellW 7.8（与网格 run 文本的
+    // 字体真实 advance 同口径；round→8 时列位每列累计右漂 ≈0.2px，27 列≈5px）；
+    // 行高 16.9 在 [15.6,17.55] 内→17（纵向 cursor/文本同锚 cellH，取整无相对漂移）
     const TerminalCellMetrics m1 = metricsFromAdvance(7.8f, 16.9f, 13.0f);
     DOCTEST_CHECK(m1.valid);
-    DOCTEST_CHECK(m1.cellW == 8.0f);
+    DOCTEST_CHECK(m1.cellW == 7.8f);
     DOCTEST_CHECK(m1.cellH == 17.0f);
+
+    // 0.01 精度量化：advance 7.834 → 7.83（两位小数，截断浮点噪声不参与布局）
+    const TerminalCellMetrics m1b = metricsFromAdvance(7.834f, 16.9f, 13.0f);
+    DOCTEST_CHECK(m1b.valid);
+    DOCTEST_CHECK(m1b.cellW == 7.83f);
 
     // clamp 下界：行高 14 → 15.6 → 16
     const TerminalCellMetrics m2 = metricsFromAdvance(7.0f, 14.0f, 13.0f);
