@@ -212,9 +212,19 @@ REGISTER_TEST(fluid_background_compose_elements,
         DOCTEST_CHECK(floatEq(halo->radius, halo->frame.width * 0.5f));
         // kMaxAlpha 0.19（重构前 0.11 叠上半透卡面后透不出色，玻璃感失效）
         DOCTEST_CHECK(halo->opacity <= 0.19f + 0.001f);
+        // bug#263：流质是常动内容（壁钟相位帧帧漂移，签名永不重复）——retained
+        // 陈旧复用窗会把可见刷新钉死在 compose/reuseFrames（10 帧窗 × 16fps pump
+        // ≈1.6Hz = 老板所见「一秒一帧」）；且 EUI 语义下 reuse>0 必伴随陈旧窗
+        //（rebuildAge<reuseFrames 沿用旧纹理），故常动内容必须 ==0（直绘逐帧推进，
+        // bug#194 验收基线）。卫星同参，抽 j=0/b=0 代表锁一致。
+        DOCTEST_CHECK(halo->retainedLayerReuseFrames == 0);
         for (int b = 0; b < 3; ++b) {
-            DOCTEST_CHECK(fx.ui.find("app.fluid.sat." + std::to_string(j) +
-                                      "." + std::to_string(b)) != nullptr);
+            const auto* sat = fx.ui.find("app.fluid.sat." + std::to_string(j) +
+                                         "." + std::to_string(b));
+            DOCTEST_CHECK(sat != nullptr);
+            if (j == 0 && b == 0 && sat != nullptr) {
+                DOCTEST_CHECK(sat->retainedLayerReuseFrames == 0);
+            }
         }
     }
     // 数量判据：恰好 14 晕，第 15 个不存在

@@ -1229,8 +1229,12 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
             .color(color)
             .radius(r)  // 半径 = 半宽 → 正圆（splash 墨染同款手法）
             .opacity(alpha)
-            .retainedLayerScale(0.5f)  // need217 F-3：56 rect 统一低清离屏+陈旧复用（方案卡 doc 35）
-            .retainedLayerReuseFrames(10)
+            // bug#263：不进 retained 低清/陈旧复用（need217 F-3 两个 opt-in 退役）。
+            // 流质是常动内容——签名帧帧漂移：reuseFrames>0 时陈旧窗把可见刷新钉死在
+            // compose/reuseFrames（10 帧窗 × 16fps pump ≈1.6Hz =「一秒一帧」）；而
+            // reuseFrames==0 时稳帧阈值=2、签名永不重复 → 层建不起来，scale 形同虚设，
+            // 等效直绘（= bug#194 验收基线：每帧推进、CPU 0.2-0.7%）。retained API
+            // 保留给静态/缓变内容，流质 rect 直绘逐帧出画。
             .build();
         // 确定性 hash 卫星：层心外慢轨道漂移的墨点，角度/距离/大小全由索引
         // hash 定死，帧间稳定不闪烁（漂移只来自相位项）
@@ -1247,9 +1251,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
                 .size(br * 2.0f, br * 2.0f)
                 .color(color)
                 .radius(br)
-                .opacity(alpha * 0.45f)
-                .retainedLayerScale(0.5f)  // need217 F-3：与晕层同参（run 扫描要求一致）
-                .retainedLayerReuseFrames(10)
+                .opacity(alpha * 0.45f)  // bug#263：与晕层同口径，不进 retained opt-in（见上）
                 .build();
         }
     }

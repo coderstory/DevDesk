@@ -1289,7 +1289,8 @@ GridLayout TerminalPage::compose(
                                     })
                                     .build();
                             });
-                    });
+                    })
+                    .build();
 
                 // 底部行（sticky：卡外固定，不随内滚 §6）：分隔线 + 恢复默认 + 完成
                 const float footerY = cardY + cardH - kPanelPad - 32.0f;
