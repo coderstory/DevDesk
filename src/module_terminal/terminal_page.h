@@ -6,8 +6,10 @@
 //（bug243）；IME 锚光标 cell（bug245）；block 字符逐列定位（bug244）。
 #pragma once
 
+#include <chrono>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <eui/dsl.h>
 
@@ -37,10 +39,22 @@ public:
     void closeSettings() { settingsOpen_ = false; }
     bool settingsOpen() const { return settingsOpen_; }
 
-    bool wantsResize() const { return pendingRows_ > 0; }
+    // bug248：量化 resize 去抖 100ms——拖拽窗口时 layout 每帧变化，原实现每帧直接
+    // resizeActive（ResizePseudoConsole + CancelIoEx 打断在飞 ReadFile），放大输入
+    // 输出抖动；合并为 pending 静默 ≥100ms 后一次应用（首会话冷启动同样延迟 100ms，
+    // 无感：ConPTY 侧另有 firstOutput 门控）。
+    bool wantsResize() const {
+        if (pendingRows_ <= 0) return false;
+        const auto elapsed = std::chrono::steady_clock::now() - pendingSince_;
+        return std::chrono::duration<float>(elapsed).count() >= 0.100f;
+    }
     int pendingRows() const { return pendingRows_; }
     int pendingCols() const { return pendingCols_; }
-    void clearPendingResize() { pendingRows_ = 0; pendingCols_ = 0; }
+    void clearPendingResize() {
+        pendingRows_ = 0;
+        pendingCols_ = 0;
+        pendingTimer_ = false;
+    }
 
     // 全屏态（env 注入口 DEVDESK_TERMINAL_FULLSCREEN=1 初始化；同槽图标钮切换）。
     bool fullscreen() const { return fullscreen_; }
@@ -67,6 +81,9 @@ private:
     float scrollRemainder_ = 0.0f;
     int pendingRows_ = 0;
     int pendingCols_ = 0;
+    std::chrono::steady_clock::time_point pendingSince_{}; // bug248：resize 去抖计时
+    bool pendingTimer_ = false;
+    std::vector<std::string> tabTitles_; // bug248：TAB 标题缓存（count 变化才重建）
     bool fullscreen_ = false;
     bool fullscreenInit_ = false;
     bool settingsOpen_ = false;      // need250 设置面板开合

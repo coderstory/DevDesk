@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <unordered_map> // bug248：textWidth 缓存
 #include <utility>
 #include <vector>
 #include "core/logging.h"
@@ -126,8 +127,29 @@ TermPerfUi& termPerfUi() {
     return s;
 }
 
+// bug248：measureTextWidth（EUI text_measure）无缓存、每帧对同批字符串完整 shaping
+// ——TAB 标题/固定文案（「新建」「终端 N」「恢复默认」等）逐帧重复测量。键空间小且
+// 有界（TAB 数有限），超 64 键整体清空防膨胀。
 float textWidth(const std::string& s, float size) {
-    return core::TextPrimitive::measureTextWidth(s, {}, size, 400);
+    struct Key {
+        float size;
+        std::string s;
+        bool operator==(const Key& o) const { return size == o.size && s == o.s; }
+    };
+    struct KeyHash {
+        std::size_t operator()(const Key& k) const {
+            return std::hash<std::string>{}(k.s) ^
+                   (std::hash<float>{}(k.size) * 0x9e3779b9ULL);
+        }
+    };
+    static std::unordered_map<Key, float, KeyHash> cache;
+    if (cache.size() >= 64) cache.clear();
+    Key key{size, s};
+    const auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    const float w = core::TextPrimitive::measureTextWidth(s, {}, size, 400);
+    cache.emplace(std::move(key), w);
+    return w;
 }
 
 } // namespace
@@ -220,11 +242,19 @@ GridLayout TerminalPage::compose(
     const float tabAreaW = std::max(0.0f, sepX - kActionGap - tabAreaX);
 
     // ---- TAB 几何规划（内容自适应 clamp[120,200]；溢出走横滚偏移）
+    // bug248：标题字符串缓存——titleNumber 会话内稳定，仅会话数变化时重建
+    if (static_cast<int>(tabTitles_.size()) != sessionCount) {
+        tabTitles_.resize(static_cast<size_t>(sessionCount));
+        for (int i = 0; i < sessionCount; i++) {
+            const Session* s = controller.at(i);
+            tabTitles_[static_cast<size_t>(i)] =
+                "终端 " + std::to_string(s ? s->titleNumber : i + 1);
+        }
+    }
     std::vector<float> tabW(static_cast<size_t>(sessionCount), 0.0f);
     float tabsTotalW = 0.0f;
     for (int i = 0; i < sessionCount; i++) {
-        const Session* s = controller.at(i);
-        const std::string title = "终端 " + std::to_string(s ? s->titleNumber : i + 1);
+        const std::string& title = tabTitles_[static_cast<size_t>(i)];
         const float titleW = std::min(textWidth(title, titleFs) + 2.0f, kTabTitleMaxW);
         float w = 12.0f + 8.0f + 6.0f + titleW + 6.0f + 16.0f + 12.0f;
         w = std::clamp(w, narrowWindow ? kTabMinWNarrow : kTabMinW, kTabMaxW);
@@ -272,14 +302,20 @@ GridLayout TerminalPage::compose(
                         },
                         layout);
                 });
-            // resize 量化：激活会话与视口行列不一致时回填（切换会话也自动补 resize）
+            // resize 量化：激活会话与视口行列不一致时回填（切换会话也自动补 resize）；
+            // bug248：pending 首次出现时起计时，由 wantsResize() 的 100ms 去抖统一放行
             if (act != nullptr && layout.rows > 0 &&
                 (act->rows != layout.rows || act->cols != layout.cols)) {
                 pendingRows_ = layout.rows;
                 pendingCols_ = layout.cols;
+                if (!pendingTimer_) {
+                    pendingSince_ = std::chrono::steady_clock::now();
+                    pendingTimer_ = true;
+                }
             } else {
                 pendingRows_ = 0;
                 pendingCols_ = 0;
+                pendingTimer_ = false;
             }
 
             // 行/列 → 逻辑像素（选区/IME/光标共用；真实 cell 度量——bug243/245 错位根因）。
@@ -612,8 +648,8 @@ GridLayout TerminalPage::compose(
                             const float w = tabW[static_cast<size_t>(i)];
                             if (x + w > 0.0f && x < tabAreaW) {
                                 const std::string id = "term.tab." + std::to_string(i);
-                                const std::string title =
-                                    "终端 " + std::to_string(s ? s->titleNumber : i + 1);
+                                const std::string& title =
+                                    tabTitles_[static_cast<size_t>(i)]; // bug248：复用缓存
                                 const float titleW = std::min(
                                     textWidth(title, titleFs) + 2.0f, kTabTitleMaxW);
                                 ui.stack(id)

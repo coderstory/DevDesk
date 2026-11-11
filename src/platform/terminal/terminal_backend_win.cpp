@@ -17,9 +17,11 @@
 
 #include <windows.h>
 
+#include <algorithm> // TermPerfEcho（bug248 临时）：std::max
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio> // TermPerfEcho（bug248 临时）：snprintf
 #include <cstdint>
 #include <cwchar>
 #include <utility>
@@ -263,6 +265,30 @@ constexpr DWORD kCloseWaitMs = 5000;
 // worker 先析构 task 而 reader 仍在 WaitForSingleObject → vterm/句柄悬空触取
 constexpr DWORD kHarvestWaitMs = 1000;
 
+// ---- TermPerfEcho（bug248 临时诊断，删诊断时整块移除）：输入→回显分段计数。
+// 分段：write()入队(UI 线程，µs 级) → qwait(writer 出队等待) → writeNs(WriteFile
+// 阻塞写) → echoNs(WriteFile 完成→回显到达 = ConPTY 往返+shell 处理，黑盒段) →
+// feed(reader，既有 feedNs) → UI 帧检出(见 terminal_session_controller.cpp 对账日志)。
+// 全部 relaxed 原子累加，reader 5s flush 统一打印归零（与既有 TermPerf 同款）。
+struct TermPerfEcho {
+    std::atomic<uint64_t> enqNs{0}, enqMaxNs{0}, enqCnt{0};
+    std::atomic<uint64_t> qwaitNs{0}, qwaitMaxNs{0}, qwaitCnt{0};
+    std::atomic<uint64_t> writeNs{0}, writeMaxNs{0}, writeCnt{0};
+    std::atomic<uint64_t> echoNs{0}, echoMaxNs{0};
+    std::atomic<uint32_t> echoCnt{0};
+    std::atomic<int64_t> lastEnqNs{0};     // 最近一次入队完成时刻（steady ns）
+    std::atomic<int64_t> writeDoneNs{0};   // 最近一次 WriteFile 完成时刻（steady ns）
+};
+TermPerfEcho& termPerfEcho() {
+    static TermPerfEcho s;
+    return s;
+}
+int64_t steadyNsNow() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 } // namespace
 
 // 会话共享态：handle（UI/主线程面）与 reader/writer/worker 线程的交界面全部收拢于此，
@@ -349,11 +375,38 @@ void readerTask(ShutdownTask& t) {
         const uint64_t b = perfBytes.exchange(0, std::memory_order_relaxed);
         const uint64_t f = perfFeedNs.exchange(0, std::memory_order_relaxed);
         const uint64_t fm = perfFeedMaxNs.exchange(0, std::memory_order_relaxed);
+        // TermPerfEcho（bug248 临时）：写路径分段 + 回显往返汇总
+        TermPerfEcho& tp = termPerfEcho();
+        char tpLine[512];
+        const uint64_t qc = tp.qwaitCnt.exchange(0, std::memory_order_relaxed);
+        const uint64_t wc = tp.writeCnt.exchange(0, std::memory_order_relaxed);
+        const uint64_t ec = tp.enqCnt.exchange(0, std::memory_order_relaxed);
+        const uint32_t ecnt = tp.echoCnt.exchange(0, std::memory_order_relaxed);
+        const double enqNum = tp.enqNs.exchange(0, std::memory_order_relaxed) / 1e6;
+        const double echoNum = tp.echoNs.exchange(0, std::memory_order_relaxed) / 1e6;
+        std::snprintf(tpLine, sizeof(tpLine),
+                      "TermPerfEcho: enqMs=%.3f/%.3f(x%llu) qwaitMs=%.3f/%.3f(x%llu) "
+                      "writeMs=%.3f/%.3f(x%llu) echoMs=%.1f/%.1f(n=%u)",
+                      enqNum / std::max<uint64_t>(ec, 1),
+                      tp.enqMaxNs.exchange(0, std::memory_order_relaxed) / 1e6,
+                      static_cast<unsigned long long>(ec),
+                      tp.qwaitNs.exchange(0, std::memory_order_relaxed) / 1e6 /
+                          std::max<uint64_t>(qc, 1),
+                      tp.qwaitMaxNs.exchange(0, std::memory_order_relaxed) / 1e6,
+                      static_cast<unsigned long long>(qc),
+                      tp.writeNs.exchange(0, std::memory_order_relaxed) / 1e6 /
+                          std::max<uint64_t>(wc, 1),
+                      tp.writeMaxNs.exchange(0, std::memory_order_relaxed) / 1e6,
+                      static_cast<unsigned long long>(wc),
+                      echoNum / std::max<uint32_t>(ecnt, 1),
+                      tp.echoMaxNs.exchange(0, std::memory_order_relaxed) / 1e6,
+                      static_cast<unsigned>(ecnt));
         LOG_INFO("TermPerf: reader bytes=" + std::to_string(b) +
                  " feedMs=" + std::to_string(f / 1000000ull) +
                  " maxFeedMs=" + std::to_string(fm / 1000000ull) +
                  " aborted=" + std::to_string(perfAborted.exchange(0, std::memory_order_relaxed)) +
                  " resizes=" + std::to_string(perfResizes.exchange(0, std::memory_order_relaxed)));
+        LOG_INFO(tpLine);
     };
     for (;;) {
         perfFlush();
@@ -395,6 +448,26 @@ void readerTask(ShutdownTask& t) {
             // resize 门控解锁点：客户端已连入（首字节过管道），此后 ResizePseudoConsole 安全
             shared->firstOutput.store(true, std::memory_order_relaxed);
             perfBytes.fetch_add(n, std::memory_order_relaxed); // TermPerf（bug248）
+            // TermPerfEcho（bug248 临时）：回显到达段 = 最近一次 WriteFile 完成 → 现在
+            //（含 ConPTY 往返 + shell 处理，黑盒段；>10s 视为无关联自发输出，丢弃）
+            TermPerfEcho& tp = termPerfEcho();
+            const int64_t arrivalNs = steadyNsNow();
+            const int64_t wd = tp.writeDoneNs.exchange(0, std::memory_order_relaxed);
+            if (wd != 0) {
+                const int64_t echo = arrivalNs - wd;
+                if (echo >= 0 && echo < 10000000000LL) {
+                    tp.echoNs.fetch_add(static_cast<uint64_t>(echo),
+                                        std::memory_order_relaxed);
+                    uint64_t prevMax = tp.echoMaxNs.load(std::memory_order_relaxed);
+                    while (static_cast<uint64_t>(echo) > prevMax &&
+                           !tp.echoMaxNs.compare_exchange_weak(
+                               prevMax, static_cast<uint64_t>(echo),
+                               std::memory_order_relaxed)) {
+                    }
+                    tp.echoCnt.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            // （bug248 临时诊断收尾：逐块 rd 日志已删；回显分段保留在 5s 汇总行）
         }
         if (n > 0 && vterm != nullptr) {
             reply.clear();
@@ -453,9 +526,45 @@ void writerTask(ShutdownTask& t) {
         // 强断后若回环重写会再次阻塞，worker 随后的 CloseHandle(inputWrite) 就打在
         // 阻塞 I/O 上（UB 面）；正常路径 writerStop 恒 false，零影响
         if (shared->writerStop.load(std::memory_order_relaxed)) break;
+        const auto writeT0 = std::chrono::steady_clock::now();
+        // TermPerfEcho（bug248 临时）：入队→出队等待（qwait；单键节奏下与最近入队配对）
+        {
+            TermPerfEcho& tp = termPerfEcho();
+            const int64_t wT0 = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    writeT0.time_since_epoch()).count();
+            const int64_t enq = tp.lastEnqNs.exchange(0, std::memory_order_relaxed);
+            if (enq != 0 && wT0 >= enq) {
+                tp.qwaitNs.fetch_add(static_cast<uint64_t>(wT0 - enq),
+                                     std::memory_order_relaxed);
+                uint64_t prevMax = tp.qwaitMaxNs.load(std::memory_order_relaxed);
+                while (static_cast<uint64_t>(wT0 - enq) > prevMax &&
+                       !tp.qwaitMaxNs.compare_exchange_weak(
+                           prevMax, static_cast<uint64_t>(wT0 - enq),
+                           std::memory_order_relaxed)) {
+                }
+                tp.qwaitCnt.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         DWORD written = 0;
         // 写失败（管道断）静默丢弃：会话即将走断裂→exited 路径
         WriteFile(t.inputWrite, payload.data(), DWORD(payload.size()), &written, nullptr);
+        // TermPerfEcho（bug248 临时）：WriteFile 阻塞时长 + 完成时刻（回显段起点）
+        {
+            TermPerfEcho& tp = termPerfEcho();
+            const auto writeT1 = std::chrono::steady_clock::now();
+            const uint64_t wNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(writeT1 - writeT0).count());
+            tp.writeNs.fetch_add(wNs, std::memory_order_relaxed);
+            uint64_t prevMax = tp.writeMaxNs.load(std::memory_order_relaxed);
+            while (wNs > prevMax &&
+                   !tp.writeMaxNs.compare_exchange_weak(prevMax, wNs,
+                                                        std::memory_order_relaxed)) {
+            }
+            tp.writeCnt.fetch_add(1, std::memory_order_relaxed);
+            tp.writeDoneNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     writeT1.time_since_epoch()).count(),
+                                 std::memory_order_relaxed);
+        }
     }
     t.writerDone.set();
 }
@@ -553,6 +662,7 @@ public:
     WinSessionHandle& operator=(const WinSessionHandle&) = delete;
 
     core::Result<void> write(const uint8_t* bytes, int32_t count, bool paste) override {
+        const auto enqT0_ = std::chrono::steady_clock::now(); // TermPerfEcho（bug248 临时）
         if (bytes == nullptr || count <= 0)
             return core::Result<void>::fail(core::ErrorCode::ValidationError, "空写入");
         if (terminated_.load(std::memory_order_relaxed))
@@ -568,6 +678,24 @@ public:
             shared_->wq.push_back(std::move(payload));
         }
         shared_->wqCv.notify_one();
+        // TermPerfEcho（bug248 临时）：write() 全程时长（UI 线程「按键→write 返回」段）
+        // + 入队完成时刻（writer qwait 配对起点）
+        {
+            TermPerfEcho& tp = termPerfEcho();
+            const auto enqT1 = std::chrono::steady_clock::now();
+            const uint64_t eNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(enqT1 - enqT0_).count());
+            tp.enqNs.fetch_add(eNs, std::memory_order_relaxed);
+            uint64_t prevMax = tp.enqMaxNs.load(std::memory_order_relaxed);
+            while (eNs > prevMax &&
+                   !tp.enqMaxNs.compare_exchange_weak(prevMax, eNs,
+                                                      std::memory_order_relaxed)) {
+            }
+            tp.enqCnt.fetch_add(1, std::memory_order_relaxed);
+            tp.lastEnqNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                   enqT1.time_since_epoch()).count(),
+                               std::memory_order_relaxed);
+        }
         return core::Result<void>::ok();
     }
 
