@@ -322,11 +322,26 @@ int main(int argc, char* argv[]) {
     if (extra.isOk()) {
         auto accExtra = panel.acceptProposal(extra.value().id);
         check(accExtra.isOk(), "S7 附加提案接受入库");
-        // bug255 阈值重校 0.5 后：弱 token 查询（"8421"，faiss 0.4179）落在
-        // 负例分数带（天气 0.4167/股票 0.4518），重叠不可分 → 不再注入。
-        // 这是召回-安全权衡的裁决项（挂 need159）；此处钉住新校准行为。
-        check(probePhrase(std::string("8421")) == 0,
-              "S7 弱 token 查询在 0.5 校准下被拦（裁决项 need159）");
+        // 阈值口径对齐产品（bug255 终报：kSearchSimilarityThreshold=0.4 保持，
+        // telemem_client.cpp:70；相似度下限语义=score≥0.4 命中、低于被拦，
+        // 引擎侧过滤）。原断言「8421 在 0.5 校准下被拦」与产品常量矛盾
+        // （8421 实测 0.4179 ≥0.4 必命中，Mac/Win 双红）——灰带样本 [0.40,0.45)
+        // 的召回-安全权衡是池 257 校准议题，不在此判红绿，降级为信息行。
+        // 弱样本校准依据（2026-11-12 Windows 真引擎阈值阶梯定轨，16 样本实测）：
+        // 负例带整体挤在 [0.35,0.40)，无样本能低于 0.35（bge 各向异性地板）；
+        // 「红烧肉怎么做」实测 ∈[0.38,0.39)——真实低于 0.4、0.4 档被拦，
+        // 与产品常量自洽。残余风险：分数带紧贴阈值（裕度 ~0.02），换模型/引擎
+        // 或 Mac 侧分数整体偏移时此断言会响——响了即池 257 重校准信号。
+        const int grayZoneHits = probePhrase(std::string("8421"));
+        std::cout << "[e2e] S7 灰带样本「8421」命中数=" << grayZoneHits
+                  << "（0.4 下不拦属预期，池257 校准议题，不判红绿）\n";
+        auto weakR = engine.search(std::string("红烧肉怎么做"), 5, 8000);
+        const int weakHits = weakR.isOk() ? static_cast<int>(weakR.value().size()) : 0;
+        std::cout << "[e2e] S7 弱样本「红烧肉怎么做」原始命中数=" << weakHits
+                  << "（实测分∈[0.38,0.39)<0.4，应被拦）\n";
+        check(weakHits == 0,
+              "S7 低于阈值弱样本被拦（0.4 门控契约，bug255 终报口径；"
+              "样本=红烧肉怎么做 [0.38,0.39)）");
     }
 
     // ── S8：infer 真调 + 需-3 路②补标 + 计账（真 runInferStep 对真引擎）────

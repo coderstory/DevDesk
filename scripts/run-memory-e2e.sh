@@ -7,24 +7,59 @@
 # 用法：bash scripts/run-memory-e2e.sh [--keep]
 #   --keep  保留临时数据根供事后检查（引擎仍会清场）
 # 前置（缺任一直接报错退出，本脚本不自动构建）：
-#   build/tests/memory_e2e_probe   缺失 → bash scripts/build-test-run.sh 增量构建
-#   build/DevDesk                  （hook 真二进制）
-#   /opt/homebrew/bin/llama-server （Homebrew llama.cpp，embedding 引擎）
-#   ~/DevDesk/memory/venv          （telemem 引擎 venv，含 telemem==1.10.1）
-#   ~/DevDesk/memory/models/bge-small-zh-v1.5-Q8_0.gguf
+#   build/tests/memory_e2e_probe(.exe) 缺失 → bash scripts/build-test-run.sh 增量构建
+#   build/DevDesk(.exe)                （hook 真二进制）
+#   llama-server：mac=/opt/homebrew/bin/llama-server；win=%USERPROFILE%\DevDesk\memory\llama\bin\
+#   telemem venv：mac=~/DevDesk/memory/venv/bin/python；win=...\venv\Scripts\python.exe（telemem==1.10.1）
+#   模型：~/DevDesk/memory/models/bge-small-zh-v1.5-Q8_0.gguf（win 同目录小写 q8_0）
 # 路径可用环境变量覆盖：LLAMA_SERVER_BIN / TELEMEM_PY / GGUF_MODEL / DEVDESK_BIN / PROBE_BIN
-# TODO(Windows): 另一机验收时补 Windows 分支（各路径换 %USERPROFILE%\DevDesk 口径，探活同为 curl）。
+# Windows 分支（2026-11-12 移植）：Git Bash/MSYS2 下数据/引擎路径换 %USERPROFILE%\DevDesk 口径、
+# 二进制补 .exe；llama-server 的 ggml-*.dll 与 exe 同目录，启动前把该目录前置进 PATH；
+# 进程清理只按 PID（msys kill + netstat 查 PID 后 taskkill //PID，严禁 //IM 防误杀并发实例）。
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 
-LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/opt/homebrew/bin/llama-server}"
-TELEMEM_PY="${TELEMEM_PY:-$HOME/DevDesk/memory/venv/bin/python}"
-GGUF_MODEL="${GGUF_MODEL:-$HOME/DevDesk/memory/models/bge-small-zh-v1.5-Q8_0.gguf}"
-DEVDESK_BIN="${DEVDESK_BIN:-$REPO_ROOT/build/DevDesk}"
-PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/tests/memory_e2e_probe}"
+# Windows（Git Bash/MINGW）分支（debt115 TODO(Windows) 补课）：原生二进制不认 MSYS
+# 路径（池 clue70：/tmp/... 被 std::filesystem 当盘相对路径静默落错处）——交给原生
+# 进程（telemem 配置/probe/DevDesk）的路径统一转 Windows 形态；bash 自身仍用 MSYS 路径。
+nativePath() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) cygpath -w "$1" ;; *) printf '%s' "$1" ;; esac; }
+
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) E2E_OS=win ;;
+  *) E2E_OS=mac ;;
+esac
+
+if [ "$E2E_OS" = "win" ]; then
+  USER_DEV_ROOT="$(cygpath -u "${USERPROFILE:-$HOME}")/DevDesk"
+  LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-$USER_DEV_ROOT/memory/llama/bin/llama-server.exe}"
+  TELEMEM_PY="${TELEMEM_PY:-$USER_DEV_ROOT/memory/venv/Scripts/python.exe}"
+  GGUF_MODEL="${GGUF_MODEL:-$USER_DEV_ROOT/memory/models/bge-small-zh-v1.5-q8_0.gguf}"
+  DEVDESK_BIN="${DEVDESK_BIN:-$REPO_ROOT/build/DevDesk.exe}"
+  PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/tests/memory_e2e_probe.exe}"
+  # 测试二进制动态链 MSYS2 的 libstdc++/libgcc/winpthread：Git Bash 自带旧版运行时缺新
+  # 符号入口点 → STATUS_ENTRYPOINT_NOT_FOUND（bash 层面=127、零输出，2026-11-12 实测；
+  # DevDesk.exe 静态链接不受影响）。与 build-test-run.sh 同口径探测构建运行时并前置 PATH。
+  if [ -n "${MINGW_PREFIX:-}" ] && [ ! -x "$(cygpath -u "$MINGW_PREFIX")/bin/g++.exe" ]; then
+    unset MINGW_PREFIX
+  fi
+  if [ -z "${MINGW_PREFIX:-}" ]; then
+    for _cand in /d/software/msys64/mingw64 /c/msys64/mingw64; do
+      if [ -d "$_cand" ]; then MINGW_PREFIX="$(cygpath -m "$_cand")"; break; fi
+    done
+  fi
+  if [ -n "${MINGW_PREFIX:-}" ] && [ -d "$(cygpath -u "$MINGW_PREFIX")/bin" ]; then
+    export PATH="$(cygpath -u "$MINGW_PREFIX")/bin:$PATH"
+  fi
+else
+  LLAMA_SERVER_BIN="${LLAMA_SERVER_BIN:-/opt/homebrew/bin/llama-server}"
+  TELEMEM_PY="${TELEMEM_PY:-$HOME/DevDesk/memory/venv/bin/python}"
+  GGUF_MODEL="${GGUF_MODEL:-$HOME/DevDesk/memory/models/bge-small-zh-v1.5-Q8_0.gguf}"
+  DEVDESK_BIN="${DEVDESK_BIN:-$REPO_ROOT/build/DevDesk}"
+  PROBE_BIN="${PROBE_BIN:-$REPO_ROOT/build/tests/memory_e2e_probe}"
+fi
 
 LLAMA_PORT=11435
 TELEMEM_PORT=8421
@@ -38,6 +73,7 @@ LLM_MODEL="${E2E_LLM_MODEL:-glm-5.3-flash}"
 HEALTH_TIMEOUT_S="${E2E_HEALTH_TIMEOUT:-120}"  # 真 LLM（公司网关）冷启动较慢，可调 300
 
 EVIDENCE_DIR="$REPO_ROOT/evidence/$(date +%F)-memory-e2e"
+[ "$E2E_OS" = "win" ] && EVIDENCE_DIR="$REPO_ROOT/evidence/$(date +%F)-memory-e2e-win"
 mkdir -p "$EVIDENCE_DIR"
 exec > >(tee "$EVIDENCE_DIR/run.log") 2>&1
 
@@ -45,10 +81,6 @@ TEMP_ROOT="$(mktemp -d /tmp/mem-e2e.XXXXXX)"
 DATA_ROOT="$TEMP_ROOT/data"
 PROJ_ROOT="$TEMP_ROOT/cc-projects"
 mkdir -p "$DATA_ROOT/memory" "$PROJ_ROOT"   # memory/ 目录是探针前置假设
-# Windows（Git Bash/MINGW）分支（debt115 TODO(Windows) 补课）：原生二进制不认 MSYS
-# 路径（池 clue70：/tmp/... 被 std::filesystem 当盘相对路径静默落错处）——交给原生
-# 进程（telemem 配置/probe/DevDesk）的路径统一转 Windows 形态；bash 自身仍用 MSYS 路径。
-nativePath() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) cygpath -w "$1" ;; *) printf '%s' "$1" ;; esac; }
 DATA_ROOT_NATIVE="$(nativePath "$DATA_ROOT")"
 TEMP_ROOT_NATIVE="$(nativePath "$TEMP_ROOT")"
 
@@ -60,9 +92,25 @@ log()  { echo "[e2e-run] $*"; }
 pass() { echo "[e2e-run] PASS: $*"; }
 fail() { echo "[e2e-run] FAIL: $*"; FAILS=$((FAILS + 1)); }
 
+winPidByPort() { # $1=port → Windows PID（netstat -ano 查 LISTENING；无则空串）
+  netstat -ano 2>/dev/null | awk -v port="$1" '$1=="TCP" && $2 ~ ":"port"$" && $4=="LISTENING" {print $5; exit}'
+}
+stopProc() { # $1=msys pid $2=port；Windows 清理只按 PID（msys kill 优先 + netstat 查 PID 兜底
+             # taskkill //PID；严禁 //IM，防误杀并发任务的同类实例）
+  [ -n "$1" ] && kill "$1" 2>/dev/null
+  if [ -n "$2" ] && [ "$E2E_OS" = "win" ] && portBusy "$2"; then
+    local wpid
+    wpid="$(winPidByPort "$2")"
+    if [ -n "$wpid" ]; then
+      log "端口 $2 仍被 PID $wpid 占用 → taskkill //PID $wpid //T //F"
+      taskkill //PID "$wpid" //T //F >/dev/null 2>&1
+    fi
+  fi
+}
+
 cleanup() {
-  [ -n "$LLAMA_PID" ] && kill "$LLAMA_PID" 2>/dev/null
-  [ -n "$TELEMEM_PID" ] && kill "$TELEMEM_PID" 2>/dev/null
+  stopProc "$LLAMA_PID" "$LLAMA_PORT"
+  stopProc "$TELEMEM_PID" "$TELEMEM_PORT"
   if [ "$KEEP" = "1" ]; then
     log "保留现场：${TEMP_ROOT}（引擎已清场）"
   else
@@ -139,6 +187,9 @@ pass "环境 yaml 写入 $TEMP_ROOT/telemem-config.yaml"
 
 # ---------- 3. 起引擎 + 探活 ----------
 log "启动 llama-server (:${LLAMA_PORT})…"
+if [ "$E2E_OS" = "win" ]; then
+  export PATH="$(dirname "$LLAMA_SERVER_BIN"):$PATH"  # ggml-*.dll 与 exe 同目录，启动前前置进 PATH
+fi
 nohup "$LLAMA_SERVER_BIN" --host 127.0.0.1 --port "$LLAMA_PORT" \
   -m "$GGUF_MODEL" --embeddings \
   > "$EVIDENCE_DIR/llama-server.log" 2>&1 &
@@ -221,7 +272,7 @@ else
 fi
 
 # ---------- 6. fail-open（杀 telemem 复跑） ----------
-kill "$TELEMEM_PID" 2>/dev/null; TELEMEM_PID=""
+stopProc "$TELEMEM_PID" "$TELEMEM_PORT"; TELEMEM_PID=""
 sleep 1
 rc=$(hook_ask "$TEMP_ROOT/hook-q-build.json" \
   "$EVIDENCE_DIR/hook-failopen.json" "$EVIDENCE_DIR/hook-failopen.err")
