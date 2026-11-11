@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<!--
+  docs/mockups/2026-11-11-智能体任务卡重设计-demo.html
+  need 261 · ui-ux-designer · 2026-11-11
+  ⚠️ demo 仅视觉校准，不是实现蓝图。参数权威来源 = docs/design/2026-11-11-智能体任务卡重设计.md
+  自包含单文件：无外部依赖、双击可开。深浅主题 / 1200·1000·820 三档宽（网格列数随宽变化）/
+  六种任务卡状态 + hover 操作组（真 hover 或「钉住」一卡）。卡片角落「拖拽」可自由缩放窗宽。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>need261 智能体任务卡重设计 · demo</title>
+<style>
+  /* ── token（src/core/theme.cpp 实测值，深/浅两套） ── */
+  :root, .theme-light {
+    --bg:            #F5FAF7;
+    --surface:       #FFFFFF;
+    --panel:         rgba(255,255,255,.80);  /* glassPanelFill 亮档 */
+    --panel-solid:   #F2F7F4;
+    --border:        #E5E7EB;   /* borderDefault · 白卡细黑边档 */
+    --text-1:        #1F2937;
+    --text-2:        #4B5563;
+    --text-3:        #6B7280;
+    --success:       #10B981;  --success-bg: rgba(16,185,129,.16);
+    --warning:       #B45309;  /* 浅色字档加深 4.52:1 */  --warning-bg: rgba(245,158,11,.16);
+    --error-text:    #B91C1C;  --error-bg:  rgba(239,68,68,.14);
+    --info:          #3B82F6;  --info-bg:   rgba(59,130,246,.16);
+    --tertiary-bg:   rgba(107,114,128,.14);
+    --primary:       #36D399;  --primary-hover: #2EC48F; --primary-down: #23B07F;
+    --primary-ink:   #08281a;
+    --hover-fill:    rgba(0,0,0,.045);
+    --hover-fill-2:  rgba(0,0,0,.08);
+    --btn-border:    #d8dde1;
+    --shadow:        0 3px 6px rgba(0,0,0,.05), 0 1px 2px rgba(0,0,0,.03);
+  }
+  .theme-dark {
+    --bg:            #1A1816;
+    --surface:       #232120;
+    --panel:         rgba(35,33,32,.78);
+    --panel-solid:   #262423;
+    --border:        #3A3735;
+    --text-1:        #FAF9F5;
+    --text-2:        #C9C5BD;
+    --text-3:        #9A948A;
+    --success:       #34D399;  --success-bg: rgba(52,211,153,.18);
+    --warning:       #FBBF24;  --warning-bg: rgba(251,191,36,.18);
+    --error-text:    #F87171;  --error-bg:  rgba(248,113,113,.16);
+    --info:          #60A5FA;  --info-bg:   rgba(96,165,250,.18);
+    --tertiary-bg:   rgba(154,148,138,.18);
+    --primary:       #36D399;  --primary-hover: #2EC48F; --primary-down: #23B07F;
+    --primary-ink:   #08281a;
+    --hover-fill:    rgba(255,255,255,.05);
+    --hover-fill-2:  rgba(255,255,255,.09);
+    --btn-border:    #4a4644;
+    --shadow:        0 3px 6px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    background: #23262a; color: var(--text-1); font-size: 14px; overflow: hidden auto;
+  }
+  body::-webkit-scrollbar { width: 0; height: 0; }   /* 滚动条视觉全无 */
+
+  /* ── 顶部工具条 ── */
+  .toolbar {
+    position: sticky; top: 0; z-index: 50; display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    padding: 10px 16px; background: #191c20; color: #cfd6dd; border-bottom: 1px solid #34383d; font-size: 12px;
+  }
+  .toolbar b { color: #fff; font-weight: 600; }
+  .toolbar .note { color: #8d949c; }
+  .tb-group { display: flex; align-items: center; gap: 4px; }
+  .tb-label { color: #8d949c; margin-right: 2px; }
+  .tb-btn {
+    padding: 4px 10px; font-size: 12px; color: #cfd6dd; background: #262a2f;
+    border: 1px solid #3a3f45; border-radius: 6px; cursor: pointer;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .tb-btn:hover { background: #31363c; }
+  .tb-btn:active { transform: scale(.96); }
+  .tb-btn.on { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); font-weight: 600; }
+
+  /* ── 模拟应用窗 ── */
+  .stage { display: flex; justify-content: center; padding: 18px 16px 40px; }
+  .app-shell { resize: horizontal; overflow: hidden; display: flex; justify-content: center; width: 100%; }
+  .app {
+    width: 1000px; min-width: 620px; max-width: 1600px; height: 640px;
+    display: flex; flex-direction: column; background: var(--bg);
+    border: 1px solid #34383d; border-radius: 10px; overflow: hidden;
+    transition: background .15s ease-out;
+  }
+  .body-row { display: flex; flex: 1; min-height: 0; }
+  .sidebar { width: 200px; flex: none; background: var(--surface); border-right: 1px solid var(--border); padding: 10px 8px; }
+  .sb-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; color: var(--text-2); font-size: 13px; }
+  .sb-item.on { background: var(--hover-fill); color: var(--text-1); font-weight: 600; box-shadow: inset 2px 0 0 var(--primary); }
+  .sb-item .ic { width: 14px; height: 14px; opacity: .7; }
+
+  .page { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 12px 12px; overflow: hidden auto; }
+  .page::-webkit-scrollbar { width: 0; height: 0; }
+  .page-header { height: 40px; flex: none; display: flex; align-items: center; gap: 10px; }
+  .page-title { font-size: 20px; font-weight: 700; color: var(--text-1); }
+
+  .btn-new {
+    height: 36px; padding: 0 18px; border: none; border-radius: 6px; cursor: pointer;
+    background: var(--primary); color: var(--primary-ink); font-size: 14px; font-weight: 600;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .btn-new:hover { background: var(--primary-hover); }
+  .btn-new:active { background: var(--primary-down); transform: scale(.96); }
+  .btn-tools {
+    margin-left: auto; height: 36px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+    background: transparent; border: 1px solid var(--btn-border); color: var(--text-2); font-size: 13px;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .btn-tools:hover { background: var(--hover-fill); }
+  .btn-tools:active { transform: scale(.96); }
+  .btn-tools .badge { font-size: 11px; font-weight: 600; color: var(--primary); background: rgba(54,211,153,.14); border-radius: 999px; padding: 2px 7px; }
+
+  /* ── 列表面板（已实现容器） ── */
+  .panel {
+    position: relative; margin-top: 8px; flex: 1; min-height: 0;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+    overflow: hidden auto;
+  }
+  .panel::-webkit-scrollbar { width: 0; height: 0; }
+
+  .tag {
+    position: absolute; top: -10px; right: 12px; z-index: 5; font-size: 11px; line-height: 1;
+    padding: 4px 8px; border-radius: 999px; background: var(--panel-solid);
+    border: 1px solid var(--border); color: var(--text-3);
+  }
+  .tag.todo { background: rgba(54,211,153,.12); border-color: transparent; color: var(--primary); font-weight: 600; }
+
+  /* ── 任务卡网格（列数由 JS 按 ui_kit::gridColumns 同式计算：min340/max420/gap8，1~5 列） ── */
+  .grid { display: grid; grid-template-columns: repeat(2, 420px); gap: 8px; }
+
+  /* ══ 任务卡（待实现·本设计：120 高，行 y12/46/76，pad 12）══ */
+  .task {
+    position: relative; height: 120px; padding: 12px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow); cursor: pointer; overflow: hidden;
+    transition: transform .18s cubic-bezier(.34,1.56,.64,1), background .12s ease-out;
+  }
+  .task:hover { transform: scale(1.02); background: color-mix(in srgb, var(--surface) 96%, var(--text-1)); }
+  .task:active { transform: scale(.96); }
+  .task.pinned { transform: scale(1.02); }
+
+  .t-row1 { display: flex; align-items: center; gap: 8px; height: 22px; }
+  .t-title {
+    font-size: 14px; font-weight: 600; color: var(--text-1); line-height: 22px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0;
+  }
+  .task:hover .t-title, .task.pinned .t-title { max-width: calc(100% - 156px - 12px); }  /* 碰撞守卫：hover 让位操作组 */
+  .task.off .t-title { opacity: .45; }
+
+  .pill { display: inline-flex; align-items: center; gap: 6px; height: 18px; padding: 0 8px; border-radius: 999px; flex: none; }
+  .pill .dot { width: 8px; height: 8px; border-radius: 8px; }
+  .pill .st { font-size: 11px; font-weight: 600; line-height: 18px; }
+  .pill.c-running { background: var(--info-bg); }    .pill.c-running .dot { background: var(--info); }   .pill.c-running .st { color: var(--info); }
+  .pill.c-ok      { background: var(--success-bg); } .pill.c-ok .dot { background: var(--success); }     .pill.c-ok .st { color: var(--success); }
+  .pill.c-fail    { background: var(--error-bg); }   .pill.c-fail .dot { background: var(--error-text); }.pill.c-fail .st { color: var(--error-text); }
+  .pill.c-limited { background: var(--warning-bg); } .pill.c-limited .dot { background: var(--warning); }.pill.c-limited .st { color: var(--warning); }
+  .pill.c-none    { background: var(--tertiary-bg); }.pill.c-none .dot { background: var(--text-3); }   .pill.c-none .st { color: var(--text-3); }
+
+  .t-row2 { display: flex; align-items: center; gap: 10px; height: 18px; margin-top: 12px; min-width: 0; overflow: hidden; }
+  .bd { font-size: 11px; font-weight: 400; line-height: 18px; flex: none; }
+  .bd.warn { color: var(--error-text); }
+  .bd.limit { color: var(--warning); }
+  .bd.off { color: var(--text-3); }
+  .t-trigger { font-size: 11px; color: var(--text-2); line-height: 18px; white-space: nowrap; flex: none; }
+  .t-lastrun { font-size: 11px; color: var(--text-3); line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+  .t-row3 { margin-top: 10px; height: 32px; }
+  .btn-run {
+    height: 32px; width: 56px; border: none; border-radius: 6px; cursor: pointer;
+    background: var(--primary); color: var(--primary-ink); font-size: 12px; font-weight: 600;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .btn-run:hover { background: var(--primary-hover); }
+  .btn-run:active { background: var(--primary-down); transform: scale(.96); }
+  .btn-run.disabled { background: var(--tertiary-bg); color: var(--text-3); cursor: default; }
+  .btn-run.disabled:hover { background: var(--tertiary-bg); }
+  .btn-run.disabled:active { transform: none; }
+
+  /* hover 操作组（右锚 卡右−14，现位不动；120ms 淡入） */
+  .actions {
+    position: absolute; top: 9px; right: 14px; z-index: 2; height: 28px;
+    display: inline-flex; gap: 4px; opacity: 0; pointer-events: none;
+    transition: opacity .12s cubic-bezier(0.215, 0.61, 0.355, 1);
+  }
+  .task:hover .actions, .task.pinned .actions { opacity: 1; pointer-events: auto; }
+  .act {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--btn-border);
+    background: var(--surface); color: var(--text-2); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .act:hover { background: var(--hover-fill); }
+  .act:active { transform: scale(.92); }
+  .act svg { width: 13px; height: 13px; }
+  .act.disabled { opacity: .4; cursor: default; }
+
+  /* 空态（已实现参照） */
+  .empty { height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+  .empty svg { width: 28px; height: 28px; color: var(--text-3); }
+  .empty .m { font-size: 14px; font-weight: 600; color: var(--text-1); }
+  .empty .g { font-size: 12px; color: var(--text-3); }
+  .empty .btn-new { height: 32px; padding: 0 16px; font-size: 13px; margin-top: 6px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <b>need261 · 智能体任务卡重设计</b>
+  <span class="note">demo 仅视觉校准，不是实现蓝图 · 参数见 docs/design/2026-11-11-智能体任务卡重设计.md · 卡上悬停可见操作组</span>
+  <span style="flex:1"></span>
+  <div class="tb-group"><span class="tb-label">窗宽</span>
+    <button class="tb-btn" data-w="1200">1200</button>
+    <button class="tb-btn on" data-w="1000">1000</button>
+    <button class="tb-btn" data-w="820">820</button>
+  </div>
+  <div class="tb-group"><span class="tb-label">主题</span>
+    <button class="tb-btn on" data-theme="light">浅色</button>
+    <button class="tb-btn" data-theme="dark">深色</button>
+  </div>
+  <div class="tb-group"><span class="tb-label">hover 态</span>
+    <button class="tb-btn" id="pinBtn">钉住第 1 卡</button>
+  </div>
+</div>
+
+<div class="stage">
+<div class="app-shell">
+<div class="app theme-light" id="app">
+  <div class="body-row">
+    <div class="sidebar">
+      <div class="sb-item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8v10a1 1 0 01-1 1h-5v-6h-6v6H4a1 1 0 01-1-1z"/></svg>主页</div>
+      <div class="sb-item on"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg>智能体</div>
+      <div class="sb-item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3h.1a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5h.1a1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9v.1a1.7 1.7 0 001.5 1h.2a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>设置</div>
+    </div>
+
+    <div class="page">
+      <!-- 页头（已实现参照） -->
+      <div class="page-header" style="position:relative">
+        <span class="page-title">智能体</span>
+        <span style="font-size:11px; line-height:1; padding:4px 8px; border-radius:999px; border:1px solid var(--border); color:var(--text-3); background:var(--panel-solid)">已实现 · 参照</span>
+        <button class="btn-new">新建任务</button>
+        <button class="btn-tools">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a5 5 0 00-7 7l-4.4 4.4a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l4.4-4.4a5 5 0 007-7l-2.6 2.6-2.4-2.4z"/></svg>
+          可用工具 <span class="badge">33</span>
+        </button>
+      </div>
+
+      <!-- 任务列表（卡内构图 = 待实现·本设计；容器已实现） -->
+      <div class="panel">
+        <span class="tag todo">待实现 · 本设计（卡内构图）</span>
+        <div class="grid" id="grid"></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<script>
+(function () {
+  /* 图标（FA 语义：info / edit / power / enqueue / trash） */
+  var icons = {
+    info:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16" stroke-linecap="round"/><circle cx="12" cy="7.5" r="0.6" fill="currentColor"/></svg>',
+    edit:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3l4 4L8 20l-5 1 1-5z"/></svg>',
+    power:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.4 6.6a9 9 0 11-12.8 0"/><line x1="12" y1="2" x2="12" y2="10" stroke-linecap="round"/></svg>',
+    queue:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M10 12h4m-2-2v4" stroke-linecap="round"/></svg>',
+    trash:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0l1 14h8l1-14"/></svg>'
+  };
+  var pillClass = { running: "c-running", completed: "c-ok", failed: "c-fail", limited: "c-limited", none: "c-none" };
+  var pillText  = { running: "运行中", completed: "成功", failed: "失败", limited: "受限", cancelled: "已取消", none: "—" };
+
+  /* 六种状态覆盖（G3 格子矩阵）：running+常驻 / 成功+cron / 未运行+一次性 / 已停用 /
+     配置异常+受限 / 长标题+运行中（碰撞守卫演示） */
+  var tasks = [
+    { name: "发版巡检-生产库", trigger: "每日 09:00", lastrun: "最近运行 5 分钟前", status: "running", run: "running" },
+    { name: "Changelog 草稿", trigger: "0 9 * * 1", lastrun: "最近运行 2 小时前", status: "completed", run: "idle" },
+    { name: "测试环境巡检", trigger: "一次性", lastrun: "未运行过", status: "none", run: "idle" },
+    { name: "变更雷达晨报", trigger: "0 9 * * *", lastrun: "最近运行 1 天前", status: "none", run: "idle", off: true },
+    { name: "依赖升级盯梢", trigger: "每周三 20:00", lastrun: "最近运行 3 天前", status: "limited", run: "idle",
+      badges: ["warn", "limit"] },
+    { name: "生产库主从延迟与慢查询巡检（超长标题省略演示用例）", trigger: "每 30 分钟", lastrun: "最近运行 12 分钟前", status: "running", run: "running" }
+  ];
+
+  var grid = document.getElementById("grid");
+  tasks.forEach(function (t, i) {
+    var badges = "";
+    (t.badges || []).forEach(function (b) {
+      var label = b === "warn" ? "配置异常" : (b === "limit" ? "受限" : "已停用");
+      badges += '<span class="bd ' + b + '">' + label + "</span>";
+    });
+    if (t.off) badges += '<span class="bd off">已停用</span>';
+    var card = document.createElement("div");
+    card.className = "task" + (t.off ? " off" : "");
+    card.innerHTML =
+      '<div class="t-row1">' +
+        '<span class="t-title">' + t.name + "</span>" +
+        '<span class="pill ' + pillClass[t.status] + '"><span class="dot"></span><span class="st">' + pillText[t.status] + "</span></span>" +
+      "</div>" +
+      '<div class="t-row2">' + badges +
+        '<span class="t-trigger">' + t.trigger + "</span>" +
+        '<span class="t-lastrun">' + t.lastrun + "</span>" +
+      "</div>" +
+      '<div class="t-row3"><button class="btn-run' + (t.run === "running" ? " disabled" : "") + '">' +
+        (t.run === "running" ? "运行中…" : "启动") + "</button></div>" +
+      '<div class="actions">' +
+        '<button class="act" title="详情">' + icons.info + "</button>" +
+        '<button class="act" title="编辑">' + icons.edit + "</button>" +
+        '<button class="act" title="启停">' + icons.power + "</button>" +
+        '<button class="act disabled" title="入队（仅常驻）">' + icons.queue + "</button>" +
+        '<button class="act" title="删除">' + icons.trash + "</button>" +
+      "</div>";
+    grid.appendChild(card);
+  });
+
+  /* ── 窗宽三档 + 主题 ── */
+  var app = document.getElementById("app");
+  document.querySelectorAll("[data-w]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-w]").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      app.style.width = b.dataset.w + "px";
+      relayout();
+    });
+  });
+  document.querySelectorAll("[data-theme]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-theme]").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      app.className = "app theme-" + b.dataset.theme;
+    });
+  });
+
+  /* 钉住第 1 卡（截图 hover 态用；真 hover 也可直接悬停任意卡） */
+  var pinBtn = document.getElementById("pinBtn");
+  function setPin(on) {
+    grid.querySelector(".task").classList.toggle("pinned", on);
+    pinBtn.classList.toggle("on", on);
+    pinBtn.textContent = on ? "取消钉住" : "钉住第 1 卡";
+  }
+  pinBtn.addEventListener("click", function () { setPin(!grid.querySelector(".task").classList.contains("pinned")); });
+
+  /* ── 网格列数：复刻 ui_kit::gridColumns（min340/max420/gap8，1~5 列，卡宽 clamp 均分） ── */
+  var gridEl = document.getElementById("grid");
+  function relayout() {
+    var w = gridEl.clientWidth;
+    if (w <= 0) return;
+    var gap = 8, minW = 340, maxW = 420, maxCols = 5;
+    var cols = Math.max(1, Math.min(maxCols, Math.floor((w + gap) / (minW + gap))));
+    var cardW = Math.min(maxW, Math.floor((w - (cols - 1) * gap) / cols));
+    gridEl.style.gridTemplateColumns = "repeat(" + cols + ", " + cardW + "px)";
+  }
+  window.addEventListener("resize", relayout);
+  relayout();
+
+  /* URL hash：#pin（钉住第 1 卡）-dark（深色）-w820（窗宽档） */
+  var hh = location.hash.replace("#", "");
+  if (hh) hh.split("-").forEach(function (tok) {
+    if (tok === "pin") setPin(true);
+    else if (tok === "dark") document.querySelector("[data-theme=dark]").click();
+    else if (/^w\d+$/.test(tok)) { var wb = document.querySelector('[data-w="' + tok.slice(1) + '"]'); if (wb) wb.click(); }
+  });
+
+  /* 阻止卡内按钮冒泡触发卡按压（demo 语义：按钮自成命中面） */
+  grid.addEventListener("click", function (e) {
+    if (e.target.closest(".act, .btn-run")) e.stopPropagation();
+  });
+})();
+</script>
+</body>
+</html>

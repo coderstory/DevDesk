@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "light"}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Settings.hit",
+     "_comment": "need260 视觉验证：进设置页（浅色主题种子）"},
+    {"type": "wait", "until": "exists", "id": "settings.tabs.1.hit"},
+    {"type": "click", "id": "settings.tabs.1.hit", "_comment": "切「模块」tab"},
+    {"type": "wait", "until": "exists", "id": "settings.card.reminder.popup.sw.track"},
+    {"type": "wait", "until": "exists", "id": "settings.card.md_assoc.title"},
+    {"type": "screenshot", "path": "need260-modules-light.png"}
+  ]
+}

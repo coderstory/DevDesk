@@ -1,13 +1,17 @@
-// settings_md_assoc_probe.cpp — F-10「关联 .md 文件」开关行卡：几何 + 四态截图探针
+// settings_md_assoc_probe.cpp — F-10「关联 .md 文件」卡：几何 + 四态截图探针
 //
 // 形态 = 卡直绘（不经真模块）：构造 SettingsCardsIn 直调 drawMdAssocCard，
 // 四态注入可控（真模块态来自真注册表，probe 不可控也不可写——测试红线：
 // 用例禁触开发机真实 .md 登记；isDefaultForMd 只读，本探针零写路径）。
 //
-// 覆盖判据（设计文档 §3.5 / PRD §八 状态集）：
-//   - 开关几何：wswitch track = 44×24 字面值、钉卡内容右缘（padX=28）
-//   - 状态字四态：关+从未开=无状态字元素 / 开+ours=「已关联」success /
-//     开+非ours=「未生效」+ 引导行 / 关+曾开=「已停止自动维护」
+// 覆盖判据（need260 设计 §2.3 / PRD §八 状态集）：
+//   - 卡宽 = 半宽列（1000 窗档 (712−8)/2 = 352，need260 §7 配对行）
+//   - 标题带：.title（19/600）存在——原 13px label 已退役
+//   - 开关几何：wswitch track = 44×24 字面值、钉卡右缘（x = 卡宽−72，
+//     右缘 = 卡宽 − padX 28，全 tab 开关右锚单一口径）
+//   - 状态带四态：关+从未开=无状态带元素（.status/.status.dot 均缺）/
+//     开+ours=「已关联」successText / 开+非ours=「未生效」warningText+引导带 /
+//     关+曾开=「已停止自动维护」textTertiary
 //   - 四态各落一张 PNG（--screenshot 目录前缀 + 态名），执行归汇总段
 //     （本探针只提供源码与断言，不在编码段运行——汇总编译模式）。
 //
@@ -43,7 +47,8 @@ void compose(eui::Ui&, const eui::Screen&) {}
 namespace {
 
 constexpr const char* kCardId = "settings.card.md_assoc";
-constexpr float kCardW = 792.0f;  // 设置页 1000×640 档卡内容宽（1000−208 侧栏）
+// 半宽列（need260 §7）：1000 窗档页宽 792 → contentW 712 → colW=(712−8)/2=352
+constexpr float kCardW = 352.0f;
 
 struct CaseSpec {
     const char* name;
@@ -126,7 +131,15 @@ int main(int argc, char* argv[]) {
                 module::settings::drawMdAssocCard(cardArgs);
             });
 
-        // 几何断言：开关 44×24 字面值、钉卡内容右缘（padX 28）
+        // 几何断言：标题带存在（need260 新增，原 13px label 退役）；
+        // 开关 44×24 字面值、右缘 = 卡宽 − padX 28（x = 卡宽−72 右锚单一口径）
+        const core::dsl::Element* title =
+            uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".title")
+                             : nullptr;
+        expect(title != nullptr, "标题带元素缺失（.title）");
+        if (title != nullptr) {
+            expect(title->text == "关联 .md 文件", "标题文案应为「关联 .md 文件」");
+        }
         const core::dsl::Element* track =
             uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".sw.track")
                              : nullptr;
@@ -136,14 +149,19 @@ int main(int argc, char* argv[]) {
             expect(floatEq(track->frame.height, 24.0f), "开关轨道高应为 24");
             expect(floatEq(track->frame.x + track->frame.width,
                            kCardW - 28.0f),
-                   "开关应钉卡内容右缘（右缘 = 卡宽 − padX 28）");
+                   "开关应钉卡右缘（右缘 = 卡宽 − padX 28）");
         }
-        // 状态字四态：存在性 + 文案
+        // 状态带四态：点 + 字存在性 + 文案（None 整带不渲染）
         const core::dsl::Element* status =
             uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".status")
                              : nullptr;
         expect(c.expectStatus ? status != nullptr : status == nullptr,
                c.expectStatus ? "状态字元素应存在" : "状态字元素应不存在");
+        const core::dsl::Element* statusDot =
+            uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".status.dot")
+                             : nullptr;
+        expect(c.expectStatus ? statusDot != nullptr : statusDot == nullptr,
+               c.expectStatus ? "状态点元素应存在" : "状态点元素应不存在");
         // 引导行四态：未生效态存在、其余态不存在
         const core::dsl::Element* guideText =
             uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".guide.text")

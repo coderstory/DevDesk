@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<!--
+  docs/mockups/2026-11-11-设置模块两卡重设计-demo.html
+  need 260 · ui-ux-designer · 2026-11-11
+  ⚠️ demo 仅视觉校准，不是实现蓝图。参数权威来源 = docs/design/2026-11-11-设置模块两卡重设计.md
+  自包含单文件：无外部依赖、双击可开。深浅主题 / 1200·1000·820 三档宽 / 模块·通用两 tab /
+  提醒卡双开关两态 / md 关联卡四态（含 Win·mac 引导分流）。角落「拖拽」可自由缩放窗宽。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>need260 设置-模块两卡重设计 · demo</title>
+<style>
+  /* ── token（src/core/theme.cpp 实测值，深/浅两套） ── */
+  :root, .theme-light {
+    --bg:            #F5FAF7;
+    --surface:       rgba(255,255,255,.94);
+    --surface-solid: #FBFDFC;
+    --border:        #E5E7EB;   /* borderDefault · 白卡细黑边档 */
+    --text-1:        #1F2937;   /* textPrimary */
+    --text-2:        #4B5563;   /* textSecondary */
+    --text-3:        #6B7280;   /* textTertiary */
+    --success:       #10B981;
+    --success-text:  #157E4E;   /* 基线浅底小字加深档 ≥4.5:1 */
+    --warning:       #F59E0B;
+    --warning-text:  #B45309;   /* 建议加深档 4.52:1 */
+    --primary:       #36D399;   /* 基线实现档薄荷绿（开关/主钮） */
+    --primary-hover: #2EC48F;
+    --primary-down:  #23B07F;
+    --primary-soft:  #E6FBF2;   /* 浅染底 */
+    --hover:         #EEF6F1;
+    --shadow:        0 3px 6px rgba(0,0,0,.04), 0 1px 2px rgba(0,0,0,.02);
+  }
+  .theme-dark {
+    --bg:            #1A1816;
+    --surface:       rgba(35,33,32,.95);
+    --surface-solid: #232120;
+    --border:        #3A3735;
+    --text-1:        #FAF9F5;
+    --text-2:        #C9C5BD;
+    --text-3:        #9A948A;
+    --success:       #34D399;
+    --success-text:  #34D399;
+    --warning:       #FBBF24;
+    --warning-text:  #FBBF24;
+    --primary:       #36D399;
+    --primary-hover: #2EC48F;
+    --primary-down:  #23B07F;
+    --primary-soft:  rgba(54,211,153,.12);
+    --hover:         #353231;
+    --shadow:        0 3px 6px rgba(0,0,0,.25), 0 1px 2px rgba(0,0,0,.18);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    background: #23262a; color: var(--text-1);
+    font-size: 14px; overflow: hidden auto;
+  }
+  body::-webkit-scrollbar { width: 0; height: 0; }   /* 滚动条视觉全无 */
+
+  /* ── 顶部工具条 ── */
+  .toolbar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+    padding: 10px 16px; background: #191c20; color: #cfd6dd;
+    border-bottom: 1px solid #34383d; font-size: 12px;
+  }
+  .toolbar b { color: #fff; font-weight: 600; }
+  .toolbar .note { color: #8d949c; }
+  .tb-group { display: flex; align-items: center; gap: 4px; }
+  .tb-label { color: #8d949c; margin-right: 2px; }
+  .tb-btn {
+    padding: 4px 10px; font-size: 12px; color: #cfd6dd; background: #262a2f;
+    border: 1px solid #3a3f45; border-radius: 6px; cursor: pointer;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .tb-btn:hover { background: #31363c; }
+  .tb-btn:active { transform: scale(.96); }
+  .tb-btn.on { background: var(--primary); border-color: var(--primary); color: #08281a; font-weight: 600; }
+
+  /* ── 模拟应用窗（可拖拽缩放 + 三档预设） ── */
+  .stage { display: flex; justify-content: center; padding: 18px 16px 40px; }
+  .app {
+    width: 1000px; min-width: 620px; max-width: 1600px;
+    height: 640px; display: flex; flex-direction: column;
+    background: var(--bg); border: 1px solid #34383d; border-radius: 10px;
+    overflow: hidden; transition: background .15s ease-out;
+  }
+  .app-wrap { display: flex; justify-content: center; width: 100%; }
+  .app-shell { resize: horizontal; overflow: hidden; display: flex; justify-content: center; }
+
+  /* ── 应用内布局：侧栏 200 + 设置页 ── */
+  .body-row { display: flex; flex: 1; min-height: 0; }
+  .sidebar {
+    width: 200px; flex: none; background: var(--surface-solid);
+    border-right: 1px solid var(--border); padding: 10px 8px;
+  }
+  .sb-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; color: var(--text-2); font-size: 13px; }
+  .sb-item.on { background: var(--hover); color: var(--text-1); font-weight: 600; box-shadow: inset 2px 0 0 var(--primary); }
+  .sb-item .ic { width: 14px; height: 14px; opacity: .7; }
+
+  .page { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 12px 12px; overflow: hidden auto; }
+  .page::-webkit-scrollbar { width: 0; height: 0; }
+  .page-header { height: 40px; display: flex; align-items: center; font-size: 17px; font-weight: 600; color: var(--text-1); flex: none; }
+
+  /* Tab（基线：激活深灰字 + 底部 2px 绿下划线，禁实心按钮 Tab） */
+  .tabs { display: flex; gap: 4px; height: 40px; flex: none; }
+  .tab {
+    padding: 0 16px; display: flex; align-items: center; font-size: 14px;
+    color: var(--text-2); cursor: pointer; position: relative; user-select: none;
+    transition: transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .tab:active { transform: scale(.965); }
+  .tab.on { color: var(--text-1); font-weight: 600; }
+  .tab.on::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: 4px; height: 2px; background: var(--primary); border-radius: 1px; }
+
+  /* ── 卡片基件 ── */
+  .card {
+    position: relative; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; box-shadow: var(--shadow); padding: 28px;
+  }
+  .card-title { font-size: 19px; font-weight: 600; color: var(--text-1); line-height: 22px; }
+  .card-desc  { font-size: 12px; color: var(--text-3); line-height: 16px; margin-top: 2px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .tag {
+    position: absolute; top: -10px; right: 12px; z-index: 5;
+    font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px;
+    background: var(--surface-solid); border: 1px solid var(--border); color: var(--text-3);
+  }
+  .tag.todo { background: var(--primary-soft); border-color: transparent; color: var(--success-text); font-weight: 600; }
+
+  /* ── 开关（44×24 字面值，开=绿轨白滑块） ── */
+  .sw {
+    width: 44px; height: 24px; flex: none; border-radius: 24px; cursor: pointer;
+    background: #c9cdcf; position: relative; border: none; padding: 0;
+    transition: background .12s ease-out;
+  }
+  .theme-dark .sw { background: #4a4644; }
+  .sw::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2);
+    transition: left .12s ease-out;
+  }
+  .sw.on { background: var(--primary); }
+  .sw.on::after { left: 22px; }
+  .sw:active::after { transform: scale(.92); }
+
+  /* ── 模块 tab 卡序列 ── */
+  .cards { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .pair-row { display: flex; gap: 8px; align-items: flex-start; }
+  .pair-row .card { flex: 1 1 0; min-width: 0; }
+
+  /* 模块插拔卡（已实现）：9 格 3 列，行距 56，格内 name13/600 + desc12 */
+  .mod-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; margin-top: 12px; }
+  .mod-cell { height: 56px; min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; padding-top: 0; }
+  .mod-cell .txt { min-width: 0; }
+  .mod-cell .nm { font-size: 13px; font-weight: 600; color: var(--text-1); line-height: 18px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mod-cell .ds { font-size: 12px; color: var(--text-3); line-height: 16px; margin-top: 2px;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mod-cell .sw { margin-top: 6px; }
+
+  /* ── 提醒弹窗卡（待实现·本设计 §2.2：140 高，三带格律 16/40/64） ── */
+  .rem-card { height: 140px; }
+  .rem-row { display: flex; align-items: center; justify-content: space-between; height: 28px; }
+  .rem-row .lb { font-size: 13px; font-weight: 600; color: var(--text-1); line-height: 28px;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rem-row.r1 { margin-top: 8px; }   /* 说明带底 56 → 行1 y64 */
+  .rem-row.r2 { margin-top: 4px; }   /* 行1 底 92 → 行2 y96 */
+
+  /* ── md 关联卡（待实现·本设计 §2.3：108 / 140(mac引导) / 152(Win引导)） ── */
+  .md-card { height: 108px; transition: height .15s ease-out; }
+  .md-card.g-mac  { height: 140px; }
+  .md-card.g-win  { height: 152px; }
+  .md-head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .md-head .sw { margin-top: 15px; }               /* 开关垂直居中标题行（y15） */
+  .md-status { display: flex; align-items: center; gap: 6px; height: 20px; margin-top: 8px; }
+  .md-status.hide { display: none; }
+  .md-status .dot { width: 6px; height: 6px; border-radius: 6px; flex: none; }
+  .md-status .st { font-size: 12px; font-weight: 500; line-height: 20px; }
+  .md-guide { margin-top: 4px; }                    /* 状态带底 84 → 引导 y88 */
+  .md-guide.hide { display: none; }
+  .md-guide .g-row { display: flex; align-items: flex-start; gap: 4px; }
+  .md-guide .g-row svg { width: 12px; height: 12px; flex: none; margin-top: 2px; color: var(--warning-text); }
+  .md-guide .gt { font-size: 11px; line-height: 16px; color: var(--warning-text); }
+  .md-guide .gt.two { max-width: 100%; }            /* mac 两行 */
+  .btn-primary {
+    margin-top: 4px; height: 28px; padding: 0 12px; border: none; border-radius: 6px;
+    background: var(--primary); color: #08281a; font-size: 13px; font-weight: 500; cursor: pointer;
+    display: inline-flex; align-items: center;
+    transition: background .12s ease-out, transform .18s cubic-bezier(.34,1.56,.64,1);
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-primary:active { background: var(--primary-down); transform: scale(.96); }
+
+  .bottom-hint { margin-top: auto; height: 20px; display: flex; align-items: center; justify-content: center;
+                 font-size: 12px; color: var(--text-3); flex: none; }
+
+  /* ── 通用 tab 参照（已实现·简化示意：appearance|editor 半宽配对 184） ── */
+  .gen-card { height: 184px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg span { padding: 5px 14px; font-size: 13px; color: var(--text-2); cursor: pointer; background: var(--surface-solid); }
+  .seg span.on { background: var(--hover); color: var(--text-1); font-weight: 600; }
+  .gen-row { display: flex; align-items: center; justify-content: space-between; height: 28px; }
+  .gen-row .lb { font-size: 13px; font-weight: 600; color: var(--text-1); }
+  .gen-row .sw { margin-top: 0; }
+  .gen-hint { font-size: 12px; color: var(--text-3); line-height: 16px; }
+  .fake-slider { width: 140px; height: 4px; border-radius: 4px; background: var(--hover); position: relative; }
+  .fake-slider::after { content: ""; position: absolute; left: 45%; top: -4px; width: 12px; height: 12px;
+                        border-radius: 50%; background: var(--primary); }
+  .fake-val { font-size: 12px; color: var(--text-2); width: 34px; text-align: right; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <b>need260 · 设置-模块两卡重设计</b>
+  <span class="note">demo 仅视觉校准，不是实现蓝图 · 参数见 docs/design/2026-11-11-设置模块两卡重设计.md</span>
+  <span style="flex:1"></span>
+  <div class="tb-group"><span class="tb-label">窗宽</span>
+    <button class="tb-btn" data-w="1200">1200</button>
+    <button class="tb-btn on" data-w="1000">1000</button>
+    <button class="tb-btn" data-w="820">820</button>
+  </div>
+  <div class="tb-group"><span class="tb-label">主题</span>
+    <button class="tb-btn on" data-theme="light">浅色</button>
+    <button class="tb-btn" data-theme="dark">深色</button>
+  </div>
+  <div class="tb-group"><span class="tb-label">md 卡状态</span>
+    <button class="tb-btn on" data-md="none">关·从未开</button>
+    <button class="tb-btn" data-md="linked">已关联</button>
+    <button class="tb-btn" data-md="win">未生效·Win</button>
+    <button class="tb-btn" data-md="mac">未生效·mac</button>
+    <button class="tb-btn" data-md="stopped">已停止维护</button>
+  </div>
+</div>
+
+<div class="stage">
+<div class="app-shell">
+<div class="app theme-light" id="app">
+  <div class="body-row">
+    <div class="sidebar">
+      <div class="sb-item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8v10a1 1 0 01-1 1h-5v-6h-6v6H4a1 1 0 01-1-1z"/></svg>主页</div>
+      <div class="sb-item on"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.9.3h.1a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5h.1a1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9v.1a1.7 1.7 0 001.5 1h.2a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>设置</div>
+      <div class="sb-item"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Markdown</div>
+    </div>
+
+    <div class="page">
+      <div class="page-header">设置</div>
+
+      <div class="tabs">
+        <div class="tab" data-tab="general">通用</div>
+        <div class="tab on" data-tab="modules">模块</div>
+        <div class="tab">日志</div>
+        <div class="tab">同步</div>
+      </div>
+
+      <!-- ═══ 模块 tab（本批对象）═══ -->
+      <div class="cards" id="view-modules">
+        <!-- 邻居卡参照：模块插拔卡（已实现，格律参照：标题 y16 / 说明 y40 / 内容 y64） -->
+        <div class="card" style="height:254px">
+          <span class="tag">已实现 · 格律参照</span>
+          <div class="card-title">模块</div>
+          <div class="card-desc">开关即时生效：关闭后该模块代码不再执行，侧边栏入口与页面当帧更新</div>
+          <div class="mod-grid" id="modGrid"></div>
+        </div>
+
+        <!-- ══ 半宽配对行（待实现·本设计）══ -->
+        <div class="pair-row">
+          <div class="card rem-card">
+            <span class="tag todo">待实现 · 本设计</span>
+            <div class="card-title">提醒弹窗</div>
+            <div class="card-desc">到期与调度事项弹全屏置顶窗，默认关闭</div>
+            <div class="rem-row r1"><span class="lb">上线提醒弹窗</span><button class="sw" id="swPopup" aria-label="上线提醒弹窗开关"></button></div>
+            <div class="rem-row r2"><span class="lb">调度全屏弹窗</span><button class="sw" id="swFs" aria-label="调度全屏弹窗开关"></button></div>
+          </div>
+
+          <div class="card md-card" id="mdCard">
+            <span class="tag todo">待实现 · 本设计</span>
+            <div class="md-head">
+              <div style="min-width:0">
+                <div class="card-title">关联 .md 文件</div>
+                <div class="card-desc">双击 .md 文件时用 DevDesk 只读查看器打开</div>
+              </div>
+              <button class="sw on" id="swMd" aria-label="关联 md 文件开关"></button>
+            </div>
+            <div class="md-status" id="mdStatus">
+              <span class="dot" id="mdDot"></span><span class="st" id="mdSt"></span>
+            </div>
+            <div class="md-guide hide" id="mdGuide">
+              <div class="g-row">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3L23 21H1z"/><line x1="12" y1="10" x2="12" y2="15" stroke-linecap="round"/><circle cx="12" cy="17.6" r="0.5" fill="currentColor"/></svg>
+                <div class="gt" id="mdGuideText"></div>
+              </div>
+              <button class="btn-primary" id="mdBtn" style="display:none">打开系统默认应用设置</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="bottom-hint">所有设置即时生效，无需保存</div>
+      </div>
+
+      <!-- ═══ 通用 tab（配对先例参照，已实现·简化示意）═══ -->
+      <div class="cards" id="view-general" style="display:none">
+        <div class="pair-row">
+          <div class="card gen-card">
+            <span class="tag">已实现 · 配对先例</span>
+            <div class="card-title">外观</div>
+            <div class="card-desc">主题外观与动态背景</div>
+            <div style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; height:32px">
+              <span class="gen-row lb" style="font-size:13px;font-weight:600;color:var(--text-1)">主题</span>
+              <span class="seg"><span class="on">浅色</span><span>深色</span><span>跟随系统</span></span>
+            </div>
+            <div class="gen-row" style="margin-top:12px"><span class="lb">动态流质背景</span><button class="sw on"></button></div>
+            <div class="gen-hint" style="margin-top:12px">关闭后主界面使用纯色背景</div>
+          </div>
+          <div class="card gen-card">
+            <span class="tag">已实现 · 配对先例</span>
+            <div class="card-title">编辑器</div>
+            <div class="card-desc">Markdown 字号与开机自启动</div>
+            <div style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; height:32px">
+              <span style="font-size:13px;font-weight:600;color:var(--text-1)">编辑器字号</span>
+              <span style="display:flex;align-items:center;gap:10px"><span class="fake-slider"></span><span class="fake-val">16px</span></span>
+            </div>
+            <div class="gen-hint" style="margin-top:10px">字号同步作用于 Markdown 阅读视图</div>
+            <div class="gen-row" style="margin-top:12px"><span class="lb">开机自启动</span><button class="sw"></button></div>
+          </div>
+        </div>
+        <div class="bottom-hint">所有设置即时生效，无需保存</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+
+<script>
+(function () {
+  /* ── 模块插拔卡 9 格（已实现数据照抄 settings_ui_cards.cpp kToggleable + 壁纸格） ── */
+  var mods = [
+    ["Markdown", "本地文件存储 + SQLite FTS5 全文搜索", true],
+    ["Todo 看板", "待办任务管理，多列卡片看板", true],
+    ["定时", "定时调度任务，到点自动触发动作与通知", true],
+    ["Claude 配置切换器", "Profile 管理 + 本地代理", true],
+    ["智能体", "任务列表 + 手动触发运行", true],
+    ["记忆", "telemem 记忆引擎面板", false],
+    ["MCP", "MCP 服务器接入配置与管理", true],
+    ["上线", "任务执行与基础配置（两子页同开同关）", true],
+    ["壁纸", "动态桌面壁纸，开启后随启动", true]
+  ];
+  var grid = document.getElementById("modGrid");
+  mods.forEach(function (m) {
+    var cell = document.createElement("div");
+    cell.className = "mod-cell";
+    cell.innerHTML =
+      '<div class="txt"><div class="nm">' + m[0] + '</div><div class="ds">' + m[1] + '</div></div>' +
+      '<button class="sw' + (m[2] ? " on" : "") + '" aria-label="' + m[0] + '开关"></button>';
+    grid.appendChild(cell);
+  });
+
+  /* 开关通用翻转 */
+  document.addEventListener("click", function (e) {
+    var sw = e.target.closest(".sw");
+    if (sw) sw.classList.toggle("on");
+  });
+
+  /* ── md 关联卡四态（判定契约 = mdAssocStatusKind 纯函数，demo 直演渲染结果） ── */
+  var mdStates = {
+    none:    { h: "",    sw: false, st: null,                                        guide: null },
+    linked:  { h: "",    sw: true,  st: ["已关联", "var(--success)"],                 guide: null },
+    win:     { h: "g-win", sw: true, st: ["未生效", "var(--warning-text)"],
+               guide: { text: "默认程序未指向 DevDesk，点击下方按钮修复。", btn: true } },
+    mac:     { h: "g-mac", sw: true, st: ["未生效", "var(--warning-text)"],
+               guide: { text: "macOS 无一键入口：Finder 右键任一 .md → 显示简介 → 打开方式 → 选 DevDesk → 全部更改", btn: false } },
+    stopped: { h: "",    sw: false, st: ["已停止自动维护", "var(--text-3)"],           guide: null }
+  };
+  var mdCard = document.getElementById("mdCard");
+  var mdStatus = document.getElementById("mdStatus");
+  var mdDot = document.getElementById("mdDot");
+  var mdSt = document.getElementById("mdSt");
+  var mdGuide = document.getElementById("mdGuide");
+  var mdGuideText = document.getElementById("mdGuideText");
+  var mdBtn = document.getElementById("mdBtn");
+  var swMd = document.getElementById("swMd");
+
+  function setMdState(key) {
+    var s = mdStates[key];
+    mdCard.className = "card md-card " + s.h;
+    swMd.classList.toggle("on", s.sw);
+    if (s.st) {
+      mdStatus.classList.remove("hide");
+      mdDot.style.background = s.st[1];
+      mdSt.style.color = s.st[1];
+      mdSt.textContent = s.st[0];
+    } else {
+      mdStatus.classList.add("hide");   /* None 态：状态带整带不渲染（PRD §八） */
+    }
+    if (s.guide) {
+      mdGuide.classList.remove("hide");
+      mdGuideText.textContent = s.guide.text;
+      mdGuideText.style.whiteSpace = s.guide.btn ? "nowrap" : "normal";
+      mdBtn.style.display = s.guide.btn ? "inline-flex" : "none";
+    } else {
+      mdGuide.classList.add("hide");
+    }
+  }
+  setMdState("none");
+  document.querySelectorAll("[data-md]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-md]").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      setMdState(b.dataset.md);
+    });
+  });
+
+  /* ── 窗宽三档 + 主题切换 ── */
+  var app = document.getElementById("app");
+  document.querySelectorAll("[data-w]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-w]").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      app.style.width = b.dataset.w + "px";
+    });
+  });
+  document.querySelectorAll("[data-theme]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-theme]").forEach(function (x) { x.classList.remove("on"); });
+      b.classList.add("on");
+      app.className = "app theme-" + b.dataset.theme;
+    });
+  });
+
+  /* ── tab 切换 ── */
+  document.querySelectorAll(".tab[data-tab]").forEach(function (t) {
+    t.addEventListener("click", function () {
+      document.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("on"); });
+      t.classList.add("on");
+      document.getElementById("view-modules").style.display = t.dataset.tab === "modules" ? "" : "none";
+      document.getElementById("view-general").style.display = t.dataset.tab === "general" ? "" : "none";
+    });
+  });
+
+  /* ── URL hash 初始化（供无头截图/评审直达状态）：#dark-md.win-w820-general 短横线分隔 ── */
+  var h = location.hash.replace("#", "");
+  if (h) h.split("-").forEach(function (tok) {
+    if (tok === "dark") document.querySelector("[data-theme=dark]").click();
+    else if (tok.indexOf("md.") === 0) { var el = document.querySelector('[data-md="' + tok.slice(3) + '"]'); if (el) el.click(); }
+    else if (/^w\d+$/.test(tok)) { var w = document.querySelector('[data-w="' + tok.slice(1) + '"]'); if (w) w.click(); }
+    else if (tok === "general") { var g = document.querySelector("[data-tab=general]"); if (g) g.click(); }
+  });
+})();
+</script>
+</body>
+</html>

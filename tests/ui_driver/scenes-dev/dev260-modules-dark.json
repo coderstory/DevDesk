@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark"}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Settings.hit",
+     "_comment": "need260 视觉验证：进设置页"},
+    {"type": "wait", "until": "exists", "id": "settings.tabs.1.hit"},
+    {"type": "click", "id": "settings.tabs.1.hit", "_comment": "切「模块」tab"},
+    {"type": "wait", "until": "exists", "id": "settings.card.reminder.popup.sw.track",
+     "_comment": "半宽配对左卡（提醒弹窗）开关在位"},
+    {"type": "wait", "until": "exists", "id": "settings.card.md_assoc.title",
+     "_comment": "半宽配对右卡（关联 .md 文件）标题带在位"},
+    {"type": "screenshot", "path": "need260-modules-dark.png"}
+  ]
+}

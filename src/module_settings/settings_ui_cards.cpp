@@ -918,9 +918,12 @@ void drawMcpCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 模块 tab 全宽矮卡（高 92，双开关同排）：上线提醒 + 调度全屏两个弹窗总开关
-// （均默认关）。全屏置顶提醒窗曾压住主窗标题栏致「无法最小化」（BUG 复盘），
-// 默认关 = 无入口不自动弹。模块 tab 零滚动预算只剩 ~2px，不再开新卡。
+// 提醒弹窗卡（模块 tab 半宽配对左卡，need260 设计 §2.2）：上线提醒 + 调度全屏
+// 两个弹窗总开关（均默认关）。全屏置顶提醒窗曾压住主窗标题栏致「无法最小化」
+// （BUG 复盘），默认关 = 无入口不自动弹。
+// 三带格律：标题 y16 / 说明 y40 / 开关行 y64、y96；两开关同一右锚 x = w−72
+//（全 tab 开关右锚单一口径，替换旧「半列右缘/卡右缘」双锚）。B6：行 y/行盒随
+// roundFs 派生，开关 44×24 字面值不缩放（放大档行盒高过开关 → 居中补位）。
 void drawReminderCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -941,45 +944,28 @@ void drawReminderCard(const CardDrawArgs& args) {
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
                 .build();
-            cardTitle(ui, id, t, 22.0f, w - 56.0f, 22.0f, 22.0f, "提醒弹窗");
-            // 双开关行统一几何（池132，2026-11-03 设计 §15）：两列镜像——
-            // label x=colX、开关各贴**半列右缘**（colX + halfW − swW），
-            // 取代旧「左开关贴 label 右侧、右开关贴卡右缘」两套水平节奏；
-            // 说明行改整卡宽右对齐贴右缘 28（与标题同排、不再从半列起错位）。
-            // B6：行 y/行高/说明行盒随字号派生（卡高已跟 roundFs(92) 放大，
-            // 行不缩 = 放大档行底溢出卡外）。
-            const float rowY = roundFs(44.0f);
-            const float rowH = roundFs(32.0f);
-            const float descH = roundFs(22.0f);
-            const float labelW = roundFs(110.0f);
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "提醒弹窗");
+            // 说明带左对齐挂 28 左轨（cardDesc 同款，废除右对齐挂标题行）
+            cardDesc(ui, id, t, 40.0f, std::max(0.0f, w - 56.0f), 16.0f,
+                     "到期与调度事项弹全屏置顶窗，默认关闭");
             const float swW = kAutostartSwitchW;
             const float swH = kAutostartSwitchH;
-            const float halfW = (w - 56.0f) * 0.5f;
-            // 池152：两列间加显式列距 16（原零列距——左列开关右缘恰贴右列
-            // label 左缘粘连错位）；右列开关仍贴卡内容右缘（w−28−swW）不随移。
-            const float col2X = 28.0f + halfW + 16.0f;
-            ui.text(id + ".title.desc")
-                .position(28.0f, roundFs(22.0f))
-                .size(std::max(0.0f, w - 56.0f), descH)
-                .text("到期事项弹全屏置顶窗（默认关，仅记日志）")
-                .fontSize(fs(12.0f))
-                .lineHeight(descH)
-                .color(t.colors.textTertiary)
-                .maxWidth(std::max(0.0f, w - 56.0f))
-                .overflow(core::TextOverflow::Ellipsis)
-                .horizontalAlign(eui::HorizontalAlign::Right)
-                .clip()
-                .build();
-            const auto drawSwitchRow = [&](const std::string& labelId,
+            const float swX = w - 28.0f - swW;
+            const auto drawSwitchRow = [&](const std::string& rowId,
                                            const char* labelText,
-                                           float labelX, float swX,
+                                           float rowYBase,
                                            bool value,
                                            const std::function<void(bool)>& on) {
-                ui.text(labelId)
-                    .position(labelX, rowY)
+                const float rowY = roundFs(rowYBase);
+                const float rowH = roundFs(28.0f);
+                // label 从左轨吃满到开关左缘 −8（窄档省略号兜底，label 不缩挤压开关）
+                const float labelW =
+                    std::max(0.0f, swX - 28.0f - roundFs(8.0f));
+                ui.text(rowId + ".label")
+                    .position(28.0f, rowY)
                     .size(labelW, rowH)
                     .text(labelText)
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .fontSize(fs(13.0f))
                     .lineHeight(rowH)
                     .fontWeight(600)
                     .color(t.colors.textPrimary)
@@ -987,18 +973,17 @@ void drawReminderCard(const CardDrawArgs& args) {
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
-                // 开关 44×24 是字面值不随字号缩放：放大档行盒高于开关 → 居中
-                // （85% 档行盒更矮则贴顶，max 语义）
-                ui_kit::wswitch(ui, std::string(labelId) + ".sw", value,
-                                swX, rowY + std::max(0.0f, (rowH - swH) * 0.5f),
+                // 开关 44×24 字面值：放大档行盒高于开关 → 居中（85% 档行盒更矮
+                // 则贴顶，max 语义）
+                ui_kit::wswitch(ui, rowId + ".sw", value, swX,
+                                rowY + std::max(0.0f, (rowH - swH) * 0.5f),
                                 swW, swH, t, on);
             };
-            drawSwitchRow(id + ".popup.label", "上线提醒弹窗", 28.0f,
-                          28.0f + halfW - swW,
+            drawSwitchRow(id + ".popup", "上线提醒弹窗", 64.0f,
                           in.cfg.releaseReminderPopup,
                           [f = a.applyReminderPopup](bool v) { f(v); });
-            drawSwitchRow(id + ".fs.label", "调度全屏弹窗", col2X,
-                          28.0f + halfW * 2.0f - swW, in.cfg.fullscreenPopup,
+            drawSwitchRow(id + ".fs", "调度全屏弹窗", 96.0f,
+                          in.cfg.fullscreenPopup,
                           [f = a.applyFullscreenPopup](bool v) { f(v); });
         })
         .build();

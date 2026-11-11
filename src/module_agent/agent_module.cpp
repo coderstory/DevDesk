@@ -90,9 +90,6 @@ constexpr float kTaskCardPad = 12.0f;
 constexpr float kTaskCardInset = 10.0f;
 constexpr float kTaskCardGap = 8.0f;
 constexpr float kTaskCardH = 120.0f;   // 三行：22 + 18 + 18 + 行距 11×2 + 上下 pad 12×2
-// 任务行「配置异常」标记宽：4 个 CJK 字 @12px = 48，留 8 余量（文案再长就换行/截断，
-// 原因全文在详情弹窗配置摘要里）
-constexpr float kTaskWarnW = 56.0f;
 // hover 操作组（F-66-4）：五个 28×28 图标钮，间距 4 → 组宽 156。
 // 组右缘必须 = 卡右缘 −14（探针 G2 断言），故 actionsX = cardW −14 − kTaskActionsW
 constexpr float kTaskIconBtn = 28.0f;
@@ -767,17 +764,40 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const float pillTextW = core::TextPrimitive::measureTextWidth(
                             status, "", stSmall.fontSize, 500);
                         const float pillW = pillTextW + core::theme::scaled(30.0f);
+                        // need261 §2.2 行1 inline：药丸永远紧贴标题实宽 +8（不再
+                        // 钉卡右缘）；标题实宽封顶 = 卡内可用 − 8 − 药丸宽，超长
+                        // 单行省略（挤压顺序：标题最先饿→药丸定宽不缩）
+                        const float inlineGap = core::theme::scaled(8.0f);
+                        const float titleMeasuredW =
+                            core::TextPrimitive::measureTextWidth(
+                                task.name, "", stTitle.fontSize, 600);
+                        const float titleMaxInlineW =
+                            std::max(0.0f, cardW - cardPad * 2.0f - inlineGap -
+                                               pillW);
                         const float titleW =
-                            std::max(0.0f, cardW - cardPad * 2.0f -
-                                               kTaskActionsW - 8.0f);
+                            std::min(titleMeasuredW, titleMaxInlineW);
                         const float titleRowY = cardPad;
                         const float statusRowY =
                             titleRowY + stTitle.lineHeight + rowGap;
                         const float triggerRowY =
                             statusRowY + stSmall.lineHeight + rowGap;
                         const float actionsX = cardW - 14.0f - kTaskActionsW;
+                        // need261 §3 hover 碰撞守卫：标题实宽+8+药丸宽 触到操作组
+                        // 左缘 −8 时，hover 期间药丸隐退（回退现行为）、标题收窄
+                        // 至 卡右−14−156−8−12；非 hover / 无碰撞不动
+                        const float pillHoverFadeEdge =
+                            cardW - 14.0f - kTaskActionsW - 8.0f;
+                        const bool pillCollides =
+                            titleMeasuredW + inlineGap + pillW >
+                            pillHoverFadeEdge;
+                        const float titleHoverMaxW =
+                            std::max(0.0f, pillHoverFadeEdge - 12.0f);
+                        const bool pillHidden = hovered && pillCollides;
+                        // need261 §2.2 行1：药丸 inline x = 12 + 标题实宽(截断后) + 8
+                        const float pillX = cardPad + titleW + inlineGap;
+                        // need261 §2.2 行3：启动钮迁左轨（x=12、y=行3顶 76），
+                        // 尺寸 56×32 / 文案 / disabled 语义全不动
                         const float runW = kTaskActionW;
-                        const float runX = cardW - cardPad - runW;
 
                         inner.stack(id)
                             .size(cardW, cardH)
@@ -831,7 +851,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 }
                                 cardBg.build();
 
-                                // 行 1 左：任务名（悬停时让位给右侧操作组）
+                                // 行 1 左：任务名（实宽封顶 inline 药丸；碰撞守卫
+                                // 触发时 hover 态收窄让位操作组）
                                 inner.text(id + ".title")
                                     .position(cardPad, titleRowY)
                                     .size(titleW, stTitle.lineHeight)
@@ -840,35 +861,43 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .lineHeight(stTitle.lineHeight)
                                     .fontWeight(600)
                                     .wrap(false)
-                                    .maxWidth(titleW)
+                                    .maxWidth(pillHidden ? titleHoverMaxW
+                                                         : titleW)
                                     .overflow(core::TextOverflow::Ellipsis)
                                     .color(taskOff
                                                ? components::theme::withOpacity(
                                                      t.colors.textPrimary, 0.45f)
                                                : t.colors.textPrimary)
                                     .build();
-                                // 行 1 右：状态药丸（点 + 文案，软底）——hover 时让位
+                                // 行 1 状态药丸（点 + 文案，软底）inline 跟标题；
+                                // 碰撞守卫触发时 hover 期隐退（120ms OutCubic，
+                                // 复用操作组同时长——need261 §5 动效表）
+                                const auto pillFade =
+                                    core::Transition::make(0.12f,
+                                                           core::Ease::OutCubic);
                                 inner.rect(id + ".pill.bg")
-                                    .position(cardW - cardPad - pillW,
+                                    .position(pillX,
                                               titleRowY + core::theme::scaled(2.0f))
                                     .size(pillW, stSmall.lineHeight)
                                     .radius(t.sizes.radiusPill)
                                     .color(components::theme::withOpacity(
                                         statusColor, 0.16f))
-                                    .opacity(hovered ? 0.0f : 1.0f)
+                                    .opacity(pillHidden ? 0.0f : 1.0f)
+                                    .transition(pillFade)
+                                    .animate(core::AnimProperty::Opacity)
                                     .build();
                                 inner.rect(id + ".status.dot")
-                                    .position(cardW - cardPad - pillW +
-                                                  core::theme::scaled(6.0f),
+                                    .position(pillX + core::theme::scaled(6.0f),
                                               titleRowY + core::theme::scaled(7.0f))
                                     .size(8.0f, 8.0f)
                                     .radius(8.0f)
                                     .color(statusColor)
-                                    .opacity(hovered ? 0.0f : 1.0f)
+                                    .opacity(pillHidden ? 0.0f : 1.0f)
+                                    .transition(pillFade)
+                                    .animate(core::AnimProperty::Opacity)
                                     .build();
                                 inner.text(id + ".status")
-                                    .position(cardW - cardPad - pillW +
-                                                  core::theme::scaled(18.0f),
+                                    .position(pillX + core::theme::scaled(18.0f),
                                               titleRowY + core::theme::scaled(2.0f))
                                     .size(std::max(0.0f,
                                                    pillW - core::theme::scaled(24.0f)),
@@ -879,7 +908,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .fontWeight(600)
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(statusColor)
-                                    .opacity(hovered ? 0.0f : 1.0f)
+                                    .opacity(pillHidden ? 0.0f : 1.0f)
+                                    .transition(pillFade)
+                                    .animate(core::AnimProperty::Opacity)
                                     .build();
                                 // 行 1 右：hover 操作组（F-66-4）。zIndex 2 高于命中面，
                                 // 按钮才点得到；stack 必须给 size 才有布局盒。
@@ -971,80 +1002,92 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     })
                                     .build();
 
-                                // 行 2：徽章组（配置异常 / 限次 / 已停用）+ 最近运行时间右对齐
+                                // 行 2 元数据链（need261 §2.2）：徽章（实宽，
+                                // 废除定宽 56）→ 触发文案 → 最近运行，枚间距 10、
+                                // 纯间距分链；链尾（最近运行）最先省略
                                 float badgeX = cardPad;
                                 auto badge = [&](const std::string& suffix,
                                                  const std::string& text,
                                                  const eui::Color& color) {
+                                    const float textW =
+                                        core::TextPrimitive::measureTextWidth(
+                                            text, "", stSmall.fontSize, 400);
                                     inner.text(id + suffix)
                                         .position(badgeX, statusRowY)
-                                        .size(kTaskWarnW, stSmall.lineHeight)
+                                        .size(textW, stSmall.lineHeight)
                                         .text(text)
                                         .fontSize(stSmall.fontSize)
                                         .lineHeight(stSmall.lineHeight)
                                         .color(color)
                                         .build();
-                                    badgeX += kTaskWarnW + core::theme::scaled(6.0f);
+                                    badgeX += textW + core::theme::scaled(10.0f);
                                 };
                                 if (hasProblem) {
                                     badge(".warn", "配置异常", t.colors.errorText);
                                 }
                                 if (limited) {
                                     badge(".limit", runLimitBadge(limitIt->second),
-                                          t.colors.warning);
+                                          t.colors.warningText);
                                 }
                                 if (taskOff) {
                                     badge(".off", "已停用", t.colors.textTertiary);
                                 }
+                                // 触发文案入行 2 链中（cron 原文 / 类型标签；
+                                // 徽章后无空档，极端超宽时卡右兜底截断）
+                                const std::string cron = cronTextOf(task);
+                                std::string triggerText =
+                                    cron.empty() ? triggerLabelOf(task.triggerType)
+                                                 : cron;
+                                const float triggerW = std::min(
+                                    core::TextPrimitive::measureTextWidth(
+                                        triggerText, "", stSmall.fontSize, 400),
+                                    std::max(0.0f, cardW - cardPad - badgeX));
+                                inner.text(id + ".trigger")
+                                    .position(badgeX, statusRowY)
+                                    .size(triggerW, stSmall.lineHeight)
+                                    .text(triggerText)
+                                    .fontSize(stSmall.fontSize)
+                                    .lineHeight(stSmall.lineHeight)
+                                    .wrap(false)
+                                    .maxWidth(triggerW)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .color(t.colors.textSecondary)
+                                    .build();
+
                                 const std::string lastRunText =
                                     it == latestRuns_.end()
                                         ? std::string("未运行过")
                                         : "最近运行 " + relativeTimeText(
                                                             it->second.startedAt, nowSec);
-                                // 起点避开左侧徽章（badgeX 已被上面的徽章推进），
-                                // 否则三枚徽章齐挂时右对齐文字会压到徽章上
-                                const float lastRunX = badgeX;
+                                // 链尾（废除右对齐）：触发后间距 10，吃剩余宽到
+                                // 卡右内边距；放不下（≤0）不建元素
+                                const float lastRunX =
+                                    badgeX + triggerW + core::theme::scaled(10.0f);
                                 const float lastRunW = std::max(
                                     0.0f, cardW - cardPad - lastRunX);
-                                inner.text(id + ".lastrun")
-                                    .position(lastRunX, statusRowY)
-                                    .size(lastRunW, stSmall.lineHeight)
-                                    .text(lastRunText)
-                                    .fontSize(stSmall.fontSize)
-                                    .lineHeight(stSmall.lineHeight)
-                                    .wrap(false)
-                                    .maxWidth(lastRunW)
-                                    .overflow(core::TextOverflow::Ellipsis)
-                                    .horizontalAlign(eui::HorizontalAlign::Right)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-
-                                // 行 3：触发条件（cron 原文 / 常驻 / 一次性类型标签），
-                                // 右侧给常驻「启动」让位
-                                const std::string cron = cronTextOf(task);
-                                std::string triggerText =
-                                    cron.empty() ? triggerLabelOf(task.triggerType)
-                                                 : cron;
-                                inner.text(id + ".trigger")
-                                    .position(cardPad, triggerRowY)
-                                    .size(std::max(0.0f, runX - cardPad - 8.0f),
-                                          stSmall.lineHeight)
-                                    .text(triggerText)
-                                    .fontSize(stSmall.fontSize)
-                                    .lineHeight(stSmall.lineHeight)
-                                    .wrap(false)
-                                    .maxWidth(std::max(0.0f, runX - cardPad - 8.0f))
-                                    .overflow(core::TextOverflow::Ellipsis)
-                                    .color(t.colors.textSecondary)
-                                    .build();
+                                if (lastRunW > 0.0f) {
+                                    inner.text(id + ".lastrun")
+                                        .position(lastRunX, statusRowY)
+                                        .size(lastRunW, stSmall.lineHeight)
+                                        .text(lastRunText)
+                                        .fontSize(stSmall.fontSize)
+                                        .lineHeight(stSmall.lineHeight)
+                                        .wrap(false)
+                                        .maxWidth(lastRunW)
+                                        .overflow(core::TextOverflow::Ellipsis)
+                                        .color(t.colors.textTertiary)
+                                        .build();
+                                }
 
                                 // 「启动」常驻主操作（不随 hover；Primary 表达主次），zIndex 2
                                 // 压在命中面之上。手搓而非 components::button 的取舍见
                                 // textActionChip shortcut 注释（其 onHover 障碍已消，
                                 // 剩余行为差异：果冻新增/zIndex 透传/文案 id 契约）。
+                                // need261 唯一记忆点：从右下角迁左轨行 3（x=12、
+                                // y=triggerRowY 76 原值，纵向契约零漂移）。
                                 textActionChip(
-                                    inner, id + ".run", runX,
-                                    triggerRowY - core::theme::scaled(7.0f), runW,
+                                    inner, id + ".run", cardPad,
+                                    triggerRowY, runW,
                                     core::theme::scaled(32.0f),
                                     runStarted ? "运行中…" : "启动",
                                     core::theme::scaled(12.0f), themeTokens,

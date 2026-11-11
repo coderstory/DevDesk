@@ -108,7 +108,7 @@ inline std::string runLimitText(int maxRuns) {
 // 增长（9→12→108）时把图标/文本/计数压叠，改流式自适应纯函数：
 //   2×padX + 图标盒 + 6 + 「可用工具」文字 + 8 + 计数 badge（primarySoftBg pill）
 // badge 宽 = 左右内边距 8×2 + 位数×字号；文字/位数逐字按 fontSize 保守估
-//（CJK 全宽口径，同 kTaskWarnW 注释约定），实渲染更窄 → badge 只会留白不会越界。
+//（CJK 全宽口径保守估），实渲染更窄 → badge 只会留白不会越界。
 // 缩放跟随 core::theme::scaled；scale=1 时 N=3/19/108 → 136/150/164（设计稿验证值）。
 // 按钮右缘由页头布局锚定（title 吃剩余宽），位数增长只向左扩。
 inline float toolsEntryButtonWidth(int toolCount) {

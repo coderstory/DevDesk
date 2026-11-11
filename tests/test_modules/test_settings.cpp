@@ -3786,15 +3786,22 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）；
         // 2026-10-27：壁纸开关收进插拔卡第 7 格，模块 tab 恒单卡（格不另立卡根）。
-        // 置顶 BUG 复盘（09d8aa62）：插拔卡后追加「提醒弹窗」矮卡（双开关默认关）。
-        // F-10：md_assoc 无门控恒显，排在 reminder 之后（壁纸开关已入插拔卡，
-        // theirs 的独立壁纸卡不再存在）。
+        // 置顶 BUG 复盘（09d8aa62）：插拔卡后追加「提醒弹窗」卡（双开关默认关）。
+        // F-10：md_assoc 无门控恒显，排在 reminder 之后；need260 半宽重排：
+        // reminder|md_assoc 成配对行（卡根转入 pair.0 子元素）。
         const std::vector<std::string> wantModulesAll = {
             "settings.card.modules",
-            "settings.card.reminder",
-            "settings.card.md_assoc"};
+            "settings.cards.pair.0"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
+        const auto modulesPairChildren =
+            pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
+        const std::vector<std::string> wantModulesPairChildren = {
+            "settings.card.reminder",
+            "settings.card.md_assoc"};
+        DOCTEST_CHECK_MESSAGE(modulesPairChildren == wantModulesPairChildren,
+                              "模块 tab 配对行子卡 实测：" +
+                                  join(modulesPairChildren));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
         const std::vector<std::string> wantLog = {
             "settings.card.log",
@@ -3817,8 +3824,8 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
             "settings.card.modules",
-            "settings.card.reminder",  // 提醒卡无模块门控（开关语义非模块启停）
-            "settings.card.md_assoc"};  // F-10：无门控恒显
+            "settings.cards.pair.0"};  // need260：reminder|md_assoc 半宽配对行
+                                       //（两卡均无模块门控，恒显）
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));

@@ -132,16 +132,17 @@ const CardSpec kCardSpecs[] = {
      0.0f, false, /*half=*/false, &drawMcpCard, nullptr},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::ModulesGrid,
      0.0f, false, /*half=*/false, &drawModulesCard, nullptr},
-    // 上线提醒卡（模块 tab 矮卡 92：310+16+92=418 ≤ 可用 420，零滚动不破）。
-    // 无模块门控：开关语义是 release 行为而非模块启停，release 关时卡保留。
+    // 提醒弹窗卡（need260 设计 §7：模块 tab 半宽配对左卡，与 md 关联卡成对，
+    // flushHalfPair 现机制直接生效、行高 = max 对内卡高）。无模块门控：开关
+    // 语义是 release 行为而非模块启停，release 关时卡保留。
     {kTabModules, "settings.card.reminder", nullptr, CardHeightKind::Fixed,
-     kReminderCardHeight, false, /*half=*/false, &drawReminderCard, nullptr},
-    // 「关联 .md 文件」卡（F-10）：模块 tab 末位全宽（应用级能力开关，壁纸
-    // 开关已入插拔卡，同 tab 语义先例）。卡高动态（引导行有无/平台档），
-    // compose 按状态字四态算好传 mdAssocH；模块 tab 零滚动预算随 mdAssocH
-    // 增量由 qa 验收把关（418+16+卡高，超 420 出页级滚动）。
+     kReminderCardHeight, false, /*half=*/true, &drawReminderCard, nullptr},
+    // 「关联 .md 文件」卡（F-10）：模块 tab 末位半宽配对右卡（应用级能力开关，
+    // 壁纸开关已入插拔卡，同 tab 语义先例）。卡高动态（引导带有无/平台档），
+    // compose 按状态字四态算好传 mdAssocH；模块 tab 零滚动预算见 need260 §6
+    // （默认 402 / Win 引导 414 ≤ 可用 420，含旧设计溢出的引导态）。
     {kTabModules, "settings.card.md_assoc", nullptr, CardHeightKind::MdAssoc,
-     0.0f, false, /*half=*/false, &drawMdAssocCard, nullptr},
+     0.0f, false, /*half=*/true, &drawMdAssocCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,

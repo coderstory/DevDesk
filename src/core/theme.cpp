@@ -37,6 +37,8 @@ namespace {
         c.warning = eui::Color("#FBBF24");
         c.error = eui::Color("#F87171");
         c.errorText = eui::Color("#F87171");  // 深底 6.40:1，与 error 同值
+        c.successText = eui::Color("#34D399");  // 深底 7.99:1，与 success 同值
+        c.warningText = eui::Color("#FBBF24");  // 深底 8.60:1，与 warning 同值
         // macOS 自绘标题栏钮推导档（设计 2026-11-06 §5 状态表：深主题列）
         c.titlebarCloseHover = eui::Color("#EF4444");
         c.titlebarClosePressed = eui::Color("#DC2626");
@@ -98,6 +100,8 @@ namespace {
         c.warning = eui::Color("#F59E0B");
         c.error = eui::Color("#EF4444");
         c.errorText = eui::Color("#B91C1C");  // 深红档：on 白 6.47 / on #FAFAF9 6.19 / on 10% 红粉底 5.46（#EF4444 本身压粉底仅 3.18）
+        c.successText = eui::Color("#157E4E");  // 深绿档：on 白 5.28 / on #FAFAF9 5.06（#10B981 本身压白底仅 2.30）
+        c.warningText = eui::Color("#B45309");  // 深橙档：on 白 4.71 / on #FAFAF9 4.52（#F59E0B 本身压白底仅 1.97）
         // macOS 自绘标题栏钮推导档（设计 2026-11-06 §5 状态表：浅主题列；
         // titlebarClosePressed = errorText 同值 #B91C1C）
         c.titlebarCloseHover = eui::Color("#DC2626");

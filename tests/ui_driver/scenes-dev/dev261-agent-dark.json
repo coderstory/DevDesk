@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["markdown", "todo", "claude_proxy", "agent"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.toggle.hot",
+     "_comment": "收起侧栏（208→72）：820 档下新建任务弹窗（最小 720 宽）不收侧栏会溢出窗外（既有弹窗行为，与本卡重排无关）"},
+    {"type": "click", "id": "app.sidebar.item.Agent.hit",
+     "_comment": "need261 视觉验证：进智能体页"},
+    {"type": "wait", "until": "exists", "id": "agent.empty.action.bg",
+     "_comment": "空库 → 空态「新建任务」钮（页头主钮仅在列表非空时渲染）"},
+    {"type": "click", "id": "agent.empty.action.bg", "_comment": "新建任务一（正常长度标题）"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "发版巡检-生产库", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg", "_comment": "跳「指令」步填 goal"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "巡检生产库发版状态", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg", "_comment": "跳「执行与安全」步（save 在此）"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.1.title"},
+    {"type": "click", "id": "agent.page.newTask.bg", "_comment": "新建任务二（超长标题：截断+药丸跟随+碰撞守卫形态）"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "一个特别特别长的智能体任务名称用来验证标题单行截断省略号与状态药丸跟随", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "长标题卡片观察", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.2.title"},
+    {"type": "wait", "ms": 800,
+     "_comment": "等列表项入场动画（~200ms 滑入/淡出）走完再截，防截到 opacity 0"},
+    {"type": "screenshot", "path": "need261-agent-dark.png"}
+  ]
+}

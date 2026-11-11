@@ -115,9 +115,12 @@ inline constexpr float kEditorFontCardHeight = 184.0f;
 inline constexpr float kModulesCardHeight = 310.0f;
 inline constexpr float kModulesCardHeightWallpaper = 310.0f;
 // 模块插拔卡几何见下方 roundFs 之后的 modules* 派生函数（B6/F-69-3）。
-// 上线提醒卡（模块 tab，插拔卡下方）：标题 22 + 开关行 32 + 下边距 16 = 92。
-// 模块 tab 预算：310 + 16 间距 + 92 = 418 ≤ 可用 420（最小窗零滚动不破）。
-inline constexpr float kReminderCardHeight = 92.0f;
+// 提醒弹窗卡（模块 tab，与 md 关联卡半宽配对，need260 设计 §2.2）：
+// 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y96 盒28
+//（行底 124）+ 下边距 16 = 140，三带格律与模块卡/通用配对卡同源。
+// 模块 tab 预算（need260 §6）：310 + 8 间距 + max(140, md 卡高) —— 默认 402 ≤
+// 可用 420 零滚动；Win 引导态 md 卡 152 → 414 仍在预算内。
+inline constexpr float kReminderCardHeight = 140.0f;
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + H28 间距令牌恢复）：
 // 卡高由最坏行序决定——H28 后（100% 档，设计系统 v1.0 令牌 4/8/12/16）：

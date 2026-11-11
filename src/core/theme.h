@@ -46,6 +46,12 @@ struct ColorTokens {
     // 仅 3.18:1，低于 WCAG AA 4.5:1。浅色档 = 深红；深色档 = error 同值。
     // 错误文字用本 token；红底/边框/圆点/图标继续用 error
     eui::Color errorText;
+    // success / warning 作文字色的专用 token（同 errorText 模式，need260/261 批）：
+    // 浅色 #10B981/#F59E0B 作 12px 小字压白底仅 ~2.3:1，低于 WCAG AA 4.5:1。
+    // 浅色档 = 加深（#157E4E 5.1:1 / #B45309 4.52:1）；深色档 = success/warning 同值。
+    // 状态字/引导文案/徽章文字用本 token；圆点/软底/图标继续用 success/warning
+    eui::Color successText;
+    eui::Color warningText;
     // macOS 自绘标题栏钮（need:140 路线 B，设计文档 2026-11-06 §5 状态表落库；
     // 推导档不许在业务代码裸写，全部走槽位）：关闭钮 hover/pressed 加深档、
     // 最小化钮 hover/pressed 加深档。全屏钮三态 = 既有 primary/primaryHover/
