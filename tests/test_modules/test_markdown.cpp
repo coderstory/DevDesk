@@ -9348,3 +9348,251 @@ REGISTER_TEST(md_viewer_session_registry,
     std::filesystem::remove_all(dir, ec);
     return true;
 })
+
+// ─── need264：点→显示码点反查（displayCpForPoint 渲染同源性）──────────────
+// 硬验收 = 反查与 hitRectsForDisplayRange 同源零漂移：对 inline 域（CJK/英文/
+// 折行/列表）逐码点取单码点矩形，矩形左缘(+ε)反查必须回到同一码点、右缘(-ε)
+// 必须推进到下一码点；Code 虚拟行近似域断言带内；表格 cell 包围盒域断言 cell
+// 级落位；两端钳制（0 / 总码点数）与 Divider-only 的 ok=false 契约收口。
+REGISTER_TEST(md_viewer_selection_point_cp_roundtrip,
+              "markdown_module: need264 displayCpForPoint 点→码点反查——hitRects 往返零漂移 + CJK/折行/代码/表格域 + 两端钳制", {
+    constexpr float kWidth = 420.0f;
+    const components::MarkdownStyle style;
+    const std::string text =
+        "# CJK 标题\n\n"
+        "正文段落：中文连续排布会真实折行，English words 混排验证最近边界反查，"
+        "这一段刻意写到足够长确保 wrap 发生出现第二行带。\n\n"
+        "- 列表项含 `inlineCode` 词\n\n"
+        "```cpp\n// 中文注释：计账必须按码点\nint x = 42; // 行尾注解 值=42\n```\n\n"
+        "| 甲 | 乙 |\n| --- | --- |\n| 丙 | 丁 |\n";
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() >= 5);
+
+    auto displayCps = [](const std::string& blockSource) {
+        const std::string d = components::MarkdownBuilder::displayTextOf(blockSource);
+        size_t n = 0, i = 0;
+        while (i < d.size()) {
+            const unsigned char c = static_cast<unsigned char>(d[i]);
+            i += std::min<size_t>(c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                                  d.size() - i);
+            ++n;
+        }
+        return std::pair<std::string, size_t>{d, n};
+    };
+
+    int checkedInline = 0;
+    bool codeBlockChecked = false;
+    for (size_t k = 0; k < blocks.size(); ++k) {
+        const std::string btext =
+            text.substr(blocks[k].start, blocks[k].end - blocks[k].start);
+        const bool isCode = btext.find("```") != std::string::npos;  // 块源可能带前导空行
+        const bool isTable = btext.find('|') != std::string::npos;
+        const auto [disp, cps] = displayCps(btext);
+        if (cps == 0) continue;
+        if (isCode) {
+            // Code 虚拟行近似域（P1 回归：块内含 CJK 注释，计账必须按码点）：
+            // 逐码点左缘往返（字节计账时 CJK 之后的 hit.cp 会膨胀为字节偏移即红）
+            // + cp0 左缘 + 越端钳到文本末。
+            int codeChecked = 0;
+            for (size_t cp = 0; cp < cps; ++cp) {
+                const auto rects = components::MarkdownBuilder::hitRectsForDisplayRange(
+                    btext, kWidth, style, cp, cp + 1);
+                if (rects.empty()) continue;
+                const auto hitL = components::MarkdownBuilder::displayCpForPoint(
+                    btext, kWidth, style, rects[0].x + 0.5f,
+                    rects[0].y + rects[0].h * 0.5f);
+                DOCTEST_CHECK_MESSAGE(
+                    hitL.ok && hitL.cp == cp,
+                    "code 左缘往返 cp=" + std::to_string(cp) + " hit=" +
+                        std::to_string(hitL.cp));
+                ++codeChecked;
+            }
+            DOCTEST_CHECK(codeChecked > 0);
+            const auto hitEnd = components::MarkdownBuilder::displayCpForPoint(
+                btext, kWidth, style, kWidth * 2.0f, 1e6f);
+            DOCTEST_CHECK(hitEnd.cp <= cps);
+            codeBlockChecked = true;
+            continue;
+        }
+        if (isTable) {
+            // 表格 cell 包围盒域：cell 级落位——(0,0) 邻域 → cell(甲)=cp0。
+            // displayTextOf 域 = 行内 cell 串接 + 行间 '\n'（"甲乙|丙丁"，5 cps，
+            // need264 口径对齐后 hitRects/displayCpForPoint/显示文本三方一致）。
+            const auto hitA = components::MarkdownBuilder::displayCpForPoint(
+                btext, kWidth, style, 1.0f, 1.0f);
+            DOCTEST_CHECK(hitA.ok);
+            DOCTEST_CHECK(hitA.cp == 0);
+            const auto hitEnd = components::MarkdownBuilder::displayCpForPoint(
+                btext, kWidth, style, kWidth - 1.0f, 1e6f);
+            DOCTEST_CHECK(hitEnd.cp <= cps);
+            continue;
+        }
+        // inline 域（标题/段落/列表）：逐码点左缘/右缘往返
+        for (size_t cp = 0; cp < cps; ++cp) {
+            const auto rects = components::MarkdownBuilder::hitRectsForDisplayRange(
+                btext, kWidth, style, cp, cp + 1);
+            if (rects.empty()) continue;
+            const float cy = rects[0].y + rects[0].h * 0.5f;
+            const auto hitL = components::MarkdownBuilder::displayCpForPoint(
+                btext, kWidth, style, rects[0].x + 0.5f, cy);
+            DOCTEST_CHECK_MESSAGE(
+                hitL.cp == cp,
+                "左缘往返 blk=" + std::to_string(k) + " cp=" + std::to_string(cp) +
+                    " hit=" + std::to_string(hitL.cp) + " disp=" + disp);
+            // 右缘推进仅在「cp 矩形未吞并 cp+1 矩形」时有意义：同行相邻矩形
+            // 连续化（kMergeGapPx=8）是既有行为——marker 盒与首内容字间隙恰为
+            // 8px 时合并成一带，右缘落在 cp+1 字形内，最近边界 = cp+2（正确）。
+            const auto nextRects = components::MarkdownBuilder::hitRectsForDisplayRange(
+                btext, kWidth, style, cp + 1, cp + 2);
+            const bool swallowedNext =
+                !nextRects.empty() &&
+                nextRects[0].x >= rects[0].x - 0.5f &&
+                nextRects[0].x + nextRects[0].w <=
+                    rects[0].x + rects[0].w + 0.5f;
+            if (rects[0].w > 2.0f && !swallowedNext) {
+                const auto hitR = components::MarkdownBuilder::displayCpForPoint(
+                    btext, kWidth, style, rects[0].x + rects[0].w - 0.5f, cy);
+                DOCTEST_CHECK_MESSAGE(
+                    hitR.cp == cp + 1,
+                    "右缘推进 blk=" + std::to_string(k) + " cp=" +
+                        std::to_string(cp) + " hit=" + std::to_string(hitR.cp));
+            }
+            ++checkedInline;
+        }
+        // 两端钳制：起点与越界终点
+        const auto hit0 = components::MarkdownBuilder::displayCpForPoint(
+            btext, kWidth, style, 0.0f, 0.0f);
+        DOCTEST_CHECK(hit0.ok);
+        DOCTEST_CHECK(hit0.cp == 0);
+        const auto hitZ = components::MarkdownBuilder::displayCpForPoint(
+            btext, kWidth, style, kWidth * 2.0f, 1e6f);
+        DOCTEST_CHECK(hitZ.cp == cps);  // 越界钳到块显示文本末
+    }
+    DOCTEST_CHECK(checkedInline > 40);
+    DOCTEST_CHECK(codeBlockChecked);
+    return true;
+})
+
+// ─── need264：选区文本构建（seam 直驱，与鼠标抬起同一条 viewerSelText）─────
+// 硬验收：显示文本域无 markdown 标记符；块切片按阅读序 '\n' 连接；CJK 码点域
+// 切片无半字；空选择 = 空串；块越界拒绝。
+REGISTER_TEST(md_viewer_selection_text_seam,
+              "markdown_module: need264 选区文本构建——标记符剥离 + 多块 '\\n' 连接 + CJK 无半字 + 空选择/越界边界", {
+    using namespace module::markdown;
+    resetViewerSessionsForTest();
+    app::consumeWindowRequests();
+    const std::filesystem::path dir = test_support::makeTempDir("mdviewer_", "sel");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    const std::string body =
+        "# 标题\n\n"
+        "中文段落 **加粗** 与 `code` 标记。\n\n"
+        "- 甲项\n- 乙项\n";
+    {
+        std::ofstream f(dir / "sel.md", std::ios::trunc);
+        f << body;
+    }
+    openViewerWindow((dir / "sel.md").string());
+    DOCTEST_REQUIRE_EQ(viewerSessionCountForTest(), size_t(1));
+    app::consumeWindowRequests();
+    const std::string path = (dir / "sel.md").string();
+
+    module::markdown::MdBlockModel model;
+    model.update(body);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() >= 3);  // 标题 / 段落 / 列表组
+
+    // 越界块拒绝注入
+    DOCTEST_CHECK_FALSE(viewerSelectionInjectForTest(path, blocks.size() + 5, 0, 0, 0));
+
+    // 单块 CJK 码点切片：「中文段落 **加粗** …」显示域 = 中文段落 加粗 与 code 标记。
+    // cp[2,4) = 「段落」（无半字）；cp[0,end) 全块。
+    DOCTEST_REQUIRE(viewerSelectionInjectForTest(path, 1, 2, 1, 4));
+    DOCTEST_CHECK_EQ(viewerSelectionTextForTest(path), std::string("段落"));
+    DOCTEST_REQUIRE(viewerSelectionInjectForTest(path, 1, 0, 1, 1000));  // cp 越界钳到块末
+    const std::string blk1All = viewerSelectionTextForTest(path);
+    DOCTEST_CHECK(blk1All.find("**") == std::string::npos);   // 无加粗标记
+    DOCTEST_CHECK(blk1All.find("`") == std::string::npos);    // 无行内码标记
+    DOCTEST_CHECK(blk1All.find("标记") != std::string::npos);  // 全块切片含块尾词
+
+    // 多块（标题→列表组）按阅读序 '\n' 连接：期望 = 各块显示文本 join
+    const std::string d0 = components::MarkdownBuilder::displayTextOf(
+        body.substr(blocks[0].start, blocks[0].end - blocks[0].start));
+    const std::string d2 = components::MarkdownBuilder::displayTextOf(
+        body.substr(blocks[2].start, blocks[2].end - blocks[2].start));
+    DOCTEST_REQUIRE(viewerSelectionInjectForTest(path, 0, 0, 2, 1000));
+    DOCTEST_CHECK_EQ(viewerSelectionTextForTest(path), d0 + "\n" + blk1All + "\n" + d2);
+
+    // 逆序拖选（自下而上）归一化到同一阅读序文本
+    DOCTEST_REQUIRE(viewerSelectionInjectForTest(path, 2, 1000, 0, 0));
+    DOCTEST_CHECK_EQ(viewerSelectionTextForTest(path), d0 + "\n" + blk1All + "\n" + d2);
+
+    // 空选择（锚=焦）= 空串（复制语义：不写剪贴板）
+    DOCTEST_REQUIRE(viewerSelectionInjectForTest(path, 1, 3, 1, 3));
+    DOCTEST_CHECK_EQ(viewerSelectionTextForTest(path), std::string());
+
+    // 3 字节 CJK 码点域切片（[1,3) = 文段，无半字节——码点切片天然对齐；
+    // emoji 走 probe 文档覆盖）
+    DOCTEST_REQUIRE(viewerSelectionInjectForTest(path, 1, 1, 1, 3));
+    DOCTEST_CHECK_EQ(viewerSelectionTextForTest(path), std::string("文段"));
+
+    resetViewerSessionsForTest();
+    std::filesystem::remove_all(dir, ec);
+    return true;
+})
+
+// ─── need264 P2：列表 marker 点选反查——右对齐字形宽反推桶位 ──────────────
+// marker 渲染为 markerWidth 盒内右对齐文本（renderListItem .mark）：字形右缘贴
+// 盒右、左侧留白。反查契约：字形左留白 → cp0；字形右与内容起点之间空隙 →
+// marker 末（ordered "1."=2 码点 / task "[ ]"=3 / unordered "-"=1）；有序与
+// task marker 不再落进字形中间（残段开头）。
+REGISTER_TEST(md_viewer_selection_marker_bucket,
+              "markdown_module: need264 marker 点选反查——右对齐字形宽桶位（ordered/task/unordered 三形态）", {
+    constexpr float kWidth = 420.0f;
+    const components::MarkdownStyle style;
+
+    auto bucket = [&](const std::string& src, float markerWidth,
+                      const char* prefix) -> std::size_t {
+        const float span = components::detail::measureMarkdownTextWidth(
+            prefix, style.fontFamily, style.bodySize, 400);
+        const float glyphLeft = std::max(0.0f, markerWidth - span);
+        const auto before = components::MarkdownBuilder::displayCpForPoint(
+            src, kWidth, style, glyphLeft - 1.0f, 10.0f);
+        const auto inGap = components::MarkdownBuilder::displayCpForPoint(
+            src, kWidth, style, markerWidth + 4.0f, 10.0f);
+        const auto atGlyphStart = components::MarkdownBuilder::displayCpForPoint(
+            src, kWidth, style, glyphLeft + 1.0f, 10.0f);
+        DOCTEST_CHECK_MESSAGE(before.cp == 0,
+                              "字形左留白→0: src=" + src + " hit=" +
+                                  std::to_string(before.cp));
+        DOCTEST_CHECK_MESSAGE(
+            inGap.cp == std::string(prefix).size(),
+            "字形后空隙→marker 末: src=" + src + " hit=" +
+                std::to_string(inGap.cp) + " 期望=" +
+                std::to_string(std::string(prefix).size()));
+        DOCTEST_CHECK_MESSAGE(atGlyphStart.cp == 0,
+                              "首字形前半→0: src=" + src + " hit=" +
+                                  std::to_string(atGlyphStart.cp));
+        return before.cp + inGap.cp;
+    };
+
+    bucket("- 甲项", 24.0f, "-");        // unordered：marker 末 = 1
+    bucket("1. 首项", 24.0f, "1.");      // ordered：marker 末 = 2（残段回归点）
+    bucket("- [ ] 待办", 34.0f, "[ ]");  // task：marker 末 = 3
+
+    // 有序 marker 中段点选（"1." 的 '1' 与 '.' 之间边界 = 1）：字形内逐码点
+    // advance 半字宽边界，不再整段落 0 或整段落末。
+    const float spanDot = components::detail::measureMarkdownTextWidth(
+        "1.", style.fontFamily, style.bodySize, 400);
+    const float glyphLeftDot = std::max(0.0f, 24.0f - spanDot);
+    const float wOne = components::detail::measureMarkdownTextWidth(
+        "1", style.fontFamily, style.bodySize, 400);
+    const auto hitMid = components::MarkdownBuilder::displayCpForPoint(
+        "1. 首项", kWidth, style, glyphLeftDot + wOne + 1.0f, 10.0f);
+    DOCTEST_CHECK_MESSAGE(hitMid.cp == 1,
+                          "'1'与'.'之间→1: hit=" + std::to_string(hitMid.cp));
+    return true;
+})

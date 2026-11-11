@@ -392,6 +392,31 @@ void mdDrawBlockFlowCore(eui::Ui& ui,
                                 onBlockTap(k, static_cast<float>(ev.y));
                             });
                         }
+                        // 块指针缝（need264 文本拖选）：回调按值拷贝（构建期后
+                        // 派发，禁引用栈上 hooks——internal.h 注释）；注册态光标
+                        // 改 IBeam（文本选择示能；编辑器不注册保持 Hand 原样）。
+                        if (hooks.onBlockPress) {
+                            hit.cursor(core::CursorShape::IBeam);
+                            hit.onPress(
+                                [fn = hooks.onBlockPress,
+                                 k](const components::MouseEvent& ev) {
+                                    fn(k, ev);
+                                });
+                        }
+                        if (hooks.onBlockDrag) {
+                            hit.onDrag(
+                                [fn = hooks.onBlockDrag,
+                                 k](const components::MouseEvent& ev) {
+                                    fn(k, ev);
+                                });
+                        }
+                        if (hooks.onBlockRelease) {
+                            hit.onRelease(
+                                [fn = hooks.onBlockRelease,
+                                 k](const components::MouseEvent& ev) {
+                                    fn(k, ev);
+                                });
+                        }
                         // onHover 回调是帧后事件（构建期已返回），禁引用捕获
                         // 栈上 deps——按值捕 hover 状态指针（所指对象 = 调用方
                         // 成员态，寿命覆盖 lambda），原 [this, sid] 等价形态。

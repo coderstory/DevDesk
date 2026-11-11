@@ -34,4 +34,15 @@ void resetViewerSessionsForTest();
 // onChange 同一条 viewerSearchApplyQuery 通路，不绕状态机。无匹配 session 返回 false。
 bool viewerSearchInjectForTest(const std::string& path, const std::string& query);
 
+// 测试缝（need264 直驱选择态）：对首个匹配 path 的 session 注入拖选终态
+//（anchor=(blockA,cpA) / focus=(blockB,cpB)，显示文本码点域）——与鼠标抬起
+// 同一条 selHasText/viewerSelText 通路（不绕自动复制语义：复制文本由
+// viewerSelectionTextForTest 读回）。无匹配 session 或块越界返回 false。
+bool viewerSelectionInjectForTest(const std::string& path, size_t blockA,
+                                  size_t cpA, size_t blockB, size_t cpB);
+
+// 测试缝（need264）：当前选区将被复制进剪贴板的文本（空选区 = 空串）——
+// 与 viewerSelRelease 实际写入剪贴板的字符串完全同一条构建函数。
+std::string viewerSelectionTextForTest(const std::string& path);
+
 } // namespace module::markdown

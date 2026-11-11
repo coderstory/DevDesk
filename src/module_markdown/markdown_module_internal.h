@@ -329,6 +329,9 @@ inline core::MenuAnchor menuAnchorForPointerInPage(const eui::PointerEvent& ev,
 struct MdRangeSpan {
     size_t begin = 0;
     size_t end = 0;
+    // need264：true = 文本选区区间（区别于搜索命中，查看器叠层分流着色）。
+    // 缺省 false = 搜索命中，编辑器/预览既有路径零影响。
+    bool selection = false;
 };
 
 // 查询缝返回的命中矩形：块局部坐标（x 自块左缘、y 自块顶）。
@@ -356,6 +359,16 @@ struct BlockFlowHooks {
         drawContent;
     std::function<void(eui::Ui& ui, size_t k, const std::string& hitId)>
         afterHitOverlay;
+    // 块指针缝（need264 查看器文本拖选）：注册于每块最上层的透明 hit MouseArea，
+    // 坐标 = 块包裹局部（x 自块左缘、y 自块顶，与 MdHitRect 同系）。press 在按下、
+    // drag 在超过拖拽阈值后连续、release 在按压结束（含拖与未拖）各必发一次。
+    // 三个回调按值拷贝进 MouseArea（构建期后事件派发），回调体内禁引用栈上
+    // 临时（bug259 onHover 同纪律：只捕 session 成员指针）。全空 = 不注册
+    // （编辑器/预览路径零行为变化，光标保持 Hand）。
+    std::function<void(size_t k, const components::MouseEvent& ev)> onBlockPress;
+    std::function<void(size_t k, const components::MouseEvent& ev)> onBlockDrag;
+    std::function<void(size_t k, const components::MouseEvent& ev)>
+        onBlockRelease;
     // 视口裁剪（性能，bug259-C）：非空时返回 false 的块整块不建元素。滚动总高
     // 不依赖逐块建元（scrollview contentHeightProvider 以几何表供给）。非空时
     // 渲染核根容器切换为绝对定位 stack（高 = totalHeight，可见块包裹 y =

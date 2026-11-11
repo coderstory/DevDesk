@@ -26,9 +26,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <system_error>
 #include <vector>
+
+#include <core/window/window_backend.h>  // setClipboardText：选中即自动复制（need264）
 
 namespace module::markdown {
 namespace {
@@ -85,12 +88,38 @@ struct ViewerSession {
     // 性能诊断资产（bug259）：DEVDESK_MDVIEWER_PERF=1 时启用（见 viewerCompose）
     std::vector<long long> perfFrameUs;   // 5s 窗口内逐帧 compose 耗时（P95/max）
     int perfLastBuiltBlocks = 0;          // 最近一帧实际建元块数（视口裁剪生效量）
+    // 5s 聚合器本体（need267-3 改会话成员态）：旧 static 跨会话共享把多窗的
+    // 帧数/耗时混进同一条 [viewer-perf]（多窗混计、单窗口径失真）。
+    int perfWindowFrames = 0;
+    long long perfWindowComposeUs = 0;
+    std::chrono::steady_clock::time_point perfWindowStart =
+        std::chrono::steady_clock::now();
+
+    // 文本选择（need264）：锚点/焦点 = (块下标, 块显示文本码点偏移)。码点域与
+    // 搜索 matches 同域（MarkdownBuilder::displayTextOf）；反查走渲染同源
+    // MarkdownBuilder::displayCpForPoint。抬起时非空选区写剪贴板（选中即自动
+    // 复制，老板 2026-11-11 原话），Ctrl+C 作兼容通道（viewerHandleKey）。
+    // selStyle 每帧 compose 回填：指针回调在帧间派发，禁捕 compose 栈上
+    // style（bug259 onHover 同纪律——只捕 session 成员指针）。
+    struct ViewerSelPos {
+        size_t block = 0;
+        size_t cp = 0;
+        bool operator==(const ViewerSelPos& o) const {
+            return block == o.block && cp == o.cp;
+        }
+    };
+    ViewerSelPos selAnchor{};
+    ViewerSelPos selFocus{};
+    bool selDragging = false;  // 按下→抬起之间（拖选进行中）
+    bool selHasText = false;   // 非空选区（拖选中实时高亮 + 抬起后保留）
+    components::MarkdownStyle selStyle{};
 
     // 命中矩形收集：onRangeRect 与 afterHitOverlay 在同一块包裹内先后配对，
     // 同帧同块缓冲（渲染核顺序保证见 mdDrawBlockFlowCore 查询缝注释）
     struct FrameRect {
         MdHitRect rect;
-        bool current = false;  // 当前命中 = 普通黄底之上再叠主色绿（设计 §3.4）
+        bool selection = false;  // need264 选区矩形（info 蓝低透明，画在搜索高亮之下）
+        bool current = false;    // 当前命中 = 普通黄底之上再叠主色绿（设计 §3.4）
     };
     std::vector<FrameRect> curBlockRects;
 };
@@ -144,6 +173,144 @@ void viewerJumpTo(ViewerSession& s, size_t matchIndex) {
     s.pendingJumpBlock = s.search.matches[matchIndex].block;  // build 后消费（时序契约见成员注释）
 }
 
+// ── 文本选择（need264）：命中反查 / 文本构建 / 自动复制 ──────────────────
+
+// 块源码切片（s.content 内 [start,end)）。
+std::string viewerBlockSource(const ViewerSession& s, size_t k) {
+    const auto& blocks = s.blockModel.blocks();
+    return s.content.substr(blocks[k].start, blocks[k].end - blocks[k].start);
+}
+
+// 显示文本码点 → 字节偏移（切片用）：lead byte 步进与 EUI countCodepoints 同表
+// 且钳位到串尾（截断尾序列不越界）——与 md_viewer_search byteToCp 互逆。
+size_t viewerSelCpToByte(const std::string& text, size_t cp) {
+    size_t i = 0;
+    for (size_t done = 0; done < cp && i < text.size(); ++done) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        i += std::min<size_t>(c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                              text.size() - i);
+    }
+    return i;
+}
+
+// 指针事件（按压块局部坐标）→ 选区锚点/焦点。跨块拖拽时事件坐标仍在按压块
+// 局部系：先经几何表回内容系 y 再定位目标块——屏外（视口裁剪不建树）块照常
+// 定位（几何表全量在；inline 布局按需惰性建，与 hitRects 同一缓存通路）。
+ViewerSession::ViewerSelPos viewerSelHitTest(const ViewerSession& s, size_t k,
+                                             float x, float y) {
+    using P = ViewerSession::ViewerSelPos;
+    const auto& blocks = s.blockModel.blocks();
+    if (blocks.empty()) return P{};
+    k = std::min(k, blocks.size() - 1);
+    const float contentY = std::max(0.0f, s.syncMap.blockTopY(k) + y);
+    size_t target = blocks.size() - 1;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (contentY < s.syncMap.blockTopY(i) + s.syncMap.blockHeight(i)) {
+            target = i;
+            break;
+        }
+    }
+    const float localY = std::max(0.0f, contentY - s.syncMap.blockTopY(target));
+    const float localX = std::clamp(x, 0.0f, s.viewerMeasureWidth);
+    const auto hit = components::MarkdownBuilder::displayCpForPoint(
+        viewerBlockSource(s, target), s.viewerMeasureWidth, s.selStyle,
+        localX, localY);
+    return P{target, hit.cp};
+}
+
+// 归一化到阅读序的选区 [b0/cp0, b1/cp1)；空选区（锚=焦）返回 false。
+bool viewerSelNormalized(const ViewerSession& s, size_t* b0, size_t* cp0,
+                         size_t* b1, size_t* cp1) {
+    const ViewerSession::ViewerSelPos& a = s.selAnchor;
+    const ViewerSession::ViewerSelPos& f = s.selFocus;
+    if (a == f) return false;
+    if (a.block < f.block || (a.block == f.block && a.cp < f.cp)) {
+        *b0 = a.block; *cp0 = a.cp; *b1 = f.block; *cp1 = f.cp;
+    } else {
+        *b0 = f.block; *cp0 = f.cp; *b1 = a.block; *cp1 = a.cp;
+    }
+    return true;
+}
+
+// 选中文本（显示文本域，无 markdown 标记符）：块切片按阅读序 '\n' 连接；
+// 空显示文本块（如 Divider）与空切片跳过，不产空行（硬验收：CJK/emoji 不得
+// 半字——码点域切片天然对齐）。
+std::string viewerSelText(const ViewerSession& s) {
+    size_t b0 = 0, cp0 = 0, b1 = 0, cp1 = 0;
+    if (!viewerSelNormalized(s, &b0, &cp0, &b1, &cp1)) return {};
+    const size_t blockCount = s.blockModel.blocks().size();
+    std::string out;
+    bool first = true;
+    for (size_t k = b0; k <= b1 && k < blockCount; ++k) {
+        const std::string display =
+            components::MarkdownBuilder::displayTextOf(viewerBlockSource(s, k));
+        if (display.empty()) continue;
+        const size_t byteBegin =
+            k == b0 ? viewerSelCpToByte(display, cp0) : 0;
+        const size_t byteEnd =
+            k == b1 ? viewerSelCpToByte(display, cp1) : display.size();
+        if (byteBegin >= byteEnd) continue;
+        if (!first) out += '\n';
+        out += display.substr(byteBegin, byteEnd - byteBegin);
+        first = false;
+    }
+    return out;
+}
+
+// 本块与当前选区的相交区间（显示文本码点域；k 越界返回 false）。
+bool viewerSelSpanForBlock(const ViewerSession& s, size_t k, size_t* begin,
+                           size_t* end) {
+    size_t b0 = 0, cp0 = 0, b1 = 0, cp1 = 0;
+    if (!viewerSelNormalized(s, &b0, &cp0, &b1, &cp1)) return false;
+    if (k < b0 || k > b1) return false;
+    *begin = k == b0 ? cp0 : 0;
+    *end = k == b1 ? cp1 : (std::numeric_limits<size_t>::max)();
+    return true;
+}
+
+// 按下：清旧选区并落锚点（简单点击 = 空 selection，抬起时清零不写剪贴板）。
+void viewerSelPress(ViewerSession& s, size_t k, const components::MouseEvent& ev) {
+    s.selDragging = true;
+    s.selHasText = false;
+    s.selAnchor = s.selFocus = viewerSelHitTest(s, k, ev.x, ev.y);
+    app::requestUpdate();
+}
+
+// 拖动：焦点实时跟随（非空即实时高亮；渲染走 pendingRangeQuery 选区间歇）。
+void viewerSelDrag(ViewerSession& s, size_t k, const components::MouseEvent& ev) {
+    if (!s.selDragging) return;
+    s.selFocus = viewerSelHitTest(s, k, ev.x, ev.y);
+    if (!(s.selAnchor == s.selFocus)) s.selHasText = true;
+    app::requestUpdate();
+}
+
+// 写剪贴板 + 回读校验（need264 复核 P3）：setClipboardText 无返回值（void），
+// 写后经 clipboardText 回读比对，失配 LOG_WARN（agent 模块复制先例同源；
+// viewer 拖选为高频路径，成功面不打日志降噪，仅失败告警）。
+void viewerCopyToClipboard(const ViewerSession& s, const std::string& text) {
+    if (text.empty()) return;
+    core::window::setClipboardText(text);
+    if (s.handle != nullptr &&
+        core::window::clipboardText(s.handle) != text) {
+        LOG_WARN("md viewer: 剪贴板写入回读校验失败（期望 " +
+                 std::to_string(text.size()) + " 字节，选区自动复制可能未生效）");
+    }
+}
+
+// 抬起：非空选区 = 保留高亮 + 写剪贴板（选中即自动复制）；空选择只清零。
+void viewerSelRelease(ViewerSession& s, size_t k, const components::MouseEvent& ev) {
+    if (!s.selDragging) return;  // 无在途按压的释放（异常时序）不动作
+    s.selDragging = false;
+    s.selFocus = viewerSelHitTest(s, k, ev.x, ev.y);
+    if (s.selAnchor == s.selFocus) {
+        s.selHasText = false;
+    } else {
+        s.selHasText = true;
+        viewerCopyToClipboard(s, viewerSelText(s));
+    }
+    app::requestUpdate();
+}
+
 // ── F-05 键路由（窗口级 onKeyEvent，不进主窗 Router）───────────────────
 // 输入框聚焦时 Enter/Esc 由 input.onKeyEvent 消费（见 drawSearchOverlay），
 // 到达本 handler 的 Enter/Esc 一定是阅读态按键——两侧互斥不双跳。
@@ -159,6 +326,12 @@ void viewerHandleKey(ViewerSession& s, const eui::KeyEvent& key) {
         if (!s.loadError.empty() || mdViewerContentBlank(s.content)) return;
         viewerSearchActivate(s.search);  // 再唤起保留关键词 + 重聚焦
         app::requestUpdate();
+        return;
+    }
+    // Ctrl/Cmd+C（need264 兼容通道）：有选区时复制——与拖选自动复制同一条
+    // viewerSelText 文本构建通路（只读查看器无编辑态，无剪切语义）。
+    if (shortcut && key.key == eui::InputKey::C && s.selHasText) {
+        viewerCopyToClipboard(s, viewerSelText(s));
         return;
     }
     if (s.search.phase != ViewerSearchPhase::Active) return;
@@ -302,13 +475,9 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
     }();
     const auto perfT0 = perfEnabled ? std::chrono::steady_clock::now()
                                     : std::chrono::steady_clock::time_point{};
-    struct PerfAgg {
-        std::chrono::steady_clock::time_point windowStart = std::chrono::steady_clock::now();
-        int frames = 0;
-        long long composeUs = 0;
-    };
-    static PerfAgg perf;
-    if (perfEnabled) ++perf.frames;
+    // 5s 聚合器 = session 成员（perfWindow*，need267-3）：旧 static 跨会话共享，
+    // 多窗并存时帧数/耗时混计，单窗口径失真。env 开关读取保持 static（进程常量）。
+    if (perfEnabled) ++s.perfWindowFrames;
     const core::theme::Tokens t = core::theme::current();
     const auto componentTheme = core::theme::componentTokensWeChat(t);
     // 程序化滚动残留标志兜底（:556-557 同款：漏清残留会把下帧用户滚轮误判成程序化）
@@ -354,6 +523,7 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
         std::max(0.0f, std::floor(std::max(0.0f, screen.width - 80.0f) / kPvWStep) * kPvWStep);
     const float pvX = std::max(0.0f, (screen.width - pvW) * 0.5f);
     const components::MarkdownStyle style = scaledPreviewStyle(componentTheme);
+    s.selStyle = style;  // 指针回调帧间消费的样式快照（禁捕栈上引用，见成员注释）
     // 样式指纹（复核 P2）：provider 槽键的样式半边。取所有影响排版高度的样式
     // 字段做 FNV-1a；字号档/gap/主题度量一动指纹即翻新，槽自然失配。
     {
@@ -463,37 +633,57 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
             hooks.pendingRangeQuery =
                 [&s](size_t k) -> std::vector<MdRangeSpan> {
                 std::vector<MdRangeSpan> spans;
-                if (s.search.phase != ViewerSearchPhase::Active ||
-                    s.search.query.empty()) {
-                    return spans;
+                if (s.search.phase == ViewerSearchPhase::Active &&
+                    !s.search.query.empty()) {
+                    for (const ViewerSearchMatch& m : s.search.matches) {
+                        if (m.block == k) spans.push_back({m.begin, m.end});
+                    }
                 }
-                for (const ViewerSearchMatch& m : s.search.matches) {
-                    if (m.block == k) spans.push_back({m.begin, m.end});
+                // need264 选区间歇：与本块显示文本相交的选区（selection 标记
+                // → afterHitOverlay 归 info 蓝档，画在搜索高亮之下）
+                size_t selBegin = 0, selEnd = 0;
+                if (viewerSelSpanForBlock(s, k, &selBegin, &selEnd)) {
+                    spans.push_back({selBegin, selEnd, /*selection=*/true});
                 }
                 return spans;
             };
             hooks.onRangeRect = [&s](size_t k, const MdRangeSpan& span,
                                      const MdHitRect& rect) {
                 const bool current =
+                    !span.selection &&
                     !s.search.matches.empty() &&
                     s.search.matches[s.search.cur].block == k &&
                     s.search.matches[s.search.cur].begin == span.begin &&
                     s.search.matches[s.search.cur].end == span.end;
-                s.curBlockRects.push_back({rect, current});
+                s.curBlockRects.push_back({rect, span.selection, current});
             };
-            // 绘制通道（复用 afterHitOverlay 缝）：块内矩形叠层，普通 = warning
+            // 绘制通道（复用 afterHitOverlay 缝）：选区矩形（info 蓝低透明，与
+            // 搜索琥珀/绿异色防混淆——need264）先画，其上搜索命中普通 = warning
             // 低透明度、当前 = 之上再叠 primary（两档透明度见设计 §3.4）
             hooks.afterHitOverlay = [&s, &t](eui::Ui& u2, size_t k,
                                              const std::string& hitId) {
                 (void)hitId;
                 const bool light = core::theme::currentThemeName() != "Dark";
+                const float selAlpha = light ? 0.16f : 0.22f;
                 const float normalAlpha = light ? 0.22f : 0.26f;
                 const float curAlpha = light ? 0.30f : 0.38f;
+                size_t selIdx = 0;
+                size_t hitIdx = 0;
                 for (size_t i = 0; i < s.curBlockRects.size(); ++i) {
                     const ViewerSession::FrameRect& fr = s.curBlockRects[i];
                     // id 含块序号：不同块的命中矩形同帧共存，元素 id 不得跨块撞名
+                    if (fr.selection) {
+                        u2.rect("md.viewer.sel." + std::to_string(k) + "." +
+                                std::to_string(selIdx++))
+                            .position(fr.rect.x, fr.rect.y)
+                            .size(fr.rect.w, fr.rect.h)
+                            .color(components::theme::withAlpha(t.colors.info,
+                                                                selAlpha))
+                            .build();
+                        continue;
+                    }
                     const std::string base = "md.viewer.hit." + std::to_string(k) +
-                                             "." + std::to_string(i);
+                                             "." + std::to_string(hitIdx++);
                     u2.rect(base)
                         .position(fr.rect.x, fr.rect.y)
                         .size(fr.rect.w, fr.rect.h)
@@ -510,6 +700,20 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
                     }
                 }
                 s.curBlockRects.clear();
+            };
+            // need264 块指针缝：拖选三件（press 落锚 / drag 焦点跟随 / release
+            // 自动复制）。捕获 session 指针（session 与窗口同寿，见注册表注释）。
+            hooks.onBlockPress = [p = &s](size_t blk,
+                                          const components::MouseEvent& ev) {
+                viewerSelPress(*p, blk, ev);
+            };
+            hooks.onBlockDrag = [p = &s](size_t blk,
+                                         const components::MouseEvent& ev) {
+                viewerSelDrag(*p, blk, ev);
+            };
+            hooks.onBlockRelease = [p = &s](size_t blk,
+                                            const components::MouseEvent& ev) {
+                viewerSelRelease(*p, blk, ev);
             };
             mdDrawBlockFlowCore(inner, contentWidth, t, style, "md.viewer",
                                 /*onBlockTap=*/{}, deps, hooks);
@@ -551,10 +755,10 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
             std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::steady_clock::now() - perfT0)
                 .count();
-        perf.composeUs += frameUs;
+        s.perfWindowComposeUs += frameUs;
         s.perfFrameUs.push_back(frameUs);
         const auto elapsed = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - perf.windowStart);
+            std::chrono::steady_clock::now() - s.perfWindowStart);
         if (elapsed.count() >= 5.0) {
             auto& us = s.perfFrameUs;
             long long maxUs = 0;
@@ -568,9 +772,11 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
                 p95Us = sorted[idx95];
                 maxUs = *std::max_element(us.begin(), us.end());
             }
-            LOG_INFO("[viewer-perf] frames=" + std::to_string(perf.frames) +
+            LOG_INFO("[viewer-perf] frames=" +
+                     std::to_string(s.perfWindowFrames) +
                      " compose_avg_us=" +
-                     std::to_string(perf.composeUs / (perf.frames ? perf.frames : 1)) +
+                     std::to_string(s.perfWindowComposeUs /
+                                    (s.perfWindowFrames ? s.perfWindowFrames : 1)) +
                      " compose_p95_us=" + std::to_string(p95Us) +
                      " compose_max_us=" + std::to_string(maxUs) +
                      " elements=" + std::to_string(ui.elementCount()) +
@@ -587,10 +793,10 @@ void viewerCompose(ViewerSession& s, eui::Ui& ui, const eui::Screen& screen) {
                      " code_hits=" + std::to_string(s.codeCache.hits()) +
                      " code_misses=" + std::to_string(s.codeCache.misses()) +
                      " window_s=" + std::to_string(elapsed.count()));
-            perf.frames = 0;
-            perf.composeUs = 0;
+            s.perfWindowFrames = 0;
+            s.perfWindowComposeUs = 0;
             s.perfFrameUs.clear();
-            perf.windowStart = std::chrono::steady_clock::now();
+            s.perfWindowStart = std::chrono::steady_clock::now();
         }
     }
 }
@@ -673,6 +879,25 @@ bool viewerSearchInjectForTest(const std::string& path,
                            s->content, kViewerDisplayTextOf);
     s->appliedQuery = query;
     return true;
+}
+
+bool viewerSelectionInjectForTest(const std::string& path, size_t blockA,
+                                  size_t cpA, size_t blockB, size_t cpB) {
+    ViewerSession* s = findSessionByPath(path);
+    if (s == nullptr) return false;
+    const size_t n = s->blockModel.blocks().size();
+    if (blockA >= n || blockB >= n) return false;
+    s->selAnchor = {blockA, cpA};
+    s->selFocus = {blockB, cpB};
+    s->selDragging = false;
+    s->selHasText = !(s->selAnchor == s->selFocus);
+    return true;
+}
+
+std::string viewerSelectionTextForTest(const std::string& path) {
+    ViewerSession* s = findSessionByPath(path);
+    if (s == nullptr) return {};
+    return viewerSelText(*s);
 }
 
 } // namespace module::markdown
