@@ -214,7 +214,7 @@ REGISTER_TEST(mcp_settings_save_load_roundtrip_19_keys,
     auto rows = core::appconfig::listWithPrefix(*::core::appDatabase(),
                                                 SettingsStore::keyNamespace());
     DOCTEST_REQUIRE(rows.isOk());
-    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(22));
+    DOCTEST_CHECK_EQ(rows.value().size(), static_cast<size_t>(24));
     // 存量库缺 mcpPort 键（旧版本升级）→ 读出默认 8931，不报错
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), SettingsStore::keyNamespace(),
