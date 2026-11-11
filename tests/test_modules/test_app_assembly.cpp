@@ -15,6 +15,7 @@
 #include "app_assembly.h"
 #include "app_sidebar.h"  // app::showAppNotice / appNotice*（toast 断言）
 #include "claude_service.h"  // 惰性装配真服务桩（devdesk_tests 链 claude_proxy 库）
+#include "module_markdown/md_viewer_window.h"  // F-02 路由缝观察（viewer session 测试缝）
 #include "module_toggle_bridge.h"
 #include "settings_config.h"
 
@@ -27,6 +28,7 @@
 #include "platform/wallpaper_capability.h"  // wallpaper 行空工厂的唯一合法条件
 
 #include <eui/dsl.h>
+#include <eui/app.h>  // consumeWindowRequests：查看器分支向进程级窗口请求队列入队，用例尾清仓
 
 #include <algorithm>
 #include <chrono>
@@ -295,7 +297,7 @@ REGISTER_TEST(assembly_exit_hook_armed_idempotent,
 })
 
 REGISTER_TEST(assembly_dispatch_and_tray_mapping,
-              "assembly: dispatchFileOpen / pageForTrayAction 既有语义", {
+              "assembly: dispatchFileOpen（F-02 .md 查看器分支 + 既有扩展名路由）/ pageForTrayAction", {
     test_support::ScopedAppRouter scoped;
 
     // 1. 扩展名 → 目标页（纯映射）
@@ -340,7 +342,9 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::ClaudeProxy)), std::string("Claude"));
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::Settings)), std::string("设置"));
 
-    // 4. dispatchFileOpen：笔记目录内文件 → "open:<相对路径>" 负载 + 切页
+    // 4. dispatchFileOpen：.md → F-02 查看器窗分支——不切页、不投递 "open:" 负载、
+    //    不经 captureFileIntoNotesDir（独立窗开原文件）；session 建立（pageId=文件名）
+    module::markdown::resetViewerSessionsForTest();
     const std::filesystem::path notesDir =
         test_support::makeTempDir(kNotesDirPrefix, "tray");
     std::error_code ec;
@@ -359,21 +363,41 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
                                     app::assembly::PreStartHook{});
     DOCTEST_REQUIRE(router.isRegistered(::core::PageId::Markdown));
 
+    const auto pageBefore = router.currentPage();
     app::assembly::dispatchFileOpen(&router, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK_EQ(router.currentPage(), pageBefore);  // 独立窗不进 Router，主窗原地
     DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
-                     std::string("open:note.md"));
+                     std::string());  // 不走 "open:" 内嵌通道
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(1));
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionPageIdForTest(0),
+                     std::string("note.md"));  // 标题=文件名含扩展名（D-3）
 
-    // 5. Markdown 被关（未注册）→ Router 回退 Home 且不投递负载
+    // 4b. .markdown 同判据同分支
+    app::assembly::dispatchFileOpen(&router, (notesDir / "b.markdown").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(2));
+
+    // 4c. 大写扩展名（OS 关联送达大小写不敏感）→ 同查看器分支（文件不在盘上
+    //     也照建 session——B7 占位在窗内呈现，路由语义与文件存在性无关）
+    app::assembly::dispatchFileOpen(&router, (notesDir / "README.MD").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(3));
+    app::assembly::dispatchFileOpen(&router, "c.Markdown", notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(4));
+
+    // 5. Markdown 被关（未注册）→ 查看器分支照常开窗（独立窗不依赖 Router 注册态），
+    //    Router 原地不动且不往关掉的模块投递负载
     ::core::Router gatedRouter;
     StubModules gatedMods;
     app::assembly::assembleAndStart(gatedRouter, allToolsOffConfig(),
                                     gatedMods.homeSettingsOnly(),
                                     app::assembly::PreStartHook{});
+    const auto gatedBefore = gatedRouter.currentPage();
     app::assembly::dispatchFileOpen(&gatedRouter, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(gatedRouter.currentPage(), ::core::PageId::Home);  // 自带回退
+    DOCTEST_CHECK_EQ(gatedRouter.currentPage(), gatedBefore);  // 主窗原地（旧为回退 Home）
     DOCTEST_CHECK_EQ(gatedRouter.consumePendingPayload(::core::PageId::Markdown),
                      std::string());  // 不往关掉的模块投递
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(5));
 
     // 6. .json → Claude 页（无负载切页，且不碰笔记目录）
     ::core::Router jsonRouter;
@@ -386,11 +410,29 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(jsonRouter.consumePendingPayload(::core::PageId::ClaudeProxy),
                      std::string());
 
-    // 7. 空路径 / 空 Router → 原地不动、不崩
-    app::assembly::dispatchFileOpen(&jsonRouter, "", notesDir);
-    DOCTEST_CHECK_EQ(jsonRouter.currentPage(), ::core::PageId::ClaudeProxy);
-    app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
+    // 6b. 非 .md 扩展名路由原样（F-02 只分流 .md/.markdown）：.txt 仍走内嵌通道
+    {
+        std::ofstream f(notesDir / "x.txt", std::ios::trunc);
+        f << "text\n";
+    }
+    app::assembly::dispatchFileOpen(&jsonRouter, (notesDir / "x.txt").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(jsonRouter.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(5));
 
+    // 7. 空路径 / 空 Router → 原地不动、不崩（空 router 先于查看器分支返回——
+    //    OS 漏斗约定调用方必须持有 Router）。页面断言取相对值：6b 已切到
+    //    Markdown，此处只断言「空路径不切页」这一行为本身
+    const auto pageBefore7 = jsonRouter.currentPage();
+    app::assembly::dispatchFileOpen(&jsonRouter, "", notesDir);
+    DOCTEST_CHECK_EQ(jsonRouter.currentPage(), pageBefore7);
+    app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
+    DOCTEST_CHECK_EQ(module::markdown::viewerSessionCountForTest(), size_t(5));
+
+    module::markdown::resetViewerSessionsForTest();
+    // 用例卫生：本用例查看器分支向 EUI-NEO 进程级窗口请求队列入过队（session
+    // 缝清不掉它），取走即弃——不把残留状态留给下游用例
+    app::consumeWindowRequests();
     std::filesystem::remove_all(notesDir, ec);
     return true;
 })
@@ -1249,5 +1291,43 @@ REGISTER_TEST(assembly_wires_notification_initialize_once,
 
     platform::notify::setBackendForTest(nullptr);
     platform::notify::resetForTest();
+    return true;
+})
+
+// ── F-01 第二实例路径队列：drain 保序取走即清 + 漏斗未注入时保留（主线程单测，
+//   无平台对象；跨线程互斥行为由监听线程侧用例 si_chain_full_inprocess 覆盖）──
+REGISTER_TEST(si_paths_queue_drain_order,
+              "app_assembly: 第二实例路径队列——drain 保序取走即清，漏斗未注入保留", {
+    app::assembly::resetSecondInstanceFilesForTest();
+
+    // 漏斗未注入：drain 保留队列不消费（极早帧不丢路径，注册后的下一帧送达）
+    app::assembly::enqueueSecondInstancePaths({"a.md"});
+    app::assembly::drainPendingSecondInstanceFiles();
+
+    static std::vector<std::string> got;
+    got.clear();
+    app::assembly::setOsOpenFunnel([](const std::string& path) {
+        got.push_back(path);
+    });
+
+    // 注入前那一条仍在 + 新入队两条：一次 drain 全部按送达序过漏斗
+    app::assembly::enqueueSecondInstancePaths({"b.md", "c.md"});
+    app::assembly::drainPendingSecondInstanceFiles();
+    DOCTEST_REQUIRE_EQ(got.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(got[0], std::string("a.md"));
+    DOCTEST_CHECK_EQ(got[1], std::string("b.md"));
+    DOCTEST_CHECK_EQ(got[2], std::string("c.md"));
+
+    // 取走即清：再 drain 无声无息
+    got.clear();
+    app::assembly::drainPendingSecondInstanceFiles();
+    DOCTEST_CHECK(got.empty());
+
+    // 空入队 no-op
+    app::assembly::enqueueSecondInstancePaths({});
+    app::assembly::drainPendingSecondInstanceFiles();
+    DOCTEST_CHECK(got.empty());
+
+    app::assembly::resetSecondInstanceFilesForTest();
     return true;
 })

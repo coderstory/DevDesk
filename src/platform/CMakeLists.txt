@@ -43,6 +43,8 @@ if(WIN32)
                                            # ⚠ 路径含 terminal/ 子目录（相对 src/platform）：
                                            # 写成裸文件名会让 CMake configure 找不到文件（Windows
                                            # job 红）且交叉编译守卫受编集合对不上磁盘（校验②红）
+        file_association_win.cpp        # .md 文件关联：HKCU ProgId 登记写/查/清（F-06，注入缝见 file_association.h）
+        open_settings_win.cpp           # 系统默认应用设置页一键直达：ms-settings:defaultapps（F-10 引导）
     )
     # ConPTY 后端的 libvterm 转译层（目标定义在根 CMakeLists，platform 之前）
     target_link_libraries(devdesk_platform PRIVATE devdesk_terminal_vterm)
@@ -66,6 +68,8 @@ elseif(APPLE)
         process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
         wallpaper_capability_macos.cpp  # 壁纸宿主能力：AVFoundation + 桌面层窗口，恒 true
         window_visibility_macos.cpp     # 主窗可见态：当前 GLFW 上下文窗口的 ICONIFIED/VISIBLE（无句柄 fail-open）
+        file_association_macos.mm      # .md 文件关联：LS/NSWorkspace 双路径（F-09，版本分支收敛单文件；ObjC++ 落点偏差见文件头）
+        open_settings_macos.cpp         # 无按类型默认页直达：恒 false，UI 走文字指引（F-10）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -90,6 +94,7 @@ else()
         # 查询 API；SDL2 后端经 EUI_WINDOW_BACKEND_SDL2 编译期走 fail-open true），
         # 保持 POSIX/UNIX 构建链路可链接。
         window_visibility_macos.cpp
+        open_settings_posix.cpp         # POSIX 兜底：恒不支持（F-10）
     )
 endif()
 
@@ -106,8 +111,9 @@ target_include_directories(devdesk_platform PUBLIC
 # 其他平台展开为空（CMake 丢弃空 list 项，不产生空 -l）
 if(WIN32)
     # version：terminal_backend_win.cpp 的 conptyFileVersion（GetFileVersionInfoW/
-    #   VerQueryValueW，debt246 redist 版本日志）——紧跟同列，别在别处再声明
-    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version)
+    #   VerQueryValueW，debt246 redist 版本日志）；ole32：file_association_win.cpp
+    #   的 COM 初始化/实例创建（objbase.h，F-06）——紧跟同列，别在别处再声明
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version ole32)
 endif()
 
 target_link_libraries(devdesk_platform
@@ -141,15 +147,15 @@ if(APPLE)
         ${USER_NOTIFICATIONS_FRAMEWORK}
     )
 
-    # notification_macos.mm 单独开 ARC：只影响该源文件，不给整个 target 打开
-    #（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
-    set_source_files_properties(notification_macos.mm PROPERTIES
+    # notification_macos.mm / file_association_macos.mm 单独开 ARC：只影响该源文件，
+    # 不给整个 target 打开（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
+    set_source_files_properties(notification_macos.mm file_association_macos.mm PROPERTIES
         COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
-# Windows 系统库：Winsock2（网络）+ Crypt32（TLS 证书链）+ Shell32（file_open_win.cpp
-# CommandLineToArgvW）+ Advapi32（system_theme_win.cpp RegGetValueW，spec 缩水 A）
-# + Shlwapi（folder_picker_win.cpp 路径解析）。统一经上方 WIN32 变量占位
+# CommandLineToArgvW / file_association_win.cpp SHChangeNotify）+ Advapi32（system_theme_win.cpp
+#（file_association_win.cpp CoCreateInstance/CoTaskMemFree，QueryCurrentDefault 关联查询）。
+# 统一经上方 WIN32 变量占位
 # ${DEVDESK_WIN_SYSTEM_LIBS} 排在 CURL::libcurl 之后；早位声明会被 CMake 去重保首位
 # ——别在别处再声明 Windows 系统库
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）

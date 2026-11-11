@@ -58,6 +58,10 @@ add_executable(devdesk_tests
     test_platform/test_notification.cpp
     # 开机自启动平台层（UAT6）：注入缝假 writer 断言注册内容/注销/回读，headless 不写系统
     test_platform/test_autostart.cpp
+    # .md 文件关联平台层（F-06）：注入缝配置（DevDeskTest.md/.mdtest）实登记链路，禁触真实 .md
+    test_platform/test_file_association.cpp
+    # .md 文件关联 mac 版本映射（F-09）：纯逻辑（11=LS/12+=NSWorkspace），win 可编译运行
+    test_platform/test_file_association_api_map.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_md_folder_tree.cpp
@@ -171,6 +175,7 @@ add_executable(devdesk_tests
     # 需-11 项目卡设置卡：表单/列表/删除门控/按钮回调/卡高几何（无头 compose）
     test_modules/test_project_cards_card.cpp
     test_modules/test_local_git_probe.cpp
+    test_modules/test_md_assoc_logic.cpp
     test_modules/test_settings.cpp    test_modules/test_terminal_keyencoder.cpp
     test_modules/test_terminal_controller.cpp
     test_modules/test_terminal_metrics.cpp

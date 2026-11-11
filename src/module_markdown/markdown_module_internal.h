@@ -321,6 +321,98 @@ inline core::MenuAnchor menuAnchorForPointerInPage(const eui::PointerEvent& ev,
         router ? router->pageOriginX() : 0.0f, scrollOffsetY, 1.0f);
 }
 
+// ─── 块流渲染核注入面（U2 抽核：类型提升到命名空间作用域，编辑器/查看器共用）───
+
+// 「区间→rect」查询缝载荷：块源码内的字符区间（字节偏移，UTF-8 码点对齐）。
+struct MdRangeSpan {
+    size_t begin = 0;
+    size_t end = 0;
+};
+
+// 查询缝返回的命中矩形：块局部坐标（x 自块左缘、y 自块顶）。
+struct MdHitRect {
+    float x = 0.0f;
+    float y = 0.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+};
+
+// 块流注入点
+// 视图态对单块的特判经本注入点传入，新增视图态只传自己的 hooks。
+// 三个绘制回调均可空（空 = 走默认）；k = 块下标、b = 块、wrapId = 包裹 stack id。
+// 查询缝两回调须成对在位（缺一 = 缝不启用）：渲染核在每块内容（含文本度量）
+// 建完后向 pendingRangeQuery 取本块待查区间，逐区间经 mdResolveBlockRangeRect
+// （渲染同源度量）解析矩形并回吐 onRangeRect；矩形纵向钳到块包裹内。
+struct BlockFlowHooks {
+    std::function<float(size_t k, const MdBlock& b, float geometryHeight,
+                        float contentWidth)>
+        wrapHeight;
+    std::function<bool(eui::Ui& ui, size_t k, const MdBlock& b,
+                       const std::string& wrapId, float contentWidth,
+                       float wrapHeight)>
+        drawContent;
+    std::function<void(eui::Ui& ui, size_t k, const std::string& hitId)>
+        afterHitOverlay;
+    // 「区间→rect」查询缝（审计 P1-2 主通路；U2 落缝、U4 搜索高亮/跳转消费）。
+    // 区间口径 = 块源码字节偏移（与「块序号+字符区间」的 matches 同一口径）。
+    std::function<std::vector<MdRangeSpan>(size_t k)> pendingRangeQuery;
+    std::function<void(size_t k, const MdRangeSpan& span, const MdHitRect& rect)>
+        onRangeRect;
+};
+
+// 实时态块级特判上下文（活动块锚 + input 主题），只在实时态内部传递。
+struct LiveBlockCtx {
+    size_t activeBlock = static_cast<size_t>(-1);  // 活动块下标（其余值不命中）
+    const components::theme::ThemeColorTokens* theme = nullptr;  // input 主题
+};
+
+// 块流渲染核依赖面（U2 抽核：全显式参数化，核自身零成员态、零静态可变态）。
+// 调用方（编辑器委托 / 查看器 compose）持全部状态，核按帧只读消费：
+//   blocks/docText: 块序列与文档源码（块源码 = docText.substr(b.start, b.end-b.start)）
+//   codeCache:      CodeFence 高亮缓存（跨帧复用；色表由核每帧 setColors 注入）
+//   syncMap:        逐块几何表（重建是调用方职责，核只读 blockHeight）
+//   hover:          hover 状态（核内 enter/leave/hovered 直读写）
+//   drawCodeBlock:  CodeFence 高亮自绘（编辑器注入成员函数实现；空 = CodeFence
+//                   走默认 markdown 渲染通路，不做高亮）
+struct MdBlockFlowDeps {
+    const std::vector<MdBlock>& blocks;
+    const std::string& docText;
+    MdPreviewCodeCache& codeCache;
+    const MdSyncMap& syncMap;
+    MdPreviewHoverState& hover;
+    std::function<void(eui::Ui& ui, const std::string& partId,
+                       const MdPreviewCodeHighlight& hl, float contentWidth,
+                       const components::MarkdownStyle& style, bool hovered,
+                       const eui::Color& hoverTint)>
+        drawCodeBlock;
+};
+
+// 「区间→rect」查询缝的几何解析（渲染同源度量，自由函数供渲染核与单测共用）。
+// 行切分与几何表估算同式（\n 分段、段内按码点数 ÷ charsPerLine 折行，字符宽度
+// 系数同 estimateMarkdownTextHeight）；行内 x/w 用真文本度量
+// （components::detail::measureMarkdownTextWidth），横向钳到 [0, contentWidth]；
+// 纵向由渲染核钳到块包裹内。近似契约：行号是估算切分而非逐字形排版，POC 判据
+// = 已知区间 → 非空矩形 ∈ 块边界（数值断言见 test_markdown 直驱用例）。
+// 返回 false = 几何不可达（空块/区间非法/零宽）。
+bool mdResolveBlockRangeRect(const std::string& blockText, size_t begin,
+                             size_t end, float contentWidth,
+                             const components::MarkdownStyle& style,
+                             MdHitRect* out);
+
+// 逐块渲染核（预览 / 实时 / 查看器共用同一条通路；U2 自 MarkdownModule::drawBlockFlow
+// 原样抽出，编辑器侧经薄委托零行为变化）。
+// 切分器保证块区间连续覆盖文档，与整篇渲染等价；prefix 决定键控 id。
+// ⚠ ui 必须是 scrollView content 回调传入的 Ui：测量 pass 也走同一回调，
+// 建到外层 Ui 会让测量量到空内容（可滚高度恒 0）。
+void mdDrawBlockFlowCore(eui::Ui& ui,
+                         float contentWidth,
+                         const core::theme::Tokens& t,
+                         const components::MarkdownStyle& style,
+                         const std::string& prefix,
+                         const std::function<void(size_t, float)>& onBlockTap,
+                         const MdBlockFlowDeps& deps,
+                         const BlockFlowHooks& hooks);
+
 class MarkdownModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::Markdown; }
@@ -519,31 +611,9 @@ private:
                            const components::theme::ThemeColorTokens& componentTheme,
                            float gap) ;
 
-    // 块流注入点
-    // 视图态对单块的特判经本注入点传入，新增视图态只传自己的 hooks。
-    // 三个回调均可空（空 = 走默认）；k = 块下标、b = 块、wrapId = 包裹 stack id。
-    struct BlockFlowHooks {
-        std::function<float(size_t k, const MdBlock& b, float geometryHeight,
-                            float contentWidth)>
-            wrapHeight;
-        std::function<bool(eui::Ui& ui, size_t k, const MdBlock& b,
-                           const std::string& wrapId, float contentWidth,
-                           float wrapHeight)>
-            drawContent;
-        std::function<void(eui::Ui& ui, size_t k, const std::string& hitId)>
-            afterHitOverlay;
-    };
-
-    // 实时态块级特判上下文（活动块锚 + input 主题），只在实时态内部传递。
-    struct LiveBlockCtx {
-        size_t activeBlock = static_cast<size_t>(-1);  // 活动块下标（其余值不命中）
-        const components::theme::ThemeColorTokens* theme = nullptr;  // input 主题
-    };
-
-    // 逐块渲染（预览 / 实时共用同一条通路）
-    // 切分器保证块区间连续覆盖文档，与整篇渲染等价；prefix 决定键控 id。
-    // ⚠ ui 必须是 scrollView content 回调传入的 Ui：测量 pass 也走同一回调，
-    // 建到外层 Ui 会让测量量到空内容（可滚高度恒 0）。
+    // 逐块渲染（预览 / 实时共用同一条通路）：薄委托。
+    // 状态组装（防御同步 + 几何表重建 + 成员态注入）在本函数，渲染决策在
+    // mdDrawBlockFlowCore（命名空间作用域，见文件头部注入面块）。
     void drawBlockFlow(eui::Ui& ui,
                        float contentWidth,
                        const core::theme::Tokens& t,

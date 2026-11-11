@@ -16,10 +16,16 @@
 
 ## 登记簿
 
+- 2026-11-10 | 审计 | 只读 MD 查看器 QA 收口 @ wt/mdv-int 6c30ea90 — 半成品：全量回归 1523 单测 Failed 0 + 探针 17/18 绿（agent_e2e 环境前置）；真机主路径可用但新缺陷 BUG-1（P1：中文路径 .md 打开失败，ASCII 对照正常）；假绿抽查 3 条变异全红过；mac 全域+真双击+真注册表链未验 | docs/research/2026-11-10-md-viewer-qa-report.md
+- 2026-11-10 | 调查 | F-07 前置验证 POC：Win10 静默写 .md 关联生效性 — 部分生效：HKCU 注册表写入可持久化/回读/幂等，但 ShellExecute 双击实测两次均弹 OpenWith 选择器、notepad 零次拉起，生效默认未变；接管需用户显式选择 | docs/research/2026-11-10-f07-win-userchoice-poc.md
+- 2026-11-10 | 调研 | 只读 MD 查看器·平台文件关联 + EUI-NEO 多窗口承载 — Win 单实例已有但第二实例路径丢失是最大缺口；macOS AppleEvent 链路已全通；EUI-NEO openWindow/scrollview 能力确认可用零上游缺口；Info.plist 缺有效 UTI 声明需补 UTImportedTypeDeclarations | docs/research/2026-11-10-md-viewer-file-assoc-multiwindow.md
 - 2026-10-30 | 调研 | 需求场景支撑（老板 10-30 场景化材料整理）：记忆 4 / MCP 3 / 智能体 4 共 11 场景按「现状可用/差哪块」分层 | 三缺口收口：G-1 infer 真调（记忆原文直存，提炼模型从未真调）/ G-2 笔记 MCP（业务数据零暴露）/ G-3 cron 模板（= 需-8 S 级，第四出厂模板）；随行需-9 用量告警 S 级；附一天时间线；两份 spec 草案（需-8/需-9）同批落 docs/specs/ | docs/superpowers/research/2026-10-30-需求场景支撑.md
 - 2026-10-29 | 调研 | engram 存储检索底座选型（池子系统输入） | 一手核实 7.68k★/MIT/SQLite+FTS5/MCP 27 工具；schema 精读判定：migrate 上游独占不可扩表、无自由 metadata 列、关系网绑定 observations——engram 适合作 Agent 记忆层，池子业务实体主存储应自建 pool.db（双库或纯自建待业务方案定） | docs/research/2026-10-29-engram-storage-selection.md
 - 2026-10-28 | 调查 | memcpp S2 记忆模块 live 层验证 — venv/引擎对账、llama 联动、三视图截图、key 红线；4 处修复 1331450c/90cf043f/473204ff/00ac9931 | docs/superpowers/plans/2026-10-28-memcpp-s2-live-verify.md
 - 2026-10-28 | 调查 | memcpp 端到端联调验收 — S3+S4 遗留 live 对账，5 处缺陷修复（MCP 会话缝/update 形参/delete 遗忘映射/UUID id 回填/融合段解析），Recall@5=100%，hook 真跑+ledger 闭环+fail-open | docs/superpowers/plans/2026-10-28-memcpp-e2e-verify.md
+- 2026-10-27 | 审计 | 壁纸 P3a @ eec88dbb | PASS：2M7L2I（最重=死锁修复无自动回归网）；限定复审计 @ ef5bdf79+dce4a25a 通过（11 条全处置，新增仅 3 Info）| docs/superpowers/plans/2026-10-27-wallpaper-p3a-audit.md
+- 2026-10-27 | 审计 | 壁纸 P5 UI @ eec88dbb | 有条件通过：3M3N（过滤宣称/遮罩z序/假绿）；限定复审计 @ ef5bdf79+dce4a25a 通过（6 条全修，残留 R-1 文案归源漂移 Low）| docs/superpowers/plans/2026-10-27-wallpaper-p5-ui-audit.md
+- 2026-10-27 | 审计 | MCP 服务骨架 B1+B2+B3 提交段（4bccde3c..a028fb1e） — 有条件通过：2 major（SSRF 字面校验可被 userinfo/短拼 IPv4/v6 zone-id 绕过；台账 §3/§4 未回填且 B2 提交点门禁实红）+ 3 minor | docs/superpowers/plans/2026-10-27-mcp-b1b2b3-audit.md（feat/mcp-server-skeleton worktree）
 
 ## 存量补登欠账
 

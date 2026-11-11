@@ -6,6 +6,7 @@
 #include "core/database.h"
 #include "mcp_service_bridge.h"
 #include "module_markdown/md_file_open.h"
+#include "module_markdown/md_viewer_window.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
 #include "platform/file_open.h"
@@ -15,7 +16,10 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <cctype>
 #include <cstdlib>
+#include <iterator>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -192,6 +196,74 @@ bool consumePendingMinimizedStartup() {
     return std::exchange(g_minimizedStartupPending, false);
 }
 
+// ── F-01 第二实例路径队列 ──
+// 线程契约见 app_assembly.h：写 = 单实例监听线程，读 = 主线程 compose drain。
+// 漏斗在锁外调用（drain 先整批取走再逐个转发，漏斗重入不会死锁）
+namespace {
+std::mutex g_secondInstanceFilesMutex;
+std::vector<std::string> g_secondInstanceFiles;
+std::function<void(const std::string&)> g_osOpenFunnel;
+} // namespace
+
+void enqueueSecondInstancePaths(std::vector<std::string> paths) {
+    if (paths.empty()) return;
+    {
+        std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
+        g_secondInstanceFiles.insert(g_secondInstanceFiles.end(),
+                                     std::make_move_iterator(paths.begin()),
+                                     std::make_move_iterator(paths.end()));
+    }
+    LOG_INFO("单实例：第二实例送达 " + std::to_string(paths.size()) +
+             " 个文件路径，待主线程分发");
+}
+
+void setOsOpenFunnel(std::function<void(const std::string& path)> funnel) {
+    g_osOpenFunnel = std::move(funnel);
+}
+
+void drainPendingSecondInstanceFiles() {
+    // 漏斗未注册（极早帧）：保留队列不消费，注册后的下一帧再送达
+    if (!g_osOpenFunnel) return;
+    std::vector<std::string> paths;
+    {
+        std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
+        paths = std::exchange(g_secondInstanceFiles, {});
+    }
+    for (const auto& path : paths) {
+        LOG_INFO("单实例：分发第二实例送达文件 — " + path);
+        g_osOpenFunnel(path);
+    }
+}
+
+void resetSecondInstanceFilesForTest() {
+    std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
+    g_secondInstanceFiles.clear();
+    g_osOpenFunnel = nullptr;
+}
+
+namespace {
+
+// .md/.markdown 判据——大小写不敏感：OS 关联送达扩展名大小写不定
+// （README.MD / notes.MARKDOWN），查看器分支与 OS 行为对齐。刻意与
+// dispatchPageForFile 不同源：那是主窗内嵌通道页面路由的既有语义（.MD→Home 不变）。
+bool pathHasMarkdownExtension(const std::string& path) {
+    auto endsWithIgnoreCase = [&path](const char* suffix) {
+        const size_t n = std::string(suffix).size();
+        if (path.size() < n) return false;
+        for (size_t i = 0; i < n; ++i) {
+            const char a = static_cast<char>(std::tolower(
+                static_cast<unsigned char>(path[path.size() - n + i])));
+            const char b = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(suffix[i])));
+            if (a != b) return false;
+        }
+        return true;
+    };
+    return endsWithIgnoreCase(".md") || endsWithIgnoreCase(".markdown");
+}
+
+} // namespace
+
 ::core::PageId dispatchPageForFile(const std::string& path) {
     // ASCII 小写化：只折 'A'-'Z'，不依赖 locale（tolower 受 locale 影响）
     const auto asciiLower = [](char c) {
@@ -220,6 +292,15 @@ bool consumePendingMinimizedStartup() {
 void dispatchFileOpen(::core::Router* router, const std::string& path,
                       const std::filesystem::path& notesDir) {
     if (router == nullptr || path.empty()) return;
+    // F-02：OS 语义漏斗里 .md/.markdown → 独立只读查看器窗（开原文件，绕开
+    // captureFileIntoNotesDir 拷贝）。判据=调用点即漏斗：全仓 OS 入口（main 启动
+    // argv / Apple Event / F-01 第二实例 drain）都汇于本函数，应用内笔记走
+    // markdown_module 的 "open:" 通道不经此处 → 应用内行为零改动自动成立。
+    // 查看器窗不依赖 Markdown 页注册态（独立窗不进 Router）。
+    if (pathHasMarkdownExtension(path)) {
+        module::markdown::openViewerWindow(path);
+        return;
+    }
     const ::core::PageId target = dispatchPageForFile(path);
     if (target == ::core::PageId::Markdown &&
         router->isRegistered(::core::PageId::Markdown)) {

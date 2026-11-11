@@ -9,8 +9,19 @@ bool acquireInstanceLock() {
     return true;
 }
 
-void notifyExistingInstance() {
-    // macOS .app bundle：再次打开时 OS 自动路由到既有实例，无需程序间通信
+bool notifyExistingInstance(const std::vector<std::string>& /*paths*/,
+                            unsigned /*ackTimeoutMs*/) {
+    // macOS .app bundle：再次打开时 OS 自动路由到既有实例（Apple Event 带路径），
+    // 无需程序间通信，亦无「第二实例」形态
+    return false;
 }
+
+void setOpenPathsHandler(PathsHandler /*handler*/) {}
+
+bool consumeSectionSignalOnce() { return false; }
+
+void setSingleInstanceRootForTest(const std::string& /*root*/) {}
+
+bool writeSectionForTest(const std::string& /*bytes*/) { return false; }
 
 } // namespace platform::single_instance

@@ -45,9 +45,12 @@
 #include "module_mcp/mcp_tools_builtin.h"
 #include "platform/autostart.h"
 #include "platform/message_box.h"
+#include "platform/file_open.h"
 #include "platform/tray_icon.h"
 #include "github_sync_exit_hook.h"
 #include "platform/single_instance.h"
+#include "platform/file_association.h"  // F-11 启动自愈：归属查询/恢复登记
+#include "md_assoc_logic.h"             // F-11 决策矩阵（纯函数，单测锁定）
 #include "settings_config.h"
 #include "wallpaper_tray_bridge.h"
 
@@ -924,9 +927,13 @@ const DslAppConfig& dslAppConfig() {
     ::core::ticker::pump(::core::time::nowUnix());
 
     // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
-    if (!platform::single_instance::acquireInstanceLock()) {
-        platform::single_instance::notifyExistingInstance();
-        LOG_INFO("已有实例运行中，已发送唤起信号，本进程退出");
+    if (!::platform::single_instance::acquireInstanceLock()) {
+        // F-01：退出前把 argv 文件路径带给首实例（持发送互斥写共享 section → 唤醒 →
+        // 等专名 ack 封顶 5s）。送达失败（首实例僵死等）也要退——单实例不变式优先，
+        // 路径丢弃 = 改造前退化行为
+        ::platform::single_instance::notifyExistingInstance(
+            {::platform::file_open::openFileFromArgv()});
+        LOG_INFO("已有实例运行中，已发送唤起信号与文件路径，本进程退出");
         std::exit(0);
     }
 
@@ -977,6 +984,35 @@ const DslAppConfig& dslAppConfig() {
         return true;
     }();
     (void)themeRestored;
+
+    // F-11 启动自愈（方案卡 §二.F-11）：落点在 themeRestored（DB 已开）之后、
+    // 窗口创建（config 静态初始化段）之前——注册表/LS 查询毫秒级，不阻塞启动。
+    // 决策矩阵单一来源 = mdAssocHealAction（纯函数，单测锁定）：关×任意=跳过
+    //（D3，含跳过查询本身）；开×ours=不动；开×others/unknown（按需修复档，
+    // F-07 定稿规则）=setAsDefaultForMd() 一次（写入幂等，重复执行无累积）。
+    // 全程静默：成功无提示（D7）、失败 LOG_WARN 不弹窗（D8）——唯一可见面 =
+    // 设置页开关行状态字。
+    static const bool mdAssocSelfHealed = []() {
+        const module::settings::SettingsStore store(::core::appDatabase());
+        const auto cfg = store.load();
+        // 关 = 不查询直接跳过（D3：整个检查跳过，含查询本身——三目短路保证）
+        const auto state =
+            cfg.mdAssocEnabled
+                ? platform::file_association::isDefaultForMd().valueOr(
+                      platform::file_association::AssocState::Unknown)
+                : platform::file_association::AssocState::Unknown;
+        if (module::settings::mdAssocHealAction(cfg.mdAssocEnabled, state) ==
+            module::settings::MdAssocHealAction::Skip) {
+            return true;
+        }
+        auto r = platform::file_association::setAsDefaultForMd();
+        if (r.isFail()) {
+            LOG_WARN("启动自愈：.md 关联恢复登记失败（下次打开设置页可见状态）: " +
+                     r.errorMessage());
+        }
+        return true;
+    }();
+    (void)mdAssocSelfHealed;
 
     // 初始窗口决策必须在 config 前求值（config 静态初始化时消费）；此时 glfwInit 已完成
     // DPI 可用，无头/无显示器时决策函数原样保留请求尺寸
@@ -1040,6 +1076,17 @@ const DslAppConfig& dslAppConfig() {
 
     static bool initialized = []() {
         using namespace core;
+        // F-01 接线（两处都须先于首个 compose 帧）：
+        // ① OS 打开漏斗：第二实例送达路径的 drain 走 handleAppleEventOpenFile 同一漏斗
+        app::assembly::setOsOpenFunnel(
+            [](const std::string& path) { handleAppleEventOpenFile(path); });
+        // ② 单实例监听线程路径回调 → app_assembly 队列（回调在监听线程跑，enqueue
+        // 内部加锁，主线程只经 compose drain 消费）。:: 全限定：本 lambda 处于
+        // using namespace core; 作用域，core::platform 与 ::platform 歧义
+        ::platform::single_instance::setOpenPathsHandler(
+            [](const std::vector<std::string>& paths) {
+                app::assembly::enqueueSecondInstancePaths(paths);
+            });
         // 须在 setupLogging() 之后（内部有 LOG_INFO）
         app::assembly::captureOpenFileFromArgv();
         // --minimized 旗标捕获（UAT6 开机自启动）：命中 → 主窗保持托盘态（compose 首帧执行）

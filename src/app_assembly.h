@@ -81,6 +81,23 @@ void resetMinimizedFlagForTest();
 // 首帧一次性取走「--minimized 启动」待执行请求（取走即清，compose 侧每帧调用无害）
 bool consumePendingMinimizedStartup();
 
+// ── F-01 第二实例路径队列（Windows 单实例监听线程送达）──
+// 线程契约：写入 = 单实例监听线程（platform::single_instance::setOpenPathsHandler 回调
+// 送达），读取 = 主线程 compose 顶部 drain。跨线程 → 实现内互斥；「取走即清」形态同
+// consumePendingMinimizedStartup（那边进程内单线程免锁，这边必须加锁）。
+void enqueueSecondInstancePaths(std::vector<std::string> paths);
+
+// OS 打开漏斗注入：main 启动装配期注册一次（handleAppleEventOpenFile 同一漏斗）。
+// 未注册时 drain 保留队列不消费（极早帧不丢路径，注册后的下一帧送达）
+void setOsOpenFunnel(std::function<void(const std::string& path)> funnel);
+
+// compose 顶部每帧调用（空队列零开销无害）：取走第二实例送达路径，按送达序逐个过
+// OS 打开漏斗
+void drainPendingSecondInstanceFiles();
+
+// 测试缝：清队列 + 摘漏斗（用例间隔离）
+void resetSecondInstanceFilesForTest();
+
 // 根据扩展名返回目标 PageId（仅目标选择；内容加载由 dispatchFileOpen 完成）
 ::core::PageId dispatchPageForFile(const std::string& path);
 

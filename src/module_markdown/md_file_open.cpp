@@ -3,11 +3,30 @@
 
 #include "core/logging.h"
 
+#include <fstream>
+#include <sstream>
 #include <system_error>
 
 namespace fs = std::filesystem;
 
 namespace module::markdown {
+
+core::Result<std::string> readFileUtf8(const std::string& absPath) {
+    std::error_code ec;
+    if (absPath.empty() || !fs::exists(absPath, ec) || ec) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileNotFound,
+            "文件不存在: " + absPath);
+    }
+    // 必须经 fs::path：std::string 重载在 Windows 走窄字符 ANSI fopen（BUG-1）
+    std::ifstream f(fs::path(absPath), std::ios::binary);
+    if (!f.is_open()) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileReadFailed,
+            "无法打开: " + absPath);
+    }
+    std::ostringstream oss;
+    oss << f.rdbuf();
+    return core::Result<std::string>::ok(oss.str());
+}
 
 core::Result<std::string> captureFileIntoNotesDir(const fs::path& notesDir,
                                                   const std::string& absPath) {

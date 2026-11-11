@@ -1313,6 +1313,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     if (app::assembly::consumePendingMinimizedStartup()) {
         app::closeMainWindow();
     }
+    // F-01 第二实例送达路径 drain：单实例监听线程入队（platform 回调），这里主线程
+    // 按送达序逐路径走 OS 打开漏斗（main 注入的 handleAppleEventOpenFile 同一漏斗）。
+    // 取走即清（consumePendingMinimizedStartup 同款形态），每帧调用空队列零开销。
+    app::assembly::drainPendingSecondInstanceFiles();
     // 窗体记忆记账（UAT6）：每帧记录还原态客户区逻辑尺寸 + 最大化标志（退出落盘的
     // 数据源）。须在 splash 早退之前——splash 帧也是主窗帧，启动即最大化的会话靠它
     // 记下最大化态（尺寸则由 main.cpp 的播种兜底）。最大化帧不记尺寸（保留还原态）

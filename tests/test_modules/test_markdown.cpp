@@ -22,8 +22,11 @@
 #include "module_markdown/md_tree.h"
 #include "module_markdown/md_view_state.h"
 #include "module_markdown/md_ids.h"
+#include "module_markdown/md_viewer_search.h"    // F-05 搜索状态机纯逻辑（直驱）
+#include "module_markdown/md_viewer_window.h"    // F-04 查看器窗口 session 缝
 #include "module_markdown/markdown_module_test_seam.h"   // 轮询周期注入（假红根因见用例）
 #include "module_settings/settings_config.h"  // SettingsStore（163 键契约测试；测试面豁免模块隔离）
+#include "module_markdown/markdown_module_internal.h"    // U2 渲染核直驱（mdDrawBlockFlowCore/区间→rect 查询缝）
 
 using module::markdown::kEditorInputId;
 
@@ -32,6 +35,9 @@ using module::markdown::kEditorInputId;
 #include <components/theme.h>      // withAlpha（活动块边框色口径）
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
+#include <eui/app.h>   // app::consumeWindowRequests/DslWindowRequest 声明（app.h:206，定义在
+                       // EUI-NEO 库、链接期解析；禁含 detail/dsl_app_impl.h——devdesk_tests 链
+                       // glfw_app_main.obj，实现头非 inline 定义必撞 multiple definition）
 #include <ui_kit/card.h>
 #include <ui_kit/glass.h>
 #include <ui_kit/wtab.h>   // kWtabSmallHeight（池164 tab 带几何判据派生源）
@@ -5012,6 +5018,166 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     return true;
 })
 
+// U2 抽核直驱守卫：渲染核（mdDrawBlockFlowCore）hooks 全显式参数化的行为断言。
+// 与 md_module_blockflow_hook_contrast（走 compose 全通路）互补：这里绕开模块
+// 成员态直驱核本体——wrapHeight 覆盖真实落进几何、drawContent 接管跳过默认
+// 渲染、afterHitOverlay 逐块回调，三处注入在核内各自生效才绿（抽核改丢即红）。
+REGISTER_TEST(md_module_blockflow_core_hooks_guard,
+              "markdown_module: 块流渲染核 hooks 直驱守卫（U2 抽核：wrapHeight/drawContent/afterHitOverlay）", {
+    const std::string text = "# 核守卫\n\nfirst para\n\nsecond para\n";
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() >= 3);
+
+    const float kCoreWidth = 400.0f;
+    const components::MarkdownStyle style;
+    const core::theme::Tokens t = core::theme::current();
+    module::markdown::MdSyncMap map;
+    map.rebuild(text, blocks, /*rev=*/1, kCoreWidth, style.blockGap,
+                [&](const module::markdown::MdBlock& b) {
+                    return components::MarkdownBuilder::estimateHeight(
+                        text.substr(b.start, b.end - b.start), kCoreWidth,
+                        style);
+                });
+    module::markdown::MdPreviewCodeCache cache;
+    module::markdown::MdPreviewHoverState hover;
+    module::markdown::MdBlockFlowDeps deps{
+        blocks, text, cache, map, hover, /*drawCodeBlock=*/{}};
+
+    int wrapCalls = 0;
+    int drawCalls = 0;
+    int overlayCalls = 0;
+    module::markdown::BlockFlowHooks hooks;
+    hooks.wrapHeight =
+        [&](size_t k, const module::markdown::MdBlock&, float geometryHeight,
+            float) {
+            ++wrapCalls;
+            return k == 0 ? geometryHeight + 40.0f : geometryHeight;
+        };
+    hooks.drawContent = [&](eui::Ui&, size_t k, const module::markdown::MdBlock&,
+                            const std::string&, float, float) {
+        ++drawCalls;
+        return k == 1;   // 第二块特判接管（默认渲染必须被跳过）
+    };
+    hooks.afterHitOverlay = [&](eui::Ui&, size_t, const std::string&) {
+        ++overlayCalls;
+    };
+
+    test_support::HeadlessFrame e("corehook");
+    e.frame([&](eui::Ui& u) {
+        module::markdown::mdDrawBlockFlowCore(u, kCoreWidth, t, style,
+                                              "t.core", /*onBlockTap=*/nullptr,
+                                              deps, hooks);
+    });
+
+    DOCTEST_CHECK_EQ(wrapCalls, static_cast<int>(blocks.size()));
+    DOCTEST_CHECK_EQ(drawCalls, static_cast<int>(blocks.size()));
+    DOCTEST_CHECK_EQ(overlayCalls, static_cast<int>(blocks.size()));
+    // wrapHeight 覆盖真实落进几何：第 0 块包裹高 = 几何表 H_0 + 40
+    const auto* wrap0 = e.ui->find(std::string("t.core.blk.") +
+                                   std::to_string(blocks[0].stableId));
+    DOCTEST_REQUIRE(wrap0 != nullptr);
+    DOCTEST_CHECK(std::fabs(wrap0->frame.height -
+                            (map.blockHeight(0) + 40.0f)) <= 0.01f);
+    // drawContent 接管跳过默认渲染：第二块无默认节点，其余块默认节点都在
+    for (size_t k = 0; k < blocks.size(); ++k) {
+        const std::string node =
+            "t.core.block." + std::to_string(blocks[k].stableId);
+        if (k == 1) {
+            DOCTEST_CHECK(e.ui->find(node) == nullptr);
+        } else {
+            DOCTEST_CHECK(e.ui->find(node) != nullptr);
+        }
+    }
+    return true;
+})
+
+// U2 查询缝 POC：「块序号+字符区间 → rect」数值断言（审计 P1-2 主通路判据）。
+// 判据：已知区间 → 非空矩形，横向落 [0, contentWidth] 带、纵向落块包裹内；
+// 另验折行解析（长段中部区间的 y 进入第二行带）。
+REGISTER_TEST(md_module_blockflow_range_rect_poc,
+              "markdown_module: 区间→rect 查询缝 POC 数值断言（U2：非空矩形∈块边界）", {
+    const float kWidth = 400.0f;
+    const components::MarkdownStyle style;
+    const core::theme::Tokens t = core::theme::current();
+    const std::string text =
+        "alpha beta gamma delta\n\n" + std::string(160, 'x') + " tail\n";
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() >= 2);
+    module::markdown::MdSyncMap map;
+    map.rebuild(text, blocks, /*rev=*/1, kWidth, style.blockGap,
+                [&](const module::markdown::MdBlock& b) {
+                    return components::MarkdownBuilder::estimateHeight(
+                        text.substr(b.start, b.end - b.start), kWidth, style);
+                });
+    module::markdown::MdPreviewCodeCache cache;
+    module::markdown::MdPreviewHoverState hover;
+    module::markdown::MdBlockFlowDeps deps{
+        blocks, text, cache, map, hover, /*drawCodeBlock=*/{}};
+
+    // 已知区间 1：第 0 块（纯段落单行）中的 "beta"
+    const std::string blk0 =
+        text.substr(blocks[0].start, blocks[0].end - blocks[0].start);
+    const size_t beg = blk0.find("beta");
+    DOCTEST_REQUIRE(beg != std::string::npos);
+    const size_t fin = beg + 4;
+
+    struct Got {
+        size_t k;
+        size_t begin;
+        size_t end;
+        float x;
+        float y;
+        float w;
+        float h;
+    };
+    std::vector<Got> got;
+    module::markdown::BlockFlowHooks hooks;
+    hooks.pendingRangeQuery = [&](size_t k) {
+        std::vector<module::markdown::MdRangeSpan> spans;
+        if (k == 0) spans.push_back({beg, fin});
+        if (k == 1) {
+            // 已知区间 2：长段中部（必折多行），验折行解析
+            const std::string blk1 =
+                text.substr(blocks[1].start, blocks[1].end - blocks[1].start);
+            const size_t mid = blk1.size() / 2;
+            spans.push_back({mid, mid + 8});
+        }
+        return spans;
+    };
+    hooks.onRangeRect =
+        [&](size_t k, const module::markdown::MdRangeSpan& s,
+            const module::markdown::MdHitRect& r) {
+            got.push_back({k, s.begin, s.end, r.x, r.y, r.w, r.h});
+        };
+
+    test_support::HeadlessFrame e("rrpoc");
+    e.frame([&](eui::Ui& u) {
+        module::markdown::mdDrawBlockFlowCore(u, kWidth, t, style, "t.rr",
+                                              /*onBlockTap=*/nullptr, deps,
+                                              hooks);
+    });
+
+    DOCTEST_REQUIRE(got.size() == 2);
+    const Got& g0 = got[0];
+    DOCTEST_CHECK(g0.k == 0);
+    DOCTEST_CHECK(g0.begin == beg);
+    DOCTEST_CHECK(g0.end == fin);
+    DOCTEST_CHECK(g0.w > 0.0f && g0.h > 0.0f);                        // 非空矩形
+    DOCTEST_CHECK(g0.x >= 0.0f && g0.x + g0.w <= kWidth + 0.5f);      // 横向带内
+    DOCTEST_CHECK(g0.y >= 0.0f && g0.y + g0.h <= map.blockHeight(0) + 0.5f);  // 块界内
+    const Got& g1 = got[1];
+    DOCTEST_CHECK(g1.k == 1);
+    DOCTEST_CHECK(g1.w > 0.0f && g1.h > 0.0f);                        // 非空矩形
+    DOCTEST_CHECK(g1.x >= 0.0f && g1.x + g1.w <= kWidth + 0.5f);      // 横向带内
+    DOCTEST_CHECK(g1.y + g1.h <= map.blockHeight(1) + 0.5f);          // 块界内（纵向钳制）
+    DOCTEST_CHECK(g1.y >= style.bodyLineHeight - 0.5f);               // 折行进第二行带
+    return true;
+})
+
 // 源码守卫（只读断言）
 // 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
 // __FILE__（ccache 会把绝对路径相对化）；定位 / 取体失败一律大声失败，不静默绿。
@@ -5119,27 +5285,59 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK(src.find("struct BlockFlowHooks") != std::string::npos);
     DOCTEST_CHECK(src.find("const BlockFlowHooks& hooks)") != std::string::npos);
 
-    // (2) drawBlockFlow 本体：视图态特判的符号一个都不许在（分支长回来即变红）
-    // 拆分第一步后定义带 MarkdownModule:: 限定（头文件里是无限定声明）——两形态都试
+    // (2) 委托薄化（U2 抽核后形态）：drawBlockFlow 本体只剩状态组装 + 核委托。
+    // 定义带 MarkdownModule:: 限定（头文件里是无限定声明）——两形态都试
     std::string body = mdFunctionBody(src, "MarkdownModule::drawBlockFlow(");
     if (body.empty()) body = mdFunctionBody(src, "void drawBlockFlow(");
     DOCTEST_CHECK_MESSAGE(!body.empty(),
                           "取不到 drawBlockFlow 函数体（签名或括号被改？）");
     for (const char* bad :
          {"isActive", "activeBlock", "LiveBlockCtx", "live->", "liveBlockText",
-          "liveFitHeight", "drawLiveInputBlock", "codeDrawn"}) {
+          "liveFitHeight", "drawLiveInputBlock", "codeDrawn",
+          "hooks.wrapHeight", "hooks.drawContent", "hooks.afterHitOverlay",
+          "components::markdown(", "syncMap_.blockHeight"}) {
         DOCTEST_CHECK_MESSAGE(body.find(bad) == std::string::npos,
-                              std::string("drawBlockFlow 内又出现视图态特判：") + bad);
+                              std::string("drawBlockFlow 委托体不再保持薄形态：") + bad);
     }
-    // 三处决策都在本体里走 hooks（缺一 = 注入点没接线）
+    DOCTEST_CHECK_MESSAGE(body.find("mdDrawBlockFlowCore(") != std::string::npos,
+                          "drawBlockFlow 未委托渲染核 mdDrawBlockFlowCore");
+    DOCTEST_CHECK_MESSAGE(body.find("rebuildSyncMap(") != std::string::npos,
+                          "委托体丢了几何表重建（渲染核只读表值，重建留在调用侧）");
+    DOCTEST_CHECK_MESSAGE(body.find("blockModel_.update(") != std::string::npos,
+                          "委托体丢了块模型防御同步");
+
+    // (2b) 渲染核本体：注入点接线 + 默认路径仍在 + 视图态特判符号禁入。
+    // 核定义（.cpp）与声明/委托调用同签名前缀，逐个候选花括号体找含接线符号的那个。
+    std::string coreBody;
+    for (size_t at = src.find("mdDrawBlockFlowCore("); at != std::string::npos;
+         at = src.find("mdDrawBlockFlowCore(", at + 1)) {
+        const size_t open = src.find('{', at);
+        if (open == std::string::npos) break;
+        const std::string candidate = mdBalanced(src, open, '{', '}');
+        if (candidate.find("hooks.wrapHeight") != std::string::npos) {
+            coreBody = candidate;
+            break;
+        }
+    }
+    DOCTEST_CHECK_MESSAGE(!coreBody.empty(),
+                          "取不到 mdDrawBlockFlowCore 函数体（签名或括号被改？）");
+    for (const char* bad :
+         {"isActive", "activeBlock", "LiveBlockCtx", "live->", "liveBlockText",
+          "liveFitHeight", "drawLiveInputBlock", "codeDrawn"}) {
+        DOCTEST_CHECK_MESSAGE(coreBody.find(bad) == std::string::npos,
+                              std::string("渲染核内又出现视图态特判：") + bad);
+    }
+    // 三处绘制决策 + 查询缝成对都在核里走 hooks（缺一 = 注入点没接线）
     for (const char* wired : {"hooks.wrapHeight", "hooks.drawContent",
-                              "hooks.afterHitOverlay"}) {
-        DOCTEST_CHECK_MESSAGE(body.find(wired) != std::string::npos,
+                              "hooks.afterHitOverlay",
+                              "hooks.pendingRangeQuery", "hooks.onRangeRect",
+                              "mdResolveBlockRangeRect("}) {
+        DOCTEST_CHECK_MESSAGE(coreBody.find(wired) != std::string::npos,
                               std::string("注入点未接线：") + wired);
     }
     // 默认路径仍在：包裹高缺省 = 几何表 H_k、渲染通路仍是上游 markdown
-    DOCTEST_CHECK(body.find("syncMap_.blockHeight(k)") != std::string::npos);
-    DOCTEST_CHECK(body.find("components::markdown(") != std::string::npos);
+    DOCTEST_CHECK(coreBody.find("deps.syncMap.blockHeight(k)") != std::string::npos);
+    DOCTEST_CHECK(coreBody.find("components::markdown(") != std::string::npos);
 
     // (3) 两条调用路径分别传入：预览态传空实现、实时态传自己的特判
     constexpr size_t kNameLen = sizeof("drawBlockFlow") - 1;
@@ -8887,5 +9085,211 @@ REGISTER_TEST(md_folder_row_h29_h27,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ─── U4/F-05：页内搜索状态机纯逻辑（md_viewer_search.h 直驱）──────────────
+// 全序列 + 边界：Idle⇄Active、换词重算归 0、Enter/Shift+Enter 首尾回绕、
+// 0/0 无操作（PRD 硬边界）、清除保留 query、再唤起回填。区间口径 = 块源码
+// 字节偏移（与渲染核查询缝同口径，直接 substr 可索引断言）。
+REGISTER_TEST(md_viewer_search_state_machine,
+              "markdown_module: F-05 搜索状态机全序列（回绕/0/0 无操作/保留词/块局部偏移）", {
+    using namespace module::markdown;
+    const std::string doc =
+        "# 指标一\n"
+        "\n"
+        "alpha beta gamma\n"
+        "\n"
+        "二次指标与AB指标\n"
+        "\n"
+        "结尾 ab 与 Ab\n";
+    MdBlockModel model;
+    model.update(doc);
+    const auto& blocks = model.blocks();
+    DOCTEST_REQUIRE(blocks.size() == size_t(4));  // 空行终结段落 → 4 块
+
+    // —— findMatches：命中数 / 块序号 / 块局部字节偏移可直索引块源码
+    const auto ms = viewerSearchFindMatches(blocks, doc, "指标");
+    DOCTEST_CHECK_EQ(ms.size(), size_t(3));  // 标题×1 + 段落×2
+    DOCTEST_CHECK_EQ(ms[0].block, size_t(0));
+    const std::string b0 =
+        doc.substr(blocks[0].start, blocks[0].end - blocks[0].start);
+    DOCTEST_CHECK_EQ(b0.find("指标"), ms[0].begin);  // 与 find 同位（块局部口径）
+    DOCTEST_CHECK_EQ(b0.substr(ms[0].begin, ms[0].end - ms[0].begin),
+                     std::string("指标"));
+    DOCTEST_CHECK_EQ(ms[1].block, size_t(2));  // 第二处落第三块
+
+    const auto ab = viewerSearchFindMatches(blocks, doc, "aB");  // query 混合大小写
+    DOCTEST_CHECK_EQ(ab.size(), size_t(3));  // AB / ab / Ab 全折配
+    DOCTEST_CHECK(viewerSearchFindMatches(blocks, doc, "").empty());      // 空 query
+    DOCTEST_CHECK(viewerSearchFindMatches(blocks, doc, "不存在词").empty());
+
+    // —— 状态机序列：备词（Idle）→ 唤起 → 逐跳回绕 → 换词归 0 → 清除 → 再唤起
+    ViewerSearchState s;
+    DOCTEST_CHECK(s.phase == ViewerSearchPhase::Idle);
+    viewerSearchApplyQuery(s, "指标", blocks, doc);
+    DOCTEST_CHECK_EQ(s.matches.size(), size_t(3));
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+    viewerSearchActivate(s);
+    DOCTEST_CHECK(s.phase == ViewerSearchPhase::Active);
+    DOCTEST_CHECK(s.everActivated);
+    DOCTEST_CHECK(s.hasFocusPending);  // C1：光标已在输入框
+    s.hasFocusPending = false;
+    DOCTEST_CHECK_EQ(s.query, std::string("指标"));
+
+    // Enter 下一处；末处回绕回首处（浏览器惯例）
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(1));
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(2));
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(0));
+    // Shift+Enter 上一处；首处回绕到末处
+    DOCTEST_CHECK_EQ(viewerSearchPrev(s), size_t(2));
+    DOCTEST_CHECK_EQ(viewerSearchPrev(s), size_t(1));
+
+    // 换词：重算 + cur 归 1（cur=0）
+    viewerSearchApplyQuery(s, "aB", blocks, doc);
+    DOCTEST_CHECK_EQ(s.matches.size(), size_t(3));
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+    DOCTEST_CHECK_EQ(s.query, std::string("aB"));
+
+    // 0/0 边界：Enter / Shift+Enter 均无操作（PRD F-05 硬边界）
+    viewerSearchApplyQuery(s, "zzz", blocks, doc);
+    DOCTEST_CHECK(s.matches.empty());
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), kViewerSearchNoMatch);
+    DOCTEST_CHECK_EQ(viewerSearchPrev(s), kViewerSearchNoMatch);
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+
+    // 清除（Esc/×）：回阅读态、命中与计数清空、query/everActivated 保留
+    viewerSearchApplyQuery(s, "指标", blocks, doc);
+    viewerSearchClear(s);
+    DOCTEST_CHECK(s.phase == ViewerSearchPhase::Idle);
+    DOCTEST_CHECK(s.matches.empty());
+    DOCTEST_CHECK_EQ(s.cur, size_t(0));
+    DOCTEST_CHECK_EQ(s.query, std::string("指标"));
+    DOCTEST_CHECK(s.everActivated);
+
+    // 再唤起：保留关键词 + 焦点待请求；重算命中后续跳正常
+    viewerSearchActivate(s);
+    DOCTEST_CHECK_EQ(s.query, std::string("指标"));
+    DOCTEST_CHECK(s.hasFocusPending);
+    viewerSearchApplyQuery(s, s.query, blocks, doc);
+    DOCTEST_CHECK_EQ(s.matches.size(), size_t(3));
+    DOCTEST_CHECK_EQ(viewerSearchNext(s), size_t(1));
+    return true;
+})
+
+// ─── U3/F-04：窗口标题截断 + 空内容判定（纯助手）──────────────────────────
+REGISTER_TEST(md_viewer_window_title_and_blank,
+              "markdown_module: F-04 标题中段省略号（保头尾/UTF-8 码点边界/路径不外泄）+ 空文件判定", {
+    using namespace module::markdown;
+    // 文件名含扩展名；路径永不出现在标题（D-3）
+    DOCTEST_CHECK_EQ(mdViewerWindowTitle("D:/x/notes/a.md"), std::string("a.md"));
+    DOCTEST_CHECK_EQ(mdViewerWindowTitle("a.md"), std::string("a.md"));
+    DOCTEST_CHECK_EQ(mdViewerWindowTitle("/tmp/目录/笔记.md"), std::string("笔记.md"));
+
+    // 超长 ASCII 名：中段省略号、保头尾、无路径分隔符
+    const std::string longName = std::string(120, 'x') + ".md";
+    const std::string trunc = mdViewerWindowTitle("/p/" + longName);
+    DOCTEST_CHECK(trunc.find('/') == std::string::npos);
+    DOCTEST_CHECK(trunc.find("…") != std::string::npos);
+    DOCTEST_CHECK(trunc.size() < longName.size());
+    DOCTEST_CHECK(trunc.front() == 'x');
+    DOCTEST_CHECK(trunc.back() == 'd');
+
+    // UTF-8 边界：省略号两侧均为完整码点。前沿判据 = 自 ell-1 回退到首个非续
+    // 字节必为 lead 字节，且该码点长度恰好终止于 ell（完整 3 字节汉字的末字节
+    // 本身就是续字节——「ell-1 非续字节」是错误不变量，首版用例在此假红）
+    std::string cjkName;
+    for (int i = 0; i < 40; ++i) cjkName += "汉";  // 120 字节有效 UTF-8
+    const std::string ctrunc = mdViewerWindowTitle("/d/" + cjkName + ".md");
+    DOCTEST_CHECK(ctrunc.size() < cjkName.size() + 3);
+    const size_t ell = ctrunc.find("…");
+    DOCTEST_REQUIRE(ell != std::string::npos);
+    {
+        size_t back = ell;
+        while (back > 0 &&
+               (static_cast<unsigned char>(ctrunc[back - 1]) & 0xC0) == 0x80) {
+            --back;
+        }
+        DOCTEST_REQUIRE(back > 0);
+        // 循环退出时 back 停在「lead 字节的下一位」（[back-1] 为首个非续字节）
+        // → lead 位 = back-1，码点占 [back-1, back-1+len)，恰终止于 ell。
+        // （首版写 back+len 多加一——back 已含 lead 位偏移，off-by-one 假红）
+        const size_t leadPos = back - 1;
+        const unsigned char lead = static_cast<unsigned char>(ctrunc[leadPos]);
+        const size_t len =
+            lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+        DOCTEST_CHECK_EQ(leadPos + len, ell);  // 码点恰好终止于省略号前沿
+        if (ell + 3 < ctrunc.size()) {      // 后沿：省略号后必为 lead 字节
+            DOCTEST_CHECK((static_cast<unsigned char>(ctrunc[ell + 3]) & 0xC0) !=
+                          0x80);
+        }
+    }
+    DOCTEST_CHECK(ctrunc.back() == 'd');
+
+    // 空内容判定（PRD §八「空」态）：0 字节 / 全 ASCII 空白 = 空；有内容字节非空
+    DOCTEST_CHECK(mdViewerContentBlank(""));
+    DOCTEST_CHECK(mdViewerContentBlank(" \t\r\n"));
+    DOCTEST_CHECK_FALSE(mdViewerContentBlank("a"));
+    DOCTEST_CHECK_FALSE(mdViewerContentBlank("汉"));
+    return true;
+})
+
+// ─── U3/F-04：查看器窗口规格与 session 注册表────────────────────────────
+// 窗口请求断言经 app::consumeWindowRequests 消费 EUI-NEO openWindow 队列
+//（测试进程无主循环，请求无人消费，测试内取走即清）。回退会红：openViewerWindow
+// 不建 session / 规格偏离 D-3 / 同名双开不加后缀，任一发生本用例即红。
+REGISTER_TEST(md_viewer_session_registry,
+              "markdown_module: F-04 窗口规格（900×640/可缩放/系统默认位）+ session 注册表 + 同名双开后缀 + 缺文件照开（B7）", {
+    using namespace module::markdown;
+    resetViewerSessionsForTest();
+    DOCTEST_CHECK(viewerSessionCountForTest() == size_t(0));
+    app::consumeWindowRequests();  // 取走即弃跨用例残留（队列进程级，不假设其他
+                                   // 用例清过仓——只断言本用例自己的入队量）
+
+    const std::filesystem::path dir =
+        test_support::makeTempDir("mdviewer_", "session");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    {
+        std::ofstream f(dir / "a.md", std::ios::trunc);
+        f << "# 查看器\n\n正文段落。\n";
+    }
+    const std::string aPath = (dir / "a.md").string();
+
+    // 1. 正常文件 → session + 窗口请求（D-3 规格逐项）
+    openViewerWindow(aPath);
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(1));
+    DOCTEST_CHECK_EQ(viewerSessionPageIdForTest(0), std::string("a.md"));
+    const auto reqs = app::consumeWindowRequests();
+    DOCTEST_REQUIRE(reqs.size() == size_t(1));
+    DOCTEST_CHECK_EQ(reqs[0].title, std::string("a.md"));
+    DOCTEST_CHECK_EQ(reqs[0].pageId, std::string("a.md"));
+    DOCTEST_CHECK_EQ(reqs[0].width, 900);
+    DOCTEST_CHECK_EQ(reqs[0].height, 640);
+    DOCTEST_CHECK(reqs[0].resizable);
+    DOCTEST_CHECK_FALSE(reqs[0].positionSet);  // 系统默认位（不调 windowPosition）
+    DOCTEST_CHECK(static_cast<bool>(reqs[0].compose));
+    DOCTEST_CHECK(static_cast<bool>(reqs[0].onKeyEvent));  // 窗口级键路由（不进主窗 Router）
+
+    // 2. 同一文件再开 = 再开一窗（D-1），pageId 加序号后缀、标题保持文件名
+    openViewerWindow(aPath);
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(2));
+    DOCTEST_CHECK_EQ(viewerSessionPageIdForTest(1), std::string("a.md #2"));
+    const auto reqs2 = app::consumeWindowRequests();
+    DOCTEST_REQUIRE(reqs2.size() == size_t(1));
+    DOCTEST_CHECK_EQ(reqs2[0].title, std::string("a.md"));
+    DOCTEST_CHECK_EQ(reqs2[0].pageId, std::string("a.md #2"));
+
+    // 3. 缺文件照开（流程 B7：错误占位在 compose 呈现，session/窗口照建照关）
+    openViewerWindow((dir / "missing.md").string());
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(3));
+    DOCTEST_CHECK_EQ(app::consumeWindowRequests().size(), size_t(1));
+
+    // 4. 注销缝：清空注册表（测试进程无窗口销毁路径，直接复位）
+    resetViewerSessionsForTest();
+    DOCTEST_CHECK_EQ(viewerSessionCountForTest(), size_t(0));
+
+    std::filesystem::remove_all(dir, ec);
     return true;
 })

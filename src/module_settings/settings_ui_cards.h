@@ -7,6 +7,8 @@
 // SettingsCardActions。
 #pragma once
 
+#include "platform/file_association.h"
+
 #include "settings_config.h"
 #include "settings_ui_logic.h"
 #include "project_card_store.h"
@@ -77,6 +79,11 @@ struct SettingsCardsIn {
     // compose 侧按位置聚合初始化，中段插字段会错位）
     std::string proxyPortFeedback;             // 非空 = 端口行反馈位文案（替代静态提示）
     bool proxyPortFeedbackError = false;       // true = 红字；false = 三级字
+
+    // .md 文件关联（F-10）：回读归属快照（设置页 compose 节流查询写入，
+    // 见 settings_module::updateMdAssocStateIfStale 的 POC 结论注释）
+    platform::file_association::AssocState mdAssocState =
+        platform::file_association::AssocState::Unknown;
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -97,6 +104,7 @@ struct SettingsCardActions {
     std::function<void(bool)> applyReminderPopup;             // 上线提醒弹窗开关（默认关）
     std::function<void(bool)> applyFullscreenPopup;           // 调度全屏弹窗开关（默认关）
     std::function<void(bool)> applyFluidBackgroundEnabled;   // 动态背景开关（UAT6 活体流质）
+    std::function<void(bool)> applyMdAssocEnabled;            // 关联 .md 文件开关（F-10）
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
 

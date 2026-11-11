@@ -89,6 +89,7 @@ void setEnvVar(const char* key, const std::string& value) {
 //  16. MCP 服务桥 handler      四槽注入（start/stop/applyPort/status）     ← mcp_service_bridge.h
 //  17. 记忆 MCP 桥 handler     两槽注入（status + setEnabled）            ← memory_mcp_bridge.h
 //  18. toast 通知桥槽          单槽注入（应用级 toast 投递落点）           ← toast_notice_bridge.h
+//  19. 第二实例路径队列/漏斗    F-01 送达队列 + OS 打开漏斗槽      ← app_assembly.h
 //
 // 同口径纪律：**进程级单例一律永不析构**——服务/注册表/统计状态这类「与进程同寿」
 // 的对象不得写成「函数局部 static」。首次构造晚于 armExitHook 时，atexit 的 LIFO
@@ -196,6 +197,9 @@ void resetCaseGlobals() {
     // 会让后续用例崩溃；去重/限速/时钟覆盖同样会串味到后续用例。resetForTest
     // 一次清全部（后端槽 + 去重缓存 + 令牌桶 + 时钟 + initialize 幂等标记）。
     ::platform::notify::resetForTest();
+    // 16. F-01 第二实例路径队列 / OS 打开漏斗（app_assembly.h）：监听线程送达残留会
+    // 让后续 drain 断言多出幻影路径；出厂态 = 空队列 + 无漏斗
+    ::app::assembly::resetSecondInstanceFilesForTest();
 }
 
 // 结果先收集、循环结束后统一批量输出：全量 800+ 例时逐条 std::endl 强 flush 是

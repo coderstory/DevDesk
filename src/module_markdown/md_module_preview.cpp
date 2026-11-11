@@ -5,6 +5,7 @@
 
 #include "markdown_module_internal.h"
 
+#include <cmath>    // std::floor（区间→rect 行切分）
 #include <utility>  // std::move（check-std-includes：不靠传递包含）
 
 namespace module::markdown {
@@ -240,11 +241,39 @@ void MarkdownModule::drawBlockFlow(eui::Ui& ui,
     if (blockModel_.text() != editorText_) {
         blockModel_.update(editorText_);  // 防御：理论不可达
     }
-    // 色表注入（每帧）：主题切换时缓存旧色条目自动作废
-    previewCodeCache_.setColors(mdHighlightColors(t));
-    // 逐块 hit/hover 几何表（与同步滚动同一张）。键全等时零成本；Preview/Live 态是唯一重建点。
+    // 几何表重建留在委托侧（键控用编辑器成员态 editorText_/editorTextRev_）；
+    // Preview/Live 态是唯一重建点，渲染核只读表值。
     rebuildSyncMap(contentWidth, style);
-    const auto& blocks = blockModel_.blocks();
+    MdBlockFlowDeps deps{
+        blockModel_.blocks(),
+        blockModel_.text(),
+        previewCodeCache_,
+        syncMap_,
+        previewHover_,
+        [this](eui::Ui& codeUi, const std::string& partId,
+               const MdPreviewCodeHighlight& hl, float w,
+               const components::MarkdownStyle& st, bool hov,
+               const eui::Color& tint) {
+            drawPreviewCodeBlock(codeUi, partId, hl, w, st, hov, tint);
+        }};
+    mdDrawBlockFlowCore(ui, contentWidth, t, style, prefix, onBlockTap, deps,
+                        hooks);
+}
+
+// ─── 块流渲染核（U2 抽核）──────────────────────────────────────────────
+// 自 MarkdownModule::drawBlockFlow 原样平移：状态全部来自 deps/hooks 显式参数，
+// 渲染决策与顺序同编辑器时代逐行一致（行为守卫 = md_module_blockflow_hook_contrast）。
+void mdDrawBlockFlowCore(eui::Ui& ui,
+                         float contentWidth,
+                         const core::theme::Tokens& t,
+                         const components::MarkdownStyle& style,
+                         const std::string& prefix,
+                         const std::function<void(size_t, float)>& onBlockTap,
+                         const MdBlockFlowDeps& deps,
+                         const BlockFlowHooks& hooks) {
+    // 色表注入（每帧）：主题切换时缓存旧色条目自动作废
+    deps.codeCache.setColors(mdHighlightColors(t));
+    const auto& blocks = deps.blocks;
     std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
     // UAT3 T1：块 hover 底衬随页面主体 wechat 化（浅灰，同 surfaceHover 口径）。
     const eui::Color hoverTint = t.colors.hover;
@@ -254,8 +283,8 @@ void MarkdownModule::drawBlockFlow(eui::Ui& ui,
         .content([&] {
             for (size_t k = 0; k < blocks.size(); ++k) {
                 const MdBlock& b = blocks[k];
-                const bool hovered = previewHover_.hovered(b.stableId);
-                const float hk = syncMap_.blockHeight(k);
+                const bool hovered = deps.hover.hovered(b.stableId);
+                const float hk = deps.syncMap.blockHeight(k);
                 // 包裹高默认取几何表 H_k，注入点可覆盖：实时态活动块改取 input
                 // 贴合高（源码行数与渲染高不等，用 H_k 会切成输入框内部滚动）。
                 const float wrapH =
@@ -284,29 +313,30 @@ void MarkdownModule::drawBlockFlow(eui::Ui& ui,
                             hooks.drawContent(ui, k, b, wrapId, contentWidth,
                                               wrapH);
                         if (!contentDrawn &&
-                            b.kind == MdBlockKind::CodeFence) {
+                            b.kind == MdBlockKind::CodeFence &&
+                            deps.drawCodeBlock) {
                             // CodeFence 自绘：上游代码块单色且不暴露预解析注入。
                             // 未变块命中 (stableId, hash) 缓存零重算。
                             const MdPreviewCodeHighlight* hl =
-                                previewCodeCache_.get(b.stableId, b.hash);
+                                deps.codeCache.get(b.stableId, b.hash);
                             if (!hl) {
                                 MdPreviewCodeHighlight fresh =
                                     mdPreviewCodeHighlight(
-                                        blockModel_.text().substr(
+                                        deps.docText.substr(
                                             b.start, b.end - b.start),
                                         mdHighlightColors(t));
                                 if (fresh.ok) {
-                                    previewCodeCache_.put(
+                                    deps.codeCache.put(
                                         b.stableId, b.hash, std::move(fresh));
-                                    hl = previewCodeCache_.get(b.stableId,
-                                                               b.hash);
+                                    hl = deps.codeCache.get(b.stableId,
+                                                            b.hash);
                                 }
                             }
                             if (hl) {
                                 activeCodeIds.push_back(b.stableId);
-                                drawPreviewCodeBlock(ui, wrapId + ".code", *hl,
-                                                     contentWidth, style,
-                                                     hovered, hoverTint);
+                                deps.drawCodeBlock(ui, wrapId + ".code", *hl,
+                                                   contentWidth, style,
+                                                   hovered, hoverTint);
                                 contentDrawn = true;
                             }
                         }
@@ -315,12 +345,31 @@ void MarkdownModule::drawBlockFlow(eui::Ui& ui,
                                 ui,
                                 prefix + ".block." +
                                     std::to_string(b.stableId))
-                                .markdown(blockModel_.text().substr(
+                                .markdown(deps.docText.substr(
                                     b.start, b.end - b.start))
                                 .width(contentWidth)
                                 .wrapContentHeight()
                                 .style(style)
                                 .build();
+                        }
+                        // 「区间→rect」查询缝：内容（含文本度量）已建，块局部
+                        // 坐标此时可解析。纵向钳到块包裹内（估算行号与实际排版
+                        // 的残差不出块界）。
+                        if (hooks.pendingRangeQuery && hooks.onRangeRect) {
+                            const std::string btext =
+                                deps.docText.substr(b.start, b.end - b.start);
+                            for (const MdRangeSpan& span :
+                                 hooks.pendingRangeQuery(k)) {
+                                MdHitRect r;
+                                if (mdResolveBlockRangeRect(
+                                        btext, span.begin, span.end,
+                                        contentWidth, style, &r)) {
+                                    if (r.y + r.h > wrapH) {
+                                        r.h = std::max(0.0f, wrapH - r.y);
+                                    }
+                                    hooks.onRangeRect(k, span, r);
+                                }
+                            }
                         }
                         // 透明 hit 覆盖层；onTap 的 y 为区域局部坐标，反查回编辑器行
                         auto hit =
@@ -332,9 +381,13 @@ void MarkdownModule::drawBlockFlow(eui::Ui& ui,
                                 onBlockTap(k, static_cast<float>(ev.y));
                             });
                         }
-                        hit.onHover([this, sid = b.stableId](bool h) {
-                               if (h) previewHover_.enter(sid);
-                               else previewHover_.leave(sid);
+                        // onHover 回调是帧后事件（构建期已返回），禁引用捕获
+                        // 栈上 deps——按值捕 hover 状态指针（所指对象 = 调用方
+                        // 成员态，寿命覆盖 lambda），原 [this, sid] 等价形态。
+                        hit.onHover([hv = &deps.hover,
+                                     sid = b.stableId](bool h) {
+                               if (h) hv->enter(sid);
+                               else hv->leave(sid);
                            })
                             .build();
                         // 注入点收尾：实时态活动块在此关覆盖层命中，
@@ -347,7 +400,109 @@ void MarkdownModule::drawBlockFlow(eui::Ui& ui,
             }
         })
         .build();
-    previewCodeCache_.pruneActive(activeCodeIds);
+    deps.codeCache.pruneActive(activeCodeIds);
+}
+
+// ─── 「区间→rect」查询缝几何解析（U2，契约见头文件声明处）────────────────
+bool mdResolveBlockRangeRect(const std::string& blockText, size_t begin,
+                             size_t end, float contentWidth,
+                             const components::MarkdownStyle& style,
+                             MdHitRect* out) {
+    if (out == nullptr || blockText.empty() || contentWidth <= 0.0f) {
+        return false;
+    }
+    if (begin >= end || end > blockText.size()) {
+        return false;
+    }
+    const float lineHeight = style.bodyLineHeight > 0.0f
+                                 ? style.bodyLineHeight
+                                 : style.bodySize + 6.0f;
+    const float averageCharWidth = std::max(1.0f, style.bodySize * 0.56f);
+    const int charsPerLine = std::max(
+        1, static_cast<int>(std::floor(contentWidth / averageCharWidth)));
+
+    // 码点起点表（UTF-8 逐码点字节偏移；截断的续字节序列按 1 字节兜底）
+    std::vector<size_t> cpBegin;
+    cpBegin.reserve(blockText.size());
+    for (size_t i = 0; i < blockText.size();) {
+        cpBegin.push_back(i);
+        const unsigned char c = static_cast<unsigned char>(blockText[i]);
+        size_t step = 1;
+        if (c >= 0xF0U) {
+            step = 4;
+        } else if (c >= 0xE0U) {
+            step = 3;
+        } else if (c >= 0xC0U) {
+            step = 2;
+        }
+        i += (i + step <= blockText.size()) ? step : 1;
+    }
+    // 字节偏移 → 码点序号（落在码点中间 = 归属该码点）
+    const auto cpIndexAt = [&cpBegin](size_t bytePos) {
+        size_t lo = 0;
+        size_t hi = cpBegin.size();
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (cpBegin[mid] < bytePos) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if (lo < cpBegin.size() && cpBegin[lo] == bytePos) return lo;
+        return lo > 0 ? lo - 1 : 0;
+    };
+
+    // 虚拟行表：与 estimateMarkdownTextHeight 同式（\n 分段、段内按
+    // charsPerLine 切行；空段计 1 行）——保证行号与几何表同源不自相矛盾。
+    std::vector<size_t> lineStartCp;
+    lineStartCp.push_back(0);
+    int cpInLine = 0;
+    for (size_t ci = 0; ci < cpBegin.size(); ++ci) {
+        if (blockText[cpBegin[ci]] == '\n') {
+            lineStartCp.push_back(ci + 1);  // 新段首
+            cpInLine = 0;
+            continue;
+        }
+        ++cpInLine;
+        if (cpInLine > charsPerLine) {
+            lineStartCp.push_back(ci);  // 段内折行
+            cpInLine = 1;
+        }
+    }
+    size_t li = lineStartCp.size() - 1;
+    for (size_t back = lineStartCp.size(); back > 0; --back) {
+        if (lineStartCp[back - 1] <= cpIndexAt(begin)) {
+            li = back - 1;
+            break;
+        }
+    }
+    const size_t lineStartByte = cpBegin[lineStartCp[li]];
+    const std::string linePrefix =
+        blockText.substr(lineStartByte, begin - lineStartByte);
+    const std::string target = blockText.substr(begin, end - begin);
+
+    // 行内 x/w：真文本度量（与渲染通路同一 measureTextWidth 源）。
+    const int kBodyWeight = 400;  // 正常字重；粗体内联 run 的加权度量属 U4 打磨
+    float x = components::detail::measureMarkdownTextWidth(
+        linePrefix, style.fontFamily, style.bodySize, kBodyWeight);
+    float w = components::detail::measureMarkdownTextWidth(
+        target, style.fontFamily, style.bodySize, kBodyWeight);
+    if (w <= 0.0f) {
+        return false;
+    }
+    // 横向钳制：命中矩形恒落在 [0, contentWidth] 带内（真度量超估算行宽也不出块）。
+    if (x < 0.0f) {
+        x = 0.0f;
+    }
+    if (x + w > contentWidth) {
+        x = std::max(0.0f, contentWidth - w);
+    }
+    out->x = x;
+    out->y = static_cast<float>(li) * lineHeight;
+    out->w = w;
+    out->h = lineHeight;
+    return true;
 }
 
 int MarkdownModule::liveCaretDisplayLine(const MdBlock& b, const std::string& blockText,
