@@ -55,8 +55,10 @@ float textWidthEstimate(const std::string& text, float fontSize) {
     return w;
 }
 
-// 等宽代码宽估算（F-07⑥ 横滚内容宽；ASCII 0.62em，CJK 按 2 格 1.1em；
-// 偏大只多留白——横滚尾部多出的空白不影响「不换行错位」验收）
+// 等宽代码宽估算（F-07⑥ 横滚内容宽；每显示列 0.62em。charLen=显示列数——
+// 模型层非 ASCII 起始序列按 2 列（need:14 P1-1：mono 字体 CJK 实测 ~1.0em/字，
+// 码点口径对纯 CJK 行欠 58%，120 字行实量 1560px vs 模型 988px 行尾不可达），
+// 双格保守入模 → 恒偏大只多留白，横滚尾部空白不影响「不换行错位」验收）
 float monoLineWidth(size_t charLen, float fontSize) {
     return charLen * fontSize * 0.62f + fontSize * 1.6f;
 }
@@ -297,7 +299,9 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         .build();
 
     // 全局搜索框（§5.1a need:14：320×32、radius 6、底 sidebarBg 降档区分、
-    // placeholder 13px textTertiary；Enter 提交 / ESC 显式取消 / 清空=取消同路）
+    // placeholder 13px textTertiary；Enter 提交 / ESC 显式取消 / 清空=取消同路）。
+    // inset 让出左侧放大镜位（组件 inset 左右对称，右缘由 ×/扫描圈叠盖——
+    // 同 agent.dialog.tools.search 先例）
     const float searchW = scaled(320.0f);
     const float searchH = scaled(32.0f);
     components::input(ui, "git.search.input")
@@ -306,6 +310,7 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         .value(c.searchDraft())
         .placeholder("搜索全仓内容…")
         .fontSize(scaled(13.0f))
+        .inset(scaled(30.0f))
         .theme(core::theme::componentTokens(t))
         .onChange([&c](const std::string& v) {
             c.setSearchDraft(v);
@@ -314,12 +319,28 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         .onEnter([&c] { c.submitSearchNow(); })
         .onCancel([&c] { c.cancelSearch(); })
         .build();
-    // 右侧指示：扫描中 ↻（pulse 驱动持续出帧；§5.1a「旋转圈」EUI 无旋转原语，
-    // 落地为 pulse 字形——参数同档 12px textTertiary）；有草稿时 ×（清空+取消）
+    // 左侧放大镜（§5.1a「放大镜 16px 描边 --c-text-3」；纯装饰 pointer 穿透，
+    // FA5 search 0xF002——同 agent 搜索框先例）
+    ui.text("git.search.icon")
+        .position(searchBoxX + scaled(9.0f), searchBoxY)
+        .size(scaled(16.0f), searchH)
+        .icon(::eui::utf8(0xF002))
+        .fontSize(scaled(13.0f))
+        .lineHeight(searchH)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary)
+        .hitTestMode(::core::dsl::HitTestMode::None)
+        .build();
+    // 右侧指示（§5.1a 两行并列——扫描圈与清除 × 并存不互斥，P2-6）：
+    // × 恒居右缘（有草稿即显，点击=清空+取消，扫描中同此路）；扫描圈让位 ×
+    // 左侧一档（pulse 驱动持续出帧；「旋转圈」EUI 无旋转原语，落地为 pulse 字形）
     const float badgeX = searchBoxX + searchW - scaled(22.0f);
+    const bool hasDraft = !c.searchDraft().empty();
     if (c.searchState() == GitPageController::GitSearchState::Scanning) {
+        const float spinX = hasDraft ? badgeX - scaled(22.0f) : badgeX;
         ui.text("git.search.spin")
-            .position(badgeX, searchBoxY)
+            .position(spinX, searchBoxY)
             .size(scaled(20.0f), searchH)
             .icon(0xF021)
             .fontSize(scaled(12.0f))
@@ -329,7 +350,8 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
             .build();
-    } else if (!c.searchDraft().empty()) {
+    }
+    if (hasDraft) {
         ui.text("git.search.clear")
             .position(badgeX, searchBoxY)
             .size(scaled(20.0f), searchH)
@@ -1517,11 +1539,15 @@ void composeSearchPopup(eui::Ui& ui, float w, float h, GitPageController& c,
                                            .color(t.colors.textPrimary);
                     if (!runs.empty()) previewText.runs(runs);
                     previewText.build();
-                    // 点击结果行 → F-08② 定位（浮层保持开，渐进出果价值）
+                    // 点击结果行 → F-08② 定位（浮层保持开，渐进出果价值）。
+                    // P2-4：results 是 controller 活引用——命中区注册与点击派发间
+                    // results 可被清（ESC 取消/新扫描重置），派发时重查边界防 OOB
                     inner.rect(rowId + ".hit")
                         .size(contentWidth, rowH)
                         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                        .onClick([&c, &results, idx] { c.jumpToHit(results[idx]); })
+                        .onClick([&c, &results, idx] {
+                            if (idx < results.size()) c.jumpToHit(results[idx]);
+                        })
                         .build();
                 })
                 .build();

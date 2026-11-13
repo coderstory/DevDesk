@@ -253,8 +253,10 @@ REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 
 })
 
 // bug#21（diff 侧生产点）：maxLineLen_ 曾按字节计（line.content.size()）——
-// CJK 行 3 字节/字虚胖；修后按 UTF-8 码点计，与内容模型同口径。
-REGISTER_TEST(git_diff_maxlinelen_codepoints, "git_diff: maxLineLen 码点计数（CJK 行不虚胖，bug#21）", {
+// CJK 行 3 字节/字虚胖；need:14 P1-1：码点口径对纯 CJK 行仍欠宽（mono 字体
+// CJK 实测 ~1.0em/字 vs 模型 0.62em/列）——修后按显示列计（非 ASCII 起始序列
+// 2 列），与内容模型同口径，恒偏大不变式成立。
+REGISTER_TEST(git_diff_maxlinelen_display_cells, "git_diff: maxLineLen 显示列数（非 ASCII 按 2 列，恒偏大不变式，bug#21+P1-1）", {
     GitDiffModel m;
     DiffPatch p;
     p.oldPath = "a.txt";
@@ -267,6 +269,6 @@ REGISTER_TEST(git_diff_maxlinelen_codepoints, "git_diff: maxLineLen 码点计数
     h.lines.push_back(line('+', 0, 2, "0123456789"));
     p.hunks.push_back(std::move(h));
     m.setPatch(std::move(p));
-    DOCTEST_CHECK(m.maxLineLen() == 10);
+    DOCTEST_CHECK(m.maxLineLen() == 20);   // 10 字 × 2 列（恒偏大：不欠于实宽）
     return true;
 })

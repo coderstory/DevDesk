@@ -129,9 +129,11 @@ REGISTER_TEST(git_content_unicode_path, "git_content: 中文文件名路径直�
 })
 
 // bug#21：maxLineLen 曾按字节计——UTF-8 CJK 3 字节/字被当 3 字符，横滚内容宽
-// 虚胖 ~3 倍（CJK 仓假横滚）。修后语义 = 码点数：1 行 10 个中文字符与 1 行
-// 10 个 ASCII 字符断言相等。
-REGISTER_TEST(git_content_maxlinelen_codepoints, "git_content: maxLineLen 码点计数（CJK 与 ASCII 等长行同宽，bug#21）", {
+// 虚胖 ~3 倍（CJK 仓假横滚）。need:14 P1-1：码点口径对纯 CJK 行仍欠宽（mono
+// 字体 CJK 实测 ~1.0em/字 vs 模型 0.62em/列，120 字行实量 1560px vs 988px）——
+// 修后语义 = 显示列数（非 ASCII 起始序列按 2 列）：10 中文 = 20 列 > 10 ASCII
+// = 10 列，恢复「模型恒偏大」不变式（行尾可达）。
+REGISTER_TEST(git_content_maxlinelen_display_cells, "git_content: maxLineLen 显示列数（非 ASCII 按 2 列，恒偏大不变式，bug#21+P1-1）", {
     const std::string cjk10 = "\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80"
                               "\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80"
                               "\xE4\xB8\x80\xE4\xB8\x80";  // 10 × U+4E00（30 字节）
@@ -139,8 +141,8 @@ REGISTER_TEST(git_content_maxlinelen_codepoints, "git_content: maxLineLen 码点
     const auto ascii = FileContent::readFromDisk(writeTemp("ascii_len.txt", "0123456789"));
     DOCTEST_REQUIRE(cjk.state == ContentState::Ok);
     DOCTEST_REQUIRE(ascii.state == ContentState::Ok);
-    DOCTEST_CHECK(cjk.maxLineLen == 10);
+    DOCTEST_CHECK(cjk.maxLineLen == 20);   // 10 字 × 2 列
     DOCTEST_CHECK(ascii.maxLineLen == 10);
-    DOCTEST_CHECK(cjk.maxLineLen == ascii.maxLineLen);
+    DOCTEST_CHECK(cjk.maxLineLen > ascii.maxLineLen);  // 恒偏大：CJK 行宽入模不欠
     return true;
 })

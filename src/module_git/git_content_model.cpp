@@ -116,14 +116,18 @@ FileContent FileContent::readFromDisk(const std::filesystem::path& absPath) {
             size_t end = i;
             if (end > start && data[end - 1] == '\r') --end;
             out.lines.emplace_back(data, start, end - start);
-            // bug#21：maxLineLen 语义 = 码点数（按字节计会把 UTF-8 CJK 3 字节/字
-            // 当 3 字符，横滚内容宽虚胖 ~3 倍）。Ok 态已过 isValidUtf8 严格校验，
-            // 序列起点计数零额外校验成本。
-            size_t codepoints = 0;
+            // maxLineLen 语义 = 显示列数（等宽格数）。bug#21 曾按字节计（CJK 3 字节
+            // → 虚胖 ~3 倍）；码点口径（need:14 审计 P1-1）对纯 CJK 行又欠宽：实测
+            // mono 字体 CJK ≈ 1.0em/字 vs 模型 0.62em/列 → 120 字行实量 1560px vs
+            // 模型 988px，行尾不可达。非 ASCII 起始序列一律按 2 列（CJK 双格保守
+            // 恒偏大，偏大只多留白）；Ok 态已过 isValidUtf8，序列起点计数零校验成本。
+            size_t cells = 0;
             for (size_t j = start; j < end; ++j) {
-                if ((static_cast<unsigned char>(data[j]) & 0xC0) != 0x80) ++codepoints;
+                const unsigned char b = static_cast<unsigned char>(data[j]);
+                if ((b & 0xC0) == 0x80) continue;  // UTF-8 续字节不计
+                cells += (b < 0x80) ? 1 : 2;
             }
-            out.maxLineLen = std::max(out.maxLineLen, codepoints);
+            out.maxLineLen = std::max(out.maxLineLen, cells);
             start = i + 1;
         }
     }

@@ -12,17 +12,20 @@ void GitDiffModel::setPatch(platform::git::DiffPatch patch, std::string placehol
     patch_ = std::move(patch);
     placeholder_ = std::move(placeholder);
     folded_.assign(patch_.hunks.size(), false);
-    // 最长行码点数（F-07⑥ 横滚内容宽）：diff 行统一等宽字体，码点数即宽。
-    // bug#21：按字节计（content.size()）会把 UTF-8 CJK 3 字节/字当 3 字符，
-    // diff 横滚内容宽虚胖 ~3 倍——与内容模型（git_content_model）同口径改码点。
+    // 最长行显示列数（F-07⑥ 横滚内容宽）：diff 行统一等宽字体。
+    // bug#21：按字节计会把 UTF-8 CJK 3 字节/字当 3 字符（虚胖 ~3 倍）；码点口径
+    // （need:14 审计 P1-1）对纯 CJK 行欠宽（实测 1.0em/字 vs 模型 0.62em/列）——
+    // 与内容模型（git_content_model）同口径：非 ASCII 起始序列按 2 列，恒偏大。
     maxLineLen_ = 0;
     for (const auto& hunk : patch_.hunks) {
         for (const auto& line : hunk.lines) {
-            size_t codepoints = 0;
+            size_t cells = 0;
             for (const char c : line.content) {
-                if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) ++codepoints;
+                const unsigned char b = static_cast<unsigned char>(c);
+                if ((b & 0xC0) == 0x80) continue;  // UTF-8 续字节不计
+                cells += (b < 0x80) ? 1 : 2;
             }
-            maxLineLen_ = std::max(maxLineLen_, codepoints);
+            maxLineLen_ = std::max(maxLineLen_, cells);
         }
     }
     rebuildRows();

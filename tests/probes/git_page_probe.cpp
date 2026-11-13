@@ -8,6 +8,7 @@
 #include <eui/detail/dsl_app_impl.h>
 #include "test_support.h"
 #include "core/module_interface.h"
+#include "core/render/text.h"
 #include "core/theme.h"
 #include "platform/folder_picker.h"
 #include "platform/git/git_libgit2.h"
@@ -41,6 +42,15 @@ void stage(const std::string& what) {
     std::ofstream log("D:/project/gui/DevDesk/build/probe_stage.log",
                       std::ios::app);
     log << what << "\n";
+}
+
+// P1-1（need:14 审计）裁决行：纯 CJK 无 ASCII 稀释最坏情形（120 字 ×3 字节 UTF-8）。
+// 外部仓由调用方预置同串长行；此处提供同串供 measureTextWidth 实量对比。
+std::string cjkProbeLine() {
+    std::string s;
+    s.reserve(360);
+    for (int i = 0; i < 120; ++i) s += "\xE6\xB1\x89";  // 汉
+    return s;
 }
 
 } // namespace
@@ -180,6 +190,8 @@ int main(int argc, char* argv[]) {
     bool noDiff = false;  // --no-diff：夹具无文本变更条目（纯二进制 untracked 仓）时跳过 ②b 文本 diff 动线
     bool bug18Shots = false;  // --untracked-diff：bug#18 两档取证（untracked 全增行 + >1MiB 占位）
     bool searchShots = false;  // --search：need:14 全局搜索取证（结果/定位/空态/ESC 取消）
+    bool hscrollExt = false;   // --hscroll：外部仓横滚取证（qa14 bug#21 CJK 回归）
+    bool cjkAdj = false;       // --cjk-adjudicate：P1-1 纯 CJK 宽度裁决（实量 vs 码点模型）
     std::string externalRepo;  // --repo <路径>：外部夹具仓注入（qa12 F-09 大仓 probe）
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -188,6 +200,8 @@ int main(int argc, char* argv[]) {
         if (arg == "--no-diff") noDiff = true;
         if (arg == "--untracked-diff") bug18Shots = true;
         if (arg == "--search") searchShots = true;
+        if (arg == "--hscroll") hscrollExt = true;
+        if (arg == "--cjk-adjudicate") cjkAdj = true;
         if (arg == "--repo" && i + 1 < argc) externalRepo = argv[++i];
     }
     if (!probe::initializeWindowBackend()) return 1;
@@ -531,7 +545,7 @@ int main(int argc, char* argv[]) {
     // ②d 批次四（need:11）：F-07⑥ 真横滚——a.txt diff 含 1500 字符超长行，
     // 拖底部横向滚动条 thumb → 代码列整体平移（行号列固定），断言行内容元素
     // frame.x 左移（不换行错位的几何证据）。
-    if (passed && !noOpen && externalRepo.empty()) {  // ②d 横滚依赖 fixture 长行，外部仓跳过
+    if (passed && !noOpen && (externalRepo.empty() || hscrollExt)) {  // ②d 横滚：fixture 长行或 --hscroll 外部仓（qa14 bug#21 CJK）
         const core::dsl::Element* changes = ui->find("git.changes.list");
         const core::dsl::Element* hscrollProbe = ui->find("git.diff.list");
         (void)hscrollProbe;
@@ -577,6 +591,20 @@ int main(int argc, char* argv[]) {
                             : -1.0;
                     std::cout << "  横滚拖动后 diff 行内容 x：" << beforeX
                               << " → " << afterX << "\n";
+                    if (cjkAdj && codeAfter != nullptr) {
+                        // P1-1 裁决（diff 侧）：实量宽（EUI measureTextWidth，与渲染同源）
+                        // vs 码点×0.62em 模型（= .code 元素宽 codeW）。实量 > codeW →
+                        // 横滚射程不足，行尾不可达确证。
+                        const float measured = core::TextPrimitive::measureTextWidth(
+                            cjkProbeLine(), "monospace", 13.0f, 400);
+                        const double diffCodeW =
+                            static_cast<double>(codeAfter->frame.width);
+                        std::cout << "  [cjk-adj] diff 侧：实量宽=" << measured
+                                  << " codeW(模型)=" << diffCodeW
+                                  << (measured > diffCodeW
+                                          ? " → 模型欠宽（行尾不可达）"
+                                          : " → 模型不欠宽") << "\n";
+                    }
                     if (codeAfter == nullptr || afterX >= beforeX - 40.0) {
                         std::cerr << "git_page_probe: FAIL——拖横滚后代码列未平移"
                                      "（x 位移不足）\n";
@@ -586,6 +614,82 @@ int main(int argc, char* argv[]) {
                                    window, runtime,
                                    shotPath(args.screenshotPath, "hscroll"))) {
                         passed = false;
+                    }
+                    // qa14 bug#21 content 侧：切内容 Tab → 长行 content 横滚同口径取证
+                    const core::dsl::Element* contentTab2 =
+                        ui->find("git.right.tab.content.hit");
+                    if (contentTab2 == nullptr ||
+                        !clickUntil(
+                            contentTab2->frame.x + contentTab2->frame.width * 0.5f,
+                            contentTab2->frame.y + contentTab2->frame.height * 0.5f,
+                            [&] { return ui->find("git.content.list") != nullptr; })) {
+                        std::cerr << "git_page_probe: FAIL——content 视图未出"
+                                     "（--hscroll content 侧前置失败）\n";
+                        passed = false;
+                    } else {
+                        const core::dsl::Element* cThumb =
+                            ui->find("git.content.list.h.thumb");
+                        if (cThumb == nullptr) {
+                            std::cerr << "git_page_probe: FAIL——超长行 content 未出横向"
+                                         "滚动条（git.content.list.h.thumb 缺失）\n";
+                            passed = false;
+                        } else {
+                            const core::dsl::Element* cCode =
+                                ui->find("git.content.list.slot.0.code");
+                            const double cBefore =
+                                cCode != nullptr
+                                    ? static_cast<double>(cCode->frame.x)
+                                    : -1.0;
+                            probe::drag(window, runtime,
+                                        static_cast<double>(cThumb->frame.x +
+                                                            cThumb->frame.width * 0.5f),
+                                        static_cast<double>(cThumb->frame.y +
+                                                            cThumb->frame.height * 0.5f),
+                                        static_cast<double>(cThumb->frame.x) + 160.0,
+                                        static_cast<double>(cThumb->frame.y +
+                                                            cThumb->frame.height * 0.5f),
+                                        10);
+                            for (int i = 0; i < 20; ++i) composeFrame();
+                            const core::dsl::Element* cCode2 =
+                                ui->find("git.content.list.slot.0.code");
+                            const double cAfter =
+                                cCode2 != nullptr
+                                    ? static_cast<double>(cCode2->frame.x)
+                                    : -1.0;
+                            std::cout << "  横滚拖动后 content 行内容 x：" << cBefore
+                                      << " → " << cAfter << "（thumbW="
+                                      << cThumb->frame.width
+                                      << " codeW="
+                                      << (cCode2 != nullptr ? cCode2->frame.width : -1.0f)
+                                      << "）\n";
+                            if (cjkAdj && cCode2 != nullptr) {
+                                // P1-1 裁决（content 侧）：同 diff 侧口径，行尾最后一个
+                                // 码点可达 ⇔ 实量宽 ≤ codeW（.code 元素宽 = 模型值）
+                                const float measured = core::TextPrimitive::measureTextWidth(
+                                    cjkProbeLine(), "monospace", 13.0f, 400);
+                                const double cCodeW =
+                                    static_cast<double>(cCode2->frame.width);
+                                std::cout << "  [cjk-adj] content 侧：实量宽=" << measured
+                                          << " codeW(模型)=" << cCodeW
+                                          << (measured > cCodeW
+                                                  ? " → 模型欠宽（行尾不可达）"
+                                                  : " → 模型不欠宽（恒偏大成立）")
+                                          << "\n";
+                            }
+                            // qa14：≥10px 平移即证可滚（拖动映射受按压捕获敏感度
+                            // 影响，clue#60；幅度不设硬阈，几何全留痕）
+                            if (cCode2 == nullptr || cBefore - cAfter < 10.0) {
+                                std::cerr << "git_page_probe: FAIL——拖横滚后 content "
+                                             "代码列未平移（≥10px 判可滚）\n";
+                                passed = false;
+                            } else if (!args.screenshotPath.empty() &&
+                                       !probe::captureFramePng(
+                                           window, runtime,
+                                           shotPath(args.screenshotPath,
+                                                    "hscroll_content"))) {
+                                passed = false;
+                            }
+                        }
                     }
                 }
             }
@@ -662,6 +766,14 @@ int main(int argc, char* argv[]) {
                 composeFrame();
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 popup = ui->find("git.search.popup") != nullptr;
+                if (popup && !args.screenshotPath.empty()) {
+                    // qa14：浮层首帧即落图（10k 仓此时=扫描态「正在扫描… x/y 文件」
+                    // + 已出部分结果 = 渐进出果 t1；小仓可能已收敛）
+                    if (!probe::captureFramePng(
+                            window, runtime,
+                            shotPath(args.screenshotPath, "search_scanning")))
+                        passed = false;
+                }
             }
             if (!popup) {
                 std::cerr << "git_page_probe: FAIL——搜索提交后浮层未出\n";
@@ -719,12 +831,33 @@ int main(int argc, char* argv[]) {
                     std::cerr << "git_page_probe: FAIL——ESC 后浮层未消失（取消语义失效）\n";
                     passed = false;
                 } else {
-                    std::cout << "  ESC 取消浮层消失（F-08④）\n";
+                    // qa14 取消稳态：再泵 2s 断言浮层不复活（10k 仓扫描中取消时，
+                    // 过期增量若泄漏会顶回浮层/结果=取消失效）
+                    bool resurrect = false;
+                    for (int i = 0; i < 40 && !resurrect; ++i) {
+                        composeFrame();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        resurrect = ui->find("git.search.popup") != nullptr;
+                    }
+                    if (resurrect) {
+                        std::cerr << "git_page_probe: FAIL——ESC 后浮层复活"
+                                     "（取消后过期增量泄漏）\n";
+                        passed = false;
+                    } else {
+                        std::cout << "  ESC 取消浮层消失且 2s 稳态不复活（F-08④）\n";
+                        if (!args.screenshotPath.empty() &&
+                            !probe::captureFramePng(
+                                window, runtime,
+                                shotPath(args.screenshotPath, "search_cancelled")))
+                            passed = false;
+                    }
                 }
                 // 档④：空结果态
                 typeAndEnter("zzz__no_such_token__");
                 bool emptyPopup = false;
-                for (int i = 0; i < 120 && !emptyPopup; ++i) {
+                const int emptyWait =
+                    externalRepo.empty() ? 120 : 2400;  // qa14：外部 10k 仓全量扫描需真实等待
+                for (int i = 0; i < emptyWait && !emptyPopup; ++i) {
                     composeFrame();
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                     emptyPopup = ui->find("git.search.popup.empty") != nullptr;

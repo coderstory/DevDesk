@@ -35,7 +35,8 @@ public:
     bool binary() const { return patch_.binary; }
     bool isEmpty() const { return patch_.hunks.empty(); }  // 「无内容变更」占位判据
     const std::string& placeholder() const { return placeholder_; }
-    // 最长行字符数（setPatch 一次算好；0=无行。视图换算等宽字宽得横滚内容宽）
+    // 最长行显示列数（setPatch 一次算好；0=无行。视图换算等宽字宽得横滚内容宽；
+    // 非 ASCII 起始序列按 2 列——与 git_content_model 同口径，need:14 P1-1）
     size_t maxLineLen() const { return maxLineLen_; }
 
     // 文件头文案（UI-A §5.6 文件头）：重命名「old → new」，其余显新路径

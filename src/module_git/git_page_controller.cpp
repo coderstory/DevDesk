@@ -166,6 +166,13 @@ void GitPageController::onStop() {
     // 取消③切模块：seq++ 让 join 等待中的长扫描在下一文件边界立即退出
     //（git_worker stop 再兜底丢弃未执行任务）；然后清回投箱
     ++searchSeq_;
+    // P2-5（need:14 审计）：切模块时扫描在途 → 复位扫描面。不复位则回模块永挂
+    // 「正在扫描」+spinner，且同词幂等（submitSearch query 未清）堵死重扫。
+    // 选 None（全清）而非 Done+truncated：truncated 语义=200 上限截断，挪用会给
+    // 出「结果完整」假象；None 回模块草稿仍在（searchDraft_ 不清），Enter 即重查。
+    if (searchState_ == GitSearchState::Scanning) {
+        resetSearchFace();
+    }
     // worker 生命周期归模块；这里只清回投箱（停机期间不再有回投目标）
     std::lock_guard<std::mutex> lock(inboxMu_);
     inbox_.clear();
@@ -823,6 +830,10 @@ void GitPageController::jumpToHit(const SearchHit& hit) {
     // 行号（内容 Ready 后视图按行盒几何滚动——clue#14 禁偏移量直设口径）
     selectTreeFile(hit.relPath);
     pendingContentLine_ = hit.line;
+    // P1-2（need:14 审计）：同文件已 Ready 时 requestContent 幂等早退，不经过
+    // Ready 落值点——重复点击/同文件第二命中只滚动不高亮。直接落值：未 Ready 时
+    // 高亮先行无害（行渲染仅在 Ready 体），Ready 到达后落值点赋同值幂等。
+    contentHighlightLine_ = hit.line;
 }
 
 size_t GitPageController::searchFileCount() const {
