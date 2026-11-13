@@ -102,6 +102,11 @@ void GitPageController::composePump() {
             now - lastStatusAt_ > std::chrono::seconds(2)) {
             requestStatus();
         }
+        // ⑤ 全局搜索防抖（need:14）：输入停 300ms 提交（Enter 走 submitSearchNow）
+        if (searchEditPending_ && now - searchEditAt_ > std::chrono::milliseconds(300)) {
+            searchEditPending_ = false;
+            submitSearch(searchDraft_);
+        }
     } else {
         watchDirtyUi_ = false;
         staleBar_ = false;
@@ -158,6 +163,9 @@ void GitPageController::onStart() {
 }
 
 void GitPageController::onStop() {
+    // 取消③切模块：seq++ 让 join 等待中的长扫描在下一文件边界立即退出
+    //（git_worker stop 再兜底丢弃未执行任务）；然后清回投箱
+    ++searchSeq_;
     // worker 生命周期归模块；这里只清回投箱（停机期间不再有回投目标）
     std::lock_guard<std::mutex> lock(inboxMu_);
     inbox_.clear();
@@ -420,12 +428,16 @@ void GitPageController::toggleDir(const std::string& dirRel) {
 void GitPageController::selectTreeFile(const std::string& relPath) {
     selectedPath_ = relPath;
     rightShowsDiff_ = false;  // I-03：右栏切内容视图
+    pendingContentLine_.reset();   // 非搜索选中：清除定位锚（jumpToHit 随后重设）
+    contentHighlightLine_ = 0;
     requestContent(relPath, /*force=*/false);
 }
 
 void GitPageController::selectChange(const std::string& path) {
     selectedPath_ = path;
     rightShowsDiff_ = true;  // I-04：右栏切 diff（N7→N8）
+    pendingContentLine_.reset();
+    contentHighlightLine_ = 0;
     requestDiff(path, /*force=*/false);
 }
 
@@ -444,6 +456,9 @@ void GitPageController::retryDiff() {
 }
 
 void GitPageController::resetRightPane() {
+    // 取消②切仓/关仓（含同仓重开）：在途扫描文件边界自灭 + 回无搜索态
+    ++searchSeq_;
+    resetSearchFace();
     content_ = FileContent{};
     contentPath_.clear();
     contentState_ = RightPaneState::None;
@@ -484,6 +499,8 @@ void GitPageController::requestContent(const std::string& relPath, bool force) {
                 content_ = fc;
                 contentState_ = RightPaneState::Ready;
                 buildContentRuns();
+                // F-08②：jumpToHit 锚在本文件 Ready 后常亮（滚动锚由视图消费）
+                if (pendingContentLine_) contentHighlightLine_ = *pendingContentLine_;
             } else if (fc.state == ContentState::ReadError) {
                 content_ = FileContent{};
                 contentState_ = RightPaneState::Error;
@@ -620,6 +637,209 @@ void GitPageController::refresh() {
     tree_.setMode(mode_);
     requestStatus();
 }
+
+// ---- 全局搜索（need:14 F-08；技术方案 §2/§3/§6）----
+
+namespace {
+
+constexpr size_t kSearchFlushFiles = 32;   // 增量包：每 32 文件或 250ms 出一包
+constexpr int kSearchFlushMs = 250;
+constexpr size_t kMaxTotalHits = 200;      // 总量上限：达 200 即停（truncated）
+
+std::string trimmed(const std::string& s) {
+    const auto isSpace = [](unsigned char c) {
+        return std::isspace(c) != 0;
+    };
+    size_t b = 0;
+    while (b < s.size() && isSpace(static_cast<unsigned char>(s[b]))) ++b;
+    size_t e = s.size();
+    while (e > b && isSpace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+}
+
+} // namespace
+
+void GitPageController::markSearchEdited() {
+    if (phase_ != GitPagePhase::Ready) return;
+    searchEditPending_ = true;
+    searchEditAt_ = std::chrono::steady_clock::now();
+}
+
+void GitPageController::submitSearchNow() {
+    if (phase_ != GitPagePhase::Ready) return;
+    searchEditPending_ = false;
+    submitSearch(searchDraft_);
+}
+
+void GitPageController::submitSearch(const std::string& rawNeedle) {
+    if (phase_ != GitPagePhase::Ready) return;
+    const std::string needle = trimmed(rawNeedle);
+    if (needle.empty()) {
+        cancelSearch();  // 清空输入 = 显式取消（清除 × 同路径）
+        return;
+    }
+    if (needle == searchQuery_ && searchState_ != GitSearchState::Error) {
+        return;  // 同词幂等（Done/Scanning 间连 Enter 不重扫；Error 允许重试）
+    }
+    searchQuery_ = needle;
+    requestSearch(needle);
+}
+
+void GitPageController::cancelSearch() {
+    ++searchSeq_;  // 取消①ESC/清除：在途任务下一文件边界自灭
+    resetSearchFace();
+    searchDraft_.clear();
+}
+
+void GitPageController::resetSearchFace() {
+    searchState_ = GitSearchState::None;
+    searchQuery_.clear();
+    searchResults_.clear();
+    searchScanned_ = 0;
+    searchTotalFiles_ = 0;
+    searchTruncated_ = false;
+    searchError_.clear();
+    searchPopupVisible_ = false;
+    searchPopupScroll_ = 0.0f;
+    searchEditPending_ = false;
+}
+
+void GitPageController::requestSearch(const std::string& needle) {
+    // 取消①新查询：先 ++ 再投——旧任务下一文件边界自灭，无需出队
+    const std::uint64_t seq = ++searchSeq_;
+    searchState_ = GitSearchState::Scanning;
+    searchResults_.clear();
+    searchScanned_ = 0;
+    searchTotalFiles_ = 0;
+    searchTruncated_ = false;
+    searchError_.clear();
+    searchPopupVisible_ = true;
+    // untracked 目录快照（不重算 status）：lastSnapshot_ 中尾 '/' 条目。B0 核对
+    // 落注：libgit2 status 不递归 untracked 时目录键形态 = "dir/"（尾斜杠），
+    // kind=Untracked（WT_NEW→Untracked）——按尾 '/' 判定，不按 kind 过滤
+    std::vector<std::string> skipDirs;
+    for (const auto& entry : lastSnapshot_.entries) {
+        if (!entry.path.empty() && entry.path.back() == '/') {
+            skipDirs.push_back(entry.path);
+        }
+    }
+    const std::string path = workdirUtf8_;
+    worker_->postWithRepo(path,
+                          [this, path, needle, seq,
+                           skipDirs = std::move(skipDirs)](platform::git::Repo* repo) {
+        if (repo == nullptr) {
+            postToUi([this, seq] {
+                if (seq != searchSeq_.load()) return;
+                searchState_ = GitSearchState::Error;
+                searchError_ = "无法打开仓库";
+            });
+            return;
+        }
+        const std::filesystem::path workdir = repo->workdir();
+        // ② walk：从根逐目录复用 GitTreeModel::walkChildren 枚举全量文件清单
+        //（.git/ignored/symlink 不跟随/Subrepo/NoAccess 语义零漂移）；untracked
+        // 目录按快照跳过不递归（防 node_modules 式 hang，F-12 同源口径）
+        std::vector<std::string> files;
+        std::vector<std::string> dirs;
+        dirs.push_back(std::string());
+        while (!dirs.empty()) {
+            if (seq != searchSeq_.load()) return;  // 目录边界过期自灭
+            const std::string dir = std::move(dirs.back());
+            dirs.pop_back();
+            const WalkResult walked = GitTreeModel::walkChildren(repo, workdir, dir);
+            if (!walked.ok) continue;  // 无权限/枚举失败：静默跳过（宽松语义）
+            for (auto& row : walked.entries) {
+                if (row.kind == TreeRowKind::Directory) {
+                    const std::string withSlash = row.relPath + "/";
+                    const bool skip =
+                        std::find(skipDirs.begin(), skipDirs.end(), withSlash) !=
+                        skipDirs.end();
+                    if (!skip) dirs.push_back(std::move(row.relPath));
+                } else if (row.kind == TreeRowKind::File) {
+                    files.push_back(std::move(row.relPath));
+                }  // Subrepo/NoAccess/派生行不入清单
+            }
+        }
+        const size_t total = files.size();
+        // ③ match：逐文件 FileContent::readFromDisk 四态判据（state≠Ok skip，
+        // ReadError 静默计数）；Ok 态逐行 matchLines（单文件 5 条上限）
+        std::vector<SearchHit> pending;
+        size_t scanned = 0;
+        size_t hitTotal = 0;
+        bool truncated = false;
+        auto lastFlush = std::chrono::steady_clock::now();
+        auto flushIfDue = [&](bool force) {
+            const bool countDue = pending.size() >= kSearchFlushFiles;
+            const bool timeDue =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - lastFlush)
+                    .count() >= kSearchFlushMs;
+            if (!force && !countDue && !timeDue) return;
+            lastFlush = std::chrono::steady_clock::now();
+            postToUi([this, seq, b = std::move(pending), s = scanned, t = total] {
+                if (seq != searchSeq_.load()) return;  // 过期增量丢弃（§3 取消）
+                for (auto& h : b) searchResults_.push_back(std::move(h));
+                if (searchState_ == GitSearchState::Scanning) {
+                    searchScanned_ = s;
+                    searchTotalFiles_ = t;
+                }
+            });
+        };
+        for (const auto& rel : files) {
+            if (seq != searchSeq_.load()) return;  // 文件边界过期自灭
+            if (truncated) break;  // 200 条即停：提前收不再计数（§5）
+            const FileContent fc = FileContent::readFromDisk(
+                workdir / platform::git::utf8ToPath(rel));
+            ++scanned;
+            if (fc.state != ContentState::Ok) continue;
+            auto hits = matchLines(fc.lines, needle);
+            for (auto& h : hits) {
+                if (hitTotal >= kMaxTotalHits) {
+                    truncated = true;
+                    break;
+                }
+                h.relPath = rel;
+                pending.push_back(std::move(h));
+                ++hitTotal;
+            }
+            flushIfDue(false);  // 每 32 文件 / 250ms 渐进出果（F-08③）
+        }
+        if (seq != searchSeq_.load()) return;
+        flushIfDue(true);
+        postToUi([this, seq, s = scanned, t = total, trunc = truncated] {
+            if (seq != searchSeq_.load()) return;
+            searchScanned_ = s;
+            searchTotalFiles_ = t;
+            searchTruncated_ = trunc;
+            if (searchState_ == GitSearchState::Scanning) {
+                searchState_ = GitSearchState::Done;
+            }
+        });
+    });
+}
+
+void GitPageController::jumpToHit(const SearchHit& hit) {
+    // F-08②：N6 复用（selectTreeFile：右栏切内容视图 + 树同步选中）+ 内容锚
+    // 行号（内容 Ready 后视图按行盒几何滚动——clue#14 禁偏移量直设口径）
+    selectTreeFile(hit.relPath);
+    pendingContentLine_ = hit.line;
+}
+
+size_t GitPageController::searchFileCount() const {
+    std::vector<const std::string*> seen;  // ≤200 条，去重现算成本可忽略
+    for (const auto& h : searchResults_) {
+        bool found = false;
+        for (const auto* p : seen) {
+            if (*p == h.relPath) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) seen.push_back(&h.relPath);
+    }
+    return seen.size();
+}
+
 
 size_t GitPageController::changedCount() const {
     size_t n = 0;

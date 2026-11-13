@@ -3,6 +3,7 @@
 
 #include "git_colors.h"
 
+#include <components/input.h>
 #include <components/theme.h>
 #include <components/tooltip.h>
 #include <components/virtuallist.h>
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 
 namespace module::git {
 
@@ -247,7 +249,19 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
                   [&c] { c.beginPickRepo(); }, c.validating());
 }
 
-// ---- 顶栏（§5.1）----
+// ---- 顶栏（§5.1 + §5.1a 全局搜索框 need:14 增补，决策① v2 反转落点）----
+
+// 搜索框几何（320×32，弹性间隔位=路径右侧、「切换仓库」左侧；浮层锚同源）
+std::pair<float, float> searchBoxGeometry(float w) {
+    const float searchW = scaled(320.0f);
+    const float searchH = scaled(32.0f);
+    const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
+    const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
+    const float x = w - scaled(16.0f) - refreshW - scaled(12.0f) - switchW -
+                    scaled(12.0f) - searchW;
+    return {x, (kTopBarH - searchH) * 0.5f};
+}
+
 void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) {
     ui.rect("git.top.bg").size(w, kTopBarH).color(t.colors.surface).build();
     ui.rect("git.top.border")
@@ -270,16 +284,64 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         .build();
 
     float x = padX + nameW + scaled(8.0f) + scaled(12.0f);
+    const auto [searchBoxX, searchBoxY] = searchBoxGeometry(w);
     const float pathMaxW = scaled(360.0f);
     ui.text("git.top.path")
         .position(x, 0.0f)
-        .size(std::min(pathMaxW, std::max(scaled(40.0f), w - x - scaled(220.0f))),
+        .size(std::min(pathMaxW, std::max(scaled(40.0f), searchBoxX - x - scaled(12.0f))),
               kTopBarH)
         .text(c.repoPathUtf8())
         .fontSize(scaled(12.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
+
+    // 全局搜索框（§5.1a need:14：320×32、radius 6、底 sidebarBg 降档区分、
+    // placeholder 13px textTertiary；Enter 提交 / ESC 显式取消 / 清空=取消同路）
+    const float searchW = scaled(320.0f);
+    const float searchH = scaled(32.0f);
+    components::input(ui, "git.search.input")
+        .position(searchBoxX, searchBoxY)
+        .size(searchW, searchH)
+        .value(c.searchDraft())
+        .placeholder("搜索全仓内容…")
+        .fontSize(scaled(13.0f))
+        .theme(core::theme::componentTokens(t))
+        .onChange([&c](const std::string& v) {
+            c.setSearchDraft(v);
+            c.markSearchEdited();
+        })
+        .onEnter([&c] { c.submitSearchNow(); })
+        .onCancel([&c] { c.cancelSearch(); })
+        .build();
+    // 右侧指示：扫描中 ↻（pulse 驱动持续出帧；§5.1a「旋转圈」EUI 无旋转原语，
+    // 落地为 pulse 字形——参数同档 12px textTertiary）；有草稿时 ×（清空+取消）
+    const float badgeX = searchBoxX + searchW - scaled(22.0f);
+    if (c.searchState() == GitPageController::GitSearchState::Scanning) {
+        ui.text("git.search.spin")
+            .position(badgeX, searchBoxY)
+            .size(scaled(20.0f), searchH)
+            .icon(0xF021)
+            .fontSize(scaled(12.0f))
+            .opacity(skeletonPulseOpacity())
+            .onFrame([](float) {})
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary)
+            .build();
+    } else if (!c.searchDraft().empty()) {
+        ui.text("git.search.clear")
+            .position(badgeX, searchBoxY)
+            .size(scaled(20.0f), searchH)
+            .icon(0xF00D)
+            .fontSize(scaled(12.0f))
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary)
+            .build();
+        hitRect(ui, "git.search.clear.hit", badgeX, searchBoxY, scaled(22.0f),
+                searchH, [&c] { c.cancelSearch(); });
+    }
 
     // 右侧按钮组：[切换仓库] [↻ 刷新]（次按钮 32px 高）
     const float btnH = scaled(32.0f);
@@ -746,6 +808,13 @@ void drawContentRow(eui::Ui& ui, const std::string& rowId, size_t lineIdx,
     ui.stack(rowId)
         .size(contentWidth, rowH)
         .content([&] {
+            // F-08② 命中行常亮底色（--c-selected-bg 同款；无淡出动画——推迟项）
+            if (c.contentHighlightLine() == static_cast<int>(lineIdx) + 1) {
+                ui.rect(rowId + ".hlbg")
+                    .size(contentWidth, rowH)
+                    .color(t.colors.active)
+                    .build();
+            }
             const float gutterW = scaled(kContentGutterW);
             ui.rect(rowId + ".gutter")
                 .size(gutterW, rowH)
@@ -884,6 +953,20 @@ void composeContentBody(eui::Ui& ui, float x, float y, float w, float h,
     // Ready：行号列 + 代码 runs（virtualList 定高 22px）。F-07⑥ 真横滚：虚拟
     // 内容宽 = 最长行等宽估算；超宽出底部横向滚动条（行内整体平移不换行）
     const auto& lines = c.content().lines;
+    // F-08② 内容锚滚动（need:14）：jumpToHit 记 pendingContentLine_，Ready 后
+    // 按行盒几何现算目标 offset 一次性赋值（锚=行号 → 目标滚动位；clue#14：
+    // 禁 setScrollOffset 偏移量直设——下方 .offset() 状态绑定是唯一滚动通道）
+    if (c.pendingContentLine() && !lines.empty()) {
+        const int lineNo =
+            std::clamp(*c.pendingContentLine(), 1, static_cast<int>(lines.size()));
+        c.clearPendingContentLine();
+        const float rowH2 = scaled(kCodeRowH);
+        const float maxOffset =
+            std::max(0.0f, static_cast<float>(lines.size()) * rowH2 - h);
+        c.setContentScrollOffset(std::clamp(static_cast<float>(lineNo - 1) * rowH2 -
+                                                h * 0.35f,
+                                            0.0f, maxOffset));
+    }
     const float codeX = scaled(kContentGutterW) + scaled(6.0f);
     const float virtualRowW =
         codeX + std::max(w - codeX,
@@ -1269,6 +1352,184 @@ void composeRightColumn(eui::Ui& ui, float x, float w, float y, float h,
     }
 }
 
+// ---- 全局搜索结果浮层（need:14 §7.2 四态增补；锚定搜索框下方）----
+// None / 收起 → 不显示；Scanning=进度头 + 渐进出果；Done=计数头 + 结果/空态；
+// Error=错误块。失焦收起：浮层外全屏透明 scrim（点击浮层外=收起，扫描不取消）。
+void composeSearchPopup(eui::Ui& ui, float w, float h, GitPageController& c,
+                        const Tokens& t) {
+    using SearchState = GitPageController::GitSearchState;
+    const SearchState st = c.searchState();
+    if (st == SearchState::None || !c.searchPopupVisible()) return;
+
+    const auto& results = c.searchResults();
+    const float popupW = std::min(scaled(560.0f), w - scaled(32.0f));
+    const auto [boxX, boxY] = searchBoxGeometry(w);
+    (void)boxY;
+    float px = boxX;
+    if (px + popupW > w - scaled(16.0f)) px = w - scaled(16.0f) - popupW;
+    const float py = kTopBarH + scaled(4.0f);
+
+    const float headerH = scaled(32.0f);
+    const float rowH = scaled(28.0f);
+    float bodyH;
+    if (st == SearchState::Error) {
+        bodyH = scaled(96.0f);
+    } else if (results.empty()) {
+        bodyH = scaled(72.0f);
+    } else {
+        bodyH = std::min(scaled(448.0f), static_cast<float>(results.size()) * rowH);
+    }
+    const float popupH = headerH + bodyH;
+
+    // 失焦收起（扫描不取消：后台继续出果，spinner 指示，再点框看进度）：
+    // 三面 scrim 带（左/右/下，从顶栏底缘起）——顶栏条不盖，搜索框保持可点
+    //（refocus/清除 ×/切仓均可用；顶栏点击不关浮层）
+    const float bandTop = kTopBarH;
+    hitRect(ui, "git.search.scrim.left", 0.0f, bandTop, std::max(0.0f, px), h - bandTop,
+            [&c] { c.setSearchPopupVisible(false); });
+    hitRect(ui, "git.search.scrim.right", px + popupW, bandTop,
+            std::max(0.0f, w - px - popupW), h - bandTop,
+            [&c] { c.setSearchPopupVisible(false); });
+    hitRect(ui, "git.search.scrim.bottom", px, py + popupH,
+            std::min(popupW, std::max(0.0f, w - px)), std::max(0.0f, h - py - popupH),
+            [&c] { c.setSearchPopupVisible(false); });
+
+    ui.stack("git.search.popup")
+        .position(px, py)
+        .size(popupW, popupH)
+        .zIndex(50)
+        .content([&] {
+            ui.rect("git.search.popup.bg")
+                .size(popupW, popupH)
+                .color(t.colors.surface)
+                .radius(8.0f)
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+            // 计数头：扫描态「正在扫描… x/y 文件」；终态「N 处命中 · M 个文件」
+            //（truncated 追加细化提示；增量 flush 期间扫描头即随结果更新）
+            std::string headText;
+            if (st == SearchState::Scanning) {
+                headText = "正在扫描… " + std::to_string(c.searchScanned()) + "/" +
+                           std::to_string(c.searchTotalFiles()) + " 文件";
+            } else if (st == SearchState::Error) {
+                headText = "搜索失败";
+            } else {
+                headText = std::to_string(results.size()) + " 处命中 · " +
+                           std::to_string(c.searchFileCount()) + " 个文件";
+                if (c.searchTruncated()) {
+                    headText += " · 结果过多，仅显示前 200——请细化关键词";
+                }
+            }
+            ui.text("git.search.popup.head")
+                .position(scaled(12.0f), 0.0f)
+                .size(popupW - scaled(24.0f), headerH)
+                .text(headText)
+                .fontSize(scaled(12.0f))
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.rect("git.search.popup.hborder")
+                .position(0.0f, headerH - 1.0f)
+                .size(popupW, 1.0f)
+                .color(t.colors.borderMuted)
+                .build();
+
+            const float bodyY = headerH;
+            if (st == SearchState::Error) {
+                // 错误块（中栏错误块参数缩档）：danger-tint 底 + 主文案 + 原因
+                ui.rect("git.search.popup.errbg")
+                    .position(scaled(12.0f), bodyY + scaled(12.0f))
+                    .size(popupW - scaled(24.0f), bodyH - scaled(24.0f))
+                    .color(components::theme::withOpacity(t.colors.error, 0.12f))
+                    .radius(6.0f)
+                    .build();
+                ui.text("git.search.popup.errmain")
+                    .position(scaled(24.0f), bodyY + scaled(22.0f))
+                    .size(popupW - scaled(48.0f), scaled(20.0f))
+                    .text("无法完成搜索")
+                    .fontSize(scaled(13.0f))
+                    .color(t.colors.errorText)
+                    .build();
+                ui.text("git.search.popup.errreason")
+                    .position(scaled(24.0f), bodyY + scaled(44.0f))
+                    .size(popupW - scaled(48.0f), scaled(18.0f))
+                    .text(c.searchError())
+                    .fontSize(scaled(12.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
+                return;
+            }
+            if (results.empty()) {
+                ui.text("git.search.popup.empty")
+                    .position(0.0f, bodyY)
+                    .size(popupW, bodyH)
+                    .text(st == SearchState::Scanning ? "正在扫描，结果将逐步显示"
+                                                      : "未找到匹配内容")
+                    .fontSize(scaled(13.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textSecondary)
+                    .build();
+                return;
+            }
+            // 结果行（virtualList 定高 28px 槽内压缩双行）：上行 relPath:行号
+            // 11px textTertiary（moreInFile 追加提示）；下行 preview 12px
+            // textPrimary、match 段 primary runs（≤200 条 UI 线程现算）
+            components::virtualList(ui, "git.search.results")
+                .position(0.0f, bodyY)
+                .size(popupW, bodyH)
+                .itemCount(static_cast<int64_t>(results.size()))
+                .rowHeight(rowH)
+                .step(rowH)
+                .overscanViewports(1.0f)
+                .theme(core::theme::componentTokens(t))
+                .offset(c.searchPopupScroll())
+                .onChange([&c](float v) { c.setSearchPopupScroll(v); })
+                .row([&](eui::Ui& inner, const std::string& rowId, int64_t index,
+                         float contentWidth, float vh) {
+                    (void)vh;
+                    const auto idx = static_cast<size_t>(index);
+                    if (idx >= results.size()) return;
+                    const SearchHit& hit = results[idx];
+                    std::string pathLine = hit.relPath + ":" + std::to_string(hit.line);
+                    if (hit.moreInFile) pathLine += " · 此文件还有更多";
+                    inner.text(rowId + ".path")
+                        .position(scaled(12.0f), scaled(2.0f))
+                        .size(contentWidth - scaled(24.0f), scaled(13.0f))
+                        .text(pathLine)
+                        .fontSize(scaled(11.0f))
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                    std::vector<eui::TextRun> runs;
+                    if (hit.matchLen > 0 &&
+                        hit.matchStart + hit.matchLen <= hit.preview.size()) {
+                        runs.push_back({static_cast<int>(hit.matchStart),
+                                        static_cast<int>(hit.matchStart + hit.matchLen),
+                                        t.colors.primary});
+                    }
+                    auto previewText = inner.text(rowId + ".preview")
+                                           .position(scaled(12.0f), scaled(14.0f))
+                                           .size(contentWidth - scaled(24.0f), scaled(14.0f))
+                                           .text(hit.preview)
+                                           .fontSize(scaled(12.0f))
+                                           .verticalAlign(eui::VerticalAlign::Center)
+                                           .color(t.colors.textPrimary);
+                    if (!runs.empty()) previewText.runs(runs);
+                    previewText.build();
+                    // 点击结果行 → F-08② 定位（浮层保持开，渐进出果价值）
+                    inner.rect(rowId + ".hit")
+                        .size(contentWidth, rowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .onClick([&c, &results, idx] { c.jumpToHit(results[idx]); })
+                        .build();
+                })
+                .build();
+        })
+        .build();
+    (void)h;
+}
+
 } // namespace
 
 void composeGitPage(eui::Ui& ui, const eui::Screen& screen,
@@ -1289,6 +1550,8 @@ void composeGitPage(eui::Ui& ui, const eui::Screen& screen,
     composeLeftColumn(ui, 0.0f, leftW, bodyY, h - bodyY, c, t);
     composeMiddleColumn(ui, leftW, midW, bodyY, h - bodyY, c, t);
     composeRightColumn(ui, leftW + midW, w - leftW - midW, bodyY, h - bodyY, c, t);
+    // 全局搜索结果浮层（need:14）：compose 在各栏之后 = z 序最上（scrim 同层）
+    composeSearchPopup(ui, w, h, c, t);
 }
 
 } // namespace module::git

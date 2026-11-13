@@ -161,10 +161,38 @@
 | 容器 | 高 48px；底 --c-bg-card；padding 0 16px；底边 1px --c-border-1；flex 横排 gap 12 |
 | 仓名 | 15px/600 --c-text-1，不截断 |
 | 完整路径 | 12px --c-text-3；max-width 360px；单行截断+省略号，hover 显 tooltip 白底 12px（tooltip 白底规范）；分隔「·」用 --c-text-3 |
-| 弹性间隔 | flex:1 占位（不得塞任何搜索框——决策①） |
+| 弹性间隔 | flex:1 占位（不得塞任何搜索框——决策①）。**[修订 2026-11-13 need:14]** 决策① v2 反转：该位放全局搜索框与结果浮层，见 §5.1a；本行其余参数不变 |
 | 「切换仓库」 | 次按钮：高 32px、padding 0 12px、radius 6px、底 --c-btn-2-bg、字 14 --c-text-1、无边框无阴影；hover 底 --c-border-2；按压果冻 scale 0.97 |
 | 「刷新」 | 次按钮同上；左侧刷新图标 16px 描边 1.5px --c-text-2；刷新中图标 rotate 800ms linear infinite、按钮 disabled（底不变，字与图标 --c-text-3）；旁附转圈指示位=该图标本体（节流自动刷新复用同指示） |
 | 自动刷新角标 | 刷新图标右上 4px 圆点 6px --c-primary，自动刷新待触发时出现 1.5s 后淡出（表示「已自动刷新」） |
+
+### 5.1a 顶栏全局搜索框与结果浮层（need:14 增补，决策① v2 反转）
+
+> 技术方案卡 `2026-11-13-git-manager-search-tech.md` §7.1/§7.2 提案原文并入（2026-11-13）；不动方案 A 已拍板其它参数。
+
+#### 顶栏搜索框（落 §5.1「弹性间隔」位：仓名/路径右侧、「切换仓库」左侧）
+
+| 元素 | 参数 |
+|---|---|
+| 容器 | 宽 320px、高 32px、radius 6px、底 --c-bg-sidebar（顶栏白底上的降档区分）、边 1px --c-border-1、聚焦边 --c-primary |
+| 图标 | 放大镜 16px 描边 1.5px --c-text-3 |
+| placeholder | 「搜索全仓内容…」13px --c-text-3 |
+| 清除 × | 有输入时显示，16px --c-text-3，点击=清空+取消（走 §3① 同路径） |
+| 扫描指示 | 框右侧 12px 旋转圈（复用刷新图标参数 §5.1） |
+| 键盘 | Enter 立即提交（跳过 debounce）；ESC=取消 |
+
+#### 结果浮层四态（F-08 四态设计增补，浮层锚定搜索框下方）
+
+| 态 | 参数 |
+|---|---|
+| 浮层容器 | 宽 560px（≥搜索框宽）、max-height 480px、radius 8px、底 --c-bg-card、边 1px --c-border-2、阴影同 dropdown 惯例；失焦收起（扫描不取消） |
+| 空态（无查询） | 浮层不显示 |
+| 扫描态 | 头部进度条：「正在扫描… x/y 文件」12px --c-text-3 + 旋转圈；已出结果实时渐显（virtualList 定高 28px 行制） |
+| 结果行 | 28px 槽内压缩双行（§5.3 修订先例同型）：上行=relPath 11px --c-text-3 +「:行号」；下行=preview 12px --c-text-1，match 段 --c-primary；hover --c-border-2 |
+| 计数头 | 「N 处命中 · M 个文件」12px --c-text-2；truncated 时追加「结果过多，仅显示前 200——请细化关键词」12px --c-text-3 |
+| 取消态 | ESC/清除 → 回无搜索态浮层消失；扫描中失焦收起≠取消（§3） |
+| 错误态 | 浮层内错误块：底 --c-danger-tint radius 6px padding 12px，13px --c-danger-text + 原因 12px --c-text-3（中栏错误块参数缩档） |
+| 空结果 | 「未找到匹配内容」13px --c-text-2 居中 |
 
 ### 5.2 左栏·目录树
 

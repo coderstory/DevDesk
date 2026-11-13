@@ -5,6 +5,7 @@
 //  （回投 inbox 排空 + 懒加载投递），模型/快照字段只在 UI 线程读写。
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -19,6 +20,7 @@
 #include "git_changes_model.h"
 #include "git_content_model.h"
 #include "git_diff_model.h"
+#include "git_search_model.h"
 #include "git_tree_model.h"
 #include "git_worker.h"
 #include "platform/file_watcher.h"
@@ -86,6 +88,21 @@ public:
     void reloadStale();  // F-13③：过期条「点击重载」→ 重读打开内容/diff + status
     void refresh();  // I-07：手动刷新（1s 节流，F-09④；watcher 自动刷新同闸）
 
+    // ---- 全局搜索（need:14 F-08；技术方案 §6.2；取消语义 §3）----
+    // 搜索框草稿（input value；onChange 持有，防抖到 300ms 由 composePump 提交）
+    const std::string& searchDraft() const { return searchDraft_; }
+    void setSearchDraft(std::string v) { searchDraft_ = std::move(v); }
+    void markSearchEdited();      // 输入编辑时刻戳（防抖起点）
+    void submitSearchNow();       // Enter 立即提交（跳过 debounce）
+    void cancelSearch();          // ESC / 清除 ×：显式取消（seq++ + 回无搜索态）
+    void jumpToHit(const SearchHit& hit);  // F-08②：selectTreeFile + 内容锚行号
+    // 浮层显隐（失焦收起 ≠ 取消：扫描后台继续，spinner 指示——§3）
+    bool searchPopupVisible() const { return searchPopupVisible_; }
+    void setSearchPopupVisible(bool v) { searchPopupVisible_ = v; }
+    // 定位锚：jumpToHit 记行号 → 内容 Ready 后视图按行盒几何消费（内容锚滚动）
+    const std::optional<int>& pendingContentLine() const { return pendingContentLine_; }
+    void clearPendingContentLine() { pendingContentLine_.reset(); }
+
     // ---- 视图读面（UI 线程，rows()/数据均为状态派生）----
     GitPagePhase phase() const { return phase_; }
     bool validating() const { return validating_; }
@@ -141,6 +158,24 @@ public:
     float diffHOffset() const { return diffHOffset_; }
     void setDiffHOffset(float v) { diffHOffset_ = v; }
 
+    // ---- 全局搜索读面（UI 线程；结果为状态派生）----
+    // None=无查询（浮层不显示）；Scanning=扫描中（渐进出果）；Done=终态；
+    // Error=失败（searchError_ 带原因）
+    enum class GitSearchState { None, Scanning, Done, Error };
+    GitSearchState searchState() const { return searchState_; }
+    const std::string& searchQuery() const { return searchQuery_; }
+    const std::vector<SearchHit>& searchResults() const { return searchResults_; }
+    size_t searchScanned() const { return searchScanned_; }
+    size_t searchTotalFiles() const { return searchTotalFiles_; }
+    bool searchTruncated() const { return searchTruncated_; }
+    const std::string& searchError() const { return searchError_; }
+    size_t searchFileCount() const;  // M 个文件 = results 去重 relPath（≤200，现算）
+    // 命中行高亮（1 起；0=无；内容 Ready 后常亮底色——F-08②）
+    int contentHighlightLine() const { return contentHighlightLine_; }
+    // 结果浮层列表滚动位（virtualList offset 状态持有，与 content 同款）
+    float searchPopupScroll() const { return searchPopupScroll_; }
+    void setSearchPopupScroll(float v) { searchPopupScroll_ = v; }
+
     // F-13③ 过期条：watcher 判定已打开内容可能过期 → 覆盖条「内容已过期，点击重载」
     // （覆盖绘制不进布局，出现/消失零滚动跳动）；重载成功后消失。
     bool staleBarVisible() const { return staleBar_; }
@@ -159,6 +194,9 @@ private:
     void requestDiff(const std::string& relPath, bool force);
     void buildContentRuns();  // Ok 态 load 后一次性算高亮 runs（O(n)，UI 线程）
     void resetRightPane();    // 切仓/关仓清右栏数据面 + 作废在途请求
+    void submitSearch(const std::string& rawNeedle);  // trim 后提交（空=取消语义）
+    void requestSearch(const std::string& needle);    // 投 walk+match 后台任务（seq++）
+    void resetSearchFace();                           // 清结果回无搜索态（seq 不动）
 
     GitWorker* worker_;
     GitTreeModel tree_;
@@ -195,6 +233,25 @@ private:
     float diffScrollOffset_ = 0.0f;
     float contentHOffset_ = 0.0f;
     float diffHOffset_ = 0.0f;
+    int contentHighlightLine_ = 0;  // 命中行（1 起；0=无）——jumpToHit 锚常亮底色
+
+    // 全局搜索状态面（need:14；字段全 UI 线程读写，searchSeq_ 除外——
+    // worker 每文件边界读，atomic）
+    std::atomic<std::uint64_t> searchSeq_{0};
+    GitSearchState searchState_ = GitSearchState::None;
+    std::string searchQuery_;       // 当前生效查询词（空=无查询）
+    std::string searchDraft_;       // 搜索框草稿（input value）
+    std::vector<SearchHit> searchResults_;
+    size_t searchScanned_ = 0;
+    size_t searchTotalFiles_ = 0;
+    bool searchTruncated_ = false;
+    std::string searchError_;
+    bool searchPopupVisible_ = false;
+    float searchPopupScroll_ = 0.0f;
+    std::optional<int> pendingContentLine_;  // jumpToHit 锚（Ready 后消费）
+    // 防抖（composePump 帧驱动 300ms；Enter 跳过）
+    bool searchEditPending_ = false;
+    std::chrono::steady_clock::time_point searchEditAt_{};
 
     // F-13 刷新联动（watcher → 过滤 → 节流；onWatchEvents 只走 postToUi，
     // 这些字段全在 UI 线程读写）

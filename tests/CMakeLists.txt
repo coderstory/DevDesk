@@ -61,6 +61,7 @@ add_executable(devdesk_tests
     # git 管理器只读 v1 批次三（need:10）：diff 行模型 / 内容四态模型
     test_platform/test_git_diff_model.cpp
     test_platform/test_git_content_model.cpp
+    test_platform/test_git_search.cpp
     test_platform/test_git_registry_module.cpp
     # git 管理器只读 v1 批次四（need:11）：刷新联动/节流/过期条/N10/submodule 降级
     test_platform/test_git_refresh.cpp

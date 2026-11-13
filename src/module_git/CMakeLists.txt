@@ -6,6 +6,7 @@ add_library(devdesk_module_git STATIC
     git_changes_model.cpp
     git_diff_model.cpp
     git_content_model.cpp
+    git_search_model.cpp
     git_colors.cpp
     git_repo_store.cpp
     git_views.cpp

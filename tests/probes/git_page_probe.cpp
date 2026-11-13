@@ -179,6 +179,7 @@ int main(int argc, char* argv[]) {
     bool noOpen = false;  // --no-open：停在空态页取证（不开仓）
     bool noDiff = false;  // --no-diff：夹具无文本变更条目（纯二进制 untracked 仓）时跳过 ②b 文本 diff 动线
     bool bug18Shots = false;  // --untracked-diff：bug#18 两档取证（untracked 全增行 + >1MiB 占位）
+    bool searchShots = false;  // --search：need:14 全局搜索取证（结果/定位/空态/ESC 取消）
     std::string externalRepo;  // --repo <路径>：外部夹具仓注入（qa12 F-09 大仓 probe）
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -186,6 +187,7 @@ int main(int argc, char* argv[]) {
         if (arg == "--no-open") noOpen = true;
         if (arg == "--no-diff") noDiff = true;
         if (arg == "--untracked-diff") bug18Shots = true;
+        if (arg == "--search") searchShots = true;
         if (arg == "--repo" && i + 1 < argc) externalRepo = argv[++i];
     }
     if (!probe::initializeWindowBackend()) return 1;
@@ -621,6 +623,132 @@ int main(int argc, char* argv[]) {
                            window, runtime,
                            shotPath(args.screenshotPath, "changes_scrolled"))) {
                 passed = false;
+            }
+        }
+    }
+
+    // ②f need:14 全局搜索（F-08①②④ 取证；--search）：真实键入（点击聚焦 →
+    // queueText）→ Enter 提交 → 结果浮层（计数头 + match 高亮 runs）→ 点击命中
+    // 行定位（右栏内容视图 + 命中行常亮底色）→ ESC 显式取消 → 空结果态。
+    if (passed && !noOpen && searchShots) {
+        const core::dsl::Element* box = ui->find("git.search.input");
+        if (box == nullptr) {
+            std::cerr << "git_page_probe: FAIL——顶栏搜索框缺失\n";
+            passed = false;
+        } else {
+            const Pt boxC{static_cast<double>(box->frame.x + 30.0f),
+                          static_cast<double>(box->frame.y + box->frame.height * 0.5f)};
+            const auto pumpFor = [&](int frames, int ms = 0) {
+                for (int i = 0; i < frames; ++i) {
+                    composeFrame();
+                    if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+                }
+            };
+            const auto typeAndEnter = [&](const std::string& text) {
+                probe::click(window, runtime, boxC.x, boxC.y);
+                pumpFor(5);
+                probe::queueText(window, runtime, text);
+                pumpFor(5);
+                probe::queueKey(window, runtime, GLFW_KEY_ENTER, core::KeyAction::Press, 0);
+                probe::pollOnce(window, runtime);
+                probe::queueKey(window, runtime, GLFW_KEY_ENTER, core::KeyAction::Release, 0);
+                probe::pollOnce(window, runtime);
+            };
+
+            // 档①：命中「第二版」（a.txt 行1）→ 浮层结果态
+            typeAndEnter("第二版");
+            bool popup = false;
+            for (int i = 0; i < 120 && !popup; ++i) {
+                composeFrame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                popup = ui->find("git.search.popup") != nullptr;
+            }
+            if (!popup) {
+                std::cerr << "git_page_probe: FAIL——搜索提交后浮层未出\n";
+                passed = false;
+            } else {
+                pumpFor(30, 30);  // 稳帧 ≥24（worker 一包收敛 + 过渡态落定）
+                if (ui->find("git.search.results") == nullptr) {
+                    std::cerr << "git_page_probe: FAIL——命中浮层无结果列表（git.search.results 缺失）\n";
+                    passed = false;
+                } else {
+                    std::cout << "  git.search.results 在场（F-08① 结果浮层）\n";
+                    if (!args.screenshotPath.empty() &&
+                        !probe::captureFramePng(
+                            window, runtime,
+                            shotPath(args.screenshotPath, "search_results"))) {
+                        passed = false;
+                    }
+                    // 档②：点击首条命中行 → 右栏内容视图 + 命中行常亮（F-08②）
+                    const core::dsl::Element* hitRow =
+                        ui->find("git.search.results.slot.0.hit");
+                    if (hitRow == nullptr) {
+                        std::cerr << "git_page_probe: FAIL——浮层命中行缺失\n";
+                        passed = false;
+                    } else {
+                        const Pt rowP{hitRow->frame.x + hitRow->frame.width * 0.5f,
+                                      hitRow->frame.y + hitRow->frame.height * 0.5f};
+                        if (!clickUntil(rowP.x, rowP.y, [&] {
+                                return ui->find("git.content.list") != nullptr &&
+                                       ui->find("git.content.list.slot.0.hlbg") !=
+                                           nullptr;
+                            })) {
+                            std::cerr << "git_page_probe: FAIL——点击命中行后内容视图/命中行常亮未出\n";
+                            passed = false;
+                        } else {
+                            std::cout << "  命中行定位 + 常亮底色在场（F-08②）\n";
+                            if (!args.screenshotPath.empty() &&
+                                !probe::captureFramePng(
+                                    window, runtime,
+                                    shotPath(args.screenshotPath, "search_jump"))) {
+                                passed = false;
+                            }
+                        }
+                    }
+                }
+                // 档③：ESC 显式取消 → 浮层消失（F-08④）
+                typeAndEnter("");  // 仅点击聚焦（空文本不触发 onChange 提交）
+                probe::queueKey(window, runtime, GLFW_KEY_ESCAPE,
+                                core::KeyAction::Press, 0);
+                probe::pollOnce(window, runtime);
+                probe::queueKey(window, runtime, GLFW_KEY_ESCAPE,
+                                core::KeyAction::Release, 0);
+                probe::pollOnce(window, runtime);
+                pumpFor(30);
+                if (ui->find("git.search.popup") != nullptr) {
+                    std::cerr << "git_page_probe: FAIL——ESC 后浮层未消失（取消语义失效）\n";
+                    passed = false;
+                } else {
+                    std::cout << "  ESC 取消浮层消失（F-08④）\n";
+                }
+                // 档④：空结果态
+                typeAndEnter("zzz__no_such_token__");
+                bool emptyPopup = false;
+                for (int i = 0; i < 120 && !emptyPopup; ++i) {
+                    composeFrame();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    emptyPopup = ui->find("git.search.popup.empty") != nullptr;
+                }
+                if (!emptyPopup) {
+                    std::cerr << "git_page_probe: FAIL——空结果态未出\n";
+                    passed = false;
+                } else {
+                    std::cout << "  空结果态在场\n";
+                    if (!args.screenshotPath.empty() &&
+                        !probe::captureFramePng(
+                            window, runtime,
+                            shotPath(args.screenshotPath, "search_empty"))) {
+                        passed = false;
+                    }
+                }
+                // 收尾复位：ESC 回无搜索态
+                probe::queueKey(window, runtime, GLFW_KEY_ESCAPE,
+                                core::KeyAction::Press, 0);
+                probe::pollOnce(window, runtime);
+                probe::queueKey(window, runtime, GLFW_KEY_ESCAPE,
+                                core::KeyAction::Release, 0);
+                probe::pollOnce(window, runtime);
+                pumpFor(10);
             }
         }
     }
