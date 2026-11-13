@@ -90,7 +90,7 @@ main → module_*（Router 页面模块 + 独立子窗）
 - `core` ❌ 不依赖 `platform`，❌ 不调用 EUI-NEO 运行时行为（header-only 类型桥接例外：`eui::Color` 值类型 / `Ui`/`Screen` 签名透传 / `component_theme.h` 纯映射）
 - `platform` ✅ 可依赖 `core`
 - **不抛 C++ 异常**，错误统一走 `Result<T>`（`src/core/result.h`）
-- Router 页面模块在 `src/app_registry.h` 一行登记，顺序 = 注册顺序 = 侧边栏顺序；**枚举以 `kModuleRegistry` 为准**（当前：home / markdown / todo / schedule / claude_proxy / agent / memory / wallpaper（平台能力不支持时不注册）/ mcp / release 分组（任务 + 基础配置两子页）/ settings / about）。
+- Router 页面模块在 `src/app_registry.h` 一行登记，顺序 = 注册顺序 = 侧边栏顺序；**枚举以 `kModuleRegistry` 为准**（当前：home / markdown / git / todo / schedule / claude_proxy / agent / memory / wallpaper（平台能力不支持时不注册）/ mcp / terminal / release 分组（任务 + 基础配置两子页）/ settings / about）。
 
 ## 七、编辑边界
 
