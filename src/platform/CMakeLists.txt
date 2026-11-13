@@ -14,6 +14,8 @@ add_library(devdesk_platform STATIC
     window_visibility.h                 # 主窗可见态抽象：接口平台无关，实现按平台拆（_win/_macos）
     file_open_common.cpp
     terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
+    git/git_libgit2.cpp                 # libgit2 RAII 作用域 + 错误码映射（need:8 批次一）
+    git/git_repo.cpp                    # Repo：open/status/diff/isIgnored/blame，PIMPL 包 git_repository
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
@@ -132,6 +134,19 @@ target_link_libraries(devdesk_platform
 target_compile_definitions(devdesk_platform PUBLIC
     CPPHTTPLIB_OPENSSL_SUPPORT
 )
+
+# libgit2 vendored（target 定义在根 CMakeLists，platform 之前；need:8）。
+# ⚠ target 名是 **libgit2package**（v1.9.7 src/libgit2/CMakeLists.txt 实读；OUTPUT_NAME=git2
+# → libgit2.a）——写成 `git2` 会被当普通库名生成 `-lgit2`，ld cannot find（实测踩坑）。
+# 必须 PUBLIC：静态库 PRIVATE 依赖经 $<LINK_ONLY> 传递时不展开 target 文件路径，消费方
+# 链接行只拿裸名；PUBLIC 让消费方按 target 全路径解析（libgit2 自身系统库闭包随
+# INTERFACE 一并传递）。泄漏面为零：该 target 的接口 include 只有 INSTALL_INTERFACE，
+# git2.h 仍只在平台 .cpp 出现。
+target_link_libraries(devdesk_platform PUBLIC libgit2package)
+# libgit2package 不外发构建期 include（只有 INSTALL_INTERFACE；实测编译行无该路径）——
+# 显式补，出界即编译错
+target_include_directories(devdesk_platform PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/libgit2/include)
 
 # macOS Security.framework (Keychain) + CoreFoundation（APPLE 分支系统深浅检测
 # 实现读 NSGlobalDomain AppleInterfaceStyle 用；两者都只在 APPLE 分支链接）

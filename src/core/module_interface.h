@@ -15,6 +15,7 @@ namespace core {
 enum class PageId {
     Home,
     Markdown,
+    Git,         // git 管理器（只读，need:7）：位于笔记之后 = 侧边栏顺序（决策④）
     Todo,
     Schedule,    // 位于 Todo 之后 = 侧边栏顺序（定时调度）
     ClaudeProxy,
@@ -37,6 +38,7 @@ inline const char* pageIdToString(PageId id) {
     switch (id) {
         case PageId::Home: return "Home";
         case PageId::Markdown: return "Markdown";
+        case PageId::Git: return "Git";
         case PageId::Todo: return "Todo";
         case PageId::Schedule: return "Schedule";
         case PageId::ClaudeProxy: return "ClaudeProxy";

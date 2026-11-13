@@ -174,6 +174,26 @@ target_link_libraries(devdesk_terminal_vterm PUBLIC libvterm)
 
 add_subdirectory(${EUI_NEO_DIR} ${CMAKE_BINARY_DIR}/_eui_neo_build EXCLUDE_FROM_ALL)
 
+# ---- libgit2 vendored（git 管理器只读 v1，池 need:8 批次一；方案 2026-11-13-git-manager-readonly-tech §4）----
+# submodule 锁 tag v1.9.7（detached HEAD，gitlink 锁 commit；升级=显式动作，libvterm 先例）。
+# 只读本地仓零网络面：SSH/HTTPS 后端全关（Windows 否则默认拉 WinHTTP）、zlib bundled、
+# regex builtin（双平台确定性）、SHA1/SHA256 内置实现（SHA256 默认跟随 HTTPS，关后须显式）、
+# iconv 关（APPLE-only 选项）。选项为普通变量：本文件 cmake_minimum_required(3.14) →
+# CMP0077 NEW，option() 让位；USE_SSH 等 CACHE STRING 变量同被普通变量遮蔽。
+# 选项名以 v1.9.7 版 CMakeLists 实读为准（POC-0，2026-11-13）。
+# 位置约束：须在 add_subdirectory(src/platform) 之前（devdesk_platform PRIVATE 链接 git2）。
+set(BUILD_SHARED_LIBS OFF)          # STATIC git2——发布形态守卫：单 exe 零外部 DLL
+set(BUILD_TESTS OFF)
+set(BUILD_CLI OFF)
+set(USE_SSH OFF)
+set(USE_HTTPS OFF)
+set(USE_SHA1 "CollisionDetection")  # bundled sha1dc，不依赖 HTTPS 后端栈
+set(USE_SHA256 "Builtin")
+set(USE_BUNDLED_ZLIB ON)
+set(REGEX_BACKEND "builtin")
+set(USE_ICONV OFF)
+add_subdirectory(third_party/libgit2)
+
 # Core + Platform 是 static lib
 add_subdirectory(src/core)
 add_subdirectory(src/platform)
@@ -199,6 +219,7 @@ endfunction()
 # 功能模块（home / markdown / todo / claude_proxy / settings / about / agent / wallpaper / schedule）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
+add_subdirectory(src/module_git)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_agent)
 add_subdirectory(src/module_memory)
@@ -404,6 +425,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_agent
     devdesk_module_memory
     devdesk_module_claude_proxy
+    devdesk_module_git
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper

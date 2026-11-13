@@ -51,6 +51,19 @@ add_executable(devdesk_tests
     test_platform/test_terminal_conpty_lookup.cpp
     test_platform/test_terminal_vterm_core.cpp
     test_platform/test_file_watcher.cpp
+    # git 管理器只读 v1 批次一（need:8）：libgit2 RAII 层 POC 五项（方案 §4.2 步骤 8）
+    test_platform/test_git_raii.cpp
+    test_platform/test_git_paths.cpp
+    test_platform/test_git_threads.cpp
+    # git 管理器只读 v1 批次二（need:7）：树模型/变更模型/模块登记+记忆仓
+    test_platform/test_git_tree_model.cpp
+    test_platform/test_git_status_model.cpp
+    # git 管理器只读 v1 批次三（need:10）：diff 行模型 / 内容四态模型
+    test_platform/test_git_diff_model.cpp
+    test_platform/test_git_content_model.cpp
+    test_platform/test_git_registry_module.cpp
+    # git 管理器只读 v1 批次四（need:11）：刷新联动/节流/过期条/N10/submodule 降级
+    test_platform/test_git_refresh.cpp
     # 债-20 process_runner 真实现契约（POSIX 族；win 侧用例整体空转另行登记）
     test_platform/test_process_runner.cpp
     test_platform/test_tray_icon.cpp
@@ -70,6 +83,8 @@ add_executable(devdesk_tests
     # 需-7 笔记 MCP 三工具（F-01..F-05）：搜索/读全文/新文件路由写 + git 链白拿验证
     test_modules/test_notes_mcp_tools.cpp
     test_modules/test_md_highlight.cpp
+    # ui_kit/text_highlight 五类代码词法扫描器（need:10 批次三）
+    test_modules/test_text_highlight_lexers.cpp
     test_modules/test_md_keyword_highlight.cpp
     test_modules/test_md_file_open.cpp
     test_modules/test_md_keyboard.cpp
@@ -369,6 +384,9 @@ target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
     ${CMAKE_SOURCE_DIR}/src/module_settings
     ${CMAKE_SOURCE_DIR}/src/module_mcp
+    # git_fixture.h 直接用 libgit2 C API 建离线夹具（need:8）；生产代码仍走
+    # platform::git 包装（platform 对 git2 PRIVATE，include 路径不外泄给消费者）
+    ${CMAKE_SOURCE_DIR}/third_party/libgit2/include
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -376,6 +394,7 @@ target_include_directories(devdesk_tests PRIVATE
 target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_home
     devdesk_module_markdown
+    devdesk_module_git
     devdesk_module_todo
     devdesk_agent
     devdesk_module_memory
@@ -529,6 +548,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
     target_link_libraries(${_probe_name} PRIVATE
         devdesk_module_home
         devdesk_module_markdown
+        devdesk_module_git
         devdesk_module_todo
         devdesk_agent
         devdesk_module_memory
@@ -549,6 +569,14 @@ foreach(_probe_source ${_devdesk_probe_sources})
     if(_probe_name STREQUAL "memory_install_probe" OR
        _probe_name STREQUAL "mcp_dialog_probe")
         target_link_libraries(${_probe_name} PRIVATE devdesk_module_mcp)
+    endif()
+    # git_page_probe（need:7 批次二）：fixture 仓用 git2 C API 直建（离线零 CLI）。
+    # git2 符号经 module_git→platform 的 PUBLIC 链（libgit2package）已可达，探针
+    # 只补 <git2.h> 的构建期 include 路径（platform 对该路径的导出口见
+    # src/platform/CMakeLists.txt 注释）。
+    if(_probe_name STREQUAL "git_page_probe")
+        target_include_directories(${_probe_name} PRIVATE
+            ${CMAKE_SOURCE_DIR}/third_party/libgit2/include)
     endif()
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），
@@ -682,6 +710,7 @@ target_include_directories(devdesk_ui_driver PRIVATE
 target_link_libraries(devdesk_ui_driver PRIVATE
     devdesk_module_home
     devdesk_module_markdown
+    devdesk_module_git
     devdesk_module_todo
     devdesk_agent
     devdesk_module_memory

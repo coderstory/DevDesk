@@ -8,7 +8,7 @@
 #include "doctest.h"
 #include "core/theme.h"
 #include "module_markdown/md_block_model.h"
-#include "module_markdown/md_highlight.h"
+#include "ui_kit/text_highlight/md_highlight.h"
 #include "module_markdown/md_preview_highlight.h"
 
 #include <eui/types.h>

@@ -5,7 +5,7 @@
 //   颜色 run 不改 layout/caret，对光标/选区/IME 覆盖层零影响。
 #pragma once
 
-#include "md_line_scanner.h"
+#include "md_fence_scan.h"
 
 #include <eui/types.h>
 

@@ -320,6 +320,7 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
     // 模块 static 须先于 armExitHook 构造：atexit LIFO 保证 handler 先于 modules/router 析构
     static std::unique_ptr<::core::Module> home(create_home_module());
     static std::unique_ptr<::core::Module> markdown(create_markdown_module());
+    static std::unique_ptr<::core::Module> gitPage(create_git_module());
     static std::unique_ptr<::core::Module> todo(create_todo_module());
     static std::unique_ptr<::core::Module> schedule(create_schedule_module());
     static std::unique_ptr<::core::Module> claude(create_claude_module());
@@ -346,6 +347,7 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                 switch (page) {
                     case ::core::PageId::Home: return home.get();
                     case ::core::PageId::Markdown: return markdown.get();
+                    case ::core::PageId::Git: return gitPage.get();
                     case ::core::PageId::Todo: return todo.get();
                     case ::core::PageId::Schedule: return schedule.get();
                     case ::core::PageId::ClaudeProxy: return claude.get();

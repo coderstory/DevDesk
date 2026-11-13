@@ -13,6 +13,7 @@
 // 页面模块工厂声明（extern "C"）；分组父项工厂按契约返回 nullptr
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
+extern "C" ::core::Module* create_git_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_schedule_module();
 extern "C" ::core::Module* create_claude_module();
@@ -48,6 +49,7 @@ struct ModuleEntry {
 inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Home,        nullptr,                          "首页",   "\xEF\x80\x95", &create_home_module},      // U+F015 fa-house
     {::core::PageId::Markdown,    module::settings::kModuleIdMarkdown,     "笔记",   "\xEF\x81\x84", &create_markdown_module},  // U+F044 fa-pen-to-square
+    {::core::PageId::Git,         module::settings::kModuleIdGit,          "Git",    "\xEF\x84\xA6", &create_git_module},       // U+F126 fa-code-branch
     {::core::PageId::Todo,        module::settings::kModuleIdTodo,         "待办",   "\xEF\x81\x98", &create_todo_module},      // U+F058 fa-circle-check
     {::core::PageId::Schedule,    module::settings::kModuleIdSchedule, "定时",   "\xEF\x80\x97", &create_schedule_module},   // U+F017 fa-clock
     {::core::PageId::ClaudeProxy, module::settings::kModuleIdClaudeProxy,  "Claude", "\xEF\x80\xA1", &create_claude_module},     // U+F021 fa-arrows-rotate

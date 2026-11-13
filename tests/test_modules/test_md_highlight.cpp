@@ -10,7 +10,7 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
-#include "module_markdown/md_highlight.h"
+#include "ui_kit/text_highlight/md_highlight.h"
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_ids.h"
 

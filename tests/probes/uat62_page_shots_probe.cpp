@@ -74,10 +74,12 @@ namespace {
 
 // 输出文件名 slug（下标与 kModuleRegistry 表序一一对应；static_assert 钉长度）
 // 2026-10 重排：调度在 Todo 之后、上线三行在 settings 之前
+// need:7 批次二：git 在 markdown 之后
 constexpr const char* kSlugs[] = {
-    "home",     "markdown", "todo",          "schedule", "claude_proxy",
-    "agent",    "memory",   "wallpaper",     "mcp",      "terminal",
-    "release_group", "release_tasks", "release_config", "settings", "about",
+    "home",     "markdown", "git",           "todo",     "schedule",
+    "claude_proxy", "agent", "memory",        "wallpaper", "mcp",
+    "terminal", "release_group", "release_tasks", "release_config",
+    "settings", "about",
 };
 static_assert(sizeof(kSlugs) / sizeof(kSlugs[0]) ==
                   sizeof(::app::registry::kModuleRegistry) /

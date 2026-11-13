@@ -4141,11 +4141,11 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
         ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
         std::string("{\n") +
             // 带当前迁移版本 + 显式豁免默认模块：模拟本版本写出的配置。否则池
-            // bug246/249 的内容自校验会把 release/schedule/terminal/memory 补回
+            // bug246/249 的内容自校验会把 release/schedule/terminal/memory/git 补回
             // enabledModules，污染下面的条目数/顺序断言。
             "\"moduleDefaultsVersion\": " +
             std::to_string(module::settings::kModuleDefaultsVersion) + ",\n" +
-            "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\", \"memory\"],\n" +
+            "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\", \"memory\", \"git\"],\n" +
             "\"fontScalePercentV3\": 9999,\n" +
             "\"logRetentionDays\": -5,\n" +
             "\"claudeProxyPort\": 70000,\n" + "\"themeMode\": \"neon\",\n" +

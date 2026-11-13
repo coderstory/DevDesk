@@ -54,7 +54,7 @@ constexpr int kMaxWindowRestoreSide = 65535;
 
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
-    kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
+    kModuleIdHome, kModuleIdMarkdown,     kModuleIdGit,   kModuleIdTodo,
     kModuleIdSchedule, kModuleIdClaudeProxy, kModuleIdSettings,
     kModuleIdAgent, kModuleIdMemory, kModuleIdWallpaper, kModuleIdMcp,
     kModuleIdTerminal, kModuleIdRelease};
@@ -82,6 +82,9 @@ constexpr ModuleDefaultMigration kModuleDefaultMigrations[] = {
     // 一直补不回。自校验不看版本号，登行即被内容核对覆盖；豁免集语义同其它行
     //（#246 前的历史显式关闭会被一次性补开，再关一次即落豁免集——老板 2026-11-09 拍板接受）。
     {3, kModuleIdMemory},
+    // v4：git（need:7 只读 git 管理器，默认启用）。v3 两行已随既有本地包落过盘，
+    // git 落新槽位 v4，防「同一版本号两批不同默认清单」的歧义。
+    {4, kModuleIdGit},
 };
 
 // 是否「后加的默认启用模块」（可被自校验补回，也可被用户显式关闭豁免）。
@@ -119,7 +122,7 @@ std::vector<std::string> defaultEnabledModules() {
     // memory 默认开启：引擎未安装时页面只显引导态，零后台成本。
     // release 默认启用（任务/基础配置两页共用该键）；schedule 默认启用
     //（此前恒注册，开关卡补齐后存量配置经迁移 v2 并入）。
-    return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
+    return {kModuleIdHome, kModuleIdMarkdown, kModuleIdGit, kModuleIdTodo,
             kModuleIdSchedule, kModuleIdClaudeProxy, kModuleIdMemory,
             kModuleIdTerminal, kModuleIdSettings, kModuleIdRelease};
 }

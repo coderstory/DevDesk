@@ -421,18 +421,19 @@ REGISTER_TEST(core_window_to_compose_degenerate_and_legacy,
 //（Settings/About 后移 3 位），故这里改为逐位比对完整顺序数组——下标即枚举值，
 // 同时锁序与锁值。
 REGISTER_TEST(core_pageid_order,
-              "core: PageId ordering contract (Home<Markdown<Todo<Schedule<ClaudeProxy<Agent<Memory<Wallpaper<Mcp<Terminal<ReleaseGroup<ReleaseTasks<ReleaseConfig<Settings<About)", {
+              "core: PageId ordering contract (Home<Markdown<Git<Todo<Schedule<ClaudeProxy<Agent<Memory<Wallpaper<Mcp<Terminal<ReleaseGroup<ReleaseTasks<ReleaseConfig<Settings<About)", {
     using core::PageId;
     const PageId kExpectedOrder[] = {
-        PageId::Home,         PageId::Markdown,      PageId::Todo,
-        PageId::Schedule,     PageId::ClaudeProxy,   PageId::Agent,
-        PageId::Memory,       PageId::Wallpaper,     PageId::Mcp,
-        PageId::Terminal,     PageId::ReleaseGroup,  PageId::ReleaseTasks,
-        PageId::ReleaseConfig, PageId::Settings,     PageId::About,
+        PageId::Home,         PageId::Markdown,      PageId::Git,
+        PageId::Todo,         PageId::Schedule,      PageId::ClaudeProxy,
+        PageId::Agent,        PageId::Memory,        PageId::Wallpaper,
+        PageId::Mcp,          PageId::Terminal,      PageId::ReleaseGroup,
+        PageId::ReleaseTasks, PageId::ReleaseConfig, PageId::Settings,
+        PageId::About,
     };
     constexpr int kExpectedCount =
         static_cast<int>(sizeof(kExpectedOrder) / sizeof(kExpectedOrder[0]));
-    DOCTEST_REQUIRE_EQ(kExpectedCount, 15);
+    DOCTEST_REQUIRE_EQ(kExpectedCount, 16);
     // 显式完整顺序数组：逐位断言「枚举值 == 下标」，少项/多项/换位都会红
     for (int i = 0; i < kExpectedCount; ++i) {
         DOCTEST_CHECK_EQ(static_cast<int>(kExpectedOrder[i]), i);
@@ -445,14 +446,14 @@ REGISTER_TEST(core_pageid_order,
 // 相对顺序必须原样保留，只有尾部两项整体下移 3 位。
 // 侧边栏「看起来顺序变了」的锅只能由上线分组背，既有项不得被顺手调序。
 REGISTER_TEST(core_pageid_existing_eleven_order_shifted,
-              "core: 既有 11 项相对顺序不变，Settings/About 因上线组插入整体下移 3 位", {
+              "core: 既有 11 项相对顺序不变，Git/Terminal/上线组为新插入不背锅，Settings/About 收尾", {
     using core::PageId;
     const PageId kNewOrder[] = {
-        PageId::Home,         PageId::Markdown,      PageId::Todo,
-        PageId::Schedule,     PageId::ClaudeProxy,   PageId::Agent,
-        PageId::Memory,       PageId::Wallpaper,     PageId::Mcp,
-        PageId::ReleaseGroup, PageId::ReleaseTasks,  PageId::ReleaseConfig,
-        PageId::Settings,     PageId::About,
+        PageId::Home,         PageId::Markdown,      PageId::Git,
+        PageId::Todo,         PageId::Schedule,      PageId::ClaudeProxy,
+        PageId::Agent,        PageId::Memory,        PageId::Wallpaper,
+        PageId::Mcp,          PageId::ReleaseGroup,  PageId::ReleaseTasks,
+        PageId::ReleaseConfig, PageId::Settings,     PageId::About,
     };
     const PageId kExistingEleven[] = {
         PageId::Home,     PageId::Markdown, PageId::Todo,      PageId::Schedule,
@@ -464,8 +465,9 @@ REGISTER_TEST(core_pageid_existing_eleven_order_shifted,
     int filteredCount = 0;
     for (PageId page : kNewOrder) {
         if (page == PageId::ReleaseGroup || page == PageId::ReleaseTasks ||
-            page == PageId::ReleaseConfig || page == PageId::Terminal) {
-            continue;  // 上线三行与 2026-11 新插入的 Terminal 均不背既有序的锅
+            page == PageId::ReleaseConfig || page == PageId::Terminal ||
+            page == PageId::Git) {
+            continue;  // 上线三行与 2026-11 新插入的 Terminal/need:7 Git 均不背既有序的锅
         }
         DOCTEST_REQUIRE(filteredCount < 11);
         filtered[filteredCount++] = page;
@@ -474,14 +476,16 @@ REGISTER_TEST(core_pageid_existing_eleven_order_shifted,
     for (int i = 0; i < 11; ++i) {
         DOCTEST_CHECK(filtered[i] == kExistingEleven[i]);
     }
-    // 前 9 项枚举值不变；Terminal 插入 Mcp 之后占 9；Settings/About 各后移 1 位（12→13 / 13→14）
-    for (int i = 0; i < 9; ++i) {
-        DOCTEST_CHECK_EQ(static_cast<int>(kExistingEleven[i]), i);
-    }
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Mcp), 8);
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Terminal), 9);
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Settings), 13);
-    DOCTEST_CHECK_EQ(static_cast<int>(PageId::About), 14);
+    // Git 插入 Markdown 之后占 2（need:7 决策④）；插入点前 Home/Markdown 值不变，
+    // 插入点后既有项枚举值各 +1（Todo=3 起）——锁值防后续无序插入。
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Home), 0);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Markdown), 1);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Git), 2);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Todo), 3);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Mcp), 9);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Terminal), 10);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::Settings), 14);
+    DOCTEST_CHECK_EQ(static_cast<int>(PageId::About), 15);
     return true;
 })
 

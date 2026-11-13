@@ -8,7 +8,7 @@ add_library(devdesk_module_markdown STATIC
     markdown_service.cpp
     markdown_tools.cpp
     notes_mcp_tools.cpp
-    md_highlight.cpp
+
     md_keyword_highlight.cpp
     md_keyboard.cpp
     md_line_scanner.cpp

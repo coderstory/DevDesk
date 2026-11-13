@@ -8,7 +8,7 @@
 //   未覆盖语言/空 lang → supported=false、runs 空；runs 用 code 偏移、升序不重叠，空白恒为 run 间隙。
 #pragma once
 
-#include "md_highlight.h"
+#include <ui_kit/text_highlight/md_highlight.h>
 
 #include <eui/types.h>
 

@@ -30,7 +30,7 @@
 #include "markdown_tools.h"
 #include "md_block_model.h"
 #include "md_block_interact.h"
-#include "md_highlight.h"
+#include <ui_kit/text_highlight/md_highlight.h>
 #include "md_ids.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"

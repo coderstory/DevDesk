@@ -19,3 +19,4 @@ bash 3.2 (macOS)：双引号串内 $var 紧跟全角字符（，/）等）会被
 - 2026-11-07（池199）：ctest add_test 裸注册「需要子命令」的探针恒红——argless 打印用法退 2 会被守卫链当失败；QA 子命令驱动型探针（install 需网络/mcpserve 起服务）argless 必须退 77（SKIP_RETURN_CODE 跳过），子命令误用仍退 2。
 - 2026-11-07（bug145 三轮误测复盘）：GL 帧回读类离屏探针读的是合成前 framebuffer，**结构性看不到窗口服务器的圆角裁剪/合成效果**——「探针 PASS」≠「合成态正确」（cee24491 探针绿但老板实测四角黑线全消）；涉及窗口形状/材质/圆角的验证必须真机目检，探针只证「画了」不证「可见」。
 - 2026-11-07（need169）：EUI 元素 onClick/onKeyEvent 存 lambda 禁捕获 &BoardView（compose 栈上每帧临时，元素跨帧调用=UAF，无头用例实崩）——回调必须按值拷贝 std::function；普通列折叠泛化走 std::map<列id,状态> 与归档列同映射（colState 缺省按 kind 分口径），列宽用 boardColumnWidthsFlex 纯函数（Σ宽恒=span，回流无空洞靠构造不靠 clamp）。
+- 2026-11-13（need:8）：本机（Windows）rm -rf build 后**新 configure** 需要自备 ninja PATH：ninja 装在 D:/software/ninja（build-test-run.sh 探测清单只覆盖 MSYS2 bin 与 cmake 目录，且「ninja 由 CMakeCache 绝对路径引用」的前提是缓存还在）——`PATH="/d/software/ninja:$PATH" bash scripts/build-test-run.sh …`；未删缓存的增量构建不受影响。

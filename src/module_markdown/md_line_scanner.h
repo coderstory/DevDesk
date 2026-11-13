@@ -3,11 +3,16 @@
 // 标题识别用行扫描 ^#{1,6}\s，不依赖 md4c（md4c Block 无源码 offset）。
 #pragma once
 
+#include <ui_kit/text_highlight/md_fence_scan.h>
+
 #include <cstddef>
 #include <string>
 #include <vector>
 
 namespace module::markdown {
+
+// MdFenceBlock / scanFences 已随 md_highlight 平移至 ui_kit/text_highlight
+//（need:10 批次三，平移不复制）；经本头透出维持 module_markdown 消费面不变。
 
 // 一条 ATX 标题。byteOffset 为该行行首字节偏移（可作光标跳转目标 / 前缀切点）。
 struct MdHeading {
@@ -16,18 +21,6 @@ struct MdHeading {
     size_t byteOffset = 0;
     std::string title;    // 去掉 # 前缀和首尾空白后的标题文本
 };
-
-// 一个围栏代码块。{openLineStart, contentEnd} 即围栏行行首，高亮器据此区分围栏/内容行。
-struct MdFenceBlock {
-    size_t openLineStart = 0;   // 开栏行（如 ```cpp）行首
-    size_t contentStart = 0;    // 首个内容行行首（开栏行换行之后）
-    size_t contentEnd = 0;      // 闭栏行行首；未闭合围栏 = text.size()
-};
-
-// 扫描围栏代码块区间，语义对齐 md4c/CommonMark（缩进 ≤3 空格、≥3 同字符、闭栏
-// 长度 ≥ 开栏且行尾仅空白）。与预览分块 / 大纲 / 高亮共用这套状态机，等价性回归
-// 锚 = md_block_model_render_equivalence。
-std::vector<MdFenceBlock> scanFences(const std::string& text);
 
 // 扫描全文标题。围栏块内的 # 行不算标题（与 scanFences 同源）。
 std::vector<MdHeading> scanHeadings(const std::string& text);

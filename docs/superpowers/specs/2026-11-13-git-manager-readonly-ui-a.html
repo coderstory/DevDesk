@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-screen="main" data-state="ok" data-mode="modified" data-view="content">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git 管理器（只读）· 方案 A 设计 demo（IDEA 严格三栏）</title>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  方案 A：IDEA 严格三栏（左目录树 260 / 中变更列表 280 / 右内容-diff 自适应）。
+  配套设计文档：2026-11-13-git-manager-readonly-ui-a.md（参数以文档为准）。
+  本页零外部依赖，离线双击可开；数据为内置模拟，右上角演示面板切换状态。
+-->
+<style>
+/* ============ token（设计文档 §3） ============ */
+:root{
+  --c-primary:#36D399; --c-primary-hover:#2EC48F; --c-primary-press:#23B07F;
+  --c-primary-tint:#E6FBF2; --c-primary-text:#157E4E;
+  --c-danger:#EF4444; --c-danger-text:#B91C1C; --c-danger-tint:#FDECEC;
+  --c-link:#576B95;
+  --c-bg-page:#F7F7F7; --c-bg-card:#FFFFFF; --c-bg-sidebar:#E8F0EC;
+  --c-border-1:#E5E5E5; --c-border-2:#EDEDED;
+  --c-text-1:#1A1A1A; --c-text-2:#666666; --c-text-3:#999999;
+  --c-selected-bg:#E5E5E5; --c-btn-2-bg:#F2F2F2;
+  --st-added:#157E4E; --st-added-bg:#E6FBF2;
+  --st-modified:#9A6700; --st-modified-bg:#FBF1DE;
+  --st-deleted:#B91C1C; --st-deleted-bg:#FDECEC;
+  --st-renamed:#576B95; --st-renamed-bg:#EDF1F7;
+  --st-untracked:#666666;
+  --diff-added-bg:#E6FBF2; --diff-removed-bg:#FDECEC;
+  --diff-hunk-bg:#F2F2F2; --diff-gutter-bg:#FAFAFA;
+  --hl-keyword:#4A6DA7; --hl-string:#157E4E; --hl-comment:#999999;
+  --hl-number:#9A6700; --hl-heading:#157E4E; --hl-code-bg:#F2F2F2;
+  --toast-bg:rgba(0,0,0,.72);
+  --shadow-card:0 4px 16px rgba(0,0,0,.08);
+}
+html[data-theme="dark"]{
+  --c-primary:#36D399; --c-primary-hover:#2EC48F; --c-primary-press:#23B07F;
+  --c-primary-tint:rgba(54,211,153,.12); --c-primary-text:#4AD48A;
+  --c-danger:#F87171; --c-danger-text:#F87171; --c-danger-tint:rgba(248,113,113,.12);
+  --c-link:#8AA6CE;
+  --c-bg-page:#191919; --c-bg-card:#242424; --c-bg-sidebar:#1E2320;
+  --c-border-1:#3A3A3A; --c-border-2:#2E2E2E;
+  --c-text-1:#E8E8E8; --c-text-2:#A0A0A0; --c-text-3:#6C6C6C;
+  --c-selected-bg:#333333; --c-btn-2-bg:#2E2E2E;
+  --st-added:#4AD48A; --st-added-bg:rgba(54,211,153,.12);
+  --st-modified:#D29922; --st-modified-bg:rgba(210,153,34,.14);
+  --st-deleted:#F87171; --st-deleted-bg:rgba(248,113,113,.12);
+  --st-renamed:#8AA6CE; --st-renamed-bg:rgba(138,166,206,.14);
+  --st-untracked:#A0A0A0;
+  --diff-added-bg:rgba(54,211,153,.10); --diff-removed-bg:rgba(248,113,113,.10);
+  --diff-hunk-bg:#2A2A2A; --diff-gutter-bg:#202020;
+  --hl-keyword:#8AA6CE; --hl-string:#4AD48A; --hl-comment:#6C6C6C;
+  --hl-number:#D29922; --hl-heading:#4AD48A; --hl-code-bg:#2A2A2A;
+  --toast-bg:rgba(0,0,0,.78);
+  --shadow-card:0 4px 16px rgba(0,0,0,.4);
+}
+/* ============ 基础 ============ */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  font-size:13px;color:var(--c-text-1);background:var(--c-bg-page);
+  overflow:hidden;
+}
+code,.mono{font-family:Consolas,Menlo,"Courier New",monospace}
+button{font-family:inherit;border:none;background:none;cursor:pointer;color:inherit}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--c-border-1);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:var(--c-text-3)}
+::-webkit-scrollbar-corner{background:transparent}
+
+/* 果冻按压 + hover（设计文档 §8 动效表） */
+.btn,.trow,.crow,.vtab,.mtab,.dp-btn,.fold-bar{
+  transition:transform 120ms cubic-bezier(.2,.8,.3,1),background-color 100ms ease-out,color 100ms ease-out;
+}
+.btn:active{transform:scale(.97)}
+.trow:active,.crow:active{transform:scale(.97);transform-origin:left center}
+
+/* ============ 屏幕切换 ============ */
+.screen{display:none;height:100vh}
+html[data-screen="main"] #screen-main{display:flex;flex-direction:column}
+html[data-screen="empty"] #screen-empty{display:flex}
+
+/* ============ 空态页（§5.7） ============ */
+#screen-empty{
+  align-items:center;justify-content:center;background:var(--c-bg-page);
+}
+.empty-box{max-width:420px;text-align:center;padding:16px}
+.empty-box h1{font-size:16px;font-weight:600;margin-bottom:8px}
+.empty-box .desc{font-size:13px;line-height:18px;color:var(--c-text-2);margin-bottom:20px}
+.stale-error{
+  display:none;background:var(--c-danger-tint);border-radius:6px;
+  padding:12px 16px;margin-bottom:20px;text-align:left;
+}
+.stale-error .e1{font-size:13px;color:var(--c-danger-text);line-height:18px}
+.stale-error .e2{font-size:12px;color:var(--c-text-3);line-height:18px;margin-top:2px}
+html[data-empty="stale"] .stale-error{display:block}
+html[data-empty="stale"] .check-error{display:none}
+.check-error{
+  background:var(--c-danger-tint);border-radius:6px;padding:12px 16px;
+  margin-bottom:20px;text-align:left;font-size:13px;color:var(--c-danger-text);line-height:18px;
+}
+.btn-primary{
+  height:36px;padding:0 20px;border-radius:6px;background:var(--c-primary);
+  color:#fff;font-size:14px;display:inline-flex;align-items:center;gap:8px;
+}
+.btn-primary:hover{background:var(--c-primary-hover)}
+.btn-primary:active{background:var(--c-primary-press)}
+.btn-primary[disabled]{opacity:.75;cursor:default}
+.btn-secondary{
+  height:32px;padding:0 12px;border-radius:6px;background:var(--c-btn-2-bg);
+  color:var(--c-text-1);font-size:14px;display:inline-flex;align-items:center;gap:6px;
+}
+.btn-secondary:hover{background:var(--c-border-2)}
+.btn-secondary[disabled]{color:var(--c-text-3);cursor:default}
+
+/* ============ 顶栏（§5.1） ============ */
+.topbar{
+  height:48px;flex:none;background:var(--c-bg-card);
+  border-bottom:1px solid var(--c-border-1);
+  display:flex;align-items:center;gap:12px;padding:0 16px;
+}
+.repo-name{font-size:15px;font-weight:600}
+.repo-path{
+  font-size:12px;color:var(--c-text-3);max-width:360px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.repo-path:hover{color:var(--c-text-2)}
+.topbar .spacer{flex:1}
+.spin{display:inline-block;width:14px;height:14px;border:1.5px solid var(--c-text-2);
+  border-top-color:transparent;border-radius:50%;animation:spin 800ms linear infinite}
+.spin.small{width:12px;height:12px;border-color:var(--c-text-3);border-top-color:transparent}
+@keyframes spin{to{transform:rotate(360deg)}}
+#btn-refresh .dot-flash{
+  position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;
+  background:var(--c-primary);opacity:0;
+}
+#btn-refresh{position:relative}
+#btn-refresh.flash .dot-flash{animation:dotflash 1.8s ease-out}
+@keyframes dotflash{0%{opacity:1}60%{opacity:1}100%{opacity:0}}
+#btn-refresh.spinning .spin{display:inline-block}
+#btn-refresh .spin{display:none}
+
+/* ============ 三栏（§1/§2） ============ */
+.cols{flex:1;display:flex;min-height:0}
+.tree-pane{
+  width:260px;flex:none;background:var(--c-bg-sidebar);
+  display:flex;flex-direction:column;min-height:0;
+}
+.changes-pane{
+  width:280px;flex:none;background:var(--c-bg-card);
+  border-left:1px solid var(--c-border-1);
+  display:flex;flex-direction:column;min-height:0;
+}
+.viewer{
+  flex:1;min-width:320px;background:var(--c-bg-card);
+  border-left:1px solid var(--c-border-1);
+  display:flex;flex-direction:column;min-height:0;
+}
+.scroll{flex:1;overflow:auto;min-height:0}
+
+/* 左栏模式切换条（§5.2） */
+.modebar{height:40px;flex:none;display:flex;border-bottom:1px solid var(--c-border-1)}
+.mtab{
+  flex:1;height:100%;font-size:13px;color:var(--c-text-2);
+  position:relative;border-bottom:2px solid transparent;
+}
+.mtab:hover{color:var(--c-text-1)}
+.mtab.on{color:var(--c-text-1);font-weight:500;border-bottom-color:var(--c-primary)}
+
+/* 树行 */
+.tree-scroll{padding:4px 0 8px}
+.trow{
+  height:28px;display:flex;align-items:center;gap:4px;
+  padding-left:calc(12px + var(--d,0)*16px);padding-right:8px;
+  white-space:nowrap;user-select:none;
+}
+.trow:hover{background:var(--c-border-2)}
+.trow.sel{background:var(--c-selected-bg);box-shadow:inset 2px 0 0 var(--c-primary)}
+.trow .tw{width:16px;flex:none;font-size:12px;color:var(--c-text-3);text-align:center}
+.trow .nm{font-size:13px;overflow:hidden;text-overflow:ellipsis}
+.trow.file .nm{cursor:pointer}
+.trow .tail{font-size:12px;color:var(--c-text-3);margin-left:auto;flex:none}
+.trow.denied .nm{color:var(--c-text-3)}
+.trow.sub .nm{color:var(--c-text-2)}
+.trow .dot{width:6px;height:6px;border-radius:50%;margin-left:6px;flex:none}
+.st-a .nm{color:var(--st-added)} .st-a .dot{background:var(--st-added)}
+.st-m .nm{color:var(--st-modified)} .st-m .dot{background:var(--st-modified)}
+.st-d .nm{color:var(--st-deleted);text-decoration:line-through} .st-d .dot{background:var(--st-deleted)}
+.st-r .nm{color:var(--st-renamed)} .st-r .dot{background:var(--st-renamed)}
+.st-u .nm{color:var(--c-text-2)} .st-u .dot{background:var(--st-untracked)}
+.tchildren{display:none}
+.trow.open + .tchildren{display:block}
+.trow .err-inline{display:none}
+.tree-empty,.tree-error,.changes-empty,.changes-error{
+  display:none;padding:32px 16px;text-align:center;
+}
+.hint-1{font-size:13px;color:var(--c-text-2);line-height:18px}
+.hint-2{font-size:12px;color:var(--c-text-3);line-height:18px;margin-top:4px}
+.errbox{
+  background:var(--c-danger-tint);border-radius:6px;padding:16px;text-align:center;
+}
+.errbox .e1{font-size:13px;color:var(--c-danger-text);line-height:18px}
+.errbox .e2{font-size:12px;color:var(--c-text-3);line-height:18px;margin-top:4px}
+.errbox .btn-secondary{margin-top:12px}
+.txt-btn{color:var(--c-primary-text);font-size:12px;padding:2px 6px;border-radius:4px}
+.txt-btn:hover{background:var(--c-primary-tint)}
+
+/* 中栏变更列表（§5.3） */
+.group-head{
+  height:32px;flex:none;display:flex;align-items:center;padding:0 12px;
+  font-size:12px;font-weight:600;color:var(--c-text-2);
+  border-bottom:1px solid var(--c-border-2);
+}
+.group-head + .group-head,.crow + .group-head{border-top:1px solid var(--c-border-2)}
+.crow{
+  min-height:28px;display:flex;align-items:center;gap:8px;
+  padding:0 12px;user-select:none;
+}
+.crow:hover{background:var(--c-border-2)}
+.crow.sel{background:var(--c-selected-bg);box-shadow:inset 2px 0 0 var(--c-primary)}
+.crow.two{padding-top:4px;padding-bottom:4px;height:auto}
+.badge{
+  width:16px;height:16px;border-radius:4px;flex:none;
+  font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;
+}
+.bm{background:var(--st-modified-bg);color:var(--st-modified)}
+.ba{background:var(--st-added-bg);color:var(--st-added)}
+.bd{background:var(--st-deleted-bg);color:var(--st-deleted)}
+.br{background:var(--st-renamed-bg);color:var(--st-renamed)}
+.bu{background:var(--c-btn-2-bg);color:var(--st-untracked);border:1px solid var(--c-border-1)}
+.cpath{min-width:0}
+.cpath .p1{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cpath .p2{font-size:11px;color:var(--c-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 右栏路径条（§5.4） */
+.pathbar{
+  height:36px;flex:none;display:flex;align-items:center;
+  padding:0 0 0 12px;border-bottom:1px solid var(--c-border-1);
+}
+.pb-path{
+  flex:1;font-size:12px;color:var(--c-text-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.vtabs{display:flex;height:100%;flex:none}
+.vtab{
+  height:100%;padding:0 14px;font-size:13px;color:var(--c-text-2);
+  border-bottom:2px solid transparent;
+}
+.vtab:hover{color:var(--c-text-1)}
+.vtab.on{color:var(--c-text-1);font-weight:500;border-bottom-color:var(--c-primary)}
+.vtab[hidden]{display:none}
+
+/* 内容视图（§5.5） */
+.viewer-body{flex:1;overflow:auto;min-height:0;background:var(--c-bg-card)}
+.cline{display:flex;height:22px;line-height:22px}
+.cline:hover{background:var(--c-bg-page)}
+.cln{
+  width:44px;flex:none;text-align:right;padding-right:8px;
+  font-family:Consolas,Menlo,monospace;font-size:12px;color:var(--c-text-3);
+  background:var(--diff-gutter-bg);border-right:1px solid var(--c-border-2);
+  user-select:none;
+}
+.cline code{
+  font-size:13px;white-space:pre;padding-left:12px;color:var(--c-text-1);
+}
+.hl-kw{color:var(--hl-keyword)}
+.hl-str{color:var(--hl-string)}
+.hl-com{color:var(--hl-comment);font-style:italic}
+.hl-num{color:var(--hl-number)}
+.hl-hd{color:var(--hl-heading);font-weight:700}
+.hl-code{background:var(--hl-code-bg);border-radius:3px;padding:0 3px;font-family:Consolas,Menlo,monospace;font-size:12px}
+
+/* 占位/状态块（§5.5/§5.6） */
+.placeholder{
+  height:100%;min-height:240px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:4px;padding:24px;
+}
+.placeholder .m1{font-size:14px;color:var(--c-text-2)}
+.placeholder .m2{font-size:12px;color:var(--c-text-3)}
+
+/* diff 视图（§5.6，本页记忆点） */
+.diff-file-head{
+  height:28px;display:flex;align-items:center;padding:0 12px;
+  background:var(--diff-gutter-bg);border-bottom:1px solid var(--c-border-2);
+  font-family:Consolas,Menlo,monospace;font-size:12px;color:var(--c-text-2);
+  white-space:nowrap;overflow:hidden;
+}
+.dline{display:grid;grid-template-columns:16px 40px 40px 1fr;height:22px;line-height:22px;min-width:100%;width:max-content}
+.dline .ic{font-size:12px;color:var(--c-text-3);text-align:center;user-select:none}
+.dline .ln{
+  font-family:Consolas,Menlo,monospace;font-size:12px;color:var(--c-text-3);
+  text-align:right;padding-right:6px;user-select:none;
+}
+.dline code{font-size:13px;white-space:pre;padding-left:8px;color:var(--c-text-1)}
+.dline.add{background:var(--diff-added-bg)}
+.dline.add .ln.n2{color:var(--c-primary-text);font-weight:600}
+.dline.del{background:var(--diff-removed-bg)}
+.dline.del .ln.n1{color:var(--c-danger-text);font-weight:600}
+.hunk-head{
+  display:grid;grid-template-columns:16px 1fr;height:24px;line-height:24px;
+  background:var(--diff-hunk-bg);cursor:pointer;user-select:none;
+  min-width:100%;width:max-content;
+}
+.hunk-head .tw{font-size:12px;color:var(--c-text-3);text-align:center;transition:transform 120ms ease-out}
+.hunk-head .ht{
+  font-family:Consolas,Menlo,monospace;font-size:11px;color:var(--c-text-2);
+  white-space:pre;padding-left:6px;
+}
+.hunk-body{display:none}
+.hunk.open .hunk-body{display:block}
+.hunk.open .hunk-head .tw{transform:rotate(90deg)}
+.fold-bar{
+  height:24px;line-height:24px;text-align:center;font-size:11px;color:var(--c-text-3);
+  background:var(--c-btn-2-bg);cursor:pointer;user-select:none;min-width:100%;width:max-content;
+}
+.fold-bar:hover{background:var(--c-border-2)}
+.fold-extra{display:none}
+
+/* 骨架（§5.8） */
+.skel{display:none;padding:12px 12px 12px 0}
+html[data-state="loading"] .real{display:none!important}
+html[data-state="loading"] .skel{display:block}
+.skrow{height:16px;border-radius:4px;background:var(--c-border-2);margin:12px 0 12px 12px;
+  animation:pulse 1.2s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:.45}to{opacity:1}}
+
+/* 状态注入（§7）：错误/空 */
+.midstate{display:none}
+html[data-state="error"] .changes-real,html[data-state="empty"] .changes-real{display:none!important}
+html[data-state="error"] .changes-error{display:block}
+html[data-state="empty"] .changes-empty{display:block}
+html[data-state="error"] .tree-real{display:none!important}
+html[data-state="error"] .tree-error{display:block}
+html[data-state="empty"][data-mode="modified"] .tree-real{display:none!important}
+html[data-state="empty"][data-mode="modified"] .tree-empty{display:block}
+
+/* 模式切换（N5） */
+html[data-mode="all"] .tree-modified{display:none!important}
+html[data-mode="modified"] .tree-all{display:none!important}
+/* 右栏视图切换（N6/N8） */
+html[data-view="content"] #view-diff{display:none}
+html[data-view="diff"] #view-content{display:none}
+
+/* toast（基线轻提示） */
+#toast{
+  position:fixed;left:50%;bottom:40px;transform:translate(-50%,8px);
+  background:var(--toast-bg);color:#fff;font-size:13px;line-height:18px;
+  padding:9px 16px;border-radius:6px;opacity:0;pointer-events:none;
+  transition:opacity 150ms ease-out,transform 150ms ease-out;z-index:99;
+}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#toast.hide{opacity:0;transition:opacity 200ms ease-in}
+
+/* ============ 演示面板（demo-only，非产品 UI） ============ */
+.dp{
+  position:fixed;top:12px;right:12px;width:208px;z-index:50;
+  background:var(--c-bg-card);border:1px dashed var(--c-border-1);border-radius:8px;
+  box-shadow:var(--shadow-card);font-size:12px;
+}
+.dp-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 10px;cursor:pointer;user-select:none;
+}
+.dp-head b{font-size:10px;font-weight:600;color:var(--c-text-3);letter-spacing:.5px}
+.dp-body{padding:0 10px 10px;display:flex;flex-direction:column;gap:8px}
+.dp.min .dp-body{display:none}
+.dp-group{display:flex;flex-wrap:wrap;gap:4px}
+.dp-label{width:100%;font-size:10px;color:var(--c-text-3)}
+.dp-btn{
+  height:24px;padding:0 8px;border-radius:4px;font-size:12px;
+  background:var(--c-btn-2-bg);color:var(--c-text-1);
+  border:1px solid transparent;
+}
+.dp-btn:hover{background:var(--c-border-2)}
+.dp-btn.on{background:var(--c-primary-tint);color:var(--c-primary-text);border-color:var(--c-primary)}
+
+/* 弱化动态效果（设计文档 §8） */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+/* ============ 自适应（设计文档 §9） ============ */
+@media (max-width:1100px){
+  .tree-pane{width:200px}
+  .changes-pane{width:240px}
+  .repo-path{max-width:220px}
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== 空态页 N2（§5.7） ==================== -->
+<section class="screen" id="screen-empty">
+  <div class="empty-box">
+    <h1>查看你的 Git 仓库</h1>
+    <div class="desc">只读查看器：浏览文件、查看变更与 diff，不做任何修改。</div>
+    <div class="stale-error">
+      <div class="e1">上次打开的仓库不可用：目录已不存在（D:\demo\moved-repo）</div>
+      <div class="e2">已清除该条记忆，请重新选择仓库。</div>
+    </div>
+    <div class="check-error" id="check-error" style="display:none"></div>
+    <button class="btn-primary" id="btn-pick" onclick="pickRepo(this)">
+      <span class="spin small" style="display:none" id="pick-spin"></span>
+      选择仓库目录
+    </button>
+    <div class="hint-2" style="margin-top:16px">校验耗时超过 1 秒时会显示加载指示</div>
+  </div>
+</section>
+
+<!-- ==================== 主界面 N3（§1 构图） ==================== -->
+<section class="screen" id="screen-main">
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <span class="repo-name">DevDesk</span>
+    <span class="repo-path" title="D:\project\gui\DevDesk">D:\project\gui\DevDesk</span>
+    <span class="spacer"></span>
+    <button class="btn-secondary btn" onclick="showEmpty('plain')">切换仓库</button>
+    <button class="btn-secondary btn" id="btn-refresh" onclick="doRefresh(this)">
+      <span class="spin"></span>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      刷新
+      <span class="dot-flash"></span>
+    </button>
+  </header>
+
+  <div class="cols">
+
+    <!-- 左栏：目录树 -->
+    <aside class="tree-pane">
+      <div class="modebar">
+        <button class="mtab" data-mode="all" onclick="setMode('all')">全部文件</button>
+        <button class="mtab" data-mode="modified" onclick="setMode('modified')">仅修改</button>
+      </div>
+
+      <div class="scroll tree-scroll">
+        <!-- 全部文件模式（树行参数见设计文档 §5.2） -->
+        <div class="tree-all tree-real">
+          <div class="trow dir open" style="--d:0"><span class="tw">▾</span><span class="nm">docs</span></div>
+          <div class="tchildren">
+            <div class="trow dir open" style="--d:1"><span class="tw">▾</span><span class="nm">说明文档</span></div>
+            <div class="tchildren">
+              <div class="trow file st-m sel" style="--d:2" data-content="md" data-path="docs/说明文档/接口规范.md" data-diff="d-mdcn" onclick="pickTreeFile(this)">
+                <span class="tw"></span><span class="nm">接口规范.md</span><span class="dot"></span>
+              </div>
+            </div>
+            <div class="trow dir" style="--d:1"><span class="tw">▸</span><span class="nm">superpowers</span></div>
+            <div class="tchildren">
+              <div class="trow dir" style="--d:2"><span class="tw">▸</span><span class="nm">specs</span></div>
+            </div>
+          </div>
+
+          <div class="trow dir lazy" style="--d:0"><span class="tw">▸</span><span class="nm">src</span></div>
+          <div class="tchildren">
+            <div class="trow lazy-spin" style="--d:1"><span class="tw"><span class="spin small"></span></span><span class="nm" style="color:var(--c-text-3)">加载中…</span></div>
+            <div class="lazy-real" style="display:none">
+              <div class="trow dir open" style="--d:1"><span class="tw">▾</span><span class="nm">module_git</span></div>
+              <div class="tchildren">
+                <div class="trow file st-m" style="--d:2" data-content="main" data-path="src/module_git/git_tree_view.cpp" data-diff="d-main" onclick="pickTreeFile(this)">
+                  <span class="tw"></span><span class="nm">git_tree_view.cpp</span><span class="dot"></span>
+                </div>
+                <div class="trow dir open" style="--d:2"><span class="tw">▾</span><span class="nm">highlight</span></div>
+                <div class="tchildren">
+                  <div class="trow file st-a" style="--d:3" data-content="java" data-path="src/module_git/highlight/java_lexer.cpp" data-diff="d-added" onclick="pickTreeFile(this)">
+                    <span class="tw"></span><span class="nm">java_lexer.cpp</span><span class="dot"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="trow dir open" style="--d:0"><span class="tw">▾</span><span class="nm">资源</span></div>
+          <div class="tchildren">
+            <div class="trow file st-u" style="--d:1" data-content="binary" data-path="资源/图标.png" onclick="pickTreeFile(this)">
+              <span class="tw"></span><span class="nm">图标.png</span><span class="dot"></span>
+            </div>
+          </div>
+
+          <div class="trow dir open" style="--d:0"><span class="tw">▾</span><span class="nm">notes</span></div>
+          <div class="tchildren">
+            <div class="trow file st-u" style="--d:1" data-content="huge" data-path="notes/性能测试数据.md" onclick="pickTreeFile(this)">
+              <span class="tw"></span><span class="nm">性能测试数据.md</span><span class="dot"></span>
+            </div>
+          </div>
+
+          <div class="trow dir" style="--d:0"><span class="tw">▸</span><span class="nm">scripts</span></div>
+          <div class="tchildren">
+            <div class="trow" style="--d:1">
+              <span class="tw" style="color:var(--c-danger-text)">✕</span>
+              <span class="nm" style="color:var(--c-danger-text);font-size:12px">无法读取：权限不足</span>
+              <button class="txt-btn" onclick="event.stopPropagation();toast('已重试：目录读取成功（演示）')">重试</button>
+            </div>
+          </div>
+
+          <div class="trow sub denied" style="--d:0" title="子仓库不展开"><span class="tw">▸</span><span class="nm">EUI-NEO</span><span class="tail">子仓库</span></div>
+          <div class="trow denied" style="--d:0" title="无权限目录，降级显示"><span class="tw"></span><span class="nm">system_logs</span><span class="tail">不可访问</span></div>
+          <div class="trow file st-m" style="--d:0" data-content="md" data-path="生产说明.md" data-diff="d-md" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">生产说明.md</span><span class="dot"></span>
+          </div>
+          <div class="trow file" style="--d:0" data-content="empty" data-path=".gitkeep" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">.gitkeep</span>
+          </div>
+        </div>
+
+        <!-- 仅修改模式（F-03：列表式树，同源着色） -->
+        <div class="tree-modified tree-real">
+          <div class="trow file st-m" style="--d:0" data-content="main" data-path="src/module_git/git_tree_view.cpp" data-diff="d-main" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">src/module_git/git_tree_view.cpp</span><span class="dot"></span>
+          </div>
+          <div class="trow file st-a" style="--d:0" data-content="java" data-path="src/module_git/highlight/java_lexer.cpp" data-diff="d-added" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">src/module_git/highlight/java_lexer.cpp</span><span class="dot"></span>
+          </div>
+          <div class="trow file st-r two" style="--d:0" data-content="md" data-path="docs/说明文档/接口规范.md" data-diff="d-mdcn" onclick="pickTreeFile(this)">
+            <span class="tw"></span>
+            <div class="cpath">
+              <div class="p1">docs/说明文档/接口规范.md</div>
+              <div class="p2">← 原 docs/接口规范.md</div>
+            </div>
+            <span class="dot"></span>
+          </div>
+          <div class="trow file st-d" style="--d:0" data-content="error" data-path="docs/旧版说明/废弃文档.md" data-diff="d-deleted" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">docs/旧版说明/废弃文档.md</span><span class="dot"></span>
+          </div>
+          <div class="trow file st-m" style="--d:0" data-content="md" data-path="生产说明.md" data-diff="d-md" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">生产说明.md</span><span class="dot"></span>
+          </div>
+          <div class="trow file st-u" style="--d:0" data-content="binary" data-path="资源/图标.png" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">资源/图标.png</span><span class="dot"></span>
+          </div>
+          <div class="trow file st-u" style="--d:0" data-content="huge" data-path="notes/性能测试数据.md" onclick="pickTreeFile(this)">
+            <span class="tw"></span><span class="nm">notes/性能测试数据.md</span><span class="dot"></span>
+          </div>
+        </div>
+
+        <div class="tree-empty midstate">
+          <div class="hint-1">工作区无变更</div>
+          <div class="hint-2">保存文件后列表会自动更新（1s 节流）</div>
+        </div>
+        <div class="tree-error midstate">
+          <div class="errbox">
+            <div class="e1">无法读取目录</div>
+            <div class="e2">仓库目录当前不可访问（可能已被移动或删除）</div>
+            <button class="btn-secondary btn" onclick="retryState()">重试</button>
+          </div>
+        </div>
+      </div>
+      <div class="skel" id="tree-skel"></div>
+    </aside>
+
+    <!-- 中栏：变更列表（决策⑤独立中栏） -->
+    <div class="changes-pane">
+      <div class="scroll changes-real">
+        <div class="group-head">变更 (5)</div>
+        <div class="crow" data-diff="d-main" onclick="pickChange(this,'diff')">
+          <span class="badge bm">M</span>
+          <div class="cpath"><div class="p1">src/module_git/git_tree_view.cpp</div></div>
+        </div>
+        <div class="crow" data-diff="d-added" onclick="pickChange(this,'diff')">
+          <span class="badge ba">A</span>
+          <div class="cpath"><div class="p1">src/module_git/highlight/java_lexer.cpp</div></div>
+        </div>
+        <div class="crow two" data-diff="d-mdcn" onclick="pickChange(this,'diff')">
+          <span class="badge br">R</span>
+          <div class="cpath">
+            <div class="p1">docs/说明文档/接口规范.md</div>
+            <div class="p2">← 原 docs/接口规范.md</div>
+          </div>
+        </div>
+        <div class="crow" data-diff="d-deleted" onclick="pickChange(this,'diff')">
+          <span class="badge bd">D</span>
+          <div class="cpath"><div class="p1">docs/旧版说明/废弃文档.md</div></div>
+        </div>
+        <div class="crow" data-diff="d-md" onclick="pickChange(this,'diff')">
+          <span class="badge bm">M</span>
+          <div class="cpath"><div class="p1">生产说明.md</div></div>
+        </div>
+
+        <div class="group-head">未跟踪 (2)</div>
+        <div class="crow" data-view="content" onclick="pickChange(this,'binary')">
+          <span class="badge bu">U</span>
+          <div class="cpath"><div class="p1">资源/图标.png</div></div>
+        </div>
+        <div class="crow" data-view="content" onclick="pickChange(this,'huge')">
+          <span class="badge bu">U</span>
+          <div class="cpath"><div class="p1">notes/性能测试数据.md</div></div>
+        </div>
+      </div>
+
+      <div class="changes-empty midstate">
+        <div class="hint-1">工作区无变更</div>
+        <div class="hint-2">保存文件后列表会自动更新（1s 节流）</div>
+      </div>
+      <div class="changes-error midstate">
+        <div class="errbox">
+          <div class="e1">无法获取变更</div>
+          <div class="e2">status 计算失败：仓库对象库被占用</div>
+          <button class="btn-secondary btn" onclick="retryState()">重试</button>
+        </div>
+      </div>
+      <div class="skel" id="changes-skel"></div>
+    </div>
+
+    <!-- 右栏：内容 / diff -->
+    <main class="viewer">
+      <div class="pathbar real">
+        <div class="pb-path" id="pb-path">src/module_git/git_tree_view.cpp</div>
+        <div class="vtabs">
+          <button class="vtab" id="vt-content" onclick="setView('content')">内容</button>
+          <button class="vtab" id="vt-diff" onclick="setView('diff')">diff</button>
+        </div>
+      </div>
+      <div class="viewer-body real">
+        <div id="view-content"></div>
+        <div id="view-diff"></div>
+      </div>
+      <div class="skel" id="viewer-skel"></div>
+    </main>
+  </div>
+</section>
+
+<!-- ==================== 演示面板（非产品 UI） ==================== -->
+<div class="dp" id="dp">
+  <div class="dp-head" onclick="document.getElementById('dp').classList.toggle('min')">
+    <b>演示控制（非产品 UI）</b><span style="font-size:10px;color:var(--c-text-3)">收起</span>
+  </div>
+  <div class="dp-body">
+    <div class="dp-group"><span class="dp-label">页面</span>
+      <button class="dp-btn" data-set="screen" data-v="main" onclick="showEmpty(null);setDp(this)">主界面</button>
+      <button class="dp-btn" data-set="screen" data-v="empty" onclick="showEmpty('plain');setDp(this)">空态页</button>
+      <button class="dp-btn" data-set="screen" data-v="stale" onclick="showEmpty('stale');setDp(this)">记忆仓失效</button>
+    </div>
+    <div class="dp-group"><span class="dp-label">数据状态（空 / 加载 / 错误 / 成功）</span>
+      <button class="dp-btn on" data-set="state" data-v="ok" onclick="setDataState('ok');setDp(this)">成功</button>
+      <button class="dp-btn" data-set="state" data-v="loading" onclick="setDataState('loading');setDp(this)">加载</button>
+      <button class="dp-btn" data-set="state" data-v="error" onclick="setDataState('error');setDp(this)">错误</button>
+      <button class="dp-btn" data-set="state" data-v="empty" onclick="setDataState('empty');setDp(this)">空</button>
+    </div>
+    <div class="dp-group"><span class="dp-label">树模式</span>
+      <button class="dp-btn on" data-set="mode" data-v="modified" onclick="setMode('modified');setDp(this)">仅修改</button>
+      <button class="dp-btn" data-set="mode" data-v="all" onclick="setMode('all');setDp(this)">全部文件</button>
+    </div>
+    <div class="dp-group"><span class="dp-label">右栏视图</span>
+      <button class="dp-btn on" data-set="view" data-v="content" onclick="setView('content');setDp(this)">内容</button>
+      <button class="dp-btn" data-set="view" data-v="diff" onclick="setView('diff');setDp(this)">diff</button>
+    </div>
+    <div class="dp-group"><span class="dp-label">内容样例</span>
+      <button class="dp-btn" onclick="setContent('main',this)">cpp 主文件</button>
+      <button class="dp-btn" onclick="setContent('java',this)">java</button>
+      <button class="dp-btn" onclick="setContent('md',this)">md</button>
+      <button class="dp-btn" onclick="setContent('huge',this)">超大文件</button>
+      <button class="dp-btn" onclick="setContent('binary',this)">二进制</button>
+      <button class="dp-btn" onclick="setContent('empty',this)">空文件</button>
+      <button class="dp-btn" onclick="setContent('error',this)">读取失败</button>
+    </div>
+    <div class="dp-group"><span class="dp-label">diff 样例（unified）</span>
+      <button class="dp-btn" onclick="setDiff('d-main',this)">主变更</button>
+      <button class="dp-btn" onclick="setDiff('d-mdcn',this)">中文md</button>
+      <button class="dp-btn" onclick="setDiff('d-md',this)">生产说明</button>
+      <button class="dp-btn" onclick="setDiff('d-added',this)">新文件</button>
+      <button class="dp-btn" onclick="setDiff('d-deleted',this)">删除文件</button>
+      <button class="dp-btn" onclick="setDiff('d-binary',this)">二进制</button>
+      <button class="dp-btn" onclick="setDiff('d-empty',this)">无变更</button>
+      <button class="dp-btn" onclick="setDiff('d-error',this)">diff失败</button>
+    </div>
+    <div class="dp-group"><span class="dp-label">主题</span>
+      <button class="dp-btn on" data-set="theme" data-v="light" onclick="setTheme('light');setDp(this)">浅色</button>
+      <button class="dp-btn" data-set="theme" data-v="dark" onclick="setTheme('dark');setDp(this)">深色</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* ============ 工具 ============ */
+var $=function(s){return document.querySelector(s)};
+var htmlEl=document.documentElement;
+function setDp(btn){
+  if(btn.dataset.set){document.querySelectorAll('.dp-btn[data-set="'+btn.dataset.set+'"]').forEach(function(b){b.classList.remove('on')});}
+  btn.classList.add('on');
+}
+var toastTimer=null;
+function toast(msg){
+  var t=$('#toast');
+  t.textContent=msg;t.className='show';
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.className='hide';},1500);
+}
+
+/* ============ 页面 / 状态 / 模式 / 视图 / 主题 ============ */
+function showEmpty(variant){
+  if(variant){htmlEl.setAttribute('data-screen','empty');htmlEl.setAttribute('data-empty',variant);}
+  else{htmlEl.setAttribute('data-screen','main');}
+  document.querySelectorAll('.dp-btn[data-set="screen"]').forEach(function(b){
+    b.classList.toggle('on',(variant||'main')===b.dataset.v);
+  });
+}
+function setDataState(s){
+  htmlEl.setAttribute('data-state',s);
+  document.querySelectorAll('.dp-btn[data-set="state"]').forEach(function(b){b.classList.toggle('on',s===b.dataset.v);});
+}
+function retryState(){
+  setDataState('ok');
+  document.querySelectorAll('.dp-btn[data-set="state"]').forEach(function(b){b.classList.toggle('on','ok'===b.dataset.v);});
+  toast('已重试：加载成功（演示）');
+}
+function setMode(m){
+  htmlEl.setAttribute('data-mode',m);
+  document.querySelectorAll('.mtab').forEach(function(b){b.classList.toggle('on',b.dataset.mode===m);});
+  document.querySelectorAll('.dp-btn[data-set="mode"]').forEach(function(b){b.classList.toggle('on',m===b.dataset.v);});
+}
+function setView(v){
+  htmlEl.setAttribute('data-view',v);
+  $('#vt-content').classList.toggle('on',v==='content');
+  $('#vt-diff').classList.toggle('on',v==='diff');
+  document.querySelectorAll('.dp-btn[data-set="view"]').forEach(function(b){b.classList.toggle('on',v===b.dataset.v);});
+}
+function setTheme(t){
+  htmlEl.setAttribute('data-theme',t);
+  document.querySelectorAll('.dp-btn[data-set="theme"]').forEach(function(b){b.classList.toggle('on',t===b.dataset.v);});
+}
+
+/* ============ 刷新（N9：节流演示 800ms 窗口） ============ */
+var refreshing=false;
+function doRefresh(btn){
+  if(refreshing){return;} /* 1s 节流窗内重复点击忽略 */
+  refreshing=true;btn.classList.add('spinning');
+  setTimeout(function(){
+    btn.classList.remove('spinning');btn.classList.add('flash');
+    refreshing=false;
+    toast('已刷新（工作区 7 个变更）');
+    setTimeout(function(){btn.classList.remove('flash');},1900);
+  },800);
+}
+
+/* ============ 空态页选仓（N1→N2→N3） ============ */
+function pickRepo(btn){
+  btn.setAttribute('disabled','');
+  $('#pick-spin').style.display='inline-block';
+  $('#check-error').style.display='none';
+  setTimeout(function(){
+    btn.removeAttribute('disabled');
+    $('#pick-spin').style.display='none';
+    showEmpty(null);
+    setDataState('loading');
+    setTimeout(function(){setDataState('ok');toast('已打开仓库：DevDesk');},900);
+  },1100); /* 校验 >1s 才显指示（此处直接演示加载） */
+}
+
+/* ============ 树交互（N4/N5/N6） ============ */
+document.addEventListener('click',function(e){
+  var dir=e.target.closest('.trow.dir');
+  if(dir&&!dir.classList.contains('denied')&&!dir.classList.contains('lazy')){
+    dir.classList.toggle('open');
+    var tw=dir.querySelector('.tw');
+    tw.textContent=dir.classList.contains('open')?'▾':'▸';
+  }
+});
+document.addEventListener('click',function(e){
+  var lazy=e.target.closest('.trow.dir.lazy');
+  if(!lazy||lazy.dataset.done)return;
+  lazy.dataset.done='1';lazy.classList.add('open');
+  lazy.querySelector('.tw').textContent='▾';
+  var box=lazy.nextElementSibling;
+  setTimeout(function(){
+    box.querySelector('.lazy-spin').style.display='none';
+    box.querySelector('.lazy-real').style.display='block';
+  },600); /* 子层懒加载行内指示（§5.2） */
+});
+function clearSel(){
+  document.querySelectorAll('.trow.sel,.crow.sel').forEach(function(r){r.classList.remove('sel');});
+}
+var DIFF_AVAIL={main:'d-main',java:'d-added',md:'d-md'}; /* 内容样例 → 可用 diff */
+function pickTreeFile(row,forceContent){
+  clearSel();row.classList.add('sel');
+  var c=row.dataset.content,p=row.dataset.path;
+  var path=p||CONTENT_PATH[c];
+  $('#pb-path').textContent=path;
+  renderContent(c,path);
+  var d=row.dataset.differ||DIFF_AVAIL[c];
+  var avail=!!d;
+  $('#vt-diff').hidden=!avail;
+  if(avail){renderDiff(d);}else if(htmlEl.getAttribute('data-view')==='diff'){setView('content');}
+  if(!forceContent&&htmlEl.getAttribute('data-view')==='content'&&!$('#view-content').querySelector('.cline')){}
+}
+
+/* ============ 中栏条目（N7→N8：单击即开 diff，决策⑤） ============ */
+function pickChange(row,fallbackContent){
+  clearSel();row.classList.add('sel');
+  if(row.dataset.view==='content'){
+    var c=fallbackContent;
+    $('#pb-path').textContent=CONTENT_PATH[c];
+    renderContent(c,CONTENT_PATH[c]);
+    $('#vt-diff').hidden=true;
+    setView('content');
+    return;
+  }
+  $('#pb-path').textContent=DIFF_HEAD[row.dataset.diff].path;
+  renderDiff(row.dataset.diff);
+  $('#vt-diff').hidden=false;
+  setView('diff');
+}
+
+/* ============ 内容样例（§5.5；高亮语言集演示=cpp/java/md） ============ */
+var CONTENT_PATH={
+  main:'src/module_git/git_tree_view.cpp',
+  java:'src/module_git/highlight/java_lexer.cpp',
+  md:'生产说明.md',
+  huge:'notes/性能测试数据.md',
+  binary:'资源/图标.png',
+  empty:'.gitkeep',
+  error:'system_logs/audit.log'
+};
+var CONTENT_MAIN=[
+'  <span class="hl-kw">if</span> (node-&gt;hasStatus()) {',
+'    row-&gt;setStatusIcon(statusIconOf(node-&gt;status()));',
+'  }',
+'  row-&gt;setIndent(node-&gt;depth() * kIndentPerLevel);',
+'  <span class="hl-kw">return</span> row;',
+'}',
+'',
+'<span class="hl-kw">void</span> GitTreeView::onStatusTick(<span class="hl-kw">const</span> StatusScan&amp; scan) {',
+'  <span class="hl-kw">if</span> (scan.changedPaths.empty()) {',
+'    <span class="hl-kw">return</span>;  <span class="hl-com">// 工作区干净，保持现状</span>',
+'  }',
+'  refreshColorsOnly();',
+'  markDirtyRows(scan.changedPaths);  <span class="hl-com">// 仅重绘脏行（measure 幂等）</span>',
+'}'
+];
+var CONTENT_JAVA=[
+'<span class="hl-kw">package</span> devdesk.git.highlight;',
+'',
+'<span class="hl-kw">import</span> java.util.Map;',
+'',
+'<span class="hl-com">/** 行级词法扫描器（java 语言集样例）。 */</span>',
+'<span class="hl-kw">public final class</span> JavaLexer {',
+'',
+'  <span class="hl-kw">private static final</span> Map&lt;String, TokenType&gt; KEYWORDS = Map.of(',
+'      <span class="hl-str">"class"</span>, TokenType.KEYWORD,',
+'      <span class="hl-str">"return"</span>, TokenType.KEYWORD);',
+'',
+'  <span class="hl-kw">public</span> List&lt;Run&gt; scan(String source) {',
+'    <span class="hl-com">// 逐行扫描；跨行结构漏标回默认色（先例边界哲学）</span>',
+'    <span class="hl-kw">var</span> runs = <span class="hl-kw">new</span> ArrayList&lt;Run&gt;();',
+'    <span class="hl-kw">for</span> (String line : source.split(<span class="hl-str">"\\n"</span>, -<span class="hl-num">1</span>)) {',
+'      runs.addAll(scanLine(line));',
+'    }',
+'    <span class="hl-kw">return</span> runs;',
+'  }',
+'}'
+];
+var CONTENT_MD=[
+'<span class="hl-hd"># DevDesk 生产说明</span>',
+'',
+'<span class="hl-hd">## 构建</span>',
+'',
+'执行 <span class="hl-code">bash scripts/build-test-run.sh</span>，',
+'禁止手敲 <span class="hl-code">cmake -B</span>（有门禁硬阻断）。',
+'',
+'<span class="hl-hd">## 安装口径</span>',
+'',
+'<span class="hl-num">1.</span> 关闭应用后覆盖复制 Debug 产物；',
+'<span class="hl-num">2.</span> 校验 sha256 后重启。'
+];
+function phBlock(m1,m2,withRetry){
+  return '<div class="placeholder"><div class="m1">'+m1+'</div>'
+    +(m2?'<div class="m2">'+m2+'</div>':'')
+    +(withRetry?'<button class="btn-secondary btn" style="margin-top:12px" onclick="toast(\'已重试：读取成功（演示）\')">重试</button>':'')
+    +'</div>';
+}
+function renderContent(c,path){
+  var box=$('#view-content');
+  $('#pb-path').textContent=path;
+  if(c==='main'||c==='java'||c==='md'){
+    var lines=c==='main'?CONTENT_MAIN:(c==='java'?CONTENT_JAVA:CONTENT_MD);
+    var h='';
+    for(var i=0;i<lines.length;i++){
+      h+='<div class="cline"><span class="cln">'+(i+1)+'</span><code>'+lines[i]+'</code></div>';
+    }
+    box.innerHTML='<div style="min-width:max-content">'+h+'</div>';
+  }else if(c==='huge'){
+    box.innerHTML=phBlock('文件过大，未加载内容（&gt;1 MiB）','约 2.3 MiB · 阈值默认 1 MiB，可在设置中调整');
+  }else if(c==='binary'){
+    box.innerHTML=phBlock('二进制文件','PNG 图像 · 只读查看器不显示二进制内容');
+  }else if(c==='empty'){
+    box.innerHTML=phBlock('空文件','该文件没有任何内容');
+  }else if(c==='error'){
+    box.innerHTML=phBlock('无法读取文件','权限不足：system_logs/audit.log',true);
+  }
+}
+function setContent(c,btn){
+  $('#vt-diff').hidden=!DIFF_AVAIL[c];
+  if(!DIFF_AVAIL[c]&&htmlEl.getAttribute('data-view')==='diff'){setView('content');}
+  renderContent(c,CONTENT_PATH[c]);
+  clearSel();
+  if(btn)setDp(btn);
+}
+
+/* ============ diff 样例（§5.6 unified：三色+双行号+hunk 折叠） ============ */
+var DIFF_HEAD={
+  'd-main':{path:'src/module_git/git_tree_view.cpp',head:'src/module_git/git_tree_view.cpp'},
+  'd-mdcn':{path:'docs/说明文档/接口规范.md',head:'docs/说明文档/接口规范.md（重命名自 docs/接口规范.md）'},
+  'd-md':{path:'生产说明.md',head:'生产说明.md'},
+  'd-added':{path:'src/module_git/highlight/java_lexer.cpp',head:'src/module_git/highlight/java_lexer.cpp（新文件）'},
+  'd-deleted':{path:'docs/旧版说明/废弃文档.md',head:'docs/旧版说明/废弃文档.md（已删除）'},
+  'd-binary':{path:'资源/图标.png',head:'资源/图标.png'},
+  'd-empty':{path:'',head:''},
+  'd-error':{path:'',head:''}
+};
+var DIFF_MAIN=[
+ {t:'hunk',x:'@@ -120,7 +120,9 @@ TreeRow GitTreeView::buildRow(…)'},
+ {t:'ctx',o:120,n:120,x:'  row-&gt;setName(node-&gt;displayName());'},
+ {t:'ctx',o:121,n:121,x:'  row-&gt;setDepth(node-&gt;depth());'},
+ {t:'del',o:122,x:'  row-&gt;setStatusIcon(Icon::None);'},
+ {t:'add',n:122,x:'  if (node-&gt;hasStatus()) {'},
+ {t:'add',n:123,x:'    row-&gt;setStatusIcon(statusIconOf(node-&gt;status()));'},
+ {t:'add',n:124,x:'  }'},
+ {t:'ctx',o:123,n:125,x:'  row-&gt;setIndent(node-&gt;depth() * kIndentPerLevel);'},
+ {t:'ctx',o:124,n:126,x:'  return row;'},
+ {t:'fold',x:'··· 展开早期未变更代码（12 行）'},
+ {t:'ctx',o:125,n:127,x:'  // …（折叠区内 12 行上下文，单击上方折叠条展开）',hid:1},
+ {t:'ctx',o:126,n:128,x:'  // …（实现区细节省略）',hid:1},
+ {t:'hunk',x:'@@ -204,6 +206,8 @@ void GitTreeView::onStatusTick(…)'},
+ {t:'ctx',o:204,n:206,x:'  if (!scan.changedPaths.empty()) {'},
+ {t:'del',o:205,x:'    refreshColorsOnly();'},
+ {t:'add',n:207,x:'    refreshColorsOnly();'},
+ {t:'add',n:208,x:'    markDirtyRows(scan.changedPaths);'},
+ {t:'ctx',o:206,n:209,x:'  }'}
+];
+var DIFF_MDCN=[
+ {t:'hunk',x:'@@ -1,6 +1,7 @@'},
+ {t:'ctx',o:1,n:1,x:'<span class="hl-hd"># 接口规范</span>'},
+ {t:'del',o:2,x:'本文档描述模块间调用约定。'},
+ {t:'add',n:2,x:'本文档描述 DevDesk 模块间调用约定（v2）。'},
+ {t:'ctx',o:3,n:3,x:''},
+ {t:'del',o:4,x:'- 旧版接口列表见附录 A'},
+ {t:'add',n:4,x:'- 接口列表见 §3；附录 A 已移至历史文档'},
+ {t:'ctx',o:5,n:5,x:'<span class="hl-hd">## 通用约定</span>'}
+];
+var DIFF_MD=[
+ {t:'hunk',x:'@@ -9,6 +9,7 @@'},
+ {t:'ctx',o:9,n:9,x:'执行 <span class="hl-code">bash scripts/build-test-run.sh</span>，'},
+ {t:'del',o:10,x:'禁止手敲 <span class="hl-code">cmake -B</span>。'},
+ {t:'add',n:10,x:'禁止手敲 <span class="hl-code">cmake -B</span>（有门禁硬阻断）。'},
+ {t:'ctx',o:11,n:11,x:''},
+ {t:'ctx',o:12,n:12,x:'<span class="hl-hd">## 安装口径</span>'}
+];
+var DIFF_ADDED=[
+ {t:'hunk',x:'@@ -0,0 +1,6 @@'},
+ {t:'add',n:1,x:'<span class="hl-com">// java 语言集词法扫描器（新文件：全增行）</span>'},
+ {t:'add',n:2,x:'<span class="hl-kw">public final class</span> JavaLexer {'},
+ {t:'add',n:3,x:'  <span class="hl-kw">public</span> List&lt;Run&gt; scan(String source) {'},
+ {t:'add',n:4,x:'    <span class="hl-com">// 逐行扫描起步（styled-runs 路线 B）</span>'},
+ {t:'add',n:5,x:'    <span class="hl-kw">return</span> scanLines(source.split(<span class="hl-str">"\\n"</span>));'},
+ {t:'add',n:6,x:'  }'},
+ {t:'add',n:7,x:'}'}
+];
+var DIFF_DELETED=[
+ {t:'hunk',x:'@@ -1,5 +0,0 @@'},
+ {t:'del',o:1,x:'<span class="hl-hd"># 废弃文档（历史存档）</span>'},
+ {t:'del',o:2,x:''},
+ {t:'del',o:3,x:'本文档已废弃，内容并入《接口规范》。'},
+ {t:'del',o:4,x:'保留于旧版说明目录供追溯。'},
+ {t:'del',o:5,x:''}
+];
+function dline(r){
+  if(r.t==='hunk'){
+    return '<div class="hunk open" data-hunk><div class="hunk-head" onclick="this.parentElement.classList.toggle(\'open\')">'
+      +'<span class="tw">▸</span><span class="ht">'+r.x+'</span></div><div class="hunk-body">';
+  }
+  if(r.t==='fold'){
+    return '</div></div><div class="fold-bar" data-fold onclick="toggleFold(this)">'+r.x+'</div>';
+  }
+  var cls=r.t==='add'?'add':(r.t==='del'?'del':'ctx');
+  var o=r.o==null?'':r.o,n=r.n==null?'':r.n;
+  var st=r.hid?' style="display:none" data-foldextra':'';
+  return '<div class="dline '+cls+'"'+st+'><span class="ic"></span><span class="ln n1">'+o+'</span><span class="ln n2">'+n+'</span><code>'+(r.x||'')+'</code></div>';
+}
+function toggleFold(bar){
+  var n=bar.nextElementSibling,any=false;
+  while(n&&n.dataset&&n.dataset.foldextra!==undefined){
+    n.style.display=(n.style.display==='none')?'':'none';any=true;n=n.nextElementSibling;
+  }
+  if(any)toast('已展开早期未变更行（演示）');
+}
+function renderDiff(id){
+  var box=$('#view-diff');
+  var head=DIFF_HEAD[id]||{path:'',head:''};
+  if(head.path)$('#pb-path').textContent=head.path;
+  if(id==='d-binary'){
+    box.innerHTML='<div class="diff-file-head">'+head.head+'</div>'
+      +'<div class="placeholder"><div class="m1">二进制文件，未显示内容差异</div><div class="m2">PNG 图像 · 大小变化：12.4 KiB → 13.1 KiB</div></div>';
+    return;
+  }
+  if(id==='d-empty'){
+    box.innerHTML='<div class="placeholder"><div class="m1">无内容变更</div><div class="m2">文件内容与上次完全一致（仅元数据变化）</div></div>';
+    return;
+  }
+  if(id==='d-error'){
+    box.innerHTML='<div class="placeholder"><div class="m1" style="color:var(--c-danger-text)">无法计算差异</div>'
+      +'<div class="m2">临时 diff 缓存不可用</div>'
+      +'<button class="btn-secondary btn" style="margin-top:12px" onclick="toast(\'已重试：diff 计算成功（演示）\')">重试</button></div>';
+    return;
+  }
+  var rows=id==='d-main'?DIFF_MAIN:(id==='d-mdcn'?DIFF_MDCN:(id==='d-md'?DIFF_MD:(id==='d-added'?DIFF_ADDED:DIFF_DELETED)));
+  var h='<div class="diff-file-head">'+head.head+'</div><div style="min-width:max-content">';
+  for(var i=0;i<rows.length;i++){h+=dline(rows[i]);}
+  h+='</div>';
+  box.innerHTML=h;
+}
+function setDiff(id,btn){
+  renderDiff(id);
+  $('#vt-diff').hidden=false;
+  setView('diff');
+  clearSel();
+  if(btn)setDp(btn);
+}
+
+/* ============ 骨架（§5.8） ============ */
+(function buildSkel(){
+  var widths=[85,62,74,55,80,68],indents=[0,1,2,1,2,3];
+  var h='';
+  for(var i=0;i<6;i++){h+='<div class="skrow" style="width:'+widths[i]+'%;margin-left:'+(12+indents[i]*16)+'px"></div>';}
+  $('#tree-skel').innerHTML=h;
+  h='';
+  var cw=[90,70,82,60,76];
+  for(var j=0;j<5;j++){h+='<div class="skrow" style="width:'+cw[j]+'%;margin-left:12px"></div>';}
+  $('#changes-skel').innerHTML=h;
+  h='';
+  var vw=[72,88,64,79];
+  for(var k=0;k<4;k++){h+='<div class="skrow" style="width:'+vw[k]+'%;margin-left:12px"></div>';}
+  $('#viewer-skel').innerHTML=h;
+})();
+
+/* ============ 初始渲染（主路径 N3 落地画面：仅修改+主文件 diff 就绪） ============ */
+setMode('modified');
+renderContent('main',CONTENT_PATH.main);
+renderDiff('d-main');
+$('#vt-diff').hidden=false;
+setView('content');
+</script>
+</body>
+</html>

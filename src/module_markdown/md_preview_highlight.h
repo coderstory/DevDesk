@@ -8,7 +8,7 @@
 //   未覆盖/空 lang 回退逐行 code 色单 run。
 #pragma once
 
-#include "md_highlight.h"
+#include <ui_kit/text_highlight/md_highlight.h>
 #include "md_line_scanner.h"
 
 #include <eui/types.h>

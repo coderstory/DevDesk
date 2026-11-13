@@ -346,6 +346,8 @@ int main(int argc, char* argv[]) {
                 break;  // 默认关闭，门控清单本就不含
             case ::core::PageId::Terminal:
                 break;  // 默认开启但不在本探针注册集（壁纸探针只关心壁纸页）
+            case ::core::PageId::Git:
+                break;  // 默认开启但不在本探针注册集（need:7 批次二；壁纸探针无关页）
             case ::core::PageId::ReleaseGroup:
             case ::core::PageId::ReleaseTasks:
             case ::core::PageId::ReleaseConfig:

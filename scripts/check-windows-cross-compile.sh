@@ -153,6 +153,8 @@ build_incs() {
     [ -d "${ROOT}/3rd/cpp-httplib" ] && INCS+=(-I "${ROOT}/3rd/cpp-httplib")
     # vendored libvterm（need:127 终端转译层依赖，仓内 submodule 随 checkout 在）
     [ -d "${ROOT}/third_party/libvterm/include" ] && INCS+=(-I "${ROOT}/third_party/libvterm/include")
+    # vendored libgit2（need:7 git 管理器数据面依赖；test_platform git TU 引 git2.h）
+    [ -d "${ROOT}/third_party/libgit2/include" ] && INCS+=(-I "${ROOT}/third_party/libgit2/include")
     [ -n "$SQLITE_INC" ] && INCS+=(-I "$SQLITE_INC")
     [ -n "$OPENSSL_INC" ] && INCS+=(-I "$OPENSSL_INC")
     [ -n "$CURL_INC" ] && INCS+=(-I "$CURL_INC")

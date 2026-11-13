@@ -37,6 +37,12 @@ add_library(devdesk_ui_kit STATIC
     # UAT6.2 字号无级调节批：横向滑杆 helper（EUI 运行时托管取值，点击跳值 /
     # 拖动连续取值）；首个消费方 = settings 外观卡字号行。
     slider.cpp
+    # 文本高亮能力层（need:10 批次三）：md 行级高亮自 module_markdown 平移至此
+    #（平移不复制，markdown 模块改 include 继续消费）+ 五类代码词法扫描器
+    #（java/js/ts/sql/json，module_git 消费——模块间禁互依的解法）。
+    text_highlight/md_fence_scan.cpp
+    text_highlight/md_highlight.cpp
+    text_highlight/code_lexers.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)

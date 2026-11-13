@@ -4,7 +4,8 @@
 //   - home 与 settings 恒启用：moduleEnabled 谓词里硬编码，sanitized 也会强制补齐，
 //     两者都不是配置里的普通项，从 enabledModules 里删掉也照样开着。
 //   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关；memory 默认开（引擎未装时只显
-//     引导态）、release/schedule 默认开。默认清单是 8 项，改动会让本文件的 size()==8 断言红。
+//     引导态）、release/schedule/terminal/git 默认开。默认清单是 10 项，改动会让本文件
+//     的 size()==10 断言红（need:7 批次二 git 入清单迁移 v4）。
 //   - 生产装配在 main.cpp getRouter()，本文件的注册段是它的复制品；改了那边这里不会自动跟。
 #include "doctest.h"
 #include "test_support.h"
@@ -76,9 +77,10 @@ std::string currentVersionSeed(const std::string& body) {
 REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(9));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(10));
     for (const char* id : {module::settings::kModuleIdHome,
                            module::settings::kModuleIdMarkdown,
+                           module::settings::kModuleIdGit,
                            module::settings::kModuleIdTodo,
                            module::settings::kModuleIdSchedule,
                            module::settings::kModuleIdClaudeProxy,
@@ -121,7 +123,8 @@ REGISTER_TEST(gating_terminal_full_chain,
 
     // ① v2 存量形态（带 v2 标记、无 terminal）→ load 迁移并入 terminal
     // 池 bug246 起自校验按内容核对：本清单连 v2 引入的 schedule 也缺（漂移态），
-    // 所以 schedule + terminal 一起补 = 9 项，而不是旧实现的「只补 terminal」8 项。
+    // 所以 schedule + terminal + memory 一起补；need:7 批次二起 git（迁移 v4）
+    // 也并入 = 10 项。
     DOCTEST_REQUIRE(writeRawConfig(
         "{\"enabledModules\": [\"home\", \"markdown\", \"todo\", "
         "\"claude_proxy\", \"settings\", \"memory\", \"release\"], "
@@ -129,7 +132,7 @@ REGISTER_TEST(gating_terminal_full_chain,
     const SettingsConfig upgraded = store.load();
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdTerminal));
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdSchedule));
-    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(9));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(10));
     DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
                                                     (std::string(SettingsStore::keyNamespace()) +
                                                      "moduleDefaultsVersion")
@@ -173,26 +176,30 @@ REGISTER_TEST(gating_module_defaults_migration,
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdSchedule));
     // 池 bug249：memory 也登了迁移行 → 存量漂移机器升级即补开（本单要的效果）
     DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdMemory));
-    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(9));
+    // need:7 批次二：git 登迁移行 v4 → 存量升级即并入
+    DOCTEST_CHECK(moduleEnabled(upgraded, kModuleIdGit));
+    DOCTEST_CHECK_EQ(upgraded.enabledModules.size(), static_cast<size_t>(10));
     // 迁移标记已回写 → 下次 load 不再迁移
     DOCTEST_CHECK_EQ(test_support::readRawConfigRow(::core::appDatabase(),
                                                     versionKey.c_str()),
                      std::to_string(kModuleDefaultsVersion));
 
-    // ② 用户显式关掉 release/schedule/terminal 后落盘 → 再 load 不得重开。
+    // ② 用户显式关掉 release/schedule/terminal/git 后落盘 → 再 load 不得重开。
     // 池 bug246 起「显式关闭」是两笔写入（清单删 ID + 豁免集加 ID，由
     // applyModuleEnabled 一次完成），这里按同一契约模拟。
     SettingsConfig userOff;
     userOff.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
                               kModuleIdClaudeProxy, kModuleIdSettings};
     userOff.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
-                                   kModuleIdTerminal, kModuleIdMemory};
+                                   kModuleIdTerminal, kModuleIdMemory,
+                                   kModuleIdGit};
     DOCTEST_REQUIRE(store.save(userOff).isOk());
     const SettingsConfig reloaded = store.load();
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdRelease));
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdSchedule));
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdTerminal));
     DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdMemory));
+    DOCTEST_CHECK_FALSE(moduleEnabled(reloaded, kModuleIdGit));
     DOCTEST_CHECK_EQ(reloaded.enabledModules.size(), static_cast<size_t>(5));
 
     // ③ 旧配置里用户关掉的既有模块也不得被迁移连带重开
@@ -223,7 +230,8 @@ REGISTER_TEST(gating_reconcile_when_version_up_to_date,
         std::to_string(kModuleDefaultsVersion) + "}"));
     const SettingsConfig loaded = store.load();
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTerminal));   // 补回
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(9));
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdGit));        // 同批迁移行一并补回
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(10));
     // 内存态之外还要真回写：重启后不再依赖再次自校验
     const std::string modsRow =
         test_support::readRawConfigRow(
@@ -400,7 +408,7 @@ REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往�
     cfg.enabledModules = {kModuleIdMarkdown, kModuleIdHome, kModuleIdSettings};
     // 默认模块全关 → 按用户关闭契约记豁免（否则 load 自校验会补回，池 bug246/249）
     cfg.userDisabledModules = {kModuleIdRelease, kModuleIdSchedule,
-                               kModuleIdTerminal, kModuleIdMemory};
+                               kModuleIdTerminal, kModuleIdMemory, kModuleIdGit};
     const SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
@@ -421,11 +429,12 @@ REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽�
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "unknown");
     // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项。
-    // 默认模块（release/schedule/terminal/memory）缺席要显式记进豁免集，否则 load 的
+    // 默认模块（release/schedule/terminal/memory/git）缺席要显式记进豁免集，否则 load 的
     // 内容自校验（池 bug246/249）会把它们补回来，下面的条数断言就测不到过滤本意了。
     DOCTEST_REQUIRE(writeRawConfig(currentVersionSeed(
         "\"enabledModules\": [\"home\", \"todo\", \"bogus\", \"todo\"], "
-        "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\", \"memory\"]")));
+        "\"userDisabledModules\": [\"release\", \"schedule\", \"terminal\", "
+        "\"memory\", \"git\"]")));
     const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
@@ -479,12 +488,13 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     DOCTEST_REQUIRE(test_support::writeRawConfigRow(
         ::core::appDatabase(), kEnabledModulesRow.c_str(), "{not json at all"));
     loaded = SettingsStore(::core::appDatabase()).load();
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(9));
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(10));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMemory));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdSchedule));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdRelease));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTerminal));
+    DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdGit));
     std::error_code ec;
     std::filesystem::remove(file, ec);
     return true;

@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Git 管理器（只读）· 方案 B 视觉 demo（两栏紧凑）</title>
+<!--
+  demo 仅视觉校准，不是实现蓝图。
+  自包含单文件：无框架、无 CDN、无外部依赖，离线双击可开。
+  右上角「演示」面板可切换场景（成功/加载/错误/空变更/空仓库/空态页/记忆仓失效）
+  与深浅主题；数据为内置模拟数据，不追求真实交互逻辑。
+  设计依据：docs/superpowers/specs/2026-11-13-git-manager-readonly-ui-b.md
+-->
+<style>
+/* ===== Token（浅色=基线实现档；深色=成对映射，色名不变） ===== */
+:root{
+  --bg-page:#F7F7F7; --bg-card:#FFFFFF; --bg-sidebar:#E8F0EC;
+  --bg-hover:#EDEDED; --bg-selected:#E5E5E5; --bg-btn2:#F2F2F2;
+  --divider-1:#E5E5E5; --divider-2:#EDEDED;
+  --text-1:#1A1A1A; --text-2:#666666; --text-3:#999999;
+  --primary:#36D399; --primary-hover:#2EC48F; --primary-pressed:#23B07F;
+  --primary-tint:#E6FBF2; --primary-text:#157E4E;
+  --danger:#EF4444; --danger-text:#B91C1C; --danger-tint:#FDECEC;
+  --link:#576B95;
+  --st-add:#157E4E; --st-mod:#B45309; --st-del:#B91C1C; --st-ren:#576B95;
+  --diff-add-bg:#E6FBF2; --diff-del-bg:#FDECEC; --diff-hunk-bg:#F2F2F2;
+  --syn-k:#A626A4; --syn-s:#50A14F; --syn-c:#A0A1A7; --syn-n:#986801; --syn-f:#4078F2; --syn-h:#157E4E;
+  --shadow-card:0 1px 2px rgba(0,0,0,0.04);
+  --mono:"Cascadia Mono",Consolas,Menlo,"Courier New",monospace;
+}
+html[data-theme="dark"]{
+  --bg-page:#1A1D1B; --bg-card:#232725; --bg-sidebar:#1F2422;
+  --bg-hover:#2E3431; --bg-selected:#3A413D; --bg-btn2:#2E3431;
+  --divider-1:#333936; --divider-2:#2C3230;
+  --text-1:#E8EAE9; --text-2:#A6ABA8; --text-3:#7C827F;
+  --primary-tint:#1E3B2F; --primary-text:#62D99A;
+  --danger:#F87171; --danger-text:#F87171; --danger-tint:#3A2323;
+  --link:#8FA8CE;
+  --st-add:#62D99A; --st-mod:#D9A05B; --st-del:#F87171; --st-ren:#8FA8CE;
+  --diff-add-bg:#1E3B2F; --diff-del-bg:#3A2323; --diff-hunk-bg:#2E3431;
+  --syn-k:#C678DD; --syn-s:#98C379; --syn-c:#7F848E; --syn-n:#D19A66; --syn-f:#61AFEF; --syn-h:#E5C07B;
+  --shadow-card:0 1px 2px rgba(0,0,0,0.30);
+}
+/* ===== 基础 ===== */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:14px;color:var(--text-1);background:var(--bg-page);overflow:hidden}
+button{font-family:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--primary);outline-offset:-1px}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--divider-1);border-radius:4px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-3)}
+::-webkit-scrollbar-corner{background:transparent}
+.hidden{display:none!important}
+/* 果冻按压（基线 0.96-0.97 弹性回弹档） */
+.pressable{transition:transform 200ms cubic-bezier(.34,1.56,.64,1)}
+.pressable:active{transform:scale(.96);transition:transform 120ms ease-out}
+/* ===== 通用件 ===== */
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 14px;border:none;
+  border-radius:6px;background:var(--bg-btn2);color:var(--text-1);font-size:14px;font-weight:500}
+.btn:hover{background:var(--bg-hover)}
+.btn-primary{height:36px;padding:0 20px;background:var(--primary);color:#fff;font-size:14px;font-weight:600}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-primary:active{background:var(--primary-pressed)}
+.btn-t{background:none;border:none;color:var(--primary-text);font-size:13px;font-weight:500;
+  padding:2px 8px;border-radius:4px}
+.btn-t:hover{background:var(--primary-tint)}
+.spin{width:14px;height:14px;flex:0 0 14px;border:2px solid var(--divider-1);border-top-color:var(--primary);
+  border-radius:50%;animation:rot 800ms linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+.sk{background:var(--bg-hover);border-radius:4px;animation:pulse 1.2s ease-in-out infinite alternate}
+@keyframes pulse{from{opacity:.5}to{opacity:1}}
+.seg{display:inline-flex;background:var(--bg-btn2);border-radius:6px;padding:2px}
+.seg button{border:none;background:none;height:20px;padding:0 10px;border-radius:4px;
+  font-size:12px;font-weight:500;color:var(--text-2);transition:all 120ms ease-out}
+.seg button:hover{color:var(--text-1)}
+.seg button.on{background:var(--bg-card);color:var(--text-1)}
+.toast{position:fixed;left:50%;bottom:36px;transform:translateX(-50%);background:rgba(0,0,0,.75);
+  color:#fff;font-size:13px;padding:8px 16px;border-radius:6px;z-index:99;pointer-events:none;
+  animation:toastin 150ms ease-out}
+@keyframes toastin{from{opacity:0;transform:translateX(-50%) translateY(6px)}}
+/* ===== 外壳 ===== */
+.shell{display:flex;height:100vh}
+.rail{width:200px;flex:0 0 200px;background:var(--bg-sidebar);border-right:1px solid var(--divider-1);
+  padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+.rail .brand{font-size:14px;font-weight:700;color:var(--text-2);padding:6px 12px 14px}
+.rail .it{display:flex;align-items:center;height:32px;padding:0 12px;border:none;background:none;
+  border-radius:6px;color:var(--text-2);font-size:14px;text-align:left}
+.rail .it:hover{background:var(--bg-hover)}
+.rail .it.on{background:var(--bg-selected);color:var(--text-1);font-weight:600;
+  box-shadow:inset 2px 0 0 var(--primary)}
+.rail .it .short{display:none}
+/* ===== 模块区 ===== */
+.module{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg-page)}
+.topbar{height:48px;flex:0 0 48px;display:flex;align-items:center;gap:12px;padding:0 16px;
+  background:var(--bg-card);border-bottom:1px solid var(--divider-1)}
+.topbar .repo{font-family:var(--mono);font-size:14px;font-weight:700;white-space:nowrap}
+.topbar .path{font-family:var(--mono);font-size:12px;color:var(--text-3);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.topbar .gap{flex:1;min-width:12px}
+.topbar .auto{width:16px;flex:0 0 16px;display:flex;justify-content:center}
+.content{flex:1;min-height:0;display:flex;gap:12px;padding:12px;position:relative}
+/* ===== 左栏（两段合一） ===== */
+.leftcol{width:300px;flex:0 0 300px;display:flex;flex-direction:column;min-height:0;
+  background:var(--bg-card);border:1px solid var(--divider-1);border-radius:6px;
+  box-shadow:var(--shadow-card);overflow:hidden}
+.pane{display:flex;flex-direction:column;min-height:0}
+.pane-changes{flex:1 1 auto;min-height:200px}
+.pane-tree{flex:0 0 38%;min-height:120px;border-top:1px solid var(--divider-2);
+  transition:flex-basis 200ms ease-out}
+.pane-tree.collapsed{flex-basis:37px}
+.pane-head{height:36px;flex:0 0 36px;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px}
+.pane-head .tt{font-size:14px;font-weight:600}
+.badge{font-size:12px;font-weight:500;color:var(--primary-text);background:var(--primary-tint);
+  border-radius:10px;padding:1px 8px}
+.pane-head .gap{flex:1}
+.icon-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;
+  background:none;border-radius:4px;color:var(--text-3);font-size:10px}
+.icon-btn:hover{background:var(--bg-hover);color:var(--text-1)}
+.pane-body{flex:1;min-height:0;overflow:auto}
+.grp{height:28px;display:flex;align-items:center;padding:0 12px;font-size:12px;font-weight:500;
+  color:var(--text-3)}
+.row{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 12px;border:none;
+  background:none;text-align:left;color:var(--text-1)}
+.row:hover{background:var(--bg-hover)}
+.row.sel{background:var(--bg-selected);box-shadow:inset 2px 0 0 var(--primary)}
+.row .dot{width:6px;height:6px;flex:0 0 6px;border-radius:50%}
+.row .p{font-family:var(--mono);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .old{color:var(--text-3)}
+.row .arr{color:var(--text-3);font-size:12px}
+.cA{color:var(--st-add)}.cM{color:var(--st-mod)}.cD{color:var(--st-del)}.cR{color:var(--st-ren)}.cU{color:var(--st-add)}
+/* 树 */
+.trow{display:flex;align-items:center;gap:4px;width:100%;height:26px;padding:0 12px;border:none;
+  background:none;text-align:left;color:var(--text-1)}
+.trow:hover{background:var(--bg-hover)}
+.trow.sel{background:var(--bg-selected);box-shadow:inset 2px 0 0 var(--primary)}
+.trow .tw{width:16px;flex:0 0 16px;font-size:10px;color:var(--text-3);text-align:center}
+.trow .nm{font-family:var(--mono);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .hint{font-size:12px;color:var(--text-3)}
+.center-note{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:6px;text-align:center;padding:16px}
+.center-note .m{font-size:13px;color:var(--text-3)}
+.center-note .e{font-size:13px;color:var(--danger-text)}
+.center-note .r{font-size:12px;color:var(--text-3)}
+/* ===== 右栏 ===== */
+.rightcol{flex:1 1 auto;min-width:468px;display:flex;flex-direction:column;min-height:0;
+  background:var(--bg-card);border:1px solid var(--divider-1);border-radius:6px;
+  box-shadow:var(--shadow-card);overflow:hidden}
+.pathbar{height:40px;flex:0 0 40px;display:flex;align-items:center;padding:0 16px;gap:12px;
+  border-bottom:1px solid var(--divider-2)}
+.pathbar .fp{font-family:var(--mono);font-size:12px;color:var(--text-2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.pathbar .gap{flex:1;min-width:12px}
+.tabs{display:flex;height:40px}
+.tabs button{position:relative;height:40px;padding:0 12px;border:none;background:none;
+  font-size:14px;color:var(--text-2)}
+.tabs button:hover{color:var(--text-1)}
+.tabs button.on{color:var(--text-1);font-weight:600}
+.tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+  background:var(--primary)}
+.stalebar{flex:0 0 28px;display:flex;align-items:center;justify-content:center;width:100%;border:none;
+  background:var(--danger-tint);color:var(--danger-text);font-size:12px}
+.stalebar:hover{filter:brightness(.97)}
+.viewer{flex:1;min-height:0;overflow:auto;background:var(--bg-card)}
+.crow,.drow{display:grid;min-width:100%;width:max-content;background:var(--bg-card)}
+.crow{grid-template-columns:56px 1fr}
+.drow{grid-template-columns:40px 40px 1fr}
+.crow code,.drow code{font-family:var(--mono);font-size:13px;line-height:20px;color:var(--text-1);
+  white-space:pre;padding:0 12px}
+.drow code{font-size:12px}
+.ln{position:sticky;left:0;background:inherit;font-family:var(--mono);font-size:12px;line-height:20px;
+  color:var(--text-3);text-align:right;padding-right:12px;user-select:none}
+.crow .ln{border-right:1px solid var(--divider-2)}
+.drow .ln.new{border-right:1px solid var(--divider-2)}
+.drow.add{background:var(--diff-add-bg)}
+.drow.del{background:var(--diff-del-bg)}
+.drow.add .ln{color:var(--primary-text)}
+.drow.del .ln{color:var(--danger-text)}
+.hunk{margin:0}
+.hunk-head{display:flex;align-items:center;gap:8px;width:100%;height:24px;padding:0 12px;border:none;
+  background:var(--diff-hunk-bg);text-align:left}
+.hunk-head:hover{filter:brightness(.98)}
+.hunk-head .tw{font-size:10px;color:var(--text-3);width:12px}
+.hunk-head .hh{font-family:var(--mono);font-size:12px;color:var(--text-2);white-space:nowrap}
+.hunk-head .tag{font-size:12px;font-weight:500}
+.hunk-head .tag.new{color:var(--st-add)}
+.hunk-head .tag.gone{color:var(--st-del)}
+.hunk-head .cnt{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.hunk-head .cnt .plus{color:var(--st-add);font-weight:400}
+.hunk-head .cnt .minus{color:var(--st-del);font-weight:400;margin-left:6px}
+.hunk-head .fold-info{font-size:12px;color:var(--text-3)}
+.hunk.folded .hunk-body{display:none}
+.hunk .fold-info{display:none}
+.hunk.folded .fold-info{display:inline}
+/* 骨架占位 */
+.skline{display:flex;align-items:center;gap:8px;height:30px;padding:0 12px}
+/* ===== 空态页 N2 ===== */
+.n2 .leftcol,.n2 .rightcol{display:none}
+.empty-page{position:absolute;inset:12px;display:flex;align-items:center;justify-content:center;
+  background:var(--bg-page)}
+.n2 .empty-page{display:flex}
+.empty-card{width:420px;text-align:center}
+.empty-card .h1{font-size:16px;font-weight:700;margin-bottom:8px}
+.empty-card .desc{font-size:13px;color:var(--text-2);margin-bottom:24px;line-height:1.6}
+.empty-card .err{background:var(--danger-tint);border-radius:6px;padding:10px 14px;margin-bottom:20px;
+  text-align:left}
+.empty-card .err .m{font-size:13px;color:var(--danger-text)}
+.empty-card .err .r{font-size:12px;color:var(--text-3);margin-top:4px}
+.empty-card .chk{display:flex;align-items:center;justify-content:center;gap:8px;height:36px;
+  font-size:12px;color:var(--text-2)}
+/* ===== 演示控件 ===== */
+.demo-panel{position:fixed;top:12px;right:12px;width:180px;background:var(--bg-card);
+  border:1px solid var(--divider-1);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.10);
+  padding:10px;z-index:50}
+.demo-panel .h{font-size:11px;color:var(--text-3);margin-bottom:6px}
+.demo-panel .sc{display:flex;flex-direction:column;align-items:flex-start;gap:1px;margin-bottom:8px}
+.demo-panel .sc button{border:none;background:none;font-size:12px;color:var(--text-2);
+  padding:3px 8px;border-radius:4px;text-align:left;width:100%}
+.demo-panel .sc button:hover{background:var(--bg-hover);color:var(--text-1)}
+.demo-panel .sc button.on{color:var(--primary-text);background:var(--primary-tint);font-weight:500}
+.demo-panel .ft{font-size:11px;color:var(--text-3);margin-top:8px}
+.demo-panel .seg{width:100%;justify-content:stretch;margin-top:4px}
+.demo-panel .seg button{flex:1}
+/* ===== 自适应（窄档 800–1279） ===== */
+@media (max-width:1279px){
+  .rail{width:56px;flex-basis:56px;padding:12px 6px}
+  .rail .it{justify-content:center;padding:0}
+  .rail .it .full,.rail .brand .full{display:none}
+  .rail .it .short{display:inline}
+  .rail .brand .short{display:inline}
+  .leftcol{width:264px;flex-basis:264px}
+  .topbar{gap:10px;padding:0 12px}
+  .topbar .btn{padding:0 10px}
+  .tabs button{padding:0 8px}
+}
+/* ===== 减弱动态效果 ===== */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- 应用侧栏（壳级桩，仅提供落位上下文：Git 位于笔记之后，决策④） -->
+  <nav class="rail">
+    <div class="brand"><span class="full">DevDesk</span><span class="short">D</span></div>
+    <button class="it"><span class="full">首页</span><span class="short">首</span></button>
+    <button class="it"><span class="full">笔记</span><span class="short">笔</span></button>
+    <button class="it on"><span class="full">Git</span><span class="short">G</span></button>
+    <button class="it"><span class="full">待办</span><span class="short">待</span></button>
+    <button class="it"><span class="full">日程</span><span class="short">日</span></button>
+    <button class="it"><span class="full">设置</span><span class="short">设</span></button>
+  </nav>
+
+  <main class="module">
+    <!-- A 顶栏 -->
+    <header class="topbar">
+      <span class="repo">DevDesk</span>
+      <span class="path" title="D:\project\gui\DevDesk">D:\project\gui\DevDesk</span>
+      <span class="gap"></span>
+      <span class="auto" id="autoSlot" title="自动刷新（1s 节流）"></span>
+      <button class="btn pressable" id="btnSwitch">切换仓库</button>
+      <button class="btn pressable" id="btnRefresh"><span id="refreshLabel">刷新</span></button>
+    </header>
+
+    <div class="content" id="content">
+      <!-- B 左栏：变更列表（上）+ 目录树（下，可折叠） -->
+      <aside class="leftcol">
+        <section class="pane pane-changes">
+          <div class="pane-head">
+            <span class="tt">变更列表</span><span class="badge" id="chgBadge">9</span>
+            <span class="gap"></span><span class="spin hidden" id="chgSpin"></span>
+          </div>
+          <div class="pane-body" id="changesBody"></div>
+        </section>
+        <section class="pane pane-tree" id="paneTree">
+          <div class="pane-head">
+            <div class="seg" id="modeSeg">
+              <button data-m="all" class="on">全部文件</button>
+              <button data-m="mod">仅修改</button>
+            </div>
+            <span class="gap"></span>
+            <span class="spin hidden" id="treeSpin"></span>
+            <button class="icon-btn" id="btnTreeFold" title="折叠/展开目录树">▼</button>
+          </div>
+          <div class="pane-body" id="treeBody"></div>
+        </section>
+      </aside>
+
+      <!-- C 右栏 -->
+      <section class="rightcol">
+        <div class="pathbar">
+          <span class="fp" id="filePath"></span>
+          <span class="gap"></span>
+          <div class="tabs" id="viewTabs">
+            <button data-v="content">内容</button>
+            <button data-v="diff" class="hidden">diff</button>
+          </div>
+        </div>
+        <button class="stalebar hidden" id="staleBar">内容已过期，点击重载</button>
+        <div class="viewer" id="viewer"></div>
+      </section>
+
+      <!-- D 空态页 N2 -->
+      <div class="empty-page hidden" id="emptyPage"></div>
+    </div>
+  </main>
+</div>
+
+<!-- 演示控件（非产品 UI） -->
+<div class="demo-panel">
+  <div class="h">演示</div>
+  <div class="sc" id="sceneBtns">
+    <button data-s="main" class="on">成功态（主路径）</button>
+    <button data-s="loading">加载态</button>
+    <button data-s="error">错误态（三区独立降级）</button>
+    <button data-s="empty-changes">空变更</button>
+    <button data-s="empty-repo">空仓库</button>
+    <button data-s="n2">空态页 N2</button>
+    <button data-s="n2-invalid">记忆仓失效</button>
+  </div>
+  <button class="btn-t" id="btnStale" style="font-size:12px">模拟内容过期</button>
+  <div class="seg" id="themeSeg">
+    <button data-t="light" class="on">浅色</button>
+    <button data-t="dark">深色</button>
+  </div>
+  <div class="ft">演示控件，非产品 UI</div>
+</div>
+
+<script>
+/* ===== 数据（内置模拟） ===== */
+var MONO = true;
+var FILES = {
+  worker:{path:'src/module_git/git_status_worker.cpp', st:'M', type:'plain', lines:[
+    '// status 后台worker：1s 节流聚合变更',
+    '#include "git_status_worker.h"',
+    '',
+    'std::vector<Entry> StatusWorker::collect() {',
+    '    auto raw = repo_.status_all();',
+    '    return normalize(raw);',
+    '}',
+  ]},
+  moduleh:{path:'src/module_git/module_git.h', st:'A', type:'plain', lines:[
+    '#pragma once',
+    '#include "core/router.h"',
+    '',
+    'namespace app {',
+    '// Git 只读模块入口（登记于 app_registry，笔记之后）',
+    'void register_git_module();',
+    '}',
+  ]},
+  apimd:{path:'docs/接口说明.md', st:'R', old:'docs/接口说明旧稿.md', type:'md', lines:[
+    '<span class="h"># 接口说明</span>',
+    '',
+    '本文档由「接口说明旧稿」重命名而来。',
+    '',
+    '- 只读查看器不含写操作接口。',
+    '- diff 形态为 <span class="s">unified</span> 单栏。',
+  ]},
+  cnpath:{path:'src/core/路径工具/中文路径工具.cpp', st:'M', type:'plain', lines:[
+    '// 中文路径工具：统一宽字符路径处理',
+    '#include "core/paths.h"',
+    '',
+    'std::wstring Paths::join(const std::wstring& a, const std::wstring& b) {',
+    '    // 一条很长的注释行用于演示超长行横向滚动：本行没有任何断行与省略，滚动条应出现且行号列保持钉在左侧，内容随横向滚动平移而不换行不错位，用以验证超长行参数在窄窗与宽窗下的一致性。',
+    '    return a + L"/" + b;',
+    '}',
+  ]},
+  release:{path:'docs/设计/发布说明.md', st:'A', type:'md', lines:[
+    '<span class="h"># 发布说明 v2.4</span>',
+    '',
+    '<span class="h">## 新功能</span>',
+    '- Git 管理器（只读）：浏览文件、查看变更与 diff。',
+    '- 主题跟随：深浅两套配色全部走主题 token。',
+    '',
+    '<span class="h">## 修复</span>',
+    '- 修复中文路径下附件读取失败的问题。',
+    '<span class="c">&gt; 详细变更见仓库 CHANGELOG.md。</span>',
+  ]},
+  usertest:{path:'tests/用户服务测试.java', st:'M', type:'java', lines:[
+    '<span class="k">package</span> tests;',
+    '',
+    '<span class="k">import</span> org.junit.jupiter.api.Test;',
+    '',
+    '<span class="k">class</span> <span class="f">用户服务测试</span> {',
+    '',
+    '    <span class="f">@Test</span>',
+    '    <span class="k">void</span> <span class="f">应加载中文路径用户</span>() {',
+    '        <span class="k">var</span> u = repo.<span class="f">find</span>(<span class="s">"数据/用户_张三.json"</span>);',
+    '        <span class="f">assertNotNull</span>(u, <span class="s">"中文路径应可加载"</span>);',
+    '        <span class="f">assertEquals</span>(<span class="s">"张三"</span>, u.<span class="f">name</span>());',
+    '    }',
+    '',
+    '    <span class="f">@Test</span>',
+    '    <span class="k">void</span> <span class="f">应写回会话状态</span>() {',
+    '        store.<span class="f">save</span>(<span class="s">"session.key"</span>, value);',
+    '    }',
+    '}',
+  ]},
+  splashold:{path:'assets/splash_old.png', st:'D', type:'gone'},
+  logo:{path:'assets/logo.png', st:'', type:'binary'},
+  bigjson:{path:'数据/大文件.json', st:'U', type:'big'},
+  todo:{path:'TODO笔记.txt', st:'U', type:'empty'},
+  ini:{path:'旧编码配置.ini', st:'', type:'encoding'},
+  readme:{path:'README.md', st:'', type:'md', lines:[
+    '<span class="h"># DevDesk 项目说明</span>',
+    '',
+    '轻量原生的个人工作台。',
+    '',
+    '<span class="h">## 模块</span>',
+    '- 笔记：长期知识沉淀。',
+    '- <span class="s">Git</span>：只读查看器（本模块，入口在笔记之后）。',
+  ]},
+};
+var CHANGES = [
+  {id:'worker',   st:'M', g:'c'},
+  {id:'moduleh',  st:'A', g:'c'},
+  {id:'apimd',    st:'R', g:'c'},
+  {id:'cnpath',   st:'M', g:'c'},
+  {id:'release',  st:'A', g:'c'},
+  {id:'usertest', st:'M', g:'c'},
+  {id:'splashold',st:'D', g:'c'},
+  {id:'bigjson',  st:'U', g:'u'},
+  {id:'todo',     st:'U', g:'u'},
+];
+var TREE = [
+  {n:'src', open:true, c:[
+    {n:'module_git', open:true, c:[{f:'worker'},{f:'moduleh'}]},
+    {n:'core', open:false, c:[{n:'路径工具', open:true, c:[{f:'cnpath'}]}]},
+  ]},
+  {n:'docs', open:true, c:[
+    {f:'apimd'},
+    {n:'设计', open:true, c:[{f:'release'}]},
+  ]},
+  {n:'tests', open:true, c:[{f:'usertest'}]},
+  {n:'assets', open:false, c:[{f:'logo'},{f:'splashold'}]},
+  {n:'数据', open:false, c:[{f:'bigjson'}]},
+  {f:'readme'},
+  {f:'todo'},
+  {f:'ini'},
+];
+/* unified diff（决策③）：行对象 [类型, 旧行号, 新行号, html] */
+var DIFFS = {
+  usertest:{tag:'', hunks:[
+    {head:'@@ -8,7 +8,10 @@ class 用户服务测试', rows:[
+      ['ctx',8,8,'    <span class="f">@Test</span>'],
+      ['ctx',9,9,'    <span class="k">void</span> <span class="f">应加载中文路径用户</span>() {'],
+      ['del',10,0,'        User u = repo.find(<span class="s">"数据/用户_张三.json"</span>);'],
+      ['del',11,0,'        assertNotNull(u);'],
+      ['add',0,10,'        <span class="k">var</span> u = repo.<span class="f">find</span>(<span class="s">"数据/用户_张三.json"</span>);'],
+      ['add',0,11,'        <span class="f">assertNotNull</span>(u, <span class="s">"中文路径应可加载"</span>);'],
+      ['add',0,12,'        <span class="f">assertEquals</span>(<span class="s">"张三"</span>, u.<span class="f">name</span>());'],
+      ['ctx',12,13,'    }'],
+      ['ctx',13,14,''],
+    ]},
+    {head:'@@ -20,4 +22,6 @@', rows:[
+      ['ctx',20,22,'    <span class="f">@Test</span>'],
+      ['ctx',21,23,'    <span class="k">void</span> <span class="f">应写回会话状态</span>() {'],
+      ['del',22,0,'        store.save(<span class="s">"session"</span>, value);'],
+      ['add',0,24,'        store.<span class="f">save</span>(<span class="s">"session.key"</span>, value, <span class="n">0</span>);'],
+      ['add',0,25,'        store.<span class="f">flush</span>();'],
+      ['ctx',23,26,'    }'],
+    ]},
+  ]},
+  release:{tag:'新文件', hunks:[
+    {head:'@@ -0,0 +1,9 @@', rows:[
+      ['add',0,1,'<span class="h"># 发布说明 v2.4</span>'],
+      ['add',0,2,''],
+      ['add',0,3,'<span class="h">## 新功能</span>'],
+      ['add',0,4,'- Git 管理器（只读）：浏览文件、查看变更与 diff。'],
+      ['add',0,5,'- 主题跟随：深浅两套配色全部走主题 token。'],
+      ['add',0,6,''],
+      ['add',0,7,'<span class="h">## 修复</span>'],
+      ['add',0,8,'- 修复中文路径下附件读取失败的问题。'],
+      ['add',0,9,'<span class="c">&gt; 详细变更见仓库 CHANGELOG.md。</span>'],
+    ]},
+  ]},
+  apimd:{tag:'重命名', hunks:[
+    {head:'@@ -1,5 +1,6 @@', rows:[
+      ['del',1,0,'<span class="h"># 接口说明（旧稿）</span>'],
+      ['add',0,1,'<span class="h"># 接口说明</span>'],
+      ['ctx',2,2,''],
+      ['add',0,3,'本文档由「接口说明旧稿」重命名而来。'],
+      ['ctx',3,4,'- 只读查看器不含写操作接口。'],
+    ]},
+  ]},
+  worker:{tag:'', hunks:[
+    {head:'@@ -12,8 +12,7 @@ StatusWorker::collect()', rows:[
+      ['ctx',12,12,'std::vector&lt;Entry&gt; out;'],
+      ['del',13,0,'    for (const auto&amp; path : raw_entries) { /* 单行聚合版：直接在循环体内完成过滤、规范化与计数三条职责，一条超长行用于演示横向滚动时行号列 sticky 钉住而内容平移不换行不错位，验证超长行参数 */ }'],
+      ['add',0,13,'    for (const auto&amp; path : raw_entries) {'],
+      ['add',0,14,'        out.push_back(normalize(path));'],
+      ['add',0,15,'    }'],
+      ['ctx',14,16,'    return out;'],
+      ['ctx',15,17,'}'],
+    ]},
+  ]},
+  cnpath:{tag:'', hunks:[
+    {head:'@@ -3,6 +3,7 @@', rows:[
+      ['ctx',3,3,'#include "core/paths.h"'],
+      ['add',0,4,'#include <span class="s">"core/宽字符.h"</span>'],
+      ['ctx',4,5,''],
+      ['del',5,0,'std::wstring Paths::join(const std::string&amp; a, const std::string&amp; b) {'],
+      ['add',0,6,'std::wstring Paths::join(const std::wstring&amp; a, const std::wstring&amp; b) {'],
+      ['ctx',6,7,'    return a + L"/" + b;'],
+    ]},
+  ]},
+  moduleh:{tag:'新文件', hunks:[
+    {head:'@@ -0,0 +1,6 @@', rows:[
+      ['add',0,1,'#pragma once'],
+      ['add',0,2,'#include "core/router.h"'],
+      ['add',0,3,''],
+      ['add',0,4,'namespace app {'],
+      ['add',0,5,'<span class="c">// Git 只读模块入口（登记于 app_registry，笔记之后）</span>'],
+      ['add',0,6,'<span class="k">void</span> register_git_module();'],
+      ['add',0,7,'}'],
+    ]},
+  ]},
+  splashold:{tag:'已删除', hunks:[
+    {head:'@@ -1,2 +0,0 @@', rows:[
+      ['del',1,0,'（二进制文件差异不显示）'],
+    ]},
+  ]},
+};
+var STC = {A:'cA', M:'cM', D:'cD', R:'cR', U:'cU'};
+var STP = {A:60, M:150, D:140, R:150, U:150}; /* 状态点色相占位（见 CSS 变量映射函数） */
+var state = {scene:'main', file:'usertest', view:'diff', mode:'all', selChange:'usertest', selTree:null};
+var treeState = JSON.parse(JSON.stringify(TREE)); /* 展开状态可变副本 */
+
+/* ===== 工具 ===== */
+function $(id){return document.getElementById(id)}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+function toast(msg){
+  var t=document.createElement('div');t.className='toast';t.textContent=msg;
+  document.body.appendChild(t);setTimeout(function(){t.remove()},1600);
+}
+function dot(st){return '<span class="dot '+STC[st]+'"></span>'}
+
+/* ===== 变更列表 ===== */
+function renderChanges(){
+  var b=$('changesBody'), s=state.scene;
+  if(s==='loading'){
+    var h='';
+    for(var i=0;i<4;i++)h+='<div class="skline"><span class="sk" style="width:6px;height:6px;border-radius:50%"></span><span class="sk" style="width:70%"></span></div>';
+    b.innerHTML=h;return;
+  }
+  if(s==='empty-changes'||s==='empty-repo'){
+    b.innerHTML='<div class="center-note"><div class="m">工作区无变更</div><div class="r">外部改动会自动刷新</div></div>';return;
+  }
+  var c=CHANGES.filter(function(x){return x.g==='c'}), u=CHANGES.filter(function(x){return x.g==='u'});
+  var h='<div class="grp">变更 · '+c.length+'</div>';
+  c.forEach(function(x){h+=chgRow(x)});
+  h+='<div class="grp">未跟踪 · '+u.length+'</div>';
+  u.forEach(function(x){h+=chgRow(x)});
+  b.innerHTML=h;
+  b.querySelectorAll('[data-cid]').forEach(function(el){
+    el.addEventListener('click',function(){openChange(el.getAttribute('data-cid'))});
+  });
+}
+function chgRow(x){
+  var f=FILES[x.id];
+  var sel=state.selChange===x.id&&state.scene!=='loading'?' sel':'';
+  var inner=dot(x.st);
+  if(x.st==='R')inner+='<span class="p"><span class="old">'+f.old+'</span> <span class="arr">→</span> <span class="cR">'+f.path+'</span></span>';
+  else inner+='<span class="p">'+f.path+'</span>';
+  return '<button class="row'+sel+'" data-cid="'+x.id+'">'+inner+'</button>';
+}
+function openChange(id){
+  if(state.scene!=='main')return;
+  state.selChange=id;state.file=id;state.view='diff';state.selTree=null;
+  renderChanges();renderViewer();
+}
+
+/* ===== 目录树 ===== */
+function renderTree(){
+  var b=$('treeBody'), s=state.scene;
+  if(s==='loading'){
+    var h='';
+    for(var i=0;i<3;i++)h+='<div class="skline" style="height:26px"><span class="sk" style="width:10px"></span><span class="sk" style="width:55%"></span></div>';
+    b.innerHTML=h;return;
+  }
+  if(s==='empty-repo'){b.innerHTML='<div class="center-note"><div class="m">无可显示文件</div></div>';return}
+  if(s==='empty-changes'){b.innerHTML='<div class="center-note"><div class="m">工作区无变更</div></div>';return}
+  if(s==='error'){
+    b.innerHTML='<div class="center-note"><div class="e">无法读取目录</div><div class="r">没有访问该目录的权限</div><button class="btn-t" onclick="retryTree()">重试</button></div>';
+    return;
+  }
+  var h='';
+  if(state.mode==='mod'){
+    CHANGES.forEach(function(x){
+      var f=FILES[x.id], sel=state.selTree===x.id?' sel':'';
+      var cls=STC[x.st==='U'?'U':x.st];
+      h+='<button class="trow'+sel+'" data-fid="'+x.id+'"><span class="tw"></span><span class="nm '+cls+'">'+f.path+'</span></button>';
+    });
+  }else{
+    h=treeHtml(treeState,0);
+  }
+  b.innerHTML=h;
+  b.querySelectorAll('[data-dir]').forEach(function(el){
+    el.addEventListener('click',function(){toggleDir(el)});
+  });
+  b.querySelectorAll('[data-fid]').forEach(function(el){
+    el.addEventListener('click',function(){openFile(el.getAttribute('data-fid'),el)});
+  });
+}
+function treeHtml(nodes,depth){
+  var h='';
+  nodes.forEach(function(nd){
+    var pad='padding-left:'+(12+depth*16)+'px';
+    if(nd.n){
+      var arrow=nd.open?'▼':'▶';
+      h+='<button class="trow" data-dir="1" style="'+pad+'"><span class="tw">'+arrow+'</span><span class="nm">'+nd.n+'</span></button>';
+      if(nd.open&&nd.c)h+=treeHtml(nd.c,depth+1);
+    }else{
+      var f=FILES[nd.f], sel=state.selTree===nd.f?' sel':'';
+      var cls=f.st?STC[f.st]:'';
+      h+='<button class="trow'+sel+'" data-fid="'+nd.f+'" style="'+pad+'"><span class="tw"></span><span class="nm '+cls+'">'+f.path.split('/').pop()+'</span></button>';
+    }
+  });
+  return h;
+}
+function findDir(nodes,path){ /* path: 数组下标链 */
+  var nd=treeState;
+  for(var i=0;i<path.length;i++)nd=nd[path[i]];
+  return nd;
+}
+function toggleDir(el){
+  /* 演示懒加载：折叠→展开前显 350ms 行内 Spinner（原箭头位） */
+  var tw=el.querySelector('.tw');
+  if(tw.textContent==='▶'){
+    tw.innerHTML='<span class="spin" style="width:10px;height:10px;border-width:1.5px"></span>';
+    setTimeout(function(){
+      /* 在 treeState 中按按钮文本定位并翻转：demo 简化——按 nm 文本查找首个同名折叠目录 */
+      flipByName(el.querySelector('.nm').textContent);
+      renderTree();
+    },350);
+  }else{
+    flipByName(el.querySelector('.nm').textContent);
+    renderTree();
+  }
+}
+function flipByName(name){
+  (function walk(ns){ns.forEach(function(nd){
+    if(nd.n===name)nd.open=!nd.open;
+    if(nd.c)walk(nd.c);
+  })})(treeState);
+}
+function openFile(id,el){
+  if(state.scene!=='main')return;
+  state.selTree=id;state.selChange=null;state.file=id;state.view='content';
+  renderTree();renderViewer();
+}
+function retryTree(){toast('重试成功：目录已可读取（demo）');renderTree()}
+
+/* ===== 右栏 ===== */
+function renderViewer(){
+  var v=$('viewer'), s=state.scene;
+  $('staleBar').classList.add('hidden');
+  if(s==='loading'){
+    var h='';
+    for(var i=0;i<14;i++)h+='<div class="skline" style="height:20px"><span class="sk" style="width:32px"></span><span class="sk" style="width:'+(40+((i*37)%50))+'%"></span></div>';
+    v.innerHTML=h;updatePathbar(null);return;
+  }
+  if(s==='error'){
+    v.innerHTML='<div class="center-note"><div class="e">diff 计算失败</div><div class="r">仓库对象库临时不可读</div><button class="btn-t" onclick="retryViewer()">重试</button></div>';
+    updatePathbar('tests/用户服务测试.java','diff');return;
+  }
+  if(s==='empty-changes'){
+    v.innerHTML='<div class="center-note"><div class="m">无内容变更</div></div>';
+    updatePathbar('tests/用户服务测试.java','diff');return;
+  }
+  if(s==='empty-repo'){
+    v.innerHTML='<div class="center-note"><div class="m">在左侧选择文件查看内容或 diff</div></div>';
+    updatePathbar(null);return;
+  }
+  var f=FILES[state.file];
+  if(!f){v.innerHTML='<div class="center-note"><div class="m">在左侧选择文件查看内容或 diff</div></div>';updatePathbar(null);return}
+  updatePathbar(f.path,state.view);
+  if(state.view==='diff'&&DIFFS[state.file]){v.innerHTML=diffHtml(state.file);bindHunks();return}
+  /* 内容/占位 */
+  if(f.type==='binary'){v.innerHTML='<div class="center-note"><div class="m">二进制文件，未显示内容</div></div>';return}
+  if(f.type==='big'){v.innerHTML='<div class="center-note"><div class="m">文件过大，未加载内容（&gt;1 MiB）</div></div>';return}
+  if(f.type==='empty'){v.innerHTML='<div class="center-note"><div class="m">空文件</div></div>';return}
+  if(f.type==='encoding'){v.innerHTML='<div class="center-note"><div class="m">暂不支持该编码（v1 保证 UTF-8/ASCII）</div></div>';return}
+  if(f.type==='gone'){v.innerHTML='<div class="center-note"><div class="e">读取失败</div><div class="r">文件已被删除（工作区不存在）</div><button class="btn-t" onclick="retryViewer()">重试</button></div>';return}
+  /* 行号+内容（超长行横向滚动不换行） */
+  var h='';
+  f.lines.forEach(function(ln,i){
+    h+='<div class="crow"><span class="ln">'+(i+1)+'</span><code>'+(ln===''?' ':ln)+'</code></div>';
+  });
+  v.innerHTML=h;
+}
+function diffHtml(id){
+  var d=DIFFS[id], h='';
+  d.hunks.forEach(function(hk){
+    var plus=0,minus=0;
+    hk.rows.forEach(function(r){if(r[0]==='add')plus++;if(r[0]==='del')minus++});
+    h+='<div class="hunk"><button class="hunk-head"><span class="tw">▼</span><span class="hh">'+hk.head+'</span>';
+    if(d.tag)h+='<span class="tag '+(d.tag==='已删除'?'gone':'new')+'">'+d.tag+'</span>';
+    h+='<span class="cnt"><span class="plus">+'+plus+'</span><span class="minus">−'+minus+'</span></span>';
+    h+='<span class="fold-info">⋯ 已折叠 '+hk.rows.length+' 行</span></button><div class="hunk-body">';
+    hk.rows.forEach(function(r){
+      var cls=r[0]==='add'?' add':(r[0]==='del'?' del':'');
+      h+='<div class="drow'+cls+'"><span class="ln old">'+(r[1]||'')+'</span><span class="ln new">'+(r[2]||'')+'</span><code>'+(r[3]===''?' ':r[3])+'</code></div>';
+    });
+    h+='</div></div>';
+  });
+  return h;
+}
+function bindHunks(){
+  document.querySelectorAll('.hunk-head').forEach(function(el){
+    el.addEventListener('click',function(){
+      var hk=el.parentElement, tw=el.querySelector('.tw');
+      hk.classList.toggle('folded');
+      tw.textContent=hk.classList.contains('folded')?'▶':'▼';
+    });
+  });
+}
+function retryViewer(){toast('重试成功：diff 已重新计算（demo）');renderViewer()}
+function updatePathbar(path,view){
+  $('filePath').textContent=path?path:'';
+  var tabs=$('viewTabs').querySelectorAll('button');
+  var hasDiff=path&&FILES[Object.keys(FILES).find(function(k){return FILES[k].path===path})];
+  var changed=hasDiff&&hasDiff.st;
+  tabs[1].classList.toggle('hidden',!changed);
+  tabs[0].classList.toggle('on',view!=='diff');
+  tabs[1].classList.toggle('on',view==='diff');
+  if(view==='diff'&&!changed){tabs[0].classList.add('on');tabs[1].classList.remove('on')}
+}
+/* Tab 切换（N6→N8） */
+$('viewTabs').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  if(b.classList.contains('hidden'))return;
+  state.view=b.getAttribute('data-v');
+  if(state.scene==='main')renderViewer();
+});
+
+/* ===== 空态页 N2 ===== */
+function renderN2(invalid){
+  var c=$('content');
+  c.classList.toggle('n2',!!invalid);
+  var ep=$('emptyPage');
+  ep.classList.toggle('hidden',!invalid);
+  c.querySelectorAll('.leftcol,.rightcol').forEach(function(el){el.classList.toggle('hidden',!!invalid)});
+  if(!invalid)return;
+  ep.innerHTML='<div class="empty-card">'+
+    (invalid==='stale'?'<div class="err"><div class="m">上次打开的仓库不可用（目录已不存在或不再是 git 仓库）</div><div class="r">已清除该条记忆，下次进入不再直达</div></div>':'')+
+    '<div class="h1">打开一个 Git 仓库</div>'+
+    '<div class="desc">只读查看器：浏览文件、查看变更与 diff，不做任何写操作。</div>'+
+    '<button class="btn-primary pressable" id="btnPick">选择仓库目录</button>'+
+    '<div class="chk hidden" id="chkInd"><span class="spin"></span>正在校验仓库…</div></div>';
+  $('btnPick').addEventListener('click',function(){
+    var ind=$('chkInd');ind.classList.remove('hidden');
+    setTimeout(function(){
+      ind.classList.add('hidden');toast('校验成功，已进入仓库（demo 返回成功态）');setScene('main');
+    },1200);
+  });
+}
+
+/* ===== 场景 ===== */
+var SCENES={'main':1,'loading':1,'error':1,'empty-changes':1,'empty-repo':1};
+function setScene(s){
+  state.scene=s;
+  document.querySelectorAll('#sceneBtns button').forEach(function(b){
+    b.classList.toggle('on',b.getAttribute('data-s')===s);
+  });
+  if(s==='n2'){renderChanges();renderTree();renderViewer();renderN2(true);return}
+  if(s==='n2-invalid'){renderChanges();renderTree();renderViewer();renderN2('stale');return}
+  renderN2(false);
+  if(s==='main'){state.selChange=state.file;state.selTree=null}
+  renderChanges();renderTree();renderViewer();
+}
+document.querySelectorAll('#sceneBtns button').forEach(function(b){
+  b.addEventListener('click',function(){setScene(b.getAttribute('data-s'))});
+});
+
+/* ===== 顶栏交互 ===== */
+$('btnSwitch').addEventListener('click',function(){setScene('n2')});
+$('btnRefresh').addEventListener('click',function(){
+  var lb=$('refreshLabel'), sp=document.createElement('span');sp.className='spin';
+  lb.textContent='';lb.appendChild(sp);$('autoSlot').appendChild(sp.cloneNode());
+  setTimeout(function(){
+    lb.textContent='刷新';$('autoSlot').innerHTML='';
+    if(state.stale){state.stale=false;$('staleBar').classList.add('hidden')}
+    toast('已刷新');
+  },900);
+});
+/* 内容过期条（F-13③） */
+$('btnStale').addEventListener('click',function(){
+  if(state.scene!=='main'){toast('请先切到成功态');return}
+  state.stale=true;$('staleBar').classList.remove('hidden');
+});
+$('staleBar').addEventListener('click',function(){
+  var b=$('staleBar');b.textContent='正在重载…';
+  setTimeout(function(){b.textContent='内容已过期，点击重载';b.classList.add('hidden');state.stale=false;toast('已重载')},600);
+});
+/* 模式分段（N5：右栏保留、树选中清、滚动回顶） */
+$('modeSeg').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  state.mode=b.getAttribute('data-m');
+  this.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b)});
+  state.selTree=null;$('treeBody').scrollTop=0;
+  renderTree();
+});
+/* 树区折叠 */
+$('btnTreeFold').addEventListener('click',function(){
+  var p=$('paneTree');p.classList.toggle('collapsed');
+  this.textContent=p.classList.contains('collapsed')?'▶':'▼';
+});
+/* 主题 */
+$('themeSeg').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b)return;
+  document.documentElement.setAttribute('data-theme',b.getAttribute('data-t'));
+  this.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b)});
+});
+
+/* ===== 初始：主路径默认停在 N8（变更条目 → diff） ===== */
+setScene('main');
+</script>
+</body>
+</html>

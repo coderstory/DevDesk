@@ -3,7 +3,7 @@
 // 关键字/字符串/注释/数字取色，未覆盖 lang 的回落，runs 结构不变式，以及色表派生。
 #include "doctest.h"
 #include "core/theme.h"
-#include "module_markdown/md_highlight.h"
+#include "ui_kit/text_highlight/md_highlight.h"
 #include "module_markdown/md_keyword_highlight.h"
 
 #include <eui/types.h>

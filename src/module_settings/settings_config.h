@@ -56,6 +56,8 @@ inline constexpr const char* kModuleIdRelease = "release";
 inline constexpr const char* kModuleIdMcp = "mcp";
 // terminal：默认启用（macOS 终端页 need:122；Windows 占位页 Phase 2）。
 inline constexpr const char* kModuleIdTerminal = "terminal";
+// git：默认启用（只读 git 管理器，need:7；无后台服务面，零成本常驻）。
+inline constexpr const char* kModuleIdGit = "git";
 
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();
@@ -69,7 +71,7 @@ std::vector<std::string> defaultEnabledModules();
 // 都逐个核对是否在清单里，缺了就补回。只比版本号时，「版本已到位但清单漂移少了
 // 模块」的库会永久卡死（某次 save 把不含该模块的内存态写回磁盘即形成此态）。
 // 豁免 = userDisabledModules 记录集（用户显式关闭的模块绝不重开）。
-inline constexpr int kModuleDefaultsVersion = 3;
+inline constexpr int kModuleDefaultsVersion = 4;
 
 // 窗口效果三档（档位字符串直接持久化进 app_config）
 inline constexpr const char* kWindowEffectOff = "off";
