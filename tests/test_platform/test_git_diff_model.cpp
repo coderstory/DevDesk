@@ -251,3 +251,22 @@ REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 
     }
     return true;
 })
+
+// bug#21（diff 侧生产点）：maxLineLen_ 曾按字节计（line.content.size()）——
+// CJK 行 3 字节/字虚胖；修后按 UTF-8 码点计，与内容模型同口径。
+REGISTER_TEST(git_diff_maxlinelen_codepoints, "git_diff: maxLineLen 码点计数（CJK 行不虚胖，bug#21）", {
+    GitDiffModel m;
+    DiffPatch p;
+    p.oldPath = "a.txt";
+    p.newPath = "a.txt";
+    DiffHunk h;
+    const std::string cjk10 = "\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80"
+                              "\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80"
+                              "\xE4\xB8\x80\xE4\xB8\x80";
+    h.lines.push_back(line('+', 0, 1, cjk10));
+    h.lines.push_back(line('+', 0, 2, "0123456789"));
+    p.hunks.push_back(std::move(h));
+    m.setPatch(std::move(p));
+    DOCTEST_CHECK(m.maxLineLen() == 10);
+    return true;
+})

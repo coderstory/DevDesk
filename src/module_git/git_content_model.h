@@ -17,7 +17,8 @@ struct FileContent {
     std::vector<std::string> lines;  // state==Ok 有效：'\n' 切分、行尾 '\r' 剥除；
                                      // 文件以换行结尾不产生末尾空行（行号 = 1 起）
     std::string errorMessage;        // state==ReadError 时的人类可读原因
-    size_t maxLineLen = 0;           // state==Ok 有效：最长行字符数（F-07⑥ 横滚内容宽）
+    size_t maxLineLen = 0;           // state==Ok 有效：最长行码点数（F-07⑥ 横滚内容宽；
+                                     // bug#21：字节→码点，UTF-8 CJK 不再虚胖 3 倍）
 
     // 四态判据（F-11）：空(0 字节)/二进制(首 8KiB 含 NUL)/超大(>1 MiB)/非 UTF-8；
     // 打不开（不存在/无权限）→ ReadError。占位态不解读文件体（GitAhead #161 反例

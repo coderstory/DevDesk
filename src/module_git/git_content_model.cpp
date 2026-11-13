@@ -116,7 +116,14 @@ FileContent FileContent::readFromDisk(const std::filesystem::path& absPath) {
             size_t end = i;
             if (end > start && data[end - 1] == '\r') --end;
             out.lines.emplace_back(data, start, end - start);
-            out.maxLineLen = std::max(out.maxLineLen, end - start);
+            // bug#21：maxLineLen 语义 = 码点数（按字节计会把 UTF-8 CJK 3 字节/字
+            // 当 3 字符，横滚内容宽虚胖 ~3 倍）。Ok 态已过 isValidUtf8 严格校验，
+            // 序列起点计数零额外校验成本。
+            size_t codepoints = 0;
+            for (size_t j = start; j < end; ++j) {
+                if ((static_cast<unsigned char>(data[j]) & 0xC0) != 0x80) ++codepoints;
+            }
+            out.maxLineLen = std::max(out.maxLineLen, codepoints);
             start = i + 1;
         }
     }

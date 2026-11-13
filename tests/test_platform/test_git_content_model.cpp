@@ -127,3 +127,20 @@ REGISTER_TEST(git_content_unicode_path, "git_content: 中文文件名路径直�
     DOCTEST_CHECK(fc.lines[0] == "中文内容");
     return true;
 })
+
+// bug#21：maxLineLen 曾按字节计——UTF-8 CJK 3 字节/字被当 3 字符，横滚内容宽
+// 虚胖 ~3 倍（CJK 仓假横滚）。修后语义 = 码点数：1 行 10 个中文字符与 1 行
+// 10 个 ASCII 字符断言相等。
+REGISTER_TEST(git_content_maxlinelen_codepoints, "git_content: maxLineLen 码点计数（CJK 与 ASCII 等长行同宽，bug#21）", {
+    const std::string cjk10 = "\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80"
+                              "\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80\xE4\xB8\x80"
+                              "\xE4\xB8\x80\xE4\xB8\x80";  // 10 × U+4E00（30 字节）
+    const auto cjk = FileContent::readFromDisk(writeTemp("cjk_len.txt", cjk10));
+    const auto ascii = FileContent::readFromDisk(writeTemp("ascii_len.txt", "0123456789"));
+    DOCTEST_REQUIRE(cjk.state == ContentState::Ok);
+    DOCTEST_REQUIRE(ascii.state == ContentState::Ok);
+    DOCTEST_CHECK(cjk.maxLineLen == 10);
+    DOCTEST_CHECK(ascii.maxLineLen == 10);
+    DOCTEST_CHECK(cjk.maxLineLen == ascii.maxLineLen);
+    return true;
+})

@@ -12,11 +12,17 @@ void GitDiffModel::setPatch(platform::git::DiffPatch patch, std::string placehol
     patch_ = std::move(patch);
     placeholder_ = std::move(placeholder);
     folded_.assign(patch_.hunks.size(), false);
-    // 最长行字符数（F-07⑥ 横滚内容宽）：diff 行统一等宽字体，字符数即宽
+    // 最长行码点数（F-07⑥ 横滚内容宽）：diff 行统一等宽字体，码点数即宽。
+    // bug#21：按字节计（content.size()）会把 UTF-8 CJK 3 字节/字当 3 字符，
+    // diff 横滚内容宽虚胖 ~3 倍——与内容模型（git_content_model）同口径改码点。
     maxLineLen_ = 0;
     for (const auto& hunk : patch_.hunks) {
         for (const auto& line : hunk.lines) {
-            maxLineLen_ = std::max(maxLineLen_, line.content.size());
+            size_t codepoints = 0;
+            for (const char c : line.content) {
+                if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) ++codepoints;
+            }
+            maxLineLen_ = std::max(maxLineLen_, codepoints);
         }
     }
     rebuildRows();
