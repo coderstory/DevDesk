@@ -184,6 +184,11 @@ add_subdirectory(${EUI_NEO_DIR} ${CMAKE_BINARY_DIR}/_eui_neo_build EXCLUDE_FROM_
 # 位置约束：须在 add_subdirectory(src/platform) 之前（devdesk_platform PRIVATE 链接 git2）。
 set(BUILD_SHARED_LIBS OFF)          # STATIC git2——发布形态守卫：单 exe 零外部 DLL
 set(BUILD_TESTS OFF)
+# 普通变量对本子目录无效：libgit2 CMakeLists cmake_minimum_required(3.5.1) → 其 policy scope
+# CMP0077 为 OLD，option(BUILD_TESTS ON) 无视父级普通变量并写 cache=ON，于是 Windows 上会编
+# tests/headertest（-Werror 撞顶层 _WIN32_WINNT=0x0A00 与 libgit2 自带 0x0600 的重定义 → 必失败）。
+# 强制 cache=OFF（2026-11-13 本机装机实测；Mac 端无此冲突所以未暴露）。
+set(BUILD_TESTS OFF CACHE BOOL "libgit2 Clar 测试：Windows 编译必失败，恒 off" FORCE)
 set(BUILD_CLI OFF)
 set(USE_SSH OFF)
 set(USE_HTTPS OFF)
