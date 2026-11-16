@@ -427,9 +427,8 @@ void GitPageController::toggleDir(const std::string& dirRel) {
     if (tree_.mode() != GitTreeModel::Mode::AllFiles) return;
     const bool expanded = tree_.isExpanded(dirRel);
     tree_.setExpanded(dirRel, !expanded);
-    if (expanded) {
-        treeScrollOffset_ = treeScrollOffset_;  // 折叠不动滚动位（virtualList 自适应）
-    }
+    // 折叠不动滚动位（virtualList 自适应）：无需额外动作，不写 scrollOffset
+    (void)expanded;
 }
 
 void GitPageController::selectTreeFile(const std::string& relPath) {

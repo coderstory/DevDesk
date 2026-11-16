@@ -155,11 +155,15 @@ if(APPLE)
     # UNUserNotificationCenter 在 UserNotifications.framework；REQUIRED 让 SDK 缺框架时
     # configure 期直接失败，而不是链接期才报未定义符号。
     find_library(USER_NOTIFICATIONS_FRAMEWORK UserNotifications REQUIRED)
+    # UniformTypeIdentifiers：file_association_macos.mm 的 12+ UTI 反查走 UTType 类
+    #（旧 UTTypeCreatePreferredIdentifierForTag 自 12.0 弃用，-Werror 下编译不过）。
+    find_library(UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     target_link_libraries(devdesk_platform PUBLIC
         "-framework Security"
         "-framework CoreFoundation"
         "-framework CoreServices"
         ${USER_NOTIFICATIONS_FRAMEWORK}
+        ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
 
     # notification_macos.mm / file_association_macos.mm 单独开 ARC：只影响该源文件，

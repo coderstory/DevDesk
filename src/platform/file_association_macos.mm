@@ -22,6 +22,12 @@
 
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#if __has_include(<UniformTypeIdentifiers/UniformTypeIdentifiers.h>)
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // UTType（12+ UTI 反查/写入路径）
+#define DEVDESK_HAS_UTTYPE_CLASS 1
+#else
+#define DEVDESK_HAS_UTTYPE_CLASS 0
+#endif
 
 #include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag / LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
 #include <sys/sysctl.h>
@@ -72,8 +78,38 @@ std::string extensionWithoutDot(const AssocConfig& config) {
 
 // 扩展名 → LS 侧实际生效 UTI：运行期按 tag 反查，不硬编码 UTI 串（声明了
 // UTImportedTypeDeclarations 的机器得 net.daringfireball.markdown，未声明机器
-// 得 dyn.*——写/查同法反查，两侧对称）
+// 得 dyn.*——写/查同法反查，两侧对称）。12+ 走 UTType 类（旧 C API 自 12.0
+// 起标记弃用，-Werror 下会红）；11 保留 C API（应用下限 11.0，该类尚不可用），
+// 弃用告警按分支局部豁免。
 core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
+    NSString* const extNs = [NSString stringWithUTF8String:extNoDot.c_str()];
+    if (extNs == nil) {
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                               "扩展名转 NSString 失败");
+    }
+    if (@available(macOS 11.0, *)) {
+#if DEVDESK_HAS_UTTYPE_CLASS
+        UTType* const type = [UTType typeWithFilenameExtension:extNs];
+        if (type == nil) {
+            return core::Result<std::string>::fail(
+                core::ErrorCode::Internal, "扩展名未解析出 UTI (" + extNoDot + ")");
+        }
+        const std::string out = cfToStdString((__bridge CFStringRef)type.identifier);
+        if (out.empty()) {
+            return core::Result<std::string>::fail(
+                core::ErrorCode::Internal, "UTI 转 string 失败 (" + extNoDot + ")");
+        }
+        return core::Result<std::string>::ok(out);
+#else
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "SDK 缺 UniformTypeIdentifiers，无法解析 UTI (" + extNoDot + ")");
+#endif
+    }
+    // 11.0 路径（UTType 类不可用）：旧 C API 是唯一选择。该 API 的弃用是
+    // 12.0 起生效，本分支只在 <12 运行时执行，故豁免告警。
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     CFStringRef const extCf = cfStringFromStdString(extNoDot);
     if (extCf == nullptr) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
@@ -82,6 +118,7 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
     CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
         kUTTagClassFilenameExtension, extCf, nullptr);
     CFRelease(extCf);
+#pragma clang diagnostic pop
     if (uti == nullptr) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "扩展名未解析出 UTI (" + extNoDot + ")");
@@ -227,21 +264,33 @@ core::Result<bool> setAsDefaultForMd(const AssocConfig& config) {
             CFURLRef const docUrl = probeFileUrl(ext);
             NSURL* const docNs = (__bridge NSURL*)docUrl;
             NSURL* const appNs = (__bridge NSURL*)self.value().second;
-            NSError* nsErr = nil;
-            const BOOL ok = [[NSWorkspace sharedWorkspace]
+            // 12+ 唯一公开 API 是 async 形态（没有同步 error: 变体；旧同步名
+            // setDefaultApplicationAtURL:toOpenURL:error: 在 SDK 里不存在）。
+            // 不能无限等：需要用户确认的 UTI 会先弹系统确认框，完成回调可能
+            // 很久才来——主线程挂住等于窗口卡死。短超时等待后一律以写后回查
+            // 为准（本文件既有契约：写入成功 ≠ 行为生效，一切以查询回读为准）。
+            __block NSError* nsErr = nil;
+            dispatch_semaphore_t const done = dispatch_semaphore_create(0);
+            [[NSWorkspace sharedWorkspace]
                 setDefaultApplicationAtURL:appNs
-                                 toOpenURL:docNs
-                                     error:&nsErr];
+                  toOpenContentTypeOfFileAtURL:docNs
+                        completionHandler:^(NSError* error) {
+                            nsErr = error;
+                            dispatch_semaphore_signal(done);
+                        }];
             CFRelease(docUrl);
-            if (ok) {
-                written = core::Result<void>::ok();
-            } else {
+            (void)dispatch_semaphore_wait(
+                done, dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC));
+            if (nsErr != nil) {
                 written = core::Result<void>::fail(
                     core::ErrorCode::Internal,
                     std::string("NSWorkspace setDefaultApplicationAtURL 失败: ") +
                         (nsErr.localizedDescription.UTF8String != nullptr
                              ? nsErr.localizedDescription.UTF8String
                              : "未知错误"));
+            } else {
+                // 已受理（或超时未回调 = 系统确认框待用户操作）：交回查判定
+                written = core::Result<void>::ok();
             }
         } else {
             // 不可达（api_map 12+ 才落此分支）；防御性诚实失败
