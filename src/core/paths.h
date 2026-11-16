@@ -56,6 +56,11 @@ std::filesystem::path claudeConfigFile();
 // C:\ProgramData\ClaudeCode\；macOS /Library/Application Support/ClaudeCode/；POSIX /etc/claude-code/
 std::filesystem::path claudeManagedSettingsFile();
 
+// ZCode 全局配置 <home>/.zcode/cli/config.json（need279：顶层 mcp.servers 所在文件）。
+// 无覆盖 env、刻意不随 DEVDESK_DATA_ROOT 迁移（改了 ZCode 读不到）。Windows 主目录
+// 取 USERPROFILE；macOS/POSIX 取 HOME
+std::filesystem::path zcodeConfigFile();
+
 // GitHub Sync 相关路径
 // SQL dump 文件路径（**数据根目录**下的 database.sql，即 `~/DevDesk/database.sql`；
 // 不是同步仓库根目录 —— 仓库里那份由导入/导出方自己决定放哪）

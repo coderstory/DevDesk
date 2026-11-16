@@ -915,9 +915,10 @@ void openDetailOf(McpPageModule& mod, eui::Ui& ui, const eui::Screen& screen,
 
 } // namespace
 
-// 三钮几何：claude / try / close 同行不重叠（左到右 = claude, close, try）
+// 四钮几何（need279 双行）：Claude 行（上）+ ZCode 行（与 try/close 同行）；
+// 同行不重叠（左到右 = claude/zcode, close, try），ZCode 行位于 Claude 行正下方
 REGISTER_TEST(mcp_page_claude_btn_geometry,
-              "mcp_page: need244 安装钮与「试一下」「关闭」同行不重叠", {
+              "mcp_page: 安装钮双行布局——ZCode 行与「试一下」「关闭」同行不重叠，Claude 行居其上", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
@@ -932,24 +933,27 @@ REGISTER_TEST(mcp_page_claude_btn_geometry,
     openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_cc_geo");
 
     const auto* claude = ui.find("mcp.dialog.detail.btn.claude.bg");
+    const auto* zcode = ui.find("mcp.dialog.detail.btn.zcode.bg");
     const auto* tryBtn = ui.find("mcp.dialog.detail.btn.try.bg");
     const auto* close = ui.find("mcp.dialog.detail.btn.close.bg");
     DOCTEST_REQUIRE(claude != nullptr);
+    DOCTEST_REQUIRE(zcode != nullptr);
     DOCTEST_REQUIRE(tryBtn != nullptr);
     DOCTEST_REQUIRE(close != nullptr);
-    const float claudeRight = claude->frame.x + claude->frame.width;
+    const float zcodeRight = zcode->frame.x + zcode->frame.width;
     const float closeRight = close->frame.x + close->frame.width;
     const float tryRight = tryBtn->frame.x + tryBtn->frame.width;
-    DOCTEST_CHECK_MESSAGE(claudeRight <= close->frame.x,
-                          "安装钮与关闭钮重叠：" + std::to_string(claudeRight) +
+    DOCTEST_CHECK_MESSAGE(zcodeRight <= close->frame.x,
+                          "ZCode 安装钮与关闭钮重叠：" + std::to_string(zcodeRight) +
                               " > " + std::to_string(close->frame.x));
     DOCTEST_CHECK_MESSAGE(closeRight <= tryBtn->frame.x,
                           "关闭钮与试一下重叠：" + std::to_string(closeRight) +
                               " > " + std::to_string(tryBtn->frame.x));
-    // 右缘不越弹窗内边距（frame 是窗口绝对坐标：以安装钮左缘 + 弹窗宽 600 换算）
-    DOCTEST_CHECK(tryRight <= claude->frame.x + 600.0f - 20.0f + 0.5f);
-    // 同一基线（按钮行）
-    DOCTEST_CHECK(claude->frame.y == tryBtn->frame.y);
+    // 右缘不越弹窗内边距（frame 是窗口绝对坐标：以 ZCode 钮左缘 + 弹窗宽 600 换算）
+    DOCTEST_CHECK(tryRight <= zcode->frame.x + 600.0f - 20.0f + 0.5f);
+    // ZCode 行与 try/close 同一基线；Claude 行在其正上方（行高 32 + 行距 4）
+    DOCTEST_CHECK(zcode->frame.y == tryBtn->frame.y);
+    DOCTEST_CHECK(claude->frame.y == zcode->frame.y - 36.0f);
     return true;
 })
 

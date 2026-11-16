@@ -25,6 +25,7 @@
 #include "core/theme.h"
 #include "core/tool.h"
 #include "claude_mcp_config.h"
+#include "zcode_mcp_config.h"
 
 #include <components/theme.h>
 
@@ -116,6 +117,28 @@ private:
     CcButtonState ccState_;
     std::string ccError_;   // 安装/卸载失败原因（成功帧清空）
     std::string ccNotice_;  // 审计 P1-4：安装成功的「需重启 Claude Code 生效」提示（重开弹窗清）
+
+    // ── 「安装到 ZCode」（need279）──
+    // 与 Claude 行同构 + 第四态冲突：installed 判据 = mcp.servers.devdesk 存在且
+    // url == 当前 live 端点；conflict = 存在但 url ≠ 端点（或缺 url）——置灰且
+    // 无卸载入口（N6：防误删用户条目）。状态在详情页每次打开时现读文件。
+    struct ZcButtonState {
+        bool filePresent = false;
+        bool installed = false;
+        bool conflict = false;
+        bool serviceRunning = false;  // running 且 port > 0
+        bool actionable() const { return filePresent && serviceRunning && !conflict; }
+    };
+    void refreshZcodeInstallState();
+    void toggleZcodeInstall();
+    void drawZcodeInstallButton(eui::Ui& ui, float x, float y,
+                                const ZcButtonState& st,
+                                const core::theme::Tokens& t,
+                                const components::theme::ThemeColorTokens& comp);
+
+    ZcButtonState zcState_;
+    std::string zcError_;   // 安装/卸载失败原因（成功帧清空）
+    std::string zcNotice_;  // 安装/卸载成功的「需重启 ZCode 生效」提示（重开弹窗清）
 
     ::core::mcp::McpToolRegistry* registry_;
 
