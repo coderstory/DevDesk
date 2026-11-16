@@ -14,6 +14,8 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
     // need250：载入持久化设置并铺到新会话参数（db 未就绪/键缺失 → 默认值）
     settings_ = loadTerminalSettings(::core::appDatabase());
     controller_.setNewSessionOptions(settings_.shell, settings_.workDir, settings_.scrollback);
+    // bug278④：面板结果通道装配（完成/× 由页面转发到 finishSettingsPanel）
+    page_.setPanelResultHandler([this](bool commit) { finishSettingsPanel(commit); });
 }
 
 core::PageId TerminalModule::pageId() const { return core::PageId::Terminal; }
@@ -44,7 +46,7 @@ void TerminalModule::onStop() {
 // module 级 Esc 先例）→ Cmd+C（encodeKey 对 super 系返回 false）→ 选区文本 → 剪贴板（F-04）
 bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
     if (event.isDown() && event.key == eui::InputKey::Escape && page_.settingsOpen()) {
-        page_.closeSettings();
+        finishSettingsPanel(false);  // bug278④：Esc=取消（丢弃草稿）
         return true;
     }
     if (event.isDown() && event.modifiers.super && event.key == eui::InputKey::C) {
@@ -63,6 +65,11 @@ bool TerminalModule::onKeyEvent(const eui::KeyEvent& event) {
 }
 
 void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
+    // bug278④：面板开合沿——开帧打草稿基线快照（本帧面板刚出现、用户尚未编辑，
+    // settings_ 即打开时刻原值；编辑发生在后续帧）。关闭沿由 finishSettingsPanel 处理。
+    if (page_.settingsOpen() && !panelWasOpen_) panelSnapshot_ = settings_;
+    panelWasOpen_ = page_.settingsOpen();
+
     // 可用性（OS<1809 → startSession 前置检查进 Failed 态占位，技术卡 v2 决策 6）
     const bool available = backend_ != nullptr && backend_->available();
 
@@ -78,15 +85,9 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
             platform::clipboardCopyText(reinterpret_cast<const uint8_t*>(text.data()),
                                         static_cast<int32_t>(text.size()));
         },
-        settings_,
-        // need250：面板任意改动 → 新会话参数同步 + 落库（即时生效项靠 settings_ 单一
-        // 数据源在下一帧 compose 直接可见；db 未就绪 save fail 只记日志不阻断）
-        [this]() {
-            controller_.setNewSessionOptions(settings_.shell, settings_.workDir,
-                                             settings_.scrollback);
-            auto r = saveTerminalSettings(::core::appDatabase(), settings_);
-            if (r.isFail()) LOG_WARN("Terminal: 设置保存失败: " + r.errorMessage());
-        });
+        // bug278④：settings_=草稿态单一数据源——改动直写即 live preview；落库与
+        // 生效只在「完成」（finishSettingsPanel），×/Esc 回滚快照（无逐改动回调）
+        settings_);
     // 全屏态变化 → 侧栏全隐缝（F-05；v2 终裁 clue92：全屏=侧栏 0 宽全隐、不画 logo，
     // 「折叠 72px 非隐藏」方案已作废）。主通道 = TerminalPage::toggleFullscreen 内的
     // 当帧打桥（bug252 根修）；此处差值检查保留，兜 DEVDESK_TERMINAL_FULLSCREEN env
@@ -102,6 +103,21 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         page_.clearPendingResize();
     }
     (void)layout;
+}
+
+// bug278④：面板结果落地（老板口径：持久化/生效只在「完成」）。commit=草稿即终态
+// （新会话参数同步 + 落库；db 未就绪 save fail 只记日志不阻断）；取消=回滚打开时刻
+// 快照（草稿丢弃，live preview 的改动下一帧随 settings_ 还原）。
+void TerminalModule::finishSettingsPanel(bool commit) {
+    if (commit) {
+        controller_.setNewSessionOptions(settings_.shell, settings_.workDir,
+                                         settings_.scrollback);
+        auto r = saveTerminalSettings(::core::appDatabase(), settings_);
+        if (r.isFail()) LOG_WARN("Terminal: 设置保存失败: " + r.errorMessage());
+    } else {
+        settings_ = panelSnapshot_;
+    }
+    page_.closeSettings();
 }
 
 } // namespace terminal

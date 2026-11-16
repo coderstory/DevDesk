@@ -35,13 +35,19 @@ public:
 
 private:
     void ensureBackend();
+    // bug278④：设置面板结果通道（完成=true 提交落库+新会话参数生效；×/Esc=false
+    // 丢弃草稿回滚快照）。老板口径 2026-11-16：弹窗内改动只在「完成」落库/生效。
+    void finishSettingsPanel(bool commit);
 
     SessionController controller_;
     TerminalPage page_;
     platform::TerminalBackend* backend_ = nullptr;
     bool sidebarCollapsedApplied_ = false;
-    // need250：终端设置单一数据源（构造时载入，面板改动即持久化）
+    // need250：终端设置单一数据源（面板开着=草稿态：改动即时预览但不落库，
+    // bug278④；「完成」才提交）
     TerminalSettings settings_;
+    TerminalSettings panelSnapshot_;   // bug278④：面板打开时刻快照（草稿基线）
+    bool panelWasOpen_ = false;        // bug278④：开合沿侦测（开帧打快照）
 };
 
 } // namespace terminal

@@ -165,7 +165,7 @@ GridLayout TerminalPage::compose(
     const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
     const std::function<void(const std::string&, bool paste)>& onTextInput,
     const std::function<void(const std::string&)>& onCopyText,
-    TerminalSettings& settings, const std::function<void()>& onSettingsChanged) {
+    TerminalSettings& settings) {
     // TermPerf（bug248）：compose 入口时间戳 + 与上次 compose 的帧间隔
     const auto composeT0 = std::chrono::steady_clock::now();
     TermPerfUi& pf = termPerfUi();
@@ -969,7 +969,6 @@ GridLayout TerminalPage::compose(
                 // 事件闭包只捕稳对象（模块成员指针 / 值拷贝的 std::function）；compose
                 // 栈局部一律不进闭包（EUI 事件在帧间派发，引用捕获悬空）
                 TerminalSettings* sp = &settings;
-                auto persist = onSettingsChanged;
                 // 次按钮底色（设计 §9：浅 #F2F2F2/#E5E5E5 · 暗 #353231/#3E3B39）
                 const Color doneBg = t.isDark ? Color{0x35 / 255.0f, 0x32 / 255.0f, 0x31 / 255.0f, 1.0f}
                                               : Color{0xF2 / 255.0f, 0xF2 / 255.0f, 0xF2 / 255.0f, 1.0f};
@@ -998,7 +997,11 @@ GridLayout TerminalPage::compose(
                     .size(24.0f, 24.0f)
                     .radius(6.0f)
                     .states(kTransparent, t.colors.hover, t.colors.hover)
-                    .onClick([this]() { closeSettings(); });
+                    .onClick([this]() {
+                        // bug278④：× = 取消通道（module 回滚草稿快照）
+                        if (onPanelResult_) onPanelResult_(false);
+                        else closeSettings();
+                    });
                 ui.text("term.set.close.icon")
                     .position(cardX + cardW - kPanelPad - 24.0f, cardY + kPanelPad + 2.0f)
                     .size(24.0f, 24.0f)
@@ -1008,10 +1011,11 @@ GridLayout TerminalPage::compose(
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center);
 
-                // 行标签/微字基线（横排 label 128 定宽左对齐；窄窗 label 独占行，
-                // 「对新会话生效」贴 label 行右缘 §6）
+                // 行标签基线（横排 label 128 定宽左对齐；窄窗 label 独占行）。
+                // bug278③：「对新会话生效」提示整行删除（老板 2026-11-16 令，
+                // 覆盖 PRD §4.2④「行内右缘微字」设计——以老板口径为准）。
                 auto drawRowBase = [&](eui::Ui& inner, const std::string& id, float y,
-                                       const char* label, bool newSessionHint) {
+                                       const char* label) {
                     const float lw = narrowPanel ? innerW : kLabelW;
                     const float ly = narrowPanel ? y : y + (kRowBlockH - 20.0f) * 0.5f;
                     inner.text(id + ".label")
@@ -1021,18 +1025,6 @@ GridLayout TerminalPage::compose(
                         .fontSize(core::theme::scaled(14.0f))
                         .color(t.colors.textPrimary)
                         .verticalAlign(eui::VerticalAlign::Center);
-                    if (newSessionHint) {
-                        const float hw =
-                            textWidth("对新会话生效", core::theme::scaled(12.0f)) + 4.0f;
-                        inner.text(id + ".hint")
-                            .position(innerW - hw, y)
-                            .size(hw, 20.0f)
-                            .text("对新会话生效")
-                            .fontSize(core::theme::scaled(12.0f))
-                            .color(t.colors.textTertiary)
-                            .horizontalAlign(eui::HorizontalAlign::Right)
-                            .verticalAlign(eui::VerticalAlign::Center);
-                    }
                 };
 
                 // 内容区内滚（滚动条视觉隐藏 §2.2/§8）
@@ -1065,7 +1057,7 @@ GridLayout TerminalPage::compose(
                                 y += 12.0f + kGroupHeadH + 8.0f;
 
                                 // ① 字体（即时：度量链重算 → 全会话 resize）
-                                drawRowBase(inner, "term.set.row.font", y, "字体", false);
+                                drawRowBase(inner, "term.set.row.font", y, "字体");
                                 inner.stack("term.set.row.font.slot")
                                     .position(controlX, ctlY(y))
                                     .size(200.0f, kControlH)
@@ -1075,7 +1067,7 @@ GridLayout TerminalPage::compose(
                                             .theme(ct)
                                             .items(ft.labels)
                                             .selected(indexOfValue(ft, settings.fontFamily))
-                                            .onChange([sp, persist](int idx) {
+                                            .onChange([sp](int idx) {
                                                 // 表引用经静态单例访问器在闭包内取
                                                 //（compose 局部不进跨帧闭包）
                                                 const OptionTable& table = fontOptionTable();
@@ -1084,14 +1076,13 @@ GridLayout TerminalPage::compose(
                                                         idx, 0,
                                                         static_cast<int>(table.values.size()) -
                                                             1)];
-                                                persist();
                                             })
                                             .build();
                                     });
                                 y += rowH + 8.0f;
 
                                 // ② 字号（即时；钳 10–24 由 stepper min/max 承担）
-                                drawRowBase(inner, "term.set.row.fsize", y, "字号", false);
+                                drawRowBase(inner, "term.set.row.fsize", y, "字号");
                                 inner.stack("term.set.row.fsize.slot")
                                     .position(controlX, ctlY(y))
                                     .size(120.0f, kControlH)
@@ -1103,10 +1094,9 @@ GridLayout TerminalPage::compose(
                                             .max(kFontSizeMax)
                                             .step(1)
                                             .value(settings.fontSize)
-                                            .onChange([sp, persist](long long v) {
+                                            .onChange([sp](long long v) {
                                                 sp->fontSize = clampedFontSize(
                                                     static_cast<int>(v));
-                                                persist();
                                             })
                                             .build();
                                     });
@@ -1114,7 +1104,7 @@ GridLayout TerminalPage::compose(
 
                                 // ③ 配色主题：模式 segmented + 色板 dropdown 联动（跟随
                                 // 应用时色板置灰=灰字显示当前继承值，§4.2③）
-                                drawRowBase(inner, "term.set.row.palette", y, "配色主题", false);
+                                drawRowBase(inner, "term.set.row.palette", y, "配色主题");
                                 const float palCtlY = ctlY(y);
                                 inner.stack("term.set.row.palette.mode.slot")
                                     .position(controlX, palCtlY)
@@ -1128,11 +1118,10 @@ GridLayout TerminalPage::compose(
                                                               TerminalColorMode::Independent
                                                           ? 1
                                                           : 0)
-                                            .onChange([sp, persist](int idx) {
+                                            .onChange([sp](int idx) {
                                                 sp->colorMode = idx == 1
                                                                     ? TerminalColorMode::Independent
                                                                     : TerminalColorMode::FollowApp;
-                                                persist();
                                             })
                                             .build();
                                     });
@@ -1151,11 +1140,10 @@ GridLayout TerminalPage::compose(
                                                                   TerminalColorPalette::Dark
                                                               ? 1
                                                               : 0)
-                                                .onChange([sp, persist](int idx) {
+                                                .onChange([sp](int idx) {
                                                     sp->colorPalette =
                                                         idx == 1 ? TerminalColorPalette::Dark
                                                                  : TerminalColorPalette::Light;
-                                                    persist();
                                                 })
                                                 .build();
                                         });
@@ -1181,8 +1169,8 @@ GridLayout TerminalPage::compose(
                                     .verticalAlign(eui::VerticalAlign::Center);
                                 y += 12.0f + kGroupHeadH + 8.0f;
 
-                                // ④ 默认 shell（仅新会话；行内右缘微字）
-                                drawRowBase(inner, "term.set.row.shell", y, "默认 shell", true);
+                                // ④ 默认 shell（仅新会话生效；bug278③ 删提示微字）
+                                drawRowBase(inner, "term.set.row.shell", y, "默认 shell");
                                 inner.stack("term.set.row.shell.slot")
                                     .position(controlX, ctlY(y))
                                     .size(200.0f, kControlH)
@@ -1192,14 +1180,13 @@ GridLayout TerminalPage::compose(
                                             .theme(ct)
                                             .items(sht.labels)
                                             .selected(indexOfValue(sht, settings.shell))
-                                            .onChange([sp, persist](int idx) {
+                                            .onChange([sp](int idx) {
                                                 const OptionTable& table = shellOptionTable();
                                                 sp->shell =
                                                     table.values[std::clamp(
                                                         idx, 0,
                                                         static_cast<int>(table.values.size()) -
                                                             1)];
-                                                persist();
                                             })
                                             .build();
                                     });
@@ -1207,7 +1194,7 @@ GridLayout TerminalPage::compose(
 
                                 // ⑤ 启动目录（仅新会话；无效 → 红边+行下红字，不阻断；
                                 // 浏览 = 原生目录对话框，选中回填）
-                                drawRowBase(inner, "term.set.row.wdir", y, "启动目录", true);
+                                drawRowBase(inner, "term.set.row.wdir", y, "启动目录");
                                 const float inputW = controlW - 64.0f - 8.0f;
                                 const float wdirCtlY = ctlY(y);
                                 inner.stack("term.set.row.wdir.slot")
@@ -1220,9 +1207,8 @@ GridLayout TerminalPage::compose(
                                             .value(settings.workDir)
                                             .placeholder("默认（用户主目录）")
                                             .fontSize(core::theme::scaled(13.0f))
-                                            .onChange([sp, persist](const std::string& txt) {
+                                            .onChange([sp](const std::string& txt) {
                                                 sp->workDir = txt;
-                                                persist();
                                             })
                                             .build();
                                     });
@@ -1235,12 +1221,11 @@ GridLayout TerminalPage::compose(
                                     .size(browseW, kControlH)
                                     .radius(6.0f)
                                     .states(kTransparent, t.colors.hover, t.colors.hover)
-                                    .onClick([sp, persist, startDir = settings.workDir]() {
+                                    .onClick([sp, startDir = settings.workDir]() {
                                         auto picked = platform::folderpicker::pickFolder(
                                             "选择启动目录", startDir);
                                         if (picked.isOk()) {
                                             sp->workDir = picked.value();
-                                            persist();
                                         }
                                     });
                                 inner.text("term.set.row.wdir.browse.label")
@@ -1267,7 +1252,7 @@ GridLayout TerminalPage::compose(
                                 y += rowH + (workDirInvalid ? kHintH : 0.0f) + 8.0f;
 
                                 // ⑥ 回滚行数（即时改上限裁最旧；>50000 行下微字）
-                                drawRowBase(inner, "term.set.row.sb", y, "回滚行数", false);
+                                drawRowBase(inner, "term.set.row.sb", y, "回滚行数");
                                 inner.stack("term.set.row.sb.slot")
                                     .position(controlX, ctlY(y))
                                     .size(140.0f, kControlH)
@@ -1279,10 +1264,9 @@ GridLayout TerminalPage::compose(
                                             .max(kScrollbackMax)
                                             .step(100)
                                             .value(settings.scrollback)
-                                            .onChange([sp, persist](long long v) {
+                                            .onChange([sp](long long v) {
                                                 sp->scrollback =
                                                     clampedScrollback(static_cast<int>(v));
-                                                persist();
                                             })
                                             .build();
                                     });
@@ -1297,7 +1281,7 @@ GridLayout TerminalPage::compose(
                                 y += rowH + (scrollbackHeavy ? kHintH : 0.0f) + 8.0f;
 
                                 // ⑦ 光标样式（即时）：块/线 segmented + 闪烁 switch
-                                drawRowBase(inner, "term.set.row.cursor", y, "光标", false);
+                                drawRowBase(inner, "term.set.row.cursor", y, "光标");
                                 const float curCtlY = ctlY(y);
                                 inner.stack("term.set.row.cursor.style.slot")
                                     .position(controlX, curCtlY)
@@ -1311,11 +1295,10 @@ GridLayout TerminalPage::compose(
                                                               TerminalCursorStyle::Bar
                                                           ? 1
                                                           : 0)
-                                            .onChange([sp, persist](int idx) {
+                                            .onChange([sp](int idx) {
                                                 sp->cursorStyle = idx == 1
                                                                       ? TerminalCursorStyle::Bar
                                                                       : TerminalCursorStyle::Block;
-                                                persist();
                                             })
                                             .build();
                                     });
@@ -1333,9 +1316,8 @@ GridLayout TerminalPage::compose(
                                     .size(44.0f, 24.0f)
                                     .checked(settings.cursorBlink)
                                     .theme(ct)
-                                    .onChange([sp, persist](bool v) {
+                                    .onChange([sp](bool v) {
                                         sp->cursorBlink = v;
-                                        persist();
                                     })
                                     .build();
                             });
@@ -1354,9 +1336,8 @@ GridLayout TerminalPage::compose(
                     .size(resetW, 32.0f)
                     .radius(6.0f)
                     .states(kTransparent, t.colors.hover, t.colors.hover)
-                    .onClick([sp, persist]() {
+                    .onClick([sp]() {
                         *sp = TerminalSettings{};
-                        persist();
                     });
                 ui.text("term.set.reset.label")
                     .position(cardX + kPanelPad, footerY)
@@ -1372,7 +1353,11 @@ GridLayout TerminalPage::compose(
                     .size(doneW, 32.0f)
                     .radius(6.0f)
                     .states(doneBg, doneHover, doneHover)
-                    .onClick([this]() { closeSettings(); });
+                    .onClick([this]() {
+                        // bug278④：完成 = 提交通道（module 落库+新会话参数生效）
+                        if (onPanelResult_) onPanelResult_(true);
+                        else closeSettings();
+                    });
                 ui.text("term.set.done.label")
                     .position(cardX + cardW - kPanelPad - doneW, footerY)
                     .size(doneW, 32.0f)

@@ -24,20 +24,28 @@ namespace terminal {
 class TerminalPage {
 public:
     // 装配整页。onKeyBytes=键编码产物；onTextInput=IME 提交/粘贴；onCopyText=选区文本
-    //（Ctrl/Cmd+C 复制时回调，module 接剪贴板）。settings=面板单一数据源（module 持有
-    // + 持久化，need250）；onSettingsChanged=面板任意改动回调（module 落库 + 同步
-    // controller 新会话参数）。设置钮 = 页内模态面板（openSettings），不再外跳导航。
+    //（Ctrl/Cmd+C 复制时回调，module 接剪贴板）。settings=面板单一数据源（module 持有；
+    // bug278④ 草稿语义：面板改动直写 settings_ 即 live preview，无逐改动持久化通道，
+    // 落库/生效只在「完成」→ setPanelResultHandler(commit=true)）。设置钮 = 页内模态
+    // 面板（openSettings），不再外跳导航。
     GridLayout compose(eui::Ui& ui, const eui::Screen& screen, SessionController& controller,
                        const std::function<void(const uint8_t*, int32_t)>& onKeyBytes,
                        const std::function<void(const std::string&, bool paste)>& onTextInput,
                        const std::function<void(const std::string&)>& onCopyText,
-                       TerminalSettings& settings,
-                       const std::function<void()>& onSettingsChanged);
+                       TerminalSettings& settings);
 
     // 设置面板开合（齿轮钮 / Esc / × / 完成 三通道关闭；点 scrim 不关，设计 §2.1）
-    void openSettings() { settingsOpen_ = true; }
+    void openSettings() { settingsOpen_ = true; panelScroll_ = 0.0f; }
     void closeSettings() { settingsOpen_ = false; }
     bool settingsOpen() const { return settingsOpen_; }
+
+    // bug278④：面板结果通道——完成=true（提交：落库+新会话参数生效）、×=false
+    // （丢弃：回滚打开时刻快照）。未接线时回落旧行为（仅关闭）；装配方注入见
+    // module_terminal.cpp。openSettings 同步清 panelScroll_：复开不得残留上次
+    // 内滚偏移（bug278①布局异常候选之一）。
+    void setPanelResultHandler(std::function<void(bool commit)> h) {
+        onPanelResult_ = std::move(h);
+    }
 
     // bug248：量化 resize 去抖 100ms——拖拽窗口时 layout 每帧变化，原实现每帧直接
     // resizeActive（ResizePseudoConsole + CancelIoEx 打断在飞 ReadFile），放大输入
@@ -88,6 +96,7 @@ private:
     bool fullscreenInit_ = false;
     bool settingsOpen_ = false;      // need250 设置面板开合
     float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
+    std::function<void(bool)> onPanelResult_;  // bug278④ 面板结果通道（完成/×）
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
     // 拖选（可视网格行列）
     bool selecting_ = false;
