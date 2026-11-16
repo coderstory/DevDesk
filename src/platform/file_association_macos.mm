@@ -1,8 +1,9 @@
 // src/platform/file_association_macos.mm
 // macOS .md 文件关联（F-09，方案卡 §二.F-09，双路径=预置 A D-6）。
 // 落点名偏差说明：卡面写 file_association_macos.cpp，实为 .mm——12+ 写入路径
-// NSWorkspace setDefaultApplicationAtURL:toOpenURL: 无 C 等价 API，本 TU 必须
-// ObjC++（repo 先例 notification_macos.mm；.h 接口与注入缝零改动）。
+// NSWorkspace 设默认无 C 等价 API（现行 toOpenContentTypeOfFileAtURL:
+// completionHandler:；旧 toOpenURL: error 形态已随 27.2 SDK 整体移除），本 TU
+// 必须 ObjC++（repo 先例 notification_macos.mm；.h 接口与注入缝零改动）。
 // 架构红线：版本→API 路径唯一权威 = file_association_api_map.h（纯逻辑单测钉死），
 // @available 仅编译期可用性守卫，运行期判定收敛本单文件（平台宏不出 *_macos）。
 // clue10 口径（同 win）：写入成功 ≠ 双击行为生效——setAsDefaultForMd 返回值 =
@@ -22,8 +23,10 @@
 
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // UTType 类反查（11.0+；C API 12.0 起弃用）
 
-#include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag / LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
+#include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag（<12 保守路径）/ LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
+#include <dispatch/dispatch.h> // NSWorkspace completionHandler → 同步 Result 桥接（信号量+超时）
 #include <sys/sysctl.h>
 
 #include <cstdlib>
@@ -79,15 +82,38 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "扩展名转 CFString 失败");
     }
-    CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
-        kUTTagClassFilenameExtension, extCf, nullptr);
-    CFRelease(extCf);
-    if (uti == nullptr) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               "扩展名未解析出 UTI (" + extNoDot + ")");
+    std::string out;
+    if (@available(macOS 12.0, *)) {
+        // 12+：UTType 类反查（typeWithTag:tagClass:conformingTo:，11.0+；C API
+        // 12.0 起弃用）——仍是运行期按 tag 反查，非硬编码 UTI 串
+        NSString* const extNs = (__bridge NSString*)extCf;
+        UTType* const utType =
+            [UTType typeWithTag:extNs
+                       tagClass:UTTagClassFilenameExtension
+                   conformingTo:nil];
+        if (utType == nil) {
+            CFRelease(extCf);
+            return core::Result<std::string>::fail(
+                core::ErrorCode::Internal,
+                "扩展名未解析出 UTI (" + extNoDot + ")");
+        }
+        const char* const utf = utType.identifier.UTF8String;
+        if (utf != nullptr) out.assign(utf);
+    } else {
+        // <12：C API 保守路径（12.0 起弃用；@available 分界=弃用版本，此分支
+        // 仅 <12 系统触达，clang 不出弃用告警）
+        CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
+            kUTTagClassFilenameExtension, extCf, nullptr);
+        if (uti == nullptr) {
+            CFRelease(extCf);
+            return core::Result<std::string>::fail(
+                core::ErrorCode::Internal,
+                "扩展名未解析出 UTI (" + extNoDot + ")");
+        }
+        out = cfToStdString(uti);
+        CFRelease(uti);
     }
-    const std::string out = cfToStdString(uti);
-    CFRelease(uti);
+    CFRelease(extCf);
     if (out.empty()) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "UTI 转 string 失败 (" + extNoDot + ")");
@@ -227,14 +253,30 @@ core::Result<bool> setAsDefaultForMd(const AssocConfig& config) {
             CFURLRef const docUrl = probeFileUrl(ext);
             NSURL* const docNs = (__bridge NSURL*)docUrl;
             NSURL* const appNs = (__bridge NSURL*)self.value().second;
-            NSError* nsErr = nil;
-            const BOOL ok = [[NSWorkspace sharedWorkspace]
-                setDefaultApplicationAtURL:appNs
-                                 toOpenURL:docNs
-                                     error:&nsErr];
+            // 27.2 SDK：旧 toOpenURL:（error 出参/completionHandler 两形态）已整体
+            // 移除（docs 404 + 编译器 no visible @interface 同证）；现行 =
+            // toOpenContentTypeOfFileAtURL:（12.0+，按探针文件 URL 的 content
+            // type 设默认，与旧 toOpenURL: 同语义）。回调投递队列官方未承诺 →
+            // 信号量桥接 + 10s 超时兜底（最坏 bounded 失败不挂死，同步 Result
+            // 契约不变）
+            dispatch_semaphore_t const done = dispatch_semaphore_create(0);
+            __block NSError* nsErr = nil;
+            [[NSWorkspace sharedWorkspace]
+                    setDefaultApplicationAtURL:appNs
+                  toOpenContentTypeOfFileAtURL:docNs
+                             completionHandler:^(NSError* err) {
+                                 nsErr = err;
+                                 dispatch_semaphore_signal(done);
+                             }];
+            const long waitSt = dispatch_semaphore_wait(
+                done, dispatch_time(DISPATCH_TIME_NOW, 10LL * NSEC_PER_SEC));
             CFRelease(docUrl);
-            if (ok) {
+            if (waitSt == 0 && nsErr == nil) {
                 written = core::Result<void>::ok();
+            } else if (waitSt != 0) {
+                written = core::Result<void>::fail(
+                    core::ErrorCode::Internal,
+                    "NSWorkspace 设默认回调超时（10s，投递队列未承诺）");
             } else {
                 written = core::Result<void>::fail(
                     core::ErrorCode::Internal,
