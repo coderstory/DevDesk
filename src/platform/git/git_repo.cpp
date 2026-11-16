@@ -89,8 +89,14 @@ core::Result<DiffResult> buildDiff(git_repository* repo, DiffBasis basis,
     // 二进制探测不跳过（patch.binary 标记供 F-11 占位判定）。
     opts.flags = GIT_DIFF_INCLUDE_UNTRACKED;
     std::string filter = pathFilter;
+    // bug281/bug285 同源（CI Release 红）：pathspec 指针数组必须活到全部
+    // git_diff_* 调用之后——原实现把 char* 声明在 if 块内，opts.pathspec.strings
+    // 存的是块内栈槽地址，块结束即悬空（Debug 栈槽未被复用侥幸绿，Release
+    // -O2 栈槽复用 → libgit2 读到垃圾 → pathFilter 恒 0 补丁）。filter 本体是
+    // 函数域 std::string，data() 在 diff 调用期间有效；只需指针与数组同寿。
+    char* pathspec = nullptr;
     if (!filter.empty()) {
-        char* pathspec = filter.data();
+        pathspec = filter.data();
         opts.pathspec.strings = &pathspec;
         opts.pathspec.count = 1;
     }
