@@ -56,6 +56,32 @@ constexpr float kHomeActionsBottomMargin = 16.0f;
 // 图表内部几何自适应：wrap = 卡高−64（基准档 156）、plot 高 = wrap−112（44，
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 
+// 卡片网格（need268，2026-11-16 拍板「整页卡片网格 + 响应式列数」）：
+// dashboard 惯例是卡片宽恒等、列数随窗宽变——模块关停后幸存卡不跟着拉成巨卡。
+//   · minCardW = 单卡可读下限：低于它文字挤成一团（96 高卡里 30px 数字要放下）；
+//   · cols 由可用宽反推，上限为元数据表行数（5）；
+//   · cardW 用「按列数均分」的精确值，保证一行正好排满不留参差。
+// 卡片自身宽度固定，行内换行交给 EUI flow（core/layout.h layoutFlow）。
+//
+// minCardW 取 180 而非更宽松的值：最小窗（1000 逻辑宽，contentW=936）必须仍能
+// 5 列单行——否则统计区变两行，会挤掉图表卡的纵向弹性（H18 双档契约）。
+constexpr float kHomeCardMinW = 180.0f;
+constexpr int kHomeCardMaxCols = 5;
+
+int homeGridColumns(float availableW, float gap) {
+    for (int cols = kHomeCardMaxCols; cols > 1; --cols) {
+        const float cardW =
+            (availableW - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
+        if (cardW >= kHomeCardMinW) return cols;
+    }
+    return 1;  // 窄窗兜底：单列占满
+}
+
+float homeGridCardWidth(float availableW, float gap, int cols) {
+    if (cols <= 1) return availableW;
+    return (availableW - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
+}
+
 // 玻璃统计卡（2026-11-01 重构）：玻璃白半透底 + 16px 圆角 + 20px 内边距 +
 // 指标名 14px（说明并入「笔记 · 今日」）/ 数据 30px 700 一级 两行排版。
 // 五色实底退役（S6.6）：那 5 色不承载状态语义，五个彩色焦点互相抢，反而不聚焦。
@@ -375,8 +401,17 @@ public:
             }
             const bool hasActions = actCount > 0;
             const float statBaseH = 96.0f * core::theme::fontScale();
+            // 卡片网格列数（need268）：按可用宽反推，窄窗自动减列、超宽屏最多 5 列。
+            // ⚠ 列宽必须按**网格容量**算，不能按可见卡数算——后者会让少卡时每卡
+            // 分到更大份额，正是「3 张巨卡」的成因（旧行为）。可见卡少就在行尾留白。
+            const int gridCols = homeGridColumns(contentW, cardGap);
+            const int statCols = gridCols;
+            const int statRows = hasStats ? ((statCount + statCols - 1) / statCols) : 0;
             // 全关时统计区是 32 高空态行（见下方 statCount == 0 分支）。
-            const float statsBlockH = hasStats ? statBaseH : 32.0f;
+            const float statsBlockH =
+                hasStats ? (statBaseH * static_cast<float>(statRows) +
+                            cardGap * static_cast<float>(statRows - 1))
+                         : 32.0f;
             const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
             // 图表卡基准高：折叠态只留标题行，基准随之收缩（否则底部留出一整块空白）。
             // 折叠高随字号缩放（B7 D2）：字号放大后标题行更高，固定 64 会截断。
@@ -395,11 +430,16 @@ public:
             const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
             // 余高去向：统计行分 18%，图表卡吸收其余；图表卡缺席时统计行全吃。
             // 折叠态不参与伸展：多出的高度留白，不把统计卡拉成巨块。
-            const float statsGrowH =
+            // 网格化后统计区可能多行，增量按行均摊——单卡高度不随窗宽飘。
+            const float statsGrowTotalH =
                 hasStats ? ((hasChart && !chartCollapsed_)
                                 ? extraH * kHomeStatGrowRatio
                                 : (hasChart ? 0.0f : extraH))
                          : 0.0f;
+            const float statsGrowH =
+                (hasStats && statRows > 0)
+                    ? statsGrowTotalH / static_cast<float>(statRows)
+                    : 0.0f;
             const float statH = statBaseH + statsGrowH;
         ui.column("home.root")
             // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」→ 永不判可滚
@@ -493,15 +533,17 @@ public:
                         .color(t.colors.textTertiary)
                         .build();
                 } else {
-                const float statW =
-                    (contentW - cardGap * static_cast<float>(statCount - 1)) /
-                    static_cast<float>(statCount);
+                // 卡片网格（need268）：列数随窗宽响应，卡宽按列数均分后固定——模块
+                // 关停后幸存卡保持原尺寸，不再被拉成「三张巨卡」。换行由 EUI flow
+                // 自动完成（core/layout.h layoutFlow），行间距走 lineGap。
+                const float statW = homeGridCardWidth(contentW, cardGap, statCols);
                 // sparkline 序列只取一次（live 判定与图表绘制共用；空序列兜底 {0.0f}）。
                 const std::vector<float> sparkSeries =
                     core::proxy_stats::rateSeries(24);
-                ui.row("home.stats")
-                    .size(contentW, statH)
+                ui.flow("home.stats")
+                    .size(contentW, statsBlockH + statsGrowTotalH)
                     .gap(cardGap)
+                    .lineGap(cardGap)
                     .content([&] {
                         // 逐表行渲染：行序 = 渲染序，元素 id 由 kind 决定；数值/配色/图表按行身份在表外取。
                         for (const auto& card : kStatCards) {

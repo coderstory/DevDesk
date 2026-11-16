@@ -281,6 +281,12 @@ add_executable(devdesk_tests
     # need:132 审查打回轮：字体度量本端门禁 doctest（资产指纹/测宽 hash/回退链序
     # 三件断言，见文件头注释；hash 基线常量变更须显式过 review）
     unit/font_metrics_gate.cpp
+    # need:266 系统字体族枚举本端门禁 doctest（枚举非空/去重/白名单外族名真解析，
+    # 与 EUI-NEO tests/unit/system_font_families.cpp 同构，见该文件头注释）
+    # ⚠ 暂时停用（2026-11-16）：该用例依赖 EUI-NEO feat/system-font-enum 分支的
+    # TextPrimitive::systemFontFamilies（need266 尚未合入 main），在 main 上编不过，
+    # 会把整条 macOS 构建链拖红。源文件保留，need266 合并进 main 后取消注释。
+    # unit/system_font_gate.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，

@@ -750,3 +750,52 @@ REGISTER_TEST(gating_home_actions_row_collapse,
     }
     return true;
 })
+
+// need268（2026-11-16 反馈）：首页统计卡改卡片网格后，模块关停不能让幸存卡被拉成
+// 「巨卡」。判据取卡宽与「满 5 列时的应有卡宽」一致——旧算法 contentW/statCount
+// 会让 3 卡各吃 1/3 宽（≈430px @1400 窗），网格化后恒等于满格宽（≈250px）。
+REGISTER_TEST(home_stats_grid_card_width_stable,
+              "home: 统计卡网格——关停模块后卡宽不随可见数拉伸（need268）", {
+    // 只注册 home / markdown / todo / settings（claude 关停 → 只剩 3 张统计卡）
+    ::core::Router router;
+    StubModule home(::core::PageId::Home, "home");
+    StubModule markdown(::core::PageId::Markdown, "markdown");
+    StubModule todo(::core::PageId::Todo, "todo");
+    StubModule settings(::core::PageId::Settings, "settings");
+    router.registerModule(&home);
+    router.registerModule(&markdown);
+    router.registerModule(&todo);
+    router.registerModule(&settings);
+    test_support::ScopedAppRouter scoped(&router);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Screen screen;
+    screen.width = 1400.0f;
+    screen.height = 800.0f;
+    eui::Ui ui;
+    ui.begin("home_grid_3cards");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* notes = ui.find("home.stat.notes");
+    const auto* pending = ui.find("home.stat.todo");
+    const auto* overdue = ui.find("home.stat.overdue");
+    DOCTEST_REQUIRE(notes != nullptr);
+    DOCTEST_REQUIRE(pending != nullptr);
+    DOCTEST_REQUIRE(overdue != nullptr);
+
+    // 幸存三卡等宽（同一网格列宽）
+    DOCTEST_CHECK(std::fabs(notes->frame.width - pending->frame.width) < 0.5f);
+    DOCTEST_CHECK(std::fabs(notes->frame.width - overdue->frame.width) < 0.5f);
+
+    // 卡宽必须明显小于「3 卡铺满整行」的宽度：这是本用例的核心判据。
+    // contentW = 窗宽 − 左右 pad(32×2) − 侧栏 220 = 1116；三卡铺满时每卡 ≈366。
+    // 网格化后按 5 列算 ≈213，取 300 为分界足够区分两代算法。
+    DOCTEST_CHECK(notes->frame.width < 300.0f);
+
+    // 三卡应在同一行内（首行 y 相同；不因换行错位）
+    DOCTEST_CHECK(std::fabs(notes->frame.y - pending->frame.y) < 0.5f);
+    DOCTEST_CHECK(std::fabs(notes->frame.y - overdue->frame.y) < 0.5f);
+    return true;
+})
