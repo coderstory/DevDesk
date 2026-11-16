@@ -23,6 +23,10 @@
 
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+// 27.2 SDK 实测（CI run 43889570987）：伞头不引全 UTType.h——类与常量可见、
+// +typeWithTag: 方法声明不可见（no known class method 同证）→ 显式引类头/常量头
+#import <UniformTypeIdentifiers/UTType.h>
+#import <UniformTypeIdentifiers/UTTagClass.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // UTType 类反查（11.0+；C API 12.0 起弃用）
 
 #include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag（<12 保守路径）/ LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
@@ -100,10 +104,14 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
         const char* const utf = utType.identifier.UTF8String;
         if (utf != nullptr) out.assign(utf);
     } else {
-        // <12：C API 保守路径（12.0 起弃用；@available 分界=弃用版本，此分支
-        // 仅 <12 系统触达，clang 不出弃用告警）
+        // <12：C API 保守路径（12.0 起弃用，仅 <12 系统触达）。CI 实证：clang 的
+        // -Wdeprecated-declarations 不随 @available else 分支自动消 → 显式 pragma
+        // 包住 legacy 调用点（push/pop 成对）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
             kUTTagClassFilenameExtension, extCf, nullptr);
+#pragma clang diagnostic pop
         if (uti == nullptr) {
             CFRelease(extCf);
             return core::Result<std::string>::fail(
