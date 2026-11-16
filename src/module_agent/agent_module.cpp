@@ -17,6 +17,7 @@
 #include <ctime>
 #include <functional>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 
 #include <components/button.h>
@@ -281,6 +282,42 @@ void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
                 .build();
         })
         .build();
+}
+
+// bug248 同款（terminal_page.cpp textWidth 先例）：measureTextWidth 无缓存、
+// 每帧对同批字符串完整 shaping——任务卡逐帧 3-5 次（标题实宽/状态药丸/徽章链/
+// 触发文案，agent_module.cpp:764-773/1012-1014/1041-1044）。键空间小且有界
+//（任务数有限 + 固定文案徽章），超 64 键整体清空防膨胀；键含字重/字族/字号/
+// 字符串（字重入键防 400/500/600 档互串——terminal 版 bug267 同款防御）。
+float cachedTextWidth(const std::string& s, float size, float weight,
+                      const std::string& family = {}) {
+    struct Key {
+        float size;
+        float weight;
+        std::string family;
+        std::string s;
+        bool operator==(const Key& o) const {
+            return size == o.size && weight == o.weight &&
+                   family == o.family && s == o.s;
+        }
+    };
+    struct KeyHash {
+        std::size_t operator()(const Key& k) const {
+            std::size_t h = (std::hash<std::string>{}(k.s) ^
+                             (std::hash<std::string>{}(k.family) *
+                              0x9e3779b9ULL));
+            return (h ^ (std::hash<float>{}(k.size) * 0xc2b2ae3dULL)) ^
+                   (std::hash<float>{}(k.weight) * 0x85ebca6bULL);
+        }
+    };
+    static std::unordered_map<Key, float, KeyHash> cache;
+    if (cache.size() >= 64) cache.clear();
+    Key key{size, weight, family, s};
+    const auto it = cache.find(key);
+    if (it != cache.end()) return it->second;
+    const float w = core::TextPrimitive::measureTextWidth(s, family, size, weight);
+    cache.emplace(std::move(key), w);
+    return w;
 }
 
 } // namespace
@@ -761,16 +798,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         // + pad 12×2 = 120 正好填满卡高，消除行间/底部空白袋
                         const float rowGap = core::theme::scaled(12.0f);
                         const float cardH = core::theme::scaled(kTaskCardH);
-                        const float pillTextW = core::TextPrimitive::measureTextWidth(
-                            status, "", stSmall.fontSize, 500);
+                        const float pillTextW =
+                            cachedTextWidth(status, stSmall.fontSize, 500);
                         const float pillW = pillTextW + core::theme::scaled(30.0f);
                         // need261 §2.2 行1 inline：药丸永远紧贴标题实宽 +8（不再
                         // 钉卡右缘）；标题实宽封顶 = 卡内可用 − 8 − 药丸宽，超长
                         // 单行省略（挤压顺序：标题最先饿→药丸定宽不缩）
                         const float inlineGap = core::theme::scaled(8.0f);
                         const float titleMeasuredW =
-                            core::TextPrimitive::measureTextWidth(
-                                task.name, "", stTitle.fontSize, 600);
+                            cachedTextWidth(task.name, stTitle.fontSize, 600);
                         const float titleMaxInlineW =
                             std::max(0.0f, cardW - cardPad * 2.0f - inlineGap -
                                                pillW);
@@ -1010,8 +1046,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                  const std::string& text,
                                                  const eui::Color& color) {
                                     const float textW =
-                                        core::TextPrimitive::measureTextWidth(
-                                            text, "", stSmall.fontSize, 400);
+                                        cachedTextWidth(text, stSmall.fontSize,
+                                                        400);
                                     inner.text(id + suffix)
                                         .position(badgeX, statusRowY)
                                         .size(textW, stSmall.lineHeight)
@@ -1039,8 +1075,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     cron.empty() ? triggerLabelOf(task.triggerType)
                                                  : cron;
                                 const float triggerW = std::min(
-                                    core::TextPrimitive::measureTextWidth(
-                                        triggerText, "", stSmall.fontSize, 400),
+                                    cachedTextWidth(triggerText,
+                                                    stSmall.fontSize, 400),
                                     std::max(0.0f, cardW - cardPad - badgeX));
                                 inner.text(id + ".trigger")
                                     .position(badgeX, statusRowY)

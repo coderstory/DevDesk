@@ -25,6 +25,7 @@
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 namespace module::settings {
@@ -44,16 +45,43 @@ inline constexpr float kStatusDot = 6.0f;      // 状态点 6×6（与状态字�
 inline constexpr float kSwitchW = 44.0f;       // 开关字面值（不随字号缩放）
 inline constexpr float kSwitchH = 24.0f;
 inline constexpr float kGuideTextY = 88.0f;    // 引导文案带 y（仅未生效态）
-inline constexpr float kGuideLineH = 16.0f;    // 引导文案行高（mac 两行 = 16×2）
+inline constexpr float kGuideLineH = kMdAssocGuideLineH; // 行高单一来源（logic.h）
 inline constexpr float kGuideIconW = 12.0f;    // 警告图标占宽（先例 settings_ui_cards.cpp:714）
 inline constexpr float kGuideIconGapX = 4.0f;
 inline constexpr float kGuideBtnY = 108.0f;    // Win 一键按钮行 y（左锚）
 inline constexpr float kBtnH = 28.0f;          // Win 一键按钮高（字面值，主导引导行盒）
 inline constexpr float kBtnPadX = 12.0f;       // 按钮宽 = 文字实宽 + 左右内边距
 
+// mac 文字指引（文案即设计，need260 §2.3 未改文案）：drawMdAssocCard 与
+// mdAssocMacGuideLineCount 单一来源。
+constexpr const char* kMacGuideText =
+    "macOS 无一键入口：Finder 右键任一 .md → 显示简介 → "
+    "打开方式 → 选 DevDesk → 全部更改";
+
+// 引导文案可用宽推导（drawMdAssocCard 与行数实测共用，防两处漂移）。
+float mdAssocGuideAvailW(float cardW) {
+    const float textX = kCardPadX + roundFs(kGuideIconGapX) + kGuideIconW;
+    return std::max(0.0f, cardW - textX - kCardPadX);
+}
+
 } // namespace
 
+int mdAssocMacGuideLineCount(float cardW) {
+    const float availW = mdAssocGuideAvailW(cardW);
+    if (availW <= 0.0f) return 2;
+    const float textW =
+        core::TextPrimitive::measureTextWidth(kMacGuideText, {}, fs(11.0f), 400);
+    // 2px 安全垫：整串实测 ÷ 可用宽的 ceil 近似 greedy 断行（断点空隙损耗）
+    const int lines = static_cast<int>(
+        std::ceil(textW / std::max(1.0f, availW - 2.0f)));
+    return lines < 2 ? 2 : lines;
+}
+
 void drawMdAssocCard(const CardDrawArgs& args) {
+    drawMdAssocCard(args, /*forceTextGuide=*/false);
+}
+
+void drawMdAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
     const float w = args.w;
@@ -63,7 +91,8 @@ void drawMdAssocCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    const bool oneClick = platform::open_settings::oneClickAvailable();
+    const bool oneClick =
+        forceTextGuide ? false : platform::open_settings::oneClickAvailable();
     // 状态字四态（判定契约 = mdAssocStatusKind；开关显本地意图、真值校正走状态字）
     const auto kind = mdAssocStatusKind(in.cfg.mdAssocEnabled,
                                         in.cfg.mdAssocEverEnabled,
@@ -167,7 +196,7 @@ void drawMdAssocCard(const CardDrawArgs& args) {
                 .color(t.colors.warningText)
                 .build();
             const float textX = padX + roundFs(kGuideIconGapX) + iconW;
-            const float textW2 = std::max(0.0f, w - textX - padX);
+            const float textW2 = mdAssocGuideAvailW(w);
             if (oneClick) {
                 // Windows：单行文案（省略号兜底）+ 独立一行一键按钮（宽 = 文字
                 // 实宽 + 左右 12 内边距，左轨锚）
@@ -198,12 +227,15 @@ void drawMdAssocCard(const CardDrawArgs& args) {
                                   openDefaultAppsSettings] { f(); })
                     .build();
             } else {
-                // macOS：无程序化直达（PRD D-5），文字指引两行（wrap、行高 16）
+                // macOS：无程序化直达（PRD D-5），文字指引盒高随实测行数派生
+                // （review P2-1：600 最小窗/130% 字号档 38 字指引超两行，固定
+                // 两行盒 + clip 会静默裁切第三行；行数与卡高契约同源函数）。
+                const float macLines =
+                    static_cast<float>(mdAssocMacGuideLineCount(w));
                 ui.text(id + ".guide.text")
                     .position(textX, gY)
-                    .size(textW2, roundFs(kGuideLineH) * 2.0f)
-                    .text("macOS 无一键入口：Finder 右键任一 .md → 显示简介 → "
-                          "打开方式 → 选 DevDesk → 全部更改")
+                    .size(textW2, roundFs(kGuideLineH) * macLines)
+                    .text(kMacGuideText)
                     .fontSize(fs(11.0f))
                     .lineHeight(roundFs(kGuideLineH))
                     .wrap(true)

@@ -1274,8 +1274,20 @@ public:
         const bool mdAssocGuide =
             mdAssocStatusKind(cfg_.mdAssocEnabled, cfg_.mdAssocEverEnabled,
                               mdAssocState_) == MdAssocStatusKind::NotEffective;
-        const float mdAssocH = roundFs(mdAssocCardHeight(
-            mdAssocGuide, platform::open_settings::oneClickAvailable()));
+        const bool mdAssocOneClick =
+            platform::open_settings::oneClickAvailable();
+        // review P2-1：mac 文字引导档卡高随实测行数派生（600 最小窗/130% 字号
+        // 38 字指引超两行）。卡宽 = 配对列宽（ui_kit::columnX 半宽口径，与
+        // drawCardRegion :1751 同源），行数实测与卡绘制共用 md_assoc_card.h 函数。
+        int mdAssocTextLines = 2;
+        if (mdAssocGuide && !mdAssocOneClick) {
+            float mdCardW = contentW;
+            ui_kit::columnX(contentW, t.sizes.spacing, &mdCardW, nullptr);
+            mdAssocTextLines =
+                mdAssocMacGuideLineCount(mdCardW);
+        }
+        const float mdAssocH = roundFs(
+            mdAssocCardHeight(mdAssocGuide, mdAssocOneClick, mdAssocTextLines));
         // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
         // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 签 claude + mcp。
         const bool claudeOn =

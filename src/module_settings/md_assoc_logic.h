@@ -45,10 +45,20 @@ inline constexpr float kMdAssocCardHeight = 108.0f;
 // 溢出的病灶由本次半宽重排一并消除）。
 inline constexpr float kMdAssocCardHeightTextGuide = 140.0f;
 inline constexpr float kMdAssocCardHeightBtnGuide = 152.0f;
-inline float mdAssocCardHeight(bool guide, bool oneClickButton) {
+// 引导文案行高（mac 文字档盒高 = 行数 × 本值；单一来源，md_assoc_card.cpp
+// 引导行盒与卡高派生共用）。100% 档两行 = 设计 §2.3 基线。
+inline constexpr float kMdAssocGuideLineH = 16.0f;
+// 卡高（纯算术，无 UI 依赖）：文字档行数由调用方实测传入（md_assoc_card.h
+// mdAssocMacGuideLineCount，600 最小窗/130% 字号档 38 字指引超两行，盒高随行数
+// 派生防静默裁切——review P2-1）；参考几何（100% 档两行）= 140 不变，设计
+// §7 卡高契约与 §6 零滚动预算在基准档下守住，放大档超出由 scrollView 吸收。
+inline float mdAssocCardHeight(bool guide, bool oneClickButton,
+                               int textGuideLines = 2) {
     if (!guide) return kMdAssocCardHeight;
-    return oneClickButton ? kMdAssocCardHeightBtnGuide
-                          : kMdAssocCardHeightTextGuide;
+    if (oneClickButton) return kMdAssocCardHeightBtnGuide;
+    const int lines = textGuideLines < 2 ? 2 : textGuideLines;
+    return kMdAssocCardHeightTextGuide +
+           static_cast<float>(lines - 2) * kMdAssocGuideLineH;
 }
 
 } // namespace module::settings

@@ -24,7 +24,10 @@
 #include "md_assoc_logic.h"
 #include "settings_config.h"
 #include "settings_ui_cards.h"
+#include "settings_ui_logic.h"  // kReminderCardHeight / roundFs
 #include "platform/open_settings.h"
+
+#include <core/theme.h>  // setFontScale（130% 档位注入）
 
 #include <cmath>
 #include <cstdlib>
@@ -180,6 +183,162 @@ int main(int argc, char* argv[]) {
                 passed = false;
             }
         }
+    }
+
+    // ── 130% 字号档·配对行不错轨（review P2-5，验 P1 左轨恒 28 直修）──
+    // 直绘提醒卡 + md 卡（同原点，帧内相对坐标可比对跨卡同锚）：标题左缘恒 28
+    // 字面、开关右缘恒 卡宽−28，两卡必须相等。130% 下 roundFs(28)=36——若卡内
+    // 左轨回退 roundFs 包裹（P1 修复前病灶）即错轨（断言红绿已双向验证）。
+    {
+        core::theme::setFontScale(1.30f);
+        int failures = 0;
+        auto expect = [&](bool ok, const std::string& what) {
+            if (!ok) {
+                std::cerr << "md_assoc_probe[pair_130]: " << what << "\n";
+                ++failures;
+            }
+        };
+        module::settings::SettingsConfig cfg;  // off_never：无引导带，纯格律
+        std::vector<std::string> noLog;
+        std::string noDraft;
+        module::settings::SettingsCardsIn in{cfg, noDraft, noLog};
+        in.mdAssocState = platform::file_association::AssocState::Unknown;
+        module::settings::SettingsCardActions a;
+        eui::Ui* uiPtr = nullptr;
+        probe::composeModuleFrame(
+            runtime, window, "md_assoc_probe",
+            static_cast<float>(args.windowW), static_cast<float>(args.windowH),
+            [&](eui::Ui& ui, const eui::Screen& screen) {
+                (void)screen;
+                uiPtr = &ui;
+                core::theme::Tokens t = core::theme::current();
+                const float hL =
+                    std::round(module::settings::kReminderCardHeight * 1.30f);
+                module::settings::CardDrawArgs left{
+                    ui, "settings.card.reminder", kCardW, hL, t, 0.0f, 0.0f,
+                    in, a};
+                module::settings::drawReminderCard(left);
+                const float hR = std::round(
+                    module::settings::mdAssocCardHeight(false, false) * 1.30f);
+                module::settings::CardDrawArgs right{ui, kCardId, kCardW, hR,
+                                                     t, 0.0f, 0.0f, in, a};
+                module::settings::drawMdAssocCard(right);
+            });
+        const core::dsl::Element* titleL =
+            uiPtr != nullptr ? uiPtr->find("settings.card.reminder.title")
+                             : nullptr;
+        const core::dsl::Element* titleR =
+            uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".title")
+                             : nullptr;
+        expect(titleL != nullptr && titleR != nullptr, "两卡标题元素缺失");
+        if (titleL != nullptr && titleR != nullptr) {
+            expect(floatEq(titleL->frame.x, titleR->frame.x),
+                   "130% 档两卡标题左缘错轨（应恒 28 字面）");
+            expect(floatEq(titleL->frame.x, 28.0f),
+                   "130% 档标题左缘应为 28 字面（roundFs 包裹即漂到 36）");
+        }
+        const core::dsl::Element* swL =
+            uiPtr != nullptr
+                ? uiPtr->find("settings.card.reminder.popup.sw.track")
+                : nullptr;
+        const core::dsl::Element* swR =
+            uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".sw.track")
+                             : nullptr;
+        expect(swL != nullptr && swR != nullptr, "两卡开关轨道元素缺失");
+        if (swL != nullptr && swR != nullptr) {
+            const float rL = swL->frame.x + swL->frame.width;
+            const float rR = swR->frame.x + swR->frame.width;
+            expect(floatEq(rL, rR), "130% 档两卡开关右缘错轨");
+            expect(floatEq(rR, kCardW - 28.0f),
+                   "130% 档开关右缘应 = 卡宽 − 28（全 tab 单一口径）");
+        }
+        if (failures != 0) passed = false;
+        core::theme::setFontScale(1.0f);  // 档位还原（全局单例，防串后续段）
+    }
+
+    // ── mac 文字档 600 窄档/130%：盒高随实测行数派生（review P2-1）──
+    // Windows 恒 oneClick → 文字档经 drawMdAssocCard(args, forceTextGuide) 测试
+    // 缝强制；600 contentW 档半宽列 = (600−8)/2 = 296，130% 下 38 字指引实测
+    // 超 2 行 → 盒高 = 行数 × roundFs(16)（固定两行盒 + clip 的旧码在此静默裁
+    // 切第三行）。100% 参考几何契约不破：行数 = 2、卡高 = 140。
+    {
+        constexpr float kNarrowCardW = 296.0f;  // 600 档半宽列
+        const int lines100 =
+            module::settings::mdAssocMacGuideLineCount(kCardW);
+        if (lines100 != 2) {
+            std::cerr << "md_assoc_probe[guide_lines]: 100% 参考几何应为两行, 实际 "
+                      << lines100 << "\n";
+            passed = false;
+        }
+        if (std::round(module::settings::mdAssocCardHeight(true, false, 2)) !=
+            std::round(module::settings::kMdAssocCardHeightTextGuide)) {
+            std::cerr << "md_assoc_probe[guide_lines]: 100% 文字档卡高契约应保持 140\n";
+            passed = false;
+        }
+        core::theme::setFontScale(1.30f);
+        int failures = 0;
+        auto expect = [&](bool ok, const std::string& what) {
+            if (!ok) {
+                std::cerr << "md_assoc_probe[mac_guide_130]: " << what << "\n";
+                ++failures;
+            }
+        };
+        const int lines130 =
+            module::settings::mdAssocMacGuideLineCount(kNarrowCardW);
+        expect(lines130 >= 3, "600 窄档/130% 下 38 字指引应超两行（盒高派生路径未生效？）");
+        // 卡高与生产同式：roundFs(mdAssocCardHeight(...))——100% 基准 × 1.30 取整
+        const float h = std::round(
+            module::settings::mdAssocCardHeight(true, false, lines130) * 1.30f);
+        expect(h > module::settings::kMdAssocCardHeightTextGuide + 0.5f,
+               "文字档卡高应随行数抬升（>140）");
+        module::settings::SettingsConfig cfg;
+        cfg.mdAssocEnabled = true;
+        cfg.mdAssocEverEnabled = true;
+        std::vector<std::string> noLog;
+        std::string noDraft;
+        module::settings::SettingsCardsIn in{cfg, noDraft, noLog};
+        in.mdAssocState = platform::file_association::AssocState::Others;
+        module::settings::SettingsCardActions a;
+        eui::Ui* uiPtr = nullptr;
+        probe::composeModuleFrame(
+            runtime, window, "md_assoc_probe",
+            static_cast<float>(args.windowW), static_cast<float>(args.windowH),
+            [&](eui::Ui& ui, const eui::Screen& screen) {
+                (void)screen;
+                uiPtr = &ui;
+                core::theme::Tokens t = core::theme::current();
+                module::settings::CardDrawArgs cardArgs{ui, kCardId,
+                                                        kNarrowCardW, h, t,
+                                                        0.0f, 0.0f, in, a};
+                module::settings::drawMdAssocCard(cardArgs,
+                                                  /*forceTextGuide=*/true);
+            });
+        const core::dsl::Element* guideText =
+            uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".guide.text")
+                             : nullptr;
+        expect(guideText != nullptr, "mac 文字档引导行元素缺失");
+        if (guideText != nullptr) {
+            const float wantBox =
+                static_cast<float>(lines130) * std::round(16.0f * 1.30f);
+            expect(floatEq(guideText->frame.height, wantBox),
+                   "引导盒高应 = 实测行数 × roundFs(16)（固定两行盒即红）");
+            expect(guideText->frame.height >
+                       2.0f * std::round(16.0f * 1.30f) - 0.5f,
+                   "盒高必须超过旧固定两行盒（42）防静默裁切");
+            expect(guideText->frame.y + guideText->frame.height <= h + 0.5f,
+                   "引导盒底不得超出卡高（卡高须随行数同步派生）");
+        }
+        if (failures != 0) passed = false;
+        // 截图证据（P2-1 验收：130%/600 窄档第三行可见不裁切）
+        if (!args.screenshotPath.empty()) {
+            const std::string path =
+                args.screenshotPath + std::string("_mac_guide_130_narrow.png");
+            if (!probe::captureFramePng(window, runtime, path)) {
+                std::cerr << "md_assoc_probe: 截图落盘失败: " << path << "\n";
+                passed = false;
+            }
+        }
+        core::theme::setFontScale(1.0f);
     }
 
     probe::terminateWindowBackend();

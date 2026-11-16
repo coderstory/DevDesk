@@ -136,3 +136,25 @@ REGISTER_TEST(md_assoc_card_height, "md_assoc: 卡高三档（无引导 48 / mac
                   module::settings::kMdAssocCardHeightBtnGuide);
     return true;
 })
+
+// ── 文字档卡高随实测行数派生（review P2-1：600 最小窗/130% 字号 38 字指引超两行）──
+REGISTER_TEST(md_assoc_card_height_lines, "md_assoc: 文字档卡高随行数派生（行数下限 2、参考几何 140 不变）", {
+    using namespace module::settings;
+    // 参考几何（100% 档两行）= 140 不变（设计 §2.3/§7 契约）
+    DOCTEST_CHECK(mdAssocCardHeight(true, false, 2) ==
+                  kMdAssocCardHeightTextGuide);
+    // 第三行 = +一个行高（kMdAssocGuideLineH=16）
+    DOCTEST_CHECK(mdAssocCardHeight(true, false, 3) ==
+                  kMdAssocCardHeightTextGuide + kMdAssocGuideLineH);
+    DOCTEST_CHECK(mdAssocCardHeight(true, false, 4) ==
+                  kMdAssocCardHeightTextGuide + 2.0f * kMdAssocGuideLineH);
+    // 行数钳下限 2（不足两行按两行格律，不缩卡）
+    DOCTEST_CHECK(mdAssocCardHeight(true, false, 1) ==
+                  kMdAssocCardHeightTextGuide);
+    DOCTEST_CHECK(mdAssocCardHeight(true, false, 0) ==
+                  kMdAssocCardHeightTextGuide);
+    // 按钮档/无引导档不受行数影响
+    DOCTEST_CHECK(mdAssocCardHeight(true, true, 5) == kMdAssocCardHeightBtnGuide);
+    DOCTEST_CHECK(mdAssocCardHeight(false, false, 5) == kMdAssocCardHeight);
+    return true;
+})

@@ -3009,6 +3009,52 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(frameContained(*longRow, *detailChip),
                           "详情 chip 跑到任务行外");
 
+    // ⑦ hover 碰撞守卫（debt268 P3-9，need261 §3）：无头收不到真实指针事件，
+    // 经 setTaskHoverForTest 状态缝直写 hoverHolder_ 持有槽位模拟 hover 进入。
+    // 判据（compose 写入的 element 目标值）：碰撞任务 hover 期药丸 opacity=0
+    //（隐退走 opacity 非移除）+ 标题收窄到 操作组左缘−8−12；非碰撞任务 hover
+    // 期药丸保持 opacity=1（守卫不过度隐退）。
+    mod.setTaskHoverForTest(longNamed.value(), true);
+    mod.setTaskHoverForTest(created.value(), true);
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_geo4");
+    const auto* pillHoverLong = ui4.find("agent.task." + nid + ".pill.bg");
+    DOCTEST_REQUIRE_MESSAGE(pillHoverLong != nullptr,
+                            "hover 帧碰撞任务药丸元素应仍在（隐退走 opacity）");
+    DOCTEST_CHECK_MESSAGE(pillHoverLong->opacity == 0.0f,
+                          "碰撞任务 hover 期药丸应隐退（opacity=0），实测 " +
+                              std::to_string(pillHoverLong->opacity));
+    const auto* hoverTitle = ui4.find("agent.task." + nid + ".title");
+    DOCTEST_REQUIRE_MESSAGE(hoverTitle != nullptr, "hover 帧标题缺失");
+    // titleHoverMaxW = 卡宽 − 14（组右距）− 156（操作组宽）− 8（组左距）− 12。
+    // 标题收窄走 text .maxWidth（DSL 文本整形约束，不落布局 frame.width）——
+    // 断言读 element 写入的目标值（lessons：直接读 compose 写入的 element 目标值）
+    const auto* hoverRow = ui4.find("agent.task." + nid);
+    DOCTEST_REQUIRE_MESSAGE(hoverRow != nullptr, "hover 帧任务卡缺失");
+    const float hoverTitleExpect =
+        hoverRow->frame.width - 14.0f - 156.0f - 8.0f - 12.0f;
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(hoverTitle->maxWidth - hoverTitleExpect) < 0.5f,
+        "hover 期标题 maxWidth 应收窄到操作组左缝内（" +
+            std::to_string(hoverTitleExpect) + "），实测 " +
+            std::to_string(hoverTitle->maxWidth));
+    const auto* pillHoverShort = ui4.find("agent.task." + tid + ".pill.bg");
+    DOCTEST_REQUIRE_MESSAGE(pillHoverShort != nullptr,
+                            "hover 帧非碰撞任务药丸元素缺失");
+    DOCTEST_CHECK_MESSAGE(pillHoverShort->opacity == 1.0f,
+                          "非碰撞任务 hover 期药丸不应被守卫隐退，实测 " +
+                              std::to_string(pillHoverShort->opacity));
+    // 离场清理：擦槽位恢复常态（下一帧药丸回显）
+    mod.setTaskHoverForTest(longNamed.value(), false);
+    mod.setTaskHoverForTest(created.value(), false);
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_geo5");
+    const auto* pillRestored = ui5.find("agent.task." + nid + ".pill.bg");
+    DOCTEST_REQUIRE_MESSAGE(pillRestored != nullptr, "离场帧药丸元素缺失");
+    DOCTEST_CHECK_MESSAGE(pillRestored->opacity == 1.0f,
+                          "hover 离场后药丸应回显（opacity=1），实测 " +
+                              std::to_string(pillRestored->opacity));
+
     mod.onStop();
     return true;
 })

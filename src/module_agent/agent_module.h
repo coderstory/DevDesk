@@ -134,6 +134,17 @@ public:
     bool dbImportedDirtyForTest() const {
         return dbImportedDirty_.load(std::memory_order_acquire);
     }
+    // 测试缝（debt268 P3-9）：hover 碰撞守卫的显隐读 hoverHolder_（bug169 §8
+    // 持有者槽位），无头环境收不到真实指针 enter/leave——直接写槽位模拟 hover
+    // 进入（0 = 卡命中面持有；不带去抖账，不会被 compose 收割），false 全清。
+    void setTaskHoverForTest(int64_t taskId, bool hovered) {
+        if (hovered) {
+            hoverHolder_[taskId] = 0;
+        } else {
+            hoverHolder_.erase(taskId);
+            hoverHideDueMs_.erase(taskId);
+        }
+    }
 
     // ---- run 停止入口（C1）与运行态查询 ----
     // 协作式取消：只置 ActiveRun::cancel，当前迭代收尾后才生效（in-flight LLM 请求不中断，

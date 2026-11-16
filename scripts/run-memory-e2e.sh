@@ -95,15 +95,31 @@ fail() { echo "[e2e-run] FAIL: $*"; FAILS=$((FAILS + 1)); }
 winPidByPort() { # $1=port → Windows PID（netstat -ano 查 LISTENING；无则空串）
   netstat -ano 2>/dev/null | awk -v port="$1" '$1=="TCP" && $2 ~ ":"port"$" && $4=="LISTENING" {print $5; exit}'
 }
+winProcIdent() { # $1=pid → 「映像名 + 命令行」（PowerShell CIM，wmic 24H2 已移除）；
+                 # 查询失败/进程已死 → 空串（调用方据此拒杀，fail-safe）
+  powershell -NoProfile -Command \
+    "\$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$1'; if(\$p){\$p.Name+' '+\$p.CommandLine}" 2>/dev/null
+}
 stopProc() { # $1=msys pid $2=port；Windows 清理只按 PID（msys kill 优先 + netstat 查 PID 兜底
-             # taskkill //PID；严禁 //IM，防误杀并发任务的同类实例）
+             # taskkill //PID；严禁 //IM，防误杀并发任务的同类实例）。
+             # debt268 P3-8：兜底 taskkill 前校验进程身份（映像名/命令行含
+             # llama-server/telemem 才杀）——端口兜底只证明「占了本测专用端口」，
+             # 证明不了「是我们的引擎」；校验不过/查询失败一律不杀，只留日志。
   [ -n "$1" ] && kill "$1" 2>/dev/null
   if [ -n "$2" ] && [ "$E2E_OS" = "win" ] && portBusy "$2"; then
-    local wpid
+    local wpid ident
     wpid="$(winPidByPort "$2")"
     if [ -n "$wpid" ]; then
-      log "端口 $2 仍被 PID $wpid 占用 → taskkill //PID $wpid //T //F"
-      taskkill //PID "$wpid" //T //F >/dev/null 2>&1
+      ident="$(winProcIdent "$wpid")"
+      case "$(printf '%s' "$ident" | tr 'A-Z' 'a-z')" in
+        *llama-server*|*telemem*)
+          log "端口 $2 仍被 PID $wpid（$ident）占用 → taskkill //PID $wpid //T //F"
+          taskkill //PID "$wpid" //T //F >/dev/null 2>&1
+          ;;
+        *)
+          log "端口 $2 被 PID $wpid 占用但身份校验不过（ident=${ident:-查询失败}）→ 不 taskkill，防误杀"
+          ;;
+      esac
     fi
   fi
 }

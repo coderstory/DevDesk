@@ -336,9 +336,21 @@ int main(int argc, char* argv[]) {
         std::cout << "[e2e] S7 灰带样本「8421」命中数=" << grayZoneHits
                   << "（0.4 下不拦属预期，池257 校准议题，不判红绿）\n";
         auto weakR = engine.search(std::string("红烧肉怎么做"), 5, 8000);
-        const int weakHits = weakR.isOk() ? static_cast<int>(weakR.value().size()) : 0;
-        std::cout << "[e2e] S7 弱样本「红烧肉怎么做」原始命中数=" << weakHits
+        if (weakR.isFail()) {
+            // debt268 P3-7：引擎失败原被合并为 weakHits=0 静默过检——先打信息行
+            // 单列实情（与 grayZoneHits 同口径的信息行），再独立断言红（引擎死
+            // ≠「弱样本被拦」，S6 引擎操作 check(isOk) 同口径，不静默吞）。
+            std::cout << "[e2e] S7 弱样本检索引擎失败（err="
+                      << weakR.errorMessage()
+                      << "）——拦截契约本轮不可判，按引擎故障记红\n";
+        }
+        const int weakHits =
+            weakR.isOk() ? static_cast<int>(weakR.value().size()) : -1;
+        std::cout << "[e2e] S7 弱样本「红烧肉怎么做」原始命中数="
+                  << (weakHits >= 0 ? std::to_string(weakHits) : std::string("检索失败"))
                   << "（实测分∈[0.38,0.39)<0.4，应被拦）\n";
+        check(weakR.isOk(),
+              "S7 弱样本引擎检索成功（失败单独红，不与「被拦」合并判过）");
         check(weakHits == 0,
               "S7 低于阈值弱样本被拦（0.4 门控契约，bug255 终报口径；"
               "样本=红烧肉怎么做 [0.38,0.39)）");
