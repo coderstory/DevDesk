@@ -186,8 +186,15 @@ REGISTER_TEST(gitRaiiDiffWorkdirToHead, "diff WorkdirToHead：增删行 + 行号
         // pathFilter：只出 a.txt
         auto d2 = repo.diff(DiffBasis::WorkdirToHead, "a.txt");
         DOCTEST_CHECK(d2.isOk());
-        DOCTEST_CHECK_EQ(d2.value().patches.size(), 1u);
-        DOCTEST_CHECK_EQ(d2.value().patches[0].newPath, "a.txt");
+        // bug281：size 断言带诊断——CI 红时直接给实际 size 与各 patch 形态（取证）
+        if (d2.isOk()) {
+            std::ostringstream diag;
+            diag << "pathFilter=a.txt patches=" << d2.value().patches.size();
+            for (const auto& p : d2.value().patches)
+                diag << " [" << p.newPath << (p.isUntracked ? "|U" : "") << "]";
+            DOCTEST_CHECK_MESSAGE(d2.value().patches.size() == 1u, diag.str());
+            DOCTEST_CHECK_EQ(d2.value().patches[0].newPath, "a.txt");
+        }
         return true;
     }();
     return git_fixture::cleanupRepoDir(dir, ok);

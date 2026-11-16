@@ -31,11 +31,20 @@ inline void checkRc(int rc, const char* what) {
     }
 }
 
-// git init 空仓（dir 必须已存在）
+// git init 空仓（dir 必须已存在）。
+// bug281：init 后在**仓库级**显式钳制行尾转换——CI runner 的系统级 gitconfig
+//（Git for Windows 装 C:\ProgramData\Git\config 与 <git>\etc\gitconfig，常设
+// core.autocrlf=true）会经 libgit2 crlf filter 渗入 fixture 仓；本地开发机
+// 无该层 config 恒不复现（环境差异型）。fixture 全链自持，不依赖宿主 config。
 inline void initRepo(const std::filesystem::path& dir) {
     git_repository* repo = nullptr;
     checkRc(git_repository_init(&repo, platform::git::pathToUtf8(dir).c_str(), 0),
             "git_repository_init");
+    git_config* cfg = nullptr;
+    checkRc(git_repository_config(&cfg, repo), "git_repository_config");
+    checkRc(git_config_set_bool(cfg, "core.autocrlf", false), "set core.autocrlf=false");
+    checkRc(git_config_set_bool(cfg, "core.safecrlf", false), "set core.safecrlf=false");
+    git_config_free(cfg);
     git_repository_free(repo);
 }
 
