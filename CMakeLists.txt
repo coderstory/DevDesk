@@ -28,6 +28,15 @@ if(WIN32)
   add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
 endif()
 
+if(MINGW)
+  # 链接器内存封顶（池 need271，2026-11-16 实测）：GNU bfd ld 链接 Debug 巨型
+  # 静态链（-static，338MB exe / 560MB tests）单进程峰值 2.1-3.5GB，ninja 并行
+  # 3 个链接 → 5GB+ 峰值。--no-keep-memory 让 ld 处理完 reloc 即释放输入缓存
+  # （代价=需要时重读输入文件，链接变慢；老板口径「慢一点没事」明确接受）。
+  # 只对本仓 exe 目标生效；EUI-NEO 独立子构建不经过本顶层作用域。
+  add_link_options(-Wl,--no-keep-memory)
+endif()
+
 # VERSION 文件变更（手工编辑）→ 自动重新 configure；构建期不写本文件（见文件头）
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 
