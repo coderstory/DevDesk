@@ -416,9 +416,10 @@ void GitPageController::toggleDir(const std::string& dirRel) {
     if (tree_.mode() != GitTreeModel::Mode::AllFiles) return;
     const bool expanded = tree_.isExpanded(dirRel);
     tree_.setExpanded(dirRel, !expanded);
-    if (expanded) {
-        treeScrollOffset_ = treeScrollOffset_;  // 折叠不动滚动位（virtualList 自适应）
-    }
+    // 折叠/展开均不动 treeScrollOffset_（折叠时 virtualList 自适应收行）。
+    // 原以「treeScrollOffset_ = treeScrollOffset_;」自赋值表达 no-op——Apple
+    // clang -Wself-assign-field 在 -Werror 下拒收（bug286 同轮暴露），改注释
+    // 文档化同等意图。
 }
 
 void GitPageController::selectTreeFile(const std::string& relPath) {
