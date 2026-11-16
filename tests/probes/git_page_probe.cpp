@@ -157,17 +157,12 @@ FixtureRepo makeProbeRepo(const std::filesystem::path& root) {
     return out;
 }
 
-// 列表第 idx 行（28px 定高槽）中心的点击坐标（virtualList 行盒命中层）
+// 行中心点击坐标（行盒取自元素 frame，文本锚点定位；定高槽推算已废——
+// bug#280 起一律 findChangeHit/findTreeHit 元素 frame，缩放/分组变化免疫）
 struct Pt {
     double x;
     double y;
 };
-
-Pt rowCenter(const core::dsl::Element* list, int idx) {
-    const float rowH = 28.0f;  // 树/列表定高槽（scaled 基准=1.0 探针档）
-    return {static_cast<double>(list->frame.x + list->frame.width * 0.5f),
-            static_cast<double>(list->frame.y + rowH * idx + rowH * 0.5f)};
-}
 
 // 截图路径派生：<base>_diff.png / <base>_content.png / <base>_content_md.png
 std::string shotPath(const std::string& base, const char* tag) {
@@ -357,6 +352,68 @@ int main(int argc, char* argv[]) {
         return false;
     };
 
+    // 文本锚点找行（bug#280：对分组结构变化鲁棒——组头无 .path/.name 文本自动
+    // 跳过，合并组前后锚点不变）
+    const auto findChangeHit = [&](const std::string& namePart)
+        -> const core::dsl::Element* {
+        for (int i = 0; i < 9; ++i) {
+            const core::dsl::Element* p = ui->find(
+                "git.changes.list.slot." + std::to_string(i) + ".path");
+            if (p != nullptr && p->text.find(namePart) != std::string::npos) {
+                return ui->find("git.changes.list.slot." + std::to_string(i) +
+                                ".hit");
+            }
+        }
+        return nullptr;
+    };
+    const auto findTreeHit = [&](const std::string& namePart)
+        -> const core::dsl::Element* {
+        for (int i = 0; i < 9; ++i) {
+            const core::dsl::Element* p = ui->find(
+                "git.tree.list.slot." + std::to_string(i) + ".name");
+            if (p != nullptr && p->text.find(namePart) != std::string::npos) {
+                return ui->find("git.tree.list.slot." + std::to_string(i) +
+                                ".hit");
+            }
+        }
+        return nullptr;
+    };
+    // 行内某元素文本含子串且在列表视口内（bug#280①：横偏残留时行元素仍在
+    // 模型里、text 仍在——只查 text 探不出「平移出屏空白」，须加几何相交）
+    const auto slotTextVisible = [&](const char* listId, const char* suffix,
+                                     const std::string& needle, int maxSlot)
+        -> bool {
+        const core::dsl::Element* list = ui->find(listId);
+        if (list == nullptr) return false;
+        for (int i = 0; i < maxSlot; ++i) {
+            const core::dsl::Element* e =
+                ui->find(std::string(listId) + ".slot." +
+                         std::to_string(i) + suffix);
+            if (e == nullptr || e->text.find(needle) == std::string::npos)
+                continue;
+            const float listR = list->frame.x + list->frame.width;
+            if (e->frame.x < listR - 20.0f &&
+                e->frame.x + e->frame.width > list->frame.x)
+                return true;
+        }
+        return false;
+    };
+    const auto slotCodeVisible = [&](const char* listId, int maxSlot) -> bool {
+        const core::dsl::Element* list = ui->find(listId);
+        if (list == nullptr) return false;
+        for (int i = 0; i < maxSlot; ++i) {
+            const core::dsl::Element* e =
+                ui->find(std::string(listId) + ".slot." +
+                         std::to_string(i) + ".code");
+            if (e == nullptr || e->text.empty()) continue;
+            const float listR = list->frame.x + list->frame.width;
+            if (e->frame.x < listR - 20.0f &&
+                e->frame.x + e->frame.width > list->frame.x)
+                return true;
+        }
+        return false;
+    };
+
     // ②b 批次三（need:10）：N7→N8 真实接线取证——单击变更条目 → 右栏真 diff。
     // 顺序（probe 实测约束）：变更行单击仅在右栏 diff 视图在场时可靠；content
     // 视图在场时变更行单击丢失（疑似 EUI virtualList 按压捕获面异常，已回流线索，
@@ -373,8 +430,16 @@ int main(int argc, char* argv[]) {
             // 全程可靠。
 
             // 1) 变更条目 md（首击）→ 右栏真 diff：增/删/上下文三色 + 双行号
-            //    + hunk 头（N7→N8 真接线，per-task 后台计算）
-            const Pt md = rowCenter(changes, 2);
+            //    + hunk 头（N7→N8 真接线，per-task 后台计算；文本锚点定位）
+            const core::dsl::Element* mdHit = findChangeHit("接口规范.md");
+            if (mdHit == nullptr) {
+                std::cerr << "git_page_probe: FAIL——变更列表无 md 条目（文本锚点失配）\n";
+                passed = false;
+            }
+            const Pt md = mdHit != nullptr
+                              ? Pt{mdHit->frame.x + mdHit->frame.width * 0.5f,
+                                   mdHit->frame.y + mdHit->frame.height * 0.5f}
+                              : Pt{-1.0, -1.0};
             if (!clickUntil(md.x, md.y,
                             [&] { return ui->find("git.diff.list") != nullptr; })) {
                 std::cerr << "git_page_probe: FAIL——变更条目单击后 diff 视图未出\n";
@@ -387,11 +452,10 @@ int main(int argc, char* argv[]) {
                     passed = false;
                 }
             }
-            // 1b) bug#18 取证（--untracked-diff）：untracked 条目 diff 两档。
-            // 行序锚（libgit2 status 字节序）：行0=变更组头、行1=a.txt、行2=md、
-            // 行3=未跟踪组头、行4='0_' ASCII 前缀超大文件（组内必最先）、
-            // 行5=新增文件.txt、行6=长名文件。修复前该单击 = 「无内容变更」空态
-            // （git.diff.list/占位元素均不出）→ 本阶段即红绿判别面。
+                // 1b) bug#18 取证（--untracked-diff）：untracked 条目 diff 两档。
+                // 行序锚已改文本锚点（bug#280② 合组后行序 = 组头+字节序内联：
+                // 0_oversize/a.txt/新增/长名/md）。修复前该单击 = 「无内容变更」空态
+                // （git.diff.list/占位元素均不出）→ 本阶段即红绿判别面。
             if (passed && bug18Shots) {
                 // clue#60 丢点击对「紧随首击」的连点更敏感：坐标取自行命中元素
                 //（virtualList slot=index，offset 0 时 slot.N=行 N）而非 rowH 推算，
@@ -406,18 +470,17 @@ int main(int argc, char* argv[]) {
                     }
                     return false;
                 };
-                const auto clickChangeRow = [&](int slot,
+                const auto clickChangeRow = [&](const std::string& namePart,
                                                 const std::function<bool()>& ok) {
-                    const core::dsl::Element* hit = ui->find(
-                        "git.changes.list.slot." + std::to_string(slot) + ".hit");
+                    const core::dsl::Element* hit = findChangeHit(namePart);
                     if (hit == nullptr) return false;
                     const Pt p{hit->frame.x + hit->frame.width * 0.5f,
                                hit->frame.y + hit->frame.height * 0.5f};
                     return bug18ClickUntil(p.x, p.y, ok);
                 };
-                // 档①：≤1MiB 文本 untracked（行5 = 新增文件.txt）→ 合成单 hunk 全增行
+                // 档①：≤1MiB 文本 untracked（新增文件.txt）→ 合成单 hunk 全增行
                 if (!clickChangeRow(
-                        5, [&] { return ui->find("git.diff.list") != nullptr; })) {
+                        "新增文件.txt", [&] { return ui->find("git.diff.list") != nullptr; })) {
                     std::cerr << "git_page_probe: FAIL——untracked 小文本 diff 未出全增行"
                                  "（bug#18 空态回归？）\n"
                               << "  诊断：diff.empty="
@@ -439,10 +502,10 @@ int main(int argc, char* argv[]) {
                         passed = false;
                     }
                 }
-                // 档②：>1MiB untracked（行4 = '0_' ASCII 前缀超大文件）→ 占位文案
+                // 档②：>1MiB untracked（'0_' ASCII 前缀超大文件）→ 占位文案
                 if (passed) {
                     if (!clickChangeRow(
-                            4, [&] { return ui->find("git.diff.placeholder") != nullptr; })) {
+                            "0_oversize_placeholder.bin", [&] { return ui->find("git.diff.placeholder") != nullptr; })) {
                         std::error_code szEc;
                         const auto bigSz = std::filesystem::file_size(
                             fixture.dir / "0_oversize_placeholder.bin", szEc);
@@ -465,10 +528,10 @@ int main(int argc, char* argv[]) {
                         }
                     }
                 }
-                // 复位选中回 md（行2）：后续内容 Tab 阶段沿用原动线
+                // 复位选中回 md：后续内容 Tab 阶段沿用原动线
                 if (passed) {
                     if (!clickChangeRow(
-                            2, [&] { return ui->find("git.diff.list") != nullptr; })) {
+                            "接口规范.md", [&] { return ui->find("git.diff.list") != nullptr; })) {
                         std::cerr << "git_page_probe: FAIL——复位 md 选中未回 diff\n";
                         passed = false;
                     }
@@ -498,6 +561,196 @@ int main(int argc, char* argv[]) {
                             passed = false;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ②g bug#280：仅修改 tab 全链取证。断言面 = 老板反馈三空：
+    // ① 文件名在场：点「仅修改」→ 左栏 ChangesOnly 平铺行 5 条（frame 非零 +
+    //    文本非空）+ 中栏单一分组（bug#280② 合并后组头仅 1 个，未跟踪为组内
+    //    U 徽标状态类型——GitHub Desktop 同款惯例，老板口径）。
+    // ② 内容区非空：树行点 a.txt → 内容视图「第二版」在场。
+    // ③ 横偏跨文件不残留（bug#280① 根因回归面）：a.txt 内容拖横滚（制造大
+    //    contentHOffset）→ 切 md 内容 → md 短行仍可见（修复前残留偏移把短行
+    //    平移出屏 = 内容区空白）。
+    // ④ diff 区非空：a.txt diff 拖横滚 → 切 md diff → 行文本在场（diff 侧同面）。
+    if (passed && !noOpen) {
+        const core::dsl::Element* tab = ui->find("git.left.tab.changes.hit");
+        if (tab == nullptr) {
+            std::cerr << "git_page_probe: FAIL——仅修改 Tab 缺失\n";
+            passed = false;
+        } else {
+            const Pt tabC{tab->frame.x + tab->frame.width * 0.5f,
+                          tab->frame.y + tab->frame.height * 0.5f};
+            // fixture 变更面 5 条（statusByPath_ 字节序）：0_oversize / a.txt /
+            // 新增文件.txt / 说明文档/接口规范.md / 长名…txt
+            if (!clickUntil(tabC.x, tabC.y, [&] {
+                    return ui->find("git.tree.list.slot.0.name") != nullptr;
+                })) {
+                std::cerr << "git_page_probe: FAIL——仅修改 tab 点击后左栏无变更行"
+                             "（ChangesOnly 平铺未渲染）\n";
+                passed = false;
+            } else {
+                std::cout << "== 仅修改（ChangesOnly）==\n";
+                int okRows = 0;
+                for (int i = 0; i < 5; ++i) {
+                    const core::dsl::Element* name = ui->find(
+                        "git.tree.list.slot." + std::to_string(i) + ".name");
+                    if (name == nullptr || name->frame.width <= 0.0f ||
+                        name->frame.height <= 0.0f || name->text.empty()) {
+                        std::cerr << "git_page_probe: FAIL——左栏变更行 slot." << i
+                                  << " 文件名缺失/行盒零\n";
+                        passed = false;
+                    } else {
+                        ++okRows;
+                        std::cout << "  slot." << i << " \"" << name->text
+                                  << "\" " << name->frame.width << "x"
+                                  << name->frame.height << "\n";
+                    }
+                }
+                if (okRows == 5 && !args.screenshotPath.empty()) {
+                    probe::captureFramePng(
+                        window, runtime,
+                        shotPath(args.screenshotPath, "changes_only"));
+                }
+                // 中栏分组头计数（bug#280②：合并未跟踪后应恰 1 个组头）
+                int headers = 0;
+                std::string headerText;
+                for (int i = 0; i < 9; ++i) {
+                    const core::dsl::Element* hd = ui->find(
+                        "git.changes.list.slot." + std::to_string(i) + ".hdtext");
+                    if (hd != nullptr) {
+                        ++headers;
+                        headerText = hd->text;
+                    }
+                }
+                if (headers != 1) {
+                    std::cerr << "git_page_probe: FAIL——中栏组头数=" << headers
+                              << "（老板口径：未跟踪并入单一分组，非平行组）\n";
+                    passed = false;
+                } else {
+                    std::cout << "  中栏组头「" << headerText << "」（单一分组）\n";
+                }
+                // ② 树行点 a.txt → 内容区「第二版」在场且可见
+                const core::dsl::Element* aTree = findTreeHit("a.txt");
+                bool contentOk = false;
+                if (aTree != nullptr) {
+                    contentOk = clickUntil(
+                        aTree->frame.x + aTree->frame.width * 0.5f,
+                        aTree->frame.y + aTree->frame.height * 0.5f,
+                        [&] {
+                            return slotTextVisible("git.content.list", ".code",
+                                                   "第二版", 6);
+                        });
+                }
+                if (!contentOk) {
+                    std::cerr << "git_page_probe: FAIL——仅修改内点 a.txt 后内容"
+                                 "视图无「第二版」（内容区空白）\n";
+                    passed = false;
+                } else {
+                    std::cout << "  a.txt 内容行在场（内容区非空）\n";
+                }
+                // ③ 横偏残留面：a.txt 内容拖横滚 → 切 md → md 短行仍可见
+                const core::dsl::Element* cThumb =
+                    ui->find("git.content.list.h.thumb");
+                if (cThumb != nullptr) {
+                    probe::drag(window, runtime,
+                                static_cast<double>(cThumb->frame.x +
+                                                    cThumb->frame.width * 0.5f),
+                                static_cast<double>(cThumb->frame.y +
+                                                    cThumb->frame.height * 0.5f),
+                                static_cast<double>(cThumb->frame.x) + 160.0,
+                                static_cast<double>(cThumb->frame.y +
+                                                    cThumb->frame.height * 0.5f),
+                                10);
+                    for (int i = 0; i < 20; ++i) composeFrame();
+                }
+                const core::dsl::Element* mdTree = findTreeHit("接口规范.md");
+                bool mdContentOk = false;
+                if (mdTree != nullptr) {
+                    mdContentOk = clickUntil(
+                        mdTree->frame.x + mdTree->frame.width * 0.5f,
+                        mdTree->frame.y + mdTree->frame.height * 0.5f,
+                        [&] {
+                            return slotTextVisible("git.content.list", ".code",
+                                                   "接口规范", 6);
+                        });
+                }
+                if (!mdContentOk) {
+                    std::cerr << "git_page_probe: FAIL——拖横滚后切 md 内容短行"
+                                 "不可见（横偏跨文件残留 = 内容区空白）\n"
+                              << "  诊断：content.list="
+                              << (ui->find("git.content.list") != nullptr)
+                              << " slot.0.code="
+                              << (ui->find("git.content.list.slot.0.code") !=
+                                  nullptr)
+                              << "\n";
+                    passed = false;
+                } else {
+                    std::cout << "  横滚后切 md 内容短行在场（横偏不残留）\n";
+                }
+                // ④ diff 侧同面：a.txt diff 拖横滚 → 切 md diff → 行文本在场
+                const core::dsl::Element* aChange = findChangeHit("a.txt");
+                bool aDiffOk = false;
+                if (aChange != nullptr) {
+                    aDiffOk = clickUntil(
+                        aChange->frame.x + aChange->frame.width * 0.5f,
+                        aChange->frame.y + aChange->frame.height * 0.5f,
+                        [&] { return ui->find("git.diff.list.h.thumb") != nullptr; });
+                }
+                const core::dsl::Element* dThumb =
+                    aDiffOk ? ui->find("git.diff.list.h.thumb") : nullptr;
+                bool mdDiffOk = false;
+                if (dThumb != nullptr) {
+                    probe::drag(window, runtime,
+                                static_cast<double>(dThumb->frame.x +
+                                                    dThumb->frame.width * 0.5f),
+                                static_cast<double>(dThumb->frame.y +
+                                                    dThumb->frame.height * 0.5f),
+                                static_cast<double>(dThumb->frame.x) + 160.0,
+                                static_cast<double>(dThumb->frame.y +
+                                                    dThumb->frame.height * 0.5f),
+                                10);
+                    for (int i = 0; i < 20; ++i) composeFrame();
+                    const core::dsl::Element* mdChange =
+                        findChangeHit("接口规范.md");
+                    if (mdChange != nullptr) {
+                        mdDiffOk = clickUntil(
+                            mdChange->frame.x + mdChange->frame.width * 0.5f,
+                            mdChange->frame.y + mdChange->frame.height * 0.5f,
+                            [&] {
+                                return slotCodeVisible("git.diff.list", 6);
+                            });
+                    }
+                }
+                if (!mdDiffOk) {
+                    std::cerr << "git_page_probe: FAIL——拖横滚后切 md diff 行"
+                                 "文本不可见（横偏跨文件残留 = diff 区空白）\n"
+                              << "  诊断：diff.list="
+                              << (ui->find("git.diff.list") != nullptr)
+                              << " diff.empty="
+                              << (ui->find("git.diff.empty") != nullptr)
+                              << " diff.err="
+                              << (ui->find("git.diff.err.main") != nullptr)
+                              << "\n";
+                    passed = false;
+                } else {
+                    std::cout << "  横滚后切 md diff 行在场（横偏不残留）\n";
+                    if (!args.screenshotPath.empty()) {
+                        probe::captureFramePng(
+                            window, runtime,
+                            shotPath(args.screenshotPath, "changes_only_diff"));
+                    }
+                }
+                // 复位：md 内容视图（②c watcher 过期条依赖 contentPath=md）
+                const core::dsl::Element* contentTab =
+                    ui->find("git.right.tab.content.hit");
+                if (contentTab != nullptr) {
+                    clickUntil(
+                        contentTab->frame.x + contentTab->frame.width * 0.5f,
+                        contentTab->frame.y + contentTab->frame.height * 0.5f,
+                        [&] { return ui->find("git.content.list") != nullptr; });
                 }
             }
         }
@@ -553,7 +806,11 @@ int main(int argc, char* argv[]) {
             std::cerr << "git_page_probe: FAIL——变更列表缺失，跳过横滚阶段\n";
             passed = false;
         } else {
-            const Pt aRow = rowCenter(changes, 1);  // 组头后首条 = a.txt
+            const core::dsl::Element* aHitC = findChangeHit("a.txt");
+            const Pt aRow = aHitC != nullptr
+                                ? Pt{aHitC->frame.x + aHitC->frame.width * 0.5f,
+                                     aHitC->frame.y + aHitC->frame.height * 0.5f}
+                                : Pt{-1.0, -1.0};
             if (!clickUntil(aRow.x, aRow.y,
                             [&] { return ui->find("git.diff.list") != nullptr; })) {
                 std::cerr << "git_page_probe: FAIL——a.txt diff 未出（横滚前置失败）\n";

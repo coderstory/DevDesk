@@ -116,23 +116,11 @@ void GitPageController::composePump() {
     visibleRows_ = tree_.rows();
     changeListItems_.clear();
     if (!changeRows_.empty()) {
-        const size_t changedN = changedCount();
-        const size_t untrackedN = untrackedCount();
-        if (changedN > 0) {
-            changeListItems_.push_back({true, 0});
-            for (size_t i = 0; i < changeRows_.size(); ++i) {
-                if (changeRows_[i].group == ChangeGroup::Changed) {
-                    changeListItems_.push_back({false, i});
-                }
-            }
-        }
-        if (untrackedN > 0) {
-            changeListItems_.push_back({true, 1});
-            for (size_t i = 0; i < changeRows_.size(); ++i) {
-                if (changeRows_[i].group == ChangeGroup::Untracked) {
-                    changeListItems_.push_back({false, i});
-                }
-            }
+        // bug#280②（老板口径 2026-11-16）：未跟踪非平行组——单一列表内联，
+        // U 徽标即状态类型（GitHub Desktop 同款惯例）
+        changeListItems_.push_back({true, 0});
+        for (size_t i = 0; i < changeRows_.size(); ++i) {
+            changeListItems_.push_back({false, i});
         }
     }
 }
@@ -491,6 +479,12 @@ void GitPageController::requestContent(const std::string& relPath, bool force) {
          contentState_ == RightPaneState::Ready)) {
         return;  // 已在加载/已加载：连点幂等（I-03/I-05）
     }
+    if (contentPath_ != relPath) {
+        // bug#280①：跨文件切换清滚动/横偏——残留偏移把新文件的短行平移出屏
+        //（内容区空白）；同文件重载（stale 重载/retryContent）保留位置
+        contentScrollOffset_ = 0.0f;
+        contentHOffset_ = 0.0f;
+    }
     contentPath_ = relPath;
     contentState_ = RightPaneState::Loading;
     contentError_.clear();
@@ -528,6 +522,11 @@ void GitPageController::requestDiff(const std::string& relPath, bool force) {
         (diffState_ == RightPaneState::Loading ||
          diffState_ == RightPaneState::Ready)) {
         return;  // 已选中再点不重载 diff（I-04 边界）
+    }
+    if (diffPath_ != relPath) {
+        // bug#280①：同 requestContent——跨文件切换清滚动/横偏（diff 区空白根因）
+        diffScrollOffset_ = 0.0f;
+        diffHOffset_ = 0.0f;
     }
     diffPath_ = relPath;
     diffState_ = RightPaneState::Loading;

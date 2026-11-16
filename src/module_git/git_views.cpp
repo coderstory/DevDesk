@@ -771,10 +771,10 @@ void composeMiddleColumn(eui::Ui& ui, float x, float w, float y, float h,
         return;
     }
 
-    // 混排行模型：组头 + 条目行（composePump 已物化为成员，行闭包布局期回调仍有效）
+    // 混排行模型：组头 + 条目行（composePump 已物化为成员，行闭包布局期回调仍有效；
+    // bug#280② 老板口径：未跟踪并入单一分组内联，U 徽标承担状态区分）
     const auto& items = c.changeListItems();
-    const size_t changedN = c.changedCount();
-    const size_t untrackedN = c.untrackedCount();
+    const size_t totalN = rows.size();
 
     const float rowH = scaled(kListRowH);
     const float headerH = scaled(kGroupHeaderH);
@@ -794,7 +794,6 @@ void composeMiddleColumn(eui::Ui& ui, float x, float w, float y, float h,
             if (idx >= items.size()) return;
             const GitPageController::ChangeListItem& item = items[idx];
             if (item.header) {
-                const bool isChanged = item.rowIndex == 0;
                 inner.rect(rowId + ".hdbg")
                     .size(contentWidth, headerH)
                     .color(t.colors.surface)
@@ -807,8 +806,8 @@ void composeMiddleColumn(eui::Ui& ui, float x, float w, float y, float h,
                 inner.text(rowId + ".hdtext")
                     .position(scaled(12.0f), 0.0f)
                     .size(contentWidth - scaled(24.0f), headerH)
-                    .text(isChanged ? GitChangesModel::groupHeader(ChangeGroup::Changed, changedN)
-                                    : GitChangesModel::groupHeader(ChangeGroup::Untracked, untrackedN))
+                    .text(GitChangesModel::groupHeader(ChangeGroup::Changed,
+                                                       totalN))
                     .fontSize(scaled(12.0f))
                     .fontWeight(600)
                     .verticalAlign(eui::VerticalAlign::Center)

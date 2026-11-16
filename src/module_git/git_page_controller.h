@@ -121,7 +121,8 @@ public:
     // 中栏混排行模型（组头/条目交错；与 changeRows 同帧物化）
     struct ChangeListItem {
         bool header;
-        size_t rowIndex;  // header 时=组号（0=变更 1=未跟踪），条目时=changeRows 下标
+        size_t rowIndex;  // header 时=组号（0=变更，单一组——bug#280② 未跟踪已
+                          // 并入组内），条目时=changeRows 下标
     };
     const std::vector<ChangeListItem>& changeListItems() const { return changeListItems_; }
     size_t changedCount() const;
