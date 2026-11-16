@@ -881,7 +881,10 @@ core::Result<std::vector<Task>> TodoService::listOverdue() {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    if (auto r = stmt.bind(1, now); r.isFail()) {
+    // 自然日口径（2026-11-16 老板令）：绑今天本地零点而非 now——当天截止不算逾期
+    const int64_t todayStart = static_cast<int64_t>(
+        core::time::localMidnightUnix(static_cast<std::time_t>(now)));
+    if (auto r = stmt.bind(1, todayStart); r.isFail()) {
         return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
     }
     auto rows = stmt.fetchAll();

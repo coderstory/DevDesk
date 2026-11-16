@@ -2958,7 +2958,7 @@ REGISTER_TEST(todo_ui_overdue_zero_grey,
 // THS-13：入选按秒级（due_at < now），日历日差却可能是 0（1 秒前到期）——
 // 行文案必须至少 1 天，不再显示「逾期0天」
 REGISTER_TEST(todo_ui_overdue_min_one_day,
-              "todo_ui: 逾期 1 秒仍显示「逾期1天」（max(1,…)，headless）", {
+              "todo_ui: 逾期天数按自然日——前天到期显示「逾期2天」（2026-11-16 口径，headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto list = env.svc->listColumns();
@@ -2969,7 +2969,7 @@ REGISTER_TEST(todo_ui_overdue_min_one_day,
     DOCTEST_REQUIRE(t.isOk());
     {
         module::todo::Task u = t.value();
-        u.dueAt = static_cast<int64_t>(std::time(nullptr)) - 1;  // 1 秒前到期
+        u.dueAt = static_cast<int64_t>(std::time(nullptr)) - 2 * 86400;  // 前天到期（自然日口径算逾期）
         DOCTEST_REQUIRE(env.svc->updateTask(u).isOk());
     }
 
@@ -2991,7 +2991,7 @@ REGISTER_TEST(todo_ui_overdue_min_one_day,
         DOCTEST_REQUIRE(rowTitle != nullptr);
         DOCTEST_REQUIRE(rowDays != nullptr);
         DOCTEST_CHECK_EQ(rowTitle->text, std::string("刚过期"));
-        DOCTEST_CHECK_EQ(rowDays->text, std::string("逾期1天"));
+        DOCTEST_CHECK_EQ(rowDays->text, std::string("逾期2天"));
     }
 
     mod->onStop();

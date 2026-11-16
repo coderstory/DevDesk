@@ -75,6 +75,17 @@ inline eui::Color cardFaceColor(Priority p, const core::theme::Tokens& t) {
                           : eui::mixColor(ui_kit::cardSurface(t), *src, kTodoTintAlpha);
 }
 
+// 截止日整卡着色（老板 2026-11-16）：逾期未完成 = 整卡红；今日到期 = 整卡橙黄
+//（今天 16 号截止的 16 号卡片不算逾期，17 号才转红）。判据在 todo_ui_logic 的
+// isOverdue/isDueToday；此处只做色面，不动优先级色条（保留硬标识）。
+inline eui::Color dueFaceColor(Priority p, const core::theme::Tokens& t,
+                               bool overdue, bool dueToday) {
+    const eui::Color base = ui_kit::cardSurface(t);
+    if (overdue) return eui::mixColor(base, t.colors.error, 0.26f);
+    if (dueToday) return eui::mixColor(base, t.colors.warning, 0.26f);
+    return cardFaceColor(p, t);
+}
+
 // ---- H20：动作区按真实控件重算（不再留 560 死值）----
 // 搜索框 240×40 → 逾期 chip 88×28 → 「新建任务」120×32，控件间 2×spacingSmall。
 // 「+ 列」入口按固定四列设计删除（列模型不可增删）。
@@ -756,6 +767,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         v.columns[static_cast<size_t>(colIndex)].kind == "done";
     // 归档/已完成列不参与逾期着色（与页头逾期计数口径一致）
     const bool overdueTint = !isArchiveCard && !isDoneCard && isOverdue(task);
+    // 今日到期（未完成、未逾期）：整卡橙黄警示（老板 2026-11-16 口径）
+    const bool dueTodayTint = !isArchiveCard && !isDoneCard && !overdueTint &&
+                              isDueToday(task);
     const float finalCardOpacity = cardOpacity * (isArchiveCard ? 0.7f : 1.0f);
     const float menuAnchorX =
         t.sizes.spacingLarge * 2.0f +
@@ -764,9 +778,11 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        .color(cardFaceColor(task.priority, t))
+        .color(dueFaceColor(task.priority, t, overdueTint, dueTodayTint))
         .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
-        .border(1.0f, t.colors.borderDefault)
+        .border(1.0f, overdueTint ? t.colors.error
+                                  : (dueTodayTint ? t.colors.warning
+                                                  : t.colors.borderDefault))
         .radius(t.sizes.radius)
         .opacity(finalCardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
@@ -828,7 +844,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         if (dueW >= 24.0f) {
             pendingChips.push_back({id + ".due", dueW, dueText,
                                     overdueTint ? t.colors.errorText
-                                                : t.colors.textTertiary});
+                                                : (dueTodayTint
+                                                       ? t.colors.warningText
+                                                       : t.colors.textTertiary)});
             chipX += dueW + 6.0f;  // 自适应宽 + 6 间距
         }
     }

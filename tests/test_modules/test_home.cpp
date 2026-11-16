@@ -108,7 +108,8 @@ REGISTER_TEST(home_service_real_stats,
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, completed_at, created_at, updated_at) VALUES "
         "(1, 't1', 0, 0, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
-        "(1, 't2', 0, 1, " + std::to_string(now - 3600) + ", NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        // t2 逾期种子按自然日口径取「前天」（2026-11-16）：now-3600 属当天，已不算逾期
+        "(1, 't2', 0, 1, " + std::to_string(now - 2 * 86400) + ", NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
         "(1, 't3', 0, 2, " + std::to_string(now + day) + ", NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
         "(1, 't4', 0, 3, " + std::to_string(now - 7200) + ", " + std::to_string(now) + ", " + std::to_string(now) + ", " + std::to_string(now) + ")"
     ).isOk());
@@ -810,13 +811,17 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
 REGISTER_TEST(home_todo_overdue_consistency,
               "HomeService/TodoService: 逾期口径单源一致性",
               {
-    // 谓词边界（纯函数，不依赖时钟）：无截止 / 已完成 / 未到期 / 截止当秒
+    // 谓词边界（纯函数）：自然日口径（2026-11-16 老板令）——截止【日】早于今天才逾期，
+    // 「截止 16 号、今天 16 号」不算，17 号才算。旧断言按秒比（99 < 100 即逾期）已废。
     using core::overdue::isOverdue;
-    DOCTEST_CHECK_FALSE(isOverdue(std::nullopt, std::nullopt, 100));
-    DOCTEST_CHECK_FALSE(isOverdue(50, 80, 100));             // 已完成
-    DOCTEST_CHECK_FALSE(isOverdue(200, std::nullopt, 100));  // 未到期
-    DOCTEST_CHECK_FALSE(isOverdue(100, std::nullopt, 100));  // 截止当秒不算
-    DOCTEST_CHECK(isOverdue(99, std::nullopt, 100));
+    const int64_t nowD = static_cast<int64_t>(std::time(nullptr));
+    const int64_t daySecs = 86400;
+    DOCTEST_CHECK_FALSE(isOverdue(std::nullopt, std::nullopt, nowD));
+    DOCTEST_CHECK_FALSE(isOverdue(nowD - 2 * daySecs, nowD - 2 * daySecs, nowD));  // 已完成
+    DOCTEST_CHECK_FALSE(isOverdue(nowD + daySecs, std::nullopt, nowD));  // 未到期
+    DOCTEST_CHECK_FALSE(isOverdue(nowD, std::nullopt, nowD));            // 截止当天不算
+    DOCTEST_CHECK_FALSE(isOverdue(nowD - 1, std::nullopt, nowD));        // 当天早些时刻也不算
+    DOCTEST_CHECK(isOverdue(nowD - 2 * daySecs, std::nullopt, nowD));    // 前天截止 → 逾期
 
     test_support::TestEnv env(kDbPrefix, "overdue_xmod");
     DOCTEST_REQUIRE(env.ready);

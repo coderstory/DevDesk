@@ -506,9 +506,21 @@ inline std::string formatDue(int64_t epoch) {
     return std::string(buf);
 }
 
+// 截止日着色口径（老板 2026-11-16）：按【自然日】比较，不按秒——
+// 「截止 16 号，今天 16 号」不算逾期，到 17 号才算。核心单源 core/overdue.h 同口径。
 inline bool isOverdue(const Task& task) {
     if (!task.dueAt.has_value() || task.completedAt.has_value()) return false;
-    return task.dueAt.value() < static_cast<int64_t>(std::time(nullptr));
+    if (task.dueAt.value() <= 0) return false;
+    return core::time::localDayNumber(static_cast<std::time_t>(task.dueAt.value())) <
+           core::time::localDayNumber(std::time(nullptr));
+}
+
+// 今天到期（未完成）：截止日 == 今天 → 卡片整卡橙黄警示，但不算逾期。
+inline bool isDueToday(const Task& task) {
+    if (!task.dueAt.has_value() || task.completedAt.has_value()) return false;
+    if (task.dueAt.value() <= 0) return false;
+    return core::time::localDayNumber(static_cast<std::time_t>(task.dueAt.value())) ==
+           core::time::localDayNumber(std::time(nullptr));
 }
 
 inline const Task* findTask(const std::vector<Task>& tasks, int64_t id) {

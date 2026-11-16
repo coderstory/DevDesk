@@ -161,7 +161,6 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
 
     const std::time_t now = std::time(nullptr);
     const int64_t todayStart = startOfDayEpoch(now);
-    const int64_t nowSecs = static_cast<int64_t>(now);
 
     // 逾期口径单源 core/overdue.h 的 kWhereSql（与 TodoService::listOverdue 共用）。
     auto todayNotes = countBySql(
@@ -185,7 +184,8 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     const std::string overdueCountSql =
         std::string("SELECT COUNT(*) AS n FROM todo_tasks WHERE ") +
         core::overdue::kWhereSql;
-    auto overdueTodos = countBySql(overdueCountSql.c_str(), nowSecs);
+    // 自然日口径（2026-11-16 老板令，与 TodoService::listOverdue 同源）：绑今天零点
+    auto overdueTodos = countBySql(overdueCountSql.c_str(), todayStart);
     if (overdueTodos.isFail()) {
         return core::Result<DashboardStats>::fail(overdueTodos.errorCode(),
                                                   overdueTodos.errorMessage());
