@@ -87,44 +87,25 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
                                                "扩展名转 CFString 失败");
     }
     std::string out;
-    if (@available(macOS 12.0, *)) {
-        // 12+：UTType 类反查。⚠ ObjC 原生形态是 +typesWithTag:tagClass:conformingTo:
-        // 返回 NSArray（Swift 的 init(tag:tagClass:conformingTo:) 是其 NS_SWIFT_NAME
-        // 精炼——单数 typeWithTag 拼法只存在于 Swift 面，clang 报 no known class
-        // method 的根因）；取首个匹配即 C API 的 preferred 语义。仍是运行期按 tag
-        // 反查，非硬编码 UTI 串。
-        NSString* const extNs = (__bridge NSString*)extCf;
-        NSArray<UTType*>* const matches =
-            [UTType typesWithTag:extNs
-                       tagClass:UTTagClassFilenameExtension
-                   conformingTo:nil];
-        UTType* const utType = matches.count > 0 ? matches.firstObject : nil;
-        if (utType == nil) {
-            CFRelease(extCf);
-            return core::Result<std::string>::fail(
-                core::ErrorCode::Internal,
-                "扩展名未解析出 UTI (" + extNoDot + ")");
-        }
-        const char* const utf = utType.identifier.UTF8String;
-        if (utf != nullptr) out.assign(utf);
-    } else {
-        // <12：C API 保守路径（12.0 起弃用，仅 <12 系统触达）。CI 实证：clang 的
-        // -Wdeprecated-declarations 不随 @available else 分支自动消 → 显式 pragma
-        // 包住 legacy 调用点（push/pop 成对）
+    // UTTypeCreatePreferredIdentifierForTag：macOS 12.0 起弃用，但弃用≠移除——
+    // 27.2 SDK 仍声明、符号仍可链（deprecated API 的兼容承诺）。CI 实证：clang 的
+    // -Wdeprecated-declarations 不随 @available 分支自动消，须 pragma 显式包裹
+    //（push/pop 成对）。现代 UTType 类迁移两轮尝试（typeWithTag/typesWithTag
+    // 两种拼法）均被 CI 证伪「no known class method」——Swift/ObjC 命名面差异
+    // 无法在无 Mac 编译环境可靠分辨，留给 Mac 侧真编译会话收口（线索 187）。
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
-            kUTTagClassFilenameExtension, extCf, nullptr);
+    CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
+        kUTTagClassFilenameExtension, extCf, nullptr);
 #pragma clang diagnostic pop
-        if (uti == nullptr) {
-            CFRelease(extCf);
-            return core::Result<std::string>::fail(
-                core::ErrorCode::Internal,
-                "扩展名未解析出 UTI (" + extNoDot + ")");
-        }
-        out = cfToStdString(uti);
-        CFRelease(uti);
+    if (uti == nullptr) {
+        CFRelease(extCf);
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "扩展名未解析出 UTI (" + extNoDot + ")");
     }
+    out = cfToStdString(uti);
+    CFRelease(uti);
     CFRelease(extCf);
     if (out.empty()) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,

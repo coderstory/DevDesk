@@ -2,6 +2,7 @@
 #include "git_search_model.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace module::git {
 

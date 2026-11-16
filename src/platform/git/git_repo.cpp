@@ -6,6 +6,9 @@
 
 #include "platform/git/git_libgit2.h"
 
+#include <system_error>
+#include <utility>
+
 namespace platform::git {
 
 namespace {

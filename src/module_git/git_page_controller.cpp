@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <utility>
 
 namespace th = ui_kit::text_highlight;
 

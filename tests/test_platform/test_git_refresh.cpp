@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <ios>
 #include <memory>
 #include <string>
 #include <thread>
