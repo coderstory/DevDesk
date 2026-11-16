@@ -88,13 +88,17 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
     }
     std::string out;
     if (@available(macOS 12.0, *)) {
-        // 12+：UTType 类反查（typeWithTag:tagClass:conformingTo:，11.0+；C API
-        // 12.0 起弃用）——仍是运行期按 tag 反查，非硬编码 UTI 串
+        // 12+：UTType 类反查。⚠ ObjC 原生形态是 +typesWithTag:tagClass:conformingTo:
+        // 返回 NSArray（Swift 的 init(tag:tagClass:conformingTo:) 是其 NS_SWIFT_NAME
+        // 精炼——单数 typeWithTag 拼法只存在于 Swift 面，clang 报 no known class
+        // method 的根因）；取首个匹配即 C API 的 preferred 语义。仍是运行期按 tag
+        // 反查，非硬编码 UTI 串。
         NSString* const extNs = (__bridge NSString*)extCf;
-        UTType* const utType =
-            [UTType typeWithTag:extNs
+        NSArray<UTType*>* const matches =
+            [UTType typesWithTag:extNs
                        tagClass:UTTagClassFilenameExtension
                    conformingTo:nil];
+        UTType* const utType = matches.count > 0 ? matches.firstObject : nil;
         if (utType == nil) {
             CFRelease(extCf);
             return core::Result<std::string>::fail(
