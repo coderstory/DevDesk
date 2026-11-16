@@ -137,6 +137,14 @@ int main(int argc, char* argv[]) {
     auto pump = [&](int frames) {
         for (int i = 0; i < frames; ++i) composeFrame();
     };
+    // 过渡收敛泵（bug285①，口径同 uat62/bug185）：点击导航若带过渡，固定 3 帧可能
+    // 断在过渡中段。≥24 帧且 isAnimating 归零（封顶 240 帧虚拟时）再断言。
+    auto pumpSettle = [&]() {
+        for (int f = 0; f < 240; ++f) {
+            composeFrame();
+            if (f + 1 >= 24 && !runtime.isAnimating()) break;
+        }
+    };
     auto shotAt = [&](const std::string& path) {
         std::vector<unsigned char> rgba;
         int pw = 0, ph = 0;
@@ -172,8 +180,12 @@ int main(int argc, char* argv[]) {
 
     // 链路1：侧栏页切换（真点击 Settings 条目）
     if (const auto* item = ui->find("app.sidebar.item.Settings.hit")) {
+        std::cout << "DIAG page before=" <<
+            static_cast<int>(router.currentPage()) << "\n";
         clickElement(*item);
-        pump(3);
+        pumpSettle();
+        std::cout << "DIAG page after=" <<
+            static_cast<int>(router.currentPage()) << "\n";
     }
     check(ui != nullptr && ui->find("settings.tabs.wrap") != nullptr,
           "链路1 真点击侧栏 Settings：设置页应当帧入 DOM（点击响应）");
@@ -187,7 +199,7 @@ int main(int argc, char* argv[]) {
     if (const auto* tab = ui->find("settings.tabs.1.hit")) {
         dumpElement(*ui, "settings.tabs.1.hit");
         clickElement(*tab);
-        pump(3);
+        pumpSettle();
     }
     const int cardsAfter =
         ui != nullptr ? countIdPrefix(*ui, "app.settings.card.") : -1;
@@ -206,7 +218,7 @@ int main(int argc, char* argv[]) {
     // 链路3：侧栏返回首页（真点击 Home 条目 → 设置页内容当帧退出）
     if (const auto* home = ui->find("app.sidebar.item.Home.hit")) {
         clickElement(*home);
-        pump(3);
+        pumpSettle();
     }
     check(ui != nullptr && ui->find("settings.tabs.wrap") == nullptr,
           "链路3 真点击侧栏 Home：应返回首页（设置页内容退出 DOM）");
