@@ -333,7 +333,14 @@ core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
         // 渲染）——见本批报告取证项，非本层请求。
         return core::platform::WindowEffect::Mica;
     }
-    // off / translucent（含未知值）：显式关 backdrop，视觉由 clearColor alpha 决定
+    if (mode == kWindowEffectTranslucent) {
+        // bug266（24H2）：半透档需要与 off 区分——EUI-NEO 的 accent 路线按档位
+        // 映射 ACCENT 状态（Transparent=透见无模糊，None=实色关）。语义即枚举
+        // 本义（dsl_app.h：Transparent=透明帧缓冲+clearColor alpha<1 整体半透）；
+        // macOS 把 Transparent 与 None 同路径处理（视觉不变，见 window_effect_macos.mm）。
+        return core::platform::WindowEffect::Transparent;
+    }
+    // off / 未知值：显式关 backdrop，实色
     return core::platform::WindowEffect::None;
 }
 
