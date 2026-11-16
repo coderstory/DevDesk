@@ -544,7 +544,7 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
 
 // Home 降级渲染
 
-REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 卡片/按钮全隐藏 + 空态文案", {
+REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 统计卡仍恒显示（need270）、快捷按钮隐退", {
     ::core::Router router;
     StubModule home(::core::PageId::Home, "home");
     StubModule settings(::core::PageId::Settings, "settings");
@@ -561,23 +561,25 @@ REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 卡
     mod->compose(ui, screen);
     ui.end();
 
-    // 5 张统计卡全隐
-    DOCTEST_CHECK(ui.find("home.stat.tokens") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.notes") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.todo") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.overdue") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.api") == nullptr);
+    // need270：统计卡描述的是**事实**（库里有多少笔记/待办/API 调用），与模块
+    // 开关无关——模块全关也恒显示 5 张卡（数据为 0 时显示 0，不再整片消失）。
+    DOCTEST_CHECK(ui.find("home.stat.tokens") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.notes") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.todo") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.overdue") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
+    // 图表卡同样恒显示（读历史行，模块关停不影响可读性）
+    DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
+    // 快捷按钮是**动作入口**：目标模块关了点了也执行不了，仍随注册态隐退
     DOCTEST_CHECK(ui.find("home.act.newnote") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
-    // 一个工具模块都没注册时的兜底文案
-    const auto* empty = ui.find("home.stats.alloff");
-    DOCTEST_REQUIRE(empty != nullptr);
-    DOCTEST_CHECK(empty->text.find("所有工具模块已关闭") != std::string::npos);
+    // 统计区不再是「所有工具模块已关闭」空态——卡片恒在场
+    DOCTEST_CHECK(ui.find("home.stats.alloff") == nullptr);
     return true;
 })
 
-REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 对应卡隐藏、其余保留", {
+REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 统计卡恒显示、按钮按目标模块隐退", {
     // 只启用 markdown（todo/claude 关闭）
     ::core::Router router;
     StubModule home(::core::PageId::Home, "home");
@@ -597,16 +599,17 @@ REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 
     mod->compose(ui, screen);
     ui.end();
 
-    // 卡片可见性按目标模块是否注册，跨模块不互相牵连
+    // need270：统计卡恒显示（不再按模块注册态过滤）——只开 markdown 时
+    // tokens/api/todo/overdue 四张卡照旧在场，数值来自库（0 就显示 0）。
     DOCTEST_CHECK(ui.find("home.stat.notes") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.tokens") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.todo") != nullptr);
+    DOCTEST_CHECK(ui.find("home.stat.overdue") != nullptr);
+    // 快捷按钮仍按**目标模块**注册态隐退（动作入口，关了就点不动）
     DOCTEST_CHECK(ui.find("home.act.newnote") != nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.tokens") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.api") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.todo") == nullptr);
-    DOCTEST_CHECK(ui.find("home.stat.overdue") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
-    // 部分启用不出空态文案
     DOCTEST_CHECK(ui.find("home.stats.alloff") == nullptr);
     return true;
 })

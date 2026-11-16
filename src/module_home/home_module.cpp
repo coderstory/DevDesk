@@ -11,6 +11,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "home_service.h"
+#include "toast_notice_bridge.h"  // need270：点已关停模块卡片时投递应用级提示
 #include <ui_kit/card.h>
 
 #include <eui/dsl.h>
@@ -373,11 +374,12 @@ public:
         const float cardGap = 8.0f;  // 全站卡间距统一档 8px（列表统一规范 §4.3）
         // 统计行高在下方 scrollView 的 content 回调内派生（需要视口高 innerH），见那里。
 
-        // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
-        int statCount = 0;
-        for (const auto& card : kStatCards) {
-            if (moduleRegistered(card.module)) ++statCount;
-        }
+        // 统计卡恒为全表行数（need270）：统计是**事实**，与模块开关无关——
+        // 数据由 home_service 直读库（claude_call_logs / markdown_index / todo_tasks），
+        // 关掉 Claude 模块不代表「今天没调过 API」。旧实现按注册态过滤会让关停模块
+        // 的指标连同历史数据一起消失，用户看到「卡片数变少」以为出了 bug。
+        constexpr int statCount =
+            static_cast<int>(sizeof(kStatCards) / sizeof(kStatCards[0]));
 
         // 页面不自铺底色，用主窗口 clearColor 透出（否则半透/磨砂档页面 alpha 恒 1 看不见效果）。
 
@@ -394,7 +396,9 @@ public:
             // 与平台标题条无关：上下内边距 + 页头 40 + 统计块 + 间隙 + 图表卡 + 操作行。
             // 窗口高于基准才伸展；低于基准由外层滚动吸收（不压缩）。
             const bool hasStats = statCount > 0;
-            const bool hasChart = moduleRegistered(::core::PageId::ClaudeProxy);
+            // need270：图表卡同样恒显示——小时用量分布读的是 claude_call_logs 历史行，
+            // 关停 Claude 模块不等于「今天没用过 token」。无数据时图表自身走空态分支。
+            const bool hasChart = true;
             int actCount = 0;
             for (const auto& btn : kActionButtons) {
                 if (moduleRegistered(btn.module)) ++actCount;
@@ -546,8 +550,8 @@ public:
                     .lineGap(cardGap)
                     .content([&] {
                         // 逐表行渲染：行序 = 渲染序，元素 id 由 kind 决定；数值/配色/图表按行身份在表外取。
+                        // need270：不过滤注册态——5 张卡恒在场（数据是事实，不随模块开关消失）。
                         for (const auto& card : kStatCards) {
-                            if (!moduleRegistered(card.module)) continue;
                             switch (card.kind) {
                                 case StatCardKind::Tokens: {
                                     // 周期重绘仅「有速率活动」时挂载：常挂 onTimer 会整页 2Hz 重排并打断 hover 过渡
@@ -996,6 +1000,15 @@ private:
             LOG_WARN("Home: Router 未注册，无法跳转到 " +
                      std::string(::core::pageIdToString(page)));
             return;
+        }
+        // need270：统计卡恒显示后，归属于「已关停模块」的卡也仍在场上。此时点它
+        // 会命中 Router 的未注册页兜底（静默回 Home）——用户看到的是「点了没反应」。
+        // 这里先给一句可归因的提示，再交给 Router 走既有兜底。
+        if (!router->isRegistered(page)) {
+            app::toast_notice::show(
+                "该模块已关闭",
+                std::string("「") + ::core::pageIdToString(page) +
+                    "」未启用，可在设置页开启后查看完整页面。");
         }
         router->navigateTo(page, payload);
     }

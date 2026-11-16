@@ -761,10 +761,11 @@ REGISTER_TEST(home_stat_chart_dual_tier,
     return true;
 })
 
-// 关闭 ClaudeProxy：图表卡不渲染时余高必须由统计行吸收，页底不留死区。
-// 基准（无图表卡）= 页头40+统计144+gap×2(40)+操作44+底边距16 = 284。
+// need270 契约变更：图表卡读取 claude_call_logs 历史行，与 Claude 模块注册态无关
+// → 模块关停后图表卡**仍在场**（此前是整卡隐退、余高让给统计行）。本用例锁定新
+// 契约：关停 ClaudeProxy 时图表卡照旧渲染，且统计区高度不被余高撑大。
 REGISTER_TEST(home_no_chart_extra_to_stats,
-              "home_module: ClaudeProxy 关闭时余高全给统计行（无图表卡）", {
+              "home_module: ClaudeProxy 关闭时图表卡仍在场（need270 解耦）", {
     core::theme::setFontScale(1.0f);
     core::theme::setWindowHeight(960.0f);  // 窗高不封顶 → fs=1
 
@@ -785,15 +786,20 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
+    // 图表卡恒在场（与 Claude 模块是否注册无关）
+    DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
+    // 5 张统计卡也恒在场
+    for (const char* id : {"home.stat.tokens", "home.stat.notes", "home.stat.todo",
+                           "home.stat.overdue", "home.stat.api"}) {
+        DOCTEST_CHECK(ui.find(id) != nullptr);
+    }
     const auto* stat = ui.find("home.stat.notes");
     const auto* root = ui.find("home.root");
     DOCTEST_REQUIRE(stat != nullptr);
     DOCTEST_REQUIRE(root != nullptr);
-    // 余高 960−284−0.5=675.5 全给统计行 → 144+675.5=819.5；内容填满页高
-    DOCTEST_CHECK_MESSAGE(
-        std::fabs(stat->frame.height - (144.0f + 675.5f)) < 0.5f,
-        "无图表卡时统计行应吸收全部余高（期望 819.5），实际 " +
+    // 统计卡恒 96（kHomeStatGrowRatio=0，余高归图表卡）——不再被余高撑成巨块
+    DOCTEST_CHECK_MESSAGE(std::fabs(stat->frame.height - 96.0f) < 0.5f,
+        "统计卡应恒为 96（余高归图表卡），实际 " +
             std::to_string(stat->frame.height));
     const float bottomMargin =
         screen.height - (root->frame.y + root->frame.height);
