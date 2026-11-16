@@ -206,6 +206,8 @@ namespace {
 std::mutex g_secondInstanceFilesMutex;
 std::vector<std::string> g_secondInstanceFiles;
 std::function<void(const std::string&)> g_osOpenFunnel;
+// 定义见文件后段（OS 关联扩展名判据）；drain 的唤醒裁决先用，故前置声明
+bool pathHasMarkdownExtension(const std::string& path);
 } // namespace
 
 void enqueueSecondInstancePaths(std::vector<std::string> paths) {
@@ -224,6 +226,13 @@ void setOsOpenFunnel(std::function<void(const std::string& path)> funnel) {
     g_osOpenFunnel = std::move(funnel);
 }
 
+bool secondInstancePathsNeedMainWindow(const std::vector<std::string>& paths) {
+    for (const auto& path : paths) {
+        if (!pathHasMarkdownExtension(path)) return true;
+    }
+    return false;
+}
+
 void drainPendingSecondInstanceFiles() {
     // 漏斗未注册（极早帧）：保留队列不消费，注册后的下一帧再送达
     if (!g_osOpenFunnel) return;
@@ -232,6 +241,12 @@ void drainPendingSecondInstanceFiles() {
         std::lock_guard<std::mutex> lock(g_secondInstanceFilesMutex);
         paths = std::exchange(g_secondInstanceFiles, {});
     }
+    if (paths.empty()) return;
+    // 唤醒裁决（bug270）：带路径唤醒不再由监听线程无条件弹主窗（那会让「双击 .md
+    // 关联启动」= 主窗被唤起 + 查看器窗两个窗口）。纯 .md/.markdown 送达 = 关联
+    // 启动，只开查看器窗（与冷启动 armTrayIfViewerOnlyLaunch 同口径）；含其它类型
+    // 才需要主窗承接路由页。纯唤起（无载荷）仍走监听线程 requestShow，不受影响。
+    if (secondInstancePathsNeedMainWindow(paths)) app::requestShow();
     for (const auto& path : paths) {
         LOG_INFO("单实例：分发第二实例送达文件 — " + path);
         g_osOpenFunnel(path);

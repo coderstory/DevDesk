@@ -105,12 +105,16 @@ void listenerLoop() {
         DWORD result = WaitForSingleObject(hEvent, 500);
         if (result == WAIT_OBJECT_0) {
             ResetEvent(hEvent);
-            // 复用托盘「显示主窗口」代码路径：保证 hiddenToTray 等内部状态一致，
-            // 不自写一套 ShowWindow
-            app::requestShow();
-            // F-01：读映射 → 整包校验 → SetEvent(载荷内专名 ack) → 路径回调入
-            // app_assembly 队列。校验失败整包丢弃（悬垂/半包永不误消费、不误 ack）
-            platform::single_instance::consumeSectionSignalOnce();
+            // F-01：先读映射 → 整包校验 → SetEvent(载荷内专名 ack) → 路径回调入
+            // app_assembly 队列。校验失败整包丢弃（悬垂/半包永不误消费、不误 ack）。
+            // 唤醒裁决（bug270）：带路径送达时不在此无条件唤起主窗——.md 关联启动
+            // 应只开查看器（与冷启动 armTrayIfViewerOnlyLaunch 同口径），打开请求
+            // 由主线程 drain 按文件类型决定是否显示主窗；纯唤起 / 悬垂脏包
+            //（返回 false）仍复用托盘「显示主窗口」路径，行为不变（保证
+            // hiddenToTray 等内部状态一致，不自写一套 ShowWindow）。
+            if (!platform::single_instance::consumeSectionSignalOnce()) {
+                app::requestShow();
+            }
         } else if (result == WAIT_FAILED) {
             break;
         }

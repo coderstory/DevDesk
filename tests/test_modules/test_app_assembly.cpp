@@ -1385,3 +1385,16 @@ REGISTER_TEST(si_paths_queue_drain_order,
     app::assembly::resetSecondInstanceFilesForTest();
     return true;
 })
+
+// ── bug270 唤醒裁决：纯 .md/.markdown 送达 = 关联启动（只开查看器窗，不唤主窗）；
+//   含其它类型才需要主窗承接路由页。判据纯函数，不驱动 requestShow 副作用 ──
+REGISTER_TEST(si_paths_wake_decision_md_only,
+              "app_assembly: 第二实例唤醒裁决——纯 .md 不唤主窗，含其它类型需要主窗", {
+    using app::assembly::secondInstancePathsNeedMainWindow;
+    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({}));
+    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"a.md"}));
+    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"a.md", "b.MARKDOWN"}));
+    DOCTEST_CHECK(secondInstancePathsNeedMainWindow({"a.md", "b.txt"}));
+    DOCTEST_CHECK(secondInstancePathsNeedMainWindow({"notes.json"}));
+    return true;
+})

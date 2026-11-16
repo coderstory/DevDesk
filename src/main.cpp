@@ -1098,6 +1098,16 @@ const DslAppConfig& dslAppConfig() {
         // OS 关联启动（argv 带 .md）：查看器窗即全部 UI，主窗保持托盘态——复用
         // --minimized 同一状态位（compose 首帧 closeMainWindow 藏托盘，托盘可唤起）
         app::assembly::armTrayIfViewerOnlyLaunch();
+        // bug270：第二实例送达路径的 drain 挂 ticker（每次 pump 一次，空队列零开销）。
+        // 主窗 compose 顶部也 drain，但「主窗已关到托盘」时主窗不 compose——只靠 compose
+        // 会让送达路径积压到下次恢复主窗（或永不分发）：托盘态双击 .md 会「什么都不出」。
+        // ticker 在两种状态下都推进（EUI 主循环托盘分支已补宿主帧泵）。
+        core::ticker::Subscription drainSub;
+        drainSub.name = "assembly.second_instance_drain";
+        drainSub.fn = [](core::ticker::Now, void*) {
+            app::assembly::drainPendingSecondInstanceFiles();
+        };
+        core::ticker::subscribe(std::move(drainSub));
         // --minimized 旗标捕获（UAT6 开机自启动）：命中 → 主窗保持托盘态（compose 首帧执行）
         app::assembly::captureMinimizedFlagFromArgv();
         LOG_INFO("DevDesk 启动中...");

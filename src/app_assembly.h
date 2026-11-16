@@ -108,6 +108,11 @@ void setOsOpenFunnel(std::function<void(const std::string& path)> funnel);
 // OS 打开漏斗
 void drainPendingSecondInstanceFiles();
 
+// 唤醒裁决（bug270，纯判据供单测直测）：送达路径里是否含「需要主窗承接」的类型
+//（非 .md/.markdown）。纯 .md 送达 = 关联启动，只开查看器窗、不唤主窗（与冷启动
+// armTrayIfViewerOnlyLaunch 同一裁决）；任一其它类型返回 true（打开在主窗路由页）。
+bool secondInstancePathsNeedMainWindow(const std::vector<std::string>& paths);
+
 // 测试缝：清队列 + 摘漏斗（用例间隔离）
 void resetSecondInstanceFilesForTest();
 
