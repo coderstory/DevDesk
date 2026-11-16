@@ -1695,11 +1695,13 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（显式关）；档位单值同步写 core
+    // 半透档：clearColor alpha=0.85 + backdrop 请求 Transparent（bug266：24H2 accent
+    // 路线下半透/off 必须区分——EUI-NEO 映射 Transparent→accent state=2（渐变透明）、
+    // None→state=0（off）；旧断言 None 是接线改前的口径）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(app::currentClearColor().a == 0.85f);
-    DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::Transparent);
     // 标题栏底**独立** alpha（显式 customColor，覆盖 EUI-NEO 按 clearColor 推导的做法）
     {
         const auto tb = app::currentTitleBarAppearance();
