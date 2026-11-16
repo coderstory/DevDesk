@@ -285,15 +285,22 @@ void viewerSelDrag(ViewerSession& s, size_t k, const components::MouseEvent& ev)
 }
 
 // 写剪贴板 + 回读校验（need264 复核 P3）：setClipboardText 无返回值（void），
-// 写后经 clipboardText 回读比对，失配 LOG_WARN（agent 模块复制先例同源；
-// viewer 拖选为高频路径，成功面不打日志降噪，仅失败告警）。
+// 写后经 clipboardText 回读比对，失配 LOG_WARN（agent 模块复制先例同源）。
+// bug276 取证加固：成功面也留 LOG_INFO（含字节数）——历史日志零失配 WARN、
+// 老板复测「拖选无反应」无法区分「复制成功被外部程序覆写」与「选区未形成」
+// （成功面静默=取证盲区），成功日志一个数据点即可定案。
 void viewerCopyToClipboard(const ViewerSession& s, const std::string& text) {
     if (text.empty()) return;
     core::window::setClipboardText(text);
-    if (s.handle != nullptr &&
-        core::window::clipboardText(s.handle) != text) {
-        LOG_WARN("md viewer: 剪贴板写入回读校验失败（期望 " +
-                 std::to_string(text.size()) + " 字节，选区自动复制可能未生效）");
+    if (s.handle != nullptr) {
+        if (core::window::clipboardText(s.handle) != text) {
+            LOG_WARN("md viewer: 剪贴板写入回读校验失败（期望 " +
+                     std::to_string(text.size()) +
+                     " 字节，选区自动复制可能未生效）");
+            return;
+        }
+        LOG_INFO("md viewer: 选区自动复制成功且回读一致（" +
+                 std::to_string(text.size()) + " 字节）");
     }
 }
 
