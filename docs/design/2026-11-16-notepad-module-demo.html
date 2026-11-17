@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  记事本模块 — 视觉校准 demo v2（伴生文档：2026-11-16-notepad-module.md）
+  demo 仅视觉校准用，不是实现蓝图：全部参数以设计文档 §4 规格表为准。
+  v2 容器变更：独立窗口形态 —— 模拟 OS 标题栏（红绿灯+文件名）+ 无侧栏
+  + 无新建入口 + 无空态；控制台可切「单窗/双窗」演示多窗并存（B 窗为静态
+  副本，演示布局与 z 序视觉）。
+  自包含单文件：无外部依赖、无网络请求，离线双击打开。
+  桌面底色为 OS 领域模拟色，非产品 token；窗内全部取值出自设计文档 §3 token。
+  快捷键：⌘S/⌘F/⌘P/⌘W 在 demo 内生效；⌘O/⌘N 可能被浏览器占用，以按钮为准。
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>记事本 — DevDesk（demo）</title>
+<style>
+  /* ==========================================================
+     §3 token 总表（src/core/theme.cpp 实值；深浅双主题）
+     ========================================================== */
+  :root, [data-theme="dark"] {
+    --bg:#1A1816; --surface:#232120; --elevated:#2C2A28;
+    --hover:#353231; --active:#3E3B39;
+    --primary:#36D399; --primary-hover:#2EC48F; --primary-pressed:#23B07F;
+    --soft:#0D3326; --on-primary:#FFFFFF; --primary-text:#36D399;
+    --text-p:#FAF9F5; --text-s:#C9C5BD; --text-t:#9A948A; --text-dis:#908A82;
+    --border:#3A3735; --border-m:#2A2826;
+    --success:#34D399; --warning:#FBBF24; --err-text:#F87171; --info:#60A5FA;
+    --hit-normal:rgba(251,191,36,.26); --hit-cur:rgba(54,211,153,.38);
+    --ed-size:14px; --ed-font:"Menlo","Cascadia Code",Consolas,monospace;
+  }
+  [data-theme="light"] {
+    --bg:#FAFAF9; --surface:#FFFFFF; --elevated:#FFFFFF;
+    --hover:#F3F4F6; --active:#E5E7EB;
+    --soft:#E6FBF2; --primary-text:#157E4E;
+    --text-p:#1F2937; --text-s:#4B5563; --text-t:#6B7280; --text-dis:#6B7280;
+    --border:#E5E7EB; --border-m:#F3F4F6;
+    --success:#10B981; --warning:#F59E0B; --err-text:#B91C1C; --info:#3B82F6;
+    --hit-normal:rgba(245,158,11,.22); --hit-cur:rgba(54,211,153,.30);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  /* 桌面底色 = OS 领域模拟，非产品 token */
+  body { background:#232629; font-family:"Inter","Microsoft YaHei","PingFang SC",sans-serif;
+    font-size:14px; overflow:hidden; color:var(--text-p); }
+  button { font-family:inherit; cursor:pointer; }
+  input, textarea, pre { font-family:inherit; }
+
+  .pressable { transition:transform 180ms cubic-bezier(.22,1,.36,1), background 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out, opacity 150ms ease-out; }
+  .pressable:hover { transform:scale(1.02); }
+  .pressable:active { transform:scale(.96); }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition:none !important; }
+    .pressable:hover, .pressable:active { transform:none; }
+  }
+
+  /* ==========================================================
+     桌面 + 独立窗（§1.2 构图 / §2 窗口级行为：默认 900×640、最小 720×480）
+     ========================================================== */
+  #desk { height:100%; display:flex; gap:12px; padding:12px; }
+  .win { flex:1; min-width:0; display:flex; flex-direction:column;
+    background:var(--bg); border-radius:10px; overflow:hidden;
+    box-shadow:0 12px 40px rgba(0,0,0,.45), 0 0 0 1px rgba(0,0,0,.35); position:relative; }
+  #winB { display:none; }
+  body.dual #winB { display:flex; }
+  body.dual #winA, body.dual #winB { flex:1 1 50%; }
+
+  /* ── §4.1 模拟 OS 标题栏（真实实现为系统绘制：mac 28pt / Win ~32px）── */
+  .titlebar { height:28px; flex:none; display:flex; align-items:center; position:relative;
+    background:var(--surface); border-bottom:1px solid var(--border-m); padding:0 12px; }
+  .lights { display:flex; gap:8px; }
+  .light { width:12px; height:12px; border-radius:50%; border:none; padding:0; }
+  .light.red { background:#FF5F57; } .light.yel { background:#FEBC2E; } .light.grn { background:#28C840; }
+  .winTitle { position:absolute; left:50%; transform:translateX(-50%);
+    font-size:13px; color:var(--text-s); white-space:nowrap; max-width:60%;
+    overflow:hidden; text-overflow:ellipsis; }
+  .winTitle.dirty::before { content:"• "; color:var(--warning); }   /* §2 脏态前缀 */
+  .demoTag { margin-left:auto; font-size:11px; color:var(--text-t);
+    border:1px solid var(--border); border-radius:999px; padding:1px 8px; }
+
+  /* ── §4.2 工具条 notepad.toolbar（h44；文件组→文档组→视图组）── */
+  .toolbar { height:44px; flex:none; display:flex; align-items:center; gap:8px;
+    padding:0 16px; border-bottom:1px solid var(--border-m); position:relative; }
+  .toolbar .group { display:flex; align-items:center; gap:8px; }
+  .toolbar .gap16 { width:8px; }  .toolbar .gap16.wide { width:16px; }
+  .toolbar .spacer { flex:1; }
+  .iconBtn { width:24px; height:24px; border-radius:50%; border:none; background:transparent;
+    display:flex; align-items:center; justify-content:center; color:var(--text-s); padding:0; }
+  .iconBtn:hover { background:var(--hover); }
+  .iconBtn:active { background:var(--active); }
+  .iconBtn svg { width:12px; height:12px; stroke:currentColor; fill:none; stroke-width:2;
+    stroke-linecap:round; stroke-linejoin:round; }
+  .iconBtn.dirty { color:var(--primary); }
+  .disabled, .iconBtn:disabled, .segBtn:disabled, .textBtn:disabled {
+    color:var(--text-dis) !important; pointer-events:none; }
+  .ddTrigger { height:28px; border-radius:6px; background:var(--surface); border:1px solid var(--border);
+    color:var(--text-p); font-size:13px; padding:0 8px;
+    display:flex; align-items:center; gap:6px; }
+  .ddTrigger:hover { background:var(--hover); }
+  .ddTrigger .chev { flex:none; width:8px; height:8px; stroke:var(--text-t); fill:none;
+    stroke-width:2; stroke-linecap:round; }
+  .ddTrigger .lbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #ddLanguage { width:140px; } #ddFont { width:160px; }
+  body[data-tier="t1"] #ddLanguage { width:120px; }
+  body[data-tier="t1"] #ddFont { width:140px; }
+  #btnFormat { height:28px; border-radius:6px; background:var(--surface); border:1px solid var(--border);
+    color:var(--text-s); font-size:13px; padding:0 12px; display:flex; align-items:center; }
+  #btnFormat:hover { background:var(--hover); }
+  #btnFormat:active { background:var(--active); }
+  #btnFormat .fmt-ico { display:none; font-size:12px; }
+  body[data-tier="t1"] #btnFormat .fmt-txt { display:none; }
+  body[data-tier="t1"] #btnFormat .fmt-ico { display:inline; }
+  body[data-tier="t1"] #btnFormat { height:24px; width:24px; padding:0; justify-content:center; }
+  #stepperFont { display:flex; align-items:center; }
+  #stepperFont .iconBtn { font-size:11px; }
+  #stepperFont .val { width:28px; text-align:center; font-size:13px; color:var(--text-p); }
+  #segPreview { height:40px; border-radius:8px; background:var(--hover); padding:2px;
+    display:flex; align-items:center; }
+  .segBtn { height:36px; width:62px; border:none; border-radius:6px; background:transparent;
+    font-size:13px; font-weight:400; color:var(--text-s); padding:0; }
+  .segBtn.on { background:var(--soft); color:var(--primary-text); font-weight:600; }
+  body[data-tier="t1"] .segBtn { width:56px; }
+
+  /* ── 菜单/下拉面板族（§4.2 menuMore）── */
+  .menu { position:fixed; z-index:60; min-width:180px; background:var(--elevated);
+    border:1px solid var(--border); border-radius:10px; padding:4px;
+    box-shadow:0 4px 12px rgba(0,0,0,.06);
+    opacity:0; transform:translateY(-4px); transition:opacity 150ms ease-out, transform 150ms ease-out; }
+  .menu.open { opacity:1; transform:translateY(0); }
+  .menuItem { height:32px; display:flex; align-items:center; gap:8px; padding:0 12px;
+    border-radius:6px; font-size:13px; color:var(--text-p); white-space:nowrap; }
+  .menuItem .note { margin-left:auto; font-size:12px; color:var(--text-t); padding-left:24px; }
+  .menuItem:hover { background:var(--hover); }
+  .menuItem.checked::before { content:"✓"; color:var(--primary); margin-right:-4px; }
+  .menuItem.disabled { color:var(--text-dis); pointer-events:none; }
+  .menuSep { height:1px; background:var(--border-m); margin:4px 8px; }
+
+  /* ── §4.3 提示条 notepad.banner（条件层 h32）── */
+  #banner { height:32px; flex:none; display:none; align-items:center; gap:8px; padding:0 16px; }
+  #banner.show { display:flex; }
+  #banner .ico { font-size:12px; flex:none; }
+  #banner .txt { font-size:12px; color:var(--text-p); }
+  #banner.warn { background:color-mix(in srgb, var(--surface) 88%, var(--warning)); }
+  #banner.info { background:color-mix(in srgb, var(--surface) 88%, var(--info)); }
+  #banner.warn .ico { color:var(--warning); } #banner.info .ico { color:var(--info); }
+
+  /* ==========================================================
+     §4.4 编辑区 notepad.editor（flex-1 唯一内滚；自动换行默认开）
+     ========================================================== */
+  .workarea { flex:1; min-height:240px; position:relative; overflow:hidden; }
+  #editor, #hl {
+    position:absolute; inset:0; padding:16px;
+    font-family:var(--ed-font); font-size:var(--ed-size);
+    line-height:calc(var(--ed-size) * 1.2);
+    tab-size:2; letter-spacing:normal; white-space:pre-wrap; word-wrap:break-word;
+  }
+  #hl { margin:0; overflow:hidden; pointer-events:none; color:var(--text-p); z-index:1; }
+  #editor { border:none; outline:none; resize:none; background:transparent;
+    color:transparent; caret-color:var(--primary); overflow:auto; z-index:2; }
+  #editor::selection { background:var(--soft); }
+  #editor::-webkit-scrollbar, .pvScroll::-webkit-scrollbar { width:8px; height:8px; }
+  #editor::-webkit-scrollbar-thumb, .pvScroll::-webkit-scrollbar-thumb { background:var(--border); border-radius:999px; }
+  #editor::-webkit-scrollbar-track, .pvScroll::-webkit-scrollbar-track { background:transparent; }
+  body.wrapOff #editor, body.wrapOff #hl { white-space:pre; word-wrap:normal; }
+
+  /* 语法高亮 token（§3.1） */
+  .tk-key  { color:var(--info); }
+  .tk-str  { color:var(--warning); }
+  .tk-cmt  { color:var(--text-t); }
+  .tk-num  { color:var(--primary-text); }
+  .tk-tag  { color:var(--info); }
+  .tk-attr { color:var(--primary-text); }
+  .tk-quote{ color:var(--text-s); }
+  .tk-err  { color:var(--err-text); }
+  .tk-warn { color:var(--warning); }
+
+  mark.hit { background:var(--hit-normal); color:inherit; border-radius:2px; }
+  mark.hit.cur { position:relative; }
+  mark.hit.cur::after { content:""; position:absolute; inset:0; background:var(--hit-cur);
+    border-radius:2px; pointer-events:none; }
+
+  /* ── §4.5 搜索替换浮层 notepad.searchBar（锚编辑区右上）── */
+  #searchBar { position:absolute; top:12px; right:16px; z-index:20;
+    display:flex; flex-direction:column; gap:6px; min-width:360px; padding:6px;
+    background:var(--elevated); border:1px solid var(--border); border-radius:10px;
+    box-shadow:0 4px 12px rgba(0,0,0,.06);
+    opacity:0; transform:translateY(-4px); pointer-events:none;
+    transition:opacity 150ms ease-out, transform 150ms ease-out; }
+  #searchBar.open { opacity:1; transform:translateY(0); pointer-events:auto; }
+  #searchBar .row { display:flex; align-items:center; gap:4px; }
+  #searchInput, #replaceInput { width:220px; height:28px; padding:0 8px;
+    background:var(--surface); color:var(--text-p); border:1px solid var(--border);
+    border-radius:6px; font-size:13px; outline:none; }
+  #searchInput:focus, #replaceInput:focus { border-color:var(--primary); }
+  #searchInput::placeholder, #replaceInput::placeholder { color:var(--text-t); }
+  #searchCount { font-size:12px; color:var(--text-s); min-width:32px; text-align:center; white-space:nowrap; margin-left:4px; }
+  #searchEmpty { font-size:12px; color:var(--text-t); white-space:nowrap; display:none; }
+  #searchEmpty.show { display:inline; }
+  .miniBtn { width:24px; height:24px; border:none; border-radius:6px; background:transparent;
+    color:var(--text-t); font-size:12px; display:flex; align-items:center; justify-content:center; padding:0; }
+  .miniBtn:hover { background:var(--hover); color:var(--text-s); }
+  .miniBtn:active { background:var(--active); }
+  #searchBar .row#rowReplace { display:none; }          /* 特异性压过 .row */
+  #searchBar.rep #rowReplace { display:flex; }
+  .repBtn { height:24px; padding:0 10px; border-radius:6px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-s); font-size:12px; white-space:nowrap; }
+  .repBtn:hover { background:var(--hover); }
+  .repBtn:active { background:var(--active); }
+
+  /* ── §4.6 预览区 notepad.preview ── */
+  #previewWrap { position:absolute; inset:0; display:none; overflow:hidden; }
+  #previewWrap.show { display:block; }
+  .pvScroll { position:absolute; inset:0; overflow-y:auto; overflow-x:hidden; }
+  .pvColumn { max-width:760px; margin:0 auto; padding:32px 40px 40px; }
+  #pvBody { color:color-mix(in srgb, var(--text-p) 78%, transparent); font-size:16px; line-height:24px; }
+  #pvBody h1 { font-size:30px; line-height:36px; color:color-mix(in srgb, var(--text-p) 96%, transparent); margin:0 0 12px; }
+  #pvBody h2 { font-size:24px; line-height:30px; color:color-mix(in srgb, var(--text-p) 96%, transparent); margin:24px 0 12px; }
+  #pvBody h3 { font-size:20px; line-height:26px; color:color-mix(in srgb, var(--text-p) 96%, transparent); margin:24px 0 12px; }
+  #pvBody p { margin:0 0 12px; }
+  #pvBody .lnk { color:var(--primary); text-decoration:underline; }
+  #pvBody ul, #pvBody ol { margin:0 0 12px; padding-left:22px; }
+  #pvBody li { margin-bottom:4px; }
+  #pvBody strong { color:color-mix(in srgb, var(--text-p) 96%, transparent); }
+  #pvBody blockquote { background:color-mix(in srgb, var(--primary) 12%, transparent);
+    border-radius:6px; padding:12px; margin:0 0 12px; }
+  #pvBody blockquote p { margin:0; }
+  #pvBody hr { border:none; border-top:1px solid color-mix(in srgb, var(--border) 82%, transparent); margin:12px 0; }
+  #pvBody pre.pv-code { font-family:var(--ed-font); font-size:14px; color:var(--text-p);
+    background:var(--surface); border:1px solid var(--border-m); border-radius:6px;
+    padding:12px; margin:0 0 12px; white-space:pre-wrap; word-break:break-all; }
+  #pvBody code { font-family:var(--ed-font); font-size:14px; background:var(--surface);
+    border-radius:4px; padding:1px 5px; }
+  #pvBody table { border-collapse:collapse; margin:0 0 12px; width:100%; }
+  #pvBody th, #pvBody td { border:1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    padding:12px; text-align:left; font-size:16px; line-height:24px; }
+  #pvBody th { color:color-mix(in srgb, var(--text-p) 96%, transparent); }
+
+  /* ── §4.8 错误占位 notepad.errorState（打开失败族；v2 无空态）── */
+  #errorState { position:absolute; inset:0; display:none; align-items:center;
+    justify-content:center; font-size:15px; color:var(--err-text); }
+  #errorState.show { display:flex; }
+
+  /* ── 关窗占位（demo 演示 §2 关窗语义；非产品 UI）── */
+  #closedPh { position:absolute; inset:0; z-index:40; display:none; flex-direction:column;
+    align-items:center; justify-content:center; gap:12px; background:var(--bg); }
+  #closedPh.show { display:flex; }
+  #closedPh .txt { font-size:15px; color:var(--text-t); }
+  .primaryBtn { height:36px; padding:0 16px; border-radius:6px; border:none;
+    background:var(--primary); color:var(--on-primary); font-size:13px; }
+  .primaryBtn:hover { background:var(--primary-hover); }
+  .primaryBtn:active { background:var(--primary-pressed); }
+  .textBtn { height:36px; padding:0 16px; border-radius:6px; background:var(--surface);
+    border:1px solid var(--border); color:var(--text-s); font-size:13px; }
+  .textBtn:hover { background:var(--hover); }
+  .textBtn:active { background:var(--active); }
+
+  /* ── B 窗静态副本（演示多窗并存；非可交互）── */
+  #winB .hlStatic { flex:1; min-height:0; overflow:hidden; padding:16px;
+    font-family:var(--ed-font); font-size:var(--ed-size);
+    line-height:calc(var(--ed-size) * 1.2); white-space:pre;
+    color:var(--text-p); background:var(--bg); }
+  #winB .toolbar, #winB .iconBtn, #winB .ddTrigger, #winB .segBtn { pointer-events:none; }
+  #winB .badge-static { position:absolute; right:12px; bottom:8px; z-index:30;
+    font-size:11px; color:var(--text-t); background:var(--elevated);
+    border:1px dashed var(--border); border-radius:6px; padding:2px 8px; }
+
+  /* ── §4.7 状态栏 notepad.statusbar（h28）── */
+  .statusbar { height:28px; flex:none; display:flex; align-items:center; gap:8px;
+    padding:0 16px; border-top:1px solid var(--border-m); font-size:12px; position:relative; }
+  .statusFile { font-size:13px; font-weight:600; color:var(--text-p);
+    max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #saveState { font-size:12px; white-space:nowrap; }
+  #saveState.clean { color:var(--text-t); }
+  #saveState.dirty { color:var(--warning); }
+  #saveState.fail { color:var(--err-text); }
+  #readonlyBadge { display:none; font-size:11px; font-weight:600; color:var(--warning);
+    background:color-mix(in srgb, var(--surface) 86%, var(--warning));
+    height:18px; line-height:18px; border-radius:4px; padding:0 6px; }
+  #readonlyBadge.show { display:inline-block; }
+  #statusMeta { margin-left:auto; display:flex; gap:16px; color:var(--text-s); white-space:nowrap; }
+  body[data-tier="t1"] #metaEnc, body[data-tier="t1"] #metaEol { display:none; }
+
+  /* ── §4.9 弹窗族 ── */
+  .overlay { position:fixed; inset:0; z-index:70; background:rgba(0,0,0,.4);
+    display:none; align-items:center; justify-content:center; }
+  .overlay.show { display:flex; }
+  .dialog { width:420px; background:var(--elevated); border:1px solid var(--border);
+    border-radius:12px; padding:24px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  .dialog h2 { font-size:16px; font-weight:600; color:var(--text-p); margin-bottom:8px; }
+  .dialog .body { font-size:13px; line-height:20px; color:var(--text-s); margin-bottom:20px; word-break:break-all; }
+  .dialog .btns { display:flex; justify-content:flex-end; gap:8px; }
+  .btn32 { height:32px; padding:0 16px; border-radius:6px; font-size:13px; }
+  .btnDangerText { border:none; background:transparent; color:var(--err-text); }
+  .btnDangerText:hover { background:color-mix(in srgb, var(--surface) 88%, var(--err-text)); }
+  .dlgInput { width:100%; height:28px; padding:0 8px; background:var(--surface); color:var(--text-p);
+    border:1px solid var(--border); border-radius:6px; font-size:13px; outline:none; margin-bottom:20px; }
+  .dlgInput:focus { border-color:var(--primary); }
+
+  /* ── §4.10 轻提示 notepad.toast ── */
+  #toast { position:fixed; bottom:56px; left:50%; transform:translate(-50%, 8px); z-index:80;
+    height:36px; line-height:36px; padding:0 16px; border-radius:8px;
+    background:rgba(0,0,0,.78); color:#FFFFFF; font-size:13px; white-space:nowrap;
+    opacity:0; pointer-events:none; transition:opacity 150ms ease-out, transform 150ms ease-out; }
+  #toast.show { opacity:1; transform:translate(-50%, 0); }
+
+  /* ── DEMO 控制台（非产品 UI）── */
+  #demoConsole { position:fixed; bottom:8px; left:50%; transform:translateX(-50%);
+    z-index:90; display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:center;
+    max-width:96vw; background:var(--elevated); border:1px dashed var(--border);
+    border-radius:10px; padding:6px 10px; box-shadow:0 4px 12px rgba(0,0,0,.06); }
+  #demoConsole .lbl { font-size:11px; color:var(--text-t); white-space:nowrap; }
+  #demoConsole button { height:24px; padding:0 10px; background:var(--surface); color:var(--text-s);
+    border:1px solid var(--border); border-radius:6px; font-size:12px; white-space:nowrap; }
+  #demoConsole button:hover { background:var(--hover); }
+  #demoConsole button.cur { border-color:var(--primary); color:var(--primary); }
+
+  /* ── 尺寸标注模式（§10 V23）── */
+  [data-dim] { position:relative; }
+  body.dim [data-dim] { outline:1px dashed var(--primary); }
+  body.dim [data-dim]::after {
+    content:attr(data-dim); position:absolute; left:4px; top:2px; z-index:95;
+    font:10px/16px Menlo, Consolas, monospace; color:#fff; background:var(--primary);
+    padding:0 5px; border-radius:4px; pointer-events:none; white-space:nowrap; }
+  body.dim .workarea[data-dim]::after, body.dim .statusbar[data-dim]::after { top:auto; bottom:2px; }
+</style>
+</head>
+<body data-theme="dark" data-tier="t0">
+
+<!-- 桌面（OS 领域模拟）+ 记事本窗 ×2（§2 多窗并存；B 窗静态副本） -->
+<div id="desk">
+
+  <!-- ═══ A 窗：完整可交互（§1.2 构图）═══ -->
+  <section class="win" id="winA">
+
+    <!-- §4.1 模拟 OS 标题栏 -->
+    <div class="titlebar" data-dim="OS 标题栏 mac 28pt / Win ~32px · 最小窗 720×480">
+      <div class="lights">
+        <button class="light red" id="lightClose" title="关闭窗口（⌘W / Ctrl+W）"></button>
+        <button class="light yel" title="最小化（系统）"></button>
+        <button class="light grn" title="全屏（系统）"></button>
+      </div>
+      <span class="winTitle" id="winTitle">notes.md</span>
+      <span class="demoTag">demo 窗 A</span>
+    </div>
+
+    <!-- §4.2 工具条 notepad.toolbar（无新建入口） -->
+    <div class="toolbar" data-dim="工具条 44（2+40+2）· 内边距 16">
+      <div class="group" data-dim="文件组 4×24 · gap 8">
+        <button id="btnOpen" class="iconBtn pressable" title="打开…（⌘O / Ctrl+O）— 在本窗换文件">
+          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+        <button id="btnSave" class="iconBtn pressable" title="保存（⌘S / Ctrl+S）">
+          <svg viewBox="0 0 24 24"><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></button>
+        <button id="btnSaveAs" class="iconBtn pressable" title="另存为…（⌘⇧S / Ctrl+Shift+S）">
+          <svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 21h16"/></svg></button>
+        <button id="btnMore" class="iconBtn pressable" title="更多">
+          <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+      </div>
+      <div class="gap16 wide"></div>
+      <div class="group" data-dim="文档组 · 语言 140 / 字体 160 / 步进 24+28+24">
+        <button id="ddLanguage" class="ddTrigger pressable" data-dim="语言下拉 140×28 · r6">
+          <span class="lbl">自动检测</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <button id="btnFormat" class="pressable" title="格式化 JSON（⌘⇧F / Ctrl+Shift+F）">
+          <span class="fmt-txt">格式化</span><span class="fmt-ico">{}</span>
+        </button>
+        <button id="ddFont" class="ddTrigger pressable" data-dim="字体下拉 160×28 · r6 · 系统族枚举">
+          <span class="lbl">Menlo</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="stepperFont" data-dim="步进 24+28+24 · 12–20">
+          <button id="btnDec" class="iconBtn pressable" title="减小字号（下限 12）">A−</button>
+          <span class="val" id="fontSizeVal">14</span>
+          <button id="btnInc" class="iconBtn pressable" title="增大字号（上限 20）">A+</button>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <div class="group" data-dim="视图组 · 右锚">
+        <button id="btnFind" class="iconBtn pressable" title="查找替换（⌘F / Ctrl+F）">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        </button>
+        <div id="segPreview" data-dim="块面 Tab 40 · 选中底 primarySoftBg">
+          <button id="segEdit" class="segBtn on">编辑</button>
+          <button id="segPrev" class="segBtn">预览</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- §4.3 提示条 notepad.banner -->
+    <div id="banner" class="warn" data-dim="提示条 32（条件层）">
+      <span class="ico" id="bannerIco">▲</span>
+      <span class="txt" id="bannerTxt"></span>
+      <button id="bannerClose" class="miniBtn" style="margin-left:auto" title="关闭">×</button>
+    </div>
+
+    <!-- §4.4/4.6/4.8 编辑区槽位 -->
+    <div class="workarea" id="workarea" data-dim="编辑区 flex · 唯一内滚 · padding 16">
+      <pre id="hl" aria-hidden="true"></pre>
+      <textarea id="editor" wrap="soft" spellcheck="false" aria-label="编辑区"></textarea>
+
+      <!-- §4.6 预览区 -->
+      <div id="previewWrap">
+        <div class="pvScroll"><div class="pvColumn"><div id="pvBody"></div></div></div>
+      </div>
+
+      <!-- §4.8 错误占位 -->
+      <div id="errorState"><span id="errorTxt"></span></div>
+
+      <!-- §4.5 搜索替换浮层 -->
+      <div id="searchBar" data-dim="浮层 ≥360 · top12 · right16 · r10">
+        <div class="row">
+          <input id="searchInput" type="text" placeholder="查找" autocomplete="off">
+          <span id="searchCount"></span>
+          <span id="searchEmpty">无匹配</span>
+          <button id="btnPrevHit" class="miniBtn pressable" title="上一处（Shift+Enter）">↑</button>
+          <button id="btnNextHit" class="miniBtn pressable" title="下一处（Enter）">↓</button>
+          <button id="btnRepToggle" class="miniBtn pressable" title="展开替换（⌥⌘F / Ctrl+H）">⇄</button>
+          <button id="btnSearchClose" class="miniBtn pressable" title="关闭（Esc）">×</button>
+        </div>
+        <div class="row" id="rowReplace">
+          <input id="replaceInput" type="text" placeholder="替换为" autocomplete="off">
+          <button id="btnReplace" class="repBtn pressable">替换</button>
+          <button id="btnReplaceAll" class="repBtn pressable">全部替换</button>
+        </div>
+      </div>
+
+      <!-- 关窗占位（demo 演示 §2 关窗语义） -->
+      <div id="closedPh">
+        <div class="txt">窗口已关闭（demo 演示：真实实现为整窗销毁）</div>
+        <button id="btnReopen" class="textBtn pressable">重新打开示例文件</button>
+      </div>
+    </div>
+
+    <!-- §4.7 状态栏 notepad.statusbar -->
+    <footer class="statusbar" data-dim="状态栏 28">
+      <span class="statusFile" id="statusFile">notes.md</span>
+      <span id="saveState" class="clean">✓ 已保存</span>
+      <span id="readonlyBadge">只读</span>
+      <div id="statusMeta">
+        <span id="metaEnc">UTF-8</span>
+        <span id="metaEol">LF</span>
+        <span id="metaPos">1:1</span>
+        <span id="metaChars">0 字</span>
+      </div>
+    </footer>
+  </section>
+
+  <!-- ═══ B 窗：静态副本（演示多窗并存布局；不可交互）═══ -->
+  <section class="win" id="winB">
+    <div class="titlebar">
+      <div class="lights"><span class="light red"></span><span class="light yel"></span><span class="light grn"></span></div>
+      <span class="winTitle">main.cpp</span>
+      <span class="demoTag">demo 窗 B（静态副本）</span>
+    </div>
+    <div class="toolbar">
+      <div class="group">
+        <button class="iconBtn"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+        <button class="iconBtn"><svg viewBox="0 0 24 24"><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/></svg></button>
+        <button class="iconBtn"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+      </div>
+      <div class="gap16 wide"></div>
+      <div class="group">
+        <button class="ddTrigger"><span class="lbl">C++</span><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <button class="ddTrigger"><span class="lbl">Menlo</span><svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div id="stepperB" style="display:flex;align-items:center">
+          <button class="iconBtn" style="font-size:11px">A−</button>
+          <span style="width:28px;text-align:center;font-size:13px">14</span>
+          <button class="iconBtn" style="font-size:11px">A+</button>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <button class="iconBtn"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></button>
+      <div style="height:40px;border-radius:8px;background:var(--hover);padding:2px;display:flex">
+        <button class="segBtn on">编辑</button><button class="segBtn">预览</button>
+      </div>
+    </div>
+    <pre class="hlStatic" id="hlB"></pre>
+    <footer class="statusbar">
+      <span class="statusFile">main.cpp</span>
+      <span style="color:var(--text-t)">✓ 已保存</span>
+      <div id="statusMetaB" style="margin-left:auto;display:flex;gap:16px;color:var(--text-s)">
+        <span>UTF-8</span><span>LF</span><span>1:1</span><span id="charsB">0 字</span>
+      </div>
+    </footer>
+    <span class="badge-static">B 窗为静态副本 · 演示多窗并存（§2）</span>
+  </section>
+</div>
+
+<!-- §4.9 弹窗族：未保存三选 / 打开·另存为（FD-1 已交付：真实实现接原生对话框，demo 以输入窗模拟） -->
+<div id="dlgOverlay" class="overlay">
+  <div class="dialog" id="dlgUnsaved">
+    <h2>未保存的更改</h2>
+    <div class="body" id="unsavedBody"></div>
+    <div class="btns">
+      <button id="dlgDiscard" class="btn32 btnDangerText pressable">不保存</button>
+      <button id="dlgCancel" class="btn32 textBtn pressable">取消</button>
+      <button id="dlgSave" class="btn32 primaryBtn pressable">保存</button>
+    </div>
+  </div>
+  <div class="dialog" id="dlgPath" style="display:none">
+    <h2 id="dlgPathTitle">打开文件</h2>
+    <div class="body" id="dlgPathBody">输入文件名（demo 内置：notes.md / config.json / main.cpp）</div>
+    <input id="dlgPathInput" class="dlgInput" type="text" placeholder="文件名">
+    <div class="btns">
+      <button id="dlgPathCancel" class="btn32 textBtn pressable">取消</button>
+      <button id="dlgPathOk" class="btn32 primaryBtn pressable">打开</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- DEMO 控制台（非产品 UI） -->
+<div id="demoConsole">
+  <span class="lbl">DEMO 控制台（非产品 UI）</span>
+  <span class="lbl">文件</span>
+  <button id="cMd" class="cur">示例 md</button>
+  <button id="cJson">示例 json</button>
+  <button id="cCpp">示例 cpp</button>
+  <span class="lbl">场景</span>
+  <button id="cErrFile">打开失败</button>
+  <button id="cErrEnc">编码不支持</button>
+  <button id="cReadonly">大文件只读</button>
+  <button id="cSaveFail">保存失败</button>
+  <button id="cUnsavedDlg">未保存弹窗</button>
+  <span class="lbl">窗口</span>
+  <button id="cDual">双窗并存</button>
+  <span class="lbl">视图</span>
+  <button id="cTheme">深/浅</button>
+  <button id="cDim">尺寸标注</button>
+  <button id="cSearch">查找</button>
+  <button id="cPreview">预览</button>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  var MOD = isMac ? "⌘" : "Ctrl";
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); };
+
+  /* ==========================================================
+     状态（§7.1 状态机；v2 无空态——窗必有文件）
+     ========================================================== */
+  var state = {
+    scene: "doc",          // doc | errFile | errEnc | readonly
+    fileName: "notes.md",
+    langSel: "auto",
+    fontSize: 14,
+    dirty: false,
+    saveFail: false,
+    preview: false,
+    closed: false,         // A 窗已关（demo 演示）
+    wrapOn: true,          // §4.4 自动换行默认开（FD-2 已支持）
+    searchOpen: false, repOpen: false,
+    q: "", rep: "", idx: 0,
+  };
+
+  /* ── 示例文件（demo 内置；无任何外部引用）── */
+  var SAMPLE_MD = [
+    "# 项目周会记事",
+    "**时间**：11 月 16 日 14:00-15:00　**记录**：记事本示例文档",
+    "",
+    "## 一、结论",
+    "- 记事本模块进入 *设计验收* 阶段",
+    "- 元素命名沿用 `notepad.*` 前缀，与 `md.*` 风格一致",
+    "- 查找替换采用浮层方案（设计文档 4.5 节）",
+    "",
+    "## 二、待办",
+    "1. 评审 HTML demo 交互",
+    "2. 对照全参数表核对色板",
+    "3. 确认设置页开关文案",
+    "",
+    "> 所有参数取自 core::theme token；绿色主色为唯一强调色。",
+    "",
+    "## 三、构建命令",
+    "```",
+    "bash scripts/build-test-run.sh --dev",
+    "```",
+    "",
+    "| 模块 | 状态 | 负责人 |",
+    "| --- | --- | --- |",
+    "| 设计文档 | 完成 | 设计 |",
+    "| HTML demo | 完成 | 设计 |",
+    "| 实现 | 待排期 | 开发 |",
+    "",
+    "详见 [设计文档](docs/design/2026-11-16-notepad-module.md)。",
+  ].join("\n");
+
+  var SAMPLE_JSON = '{"app":"DevDesk","version":"1.4.0","features":{"notepad":true,"tabs":false},' +
+    '"limits":{"maxFontSize":20,"minFontSize":12,"undoStack":128},' +
+    '"extensions":["md","json","txt","yaml","toml","log","ini","js","ts","css","html","xml","sql","py","cpp"],' +
+    '"nested":{"array":[1,2.5,-3],"flag":null,"ok":true}}';
+
+  var SAMPLE_CPP = [
+    "// main.cpp — 记事本语法高亮示例",
+    "#include <iostream>",
+    "#include <string>",
+    "",
+    "/* 记事本 v2：独立窗口，一文件一窗 */",
+    "int main(int argc, char** argv) {",
+    "    const std::string greeting = \"你好，记事本\";",
+    "    int retries = 3;",
+    "    double ratio = 0.75;",
+    "    if (retries > 0) {",
+    "        std::cout << greeting << std::endl;   // 输出问候",
+    "    }",
+    "    for (int i = 0; i < retries; i++) {",
+    "        auto ok = true;",
+    "        (void)ratio;",
+    "    }",
+    "    return 0;",
+    "}",
+  ].join("\n");
+
+  var FILES = { "notes.md": SAMPLE_MD, "config.json": SAMPLE_JSON, "main.cpp": SAMPLE_CPP };
+
+  /* ==========================================================
+     语言注册表与语法高亮（§3.1；FD-2 软换行下高亮分段与展示解耦）
+     ========================================================== */
+  var RX = {
+    cmtBlock: /\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+    str: /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
+    strTpl: /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g,
+    num: /\b0[xX][0-9a-fA-F]+\b|-?\b\d+(?:\.\d+)?(?:[uUlLfF]+)?\b/g,
+  };
+  function kw(words) { return new RegExp("\\b(?:" + words.join("|") + ")\\b", "g"); }
+
+  var LANGS = {
+    markdown: { name: "Markdown", fn: tokMd },
+    json:     { name: "JSON", fn: function (t) { return scan(t, [
+      { re: /"(?:[^"\\\n]|\\.)*"(?=\s*:)/g, cls: "tk-attr" },
+      { re: /"(?:[^"\\\n]|\\.)*"/g, cls: "tk-str" },
+      { re: /\b(?:true|false|null)\b/g, cls: "tk-num" },
+      { re: /-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, cls: "tk-num" },
+    ]); } },
+    cpp: { name: "C++", fn: function (t) { return scan(t, [
+      { re: RX.cmtBlock, cls: "tk-cmt" },
+      { re: RX.str, cls: "tk-str" },
+      { re: /^#\s*\w+[^\n]*/gm, cls: "tk-key" },
+      { re: RX.num, cls: "tk-num" },
+      { re: kw(["alignas","auto","bool","break","case","catch","char","class","const","constexpr","continue","default","delete","do","double","else","enum","explicit","extern","false","float","for","friend","if","inline","int","long","mutable","namespace","new","noexcept","nullptr","operator","override","private","protected","public","return","short","signed","sizeof","static","std","string","struct","switch","template","this","throw","true","try","typedef","typename","union","unsigned","using","virtual","void","while"]), cls: "tk-key" },
+    ]); } },
+    javascript: { name: "JavaScript", fn: function (t) { return scan(t, [
+      { re: RX.cmtBlock, cls: "tk-cmt" },
+      { re: RX.strTpl, cls: "tk-str" },
+      { re: RX.num, cls: "tk-num" },
+      { re: kw(["async","await","break","case","catch","class","const","continue","default","delete","do","else","export","extends","false","finally","for","from","function","if","import","in","instanceof","let","new","null","of","return","super","switch","this","throw","true","try","typeof","undefined","var","void","while","yield"]), cls: "tk-key" },
+    ]); } },
+    typescript: { name: "TypeScript", fn: function (t) { return scan(t, [
+      { re: RX.cmtBlock, cls: "tk-cmt" },
+      { re: RX.strTpl, cls: "tk-str" },
+      { re: RX.num, cls: "tk-num" },
+      { re: kw(["abstract","any","as","async","await","boolean","break","case","catch","class","const","continue","declare","default","delete","do","else","enum","export","extends","false","finally","for","from","function","if","implements","import","in","instanceof","interface","let","namespace","never","new","null","number","of","private","protected","public","readonly","return","string","super","switch","this","throw","true","try","type","typeof","undefined","var","void","while","yield"]), cls: "tk-key" },
+    ]); } },
+    python: { name: "Python", fn: function (t) { return scan(t, [
+      { re: /"""[\s\S]*?"""|'''[\s\S]*?'''/g, cls: "tk-str" },
+      { re: /#[^\n]*/g, cls: "tk-cmt" },
+      { re: RX.str, cls: "tk-str" },
+      { re: /^@\w+/gm, cls: "tk-key" },
+      { re: RX.num, cls: "tk-num" },
+      { re: kw(["and","as","assert","async","await","break","class","continue","def","del","elif","else","except","False","finally","for","from","global","if","import","in","is","lambda","None","not","or","pass","print","raise","return","self","True","try","while","with","yield"]), cls: "tk-key" },
+    ]); } },
+    sql: { name: "SQL", fn: function (t) { return scan(t, [
+      { re: /--[^\n]*|\/\*[\s\S]*?\*\//g, cls: "tk-cmt" },
+      { re: /'(?:[^'\n]|'')*'/g, cls: "tk-str" },
+      { re: RX.num, cls: "tk-num" },
+      { re: kw(["select","from","where","insert","into","values","update","set","delete","create","table","drop","alter","add","join","left","right","inner","outer","on","group","order","by","limit","offset","as","and","or","not","null","is","in","like","between","exists","count","sum","avg","min","max","primary","key","foreign","references","index","view","distinct","having","union","all","case","when","then","else","end"]), cls: "tk-key" },
+    ]); } },
+    css: { name: "CSS", fn: function (t) { return scan(t, [
+      { re: /\/\*[\s\S]*?\*\//g, cls: "tk-cmt" },
+      { re: RX.str, cls: "tk-str" },
+      { re: /#[0-9a-fA-F]{3,8}\b/g, cls: "tk-num" },
+      { re: /@[\w-]+/g, cls: "tk-key" },
+      { re: /-?\d+(?:\.\d+)?(?:px|em|rem|vh|vw|%|s|ms|deg|fr)?\b/g, cls: "tk-num" },
+      { re: /^[^@;{}\n]+(?=\s*\{)/gm, cls: "tk-key" },
+      { re: /[a-zA-Z-]+(?=\s*:)/g, cls: "tk-attr" },
+    ]); } },
+    html: { name: "HTML", fn: function (t) { return scan(t, [
+      { re: /<!--[\s\S]*?-->/g, cls: "tk-cmt" },
+      { re: /<\/?[a-zA-Z][\w-]*|\/?>/g, cls: "tk-tag" },
+      { re: RX.str, cls: "tk-str" },
+      { re: /[a-zA-Z-]+(?==)/g, cls: "tk-attr" },
+    ]); } },
+    xml: { name: "XML", fn: null },
+    yaml: { name: "YAML", fn: function (t) { return scan(t, [
+      { re: /#[^\n]*/g, cls: "tk-cmt" },
+      { re: RX.str, cls: "tk-str" },
+      { re: /(?<=^[ \t]*)[\w.$-]+(?=\s*[:=])/gm, cls: "tk-attr" },
+      { re: /\b(?:true|false|null|yes|no|on|off)\b/gi, cls: "tk-num" },
+      { re: RX.num, cls: "tk-num" },
+    ]); } },
+    toml: { name: "TOML", fn: null },
+    ini: { name: "INI", fn: null },
+    log: { name: "日志", fn: tokLog },
+    plain: { name: "纯文本", fn: null },
+  };
+  LANGS.xml.fn = LANGS.html.fn;
+  LANGS.toml.fn = LANGS.yaml.fn;
+  LANGS.ini.fn = LANGS.yaml.fn;
+
+  var EXT2LANG = { md:"markdown", markdown:"markdown", json:"json", cpp:"cpp", cc:"cpp", h:"cpp", hpp:"cpp",
+    js:"javascript", mjs:"javascript", ts:"typescript", css:"css", html:"html", xml:"xml",
+    sql:"sql", py:"python", yaml:"yaml", yml:"yaml", toml:"toml", ini:"ini", log:"log", txt:"plain" };
+
+  function scan(text, patterns) {
+    var out = [];
+    for (var pi = 0; pi < patterns.length; pi++) {
+      var re = patterns[pi].re; re.lastIndex = 0; var m;
+      while ((m = re.exec(text))) {
+        if (m[0].length === 0) { re.lastIndex++; continue; }
+        out.push({ start: m.index, end: m.index + m[0].length, cls: patterns[pi].cls });
+      }
+    }
+    out.sort(function (a, b) { return a.start - b.start || a.end - b.end; });
+    var res = [], last = -1;
+    for (var i = 0; i < out.length; i++) {
+      if (out[i].start >= last) { res.push(out[i]); last = out[i].end; }
+    }
+    return res;
+  }
+
+  function tokMd(text) {
+    var out = [], lines = text.split("\n"), pos = 0, inFence = false, m;
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li], start = pos, end = pos + line.length;
+      pos = end + 1;
+      if (/^\s*```/.test(line)) { out.push({ start: start, end: end, cls: "tk-key" }); inFence = !inFence; continue; }
+      if (inFence) continue;
+      if (/^#{1,6}\s/.test(line)) { out.push({ start: start, end: end, cls: "tk-num" }); continue; }
+      if (/^>\s?/.test(line)) { out.push({ start: start, end: end, cls: "tk-quote" }); continue; }
+      if ((m = /^(\s*)([-*+]|\d+\.)\s/.exec(line))) {
+        out.push({ start: start + m[1].length, end: start + m[1].length + m[2].length, cls: "tk-num" });
+      }
+    }
+    var extra = scan(text, [
+      { re: /`[^`\n]+`/g, cls: "tk-key" },
+      { re: /\*\*[^*\n]+\*\*/g, cls: "tk-num" },
+      { re: /\[[^\]\n]*\]\([^)\n]*\)/g, cls: "tk-key" },
+    ]);
+    return scanMerge(out, extra);
+  }
+  /* 两组 token 区间合并后重跑去重叠（优先级=先入者） */
+  function scanMerge(a, b) {
+    var all = a.concat(b).sort(function (x, y) { return x.start - y.start || x.end - y.end; });
+    var res = [], last = -1;
+    for (var i = 0; i < all.length; i++) { if (all[i].start >= last) { res.push(all[i]); last = all[i].end; } }
+    return res;
+  }
+
+  function tokLog(text) {
+    var out = [], lines = text.split("\n"), pos = 0;
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li], start = pos, end = pos + line.length;
+      pos = end + 1;
+      var ts = /^\[[\d\-:. ]+\]|^\d{4}-\d{2}-\d{2}[ T][\d:.]+/.exec(line);
+      var body = ts ? start + ts[0].length : start;
+      if (ts) out.push({ start: start, end: body, cls: "tk-cmt" });
+      if (/ERROR/.test(line)) out.push({ start: body, end: end, cls: "tk-err" });
+      else if (/WARN/.test(line)) out.push({ start: body, end: end, cls: "tk-warn" });
+    }
+    return out;
+  }
+
+  /* ==========================================================
+     渲染管线（§4.4 + §4.5：tokens + 命中区 → 分段嵌套 HTML）
+     ========================================================== */
+  function effLang() {
+    if (state.langSel !== "auto") return state.langSel;
+    var ext = (state.fileName.split(".").pop() || "").toLowerCase();
+    return EXT2LANG[ext] || "plain";
+  }
+  function getHits(text, q) {
+    if (!q) return [];
+    var L = text.toLowerCase(), l = q.toLowerCase(), out = [], i = 0;
+    while ((i = L.indexOf(l, i)) !== -1) { out.push({ start: i, end: i + q.length }); i += q.length; }
+    return out;
+  }
+  var editor = $("editor"), hl = $("hl");
+  function buildHtml(text, toks, hits, curIdx) {
+    var layers = [], i;
+    for (i = 0; i < toks.length; i++) layers.push({ start: toks[i].start, end: toks[i].end, cls: toks[i].cls, kind: "tok" });
+    for (i = 0; i < hits.length; i++) layers.push({ start: hits[i].start, end: hits[i].end, cls: i === curIdx ? "hit cur" : "hit", kind: "hit" });
+    var pts = [0, text.length];
+    layers.forEach(function (l) { pts.push(l.start, l.end); });
+    pts.sort(function (a, b) { return a - b; });
+    var html = "", p, k;
+    for (k = 0; k < pts.length; k++) {
+      p = pts[k];
+      if (k > 0 && pts[k - 1] === p) continue;   /* 重复边界点只处理一次 */
+      if (p >= text.length) break;
+      var nxt = text.length;
+      for (var q2 = k + 1; q2 < pts.length; q2++) {
+        if (pts[q2] > p) { nxt = Math.min(pts[q2], text.length); break; }
+      }
+      if (nxt <= p) continue;
+      var toksHere = [], hitHere = null;
+      for (i = 0; i < layers.length; i++) {
+        var l = layers[i];
+        if (l.start <= p && p < l.end) { if (l.kind === "tok") toksHere.push(l.cls); else hitHere = l; }
+      }
+      var seg = esc(text.slice(p, nxt));
+      if (hitHere) seg = '<mark class="' + hitHere.cls + '">' + seg + "</mark>";
+      for (i = toksHere.length - 1; i >= 0; i--) seg = '<span class="' + toksHere[i] + '">' + seg + "</span>";
+      html += seg;
+    }
+    return html + "\n";
+  }
+  function renderEditor() {
+    var text = editor.value;
+    var lang = LANGS[effLang()];
+    var toks = lang && lang.fn ? lang.fn(text) : [];
+    var hits = getHits(text, state.q);
+    if (state.idx >= hits.length) state.idx = Math.max(0, hits.length - 1);
+    hl.innerHTML = buildHtml(text, toks, hits, state.idx);
+    syncScroll();
+    updateSearchUi(hits.length);
+  }
+  function syncScroll() {
+    hl.scrollTop = editor.scrollTop;
+    if (!state.wrapOn) hl.scrollLeft = editor.scrollLeft;
+  }
+  editor.addEventListener("scroll", syncScroll);
+
+  /* ── 状态栏 + 标题栏（§4.7 / §2：脏态「• 」前缀）── */
+  function renderStatus() {
+    var sel = editor.selectionStart || 0;
+    var upto = editor.value.slice(0, sel);
+    var ls = upto.split("\n");
+    $("metaPos").textContent = ls.length + ":" + (ls[ls.length - 1].length + 1);
+    $("metaChars").textContent = editor.value.length.toLocaleString() + " 字";
+    var sf = $("statusFile"), ss = $("saveState");
+    sf.textContent = state.fileName;
+    ss.className = ""; ss.style.display = "";
+    if (state.scene === "errFile" || state.scene === "errEnc") { ss.style.display = "none"; }
+    else if (state.saveFail && state.dirty) { ss.classList.add("fail"); ss.textContent = "✕ 保存失败"; }
+    else if (state.dirty) { ss.classList.add("dirty"); ss.textContent = "● 未保存"; }
+    else { ss.classList.add("clean"); ss.textContent = "✓ 已保存"; }
+    $("readonlyBadge").classList.toggle("show", state.scene === "readonly");
+    $("btnSave").classList.toggle("dirty", state.dirty && state.scene !== "readonly");
+    var wt = $("winTitle");
+    wt.textContent = state.fileName;
+    wt.classList.toggle("dirty", state.dirty);
+  }
+
+  /* ── §7.2 态×控件联动矩阵 ── */
+  function applyStates() {
+    var doc = state.scene === "doc" || state.scene === "readonly";
+    var editable = state.scene === "doc";
+    var isJson = effLang() === "json";
+    var isMd = effLang() === "markdown";
+    var dis = function (el, d) { el.disabled = !!d; el.classList.toggle("disabled", !!d); };
+    dis($("btnSave"), !doc || state.scene === "readonly");
+    dis($("btnSaveAs"), state.scene === "errFile" || state.scene === "errEnc");
+    dis($("btnFormat"), !editable || !isJson || state.preview);
+    dis($("ddLanguage"), !doc || state.preview);
+    dis($("ddFont"), !doc || state.preview);
+    dis($("btnDec"), !doc || state.preview || state.fontSize <= 12);
+    dis($("btnInc"), !doc || state.preview || state.fontSize >= 20);
+    dis($("btnFind"), !doc || state.preview);
+    dis($("segPrev"), !doc || !isMd);
+    dis($("segEdit"), !doc || !isMd);
+    editor.readOnly = state.scene === "readonly";
+    $("btnSave").title = "保存（" + MOD + "S）";
+    $("btnSaveAs").title = "另存为…（" + MOD + "+Shift+S）";
+    $("btnFormat").title = "格式化 JSON（" + MOD + "+Shift+F）";
+    $("btnFind").title = "查找替换（" + MOD + "F）";
+    // 槽位可见性（§7：无空态；错误占位在 winA workarea）
+    $("errorState").classList.toggle("show", state.scene === "errFile" || state.scene === "errEnc");
+    var showEd = doc && !state.preview && !state.closed;
+    editor.style.display = showEd ? "" : "none";
+    hl.style.display = showEd ? "" : "none";
+    $("previewWrap").classList.toggle("show", doc && state.preview && !state.closed);
+    $("closedPh").classList.toggle("show", state.closed);
+    // 提示条（§4.3）
+    var b = $("banner");
+    if (state.scene === "readonly" && !state.closed) {
+      b.className = "show warn";
+      $("bannerIco").textContent = "▲"; $("bannerIco").style.color = "var(--warning)";
+      $("bannerTxt").textContent = "文件较大（1.8 MB），已切换只读模式并关闭语法高亮";
+      $("bannerClose").style.display = "none";
+    } else { b.className = ""; }
+    $("segEdit").classList.toggle("on", !state.preview);
+    $("segPrev").classList.toggle("on", state.preview);
+    var eff = effLang();
+    $("ddLanguage").querySelector(".lbl").textContent =
+      state.langSel === "auto" ? "自动检测（" + LANGS[eff].name + "）" : LANGS[state.langSel].name;
+  }
+  function renderAll() { applyStates(); if (!state.closed) renderEditor(); renderStatus(); }
+
+  /* ── 轻提示（§4.10）── */
+  var toastTimer = null;
+  function toast(msg, ms) {
+    var t = $("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, ms || 1500);
+  }
+
+  /* ==========================================================
+     菜单/下拉（§4.2 面板族）
+     ========================================================== */
+  var curMenu = null;
+  function closeMenu() { if (curMenu) { curMenu.el.remove(); curMenu = null; } }
+  function openMenu(anchor, items, width) {
+    closeMenu();
+    var el = document.createElement("div");
+    el.className = "menu";
+    if (width) el.style.minWidth = width + "px";
+    items.forEach(function (it) {
+      if (it.sep) { var s = document.createElement("div"); s.className = "menuSep"; el.appendChild(s); return; }
+      var d = document.createElement("div");
+      d.className = "menuItem" + (it.checked ? " checked" : "") + (it.disabled ? " disabled" : "");
+      d.innerHTML = '<span>' + esc(it.label) + "</span>" +
+        (it.note ? '<span class="note">' + esc(it.note) + "</span>" : "");
+      d.addEventListener("click", function () { closeMenu(); it.onPick && it.onPick(); });
+      el.appendChild(d);
+    });
+    document.body.appendChild(el);
+    var r = anchor.getBoundingClientRect();
+    el.style.left = Math.min(r.left, window.innerWidth - el.offsetWidth - 8) + "px";
+    el.style.top = (r.bottom + 4) + "px";
+    requestAnimationFrame(function () { el.classList.add("open"); });
+    curMenu = { el: el };
+  }
+  document.addEventListener("mousedown", function (e) {
+    if (curMenu && !curMenu.el.contains(e.target)) closeMenu();
+  });
+
+  /* ==========================================================
+     文件操作（§5.1）：打开=本窗换文件 / 保存 / 另存为 / 关窗
+     v2 无新建入口；FD-1 已交付——真实实现接原生对话框，demo 以输入窗模拟
+     ========================================================== */
+  function markDirty() { state.dirty = true; renderAll(); }
+  editor.addEventListener("input", function () {
+    if (!editor.readOnly) markDirty(); else renderEditor();
+  });
+  /* Tab 键插入 2 空格（§4.4） */
+  editor.addEventListener("keydown", function (e) {
+    if (e.key === "Tab" && !editor.readOnly) {
+      e.preventDefault();
+      var s = editor.selectionStart, epos = editor.selectionEnd;
+      editor.value = editor.value.slice(0, s) + "  " + editor.value.slice(epos);
+      editor.selectionStart = editor.selectionEnd = s + 2;
+      markDirty();
+    }
+  });
+  ["keyup", "click", "select"].forEach(function (ev) { editor.addEventListener(ev, renderStatus); });
+
+  function caretTo(pos) { editor.selectionStart = editor.selectionEnd = pos; }
+  function setText(v) { editor.value = v; caretTo(0); markDirty(); }
+
+  function save() {
+    if (state.scene !== "doc" && state.scene !== "readonly") return;
+    if (state.scene === "readonly") return;
+    if (state.saveFail) { state.dirty = true; renderStatus(); toast("保存失败：磁盘已满或权限不足"); return; }
+    state.dirty = false; renderAll(); toast("已保存");
+  }
+
+  /* 未保存三选弹窗（§4.9：关窗/换文件/重载共用；保存失败不关） */
+  var dlgOverlay = $("dlgOverlay"), dlgUnsaved = $("dlgUnsaved"), dlgPath = $("dlgPath");
+  var pendingAction = null;
+  function confirmUnsaved(cb, verb) {
+    if (!state.dirty || state.closed) { cb(); return; }
+    pendingAction = cb;
+    $("unsavedBody").textContent = "“" + state.fileName + "” 有未保存的更改，" + (verb || "关闭") + "后将丢失。";
+    dlgUnsaved.style.display = ""; dlgPath.style.display = "none";
+    dlgOverlay.classList.add("show");
+  }
+  function closeDlg() { dlgOverlay.classList.remove("show"); pendingAction = null; }
+  $("dlgSave").addEventListener("click", function () {
+    if (state.saveFail) { toast("保存失败：磁盘已满或权限不足"); renderStatus(); return; }
+    save(); var cb = pendingAction; closeDlg(); cb && cb();
+  });
+  $("dlgDiscard").addEventListener("click", function () { state.dirty = false; var cb = pendingAction; closeDlg(); cb && cb(); });
+  $("dlgCancel").addEventListener("click", closeDlg);
+  dlgOverlay.addEventListener("mousedown", function (e) { if (e.target === dlgOverlay) closeDlg(); });
+
+  /* 打开/另存为（demo 模拟；真实实现=FD-1 原生对话框） */
+  function openPathDlg(mode) {
+    pendingAction = null;
+    $("dlgPathTitle").textContent = mode === "open" ? "打开文件" : "另存为";
+    $("dlgPathOk").textContent = mode === "open" ? "打开" : "保存";
+    $("dlgPathBody").textContent = mode === "open"
+      ? "选择文件（demo 内置：notes.md / config.json / main.cpp）。真实实现为 FD-1 原生打开对话框。"
+      : "输入新文件名（demo 模拟 FD-1 原生另存对话框）";
+    $("dlgPathInput").value = mode === "open" ? "" : state.fileName;
+    dlgUnsaved.style.display = "none"; dlgPath.style.display = "";
+    dlgOverlay.classList.add("show");
+    $("dlgPathInput").focus();
+    dlgPath.dataset.mode = mode;
+  }
+  function pathOk() {
+    var name = $("dlgPathInput").value.trim();
+    if (!name) return;
+    var mode = dlgPath.dataset.mode;
+    dlgOverlay.classList.remove("show");
+    if (mode === "open") {
+      if (name === state.fileName) { toast("该文件已在本窗打开"); return; }   /* 一文件一窗：同窗幂等 */
+      if (FILES[name]) { loadFile(name); toast("已打开 " + name); }
+      else { toast("无法打开：文件不存在或已被移动", 3000); }   /* 换文件失败：保持原文档（§4.8） */
+    } else {
+      state.fileName = name; state.dirty = false; state.scene = "doc";
+      renderAll(); toast("已保存");
+    }
+  }
+  $("dlgPathOk").addEventListener("click", pathOk);
+  $("dlgPathInput").addEventListener("keydown", function (e) { if (e.key === "Enter") pathOk(); });
+  $("dlgPathCancel").addEventListener("click", function () { dlgOverlay.classList.remove("show"); });
+
+  function loadFile(name) {
+    state.scene = "doc"; state.fileName = name; state.langSel = "auto";
+    state.dirty = false; state.preview = false; state.closed = false;
+    closeSearch(true);
+    editor.value = FILES[name]; caretTo(0); renderAll();
+  }
+  function loadError(kind, name) {
+    state.scene = kind; state.fileName = name || state.fileName; state.dirty = false;
+    state.preview = false; closeSearch(true);
+    $("errorTxt").textContent = kind === "errEnc"
+      ? "无法打开：仅支持 UTF-8 编码"
+      : "无法打开：文件不存在或已被移动";
+    renderAll();
+  }
+
+  /* 关窗（§2：脏态三选；demo 以占位演示销毁） */
+  function closeWindow() {
+    confirmUnsaved(function () {
+      state.closed = true;
+      closeSearch(true);
+      renderAll();
+      $("btnReopen").onclick = function () { loadFile(state.fileName); };
+    }, "关闭");
+  }
+  $("lightClose").addEventListener("click", closeWindow);
+
+  $("btnOpen").addEventListener("click", function () { confirmUnsaved(function () { openPathDlg("open"); }, "切换"); });
+  $("btnSave").addEventListener("click", save);
+  $("btnSaveAs").addEventListener("click", function () { openPathDlg("saveAs"); });
+  $("btnMore").addEventListener("click", function () {
+    openMenu($("btnMore"), [
+      { label: "自动换行", checked: state.wrapOn, onPick: function () {
+        state.wrapOn = !state.wrapOn;
+        document.body.classList.toggle("wrapOff", !state.wrapOn);
+        editor.setAttribute("wrap", state.wrapOn ? "soft" : "off");
+        hl.style.whiteSpace = state.wrapOn ? "pre-wrap" : "pre";
+        editor.style.whiteSpace = state.wrapOn ? "pre-wrap" : "pre";
+        renderEditor();
+        toast(state.wrapOn ? "已开启自动换行" : "已关闭自动换行（横向滚动）");
+      } },
+      { sep: true },
+      { label: "重新加载", note: "放弃更改", onPick: function () {
+        confirmUnsaved(function () {
+          if (FILES[state.fileName]) { loadFile(state.fileName); toast("已重新加载"); }
+          else toast("无可重载的源文件");
+        }, "切换");
+      } },
+      { label: "复制文件路径", onPick: function () {
+        try { navigator.clipboard.writeText("~/DevDesk/notes/" + state.fileName); } catch (e) {}
+        toast("已复制文件路径");
+      } },
+    ], 200);
+  });
+
+  /* ==========================================================
+     工具条（§5.2）
+     ========================================================== */
+  $("ddLanguage").addEventListener("click", function () {
+    if ($("ddLanguage").disabled) return;
+    var items = [{ label: "自动检测（按扩展名）", checked: state.langSel === "auto",
+      onPick: function () { state.langSel = "auto"; renderAll(); } }];
+    Object.keys(LANGS).forEach(function (k) {
+      items.push({ label: LANGS[k].name, checked: state.langSel === k,
+        onPick: function () { state.langSel = k; renderAll(); } });
+    });
+    openMenu($("ddLanguage"), items, 180);
+  });
+  $("ddFont").addEventListener("click", function () {
+    if ($("ddFont").disabled) return;
+    /* FD-3 已交付：真实实现为系统字体族全量枚举（macOS 实测 210 族）；
+       demo 以常用族样本演示面板形态 */
+    var fonts = [
+      { n: "Menlo", p: "macOS 默认等宽" }, { n: "Cascadia Code", p: "Windows 默认等宽" },
+      { n: "Monaco", p: "macOS" }, { n: "SF Mono", p: "macOS" }, { n: "Consolas", p: "Windows" },
+      { n: "PingFang SC", p: "macOS" }, { n: "微软雅黑", p: "Windows" },
+    ];
+    var cur = document.documentElement.style.getPropertyValue("--ed-font") || "";
+    var curName = cur.split(",")[0].replace(/"/g, "").trim() || "Menlo";
+    openMenu($("ddFont"), fonts.map(function (f) {
+      return { label: f.n, note: f.p, checked: curName === f.n,
+        onPick: function () {
+          document.documentElement.style.setProperty("--ed-font", '"' + f.n + '", Menlo, Consolas, monospace');
+          $("ddFont").querySelector(".lbl").textContent = f.n;
+          toast("字体已切换为 " + f.n);
+        } };
+    }), 200);
+  });
+  function stepSize(d) {
+    if ($("btnDec").disabled && d < 0) return;
+    if ($("btnInc").disabled && d > 0) return;
+    state.fontSize = Math.min(20, Math.max(12, state.fontSize + d));
+    document.documentElement.style.setProperty("--ed-size", state.fontSize + "px");
+    $("fontSizeVal").textContent = state.fontSize;
+    renderEditor(); renderStatus();
+  }
+  $("btnDec").addEventListener("click", function () { stepSize(-1); });
+  $("btnInc").addEventListener("click", function () { stepSize(1); });
+
+  /* JSON 格式化（§5.2：失败定位） */
+  function formatJson() {
+    if ($("btnFormat").disabled) return;
+    var text = editor.value;
+    try {
+      var v = JSON.parse(text);
+      setText(JSON.stringify(v, null, 2));
+      toast("JSON 已格式化");
+    } catch (e) {
+      var m = /position (\d+)/.exec(e.message);
+      var idx = m ? Math.min(+m[1], text.length) : 0;
+      var ls = text.slice(0, idx).split("\n");
+      var line = ls.length, col = ls[ls.length - 1].length + 1;
+      editor.focus();
+      editor.setSelectionRange(idx, Math.min(idx + 1, text.length));
+      scrollToLine(line - 1);
+      toast("JSON 语法错误：第 " + line + " 行 第 " + col + " 列，已定位", 3000);
+    }
+  }
+  $("btnFormat").addEventListener("click", formatJson);
+
+  /* 预览切换（§4.6） */
+  function togglePreview() {
+    if ($("segPrev").disabled && !state.preview) { toast("仅 Markdown 文件支持预览"); return; }
+    state.preview = !state.preview;
+    if (state.preview) { $("pvBody").innerHTML = mdToHtml(editor.value); document.querySelector(".pvScroll").scrollTop = 0; }
+    else { renderEditor(); }
+    closeSearch(true);
+    renderAll();
+  }
+  $("segPrev").addEventListener("click", function () { if (!state.preview) togglePreview(); });
+  $("segEdit").addEventListener("click", function () { if (state.preview) togglePreview(); });
+
+  /* ==========================================================
+     搜索替换（§4.5 / §5.3）
+     ========================================================== */
+  var searchBar = $("searchBar"), searchInput = $("searchInput"), replaceInput = $("replaceInput");
+  function openSearch(withRep) {
+    if ($("btnFind").disabled) return;
+    state.searchOpen = true;
+    if (withRep) { state.repOpen = true; searchBar.classList.add("rep"); }
+    searchBar.classList.add("open");
+    searchInput.focus(); searchInput.select();
+    renderEditor();
+  }
+  function closeSearch(silent) {
+    if (!state.searchOpen) return;
+    state.searchOpen = false; state.repOpen = false;
+    searchBar.classList.remove("open", "rep");
+    state.q = ""; state.idx = 0;
+    searchInput.value = ""; replaceInput.value = "";
+    renderEditor();
+    if (!silent) editor.focus();
+  }
+  function scrollToLine(lineIdx) {
+    var lh = state.fontSize * 1.2;
+    var target = lineIdx * lh - editor.clientHeight / 2 + lh / 2;
+    editor.scrollTop = Math.max(0, target);
+    syncScroll();
+  }
+  function gotoHit(hits, i) {
+    if (!hits.length) return;
+    state.idx = ((i % hits.length) + hits.length) % hits.length;
+    var h = hits[state.idx];
+    var line = editor.value.slice(0, h.start).split("\n").length - 1;
+    scrollToLine(line);
+    renderEditor();
+  }
+  function updateSearchUi(n) {
+    if (!state.searchOpen) return;
+    $("searchCount").textContent = state.q ? (n ? (state.idx + 1) + "/" + n : "0/0") : "";
+    $("searchEmpty").classList.toggle("show", !!state.q && n === 0);
+  }
+  searchInput.addEventListener("input", function () {
+    state.q = searchInput.value; state.idx = 0;
+    renderEditor();
+    var hits = getHits(editor.value, state.q);
+    if (hits.length) gotoHit(hits, 0);
+    updateSearchUi(hits.length);
+  });
+  searchInput.addEventListener("keydown", function (e) {
+    var hits = getHits(editor.value, state.q);
+    if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); gotoHit(hits, state.idx - 1); }
+    else if (e.key === "Enter") { e.preventDefault(); gotoHit(hits, state.idx + 1); }
+    else if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+  });
+  $("btnNextHit").addEventListener("click", function () { gotoHit(getHits(editor.value, state.q), state.idx + 1); });
+  $("btnPrevHit").addEventListener("click", function () { gotoHit(getHits(editor.value, state.q), state.idx - 1); });
+  $("btnRepToggle").addEventListener("click", function () {
+    state.repOpen = !state.repOpen;
+    searchBar.classList.toggle("rep", state.repOpen);
+    if (state.repOpen) replaceInput.focus();
+  });
+  $("btnSearchClose").addEventListener("click", function () { closeSearch(); });
+  function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  $("btnReplace").addEventListener("click", function () {
+    var text = editor.value, hits = getHits(text, state.q);
+    if (!hits.length || !state.q) return;
+    var h = hits[Math.min(state.idx, hits.length - 1)];
+    editor.value = text.slice(0, h.start) + replaceInput.value + text.slice(h.end);
+    caretTo(h.start + replaceInput.value.length);
+    markDirty(); renderEditor();
+  });
+  $("btnReplaceAll").addEventListener("click", function () {
+    if (!state.q) return;
+    var text = editor.value, n = getHits(text, state.q).length;
+    if (!n) { toast("无匹配"); return; }
+    editor.value = text.replace(new RegExp(escapeReg(state.q), "gi"), replaceInput.value);
+    caretTo(0); markDirty(); renderEditor();
+    toast("已替换 " + n + " 处");
+  });
+  $("btnFind").addEventListener("click", function () { openSearch(state.repOpen); });
+
+  /* ==========================================================
+     Markdown 预览渲染（§4.6 简版解析器）
+     ========================================================== */
+  function mdInline(s) {
+    return esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="lnk">$1</span>');
+  }
+  function mdToHtml(src) {
+    var lines = src.split("\n"), out = [], i = 0, m, par = [];
+    function flush() { if (par.length) { out.push("<p>" + par.map(mdInline).join("<br>") + "</p>"); par = []; } }
+    while (i < lines.length) {
+      var L = lines[i];
+      if (/^\s*$/.test(L)) { flush(); i++; continue; }
+      if (/^```/.test(L)) {
+        flush(); i++; var buf = [];
+        while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++; out.push('<pre class="pv-code">' + esc(buf.join("\n")) + "</pre>"); continue;
+      }
+      if ((m = /^(#{1,6})\s+(.*)$/.exec(L))) { flush(); var lv = m[1].length; out.push("<h" + lv + ">" + mdInline(m[2]) + "</h" + lv + ">"); i++; continue; }
+      if (/^(-{3,}|\*{3,})\s*$/.test(L)) { flush(); out.push("<hr>"); i++; continue; }
+      if (/^>\s?/.test(L)) {
+        flush(); var qs = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) { qs.push(lines[i].replace(/^>\s?/, "")); i++; }
+        out.push("<blockquote><p>" + qs.map(mdInline).join("<br>") + "</p></blockquote>"); continue;
+      }
+      if (/^\s*[-*+]\s+/.test(L)) {
+        flush(); var li = [];
+        while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { li.push("<li>" + mdInline(lines[i].replace(/^\s*[-*+]\s+/, "")) + "</li>"); i++; }
+        out.push("<ul>" + li.join("") + "</ul>"); continue;
+      }
+      if (/^\s*\d+\.\s+/.test(L)) {
+        flush(); var oi = [];
+        while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { oi.push("<li>" + mdInline(lines[i].replace(/^\s*\d+\.\s+/, "")) + "</li>"); i++; }
+        out.push("<ol>" + oi.join("") + "</ol>"); continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(L) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+        flush();
+        var cells = function (row) { return row.trim().replace(/^\||\|$/g, "").split("|").map(function (c) { return c.trim(); }); };
+        var head = cells(L); i += 2; var rows = [];
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(cells(lines[i])); i++; }
+        var t = "<table><tr>" + head.map(function (c) { return "<th>" + mdInline(c) + "</th>"; }).join("") + "</tr>";
+        rows.forEach(function (r) { t += "<tr>" + r.map(function (c) { return "<td>" + mdInline(c) + "</td>"; }).join("") + "</tr>"; });
+        out.push(t + "</table>"); continue;
+      }
+      par.push(L); i++;
+    }
+    flush();
+    return out.join("\n");
+  }
+
+  /* ==========================================================
+     DEMO 控制台（非产品 UI）
+     ========================================================== */
+  function pickScene(btn, fn) {
+    fn();
+    ["cMd", "cJson", "cCpp", "cErrFile", "cErrEnc", "cReadonly"].forEach(function (id) {
+      $(id).classList.remove("cur");
+    });
+    if (btn) btn.classList.add("cur");
+  }
+  $("cMd").addEventListener("click", function () { pickScene(this, function () { loadFile("notes.md"); }); });
+  $("cJson").addEventListener("click", function () { pickScene(this, function () { loadFile("config.json"); }); });
+  $("cCpp").addEventListener("click", function () { pickScene(this, function () { loadFile("main.cpp"); }); });
+  $("cErrFile").addEventListener("click", function () { pickScene(this, function () { loadError("errFile", "missing.md"); }); });
+  $("cErrEnc").addEventListener("click", function () { pickScene(this, function () { loadError("errEnc", "legacy.dat"); }); });
+  $("cReadonly").addEventListener("click", function () { pickScene(this, function () {
+    var big = [];
+    for (var i = 1; i <= 1200; i++) {
+      big.push("第 " + i + " 行 — 大文件降级演示：模拟超过 1 MB 的只读文档内容行。");
+    }
+    state.scene = "readonly"; state.fileName = "big-dump.log"; state.langSel = "auto";
+    state.dirty = false; state.preview = false; state.closed = false; closeSearch(true);
+    editor.value = big.join("\n"); caretTo(0); renderAll();
+  }); });
+  $("cSaveFail").addEventListener("click", function () {
+    state.saveFail = !state.saveFail;
+    this.classList.toggle("cur", state.saveFail);
+    toast(state.saveFail ? "已开启「保存失败」模拟：下次保存将失败" : "已关闭「保存失败」模拟");
+    renderStatus();
+  });
+  $("cUnsavedDlg").addEventListener("click", function () {
+    confirmUnsaved(function () { toast("无未保存更改，无需确认"); }, "关闭");
+  });
+  $("cDual").addEventListener("click", function () {
+    document.body.classList.toggle("dual");
+    this.classList.toggle("cur", document.body.classList.contains("dual"));
+    applyTier();
+  });
+  $("cTheme").addEventListener("click", function () {
+    var b = document.body;
+    b.dataset.theme = b.dataset.theme === "dark" ? "light" : "dark";
+  });
+  $("cDim").addEventListener("click", function () {
+    document.body.classList.toggle("dim");
+    this.classList.toggle("cur", document.body.classList.contains("dim"));
+  });
+  $("cSearch").addEventListener("click", function () { openSearch(false); });
+  $("cPreview").addEventListener("click", function () {
+    if (state.scene !== "doc") { toast("仅 Markdown 文件支持预览"); return; }
+    if (!state.preview && effLang() !== "markdown") { toast("仅 Markdown 文件支持预览"); return; }
+    togglePreview();
+  });
+  $("bannerClose").addEventListener("click", function () { $("banner").className = ""; });
+
+  /* ==========================================================
+     快捷键（§6：无 ⌘N；⌘W 关窗；窗级键盘事件）
+     ========================================================== */
+  document.addEventListener("keydown", function (e) {
+    var mod = e.metaKey || e.ctrlKey;
+    var k = e.key.toLowerCase();
+    if (e.key === "Escape") {
+      if (curMenu) { closeMenu(); return; }
+      if (dlgOverlay.classList.contains("show")) { closeDlg(); return; }
+      if (state.searchOpen) { closeSearch(); return; }
+      return;
+    }
+    if (!mod) return;
+    if (k === "w") { e.preventDefault(); closeWindow(); return; }            /* ⌘W 关窗 */
+    if (k === "f" && e.altKey) { e.preventDefault(); openSearch(true); return; }
+    if (k === "h" && !e.shiftKey) { e.preventDefault(); openSearch(true); return; }
+    if (k === "f" && !e.shiftKey) { e.preventDefault(); openSearch(false); return; }
+    if (k === "s") { e.preventDefault(); e.shiftKey ? openPathDlg("saveAs") : save(); return; }
+    if (k === "o") { e.preventDefault(); confirmUnsaved(function () { openPathDlg("open"); }, "切换"); return; }
+    if (k === "p") { e.preventDefault(); $("cPreview").click(); return; }
+    if (k === "f" && e.shiftKey) { e.preventDefault(); formatJson(); return; }
+  });
+
+  /* ==========================================================
+     自适应（§9.2 断点档：T0 ≥900 / T1 720–899 / <720 min 钳制）
+     ========================================================== */
+  function applyTier() {
+    var w = window.innerWidth;
+    /* 双窗模式：断点按每扇窗的实际宽度计算（§9.2 断点档锚定窗宽） */
+    if (document.body.classList.contains("dual")) w = (w - 24 - 12) / 2;
+    document.body.dataset.tier = w >= 900 ? "t0" : "t1";
+  }
+  window.addEventListener("resize", applyTier);
+
+  /* ── B 窗静态副本渲染（多窗并存演示）── */
+  function renderWinB() {
+    var toks = LANGS.cpp.fn(SAMPLE_CPP);
+    $("hlB").innerHTML = buildHtml(SAMPLE_CPP, toks, [], -1);
+    $("charsB").textContent = SAMPLE_CPP.length.toLocaleString() + " 字";
+  }
+
+  /* ── 初始化 ── */
+  applyTier();
+  loadFile("notes.md");
+  renderWinB();
+})();
+</script>
+</body>
+</html>
