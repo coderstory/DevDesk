@@ -164,6 +164,17 @@ core::Result<module::schedule::Receipt> localAlertViaRegistry(
     }
     return entries.front().receipt;
 }
+
+// need291 fire-and-forget 收口：store/告警写失败统一 WARN 留痕（含 sqlite
+// errorMessage），不静默丢弃。投递行插入（insertDelivery）既有严检早退
+// 不变；本 helper 只负责可见性，不改变调用点的 Result 链语义。
+template <typename T>
+void logWriteFailure(const char* site, const core::Result<T>& r) {
+    if (r.isFail()) {
+        LOG_WARN(std::string("action_runner: ") + site + " 落库失败：" +
+                 r.errorMessage());
+    }
+}
 } // namespace
 
 core::Result<Receipt> ActionRunner::localAlert(const Delivery& delivery) {
@@ -206,7 +217,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
         // 渠道配置缺失/未注册 = 配置错误，判永久失败不重试。
         rec.status = "dropped";
         rec.error = delivered.errorMessage();
-        (void)store_.updateDelivery(rec);
+        logWriteFailure("updateDelivery[deliver-fail]", store_.updateDelivery(rec));
         --httpInFlight_[channelId];
         out.terminal = true;
         out.error = rec.error;
@@ -223,7 +234,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
         case ReceiptClass::kSuccess:
             rec.status = "success";
             rec.nextRetryAt = std::nullopt;
-            (void)store_.updateDelivery(rec);
+            logWriteFailure("updateDelivery[success]", store_.updateDelivery(rec));
             --httpInFlight_[channelId];
             out.success = true;
             return core::Result<RetryOutcome>::ok(std::move(out));
@@ -234,7 +245,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
                 // 达上限：最终失败——降级本地提示一次（§4.9），run 仍 success。
                 rec.status = "failed";
                 rec.nextRetryAt = std::nullopt;
-                (void)store_.updateDelivery(rec);
+                logWriteFailure("updateDelivery[failed]", store_.updateDelivery(rec));
                 --httpInFlight_[channelId];
                 out.terminal = true;
                 out.degradedLocally = true;
@@ -244,7 +255,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
             rec.status = "retry";
             // 真实 Receipt 无结构化建议延迟：按固定阶梯 0s/30s/300s（§4.9）。
             rec.nextRetryAt = plannedAt + retryDelaySec(attempt, 0);
-            (void)store_.updateDelivery(rec);
+            logWriteFailure("updateDelivery[retry]", store_.updateDelivery(rec));
             --httpInFlight_[channelId];
             out.terminal = false;
             out.nextRetryAt = rec.nextRetryAt;
@@ -257,7 +268,8 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
             rec.status = "dropped";
             rec.error = receipt.detail.empty() ? "渠道未配置密钥" : receipt.detail;
             rec.nextRetryAt = std::nullopt;
-            (void)store_.updateDelivery(rec);
+            logWriteFailure("updateDelivery[config-missing]",
+                            store_.updateDelivery(rec));
             --httpInFlight_[channelId];
             out.terminal = true;
             out.degradedLocally = true;
@@ -272,7 +284,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
             rec.status = "dropped";
             rec.error = receipt.detail;
             rec.nextRetryAt = std::nullopt;
-            (void)store_.updateDelivery(rec);
+            logWriteFailure("updateDelivery[permanent]", store_.updateDelivery(rec));
             --httpInFlight_[channelId];
             out.terminal = true;
             out.channelDisabled = true;
@@ -357,19 +369,19 @@ core::Result<RunOutcome> ActionRunner::run(const RunContext& ctx) {
             if (ch.isOk() && ch.value().has_value()) {
                 ChannelRecord record = *ch.value();
                 record.enabled = false;
-                (void)store_.updateChannel(record);
+                logWriteFailure("updateChannel[disable]", store_.updateChannel(record));
             }
             Delivery alert = delivery;
             alert.title = "调度渠道已停用";
             alert.body = "渠道投递永久失败已停用：" + r.error;
-            (void)localAlert(alert);
+            logWriteFailure("localAlert[channel-disabled]", localAlert(alert));
         }
         if (r.degradedLocally) {
             // 最终失败：降级本地提示恰好一次（§4.9），不每次重试都弹。
             Delivery alert = delivery;
             alert.title = "提醒投递失败";
             alert.body = "「" + delivery.title + "」连续投递失败，请检查渠道配置";
-            (void)localAlert(alert);
+            logWriteFailure("localAlert[degrade]", localAlert(alert));
         }
     }
     // 渠道失败不改 run 的 success（§4.5）：提醒类动作本身已尽力。

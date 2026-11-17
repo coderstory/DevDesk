@@ -1456,8 +1456,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // #196 交叉淡化盖顶：主界面帧画完后，splash 以递减透明度叠顶（0.9~1.2s 窗口期；
     // 窗口期外零元素零开销）。放最顶：淡化期间 splash 覆盖含窗口边框在内的全部内容。
     // 退出丢稿确认弹窗（need:291）：guard 拦截退出后置开态，此处盖顶绘制
-    //（dialog zIndex 1000 > 页面内容）；未开 = 零开销早退。splash 只在启动
-    // 1.2s 内存在，退出确认发生在其后，两者无共存窗口。
+    //（dialog zIndex 1200——EUI 按子树 max zIndex 排兄弟，页内 toast z1100 抬高
+    // 上界，取 1000 会被盖+点击截胡，实测依据见 quit_save_bridge.cpp 注释）；
+    // 未开 = 零开销早退。splash 只在启动 1.2s 内存在，退出确认发生在其后，
+    // 两者无共存窗口。
     app::quit_save::drawConfirmDialog(ui, screen);
     ui_kit::drawSplashOverlay(ui, screen);
 }

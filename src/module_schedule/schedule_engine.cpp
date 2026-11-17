@@ -47,6 +47,18 @@ bool runExists(ScheduleStore& store, int64_t ruleId, int64_t plannedAt) {
     return found.isOk() && found.value().has_value();
 }
 
+// need291 fire-and-forget 收口：store/告警写失败统一 WARN 留痕（含 sqlite
+// errorMessage），不静默丢弃。失败不可继续处（drainPendingFires 的
+// pending→running 推进）在调用点早退回队；其余失败仅留痕不改流程——重扫
+// 窗口/唯一索引（runExists）保证留痕后不产生重复执行。
+template <typename T>
+void logWriteFailure(const char* site, const core::Result<T>& r) {
+    if (r.isFail()) {
+        LOG_WARN(std::string("schedule.engine: ") + site + " 落库失败：" +
+                 r.errorMessage());
+    }
+}
+
 // 插入一条无动作的错过/摘要记录（dedupe 守卫：已存在则跳过）。
 void insertMissedRun(ScheduleStore& store, int64_t ruleId, int64_t plannedAt,
                      const std::string& summary) {
@@ -58,7 +70,7 @@ void insertMissedRun(ScheduleStore& store, int64_t ruleId, int64_t plannedAt,
     r.plannedAt = plannedAt;
     r.status = "missed";
     r.resultSummary = summary;
-    (void)store.insertRun(r);
+    logWriteFailure("insertRun[missed]", store.insertRun(r));
 }
 
 // 过期 next_fire_at 缓存重算（禁用/暂停分支共用）：以 now 为锚算下一触发点
@@ -146,7 +158,7 @@ void ScheduleEngine::flushEvalMemo() {
             continue;
         }
         rule.lastEvalAt = it->second;
-        (void)store_.updateRule(rule);
+        logWriteFailure("updateRule[flush-eval]", store_.updateRule(rule));
     }
     evalMemo_.clear();
 }
@@ -197,7 +209,7 @@ void ScheduleEngine::rollbackLastEval(int64_t nowUnix) {
         if (!rule.enabled || rule.archivedAt.has_value()) continue;
         if (rule.lastEvalAt == nowUnix) continue;
         rule.lastEvalAt = nowUnix;
-        (void)store_.updateRule(rule);
+        logWriteFailure("updateRule[rollback]", store_.updateRule(rule));
         evalMemo_[rule.id] = nowUnix;  // 内存推进态一并回拨（取 max 口径下须显式压低）
     }
     LOG_WARN("schedule.engine: 时钟回拨，已刷新 last_eval_at 不重放");
@@ -233,7 +245,7 @@ void ScheduleEngine::evaluateRule(const RuleRecord& rule, int64_t nowUnix) {
         if (r.nextFireAt.has_value() && *r.nextFireAt <= nowUnix) {
             r.nextFireAt = recomputeNextFrom(rule, nowUnix);
         }
-        (void)store_.updateRule(r);
+        logWriteFailure("updateRule[disabled]", store_.updateRule(r));
         return;
     }
     // 暂停中：期间到期点不补（§4.4）；只推进 last_eval_at，解除后从 now 干净续跑。
@@ -245,7 +257,7 @@ void ScheduleEngine::evaluateRule(const RuleRecord& rule, int64_t nowUnix) {
         if (r.nextFireAt.has_value() && *r.nextFireAt <= nowUnix) {
             r.nextFireAt = recomputeNextFrom(rule, nowUnix);
         }
-        (void)store_.updateRule(r);
+        logWriteFailure("updateRule[paused]", store_.updateRule(r));
         return;
     }
     // event/resident：无下次时刻，引擎不驱动（v1 由外部入队）。
@@ -279,7 +291,7 @@ void ScheduleEngine::evaluateRule(const RuleRecord& rule, int64_t nowUnix) {
             auto next = core::schedule::nextFire(spec, nowUnix, ctx);
             r.nextFireAt = next.isOk() ? next.value() : std::nullopt;
         }
-        (void)store_.updateRule(r);
+        logWriteFailure("updateRule[cold-start]", store_.updateRule(r));
         evalMemo_[rule.id] = nowUnix;
         return;
     }
@@ -344,7 +356,8 @@ void ScheduleEngine::evaluateRule(const RuleRecord& rule, int64_t nowUnix) {
                         alert.dedupeKey =
                             "rule:" + std::to_string(rule.id) + ":overflow:" +
                             std::to_string(overflowAt);
-                        (void)runner_.localAlert(alert);
+                        logWriteFailure("localAlert[overflow]",
+                                      runner_.localAlert(alert));
                     }
                 }
             }
@@ -374,7 +387,7 @@ void ScheduleEngine::evaluateRule(const RuleRecord& rule, int64_t nowUnix) {
     evalMemo_[rule.id] = nowUnix;
     if (cacheRecomputed) {
         r.lastEvalAt = nowUnix;
-        (void)store_.updateRule(r);
+        logWriteFailure("updateRule[boundary]", store_.updateRule(r));
     }
 }
 
@@ -415,7 +428,7 @@ void ScheduleEngine::fireRule(const RuleRecord& rule, int64_t dueAt, bool catchU
             r.plannedAt = dueAt;
             r.status = "suppressed";
             r.resultSummary = "待执行队列已满，跳过本次触发";
-            (void)store_.insertRun(r);
+            logWriteFailure("insertRun[suppressed]", store_.insertRun(r));
             LOG_WARN("schedule.engine: 待执行队列满，规则 #" + std::to_string(rule.id) +
                      " 触发被抑制");
             return;
@@ -515,7 +528,7 @@ void ScheduleEngine::finalizeRun(const PendingFire& fire, int64_t nowUnix,
                           (r.resultSummary.empty() ? "" : "；" + r.resultSummary);
     }
     r.error = outcome.error;
-    (void)store_.updateRun(r);
+    logWriteFailure("updateRun[finalize]", store_.updateRun(r));
 
     runningFires_.erase(rit);
     runToRule_.erase(f.run.id);
@@ -564,11 +577,11 @@ void ScheduleEngine::finishFire(int64_t ruleId, int64_t firedAt, bool onceKind,
     rule.lastFireAt = firedAt;
     rule.runCount += 1;
     rule.lastEvalAt = nowUnix;  // 触发边界：last_eval_at 随收尾落库
-    (void)store_.updateRule(rule);
+    logWriteFailure("updateRule[finish]", store_.updateRule(rule));
 
     if (onceKind) {
         // 一次性规则触发后归档停用（§4.4/验收 4）：不删除，重启不再触发。
-        (void)store_.archiveRule(ruleId);
+        logWriteFailure("archiveRule[once]", store_.archiveRule(ruleId));
     }
 }
 
@@ -623,11 +636,18 @@ void ScheduleEngine::drainPendingFires(int64_t nowUnix) {    while (!pendingFire
             continue;
         }
         f.rule = live.value();  // 执行用最新行：排队期间的编辑/启停在此生效
-        // pending → running 状态推进。
+        // pending → running 状态推进。失败早退：行留 pending 却执行投递 =
+        // 半写状态，回队首下 tick 重试（真实故障期每 tick 一条 WARN）。
         RunRecord r = f.run;
         r.status = "running";
         r.startedAt = nowUnix;
-        (void)store_.updateRun(r);
+        auto advanced = store_.updateRun(r);
+        if (advanced.isFail()) {
+            LOG_WARN("schedule.engine: pending→running 推进失败，触发回队重试 " +
+                     advanced.errorMessage());
+            pendingFires_.push_front(std::move(f));
+            break;
+        }
         f.run = r;
         executeFire(std::move(f), nowUnix);
     }
@@ -657,19 +677,19 @@ void ScheduleEngine::drainDeliveryRetries(int64_t nowUnix) {
             if (ch.isOk() && ch.value().has_value()) {
                 ChannelRecord record = *ch.value();
                 record.enabled = false;
-                (void)store_.updateChannel(record);
+                logWriteFailure("updateChannel[disable]", store_.updateChannel(record));
             }
             Delivery alert = retry.delivery;
             alert.title = "调度渠道已停用";
             alert.body = "渠道投递永久失败已停用：" + out.error;
-            (void)runner_.localAlert(alert);
+            logWriteFailure("localAlert[channel-disabled]", runner_.localAlert(alert));
         }
         if (out.degradedLocally) {
             // 最终失败：降级本地提示恰好一次（§4.9），不每次重试都弹。
             Delivery alert = retry.delivery;
             alert.title = "提醒投递失败";
             alert.body = "「" + retry.delivery.title + "」连续投递失败，请检查渠道配置";
-            (void)runner_.localAlert(alert);
+            logWriteFailure("localAlert[degrade]", runner_.localAlert(alert));
         }
     }
 }

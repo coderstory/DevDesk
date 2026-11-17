@@ -12,6 +12,7 @@
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
+#include "core/logging.h"
 #include "core/result.h"
 #include "core/ticker.h"
 #include "module_schedule/channel_registry.h"
@@ -26,8 +27,11 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <fstream>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -175,6 +179,24 @@ module::schedule::RuleRecord makeOnceRule(int64_t atUnix, const std::string& mis
     r.channelIds = std::move(channelIds);
     r.missedPolicy = missedPolicy;
     return r;
+}
+
+// need291 用例公用：日志捕获（core::log 只有 addFileOutput、无关闭接口——
+// 捕获后本进程后续日志都写该临时文件，沿用 test_agent_scheduler 既有做法）。
+std::filesystem::path captureLog(const char* tag) {
+    const auto logPath =
+        test_temp::tempPath(std::string("devdesk_test_need291_") + tag + ".log");
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+    core::log::addFileOutput(logPath);
+    return logPath;
+}
+
+std::string slurpLog(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    return oss.str();
 }
 
 } // namespace
@@ -879,5 +901,136 @@ REGISTER_TEST(schedule_engine_paused_no_stale_refire_on_release,
     DOCTEST_REQUIRE(rows.size() == 1);
     DOCTEST_CHECK(rows[0].getInt64("planned_at").valueOr(-1) == 200);
     DOCTEST_CHECK(channels.fake->calls == 1);
+    return true;
+})
+
+// ---- need291 fire-and-forget 收口：store 写失败注入（sqlite 触发器拦 UPDATE，
+// INSERT 不拦——真 store 路径上的确定性写失败）----
+
+// 防：投递终态迁移（updateDelivery）失败被 (void) 丢弃——行停留 pending、
+// 重启后重复投递且无痕迹。锁：失败留 WARN 含 sqlite errorMessage；行状态
+// 停留 pending 可观察；run 结局不受影响（投递已发生，结局语义不变）。
+REGISTER_TEST(schedule_engine_delivery_update_fail_logged,
+              "调度引擎: updateDelivery 失败(触发器 ABORT) 留 WARN 含 sqlite 错误, 投递行停留 pending 不静默", {
+    auto db = openMigrated("n291delupd");
+    module::schedule::ScheduleStore store(db.db());
+    TestChannels channels(store, "fake_remind");
+    module::schedule::ScheduleEngine engine(db.db(), channels.registry);
+
+    (void)store.createRule(
+        makeIntervalRule(60, 0, "remind", "once", {channels.channelRowId})).value();
+    engine.tick(59);  // 冷启动: last_eval=59, next=60
+
+    const auto logPath = captureLog("delupd");
+    DOCTEST_REQUIRE(db.db().exec(
+        "CREATE TRIGGER need291_block_delivery BEFORE UPDATE ON schedule_delivery "
+        "BEGIN SELECT RAISE(ABORT, 'need291-block-delivery'); END;").isOk());
+
+    engine.tick(60);  // 到期: 投递成功但终态回写被拦
+    DOCTEST_CHECK(channels.fake->calls == 1);            // 投递本身已发生
+    DOCTEST_CHECK(countRuns(db.db(), "success") == 1);   // run 结局不受影响
+
+    auto rows = db.db().prepare("SELECT status AS v FROM schedule_delivery")
+                    .value().fetchAll().value();
+    DOCTEST_REQUIRE(rows.size() == 1);
+    DOCTEST_CHECK(rows[0].getString("v").valueOr("") == "pending");  // 半写状态可见
+
+    const std::string log = slurpLog(logPath);
+    DOCTEST_CHECK(log.find("updateDelivery[success]") != std::string::npos);
+    DOCTEST_CHECK(log.find("need291-block-delivery") != std::string::npos);  // sqlite 错误透传
+    return true;
+})
+
+// 防：一次性规则收尾（updateRule 推进 last_fire/run_count + archiveRule 归档）
+// 失败被 (void) 丢弃——规则启停/归档态静默丢失（用户已关/已归档的规则复活）。
+// 锁：两处失败均留 WARN；规则行停留未归档、仍 enabled 状态可观察。
+REGISTER_TEST(schedule_engine_once_archive_fail_logged,
+              "调度引擎: once 收尾 updateRule/archiveRule 失败(触发器 ABORT) 留 WARN, 规则未归档可观察", {
+    auto db = openMigrated("n291arch");
+    module::schedule::ScheduleStore store(db.db());
+    TestChannels channels(store, "fake_remind");
+    module::schedule::ScheduleEngine engine(db.db(), channels.registry);
+
+    auto rule = store.createRule(makeOnceRule(60, "once", {channels.channelRowId})).value();
+    engine.tick(59);  // 冷启动: last_eval=59, next=60
+
+    const auto logPath = captureLog("arch");
+    DOCTEST_REQUIRE(db.db().exec(
+        "CREATE TRIGGER need291_block_rule BEFORE UPDATE ON schedule_rule "
+        "BEGIN SELECT RAISE(ABORT, 'need291-block-rule'); END;").isOk());
+
+    engine.tick(60);  // 触发并收尾: finishFire 的 updateRule + archiveRule 均被拦
+    DOCTEST_CHECK(countRuns(db.db(), "success") == 1);
+    DOCTEST_CHECK(channels.fake->calls == 1);
+
+    auto row = db.db().prepare(
+                       "SELECT archived_at AS v, enabled AS e FROM schedule_rule WHERE id = " +
+                       std::to_string(rule.id))
+                   .value().fetchAll().value();
+    DOCTEST_REQUIRE(row.size() == 1);
+    DOCTEST_CHECK(row[0].isNull("v"));                    // 归档失败: 未归档（可观察）
+    DOCTEST_CHECK(row[0].getInt64("e").valueOr(0) == 1);  // 仍 enabled
+
+    const std::string log = slurpLog(logPath);
+    DOCTEST_CHECK(log.find("updateRule[finish]") != std::string::npos);
+    DOCTEST_CHECK(log.find("archiveRule[once]") != std::string::npos);
+    DOCTEST_CHECK(log.find("need291-block-rule") != std::string::npos);
+    return true;
+})
+
+// 防：pending→running 推进失败被 (void) 丢弃后照常执行——行留 pending 却已
+// 投递（半写状态）。锁：推进失败早退回队（本 tick 不投递）；故障解除后同一
+// 条 run 续跑成功、不重复插行。
+REGISTER_TEST(schedule_engine_pending_advance_fail_requeue,
+              "调度引擎: pending→running 推进失败(触发器 ABORT) 早退回队不执行, 解除后同 run 续跑", {
+    auto db = openMigrated("n291queue");
+    module::schedule::ScheduleStore store(db.db());
+    TestChannels channels(store, "fake00");
+    std::vector<FakeChannel*> fakes;
+    std::vector<int64_t> rowIds = {channels.channelRowId};
+    for (int i = 1; i < 19; ++i) {
+        const std::string kind = (i < 10 ? "fake0" : "fake") + std::to_string(i);
+        module::schedule::ChannelRecord ch;
+        ch.kind = kind;
+        ch.name = "t-" + kind;
+        rowIds.push_back(store.createChannel(ch).value().id);
+        auto f = std::make_unique<FakeChannel>(kind);
+        fakes.push_back(f.get());
+        DOCTEST_REQUIRE(channels.registry.registerChannel(std::move(f)).isOk());
+    }
+    module::schedule::ScheduleEngine engine(db.db(), channels.registry);
+
+    // 规则 A：18 渠道（= 全局桶容量），首触发耗尽令牌；规则 B：once 1 渠道，
+    // 同 tick 触发时桶空 → 入 pending 队列。
+    std::vector<int64_t> aChannels(rowIds.begin(), rowIds.begin() + 18);
+    (void)store.createRule(makeIntervalRule(60, 0, "remind", "once", aChannels)).value();
+    auto ruleB = store.createRule(makeOnceRule(60, "once", {rowIds[18]})).value();
+    engine.tick(50);  // 冷启动: A next=60, B next=60
+
+    const auto logPath = captureLog("queue");
+    DOCTEST_REQUIRE(db.db().exec(
+        "CREATE TRIGGER need291_block_run BEFORE UPDATE ON schedule_run "
+        "BEGIN SELECT RAISE(ABORT, 'need291-block-run'); END;").isOk());
+
+    engine.tick(60);   // A 直接触发（INSERT 不受拦），B 桶空入队 pending
+    engine.tick(120);  // 桶回填，drain 取 B: pending→running 被 ABORT → 早退回队
+    DOCTEST_CHECK(fakes[17]->calls == 0);  // 早退: 本 tick 未投递
+    auto st = db.db().prepare("SELECT status AS v FROM schedule_run WHERE rule_id = " +
+                              std::to_string(ruleB.id))
+                  .value().fetchAll().value();
+    DOCTEST_REQUIRE(st.size() == 1);
+    DOCTEST_CHECK(st[0].getString("v").valueOr("") == "pending");  // 行未半写
+    const std::string log = slurpLog(logPath);
+    DOCTEST_CHECK(log.find("pending→running 推进失败") != std::string::npos);
+    DOCTEST_CHECK(log.find("need291-block-run") != std::string::npos);
+
+    DOCTEST_REQUIRE(db.db().exec("DROP TRIGGER need291_block_run").isOk());
+    engine.tick(121);  // 故障解除: 同一条 run 续跑
+    DOCTEST_CHECK(fakes[17]->calls == 1);
+    auto rows2 = db.db().prepare("SELECT status AS v FROM schedule_run WHERE rule_id = " +
+                                 std::to_string(ruleB.id))
+                     .value().fetchAll().value();
+    DOCTEST_CHECK(rows2.size() == 1);  // 不重复插行
+    DOCTEST_CHECK(rows2[0].getString("v").valueOr("") == "success");
     return true;
 })
