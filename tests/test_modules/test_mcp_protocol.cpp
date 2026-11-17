@@ -2,10 +2,13 @@
 // JSON 转义与 id 回显。传输层（415/403/405）由服务级用例（B3）覆盖。
 #include "doctest.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "module_mcp/mcp_protocol.h"
@@ -57,6 +60,22 @@ public:
         const std::string&) override {
         return core::Result<core::mcp::ToolResult>::fail(
             core::ErrorCode::Internal, "boom: 工具内部错误");
+    }
+};
+
+// 挂死工具：睡眠 1.5s 才返回（配合 env 把总闸调到 1s 触发外层超时）
+class SlowTool : public core::mcp::IMcpTool {
+public:
+    std::string name() const override { return "slow_tool"; }
+    std::string description() const override { return "sleeps past the gate"; }
+    std::string inputSchemaJson() const override {
+        return R"({"type":"object","properties":{}})";
+    }
+    core::Result<core::mcp::ToolResult> execute(
+        const std::string&) override {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        return core::Result<core::mcp::ToolResult>::ok(
+            core::mcp::ToolResult{false, "slow finished"});
     }
 };
 
@@ -528,6 +547,53 @@ REGISTER_TEST(mcp_protocol_tools_call_success_and_escaping,
     DOCTEST_CHECK_EQ(strField(block, "text"), text);
     DOCTEST_CHECK_EQ(tool->lastArgs, std::string(R"({"a":1})"));
     DOCTEST_CHECK_EQ(tool->calls, 1);
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_tools_call_outer_timeout_gate,
+              "mcp protocol: 慢工具超过外层总闸 → 200 -32603 且提示超时；快工具不受总闸影响", {
+    Fixture fixture;
+    auto slow = std::make_shared<SlowTool>();
+    auto fast = std::make_shared<StubTool>("fast_tool", "quick result");
+    DOCTEST_CHECK(fixture.tools.registerTool(slow).isOk());
+    DOCTEST_CHECK(fixture.tools.registerTool(fast).isOk());
+
+    // env 覆盖总闸到 1s（用完恢复，防泄漏到其它用例）
+    const char* saved = std::getenv("MCP_TOOL_TIMEOUT_SECONDS");
+    setenv("MCP_TOOL_TIMEOUT_SECONDS", "1", 1);
+
+    std::string newId;
+    const std::string sessionId = fixture.openSession();
+    auto slowOutcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"slow_tool"}})",
+        sessionId, "", newId);
+    const int slowCode = errorCodeOf(slowOutcome.body);
+    std::string slowMsg;
+    const auto slowRoot = parseBody(slowOutcome.body);
+    if (slowRoot.isObject() &&
+        slowRoot.asObject().get("error").isObject()) {
+        slowMsg = strField(slowRoot.asObject().get("error").asObject(),
+                           "message");
+    }
+    // 快工具在同一总闸配置下正常返回（总闸不误伤）
+    auto fastOutcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"fast_tool"}})",
+        sessionId, "", newId);
+    if (saved != nullptr) setenv("MCP_TOOL_TIMEOUT_SECONDS", saved, 1);
+    else unsetenv("MCP_TOOL_TIMEOUT_SECONDS");
+
+    DOCTEST_CHECK_EQ(slowOutcome.status, 200);
+    DOCTEST_CHECK_EQ(slowCode, -32603);
+    DOCTEST_CHECK_EQ(slowMsg.find("超时") != std::string::npos, true);
+    DOCTEST_CHECK_EQ(fastOutcome.status, 200);
+    const auto fastRoot = parseBody(fastOutcome.body);
+    DOCTEST_REQUIRE(fastRoot.isObject());
+    const auto fastResult = fastRoot.asObject().get("result");
+    DOCTEST_REQUIRE(fastResult.isObject());
+    const auto fastContent = fastResult.asObject().get("content");
+    DOCTEST_REQUIRE(fastContent.isArray());
+    DOCTEST_CHECK_EQ(strField(fastContent[0].asObject(), "text"),
+                     std::string("quick result"));
     return true;
 })
 

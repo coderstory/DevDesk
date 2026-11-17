@@ -1,8 +1,12 @@
 #include "mcp_protocol.h"
 
 #include <cctype>
+#include <chrono>
+#include <cstdlib>
+#include <future>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "core/logging.h"
@@ -41,6 +45,23 @@ std::string quoteString(const std::string& text) {
     auto serialized = platform::json::stringify(
         platform::json::makeString(platform::utf8::sanitize(text)));
     return serialized.isOk() ? serialized.value() : std::string("\"\"");
+}
+
+// 外层超时总闸（need290）：工具自身超时（bash.run 30s/net.fetch 10s 等）之外
+// 的兜底，防个别工具挂死钉住 HTTP 请求线程。默认 600s（≥10min 宽松，对齐
+// 生态对长工具的容忍，防误杀）；env MCP_TOOL_TIMEOUT_SECONDS 覆盖（秒），
+// 非法/≤0/超界回退默认。
+int toolCallTimeoutSeconds() {
+    constexpr int kDefaultToolTimeoutSeconds = 600;
+    const char* raw = std::getenv("MCP_TOOL_TIMEOUT_SECONDS");
+    if (raw == nullptr || *raw == '\0') return kDefaultToolTimeoutSeconds;
+    char* parseEnd = nullptr;
+    const long parsed = std::strtol(raw, &parseEnd, 10);
+    if (parseEnd == raw || *parseEnd != '\0' || parsed <= 0 ||
+        parsed > 2147483000L) {
+        return kDefaultToolTimeoutSeconds;
+    }
+    return static_cast<int>(parsed);
 }
 
 std::string errorResponseText(const JsonValue& id, int code,
@@ -264,7 +285,47 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
         }
         // keep-alive：execute 期间即使 registry 里被 unregister 也不悬垂
         const std::shared_ptr<core::mcp::IMcpTool> tool = found.value();
-        auto executed = tool->execute(argumentsJson);
+        // 外层超时总闸（need290）：execute 放一次性 worker 线程，请求线程限时
+        // 收割。超时即放弃（detach）：worker 仍持 tool 的 shared_ptr 跑到自然
+        // 结束，结果写进被遗弃的 promise 随之丢弃——响应只由请求线程写一次，
+        // 无双响应/无悬垂引用；代价是超时后工具线程仍在跑（全仓无协作式取消
+        // 基建可复用，弃置口径见手册 10 章）。
+        auto executePromise = std::make_shared<
+            std::promise<core::Result<core::mcp::ToolResult>>>();
+        auto executeFuture = executePromise->get_future();
+        std::thread executeWorker;
+        bool workerSpawned = false;
+        try {
+            executeWorker = std::thread([tool, argumentsJson, executePromise] {
+                executePromise->set_value(tool->execute(argumentsJson));
+            });
+            workerSpawned = true;
+        } catch (...) {
+            // 线程资源耗尽：不钉死请求线程，直接回基础设施错误
+        }
+        if (!workerSpawned) {
+            return HttpOutcome{200,
+                               errorResponseText(id, -32603,
+                                                 "工具执行调度失败（线程资源不足）"),
+                               false};
+        }
+        const int timeoutSeconds = toolCallTimeoutSeconds();
+        if (executeFuture.wait_for(std::chrono::seconds(timeoutSeconds)) !=
+            std::future_status::ready) {
+            executeWorker.detach();
+            LOG_WARN("MCP 工具执行超过外层总闸 " + std::to_string(timeoutSeconds) +
+                     "s，放弃等待: " + toolName);
+            return HttpOutcome{200,
+                               errorResponseText(
+                                   id, -32603,
+                                   "工具执行超时（外层总闸 " +
+                                       std::to_string(timeoutSeconds) +
+                                       "s，可设 MCP_TOOL_TIMEOUT_SECONDS）: " +
+                                       toolName),
+                               false};
+        }
+        executeWorker.join();
+        auto executed = executeFuture.get();
         if (executed.isFail()) {
             // 工具业务失败必须用 ToolResult{isError=true}；fail = 基础设施错误
             return HttpOutcome{200,
