@@ -232,6 +232,34 @@ std::string notepadFontTriggerLabel(const std::string& family) {
     return family.substr(0, cut) + "…";
 }
 
+// 状态栏统计缓存（P2-5 走查节流，need289）：行:列/字符数每帧全量 3×全文扫描
+// → (textRevision, cursor) 门控，键未变帧零扫描（10MB 只读窗每帧 3×10MB → 0）。
+// 设计稿 §11.4「200ms 节流」的事件驱动等价实现：失效点=编辑/光标移动本身。
+struct NotepadStatusStats {
+    bool valid = false;
+    unsigned long long textRev = 0;
+    int cursor = 0;
+    int line = 0;
+    size_t colCp = 0;
+    size_t chars = 0;
+};
+
+// 脏态「●未保存」x 估宽（P3-1 走查）：码点分档 CJK 12px / 其余 7px（12px
+// 字号实测档）。原码点×7px 粗估对 CJK 文件名系统性偏小 → ● 叠上标题文字。
+float notepadTitleEstWidth(const std::string& title) {
+    float width = 0.0f;
+    for (size_t i = 0; i < title.size();) {
+        const unsigned char b = static_cast<unsigned char>(title[i]);
+        const size_t len = b < 0x80                ? 1
+                           : (b & 0xE0) == 0xC0    ? 2
+                           : (b & 0xF0) == 0xE0    ? 3
+                                                   : 4;
+        width += len >= 3 ? 12.0f : 7.0f;  // 3/4 字节 UTF-8 ≈ CJK/emoji 宽档
+        i += len;
+    }
+    return width + 20.0f;
+}
+
 // 命中层合成色（设计稿 §4.5 落地值）：普通命中 = warning@26%/22%；
 // 当前命中 = warning 打底再叠 primary@38%/30%，styled-runs 仅 color 一维
 // → 标准 over 合成预折算成单色（tech 卡 §四「预合成」）。
@@ -255,8 +283,9 @@ void notepadFindClose(NotepadSession& s) {
     f.pendingJump = 0;
     f.hits.clear();
     f.cur = kFindNoHit;
-    f.appliedQuery.clear();  // Esc 清高亮留词（F-06）；重开经门控强制重算
-    f.styleDirty = true;     // 命中层缓存失效（lineRuns 缓存键 = textRevision|styleRevision）
+    f.appliedQuery.clear();    // Esc 清高亮留词（F-06）；重开经门控强制重算
+    f.styleDirty = true;       // 命中层缓存失效（lineRuns 缓存键 = textRevision|styleRevision）
+    f.pendingFocusEditor = true;  // P2-3：关条焦点回归编辑器（开条播种对称）
 }
 
 void notepadFindToggle(NotepadSession& s) {
@@ -708,12 +737,21 @@ void drawFontTrigger(NotepadSession& s, eui::Ui& ui,
 
 // F-09 弹层面板（260×300 触发器下方 6px；内滚 = components::scrollView，
 // 首项「默认字体」= 空族复位；命中遮罩 blockPointer 防穿透编辑器）。
+// P2-4（need289 走查）：开时先铺全窗透明点击层（点击弹层外任意处收起不改值，
+// 设计稿 §5.2）+ Esc 收起请求位消费（键路由 Ui 态不可达 → session 置位）。
 void drawFontPopup(NotepadSession& s, eui::Ui& ui,
-                   const core::theme::Tokens& t) {
+                   const core::theme::Tokens& t, float w, float h) {
     const std::string base(kNotepadDdFontId);
     FontPopupState& ps = ui.state<FontPopupState>(base + ".state");
+    if (s.pendingPopupDismiss) {  // Esc 收起请求（键路由置位，本处单点消费）
+        s.pendingPopupDismiss = false;
+        if (ps.open) {
+            ps.open = false;
+            app::requestUpdate();
+        }
+    }
     if (!ps.open) return;
-    if (s.previewOn) {  // 预览态字体禁用（§4.6）：残留弹层强制收起
+    if (s.previewOn || !s.loadError.empty()) {  // 预览/错误态字体禁用：残留弹层强制收起
         ps.open = false;
         return;
     }
@@ -722,6 +760,18 @@ void drawFontPopup(NotepadSession& s, eui::Ui& ui,
     constexpr float kH = 300.0f;
     constexpr float kPad = 6.0f;
     constexpr float kItemH = 26.0f;
+    // 全窗遮罩点击层（P2-4）：透明可点，点击 = 收起不改值；弹层面板画在其上
+    //（后画者在上）且面板自身 hit rect blockPointer，面板内点击不透到本层。
+    ui.rect(base + ".popup.scrim")
+        .position(0.0f, 0.0f)
+        .size(w, h)
+        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+        .onClick([&ui] {
+            ui.state<FontPopupState>(std::string(kNotepadDdFontId) + ".state")
+                .open = false;
+            app::requestUpdate();
+        })
+        .build();
     ui.stack(base + ".popup")
         .position(240.0f, 8.0f + 28.0f + 6.0f)
         .size(kW, kH)
@@ -816,7 +866,7 @@ void drawProtectDialog(NotepadSession& s, eui::Ui& ui, float w, float h,
     using components::button;
     const components::DialogStyle style(tokens);
     const auto& m = tokens.metrics;
-    constexpr float kDialogW = 460.0f;
+    constexpr float kDialogW = 420.0f;  // P3-6 走查：设计稿 §4.9 宽 420
     constexpr float kDialogH = 200.0f;
     const float inset = m.spacing.panel;
     const float contentWidth = kDialogW - 2.0f * inset;
@@ -949,8 +999,16 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
     s.sizeSeen = true;
 
     const bool errorState = !s.loadError.empty();
-    const bool showPrompt = (s.readonly || s.largeFile || s.binarySuspect) &&
-                            !errorState;
+    // 提示条分档（P3-5 走查，设计稿 §7.4）：只读档 = warning 不可关；大文件
+    // 档 = info 可关（关 = 本窗 Ui 态旗标，窗重开还原）。二进制 suspect 恒伴
+    // readonly（applyLoadedState），归只读档。
+    bool& promptDismissed = ui.state<bool>("notepad.promptbar.dismissed");
+    const bool readonlyPrompt =
+        !errorState && (s.readonly || s.binarySuspect);
+    const bool largeFilePrompt =
+        !errorState && !readonlyPrompt && s.largeFile;
+    const bool showPrompt =
+        readonlyPrompt || (largeFilePrompt && !promptDismissed);
     const float editorTop = kToolbarH + (showPrompt ? kPromptH : 0.0f);
 
     // ── 工具条 44（无新建钮 = N-14）──
@@ -1029,9 +1087,12 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
                       });
     }
     // F-19 自动换行钮（toggle 选中态高亮；largeFile 强制关 + 钮禁用 =
-    // 大文件模式口径）。x 让位给格式化/预览钮（两者互斥，任一显示则后移一档）。
+    // 大文件模式口径）。x 让位逻辑（P3-7 走查）：.md 预览钮占 564 → 636；
+    // .json 无预览钮 → 紧跟格式化钮 564（不留预览位空洞）；无文档钮 → 492。
     {
-        const float wrapX = (matrix.showFormat || matrix.showPreview) ? 636.0f : 492.0f;
+        const float wrapX = matrix.showPreview ? 636.0f
+                            : matrix.showFormat ? 564.0f
+                                                : 492.0f;
         toolbarButton(ui, kNotepadBtnWrapId, "换行", wrapX, t,
                       !errorState && !s.largeFile, [&s] {
                           notepadToggleWrap(s);
@@ -1040,22 +1101,32 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
 
     // ── 提示条 32（只读降级 / 大文件模式；错误态文本直接占编辑区，不叠提示条）──
     if (showPrompt) {
+        const bool infoTier = largeFilePrompt;  // P3-5：大文件档 info 可关
         ui.rect("notepad.promptbar")
             .position(0.0f, kToolbarH)
             .size(w, kPromptH)
-            .color(components::theme::withAlpha(t.colors.warning, 0.12f))
+            .color(components::theme::withAlpha(
+                infoTier ? t.colors.info : t.colors.warning, 0.12f))
             .build();
-        const char* msg = s.readonly ? s.readonlyReason.c_str()
-                                     : "大文件模式：已关闭代码高亮与自动换行";
+        const char* msg = infoTier ? "大文件模式：已关闭代码高亮与自动换行"
+                                   : s.readonlyReason.c_str();
         ui.text("notepad.promptbar.text")
             .position(16.0f, kToolbarH)
-            .size(w - 32.0f, kPromptH)
+            .size(w - 32.0f - (infoTier ? 28.0f : 0.0f), kPromptH)
             .text(msg)
             .fontSize(12.0f)
             .lineHeight(kPromptH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textSecondary)
             .build();
+        if (infoTier) {
+            // 关闭钮（P3-5）：点击收本条（编辑区上移补位）；只读档无此钮
+            barButton(ui, "notepad.promptbar.close", "×", w - 36.0f,
+                      kToolbarH + 4.0f, 24.0f, 24.0f, t, true, [&ui] {
+                          ui.state<bool>("notepad.promptbar.dismissed") = true;
+                          app::requestUpdate();
+                      });
+        }
     }
 
     // ── 编辑区 flex（唯一内滚容器；错误态 = 占位文案）──
@@ -1141,6 +1212,11 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             });
         }
         editor.build();
+        // P2-3：关条焦点回收消费（notepadFindClose 置位；开条播种聚焦的对称面）
+        if (s.find.pendingFocusEditor && !s.find.visible) {
+            s.find.pendingFocusEditor = false;
+            ui.requestFocus(kNotepadEditorInputId);
+        }
         }
     }
 
@@ -1161,9 +1237,8 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
         .color(t.colors.textSecondary)
         .build();
     if (s.dirty) {
-        // x 随标题估宽：码点数 × 7px（12px 字号粗估，CJK 偏宽按余量吸收）
-        const float titleW =
-            static_cast<float>(notepadUtf8Length(s.title)) * 7.0f + 20.0f;
+        // x 随标题估宽：CJK/其余分档（notepadTitleEstWidth，P3-1 走查）
+        const float titleW = notepadTitleEstWidth(s.title);
         ui.text("notepad.status.dirty")
             .position(16.0f + titleW, h - kStatusH)
             .size(90.0f, kStatusH)
@@ -1175,18 +1250,31 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             .build();
     }
     if (!errorState) {
+        // 行:列 / 字符数（P2-5 缓存门控）：键 = (textRevision, cursor)，未变帧
+        // 零扫描（原每帧 3×全文遍历，10MB 只读窗约 3-5ms/帧）
+        NotepadStatusStats& stats =
+            ui.state<NotepadStatusStats>("notepad.status.stats");
         const InputState& st = ui.state<InputState>(kNotepadEditorInputId);
-        const int line = notepadByteOffsetToLine(st.text, st.cursor);
-        const size_t lineStart = notepadLineStartOffset(st.text, line);
-        // cursor 是 int（InputState 契约），lineStart 是 size_t：先归一为 size_t
-        // 再比较，避免 -Wsign-compare（本仓 -Werror）。
-        const size_t cursorBytes = static_cast<size_t>(st.cursor);
-        const size_t colCp =
-            cursorBytes >= lineStart
-                ? notepadUtf8Length(st.text.substr(lineStart, cursorBytes - lineStart))
-                : 0;
+        if (!stats.valid || stats.textRev != st.textRevision ||
+            stats.cursor != st.cursor) {
+            stats.valid = true;
+            stats.textRev = st.textRevision;
+            stats.cursor = st.cursor;
+            stats.line = notepadByteOffsetToLine(st.text, st.cursor);
+            const size_t lineStart = notepadLineStartOffset(st.text, stats.line);
+            // cursor 是 int（InputState 契约），lineStart 是 size_t：先归一为
+            // size_t 再比较，避免 -Wsign-compare（本仓 -Werror）。
+            const size_t cursorBytes = static_cast<size_t>(st.cursor);
+            stats.colCp =
+                cursorBytes >= lineStart
+                    ? notepadUtf8Length(
+                          st.text.substr(lineStart, cursorBytes - lineStart))
+                    : 0;
+            stats.chars = notepadUtf8Length(st.text);
+        }
         char buf[64];
-        std::snprintf(buf, sizeof buf, "行 %d, 列 %zu", line + 1, colCp + 1);
+        std::snprintf(buf, sizeof buf, "行 %d, 列 %zu", stats.line + 1,
+                      stats.colCp + 1);
         ui.text("notepad.status.cursor")
             .position(w - 300.0f, h - kStatusH)
             .size(140.0f, kStatusH)
@@ -1196,7 +1284,7 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textSecondary)
             .build();
-        std::snprintf(buf, sizeof buf, "%zu 字符", notepadUtf8Length(st.text));
+        std::snprintf(buf, sizeof buf, "%zu 字符", stats.chars);
         ui.text("notepad.status.chars")
             .position(w - 150.0f, h - kStatusH)
             .size(134.0f, kStatusH)
@@ -1211,22 +1299,23 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
         // 禁用（灰显不可点）；错误占位窗整块不渲染（无文件无编码语义）。
         if (w >= 900.0f) {
             const bool canToggle = editable;
-            // 编码段：UTF-8 ↔ UTF-8 BOM 循环（D-8 两档）
+            // 编码段：UTF-8 ↔ UTF-8 BOM 循环（D-8 两档）；段宽 128（P3-2 走查：
+            // 最长标签「GB18030（推测）」约 109px 超 102 固定段宽会截断）
             ui.stack(kNotepadStatusEncodingId)
-                .position(w - 478.0f, h - kStatusH)
-                .size(102.0f, kStatusH)
+                .position(w - 500.0f, h - kStatusH)
+                .size(128.0f, kStatusH)
                 .disabled(!canToggle)
                 .onClick([&s] { notepadToggleBom(s); })
                 .content([&] {
                     ui.rect(kNotepadStatusEncodingId + std::string(".hover"))
-                        .size(102.0f, kStatusH)
+                        .size(128.0f, kStatusH)
                         .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                                 t.colors.hover, t.colors.hover)
                         .radius(4.0f)
                         .instantStates()
                         .build();
                     ui.text(kNotepadStatusEncodingId + std::string(".label"))
-                        .size(102.0f, kStatusH)
+                        .size(128.0f, kStatusH)
                         .text(notepadEncodingLabel(s))
                         .fontSize(12.0f)
                         .lineHeight(kStatusH)
@@ -1239,7 +1328,7 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
                 .build();
             // 行尾段：LF ↔ CRLF 循环（Mixed 显「混合」，点切先归 CRLF）
             ui.stack(kNotepadStatusEolId)
-                .position(w - 368.0f, h - kStatusH)
+                .position(w - 364.0f, h - kStatusH)
                 .size(60.0f, kStatusH)
                 .disabled(!canToggle)
                 .onClick([&s] { notepadToggleEol(s); })
@@ -1272,8 +1361,9 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
         drawSearchBar(s, ui, w, editorTop, t, componentTheme, editable);
     }
 
-    // ── 字体下拉弹层（z 序最上：工具条触发器 + 内滚面板；开时遮编辑区）──
-    drawFontPopup(s, ui, t);
+    // ── 字体下拉弹层（z 序最上：工具条触发器 + 全窗遮罩点击层 + 内滚面板；
+    // 开时遮编辑区）──
+    drawFontPopup(s, ui, t, w, h);
 
     // ── 会话内轻提示（聚焦/保存反馈；自管 1.5s 窗口，多窗互不覆盖）──
     if (!s.toastMessage.empty() && std::chrono::steady_clock::now() < s.toastUntil) {
@@ -1363,6 +1453,12 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
             app::requestUpdate();
             return;
         }
+    }
+    // Esc 兜底（P2-4）：字体弹层收起请求位（Ui 树 FontPopupState 键路由不可达
+    // → session 置位，drawFontPopup 消费；弹层未开时消费即弃，零副作用）
+    if (key.key == eui::InputKey::Escape) {
+        s.pendingPopupDismiss = true;
+        app::requestUpdate();
     }
 }
 

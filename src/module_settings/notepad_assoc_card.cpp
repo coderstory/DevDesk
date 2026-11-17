@@ -171,14 +171,14 @@ void drawNotepadAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
                 .color(statusColor)
                 .build();
             const float statusW = core::TextPrimitive::measureTextWidth(
-                statusText, {}, fs(12.0f), 500);
+                statusText, {}, fs(12.0f), 600);
             ui.text(id + ".status")
                 .position(padX + dotW + roundFs(6.0f), roundFs(kStatusY))
                 .size(statusW, roundFs(kStatusH))
                 .text(statusText)
                 .fontSize(fs(12.0f))
                 .lineHeight(roundFs(kStatusH))
-                .fontWeight(500)
+                .fontWeight(600)
                 .color(statusColor)
                 .build();
         }

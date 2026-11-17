@@ -210,6 +210,13 @@ int main(int argc, char* argv[]) {
             if (save == nullptr || !save->disabled)
                 passed = fail("错误态保存钮未 disabled");
         }
+        // P2-1：错误窗字体触发器禁用（matrix.fontControlsEnabled 含 !errorState）
+        if (passed) {
+            const core::dsl::Element* ddFont =
+                ui->find(module::notepad::kNotepadDdFontId);
+            if (ddFont == nullptr || !ddFont->disabled)
+                passed = fail("错误窗字体触发器未禁用（P2-1）");
+        }
     }
 
     // ── D. 查找条键盘全流程（批 2 F-06；窗口级 onKeyEvent 直驱 + 会话态注入）──
@@ -313,6 +320,17 @@ int main(int argc, char* argv[]) {
             if (passed && (count == nullptr || count->text != "3/3"))
                 passed = fail(std::string("再唤起计数非 3/3: ") +
                               (count ? count->text : "(缺件)"));
+        }
+
+        // P2-3：关条焦点回归编辑器（Esc 关条 → 焦点从查找输入切回编辑 input）
+        if (passed) {
+            pressKey(eui::InputKey::Escape, false, false);
+            composeSession(s);
+            composeSession(s);
+            if (ui->find(module::notepad::kNotepadSearchBarId) != nullptr)
+                passed = fail("P2-3: Esc 后查找条仍在场");
+            if (passed && !ui->isFocused(module::notepad::kNotepadEditorInputId))
+                passed = fail("P2-3: 关条后焦点未回归编辑器（isFocused 编辑 input 为假）");
         }
     }
 
@@ -765,6 +783,122 @@ int main(int argc, char* argv[]) {
             passed = fail("M+Shift+V 非 .md 会话不应切预览");
     }
 
+    // ── I. 修复棒 2 面（need289 P2-4/P2-5/P3-5/P3-7）：字体弹层 scrim/Esc 收起
+    //    + 状态栏统计缓存键随动 + 大文件提示条 info 档可关 + .json 换行钮让位 ──
+    if (passed) {
+        const auto pressKey = [&](module::notepad::NotepadSession& s,
+                                  eui::InputKey key) {
+            eui::KeyEvent ev;
+            ev.key = key;
+            ev.action = core::KeyAction::Press;
+            module::notepad::notepadHandleKeySession(s, ev);
+        };
+        module::notepad::NotepadSession& ts =
+            *module::notepad::detail::sessionRegistry().back();   // plain.txt
+        module::notepad::NotepadSession& js =
+            *module::notepad::detail::sessionRegistry()[3];       // cfg.json
+        const std::string scrimId =
+            std::string(module::notepad::kNotepadDdFontId) + ".popup.scrim";
+
+        // I1 字体弹层外点/Esc 收起（P2-4，设计稿 §5.2「收起不改值」）
+        composeSession(ts);
+        composeSession(ts);
+        const core::dsl::Element* trigger =
+            ui->find(module::notepad::kNotepadDdFontId);
+        if (passed && (trigger == nullptr || trigger->onClick == nullptr))
+            passed = fail("I1: 字体触发器不可点");
+        else if (passed) trigger->onClick();
+        composeSession(ts);
+        composeSession(ts);
+        const core::dsl::Element* scrim = ui->find(scrimId);
+        if (passed && (scrim == nullptr || scrim->onClick == nullptr))
+            passed = fail("I1: 弹层开启后全窗遮罩点击层不在场（P2-4）");
+        else if (passed) scrim->onClick();
+        composeSession(ts);
+        composeSession(ts);
+        if (passed && ui->find(scrimId) != nullptr)
+            passed = fail("I1: 遮罩点击后字体弹层未收起（P2-4）");
+        if (passed) {
+            const core::dsl::Element* trigger2 =
+                ui->find(module::notepad::kNotepadDdFontId);
+            if (trigger2 == nullptr || trigger2->onClick == nullptr)
+                passed = fail("I1: 二次开弹层触发器不可点");
+            else trigger2->onClick();
+        }
+        composeSession(ts);
+        composeSession(ts);
+        if (passed && ui->find(scrimId) == nullptr)
+            passed = fail("I1: 二次开弹层遮罩未出现");
+        pressKey(ts, eui::InputKey::Escape);
+        composeSession(ts);
+        composeSession(ts);
+        if (passed && ui->find(scrimId) != nullptr)
+            passed = fail("I1: Esc 未收起字体弹层（P2-4）");
+
+        // I2 状态栏统计缓存键随动（P2-5）：cursor 变化 → 行列重算；
+        // textRevision 变化 → 字符数重算（镜像同步 = value 相等不触发回置）
+        if (passed) {
+            using InputState = components::input_detail::InputModel::InputState;
+            InputState& st =
+                ui->state<InputState>(module::notepad::kNotepadEditorInputId);
+            st.cursor = 6;  // "plain text\n" 第 7 字节 → 行 1, 列 7
+            composeSession(ts);
+            composeSession(ts);
+            const core::dsl::Element* cursorEl = ui->find("notepad.status.cursor");
+            if (cursorEl == nullptr || cursorEl->text != "行 1, 列 7")
+                passed = fail("I2: 光标移动后行列未重算（P2-5 缓存键）: " +
+                              (cursorEl ? cursorEl->text : "(缺件)"));
+            st.text = "abc";
+            ++st.textRevision;
+            ts.editText = "abc";  // 镜像同步（value 相等跳过回置）
+            composeSession(ts);
+            composeSession(ts);
+            const core::dsl::Element* charsEl = ui->find("notepad.status.chars");
+            if (charsEl == nullptr || charsEl->text != "3 字符")
+                passed = fail("I2: 文本修订后字符数未重算（P2-5 缓存键）: " +
+                              (charsEl ? charsEl->text : "(缺件)"));
+        }
+
+        // I3 .json 窗换行钮紧跟格式化钮（P3-7：不留预览位空洞）
+        composeSession(js);
+        composeSession(js);
+        if (passed) {
+            const core::dsl::Element* wrap =
+                ui->find(module::notepad::kNotepadBtnWrapId);
+            if (wrap == nullptr || wrap->x != 564.0f)
+                passed = fail("I3: .json 窗换行钮未在 x=564（P3-7 布局空洞）: " +
+                              std::to_string(wrap ? wrap->x : -1.0f));
+        }
+
+        // I4 大文件提示条 info 档可关（P3-5：只读档仍 warning 不可关对照见 B 段）
+        const std::string largePath2 = (dir / "large2.txt").string();
+        {
+            std::ofstream lf(largePath2, std::ios::binary);
+            const std::string chunk(64, 'x');
+            for (int i = 0; i < 18000; ++i) {
+                lf << chunk << "\n";
+            }
+        }
+        module::notepad::openNotepadWindow(largePath2);
+        if (passed) {
+            module::notepad::NotepadSession& ls =
+                *module::notepad::detail::sessionRegistry().back();
+            composeSession(ls);
+            composeSession(ls);
+            if (ui->find("notepad.promptbar") == nullptr)
+                passed = fail("I4: 大文件提示条不在场");
+            const core::dsl::Element* closeBtn =
+                ui->find("notepad.promptbar.close");
+            if (passed && (closeBtn == nullptr || closeBtn->onClick == nullptr))
+                passed = fail("I4: 大文件提示条关闭钮不在场（P3-5 info 档可关）");
+            else if (passed) closeBtn->onClick();
+            composeSession(ls);
+            composeSession(ls);
+            if (passed && ui->find("notepad.promptbar") != nullptr)
+                passed = fail("I4: 关闭钮点击后提示条未收起（P3-5）");
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
     probe::captureIfRequested(args, window, runtime, &passed);
 
@@ -780,6 +914,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "notepad_probe: PASS（" << args.windowW << "x" << args.windowH
-              << "，6 session：正常/只读/错误占位 + 查找条键盘流 + 按钮矩阵/预览切换 + 换行钮 + 未保存保护链 + 另存为钮矩阵/M+Shift+S 守卫/三快捷键接线）\n";
+              << "，7 session：正常/只读/错误占位 + 查找条键盘流（含关条焦点回归）+ 按钮矩阵/预览切换 + 换行钮 + 未保存保护链 + 另存为钮矩阵/M+Shift+S 守卫/三快捷键接线 + 弹层收起/统计缓存/提示条可关/换行钮让位）\n";
     return 0;
 }

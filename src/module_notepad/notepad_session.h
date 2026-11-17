@@ -99,6 +99,9 @@ struct NotepadSession {
         bool pendingSeed = false;         // 开条后首帧播种输入框（键路由置位，compose 消费）
         int pendingJump = 0;              // 待跳转 +1/-1（键路由置位，compose 消费——
                                           // 键事件处理器无 Ui 访问权，InputState 直写单点在 compose）
+        bool pendingFocusEditor = false;  // 关条焦点回收（P2-3）：开条有播种聚焦，
+                                          // 关条对称回归编辑器（notepadFindClose 置位，
+                                          // compose 编辑分支消费——键处理器无 Ui 访问权）
     };
     NotepadFindState find;
 
@@ -107,6 +110,9 @@ struct NotepadSession {
     // M+Shift+F 格式化待消费（键路由置位——键事件处理器无 Ui 访问权，
     // InputState 直写单点在 compose 消费，find.pendingJump 同模式）
     bool pendingFormatJson = false;
+    // 字体弹层 Esc 收起请求（P2-4）：Ui 树 FontPopupState 键路由不可达 →
+    // session 请求位，compose drawFontPopup 消费（pendingFormatJson 同模式）
+    bool pendingPopupDismiss = false;
 
     // ── 会话内轻提示（自管 1.5s 窗口；不用 ui_kit 单例 toast 态，多窗互不覆盖）──
     std::string toastMessage;

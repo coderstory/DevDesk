@@ -178,6 +178,7 @@ REGISTER_TEST(notepad_preview_matrix_disable,
     const NotepadToolbarMatrix merr = notepadToolbarMatrixFor(err);
     DOCTEST_CHECK_FALSE(merr.showFormat);
     DOCTEST_CHECK_FALSE(merr.showPreview);
+    DOCTEST_CHECK_FALSE(merr.fontControlsEnabled);  // P2-1：错误窗字体触发器同守（A± 原已守）
     return true;
 })
 

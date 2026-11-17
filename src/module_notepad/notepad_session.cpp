@@ -150,7 +150,9 @@ NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s) {
     m.formatEnabled = editable && !s.previewOn;
     m.previewEnabled = !s.largeFile;
     m.findToggleEnabled = !s.previewOn;
-    m.fontControlsEnabled = !s.previewOn;
+    // P2-1（need289 走查）：错误占位窗字体面禁用（设计稿 §7.2 联动矩阵——
+    // A± 原已守，触发器漏）
+    m.fontControlsEnabled = !s.previewOn && !errorState;
     return m;
 }
 
