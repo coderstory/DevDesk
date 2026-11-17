@@ -117,8 +117,14 @@ void openNotepadWindow(const std::string& path) {
     NotepadSession* raw = &s;
     detail::sessionRegistry().push_back(std::move(session));
 
-    // 窗口规格：尺寸记忆应用级一份（首次 = 900×640 默认）；越界拉回工作区
+    // 窗口规格：尺寸记忆应用级一份（首次 = 900×640 默认）；越界拉回工作区。
+    // bug282 独立普通窗三件套（设计稿口径）：底色钉不透明（三档窗口效果下的
+    // 半透 alpha 不连坐子窗）、材质固定 None（全局磨砂/半透 backdrop 不贯通）、
+    // 不吃全局 clearColor 广播（切档回填 alpha<1 会重新漏底）+ 内容不延伸进
+    // 标题栏（主窗自绘壳的全局 FSCV 不连坐子窗，保原生标题栏条）。
     const NotepadPrefs prefs = notepadLoadPrefs();
+    eui::Color opaqueBackground = core::theme::current().colors.background;
+    opaqueBackground.a = 1.0f;
     app::DslWindowConfig config;
     config.title(raw->title)
         .pageId(raw->pageId)
@@ -126,7 +132,10 @@ void openNotepadWindow(const std::string& path) {
         .minSize(720, 480)  // need269 已落地（dsl_app.h:288-301）
         .resizable(true)
         .focusOnShow(true)
-        .clearColor(core::theme::current().colors.background)
+        .clearColor(opaqueBackground)
+        .ignoreClearColorOverride(true)
+        .windowEffect(core::platform::WindowEffect::None)
+        .titlebarExtendContent(false)
         .onWindowCreated([raw](core::window::Handle h) { raw->handle = h; })
         .onWindowDestroyed([raw](core::window::Handle) {
             notepadSessionWindowDestroyed(raw);  // 注销防悬垂 + 几何记忆落库

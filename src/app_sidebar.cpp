@@ -1315,6 +1315,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     if (app::assembly::consumePendingMinimizedStartup()) {
         app::closeMainWindow();
     }
+    // bug283：主窗首帧记账——此后 odoc 送达一律按温开（不再 arm 托盘启动）。
+    // 首帧无论是否走 close-to-tray 都算「生命周期已开」：托盘态启动时 compose
+    // 照跑（EUI 渲染与 show 解耦），闩不落会让温开误抢隐藏。
+    app::assembly::markMainWindowComposed();
     // F-01 第二实例送达路径 drain：单实例监听线程入队（platform 回调），这里主线程
     // 按送达序逐路径走 OS 打开漏斗（main 注入的 handleAppleEventOpenFile 同一漏斗）。
     // 取走即清（consumePendingMinimizedStartup 同款形态），每帧调用空队列零开销。

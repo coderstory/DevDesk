@@ -38,6 +38,7 @@ bool g_argvCaptureDone = false;
 bool g_minimizedCaptureDone = false;
 bool g_minimizedStartupPending = false;
 bool g_mainWindowStartHidden = false;  // bug259-A：首帧不 show 闩值（mainWindowStartsHidden）
+bool g_mainWindowComposed = false;  // bug283：主窗首帧 compose 闩（启动窗口期判据）
 
 // 捕获落点：写进程级 pending 路径；空路径（无文件参数/只有 flag）不写。
 // source 只进日志，区分 argv 与平台队列两条来源。
@@ -193,6 +194,7 @@ void resetMinimizedFlagForTest() {
     g_minimizedCaptureDone = false;
     g_minimizedStartupPending = false;
     g_mainWindowStartHidden = false;
+    g_mainWindowComposed = false;
 }
 
 bool consumePendingMinimizedStartup() {
@@ -283,15 +285,31 @@ void dispatchFileOpen(::core::Router* router, const std::string& path,
 // 记事本清单 → 记事本窗即全部 UI，主窗保持托盘态。复用 --minimized 同一状态位
 //（compose 首帧 closeMainWindow 同款路径，托盘左键可唤起），不另造平行机制。
 // 前置=argv 捕获门已翻（无参数启动不置旗标，主窗正常弹出零回归）
+// 关联启动 arm 的通道无关实现（bug283）：置 --minimized 同一状态位 + 首帧不
+// show 闩值。argv 通道（armTrayIfViewerOnlyLaunch）与 odoc 通道（main 的
+// handleAppleEventOpenFile 冷启送达）共用，不复制两份。温开门槛内聚在此：主窗
+// 首帧 compose 后送达 = 温开，不再 arm（调用方无须自行判断）。
+void armTrayForNotepadAssociation(const std::string& path, const char* channel) {
+    if (!core::notepad::isNotepadExtension(path)) return;
+    if (!mainWindowStartupArmingWindowOpen()) return;  // 温开不抢隐藏
+    g_minimizedStartupPending = true;
+    g_mainWindowStartHidden = true;  // bug259-A：首帧不 show（闩值，见头文件）
+    LOG_INFO(std::string("关联启动（记事本关联 ") + channel +
+             "）：主窗保持托盘态，仅记事本窗");
+}
+
 void armTrayIfViewerOnlyLaunch() {
-    if (g_argvCaptureDone && core::notepad::isNotepadExtension(pendingOpenFilePath())) {
-        g_minimizedStartupPending = true;
-        g_mainWindowStartHidden = true;  // bug259-A：首帧不 show（闩值，见头文件）
-        LOG_INFO("关联启动（记事本关联 argv）：主窗保持托盘态，仅记事本窗");
-    }
+    if (g_argvCaptureDone) armTrayForNotepadAssociation(pendingOpenFilePath(), "argv");
 }
 
 bool mainWindowStartsHidden() { return g_mainWindowStartHidden; }
+
+// 主窗首帧 compose 闩（bug283 启动窗口期判据）：sidebar compose 首帧置位、进程
+// 内不清。置位前 odoc 首文件送达 = 冷启关联启动（可 arm）；置位后 = 温开（不得
+// 抢隐藏——含托盘态双击文件、二次送达等场景）。
+void markMainWindowComposed() { g_mainWindowComposed = true; }
+
+bool mainWindowStartupArmingWindowOpen() { return !g_mainWindowComposed; }
 
 std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;

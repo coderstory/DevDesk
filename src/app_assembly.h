@@ -87,6 +87,16 @@ bool consumePendingMinimizedStartup();
 //（.txt/.json 等在主窗内打开，主窗必须正常弹出）。
 void armTrayIfViewerOnlyLaunch();
 
+// 关联启动 arm 的通道无关实现（bug283）：argv 通道走 armTrayIfViewerOnlyLaunch；
+// odoc 通道（macOS Apple Event 冷启）由 main 的 handleAppleEventOpenFile 在
+// 「主窗首帧 compose 前送达」的启动窗口期内调用。非清单扩展名 = no-op。
+void armTrayForNotepadAssociation(const std::string& path, const char* channel);
+
+// 主窗首帧 compose 闩（bug283 启动窗口期判据）：sidebar compose 首帧置位；之前
+// odoc 首文件送达 = 冷启关联启动（可 arm），之后 = 温开（不得抢隐藏）。
+void markMainWindowComposed();
+bool mainWindowStartupArmingWindowOpen();
+
 // 主窗「启动即托盘态」闩值（bug259-A）：armTrayIfViewerOnlyLaunch /
 // captureMinimizedFlagFromArgv 命中时置位，进程内不清。消费方 = EUI-NEO 首帧
 // ready 缝（mainWindowStartHiddenProvider）——首帧【不 show】主窗直接落托盘态。

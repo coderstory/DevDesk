@@ -577,6 +577,40 @@ REGISTER_TEST(assembly_arm_tray_if_viewer_only_launch,
     return true;
 })
 
+// bug283：odoc 冷启通道 arm——通道无关 helper + 启动窗口期闩。argv 通道回归由
+// assembly_arm_tray_if_viewer_only_launch 保有；本用例钉 odoc 侧三条边：首帧前
+// 送达（冷启）= arm 命中；首帧记账后送达（温开）= 不 arm 不抢隐藏；非清单
+// 扩展 = no-op（主窗承接路由）。
+REGISTER_TEST(assembly_arm_tray_odoc_cold_start,
+              "assembly: odoc 冷启关联启动 arm（启动窗口期命中 / 温开不抢 / 非清单扩展 no-op）", {
+    using app::assembly::armTrayForNotepadAssociation;
+    using app::assembly::consumePendingMinimizedStartup;
+    using app::assembly::mainWindowStartupArmingWindowOpen;
+    using app::assembly::markMainWindowComposed;
+    using app::assembly::resetMinimizedFlagForTest;
+
+    // 1. 启动窗口期内（主窗未 compose）odoc 送达清单扩展 → arm 命中
+    resetMinimizedFlagForTest();
+    DOCTEST_CHECK(mainWindowStartupArmingWindowOpen());
+    armTrayForNotepadAssociation("/tmp/Untitled.txt", "odoc");
+    DOCTEST_CHECK(consumePendingMinimizedStartup());
+
+    // 2. 温开：主窗已 compose（闩已落）→ 门槛关闭，不再 arm（主窗不抢隐藏）
+    markMainWindowComposed();
+    DOCTEST_CHECK_FALSE(mainWindowStartupArmingWindowOpen());
+    armTrayForNotepadAssociation("/tmp/Untitled.txt", "odoc");
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 3. 非清单扩展（.png）→ helper no-op
+    resetMinimizedFlagForTest();
+    armTrayForNotepadAssociation("/tmp/photo.png", "odoc");
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 收尾：不留进程级状态
+    resetMinimizedFlagForTest();
+    return true;
+})
+
 // 空态兜底渲染的注入接线：core 侧的 Router 不自行绘制「无页面」占位（eui::Ui 只可透传，
 // 文案与样式不能住在 core），占位搬到装配段注入。本用例证明装配后「当前页无模块」真的会
 // 画出 app 层的那一块。

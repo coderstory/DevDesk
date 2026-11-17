@@ -530,6 +530,10 @@ void handleAppleEventOpenFile(const std::string& path) {
     app::assembly::pendingOpenFilePath() = path;
     LOG_INFO("捕获到待打开文件（Apple Event）: " + path);
 
+    // bug283：odoc 冷启（Finder 双击 / `open 文件`）在主窗首帧 compose 前送达 =
+    // 关联启动，与 argv 通道同一裁决（复用 armTray 同一状态位与温开门槛，
+    // 门槛内聚在 helper：主窗首帧 compose 后送达 = 温开，不得抢隐藏）。
+    app::assembly::armTrayForNotepadAssociation(path, "odoc");
     app::assembly::dispatchFileOpen(getRouter(), path,
                                     ::core::paths::markdownDir());
 }
