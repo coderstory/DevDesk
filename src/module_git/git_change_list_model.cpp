@@ -502,7 +502,9 @@ void GitChangeListModel::emitGroupTree(
                 if (fileIt != fileMap.end()) node.fileIdx = fileIt->second;
                 size_t subtree = node.fileIdx.size();
                 for (const auto& sd : node.subdirs) {
-                    subtree += sd.lazy ? 0 : sd.childCount;
+                    // bug#292 D4：lazy 子树已枚举的文件并入父目录计数（枚举前缓存
+                    // 空=0 → lazy 行自身不显计数；枚举后如实 1→2，不再虚报 1）
+                    subtree += sd.lazy ? countLazyFiles(sd.path) : sd.childCount;
                 }
                 node.childCount = subtree;
             }
@@ -660,7 +662,9 @@ void GitChangeListModel::emitLazyRows(const std::string& dirRel, int depth,
 }
 
 size_t GitChangeListModel::countLazyFiles(const std::string& dirRel) const {
-    if (!isExpanded(dirRel)) return 0;
+    // bug#292 D4：计数只认「已枚举」这一事实，不认展开位——否则展开→收起会让
+    // 组头 (20)→(19)（数据未变，仅视图收合）＝无理由跳变；未枚举=缓存空=0，
+    // 即设计 §4.4「lazy 枚举前不可得=不显」
     const auto it = untrackedChildren_.find(dirRel);
     if (it == untrackedChildren_.end()) return 0;
     size_t n = 0;

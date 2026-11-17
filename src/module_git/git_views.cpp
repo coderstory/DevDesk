@@ -15,6 +15,7 @@
 #include <ui_kit/empty_state.h>  // need:297 E2-b：空态统一 kit 标准形态
 #include <ui_kit/wtab.h>  // need:296 D3：视图切换 Tab 换块面式统一组件
 #include <core/component_theme.h>
+#include <core/render/text.h>
 
 #include <algorithm>
 #include <chrono>
@@ -114,6 +115,39 @@ std::pair<std::string, bool> ellipsisFit(const std::string& text, float fontSize
     }
     if (keep == 0) return {std::string("…"), true};
     return {text.substr(0, keep) + "…", true};
+}
+
+// 顶栏路径专用的实测截断（bug#292 D1）：上一版 ellipsisFit 按 0.62em/列估算，
+// 对 12px ASCII 路径高估约 35%（实测 ~0.46em）——480 盒只画到 ~345 就出省略号，
+// 盒内白留 ~135。此处用渲染同引擎 measureTextWidth 二分定截断点（≤log2(码点)次
+// 测量，路径短；CJK/任意 UTF-8 按码点边界，禁切半字符）。
+std::pair<std::string, bool> ellipsisFitMeasured(const std::string& text,
+                                                 float fontSize, float budgetW) {
+    constexpr float kWeight = 400.0f;
+    const std::string ell = "…";
+    if (core::TextPrimitive::measureTextWidth(text, {}, fontSize, kWeight) <= budgetW) {
+        return {text, false};
+    }
+    std::vector<size_t> cuts{0};
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char ch = static_cast<unsigned char>(text[i]);
+        i += (ch < 0x80) ? 1 : ((ch & 0xE0) == 0xC0) ? 2 : ((ch & 0xF0) == 0xE0) ? 3 : 4;
+        if (i <= text.size()) cuts.push_back(i);
+    }
+    size_t lo = 0;
+    size_t hi = cuts.size() - 1;
+    while (lo < hi) {
+        const size_t mid = (lo + hi + 1) / 2;
+        const float w = core::TextPrimitive::measureTextWidth(text.substr(0, cuts[mid]) + ell,
+                                                              {}, fontSize, kWeight);
+        if (w <= budgetW) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if (lo == 0) return {ell, true};
+    return {text.substr(0, cuts[lo]) + ell, true};
 }
 
 // 骨架 pulse（UI-A §8：opacity 0.45↔1、1.2s ease-in-out alternate infinite；
@@ -245,7 +279,15 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
 
     const float blockW = std::min(420.0f, w);
     const float blockX = (w - blockW) * 0.5f;
-    float y = h * 0.32f;
+    // bug#292 D5：整页空态垂直居中——块高=标题→副文案间距28+副文案→按钮间距30+
+    // （错误条 barH+16）+按钮36 = 94；原 h*0.32 起排使下方留白约为上方 1.8 倍
+    const float errH = c.emptyError()
+                           ? (c.emptyError()->detail.empty() ? scaled(44.0f)
+                                                             : scaled(64.0f)) +
+                                 scaled(16.0f)
+                           : 0.0f;
+    const float blockH = scaled(28.0f) + scaled(30.0f) + errH + scaled(36.0f);
+    float y = (h - blockH) * 0.5f;
 
     ui.text("git.empty.title")
         .position(blockX, y)
@@ -354,10 +396,14 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     }
 
     const std::string name = c.repoDisplayName();
-    const float nameW = textWidthEstimate(name, scaled(15.0f));
+    // bug#292 D2：估算式 textWidthEstimate 对 CJK 高估约 29%（3 字节 ×0.43em vs
+    // 实测 ~1.0em/字）——「示例仓库」盒宽 101 而墨宽 60，把仓名↔路径可见间距
+    // 撑到 ~58px。顶栏仓名改用渲染同引擎实测宽（§3 gap 12 才对得上）。
+    const float nameW =
+        core::TextPrimitive::measureTextWidth(name, {}, scaled(15.0f), 600);
     ui.text("git.top.name")
         .position(x, kPageMargin)
-        .size(nameW + scaled(8.0f), kTopBarH)
+        .size(nameW, kTopBarH)
         .text(name)
         .fontSize(scaled(15.0f))
         .fontWeight(600)
@@ -365,15 +411,28 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
         .color(t.colors.textPrimary)
         .build();
 
+    // 仓名↔路径分隔「·」（§3：flex gap 12 + 分隔符；D2 原缺分隔符且间距超规）
+    x += nameW + scaled(12.0f);
+    const float sepW =
+        core::TextPrimitive::measureTextWidth("·", {}, scaled(12.0f), 400);
+    ui.text("git.top.sep")
+        .position(x, kPageMargin)
+        .size(sepW, kTopBarH)
+        .text("·")
+        .fontSize(scaled(12.0f))
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary)
+        .build();
+    x += sepW + scaled(12.0f);
+
     // 完整路径（need:299：搜索框删除后空间富余，max 360→480；单行省略号+tooltip
     // 全路径——§3 禁硬裁切，ellipsisFit 码点预算截断）
-    x += nameW + scaled(8.0f) + scaled(12.0f);
     const float switchRight = switchButtonRightEdge(w);
     const float pathMaxW = scaled(480.0f);
     const float pathW = std::min(
         pathMaxW, std::max(scaled(40.0f), switchRight - scaled(12.0f) - x));
     const auto [shownPath, pathTruncated] =
-        ellipsisFit(c.repoPathUtf8(), scaled(12.0f), pathW);
+        ellipsisFitMeasured(c.repoPathUtf8(), scaled(12.0f), pathW);
     ui.text("git.top.path")
         .position(x, kPageMargin)
         .size(pathW, kTopBarH)
