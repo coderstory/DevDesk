@@ -1555,7 +1555,7 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     // settings_window_effect_frosted_material 回归用例），未知→None
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::None);
-    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Acrylic);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
     DOCTEST_CHECK(ms::windowEffectRequest("bogus") == WE::None);
     return true;
 })
@@ -1656,18 +1656,15 @@ REGISTER_TEST(settings_window_effect_frosted_material, "settings: 磨砂档请�
     // 系统语义给菜单/浮层，常驻主窗（本机 1920×1080@125% 主窗自 9-27 起恒启动即
     // 最大化）落进系统材质回退策略高发区，真机症状与之同形（窗底成实色灰、无通
     // 透）。本批改请求 Mica（DWMSBT_MAINWINDOW=2，主窗材质，无 transient 回退
-    // bug288 A 案（2026-11-17 老板令「先试试A」）：磨砂回到 09-22 Phase D 原始请求
-    // Acrylic（DWMSBT_TRANSIENTWINDOW=3，DWM 真亚克力=模糊+半透）。UAT6（64e6965e）
-    // 换 Mica 是「窗口恒最大化→Windows 不渲材质半透」环境下的治标（最大化下 Mica
-    // 同样平色，11-16 磨砂实色复报实证无效）；现窗口非最大化（IsZoomed=False），
-    // Acrylic 渲染表现装机实测裁决。三锁：① 请求档 = Acrylic；② SYSTEMBACKDROP
-    // 落值 = 3（改回 Mica=2 时红）；③ frosted 请求必须与无材质档（None/Transparent）
-    // 可区分——M-3 门控靠 active≠frosted 判降级。
-    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Acrylic);
+    // 类；最大化态窗后无活物，blur 实时性视觉不可辨）。三锁：① 请求档 = Mica；
+    // ② SYSTEMBACKDROP 落值 = 2（改回 Acrylic=3 时红）；③ frosted 请求必须与
+    // 无材质档（None/Transparent）可区分——M-3 门控靠 active≠frosted 判降级。
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
     DOCTEST_CHECK(core::platform::systemBackdropValue(
-                      ms::windowEffectRequest(ms::kWindowEffectFrosted)) == 3);
+                      ms::windowEffectRequest(ms::kWindowEffectFrosted)) == 2);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) != WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) != WE::Transparent);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) != WE::Acrylic);
     return true;
 })
 
@@ -1696,13 +1693,13 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（accent 实验线已全量
-    // revert——bf9e4588 的 translucent→Transparent 接线随之撤回，回到「视觉由
-    // clearColor alpha 决定」原始口径；bug284 的测试同步也镜像回落）
+    // 半透档：clearColor alpha=0.85 + backdrop 请求 Transparent（bug266：24H2 accent
+    // 路线下半透/off 必须区分——EUI-NEO 映射 Transparent→accent state=2（渐变透明）、
+    // None→state=0（off）；旧断言 None 是接线改前的口径）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(app::currentClearColor().a == 0.85f);
-    DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::Transparent);
     // 标题栏底**独立** alpha（显式 customColor，覆盖 EUI-NEO 按 clearColor 推导的做法）
     {
         const auto tb = app::currentTitleBarAppearance();
@@ -1710,11 +1707,11 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
         DOCTEST_CHECK(tb.colorAlpha == 0.85f);
     }
 
-    // 磨砂档：alpha=0.15 + Acrylic 请求（bug288 A 案回 09-22 原始）+ 标题栏 0.65；档位单值同步写 core
+    // 磨砂档：alpha=0.15 + Mica 请求（UAT6 起主窗材质）+ 标题栏 0.65；档位单值同步写 core
     ms::applyWindowVisuals(ms::kWindowEffectFrosted);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectFrosted);
     DOCTEST_CHECK(app::currentClearColor().a == 0.15f);
-    DOCTEST_CHECK(app::currentWindowEffect() == WE::Acrylic);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::Mica);
     {
         const auto tb = app::currentTitleBarAppearance();
         DOCTEST_CHECK(tb.customColor);

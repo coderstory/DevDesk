@@ -320,14 +320,18 @@ float windowEffectThemeOpacity(const std::string& mode) {
 
 core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
     if (mode == kWindowEffectFrosted) {
-        // bug288 A 案（2026-11-17 老板令「先试试A」）：磨砂回到 09-22 Phase D 原始
-        // 请求 Acrylic（DWM 真亚克力=模糊+半透，「原本磨砂=磨砂+半透」的出处）。
-        // 历史：UAT6（64e6965e）在「窗口恒最大化→Windows 不渲材质半透」的环境下
-        // 换成 Mica 治标无效；现窗口非最大化（IsZoomed=False 实测），Acrylic 在
-        // 24H2 非最大化态的渲染表现由本轮装机实测裁决。M-3 门控桥 Acrylic/Mica
-        // 同映射 frosted（main.cpp:259-261），降级 UX 不变；macOS Acrylic 族挂
-        // NSVisualEffectView 不受影响。
-        return core::platform::WindowEffect::Acrylic;
+        // UAT6 真机两连「磨砂直接没半透效果了，底色变成灰色」：Acrylic→Mica。
+        // DWMSBT_TRANSIENTWINDOW 是系统给菜单/浮层的 transient 材质，用于常驻主窗
+        // 时落进系统的回退策略高发区（最大化/失焦态常见表现 = 材质不渲、窗底成实
+        // 色灰——真机症状同形；本机 1920×1080@125% 工作区 1680×860，主窗自 9-27 起
+        // 「放不下即启动最大化」恒常驻最大化态，e554acde 又记忆最大化标志）。
+        // Mica（DWMSBT_MAINWINDOW）是主窗材质，无 transient 回退类；最大化态窗后
+        // 无活物，blur 实时性差异视觉不可辨。M-3 门控桥已把 Mica 映射 "frosted"
+        //（main.cpp activeWindowEffectTier），降级 UX 不变；macOS Mica 族挂同一
+        // NSVisualEffectView 材质视图（window_effect_macos.mm），不受影响。若换
+        // Mica 后真机仍灰底，根因收敛到 EUI-NEO 自绘壳系列（逐像素透明/backdrop
+        // 渲染）——见本批报告取证项，非本层请求。
+        return core::platform::WindowEffect::Mica;
     }
     // off / translucent（含未知值）：显式关 backdrop，视觉由 clearColor alpha 决定
     return core::platform::WindowEffect::None;
