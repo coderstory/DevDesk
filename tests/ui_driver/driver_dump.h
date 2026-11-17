@@ -2,6 +2,12 @@
 // driver_dump.h — id dump（债-18 编排件）：--dump-ids CLI 模式（启动→compose→打印→
 // 退出）+ 场景步骤 {"type":"dump","path":...}（中途落盘）共用这里的收集与格式化。
 // 格式：id<TAB>x,y w×h<TAB>flags（flags = interactive/clip/disabled/opacity0/zIndex）。
+// 滚动态（bug310）：滚动偏移不落在布局 frame 上——EUI 以 render transform
+//（scrollTransformForElement）平移内容/滑块，dump 的 x,y 永远不动。故对带滚动
+// 状态的元素追加数值标志，让「滚轮是否真的生效」在 dump 里可读：
+//   scroll=<offset>/<max>      滚动根自身（scrollStateId）
+//   scrollSrc=<offset>/<max>   内容层（scrollContentSourceId 指向的滚动根偏移）
+//   scrollBar=<offset>/<max>   滑块（scrollThumbSourceId 指向的滚动根偏移）
 #include "probes/probe_harness.h"
 
 #include <fstream>
@@ -49,6 +55,17 @@ inline std::vector<DumpRow> collectDumpRows(core::dsl::Ui& ui) {
         if (element->disabled) row.flags += "disabled ";
         if (element->opacity == 0.0f) row.flags += "opacity0 ";
         if (element->zIndex != 0) row.flags += "zIndex=" + std::to_string(element->zIndex) + " ";
+        const auto scrollFlag = [&](const char* name, const std::string& sourceId) {
+            if (sourceId.empty()) return;
+            const auto src = byId.find(sourceId);
+            if (src == byId.end()) return;
+            row.flags += std::string(name) + "=" +
+                         std::to_string(static_cast<int>(src->second->scrollOffset)) + "/" +
+                         std::to_string(static_cast<int>(src->second->scrollMaxOffset)) + " ";
+        };
+        scrollFlag("scroll", element->scrollStateId);
+        scrollFlag("scrollSrc", element->scrollContentSourceId);
+        scrollFlag("scrollBar", element->scrollThumbSourceId);
         while (!row.flags.empty() && row.flags.back() == ' ') row.flags.pop_back();
         rows.push_back(std::move(row));
     }

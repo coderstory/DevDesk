@@ -25,6 +25,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace ui_drive {
@@ -314,9 +315,16 @@ private:
         result->passed = true;
     }
 
+    // 滚轮注入时序（bug310 实测结论）：EUI 的滚轮不是「同帧改 offset」——
+    // Runtime::update 里 updateScroll 只按 wheel 增量给 scrollState 加惯性速度，
+    // 真实位移由随后的 updateScrollMotion 逐帧推进（dt 钳到 1/30、摩擦 12/s：
+    // 一格 -20 约 600px、约 40 帧走完）。只推一帧 → 只吃到首帧约 108px 位移，
+    // 大内容区会被严重欠滚。故：pointer motion 独立成帧落地 → 注入 scroll →
+    // 惯性收尾若干帧（带真实短 sleep，让窗口事件泵跟上实机节奏）。
     void execScroll(const Step& step, StepResult* result) {
         double cx = env_.windowW * 0.5;
         double cy = env_.windowH * 0.5;
+        const core::dsl::Element* target = nullptr;
         if (!step.id.empty()) {
             core::dsl::Ui* ui = currentUi();
             const TreeView tree = detail::walkTreeView(*ui);
@@ -326,15 +334,52 @@ private:
                 result->errorReason = err;
                 return;
             }
+            target = el;
             cx = el->frame.x + el->frame.width * 0.5;
             cy = el->frame.y + el->frame.height * 0.5;
         }
+        const float offsetBefore = target != nullptr ? target->scrollOffset : 0.0f;
         // 先定位指针再滚轮（滚动目标 = 指针所在滚动容器）
         core::queuePointerMotion(env_.window, cx, cy, {}, {});
+        composeFrame();  // 指针 motion 独立成帧落地（下一帧按新指针位置做滚动命中）
         probe::queueScroll(env_.window, *env_.runtime, step.dx, step.dy);
-        composeFrame();
+        composeFrame();  // 本帧 updateScroll 只加惯性速度，位移在后续 motion 帧推进
+        for (int i = 0; i < kScrollSettleFrames; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kScrollSettleSleepMs));
+            composeFrame();
+        }
+        // 位移回读（对齐 click 命中回读的「不静默假绿」口径）：溢出容器滚了却
+        // 等于没滚 → FAIL 带数字，而不是 PASS 让场景作者自己翻 dump 猜。
+        if (target != nullptr) {
+            const core::dsl::Element* after =
+                currentUi() != nullptr ? currentUi()->find(step.id) : nullptr;
+            const float offsetAfter = after != nullptr ? after->scrollOffset : offsetBefore;
+            const float maxOffset = after != nullptr ? after->scrollMaxOffset : 0.0f;
+            result->target += "（偏移 " + std::to_string(static_cast<int>(offsetBefore)) + "→" +
+                              std::to_string(static_cast<int>(offsetAfter)) + "/" +
+                              std::to_string(static_cast<int>(maxOffset)) + "）";
+            const bool wantsMove = step.dx != 0.0 || step.dy != 0.0;
+            // 边界上是合法空操作：dy<0（向下滚）且已在底部、dy>0 且已在顶部
+            const bool atBoundary = (step.dy < 0.0 && offsetBefore >= maxOffset - 0.5f) ||
+                                    (step.dy > 0.0 && offsetBefore <= 0.5f);
+            if (wantsMove && !atBoundary && maxOffset > 0.0f &&
+                closeEnoughOffset(offsetBefore, offsetAfter)) {
+                result->errorReason = "滚轮零响应：'" + step.id + "' 溢出（maxOffset " +
+                                      std::to_string(static_cast<int>(maxOffset)) +
+                                      "）但偏移仍为 " +
+                                      std::to_string(static_cast<int>(offsetAfter)) +
+                                      "——查指针是否落在滚动容器内（clip/遮挡）或该页未回写 offset";
+                return;
+            }
+        }
         result->passed = true;
     }
+
+    static bool closeEnoughOffset(float a, float b) { return std::fabs(a - b) <= 0.5f; }
+
+    // 滚轮注入后的惯性收尾帧数 / 帧间隔（每帧 dt 仍是 1/60，sleep 只为贴近实机节奏）
+    static constexpr int kScrollSettleFrames = 40;
+    static constexpr int kScrollSettleSleepMs = 16;
 
     void execDrag(const Step& step, StepResult* result) {
         core::dsl::Ui* ui = currentUi();
