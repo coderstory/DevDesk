@@ -12,6 +12,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/result.h"  // Result<void>（另存为落地单点返回面）
 #include "notepad_encoding.h"
 #include "notepad_find.h"  // FindHit / kFindNoHit（查找态字段集）
 
@@ -103,6 +104,9 @@ struct NotepadSession {
 
     // ── 语法高亮语言（notepad_language 映射；compose 懒求值一次，空 = None 纯文本）──
     std::string language;
+    // M+Shift+F 格式化待消费（键路由置位——键事件处理器无 Ui 访问权，
+    // InputState 直写单点在 compose 消费，find.pendingJump 同模式）
+    bool pendingFormatJson = false;
 
     // ── 会话内轻提示（自管 1.5s 窗口；不用 ui_kit 单例 toast 态，多窗互不覆盖）──
     std::string toastMessage;
@@ -125,6 +129,20 @@ std::string notepadWindowTitleFor(const std::string& path, size_t maxBytes = 96)
 // 保存单点（mtime 拦截 + 干净直通/脏重编码；实现单点在 notepad_file_io.cpp，
 // 三选「覆盖/另存为/取消」对话框批 4 接管）。
 void notepadSaveSession(NotepadSession& s);
+
+// F-04 另存为完整链（need289 修复棒 1；实现单点在 notepad_file_io.cpp）：OS
+// 保存对话框（默认名 = 当前文件名，覆盖确认由对话框承担，PRD F-04）→ 取消
+// 零副作用（保持编辑态）→ notepadSaveSessionAsTo 落地。错误占位/只读/二进制
+// 窗无另存为语义（钮禁用 + M+Shift+S 同口径拦截）。
+void notepadSaveSessionAs(NotepadSession& s);
+
+// 另存为落地单点（对话框取消之后的写盘 + session 全量迁移步骤；独立成函数 =
+// 无头单测直调，对话框面不可无头化）。写失败 → 返回 fail 且 session 未落
+// 任何态（零副作用）；成功 = path/normKey/title/rawBytes/基线
+//（loadText/loadHasBom/loadEol/enc）/mtime/脏态/窗口标题全量迁移（设计稿
+// §4.2「本窗转为新文件」）。
+core::Result<void> notepadSaveSessionAsTo(NotepadSession& s,
+                                          const std::string& newPath);
 
 // 同文件查重（openNotepadWindow 专用）。注册表命中 = 窗活着（销毁即注销）。
 NotepadSession* findSessionByNormKey(const std::string& normKey);
@@ -160,7 +178,9 @@ NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s);
 // ── 窗口装配面（notepad_window.cpp 实现）────────────────────────────
 // compose（工具条 44 / 提示条 32 条件 / 编辑区 flex / 状态栏 28，设计稿 §1.2）。
 void notepadComposeSession(NotepadSession& s, eui::Ui& ui, const eui::Screen& screen);
-// 窗口级键路由（M+O 打开 / M+S 保存 / M+W 关窗；不进主窗 Router）。
+// 窗口级键路由（M+O 打开 / M+S 保存 / M+Shift+S 另存为 / M+F 查找 / M+H 替换
+// 直开 / M+Shift+F 格式化 / M+P·M+Shift+V 预览 / M+W 关窗 / M±= 字号；不进主
+// 窗 Router；shift 组合单独判定——shortcut() 显式排除 shift）。
 void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key);
 // F-02 窗内打开：OS 打开对话框（过滤器=扩展名清单+所有文件）→ 逐路径
 // openNotepadWindow（已开路径由查重聚焦收口）。

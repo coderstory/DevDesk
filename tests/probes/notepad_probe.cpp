@@ -16,6 +16,9 @@
 //     树（三钮 id 锚）+ 不保存→豁免→窗关（计数减）+ 保存→落盘关窗（内容核对）
 //     + quit guard 全链（拒退→处理→放行 / 取消不卡死 / 全豁免放行 + requestExit
 //     再入队语义，clue #269）
+//   H 另存为+快捷键（need289 修复棒 1 F-04/§九）：另存为钮存在+禁用矩阵
+//     （可编辑/只读/错误窗）+ M+Shift+S 只读·错误窗守卫零副作用 + M+H 替换
+//     直开 + M+Shift+F 格式化置位-消费 + M+P·M+Shift+V 预览切换
 // 运行：notepad_probe [--screenshot <路径>]（不带 = 零开销不落图）。
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（openWindow=入队不建窗）
@@ -654,6 +657,114 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ── H. F-04 另存为 + 快捷键接线（need289 修复棒 1）：另存为钮存在+禁用
+    //    矩阵（可编辑=可用 / 只读与错误窗=禁用，§7.2）+ M+Shift+S 键路由守卫
+    //    （只读窗直驱零副作用——守卫若缺失会弹真保存对话框挂起 = 超时红，故
+    //    可编辑窗禁直驱，对话框面归真机 QA）+ M+H 替换条直开 / M+Shift+F
+    //    格式化置位-消费 / M+P·M+Shift+V 预览切换
+    if (passed) {
+        const auto pressKey = [&](module::notepad::NotepadSession& s,
+                                  eui::InputKey key, bool withShortcut,
+                                  bool withShift) {
+            eui::KeyEvent ev;
+            ev.key = key;
+            ev.action = core::KeyAction::Press;
+            ev.modifiers.control = withShortcut;
+            ev.modifiers.super = withShortcut;
+            ev.modifiers.shift = withShift;
+            module::notepad::notepadHandleKeySession(s, ev);
+        };
+        module::notepad::NotepadSession& ms =
+            *module::notepad::detail::sessionRegistry().front();  // note.md（可编辑）
+        module::notepad::NotepadSession& rs =
+            *module::notepad::detail::sessionRegistry()[1];       // utf16（只读）
+        module::notepad::NotepadSession& es =
+            *module::notepad::detail::sessionRegistry()[2];       // ghost（错误占位）
+        module::notepad::NotepadSession& js =
+            *module::notepad::detail::sessionRegistry()[3];       // cfg.json
+        module::notepad::NotepadSession& ts =
+            *module::notepad::detail::sessionRegistry().back();   // plain.txt
+
+        // H1 另存为钮存在 + 禁用矩阵
+        composeSession(ms);
+        composeSession(ms);
+        const core::dsl::Element* saveAs =
+            ui->find(module::notepad::kNotepadBtnSaveAsId);
+        if (saveAs == nullptr)
+            passed = fail("另存为钮 notepad.btnSaveAs 不在场（F-04）");
+        if (passed && saveAs->disabled)
+            passed = fail("可编辑窗另存为钮不应禁用");
+        composeSession(rs);
+        composeSession(rs);
+        saveAs = ui->find(module::notepad::kNotepadBtnSaveAsId);
+        if (passed && (saveAs == nullptr || !saveAs->disabled))
+            passed = fail("只读窗另存为钮未禁用（§7.2 矩阵）");
+        composeSession(es);
+        composeSession(es);
+        saveAs = ui->find(module::notepad::kNotepadBtnSaveAsId);
+        if (passed && (saveAs == nullptr || !saveAs->disabled))
+            passed = fail("错误窗另存为钮未禁用（§7.2 矩阵）");
+
+        // H2 M+Shift+S 键路由守卫：只读/错误窗直驱零副作用（可编辑窗禁直驱）
+        const std::string roPath = rs.path;
+        const std::string ghostPathBefore = es.path;
+        pressKey(rs, eui::InputKey::S, true, true);
+        if (rs.path != roPath || rs.dirty)
+            passed = fail("M+Shift+S 只读窗未守卫拦截（应零副作用）");
+        pressKey(es, eui::InputKey::S, true, true);
+        if (es.path != ghostPathBefore || es.dirty)
+            passed = fail("M+Shift+S 错误窗未守卫拦截（应零副作用）");
+
+        // H3 M+H 替换条直开（D3）：开条 + 替换行展开 + 替换输入在场
+        composeSession(ts);
+        composeSession(ts);
+        pressKey(ts, eui::InputKey::H, true, false);
+        composeSession(ts);
+        composeSession(ts);
+        if (ui->find(module::notepad::kNotepadSearchBarId) == nullptr)
+            passed = fail("M+H 后查找条不在场（替换直开断链）");
+        if (passed && !ts.find.replaceOpen)
+            passed = fail("M+H 未直开替换行（replaceOpen 未展开）");
+        if (passed && ui->find(module::notepad::kNotepadSearchReplaceInputId) == nullptr)
+            passed = fail("M+H 后替换输入框不在场");
+        pressKey(ts, eui::InputKey::Escape, false, false);  // 收条还原
+        composeSession(ts);
+
+        // H4 M+Shift+F 格式化：.txt 不置位 / .json 置位 → compose 消费 pretty
+        pressKey(ts, eui::InputKey::F, true, true);
+        if (ts.pendingFormatJson)
+            passed = fail("M+Shift+F 非 .json 会话不应置位");
+        pressKey(js, eui::InputKey::F, true, true);
+        if (passed && !js.pendingFormatJson)
+            passed = fail("M+Shift+F .json 可编辑窗未置位 pendingFormatJson");
+        composeSession(js);
+        composeSession(js);
+        if (passed && js.pendingFormatJson)
+            passed = fail("pendingFormatJson 未被 compose 消费");
+        if (passed && js.editText.find('\n') == std::string::npos)
+            passed = fail("M+Shift+F 后编辑镜像未变 pretty（格式化未落地）");
+
+        // H5 M+P / M+Shift+V 预览切换：.md 翻转两轮 / .txt 不动作
+        pressKey(ms, eui::InputKey::P, true, false);
+        if (passed && !ms.previewOn)
+            passed = fail("M+P 未切进预览（.md 会话）");
+        pressKey(ms, eui::InputKey::P, true, false);
+        if (passed && ms.previewOn)
+            passed = fail("M+P 未切回编辑");
+        pressKey(ms, eui::InputKey::V, true, true);
+        if (passed && !ms.previewOn)
+            passed = fail("M+Shift+V 未切进预览（PRD §九）");
+        pressKey(ms, eui::InputKey::V, true, true);
+        if (passed && ms.previewOn)
+            passed = fail("M+Shift+V 未切回编辑");
+        pressKey(ts, eui::InputKey::P, true, false);
+        if (passed && ts.previewOn)
+            passed = fail("M+P 非 .md 会话不应切预览");
+        pressKey(ts, eui::InputKey::V, true, true);
+        if (passed && ts.previewOn)
+            passed = fail("M+Shift+V 非 .md 会话不应切预览");
+    }
+
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
     probe::captureIfRequested(args, window, runtime, &passed);
 
@@ -669,6 +780,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "notepad_probe: PASS（" << args.windowW << "x" << args.windowH
-              << "，6 session：正常/只读/错误占位 + 查找条键盘流 + 按钮矩阵/预览切换 + 换行钮 + 未保存保护链）\n";
+              << "，6 session：正常/只读/错误占位 + 查找条键盘流 + 按钮矩阵/预览切换 + 换行钮 + 未保存保护链 + 另存为钮矩阵/M+Shift+S 守卫/三快捷键接线）\n";
     return 0;
 }

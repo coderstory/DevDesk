@@ -275,6 +275,9 @@ add_executable(devdesk_tests
     # need:263 批 4 棒 A：未保存保护纯决策层（三选映射/veto 裁决+豁免一次性
     # 消费/quit guard 扫描三态，clue #269 穷尽路径纯函数面）
     test_modules/test_notepad_protect.cpp
+    # need289 修复棒 1：F-04 另存为落地单点（session 迁移字段矩阵/写失败零副
+    # 作用/干净字节直通/中文空格宽路径；对话框面 = probe H 段 + 真机 QA）
+    test_modules/test_notepad_saveas.cpp
     # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
     test_modules/test_mcp_settings.cpp
     test_modules/test_mcp_service.cpp

@@ -272,6 +272,19 @@ void notepadFindToggle(NotepadSession& s) {
     app::requestUpdate();
 }
 
+// M+H 替换条直开（PRD 流程 D3，need289 修复棒 1）：未开 = 开条（播种+聚焦+
+// 重算，复用 F-06 全套）+ 展开替换行；已开 = 仅展开替换行（不重播种，
+// 避免打断正在输入的查找词）。
+void notepadFindOpenReplace(NotepadSession& s) {
+    if (s.find.visible) {
+        s.find.replaceOpen = true;
+        app::requestUpdate();
+        return;
+    }
+    notepadFindToggle(s);       // 开条 + 播种 + 聚焦 + 强制重算
+    s.find.replaceOpen = true;  // D3：直开替换行
+}
+
 // 查找态每帧 tick（compose 编辑分支调用）：待跳转消费 + 输入即重算
 //（appliedQuery 门控）+ 文本编辑重算（textRevision 门控，当前序号尽量邻近）。
 void notepadFindTick(NotepadSession& s,
@@ -430,6 +443,14 @@ void notepadFormatJson(NotepadSession& s,
 void notepadTogglePreview(NotepadSession& s) {
     s.previewOn = !s.previewOn;
     app::requestUpdate();
+}
+
+// 预览切换键路由入口（M+P 设计稿 §6 / M+Shift+V PRD §九，need289 修复棒 1）：
+// guard = .md/.markdown 且非大文件，与钮面 matrix.previewEnabled 同口径。
+void notepadTogglePreviewIfAvailable(NotepadSession& s) {
+    const NotepadToolbarMatrix m = notepadToolbarMatrixFor(s);
+    if (!m.showPreview || !m.previewEnabled) return;
+    notepadTogglePreview(s);
 }
 
 // 编辑器 per-line provider（语法层 ∪ 命中层；3 参 lineStyles 契约 + 4 参
@@ -635,7 +656,7 @@ void drawFontPopupItem(NotepadSession& s, eui::Ui& inner,
 }
 
 // F-09 字体下拉触发器（设计稿 §4.2 ddFont 规格：h28 r6 surface 底 1px 边框
-// 13px + chevron；x=168 = 打开/保存两钮之后 8px）。预览态禁用（§4.6 字体禁用）。
+// 13px + chevron；x=240 = 打开/保存/另存为三钮之后 8px）。预览态禁用（§4.6 字体禁用）。
 void drawFontTrigger(NotepadSession& s, eui::Ui& ui,
                      const core::theme::Tokens& t, bool enabled) {
     const std::string base(kNotepadDdFontId);
@@ -648,7 +669,7 @@ void drawFontTrigger(NotepadSession& s, eui::Ui& ui,
         ps.scroll = 0.0f;
     }
     ui.stack(base)
-        .position(168.0f, 8.0f)
+        .position(240.0f, 8.0f)
         .size(kW, kH)
         .disabled(!enabled)
         .content([&] {
@@ -702,7 +723,7 @@ void drawFontPopup(NotepadSession& s, eui::Ui& ui,
     constexpr float kPad = 6.0f;
     constexpr float kItemH = 26.0f;
     ui.stack(base + ".popup")
-        .position(168.0f, 8.0f + 28.0f + 6.0f)
+        .position(240.0f, 8.0f + 28.0f + 6.0f)
         .size(kW, kH)
         .content([&] {
             ui.rect(base + ".popup.bg")
@@ -947,10 +968,15 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
     toolbarButton(ui, kNotepadBtnSaveId, "保存", 88.0f, t, editable, [&s] {
         notepadSaveSession(s);
     });
+    // F-04 另存为（need289 修复棒 1；设计稿 §4.2 btnSaveAs，保存钮右侧 8px）：
+    // readonly/binary/错误窗禁用（禁用矩阵与保存钮同 editable 口径，§7.2）
+    toolbarButton(ui, kNotepadBtnSaveAsId, "另存为", 160.0f, t, editable, [&s] {
+        notepadSaveSessionAs(s);
+    });
     // ── 批 3 文档语义组（设计稿 §4.2）：字体下拉 + 字号步进 + 格式化/预览（棒 B）──
     drawFontTrigger(s, ui, t, matrix.fontControlsEnabled);
     {
-        constexpr float kStepperX = 336.0f;  // 触发器 168+160 之后 8px
+        constexpr float kStepperX = 408.0f;  // 触发器 240+160 之后 8px
         const bool canStep = !errorState && matrix.fontControlsEnabled;
         barButton(ui, kNotepadStepperFontMinusId, "A-", kStepperX, 10.0f,
                   24.0f, 24.0f, t, canStep && s.editorFontSize > 10, [&s] {
@@ -977,7 +1003,7 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
     // F-11 格式化钮（仅 .json 扩展显示；readonly/binary/预览态禁用）。tooltip
     // 固定副文案 = D-4 键序重排轻量明示（settings_ui_cards.cpp:618 同款写法）。
     if (matrix.showFormat) {
-        constexpr float kFormatX = 420.0f;  // A+ 步进钮 388+24 之后 8px
+        constexpr float kFormatX = 492.0f;  // A+ 步进钮 460+24 之后 8px
         toolbarButton(ui, kNotepadBtnFormatId, "格式化", kFormatX, t,
                       matrix.formatEnabled, [&s, &ui] {
                           notepadFormatJson(
@@ -996,7 +1022,7 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
     // F-13 预览钮（仅 .md/.markdown 扩展显示；大文件禁用 = 1MB 级渲染成本
     // 未证，PRD F-16 降级口径）。预览态钮面切「编辑」= 点击切回。
     if (matrix.showPreview) {
-        constexpr float kPreviewX = 492.0f;
+        constexpr float kPreviewX = 564.0f;
         toolbarButton(ui, kNotepadBtnPreviewId, s.previewOn ? "编辑" : "预览",
                       kPreviewX, t, matrix.previewEnabled, [&s] {
                           notepadTogglePreview(s);
@@ -1005,7 +1031,7 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
     // F-19 自动换行钮（toggle 选中态高亮；largeFile 强制关 + 钮禁用 =
     // 大文件模式口径）。x 让位给格式化/预览钮（两者互斥，任一显示则后移一档）。
     {
-        const float wrapX = (matrix.showFormat || matrix.showPreview) ? 564.0f : 420.0f;
+        const float wrapX = (matrix.showFormat || matrix.showPreview) ? 636.0f : 492.0f;
         toolbarButton(ui, kNotepadBtnWrapId, "换行", wrapX, t,
                       !errorState && !s.largeFile, [&s] {
                           notepadToggleWrap(s);
@@ -1059,6 +1085,15 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
         // 一次 16 行后缀扫描，成本可忽略）
         if (s.language.empty() && !s.path.empty()) {
             s.language = std::string(languageForExtension(s.path));
+        }
+        // M+Shift+F 待消费（键路由置位，InputState 直写单点在 compose）；
+        // 按键与帧间状态可能漂移，§4.6 预览禁用 + 只读面再核一遍
+        if (s.pendingFormatJson) {
+            s.pendingFormatJson = false;
+            if (!s.previewOn && !s.readonly && !s.binarySuspect &&
+                notepadSessionHasExtension(s, ".json")) {
+                notepadFormatJson(s, st);
+            }
         }
         if (s.previewOn) {
             // 预览槽位整页替换编辑器（InputState 不动 → 切回光标/滚动保留）；
@@ -1263,6 +1298,34 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
     }
     if (shortcut && key.key == eui::InputKey::S) {
         notepadSaveSession(s);  // F-03：干净短路 / mtime 拦截 / 脏重编码
+        return;
+    }
+    // Shift 组合支路（shortcut() 显式排除 shift，M+Shift+S/F/V 单独判定；
+    // PRD §九快捷键表 + 设计稿 §6，need289 修复棒 1 接线）
+    const bool shortcutShift =
+        key.modifiers.shortcut() && key.modifiers.shift && !key.modifiers.alt;
+    if (shortcutShift && key.key == eui::InputKey::S) {
+        notepadSaveSessionAs(s);  // F-04 另存为（错误/只读/二进制窗同口径拦截）
+        return;
+    }
+    if (shortcutShift && key.key == eui::InputKey::F) {
+        // M+Shift+F 格式化（F-11：仅 .json 可编辑窗；预览态禁用 §4.6）。
+        // 键处理器无 Ui 访问权 → 置位 pendingFormatJson，compose 消费
+        //（find.pendingJump 同模式）
+        const NotepadToolbarMatrix m = notepadToolbarMatrixFor(s);
+        if (m.showFormat && m.formatEnabled) s.pendingFormatJson = true;
+        return;
+    }
+    if (shortcutShift && key.key == eui::InputKey::V) {
+        notepadTogglePreviewIfAvailable(s);  // M+Shift+V 预览切换（PRD §九）
+        return;
+    }
+    if (shortcut && key.key == eui::InputKey::H) {
+        notepadFindOpenReplace(s);  // M+H 替换条直开（PRD 流程 D3）
+        return;
+    }
+    if (shortcut && key.key == eui::InputKey::P) {
+        notepadTogglePreviewIfAvailable(s);  // M+P 预览切换（设计稿 §6）
         return;
     }
     if (shortcut && key.key == eui::InputKey::W && s.handle != nullptr) {

@@ -18,6 +18,7 @@ namespace module::notepad {
 inline constexpr const char* kNotepadEditorInputId = "notepad.editor.input";
 inline constexpr const char* kNotepadBtnOpenId = "notepad.btnOpen";
 inline constexpr const char* kNotepadBtnSaveId = "notepad.btnSave";
+inline constexpr const char* kNotepadBtnSaveAsId = "notepad.btnSaveAs";  // F-04 另存为（设计稿 §4.2 btnSaveAs）
 inline constexpr const char* kNotepadToolbarId = "notepad.toolbar";
 inline constexpr const char* kNotepadStatusbarId = "notepad.statusbar";
 
