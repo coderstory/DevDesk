@@ -311,8 +311,8 @@ std::pair<float, float> searchBoxGeometry(float w, bool narrow) {
     const float searchH = scaled(32.0f);
     const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    const float x = w - scaled(16.0f) - refreshW - scaled(12.0f) - switchW -
-                    scaled(12.0f) - searchW;
+    const float x = w - kPageMargin - refreshW - scaled(12.0f) - switchW -
+                    scaled(12.0f) - searchW;  // bug#294：搜索框右缘链对齐右卡列（kPageMargin）
     return {x, (kTopBarH - searchH) * 0.5f};
 }
 
@@ -325,7 +325,8 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
         .color(t.colors.borderDefault)
         .build();
 
-    const float padX = scaled(16.0f);
+    // bug#294：顶栏内容左右起点与下方两卡同页边（kPageMargin=12）对齐——原 scaled(16) 左右两侧均错位约 10px
+    const float padX = kPageMargin;
     float x = padX;
     // 折叠展开钮（§3：仅左栏折叠时显示，为顶栏第一个元素 32×32）
     if (c.listCollapsed()) {
@@ -446,7 +447,7 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     const float btnY = (kTopBarH - btnH) * 0.5f;
     const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    const float refreshX = w - scaled(16.0f) - refreshW;
+    const float refreshX = w - kPageMargin - refreshW;  // bug#294：右缘对齐右卡列
     const float switchX = refreshX - scaled(12.0f) - switchW;
     secondaryButton(ui, "git.top.refresh", "↻ 刷新", refreshX, btnY, refreshW, btnH,
                     t, [&c] { c.refresh(); });
@@ -1444,14 +1445,59 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
     const float pathW = std::max(
         scaled(40.0f),
         w - (hx - x) - padX - statsW - tabZoneW - scaled(16.0f));
-    ui.text("git.right.head.path")
+    // bug#292（F-11）：超长路径省略（显示列宽预算逐码点截断+「…」）+ tooltip 全文
+    // （包装栈内局部坐标=列表行 tooltip 同款口径；等宽列宽 0.62em/列、非 ASCII
+    // 起始字节记 2 列——CJK 实测 ~1.0em 恒偏大安全侧）
+    std::string shownPath;
+    bool pathTruncated = false;
+    if (!pathText.empty()) {
+        const float colW = scaled(13.0f) * 0.62f;
+        const float budget =
+            pathW - scaled(13.0f) * 1.6f - scaled(12.0f);  // 基宽+右安全边
+        float acc = 0.0f;
+        size_t i = 0;
+        while (i < pathText.size()) {
+            const unsigned char ch = static_cast<unsigned char>(pathText[i]);
+            const size_t len = (ch < 0x80) ? 1
+                               : ((ch & 0xE0) == 0xC0) ? 2
+                               : ((ch & 0xF0) == 0xE0) ? 3 : 4;
+            const float wCols = (ch < 0x80) ? colW : colW * 2.0f;
+            if (acc + wCols > budget) {
+                pathTruncated = true;
+                break;
+            }
+            shownPath.append(pathText, i, len);
+            acc += wCols;
+            i += len;
+        }
+        if (pathTruncated) shownPath += "…";
+    }
+    ui.stack("git.right.head.pathwrap")
         .position(hx, y)
         .size(pathW, headH)
-        .text(pathText)
-        .fontFamily("monospace")
-        .fontSize(scaled(13.0f))
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textPrimary)
+        .content([&] {
+            ui.text("git.right.head.path")
+                .position(0.0f, 0.0f)
+                .size(pathW, headH)
+                .text(shownPath)
+                .fontFamily("monospace")
+                .fontSize(scaled(13.0f))
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textPrimary)
+                .build();
+            if (pathTruncated) {
+                components::tooltip(ui, "git.right.head.path.tip")
+                    .theme(core::theme::componentTokens(t))
+                    .source("git.right.head.path")
+                    .value(pathText)
+                    .anchor(pathW * 0.5f, headH * 0.5f)
+                    .bounds(pathW, headH)
+                    .minWidth(120.0f)
+                    .maxWidth(420.0f)
+                    .zIndex(40)
+                    .build();
+            }
+        })
         .build();
     // 统计（路径后 8px：+N 绿 / −N 红；单元素 + runs 分色，§5.2）
     if (statsW > 0.0f) {
