@@ -56,10 +56,10 @@ inline float surfaceAlpha(const std::string& mode) {
         }
         return 0.15f;
     }
-    // UAT6 真机两连（第 2 轮调值）：0.5→0.72。0.5 时侧栏/about 铺色叠在窗口纱
-    //（0.85）之上，铺色有效不透明度仅 1−0.18×0.5=0.91，亮壁纸（白）下浅 tint
-    // 混底变浅灰绿、正文/导航对比度塌（浅色主题次要文字 4.22:1<4.5）。0.72 后
-    // 有效不透明度 0.958，两主题正文 ≥4.5:1（护栏：test_settings
+    // UAT6 真机两连（第 2 轮调值）：0.5→0.72（0.5 时亮壁纸下浅 tint 混底、正文
+    // 对比度塌 4.22:1<4.5）。bug274 定标复核：窗口纱降 0.72 单层（winbg 退役）后
+    // 铺色有效不透明度 1−0.28×0.72≈0.798，护栏复算两主题最紧 5.79:1（亮主题次要
+    // 文字）≥4.5，本值维持不变（护栏：test_settings
     // settings_window_effect_contrast_guard）。
     if (mode == "translucent") return 0.72f;
     return 1.0f;
