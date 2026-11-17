@@ -162,8 +162,7 @@ def sync() -> int:
         sys.modules.update({"mcp": top, "mcp.server": srv, "mcp.server.mcpserver": msrv})
     spec.loader.exec_module(mod)
     mod._write_report()
-    mod._write_snapshot()
-    print(f"✅ 报告与快照已从 {DB.name} 重生成")
+    print(f"✅ 报告已从 {DB.name} 重生成")
     return 0
 
 
