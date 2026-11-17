@@ -75,10 +75,13 @@ void GitDiffModel::rebuildRows() {
 
 std::string synthesizeUntrackedDiff(platform::git::DiffPatch& patch,
                                     const std::filesystem::path& absPath) {
-    // 只处理「untracked 且无 hunk」；untracked 目录条目（libgit2 路径尾 '/'，
-    // §2.1 整体一条不递归防 hang）与已有 hunk 的 patch 一律不动
+    // 只处理「untracked 且无 hunk」；已有 hunk 的 patch 一律不动
     if (!patch.isUntracked || !patch.hunks.empty()) return {};
-    if (!patch.newPath.empty() && patch.newPath.back() == '/') return {};
+    // bug#290：untracked 目录条目（libgit2 路径尾 '/'，§2.1 整体一条不递归
+    // 防 hang）返占位文案——原返空 patch 被视图判「无内容变更」误报；
+    // 仍不合成行、不触碰磁盘（不递归读目录）
+    if (!patch.newPath.empty() && patch.newPath.back() == '/')
+        return "未跟踪文件夹（整体一条目，不展开 diff）";
 
     const FileContent fc = FileContent::readFromDisk(absPath);
     switch (fc.state) {

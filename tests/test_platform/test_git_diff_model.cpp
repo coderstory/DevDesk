@@ -222,7 +222,7 @@ REGISTER_TEST(git_diff_untracked_synth_binary_empty, "git_diff: untracked 二进
     return true;
 })
 
-REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 untracked / 目录条目(尾'/') / 已有 hunk 一律不动", {
+REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 untracked / 已有 hunk 一律不动；目录条目(尾'/') 返占位（bug290）", {
     const test_support::TempDir dir("untracked_guard");
     dir.write(dir.file("t.txt"), "line\n");
     {
@@ -233,10 +233,12 @@ REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 
         DOCTEST_CHECK(!p.binary);
     }
     {
-        DiffPatch p;  // untracked 目录条目：§2.1 不递归决策不破，不触碰磁盘
+        DiffPatch p;  // untracked 目录条目：§2.1 不递归决策不破，不触碰磁盘；
+                      // bug#290 改返占位文案（原返空=中栏点文件夹误报「无内容变更」）
         p.newPath = "somedir/";
         p.isUntracked = true;
-        DOCTEST_CHECK(module::git::synthesizeUntrackedDiff(p, dir.file("somedir/")).empty());
+        DOCTEST_CHECK(module::git::synthesizeUntrackedDiff(p, dir.file("somedir/")) ==
+                      "未跟踪文件夹（整体一条目，不展开 diff）");
         DOCTEST_CHECK(p.hunks.empty());
     }
     {

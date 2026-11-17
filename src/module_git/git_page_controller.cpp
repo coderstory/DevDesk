@@ -552,9 +552,11 @@ void GitPageController::requestDiff(const std::string& relPath, bool force) {
         std::string message;
         std::string placeholder;
         if (ok) {
+            bool matched = false;  // bug#290：pathFilter 零匹配不再静默落空 patch
             for (auto& p : diff.value().patches) {
                 if (p.newPath == relPath || p.oldPath == relPath) {
                     patch = std::move(p);
+                    matched = true;
                     break;
                 }
             }
@@ -564,6 +566,11 @@ void GitPageController::requestDiff(const std::string& relPath, bool force) {
             placeholder = synthesizeUntrackedDiff(
                 patch,
                 platform::git::utf8ToPath(path) / platform::git::utf8ToPath(relPath));
+            // bug#290：零匹配（如中栏点未跟踪文件夹条目已无对应 delta）不再
+            // 静默用默认空 patch →「无内容变更」误报，改占位文案
+            if (!matched && placeholder.empty()) {
+                placeholder = "未找到该条目的差异（可能已无变更，或是未跟踪文件夹）";
+            }
         } else {
             message = diff.errorMessage();
         }
