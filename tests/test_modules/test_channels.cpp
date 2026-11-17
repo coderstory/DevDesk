@@ -9,6 +9,8 @@
 #include "platform/notification.h"
 #include "app_sidebar.h"
 #include "toast_notice_bridge.h"
+#include "quit_save_bridge.h"  // need:291 退出丢稿 guard 两路径用例
+#include "app_assembly.h"  // need:291 迁移失败弹窗文案构造用例
 
 #include <cstdint>
 #include <functional>
@@ -505,5 +507,58 @@ REGISTER_TEST(channelsToastDefaultSinkViaBridge, "schedule toast 渠道：默认
         registry.resetForTest();
     }
     ::app::toast_notice::setHandler(nullptr);  // 显式复位（防留桩；resetCaseGlobals 兜底）
+    return true;
+});
+
+REGISTER_TEST(quitSaveGuardBlocksWhileDirty, "退出丢稿 guard（need:291）：未装配/无 dirty 放行；dirty 阻止退出+弹窗开；弹窗开着再触发仍阻止", {
+    ::app::quit_save::resetForTest();
+    // 桥槽是无捕获函数指针：桩状态用静态存储，lambda 零捕获直引它（channelsToast 同款）
+    static bool stubHas = false;
+    stubHas = false;
+    ::app::quit_save::setHandlers([]() -> bool { return stubHas; },
+                                  []() { stubHas = false; });
+    // 1) 无未保存修改：放行（退出直通，现行为不变），弹窗不开
+    DOCTEST_CHECK(::app::quit_save::guard());
+    DOCTEST_CHECK_FALSE(::app::quit_save::dialogOpenForTest());
+    // 2) dirty：阻止本次退出（返回 false）+ 确认弹窗置开态
+    stubHas = true;
+    DOCTEST_CHECK_FALSE(::app::quit_save::guard());
+    DOCTEST_CHECK(::app::quit_save::dialogOpenForTest());
+    // 3) 弹窗开着再触发退出（连点托盘 Exit）：继续阻止，不重复计数不崩溃
+    DOCTEST_CHECK_FALSE(::app::quit_save::guard());
+    DOCTEST_CHECK(::app::quit_save::dialogOpenForTest());
+    ::app::quit_save::resetForTest();  // 用例间 static 隔离（防留桩；同 toast 显式复位纪律）
+    return true;
+});
+
+REGISTER_TEST(quitSaveConfirmDiscardThenProceed, "退出丢稿 guard（need:291）：「放弃修改并退出」主路径 → discard 恰调一次+关弹窗+guard 放行真退出", {
+    ::app::quit_save::resetForTest();
+    static bool stubHas = false;
+    static int stubDiscards = 0;
+    stubHas = true;
+    stubDiscards = 0;
+    ::app::quit_save::setHandlers([]() -> bool { return stubHas; },
+                                  []() { ++stubDiscards; stubHas = false; });
+    // dirty → guard 阻止 + 弹窗开
+    DOCTEST_CHECK_FALSE(::app::quit_save::guard());
+    DOCTEST_CHECK(::app::quit_save::dialogOpenForTest());
+    // 弹窗主钮同路径（confirmDiscardAndExit）：清 dirty → 关弹窗 → requestExit
+    ::app::quit_save::confirmDiscardAndExit();
+    DOCTEST_CHECK_EQ(stubDiscards, 1);
+    DOCTEST_CHECK_FALSE(::app::quit_save::dialogOpenForTest());
+    // dirty 已清 → guard 放行（主循环消费退出请求 → 真退出）
+    DOCTEST_CHECK(::app::quit_save::guard());
+    ::app::quit_save::resetForTest();
+    return true;
+});
+
+REGISTER_TEST(migrationFailMessageContract, "迁移失败弹窗文案（need:291）：含标题语义 + 实际数据根/库路径 + 可操作恢复指引", {
+    const std::string msg = ::app::assembly::migrationFailMessage(
+        "/tmp/x/DevDesk/devdesk.sqlite3", "/tmp/x/DevDesk");
+    DOCTEST_CHECK(msg.find("数据库升级失败") != std::string::npos);
+    DOCTEST_CHECK(msg.find("/tmp/x/DevDesk/devdesk.sqlite3") != std::string::npos);
+    DOCTEST_CHECK(msg.find("数据目录：/tmp/x/DevDesk") != std::string::npos);
+    DOCTEST_CHECK(msg.find("移走或改名备份") != std::string::npos);
+    DOCTEST_CHECK(msg.find("备份目录") != std::string::npos);
     return true;
 });

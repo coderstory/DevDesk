@@ -408,7 +408,10 @@ add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
     src/memory_mcp_bridge.cpp
     # toast 通知桥实现缝：schedule toast 渠道引用 app::toast_notice::* 符号；
     # 缝本体只依赖标准库，不产生 module_schedule / app 层链接边
-    src/toast_notice_bridge.cpp)
+    src/toast_notice_bridge.cpp
+    # 退出丢稿防线桥（need:291）：main.cpp 装配 guard、app_sidebar compose 绘制
+    # 弹窗；缝本体依赖 ui_kit/core，不产生 module_markdown 链接边
+    src/quit_save_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
 # 排除 EUI-NEO 的旧图标 RC（IDI_APP_ICON）：DevDesk 已在下方用 devdesk.rc.in
 # 注入自己的 "A_DEVDESK_ICON" 命名资源。两份 RC 共用 RT_ICON ID 1-6 会导致

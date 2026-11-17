@@ -446,6 +446,13 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override ;
 
+    // 退出丢稿防线（need:291）：app 层退出 guard（quit_save_bridge，经 main.cpp
+    // 装配段注册 app::setQuitGuard）经此查询/放弃未落盘编辑。dirty = 已键入未落盘
+    // （保存失败保持 dirty 并置 saveFailed_，见 md_module_tree）；放弃 = 清 dirty，
+    // 让退出链 onStop 的保存重试自然跳过（磁盘保留最后已保存版本）。
+    bool hasUnsavedEdits() const { return editorDirty_; }
+    void discardUnsavedEdits() { editorDirty_ = false; saveFailed_ = false; }
+
 private:
     // Esc 关最上层弹窗/浮层（顺序 = z 序倒序）。返回 true = 本键已消费，无弹窗返回 false。
     bool closeTopmostPopup() ;

@@ -154,4 +154,9 @@ using ModuleLookup = ::core::Module* (*)(::core::PageId page);
 void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup);
 
+// 迁移失败弹窗文案构造（need:291）：纯函数便于单测锁「含数据根/库路径/恢复指引」；
+// 消费点 main.cpp openAppDatabase 迁移失败分支（msgbox 单按钮 → 退出）
+std::string migrationFailMessage(const std::string& dbPath,
+                                 const std::string& dataDir);
+
 } // namespace app::assembly

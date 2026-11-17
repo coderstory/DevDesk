@@ -441,4 +441,14 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
     }
 }
 
+std::string migrationFailMessage(const std::string& dbPath,
+                                 const std::string& dataDir) {
+    // need:291：用户可操作的恢复指引（数据根与库文件用实际路径，不抽象描述）
+    return "数据库升级失败，应用即将退出。\n\n"
+           "数据目录：" + dataDir + "\n"
+           "数据库文件：" + dbPath + "\n\n"
+           "可尝试：先把上面的数据库文件移走或改名备份，再重新启动应用"
+           "（会重建空数据库）；历史数据可在数据目录的备份目录中找回。";
+}
+
 } // namespace app::assembly

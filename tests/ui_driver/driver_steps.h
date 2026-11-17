@@ -16,6 +16,9 @@
 #include "ui_driver/driver_report.h"
 #include "ui_driver/driver_schema.h"
 
+#include <eui/app.h>  // execQuit（need:291）：app::requestExit / consumeExitRequest
+#include <eui/detail/dsl_app_impl.h>  // app::detail::shouldProceedExit（need272 裁决缝，inline）
+
 #include <chrono>
 #include <ratio>
 #include <cmath>
@@ -144,6 +147,7 @@ private:
         if (step.type == "wait") return step.ms > 0 ? std::to_string(step.ms) + "ms" : step.until + " " + (step.id.empty() ? "'" + step.text + "'" : step.id);
         if (step.type == "assert") return step.check + " " + (step.id.empty() ? (step.check == "text" ? "'" + step.text + "'" : std::string()) : step.id);
         if (step.type == "screenshot" || step.type == "dump") return step.path;
+        if (step.type == "quit") return "requestExit";
         return {};
     }
 
@@ -181,6 +185,7 @@ private:
         else if (step.type == "assert") execAssert(step, result);
         else if (step.type == "screenshot") execScreenshot(step, result);
         else if (step.type == "dump") execDump(step, result);
+        else if (step.type == "quit") execQuit(step, result);
         else result->errorReason = "不支持的步骤类型";
         if (!result->passed && result->screenshotPath.empty()) {
             captureFailureShot(result, result->index);
@@ -488,6 +493,19 @@ private:
         } else {
             result->errorReason = "截图落盘失败: " + path;
         }
+    }
+
+    // need:291：复刻真主循环退出请求消费点语义（glfw_app_main 同款）：requestExit
+    // 置位 → 当拍 consume → 问 quit guard（need272 裁决）。guard 拦截 = 开确认弹窗、
+    // 进程存活，场景继续断言；guard 放行 = 真 app 下主循环 forceClose 退出——驱动
+    // 无真主循环，此处只做裁决不杀进程（真退出路径由单测锁 guard 放行 + 外层核退出码）。
+    void execQuit(const Step& step, StepResult* result) {
+        (void)step;
+        app::requestExit();
+        if (app::detail::consumeExitRequest()) {
+            app::detail::shouldProceedExit();
+        }
+        result->passed = true;
     }
 
     void execDump(const Step& step, StepResult* result) {

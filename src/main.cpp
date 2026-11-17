@@ -22,6 +22,8 @@
 #include "core/window_geometry.h"  // 窗体记忆几何账本（UAT6：每帧记账、退出落盘）
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
+#include "module_markdown/markdown_module_internal.h"  // 退出丢稿缝（need:291）hasUnsaved/discard
+#include "quit_save_bridge.h"  // 退出丢稿防线桥（need:291）
 #include "module_memory/engine/telemem_config.h"
 #include "module_memory/gateway/telemem_client.h"
 #include "module_memory/hook/hook_command.h"
@@ -209,8 +211,17 @@ bool handleDbCorruption(
         db = std::move(opened);
         auto migrateResult = db->migrate();
         if (migrateResult.isFail()) {
+            // need:291：迁移失败不再只留日志——用户可见弹窗 + 退出。此刻仍在
+            // dslAppConfig 静态初始化内（compose 循环不存在），msgbox 是唯一模态
+            // 通道（同「还原后仍损坏」分支口径）；文案带实际数据根与数据库路径，
+            // 给出可操作的恢复指引。_Exit 同上方分支：atexit 钩子尚未装配。
+            ::platform::msgbox::show(
+                "数据库迁移失败",
+                app::assembly::migrationFailMessage(
+                    dbPath.string(), ::core::paths::appDataDir().string()),
+                false);
             LOG_FATAL("数据库迁移失败: " + migrateResult.errorMessage());
-            std::abort();
+            std::_Exit(1);
         }
         ::core::registerAppDatabase(&db->db());
         LOG_INFO("数据库已就绪: " + ::core::paths::sqliteDbFile().string());
@@ -504,6 +515,27 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                                      &memoryMcpSetEnabledImpl);
         // toast 渠道默认落点：schedule toast 渠道 flush 经桥投递应用级 toast
         app::toast_notice::setHandler(&toastNoticeShowImpl);
+        // 退出丢稿防线（need:291）：guard 查 markdown 未落盘编辑，有 → 开确认弹窗
+        // 阻止退出；「放弃修改并退出」先清 dirty 再 requestExit（guard 二次放行）。
+        // 无捕获函数指针直引本函数 static（wallpaper 托盘桥同款惯用法）。
+        app::quit_save::setHandlers(
+            +[]() -> bool {
+                auto* markdownModule =
+                    static_cast<::module::markdown::MarkdownModule*>(
+                        markdown.get());
+                return markdownModule != nullptr &&
+                       markdownModule->hasUnsavedEdits();
+            },
+            +[]() {
+                auto* markdownModule =
+                    static_cast<::module::markdown::MarkdownModule*>(
+                        markdown.get());
+                if (markdownModule != nullptr) {
+                    markdownModule->discardUnsavedEdits();
+                }
+            });
+        // need272 退出裁决缝：托盘 Exit / requestExit 主循环消费点都会问它
+        app::setQuitGuard(&app::quit_save::guard);
         app::mcp::setHandlers(&mcpStartImpl, &mcpStopImpl, &mcpApplyPortImpl,
                               &mcpStatusImpl);
         if (module::settings::moduleEnabled(gatingConfigSnapshot(),

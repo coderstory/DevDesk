@@ -64,7 +64,7 @@ struct Scene {
 
 inline std::vector<std::string> stepTypeVocabulary() {
     return {"click", "type", "key", "scroll", "drag",
-            "wait", "assert", "screenshot", "dump"};
+            "wait", "assert", "screenshot", "dump", "quit"};
 }
 
 inline std::vector<std::string> stepKeyVocabulary(const std::string& type) {
@@ -79,6 +79,9 @@ inline std::vector<std::string> stepKeyVocabulary(const std::string& type) {
     if (type == "assert") return {"check", "id", "text", "op", "other", "_comment", "timeoutMs"};
     if (type == "screenshot") return {"path", "_comment"};
     if (type == "dump") return {"path", "_comment"};
+    // need:291：编程式退出请求（app::requestExit，托盘 Exit 同一消费点）。
+    // guard 拦截时进程存活可继续断言；放行时主循环退出、报告以已执行步骤收尾。
+    if (type == "quit") return {"_comment"};
     return {"_comment"};
 }
 
@@ -535,6 +538,10 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
     }
     if (type == "screenshot" || type == "dump") {
         if (auto r = getString("path", &out->path, /*required=*/true); r.isFail()) return r;
+        return core::Result<void>::ok();
+    }
+    if (type == "quit") {
+        // need:291：无参步骤（_comment 通用键已在上方校验放行）
         return core::Result<void>::ok();
     }
     return failStep(index1, "未知步骤 type '" + type + "'");

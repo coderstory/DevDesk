@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit", "_comment": "need:291 「放弃修改并退出」路径：造 dirty → quit → 主钮 → 真退出"},
+    {"type": "wait", "until": "exists", "id": "md.tree.new", "timeoutMs": 4000},
+    {"type": "click", "id": "md.tree.new"},
+    {"type": "wait", "until": "exists", "id": "md.dialog.new.input", "timeoutMs": 3000},
+    {"type": "click", "id": "md.dialog.new.input"},
+    {"type": "type", "text": "放弃修改退出验证"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "exists", "id": "md.editor.input.hit", "timeoutMs": 4000},
+    {"type": "click", "id": "md.editor.input.hit"},
+    {"type": "type", "text": "这段草稿将被用户明确丢弃", "_comment": "自动落盘防抖 400ms，quit 抢在防抖窗口内"},
+    {"type": "quit", "_comment": "guard 应拦截并弹确认"},
+    {"type": "wait", "until": "exists", "id": "app.quitsave.title", "timeoutMs": 3000},
+    {"type": "wait", "ms": 800},
+    {"type": "click", "id": "app.quitsave.confirm", "_comment": "「放弃修改并退出」：清 dirty → requestExit → guard 放行（真 app = 进程退出）；驱动侧无真主循环，discard 生效由单测与后续 guard 状态佐证，进程退出码由外层核"}
+  ]
+}

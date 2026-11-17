@@ -23,6 +23,8 @@
 #include "app_sidebar.h"
 #include "module_toggle_bridge.h"  // app::toggle::setToggleHandler
 #include "terminal_fullscreen_bridge.h"  // QA122：全屏→侧栏折叠桥（对齐真机 main.cpp 装配）
+#include "quit_save_bridge.h"  // need:291：退出丢稿 guard 装配（与真机 main.cpp 同构）
+#include "module_markdown/markdown_module_internal.h"  // need:291：hasUnsaved/discard 查询缝
 #include "settings_config.h"       // SettingsStore（门控注册读 enabledModules）
 #include "test_support.h"
 #include "ui_driver/driver_dump.h"
@@ -180,6 +182,26 @@ bool assembleApp(::core::Router& router,
     // 误报产品缺陷——探针宿主与生产宿主装配面一致原则）
     app::terminal_fullscreen::setHandler(
         +[](bool collapsed) { app::setSidebarHiddenForFullscreen(collapsed); });
+    // 退出丢稿防线装配（need:291）：与真机 main.cpp getRouter 装配段同构
+    //（探针宿主与生产宿主装配面一致原则，缺装配时 quit 步骤永不弹窗、E2E 失真）。
+    // 无捕获函数指针直引本 TU 文件级 lookupForDriver（driverToggleHandler 同款）。
+    ::app::quit_save::setHandlers(
+        +[]() -> bool {
+            auto* markdownModule =
+                static_cast<::module::markdown::MarkdownModule*>(
+                    lookupForDriver(::core::PageId::Markdown));
+            return markdownModule != nullptr &&
+                   markdownModule->hasUnsavedEdits();
+        },
+        +[]() {
+            auto* markdownModule =
+                static_cast<::module::markdown::MarkdownModule*>(
+                    lookupForDriver(::core::PageId::Markdown));
+            if (markdownModule != nullptr) {
+                markdownModule->discardUnsavedEdits();
+            }
+        });
+    ::app::setQuitGuard(&::app::quit_save::guard);
     return registered > 0;
 }
 

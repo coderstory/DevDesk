@@ -14,6 +14,7 @@
 #include "module_agent/agent_module.h"
 #include "module_memory/memory_module.h"  // 需-9：用量告警每帧判定驱动（M3 同款）
 #include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
+#include "quit_save_bridge.h"  // 退出丢稿确认弹窗（need:291）主窗 compose 尾部绘制
 #include "settings_config.h"
 #include <components/scrollview.h>  // need186 §11：导航滚动区（EUI 全站 scrollView idiom）
 #include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
@@ -1454,6 +1455,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
                            scale, cornerRadiusLogical);
     // #196 交叉淡化盖顶：主界面帧画完后，splash 以递减透明度叠顶（0.9~1.2s 窗口期；
     // 窗口期外零元素零开销）。放最顶：淡化期间 splash 覆盖含窗口边框在内的全部内容。
+    // 退出丢稿确认弹窗（need:291）：guard 拦截退出后置开态，此处盖顶绘制
+    //（dialog zIndex 1000 > 页面内容）；未开 = 零开销早退。splash 只在启动
+    // 1.2s 内存在，退出确认发生在其后，两者无共存窗口。
+    app::quit_save::drawConfirmDialog(ui, screen);
     ui_kit::drawSplashOverlay(ui, screen);
 }
 

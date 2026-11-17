@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit", "_comment": "need:291 切到笔记页"},
+    {"type": "wait", "until": "exists", "id": "md.tree.new", "timeoutMs": 4000},
+    {"type": "click", "id": "md.tree.new", "_comment": "新建笔记（临时数据根空库，先造一篇）"},
+    {"type": "wait", "until": "exists", "id": "md.dialog.new.input", "timeoutMs": 3000},
+    {"type": "click", "id": "md.dialog.new.input"},
+    {"type": "type", "text": "退出丢稿验证"},
+    {"type": "key", "name": "Enter", "_comment": "回车创建并打开（onEnter commit）"},
+    {"type": "wait", "until": "exists", "id": "md.editor.input.hit", "timeoutMs": 4000},
+    {"type": "click", "id": "md.editor.input.hit", "_comment": "聚焦编辑器"},
+    {"type": "type", "text": "未保存草稿：退出前必须弹确认", "_comment": "键入即 dirty（自动落盘防抖 400ms，quit 必须抢在防抖窗口内）"},
+    {"type": "quit", "_comment": "模拟托盘 Exit：退出请求消费点 → quit guard 应拦截并弹确认"},
+    {"type": "wait", "until": "exists", "id": "app.quitsave.title", "timeoutMs": 3000, "_comment": "确认弹窗出现（guard 阻止退出、进程存活）"},
+    {"type": "wait", "ms": 800, "_comment": "D4：截图前等一拍（过渡收尾）"},
+    {"type": "screenshot", "path": "need291-quit-dialog.png"},
+    {"type": "dump", "path": "need291-quit-dialog-dump.txt", "_comment": "弹窗元素树：cancel/confirm 实际 rect 与命中层排查"},
+    {"type": "click", "id": "app.quitsave.cancel", "_comment": "「放弃退出」路径（严格命中回读：验证根层弹窗 z=1200 拿到真实命中优先级）"},
+    {"type": "wait", "until": "missing", "id": "app.quitsave.title", "timeoutMs": 3000},
+    {"type": "assert", "check": "exists", "id": "md.editor.input.hit", "_comment": "应用仍存活（未退出），可继续编辑"},
+    {"type": "screenshot", "path": "need291-quit-cancelled.png"}
+  ]
+}

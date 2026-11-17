@@ -7,6 +7,9 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
     # app::tray 壁纸托盘桥实现缝：test_wallpaper_tray.cpp 引用其符号
     ${CMAKE_SOURCE_DIR}/src/wallpaper_tray_bridge.cpp
+    # 退出丢稿防线桥（need:291）：app_sidebar.cpp（本目标直编）引用
+    # app::quit_save::drawConfirmDialog；test_channels.cpp 引用 guard 符号
+    ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
     # 调度通知渠道层（波 S5）：渠道注册表 + 四个内置渠道，随测试二进制直编
     #（src/module_schedule 模块装配由宿主波注册，这里只覆盖渠道层）
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channel_registry.cpp
@@ -546,6 +549,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp"
@@ -728,6 +732,7 @@ add_executable(devdesk_ui_driver
     ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
@@ -774,8 +779,9 @@ set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # need242：terminal-input = 终端页输入注入（type 聚焦 / key 达 PTY / 拖选+复制）
 # need244：mcp-claude-install = MCP 详情页「安装到 Claude Code」按钮在场 + 几何。
 #（驱动侧无 disabled 断言能力，「服务未运行 → 置灰 + 提示」由 test_mcp_page 的 doctest 钉）
+# need290：claude-d1-seed-enable = 种子启用 claude_proxy → ClaudeService 装配正常（D1 回归）
 foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input
-        mcp-claude-install)
+        mcp-claude-install claude-d1-seed-enable)
     add_test(NAME ui_driver_${_ui_scene}
         COMMAND devdesk_ui_driver
             --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"
@@ -830,6 +836,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)  # 2026-11-05：保持 UNIX（github_sync_
         ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
