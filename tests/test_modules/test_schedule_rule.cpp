@@ -371,6 +371,38 @@ REGISTER_TEST(schedule_event_resident_no_fire, "schedule: event / resident 无 n
     return true;
 })
 
+// 时区闸红字安全化（need290）：tzId 非空的报错文案不得携带可疑内容。
+// 防：上游悬垂/未初始化读到的垃圾 tzId 原样进用户可见串（UTF-8 中段截断=乱码；
+// 超长垃圾拼接=bad_alloc abort）——文案必须为占位/限长可读形态。
+REGISTER_TEST(schedule_tz_message_sanitized, "schedule: tzId 非空红字安全化（占位/限长/合法值原样）", {
+    const FireContext c = ctxAt(unixOf(2026, 10, 28, 0, 0));
+    const RuleSpec rs = mustParse(RuleKind::Resident, R"({})");
+    // 非打印字节 → 整体占位，垃圾字节一个都不回显
+    FireContext garbage = c;
+    garbage.tzId = std::string("A\x01\xFF" "B");
+    const auto r1 = nextFire(rs, 0, garbage);
+    DOCTEST_CHECK(r1.isFail());
+    const std::string m1 = r1.errorMessage();
+    DOCTEST_CHECK(m1.find("v1 仅支持系统本地时区") != std::string::npos);
+    DOCTEST_CHECK(m1.find("（值不可读）") != std::string::npos);
+    DOCTEST_CHECK(m1.find('A') == std::string::npos);
+    // 超长可打印值 → 截断加省略号，文案长度有界
+    FireContext longId = c;
+    longId.tzId.assign(200, 'x');
+    const auto r2 = nextFire(rs, 0, longId);
+    DOCTEST_CHECK(r2.isFail());
+    const std::string m2 = r2.errorMessage();
+    DOCTEST_CHECK(m2.size() < 200);
+    DOCTEST_CHECK(m2.find("…") != std::string::npos);
+    // 可读合法值 → 原样展示（「v1 仅支持系统本地时区」事实保留）
+    FireContext named = c;
+    named.tzId = "Asia/Shanghai";
+    const auto r3 = nextFire(rs, 0, named);
+    DOCTEST_CHECK(r3.isFail());
+    DOCTEST_CHECK(r3.errorMessage().find("Asia/Shanghai") != std::string::npos);
+    return true;
+})
+
 // §9.11：时钟回拨不重放——nextFire 永不返回 ≤ afterUnix 的时刻；已过去的触发点再问也是明天。
 // lastEvalAt 的比较在引擎层（本层无状态），本用例锁住纯函数侧的前提：严格大于 + 闭区间恰好一次。
 // 防：回拨后同一触发点被第二次返回（动作重复执行）

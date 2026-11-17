@@ -1,6 +1,7 @@
 // MCP 协议分发的纯逻辑用例（不碰 socket）：判序、版本协商、会话、通知、错误码、
 // JSON 转义与 id 回显。传输层（415/403/405）由服务级用例（B3）覆盖。
 #include "doctest.h"
+#include "test_support.h"
 
 #include <chrono>
 #include <cstddef>
@@ -558,9 +559,10 @@ REGISTER_TEST(mcp_protocol_tools_call_outer_timeout_gate,
     DOCTEST_CHECK(fixture.tools.registerTool(slow).isOk());
     DOCTEST_CHECK(fixture.tools.registerTool(fast).isOk());
 
-    // env 覆盖总闸到 1s（用完恢复，防泄漏到其它用例）
+    // env 覆盖总闸到 1s（用完恢复，防泄漏到其它用例；走 test_support
+    // 可移植封装——MinGW 无 setenv 声明，守卫链红过一次）
     const char* saved = std::getenv("MCP_TOOL_TIMEOUT_SECONDS");
-    setenv("MCP_TOOL_TIMEOUT_SECONDS", "1", 1);
+    test_support::setEnvVar("MCP_TOOL_TIMEOUT_SECONDS", "1");
 
     std::string newId;
     const std::string sessionId = fixture.openSession();
@@ -579,8 +581,8 @@ REGISTER_TEST(mcp_protocol_tools_call_outer_timeout_gate,
     auto fastOutcome = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"fast_tool"}})",
         sessionId, "", newId);
-    if (saved != nullptr) setenv("MCP_TOOL_TIMEOUT_SECONDS", saved, 1);
-    else unsetenv("MCP_TOOL_TIMEOUT_SECONDS");
+    test_support::setEnvVar("MCP_TOOL_TIMEOUT_SECONDS",
+                            saved != nullptr ? saved : "");
 
     DOCTEST_CHECK_EQ(slowOutcome.status, 200);
     DOCTEST_CHECK_EQ(slowCode, -32603);
@@ -594,6 +596,36 @@ REGISTER_TEST(mcp_protocol_tools_call_outer_timeout_gate,
     DOCTEST_REQUIRE(fastContent.isArray());
     DOCTEST_CHECK_EQ(strField(fastContent[0].asObject(), "text"),
                      std::string("quick result"));
+    return true;
+})
+
+REGISTER_TEST(mcp_protocol_tools_call_gate_passthrough,
+              "mcp protocol: 总闸 2s > 工具耗时 1.5s → 放行路径 200 + result 正文（总闸放行态锁死，need290 审计红相补证）", {
+    Fixture fixture;
+    auto slow = std::make_shared<SlowTool>();
+    DOCTEST_CHECK(fixture.tools.registerTool(slow).isOk());
+
+    // 总闸 2s：慢工具 1.5s 先完成 → future ready → 正常 result（不触发超时）
+    const char* saved = std::getenv("MCP_TOOL_TIMEOUT_SECONDS");
+    test_support::setEnvVar("MCP_TOOL_TIMEOUT_SECONDS", "2");
+
+    std::string newId;
+    const std::string sessionId = fixture.openSession();
+    auto outcome = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"slow_tool"}})",
+        sessionId, "", newId);
+    test_support::setEnvVar("MCP_TOOL_TIMEOUT_SECONDS",
+                            saved != nullptr ? saved : "");
+
+    DOCTEST_CHECK_EQ(outcome.status, 200);
+    const auto root = parseBody(outcome.body);
+    DOCTEST_REQUIRE(root.isObject());
+    const auto result = root.asObject().get("result");
+    DOCTEST_REQUIRE(result.isObject());
+    const auto content = result.asObject().get("content");
+    DOCTEST_REQUIRE(content.isArray());
+    DOCTEST_CHECK_EQ(strField(content[0].asObject(), "text"),
+                     std::string("slow finished"));
     return true;
 })
 

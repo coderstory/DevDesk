@@ -297,7 +297,17 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
         bool workerSpawned = false;
         try {
             executeWorker = std::thread([tool, argumentsJson, executePromise] {
-                executePromise->set_value(tool->execute(argumentsJson));
+                // need290 审计 P2：工具实现若违约抛异常，线程内未捕获会
+                // std::terminate 全进程——worker 内收口为基础设施 fail，
+                // 与线程创建处 catch(...) 防御姿态一致。
+                try {
+                    executePromise->set_value(tool->execute(argumentsJson));
+                } catch (...) {
+                    executePromise->set_value(
+                        core::Result<core::mcp::ToolResult>::fail(
+                            core::ErrorCode::Internal,
+                            "工具执行异常终止（违背禁异常约定）"));
+                }
             });
             workerSpawned = true;
         } catch (...) {

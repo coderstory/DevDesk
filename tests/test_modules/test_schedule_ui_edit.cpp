@@ -334,6 +334,40 @@ REGISTER_TEST(scheduleEditFormFromRecordRoundTrip, "schedule 编辑弹窗：Rule
     return true;
 });
 
+// 防：编辑既有 cron 规则时表达式不回显（need290 cron-P0）——双击只想改名/启停，
+// 直接保存会把表达式清空、规则失效。回填真源 = rec.specJson 的 expr 原串。
+REGISTER_TEST(scheduleEditCronBackfill, "schedule 编辑弹窗：cron 规则回填表达式原串，不改直接保存语义不变", {
+    EditFormState f;
+    f.kind = RuleKind::Cron;
+    f.cronExpr = "30 9 * * 1-5";
+    f.name = "cron 回填";
+    const int64_t now = localUnix(2026, 10, 27, 8, 0);
+    const auto rec = module::schedule::ui::buildRuleRecord(f, makeCtx(now));
+    DOCTEST_REQUIRE(rec.isOk());
+    const auto back = module::schedule::ui::formFromRecord(rec.value());
+    DOCTEST_REQUIRE(back.isOk());
+    DOCTEST_CHECK(back.value().kind == RuleKind::Cron);
+    DOCTEST_CHECK(back.value().cronExpr == "30 9 * * 1-5");  // 修复前=空串（不回显）
+    const auto again = module::schedule::ui::buildRuleRecord(back.value(), makeCtx(now));
+    DOCTEST_REQUIRE(again.isOk());  // 不改表达式直接保存 → 载荷仍合法
+    DOCTEST_CHECK(again.value().specJson == rec.value().specJson);  // 语义不变
+    return true;
+});
+
+// 防：表达式为空仍静默保存（空 expr 必须红字拦截、不产出落库载荷）。
+REGISTER_TEST(scheduleEditCronEmptyExprRejected, "schedule 编辑弹窗：cron 空表达式红字拦截不落库", {
+    EditFormState f;
+    f.kind = RuleKind::Cron;
+    f.cronExpr = "";
+    const auto spec = module::schedule::ui::validateAndParse(f);
+    DOCTEST_CHECK(spec.isFail());
+    DOCTEST_CHECK_FALSE(spec.errorMessage().empty());  // 红字文案
+    const int64_t now = localUnix(2026, 10, 27, 8, 0);
+    const auto rec = module::schedule::ui::buildRuleRecord(f, makeCtx(now));
+    DOCTEST_CHECK(rec.isFail());
+    return true;
+});
+
 // 防：run_task 动作静默落库空 key——运行时 action_runner extract("key") 拿到空串
 // 只能静默失败；保存侧必须拦（R3 A2 的反例面）。
 REGISTER_TEST(scheduleEditRunTaskEmptyKeyRejected, "schedule 编辑弹窗：run_task 空 key 拒绝保存", {

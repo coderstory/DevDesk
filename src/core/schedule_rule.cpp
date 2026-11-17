@@ -511,10 +511,29 @@ Result<RuleSpec> parseEvent(yyjson_val* obj) {
 
 // ---------- 时区闸（v1 只本地；ctx 除 tzId 外仅作快照，换算全以实参为准） ----------
 
+namespace {
+// tzId 在 v1 仅预留透传（正常路径恒空）。红字拼接前先安全化：仅保留可打印
+// ASCII 且限长，异常输入输出占位文案——上游悬垂/未初始化读到的垃圾字节不得
+// 原样进入用户可见串（UTF-8 中段截断=乱码；超长垃圾拼接=bad_alloc abort，
+// need290 生命周期缺陷的两副症状，此处为核心层兜底防线）。
+std::string zoneIdForMessage(const std::string& tzId) {
+    constexpr size_t kMaxLen = 48;
+    std::string safe;
+    for (char c : tzId) {
+        const auto uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || uc > 0x7E) return "（值不可读）";
+        if (safe.size() == kMaxLen) return safe + "…";
+        safe.push_back(c);
+    }
+    return safe.empty() ? "（值不可读）" : safe;
+}
+}  // namespace
+
 Result<void> checkZone(const FireContext& ctx) {
     if (!ctx.tzId.empty()) {
         return Result<void>::fail(ErrorCode::NotImplemented,
-                                  "v1 仅支持系统本地时区（tzId 非空未支持：" + ctx.tzId + "）");
+                                  "v1 仅支持系统本地时区（tzId 非空未支持：" +
+                                      zoneIdForMessage(ctx.tzId) + "）");
     }
     return Result<void>::ok();
 }

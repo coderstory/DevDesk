@@ -8,6 +8,7 @@
 #include "platform/json.h"
 #include "upstream_dialect.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>

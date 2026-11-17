@@ -390,9 +390,11 @@ core::Result<EditFormState> formFromRecord(const RuleRecord& rec) {
             break;
         }
         case core::schedule::RuleKind::Cron:
-            // CronExpr 无稳定文本回显契约，保留原样文本需重读 spec_json；v1 编辑
-            // 回填用「分 时 日 月 周」原串由宿主透传，这里置空并让控件显示提示。
-            f.cronExpr.clear();
+            // need290 cron-P0：编辑回填必须透传表达式原串（真源 = rec.specJson 的
+            // "expr" 字段；RuleSpec.cron 是解析后结构，无原文）。前置 parseRuleSpec
+            // 已成功 → expr 必在且合法；actionJsonField 缺失时兜底空串，由保存侧
+            // 空表达式红字拦截兜住，不会再静默清空。
+            f.cronExpr = actionJsonField(rec.specJson, "expr");
             break;
         case core::schedule::RuleKind::Event:
             f.eventNames = s.events;
@@ -887,7 +889,13 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
                 .radius(t.sizes.radius)
-                .onClick([&st, &host, &ctx] {
+                // EUI-NEO 铁律：onClick 回调在点击帧由 updateInteraction 才调用
+                //（compose 栈已展开），禁止引用捕获 compose 帧栈局部。ctx 是宿主
+                // 每帧栈新对象（schedule_ui_list drawEditDialog 调用点），引用捕获
+                // 即悬垂——保存时读出垃圾 tzId（乱码红字 + 拼串 bad_alloc 同根）。
+                // 值捕获 = 构造期拷贝，回调帧内读自有副本。st/host 为宿主成员，
+                // 生命周期覆盖回调，可引用捕获。
+                .onClick([&st, &host, ctx] {
                     if (st.form.actionKind == "webhook_only") {
                         // 仅投递动作唯一外发渠道是企微：未勾选直接拦（防静默丢通知）
                         bool wecom = false;
