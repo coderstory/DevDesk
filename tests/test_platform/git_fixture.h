@@ -133,7 +133,17 @@ inline bool cleanupRepoDir(const std::filesystem::path& dir, bool bodyOk) {
                  dir, std::filesystem::directory_options::skip_permission_denied, ec);
              !ec && it != std::filesystem::recursive_directory_iterator();
              it.increment(ec)) {
-            std::filesystem::permissions(it->path(), std::filesystem::perms::owner_write, ec);
+            // bug278：replace 成 owner_write 会把目录剥成 0200（POSIX 无 x 位即不可
+            // 遍历）→ remove_all 进不去子目录 ENOTEMPTY（macOS 全量 25 红的根因；
+            // Windows 无 x 位遍历概念故从未暴露）。改 add 语义只加不清：文件 +w
+            //（清 loose objects 只读位，Windows 上等价清 READONLY 属性）、目录
+            // +rwx（保持/恢复可遍历——还能救回历史残留的 0200 锁死目录）。
+            const std::filesystem::perms add =
+                it->is_directory(ec)
+                    ? std::filesystem::perms::owner_all
+                    : std::filesystem::perms::owner_write;
+            std::filesystem::permissions(it->path(), add,
+                                         std::filesystem::perm_options::add, ec);
         }
         std::error_code rmEc;
         for (int attempt = 0; attempt < 10; ++attempt) {
