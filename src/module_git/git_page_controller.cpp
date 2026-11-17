@@ -602,7 +602,28 @@ void GitPageController::requestDiff(const std::string& relPath, bool force) {
     diffError_.clear();
     const std::uint64_t req = ++diffReq_;
     const std::string path = workdirUtf8_;
-    worker_->postWithRepo(path, [this, relPath, req, path](platform::git::Repo* repo) {
+    // bug#296：未跟踪行（顶层或 lazy 展开子文件）在 workdir↔HEAD diff 里无
+    // delta 可匹配（F-09 不递归）→ 零匹配落「文件已无变更」误报。选中行状态
+    // 为 U 时绕过 diff 管线直接合成全增（bug#18 档①同链，fs 读无需 repo）。
+    const bool untrackedRow =
+        selectedRowStatus() == platform::git::StatusKind::Untracked;
+    worker_->postWithRepo(
+        path, [this, relPath, req, path, untrackedRow](platform::git::Repo* repo) {
+        if (untrackedRow) {
+            platform::git::DiffPatch patch;
+            patch.newPath = relPath;
+            patch.isUntracked = true;
+            std::string placeholder = synthesizeUntrackedDiff(
+                patch,
+                platform::git::utf8ToPath(path) / platform::git::utf8ToPath(relPath));
+            postToUi([this, relPath, req, patch = std::move(patch),
+                      placeholder = std::move(placeholder)]() mutable {
+                if (req != diffReq_ || relPath != diffPath_) return;  // 过期丢弃
+                diffModel_.setPatch(std::move(patch), std::move(placeholder));
+                diffState_ = RightPaneState::Ready;
+            });
+            return;
+        }
         if (repo == nullptr) {
             postToUi([this, relPath, req] {
                 if (req != diffReq_ || relPath != diffPath_) return;

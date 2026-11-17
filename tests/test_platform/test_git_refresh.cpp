@@ -380,3 +380,84 @@ REGISTER_TEST(gitRefreshKeepsListUiState, "F-09：刷新重建行序列保 选�
     platform::folderpicker::setPickerForTest(nullptr);
     return git_fixture::cleanupRepoDir(repoDir, true);
 })
+
+// ---- ⑦ bug#296：U 行点开 = 全增 diff（真仓实测；顶层未跟踪 + lazy 子文件）----
+// 老板 2026-11-17 装机版打回：「.project 标记U 点开显示文件已无变更。。。又没人修改
+// 到底变了还是没变」。根因：未跟踪行在 workdir↔HEAD diff 里无 delta 可匹配（F-09
+// 不递归：lazy 子文件必然无；顶层靠 pathspec 命中）→ 零匹配落「文件已无变更，列表
+// 将刷新」误报。契约：U 行点击一律合成全增 diff，禁误报文案。
+REGISTER_TEST(gitUntrackedClickFullAddDiff, "bug296：点 U 行出全增 diff（顶层+lazy 子文件），禁「文件已无变更」误报", {
+    const platform::git::Libgit2Scope libgit2;
+    const auto root = test_support::makeTempDir("devdesk_git_refresh_", "bug296");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           platform::git::pathToUtf8(root).c_str());
+    const auto repoDir = root / "未跟踪仓";
+    std::filesystem::create_directories(repoDir);
+    git_fixture::initRepo(repoDir);
+    git_fixture::commitAll(repoDir, {{"a.txt", "第一版\n"}});
+    // 对照档前置：a.txt 置真实变更（否则它不在变更列表里，点开零匹配文案=正确行为）
+    test_support::writeTextFile(repoDir / "a.txt", "第二版\n");
+    // 顶层未跟踪文件（老板场景本体：.project）
+    test_support::writeTextFile(repoDir / ".project",
+                                "<?xml version=\"1.0\"?>\n<nature>eclipse</nature>\n");
+    // 未跟踪目录 + 子文件（D3-A lazy 展开层——无 delta 可匹配重灾区）
+    test_support::writeTextFile(repoDir / "新模块" / "note.md", "新内容\n");
+    const std::string repoUtf8 = platform::git::pathToUtf8(repoDir);
+
+    GitWorker worker;
+    worker.start();
+    GitPageController c(&worker);
+    DOCTEST_CHECK(openRepoViaPicker(c, repoUtf8));
+    DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
+
+    // 档①：顶层未跟踪 .project 行 → 全增 diff（2 行、origin '+'、newNo 1 起）
+    c.selectChange(".project");
+    DOCTEST_CHECK(pumpUntil(c, [&] { return c.diffState() == RightPaneState::Ready; }));
+    DOCTEST_CHECK(c.diffModel().placeholder().empty());  // bug296：禁误报文案
+    DOCTEST_CHECK_EQ(c.diffModel().patch().newPath, ".project");
+    DOCTEST_CHECK(c.diffModel().patch().isUntracked);
+    if (c.diffModel().patch().hunks.size() == 1) {
+        DOCTEST_CHECK_EQ(c.diffModel().patch().hunks[0].lines.size(), 2);
+        if (c.diffModel().patch().hunks[0].lines.size() == 2) {
+            DOCTEST_CHECK_EQ(c.diffModel().patch().hunks[0].lines[0].origin, '+');
+            DOCTEST_CHECK_EQ(c.diffModel().patch().hunks[0].lines[1].newNo, 2);
+        }
+    } else {
+        DOCTEST_CHECK_EQ(c.diffModel().patch().hunks.size(), 1);
+    }
+
+    // 档②：lazy 展开未跟踪目录 → 子文件行 → 同契约
+    c.toggleUntrackedDir("新模块");
+    DOCTEST_CHECK(pumpUntil(c, [&] {
+        for (const auto& r : c.listRows()) {
+            if (r.kind == module::git::ChangeListRow::Kind::File &&
+                r.relPath == "新模块/note.md") {
+                return true;
+            }
+        }
+        return false;
+    }));
+    c.selectChange("新模块/note.md");
+    DOCTEST_CHECK(pumpUntil(c, [&] { return c.diffState() == RightPaneState::Ready; }));
+    DOCTEST_CHECK(c.diffModel().placeholder().empty());  // bug296 核心
+    DOCTEST_CHECK_EQ(c.diffModel().patch().newPath, "新模块/note.md");
+    DOCTEST_CHECK(c.diffModel().patch().isUntracked);
+    if (c.diffModel().patch().hunks.size() == 1) {
+        DOCTEST_CHECK_EQ(c.diffModel().patch().hunks[0].lines.size(), 1);
+        if (!c.diffModel().patch().hunks[0].lines.empty()) {
+            DOCTEST_CHECK_EQ(c.diffModel().patch().hunks[0].lines[0].origin, '+');
+        }
+    } else {
+        DOCTEST_CHECK_EQ(c.diffModel().patch().hunks.size(), 1);
+    }
+
+    // 对照档：真实修改文件 → 正常 diff
+    c.selectChange("a.txt");
+    DOCTEST_CHECK(pumpUntil(c, [&] { return c.diffState() == RightPaneState::Ready; }));
+    DOCTEST_CHECK(c.diffModel().placeholder().empty());
+    DOCTEST_CHECK_EQ(c.diffModel().patch().hunks.size(), 1);
+
+    worker.stop();
+    platform::folderpicker::setPickerForTest(nullptr);
+    return git_fixture::cleanupRepoDir(root, true);
+})
