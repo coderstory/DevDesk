@@ -1,4 +1,4 @@
-// src/module_markdown/md_keyword_highlight.h
+// src/ui_kit/text_highlight/md_keyword_highlight.h
 // 代码关键字多色词法器：围栏源码 → 按语言着色的 runs（关键字/字符串/注释/
 //   数字/默认 五色）。纯函数、零依赖、可单测；供 md_preview_highlight 的 CodeFence 路径，
 //   编辑器侧仍整行单 code 色。
@@ -15,7 +15,7 @@
 #include <string_view>
 #include <vector>
 
-namespace module::markdown {
+namespace ui_kit::text_highlight {
 
 struct MdKeywordHighlight {
     bool supported = false;           // lang 无词法器 → false（调用方回退单色）
@@ -28,8 +28,10 @@ bool mdKeywordLangSupported(std::string_view lang);
 
 // code = 围栏内容（行以 \n 连接、已剔 \r 的显示串段）；colors = 与编辑器同源的
 // MdHighlightColors（只用 codeKeyword/codeString/codeComment/codeNumber/code）。纯函数、不抛异常。
+// MdHighlightColors 仍在 module::markdown（md_highlight.h 定义，平移时未改
+// namespace），本头按全限定名引用。
 MdKeywordHighlight mdKeywordHighlight(std::string_view code,
                                       std::string_view lang,
-                                      const MdHighlightColors& colors);
+                                      const module::markdown::MdHighlightColors& colors);
 
-} // namespace module::markdown
+} // namespace ui_kit::text_highlight

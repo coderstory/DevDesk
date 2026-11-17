@@ -92,6 +92,11 @@ std::vector<::core::PageId> assembleAndStart(
 
     router.startAll();
 
+    // 未保存保护 quit guard（need263 批 4 F-05/D-3）：主循环消费退出请求时
+    // 逐窗问 notepad 保护链（脏窗弹三选）；全干净/空注册表即放行，不拦
+    // 无记事本窗的常规退出。实现 = module::notepad::notepadQuitGuard。
+    app::setQuitGuard(module::notepad::notepadQuitGuard);
+
     armExitHook();
     return registered;
 }

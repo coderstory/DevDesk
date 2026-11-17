@@ -37,7 +37,15 @@
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 
-    <!-- 关键：注册文件类型 -->
+    <!-- 关键：注册文件类型（F-18 记事本 26 扩展，need263 批 4 棒 B 2026-11-18）。
+         UTI 归组依据 = 2026-11-18 本机 UTType(filenameExtension:) 实测：
+         md/markdown/json/txt/yaml/yml/log/js/mjs/css/html/htm/xml/py/cpp/cc/cxx/
+         h/hpp 均有系统 UTI（见各组）；toml/ini/sql/cjs/jsx/tsx 无 → 走下方
+         UTImportedTypeDeclarations 自声明（com.devdesk.*，归组「DevDesk Text」
+         /「DevDesk Script」两个组）。
+         ⚠ .ts 刻意不声明：系统 UTI = public.mpeg-2-transport-stream（视频），
+         声明会抢视频文件关联；.ts 仅 Windows 注册表路径接管（运行时豁免见
+         file_association_macos.mm macSupportedExtension）。 -->
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -50,7 +58,31 @@
             <key>LSItemContentTypes</key>
             <array>
                 <string>net.daringfireball.markdown</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Text File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
                 <string>public.plain-text</string>
+                <string>public.text</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Log File</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.apple.log</string>
             </array>
         </dict>
         <dict>
@@ -67,6 +99,32 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key>
+            <string>YAML Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.yaml</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>DevDesk Text</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.devdesk.toml</string>
+                <string>com.devdesk.ini</string>
+                <string>com.devdesk.sql</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
             <string>JavaScript Source</string>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
@@ -75,6 +133,20 @@
             <key>LSItemContentTypes</key>
             <array>
                 <string>com.netscape.javascript-source</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>DevDesk Script</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.devdesk.cjs</string>
+                <string>com.devdesk.jsx</string>
+                <string>com.devdesk.tsx</string>
             </array>
         </dict>
         <dict>
@@ -91,15 +163,74 @@
         </dict>
         <dict>
             <key>CFBundleTypeName</key>
-            <string>Text File</string>
+            <string>CSS Source</string>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>LSHandlerRank</key>
             <string>Alternate</string>
             <key>LSItemContentTypes</key>
             <array>
-                <string>public.plain-text</string>
-                <string>public.text</string>
+                <string>public.css</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>XML Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.xml</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Python Script</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.python-script</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>C++ Source</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.c-plus-plus-source</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>C Header</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.c-header</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>C++ Header</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.c-plus-plus-header</string>
             </array>
         </dict>
     </array>
@@ -108,7 +239,8 @@
     <key>UTExportedTypeDeclarations</key>
     <array/>
 
-    <!-- .md UTI（F-08）：Imported=编号非 DevDesk 发明（归属 public.plain-text） -->
+    <!-- Imported 声明（编号非 DevDesk 发明的既有格式 + DevDesk 承接的未编号
+         文本格式，均归属 public.plain-text；md/markdown 为 F-08 既有声明） -->
     <key>UTImportedTypeDeclarations</key>
     <array>
         <dict>
@@ -124,6 +256,96 @@
                 <array>
                     <string>md</string>
                     <string>markdown</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.devdesk.toml</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>toml</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.devdesk.ini</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ini</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.devdesk.sql</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sql</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.devdesk.cjs</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>com.netscape.javascript-source</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>cjs</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.devdesk.jsx</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>com.netscape.javascript-source</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>jsx</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.devdesk.tsx</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>tsx</string>
                 </array>
             </dict>
         </dict>

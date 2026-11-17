@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/logging.h"
+#include "core/notepad_file_types.h"  // notepadAsciiLower（扩展名大小写折叠）
 #include "core/window/window_backend.h"  // setWindowTitle（脏态前缀）/ getWindowPos（关窗记忆）
 #include "notepad_module.h"
 #include "notepad_prefs.h"
@@ -105,6 +106,9 @@ void sessionToast(NotepadSession& s, const std::string& message) {
 }
 
 void sessionSetDirty(NotepadSession& s, bool dirty) {
+    // 「不保存」豁免只对决策当时的编辑代生效：任何新的脏化（含已脏再编辑、
+    // 早返回路径）都作废豁免旗标，重新进保护。
+    if (dirty) s.skipCloseConfirm = false;
     if (s.dirty == dirty) return;
     s.dirty = dirty;
     if (s.handle != nullptr) {
@@ -123,5 +127,31 @@ std::string notepadSessionPageIdForTest(size_t index) {
 }
 
 void resetNotepadSessionsForTest() { sessions().clear(); }
+
+bool notepadSessionHasExtension(const NotepadSession& s,
+                                std::string_view lowerExt) {
+    const std::string& key = s.normKey;
+    if (key.size() < lowerExt.size()) return false;
+    for (size_t i = 0; i < lowerExt.size(); ++i) {
+        const char actual =
+            core::notepad::notepadAsciiLower(key[key.size() - lowerExt.size() + i]);
+        if (actual != lowerExt[i]) return false;
+    }
+    return true;
+}
+
+NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s) {
+    NotepadToolbarMatrix m;
+    const bool errorState = !s.loadError.empty();
+    const bool editable = !errorState && !s.readonly && !s.binarySuspect;
+    m.showFormat = !errorState && notepadSessionHasExtension(s, ".json");
+    m.showPreview = !errorState && (notepadSessionHasExtension(s, ".md") ||
+                                    notepadSessionHasExtension(s, ".markdown"));
+    m.formatEnabled = editable && !s.previewOn;
+    m.previewEnabled = !s.largeFile;
+    m.findToggleEnabled = !s.previewOn;
+    m.fontControlsEnabled = !s.previewOn;
+    return m;
+}
 
 }  // namespace module::notepad

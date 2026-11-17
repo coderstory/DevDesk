@@ -1,21 +1,25 @@
 // src/platform/file_association_macos.mm
-// macOS .md 文件关联（F-09，方案卡 §二.F-09，双路径=预置 A D-6）。
-// 落点名偏差说明：卡面写 file_association_macos.cpp，实为 .mm——12+ 写入路径
+// macOS 记事本多扩展文件关联（F-18 多扩展化，need263 批 4 棒 B；原 F-09 单
+// .md 版）。落点名偏差说明：卡面写 file_association_macos.cpp，实为 .mm——
 // NSWorkspace setDefaultApplicationAtURL:toOpenURL: 无 C 等价 API，本 TU 必须
-// ObjC++（repo 先例 notification_macos.mm；.h 接口与注入缝零改动）。
-// 架构红线：版本→API 路径唯一权威 = file_association_api_map.h（纯逻辑单测钉死），
-// @available 仅编译期可用性守卫，运行期判定收敛本单文件（平台宏不出 *_macos）。
-// clue10 口径（同 win）：写入成功 ≠ 双击行为生效——setAsDefaultForMd 返回值 =
-// 写后回查判属；macOS 11–15 逐版本定性（.md 编号内建与否/NSWorkspace 确认框）
-// = UAT 项，预置 A 先行零返工。
-// 注入缝口径（与 U6 同款 AssocConfig，mac 侧语义差异）：
+// ObjC++（repo 先例 notification_macos.mm）。
+// 架构红线：版本→API 路径唯一权威 = file_association_api_map.h（纯逻辑单测
+// 钉死），@available 仅编译期可用性守卫，运行期判定收敛本单文件。
+// 多扩展写入策略（12+ 批量）：26 项逐个 await 确认框最坏 26×1.5s 挂死 UI →
+// 全部先 fire + dispatch_group 聚合，单次 1.5ms? 否——1.5s 总预算等待，随后
+// 统一回查判定（超时未回调 = 确认框待用户操作，交回查如实呈现）。
+// mac 侧扩展豁免（.ts）：系统 UTI = public.mpeg-2-transport-stream（视频，
+// 2026-11-18 本机 UTType 实测）——登记会抢视频文件关联，mac 侧写入/聚合查询
+// 一律跳过；Windows 注册表 ProgId 路径无 UTI 冲突照常全量。
+//   shortcut: 跳过清单仅 .ts 一项, 升级触发=扩展清单新增与系统 UTI 冲突条目时
+// 注入缝口径（与 win 同款 AssocConfig，mac 侧语义差异）：
 //   · config.progId = 查询判属锚（回读 bundle id 比对串）；生产缺省（win 字面量
-//     "DevDesk.md"）在 mac 无意义 → 解析为运行期本应用 bundle identifier；
+//     "DevDesk.notepad"）在 mac 无意义 → 解析为运行期本应用 bundle identifier；
 //     显式传入非缺省 progId（mac 测试用隔离 bundle id）则按字面量比对。
 //   · 写入目标恒为本应用 bundle id + 自身 app URL（mac 设默认的合法对象是真实
 //     app，异于 win 自建 ProgId 注册键可任写）。
-// mac 无注销 API（LS 默认 handler 只能改设不能删）→ removeRegistrationForTest
-// 诚实 NotImplemented（PRD D-4 生产不注销，清理缝 mac 面无消费场景）。
+// mac 无注销 API（LS 默认 handler 只能改设不能删）→ unregisterAll 诚实
+// NotImplemented（F-18「关闭=撤销」在 mac 侧不可达，设置页关=停自愈如实呈现）。
 #include "file_association.h"
 
 #include "file_association_api_map.h" // 版本→写入 API 路径唯一权威
@@ -30,12 +34,14 @@
 #endif
 
 #include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag / LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
+#include <dispatch/dispatch.h>
 #include <sys/sysctl.h>
 
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace platform::file_association {
 namespace {
@@ -70,17 +76,23 @@ int macOSMajorVersion() {
 }
 
 // ".md" → "md"（UTTypeCreatePreferredIdentifierForTag 要不带点扩展名）
-std::string extensionWithoutDot(const AssocConfig& config) {
-    std::string ext = config.extension;
+std::string extensionWithoutDot(const std::string& extWithDot) {
+    std::string ext = extWithDot;
     if (!ext.empty() && ext.front() == '.') ext.erase(ext.begin());
     return ext;
 }
 
+// mac 侧豁免扩展（见文件头）：.ts 撞 public.mpeg-2-transport-stream，写入与
+// 聚合查询都不碰；单扩展查询不豁免（直接问就如实答）
+bool macSupportedExtension(const std::string& extWithDot) {
+    return extWithDot != ".ts";
+}
+
 // 扩展名 → LS 侧实际生效 UTI：运行期按 tag 反查，不硬编码 UTI 串（声明了
-// UTImportedTypeDeclarations 的机器得 net.daringfireball.markdown，未声明机器
-// 得 dyn.*——写/查同法反查，两侧对称）。12+ 走 UTType 类（旧 C API 自 12.0
-// 起标记弃用，-Werror 下会红）；11 保留 C API（应用下限 11.0，该类尚不可用），
-// 弃用告警按分支局部豁免。
+// UTImportedTypeDeclarations 的机器得声明 UTI，未声明机器得 dyn.*——写/查
+// 同法反查，两侧对称）。12+ 走 UTType 类（旧 C API 自 12.0 起标记弃用，
+// -Werror 下会红）；11 保留 C API（应用下限 11.0，该类尚不可用），弃用告警
+// 按分支局部豁免。
 core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
     NSString* const extNs = [NSString stringWithUTF8String:extNoDot.c_str()];
     if (extNs == nil) {
@@ -186,11 +198,11 @@ core::Result<std::string> bundleIdForAppUrl(CFURLRef appUrl) {
     return core::Result<std::string>::ok(id);
 }
 
-// 查询当前 .md 生效默认：LSCopyDefaultApplicationURLForURL（10.10+，12 上不弃用，
-// 与 NSWorkspace URLForApplicationToOpenURL 同结果语义——卡 F-09「12+ 新旧均可」）。
+// 查询单扩展当前生效默认：LSCopyDefaultApplicationURLForURL（10.10+，12 上
+// 不弃用，与 NSWorkspace URLForApplicationToOpenURL 同结果语义）。
 // fail = 查询失败/无归属（调用方落 Unknown，绝不映射 Others）
-core::Result<std::string> queryCurrentDefaultBundleId(const AssocConfig& config) {
-    const std::string ext = extensionWithoutDot(config);
+core::Result<std::string> queryCurrentDefaultBundleId(const std::string& extWithDot) {
+    const std::string ext = extensionWithoutDot(extWithDot);
     if (ext.empty()) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "扩展名为空，无法查询");
@@ -200,7 +212,7 @@ core::Result<std::string> queryCurrentDefaultBundleId(const AssocConfig& config)
     CFURLRef const appUrl = LSCopyDefaultApplicationURLForURL(docUrl, kLSRolesAll, &err);
     CFRelease(docUrl);
     if (appUrl == nullptr) {
-        std::string msg = "LaunchServices 查询 .md 默认应用失败（无生效 handler）";
+        std::string msg = "LaunchServices 查询默认应用失败（无生效 handler）: " + extWithDot;
         if (err != nullptr) {
             CFStringRef const desc = CFErrorCopyFailureReason(err);
             if (desc != nullptr) {
@@ -218,7 +230,7 @@ core::Result<std::string> queryCurrentDefaultBundleId(const AssocConfig& config)
 
 // 写后刷新（win SHChangeNotify must-call 的 mac 同位步骤）：mac 无关联变更广播
 // API，LS handler 变更即时落 LS 偏好域，显式 synchronize 促跨进程可见；
-// 实效定性（图标/Finder 即时性）= UAT 项
+// 实效定性（图标/Finder 即时性）= UAT 项。整批写入恰刷一次（spy 断言）。
 void launchServicesRefreshed() {
     if (g_notifySink != nullptr) {
         g_notifySink();
@@ -229,30 +241,62 @@ void launchServicesRefreshed() {
 
 } // namespace
 
-core::Result<AssocState> isDefaultForMd(const AssocConfig& config) {
+core::Result<AssocState> isDefaultFor(const std::string& extension,
+                                      const AssocConfig& config) {
     const std::string anchor = resolveAnchor(config);
     if (anchor.empty()) {
         // 判属锚缺失（非 bundle 进程）= 无法判定 → Unknown（≠Others，语义见 .h）
         return core::Result<AssocState>::ok(AssocState::Unknown);
     }
-    const core::Result<std::string> current = queryCurrentDefaultBundleId(config);
+    const core::Result<std::string> current = queryCurrentDefaultBundleId(extension);
     return core::Result<AssocState>::ok(
         classifyState(current.isOk(), current.valueOr(""), anchor));
 }
 
-core::Result<bool> setAsDefaultForMd(const AssocConfig& config) {
-    const std::string ext = extensionWithoutDot(config);
-    if (ext.empty()) {
-        return core::Result<bool>::fail(core::ErrorCode::Internal, "扩展名为空，无法设默认");
+core::Result<AssocState> overallState(const AssocConfig& config) {
+    const std::string anchor = resolveAnchor(config);
+    if (anchor.empty()) {
+        return core::Result<AssocState>::ok(AssocState::Unknown);
     }
+    std::vector<AssocState> states;
+    states.reserve(config.extensions.size());
+    for (const std::string& ext : config.extensions) {
+        if (!macSupportedExtension(ext)) continue;  // .ts 豁免（文件头）
+        const core::Result<std::string> current = queryCurrentDefaultBundleId(ext);
+        states.push_back(classifyState(current.isOk(), current.valueOr(""), anchor));
+    }
+    return core::Result<AssocState>::ok(aggregateAssocStates(states));
+}
+
+core::Result<bool> setAsDefaultFor(const AssocConfig& config) {
     const core::Result<std::pair<std::string, CFURLRef>> self = selfIdentity();
     if (self.isFail()) {
         return core::Result<bool>::fail(self.errorCode(), self.errorMessage());
     }
-    const core::Result<std::string> uti = contentTypeForExtension(ext);
-    if (uti.isFail()) {
+    const std::string anchor = resolveAnchor(config);
+    if (anchor.empty()) {
         CFRelease(self.value().second);
-        return core::Result<bool>::fail(uti.errorCode(), uti.errorMessage());
+        return core::Result<bool>::fail(core::ErrorCode::Internal,
+                                        "非 bundle 进程，无法设默认");
+    }
+
+    // 逐扩展解析 UTI（跳过 mac 豁免项；UTI 反查失败如实 fail——不伪装部分成功）
+    struct ExtUti { std::string ext; std::string uti; };
+    std::vector<ExtUti> targets;
+    for (const std::string& ext : config.extensions) {
+        if (!macSupportedExtension(ext)) continue;
+        const core::Result<std::string> uti =
+            contentTypeForExtension(extensionWithoutDot(ext));
+        if (uti.isFail()) {
+            CFRelease(self.value().second);
+            return core::Result<bool>::fail(uti.errorCode(), uti.errorMessage());
+        }
+        targets.push_back({ext, uti.value()});
+    }
+    if (targets.empty()) {
+        CFRelease(self.value().second);
+        return core::Result<bool>::fail(core::ErrorCode::Internal,
+                                        "mac 侧无可登记扩展（全部豁免）");
     }
 
     // 写入（双路径，分支唯一权威 = api_map；@available 仅编译期守卫）
@@ -261,35 +305,43 @@ core::Result<bool> setAsDefaultForMd(const AssocConfig& config) {
                                                           "写入路径未执行");
     if (api == mac_api::WriteApi::NsWorkspaceSetDefault) {
         if (@available(macOS 12.0, *)) {
-            CFURLRef const docUrl = probeFileUrl(ext);
-            NSURL* const docNs = (__bridge NSURL*)docUrl;
             NSURL* const appNs = (__bridge NSURL*)self.value().second;
             // 12+ 唯一公开 API 是 async 形态（没有同步 error: 变体；旧同步名
             // setDefaultApplicationAtURL:toOpenURL:error: 在 SDK 里不存在）。
-            // 不能无限等：需要用户确认的 UTI 会先弹系统确认框，完成回调可能
-            // 很久才来——主线程挂住等于窗口卡死。短超时等待后一律以写后回查
-            // 为准（本文件既有契约：写入成功 ≠ 行为生效，一切以查询回读为准）。
-            __block NSError* nsErr = nil;
-            dispatch_semaphore_t const done = dispatch_semaphore_create(0);
-            [[NSWorkspace sharedWorkspace]
-                setDefaultApplicationAtURL:appNs
-                  toOpenContentTypeOfFileAtURL:docNs
-                        completionHandler:^(NSError* error) {
-                            nsErr = error;
-                            dispatch_semaphore_signal(done);
-                        }];
-            CFRelease(docUrl);
-            (void)dispatch_semaphore_wait(
-                done, dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC));
-            if (nsErr != nil) {
+            // 多扩展批量：全部先 fire + group 聚合，单次总预算等待——逐项
+            // await 确认框最坏 N×超时挂死 UI。需要用户确认的 UTI 完成回调可能
+            // 很久才来：超时未回调 = 确认框待用户操作，交写后回查如实判定
+            //（本文件既有契约：写入成功 ≠ 行为生效，一切以查询回读为准）。
+            __block NSError* firstErr = nil;
+            dispatch_group_t const group = dispatch_group_create();
+            for (const ExtUti& t : targets) {
+                CFURLRef const docUrl = probeFileUrl(extensionWithoutDot(t.ext));
+                NSURL* const docNs = (__bridge NSURL*)docUrl;
+                dispatch_group_enter(group);
+                [[NSWorkspace sharedWorkspace]
+                    setDefaultApplicationAtURL:appNs
+                      toOpenContentTypeOfFileAtURL:docNs
+                            completionHandler:^(NSError* error) {
+                                if (error != nil && firstErr == nil) firstErr = error;
+                                dispatch_group_leave(group);
+                            }];
+                CFRelease(docUrl);
+            }
+            const long waited =
+                dispatch_group_wait(group,
+                                    dispatch_time(DISPATCH_TIME_NOW,
+                                                  1500 * NSEC_PER_MSEC));
+            if (firstErr != nil) {
                 written = core::Result<void>::fail(
                     core::ErrorCode::Internal,
                     std::string("NSWorkspace setDefaultApplicationAtURL 失败: ") +
-                        (nsErr.localizedDescription.UTF8String != nullptr
-                             ? nsErr.localizedDescription.UTF8String
+                        (firstErr.localizedDescription.UTF8String != nullptr
+                             ? firstErr.localizedDescription.UTF8String
                              : "未知错误"));
+            } else if (waited != 0) {
+                // 超时（确认框待用户操作）：已受理，交回查判定
+                written = core::Result<void>::ok();
             } else {
-                // 已受理（或超时未回调 = 系统确认框待用户操作）：交回查判定
                 written = core::Result<void>::ok();
             }
         } else {
@@ -299,33 +351,37 @@ core::Result<bool> setAsDefaultForMd(const AssocConfig& config) {
                 "版本判定与系统可用性不一致（api_map=12+，@available<12）");
         }
     } else {
-        CFStringRef const utiCf = cfStringFromStdString(uti.value());
-        CFStringRef const bundleIdCf = cfStringFromStdString(self.value().first);
-        const OSStatus st = LSSetDefaultRoleHandlerForContentType(
-            utiCf, kLSRolesAll, bundleIdCf);
-        if (utiCf != nullptr) CFRelease(utiCf);
-        if (bundleIdCf != nullptr) CFRelease(bundleIdCf);
-        if (st == noErr) {
-            written = core::Result<void>::ok();
-        } else {
-            written = core::Result<void>::fail(
-                core::ErrorCode::Internal,
-                "LSSetDefaultRoleHandlerForContentType 失败 (OSStatus=" +
-                    std::to_string(static_cast<long>(st)) + ")");
+        // 11 路径：LSSet 为同步逐项（无确认框，不挂 UI），任一失败如实报
+        bool anyFailed = false;
+        for (const ExtUti& t : targets) {
+            CFStringRef const utiCf = cfStringFromStdString(t.uti);
+            CFStringRef const bundleIdCf = cfStringFromStdString(self.value().first);
+            const OSStatus st = LSSetDefaultRoleHandlerForContentType(
+                utiCf, kLSRolesAll, bundleIdCf);
+            if (utiCf != nullptr) CFRelease(utiCf);
+            if (bundleIdCf != nullptr) CFRelease(bundleIdCf);
+            if (st != noErr) {
+                written = core::Result<void>::fail(
+                    core::ErrorCode::Internal,
+                    "LSSetDefaultRoleHandlerForContentType 失败 (" + t.ext +
+                        " OSStatus=" + std::to_string(static_cast<long>(st)) + ")");
+                anyFailed = true;
+                break;
+            }
         }
+        if (!anyFailed) written = core::Result<void>::ok();
     }
     CFRelease(self.value().second);
     if (written.isFail()) {
         return core::Result<bool>::fail(written.errorCode(), written.errorMessage());
     }
 
-    // 写后必刷（win SHChangeNotify 同位口径，spy 缝在此断言）
+    // 写后必刷（win SHChangeNotify 同位口径，整批恰一次，spy 缝在此断言）
     launchServicesRefreshed();
-    // 写后回查：bool = 归本应用。回查落 Unknown/Others → ok(false)——写入成功
-    // ≠ 行为生效（clue10/F-07 判定规则），呈现与自愈以本查询回读为准
-    const core::Result<AssocState> state = isDefaultForMd(config);
-    return core::Result<bool>::ok(state.isOk() &&
-                                  state.value() == AssocState::Ours);
+    // 写后回查：bool = 聚合归本应用。回查落 Unknown/Others → ok(false)——
+    // 写入成功 ≠ 行为生效（clue10/F-07 判定规则），呈现与自愈以查询回读为准
+    return core::Result<bool>::ok(
+        overallState(config).valueOr(AssocState::Unknown) == AssocState::Ours);
 }
 
 ShellNotifySink* setShellNotifySink(ShellNotifySink* sink) {
@@ -334,11 +390,25 @@ ShellNotifySink* setShellNotifySink(ShellNotifySink* sink) {
     return old;
 }
 
+core::Result<void> unregisterAll(const AssocConfig&) {
+    return core::Result<void>::fail(
+        core::ErrorCode::NotImplemented,
+        "macOS 无注销默认 handler 的公开 API（LS handler 只能改设不能删；"
+        "F-18「关闭=撤销」在 mac 不可达，关闭语义=停止自愈，如实呈现）");
+}
+
+core::Result<void> launchAdvancedAssociationUI(const std::string&) {
+    return core::Result<void>::fail(
+        core::ErrorCode::NotImplemented,
+        "macOS 无按文件类型的系统默认页程序化直达（PRD D-5：官方唯一批量入口 = "
+        "Finder 显示简介→打开方式→全部更改，设置页文字指引兜底）");
+}
+
 core::Result<void> removeRegistrationForTest(const AssocConfig&) {
     return core::Result<void>::fail(
         core::ErrorCode::NotImplemented,
         "macOS 无注销默认 handler 的公开 API（LS handler 只能改设不能删；"
-        "PRD D-4 生产不注销，mac 注入缝链路测试如立项须先调研清除路径）");
+        "mac 注入缝链路测试如立项须先调研清除路径）");
 }
 
 } // namespace platform::file_association

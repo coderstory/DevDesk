@@ -22,5 +22,9 @@ struct NotepadPrefs {
 NotepadPrefs notepadLoadPrefs();
 // 关窗时回写窗口几何（尺寸 + 位置一并；posSet 恒 true——记忆过即有位）。
 void notepadSaveWindowGeometry(int width, int height, int x, int y);
+// 编辑器偏好即时落库（F-09/F-10：字体族选择 / A±字号变化时写穿透，不攒到关窗）。
+// db 未注册（测试进程）= 静默跳过，不报错。
+void notepadSaveEditorPrefs(const std::string& fontFamily, bool wrap,
+                            int editorFontSize);
 
 }  // namespace module::notepad

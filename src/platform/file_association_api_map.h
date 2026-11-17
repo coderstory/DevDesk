@@ -24,4 +24,10 @@ inline WriteApi writeApiFor(int majorVersion) {
                : WriteApi::LsSetRoleHandler;
 }
 
+// F-18 拉系统关联设置 UI 的路径映射锚（launchAdvancedAssociationUI 唯一权威）：
+// Windows 10+ = ms-settings:defaultapps（系统设置「默认应用」页，ShellExecuteW
+// URI；Win8+ 禁静默抢默认后官方正路，clue #248）。macOS 无按文件类型默认页
+// 程序化直达（PRD D-5）→ 该平台如实 NotImplemented + 设置页文字指引兜底。
+inline constexpr const char* kAdvancedAssociationUiUri = "ms-settings:defaultapps";
+
 } // namespace platform::file_association::mac_api

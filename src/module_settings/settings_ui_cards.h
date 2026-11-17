@@ -80,10 +80,14 @@ struct SettingsCardsIn {
     std::string proxyPortFeedback;             // 非空 = 端口行反馈位文案（替代静态提示）
     bool proxyPortFeedbackError = false;       // true = 红字；false = 三级字
 
-    // .md 文件关联（F-10）：回读归属快照（设置页 compose 节流查询写入，
-    // 见 settings_module::updateMdAssocStateIfStale 的 POC 结论注释）
-    platform::file_association::AssocState mdAssocState =
+    // 记事本文件关联（F-18，接管 F-10 mdAssocState）：聚合回读快照 + 逐扩展
+    // 快照（与 productionConfig().extensions 平行，引导摘要数据源）+ 未生效
+    // 摘要文案（compose 节流查询组装，见 settings_module::
+    // updateNotepadAssocStateIfStale 的 POC 结论注释）
+    platform::file_association::AssocState notepadAssocState =
         platform::file_association::AssocState::Unknown;
+    std::vector<platform::file_association::AssocState> notepadExtStates;
+    std::string notepadGuideText;              // 未生效摘要（空 = 无摘要兜底文案）
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -104,7 +108,7 @@ struct SettingsCardActions {
     std::function<void(bool)> applyReminderPopup;             // 上线提醒弹窗开关（默认关）
     std::function<void(bool)> applyFullscreenPopup;           // 调度全屏弹窗开关（默认关）
     std::function<void(bool)> applyFluidBackgroundEnabled;   // 动态背景开关（UAT6 活体流质）
-    std::function<void(bool)> applyMdAssocEnabled;            // 关联 .md 文件开关（F-10）
+    std::function<void(bool)> applyNotepadAssocEnabled;      // 记事本文件关联开关（F-18）
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
 

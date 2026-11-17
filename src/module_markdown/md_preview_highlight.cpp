@@ -1,7 +1,7 @@
 // src/module_markdown/md_preview_highlight.cpp —— 预览代码块高亮 + 脏块缓存（接口见头文件）。
 #include "md_preview_highlight.h"
 
-#include "md_keyword_highlight.h"
+#include <ui_kit/text_highlight/md_keyword_highlight.h>
 
 #include <algorithm>
 #include <unordered_set>
@@ -95,8 +95,8 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
                                            contentDispStart,
                                        out.displayText.size() -
                                            static_cast<size_t>(contentDispStart));
-        const MdKeywordHighlight kw =
-            mdKeywordHighlight(content, out.lang, colors);
+        const ui_kit::text_highlight::MdKeywordHighlight kw =
+            ui_kit::text_highlight::mdKeywordHighlight(content, out.lang, colors);
         if (kw.supported) {
             // 词法器 runs 坐标 = content 内偏移 → 平移进 displayText 坐标系（升序不重叠由词法器保证）。
             out.runs.reserve(out.runs.size() + kw.runs.size());

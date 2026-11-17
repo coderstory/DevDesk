@@ -4,7 +4,7 @@
 #include "doctest.h"
 #include "core/theme.h"
 #include "ui_kit/text_highlight/md_highlight.h"
-#include "module_markdown/md_keyword_highlight.h"
+#include "ui_kit/text_highlight/md_keyword_highlight.h"
 
 #include <eui/types.h>
 
@@ -13,10 +13,10 @@
 #include <vector>
 
 using module::markdown::MdHighlightColors;
-using module::markdown::MdKeywordHighlight;
 using module::markdown::mdHighlightColors;
-using module::markdown::mdKeywordHighlight;
-using module::markdown::mdKeywordLangSupported;
+using ui_kit::text_highlight::MdKeywordHighlight;
+using ui_kit::text_highlight::mdKeywordHighlight;
+using ui_kit::text_highlight::mdKeywordLangSupported;
 
 namespace {
 

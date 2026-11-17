@@ -16,6 +16,7 @@
 #include "notepad_encoding.h"
 #include "notepad_file_io.h"
 #include "notepad_prefs.h"
+#include "notepad_protect.h"  // notepadCloseShouldIntercept（关窗 veto 裁决单点）
 #include "notepad_session.h"
 
 namespace module::notepad {
@@ -41,13 +42,16 @@ void applyLoadedState(NotepadSession& s, NotepadLoadedFile& loaded) {
     s.loadText = loaded.text;
     s.enc = loaded.enc;
     s.eolMode = loaded.eol;
+    s.loadEol = loaded.eol;
     s.mixedEol = loaded.mixedEol;
     s.hasBom = loaded.hasBom;
+    s.loadHasBom = loaded.hasBom;
     s.loadMtime = loaded.mtime;
     s.hasMtime = loaded.hasMtime;
     if (loaded.byteCount > kNotepadHugeFileBytes) {
         s.hugeFile = true;
         s.largeFile = true;
+        s.wrapOn = false;  // F-19：大文件模式强制关软换行（换行钮同口径禁用）
         s.readonly = true;
         s.readonlyReason = "文件超过 10MB，已只读打开";
         return;
@@ -73,8 +77,9 @@ void applyLoadedState(NotepadSession& s, NotepadLoadedFile& loaded) {
                            (loaded.enc.guessLabel != nullptr
                                 ? loaded.enc.guessLabel
                                 : "未知（推测）") +
-                           "），已只读打开";
+                           "）";
     }
+    if (s.largeFile) s.wrapOn = false;  // F-19：大文件模式强制关软换行（>1MB 可编辑档）
 }
 
 }  // namespace
@@ -100,7 +105,10 @@ void openNotepadWindow(const std::string& path) {
     s.normKey = norm;
     s.title = notepadWindowTitleFor(path);
     s.pageId = "notepad." + std::to_string(detail::nextPageIdSeq());
-    s.editorFontSize = notepadLoadPrefs().editorFontSize;
+    const NotepadPrefs prefs = notepadLoadPrefs();
+    s.editorFontSize = prefs.editorFontSize;
+    s.fontFamily = prefs.fontFamily;  // 空 = 系统默认（F-09）
+    s.wrapOn = prefs.wrap;            // F-19 状态层（渲染旋钮缺，见 session.h 注）
 
     // 流程 A2 异常分支：读失败仍开窗，窗内错误占位；窗口照开照关
     auto loaded = notepadLoadFile(path);
@@ -122,7 +130,6 @@ void openNotepadWindow(const std::string& path) {
     // 半透 alpha 不连坐子窗）、材质固定 None（全局磨砂/半透 backdrop 不贯通）、
     // 不吃全局 clearColor 广播（切档回填 alpha<1 会重新漏底）+ 内容不延伸进
     // 标题栏（主窗自绘壳的全局 FSCV 不连坐子窗，保原生标题栏条）。
-    const NotepadPrefs prefs = notepadLoadPrefs();
     eui::Color opaqueBackground = core::theme::current().colors.background;
     opaqueBackground.a = 1.0f;
     app::DslWindowConfig config;
@@ -141,8 +148,12 @@ void openNotepadWindow(const std::string& path) {
             notepadSessionWindowDestroyed(raw);  // 注销防悬垂 + 几何记忆落库
         })
         .onCloseRequested([raw](core::window::Handle) {
-            (void)raw;  // 未保存保护链批 4 挂载（F-05）；本批直通放行
-            return true;
+            // 未保存保护（F-05）：干净/已豁免（旗标消费）直通放行；脏 → 弹
+            // 该窗自己的三选并返回 false 拦截本次 close（GLFW/WM_CLOSE 不销毁）。
+            if (!notepadCloseShouldIntercept(*raw)) return true;
+            raw->protectOpen = true;
+            raw->protectQuitContext = false;  // 关窗语境：保存成功走 requestWindowClose
+            return false;
         })
         .onKeyEvent([raw](const eui::KeyEvent& key) {
             notepadHandleKeySession(*raw, key);

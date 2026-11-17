@@ -3787,8 +3787,8 @@ REGISTER_TEST(settings_card_registry_order,
         // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）；
         // 2026-10-27：壁纸开关收进插拔卡第 7 格，模块 tab 恒单卡（格不另立卡根）。
         // 置顶 BUG 复盘（09d8aa62）：插拔卡后追加「提醒弹窗」卡（双开关默认关）。
-        // F-10：md_assoc 无门控恒显，排在 reminder 之后；need260 半宽重排：
-        // reminder|md_assoc 成配对行（卡根转入 pair.0 子元素）。
+        // F-18：notepad_assoc 无门控恒显，排在 reminder 之后；need260 半宽重排：
+        // reminder|notepad_assoc 成配对行（卡根转入 pair.0 子元素）。
         const std::vector<std::string> wantModulesAll = {
             "settings.card.modules",
             "settings.cards.pair.0"};
@@ -3798,7 +3798,7 @@ REGISTER_TEST(settings_card_registry_order,
             pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
         const std::vector<std::string> wantModulesPairChildren = {
             "settings.card.reminder",
-            "settings.card.md_assoc"};
+            "settings.card.notepad_assoc"};
         DOCTEST_CHECK_MESSAGE(modulesPairChildren == wantModulesPairChildren,
                               "模块 tab 配对行子卡 实测：" +
                                   join(modulesPairChildren));
@@ -3824,7 +3824,7 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
             "settings.card.modules",
-            "settings.cards.pair.0"};  // need260：reminder|md_assoc 半宽配对行
+            "settings.cards.pair.0"};  // need260：reminder|notepad_assoc 半宽配对行
                                        //（两卡均无模块门控，恒显）
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));

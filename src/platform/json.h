@@ -86,11 +86,21 @@ private:
     void* data_ = nullptr;
 };
 
-// 解析错误详情（yyjson 原生 err.pos/msg 透出；消费方由 bytePos 数换行符得行号）
+// 解析错误详情（yyjson 原生 err.pos/msg 透出；消费方由 jsonLineColForPos 换行列）
 struct ParseDiag {
     size_t bytePos = 0;  // 解析失败处的字节偏移（成功时 0）
     std::string msg;     // yyjson 错误消息（成功时为空）
 };
+
+// 行/列（1 基；列按 Unicode 码点计，yyjson_locate_pos 语义，need263 clue #255）
+struct JsonLineCol {
+    size_t line = 1;
+    size_t col = 1;
+};
+
+// 字节偏移 → 行/列（yyjson_locate_pos 薄封装；bytePos 越界按文本末尾钳界，
+// 空文本 = 1/1）。记事本 JSON 格式化错误提示专用（F-11），记事本不直接碰 yyjson。
+JsonLineCol jsonLineColForPos(const std::string& text, size_t bytePos);
 
 // 解析。带 diag 重载填 ParseDiag（可为 nullptr）；单参版本行为与既往字节一致。
 core::Result<JsonValue> parse(const std::string& text, ParseDiag* diag);

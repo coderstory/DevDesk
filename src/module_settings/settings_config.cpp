@@ -41,9 +41,10 @@ constexpr const char* kKeyModuleDefaultsVersion = "moduleDefaultsVersion";
 // 用户显式关闭的默认模块（自校验豁免集，见 kModuleDefaultsVersion 注释）
 constexpr const char* kKeyUserDisabledModules = "userDisabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
-// 「关联 .md 文件」（F-10）：bool 直存；键缺失（存量库/旧版本升级）→ 默认关
-constexpr const char* kKeyMdAssocEnabled = "mdAssocEnabled";
-constexpr const char* kKeyMdAssocEverEnabled = "mdAssocEverEnabled";
+// 「记事本文件关联」（F-10 起家，F-18 改字段名 notepadAssoc*，键名沿用 F-10
+// 字面量保存量兼容）：bool 直存；键缺失（存量库/旧版本升级）→ 默认关
+constexpr const char* kKeyNotepadAssocEnabled = "mdAssocEnabled";
+constexpr const char* kKeyNotepadAssocEverEnabled = "mdAssocEverEnabled";
 constexpr const char* kKeyAccentTheme = "accentTheme";
 // 窗体记忆（UAT6）：还原态尺寸 0 = 无记录；sanitized 负值/越此上限归 0
 //（巨值/微值的可用性由恢复侧钳制链兜底，这里只防脏数据落账）
@@ -554,18 +555,18 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.sidebarCollapsed = v.value().asBool();
     }
-    // 「关联 .md 文件」（F-10）：键缺失（存量库/旧版本升级）→ 默认关/从未开过
-    if (auto raw = readRow(kKeyMdAssocEnabled); raw.isOk()) {
-        auto v = parseRow(configKey(kKeyMdAssocEnabled), raw.value());
+    // 「记事本文件关联」（F-18）：键缺失（存量库/旧版本升级）→ 默认关/从未开过
+    if (auto raw = readRow(kKeyNotepadAssocEnabled); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyNotepadAssocEnabled), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
             v.errorCode(), v.errorMessage());
-        if (v.value().isBool()) cfg.mdAssocEnabled = v.value().asBool();
+        if (v.value().isBool()) cfg.notepadAssocEnabled = v.value().asBool();
     }
-    if (auto raw = readRow(kKeyMdAssocEverEnabled); raw.isOk()) {
-        auto v = parseRow(configKey(kKeyMdAssocEverEnabled), raw.value());
+    if (auto raw = readRow(kKeyNotepadAssocEverEnabled); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyNotepadAssocEverEnabled), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
             v.errorCode(), v.errorMessage());
-        if (v.value().isBool()) cfg.mdAssocEverEnabled = v.value().asBool();
+        if (v.value().isBool()) cfg.notepadAssocEverEnabled = v.value().asBool();
     }
     // 窗体记忆（UAT6）：键缺失（首启动/旧版本升级）→ 默认 0/0/false = 无记录
     if (auto raw = readRow(kKeyWindowRestoreWidth); raw.isOk()) {
@@ -715,8 +716,8 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyMcpPort, platform::json::makeInt(cfg.mcpPort)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
-        {kKeyMdAssocEnabled, platform::json::makeBool(cfg.mdAssocEnabled)},
-        {kKeyMdAssocEverEnabled, platform::json::makeBool(cfg.mdAssocEverEnabled)},
+        {kKeyNotepadAssocEnabled, platform::json::makeBool(cfg.notepadAssocEnabled)},
+        {kKeyNotepadAssocEverEnabled, platform::json::makeBool(cfg.notepadAssocEverEnabled)},
         {kKeyAccentTheme, platform::json::makeString(cfg.accentTheme)},
         {kKeyWindowRestoreWidth, platform::json::makeInt(cfg.windowRestoreWidth)},
         {kKeyWindowRestoreHeight, platform::json::makeInt(cfg.windowRestoreHeight)},

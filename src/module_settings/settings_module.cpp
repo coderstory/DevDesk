@@ -18,8 +18,8 @@
 #include "project_card_store.h"
 #include "project_cards_card.h"
 #include "settings_ui_logic.h"
-#include "md_assoc_card.h"        // drawMdAssocCard（F-10 开关行卡）
-#include "md_assoc_logic.h"       // 状态字四态 / 卡高契约（F-10/F-11 判定）
+#include "notepad_assoc_card.h"   // drawNotepadAssocCard（F-18 开关行卡）
+#include "notepad_assoc_logic.h"  // 状态字四态 / 卡高契约 / 未生效摘要（F-18 判定）
 #include "platform/open_settings.h"  // oneClickAvailable（引导行卡高平台档）
 
 #include "core/claude_proxy_service.h"
@@ -95,8 +95,8 @@ enum class CardHeightKind {
     FillRemainder,
     GithubSync,   // 恒满高（UAT4 起不按启用态折叠；UAT5 方案 A 三段式，见 kGithubSyncCardHeight）
     ModulesGrid,  // 模块插拔卡：格数 × 列数派生（modulesCardHeightFor，>1.15 档降单列）
-    MdAssoc,      // 动态高（F-10）：状态字未生效时引导行有无 + 平台档（Win 按钮
-                  // 行盒 28 / mac 文字行盒 16）→ compose 按四态算好传 mdAssocH
+    NotepadAssoc, // 动态高（F-18）：状态字未生效时引导行有无 + 平台档（Win 按钮
+                  // 行盒 28 / mac 文字行盒 16）→ compose 按四态算好传 notepadAssocH
 };
 
 struct CardSpec {
@@ -137,12 +137,14 @@ const CardSpec kCardSpecs[] = {
     // 语义是 release 行为而非模块启停，release 关时卡保留。
     {kTabModules, "settings.card.reminder", nullptr, CardHeightKind::Fixed,
      kReminderCardHeight, false, /*half=*/true, &drawReminderCard, nullptr},
-    // 「关联 .md 文件」卡（F-10）：模块 tab 末位半宽配对右卡（应用级能力开关，
-    // 壁纸开关已入插拔卡，同 tab 语义先例）。卡高动态（引导带有无/平台档），
-    // compose 按状态字四态算好传 mdAssocH；模块 tab 零滚动预算见 need260 §6
-    // （默认 402 / Win 引导 414 ≤ 可用 420，含旧设计溢出的引导态）。
-    {kTabModules, "settings.card.md_assoc", nullptr, CardHeightKind::MdAssoc,
-     0.0f, false, /*half=*/true, &drawMdAssocCard, nullptr},
+    // 「记事本文件关联」卡（F-18，need263 批 4 棒 B，接管退役的 md 关联卡）：
+    // 模块 tab 末位半宽配对右卡（应用级能力开关，壁纸开关已入插拔卡，同 tab
+    // 语义先例）。卡高动态（引导带有无/平台档），compose 按状态字四态算好传
+    // notepadAssocH；模块 tab 零滚动预算见 need260 §6（默认 402 / Win 引导
+    // 414 ≤ 可用 420，含旧设计溢出的引导态）。
+    {kTabModules, "settings.card.notepad_assoc", nullptr,
+     CardHeightKind::NotepadAssoc,
+     0.0f, false, /*half=*/true, &drawNotepadAssocCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
@@ -697,44 +699,67 @@ public:
 
     // ── GitHub Sync 操作方法 ──
 
-    // ── 「关联 .md 文件」开关（F-10）──
-    // 开 = 恢复登记（platform setAsDefaultForMd）→ 写后回查 isDefaultForMd，
-    // 回读归本应用才显「已关联」；仍非 ours（others/unknown）→「未生效」+
-    // 平台引导（F-07 判定规则：写入成功≠行为生效，一切以查询回读为准）。
-    // 关 = 仅落盘停自愈，不注销已有关联（D-4）；mdAssocEverEnabled 只置位不
-    // 翻转（关+曾开过=「已停止自动维护」判据）。
-    void applyMdAssocEnabled(bool on) {
+    // ── 「记事本文件关联」开关（F-18，接管 F-10）──
+    // 开 = 全清单登记（platform setAsDefaultFor，含旧 DevDesk.md 注册迁移）→
+    // 写后聚合回查 overallState，归本应用才显「已关联」；仍非 ours（others/
+    // unknown）→「未生效」+ 平台引导（F-07 判定规则：写入成功≠行为生效，一切
+    // 以查询回读为准）。
+    // 关 = 落盘停自愈 + 撤销已注册关联（F-18 新语义「关闭=撤销」，老板
+    // 2026-11-17 裁；仅回读归己才清不误删他者；macOS 无注销 API 如实失败日志）；
+    // notepadAssocEverEnabled 只置位不翻转（关+曾开过=「已停止自动维护」判据）。
+    void applyNotepadAssocEnabled(bool on) {
         if (on) {
-            if (auto w = platform::file_association::setAsDefaultForMd();
+            if (auto w = platform::file_association::setAsDefaultFor();
                 w.isFail()) {
-                LOG_WARN("Settings: .md 关联恢复登记失败: " + w.errorMessage());
+                LOG_WARN("Settings: 记事本关联登记失败: " + w.errorMessage());
             }
-            if (auto q = platform::file_association::isDefaultForMd();
-                q.isOk()) {
-                mdAssocState_ = q.value();
-            }
-            mdAssocQueryAtSec_ = nowSec();
-            cfg_.mdAssocEnabled = true;
-            cfg_.mdAssocEverEnabled = true;
+            cfg_.notepadAssocEnabled = true;
+            cfg_.notepadAssocEverEnabled = true;
         } else {
-            cfg_.mdAssocEnabled = false;
+            cfg_.notepadAssocEnabled = false;
+            if (auto u = platform::file_association::unregisterAll(); u.isFail()) {
+                LOG_WARN("Settings: 撤销已注册关联失败（macOS 无注销 API 属预期，"
+                         "关闭语义=停止自愈）: " + u.errorMessage());
+            }
         }
+        refreshNotepadAssocState();
         if (auto r = store_->save(cfg_); r.isFail()) {
-            LOG_WARN("Settings: 保存 .md 关联开关失败: " + r.errorMessage());
+            LOG_WARN("Settings: 保存记事本关联开关失败: " + r.errorMessage());
         }
-        LOG_INFO(std::string("Settings: 关联 .md 文件已") +
-                 (on ? "开启（已请求恢复登记，状态以回读为准）" : "关闭（停止启动自愈）"));
+        LOG_INFO(std::string("Settings: 记事本文件关联已") +
+                 (on ? "开启（已请求全量登记，状态以回读为准）"
+                     : "关闭（撤销已注册关联/停自愈，以平台能力为准）"));
     }
 
-    // F-10 回显节流回查（PRD §八「打开设置页/重获焦点时回读校正」）：见 compose
-    // 调用点 POC 结论注释。查询失败保持上次快照（PRD §八错误态：显示本地已知值）。
-    void updateMdAssocStateIfStale() {
-        const int64_t now = nowSec();
-        if (now - mdAssocQueryAtSec_ < 1) return;
-        mdAssocQueryAtSec_ = now;
-        if (auto q = platform::file_association::isDefaultForMd(); q.isOk()) {
-            mdAssocState_ = q.value();
+    // 聚合 + 逐扩展回读快照刷新（compose 节流回查与开关动作共用单点）
+    void refreshNotepadAssocState() {
+        if (auto q = platform::file_association::overallState(); q.isOk()) {
+            notepadAssocState_ = q.value();
         }
+        const auto pc = platform::file_association::productionConfig();
+        if (notepadExtStates_.size() != pc.extensions.size()) {
+            notepadExtStates_.assign(pc.extensions.size(),
+                                     platform::file_association::AssocState::Unknown);
+        }
+        for (size_t i = 0; i < pc.extensions.size(); ++i) {
+            if (auto s = platform::file_association::isDefaultFor(pc.extensions[i]);
+                s.isOk()) {
+                notepadExtStates_[i] = s.value();
+            }
+        }
+        notepadGuideText_ = notepadAssocFailingSummary(pc.extensions,
+                                                       notepadExtStates_);
+        notepadAssocQueryAtSec_ = nowSec();
+    }
+
+    // F-10 起家的回显节流回查（PRD §八「打开设置页/重获焦点时回读校正」）：
+    // 见 compose 调用点 POC 结论注释。查询失败保持上次快照（PRD §八错误态：
+    // 显示本地已知值）。关+从未开过 = 状态字不渲染 → 整个查询跳过（零系统触达）。
+    void updateNotepadAssocStateIfStale() {
+        if (!cfg_.notepadAssocEnabled && !cfg_.notepadAssocEverEnabled) return;
+        const int64_t now = nowSec();
+        if (now - notepadAssocQueryAtSec_ < 1) return;
+        refreshNotepadAssocState();
     }
 
     void applyGithubSyncEnabled(bool on) {
@@ -1264,30 +1289,35 @@ public:
                 svc->lastSyncWarnings().size(), 2);
         }
         const float proxyH = proxyCardHeightFor(warnLines);
-        // F-10 回显（PRD §八）：设置页可见期间以平台回读校正状态字（先显本地值
-        // 同帧用回读值画，无加载态）。POC 结论（实现期核实）：EUI-NEO 有
+        // F-10 起家的回显（PRD §八）：设置页可见期间以平台回读校正状态字（先显
+        // 本地值同帧用回读值画，无加载态）。POC 结论（实现期核实）：EUI-NEO 有
         // core::window::windowIsFocused（window_backend.h:53），但 DevDesk 侧
         // 模块拿不到 runtime 句柄（src 全仓零消费先例）→ 降级 = compose 节流
         // 重查：设置页 compose 只在本页可见时发生，注册表查询毫秒级，1s 节流
         // 下用户在页期间的归属漂移 ≤1s 被校正，可观察行为与焦点方案一致。
-        updateMdAssocStateIfStale();
-        const bool mdAssocGuide =
-            mdAssocStatusKind(cfg_.mdAssocEnabled, cfg_.mdAssocEverEnabled,
-                              mdAssocState_) == MdAssocStatusKind::NotEffective;
-        const bool mdAssocOneClick =
+        updateNotepadAssocStateIfStale();
+        const bool notepadAssocGuide =
+            notepadAssocStatusKind(cfg_.notepadAssocEnabled,
+                                   cfg_.notepadAssocEverEnabled,
+                                   notepadAssocState_) ==
+            NotepadAssocStatusKind::NotEffective;
+        const bool notepadAssocOneClick =
             platform::open_settings::oneClickAvailable();
-        // review P2-1：mac 文字引导档卡高随实测行数派生（600 最小窗/130% 字号
-        // 38 字指引超两行）。卡宽 = 配对列宽（ui_kit::columnX 半宽口径，与
-        // drawCardRegion :1751 同源），行数实测与卡绘制共用 md_assoc_card.h 函数。
-        int mdAssocTextLines = 2;
-        if (mdAssocGuide && !mdAssocOneClick) {
+        // review P2-1（承接 md 卡）：mac 文字引导档卡高随实测行数派生（600 最小
+        // 窗/130% 字号指引超两行）。卡宽 = 配对列宽（ui_kit::columnX 半宽口径，
+        // 与 drawCardRegion 同源），行数实测与卡绘制共用 notepad_assoc_card.h
+        // 函数；文案 = notepadAssocMacGuideText 组装（logic.h 单一来源）。
+        int notepadAssocTextLines = 2;
+        if (notepadAssocGuide && !notepadAssocOneClick) {
             float mdCardW = contentW;
             ui_kit::columnX(contentW, t.sizes.spacing, &mdCardW, nullptr);
-            mdAssocTextLines =
-                mdAssocMacGuideLineCount(mdCardW);
+            notepadAssocTextLines =
+                notepadAssocMacGuideLineCount(
+                    mdCardW, notepadAssocMacGuideText(notepadGuideText_));
         }
-        const float mdAssocH = roundFs(
-            mdAssocCardHeight(mdAssocGuide, mdAssocOneClick, mdAssocTextLines));
+        const float notepadAssocH = roundFs(
+            notepadAssocCardHeight(notepadAssocGuide, notepadAssocOneClick,
+                                   notepadAssocTextLines));
         // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
         // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 签 claude + mcp。
         const bool claudeOn =
@@ -1391,9 +1421,9 @@ public:
                                         // MCP 门控态必须进签名：模块 Tab 打开 mcp → 回通用
                                         // Tab 时命中旧内容高缓存会裁掉 514 高的开启态内容
                                         (mcpOn ? "M" : "m") +
-                                        // F-10 引导行有无必须进签名：状态字生效切换时
-                                        // mdAssoc 卡高变，旧缓存高失真（字母 D 避让 mcpOn 的 M/m）
-                                        (mdAssocGuide ? "D" : "d") +
+                                        // F-18 引导行有无必须进签名：状态字生效切换时
+                                        // notepad 关联卡高变，旧缓存高失真（字母 D 避让 mcpOn 的 M/m）
+                                        (notepadAssocGuide ? "D" : "d") +
                                         ".c" +
                                         std::to_string(static_cast<int>(
                                             pairColW + 0.5f)) +
@@ -1410,7 +1440,7 @@ public:
                                 drawCardRegion(inner, contentWidth,
                                                scrollRootPageY, cardsH,
                                                screen.height, t, proxyH,
-                                               mdAssocH, svc);
+                                               notepadAssocH, svc);
                             })
                             .build();
                     })
@@ -1603,7 +1633,7 @@ private:
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
         a.applyAutostartEnabled = [this](bool on) { applyAutostartEnabled(on); };
         a.applyFluidBackgroundEnabled = [this](bool on) { applyFluidBackgroundEnabled(on); };
-        a.applyMdAssocEnabled = [this](bool on) { applyMdAssocEnabled(on); };
+        a.applyNotepadAssocEnabled = [this](bool on) { applyNotepadAssocEnabled(on); };
         a.requestLogTailReload = [this] { logTailDirty_ = true; };
         a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };
 
@@ -1653,7 +1683,7 @@ private:
     // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 警告行数推导；FillRemainder = 剩余视口高。
     // 非 static：McpCard 档要读成员（mcpCardHeightFor）
     float cardHeight(const CardSpec& spec, float proxyH,
-                     float mdAssocH, float remain) {
+                     float notepadAssocH, float remain) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
             // spec.height 是 100% 档基准，运行期随生效字号放大：卡高不同步放大就会把尾行挤出卡外。
@@ -1662,9 +1692,9 @@ private:
             return proxyH;
         case CardHeightKind::McpCard:
             return mcpCardHeightFor();
-        case CardHeightKind::MdAssoc:
+        case CardHeightKind::NotepadAssoc:
             // F-10：compose 按状态字四态 + 平台档算好（roundFs 已含）
-            return mdAssocH;
+            return notepadAssocH;
         case CardHeightKind::FillRemainder:
             // UAT6 零滚动收口：日志 tab 在最小窗（1000×640 → 卡区可用高 372）下
             // remain = 372 − roundFs(144) − gap 16 = 212——旧下限 260 > 212 把日志
@@ -1697,7 +1727,7 @@ private:
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
-                        float mdAssocH, ::core::IClaudeProxyService* svc) {
+                        float notepadAssocH, ::core::IClaudeProxyService* svc) {
         // logTail_ 保持原始不预过滤——过滤在装配期做，切档零额外磁盘 IO、下一帧立即生效；
         // 若在 readLogTailLines/applyLogTail 里过滤，切到低级别要重读磁盘才能看到更多行。
         auto filteredLogTail = filterLogTailByLevel(logTail_, parseLogLevel(cfg_.logLevel));
@@ -1748,7 +1778,9 @@ private:
         in.projectCardStatus = projectCardStatus_;
         in.projectCardStatusError = projectCardStatusError_;
         // .md 文件关联（F-10）：回读归属快照（compose 节流查询写入）
-        in.mdAssocState = mdAssocState_;
+        in.notepadAssocState = notepadAssocState_;
+        in.notepadExtStates = notepadExtStates_;
+        in.notepadGuideText = notepadGuideText_;
         const SettingsCardActions a = cardActions();
         // 卡与卡纵向间距统一 8px（列表统一规范 §4.3：禁 ≥16 松散档）；
         // 半宽配对横向列距同值（columnX 单一来源口径，注释见 :1661）
@@ -1768,7 +1800,7 @@ private:
         // 落单半宽卡：直接作内容列子元素（列起始对齐 START → x=0，宽 = colW）。
         auto flushLoneHalf = [&]() {
             if (pendingHalf == nullptr) return;
-            const float h = cardHeight(*pendingHalf, proxyH, mdAssocH,
+            const float h = cardHeight(*pendingHalf, proxyH, notepadAssocH,
                                       cardsH - cardY);
             CardDrawArgs args{ui, pendingHalf->id, colW, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
@@ -1781,9 +1813,9 @@ private:
         // 右卡矮于行高时下方自然留白，不拉伸）。对内两卡 pageY 同为行顶（openUp 几何一致）。
         auto flushHalfPair = [&](const CardSpec& rightSpec) {
             const CardSpec& leftSpec = *pendingHalf;
-            const float hL = cardHeight(leftSpec, proxyH, mdAssocH,
+            const float hL = cardHeight(leftSpec, proxyH, notepadAssocH,
                                         cardsH - cardY);
-            const float hR = cardHeight(rightSpec, proxyH, mdAssocH,
+            const float hR = cardHeight(rightSpec, proxyH, notepadAssocH,
                                         cardsH - cardY);
             const float rowH = std::max(hL, hR);
             const float rowY = cardY;
@@ -1824,7 +1856,7 @@ private:
             }
             flushLoneHalf();   // 全宽卡先清掉挂起的半宽游标
             const float h =
-                cardHeight(spec, proxyH, mdAssocH, cardsH - cardY);
+                cardHeight(spec, proxyH, notepadAssocH, cardsH - cardY);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
                               in, a};
@@ -1956,10 +1988,13 @@ private:
 
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
-    // .md 文件关联（F-10）：回读归属快照 + 节流戳（仅 UI 线程读写，compose 消费）
-    platform::file_association::AssocState mdAssocState_ =
+    // 记事本文件关联（F-18，接管 F-10）：聚合回读快照 + 逐扩展快照 + 未生效
+    // 摘要 + 节流戳（仅 UI 线程读写，compose 消费）
+    platform::file_association::AssocState notepadAssocState_ =
         platform::file_association::AssocState::Unknown;
-    int64_t mdAssocQueryAtSec_ = 0;  // 上次回读时刻（nowSec 秒）；0=从未查过（首帧即查）
+    std::vector<platform::file_association::AssocState> notepadExtStates_;
+    std::string notepadGuideText_;
+    int64_t notepadAssocQueryAtSec_ = 0;  // 上次回读时刻（nowSec 秒）；0=从未查过（首帧即查）
     // GitHub Sync
     std::unique_ptr<GithubSyncStore> githubSyncStore_;
     GithubSyncConfig githubSyncCfg_;

@@ -43,6 +43,9 @@ add_library(devdesk_ui_kit STATIC
     text_highlight/md_fence_scan.cpp
     text_highlight/md_highlight.cpp
     text_highlight/code_lexers.cpp
+    # LangSpec 代码关键字词法器（need263 批 2）自 module_markdown 迁入：9 类
+    # 表驱动单入口，module_markdown 预览与 module_notepad 共用。
+    text_highlight/md_keyword_highlight.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)

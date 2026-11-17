@@ -87,6 +87,14 @@ add_executable(devdesk_tests
     # ui_kit/text_highlight 五类代码词法扫描器（need:10 批次三）
     test_modules/test_text_highlight_lexers.cpp
     test_modules/test_md_keyword_highlight.cpp
+    # need263 批 2：notepad 语言映射单一真源 + per-line 高亮 provider
+    test_modules/test_notepad_language.cpp
+    # need263 批 2 棒 2：查找/替换纯函数引擎（findAll/环绕/大小写/全词/CJK/
+    # F-07 落点锁全边界/replaceAll 计数/mergeRuns 切分）
+    test_modules/test_notepad_find.cpp
+    # need263 批 3 棒 B：F-11 JSON 格式化（parse→stringify 幂等/键序/行列换算
+    # 边界）+ F-13 预览态工具条联动矩阵（纯函数）
+    test_modules/test_notepad_preview.cpp
     test_modules/test_md_file_open.cpp
     test_modules/test_md_keyboard.cpp
     test_modules/test_md_block_model.cpp
@@ -191,7 +199,8 @@ add_executable(devdesk_tests
     # 需-11 项目卡设置卡：表单/列表/删除门控/按钮回调/卡高几何（无头 compose）
     test_modules/test_project_cards_card.cpp
     test_modules/test_local_git_probe.cpp
-    test_modules/test_md_assoc_logic.cpp
+    # F-18 记事本关联纯逻辑（接管退役 test_md_assoc_logic.cpp）
+    test_modules/test_notepad_assoc.cpp
     test_modules/test_settings.cpp    test_modules/test_terminal_keyencoder.cpp
     test_modules/test_terminal_controller.cpp
     test_modules/test_terminal_metrics.cpp
@@ -259,6 +268,9 @@ add_executable(devdesk_tests
     # 编码回写纯函数无头直测（断言面 = 技术方案卡 §十一）
     test_modules/test_notepad_file_types.cpp
     test_modules/test_notepad_encoding.cpp
+    # need:263 批 4 棒 A：未保存保护纯决策层（三选映射/veto 裁决+豁免一次性
+    # 消费/quit guard 扫描三态，clue #269 穷尽路径纯函数面）
+    test_modules/test_notepad_protect.cpp
     # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
     test_modules/test_mcp_settings.cpp
     test_modules/test_mcp_service.cpp
@@ -285,12 +297,11 @@ add_executable(devdesk_tests
     # need:132 审查打回轮：字体度量本端门禁 doctest（资产指纹/测宽 hash/回退链序
     # 三件断言，见文件头注释；hash 基线常量变更须显式过 review）
     unit/font_metrics_gate.cpp
-    # need:266 系统字体族枚举本端门禁 doctest（枚举非空/去重/白名单外族名真解析，
-    # 与 EUI-NEO tests/unit/system_font_families.cpp 同构，见该文件头注释）
-    # ⚠ 暂时停用（2026-11-16）：该用例依赖 EUI-NEO feat/system-font-enum 分支的
-    # TextPrimitive::systemFontFamilies（need266 尚未合入 main），在 main 上编不过，
-    # 会把整条 macOS 构建链拖红。源文件保留，need266 合并进 main 后取消注释。
-    # unit/system_font_gate.cpp
+    # need:266 系统字体族枚举本端门禁 doctest（枚举非空/常见家族命中/按名
+    # resolve 到真实字体文件，与 EUI-NEO tests/unit/system_font_families.cpp
+    # 同构）。2026-11-16 曾因依赖未合入 main 的 feat/system-font-enum 停用；
+    # need266 已合入（EUI dadd536 / DevDesk 5d205f9c 指针）→ 恢复（clue 270）。
+    unit/system_font_gate.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，

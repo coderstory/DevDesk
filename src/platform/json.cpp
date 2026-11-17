@@ -321,6 +321,20 @@ core::Result<JsonValue> parse(const std::string& text) {
     return parse(text, nullptr);
 }
 
+JsonLineCol jsonLineColForPos(const std::string& text, size_t bytePos) {
+    JsonLineCol out;
+    if (text.empty()) return out;
+    const size_t pos =
+        bytePos > text.size() ? text.size() : bytePos;  // 越界钳界（yyjson 对 pos>len 返回全 0）
+    size_t line = 0;
+    size_t col = 0;
+    size_t chr = 0;
+    yyjson_locate_pos(text.data(), text.size(), pos, &line, &col, &chr);
+    out.line = line > 0 ? line : 1;
+    out.col = col > 0 ? col : 1;
+    return out;
+}
+
 // 序列化（yyjson writer）。字节级期望值见 implToMut 注释与 snapshot 用例
 core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
     yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);

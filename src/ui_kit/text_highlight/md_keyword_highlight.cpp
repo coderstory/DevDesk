@@ -8,7 +8,12 @@
 #include <unordered_set>
 #include <utility>
 
-namespace module::markdown {
+namespace ui_kit::text_highlight {
+
+// MdHighlightColors 定义在 md_highlight.h（module::markdown namespace），
+// using 引入一次，本文件内部未限定名零改。
+using module::markdown::MdHighlightColors;
+
 namespace {
 
 char toLowerAscii(char c) {
@@ -524,4 +529,4 @@ MdKeywordHighlight mdKeywordHighlight(std::string_view code,
     return out;
 }
 
-} // namespace module::markdown
+} // namespace ui_kit::text_highlight

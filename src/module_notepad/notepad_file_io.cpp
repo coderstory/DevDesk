@@ -90,9 +90,12 @@ void notepadSaveSession(NotepadSession& s) {
         LOG_WARN("记事本保存失败: " + s.path + " " + result.errorMessage());
         return;
     }
-    // 落盘成功：基线/镜像前移 + mtime 重取（原子替换后必变），脏态清零（标题联动）
+    // 落盘成功：基线/镜像前移（含编码/行尾基线——状态栏点切脏判定基准）+
+    // mtime 重取（原子替换后必变），脏态清零（标题联动）
     s.rawBytes = bytes;
     s.loadText = s.editText;
+    s.loadHasBom = s.hasBom;
+    s.loadEol = s.eolMode;
     std::error_code ec;
     const auto mtime = std::filesystem::last_write_time(p, ec);
     if (ec) {

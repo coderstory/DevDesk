@@ -9,9 +9,11 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "notepad_encoding.h"
+#include "notepad_find.h"  // FindHit / kFindNoHit（查找态字段集）
 
 // eui::Ui / Screen / KeyEvent 在 EUI-NEO 里是 core::dsl 的**类型别名**
 //（eui/dsl.h:9-10、types.h:36），不可在本头前向声明 class/struct——那会撞成
@@ -48,12 +50,19 @@ struct NotepadSession {
     bool hasMtime = false;   // mtime 取到才启用保存前拦截
     bool seeded = false;     // InputState 首帧播种旗标（每窗一次）
     int editorFontSize = 14; // 编辑字号（开窗时从 notepad_prefs 取，批 3 接 A-/A+）
+    std::string fontFamily;  // 编辑字体族（空 = 系统默认；F-09，开窗从 prefs 取）
+    bool wrapOn = true;      // 自动换行偏好（F-19；渲染级 = EUI InputBuilder.softWrap
+                             // 旋钮，notepad.btnWrap 钮接管；大文件模式载入强制关）
+    bool previewOn = false;  // F-13 md 预览整页切换（.md/.markdown 会话；切换不动
+                             // 编辑 InputState → 切回光标/滚动保留）
 
     // ── 编码 / 行尾（notepad_encoding 探测结果）──
     NotepadEncodingProbe enc{};
     NotepadEol eolMode = NotepadEol::Lf;
     bool mixedEol = false;   // 载入时混合行尾（保存策略见 notepad_file_io）
-    bool hasBom = false;     // UTF-8 BOM 保留（保存回写）
+    bool hasBom = false;     // UTF-8 BOM 保留（保存回写；状态栏点切 F-15）
+    bool loadHasBom = false; // 载入基线 BOM（点切回翻 = 回到干净态的脏判定基线）
+    NotepadEol loadEol = NotepadEol::Lf;  // 载入基线行尾（同上）
     bool largeFile = false;  // >1MB：关高亮+关 wrap（高亮/wrap 开关批 3 消费），可编辑
     bool hugeFile = false;   // >10MB：只读降级
 
@@ -63,6 +72,37 @@ struct NotepadSession {
     bool binarySuspect = false;  // F-14 二进制拒编分支（三选「仍要打开」批 4）
 
     bool dirty = false;
+
+    // ── 未保存保护链（批 4 棒 A，F-05；纯决策面在 notepad_protect.{h,cpp}）──
+    bool skipCloseConfirm = false;   // 「不保存」一次性豁免：置位后下一次关窗
+                                     // 请求直通放行并消费；再编辑（setDirty(true)）作废
+    bool protectOpen = false;        // 未保存三选弹窗待决（该窗 Ui 树内渲染）
+    bool protectQuitContext = false; // 弹窗语境：false=关窗 veto，true=退出 guard
+                                     // （决定三选回调走 requestWindowClose 还是
+                                     // requestExit 再入队，clue #269）
+
+    // ── 查找替换态（F-06/F-07/F-08，tech 卡 §二 search；会话内隔离，多窗互不影响）──
+    // 重开留词：query 在查找条关闭后仍保留（F-06 会话内保留 = session 字段）。
+    struct NotepadFindState {
+        bool visible = false;             // 查找条开（M+F 开 / Esc 关）
+        std::string query;                // 输入框实时词（关条不清）
+        std::string appliedQuery;         // 已应用词（输入即重算门控；关条清空 → 重开强制重算）
+        bool caseSensitive = false;       // 大小写开关（批 2 默认关；UI 切换批 3 收敛）
+        bool wholeWord = false;           // 全词开关（同上）
+        bool replaceOpen = false;         // 替换行展开
+        std::string replaceWith;          // 替换输入框实时词
+        std::vector<FindHit> hits;        // 命中集（appliedQuery ∘ textRevision 域）
+        size_t cur = kFindNoHit;          // 当前命中下标（kFindNoHit = 无）
+        unsigned long long hitsRevision = 0;  // hits 对应的 InputState.textRevision
+        bool styleDirty = false;          // 开关条后命中层缓存失效待消费（compose bump styleRevision）
+        bool pendingSeed = false;         // 开条后首帧播种输入框（键路由置位，compose 消费）
+        int pendingJump = 0;              // 待跳转 +1/-1（键路由置位，compose 消费——
+                                          // 键事件处理器无 Ui 访问权，InputState 直写单点在 compose）
+    };
+    NotepadFindState find;
+
+    // ── 语法高亮语言（notepad_language 映射；compose 懒求值一次，空 = None 纯文本）──
+    std::string language;
 
     // ── 会话内轻提示（自管 1.5s 窗口；不用 ui_kit 单例 toast 态，多窗互不覆盖）──
     std::string toastMessage;
@@ -97,6 +137,25 @@ void sessionToast(NotepadSession& s, const std::string& message);
 
 // 脏态切换单点：更新 dirty + 窗口标题「• 」前缀联动（setWindowTitle）。
 void sessionSetDirty(NotepadSession& s, bool dirty);
+
+// ── 批 3 棒 B（F-11/F-13）按扩展名的按钮矩阵 + 工具条联动（设计稿 §4.2/§4.6；
+// 纯函数可直测）────────────────────────────────────────────────────────────
+
+// 会话扩展名判据：normKey 尾缀匹配（ext 传小写字面量如 ".json"；normKey 保留
+// 原 casing，ASCII 大小写折叠后比对——core::notepad notepadAsciiLower 同源折叠）。
+bool notepadSessionHasExtension(const NotepadSession& s, std::string_view lowerExt);
+
+// 工具条联动矩阵（compose 消费 + 测试直测）。editable 口径 = compose 同款
+//（!loadError && !readonly && !binarySuspect），由本函数内部推导，调用方不再传。
+struct NotepadToolbarMatrix {
+    bool showFormat = false;         // 仅 .json 扩展（F-11）
+    bool showPreview = false;        // 仅 .md/.markdown 扩展（F-13）
+    bool formatEnabled = false;      // 可编辑且非预览态（readonly/binary/预览禁用）
+    bool previewEnabled = false;     // 大文件禁用（1MB 级渲染成本未证，PRD F-16 降级）
+    bool findToggleEnabled = true;   // 预览态 M+F 禁用（§4.6 查找禁用）
+    bool fontControlsEnabled = true; // 预览态字体下拉/A± 禁用（§4.6）
+};
+NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s);
 
 // ── 窗口装配面（notepad_window.cpp 实现）────────────────────────────
 // compose（工具条 44 / 提示条 32 条件 / 编辑区 flex / 状态栏 28，设计稿 §1.2）。

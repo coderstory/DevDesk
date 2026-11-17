@@ -125,12 +125,13 @@ struct SettingsConfig {
     std::string accentTheme = "clay";
     // true = 启动恢复 72px 图标栏；运行时切换在 app_sidebar，经 SettingsStore 持久化到这里。
     bool sidebarCollapsed = false;
-    // 「关联 .md 文件」开关（F-10，PRD 默认关）：持久化的是用户意图；真值 =
-    // 平台查询回读（F-07 判定规则：写入成功≠行为生效，设置页回显以回读校正）。
-    bool mdAssocEnabled = false;
+    // 「记事本文件关联」开关（F-18，need263 批 4 棒 B，接管 F-10 单 .md 版）：
+    // 持久化的是用户意图；真值 = 平台聚合查询回读（F-07 判定规则：写入成功≠
+    // 行为生效，设置页回显以回读校正）。DB 键名沿用 F-10 时代字面量（存量兼容）。
+    bool notepadAssocEnabled = false;
     // 是否曾开启过（状态字四态判据：关+曾开过=「已停止自动维护」/关+从未开过=
-    // 无状态字）。只置位不翻转：开路径置 true，关路径不动（D-4）。
-    bool mdAssocEverEnabled = false;
+    // 无状态字）。只置位不翻转：开路径置 true，关路径不动。
+    bool notepadAssocEverEnabled = false;
     // 窗体记忆（UAT6）：上次退出时的还原态客户区尺寸（逻辑单位）+ 最大化标志；0 = 无记录
     //（首次启动 / 异常退出未落盘），启动回退默认尺寸。恢复钳制链见
     // core/window_layout::restoreInitialWindow；sanitized 负值/越上限归 0
@@ -211,7 +212,7 @@ public:
     //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
     // 批加 fluidBackgroundEnabled；默认模块迁移加 moduleDefaultsVersion；MCP 批
     // 加 mcpPort；池 bug246 加 userDisabledModules；F-10 加 mdAssocEnabled/
-    // mdAssocEverEnabled。键数断言同步在 test_mcp_settings
+    // mdAssocEverEnabled（键名沿用至 F-18 notepadAssoc* 字段）。键数断言同步在 test_mcp_settings
     // mcp_settings_save_load_roundtrip_19_keys（用例名保留）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;

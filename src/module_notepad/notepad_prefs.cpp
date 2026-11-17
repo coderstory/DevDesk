@@ -56,8 +56,17 @@ NotepadPrefs notepadLoadPrefs() {
     out.posSet = get(kKeyPosSet) == "1";
     out.fontFamily = get(kKeyFontFamily);
     out.wrap = get(kKeyWrap) != "0";  // 缺省=开
-    out.editorFontSize = clampInt(get(kKeyEditorFontSize), 14, 12, 20);
+    out.editorFontSize = clampInt(get(kKeyEditorFontSize), 14, 10, 32);
     return out;
+}
+
+void notepadSaveEditorPrefs(const std::string& fontFamily, bool wrap,
+                            int editorFontSize) {
+    core::data::SqliteDb* db = core::appDatabase();
+    if (db == nullptr) return;
+    setKey(*db, kKeyFontFamily, fontFamily);
+    setKey(*db, kKeyWrap, wrap ? "1" : "0");
+    setKey(*db, kKeyEditorFontSize, std::to_string(editorFontSize));
 }
 
 void notepadSaveWindowGeometry(int width, int height, int x, int y) {
