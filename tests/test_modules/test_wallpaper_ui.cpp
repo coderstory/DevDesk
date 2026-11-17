@@ -968,6 +968,42 @@ REGISTER_TEST(wallpaper_ui_import_no_access_dialog,
     return true;
 })
 
+// 防（bug275）：弹窗 confirm 回调禁止引用捕获 compose 帧局部 UiActions——真机栈
+//（2026-11-17 两份 .ips）：点「打开系统设置」→ Runtime::updateInteraction →
+// drawImportNoAccessDialog::$_1::operator() → SIGSEGV。wallpaper_module.cpp 每帧
+// 栈上构造 UiActions，帧返回即销毁；回调在下一次点击帧才被调用，[&actions] 即
+// use-after-free。手法：UiActions 作用域内 compose 后拷出 confirm 回调，销毁
+// UiActions、栈冲刷后触发——值捕获版计数照常 +1；引用捕获版读已死栈帧（CI ASan
+// 档必红；裸构建靠冲刷大概率红）。
+REGISTER_TEST(wallpaper_ui_no_access_confirm_outlives_actions,
+              "wallpaper_ui: 无权限弹窗回调不引用已销毁 UiActions（bug275 生命周期）", {
+    int openSettingsCalls = 0;
+    wp::UiState state;
+    state.tab = 1;
+    wp::WallpaperSnapshot snapshot =
+        makeSnapshot(wp::WallpaperKind::Video, wp::Availability::Playing);
+    snapshot.importNoAccess = true;
+    snapshot.importSummary = "花見目录存在但无法读取（未授予完全磁盘访问权限）";
+    std::function<void()> savedConfirm;
+    {
+        wp::UiActions actions;
+        actions.openPrivacySettings = [&openSettingsCalls] { ++openSettingsCalls; };
+        eui::Ui ui;
+        composeFrame(ui, kPage1600x1000, snapshot, actions, state);
+        auto* confirmEl = ui.find("wallpaper.dialog.import.noaccess.confirm.bg");
+        DOCTEST_REQUIRE(confirmEl != nullptr);
+        DOCTEST_REQUIRE(static_cast<bool>(confirmEl->onClick));
+        savedConfirm = confirmEl->onClick;
+    }
+    // 冲刷已死 UiActions 所在栈区，让悬垂引用（若回归）指向被覆写的内存。
+    volatile char scrub[8192];
+    for (volatile char& b : scrub) b = static_cast<char>(0xAA);
+    (void)scrub;
+    if (savedConfirm) savedConfirm();
+    DOCTEST_CHECK_EQ(openSettingsCalls, 1);
+    return true;
+})
+
 // 防：壁纸页回潮出删除/维护/转码/队列入口（需求 §7.4 明确没有），以及页内出现
 // 文件名（本页面只应显示文件夹路径）。
 REGISTER_TEST(wallpaper_ui_no_maintenance_entry,
