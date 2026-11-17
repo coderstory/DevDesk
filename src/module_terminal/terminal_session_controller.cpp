@@ -11,6 +11,20 @@ namespace terminal {
 
 void SessionController::setBackend(platform::TerminalBackend* backend) { backend_ = backend; }
 
+void SessionController::setOutputWake(std::function<void()> wake) {
+    outputWake_ = std::move(wake);
+    for (Session& s : sessions_) {
+        if (s.handle) s.handle->setOutputNotify(outputWake_);
+    }
+}
+
+bool SessionController::outputNotifyAvailable() const {
+    for (const Session& s : sessions_) {
+        if (s.handle && s.handle->supportsOutputNotify()) return true;
+    }
+    return false;
+}
+
 int SessionController::spawnInto_(Session& s) {
     // 可用性前置检查（need:127 技术卡 v2 决策 6）：OS<1809 无 ConPTY → Failed 态 +
     // unavailableReason 明确文案（复用失败覆盖卡，零新增 UI 形态）
@@ -44,6 +58,8 @@ int SessionController::spawnInto_(Session& s) {
     }
     s.handle = std::move(result.value());
     s.handle->setScrollbackLimit(newSessionScrollback_); // need250：新会话按设置分配回滚
+    // bug249：输出/退出唤醒接线（reader 线程 → requestUiUpdate，非 UI 线程安全路径）
+    if (outputWake_) s.handle->setOutputNotify(outputWake_);
     s.state = SessionState::Running;
     s.lastGeneration = -1;
     s.error.clear();

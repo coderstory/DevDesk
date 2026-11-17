@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1000},
+
+    {"type": "click", "id": "app.term.act.gear.bg", "_comment": "滑杆图标 → 页内设置模态"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "assert", "check": "exists", "id": "app.term.set.title"},
+    {"type": "assert", "check": "text", "op": "contains", "id": "app.term.set.title", "text": "终端设置"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.rows.canvas"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.row.font.label"},
+    {"type": "assert", "check": "text", "op": "contains", "id": "app.term.set.row.font.label", "text": "字体"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.row.fsize.label"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.row.shell.label"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.row.sb.label"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.row.cursor.label"},
+    {"type": "assert", "check": "exists", "id": "app.term.set.done"},
+    {"type": "dump", "path": "qa262-popup-tree.txt"},
+    {"type": "screenshot", "path": "qa262-01-settings.png"}
+  ]
+}

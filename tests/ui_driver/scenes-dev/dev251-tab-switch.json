@@ -1,0 +1,27 @@
+{
+ "version": 1,
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "bug251：进终端页"},
+  {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 4000},
+  {"type": "wait", "ms": 500, "_comment": "TAB0 会话起（本批不验输入链，UI 态足够）"},
+
+  {"type": "click", "id": "app.term.act.new.bg", "_comment": "新建 TAB1"},
+  {"type": "wait", "until": "exists", "id": "app.term.tab.1.bg", "timeoutMs": 5000},
+  {"type": "wait", "ms": 250, "_comment": "2-3 帧，排除动画帧假象"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar", "_comment": "新 TAB 为激活态（底部高亮条）"},
+  {"type": "screenshot", "path": "dev251-01-new-tab-active.png"},
+
+  {"type": "click", "id": "app.term.tab.0.bg", "_comment": "bug251 触发点：点 TAB0"},
+  {"type": "wait", "ms": 250, "_comment": "debt254：wait 泵一次重组，断言读到点击后的新树"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.0.bar", "_comment": "激活迁移到 TAB0"},
+  {"type": "assert", "check": "missing", "id": "app.term.tab.1.bar", "_comment": "TAB1 高亮条撤下"},
+  {"type": "dump", "path": "dev251-after-switch.txt"},
+  {"type": "screenshot", "path": "dev251-02-switched-to-tab0.png"},
+
+  {"type": "click", "id": "app.term.tab.1.bg", "_comment": "再点回 TAB1"},
+  {"type": "wait", "ms": 250},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar"},
+  {"type": "assert", "check": "missing", "id": "app.term.tab.0.bar"},
+  {"type": "screenshot", "path": "dev251-03-back-to-tab1.png"}
+ ]
+}

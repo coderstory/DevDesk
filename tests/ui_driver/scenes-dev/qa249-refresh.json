@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1000},
+
+    {"type": "assert", "check": "exists", "id": "app.term.framepump",
+     "_comment": "bug249 机制面：Running 会话期间按需出帧泵存在（EUI onFrame → composeRequested/animating → 60fps 节流）"},
+
+    {"type": "type", "text": "echo qa249-marker-A", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "qa249-marker-A", "timeoutMs": 20000, "skipExit": 77,
+     "_comment": "Enter 之后到上屏之间零点击/零移动；驱动 wait 每轮自行 compose（driver_steps.h:347-395），故本步证数据链，视觉自刷新另由 framepump+EUI 契约证明"},
+
+    {"type": "screenshot", "path": "qa249-01-echo.png"},
+
+    {"type": "type", "text": "printf 'qa249-S1\\nqa249-S2\\nqa249-S3\\n'", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "qa249-S3", "timeoutMs": 15000},
+    {"type": "screenshot", "path": "qa249-02-stream.png"},
+
+    {"type": "wait", "ms": 500},
+    {"type": "type", "text": "exit", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "missing", "id": "app.term.framepump", "timeoutMs": 15000, "skipExit": 77,
+     "_comment": "无 Running 会话 → 出帧泵摘除 = 该口径下零空转"},
+    {"type": "screenshot", "path": "qa249-03-exited.png"}
+  ]
+}

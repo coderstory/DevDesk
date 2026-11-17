@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1200,
+     "_comment": "空闲稳定窗口（bug249②：外部 CPU 采样落在此段）"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump",
+     "_comment": "有输出通知路径的平台空闲不挂常驻泵 = 空闲零 60fps 空转（bug249②）"},
+    {"type": "wait", "ms": 4000, "_comment": "持续空闲窗口：给外部 CPU 采样留时长"},
+    {"type": "type", "text": "echo qa249P1", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "qa249P1", "timeoutMs": 20000, "skipExit": 77,
+     "_comment": "bug249①：键入+Enter 后零点击/零移动，输出自动上屏"},
+    {"type": "screenshot", "path": "qa249p-01-echo.png"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump",
+     "_comment": "消费完输出仍无泵（无未决内容不出帧）"},
+    {"type": "type", "text": "exit", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "exists", "id": "term.overlay.card", "timeoutMs": 20000, "skipExit": 77,
+     "_comment": "bug305：exit 后零点击即迁移 Exited（覆盖卡出现）"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump",
+     "_comment": "bug305：exit 后出帧泵不存在"},
+    {"type": "screenshot", "path": "qa249p-02-exited.png"},
+    {"type": "wait", "ms": 2000},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump",
+     "_comment": "退出态 2s 后仍无泵（任何时刻都无 Running 会话可驱动帧）"}
+  ]
+}

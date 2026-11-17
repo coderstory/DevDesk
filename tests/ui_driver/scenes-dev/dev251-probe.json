@@ -1,0 +1,26 @@
+{
+ "version": 1,
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "探针：进终端页"},
+  {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 4000},
+  {"type": "wait", "ms": 300, "_comment": "会话起（工具 shell 内网格不渲染，探针只取元素树）"},
+  {"type": "screenshot", "path": "probe-01-single.png"},
+
+  {"type": "click", "id": "app.term.act.new.bg", "_comment": "新建第二个 TAB"},
+  {"type": "wait", "until": "exists", "id": "app.term.tab.1.bg", "timeoutMs": 4000},
+  {"type": "wait", "ms": 200, "_comment": "2-3 帧推进，排除动画帧假象"},
+  {"type": "dump", "path": "probe-02-tabs.txt", "_comment": "两 TAB 当帧树：找激活态判定面"},
+  {"type": "screenshot", "path": "probe-02-two-tabs.png"},
+
+  {"type": "click", "id": "app.term.tab.1.bg", "_comment": "点 TAB1（bug251 触发点）"},
+  {"type": "wait", "ms": 200},
+  {"type": "dump", "path": "probe-03-after-click-tab1.txt"},
+  {"type": "screenshot", "path": "probe-03-after-click-tab1.png"},
+
+  {"type": "click", "id": "app.term.act.fs.bg", "_comment": "全屏（bug252 触发点）"},
+  {"type": "wait", "until": "exists", "id": "app.term.act.fs.icon", "timeoutMs": 4000},
+  {"type": "wait", "ms": 250, "_comment": "2-3 帧推进"},
+  {"type": "dump", "path": "probe-04-fullscreen.txt", "_comment": "全屏态：侧栏宽 + TAB 激活条/关闭钮"},
+  {"type": "screenshot", "path": "probe-04-fullscreen.png"}
+ ]
+}

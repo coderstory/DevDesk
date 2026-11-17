@@ -4,6 +4,7 @@
 // 右邻优先激活（无右邻则左邻）；会话序号进程内递增不复用。
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,8 +17,27 @@ enum class SessionState {
     Idle,     // 尚未启动（首个会话页面进入时自动 start）
     Running,
     Exited,   // 子进程已退出，exitCode 有效；最后一帧内容保留展示
-    Failed,   // spawn 失败，errorMessage 可达，可重试
+    Failed,    // spawn 失败，errorMessage 可达，可重试
 };
+
+// 出帧策略（bug249/bug305，纯函数供页面组帧与单测断言）：任一会话 Running 时必须
+// 有主动唤醒某条路径——平台提供输出通知（reader 新输出/退出经 requestUiUpdate 唤醒）
+// 时按需出帧，空闲零帧；没有通知路径的平台保留常驻 onFrame 泵兜底。
+inline bool needsFramePump(bool anyRunning, bool outputNotifyAvailable) {
+    return anyRunning && !outputNotifyAvailable;
+}
+
+// 低频自唤醒周期（bug306）：有输出通知路径时，Running 期间靠这一路 550ms 一帧推进
+// 光标闪烁相位，并顺带巡检子进程退出（bug305：ConPTY 退出不断管道，只能靠进程句柄
+// 巡检发现）。550ms ≈ 1.8fps（≤2fps 硬上限），与 1100ms 闪烁周期正好两拍一翻转。
+// **不得回到 60fps 常驻出帧**（bug249 已验收口径）。
+inline constexpr int kIdleFrameTickMs = 550;
+
+// 是否需要挂低频自唤醒（纯函数）：有通知路径时 Running 才挂（退出后/空闲归零）；
+// 无通知路径的平台已由 needsFramePump 常驻泵负责，不重复挂。
+inline bool needsIdleTick(bool anyRunning, bool outputNotifyAvailable) {
+    return anyRunning && outputNotifyAvailable;
+}
 
 // 单会话全部运行态（页面/网格只经 controller 间接读）
 struct Session {
@@ -37,6 +57,12 @@ struct Session {
 class SessionController {
 public:
     void setBackend(platform::TerminalBackend* backend);
+
+    // 输出/退出唤醒出口（bug249）：页面装 core::platform::requestUiUpdate —— reader
+    // 线程产出新帧或子进程退出时调一次，只出这一帧。装后对既有会话立即生效。
+    void setOutputWake(std::function<void()> wake);
+    // 当前会话后端是否具备输出通知路径（页面据此决定是否需要常驻泵兜底）
+    bool outputNotifyAvailable() const;
 
     // 新建会话追加到序列尾并激活，返回新会话 index。backend 不可用 / spawn 失败
     // 不抛不崩：会话以 Failed 态占位（TAB 圆点红 + 覆盖卡错误详情）。
@@ -85,6 +111,7 @@ private:
     std::string newSessionShell_;
     std::string newSessionWorkDir_;
     int newSessionScrollback_ = 1000;
+    std::function<void()> outputWake_;  // 空=未装（无唤醒出口，页面走常驻泵兜底）
 };
 
 } // namespace terminal
