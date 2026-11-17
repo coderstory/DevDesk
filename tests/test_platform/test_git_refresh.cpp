@@ -23,11 +23,13 @@
 #include "git_fixture.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <ios>
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 using module::git::GitPageController;
 using module::git::GitPagePhase;
@@ -524,4 +526,170 @@ REGISTER_TEST(gitRecentRepoLruAndFilterReset, "need:299：开仓记录最近仓 
     platform::folderpicker::setPickerForTest(nullptr);
     return git_fixture::cleanupRepoDir(repoA, true) &&
            git_fixture::cleanupRepoDir(repoB, true);
+})
+
+// ---- ⑨ bug#296 真仓门控实证（DEVDESK_GIT_REAL_REPO=<真实仓路径>）----
+// 用真实工作树验 U 行（真未跟踪文件）点开 = 全增 diff、禁「文件已无变更」误报；
+// M 行（真修改文件）仍走真 delta；已跟踪未改文件为对照档（零匹配语义）。
+// 只读契约：只有 status/diff/读盘，用例内不做任何 git 写（禁 add/commit/checkout/
+// stash）。默认未设环境变量 → SKIP，CI 不红（真仓路径含本机未提交现状，不可作基线）。
+REGISTER_TEST(gitUntrackedClickRealRepo,
+              "bug296真仓(env门控)：工作树 U 文件行点开=全增 diff 禁「文件已无变更」；M 行真 delta；已跟踪未改对照档零匹配", {
+    const char* envRepo = std::getenv("DEVDESK_GIT_REAL_REPO");
+    if (envRepo == nullptr || *envRepo == '\0') {
+        DOCTEST_SKIP("DEVDESK_GIT_REAL_REPO 未设置——真仓用例需显式指定仓路径"
+                     "（CI 默认不跑）");
+    }
+    const std::filesystem::path realRepo = platform::git::utf8ToPath(envRepo);
+    const bool isRepo = std::filesystem::exists(realRepo / ".git");
+    DOCTEST_CHECK_MESSAGE(isRepo, std::string("不是 git 仓: ") + envRepo);
+    const platform::git::Libgit2Scope libgit2;
+    const auto root = test_support::makeTempDir("devdesk_git_realrepo_", "bug296");
+    // 数据根隔离：开仓记录/git_manager.json 写临时目录，不碰真实 %USERPROFILE%\DevDesk
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           platform::git::pathToUtf8(root).c_str());
+    const std::string repoUtf8 = platform::git::pathToUtf8(realRepo);
+    std::cout << "[bug296] real repo = " << repoUtf8 << std::endl;
+
+    GitWorker worker;
+    worker.start();
+    GitPageController c(&worker);
+    DOCTEST_CHECK_MESSAGE(openRepoViaPicker(c, repoUtf8), "真仓打开失败");
+    DOCTEST_CHECK_MESSAGE(pumpUntil(c, [&] { return !c.statusLoading(); }, 20000),
+                          "status 扫描超时（20s）");
+
+    auto pumpFor = [&](auto pred, int maxMs = 10000) {
+        return pumpUntil(c, pred, maxMs);
+    };
+    auto rowsOfStatus = [&](platform::git::StatusKind kind) {
+        std::vector<std::string> out;
+        for (const auto& r : c.listRows()) {
+            if (r.kind == module::git::ChangeListRow::Kind::File && r.status.has_value() &&
+                *r.status == kind) {
+                out.push_back(r.relPath);
+            }
+        }
+        return out;
+    };
+    auto listedAsFile = [&](const std::string& rel) {
+        for (const auto& r : c.listRows()) {
+            if (r.kind == module::git::ChangeListRow::Kind::File && r.relPath == rel) return true;
+        }
+        return false;
+    };
+
+    // ① U 行（真未跟踪文件，含 untracked 目录自动枚举出的子文件行）：
+    // 未跟踪目录首层枚举（裁决④）是 status 后的异步链——等 U 行集合稳定（两轮
+    // 100ms 间隔数量不变）再收集，否则真仓的目录派生 U 文件行会漏采样
+    for (int i = 0; i < 20; ++i) {
+        const size_t before = rowsOfStatus(platform::git::StatusKind::Untracked).size();
+        pumpUntil(c, [] { return false; }, 100);
+        if (rowsOfStatus(platform::git::StatusKind::Untracked).size() == before) break;
+    }
+    // 点开 → 合成全增 diff；断言禁误报文案、全 '+'、newNo 1 起连续、oldNo 无
+    const auto untracked = rowsOfStatus(platform::git::StatusKind::Untracked);
+    DOCTEST_CHECK_MESSAGE(!untracked.empty(),
+                          "真仓无未跟踪文件行——无法覆盖 U 行主症状");
+    int uChecked = 0;
+    for (const auto& rel : untracked) {
+        std::error_code ec;
+        const auto sz = std::filesystem::file_size(realRepo / platform::git::utf8ToPath(rel), ec);
+        if (ec || sz > 1024u * 1024u) {  // >1MiB 走「文件过大」合法占位，另口径
+            std::cout << "[bug296] skip U (oversize/err): " << rel << std::endl;
+            continue;
+        }
+        ++uChecked;
+        std::cout << "[bug296] U row: " << rel << " (" << sz << " bytes)" << std::endl;
+        c.selectChange(rel);
+        DOCTEST_CHECK_MESSAGE(
+            pumpFor([&] {
+                return c.diffState() == RightPaneState::Ready &&
+                       c.diffModel().patch().newPath == rel;
+            }),
+            "U 行 diff 未就绪: " + rel);
+        const std::string ph = c.diffModel().placeholder();
+        DOCTEST_CHECK_MESSAGE(ph.empty(), "U 行误报文案 [" + ph + "]: " + rel);
+        DOCTEST_CHECK_EQ(c.diffModel().patch().newPath, rel);
+        DOCTEST_CHECK(c.diffModel().patch().isUntracked);
+        DOCTEST_CHECK(c.diffModel().patch().binary || !c.diffModel().patch().hunks.empty());
+        if (c.diffModel().patch().binary) {
+            // 二进制 U（如 png/pool.db-shm）：走「二进制文件」占位，不是全增行——
+            // 但同样禁「文件已无变更」误报（上面 ph.empty 已断言）
+            std::cout << "[bug296] U binary placeholder OK: " << rel << std::endl;
+            continue;
+        }
+        DOCTEST_CHECK_MESSAGE(c.diffModel().patch().hunks.size() == 1,
+                              "U 行应按整文件合成为单 hunk: " + rel);
+        const auto& lines = c.diffModel().patch().hunks[0].lines;
+        DOCTEST_CHECK_MESSAGE(!lines.empty(), "U 行合成 diff 空: " + rel);
+        for (size_t i = 0; i < lines.size(); ++i) {
+            DOCTEST_CHECK_MESSAGE(lines[i].origin == '+', "非增行: " + rel);
+            DOCTEST_CHECK_MESSAGE(lines[i].newNo.has_value() &&
+                                      *lines[i].newNo == static_cast<int>(i) + 1,
+                                  "newNo 非 1 起连续: " + rel);
+            DOCTEST_CHECK_MESSAGE(!lines[i].oldNo.has_value(), "全增行不应有 oldNo: " + rel);
+        }
+        std::cout << "[bug296] U add-lines=" << lines.size() << std::endl;
+    }
+    DOCTEST_CHECK_MESSAGE(uChecked > 0, "真仓 U 行样本为空");
+
+    // 红面成因证据（工作树只读替代——本单禁止还原产品源码）：直接走修复前的
+    // workdir↔HEAD diff 管线，未跟踪文件零匹配 → 正是「文件已无变更」误报来源；
+    // 上方 U 分支断言证明控制器已绕开该管线。二者同仓同文件，构成红/绿对照。
+    {
+        auto repo = platform::git::Repo::open(realRepo);
+        DOCTEST_CHECK_MESSAGE(repo.isOk(), "直开真仓失败（红面证据无法取证）");
+        if (repo.isOk()) {
+            for (const auto& rel : untracked) {
+                auto raw = repo.value().diff(platform::git::DiffBasis::WorkdirToHead, rel);
+                DOCTEST_CHECK_MESSAGE(raw.isOk(), "原管线 diff 失败: " + rel);
+                bool rawMatched = false;
+                for (const auto& p : raw.value().patches) {
+                    if (p.newPath == rel || p.oldPath == rel) rawMatched = true;
+                }
+                std::cout << "[bug296] pre-fix pipeline match(" << rel
+                          << ") = " << (rawMatched ? "yes" : "NO(误报成因)") << std::endl;
+                DOCTEST_CHECK_MESSAGE(!rawMatched,
+                                      "未跟踪文件在原 diff 管线竟有 delta（红面成因不成立）: " + rel);
+            }
+        }
+    }
+
+    // ② M 行（真修改文件）：真 delta 不受 bug#296 修复影响（placeholder 空、hunks 非空）
+    const auto modified = rowsOfStatus(platform::git::StatusKind::Modified);
+    DOCTEST_CHECK_MESSAGE(!modified.empty(), "真仓无已修改文件行——M 行对照缺失");
+    int mChecked = 0;
+    for (const auto& rel : modified) {
+        ++mChecked;
+        std::cout << "[bug296] M row: " << rel << std::endl;
+        c.selectChange(rel);
+        DOCTEST_CHECK_MESSAGE(
+            pumpFor([&] {
+                return c.diffState() == RightPaneState::Ready &&
+                       c.diffModel().patch().newPath == rel;
+            }),
+            "M 行 diff 未就绪: " + rel);
+        DOCTEST_CHECK_MESSAGE(c.diffModel().placeholder().empty(), "M 行误报文案: " + rel);
+        DOCTEST_CHECK_FALSE(c.diffModel().patch().isUntracked);
+        DOCTEST_CHECK_MESSAGE(!c.diffModel().patch().hunks.empty(), "M 行无真 delta: " + rel);
+    }
+    DOCTEST_CHECK(mChecked > 0);
+
+    // ③ 对照档：已跟踪且真未改文件 → 零匹配/无变更语义仍正确（不合成假全增）
+    const std::string control = "CMakeLists.txt";
+    DOCTEST_CHECK_MESSAGE(!listedAsFile(control), "对照文件意外出现在变更列表: " + control);
+    c.selectChange(control);
+    DOCTEST_CHECK_MESSAGE(pumpFor([&] { return !c.diffModel().placeholder().empty(); }),
+                          "对照档零匹配结果未到达");
+    const std::string cph = c.diffModel().placeholder();
+    std::cout << "[bug296] control placeholder = [" << cph << "]" << std::endl;
+    DOCTEST_CHECK_MESSAGE(cph.find("已无变更") != std::string::npos,
+                          "对照档零匹配文案语义丢失: [" + cph + "]");
+    DOCTEST_CHECK(c.diffModel().patch().hunks.empty());
+    DOCTEST_CHECK_FALSE(c.diffModel().patch().isUntracked);
+
+    worker.stop();
+    platform::folderpicker::setPickerForTest(nullptr);
+    // 只清临时数据根；真实仓一律不动（只读实证）
+    return git_fixture::cleanupRepoDir(root, true);
 })
