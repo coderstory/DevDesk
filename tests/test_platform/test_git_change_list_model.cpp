@@ -209,36 +209,58 @@ REGISTER_TEST(gitChangeListModelBucketBothSidesTwoRows, "双组分桶：staged �
     return true;
 })
 
-REGISTER_TEST(gitChangeListModelUntrackedDirRow, "untracked 目录行 U 特殊化：剥尾斜杠/名含'/'/childCount=0（R4）/归未暂存组/空组隐藏", {
+REGISTER_TEST(gitChangeListModelUntrackedPureFileRows, "裁决④：untracked 目录条目不再产 Dir 行——自动枚举后文件行并入派生带 U 徽标；嵌套子目录=派生目录行（纯结构装置无徽标，原则令）", {
     StatusSnapshot snap;
     snap.entries = {
         entryOf("docs/", StatusKind::Untracked, false),
-        entryOf("嵌套/子目录/", StatusKind::Untracked, false),
         entryOf("普通.txt", StatusKind::Modified, false),
     };
     GitChangeListModel model;
     model.rebuild(snap, ChangeViewMode::Tree);
+    // 枚举落地前：docs/ 条目不产任何行（文件夹原则令+裁决④）——组头 + 普通.txt
+    DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Dir),
+                     static_cast<size_t>(0));
+    DOCTEST_CHECK_EQ(findRow(model.rows(), ChangeListRow::Kind::File, "普通.txt") != nullptr,
+                     true);
+    // 自动枚举回包：文件行并入同源派生（U 徽标）、嵌套子目录=派生 lazy 目录行
+    WalkResult r;
+    r.ok = true;
+    r.entries = {
+        {"指南.md", "docs/指南.md", EntryKind::File},
+        {"sub", "docs/sub", EntryKind::Directory},
+    };
+    model.applyUntrackedChildren("docs", r);
     const auto& rows = model.rows();
-    // 无已暂存条目 → 空组整组隐藏（设计 §4.3）；组头 + 2 目录行 + 1 文件 = 4
-    DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(4));
-    DOCTEST_CHECK(headerOf(rows, ChangeListRow::Group::Staged) == nullptr);
+    // 组头 + docs/(派生结构目录) + 指南.md(U) + sub/(lazy) + 普通.txt = 5
+    DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(5));
     const ChangeListRow* d = findRow(rows, ChangeListRow::Kind::Dir, "docs");
     DOCTEST_REQUIRE(d != nullptr);
-    DOCTEST_CHECK_EQ(d->name, std::string("docs/"));  // 显示名补回 '/'（bug280 先例）
-    DOCTEST_CHECK_EQ(d->dirRel, std::string("docs"));  // status 条目剥尾斜杠
-    DOCTEST_REQUIRE(d->status.has_value());
-    DOCTEST_CHECK_EQ(*d->status, StatusKind::Untracked);  // U 徽标（F-12）
-    DOCTEST_CHECK_EQ(d->childCount, static_cast<size_t>(0));  // R4：lazy 前不可得不显计数
+    DOCTEST_CHECK_EQ(d->name, std::string("docs/"));
+    DOCTEST_CHECK_FALSE(d->status.has_value());  // 原则令：目录行不带状态徽标
+    DOCTEST_CHECK_FALSE(d->lazy);                // tracked 式派生目录（默认展开）
+    DOCTEST_CHECK_EQ(d->childCount, static_cast<size_t>(1));  // 子树文件行=结构信息
     DOCTEST_CHECK_EQ(d->group, ChangeListRow::Group::Unstaged);  // 归未暂存组（D6-A）
-    // 嵌套 untracked 条目：无变更中间目录不入树，整链一节点（天然链式显示）
-    const ChangeListRow* n = findRow(rows, ChangeListRow::Kind::Dir, "嵌套/子目录");
-    DOCTEST_REQUIRE(n != nullptr);
-    DOCTEST_CHECK_EQ(n->name, std::string("嵌套/子目录/"));
-    DOCTEST_CHECK_EQ(n->depth, 0);
+    // 枚举文件行 = U 徽标（只落文件行）
+    const ChangeListRow* f = findRow(rows, ChangeListRow::Kind::File, "docs/指南.md");
+    DOCTEST_REQUIRE(f != nullptr);
+    DOCTEST_REQUIRE(f->status.has_value());
+    DOCTEST_CHECK_EQ(*f->status, StatusKind::Untracked);
+    // 嵌套子目录：lazy 派生目录行（默认收起，展开走懒枚举；无徽标无计数——R4）
+    const ChangeListRow* sub = findRow(rows, ChangeListRow::Kind::Dir, "docs/sub");
+    DOCTEST_REQUIRE(sub != nullptr);
+    DOCTEST_CHECK_EQ(sub->name, std::string("sub/"));
+    DOCTEST_CHECK(sub->lazy);
+    DOCTEST_CHECK_FALSE(sub->status.has_value());
+    DOCTEST_CHECK_EQ(sub->childCount, static_cast<size_t>(0));
+    // 平铺形态同源：文件行混排（无 untracked 目录行）
+    model.setViewMode(ChangeViewMode::Flat);
+    DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Dir),
+                     static_cast<size_t>(1));  // 仅 sub/ lazy 锚
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::File, "docs/指南.md") != nullptr);
     return true;
 })
 
-REGISTER_TEST(gitChangeListModelBitmapModeIndependence, "树/平铺展开位图互不干扰（设计 §6.3）：各自记忆、切换互不覆盖", {
+REGISTER_TEST(gitChangeListModelBitmapModeIndependence, "树/平铺展开位图互不干扰（设计 §6.3）：各自记忆、切换互不覆盖（need:299 嵌套 lazy 目录口径）", {
     StatusSnapshot snap;
     snap.entries = {
         entryOf("docs/", StatusKind::Untracked, false),
@@ -246,26 +268,34 @@ REGISTER_TEST(gitChangeListModelBitmapModeIndependence, "树/平铺展开位图�
     };
     GitChangeListModel model;
     model.rebuild(snap, ChangeViewMode::Tree);
-    // 树态展开 docs（untracked lazy）→ Loading 占位行出现
-    model.setExpanded("docs", true);
-    model.markUntrackedLoading("docs");
+    // 枚举 docs：嵌套 lazy 子目录 sub（裁决④后 lazy 边界只在嵌套层）
+    WalkResult r;
+    r.ok = true;
+    r.entries = {
+        {"a.md", "docs/a.md", EntryKind::File},
+        {"sub", "docs/sub", EntryKind::Directory},
+    };
+    model.applyUntrackedChildren("docs", r);
+    // 树态展开 sub（嵌套 lazy）→ Loading 占位行出现
+    model.setExpanded("docs/sub", true);
+    model.markUntrackedLoading("docs/sub");
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Loading),
                      static_cast<size_t>(1));
-    // 切平铺：平铺位图为空 → docs 行在（混排 U）但无 Loading 行
+    // 切平铺：平铺位图为空 → sub 行在但无 Loading 行
     model.setViewMode(ChangeViewMode::Flat);
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Loading),
                      static_cast<size_t>(0));
-    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::Dir, "docs") != nullptr);
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::Dir, "docs/sub") != nullptr);
     // 平铺态展开 → 平铺位图记录，平铺出 Loading
-    model.setExpanded("docs", true);
+    model.setExpanded("docs/sub", true);
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Loading),
                      static_cast<size_t>(1));
     // 切回树：树位图仍在（Loading 回现）——两位图互不覆盖
     model.setViewMode(ChangeViewMode::Tree);
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Loading),
                      static_cast<size_t>(1));
-    // 树态折叠 docs：平铺态不受影响
-    model.setExpanded("docs", false);
+    // 树态折叠 sub：平铺态不受影响
+    model.setExpanded("docs/sub", false);
     model.setViewMode(ChangeViewMode::Flat);
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Loading),
                      static_cast<size_t>(1));
@@ -304,22 +334,21 @@ REGISTER_TEST(gitChangeListModelCollapseThresholdBoundary, "组头默认折叠�
     return true;
 })
 
-REGISTER_TEST(gitChangeListModelLazyInjectAndTruncate, "lazy 子行注入 + >500 截断尾行 + pending/失败/重试状态机（F-04/POC①）", {
+REGISTER_TEST(gitChangeListModelLazyInjectAndTruncate, "自动枚举注入 + >500 截断尾行 + pending/失败/重试状态机（F-04/POC①；裁决④顶层免展开）", {
     StatusSnapshot snap;
     snap.entries = {entryOf("big/", StatusKind::Untracked, false)};
     GitChangeListModel model;
     model.rebuild(snap, ChangeViewMode::Tree);
-    // 展开 → 未加载 → pending 投递
-    model.setExpanded("big", true);
+    // 裁决④：顶层条目自动枚举——pending 无视展开（不产 Dir 行，无 Loading 行）
     auto pending = model.pendingUntrackedDirs();
     DOCTEST_REQUIRE_EQ(pending.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(pending[0], std::string("big"));
-    // 发起加载 → Loading 行；pending 清空
     model.markUntrackedLoading("big");
     DOCTEST_CHECK_EQ(model.pendingUntrackedDirs().size(), static_cast<size_t>(0));
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Loading),
-                     static_cast<size_t>(1));
-    // walk 回包：503 文件 + 2 子目录 → 前 500 文件 + 截断尾行 remain 3 + 2 目录行
+                     static_cast<size_t>(0));  // 顶层无目录行，Loading 无处挂
+    // walk 回包：503 文件 + 2 子目录 → 前 500 文件并入派生 + 截断尾行 remain 3
+    // + 2 嵌套 lazy 目录行
     WalkResult result;
     result.ok = true;
     for (int i = 0; i < 503; ++i) {
@@ -330,7 +359,7 @@ REGISTER_TEST(gitChangeListModelLazyInjectAndTruncate, "lazy 子行注入 + >500
     result.entries.push_back({"s2", "big/s2", EntryKind::Directory});
     model.applyUntrackedChildren("big", result);
     const auto& rows = model.rows();
-    // 组头 + big/ + s1/ + s2/ + 500 文件 + 截断尾行 = 505
+    // 组头 + big/(派生) + s1/ + s2/ + 500 文件 + 截断尾行 = 505
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(505));
     const ChangeListRow* tr = nullptr;
     for (const auto& r : rows) {
@@ -338,17 +367,17 @@ REGISTER_TEST(gitChangeListModelLazyInjectAndTruncate, "lazy 子行注入 + >500
     }
     DOCTEST_REQUIRE(tr != nullptr);
     DOCTEST_CHECK_EQ(tr->remainCount, static_cast<size_t>(3));
-    DOCTEST_CHECK_EQ(tr->depth, 1);
+    DOCTEST_CHECK_EQ(tr->depth, 0);  // 裁决④：顶层无目录行可挂——组尾 depth 0
     DOCTEST_CHECK_EQ(tr->dirRel, std::string("big"));
     // 注入文件行 = U 徽标（枚举结果全量取用——非 ignored 即 untracked，POC①）
     const ChangeListRow* f0 = findRow(rows, ChangeListRow::Kind::File, "big/f0.txt");
     DOCTEST_REQUIRE(f0 != nullptr);
     DOCTEST_REQUIRE(f0->status.has_value());
     DOCTEST_CHECK_EQ(*f0->status, StatusKind::Untracked);
-    // 组头计数：1 目录条目 + 500 可见文件 = 501（截断余量不计入）
+    // 组头计数（原则令：只算文件行）：500 可见文件（截断余量不计）
     DOCTEST_CHECK_EQ(headerOf(rows, ChangeListRow::Group::Unstaged)->childCount,
-                     static_cast<size_t>(501));
-    // 子目录续 lazy：展开 s1 → pending 指向 big/s1
+                     static_cast<size_t>(500));
+    // 嵌套子目录续 lazy：展开 s1 → pending 指向 big/s1（展开才枚举）
     model.setExpanded("big/s1", true);
     pending = model.pendingUntrackedDirs();
     DOCTEST_REQUIRE_EQ(pending.size(), static_cast<size_t>(1));
@@ -369,10 +398,19 @@ REGISTER_TEST(gitChangeListModelLazyInjectAndTruncate, "lazy 子行注入 + >500
     DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Error),
                      static_cast<size_t>(0));
     DOCTEST_CHECK_EQ(model.pendingUntrackedDirs().size(), static_cast<size_t>(0));
+    // 顶层枚举失败：组尾错误行（无目录行可挂——裁决④）；重试清错误后因缓存
+    // 已在（先前成功枚举）不重投——pending 排除已缓存目录
+    model.markUntrackedLoading("big");
+    model.markUntrackedFailed("big", "boom");
+    DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::Error),
+                     static_cast<size_t>(1));
+    DOCTEST_CHECK(model.pendingUntrackedDirs().empty());
+    model.requestRetry("big");
+    DOCTEST_CHECK_EQ(model.pendingUntrackedDirs().size(), static_cast<size_t>(0));
     return true;
 })
 
-REGISTER_TEST(gitChangeListModelHeaderCountWithExpandedChildren, "组头计数：untracked 展开子文件计入未暂存计数（设计 §4.3）；折叠组计数保留", {
+REGISTER_TEST(gitChangeListModelHeaderCountWithExpandedChildren, "组头计数（原则令：只算文件行）：枚举并入文件计入、未枚举目录不计；折叠组计数保留", {
     StatusSnapshot snap;
     snap.entries = {
         entryOf("u1.txt", StatusKind::Untracked, false),
@@ -383,12 +421,11 @@ REGISTER_TEST(gitChangeListModelHeaderCountWithExpandedChildren, "组头计数�
     model.rebuild(snap, ChangeViewMode::Tree);
     DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Unstaged)
                          ->childCount,
-                     static_cast<size_t>(2));  // 1 untracked 文件 + 1 目录条目
+                     static_cast<size_t>(1));  // 只算文件行：目录条目未枚举不计（原则令）
     DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Staged)
                          ->childCount,
                      static_cast<size_t>(1));
-    // 展开 docs 注入 2 子文件 → 未暂存计数 = 1 + 1 + 2 = 4；已暂存组不受影响
-    model.setExpanded("docs", true);
+    // docs 枚举 2 子文件并入 → 未暂存计数 = 1 + 2 = 3；已暂存组不受影响
     WalkResult r;
     r.ok = true;
     r.entries = {
@@ -398,7 +435,7 @@ REGISTER_TEST(gitChangeListModelHeaderCountWithExpandedChildren, "组头计数�
     model.applyUntrackedChildren("docs", r);
     DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Unstaged)
                          ->childCount,
-                     static_cast<size_t>(4));
+                     static_cast<size_t>(3));
     DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Staged)
                          ->childCount,
                      static_cast<size_t>(1));
@@ -407,7 +444,7 @@ REGISTER_TEST(gitChangeListModelHeaderCountWithExpandedChildren, "组头计数�
     DOCTEST_CHECK_EQ(model.rows().size(), static_cast<size_t>(3));
     DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Unstaged)
                          ->childCount,
-                     static_cast<size_t>(4));
+                     static_cast<size_t>(3));
     return true;
 })
 
@@ -454,7 +491,7 @@ REGISTER_TEST(gitChangeListModelRefreshKeepsBitmaps, "刷新重建保位图/缓�
     return true;
 })
 
-REGISTER_TEST(gitChangeListModelFlatDirAggregation, "平铺形态：目录段聚合排序（同目录相邻）+ untracked 目录行混排（无独立节）", {
+REGISTER_TEST(gitChangeListModelFlatDirAggregation, "平铺形态：目录段聚合排序（同目录相邻）+ 枚举并入 untracked 文件行混排（裁决④：无目录条目行）", {
     StatusSnapshot snap;
     snap.entries = {
         entryOf("zdir/late.txt", StatusKind::Modified, false),
@@ -465,17 +502,149 @@ REGISTER_TEST(gitChangeListModelFlatDirAggregation, "平铺形态：目录段聚
     };
     GitChangeListModel model;
     model.rebuild(snap, ChangeViewMode::Flat);
+    {
+        const auto& rows = model.rows();
+        // 枚举前：adir/ 条目不产行——组头 + 4 文件
+        DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(5));
+        DOCTEST_CHECK_EQ(rows[1].relPath, std::string("adir/early.txt"));
+        DOCTEST_CHECK_EQ(rows[2].relPath, std::string("adir/mid.txt"));  // 同目录相邻
+        DOCTEST_CHECK_EQ(rows[3].relPath, std::string("root.txt"));
+        DOCTEST_CHECK_EQ(rows[4].relPath, std::string("zdir/late.txt"));
+    }
+    // adir 枚举回包 → 文件行按路径字节序混排（无独立节、无目录条目行）
+    WalkResult r;
+    r.ok = true;
+    r.entries = {{"aa.txt", "adir/aa.txt", EntryKind::File}};
+    model.applyUntrackedChildren("adir", r);
     const auto& rows = model.rows();
-    // 组头 + adir/(U 目录行) + adir 两文件 + root.txt + zdir/late.txt = 6
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(6));
-    DOCTEST_CHECK_EQ(rows[1].kind, ChangeListRow::Kind::Dir);
-    DOCTEST_CHECK_EQ(rows[1].name, std::string("adir/"));  // "adir/" < "adir/early.txt"
+    DOCTEST_CHECK_EQ(rows[1].relPath, std::string("adir/aa.txt"));  // aa < early
     DOCTEST_REQUIRE(rows[1].status.has_value());
-    DOCTEST_CHECK_EQ(*rows[1].status, StatusKind::Untracked);
+    DOCTEST_CHECK_EQ(*rows[1].status, StatusKind::Untracked);  // U 徽标（文件行）
     DOCTEST_CHECK_EQ(rows[2].relPath, std::string("adir/early.txt"));
-    DOCTEST_CHECK_EQ(rows[3].relPath, std::string("adir/mid.txt"));  // 同目录相邻
+    DOCTEST_CHECK_EQ(rows[3].relPath, std::string("adir/mid.txt"));
     DOCTEST_CHECK_EQ(rows[4].relPath, std::string("root.txt"));
     DOCTEST_CHECK_EQ(rows[5].relPath, std::string("zdir/late.txt"));
+    return true;
+})
+
+REGISTER_TEST(gitChangeListModelFilterTree, "列表过滤·树形态（need:299 §4.9）：命中文件+祖先链自动临时展开；清空=恢复原展开位图（不写记忆）；组头计数=命中文件行数；lazy 目录自身路径命中保留", {
+    StatusSnapshot snap;
+    snap.entries = {
+        entryOf("src/a.cpp", StatusKind::Modified, false),
+        entryOf("src/deep/x.cpp", StatusKind::Modified, false),
+        entryOf("docs/", StatusKind::Untracked, false),
+        entryOf("root.txt", StatusKind::Modified, false),
+    };
+    GitChangeListModel model;
+    model.rebuild(snap, ChangeViewMode::Tree);
+    WalkResult r;
+    r.ok = true;
+    r.entries = {
+        {"指南.md", "docs/指南.md", EntryKind::File},
+        {"sub", "docs/sub", EntryKind::Directory},
+    };
+    model.applyUntrackedChildren("docs", r);
+    // 预置折叠记忆：折叠 src（过滤展开不得写入此位图）
+    model.setExpanded("src", false);
+    DOCTEST_CHECK_FALSE(model.isExpanded("src"));
+    // 过滤「deep」：命中 src/deep/x.cpp → 祖先链 src/deep 临时展开；折叠记忆不动
+    model.setFilter("deep");
+    {
+        const auto& rows = model.rows();
+        // 组头(1) + src/deep/(单链压缩：src 唯一子链 deep 无直接文件，clue#199)
+        // + x.cpp = 3 行；docs/指南.md 不命中「deep」、root.txt 不命中 → 不显示
+        DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(3));
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::Dir, "src") == nullptr);
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::Dir, "src/deep") != nullptr);
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::File, "src/deep/x.cpp") != nullptr);
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::File, "src/a.cpp") == nullptr);
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::File, "root.txt") == nullptr);
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::File, "docs/指南.md") == nullptr);
+        DOCTEST_CHECK_EQ(headerOf(rows, ChangeListRow::Group::Unstaged)->childCount,
+                         static_cast<size_t>(1));  // 命中文件行数
+    }
+    // 折叠记忆未被过滤写入：清空恢复原位图（src 收起、docs/指南.md 回归）
+    model.setFilter({});
+    {
+        const auto& rows = model.rows();
+        DOCTEST_CHECK_FALSE(model.isExpanded("src"));
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::File, "src/deep/x.cpp") == nullptr);
+        DOCTEST_CHECK(findRow(rows, ChangeListRow::Kind::File, "docs/指南.md") != nullptr);
+        DOCTEST_CHECK_EQ(headerOf(rows, ChangeListRow::Group::Unstaged)->childCount,
+                         static_cast<size_t>(4));  // 3 tracked + 1 枚举并入
+    }
+    // 过滤「sub」：lazy 目录自身路径命中 → 目录行保留（可点展开；过滤不触发枚举）
+    model.setFilter("sub");
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::Dir, "docs/sub") != nullptr);
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::File, "docs/指南.md") == nullptr);
+    model.setFilter({});
+    // 过滤大小写不敏感（ASCII 折叠）：「DOCS」命中 docs/ 指南.md 路径
+    model.setFilter("DOCS");
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::File, "docs/指南.md") != nullptr);
+    model.setFilter({});
+    return true;
+})
+
+REGISTER_TEST(gitChangeListModelFilterFlat, "列表过滤·平铺形态（need:299 §4.9）：行级匹配；0 命中=组头+行集临时隐藏；命中文件并入档（untracked 同口径）", {
+    StatusSnapshot snap;
+    snap.entries = {
+        entryOf("staged/a.txt", StatusKind::Modified, true),
+        entryOf("unst/b.txt", StatusKind::Modified, false),
+        entryOf("docs/", StatusKind::Untracked, false),
+    };
+    GitChangeListModel model;
+    model.rebuild(snap, ChangeViewMode::Flat);
+    WalkResult r;
+    r.ok = true;
+    r.entries = {{"笔记.md", "docs/笔记.md", EntryKind::File}};
+    model.applyUntrackedChildren("docs", r);
+    // 过滤「unst」：未暂存 1 命中；已暂存 0 命中=组头临时隐藏（非折叠语义）
+    model.setFilter("unst");
+    {
+        const auto& rows = model.rows();
+        DOCTEST_CHECK(headerOf(rows, ChangeListRow::Group::Staged) == nullptr);
+        DOCTEST_CHECK(headerOf(rows, ChangeListRow::Group::Unstaged) != nullptr);
+        DOCTEST_CHECK_EQ(countKind(rows, ChangeListRow::Kind::File),
+                         static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(headerOf(rows, ChangeListRow::Group::Unstaged)->childCount,
+                         static_cast<size_t>(1));
+    }
+    // 过滤「docs」：枚举并入的 untracked 文件行命中（同源派生同口径）
+    model.setFilter("docs");
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::File, "docs/笔记.md") != nullptr);
+    // 过滤「zzz」：全组 0 命中=行序列空（视图据此显过滤空态，与干净空态区分）
+    model.setFilter("zzz");
+    DOCTEST_CHECK(model.rows().empty());
+    // 清空恢复全量
+    model.setFilter({});
+    DOCTEST_CHECK_EQ(countKind(model.rows(), ChangeListRow::Kind::File),
+                     static_cast<size_t>(3));
+    return true;
+})
+
+REGISTER_TEST(gitChangeListModelFileStatusApi, "fileStatus：不依赖可见行集——折叠目录/未展开 lazy 缓存下的文件仍可取状态（选中行徽标/U 判据）", {
+    StatusSnapshot snap;
+    snap.entries = {
+        entryOf("src/a.cpp", StatusKind::Modified, false),
+        entryOf("docs/", StatusKind::Untracked, false),
+    };
+    GitChangeListModel model;
+    model.rebuild(snap, ChangeViewMode::Tree);
+    WalkResult r;
+    r.ok = true;
+    r.entries = {{"g.md", "docs/g.md", EntryKind::File}};
+    model.applyUntrackedChildren("docs", r);
+    // 折叠 docs 派生目录 → g.md 行不可见，但 fileStatus 仍可取（bug296 判据链）
+    model.setExpanded("docs", false);
+    DOCTEST_CHECK(findRow(model.rows(), ChangeListRow::Kind::File, "docs/g.md") == nullptr);
+    const auto st = model.fileStatus("docs/g.md");
+    DOCTEST_REQUIRE(st.has_value());
+    DOCTEST_CHECK_EQ(*st, StatusKind::Untracked);
+    const auto st2 = model.fileStatus("src/a.cpp");
+    DOCTEST_REQUIRE(st2.has_value());
+    DOCTEST_CHECK_EQ(*st2, StatusKind::Modified);
+    DOCTEST_CHECK_FALSE(model.fileStatus("不存在.txt").has_value());
     return true;
 })
 

@@ -66,6 +66,9 @@ constexpr unsigned kGlyphSpinner = 0xF021;          // fa-refresh（旋转圈降
 constexpr unsigned kGlyphCircleCheck = 0xF058;      // fa-circle-check
 constexpr unsigned kGlyphCodeBranch = 0xF126;       // fa-code-branch
 constexpr unsigned kGlyphCircleExclaim = 0xF06A;    // fa-circle-exclamation
+constexpr unsigned kGlyphCaretDown = 0xF107;        // fa-angle-down（切换仓库下拉 §11）
+constexpr unsigned kGlyphCheck = 0xF00C;            // fa-check（当前仓标记 §3.1）
+constexpr unsigned kGlyphXmark = 0xF00D;            // fa-xmark（过滤清除 × §11）
 
 // 文本宽度估算（wtabTextWidth 同式：CJK 0.43 / ASCII 0.56 × 字号 + 1.6 基宽；
 // 偏大只多留白，用于固定头内元素定位，不做逐字截断）
@@ -83,6 +86,32 @@ float textWidthEstimate(const std::string& text, float fontSize) {
 // 双格保守入模 → 恒偏大只多留白，横滚尾部空白不影响「不换行错位」验收）
 float monoLineWidth(size_t charLen, float fontSize) {
     return charLen * fontSize * 0.62f + fontSize * 1.6f;
+}
+
+// 超长名单行省略号截断（need:299 §4.4/§4.5 钉死落地；bug#292 同款列宽预算：
+// 每显示列 0.62em、非 ASCII 起始字节记 2 列——CJK 实测 ~1.0em 恒偏大安全侧；
+// CJK 按码点/UTF-8 序列边界截断，禁切半个多字节字符）。返回带「…」的显示串，
+// truncated=true 时调用方须挂 tooltip 全文。
+std::pair<std::string, bool> ellipsisFit(const std::string& text, float fontSize,
+                                         float budgetW) {
+    if (textWidthEstimate(text, fontSize) <= budgetW) return {text, false};
+    const float colW = fontSize * 0.62f;
+    const float budget = budgetW - fontSize * 0.62f - fontSize * 0.4f;  // 留「…」+安全边
+    float acc = 0.0f;
+    size_t keep = 0;
+    while (keep < text.size()) {
+        const unsigned char ch = static_cast<unsigned char>(text[keep]);
+        const size_t len = (ch < 0x80) ? 1
+                           : ((ch & 0xE0) == 0xC0) ? 2
+                           : ((ch & 0xF0) == 0xE0) ? 3 : 4;
+        if (keep + len > text.size()) break;  // 防御：残缺 UTF-8 尾
+        const float wCols = (ch < 0x80) ? colW : colW * 2.0f;
+        if (acc + wCols > budget) break;
+        acc += wCols;
+        keep += len;
+    }
+    if (keep == 0) return {std::string("…"), true};
+    return {text.substr(0, keep) + "…", true};
 }
 
 // 骨架 pulse（UI-A §8：opacity 0.45↔1、1.2s ease-in-out alternate infinite；
@@ -302,25 +331,20 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
                   [&c] { c.beginPickRepo(); }, c.validating());
 }
 
-// ---- 顶栏（§3 48px：折叠展开钮(条件) + 仓名 + 路径 + 搜索 + 切换仓库 + 刷新）----
+// ---- 顶栏（§3 need:299 重排 48px：折叠展开钮(条件)+仓名+路径480+…+[切换仓库▾][刷新]；
+//      全局搜索框已删除，归 #300）----
 // 设计 §3 分支 chip：platform/git 无分支查询接口（数据面零改动硬约束），演绎省略。
 
-// 搜索框几何（320×32，窄窗 240；弹性间隔位=路径右侧、「切换仓库」左侧）
-std::pair<float, float> searchBoxGeometry(float w, bool narrow) {
-    // bug#297：顶栏卡片化（页边 12 内缩）+卡内距统一 scaled(12)——返回页面绝对坐标
+// 切换仓库按钮右缘（need:299 §3.1：下拉右缘=按钮右缘对齐；按钮组=右锚两枚次钮）
+float switchButtonRightEdge(float w) {
     const float cardW = w - kPageMargin * 2.0f;
-    const float searchW = scaled(narrow ? 240.0f : 320.0f);
-    const float searchH = scaled(32.0f);
-    const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    const float inner = scaled(12.0f);
-    const float x = kPageMargin + cardW - inner - refreshW - scaled(12.0f) -
-                    switchW - scaled(12.0f) - searchW;
-    return {x, kPageMargin + (kTopBarH - searchH) * 0.5f};
+    return kPageMargin + cardW - scaled(12.0f) - refreshW - scaled(12.0f);
 }
 
 void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
                    const Tokens& t) {
+    (void)narrow;  // 搜索框删除后窄窗档只剩路径宽度自适应（§9）
     // bug#297（老板令「一个圆角一个直角」）：顶栏改卡片形态与下方两卡同语言——
     // 白卡+1px 边+radius 16+页边 12；卡内距 scaled(12) 与两卡内容列统一对齐
     const float cardX = kPageMargin;
@@ -369,97 +393,222 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
         .color(t.colors.textPrimary)
         .build();
 
+    // 完整路径（need:299：搜索框删除后空间富余，max 360→480；单行省略号+tooltip
+    // 全路径——§3 禁硬裁切，ellipsisFit 码点预算截断）
     x += nameW + scaled(8.0f) + scaled(12.0f);
-    const auto [searchBoxX, searchBoxY] = searchBoxGeometry(w, narrow);
-    const float pathMaxW = scaled(360.0f);
+    const float switchRight = switchButtonRightEdge(w);
+    const float pathMaxW = scaled(480.0f);
+    const float pathW = std::min(
+        pathMaxW, std::max(scaled(40.0f), switchRight - scaled(12.0f) - x));
+    const auto [shownPath, pathTruncated] =
+        ellipsisFit(c.repoPathUtf8(), scaled(12.0f), pathW);
     ui.text("git.top.path")
         .position(x, kPageMargin)
-        .size(std::min(pathMaxW, std::max(scaled(40.0f), searchBoxX - x - scaled(12.0f))),
-              kTopBarH)
-        .text(c.repoPathUtf8())
+        .size(pathW, kTopBarH)
+        .text(shownPath)
         .fontSize(scaled(12.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
-
-    // 全局搜索框（§5.1a need:14：320×32、radius 6、底 sidebarBg 降档区分、
-    // placeholder 13px textTertiary；Enter 提交 / ESC 显式取消 / 清空=取消同路）。
-    // inset 让出左侧放大镜位（组件 inset 左右对称，右缘由 ×/扫描圈叠盖——
-    // 同 agent.dialog.tools.search 先例）
-    const float searchW = scaled(narrow ? 240.0f : 320.0f);
-    const float searchH = scaled(32.0f);
-    components::input(ui, "git.search.input")
-        .position(searchBoxX, searchBoxY)
-        .size(searchW, searchH)
-        .value(c.searchDraft())
-        .placeholder("搜索全仓内容…")
-        .fontSize(scaled(13.0f))
-        .inset(scaled(30.0f))
-        .theme(core::theme::componentTokens(t))
-        .onChange([&c](const std::string& v) {
-            c.setSearchDraft(v);
-            c.markSearchEdited();
-        })
-        .onEnter([&c] { c.submitSearchNow(); })
-        .onCancel([&c] { c.cancelSearch(); })
-        .build();
-    // 左侧放大镜（§5.1a「放大镜 16px 描边 --c-text-3」；纯装饰 pointer 穿透，
-    // FA5 search 0xF002——同 agent 搜索框先例）
-    ui.text("git.search.icon")
-        .position(searchBoxX + scaled(9.0f), searchBoxY)
-        .size(scaled(16.0f), searchH)
-        .icon(::eui::utf8(0xF002))
-        .fontSize(scaled(13.0f))
-        .lineHeight(searchH)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textTertiary)
-        .hitTestMode(::core::dsl::HitTestMode::None)
-        .build();
-    // 右侧指示（§5.1a 两行并列——扫描圈与清除 × 并存不互斥，P2-6）：
-    // × 恒居右缘（有草稿即显，点击=清空+取消，扫描中同此路）；扫描圈让位 ×
-    // 左侧一档（pulse 驱动持续出帧；「旋转圈」EUI 无旋转原语，落地为 pulse 字形）
-    const float badgeX = searchBoxX + searchW - scaled(22.0f);
-    const bool hasDraft = !c.searchDraft().empty();
-    if (c.searchState() == GitPageController::GitSearchState::Scanning) {
-        const float spinX = hasDraft ? badgeX - scaled(22.0f) : badgeX;
-        ui.text("git.search.spin")
-            .position(spinX, searchBoxY)
-            .size(scaled(20.0f), searchH)
-            .icon(kGlyphSpinner)
-            .fontSize(scaled(12.0f))
-            .opacity(skeletonPulseOpacity())
-            .onFrame([](float) {})
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
+    if (pathTruncated) {
+        components::tooltip(ui, "git.top.path.tip")
+            .theme(core::theme::componentTokens(t))
+            .source("git.top.path")
+            .value(c.repoPathUtf8())
+            .anchor(x + pathW * 0.5f, kPageMargin + kTopBarH * 0.5f)
+            .bounds(pathW, kTopBarH)
+            .minWidth(120.0f)
+            .maxWidth(480.0f)
+            .zIndex(40)
             .build();
     }
-    if (hasDraft) {
-        ui.text("git.search.clear")
-            .position(badgeX, searchBoxY)
-            .size(scaled(20.0f), searchH)
-            .icon(0xF00D)
-            .fontSize(scaled(12.0f))
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
-        hitRect(ui, "git.search.clear.hit", badgeX, searchBoxY, scaled(22.0f),
-                searchH, [&c] { c.cancelSearch(); });
-    }
 
-    // 右侧按钮组：[切换仓库] [↻ 刷新]（次按钮 32px 高；卡内右距=inner 统一网格）
+    // 右侧按钮组：[切换仓库 ▾] [↻ 刷新]（次按钮 32px 高；卡内右距=inner 统一网格；
+    // 切换仓库=下拉触发器 need:299 §3.1，原「迁移空态页」动线由下拉「浏览目录…」承接）
     const float btnH = scaled(32.0f);
     const float btnY = kPageMargin + (kTopBarH - btnH) * 0.5f;
-    const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
+    const float switchW =
+        textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f) + scaled(14.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
     const float refreshX = cardX + cardW - inner - refreshW;
     const float switchX = refreshX - scaled(12.0f) - switchW;
     secondaryButton(ui, "git.top.refresh", "↻ 刷新", refreshX, btnY, refreshW, btnH,
                     t, [&c] { c.refresh(); });
     secondaryButton(ui, "git.top.switch", "切换仓库", switchX, btnY, switchW, btnH,
-                    t, [&c] { c.switchRepo(); });
+                    t, [&c] { c.toggleRepoDropdown(); });
+    // 文案右侧 fa-angle-down 12px textSecondary（§3；纯装饰 pointer 穿透，命中归按钮）
+    ui.text("git.top.switch.caret")
+        .position(switchX + switchW - scaled(16.0f), btnY)
+        .size(scaled(14.0f), btnH)
+        .icon(kGlyphCaretDown)
+        .fontSize(scaled(12.0f))
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textSecondary)
+        .hitTestMode(::core::dsl::HitTestMode::None)
+        .build();
+}
+
+// ---- 切换仓库历史下拉（need:299 §3.1/§6.10；临时浮层 z50，不改页面构图）----
+void composeRepoDropdown(eui::Ui& ui, float w, float h, GitPageController& c,
+                         const Tokens& t) {
+    if (!c.repoDropdownVisible()) return;
+    const auto& entries = c.recentRepoEntries();
+
+    // 几何：宽 min(360, 页宽−24)；右缘=按钮右缘对齐，越左越界钳页边 12；
+    // 上缘=顶栏卡下缘+4
+    const float popupW = std::min(scaled(360.0f), w - scaled(24.0f));
+    const float switchRight = switchButtonRightEdge(w);
+    float px = switchRight - popupW;
+    if (px < scaled(12.0f)) px = scaled(12.0f);
+    const float py = kPageMargin + kTopBarH + scaled(4.0f);
+    const float labelH = entries.empty() ? 0.0f : scaled(28.0f);
+    const float browseH = scaled(32.0f);
+    const float popupH = labelH + static_cast<float>(entries.size()) * scaled(40.0f) +
+                         1.0f + browseH;
+
+    // scrim（浮层外透明命中带；顶栏条不盖——切换仓库钮保持可点=toggle 收起）
+    const float bandTop = kPageMargin + kTopBarH;
+    hitRect(ui, "git.repo.dd.scrim.left", 0.0f, bandTop, std::max(0.0f, px),
+            h - bandTop, [&c] { c.setRepoDropdownVisible(false); });
+    hitRect(ui, "git.repo.dd.scrim.right", px + popupW, bandTop,
+            std::max(0.0f, w - px - popupW), h - bandTop,
+            [&c] { c.setRepoDropdownVisible(false); });
+    hitRect(ui, "git.repo.dd.scrim.bottom", px, py + popupH,
+            std::min(popupW, std::max(0.0f, w - px)),
+            std::max(0.0f, h - py - popupH),
+            [&c] { c.setRepoDropdownVisible(false); });
+
+    ui.stack("git.repo.dd")
+        .position(px, py)
+        .size(popupW, popupH)
+        .zIndex(50)
+        .content([&] {
+            ui.rect("git.repo.dd.bg")
+                .size(popupW, popupH)
+                .color(t.colors.surface)
+                .radius(8.0f)
+                .border(1.0f, t.colors.borderDefault)
+                .shadow(core::Shadow{true, {0.0f, 6.0f}, 20.0f, 0.0f,
+                                     eui::Color{0.0f, 0.0f, 0.0f, 0.08f}})
+                .build();
+            float y = 0.0f;
+            if (labelH > 0.0f) {
+                // 节标「最近仓库」（仅历史非空时显示）
+                ui.text("git.repo.dd.label")
+                    .position(scaled(12.0f), y)
+                    .size(popupW - scaled(24.0f), labelH)
+                    .text("最近仓库")
+                    .fontSize(scaled(11.0f))
+                    .fontWeight(500)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                y += labelH;
+            }
+            // 仓行（两行式：仓名 13/500 + 路径 11/16；当前仓 ✓；失效行置灰+「已失效」
+            // 仍可点击重开 §6.10②）。LRU 上限 8 → 无内滚档（§3.1 >8 内滚不可达）
+            for (size_t i = 0; i < entries.size(); ++i) {
+                const auto& e = entries[i];
+                const float rowY = y;
+                const std::string idx = std::to_string(i);
+                const eui::Color nameColor =
+                    e.exists ? t.colors.textPrimary : t.colors.textTertiary;
+                const eui::Color pathColor = t.colors.textTertiary;
+                ui.text("git.repo.dd.row." + idx + ".name")
+                    .position(scaled(12.0f), rowY + scaled(5.0f))
+                    .size(popupW - scaled(24.0f) - scaled(56.0f), scaled(18.0f))
+                    .text(e.name)
+                    .fontSize(scaled(13.0f))
+                    .fontWeight(500)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(nameColor)
+                    .build();
+                const auto [shownRepoPath, repoPathTrunc] =
+                    ellipsisFit(e.path, scaled(11.0f), popupW - scaled(24.0f) - scaled(56.0f));
+                ui.text("git.repo.dd.row." + idx + ".path")
+                    .position(scaled(12.0f), rowY + scaled(21.0f))
+                    .size(popupW - scaled(24.0f) - scaled(56.0f), scaled(16.0f))
+                    .text(shownRepoPath)
+                    .fontSize(scaled(11.0f))
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(pathColor)
+                    .build();
+                if (repoPathTrunc || !e.exists) {
+                    components::tooltip(ui, "git.repo.dd.row." + idx + ".tip")
+                        .theme(core::theme::componentTokens(t))
+                        .source("git.repo.dd.row." + idx + ".path")
+                        .value(e.path + (e.exists ? std::string() : std::string("（已失效）")))
+                        .anchor(scaled(12.0f) + (popupW - scaled(24.0f)) * 0.5f,
+                                rowY + scaled(20.0f))
+                        .bounds(popupW, scaled(40.0f))
+                        .minWidth(120.0f)
+                        .maxWidth(480.0f)
+                        .zIndex(51)
+                        .build();
+                }
+                if (e.current) {
+                    // 当前仓标记：行右缘 fa-check 12px 主色（§3.1）
+                    ui.text("git.repo.dd.row." + idx + ".check")
+                        .position(popupW - scaled(28.0f), rowY)
+                        .size(scaled(16.0f), scaled(40.0f))
+                        .icon(kGlyphCheck)
+                        .fontSize(scaled(12.0f))
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.primary)
+                        .hitTestMode(::core::dsl::HitTestMode::None)
+                        .build();
+                } else if (!e.exists) {
+                    // 失效仓行：右缘「已失效」11px danger-text（仍可点击=尝试重开）
+                    ui.text("git.repo.dd.row." + idx + ".stale")
+                        .position(popupW - scaled(64.0f), rowY)
+                        .size(scaled(52.0f), scaled(40.0f))
+                        .text("已失效")
+                        .fontSize(scaled(11.0f))
+                        .horizontalAlign(eui::HorizontalAlign::Right)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.errorText)
+                        .hitTestMode(::core::dsl::HitTestMode::None)
+                        .build();
+                }
+                hitRect(ui, "git.repo.dd.row." + idx + ".hit", 0.0f, rowY, popupW,
+                        scaled(40.0f),
+                        [&c, p = e.path] { c.openRecentRepo(p); });
+                y += scaled(40.0f);
+            }
+            if (labelH > 0.0f) {
+                // 分隔线（节标/仓行清单与「浏览目录…」之间）
+                ui.rect("git.repo.dd.divider")
+                    .position(0.0f, y)
+                    .size(popupW, 1.0f)
+                    .color(t.colors.borderMuted)
+                    .build();
+                y += 1.0f;
+            }
+            // 操作行「浏览目录…」=打开系统目录选择器（平台 API）
+            ui.text("git.repo.dd.browse.icon")
+                .position(scaled(12.0f), y)
+                .size(scaled(16.0f), browseH)
+                .icon(kGlyphFolderOpen)
+                .fontSize(scaled(12.0f))
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textSecondary)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .build();
+            ui.text("git.repo.dd.browse")
+                .position(scaled(34.0f), y)
+                .size(popupW - scaled(46.0f), browseH)
+                .text("浏览目录…")
+                .fontSize(scaled(13.0f))
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textPrimary)
+                .build();
+            hitRect(ui, "git.repo.dd.browse.hit", 0.0f, y, popupW, browseH, [&c] {
+                c.setRepoDropdownVisible(false);
+                c.beginPickRepo();
+            });
+        })
+        .build();
 }
 
 // ---- 变更列表行渲染（§4.3~§4.6；行盒 = （行, contentWidth）纯函数）----
@@ -513,7 +662,14 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
     ui.stack(rowId)
         .size(contentWidth, slotH)
         .content([&] {
-            const float indent = scaled(kIndentBase) + indentStep * row.depth;
+            // 深嵌套缩进钳制（need:299 §4.4 钉死）：名区最小 96px——indent =
+            // min(基值+步进×depth, 行宽−12(右距)−16(徽标位)−8(gap)−96)；超限后更
+            // 深层级不再增加缩进（视觉同位，层级靠 tooltip 全路径区分），禁横向溢出
+            const float indentClamp = std::max(
+                scaled(kIndentBase),
+                contentWidth - scaled(12.0f + 16.0f + 8.0f + 96.0f));
+            const float indent =
+                std::min(scaled(kIndentBase) + indentStep * row.depth, indentClamp);
 
             if (row.kind == ChangeListRow::Kind::GroupHeader) {
                 // 组头 32px（§4.3：箭头 + 「已暂存 (N)」13/600；点击折叠）
@@ -553,9 +709,8 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
             // 行体统一画在槽顶 kRowH 内（组头外全部 28px 行）
             if (row.kind == ChangeListRow::Kind::Dir) {
                 const bool expanded = rowExpandedAt(c.listRows(), idx);
-                const bool untracked =
-                    row.status == platform::git::StatusKind::Untracked;
-                // §4.4：hover/按压降级省略（EUI 无 hover 驱动）；不选中不进 diff
+                // 文件夹原则令（2026-11-17）：目录行=纯结构装置——不带状态徽标，
+                // childCount=子树文件行数（纯结构信息）；不可选中、不进 diff（D3-A）
                 float x = indent;
                 const float arrowW = scaled(14.0f);
                 ui.text(rowId + ".arrow")
@@ -576,30 +731,23 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
                     .color(t.colors.textTertiary)
                     .build();
                 x += scaled(18.0f);
-                // 目录名（untracked 行 name 已带 '/' 后缀，模型烘焙）
-                const bool hasCount =
-                    row.childCount > 0 && !untracked;  // R4：untracked 行不显计数
-                const float nameW =
-                    contentWidth - x - scaled(12.0f) -
-                    (untracked ? scaled(kBadgeSize + 4.0f) : 0.0f) -
-                    (hasCount ? scaled(36.0f) : 0.0f);
+                // 目录名（need:299：单行省略号字符截断，禁硬裁切——ellipsisFit
+                // 码点预算；右界=计数左缘−8，徽标位已随原则令移除）
+                const bool hasCount = row.childCount > 0;
+                const float nameW = std::max(
+                    scaled(20.0f),
+                    contentWidth - x - scaled(12.0f) - (hasCount ? scaled(36.0f) : 0.0f));
+                const auto [shownName, nameTruncated] =
+                    ellipsisFit(row.name, scaled(13.0f), nameW);
                 ui.text(rowId + ".name")
                     .position(x, 0.0f)
-                    .size(std::max(scaled(20.0f), nameW), rowH)
-                    .text(row.name)
+                    .size(nameW, rowH)
+                    .text(shownName)
                     .fontSize(scaled(13.0f))
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textPrimary)
                     .build();
-                // U 徽标（§4.6：目录行=目录名后 4px）
-                if (untracked) {
-                    drawBadge(ui, rowId + ".badge",
-                              x + textWidthEstimate(row.name, scaled(13.0f)) +
-                                  scaled(4.0f),
-                              (rowH - scaled(kBadgeSize)) * 0.5f,
-                              platform::git::StatusKind::Untracked, t, gc);
-                }
-                // 子树变更文件计数（§4.4：右锚 12px）
+                // 子树文件行计数（§4.4：右锚 12px；lazy 未枚举=0 不显）
                 if (hasCount) {
                     ui.text(rowId + ".count")
                         .position(contentWidth - scaled(12.0f) - scaled(32.0f), 0.0f)
@@ -611,23 +759,22 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
                         .color(t.colors.textTertiary)
                         .build();
                 }
-                // 超长目录名 tooltip（need14 口径）
-                if (textWidthEstimate(row.name, scaled(13.0f)) > nameW) {
+                // 省略发生时 tooltip 全路径（need:299 §4.4）
+                if (nameTruncated) {
                     components::tooltip(ui, rowId + ".name.tip")
                         .theme(core::theme::componentTokens(t))
                         .source(rowId + ".name")
                         .value(row.dirRel.empty() ? row.relPath : row.dirRel)
-                        .anchor(x + std::max(scaled(20.0f), nameW) * 0.5f,
-                                rowH * 0.5f)
+                        .anchor(x + nameW * 0.5f, rowH * 0.5f)
                         .bounds(contentWidth, rowH)
                         .minWidth(120.0f)
                         .maxWidth(420.0f)
                         .zIndex(40)
                         .build();
                 }
-                // D3-A：点击=展开/收起，永不进 diff（untracked=lazy 枚举触发点）
+                // D3-A：点击=展开/收起，永不进 diff（lazy 派生目录=lazy 枚举触发点）
                 const std::string rel = row.relPath;
-                if (untracked) {
+                if (row.lazy) {
                     hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth, rowH,
                             [&c, rel] { c.toggleUntrackedDir(rel); });
                 } else {
@@ -664,13 +811,12 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
             }
 
             if (row.kind == ChangeListRow::Kind::Truncate) {
-                // §6.2：>500 截断尾行「还有 N 个文件 · 在搜索中查看全部」
+                // §6.2：>500 截断尾行「还有 N 个文件」（need:299：搜索引导随 #300 删）
                 float x = indent + scaled(14.0f);
                 ui.text(rowId + ".text")
                     .position(x, 0.0f)
                     .size(contentWidth - x - scaled(12.0f), rowH)
-                    .text("还有 " + std::to_string(row.remainCount) +
-                          " 个文件 · 在搜索中查看全部")
+                    .text("还有 " + std::to_string(row.remainCount) + " 个文件")
                     .fontSize(scaled(12.0f))
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textTertiary)
@@ -716,47 +862,53 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
                     .color(t.colors.primary)
                     .build();
             }
-            float x = std::max(scaled(kIndentBase), indent);
+            float x = indent;
+            // 徽标锚位=缩进后固定 16px 位，不随名长移动（§4.5）；徽标只落文件行
             if (row.status.has_value()) {
                 drawBadge(ui, rowId + ".badge", x,
                           (rowH - scaled(kBadgeSize)) * 0.5f, *row.status, t, gc);
             }
             x += scaled(kBadgeSize) + scaled(8.0f);
-            // 文件名：树形态=短名；平铺形态=短名+目录弱化段（§4.5/§4.7）
-            const float trailingW =
-                flat ? scaled(60.0f) : scaled(12.0f);
+            // 超长名三段边界（need:299 §4.5 钉死）：①先饿平铺路径段（可至 0 隐藏）
+            // 再饿名区至 96px 下限；②省略发生=tooltip 全路径；③CJK 码点截断
+            const float avail = contentWidth - x - scaled(12.0f);
+            const float naturalW =
+                textWidthEstimate(row.name, scaled(13.0f)) + scaled(8.0f);
             const float nameW =
-                std::max(scaled(24.0f), contentWidth - x - trailingW);
+                std::max(scaled(96.0f), std::min(naturalW, std::max(scaled(96.0f), avail)));
+            const float segW =
+                flat ? std::max(0.0f, avail - nameW - scaled(8.0f)) : 0.0f;
+            const auto [shownName, nameTruncated] =
+                ellipsisFit(row.name, scaled(13.0f), nameW);
             ui.text(rowId + ".name")
                 .position(x, 0.0f)
                 .size(nameW, rowH)
-                .text(row.name)
+                .text(shownName)
                 .fontSize(scaled(13.0f))
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textPrimary)
                 .build();
             if (flat) {
-                // 平铺：文件名后目录弱化段 12px textTertiary（§4.5 路径弱化段）
+                // 平铺：文件名后目录弱化段 12px textTertiary（§4.5；可被长名挤压
+                // 至 0 隐藏——先饿次序①）
                 std::string dirSeg;
                 if (row.relPath.size() > row.name.size() + 1) {
                     dirSeg = row.relPath.substr(
                         0, row.relPath.size() - row.name.size() - 1);
                 }
-                if (!dirSeg.empty()) {
+                if (!dirSeg.empty() && segW >= scaled(20.0f)) {
+                    const auto [shownSeg, segTrunc] =
+                        ellipsisFit(dirSeg, scaled(12.0f), segW);
                     ui.text(rowId + ".dir")
-                        .position(x + textWidthEstimate(row.name, scaled(13.0f)) +
-                                      scaled(8.0f),
-                                  0.0f)
-                        .size(std::max(scaled(20.0f),
-                                       contentWidth - x -
-                                           textWidthEstimate(row.name, scaled(13.0f)) -
-                                           scaled(20.0f)),
-                              rowH)
-                        .text(dirSeg)
+                        .position(x + nameW + scaled(8.0f), 0.0f)
+                        .size(segW, rowH)
+                        .text(shownSeg)
                         .fontSize(scaled(12.0f))
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textTertiary)
+                        .hitTestMode(::core::dsl::HitTestMode::None)
                         .build();
+                    (void)segTrunc;
                 }
             }
             // 超长名/R 行 tooltip（§4.5：R 行 hover 完整「old → new」等宽 12px）
@@ -771,7 +923,7 @@ void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
                     .maxWidth(480.0f)
                     .zIndex(40)
                     .build();
-            } else if (textWidthEstimate(row.relPath, scaled(13.0f)) > nameW) {
+            } else if (nameTruncated) {
                 components::tooltip(ui, rowId + ".name.tip")
                     .theme(core::theme::componentTokens(t))
                     .source(rowId + ".name")
@@ -824,8 +976,48 @@ void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
         .color(t.colors.borderMuted)
         .build();
 
-    const float listY = y + headH;
-    const float listH = h - headH;
+    // 过滤行 32px（§4.2b need:299：纯输入框无按钮，粘顶列头之下；老板令逐字
+    // 「目录树加一个搜索功能 只需要一个输入框 不需要按钮」；全路径子串匹配 §4.9）
+    const float filterH = scaled(32.0f);
+    {
+        const float inputH = scaled(28.0f);
+        const float inputY = y + headH + (filterH - inputH) * 0.5f;
+        const float inputX = x + scaled(12.0f);
+        const float inputW = w - scaled(24.0f);
+        components::input(ui, "git.list.filter")
+            .position(inputX, inputY)
+            .size(inputW, inputH)
+            .value(c.filterDraft())
+            .placeholder("过滤文件名…")
+            .fontSize(scaled(12.0f))
+            .theme(core::theme::componentTokens(t))
+            .onChange([&c](const std::string& v) { c.setFilterDraft(v); })
+            .onCancel([&c] { c.clearFilter(); })  // 输入框内 Esc=清空（§6.9）
+            .build();
+        // 清除 ×（有输入即显；点击=清空+恢复全列表 §4.2b；无输入隐藏）
+        if (!c.filterDraft().empty()) {
+            const float clearX = inputX + inputW - scaled(22.0f);
+            ui.text("git.list.filter.clear")
+                .position(clearX, inputY)
+                .size(scaled(20.0f), inputH)
+                .icon(kGlyphXmark)
+                .fontSize(scaled(12.0f))
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textTertiary)
+                .build();
+            hitRect(ui, "git.list.filter.clear.hit", clearX, inputY, scaled(22.0f),
+                    inputH, [&c] { c.clearFilter(); });
+        }
+        ui.rect("git.list.filter.border")
+            .position(x, y + headH + filterH)
+            .size(w, 1.0f)
+            .color(t.colors.borderMuted)
+            .build();
+    }
+
+    const float listY = y + headH + filterH;
+    const float listH = h - headH - filterH;
     const auto& rows = c.listRows();  // 成员引用：行闭包布局期回调仍有效
 
     if (c.statusLoading() && rows.empty()) {
@@ -881,6 +1073,27 @@ void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
         return;
     }
     if (rows.empty()) {
+        if (c.filterActive()) {
+            // 过滤无匹配空态（§4.8 need:299：与「工作区干净」空态严格区分，
+            // 两行画面；仅过滤词非空时出现）
+            ui.text("git.list.filter.empty.main")
+                .position(x, listY + listH * 0.4f)
+                .size(w, scaled(20.0f))
+                .text("无匹配文件")
+                .fontSize(scaled(13.0f))
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.text("git.list.filter.empty.sub")
+                .position(x, listY + listH * 0.4f + scaled(24.0f))
+                .size(w, scaled(18.0f))
+                .text("试试更短关键词，或点 × 清空")
+                .fontSize(scaled(12.0f))
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(t.colors.textTertiary)
+                .build();
+            return;
+        }
         // 空态（§4.8：组头全隐藏 + 弱提示一行；主空态画面由右卡承担 §5.7）
         ui.text("git.list.empty")
             .position(x, listY + listH * 0.4f)
@@ -902,6 +1115,10 @@ void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
         .rowHeight(scaled(kRowSlotH))
         .step(scaled(kRowSlotH))
         .overscanViewports(1.0f)
+        // 滚动条视觉全无（老板口径 §1.1：滚动保留、滚动条不显示）——纵向条
+        // 隐藏，滚轮照常；横向条是 diff/内容专用（F-07⑥ 拖拽回归依赖，另处）
+        .scrollbarWidth(0.0f)
+        .scrollbarGap(0.0f)
         .theme(core::theme::componentTokens(t))
         .offset(c.listScrollOffset())
         .onChange([&c](float v) { c.setListScrollOffset(v); })
@@ -924,14 +1141,6 @@ void drawContentRow(eui::Ui& ui, const std::string& rowId, size_t lineIdx,
     ui.stack(rowId)
         .size(contentWidth, rowH)
         .content([&] {
-            // F-08② 命中行常亮底色（--c-selected-bg 同款；无淡出动画——need:14
-            // 推迟项先例，D7-A diff 侧同口径）
-            if (c.contentHighlightLine() == static_cast<int>(lineIdx) + 1) {
-                ui.rect(rowId + ".hlbg")
-                    .size(contentWidth, rowH)
-                    .color(t.colors.active)
-                    .build();
-            }
             const float gutterW = scaled(kContentGutterW);
             ui.rect(rowId + ".gutter")
                 .size(gutterW, rowH)
@@ -1070,20 +1279,6 @@ void composeContentBody(eui::Ui& ui, float x, float y, float w, float h,
     // Ready：行号列 + 代码 runs（virtualList 定高 22px）。F-07⑥ 真横滚：虚拟
     // 内容宽 = 最长行等宽估算；超宽出底部横向滚动条（行内整体平移不换行）
     const auto& lines = c.content().lines;
-    // F-08② 内容锚滚动（need:14）：jumpToHit 记 pendingContentLine_，Ready 后
-    // 按行盒几何现算目标 offset 一次性赋值（锚=行号 → 目标滚动位；clue#14：
-    // 禁 setScrollOffset 偏移量直设——下方 .offset() 状态绑定是唯一滚动通道）
-    if (c.pendingContentLine() && !lines.empty()) {
-        const int lineNo =
-            std::clamp(*c.pendingContentLine(), 1, static_cast<int>(lines.size()));
-        c.clearPendingContentLine();
-        const float rowH2 = scaled(kCodeRowH);
-        const float maxOffset =
-            std::max(0.0f, static_cast<float>(lines.size()) * rowH2 - h);
-        c.setContentScrollOffset(std::clamp(static_cast<float>(lineNo - 1) * rowH2 -
-                                                h * 0.35f,
-                                            0.0f, maxOffset));
-    }
     const float codeX = scaled(kContentGutterW) + scaled(6.0f);
     const float virtualRowW =
         codeX + std::max(w - codeX,
@@ -1095,6 +1290,8 @@ void composeContentBody(eui::Ui& ui, float x, float y, float w, float h,
         .rowHeight(scaled(kCodeRowH))
         .step(scaled(kCodeRowH))
         .overscanViewports(1.0f)
+        .scrollbarWidth(0.0f)  // 滚动条视觉全无（§1.1 纵向条；横向条保留 F-07⑥）
+        .scrollbarGap(0.0f)
         .theme(core::theme::componentTokens(t))
         .offset(c.contentScrollOffset())
         .onChange([&c](float v) { c.setContentScrollOffset(v); })
@@ -1178,17 +1375,6 @@ void drawDiffRow(eui::Ui& ui, const std::string& rowId, const DiffRow& row,
             const float oldX = scaled(kDiffFoldW);
             const float newX = scaled(kDiffFoldW + kDiffNoW);
             const float codeX = scaled(kDiffFoldW + kDiffNoW * 2);
-            // D7-A diff 命中行常亮底色（newNo 匹配；need:14 推迟项先例同口径）
-            const auto pendingNo = line.newNo;
-            const bool highlighted =
-                c.diffHighlightLine() > 0 && pendingNo.has_value() &&
-                *pendingNo == c.diffHighlightLine();
-            if (highlighted) {
-                ui.rect(rowId + ".hlbg")
-                    .size(contentWidth, rowH)
-                    .color(t.colors.active)
-                    .build();
-            }
             if (line.origin == '+') {
                 ui.rect(rowId + ".bg")
                     .size(contentWidth, rowH)
@@ -1343,6 +1529,8 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
         .rowHeight(scaled(kDiffSlotH))
         .step(scaled(kDiffSlotH))
         .overscanViewports(1.0f)
+        .scrollbarWidth(0.0f)  // 滚动条视觉全无（§1.1 纵向条；横向条保留 F-07⑥）
+        .scrollbarGap(0.0f)
         .theme(core::theme::componentTokens(t))
         .offset(c.diffScrollOffset())
         .onChange([&c](float v) { c.setDiffScrollOffset(v); })
@@ -1415,12 +1603,11 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
 
     const float headH = scaled(kRightHeaderH);
     const float padX = scaled(12.0f);  // bug#297：卡内距统一 12（与顶栏/左卡内容列对齐）
-    const bool searchView = c.searchContentView();
     const auto selStatus = c.selectedRowStatus();
 
-    // 头部（§5.2 徽标 + 路径条 + 统计 + tab；§6.8 搜索独立视图=仅路径+「内容」）
+    // 头部（§5.2 徽标 + 路径条 + 统计 + tab）
     float hx = x + padX;
-    if (!searchView && selStatus.has_value()) {
+    if (selStatus.has_value()) {
         drawBadge(ui, "git.right.head.badge", hx,
                   y + (headH - scaled(kBadgeSize)) * 0.5f, *selStatus, t,
                   gitColors(t));
@@ -1448,7 +1635,7 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
                                                      std::to_string(removed),
                                                  scaled(12.0f)) + scaled(8.0f)
                              : 0.0f;
-    const float tabZoneW = searchView ? tabW : tabW * 2 + scaled(16.0f);
+    const float tabZoneW = tabW * 2 + scaled(16.0f);
     const float pathW = std::max(
         scaled(40.0f),
         w - (hx - x) - padX - statsW - tabZoneW - scaled(16.0f));
@@ -1527,11 +1714,7 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
         statsText.build();
     }
     // tab（右锚；§5.2 激活=底部 2px 主色下划线）
-    if (searchView) {
-        // §6.8 独立内容视图：「内容」恒激活无切换（文字钮非 tab 语义）
-        underlineTab(ui, "git.right.head.tab.content.only", "内容", true,
-                     x + w - padX - tabW, y, tabW, headH, t, nullptr);
-    } else {
+    {
         const float contentTabX = x + w - padX - tabW;
         const float diffTabX = contentTabX - scaled(16.0f) - tabW;
         underlineTab(ui, "git.right.head.tab.content", "内容",
@@ -1554,15 +1737,14 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
     const float bodyH = h - headH;
     const GitColors gc = gitColors(t);
     const auto& rows = c.listRows();
-    if (searchView) {
-        // §6.8：命中∉变更列表 → 独立内容视图（头部仅路径已画）
-        composeContentBody(ui, x, bodyY, w, bodyH, c, t, gc);
-    } else if (c.statusLoading() && rows.empty()) {
+    if (c.statusLoading() && rows.empty()) {
         composeRightEmpty(ui, x, bodyY, w, bodyH, kGlyphCodeBranch,
                           "选择左侧文件查看差异", "正在扫描变更…", t);
-    } else if (rows.empty() && c.statusError().empty()) {
+    } else if (rows.empty() && c.statusError().empty() && !c.filterActive()) {
         // 工作区干净空态（§5.7：图标+主/副文案+[刷新]；空仓同构文案演绎统一，
-        // platform/git 无提交数查询接口）
+        // platform/git 无提交数查询接口）。need299 打磨轮修订：过滤无匹配
+        // （rows 被滤空但工作区非干净）不得到此冒充干净空态（§4.9 过滤=仅
+        // 视图过滤），落 §5.5 未选文件空态——filterActive 判定隔离两空态
         composeRightEmpty(ui, x, bodyY, w, bodyH, kGlyphCircleCheck,
                           "工作区很干净", "文件变更后会出现在这里", t, &c);
     } else if (c.selectedPath().empty()) {
@@ -1608,189 +1790,6 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
     }
 }
 
-// ---- 全局搜索结果浮层（need:14 §7.2 四态增补；锚定搜索框下方）----
-// None / 收起 → 不显示；Scanning=进度头 + 渐进出果；Done=计数头 + 结果/空态；
-// Error=错误块。失焦收起：浮层外全屏透明 scrim（点击浮层外=收起，扫描不取消）。
-void composeSearchPopup(eui::Ui& ui, float w, float h, GitPageController& c,
-                        const Tokens& t) {
-    using SearchState = GitPageController::GitSearchState;
-    const SearchState st = c.searchState();
-    if (st == SearchState::None || !c.searchPopupVisible()) return;
-
-    const auto& results = c.searchResults();
-    const float popupW = std::min(scaled(560.0f), w - scaled(32.0f));
-    const bool narrow = w < kNarrowBreakpoint;
-    const auto [boxX, boxY] = searchBoxGeometry(w, narrow);
-    (void)boxY;
-    float px = boxX;
-    if (px + popupW > w - scaled(16.0f)) px = w - scaled(16.0f) - popupW;
-    const float py = kTopBarH + scaled(4.0f);
-
-    const float headerH = scaled(32.0f);
-    const float rowH = scaled(28.0f);
-    float bodyH;
-    if (st == SearchState::Error) {
-        bodyH = scaled(96.0f);
-    } else if (results.empty()) {
-        bodyH = scaled(72.0f);
-    } else {
-        bodyH = std::min(scaled(448.0f), static_cast<float>(results.size()) * rowH);
-    }
-    const float popupH = headerH + bodyH;
-
-    // 失焦收起（扫描不取消：后台继续出果，spinner 指示，再点框看进度）：
-    // 三面 scrim 带（左/右/下，从顶栏底缘起）——顶栏条不盖，搜索框保持可点
-    //（refocus/清除 ×/切仓均可用；顶栏点击不关浮层）
-    const float bandTop = kTopBarH;
-    hitRect(ui, "git.search.scrim.left", 0.0f, bandTop, std::max(0.0f, px), h - bandTop,
-            [&c] { c.setSearchPopupVisible(false); });
-    hitRect(ui, "git.search.scrim.right", px + popupW, bandTop,
-            std::max(0.0f, w - px - popupW), h - bandTop,
-            [&c] { c.setSearchPopupVisible(false); });
-    hitRect(ui, "git.search.scrim.bottom", px, py + popupH,
-            std::min(popupW, std::max(0.0f, w - px)), std::max(0.0f, h - py - popupH),
-            [&c] { c.setSearchPopupVisible(false); });
-
-    ui.stack("git.search.popup")
-        .position(px, py)
-        .size(popupW, popupH)
-        .zIndex(50)
-        .content([&] {
-            ui.rect("git.search.popup.bg")
-                .size(popupW, popupH)
-                .color(t.colors.surface)
-                .radius(8.0f)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-            // 计数头：扫描态「正在扫描… x/y 文件」；终态「N 处命中 · M 个文件」
-            //（truncated 追加细化提示；增量 flush 期间扫描头即随结果更新）
-            std::string headText;
-            if (st == SearchState::Scanning) {
-                headText = "正在扫描… " + std::to_string(c.searchScanned()) + "/" +
-                           std::to_string(c.searchTotalFiles()) + " 文件";
-            } else if (st == SearchState::Error) {
-                headText = "搜索失败";
-            } else {
-                headText = std::to_string(results.size()) + " 处命中 · " +
-                           std::to_string(c.searchFileCount()) + " 个文件";
-                if (c.searchTruncated()) {
-                    headText += " · 结果过多，仅显示前 200——请细化关键词";
-                }
-            }
-            ui.text("git.search.popup.head")
-                .position(scaled(12.0f), 0.0f)
-                .size(popupW - scaled(24.0f), headerH)
-                .text(headText)
-                .fontSize(scaled(12.0f))
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.rect("git.search.popup.hborder")
-                .position(0.0f, headerH - 1.0f)
-                .size(popupW, 1.0f)
-                .color(t.colors.borderMuted)
-                .build();
-
-            const float bodyY = headerH;
-            if (st == SearchState::Error) {
-                // 错误块（列表卡错误块参数缩档）：danger-tint 底 + 主文案 + 原因
-                ui.rect("git.search.popup.errbg")
-                    .position(scaled(12.0f), bodyY + scaled(12.0f))
-                    .size(popupW - scaled(24.0f), bodyH - scaled(24.0f))
-                    .color(components::theme::withOpacity(t.colors.error, 0.12f))
-                    .radius(6.0f)
-                    .build();
-                ui.text("git.search.popup.errmain")
-                    .position(scaled(24.0f), bodyY + scaled(22.0f))
-                    .size(popupW - scaled(48.0f), scaled(20.0f))
-                    .text("无法完成搜索")
-                    .fontSize(scaled(13.0f))
-                    .color(t.colors.errorText)
-                    .build();
-                ui.text("git.search.popup.errreason")
-                    .position(scaled(24.0f), bodyY + scaled(44.0f))
-                    .size(popupW - scaled(48.0f), scaled(18.0f))
-                    .text(c.searchError())
-                    .fontSize(scaled(12.0f))
-                    .color(t.colors.textTertiary)
-                    .build();
-                return;
-            }
-            if (results.empty()) {
-                ui.text("git.search.popup.empty")
-                    .position(0.0f, bodyY)
-                    .size(popupW, bodyH)
-                    .text(st == SearchState::Scanning ? "正在扫描，结果将逐步显示"
-                                                      : "未找到匹配内容")
-                    .fontSize(scaled(13.0f))
-                    .horizontalAlign(eui::HorizontalAlign::Center)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textSecondary)
-                    .build();
-                return;
-            }
-            // 结果行（virtualList 定高 28px 槽内压缩双行）：上行 relPath:行号
-            // 11px textTertiary（moreInFile 追加提示）；下行 preview 12px
-            // textPrimary、match 段 primary runs（≤200 条 UI 线程现算）
-            components::virtualList(ui, "git.search.results")
-                .position(0.0f, bodyY)
-                .size(popupW, bodyH)
-                .itemCount(static_cast<int64_t>(results.size()))
-                .rowHeight(rowH)
-                .step(rowH)
-                .overscanViewports(1.0f)
-                .theme(core::theme::componentTokens(t))
-                .offset(c.searchPopupScroll())
-                .onChange([&c](float v) { c.setSearchPopupScroll(v); })
-                .row([&](eui::Ui& inner, const std::string& rowId, int64_t index,
-                         float contentWidth, float vh) {
-                    (void)vh;
-                    const auto idx = static_cast<size_t>(index);
-                    if (idx >= results.size()) return;
-                    const SearchHit& hit = results[idx];
-                    std::string pathLine = hit.relPath + ":" + std::to_string(hit.line);
-                    if (hit.moreInFile) pathLine += " · 此文件还有更多";
-                    inner.text(rowId + ".path")
-                        .position(scaled(12.0f), scaled(2.0f))
-                        .size(contentWidth - scaled(24.0f), scaled(13.0f))
-                        .text(pathLine)
-                        .fontSize(scaled(11.0f))
-                        .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.textTertiary)
-                        .build();
-                    std::vector<eui::TextRun> runs;
-                    if (hit.matchLen > 0 &&
-                        hit.matchStart + hit.matchLen <= hit.preview.size()) {
-                        runs.push_back({static_cast<int>(hit.matchStart),
-                                        static_cast<int>(hit.matchStart + hit.matchLen),
-                                        t.colors.primary});
-                    }
-                    auto previewText = inner.text(rowId + ".preview")
-                                           .position(scaled(12.0f), scaled(14.0f))
-                                           .size(contentWidth - scaled(24.0f), scaled(14.0f))
-                                           .text(hit.preview)
-                                           .fontSize(scaled(12.0f))
-                                           .verticalAlign(eui::VerticalAlign::Center)
-                                           .color(t.colors.textPrimary);
-                    if (!runs.empty()) previewText.runs(runs);
-                    previewText.build();
-                    // 点击结果行 → F-08② 定位（浮层保持开，渐进出果价值）。
-                    // P2-4：results 是 controller 活引用——命中区注册与点击派发间
-                    // results 可被清（ESC 取消/新扫描重置），派发时重查边界防 OOB
-                    inner.rect(rowId + ".hit")
-                        .size(contentWidth, rowH)
-                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                        .onClick([&c, &results, idx] {
-                            if (idx < results.size()) c.jumpToHit(results[idx]);
-                        })
-                        .build();
-                })
-                .build();
-        })
-        .build();
-    (void)h;
-}
-
 } // namespace
 
 void composeGitPage(eui::Ui& ui, const eui::Screen& screen,
@@ -1820,8 +1819,9 @@ void composeGitPage(eui::Ui& ui, const eui::Screen& screen,
     const float rightW = w - rightX - kPageMargin;
     composeDiffCard(ui, rightX, bodyY, rightW, bodyH, c, t);
 
-    // 全局搜索结果浮层（need:14）：compose 在两卡之后 = z 序最上（scrim 同层）
-    composeSearchPopup(ui, w, h, c, t);
+    // 切换仓库历史下拉（need:299 §3.1）：compose 在两卡之后 = z 序最上（scrim 同层；
+    // 临时浮层不改页面构图 §1.1）
+    composeRepoDropdown(ui, w, h, c, t);
 }
 
 } // namespace module::git

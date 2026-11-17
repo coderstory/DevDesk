@@ -15,6 +15,7 @@
 #include "module_git/git_change_list_model.h"
 #include "module_git/git_content_model.h"
 #include "module_git/git_page_controller.h"
+#include "module_git/git_repo_store.h"
 #include "module_git/git_worker.h"
 #include "platform/folder_picker.h"
 #include "platform/git/git_libgit2.h"
@@ -207,8 +208,7 @@ REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 视
                c.diffState() == RightPaneState::Placeholder;
     }));
     DOCTEST_CHECK(c.selectedPath() == "甲.txt");
-    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
-                  !c.searchContentView());  // diff 动线（D5-A 判据）
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff);  // diff 动线（D5-A 判据）
 
     // 切走（N2 空态页）→ 重选同仓：恢复视图形态 + 打开文件 + 视图类型
     //（树/平铺切换记忆至会话不落盘，设计 §6.3；N10 跨仓恢复沿用同一位）
@@ -217,8 +217,7 @@ REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 视
     DOCTEST_CHECK(openRepoViaPicker(c, platform::git::pathToUtf8(repoA)));
     DOCTEST_CHECK(c.viewMode() == module::git::ChangeViewMode::Flat);
     DOCTEST_CHECK(c.selectedPath() == "甲.txt");
-    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
-                  !c.searchContentView());  // diff 动线（D5-A 判据）
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff);  // diff 动线（D5-A 判据）
     DOCTEST_CHECK(pumpUntil(c, [&] {
         return c.diffState() == RightPaneState::Ready ||
                c.diffState() == RightPaneState::Placeholder;
@@ -228,7 +227,6 @@ REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 视
     c.switchRepo();
     DOCTEST_CHECK(openRepoViaPicker(c, platform::git::pathToUtf8(repoB)));
     DOCTEST_CHECK(c.selectedPath().empty());
-    DOCTEST_CHECK_FALSE(c.searchContentView());  // 全新会话不携带搜索内容动线
     worker.stop();
     platform::folderpicker::setPickerForTest(nullptr);
     return git_fixture::cleanupRepoDir(repoA, true) &&
@@ -349,8 +347,7 @@ REGISTER_TEST(gitRefreshKeepsListUiState, "F-09：刷新重建行序列保 选�
 
     // 三位保持：选中 + 右栏动线、目录展开位图、组折叠位图
     DOCTEST_CHECK(c.selectedPath() == "根.txt");
-    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
-                  !c.searchContentView());  // diff 动线（D5-A 判据）
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff);  // diff 动线（D5-A 判据）
     DOCTEST_CHECK_FALSE(list.isExpanded("docs"));  // 折叠记忆跨刷新保留
     DOCTEST_CHECK(list.isGroupCollapsed(module::git::ChangeListRow::Group::Unstaged));
     // 折叠组子树不出行（组头仍在，行序列确已重建）
@@ -426,8 +423,7 @@ REGISTER_TEST(gitUntrackedClickFullAddDiff, "bug296：点 U 行出全增 diff（
         DOCTEST_CHECK_EQ(c.diffModel().patch().hunks.size(), 1);
     }
 
-    // 档②：lazy 展开未跟踪目录 → 子文件行 → 同契约
-    c.toggleUntrackedDir("新模块");
+    // 档②：顶层 untracked 目录自动枚举（裁决④）→ 子文件行直接在列 → 同契约
     DOCTEST_CHECK(pumpUntil(c, [&] {
         for (const auto& r : c.listRows()) {
             if (r.kind == module::git::ChangeListRow::Kind::File &&
@@ -437,6 +433,17 @@ REGISTER_TEST(gitUntrackedClickFullAddDiff, "bug296：点 U 行出全增 diff（
         }
         return false;
     }));
+    // 裁决④+原则令：「新模块」目录行=纯结构装置（无徽标非 lazy，计数=文件行数），
+    // 不再是带 U 徽标的 untracked 目录条目行
+    for (const auto& r : c.listRows()) {
+        if (r.kind == module::git::ChangeListRow::Kind::Dir &&
+            r.relPath == "新模块") {
+            DOCTEST_CHECK_MESSAGE(!r.status.has_value(),
+                                  "目录行不应带状态徽标（文件夹原则令）");
+            DOCTEST_CHECK_MESSAGE(!r.lazy,
+                                  "顶层条目枚举后的目录行=tracked 式派生结构目录");
+        }
+    }
     c.selectChange("新模块/note.md");
     DOCTEST_CHECK(pumpUntil(c, [&] { return c.diffState() == RightPaneState::Ready; }));
     DOCTEST_CHECK(c.diffModel().placeholder().empty());  // bug296 核心
@@ -460,4 +467,61 @@ REGISTER_TEST(gitUntrackedClickFullAddDiff, "bug296：点 U 行出全增 diff（
     worker.stop();
     platform::folderpicker::setPickerForTest(nullptr);
     return git_fixture::cleanupRepoDir(root, true);
+})
+
+// ---- ⑧ need:299：最近仓历史 LRU + 切仓清过滤 + 当前仓下拉点击幂等 ----
+
+REGISTER_TEST(gitRecentRepoLruAndFilterReset, "need:299：开仓记录最近仓 LRU（≤8 去重新→旧，git_manager.json 持久化）；切仓清过滤词；当前仓下拉点击=收起不重载", {
+    const platform::git::Libgit2Scope libgit2;
+    const auto root = test_support::makeTempDir("devdesk_git_lru_", "root");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           platform::git::pathToUtf8(root).c_str());
+    const auto repoA = root / "仓甲";
+    const auto repoB = root / "仓乙";
+    std::filesystem::create_directories(repoA);
+    std::filesystem::create_directories(repoB);
+    git_fixture::initRepo(repoA);
+    git_fixture::commitAll(repoA, {{"甲.txt", "甲\n"}});
+    git_fixture::initRepo(repoB);
+    git_fixture::commitAll(repoB, {{"乙.txt", "乙\n"}});
+    const std::string aUtf8 = platform::git::pathToUtf8(repoA);
+    const std::string bUtf8 = platform::git::pathToUtf8(repoB);
+
+    GitWorker worker;
+    worker.start();
+    GitPageController c(&worker);
+    DOCTEST_CHECK(openRepoViaPicker(c, aUtf8));
+    DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
+    // 开 A 即过滤（词挂在列表上）→ 切 B：词清空（§4.9 切仓=过滤词清空）
+    c.setFilterDraft("甲");
+    DOCTEST_CHECK(c.filterActive());
+    DOCTEST_CHECK(openRepoViaPicker(c, bUtf8));
+    // 校验→openRepo 异步链路完成（Ready 期 pumpUntil(Ready) 会秒过——等到切仓落地）
+    DOCTEST_CHECK(pumpUntil(c, [&] {
+        return c.repoPathUtf8() == bUtf8 && !c.statusLoading();
+    }));
+    DOCTEST_CHECK(c.filterDraft().empty());
+    DOCTEST_CHECK_FALSE(c.filterActive());
+    // LRU：B 置顶新→旧，A 随后；持久化 git_manager.json（≤8 条）
+    const auto mem = module::git::GitRepoStore::load();
+    DOCTEST_REQUIRE_EQ(mem.recentRepos.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(mem.recentRepos[0], bUtf8);
+    DOCTEST_CHECK_EQ(mem.recentRepos[1], aUtf8);
+    // 当前仓下拉点击=收起幂等不重载（§6.10④）；Ready 保持
+    c.setRepoDropdownVisible(true);
+    c.openRecentRepo(bUtf8);
+    DOCTEST_CHECK_FALSE(c.repoDropdownVisible());
+    DOCTEST_CHECK(c.phase() == GitPagePhase::Ready);
+    // 下拉行集：可见时 composePump 刷新（当前仓 exists+current 标记）
+    c.setRepoDropdownVisible(true);
+    c.composePump();
+    DOCTEST_REQUIRE_EQ(c.recentRepoEntries().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK(c.recentRepoEntries()[0].current);   // B 当前
+    DOCTEST_CHECK(c.recentRepoEntries()[0].exists);
+    DOCTEST_CHECK_FALSE(c.recentRepoEntries()[1].current);
+    c.setRepoDropdownVisible(false);
+    worker.stop();
+    platform::folderpicker::setPickerForTest(nullptr);
+    return git_fixture::cleanupRepoDir(repoA, true) &&
+           git_fixture::cleanupRepoDir(repoB, true);
 })
