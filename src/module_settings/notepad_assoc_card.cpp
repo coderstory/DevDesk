@@ -139,18 +139,25 @@ void drawNotepadAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
                         kSwitchW, kSwitchH, t,
                         [f = a.applyNotepadAssocEnabled](bool v) { f(v); });
 
-        // 说明带（id .hint 不换；单行省略三件套）
+        // 说明带（id .hint 不换；宽档单行省略三件套；窄窗 2 行 wrap——review 260
+        // P2-2 / P3-2：820 档单行会断在「只读查…」，窄档改 2 行 18 行高，
+        // 其下状态带/引导带整体下移 kNotepadAssocNarrowHintExtra（卡高同步见 logic.h）。
+        const bool narrow = args.narrow;
+        const float hintH = roundFs(narrow ? 36.0f : kHintH);
         ui.text(id + ".hint")
             .position(padX, roundFs(kHintY))
-            .size(innerW, roundFs(kHintH))
+            .size(innerW, hintH)
             .text("双击记事本支持的文件时用 DevDesk 打开")
             .fontSize(fs(12.0f))
-            .lineHeight(roundFs(kHintH))
+            .lineHeight(roundFs(narrow ? 18.0f : kHintH))
+            .wrap(narrow)
             .color(t.colors.textTertiary)
             .maxWidth(innerW)
-            .overflow(core::TextOverflow::Ellipsis)
+            .overflow(narrow ? core::TextOverflow::Clip
+                             : core::TextOverflow::Ellipsis)
             .clip()
             .build();
+        const float bandShift = narrow ? roundFs(kNotepadAssocNarrowHintExtra) : 0.0f;
 
         // 状态带（None = 空串 → 整带不渲染，「关+从未开过=无状态字」）。
         // 点 6×6 与状态字同色同档（加深档走 token，浅底 ≥4.5:1）；字 x = 28+6+6 = 40。
@@ -164,7 +171,7 @@ void drawNotepadAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
                            : t.colors.textTertiary);
             const float dotW = roundFs(kStatusDot);
             ui.rect(id + ".status.dot")
-                .position(padX, roundFs(kStatusY) +
+                .position(padX, roundFs(kStatusY) + bandShift +
                                     (roundFs(kStatusH) - dotW) * 0.5f)
                 .size(dotW, dotW)
                 .radius(dotW)
@@ -173,7 +180,8 @@ void drawNotepadAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
             const float statusW = core::TextPrimitive::measureTextWidth(
                 statusText, {}, fs(12.0f), 600);
             ui.text(id + ".status")
-                .position(padX + dotW + roundFs(6.0f), roundFs(kStatusY))
+                .position(padX + dotW + roundFs(6.0f),
+                          roundFs(kStatusY) + bandShift)
                 .size(statusW, roundFs(kStatusH))
                 .text(statusText)
                 .fontSize(fs(12.0f))
@@ -187,7 +195,7 @@ void drawNotepadAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
         // Win 摘要单行（省略号兜底）/ mac 摘要+平台指引（盒高随实测行数派生），
         // Win 一键按钮独立一行 y108 左锚（launchAdvancedAssociationUI 直达）。
         if (guide) {
-            const float gY = roundFs(kGuideTextY);
+            const float gY = roundFs(kGuideTextY) + bandShift;
             const float iconW = kGuideIconW;
             ui.text(id + ".guide.icon")
                 .position(padX, gY + (roundFs(kGuideLineH) - iconW) * 0.5f)
@@ -218,7 +226,7 @@ void drawNotepadAssocCard(const CardDrawArgs& args, bool forceTextGuide) {
                                                           fs(13.0f), 400) +
                     2.0f * kBtnPadX;
                 components::button(ui, id + ".guide.btn")
-                    .position(padX, roundFs(kGuideBtnY))
+                    .position(padX, roundFs(kGuideBtnY) + bandShift)
                     .size(btnW, kBtnH)
                     .text(btnLabel)
                     .fontSize(fs(13.0f))

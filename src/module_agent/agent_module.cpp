@@ -246,15 +246,18 @@ void toolsEntryButton(::eui::Ui& ui, const std::string& id, int toolCount,
 // 新增、zIndex 需另行透传、文案 id 变为 button 逐态契约，升级时一并处理）。
 void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
                     float w, float h, const std::string& label, float fontSize,
+                    const ::core::Color& labelColor,
                     const components::theme::ThemeColorTokens& tokens,
                     bool enabled, std::function<void()> onClick,
                     std::function<void(bool)> onHover, int zIndex) {
     const ::core::Color base = tokens.primary;
     const ::core::Color hover = components::theme::buttonHover(tokens, base);
     const ::core::Color pressed = components::theme::buttonPressed(tokens, base);
-    const ::core::Color textColor =
-        enabled ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f}
-                : ::core::Color{0.94f, 0.97f, 1.0f, 0.40f};
+    // need261 review P1-1：绿主色底（#36D399/#07C160）上白标签仅 1.78/2.38:1，
+    // 标签统一走 onAccent 深墨（8.4/6.8:1）；禁用态 40% 透明度沿用旧口径
+    //（WCAG 对禁用控件豁免对比度）。
+    ::core::Color textColor = labelColor;
+    if (!enabled) textColor.a = 0.40f;
     // 根 stack 保留 `<id>` 语义（可点 + 带文案）并承载 zIndex：命中面压在上面时
     // 靠它把整组抬到命中面之上（同 components::button 的「外层 stack 抬层级」口径）
     ui.stack(id)
@@ -601,6 +604,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .size(kNewTaskBtnW, 40.0f)
                             .text("+ 新建任务")
                             .theme(themeTokens)
+                            // need261 review P3-1：同页主按钮标签统一 onAccent
+                            // 深墨（框架 primary 默认白标签在绿底仅 1.78:1）
+                            .textColor(t.colors.onAccent)
                             .disabled(store_ == nullptr)
                             .onClick([this] { openNewTaskDialog(); })
                             .build();
@@ -714,7 +720,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     for (const auto& task : tasks_) {
                         const std::string id =
                             "agent.task." + std::to_string(task.id);
-                        std::string status = "—";
+                        std::string status = "未运行";
                         eui::Color statusColor = t.colors.textTertiary;
                         auto it = latestRuns_.find(task.id);
                         if (it != latestRuns_.end()) {
@@ -1062,9 +1068,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .color(t.colors.textSecondary)
                                     .build();
 
+                                // need261 review P3-2：未运行过不再进元信息链（药丸已表达「未运行」），
+                                // 避免同卡两处重复同一状态；只保留触发方式
                                 const std::string lastRunText =
                                     it == latestRuns_.end()
-                                        ? std::string("未运行过")
+                                        ? std::string()
                                         : "最近运行 " + relativeTimeText(
                                                             it->second.startedAt, nowSec);
                                 // 链尾（废除右对齐）：触发后间距 10，吃剩余宽到
@@ -1073,7 +1081,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     badgeX + triggerW + core::theme::scaled(10.0f);
                                 const float lastRunW = std::max(
                                     0.0f, cardW - cardPad - lastRunX);
-                                if (lastRunW > 0.0f) {
+                                if (lastRunW > 0.0f && !lastRunText.empty()) {
                                     inner.text(id + ".lastrun")
                                         .position(lastRunX, statusRowY)
                                         .size(lastRunW, stSmall.lineHeight)
@@ -1098,7 +1106,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     triggerRowY, runW,
                                     core::theme::scaled(32.0f),
                                     runStarted ? "运行中…" : "启动",
-                                    core::theme::scaled(12.0f), themeTokens,
+                                    core::theme::scaled(12.0f), t.colors.onAccent, themeTokens,
                                     loop_ != nullptr && !runStarted,
                                     [this, taskId = task.id] {
                                         startTask(taskId);

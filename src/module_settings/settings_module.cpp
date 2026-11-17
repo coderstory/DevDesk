@@ -1301,28 +1301,39 @@ public:
         // 重查：设置页 compose 只在本页可见时发生，注册表查询毫秒级，1s 节流
         // 下用户在页期间的归属漂移 ≤1s 被校正，可观察行为与焦点方案一致。
         updateNotepadAssocStateIfStale();
-        const bool notepadAssocGuide =
+        const auto notepadAssocKind =
             notepadAssocStatusKind(cfg_.notepadAssocEnabled,
                                    cfg_.notepadAssocEverEnabled,
-                                   notepadAssocState_) ==
-            NotepadAssocStatusKind::NotEffective;
+                                   notepadAssocState_);
+        const bool notepadAssocGuide =
+            notepadAssocKind == NotepadAssocStatusKind::NotEffective;
+        // review 260 P2-1：None 态（关+从未开过）无状态带 → 卡高不预留该带
+        const bool notepadAssocHasStatus =
+            notepadAssocStatusLabel(notepadAssocKind)[0] != '\0';
         const bool notepadAssocOneClick =
             platform::open_settings::oneClickAvailable();
+        // review 260 P2-2：内容宽 <640（≈ 820 窗）→ 半宽配对卡改单列堆叠，说明 2 行，
+        // 卡高同步派生（断点按内容宽判——1000 档内容宽 728 两卡并排是设计基线，
+        // 不能拿窗宽对 960 直接比）
+        const bool narrowCards = settingsCardsNarrow(contentW);
         // review P2-1（承接 md 卡）：mac 文字引导档卡高随实测行数派生（600 最小
         // 窗/130% 字号指引超两行）。卡宽 = 配对列宽（ui_kit::columnX 半宽口径，
-        // 与 drawCardRegion 同源），行数实测与卡绘制共用 notepad_assoc_card.h
-        // 函数；文案 = notepadAssocMacGuideText 组装（logic.h 单一来源）。
+        // 与 drawCardRegion 同源；窄窗堆叠档卡宽 = 内容宽），行数实测与卡绘制共用
+        // notepad_assoc_card.h 函数；文案 = notepadAssocMacGuideText 组装（logic.h
+        // 单一来源）。
         int notepadAssocTextLines = 2;
         if (notepadAssocGuide && !notepadAssocOneClick) {
             float mdCardW = contentW;
-            ui_kit::columnX(contentW, t.sizes.spacing, &mdCardW, nullptr);
-            notepadAssocTextLines =
-                notepadAssocMacGuideLineCount(
-                    mdCardW, notepadAssocMacGuideText(notepadGuideText_));
+            if (!narrowCards) {
+                ui_kit::columnX(contentW, t.sizes.spacing, &mdCardW, nullptr);
+            }
+            notepadAssocTextLines = notepadAssocMacGuideLineCount(
+                mdCardW, notepadAssocMacGuideText(notepadGuideText_));
         }
         const float notepadAssocH = roundFs(
             notepadAssocCardHeight(notepadAssocGuide, notepadAssocOneClick,
-                                   notepadAssocTextLines));
+                                   notepadAssocTextLines, notepadAssocHasStatus,
+                                   narrowCards));
         // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
         // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 签 claude + mcp。
         const bool claudeOn =
@@ -1414,7 +1425,12 @@ public:
                                         &pairColW, nullptr);
                         components::scrollView(ui, "settings.cards.scroll")
                             .size(contentW, cardsH)
-                            .gap(t.sizes.spacing)  // 卡间距 8px（§4.3），与卡推进 gapY 同值
+                            // 卡间距：模块 tab 走 16 刻度（review 260 P3-3：
+                            // 模块卡↔配对行旧 8 实测被读成 14，未落 16 刻度）；
+                            // 其余 tab 维持 8（need224 gapY 16→8 口径不动）
+                            .gap(settingsTab_ == kTabModules
+                                     ? t.sizes.spacingLarge
+                                     : t.sizes.spacing)
                             .step(60.0f)
                             .theme(compTheme)
                             // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名 + 列宽桶：
@@ -1445,7 +1461,7 @@ public:
                                 drawCardRegion(inner, contentWidth,
                                                scrollRootPageY, cardsH,
                                                screen.height, t, proxyH,
-                                               notepadAssocH, svc);
+                                               notepadAssocH, svc, narrowCards);
                             })
                             .build();
                     })
@@ -1732,7 +1748,8 @@ private:
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
-                        float notepadAssocH, ::core::IClaudeProxyService* svc) {
+                        float notepadAssocH, ::core::IClaudeProxyService* svc,
+                        bool narrowCards) {
         // logTail_ 保持原始不预过滤——过滤在装配期做，切档零额外磁盘 IO、下一帧立即生效；
         // 若在 readLogTailLines/applyLogTail 里过滤，切到低级别要重读磁盘才能看到更多行。
         auto filteredLogTail = filterLogTailByLevel(logTail_, parseLogLevel(cfg_.logLevel));
@@ -1787,14 +1804,18 @@ private:
         in.notepadExtStates = notepadExtStates_;
         in.notepadGuideText = notepadGuideText_;
         const SettingsCardActions a = cardActions();
-        // 卡与卡纵向间距统一 8px（列表统一规范 §4.3：禁 ≥16 松散档）；
-        // 半宽配对横向列距同值（columnX 单一来源口径，注释见 :1661）
-        const float gapY = t.sizes.spacing;
-        float cardY = 0.0f;
         // 越界 tab（不可达）回落通用页
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
                             ? settingsTab_
                             : kTabGeneral;
+        // 卡与卡纵向间距 8px（列表统一规范 §4.3：禁 ≥16 松散档）；模块 tab 走 16
+        // 刻度（review 260 P3-3）；窄窗堆叠档同 16（review 260 P2-2）。
+        const float gapY = (tab == kTabModules || narrowCards)
+                               ? t.sizes.spacingLarge
+                               : t.sizes.spacing;
+        // 窄窗堆叠只作用于模块 tab 的两张半宽卡（其它 tab 本就单列全宽）
+        const bool narrowHalfStack = narrowCards && tab == kTabModules;
+        float cardY = 0.0f;
         // 半宽配对列几何：列宽/右列 x 单一来源 ui_kit::columnX（gap 与卡间距一致）。
         float colW = contentWidth;
         ui_kit::columnX(contentWidth, gapY, &colW, nullptr);
@@ -1843,6 +1864,23 @@ private:
             pendingHalf = nullptr;
         };
 
+        // 卡高解析：窄窗堆叠档模块 tab 的两类卡改走窄档派生（提醒卡说明 2 行、
+        // 模块网格降 2 列 2 行描述）；其余沿用注册表卡高种类。
+        auto heightOf = [&](const CardSpec& spec) {
+            if (narrowHalfStack) {
+                if (spec.heightKind == CardHeightKind::Fixed) {
+                    return roundFs(kReminderCardHeightNarrow);
+                }
+                if (spec.heightKind == CardHeightKind::ModulesGrid) {
+                    return modulesCardHeightFor(
+                        kModuleToggleCellCount(
+                            ::platform::wallpaper::supported()),
+                        /*narrow=*/true);
+                }
+            }
+            return cardHeight(spec, proxyH, notepadAssocH, cardsH - cardY);
+        };
+
         for (const CardSpec& spec : kCardSpecs) {
             if (spec.tab != tab) continue;
             if (spec.visible != nullptr && !spec.visible()) {
@@ -1850,6 +1888,17 @@ private:
             }
             if (spec.gate != nullptr && !moduleEnabled(cfg_, spec.gate)) {
                 continue;  // 模块关 → 整卡隐藏（不显示故障态）
+            }
+            if (spec.half && narrowHalfStack) {
+                // 窄窗（review 260 P2-2）：半宽卡改全宽单列上下堆叠，间距 16
+                flushLoneHalf();
+                const float h = heightOf(spec);
+                CardDrawArgs args{ui, spec.id, contentWidth, h, t,
+                                  cardsTopY + cardY - cardsScrollOffset_,
+                                  screenH, in, a, /*narrow=*/true};
+                spec.draw(args);
+                cardY += h + gapY;
+                continue;
             }
             if (spec.half) {
                 if (pendingHalf == nullptr) {
@@ -1860,11 +1909,10 @@ private:
                 continue;
             }
             flushLoneHalf();   // 全宽卡先清掉挂起的半宽游标
-            const float h =
-                cardHeight(spec, proxyH, notepadAssocH, cardsH - cardY);
+            const float h = heightOf(spec);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
-                              in, a};
+                              in, a, /*narrow=*/narrowHalfStack};
             spec.draw(args);
             cardY += h + gapY;
         }

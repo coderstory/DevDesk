@@ -33,6 +33,11 @@ struct ColorTokens {
     eui::Color accentText;
     // 主色背景上的前景色（主按钮文字/ACTIVE 徽标；两主题均为白）
     eui::Color onPrimary;
+    // 绿系主色底上的深墨前景（need261 review P1-1/P3-1）：微信绿水彩亮度高，
+    // onPrimary 白在上仅 1.78:1（深底薄荷 #36D399）/ 2.38:1（浅底 #07C160），
+    // 低于 AA；深墨 #06251A 分别 8.4:1 / 6.8:1。仅用于饱和度高的绿主按钮文字，
+    // onPrimary 继续服务 Clay 等深主色档（白字达标）。
+    eui::Color onAccent;
     eui::Color textPrimary;
     eui::Color textSecondary;
     eui::Color textTertiary;

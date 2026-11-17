@@ -471,13 +471,16 @@ void drawModulesCard(const CardDrawArgs& args) {
 
             // 开关格（B6/F-69-3：列数/格高内容派生）：≤1.15 档两列（行主序，
             // 0/1 同行异列）；>1.15 档降单列——放大后两列格宽放不下 name/desc。
+            // 窄窗（review 260 P3-2）：<960 档 3 列降 2 列 + 描述 2 行 + 超长
+            // tooltip（3 列格宽 230 把模块名截成「Claude 配置…」）。
             // 开关控件几何沿用 44×24（UAT3 由 80×32 收敛口径），在格内垂直居中。
             // 格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
-            const int gridCols = modulesCardCols(cellCount);
+            const bool narrow = args.narrow;
+            const int gridCols = modulesCardCols(cellCount, narrow);
             const float nameH = modulesNameH();
             const float rowDescDy = modulesRowDescDy();
-            const float rowDescH = modulesRowDescH();
-            const float rowPitch = modulesRowPitch();
+            const float rowDescH = modulesRowDescH(narrow);
+            const float rowPitch = modulesRowPitch(narrow);
             const float switchW = 44.0f;
             const float switchH = 24.0f;
             const float switchGap = 12.0f;   // 格内文案与右贴开关的间距
@@ -509,7 +512,12 @@ void drawModulesCard(const CardDrawArgs& args) {
                     isWallpaper ? std::string("settings.card.wallpaper") : id;
                 const std::string suffix =
                     isWallpaper ? "" : "." + std::to_string(i);
-                ui.text(cellId + (isWallpaper ? ".name" : ".name" + suffix))
+                const std::string nameId =
+                    cellId + (isWallpaper ? ".name" : ".name" + suffix);
+                const std::string descId = cellId + (isWallpaper
+                                                         ? ".rowdesc"
+                                                         : ".rowdesc" + suffix);
+                ui.text(nameId)
                     .position(cellX, rowY)
                     .size(textW, nameH)
                     .text(meta.name)
@@ -521,18 +529,49 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
-                ui.text(cellId + (isWallpaper ? ".rowdesc"
-                                              : ".rowdesc" + suffix))
+                ui.text(descId)
                     .position(cellX, rowY + rowDescDy)
                     .size(textW, rowDescH)
                     .text(meta.desc)
                     .fontSize(fs(12.0f))
-                    .lineHeight(rowDescH)
+                    .lineHeight(roundFs(narrow ? 18.0f : 16.0f))
+                    .wrap(narrow)   // 窄窗 2 行（review 260 P3-2）
                     .color(t.colors.textTertiary)
                     .maxWidth(textW)
-                    .overflow(core::TextOverflow::Ellipsis)
+                    .overflow(narrow ? core::TextOverflow::Clip
+                                     : core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
+                // 超长承载全文（review 260 P3-2）：实测宽超格宽才挂，锚点取
+                // 文案块中心；hover 触发沿用 EUI tooltip 既有通道（git 页同款）。
+                const float nameTextW = core::TextPrimitive::measureTextWidth(
+                    meta.name, {}, t.sizes.fontSizeBody - 1.0f, 600);
+                if (nameTextW > textW) {
+                    components::tooltip(ui, nameId + ".tip")
+                        .theme(compThemeTop)
+                        .source(nameId)
+                        .value(meta.name)
+                        .anchor(cellX + textW * 0.5f, rowY + nameH * 0.5f)
+                        .bounds(w, h)
+                        .minWidth(120.0f)
+                        .maxWidth(std::max(160.0f, w * 0.6f))
+                        .zIndex(40)
+                        .build();
+                }
+                const float descTextW = core::TextPrimitive::measureTextWidth(
+                    meta.desc, {}, fs(12.0f), 400);
+                if (descTextW > textW) {
+                    components::tooltip(ui, descId + ".tip")
+                        .theme(compThemeTop)
+                        .source(descId)
+                        .value(meta.desc)
+                        .anchor(cellX + textW * 0.5f, rowY + rowDescDy + 8.0f)
+                        .bounds(w, h)
+                        .minWidth(160.0f)
+                        .maxWidth(std::max(200.0f, w * 0.6f))
+                        .zIndex(40)
+                        .build();
+                }
                 // 开关换微信绿 wswitch（§6 item 7）：绿轨道+白滑块（§4.4）。
                 // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
                 // UAT3：80×32 显示过大 → 44×24（agent_module 详情弹窗同款）；
@@ -982,9 +1021,28 @@ void drawReminderCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "提醒弹窗");
-            // 说明带左对齐挂 28 左轨（cardDesc 同款，废除右对齐挂标题行）
-            cardDesc(ui, id, t, 40.0f, std::max(0.0f, w - 56.0f), 16.0f,
-                     "到期与调度事项弹全屏置顶窗，默认关闭");
+            // 说明带左对齐挂 28 左轨（cardDesc 同款，废除右对齐挂标题行）。
+            // 窄窗（review 260 P2-2）：改 2 行（行高 18、盒 36）不单行省略——
+            // 820 档旧单行断在「默认…」语义关键处；开关行随之下移 16。
+            const bool narrow = args.narrow;
+            if (narrow) {
+                const float descW = std::max(0.0f, w - 56.0f);
+                const float descH = roundFs(36.0f);
+                ui.text(id + ".desc")
+                    .position(28.0f, roundFs(40.0f))
+                    .size(descW, descH)
+                    .text("到期与调度事项弹全屏置顶窗，默认关闭")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(roundFs(18.0f))
+                    .wrap(true)
+                    .color(t.colors.textTertiary)
+                    .maxWidth(descW)
+                    .clip()
+                    .build();
+            } else {
+                cardDesc(ui, id, t, 40.0f, std::max(0.0f, w - 56.0f), 16.0f,
+                         "到期与调度事项弹全屏置顶窗，默认关闭");
+            }
             const float swW = kAutostartSwitchW;
             const float swH = kAutostartSwitchH;
             const float swX = w - 28.0f - swW;
@@ -1016,10 +1074,12 @@ void drawReminderCard(const CardDrawArgs& args) {
                                 rowY + std::max(0.0f, (rowH - swH) * 0.5f),
                                 swW, swH, t, on);
             };
-            drawSwitchRow(id + ".popup", "上线提醒弹窗", 64.0f,
+            drawSwitchRow(id + ".popup", "上线提醒弹窗",
+                          narrow ? 80.0f : 64.0f,
                           in.cfg.releaseReminderPopup,
                           [f = a.applyReminderPopup](bool v) { f(v); });
-            drawSwitchRow(id + ".fs", "调度全屏弹窗", 96.0f,
+            drawSwitchRow(id + ".fs", "调度全屏弹窗",
+                          narrow ? 112.0f : 96.0f,
                           in.cfg.fullscreenPopup,
                           [f = a.applyFullscreenPopup](bool v) { f(v); });
         })
