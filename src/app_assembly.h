@@ -109,18 +109,17 @@ void setOsOpenFunnel(std::function<void(const std::string& path)> funnel);
 void drainPendingSecondInstanceFiles();
 
 // 唤醒裁决（bug270，纯判据供单测直测）：送达路径里是否含「需要主窗承接」的类型
-//（非 .md/.markdown）。纯 .md 送达 = 关联启动，只开查看器窗、不唤主窗（与冷启动
-// armTrayIfViewerOnlyLaunch 同一裁决）；任一其它类型返回 true（打开在主窗路由页）。
+//（非记事本清单扩展名）。纯清单内送达 = 关联启动，只开记事本窗、不唤主窗（与冷
+// 启动 armTrayIfViewerOnlyLaunch 同一裁决）；任一其它类型返回 true（主窗承接）。
 bool secondInstancePathsNeedMainWindow(const std::vector<std::string>& paths);
 
 // 测试缝：清队列 + 摘漏斗（用例间隔离）
 void resetSecondInstanceFilesForTest();
 
-// 根据扩展名返回目标 PageId（仅目标选择；内容加载由 dispatchFileOpen 完成）
-::core::PageId dispatchPageForFile(const std::string& path);
-
-// 绝对路径解析成笔记目录内相对路径，以 "open:<相对路径>" 走 Markdown 的 consumeNavPayload 通道。
-// 降级：模块未注册 → Router 回退 Home 且不投递负载；解析失败 → 只切页+WARN
+// OS 打开漏斗（need:273 记事本改造）：清单扩展名 → 独立记事本窗（查重聚焦/新窗
+// 在 session 层内收）；未注册 → navigateTo(Home)。notesDir 参数保留 = 签名不变
+//（OS 双击不再拷贝进笔记目录，captureFileIntoNotesDir 语义废止；应用内笔记
+// "open:" 通道不经漏斗、零影响）
 void dispatchFileOpen(::core::Router* router, const std::string& path,
                       const std::filesystem::path& notesDir);
 

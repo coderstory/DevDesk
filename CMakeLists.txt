@@ -233,6 +233,9 @@ endfunction()
 # 功能模块（home / markdown / todo / claude_proxy / settings / about / agent / wallpaper / schedule）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
+# 记事本（独立窗口模块，need:273）：不进 Router / app_registry 零登记（PRD R-7），
+# 开窗入口仅 OS 漏斗与窗内打开对话框
+add_subdirectory(src/module_notepad)
 add_subdirectory(src/module_git)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_agent)
@@ -435,6 +438,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_ui_kit
     devdesk_module_home
     devdesk_module_markdown
+    devdesk_module_notepad
     devdesk_module_todo
     devdesk_agent
     devdesk_module_memory

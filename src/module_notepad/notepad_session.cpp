@@ -1,0 +1,127 @@
+// notepad_session.cpp — session 注册表 / 规范路径查重 / 标题 / 脏态联动
+//（need:273 批 1）。生命周期不变量照抄 md_viewer_window 先例：注册表 erase
+// 只发生在 onWindowDestroyed（销毁前回调）→ compose 闭包捕获的裸指针与窗口同寿。
+#include "notepad_session.h"
+
+#include <cstdint>
+#include <memory>
+#include <system_error>
+#include <vector>
+
+#include "core/logging.h"
+#include "core/window/window_backend.h"  // setWindowTitle（脏态前缀）/ getWindowPos（关窗记忆）
+#include "notepad_module.h"
+#include "notepad_prefs.h"
+
+namespace module::notepad {
+
+namespace {
+
+std::vector<std::unique_ptr<NotepadSession>>& sessions() {
+    static std::vector<std::unique_ptr<NotepadSession>> registry;
+    return registry;
+}
+
+}  // namespace
+
+namespace detail {
+
+std::vector<std::unique_ptr<NotepadSession>>& sessionRegistry() {
+    return sessions();
+}
+
+std::uint64_t nextPageIdSeq() {
+    // 全局递增页序号：跨注册表清空单调递增，pageId 唯一性不依赖注册表现状
+    //（v5：仅窗口内部唯一标识，不用于同路径双开）
+    static std::uint64_t seq = 0;
+    return ++seq;
+}
+
+}  // namespace detail
+
+std::string notepadWindowTitleFor(const std::string& path, size_t maxBytes) {
+    const size_t sep = path.find_last_of("/\\");
+    const std::string name =
+        sep == std::string::npos ? path : path.substr(sep + 1);
+    if (name.size() <= maxBytes) return name;
+    const std::string ellipsis = "…";  // 3 字节
+    const size_t keep =
+        maxBytes > ellipsis.size() + 1 ? maxBytes - ellipsis.size() : 1;
+    const size_t head = keep - keep / 3;
+    const size_t tail = keep - head;
+    const auto snapToCodepoint = [&name](size_t pos) {
+        while (pos > 0 &&
+               (static_cast<unsigned char>(name[pos]) & 0xC0) == 0x80) {
+            --pos;
+        }
+        return pos;
+    };
+    const size_t headEnd = snapToCodepoint(head);
+    const size_t tailBegin =
+        snapToCodepoint(name.size() > tail ? name.size() - tail : 0);
+    if (headEnd == 0 || tailBegin <= headEnd) return name.substr(0, maxBytes);
+    return name.substr(0, headEnd) + ellipsis + name.substr(tailBegin);
+}
+
+std::string notepadNormKeyFor(const std::string& path) {
+    std::error_code ec;
+    const std::filesystem::path p(path);
+    auto canon = std::filesystem::weakly_canonical(p, ec);
+    if (!ec) return canon.string();
+    canon = std::filesystem::absolute(p, ec);  // 文件不存在也查重（错误占位窗）
+    return canon.lexically_normal().string();
+}
+
+NotepadSession* findSessionByNormKey(const std::string& normKey) {
+    for (auto& s : sessions()) {
+        if (s->normKey == normKey) return s.get();
+    }
+    return nullptr;
+}
+
+void notepadSessionWindowDestroyed(NotepadSession* s) {
+    // 关窗记忆回写（应用级一份，设计稿 §2）：尺寸取 compose 最近回填；位置趁
+    // 句柄仍有效（销毁前回调契约）读窗位。首窗从未 compose（异常路径）不落库。
+    if (s->sizeSeen && s->handle != nullptr) {
+        int x = 0;
+        int y = 0;
+        core::window::getWindowPos(static_cast<core::window::Handle>(s->handle),
+                                   x, y);
+        notepadSaveWindowGeometry(s->lastW, s->lastH, x, y);
+    }
+    for (auto it = sessions().begin(); it != sessions().end(); ++it) {
+        if (it->get() == s) {
+            sessions().erase(it);
+            return;
+        }
+    }
+}
+
+void sessionToast(NotepadSession& s, const std::string& message) {
+    s.toastMessage = message;
+    s.toastUntil = std::chrono::steady_clock::now() +
+                   std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                       std::chrono::duration<float>(1.5f));
+}
+
+void sessionSetDirty(NotepadSession& s, bool dirty) {
+    if (s.dirty == dirty) return;
+    s.dirty = dirty;
+    if (s.handle != nullptr) {
+        // 标题 = 脏态「• 」前缀（macOS 文档惯例）+ 文件名；setWindowTitle
+        // 即时生效（批 0 能力，need272）
+        const std::string title = (dirty ? "• " : "") + s.title;
+        core::window::setWindowTitle(
+            static_cast<core::window::Handle>(s.handle), title.c_str());
+    }
+}
+
+size_t notepadSessionCountForTest() { return sessions().size(); }
+
+std::string notepadSessionPageIdForTest(size_t index) {
+    return index < sessions().size() ? sessions()[index]->pageId : std::string();
+}
+
+void resetNotepadSessionsForTest() { sessions().clear(); }
+
+}  // namespace module::notepad

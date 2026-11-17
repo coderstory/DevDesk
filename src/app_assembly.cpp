@@ -4,9 +4,9 @@
 #include "app_sidebar.h"
 #include "core/logging.h"
 #include "core/database.h"
+#include "core/notepad_file_types.h"  // 记事本扩展名单一真源（漏斗/托盘/第二实例判据）
 #include "mcp_service_bridge.h"
-#include "module_markdown/md_file_open.h"
-#include "module_markdown/md_viewer_window.h"
+#include "module_notepad/notepad_module.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
 #include "platform/file_open.h"
@@ -206,8 +206,6 @@ namespace {
 std::mutex g_secondInstanceFilesMutex;
 std::vector<std::string> g_secondInstanceFiles;
 std::function<void(const std::string&)> g_osOpenFunnel;
-// 定义见文件后段（OS 关联扩展名判据）；drain 的唤醒裁决先用，故前置声明
-bool pathHasMarkdownExtension(const std::string& path);
 } // namespace
 
 void enqueueSecondInstancePaths(std::vector<std::string> paths) {
@@ -228,7 +226,7 @@ void setOsOpenFunnel(std::function<void(const std::string& path)> funnel) {
 
 bool secondInstancePathsNeedMainWindow(const std::vector<std::string>& paths) {
     for (const auto& path : paths) {
-        if (!pathHasMarkdownExtension(path)) return true;
+        if (!core::notepad::isNotepadExtension(path)) return true;
     }
     return false;
 }
@@ -242,9 +240,9 @@ void drainPendingSecondInstanceFiles() {
         paths = std::exchange(g_secondInstanceFiles, {});
     }
     if (paths.empty()) return;
-    // 唤醒裁决（bug270）：带路径唤醒不再由监听线程无条件弹主窗（那会让「双击 .md
-    // 关联启动」= 主窗被唤起 + 查看器窗两个窗口）。纯 .md/.markdown 送达 = 关联
-    // 启动，只开查看器窗（与冷启动 armTrayIfViewerOnlyLaunch 同口径）；含其它类型
+    // 唤醒裁决（bug270）：带路径唤醒不再由监听线程无条件弹主窗（那会让「双击关联
+    // 文件启动」= 主窗被唤起 + 记事本窗两个窗口）。纯记事本清单扩展名送达 = 关联
+    // 启动，只开记事本窗（与冷启动 armTrayIfViewerOnlyLaunch 同口径）；含其它类型
     // 才需要主窗承接路由页。纯唤起（无载荷）仍走监听线程 requestShow，不受影响。
     if (secondInstancePathsNeedMainWindow(paths)) app::requestShow();
     for (const auto& path : paths) {
@@ -259,91 +257,37 @@ void resetSecondInstanceFilesForTest() {
     g_osOpenFunnel = nullptr;
 }
 
-namespace {
-
-// .md/.markdown 判据——大小写不敏感：OS 关联送达扩展名大小写不定
-// （README.MD / notes.MARKDOWN），查看器分支与 OS 行为对齐。刻意与
-// dispatchPageForFile 不同源：那是主窗内嵌通道页面路由的既有语义（.MD→Home 不变）。
-bool pathHasMarkdownExtension(const std::string& path) {
-    auto endsWithIgnoreCase = [&path](const char* suffix) {
-        const size_t n = std::string(suffix).size();
-        if (path.size() < n) return false;
-        for (size_t i = 0; i < n; ++i) {
-            const char a = static_cast<char>(std::tolower(
-                static_cast<unsigned char>(path[path.size() - n + i])));
-            const char b = static_cast<char>(
-                std::tolower(static_cast<unsigned char>(suffix[i])));
-            if (a != b) return false;
-        }
-        return true;
-    };
-    return endsWithIgnoreCase(".md") || endsWithIgnoreCase(".markdown");
-}
-
-} // namespace
-
-::core::PageId dispatchPageForFile(const std::string& path) {
-    // ASCII 小写化：只折 'A'-'Z'，不依赖 locale（tolower 受 locale 影响）
-    const auto asciiLower = [](char c) {
-        return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-    };
-    // 后缀比较大小写不敏感（APFS/NTFS 默认不敏感）：只小写化文件名尾部与后缀，
-    // 不整串拷贝。Windows 同步为大小写不敏感（原本对该平台即应如此）。
-    const auto endsWith = [&](const char* suffix) {
-        const size_t n = std::string(suffix).size();
-        if (path.size() < n) return false;
-        const size_t offset = path.size() - n;
-        for (size_t i = 0; i < n; ++i) {
-            if (asciiLower(path[offset + i]) != asciiLower(suffix[i])) {
-                return false;
-            }
-        }
-        return true;
-    };
-    if (endsWith(".md") || endsWith(".markdown")) return ::core::PageId::Markdown;
-    if (endsWith(".json")) return ::core::PageId::ClaudeProxy;
-    if (endsWith(".js") || endsWith(".html") || endsWith(".htm") ||
-        endsWith(".txt")) return ::core::PageId::Markdown;  // 文本类用 Markdown 模块查看
-    return ::core::PageId::Home;
-}
+// 记事本改造 need:273：pathHasMarkdownExtension / dispatchPageForFile 已退役——
+// 扩展名判据统一 core::notepad::isNotepadExtension 单一真源；主窗内嵌通道
+// 页面路由不再承接 OS 送达，OS 双击全部改送达记事本窗。
 
 void dispatchFileOpen(::core::Router* router, const std::string& path,
                       const std::filesystem::path& notesDir) {
+    (void)notesDir;  // R-1：OS 双击不再拷贝进笔记目录（captureFileIntoNotesDir
+                     // 语义废止）；参数保留 = app_assembly.h 公开签名不变，
+                     // 应用内笔记 "open:" 通道不经漏斗、零影响
     if (router == nullptr || path.empty()) return;
-    // F-02：OS 语义漏斗里 .md/.markdown → 独立只读查看器窗（开原文件，绕开
-    // captureFileIntoNotesDir 拷贝）。判据=调用点即漏斗：全仓 OS 入口（main 启动
-    // argv / Apple Event / F-01 第二实例 drain）都汇于本函数，应用内笔记走
-    // markdown_module 的 "open:" 通道不经此处 → 应用内行为零改动自动成立。
-    // 查看器窗不依赖 Markdown 页注册态（独立窗不进 Router）。
-    if (pathHasMarkdownExtension(path)) {
-        module::markdown::openViewerWindow(path);
+    // OS 语义漏斗：清单扩展名 → 独立记事本窗（查重聚焦/新窗在 session 层内收）。
+    // 判据=调用点即漏斗：全仓 OS 入口（main 启动 argv / Apple Event / 第二实例
+    // drain）都汇于本函数；记事本窗不依赖任何 Router 注册态（独立窗不进 Router）。
+    if (core::notepad::isNotepadExtension(path)) {
+        module::notepad::openNotepadWindow(path);
         return;
     }
-    const ::core::PageId target = dispatchPageForFile(path);
-    if (target == ::core::PageId::Markdown &&
-        router->isRegistered(::core::PageId::Markdown)) {
-        // 已先判 isOk()：value() 失败即 LOG_FATAL+abort
-        auto r = module::markdown::captureFileIntoNotesDir(notesDir, path);
-        if (r.isOk()) {
-            const std::string payload = "open:" + r.value();
-            LOG_INFO("文件打开分发: " + path + " → " + payload);
-            router->navigateTo(target, payload);
-            return;
-        }
-        LOG_WARN("文件打开分发：无法纳入笔记目录，仅切页 — " + path + ": " +
-                 r.errorMessage());
-    }
-    router->navigateTo(target);
+    // 未注册扩展名 → Home（F-01 口径不变）
+    LOG_INFO("文件打开分发：未注册扩展名，落首页 — " + path);
+    router->navigateTo(::core::PageId::Home);
 }
 
-// 关联启动裁决（need:5）：.md argv → 查看器窗即全部 UI，主窗保持托盘态。复用
-// --minimized 同一状态位（compose 首帧 closeMainWindow 同款路径，托盘左键可唤起），
-// 不另造平行机制。前置=argv 捕获门已翻（无参数启动不置旗标，主窗正常弹出零回归）
+// 关联启动裁决（need:5，R-3 强化：纯记事本清单送达 = 关联启动）：argv 路径 ∈
+// 记事本清单 → 记事本窗即全部 UI，主窗保持托盘态。复用 --minimized 同一状态位
+//（compose 首帧 closeMainWindow 同款路径，托盘左键可唤起），不另造平行机制。
+// 前置=argv 捕获门已翻（无参数启动不置旗标，主窗正常弹出零回归）
 void armTrayIfViewerOnlyLaunch() {
-    if (g_argvCaptureDone && pathHasMarkdownExtension(pendingOpenFilePath())) {
+    if (g_argvCaptureDone && core::notepad::isNotepadExtension(pendingOpenFilePath())) {
         g_minimizedStartupPending = true;
         g_mainWindowStartHidden = true;  // bug259-A：首帧不 show（闩值，见头文件）
-        LOG_INFO("关联启动（.md argv）：主窗保持托盘态，仅查看器窗");
+        LOG_INFO("关联启动（记事本关联 argv）：主窗保持托盘态，仅记事本窗");
     }
 }
 

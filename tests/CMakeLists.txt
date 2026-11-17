@@ -255,6 +255,10 @@ add_executable(devdesk_tests
     # 提醒窗调度/抑制/渲染零自动化断言（审计 C2 M2）：纯决策逻辑无头用例
     #（指纹/冷却门/开-关窗判据/看门狗宽限/迟到代数/demo 电平映射，零窗口零 DB）
     test_modules/test_release_reminder.cpp
+    # need:273 记事本批 1：core 扩展名单一真源清单↔判据一致性 + 编码/行尾/
+    # 编码回写纯函数无头直测（断言面 = 技术方案卡 §十一）
+    test_modules/test_notepad_file_types.cpp
+    test_modules/test_notepad_encoding.cpp
     # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
     test_modules/test_mcp_settings.cpp
     test_modules/test_mcp_service.cpp
@@ -401,6 +405,7 @@ target_include_directories(devdesk_tests PRIVATE
 target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_home
     devdesk_module_markdown
+    devdesk_module_notepad
     devdesk_module_git
     devdesk_module_todo
     devdesk_agent
@@ -555,6 +560,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
     target_link_libraries(${_probe_name} PRIVATE
         devdesk_module_home
         devdesk_module_markdown
+        devdesk_module_notepad
         devdesk_module_git
         devdesk_module_todo
         devdesk_agent
@@ -717,6 +723,7 @@ target_include_directories(devdesk_ui_driver PRIVATE
 target_link_libraries(devdesk_ui_driver PRIVATE
     devdesk_module_home
     devdesk_module_markdown
+    devdesk_module_notepad
     devdesk_module_git
     devdesk_module_todo
     devdesk_agent
