@@ -16,6 +16,7 @@
 #include <git2.h>
 
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <functional>
 #include <iostream>

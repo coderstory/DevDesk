@@ -4,6 +4,7 @@
 #include "code_lexers.h"
 
 #include <cctype>
+#include <string>
 #include <unordered_set>
 
 namespace ui_kit::text_highlight {

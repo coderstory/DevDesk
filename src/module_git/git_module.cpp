@@ -1,6 +1,10 @@
 // src/module_git/git_module.cpp
 #include "git_module.h"
 
+#include <chrono>
+#include <utility>
+#include <vector>
+
 #include "core/logging.h"
 #include "git_views.h"
 

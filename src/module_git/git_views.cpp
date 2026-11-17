@@ -10,8 +10,12 @@
 #include <core/component_theme.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <functional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace module::git {
 
