@@ -102,6 +102,10 @@ struct MockScript {
     std::string contentType = "text/event-stream";
     long delayMsPerChunk = 0;
     size_t stopAfterChunks = 0;   // >0：发到第 N 个就结束（模拟截断）
+    // 半开模拟（bug:streaming-idle-timeout）：发够 stallAfterChunks 个后静默
+    // stallMs——连接保持、无任何数据；之后 provider 继续被调直至发完自然收尾
+    size_t stallAfterChunks = 0;
+    int stallMs = 0;
 };
 
 class MockSseServer {
@@ -153,13 +157,14 @@ public:
                       }
 
                       auto idx = std::make_shared<size_t>(0);
+                      auto stalled = std::make_shared<std::atomic<bool>>(false);
                       // releaser 兜底：cpp-httplib 在两次 provider 调用之间
                       // 发现连接断开（is_writable 失败）时会直接退出写循环、
                       // 不再调用 provider——sink.write 失败路径没机会执行，
                       // finished 只能在 ~Response() 的 releaser 里置位。
                       res.set_chunked_content_provider(
                           scriptPtr->contentType,
-                          [scriptPtr, idx, emitted, finished](
+                          [scriptPtr, idx, emitted, finished, stalled](
                               size_t /*offset*/, httplib::DataSink& sink) -> bool {
                               if (*idx >= scriptPtr->chunks.size()) {
                                   finished->store(true);
@@ -180,6 +185,15 @@ public:
                               if (scriptPtr->delayMsPerChunk > 0) {
                                   std::this_thread::sleep_for(
                                       milliseconds(scriptPtr->delayMsPerChunk));
+                              }
+                              // 静默期（半开模拟）：发够后停发但保持连接；
+                              // stalled 一次性闸，只静默一轮
+                              if (scriptPtr->stallMs > 0 &&
+                                  scriptPtr->stallAfterChunks > 0 &&
+                                  *idx >= scriptPtr->stallAfterChunks &&
+                                  !stalled->exchange(true)) {
+                                  std::this_thread::sleep_for(
+                                      milliseconds(scriptPtr->stallMs));
                               }
                               return true;
                           },
@@ -761,6 +775,102 @@ REGISTER_TEST(streaming_proxy_client_disconnect_cancels_upstream,
                                    5000);
     DOCTEST_CHECK(stopped);
     DOCTEST_CHECK(upstream.emitted() < many.size());
+
+    proxy.stop();
+    upstream.stop();
+    return true;
+})
+
+// ── 流式空闲看门狗（bug:streaming-idle-timeout）────────────────────────
+// 红链：上游发 3 帧后静默 3s（半开），无看门狗时客户端要等满 3s 静默拿到
+// 自然收尾（无 error 帧、elapsed≈3s）；看门狗 300ms 即断流并合成 error 帧。
+REGISTER_TEST(streaming_proxy_idle_watchdog_cuts_stalled_upstream,
+              "streaming: claude idle watchdog cuts stalled upstream with error frame", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    MockScript script;
+    script.chunks = makeSseScript(3, false);   // 3 个数据帧，无 [DONE]
+    script.stallAfterChunks = 3;
+    script.stallMs = 3000;
+    upstream.onMessages(script);
+
+    // 阈值 300ms；ScopedEnv 析构还原（fail-fast 早退也不泄漏给后续用例）
+    test_support::ScopedEnv idleEnv("DEVDESK_PROXY_STREAM_IDLE_TIMEOUT_MS",
+                                    "300");
+
+    StreamEnv env;
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    httplib::Client cli("127.0.0.1", proxy.actualPort());
+    cli.set_read_timeout(10, 0);
+
+    const auto t0 = steady_clock::now();
+    auto res = clientPostStream(cli, "/v1/messages", R"({"stream":true})",
+                                false);
+    const auto elapsed =
+        duration_cast<milliseconds>(steady_clock::now() - t0).count();
+
+    DOCTEST_CHECK(res.ok);
+    DOCTEST_CHECK_EQ(res.status, 200);
+    DOCTEST_CHECK(sseOrderOk(res.body, 3));
+    // 看门狗 300ms 触发 → error 帧 + 提前结束（无看门狗要等满 3s 静默）
+    DOCTEST_CHECK(elapsed < 2000);
+    DOCTEST_CHECK(res.body.find("upstream_stream_error") != std::string::npos);
+    DOCTEST_CHECK(res.body.find("idle timeout") != std::string::npos);
+    // 流是被看门狗截断的：不会有上游自然收尾的 [DONE]
+    DOCTEST_CHECK(res.body.find("data: [DONE]") == std::string::npos);
+
+    proxy.stop();
+    upstream.stop();
+    return true;
+})
+
+// 正常慢流不误杀：帧间隔 100ms ≪ 阈值 500ms，全部帧 + [DONE] 完整送达、
+// 零 error 帧。论证「正常长流不被误杀」——看门狗只看空闲，不看总时长。
+REGISTER_TEST(streaming_proxy_idle_watchdog_spares_slow_stream,
+              "streaming: claude idle watchdog spares slow-but-alive stream", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    MockScript script;
+    script.chunks = makeSseScript(12, true);
+    script.delayMsPerChunk = 100;   // 帧间隔 100ms，总时长 ~1.3s > 阈值也无碍
+    upstream.onMessages(script);
+
+    test_support::ScopedEnv idleEnv("DEVDESK_PROXY_STREAM_IDLE_TIMEOUT_MS",
+                                    "500");
+
+    StreamEnv env;
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    httplib::Client cli("127.0.0.1", proxy.actualPort());
+    cli.set_read_timeout(15, 0);
+
+    auto res = clientPostStream(cli, "/v1/messages", R"({"stream":true})",
+                                false);
+
+    DOCTEST_CHECK(res.ok);
+    DOCTEST_CHECK_EQ(res.status, 200);
+    DOCTEST_CHECK_EQ(res.body, joinChunks(script.chunks));
+    DOCTEST_CHECK(res.body.find("upstream_stream_error") == std::string::npos);
+    DOCTEST_CHECK(sseOrderOk(res.body, 12));
 
     proxy.stop();
     upstream.stop();

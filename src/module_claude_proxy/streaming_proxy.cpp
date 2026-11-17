@@ -8,14 +8,49 @@
 #include "platform/json.h"
 #include "upstream_dialect.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <string>
+#include <thread>
 
 namespace module::claude {
 
 // SSE 事件重组 + usage 解析
 
 namespace {
+
+// ── 流式空闲看门狗（bug:streaming-idle-timeout）──────────────────────────
+// 根因：StreamingResponse::readChunk 纯条件变量阻塞等待、无超时（platform/
+// http_client.cpp），上游半开（连接活着但一个字节不发）时 provider 卡死
+// indefinite——curl 总超时对流式恒为 0（proxy_router.cpp upstream.timeoutMs=0，
+// 长流不能设总上限），唯一的取消唤醒通路是 cancel()。
+// 方案：看门狗线程盯「最近一次上游流转折」时刻，空闲超阈值 → 置 fired +
+// cancel()（复用既有取消唤醒：queueCv.notify_all + libcurl 进度回调 ~1s 中止），
+// readChunk 立即 Error 返回，provider 据此走既有合成 event:error 帧通路。
+constexpr int64_t kDefaultStreamIdleTimeoutMs = 300000;  // 5min
+// 默认值取 CLAUDE_STREAM_IDLE_TIMEOUT_MS 的 Claude Code 侧默认
+//（env_var_hints.h:104）：同语义参数（流式空闲容忍）双端口径一致，且
+// Anthropic SSE 在思考期有秒级 ping 心跳，5min 静默 = 连接确死。
+// 不直接复用该变量：它在本仓的语义是「透传给 claude CLI 子进程」，代理自读
+// 会与透传耦合（为 CLI 调大 → 代理半开保护同步失效）。独立 env 跟随仓内
+// DEVDESK_ 前缀惯例（DEVDESK_DATA_ROOT / DEVDESK_CLAUDE_CONFIG_DIR）。
+// 非法值（非数字 / <=0）回退默认；不设关闭档——关闭 = 重新引入 indefinite 挂死。
+int64_t streamIdleTimeoutMs() {
+    const char* env = std::getenv("DEVDESK_PROXY_STREAM_IDLE_TIMEOUT_MS");
+    if (env != nullptr && *env != '\0') {
+        char* end = nullptr;
+        const long long v = std::strtoll(env, &end, 10);
+        if (end != env && v > 0) return static_cast<int64_t>(v);
+    }
+    return kDefaultStreamIdleTimeoutMs;
+}
+
+int64_t steadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 // 从 usage 对象里取一个数值 token 字段：存在且是数字才写入 dest 并返回 true
 // （累计值口径：字段缺失/非数字时保持 dest 原值，绝不用 0 冒充）
@@ -228,9 +263,42 @@ void forwardStream(platform::http::ResponseWriter& out,
     auto usageState = std::make_shared<UsageState>();
     const auto streamStart = std::chrono::steady_clock::now();
 
+    // 空闲看门狗共享态：lastActivity 由 provider 每轮 readChunk 返回后刷新；
+    // fired 置位后 Error 分支改用超时文案走合成 error 帧；stop 由 releaser 置位停机。
+    struct IdleWatchdogState {
+        std::atomic<int64_t> lastActivityMs{0};
+        std::atomic<bool> fired{false};
+        std::atomic<bool> stop{false};
+    };
+    auto wd = std::make_shared<IdleWatchdogState>();
+    wd->lastActivityMs.store(steadyNowMs(), std::memory_order_release);
+    const int64_t idleTimeoutMs = streamIdleTimeoutMs();
+    // 看门狗线程：先于 setChunkProvider 启动（provider 一被调就要有保护），
+    // releaser join（cpp-httplib 保证 releaser 在 provider 收尾后调用）。
+    // 异常情形（releaser 未被调）下线程也在空闲超时后自灭——fire 一次对
+    // 已死流 cancel 是 no-op，随后 return，无无限泄漏。
+    auto wdThread = std::make_shared<std::thread>(
+        [wd, upstream, idleTimeoutMs] {
+            while (!wd->stop.load(std::memory_order_acquire)) {
+                const int64_t idle = steadyNowMs() -
+                                     wd->lastActivityMs.load(std::memory_order_acquire);
+                if (idle >= idleTimeoutMs) {
+                    wd->fired.store(true, std::memory_order_release);
+                    LOG_WARN("流式空闲看门狗触发：上游 " + std::to_string(idle) +
+                             "ms 无数据，断开并合成 error 帧（阈值 " +
+                             std::to_string(idleTimeoutMs) +
+                             "ms，DEVDESK_PROXY_STREAM_IDLE_TIMEOUT_MS 可调）");
+                    upstream->cancel();
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(
+                    static_cast<long>(std::min<int64_t>(200, idleTimeoutMs - idle))));
+            }
+        });
+
     // provider 由 cpp-httplib 反复调用，每轮拉一个 chunk 写给客户端
     auto provider =
-        [upstream, statsId, usageState, streamStart](
+        [upstream, statsId, usageState, streamStart, wd, idleTimeoutMs](
             platform::http::ResponseWriter::ChunkWriter writeChunk,
             platform::http::ResponseWriter::IsWritableFn isWritable) -> bool {
         // 客户端已断开 → 立即停止上游
@@ -244,6 +312,8 @@ void forwardStream(platform::http::ResponseWriter& out,
         std::string chunk;
         std::string err;
         const auto r = upstream->readChunk(chunk, err);
+        // 任何返回都算「上游流转折」：End/Error 也刷新，防收尾瞬间被误杀
+        wd->lastActivityMs.store(steadyNowMs(), std::memory_order_release);
 
         if (r == platform::http::ChunkResult::End) {
             // 上游自然结束：不写终止 chunk，让 cpp-httplib 发 0\r\n\r\n
@@ -251,12 +321,27 @@ void forwardStream(platform::http::ResponseWriter& out,
             return false;
         }
         if (r == platform::http::ChunkResult::Error) {
-            LOG_WARN("上游流式错误: " + err);
+            // 看门狗路径：cancel 原因是 "cancelled"，但根因是空闲超时 →
+            // 日志与 error 帧都改用超时文案；其余路径维持原语义
+            const bool idleFired = wd->fired.load(std::memory_order_acquire);
+            if (idleFired) {
+                LOG_WARN("上游流式空闲超时（看门狗已断开，阈值 " +
+                         std::to_string(idleTimeoutMs) + "ms）");
+            } else {
+                LOG_WARN("上游流式错误: " + err);
+            }
             // 上游断流/超时不静默收尾——先合成一个 event: error SSE 帧写给
             // 客户端（可感知截断），再正常结束 chunked 传输。
-            // err == "cancelled"（客户端已断开）时跳过，写也写不进去。
-            if (err != "cancelled") {
-                const std::string frame = buildUpstreamErrorFrame(err);
+            // err == "cancelled"（客户端已断开）时跳过，写也写不进去；
+            // 看门狗触发同样是 cancelled，但客户端还活着，必须写帧。
+            if (err != "cancelled" || idleFired) {
+                const std::string msg =
+                    idleFired
+                        ? "upstream idle timeout: no data for " +
+                              std::to_string(idleTimeoutMs) +
+                              "ms (streaming idle watchdog)"
+                        : err;
+                const std::string frame = buildUpstreamErrorFrame(msg);
                 if (!writeChunk(frame.data(), frame.size())) {
                     LOG_INFO("写 error 帧失败（对端已断开）");
                 }
@@ -291,7 +376,15 @@ void forwardStream(platform::http::ResponseWriter& out,
 
     // releaser：响应彻底结束时触发（含客户端断开），确保上游被取消 + 线程回收；
     // 也是用量回执的唯一出口（此刻累计值已定格，且只回调一次）
-    auto releaser = [upstream, statsId, usageState, onUsage](bool /*success*/) {
+    auto releaser = [upstream, statsId, usageState, onUsage, wd,
+                     wdThread](bool /*success*/) {
+        // 先停看门狗再收流：防流已收尾后的多余 fire（对已死流 cancel 无害但脏）
+        if (wdThread) {
+            wd->stop.store(true, std::memory_order_release);
+            if (wdThread->joinable()) {
+                wdThread->join();
+            }
+        }
         upstream->cancel();
         core::proxy_stats::endStream(statsId);
         if (onUsage) {

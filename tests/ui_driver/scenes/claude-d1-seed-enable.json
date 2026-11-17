@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"enabledModules": ["markdown", "todo", "claude_proxy"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "assert", "check": "exists", "id": "app.sidebar.item.ClaudeProxy.hit",
+     "_comment": "种子启用 claude_proxy（等价用户「开启后重启」路径）→ 条目在场"},
+    {"type": "click", "id": "app.sidebar.item.ClaudeProxy.hit"},
+    {"type": "wait", "until": "exists", "id": "claude.root"},
+    {"type": "assert", "check": "missing", "id": "claude.profiles.error",
+     "_comment": "bug:D1-service-assembly 转绿：服务已装配 → 无「Profile 列表加载失败」红字"},
+    {"type": "assert", "check": "exists", "id": "claude.profiles.empty",
+     "_comment": "空库 = 正常空态，非错误态（红字即 D1 复发）"},
+    {"type": "screenshot", "path": "claude-d1-seed-enable.png"}
+  ]
+}

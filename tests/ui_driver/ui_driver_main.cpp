@@ -19,6 +19,7 @@
 #include <eui/detail/dsl_app_impl.h>
 #include "app_assembly.h"          // buildGatedEntries / dispatchModuleToggle
 #include "app_registry.h"
+#include "claude_service.h"        // bug:D1-service-assembly：驱动侧真装配单例
 #include "app_sidebar.h"
 #include "module_toggle_bridge.h"  // app::toggle::setToggleHandler
 #include "terminal_fullscreen_bridge.h"  // QA122：全屏→侧栏折叠桥（对齐真机 main.cpp 装配）
@@ -104,6 +105,8 @@ namespace {
 
 ::core::Router* g_router = nullptr;
 std::vector<std::unique_ptr<::core::Module>>* g_mods = nullptr;
+// 驱动侧 ClaudeService 单例（main.cpp getClaudeService 不在链接面，见下 assembleApp）
+std::unique_ptr<::module::claude::ClaudeService> g_driverSvc;
 
 constexpr std::size_t kRegistrySize =
     sizeof(::app::registry::kModuleRegistry) /
@@ -134,6 +137,20 @@ void driverToggleHandler(const std::string& moduleId, bool on) {
 // 返回 false = 门控后无可注册模块（异常态）
 bool assembleApp(::core::Router& router,
                  std::vector<std::unique_ptr<::core::Module>>& mods) {
+    // 真机 preStart 等价（bug:D1-service-assembly）：真机 main.cpp 经
+    // PreStartHook → prepareClaudeServiceBeforeModules，在模块 onStart 前按
+    // enabledModules 门控装配 ClaudeService + setGlobal（main.cpp:639-658）。
+    // 驱动此前缺这一步：种子启用 claude_proxy（等价「开启后重启」）时页面
+    // 恒现「服务未就绪（ClaudeService 未注册）」红字 + 「Claude 服务未装配」
+    // toast——walkthrough D1 误报的根因。真机不受影响（preStart 恒先于
+    // onStart）；这里补齐使驱动装配面 = 真机装配面。keychain 用测试服务名，
+    // 构造不触 ~/.claude/settings.json（接管链仅在 startProxy 时经
+    // setSettingsSyncPaths + syncTakeOver，驱动不起代理）。
+    if (g_driverSvc == nullptr) {
+        g_driverSvc = std::make_unique<::module::claude::ClaudeService>(
+            *::core::appDatabase(), "DevDeskUiDriverClaudeService");
+        ::module::claude::ClaudeService::setGlobal(g_driverSvc.get());
+    }
     // 全表实例化（工厂可能返回 nullptr：平台能力不支持，如非 Windows 的 wallpaper）
     for (const auto& e : ::app::registry::kModuleRegistry) {
         std::unique_ptr<::core::Module> m(e.factory());
@@ -180,6 +197,11 @@ int cleanupAndReturn(::core::Router& router,
     g_router = nullptr;
     g_mods = nullptr;
     router.stopAll();
+    // 进程全局态还原（test_app_assembly 同款纪律）：先 stopAll（模块 onStop
+    // 仍可摸服务）再摘牌销毁；销毁早于 main 作用域 TestEnv 的库析构
+    //（ClaudeService 持 SqliteDb&，库先关 = 悬垂引用）
+    ::module::claude::ClaudeService::setGlobal(nullptr);
+    g_driverSvc.reset();
     runtime.shutdown(false);
     core::releaseInputQueue(window);
     core::window::destroyWindow(window);
