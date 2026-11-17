@@ -58,6 +58,8 @@ add_executable(devdesk_tests
     # git 管理器只读 v1 批次二（need:7）：树模型/变更模型/模块登记+记忆仓
     test_platform/test_git_tree_model.cpp
     test_platform/test_git_status_model.cpp
+    # need291 Git 管理器重设计（doc25 §5）：变更列表行模型新用例族（含原 GitChangesModel 用例等价改挂）
+    test_platform/test_git_change_list_model.cpp
     # git 管理器只读 v1 批次三（need:10）：diff 行模型 / 内容四态模型
     test_platform/test_git_diff_model.cpp
     test_platform/test_git_content_model.cpp

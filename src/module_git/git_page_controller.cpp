@@ -83,14 +83,8 @@ void GitPageController::composePump() {
         }
         job();
     }
-    // ② 懒加载投递：已展开但未加载的目录（浅层优先），单帧最多 4 个防任务洪泛
-    if (phase_ == GitPagePhase::Ready && tree_.mode() == GitTreeModel::Mode::AllFiles) {
-        int budget = 4;
-        for (const auto& dirRel : tree_.pendingDirs()) {
-            if (budget-- <= 0) break;
-            requestWalk(dirRel);
-        }
-    }
+    // ②（need291）untracked lazy 枚举改 toggle 驱动（toggleUntrackedDir 主动请求），
+    //    无自动投递泵；POC① 单层枚举 <20ms，无需预算限流。
     // ③ F-13 刷新联动泵：watcher 置脏 → 1s 节流闸（trailing：到窗发一次）→
     // requestStatus；过期条评估；watcher 不可用降级 2s 轮询（仅模块可见=本泵在跑）
     if (phase_ == GitPagePhase::Ready) {
@@ -114,29 +108,62 @@ void GitPageController::composePump() {
     }
 
     // ④ 行模型物化（视图行闭包持有的成员引用；每帧重算 = 状态派生，零缓存矩形）
-    visibleRows_ = tree_.rows();
-    changeListItems_.clear();
-    if (!changeRows_.empty()) {
-        // bug#280②（老板口径 2026-11-16）：未跟踪非平行组——单一列表内联，
-        // U 徽标即状态类型（GitHub Desktop 同款惯例）
-        changeListItems_.push_back({true, 0});
-        for (size_t i = 0; i < changeRows_.size(); ++i) {
-            changeListItems_.push_back({false, i});
+    listRows_ = listModel_.rows();
+}
+
+void GitPageController::setViewMode(ChangeViewMode mode) {
+    if (viewMode_ == mode) return;  // 连点幂等（设计 §6.3）
+    viewMode_ = mode;
+    if (phase_ != GitPagePhase::Ready) return;
+    // 展开位图两形态互不消费（设计 §6.3：互不干扰）；快照重建行序列
+    listModel_.rebuild(lastSnapshot_, viewMode_);
+    listRows_ = listModel_.rows();
+    // 切换后选中行保持可见（PRD F-02 scrollIntoView 口径）：滚到选中行槽位
+    if (!selectedPath_.empty()) {
+        for (size_t i = 0; i < listRows_.size(); ++i) {
+            if (listRows_[i].kind == ChangeListRow::Kind::File &&
+                listRows_[i].relPath == selectedPath_) {
+                // 32px 定高槽（视图 kRowSlotH 同值）；滚至行顶−半屏内可见
+                listScrollOffset_ = std::max(0.0f, static_cast<float>(i) * 32.0f - 200.0f);
+                break;
+            }
         }
     }
 }
 
+void GitPageController::toggleGroup(ChangeListRow::Group group) {
+    listModel_.setGroupCollapsed(group, !listModel_.isGroupCollapsed(group));
+}
+
+void GitPageController::toggleDir(const std::string& dirRel) {
+    // tracked 派生目录：纯模型展开位图（lazy 枚举只属 untracked，D3-A）
+    listModel_.setExpanded(dirRel, !listModel_.isExpanded(dirRel));
+}
+
+void GitPageController::toggleUntrackedDir(const std::string& dirRel) {
+    const bool expanded = listModel_.isExpanded(dirRel);
+    listModel_.setExpanded(dirRel, !expanded);
+    if (!expanded && requestedUntrackedDirs_.insert(dirRel).second) {
+        // 首次展开：lazy 枚举（F-04；已缓存/已在途不重走——POC① 非递归约束下
+        // 每层只枚举一次，刷新保留缓存同口径）
+        requestUntrackedChildren(dirRel);
+    }
+}
+
+void GitPageController::retryUntrackedDir(const std::string& dirRel) {
+    // N4 错误态重试：目录保持展开，重走枚举
+    requestedUntrackedDirs_.insert(dirRel);
+    requestUntrackedChildren(dirRel);
+}
+
 void GitPageController::onStart() {
-    // N10 会话内切回（切其它模块再回来）：仓/树模式/右栏打开文件与视图类型三项
-    // 保留；树展开状态与滚动位不保留（PRD §4 N10：返回回根层首屏）。worker/回投
-    // 箱已随 onStop 重置，status 与打开内容全部重取。
+    // N10 会话内切回（切其它模块再回来）：仓/右栏打开文件与视图类型保留；列表
+    // 展开/折叠位图随模型保留（F-09 同口径）。worker/回投箱已随 onStop 重置，
+    // status 与打开内容全部重取。
     if (phase_ == GitPagePhase::Ready && !workdirUtf8_.empty()) {
-        tree_.reset();
-        tree_.setMode(mode_);
-        treeScrollOffset_ = 0.0f;
         resetRightPane();
         if (!selectedPath_.empty()) {
-            if (rightShowsDiff_) {
+            if (rightTab_ == RightTab::Diff && !searchContentView_) {
                 requestDiff(selectedPath_, /*force=*/true);
             } else {
                 requestContent(selectedPath_, /*force=*/true);
@@ -236,11 +263,12 @@ void GitPageController::validateAsync(const std::string& repoPathUtf8,
 }
 
 void GitPageController::openRepo(const std::string& repoPathUtf8) {
-    // N10 切回恢复：同仓再选（切换仓库 → 空态页 → 重选同仓）恢复树模式 + 右栏
-    // 打开文件与视图类型；树展开与滚动位不保留。异仓 = 全新会话。
+    // N10 切回恢复：同仓再选（切换仓库 → 空态页 → 重选同仓）恢复右栏打开文件与
+    // 视图类型；列表展开位图与滚动位不保留（回列表首屏）。异仓 = 全新会话。
     const std::string prevWorkdir = workdirUtf8_;
     const std::string prevSelected = selectedPath_;
-    const bool prevDiff = rightShowsDiff_;
+    const RightTab prevTab = rightTab_;
+    const bool prevSearchView = searchContentView_;
     const bool sameRepo = phase_ == GitPagePhase::Empty && !prevWorkdir.empty() &&
                           prevWorkdir == repoPathUtf8;
     closeRepo();
@@ -252,24 +280,23 @@ void GitPageController::openRepo(const std::string& repoPathUtf8) {
     if (saved.isFail()) {
         LOG_WARN("GitPage: 记忆仓写入失败: " + saved.errorMessage());
     }
-    tree_.reset();
-    tree_.setMode(mode_);
-    if (mode_ == GitTreeModel::Mode::ChangesOnly && !lastSnapshot_.entries.empty()) {
-        tree_.applyStatus(lastSnapshot_);
-    }
-    treeScrollOffset_ = 0.0f;
+    listModel_.reset();
+    requestedUntrackedDirs_.clear();
+    listScrollOffset_ = 0.0f;
     resetRightPane();
     if (sameRepo && !prevSelected.empty()) {
         selectedPath_ = prevSelected;
-        rightShowsDiff_ = prevDiff;
-        if (prevDiff) {
-            requestDiff(prevSelected, /*force=*/true);
-        } else {
+        rightTab_ = prevTab;
+        searchContentView_ = prevSearchView;
+        if (prevSearchView || prevTab == RightTab::Content) {
             requestContent(prevSelected, /*force=*/true);
+        } else {
+            requestDiff(prevSelected, /*force=*/true);
         }
     } else {
         selectedPath_.clear();
-        rightShowsDiff_ = false;
+        rightTab_ = RightTab::Diff;
+        searchContentView_ = false;
     }
     if (repoChangeCb_) repoChangeCb_(workdirUtf8_);
     requestStatus();
@@ -281,9 +308,12 @@ void GitPageController::closeRepo() {
     statusError_.clear();
     statusLoading_ = false;
     selectedPath_.clear();
-    rightShowsDiff_ = false;
-    treeScrollOffset_ = 0.0f;
-    changeRows_.clear();
+    rightTab_ = RightTab::Diff;
+    searchContentView_ = false;
+    listScrollOffset_ = 0.0f;
+    listModel_.reset();
+    requestedUntrackedDirs_.clear();
+    listRows_.clear();
     lastSnapshot_ = platform::git::StatusSnapshot{};
     watchDirtyUi_ = false;
     staleBar_ = false;
@@ -333,7 +363,7 @@ void GitPageController::onWatchEvents(
 void GitPageController::reloadStale() {
     if (!staleBar_ || selectedPath_.empty()) return;
     staleBar_ = false;
-    if (rightShowsDiff_) {
+    if (rightTab_ == RightTab::Diff && !searchContentView_) {
         requestDiff(selectedPath_, /*force=*/true);
     } else {
         requestContent(selectedPath_, /*force=*/true);
@@ -374,72 +404,104 @@ void GitPageController::requestStatus() {
 void GitPageController::applyStatusSnapshot(
     const platform::git::StatusSnapshot& snapshot) {
     lastSnapshot_ = snapshot;
-    changeRows_ = GitChangesModel::build(snapshot);
-    tree_.applyStatus(snapshot);
+    // F-09：刷新=行序列重建，展开位图/组折叠/untracked 缓存模型内保留（clue#14）
+    listModel_.rebuild(snapshot, viewMode_);
+    listRows_ = listModel_.rows();
+    clearSelectionIfMissing();
 }
 
-void GitPageController::requestWalk(const std::string& dirRel) {
-    tree_.markLoading(dirRel);
+void GitPageController::clearSelectionIfMissing() {
+    // N8（设计 §6.1 边界/§7）：选中文件被后台刷新删除 → 右栏回空态 + 列表去行。
+    // 搜索独立内容视图不受列表约束（命中文件本就 ∉ 变更列表）。
+    if (searchContentView_ || selectedPath_.empty()) return;
+    if (rowHasFile(selectedPath_)) return;
+    selectedPath_.clear();
+    rightTab_ = RightTab::Diff;
+    pendingDiffLine_.reset();
+    diffHighlightLine_ = 0;
+    diffModel_.clear();
+    diffPath_.clear();
+    diffState_ = RightPaneState::None;
+    ++diffReq_;
+    content_ = FileContent{};
+    contentPath_.clear();
+    contentState_ = RightPaneState::None;
+    contentRuns_.clear();
+    ++contentReq_;
+}
+
+bool GitPageController::rowHasFile(const std::string& relPath) const {
+    if (relPath.empty()) return false;
+    // 全量成员判定（模型双桶+lazy 缓存），非可见行扫描——折叠组/未展开目录下
+    // 的选中文件刷新后不丢（F-09：折叠组含选中行=选中保持前提）
+    return listModel_.hasFile(relPath);
+}
+
+std::optional<platform::git::StatusKind> GitPageController::selectedRowStatus()
+    const {
+    if (selectedPath_.empty()) return std::nullopt;
+    for (const auto& row : listRows_) {
+        if (row.kind == ChangeListRow::Kind::File && row.relPath == selectedPath_ &&
+            row.status.has_value()) {
+            return row.status;
+        }
+    }
+    return std::nullopt;
+}
+
+void GitPageController::requestUntrackedChildren(const std::string& dirRel) {
+    listModel_.markUntrackedLoading(dirRel);
     const std::string path = workdirUtf8_;
     worker_->postWithRepo(path, [this, path, dirRel](platform::git::Repo* repo) {
         const std::filesystem::path workdir =
             repo != nullptr ? repo->workdir()
                             : platform::git::utf8ToPath(path);
-        // repo == nullptr（open 失败）时 walk 无 ignore 判定——降级纯 fs 枚举
-        WalkResult walked = GitTreeModel::walkChildren(repo, workdir, dirRel);
+        // repo == nullptr（open 失败）时 walk 无 ignore 判定——降级纯 fs 枚举。
+        // POC①（need291）：单层枚举 ~1.6µs/条目；归并口径=枚举结果全量取用
+        //（非 ignored 即 untracked），子目录条目续 lazy、文件条目打 U。
+        fs_walk::WalkResult walked = fs_walk::walkChildren(repo, workdir, dirRel);
         postToUi([this, path, dirRel, walked] {
             if (path != workdirUtf8_) return;  // 期间已切仓：过期结果丢弃
             if (!walked.ok) {
-                if (walked.permission) {
-                    tree_.markNoAccess(dirRel);
-                } else {
-                    tree_.markLoadFailed(dirRel, walked.message);
-                }
+                listModel_.markUntrackedFailed(dirRel, walked.message);
                 return;
             }
-            tree_.applyChildren(dirRel, std::move(walked.entries));
+            const bool emptyDir = walked.entries.empty();
+            listModel_.applyUntrackedChildren(dirRel, walked);
+            // N4 竞态空目录（展开期间文件被删）：行消失语义=触发一次刷新，
+            // 快照更新后目录条目消失、行随之消失（设计 §7 N4 空格）
+            if (emptyDir) requestStatus();
         });
     });
 }
 
-void GitPageController::setTreeMode(GitTreeModel::Mode mode) {
-    if (mode_ == mode) return;  // I-01 连点幂等
-    mode_ = mode;
-    tree_.setMode(mode);
-    treeScrollOffset_ = 0.0f;  // 切换后树滚动回顶（spec I-01）
-    if (mode == GitTreeModel::Mode::AllFiles) {
-        // 回全部文件：已展开目录缓存保留（不重走）；根层缺失则 composePump 补投
-    }
-}
-
-void GitPageController::toggleDir(const std::string& dirRel) {
-    if (tree_.mode() != GitTreeModel::Mode::AllFiles) return;
-    const bool expanded = tree_.isExpanded(dirRel);
-    tree_.setExpanded(dirRel, !expanded);
-    // 折叠/展开均不动 treeScrollOffset_（折叠时 virtualList 自适应收行）。
-    // 原以「treeScrollOffset_ = treeScrollOffset_;」自赋值表达 no-op——Apple
-    // clang -Wself-assign-field 在 -Werror 下拒收（bug286 同轮暴露），改注释
-    // 文档化同等意图。
-}
-
-void GitPageController::selectTreeFile(const std::string& relPath) {
-    selectedPath_ = relPath;
-    rightShowsDiff_ = false;  // I-03：右栏切内容视图
-    pendingContentLine_.reset();   // 非搜索选中：清除定位锚（jumpToHit 随后重设）
-    contentHighlightLine_ = 0;
-    requestContent(relPath, /*force=*/false);
-}
-
 void GitPageController::selectChange(const std::string& path) {
+    // F-05 主动线：文件行点击 → diff 即时切换；搜索独立内容视图退出；
+    // rightTab_ 保持（设计 §6.1：已在「内容」tab 保持 tab 选择切文件）
+    searchContentView_ = false;
     selectedPath_ = path;
-    rightShowsDiff_ = true;  // I-04：右栏切 diff（N7→N8）
     pendingContentLine_.reset();
     contentHighlightLine_ = 0;
     requestDiff(path, /*force=*/false);
 }
 
-void GitPageController::retryDir(const std::string& dirRel) {
-    tree_.requestRetry(dirRel);  // pendingDirs() 下帧重投（I-08）
+void GitPageController::setRightTab(RightTab tab) {
+    if (searchContentView_) return;  // §6.8 独立内容视图无 tab（「内容」恒激活）
+    if (rightTab_ == tab) return;    // 连点幂等
+    rightTab_ = tab;
+    if (selectedPath_.empty()) return;
+    // §6.6：切换不重发请求（数据已取）；错误态重进 = 重试语义
+    if (tab == RightTab::Content) {
+        requestContent(selectedPath_, /*force=*/contentState_ == RightPaneState::Error);
+    } else {
+        requestDiff(selectedPath_, /*force=*/diffState_ == RightPaneState::Error);
+    }
+}
+
+void GitPageController::retryStatus() {
+    // N2 扫描失败重试：绕 1s 节流闸（失败后立即重试是显式用户动作）
+    if (phase_ != GitPagePhase::Ready) return;
+    requestStatus();
 }
 
 void GitPageController::retryContent() {
@@ -456,6 +518,7 @@ void GitPageController::resetRightPane() {
     // 取消②切仓/关仓（含同仓重开）：在途扫描文件边界自灭 + 回无搜索态
     ++searchSeq_;
     resetSearchFace();
+    searchContentView_ = false;
     content_ = FileContent{};
     contentPath_.clear();
     contentState_ = RightPaneState::None;
@@ -471,6 +534,10 @@ void GitPageController::resetRightPane() {
     diffScrollOffset_ = 0.0f;
     contentHOffset_ = 0.0f;
     diffHOffset_ = 0.0f;
+    pendingContentLine_.reset();
+    contentHighlightLine_ = 0;
+    pendingDiffLine_.reset();
+    diffHighlightLine_ = 0;
     staleBar_ = false;
 }
 
@@ -550,9 +617,8 @@ void GitPageController::requestDiff(const std::string& relPath, bool force) {
         const bool ok = diff.isOk();
         platform::git::DiffPatch patch;
         std::string message;
-        std::string placeholder;
+        bool matched = false;
         if (ok) {
-            bool matched = false;  // bug#290：pathFilter 零匹配不再静默落空 patch
             for (auto& p : diff.value().patches) {
                 if (p.newPath == relPath || p.oldPath == relPath) {
                     patch = std::move(p);
@@ -562,28 +628,29 @@ void GitPageController::requestDiff(const std::string& relPath, bool force) {
             }
             // bug#18：untracked 条目 libgit2 不带 UNTRACKED_CONTENT → patch 无 hunks
             // （F-09 内存约束下禁加该 flag）。模型层合成：≤1MiB 文本全增行 /
-            // >1MiB·二进制占位 / 空文件保持空态（复用 content_model 读路径判据）
-            placeholder = synthesizeUntrackedDiff(
+            // >1MiB·二进制占位（need291：目录占位文案分支随 F-05 目录行不进 diff
+            // 交互根治而退役）
+            synthesizeUntrackedDiff(
                 patch,
                 platform::git::utf8ToPath(path) / platform::git::utf8ToPath(relPath));
-            // bug#290：零匹配（如中栏点未跟踪文件夹条目已无对应 delta）不再
-            // 静默用默认空 patch →「无内容变更」误报，改占位文案
-            if (!matched && placeholder.empty()) {
-                placeholder = "未找到该条目的差异（可能已无变更，或是未跟踪文件夹）";
-            }
         } else {
             message = diff.errorMessage();
         }
         postToUi([this, relPath, req, patch = std::move(patch), ok, message,
-                  placeholder = std::move(placeholder)]() mutable {
+                  matched]() mutable {
             if (req != diffReq_ || relPath != diffPath_) return;  // 过期丢弃
             if (!ok) {
                 diffState_ = RightPaneState::Error;
                 diffError_ = message;
                 return;
             }
+            // bug#290/PRD N5：零匹配（选中后文件被删等竞态）→ 显式文案 + 自动
+            // 触发列表刷新（禁静默空/禁「无内容变更」误导）
+            std::string placeholder;
+            if (!matched) placeholder = "文件已无变更，列表将刷新";
             diffModel_.setPatch(std::move(patch), std::move(placeholder));
             diffState_ = RightPaneState::Ready;
+            if (!matched) requestStatus();
         });
     });
 }
@@ -648,8 +715,8 @@ void GitPageController::buildContentRuns() {
 void GitPageController::refresh() {
     if (phase_ != GitPagePhase::Ready) return;
     if (refreshThrottled()) return;  // F-09④：1s 内至多触发一次重算（手动/watcher 同闸）
-    tree_.reset();
-    tree_.setMode(mode_);
+    // F-09（need291）：刷新=快照重建行序列；展开位图/组折叠/选中/untracked 缓存
+    // 全保留（模型内状态，applyStatusSnapshot 统一重建）
     requestStatus();
 }
 
@@ -751,7 +818,7 @@ void GitPageController::requestSearch(const std::string& needle) {
             return;
         }
         const std::filesystem::path workdir = repo->workdir();
-        // ② walk：从根逐目录复用 GitTreeModel::walkChildren 枚举全量文件清单
+        // ② walk：从根逐目录复用 git_fs_walk::walkChildren 枚举全量文件清单
         //（.git/ignored/symlink 不跟随/Subrepo/NoAccess 语义零漂移）；untracked
         // 目录按快照跳过不递归（防 node_modules 式 hang，F-12 同源口径）
         std::vector<std::string> files;
@@ -761,16 +828,16 @@ void GitPageController::requestSearch(const std::string& needle) {
             if (seq != searchSeq_.load()) return;  // 目录边界过期自灭
             const std::string dir = std::move(dirs.back());
             dirs.pop_back();
-            const WalkResult walked = GitTreeModel::walkChildren(repo, workdir, dir);
+            const fs_walk::WalkResult walked = fs_walk::walkChildren(repo, workdir, dir);
             if (!walked.ok) continue;  // 无权限/枚举失败：静默跳过（宽松语义）
             for (auto& row : walked.entries) {
-                if (row.kind == TreeRowKind::Directory) {
+                if (row.kind == fs_walk::EntryKind::Directory) {
                     const std::string withSlash = row.relPath + "/";
                     const bool skip =
                         std::find(skipDirs.begin(), skipDirs.end(), withSlash) !=
                         skipDirs.end();
                     if (!skip) dirs.push_back(std::move(row.relPath));
-                } else if (row.kind == TreeRowKind::File) {
+                } else if (row.kind == fs_walk::EntryKind::File) {
                     files.push_back(std::move(row.relPath));
                 }  // Subrepo/NoAccess/派生行不入清单
             }
@@ -834,14 +901,25 @@ void GitPageController::requestSearch(const std::string& needle) {
 }
 
 void GitPageController::jumpToHit(const SearchHit& hit) {
-    // F-08②：N6 复用（selectTreeFile：右栏切内容视图 + 树同步选中）+ 内容锚
-    // 行号（内容 Ready 后视图按行盒几何滚动——clue#14 禁偏移量直设口径）
-    selectTreeFile(hit.relPath);
+    // F-08②（need291 D7-A 双通道锚）：
+    //   命中∈变更列表 → 选中该行 + diff 视图锚定（newNo 匹配滚动+高亮）；
+    //   命中∉变更列表 → 独立内容视图（头部仅路径，「内容」恒激活）+ 内容锚。
+    // clue#14：滚动锚=行号，Ready 后视图按行盒几何消费，禁偏移量直设。
+    if (rowHasFile(hit.relPath)) {
+        selectChange(hit.relPath);
+        rightTab_ = RightTab::Diff;
+        pendingDiffLine_ = hit.line;
+        // P1-2（need:14 审计）同款：同文件已 Ready 时 requestDiff 幂等早退不经
+        // Ready 落值点——高亮先行落值，Ready 到达后赋同值幂等。
+        diffHighlightLine_ = hit.line;
+        return;
+    }
+    searchContentView_ = true;
+    selectedPath_ = hit.relPath;
+    rightTab_ = RightTab::Content;
     pendingContentLine_ = hit.line;
-    // P1-2（need:14 审计）：同文件已 Ready 时 requestContent 幂等早退，不经过
-    // Ready 落值点——重复点击/同文件第二命中只滚动不高亮。直接落值：未 Ready 时
-    // 高亮先行无害（行渲染仅在 Ready 体），Ready 到达后落值点赋同值幂等。
     contentHighlightLine_ = hit.line;
+    requestContent(hit.relPath, /*force=*/false);
 }
 
 size_t GitPageController::searchFileCount() const {
@@ -857,31 +935,6 @@ size_t GitPageController::searchFileCount() const {
         if (!found) seen.push_back(&h.relPath);
     }
     return seen.size();
-}
-
-
-size_t GitPageController::changedCount() const {
-    size_t n = 0;
-    for (const auto& row : changeRows_) {
-        if (row.group == ChangeGroup::Changed) ++n;
-    }
-    return n;
-}
-
-size_t GitPageController::untrackedCount() const {
-    size_t n = 0;
-    for (const auto& row : changeRows_) {
-        if (row.group == ChangeGroup::Untracked) ++n;
-    }
-    return n;
-}
-
-bool GitPageController::selectedHasChange() const {
-    if (selectedPath_.empty()) return false;
-    for (const auto& row : changeRows_) {
-        if (row.path == selectedPath_) return true;
-    }
-    return false;
 }
 
 std::string GitPageController::repoDisplayName() const {

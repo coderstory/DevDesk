@@ -5,13 +5,14 @@
 //     Unknown → 全量重扫兜底）——纯函数 classifyWatchEvent；
 //   ② 1s 节流窗：脏标记 trailing 到窗发一次；窗内不重复投（F-09④）；
 //   ③ 过期条：元数据/溢出/命中打开文件 → staleBar 置位；reloadStale 清除（F-13③）；
-//   ④ N10：切换仓库后重选同仓恢复 树模式+右栏打开文件与视图类型（仓/模式/打开文件）；
-//   ⑤ submodule gitlink 仓 status 不误报内部改动（F-12③，EXCLUDE_SUBMODULES）。
+//   ④ N10：切换仓库后重选同仓恢复 视图形态（树/平铺）+右栏打开文件与视图类型（仓/模式/打开文件）；
+//   ⑤ submodule gitlink 仓 status 不误报内部改动（F-12③，EXCLUDE_SUBMODULES）；
+//   ⑥ F-09（need:291）：刷新重建行序列保 选中/目录展开位图/组折叠位图。
 // 控制器驱动：picker 注入缝 + 真 GitWorker 线程 + composePump 排空回投（协议同生产）。
 #include "doctest.h"
 #include "test_support.h"
 
-#include "module_git/git_changes_model.h"
+#include "module_git/git_change_list_model.h"
 #include "module_git/git_content_model.h"
 #include "module_git/git_page_controller.h"
 #include "module_git/git_worker.h"
@@ -108,13 +109,16 @@ REGISTER_TEST(gitWatchThrottleAndStaleBar, "刷新联动：watcher 脏→1s 窗�
     std::filesystem::create_directories(repoDir);
     git_fixture::initRepo(repoDir);
     git_fixture::commitAll(repoDir, {{"a.txt", "第一版\n"}});
+    // a.txt 置为真实变更条目（选中的打开文件须是变更成员——N8：刷新后选中
+    // 非变更文件会被清选中+右栏回空态；watcher Modified a.txt 事件语义=文件真改）
+    test_support::writeTextFile(repoDir / "a.txt", "第二版\n");
     const std::string repoUtf8 = platform::git::pathToUtf8(repoDir);
 
     GitWorker worker;
     worker.start();
     GitPageController c(&worker);
     DOCTEST_CHECK(openRepoViaPicker(c, repoUtf8));
-    DOCTEST_CHECK(pumpUntil(c, [&] { return c.tree().rootLoaded(); }));
+    DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
     // 静默基线：走出开仓那次 status 的 1s 节流窗，后续 watcher 断言确定化
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     c.composePump();
@@ -136,13 +140,14 @@ REGISTER_TEST(gitWatchThrottleAndStaleBar, "刷新联动：watcher 脏→1s 窗�
     DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
 
     // ③ 工作树事件命中打开文件 → 过期条；未命中 → 不置条
-    // （先静默出窗，避免 pending 脏标记在本段中途触发 status 干扰时序）
+    // （先静默出窗，避免 pending 脏标记在本段中途触发 status 干扰时序；
+    //   need:291 后「打开文件」动线=selectChange——中栏平铺/树行点击同链路）
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     c.composePump();
     DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
-    c.selectTreeFile("a.txt");
+    c.selectChange("a.txt");
     DOCTEST_CHECK(pumpUntil(c, [&] {
-        return c.contentState() == RightPaneState::Ready;
+        return c.diffState() == RightPaneState::Ready;
     }));
     c.onWatchEvents({{platform::FileWatchAction::Modified, "其它文件.txt"}});
     c.composePump();
@@ -157,7 +162,7 @@ REGISTER_TEST(gitWatchThrottleAndStaleBar, "刷新联动：watcher 脏→1s 窗�
     c.reloadStale();
     DOCTEST_CHECK_FALSE(c.staleBarVisible());
     DOCTEST_CHECK(pumpUntil(c, [&] {
-        return c.contentState() == RightPaneState::Ready;
+        return c.diffState() == RightPaneState::Ready;
     }));
 
     // ② 手动刷新同闸：1s 窗内连点至多一次（F-09④）
@@ -173,7 +178,7 @@ REGISTER_TEST(gitWatchThrottleAndStaleBar, "刷新联动：watcher 脏→1s 窗�
     return git_fixture::cleanupRepoDir(repoDir, true);
 })
 
-REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 树模式+右栏打开文件+视图类型；异仓全新会话", {
+REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 视图形态+右栏打开文件+视图类型；异仓全新会话", {
     const platform::git::Libgit2Scope libgit2;
     const auto root = test_support::makeTempDir("devdesk_git_n10_", "root");
     const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
@@ -191,7 +196,7 @@ REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 树
     worker.start();
     GitPageController c(&worker);
     DOCTEST_CHECK(openRepoViaPicker(c, platform::git::pathToUtf8(repoA)));
-    c.setTreeMode(module::git::GitTreeModel::Mode::ChangesOnly);
+    c.setViewMode(module::git::ChangeViewMode::Flat);
     // 制造变更条目并选中（打开文件 + diff 视图）
     std::ofstream(repoA / platform::git::utf8ToPath("甲.txt"), std::ios::binary) << "改\n";
     c.refresh();
@@ -202,15 +207,18 @@ REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 树
                c.diffState() == RightPaneState::Placeholder;
     }));
     DOCTEST_CHECK(c.selectedPath() == "甲.txt");
-    DOCTEST_CHECK(c.rightShowsDiff());
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
+                  !c.searchContentView());  // diff 动线（D5-A 判据）
 
-    // 切走（N2 空态页）→ 重选同仓：恢复模式 + 打开文件 + 视图类型
+    // 切走（N2 空态页）→ 重选同仓：恢复视图形态 + 打开文件 + 视图类型
+    //（树/平铺切换记忆至会话不落盘，设计 §6.3；N10 跨仓恢复沿用同一位）
     c.switchRepo();
     DOCTEST_CHECK(c.phase() == GitPagePhase::Empty);
     DOCTEST_CHECK(openRepoViaPicker(c, platform::git::pathToUtf8(repoA)));
-    DOCTEST_CHECK(c.tree().mode() == module::git::GitTreeModel::Mode::ChangesOnly);
+    DOCTEST_CHECK(c.viewMode() == module::git::ChangeViewMode::Flat);
     DOCTEST_CHECK(c.selectedPath() == "甲.txt");
-    DOCTEST_CHECK(c.rightShowsDiff());
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
+                  !c.searchContentView());  // diff 动线（D5-A 判据）
     DOCTEST_CHECK(pumpUntil(c, [&] {
         return c.diffState() == RightPaneState::Ready ||
                c.diffState() == RightPaneState::Placeholder;
@@ -220,7 +228,7 @@ REGISTER_TEST(gitN10SessionRestore, "N10：切换仓库后重选同仓恢复 树
     c.switchRepo();
     DOCTEST_CHECK(openRepoViaPicker(c, platform::git::pathToUtf8(repoB)));
     DOCTEST_CHECK(c.selectedPath().empty());
-    DOCTEST_CHECK(c.rightShowsDiff() == false);
+    DOCTEST_CHECK_FALSE(c.searchContentView());  // 全新会话不携带搜索内容动线
     worker.stop();
     platform::folderpicker::setPickerForTest(nullptr);
     return git_fixture::cleanupRepoDir(repoA, true) &&
@@ -297,4 +305,78 @@ REGISTER_TEST(gitOversizePlaceholderNoRead, "F-11③：超 1 MiB 占位短路—
     DOCTEST_CHECK(fc.lines.empty());
     DOCTEST_CHECK(fc.maxLineLen == 0);
     return git_fixture::cleanupRepoDir(root, true);
+})
+
+// ---- ⑥ F-09（need:291）：刷新重建行序列，列表 UI 状态位保持 ----
+
+REGISTER_TEST(gitRefreshKeepsListUiState, "F-09：刷新重建行序列保 选中/目录展开位图/组折叠位图（need:291）", {
+    const platform::git::Libgit2Scope libgit2;
+    const auto root = test_support::makeTempDir("devdesk_git_listui_", "root");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           platform::git::pathToUtf8(root).c_str());
+    const auto repoDir = root / "保位仓";
+    std::filesystem::create_directories(repoDir);
+    git_fixture::initRepo(repoDir);
+    git_fixture::commitAll(repoDir, {{"根.txt", "v1\n"}, {"docs/指南.md", "v1\n"}});
+    // 工作区改动（均 unstaged，tracked 派生目录——纯派生不走 worker lazy）：
+    // 根内文件 + docs 子目录文件 → unstaged 组内派生 docs 目录节点
+    test_support::writeTextFile(repoDir / "根.txt", "v2\n");
+    test_support::writeTextFile(repoDir / "docs" / "指南.md", "v2\n");
+    const std::string repoUtf8 = platform::git::pathToUtf8(repoDir);
+
+    GitWorker worker;
+    worker.start();
+    GitPageController c(&worker);
+    DOCTEST_CHECK(openRepoViaPicker(c, repoUtf8));
+    DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
+
+    module::git::GitChangeListModel& list = c.listModel();
+    // tracked 派生目录默认展开（设计 §7 N2）→ 显式折叠验证记忆位图（纯重建不走 lazy）
+    c.toggleDir("docs");
+    DOCTEST_CHECK_FALSE(list.isExpanded("docs"));
+    // 选中根内文件 + 右栏 diff（主动线）
+    c.selectChange("根.txt");
+    DOCTEST_CHECK(pumpUntil(c, [&] { return c.diffState() == RightPaneState::Ready; }));
+    // 折叠未暂存组（选中行在组内——设计 §6.4 折叠组含选中行=选中保持前提）
+    list.setGroupCollapsed(module::git::ChangeListRow::Group::Unstaged, true);
+    DOCTEST_CHECK(list.isGroupCollapsed(module::git::ChangeListRow::Group::Unstaged));
+
+    // 手动刷新（出开仓 1s 节流窗后投一次，F-09④ 同闸）
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    c.composePump();
+    c.refresh();
+    DOCTEST_CHECK(pumpUntil(c, [&] { return !c.statusLoading(); }));
+
+    // 三位保持：选中 + 右栏动线、目录展开位图、组折叠位图
+    DOCTEST_CHECK(c.selectedPath() == "根.txt");
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
+                  !c.searchContentView());  // diff 动线（D5-A 判据）
+    DOCTEST_CHECK_FALSE(list.isExpanded("docs"));  // 折叠记忆跨刷新保留
+    DOCTEST_CHECK(list.isGroupCollapsed(module::git::ChangeListRow::Group::Unstaged));
+    // 折叠组子树不出行（组头仍在，行序列确已重建）
+    bool sawFileRow = false;
+    bool sawUnstagedHeader = false;
+    for (const auto& r : list.rows()) {
+        if (r.kind == module::git::ChangeListRow::Kind::File) sawFileRow = true;
+        if (r.kind == module::git::ChangeListRow::Kind::GroupHeader &&
+            r.group == module::git::ChangeListRow::Group::Unstaged) {
+            sawUnstagedHeader = true;
+        }
+    }
+    DOCTEST_CHECK_FALSE(sawFileRow);
+    DOCTEST_CHECK(sawUnstagedHeader);
+    // 重新展开组 + docs 目录 → 子行凭折叠/展开记忆位图回归
+    list.setGroupCollapsed(module::git::ChangeListRow::Group::Unstaged, false);
+    c.toggleDir("docs");  // 撤销 :334 的显式折叠（记忆位图往返）
+    bool sawGuide = false;
+    for (const auto& r : list.rows()) {
+        if (r.kind == module::git::ChangeListRow::Kind::File &&
+            r.relPath == "docs/指南.md") {
+            sawGuide = true;
+        }
+    }
+    DOCTEST_CHECK(sawGuide);
+    worker.stop();
+    platform::folderpicker::setPickerForTest(nullptr);
+    return git_fixture::cleanupRepoDir(repoDir, true);
 })

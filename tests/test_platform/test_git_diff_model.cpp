@@ -222,7 +222,7 @@ REGISTER_TEST(git_diff_untracked_synth_binary_empty, "git_diff: untracked 二进
     return true;
 })
 
-REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 untracked / 已有 hunk 一律不动；目录条目(尾'/') 返占位（bug290）", {
+REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 untracked / 已有 hunk 一律不动；目录占位文案退役（bug290→F-05 交互根治）", {
     const test_support::TempDir dir("untracked_guard");
     dir.write(dir.file("t.txt"), "line\n");
     {
@@ -233,13 +233,17 @@ REGISTER_TEST(git_diff_untracked_synth_guards, "git_diff: 合成守卫——非 
         DOCTEST_CHECK(!p.binary);
     }
     {
-        DiffPatch p;  // untracked 目录条目：§2.1 不递归决策不破，不触碰磁盘；
-                      // bug#290 改返占位文案（原返空=中栏点文件夹误报「无内容变更」）
+        // untracked 目录条目（尾'/'）：need:291 F-05 交互根治——目录行点击=toggle
+        // 永不进 diff（设计 §6.2），模型不再特殊化目录路径，bug#290 旧占位文案
+        // 「未跟踪文件夹…」退役。本块只钉退役（目录路径不再到达 diff 模型，
+        // 替代值不契约化；误报根治由交互层钉：change list DirRow 用例 / ui 探针 G5）
+        DiffPatch p;
         p.newPath = "somedir/";
         p.isUntracked = true;
-        DOCTEST_CHECK(module::git::synthesizeUntrackedDiff(p, dir.file("somedir/")) ==
+        DOCTEST_CHECK(module::git::synthesizeUntrackedDiff(p, dir.file("somedir/")) !=
                       "未跟踪文件夹（整体一条目，不展开 diff）");
         DOCTEST_CHECK(p.hunks.empty());
+        DOCTEST_CHECK(!p.binary);
     }
     {
         DiffPatch p;  // 已有 hunk 的 untracked patch（理论不可达）：原样保留

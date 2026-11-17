@@ -1,4 +1,9 @@
 // src/module_git/git_views.cpp
+// Git 页两栏视图 compose（need:291 重设计；设计文档 docs/design/2026-11-17-git管理器重设计.md）：
+//   左卡=变更列表（320 可折叠，树/平铺双态+两组头+untracked lazy 行）；
+//   右卡=diff 常驻主区（头部 44px 粘顶：徽标+路径+统计+差异/内容 tab）。
+// 渲染纪律（clue#22）：所有行盒/命中矩形 = （行模型, 宽度）的纯函数，compose
+// measure pass 每帧两跑幂等；零矩形缓存。
 #include "git_views.h"
 
 #include "git_colors.h"
@@ -24,30 +29,43 @@ namespace {
 using core::theme::scaled;
 using core::theme::Tokens;
 
-// ---- UI 方案 A §2/§4 尺寸常量（字面量基准，经 scaled() 随全局字号缩放）----
+// ---- 设计 §1/§4/§5 尺寸常量（字面量基准，经 scaled() 随全局字号缩放）----
 constexpr float kTopBarH = 48.0f;
-constexpr float kModeBarH = 40.0f;
-constexpr float kGroupHeaderH = 32.0f;
-constexpr float kPathBarH = 36.0f;
-constexpr float kTreeRowH = 28.0f;
-constexpr float kListRowH = 28.0f;
-constexpr float kIndentStep = 16.0f;   // 树每层缩进
+constexpr float kPageMargin = 12.0f;          // §1 页边距 12（双侧 24）
+constexpr float kCardGap = 12.0f;             // §1 两卡间 gap 12 显式常量
+constexpr float kNarrowBreakpoint = 1200.0f;  // §9：<1200 左卡 280/缩进 12/搜索 240
+constexpr float kListCardW = 320.0f;          // §4.1 左卡定宽
+constexpr float kListCardWNarrow = 280.0f;    // §9 窄窗档
+constexpr float kListHeaderH = 36.0f;         // §4.2 列头（粘顶）
+constexpr float kGroupHeaderH = 32.0f;        // §4.3 组头
+constexpr float kRowSlotH = 32.0f;            // virtualList 定高槽：组头满槽、
+                                              // 行画槽顶 28px（EUI 定高约束）
+constexpr float kRowH = 28.0f;                // §4.4/§4.5 目录/文件行高
+constexpr float kRightHeaderH = 44.0f;        // §5.2 diff 头部（粘顶）
+constexpr float kIndentStep = 16.0f;          // §4.4 每级缩进（窄窗 12）
+constexpr float kIndentStepNarrow = 12.0f;
 constexpr float kIndentBase = 12.0f;
 constexpr float kBadgeSize = 16.0f;
-constexpr float kNarrowBreakpoint = 1100.0f;  // §9：≤1100 档左 200/中 240
-constexpr float kLeftColWide = 260.0f;
-constexpr float kLeftColNarrow = 200.0f;
-constexpr float kMidColWide = 280.0f;
-constexpr float kMidColNarrow = 240.0f;
-// §4/§5.5/§5.6 代码面（等宽 13px、行高 22px；diff 行号 12px、hunk 头/折叠条 24px）
-constexpr float kCodeRowH = 22.0f;          // 内容/ diff 代码行高
-constexpr float kDiffSlotH = 24.0f;         // diff virtualList 定高槽（行画槽内 22px，
-                                            // hunk 头/折叠条满槽——EUI 定高约束）
-constexpr float kContentGutterW = 44.0f;    // 内容行号列宽
-constexpr float kDiffFoldW = 16.0f;         // diff 折叠符列宽
-constexpr float kDiffNoW = 40.0f;           // diff 旧/新行号列宽
-constexpr float kDiffFileHeaderH = 28.0f;   // diff 文件头高
-constexpr float kCodeGutterPad = 8.0f;      // 行号右 padding
+constexpr float kIconBtnSize = 24.0f;         // §4.2 列头图标钮
+// §5.3/§5.4 代码面（等宽 13px、行高 22px；四列网格 折叠24｜旧48｜新48｜代码 flex）
+constexpr float kCodeRowH = 22.0f;
+constexpr float kDiffSlotH = 24.0f;           // diff virtualList 定高槽
+constexpr float kContentGutterW = 48.0f;      // §5.4 内容行号列宽
+constexpr float kDiffFoldW = 24.0f;           // §5.3 折叠符列宽
+constexpr float kDiffNoW = 48.0f;             // §5.3 旧/新行号列宽
+constexpr float kCodeGutterPad = 8.0f;        // 行号右 padding
+constexpr float kCardRadius = 16.0f;          // §1.2 两卡 radius 16
+
+// FontAwesome（设计 §11 映射）
+constexpr unsigned kGlyphFolderTree = 0xF802;       // fa-folder-tree
+constexpr unsigned kGlyphList = 0xF03A;             // fa-list
+constexpr unsigned kGlyphCollapse = 0xF100;         // fa-angle-double-left
+constexpr unsigned kGlyphFolder = 0xF07B;           // fa-folder
+constexpr unsigned kGlyphFolderOpen = 0xF07C;       // fa-folder-open
+constexpr unsigned kGlyphSpinner = 0xF021;          // fa-refresh（旋转圈降级 pulse）
+constexpr unsigned kGlyphCircleCheck = 0xF058;      // fa-circle-check
+constexpr unsigned kGlyphCodeBranch = 0xF126;       // fa-code-branch
+constexpr unsigned kGlyphCircleExclaim = 0xF06A;    // fa-circle-exclamation
 
 // 文本宽度估算（wtabTextWidth 同式：CJK 0.43 / ASCII 0.56 × 字号 + 1.6 基宽；
 // 偏大只多留白，用于固定头内元素定位，不做逐字截断）
@@ -158,8 +176,8 @@ void skeletonRow(eui::Ui& ui, const std::string& id, float x, float y, float w,
         .build();
 }
 
-// 下划线式 Tab（§5.2 模式切换条 / §5.4 视图切换：激活=主色 2px 底线；方案 A 明确
-// Tab 形态禁实心按钮——ui_kit::wtab 为块面式，按方案 A 自绘下划线式）
+// 下划线式 Tab（§5.2 视图切换：激活=主色 2px 底线；方案 A 明确 Tab 形态禁实心
+// 按钮——ui_kit::wtab 为块面式，按方案 A 自绘下划线式）
 void underlineTab(eui::Ui& ui, const std::string& id, const std::string& label,
                   bool active, float x, float y, float w, float h,
                   const Tokens& t, const std::function<void()>& onClick) {
@@ -188,7 +206,36 @@ void underlineTab(eui::Ui& ui, const std::string& id, const std::string& label,
     hitRect(ui, id + ".hit", x, y, w, h, onClick);
 }
 
-// ---- 空态页（§5.7）----
+// 图标钮（§4.2 列头 segmented/折叠钮：24×24；激活=底 selected + 图标 text1，
+// 未激活=底透明 + 图标 text3。EUI 无 hover 驱动原语，hover 档降级省略）
+void iconButton(eui::Ui& ui, const std::string& id, unsigned glyph, bool active,
+                float x, float y, float size, const Tokens& t,
+                const std::function<void()>& onClick) {
+    ui.stack(id)
+        .position(x, y)
+        .size(size, size)
+        .content([&] {
+            if (active) {
+                ui.rect(id + ".bg")
+                    .size(size, size)
+                    .color(t.colors.active)
+                    .radius(6.0f)
+                    .build();
+            }
+            ui.text(id + ".glyph")
+                .size(size, size)
+                .icon(glyph)
+                .fontSize(scaled(12.0f))
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(active ? t.colors.textPrimary : t.colors.textTertiary)
+                .build();
+        })
+        .build();
+    hitRect(ui, id + ".hit", x, y, size, size, onClick);
+}
+
+// ---- 空态页（§5.7 / v1 沿用）----
 void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
                       GitPageController& c, const Tokens& t) {
     const float w = screen.width;
@@ -212,7 +259,7 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
     ui.text("git.empty.desc")
         .position(blockX, y)
         .size(blockW, scaled(20.0f))
-        .text("只读查看器：浏览文件、查看变更与 diff，不做任何修改。")
+        .text("只读查看器：浏览变更与 diff，不做任何修改。")
         .fontSize(scaled(13.0f))
         .lineHeight(scaled(18.0f))
         .horizontalAlign(eui::HorizontalAlign::Center)
@@ -255,11 +302,12 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
                   [&c] { c.beginPickRepo(); }, c.validating());
 }
 
-// ---- 顶栏（§5.1 + §5.1a 全局搜索框 need:14 增补，决策① v2 反转落点）----
+// ---- 顶栏（§3 48px：折叠展开钮(条件) + 仓名 + 路径 + 搜索 + 切换仓库 + 刷新）----
+// 设计 §3 分支 chip：platform/git 无分支查询接口（数据面零改动硬约束），演绎省略。
 
-// 搜索框几何（320×32，弹性间隔位=路径右侧、「切换仓库」左侧；浮层锚同源）
-std::pair<float, float> searchBoxGeometry(float w) {
-    const float searchW = scaled(320.0f);
+// 搜索框几何（320×32，窄窗 240；弹性间隔位=路径右侧、「切换仓库」左侧）
+std::pair<float, float> searchBoxGeometry(float w, bool narrow) {
+    const float searchW = scaled(narrow ? 240.0f : 320.0f);
     const float searchH = scaled(32.0f);
     const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
@@ -268,7 +316,8 @@ std::pair<float, float> searchBoxGeometry(float w) {
     return {x, (kTopBarH - searchH) * 0.5f};
 }
 
-void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) {
+void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
+                   const Tokens& t) {
     ui.rect("git.top.bg").size(w, kTopBarH).color(t.colors.surface).build();
     ui.rect("git.top.border")
         .position(0.0f, kTopBarH)
@@ -277,10 +326,33 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         .build();
 
     const float padX = scaled(16.0f);
+    float x = padX;
+    // 折叠展开钮（§3：仅左栏折叠时显示，为顶栏第一个元素 32×32）
+    if (c.listCollapsed()) {
+        const float btnY = (kTopBarH - scaled(32.0f)) * 0.5f;
+        ui.stack("git.top.expand")
+            .position(x, btnY)
+            .size(scaled(32.0f), scaled(32.0f))
+            .content([&] {
+                ui.text("git.top.expand.glyph")
+                    .size(scaled(32.0f), scaled(32.0f))
+                    .icon(kGlyphList)
+                    .fontSize(scaled(14.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textSecondary)
+                    .build();
+            })
+            .build();
+        hitRect(ui, "git.top.expand.hit", x, btnY, scaled(32.0f), scaled(32.0f),
+                [&c] { c.toggleListCollapsed(); });
+        x += scaled(32.0f) + scaled(8.0f);
+    }
+
     const std::string name = c.repoDisplayName();
     const float nameW = textWidthEstimate(name, scaled(15.0f));
     ui.text("git.top.name")
-        .position(padX, 0.0f)
+        .position(x, 0.0f)
         .size(nameW + scaled(8.0f), kTopBarH)
         .text(name)
         .fontSize(scaled(15.0f))
@@ -289,8 +361,8 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         .color(t.colors.textPrimary)
         .build();
 
-    float x = padX + nameW + scaled(8.0f) + scaled(12.0f);
-    const auto [searchBoxX, searchBoxY] = searchBoxGeometry(w);
+    x += nameW + scaled(8.0f) + scaled(12.0f);
+    const auto [searchBoxX, searchBoxY] = searchBoxGeometry(w, narrow);
     const float pathMaxW = scaled(360.0f);
     ui.text("git.top.path")
         .position(x, 0.0f)
@@ -306,7 +378,7 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
     // placeholder 13px textTertiary；Enter 提交 / ESC 显式取消 / 清空=取消同路）。
     // inset 让出左侧放大镜位（组件 inset 左右对称，右缘由 ×/扫描圈叠盖——
     // 同 agent.dialog.tools.search 先例）
-    const float searchW = scaled(320.0f);
+    const float searchW = scaled(narrow ? 240.0f : 320.0f);
     const float searchH = scaled(32.0f);
     components::input(ui, "git.search.input")
         .position(searchBoxX, searchBoxY)
@@ -346,7 +418,7 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
         ui.text("git.search.spin")
             .position(spinX, searchBoxY)
             .size(scaled(20.0f), searchH)
-            .icon(0xF021)
+            .icon(kGlyphSpinner)
             .fontSize(scaled(12.0f))
             .opacity(skeletonPulseOpacity())
             .onFrame([](float) {})
@@ -382,51 +454,229 @@ void composeTopBar(eui::Ui& ui, float w, GitPageController& c, const Tokens& t) 
                     t, [&c] { c.switchRepo(); });
 }
 
-// ---- 树行渲染（§5.2；行盒 = （行, contentWidth）纯函数）----
-void drawTreeRow(eui::Ui& ui, const std::string& rowId, const TreeRow& row,
-                 float contentWidth, GitPageController& c, const Tokens& t,
-                 const GitColors& gc) {
-    const float rowH = scaled(kTreeRowH);
+// ---- 变更列表行渲染（§4.3~§4.6；行盒 = （行, contentWidth）纯函数）----
+// expanded 派生：下一行 depth 更深 = 本目录已展开（行模型序列自证，免模型查询）
+bool rowExpandedAt(const std::vector<ChangeListRow>& rows, size_t idx) {
+    return idx + 1 < rows.size() && rows[idx + 1].depth > rows[idx].depth;
+}
+
+// 状态徽标 16×16（浅染底 + 状态字母；§4.5/§4.6）
+void drawBadge(eui::Ui& ui, const std::string& id, float x, float y,
+               platform::git::StatusKind kind, const Tokens& t,
+               const GitColors& gc) {
+    eui::Color bg = t.colors.surfaceElevated;
+    eui::Color fg = t.colors.textSecondary;
+    switch (kind) {
+        case platform::git::StatusKind::New: bg = gc.addedBg; fg = gc.added; break;
+        case platform::git::StatusKind::Modified: bg = gc.modifiedBg; fg = gc.modified; break;
+        case platform::git::StatusKind::Deleted: bg = gc.deletedBg; fg = gc.deleted; break;
+        case platform::git::StatusKind::Renamed: bg = gc.renamedBg; fg = gc.renamed; break;
+        case platform::git::StatusKind::Untracked: bg = gc.untrackedBg; fg = gc.untracked; break;
+        default: break;
+    }
+    ui.rect(id)
+        .position(x, y)
+        .size(scaled(kBadgeSize), scaled(kBadgeSize))
+        .color(bg)
+        .radius(3.0f)
+        .build();
+    ui.text(id + ".text")
+        .position(x, y)
+        .size(scaled(kBadgeSize), scaled(kBadgeSize))
+        .text(std::string(1, statusBadgeLetter(kind)))
+        .fontSize(scaled(10.0f))
+        .fontWeight(700)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(fg)
+        .build();
+}
+
+// 目录行 / 文件行 / 加载 / 截断尾行 / 错误行（§4.3~§4.6 + §6.2 边界）
+// indentStepPx：缩进步长（窄窗档 12、常规 16，§9——compose 侧换算传入）
+void drawChangeListRow(eui::Ui& ui, const std::string& rowId,
+                       const ChangeListRow& row, size_t idx, bool flat,
+                       float indentStepPx, float contentWidth,
+                       GitPageController& c, const Tokens& t, const GitColors& gc) {
+    const float slotH = scaled(kRowSlotH);
+    const float rowH = scaled(kRowH);
+    const float indentStep = indentStepPx;
+
     ui.stack(rowId)
-        .size(contentWidth, rowH)
+        .size(contentWidth, slotH)
         .content([&] {
-            const float indent = scaled(kIndentBase + kIndentStep * row.depth);
-            const bool selected =
-                row.kind == TreeRowKind::File &&
-                c.selectedPath() == row.relPath && !c.rightShowsDiff();
-            if (selected) {
-                ui.rect(rowId + ".selbg")
-                    .size(contentWidth, rowH)
-                    .color(t.colors.active)
+            const float indent = scaled(kIndentBase) + indentStep * row.depth;
+
+            if (row.kind == ChangeListRow::Kind::GroupHeader) {
+                // 组头 32px（§4.3：箭头 + 「已暂存 (N)」13/600；点击折叠）
+                const bool collapsed = c.listModel().isGroupCollapsed(row.group);
+                ui.rect(rowId + ".bg")
+                    .size(contentWidth, scaled(kGroupHeaderH))
+                    .color(t.colors.surface)
                     .build();
-                ui.rect(rowId + ".selbar")
-                    .size(2.0f, rowH)
-                    .color(t.colors.primary)
+                ui.rect(rowId + ".border")
+                    .position(0.0f, scaled(kGroupHeaderH))
+                    .size(contentWidth, 1.0f)
+                    .color(t.colors.borderMuted)
                     .build();
+                ui.text(rowId + ".arrow")
+                    .position(scaled(12.0f), 0.0f)
+                    .size(scaled(14.0f), scaled(kGroupHeaderH))
+                    .text(collapsed ? "▶" : "▼")
+                    .fontSize(scaled(10.0f))
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                ui.text(rowId + ".text")
+                    .position(scaled(28.0f), 0.0f)
+                    .size(contentWidth - scaled(40.0f), scaled(kGroupHeaderH))
+                    .text(row.name)  // 「已暂存 (N)」模型烘焙（计数=组内文件行数）
+                    .fontSize(scaled(13.0f))
+                    .fontWeight(600)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textPrimary)
+                    .build();
+                hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth,
+                        scaled(kGroupHeaderH),
+                        [&c, g = row.group] { c.toggleGroup(g); });
+                return;
             }
-            float x = indent;
-            // 展开符：目录 ▶/▼（懒加载中省略号占位；叶/降级行同宽空占）
-            const float arrowW = scaled(16.0f);
-            const bool showArrow = row.kind == TreeRowKind::Directory;
-            if (showArrow) {
-                const char* glyph = row.loading ? "…" : (row.expanded ? "▼" : "▶");
+
+            // 行体统一画在槽顶 kRowH 内（组头外全部 28px 行）
+            if (row.kind == ChangeListRow::Kind::Dir) {
+                const bool expanded = rowExpandedAt(c.listRows(), idx);
+                const bool untracked =
+                    row.status == platform::git::StatusKind::Untracked;
+                // §4.4：hover/按压降级省略（EUI 无 hover 驱动）；不选中不进 diff
+                float x = indent;
+                const float arrowW = scaled(14.0f);
                 ui.text(rowId + ".arrow")
                     .position(x, 0.0f)
                     .size(arrowW, rowH)
-                    .text(glyph)
+                    .text(expanded ? "▼" : "▶")
+                    .fontSize(scaled(10.0f))
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                x += arrowW;
+                ui.text(rowId + ".icon")
+                    .position(x, 0.0f)
+                    .size(scaled(16.0f), rowH)
+                    .icon(expanded ? kGlyphFolderOpen : kGlyphFolder)
                     .fontSize(scaled(12.0f))
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textTertiary)
                     .build();
+                x += scaled(18.0f);
+                // 目录名（untracked 行 name 已带 '/' 后缀，模型烘焙）
+                const bool hasCount =
+                    row.childCount > 0 && !untracked;  // R4：untracked 行不显计数
+                const float nameW =
+                    contentWidth - x - scaled(12.0f) -
+                    (untracked ? scaled(kBadgeSize + 4.0f) : 0.0f) -
+                    (hasCount ? scaled(36.0f) : 0.0f);
+                ui.text(rowId + ".name")
+                    .position(x, 0.0f)
+                    .size(std::max(scaled(20.0f), nameW), rowH)
+                    .text(row.name)
+                    .fontSize(scaled(13.0f))
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textPrimary)
+                    .build();
+                // U 徽标（§4.6：目录行=目录名后 4px）
+                if (untracked) {
+                    drawBadge(ui, rowId + ".badge",
+                              x + textWidthEstimate(row.name, scaled(13.0f)) +
+                                  scaled(4.0f),
+                              (rowH - scaled(kBadgeSize)) * 0.5f,
+                              platform::git::StatusKind::Untracked, t, gc);
+                }
+                // 子树变更文件计数（§4.4：右锚 12px）
+                if (hasCount) {
+                    ui.text(rowId + ".count")
+                        .position(contentWidth - scaled(12.0f) - scaled(32.0f), 0.0f)
+                        .size(scaled(32.0f), rowH)
+                        .text(std::to_string(row.childCount))
+                        .fontSize(scaled(12.0f))
+                        .horizontalAlign(eui::HorizontalAlign::Right)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }
+                // 超长目录名 tooltip（need14 口径）
+                if (textWidthEstimate(row.name, scaled(13.0f)) > nameW) {
+                    components::tooltip(ui, rowId + ".name.tip")
+                        .theme(core::theme::componentTokens(t))
+                        .source(rowId + ".name")
+                        .value(row.dirRel.empty() ? row.relPath : row.dirRel)
+                        .anchor(x + std::max(scaled(20.0f), nameW) * 0.5f,
+                                rowH * 0.5f)
+                        .bounds(contentWidth, rowH)
+                        .minWidth(120.0f)
+                        .maxWidth(420.0f)
+                        .zIndex(40)
+                        .build();
+                }
+                // D3-A：点击=展开/收起，永不进 diff（untracked=lazy 枚举触发点）
+                const std::string rel = row.relPath;
+                if (untracked) {
+                    hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth, rowH,
+                            [&c, rel] { c.toggleUntrackedDir(rel); });
+                } else {
+                    hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth, rowH,
+                            [&c, rel] { c.toggleDir(rel); });
+                }
+                return;
             }
-            x += arrowW;
 
-            if (row.kind == TreeRowKind::Error) {
-                // 行内错误行 + 重试（§5.2）
+            if (row.kind == ChangeListRow::Kind::Loading) {
+                // §4.4 加载行：旋转圈（pulse 降级）+「正在读取…」（>1s 阈值由
+                // worker 实际耗时天然满足：常态 <20ms 不出 Loading 帧）
+                float x = indent + scaled(14.0f);
+                ui.text(rowId + ".spin")
+                    .position(x, 0.0f)
+                    .size(scaled(16.0f), rowH)
+                    .icon(kGlyphSpinner)
+                    .fontSize(scaled(12.0f))
+                    .opacity(skeletonPulseOpacity())
+                    .onFrame([](float) {})
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                x += scaled(20.0f);
+                ui.text(rowId + ".text")
+                    .position(x, 0.0f)
+                    .size(contentWidth - x - scaled(12.0f), rowH)
+                    .text("正在读取…")
+                    .fontSize(scaled(12.0f))
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                return;
+            }
+
+            if (row.kind == ChangeListRow::Kind::Truncate) {
+                // §6.2：>500 截断尾行「还有 N 个文件 · 在搜索中查看全部」
+                float x = indent + scaled(14.0f);
+                ui.text(rowId + ".text")
+                    .position(x, 0.0f)
+                    .size(contentWidth - x - scaled(12.0f), rowH)
+                    .text("还有 " + std::to_string(row.remainCount) +
+                          " 个文件 · 在搜索中查看全部")
+                    .fontSize(scaled(12.0f))
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+                return;
+            }
+
+            if (row.kind == ChangeListRow::Kind::Error) {
+                // §6.2：枚举失败子区错误行 + 重试（目录保持展开）
+                float x = indent + scaled(14.0f);
                 ui.text(rowId + ".err")
                     .position(x, 0.0f)
-                    .size(contentWidth - x - scaled(48.0f), rowH)
-                    .text("无法读取：" + row.errorText)
+                    .size(contentWidth - x - scaled(60.0f), rowH)
+                    .text("无法读取目录：" + row.errorText)
                     .fontSize(scaled(12.0f))
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.errorText)
@@ -442,202 +692,12 @@ void drawTreeRow(eui::Ui& ui, const std::string& rowId, const TreeRow& row,
                     .build();
                 hitRect(ui, rowId + ".retry.hit",
                         contentWidth - scaled(12.0f) - retryW, 0.0f, retryW, rowH,
-                        [&c, rel = row.relPath] { c.retryDir(rel); });
+                        [&c, rel = row.dirRel] { c.retryUntrackedDir(rel); });
                 return;
             }
 
-            // 名称（变更行着状态色）
-            const bool hasStatus = row.status.has_value();
-            eui::Color nameColor = t.colors.textPrimary;
-            if (hasStatus) {
-                switch (*row.status) {
-                    case platform::git::StatusKind::New: nameColor = gc.added; break;
-                    case platform::git::StatusKind::Modified: nameColor = gc.modified; break;
-                    case platform::git::StatusKind::Deleted: nameColor = gc.deleted; break;
-                    case platform::git::StatusKind::Renamed: nameColor = gc.renamed; break;
-                    case platform::git::StatusKind::Untracked: nameColor = gc.untracked; break;
-                    default: break;
-                }
-            }
-            if (row.kind == TreeRowKind::EmptyDir) {
-                ui.text(rowId + ".name")
-                    .position(x, 0.0f)
-                    .size(contentWidth - x - scaled(12.0f), rowH)
-                    .text("空目录")
-                    .fontSize(scaled(12.0f))
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textTertiary)
-                    .build();
-                return;
-            }
-            const float nameW =
-                contentWidth - x - scaled(12.0f) -
-                (row.kind == TreeRowKind::NoAccess || row.kind == TreeRowKind::Subrepo
-                     ? scaled(64.0f)
-                     : (hasStatus ? scaled(16.0f) : 0.0f));
-            ui.text(rowId + ".name")
-                .position(x, 0.0f)
-                .size(std::max(scaled(20.0f), nameW), rowH)
-                .text(row.name)
-                .fontSize(scaled(13.0f))
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(row.kind == TreeRowKind::NoAccess ? t.colors.textTertiary
-                                                         : nameColor)
-                .build();
-
-            // 超长名截断 + 悬浮全名（PRD §5 目录树成功格边界；EUI tooltip 组件，
-            // hoverOpacityFrom(source) 驱动显隐；气泡 zIndex 逃逸行栈）
-            if (textWidthEstimate(row.name, scaled(13.0f)) > nameW) {
-                components::tooltip(ui, rowId + ".name.tip")
-                    .theme(core::theme::componentTokens(t))
-                    .source(rowId + ".name")
-                    .value(row.name)
-                    .anchor(x + std::max(scaled(20.0f), nameW) * 0.5f,
-                            rowH * 0.5f)
-                    .bounds(contentWidth, rowH)
-                    .minWidth(120.0f)
-                    .maxWidth(420.0f)
-                    .zIndex(40)
-                    .build();
-            }
-
-            // 降级标注（无权限/子仓库）
-            if (row.kind == TreeRowKind::NoAccess) {
-                ui.text(rowId + ".tag")
-                    .position(contentWidth - scaled(76.0f), 0.0f)
-                    .size(scaled(64.0f), rowH)
-                    .text("不可访问")
-                    .fontSize(scaled(12.0f))
-                    .horizontalAlign(eui::HorizontalAlign::Right)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textTertiary)
-                    .build();
-            } else if (row.kind == TreeRowKind::Subrepo) {
-                ui.text(rowId + ".tag")
-                    .position(contentWidth - scaled(76.0f), 0.0f)
-                    .size(scaled(64.0f), rowH)
-                    .text("子仓库")
-                    .fontSize(scaled(12.0f))
-                    .horizontalAlign(eui::HorizontalAlign::Right)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textTertiary)
-                    .build();
-            } else if (hasStatus) {
-                // 变更行右缘 6px 同色圆点（着色+点双通道，PRD §6）
-                ui.rect(rowId + ".dot")
-                    .position(contentWidth - scaled(14.0f), (rowH - scaled(6.0f)) * 0.5f)
-                    .size(scaled(6.0f), scaled(6.0f))
-                    .color(nameColor)
-                    .radius(3.0f)
-                    .build();
-            }
-
-            // 点击：目录=展开/折叠；文件=选中切内容视图；降级行无反应
-            if (row.kind == TreeRowKind::Directory) {
-                hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth, rowH,
-                        [&c, rel = row.relPath] { c.toggleDir(rel); });
-            } else if (row.kind == TreeRowKind::File) {
-                hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth, rowH,
-                        [&c, rel = row.relPath] { c.selectTreeFile(rel); });
-            }
-        })
-        .build();
-}
-
-// ---- 左栏（§5.2）----
-void composeLeftColumn(eui::Ui& ui, float x, float w, float y, float h,
-                       GitPageController& c, const Tokens& t) {
-    ui.rect("git.left.bg")
-        .position(x, y)
-        .size(w, h)
-        .color(t.colors.sidebarBg)
-        .build();
-    ui.rect("git.left.border")
-        .position(x + w, y)
-        .size(1.0f, h)
-        .color(t.colors.borderDefault)
-        .build();
-
-    // 模式切换条（两 Tab 各 50% 等分，下划线式）
-    const auto mode = c.tree().mode();
-    const float tabW = w * 0.5f;
-    underlineTab(ui, "git.left.tab.all", "全部文件",
-                 mode == GitTreeModel::Mode::AllFiles, x, y, tabW, scaled(kModeBarH),
-                 t, [&c] { c.setTreeMode(GitTreeModel::Mode::AllFiles); });
-    underlineTab(ui, "git.left.tab.changes", "仅修改",
-                 mode == GitTreeModel::Mode::ChangesOnly, x + tabW, y, tabW,
-                 scaled(kModeBarH), t,
-                 [&c] { c.setTreeMode(GitTreeModel::Mode::ChangesOnly); });
-    ui.rect("git.left.modebar.border")
-        .position(x, y + scaled(kModeBarH))
-        .size(w, 1.0f)
-        .color(t.colors.borderDefault)
-        .build();
-
-    const float listY = y + scaled(kModeBarH) + scaled(4.0f);
-    const float listH = h - scaled(kModeBarH) - scaled(8.0f);
-    const auto& rows = c.visibleRows();  // 成员引用：行闭包布局期回调仍有效
-    const bool rootLoaded =
-        mode == GitTreeModel::Mode::ChangesOnly || c.tree().rootLoaded();
-
-    if (mode == GitTreeModel::Mode::AllFiles && !rootLoaded) {
-        // 根层懒加载中：骨架行（§5.8 左栏 6 条）
-        float sy = listY + scaled(8.0f);
-        float widths[] = {0.62f, 0.78f, 0.70f, 0.85f, 0.66f, 0.74f};
-        int depthSteps[] = {0, 1, 1, 2, 0, 1};
-        for (int i = 0; i < 6; ++i) {
-            const float sw = (w - scaled(24.0f)) * widths[i];
-            skeletonRow(ui, "git.left.skel." + std::to_string(i),
-                        x + scaled(12.0f) +
-                            scaled(kIndentStep * depthSteps[i]),
-                        sy, sw, scaled(16.0f), t);
-            sy += scaled(24.0f);
-        }
-        return;
-    }
-    if (rows.empty()) {
-        const char* emptyText =
-            mode == GitTreeModel::Mode::ChangesOnly ? "工作区无变更" : "无可显示文件";
-        ui.text("git.left.empty")
-            .position(x, listY)
-            .size(w, scaled(40.0f))
-            .text(emptyText)
-            .fontSize(scaled(12.0f))
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
-        return;
-    }
-    components::virtualList(ui, "git.tree.list")
-        .position(x, listY)
-        .size(w, listH)
-        .itemCount(static_cast<int64_t>(rows.size()))
-        .rowHeight(scaled(kTreeRowH))
-        .step(scaled(kTreeRowH))
-        .overscanViewports(1.0f)
-        .theme(core::theme::componentTokens(t))
-        .offset(c.treeScrollOffset())
-        .onChange([&c](float v) { c.setTreeScrollOffset(v); })
-        .row([&](eui::Ui& inner, const std::string& rowId, int64_t index,
-                 float contentWidth, float rowHeight) {
-            (void)rowHeight;
-            const auto idx = static_cast<size_t>(index);
-            if (idx >= rows.size()) return;
-            drawTreeRow(inner, rowId, rows[idx], contentWidth, c, t,
-                        gitColors(t));
-        })
-        .build();
-}
-
-// ---- 中栏条目行（§5.3）----
-void drawChangeRow(eui::Ui& ui, const std::string& rowId, const ChangeRow& row,
-                   float contentWidth, GitPageController& c, const Tokens& t,
-                   const GitColors& gc) {
-    const float rowH = scaled(kListRowH);
-    ui.stack(rowId)
-        .size(contentWidth, rowH)
-        .content([&] {
-            const bool selected = c.selectedPath() == row.path && c.rightShowsDiff();
+            // ---- 文件行（§4.5）----
+            const bool selected = c.selectedPath() == row.relPath;
             if (selected) {
                 ui.rect(rowId + ".selbg")
                     .size(contentWidth, rowH)
@@ -648,94 +708,127 @@ void drawChangeRow(eui::Ui& ui, const std::string& rowId, const ChangeRow& row,
                     .color(t.colors.primary)
                     .build();
             }
-            const float padX = scaled(12.0f);
-            // 状态徽标 16×16（A/M/D/R 彩底彩字；U 灰底灰字描边）
-            eui::Color badgeBg = t.colors.surfaceElevated;
-            eui::Color badgeFg = gc.untracked;
-            switch (row.kind) {
-                case platform::git::StatusKind::New: badgeBg = gc.addedBg; badgeFg = gc.added; break;
-                case platform::git::StatusKind::Modified: badgeBg = gc.modifiedBg; badgeFg = gc.modified; break;
-                case platform::git::StatusKind::Deleted: badgeBg = gc.deletedBg; badgeFg = gc.deleted; break;
-                case platform::git::StatusKind::Renamed: badgeBg = gc.renamedBg; badgeFg = gc.renamed; break;
-                default: break;
+            float x = std::max(scaled(kIndentBase), indent);
+            if (row.status.has_value()) {
+                drawBadge(ui, rowId + ".badge", x,
+                          (rowH - scaled(kBadgeSize)) * 0.5f, *row.status, t, gc);
             }
-            ui.rect(rowId + ".badge")
-                .position(padX, (rowH - scaled(kBadgeSize)) * 0.5f)
-                .size(scaled(kBadgeSize), scaled(kBadgeSize))
-                .color(badgeBg)
-                .radius(4.0f)
-                .border(row.kind == platform::git::StatusKind::Untracked
-                            ? 1.0f
-                            : 0.0f,
-                        t.colors.borderDefault)
-                .build();
-            ui.text(rowId + ".badge.text")
-                .position(padX, (rowH - scaled(kBadgeSize)) * 0.5f)
-                .size(scaled(kBadgeSize), scaled(kBadgeSize))
-                .text(std::string(1, statusBadgeLetter(row.kind)))
-                .fontSize(scaled(10.0f))
-                .fontWeight(700)
-                .horizontalAlign(eui::HorizontalAlign::Center)
+            x += scaled(kBadgeSize) + scaled(8.0f);
+            // 文件名：树形态=短名；平铺形态=短名+目录弱化段（§4.5/§4.7）
+            const float trailingW =
+                flat ? scaled(60.0f) : scaled(12.0f);
+            const float nameW =
+                std::max(scaled(24.0f), contentWidth - x - trailingW);
+            ui.text(rowId + ".name")
+                .position(x, 0.0f)
+                .size(nameW, rowH)
+                .text(row.name)
+                .fontSize(scaled(13.0f))
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(badgeFg)
+                .color(t.colors.textPrimary)
                 .build();
-
-            const float textX = padX + scaled(kBadgeSize) + scaled(8.0f);
-            const float textW = contentWidth - textX - scaled(12.0f);
-            // 重命名两行式压缩档（主行新名 13px + 副行旧名 11px，共 28px 行高制；
-            // 方案 A 40px 两行需变高行 virtualList——EUI 虚拟列表定高，压缩排版）
+            if (flat) {
+                // 平铺：文件名后目录弱化段 12px textTertiary（§4.5 路径弱化段）
+                std::string dirSeg;
+                if (row.relPath.size() > row.name.size() + 1) {
+                    dirSeg = row.relPath.substr(
+                        0, row.relPath.size() - row.name.size() - 1);
+                }
+                if (!dirSeg.empty()) {
+                    ui.text(rowId + ".dir")
+                        .position(x + textWidthEstimate(row.name, scaled(13.0f)) +
+                                      scaled(8.0f),
+                                  0.0f)
+                        .size(std::max(scaled(20.0f),
+                                       contentWidth - x -
+                                           textWidthEstimate(row.name, scaled(13.0f)) -
+                                           scaled(20.0f)),
+                              rowH)
+                        .text(dirSeg)
+                        .fontSize(scaled(12.0f))
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }
+            }
+            // 超长名/R 行 tooltip（§4.5：R 行 hover 完整「old → new」等宽 12px）
             if (!row.oldPath.empty()) {
-                ui.text(rowId + ".path")
-                    .position(textX, 0.0f)
-                    .size(textW, scaled(16.0f))
-                    .text(row.path)
-                    .fontSize(scaled(13.0f))
-                    .color(t.colors.textPrimary)
+                components::tooltip(ui, rowId + ".rename.tip")
+                    .theme(core::theme::componentTokens(t))
+                    .source(rowId + ".name")
+                    .value(row.oldPath + " → " + row.relPath)
+                    .anchor(x + nameW * 0.5f, rowH * 0.5f)
+                    .bounds(contentWidth, rowH)
+                    .minWidth(120.0f)
+                    .maxWidth(480.0f)
+                    .zIndex(40)
                     .build();
-                ui.text(rowId + ".oldpath")
-                    .position(textX, scaled(15.0f))
-                    .size(textW, scaled(12.0f))
-                    .text("← 原 " + row.oldPath)
-                    .fontSize(scaled(11.0f))
-                    .color(t.colors.textTertiary)
-                    .build();
-            } else {
-                ui.text(rowId + ".path")
-                    .position(textX, 0.0f)
-                    .size(textW, rowH)
-                    .text(row.path)
-                    .fontSize(scaled(13.0f))
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textPrimary)
+            } else if (textWidthEstimate(row.relPath, scaled(13.0f)) > nameW) {
+                components::tooltip(ui, rowId + ".name.tip")
+                    .theme(core::theme::componentTokens(t))
+                    .source(rowId + ".name")
+                    .value(row.relPath)
+                    .anchor(x + nameW * 0.5f, rowH * 0.5f)
+                    .bounds(contentWidth, rowH)
+                    .minWidth(120.0f)
+                    .maxWidth(420.0f)
+                    .zIndex(40)
                     .build();
             }
+            // 主动线：文件行点击 → diff（F-05；untracked 子文件行同链路）
             hitRect(ui, rowId + ".hit", 0.0f, 0.0f, contentWidth, rowH,
-                    [&c, p = row.path] { c.selectChange(p); });
+                    [&c, p = row.relPath] { c.selectChange(p); });
         })
         .build();
 }
 
-// ---- 中栏（§5.3）----
-void composeMiddleColumn(eui::Ui& ui, float x, float w, float y, float h,
-                         GitPageController& c, const Tokens& t) {
-    ui.rect("git.mid.bg")
+// ---- 左卡：变更列表（§4；320 可折叠，列头 36 + 独立内滚）----
+void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
+                     float indentStepPx, GitPageController& c, const Tokens& t) {
+    // 卡容器（§4.1：白卡 + 细边 + radius 16）
+    ui.rect("git.list.bg")
         .position(x, y)
         .size(w, h)
         .color(t.colors.surface)
-        .build();
-    ui.rect("git.mid.border")
-        .position(x, y)
-        .size(1.0f, h)
-        .color(t.colors.borderDefault)
+        .radius(kCardRadius)
+        .border(1.0f, t.colors.borderDefault)
         .build();
 
-    const auto& rows = c.changeRows();
+    // 列头 36px（§4.2：右锚 树/平铺 segmented + 折叠钮）
+    const float headH = scaled(kListHeaderH);
+    const float btnSize = scaled(kIconBtnSize);
+    const float btnY = (headH - btnSize) * 0.5f;
+    const float collapseBtnX = x + w - scaled(8.0f) - btnSize;
+    const float flatBtnX = collapseBtnX - scaled(4.0f) - btnSize;
+    const float treeBtnX = flatBtnX - btnSize;
+    const bool treeMode = c.viewMode() == ChangeViewMode::Tree;
+    iconButton(ui, "git.list.btn.tree", kGlyphFolderTree, treeMode, treeBtnX,
+               y + btnY, btnSize, t,
+               [&c] { c.setViewMode(ChangeViewMode::Tree); });
+    iconButton(ui, "git.list.btn.flat", kGlyphList, !treeMode, flatBtnX,
+               y + btnY, btnSize, t,
+               [&c] { c.setViewMode(ChangeViewMode::Flat); });
+    iconButton(ui, "git.list.btn.collapse", kGlyphCollapse, false, collapseBtnX,
+               y + btnY, btnSize, t, [&c] { c.toggleListCollapsed(); });
+    ui.rect("git.list.header.border")
+        .position(x, y + headH)
+        .size(w, 1.0f)
+        .color(t.colors.borderMuted)
+        .build();
+
+    const float listY = y + headH;
+    const float listH = h - headH;
+    const auto& rows = c.listRows();  // 成员引用：行闭包布局期回调仍有效
+
     if (c.statusLoading() && rows.empty()) {
-        // 加载态：5 条骨架行（§5.3 加载态）
-        float sy = y + scaled(12.0f);
-        float widths[] = {0.90f, 0.70f, 0.80f, 0.60f, 0.75f};
-        for (int i = 0; i < 5; ++i) {
-            skeletonRow(ui, "git.mid.skel." + std::to_string(i),
+        // 加载态（§4.8）：组头骨架 ×1 + 行骨架 ×6（无 shimmer，同高不跳版）
+        float sy = listY + scaled(8.0f);
+        skeletonRow(ui, "git.list.skel.header", x + scaled(12.0f), sy,
+                    (w - scaled(24.0f)) * 0.5f, scaled(20.0f), t);
+        sy += scaled(32.0f);
+        float widths[] = {0.90f, 0.70f, 0.80f, 0.60f, 0.75f, 0.66f};
+        for (int i = 0; i < 6; ++i) {
+            skeletonRow(ui, "git.list.skel." + std::to_string(i),
                         x + scaled(12.0f), sy, (w - scaled(24.0f)) * widths[i],
                         scaled(20.0f), t);
             sy += scaled(28.0f);
@@ -743,31 +836,48 @@ void composeMiddleColumn(eui::Ui& ui, float x, float w, float y, float h,
         return;
     }
     if (!c.statusError().empty() && rows.empty()) {
-        ui.text("git.mid.error")
-            .position(x + scaled(12.0f), y + scaled(12.0f))
-            .size(w - scaled(24.0f), scaled(60.0f))
-            .text("无法获取变更：" + c.statusError())
+        // 扫描失败错误块（§4.8：不冒充空态；重试绕节流闸）
+        const float blockX = x + scaled(12.0f);
+        const float blockW = w - scaled(24.0f);
+        float by = listY + scaled(16.0f);
+        ui.text("git.list.err.icon")
+            .position(blockX, by)
+            .size(scaled(20.0f), scaled(20.0f))
+            .icon(kGlyphCircleExclaim)
+            .fontSize(scaled(14.0f))
+            .color(t.colors.error)
+            .build();
+        by += scaled(24.0f);
+        ui.text("git.list.err.main")
+            .position(blockX, by)
+            .size(blockW, scaled(20.0f))
+            .text("无法获取变更")
             .fontSize(scaled(13.0f))
-            .lineHeight(scaled(20.0f))
-            .wrap(true)
+            .fontWeight(600)
             .color(t.colors.errorText)
             .build();
+        by += scaled(22.0f);
+        ui.text("git.list.err.reason")
+            .position(blockX, by)
+            .size(blockW, scaled(36.0f))
+            .text(c.statusError())
+            .fontSize(scaled(12.0f))
+            .lineHeight(scaled(18.0f))
+            .wrap(true)
+            .color(t.colors.textTertiary)
+            .build();
+        by += scaled(40.0f);
+        secondaryButton(ui, "git.list.err.retry", "重试", blockX, by,
+                        scaled(72.0f), scaled(28.0f), t,
+                        [&c] { c.retryStatus(); });
         return;
     }
     if (rows.empty()) {
-        // 空态（§5.3）：主文案 + 节流说明
-        ui.text("git.mid.empty")
-            .position(x, y + h * 0.4f)
+        // 空态（§4.8：组头全隐藏 + 弱提示一行；主空态画面由右卡承担 §5.7）
+        ui.text("git.list.empty")
+            .position(x, listY + listH * 0.4f)
             .size(w, scaled(20.0f))
-            .text("工作区无变更")
-            .fontSize(scaled(13.0f))
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.textSecondary)
-            .build();
-        ui.text("git.mid.empty.hint")
-            .position(x, y + h * 0.4f + scaled(24.0f))
-            .size(w, scaled(18.0f))
-            .text("保存文件后列表会自动更新（1s 节流）")
+            .text("没有未提交变更")
             .fontSize(scaled(12.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .color(t.colors.textTertiary)
@@ -775,57 +885,30 @@ void composeMiddleColumn(eui::Ui& ui, float x, float w, float y, float h,
         return;
     }
 
-    // 混排行模型：组头 + 条目行（composePump 已物化为成员，行闭包布局期回调仍有效；
-    // bug#280② 老板口径：未跟踪并入单一分组内联，U 徽标承担状态区分）
-    const auto& items = c.changeListItems();
-    const size_t totalN = rows.size();
-
-    const float rowH = scaled(kListRowH);
-    const float headerH = scaled(kGroupHeaderH);
-    // 定高行制：组头行 = rowH 槽内画 32px 头（EUI virtualList 定高约束）
+    // 行序列 virtualList（定高槽 32：组头满槽、行画 28px）
+    const bool flat = c.viewMode() == ChangeViewMode::Flat;
     components::virtualList(ui, "git.changes.list")
-        .position(x + 1.0f, y)
-        .size(w - 1.0f, h)
-        .itemCount(static_cast<int64_t>(items.size()))
-        .rowHeight(rowH)
-        .step(rowH)
+        .position(x + 1.0f, listY)
+        .size(w - 2.0f, listH)
+        .itemCount(static_cast<int64_t>(rows.size()))
+        .rowHeight(scaled(kRowSlotH))
+        .step(scaled(kRowSlotH))
         .overscanViewports(1.0f)
         .theme(core::theme::componentTokens(t))
+        .offset(c.listScrollOffset())
+        .onChange([&c](float v) { c.setListScrollOffset(v); })
         .row([&](eui::Ui& inner, const std::string& rowId, int64_t index,
                  float contentWidth, float vh) {
             (void)vh;
             const auto idx = static_cast<size_t>(index);
-            if (idx >= items.size()) return;
-            const GitPageController::ChangeListItem& item = items[idx];
-            if (item.header) {
-                inner.rect(rowId + ".hdbg")
-                    .size(contentWidth, headerH)
-                    .color(t.colors.surface)
-                    .build();
-                inner.rect(rowId + ".hdborder")
-                    .position(0.0f, headerH)
-                    .size(contentWidth, 1.0f)
-                    .color(t.colors.borderMuted)
-                    .build();
-                inner.text(rowId + ".hdtext")
-                    .position(scaled(12.0f), 0.0f)
-                    .size(contentWidth - scaled(24.0f), headerH)
-                    .text(GitChangesModel::groupHeader(ChangeGroup::Changed,
-                                                       totalN))
-                    .fontSize(scaled(12.0f))
-                    .fontWeight(600)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textSecondary)
-                    .build();
-                return;
-            }
-            drawChangeRow(inner, rowId, rows[item.rowIndex], contentWidth, c, t,
-                          gitColors(t));
+            if (idx >= rows.size()) return;
+            drawChangeListRow(inner, rowId, rows[idx], idx, flat, indentStepPx,
+                              contentWidth, c, t, gitColors(t));
         })
         .build();
 }
 
-// ---- 内容视图（§5.5：行号列 44px + 代码 runs；行槽 22px）----
+// ---- 内容视图行（§5.4：行号列 48px + 代码 runs；行槽 22px）----
 void drawContentRow(eui::Ui& ui, const std::string& rowId, size_t lineIdx,
                     float contentWidth, const GitPageController& c,
                     const Tokens& t, const GitColors& gc) {
@@ -833,7 +916,8 @@ void drawContentRow(eui::Ui& ui, const std::string& rowId, size_t lineIdx,
     ui.stack(rowId)
         .size(contentWidth, rowH)
         .content([&] {
-            // F-08② 命中行常亮底色（--c-selected-bg 同款；无淡出动画——推迟项）
+            // F-08② 命中行常亮底色（--c-selected-bg 同款；无淡出动画——need:14
+            // 推迟项先例，D7-A diff 侧同口径）
             if (c.contentHighlightLine() == static_cast<int>(lineIdx) + 1) {
                 ui.rect(rowId + ".hlbg")
                     .size(contentWidth, rowH)
@@ -893,7 +977,7 @@ void drawContentRow(eui::Ui& ui, const std::string& rowId, size_t lineIdx,
         .build();
 }
 
-// ---- 内容视图体（§5.5/§7：四态占位 + 错误重试 + 行列表）----
+// ---- 内容视图体（§5.4/§7：四态占位 + 错误重试 + 行列表）----
 void composeContentBody(eui::Ui& ui, float x, float y, float w, float h,
                         GitPageController& c, const Tokens& t,
                         const GitColors& gc) {
@@ -934,7 +1018,7 @@ void composeContentBody(eui::Ui& ui, float x, float y, float w, float h,
         return;
     }
     if (st == RightPaneState::Placeholder) {
-        // 四态占位文案（§5.5）：主文案 14px --c-text-2 + 副文案 12px --c-text-3
+        // 四态占位文案（§5.4）：主文案 14px --c-text-2 + 副文案 12px --c-text-3
         const char* mainText = "无法显示";
         const char* subText = "";
         switch (c.content().state) {
@@ -1019,7 +1103,7 @@ void composeContentBody(eui::Ui& ui, float x, float y, float w, float h,
         .build();
 }
 
-// ---- diff 视图行（§5.6：四列 16/40/40/flex；行 22px 画 24px 槽内）----
+// ---- diff 视图行（§5.3：四列 24/48/48/flex；行 22px 画 24px 槽内）----
 void drawDiffRow(eui::Ui& ui, const std::string& rowId, const DiffRow& row,
                  float contentWidth, GitPageController& c, const Tokens& t,
                  const GitColors& gc) {
@@ -1086,6 +1170,17 @@ void drawDiffRow(eui::Ui& ui, const std::string& rowId, const DiffRow& row,
             const float oldX = scaled(kDiffFoldW);
             const float newX = scaled(kDiffFoldW + kDiffNoW);
             const float codeX = scaled(kDiffFoldW + kDiffNoW * 2);
+            // D7-A diff 命中行常亮底色（newNo 匹配；need:14 推迟项先例同口径）
+            const auto pendingNo = line.newNo;
+            const bool highlighted =
+                c.diffHighlightLine() > 0 && pendingNo.has_value() &&
+                *pendingNo == c.diffHighlightLine();
+            if (highlighted) {
+                ui.rect(rowId + ".hlbg")
+                    .size(contentWidth, rowH)
+                    .color(t.colors.active)
+                    .build();
+            }
             if (line.origin == '+') {
                 ui.rect(rowId + ".bg")
                     .size(contentWidth, rowH)
@@ -1150,41 +1245,14 @@ void drawDiffRow(eui::Ui& ui, const std::string& rowId, const DiffRow& row,
         .build();
 }
 
-// ---- diff 视图体（§5.6/§7：文件头 + hunk 折叠 + 巨 diff 行模型分块）----
+// ---- diff 视图体（§5.3/§5.6：头部信息在右卡 44px 头部；此体只画画布）----
 void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
                      GitPageController& c, const Tokens& t, const GitColors& gc) {
     const auto st = c.diffState();
     if (st == RightPaneState::None) return;
 
-    // 文件头 28px（加载中照常画，§7 状态表「骨架+文件头照常」）
-    const std::string headerText = c.diffModel().headerText().empty()
-                                       ? c.diffPath()
-                                       : c.diffModel().headerText();
-    ui.rect("git.diff.header")
-        .position(x, y)
-        .size(w, scaled(kDiffFileHeaderH))
-        .color(gc.diffGutterBg)
-        .build();
-    ui.rect("git.diff.header.border")
-        .position(x, y + scaled(kDiffFileHeaderH))
-        .size(w, 1.0f)
-        .color(t.colors.borderMuted)
-        .build();
-    ui.text("git.diff.header.text")
-        .position(x + scaled(12.0f), y)
-        .size(w - scaled(24.0f), scaled(kDiffFileHeaderH))
-        .text(headerText)
-        .fontFamily("monospace")
-        .fontSize(scaled(12.0f))
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textSecondary)
-        .build();
-
-    const float bodyY = y + scaled(kDiffFileHeaderH);
-    const float bodyH = h - scaled(kDiffFileHeaderH);
-
     if (st == RightPaneState::Loading) {
-        float sy = bodyY + scaled(12.0f);
+        float sy = y + scaled(12.0f);
         float widths[] = {0.74f, 0.92f, 0.68f, 0.85f};
         for (int i = 0; i < 4; ++i) {
             skeletonRow(ui, "git.diff.skel." + std::to_string(i),
@@ -1195,16 +1263,17 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
         return;
     }
     if (st == RightPaneState::Error) {
+        // §5.6 错误块：禁静默空/禁「无内容变更」误导文案（bug#290 根治口径）
         ui.text("git.diff.err.main")
-            .position(x, bodyY + bodyH * 0.4f)
+            .position(x, y + h * 0.4f)
             .size(w, scaled(20.0f))
-            .text("无法计算差异")
+            .text("无法加载差异")
             .fontSize(scaled(14.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .color(t.colors.errorText)
             .build();
         ui.text("git.diff.err.reason")
-            .position(x, bodyY + bodyH * 0.4f + scaled(26.0f))
+            .position(x, y + h * 0.4f + scaled(26.0f))
             .size(w, scaled(18.0f))
             .text(c.diffError())
             .fontSize(scaled(12.0f))
@@ -1213,16 +1282,16 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
             .build();
         const float btnW = 88.0f;
         secondaryButton(ui, "git.diff.retry", "重试",
-                        x + (w - btnW) * 0.5f, bodyY + bodyH * 0.4f + scaled(52.0f),
+                        x + (w - btnW) * 0.5f, y + h * 0.4f + scaled(52.0f),
                         btnW, scaled(32.0f), t, [&c] { c.retryDiff(); });
         return;
     }
 
-    // Ready：untracked 超大占位（bug#18，F-11③ 同文案）/ 二进制占位 /
-    // 无内容变更占位 / unified 行列表
+    // Ready：untracked 超大占位（bug#18，F-11③ 同文案）/ 竞态占位（N5 显式
+    // 文案+自动刷新）/ 二进制占位 / 空文件空态 / unified 行列表
     if (!c.diffModel().placeholder().empty()) {
         ui.text("git.diff.placeholder")
-            .position(x, bodyY + bodyH * 0.4f)
+            .position(x, y + h * 0.4f)
             .size(w, scaled(20.0f))
             .text(c.diffModel().placeholder())
             .fontSize(scaled(14.0f))
@@ -1233,7 +1302,7 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
     }
     if (c.diffModel().binary()) {
         ui.text("git.diff.binary")
-            .position(x, bodyY + bodyH * 0.4f)
+            .position(x, y + h * 0.4f)
             .size(w, scaled(20.0f))
             .text("二进制文件，未显示内容差异")
             .fontSize(scaled(14.0f))
@@ -1244,7 +1313,7 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
     }
     if (c.diffModel().isEmpty()) {
         ui.text("git.diff.empty")
-            .position(x, bodyY + bodyH * 0.4f)
+            .position(x, y + h * 0.4f)
             .size(w, scaled(20.0f))
             .text("无内容变更")
             .fontSize(scaled(14.0f))
@@ -1260,8 +1329,8 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
         codeX + std::max(w - codeX,
                          monoLineWidth(c.diffModel().maxLineLen(), scaled(13.0f)));
     components::virtualList(ui, "git.diff.list")
-        .position(x, bodyY)
-        .size(w, bodyH)
+        .position(x, y)
+        .size(w, h)
         .itemCount(static_cast<int64_t>(rows.size()))
         .rowHeight(scaled(kDiffSlotH))
         .step(scaled(kDiffSlotH))
@@ -1282,63 +1351,172 @@ void composeDiffBody(eui::Ui& ui, float x, float y, float w, float h,
         .build();
 }
 
-// ---- 右栏（§5.4：路径条 + 视图切换 + 内容/diff 真身）----
-void composeRightColumn(eui::Ui& ui, float x, float w, float y, float h,
-                        GitPageController& c, const Tokens& t) {
+// ---- 右卡空态块（§5.5/§5.7：线性图标 + 主文案 + 副文案 + 可选就近操作）----
+void composeRightEmpty(eui::Ui& ui, float x, float y, float w, float h,
+                       unsigned glyph, const std::string& mainText,
+                       const std::string& subText, const Tokens& t,
+                       GitPageController* c = nullptr) {
+    const float blockW = std::min(420.0f, w);
+    const float blockX = x + (w - blockW) * 0.5f;
+    float by = y + h * 0.32f;
+    ui.text("git.right.empty.icon")
+        .position(blockX + (blockW - scaled(24.0f)) * 0.5f, by)
+        .size(scaled(24.0f), scaled(24.0f))
+        .icon(glyph)
+        .fontSize(scaled(20.0f))
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary)
+        .build();
+    by += scaled(36.0f);
+    ui.text("git.right.empty.main")
+        .position(blockX, by)
+        .size(blockW, scaled(20.0f))
+        .text(mainText)
+        .fontSize(scaled(14.0f))
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .color(t.colors.textSecondary)
+        .build();
+    by += scaled(26.0f);
+    ui.text("git.right.empty.sub")
+        .position(blockX, by)
+        .size(blockW, scaled(18.0f))
+        .text(subText)
+        .fontSize(scaled(12.0f))
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .color(t.colors.textTertiary)
+        .build();
+    if (c != nullptr) {
+        by += scaled(30.0f);
+        secondaryButton(ui, "git.right.empty.action", "↻ 刷新",
+                        blockX + (blockW - scaled(96.0f)) * 0.5f, by,
+                        scaled(96.0f), scaled(32.0f), t, [c] { c->refresh(); });
+    }
+}
+
+// ---- 右卡：diff 主区（§5：头部 44px 粘顶 + 视图体）----
+void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
+                     GitPageController& c, const Tokens& t) {
     ui.rect("git.right.bg")
         .position(x, y)
         .size(w, h)
         .color(t.colors.surface)
+        .radius(kCardRadius)
+        .border(1.0f, t.colors.borderDefault)
         .build();
 
-    // 路径条 36px：左路径右切换（内容｜diff，diff Tab 仅选中文件有变更时出现）
-    ui.rect("git.right.pathbar.border")
-        .position(x, y + scaled(kPathBarH))
+    const float headH = scaled(kRightHeaderH);
+    const float padX = scaled(16.0f);
+    const bool searchView = c.searchContentView();
+    const auto selStatus = c.selectedRowStatus();
+
+    // 头部（§5.2 徽标 + 路径条 + 统计 + tab；§6.8 搜索独立视图=仅路径+「内容」）
+    float hx = x + padX;
+    if (!searchView && selStatus.has_value()) {
+        drawBadge(ui, "git.right.head.badge", hx,
+                  y + (headH - scaled(kBadgeSize)) * 0.5f, *selStatus, t,
+                  gitColors(t));
+        hx += scaled(kBadgeSize) + scaled(8.0f);
+    }
+    // 路径条：等宽 13px；rename 显「old → new」（diffModel.headerText 既有口径）
+    std::string pathText = c.selectedPath().empty() ? std::string() : c.selectedPath();
+    if (c.diffState() == RightPaneState::Ready && !c.diffModel().headerText().empty()) {
+        pathText = c.diffModel().headerText();
+    }
+    // 统计 +N/−N（§5.2：diff 体量唯一摘要位；右锚 tab 前预留位现算）
+    size_t added = 0;
+    size_t removed = 0;
+    if (c.diffState() == RightPaneState::Ready) {
+        for (const auto& hunk : c.diffModel().patch().hunks) {
+            for (const auto& l : hunk.lines) {
+                if (l.origin == '+') ++added;
+                else if (l.origin == '-') ++removed;
+            }
+        }
+    }
+    const float tabW = scaled(52.0f);
+    const float statsW = (added > 0 || removed > 0)
+                             ? textWidthEstimate("+" + std::to_string(added) + " −" +
+                                                     std::to_string(removed),
+                                                 scaled(12.0f)) + scaled(8.0f)
+                             : 0.0f;
+    const float tabZoneW = searchView ? tabW : tabW * 2 + scaled(16.0f);
+    const float pathW = std::max(
+        scaled(40.0f),
+        w - (hx - x) - padX - statsW - tabZoneW - scaled(16.0f));
+    ui.text("git.right.head.path")
+        .position(hx, y)
+        .size(pathW, headH)
+        .text(pathText)
+        .fontFamily("monospace")
+        .fontSize(scaled(13.0f))
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textPrimary)
+        .build();
+    // 统计（路径后 8px：+N 绿 / −N 红；单元素 + runs 分色，§5.2）
+    if (statsW > 0.0f) {
+        const float statsX = x + w - padX - tabZoneW - scaled(16.0f) - statsW;
+        const std::string addText = "+" + std::to_string(added);
+        const std::string delText = "−" + std::to_string(removed);
+        std::vector<eui::TextRun> statRuns;
+        statRuns.push_back({0, static_cast<int>(addText.size()), t.colors.primaryText});
+        statRuns.push_back({static_cast<int>(addText.size() + 1),
+                            static_cast<int>(addText.size() + 1 + delText.size()),
+                            t.colors.errorText});
+        auto statsText = ui.text("git.right.head.stats")
+            .position(statsX, y)
+            .size(statsW, headH)
+            .text(addText + " " + delText)
+            .fontFamily("monospace")
+            .fontSize(scaled(12.0f))
+            .verticalAlign(eui::VerticalAlign::Center);
+        statsText.runs(statRuns);
+        statsText.build();
+    }
+    // tab（右锚；§5.2 激活=底部 2px 主色下划线）
+    if (searchView) {
+        // §6.8 独立内容视图：「内容」恒激活无切换（文字钮非 tab 语义）
+        underlineTab(ui, "git.right.head.tab.content.only", "内容", true,
+                     x + w - padX - tabW, y, tabW, headH, t, nullptr);
+    } else {
+        const float contentTabX = x + w - padX - tabW;
+        const float diffTabX = contentTabX - scaled(16.0f) - tabW;
+        underlineTab(ui, "git.right.head.tab.content", "内容",
+                     c.rightTab() == GitPageController::RightTab::Content,
+                     contentTabX, y, tabW, headH, t,
+                     [&c] { c.setRightTab(GitPageController::RightTab::Content); });
+        underlineTab(ui, "git.right.head.tab.diff", "差异",
+                     c.rightTab() == GitPageController::RightTab::Diff,
+                     diffTabX, y, tabW, headH, t,
+                     [&c] { c.setRightTab(GitPageController::RightTab::Diff); });
+    }
+    ui.rect("git.right.head.border")
+        .position(x, y + headH)
         .size(w, 1.0f)
         .color(t.colors.borderDefault)
         .build();
-    const std::string shown = c.selectedPath().empty() ? c.repoPathUtf8()
-                                                       : c.selectedPath();
-    ui.text("git.right.path")
-        .position(x + scaled(12.0f), y)
-        .size(w - scaled(220.0f), scaled(kPathBarH))
-        .text(shown)
-        .fontSize(scaled(12.0f))
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(c.selectedPath().empty() ? t.colors.textTertiary : t.colors.textSecondary)
-        .build();
 
-    const float tabH = scaled(kPathBarH);
-    const float tabW = textWidthEstimate("内容", scaled(13.0f)) + scaled(20.0f);
-    const float contentTabX = x + w - scaled(16.0f) - tabW * 2.0f - scaled(12.0f);
-    underlineTab(ui, "git.right.tab.content", "内容", !c.rightShowsDiff(),
-                 contentTabX, y, tabW, tabH, t, [&c] {
-                     if (!c.selectedPath().empty()) {
-                         c.selectTreeFile(c.selectedPath());
-                     }
-                 });
-    if (c.selectedHasChange()) {
-        underlineTab(ui, "git.right.tab.diff", "diff", c.rightShowsDiff(),
-                     contentTabX + tabW + scaled(12.0f), y, tabW, tabH, t,
-                     [&c] { c.selectChange(c.selectedPath()); });
-    }
-
-    // 视图体（批次三真身：N8 diff / N6 内容）
-    const float bodyY = y + scaled(kPathBarH);
-    const float bodyH = h - scaled(kPathBarH);
+    // 视图体（diff 常驻主视图 / 内容次视图 / 空态全集）
+    const float bodyY = y + headH;
+    const float bodyH = h - headH;
     const GitColors gc = gitColors(t);
-    if (c.selectedPath().empty()) {
-        ui.text("git.right.body.hint")
-            .position(x, bodyY + bodyH * 0.4f)
-            .size(w, scaled(20.0f))
-            .text("在左侧选择文件查看内容与变更")
-            .fontSize(scaled(14.0f))
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
-        return;
-    }
-    if (c.rightShowsDiff()) {
+    const auto& rows = c.listRows();
+    if (searchView) {
+        // §6.8：命中∉变更列表 → 独立内容视图（头部仅路径已画）
+        composeContentBody(ui, x, bodyY, w, bodyH, c, t, gc);
+    } else if (c.statusLoading() && rows.empty()) {
+        composeRightEmpty(ui, x, bodyY, w, bodyH, kGlyphCodeBranch,
+                          "选择左侧文件查看差异", "正在扫描变更…", t);
+    } else if (rows.empty() && c.statusError().empty()) {
+        // 工作区干净空态（§5.7：图标+主/副文案+[刷新]；空仓同构文案演绎统一，
+        // platform/git 无提交数查询接口）
+        composeRightEmpty(ui, x, bodyY, w, bodyH, kGlyphCircleCheck,
+                          "工作区很干净", "文件变更后会出现在这里", t, &c);
+    } else if (c.selectedPath().empty()) {
+        // 未选文件空态（§5.5）
+        composeRightEmpty(ui, x, bodyY, w, bodyH, kGlyphCodeBranch,
+                          "选择左侧文件查看差异", "点击变更列表中的文件行", t);
+    } else if (c.rightTab() == GitPageController::RightTab::Diff) {
         composeDiffBody(ui, x, bodyY, w, bodyH, c, t, gc);
     } else {
         composeContentBody(ui, x, bodyY, w, bodyH, c, t, gc);
@@ -1388,7 +1566,8 @@ void composeSearchPopup(eui::Ui& ui, float w, float h, GitPageController& c,
 
     const auto& results = c.searchResults();
     const float popupW = std::min(scaled(560.0f), w - scaled(32.0f));
-    const auto [boxX, boxY] = searchBoxGeometry(w);
+    const bool narrow = w < kNarrowBreakpoint;
+    const auto [boxX, boxY] = searchBoxGeometry(w, narrow);
     (void)boxY;
     float px = boxX;
     if (px + popupW > w - scaled(16.0f)) px = w - scaled(16.0f) - popupW;
@@ -1461,7 +1640,7 @@ void composeSearchPopup(eui::Ui& ui, float w, float h, GitPageController& c,
 
             const float bodyY = headerH;
             if (st == SearchState::Error) {
-                // 错误块（中栏错误块参数缩档）：danger-tint 底 + 主文案 + 原因
+                // 错误块（列表卡错误块参数缩档）：danger-tint 底 + 主文案 + 原因
                 ui.rect("git.search.popup.errbg")
                     .position(scaled(12.0f), bodyY + scaled(12.0f))
                     .size(popupW - scaled(24.0f), bodyH - scaled(24.0f))
@@ -1570,16 +1749,24 @@ void composeGitPage(eui::Ui& ui, const eui::Screen& screen,
     }
     const float w = screen.width;
     const float h = screen.height;
-    const bool narrow = w < kNarrowBreakpoint;
-    const float leftW = narrow ? kLeftColNarrow : kLeftColWide;
-    const float midW = narrow ? kMidColNarrow : kMidColWide;
-    const float bodyY = kTopBarH;
+    const bool narrow = w < kNarrowBreakpoint;  // §9：<1200 左卡 280
 
-    composeTopBar(ui, w, c, t);
-    composeLeftColumn(ui, 0.0f, leftW, bodyY, h - bodyY, c, t);
-    composeMiddleColumn(ui, leftW, midW, bodyY, h - bodyY, c, t);
-    composeRightColumn(ui, leftW + midW, w - leftW - midW, bodyY, h - bodyY, c, t);
-    // 全局搜索结果浮层（need:14）：compose 在各栏之后 = z 序最上（scrim 同层）
+    composeTopBar(ui, w, narrow, c, t);
+
+    // 两栏构图（§1：页边 12 + 左卡 320 可折叠 + gap 12 + 右卡余宽）
+    const float bodyY = kTopBarH + kPageMargin;
+    const float bodyH = h - bodyY - kPageMargin;
+    float listW = narrow ? kListCardWNarrow : kListCardW;
+    if (c.listCollapsed()) listW = 0.0f;  // §6.5 折叠=宽 0 隐藏，右卡满宽
+    if (listW > 0.0f) {
+        composeListCard(ui, kPageMargin, bodyY, listW, bodyH,
+                        scaled(narrow ? kIndentStepNarrow : kIndentStep), c, t);
+    }
+    const float rightX = kPageMargin + listW + (listW > 0.0f ? kCardGap : 0.0f);
+    const float rightW = w - rightX - kPageMargin;
+    composeDiffCard(ui, rightX, bodyY, rightW, bodyH, c, t);
+
+    // 全局搜索结果浮层（need:14）：compose 在两卡之后 = z 序最上（scrim 同层）
     composeSearchPopup(ui, w, h, c, t);
 }
 

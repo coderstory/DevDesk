@@ -2,7 +2,11 @@
 // git 管理器 v2 全局搜索（need:14）：匹配模型纯函数——asciiFold 折叠 /
 // matchLines 子串命中与 5 条上限 / truncateAtCodepoint 码点边界截断。
 // 收口修复批（P1-2/P2-5）增补控制器级两条：jumpToHit 重复点击高亮保持 /
-// onStop 扫描面复位。控制器驱动协议同 test_git_refresh（picker 注入+真 worker）。
+// onStop 扫描面复位。
+// need:291 重设计（F-08/设计 §6.8）：jumpToHit 双通道锚——命中∈变更列表 →
+// 列表选中该行 + diff 视图锚定（newNo 匹配，高亮 1.5s 渐隐）；命中∉变更列表 →
+// 独立内容视图（头部仅路径，「内容」恒激活）。pendingContentLine 语义迁移为双通道。
+// 控制器驱动协议同 test_git_refresh（picker 注入+真 worker）。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -147,7 +151,7 @@ bool pumpUntilSearch(GitPageController& c, Pred pred, int maxMs = 5000) {
 
 } // namespace
 
-REGISTER_TEST(gitSearchRepeatJumpHighlightKept, "git_search: 重复 jumpToHit 同文件已 Ready 高亮不灭（P1-2）", {
+REGISTER_TEST(gitSearchRepeatJumpHighlightKept, "git_search: 命中∉变更列表→独立内容视图 + 重复 jumpToHit 高亮不灭（P1-2）", {
     const platform::git::Libgit2Scope libgit2;
     const auto root = test_support::makeTempDir("devdesk_git_search_", "root");
     const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
@@ -176,12 +180,14 @@ REGISTER_TEST(gitSearchRepeatJumpHighlightKept, "git_search: 重复 jumpToHit �
     DOCTEST_CHECK(c.searchResults()[0].line == 2);
 
     // 首跳：文件未加载 → Ready 后高亮落值（F-08② 基线，修前应绿）
+    // 该仓工作区干净（commitAll 后无改动）→ 命中∉变更列表 → 独立内容视图通道
     c.jumpToHit(c.searchResults()[0]);
     DOCTEST_CHECK(pumpUntilSearch(c, [&] {
         return c.contentState() == module::git::RightPaneState::Ready &&
                c.contentHighlightLine() > 0;
     }));
     DOCTEST_CHECK(c.contentHighlightLine() == 2);
+    DOCTEST_CHECK(c.searchContentView());  // ∉变更通道：独立内容视图（设计 §6.8）
 
     // 重复点击同一命中：同文件已 Ready，requestContent 幂等早退——高亮必须仍在
     //（修前：selectTreeFile 先清 0、早退分支不经过 Ready 落值点 → 红椭圆）
@@ -227,4 +233,55 @@ REGISTER_TEST(gitSearchOnStopResetScanningFace, "git_search: 切模块 onStop �
     }));
     DOCTEST_CHECK(c.searchResults().size() == 1);
     return true;
+})
+
+REGISTER_TEST(gitSearchJumpInChangeDiffAnchor, "git_search: 命中∈变更列表→选中行+diff 锚定 newNo 匹配（F-08 双通道）", {
+    const platform::git::Libgit2Scope libgit2;
+    const auto root = test_support::makeTempDir("devdesk_git_search_", "root");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           platform::git::pathToUtf8(root).c_str());
+    const auto repoDir = root / "锚定仓";
+    std::filesystem::create_directories(repoDir);
+    git_fixture::initRepo(repoDir);
+    git_fixture::commitAll(repoDir, {{"数据.txt", "第一版\n第二版\n第三版\n"}});
+    // 工作区改动（开仓前造好 → 首次 status 即含变更）：第 2 行改写 → untracked 无关
+    test_support::writeTextFile(repoDir / "数据.txt", "第一版\n第二版改\n第三版\n");
+    const std::string repoUtf8 = platform::git::pathToUtf8(repoDir);
+
+    GitWorker worker;
+    worker.start();
+    GitPageController c(&worker);
+    g_searchPickerPath = &repoUtf8;
+    platform::folderpicker::setPickerForTest(&pickSearchFixed);
+    c.beginPickRepo();
+    DOCTEST_CHECK(pumpUntilSearch(c, [&] { return c.phase() == GitPagePhase::Ready; }));
+
+    // 命中词在变更文件内：搜索走工作区全文（数据链不动），命中行=2
+    c.setSearchDraft("第二版改");
+    c.submitSearchNow();
+    DOCTEST_CHECK(pumpUntilSearch(c, [&] {
+        return c.searchState() == GitPageController::GitSearchState::Done &&
+               !c.searchResults().empty();
+    }));
+    DOCTEST_REQUIRE(c.searchResults().size() >= 1);
+    DOCTEST_CHECK(c.searchResults()[0].relPath == "数据.txt");
+    DOCTEST_CHECK(c.searchResults()[0].line == 2);
+
+    // ∈变更列表 → 列表选中该行 + 右栏切 diff（主动线 selectChange）+ diff 锚定
+    c.jumpToHit(c.searchResults()[0]);
+    DOCTEST_CHECK(pumpUntilSearch(c, [&] {
+        return c.diffState() == module::git::RightPaneState::Ready;
+    }));
+    DOCTEST_CHECK(c.selectedPath() == "数据.txt");
+    DOCTEST_CHECK(c.rightTab() == GitPageController::RightTab::Diff &&
+                  !c.searchContentView());  // ∈变更 → diff 动线（D5-A 判据）
+    // newNo 匹配：修改行新号 2（锚=diff 视图滚动+高亮行，1.5s 渐隐由视图层消费）
+    DOCTEST_CHECK(c.diffHighlightLine() == 2);
+
+    // 重复跳同一命中：diff 已 Ready（requestDiff 幂等早退）锚必须仍在（P1-2 对偶）
+    c.jumpToHit(c.searchResults()[0]);
+    DOCTEST_CHECK(c.diffHighlightLine() == 2);
+    worker.stop();
+    platform::folderpicker::setPickerForTest(nullptr);
+    return git_fixture::cleanupRepoDir(repoDir, true);
 })

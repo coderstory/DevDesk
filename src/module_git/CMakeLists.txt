@@ -2,8 +2,8 @@ add_library(devdesk_module_git STATIC
     git_module.cpp
     git_page_controller.cpp
     git_worker.cpp
-    git_tree_model.cpp
-    git_changes_model.cpp
+    git_change_list_model.cpp
+    git_fs_walk.cpp
     git_diff_model.cpp
     git_content_model.cpp
     git_search_model.cpp
