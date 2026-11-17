@@ -1,0 +1,46 @@
+{
+ "version": 1,
+ "settings": {
+  "defaultWaitTimeoutMs": 15000
+ },
+ "steps": [
+  {
+   "type": "click",
+   "id": "app.sidebar.item.Terminal.hit"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "app.term.cursor",
+   "timeoutMs": 25000
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "nonempty",
+   "timeoutMs": 60000
+  },
+  {
+   "type": "wait",
+   "ms": 800
+  },
+  {
+   "type": "type",
+   "text": "'▐▛███▜▌';'▝▜█████▛▘';'  ▘▘ ▝▝';'████████';'▀▄▀▄▀▄▀▄';'▄▀▄▀▄▀▄▀';'▌▐▌▐▌▐▌▐';'░▒▓█▓▒░';'─│┌┐└┘├┤┬┴┼'",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "ms": 900
+  },
+  {
+   "type": "screenshot",
+   "path": "qa244-blocks-3.png"
+  }
+ ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 5000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "进终端页"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 6000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000,
+     "_comment": "首屏判据：网格出现可见文本（shell 提示符）"},
+    {"type": "wait", "ms": 1200, "_comment": "首屏稳定窗（shell 就绪读输入）"},
+    {"type": "dump", "path": "qa-258-first.txt", "_comment": "bug258 基线：首屏光标/网格几何（光标受闪烁相位门控，几何主判据另用 ImeTrace）"},
+    {"type": "screenshot", "path": "qa-258-01-first-screen.png"},
+
+    {"type": "type", "text": "echo QA258", "id": "app.term.input"},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "qa-258-typed.txt", "_comment": "键入 10 字符后光标几何（若在场）：x 增量应≈10×cellW"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "QA258", "timeoutMs": 10000},
+    {"type": "screenshot", "path": "qa-258-02-after-enter.png"},
+
+    {"type": "type", "text": "clear", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "ms": 500},
+    {"type": "type", "text": "echo QA243-A1", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "QA243-A1", "timeoutMs": 10000},
+    {"type": "type", "text": "echo QA243-B2", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "QA243-B2", "timeoutMs": 10000},
+    {"type": "type", "text": "echo QA243-C3", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "QA243-C3", "timeoutMs": 10000},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "qa-243-lines.txt", "_comment": "bug243 基线：grid row 几何"},
+    {"type": "screenshot", "path": "qa-243-01-three-lines.png"},
+
+    {"type": "drag", "from": "app.term.grid.row.0", "to": "app.term.grid.row.1", "steps": 12,
+     "_comment": "拖选 row.0→row.1（跨 2 行）"},
+    {"type": "assert", "check": "exists", "id": "app.term.sel.0", "_comment": "选区应落在 row.0 起"},
+    {"type": "assert", "check": "missing", "id": "app.term.sel.2", "_comment": "高亮行范围不应越过 row.1"},
+    {"type": "dump", "path": "qa-243-sel.txt", "_comment": "选区几何：sel.0.y 应==row.0.y；sel.1.y==row.1.y"},
+    {"type": "screenshot", "path": "qa-243-02-selection.png"},
+    {"type": "key", "name": "Ctrl+C", "id": "app.term.input", "_comment": "有选区 → 复制（剪贴板外部读取比对）"},
+    {"type": "wait", "ms": 500},
+    {"type": "screenshot", "path": "qa-243-03-copied.png"}
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 6000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1500},
+    {"type": "drag", "from": "app.term.grid.row.0", "to": "app.term.grid.row.1", "steps": 12},
+    {"type": "assert", "check": "exists", "id": "app.term.sel.0"},
+    {"type": "wait", "ms": 4000, "_comment": "停住供外部 GetCursorInfo 轮询窗口"},
+    {"type": "screenshot", "path": "qa-243-04-hover-cursor.png"}
+  ]
+}
