@@ -307,30 +307,37 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
 
 // 搜索框几何（320×32，窄窗 240；弹性间隔位=路径右侧、「切换仓库」左侧）
 std::pair<float, float> searchBoxGeometry(float w, bool narrow) {
+    // bug#297：顶栏卡片化（页边 12 内缩）+卡内距统一 scaled(12)——返回页面绝对坐标
+    const float cardW = w - kPageMargin * 2.0f;
     const float searchW = scaled(narrow ? 240.0f : 320.0f);
     const float searchH = scaled(32.0f);
     const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    const float x = w - kPageMargin - refreshW - scaled(12.0f) - switchW -
-                    scaled(12.0f) - searchW;  // bug#294：搜索框右缘链对齐右卡列（kPageMargin）
-    return {x, (kTopBarH - searchH) * 0.5f};
+    const float inner = scaled(12.0f);
+    const float x = kPageMargin + cardW - inner - refreshW - scaled(12.0f) -
+                    switchW - scaled(12.0f) - searchW;
+    return {x, kPageMargin + (kTopBarH - searchH) * 0.5f};
 }
 
 void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
                    const Tokens& t) {
-    ui.rect("git.top.bg").size(w, kTopBarH).color(t.colors.surface).build();
-    ui.rect("git.top.border")
-        .position(0.0f, kTopBarH)
-        .size(w, 1.0f)
-        .color(t.colors.borderDefault)
+    // bug#297（老板令「一个圆角一个直角」）：顶栏改卡片形态与下方两卡同语言——
+    // 白卡+1px 边+radius 16+页边 12；卡内距 scaled(12) 与两卡内容列统一对齐
+    const float cardX = kPageMargin;
+    const float cardW = w - kPageMargin * 2.0f;
+    ui.rect("git.top.bg")
+        .position(cardX, kPageMargin)
+        .size(cardW, kTopBarH)
+        .color(t.colors.surface)
+        .radius(kCardRadius)
+        .border(1.0f, t.colors.borderDefault)
         .build();
 
-    // bug#294：顶栏内容左右起点与下方两卡同页边（kPageMargin=12）对齐——原 scaled(16) 左右两侧均错位约 10px
-    const float padX = kPageMargin;
-    float x = padX;
+    const float inner = scaled(12.0f);  // bug#297：三卡统一卡内距（内容列对齐网格）
+    float x = cardX + inner;
     // 折叠展开钮（§3：仅左栏折叠时显示，为顶栏第一个元素 32×32）
     if (c.listCollapsed()) {
-        const float btnY = (kTopBarH - scaled(32.0f)) * 0.5f;
+        const float btnY = kPageMargin + (kTopBarH - scaled(32.0f)) * 0.5f;
         ui.stack("git.top.expand")
             .position(x, btnY)
             .size(scaled(32.0f), scaled(32.0f))
@@ -353,7 +360,7 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     const std::string name = c.repoDisplayName();
     const float nameW = textWidthEstimate(name, scaled(15.0f));
     ui.text("git.top.name")
-        .position(x, 0.0f)
+        .position(x, kPageMargin)
         .size(nameW + scaled(8.0f), kTopBarH)
         .text(name)
         .fontSize(scaled(15.0f))
@@ -366,7 +373,7 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     const auto [searchBoxX, searchBoxY] = searchBoxGeometry(w, narrow);
     const float pathMaxW = scaled(360.0f);
     ui.text("git.top.path")
-        .position(x, 0.0f)
+        .position(x, kPageMargin)
         .size(std::min(pathMaxW, std::max(scaled(40.0f), searchBoxX - x - scaled(12.0f))),
               kTopBarH)
         .text(c.repoPathUtf8())
@@ -442,12 +449,12 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
                 searchH, [&c] { c.cancelSearch(); });
     }
 
-    // 右侧按钮组：[切换仓库] [↻ 刷新]（次按钮 32px 高）
+    // 右侧按钮组：[切换仓库] [↻ 刷新]（次按钮 32px 高；卡内右距=inner 统一网格）
     const float btnH = scaled(32.0f);
-    const float btnY = (kTopBarH - btnH) * 0.5f;
+    const float btnY = kPageMargin + (kTopBarH - btnH) * 0.5f;
     const float switchW = textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f);
     const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    const float refreshX = w - kPageMargin - refreshW;  // bug#294：右缘对齐右卡列
+    const float refreshX = cardX + cardW - inner - refreshW;
     const float switchX = refreshX - scaled(12.0f) - switchW;
     secondaryButton(ui, "git.top.refresh", "↻ 刷新", refreshX, btnY, refreshW, btnH,
                     t, [&c] { c.refresh(); });
@@ -799,7 +806,7 @@ void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
     const float headH = scaled(kListHeaderH);
     const float btnSize = scaled(kIconBtnSize);
     const float btnY = (headH - btnSize) * 0.5f;
-    const float collapseBtnX = x + w - scaled(8.0f) - btnSize;
+    const float collapseBtnX = x + w - scaled(12.0f) - btnSize;  // bug#297：列头钮右距统一 12
     const float flatBtnX = collapseBtnX - scaled(4.0f) - btnSize;
     const float treeBtnX = flatBtnX - btnSize;
     const bool treeMode = c.viewMode() == ChangeViewMode::Tree;
@@ -1407,7 +1414,7 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
         .build();
 
     const float headH = scaled(kRightHeaderH);
-    const float padX = scaled(16.0f);
+    const float padX = scaled(12.0f);  // bug#297：卡内距统一 12（与顶栏/左卡内容列对齐）
     const bool searchView = c.searchContentView();
     const auto selStatus = c.selectedRowStatus();
 
@@ -1799,8 +1806,9 @@ void composeGitPage(eui::Ui& ui, const eui::Screen& screen,
 
     composeTopBar(ui, w, narrow, c, t);
 
-    // 两栏构图（§1：页边 12 + 左卡 320 可折叠 + gap 12 + 右卡余宽）
-    const float bodyY = kTopBarH + kPageMargin;
+    // 两栏构图（§1：页边 12 + 顶栏卡 12..60 + gap 12 + 左卡 320 可折叠 + gap 12 + 右卡余宽）
+    // bug#297：顶栏卡片化后 bodyY 含顶栏卡自身页边（12+48+12=72）
+    const float bodyY = kPageMargin + kTopBarH + kPageMargin;
     const float bodyH = h - bodyY - kPageMargin;
     float listW = narrow ? kListCardWNarrow : kListCardW;
     if (c.listCollapsed()) listW = 0.0f;  // §6.5 折叠=宽 0 隐藏，右卡满宽
