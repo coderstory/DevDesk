@@ -26,8 +26,8 @@ GitColors gitColors(const core::theme::Tokens& t) {
     c.modified = t.colors.warning;       // 琥珀（--st-modified）
     c.deleted = t.colors.errorText;      // 红系告警（--st-deleted）
     c.renamed = t.colors.info;           // 蓝系信息（--st-renamed）
-    c.untracked = t.colors.textSecondary;
-    c.untrackedBg = t.colors.surfaceElevated;  // U 徽标灰底（次按钮底语义）
+    c.untracked = t.colors.primaryText;  // U 绿档 #157E4E（--st-added 同族，need291 设计 §2.2）
+    c.untrackedBg = tint(t.colors.primary, dark, 0.12f, 0.12f);  // ≈#E6FBF2（addedBg 同式）
     // 底色 = 对应文字色浅染：浅档 12~14% 叠页面底，深档同式（方案 A rgba 值同带）
     c.addedBg = tint(t.colors.primary, dark, 0.12f, 0.12f);
     c.modifiedBg = tint(t.colors.warning, dark, 0.14f, 0.14f);

@@ -58,10 +58,11 @@ add_executable(devdesk_tests
     # git 管理器只读 v1 批次二（need:7）：树模型/变更模型/模块登记+记忆仓
     test_platform/test_git_tree_model.cpp
     test_platform/test_git_status_model.cpp
+    # need291 Git 管理器重设计（doc25 §5）：变更列表行模型新用例族（含原 GitChangesModel 用例等价改挂）
+    test_platform/test_git_change_list_model.cpp
     # git 管理器只读 v1 批次三（need:10）：diff 行模型 / 内容四态模型
     test_platform/test_git_diff_model.cpp
     test_platform/test_git_content_model.cpp
-    test_platform/test_git_search.cpp
     test_platform/test_git_registry_module.cpp
     # git 管理器只读 v1 批次四（need:11）：刷新联动/节流/过期条/N10/submodule 降级
     test_platform/test_git_refresh.cpp
@@ -229,6 +230,9 @@ add_executable(devdesk_tests
     # need244：「安装到 Claude Code」配置读写（~/.claude.json 顶层 mcpServers 键级
     # 安装/卸载；保留其余 server 与全部自身状态字段；缺失文件不自动创建）
     test_modules/test_mcp_claude_config.cpp
+    # need279：「安装到 ZCode」配置读写（~/.zcode/cli/config.json 顶层 mcp.servers
+    # 键级安装/卸载；同名异址冲突不覆盖；缺失文件不自动创建）
+    test_modules/test_mcp_zcode_config.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
     test_modules/test_editor_font.cpp
@@ -542,6 +546,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
     elseif(_probe_name STREQUAL "layout_guard_probe")
         # 池 #221：布局病守卫 kit——kit 实现随本目标一起编（layout_guard_kit.h
@@ -723,6 +728,7 @@ add_executable(devdesk_ui_driver
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
+    ${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
 target_include_directories(devdesk_ui_driver PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -824,6 +830,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)  # 2026-11-05：保持 UNIX（github_sync_
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
+        ${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
     target_include_directories(github_sync_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src

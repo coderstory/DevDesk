@@ -140,7 +140,9 @@ constexpr float kCardMaxW = 420.0f;
 constexpr int kCardMaxCols = 5;
 constexpr float kCardH = 120.0f;
 constexpr float kDialogW = 600.0f;
-constexpr float kDialogH = 480.0f;
+// need279：480→516（+36 = 按钮行 32 + 行距 4）腾「安装到 ZCode」行——
+// ZCode 行落原 Claude 行位（h-52），Claude 行上移 h-88，结果区底缘随之下收
+constexpr float kDialogH = 516.0f;
 
 // 卡内横向常量
 constexpr float kCardPad = 16.0f;       // 卡内边距
@@ -710,6 +712,67 @@ void McpPageModule::drawClaudeInstallButton(
         .build();
 }
 
+// ── 「安装到 ZCode」（need279）：与 Claude 行同构镜像，判定目标为
+// ~/.zcode/cli/config.json 顶层 mcp.servers.devdesk ──
+
+void McpPageModule::refreshZcodeInstallState() {
+    const zc::ConfigState st = zc::readConfigState(core::paths::zcodeConfigFile());
+    zcState_.filePresent = st.filePresent;
+    const auto live = app::mcp::status();
+    zcState_.serviceRunning = live.running && live.port > 0;
+    zcState_.installed = false;
+    zcState_.conflict = false;
+    if (st.installed) {
+        // installed/conflict 判据 = 键存在时比对 live 端点；服务未运行（端口无效）
+        // 时不判冲突（hint 优先级里「请先启动 MCP 服务」先行）
+        const std::string endpoint =
+            "http://127.0.0.1:" + std::to_string(live.port) + "/mcp";
+        zcState_.installed = !st.installedUrl.empty() && st.installedUrl == endpoint;
+        zcState_.conflict = !zcState_.installed;  // 异址或缺 url = 冲突（D2）
+    }
+    if (!st.error.empty()) zcError_ = st.error;
+}
+
+void McpPageModule::toggleZcodeInstall() {
+    if (!zcState_.actionable()) return;  // 置灰态点击不生效（防御：disabled 已拦）
+    const auto file = core::paths::zcodeConfigFile();
+    core::Result<void> r;
+    if (zcState_.installed) {
+        r = zc::removeServerFile(file);
+    } else {
+        // 端点拼法同 Claude 行（手册 §3.8）：单一 HTTP 服务 + /mcp
+        const auto live = app::mcp::status();
+        r = zc::installServerFile(
+            file, "http://127.0.0.1:" + std::to_string(live.port) + "/mcp");
+    }
+    zcError_ = r.isFail() ? r.errorMessage() : std::string();
+    // 写入成功 ≠ 立即生效（ZCode 启动时读配置，D3 裁决）——就地提示重启
+    if (r.isOk() && !zcState_.installed) {
+        zcNotice_ = "已写入，重启 ZCode 后生效";
+    } else {
+        zcNotice_.clear();
+    }
+    refreshZcodeInstallState();  // 立即重读，按钮态与文件同步
+    core::platform::requestUiUpdate();
+}
+
+void McpPageModule::drawZcodeInstallButton(
+    eui::Ui& ui, float x, float y, const ZcButtonState& st,
+    const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp) {
+    // 文案三态：未装=安装 / 已装=卸载；冲突态置灰且无卸载入口（N6：防误删用户条目）
+    const std::string label = st.installed ? "从 ZCode 卸载" : "安装到 ZCode";
+    components::button(ui, "mcp.dialog.detail.btn.zcode")
+        .theme(comp, false)  // 次要操作：与 Claude 行同级灰底
+        .position(x, y)
+        .size(160.0f, 32.0f)
+        .text(label)
+        .fontSize(core::theme::scaled(12.0f))
+        .disabled(!st.actionable())
+        .onClick([this] { toggleZcodeInstall(); })
+        .build();
+}
+
 void McpPageModule::drawDetailDialog(
     eui::Ui& ui, const eui::Screen& screen, const core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& comp) {
@@ -931,7 +994,8 @@ void McpPageModule::drawDetailDialog(
             const bool resultEmpty = !running && !hasResult;
             ui.rect("mcp.dialog.detail.result.box")
                 .position(20.0f, 318.0f)
-                .size(w - 40.0f, h - 318.0f - 64.0f)
+                // need279：底缘 64→100（Claude 行上移 h-88 让位 ZCode 行）
+                .size(w - 40.0f, h - 318.0f - 100.0f)
                 .radius(t.sizes.radius)
                 .color(t.colors.background)
                 .border(1.0f, t.colors.borderMuted)
@@ -944,7 +1008,7 @@ void McpPageModule::drawDetailDialog(
             const float resultLineH = core::theme::scaled(17.0f);
             components::scrollView(ui, "mcp.dialog.detail.result.scroll")
                 .position(28.0f, 326.0f)
-                .size(w - 56.0f, h - 326.0f - 64.0f - 16.0f)
+                .size(w - 56.0f, h - 326.0f - 100.0f - 16.0f)  // need279 同上
                 .gap(0.0f)
                 .step(resultLineH)
                 .theme(comp)
@@ -973,13 +1037,15 @@ void McpPageModule::drawDetailDialog(
                 })
                 .build();
 
-            // 操作行：「安装到 Claude Code」（need244）+「试一下」（运行中禁用）+「关闭」。
-            // 三个钮同行不重叠：claude 20..180、hint 188..396、close 404..476、
+            // 操作行（need279 起双行）：Claude 行（h-88）+ ZCode 行（h-52，与
+            // 「关闭/试一下」同行）。「安装到 ZCode」位于 Claude 行正下方；
+            // claude/zcode 钮 20..180、hint 188..396、close 404..476、
             // try 484..580（w=600，右缘留 20）。
             const CcButtonState cc = ccState_;
-            drawClaudeInstallButton(ui, 20.0f, h - 52.0f, cc, t, comp);
+            drawClaudeInstallButton(ui, 20.0f, h - 88.0f, cc, t, comp);
             {
-                // 就地提示槽：无 .claude.json / 服务未运行 / 写失败 / 安装成功待重启，四选一
+                // Claude 行就地提示槽：无 .claude.json / 服务未运行 / 写失败 /
+                // 安装成功待重启，四选一
                 std::string hint;
                 bool isError = false;
                 if (!cc.filePresent) {
@@ -995,7 +1061,7 @@ void McpPageModule::drawDetailDialog(
                 if (!hint.empty()) {
                     const float hintW = 404.0f - 8.0f - 188.0f;
                     ui.text("mcp.dialog.detail.claude.hint")
-                        .position(188.0f, h - 52.0f)
+                        .position(188.0f, h - 88.0f)
                         .size(hintW, 32.0f)
                         .text(hint)
                         .fontSize(core::theme::scaled(11.0f))
@@ -1003,6 +1069,45 @@ void McpPageModule::drawDetailDialog(
                         .color(isError ? t.colors.errorText
                                        : t.colors.textTertiary)
                         .maxWidth(hintW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
+                        .build();
+                }
+            }
+            const ZcButtonState zc = zcState_;
+            drawZcodeInstallButton(ui, 20.0f, h - 52.0f, zc, t, comp);
+            {
+                // ZCode 行就地提示槽（优先级：文件 → 服务 → 冲突 → 错误 → 成功提示；
+                // N6 冲突引导较长，两行 wrap + 截断防越盒）
+                std::string hint;
+                bool zcIsError = false;
+                if (!zc.filePresent) {
+                    hint = "未检测到 ZCode（~/.zcode/cli/config.json 不存在）";
+                } else if (!zc.serviceRunning) {
+                    hint = "请先启动 MCP 服务";
+                } else if (zc.conflict) {
+                    hint = "ZCode 配置已有同名 devdesk 条目且地址不同，"
+                           "请先在 ZCode 配置中移除该条目后再安装";
+                    zcIsError = true;
+                } else if (!zcError_.empty()) {
+                    hint = zcError_;
+                    zcIsError = true;
+                } else if (!zcNotice_.empty()) {
+                    hint = zcNotice_;
+                }
+                if (!hint.empty()) {
+                    const float zcHintW = 404.0f - 8.0f - 188.0f;
+                    ui.text("mcp.dialog.detail.zcode.hint")
+                        .position(188.0f, h - 52.0f)
+                        .size(zcHintW, 32.0f)
+                        .text(hint)
+                        .fontSize(core::theme::scaled(11.0f))
+                        .lineHeight(core::theme::scaled(14.0f))
+                        .wrap(true)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(zcIsError ? t.colors.errorText
+                                         : t.colors.textTertiary)
+                        .maxWidth(zcHintW)
                         .overflow(core::TextOverflow::Ellipsis)
                         .clip()
                         .build();
@@ -1074,10 +1179,14 @@ void McpPageModule::openDetail(const std::string& name) {
     detailTool_ = found.value();
     buildParamSpecs();  // 池146：按当前工具 inputSchema 重建参数表单规格
     // need244：详情页每次打开都重读 ~/.claude.json（不跨会话缓存），并清上一轮写
-    // 失败原因与「已写入」提示（提示只属于本次点击后的窗口期，重开视为过期）
+    // 失败原因与「已写入」提示（提示只属于本次点击后的窗口期，重开视为过期）；
+    // need279：ZCode 行同口径（~/.zcode/cli/config.json）
     ccError_.clear();
     ccNotice_.clear();
     refreshClaudeInstallState();
+    zcError_.clear();
+    zcNotice_.clear();
+    refreshZcodeInstallState();
     // 换工具打开：清上一工具的残留结果（同工具重开保留在途/已完成态）
     if (tryToolName_ != name && !tryRunning()) {
         std::lock_guard<std::mutex> lk(tryMutex_);

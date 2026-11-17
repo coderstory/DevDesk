@@ -99,13 +99,21 @@ REGISTER_TEST(gitRepoStoreRoundtripAndClear, "记忆仓：save/load 往返 + cle
     // ② 往返（中文路径全链 UTF-8）
     GitRepoMemory mem;
     mem.lastRepoPath = "D:\\repos\\说明文档仓";
+    // need:299：最近仓历史 ≤8 条有序 LRU 往返（控制器负责去重，存储只存取）
+    for (int i = 0; i < 10; ++i) {
+        mem.recentRepos.push_back("D:\\repos\\仓" + std::to_string(i));
+    }
     DOCTEST_CHECK(GitRepoStore::save(mem).isOk());
     DOCTEST_CHECK(GitRepoStore::hasMemory());
     const auto loaded = GitRepoStore::load();
     DOCTEST_CHECK_EQ(loaded.lastRepoPath, "D:\\repos\\说明文档仓");
+    DOCTEST_REQUIRE_EQ(loaded.recentRepos.size(), GitRepoStore::kMaxRecentRepos);
+    DOCTEST_CHECK_EQ(loaded.recentRepos[0], "D:\\repos\\仓0");   // 新→旧有序
+    DOCTEST_CHECK_EQ(loaded.recentRepos[7], "D:\\repos\\仓7");   // 截前 8 条
     // ③ clear = 空记忆落盘（N1 失效清除语义）
     DOCTEST_CHECK(GitRepoStore::clear().isOk());
     DOCTEST_CHECK_FALSE(GitRepoStore::hasMemory());
     DOCTEST_CHECK(GitRepoStore::load().lastRepoPath.empty());
+    DOCTEST_CHECK(GitRepoStore::load().recentRepos.empty());
     return true;
 })

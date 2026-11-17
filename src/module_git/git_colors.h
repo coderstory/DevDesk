@@ -19,8 +19,8 @@ struct GitColors {
     eui::Color deletedBg;
     eui::Color renamed;      // 重命名（蓝，信息传递）
     eui::Color renamedBg;
-    eui::Color untracked;    // 未跟踪（中性弱化，组头已承担区分）
-    eui::Color untrackedBg;  // 灰徽标底（次按钮底槽位）
+    eui::Color untracked;    // 未跟踪（绿档 #157E4E=added 同族；need291 设计 §2.2 修订）
+    eui::Color untrackedBg;  // U 徽标绿底（--st-added bg #E6FBF2 同族浅染）
     eui::Color diffAddedBg;    // diff 增行底（批次 #10 消费，先落 token）
     eui::Color diffRemovedBg;  // diff 删行底
     eui::Color diffHunkBg;     // hunk 头/折叠条底

@@ -7,9 +7,11 @@
 
 namespace platform::file_association::mac_api {
 
-// macOS 12.0 = LSSetDefaultRoleHandlerForContentType 弃用、NSWorkspace
-// setDefaultApplicationAtURL:toOpenURL: 引入（应用下限 11.0 → 双路径分界，
-// clue5；真机 11–15 逐版本定性 = UAT 项，分界先按预置 A 落）
+// macOS 12.0 = LSSetDefaultRoleHandlerForContentType 弃用、NSWorkspace 设默认
+// API 引入（应用下限 11.0 → 双路径分界，clue5；27.2 SDK 起 12.0 引入的
+// toOpenURL: error 形态已整体移除，现行 = toOpenContentTypeOfFileAtURL:
+// completionHandler:——分界版本与分支逻辑不变；真机 11–15 逐版本定性 = UAT 项，
+// 分界先按预置 A 落）
 inline constexpr int kWorkspaceSetDefaultSinceMajor = 12;
 
 // 写入路径二选一：LS role handler（11）/ NSWorkspace 设默认（12+）

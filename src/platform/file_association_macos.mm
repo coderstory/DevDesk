@@ -1,17 +1,21 @@
 // src/platform/file_association_macos.mm
 // macOS 记事本多扩展文件关联（F-18 多扩展化，need263 批 4 棒 B；原 F-09 单
 // .md 版）。落点名偏差说明：卡面写 file_association_macos.cpp，实为 .mm——
-// NSWorkspace setDefaultApplicationAtURL:toOpenURL: 无 C 等价 API，本 TU 必须
-// ObjC++（repo 先例 notification_macos.mm）。
+// 12+ 写入路径 NSWorkspace 设默认无 C 等价 API（现行
+// toOpenContentTypeOfFileAtURL: completionHandler:；旧 toOpenURL: error 形态
+// 已随 27.2 SDK 整体移除），本 TU 必须 ObjC++（repo 先例
+// notification_macos.mm）。
 // 架构红线：版本→API 路径唯一权威 = file_association_api_map.h（纯逻辑单测
 // 钉死），@available 仅编译期可用性守卫，运行期判定收敛本单文件。
 // 多扩展写入策略（12+ 批量）：26 项逐个 await 确认框最坏 26×1.5s 挂死 UI →
-// 全部先 fire + dispatch_group 聚合，单次 1.5ms? 否——1.5s 总预算等待，随后
-// 统一回查判定（超时未回调 = 确认框待用户操作，交回查如实呈现）。
+// 全部先 fire + dispatch_group 聚合，单次 1.5s 总预算等待，随后统一回查判定
+//（超时未回调 = 确认框待用户操作，交回查如实呈现）。
 // mac 侧扩展豁免（.ts）：系统 UTI = public.mpeg-2-transport-stream（视频，
 // 2026-11-18 本机 UTType 实测）——登记会抢视频文件关联，mac 侧写入/聚合查询
 // 一律跳过；Windows 注册表 ProgId 路径无 UTI 冲突照常全量。
 //   shortcut: 跳过清单仅 .ts 一项, 升级触发=扩展清单新增与系统 UTI 冲突条目时
+// clue10 口径（同 win）：写入成功 ≠ 双击行为生效——setAsDefaultFor 返回值 =
+// 写后回查判属；macOS 11–15 逐版本定性（扩展 UTI/NSWorkspace 确认框）= UAT 项。
 // 注入缝口径（与 win 同款 AssocConfig，mac 侧语义差异）：
 //   · config.progId = 查询判属锚（回读 bundle id 比对串）；生产缺省（win 字面量
 //     "DevDesk.notepad"）在 mac 无意义 → 解析为运行期本应用 bundle identifier；
@@ -26,15 +30,14 @@
 
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
-#if __has_include(<UniformTypeIdentifiers/UniformTypeIdentifiers.h>)
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // UTType（12+ UTI 反查/写入路径）
-#define DEVDESK_HAS_UTTYPE_CLASS 1
-#else
-#define DEVDESK_HAS_UTTYPE_CLASS 0
-#endif
+// 27.2 SDK 实测（CI run 43889570987）：伞头不引全 UTType.h——类与常量可见、
+// +typeWithTag: 方法声明不可见（no known class method 同证）→ 显式引类头/常量头
+#import <UniformTypeIdentifiers/UTType.h>
+#import <UniformTypeIdentifiers/UTTagClass.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // UTType 类反查（11.0+；C API 12.0 起弃用）
 
-#include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag / LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
-#include <dispatch/dispatch.h>
+#include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag（<11 保守路径）/ LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
+#include <dispatch/dispatch.h> // NSWorkspace completionHandler → 同步 Result 桥接（group+超时）
 #include <sys/sysctl.h>
 
 #include <cstdlib>
@@ -100,7 +103,6 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
                                                "扩展名转 NSString 失败");
     }
     if (@available(macOS 11.0, *)) {
-#if DEVDESK_HAS_UTTYPE_CLASS
         UTType* const type = [UTType typeWithFilenameExtension:extNs];
         if (type == nil) {
             return core::Result<std::string>::fail(
@@ -112,14 +114,12 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
                 core::ErrorCode::Internal, "UTI 转 string 失败 (" + extNoDot + ")");
         }
         return core::Result<std::string>::ok(out);
-#else
-        return core::Result<std::string>::fail(
-            core::ErrorCode::Internal,
-            "SDK 缺 UniformTypeIdentifiers，无法解析 UTI (" + extNoDot + ")");
-#endif
     }
-    // 11.0 路径（UTType 类不可用）：旧 C API 是唯一选择。该 API 的弃用是
-    // 12.0 起生效，本分支只在 <12 运行时执行，故豁免告警。
+    // <11 路径（UTType 类不可用）：旧 C API 是唯一选择。UTTypeCreatePreferredIdentifierForTag
+    // 12.0 起标记弃用，但弃用≠移除——27.2 SDK 仍声明、符号仍可链（deprecated API
+    // 的兼容承诺）。CI 实证：clang 的 -Wdeprecated-declarations 不随 @available
+    // 分支自动消，须 pragma 显式包裹（push/pop 成对）。11+ 已走 UTType 类
+    //（typeWithFilenameExtension:，本文件 Mac 侧真编译收口）；此分支仅 <11 运行期可达。
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     CFStringRef const extCf = cfStringFromStdString(extNoDot);
@@ -127,16 +127,19 @@ core::Result<std::string> contentTypeForExtension(const std::string& extNoDot) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "扩展名转 CFString 失败");
     }
+    std::string out;
     CFStringRef const uti = UTTypeCreatePreferredIdentifierForTag(
         kUTTagClassFilenameExtension, extCf, nullptr);
-    CFRelease(extCf);
 #pragma clang diagnostic pop
     if (uti == nullptr) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               "扩展名未解析出 UTI (" + extNoDot + ")");
+        CFRelease(extCf);
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "扩展名未解析出 UTI (" + extNoDot + ")");
     }
-    const std::string out = cfToStdString(uti);
+    out = cfToStdString(uti);
     CFRelease(uti);
+    CFRelease(extCf);
     if (out.empty()) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "UTI 转 string 失败 (" + extNoDot + ")");
@@ -306,8 +309,10 @@ core::Result<bool> setAsDefaultFor(const AssocConfig& config) {
     if (api == mac_api::WriteApi::NsWorkspaceSetDefault) {
         if (@available(macOS 12.0, *)) {
             NSURL* const appNs = (__bridge NSURL*)self.value().second;
-            // 12+ 唯一公开 API 是 async 形态（没有同步 error: 变体；旧同步名
-            // setDefaultApplicationAtURL:toOpenURL:error: 在 SDK 里不存在）。
+            // 12+ 唯一公开 API 是 async 形态（27.2 SDK 实测：旧 toOpenURL:
+            // error 出参/completionHandler 两形态已整体移除——docs 404 + 编译器
+            // no visible @interface 同证；现行 = toOpenContentTypeOfFileAtURL:，
+            // 按探针文件 URL 的 content type 设默认，与旧 toOpenURL: 同语义）。
             // 多扩展批量：全部先 fire + group 聚合，单次总预算等待——逐项
             // await 确认框最坏 N×超时挂死 UI。需要用户确认的 UTI 完成回调可能
             // 很久才来：超时未回调 = 确认框待用户操作，交写后回查如实判定

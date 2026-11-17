@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<!--
+  Git 管理器整体重设计 demo（need291 / 修订 need299）
+  ⚠ demo 仅视觉校准，不是实现蓝图。实现按设计文档参数由 developer 落地：
+  docs/design/2026-11-17-git管理器重设计.md
+  need299 修订（2026-11-17 老板三连令）：全仓搜索整体删除（归 #300，本 demo 零残留）；
+  顶栏去搜索重排；切换仓库=最近仓历史下拉；变更列表加过滤输入框（纯输入框无按钮）；
+  长名省略+深嵌套样本；平铺形态 untracked 目录行（§4.7 修订）。
+  自包含单文件：样式内联、无框架、无外部依赖、浏览器直开。
+  底部工具条为 demo 预览工具（场景切换），非产品界面一部分。
+  图标为内联 SVG（实现用 FontAwesome 同名线性图标，映射见设计文档 §11）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Git 管理器重设计 demo · need291/299</title>
+<style>
+  /* ===== token（设计文档 §2）===== */
+  :root{
+    --c-bg-page:#F7F7F7; --c-bg-card:#FFFFFF;
+    --c-border-1:#E5E5E5; --c-border-2:#EDEDED; --c-border-default:#D9D9D9;
+    --c-text-1:#1A1A1A; --c-text-2:#666666; --c-text-3:#999999;
+    --c-selected-bg:#E5E5E5; --c-btn-2-bg:#F2F2F2;
+    --c-primary:#36D399; --c-primary-hover:#2EC48F; --c-primary-active:#23B07F;
+    --c-primary-tint:#E6FBF2; --c-primary-text:#157E4E;
+    --c-danger:#EF4444; --c-danger-text:#B91C1C; --c-danger-tint:#FDECEC;
+    --c-link:#576B95; --c-sidebar-bg:#E8F0EC;
+    /* 领域编码（前身 spec §3.2 沿用） */
+    --st-added:#157E4E; --st-added-bg:#E6FBF2;
+    --st-modified:#9A6700; --st-modified-bg:#FBF1DE;
+    --st-deleted:#B91C1C; --st-deleted-bg:#FDECEC;
+    --st-renamed:#576B95; --st-renamed-bg:#EDF1F7;
+    --st-untracked:#157E4E; --st-untracked-bg:#E6FBF2;
+    --diff-added-bg:#E6FBF2; --diff-removed-bg:#FDECEC;
+    --diff-hunk-bg:#F2F2F2; --diff-gutter-bg:#FAFAFA;
+    --font-ui:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    --font-mono:Consolas,Menlo,"Courier New",monospace;
+    --ease-out:cubic-bezier(0,0,0.2,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;}
+  body{font-family:var(--font-ui);background:var(--c-bg-page);color:var(--c-text-1);overflow:hidden;}
+  /* 滚动条视觉全无（老板口径：滚动保留） */
+  .noscroll{scrollbar-width:none;-ms-overflow-style:none;}
+  .noscroll::-webkit-scrollbar{display:none;}
+
+  /* ===== 应用外壳（demo 示意）===== */
+  .app{display:flex;height:100vh;}
+  .sidebar{width:200px;flex:none;background:var(--c-sidebar-bg);border-right:1px solid var(--c-border-1);
+    display:flex;flex-direction:column;padding:12px 8px;gap:2px;}
+  .side-logo{font-size:15px;font-weight:600;padding:8px 12px 16px;color:var(--c-text-1);}
+  .side-item{display:flex;align-items:center;gap:10px;height:36px;padding:0 12px;border-radius:6px;
+    font-size:13px;color:var(--c-text-2);cursor:default;}
+  .side-item svg{width:14px;height:14px;}
+  .side-item.active{background:#FFFFFF;color:var(--c-text-1);font-weight:500;
+    box-shadow:0 1px 2px rgba(0,0,0,0.04);}
+  .side-item.active::before{content:'';width:2px;height:16px;background:var(--c-primary);
+    border-radius:1px;margin-right:-4px;margin-left:-16px;}
+
+  /* ===== 主区 ===== */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;}
+
+  /* 顶栏 48 卡片（§3 need:299 重排：去搜索框，路径 max 480） */
+  .topbar{height:48px;flex:none;background:var(--c-bg-card);border:1px solid var(--c-border-1);
+    border-radius:16px;margin:12px 12px 0;display:flex;align-items:center;gap:12px;padding:0 12px;}
+  .btn-expand-bar{display:none;width:32px;height:32px;border:none;border-radius:6px;background:transparent;
+    color:var(--c-text-2);cursor:pointer;align-items:center;justify-content:center;
+    transition:background 120ms var(--ease-out),transform 160ms var(--ease-out);}
+  .btn-expand-bar:hover{background:var(--c-border-2);}
+  .btn-expand-bar:active{transform:scale(0.97);}
+  .app.collapsed .btn-expand-bar{display:flex;}
+  .repo-name{font-size:15px;font-weight:600;white-space:nowrap;}
+  .repo-path{font-size:12px;color:var(--c-text-3);max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .repo-dot{color:var(--c-text-3);font-size:12px;}
+  .branch-chip{display:flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:6px;
+    background:var(--c-btn-2-bg);font-size:12px;color:var(--c-text-2);cursor:default;white-space:nowrap;}
+  .branch-chip svg{width:12px;height:12px;}
+  .topbar-flex{flex:1;}
+  .btn{height:32px;padding:0 12px;border-radius:6px;border:none;background:var(--c-btn-2-bg);
+    font-size:14px;font-family:var(--font-ui);color:var(--c-text-1);cursor:pointer;
+    display:flex;align-items:center;gap:6px;white-space:nowrap;
+    transition:background 120ms var(--ease-out),transform 160ms var(--ease-out);}
+  .btn:hover{background:var(--c-border-2);}
+  .btn.on{background:var(--c-border-2);}
+  .btn:active{transform:scale(0.97);}
+  .btn svg{width:14px;height:14px;color:var(--c-text-2);}
+  .btn:disabled{color:var(--c-text-3);cursor:default;}
+  .btn:disabled svg{color:var(--c-text-3);}
+  .btn.primary{background:var(--c-primary);color:#FFFFFF;}
+  .btn.primary svg{color:#FFFFFF;}
+  .btn.primary:hover{background:var(--c-primary-hover);}
+  .btn.primary:active{background:var(--c-primary-active);}
+  .btn.sm{height:28px;padding:0 10px;font-size:12px;}
+  .btn.spin svg{animation:rot 800ms linear infinite;}
+  @keyframes rot{to{transform:rotate(360deg);}}
+
+  /* ===== 切换仓库历史下拉（§3.1 need:299 新增）===== */
+  .repo-wrap{position:relative;}
+  .btn .caret{width:12px;height:12px;}
+  .repo-pop{display:none;position:absolute;top:38px;right:0;width:360px;
+    background:var(--c-bg-card);border:1px solid var(--c-border-default);border-radius:8px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.08);z-index:50;overflow:hidden;}
+  .repo-pop.open{display:block;animation:popin 150ms var(--ease-out);}
+  @keyframes popin{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+  .rm-label{height:28px;display:flex;align-items:center;padding:0 12px;
+    font-size:11px;font-weight:500;color:var(--c-text-3);}
+  .rm-list{max-height:320px;overflow-y:auto;position:relative;}
+  .rm-row{display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;cursor:pointer;
+    transition:background 120ms var(--ease-out);}
+  .rm-row:hover{background:var(--c-border-2);}
+  .rm-txt{flex:1;min-width:0;}
+  .rm-name{font-size:13px;font-weight:500;color:var(--c-text-1);line-height:18px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rm-path{font-size:11px;color:var(--c-text-3);line-height:16px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rm-check{width:12px;height:12px;color:var(--c-primary);flex:none;visibility:hidden;}
+  .rm-row[data-current] .rm-check{visibility:visible;}
+  .rm-stale .rm-name,.rm-stale .rm-path{color:var(--c-text-3);}
+  .rm-stale-tag{font-size:11px;color:var(--c-danger-text);flex:none;}
+  .rm-divider{height:1px;background:var(--c-border-2);}
+  .rm-action{display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 12px;
+    border:none;background:transparent;font-size:13px;font-family:var(--font-ui);color:var(--c-text-1);
+    cursor:pointer;text-align:left;transition:background 120ms var(--ease-out);}
+  .rm-action:hover{background:var(--c-border-2);}
+  .rm-action svg{width:12px;height:12px;color:var(--c-text-2);flex:none;}
+  .rm-fade{display:none;position:absolute;left:1px;right:1px;height:8px;pointer-events:none;z-index:2;}
+  .repo-pop.has-ov .rm-fade{display:block;}
+  .rm-fade.top{top:28px;background:linear-gradient(to bottom,var(--c-bg-card),rgba(255,255,255,0));}
+  .rm-fade.bot{bottom:33px;background:linear-gradient(to top,var(--c-bg-card),rgba(255,255,255,0));}
+
+  /* ===== 内容区：两卡（§1.2）===== */
+  .content{flex:1;display:flex;gap:12px;padding:12px;min-height:0;}
+  .card{background:var(--c-bg-card);border:1px solid var(--c-border-default);border-radius:16px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.04);display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+
+  /* 左卡：变更列表 320（§4）*/
+  .card-list{width:320px;flex:none;transition:width 200ms var(--ease-out),opacity 200ms var(--ease-out),margin 200ms var(--ease-out);}
+  .app.collapsed .card-list{width:0;opacity:0;margin-left:-12px;border:none;}
+  .list-head{height:36px;flex:none;display:flex;align-items:center;justify-content:flex-end;gap:4px;
+    padding:0 12px;border-bottom:1px solid var(--c-border-2);}
+  .seg{display:flex;border-radius:6px;}
+  .seg button{width:24px;height:24px;border:none;background:transparent;color:var(--c-text-3);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;border-radius:6px;
+    transition:background 120ms var(--ease-out),color 120ms var(--ease-out),transform 160ms var(--ease-out);}
+  .seg button svg{width:12px;height:12px;}
+  .seg button:hover{color:var(--c-text-2);}
+  .seg button:active{transform:scale(0.97);}
+  .seg button.on{background:var(--c-selected-bg);color:var(--c-text-1);}
+  .btn-collapse{width:24px;height:24px;border:none;background:transparent;color:var(--c-text-3);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;border-radius:6px;
+    transition:background 120ms var(--ease-out),transform 160ms var(--ease-out);}
+  .btn-collapse:hover{background:var(--c-border-2);}
+  .btn-collapse:active{transform:scale(0.97);}
+  .btn-collapse svg{width:12px;height:12px;}
+
+  /* 过滤行 32（§4.2b need:299 新增：纯输入框无按钮）*/
+  .filter-row{height:32px;flex:none;display:flex;align-items:center;padding:0 12px;
+    border-bottom:1px solid var(--c-border-2);}
+  .filter-box{position:relative;flex:1;min-width:0;height:28px;border-radius:6px;
+    background:var(--c-btn-2-bg);border:1px solid transparent;display:flex;align-items:center;
+    transition:background 120ms var(--ease-out),border-color 120ms var(--ease-out);}
+  .filter-box input{flex:1;min-width:0;border:none;outline:none;background:transparent;
+    font-size:12px;font-family:var(--font-ui);color:var(--c-text-1);padding:0 24px 0 8px;}
+  .filter-box input::placeholder{color:var(--c-text-3);}
+  .filter-box:focus-within{background:var(--c-bg-card);border-color:var(--c-primary);}
+  .filter-clear{display:none;position:absolute;right:2px;top:50%;transform:translateY(-50%);
+    width:20px;height:20px;border:none;background:transparent;color:var(--c-text-3);cursor:pointer;
+    align-items:center;justify-content:center;padding:0;}
+  .filter-clear svg{width:14px;height:14px;}
+  .filter-clear:hover{color:var(--c-text-2);}
+  .filter-box.has-input .filter-clear{display:flex;}
+  /* 过滤态：目录计数隐藏（§4.9）*/
+  .list-body.filtering .dir-row .cnt{display:none;}
+  /* 过滤无匹配空态（§4.8）*/
+  .filter-empty{display:none;padding:32px 12px;text-align:center;}
+  .filter-empty.show{display:block;}
+  .filter-empty .t1{font-size:13px;color:var(--c-text-2);}
+  .filter-empty .t2{font-size:12px;color:var(--c-text-3);margin-top:4px;}
+
+  .list-body{flex:1;overflow-y:auto;padding-bottom:8px;}
+
+  /* 组头 32（§4.3）*/
+  .group-head{height:32px;flex:none;display:flex;align-items:center;gap:6px;padding:0 12px;
+    background:var(--c-bg-card);border-bottom:1px solid var(--c-border-2);cursor:pointer;user-select:none;}
+  .group-head .arrow{font-size:12px;color:var(--c-text-3);width:12px;line-height:1;transition:transform 150ms var(--ease-out);}
+  .group-head.folded .arrow{transform:rotate(-90deg);}
+  .group-head .gname{font-size:13px;font-weight:600;color:var(--c-text-1);}
+  /* 组折叠：grid 0fr 技巧 */
+  .group-wrap{display:grid;grid-template-rows:1fr;transition:grid-template-rows 200ms var(--ease-out);}
+  .group-wrap.folded{grid-template-rows:0fr;}
+  .group-inner{overflow:hidden;min-height:0;}
+
+  /* 目录行 28（§4.4：省略号+tooltip；深嵌套缩进钳制=名区最小 96px）*/
+  .dir-row{height:28px;display:flex;align-items:center;gap:4px;padding:0 12px;cursor:pointer;user-select:none;}
+  .dir-row:hover{background:var(--c-border-2);}
+  .dir-row:active{background:var(--c-selected-bg);}
+  .dir-row .arrow{font-size:10px;color:var(--c-text-3);width:12px;line-height:1;transition:transform 150ms var(--ease-out);}
+  .dir-row.open .arrow{transform:rotate(90deg);}
+  .dir-row svg{width:14px;height:14px;color:var(--c-text-3);flex:none;}
+  .dir-row .dname{font-size:13px;color:var(--c-text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dir-row .cnt{margin-left:auto;font-size:12px;color:var(--c-text-3);padding-right:4px;flex:none;}
+  /* 目录子区展开 */
+  .dir-children{display:grid;grid-template-rows:0fr;transition:grid-template-rows 200ms var(--ease-out);}
+  .dir-children.open{grid-template-rows:1fr;}
+  .dir-children>div{overflow:hidden;min-height:0;}
+
+  /* 文件行 28（§4.5：名区省略号；平铺路径段先饿）*/
+  .file-row{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px;cursor:pointer;user-select:none;}
+  .file-row:hover{background:var(--c-border-2);}
+  .file-row:active{background:var(--c-selected-bg);}
+  .file-row.selected{background:var(--c-primary-tint);box-shadow:inset 2px 0 0 var(--c-primary);}
+  .file-row .badge{flex:none;}
+  .file-row .fname{font-size:13px;color:var(--c-text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .file-row .fpath{font-size:12px;color:var(--c-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+  .view-tree .file-row .fpath{display:none;}
+  /* 徽标 16×16（§4.5）*/
+  .badge{width:16px;height:16px;border-radius:3px;font-size:10px;font-weight:700;flex:none;
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-ui);}
+  .badge.M{background:var(--st-modified-bg);color:var(--st-modified);}
+  .badge.D{background:var(--st-deleted-bg);color:var(--st-deleted);}
+  .badge.R{background:var(--st-renamed-bg);color:var(--st-renamed);}
+  .badge.A{background:var(--st-added-bg);color:var(--st-added);}
+  .badge.U{background:var(--st-untracked-bg);color:var(--st-untracked);}
+
+  /* 加载行（§4.4 展开 lazy）*/
+  .load-row{height:28px;display:flex;align-items:center;gap:8px;padding:0 12px 0 32px;}
+  .spin{width:12px;height:12px;border:1.5px solid var(--c-border-1);border-top-color:var(--c-text-3);
+    border-radius:50%;animation:rot 800ms linear infinite;flex:none;}
+  .load-row .t{font-size:12px;color:var(--c-text-3);}
+
+  /* 目录内错误行（§6.2）*/
+  .dir-error{display:flex;align-items:center;gap:6px;padding:4px 12px 4px 32px;}
+  .dir-error .t{font-size:12px;color:var(--c-danger-text);}
+  .dir-error button{border:none;background:transparent;font-size:12px;color:var(--c-text-2);cursor:pointer;
+    text-decoration:underline;padding:2px 4px;border-radius:4px;}
+  .dir-error button:hover{background:var(--c-border-2);}
+  /* 截断尾行（§6.2 >500；need:299：搜索引导随 #300 删，仅计数）*/
+  .dir-more{padding:4px 12px 4px 32px;font-size:12px;color:var(--c-text-3);}
+
+  /* 列表骨架（§4.8）*/
+  .sk-row{height:28px;margin:0 12px;border-radius:6px;background:var(--c-border-2);}
+  .sk-group{height:32px;margin:0 0 8px;border-radius:6px;background:var(--c-border-2);}
+  .sk-gap{height:8px;}
+
+  /* 列表错误块（§4.8）*/
+  .list-error{margin:24px 16px;padding:16px;border:1px solid var(--c-border-default);border-radius:8px;
+    display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+  .list-error svg{width:16px;height:16px;color:var(--c-danger);}
+  .list-error .t{font-size:13px;font-weight:600;color:var(--c-danger-text);}
+  .list-error .r{font-size:12px;color:var(--c-text-3);line-height:1.6;}
+
+  /* 列表空提示（§4.8）*/
+  .list-empty-hint{padding:32px 12px;text-align:center;font-size:12px;color:var(--c-text-3);}
+
+  /* ===== 右卡：diff 主区（§5）===== */
+  .card-diff{flex:1;min-width:0;}
+  .diff-head{height:44px;flex:none;display:flex;align-items:center;gap:8px;padding:0 16px;
+    background:var(--c-bg-card);border-bottom:1px solid var(--c-border-1);position:sticky;top:0;z-index:5;}
+  .diff-head .path{font-family:var(--font-mono);font-size:13px;color:var(--c-text-1);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+  .diff-head .path .old{color:var(--c-text-3);}
+  .diff-head .stat{font-family:var(--font-mono);font-size:12px;white-space:nowrap;flex:none;}
+  .diff-head .stat .add{color:var(--st-added);}
+  .diff-head .stat .del{color:var(--st-deleted);}
+  .view-tabs{display:flex;gap:16px;flex:none;}
+  .view-tabs button{border:none;background:transparent;font-size:13px;font-family:var(--font-ui);
+    color:var(--c-text-3);cursor:pointer;padding:0 2px 6px;position:relative;
+    transition:color 120ms var(--ease-out);}
+  .view-tabs button:hover{color:var(--c-text-1);}
+  .view-tabs button.on{color:var(--c-text-1);}
+  .view-tabs button.on::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;
+    background:var(--c-primary);border-radius:1px;}
+
+  .diff-body{flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column;}
+  .view-pane{flex:1;display:flex;flex-direction:column;min-height:0;}
+
+  /* unified diff 网格（§5.3）：折叠符24｜旧行号48｜新行号48｜代码flex，行高22 */
+  .dline{display:grid;grid-template-columns:24px 48px 48px 1fr;min-height:22px;line-height:22px;
+    font-family:var(--font-mono);font-size:13px;white-space:pre;}
+  .dline .sig{color:transparent;text-align:center;user-select:none;}
+  .dline .ln{background:var(--diff-gutter-bg);color:var(--c-text-3);font-size:12px;
+    text-align:right;padding:0 8px;user-select:none;}
+  .dline .code{padding:0 12px;color:var(--c-text-1);}
+  .dline.add{background:var(--diff-added-bg);}
+  .dline.add .ln.new{color:var(--st-added);}
+  .dline.add .sig::after{content:'+';color:var(--st-added);}
+  .dline.del{background:var(--diff-removed-bg);}
+  .dline.del .ln.old{color:var(--st-deleted);}
+  .dline.del .sig::after{content:'-';color:var(--st-deleted);}
+  /* hunk 头 24（§5.3）*/
+  .hunk{display:flex;align-items:center;min-height:24px;background:var(--diff-hunk-bg);
+    font-family:var(--font-mono);font-size:11px;color:var(--c-text-2);padding:0 8px 0 0;cursor:default;}
+  .hunk .harrow{width:24px;text-align:center;color:var(--c-text-3);font-size:10px;cursor:pointer;
+    user-select:none;line-height:24px;}
+  .hunk .harrow:hover{color:var(--c-text-1);}
+  /* hunk 折叠 */
+  .hunk-body{display:grid;grid-template-rows:1fr;transition:grid-template-rows 200ms var(--ease-out);}
+  .hunk-body.folded{grid-template-rows:0fr;}
+  .hunk-body>div{overflow:hidden;min-height:0;}
+  .hunk-foldbar{display:flex;align-items:center;min-height:24px;background:var(--diff-hunk-bg);
+    font-family:var(--font-mono);font-size:11px;color:var(--c-text-3);padding:0 12px;cursor:pointer;user-select:none;}
+  .hunk-foldbar:hover{color:var(--c-text-2);}
+
+  /* 内容视图（§5.4）*/
+  .cline{display:grid;grid-template-columns:48px 1fr;min-height:22px;line-height:22px;
+    font-family:var(--font-mono);font-size:13px;white-space:pre;}
+  .cline .n{background:var(--diff-gutter-bg);color:var(--c-text-3);font-size:12px;
+    text-align:right;padding:0 8px;user-select:none;}
+  .cline .c{padding:0 12px;color:var(--c-text-1);}
+
+  /* 右栏占位/空态/错误块（§5.5/§5.6）*/
+  .pane-center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;padding:24px;text-align:center;}
+  .pane-center svg{width:24px;height:24px;color:var(--c-text-3);}
+  .pane-center .t1{font-size:14px;color:var(--c-text-2);}
+  .pane-center .t2{font-size:12px;color:var(--c-text-3);margin-top:-4px;}
+  .pane-error svg{color:var(--c-danger);}
+  .pane-error .t1{font-size:13px;font-weight:600;color:var(--c-danger-text);}
+
+  /* diff 骨架（§5.6）*/
+  .sk-pane{flex:1;padding:12px 16px;}
+  .sk-pane div{height:22px;margin-bottom:6px;border-radius:4px;background:var(--c-border-2);}
+
+  /* ===== 场景开关（demo 工具）===== */
+  body[data-scene="empty"] .scene-main{display:none;}
+  body[data-scene="empty"] .scene-empty{display:flex;}
+  body[data-scene="error"] .scene-main{display:none;}
+  body[data-scene="error"] .scene-error{display:flex;}
+  body[data-scene="loading"] .scene-main{display:none;}
+  body[data-scene="loading"] .scene-load{display:flex;}
+  .scene-empty,.scene-error,.scene-load{display:none;flex:1;min-height:0;}
+  body:not([data-scene="main"]) .card-list{width:320px;opacity:1;margin:0;border:1px solid var(--c-border-default);}
+
+  .dock{position:fixed;left:50%;bottom:12px;transform:translateX(-50%);z-index:99;
+    display:flex;align-items:center;gap:8px;background:rgba(26,26,26,0.92);border-radius:10px;
+    padding:8px 12px;color:#EDEDED;font-size:12px;box-shadow:0 4px 16px rgba(0,0,0,0.2);}
+  .dock .lbl{opacity:0.7;}
+  .dock button{border:none;background:rgba(255,255,255,0.14);color:#FFFFFF;font-size:12px;
+    font-family:var(--font-ui);border-radius:6px;padding:5px 10px;cursor:pointer;
+    transition:background 120ms var(--ease-out),transform 160ms var(--ease-out);}
+  .dock button:hover{background:rgba(255,255,255,0.26);}
+  .dock button:active{transform:scale(0.97);}
+  .dock button.on{background:var(--c-primary);color:#1A1A1A;font-weight:600;}
+
+  /* 平铺/树视图切换（§6.3）*/
+  .view-flat{display:none;}
+  .list-body.flat .view-tree{display:none;}
+  .list-body.flat .view-flat{display:block;animation:fadein 150ms var(--ease-out);}
+  .list-body:not(.flat) .view-tree{animation:fadein 150ms var(--ease-out);}
+  @keyframes fadein{from{opacity:0;}to{opacity:1;}}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none !important;transition:none !important;}
+  }
+</style>
+</head>
+<body data-scene="main">
+
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 3.5h4l1.5 2h7.5v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a.999.999 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-folder-open" viewBox="0 0 16 16"><path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v1M1.5 12.5l2-5.5h12l-2.2 5.6a1 1 0 0 1-.9.6H2.5a1 1 0 0 1-1-.7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-tree" viewBox="0 0 16 16"><path d="M2 4h4M2 8h4M2 12h4M8.5 4H14M8.5 8H14M8.5 12H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><rect x="1" y="2.5" width="1.5" height="3" rx="0.5" fill="currentColor"/><rect x="1" y="6.5" width="1.5" height="3" rx="0.5" fill="currentColor"/><rect x="1" y="10.5" width="1.5" height="3" rx="0.5" fill="currentColor"/></symbol>
+  <symbol id="i-list" viewBox="0 0 16 16"><path d="M5.5 4h9M5.5 8h9M5.5 12h9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="2.5" cy="4" r="1" fill="currentColor"/><circle cx="2.5" cy="8" r="1" fill="currentColor"/><circle cx="2.5" cy="12" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-collapse" viewBox="0 0 16 16"><path d="M4 3l4 5-4 5M9 3l4 5-4 5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 16 16"><rect x="2" y="2.5" width="5" height="11" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10 5.5l3 2.5-3 2.5M9.5 8H13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 16 16"><path d="M4 6.5l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="4" cy="4" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="4" cy="12" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="12" cy="6" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 5.8v4.4M12 7.8c0 2.2-2 3.2-4.5 3.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.2 8.2l2 2 3.6-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 4.8v3.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-home" viewBox="0 0 16 16"><path d="M2.5 7.5L8 2.5l5.5 5M4 7v6h8V7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 16 16"><path d="M4 1.5h5.5L13 5v9.5H4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.5 1.5V5H13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></symbol>
+  <symbol id="i-term" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4 6l2.5 2L4 10M8.5 10.5h3.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+  <symbol id="i-branch2" viewBox="0 0 16 16"><use href="#i-branch"/></symbol>
+</svg>
+
+<div class="app" id="app">
+  <!-- 应用侧栏（demo 示意，非本设计范围） -->
+  <aside class="sidebar">
+    <div class="side-logo">DevDesk</div>
+    <div class="side-item"><svg><use href="#i-home"/></svg>首页</div>
+    <div class="side-item"><svg><use href="#i-doc"/></svg>Markdown</div>
+    <div class="side-item active"><svg><use href="#i-branch"/></svg>Git</div>
+    <div class="side-item"><svg><use href="#i-term"/></svg>终端</div>
+    <div class="side-item"><svg><use href="#i-gear"/></svg>设置</div>
+  </aside>
+
+  <div class="main">
+    <!-- 顶栏 48（§3 need:299 重排：无搜索框；切换仓库=历史下拉触发器） -->
+    <header class="topbar">
+      <button class="btn-expand-bar" id="btnExpand" title="展开变更列表"><svg><use href="#i-expand"/></svg></button>
+      <span class="repo-name">DevDesk</span>
+      <span class="repo-dot">·</span>
+      <span class="repo-path" title="D:\project\gui\DevDesk">D:\project\gui\DevDesk</span>
+      <span class="branch-chip"><svg><use href="#i-branch"/></svg>dev</span>
+      <span class="topbar-flex"></span>
+      <div class="repo-wrap">
+        <button class="btn" id="btnSwitch">切换仓库<svg class="caret"><use href="#i-caret"/></svg></button>
+        <!-- 最近仓历史下拉（§3.1）：节标+仓行两行式+当前仓 ✓+失效行+浏览目录 -->
+        <div class="repo-pop" id="repoPop">
+          <div class="rm-label">最近仓库</div>
+          <div class="rm-list noscroll" id="rmList">
+            <div class="rm-row" data-current data-name="DevDesk" data-path="D:\project\gui\DevDesk">
+              <div class="rm-txt"><div class="rm-name">DevDesk</div><div class="rm-path" title="D:\project\gui\DevDesk">D:\project\gui\DevDesk</div></div>
+              <svg class="rm-check"><use href="#i-check"/></svg>
+            </div>
+            <div class="rm-row" data-name="zcode-plugins" data-path="C:\Users\coderstory\dev\zcode-plugins">
+              <div class="rm-txt"><div class="rm-name">zcode-plugins</div><div class="rm-path" title="C:\Users\coderstory\dev\zcode-plugins">C:\Users\coderstory\dev\zcode-plugins</div></div>
+              <svg class="rm-check"><use href="#i-check"/></svg>
+            </div>
+            <div class="rm-row" data-name="gui-archive" data-path="E:\archive\gui-archive-20261029">
+              <div class="rm-txt"><div class="rm-name">gui-archive</div><div class="rm-path" title="E:\archive\gui-archive-20261029">E:\archive\gui-archive-20261029</div></div>
+              <svg class="rm-check"><use href="#i-check"/></svg>
+            </div>
+            <div class="rm-row rm-stale" data-name="legacy-tools" data-path="E:\archive\legacy-tools">
+              <div class="rm-txt"><div class="rm-name">legacy-tools</div><div class="rm-path" title="E:\archive\legacy-tools">E:\archive\legacy-tools</div></div>
+              <span class="rm-stale-tag">已失效</span>
+            </div>
+          </div>
+          <div class="rm-fade top"></div>
+          <div class="rm-fade bot"></div>
+          <div class="rm-divider"></div>
+          <button class="rm-action" id="rmBrowse"><svg><use href="#i-folder-open"/></svg>浏览目录…</button>
+        </div>
+      </div>
+      <button class="btn" id="btnRefresh"><svg><use href="#i-refresh"/></svg>刷新</button>
+    </header>
+
+    <!-- 内容区：两卡（§1.2） -->
+    <div class="content">
+
+      <!-- ===== 左卡：变更列表 320（§4） ===== -->
+      <section class="card card-list scene-main">
+        <div class="list-head">
+          <div class="seg" role="group" aria-label="视图形态">
+            <button id="btnTree" class="on" title="文件夹分组树"><svg><use href="#i-tree"/></svg></button>
+            <button id="btnFlat" title="平铺列表"><svg><use href="#i-list"/></svg></button>
+          </div>
+          <button class="btn-collapse" id="btnCollapse" title="折叠变更列表"><svg><use href="#i-collapse"/></svg></button>
+        </div>
+        <!-- 过滤行（§4.2b need:299：纯输入框无按钮，输入即过滤） -->
+        <div class="filter-row">
+          <div class="filter-box" id="filterBox">
+            <input id="filterInput" type="text" placeholder="过滤文件名…" autocomplete="off" spellcheck="false">
+            <button class="filter-clear" id="filterClear" title="清空过滤"><svg><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+        <div class="list-body noscroll" id="listBody">
+
+          <!-- 树形态（默认，D1-C） -->
+          <div class="view-tree">
+            <!-- 组头：已暂存 (2) -->
+            <div class="group-head" data-group="staged">
+              <span class="arrow">▾</span><span class="gname">已暂存 (2)</span>
+            </div>
+            <div class="group-wrap" id="groupStaged">
+              <div class="group-inner">
+                <div class="dir-row" data-dir data-full="src">
+                  <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">src</span><span class="cnt">2</span>
+                </div>
+                <div class="dir-children"><div>
+                  <div class="dir-row" data-dir data-full="src/utils" style="padding-left:28px;">
+                    <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">utils</span><span class="cnt">1</span>
+                  </div>
+                  <div class="dir-children"><div>
+                    <div class="file-row" data-file="diff_view.cpp" data-full="src/utils/diff_view.cpp" style="padding-left:44px;" title="src/utils/diff_view.cpp">
+                      <span class="badge M">M</span><span class="fname">diff_view.cpp</span><span class="fpath">src/utils/</span>
+                    </div>
+                  </div></div>
+                  <div class="file-row" data-file="main.cpp" data-full="src/main.cpp" style="padding-left:28px;" title="src/main.cpp">
+                    <span class="badge M">M</span><span class="fname">main.cpp</span><span class="fpath">src/</span>
+                  </div>
+                </div></div>
+              </div>
+            </div>
+
+            <!-- 组头：未暂存 (6)，untracked 并入（D6-A） -->
+            <div class="group-head" data-group="unstaged">
+              <span class="arrow">▾</span><span class="gname">未暂存 (6)</span>
+            </div>
+            <div class="group-wrap" id="groupUnstaged">
+              <div class="group-inner">
+                <div class="dir-row" data-dir data-full="src/repo">
+                  <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">src/repo</span><span class="cnt">1</span>
+                </div>
+                <div class="dir-children"><div>
+                  <div class="file-row" data-file="status.cpp" data-full="src/repo/status.cpp" style="padding-left:28px;" title="src/repo/status.cpp">
+                    <span class="badge M">M</span><span class="fname">status.cpp</span><span class="fpath">src/repo/</span>
+                  </div>
+                </div></div>
+
+                <!-- 派生结构目录行（裁决④ B 形态 2026-11-17：untracked 条目自动枚举为
+                     文件行并入派生；文件夹原则令：目录行纯结构装置——无徽标，
+                     计数=子树文件行数；不可选中不进 diff） -->
+                <div class="dir-row" data-dir data-full="docs">
+                  <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">docs</span><span class="cnt">2</span>
+                </div>
+                <div class="dir-children"><div>
+                  <div class="file-row" data-file="新文档.md" data-full="docs/新文档.md" style="padding-left:28px;" title="docs/新文档.md"><span class="badge U">U</span><span class="fname">新文档.md</span><span class="fpath">docs/</span></div>
+                  <div class="file-row" data-file="笔记.md" data-full="docs/笔记.md" style="padding-left:28px;" title="docs/笔记.md"><span class="badge U">U</span><span class="fname">笔记.md</span><span class="fpath">docs/</span></div>
+                  <!-- 嵌套子目录=派生 lazy 目录行（无徽标；点击=懒枚举展开，永不进 diff） -->
+                  <div class="dir-row" data-dir data-untracked data-full="docs/notes" style="padding-left:28px;" title="docs/notes">
+                    <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">notes</span>
+                  </div>
+                  <div class="dir-children"><div>
+                    <!-- lazy 枚举演示：点开时先插入加载行，800ms 后出子行（JS） -->
+                  </div></div>
+                </div></div>
+
+                <div class="file-row" data-file="readme.md" data-full="readme.md">
+                  <span class="badge M">M</span><span class="fname">readme.md</span><span class="fpath"></span>
+                </div>
+                <div class="file-row" data-file="损坏样本.bin" data-full="assets/损坏样本.bin">
+                  <span class="badge D">D</span><span class="fname">损坏样本.bin</span><span class="fpath">assets/</span>
+                </div>
+
+                <!-- 深嵌套样本（G11：缩进钳制+长名省略号，need:299） -->
+                <div class="dir-row" data-dir data-full="modules">
+                  <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">modules</span><span class="cnt">1</span>
+                </div>
+                <div class="dir-children"><div>
+                  <div class="dir-row" data-dir data-full="modules/net" style="padding-left:28px;">
+                    <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">net</span><span class="cnt">1</span>
+                  </div>
+                  <div class="dir-children"><div>
+                    <div class="dir-row" data-dir data-full="modules/net/transport" style="padding-left:44px;">
+                      <span class="arrow">▸</span><svg><use href="#i-folder"/></svg><span class="dname">transport</span><span class="cnt">1</span>
+                    </div>
+                    <div class="dir-children"><div>
+                      <div class="file-row" data-file="peer_frame_codec_registry_impl.cc" data-full="modules/net/transport/peer_frame_codec_registry_impl.cc" style="padding-left:60px;" title="modules/net/transport/peer_frame_codec_registry_impl.cc">
+                        <span class="badge M">M</span><span class="fname">peer_frame_codec_registry_impl.cc</span><span class="fpath">modules/net/transport/</span>
+                      </div>
+                    </div></div>
+                  </div></div>
+                </div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 平铺形态（D1-C 双态；untracked 未枚举目录=目录行，§4.7 need:299 修订） -->
+          <div class="view-flat">
+            <div class="group-head" data-group="staged-f">
+              <span class="arrow">▾</span><span class="gname">已暂存 (2)</span>
+            </div>
+            <div class="group-wrap" id="groupStagedF">
+              <div class="group-inner">
+                <div class="file-row" data-file="main.cpp" data-full="src/main.cpp">
+                  <span class="badge M">M</span><span class="fname">main.cpp</span><span class="fpath">src/</span>
+                </div>
+                <div class="file-row" data-file="diff_view.cpp" data-full="src/utils/diff_view.cpp">
+                  <span class="badge M">M</span><span class="fname">diff_view.cpp</span><span class="fpath">src/utils/</span>
+                </div>
+              </div>
+            </div>
+            <div class="group-head" data-group="unstaged-f">
+              <span class="arrow">▾</span><span class="gname">未暂存 (6)</span>
+            </div>
+            <div class="group-wrap" id="groupUnstagedF">
+              <div class="group-inner">
+                <div class="file-row" data-file="status.cpp" data-full="src/repo/status.cpp">
+                  <span class="badge M">M</span><span class="fname">status.cpp</span><span class="fpath">src/repo/</span>
+                </div>
+                <div class="file-row" data-file="peer_frame_codec_registry_impl.cc" data-full="modules/net/transport/peer_frame_codec_registry_impl.cc" title="modules/net/transport/peer_frame_codec_registry_impl.cc">
+                  <span class="badge M">M</span><span class="fname">peer_frame_codec_registry_impl.cc</span><span class="fpath">modules/net/transport/</span>
+                </div>
+                <div class="file-row" data-file="readme.md" data-full="readme.md">
+                  <span class="badge M">M</span><span class="fname">readme.md</span><span class="fpath"></span>
+                </div>
+                <div class="file-row" data-file="损坏样本.bin" data-full="assets/损坏样本.bin">
+                  <span class="badge D">D</span><span class="fname">损坏样本.bin</span><span class="fpath">assets/</span>
+                </div>
+                <!-- 裁决④ B 形态：未跟踪目录条目自动枚举成文件行混排（无目录条目行，§4.7） -->
+                <div class="file-row" data-file="新文档.md" data-full="docs/新文档.md"><span class="badge U">U</span><span class="fname">新文档.md</span><span class="fpath">docs/</span></div>
+                <div class="file-row" data-file="笔记.md" data-full="docs/笔记.md"><span class="badge U">U</span><span class="fname">笔记.md</span><span class="fpath">docs/</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 过滤无匹配空态（§4.8，仅过滤词非空时出现） -->
+          <div class="filter-empty" id="filterEmpty">
+            <div class="t1">无匹配文件</div>
+            <div class="t2">试试更短关键词，或点 × 清空</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右卡：diff 主区 —— 主态（§5） -->
+      <section class="card card-diff scene-main">
+        <div class="diff-head" id="diffHead" style="visibility:hidden;">
+          <span class="badge M" id="dhBadge">M</span>
+          <span class="path" id="dhPath">src/main.cpp</span>
+          <span class="stat" id="dhStat"><span class="add">+36</span>&nbsp;<span class="del">−4</span></span>
+          <div class="view-tabs">
+            <button id="tabDiff" class="on">差异</button>
+            <button id="tabContent">内容</button>
+          </div>
+        </div>
+        <div class="diff-body noscroll" id="diffBody">
+          <!-- 未选中空态（§5.5） -->
+          <div class="view-pane" id="paneNone">
+            <div class="pane-center">
+              <svg><use href="#i-branch"/></svg>
+              <div class="t1">选择左侧文件查看差异</div>
+              <div class="t2">点击变更列表中的文件行</div>
+            </div>
+          </div>
+          <!-- diff 视图（JS 注入） -->
+          <div class="view-pane" id="paneDiff" style="display:none;"></div>
+          <!-- 内容视图（JS 注入） -->
+          <div class="view-pane" id="paneContent" style="display:none;"></div>
+        </div>
+      </section>
+
+      <!-- 场景：工作区干净空态（§5.7） -->
+      <section class="card card-diff scene-empty">
+        <div class="pane-center">
+          <svg><use href="#i-check"/></svg>
+          <div class="t1">工作区很干净</div>
+          <div class="t2">文件变更后会出现在这里</div>
+          <button class="btn" style="margin-top:6px;"><svg><use href="#i-refresh"/></svg>刷新</button>
+        </div>
+      </section>
+
+      <!-- 场景：扫描失败错误态（§4.8；失效仓重开失败同走本画面 N1/N9） -->
+      <section class="card card-diff scene-error">
+        <div class="pane-center" style="align-items:flex-start;">
+          <div class="list-error" style="width:360px;">
+            <svg><use href="#i-warn"/></svg>
+            <span class="t">无法获取变更</span>
+            <span class="r">libgit2 错误：repository path not found（-3）<br>仓库目录可能已被移动或删除。</span>
+            <button class="btn sm"><svg><use href="#i-refresh"/></svg>重试</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 场景：加载骨架（§4.8/§5.6） -->
+      <section class="card card-diff scene-load" style="flex-direction:column;">
+        <div style="flex:1;padding:8px 12px;display:flex;flex-direction:column;overflow:hidden;">
+          <div class="sk-group" style="width:160px;"></div>
+          <div class="sk-row" style="width:70%;"></div>
+          <div class="sk-row" style="width:82%;"></div>
+          <div class="sk-row" style="width:64%;"></div>
+          <div class="sk-row" style="width:76%;"></div>
+          <div class="sk-gap"></div>
+          <div class="sk-group" style="width:160px;"></div>
+          <div class="sk-row" style="width:58%;"></div>
+          <div class="sk-row" style="width:71%;"></div>
+          <div class="sk-row" style="width:80%;"></div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- demo 预览工具条（非产品界面） -->
+<div class="dock">
+  <span class="lbl">demo 场景</span>
+  <button data-scene-btn="main" class="on">主态</button>
+  <button data-scene-btn="empty">空态·干净</button>
+  <button data-scene-btn="loading">加载</button>
+  <button data-scene-btn="error">扫描失败</button>
+  <span class="lbl">│ 提示：点文件行看 diff · 列头下输入框即输即滤 · 组头/目录可折叠 · 列头切平铺 · 「切换仓库▾」开历史下拉 · 折叠左栏 · 拖窗缩放（最小 1200×720）</span>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var $=function(s){return document.querySelector(s);};
+  var $$=function(s){return Array.prototype.slice.call(document.querySelectorAll(s));};
+
+  /* ===== 场景切换（demo 工具） ===== */
+  function setScene(sc){
+    document.body.setAttribute('data-scene',sc);
+    $$('[data-scene-btn]').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-scene-btn')===sc);});
+  }
+  $$('[data-scene-btn]').forEach(function(b){b.addEventListener('click',function(){setScene(b.getAttribute('data-scene-btn'));});});
+
+  /* ===== diff 数据（demo 假数据） ===== */
+  var esc=function(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');};
+  function hunkHead(txt){return '<div class="hunk"><span class="harrow" data-hunk-toggle>▸</span>'+esc(txt)+'</div>';}
+  function ctx(o,n,t){return '<div class="dline"><span class="sig"></span><span class="ln old">'+o+'</span><span class="ln new">'+n+'</span><span class="code">'+esc(t)+'</span></div>';}
+  function del(o,t){return '<div class="dline del"><span class="sig"></span><span class="ln old">'+o+'</span><span class="ln new"></span><span class="code">'+esc(t)+'</span></div>';}
+  function add(n,t){return '<div class="dline add"><span class="sig"></span><span class="ln old"></span><span class="ln new">'+n+'</span><span class="code">'+esc(t)+'</span></div>';}
+
+  var FILES={
+    'main.cpp':{badge:'M',path:'src/main.cpp',stat:'+36 −4',rename:null,
+      diff:function(){
+        var h1=[hunkHead('@@ -12,7 +12,9 @@ #include 段'),
+          ctx(12,12,'#include "core/router.h"'),
+          del(13,'#include "legacy/status_bar.h"'),
+          add(13,'#include "ui/status_chip.h"'),
+          add(14,'#include "ui/theme_bridge.h"'),
+          ctx(14,15,''),
+          ctx(15,16,'namespace devdesk {'),];
+        var h2=[hunkHead('@@ -48,6 +50,7 @@ GitPage::onStatusReady'),
+          ctx(48,50,'void GitPage::onStatusReady() {'),
+          add(51,'    m_model->rebuildGroups(staged, unstaged);'),
+          ctx(49,52,'    m_list->refresh();'),
+          del(50,'    m_tree->reloadAll();'),
+          ctx(51,53,'}'),
+          ctx(52,54,''),];
+        return h1.concat(['<div class="hunk-body"><div>'],h2,['</div></div>']);
+      }},
+    'diff_view.cpp':{badge:'M',path:'src/utils/diff_view.cpp',stat:'+12 −2',rename:null,
+      diff:function(){return [hunkHead('@@ -31,6 +31,16 @@ DiffView::renderRow'),
+        ctx(31,31,'Row DiffView::renderRow(const Line& l) {'),
+        add(32,'    if (l.kind == LineKind::Hunk)'),
+        add(33,'        return makeFoldBar(l);'),
+        ctx(32,34,'    Row r;'),
+        del(33,'    r.oldNo = l.oldNo;'),
+        add(34,'    r.oldNo = l.oldNo.value_or(0);'),
+        add(35,'    r.newNo = l.newNo.value_or(0);'),
+        ctx(34,36,'    return r;'),];}},
+    'status.cpp':{badge:'M',path:'src/repo/status.cpp',stat:'+8 −8',rename:null,
+      diff:function(){return [hunkHead('@@ -88,9 +88,9 @@ StatusRepo::scan'),
+        ctx(88,88,'    for (auto& e : entries) {'),
+        del(89,'        if (e.staged) staged_.push_back(e);'),
+        del(90,'        else unstaged_.push_back(e);'),
+        add(89,'        (e.staged ? staged_ : unstaged_).push_back(e);'),
+        add(90,'        if (e.untracked) markUntracked(e);'),
+        ctx(91,91,'    }'),];}},
+    'peer_frame_codec_registry_impl.cc':{badge:'M',path:'modules/net/transport/peer_frame_codec_registry_impl.cc',stat:'+2 −1',rename:null,
+      diff:function(){return [hunkHead('@@ -210,4 +210,5 @@ PeerFrameCodec::registerAll'),
+        ctx(210,210,'void PeerFrameCodec::registerAll(Registry& r) {'),
+        add(211,'    r.add<FrameCodecV2>();'),
+        del(212,'    r.add<FrameCodecLegacy>();'),
+        ctx(213,213,'}')];}},
+    'readme.md':{badge:'M',path:'readme.md',stat:'+3 −1',rename:null,
+      diff:function(){return [hunkHead('@@ -1,5 +1,7 @@ # DevDesk'),
+        ctx(1,1,'# DevDesk'),
+        add(2,''),
+        add(3,'> 2026-11-17：Git 管理器重设计落地。'),
+        del(4,'旧三栏查看器说明已废弃。'),
+        ctx(5,6,'## 构建'),];}},
+    '新文档.md':{badge:'U',path:'docs/新文档.md',stat:'+24 −0',rename:null,
+      diff:function(){var rows=[hunkHead('@@ -0,0 +1,6 @@')];
+        for(var i=1;i<=6;i++){rows.push(add(i,['# 设计笔记','',
+          '变更列表是唯一导航对象，','diff 是唯一内容终点。','','## 动线'][i-1]));}
+        return rows;}},
+    '笔记.md':{badge:'U',path:'docs/笔记.md',stat:'+9 −0',rename:null,
+      diff:function(){return [hunkHead('@@ -0,0 +1,4 @@'),
+        add(1,'## 未跟踪目录展开'),
+        add(2,'lazy 枚举，不递归；'),
+        add(3,'目录行点击不进 diff；'),
+        add(4,'>500 截断只报计数。')];}},
+    '损坏样本.bin':{badge:'D',path:'assets/损坏样本.bin',stat:null,rename:null,error:true},
+  };
+  var CONTENT={
+    'main.cpp':['#include "core/router.h"','#include "ui/status_chip.h"','','namespace devdesk {',
+      '// Git 页模块注册','void registerGitPage(Router& r) {','    r.add("git", makeGitPage());','}','','}'],
+    'diff_view.cpp':['Row DiffView::renderRow(const Line& l) {','    Row r;','    r.oldNo = l.oldNo.value_or(0);','    return r;','}'],
+    'status.cpp':['void StatusRepo::scan() {','    for (auto& e : entries) {','        (e.staged ? staged_ : unstaged_).push_back(e);','    }','}'],
+    'peer_frame_codec_registry_impl.cc':['void PeerFrameCodec::registerAll(Registry& r) {','    r.add<FrameCodecV2>();','}'],
+    'readme.md':['# DevDesk','','> 2026-11-17：Git 管理器重设计落地。','## 构建'],
+  };
+
+  /* ===== 列表交互 ===== */
+  var selectedFile=null;
+  var listBody=$('#listBody');
+
+  // 组头折叠
+  $$('.group-head').forEach(function(h){
+    h.addEventListener('click',function(){
+      var wrap=document.getElementById(h.getAttribute('data-group')==='staged'?'groupStaged':
+        h.getAttribute('data-group')==='unstaged'?'groupUnstaged':
+        h.getAttribute('data-group')==='staged-f'?'groupStagedF':'groupUnstagedF');
+      h.classList.toggle('folded');
+      wrap.classList.toggle('folded');
+    });
+  });
+
+  // 目录展开/收起（含 untracked lazy 演示；树/平铺两形态同构，§4.7）
+  $$('[data-dir]').forEach(function(d){
+    var children=d.nextElementSibling;
+    d.addEventListener('click',function(){
+      var opening=!d.classList.contains('open');
+      d.querySelector('.arrow').textContent=opening?'▾':'▸';
+      d.querySelector('use').setAttribute('href',opening?'#i-folder-open':'#i-folder');
+      if(opening && d.hasAttribute('data-untracked') && (!children.firstElementChild || children.firstElementChild.childElementCount===0)){
+        // 嵌套 lazy 枚举演示：加载行 → 子行（真实实现=filesystem 逐层枚举，D3-A POC 前置；
+        // 裁决④：lazy 边界只在嵌套层，顶层 untracked 条目已自动枚举并入派生）
+        children.classList.add('open');
+        children.firstElementChild.innerHTML='<div class="load-row"><span class="spin"></span><span class="t">正在读取…</span></div>';
+        setTimeout(function(){
+          children.firstElementChild.innerHTML=
+            '<div class="file-row" data-file="方案.md" data-full="docs/notes/方案.md" style="padding-left:44px;" title="docs/notes/方案.md"><span class="badge U">U</span><span class="fname">方案.md</span><span class="fpath">docs/notes/</span></div>'+
+            '<div class="dir-more">还有 1 个文件</div>';
+          bindFileRows();
+          syncSelection();
+          if($('#filterInput').value.trim())applyFilter(); // 展开后子行即时参与过滤（§6.9）
+        },800);
+      }else{
+        children.classList.toggle('open',opening);
+      }
+    });
+  });
+
+  // 文件行点击（主动线 §6.1）
+  function bindFileRows(){
+    $$('[data-file]').forEach(function(r){
+      if(r._bound)return; r._bound=true;
+      r.addEventListener('click',function(){selectFile(r.getAttribute('data-file'),r);});
+    });
+  }
+  function syncSelection(){
+    $$('[data-file]').forEach(function(r){
+      r.classList.toggle('selected',r.getAttribute('data-file')===selectedFile);
+    });
+  }
+
+  /* ===== 列表过滤（§4.9/§6.9 need:299：全路径子串大小写不敏感；树=祖先链自动展开，平铺=组隐藏）===== */
+  var filterInput=$('#filterInput'),filterBox=$('#filterBox'),filterClear=$('#filterClear'),filterEmpty=$('#filterEmpty');
+  var composing=false,dirSnap=null,headSnap=null;
+
+  function applyFilter(){
+    var q=filterInput.value.trim().toLowerCase();
+    var filtering=q.length>0;
+    listBody.classList.toggle('filtering',filtering);
+    filterBox.classList.toggle('has-input',filtering);
+    if(filtering&&!dirSnap){
+      // 首次过滤前快照展开位图与组头文案（清空恢复，§4.9）
+      dirSnap=$$('.dir-row').map(function(d){
+        return {d:d,open:d.classList.contains('open'),
+          kidsOpen:d.nextElementSibling?d.nextElementSibling.classList.contains('open'):false,
+          arrow:d.querySelector('.arrow')?d.querySelector('.arrow').textContent:'▸'};
+      });
+      headSnap=$$('.group-head .gname').map(function(g){return [g,g.textContent];});
+    }
+    var vis={tree:0,flat:0};
+    ['tree','flat'].forEach(function(key){
+      var view=listBody.querySelector('.view-'+key);
+      if(!view)return;
+      var v=0;
+      // 文件行：全路径子串匹配
+      $$('.view-'+key+' .file-row').forEach(function(r){
+        var full=(r.getAttribute('data-full')||r.getAttribute('data-file')||'').toLowerCase();
+        var show=!filtering||full.indexOf(q)>=0;
+        r.style.display=show?'':'none';
+        if(show)v++;
+      });
+      // 目录行：自底向上=有可见后代保留（祖先链）；untracked 目录自身路径命中也保留
+      var dirs=$$('.view-'+key+' .dir-row');
+      var vd=0; // 目录可见数（空态判定=文件行+目录行合并，§4.9）
+      for(var i=dirs.length-1;i>=0;i--){
+        var d=dirs[i],kids=d.nextElementSibling;
+        var kidVis=kids?$$('.view-'+key+' .file-row').filter(function(r){return kids.contains(r)&&r.style.display!=='none';}).length:0;
+        var selfFull=(d.getAttribute('data-full')||'').toLowerCase();
+        var show=!filtering||kidVis>0||(d.hasAttribute('data-untracked')&&selfFull.indexOf(q)>=0);
+        d.style.display=show?'':'none';
+        if(filtering&&show)vd++;
+        if(filtering&&show&&kidVis>0){
+          // 过滤态自动临时展开（清空恢复原位图）
+          d.classList.add('open');
+          if(kids)kids.classList.add('open');
+          var ar=d.querySelector('.arrow');if(ar)ar.textContent='▾';
+          var ic=d.querySelector('use');if(ic)ic.setAttribute('href','#i-folder-open');
+        }
+      }
+      vis[key]=v+vd;
+    });
+      // 组头：计数=文件行数（文件夹原则令：目录行不计）；组隐藏判定=可见行集
+      //（§4.9：lazy 目录自身路径命中时行集非空不报无匹配——计数显 0 但组保留）
+      [['groupStaged','tree'],['groupStagedF','flat'],['groupUnstaged','tree'],['groupUnstagedF','flat']].forEach(function(pair){
+        var wrap=document.getElementById(pair[0]);if(!wrap)return;
+        var head=wrap.previousElementSibling;
+        var g=$$('.view-'+pair[1]+' .file-row').filter(function(r){return wrap.contains(r)&&r.style.display!=='none';}).length;
+        var dirVisible=$$('.view-'+pair[1]+' .dir-row').some(function(d){return wrap.contains(d)&&d.style.display!=='none';});
+        var gname=head.querySelector('.gname');
+        if(filtering){
+          gname.textContent=gname.textContent.replace(/\(\d+\)/,'('+g+')');
+          var hide=(g===0&&!dirVisible);
+          head.style.display=hide?'none':'';
+          wrap.style.display=hide?'none':'';
+        }else{
+          head.style.display='';wrap.style.display='';
+        }
+      });
+    // 无匹配空态（§4.8；仅作用当前形态视图）
+    var active=listBody.classList.contains('flat')?'flat':'tree';
+    filterEmpty.classList.toggle('show',filtering&&vis[active]===0);
+  }
+  function clearFilter(){
+    filterInput.value='';
+    applyFilter();
+    if(dirSnap){dirSnap.forEach(function(s){
+      s.d.classList.toggle('open',s.open);
+      if(s.d.nextElementSibling)s.d.nextElementSibling.classList.toggle('open',s.kidsOpen);
+      var ar=s.d.querySelector('.arrow');if(ar)ar.textContent=s.arrow;
+      var ic=s.d.querySelector('use');if(ic)ic.setAttribute('href',s.open?'#i-folder-open':'#i-folder');
+    });dirSnap=null;}
+    if(headSnap){headSnap.forEach(function(p){p[0].textContent=p[1];});headSnap=null;}
+    $$('.dir-row').forEach(function(d){d.style.display='';});
+    $$('.file-row').forEach(function(r){r.style.display='';});
+    $$('.group-head').forEach(function(h){h.style.display='';});
+    $$('.group-wrap').forEach(function(w){w.style.display='';});
+    filterEmpty.classList.remove('show');
+  }
+  filterInput.addEventListener('compositionstart',function(){composing=true;});
+  filterInput.addEventListener('compositionend',function(){composing=false;applyFilter();});
+  filterInput.addEventListener('input',function(){if(composing)return;applyFilter();});
+  filterInput.addEventListener('keydown',function(e){
+    if(e.key==='Escape'){clearFilter();e.stopPropagation();e.preventDefault();} // Esc=清空（§6.9，不冒泡）
+  });
+  filterClear.addEventListener('click',function(e){
+    e.stopPropagation();clearFilter();filterInput.focus(); // ×=清空+恢复+焦点回输入框
+  });
+
+  /* ===== 右栏渲染 ===== */
+  function showPane(id){
+    ['paneNone','paneDiff','paneContent'].forEach(function(p){
+      document.getElementById(p).style.display=(p===id)?'flex':'none';
+    });
+    $('#diffHead').style.visibility=(id==='paneNone')?'hidden':'visible';
+  }
+  function fadePane(el){
+    el.style.animation='none';void el.offsetWidth;
+    el.style.animation='fadein 120ms cubic-bezier(0,0,0.2,1)';
+    el.addEventListener('animationend',function h(){el.style.animation='none';el.removeEventListener('animationend',h);});
+  }
+
+  function selectFile(f,row){
+    selectedFile=f; syncSelection();
+    if(row) row.scrollIntoView({block:'nearest'});
+    var d=FILES[f];
+    if(!d)return;
+    var head=$('#diffHead');
+    $('#dhBadge').className='badge '+d.badge; $('#dhBadge').textContent=d.badge;
+    $('#dhPath').textContent=d.path; $('#dhPath').title=d.path;
+    $('#dhStat').style.display=d.stat?'':'none';
+    if(d.stat) $('#dhStat').innerHTML='<span class="add">'+d.stat.split(' ')[0]+'</span>&nbsp;<span class="del">'+d.stat.split(' ')[1]+'</span>';
+    fadePane(head);
+    openTab(currentTab,true);
+  }
+
+  var currentTab='diff';
+  function openTab(tab,force){
+    if(tab===currentTab&&!force)return;
+    currentTab=tab;
+    $('#tabDiff').classList.toggle('on',tab==='diff');
+    $('#tabContent').classList.toggle('on',tab==='content');
+    var f=FILES[selectedFile];
+    if(!f){showPane('paneNone');return;}
+    if(f.error){
+      // diff/读失败错误态（§5.6，禁静默空）
+      $('#paneDiff').innerHTML=$('#paneContent').innerHTML=
+        '<div class="pane-center pane-error"><svg><use href="#i-warn"/></svg>'+
+        '<div class="t1">'+(tab==='diff'?'无法加载差异':'无法读取文件')+'</div>'+
+        '<div class="t2">二进制/已删除内容不可读（错误码 -22）</div>'+
+        '<button class="btn sm" style="margin-top:4px;"><svg><use href="#i-refresh"/></svg>重试</button></div>';
+      showPane(tab==='diff'?'paneDiff':'paneContent'); return;
+    }
+    if(tab==='diff'){
+      var html=f.diff();
+      $('#paneDiff').innerHTML=html; showPane('paneDiff'); fadePane($('#paneDiff'));
+      bindHunks();
+    }else{
+      var lines=CONTENT[f.path.split('/').pop()]||CONTENT[Object.keys(CONTENT).find(function(k){return f.path.indexOf(k)>=0;})]||['（内容预览）'];
+      $('#paneContent').innerHTML=lines.map(function(l,i){
+        return '<div class="cline"><span class="n">'+(i+1)+'</span><span class="c">'+esc(l)+'</span></div>';
+      }).join('');
+      showPane('paneContent'); fadePane($('#paneContent'));
+    }
+  }
+  $('#tabDiff').addEventListener('click',function(){openTab('diff');});
+  $('#tabContent').addEventListener('click',function(){openTab('content');});
+
+  // hunk 折叠（§5.3）
+  function bindHunks(){
+    $$('#paneDiff [data-hunk-toggle]').forEach(function(a){
+      a.addEventListener('click',function(){
+        var body=a.parentElement.nextElementSibling;
+        var folded=body.classList.toggle('folded');
+        a.textContent=folded?'▾':'▸';
+        if(folded){
+          var bar=document.createElement('div');
+          bar.className='hunk-foldbar';
+          bar.textContent='⋯ 已折叠 N 行 · 点击展开';
+          bar.addEventListener('click',function(){
+            body.classList.remove('folded'); bar.remove(); a.textContent='▸';
+          });
+          body.parentElement.insertBefore(bar,body);
+        }else{
+          var b=body.parentElement.querySelector('.hunk-foldbar');
+          if(b)b.remove();
+        }
+      });
+    });
+  }
+
+  /* ===== 树/平铺切换（§6.3；过滤词保留重应用 §4.9）===== */
+  $('#btnTree').addEventListener('click',function(){
+    listBody.classList.remove('flat');
+    $('#btnTree').classList.add('on'); $('#btnFlat').classList.remove('on'); syncSelection();
+    if(filterInput.value.trim())applyFilter();
+  });
+  $('#btnFlat').addEventListener('click',function(){
+    listBody.classList.add('flat');
+    $('#btnFlat').classList.add('on'); $('#btnTree').classList.remove('on'); syncSelection();
+    if(filterInput.value.trim())applyFilter();
+  });
+
+  /* ===== 左栏折叠（§6.5）===== */
+  $('#btnCollapse').addEventListener('click',function(){$('#app').classList.add('collapsed');});
+  $('#btnExpand').addEventListener('click',function(){$('#app').classList.remove('collapsed');});
+
+  /* ===== 切换仓库历史下拉（§3.1/§6.10 need:299）===== */
+  var repoPop=$('#repoPop'),btnSwitch=$('#btnSwitch'),rmList=$('#rmList');
+  function closeRepo(){repoPop.classList.remove('open');btnSwitch.classList.remove('on');}
+  function repoOvCheck(){repoPop.classList.toggle('has-ov',rmList.scrollHeight>rmList.clientHeight);}
+  btnSwitch.addEventListener('click',function(e){
+    e.stopPropagation();
+    repoPop.classList.toggle('open');
+    btnSwitch.classList.toggle('on',repoPop.classList.contains('open')); // 激活底
+    repoOvCheck();
+  });
+  document.addEventListener('mousedown',function(e){
+    if(repoPop.classList.contains('open')&&!repoPop.contains(e.target)&&!btnSwitch.contains(e.target))closeRepo(); // scrim=外点收起
+  });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&repoPop.classList.contains('open')){closeRepo();e.preventDefault();} // Esc=收起
+  });
+  $$('.rm-row').forEach(function(r){
+    r.addEventListener('click',function(){
+      if(r.hasAttribute('data-current')){closeRepo();return;} // 当前仓=幂等不重载
+      if(r.classList.contains('rm-stale')){
+        // 失效仓=尝试重开失败走 N1 错误块（demo 复用错误场景表意）
+        closeRepo();setScene('error');return;
+      }
+      // 切换成功：顶栏更新+当前仓 ✓ 转移（demo 简化：列表刷新加载态省略）
+      $('.repo-name').textContent=r.getAttribute('data-name');
+      var p=$('.repo-path');p.textContent=r.getAttribute('data-path');p.title=r.getAttribute('data-path');
+      $$('.rm-row').forEach(function(x){x.removeAttribute('data-current');});
+      r.setAttribute('data-current','');
+      closeRepo();
+    });
+  });
+  $('#rmBrowse').addEventListener('click',function(){
+    closeRepo(); // 浏览目录=收起后开系统目录选择器（平台 API，实现侧）
+  });
+
+  /* ===== 刷新示意（§6.7 角标略，旋转态）===== */
+  var refreshing=false;
+  $('#btnRefresh').addEventListener('click',function(){
+    if(refreshing)return; refreshing=true;
+    var b=$('#btnRefresh'); b.disabled=true; b.classList.add('spin');
+    setTimeout(function(){b.disabled=false;b.classList.remove('spin');refreshing=false;},1200);
+  });
+
+  bindFileRows();
+
+  // demo 首屏初始化：展开 src 与 utils 目录并选中 main.cpp，直接呈现 diff 主视图（仅 demo 表达需要）
+  (function initFirst(){
+    var dirs=document.querySelectorAll('.view-tree .dir-row');
+    if(dirs[0])dirs[0].click();
+    setTimeout(function(){
+      var utilsRow=document.querySelector('#groupStaged .dir-row');
+      if(utilsRow)utilsRow.click();
+      var m=document.querySelector('.view-tree .file-row[data-file="main.cpp"]');
+      if(m)m.click();
+    },260);
+  })();
+})();
+</script>
+</body>
+</html>

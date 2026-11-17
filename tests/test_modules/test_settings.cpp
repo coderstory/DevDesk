@@ -1693,7 +1693,8 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（显式关）；档位单值同步写 core
+    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（窗口效果实验线全量撤回
+    // 后的原始口径：视觉由 clearColor alpha 决定；accent 路线已不存在）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(app::currentClearColor().a == 0.85f);

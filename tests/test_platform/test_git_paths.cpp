@@ -88,7 +88,14 @@ REGISTER_TEST(gitPathsDiffChineseLineContent, "中文+空格仓：diff 行内容
         Repo repo = std::move(openR.value());
         auto d = repo.diff(DiffBasis::WorkdirToHead, "说明 文档.txt");
         DOCTEST_CHECK(d.isOk());
-        DOCTEST_CHECK_EQ(d.value().patches.size(), 1u);
+        // bug281：size 断言带诊断——CI 红时直接给实际 size 与各 patch 形态（取证）
+        if (d.isOk()) {
+            std::ostringstream diag;
+            diag << "pathFilter diff patches=" << d.value().patches.size();
+            for (const auto& p : d.value().patches)
+                diag << " [" << p.newPath << (p.isUntracked ? "|U" : "") << "]";
+            DOCTEST_CHECK_MESSAGE(d.value().patches.size() == 1u, diag.str());
+        }
         DOCTEST_CHECK_EQ(d.value().patches[0].hunks.size(), 1u);
         bool hasPlus = false;
         for (const auto& line : d.value().patches[0].hunks[0].lines) {

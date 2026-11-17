@@ -59,6 +59,14 @@ fs::path claudeConfigFile() {
     return base / ".claude.json";
 }
 
+// need279：ZCode 全局配置。主目录取 HOME（同 platformDefaultAppDataDir 口径）；
+// 刻意不走 DEVDESK_DATA_ROOT / 覆盖 env——ZCode 按用户主目录定位，改了它读不到
+fs::path zcodeConfigFile() {
+    const char* home = std::getenv("HOME");
+    fs::path base(home ? home : "");
+    return base / ".zcode" / "cli" / "config.json";
+}
+
 fs::path claudeManagedSettingsFile() {
     return fs::path("/Library/Application Support/ClaudeCode/managed-settings.json");
 }

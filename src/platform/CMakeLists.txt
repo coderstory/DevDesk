@@ -151,6 +151,7 @@ target_include_directories(devdesk_platform PRIVATE
 # macOS Security.framework (Keychain) + CoreFoundation（APPLE 分支系统深浅检测
 # 实现读 NSGlobalDomain AppleInterfaceStyle 用；两者都只在 APPLE 分支链接）
 # CoreServices：file_watcher_macos.cpp 的 FSEvents（FSEventStreamCreate 等）
+# UniformTypeIdentifiers：file_association_macos.mm 的 UTType 类反查（12+ 路径）
 if(APPLE)
     # UNUserNotificationCenter 在 UserNotifications.framework；REQUIRED 让 SDK 缺框架时
     # configure 期直接失败，而不是链接期才报未定义符号。
@@ -162,6 +163,7 @@ if(APPLE)
         "-framework Security"
         "-framework CoreFoundation"
         "-framework CoreServices"
+        "-framework UniformTypeIdentifiers"
         ${USER_NOTIFICATIONS_FRAMEWORK}
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )

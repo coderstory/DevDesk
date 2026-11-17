@@ -8,6 +8,10 @@
 #include "core/logging.h"
 #include "git_views.h"
 
+#include <chrono>
+#include <utility>
+#include <vector>
+
 namespace module::git {
 
 GitModule::GitModule()

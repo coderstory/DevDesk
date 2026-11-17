@@ -14,6 +14,7 @@ namespace module::git {
 namespace {
 
 constexpr const char* kKeyRepoPath = "lastRepoPath";
+constexpr const char* kKeyRecentRepos = "recentRepos";
 
 // 小文件直读直写（json 封装只管字符串，无文件 IO 面——github_sync_config 同口径）
 std::string readFileOrEmpty(const std::filesystem::path& file, bool& ok) {
@@ -55,12 +56,21 @@ GitRepoMemory GitRepoStore::load() {
     if (obj.has(kKeyRepoPath) && obj.get(kKeyRepoPath).isString()) {
         out.lastRepoPath = obj.get(kKeyRepoPath).asString();
     }
+    if (obj.has(kKeyRecentRepos) && obj.get(kKeyRecentRepos).isArray()) {
+        const auto arr = obj.get(kKeyRecentRepos);
+        const int n = arr.size();
+        for (int i = 0; i < n && out.recentRepos.size() < kMaxRecentRepos; ++i) {
+            if (arr[i].isString()) out.recentRepos.push_back(arr[i].asString());
+        }
+    }
     return out;
 }
 
 core::Result<void> GitRepoStore::save(const GitRepoMemory& memory) {
     ::platform::json::JsonObject obj;
     obj.set(kKeyRepoPath, ::platform::json::makeString(memory.lastRepoPath));
+    obj.set(kKeyRecentRepos,
+            ::platform::json::makeStringArray(memory.recentRepos));
     auto text = ::platform::json::stringify(
         ::platform::json::JsonValue(obj), /*pretty=*/true);
     if (text.isFail()) {

@@ -137,6 +137,14 @@ int main(int argc, char* argv[]) {
     auto pump = [&](int frames) {
         for (int i = 0; i < frames; ++i) composeFrame();
     };
+    // 过渡收敛泵（bug285①，口径同 uat62/bug185）：点击导航若带过渡，固定 3 帧可能
+    // 断在过渡中段。≥24 帧且 isAnimating 归零（封顶 240 帧虚拟时）再断言。
+    auto pumpSettle = [&]() {
+        for (int f = 0; f < 240; ++f) {
+            composeFrame();
+            if (f + 1 >= 24 && !runtime.isAnimating()) break;
+        }
+    };
     auto shotAt = [&](const std::string& path) {
         std::vector<unsigned char> rgba;
         int pw = 0, ph = 0;
@@ -148,11 +156,38 @@ int main(int argc, char* argv[]) {
         std::cout << "shot " << path << " " << pw << "x" << ph << "\n";
         return true;
     };
-    // 真点击（命中区中心，坐标取当帧 DOM frame）→ 排队后 compose 消费
+    // 真点击（bug285① 可见区保真版）：点击点=frame 中心，但半可见行（滚动视口
+    // 裁掉一部分的行）的中心可能落在滚动根 clip 外——EUI hitTestElement 对 clip
+    // 外子树整体拒绝（runtime_input.h contains 判定），这是正确的滚动列表语义
+    // 而非缺陷。bug285① 根因：1d4f55f6 wallpaper 入册 +1 行后，首页态侧栏 nav
+    // 内容高（617）首次超过钳窗后视口高（541.9，探针 1200x1000 请求被工作区钳
+    // 到 ~726 逻辑高），Settings 行成半可见行，探针点中心 y=681 落在不可见半区
+    // → 命中管线返回空 → onClick 从未触发。修法=点击点自校验：
+    // hitTestInteractiveAt 不回指本元素时，在 frame 内自上而下扫描真实可命中点
+    //（=用户肉眼可见可点区域，滚动列表上半可见即点上半），全找不到才回退中心
+    // 并如实 DIAG。断言本身零改动。
     auto clickElement = [&](const core::dsl::Element& element) {
-        probe::click(window, runtime,
-                     static_cast<double>(element.frame.x + element.frame.width * 0.5f),
-                     static_cast<double>(element.frame.y + element.frame.height * 0.5f));
+        double cx = element.frame.x + element.frame.width * 0.5f;
+        double cy = element.frame.y + element.frame.height * 0.5f;
+        const std::string expect = element.id;
+        if (runtime.hitTestInteractiveAt(cx, cy, 1.0f) != expect) {
+            bool found = false;
+            for (float t = 0.12f; t <= 0.88f && !found; t += 0.08f) {
+                const double ty = element.frame.y + element.frame.height * t;
+                for (float s = 0.12f; s <= 0.88f; s += 0.08f) {
+                    const double tx = element.frame.x + element.frame.width * s;
+                    if (runtime.hitTestInteractiveAt(tx, ty, 1.0f) == expect) {
+                        cx = tx;
+                        cy = ty;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            std::cout << "DIAG click-point visible-region adjust (" << cx << ","
+                      << cy << ") found=" << found << "\n";
+        }
+        probe::click(window, runtime, cx, cy);
     };
 
     bool passed = true;
@@ -172,8 +207,12 @@ int main(int argc, char* argv[]) {
 
     // 链路1：侧栏页切换（真点击 Settings 条目）
     if (const auto* item = ui->find("app.sidebar.item.Settings.hit")) {
+        std::cout << "DIAG page before=" <<
+            static_cast<int>(router.currentPage()) << "\n";
         clickElement(*item);
-        pump(3);
+        pumpSettle();
+        std::cout << "DIAG page after=" <<
+            static_cast<int>(router.currentPage()) << "\n";
     }
     check(ui != nullptr && ui->find("settings.tabs.wrap") != nullptr,
           "链路1 真点击侧栏 Settings：设置页应当帧入 DOM（点击响应）");
@@ -187,7 +226,7 @@ int main(int argc, char* argv[]) {
     if (const auto* tab = ui->find("settings.tabs.1.hit")) {
         dumpElement(*ui, "settings.tabs.1.hit");
         clickElement(*tab);
-        pump(3);
+        pumpSettle();
     }
     const int cardsAfter =
         ui != nullptr ? countIdPrefix(*ui, "app.settings.card.") : -1;
@@ -206,7 +245,7 @@ int main(int argc, char* argv[]) {
     // 链路3：侧栏返回首页（真点击 Home 条目 → 设置页内容当帧退出）
     if (const auto* home = ui->find("app.sidebar.item.Home.hit")) {
         clickElement(*home);
-        pump(3);
+        pumpSettle();
     }
     check(ui != nullptr && ui->find("settings.tabs.wrap") == nullptr,
           "链路3 真点击侧栏 Home：应返回首页（设置页内容退出 DOM）");

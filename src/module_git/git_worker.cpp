@@ -29,6 +29,13 @@ void GitWorker::stop() {
     cv_.notify_all();  // 唤醒 run() 的 wait（pred 见 stop_，即退）
     if (thread_.joinable()) thread_.join();
     started_ = false;
+    // 关闭缓存仓库句柄（bug285②）：join 只保证线程停，不释放已 open 的 Repo。
+    // GitModule::onStop 尾部 libgit2Scope_.reset()（git_libgit2_shutdown 引用计数
+    // 归零）先于本类析构——不先关仓库，git_repository_free 会落在 shutdown 之后，
+    // 触碰已拆毁的 mwindow 全局态 → teardown SEGV（uat62 全页截图探针实测崩：
+    // pack_backend__free → git_mwindow_put_pack → 已销毁 CRITICAL_SECTION）。
+    cached_.reset();
+    cachedPath_.clear();
 }
 
 void GitWorker::post(RawJob job) {
