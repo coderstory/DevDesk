@@ -1550,13 +1550,11 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) <
                   ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent));
 
-    // backdrop 请求：off 显式关（None），translucent→Transparent（bug266：24H2
-    // accent 路线需要档位区分「半透=透见无模糊」与「off=实色」，语义即枚举本义），
-    // frosted→Mica（UAT6：Acrylic→Mica，主窗材质，DWMSBT_MAINWINDOW——「磨砂底色
-    // 变灰」真机回归锚点，另见 settings_window_effect_frosted_material 回归用例），
-    // 未知→None
+    // backdrop 请求：off/translucent 显式关（None），frosted→Mica（UAT6：Acrylic→
+    // Mica，主窗材质，DWMSBT_MAINWINDOW——「磨砂底色变灰」真机回归锚点，另见
+    // settings_window_effect_frosted_material 回归用例），未知→None
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
-    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::Transparent);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
     DOCTEST_CHECK(ms::windowEffectRequest("bogus") == WE::None);
     return true;
