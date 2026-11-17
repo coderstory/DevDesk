@@ -141,16 +141,26 @@ void GitTreeModel::rebuildChangesRows() {
     changesRows_.clear();
     changesRows_.reserve(statusByPath_.size());
     for (const auto& [path, kind] : statusByPath_) {
+        // 未跟踪目录条目路径带尾 '/'（libgit2 不开 RECURSE_UNTRACKED_DIRS：目录整体
+        // 一条）；裸 rfind('/'+1) 会取到空串 = 行无名字（bug280）。先剥尾斜杠归一
+        // relPath 再取末段，显示名补回 '/' 标识文件夹行（与中栏全路径口径一致）。
+        bool dirEntry = false;
+        std::string rel = path;
+        while (!rel.empty() && rel.back() == '/') {
+            rel.pop_back();
+            dirEntry = true;
+        }
         TreeRow row;
-        row.relPath = path;
-        row.name = path;
+        row.relPath = rel;
+        row.name = rel;
         row.depth = 0;
         row.kind = TreeRowKind::File;
         row.status = kind;
-        const auto slash = path.rfind('/');
+        const auto slash = rel.rfind('/');
         if (slash != std::string::npos) {
-            row.name = path.substr(slash + 1);
+            row.name = rel.substr(slash + 1);
         }
+        if (dirEntry) row.name += '/';
         const auto oldIt = renameOld_.find(path);
         if (oldIt != renameOld_.end()) row.oldPath = oldIt->second;
         changesRows_.push_back(std::move(row));

@@ -205,6 +205,7 @@ REGISTER_TEST(gitTreeChangesOnlyModeFromStatus, "仅修改模式：status 平铺
         dir = makeWalkRepo("chgmode");
         writeTextFile(dir / "a.txt", "hello\nchanged\n");  // modified（unstaged）
         writeTextFile(dir / "新增文件.txt", "new\n");       // untracked
+        writeTextFile(dir / "新目录" / "内文件.txt", "in\n");  // untracked 目录整体一条（尾斜杠）
 
         auto opened = Repo::open(dir);
         DOCTEST_REQUIRE(opened.isOk());
@@ -217,10 +218,11 @@ REGISTER_TEST(gitTreeChangesOnlyModeFromStatus, "仅修改模式：status 平铺
         model.setMode(GitTreeModel::Mode::ChangesOnly);
         model.applyStatus(snapshot.value());
         const auto rows = model.rows();
-        DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(3));
         for (const auto& r : rows) {
             DOCTEST_CHECK_EQ(r.depth, 0);  // 平铺无目录语义
             DOCTEST_CHECK(r.status.has_value());
+            DOCTEST_CHECK(!r.name.empty());  // bug280：尾斜杠目录条目不得出空名行
         }
         const TreeRow* mod = findRow(rows, "a.txt");
         DOCTEST_REQUIRE(mod != nullptr);
@@ -228,6 +230,14 @@ REGISTER_TEST(gitTreeChangesOnlyModeFromStatus, "仅修改模式：status 平铺
         const TreeRow* unt = findRow(rows, "新增文件.txt");
         DOCTEST_REQUIRE(unt != nullptr);
         if (unt != nullptr) DOCTEST_CHECK_EQ(*unt->status, StatusKind::Untracked);
+        // untracked 目录整体一条（libgit2 路径带尾 '/'）：relPath 归一不带斜杠，
+        // 显示名保留 '/' 区分文件夹行（bug280 回炉修复）
+        const TreeRow* dirRow = findRow(rows, "新目录");
+        DOCTEST_REQUIRE(dirRow != nullptr);
+        if (dirRow != nullptr) {
+            DOCTEST_CHECK_EQ(*dirRow->status, StatusKind::Untracked);
+            DOCTEST_CHECK_EQ(dirRow->name, "新目录/");
+        }
 
         // 切回全部文件模式：根层未 walk → 空行集（视图出骨架态，不炸）
         model.setMode(GitTreeModel::Mode::AllFiles);
