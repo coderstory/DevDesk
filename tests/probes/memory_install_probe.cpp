@@ -30,6 +30,9 @@
 
 #include "core/logging.h"
 #include "core/mcp_tool.h"
+// need317 审计 P1：key 通道 app_secrets 化后 saveLlmKeyToStore 走
+// core::appDatabase()——本探针须自开临时库注册（旧凭据通道不依赖库）。
+#include "test_support.h"  // ScopedAppDatabase / tempDbPath
 #include "module_mcp/mcp_service.h"
 #include "module_memory/collector/collector.h"
 #include "module_memory/engine/telemem_config.h"
@@ -337,6 +340,11 @@ int cmdKeyE2e(int argc, char* argv[]) {
         }
     }
     const std::string kFakeKey = "sk-e2e-fake-need256";
+    // need317 审计 P1：假 key 走真实 app_secrets 通道的前提=appDatabase 已注册。
+    // 开临时库（TestDb 构造即 migrate，tempDbPath 唯一随进程弃置），
+    // 作用域罩住整个 key-e2e 流程。
+    test_support::TestDb keyDb("need317-key-e2e", "probe");
+    const test_support::ScopedAppDatabase dbGuard(keyDb.handle());
     if (!engine::saveLlmKeyToStore(kFakeKey)) {
         std::cout << "[probe] FAIL 假 key 存 app_secrets 失败\n";
         g_fail++;
