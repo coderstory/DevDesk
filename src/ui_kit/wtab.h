@@ -17,11 +17,10 @@
 
 namespace ui_kit {
 
-// Tab 常量：2026-11-03 池167 全站放大档；2026-11-18 池167 D-9 复验提档：页面级
-// 主文字 15→18（老板口径 40 高/18 字号；高度 40 已全站统一无需动）。
-// scaled() 自动随缩放档；宽度侧（settings/wallpaper 量宽、wtabRow 文字宽）均以
-// 本常量为参，改值即自适应。
-constexpr float kWtabFontSize = 18.0f;         // 页面级 Tab 字号
+// Tab 常量：2026-11-03 池167 全站放大档；2026-11-18 池339 老板装机实测回调：
+// 字号 18→14.4（-20% 档；高度 40 不动）。scaled() 自动随缩放档；宽度侧
+// （settings/wallpaper 量宽、wtabRow 文字宽）均以本常量为参，改值即自适应。
+constexpr float kWtabFontSize = 14.4f;         // 页面级 Tab 字号
 constexpr float kWtabSmallFontSize = 14.0f;    // 弹窗级小 Tab 字号
 
 // 2026-11-01 统一：Tab 高度此前有 32 / 36 / 40 三档并存（memory 36、settings/md/
