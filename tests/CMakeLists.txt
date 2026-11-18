@@ -611,8 +611,10 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # memory_install_probe（need:159 qa 全链路实测驱动）：mcpserve 子命令要真
     # module::mcp::globalMcpService（HTTP MCP 服务），链接 devdesk_module_mcp
     # mcp_dialog_probe（bug180 两态对照）：McpPageModule + McpToolRegistry 真类型
+    # mcp_card_343_probe（need343 卡重排可视基线）：同上真类型
     if(_probe_name STREQUAL "memory_install_probe" OR
-       _probe_name STREQUAL "mcp_dialog_probe")
+       _probe_name STREQUAL "mcp_dialog_probe" OR
+       _probe_name STREQUAL "mcp_card_343_probe")
         target_link_libraries(${_probe_name} PRIVATE devdesk_module_mcp)
     endif()
     # git_page_probe（need:7 批次二）：fixture 仓用 git2 C API 直建（离线零 CLI）。

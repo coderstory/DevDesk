@@ -139,20 +139,27 @@ namespace {
 constexpr float kCardMinW = 340.0f;
 constexpr float kCardMaxW = 420.0f;
 constexpr int kCardMaxCols = 5;
-constexpr float kCardH = 120.0f;
+// need343「文本全左侧」：卡高 120→96（设计稿 §4.1，消 y=84 以下无信息空带）
+constexpr float kCardH = 96.0f;
 constexpr float kDialogW = 600.0f;
 // need279：480→516（+36 = 按钮行 32 + 行距 4）腾「安装到 ZCode」行——
 // ZCode 行落原 Claude 行位（h-52），Claude 行上移 h-88，结果区底缘随之下收
 constexpr float kDialogH = 516.0f;
 
-// 卡内横向常量
-constexpr float kCardPad = 16.0f;       // 卡内边距
-constexpr float kCardIcon = 40.0f;      // 图标位
-constexpr float kCardTextX = 68.0f;     // 文本列起点（图标右侧 12）
-constexpr float kStatusGap = 16.0f;     // 文本列右端 ↔ 状态列左端（F-01 判据 ≥16）
-constexpr float kChipW = 40.0f;         // 标签 chip 宽
+// 卡内布局常量（need343 设计稿 docs/design/2026-11-18-mcp-card-redesign.md §4
+// 全数值）：单左文本列（名称/状态行/描述一条左缘 x=16）+ 单右图标轨（仅图形
+// 零文本）。旧「图标左上顶文本列到 x=68 + 状态右上 + CTA 右下」四簇构图废除。
+constexpr float kCardPad = 16.0f;        // 左基线 = 卡内边距（§4.2）
+constexpr float kCardIcon = 40.0f;       // 右轨图标位（§4.4）
+constexpr float kCardTextTrack = 84.0f;  // 文本列宽 = 卡宽−84（左 16 + 右轨 56 + 缝 12）
+constexpr float kNameRowH = 22.0f;       // §2.3 行盒：16+22+4+18+4+16+16 = 96
+constexpr float kStatusRowY = 42.0f;     // 状态行顶（点+词+chips 同行）
+constexpr float kStatusRowH = 18.0f;
+constexpr float kDescRowY = 64.0f;       // 描述行顶（§4.2）
+constexpr float kDescRowH = 16.0f;
+constexpr float kChipW = 40.0f;          // 标签 chip 宽（§4.3）
 constexpr float kChipH = 18.0f;
-constexpr float kCtaW = 120.0f;         // hover CTA 宽（右对齐）
+constexpr float kArrowSize = 16.0f;      // hover 箭头纯图标（§4.4）
 
 // 工具卡图标：按名字族派发 FA7 Free-Solid 码点（抓取=globe / 服务信息=server /
 // 其余=cube）；码点均在 EUI-NEO 内置 FA7 整字体覆盖内。
@@ -415,15 +422,19 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
     const bool hovered = hoveredCards_.count(name) > 0;
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
 
-    // 2026-11-01 自适应列宽下的卡内布局（全部由 cardWidth 推导，不再写死坐标）：
-    //   [图标 40][文本列 …… 16px ……][● 状态]  ← 状态组右对齐
-    //   [内置][服务]                        [查看详情 ›]
+    // need343「文本全左侧」构图（设计稿 §2.2/§4）：文本列 x=16 单基线四层
+    //（名称/状态行/描述，chips 挂状态行内），右轨仅 40×40 图标 + hover 纯图标
+    // 箭头，右侧零文本；全部由 cardWidth 推导。
     const std::string statusText = serviceRunning ? "可用" : "未启用";
     const float statusTextW = ui_kit::cachedTextWidth(
         statusText, core::theme::scaled(11.0f), 400);
-    const float statusTextX = cardWidth - kCardPad - statusTextW;
-    const float statusDotX = statusTextX - 12.0f - 8.0f;
-    const float textW = std::max(0.0f, statusDotX - kCardTextX - kStatusGap);
+    const float textW = std::max(0.0f, cardWidth - kCardTextTrack);
+    // 状态行内部横排（§4.3）：点 8 + 点词距 6 + 词 + 词距 chip 12 + chip 40 +
+    // chip 距 6 + chip 40，定宽合计 ≤134 < 最小卡文本列 256。
+    const float statusTextX = kCardPad + 8.0f + 6.0f;
+    const float builtinChipX = statusTextX + statusTextW + 12.0f;
+    const float svcChipX = builtinChipX + kChipW + 6.0f;
+    const float iconX = cardWidth - kCardPad - kCardIcon;  // 右轨（§4.4）
 
     ui.stack(id)
         .size(cardWidth, kCardH)
@@ -436,7 +447,11 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
             // 实色块。此处取 §6-C 口径，§5.2-1 相应措辞已在规范文档修订。
             ui.rect(id + ".bg")
                 .size(cardWidth, kCardH)
-                .color(ui_kit::itemSurface(t))
+                // hover 底色 surface→hover 120ms ease-out（§4.6）：目标值每帧
+                // 随命中面换，claude_ui_list/schedule tint 同款 transition 通道
+                .color(hovered ? t.colors.hover : ui_kit::itemSurface(t))
+                .transition(core::Transition::make(0.12f, core::Ease::OutQuad))
+                .animate(core::AnimProperty::Color)
                 .radius(t.sizes.radiusLarge)
                 // 阴影几何与 md 玻璃壳 / agent 摘要卡同款（24 模糊 / 8 偏移），
                 // 色走 glassShadowColor（亮档冷绿黑，纯黑压绿白底会发灰）
@@ -445,15 +460,15 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .border(1.0f, ui_kit::glassBorder(t))
                 .build();
 
-            // 图标位：primarySoftBg 圆角底 + FA 码点
+            // 右轨图标位（§4.4 右上 卡宽−56,16）：primarySoftBg 圆角底 + FA 码点
             ui.rect(id + ".icon.bg")
-                .position(kCardPad, kCardPad)
+                .position(iconX, kCardPad)
                 .size(kCardIcon, kCardIcon)
                 .radius(t.sizes.radius)
                 .color(t.colors.primarySoftBg)
                 .build();
             ui.text(id + ".icon")
-                .position(kCardPad, kCardPad)
+                .position(iconX, kCardPad)
                 .size(kCardIcon, kCardIcon)
                 .icon(eui::utf8(toolIconGlyph(name)))
                 .fontSize(core::theme::scaled(16.0f))
@@ -462,19 +477,23 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
 
-            // 名称 + 单行描述（Ellipsis 只在 wrap(false)+maxWidth>0 生效）
+            // 名称（行盒 16..38，单行省略号 §4.2）+ 描述（行盒 64..80）——
+            // 同一条左缘 x=16（Ellipsis 只在 wrap(false)+maxWidth>0 生效）
             ui.text(id + ".name")
-                .position(kCardTextX, kCardPad)
-                .size(textW, core::theme::scaled(20.0f))
+                .position(kCardPad, kCardPad)
+                .size(textW, core::theme::scaled(kNameRowH))
                 .text(name)
                 .fontFamily("monospace")
                 .fontSize(core::theme::scaled(14.0f))
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
+                .maxWidth(textW)
+                .wrap(false)
+                .overflow(core::TextOverflow::Ellipsis)
                 .build();
             ui.text(id + ".desc")
-                .position(kCardTextX, kCardPad + 24.0f)
-                .size(textW, core::theme::scaled(16.0f))
+                .position(kCardPad, kDescRowY)
+                .size(textW, core::theme::scaled(kDescRowH))
                 .text(tool->description())
                 .fontSize(core::theme::scaled(12.0f))
                 .color(t.colors.textTertiary)
@@ -483,39 +502,38 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .overflow(core::TextOverflow::Ellipsis)
                 .build();
 
-            // 状态点 + 文案（右上；服务运行态只读反映）
-            // 2026-11-01 F-01：状态组整体右对齐，与描述列右端保持 ≥16px 间距
-            // （原固定 x=254、描述宽 178，间距只有 8px，长描述末尾的「…」与
-            //   「未启用」粘成一句话）。
+            // 状态行（文本列第二层 y=42：点+词+chips 同行左对齐；服务运行态
+            // 只读反映，开关在设置页）。点 8×8 全圆（§4.3 圆角 4，中心线 y=51）。
             ui.rect(id + ".status.dot")
-                .position(statusDotX, kCardPad + 4.0f)
+                .position(kCardPad, kStatusRowY + 5.0f)
                 .size(8.0f, 8.0f)
-                .radius(t.sizes.radiusSmall)
+                .radius(4.0f)  // 全圆；radiusSmall=6 非全圆
                 .color(serviceRunning ? t.colors.success : t.colors.textDisabled)
                 .build();
             ui.text(id + ".status.text")
-                .position(statusTextX, kCardPad + 14.0f)
-                .size(statusTextW, core::theme::scaled(14.0f))
+                .position(statusTextX, kStatusRowY)
+                .size(statusTextW, core::theme::scaled(kStatusRowH))
                 .text(statusText)
                 .fontSize(core::theme::scaled(11.0f))
                 // 状态词两档制=600（规范 §2.1；池235 收编：原先无 fontWeight
                 // 渲染 400，与 agent/schedule/claude 三页同语义 600 漂移）
                 .fontWeight(600)
                 .color(t.colors.textTertiary)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .build();
 
-            // 标签 chips：内置（primary 软底）/ 服务（中性灰底）
+            // 标签 chips（挂状态行内 y=42）：内置（primary 软底）/ 服务（中性灰底）
             // 2026-11-01 F-12/R6：服务 chip 原用 purple 软底 + purple 字——purple
             // 是用户可选的强调色槽位，借用为类别标签色会让微信绿白体系里凭空冒出
             // 唯一的紫色。改中性灰底 + 主色字。
             ui.rect(id + ".tag.builtin.bg")
-                .position(kCardPad, 84.0f)
+                .position(builtinChipX, kStatusRowY)
                 .size(kChipW, kChipH)
                 .radius(t.sizes.radiusPill)
                 .color(t.colors.primarySoftBg)
                 .build();
             ui.text(id + ".tag.builtin")
-                .position(kCardPad, 84.0f)
+                .position(builtinChipX, kStatusRowY)
                 .size(kChipW, kChipH)
                 .text("内置")
                 .fontSize(core::theme::scaled(11.0f))
@@ -523,15 +541,14 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
-            const float svcChipX = kCardPad + kChipW + 6.0f;
             ui.rect(id + ".tag.svc.bg")
-                .position(svcChipX, 84.0f)
+                .position(svcChipX, kStatusRowY)
                 .size(kChipW, kChipH)
                 .radius(t.sizes.radiusPill)
                 .color(t.colors.borderMuted)
                 .build();
             ui.text(id + ".tag.svc")
-                .position(svcChipX, 84.0f)
+                .position(svcChipX, kStatusRowY)
                 .size(kChipW, kChipH)
                 .text("服务")
                 .fontSize(core::theme::scaled(11.0f))
@@ -540,30 +557,20 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .verticalAlign(eui::VerticalAlign::Center)
                 .build();
 
-            // hover CTA：平时 opacity 0，onHover 浮现（app_sidebar 窗控钮先例的
-            // .states+onHover 通道）；整卡可点进详情。右对齐随卡宽自适应。
-            const float ctaX = cardWidth - kCardPad - kCtaW;
-            ui.row(id + ".cta")
-                .position(ctaX, 84.0f)
-                .size(kCtaW, kChipH)
-                .alignItems(eui::Align::CENTER)
-                .gap(4.0f)
+            // hover 箭头（§4.4 右下 卡宽−32,64，纯图标零文字）：默认透明度 0，
+            // 卡 hover 浮现 120ms ease-out（schedule tint 同款通道）。替换原
+            // 120px「查看详情」文字 CTA——右侧不再出现任何文字。
+            ui.text(id + ".cta")
+                .position(cardWidth - kCardPad - kArrowSize, kDescRowY)
+                .size(kArrowSize, kArrowSize)
+                .icon(0xF061)  // fa-arrow-right
+                .fontSize(core::theme::scaled(11.0f))
+                .color(t.colors.primaryText)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .opacity(hovered ? 1.0f : 0.0f)
-                .content([&] {
-                    ui.text(id + ".cta.label")
-                        .size(kCtaW - 18.0f, kChipH)
-                        .text("查看详情")
-                        .fontSize(core::theme::scaled(12.0f))
-                        .color(t.colors.primaryText)
-                        .horizontalAlign(eui::HorizontalAlign::Right)
-                        .build();
-                    ui.text(id + ".cta.arrow")
-                        .size(14.0f, kChipH)
-                        .icon(0xF061)  // fa-arrow-right
-                        .fontSize(core::theme::scaled(11.0f))
-                        .color(t.colors.primaryText)
-                        .build();
-                })
+                .transition(core::Transition::make(0.12f, core::Ease::OutCubic))
+                .animate(core::AnimProperty::Opacity)
                 .build();
 
             // 命中面：透明三态 + onHover/onClick（顶层，吃整卡点击）

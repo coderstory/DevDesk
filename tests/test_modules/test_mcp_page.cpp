@@ -247,24 +247,119 @@ REGISTER_TEST(mcp_page_grid_cards,
     return true;
 })
 
-// 防：F-01 描述列与状态列咬合——长描述末尾「…」与「未启用」粘连成一句。
-// 判据：描述行右端到状态圆点左端 ≥ 16px。
-REGISTER_TEST(mcp_page_desc_status_gap,
-              "mcp_page: 描述列右端与状态列左端间距 ≥16px，不咬合", {
+// ── need343「文本全左侧」结构断言 ──
+// 真值源 = 设计稿具名常量（docs/design/2026-11-18-mcp-card-redesign.md §4），
+// 断言引用常量名不写旧布位魔数（复盘机制②教训：布位迁移不破断言）。
+namespace mcpDesign {
+constexpr float kCardH = 96.0f;        // §4.1 卡高（原 120）
+constexpr float kTextX = 16.0f;        // §4.2 文本列单基线（卡内相对）
+constexpr float kNameY = 16.0f;        // §4.2 名称行盒顶
+constexpr float kStatusY = 42.0f;      // §4.2 状态行盒顶
+constexpr float kDescY = 64.0f;        // §4.2 描述行盒顶
+constexpr float kRightTrackW = 56.0f;  // §4.4 右轨宽（卡右缘到右轨外缘）
+constexpr float kIconSize = 40.0f;     // §4.4 图标位
+constexpr float kArrowSize = 16.0f;    // §4.4 hover 箭头
+constexpr float kDotSize = 8.0f;       // §4.3 状态点
+constexpr float kGapDotWord = 6.0f;    // §4.3 点↔词间距
+constexpr float kGapWordChip = 12.0f;  // §4.3 词↔chip 间距
+constexpr float kGapChipChip = 6.0f;   // §4.3 chip↔chip 间距
+constexpr float kEps = 0.5f;           // 浮点比较容差
+} // namespace mcpDesign
+
+// 防：need343 P3/P4 双左缘回潮——名称/描述/状态行行首必须同一条左缘 x=16
+//（状态词与双 chip 在状态行内按 §4.3 间距右链，不另起基线），行序与行盒顶 =
+// 设计稿 §4.2（名称 16 / 状态 42 / 描述 64），卡高 96。
+REGISTER_TEST(mcp_page_card_text_all_left,
+              "mcp_page: need343 文本列单基线——名称/描述/状态行首同 x=16、行盒顶 16/42/64、卡高 96", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
     McpPageModule mod(reg);
     const eui::Screen screen = makeScreen();
     eui::Ui ui;
-    composeFrame(mod, ui, screen, "mcp_gap");
+    composeFrame(mod, ui, screen, "mcp_left_1");
 
+    const auto* card = ui.find("mcp.card.test_alpha_tool");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_CHECK_EQ(card->height.value, mcpDesign::kCardH);
+    const auto* nameEl = ui.find("mcp.card.test_alpha_tool.name");
+    const auto* word = ui.find("mcp.card.test_alpha_tool.status.text");
+    const auto* chipB = ui.find("mcp.card.test_alpha_tool.tag.builtin");
+    const auto* chipS = ui.find("mcp.card.test_alpha_tool.tag.svc");
     const auto* desc = ui.find("mcp.card.test_alpha_tool.desc");
-    const auto* dot = ui.find("mcp.card.test_alpha_tool.status.dot");
+    DOCTEST_REQUIRE(nameEl != nullptr);
+    DOCTEST_REQUIRE(word != nullptr);
+    DOCTEST_REQUIRE(chipB != nullptr);
+    DOCTEST_REQUIRE(chipS != nullptr);
     DOCTEST_REQUIRE(desc != nullptr);
+    // 单基线（§4.2/§4.3）：名称/描述左缘 = 卡左缘+16；状态行行首=点 x+16，
+    // 词与双 chip 按 §4.3 间距右链（不另起左缘）。（frame 为窗口绝对坐标）
+    const float baseX = card->frame.x + mcpDesign::kTextX;
+    const auto* dot = ui.find("mcp.card.test_alpha_tool.status.dot");
     DOCTEST_REQUIRE(dot != nullptr);
-    const float descRight = desc->frame.x + desc->frame.width;
-    DOCTEST_CHECK((dot->frame.x - descRight >= 16.0f));
+    DOCTEST_CHECK(std::fabs(nameEl->frame.x - baseX) < mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(desc->frame.x - baseX) < mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(dot->frame.x - baseX) < mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(word->frame.x -
+                            (baseX + mcpDesign::kDotSize + mcpDesign::kGapDotWord)) <
+                  mcpDesign::kEps);
+    const float wordRight = word->frame.x + word->frame.width;
+    DOCTEST_CHECK(std::fabs(chipB->frame.x - (wordRight + mcpDesign::kGapWordChip)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(chipS->frame.x -
+                            (chipB->frame.x + chipB->frame.width +
+                             mcpDesign::kGapChipChip)) < mcpDesign::kEps);
+    // 行序钉板：名称 16 / 状态行（词+chips）42 / 描述 64（相对卡顶）
+    DOCTEST_CHECK(std::fabs(nameEl->frame.y - (card->frame.y + mcpDesign::kNameY)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(word->frame.y - (card->frame.y + mcpDesign::kStatusY)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(chipB->frame.y - (card->frame.y + mcpDesign::kStatusY)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(desc->frame.y - (card->frame.y + mcpDesign::kDescY)) <
+                  mcpDesign::kEps);
+    // 名称单行省略号（§4.2 溢出规则；长名不折行不撑高）
+    DOCTEST_CHECK_EQ(nameEl->overflow, core::TextOverflow::Ellipsis);
+    return true;
+})
+
+// 防：need343 P1/P2 右侧文本回潮——右轨只能有图标底/图标字形/hover 纯图标
+// 箭头；旧「查看详情」文字 CTA 节点必须消失，右侧不出现任何文字。
+REGISTER_TEST(mcp_page_card_right_track_icon_only,
+              "mcp_page: need343 右轨零文本——图标 40×40 在右上(卡宽−56,16)、hover 箭头纯图标右下(卡宽−32,64)、旧文字 CTA 消失", {
+    core::mcp::McpToolRegistry reg;
+    std::shared_ptr<FakeTool> alpha, beta;
+    seedTwoTools(reg, alpha, beta);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_rtrack_1");
+
+    const auto* card = ui.find("mcp.card.test_alpha_tool");
+    DOCTEST_REQUIRE(card != nullptr);
+    const float cardW = card->width.value;
+    const auto* iconBg = ui.find("mcp.card.test_alpha_tool.icon.bg");
+    const auto* arrow = ui.find("mcp.card.test_alpha_tool.cta");
+    DOCTEST_REQUIRE(iconBg != nullptr);
+    DOCTEST_REQUIRE(arrow != nullptr);
+    // 图标：右上 (卡宽−56, 16) 40×40（§4.4）
+    DOCTEST_CHECK(std::fabs(iconBg->frame.x -
+                            (card->frame.x + cardW - mcpDesign::kRightTrackW)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(iconBg->frame.y - (card->frame.y + mcpDesign::kTextX)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(iconBg->frame.width - mcpDesign::kIconSize) <
+                  mcpDesign::kEps);
+    // hover 箭头：右下 (卡宽−32, 64) 16×16（§4.4）
+    DOCTEST_CHECK(std::fabs(arrow->frame.x -
+                            (card->frame.x + cardW - mcpDesign::kArrowSize -
+                             mcpDesign::kTextX)) < mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(arrow->frame.y - (card->frame.y + mcpDesign::kDescY)) <
+                  mcpDesign::kEps);
+    DOCTEST_CHECK(std::fabs(arrow->frame.width - mcpDesign::kArrowSize) <
+                  mcpDesign::kEps);
+    // 旧文字 CTA（.cta.label「查看详情」）废除 = 右侧零文本的结构证据
+    DOCTEST_CHECK(ui.find("mcp.card.test_alpha_tool.cta.label") == nullptr);
     return true;
 })
 
@@ -698,9 +793,10 @@ REGISTER_TEST(mcp_page_status_line,
     return true;
 })
 
-// 防：hover CTA 恒显或恒隐（.states+onHover 通道失效）。
+// 防：hover 箭头恒显或恒隐（need343：.cta 已从文字 CTA 收敛为纯图标箭头，
+// onHover 通道失效会退回恒显/恒隐）。
 REGISTER_TEST(mcp_page_hover_cta,
-              "mcp_page: 卡片 hover → CTA 浮现（opacity 1）；移出 → 隐藏（opacity 0）", {
+              "mcp_page: 卡片 hover → 右下箭头浮现（opacity 1）；移出 → 隐藏（opacity 0）", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
