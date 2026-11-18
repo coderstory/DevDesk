@@ -33,7 +33,7 @@ using core::theme::scaled;
 using core::theme::Tokens;
 
 // ---- 设计 §1/§4/§5 尺寸常量（字面量基准，经 scaled() 随全局字号缩放）----
-constexpr float kTopBarH = 48.0f;
+constexpr float kTopBarH = 38.4f;              // need339 0.8 档（原 48，仅顶栏卡域）
 constexpr float kPageMargin = 12.0f;          // §1 页边距 12（双侧 24）
 constexpr float kCardGap = 12.0f;             // §1 两卡间 gap 12 显式常量
 constexpr float kNarrowBreakpoint = 1200.0f;  // §9：<1200 左卡 280/缩进 12/搜索 240
@@ -173,10 +173,12 @@ void hitRect(eui::Ui& ui, const std::string& id, float x, float y, float w,
     hit.build();
 }
 
-// 次按钮（§5.1：高 32、底 surfaceElevated、radius 6、无边框无阴影）
+// 次按钮（§5.1：高 32、底 surfaceElevated、radius 6、无边框无阴影；
+// fontSizePx 可覆盖：need339 顶栏 0.8 档传 11.2，其余调用点维持默认 14）
 void secondaryButton(eui::Ui& ui, const std::string& id, const std::string& label,
                      float x, float y, float w, float h, const Tokens& t,
-                     const std::function<void()>& onClick) {
+                     const std::function<void()>& onClick,
+                     float fontSizePx = scaled(14.0f)) {
     ui.stack(id)
         .position(x, y)
         .size(w, h)
@@ -189,7 +191,7 @@ void secondaryButton(eui::Ui& ui, const std::string& id, const std::string& labe
             ui.text(id + ".text")
                 .size(w, h)
                 .text(label)
-                .fontSize(scaled(14.0f))
+                .fontSize(fontSizePx)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textPrimary)
@@ -352,15 +354,17 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
 // 切换仓库按钮右缘（need:299 §3.1：下拉右缘=按钮右缘对齐；按钮组=右锚两枚次钮）
 float switchButtonRightEdge(float w) {
     const float cardW = w - kPageMargin * 2.0f;
-    const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    return kPageMargin + cardW - scaled(12.0f) - refreshW - scaled(12.0f);
+    const float refreshW = textWidthEstimate("↻ 刷新", scaled(11.2f)) + scaled(24.0f);
+    // 右距 9.6 = composeTopBar inner（need339 0.8 同步）；末项 12 = 钮间 gap 不缩
+    return kPageMargin + cardW - scaled(9.6f) - refreshW - scaled(12.0f);
 }
 
 void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
                    const Tokens& t) {
     (void)narrow;  // 搜索框删除后窄窗档只剩路径宽度自适应（§9）
     // bug#297（老板令「一个圆角一个直角」）：顶栏改卡片形态与下方两卡同语言——
-    // 白卡+1px 边+radius 16+页边 12；卡内距 scaled(12) 与两卡内容列统一对齐
+    // 白卡+1px 边+radius 16+页边 12；need339 0.8 档卡内距 9.6（下方两卡仍 12，
+    // bug#297 内容列网格暂偏 2.4，是否跟随待设计拍板）
     const float cardX = kPageMargin;
     const float cardW = w - kPageMargin * 2.0f;
     ui.rect("git.top.bg")
@@ -371,28 +375,28 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
         .border(1.0f, t.colors.borderDefault)
         .build();
 
-    const float inner = scaled(12.0f);  // bug#297：三卡统一卡内距（内容列对齐网格）
+    const float inner = scaled(9.6f);   // need339 0.8 档：12→9.6（原三卡统一卡内距）
     float x = cardX + inner;
-    // 折叠展开钮（§3：仅左栏折叠时显示，为顶栏第一个元素 32×32）
+    // 折叠展开钮（§3：仅左栏折叠时显示；need339 0.8 档 25.6×25.6，原 32×32）
     if (c.listCollapsed()) {
-        const float btnY = kPageMargin + (kTopBarH - scaled(32.0f)) * 0.5f;
+        const float btnY = kPageMargin + (kTopBarH - scaled(25.6f)) * 0.5f;
         ui.stack("git.top.expand")
             .position(x, btnY)
-            .size(scaled(32.0f), scaled(32.0f))
+            .size(scaled(25.6f), scaled(25.6f))
             .content([&] {
                 ui.text("git.top.expand.glyph")
-                    .size(scaled(32.0f), scaled(32.0f))
+                    .size(scaled(25.6f), scaled(25.6f))
                     .icon(kGlyphList)
-                    .fontSize(scaled(14.0f))
+                    .fontSize(scaled(11.2f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textSecondary)
                     .build();
             })
             .build();
-        hitRect(ui, "git.top.expand.hit", x, btnY, scaled(32.0f), scaled(32.0f),
+        hitRect(ui, "git.top.expand.hit", x, btnY, scaled(25.6f), scaled(25.6f),
                 [&c] { c.toggleListCollapsed(); });
-        x += scaled(32.0f) + scaled(8.0f);
+        x += scaled(25.6f) + scaled(8.0f);
     }
 
     const std::string name = c.repoDisplayName();
@@ -400,12 +404,12 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     // 实测 ~1.0em/字）——「示例仓库」盒宽 101 而墨宽 60，把仓名↔路径可见间距
     // 撑到 ~58px。顶栏仓名改用渲染同引擎实测宽（§3 gap 12 才对得上）。
     const float nameW =
-        core::TextPrimitive::measureTextWidth(name, {}, scaled(15.0f), 600);
+        core::TextPrimitive::measureTextWidth(name, {}, scaled(12.0f), 600);
     ui.text("git.top.name")
         .position(x, kPageMargin)
         .size(nameW, kTopBarH)
         .text(name)
-        .fontSize(scaled(15.0f))
+        .fontSize(scaled(12.0f))
         .fontWeight(600)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary)
@@ -414,12 +418,12 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     // 仓名↔路径分隔「·」（§3：flex gap 12 + 分隔符；D2 原缺分隔符且间距超规）
     x += nameW + scaled(12.0f);
     const float sepW =
-        core::TextPrimitive::measureTextWidth("·", {}, scaled(12.0f), 400);
+        core::TextPrimitive::measureTextWidth("·", {}, scaled(9.6f), 400);
     ui.text("git.top.sep")
         .position(x, kPageMargin)
         .size(sepW, kTopBarH)
         .text("·")
-        .fontSize(scaled(12.0f))
+        .fontSize(scaled(9.6f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
@@ -432,12 +436,12 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
     const float pathW = std::min(
         pathMaxW, std::max(scaled(40.0f), switchRight - scaled(12.0f) - x));
     const auto [shownPath, pathTruncated] =
-        ellipsisFitMeasured(c.repoPathUtf8(), scaled(12.0f), pathW);
+        ellipsisFitMeasured(c.repoPathUtf8(), scaled(9.6f), pathW);
     ui.text("git.top.path")
         .position(x, kPageMargin)
         .size(pathW, kTopBarH)
         .text(shownPath)
-        .fontSize(scaled(12.0f))
+        .fontSize(scaled(9.6f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
@@ -454,25 +458,25 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
             .build();
     }
 
-    // 右侧按钮组：[切换仓库 ▾] [↻ 刷新]（次按钮 32px 高；卡内右距=inner 统一网格；
+    // 右侧按钮组：[切换仓库 ▾] [↻ 刷新]（need339 0.8 档 25.6 高，原 32；卡内右距=inner；
     // 切换仓库=下拉触发器 need:299 §3.1，原「迁移空态页」动线由下拉「浏览目录…」承接）
-    const float btnH = scaled(32.0f);
+    const float btnH = scaled(25.6f);
     const float btnY = kPageMargin + (kTopBarH - btnH) * 0.5f;
     const float switchW =
-        textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f) + scaled(14.0f);
-    const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
+        textWidthEstimate("切换仓库", scaled(11.2f)) + scaled(24.0f) + scaled(14.0f);
+    const float refreshW = textWidthEstimate("↻ 刷新", scaled(11.2f)) + scaled(24.0f);
     const float refreshX = cardX + cardW - inner - refreshW;
     const float switchX = refreshX - scaled(12.0f) - switchW;
     secondaryButton(ui, "git.top.refresh", "↻ 刷新", refreshX, btnY, refreshW, btnH,
-                    t, [&c] { c.refresh(); });
+                    t, [&c] { c.refresh(); }, scaled(11.2f));
     secondaryButton(ui, "git.top.switch", "切换仓库", switchX, btnY, switchW, btnH,
-                    t, [&c] { c.toggleRepoDropdown(); });
-    // 文案右侧 fa-angle-down 12px textSecondary（§3；纯装饰 pointer 穿透，命中归按钮）
+                    t, [&c] { c.toggleRepoDropdown(); }, scaled(11.2f));
+    // 文案右侧 fa-angle-down（need339 0.8 档 9.6px，原 12；槽宽 14 不缩，纯装饰穿透）
     ui.text("git.top.switch.caret")
         .position(switchX + switchW - scaled(16.0f), btnY)
         .size(scaled(14.0f), btnH)
         .icon(kGlyphCaretDown)
-        .fontSize(scaled(12.0f))
+        .fontSize(scaled(9.6f))
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textSecondary)
