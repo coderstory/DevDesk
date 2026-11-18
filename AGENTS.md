@@ -51,7 +51,7 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 
 > **一律 `bash scripts/build-test-run.sh`（仓库根）。禁止手敲 `cmake -B …` / `cmake --build …`（有门禁硬阻断）。**
 
-脚本封装了手敲必漏的约定：EUI-NEO submodule 自动定位、ccache 两个 launcher 参数、`OPENSSL_ROOT_DIR` 平台差异、发布形态守卫（Windows 单 exe/零外部 DLL）、模块隔离守卫、并行度封顶 `DEVDESK_JOBS=3`。
+脚本封装了手敲必漏的约定：EUI-NEO submodule 自动定位、ccache 两个 launcher 参数、`OPENSSL_ROOT_DIR` 平台差异、发布形态守卫（Windows 单 exe/零外部 DLL）、模块隔离守卫、并行度封顶 `DEVDESK_JOBS=6`（need#324 老板令 2026-11-18 由 3 上调）。
 
 | 开关 | 作用 |
 |---|---|

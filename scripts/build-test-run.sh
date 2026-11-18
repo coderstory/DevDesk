@@ -30,7 +30,7 @@
 #                 `LC_ALL=C grep -a -c S`，0 命中 = 装的包不含该特征（= 旧包 / 构建未含
 #                 本次修复）→ exit 1。sha 断言只证明「装的是本次产物」；本参数补上
 #                 「本次产物里确实包含某次修复」那一半。不带 --install 时出声提示、不生效。
-# 环境变量：DEVDESK_JOBS 并发编译单元数（默认 3，多 worktree 并发时的封顶）；
+# 环境变量：DEVDESK_JOBS 并发编译单元数（默认 6，need324 老板令 2026-11-18 由 3 上调）；
 #           DEVDESK_BUILD_TYPE 构建类型（默认 Debug；--release 等价于 Release）；
 #           DEVDESK_BUILD_DIR 构建目录（默认按构建类型选：Debug=build/、
 #           Release=build-release/；显式指定时一律以它为准——差分验证 / 一次性探针走
@@ -140,8 +140,9 @@ case "$DEVDESK_OS" in
 esac
 
 # 并行度封顶：多个 worktree 同时构建时各自默认 -j(=核数) 会互相拖死（CPU/内存全占，
-# 单条 build 反而更慢）。默认 3 并发编译单元，可用 DEVDESK_JOBS 覆盖。
-export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-3}"
+# 单条 build 反而更慢）。默认 6 并发编译单元（need324 老板令 2026-11-18 由 3 上调，
+# 10 核机+波次验证模型下编译吞吐优先），可用 DEVDESK_JOBS 覆盖。
+export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-6}"
 
 # UI probe 可执行构建开关。CI 无 GUI 会话：probe 测试全走 SKIP_RETURN_CODE 77 跳过，
 # 但 probe 可执行仍在编译链接（CI 日志里成片的 Building ... probe 行）—— 纯浪费。
