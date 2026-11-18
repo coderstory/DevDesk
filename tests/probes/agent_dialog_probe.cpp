@@ -865,9 +865,13 @@ int main(int argc, char* argv[]) {
             composeFrame();
             composeFrame();
         }
+        // 断言锚 msg.1（现行契约 need347）：msgs.toggle 打开消息区后默认展开规则
+        // 只展开最终 assistant 消息（msgs.toggle 点击 → applyDefaultMessageExpansion，
+        // agent_module_dialogs.cpp:111-131），即 msg.1 展开态含 .blk.0；msg.0 为
+        // user 消息收起基线，不作为翻转锚。点击整卡命中面 → 翻转为收起态
         const bool expandedBefore =
-            findElement("agent.dialog.detail.msg.0.blk.0") != nullptr;
-        const auto* cardHit = findElement("agent.dialog.detail.msg.0.hit");
+            findElement("agent.dialog.detail.msg.1.blk.0") != nullptr;
+        const auto* cardHit = findElement("agent.dialog.detail.msg.1.hit");
         if (cardHit == nullptr) {
             std::cerr << "agent_dialog_probe: 消息卡缺整卡命中面 .hit（池162 卡面未落地？）\n";
             passed = false;
@@ -876,12 +880,14 @@ int main(int argc, char* argv[]) {
             composeFrame();
             composeFrame();
             const bool expandedAfter =
-                findElement("agent.dialog.detail.msg.0.blk.0") != nullptr;
+                findElement("agent.dialog.detail.msg.1.blk.0") != nullptr;
             if (expandedBefore == expandedAfter) {
-                std::cerr << "agent_dialog_probe: 整卡命中面点击未翻转消息卡展开态\n";
+                std::cerr << "agent_dialog_probe: 整卡命中面点击未翻转消息卡展开态"
+                             "（msg.1.blk.0 before=" << expandedBefore
+                          << " after=" << expandedAfter << "）\n";
                 passed = false;
             } else {
-                std::cout << "D1 msg.0.hit 整卡点击开合 OK（展开 "
+                std::cout << "D1 msg.1.hit 整卡点击开合 OK（展开 "
                           << expandedBefore << " → " << expandedAfter << "）\n";
             }
         }
