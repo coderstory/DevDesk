@@ -10,6 +10,7 @@
 #include "platform/json.h"
 
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 
 #include <components/button.h>
 #include <components/dialog.h>
@@ -465,19 +466,65 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     EditDialogState& st, const EditDialogHost& host,
                     const core::schedule::FireContext& ctx) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = std::max(560.0f, screen.width * 0.5f);
     const float h = 640.0f;
-    const float x0 = ui_kit::kDialogInsetX;
-    const float innerW = w - ui_kit::kDialogBodyInsetX;
 
-    components::dialog(ui, "schedule.edit.dialog")
-        .open(st.open)
-        .screen(screen.width, screen.height)
-        .size(w, h)
-        .theme(themeTokens)
-        .zIndex(1000)
-        .onOpenChange([&st](bool v) { st.open = v; })
-        .content([&] {
+    // need294：迁标准弹窗壳（need156 规范）——头区标题/分隔线、底区细线+右锚按钮
+    // 对（40 高 / min96 自适应）归壳；内容区 = (24,69,w-48,h-158)。宽由
+    // max(560, screen*0.5) 归一为标准宽档 Wide=640。
+    ui_kit::DialogShellSpec shell;
+    shell.id = "schedule.edit.dialog";
+    shell.width = ui_kit::DialogWidth::Wide;
+    shell.height = h;
+    shell.open = st.open;
+    shell.title = "定时规则";
+    shell.cancel = {"取消", [&host] {
+        if (host.close) host.close();
+    }};
+    // 保存 / 取消：保存前 validateAndParse + 事务内重算 next_fire_at（§4.4）
+    shell.confirm = {"保存",
+        // EUI-NEO 铁律：onClick 回调在点击帧由 updateInteraction 才调用
+        //（compose 栈已展开），禁止引用捕获 compose 帧栈局部。ctx 是宿主
+        // 每帧栈新对象（schedule_ui_list drawEditDialog 调用点），引用捕获
+        // 即悬垂——保存时读出垃圾 tzId（乱码红字 + 拼串 bad_alloc 同根）。
+        // 值捕获 = 构造期拷贝，回调帧内读自有副本。st/host 为宿主成员，
+        // 生命周期覆盖回调，可引用捕获。（need290 修复，need294 迁壳原样搬入）
+        [&st, &host, ctx] {
+            if (st.form.actionKind == "webhook_only") {
+                // 仅投递动作唯一外发渠道是企微：未勾选直接拦（防静默丢通知）
+                bool wecom = false;
+                for (const auto& ch : host.channels) {
+                    if (ch.key == module::schedule::kChannelWecom &&
+                        std::find(st.form.channelIds.begin(),
+                                  st.form.channelIds.end(),
+                                  ch.id) != st.form.channelIds.end()) {
+                        wecom = true;
+                        break;
+                    }
+                }
+                if (!wecom) {
+                    st.saveError = "仅投递动作必须勾选「企业微信」渠道";
+                    return;
+                }
+            }
+            const auto rec = buildRuleRecord(st.form, ctx);
+            if (rec.isFail()) {
+                st.saveError = rec.errorMessage();
+                return;
+            }
+            RuleRecord out = rec.value();
+            out.id = st.ruleId;  // 非 0 = 编辑既有规则（宿主走 updateRule）
+            const std::string err = host.saveRule(out);
+            if (err.empty()) {
+                if (host.close) host.close();
+            } else {
+                st.saveError = err;
+            }
+        }};
+    shell.onOpenChange = [&st](bool v) { st.open = v; };
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        const float x0 = area.x;
+        const float innerW = area.w;
             // 每帧按当前表单重算：校验红字 + 预览缓存同一真源（nextFire 迭代）
             st.form.errorText.clear();
             {
@@ -490,11 +537,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
             const auto touch = [&st] { st.saveError.clear(); };
 
-            ui_kit::drawDialogTitle(ui, "schedule.edit.title", w, "定时规则",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
-                                    {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
-
-            // 类型页签（六 kind）
+            // 类型页签（六 kind）；y=56 压在壳头区分隔线（52）下 4px
             const struct { core::schedule::RuleKind kind; const char* label; } kTabs[6] = {
                 {core::schedule::RuleKind::Once, "一次性"},
                 {core::schedule::RuleKind::Interval, "间隔"},
@@ -507,7 +550,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             const float tabW = (innerW - tabGap * 5.0f) / 6.0f;
             for (int i = 0; i < 6; ++i) {
                 drawKindTab(ui, "schedule.edit.kind." + std::to_string(i),
-                            x0 + static_cast<float>(i) * (tabW + tabGap), 52.0f, tabW, 30.0f,
+                            x0 + static_cast<float>(i) * (tabW + tabGap), 56.0f, tabW, 30.0f,
                             kTabs[i].label, st.form.kind == kTabs[i].kind, t,
                             [&st, touch, k = kTabs[i].kind] {
                                 st.form.kind = k;
@@ -869,77 +912,23 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
             fy += 120.0f;
 
-            // 底部操作区（池140 §5）：删除（danger 文字，左下）+ 弹性 + 取消/保存（右下）。
-            // 删除仅编辑既有规则时出现；点击 → 宿主收本弹窗并开既有删除确认小弹窗。
+            // 底部操作区（池140 §5 → need294 迁壳）：删除走壳危险变体样式
+            //（40 高 / min 宽 96 / error 底白字），钉底区行左端（与壳右锚
+            // cancel/confirm 同排同高）；仅编辑既有规则时出现，点击 → 宿主
+            // 收本弹窗并开删除确认小弹窗。取消/保存已归壳底区按钮对。
             if (st.ruleId != 0 && host.requestDelete) {
-                ui.text("schedule.edit.delete")
-                    .position(x0, h - 60.0f + 8.0f)
-                    .size(48.0f, 20.0f)
+                components::button(ui, "schedule.edit.delete")
+                    .position(x0, h - ui_kit::kDialogFooterH + 17.0f)
+                    .size(ui_kit::kDialogButtonMinW, 40.0f)  // 40 = 壳钮高（dialog_shell 内部档）
                     .text("删除")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .color(t.colors.errorText)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .colors(t.colors.error, t.colors.error, t.colors.error)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radius)
                     .onClick([&st, &host] { host.requestDelete(st.ruleId); })
                     .build();
             }
-            // 保存 / 取消：保存前 validateAndParse + 事务内重算 next_fire_at（§4.4）
-            components::button(ui, "schedule.edit.save")
-                .position(w - x0 - 120.0f, h - 60.0f)
-                .size(120.0f, 36.0f)
-                .text("保存")
-                .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius)
-                // EUI-NEO 铁律：onClick 回调在点击帧由 updateInteraction 才调用
-                //（compose 栈已展开），禁止引用捕获 compose 帧栈局部。ctx 是宿主
-                // 每帧栈新对象（schedule_ui_list drawEditDialog 调用点），引用捕获
-                // 即悬垂——保存时读出垃圾 tzId（乱码红字 + 拼串 bad_alloc 同根）。
-                // 值捕获 = 构造期拷贝，回调帧内读自有副本。st/host 为宿主成员，
-                // 生命周期覆盖回调，可引用捕获。
-                .onClick([&st, &host, ctx] {
-                    if (st.form.actionKind == "webhook_only") {
-                        // 仅投递动作唯一外发渠道是企微：未勾选直接拦（防静默丢通知）
-                        bool wecom = false;
-                        for (const auto& ch : host.channels) {
-                            if (ch.key == module::schedule::kChannelWecom &&
-                                std::find(st.form.channelIds.begin(),
-                                          st.form.channelIds.end(),
-                                          ch.id) != st.form.channelIds.end()) {
-                                wecom = true;
-                                break;
-                            }
-                        }
-                        if (!wecom) {
-                            st.saveError = "仅投递动作必须勾选「企业微信」渠道";
-                            return;
-                        }
-                    }
-                    const auto rec = buildRuleRecord(st.form, ctx);
-                    if (rec.isFail()) {
-                        st.saveError = rec.errorMessage();
-                        return;
-                    }
-                    RuleRecord out = rec.value();
-                    out.id = st.ruleId;  // 非 0 = 编辑既有规则（宿主走 updateRule）
-                    const std::string err = host.saveRule(out);
-                    if (err.empty()) {
-                        if (host.close) host.close();
-                    } else {
-                        st.saveError = err;
-                    }
-                })
-                .build();
-            components::button(ui, "schedule.edit.cancel")
-                .position(w - x0 - 120.0f - 16.0f - 120.0f, h - 60.0f)
-                .size(120.0f, 36.0f)
-                .text("取消")
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([&host] {
-                    if (host.close) host.close();
-                })
-                .build();
-        })
-        .build();
+        });
 }
 
 }  // namespace module::schedule::ui

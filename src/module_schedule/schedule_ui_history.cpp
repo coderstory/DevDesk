@@ -8,10 +8,10 @@
 
 #include <ui_kit/card.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/dialog_shell.h>
 #include <ui_kit/empty_state.h>
 
 #include <components/button.h>
-#include <components/dialog.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
 
@@ -40,11 +40,11 @@ std::string formatLocal(int64_t unixSec) {
 // 所有右对齐元素（× 关闭钮 / 行内重试钮 / 底部关闭钮）一律以 contentRight
 // 为右基准，旧版三者各写各的 x（重试钮右边界距卡右 16px、文本距卡左 12px、
 // 底部钮却左对齐）——「按钮没对齐」的根因。
-constexpr float kDrawerMinW = 520.0f;
-constexpr float kDrawerMaxW = 720.0f;
 constexpr float kDrawerMinH = 440.0f;
 constexpr float kDrawerMaxH = 680.0f;
 
+// need294 迁标准壳后废弃：kDrawerMinW/MaxW（宽归 DialogWidth::Wide）、
+// kFooterBtnH/W/kFooterBottomPad/kTitleCloseSize（底区钮与右上 × 归壳）。
 // 卡片内边距 / 卡片间距
 constexpr float kCardPad = 14.0f;
 constexpr float kCardGap = 10.0f;
@@ -62,12 +62,6 @@ constexpr float kDotSize = 8.0f;
 constexpr float kStatusRowH = 22.0f;
 constexpr float kBodyRowH = 16.0f;
 constexpr float kChipRowH = 20.0f;
-// 底部按钮带：按钮高 40 + 底边距 16
-constexpr float kFooterBtnH = 40.0f;
-constexpr float kFooterBtnW = 96.0f;
-constexpr float kFooterBottomPad = 16.0f;
-// 顶部 × 图标钮
-constexpr float kTitleCloseSize = 32.0f;
 // 行内重试钮
 constexpr float kRetryBtnW = 64.0f;
 constexpr float kRetryBtnH = 26.0f;
@@ -406,21 +400,11 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
                        HistoryDrawerState& st, const HistoryDrawerHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
 
-    // 内容列：左起 x0 = kDialogInsetX，右基准 contentRight（所有右对齐元素共用）
-    const float x0 = ui_kit::kDialogInsetX;
-
-    // 头部：标题 28 + 副标题 18 + 分隔线 1
-    const float titleY = 16.0f;
-    const float titleH = 28.0f;
-    const float subtitleY = titleY + titleH + 6.0f;
+    // need294：迁标准弹窗壳（need156 规范）——标题归壳头区、底部关闭钮归壳
+    // 底区 cancel（旧右上 × 一并去除，关抽屉统一走底区钮）；副标题（统计条）
+    // 与分隔线画在内容区顶部，列表自 content 顶 +18+10+12 起。
     const float subtitleH = 18.0f;
-    const float dividerY = subtitleY + subtitleH + 10.0f;
-    const float listTop = dividerY + 12.0f;
-
-    // 底部结构（自上而下）：列表 → 12 缝 → 分隔线 1 → 16 缝 → 按钮带 40 → 底边距 16
-    const float listBottomGap = 12.0f;
-    const float dividerGap = 16.0f;
-    const float footerBandH = dividerGap + 1.0f + dividerGap + kFooterBtnH + kFooterBottomPad;
+    const float listTop = ui_kit::kDialogHeaderH + subtitleH + 10.0f + 12.0f;  // 109
 
     // 列表内容高（卡片两档高度 + 间距）→ 抽屉高度随内容自适应：
     // 固定高度时 3 条记录下方空一大片，看着像没做完。
@@ -431,14 +415,10 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
         listContentH += hasDetail ? kCardHWithDetail : kCardH;
         if (i > 0) listContentH += kCardGap;
     }
-    const float neededH = listTop + std::max(listContentH, 120.0f) + footerBandH;
+    // 壳内容区底 = h−89（底区细线上隙 16）；列表底再留 12 缝
+    const float neededH = listTop + std::max(listContentH, 120.0f) + 12.0f +
+                          ui_kit::kDialogFooterH + ui_kit::kDialogContentBottomGap;
     const float h = std::clamp(std::max(neededH, kDrawerMinH), kDrawerMinH, kDrawerMaxH);
-    const float w = std::clamp(screen.width * 0.46f, kDrawerMinW, kDrawerMaxW);
-    const float contentW = w - ui_kit::kDialogBodyInsetX;
-    const float contentRight = x0 + contentW;
-    const float footerBtnY = h - kFooterBottomPad - kFooterBtnH;
-    const float footerDividerY = footerBtnY - dividerGap - 1.0f;
-    const float listH = std::max(96.0f, footerDividerY - listBottomGap - listTop);
 
     // 统计条：总数 + 成功 / 失败 / 错过
     size_t okCount = 0;
@@ -458,48 +438,36 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
     if (failCount > 0) statText += " · 失败 " + std::to_string(failCount);
     if (missedCount > 0) statText += " · 错过 " + std::to_string(missedCount);
 
-    components::dialog(ui, "schedule.history.drawer")
-        .open(st.open)
-        .screen(screen.width, screen.height)
-        .size(w, h)
-        .theme(themeTokens)
-        .zIndex(990)
-        .onOpenChange([&st](bool v) { st.open = v; })
-        .content([&] {
-            // 标题：宽度让出右上角 × 钮（避免文字压按钮）
-            const float titleW = contentRight - kTitleCloseSize - 12.0f - x0;
-            ui_kit::drawDialogTitle(ui, "schedule.history.title", w, "运行历史",
-                                    ui_kit::kDialogTitleFontSize, t.colors.textPrimary,
-                                    {.x = x0, .y = titleY, .inset = w - titleW,
-                                     .height = titleH, .lineHeight = titleH});
+    ui_kit::DialogShellSpec shell;
+    shell.id = "schedule.history.drawer";
+    shell.width = ui_kit::DialogWidth::Wide;  // 旧 clamp(screen*0.46,520,720) → 标准宽档 640
+    shell.height = h;
+    shell.open = st.open;
+    shell.zIndex = 990;
+    shell.title = "运行历史";
+    shell.cancel = {"关闭", [&host] {
+        if (host.close) host.close();
+    }};
+    shell.onOpenChange = [&st](bool v) { st.open = v; };
+    ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                            [&](const ui_kit::DialogContentArea& area) {
+        const float x0 = area.x;
+        const float w = area.w + ui_kit::kDialogBodyInsetX;
+        const float contentW = area.w;
+        const float listH = std::max(96.0f, (area.y + area.h - 12.0f) - listTop);
 
-            // 右上角关闭：图标钮，右边缘 = contentRight（与底部钮同一基准）
-            components::button(ui, "schedule.history.titleClose")
-                .position(contentRight - kTitleCloseSize,
-                          titleY + (titleH - kTitleCloseSize) * 0.5f)
-                .size(kTitleCloseSize, kTitleCloseSize)
-                .text("")
-                .icon(0xF00D)  // fa-xmark
-                .iconSize(12.0f)
-                .theme(themeTokens, false)
-                .radius(t.sizes.radiusSmall)
-                .onClick([&host] {
-                    if (host.close) host.close();
-                })
-                .build();
+        // 副标题：统计条
+        ui_kit::drawDialogText(ui, "schedule.history.summary", w, statText,
+                                t.sizes.fontSizeSmall, t.colors.textSecondary,
+                                {.x = x0, .y = area.y, .inset = w - contentW,
+                                 .height = subtitleH, .lineHeight = subtitleH});
 
-            // 副标题：统计条
-            ui_kit::drawDialogText(ui, "schedule.history.summary", w, statText,
-                                    t.sizes.fontSizeSmall, t.colors.textSecondary,
-                                    {.x = x0, .y = subtitleY, .inset = w - contentW,
-                                     .height = subtitleH, .lineHeight = subtitleH});
-
-            // 分隔线（头部 / 列表）
-            ui.rect("schedule.history.divider")
-                .position(x0, dividerY)
-                .size(contentW, 1.0f)
-                .color(t.colors.borderDefault)
-                .build();
+        // 分隔线（副标题 / 列表）
+        ui.rect("schedule.history.divider")
+            .position(x0, area.y + subtitleH + 10.0f)
+            .size(contentW, 1.0f)
+            .color(t.colors.borderDefault)
+            .build();
 
             // 列表区：空态 or 滚动列表
             if (host.items.empty()) {
@@ -541,25 +509,8 @@ void drawHistoryDrawer(eui::Ui& ui, const eui::Screen& screen, const core::theme
                     .build();
             }
 
-            // 底部：分隔线 + 关闭钮右对齐（与右上 × 钮同一右基准）
-            ui.rect("schedule.history.footerDivider")
-                .position(x0, footerDividerY)
-                .size(contentW, 1.0f)
-                .color(t.colors.borderDefault)
-                .build();
-            components::button(ui, "schedule.history.close")
-                .position(contentRight - kFooterBtnW, footerBtnY)
-                .size(kFooterBtnW, kFooterBtnH)
-                .text("关闭")
-                .theme(themeTokens, false)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([&host] {
-                    if (host.close) host.close();
-                })
-                .build();
-        })
-        .build();
+        });
+    // 抽屉底区细线与「关闭」钮由壳负责（<id>.footer.line / <id>.cancel）
 }
 
 }  // namespace module::schedule::ui

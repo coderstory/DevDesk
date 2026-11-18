@@ -591,11 +591,11 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
         expectNode("schedule.edit.enabled", &passed);  // 表单首行「启用」开关
-        expectNode("schedule.edit.delete", &passed);   // 编辑态左下删除文字钮
-        expectNode("schedule.edit.save", &passed);
-        expectNode("schedule.edit.cancel", &passed);
+        expectNode("schedule.edit.delete", &passed);   // 编辑态底区左端危险删除钮（need294 迁壳）
+        expectNode("schedule.edit.dialog.confirm", &passed);  // 壳底区主钮=保存
+        expectNode("schedule.edit.dialog.cancel", &passed);
         shot(shotEdit);
-        if (const auto* cancel = findElement("schedule.edit.cancel")) {
+        if (const auto* cancel = findElement("schedule.edit.dialog.cancel")) {
             clickElement(*cancel);
             settleFrames(15);
         }
@@ -614,7 +614,7 @@ int main(int argc, char* argv[]) {
         }
         expectNode("schedule.edit.enabled", &passed);
         expectNoNode("schedule.edit.delete", &passed);
-        if (const auto* cancel = findElement("schedule.edit.cancel")) {
+        if (const auto* cancel = findElement("schedule.edit.dialog.cancel")) {
             clickElement(*cancel);
             settleFrames(15);
         }
@@ -645,16 +645,15 @@ int main(int argc, char* argv[]) {
         settleFrames(15);
     }
     expectNode("schedule.history.drawer.panel", &passed);
-    expectNode("schedule.history.title", &passed);
+    expectNode("schedule.history.drawer.title", &passed);  // 壳头区标题（need294）
     expectNode("schedule.history.summary", &passed);
-    expectNode("schedule.history.close", &passed);
-    expectNode("schedule.history.titleClose", &passed);
+    expectNode("schedule.history.drawer.cancel", &passed);  // 壳底区副钮=关闭
     if (emptyHistory) {
         // 空历史档：空态组件在位、无任何行卡
         expectNode("schedule.history.empty", &passed);
         expectNoNode("schedule.history.row.0", &passed);
         shot(shotHistory);
-        if (const auto* close = findElement("schedule.history.close")) {
+        if (const auto* close = findElement("schedule.history.drawer.cancel")) {
             clickElement(*close);
             settleFrames(15);
         }
@@ -667,12 +666,11 @@ int main(int argc, char* argv[]) {
     // 渠道 chip 挂在有投递记录的行上（planned_at 倒序：错过 → 失败 → 成功）
     expectNode("schedule.history.row.1.chip.0", &passed);
     expectNode("schedule.history.row.0.retry", &passed);  // 失败/错过行才给重试
-    // 对齐门禁：右上 × 与底部关闭钮右边界 = 弹窗内容列右基准（弹窗右 −24）；
-    // 行内重试钮右边界 = 卡片右 −14（卡内边距）。三者各写各的 x 就是「没对齐」。
+    // 对齐门禁：底部关闭钮（壳底区副钮）右边界 = 弹窗内容列右基准（弹窗右 −24，
+    // 壳几何同源应恒过）；行内重试钮右边界 = 卡片右 −14（卡内边距）。
     if (const auto* panel = findElement("schedule.history.drawer.panel")) {
         const float contentRight = panel->frame.x + panel->frame.width - 24.0f;
-        for (const char* id : {"schedule.history.titleClose",
-                               "schedule.history.close"}) {
+        for (const char* id : {"schedule.history.drawer.cancel"}) {
             const auto* btn = findElement(id);
             if (btn == nullptr) continue;
             const float right = btn->frame.x + btn->frame.width;
@@ -696,7 +694,7 @@ int main(int argc, char* argv[]) {
     }
     shot(shotHistory);
     // 关抽屉（backdrop 盖全窗，不关会挡住后续 F 段的点击）
-    if (const auto* close = findElement("schedule.history.close")) {
+    if (const auto* close = findElement("schedule.history.drawer.cancel")) {
         clickElement(*close);
         settleFrames(15);
     }
@@ -727,7 +725,7 @@ int main(int argc, char* argv[]) {
     expectNode("schedule.list.deleteConfirm.body", &passed);
     expectNode("schedule.list.deleteConfirm.purge", &passed);
     expectNode("schedule.list.deleteConfirm.cancel", &passed);
-    expectNode("schedule.list.deleteConfirm.ok", &passed);
+    expectNode("schedule.list.deleteConfirm.confirm", &passed);  // 壳底区主钮（need294 Danger 变体）
     shot(shotDelete);
     // 取消 → 弹窗关、卡还在
     if (const auto* cancel = findElement("schedule.list.deleteConfirm.cancel")) {
@@ -744,7 +742,7 @@ int main(int argc, char* argv[]) {
         clickElement(*del);
         settleFrames(15);
     }
-    if (const auto* ok = findElement("schedule.list.deleteConfirm.ok")) {
+    if (const auto* ok = findElement("schedule.list.deleteConfirm.confirm")) {
         clickElement(*ok);
         settleFrames(15);
     }

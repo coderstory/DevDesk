@@ -505,11 +505,14 @@ REGISTER_TEST(schedule_list_history_drawer_open_close_wiring,
     DOCTEST_REQUIRE(panel != nullptr);
     DOCTEST_CHECK_EQ(panel->opacity, 0.0f);
 
-    // 点页头入口 → 置 open + 装载（planned_at 倒序：failed 在前且带渠道汇总）
+    // 点页头入口 → 置 open + 装载（planned_at 倒序：failed 在前且带渠道汇总）；
+    // need294 页头入口升 ui_kit 按钮，onClick 挂在 .bg 节点
     const auto* entry = frame.find("schedule.list.history");
     DOCTEST_REQUIRE(entry != nullptr);
-    DOCTEST_REQUIRE(entry->onClick != nullptr);
-    entry->onClick();
+    const auto* entryBg = frame.find("schedule.list.history.bg");
+    DOCTEST_REQUIRE(entryBg != nullptr);
+    DOCTEST_REQUIRE(entryBg->onClick != nullptr);
+    entryBg->onClick();
     DOCTEST_CHECK(listUi.historyOpen());
     DOCTEST_REQUIRE_EQ(listUi.historyItems().size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(listUi.historyItems()[0].run.plannedAt, 1760002000);
@@ -522,8 +525,9 @@ REGISTER_TEST(schedule_list_history_drawer_open_close_wiring,
     DOCTEST_CHECK(frame.find("schedule.history.row.0") != nullptr);
     DOCTEST_CHECK(frame.find("schedule.history.row.1") != nullptr);
 
-    // 点抽屉内关闭钮 → 收起（下一帧 opacity 回 0；button 的 onClick 挂在 .bg 节点）
-    const auto* closeBtn = frame.find("schedule.history.close.bg");
+    // 点抽屉内关闭钮 → 收起（下一帧 opacity 回 0；need294 迁壳后关闭钮 =
+    // 壳底区副钮 .cancel，onClick 挂在 .bg 节点）
+    const auto* closeBtn = frame.find("schedule.history.drawer.cancel.bg");
     DOCTEST_REQUIRE(closeBtn != nullptr);
     DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
     closeBtn->onClick();
@@ -593,8 +597,11 @@ REGISTER_TEST(schedule_list_history_drawer_empty_ok,
     composeFrame(listUi, frame, screen, "hist_empty_closed");
     const auto* entry = frame.find("schedule.list.history");
     DOCTEST_REQUIRE(entry != nullptr);
-    DOCTEST_REQUIRE(entry->onClick != nullptr);
-    entry->onClick();
+    // need294：页头入口升 ui_kit 按钮，onClick 挂在 .bg 节点
+    const auto* entryBg = frame.find("schedule.list.history.bg");
+    DOCTEST_REQUIRE(entryBg != nullptr);
+    DOCTEST_REQUIRE(entryBg->onClick != nullptr);
+    entryBg->onClick();
     DOCTEST_CHECK(listUi.historyOpen());
     DOCTEST_CHECK(listUi.historyItems().empty());
 

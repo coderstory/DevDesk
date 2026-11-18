@@ -10,6 +10,7 @@
 #include "platform/json.h"
 #include "ui_kit/button.h"
 #include "ui_kit/dialog_form.h"
+#include "ui_kit/dialog_shell.h"
 #include "ui_kit/glass.h"
 #include "ui_kit/jelly.h"
 #include "ui_kit/metrics.h"
@@ -1097,17 +1098,13 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
-            ui.text("schedule.list.history")
-                .position(pageW - pad - newBtnW - core::theme::scaled(16.0f) - historyW,
-                          headerY)
-                .size(historyW, headerH)
-                .text("运行历史")
-                .fontSize(t.sizes.fontSizeBody)
-                .lineHeight(headerH)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.primaryText)
-                .onClick([this] { openHistory(); })
-                .build();
+            // 运行历史（走查 T3/P2：裸绿字无底无 hover → 升 Outline 档 =
+            // ui_kit Secondary 灰底钮，40 高与「新建」同排归一）
+            ui_kit::button(ui, "schedule.list.history", "运行历史",
+                           ui_kit::ButtonLevel::Secondary,
+                           pageW - pad - newBtnW - core::theme::scaled(16.0f) - historyW,
+                           headerY, historyW, ui_kit::kButtonHeight, t,
+                           {[this] { openHistory(); }});
             // 新建（池137：全页唯一新建入口；空态纯文字提示后恒 Primary）
             ui_kit::button(ui, "schedule.list.new", "新建",
                            ui_kit::ButtonLevel::Primary, pageW - pad - newBtnW,
@@ -1237,70 +1234,48 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
     // 运行历史抽屉（关闭态也常驻构建，EUI 收起过渡依赖节点存在；zIndex 990 盖过列表）
     ui::drawHistoryDrawer(ui, screen, t, historyState_, historyHost_);
 
-    // 删除确认小弹窗（DialogBuilder 契约：open(false) 时节点常驻、仅禁交互）
+    // 删除确认小弹窗（need294：迁标准壳 Danger 变体——主钮删除走 error 底
+    // 白字，标题色保持 textPrimary；DialogBuilder 契约：open(false) 时节点
+    // 常驻、仅禁交互）
     {
         const auto themeTokens = core::theme::componentTokensWeChat(t);
-        const float w = 460.0f;
-        const float h = 230.0f;
-        const float x0 = ui_kit::kDialogInsetX;
-        const float innerW = w - ui_kit::kDialogBodyInsetX;
-        components::dialog(ui, "schedule.list.deleteConfirm")
-            .open(deleteConfirmOpen())
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(themeTokens)
-            .zIndex(1200)
-            .onOpenChange([this](bool v) { if (!v) cancelPendingDelete(); })
-            .content([&] {
-                ui_kit::drawDialogTitle(ui, "schedule.list.deleteConfirm.title",
-                                        w, "删除定时规则", ui_kit::kDialogTitleFontSize,
-                                        t.colors.textPrimary,
-                                        {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
-                ui_kit::drawDialogText(
-                    ui, "schedule.list.deleteConfirm.body", w,
-                    "确定删除「" + pendingDeleteName_ +
-                        "」吗？默认仅软删（配置与运行历史保留）。",
-                    t.sizes.fontSizeSmall, t.colors.textSecondary,
-                    {.y = 56.0f, .height = 20.0f, .lineHeight = 20.0f});
-                // 不用 components::checkbox：其头文件在 -Werror 下有 unused
-                // variable（EUI-NEO 上游问题），「彻底删除」改行内开关同语义
-                ui.text("schedule.list.deleteConfirm.purge.label")
-                    .position(x0, 92.0f)
-                    .size(innerW - 60.0f, 24.0f)
-                    .text("彻底删除（物理删除规则，运行历史保留）")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .color(t.colors.textSecondary)
-                    .build();
-                components::toggleSwitch(ui, "schedule.list.deleteConfirm.purge")
-                    .position(w - ui_kit::kDialogInsetX - 52.0f, 90.0f)
-                    .size(44.0f, 24.0f)
-                    .checked(pendingDeletePurge_)
-                    .theme(themeTokens)
-                    .onChange([this](bool v) { pendingDeletePurge_ = v; })
-                    .build();
-                components::button(ui, "schedule.list.deleteConfirm.cancel")
-                    .position(x0, h - 60.0f)
-                    .size(120.0f, 36.0f)
-                    .text("取消")
-                    .colors(t.colors.background, t.colors.hover,
-                            t.colors.primarySoftBg)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { cancelPendingDelete(); })
-                    .build();
-                components::button(ui, "schedule.list.deleteConfirm.ok")
-                    .position(w - 120.0f - ui_kit::kDialogInsetX, h - 60.0f)
-                    .size(120.0f, 36.0f)
-                    .text("删除")
-                    .colors(t.colors.primary, t.colors.primaryHover,
-                            t.colors.primaryPressed)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([this] { confirmPendingDelete(); })
-                    .build();
-            })
-            .build();
+        ui_kit::DialogShellSpec shell;
+        shell.id = "schedule.list.deleteConfirm";
+        shell.width = ui_kit::DialogWidth::Standard;  // 旧 460 同档
+        shell.height = 240.0f;  // 旧 230，低于壳最小 240 抬到下限（规范 §3.4）
+        shell.zIndex = 1200;
+        shell.open = deleteConfirmOpen();
+        shell.title = "删除定时规则";
+        shell.dangerConfirm = true;
+        shell.cancel = {"取消", [this] { cancelPendingDelete(); }};
+        shell.confirm = {"删除", [this] { confirmPendingDelete(); }};
+        shell.onOpenChange = [this](bool v) { if (!v) cancelPendingDelete(); };
+        ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
+                                [&](const ui_kit::DialogContentArea& area) {
+            ui_kit::drawDialogText(
+                ui, "schedule.list.deleteConfirm.body",
+                area.w + ui_kit::kDialogBodyInsetX,
+                "确定删除「" + pendingDeleteName_ +
+                    "」吗？默认仅软删（配置与运行历史保留）。",
+                t.sizes.fontSizeSmall, t.colors.textSecondary,
+                {.x = area.x, .y = area.y, .height = 20.0f, .lineHeight = 20.0f});
+            // 不用 components::checkbox：其头文件在 -Werror 下有 unused
+            // variable（EUI-NEO 上游问题），「彻底删除」改行内开关同语义
+            ui.text("schedule.list.deleteConfirm.purge.label")
+                .position(area.x, area.y + 36.0f)
+                .size(area.w - 60.0f, 24.0f)
+                .text("彻底删除（物理删除规则，运行历史保留）")
+                .fontSize(t.sizes.fontSizeSmall)
+                .color(t.colors.textSecondary)
+                .build();
+            components::toggleSwitch(ui, "schedule.list.deleteConfirm.purge")
+                .position(area.x + area.w - 52.0f, area.y + 34.0f)
+                .size(44.0f, 24.0f)
+                .checked(pendingDeletePurge_)
+                .theme(themeTokens)
+                .onChange([this](bool v) { pendingDeletePurge_ = v; })
+                .build();
+        });
     }
 
     // 规则编辑弹窗（关闭态也常驻构建，EUI 内建收起过渡依赖节点存在）
