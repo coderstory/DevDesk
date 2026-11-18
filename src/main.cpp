@@ -177,7 +177,9 @@ bool handleDbCorruption(
                         "无法打开数据库",
                         app::assembly::openFailMessage(dbPath.string()), false);
                     LOG_FATAL("无法打开数据库: " + r.errorMessage());
-                    std::abort();
+                    // need300 审计 P1：与同函数三个兄弟分支同口径 _Exit(1)——
+                    // abort 会触发 SIGABRT/崩溃上报，用户看完弹窗又见「已停止工作」
+                    std::_Exit(1);
                 }
                 LOG_ERROR("数据库打开失败且判定损坏: " + r.errorMessage());
             } else {

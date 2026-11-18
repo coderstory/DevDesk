@@ -641,7 +641,6 @@ void ScheduleListUi::requestDeleteRule(int64_t ruleId) {
     pendingDeleteId_ = ruleId;
     pendingDeleteName_ =
         rule.value().name.empty() ? "（未命名）" : rule.value().name;
-    std::fprintf(stderr, "[DEBUG-N1] set name='%s'\n", pendingDeleteName_.c_str());
     pendingDeletePurge_ = false;  // 默认软删（§4.4：配置与历史保留）
 }
 
@@ -657,8 +656,6 @@ void ScheduleListUi::confirmPendingDelete() {
 }
 
 void ScheduleListUi::cancelPendingDelete() {
-    std::fprintf(stderr, "[DEBUG-N1] cancelPendingDelete (name=%s)\n",
-                 pendingDeleteName_.c_str());
     pendingDeleteId_ = 0;
     pendingDeleteName_.clear();
     pendingDeletePurge_ = false;
@@ -748,6 +745,9 @@ void ScheduleListUi::resetForTest() {
     pendingScrollReset_ = false;
     tabFadePending_ = false;
     hoveredCardIds_.clear();
+    // need300 审计 P1：延帧删除请求一并清（cancelPendingDelete 只清 pending
+    // 三件套——headless「requestDelete→reset→再 compose」会幽灵开确认窗）
+    deferredDeleteId_ = 0;
     cancelPendingDelete();
 }
 

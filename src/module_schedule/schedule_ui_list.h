@@ -135,9 +135,6 @@ public:
     // ①need:300：确认弹窗开态判据 = 有挂起删除 id。原名非空判据会让「未命名
     // 规则」永远弹不出确认窗 = UI 上删不掉。
     bool deleteConfirmOpen() const { return pendingDeleteId_ != 0; }
-    // ①need:300：删除钮当帧只收编辑弹窗，次帧 compose 头消费开确认——同帧
-    // 「一壳 1→0 + 一壳 0→1」会冻结两壳透明度过渡（确认壳 opacity 卡 0 隐形）。
-    int64_t deferredDeleteId_ = 0;
 
     // 测试缝：回默认态（归档折叠 + 清错误文案 + 收抽屉；生产不调用）
     void resetForTest();
@@ -166,8 +163,12 @@ private:
     ui::HistoryDrawerHost historyHost_;    // 抽屉数据 + close 回调（构造时接好）
     ui::EditDialogState editState_;        // 编辑弹窗（关闭态也常驻构建）
     ui::EditDialogHost editHost_;          // 渠道/任务候选 + saveRule/close（构造时接好）
-    int64_t pendingDeleteId_ = 0;          // 非 0 = 删除确认弹窗开着
-    std::string pendingDeleteName_;        // 确认弹窗正文用规则名（兼开合标志）
+    int64_t pendingDeleteId_ = 0;          // 非 0 = 删除确认弹窗开着（开合唯一判据）
+    std::string pendingDeleteName_;        // 确认弹窗正文用规则名（need300：不再兼开合标志）
+    // ①need:300：删除钮当帧只收编辑弹窗，次帧 compose 头消费开确认——同帧
+    // 「一壳 1→0 + 一壳 0→1」会冻结两壳透明度过渡（确认壳 opacity 卡 0 隐形）。
+    // 纯实现态（审计 P2：tests 走 requestDelete+deleteConfirmOpen 断言面，不直读）。
+    int64_t deferredDeleteId_ = 0;
     bool pendingDeletePurge_ = false;      // 「彻底删除」勾选态
     // 分类 TAB 状态与一次性标记（compose 消费后清零）：滚动回顶走
     // ui.setScrollOffset 帧末取件；淡入走 opacity 目标值翻转 + 120ms 过渡。
