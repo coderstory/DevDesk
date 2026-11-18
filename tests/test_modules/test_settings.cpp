@@ -2317,12 +2317,13 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.editor.fluid.sw.track"),
                           at(24.0f, 24.0f, 24.0f));
             if (err.empty())
-                // UAT6：卡内第二段加自启动行 → 144→184（与外观卡同高，配对行高不变）
+                // UAT6：卡内第二段加自启动行 → 144→184（need321 主题行入外观卡后
+                // editor 184 / appearance 226，配对行高随 appearance 档）
                 err = pin("editor 卡高", heightOf("settings.card.editor"),
                           at(156.0f, 184.0f, 239.0f));
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
-                          at(156.0f, 184.0f, 239.0f));
+                          at(192.0f, 226.0f, 294.0f));
             // 代理卡（UAT5 迁入通用 tab；need155 起胶囊行盒随 roundFs 派生）
             if (err.empty())
                 err = pin("proxy.pill.run.bg 高（胶囊行盒 22）",
@@ -2629,8 +2630,8 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(pair->frame.width, contentW));
         // 行高 = max(对内卡高)：UAT6 自启动行入 editor 后两卡同高（184|184）→
         // 行高 184，与 UAT5 前 max(184,144)=184 逐值不变（零滚动预算不动）
-        DOCTEST_CHECK(nearEq(pair->frame.height, 184.0f));
-        DOCTEST_CHECK(nearEq(appearance->frame.height, 184.0f));
+        DOCTEST_CHECK(nearEq(pair->frame.height, 226.0f));
+        DOCTEST_CHECK(nearEq(appearance->frame.height, 226.0f));
         DOCTEST_CHECK(nearEq(editor->frame.height, 184.0f));
         // 两卡同排（行顶同 y）且都在行内
         DOCTEST_CHECK(nearEq(appearance->frame.y, pair->frame.y));
@@ -3641,12 +3642,12 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ui_kit::kWtabHeight, 40.0f);
     // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
     DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
-    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
+    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 226.0f);
     // UAT6：编辑器字号卡卡内第二段加「开机自启动」行 → 144→184（与外观卡同高）。
     // 关键不变量：与 kAppearanceCardHeight 同值 → 配对行高恒 184 不变，通用 tab
-    // 内容高对可用 372 的零滚动预算逐值保持（338/356/372 @ 0/1/2 条代理警告）。
+    // 内容高对可用 424 的零滚动预算（need321 后；0/1/2 警告态逐值随 roundFs 派生）。
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
+    DOCTEST_CHECK(ms::kAppearanceCardHeight > ms::kEditorFontCardHeight);
     // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
     // 常量 310 仅留作 100% 档参考锚。池151 起 MCP 归位常规格：9 格（含壁纸）
     // 3 列 3 行派生值 254，8 格（无壁纸）两列 4 行仍 310。
@@ -3950,10 +3951,10 @@ REGISTER_TEST(settings_editor_card_autostart_row,
 // 通用 tab 零滚动预算（UAT6 开机自启动行落位的依据，也是护栏）：1000×640 窗
 //（Windows 自绘壳 → 页区高 600）下 cardsH = 600-152-40-20-16 = 372；内容 =
 // 配对行 184 + 16 + 代理卡（0/1/2 条警告 = 108/146/164，need155）。行落编辑器
-// 字号卡阴影后配对行高恒 184 → 最坏 2 警告态 184+16+164 = 364 ≤ 可用 372
+// need321 主题行入外观卡 → 配对行高随 appearance 226：最坏 2 警告态 226+16+164 = 406 ≤ 可用 424
 //（零滚动保住，较重设计前富余 +8）。
 REGISTER_TEST(settings_general_tab_zero_scroll_budget,
-              "settings: 通用 tab 1000×640 零滚动预算——配对行高 184 不变 + 最坏代理态 364 ≤ 可用 372", {
+              "settings: 通用 tab 1000×640 零滚动预算——配对行高随 appearance 226 + 最坏代理态 406 ≤ 可用 424", {
     namespace ms = module::settings;
     struct FontScaleGuard {
         float prev;
@@ -3966,14 +3967,14 @@ REGISTER_TEST(settings_general_tab_zero_scroll_budget,
     FontScaleGuard g{1.0f};
 
     // ① 纯件：配对行掌高者不变量（editor == appearance → max 恒 appearance 档）
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
-    // 最坏代理态（2 条警告）逐值复算：内容 ≤ 可用（364 ≤ 372，超 1px 即破）
+    DOCTEST_CHECK(ms::kAppearanceCardHeight > ms::kEditorFontCardHeight);
+    // 最坏代理态（2 条警告）逐值复算：内容 ≤ 可用（406 ≤ 424，超 1px 即破）
     DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 164.0f);
     DOCTEST_CHECK_EQ(ms::roundFs(ms::kAppearanceCardHeight) +
                          16.0f + ms::proxyCardHeightFor(2),
-                     364.0f);
+                     406.0f);
     // ② compose 实测（headless 无代理服务 → 0 警告态）：配对行/代理卡节点高与
-    // 纯件一致，内容高 308 ≤ 可用 372（页级滚动条断言由同库
+    // 纯件一致，内容高 350 ≤ 可用 424（need321 后 0 警告态；页级滚动条断言由同库
     // settings_min_window_tabs_zero_scroll 承担，本用例钉预算等式与掌高者不变量）
     test_support::TestEnv env(kCfgPrefix, "autostartbudget", true);
     test_support::ScopedConfigPath cfgEnv(
@@ -4008,7 +4009,7 @@ REGISTER_TEST(settings_general_tab_zero_scroll_budget,
                             ms::roundFs(20.0f) - t.sizes.spacingLarge;
         DOCTEST_CHECK(pair->frame.height + t.sizes.spacingLarge +
                           proxy->frame.height <
-                      cardsH);   // 338 < 372：零滚动（内容 ≤ 可用）
+                      cardsH);   // 350 < 424：零滚动（内容 ≤ 可用，need321 后）
         // 配对行内矮卡不变量：editor 不掌行（== appearance 高 → 行高不变）
         DOCTEST_CHECK(editor->frame.height <= pair->frame.height + 0.5f);
         mod->onStop();
