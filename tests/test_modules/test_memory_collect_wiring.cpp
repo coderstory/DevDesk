@@ -546,6 +546,54 @@ REGISTER_TEST(memory_collect_f06_wash_redteam_and_control,
     return true;
 })
 
+// pool:bug:346（BI 审查 P2）：1024B 事件截断 × F-06 洗链交互——session_reader ③
+// 截断可把 [Request interrupted by user 从中撕开（残段=真前缀，find 不命中→
+// 洗不掉入卡）；洗链对行尾被撕开前缀兜底擦除。
+REGISTER_TEST(memory_collect_f06_wash_torn_marker,
+              "memory: F-06 洗链×1024B 截断——被撕开的中断标记残段洗后零残留", {
+    // 撕开形态微锚：独占尾行整段丢 / 行尾残段保正文 / 词中撕开
+    bool w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "正文段落\n[Request interru", &w),
+                     std::string("正文段落"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "前面有文字[Request interrupted by us", &w),
+                     std::string("前面有文字"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "词中撕开[Request inter", &w),
+                     std::string("词中撕开"));
+    DOCTEST_CHECK(w);
+    w = false;
+    // 阈值下限负例：裸 '[' 与 <8B 碎前缀不算残段（零误洗契约不破）
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers("结尾是裸开括号 [", &w),
+                     std::string("结尾是裸开括号 ["));
+    DOCTEST_CHECK(!w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers("低于下限 [Reques", &w),
+                     std::string("低于下限 [Reques"));
+    DOCTEST_CHECK(!w);
+
+    // 断言主体：1000B 正文 + 41B 完整标记，事件级截断切在第 1024 字节恰落在
+    // 标记内部撕出 24B 残段（ASCII 无码点回退，与 session_reader truncateUtf8
+    // 行为一致）→ 洗后零残段、正文保全
+    const std::string full =
+        std::string(1000, 'x') + "[Request interrupted by user for tool use]";
+    const std::string truncated = full.substr(0, 1024);
+    DOCTEST_REQUIRE_EQ(truncated.size(), static_cast<std::size_t>(1024));
+    DOCTEST_CHECK_EQ(truncated.substr(1000),
+                     std::string("[Request interrupted by u"));
+    w = false;
+    const std::string out = pipeline::stripLeakMarkers(truncated, &w);
+    DOCTEST_CHECK(w);
+    DOCTEST_CHECK_EQ(out, std::string(1000, 'x'));
+    DOCTEST_CHECK(out.find("[Request") == std::string::npos);  // 零残段
+    return true;
+})
+
 REGISTER_TEST(memory_collect_f06_wash_in_round,
               "memory: F-06 L2 接线——管线轮内洗：中断标记不入卡、两侧正文保留、report.washed 计数", {
     const auto dir = makeTempDir("f06-round");

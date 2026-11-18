@@ -172,6 +172,22 @@ bool isNoiseEcho(const std::string& text) {
 std::string stripLeakMarkers(const std::string& body, bool* washed) {
     constexpr std::string_view kInterrupt = "[Request interrupted by user";
     constexpr std::string_view kToolErrPrefix = "[tool_error] ";
+    // pool:bug:346（BI 审查 P2）：1024B 事件截断（session_reader ③）可把中断
+    // 标记从中撕开，残段是 kInterrupt 真前缀 find 不命中→入卡。撕裂只发生在
+    // 被截断文本尾部，行尾=真前缀即残段；≥8B「[Request」词根起判（正文裸
+    // '[' 等碎前缀不误洗，对照集零误洗契约不破）。返回残段字节数，0=非残段
+    const auto tornTailLen = [&kInterrupt](const std::string& l)
+                             -> std::size_t {
+        constexpr std::size_t kTornMin = 8;  // "[Request" 完整词根
+        std::size_t maxLen = kInterrupt.size() - 1;
+        if (maxLen > l.size()) maxLen = l.size();
+        for (std::size_t len = maxLen; len >= kTornMin; --len) {
+            if (l.compare(l.size() - len, len, kInterrupt, 0, len) == 0) {
+                return len;
+            }
+        }
+        return 0;
+    };
     if (washed != nullptr) *washed = false;
     std::string out;
     out.reserve(body.size());
@@ -192,6 +208,11 @@ std::string stripLeakMarkers(const std::string& body, bool* washed) {
             line.erase(hit, (close == std::string::npos ? line.size()
                                                          : close + 1) -
                                 hit);
+            changed = true;
+        }
+        // pool:bug:346：截断撕开残段兜底（完整命中含无']'尾已由上方循环处理）
+        if (const std::size_t torn = tornTailLen(line); torn != 0) {
+            line.erase(line.size() - torn);
             changed = true;
         }
         if (changed) {
