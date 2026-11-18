@@ -18,6 +18,8 @@
 
 #include "platform/terminal/swift_bridge.h"
 
+#include "platform/terminal/terminal_backend.h"
+
 REGISTER_TEST(terminal_workdir_resolve,
               "terminal_workdir: spawn 目录解析——非空原值、空→$HOME（need328）", {
     // 非空 → 原值直传
@@ -77,6 +79,51 @@ REGISTER_TEST(terminal_workdir_e2e_spawn_chdir,
         std::string got = pollPwdOut(wd + "/pwd.out");
         DOCTEST_REQUIRE_EQ(got, homeCanon);
         s->stop();
+    }
+    return true;
+})
+
+// need330：设置面板 shell 裸名（"bash"）走 UI 真实入口 TerminalBackend::spawn——
+// 上游 Spawn 要求绝对路径（executablePathNotAbsolute），裸名未解析 = 装机态 bash 会话
+// 全灭。锁四象限的 bash 一对：裸名 spawn 可用 + {非空目录落之、空→$HOME}。
+REGISTER_TEST(terminal_workdir_e2e_bash_bare_name,
+              "terminal_workdir: bash 裸名经 backend spawn——目录落之/空→$HOME（need330）", {
+    std::filesystem::create_directories("/tmp/devdesk-wd-e2e");
+    const std::string wd = std::filesystem::canonical("/tmp/devdesk-wd-e2e").string();
+    const char* cmd = "pwd > /tmp/devdesk-wd-e2e/pwd-bash.out; echo __WD_DONE__\n";
+    const char* home = std::getenv("HOME");
+    DOCTEST_REQUIRE(home != nullptr);
+    const std::string homeCanon = std::filesystem::canonical(home).string();
+    platform::TerminalSize size;
+    size.rows = 24;
+    size.cols = 80;
+
+    // ① 裸名 "bash" + 非空目录 → 会话 cwd 落该目录
+    {
+        auto backend = platform::terminalBackendMac();
+        auto spawned = backend->spawn("bash", size, wd);
+        DOCTEST_REQUIRE(spawned.isOk());
+        auto& h = spawned.value();
+        DOCTEST_REQUIRE(h->write(reinterpret_cast<const uint8_t*>(cmd),
+                                 static_cast<int32_t>(std::strlen(cmd)), false)
+                            .isOk());
+        std::string got = pollPwdOut(wd + "/pwd-bash.out");
+        DOCTEST_REQUIRE_EQ(got, wd);
+        h->terminate();
+    }
+    // ② 裸名 "bash" + 空目录 → 解析成 $HOME
+    {
+        std::filesystem::remove(wd + "/pwd-bash.out");
+        auto backend = platform::terminalBackendMac();
+        auto spawned = backend->spawn("bash", size, "");
+        DOCTEST_REQUIRE(spawned.isOk());
+        auto& h = spawned.value();
+        DOCTEST_REQUIRE(h->write(reinterpret_cast<const uint8_t*>(cmd),
+                                 static_cast<int32_t>(std::strlen(cmd)), false)
+                            .isOk());
+        std::string got = pollPwdOut(wd + "/pwd-bash.out");
+        DOCTEST_REQUIRE_EQ(got, homeCanon);
+        h->terminate();
     }
     return true;
 })

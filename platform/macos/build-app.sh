@@ -147,6 +147,19 @@ else
     echo "⚠️  未找到 $BUILD_DIR/assets，跳过资源拷贝（先构建 DevDesk 目标生成 assets）" >&2
 fi
 
+# corta-exec 随包（need:330）：CortaTerminal Spawn.swift 按「宿主二进制上行 6 级」寻址
+# 该 helper（dladdr→realpath→逐级剥目录找 corta-exec），装机态 Contents/MacOS 里没有它
+# 终端 spawn 直接 ENOENT 失败。同 scripts/package-macos.sh 的随包断言，缺件硬失败。
+CORTA_EXEC="$BUILD_DIR/gen/corta/corta-exec"
+if [ -f "$CORTA_EXEC" ]; then
+    cp "$CORTA_EXEC" "$APP_DIR/Contents/MacOS/corta-exec"
+    chmod +x "$APP_DIR/Contents/MacOS/corta-exec"
+    echo "✅ corta-exec 就位（Contents/MacOS/corta-exec）"
+else
+    echo "❌ 缺 $CORTA_EXEC（先跑 build-test-run.sh 构建终端桥），终端会话在装机态将无法启动" >&2
+    exit 1
+fi
+
 # 签名：bundle 组装的**最后一次写入**。到这里二进制、Info.plist 版本号、图标、assets 都已
 # 就位，签完就不能再动 bundle 里任何文件（否则封条失效）。注意：package-macos.sh 和
 # --install 路径在本脚本之后还会补拷 assets，它们必须在自己的写操作完成后再签一次。

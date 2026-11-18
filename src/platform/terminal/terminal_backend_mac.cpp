@@ -28,6 +28,21 @@ std::string resolveDefaultShell() {
     return "/bin/zsh";
 }
 
+// 设置面板 shell 值 → spawn 可执行（need330）：上游 Spawn 要求绝对路径
+//（executablePathNotAbsolute），而 need250 选项表存的是裸名（""/"bash"/"sh"）。
+// 裸名 → /bin/<名> 可执行即用；绝对路径校验可执行；任意分支落空回落默认解析链，
+// 保证 spawn 永远拿到可执行的绝对路径。
+std::string resolveShellExecutable(const std::string& shell) {
+    if (shell.empty()) return resolveDefaultShell();
+    if (shell[0] == '/') {
+        if (access(shell.c_str(), X_OK) == 0) return shell;
+        return resolveDefaultShell();
+    }
+    const std::string bin = "/bin/" + shell;
+    if (access(bin.c_str(), X_OK) == 0) return bin;
+    return resolveDefaultShell();
+}
+
 class MacSessionHandle : public TerminalSessionHandle {
 public:
     explicit MacSessionHandle(std::unique_ptr<SwiftBridgeSession> s) : s_(std::move(s)) {}
@@ -82,7 +97,7 @@ public:
         // need328：workDir 接线桥 spawn；空/非空语义在桥内 resolveSpawnWorkDir
         // 统一解析（空 → $HOME，与 win 侧 %USERPROFILE% 对齐）。shell 选名
         //（zsh/bash/sh）直作 exe 透传，空 = 默认解析（决策 6：env 注入 → $SHELL → pw_shell → /bin/zsh）
-        const std::string exe = shell.empty() ? resolveDefaultShell() : shell;
+        const std::string exe = resolveShellExecutable(shell);
         auto s = SwiftBridgeSession::spawn(exe, size.rows, size.cols, workDir);
         if (!s) {
             char reason[512] = {0};
