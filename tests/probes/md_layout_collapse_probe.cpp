@@ -179,12 +179,13 @@ int main(int argc, char* argv[]) {
                      "（点击文件行未打开笔记？）\n";
         passed = false;
     } else {
-        // 代码预期几何：body 顶 y=48、tab 带 36、chip 区 48 → 输入框顶
-        // y=132（bug149 修复后值，与窗高无关）；输入框底 = 列底(窗高-32)
-        // - 30 = 窗高-62（800 窗→738、1000 窗→938）。原写死 738 只对 800
-        // 窗成立，ctest 缺省 1200x1000 会误报 bug149（2026-11-07 改随窗高
-        // 推导，bug210 波及面验证时发现）。
-        const float expectY = 132.0f;
+        // 代码预期几何：body 顶 y=48、tab 带 36、顶距 8 + chip 行 24 + 间距 8
+        //（bug#164 打回#1：顶距 16→8，colY = topInset+40，3a5ebd14）→ 输入框
+        // 顶 y=124（与窗高无关；132 为顶距收敛前旧值，已退役）；输入框底 =
+        // 列底(窗高-32) - 30 = 窗高-62（800 窗→738、1000 窗→938）。原写死 738
+        // 只对 800 窗成立，ctest 缺省 1200x1000 会误报 bug149（2026-11-07 改
+        // 随窗高推导，bug210 波及面验证时发现）。
+        const float expectY = 124.0f;
         const float expectBottom = static_cast<float>(args.windowH) - 62.0f;
         if (std::fabs(input.y - expectY) > 2.0f) {
             std::cerr << "bug149 嫌疑: 编辑区 y=" << input.y << " 预期≈"

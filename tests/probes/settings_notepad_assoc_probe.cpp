@@ -203,6 +203,10 @@ int main(int argc, char* argv[]) {
     }
 
     // ── 130% 字号档·配对行不错轨（承接 md 卡 review P2-5，验 P1 左轨恒 28）──
+    // 直绘提醒卡 + notepad 卡（同原点，帧内相对坐标可比对跨卡同锚）：标题左缘恒 28
+    // 字面、两卡必须相等（130% 下 roundFs(28)=36——左轨回退 roundFs 包裹即
+    // 错轨，P1 病灶）。开关口径 need132 D-4（2910c4df）起分卡：notepad 卡右锚
+    // 卡宽−28；提醒卡左锚 label 列——两卡右缘相等口径已随 D-4 退役。
     {
         core::theme::setFontScale(1.30f);
         int failures = 0;
@@ -255,10 +259,24 @@ int main(int argc, char* argv[]) {
         const core::dsl::Element* swR =
             uiPtr != nullptr ? uiPtr->find(std::string(kCardId) + ".sw.track")
                              : nullptr;
-        expect(swR != nullptr, "开关轨道元素缺失");
-        if (swR != nullptr) {
-            expect(floatEq(swR->frame.x + swR->frame.width, kCardW - 28.0f),
-                   "130% 档开关右缘应 = 卡宽 − 28（全 tab 单一口径）");
+        const core::dsl::Element* swL =
+            uiPtr != nullptr
+                ? uiPtr->find("settings.card.reminder.popup.sw.track")
+                : nullptr;
+        expect(swL != nullptr && swR != nullptr, "两卡开关轨道元素缺失");
+        if (swL != nullptr && swR != nullptr) {
+            // need132 D-4：提醒卡开关列左锚（label 112 + 行内距 16，28 左轨
+            // 起），44×24 字面不缩放——不再钉卡右缘。
+            expect(floatEq(swL->frame.x,
+                           28.0f + module::settings::roundFs(112.0f) +
+                               module::settings::roundFs(16.0f)),
+                   "130% 档提醒卡开关应左锚 label 列（28+roundFs(112)+"
+                   "roundFs(16)）");
+            expect(floatEq(swL->frame.width, 44.0f),
+                   "130% 档提醒卡开关宽应为 44 字面（不缩放）");
+            const float rR = swR->frame.x + swR->frame.width;
+            expect(floatEq(rR, kCardW - 28.0f),
+                   "130% 档 notepad 卡开关右缘应 = 卡宽 − 28（右锚口径）");
         }
         if (failures != 0) passed = false;
         core::theme::setFontScale(1.0f);  // 档位还原（全局单例，防串后续段）

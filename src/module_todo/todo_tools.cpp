@@ -173,7 +173,7 @@ public:
     std::string name() const override { return "todo.list"; }
 
     std::string schemaJson() const override {
-        return R"({"name":"todo.list","description":"列出待办任务（含 id/标题/列/优先级/完成态）；可按完成态或逾期过滤","input_schema":{"type":"object","properties":{"completed":{"type":"boolean","description":"true=只看已完成，false=只看未完成，缺省=全部"},"overdue":{"type":"boolean","description":"true=只看已逾期任务（截止时间早于当前时间且未完成，与 Todo 页逾期弹窗口径一致）；completed=true 时不可用（互斥）；缺省/false=不按逾期过滤"}}}})";
+        return R"({"name":"todo.list","description":"列出待办任务（含 id/标题/列/优先级/完成态）；可按完成态或逾期过滤","input_schema":{"type":"object","properties":{"completed":{"type":"boolean","description":"true=只看已完成，false=只看未完成，缺省=全部"},"overdue":{"type":"boolean","description":"true=只看已逾期任务（按自然日口径：截止日期早于今天本地零点且未完成——当天截止不算逾期，与 Todo 页逾期弹窗口径一致，2026-11-16 起）；completed=true 时不可用（互斥）；缺省/false=不按逾期过滤"}}}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {
