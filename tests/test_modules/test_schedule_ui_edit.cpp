@@ -6,10 +6,15 @@
 #include "doctest.h"
 
 #include "core/schedule_rule.h"
+#include "core/theme.h"
 #include "core/time.h"
 #include "module_schedule/schedule_ui_edit.h"
+#include "ui_kit/dialog_shell.h"  // kDialogInsetX（头部 chip 右缘对齐定点断言）
 
+#include <cmath>
 #include <ctime>
+#include <eui/dsl.h>
+#include <eui/types.h>
 #include <string>
 #include <vector>
 
@@ -50,6 +55,9 @@ EditFormState makeDailyForm() {
     f.calendarAnchorDate = "2026-10-27";  // 周二
     return f;
 }
+
+// 浮点近似比较（test_ui_kit_selection.cpp 口径，epsilon=0.01）
+bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 }  // namespace
 
@@ -386,5 +394,95 @@ REGISTER_TEST(scheduleEditRunTaskEmptyKeyRejected, "schedule 编辑弹窗：run_
     DOCTEST_REQUIRE(rec.isOk());
     DOCTEST_CHECK(rec.value().actionJson.find("\"key\"") != std::string::npos);
     DOCTEST_CHECK(rec.value().actionJson.find("md.cleanup") != std::string::npos);
+    return true;
+});
+
+// 防：删除钮回退底区旧形态（need294 C1 手抄 danger 钮 y=h−56，老板验收不认
+// ——危险操作须在可见头区，范式 = todo 详情头部 chips）。定点断言：chip 悬于
+// 头区分隔线（y=52）上方、右缘贴 kDialogInsetX=24；点击走 host.requestDelete
+// 既有延帧确认链入口（need#300 语义不变）；新建态（ruleId=0）不渲染。
+REGISTER_TEST(scheduleEditDeleteChipInHeader, "schedule 编辑弹窗：删除=头部右缘 danger chip（定点+确认链）", {
+    const auto& t = core::theme::current();
+    {
+        eui::Ui ui;
+        ui.begin("schedule_edit_delete_chip");
+        module::schedule::ui::EditDialogState st;
+        st.open = true;
+        st.ruleId = 42;
+        st.form.kind = core::schedule::RuleKind::Once;
+        st.form.name = "定点断言";
+        st.form.onceAtLocal = "2026-12-01 09:00";
+        module::schedule::ui::EditDialogHost host;
+        int64_t deleted = 0;
+        host.requestDelete = [&deleted](int64_t id) { deleted = id; };
+        const eui::Screen screen{1280.0f, 800.0f};
+        module::schedule::ui::drawEditDialog(ui, screen, t, st, host,
+                                             makeCtx(localUnix(2026, 10, 27, 8, 0)));
+        // 定点断言锚 stack 根节点（绝对坐标；.bg 等子节点坐标是 stack 相对 0,0）
+        const auto* chip = ui.find("schedule.edit.delete");
+        DOCTEST_REQUIRE(chip != nullptr);
+        DOCTEST_CHECK(chip->y < 52.0f);              // 头区（分隔线之上，非底区 h−56）
+        DOCTEST_CHECK(floatEq(chip->y, 18.0f));      // 与标题同行（todo chip 范式 y）
+        // 右缘贴 kDialogInsetX=24：Wide=640 → chip 宽 76 → x=540
+        DOCTEST_CHECK(floatEq(chip->x, 540.0f));
+        const auto* delBg = ui.find("schedule.edit.delete.bg");
+        DOCTEST_REQUIRE(delBg != nullptr);
+        DOCTEST_CHECK(floatEq(delBg->width.value, 76.0f));
+        // 点击 → 宿主 requestDelete(ruleId)（延帧确认链入口，语义不变）
+        DOCTEST_REQUIRE(delBg->onClick != nullptr);
+        delBg->onClick();
+        DOCTEST_CHECK_EQ(deleted, 42);
+        ui.end();
+    }
+    {
+        eui::Ui ui;
+        ui.begin("schedule_edit_delete_chip_new");
+        module::schedule::ui::EditDialogState st;
+        st.open = true;
+        st.ruleId = 0;  // 新建态
+        st.form.kind = core::schedule::RuleKind::Once;
+        st.form.onceAtLocal = "2026-12-01 09:00";
+        module::schedule::ui::EditDialogHost host;
+        host.requestDelete = [](int64_t) {};
+        const eui::Screen screen{1280.0f, 800.0f};
+        module::schedule::ui::drawEditDialog(ui, screen, t, st, host,
+                                             makeCtx(localUnix(2026, 10, 27, 8, 0)));
+        DOCTEST_CHECK(ui.find("schedule.edit.delete.bg") == nullptr);
+        ui.end();
+    }
+    return true;
+});
+
+// 防：启用开关回退旧形态（need336 前=表单首行 components::toggleSwitch，老板
+// 验收要求开关行并入可见表单区名称行之后、组件归一 ui_kit::wswitch 既有件）。
+// 定点断言：wswitch track 位于名称输入行之下（x=x0+60 缩进列、y=96+72+2=170）。
+REGISTER_TEST(scheduleEditEnableSwitchAfterName, "schedule 编辑弹窗：启用=wswitch 开关行在名称行后（定点）", {
+    const auto& t = core::theme::current();
+    eui::Ui ui;
+    ui.begin("schedule_edit_enable_switch");
+    module::schedule::ui::EditDialogState st;
+    st.open = true;
+    st.ruleId = 0;
+    st.form.kind = core::schedule::RuleKind::Once;
+    st.form.onceAtLocal = "2026-12-01 09:00";
+    module::schedule::ui::EditDialogHost host;
+    const eui::Screen screen{1280.0f, 800.0f};
+    module::schedule::ui::drawEditDialog(ui, screen, t, st, host,
+                                         makeCtx(localUnix(2026, 10, 27, 8, 0)));
+    // 定点断言锚 stack 根节点（绝对坐标；.track/.thumb 子节点坐标 stack 相对）
+    const auto* sw = ui.find("schedule.edit.enabled");
+    DOCTEST_REQUIRE(sw != nullptr);
+    // 名称行（label y=96 + input 116..152）之后 → 开关行 label y=168、switch y=170
+    DOCTEST_CHECK(floatEq(sw->x, 84.0f));       // x0(24)+60 缩进列
+    DOCTEST_CHECK(floatEq(sw->y, 170.0f));
+    const auto* track = ui.find("schedule.edit.enabled.track");
+    DOCTEST_REQUIRE(track != nullptr);
+    const auto* thumb = ui.find("schedule.edit.enabled.thumb");
+    DOCTEST_REQUIRE(thumb != nullptr);
+    const auto* nameStack = ui.find("schedule.edit.name");
+    DOCTEST_REQUIRE(nameStack != nullptr);
+    DOCTEST_CHECK(sw->y > nameStack->y);        // 在名称行之后（非表单首行）
+    DOCTEST_CHECK(sw->y > 86.0f);               // 在 kind 页签行（56..86）之下
+    ui.end();
     return true;
 });

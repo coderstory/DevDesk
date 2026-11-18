@@ -39,7 +39,8 @@ struct ChannelOption {
 struct EditFormState {
     core::schedule::RuleKind kind = core::schedule::RuleKind::Once;
     std::string name;
-    // 启停（池140：启停开关收进编辑弹窗，表单首行「启用」；卡面零操作钮）
+    // 启停（池140：启停开关收进编辑弹窗；need336 归位 = 名称行后「启用」开关行
+    // （ui_kit::wswitch）；卡面零操作钮）
     bool enabled = true;
 
     // once：二选一（onceUseLocal 决定用 at_local 还是 at）
@@ -124,8 +125,8 @@ struct EditDialogHost {
     std::vector<std::string> taskKeys;  // run_task 下拉候选 = InternalTaskRegistry 已注册 key（禁自由输入，防键名错写）；空 = 下拉只出灰字空态
     std::function<std::string(const RuleRecord&)> saveRule;  // 模块侧同事务落库
     std::function<void()> close;
-    // 弹窗左下「删除」文字钮（仅编辑既有规则时出现）：宿主收编辑弹窗并走
-    // 既有删除确认链路（requestDeleteRule → 确认小弹窗）。
+    // 弹窗头部右缘「删除」danger chip（need336 归位；仅编辑既有规则时出现）：
+    // 宿主收编辑弹窗并走既有删除确认链路（requestDeleteRule → 确认小弹窗）。
     std::function<void(int64_t ruleId)> requestDelete;
 };
 

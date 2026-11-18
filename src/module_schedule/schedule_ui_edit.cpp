@@ -11,11 +11,11 @@
 
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/dialog_shell.h>
+#include <ui_kit/wswitch.h>
 
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/input.h>
-#include <components/switch.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -539,6 +539,29 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                             [&](const ui_kit::DialogContentArea& area) {
         const float x0 = area.x;
         const float innerW = area.w;
+            // 头部右缘 danger chip（need336：删除归位可见头区，范式 = todo 详情
+            // 头部动作 chips todo_ui_dialogs.cpp:868-924）——红字 trash chip 悬于
+            // 分隔线上方；替代 need294 C1 的底区行左端手抄 danger 钮（#294 审计
+            // bug#35 手抄副本就此清零，真迁移非复制）。仅编辑既有规则时出现；
+            // 点击 → 宿主 requestDelete 入口不变（收本弹窗 + 开既有删除确认链）。
+            if (st.ruleId != 0 && host.requestDelete) {
+                const float chipY = 18.0f;
+                const float deleteW = 76.0f;
+                components::button(ui, "schedule.edit.delete")
+                    .position(area.x + area.w - deleteW, chipY)
+                    .size(deleteW, 28.0f)
+                    .icon(0xF2ED)   // fa-trash（同 todo 详情删除 chip）
+                    .text("删除")
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .colors(t.colors.background, t.colors.hover,
+                            eui::mixColor(t.colors.surface, t.colors.error, 0.18f))
+                    .textColor(t.colors.errorText)
+                    .iconColor(t.colors.errorText)
+                    .radius(t.sizes.radiusSmall)   // 胶囊（同 todo 删除 chip）
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([&st, &host] { host.requestDelete(st.ruleId); })
+                    .build();
+            }
             // 每帧按当前表单重算：校验红字 + 预览缓存同一真源（nextFire 迭代）
             st.form.errorText.clear();
             {
@@ -573,16 +596,6 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
 
             float fy = 96.0f;
-            // 启用开关（池140：表单首行「启用」，启停从卡面收进编辑弹窗一步直达）
-            drawLabel(ui, "schedule.edit.enabled.label", x0, fy, "启用", t);
-            components::toggleSwitch(ui, "schedule.edit.enabled")
-                .position(x0 + 60.0f, fy + 2.0f)
-                .size(44.0f, 24.0f)
-                .checked(st.form.enabled)
-                .theme(themeTokens)
-                .onChange([&st](bool v) { st.form.enabled = v; })
-                .build();
-            fy += 44.0f;
             drawLabel(ui, "schedule.edit.name.label", x0, fy, "名称", t);
             components::input(ui, "schedule.edit.name")
                 .position(x0, fy + 20.0f)
@@ -601,6 +614,15 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                 .onCancel(doCancel)
                 .build();
             fy += 72.0f;
+
+            // 启用开关行（池140：启停收进编辑弹窗一步直达；need336 归位可见表单
+            // 区——名称行之后，组件归一 ui_kit::wswitch 既有件。原表单首行
+            // toggleSwitch 形态老板验收不认，禁再回迁首行）
+            drawLabel(ui, "schedule.edit.enabled.label", x0, fy, "启用", t);
+            ui_kit::wswitch(ui, "schedule.edit.enabled", st.form.enabled,
+                            x0 + 60.0f, fy + 2.0f, 44.0f, 24.0f, t,
+                            [&st](bool v) { st.form.enabled = v; });
+            fy += 44.0f;
 
             // 各 kind 的参数行（占位布局：字段输入 + 语义标签）
             if (st.form.kind == core::schedule::RuleKind::Once) {
@@ -929,23 +951,6 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .build();
             }
             fy += 120.0f;
-
-            // 底部操作区（池140 §5 → need294 迁壳）：删除走壳危险变体样式
-            //（40 高 / min 宽 96 / error 底白字），钉底区行左端（与壳右锚
-            // cancel/confirm 同排同高）；仅编辑既有规则时出现，点击 → 宿主
-            // 收本弹窗并开删除确认小弹窗。取消/保存已归壳底区按钮对。
-            if (st.ruleId != 0 && host.requestDelete) {
-                components::button(ui, "schedule.edit.delete")
-                    .position(x0, h - ui_kit::kDialogFooterH + 17.0f)
-                    .size(ui_kit::kDialogButtonMinW, 40.0f)  // 40 = 壳钮高（dialog_shell 内部档）
-                    .text("删除")
-                    .fontSize(core::theme::scaled(14.0f))
-                    .colors(t.colors.error, t.colors.error, t.colors.error)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([&st, &host] { host.requestDelete(st.ruleId); })
-                    .build();
-            }
         });
 }
 
