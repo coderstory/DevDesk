@@ -777,11 +777,20 @@ public:
                             // 折叠箭头：chevron-down 展开 / chevron-right 收起
                             // （走 Icon 字体：几何符号在正文字体里会退化成小点）
                             // 折叠态与居中后的标题同带（盒心对齐）。
+                            // need344 光学对齐：图标字体 glyph 按基线定位（text.cpp:661
+                            // yOffset=ascent-bitmap_top×scale），FA chevron 墨水中心只悬在
+                            // 基线上方 ≈0.2~0.4em，而 CJK 标题墨水中心 ≈基线上方 0.42em×字号
+                            // ——同一基线下图标墨水比标题视觉中心低 1~3px，几何对半观感仍偏下
+                            // （老板目检 2026-11-18）。上移 2px×字号缩放修正；如复测仍偏，
+                            // 只调这一个常量。
+                            constexpr float kChevronOpticalY = -2.0f;
+                            const float chevronY =
+                                (chartCollapsed_
+                                     ? (titleBoxH - titleLineH) * 0.5f
+                                     : 16.0f) +
+                                kChevronOpticalY * core::theme::fontScale();
                             ui.text("home.api.chart.toggle")
-                                .position(contentW - 32.0f - 20.0f,
-                                          chartCollapsed_
-                                              ? (titleBoxH - titleLineH) * 0.5f
-                                              : 16.0f)
+                                .position(contentW - 32.0f - 20.0f, chevronY)
                                 .size(20.0f, titleLineH)
                                 .icon(chartCollapsed_ ? 0xF054 : 0xF078)
                                 .fontSize(core::theme::scaled(12.0f))
