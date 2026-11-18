@@ -26,6 +26,7 @@ public:
     void setRate(float rate) override;
     void setVolume(float volume) override;
     void setMute(bool muted) override;
+    void setVideoMemCache(bool enabled) override;
     void setImageFit(ImageFit fit) override;
     void stop() override;
     float positionSec() const override;

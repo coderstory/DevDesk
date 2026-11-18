@@ -58,6 +58,7 @@ struct WallpaperSnapshot {
     float volume = 1.0f;
     bool muted = false;
     bool pauseOnBattery = false;
+    bool videoMemCache = false;  // 视频缓存到内存开关（need:311）
     int imageMinPixels = 3686400;
     ImageFit imageFit = ImageFit::Fill;
     int secondsUntilRotation = -1;  // -1 = 不轮换
@@ -111,6 +112,8 @@ public:
     void setVolume(float volume);
     void setMuted(bool muted);
     void setPauseOnBattery(bool pauseOnBattery);
+    // 视频缓存到内存开关：持久化 + 即时生效（重装当前视频项并回原位置）。
+    void setVideoMemCache(bool videoMemCache);
     void setImageMinPixels(int minPixels);
     void setImageFit(ImageFit fit);
 

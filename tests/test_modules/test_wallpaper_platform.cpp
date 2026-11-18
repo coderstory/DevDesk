@@ -179,6 +179,19 @@ REGISTER_TEST(wallpaper_platform_mpv_commands,
     DOCTEST_CHECK_EQ(wp::mpvLoadFileCommand("C:\\videos\\a.mp4"),
                      std::string("{\"command\":[\"loadfile\",\"C:\\\\videos\\\\a.mp4\","
                                  "\"replace\"]}"));
+    // need:311 F2：缓存模式 = 第三参 -1（mpv>=0.38 插入索引占位）+ 第四参 per-file
+    // 选项表；前后缓冲都 = 文件大小，显式 seekable-cache=yes（clue#308）。
+    DOCTEST_CHECK_EQ(
+        wp::mpvLoadFileCommand("C:\\videos\\a.mp4", 4096),
+        std::string("{\"command\":[\"loadfile\",\"C:\\\\videos\\\\a.mp4\",\"replace\",-1,"
+                    "[\"demuxer-max-bytes=4096\",\"demuxer-max-back-bytes=4096\","
+                    "\"demuxer-seekable-cache=yes\"]]}"));
+    // 512MB 上限值原样下发（字节字符串，不带单位后缀）。
+    DOCTEST_CHECK(wp::mpvLoadFileCommand("a.mp4", 536870912).find(
+                      "\"demuxer-max-bytes=536870912\"") != std::string::npos);
+    // cacheBytes=0 必须与旧命令逐字一致（默认关闭路径零变化）。
+    DOCTEST_CHECK_EQ(wp::mpvLoadFileCommand("a.mp4", 0),
+                     wp::mpvLoadFileCommand("a.mp4"));
     DOCTEST_CHECK_EQ(wp::mpvSetPropertyCommand("pause", true),
                      std::string("{\"command\":[\"set_property\",\"pause\",true]}"));
     DOCTEST_CHECK_EQ(wp::mpvSetPropertyCommand("pause", false),

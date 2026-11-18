@@ -27,6 +27,7 @@ struct WallpaperSettings {
     PlayMode mode = PlayMode::LoopSingle;
     int rotationIntervalSec = 300;  // UI 档位 5/10/15/30/60/120 分钟
     bool pauseOnBattery = false;
+    bool videoMemCache = false;  // 视频文件缓存到内存（need:311；默认关）
     int imageMinPixels = 3686400;  // 1080P=2073600 / 2K=3686400 / 4K=8294400
     ImageFit imageFit = ImageFit::Fill;
     std::string lastPlayedPath;     // 运行时：单循环续播

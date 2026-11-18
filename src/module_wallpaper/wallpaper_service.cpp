@@ -71,6 +71,7 @@ void WallpaperService::start() {
         snapshot_.volume = settings_.volume;
         snapshot_.muted = settings_.muted;
         snapshot_.pauseOnBattery = settings_.pauseOnBattery;
+        snapshot_.videoMemCache = settings_.videoMemCache;
         snapshot_.imageMinPixels = settings_.imageMinPixels;
         snapshot_.imageFit = settings_.imageFit;
         snapshot_.folderPath = currentFolderLocked();
@@ -203,6 +204,7 @@ WallpaperSnapshot WallpaperService::snapshot() const {
     out.volume = settings_.volume;
     out.muted = settings_.muted;
     out.pauseOnBattery = settings_.pauseOnBattery;
+    out.videoMemCache = settings_.videoMemCache;
     out.imageMinPixels = settings_.imageMinPixels;
     out.imageFit = settings_.imageFit;
 
@@ -304,6 +306,30 @@ void WallpaperService::setPauseOnBattery(bool pauseOnBattery) {
     snapshot_.pauseOnBattery = pauseOnBattery;
     arbiter_.setPauseOnBattery(pauseOnBattery);
     if (changed) applyHoldDecisionLocked(nowLocked());
+    persistLocked();
+}
+
+void WallpaperService::setVideoMemCache(bool videoMemCache) {
+    std::lock_guard<std::mutex> lock(mu_);
+    const bool changed = settings_.videoMemCache != videoMemCache;
+    settings_.videoMemCache = videoMemCache;
+    snapshot_.videoMemCache = videoMemCache;
+    {
+        std::lock_guard<std::mutex> playerLock(playerMu_);
+        if (player_) player_->setVideoMemCache(videoMemCache);
+    }
+    // 即时生效（PRD F4）：重装当前视频项并回到原位置；图片项不受开关影响。
+    if (changed && started_ && !currentItemImage_) {
+        const std::optional<std::string> current = rotation_.currentPath();
+        if (current.has_value() && !isImageFilePath(*current)) {
+            const float resumeSeconds = playerPositionLocked();
+            loadItemLocked(*current, nowLocked());
+            if (resumeSeconds > 0.05f) {
+                std::lock_guard<std::mutex> playerLock(playerMu_);
+                if (player_) player_->seek(resumeSeconds);
+            }
+        }
+    }
     persistLocked();
 }
 
@@ -860,6 +886,7 @@ void WallpaperService::applySettingsToPlayerLocked() {
     player_->setRate(settings_.rate);
     player_->setVolume(settings_.volume);
     player_->setMute(settings_.muted);
+    player_->setVideoMemCache(settings_.videoMemCache);
     player_->setImageFit(settings_.imageFit);
 }
 

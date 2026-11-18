@@ -28,6 +28,9 @@ public:
     virtual void setRate(float rate) = 0;
     virtual void setVolume(float volume) = 0;
     virtual void setMute(bool muted) = 0;
+    // 视频内存缓存开关（need:311）。默认 no-op：Null/测试后端不需要缓存语义；
+    // 平台播放器在 load 时按「开关 × 文件大小」自判是否走内存缓存。
+    virtual void setVideoMemCache(bool enabled) { (void)enabled; }
     // 图片铺法（仅对静图项有意义）。默认 no-op：mpv 路线只实现「填充」
     //（--panscan=1.0，其余三种是 deferred 决策），macOS 原生路线四种全画。
     virtual void setImageFit(ImageFit fit) { (void)fit; }

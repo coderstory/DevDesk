@@ -11,6 +11,8 @@
 //   §6 图片铺法四种都能下发且不报错（Fill/Fit/Center/Tile）。
 //   §7 stop 后无错误残留、宿主窗口不再持有播放器。
 //   §8 让路 watcher：五路 poll 通道可用（电池可读、全屏判定不崩）。
+//   §9 视频内存缓存（need:311）：开关开 + ≤512MB → 内存喂数生效（lastLoadUsedMemoryCache
+//      + 播放推进 + RSS 增量）；停播后缓存释放（RSS 回落、诊断位清零）；关闭 → 文件 URL 直读。
 // 退出码：0 通过 / 77 非 macOS 跳过 / 非零失败（stderr 中文原因）。
 //
 // 素材：视频与图片从 --video / --image 指定；不给则用 /tmp 下临时生成的素材
@@ -21,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -33,7 +36,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <ImageIO/ImageIO.h>
+#include <mach/mach.h>
 
+#include "module_wallpaper/core/video_cache.h"
 #include "module_wallpaper/platform/mpv_controller.h"
 #include "module_wallpaper/platform/wallpaper_host.h"
 #include "module_wallpaper/platform/yield_watchers.h"
@@ -60,6 +65,17 @@ void pumpMainEvents(double seconds) {
     while (CFAbsoluteTimeGetCurrent() < deadline) {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
     }
+}
+
+// 当前进程常驻内存（字节）。need:311 §9 缓存释放判据用它做前后对照。
+std::uint64_t residentBytes() {
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS) {
+        return 0;
+    }
+    return static_cast<std::uint64_t>(info.resident_size);
 }
 
 bool waitUntil(const std::function<bool()>& predicate, std::chrono::milliseconds timeout) {
@@ -224,6 +240,113 @@ int runProbe(const std::string& videoPath, const std::string& imagePath) {
         const std::string fitError = player.takeError();
         check(fitError.empty(), "§6 四种铺法下发不应报错: " + fitError);
         player.stop();
+    }
+
+    // ── §9 视频内存缓存（need:311）──
+    // 判据口径（本机实测标定）：RSS 不能当「缓存已释放」的精密尺——libmalloc 会
+    // 回收已被释放的大块不给 OS（实测 4 次重装后 RSS 恒定在「一个文件大小 + 解码器
+    // 地板」，不随轮换次数线性上涨）。因此钉三条：①开启后确实走内存喂数且播放推进；
+    // ②4 轮重装不线性累积（增量 < 2 份文件）；③与「直读对照」的停播地板一致。
+    if (hasVideo) {
+        const std::uintmax_t fileBytes = std::filesystem::file_size(videoPath);
+        const std::uint64_t rssBaseline = residentBytes();
+        module::wallpaper::MpvController cached;
+        cached.start(reinterpret_cast<std::uintptr_t>(handle.videoChild));
+        cached.setVideoMemCache(true);
+        cached.pause(false);
+        cached.load(videoPath);
+        const bool cacheActive = waitUntil(
+            [&cached] {
+                return cached.processAlive() && cached.lastLoadUsedMemoryCache() &&
+                       cached.positionSec() > 0.2f;
+            },
+            std::chrono::milliseconds(8000));
+        check(cacheActive,
+              "§9 开关开 + " + std::to_string(fileBytes / 1024 / 1024) +
+                  "MB 视频应走内存喂数且播放推进（active=" +
+                  std::string(cached.lastLoadUsedMemoryCache() ? "true" : "false") +
+                  " pos=" + std::to_string(cached.positionSec()) + "）");
+        const std::uint64_t rssWithCache = residentBytes();
+        std::cout << "wallpaper_macos_probe: §9 RSS baseline=" << rssBaseline / 1024 / 1024
+                  << "MB withCache=" << rssWithCache / 1024 / 1024
+                  << "MB file=" << fileBytes / 1024 / 1024 << "MB\n";
+        if (cacheActive) {
+            check(rssWithCache > rssBaseline + fileBytes / 2,
+                  "§9 内存缓存应体现在 RSS（增量 " +
+                      std::to_string((rssWithCache - rssBaseline) / 1024 / 1024) +
+                      "MB，应 > 文件一半）");
+        }
+        // 轮换切条目 = 同一控制器再 load 4 次：缓存不得线性累积。
+        if (cacheActive) {
+            for (int cycle = 0; cycle < 3; ++cycle) {
+                cached.load(videoPath);
+                (void)waitUntil([&cached] { return cached.positionSec() > 0.2f; },
+                                std::chrono::milliseconds(8000));
+                pumpMainEvents(0.3);
+            }
+            const std::uint64_t rssAfterReload = residentBytes();
+            std::cout << "wallpaper_macos_probe: §9 RSS afterReload(4x)="
+                      << rssAfterReload / 1024 / 1024 << "MB\n";
+            check(rssAfterReload < rssWithCache + fileBytes * 2,
+                  "§9 多轮轮换重装不得线性累积（增量 " +
+                      std::to_string((rssAfterReload - rssWithCache) / 1024 / 1024) +
+                      "MB < 2 份文件 " + std::to_string(fileBytes * 2 / 1024 / 1024) +
+                      "MB）");
+        }
+        // 停播 = 轮换/换源收尾：诊断位清零 + RSS 不高于「直读对照」的停播地板。
+        cached.stop();
+        check(!cached.lastLoadUsedMemoryCache(), "§9 停播后内存缓存诊断位应清零");
+        pumpMainEvents(0.6);
+        const std::uint64_t rssStopAfterCache = residentBytes();
+        std::cout << "wallpaper_macos_probe: §9 RSS stopAfterCache="
+                  << rssStopAfterCache / 1024 / 1024 << "MB\n";
+
+        // 关闭开关 = 现状文件 URL 直读（回归锚 + 停播地板对照）。
+        module::wallpaper::MpvController direct;
+        direct.start(reinterpret_cast<std::uintptr_t>(handle.videoChild));
+        direct.pause(false);
+        direct.load(videoPath);
+        const bool directAdvanced = waitUntil(
+            [&direct] { return direct.positionSec() > 0.2f; },
+            std::chrono::milliseconds(6000));
+        check(directAdvanced, "§9 关闭开关后文件直读应照常播放");
+        check(!direct.lastLoadUsedMemoryCache(), "§9 关闭开关后不得命中内存缓存路径");
+        direct.stop();
+        pumpMainEvents(0.6);
+        const std::uint64_t rssStopAfterDirect = residentBytes();
+        std::cout << "wallpaper_macos_probe: §9 RSS stopAfterDirect="
+                  << rssStopAfterDirect / 1024 / 1024 << "MB\n";
+        // 超限回落（D2）：>512MB 文件不必读进内存，按现状文件 URL 直读。
+        // 用稀疏文件（truncate）造 513MB 体积，零真实磁盘占用；内容不是有效视频，
+        // 因此只断言「未命中内存缓存路径 + 不报崩溃」，不要求播放推进。
+        {
+            const std::filesystem::path oversize =
+                std::filesystem::temp_directory_path() / "devdesk_wallpaper_oversize.mp4";
+            std::error_code ec;
+            std::filesystem::remove(oversize, ec);
+            {
+                std::ofstream out(oversize, std::ios::binary | std::ios::trunc);
+                out.seekp(513ll * 1024ll * 1024ll - 1);
+                out.put('\0');
+            }
+            check(std::filesystem::file_size(oversize) > module::wallpaper::kVideoMemCacheLimitBytes,
+                  "§9 稀疏超限文件应 >512MB");
+            module::wallpaper::MpvController oversizePlayer;
+            oversizePlayer.start(reinterpret_cast<std::uintptr_t>(handle.videoChild));
+            oversizePlayer.setVideoMemCache(true);
+            oversizePlayer.load(oversize.string());
+            pumpMainEvents(1.0);
+            check(!oversizePlayer.lastLoadUsedMemoryCache(),
+                  "§9 开关开但文件 >512MB 应回落直读（不缓存）");
+            oversizePlayer.stop();
+            std::filesystem::remove(oversize, ec);
+        }
+
+        const std::uint64_t tolerance = 16ull * 1024ull * 1024ull;
+        check(rssStopAfterCache <= rssStopAfterDirect + tolerance,
+              "§9 缓存路径停播后 RSS 不得高于直读对照地板 +16MB（" +
+                  std::to_string(rssStopAfterCache / 1024 / 1024) + "MB vs " +
+                  std::to_string(rssStopAfterDirect / 1024 / 1024) + "MB）");
     }
 
     // ── §8 让路 watcher ──

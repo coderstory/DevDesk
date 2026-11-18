@@ -24,6 +24,8 @@ void MpvPlayer::setVolume(float volume) { controller_.setVolume(volume); }
 
 void MpvPlayer::setMute(bool muted) { controller_.setMute(muted); }
 
+void MpvPlayer::setVideoMemCache(bool enabled) { controller_.setVideoMemCache(enabled); }
+
 void MpvPlayer::setImageFit(ImageFit fit) { controller_.setImageFit(fit); }
 
 void MpvPlayer::stop() { controller_.stop(); }

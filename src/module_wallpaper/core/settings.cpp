@@ -198,6 +198,7 @@ WallpaperSettings loadWallpaperSettings(const std::filesystem::path& path) {
                                  PlayMode::LoopSingle);
     settings.rotationIntervalSec = numberFieldAsInt(object, "rotationInterval", 300);
     settings.pauseOnBattery = boolValue(object, "pauseOnBattery", false);
+    settings.videoMemCache = boolValue(object, "videoMemCache", false);
     settings.imageMinPixels = numberFieldAsInt(object, "imageMinPixels", 3686400);
     settings.imageFit = fitFromJson(stringValue(object, "imageFit", "fill"), ImageFit::Fill);
     settings.lastPlayedPath = stringValue(object, "lastPlayedPath", "");
@@ -224,6 +225,7 @@ core::Result<void> saveWallpaperSettings(const std::filesystem::path& path,
     object.set("playMode", platform::json::makeString(modeToJson(safe.mode)));
     object.set("rotationInterval", platform::json::makeInt(safe.rotationIntervalSec));
     object.set("pauseOnBattery", platform::json::makeBool(safe.pauseOnBattery));
+    object.set("videoMemCache", platform::json::makeBool(safe.videoMemCache));
     object.set("imageMinPixels", platform::json::makeInt(safe.imageMinPixels));
     object.set("imageFit", platform::json::makeString(fitToJson(safe.imageFit)));
     object.set("lastPlayedPath", platform::json::makeString(safe.lastPlayedPath));

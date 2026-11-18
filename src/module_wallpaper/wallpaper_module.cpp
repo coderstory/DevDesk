@@ -45,6 +45,9 @@ void WallpaperModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     actions.setPauseOnBattery = [this](bool pauseOnBattery) {
         service_.setPauseOnBattery(pauseOnBattery);
     };
+    actions.setVideoMemCache = [this](bool videoMemCache) {
+        service_.setVideoMemCache(videoMemCache);
+    };
     actions.setImageMinPixels = [this](int minPixels) {
         service_.setImageMinPixels(minPixels);
     };

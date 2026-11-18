@@ -27,7 +27,11 @@
 #import <ImageIO/ImageIO.h>
 #import <QuartzCore/QuartzCore.h>
 
+#include "core/logging.h"
+
+#include "module_wallpaper/core/video_cache.h"
 #include "module_wallpaper/platform/mpv_controller.h"
+#include "module_wallpaper/platform/video_mem_loader.h"
 #include "module_wallpaper/platform/wallpaper_host_macos_view.h"
 
 #include <algorithm>
@@ -45,9 +49,54 @@
 // 主队列上的播放器状态。做成 ObjC 对象：它持有 AVQueuePlayer / looper / 当前图层
 // 选择，全部生命周期都在主队列上，避免 C++ 对象跨线程析构。
 // 必须声明在全局作用域（ObjC 声明不能进命名空间）。
+// 内存喂数 delegate（need:311 / clue#309）：AVURLAsset 的自定义 scheme 请求全部
+// 交给这里，从 RAM buffer 切片应答。delegate 由 resourceLoader 弱持，故 controller
+// 侧必须强持（盒子属性 memoryLoader）；换代次时随队列清空一起释放 → RAM 释放。
+@interface DevDeskMemResourceLoader : NSObject <AVAssetResourceLoaderDelegate>
+@property(nonatomic, strong) NSData* data;
+@property(nonatomic, copy) NSString* contentType;
+@end
+
+@implementation DevDeskMemResourceLoader
+- (BOOL)resourceLoader:(AVAssetResourceLoader*)resourceLoader
+    shouldWaitForLoadingOfRequestedResource:(AVAssetResourceLoadingRequest*)loadingRequest {
+    (void)resourceLoader;
+    const NSUInteger total = self.data.length;
+    AVAssetResourceLoadingContentInformationRequest* info = loadingRequest.contentInformationRequest;
+    if (info != nil) {
+        // 三件套缺一不可（clue#309）：byteRange 支持是 seek 前提，contentLength 定 EOF。
+        info.byteRangeAccessSupported = YES;
+        info.contentLength = (long long)total;
+        info.contentType = self.contentType;
+    }
+    AVAssetResourceLoadingDataRequest* dataRequest = loadingRequest.dataRequest;
+    if (dataRequest != nil) {
+        const module::wallpaper::video_mem_loader::ByteRange range =
+            module::wallpaper::video_mem_loader::clampRange(
+                total, (std::uint64_t)dataRequest.requestedOffset,
+                (std::uint64_t)dataRequest.requestedLength,
+                dataRequest.requestsAllDataToEndOfResource != NO);
+        if (range.offset < total && range.length > 0) {
+            NSData* slice = [self.data subdataWithRange:NSMakeRange((NSUInteger)range.offset,
+                                                                   (NSUInteger)range.length)];
+            [dataRequest respondWithData:slice];
+        }
+    }
+    [loadingRequest finishLoading];
+    return YES;
+}
+- (void)resourceLoader:(AVAssetResourceLoader*)resourceLoader
+    didCancelLoadingRequest:(AVAssetResourceLoadingRequest*)loadingRequest {
+    (void)resourceLoader;
+    (void)loadingRequest;
+}
+@end
+
 @interface DevDeskMacPlayerBox : NSObject
 @property(nonatomic, strong) AVQueuePlayer* player;
 @property(nonatomic, strong) AVPlayerLooper* looper;
+// need:311：当前视频项若走内存喂数，delegate 必须活到队列清空（弱持有兜底）。
+@property(nonatomic, strong) DevDeskMemResourceLoader* memoryLoader;
 @property(nonatomic, strong) DevDeskWallpaperHostView* host;
 @property(nonatomic) float desiredRate;
 @property(nonatomic) float volume;
@@ -157,6 +206,8 @@ struct MpvController::Impl {
     // 装载代次：每次 load / stop 递增。后台图片解码晚到时对不上号就丢弃（审计
     // F6/F7：既防「stop 后图片复活」，也防「快速换片时旧图盖掉新视频」）。
     std::atomic<std::uint64_t> loadGeneration{0};
+    // need:311：最近一次视频装载是否命中内存喂数（探针诊断）。
+    std::atomic<bool> memoryCacheActive{false};
 
     std::mutex errorMutex;
     std::string error;
@@ -191,6 +242,9 @@ struct MpvController::Impl {
         [box.looper disableLooping];
         box.looper = nil;
         [box.player removeAllItems];
+        // need:311：换片 / 停播即释放 RAM buffer（PRD D3）。
+        box.memoryLoader = nil;
+        memoryCacheActive.store(false, std::memory_order_relaxed);
     }
 };
 
@@ -271,6 +325,9 @@ void MpvController::load(const std::string& path, float seekSeconds) {
         // 必须**拷贝**路径再进 block：path 是调用方的引用参数，block 异步执行时
         // 该引用早已失效（实测退化成空串 → "无法识别的文件路径: "）。
         auto pathCopy = std::make_shared<std::string>(path);
+        // need:311：开关在投递时取快照；缓存判定与整读在播放串行队列上做
+        //（≤512MB 的大读不占 UI 线程；读失败回落现状文件 URL）。
+        const bool cacheWanted = videoMemCache_.load(std::memory_order_relaxed);
         // block 隐式按值捕获 impl/pathCopy/generation/seekSeconds（均为局部量，
         // 不捕 this）。带捕获的 C++ lambda 不能转 dispatch_block_t，必须 ^{}。
         dispatch_async(impl->queue, ^{
@@ -282,12 +339,59 @@ void MpvController::load(const std::string& path, float seekSeconds) {
                 if (box.player == nil) {
                     box.player = [[AVQueuePlayer alloc] init];
                 }
+                impl->memoryCacheActive.store(false, std::memory_order_relaxed);
                 NSURL* url = fileURLFromUtf8Path(*pathCopy);
                 if (url == nil) {
                     impl->setError("无法识别的文件路径: " + *pathCopy);
                     return;
                 }
-                AVPlayerItem* item = [AVPlayerItem playerItemWithURL:url];
+                AVPlayerItem* item = nil;
+                if (cacheWanted) {
+                    std::uint64_t fileBytes = 0;
+                    const bool sizeKnown = queryFileSizeBytes(*pathCopy, &fileBytes);
+                    const VideoMemCacheDecision decision =
+                        decideVideoMemCache(true, true, sizeKnown, fileBytes);
+                    if (decision.useMemory) {
+                        NSString* nsPath = [NSString stringWithUTF8String:pathCopy->c_str()];
+                        // NSDataReadingUncached：强制读进匿名内存。默认读法对大文件
+                        // 走 mmap，文件页计入 RSS 且停播后不会回落（实测 76MB 视频
+                        // 释放后 RSS 仍留 76MB 文件页）——那会让「缓存释放」不可证。
+                        NSData* data = nsPath != nil
+                                           ? [NSData dataWithContentsOfFile:nsPath
+                                                                     options:NSDataReadingUncached
+                                                                       error:nil]
+                                           : nil;
+                        if (data != nil && data.length > 0) {
+                            // 自定义 scheme（clue#309）：保留原扩展名供内容提示，
+                            // delegate 在创建 AVURLAsset 前挂上。
+                            NSURLComponents* components = [NSURLComponents new];
+                            components.scheme = @(video_mem_loader::kMemoryScheme);
+                            components.host = @"video";
+                            components.path = [@"/" stringByAppendingString:nsPath.lastPathComponent];
+                            NSURL* memoryURL = components.URL;
+                            DevDeskMemResourceLoader* loader =
+                                [[DevDeskMemResourceLoader alloc] init];
+                            loader.data = data;
+                            loader.contentType =
+                                @(video_mem_loader::contentTypeForPath(*pathCopy).c_str());
+                            AVURLAsset* asset = [AVURLAsset URLAssetWithURL:memoryURL
+                                                                    options:nil];
+                            [asset.resourceLoader setDelegate:loader queue:impl->queue];
+                            box.memoryLoader = loader;
+                            item = [AVPlayerItem playerItemWithAsset:asset];
+                            impl->memoryCacheActive.store(true, std::memory_order_relaxed);
+                        } else {
+                            LOG_WARN("壁纸: 视频缓存读取失败，回落直接读盘: " + *pathCopy);
+                        }
+                    } else {
+                        LOG_INFO(std::string("壁纸: 视频缓存跳过（") + decision.reason + "）");
+                    }
+                }
+                if (item == nil) {
+                    item = [AVPlayerItem playerItemWithURL:url];
+                    box.memoryLoader = nil;  // 回落路径不得残留旧 buffer
+                    impl->memoryCacheActive.store(false, std::memory_order_relaxed);
+                }
                 // 保音高必须显式设：macOS 12+ 默认 timeDomain 会变调。
                 item.audioTimePitchAlgorithm = AVAudioTimePitchAlgorithmSpectral;
                 // 定值 3.0（沿用已验证实现）。与上面一条同理，必须在 looper 之前设：
@@ -469,6 +573,11 @@ float MpvController::positionSec() const {
         dispatch_sync(impl->queue, read);
     }
     return seconds;
+}
+
+bool MpvController::lastLoadUsedMemoryCache() const {
+    if (!impl_) return false;
+    return impl_->memoryCacheActive.load(std::memory_order_relaxed);
 }
 
 bool MpvController::processAlive() const {

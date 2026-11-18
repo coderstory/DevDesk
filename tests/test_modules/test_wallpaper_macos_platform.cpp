@@ -10,6 +10,7 @@
 #include "module_wallpaper/platform/image_fit_geometry.h"
 #include "module_wallpaper/platform/image_probe.h"
 #include "module_wallpaper/platform/importer_macos.h"
+#include "module_wallpaper/platform/video_mem_loader.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -287,5 +288,48 @@ REGISTER_TEST(wallpaper_macos_importer_source_no_access_distinguished,
     DOCTEST_CHECK_FALSE(missing.readable);
     DOCTEST_CHECK_FALSE(missing.noAccess);
     fs::remove_all(dir, ec);
+    return true;
+})
+
+// 防（need:311 F3/F5）：内存喂数纯逻辑——contentType 三件套里的 UTI 映射、资源请求
+// 区间夹取（越界/读到 EOF）。AVAssetResourceLoaderDelegate 实现直接消费这两处结果，
+// 映射错 = AVPlayer 拒绝装载，夹取错 = 越界读崩溃。
+REGISTER_TEST(wallpaper_macos_mem_loader_pure_logic,
+              "wallpaper macOS: 内存喂数 contentType 映射 + 资源请求区间夹取", {
+    namespace loader = module::wallpaper::video_mem_loader;
+    DOCTEST_CHECK_EQ(loader::contentTypeForPath("C:/v/a.mp4"),
+                     std::string("public.mpeg-4"));
+    DOCTEST_CHECK_EQ(loader::contentTypeForPath("/tmp/a.M4V"),
+                     std::string("public.mpeg-4"));
+    DOCTEST_CHECK_EQ(loader::contentTypeForPath("/tmp/a.mov"),
+                     std::string("com.apple.quicktime-movie"));
+    DOCTEST_CHECK_EQ(loader::contentTypeForPath("/tmp/a.bin"),
+                     std::string("public.movie"));
+    DOCTEST_CHECK_EQ(loader::contentTypeForPath("a"), std::string("public.movie"));
+    DOCTEST_CHECK_EQ(std::string(loader::kMemoryScheme), std::string("devdesk-mem"));
+
+    // 常规切片。
+    loader::ByteRange range = loader::clampRange(1000, 100, 200, false);
+    DOCTEST_CHECK_EQ(range.offset, 100u);
+    DOCTEST_CHECK_EQ(range.length, 200u);
+    // 读到末尾：长度收敛到剩余。
+    range = loader::clampRange(1000, 900, 500, false);
+    DOCTEST_CHECK_EQ(range.offset, 900u);
+    DOCTEST_CHECK_EQ(range.length, 100u);
+    // requestsAllDataToEndOfResource：忽略请求长度。
+    range = loader::clampRange(1000, 200, 1, true);
+    DOCTEST_CHECK_EQ(range.offset, 200u);
+    DOCTEST_CHECK_EQ(range.length, 800u);
+    // offset 越界：贴 EOF、长度 0（不越界读）。
+    range = loader::clampRange(1000, 5000, 100, false);
+    DOCTEST_CHECK_EQ(range.offset, 1000u);
+    DOCTEST_CHECK_EQ(range.length, 0u);
+    range = loader::clampRange(1000, 0, 10, false);
+    DOCTEST_CHECK_EQ(range.offset, 0u);
+    DOCTEST_CHECK_EQ(range.length, 10u);
+    // 空文件：任何请求都是 0 长。
+    range = loader::clampRange(0, 0, 10, true);
+    DOCTEST_CHECK_EQ(range.offset, 0u);
+    DOCTEST_CHECK_EQ(range.length, 0u);
     return true;
 })

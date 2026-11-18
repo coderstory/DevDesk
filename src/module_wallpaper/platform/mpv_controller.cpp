@@ -35,6 +35,7 @@
 
 #include "core/logging.h"
 #include "core/paths.h"
+#include "module_wallpaper/core/video_cache.h"
 
 namespace module::wallpaper {
 
@@ -62,6 +63,7 @@ struct Command {
     std::string path;
     double number = 0.0;   // Load: seek 秒（<0 = 不 seek）；Seek: 秒；Rate/Volume: 数值
     bool flag = false;     // Pause/Mute
+    bool videoCache = false;  // Load: 请求内存缓存（need:311；按文件大小在控制线程再判）
     std::shared_ptr<StopSignal> stopSignal;
 };
 
@@ -101,6 +103,8 @@ struct MpvController::Impl {
     // 主动收尾旗标：shutdown / 写超时强杀都会置位。读线程退出时据此区分
     // 「正常收尾」与「mpv 意外死亡」，后者才补报意外退出错误。
     std::atomic<bool> stopRequested{false};
+    // need:311 探针诊断：最近一次视频装载是否带内存缓存参数（控制线程写）。
+    std::atomic<bool> memoryCacheActive{false};
     std::atomic<std::uint32_t> pid{0};
     std::atomic<std::uint64_t> counter{0};
 
@@ -429,13 +433,29 @@ void MpvController::Impl::handleCommand(const Command& command) {
         case CommandType::Start:
             (void)spawn(command.windowId);
             break;
-        case CommandType::Load:
+        case CommandType::Load: {
             if (!running()) break;
             positionMs.store(0, std::memory_order_relaxed);
-            if (!sendLine(mpvLoadFileCommand(command.path))) break;
+            // need:311 内存缓存：开关开且视频 <=512MB 时把 demuxer 前后缓冲抬到
+            // 文件大小并显式开 seekable-cache（clue#308）；超限/未知/非视频回落现状参数。
+            std::uint64_t cacheBytes = 0;
+            if (command.videoCache && isVideoFilePath(command.path)) {
+                std::uint64_t fileBytes = 0;
+                const bool sizeKnown = queryFileSizeBytes(command.path, &fileBytes);
+                const VideoMemCacheDecision decision =
+                    decideVideoMemCache(true, true, sizeKnown, fileBytes);
+                if (decision.useMemory) {
+                    cacheBytes = decision.fileBytes;
+                } else {
+                    LOG_INFO(std::string("壁纸: 视频缓存跳过（") + decision.reason + "）");
+                }
+            }
+            memoryCacheActive.store(cacheBytes > 0, std::memory_order_relaxed);
+            if (!sendLine(mpvLoadFileCommand(command.path, cacheBytes))) break;
             (void)sendLine(mpvSetPropertyCommand("pause", paused));
             if (command.number >= 0.0) (void)sendLine(mpvSeekCommand(command.number));
             break;
+        }
         case CommandType::Pause:
             paused = command.flag;
             if (running()) (void)sendLine(mpvSetPropertyCommand("pause", paused));
@@ -510,6 +530,7 @@ void MpvController::load(const std::string& path, float seekSeconds) {
     command.type = CommandType::Load;
     command.path = path;
     command.number = static_cast<double>(seekSeconds);
+    command.videoCache = videoMemCache_.load(std::memory_order_relaxed);
     (void)impl_->enqueue(std::move(command));
 }
 
@@ -551,6 +572,11 @@ void MpvController::setMute(bool muted) {
 void MpvController::setImageFit(ImageFit /*fit*/) {
     // mpv 路线只实现「填充」（--panscan=1.0 全局参数）：其余三种铺法是 deferred
     // 决策（见技术方案 §3 决策记录），这里刻意 no-op，不假装支持。
+}
+
+bool MpvController::lastLoadUsedMemoryCache() const {
+    if (!impl_) return false;
+    return impl_->memoryCacheActive.load(std::memory_order_relaxed);
 }
 
 float MpvController::positionSec() const {

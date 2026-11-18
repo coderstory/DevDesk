@@ -31,6 +31,7 @@ struct UiActions {
     std::function<void(float)> setVolume;
     std::function<void(bool)> setMuted;
     std::function<void(bool)> setPauseOnBattery;
+    std::function<void(bool)> setVideoMemCache;
     std::function<void(int)> setImageMinPixels;
     std::function<void(ImageFit)> setImageFit;
     std::function<void()> selectFolder;  // 弹出目录选择并写入服务

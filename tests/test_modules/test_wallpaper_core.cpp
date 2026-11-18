@@ -17,6 +17,7 @@
 #include "module_wallpaper/core/presentation.h"
 #include "module_wallpaper/core/rotation.h"
 #include "module_wallpaper/core/settings.h"
+#include "module_wallpaper/core/video_cache.h"
 #include "module_wallpaper/core/video_library.h"
 #include "module_wallpaper/platform/player_backend.h"
 #include "module_wallpaper/platform/yield_watchers.h"
@@ -161,6 +162,7 @@ REGISTER_TEST(wallpaper_core_settings, "wallpaper core: settings 默认值/往�
     DOCTEST_CHECK(defaults.mode == wp::PlayMode::LoopSingle);
     DOCTEST_CHECK_EQ(defaults.rotationIntervalSec, 300);
     DOCTEST_CHECK_FALSE(defaults.pauseOnBattery);
+    DOCTEST_CHECK_FALSE(defaults.videoMemCache);  // need:311 默认关（D1）
     DOCTEST_CHECK_EQ(defaults.imageMinPixels, 3686400);
     DOCTEST_CHECK(defaults.imageFit == wp::ImageFit::Fill);
 
@@ -175,6 +177,7 @@ REGISTER_TEST(wallpaper_core_settings, "wallpaper core: settings 默认值/往�
     settings.mode = wp::PlayMode::Shuffle;
     settings.rotationIntervalSec = 900;
     settings.pauseOnBattery = true;
+    settings.videoMemCache = true;
     settings.imageMinPixels = 8294400;
     settings.imageFit = wp::ImageFit::Tile;
     settings.lastPlayedPath = "D:/wallpapers/a.mp4";
@@ -197,6 +200,7 @@ REGISTER_TEST(wallpaper_core_settings, "wallpaper core: settings 默认值/往�
     DOCTEST_CHECK(loaded.mode == wp::PlayMode::Shuffle);
     DOCTEST_CHECK_EQ(loaded.rotationIntervalSec, 900);
     DOCTEST_CHECK(loaded.pauseOnBattery);
+    DOCTEST_CHECK(loaded.videoMemCache);  // need:311 往返
     DOCTEST_CHECK_EQ(loaded.imageMinPixels, 8294400);
     DOCTEST_CHECK(loaded.imageFit == wp::ImageFit::Tile);
     DOCTEST_CHECK_EQ(loaded.lastPlayedPath, settings.lastPlayedPath);
@@ -788,6 +792,57 @@ REGISTER_TEST(wallpaper_core_presentation, "wallpaper core: presentation 标签/
     return true;
 })
 
+// 防（need:311 F2/F3/F5/F6）：缓存判定矩阵——开关 × 文件大小 × 视频/图片；
+// 512MB 边界含边界值；超限/未知大小回落且给中文原因。删掉判定里的任一分支本用例即红。
+REGISTER_TEST(wallpaper_core_video_mem_cache_decision,
+              "wallpaper core: 视频内存缓存判定（开关×大小×图片，512MB 边界/回落原因）", {
+    namespace vc = wp;
+    using wp::decideVideoMemCache;
+    using wp::kVideoMemCacheLimitBytes;
+    const std::uint64_t limit = kVideoMemCacheLimitBytes;
+    DOCTEST_CHECK_EQ(limit, 512ull * 1024ull * 1024ull);
+
+    // 关：一律直读，原因「开关关闭」。
+    DOCTEST_CHECK_FALSE(decideVideoMemCache(false, true, true, 1024).useMemory);
+    DOCTEST_CHECK_EQ(decideVideoMemCache(false, true, true, 1024).reason,
+                     std::string("开关关闭"));
+    // 图片条目恒不缓存（F6）。
+    DOCTEST_CHECK_FALSE(decideVideoMemCache(true, false, true, 1024).useMemory);
+    DOCTEST_CHECK_EQ(decideVideoMemCache(true, false, true, 1024).reason,
+                     std::string("非视频条目"));
+    // stat 失败：回落 + 原因。
+    DOCTEST_CHECK_FALSE(decideVideoMemCache(true, true, false, 0).useMemory);
+    DOCTEST_CHECK_EQ(decideVideoMemCache(true, true, false, 0).reason,
+                     std::string("无法读取文件大小"));
+    // 上限边界：恰好 512MB 缓存；+1 字节回落（D2「超限忽略」）。
+    const wp::VideoMemCacheDecision atLimit = decideVideoMemCache(true, true, true, limit);
+    DOCTEST_CHECK(atLimit.useMemory);
+    DOCTEST_CHECK_EQ(atLimit.fileBytes, limit);
+    DOCTEST_CHECK(atLimit.reason.empty());
+    const wp::VideoMemCacheDecision overLimit =
+        decideVideoMemCache(true, true, true, limit + 1);
+    DOCTEST_CHECK_FALSE(overLimit.useMemory);
+    DOCTEST_CHECK_EQ(overLimit.reason, std::string("文件超过 512MB 上限"));
+
+    // 扩展名白名单与扫描器同口径（mp4/mov/m4v，大小写不敏感）。
+    DOCTEST_CHECK(vc::isVideoFilePath("C:/a/b.MP4"));
+    DOCTEST_CHECK(vc::isVideoFilePath("C:/a/b.mov"));
+    DOCTEST_CHECK(vc::isVideoFilePath("C:/a/b.m4v"));
+    DOCTEST_CHECK_FALSE(vc::isVideoFilePath("C:/a/b.jpg"));
+    DOCTEST_CHECK_FALSE(vc::isVideoFilePath("C:/a/b"));
+
+    // stat 探针：真实临时文件大小；不存在/空路径返回 false。
+    test_support::TempDir dir("wallpaper_video_cache");
+    const fs::path known = dir.path / "clip.mp4";
+    writeTextFile(known, std::string(4096, 'x'));
+    std::uint64_t bytes = 0;
+    DOCTEST_CHECK(vc::queryFileSizeBytes(known.string(), &bytes));
+    DOCTEST_CHECK_EQ(bytes, static_cast<std::uint64_t>(4096));
+    DOCTEST_CHECK_FALSE(vc::queryFileSizeBytes((dir.path / "missing.mp4").string(), &bytes));
+    DOCTEST_CHECK_FALSE(vc::queryFileSizeBytes("", &bytes));
+    return true;
+})
+
 // 防：服务 start 后扫描结果没进快照 / 选目录不持久化 / rescan 丢设置 /
 // stop 不收线程 / 手动暂停与系统让路在快照里混为一谈 / 来源切换沿用旧清单。
 REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选目录持久化/暂停/stop", {
@@ -1272,5 +1327,92 @@ REGISTER_TEST(wallpaper_core_service_yield_watchers,
     service.stop();
     service.stop();
     DOCTEST_CHECK(watchersRaw->stopped());
+    return true;
+})
+
+// 防（need:311 F4/F6）：开关切换持久化且即时重装当前视频项回原位置；图片项不因
+// 开关切换重装；默认关闭时装载链路与现状一致（回归锚）。
+REGISTER_TEST(wallpaper_core_service_video_mem_cache_switch,
+              "wallpaper core: 视频缓存开关持久化 + 视频项即时重装回位置 + 图片项零影响", {
+    test_support::TempDir dir("wallpaper_service_cache_switch");
+    const fs::path settingsPath = dir.path / "wallpaper" / "settings.json";
+    const fs::path videoRoot = dir.path / "videos";
+    const fs::path imageRoot = dir.path / "images";
+    fs::create_directories(videoRoot);
+    fs::create_directories(imageRoot);
+    for (const char* name : {"a.mp4", "b.mp4"}) {
+        writeTextFile(videoRoot / name, "x");
+    }
+    for (const char* name : {"a.jpg", "b.jpg"}) {
+        writeTextFile(imageRoot / name, "x");
+    }
+
+    auto player = std::make_unique<wp::NullPlayerBackend>();
+    wp::NullPlayerBackend* playerRaw = player.get();
+
+    wp::WallpaperService service;
+    service.setSettingsPathForTest(settingsPath.string());
+    service.setVideoScannerForTest([](const std::string& folder) {
+        wp::VideoScanResult result;
+        result.status = wp::LibraryScanStatus::Ok;
+        result.files = {(fs::path(folder) / "a.mp4").string(),
+                        (fs::path(folder) / "b.mp4").string()};
+        return result;
+    });
+    service.setImageScannerForTest([&imageRoot](const std::string& folder, int minPixels) {
+        (void)minPixels;
+        wp::ImageScanResult result;
+        if (wp::folder_policy::normalizeFolderPath(folder) !=
+            wp::folder_policy::normalizeFolderPath(imageRoot.string())) {
+            return result;
+        }
+        result.status = wp::LibraryScanStatus::Ok;
+        result.files = {(fs::path(folder) / "a.jpg").string(),
+                        (fs::path(folder) / "b.jpg").string()};
+        result.total = 2;
+        result.passing = 2;
+        return result;
+    });
+    service.setPlayerForTest(std::move(player));
+    service.start();
+    std::string error;
+    DOCTEST_REQUIRE_MESSAGE(service.selectFolder(videoRoot.string(), &error),
+                            "selectFolder 失败: " + error);
+    wp::WallpaperSnapshot snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+    DOCTEST_REQUIRE(snapshot.availability == wp::Availability::Playing);
+    DOCTEST_CHECK_FALSE(snapshot.videoMemCache);  // 默认关
+    const int loadsBefore = playerCallCount(*playerRaw, "load");
+
+    // 开关打开：持久化 + 当前视频项重装一次（新设定在下次 load 生效）。
+    service.setVideoMemCache(true);
+    snapshot = service.snapshot();
+    DOCTEST_CHECK(snapshot.videoMemCache);
+    const wp::WallpaperSettings stored = wp::loadWallpaperSettings(settingsPath);
+    DOCTEST_CHECK(stored.videoMemCache);
+    const int loadsAfterOn = playerCallCount(*playerRaw, "load");
+    DOCTEST_CHECK_MESSAGE(loadsAfterOn == loadsBefore + 1,
+                          "开关打开应重装当前视频项（load 次数 " +
+                              std::to_string(loadsBefore) + " → " +
+                              std::to_string(loadsAfterOn) + "）");
+
+    // 开关关闭：再重装一次回到直读。
+    service.setVideoMemCache(false);
+    DOCTEST_CHECK_FALSE(service.snapshot().videoMemCache);
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), loadsAfterOn + 1);
+
+    // 图片项：开关切换不重装（F6）。切到图片来源并装载第一张。
+    service.setKind(wp::WallpaperKind::Image);
+    DOCTEST_REQUIRE_MESSAGE(service.selectFolder(imageRoot.string(), &error),
+                            "图片 selectFolder 失败: " + error);
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+    DOCTEST_REQUIRE(snapshot.availability == wp::Availability::Playing);
+    const int loadsBeforeImageSwitch = playerCallCount(*playerRaw, "load");
+    service.setVideoMemCache(true);
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), loadsBeforeImageSwitch);
+    service.stop();
     return true;
 })

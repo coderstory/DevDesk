@@ -147,8 +147,19 @@ inline std::string mpvNumber(double value) {
     return std::string(buffer);
 }
 
-inline std::string mpvLoadFileCommand(const std::string& path) {
-    return "{\"command\":[\"loadfile\",\"" + mpvJsonEscape(path) + "\",\"replace\"]}";
+// loadfile 命令（need:311）：cacheBytes>0 = 内存缓存模式，携带 per-file 选项
+// （demuxer 前后缓冲都抬到 >= 文件大小 + 显式 seekable-cache，clue#308）；第三参
+// -1 是 mpv >=0.38 的插入索引占位，第四参才是 per-file 选项表。
+inline std::string mpvLoadFileCommand(const std::string& path,
+                                      std::uint64_t cacheBytes = 0) {
+    const std::string escaped = mpvJsonEscape(path);
+    if (cacheBytes == 0) {
+        return "{\"command\":[\"loadfile\",\"" + escaped + "\",\"replace\"]}";
+    }
+    const std::string bytes = std::to_string(cacheBytes);
+    return "{\"command\":[\"loadfile\",\"" + escaped + "\",\"replace\",-1,[\"demuxer-max-bytes=" +
+           bytes + "\",\"demuxer-max-back-bytes=" + bytes +
+           "\",\"demuxer-seekable-cache=yes\"]]}";
 }
 
 inline std::string mpvSetPropertyCommand(const std::string& name, bool value) {
@@ -252,8 +263,16 @@ public:
     // 图片铺法。mpv 路线只实现「填充」（--panscan=1.0，其余三种铺法是 deferred
     // 决策，调用即 no-op）；macOS 原生路线四种铺法全部自己画。
     void setImageFit(ImageFit fit);
+    // 视频内存缓存开关（need:311）：只记状态；下一次 load 时按「开关 × 文件大小」
+    // 决定是否带 per-file demuxer 参数（Windows）/ 走内存喂数（macOS）。
+    void setVideoMemCache(bool enabled) {
+        videoMemCache_.store(enabled, std::memory_order_relaxed);
+    }
 
     float positionSec() const;
+    // 诊断（桌面探针用，need:311）：最近一次视频装载是否真的走了内存缓存路径。
+    // Windows = 带 per-file demuxer 参数下发；macOS = 内存喂数 resource loader 生效。
+    bool lastLoadUsedMemoryCache() const;
     bool processAlive() const;
     std::uint32_t processId() const;
     // 取走最近一次错误（空串 = 无错误）。
@@ -263,6 +282,10 @@ private:
     // 见文件尾注入缝契约（need:296 D4 头文件零平台宏：声明两平台恒在，
     // 定义与调用仅 Windows 侧存在）
     friend struct MpvControllerTestAccess;
+    // 内存缓存开关（need:311）：任意线程写、load 时读；只影响后续装载。
+    // 「最近一次是否命中」在各自平台的 Impl 内（Windows 控制线程 / macOS 播放
+    // 串行队列），头文件不暴露写入点。
+    std::atomic<bool> videoMemCache_{false};
     struct Impl;
     // shared 所有权：异步块按值捕 impl，块在飞时 Impl 不会被析构（2026-11-04
     // 审计 F6：图片后台解码晚到 / 析构竞态的根治）。macOS 实现专用；Windows 的

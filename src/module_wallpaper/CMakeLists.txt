@@ -14,6 +14,9 @@ add_library(devdesk_module_wallpaper STATIC
     core/model.h
     core/settings.cpp
     core/settings.h
+    # 视频内存缓存判定（need:311）：纯逻辑，两平台播放器共用。
+    core/video_cache.cpp
+    core/video_cache.h
     core/rotation.cpp
     core/rotation.h
     core/arbiter.cpp
@@ -32,6 +35,8 @@ add_library(devdesk_module_wallpaper STATIC
     core/importer.h
     # 播放后端接口；Null 仅测试注入，生产走 platform/ 的 mpv 实现。
     platform/player_backend.h
+    # macOS 内存喂数纯逻辑（need:311）：contentType/区间夹取，跨平台单测。
+    platform/video_mem_loader.h
     platform/player_null.cpp
     # 让路事件源接口（锁屏/电池/全屏/换屏 → arbiter）：平台无关缝，测试注入假实现。
     platform/yield_watchers.h

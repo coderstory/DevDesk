@@ -42,6 +42,8 @@ void MpvController::setImageFit(ImageFit /*fit*/) {}
 
 float MpvController::positionSec() const { return 0.0f; }
 
+bool MpvController::lastLoadUsedMemoryCache() const { return false; }
+
 bool MpvController::processAlive() const { return false; }
 
 std::uint32_t MpvController::processId() const { return 0; }
