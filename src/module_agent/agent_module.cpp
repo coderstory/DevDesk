@@ -753,6 +753,10 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         }
                         const bool hovered = hoverHolder_.count(task.id) > 0;
                         const bool pressed = pressedTaskIds_.count(task.id) > 0;
+                        // need338 迁 need334 范式：果冻时间线供值上提到整卡 stack
+                        // 外（transform/zIndex 挂 stack，见下方 inner.stack(id)）。
+                        const ui_kit::JellyPose jelly =
+                            ui_kit::jellyFrame(id, hovered);
 
                         // 三行内容（F-66-3）：标题+状态药丸 / 徽章+最近运行 / 触发条件。
                         // 卡内一律绝对定位 → 必须包一层 stack 根，flow 会接管子元素 x/y。
@@ -806,8 +810,22 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         // 尺寸 56×32 / 文案 / disabled 语义全不动
                         const float runW = kTaskActionW;
 
+                        // need338 迁 need334 范式：transform/zIndex 施加在**整卡
+                        // stack**（本 stack 即整卡根）。曾挂 .bg 时标题/药丸/启动钮是
+                        // .bg 兄弟，560ms 内卡底盖内容（白罩）+ bg 独缩错位。按下缩放
+                        // 随 stack（源=pressedTaskIds_，语义不变）。
                         inner.stack(id)
                             .size(cardW, cardH)
+                            .transformOrigin(0.5f, 0.5f)  // 果冻坑③：缩放中心=卡中心
+                            .scale(pressed ? kJelly.pressedScale : jelly.sx,
+                                   pressed ? kJelly.pressedScale : jelly.sy)
+                            .zIndex(jelly.active ? 20 : 0)  // 动画期盖邻卡；走完回落
+                            .transition(jelly.active
+                                            ? core::Transition::make(
+                                                  0.035f, core::Ease::Linear)
+                                            : core::Transition::make(
+                                                  0.18f, core::Ease::OutBack))
+                            .animate(core::AnimProperty::Transform)
                             .content([&] {
                                 // 卡底（F-66-5 材质×果冻合体）：B1 三态材质吃 hover/press
                                 // 变色，need201 v2 每帧写 radius/scale 目标值吃
@@ -816,32 +834,22 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 // radius=12 与缝的基线口径无缝）。pressed 优先级
                                 // 维持 pressedRadius/pressedScale，时间线在缝内
                                 // 后台推进不中断。
-                                // ⚠️ states() 只改颜色改不了圆角，圆角/缩放必须每帧
-                                // compose 出新值，动画只把上一帧的值平滑过去。
+                        // ⚠️ states() 只改颜色改不了圆角，圆角/缩放必须每帧
+                        // compose 出新值，动画只把上一帧的值平滑过去。
                                 const eui::Color cardSurfaceColor =
                                     pressed ? ui_kit::itemSurfacePressed(t)
                                             : (hovered ? ui_kit::itemSurfaceHover(t)
                                                        : ui_kit::itemSurface(t));
-                                const ui_kit::JellyPose jelly =
-                                    ui_kit::jellyFrame(id, hovered);
                                 auto cardBg = inner.rect(id + ".bg")
                                     .size(cardW, cardH)
                                     .states(cardSurfaceColor, cardSurfaceColor,
                                             cardSurfaceColor)
-                                    // ⚠️ states() 内部会把 interactive 置 true（dsl.h
-                                    // states 实现），而动画期本元素被抬到 zIndex(20)
-                                    // 盖过 .hit（z=1）——不关掉就会顶替掉整卡的 hover/
-                                    // press/click 处理者：hover 一进入即被劫走 → .hit 收
-                                    // onHover(false) → 去抖后 hover 失效 → 果冻退出 →
-                                    // 事件回 .hit，形成抖动且点击打不开详情。三态色
-                                    // 已由本帧显式传入（上三行 states 同色），不需要它
-                                    // 自己参与交互判定。
+                                    // states() 内部会把 interactive 置 true（dsl.h
+                                    // states 实现）——bg 不参与交互判定：命中/悬停
+                                    // 全归 .hit（z=1，need338 后 bg 也不再抬 z）。
                                     .interactive(false)
                                     .radius(pressed ? kJelly.pressedRadius
                                                     : jelly.radius)
-                                    .transformOrigin(0.5f, 0.5f)
-                                    .scale(pressed ? kJelly.pressedScale : jelly.sx,
-                                           pressed ? kJelly.pressedScale : jelly.sy)
                                     .border(1.0f, t.colors.borderDefault)
                                     .shadow(components::theme::panelShadow(
                                         core::theme::componentTokensWeChat(t)))
@@ -851,11 +859,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                     : core::Transition::make(
                                                           0.18f, core::Ease::OutBack))
                                     .animate(core::AnimProperty::Color |
-                                             core::AnimProperty::Radius |
-                                             core::AnimProperty::Transform);
-                                if (jelly.active) {
-                                    cardBg.zIndex(20);  // 动画进行中盖过邻卡
-                                }
+                                             core::AnimProperty::Radius);
                                 cardBg.build();
 
                                 // 行 1 左：任务名（实宽封顶 inline 药丸；碰撞守卫

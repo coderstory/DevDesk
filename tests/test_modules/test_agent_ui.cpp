@@ -4778,15 +4778,21 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
     const auto* nextSub = ui2.find("agent.dialog.detail.summary.next.sub");
     DOCTEST_REQUIRE(nextSub != nullptr);
     DOCTEST_CHECK(nextSub->text.find("定时") != std::string::npos);
-    // 布局公式（方案 A 单列三档，弹性 1600 屏 → 面板 800×660）：
-    // summaryY=64 / summaryH=81 / navY=159（摘要底 +14）/ contentY=199（nav 底 +8）
+    // 布局公式（方案 A 单列三档，弹性 1600 屏 → 面板 800×552）：
+    // summaryY = 头部行底（44+lhS）+ 12（need339①：行底让位，随字号派生）/
+    // summaryH=81 / navY = summaryY+summaryH+14 / contentY = navY+40
+    const auto& tokJ = core::theme::current();
+    const float lhSJ =
+        static_cast<float>(std::lround(tokJ.sizes.fontSizeSmall * 1.4f));
+    const float summaryYJ = 44.0f + lhSJ + 12.0f;
     const auto* panel = ui2.find("agent.dialog.detail.panel");
     const auto* nav = ui2.find("agent.dialog.detail.nav");
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(panel != nullptr && nav != nullptr && runlist != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 48.0f),
-                          "摘要卡应钉面板顶 +64（头部带之下），实测 " +
-                              std::to_string(lastCard->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(lastCard->frame.y - panel->frame.y, summaryYJ),
+        "摘要卡应钉头部行底 +12（need339①），实测 " +
+            std::to_string(lastCard->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.height, 81.0f),
                           "摘要卡高应 81，实测 " +
                               std::to_string(lastCard->frame.height));
@@ -5043,11 +5049,22 @@ REGISTER_TEST(agent_ui_detail_shell_narrow_tabs,
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.2.bg") != nullptr);
     const auto* navItem1Bg = ui2.find("agent.dialog.detail.nav.item.1.bg");
     DOCTEST_REQUIRE(navItem1Bg != nullptr);
-    // 单列几何与弹性档同一公式：navY=159 / contentY=199，主内容全宽 = innerW 596
+    // 单列几何与弹性档同一公式（need339①：navY = 44+lhS+12+summaryH+14 随字号派生，
+    // 不再钉字面 159/199），主内容全宽 = innerW 596
+    const auto& tokS = core::theme::current();
+    const float lhSS =
+        static_cast<float>(std::lround(tokS.sizes.fontSizeSmall * 1.4f));
+    const float lhBS =
+        static_cast<float>(std::lround(tokS.sizes.fontSizeBody * 1.4f));
+    const float summaryYS = 44.0f + lhSS + 12.0f;
+    const float summaryHS =
+        std::max(81.0f, 2.0f * 10.0f + lhSS + lhBS + lhSS + 4.0f);
+    const float navYS = summaryYS + summaryHS + 14.0f;
+    const float contentYS = navYS + 32.0f + 8.0f;
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(runlist != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 143.0f),
-                          "钳制档 nav 应 +159（与弹性档同公式），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, navYS),
+                          "钳制档 nav 应 +summaryY+summaryH+14，实测 " +
                               std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(runlist->frame.x - panel->frame.x, 24.0f) &&
@@ -5056,8 +5073,8 @@ REGISTER_TEST(agent_ui_detail_shell_narrow_tabs,
             std::to_string(runlist->frame.x - panel->frame.x) + " 宽 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.y - panel->frame.y, 183.0f),
-        "钳制档内容应 +183（navY143+kNavH32+8，与弹性档同公式），实测 " +
+        nearPx(runlist->frame.y - panel->frame.y, contentYS),
+        "钳制档内容应 +contentY（nav 底 +40），实测 " +
             std::to_string(runlist->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(runlist->frame.y + runlist->frame.height <=
                               panel->frame.y + panel->frame.height + 0.5f,
@@ -6000,6 +6017,80 @@ REGISTER_TEST(agent_ui_draft_error_paths,
     auto tasks = store.listTasks();
     DOCTEST_REQUIRE(tasks.isOk());
     DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_draft_error_row_in_dialog,
+              "agent_ui_draft: 长错误文案不逃逸弹窗（面板几何包含/右缘不溢出）+ "
+              "规范错误行（error 图标 + errorText 色 + 换行槽）", {
+    test_support::TestDb tdb("agentui", "drafterrrow");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    // 上游 500 + 长 body：direct_llm_client 非 200 文案 =「上游 HTTP NNN: 」+
+    // body 前 200 字节 → 单行远超面板宽，无 wrap 即横向逃出弹窗（need341 实测）
+    const std::string longBody(220, 'x');
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [&longBody](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 500;
+        res.body = longBody;
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui uiA;
+    composeTo(uiA, mod, kScreen, "agent_ui_der10");
+    DOCTEST_REQUIRE(clickId(uiA, "agent.empty.action.bg"));
+    eui::Ui uiB;
+    composeTo(uiB, mod, kScreen, "agent_ui_der11");
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
+    eui::Ui uiB2;
+    composeTo(uiB2, mod, kScreen, "agent_ui_der11s2");
+    DOCTEST_REQUIRE(clickId(uiB2, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiC;
+    composeTo(uiC, mod, kScreen, "agent_ui_der12");
+    auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    typeInto(hit, "整理逾期待办");
+    DOCTEST_REQUIRE(clickId(uiC, "agent.dialog.task.draft.generate.bg"));
+    bool settled = false;
+    for (int i = 0; i < 400 && !settled; ++i) {
+        eui::Ui frame;
+        composeTo(frame, mod, kScreen, "agent_ui_der13");
+        settled = frame.find("agent.dialog.task.draft.error") != nullptr;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_REQUIRE_MESSAGE(settled, "失败错误行 2s 内未呈现");
+    eui::Ui u;
+    composeTo(u, mod, kScreen, "agent_ui_der14");
+
+    // 子树包含：错误行必须整体落在弹窗面板几何内（逃逸即此处红）
+    const auto* panel = u.find("agent.dialog.task.draft.panel");
+    const auto* err = u.find("agent.dialog.task.draft.error");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("上游 HTTP 500") != std::string::npos);
+    DOCTEST_CHECK(err->frame.x >= panel->frame.x - 0.5f);
+    DOCTEST_CHECK(err->frame.x + err->frame.width <=
+                  panel->frame.x + panel->frame.width + 0.5f);
+    DOCTEST_CHECK(err->frame.y + err->frame.height <=
+                  panel->frame.y + panel->frame.height + 0.5f);
+    // 规范样式：行首 error 图标（fa-triangle-exclamation）+ errorText 深红字
+    const auto* icon = u.find("agent.dialog.task.draft.error.icon");
+    DOCTEST_CHECK_MESSAGE(icon != nullptr,
+                          "错误行应带 fa-triangle-exclamation 图标节点");
+    DOCTEST_CHECK_MESSAGE(std::fabs(err->textColor.r -
+                                    core::theme::current().colors.errorText.r) <
+                              0.01f,
+                          "错误行字色应走 errorText 档");
 
     mod.onStop();
     return true;

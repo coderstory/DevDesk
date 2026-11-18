@@ -7,6 +7,8 @@
 //   - Token 数字口径 = 最近一次成功调用的速率（core/call_rate.h 的 tps 单源），
 //     非累计、非实时；无数据时是空态「--」。
 #include "doctest.h"
+#include <chrono>
+#include <thread>
 #include "test_support.h"
 #include "core/call_rate.h"
 #include "core/database.h"
@@ -967,5 +969,95 @@ REGISTER_TEST(home_chart_card_collapsible,
     DOCTEST_CHECK(chartBack->frame.height > 300.0f);
 
     mod->onStop();
+    return true;
+})
+
+// 防（need338，need334 同根因迁 home 统计卡）：jelly zIndex(20)/scale 曾挂 .bg，
+// .content（图表/文字/命中层）是 .bg 兄弟 → 560ms 内玻璃面盖内容 + bg 独缩错位露灰底。
+// 迁移后 transform/zIndex 施加在整卡 stack（<id>），.bg 只管 radius 形变与卡面。
+REGISTER_TEST(home_stat_card_jelly_whole_stack_layer,
+              "home 统计卡果冻：transform/zIndex 在整卡 stack、bg 只管 radius（need338 迁 need334 范式）", {
+    core::proxy_stats::resetForTest();
+    core::theme::setLight();
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Screen screen;
+    screen.width = 1200.0f;
+    screen.height = 720.0f;
+    const std::string id = "home.stat.tokens";
+    const auto nearOne = [](float v) { return v > 0.995f && v < 1.005f; };
+    const auto offOne = [](float v) { return v < 0.995f || v > 1.005f; };
+
+    // 静息帧：stack z=0 无缩放；bg z=0、radius=radiusOverlay
+    eui::Ui ui;
+    ui.begin("home_jelly_rest");
+    mod->compose(ui, screen);
+    ui.end();
+    {
+        auto* stack = ui.find(id);
+        auto* bg = ui.find(id + ".bg");
+        auto* press = ui.find(id + ".press");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_REQUIRE(press != nullptr);
+        DOCTEST_CHECK(stack->zIndex == 0);
+        DOCTEST_CHECK(nearOne(stack->transform.scale.x));
+        DOCTEST_CHECK(bg->zIndex == 0);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK(bg->radius > t.sizes.radiusOverlay - 0.5f);
+        DOCTEST_CHECK(bg->radius < t.sizes.radiusOverlay + 0.5f);
+    }
+    // hover 进入（.press onHover 写集，下帧读）→ z 抬整卡、bg 不抬
+    {
+        auto* press = ui.find(id + ".press");
+        DOCTEST_REQUIRE(press->onHoverChanged != nullptr);
+        press->onHoverChanged(true);
+    }
+    eui::Ui ui2;
+    ui2.begin("home_jelly_active");
+    mod->compose(ui2, screen);
+    ui2.end();
+    {
+        auto* stack = ui2.find(id);
+        auto* bg = ui2.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(stack->zIndex == 20);   // 动画期整卡盖邻卡
+        DOCTEST_CHECK(bg->zIndex == 0);       // 玻璃面不再压内容
+    }
+    // 时间线行进中：stack 缩放、bg 恒 1
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    eui::Ui ui3;
+    ui3.begin("home_jelly_mid");
+    mod->compose(ui3, screen);
+    ui3.end();
+    {
+        auto* stack = ui3.find(id);
+        auto* bg = ui3.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(offOne(stack->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.y));
+    }
+    // hover 退出 → 回落
+    {
+        auto* press2 = ui2.find(id + ".press");
+        DOCTEST_REQUIRE(press2 != nullptr);
+        press2->onHoverChanged(false);
+    }
+    eui::Ui ui4;
+    ui4.begin("home_jelly_exit");
+    mod->compose(ui4, screen);
+    ui4.end();
+    {
+        auto* stack = ui4.find(id);
+        auto* bg = ui4.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(stack->zIndex == 0);
+        DOCTEST_CHECK(nearOne(stack->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
+    }
     return true;
 })

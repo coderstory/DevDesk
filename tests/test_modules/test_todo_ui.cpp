@@ -5,6 +5,8 @@
 //   - 无头环境下没有真实输入与焦点，键盘移动与菜单点击只能靠直接调回调 + 断言落库结果。
 //   - 拖放条是覆盖层不是流式内容：悬停行下方的占位条必须压在两卡之间的底缝，卡片不得被下推。
 #include "doctest.h"
+#include <chrono>
+#include <thread>
 #include "test_dialog_frame_helper.h"  // dialog_frame：弹窗「元素在框内」共享断言
 #include "test_support.h"
 
@@ -5661,5 +5663,82 @@ REGISTER_TEST(todo_ui_detail_archive_chip,
     }
 
     mod->onStop();
+    return true;
+})
+
+// 防（need338，need334 同根因迁 todo 卡）：①hover 白罩——jelly zIndex(20)/scale 曾挂
+// .bg，色条/文本/chip 是 .bg 兄弟，dsl.h 兄弟排序按 subtreeMaxZIndex → 560ms 时间线内
+// 玻璃面盖内容；②缩放露灰底——transform 只缩 .bg，内容固定尺寸错位。迁移后
+// transform/zIndex 施加在整卡 wrapper（<id>.jelly），.bg 只管 radius 形变与卡面。
+REGISTER_TEST(todo_card_jelly_whole_stack_layer,
+              "todo 卡果冻：transform/zIndex 在整卡 wrapper、bg 只管 radius（need338 迁 need334 范式）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto c1 = env.svc->createColumn("果冻列");
+    DOCTEST_REQUIRE(c1.isOk());
+    auto t1 = env.svc->createTask(c1.value().id, "果冻任务");
+    DOCTEST_REQUIRE(t1.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    const std::string root = "todo.col.4.card.0";
+    const auto nearOne = [](float v) { return v > 0.995f && v < 1.005f; };
+    const auto offOne = [](float v) { return v < 0.995f || v > 1.005f; };
+
+    // 静息帧：wrapper z=0 无缩放；bg z=0、radius 已随主题半径平移
+    {
+        Frame frame(mod.get());
+        auto* wrap = frame.ui.find(root + ".jelly");
+        auto* bg = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(wrap != nullptr);  // 迁移后新增整卡 wrapper
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(wrap->zIndex == 0);
+        DOCTEST_CHECK(nearOne(wrap->transform.scale.x));
+        DOCTEST_CHECK(bg->zIndex == 0);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK(bg->radius > t.sizes.radius - 0.5f);
+        DOCTEST_CHECK(bg->radius < t.sizes.radius + 0.5f);
+    }
+    // hover 进入：.bg onHover 喂 plate.hoverCards → 时间线 active，z 抬整卡、bg 不抬
+    {
+        Frame frame(mod.get());
+        auto* bg = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_REQUIRE(bg->onHoverChanged != nullptr);
+        bg->onHoverChanged(true);
+        frame.refresh();
+        auto* wrap = frame.ui.find(root + ".jelly");
+        auto* bg2 = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(bg2 != nullptr);
+        DOCTEST_CHECK(wrap->zIndex == 20);   // 动画期整卡盖邻卡
+        DOCTEST_CHECK(bg2->zIndex == 0);     // 玻璃面不再压内容
+    }
+    // 时间线行进中：wrapper 缩放、bg 恒 1（卡内无固定尺寸错位层 → 无灰底）
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    {
+        Frame frame(mod.get());
+        auto* wrap = frame.ui.find(root + ".jelly");
+        auto* bg = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(offOne(wrap->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.y));
+    }
+    // hover 退出（todo 无去抖，集合即擦）→ 回落
+    {
+        Frame frame(mod.get());
+        auto* bg = frame.ui.find(root + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        bg->onHoverChanged(false);
+    }
+    {
+        Frame frame(mod.get());
+        auto* wrap = frame.ui.find(root + ".jelly");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_CHECK(wrap->zIndex == 0);
+        DOCTEST_CHECK(nearOne(wrap->transform.scale.x));
+    }
     return true;
 })

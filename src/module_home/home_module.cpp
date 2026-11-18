@@ -142,8 +142,19 @@ void drawSolidStatCard(eui::Ui& ui,
     const components::CardStyle cardStyle;  // 与 components::card 默认档一致
     const bool cardHovered = statCardHoverSet().count(id) > 0;
     const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, cardHovered);
+    // need338 迁 need334 范式：transform/zIndex 施加在**整卡 stack**（本函数根
+    // stack 即整卡）。曾挂 .bg 时 .content（图表/文字/命中层）是 .bg 兄弟，dsl.h
+    // 兄弟排序按 subtreeMaxZIndex 把玻璃面排到内容之上（hover 白罩），且 bg 独缩
+    // 内容不缩（错位露灰底）。bg 只留 radius 形变（仍随 radiusOverlay 平移）。
     ui.stack(id)
         .size(width, height)
+        .transformOrigin(0.5f, 0.5f)   // 果冻坑③：缩放中心=卡中心
+        .scale(pose.sx, pose.sy)       // 坑②：逐轴目标每帧重给
+        .zIndex(pose.active ? 20 : 0)  // 动画期盖邻卡；走完回落 0
+        .transition(pose.active
+                        ? core::Transition::make(0.035f, core::Ease::Linear)
+                        : core::Transition::make(0.18f, core::Ease::OutBack))
+        .animate(core::AnimProperty::Transform)
         .content([&] {
             ui.rect(id + ".bg")
                 .size(width, height)
@@ -152,17 +163,12 @@ void drawSolidStatCard(eui::Ui& ui,
                 .shadow(cardStyle.shadow)
                 .radius(pose.radius +
                         (corner - ui_kit::JellyOptions::kRestRadius))
-                // 动画进行中 zIndex(20) 盖过邻卡（jelly 契约，E1 审计补丁行勿漏）
-                .zIndex(pose.active ? 20 : 0)
-                .transformOrigin(0.5f, 0.5f)
-                .scale(pose.sx, pose.sy)
                 .transition(pose.active
                                 ? core::Transition::make(0.035f,
                                                          core::Ease::Linear)
                                 : core::Transition::make(0.18f,
                                                          core::Ease::OutBack))
-                .animate(core::AnimProperty::Radius |
-                         core::AnimProperty::Transform)
+                .animate(core::AnimProperty::Radius)
                 .build();
             ui.stack(id + ".content")
                 .position(pad, pad)
@@ -254,8 +260,10 @@ void drawSolidStatCard(eui::Ui& ui,
                                              t.colors.textPrimary.b, 0.10f})
                     .radius(corner)
                     .onClick(std::move(onClick))
-                    // need301③：hover 边沿喂果冻时间线（写集，下帧 drawSolidStatCard 读）
-                    .onHover([&id](bool h) {
+                    // need301③：hover 边沿喂果冻时间线（写集，下帧 drawSolidStatCard 读）。
+                    // need338：必须按值捕获 id——回调在 compose 返回后才会被事件层调用，
+                    // 引用捕获 = 悬垂（need338 单测确定必现：二帧 compose 复用内存致插队串号）。
+                    .onHover([id](bool h) {
                         if (h) {
                             statCardHoverSet().insert(id);
                         } else {

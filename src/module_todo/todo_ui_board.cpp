@@ -748,8 +748,27 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     // 卡片骨架用 card 组件；选中/未选中边框挂卡内交互层 .bg（挂 card 上会被不透明 .bg 盖住）
     // 2026-10-31：骨架底必须透明——card 组件默认底是不透明 cardColor，会把内层 0.92 半透卡面
     // 「垫实」成纯白（用户反馈的半透丢失）。卡面唯一载体 = 内层 .bg（kCardGlassAlpha + H16 浅染）。
-    components::card(ui, id + ".card")
+    // need338 迁 need334 范式：果冻 transform/zIndex 施加在**整卡 wrapper**（.jelly，
+    // 与卡同几何 → transformOrigin(0.5,0.5)=卡中心）。曾挂内层 .bg 时色条/文本/chip 是
+    // .bg 兄弟，dsl.h 兄弟排序按 subtreeMaxZIndex 把玻璃面排到内容之上（hover 白罩），
+    // 且 bg 独缩内容不缩（卡内固定尺寸错位露灰底）。CardBuilder 不外露 scale/transform
+    // 缝 → 包一层 wrapper 承载形变，卡组件骨架/命中面/回调零改动。
+    const bool cardHovered = plate.hoverCards.count(id) > 0;
+    const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, cardHovered);
+    const core::Transition jellyTr =
+        pose.active ? core::Transition::make(0.035f, core::Ease::Linear)
+                    : core::Transition::make(0.18f, core::Ease::OutBack);
+    ui.stack(id + ".jelly")
         .position(x, y)
+        .size(width, kCardHeight)
+        .transformOrigin(0.5f, 0.5f)   // 果冻坑③：缩放中心=卡中心
+        .scale(pose.sx, pose.sy)       // 坑②：逐轴目标每帧重给
+        .zIndex(pose.active ? 20 : 0)  // 动画期盖邻卡；走完回落 0
+        .transition(jellyTr)
+        .animate(core::AnimProperty::Transform)
+        .content([&] {
+    components::card(ui, id + ".card")
+        .position(0.0f, 0.0f)
         .size(width, kCardHeight)
         .radius(t.sizes.radius)
         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
@@ -777,11 +796,10 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         t.sizes.spacingLarge * 2.0f +
         plate.columnX[static_cast<size_t>(colIndex)] +
         plate.columnWidth[static_cast<size_t>(colIndex)] * 0.5f;
-    // E1-c（need297 批次E）卡果冻：hover 时间线走 jellyFrame 缝，不走 jellyCard 整卡
-    // 替换——本卡 bg 自带 onClick/onContextMenu/onPress/onDrag/自定义涂色，命中面与
-    // 拖拽行为不动，果冻只追加 radius/scale 形变目标（schedule 卡同源消费）
-    const bool cardHovered = plate.hoverCards.count(id) > 0;
-    const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, cardHovered);
+    // E1-c（need297 批次E）卡果冻：hover 时间线走 jellyFrame 缝（pose/jellyTr 已在
+    // wrapper 段计算）。need338：zIndex/scale 迁整卡 wrapper（缩放越出布局矩形时由
+    // wrapper 的 z=20 盖过邻卡），.bg 只留 radius 形变（仍随主题半径平移）——bg 不再
+    // 抬 z/缩放，内容/命中面随卡同形变，白罩/露灰底两错乱同根消除。
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
@@ -791,15 +809,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
                                   : (dueTodayTint ? t.colors.warning
                                                   : t.colors.borderDefault))
         .radius(pose.radius + (t.sizes.radius - ui_kit::JellyOptions::kRestRadius))
-        // need297 审计 P2：动画进行中 zIndex(20) 盖过邻卡（jellyCard 契约
-        // jelly.h:241-243；手写缝漏抄此行——缩放越出布局矩形会被后绘邻卡裁切）
-        .zIndex(pose.active ? 20 : 0)
-        .transformOrigin(0.5f, 0.5f)
-        .scale(pose.sx, pose.sy)
-        .transition(pose.active
-                        ? core::Transition::make(0.035f, core::Ease::Linear)
-                        : core::Transition::make(0.18f, core::Ease::OutBack))
-        .animate(core::AnimProperty::Radius | core::AnimProperty::Transform)
+        .transition(jellyTr)
+        .animate(core::AnimProperty::Radius)
         .opacity(finalCardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
         .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex, menuAnchorX](
@@ -977,6 +988,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     }
 
         })
+        .build();
+        })  // need338：整卡 wrapper（.jelly）content 收口
         .build();
 }
 
