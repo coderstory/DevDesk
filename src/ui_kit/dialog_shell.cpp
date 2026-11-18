@@ -75,8 +75,9 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
     // clamp 优先、可低于最小下限。框架内部另有 −48 一档 clamp，比这里更松不生效。
     const float w =
         std::min(dialogWidthPx(spec.width), std::max(0.0f, screen.width - 96.0f));
-    const float h = std::min(std::max(spec.height, kDialogMinH),
-                             std::max(0.0f, screen.height - 96.0f));
+    const float h = std::min(
+        std::max(spec.height, spec.compact ? 200.0f : kDialogMinH),
+        std::max(0.0f, screen.height - 96.0f));
 
     auto builder = components::dialog(ui, spec.id);
     builder.open(spec.open)

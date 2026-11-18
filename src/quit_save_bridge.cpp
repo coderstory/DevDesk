@@ -68,6 +68,10 @@ void drawConfirmDialog(eui::Ui& ui, const eui::Screen& screen) {
     spec.titleColor = t.colors.errorText;  // 警示类弹窗标题提强度（规范 §3.3）
     spec.dangerConfirm = true;             // 主钮=丢弃修改，破坏性变体
     spec.open = true;
+    // need337 紧凑档：老板验收「文本观感好大」实拍定因=240 底盘空白松散——
+    // 内容实占（头 69+正文 66+底 73）≈208，取 212 紧凑不空
+    spec.compact = true;
+    spec.height = 212.0f;
     // z=1200（>#156 规范档 1000）：本弹窗画在 app 根层（主窗 compose 尾部、
     // router 页面子树之外），而 EUI 命中/渲染按「子树 max zIndex」排兄弟——页面
     // 子树内常驻着模块弹窗（z1000）与页内 toast（z1100），页面子树上界恒 ≥1100，

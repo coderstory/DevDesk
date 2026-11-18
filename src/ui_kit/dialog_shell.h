@@ -54,6 +54,9 @@ struct DialogShellSpec {
     // 低频旁路入口（如未安装向导）专用，禁放主流程动作。
     DialogShellButton thirdAction;
     bool dangerConfirm = false;       // 危险变体：confirm 底 error（删除确认类，规范 §3.3）
+    // 紧凑档（need337 老板验收口径：松散观感=底盘空白）：高度下限 240→200，
+    // 配合 height 传内容实占高（头 69+正文+底 73）用。opt-in 零波及默认弹窗。
+    bool compact = false;
     std::function<void(bool)> onOpenChange;
 };
 
