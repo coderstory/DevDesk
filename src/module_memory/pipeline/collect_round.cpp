@@ -221,6 +221,12 @@ std::string stripLeakMarkers(const std::string& body, bool* washed) {
             if (line.find_first_not_of(" \t\r") != std::string::npos) {
                 out += line;
                 if (nl != std::string::npos) out.push_back('\n');
+            } else if (nl == std::string::npos && !out.empty() &&
+                       out.back() == '\n') {
+                // pool:bug:349：被丢的是末行时，前行携带的分隔 '\n' 遗成尾悬行
+                //（:556 红根因——洗后应零残段零悬行）；中间行不回收（分隔语义
+                // 归下一行）
+                out.pop_back();
             }
         } else {
             out += line;

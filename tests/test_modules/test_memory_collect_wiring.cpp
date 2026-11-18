@@ -605,11 +605,16 @@ REGISTER_TEST(memory_collect_f06_wash_in_round,
     auto store = std::move(opened.value());
     collector::Collector collector(dir / "collector.db", projects);
 
-    const std::string body =
-        prose("F-06 管线内洗验证正文段落，语义完整足够长以照常越过极短段门槛成卡。", 12) +
-        "\n[Request interrupted by user]\n后续两侧正文照常保留在卡内不可丢弃。";
+    // pool:bug:349 夹具双修（出生即红，非产品回归）：①换行必须以 \n 转义进
+    // JSON——collector 按 getline 逐行读 jsonl，真实换行把首行截成坏行 →
+    // 0 事件 0 卡；②解析后 body 须 ≤kMaxEventBytes(1024B)（session_reader ③
+    // 单事件截断）——原 12 rep 时标记在截断点之后永远洗不到。9 rep+标记+尾段
+    // =969B，极短段门槛（≥50 有效字符）照过
+    const std::string bodyJson =
+        prose("F-06 管线内洗验证正文段落，语义完整足够长以照常越过极短段门槛成卡。", 9) +
+        "\\n[Request interrupted by user]\\n后续两侧正文照常保留在卡内不可丢弃。";
     writeSession(projects / "sess-f06.jsonl",
-                 userLine("sess-f06", body) + "\n");
+                 userLine("sess-f06", bodyJson) + "\n");
 
     auto r = pipeline::runCollectRound(collector, gate, store, {});
     DOCTEST_REQUIRE(r.isOk());
