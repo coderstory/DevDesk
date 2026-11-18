@@ -264,6 +264,16 @@ case "$BUILD_DIR" in
   *)  BUILD_DIR_ABS="$PWD/$BUILD_DIR" ;;
 esac
 if [ -d "$BUILD_DIR" ]; then BUILD_DIR_ABS="$(cd "$BUILD_DIR" && pwd)"; fi
+
+# keychain 编译硬禁令（need327 老板令 2026-11-18）：src/tests 零引用，命中即
+# 整个构建不开始（先于一切 cmake/ninja，秒级 grep）。历史：keychain 全链退役
+# （need#317 删五文件+测试+脚手架，#304/#305 三处切 app_secrets），本门防「删了又冒」。
+SCRIPT_DIR_N327="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! bash "${SCRIPT_DIR_N327}/check-no-keychain.sh"; then
+  echo "❌ keychain 禁令守卫未过——构建中止（新凭据一律 core/secrets_store）" >&2
+  exit 1
+fi
+
 echo "── 构建: $BUILD_TYPE → $BUILD_DIR/ ──"
 
 # 解析 EUI-NEO 路径（仓内 submodule，位于仓库根 ./EUI-NEO；worktree 内同样可见）
