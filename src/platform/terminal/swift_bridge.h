@@ -12,12 +12,17 @@
 
 namespace platform {
 
+// need328：spawn 目录解析唯一入口——非空直传；空 → $HOME（与 win 侧 %USERPROFILE%
+// 语义对齐，均不依赖进程 cwd）。自由函数供单测直测传参链。
+std::string resolveSpawnWorkDir(const std::string& workDir);
+
 // 一个 Swift 会话的 C++ 侧持有者。所有方法主线程调用（技术卡 §5.3）。
 class SwiftBridgeSession {
 public:
     // spawn 失败返回 nullptr（corta-exec 缺失/非存在 shell/PTY 失败）
+    // workDir 语义（need328）：空 → $HOME、非空原值（解析唯一入口 resolveSpawnWorkDir）
     static std::unique_ptr<SwiftBridgeSession> spawn(
-        const std::string& shell, int rows, int cols);
+        const std::string& shell, int rows, int cols, const std::string& workDir);
     // 最近一次 spawn 的核心错误描述（UTF-8 写出；false=无记录/容量不足）
     static bool lastSpawnError(uint8_t* out, int32_t capacity);
     ~SwiftBridgeSession();

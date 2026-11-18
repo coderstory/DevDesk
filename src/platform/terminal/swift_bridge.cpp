@@ -8,6 +8,7 @@
 
 #include "core/logging.h"
 
+#include <cstdlib>
 #include <cstring>
 
 namespace platform {
@@ -33,11 +34,22 @@ SwiftBridgeSession::~SwiftBridgeSession() {
     }
 }
 
+std::string resolveSpawnWorkDir(const std::string& workDir) {
+    if (!workDir.empty()) return workDir;
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : std::string();
+}
+
 std::unique_ptr<SwiftBridgeSession> SwiftBridgeSession::spawn(
-    const std::string& shell, int rows, int cols) {
+    const std::string& shell, int rows, int cols, const std::string& workDir) {
     auto s = std::unique_ptr<SwiftBridgeSession>(new SwiftBridgeSession());
+    const std::string dir = resolveSpawnWorkDir(workDir);
+    // need328：目录进 Swift Optional——空（连 $HOME 都缺失）传 none → 上游默认 cwd 兜底
+    using OptString = swift::Optional<swift::String>;
+    const OptString dirArg =
+        dir.empty() ? OptString::none() : OptString::some(swift::String(dir));
     s->impl_ = std::make_unique<Impl>(
-        CortaBridge::CortaBridgeSession::spawnInteractive(shell, rows, cols));
+        CortaBridge::CortaBridgeSession::spawnInteractive(shell, rows, cols, dirArg));
     if (s->impl_->session.isNone()) return nullptr;
     return s;
 }

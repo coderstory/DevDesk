@@ -79,12 +79,11 @@ public:
     core::Result<std::unique_ptr<TerminalSessionHandle>> spawn(
         const std::string& shell, const TerminalSize& size,
         const std::string& workDir) override {
-        // need250：workDir mac 侧本批忽略（Swift 桥 spawn 无目录参数，会话目录语义
-        // 不变）；shell 选名（zsh/bash/sh）直作 exe 透传，空 = 默认解析
-        //（决策 6：env 注入 → $SHELL → pw_shell → /bin/zsh）
-        (void)workDir;
+        // need328：workDir 接线桥 spawn；空/非空语义在桥内 resolveSpawnWorkDir
+        // 统一解析（空 → $HOME，与 win 侧 %USERPROFILE% 对齐）。shell 选名
+        //（zsh/bash/sh）直作 exe 透传，空 = 默认解析（决策 6：env 注入 → $SHELL → pw_shell → /bin/zsh）
         const std::string exe = shell.empty() ? resolveDefaultShell() : shell;
-        auto s = SwiftBridgeSession::spawn(exe, size.rows, size.cols);
+        auto s = SwiftBridgeSession::spawn(exe, size.rows, size.cols, workDir);
         if (!s) {
             char reason[512] = {0};
             const bool hasReason = platform::SwiftBridgeSession::lastSpawnError(

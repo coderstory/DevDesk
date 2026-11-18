@@ -52,6 +52,9 @@ add_executable(devdesk_tests
     # debt246：ConPTY v2 redist 三级查找顺序判定（terminal_conpty_lookup.h 纯函数，全平台编译）
     test_platform/test_terminal_conpty_lookup.cpp
     test_platform/test_terminal_vterm_core.cpp
+    # need328：mac 终端 spawn 目录传参链（非 Apple 平台编空 TU，守卫先例同
+    # test_file_watcher.cpp；符号解析靠下方 devdesk_terminal_bridge 链接）
+    test_platform/test_terminal_workdir.cpp
     test_platform/test_file_watcher.cpp
     # git 管理器只读 v1 批次一（need:8）：libgit2 RAII 层 POC 五项（方案 §4.2 步骤 8）
     test_platform/test_git_raii.cpp

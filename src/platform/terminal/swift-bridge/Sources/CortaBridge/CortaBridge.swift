@@ -79,15 +79,18 @@ public final class CortaBridgeSession: @unchecked Sendable {
     }
 
     /// spawn 失败返回 nil（F-07 失败卡消息面：错误经 lastSpawnError 读取）。
+    /// workingDirectory：会话启动目录（need328）；nil = 上游默认 cwd 行为。
     public convenience init?(
-        executable: String, arguments: [String] = [], rows: Int32, cols: Int32
+        executable: String, arguments: [String] = [], rows: Int32, cols: Int32,
+        workingDirectory: String? = nil
     ) {
         let size = TerminalSize(
             rows: UInt16(max(rows, 1)), columns: UInt16(max(cols, 1)))
         let session: TerminalSession
         do {
             session = try TerminalSession(
-                executable: executable, arguments: arguments, size: size)
+                executable: executable, arguments: arguments, size: size,
+                workingDirectory: workingDirectory)
         } catch {
             CortaBridgeSession.errorBox.lock.lock()
             CortaBridgeSession.errorBox.lastError = "\(error)"
@@ -111,9 +114,11 @@ public final class CortaBridgeSession: @unchecked Sendable {
     /// 交互 shell 入口（DevDesk 集成用）。核心语义：executable 自身即 argv0，
     /// arguments 只放额外参数（实测传 [executable] 会把二进制当脚本执行 → 127）。
     public static func spawnInteractive(
-        executable: String, rows: Int32, cols: Int32
+        executable: String, rows: Int32, cols: Int32, workingDirectory: String? = nil
     ) -> CortaBridgeSession? {
-        CortaBridgeSession(executable: executable, arguments: [], rows: rows, cols: cols)
+        CortaBridgeSession(
+            executable: executable, arguments: [], rows: rows, cols: cols,
+            workingDirectory: workingDirectory)
     }
 
     /// C++ 侧便捷口：shell 命令串（zsh -f -c，无交互/无 prompt，测试与 POC 用）。
