@@ -4807,16 +4807,22 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
                            lastCard->frame.width));
     DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.width, nextCard->frame.width),
                           "摘要卡应等宽三等分");
+    // segment/内容区随行底让位公式派生（need339①，不再钉字面 143/183）
+    const float lhBJ =
+        static_cast<float>(std::lround(tokJ.sizes.fontSizeBody * 1.4f));
+    const float summaryHJ =
+        std::max(81.0f, 2.0f * 10.0f + lhSJ + lhBJ + lhSJ + 4.0f);
+    const float navYJ = summaryYJ + summaryHJ + 14.0f;
     DOCTEST_CHECK_MESSAGE(
-        nearPx(nav->frame.y - panel->frame.y, 143.0f),
-        "segment 应在面板顶 +143（实测锚定），实测 " +
+        nearPx(nav->frame.y - panel->frame.y, navYJ),
+        "segment 应钉 summaryY+summaryH+14（need339① 行底让位公式），实测 " +
             std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.width, 752.0f),
                           "segment 应全宽 752（弹性宽 800-48，裁定 2：内容区双侧 24px），实测 " +
                               std::to_string(nav->frame.width));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.y - panel->frame.y, 183.0f),
-        "tab 内容区应在面板顶 +183（navY 143 + kNavH 32 + 8，UAT6.1 顶部收紧后），实测 " +
+        nearPx(runlist->frame.y - panel->frame.y, navYJ + 40.0f),
+        "tab 内容区应在 navY+40（kNavH 32 + 8），实测 " +
             std::to_string(runlist->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
         runlist->frame.y + runlist->frame.height <=
@@ -4848,8 +4854,8 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
     DOCTEST_REQUIRE_MESSAGE(panel4 != nullptr && runlist4 != nullptr,
                             "无 run 任务缺面板/主区");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist4->frame.y - panel4->frame.y, 183.0f),
-        "无 run 任务主区几何应与有 run 一致（+183），实测 " +
+        nearPx(runlist4->frame.y - panel4->frame.y, navYJ + 40.0f),
+        "无 run 任务主区几何应与有 run 一致（navY+40，need339① 公式），实测 " +
             std::to_string(runlist4->frame.y - panel4->frame.y));
 
     mod.onStop();
