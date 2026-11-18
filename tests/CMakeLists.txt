@@ -788,10 +788,12 @@ set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 #（驱动侧无 disabled 断言能力，「服务未运行 → 置灰 + 提示」由 test_mcp_page 的 doctest 钉）
 # need290：claude-d1-seed-enable = 种子启用 claude_proxy → ClaudeService 装配正常（D1 回归）
 # need302：todo-card-context-menu = click button:"right" 右键原语回归（todo 卡 ctx 菜单）。
-# schedule-rule-once-chain = 定时一次性规则建→存→用户页签行卡（表达式/cron 链路因
-# schedule 弹窗 cron 字段注入竞争挂起，见 need302 池注记，模块侧修复后补链）。
+# schedule-rule-once-chain = 定时一次性规则建→存→用户页签行卡。
+# schedule-cron-edit-chain = cron 表达式建→存→行卡→编辑回显（need307 归因：翻倍
+# 根因=预填默认值上追加注入文本，注入前须 Shortcut+A+Backspace 清场，非事件重复投递）。
 foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input
-        mcp-claude-install claude-d1-seed-enable todo-card-context-menu schedule-rule-once-chain)
+        mcp-claude-install claude-d1-seed-enable todo-card-context-menu schedule-rule-once-chain
+        schedule-cron-edit-chain)
     add_test(NAME ui_driver_${_ui_scene}
         COMMAND devdesk_ui_driver
             --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"
