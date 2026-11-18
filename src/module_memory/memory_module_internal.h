@@ -62,6 +62,80 @@ inline constexpr int kViewConsole = 0;
 inline constexpr int kViewReview = 1;
 inline constexpr int kViewConfig = 2;
 
+// ── need298（2026-11-18 走查 §1.3）：窄窗几何单一来源 ──
+// 阈值/让位宽度全部收拢为纯函数，compose 与 doctest 共用同一口径
+// （bug217 行盒预算截断同族做法）；断言不重叠/换行/省略的几何单测
+// 在 tests/test_modules/test_memory_narrow_width.cpp。
+
+// M1 健康格② 状态行：右端「跑评测」96×28 同带，让位 96+8；其余格全宽。
+inline float healthStatusRowW(float cardW, bool reserveRunBtn) {
+    return reserveRunBtn ? cardW - 28.0f - 96.0f - 8.0f : cardW - 28.0f;
+}
+
+// M3 健康四格 2×2 断点（#181 §8）：内容区 <880 收两列。
+inline constexpr float kHealthGridNarrowW = 880.0f;
+inline int healthGridCols(float w) { return w < kHealthGridNarrowW ? 2 : 4; }
+inline float healthGridCardW(float w) {
+    return (w - static_cast<float>(healthGridCols(w) - 1) * kCardGap) /
+           static_cast<float>(healthGridCols(w));
+}
+inline int healthGridRows(float w) { return healthGridCols(w) == 2 ? 2 : 1; }
+
+// M4 引擎状态带警示短语可用宽：右端按钮组（启停 120 + 详情 64，向导内联时
+// +150+8）左缘 −8；短语 x=310（状态词 212+90 之后）。
+inline float engineBandWarnW(float w, bool wizardInline) {
+    float groupLeft = w - 16.0f - 120.0f - 8.0f - 64.0f;
+    if (wizardInline) groupLeft -= 8.0f + 150.0f;
+    return groupLeft - 8.0f - 310.0f;
+}
+
+// M5 批量操作条两段式断点：<740 说明独占一行（w−28）、按钮行右锚下一行。
+inline constexpr float kBatchBarNarrowW = 740.0f;
+inline float batchInfoW(float w) {
+    return w < kBatchBarNarrowW ? w - 28.0f : w - 480.0f;
+}
+inline float batchBarH(float w) { return w < kBatchBarNarrowW ? 76.0f : 44.0f; }
+inline float batchBtnRowY(float w) { return w < kBatchBarNarrowW ? 42.0f : 7.0f; }
+
+// M6 审核工具条折行态（<860 或 chips 放不下）：「批量处理」钮恒第一行 y10
+// 右锚，状态 chips 折第二行独立全宽（不再与右端保留区竞争）。
+inline constexpr float kBatchZone = 136.0f;
+inline float batchToolbarStateRowY(bool wrap) { return wrap ? 54.0f : 10.0f; }
+
+// M7 已裁决卡类型盒宽：左距 16 + 时间列 174 + 右隙 16。
+inline float decidedKindBoxW(float w) { return w - 206.0f; }
+
+// M9 审核 TAB 宽：文字实宽 +32（wallpaper_tabs 同法），下限 132 保两短 TAB 观感。
+inline float reviewTabW(float measuredTextW) {
+    return measuredTextW + 32.0f > 132.0f ? measuredTextW + 32.0f : 132.0f;
+}
+
+// M11 配置组头摘要宽：x+240 起，右让 chevron 40 + 隙 60。
+inline float groupSumW(float w) { return w - 340.0f; }
+
+// M13 提案卡右端摘要：窄窗档 190→120（佐证先饿，#195 §7）。
+inline constexpr float kProposalMetaNarrowW = 560.0f;
+inline float proposalMetaW(float w) { return w < kProposalMetaNarrowW ? 120.0f : 190.0f; }
+
+// M18 消耗带标题宽：320 定宽收至右锚预算档词（x+w−240）左缘。
+inline float usageTitleW(float w) {
+    const float budget = w - 256.0f;
+    return budget < 320.0f ? (budget > 0.0f ? budget : 0.0f) : 320.0f;
+}
+
+// M16 审核 chips 估宽（wrap 判定与绘制两处同一来源）：CJK 首字节 12 /
+// ASCII 6 / 四字节首字节（emoji 等）双宽 24，续字节不计；base = 内边距档
+// （wrap 估 30、绘制 24，与既有口径一致）。
+inline float chipTextW(const std::string& label, float base) {
+    float w = base;
+    for (unsigned char c : label) {
+        if (c >= 0xF0) w += 24.0f;
+        else if (c >= 0xC0) w += 12.0f;
+        else if (c < 0x80) w += 6.0f;
+    }
+    return w;
+}
+
 // ── 文案/取值映射 ──
 
 inline const char* engineStateText(TelememEngine::State s) {

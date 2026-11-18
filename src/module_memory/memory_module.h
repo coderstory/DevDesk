@@ -65,8 +65,8 @@ private:
     // 视图内部件
     void composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t, float x,
                            float w, float y);
-    void composeHealthGrid(eui::Ui& ui, const core::theme::Tokens& t, float x,
-                           float w, float y);
+    float composeHealthGrid(eui::Ui& ui, const core::theme::Tokens& t, float x,
+                            float w, float y);  // 返回实占高（2×2 断点 need298 M3）
     void composeProposalCard(eui::Ui& ui, const core::theme::Tokens& t,
                              float x, float w, float y,
                              const panel::PanelSnapshot& snap,

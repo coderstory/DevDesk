@@ -6,6 +6,8 @@
 
 #include "memory_module_internal.h"
 
+#include <ui_kit/text_metrics.h>  // cachedTextWidth（M9 TAB 估宽统一入口）
+
 #include "core/tool.h"
 #include "module_memory/agent_tools.h"
 #include "module_memory/engine/telemem_config.h"
@@ -116,18 +118,22 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         .build();
 
     const float tabY = kTitleH + t.sizes.spacingLarge;
-    const float tabW = 132.0f;
     const auto snap = panel_.snapshot();
     char reviewLabel[48];
     std::snprintf(reviewLabel, sizeof(reviewLabel), "记忆审核 (%d)",
                   static_cast<int>(snap.pending.size()));
     const char* tabLabels[kViewConfig + 1] = {"主控台", reviewLabel, "配置"};
+    // need298 M9：TAB 宽按文字实宽自适应（wallpaper_tabs 同法 +32；估宽统一
+    // 入口 cachedTextWidth，字重取选中态 600 最宽档），待审数 4 位不再裁字。
+    float tabX = pagePad;
     for (int i = kViewConsole; i <= kViewConfig; ++i) {
         const int view = i;
+        const float tabW = reviewTabW(ui_kit::cachedTextWidth(
+            tabLabels[i], core::theme::scaled(ui_kit::kWtabFontSize), 600));
         ui_kit::wtab(ui, "memory.tabs." + std::to_string(i), tabLabels[i],
-                     activeView_ == i,
-                     pagePad + static_cast<float>(i) * (tabW + 4.0f), tabY,
-                     tabW, kTabH, t, [this, view] { activeView_ = view; });
+                     activeView_ == i, tabX, tabY, tabW, kTabH, t,
+                     [this, view] { activeView_ = view; });
+        tabX += tabW + 4.0f;
     }
 
     const float bodyY = tabY + kTabH + t.sizes.spacingLarge;
@@ -227,13 +233,20 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
         .verticalAlign(eui::VerticalAlign::Center)
         .color(stateColor)
         .build();
-    // 异常前置：Failed / 本机模型缺失时警示短语直接上带（细节进详情弹窗）
+    // 异常前置：Failed / 本机模型缺失时警示短语直接上带（细节进详情弹窗）。
+    // need298 M4：短语宽度 = 右端按钮组左缘 −8（超长省略），窄窗不再与按钮叠印。
     const bool failed = es.state == TelememEngine::State::Failed;
+    const bool wizardInline =
+        es.state == TelememEngine::State::Idle && !es.pythonFound;
     if (failed || es.llamaMissing) {
+        const float warnW = engineBandWarnW(w, wizardInline);
+        const std::string warnText = failed ? "引擎故障 · 点「详情」看原因"
+                                            : "本机模型文件缺失";
         ui.text("memory.eng.warn")
-            .position(306.0f, 0.0f)
-            .size(320.0f, bandH)
-            .text(failed ? "引擎故障 · 点「详情」看原因" : "本机模型文件缺失")
+            .position(310.0f, 0.0f)
+            .size(std::max(0.0f, warnW), bandH)
+            .text(truncateByAdvance(warnText, std::max(0.0f, warnW),
+                                    core::theme::scaled(11.0f)))
             .fontSize(core::theme::scaled(11.0f))
             .lineHeight(bandH)
             .fontWeight(600)
@@ -246,8 +259,6 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     // 向导仅未安装引导态（Idle + 未检出 Python）直出
     const bool busy = es.state == TelememEngine::State::Preparing;
     const bool running = es.state == TelememEngine::State::Running;
-    const bool wizardInline =
-        es.state == TelememEngine::State::Idle && !es.pythonFound;
     const float btnH = 36.0f;
     const float btnY = (bandH - btnH) * 0.5f;
     float rightX = w - 16.0f - 120.0f;  // 主操作（启停）右缘对齐
@@ -292,21 +303,26 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     });
 }
 
-void MemoryModule::composeHealthGrid(eui::Ui& ui,
-                                     const core::theme::Tokens& t, float x,
-                                     float w, float y) {
+float MemoryModule::composeHealthGrid(eui::Ui& ui,
+                                      const core::theme::Tokens& t, float x,
+                                      float w, float topY) {
     const auto snap = panel_.snapshot();
     const float gap = kCardGap;
-    const float cardW = (w - 3.0f * gap) / 4.0f;
+    // need298 M3：内容区 <880 收 2×2（#181 §8 断点），格宽跌破 200 的挤压消除。
+    const int cols = healthGridCols(w);
+    const float cardW = healthGridCardW(w);
     // need:181 三 TAB 分层（设计 §2.3）：健康四格 236 → 132px。格内节奏 =
     // 标签 y10 → 数值 y30 → 状态行 y72 → 12px 横带胶囊 y98；口径/说明类
     // note 全部降 L2 hover 浮层（components::tooltip，挂整卡透明命中）。
     // need189：118px = 条带内容底 110 + 8 档底距（原 132 留 22 空腹）；
     // 格内节奏一字未动，只收卡底留白。
+    // 2×2 态：y 为当前行基线，cardBase 按行号推进（卡块按序执行）。
     const float kCardH = core::theme::scaled(kHealthGridH);
+    float y = topY;
 
     auto cardBase = [&](int i) {
-        const float cx = x + static_cast<float>(i) * (cardW + gap);
+        y = topY + static_cast<float>(i / cols) * (kCardH + gap);
+        const float cx = x + static_cast<float>(i % cols) * (cardW + gap);
         ui_kit::cardPanel(ui, "memory.health.card" + std::to_string(i), cx, y, cardW, kCardH, t.sizes.radiusOverlay, t);
         return cx;
     };
@@ -322,10 +338,10 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             .build();
     };
     auto statusRow = [&](const std::string& id, float cx, const std::string& text,
-                         eui::Color color) {
+                         eui::Color color, bool reserveRunBtn = false) {
         ui.text(id)
             .position(cx + 14.0f, y + core::theme::scaled(72.0f))
-            .size(cardW - 28.0f, core::theme::scaled(20.0f))
+            .size(healthStatusRowW(cardW, reserveRunBtn), core::theme::scaled(20.0f))
             .text(text)
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(core::theme::scaled(20.0f))
@@ -444,7 +460,8 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
                       : (below ? ("当前 " + std::to_string(pct) + "% · 低于升级线")
                                : ("当前 " + std::to_string(pct) + "% · 达标")),
                   !hasEval ? t.colors.textTertiary
-                           : (below ? t.colors.warning : t.colors.success));
+                           : (below ? t.colors.warning : t.colors.success),
+                  true);  // need298 M1：同带右端「跑评测」96×28，状态行让位防叠印
         // 「跑评测」96×28 移至状态行右侧；引擎非 Running 或评测中禁用（IMP-114-5）
         const bool running = panel_.evalRunning();
         const bool clickable = !running && snap.engine.state ==
@@ -521,12 +538,16 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
                   formatBytes(snap.storageBytes) + " · " +
                       std::to_string(snap.collectorSessions) + " 个会话",
                   t.colors.textSecondary);
-        miniBand("memory.health.h3.band", cx, 0.0f, t.colors.primary);
+        // need298 M2：原 miniBand(3, 0.0f) 恒空死条已删——无信息承载的装饰
+        // 违反 #195 §3 R2；格内节奏收为 标签→数值→状态行。
         tip(3, "提案 " + std::to_string(snap.pending.size()) + " 待审 / " +
                    std::to_string(snap.decided.size()) +
                    " 已处理 · 记忆都存在你自己的电脑里，配置页可随时导出。",
             cx);
     }
+    // 实占高度（2×2 态两行），composeConsole 据此推进 cy（M3 断点不叠消耗带）。
+    return static_cast<float>(healthGridRows(w)) * kCardH +
+           static_cast<float>(healthGridRows(w) - 1) * gap;
 }
 
 } // namespace module::memory

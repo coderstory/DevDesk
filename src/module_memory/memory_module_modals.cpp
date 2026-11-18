@@ -3,6 +3,7 @@
 
 #include "memory_module_internal.h"
 
+#include <core/window/window_backend.h>  // setClipboardText（need298 M19 复制全文）
 #include <ui_kit/dialog_shell.h>
 
 namespace module::memory {
@@ -314,6 +315,17 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
     shell.open = true;
     shell.title = "telemem 记忆引擎";
     shell.cancel = {"关闭", [this] { engineDetailOpen_ = false; }};
+    // need298 M20：未安装态「首次安装向导」走壳新增左槽 thirdAction（按钮行
+    // 左缘锚定、与右锚组同基线），删除原 area.y+h+33 手工偏移 hack（壳布局
+    // 一改即错位）。
+    const bool uninstalled = !es.embedReady || es.llamaMissing || !es.pythonFound;
+    if (uninstalled) {
+        shell.thirdAction = {"首次安装向导", [this] {
+                                 engineDetailOpen_ = false;
+                                 wizardOpen_ = true;
+                                 TelememEngine::global().refreshEmbedProbe();
+                             }};
+    }
     shell.onOpenChange = [this](bool v) {
         if (!v) engineDetailOpen_ = false;
     };
@@ -369,27 +381,14 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                               area.w - 90.0f - core::theme::scaled(12.5f),
                               core::theme::scaled(12.5f)),
             false);
-        // 未安装态追加 [首次安装向导]：壳只提供 .cancel/.confirm 两槽，该入口是
-        // 第三个动作，故仍走 ui_kit::button 并落在壳按钮行左缘（与壳 .cancel 同基线
-        // y=h−56）。area 底 = h−89，+33 跨过呼吸隙 16 与细线 1 到按钮行基线 17。
-        const bool uninstalled = !es.embedReady || es.llamaMissing || !es.pythonFound;
-        if (uninstalled) {
-            ui_kit::button(ui, "memory.dialog.engine.wizard", "首次安装向导",
-                           ui_kit::ButtonLevel::Secondary,
-                           area.x, area.y + area.h + 33.0f, 158.0f,
-                           ui_kit::kButtonHeight, t,
-                           {[this] {
-                               engineDetailOpen_ = false;
-                               wizardOpen_ = true;
-                               TelememEngine::global().refreshEmbedProbe();
-                           }});
-        }
+        // 未安装态「首次安装向导」已上移至壳 thirdAction 左槽（M20，见上方 spec）。
     });
 }
 
-// need:183：审核卡「查看全文」只读弹窗——多行滚动可复制；不挂 onChange =
-// 改动不落任何状态（编辑通路仍走「编辑后接受」弹窗）。
-// need156：壳改走标准弹窗壳（头区分隔线 + 底区细线 + 右锚按钮）。
+// need:183：审核卡「查看全文」只读弹窗。need298 M19：原 multiline input 可打字
+// 可删字但无 onChange——编辑静默丢失，交互语义自相矛盾；改只读 text 块 +
+// 内滚（wrapContent 自测高），「复制全文」占壳主钮槽（setClipboardText，
+// 同 agent_module_dialogs 先例），复制后弹窗不关。编辑通路仍走「编辑后接受」。
 void MemoryModule::composeFullTextDialog(eui::Ui& ui, const eui::Screen& screen,
                                          const core::theme::Tokens& t,
                                          const components::theme::ThemeColorTokens& ct) {
@@ -401,18 +400,38 @@ void MemoryModule::composeFullTextDialog(eui::Ui& ui, const eui::Screen& screen,
     shell.open = true;
     shell.title = textDialogTitle_.empty() ? "提案全文" : textDialogTitle_;
     shell.cancel = {"关闭", [this] { textDialogOpen_ = false; }};
+    shell.confirm = {"复制全文", [this] {
+                         core::window::setClipboardText(textDialogBody_);
+                         showToast("已复制", "提案全文已进剪贴板");
+                     }};
     shell.onOpenChange = [this](bool v) {
         if (!v) textDialogOpen_ = false;
     };
     ui_kit::drawDialogShell(ui, screen, shell, t, ct,
                             [&](const ui_kit::DialogContentArea& area) {
-                                components::input(ui, "memory.dialog.fulltext.body")
+                                components::scrollView(
+                                    ui, "memory.dialog.fulltext.scroll")
                                     .position(area.x, area.y)
-                                    .size(area.w, area.h)
-                                    .value(textDialogBody_)
-                                    .multiline(true)
-                                    .fontSize(core::theme::scaled(13.0f))
+                                    .size(area.w, std::max(0.0f, area.h))
+                                    .step(60.0f)
                                     .theme(ct)
+                                    .contentKey(
+                                        "memory.dialog.fulltext.scroll.w" +
+                                        std::to_string(
+                                            static_cast<int>(area.w)))
+                                    .content([&](eui::Ui& inner, float cw,
+                                                 float) {
+                                        inner.text("memory.dialog.fulltext.body")
+                                            .position(0.0f, 0.0f)
+                                            .width(cw)
+                                            .height(core::SizeValue::wrapContent())
+                                            .wrap()
+                                            .text(textDialogBody_)
+                                            .fontSize(core::theme::scaled(13.0f))
+                                            .lineHeight(core::theme::scaled(20.0f))
+                                            .color(t.colors.textPrimary)
+                                            .build();
+                                    })
                                     .build();
                             });
 }

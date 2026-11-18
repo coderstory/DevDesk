@@ -391,7 +391,7 @@ int main(int argc, char* argv[]) {
         // need:202（fb55fc65）后 llamaMissing 文案=本机模型文件缺失 + 指路向导③步
         A.textHas("memory.dialog.engine.embed.v", "本机模型文件缺失");
         A.textHas("memory.dialog.engine.embed.v", "首次安装向导第③步");
-        A.exists("memory.dialog.engine.wizard.bg");  // 未安装态弹窗内向导入口
+        A.exists("memory.dialog.engine.third.bg");  // 未安装态弹窗内向导入口
         clickEl("memory.dialog.engine.cancel.bg");   // 关闭弹窗回状态带（need156 壳 .cancel）
         composeFrame();
         composeFrame();
@@ -704,7 +704,7 @@ int main(int argc, char* argv[]) {
         switchView(0);
         composeFrame();
         clickEl("memory.eng.detail.bg");               // 开详情弹窗
-        clickEl("memory.dialog.engine.wizard.bg");     // 弹窗内取向导
+        clickEl("memory.dialog.engine.third.bg");     // 弹窗内取向导
         if (A.elem("memory.dialog.wizard.s3.name") == nullptr ||
             A.elem("memory.dialog.wizard.s4.name") == nullptr) {
             std::cerr << "memory_probe: FAIL——向导未现四步结构（s3/s4 缺）\n";

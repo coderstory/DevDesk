@@ -50,13 +50,16 @@ struct DialogShellSpec {
     std::optional<eui::Color> titleColor;
     DialogShellButton cancel;         // 副按钮（左）：关闭/取消
     DialogShellButton confirm;        // 主按钮（右）：应用/确认
+    // 第三动作（可选）：按钮行左缘锚定（x=24，与右锚组同基线），副按钮样式。
+    // 低频旁路入口（如未安装向导）专用，禁放主流程动作。
+    DialogShellButton thirdAction;
     bool dangerConfirm = false;       // 危险变体：confirm 底 error（删除确认类，规范 §3.3）
     std::function<void(bool)> onOpenChange;
 };
 
 // 绘制标准壳 + 执行 content(area)（content 只画内容区，头/底区由壳负责）。
 // 节点 id 约定：<id>.title / <id>.title.line / <id>.footer.line / <id>.cancel /
-// <id>.confirm（button 子节点 <id>.bg / <id>.text 由 components::button 生成）。
+// <id>.confirm / <id>.third（button 子节点 <id>.bg / <id>.text 由 components::button 生成）。
 void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSpec& spec,
                      const core::theme::Tokens& t,
                      const components::theme::ThemeColorTokens& themeTokens,

@@ -43,8 +43,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
     // 展开运行明细后内滚。need189 把健康格/消耗带底距从 22/26 压到 8 档
     // （规范 §4.3 间距档），整链在 130% 字号下也低于最小窗可视高。
     cy += core::theme::scaled(kEngineBandH) + kCardGap;
-    composeHealthGrid(ui, t, x, w, cy);
-    cy += core::theme::scaled(kHealthGridH) + kCardGap;
+    cy += composeHealthGrid(ui, t, x, w, cy) + kCardGap;  // 实占高（2×2 断点 M3）
 
     // 消耗带 86px（设计 §2.4）：标题行 + 12px 横带进度 + 数字行；
     // 软/硬档数字与口径 note → L2 hover 浮层
@@ -53,8 +52,9 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         ui_kit::cardPanel(ui, "memory.usage.card", x, cy, w, kUsageH, t.sizes.radiusLarge, t);
         ui.text("memory.usage.title")
             .position(x + 16.0f, cy + core::theme::scaled(12.0f))
-            .size(320.0f, core::theme::scaled(22.0f))
-            .text("token 消耗（今日 / 本月）")
+            .size(usageTitleW(w), core::theme::scaled(22.0f))
+            .text(truncateByAdvance(std::string("token 消耗（今日 / 本月）"),
+                                    usageTitleW(w), t.sizes.fontSizeBody))
             .fontSize(t.sizes.fontSizeBody)
             .lineHeight(core::theme::scaled(22.0f))
             .fontWeight(600)
@@ -148,7 +148,8 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.details.head")
             .position(x, cy)
             .size(w, headH)
-            .color(t.colors.surface)
+            .states(t.colors.surface, t.colors.hover,
+                    t.colors.hover)  // need298 M8：可点行 hover 三态（#195 §4.4）
             .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
             .onClick([this] { consoleDetailsOpen_ = !consoleDetailsOpen_; })
@@ -178,10 +179,15 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
             .build();
+        // need298 M14：文本「⌄/›」直切 → FA chevron + 160ms OutCubic 旋转
+        // （#181 §7 动效表；FA 码点同 md_module_tree/sidebar 口径）
         ui.text("memory.details.chev")
             .position(x + w - 40.0f, cy)
             .size(24.0f, headH)
-            .text(consoleDetailsOpen_ ? "⌄" : "›")
+            .icon(eui::utf8(0xF054u))  // fa-chevron-right，展开旋 90° 朝下
+            .rotate(consoleDetailsOpen_ ? 1.5707963f : 0.0f)
+            .transition(core::Transition::make(0.16f, core::Ease::OutCubic))
+            .animate(core::AnimProperty::Transform)
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(headH)
             .horizontalAlign(eui::HorizontalAlign::Center)
@@ -289,7 +295,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             } else {
                 by += static_cast<float>(showN) * kRowH + core::theme::scaled(6.0f);
                 ui.text("memory.recent.all")
-                    .position(cTok - 60.0f, by)
+                    .position(x + w - 16.0f - 180.0f, by)  // need298 M19：右缘锚，替代 cTok−60 hack
                     .size(180.0f, core::theme::scaled(22.0f))
                     .text("查看全部（导出 JSON）")
                     .fontSize(core::theme::scaled(11.5f))
@@ -478,7 +484,7 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
                                  ? "标记过期记忆：" + title
                                  : "合并重复记忆：" + title)));
     // bug217（2026-11-04）：行盒宽度预算截断（窄窗标题曾横向溢出压到右端摘要）
-    const float kMetaW = 190.0f;
+    const float kMetaW = proposalMetaW(w);  // need298 M13：窄窗档 190→120（佐证先饿）
     const float kTitleBudget = w - (hx - x) - kindW - kMetaW - 20.0f;
     ui.text("memory.rv.title." + p.id)
         .position(hx + kindW + 10.0f, y + core::theme::scaled(10.0f))
@@ -648,12 +654,12 @@ void MemoryModule::composeDecidedCard(eui::Ui& ui,
     // （resultText 长文曾纵向溢出压住撤销钮与下一卡）
     ui.text("memory.rv.done.kind." + p.id)
         .position(x + 16.0f, y + core::theme::scaled(34.0f))
-        .size(w - 200.0f, core::theme::scaled(40.0f))
+        .size(decidedKindBoxW(w), core::theme::scaled(40.0f))
         .wrap()
         .text(truncateByAdvance(
             "「" + kindLabel(p.kind) + "」" +
                 (p.resultText.empty() ? srcLabel(p.source) : p.resultText),
-            2.0f * (w - 200.0f) - 2.0f * core::theme::scaled(12.5f),
+            2.0f * decidedKindBoxW(w) - 2.0f * core::theme::scaled(12.5f),
             core::theme::scaled(12.5f)))
         .fontSize(core::theme::scaled(12.5f))
         .lineHeight(core::theme::scaled(18.0f))
@@ -722,33 +728,28 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         auto chipRowW = [](const std::vector<std::string>& labels) {
             float w = 0.0f;
             for (const auto& label : labels) {
-                float chipW = 30.0f;
-                for (unsigned char c : label) {
-                    if (c >= 0x80 && c < 0xC0) continue;  // UTF-8 续字节不计宽
-                    chipW += (c >= 0xC0) ? 12.0f : 6.0f;  // CJK 12 / ASCII 6，按首字节
-                }
-                w += chipW + 6.0f;
+                w += chipTextW(label, 30.0f) + 6.0f;  // M16：估宽单一来源
             }
             return w;
         };
-        const float kBatchZone = 136.0f;  // 右端「批量处理」按钮保留区（104 + 估宽余量）
+        // 右端「批量处理」按钮保留区（104 + 估宽余量）；折行态 chips 独占第二行
+        // 全宽，保留区不再参与竞争（M6）。常量单一来源 memory_module_internal.h
         const float chipsTotal = 12.0f + 120.0f + 10.0f + 120.0f + 14.0f +
                                  chipRowW(stateLabels);
-        // need:181 §3.2：内容区 <860 时状态 chips 折第二行、高 88（设计自适应档）
+        // need:181 §3.2：内容区 <860 时状态 chips 折第二行、高 88（设计自适应档）；
+        // need298 M6：折行态「批量处理」恒第一行 y10 右锚，chips 第二行全宽
+        // （原 chips y42 与按钮 y28 同带相触），保留区不参与第二行竞争。
         const bool wrapNarrow = chipsTotal > w - kBatchZone || w < 860.0f;
         const float kBarH = wrapNarrow ? 88.0f : 52.0f;
-        const float stateRowY = wrapNarrow ? 42.0f : 10.0f;
+        const float stateRowY = batchToolbarStateRowY(wrapNarrow);
         ui_kit::cardPanel(ui, "memory.rv.toolbar", x, cy, w, kBarH, t.sizes.radius, t);
         auto chipRow = [&](const std::string& prefix, float cx, float cyRow,
                            const std::vector<std::string>& labels, int active,
                            std::function<void(int)> onPick) {
             for (int i = 0; i < static_cast<int>(labels.size()); ++i) {
-                // chip 宽按显示字符估（全宽 12px / ASCII 6px + 24 内边距）
-                float chipW = 24.0f;
-                for (unsigned char c : labels[static_cast<std::size_t>(i)]) {
-                    if (c >= 0xC0) chipW += 12.0f;  // 全宽字符首字节
-                    else if (c < 0x80) chipW += 6.0f;
-                }
+                // chip 宽按显示字符估（M16：chipTextW 单一来源，四字节双宽）
+                const float chipW =
+                    chipTextW(labels[static_cast<std::size_t>(i)], 24.0f);
                 const std::string id = prefix + std::to_string(i);
                 ui.rect(id)
                     .position(cx, cyRow)
@@ -819,11 +820,11 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                          filterState_ = v;
                          reviewShowLimit_ = kReviewShowLimit;
                      });
-        // 「批量处理」次级按钮（右缘锚；进出批量模式）
+        // 「批量处理」次级按钮（右缘锚；进出批量模式；M6：恒第一行 y10）
         ui_kit::button(ui, "memory.rv.batchbtn",
                        batchMode_ ? "退出批量" : "批量处理",
                        ui_kit::ButtonLevel::Secondary,
-                       x + w - 16.0f - 104.0f, cy + (kBarH - 32.0f) * 0.5f,
+                       x + w - 16.0f - 104.0f, cy + 10.0f,
                        104.0f, 32.0f, t,
                        {[this] {
                            batchMode_ = !batchMode_;
@@ -842,31 +843,38 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                                 }
                                 return false;
                             });
+            // need298 M5：内容区 <740 两段式——说明独占第一行（超长省略），
+            // 按钮行右锚第二行；原 w−480 在窄窗变负/极窄且与右锚钮叠印。
+            const float barH = batchBarH(w);
+            const float btnRowY = batchBtnRowY(w);
+            const std::string infoText =
+                "已选 " + std::to_string(batchSel_.size()) + " 项" +
+                (batchSel_.empty()
+                     ? " · 在卡片左侧勾选后可批量处理"
+                     : (allOk ? " · 所选提案均支持批量接受"
+                              : " · 批量接受仅对「遗忘 / 新增」开放"));
             ui.rect("memory.rv.batchbar")
                 .position(x, cy)
-                .size(w, 44.0f)
+                .size(w, barH)
                 .color(t.colors.primarySoftBg)
                 .radius(t.sizes.radius)
                 .build();
             ui.text("memory.rv.batchinfo")
                 .position(x + 14.0f, cy + core::theme::scaled(12.0f))
-                .size(w - 480.0f, core::theme::scaled(20.0f))
-                .text("已选 " + std::to_string(batchSel_.size()) + " 项" +
-                      (batchSel_.empty()
-                           ? " · 在卡片左侧勾选后可批量处理"
-                           : (allOk ? " · 所选提案均支持批量接受"
-                                    : " · 批量接受仅对「遗忘 / 新增」开放")))
+                .size(std::max(0.0f, batchInfoW(w)), core::theme::scaled(20.0f))
+                .text(truncateByAdvance(infoText, batchInfoW(w),
+                                        core::theme::scaled(12.5f)))
                 .fontSize(core::theme::scaled(12.5f))
                 .lineHeight(core::theme::scaled(20.0f))
                 .color(t.colors.primaryText)
                 .build();
             ui_kit::button(ui, "memory.rv.batchclear", "取消选择",
                            ui_kit::ButtonLevel::Secondary, x + w - 260.0f,
-                           cy + core::theme::scaled(7.0f), 108.0f, 30.0f, t,
+                           cy + btnRowY, 108.0f, 30.0f, t,
                            {[this] { batchSel_.clear(); }});
             if (allOk) {
                 primaryButton(ui, "memory.rv.batchaccept", "批量接受",
-                              x + w - 140.0f, cy + core::theme::scaled(7.0f), 124.0f, 30.0f, t,
+                              x + w - 140.0f, cy + btnRowY, 124.0f, 30.0f, t,
                               [this] {
                                   std::vector<std::string> ids(
                                       batchSel_.begin(), batchSel_.end());
@@ -885,9 +893,9 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             } else {
                 ui_kit::button(ui, "memory.rv.batchaccept", "批量接受",
                                ui_kit::ButtonLevel::Secondary,
-                               x + w - 140.0f, cy + core::theme::scaled(7.0f), 124.0f, 30.0f, t, {});
+                               x + w - 140.0f, cy + btnRowY, 124.0f, 30.0f, t, {});
             }
-            cy += 44.0f + 8.0f;  // need219 §4.3：卡间距 8px（批量条→列表）
+            cy += barH + 8.0f;  // need219 §4.3：卡间距 8px（批量条→列表）
         }
     }
 
@@ -912,7 +920,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         if (matched > shown) {
             // 渐进加载尾行：如实报剩余量 + 按需增长（每批 kReviewShowLimit）
             ui.text("memory.rv.more.note")
-                .position(x + 16.0f, cy + core::theme::scaled(12.0f))
+                .position(x + 16.0f, cy + core::theme::scaled(6.0f))  // need298 M15：与右侧按钮同中心线（34 高钮 vs 22 高行）
                 .size(w - 190.0f, core::theme::scaled(22.0f))
                 .text("已显示前 " + std::to_string(shown) + " 条 · 还有 " +
                       std::to_string(matched - shown) +
@@ -999,7 +1007,8 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         ui.rect("memory.cfg.grp" + gid + ".head")
             .position(x, cy)
             .size(w, headH)
-            .color(t.colors.surface)
+            .states(t.colors.surface, t.colors.hover,
+                    t.colors.hover)  // need298 M8：可点组头 hover 三态（#195 §4.4）
             .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
             .onClick([this, gi] {
@@ -1019,17 +1028,22 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             .build();
         ui.text("memory.cfg.grp" + gid + ".sum")
             .position(x + 240.0f, cy)
-            .size(w - 300.0f, headH)
-            .text(sum)
+            .size(std::max(0.0f, groupSumW(w)), headH)
+            .text(truncateByAdvance(sum, groupSumW(w),
+                                    core::theme::scaled(12.0f)))  // need298 M11：超长省略，不越 chevron
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(headH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(sumWarn ? t.colors.warning : t.colors.textTertiary)
             .build();
+        // need298 M14：FA chevron + 160ms OutCubic 旋转（同 memory.details.chev）
         ui.text("memory.cfg.grp" + gid + ".chev")
             .position(x + w - 40.0f, cy)
             .size(24.0f, headH)
-            .text(cfgOpen_[static_cast<std::size_t>(gi)] ? "⌄" : "›")
+            .icon(eui::utf8(0xF054u))  // fa-chevron-right，展开旋 90° 朝下
+            .rotate(cfgOpen_[static_cast<std::size_t>(gi)] ? 1.5707963f : 0.0f)
+            .transition(core::Transition::make(0.16f, core::Ease::OutCubic))
+            .animate(core::AnimProperty::Transform)
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(headH)
             .horizontalAlign(eui::HorizontalAlign::Center)
@@ -1392,7 +1406,9 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                               by + core::theme::scaled(6.0f))
                     .size(tw - core::theme::scaled(48.0f),
                           core::theme::scaled(18.0f))
-                    .text(tiles[i])
+                    .text(truncateByAdvance(
+                        tiles[i], tw - core::theme::scaled(48.0f),
+                        core::theme::scaled(11.0f)))  // need298 M10：窄窗末字防裁
                     .fontSize(core::theme::scaled(11.0f))
                     .lineHeight(core::theme::scaled(18.0f))
                     .color(t.colors.textSecondary)

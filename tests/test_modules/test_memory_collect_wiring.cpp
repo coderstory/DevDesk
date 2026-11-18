@@ -243,7 +243,8 @@ REGISTER_TEST(memory_review_toolbar_min_window_800_wrap_two_rows,
     eui::Ui ui;
     composeReviewFrame(mod, ui, 800.0f, 640.0f);
     if (!checkToolbarChain(ui, 800.0f)) return false;
-    // 折行证据：工具条 88 高；状态 chips 在第二行（y = toolbar.y + 42）
+    // 折行证据：工具条 88 高；状态 chips 在第二行（y = toolbar.y + 54，
+    // need298 M6：chips 行移到「批量处理」钮 y10~42 之下，独占全宽不竞争）
     const auto* toolbar = ui.find("memory.rv.toolbar");
     const auto* stateChip = ui.find("memory.rv.chipSt.0");
     DOCTEST_REQUIRE(toolbar != nullptr);
@@ -252,10 +253,10 @@ REGISTER_TEST(memory_review_toolbar_min_window_800_wrap_two_rows,
                           "工具条高 " + std::to_string(toolbar->frame.height) +
                               " ≠ 88（窄窗未折两行）");
     DOCTEST_CHECK_MESSAGE(std::fabs(stateChip->frame.y -
-                                    (toolbar->frame.y + 42.0f)) < 0.5f,
+                                    (toolbar->frame.y + 54.0f)) < 0.5f,
                           "状态 chips y=" + std::to_string(stateChip->frame.y) +
                               " 未落在第二行 " +
-                              std::to_string(toolbar->frame.y + 42.0f));
+                              std::to_string(toolbar->frame.y + 54.0f));
     return true;
 })
 
