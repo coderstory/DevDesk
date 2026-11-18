@@ -789,8 +789,9 @@ REGISTER_TEST(streaming_proxy_idle_watchdog_cuts_stalled_upstream,
     MockSseServer upstream;
     DOCTEST_REQUIRE(upstream.start());
 
-    // stall 时长常量化：墙钟上界与它绑死（见下方 elapsed 断言）。
-    const long stallMs = 3000;
+    // stall 时长常量化：墙钟上界与它绑死（见下方 elapsed 断言）。int 与
+    // MockScript 字段同型（need303 审计 P3：免窄化）。
+    const int stallMs = 3000;
     MockScript script;
     script.chunks = makeSseScript(3, false);   // 3 个数据帧，无 [DONE]
     script.stallAfterChunks = 3;
@@ -825,7 +826,8 @@ REGISTER_TEST(streaming_proxy_idle_watchdog_cuts_stalled_upstream,
     DOCTEST_CHECK_EQ(res.status, 200);
     DOCTEST_CHECK(sseOrderOk(res.body, 3));
     // 语义断言为主：看门狗真触发 → 合成 error 帧（含 idle timeout 文案），且
-    // 不会有上游自然收尾的 [DONE]；看门狗没触发时这些必红（敏感度保证）。
+    // 不会有上游自然收尾的 [DONE]；看门狗没触发时 error 帧两条与墙钟上界
+    // 必红（敏感度由其承担；[DONE] 缺席断言对脚本恒真，仅锁协议形状）。
     DOCTEST_CHECK(res.body.find("upstream_stream_error") != std::string::npos);
     DOCTEST_CHECK(res.body.find("idle timeout") != std::string::npos);
     DOCTEST_CHECK(res.body.find("data: [DONE]") == std::string::npos);
