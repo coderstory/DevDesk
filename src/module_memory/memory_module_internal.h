@@ -95,7 +95,11 @@ inline float batchInfoW(float w) {
     return w < kBatchBarNarrowW ? w - 28.0f : w - 480.0f;
 }
 inline float batchBarH(float w) { return w < kBatchBarNarrowW ? 76.0f : 44.0f; }
-inline float batchBtnRowY(float w) { return w < kBatchBarNarrowW ? 42.0f : 7.0f; }
+// need298 审计 P2：条带内缩放口径统一——两档 y 均走 scaled（原固定 42/7 与
+// 同条带 scaled(12) 说明行混用，130% 字号档按钮上移 ~2px）。
+inline float batchBtnRowY(float w) {
+    return core::theme::scaled(w < kBatchBarNarrowW ? 42.0f : 7.0f);
+}
 
 // M6 审核工具条折行态（<860 或 chips 放不下）：「批量处理」钮恒第一行 y10
 // 右锚，状态 chips 折第二行独立全宽（不再与右端保留区竞争）。

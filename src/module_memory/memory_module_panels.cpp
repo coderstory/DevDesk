@@ -295,7 +295,7 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
             } else {
                 by += static_cast<float>(showN) * kRowH + core::theme::scaled(6.0f);
                 ui.text("memory.recent.all")
-                    .position(x + w - 16.0f - 180.0f, by)  // need298 M19：右缘锚，替代 cTok−60 hack
+                    .position(x + w - 16.0f - 180.0f, by)  // need298 矩阵 M19：右缘锚，替代 cTok−60 hack
                     .size(180.0f, core::theme::scaled(22.0f))
                     .text("查看全部（导出 JSON）")
                     .fontSize(core::theme::scaled(11.5f))

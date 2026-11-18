@@ -3,7 +3,7 @@
 
 #include "memory_module_internal.h"
 
-#include <core/window/window_backend.h>  // setClipboardText（need298 M19 复制全文）
+#include <core/window/window_backend.h>  // setClipboardText（need298 矩阵 M12 复制全文）
 #include <ui_kit/dialog_shell.h>
 
 namespace module::memory {
@@ -315,7 +315,7 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
     shell.open = true;
     shell.title = "telemem 记忆引擎";
     shell.cancel = {"关闭", [this] { engineDetailOpen_ = false; }};
-    // need298 M20：未安装态「首次安装向导」走壳新增左槽 thirdAction（按钮行
+    // need298 矩阵 M17：未安装态「首次安装向导」走壳新增左槽 thirdAction（按钮行
     // 左缘锚定、与右锚组同基线），删除原 area.y+h+33 手工偏移 hack（壳布局
     // 一改即错位）。
     const bool uninstalled = !es.embedReady || es.llamaMissing || !es.pythonFound;
@@ -381,11 +381,11 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                               area.w - 90.0f - core::theme::scaled(12.5f),
                               core::theme::scaled(12.5f)),
             false);
-        // 未安装态「首次安装向导」已上移至壳 thirdAction 左槽（M20，见上方 spec）。
+        // 未安装态「首次安装向导」已上移至壳 thirdAction 左槽（矩阵 M17，见上方 spec）。
     });
 }
 
-// need:183：审核卡「查看全文」只读弹窗。need298 M19：原 multiline input 可打字
+// need:183：审核卡「查看全文」只读弹窗。need298 矩阵 M12：原 multiline input 可打字
 // 可删字但无 onChange——编辑静默丢失，交互语义自相矛盾；改只读 text 块 +
 // 内滚（wrapContent 自测高），「复制全文」占壳主钮槽（setClipboardText，
 // 同 agent_module_dialogs 先例），复制后弹窗不关。编辑通路仍走「编辑后接受」。
