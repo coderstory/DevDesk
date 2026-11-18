@@ -44,6 +44,8 @@ inline float cachedTextWidth(const std::string& text, float fontSize,
                    (std::hash<float>{}(k.weight) * 0x85ebca6bULL);
         }
     };
+    // 线程契约（need296 审计 P1）：仅限 UI 线程调用（immediate-mode compose 帧）；
+    // unordered_map 非线程安全——后台线程（预排版类）禁引用，须另行加锁或自建缓存。
     static std::unordered_map<Key, float, KeyHash> cache;
     if (cache.size() >= kTextWidthCacheCapacity) cache.clear();
     Key key{fontSize, weight, family, text};
