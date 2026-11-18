@@ -254,10 +254,13 @@ void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
     const ::core::Color hover = components::theme::buttonHover(tokens, base);
     const ::core::Color pressed = components::theme::buttonPressed(tokens, base);
     // need261 review P1-1：绿主色底（#36D399/#07C160）上白标签仅 1.78/2.38:1，
-    // 标签统一走 onAccent 深墨（8.4/6.8:1）；禁用态 40% 透明度沿用旧口径
-    //（WCAG 对禁用控件豁免对比度）。
+    // 标签统一走 onAccent 深墨（8.4/6.8:1）；WCAG 对禁用控件豁免对比度。
+    // debt309 N4：禁用态填充同步 40%（与标签同口径）——只降标签时满饱和
+    // mint 底视觉仍像可点。
     ::core::Color textColor = labelColor;
     if (!enabled) textColor.a = 0.40f;
+    const ::core::Color fillBase =
+        enabled ? base : components::theme::withOpacity(base, 0.40f);
     // 根 stack 保留 `<id>` 语义（可点 + 带文案）并承载 zIndex：命中面压在上面时
     // 靠它把整组抬到命中面之上（同 components::button 的「外层 stack 抬层级」口径）
     ui.stack(id)
@@ -267,7 +270,7 @@ void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
         .content([&] {
             auto bg = ui.rect(id + ".bg")
                           .size(w, h)
-                          .states(base, hover, pressed)
+                          .states(fillBase, hover, pressed)
                           .radius(tokens.metrics.radius.overlay)
                           .disabled(!enabled)
                           .onClick(onClick);
@@ -777,10 +780,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             ui_kit::cachedTextWidth(status, stSmall.fontSize,
                                                     600);
                         const float pillW = pillTextW + core::theme::scaled(30.0f);
-                        // need261 §2.2 行1 inline：药丸永远紧贴标题实宽 +8（不再
-                        // 钉卡右缘）；标题实宽封顶 = 卡内可用 − 8 − 药丸宽，超长
-                        // 单行省略（挤压顺序：标题最先饿→药丸定宽不缩）
-                        const float inlineGap = core::theme::scaled(8.0f);
+                        // need261 §2.2 行1 inline：药丸永远紧贴标题实宽 +16（不再
+                        // 钉卡右缘）；标题实宽封顶 = 卡内可用 − 16 − 药丸宽，超长
+                        // 单行省略（挤压顺序：标题最先饿→药丸定宽不缩）。间距
+                        // 8→16：debt309 N5，截断省略号贴药丸 8px 偏紧。
+                        const float inlineGap = core::theme::scaled(16.0f);
                         const float titleMeasuredW =
                             ui_kit::cachedTextWidth(task.name, stTitle.fontSize,
                                                     600);
@@ -795,7 +799,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const float triggerRowY =
                             statusRowY + stSmall.lineHeight + rowGap;
                         const float actionsX = cardW - 14.0f - kTaskActionsW;
-                        // need261 §3 hover 碰撞守卫：标题实宽+8+药丸宽 触到操作组
+                        // need261 §3 hover 碰撞守卫：标题实宽+16+药丸宽 触到操作组
                         // 左缘 −8 时，hover 期间药丸隐退（回退现行为）、标题收窄
                         // 至 卡右−14−156−8−12；非 hover / 无碰撞不动
                         const float pillHoverFadeEdge =
@@ -806,7 +810,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const float titleHoverMaxW =
                             std::max(0.0f, pillHoverFadeEdge - 12.0f);
                         const bool pillHidden = hovered && pillCollides;
-                        // need261 §2.2 行1：药丸 inline x = 12 + 标题实宽(截断后) + 8
+                        // need261 §2.2 行1：药丸 inline x = 12 + 标题实宽(截断后) + 16
                         const float pillX = cardPad + titleW + inlineGap;
                         // need261 §2.2 行3：启动钮迁左轨（x=12、y=行3顶 76），
                         // 尺寸 56×32 / 文案 / disabled 语义全不动

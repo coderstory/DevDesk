@@ -120,8 +120,8 @@ inline constexpr float kModulesCardHeightWallpaper = 310.0f;
 // 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y108 盒28
 //（行距 16 刻度，行底 136）+ 下边距 16 = 152（#132 D-4：行距由 4 改全站 16，
 // 卡高随之 +4）。
-// 模块 tab 预算（need260 §6）：254（9 格 3 列）+ 16 间距 + max(152, md 卡高)
-// = 422 ≤ 可用 420 + 2px 由 scrollView 吸收（与 Win 引导态 md 卡同档）。
+// 模块 tab 预算（need260 §6）：240（9 格 3 列，debt309 N3 底距 38→24）+ 16 间距
+// + max(152, md 卡高) = 408 ≤ 可用 420（余 12 零滚动；与 Win 引导态 md 卡同档）。
 inline constexpr float kReminderCardHeight = 152.0f;
 // 窄窗（<960）单列堆叠档：说明改 2 行（行高 18、盒 36），开关行下移 16 →
 // 行 y 80/124、行底 152 + 16 = 168（review 260 P2-2：窄档描述不许单行省略断在
@@ -194,16 +194,17 @@ inline float modulesRowDescH(bool narrow = false) {
 inline float modulesRowPitch(bool narrow = false) {
     return roundFs(narrow ? 72.0f : 56.0f);   // 窄窗 = 18+2+36 内容 + 16 行距
 }
-// 100% 档：8 格（壁纸不支持）两列 4 行 = 310（对齐 kModulesCardHeight）；
-// 9 格（含壁纸格）3 列 3 行 = 68 + 2×56 + (18+2+16) + 38 = 254；窄窗 9 格
-// 2 列 5 行 = 68 + 4×72 + (18+2+36) + 38 = 450。
+// 100% 档：8 格（壁纸不支持）两列 4 行 = 68 + 3×56 + (18+2+16) + 24 = 296；9 格
+//（含壁纸格）3 列 3 行 = 68 + 2×56 + (18+2+16) + 24 = 240；窄窗 9 格 2 列 5 行
+// = 68 + 4×72 + (18+2+36) + 24 = 436。debt309 N3：卡底内距 38 → 24 刻度
+//（review2 N3：38 比 24 刻度多 14；kModulesCardHeight=310 为 N3 前历史参考锚）。
 inline float modulesCardHeightFor(int cells, bool narrow = false) {
     const float cellH = modulesNameH() + roundFs(2.0f) +
                         modulesRowDescH(narrow);
     return modulesGridTopY() +
            static_cast<float>(modulesCardRows(cells, narrow) - 1) *
                modulesRowPitch(narrow) +
-           cellH + roundFs(38.0f);
+           cellH + roundFs(24.0f);
 }
 
 // 下拉贴近窗体底边向下展开可能被裁剪，用同一套几何预判、出界则置 openUp 向上；弹层三项必须与 EUI-NEO dropdown 实际渲染一致（主题覆写 metrics 时需同步）。

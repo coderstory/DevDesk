@@ -15,6 +15,7 @@
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
+#include <eui/platform.h>  // core::platform::requestUiUpdate（bug307② 送达入队唤醒主循环）
 
 #include <cctype>
 #include <cstdlib>
@@ -225,6 +226,13 @@ void enqueueSecondInstancePaths(std::vector<std::string> paths) {
     }
     LOG_INFO("单实例：第二实例送达 " + std::to_string(paths.size()) +
              " 个文件路径，待主线程分发");
+    // bug307②：入队即唤醒主循环（监听线程的 SetEvent 只唤醒监听线程自身）。
+    // 主循环可见空闲态在 glfwWaitEvents 无限期挂起，等下一次用户输入才 compose
+    // 的话送达路径有延迟；requestUiUpdate 是跨线程生产验证过的唤醒出口（流质泵
+    // 线程 / claude 后台任务同款——单 requestFrame 的 postEmptyEvent 在本机
+    // GLFW 上实测不生效，2026-11-07 bug#194）。托盘/最小化态不依赖唤醒，由
+    // EUI 主循环驻留分支的宿主帧泵兜底。
+    ::core::platform::requestUiUpdate();
 }
 
 void setOsOpenFunnel(std::function<void(const std::string& path)> funnel) {

@@ -1316,6 +1316,11 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 时 splash 不该露脸。取走即清：仅启动后第一帧生效，托盘左键/Show 正常唤起。
     if (app::assembly::consumePendingMinimizedStartup()) {
         app::closeMainWindow();
+        // bug307：托盘态启动主窗首帧后不再 compose（EUI 主循环走托盘分支），
+        // splash 照常启动会挂在「启动 splash 开始」永不结束（收尾只能由主窗帧
+        // 触发，实测日志停 2 分钟零推进）。与 closeMainWindow 同点一次跳过：
+        // splash 不启动，托盘点「显示主窗口」首帧直接画主界面。
+        ui_kit::skipStartupSplash();
     }
     // bug283：主窗首帧记账——此后 odoc 送达一律按温开（不再 arm 托盘启动）。
     // 首帧无论是否走 close-to-tray 都算「生命周期已开」：托盘态启动时 compose

@@ -3649,11 +3649,12 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK(ms::kAppearanceCardHeight > ms::kEditorFontCardHeight);
     // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
-    // 常量 310 仅留作 100% 档参考锚。池151 起 MCP 归位常规格：9 格（含壁纸）
-    // 3 列 3 行派生值 254，8 格（无壁纸）两列 4 行仍 310。
+    // 常量 310 仅留作 N3 前历史参考锚。池151 起 MCP 归位常规格：9 格（含壁纸）
+    // 3 列 3 行派生值 240（debt309 N3：底距 38→24，原 254），8 格（无壁纸）
+    // 两列 4 行 296。
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 310.0f);
     DOCTEST_CHECK_EQ(ms::modulesCardHeightFor(ms::kModuleToggleCellCount(true)),
-                     254.0f);
+                     240.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 

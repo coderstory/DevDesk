@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 10000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.schedule.list.new.bg"},
+    {"type": "wait", "until": "exists", "id": "app.schedule.edit.name.hit", "timeoutMs": 5000},
+    {"type": "type", "id": "app.schedule.edit.name.hit", "text": "drv-save-regression"},
+    {"type": "click", "id": "app.schedule.edit.save.bg", "force": true, "_comment": "bug#325 回归：保存链曾悬垂捕获宿主每帧栈上临时 FireContext，输入派发阶段调用 onClick 时读垃圾 tzId 抛 bad_alloc 崩溃"},
+    {"type": "wait", "until": "missing", "id": "app.schedule.list.user.empty", "timeoutMs": 5000, "_comment": "保存成功 → 弹窗收起 → reload → 用户空态消失"},
+    {"type": "dump", "path": "schedule-new-save-after.txt"}
+  ]
+}

@@ -1164,7 +1164,8 @@ const DslAppConfig& dslAppConfig() {
         // bug270：第二实例送达路径的 drain 挂 ticker（每次 pump 一次，空队列零开销）。
         // 主窗 compose 顶部也 drain，但「主窗已关到托盘」时主窗不 compose——只靠 compose
         // 会让送达路径积压到下次恢复主窗（或永不分发）：托盘态双击 .md 会「什么都不出」。
-        // ticker 在两种状态下都推进（EUI 主循环托盘分支已补宿主帧泵）。
+        // ticker 在可见/托盘/最小化/不可渲染各驻留分支都推进（EUI 主循环各分支均已补
+        // 宿主帧泵，bug270 托盘 + bug307② 其余分支；送达入队另有 requestUiUpdate 唤醒）。
         core::ticker::Subscription drainSub;
         drainSub.name = "assembly.second_instance_drain";
         drainSub.fn = [](core::ticker::Now, void*) {

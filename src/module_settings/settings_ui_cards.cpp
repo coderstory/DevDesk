@@ -511,7 +511,13 @@ void drawModulesCard(const CardDrawArgs& args) {
                                                  (cellW + 16.0f));
                 const float rowY = modulesGridTopY() +
                                    static_cast<float>(row) * rowPitch;
-                const float textW = cellW - switchW - switchGap;
+                // #309②（review 260 P3）：末行落单（行数>1 且余 1 格）时末格扩
+                // 全行宽——消除 9 项 2 列末行右格 236 宽空置；完整行几何不动。
+                const bool orphanLast =
+                    i == cellCount - 1 && gridCols >= 2 &&
+                    (cellCount % gridCols) == 1 && cellCount > gridCols;
+                const float effCellW = orphanLast ? (w - 56.0f) : cellW;
+                const float textW = effCellW - switchW - switchGap;
                 // 壁纸格格元素根 id 独立于宿主卡 id（探针/测试锚不变），格内
                 // 子元素命名跟随常规格惯例（name/rowdesc/sw）。
                 const std::string cellId =
@@ -585,7 +591,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                 ui_kit::wswitch(ui, cellId + (isWallpaper ? ".sw"
                                                            : ".sw" + suffix),
                     moduleEnabled(in.cfg, meta.moduleId),
-                    cellX + cellW - switchW, rowY + 6.0f, switchW, switchH, t,
+                    cellX + effCellW - switchW, rowY + 6.0f, switchW, switchH, t,
                     [f = a.applyModuleEnabled,
                      mid = meta.moduleId](bool v) {
                         f(mid, v);
