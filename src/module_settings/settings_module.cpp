@@ -298,6 +298,11 @@ public:
         refreshProjectCards();
         // H1: 进页面不自动弹错误弹窗——错误留在卡片里、用户点「查看详情」才弹
         githubSyncErrorDialog_.open = false;
+        // Token 显形仅本页停留期有效（manual 13 章「离开页面恢复掩码」）：
+        // Module/Router 无离开钩子，重置挂进页通知——该标志唯一读取方是同步卡
+        // compose（离页期间不渲染），回本页（navigateTo 含同页重入）必经本钩，
+        // 下次渲染前已恢复掩码，观测语义等价于「离开即恢复」。
+        githubSyncTokenVisible_ = false;
     }
 
     // Ctrl+S：端口草稿非空且 ≠ 已应用端口 → applyProxyPort，否则重写配置 + 回显「已保存」。

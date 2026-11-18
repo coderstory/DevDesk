@@ -744,6 +744,61 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     return true;
 })
 
+// Token 眼子显形仅设置页停留期有效（manual 13 章「离开页面恢复掩码」）：
+// 无头 compose 点眼睛 → 图标翻显形档（0xF070）→ Router 每次导航回目标页
+// onPageEnter（含同页重入，settings_module 在此重置）→ 掩码档（0xF06E）恢复。
+// 锁恢复语义：显形状态不得跨进页通知存活。
+REGISTER_TEST(settings_github_token_mask_restored_on_page_enter,
+              "settings: GitHub Token 显形经 onPageEnter 恢复掩码", {
+    test_support::TestEnv env(kCfgPrefix, "tokenmask", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "tokenmask_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen{1600.0f, 1000.0f};
+    const std::string kEye = "settings.card.github_sync.token.eye";
+    const std::string kMasked = "\xEF\x81\xAE";   // 0xF06E 眼睛（掩码档）
+    const std::string kRevealed = "\xEF\x81\xB0"; // 0xF070 眼斜线（显形档）
+    auto eyeText = [&](eui::Ui& ui) -> const std::string* {
+        const auto* eye = ui.find(kEye);
+        return eye == nullptr ? nullptr : &eye->text;
+    };
+    auto frame = [&](eui::Ui& ui) {
+        ui.begin("tokenmask");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, module::settings::kTabSync));
+    eui::Ui ui;
+    frame(ui);
+    // 初态 = 掩码档
+    const std::string* t0 = eyeText(ui);
+    DOCTEST_REQUIRE(t0 != nullptr);
+    DOCTEST_CHECK_EQ(*t0, kMasked);
+    // 点眼睛 → 显形档
+    const auto* eye = ui.find(kEye);
+    DOCTEST_REQUIRE(eye != nullptr);
+    DOCTEST_REQUIRE(eye->onClick != nullptr);
+    eye->onClick();
+    ui.begin("tokenmask2");
+    mod->compose(ui, screen);
+    ui.end();
+    const std::string* t1 = eyeText(ui);
+    DOCTEST_REQUIRE(t1 != nullptr);
+    DOCTEST_CHECK_EQ(*t1, kRevealed);
+    // 模拟「离开后回到本页」：navigateTo 回目标页必经 onPageEnter（含同页重入）
+    mod->onPageEnter();
+    ui.begin("tokenmask3");
+    mod->compose(ui, screen);
+    ui.end();
+    const std::string* t2 = eyeText(ui);
+    DOCTEST_REQUIRE(t2 != nullptr);
+    DOCTEST_CHECK_EQ(*t2, kMasked);
+
+    mod->onStop();
+    return true;
+})
+
 // 动态背景开关（152 批）：自外观卡标题带迁「通用」卡行 2（editor.fluid，
 // label + 说明 + 44×24 wswitch 行先例，与开机自启动行同款）——卡高 184 不动，
 // 通用 tab 零滚动预算逐值保持。锁：结构 + 标签/说明文案 + onClick 接线 +
