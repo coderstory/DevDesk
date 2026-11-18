@@ -167,17 +167,35 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     float* offset = view == kViewConsole
                         ? &consoleScroll_
                         : (view == kViewReview ? &reviewScroll_ : &configScroll_);
+    // contentKey 拼入配置 tab 折叠态签名（need:335）：MeasureCache 键 = (宽,
+    // 视口高, gap, key)，固定键在折叠组展开/折叠后命中旧测量——内容高不重算、
+    // scrollable 不重判。配置视图已由下方 contentHeightProvider 供高（缓存
+    // 被绕过），此签名保语义正确：未来若撤 provider，折叠态变化仍触发重测。
+    std::string contentKey = "memory.view" + std::to_string(view);
+    if (view == kViewConfig) {
+        for (bool open : cfgOpen_) {
+            contentKey += open ? '1' : '0';
+        }
+    }
     // 滚动根定位于 TAB 行下方（页头/TAB 不滚；调度页同款），内容 0 基相对坐标
-    components::scrollView(ui, scrollIds[view])
+    auto scroll = components::scrollView(ui, scrollIds[view])
         .position(pagePad, bodyY)
         .size(contentW, std::max(120.0f, screen.height - bodyY - 12.0f))
         .step(60.0f)
         .theme(ct)
-        .contentKey("memory.view" + std::to_string(view))
+        .contentKey(contentKey)
         .offset(*offset)
-        .onChange([offset](float v) { *offset = v; })
-        .content(drawView)
-        .build();
+        .onChange([offset](float v) { *offset = v; });
+    if (view == kViewConfig) {
+        // 内容高供给缝（need:335）：配置 tab 走渲染 pass 回写的实占底，绕开
+        // EUI stack wrapContent 对绝对定位子元素的偏小测量（实测声明几何
+        // 1424 被解析为 1320，尾组 104px 不可达）。上帧值首帧兜底 vh，
+        // 第二帧起与渲染同源；其它视图不挂 provider，原缓存测量路径不变。
+        scroll.contentHeightProvider([this](float, float vh) {
+            return std::max(vh, cfgContentBottom_);
+        });
+    }
+    scroll.content(drawView).build();
 
     ui_kit::drawToast(ui, screen, "memory.toast", toast_, ct);
 

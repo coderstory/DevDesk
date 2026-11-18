@@ -7,6 +7,7 @@
 
 #include "module_memory/collector/collector.h"
 #include "module_memory/memory_module.h"
+#include "module_memory/memory_module_internal.h"
 #include "module_memory/pipeline/collect_round.h"
 #include "module_memory/proposals/curator.h"
 #include "module_memory/proposals/proposal_store.h"
@@ -439,5 +440,79 @@ REGISTER_TEST(memory_collect_storm_confidence_and_ttl_sweep,
     DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK(pending.value()[0].confidence > 0.0);
     DOCTEST_CHECK(pending.value()[0].confidence < 0.5);
+    return true;
+})
+
+// ── need:335：配置 tab 折叠全展后尾组可达 ──
+// 根因两层：① scrollView MeasureCache 键不含折叠态 → 展开后命中旧测量，
+// scrollable 不重判（默认全折叠低于视口 → 永不出滚动条）；② EUI stack
+// wrapContent 对绝对定位子元素测量偏小（声明几何 1424 被解析为 1320），
+// 即使重算尾部仍差一截。修复：contentKey 拼折叠态签名（保重测语义）+
+// contentHeightProvider 供渲染 pass 回写的实占底（need:335 双保险）。
+// 几何断言走 compose 全链路（同上 composeReviewFrame），scrollContentFrom +
+// offset clamp(0,maxOffset) 保证 contentH > viewportH ⇔ 任意尾部元素滚到底可视。
+
+void composeConfigFrame(module::memory::MemoryModule& mod, eui::Ui& ui,
+                        float screenW, float screenH, int frames = 2) {
+    eui::Screen s;
+    s.width = screenW;
+    s.height = screenH;
+    s.scale = 1.0f;
+    // contentHeightProvider 读上一帧回写的实占底——同真实 app 每帧 compose，
+    // 第 2 帧起供高与渲染同源；首帧兜底视口高。
+    for (int f = 0; f < frames; ++f) {
+        ui.begin("memory_config_scroll_test");
+        mod.compose(ui, s);
+        ui.end();
+        ui.layout(screenW, screenH);
+    }
+}
+
+REGISTER_TEST(memory_config_scroll_tail_group_reachable_when_expanded,
+              "memory need:335: 配置 tab 全展后内容高超视口（尾组可达），供高随折叠态即时重算", {
+    module::memory::MemoryModule mod;
+    mod.setActiveViewForTest(module::memory::kViewConfig);
+
+    // 基线：默认全折叠（复刻实测初始态）
+    eui::Ui uiFolded;
+    composeConfigFrame(mod, uiFolded, 900.0f, 560.0f);
+    const auto* contentF = uiFolded.find("memory.config.scroll.content");
+    DOCTEST_REQUIRE(contentF != nullptr);
+
+    // 三折叠组全展开（组 3 安全隐私常显，无折叠态）
+    mod.setConfigGroupOpenForTest(0, true);
+    mod.setConfigGroupOpenForTest(1, true);
+    mod.setConfigGroupOpenForTest(2, true);
+    eui::Ui uiOpen;
+    composeConfigFrame(mod, uiOpen, 900.0f, 560.0f);
+    const auto* rootO = uiOpen.find("memory.config.scroll");
+    const auto* contentO = uiOpen.find("memory.config.scroll.content");
+    DOCTEST_REQUIRE(rootO != nullptr);
+    DOCTEST_REQUIRE(contentO != nullptr);
+    const float viewportH = rootO->frame.height;
+    // 可达性走滚动区供高真值：maxOffset = 供高 − 视口；滚到底（offset =
+    // maxOffset）后元素可视 ⇔ maxOffset ≥ 元素底 − 视口
+    const float maxOffset = rootO->scrollMaxOffset;
+    DOCTEST_CHECK_MESSAGE(
+        maxOffset > 0.0f,
+        "全展开滚动区 maxOffset=" + std::to_string(maxOffset) +
+            " 须 >0（供高超视口才出滚动）");
+    // 尾组最深交互件（安全隐私「导出全部记忆」钮）：滚到底须完整可视
+    const auto* exportBtn = uiOpen.find("memory.cfg.data.export");
+    DOCTEST_REQUIRE(exportBtn != nullptr);
+    // 元素 frame 是页面绝对坐标，减内容列绝对顶换回 0 基相对坐标
+    const float relBottom =
+        exportBtn->frame.y + exportBtn->frame.height - contentO->frame.y;
+    DOCTEST_CHECK_MESSAGE(
+        maxOffset >= relBottom - viewportH,
+        "maxOffset " + std::to_string(maxOffset) + " 不足导出钮相对底 " +
+            std::to_string(relBottom) + " − 视口 " + std::to_string(viewportH) +
+            "（尾组不可达）");
+    // 供高随折叠态即时重算：全展 maxOffset 须大于全折叠（修复前固定供高）
+    const float maxOffsetF = uiFolded.find("memory.config.scroll")->scrollMaxOffset;
+    DOCTEST_CHECK_MESSAGE(
+        maxOffset > maxOffsetF,
+        "全展 maxOffset " + std::to_string(maxOffset) + " 未大于全折叠 " +
+            std::to_string(maxOffsetF) + "（供高未随折叠态重算）");
     return true;
 })

@@ -1621,6 +1621,10 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
         .lineHeight(core::theme::scaled(20.0f))
         .color(t.colors.textDisabled)
         .build();
+    // need:335：内容实占底 = foot 底（0 基）。scrollview 的 contentHeightProvider
+    // 用它供滚动总高——EUI stack wrapContent 对绝对定位子元素测量偏小（实测
+    // 1424 声明几何被解析为 1320，尾组 104px 不可达），弃整篇 scratch 测量。
+    cfgContentBottom_ = (cy + core::theme::scaled(24.0f)) - oy;
 }
 
 // ── 弹窗层 ──
