@@ -222,8 +222,10 @@ private:
                 return;
             }
             targetResolvedId = el->id;
-            cx = el->frame.x + el->frame.width * 0.5;
-            cy = el->frame.y + el->frame.height * 0.5;
+            // 滚动容器内目标按窗口坐标取点（need171：内容坐标点击落空）
+            const core::LayoutRect hitFrame = effectiveFrame(tree, *el);
+            cx = hitFrame.x + hitFrame.width * 0.5;
+            cy = hitFrame.y + hitFrame.height * 0.5;
         } else {
             cx = step.pointX;
             cy = step.pointY;
@@ -335,8 +337,9 @@ private:
                 return;
             }
             target = el;
-            cx = el->frame.x + el->frame.width * 0.5;
-            cy = el->frame.y + el->frame.height * 0.5;
+            const core::LayoutRect scrollFrame = effectiveFrame(tree, *el);
+            cx = scrollFrame.x + scrollFrame.width * 0.5;
+            cy = scrollFrame.y + scrollFrame.height * 0.5;
         }
         const float offsetBefore = target != nullptr ? target->scrollOffset : 0.0f;
         // 先定位指针再滚轮（滚动目标 = 指针所在滚动容器）
@@ -527,16 +530,17 @@ private:
                                       detail::candidatesSuffixForIds(step.id, tree);
                 return;
             }
+            const core::LayoutRect elFrame = effectiveFrame(tree, *el);
             if (step.op == "within-window") {
-                if (rectWithinWindow(el->frame, env_.windowW, env_.windowH)) {
+                if (rectWithinWindow(elFrame, env_.windowW, env_.windowH)) {
                     result->passed = true;
                 } else {
                     result->errorReason =
                         "断言失败：元素 '" + step.id + "' 超出窗口（frame " +
-                        std::to_string(static_cast<int>(el->frame.x)) + "," +
-                        std::to_string(static_cast<int>(el->frame.y)) + " " +
-                        std::to_string(static_cast<int>(el->frame.width)) + "x" +
-                        std::to_string(static_cast<int>(el->frame.height)) + "，窗口 " +
+                        std::to_string(static_cast<int>(elFrame.x)) + "," +
+                        std::to_string(static_cast<int>(elFrame.y)) + " " +
+                        std::to_string(static_cast<int>(elFrame.width)) + "x" +
+                        std::to_string(static_cast<int>(elFrame.height)) + "，窗口 " +
                         std::to_string(static_cast<int>(env_.windowW)) + "x" +
                         std::to_string(static_cast<int>(env_.windowH)) + "）";
                 }
@@ -549,7 +553,7 @@ private:
                                       detail::candidatesSuffixForIds(step.otherId, tree);
                 return;
             }
-            if (rectIntersectsRect(el->frame, other->frame)) {
+            if (rectIntersectsRect(elFrame, effectiveFrame(tree, *other))) {
                 result->passed = true;
             } else {
                 result->errorReason = "断言失败：元素 '" + step.id + "' 与 '" +

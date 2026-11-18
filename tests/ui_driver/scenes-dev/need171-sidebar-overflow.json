@@ -1,0 +1,18 @@
+{"version":1,"settings":{"window":{"width":1000,"height":640},"seed":{"config":{"config.json:":{"themeMode":"dark","enabledModules":["markdown","git","todo","schedule","claude_proxy","agent","memory","wallpaper","mcp","terminal"]}}}},"steps":[
+ {"type":"dump","path":"red-1000x640-0.txt","_comment":"初始态：全部入口规划，记录 nav scroll / 行几何"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-60},
+ {"type":"wait","ms":300},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-60},
+ {"type":"wait","ms":300},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-60},
+ {"type":"wait","ms":300},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-60},
+ {"type":"wait","ms":300},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-60},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"red-1000x640-max.txt","_comment":"滚到 max 后：断言 scroll=offset/max 与末尾入口可达"},
+ {"type":"screenshot","path":"red-1000x640-max.png"},
+ {"type":"click","id":"app.sidebar.item.About.hit","_comment":"max 处点末尾入口（关于）——现状预期失败"},
+ {"type":"wait","ms":500},
+ {"type":"dump","path":"red-1000x640-after.txt"}
+]}
