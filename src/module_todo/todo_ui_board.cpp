@@ -92,6 +92,12 @@ inline eui::Color dueFaceColor(Priority p, const core::theme::Tokens& t,
 // need294 批次C），控件间 2×spacingSmall。
 // 「+ 列」入口按固定四列设计删除（列模型不可增删）。
 constexpr float kHeaderSearchW = 240.0f;
+// 搜索框可收窄下限：内容宽不足时先收搜索框，把宽度让给标题（bug311——820 档
+// 内容宽 536 时标题只剩 80px，「Todo 看板」被截成「Todo 看」）。1000 档内容宽
+// 716 → 收窄公式不触发，搜索框恒 240。
+constexpr float kHeaderSearchMinW = 140.0f;
+// 标题可读下限（「Todo 看板」≈110px，留余量）；经 scaled() 随字号档缩放
+constexpr float kHeaderTitleMinW = 148.0f;
 constexpr float kHeaderOverdueW = 88.0f;
 constexpr float kHeaderNewTaskW = 120.0f;
 
@@ -105,8 +111,16 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v) {
     (void)bodyH;
     const auto componentTheme = core::theme::componentTokensWeChat(t);
-    const float actionsW = kHeaderSearchW + kHeaderOverdueW + kHeaderNewTaskW +
-                           t.sizes.spacingSmall * 2.0f;
+    // 右侧固定组 = 逾期 chip + 新建任务 + 两处 gap；搜索框按可用宽在上限 240 /
+    // 下限 140 之间收窄，保证标题至少 kHeaderTitleMinW（bug311）
+    const float fixedActionsW = kHeaderOverdueW + kHeaderNewTaskW +
+                                t.sizes.spacingSmall * 2.0f;
+    const float searchW = std::min(kHeaderSearchW,
+                                   std::max(core::theme::scaled(kHeaderSearchMinW),
+                                            contentW -
+                                                core::theme::scaled(kHeaderTitleMinW) -
+                                                fixedActionsW));
+    const float actionsW = searchW + fixedActionsW;
     // 标题区可用宽 = 内容宽 − 动作区实际宽；极窄窗口钳到 0 防负宽
     const float titleW = std::max(0.0f, contentW - actionsW);
     ui.row("todo.header")
@@ -137,10 +151,10 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 .content([&] {
 // 搜索框：Enter 无副作用（不绑 onEnter）；包 stack 才能在流式 row 里叠 FA 图标浮层
                     ui.stack("todo.search.wrap")
-                        .size(240.0f, 40.0f)
+                        .size(searchW, 40.0f)
                         .content([&] {
                             components::input(ui, "todo.search")
-                                .size(240.0f, 40.0f)
+                                .size(searchW, 40.0f)
                                 .value(v.searchQuery)
                                 // 2026-11-01：同 md 搜索框——固定宽度容器里
                                 // 放大后的提示文字会溢出被裁，就地收敛文案。
