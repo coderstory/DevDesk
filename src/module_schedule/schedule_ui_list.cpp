@@ -11,6 +11,7 @@
 #include "ui_kit/button.h"
 #include "ui_kit/dialog_form.h"
 #include "ui_kit/dialog_shell.h"
+#include "ui_kit/empty_state.h"
 #include "ui_kit/glass.h"
 #include "ui_kit/jelly.h"
 #include "ui_kit/metrics.h"
@@ -1157,18 +1158,27 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                                 userTab ? assembly_.userRows : assembly_.systemRows;
                             float userMasonryH = 0.0f;
                             if (rows.empty()) {
-                                // 空态（池137）：贴左灰字纯提示，缩进 16 与卡对齐；
-                                // 无卡无任何按钮，唯一新建入口在页头
-                                ui.text(userTab ? "schedule.list.user.empty"
-                                                : "schedule.list.sys.empty")
-                                    .position(core::theme::scaled(16.0f),
-                                              core::theme::scaled(8.0f))
-                                    .size(std::max(0.0f, w - core::theme::scaled(32.0f)),
-                                          core::theme::scaled(20.0f))
-                                    .text(userTab ? "暂无用户定时" : "暂无系统定时")
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .color(t.colors.textTertiary)
-                                    .build();
+                                // 空态（need297 E2-b）：裸灰字换 ui_kit::emptyState
+                                // 标准档（图标+主句+引导+行动钮）。行动钮仅用户 TAB
+                                // ——新建只创建用户规则，系统 TAB 无创建路径，引导
+                                // 句说明来源即可（页头「新建」仍是全页唯一常驻入口，
+                                // 池137 语义不变，此处是 §5.6 就近入口）。
+                                ui_kit::EmptyStateOptions opts;
+                                opts.message = userTab ? "暂无用户定时" : "暂无系统定时";
+                                opts.guide = userTab ? "创建第一条定时规则"
+                                                     : "系统定时由应用内置提供";
+                                opts.icon = 0xF017;  // fa-clock
+                                if (userTab) {
+                                    opts.action = {"新建规则",
+                                                   [this] { openNewRule(); }};
+                                }
+                                ui_kit::emptyState(ui,
+                                                   userTab ? "schedule.list.user.empty"
+                                                           : "schedule.list.sys.empty",
+                                                   opts, core::theme::scaled(16.0f),
+                                                   core::theme::scaled(8.0f),
+                                                   std::max(0.0f, w - core::theme::scaled(32.0f)),
+                                                   160.0f, t);
                             } else {
                                 userMasonryH = drawMasonry(ui, rows,
                                                            userTab ? "schedule.list.user."

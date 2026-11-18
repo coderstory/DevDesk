@@ -477,11 +477,13 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
     shell.height = h;
     shell.open = st.open;
     shell.title = "定时规则";
-    shell.cancel = {"取消", [&host] {
+    // 取消/保存动作抽局部 std::function：底部按钮对与名称框键盘路径（need297
+    // E2-a：Enter=保存同链 / Esc=取消，#156 §9）共用同一份逻辑，两入口不漂移。
+    const std::function<void()> doCancel = [&host] {
         if (host.close) host.close();
-    }};
+    };
     // 保存 / 取消：保存前 validateAndParse + 事务内重算 next_fire_at（§4.4）
-    shell.confirm = {"保存",
+    const std::function<void()> doSave =
         // EUI-NEO 铁律：onClick 回调在点击帧由 updateInteraction 才调用
         //（compose 栈已展开），禁止引用捕获 compose 帧栈局部。ctx 是宿主
         // 每帧栈新对象（schedule_ui_list drawEditDialog 调用点），引用捕获
@@ -519,8 +521,20 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             } else {
                 st.saveError = err;
             }
-        }};
+        };
+    shell.cancel = {"取消", doCancel};
+    shell.confirm = {"保存", doSave};
     shell.onOpenChange = [&st](bool v) { st.open = v; };
+    // need297 E2-a：打开沿自动聚焦名称框（requestFocus 帧末按元素 id 消费，
+    // 本帧树中无该元素则丢弃）。只发一次——每帧重发会抢走用户移到其它输入框
+    // 的焦点；关窗复位沿状态。
+    if (st.open && !st.focusSeeded) {
+        st.focusSeeded = true;
+        ui.requestFocus("schedule.edit.name.hit");
+    }
+    if (!st.open) {
+        st.focusSeeded = false;
+    }
     ui_kit::drawDialogShell(ui, screen, shell, t, themeTokens,
                             [&](const ui_kit::DialogContentArea& area) {
         const float x0 = area.x;
@@ -581,6 +595,10 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     st.form.name = v;
                     touch();
                 })
+                // need297 E2-a（#156 §9）：名称框 Enter=保存同链、Esc=取消——
+                // 与底部按钮对共用 doSave/doCancel，校验红字/落库失败行为一致
+                .onEnter(doSave)
+                .onCancel(doCancel)
                 .build();
             fy += 72.0f;
 

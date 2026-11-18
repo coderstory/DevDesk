@@ -12,6 +12,7 @@
 #include <components/theme.h>
 #include <components/tooltip.h>
 #include <components/virtuallist.h>
+#include <ui_kit/empty_state.h>  // need:297 E2-b：空态统一 kit 标准形态
 #include <ui_kit/wtab.h>  // need:296 D3：视图切换 Tab 换块面式统一组件
 #include <core/component_theme.h>
 
@@ -1044,36 +1045,20 @@ void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
         return;
     }
     if (rows.empty()) {
+        // 空态（need297 E2-b）：裸灰字换 ui_kit::emptyState 无图标档（320 窄列
+        // 空间有限，§4.12 统一形态；整体垂直居中替代旧 listH*0.4 手摆）。
+        // 主空态画面仍由右卡承担 §5.7，此处只保留弱提示语义（§4.8）。
+        ui_kit::EmptyStateOptions opts;
         if (c.filterActive()) {
-            // 过滤无匹配空态（§4.8 need:299：与「工作区干净」空态严格区分，
-            // 两行画面；仅过滤词非空时出现）
-            ui.text("git.list.filter.empty.main")
-                .position(x, listY + listH * 0.4f)
-                .size(w, scaled(20.0f))
-                .text("无匹配文件")
-                .fontSize(scaled(13.0f))
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.text("git.list.filter.empty.sub")
-                .position(x, listY + listH * 0.4f + scaled(24.0f))
-                .size(w, scaled(18.0f))
-                .text("试试更短关键词，或点 × 清空")
-                .fontSize(scaled(12.0f))
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(t.colors.textTertiary)
-                .build();
-            return;
+            // 过滤无匹配空态（§4.8 need:299：与「工作区干净」空态严格区分；
+            // 仅过滤词非空时出现）
+            opts.message = "无匹配文件";
+            opts.guide = "试试更短关键词，或点 × 清空";
+        } else {
+            // 空态（§4.8：组头全隐藏 + 弱提示一行）
+            opts.message = "没有未提交变更";
         }
-        // 空态（§4.8：组头全隐藏 + 弱提示一行；主空态画面由右卡承担 §5.7）
-        ui.text("git.list.empty")
-            .position(x, listY + listH * 0.4f)
-            .size(w, scaled(20.0f))
-            .text("没有未提交变更")
-            .fontSize(scaled(12.0f))
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
+        ui_kit::emptyState(ui, "git.list.empty", opts, x, listY, w, listH, t);
         return;
     }
 

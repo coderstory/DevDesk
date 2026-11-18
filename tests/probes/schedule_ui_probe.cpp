@@ -392,22 +392,26 @@ int main(int argc, char* argv[]) {
     composeFrame();
 
     if (emptyRules) {
-        // ---------- S1（池137/139）：空态 = 纯文字提示，无卡无任何按钮 ----------
+        // ---------- S1（池137/139 + need297 E2-b）：空态 = kit 标准档（图标+主句
+        // +引导），无卡；用户 TAB 加「新建规则」就近行动钮（Secondary，页头新建
+        // 仍恒 Primary）；系统 TAB 无创建路径故无行动钮 ----------
         const auto& t = core::theme::current();
         if (!buttonLevelIs("schedule.list.new", /*primary=*/true)) {
             std::cerr << "schedule_ui_probe: S1 FAIL 页头新建钮不是 Primary"
                          "（唯一新建入口恒主钮）\n";
             passed = false;
         }
-        expectNode("schedule.list.sys.empty", &passed);
+        expectNode("schedule.list.sys.empty.message", &passed);
+        expectNoNode("schedule.list.sys.empty.action", &passed);
         expectNoNode("schedule.list.sys.0", &passed);
-        // 用户 TAB 同口径：纯文字、无任何按钮（池137）
+        // 用户 TAB：主句+引导+行动钮齐全（need297 E2-b）
         if (const auto* tab1 = findElement("schedule.list.tab.1")) {
             clickElement(*tab1);
             settleFrames(15);
         }
-        expectNode("schedule.list.user.empty", &passed);
-        expectNoNode("schedule.list.user.empty.action", &passed);
+        expectNode("schedule.list.user.empty.message", &passed);
+        expectNode("schedule.list.user.empty.guide", &passed);
+        expectNode("schedule.list.user.empty.action", &passed);
         expectNoNode("schedule.list.user.0", &passed);
         // 全页（滚动区内）唯一绿钮不存在：只扫列表滚动区子树（页头新建在区外）
         int primaryFills = 0;
@@ -434,7 +438,7 @@ int main(int argc, char* argv[]) {
                       << primaryFills << " 个主色填充（应 0）\n";
             passed = false;
         }
-        if (passed) std::cout << "S1 PASS 空态纯文字无按钮 + 页头唯一新建 Primary\n";
+        if (passed) std::cout << "S1 PASS 空态 kit 标准档 + 用户 TAB 就近钮 + 页头唯一新建 Primary\n";
         shot(shotEmpty);
         if (!passed) {
             std::cerr << "schedule_ui_probe: FAILED\n";

@@ -273,13 +273,14 @@ REGISTER_TEST(schedule_list_empty_provider_registry_ok,
     const eui::Screen screen = makeScreen();
     eui::Ui frame;
     composeFrame(listUi, frame, screen, "empty_sys");
-    DOCTEST_CHECK(frame.find("schedule.list.sys.empty") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.sys.empty.message") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.sys.empty.action") == nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.sys.0") == nullptr);
-    // 用户 TAB 同口径空态：纯文字、无任何按钮（池137）
+    // 用户 TAB：kit 标准档 + 「新建规则」就近行动钮（need297 E2-b）
     listUi.setTab(1);
     composeFrame(listUi, frame, screen, "empty_user");
-    DOCTEST_CHECK(frame.find("schedule.list.user.empty") != nullptr);
-    DOCTEST_CHECK(frame.find("schedule.list.user.empty.action") == nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.empty.message") != nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.user.empty.action") != nullptr);
     return true;
 })
 

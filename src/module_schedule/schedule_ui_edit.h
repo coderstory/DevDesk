@@ -138,6 +138,8 @@ struct EditDialogState {
     EditFormState form;
     std::vector<int64_t> previewCache;  // previewNextFires 结果；空且无红字 = 无下次时刻
     std::string saveError;
+    // need297 E2-a：打开沿已自动聚焦名称框（防每帧重发抢走用户焦点）；关窗复位
+    bool focusSeeded = false;
 };
 
 // 编辑弹窗绘制（关闭态也常驻构建，EUI 内建收起过渡依赖节点存在）。元素 id 以
