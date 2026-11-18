@@ -36,7 +36,12 @@ namespace module::settings {
 
 namespace {
 
-// themeModeIndex 已随主题选择器删除（D-12/E3）移除——WeChat 皮肤即主题。
+// need321：主题档 → 下拉索引（0 跟随系统 / 1 浅色 / 2 深色，与 kThemeModePresets 同序）
+int themeModeIndex(const std::string& mode) {
+    if (mode == kThemeModeLight) return 1;
+    if (mode == kThemeModeDark) return 2;
+    return 0;  // auto（跟随系统）
+}
 
 int windowEffectIndex(const std::string& mode) {
     if (mode == kWindowEffectTranslucent) return 1;
@@ -153,9 +158,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     // E 批布局统一：标题 16/22 + 内容起始 y=68（全卡统一口径，roundFs 派生见
     // settings_ui_logic.h；标题顶 16 = 字面锚）。
     // 152 批：「动态背景」开关迁「通用」卡（settings.card.editor.fluid，行 2），
-    // 本卡标题带右贴位与 desc 槽随之清退；卡高 kAppearanceCardHeight 不变，
-    // 通用 tab 零滚动预算逐值保持（need155 起 0/1/2 条代理警告 = 308/346/364 对可用 372）。
-    // 字号缩放/窗口效果两行 FormRow 自带标签，desc 槽留白。
+    // 本卡标题带右贴位与 desc 槽随之清退。
+    // need321：卡内三行 = 字号缩放 / 主题 / 窗口效果（FormRow 自带标签，desc 槽留白）；
+    // 主题行撑高卡高 184→226，零滚动预算见 kAppearanceCardHeight 注释。
     const float descH = roundFs(16.0f);
     const float hintH = roundFs(16.0f);
     ui.stack(id)
@@ -173,11 +178,12 @@ void drawAppearanceCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "外观");
 
-            // 主题选择器已删除（D-12/E3 去功能例外——WeChat 皮肤即主题、暗色延后 D-04）。
-            // 字号缩放（§6 item 3 确认在通用 tab）+ 窗口效果用 FormRow 排列（§6 item 5）。
+            // need321：主题三档行恢复（D-12/E3 移除后按老板裁决①补齐）。
+            // 三行统一 FormRow 排列（§6 item 3/5 语汇）。
             const float rowH = logFieldHeight();  // 36px（与日志卡同口径）
             const float fontRowY = roundFs(40.0f) + descH + roundFs(12.0f);  // 100% = 68
-            const float effectRowY = fontRowY + rowH + roundFs(6.0f);
+            const float themeRowY = fontRowY + rowH + roundFs(6.0f);   // 100% = 110
+            const float effectRowY = themeRowY + rowH + roundFs(6.0f);  // 100% = 152
             const float formX = 28.0f;
             const float formW = w - 56.0f;  // 卡内左右各 28 padding
 
@@ -209,6 +215,37 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                                 .fontSize(fs(13.0f))
                                 .lineHeight(ch)
                                 .color(t.colors.textSecondary)
+                                .build();
+                        })
+                        .build();
+                }, t);
+
+            // 主题三档 FormRow（「跟随系统」= 启动/回本页取系统值即时解析；EUI-NEO 无
+            // 系统外观变更回调，运行中不热切——见 settings_module::onPageEnter 的 auto 注释）
+            ui_kit::formRow(ui, id + ".theme", "主题", formX, themeRowY,
+                            formW, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float ddW = cw;
+                    ui.stack(id + ".theme.ddwrap")
+                        .position(cx, cy)
+                        .size(ddW, ch)
+                        .content([&] {
+                            components::dropdown(ui, id + ".theme.dd")
+                                .size(ddW, ch)
+                                .theme(compTheme)
+                                .items(std::vector<std::string>(
+                                    kThemeModePresetLabels,
+                                    kThemeModePresetLabels +
+                                        kThemeModePresetCount))
+                                .selected(themeModeIndex(in.cfg.themeMode))
+                                .open(isDropdownOpen(in.openDropdown,
+                                                     Dropdown::Theme))
+                                .onOpenChange([f = a.setDropdownOpen](bool v) {
+                                    f(Dropdown::Theme, v);
+                                })
+                                .onChange([f = a.applyThemeMode](int idx) {
+                                    f(idx);
+                                })
                                 .build();
                         })
                         .build();

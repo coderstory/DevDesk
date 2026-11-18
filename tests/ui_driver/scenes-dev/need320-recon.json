@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"enabledModules": ["home", "markdown", "todo", "schedule", "mcp", "settings", "claude_proxy"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "until": "exists", "id": "md.tree.new", "timeoutMs": 4000},
+    {"type": "click", "id": "md.tree.new"},
+    {"type": "wait", "until": "exists", "id": "md.dialog.new.input", "timeoutMs": 3000},
+    {"type": "click", "id": "md.dialog.new.input"},
+    {"type": "type", "text": "右键重命名甲"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "need320-md-dump.txt"},
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add", "timeoutMs": 3000},
+    {"type": "dump", "path": "need320-todo-dump.txt"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "until": "exists", "id": "app.schedule.list.new.bg", "timeoutMs": 3000},
+    {"type": "dump", "path": "need320-schedule-dump.txt"},
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit"},
+    {"type": "wait", "until": "exists", "id": "mcp.grid", "timeoutMs": 3000},
+    {"type": "dump", "path": "need320-mcp-dump.txt"}
+  ]
+}
