@@ -623,6 +623,10 @@ int main(int argc, char* argv[]) {
                        "干净仓左卡弱提示「没有未提交变更」（kit 空态档）");
                 expect(ui->find("git.list.filter.empty.message") == nullptr,
                        "干净空态不得挂过滤空态基 id（双向锁）");
+                // need310 审计 P2：guide 节点同侧缺席也锁（结构上 emptyState
+                // 单基 id 使然，显式断言防未来结构漂移）
+                expect(ui->find("git.list.filter.empty.guide") == nullptr,
+                       "干净空态不得挂过滤空态 guide（双向锁补全）");
                 expect(ui->find("git.list.empty.guide") == nullptr,
                        "切仓后过滤词清空（干净空态而非无匹配空态）");
                 expect(ui->find("git.right.empty.main") != nullptr &&
