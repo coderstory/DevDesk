@@ -73,7 +73,11 @@ inline bool textPresent(const TreeView& tree, const std::string& resolvedId,
         }
         return false;
     }
-    if (text.empty()) return false;
+    // 空串 equals = 显式「字段为空」判据（need319 清场断言）；仅定点元素可比——
+    // 全页扫描下任何空叶子都会命中，恒真无意义，一律 false。
+    // 注意：EUI-NEO input 空值时把 placeholder 写进 .text（input.h:495），故
+    // "<input>.text" 上此判据恒红——输入框清场请锁可见副作用（如校验红字）。
+    if (text.empty() && (op != TextOp::Equals || resolvedId.empty())) return false;
     auto matches = [op, &text](const std::string& value) {
         if (op == TextOp::Equals) return value == text;
         return value.find(text) != std::string::npos;

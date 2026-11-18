@@ -367,6 +367,9 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
         }
     }
 
+    // need319：区分「text 字段缺省」（仍拦）与「显式 text=""」（空串判据放行）
+    const bool hasText = obj.has("text");
+
     auto getString = [&](const char* key, std::string* dst,
                          bool required = false) -> core::Result<void> {
         if (!obj.has(key)) {
@@ -485,9 +488,15 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
         if ((out->until == "exists" || out->until == "missing") && out->id.empty()) {
             return failStep(index1, "wait.until=exists/missing 需要 'id'");
         }
-        // nonempty = 任意可见文本判据（不读 text 字段）；contains/equals 才需要 text
-        if (out->until == "text" && out->op != "nonempty" && out->text.empty()) {
-            return failStep(index1, "wait.until=text 需要 'text'（op=nonempty 除外）");
+        // nonempty = 任意可见文本判据（不读 text 字段）；contains/equals 才需要 text。
+        // need319：op=equals + 显式 text="" = 「字段为空」等待判据（仅定点 id）。
+        if (out->until == "text" && out->op != "nonempty" &&
+            (!hasText || (out->text.empty() && out->op != "equals"))) {
+            return failStep(index1,
+                            "wait.until=text 需要 'text'（op=nonempty 除外；空串判据=op=equals 显式 text=\"\"）");
+        }
+        if (out->until == "text" && out->op == "equals" && out->text.empty() && out->id.empty()) {
+            return failStep(index1, "空串等待判据需要 'id'（全页空文本扫描恒真无意义）");
         }
         if (out->until == "text" && !out->op.empty() && out->op != "contains" &&
             out->op != "equals" && out->op != "nonempty") {
@@ -517,7 +526,17 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
             return failStep(index1, "assert.check=exists/missing 需要 'id'");
         }
         if (out->check == "text") {
-            if (out->text.empty()) return failStep(index1, "assert.check=text 需要 'text'");
+            // need319：op=equals + 显式 text="" = 「字段为空」断言（清场判据）。
+            // 缺 text 字段仍拦；contains 空文本恒真也拦（只认显式 equals 空串意图）。
+            if (!hasText) return failStep(index1, "assert.check=text 需要 'text'");
+            if (out->text.empty() && out->op != "equals") {
+                return failStep(index1,
+                                "assert.check=text 的 text 为空时仅 op=equals 合法"
+                                "（空串断言需显式 equals；缺省 contains 空文本恒真已拦）");
+            }
+            if (out->text.empty() && out->id.empty()) {
+                return failStep(index1, "空串断言需要 'id'（全页空文本扫描恒真无意义）");
+            }
             if (!out->op.empty() && out->op != "contains" && out->op != "equals") {
                 return failStep(index1, "assert 文本 op 仅支持 contains / equals（缺省 contains）");
             }

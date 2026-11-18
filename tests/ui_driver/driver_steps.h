@@ -138,14 +138,24 @@ private:
         env_.runtime->compose("app", env_.windowW, env_.windowH, env_.composeFn);
     }
 
+    // need319：空文本在报告/诊断里显示为 <空串>，防空引号看不出判据（清场断言）
+    static std::string quoteText(const std::string& value) {
+        return value.empty() ? std::string("<空串>") : "'" + value + "'";
+    }
+
     static std::string describeTarget(const Step& step) {
         if (step.type == "click") return step.id.empty() ? "point(" + std::to_string(static_cast<int>(step.pointX)) + "," + std::to_string(static_cast<int>(step.pointY)) + ") [坐标步骤]" : step.id;
         if (step.type == "type") return "'" + step.text + "'";
         if (step.type == "key") return step.keyName;
         if (step.type == "scroll") return "dx=" + std::to_string(static_cast<int>(step.dx)) + " dy=" + std::to_string(static_cast<int>(step.dy));
         if (step.type == "drag") return step.id + " → " + step.toId;
-        if (step.type == "wait") return step.ms > 0 ? std::to_string(step.ms) + "ms" : step.until + " " + (step.id.empty() ? "'" + step.text + "'" : step.id);
-        if (step.type == "assert") return step.check + " " + (step.id.empty() ? (step.check == "text" ? "'" + step.text + "'" : std::string()) : step.id);
+        if (step.type == "wait") {
+            if (step.ms > 0) return std::to_string(step.ms) + "ms";
+            const std::string target = step.until == "text" && step.op == "nonempty"
+                ? std::string("任意可见文本") : step.id.empty() ? quoteText(step.text) : step.id;
+            return step.until + " " + target;
+        }
+        if (step.type == "assert") return step.check + " " + (step.id.empty() ? (step.check == "text" ? quoteText(step.text) : std::string()) : step.id);
         if (step.type == "screenshot" || step.type == "dump") return step.path;
         if (step.type == "quit") return "requestExit";
         return {};
@@ -389,9 +399,10 @@ private:
                 return;
             }
             if (std::chrono::steady_clock::now() > deadline) {
-                const std::string targetDesc = step.until == "text" && step.text.empty()
+                const std::string targetDesc = step.until == "text" && step.text.empty() &&
+                                                       step.op != "equals"
                     ? "op=nonempty 任意可见文本" + (step.id.empty() ? std::string() : " @ " + step.id)
-                    : (step.id.empty() ? "'" + step.text + "'" : step.id);
+                    : (step.id.empty() ? quoteText(step.text) : step.id);
                 result->errorReason = "等待 '" + step.until + "' 超时 " +
                                       std::to_string(timeoutMs) + "ms（目标 " +
                                       targetDesc + "）";
@@ -459,7 +470,7 @@ private:
             if (textPresent(tree, resolvedId, op, step.text)) {
                 result->passed = true;
             } else {
-                result->errorReason = "断言失败：文本 '" + step.text + "' 未命中（op=" +
+                result->errorReason = "断言失败：文本 " + quoteText(step.text) + " 未命中（op=" +
                                       (op == TextOp::Equals ? "equals" : "contains") +
                                       "，范围=" + scope + "）";
             }

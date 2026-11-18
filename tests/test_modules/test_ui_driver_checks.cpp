@@ -142,3 +142,28 @@ REGISTER_TEST(uiDriverChecksTextPresentNonEmpty, "uidrv/checks: nonempty 可见�
     DOCTEST_CHECK_FALSE(textPresent(emptyTree, "", TextOp::NonEmpty, ""));
     return true;
 })
+
+// need319：空串 equals = 显式「字段为空」判据（清场断言）。锁三态：空字段绿 /
+// 非空字段红 / 全页扫描恒拒（避免任何空叶子都命中）。
+REGISTER_TEST(uiDriverChecksTextPresentEmptyEquals, "uidrv/checks: 空串 equals（字段为空判据）", {
+    static Element cleared;
+    cleared.id = "app.form.field";
+    cleared.text = "";
+    static Element filled;
+    filled.id = "app.form.filled";
+    filled.text = "0 9 * * *";
+    TreeView tree = makeSampleTree();
+    tree.byId[cleared.id] = &cleared;
+    tree.byId[filled.id] = &filled;
+    tree.leaves.push_back(&cleared);
+    tree.leaves.push_back(&filled);
+
+    DOCTEST_CHECK(textPresent(tree, cleared.id, TextOp::Equals, ""));       // 清场成功
+    DOCTEST_CHECK_FALSE(textPresent(tree, filled.id, TextOp::Equals, ""));  // 清场失效 → 红
+    DOCTEST_CHECK_FALSE(textPresent(tree, cleared.id, TextOp::Contains, ""));
+    // 全页扫描（id 空）：空叶子 abound，equals 空串恒真无意义 → 一律 false
+    DOCTEST_CHECK_FALSE(textPresent(tree, "", TextOp::Equals, ""));
+    // id 不在树里 → false（元素消失不等于字段为空）
+    DOCTEST_CHECK_FALSE(textPresent(tree, "app.form.absent", TextOp::Equals, ""));
+    return true;
+})

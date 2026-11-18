@@ -231,3 +231,48 @@ REGISTER_TEST(uiDriverSchemaWaitSkipExitAndNonEmpty, "uidrv/schema: wait.skipExi
     DOCTEST_CHECK(err.find("text") != std::string::npos);
     return true;
 })
+
+// need319：assert/wait 的 equals + 显式空串（清场判据）放行；缺 text 字段与
+// contains 空串仍拦（后者恒真无意义）。
+REGISTER_TEST(uiDriverSchemaEmptyEqualsText, "uidrv/schema: equals 空串断言/等待（清场判据）", {
+    // 正例：assert equals text="" 定点 → 合法
+    Scene scene;
+    if (!parseOk(R"({"version":1,"steps":[
+        {"type":"assert","check":"text","id":"app.form.field","op":"equals","text":""}
+    ]})", &scene)) return false;
+    DOCTEST_CHECK_EQ(scene.steps.size(), std::size_t(1));
+    DOCTEST_CHECK_EQ(scene.steps[0].op, std::string("equals"));
+    DOCTEST_CHECK(scene.steps[0].text.empty());
+    // 正例：wait equals text="" 定点 → 合法
+    Scene waitScene;
+    if (!parseOk(R"({"version":1,"steps":[
+        {"type":"wait","until":"text","id":"app.form.field","op":"equals","text":""}
+    ]})", &waitScene)) return false;
+    DOCTEST_CHECK(waitScene.steps[0].text.empty());
+
+    // 负例①：缺 text 字段照旧拦（显式空串才有意图）
+    std::string err;
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"assert","check":"text","id":"app.form.field","op":"equals"}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("text") != std::string::npos);
+    // 负例②：contains + 空串（恒真）拦
+    err.clear();
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"assert","check":"text","id":"app.form.field","text":""}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("equals") != std::string::npos);
+    // 负例③：空串判据缺 id（全页扫描恒真）拦
+    err.clear();
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"assert","check":"text","op":"equals","text":""}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("id") != std::string::npos);
+    // 负例④：wait 空串判据缺 id 同样拦
+    err.clear();
+    DOCTEST_CHECK_FALSE(parseOk(R"({"version":1,"steps":[
+        {"type":"wait","until":"text","op":"equals","text":""}
+    ]})", nullptr, &err));
+    DOCTEST_CHECK(err.find("id") != std::string::npos);
+    return true;
+})
