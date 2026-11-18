@@ -551,7 +551,7 @@ void AgentModule::composeTaskDialog(
                 .onClick([this] { closeTaskDialog(); })
                 .build();
 
-            // ====== 左侧竖向导航 (0,44) 160×(H-44)：nav-item 高 56，序号圆 r=11 + 标签/副标竖排 ======
+            // ====== 左侧竖向导航 (0,44) 160×(H-44)：nav-item 高 64，序号圆 r=11 + 标签/副标竖排 ======
             // 四态：done=#E6FBF2 底+#36D399 字+✓ / cur=#36D399 填充+白字+左3px绿条
             //       cur-err=#EF4444 10% 底+errorText 红字+!+左3px红条 / todo=hover 底+textSecondary 字
             {
@@ -567,7 +567,9 @@ void AgentModule::composeTaskDialog(
                     .color(t.colors.borderDefault)
                     .build();
 
-                constexpr float kVertNavItemH = 56.0f;
+                // need340：双行文本（标签+副标）原 0 行距观感偏挤——item 56→64，
+                // 上 padding 12→16、行距 0→4（文本块在 64 高内仍垂直居中）
+                constexpr float kVertNavItemH = 64.0f;
                 // bug154③：节点条间原 0 间隙贴死成整条色带——上下 12 / 相邻 8
                 // （theme spacing token），节点块独立可辨
                 constexpr float kVertNavTopPad = 12.0f;
@@ -627,9 +629,9 @@ void AgentModule::composeTaskDialog(
                             : (stepInvalid || cur) ? t.colors.onPrimary
                                                    : t.colors.textSecondary)
                         .build();
-                    // 标签 + 副标竖排（圆右 8px，块在 56 高内垂直居中）
+                    // 标签 + 副标竖排（圆右 8px，块在 64 高内垂直居中）
                     ui.text(nodeId + ".label")
-                        .position(44.0f, navY + 12.0f)
+                        .position(44.0f, navY + 16.0f)
                         .size(kVertNavW - 44.0f - 14.0f, core::theme::scaled(18.0f))
                         .text(kStepLabels[i])
                         .fontSize(core::theme::scaled(14.0f))
@@ -639,7 +641,7 @@ void AgentModule::composeTaskDialog(
                         .color(itemFg)
                         .build();
                     ui.text(nodeId + ".sub")
-                        .position(44.0f, navY + 30.0f)
+                        .position(44.0f, navY + 38.0f)
                         .size(kVertNavW - 44.0f - 14.0f, core::theme::scaled(14.0f))
                         .text(kStepSubs[i])
                         .fontSize(core::theme::scaled(12.0f))

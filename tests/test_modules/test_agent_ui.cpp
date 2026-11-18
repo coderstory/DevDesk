@@ -2886,13 +2886,13 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     // 字段有效宽 = 弹窗宽 − 196（左导航 160 + 双侧 pad 32）。
     const float kContentW = pw - 196.0f;   // 604
 
-    // ② 竖向导航几何：项面 (0, 44+i*56) 160×56，首项 step.0.bg 顶=标题栏带底
+    // ② 竖向导航几何：项面 (0, 44+i*64) 160×64（need340 双行行距 +4），首项 step.0.bg 顶=标题栏带底
     const auto* step0 = ui2.find("agent.dialog.task.step.0.bg");
     DOCTEST_REQUIRE(step0 != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 0.0f), "step.0.bg x 应=0（贴弹窗左缘），实测 " + std::to_string(step0->frame.x - px));
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, 56.0f), "step.0.bg y 应=56（bug154③ 顶部留白 12）");
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.width, 160.0f), "step.0.bg w 应=160");
-    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, 56.0f), "step.0.bg h 应=56");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, 64.0f), "step.0.bg h 应=64（need340）");
 
     // ②b step 0：名称输入 y=88（44 内容区顶 + 16 pad + 28）h=40 全内容宽（x0=180）
     const auto* nameInput = ui2.find("agent.dialog.task.name");
