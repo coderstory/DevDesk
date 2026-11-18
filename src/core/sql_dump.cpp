@@ -22,6 +22,9 @@ namespace core::sql_dump {
 const std::vector<std::string>& defaultSkipTables() {
     static const std::vector<std::string> kTables = {
         "claude_call_logs", "claude_run_settings",
+        // 应用密钥（need305）：分平台保护形态的运行时密钥（memory.llm /
+        // devdesk.schedule），密钥不进同步面（决策#11）。
+        "app_secrets",
         // 同步基线（sha/hash/首次方向/未同步提示）是本机专属状态：随 dump 跨设备
         // 转移会让新设备拿别人写的基线比对 → 误判未变跳过下载 → 进而删远端笔记。
         "github_sync_state",

@@ -3,8 +3,8 @@
 
 #include "core/logging.h"
 #include "core/paths.h"
+#include "core/secrets_store.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 
 #include <fstream>
 #include <system_error>
@@ -107,7 +107,7 @@ std::string redactSecretsForLog(const std::string& text,
     return out;
 }
 
-// ── need256：提炼 key 钥匙串通道（见 telemem_config.h 契约）──
+// ── need256→need305：提炼 key DB 通道（见 telemem_config.h 契约）──
 
 std::string maskLlmKey(const std::string& key) {
     if (key.empty()) return {};
@@ -117,20 +117,17 @@ std::string maskLlmKey(const std::string& key) {
 
 bool saveLlmKeyToKeychain(const std::string& key) {
     if (key.empty()) return false;  // 空 key 无意义，拒存
-    return platform::keychain::storeSecret(kLlmKeychainService,
-                                           kLlmKeychainAccount, key)
+    return core::secrets_store::set(kLlmSecretService, kLlmSecretAccount, key)
         .isOk();
 }
 
 std::string readLlmKeyFromKeychain() {
-    const auto r =
-        platform::keychain::loadSecret(kLlmKeychainService, kLlmKeychainAccount);
+    const auto r = core::secrets_store::get(kLlmSecretService, kLlmSecretAccount);
     return r.isOk() ? r.value() : std::string{};
 }
 
 bool clearLlmKeyFromKeychain() {
-    return platform::keychain::deleteSecret(kLlmKeychainService,
-                                            kLlmKeychainAccount)
+    return core::secrets_store::erase(kLlmSecretService, kLlmSecretAccount)
         .isOk();
 }
 

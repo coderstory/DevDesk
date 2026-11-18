@@ -21,7 +21,6 @@
 #include "core/theme.h"
 #include "core/time.h"
 #include "platform/http_server.h"
-#include "platform/keychain.h"
 #include "platform/terminal_launch.h"
 #include "platform/folder_picker.h"
 #include "provider_config.h"
@@ -57,7 +56,6 @@ static std::unique_ptr<::core::Module> mkmod(bool bypassSwitch = true) {
 
 namespace {
 
-constexpr const char* kTestKeychainService = "DevDeskTestClaudeModule";
 
 // 临时 db 文件名前缀（test_support::TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_claude_ui_";
@@ -68,8 +66,7 @@ struct TestEnv : test_support::TestDb {
     std::unique_ptr<module::claude::ClaudeService> svc;
 
     TestEnv() : test_support::TestDb(kDbPrefix, "") {
-        svc = std::make_unique<module::claude::ClaudeService>(db->db(),
-                                                              kTestKeychainService);
+        svc = std::make_unique<module::claude::ClaudeService>(db->db());
         module::claude::ClaudeService::setGlobal(svc.get());
     }
 
@@ -78,8 +75,6 @@ struct TestEnv : test_support::TestDb {
     }
 };
 
-// 清某个 profile 的测试密钥
-using test_support::cleanupProfileKey;
 
 // 动态空闲端口：借 platform::http::Server 的 bind 0 支持（http_server.cpp：
 // port==0 → bind_to_any_port）向系统要一个空闲端口随即释放，交还调用方独占——
@@ -249,7 +244,6 @@ REGISTER_TEST(claude_detail_three_tabs_layout,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -387,8 +381,6 @@ REGISTER_TEST(claude_module_compose_with_data,
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
-    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -460,7 +452,6 @@ REGISTER_TEST(claude_module_test_connection_async,
 
     mod->onStop();
     upstream.stop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -609,7 +600,6 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
     env.svc->stopProxy();  // 用完还原
     mod->onStop();
     upstream.stop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -790,7 +780,6 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -854,7 +843,6 @@ REGISTER_TEST(claude_profiles_scrollview,
     }
 
     mod->onStop();
-    for (size_t i = 0; i < ids.size(); ++i) cleanupProfileKey(kTestKeychainService, ids[i]);
     return true;
 })
 
@@ -1039,7 +1027,6 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     DOCTEST_REQUIRE(listed.isOk());
     DOCTEST_CHECK_EQ(listed.value().size(), 1u);
     DOCTEST_CHECK_EQ(listed.value()[0].name, std::string("快捷键建档"));
-    const int64_t pid = listed.value()[0].id;
     // 4) 表单外 Ctrl+S（无保存对象）、未注册组合、裸键、Alt 修饰、Release 全不消费，
     //    且不得开表单。
     DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::S)));
@@ -1111,10 +1098,8 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(!env.svc->isProxyRunning());
     upstream.stop();
-    cleanupProfileKey(kTestKeychainService, mockProf.value().id);
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1124,7 +1109,6 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     auto created = env.svc->createProfile("Esc目标", "https://esc.example.com",
                                           "sk-ant-esc-00001", "claude-sonnet-4-5");
     DOCTEST_REQUIRE(created.isOk());
-    const int64_t pid = created.value().id;
 
     auto mod = mkmod();
     eui::Screen screen;
@@ -1183,7 +1167,6 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1259,8 +1242,6 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     DOCTEST_CHECK(hasName(cardNames(), "官方"));
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
-    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -1375,9 +1356,6 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
     DOCTEST_CHECK(sawCopy);
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
-    cleanupProfileKey(kTestKeychainService, b.value().id);
-    cleanupProfileKey(kTestKeychainService, copyId);
     return true;
 })
 
@@ -1738,7 +1716,6 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         auto act = env.svc->getActiveProfile();
         DOCTEST_REQUIRE(act.isOk());
         DOCTEST_CHECK_EQ(act.value().authField, std::string("api_key"));
-        cleanupProfileKey(kTestKeychainService, list.value()[0].id);
     }
 
     mod->onStop();
@@ -1802,7 +1779,6 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
         auto g = env.svc->getProfile(a.value().id);
         DOCTEST_REQUIRE(g.isOk());
         DOCTEST_CHECK_EQ(g.value().authField, std::string("api_key"));
-        cleanupProfileKey(kTestKeychainService, a.value().id);
     }
 
     mod->onStop();
@@ -1925,7 +1901,6 @@ REGISTER_TEST(claude_module_run_button_headless,
         std::error_code rmEc;
         std::filesystem::remove(settingsFile, rmEc);
     }
-    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2058,7 +2033,6 @@ REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2132,7 +2106,6 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     const float runRight = run->frame.x + run->frame.width;
     DOCTEST_CHECK(std::fabs(rowRight - runRight) < 0.5f);
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2248,7 +2221,6 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2443,7 +2415,6 @@ REGISTER_TEST(claude_profile_avatar_centered,
     auto p = env.svc->createProfile("Zed", "https://avatar.example.com",
                                     "sk-ant-avatar-001", "m-avatar");
     DOCTEST_REQUIRE(p.isOk());
-    const int64_t pid = p.value().id;
 
     auto mod = mkmod();
     mod->onStart();
@@ -2472,7 +2443,6 @@ REGISTER_TEST(claude_profile_avatar_centered,
     DOCTEST_CHECK_EQ(bg->frame.height, 32.0f);
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2563,7 +2533,6 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
     DOCTEST_CHECK_EQ(srcOf["MY_PROFILE"], std::string("本 Profile"));
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2667,7 +2636,6 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
     DOCTEST_CHECK_MESSAGE(p130.empty(), p130);
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2681,7 +2649,7 @@ REGISTER_TEST(claude_module_onstart_reentry_idempotent,
     // 硬性需求 1 —— onStart 不自动起代理（main 按设置门控 / 用户手动启动）
     mod->onStart();
     DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
-    mod->onStart();   // 双 onStart：no-op（不重跑同步首刷 + 孤儿 Keychain 清理）
+    mod->onStart();   // 双 onStart：no-op（不重跑同步首刷）
     DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
     mod->onStop();
     DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
@@ -2851,7 +2819,6 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
         DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-haiku"));
     }
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -2938,60 +2905,10 @@ REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
         DOCTEST_CHECK_EQ(got.value().model, std::string("m-form-def[1M]"));
     }
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
-// 旧库（有 keychain_account 列 + 待回填行）启动时的钥匙串回填**只允许尝试一次**：
-// ad-hoc 签名下钥匙串授权每次重装都会失效（macOS 会弹「请输入钥匙串密码」），
-// 若每次启动都重试，用户永远清不掉这个框（2026-10-18 实证：id=4 是激活 profile，
-// 密钥只在钥匙串里）。判据：①首启确实读取 ②一次性标记落库 ③二次启动零额外读取。
-REGISTER_TEST(claude_keychain_backfill_one_shot,
-              "claude_module: 旧凭据回填只尝试一次（二次启动零钥匙串触达）", {
-    TestEnv env;
-    // 还原旧库形态：新 DDL 已无该列，手工补回 + 一行「密文列空、指向钥匙串」的 profile
-    DOCTEST_REQUIRE(env.handle().exec(
-        "ALTER TABLE claude_profiles ADD COLUMN keychain_account TEXT").isOk());
-    DOCTEST_REQUIRE(env.handle().exec(
-        "INSERT INTO claude_profiles "
-        "(name, base_url, api_key_hint, api_key_check, model, created_at, updated_at, "
-        "keychain_account) VALUES ('legacy', 'https://example.invalid', 'hint', '', "
-        "'m', 0, 0, 'claude:legacy')").isOk());
 
-    // 假钥匙串：只记账，恒答「没有这条」（真实现会让测试机弹授权框）
-    static int loads = 0;
-    loads = 0;
-    platform::keychain::Backend fake = platform::keychain::defaultBackend();
-    fake.loadSecret = [](const std::string&, const std::string&)
-        -> core::Result<std::string> {
-        ++loads;
-        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
-                                               "Keychain item not found");
-    };
-    const platform::keychain::Backend* prev =
-        platform::keychain::setBackendForTest(&fake);
-
-    {
-        auto mod = mkmod();
-        mod->onStart();
-        mod->onStop();
-    }
-    DOCTEST_CHECK(loads >= 1);   // ①首启确实试过（派生命名空间 + 旧名回退）
-    const int afterFirst = loads;
-    auto done = core::appconfig::get(env.handle(), "claude.keychain_backfill_done");
-    DOCTEST_CHECK(done.isOk());
-    DOCTEST_CHECK_EQ(done.isOk() ? done.value() : std::string(), std::string("1"));
-
-    {
-        auto mod = mkmod();
-        mod->onStart();
-        mod->onStop();
-    }
-    DOCTEST_CHECK_EQ(loads, afterFirst);   // ③二次启动零钥匙串触达
-
-    platform::keychain::setBackendForTest(prev);
-    return true;
-})
 
 // UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）
 // 左栏固定 240px（S3.4），替代旧 clamp(0.39,320,460)。防两件事故：
@@ -3120,8 +3037,6 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
-    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -3133,8 +3048,6 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     DOCTEST_REQUIRE(a.isOk());
     auto b = env.svc->createProfile("B", "https://b.example.com", "sk-b", "");
     DOCTEST_REQUIRE(b.isOk());
-    const int64_t idA = a.value().id;
-    const int64_t idB = b.value().id;
 
     auto mod = mkmod(false);  // 不 bypass——真走弹窗路径
     mod->onStart();
@@ -3225,8 +3138,6 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, idA);
-    cleanupProfileKey(kTestKeychainService, idB);
     return true;
 })
 
@@ -3378,8 +3289,6 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         DOCTEST_CHECK(!sameColor(rowBg->color, t.colors.surfaceElevated));
     }
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
-    cleanupProfileKey(kTestKeychainService, b.id);
     return true;
 })
 
@@ -3529,8 +3438,6 @@ REGISTER_TEST(claude_module_ui_set_active_captures_settings,
     }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
-    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -3658,8 +3565,5 @@ REGISTER_TEST(claude_import_precheck_form_interception,
     DOCTEST_CHECK_EQ(legacy.value().size(), countBefore + 2);
     DOCTEST_CHECK_FALSE(f2.formOpen_);
 
-    cleanupProfileKey(kTestKeychainService, final.value().back().id);
-    cleanupProfileKey(kTestKeychainService,
-                      legacy.value()[legacy.value().size() - 2].id);
     return true;
 })

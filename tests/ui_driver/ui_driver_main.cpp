@@ -150,7 +150,7 @@ bool assembleApp(::core::Router& router,
     // setSettingsSyncPaths + syncTakeOver，驱动不起代理）。
     if (g_driverSvc == nullptr) {
         g_driverSvc = std::make_unique<::module::claude::ClaudeService>(
-            *::core::appDatabase(), "DevDeskUiDriverClaudeService");
+            *::core::appDatabase());
         ::module::claude::ClaudeService::setGlobal(g_driverSvc.get());
     }
     // 全表实例化（工厂可能返回 nullptr：平台能力不支持，如非 Windows 的 wallpaper）

@@ -9,7 +9,6 @@
 #include "core/time.h"
 #include "platform/credential_protection.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 #include "platform/terminal_launch_common.h"
 #include "provider_config.h"
 #include "settings_takeover.h"
@@ -29,14 +28,9 @@
 #include <string>
 #include <utility>
 
-#include <openssl/sha.h>
-
 namespace module::claude {
 
 namespace {
-
-// 旧 Keychain service 名前缀（拼在数据根短哈希之前）
-constexpr const char* kKeychainServicePrefix = "DevDesk";
 
 using core::time::nowUnix;
 
@@ -65,39 +59,8 @@ bool keyAtOldValue(ProfileRepository& repo, int64_t profileId,
 
 } // namespace
 
-// 按数据根派生 Keychain 命名空间名（仅用于残留清理）
-std::string keychainServiceForDataRoot(const std::string& dataRoot) {
-    if (dataRoot.empty()) {
-        return std::string();   // 空根无法派生（生产不可达）
-    }
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256(reinterpret_cast<const unsigned char*>(dataRoot.data()),
-           dataRoot.size(), digest);
-    std::ostringstream oss;
-    // 前 4 字节 8 位 hex（同 ProfileRepository::sha256HexPrefix 口径）
-    for (int i = 0; i < 4 && i < SHA256_DIGEST_LENGTH; ++i) {
-        oss << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(digest[i]);
-    }
-    return std::string(kKeychainServicePrefix) + "-" + oss.str();
-}
-
-namespace {
-
-// 生产路径：按数据根派生清理命名空间名；派生失败（空根）兜底裸前缀。
-std::string resolveKeychainService() {
-    auto derived = keychainServiceForDataRoot(core::paths::appDataDir().string());
-    return derived.empty() ? std::string(kKeychainServicePrefix) : derived;
-}
-
-} // namespace
-
-ClaudeService::ClaudeService(core::data::SqliteDb& db,
-                             const std::string& keychainService)
-    : db_(db),
-      profileRepository_(db, keychainService.empty() ? resolveKeychainService()
-                                                     : keychainService),
-      proxyRuntime_(*this) {}
+ClaudeService::ClaudeService(core::data::SqliteDb& db)
+    : db_(db), profileRepository_(db), proxyRuntime_(*this) {}
 
 // 全局单例指针（析构要在它身上摘牌）
 namespace {
@@ -179,10 +142,6 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
         if (proxyStopped) *proxyStopped = true;
     }
     return core::Result<void>::ok();
-}
-
-core::Result<int> ClaudeService::backfillCredentialsFromKeychain() {
-    return profileRepository_.backfillCredentialsFromKeychain();
 }
 
 core::Result<std::string> ClaudeService::loadApiKey(int64_t profileId) {

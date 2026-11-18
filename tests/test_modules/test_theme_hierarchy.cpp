@@ -195,8 +195,7 @@ REGISTER_TEST(theme_hierarchy_claude,
     test_support::TestEnv env(kDbPrefix, "claude", true);
     DOCTEST_REQUIRE(env.ready);
 
-    module::claude::ClaudeService svc(env.db->db(),
-                                      "DevDeskTestThemeHier");
+    module::claude::ClaudeService svc(env.db->db());
     module::claude::ClaudeService::setGlobal(&svc);
 
     std::unique_ptr<::core::Module> mod(create_claude_module());

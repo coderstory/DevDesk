@@ -104,7 +104,7 @@ struct ScopedFakeKc {
 REGISTER_TEST(credential_stored_in_db_column_roundtrip,
               "credential: 凭据落在 api_key_encrypted 列（往返一致）+ 全量 SHA256", {
     test_support::TestDb tdb(kCredPrefix, "roundtrip");
-    module::claude::ClaudeService svc(tdb.handle(), kSvc);
+    module::claude::ClaudeService svc(tdb.handle());
 
     const std::string key = "sk-ant-roundtrip-0123456789abcdef";
     auto created = svc.createProfile("往返", "https://r.example.com", key, "m");
@@ -146,7 +146,7 @@ REGISTER_TEST(credential_legacy_keychain_not_read_nor_written,
               "credential: 旧 Keychain 既不读也不写（迁库后 Keychain 非凭据源）", {
     test_support::TestDb tdb(kCredPrefix, "legacy");
     ScopedFakeKc kc;
-    module::claude::ClaudeService svc(tdb.handle(), kSvc);
+    module::claude::ClaudeService svc(tdb.handle());
 
     const std::string dbKey = "sk-ant-db-authoritative-01";
     auto created = svc.createProfile("甲", "https://a.example.com", dbKey, "m");
@@ -176,7 +176,7 @@ REGISTER_TEST(credential_legacy_keychain_not_read_nor_written,
 REGISTER_TEST(credential_export_json_contains_no_secret,
               "credential: 导出 JSON 不含凭据（明文 / 摘要 / 存储形态一律不得出现）", {
     test_support::TestDb tdb(kCredPrefix, "export");
-    module::claude::ClaudeService svc(tdb.handle(), kSvc);
+    module::claude::ClaudeService svc(tdb.handle());
 
     const std::string key = "sk-ant-EXPORT-MUST-NOT-LEAK-0123456789";
     auto created = svc.createProfile("导出源", "https://e.example.com", key, "m");

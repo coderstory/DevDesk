@@ -132,6 +132,8 @@ add_executable(devdesk_tests
     test_modules/test_net_fetch_tool.cpp
     test_modules/test_message_blocks.cpp
     test_modules/test_memory_engine.cpp
+    # need305：app_secrets 薄封装（往返/protect 落库形态/时间戳/未注册 appDatabase）
+    test_modules/test_secrets_store.cpp
     # bug203/217：引擎卡状态行独立 + 审核卡文本像素预算截断 + 数据根 MSYS 陷阱
     test_modules/test_memory_status_lines.cpp
     # need298：走查 §1.3 窄窗几何单一来源（阈值/让位宽 compose 与 doctest 同口径）

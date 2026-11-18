@@ -31,7 +31,6 @@
 namespace {
 
 // Keychain service：测试专用命名空间，不污染生产数据（同 test_claude_service.cpp）
-constexpr const char* kTestKeychainService = "DevDeskTestClaudeTools";
 constexpr const char* kDbPrefix = "devdesk_test_claude_tools_";
 
 // 从进程级注册表按名取工具并执行（走与 AgentLoop 相同的 find→execute 路径）
@@ -56,19 +55,16 @@ struct ToolEnv {
 
     explicit ToolEnv(const std::string& tag) : tdb(kDbPrefix, tag) {
         svc = std::make_unique<module::claude::ClaudeService>(
-            tdb.handle(), kTestKeychainService);
+            tdb.handle());
         tools = std::make_unique<module::claude::ClaudeTools>(*svc);
     }
     ~ToolEnv() {
         tools->unregisterAll();
-        for (const int64_t id : createdIds) {
-            test_support::cleanupProfileKey(kTestKeychainService, id);
-        }
     }
     ToolEnv(const ToolEnv&) = delete;
     ToolEnv& operator=(const ToolEnv&) = delete;
 
-    // 建 profile 并登记待清 Keychain 条目。失败即抛：夹具没建成 = 后续断言必然
+    // 建 profile 并登记 id。失败即抛：夹具没建成 = 后续断言必然
     // 连锁失真，与 test_support 的「构造失败即抛」同口径。
     module::claude::Profile create(const std::string& name,
                                    const std::string& baseUrl,

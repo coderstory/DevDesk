@@ -31,7 +31,6 @@
 
 namespace {
 
-constexpr const char* kTestKeychainService = "DevDeskTestProviderConfig";
 
 // 构造全填的 6 槽位配置
 module::claude::ModelsConfig fullConfig() {
@@ -276,7 +275,7 @@ REGISTER_TEST(provider_config_service_roundtrip,
               "claude_service: models_config/extra_env 读写往返", {
     KEYCHAIN_TEST_GATE("provider_config_service_roundtrip");
     test_support::TestDb tdb(kDbPrefix, "svc_roundtrip");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile("官方中转", "https://gw.example.com/anthropic",
                                      "sk-ind-test-0123456789abcdef",
@@ -321,9 +320,6 @@ REGISTER_TEST(provider_config_service_roundtrip,
         DOCTEST_CHECK(r.isFail());
     }
 
-    // 清理 keychain 条目（有意忽略结果：失败仅残留测试条目，need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(id));
     return true;
 })
 
@@ -350,7 +346,7 @@ REGISTER_TEST(provider_config_new_column_defaults,
         DOCTEST_REQUIRE(ins.isOk());
         DOCTEST_REQUIRE(ins.value().step().isOk());
 
-        module::claude::ClaudeService svc(db, kTestKeychainService);
+        module::claude::ClaudeService svc(db);
         auto profiles = svc.listProfiles();
         DOCTEST_REQUIRE(profiles.isOk());
         DOCTEST_REQUIRE_EQ(profiles.value().size(), 1u);

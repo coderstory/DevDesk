@@ -97,8 +97,8 @@ inline constexpr const char* kSql = R"(
     --     Windows NTFS 默认 ACL 仅本用户；core/file_perms.h 收紧 devdesk.db +
     --     -wal + -shm，每次打开校正，Windows 侧 no-op）。
     --     空串 = 该 profile 没有密钥（「没有」与「有但解不开」由读侧错误码区分，
-    --     不靠列内容区分）。Keychain 不是凭据来源，只剩启动时的一次性残留清理
-    --     （claude:<id> 前缀之外的条目保留）。
+    --     不靠列内容区分）。Keychain 不是凭据来源，残留清理已随旧凭据回填链
+    --     一并移除（need305 一期）。
     --   api_key_hint      UI 显示用（前 6 + "***" + 尾 4），脱敏形态，导出/复制链
     --                     径只允许用它，绝不用 api_key_encrypted。
     --   api_key_check     全量 SHA256 hex（64 字符）——作「密钥是否变更」判据。
@@ -292,8 +292,9 @@ inline constexpr const char* kSql = R"(
         created_at INTEGER NOT NULL
     );
 
-    -- schedule_channel：通知渠道配置。secret_ref 只是 platform::keychain 的
-    -- account 名（如 wecom.<channel_id>）：key 本身不落库、不进日志、UI 只显 ****（§4.9）。
+    -- schedule_channel：通知渠道配置。secret_ref 是 app_secrets 的 account 键名
+    --（need305，沿旧 keychain 命名，如 wecom.<channel_id>）：key 本身不进日志、
+    -- UI 只显 ****（§4.9）。
     CREATE TABLE IF NOT EXISTS schedule_channel (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kind TEXT NOT NULL,
@@ -453,6 +454,20 @@ inline constexpr const char* kSql = R"(
         at INTEGER NOT NULL DEFAULT 0,
         note TEXT NOT NULL DEFAULT '',
         FOREIGN KEY (task_id) REFERENCES release_task(id) ON DELETE CASCADE
+    );
+
+    -- 应用密钥专表（need305）：运行时三处原经平台 keychain 的通道
+    --（memory.llm / devdesk.schedule）统一落本表，键名 (service, account) 沿
+    -- 旧 keychain 命名空间一一对应。value 是分平台保护形态
+    --（platform/credential_protection 的产物），**不是明文**；读写两侧失败
+    -- 原样上抛不静默回落（secrets_store）。密钥不进同步面：本表不随 dump
+    -- 上 git 远端（sql_dump defaultSkipTables，决策#11）。
+    CREATE TABLE IF NOT EXISTS app_secrets (
+        service TEXT NOT NULL,
+        account TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (service, account)
     );
 
     -- 唯一性兜底：去重守卫在先，唯一索引在后（与建表同脚本幂等执行）。

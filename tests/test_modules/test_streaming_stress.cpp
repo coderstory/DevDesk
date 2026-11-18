@@ -324,8 +324,6 @@ private:
 
 // 代理环境：ProxyRouter + InMemoryDb 内存库，不触碰 Keychain
 
-// 显式传 Keychain service 名，不走默认构造按数据根派生的那条路：派生会碰到真实 Keychain。
-constexpr const char* kStressTestKeychainService = "DevDeskTestStreamingStress";
 struct StressEnv {
     test_support::InMemoryDb db;
     std::unique_ptr<module::claude::ClaudeService> service;
@@ -333,7 +331,7 @@ struct StressEnv {
 
     bool start(const std::string& upstreamBase) {
         service = std::make_unique<module::claude::ClaudeService>(
-            db.handle(), kStressTestKeychainService);
+            db.handle());
         proxy = std::make_unique<platform::http::Server>("127.0.0.1", 0);
         router_ = std::make_unique<module::claude::ProxyRouter>(*service, *proxy);
         router_->setProfileProvider([upstreamBase]() {

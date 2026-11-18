@@ -1273,7 +1273,7 @@ REGISTER_TEST(settings_takeover_status_row,
     DOCTEST_REQUIRE(r.isOk());
     auto db = std::make_unique<::core::Database>(std::move(r.value()));
     DOCTEST_REQUIRE(db->migrate().isOk());
-    module::claude::ClaudeService svc(db->db(), "DevDeskTestTakeover");
+    module::claude::ClaudeService svc(db->db());
     module::claude::ClaudeService::setGlobal(&svc);
     ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     module::claude::settings_sync::Paths paths;
@@ -1371,7 +1371,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     DOCTEST_REQUIRE(r.isOk());
     auto db = std::make_unique<::core::Database>(std::move(r.value()));
     DOCTEST_REQUIRE(db->migrate().isOk());
-    module::claude::ClaudeService svc(db->db(), "DevDeskTestWarnUnmanaged");
+    module::claude::ClaudeService svc(db->db());
     module::claude::ClaudeService::setGlobal(&svc);
     ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     module::claude::settings_sync::Paths paths;
@@ -2859,7 +2859,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
               "settings: Ctrl+S 提交端口草稿 / 显式落盘", {
     test_support::TestEnv env(kCfgPrefix, "ctrls", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "ctrls_cfg"));
-    module::claude::ClaudeService svc(env.db->db(), "DevDeskTestCtrlS");
+    module::claude::ClaudeService svc(env.db->db());
     module::claude::ClaudeService::setGlobal(&svc);
     ScopedClaudeProxy proxyForSettings;  // 设置页经定位器取代理运行面
     std::unique_ptr<::core::Module> mod(create_settings_module());

@@ -36,7 +36,6 @@
 
 namespace {
 
-constexpr const char* kTestKeychainService = "DevDeskTestProxyRouter";
 
 // 临时 db 文件名前缀（TestDb 第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_proxy_";
@@ -190,7 +189,7 @@ REGISTER_TEST(proxy_router_forward_200,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "fwd200");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile(
         "Upstream", "http://127.0.0.1:" + std::to_string(upstreamPort),
@@ -214,9 +213,6 @@ REGISTER_TEST(proxy_router_forward_200,
 
 
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -236,7 +232,7 @@ REGISTER_TEST(proxy_router_upstream_401,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "fwd401");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile(
         "BadKey", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
@@ -255,9 +251,6 @@ REGISTER_TEST(proxy_router_upstream_401,
 
 
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -277,7 +270,7 @@ REGISTER_TEST(proxy_router_upstream_404,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "fwd404");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile(
         "Any", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
@@ -294,9 +287,6 @@ REGISTER_TEST(proxy_router_upstream_404,
 
 
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -304,7 +294,7 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
               "proxy_router: 上游不可达返回 502", {
     KEYCHAIN_TEST_GATE("proxy_router_upstream_unreachable");
     test_support::TestDb tdb(kDbPrefix, "fwd502");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile("Dead", "http://127.0.0.1:1",
                                      "sk-ant-dead-0001", "claude-sonnet-4-5");
@@ -321,9 +311,6 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
     DOCTEST_CHECK(r.body.find("upstream_unreachable") != std::string::npos);
 
 
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -331,7 +318,7 @@ REGISTER_TEST(proxy_router_no_active_profile,
               "proxy_router: 无激活 profile 返回 503", {
     KEYCHAIN_TEST_GATE("proxy_router_no_active_profile");
     test_support::TestDb tdb(kDbPrefix, "noactive");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile("Inactive", "http://127.0.0.1:1",
                                      "sk-ant-inactive", "m");
@@ -346,16 +333,13 @@ REGISTER_TEST(proxy_router_no_active_profile,
     DOCTEST_CHECK(r.body.find("no_active_profile") != std::string::npos);
 
 
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
 REGISTER_TEST(proxy_router_missing_api_key,
               "proxy_router: Keychain 缺 key 缓冲/流式统一 503 no_active_profile", {
     test_support::TestDb tdb(kDbPrefix, "nokey");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     auto created = svc.createProfile("NoKey", "http://127.0.0.1:1",
                                      "sk-ant-will-delete", "m");
@@ -409,7 +393,7 @@ REGISTER_TEST(proxy_router_end_to_end,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "e2e");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
     auto created = svc.createProfile(
         "E2E", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
         "sk-ant-e2e-key-0001", "claude-sonnet-4-5");
@@ -441,16 +425,13 @@ REGISTER_TEST(proxy_router_end_to_end,
     svc.stopProxy();
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
 REGISTER_TEST(proxy_router_error_json_escaped,
               "proxy_router: 错误 JSON 转义（message 含引号/反斜杠）", {
     test_support::TestDb tdb(kDbPrefix, "escjson");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
 
     platform::http::Server proxyServer("127.0.0.1", 0);
     module::claude::ProxyRouter router(svc, proxyServer);
@@ -506,7 +487,7 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "dialect");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
     auto created = svc.createProfile(
         "Dialect", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
         "sk-ant-dialect-key-0001", "deepseek-v4-flash");
@@ -550,9 +531,6 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
                      R"({"model":"deepseek-v4-flash","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})");
 
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -567,7 +545,7 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "hdrdrop");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
     auto created = svc.createProfile("HdrDrop", upstream.baseUrl(),
                                      "sk-ant-hdr-key-0001", "claude-sonnet-4-5");
     DOCTEST_REQUIRE(created.isOk());
@@ -615,9 +593,6 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     DOCTEST_CHECK_EQ(headerValueCI(seen, "x-devdesk-keep"), std::string("yes"));
 
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -634,7 +609,7 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "hdre2e");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
     auto created = svc.createProfile("HdrE2E", upstream.baseUrl(),
                                      "sk-ant-hdr-e2e-0001", "claude-sonnet-4-5");
     DOCTEST_REQUIRE(created.isOk());
@@ -700,9 +675,6 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     svc.stopProxy();
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -727,7 +699,7 @@ REGISTER_TEST(proxy_router_writes_call_log_row,
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
     test_support::TestDb tdb(kDbPrefix, "calllog");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService svc(tdb.handle());
     auto created = svc.createProfile(
         "Upstream", "http://127.0.0.1:" + std::to_string(upstreamPort),
         "sk-ant-upstream-key-9999", "claude-sonnet-4-5");
@@ -760,8 +732,5 @@ REGISTER_TEST(proxy_router_writes_call_log_row,
     DOCTEST_CHECK_EQ(rows.value()[0].getString("m").value(), std::string("POST"));
 
     upstream.stop();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })

@@ -36,9 +36,7 @@ const std::string& claudeUpstreamSessionId();
 class ClaudeService {
 public:
     // db 不持有所有权，由调用方保证生命周期。
-    // keychainService：空 = 按数据根派生 "DevDesk-<短哈希>"；非空 = 原样用（测试隔离）。
-    explicit ClaudeService(core::data::SqliteDb& db,
-                           const std::string& keychainService = std::string());
+    explicit ClaudeService(core::data::SqliteDb& db);
     ~ClaudeService();
 
     ClaudeService(const ClaudeService&) = delete;
@@ -71,10 +69,6 @@ public:
     // 删除 profile（清空凭据三列再删行）；凭据清理失败则中止、行保留可重试。
     // 删激活 profile 且代理运行中 → 成功后 stopProxy()；proxyStopped 出参供 UI toast。
     core::Result<void> deleteProfile(int64_t id, bool* proxyStopped = nullptr);
-
-    // 迁移旧 Keychain 凭据入库：api_key_encrypted 仍空且 keychain_account 列存在的 profile，
-    // 逐行读旧 Keychain → protect → 写回凭据三列；失败不中断（LOG_WARN 继续）。
-    core::Result<int> backfillCredentialsFromKeychain();
 
     // API key
 
@@ -271,9 +265,5 @@ private:
     std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
         terminalLauncher_ = &platform::terminal::launch;
 };
-
-// 旧 Keychain 命名空间名："DevDesk-" + SHA256(dataRoot) 前 4 字节 hex。Keychain
-// service 是全局命名空间不随 DEVDESK_DATA_ROOT 隔离；空根 → 空串；只用于残留清理。
-std::string keychainServiceForDataRoot(const std::string& dataRoot);
 
 } // namespace module::claude

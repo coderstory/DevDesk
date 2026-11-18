@@ -62,10 +62,8 @@ private:
 
 class ProfileRepository {
 public:
-    // db 由调用方确保生命周期；keychainService 仅用于旧凭据回填（backfillCredentialsFromKeychain）
-    // 的 Keychain 命名空间（命名空间生产 / 测试各自派生）
-    explicit ProfileRepository(core::data::SqliteDb& db,
-                               std::string keychainService);
+    // db 由调用方确保生命周期
+    explicit ProfileRepository(core::data::SqliteDb& db);
 
     // Profile CRUD
 
@@ -95,11 +93,6 @@ public:
     // 复制 Profile：名称加「副本」后缀（重名递增避让，100 次冲突 → fail）；API key 一并复制（源缺失 → fail）；副本不激活；二段补写失败 best-effort 回滚
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
-    // 迁移旧 Keychain 凭据入库：查 api_key_encrypted 为空且 keychain_account 列存在的 profile，
-    // 逐行读旧 keychain → protect → 写回凭据三列；失败不中断启动（LOG_WARN 后继续下一行）。
-    // 仅在旧 keychain_account 列存在时执行（新库跳过，零开销）。成功回填的条目一并更新 hint/check。
-    core::Result<int> backfillCredentialsFromKeychain();
-
     // 取明文 API key（仅发请求时调用，用完即丢弃）。列空 → fail(NotFound)；解不开 → fail(原错误码)——「解不开」与「没配过」必须可分辨
     core::Result<std::string> loadApiKey(int64_t profileId);
 
@@ -112,7 +105,6 @@ public:
     core::Result<Profile> rowToProfile(const core::data::SqlRow& row) const;
 
     core::data::SqliteDb& db_;
-    std::string keychainService_;   // 仅用于旧 Keychain 凭据回填（见构造注释）
 };
 
 } // namespace module::claude

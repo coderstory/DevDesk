@@ -6,10 +6,11 @@
 // 注册接缝 registerWecomChannel 由合并波在 registerBuiltinChannels 之后调用
 // （schedule_channel 行 kind=="wecom" → parseWecomConfig → 注册）。
 //
-// 凭据纪律（§4.9 硬约束）：webhook key 只经 platform::keychain
-// （service kWecomKeychainService，account 经 schedule_channel.secret_ref，
-//  空则派生 wecom.<channelDbId>），不落 sqlite、不进日志、不进任何 struct；
-// deliver 内即时读取、用后即弃。buildWecomUrl 的返回值含 key，禁止写进日志/Receipt。
+// 凭据纪律（§4.9 硬约束）：webhook key 只存 DB 专表 app_secrets
+//（need305；service kWecomKeychainService，account 经 schedule_channel.secret_ref，
+//  空则派生 wecom.<channelDbId>；键名沿用旧 keychain 命名），不进日志、
+// 不进任何 struct；deliver 内即时读取、用后即弃。buildWecomUrl 的返回值含
+// key，禁止写进日志/Receipt。
 //
 // 幂等契约：无服务端幂等键，去重靠引擎的 (rule, planned_at)；buildWecomPayload
 // 是纯函数（不注入时间戳/attempt 计数），重试恒产同一正文——重试不得改正文。
@@ -43,7 +44,7 @@ inline constexpr std::size_t kWecomTextMaxBytes = 2048;      // text.content 上
 inline constexpr std::size_t kWecomMarkdownMaxBytes = 4096;  // markdown / markdown_v2 上限
 inline constexpr int kWecomRateCapacity = 18;                // 官方 20 条/分钟，留 2 条余量
 inline constexpr double kWecomRateRefillPerSec = 18.0 / 60.0;
-inline constexpr const char* kWecomKeychainService = "devdesk.schedule";  // keychain service
+inline constexpr const char* kWecomKeychainService = "devdesk.schedule";  // app_secrets service（need305，键名沿用旧 keychain 命名）
 
 // ---- 纯函数（可单测，不触 IO/网络/时钟）----
 
@@ -82,7 +83,7 @@ core::Result<platform::http::ProxyMode> resolveWecomProxyMode(const WecomConfig&
 // 调用方禁止把它写进任何日志/Receipt/detail（凭据纪律）。
 std::string buildWecomUrl(const WecomConfig& cfg, const std::string& key);
 
-// keychain account：secretRef 非空即原样（经 schedule_channel.secret_ref），
+// app_secrets account：secretRef 非空即原样（经 schedule_channel.secret_ref），
 // 空则 "wecom." + channelDbId。account 名不是秘密，可进日志。
 std::string wecomKeychainAccount(const WecomConfig& cfg);
 

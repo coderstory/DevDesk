@@ -70,7 +70,7 @@ struct AgentToolRegistration {
         todoTools = std::make_unique<module::todo::TodoTools>(*todoSvc);
         todoTools->registerAll();
         claudeSvc = std::make_unique<module::claude::ClaudeService>(
-            tdb.handle(), "DevDeskTestAgentTpl");
+            tdb.handle());
         claudeTools = std::make_unique<module::claude::ClaudeTools>(*claudeSvc);
         claudeTools->registerAll();
         scheduleStore =

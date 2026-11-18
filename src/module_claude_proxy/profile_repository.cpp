@@ -1,11 +1,9 @@
 // ProfileRepository 实现：策略尾（停代理 / 接管 / 激活时机）留在门面，本类只做 DB 段
 #include "profile_repository.h"
 
-#include "core/app_config.h"
 #include "core/logging.h"
 #include "core/time.h"
 #include "platform/credential_protection.h"
-#include "platform/keychain.h"
 #include "provider_config.h"
 
 #include <openssl/sha.h>
@@ -183,9 +181,7 @@ void TwoPhaseKeyWrite::compensate() {
     keyTouched_ = false;
 }
 
-ProfileRepository::ProfileRepository(core::data::SqliteDb& db,
-                                     std::string keychainService)
-    : db_(db), keychainService_(std::move(keychainService)) {}
+ProfileRepository::ProfileRepository(core::data::SqliteDb& db) : db_(db) {}
 
 core::Result<Profile> ProfileRepository::rowToProfile(
     const core::data::SqlRow& row) const {
@@ -599,127 +595,6 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
 
     // 停代理策略尾（删的是激活 profile 且代理运行中 → stopProxy 还原 settings.json）留门面，wasActive 经出参回填
     return core::Result<void>::ok();
-}
-
-core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
-    // 前提：旧 keychain_account 列还在旧库中——新库无此行，跳过不报错
-    {
-        auto prep = db_.prepare("SELECT keychain_account FROM claude_profiles LIMIT 0");
-        if (prep.isFail()) {
-            // 列不存在 → 新库，无旧凭据需回填
-            LOG_INFO("凭据回填跳过：keychain_account 列不存在（新库或已清理）");
-            return core::Result<int>::ok(0);
-        }
-    }
-
-    // 一次性门：这是 2026-10-14 之前旧库的迁移路径，只允许首次启动尝试一次。
-    // 钥匙串授权在 ad-hoc 签名下每次重装都会失效（macOS 弹「请输入钥匙串密码」），
-    // 每次启动重试 = 用户永远清不掉该框（2026-10-18 实证）。失败也置位：旧条目
-    // 仍在钥匙串里，用户可手动重配，不再自动重试。
-    constexpr const char* kBackfillDoneKey = "claude.keychain_backfill_done";
-    auto done = core::appconfig::get(db_, kBackfillDoneKey);
-    if (done.isOk() && done.value() == "1") {
-        LOG_DEBUG("凭据回填跳过：一次性迁移已执行过");
-        return core::Result<int>::ok(0);
-    }
-
-    // 查待回填行：api_key_encrypted 仍为空但 keychain_account 有值
-    auto prep = db_.prepare(
-        "SELECT id, keychain_account FROM claude_profiles "
-        "WHERE api_key_encrypted = '' AND keychain_account IS NOT NULL "
-        "AND keychain_account != ''");
-    if (prep.isFail()) {
-        return core::Result<int>::fail(prep.errorCode(),
-                                       "凭据回填查询失败: " + prep.errorMessage());
-    }
-    auto rows = prep.value().fetchAll();
-    if (rows.isFail()) {
-        return core::Result<int>::fail(rows.errorCode(),
-                                       "凭据回填取行失败: " + rows.errorMessage());
-    }
-
-    int backfilled = 0;
-    for (const auto& row : rows.value()) {
-        auto idV = row.getInt64("id");
-        auto accountV = row.getString("keychain_account");
-        if (idV.isFail() || accountV.isFail()) continue;
-        const int64_t id = idV.value();
-        const std::string account = accountV.value();
-
-        // 读旧 Keychain 凭据（DPAPI 密文文件）。keychainService_ 是按数据根派生的新命名空间
-        // （"DevDesk-<hash>"）；Windows 旧版实际用纯 "DevDesk" 存（keychain/DevDesk/claude%3A<id>.key），
-        // 派生空间 miss 时必须回退旧名——否则老用户的密钥永远「找不到」，凭据静默丢失（2026-10-14 实证）。
-        auto secretR = platform::keychain::loadSecret(keychainService_, account);
-        std::string primaryError;
-        if (secretR.isFail()) {
-            // 回退旧名是 Windows 旧版形态；但**不能丢掉派生空间的原始错误**——
-            // 否则「授权被拒」会被旧名的 not found 覆盖，日志再次说谎
-            //（2026-10-18 实证：派生空间 errSecAuthFailed 被旧名 NotFound 掩盖）。
-            primaryError = secretR.errorMessage();
-            secretR = platform::keychain::loadSecret("DevDesk", account);
-        }
-        if (secretR.isFail()) {
-            LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " Keychain 读取失败（跳过）: 派生空间=" + primaryError +
-                     "；旧名=" + secretR.errorMessage());
-            continue;
-        }
-        if (secretR.value().empty()) {
-            LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " Keychain 凭据为空串（跳过）");
-            continue;
-        }
-
-        // 经当前平台 protect 入库
-        auto protectedR = platform::credential::protect(secretR.value());
-        if (protectedR.isFail()) {
-            LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " 凭据保护失败（跳过）: " + protectedR.errorMessage());
-            continue;
-        }
-        const std::string hint = makeApiKeyHint(secretR.value());
-        const std::string check = sha256Hex(secretR.value());
-
-        auto up = db_.prepare(
-            "UPDATE claude_profiles SET api_key_encrypted = ?, api_key_hint = ?, "
-            "api_key_check = ?, keychain_account = NULL, updated_at = ? WHERE id = ?");
-        if (up.isFail()) {
-            LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " UPDATE 准备失败（跳过）: " + up.errorMessage());
-            continue;
-        }
-        auto& stmt = up.value();
-        bool bindOk = true;
-        if (auto b = stmt.bind(1, protectedR.value()); b.isFail()) bindOk = false;
-        else if (auto b = stmt.bind(2, hint); b.isFail()) bindOk = false;
-        else if (auto b = stmt.bind(3, check); b.isFail()) bindOk = false;
-        else if (auto b = stmt.bind(4, static_cast<int64_t>(nowUnix())); b.isFail()) bindOk = false;
-        else if (auto b = stmt.bind(5, id); b.isFail()) bindOk = false;
-        if (!bindOk) {
-            LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " UPDATE 参数绑定失败（跳过）");
-            continue;
-        }
-        auto stepR = stmt.step();
-        if (stepR.isFail()) {
-            LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " UPDATE 执行失败（跳过）: " + stepR.errorMessage());
-            continue;
-        }
-        ++backfilled;
-        LOG_INFO("凭据回填：id=" + std::to_string(id) + " 已从 Keychain 迁入数据库");
-    }
-
-    if (backfilled > 0) {
-        LOG_INFO("凭据回填完成：共回填 " + std::to_string(backfilled) + " 个 profile");
-    }
-    // 无论成败都置位（一次性语义）。写入失败只记日志：下次启动会再试一次，
-    // 属可接受退化，不会变成每次启动必然重试。
-    auto mark = core::appconfig::set(db_, kBackfillDoneKey, "1");
-    if (mark.isFail()) {
-        LOG_WARN("凭据回填：一次性标记写入失败 - " + mark.errorMessage());
-    }
-    return core::Result<int>::ok(backfilled);
 }
 
 core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {

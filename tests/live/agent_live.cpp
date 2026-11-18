@@ -653,10 +653,8 @@ bool loadRealProfile(const fs::path& stageDir, SnapshotSource& src,
             err = "打开副本库失败: " + opened.errorMessage();
             return false;
         }
-        // keychainService 传独立测试命名空间：本对象生命周期内只调纯 DB 读
-        //（getActiveProfile / loadApiKey），绝不调 cleanupOrphanKeychainEntries
-        module::claude::ProfileRepository repo(opened.value(),
-                                               "DevDesk-agent-live-test");
+        // 本对象生命周期内只调纯 DB 读（getActiveProfile / loadApiKey）
+        module::claude::ProfileRepository repo(opened.value());
         auto active = repo.getActiveProfile();
         if (active.isFail()) {
             err = "取激活 profile 失败: " + active.errorMessage();
@@ -665,23 +663,6 @@ bool loadRealProfile(const fs::path& stageDir, SnapshotSource& src,
         auto key = repo.loadApiKey(active.value().id);
         std::string keyPlain;
         if (key.isOk()) keyPlain = key.value();
-        if (keyPlain.empty() && std::getenv("DEVDESK_AGENT_LIVE_ALLOW_KEYCHAIN") != nullptr) {
-            // 仍空 → 该 profile 的 key 可能在 macOS Keychain（存量形态）。读单条
-            // (服务=按真实数据根派生, 账户=claude:<id>) 可能弹授权对话框，须显式
-            // DEVDESK_AGENT_LIVE_ALLOW_KEYCHAIN=1 才走；绝不枚举/清理钥匙串。
-            const std::string realRoot = realDb.parent_path().string();
-            const std::string services[] = {
-                module::claude::keychainServiceForDataRoot(realRoot), "DevDesk"};
-            for (const std::string& svc : services) {
-                if (svc.empty()) continue;
-                auto kc = platform::keychain::loadSecret(
-                    svc, "claude:" + std::to_string(active.value().id));
-                if (kc.isOk() && !kc.value().empty()) {
-                    keyPlain = kc.value();
-                    break;
-                }
-            }
-        }
         if (keyPlain.empty()) {
             err = "读 API Key 失败：DB 凭据列空，cc-switch 无匹配 baseUrl 的供应商；"
                   "在 Claude 页重存一次 key（写入 DB 列）后重跑";
@@ -758,7 +739,7 @@ int main(int argc, char** argv) {
         c.md = std::make_unique<module::markdown::MarkdownService>(c.appDb->db(),
                                                                    c.notesDir);
         c.claude = std::make_unique<module::claude::ClaudeService>(
-            c.appDb->db(), "DevDesk-agent-live-test");
+            c.appDb->db());
         // 替身 profile ×2（假 key）供 claude.* 工具操作；baseUrl 用真上游 →
         // claude.test_connection 是一次真请求（假 key → 4xx，正好喂 G 类失败语义）
         auto p1 = c.claude->createProfile("live-a", src.profile.baseUrl,

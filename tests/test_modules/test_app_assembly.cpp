@@ -1085,7 +1085,7 @@ void asmEnsureService() {
         // getClaudeService static 守卫语义：重复调用返回同指针（这里用
         // unique_ptr 空判等价表达），setGlobal 在创建时完成一次
         g_asmSvc = std::make_unique<module::claude::ClaudeService>(
-            g_asmDb->handle(), "DevDeskTestClaudeService");
+            g_asmDb->handle());
         module::claude::ClaudeService::setGlobal(g_asmSvc.get());
     }
 }

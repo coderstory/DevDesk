@@ -19,6 +19,7 @@ add_library(devdesk_core STATIC
     schedule_rule.cpp                   # 六 kind 规则模型：解析/校验/nextFire/missedFires（纯函数）
     mcp_tool.cpp                        # MCP 能力接缝：工具抽象 + 注册表（模块自行实现并注册）
     sql_dump.cpp                        # SQLite 导出/导入（GitHub Sync 用）
+    secrets_store.cpp                   # 应用密钥专表 app_secrets 薄封装（need305）
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，

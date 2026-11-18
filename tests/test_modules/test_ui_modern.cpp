@@ -95,14 +95,13 @@ struct TodoFrame {
 
 // claude 无头环境
 constexpr const char* kClaudeDbPrefix = "devdesk_test_uimodern_claude_";
-constexpr const char* kClaudeKeychainService = "DevDeskTestUiModernClaude";
 
 struct ClaudeEnv : test_support::TestDb {
     std::unique_ptr<module::claude::ClaudeService> svc;
 
     ClaudeEnv() : test_support::TestDb(kClaudeDbPrefix, "") {
         svc = std::make_unique<module::claude::ClaudeService>(
-            db->db(), kClaudeKeychainService);
+            db->db());
         module::claude::ClaudeService::setGlobal(svc.get());
     }
 
@@ -434,8 +433,6 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
     }
 
     mod->onStop();
-    test_support::cleanupProfileKey(kClaudeKeychainService, a.value().id);
-    test_support::cleanupProfileKey(kClaudeKeychainService, b.value().id);
     return true;
 })REGISTER_TEST(uiModernMdModeSwitchNoFade,
               "uiModern: md 四态切换硬切（1cdd36f 已删整页 fade，root 常驻 opacity 1）", {

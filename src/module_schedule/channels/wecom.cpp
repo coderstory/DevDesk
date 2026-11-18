@@ -6,8 +6,8 @@
 #include <utility>
 
 #include "core/logging.h"
+#include "core/secrets_store.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 
 namespace module::schedule {
 
@@ -336,15 +336,16 @@ core::Result<Receipt> WecomChannel::deliver(const Delivery& d) {
         }
     }
 
-    // 2. 凭据：即时读、用后即弃；key 不落库、不进日志、不进任何对象字段。
+    // 2. 凭据：即时读、用后即弃；key 只存 app_secrets 专表（need305），
+    //    不进日志、不进任何对象字段。
     const std::string account = wecomKeychainAccount(cfg_);
-    auto secret = platform::keychain::loadSecret(kWecomKeychainService, account);
+    auto secret = core::secrets_store::get(kWecomKeychainService, account);
     if (secret.isFail() || secret.value().empty()) {
         LOG_WARN("企业微信渠道密钥缺失（account " + account +
                  "）：请在设置页配置群机器人 webhook key");
         return core::Result<Receipt>::ok(Receipt{
             "missing_secret",
-            "keychain 无渠道密钥（account " + account +
+            "配置库无渠道密钥（account " + account +
                 "）：请先在设置页配置群机器人 webhook key"});
     }
     const std::string& key = secret.value();

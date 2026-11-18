@@ -269,9 +269,6 @@ private:
         std::make_shared<std::atomic<bool>>(false);
 };
 
-// 显式测试 service：默认构造现按数据根派生 service 名，此处传显式名钉死隔离
-// 语义——绝不派生、更不触碰任何真实 Keychain 命名空间
-constexpr const char* kStreamTestKeychainService = "DevDeskTestStreamingProxy";
 
 // InMemoryDb 内存库（不触碰 Keychain）；ClaudeService 构造失败即抛，service 恒非空
 struct StreamEnv {
@@ -280,7 +277,7 @@ struct StreamEnv {
 
     StreamEnv() {
         service = std::make_unique<module::claude::ClaudeService>(
-            db.handle(), kStreamTestKeychainService);
+            db.handle());
     }
 
     module::claude::ClaudeService& svc() const { return *service; }
@@ -295,7 +292,7 @@ struct MigratedStreamEnv {
     explicit MigratedStreamEnv(const std::string& tag)
         : env("hprobe72_", tag, false) {
         service = std::make_unique<module::claude::ClaudeService>(
-            env.db->db(), kStreamTestKeychainService);
+            env.db->db());
         // FK 前提：日志行引用 profile_id（造数失败会被用例断言抓，有意忽略，need295）
         (void)env.db->db().exec(
             "INSERT INTO claude_profiles (name, base_url, api_key_hint, "

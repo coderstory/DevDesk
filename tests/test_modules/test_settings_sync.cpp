@@ -40,7 +40,6 @@
 
 namespace {
 
-constexpr const char* kTestKeychainService = "DevDeskTestSettingsSync";
 
 constexpr const char* kSyncTempDirPrefix = "devdesk_test_sync_";
 
@@ -662,7 +661,7 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
 
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     // 未注入路径（默认关闭）→ startProxy 不写任何文件
     {
         auto r = svc.startProxy("127.0.0.1", 0);
@@ -728,9 +727,6 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
         DOCTEST_CHECK(!svc.isClaudeCodeManaged());
     }
 
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -744,7 +740,7 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
     d.write(overlay, R"({"env": {"ANTHROPIC_BASE_URL": "https://corp.example.com"}})");
     paths.overlayFiles = {overlay};
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
     auto r = svc.startProxy("127.0.0.1", 0);
@@ -767,7 +763,7 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     SyncDb sdb("sync_tofail");
     auto paths = makePaths(d, sdb.handle());
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
     auto a = svc.createProfile("接管失败A", "https://gw.example.com",
@@ -801,11 +797,6 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     }
 
     svc.stopProxy();  // sidecar 损坏 → 还原报错并保留文件，不崩
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(a.value().id));
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })
 
@@ -821,7 +812,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     ClaudeService::setGlobal(&svc);
     struct GlobalGuard {
         ~GlobalGuard() { ClaudeService::setGlobal(nullptr); }
@@ -869,7 +860,7 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
     auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
     auto created = svc.createProfile("激活删除目标", "https://gw.example.com",
@@ -919,9 +910,6 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
         DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     }
 
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -939,7 +927,7 @@ REGISTER_TEST(sync_switch_off_no_write,
     const std::string original = R"({"env": {"MY_KEY": "user"}})";
     d.write(paths.settingsFile, original);
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     DOCTEST_CHECK(svc.settingsTakeOverEnabled());  // 默认开
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(false);         // 显式关闭
@@ -978,9 +966,6 @@ REGISTER_TEST(sync_switch_off_no_write,
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
     DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
@@ -1225,7 +1210,7 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     SyncDb sdb("sync_snapshot");
     auto paths = makePaths(d, sdb.handle());
 
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService svc(tdb.handle());
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
     auto a = svc.createProfile("快照A", "https://gw.example.com",
@@ -1291,10 +1276,5 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     }
 
     svc.stopProxy();
-    // 测试收尾清理，有意忽略结果（need295）
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(a.value().id));
-    (void)platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })
