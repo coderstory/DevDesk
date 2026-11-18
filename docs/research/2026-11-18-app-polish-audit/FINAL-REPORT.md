@@ -2,7 +2,7 @@
 
 - 日期：2026-11-18｜条目：need#306（打磨专项收尾文档批）｜角色：product-manager
 - 数据来源：池台账（needs / bugs / clues 表）+ `git log 63900b3e..HEAD` 打磨提交族 + 同目录 REPORT.md / closure-qa.md / closure-qa-c.md；素材以台账与提交记录为准，零发明。
-- 在飞说明：need#304 / need#305 闭合前本文保持「在飞段【待填：闭合后补】」标记，闭合后由收口批回填。
+- 收口说明（2026-11-18 终验波 need#329）：need#304 / #305 已随 keychain 全链退役（`98d1cccc`）+ 编译硬禁令（`6be415d7`）闭合；原「在飞段【待填】」标记已回填，终验证据见同目录 final-verification.md 与 evidence/2026-11-18-need329/。
 
 ## §1 交付矩阵（批次 × 池条目 × 提交号 × 一句话）
 
@@ -23,12 +23,35 @@
 | driver 能力增强 | need#302 | `0e9199c0`（前置 wip `c660712a`） | driver rightClick 原语 + 定时一次性规则链场景 + disabled 断言（闭合态判据=留树带标志）+ abandonedToolWorkers nodiscard（审计 P2/P3 清零） |
 | 壁纸让路 + stall | need#303 | `cb778a0d`（前置 wip `6f0f9fd8`） | 壁纸让路三分语义实态词（真让路才显「让路中」）+ stall 用例语义断言 / 墙钟绑死 stallMs |
 
-**在飞段【待填：闭合后补】**
+**收官批（need#304–#328，2026-11-18 终验 need#329 全量 EXIT=0 通过）**
 
-| 条目 | 现状 | 已见 wip | 闭合后补 |
-|---|---|---|---|
-| need#304 keychain 禁用·测试门控 | 进行中 | `757ce749`（用例级 KEYCHAIN_TEST_GATE + cleanupProfileKey no-op，默认零钥匙串触达） | 【待填：闭合后补】 |
-| need#305 keychain 退役·运行时三处迁移 app_secrets（一期） | 进行中 | `ab4b0fdd` | 【待填：闭合后补】 |
+| 条目 | 主提交 | 一句话交付 |
+|---|---|---|
+| need#304 keychain 禁用·测试门控 | `7d4e6a2b` + `98d1cccc` | KEYCHAIN_TEST_GATE 门控收敛真触达 + DOCTEST_SKIP 可见跳过；二期删 test_keychain（11 用例） |
+| need#305 keychain 退役·运行时迁移 app_secrets | `ab4b0fdd` + `c2c75e20`（审计 P0 依赖倒置：保护缝下沉 core）+ `98d1cccc`（二期删五平台文件） | 运行时三处切 app_secrets 专表，keychain 全链退役 |
+| need#306 收尾文档批 | `7625763a` | 本报告骨架 + USER_GUIDE keychain/批次F 同步七处 |
+| need#307 cron 翻倍归因 | `4e6f76bd` + `417ee8f0` | 翻倍根因=预填默认值追加非事件重复投递；建存→编辑回显 E2E 链 3/3 绿 |
+| need#308 wecom 分文案 | `b3aecccc` | NotFound→未配置 / unprotect 等→数据异常需重录，两态用例锁 |
+| need#309 关闭序摘牌 | `7da441d7` | appDatabase 退出置空先于连接析构（atexit LIFO）+ 顺序探针 |
+| need#310 观感素材 | `14e05bbf` + `9b2fafc7` | FolderMissing 摘要专词 + 非播放态 chips 压暗 + git 过滤空态独立基 id + guide 缺席双向断言 |
+| need#311 壁纸视频内存缓存 | `674c1875` | 判定纯函数/设置项/服务开关/mpv per-file 参数/探针 §9（wallpaper_ui.cpp+test 工作树 hunks 留待归位，见 tech 卡 §6） |
+| need#313 真机复核 | `83c44cae` | D1 装配 9 启零未装配（结案）+ 终端 cwd 新 P1 发现（立 need#328） |
+| need#314 人工项三分拣 | `6faf8d1f` | 需人工 66 项：可自动化 18 / 真机 35 / 裁决或消解 13，已消解 9 对号 |
+| need#315 记忆 E2E | `76ca5698` | 可行性简报：42/46 PASS，缺口 G1–G3 冻结期不修（老板令） |
+| need#316 手册对账 | `48c6c263` | 15 章 40 条行为 delta + 64 卡壳点三态对账（消解 8/仍在 55/裁决 1） |
+| need#317 审计 P1 清零 | `e8519f1d` | key-e2e 子命令自开临时库注册 appDatabase（TestDb+ScopedAppDatabase） |
+| need#318 wecom 判据收窄 | `983d8f61` + `b3fd954a` | InvalidApiKey(值形态坏)→重录 / Internal(瞬时)→另报；平台解不开错误码统一 InvalidApiKey |
+| need#319 driver 空串判据 | `c480847c` | 空串 equals=定点「字段为空」判据，恒真双护栏（非 equals 拦 + 无 id 全页扫描拦） |
+| need#320 走查自动化批1 | `02cdb201` | 侦察场景+四页 id dump 取证（生产场景未落地，交接报告） |
+| need#321 主题三档 | `ac7e7dfe` + `8ffa1821` | 外观卡主题三档行（浅色/深色/跟随系统）+ 卡高 184→226 + settings 137/137 绿 |
+| need#322 700 字重豁免 | `1c86293e` | 5 处归 600 + 3 处豁免标记（裁决项 4 收口） |
+| need#324 并行度 | `a6676a1b` | DEVDESK_JOBS 默认 3→6（老板令，脚本+AGENTS+CLAUDE 三处口径同步） |
+| need#325 走查批2 | `019e0f56` | schedule-resident-enable-chain + todo-keyboard-move 入 CMake（A-4/A-5/A-6/C-13） |
+| need#326 EUI 双壳互冻 RCA | `8a303dba` | AnimatedValue setTarget 早退假说链 + 方案A五行自愈（待 POC） |
+| need#327 keychain 编译硬禁令 | `6be415d7` | check-no-keychain.sh 前置门（src/tests 零引用，命中即构建中止） |
+| need#328 终端 workDir | `754c4531` | macOS 桥接三层透传（Swift workingDirectory some/none + resolveSpawnWorkDir）+ spawn e2e |
+
+（need#312 / #323 在提交族 `63900b3e..HEAD` 无对应提交，行不加防发明，终态以池台账为准。）
 
 ## §2 质量底盘演进表
 
@@ -39,8 +62,9 @@
 | 批次 C 收口 | 2462 / 1→0 | closure-qa-c：唯一红=emptyState 旧断言钉 hover 未随 C2 surfaceElevated 契约同步（一行修复）；白卡 Secondary 消失态专项确认→opt-in 描边处置 |
 | 批次 E 收口 | 2468 / 0 | E 批增量入账 |
 | 批次 F / 杂项后 | 2481 / 0 | 终态 |
+| 终验（need#329，HEAD=8ffa1821 工作树） | 2486 / 0 | 完整档 EXIT=0：doctest 2479 过 / 7 跳（DOCTEST_SKIP 可见跳过族）；probe 52/57（5 设计内跳过，均有复跑 77 佐证）；守卫链全绿（keychain 硬禁令前置门 / Win 交叉编译 486 文件 / std include 915 文件 / 模块隔离 / 玻璃 / ToolGuard，自检好树绿坏树红非恒真） |
 
-终态质量底盘：**唯一已知红 = need#256 钥匙串空账号**（平台层语义，二期消）；UI probe 52/52；守卫链全绿（含 Windows 交叉编译 482/482）；`-Werror` + `[[nodiscard]]` 零告警。
+终验质量底盘（2026-11-18 need#329）：原唯一已知红 need#256 钥匙串空账号**已随 keychain 全链退役消号**（`98d1cccc` 删 + `6be415d7` 编译硬禁令防复发）；probe 52/57（5 设计内跳过）；守卫链全绿（含 Windows 交叉编译 486/486）；`-Werror` + `[[nodiscard]]` 零告警。
 
 ## §3 挂池 P2 观测项清单（锚点 + 处置建议）
 
@@ -59,8 +83,8 @@
 | bug#36（#295） | DB 写路径「接住=透传」口径备案；proposal_store.cpp:445 等 4 处 bind 静默跳过 | 口径已备案 | 后续同类收口按透传口径执行；bind 留痕列 P3 顺手清 |
 | bug#37（#296） | git_views 500 字重两处 + agent_dialogs 估宽 500 | 已收口：need#301 双清零（`a0b27ab8`）；框架域残留沉 clue#306 | 台账闭行；框架侧随 clue#306 |
 | bug#38（#296） | release_reminder.cpp:90 最低档黄→绿非观感等价 | 未裁决 | 见 §4 裁决项；裁决后收口目检亮暗双档留痕 |
-| bug#39（#297） | git 过滤空态与干净空态共用基 id「git.list.empty」 | 未处置 | P2 观测：后续探针编写注意；need 时拆独立基 id |
-| bug#40（#303） | FolderMissing 折叠摘要落「未播放」泛词；非播放态 chips 亮显并存 | 未处置 | P2：FolderMissing 单列「文件夹不可用」或口径注释；非播放态压暗 chips 可选 |
+| bug#39（#297） | git 过滤空态与干净空态共用基 id「git.list.empty」 | 已收口：独立基 id 拆分（`14e05bbf`）+ filter.empty.guide 缺席双向断言（`9b2fafc7`）；终验实拍 evidence/2026-11-18-need329/git-states_05_filter_empty.png | 台账闭行 |
+| bug#40（#303） | FolderMissing 折叠摘要落「未播放」泛词；非播放态 chips 亮显并存 | 已收口：摘要专词「目录不见了」+ 非播放态 chips 压暗（`14e05bbf`）；终验实拍专词条 evidence/2026-11-18-need329/wallpaper/library-empty-1000x640-light.png（chips 展开态无现役探针镜头，压暗口径以 wallpaper_ui.cpp:813 注释与断言为准） | 台账闭行 |
 | bug#41（#302） | driver queueText 注入 cron.expr 字段文本翻倍待归因 | 挂起：待 #300 落地后重跑 dev302-recon 归因 | 重跑归因：真 app 缺陷立 bug，驱动伪影闭案；cron 建存→回显 E2E 链随此解锁 |
 | bug#42（#298） | M 编号双标不一致；batchBtnRowY 固定 7.0f 未 scaled | 主会话顺手清零中（M 编号）；缩放口径未动 | 编号清零后闭行；缩放口径下次过带统一 |
 | bug#43（#301） | home 果冻手写展开省略 card::build gradient/opacity 两行 | 行为等价，属演进敏感点 | 观测：框架 CardStyle 默认档演进时人工同步 |
