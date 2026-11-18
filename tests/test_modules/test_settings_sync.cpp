@@ -653,6 +653,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
 })
 
 REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接线", {
+    KEYCHAIN_TEST_GATE("sync_service_wiring");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "wiring");
     test_support::TempDir d("wiring", kSyncTempDirPrefix);
@@ -759,6 +760,7 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
 // 接管失败并入 lastSyncWarnings，且失败不阻断起代理 / 切 profile
 REGISTER_TEST(sync_service_takeover_failure_reported,
               "claude_service: 接管失败并入 lastSyncWarnings 且不阻断操作", {
+    KEYCHAIN_TEST_GATE("sync_service_takeover_failure_reported");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "tofail");
     test_support::TempDir d("tofail", kSyncTempDirPrefix);
@@ -859,6 +861,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
 // 指向无 profile 的代理。
 REGISTER_TEST(sync_delete_active_profile_stops_proxy,
               "claude_service: 删激活 Profile 停代理并还原 settings", {
+    KEYCHAIN_TEST_GATE("sync_delete_active_profile_stops_proxy");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "delact");
     test_support::TempDir d("delact", kSyncTempDirPrefix);
@@ -927,6 +930,7 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
 // 启动补还原。
 REGISTER_TEST(sync_switch_off_no_write,
               "claude_service: 接管开关关闭时不写 settings.json", {
+    KEYCHAIN_TEST_GATE("sync_switch_off_no_write");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "off");
     test_support::TempDir d("off", kSyncTempDirPrefix);
@@ -1200,6 +1204,7 @@ REGISTER_TEST(sync_restore_legacy_nonenv_snapshot,
 
 REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
               "claude_service: lastSyncWarnings 返回快照（非活引用）+ 并发读写不崩", {
+    KEYCHAIN_TEST_GATE("claude_service_last_sync_warnings_snapshot");
     static_assert(
         std::is_same_v<
             decltype(std::declval<const module::claude::ClaudeService&>()

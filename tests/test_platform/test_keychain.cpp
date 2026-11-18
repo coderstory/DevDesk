@@ -34,6 +34,7 @@
 #endif
 
 REGISTER_TEST(keychain_store_load, "keychain: store and load", {
+    KEYCHAIN_TEST_GATE("keychain_store_load");
     SKIP_ON_MACOS_KEYCHAIN();   // 会写入真实钥匙串 → macOS 跳过
     SKIP_IF_WRITE_BLOCKED();    // Windows 安全策略（受控文件夹访问等）会封进程写文件能力
 
@@ -57,12 +58,14 @@ REGISTER_TEST(keychain_store_load, "keychain: store and load", {
 })
 
 REGISTER_TEST(keychain_load_nonexistent, "keychain: load nonexistent", {
+    KEYCHAIN_TEST_GATE("keychain_load_nonexistent");
     auto load = platform::keychain::loadSecret("DevDeskTest", "nonexistent_account_xyz");
     DOCTEST_CHECK(load.isFail());
     return true;
 })
 
 REGISTER_TEST(keychain_delete_nonexistent, "keychain: delete nonexistent ok", {
+    KEYCHAIN_TEST_GATE("keychain_delete_nonexistent");
     auto del = platform::keychain::deleteSecret("DevDeskTest", "nonexistent_account_xyz");
     DOCTEST_CHECK(del.isOk());
     return true;
@@ -82,6 +85,7 @@ REGISTER_TEST(keychain_delete_nonexistent, "keychain: delete nonexistent ok", {
 #if defined(__APPLE__)
 REGISTER_TEST(keychain_blank_identity_no_wildcard,
               "keychain: 空 service/account 不通配（macOS）", {
+    KEYCHAIN_TEST_GATE("keychain_blank_identity_no_wildcard");
     // store：无身份可写 → 显式拒绝（不通配删旧，也不写查不回来的孤儿条目）
     auto stored = platform::keychain::storeSecret("DevDeskTestBlankIdentity", "",
                                                   "sk-blank-identity");
@@ -102,6 +106,7 @@ REGISTER_TEST(keychain_blank_identity_no_wildcard,
 
 REGISTER_TEST(keychain_delete_secrets_not_in,
               "keychain: deleteSecretsNotIn 只留 keep 集合", {
+    KEYCHAIN_TEST_GATE("keychain_delete_secrets_not_in");
     SKIP_ON_MACOS_KEYCHAIN();   // 写 3 条 + 枚举整库 → macOS 跳过
     SKIP_IF_WRITE_BLOCKED();    // Windows 安全策略下进程写文件受限
 

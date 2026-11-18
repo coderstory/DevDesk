@@ -17,6 +17,7 @@
 #include "core/input/input_types.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -31,6 +32,28 @@
 #include <utility>
 
 namespace test_support {
+
+// 0) keychain 测试统一门控（need304，老板令 2026-11-18：默认任何测试运行零钥匙串触达）。
+// 根因：macOS adhoc 签名每次重建 cdhash 变化，测试进程一触达 Security.framework
+// 就弹系统授权框。触达**真**钥匙串（直呼 storeSecret/loadSecret/deleteSecret 或经
+// cleanupProfileKey）的用例，体首行放 KEYCHAIN_TEST_GATE；经 setBackendForTest 注入
+// 假 backend 的用例零真触达，不门控。默认（未设 DEVDESK_KEYCHAIN_TESTS=1）打 stderr
+// 横幅后早退——跳≠过，横幅必须可见；开启后全链真跑不变。
+inline bool keychainTestsEnabled() {
+    const char* v = std::getenv("DEVDESK_KEYCHAIN_TESTS");
+    return v != nullptr && std::string(v) == "1";
+}
+
+#define KEYCHAIN_TEST_GATE(caseName)                                     \
+    do {                                                                 \
+        if (!test_support::keychainTestsEnabled()) {                     \
+            std::fprintf(stderr,                                         \
+                         "[keychain-skip] %s : 触达真钥匙串，默认跳过；"  \
+                         "开启真跑：DEVDESK_KEYCHAIN_TESTS=1\n",          \
+                         caseName);                                      \
+            return true;                                                 \
+        }                                                                \
+    } while (0)
 
 // 1) 环境变量作用域
 // 空值 = 删除：Windows 走 _putenv_s，POSIX 走 unsetenv ——「未设置」与「空串」
@@ -554,8 +577,21 @@ inline bool clearStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
         .isOk();
 }
 
-// 删某个 service 下某 profile 的 Keychain 条目；service 由调用方传自身的测试常量
+// 删某个 service 下某 profile 的 Keychain 条目；service 由调用方传自身的测试常量。
+// 门控同 KEYCHAIN_TEST_GATE（need304）：默认静默 no-op（每进程只报一次），不触达真
+// 钥匙串——调用方是测试收尾清理，跳过即无害（最坏残留一个测试条目）；清理性 no-op
+// 不构成用例假绿，故不逐用例横幅，只在首调时出声。
 inline void cleanupProfileKey(const char* service, int64_t profileId) {
+    if (!keychainTestsEnabled()) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::fprintf(stderr,
+                         "[keychain-skip] cleanupProfileKey 全部 no-op（测试收尾"
+                         "清理不触达钥匙串）；开启真跑：DEVDESK_KEYCHAIN_TESTS=1\n");
+        }
+        return;
+    }
     // 有意忽略删除结果：失败仅残留测试密钥，不影响断言（need295）
     (void)platform::keychain::deleteSecret(service,
                                            "claude:" + std::to_string(profileId));

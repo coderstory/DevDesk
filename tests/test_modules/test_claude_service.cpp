@@ -154,6 +154,7 @@ bool runSettingsFileIsOwnerOnly(const std::filesystem::path& p) {
 
 REGISTER_TEST(claude_service_create_get_profile,
               "claude_service: createProfile + getProfile 往返", {
+    KEYCHAIN_TEST_GATE("claude_service_create_get_profile");
     test_support::TestDb tdb(kDbPrefix, "create_get");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -213,6 +214,7 @@ REGISTER_TEST(claude_service_list_profiles,
 
 REGISTER_TEST(claude_service_set_active_profile,
               "claude_service: setActiveProfile 切换激活（唯一）", {
+    KEYCHAIN_TEST_GATE("claude_service_set_active_profile");
     test_support::TestDb tdb(kDbPrefix, "active");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -265,6 +267,7 @@ REGISTER_TEST(claude_service_set_active_profile,
 
 REGISTER_TEST(claude_service_first_create_auto_activates,
               "claude_service: createProfile 首建自动激活 + 不抢占 + 503 指引文案", {
+    KEYCHAIN_TEST_GATE("claude_service_first_create_auto_activates");
     test_support::TestDb tdb(kDbPrefix, "autoactivate");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -339,6 +342,7 @@ REGISTER_TEST(claude_service_configured_proxy_port,
 
 REGISTER_TEST(claude_service_load_api_key,
               "claude_service: loadApiKey 从 Keychain 读明文", {
+    KEYCHAIN_TEST_GATE("claude_service_load_api_key");
     test_support::TestDb tdb(kDbPrefix, "loadkey");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -373,6 +377,7 @@ REGISTER_TEST(claude_service_load_api_key,
 
 REGISTER_TEST(claude_service_update_profile,
               "claude_service: updateProfile 改字段 + 可选换 key", {
+    KEYCHAIN_TEST_GATE("claude_service_update_profile");
     test_support::TestDb tdb(kDbPrefix, "update");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -418,6 +423,7 @@ REGISTER_TEST(claude_service_update_profile,
 
 REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
               "claude_service: updateProfile DB 写失败按旧值回写 Keychain", {
+    KEYCHAIN_TEST_GATE("claude_service_update_db_fail_rolls_back_keychain");
     test_support::TestDb tdb(kDbPrefix, "updcomp");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -663,6 +669,7 @@ REGISTER_TEST(claude_cpx14_create_fail_no_residue,
 
 REGISTER_TEST(claude_service_delete_profile,
               "claude_service: deleteProfile 清 SQLite + Keychain", {
+    KEYCHAIN_TEST_GATE("claude_service_delete_profile");
     test_support::TestDb tdb(kDbPrefix, "delete");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -714,6 +721,7 @@ REGISTER_TEST(claude_keychain_service_for_data_root,
 
 REGISTER_TEST(claude_service_create_validation,
               "claude_service: createProfile 校验重名 + 空字段", {
+    KEYCHAIN_TEST_GATE("claude_service_create_validation");
     test_support::TestDb tdb(kDbPrefix, "validate");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -745,6 +753,7 @@ REGISTER_TEST(claude_service_create_validation,
 
 REGISTER_TEST(claude_service_test_connection,
               "claude_service: testConnection 发 POST /v1/messages（1-token ping）", {
+    KEYCHAIN_TEST_GATE("claude_service_test_connection");
     platform::http::Server upstream("127.0.0.1", 0);
     int hitCount = 0;
     std::string lastPath;
@@ -814,6 +823,7 @@ REGISTER_TEST(claude_service_test_connection,
 // does not exist」），剥掉即 200。探测体必须与真实转发同源剥标记。
 REGISTER_TEST(claude_service_probe_strips_one_m_marker,
               "claude_service: testConnection 探测体剥模型名 [1M] 本地标记（bug212）", {
+    KEYCHAIN_TEST_GATE("claude_service_probe_strips_one_m_marker");
     platform::http::Server upstream("127.0.0.1", 0);
     std::string lastBody;
     upstream.route("POST", "/v1/messages",
@@ -856,6 +866,7 @@ REGISTER_TEST(claude_service_probe_strips_one_m_marker,
 // 对要求 x-opencode-session、且 Cloudflare 按 UA 拦截的网关（opencode.ai/zen）自拼会误报失败，而真实转发是通的。
 REGISTER_TEST(claude_service_test_connection_uses_dialect,
               "claude_service: testConnection 经上游方言（UA/鉴权/opencode 会话头）", {
+    KEYCHAIN_TEST_GATE("claude_service_test_connection_uses_dialect");
     platform::http::Server upstream("127.0.0.1", 0);
     HeaderMap seen;
     int hitCount = 0;
@@ -926,6 +937,7 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
 
 REGISTER_TEST(claude_service_test_connection_unreachable,
               "claude_service: testConnection 上游不可达返回失败", {
+    KEYCHAIN_TEST_GATE("claude_service_test_connection_unreachable");
     test_support::TestDb tdb(kDbPrefix, "connfail");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -1064,6 +1076,7 @@ REGISTER_TEST(claude_service_proxy_host_whitelist,
 // 反向同步：全部经临时 settings_sync::Paths 注入，绝不碰真实 ~/.claude。
 REGISTER_TEST(claude_reverse_capture_on_switch,
               "claude_service: 反向同步① 切 profile 前捕获 settings.json", {
+    KEYCHAIN_TEST_GATE("claude_reverse_capture_on_switch");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revcap");
     test_support::TempDir d("revcap", kRevTempDirPrefix);
@@ -1143,6 +1156,7 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
 // 只切一次的话被捕获的不是 a，下面全部断言指向错行、恒真通过。
 REGISTER_TEST(claude_reverse_guard_keys_not_touched,
               "claude_service: 反向同步② 守卫键不写也不清", {
+    KEYCHAIN_TEST_GATE("claude_reverse_guard_keys_not_touched");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revguard");
     test_support::TempDir d("revguard", kRevTempDirPrefix);
@@ -1231,6 +1245,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
 
 REGISTER_TEST(claude_reverse_absent_clears,
               "claude_service: 反向同步③ 缺席即清空", {
+    KEYCHAIN_TEST_GATE("claude_reverse_absent_clears");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revclear");
     test_support::TempDir d("revclear", kRevTempDirPrefix);
@@ -1283,6 +1298,7 @@ REGISTER_TEST(claude_reverse_absent_clears,
 
 REGISTER_TEST(claude_reverse_broken_json_aborts,
               "claude_service: 反向同步④ 坏 JSON 中止切换且 profile 一字未改", {
+    KEYCHAIN_TEST_GATE("claude_reverse_broken_json_aborts");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revbad");
     test_support::TempDir d("revbad", kRevTempDirPrefix);
@@ -1354,6 +1370,7 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
 
 REGISTER_TEST(claude_reverse_missing_or_empty_noop,
               "claude_service: 反向同步⑤ 缺失或空文件 no-op 且照常切换", {
+    KEYCHAIN_TEST_GATE("claude_reverse_missing_or_empty_noop");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revnoop");
     test_support::TempDir d("revnoop", kRevTempDirPrefix);
@@ -1430,6 +1447,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
 
 REGISTER_TEST(claude_reverse_no_active_skips,
               "claude_service: 反向同步⑥ 无激活 profile 时不读文件", {
+    KEYCHAIN_TEST_GATE("claude_reverse_no_active_skips");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revnoact");
     test_support::TempDir d("revnoact", kRevTempDirPrefix);
@@ -1455,6 +1473,7 @@ REGISTER_TEST(claude_reverse_no_active_skips,
 
 REGISTER_TEST(claude_reverse_no_change_zero_write,
               "claude_service: 反向同步⑦ 无变化零写入 updated_at 不变", {
+    KEYCHAIN_TEST_GATE("claude_reverse_no_change_zero_write");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revsame");
     test_support::TempDir d("revsame", kRevTempDirPrefix);
@@ -1513,6 +1532,7 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
 
 REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
               "claude_service: 反向同步⑧ sidecar 托管键不被覆盖", {
+    KEYCHAIN_TEST_GATE("claude_reverse_sidecar_managed_key_skipped");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revside");
     test_support::TempDir d("revside", kRevTempDirPrefix);
@@ -1564,6 +1584,7 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
 
 REGISTER_TEST(claude_dup_profile_basic,
               "claude_service: 复制 profile 全等同源且不激活", {
+    KEYCHAIN_TEST_GATE("claude_dup_profile_basic");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dup");
     test_support::TempDir d("dup", kRevTempDirPrefix);
@@ -1724,6 +1745,7 @@ REGISTER_TEST(claude_dup_missing_key_two_states,
 
 REGISTER_TEST(claude_dup_stage2_rollback,
               "claude_service: 复制二段失败回滚且零残留", {
+    KEYCHAIN_TEST_GATE("claude_dup_stage2_rollback");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "duprb");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1754,6 +1776,7 @@ REGISTER_TEST(claude_dup_stage2_rollback,
 
 REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
               "claude_service: 认证字段默认 both + getProfile/getActiveProfile 往返", {
+    KEYCHAIN_TEST_GATE("claude_service_auth_field_default_and_roundtrip");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_rt");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1799,6 +1822,7 @@ REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
 
 REGISTER_TEST(claude_service_auth_field_update_both_branches,
               "claude_service: 认证字段 updateProfile 两分支（换 key / 不换 key）", {
+    KEYCHAIN_TEST_GATE("claude_service_auth_field_update_both_branches");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_upd");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1830,6 +1854,7 @@ REGISTER_TEST(claude_service_auth_field_update_both_branches,
 
 REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
               "claude_service: 认证字段经二段补写（models/env）仍保持", {
+    KEYCHAIN_TEST_GATE("claude_service_auth_field_survives_two_stage_update");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_two");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1856,6 +1881,7 @@ REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
 
 REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
               "claude_service: 复制 profile 保留认证字段", {
+    KEYCHAIN_TEST_GATE("claude_service_duplicate_keeps_auth_field");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_dup");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1880,6 +1906,7 @@ REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
 
 REGISTER_TEST(claude_service_auth_field_invalid_normalized,
               "claude_service: 认证字段非法值写侧规范化为 both", {
+    KEYCHAIN_TEST_GATE("claude_service_auth_field_invalid_normalized");
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_norm");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1908,6 +1935,7 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
 
 REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
               "claude_service: runProfile 直连——不启代理、写 run-settings 临时文件、假 launch 收到 --settings 参数", {
+    KEYCHAIN_TEST_GATE("claude_service_run_profile_direct_env_writes_temp_settings");
     test_support::DataRootEnv root(kDbPrefix, "runprofile1");
     test_support::TestDb tdb(kDbPrefix, "runprofile1");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -2027,6 +2055,7 @@ REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
 
 REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
               "claude_service: runProfile 零全局回归闸——settings.json 未写、is_active 未变、代理未动（激活/非激活都跑）", {
+    KEYCHAIN_TEST_GATE("claude_service_run_profile_zero_global_change_gate");
     test_support::DataRootEnv root(kDbPrefix, "runprofile3");
     test_support::TestDb tdb(kDbPrefix, "runprofile3");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -2092,6 +2121,7 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
 
 REGISTER_TEST(claude_service_run_profile_write_failure_aborts,
               "claude_service: runProfile 写临时 settings 失败（run-settings 被文件占位）→ fail 且不开窗", {
+    KEYCHAIN_TEST_GATE("claude_service_run_profile_write_failure_aborts");
     test_support::DataRootEnv root(kDbPrefix, "runprofile4");
     test_support::TestDb tdb(kDbPrefix, "runprofile4");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -2272,6 +2302,7 @@ REGISTER_TEST(claude_pv_no_active_profile,
 
 REGISTER_TEST(claude_pv_unreachable_no_takeover,
               "claude_service: 前置校验② 上游不可达 → fail（NetworkUnreachable）且 settings.json 未被接管", {
+    KEYCHAIN_TEST_GATE("claude_pv_unreachable_no_takeover");
     test_support::TestDb tdb(kDbPrefix, "pv_conn");
     TempSyncPaths sync("pv_conn", tdb.handle());                   // 文件内桩：临时 settings.json + sidecar
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -2304,6 +2335,7 @@ REGISTER_TEST(claude_pv_unreachable_no_takeover,
 
 REGISTER_TEST(claude_pv_non_2xx_fails,
               "claude_service: 前置校验③ 上游 401 → fail（无/坏 key 不得起代理）", {
+    KEYCHAIN_TEST_GATE("claude_pv_non_2xx_fails");
     platform::http::Server upstream401("127.0.0.1", 0);   // 模式照 :994-1010
     upstream401.route("POST", "/v1/messages",
                       [](const platform::http::RequestCtx&,
@@ -2335,6 +2367,7 @@ REGISTER_TEST(claude_pv_non_2xx_fails,
 
 REGISTER_TEST(claude_pv_ok_then_start_proxy,
               "claude_service: 前置校验④ 通过（2xx）→ 校验只探一次，startProxy 仍可用", {
+    KEYCHAIN_TEST_GATE("claude_pv_ok_then_start_proxy");
     platform::http::Server upstream("127.0.0.1", 0);       // 模式照 :952-968
     int hitCount = 0;
     std::string lastPath;
@@ -2380,6 +2413,7 @@ REGISTER_TEST(claude_pv_ok_then_start_proxy,
 
 REGISTER_TEST(claude_pv_timeout_honored,
               "claude_service: 前置校验⑤ 探测超时按入参生效（不静默回落 15s）", {
+    KEYCHAIN_TEST_GATE("claude_pv_timeout_honored");
     // mock 上游挂 1500ms 才回 200，probeTimeoutMs=150 → 必须 fail。
     // 超时参数若没接上（回落 testConnection 的 15000），请求会在 1.5s 后成功 → 本用例红。
     // 断言是 ok/fail 二值、不测墙钟，10× 余量保证负载抖动下也不误判；收尾 slow.stop() 会 join
@@ -2417,6 +2451,7 @@ REGISTER_TEST(claude_pv_timeout_honored,
 // 一：传入显式工作目录 → LaunchSpec.workingDir 使用该目录（而非 homeDir）
 REGISTER_TEST(claude_run_profile_explicit_working_dir,
               "claude_service: runProfile 显式 workingDir → LaunchSpec 收到该目录", {
+    KEYCHAIN_TEST_GATE("claude_run_profile_explicit_working_dir");
     test_support::DataRootEnv root(kDbPrefix, "rundir1");
     test_support::TestDb tdb(kDbPrefix, "rundir1");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -2457,6 +2492,7 @@ REGISTER_TEST(claude_run_profile_explicit_working_dir,
 // 二：不传 workingDir（回退 homeDir 默认值）—— 向后兼容现有调用方
 REGISTER_TEST(claude_run_profile_default_working_dir,
               "claude_service: runProfile 不传 workingDir → 回退 homeDir", {
+    KEYCHAIN_TEST_GATE("claude_run_profile_default_working_dir");
     test_support::DataRootEnv root(kDbPrefix, "rundir2");
     test_support::TestDb tdb(kDbPrefix, "rundir2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);

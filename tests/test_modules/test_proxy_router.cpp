@@ -169,6 +169,7 @@ DirectResult directCall(module::claude::ProxyRouter& router,
 
 REGISTER_TEST(proxy_router_forward_200,
               "proxy_router: 200 转发 + 上游鉴权透传", {
+    KEYCHAIN_TEST_GATE("proxy_router_forward_200");
     // mock 上游：POST /v1/messages → 200 + JSON
     platform::http::Server upstream("127.0.0.1", 0);
     std::string upstreamKey;
@@ -221,6 +222,7 @@ REGISTER_TEST(proxy_router_forward_200,
 
 REGISTER_TEST(proxy_router_upstream_401,
               "proxy_router: 上游 401 原样透传", {
+    KEYCHAIN_TEST_GATE("proxy_router_upstream_401");
     platform::http::Server upstream("127.0.0.1", 0);
     upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
@@ -261,6 +263,7 @@ REGISTER_TEST(proxy_router_upstream_401,
 
 REGISTER_TEST(proxy_router_upstream_404,
               "proxy_router: 上游 404 原样透传", {
+    KEYCHAIN_TEST_GATE("proxy_router_upstream_404");
     // 只注册 /v1/messages；请求 /v1/unknown 会 404
     platform::http::Server upstream("127.0.0.1", 0);
     upstream.route("POST", "/v1/messages",
@@ -299,6 +302,7 @@ REGISTER_TEST(proxy_router_upstream_404,
 
 REGISTER_TEST(proxy_router_upstream_unreachable,
               "proxy_router: 上游不可达返回 502", {
+    KEYCHAIN_TEST_GATE("proxy_router_upstream_unreachable");
     test_support::TestDb tdb(kDbPrefix, "fwd502");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -325,6 +329,7 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
 
 REGISTER_TEST(proxy_router_no_active_profile,
               "proxy_router: 无激活 profile 返回 503", {
+    KEYCHAIN_TEST_GATE("proxy_router_no_active_profile");
     test_support::TestDb tdb(kDbPrefix, "noactive");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -386,6 +391,7 @@ REGISTER_TEST(proxy_router_missing_api_key,
 
 REGISTER_TEST(proxy_router_end_to_end,
               "proxy_router: 端到端 HTTP 代理（Bearer 鉴权 + 转发）", {
+    KEYCHAIN_TEST_GATE("proxy_router_end_to_end");
     // mock 上游
     platform::http::Server upstream("127.0.0.1", 0);
     std::string seenApiKey;
@@ -482,6 +488,7 @@ REGISTER_TEST(proxy_router_error_json_escaped,
 
 REGISTER_TEST(proxy_router_applies_upstream_dialect,
               "proxy_router: 转发覆盖 UA + 鉴权头（客户端 python-urllib 不泄漏）", {
+    KEYCHAIN_TEST_GATE("proxy_router_applies_upstream_dialect");
     platform::http::Server upstream("127.0.0.1", 0);
     HeaderMap seen;
     std::string seenBody;
@@ -551,6 +558,7 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
 
 REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
               "proxy_router: 不转发 httplib 注入伪头（LOCAL_ADDR/REMOTE_PORT 等）", {
+    KEYCHAIN_TEST_GATE("proxy_router_drops_httplib_pseudo_headers");
     // mock 上游：捕获原始请求头（未去重的 Headers multimap）
     RawUpstream upstream;
     httplib::Headers seen;
@@ -615,6 +623,7 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
 
 REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
               "proxy_router: 端到端不转发伪头（缓冲 + 流式）", {
+    KEYCHAIN_TEST_GATE("proxy_router_pseudo_headers_filtered_end_to_end");
     // 上游 mock 捕获每封请求的原始头
     RawUpstream upstream;
     std::vector<httplib::Headers> snaps;
@@ -703,6 +712,7 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
 // 删掉整条落库链后，首页图表恒走空态（有数据也不画图）。
 REGISTER_TEST(proxy_router_writes_call_log_row,
               "proxy_router: buffered path persists claude_call_logs row", {
+    KEYCHAIN_TEST_GATE("proxy_router_writes_call_log_row");
     platform::http::Server upstream("127.0.0.1", 0);
     upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
