@@ -83,14 +83,17 @@ int levelRank(RemindLevel level) {
     return 0;
 }
 
-// 三档提醒色（票据指定色系）：红 #EF4444 / 橙 #F59E0B / 黄 #EAB308。
+// 三档提醒色（票据指定色系 → need:296 D6 token 化）：红=error / 橙=warning /
+// 黄=success，语义 token 亮暗双档自动适配（原裸 hex #EF4444/#F59E0B/#EAB308
+// 仅亮档口径）。
 eui::Color levelAccent(RemindLevel level) {
+    const auto& c = core::theme::current().colors;
     switch (level) {
-        case RemindLevel::Red: return eui::Color::fromHex(0xEF4444u);
-        case RemindLevel::Orange: return eui::Color::fromHex(0xF59E0Bu);
-        case RemindLevel::Yellow: return eui::Color::fromHex(0xEAB308u);
+        case RemindLevel::Red: return c.error;
+        case RemindLevel::Orange: return c.warning;
+        case RemindLevel::Yellow: return c.success;
     }
-    return eui::Color::fromHex(0xEAB308u);
+    return c.success;
 }
 
 const char* levelHeadline(RemindLevel level) {

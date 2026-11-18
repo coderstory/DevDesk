@@ -172,6 +172,9 @@ add_executable(devdesk_tests
     # UAT6.2 字号无级调节批：slider helper 无头断言（四节点/取值绑定/token 落点/
     # 行程映射与越界钳制）+ 归一化值→百分比映射钉值。
     test_modules/test_ui_kit_slider.cpp
+    # need:296 D2：统一估宽入口 cachedTextWidth 无头断言（weight 入键不串档 /
+    # 同键重入一致 / 不同文本不互串）。
+    test_modules/test_ui_kit_text_metrics.cpp
     # need201 果冻 v2：jellyPose 时间线关键帧 / 扭摆差分反相 / active 窗口无头断言
     test_modules/test_ui_kit_jelly.cpp
     # 池168/need184③：窗口 ring 最大化隐藏分支无头断言

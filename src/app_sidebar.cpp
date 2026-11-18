@@ -11,6 +11,7 @@
 #include "core/theme.h"
 #include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
 #include "core/window_geometry.h"  // 窗体记忆账本（UAT6：compose 每帧记账还原态尺寸）
+#include "core/window_layout.h"  // need:296 D4：回退态 inset/窗圆角三平台访问器
 #include "module_agent/agent_module.h"
 #include "module_memory/memory_module.h"  // 需-9：用量告警每帧判定驱动（M3 同款）
 #include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
@@ -1385,13 +1386,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // bodyTop gate 化（need:140 F-03，审计 P1-1 回退缝）：chrome=true（Windows
     // 自绘壳 / macOS NSView 自绘壳启用）→ titlebarHeight()=40，两端同值同档；
     // 回退 override=false → macOS 恢复系统标题栏（红绿灯原生钮 + inset 30 现状）。
-    // #ifdef 只承载「回退态 inset 值」，非物理删除——整体回退预案依托此缝
-#ifdef __APPLE__
-    // macOS 系统标题栏高度（回退态：红绿灯原生钮所在）；内容需让出它。
-    const float kSystemTitleBarInset = 30.0f;
-#else
-    const float kSystemTitleBarInset = 0.0f;
-#endif
+    // 回退态 inset 三平台口径收口 window_layout 平台族（need:296 D4 上收 #ifdef，
+    // 整体回退预案依托此缝）
+    const float kSystemTitleBarInset =
+        ::core::window_layout::systemTitleBarInset();
     // 全屏态（老板 2026-11-06）：mac 原生全屏下标题条整条退场，内容铺满全窗 →
     // bodyTop=0、不画标题条。非全屏保持 chrome ? 40 : 回退 inset。
     const bool inFullscreen = app::mainWindowFullscreen();
@@ -1435,21 +1433,13 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
                       core::theme::componentTokensWeChat(core::theme::current()));
     // 池168（2026-11-04 老板撤销绿白虚框改细黑边）：窗口边框——全窗最外缘非交互
     // 覆盖，放最后保证不被任何内容盖住。最大化态隐藏（need184③）。
-    // 圆角按平台真实窗体圆角传入（2026-11-06 修 mac 贴边）：
-    //   Windows = DWM 固定 8 物理px → 逻辑值 = 8/contentScale；
-    //   macOS   = AppKit 原生圆角 16 逻辑pt（系统绘制，EUI 不设 cornerRadius）。
+    // 圆角按平台真实窗体圆角传入（2026-11-06 修 mac 贴边）：macOS = AppKit 原生
+    // 16 逻辑pt（AppKit 内省实证，误测史与依据见 window_layout_macos.cpp，
+    // bug145/池197）；Windows = DWM 固定 8 物理px 折算逻辑值。三平台口径收口
+    // window_layout 平台族（need:296 D4 上收 #ifdef）。
     const float scale = app::contentScale();
-#ifdef __APPLE__
-    // macOS 圆角 = 16 逻辑pt（2026-11-07 AppKit 内省实证：标准 titled 窗
-    // [NSWindow valueForKey:@"_cornerRadius"] == 16.0，系统自报值）。
-    // 此前两轮全错：12 偏大 2pt→弧带被裁「变淡不完整」；10 源自一次误测
-    // （像素扫描扫到的是旧 ring 自身弧/阴影带，非窗口裁剪弧）→ r=9 的弧带
-    // 整体落在 45° 裁剪线内 → 四角黑线全消（bug145，池197）。16 → 描边弧
-    // r=15 与窗口裁剪弧同心、整体内侧 1px，四角弧带完整可见。
-    const float cornerRadiusLogical = 16.0f;
-#else
-    const float cornerRadiusLogical = 8.0f / (scale > 0.0f ? scale : 1.0f);
-#endif
+    const float cornerRadiusLogical =
+        ::core::window_layout::windowCornerRadiusLogical(scale);
     ui_kit::drawWindowRing(ui, screen.width, screen.height,
                            core::theme::current(), app::mainWindowMaximized(),
                            scale, cornerRadiusLogical);

@@ -27,6 +27,7 @@
 #include <components/theme.h>
 
 #include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
+#include <ui_kit/text_metrics.h>  // need:296 D2：估宽缓存归一
 
 #include <eui/dsl.h>
 
@@ -301,12 +302,12 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                     // 与左侧标题相距 700px，关联性为零。改为「量出标题实际宽度 →
                     // chip 紧随其后」，行内间距固定 8px。
                     const std::string sectionTitle = "注册的工具";
-                    const float titleW = core::TextPrimitive::measureTextWidth(
-                        sectionTitle, "", t.sizes.fontSizeLarge, 600);
+                    const float titleW = ui_kit::cachedTextWidth(
+                        sectionTitle, t.sizes.fontSizeLarge, 600);
                     const std::string countText = std::to_string(tools.size());
                     const float countW =
-                        core::TextPrimitive::measureTextWidth(
-                            countText, "", core::theme::scaled(11.0f), 400) +
+                        ui_kit::cachedTextWidth(
+                            countText, core::theme::scaled(11.0f), 400) +
                         14.0f;
 
                     ui.row("mcp.section")
@@ -418,8 +419,8 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
     //   [图标 40][文本列 …… 16px ……][● 状态]  ← 状态组右对齐
     //   [内置][服务]                        [查看详情 ›]
     const std::string statusText = serviceRunning ? "可用" : "未启用";
-    const float statusTextW = core::TextPrimitive::measureTextWidth(
-        statusText, "", core::theme::scaled(11.0f), 400);
+    const float statusTextW = ui_kit::cachedTextWidth(
+        statusText, core::theme::scaled(11.0f), 400);
     const float statusTextX = cardWidth - kCardPad - statusTextW;
     const float statusDotX = statusTextX - 12.0f - 8.0f;
     const float textW = std::max(0.0f, statusDotX - kCardTextX - kStatusGap);
@@ -605,10 +606,14 @@ void McpPageModule::drawMemoryModuleRow(
         .content([&] {
             ui.rect(id + ".bg")
                 .size(contentW, kRowH)
-                .color(eui::Color{t.colors.surface.r, t.colors.surface.g,
-                                  t.colors.surface.b, t.colors.surface.a})
+                // 玻璃三件套（need:296 D5；池235/need219 §5.2-1）：对齐同页工具卡
+                //（drawToolCard 同款 itemSurface + glassBorder + glassShadowColor，
+                // 24 模糊 / 8 偏移）——原 surface+borderDefault 无影掉出玻璃语言
+                .color(ui_kit::itemSurface(t))
                 .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
+                .shadow(core::Shadow{true, {0.0f, 8.0f}, 24.0f, 0.0f,
+                                     ui_kit::glassShadowColor(t), false})
+                .border(1.0f, ui_kit::glassBorder(t))
                 .build();
             ui.rect(id + ".icon.bg")
                 .position(kPad, kPad)

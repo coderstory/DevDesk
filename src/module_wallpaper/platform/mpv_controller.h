@@ -260,9 +260,9 @@ public:
     std::string takeError();
 
 private:
-#if defined(_WIN32)
-    friend struct MpvControllerTestAccess;  // 见文件尾注入缝契约
-#endif
+    // 见文件尾注入缝契约（need:296 D4 头文件零平台宏：声明两平台恒在，
+    // 定义与调用仅 Windows 侧存在）
+    friend struct MpvControllerTestAccess;
     struct Impl;
     // shared 所有权：异步块按值捕 impl，块在飞时 Impl 不会被析构（2026-11-04
     // 审计 F6：图片后台解码晚到 / 析构竞态的根治）。macOS 实现专用；Windows 的
@@ -271,16 +271,16 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
-#if defined(_WIN32)
-// 仅测试注入缝（tests/test_wallpaper_platform.cpp 的 IPC 死锁回归网用，生产代码
-// 不得调用）：把测试自建的管道客户端句柄与伪进程句柄（未复位的事件即可——
-// TerminateProcess 对其失败被忽略、wait 永不信号，使 stop 梯子走满有界路径而
-// 不引入真子进程）注入控制器，模拟「spawn 成功 + 对端连上后拒绝读」。
+// 仅测试注入缝（tests/test_modules/test_wallpaper_platform.cpp 的 IPC 死锁回归
+// 网用，生产代码不得调用）：把测试自建的管道客户端句柄与伪进程句柄（未复位的
+// 事件即可——TerminateProcess 对其失败被忽略、wait 永不信号，使 stop 梯子走满
+// 有界路径而不引入真子进程）注入控制器，模拟「spawn 成功 + 对端连上后拒绝读」。
 // 注入即所有权移交：句柄由控制器 shutdown 路径统一关闭。
+// need:296 D4 头文件零平台宏：声明两平台恒在（无定义即可，ODR 使用只在 Windows），
+// 定义在 Windows 实现文件内。
 struct MpvControllerTestAccess {
     static void attachIpcForTest(MpvController& controller, void* pipeClient,
                                  void* fakeProcess);
 };
-#endif
 
 } // namespace module::wallpaper

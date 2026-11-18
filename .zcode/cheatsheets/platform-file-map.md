@@ -22,14 +22,18 @@
 | python_locator | ✅ | ✅ |
 | telemem_process | ✅ | ✅ |
 
-## module_settings/ 与 module_wallpaper/
+## module_settings/、module_wallpaper/ 与 terminal 两族（2026-11-18 need:296 D4 修订）
 
-| 能力 | macos | win | 备注 |
-|---|---|---|---|
-| local_git_probe | ✅ | ✅ | |
-| image_probe | — | ✅ | ⚠ 仅 Windows |
-| wallpaper_host | — | ✅ | ⚠ 仅 Windows |
-| yield_watchers | — | ✅ | ⚠ 仅 Windows |
+| 能力 | macos | posix | win | 备注 |
+|---|---|---|---|---|
+| local_git_probe（module_settings） | ✅ | **—** | ✅ | ⚠ 无 posix 兜底（实存 _macos/_win 两实现） |
+| image_probe（module_wallpaper） | ✅ | stub | ✅ | 改标：macos 列原误写 —，`image_probe_macos.cpp` 实存；posix = _stub 降级 |
+| wallpaper_host（module_wallpaper） | ✅(.mm) | stub | ✅ | 改标：`wallpaper_host_macos.mm` 实存；posix = _stub 降级 |
+| yield_watchers（module_wallpaper） | ✅(.mm) | stub | ✅ | 改标：`yield_watchers_macos.mm` 实存；posix = _stub 降级 |
+| importer（module_wallpaper） | ✅ | stub | stub | 新补行：仅 macos 有实现，win/posix 走 `importer_stub.cpp` |
+| mpv_controller（module_wallpaper） | ✅(.mm) | stub | ✅ | 新补行：win = `mpv_controller.cpp`，posix = `_stub` |
+| terminal_settings_platform（module_terminal） | （复用 posix 列） | ✅ | ✅ | 新补行：无 _macos 文件，CMake 非 WIN32 分支统一挂 `_posix.cpp`（mac 构建走它） |
+| terminal_backend（platform/terminal） | ✅ | **—** | ✅ | 新补行：macos 文件名漂移为 `_mac.cpp`（非 `_macos`），⚠ 无 posix 兜底 |
 
 ## platform/
 

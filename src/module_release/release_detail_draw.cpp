@@ -872,7 +872,7 @@ void drawServiceCard(eui::Ui& ui, const std::string& id, float x, float y, float
         .text(svc.serviceName)
         .fontSize(core::theme::scaled(18.0f))  // §4.2 L1：服务名 15→18
         .lineHeight(core::theme::scaled(20.0f))
-        .fontWeight(700)
+        .fontWeight(600)  // need219 §2.1：行首标题两档制 600（原 700 越档）
         .maxWidth(nameW)
         .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)

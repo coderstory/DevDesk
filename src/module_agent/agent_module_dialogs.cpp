@@ -12,6 +12,7 @@
 
 #include <ui_kit/dialog_shell.h>  // need156 标准弹窗壳（可用工具弹窗）
 #include <ui_kit/materials.h>   // itemSurface（池127 L2 卡面）
+#include <ui_kit/text_metrics.h>  // need:296 D2：估宽缓存归一
 #include <components/theme.h>      // panelShadow（need219 §5.2-2 弹窗内卡描边阴影统一）
 #include <core/component_theme.h>  // componentTokensWeChat（panelShadow 入参）
 
@@ -1579,8 +1580,9 @@ void AgentModule::composeToolsDialog(
                 const float row2 = core::theme::scaled(18.0f);
                 const float btnFs = core::theme::scaled(12.0f);
                 const float btnH = core::theme::scaled(26.0f);
+                // need219 §2.1：文字钮佐证档 400（渲染 :1639 即 400，估宽原 500 缺口）
                 const float btnW = core::TextPrimitive::measureTextWidth(
-                                       "清空搜索", "", btnFs, 500) +
+                                       "清空搜索", "", btnFs, 400) +
                                    core::theme::scaled(16.0f);
                 const float totalH =
                     iconFs + 8.0f + row1 + 4.0f + row2 + 10.0f + btnH;
@@ -2035,14 +2037,12 @@ void AgentModule::renderToolCard(
                                          findMatchRanges(
                                              core::str::toLowerAscii(label),
                                              queryLower)) {
-                                        const float px =
-                                            core::TextPrimitive::measureTextWidth(
-                                                label.substr(0, ms), "", chipFs,
-                                                500);
-                                        const float pw =
-                                            core::TextPrimitive::measureTextWidth(
-                                                label.substr(ms, me - ms), "",
-                                                chipFs, 500);
+                                        // need:296 D2：高亮定位逐帧测量走缓存
+                                        const float px = ui_kit::cachedTextWidth(
+                                            label.substr(0, ms), chipFs, 500);
+                                        const float pw = ui_kit::cachedTextWidth(
+                                            label.substr(ms, me - ms), chipFs,
+                                            500);
                                         inner.rect(chid + ".hl." +
                                                    std::to_string(ms))
                                             .position(

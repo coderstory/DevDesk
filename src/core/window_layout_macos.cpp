@@ -16,4 +16,20 @@ const char* windowUnitName() {
     return "pt";
 }
 
+float systemTitleBarInset() {
+    // macOS 系统标题栏高度（回退态：红绿灯原生钮所在）；内容需让出它
+    return 30.0f;
+}
+
+float windowCornerRadiusLogical(float contentScale) {
+    // macOS 圆角 = 16 逻辑pt（2026-11-07 AppKit 内省实证：标准 titled 窗
+    // [NSWindow valueForKey:@"_cornerRadius"] == 16.0，系统自报值，scale 不参与
+    // 折算）。此前两轮全错：12 偏大 2pt→弧带被裁「变淡不完整」；10 源自一次误测
+    // （像素扫描扫到的是旧 ring 自身弧/阴影带，非窗口裁剪弧）→ r=9 的弧带
+    // 整体落在 45° 裁剪线内 → 四角黑线全消（bug145，池197）。16 → 描边弧
+    // r=15 与窗口裁剪弧同心、整体内侧 1px，四角弧带完整可见。
+    (void)contentScale;
+    return 16.0f;
+}
+
 } // namespace core::window_layout

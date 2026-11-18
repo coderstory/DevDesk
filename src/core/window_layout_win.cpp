@@ -15,4 +15,15 @@ const char* windowUnitName() {
     return "物理px";
 }
 
+float systemTitleBarInset() {
+    // Windows 无回退态系统标题栏让位（自绘壳回退同样零占位）
+    return 0.0f;
+}
+
+float windowCornerRadiusLogical(float contentScale) {
+    // DWM 固定 8 物理px → 逻辑值 = 8/contentScale
+    const float s = contentScale > 0.0f ? contentScale : 1.0f;
+    return 8.0f / s;
+}
+
 } // namespace core::window_layout

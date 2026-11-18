@@ -266,14 +266,14 @@ public:
                                  t.sizes.radiusLarge, t, aboutSurface);
 
         // 页标题（卡内 y=卡Y+16 → 标题整体由 0 下移至 40；与 agent.title 同款：
-        // fontSizeTitle 24/700、32 行高）
+        // fontSizeTitle 24/600（need219 §2.1 两档制，原 700 越档）、32 行高）
         ui.text("about.title")
             .position(cardX + kCardPad, kCardY + kCardPad)
             .size(innerW, kTitleH)
             .text("关于")
             .fontSize(t.sizes.fontSizeTitle)
             .lineHeight(kTitleH)
-            .fontWeight(700)
+            .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
 

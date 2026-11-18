@@ -15,4 +15,15 @@ const char* windowUnitName() {
     return "pt";  // X11 无物理/逻辑分层，单位与 macOS 的点同为「窗口单位」
 }
 
+float systemTitleBarInset() {
+    // X11 无系统标题栏让位概念，与 Windows 同口径
+    return 0.0f;
+}
+
+float windowCornerRadiusLogical(float contentScale) {
+    // 无 DWM，取 Windows 同口径保守值
+    const float s = contentScale > 0.0f ? contentScale : 1.0f;
+    return 8.0f / s;
+}
+
 } // namespace core::window_layout

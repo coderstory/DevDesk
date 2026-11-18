@@ -12,6 +12,7 @@
 #include <components/theme.h>
 #include <components/tooltip.h>
 #include <components/virtuallist.h>
+#include <ui_kit/wtab.h>  // need:296 D3：视图切换 Tab 换块面式统一组件
 #include <core/component_theme.h>
 
 #include <algorithm>
@@ -203,36 +204,6 @@ void skeletonRow(eui::Ui& ui, const std::string& id, float x, float y, float w,
         // 骨架在屏期间持续出帧驱动 pulse（骨架卸下后元素消失，帧循环自然停）
         .onFrame([](float) {})
         .build();
-}
-
-// 下划线式 Tab（§5.2 视图切换：激活=主色 2px 底线；方案 A 明确 Tab 形态禁实心
-// 按钮——ui_kit::wtab 为块面式，按方案 A 自绘下划线式）
-void underlineTab(eui::Ui& ui, const std::string& id, const std::string& label,
-                  bool active, float x, float y, float w, float h,
-                  const Tokens& t, const std::function<void()>& onClick) {
-    ui.stack(id)
-        .position(x, y)
-        .size(w, h)
-        .content([&] {
-            ui.text(id + ".text")
-                .size(w, h)
-                .text(label)
-                .fontSize(scaled(13.0f))
-                .fontWeight(active ? 500 : 400)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(active ? t.colors.textPrimary : t.colors.textSecondary)
-                .build();
-            if (active) {
-                ui.rect(id + ".underline")
-                    .position(0.0f, h - 2.0f)
-                    .size(w, 2.0f)
-                    .color(t.colors.primary)
-                    .build();
-            }
-        })
-        .build();
-    hitRect(ui, id + ".hit", x, y, w, h, onClick);
 }
 
 // 图标钮（§4.2 列头 segmented/折叠钮：24×24；激活=底 selected + 图标 text1，
@@ -1713,17 +1684,20 @@ void composeDiffCard(eui::Ui& ui, float x, float y, float w, float h,
         statsText.runs(statRuns);
         statsText.build();
     }
-    // tab（右锚；§5.2 激活=底部 2px 主色下划线）
+    // tab（右锚；need:296 D3：自绘下划线式 → ui_kit::wtab 块面式统一组件，
+    // 页级档高 40 / 字号 15 / active 600（wtab 内部口径），44 行头内垂直居中；
+    // 节点 id 保持既有命名——git_page_probe 按 <id>.hit 定位点击）
     {
         const float contentTabX = x + w - padX - tabW;
         const float diffTabX = contentTabX - scaled(16.0f) - tabW;
-        underlineTab(ui, "git.right.head.tab.content", "内容",
+        const float tabY = y + (headH - ui_kit::kWtabHeight) * 0.5f;
+        ui_kit::wtab(ui, "git.right.head.tab.content", "内容",
                      c.rightTab() == GitPageController::RightTab::Content,
-                     contentTabX, y, tabW, headH, t,
+                     contentTabX, tabY, tabW, ui_kit::kWtabHeight, t,
                      [&c] { c.setRightTab(GitPageController::RightTab::Content); });
-        underlineTab(ui, "git.right.head.tab.diff", "差异",
+        ui_kit::wtab(ui, "git.right.head.tab.diff", "差异",
                      c.rightTab() == GitPageController::RightTab::Diff,
-                     diffTabX, y, tabW, headH, t,
+                     diffTabX, tabY, tabW, ui_kit::kWtabHeight, t,
                      [&c] { c.setRightTab(GitPageController::RightTab::Diff); });
     }
     ui.rect("git.right.head.border")

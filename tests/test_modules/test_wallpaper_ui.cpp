@@ -184,7 +184,7 @@ REGISTER_TEST(wallpaper_ui_geometry_1600,
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK_EQ(title->text, std::string("壁纸"));
     DOCTEST_CHECK_EQ(title->fontSize, 24.0f);
-    DOCTEST_CHECK_EQ(title->fontWeight, 700);
+    DOCTEST_CHECK_EQ(title->fontWeight, 600);  // need219 §2.1 页头 600（原 700 断言随 D1 同步）
     DOCTEST_CHECK_EQ(title->lineHeight, 40.0f);
 
     const auto* header = ui.find("wallpaper.header");

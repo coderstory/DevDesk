@@ -120,4 +120,18 @@ WindowSize minWindowSizeForWorkArea(const InitialWindowRequest& request,
                                     float scale,
                                     const FrameInsets& frameInsets);
 
+// ---- 布局期平台事实（need:296 D4：app 层 #ifdef 上收三平台族）----
+
+// 回退态（自绘壳 override 关闭）系统标题栏让位 inset（逻辑 pt）：macOS 30
+//（红绿灯原生钮带高，need:140 F-03 回退缝）；Windows/posix 0。chrome 启用时的
+// 自绘标题条高 40 走 app 侧 titlebarHeight()，与本值无关
+float systemTitleBarInset();
+
+// 窗口外缘装饰圆角（逻辑单位）：macOS = AppKit 原生 16 逻辑pt（2026-11-07 内省
+// 实证标准 titled 窗 _cornerRadius==16.0 系统自报值；12/10/9 三轮误测史见
+// bug145、池197——16 使描边弧 r=15 与窗口裁剪弧同心、四角弧带完整）；Windows =
+// DWM 固定 8 物理px 按 contentScale 折算逻辑值；posix 无 DWM，取 Windows 同口径。
+// scale<=0 按 1.0
+float windowCornerRadiusLogical(float contentScale);
+
 } // namespace core::window_layout

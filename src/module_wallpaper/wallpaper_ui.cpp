@@ -1193,7 +1193,7 @@ void drawHeader(eui::Ui& ui, float contentW, WallpaperKind kind,
             .text("壁纸")
             .fontSize(t.sizes.fontSizeTitle)
             .lineHeight(ui_kit::kHeaderH)
-            .fontWeight(700)
+            .fontWeight(600)  // need219 §2.1：页头标题两档制 600（原 700 越档）
             .color(t.colors.textPrimary)
             .build();
         const auto onKind = actions.setKind;

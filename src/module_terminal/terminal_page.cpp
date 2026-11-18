@@ -25,6 +25,7 @@
 #include <components/switch.h>
 #include "ui_kit/card.h"
 #include "ui_kit/glass.h"
+#include "ui_kit/text_metrics.h"  // need:296 D2：textWidth 归一（helper 补字重维度）
 
 namespace terminal {
 
@@ -127,36 +128,8 @@ TermPerfUi& termPerfUi() {
     return s;
 }
 
-// bug248：measureTextWidth（EUI text_measure）无缓存、每帧对同批字符串完整 shaping
-// ——TAB 标题/固定文案（「新建」「终端 N」「恢复默认」等）逐帧重复测量。键空间小且
-// 有界（TAB 数有限），超 64 键整体清空防膨胀。
-// bug267-P3b：缓存键补字体族口径——现调用方都走默认族（空串），防御性入键，
-// 防未来调用方传具名族时复用错族宽度（TAB 几何按错字体规划）。
-float textWidth(const std::string& s, float size, const std::string& family = {}) {
-    struct Key {
-        float size;
-        std::string family;
-        std::string s;
-        bool operator==(const Key& o) const {
-            return size == o.size && family == o.family && s == o.s;
-        }
-    };
-    struct KeyHash {
-        std::size_t operator()(const Key& k) const {
-            return (std::hash<std::string>{}(k.s) ^
-                    (std::hash<std::string>{}(k.family) * 0x9e3779b9ULL)) ^
-                   (std::hash<float>{}(k.size) * 0xc2b2ae3dULL);
-        }
-    };
-    static std::unordered_map<Key, float, KeyHash> cache;
-    if (cache.size() >= 64) cache.clear();
-    Key key{size, family, s};
-    const auto it = cache.find(key);
-    if (it != cache.end()) return it->second;
-    const float w = core::TextPrimitive::measureTextWidth(s, family, size, 400);
-    cache.emplace(std::move(key), w);
-    return w;
-}
+// bug248 估宽缓存已归一至 ui_kit::cachedTextWidth（need:296 D2；bug267 字族入键
+// 防御随归一带入 helper），本文件直调、显式传 weight=400（与原实现同口径）。
 
 } // namespace
 
@@ -238,7 +211,7 @@ GridLayout TerminalPage::compose(
     const bool narrowWindow = screen.width < 720.0f;
     const float titleFs = core::theme::scaled(14.0f);
     const float detailFs = core::theme::scaled(12.0f);
-    const float newLabelW = textWidth("新建", titleFs);
+    const float newLabelW = ui_kit::cachedTextWidth("新建", titleFs, 400);
     const float newBtnW = narrowWindow ? 32.0f : 12.0f + 14.0f + 6.0f + newLabelW + 12.0f;
     float sepX = 0.0f, gearX = 0.0f, midX = 0.0f, rightX = 0.0f;
     {
@@ -269,7 +242,7 @@ GridLayout TerminalPage::compose(
     float tabsTotalW = 0.0f;
     for (int i = 0; i < sessionCount; i++) {
         const std::string& title = tabTitles_[static_cast<size_t>(i)];
-        const float titleW = std::min(textWidth(title, titleFs) + 2.0f, kTabTitleMaxW);
+        const float titleW = std::min(ui_kit::cachedTextWidth(title, titleFs, 400) + 2.0f, kTabTitleMaxW);
         float w = 12.0f + 8.0f + 6.0f + titleW + 6.0f + 16.0f + 12.0f;
         w = std::clamp(w, narrowWindow ? kTabMinWNarrow : kTabMinW, kTabMaxW);
         tabW[static_cast<size_t>(i)] = w;
@@ -665,7 +638,7 @@ GridLayout TerminalPage::compose(
                                 const std::string& title =
                                     tabTitles_[static_cast<size_t>(i)]; // bug248：复用缓存
                                 const float titleW = std::min(
-                                    textWidth(title, titleFs) + 2.0f, kTabTitleMaxW);
+                                    ui_kit::cachedTextWidth(title, titleFs, 400) + 2.0f, kTabTitleMaxW);
                                 ui.stack(id)
                                     .position(x, 0.0f)
                                     .size(w, kTabH)
@@ -792,7 +765,7 @@ GridLayout TerminalPage::compose(
                     .fontSize(core::theme::scaled(14.0f))
                     .color(t.colors.textSecondary)
                     .horizontalAlign(eui::HorizontalAlign::Center);
-                const float linkW = textWidth("+ 新建会话", core::theme::scaled(14.0f)) + 8.0f;
+                const float linkW = ui_kit::cachedTextWidth("+ 新建会话", core::theme::scaled(14.0f), 400) + 8.0f;
                 ui.text("term.empty.new")
                     .position((screen.width - linkW) * 0.5f, iconY + 24.0f + 8.0f + 12.0f)
                     .size(linkW, 20.0f)
@@ -854,10 +827,12 @@ GridLayout TerminalPage::compose(
                         // 按钮行：主（重新开始/重试）+ 次（关闭标签），§4.4
                         const float btnH = 28.0f;
                         const float retryLabelW =
-                            textWidth(failed ? "重试" : "重新开始", core::theme::scaled(13.0f));
+                            ui_kit::cachedTextWidth(failed ? "重试" : "重新开始",
+                                                    core::theme::scaled(13.0f),
+                                                    400);
                         const float retryW = retryLabelW + 24.0f;
                         const float closeLabelW =
-                            textWidth("关闭标签", core::theme::scaled(13.0f));
+                            ui_kit::cachedTextWidth("关闭标签", core::theme::scaled(13.0f), 400);
                         const float closeW = closeLabelW + 24.0f;
                         ui.row("term.overlay.btns")
                             .size(cardW - 2.0f * t.sizes.spacingLarge, btnH)
@@ -1303,7 +1278,7 @@ GridLayout TerminalPage::compose(
                                             .build();
                                     });
                                 const float blinkLabelW =
-                                    textWidth("闪烁", core::theme::scaled(12.0f)) + 6.0f;
+                                    ui_kit::cachedTextWidth("闪烁", core::theme::scaled(12.0f), 400) + 6.0f;
                                 inner.text("term.set.row.cursor.blink.label")
                                     .position(controlX + 136.0f, curCtlY)
                                     .size(blinkLabelW, kControlH)
@@ -1330,7 +1305,7 @@ GridLayout TerminalPage::compose(
                     .position(cardX + kPanelPad, footerY - 12.0f - 1.0f)
                     .size(innerW, 1.0f)
                     .color(t.colors.borderMuted);
-                const float resetW = textWidth("恢复默认", core::theme::scaled(13.0f)) + 24.0f;
+                const float resetW = ui_kit::cachedTextWidth("恢复默认", core::theme::scaled(13.0f), 400) + 24.0f;
                 ui.rect("term.set.reset")
                     .position(cardX + kPanelPad, footerY)
                     .size(resetW, 32.0f)
@@ -1347,7 +1322,7 @@ GridLayout TerminalPage::compose(
                     .color(t.colors.textSecondary)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center);
-                const float doneW = textWidth("完成", core::theme::scaled(14.0f)) + 40.0f;
+                const float doneW = ui_kit::cachedTextWidth("完成", core::theme::scaled(14.0f), 400) + 40.0f;
                 ui.rect("term.set.done")
                     .position(cardX + cardW - kPanelPad - doneW, footerY)
                     .size(doneW, 32.0f)
