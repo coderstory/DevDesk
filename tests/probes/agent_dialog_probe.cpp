@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     // 本探针私有构图开关（parseProbeArgs 未知参数忽略，这里自己收）
     std::string shotTask, shotTaskPlain, shotDetail, shotDraft, shotDraftError,
-        shotTools, shotPage, shotEdit, shotStep0, shotStep3;
+        shotDraftFail, shotTools, shotPage, shotEdit, shotStep0, shotStep3;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-task" && i + 1 < argc) {
@@ -89,6 +89,8 @@ int main(int argc, char* argv[]) {
             shotDraft = argv[++i];
         } else if (arg == "--shot-draft-error" && i + 1 < argc) {
             shotDraftError = argv[++i];
+        } else if (arg == "--shot-draft-fail" && i + 1 < argc) {
+            shotDraftFail = argv[++i];
         } else if (arg == "--shot-tools" && i + 1 < argc) {
             shotTools = argv[++i];
         } else if (arg == "--shot-page" && i + 1 < argc) {
@@ -584,6 +586,13 @@ int main(int argc, char* argv[]) {
                                                   "agent.dialog.task.draft")) {
                     std::cerr << "agent_dialog_probe: 请求失败态 L2 z 碰撞扫描"
                                  "失败\n";
+                    passed = false;
+                }
+                // need341：请求失败态报错行在场帧（弹窗内收口取证）
+                if (!shotDraftFail.empty() &&
+                    !probe::captureFramePng(window, runtime, shotDraftFail)) {
+                    std::cerr << "agent_dialog_probe: --shot-draft-fail 落图"
+                                 "失败: " << shotDraftFail << "\n";
                     passed = false;
                 }
             }

@@ -2203,11 +2203,27 @@ void AgentModule::composeDraftDialog(
                                {.x = area.x, .y = resultY + 18.0f, .height = 44.0f,
                                 .lineHeight = 16.0f, .wrap = true,
                                 .skipIfEmpty = true});
-        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error", textDialogW,
-                               draftError_, t.sizes.fontSizeSmall,
-                               t.colors.errorText,
-                               {.x = area.x, .y = resultY, .height = 18.0f,
-                                .lineHeight = 18.0f, .skipIfEmpty = true});
+        // need341：错误行规范样式——行首 fa-triangle-exclamation 图标 + errorText
+        // 深红 + 换行槽。上游非 2xx 文案含 body 前 200 字节（direct_llm_client），
+        // 无 wrap 单行会横向逃出面板（need341 老板实测报修）。行范式同
+        // github_sync_card 警示行，色 token 同 todo 逾期弹窗；槽高 72（4 行），
+        // resultY+72 仍高于按钮行基线（area 底 +33），互不越界。
+        if (!draftError_.empty()) {
+            ui.text("agent.dialog.task.draft.error.icon")
+                .position(area.x, resultY)
+                .size(14.0f, 18.0f)
+                .icon(0xF071)  // fa-triangle-exclamation
+                .fontSize(core::theme::scaled(t.sizes.fontSizeSmall))
+                .lineHeight(18.0f)
+                .color(t.colors.errorText)
+                .build();
+        }
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error",
+                               textDialogW - 22.0f, draftError_,
+                               t.sizes.fontSizeSmall, t.colors.errorText,
+                               {.x = area.x + 22.0f, .y = resultY, .height = 72.0f,
+                                .lineHeight = 18.0f, .wrap = true,
+                                .skipIfEmpty = true});
     });
 }
 
