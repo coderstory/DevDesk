@@ -327,9 +327,27 @@ REGISTER_TEST(notepad_md_sel_doc_rects_roundtrip,
     DOCTEST_CHECK(tblHit.ok);
     DOCTEST_CHECK(tblHit.cp == 0);
 
-    // 整篇全选矩形量 ≥ 单码点计数（铺满各块）
+    // 整篇全选矩形铺满各块（#350 期望校准：缝内 mergeAdjacentRectsOnSameLine
+    // 会把全选矩形按行/段合并，条数必然少于单码点计数——旧「量 ≥ 计数」在缝修
+    // 后必红；改为逐码点单矩形被某条全选矩形同行包含：y 相等且 x 区间被含）。
     const auto allRects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
         body, kWidth, style, 0, totalCps);
-    DOCTEST_CHECK(allRects.size() >= static_cast<size_t>(roundtripped));
+    for (size_t cp = 0; cp < totalCps; ++cp) {
+        const auto rects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+            body, kWidth, style, cp, cp + 1);
+        if (rects.empty()) continue;
+        const auto& r = rects.front();
+        bool covered = false;
+        for (const auto& ar : allRects) {
+            const float dy = ar.y > r.y ? ar.y - r.y : r.y - ar.y;
+            if (dy < 0.5f && ar.x <= r.x + 0.5f &&
+                ar.x + ar.w >= r.x + r.w - 0.5f) {
+                covered = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(covered,
+                              "全选矩形未覆盖 cp=" + std::to_string(cp));
+    }
     return true;
 })
