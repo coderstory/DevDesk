@@ -3,6 +3,7 @@
 #include <utility>
 
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -47,6 +48,15 @@ std::string trimWhitespace(const std::string& s) {
     while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
     while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
     return s.substr(b, e - b);
+}
+
+// bug239 错误透传（AZ 建议）：日志侧截断引擎原始响应，防大 body 刷爆日志；
+// 诊断用途，UTF-8 截半产生的乱码可接受
+std::string truncateForLog(const std::string& body) {
+    constexpr std::size_t kMax = 200;
+    if (body.size() <= kMax) return body;
+    return body.substr(0, kMax) + "…(+" +
+           std::to_string(body.size() - kMax) + "B)";
 }
 
 // BUG-114-2：注入相似度下限。telemem search_memories 原生 threshold 参数
@@ -219,8 +229,18 @@ core::Result<std::string> callTool(const std::string& tool,
         req.headers["Accept"] = "application/json, text/event-stream";
         req.headers["Mcp-Session-Id"] = sid.value();
         req.timeoutMs = timeoutMs;
+        // bug239 错误透传（AZ 建议）：传输层失败带工具名/耗时/HTTP 状态/引擎
+        // 原始响应落日志，禁静默吞（round4 实证：addInferred 判负全程零留痕，
+        // 排查只能靠引擎侧反推）。404 会话重取分支是自愈路径不打。
+        const auto t0 = std::chrono::steady_clock::now();
         const auto resp = platform::http::send(req);
+        const auto elapsedMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - t0)
+                .count();
         if (resp.isFail()) {
+            LOG_WARN("telemem " + tool + " 传输失败: " + resp.errorMessage() +
+                     "（耗时 " + std::to_string(elapsedMs) + "ms）");
             return core::Result<std::string>::fail(resp.errorCode(),
                                                    resp.errorMessage());
         }
@@ -229,6 +249,10 @@ core::Result<std::string> callTool(const std::string& tool,
             continue;
         }
         if (resp.value().statusCode != 200) {
+            LOG_WARN("telemem " + tool + " HTTP " +
+                     std::to_string(resp.value().statusCode) + "（耗时 " +
+                     std::to_string(elapsedMs) +
+                     "ms）引擎原始响应: " + truncateForLog(resp.value().body));
             return core::Result<std::string>::fail(
                 core::ErrorCode::HttpError,
                 "HTTP " + std::to_string(resp.value().statusCode));
@@ -542,6 +566,52 @@ core::Result<std::string> confirmStoredAfterTimeout(
         timeoutMsg + "（入库状态未能核实: " + found.errorMessage() + "）");
 }
 
+// bug239 层⑥（round4 实证）：addInferred 超时 ≠ 入库失败——引擎 add 走真
+// LLM 提炼腿（infer + related-update 双跳），客户端掐断后引擎继续跑完并写库
+// （round4：网关 200×2、faiss 已插入、零服务端错误，客户端判负）。超时后按
+// id 差分清单判定真实状态（#334 confirmStoredAfterTimeout 同思路；infer 正文
+// 被云端改写不能按原文匹配，改按 id 差分）：有新增 = 引擎已写库（响应迟到
+// 而已）→ 按成功回传（调用方照常计账出队）；零新增 = 真未落库 → 如实报超时
+// （留队下轮补跑，残余竞态：引擎在核实后才落库会重复入库，与 #334 同类已知
+// 风险）；核实请求自身失败 = 状态未知 → 原超时 + 未能核实。
+core::Result<std::string> confirmInferredAfterTimeout(
+    TelememHttpRetriever& engine, const std::vector<std::string>& beforeIds,
+    const std::string& timeoutMsg) {
+    // 清单口径同既有缝（get_memories limit 200）
+    auto after = engine.listAll(200, 10000);
+    if (after.isFail()) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NetworkTimeout,
+            timeoutMsg + "（入库状态未能核实: " + after.errorMessage() + "）");
+    }
+    std::string found;
+    int fresh = 0;
+    for (const MemoryListItem& it : after.value()) {
+        if (it.id.empty()) continue;
+        bool known = false;
+        for (const std::string& id : beforeIds) {
+            if (id == it.id) {
+                known = true;
+                break;
+            }
+        }
+        if (known) continue;  // 差分：只看本次提炼新增
+        ++fresh;
+        found = it.id;
+    }
+    if (fresh == 0) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NetworkTimeout,
+            "add 超时且已核实未入库: " + timeoutMsg);
+    }
+    LOG_WARN("addInferred 超时但引擎已入库（清单新增 " +
+             std::to_string(fresh) + " 条，响应迟到）——按成功回传");
+    // 唯一新增时回传产物 id；多条新增（LLM 拆多条）留空串，产物 id 由
+    // infer_batch 清单差分补标链路自取，不在此猜
+    return fresh == 1 ? core::Result<std::string>::ok(found)
+                      : core::Result<std::string>::ok(std::string());
+}
+
 core::Result<std::string> TelememHttpRetriever::addDirect(
     const std::string& text) {
     // 入库非 hook 同步路径，放宽到 10s
@@ -581,17 +651,50 @@ core::Result<std::string> TelememHttpRetriever::addDirect(
 
 core::Result<std::string> TelememHttpRetriever::addInferred(
     const std::string& text) {
-    // 提炼语义（infer=true）：实测云端往返 4.45s 为快失败形态，成功含 LLM
-    // 生成 → 30s。不做 findMemoryIdByText：提炼后正文被云端改写，按原文精确
-    // 匹配拿不到产物 id（需-3 spec §3）；产物 id 走清单差分（需-3 路②，
-    // infer_batch tagInferredProducts 消费）。
+    // 提炼语义（infer=true）：成功含 LLM 生成 + 引擎侧 related-update 双跳。
+    // bug239 层⑥（round4 实证，evidence/20261118-real-llm/round4）：30s 实测
+    // 不够——真网关双跳（infer ~24.4s + update ~3.8s + 向量化/入库）合计
+    // ~31s，客户端 30s（CURLOPT_TIMEOUT_MS 全程限额）掐断判负而引擎实际
+    // 成功入库。60s ≈ 实测的 2 倍余量；更慢尾巴走超时核实兜底。不做
+    // findMemoryIdByText：提炼后正文被云端改写，按原文精确匹配拿不到产物 id
+    //（需-3 spec §3）；产物 id 走清单差分（需-3 路②，infer_batch
+    // tagInferredProducts 消费）。
+    constexpr long kInferTimeoutMs = 60000;
+    // 核实快照（超时差分的「前」侧）必须在 add 前取；失败＝放弃核实能力，
+    // 不影响主流程（超时如实透传，另有 callTool 日志留痕）
+    std::vector<std::string> beforeIds;
+    bool snapshotted = false;
+    {
+        auto before = listAll(200, 10000);
+        if ((snapshotted = before.isOk())) {
+            beforeIds.reserve(before.value().size());
+            for (const MemoryListItem& it : before.value()) {
+                beforeIds.push_back(it.id);
+            }
+        } else {
+            LOG_WARN("addInferred 核实快照失败（超时后将无法核实入库状态）: " +
+                     before.errorMessage());
+        }
+    }
     const auto resp =
-        callTool("add_memory", buildAddMemoryArgs(text, true), 30000);
+        callTool("add_memory", buildAddMemoryArgs(text, true), kInferTimeoutMs);
     if (resp.isFail()) {
+        // bug239：超时走核实分支（见 confirmInferredAfterTimeout）；其余错误
+        //（引擎不在/HTTP 4xx）语义即真失败，原文透传不核实
+        if (resp.errorCode() == core::ErrorCode::NetworkTimeout && snapshotted) {
+            return confirmInferredAfterTimeout(*this, beforeIds,
+                                               resp.errorMessage());
+        }
         return core::Result<std::string>::fail(resp.errorCode(),
                                                resp.errorMessage());
     }
-    return parseAddResponse(resp.value());
+    auto parsed = parseAddResponse(resp.value());
+    if (parsed.isFail()) {
+        // bug239 错误透传：HTTP 200 但解析判负时带引擎原始响应留痕
+        LOG_WARN("addInferred 引擎回 200 但解析判负: " + parsed.errorMessage() +
+                 "（引擎原始响应: " + truncateForLog(resp.value()) + "）");
+    }
+    return parsed;
 }
 
 core::Result<void> TelememHttpRetriever::updateMemoryText(
