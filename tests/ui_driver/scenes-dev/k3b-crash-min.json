@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 10000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.schedule.list.new.bg"},
+    {"type": "wait", "until": "exists", "id": "app.schedule.edit.name.hit", "timeoutMs": 5000},
+    {"type": "type", "id": "app.schedule.edit.name.hit", "text": "k-crash-repro"},
+    {"type": "click", "id": "app.schedule.edit.dialog.confirm.bg", "force": true, "_comment": "最小复现：保存触发 bad_alloc"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "k3b-after-save.txt"}
+  ]
+}
