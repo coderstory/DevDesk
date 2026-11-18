@@ -502,7 +502,7 @@ REGISTER_TEST(memory_collect_f06_wash_redteam_and_control,
     const auto hasToolErrLinePrefix = [](const std::string& t) {
         std::size_t p = 0;
         while (p <= t.size()) {
-            if (t.compare(p, 12, "[tool_error] ") == 0) return true;
+            if (t.compare(p, 13, "[tool_error] ") == 0) return true;
             const std::size_t nl = t.find('\n', p);
             if (nl == std::string::npos) break;
             p = nl + 1;
