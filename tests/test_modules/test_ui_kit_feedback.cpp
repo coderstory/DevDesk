@@ -5,11 +5,12 @@
 // 断言三层（spec §7.1）：
 //   - 元素存在性（ui.find != nullptr）
 //   - 几何数值（width / height / radius / fontSize）
-//   - 颜色 hex 精确（* 令牌值；黑半透明 bg 例外用语义常量）
+//   - 颜色 hex 精确（* 令牌值；墨绿描边/文字用 need328 语义常量）
 //
-// 色值走 wechat 令牌（core::theme::current().colors.*）；黑半透明 bg 例外
-// （wechat 无黑半透明槽位——§4.10 spec 钉「黑色半透明」，故用 eui::Color{0,0,0,0.7}
-// 语义常量，alpha=0.7 ≈ 178/255）。
+// 色值走 wechat 令牌（core::theme::current().colors.*）；need328（2026-11-18
+// 老板验收回调）改版：bg = success 令牌压 0.88 半透（绿半透），描边/文字 =
+// 墨绿语义常量 kLightToastInk #06251A（绿底白字 ~1.9:1 不达标，need261 深墨
+// 裁决；色值纪律见 light_toast.h 文件头）。
 //
 // resetCaseGlobals 默认 setDark()，wechat 令牌在深浅两模式均初始化（theme.cpp）。
 #include "doctest.h"
@@ -38,52 +39,59 @@ auto sameColor = [](const eui::Color& x, const eui::Color& y) {
 
 } // namespace
 
-// 场景1（§4.10 防「轻提示不黑底/非半透明」）：showLightToast 首次触发后 bg 节点
-// 存在 + color=黑半透明 (0,0,0,0.7) + 圆角=radiusSmall(6)。
-// 事故：轻提示用白底/纯黑底致可读性塌陷或违和（§4.10 spec 钉「黑色半透明」；
-// 违反即整条 toast 视觉与微信基线脱节）。
-REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
-              "ui_kit lightToast: bg=黑半透明(0,0,0,0.7) + radius=6 首次触发", {
+// 场景1（§4.10 + need328 防「轻提示不绿底/非半透/无边框」）：showLightToast 首次
+// 触发后 bg 节点存在 + color=success 令牌压 0.88 + 墨绿 1px 描边 + 圆角=radiusSmall(6)。
+// 事故：轻提示配色漂移（改回黑底白字，或借 accent 依赖槽位致非微信绿 accent 下
+// 失绿/漂白）——老板钉「绿色半透 + 墨绿边框」（need328）。
+REGISTER_TEST(ui_kit_light_toast_green_translucent_bg,
+              "ui_kit lightToast: bg=success绿半透(0.88) + 墨绿描边1px + radius=6", {
     ui_kit::resetLightToastForTests();  // 防单实例 state 跨测试用例泄漏
     const auto& t = core::theme::current();
     eui::Ui ui;
-    ui.begin("w02d_lt_black");
+    ui.begin("w02d_lt_green");
     ui_kit::showLightToast(ui, "lt", "已复制", 100.0f, 100.0f, t);
     ui.end();
 
     const auto* bg = ui.find("lt.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = 黑半透明 (0, 0, 0, 0.7)——语义常量（wechat 无对应槽位，见 light_toast.h 注释）
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x00);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0x00);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x00);
-    // alpha 0.7 → std::round(0.7×255)=std::round(178.5)=179（std::round 半远离零）
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 179);
+    // bg = success 令牌压 0.88（need328：恒绿不随 accent 漂移；深色档 #34D399 /
+    // 浅色档 #10B981，与令牌逐通道比对）
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), toHexByte(t.colors.success.r));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), toHexByte(t.colors.success.g));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), toHexByte(t.colors.success.b));
+    // alpha 0.88 → std::round(0.88×255)=std::round(224.4)=224
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 224);
+    // 墨绿描边（need328）：1px × #06251A（kLightToastInk 语义常量）
+    DOCTEST_CHECK_EQ(bg->border.width, ui_kit::kLightToastBorderWidth);
+    DOCTEST_CHECK_EQ(bg->border.width, 1.0f);
+    DOCTEST_CHECK_EQ(toHexByte(bg->border.color.r), 0x06);
+    DOCTEST_CHECK_EQ(toHexByte(bg->border.color.g), 0x25);
+    DOCTEST_CHECK_EQ(toHexByte(bg->border.color.b), 0x1A);
     // 圆角 = radiusSmall (6px)
     DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusSmall);
     DOCTEST_CHECK_EQ(bg->radius, 6.0f);
     return true;
 })
 
-// 场景2（§4.10 防「轻提示非白字」）：text 节点 color=onPrimary(#FFFFFF)
-// + 字号 14px（§3.3 主文字）。
-// 事故：黑底非白字致对比度塌陷（§4.10 spec 钉「白色文字」；onPrimary=#FFFFFF
-// 在 wechat 令牌里是主色上的前景色，黑底白字同义复用）。
-REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
-              "ui_kit lightToast: text color=onPrimary(#FFFFFF) + fontSize=14", {
+// 场景2（§4.10 + need328 防「绿底白字」）：text 节点 color=墨绿 kLightToastInk
+// (#06251A) + 字号 14px（§3.3 主文字）。
+// 事故：绿底白字对比 ~1.9:1 塌陷（need261 裁决绿底用深墨；need328 配色改版
+// 同步换字色，白字断言同步退役）。
+REGISTER_TEST(ui_kit_light_toast_ink_text_on_green,
+              "ui_kit lightToast: text color=墨绿(#06251A) + fontSize=14", {
     ui_kit::resetLightToastForTests();  // 防单实例 state 跨测试用例泄漏
     const auto& t = core::theme::current();
     eui::Ui ui;
-    ui.begin("w02d_lt_white");
+    ui.begin("w02d_lt_ink");
     ui_kit::showLightToast(ui, "lt", "保存成功", 100.0f, 100.0f, t);
     ui.end();
 
     const auto* txt = ui.find("lt.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text color = onPrimary (#FFFFFF)
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0xFF);
+    // text color = 墨绿 kLightToastInk (#06251A)——绿底深墨（need261/need328）
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x06);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x25);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x1A);
     // 字号 14（§3.3 主文字；spec 无 14 档 token，钉 spec 值）
     DOCTEST_CHECK_EQ(txt->fontSize, 14.0f);
     // text 内容正确（防「空文案渲染」）

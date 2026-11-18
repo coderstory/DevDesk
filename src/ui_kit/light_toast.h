@@ -1,20 +1,23 @@
 // src/ui_kit/light_toast.h
 // presentation 能力层：微信式轻提示（spec §4.10）。
-// W2d 新增：黑半透明 bg + 白字 + 圆角 6 + 居中 + 1.5s 自动消失。
+// W2d 新增：居中轻提示 + 1.5s 自动消失；need328（2026-11-18 老板验收回调）
+// 配色改版：绿半透底 + 墨绿描边 + 墨绿字（原黑半透底 + 白字）。
 //
 // 既有通知式 toast（toast.h/.cpp）保留不迁移——两种 toast 并存：
 //   - 旧 toast：通知式，含 title/body/icon、贴右下角、3.5s+ 自动消失；既有调用不动
 //   - 新 light_toast：微信式轻提示，单行 message、居中、1.5s 自动消失；
 //     新反馈点（复制成功/保存成功/操作完成）调本 helper。
-// 并存依据：spec §4.10「既有通知式 toast 保留不迁移；微信式黑色半透明居中轻提示
+// 并存依据：spec §4.10「既有通知式 toast 保留不迁移；微信式居中轻提示
 // 为 ui_kit 新增小组件。两种 toast 并存，新反馈点用微信式，旧调用不动」。
 //
-// 色值纪律（D-03 / §8 #11 禁裸 hex）：
-//   - 黑半透明 bg 用 eui::Color{0,0,0,0.7} 语义常量（wechat 令牌无黑半透明槽位——
-//     wechat.* 全是浅色基底系：pageBg #F7F7F7 / cardBg #FFFFFF 等，无黑半透明档；
-//     §4.10 spec 明示「黑色半透明背景」，故用语义常量 + 此注释例外说明）。
-//   - 白字用 wechat.onPrimary（#FFFFFF，主色上的前景色——黑底白字同义；onPrimary
-//     在 wechat 令牌里就是 #FFFFFF，复用此槽位避免新增裸白色字面量）。
+// 色值纪律（D-03 / §8 #11 禁裸 hex，need328 两档口径）：
+//   - 填充 = theme success 令牌压半透 alpha（深色档 #34D399 / 浅色档 #10B981，
+//     alpha 0.88）：成功反馈语义绿，恒绿不随 accent 漂移——primary/onAccent 是
+//     accent 依赖槽位（非微信绿 accent 下 primary 失绿、onAccent 漂白），禁用于
+//     本组件。
+//   - 描边/文字 = 墨绿语义常量 #06251A（值同 onAccent 深墨档，但不借该 accent
+//     依赖槽位，理由见上）：两档绿底上均 ≥6:1 ≥ WCAG AA 4.5:1；绿底白字仅
+//     ~1.9:1 不达标（need261「绿底深墨不用白字」同裁决）。
 //   - 圆角 t.sizes.radiusWeChat（6px，§3.2 D-12 统一）。
 #pragma once
 
@@ -29,9 +32,14 @@ namespace ui_kit {
 // §4.10 spec 钉 1.5s 自动消失。
 constexpr float kLightToastDurationSec = 1.5f;
 
-// §4.10 spec「黑色半透明背景」——0.7 alpha 对齐微信 PC 端 toast 视觉。
-// wechat 令牌无对应槽位（见文件头注释），故用语义常量。
-constexpr float kLightToastBgAlpha = 0.7f;
+// need328 绿半透档：success 令牌压 0.88 alpha（底层背景 12% 透出）。
+constexpr float kLightToastGreenAlpha = 0.88f;
+
+// need328 墨绿描边宽 + 描边/文字色 #06251A（值同 onAccent 深墨档；不借该
+// accent 依赖槽位，见文件头色值纪律）。
+constexpr float kLightToastBorderWidth = 1.0f;
+constexpr eui::Color kLightToastInk{6.0f / 255.0f, 37.0f / 255.0f,
+                                    26.0f / 255.0f, 1.0f};
 
 // 内部 state：function-local static 单实例（仿 splash.cpp 的 splashState() 模式）。
 //
@@ -61,13 +69,13 @@ struct LightToastState {
 void showLightToast(eui::Ui& ui, const std::string& id, const std::string& message,
                     float cx, float cy, const core::theme::Tokens& t);
 
-// 纯绘制（无状态机）：黑半透明底 + 白字 + 圆角，居中于 (cx, cy)。
+// 纯绘制（无状态机）：绿半透底 + 墨绿描边 + 墨绿字 + 圆角，居中于 (cx, cy)。
 // 两处复用：showLightToast（自带 1.5s 状态机）与 ui_kit::drawToast 的轻反馈分支
 // （2026-11-01 R5：无标题的短反馈统一走居中轻提示，不再各自贴右下角）。
 // 节点 id = `<id>`（stack）/ `<id>.bg`（rect）/ `<id>.text`（text）。
 void drawLightToastPill(eui::Ui& ui, const std::string& id,
-                         const std::string& message, float cx, float cy,
-                         const core::theme::Tokens& t);
+                        const std::string& message, float cx, float cy,
+                        const core::theme::Tokens& t);
 
 // —— 测试 seam（仅测试用，仿 splash.h 的 splashDisabledForTestsFlag 模式）——
 // resetLightToastForTests：reset 内部 state（open=false, message="", startTime={}），
