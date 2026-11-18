@@ -17,6 +17,7 @@
 #include <eui/dsl.h>
 #include <ui_kit/glass.h>   // glassBorder（池162 摘要三卡卡语言断言）
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -234,15 +235,27 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.0.bg") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.1.bg") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.2.bg") != nullptr);
-    // 单列几何与弹性档同一公式：summaryY=48 / navY=143.5 / contentY=183.5（UAT6.1 顶部收紧）
+    // 单列几何与弹性档同一公式——need339① 起 summaryY = 头部行底（44+lhS）+ 12，
+    // 随字号派生，不再钉字面 48/143.5/183.5（旧字面压住头部状态行盒）
+    const auto& tokN = core::theme::current();
+    const float lhSN =
+        static_cast<float>(std::lround(tokN.sizes.fontSizeSmall * 1.4f));
+    const float lhBN =
+        static_cast<float>(std::lround(tokN.sizes.fontSizeBody * 1.4f));
+    const float summaryHN =
+        std::max(81.0f, 2.0f * 10.0f + lhSN + lhBN + lhSN + 4.0f);
+    const float summaryYN = 44.0f + lhSN + 12.0f;
+    const float navYN = summaryYN + summaryHN + 14.0f;
+    const float contentYN = navYN + 32.0f + 8.0f;
     const auto* lastCard = ui2.find("agent.dialog.detail.summary.last");
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(lastCard != nullptr && runlist != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 48.0f),
-                          "摘要卡应 +48（与弹性档同公式），实测 " +
-                              std::to_string(lastCard->frame.y - panel->frame.y));
-    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 143.5f),
-                          "nav 应 +143.5（与弹性档同公式），实测 " +
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(lastCard->frame.y - panel->frame.y, summaryYN),
+        "摘要卡应 +44+lhS+12（行底让位公式），实测 " +
+            std::to_string(lastCard->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, navYN),
+                          "nav 应 +summaryY+summaryH+14，实测 " +
                               std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(runlist->frame.x - panel->frame.x, 24.0f) &&
@@ -251,8 +264,8 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
             std::to_string(runlist->frame.x - panel->frame.x) + " 宽 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.y - panel->frame.y, 183.5f),
-        "窄窗内容应 +183.5（与弹性档同公式），实测 " +
+        nearPx(runlist->frame.y - panel->frame.y, contentYN),
+        "窄窗内容应 +contentY（navY+40），实测 " +
             std::to_string(runlist->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(runlist->frame.y + runlist->frame.height <=
                               panel->frame.y + panel->frame.height + 0.5f,
@@ -330,6 +343,66 @@ REGISTER_TEST(agent_ui_detail_layout_shortwide_900x600,
             std::to_string(scroll->frame.y + scroll->frame.height) +
             " 面板底 " +
             std::to_string(panel->frame.y + panel->frame.height));
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_layout_need339_header_clear_of_cards,
+              "detail_layout: need339——头部状态/元信息行完整露在摘要三卡上方（行底 ≤ 卡顶）+ 执行记录行卡范式密度（pad14/gap10/focus 描边）", {
+    DetailFixture fx("agentdl", "ovl");
+    DOCTEST_REQUIRE(fx.seedTask("遮挡回归任务"));
+
+    eui::Ui ui;
+    composeTo(ui, fx.mod, kScreenBig, "layout_ovl_1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, fx.mod, std::to_string(fx.taskId)));
+    eui::Ui ui2;
+    composeTo(ui2, fx.mod, kScreenBig, "layout_ovl_2");
+
+    // ① 头部三段行（kicker/状态/meta，bug154② 落 y=44，行高 lhS）必须整体在
+    // 摘要三卡上方：行盒底 ≤ 卡顶。历史缺陷：卡顶写字面 48 压进行盒（44+lhS，
+    // 默认档行底 61），卡片在 stack 里后画，把状态/元信息行下半截盖住。
+    const auto* kicker = ui2.find("agent.dialog.detail.header.kicker");
+    const auto* status = ui2.find("agent.dialog.detail.header.status");
+    const auto* meta = ui2.find("agent.dialog.detail.header.meta");
+    const auto* lastCard = ui2.find("agent.dialog.detail.summary.last");
+    DOCTEST_REQUIRE_MESSAGE(
+        kicker != nullptr && status != nullptr && meta != nullptr &&
+            lastCard != nullptr,
+        "缺头部行或摘要卡");
+    const float headerBottom =
+        std::max(std::max(kicker->frame.y + kicker->frame.height,
+                          status->frame.y + status->frame.height),
+                 meta->frame.y + meta->frame.height);
+    DOCTEST_CHECK_MESSAGE(
+        headerBottom <= lastCard->frame.y + 0.5f,
+        "头部文本行底 " + std::to_string(headerBottom) + " 侵入摘要三卡顶 " +
+            std::to_string(lastCard->frame.y));
+
+    // ② 行卡范式（schedule 运行历史行卡密度）：行盒 = 2*pad14 + 状态行
+    // max(22,lhS)；圆点 x = 内边距 14；行卡与上方日期头间距 = 范式卡距 10；
+    // 默认选中行 = .focus 1px primary 描边覆面（替代旧 primarySoftBg 填充 + 左缘条）
+    const auto* run0 = ui2.find("agent.dialog.detail.runlist.0");
+    const auto* dot0 = ui2.find("agent.dialog.detail.runlist.0.dot");
+    const auto* day0 = ui2.find("agent.dialog.detail.runlist.day.0");
+    const auto* focus0 = ui2.find("agent.dialog.detail.runlist.0.focus");
+    DOCTEST_REQUIRE_MESSAGE(run0 != nullptr && dot0 != nullptr && day0 != nullptr,
+                            "缺 runlist 行/圆点/日期头");
+    const auto& tokO = core::theme::current();
+    const float lhSO =
+        static_cast<float>(std::lround(tokO.sizes.fontSizeSmall * 1.4f));
+    const float wantRowH = 28.0f + std::max(22.0f, lhSO);
+    DOCTEST_CHECK_MESSAGE(nearPx(run0->frame.height, wantRowH),
+                          "行卡高应=2*14+状态行（范式密度 " +
+                              std::to_string(wantRowH) + "），实测 " +
+                              std::to_string(run0->frame.height));
+    DOCTEST_CHECK_MESSAGE(nearPx(dot0->frame.x - run0->frame.x, 14.0f),
+                          "圆点应落范式内边距 14，实测 " +
+                              std::to_string(dot0->frame.x - run0->frame.x));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(run0->frame.y - (day0->frame.y + day0->frame.height), 10.0f),
+        "行卡间距应=范式 10，实测 " +
+            std::to_string(run0->frame.y -
+                           (day0->frame.y + day0->frame.height)));
+    DOCTEST_REQUIRE_MESSAGE(focus0 != nullptr, "默认选中行缺 .focus 描边覆面");
     return true;
 })
 

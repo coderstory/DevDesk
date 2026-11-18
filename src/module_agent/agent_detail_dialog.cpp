@@ -122,7 +122,12 @@ void AgentModule::composeTaskDetailDialog(
     const float lhB = static_cast<float>(std::lround(fsB * 1.4f));
 
     // —— 区域划分（面板内坐标；单列三档 tab 一套几何，无宽窄分叉）——
-    const float summaryY = 48.0f;   // 头部之下（UAT6.1: 64→48 收紧顶部留白，与左右边距 28 协调）
+    // 头部状态/元信息行落点（bug154② 定格 44）。need339①：摘要三卡顶必须让到
+    // 行盒之下——原字面 summaryY=48 压进行盒（44+lhS，默认档行底 61 > 48），
+    // 卡片在 stack 里后画，把状态/元信息行下半截盖住。卡顶 = 行底 + 12（同弹窗
+    // 内 12 间距档），随字号缩放派生，不再写字面 48。
+    constexpr float kHeaderMetaY = 44.0f;
+    const float summaryY = kHeaderMetaY + lhS + 12.0f;
     const float summaryH =
         std::max(81.0f, 2.0f * 10.0f + lhS + lhB + lhS + 4.0f);
     const float navY = summaryY + summaryH + 14.0f;   // segment（三档）
@@ -195,7 +200,7 @@ void AgentModule::composeTaskDetailDialog(
             constexpr float kKickerW = 56.0f;   // 「任务详情」4 CJK @13
             constexpr float kStatusW = 64.0f;  // 「● 已取消」@13 + 余量
             ui.text("agent.dialog.detail.header.kicker")
-                .position(x0, 44.0f)  // bug154②：34 与标题行盒（10+26=36）重叠，让至 44
+                .position(x0, kHeaderMetaY)  // bug154②：34 与标题行盒（10+26=36）重叠，让至 44
                 .size(kKickerW, lhS)
                 .text("任务详情")
                 .fontSize(fsS)
@@ -203,7 +208,7 @@ void AgentModule::composeTaskDetailDialog(
                 .color(t.colors.textTertiary)
                 .build();
             ui.text("agent.dialog.detail.header.status")
-                .position(x0 + kKickerW + 8.0f, 44.0f)  // bug154② 同步让位
+                .position(x0 + kKickerW + 8.0f, kHeaderMetaY)  // bug154② 同步让位
                 .size(kStatusW, lhS)
                 .text("● " + statusText)
                 .fontSize(fsS)
@@ -233,7 +238,7 @@ void AgentModule::composeTaskDetailDialog(
                 metaColor = t.colors.errorText;
             }
             ui.text("agent.dialog.detail.header.meta")
-                .position(metaX, 44.0f)  // bug154② 同步让位
+                .position(metaX, kHeaderMetaY)  // bug154② 同步让位
                 .size(metaW, lhS)
                 .text(metaText)
                 .fontSize(fsS)
@@ -455,18 +460,26 @@ void AgentModule::composeTaskDetailDialog(
                 })
                 .build();
 
-            // —— 时间线（tab 0）：按天分组 + 行容器化 ——
-            // 行 = <i> 容器（stack），子节点 .bg（命中面+选中底）/ .dot / .time /
-            // .status / .duration；失败行内 .err（48 字节摘要）[.err.hint 仅 LLM 配置类]。
-            // onClick 落 .bg；点行自动切「运行详情」tab（方案 A 要点 ③）
+            // —— 时间线（tab 0）：按天分组 + 行卡化（need339② 对齐 schedule
+            // 运行历史行卡范式）——
+            // 行 = <i> 容器（stack），子节点 .bg（cardPanelColored 行卡底板：
+            // 1px 边 + 面板阴影 + 主题分档底色）/ .focus（选中 1px primary 描边覆面）/
+            // .dot / .time / .status / .duration；失败行内 .err（48 字节摘要）
+            // [.err.hint 仅 LLM 配置类]。onClick 落 .bg；点行自动切「运行详情」
+            // tab（方案 A 要点 ③）。字重两档制：.status 600（标题档），.time/
+            // .duration/.err/日期头 400。
             auto composeRunlist = [&](float rx, float ry, float rw, float rh) {
                 const float titleH = std::max(22.0f, lhB);
-                // 行高 fs13 派生（err/hint 各 +16）
-                const float rowMainH = std::max(52.0f, lhS + 34.0f);
+                // 行卡密度取范式三参（schedule_ui_history kCardPad/kCardGap/
+                // kStatusRowH）：内边距 14、行间距 10、状态行高 22——
+                // 行盒 = 上下 pad + 状态行；err/hint 各 +16
+                constexpr float kRowPad = 14.0f;                // 范式 kCardPad
+                constexpr float kRowGap = 10.0f;                // 范式 kCardGap
+                const float kMainLineH = std::max(22.0f, lhS);  // 范式 kStatusRowH
+                const float rowMainH = 2.0f * kRowPad + kMainLineH;
                 const float rowErrH = std::max(16.0f, lhS - 2.0f);
-                constexpr float kRowInnerX = 12.0f;
                 constexpr float kDotSize = 8.0f;
-                const float timeX = kRowInnerX + kDotSize + 8.0f;
+                const float timeX = kRowPad + kDotSize + 8.0f;
                 constexpr float kTimeW = 100.0f;   // MM-DD HH:MM:SS @13 ≈ 96
                 const float statusX = timeX + kTimeW + 4.0f;
                 constexpr float kStatusW = 48.0f;  // 3 CJK @13 = 39
@@ -514,7 +527,7 @@ void AgentModule::composeTaskDetailDialog(
                                                "agent.dialog.detail.runlist.scroll")
                             .position(0.0f, titleH + 8.0f)
                             .size(rw, std::max(0.0f, rh - titleH - 8.0f - noteH))
-                            .gap(4.0f)
+                            .gap(kRowGap)  // 行卡间距 = 范式 10（need339②）
                             .step(18.0f)
                             .theme(themeTokens)
                             // key 含 size/选中/最新状态（运行中耗时文本变化
@@ -577,18 +590,17 @@ void AgentModule::composeTaskDetailDialog(
                                     inner.stack(runRowId)
                                         .size(cw, rowH)
                                         .content([&] {
-                                            // .bg = 命中面 + 选中底（未选中透明，
-                                            // hover 微亮）。alpha=0 = 透明底语义常量
-                                            inner.rect(runRowId + ".bg")
-                                                .size(cw, rowH)
-                                                .radius(t.sizes.radiusSmall)
-                                                .states(highlighted
-                                                            ? t.colors.primarySoftBg
-                                                            : eui::Color{0.0f, 0.0f,
-                                                                         0.0f, 0.0f},
-                                                        t.colors.hover,
-                                                        t.colors.hover)
-                                                .onClick([this, runId = run.id] {
+                                            // 行卡底板 = 范式材质（schedule 运行
+                                            // 历史行卡同款 cardPanelColored：主题
+                                            // 分档底色 + 1px 边 + 面板阴影）；命中
+                                            // 面与点击同落底板（id 契约 .bg 不变）
+                                            const eui::Color rowBg =
+                                                t.isDark ? t.colors.surfaceElevated
+                                                         : t.colors.background;
+                                            ui_kit::cardPanelColored(
+                                                inner, runRowId + ".bg", 0.0f, 0.0f,
+                                                cw, rowH, t.sizes.radius, t, rowBg,
+                                                [this, runId = run.id] {
                                                     selectedRunId_ = runId;
                                                     // seq 只在 run 内唯一：切 run 清
                                                     // 消息展开态并收回消息区；
@@ -599,25 +611,32 @@ void AgentModule::composeTaskDetailDialog(
                                                     detailTab_ = 1;
                                                     ++msgScrollVersion_;
                                                     tasksDirty_ = true;
-                                                })
-                                                .build();
+                                                });
                                             if (highlighted) {
-                                                // 选中行左缘 2px primary
-                                                inner.rect(runRowId + ".edge")
-                                                    .size(2.0f, rowH)
-                                                    .color(t.colors.primary)
+                                                // 选中态 = 范式 focus 覆面：透明底 +
+                                                // 1px primary 描边（schedule 行卡同款，
+                                                // 替代旧 primarySoftBg 填充 + 左缘条）
+                                                inner.rect(runRowId + ".focus")
+                                                    .size(cw, rowH)
+                                                    .color(eui::Color{0.0f, 0.0f,
+                                                                      0.0f, 0.0f})
+                                                    .radius(t.sizes.radius)
+                                                    .border(1.0f, t.colors.primary)
                                                     .build();
                                             }
                                             inner.rect(runRowId + ".dot")
-                                                .position(kRowInnerX,
-                                                          (rowMainH - kDotSize) * 0.5f)
+                                                .position(kRowPad,
+                                                          kRowPad +
+                                                              (kMainLineH - kDotSize) *
+                                                                  0.5f)
                                                 .size(kDotSize, kDotSize)
                                                 .radius(t.sizes.radiusPill)
                                                 .color(statusDotColor(run.status, t))
                                                 .build();
                                             inner.text(runRowId + ".time")
                                                 .position(timeX,
-                                                          (rowMainH - lhS) * 0.5f)
+                                                          kRowPad +
+                                                              (kMainLineH - lhS) * 0.5f)
                                                 .size(kTimeW, lhS)
                                                 .text(formatLocalShortDateTime(
                                                     run.startedAt))
@@ -629,10 +648,14 @@ void AgentModule::composeTaskDetailDialog(
                                                 .build();
                                             inner.text(runRowId + ".status")
                                                 .position(statusX,
-                                                          (rowMainH - lhS) * 0.5f)
+                                                          kRowPad +
+                                                              (kMainLineH - lhS) * 0.5f)
                                                 .size(kStatusW, lhS)
                                                 .text(statusText)
                                                 .fontSize(fsS)
+                                                // 标题档 600（范式行卡状态行同档；
+                                                // 明细 .time/.duration/.err 400）
+                                                .fontWeight(600)
                                                 .lineHeight(lhS)
                                                 .wrap(false)
                                                 .maxWidth(kStatusW)
@@ -640,9 +663,10 @@ void AgentModule::composeTaskDetailDialog(
                                                 .build();
                                             inner.text(runRowId + ".duration")
                                                 .position(durationX,
-                                                          (rowMainH - lhS) * 0.5f)
+                                                          kRowPad +
+                                                              (kMainLineH - lhS) * 0.5f)
                                                 .size(std::max(
-                                                    0.0f, cw - durationX - kRowInnerX),
+                                                    0.0f, cw - durationX - kRowPad),
                                                       lhS)
                                                 .text(durationText)
                                                 .fontSize(fsS)
@@ -650,7 +674,7 @@ void AgentModule::composeTaskDetailDialog(
                                                 .horizontalAlign(eui::HorizontalAlign::Right)
                                                 .wrap(false)
                                                 .maxWidth(std::max(
-                                                    0.0f, cw - durationX - kRowInnerX))
+                                                    0.0f, cw - durationX - kRowPad))
                                                 .color(t.colors.textTertiary)
                                                 .build();
                                             if (hasErr) {
@@ -659,7 +683,7 @@ void AgentModule::composeTaskDetailDialog(
                                                     .size(std::max(
                                                               0.0f,
                                                               cw - timeX -
-                                                                  kRowInnerX),
+                                                                  kRowPad),
                                                           rowErrH)
                                                     .text("错误：" +
                                                           utf8Truncate(*run.error, 48))
@@ -667,7 +691,7 @@ void AgentModule::composeTaskDetailDialog(
                                                     .lineHeight(rowErrH)
                                                     .wrap(false)
                                                     .maxWidth(std::max(
-                                                        0.0f, cw - timeX - kRowInnerX))
+                                                        0.0f, cw - timeX - kRowPad))
                                                     .color(t.colors.errorText)
                                                     .build();
                                                 // 「去 Claude 页」引导：仅「LLM 配置
@@ -679,7 +703,7 @@ void AgentModule::composeTaskDetailDialog(
                                                         .size(std::max(
                                                                   0.0f,
                                                                   cw - timeX -
-                                                                      kRowInnerX),
+                                                                      kRowPad),
                                                               rowErrH)
                                                         .text("去 Claude 页 →")
                                                         .fontSize(fsS)

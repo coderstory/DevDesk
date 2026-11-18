@@ -1550,8 +1550,15 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     const auto* run0Bg = ui2.find("agent.dialog.detail.runlist.0.bg");
     const auto* run1Bg = ui2.find("agent.dialog.detail.runlist.1.bg");
     DOCTEST_REQUIRE(run0Bg != nullptr && run1Bg != nullptr);
-    DOCTEST_CHECK_MESSAGE(run0Bg->color.a > run1Bg->color.a,
-                          "最近一次 run 未高亮（选中 .bg 应为 primarySoftBg）");
+    // need339② 行卡范式：底板 = 同材质 cardPanelColored（同色同边），选中态改由
+    // 1px primary .focus 描边覆面表达（schedule 运行历史行卡同款，替代旧
+    // primarySoftBg 填充 + 2px 左缘条）
+    const auto* run0Focus = ui2.find("agent.dialog.detail.runlist.0.focus");
+    DOCTEST_REQUIRE_MESSAGE(run0Focus != nullptr,
+                            "最近一次 run（默认选中）缺 .focus 描边覆面");
+    DOCTEST_CHECK_MESSAGE(run0Focus->border.width > 0.5f,
+                          "选中行 .focus 应有 1px 描边");
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.runlist.1.focus") == nullptr);
     const auto* errRow = ui2.find("agent.dialog.detail.runlist.1.err");
     DOCTEST_REQUIRE(errRow != nullptr);
     DOCTEST_CHECK(errRow->text.find("200K") != std::string::npos);
@@ -7533,6 +7540,92 @@ REGISTER_TEST(agent_ui_task_template_apply,
     DOCTEST_CHECK(ui8.find("agent.dialog.task.tpl.caption") == nullptr);
     DOCTEST_CHECK(ui8.find("agent.dialog.task.tpl.item.0.bg") == nullptr);
 
+    mod.onStop();
+    return true;
+})
+
+// 防（need338，need334 同根因迁 agent 任务卡）：jelly zIndex(20)/scale 曾挂 .bg，
+// 标题/药丸/启动钮是 .bg 兄弟 → 560ms 内卡底盖内容 + bg 独缩错位。迁移后
+// transform/zIndex 施加在整卡 stack（agent.task.<id>），.bg 只管三态材质/radius。
+REGISTER_TEST(agent_ui_task_card_jelly_whole_stack_layer,
+              "agent_ui 任务卡果冻：transform/zIndex 在整卡 stack、bg 只管材质/radius（need338 迁 need334 范式）", {
+    test_support::TestDb tdb("agentui", "jellylayer");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("果冻任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string id = "agent.task." + std::to_string(created.value());
+    const auto nearOne = [](float v) { return v > 0.995f && v < 1.005f; };
+    const auto offOne = [](float v) { return v < 0.995f || v > 1.005f; };
+
+    // 静息帧：stack z=0 无缩放；bg z=0 无缩放
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_jelly_rest");
+    {
+        auto* stack = ui.find(id);
+        auto* bg = ui.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(stack->zIndex == 0);
+        DOCTEST_CHECK(nearOne(stack->transform.scale.x));
+        DOCTEST_CHECK(bg->zIndex == 0);
+        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
+    }
+    // hover 进入：.hit onHover 写 hoverHolder_ → 时间线 active，z 抬整卡、bg 不抬
+    {
+        auto* hit = ui.find(id + ".hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onHoverChanged != nullptr);
+        hit->onHoverChanged(true);
+    }
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_jelly_active");
+    {
+        auto* stack = ui2.find(id);
+        auto* bg = ui2.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(stack->zIndex == 20);   // 动画期整卡盖邻卡
+        DOCTEST_CHECK(bg->zIndex == 0);       // 卡底不再压内容
+    }
+    // 时间线行进中：stack 缩放、bg 恒 1
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_jelly_mid");
+    {
+        auto* stack = ui3.find(id);
+        auto* bg = ui3.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(offOne(stack->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
+    }
+    // hover 退出：agent leave 有 120ms 去抖，过账后 compose 收敛 → 回落
+    {
+        auto* hit2 = ui2.find(id + ".hit");
+        DOCTEST_REQUIRE(hit2 != nullptr);
+        hit2->onHoverChanged(false);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(160));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_jelly_exit");
+    {
+        auto* stack = ui4.find(id);
+        auto* bg = ui4.find(id + ".bg");
+        DOCTEST_REQUIRE(stack != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(stack->zIndex == 0);
+        DOCTEST_CHECK(nearOne(stack->transform.scale.x));
+        DOCTEST_CHECK(nearOne(bg->transform.scale.x));
+    }
     mod.onStop();
     return true;
 })
