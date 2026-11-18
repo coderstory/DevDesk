@@ -22,6 +22,7 @@
 // notepad_window.cpp 等消费、需要完整定义，故直接引 EUI 头。
 #include <eui/dsl.h>
 #include <eui/types.h>
+#include <components/markdown.h>  // MarkdownStyle（need345 预览选区样式快照字段）
 
 namespace module::notepad {
 
@@ -56,6 +57,20 @@ struct NotepadSession {
                              // 旋钮，notepad.btnWrap 钮接管；大文件模式载入强制关）
     bool previewOn = false;  // F-13 md 预览整页切换（.md/.markdown 会话；切换不动
                              // 编辑 InputState → 切回光标/滚动保留）
+
+    // ── md 预览文本选区（need345，语义平移自退役查看器 eebed0b9/池 #264）──
+    // 锚/焦 = 整篇显示文本码点域（MarkdownBuilder::displayTextOf 扁平域，含块
+    // 间 '\n'）——与旧查看器逐块 (block,cp) 域不同：notepad 预览 = components::
+    // markdown 整篇单元素渲染，无逐块几何表，跨块选区天然由扁平域承担。
+    // selPreviewStyle/Width = compose 帧快照：指针回调在帧间派发，反查
+    // displayCpForPoint 须与渲染同源样式/宽度（bug259 onHover 同纪律——回调
+    // 只捕 session 成员指针，禁捕 compose 帧栈上局部）。
+    size_t selAnchorCp = 0;
+    size_t selFocusCp = 0;
+    bool selDragging = false;  // 按下→抬起之间（拖选进行中）
+    bool selHasText = false;   // 非空选区（拖选中实时高亮 + 抬起后保留）
+    components::MarkdownStyle selPreviewStyle{};  // compose 帧样式快照（见上注）
+    float selPreviewWidth = 0.0f;                 // 同上：渲染宽快照
 
     // ── 编码 / 行尾（notepad_encoding 探测结果）──
     NotepadEncodingProbe enc{};
@@ -191,5 +206,10 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key);
 // F-02 窗内打开：OS 打开对话框（过滤器=扩展名清单+所有文件）→ 逐路径
 // openNotepadWindow（已开路径由查重聚焦收口）。
 void notepadOpenViaDialog(NotepadSession& s);
+
+// need345：预览选区将复制的文本（整篇显示文本码点域切片，无 markdown 标记
+// 符；空选区 = 空串）。实现单点在 notepad_window.cpp——拖选抬起自动复制与
+// Ctrl+C 兼容通道同一条构建通路（测试直驱本函数，session 字段可直接注入）。
+std::string notepadPreviewSelText(const NotepadSession& s);
 
 }  // namespace module::notepad

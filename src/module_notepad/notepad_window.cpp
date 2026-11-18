@@ -14,6 +14,7 @@
 #include <components/input.h>
 #include <components/dialog.h>  // F-05 未保存保护三选弹窗（content() 缝三钮）
 #include <components/markdown.h>  // F-13 预览整篇渲染（EUI 组件层合法依赖）
+#include <components/mousearea.h>  // need345 预览拖选 hit 覆盖层（press/drag/release）
 #include <components/scrollview.h>  // 字体下拉面板内滚（F-09，设计稿 §4.2 max-h 内滚）+ 预览纵滚
 #include <components/theme.h>
 #include <components/tooltip.h>  // F-11 格式化钮键序明示副文案（D-4 轻量明示）
@@ -482,6 +483,93 @@ void notepadTogglePreviewIfAvailable(NotepadSession& s) {
     notepadTogglePreview(s);
 }
 
+// ── md 预览文本选区（need345）：拖选三件 + 自动复制（整篇显示码点域）──
+// 语义平移自退役查看器（eebed0b9 池 #264：拖选自动复制、剪贴板回读校验、
+// Ctrl+C 兼容通道）；域差异（整篇扁平码点域 vs 旧逐块域）见 notepad_session.h
+// 选区字段注释。toast = sessionToast（compose 尾 drawLightToastPill 单源消费，
+// ui_kit 轻提示只调用）。
+
+// 码点 → 字节偏移（显示文本切片）：lead byte 步进 + 钳位串尾（旧查看器
+// viewerSelCpToByte 同式；码点域切片天然不产 CJK/emoji 半字）。
+size_t notepadSelCpToByte(const std::string& text, size_t cp) {
+    size_t i = 0;
+    for (size_t done = 0; done < cp && i < text.size(); ++done) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        i += std::min<size_t>(c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                              text.size() - i);
+    }
+    return i;
+}
+
+// 归一化阅读序 [cp0, cp1)；空选区（锚=焦）返回 false。
+bool notepadSelNormalized(const NotepadSession& s, size_t* cp0, size_t* cp1) {
+    if (s.selAnchorCp == s.selFocusCp) return false;
+    if (s.selAnchorCp < s.selFocusCp) {
+        *cp0 = s.selAnchorCp;
+        *cp1 = s.selFocusCp;
+    } else {
+        *cp0 = s.selFocusCp;
+        *cp1 = s.selAnchorCp;
+    }
+    return true;
+}
+
+// 指针事件（hit 层内容系局部坐标 = 整篇内容系）→ 整篇显示码点：渲染同源
+// displayCpForPoint 反查（x 钳渲染宽、y 钳非负——旧查看器 localX 同式）。
+size_t notepadSelHitCp(NotepadSession& s, const components::MouseEvent& ev) {
+    const auto hit = components::MarkdownBuilder::displayCpForPoint(
+        s.editText, s.selPreviewWidth, s.selPreviewStyle,
+        std::clamp(ev.x, 0.0f, std::max(0.0f, s.selPreviewWidth)),
+        std::max(0.0f, ev.y));
+    return hit.ok ? hit.cp : 0;
+}
+
+// 写剪贴板 + 回读校验 + 成功 toast（need345）。回读校验 = 旧查看器
+// viewerCopyToClipboard 同语义：setClipboardText 无返回值，写后经 clipboardText
+// 比对，失配 LOG_WARN（agent 模块复制先例同源；成功面不打日志降噪）。
+void notepadCopySel(NotepadSession& s, const std::string& text) {
+    if (text.empty()) return;
+    core::window::setClipboardText(text);
+    if (s.handle != nullptr &&
+        core::window::clipboardText(static_cast<core::window::Handle>(s.handle)) != text) {
+        LOG_WARN("notepad md 预览: 剪贴板写入回读校验失败（期望 " +
+                 std::to_string(text.size()) + " 字节，选区自动复制可能未生效）");
+    }
+    char buf[48];
+    std::snprintf(buf, sizeof buf, "已复制 %zu 字", notepadUtf8Length(text));
+    sessionToast(s, buf);
+    app::requestUpdate();
+}
+
+// 按下：清旧选区并落锚点（简单点击 = 空选区，抬起清零不写剪贴板）。
+void notepadSelPress(NotepadSession& s, const components::MouseEvent& ev) {
+    s.selDragging = true;
+    s.selHasText = false;
+    s.selAnchorCp = s.selFocusCp = notepadSelHitCp(s, ev);
+    app::requestUpdate();
+}
+
+// 拖动：焦点实时跟随（非空即实时高亮；矩形层 drawPreviewSlot 每帧按选区态画）。
+void notepadSelDrag(NotepadSession& s, const components::MouseEvent& ev) {
+    if (!s.selDragging) return;
+    s.selFocusCp = notepadSelHitCp(s, ev);
+    s.selHasText = s.selAnchorCp != s.selFocusCp;
+    app::requestUpdate();
+}
+
+// 抬起：非空选区 = 保留高亮 + 自动复制（选中即复制，老板 2026-11-11 口径）；
+// 空选择只清零（不写剪贴板）。
+void notepadSelRelease(NotepadSession& s, const components::MouseEvent& ev) {
+    if (!s.selDragging) return;  // 无在途按压的释放（异常时序）不动作
+    s.selDragging = false;
+    s.selFocusCp = notepadSelHitCp(s, ev);
+    s.selHasText = s.selAnchorCp != s.selFocusCp;
+    if (s.selHasText) {
+        notepadCopySel(s, notepadPreviewSelText(s));
+    }
+    app::requestUpdate();
+}
+
 // 编辑器 per-line provider（语法层 ∪ 命中层；3 参 lineStyles 契约 + 4 参
 // highlightLine 经本函数桥接，session.language 在此绑定）。
 std::vector<eui::TextRun> notepadEditorLineRuns(
@@ -821,6 +909,7 @@ void drawPreviewSlot(
     const components::theme::ThemeColorTokens& componentTheme) {
     components::MarkdownStyle style(componentTheme);
     style.blockGap *= core::theme::fontScale();
+    s.selPreviewStyle = style;  // need345 选区反查样式快照（指针回调帧间消费）
     // 滚动偏移留存（Ui 态与窗同寿）；contentKey = 文本修订 → 预览态禁编辑，
     // 度量缓存稳定（textRevision 变化才会重测）。
     float& scroll = ui.state<float>(std::string(kNotepadPreviewId) + ".scroll");
@@ -845,17 +934,84 @@ void drawPreviewSlot(
                     .build();
                 return;
             }
-            components::markdown(inner, kNotepadPreviewContentId)
-                .markdown(s.editText)
+            // need345 反查宽度快照（内容系 = hit 层局部系，见 session 选区字段注）
+            s.selPreviewWidth = innerW;
+            // 整篇包裹 stack：md 文本 + 选区矩形叠层 + 透明 hit 覆盖层（拖选
+            // 三件）。高 = estimateHeight（渲染同源估算，displayCpForPoint 的
+            // 纵向排布同式）——旧查看器逐块 hit 缝（mdDrawBlockFlowCore）的
+            // 整篇等价形态（块流核 module_markdown 私有，隔离禁依赖，见 §注）。
+            const float docH = components::MarkdownBuilder::estimateHeight(
+                s.editText, innerW, style);
+            const std::string wrapId = std::string(kNotepadPreviewContentId) + ".wrap";
+            auto wrap = inner.stack(wrapId)
                 .width(innerW)
-                .wrapContentHeight()
-                .style(style)
-                .build();
+                .height(docH);
+            wrap.content([&] {
+                components::markdown(inner, kNotepadPreviewContentId)
+                    .markdown(s.editText)
+                    .width(innerW)
+                    .wrapContentHeight()
+                    .style(style)
+                    .build();
+                // 选区矩形（info 蓝低透明，旧查看器 selAlpha 同档）：文档系 y
+                // 直接叠层（hitRectsForDisplayRangeDoc，need345 EUI-NEO 新缝）；
+                // rect 不消费命中，不挡 hit 层事件。
+                if (s.selHasText) {
+                    size_t cp0 = 0, cp1 = 0;
+                    if (notepadSelNormalized(s, &cp0, &cp1)) {
+                        const auto rects =
+                            components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+                                s.editText, innerW, style, cp0, cp1);
+                        const auto& t = core::theme::current();
+                        const float selAlpha =
+                            core::theme::currentThemeName() != "Dark" ? 0.16f : 0.22f;
+                        size_t i = 0;
+                        for (const auto& r : rects) {
+                            inner.rect(wrapId + ".sel." + std::to_string(i++))
+                                .position(r.x, r.y)
+                                .size(r.w, r.h)
+                                .color(components::theme::withAlpha(t.colors.info, selAlpha))
+                                .build();
+                        }
+                    }
+                }
+                // 透明 hit 覆盖层（不劫持滚动——块流 hit 层同机制）：坐标 = 覆盖
+                // 层局部 = 整篇内容系（notepadSelHitCp 直入反查）；回调只捕
+                // session 指针（clue #292 值捕获纪律，禁捕帧栈上 style/innerW）。
+                components::mouseArea(inner, wrapId + ".hit")
+                    .size(innerW, docH)
+                    .cursor(core::CursorShape::IBeam)
+                    .onPress([p = &s](const components::MouseEvent& ev) {
+                        notepadSelPress(*p, ev);
+                    })
+                    .onDrag([p = &s](const components::MouseEvent& ev) {
+                        notepadSelDrag(*p, ev);
+                    })
+                    .onRelease([p = &s](const components::MouseEvent& ev) {
+                        notepadSelRelease(*p, ev);
+                    })
+                    .build();
+            });
+            wrap.build();
         })
         .build();
 }
 
 }  // namespace
+
+// need345：预览选区文本构建单点（声明见 notepad_session.h）——整篇显示文本
+// 码点域切片：跨块 '\n' 已含在扁平域内（= 旧查看器「多块按阅读序 '\n' 连接」
+// 的整篇等价语义）；显示域无 markdown 标记符；码点切片不产半字。拖选抬起
+// 自动复制与 Ctrl+C 兼容通道共用本函数（测试直驱同一条通路）。
+std::string notepadPreviewSelText(const NotepadSession& s) {
+    size_t cp0 = 0, cp1 = 0;
+    if (!notepadSelNormalized(s, &cp0, &cp1)) return {};
+    const std::string display = components::MarkdownBuilder::displayTextOf(s.editText);
+    const size_t begin = notepadSelCpToByte(display, cp0);
+    const size_t end = notepadSelCpToByte(display, cp1);
+    if (begin >= end) return {};
+    return display.substr(begin, end - begin);
+}
 
 // 未保存保护三选弹窗（批 4 F-05）：渲染在子窗自己的 Ui 树内（每窗独立）。
 // components::dialog content() 缝自绘三钮行（dialog.h 默认布局只有两钮位）；
@@ -1416,6 +1572,13 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
     }
     if (shortcut && key.key == eui::InputKey::P) {
         notepadTogglePreviewIfAvailable(s);  // M+P 预览切换（设计稿 §6）
+        return;
+    }
+    // Ctrl/Cmd+C（need345 预览选区复制兼容通道）：与拖选自动复制同一条
+    // notepadPreviewSelText 构建通路（预览只读无编辑态；编辑态 Ctrl+C 由
+    // input 组件剪贴板语义承担——预览态编辑 input 不在树内，键必到窗口级）。
+    if (shortcut && key.key == eui::InputKey::C && s.previewOn && s.selHasText) {
+        notepadCopySel(s, notepadPreviewSelText(s));
         return;
     }
     if (shortcut && key.key == eui::InputKey::W && s.handle != nullptr) {
