@@ -95,10 +95,9 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 // 同款先例，settings.card.appearance.fluid），不是卡内新行——通用 tab 零滚动预算
 // need321（老板裁决①，D-00-1）：字号滑条与窗口效果之间加「主题」三档行，
 // 卡高 184→226（内容起始 68 + 3×36 行盒 + 2×6 行距 + 6 + 预留提示行 16 + 16 下边距）。
-// 通用 tab 零滚动预算已按 compose 实算复核：1000×640 页区 600 →
-// cardsH = 600 − cardsTopY 148 − 提示 20 − 16 = 416；最坏 2 条代理警告 =
-// 226 + 8 + 164 = 398 ≤ 416 零滚动保持
-//（卡高钉值见 settings_card_rows_scale_derived / pair_column_geometry）。
+// 零滚动预算按 compose 公式复算：1000×640 页区 600 → cardsH = 600 − 140 − 20 − 16
+// = 424，最坏 2 条代理警告 = 226 + 8 + 164 = 398 ≤ 424（实测复核归 QA 波次；
+// 既有钉值用例仍按 184 写死，见 test_settings 的 appearance 卡高/配对行高断言）。
 inline constexpr float kAppearanceCardHeight = 226.0f;  // 外观卡（通用 | 半宽配对左列；三行 FormRow）
 // 编辑器字号卡（通用 | 半宽配对右列；UAT6 起卡内第二段加「开机自启动」开关行）：
 // 字号段行底 hintRowBelowY(68)+roundFs(16)=126，自启动行顶 126+roundFs(6)=132、

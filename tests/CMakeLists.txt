@@ -790,9 +790,12 @@ set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # schedule-rule-once-chain = 定时一次性规则建→存→用户页签行卡。
 # schedule-cron-edit-chain = cron 表达式建→存→行卡→编辑回显（need307 归因：翻倍
 # 根因=预填默认值上追加注入文本，注入前须 Shortcut+A+Backspace 清场，非事件重复投递）。
+# need325（manual-triage A-5/A-6）：schedule-resident-enable-chain = 常驻规则建→存→
+# 行卡→编辑弹窗停用→「已停用」tag（C-13 tzId 缺陷回归哨）。
+# need325（A-4）：todo-keyboard-move = Shortcut+↑/↓ 组合键移动选中卡（位置真锁）。
 foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input
         mcp-claude-install claude-d1-seed-enable todo-card-context-menu schedule-rule-once-chain
-        schedule-cron-edit-chain)
+        schedule-cron-edit-chain schedule-resident-enable-chain todo-keyboard-move)
     add_test(NAME ui_driver_${_ui_scene}
         COMMAND devdesk_ui_driver
             --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"
