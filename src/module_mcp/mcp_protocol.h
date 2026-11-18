@@ -41,4 +41,8 @@ private:
     std::string serverVersion_;
 };
 
+// need301②（原 bug#28 观测补强）：外层总闸超时后弃置（detach）的 worker
+// 累计数。进程级单调原子计数，仅供观测/测试断言；detach 线程不可回收。
+int abandonedToolWorkers();
+
 } // namespace module::mcp

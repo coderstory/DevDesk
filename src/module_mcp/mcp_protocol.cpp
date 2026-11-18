@@ -1,5 +1,6 @@
 #include "mcp_protocol.h"
 
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -19,6 +20,11 @@ namespace {
 
 using platform::json::JsonObject;
 using platform::json::JsonValue;
+
+// need301②（原 bug#28 观测补强）：外层总闸超时弃置（detach）的 worker 累计
+// 计数。detach 线程不可收割，只观测不回收；并发上限（单飞拒绝）属后续裁决，
+// 此处不动。
+std::atomic<int> g_abandonedToolWorkers{0};
 
 std::string trimmed(const std::string& text) {
     std::size_t begin = 0;
@@ -100,6 +106,10 @@ core::Result<JsonValue> parseFragment(const std::string& fragment) {
 }
 
 } // namespace
+
+int abandonedToolWorkers() {
+    return g_abandonedToolWorkers.load(std::memory_order_relaxed);
+}
 
 McpProtocol::McpProtocol(McpSessionStore& sessions,
                          core::mcp::McpToolRegistry& tools,
@@ -323,8 +333,12 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
         if (executeFuture.wait_for(std::chrono::seconds(timeoutSeconds)) !=
             std::future_status::ready) {
             executeWorker.detach();
+            const int abandoned =
+                g_abandonedToolWorkers.fetch_add(1, std::memory_order_relaxed) +
+                1;
             LOG_WARN("MCP 工具执行超过外层总闸 " + std::to_string(timeoutSeconds) +
-                     "s，放弃等待: " + toolName);
+                     "s，放弃等待（当前弃置 worker 计数 " +
+                     std::to_string(abandoned) + "）: " + toolName);
             return HttpOutcome{200,
                                errorResponseText(
                                    id, -32603,

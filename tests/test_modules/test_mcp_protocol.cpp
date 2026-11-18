@@ -629,6 +629,34 @@ REGISTER_TEST(mcp_protocol_tools_call_gate_passthrough,
     return true;
 })
 
+REGISTER_TEST(mcp_protocol_abandoned_worker_counter,
+              "mcp protocol: 两连慢工具超外层总闸 → 弃置 worker 计数增量=2（need301② 观测口径）", {
+    Fixture fixture;
+    auto slow = std::make_shared<SlowTool>();
+    DOCTEST_CHECK(fixture.tools.registerTool(slow).isOk());
+
+    // 基线取快照（进程级累计量；同二进制内其它用例可能已触发过弃置）
+    const int before = module::mcp::abandonedToolWorkers();
+    const char* saved = std::getenv("MCP_TOOL_TIMEOUT_SECONDS");
+    test_support::setEnvVar("MCP_TOOL_TIMEOUT_SECONDS", "1");
+
+    std::string newId;
+    const std::string sessionId = fixture.openSession();
+    auto first = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"slow_tool"}})",
+        sessionId, "", newId);
+    auto second = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"slow_tool"}})",
+        sessionId, "", newId);
+    test_support::setEnvVar("MCP_TOOL_TIMEOUT_SECONDS",
+                            saved != nullptr ? saved : "");
+
+    DOCTEST_CHECK_EQ(first.status, 200);
+    DOCTEST_CHECK_EQ(second.status, 200);
+    DOCTEST_CHECK_EQ(module::mcp::abandonedToolWorkers(), before + 2);
+    return true;
+})
+
 REGISTER_TEST(mcp_protocol_tools_call_is_error,
               "mcp protocol: 工具业务失败（isError=true）仍 200，result 带 isError=true", {
     Fixture fixture;

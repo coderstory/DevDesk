@@ -472,7 +472,8 @@ void composeRepoDropdown(eui::Ui& ui, float w, float h, GitPageController& c,
                     .size(popupW - scaled(24.0f), labelH)
                     .text("最近仓库")
                     .fontSize(scaled(11.0f))
-                    .fontWeight(500)
+                    // need219 §2.1：节标=普通域文案（非状态词/关键值）→ 明细档 400
+                    .fontWeight(400)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textTertiary)
                     .build();
@@ -492,7 +493,8 @@ void composeRepoDropdown(eui::Ui& ui, float w, float h, GitPageController& c,
                     .size(popupW - scaled(24.0f) - scaled(56.0f), scaled(18.0f))
                     .text(e.name)
                     .fontSize(scaled(13.0f))
-                    .fontWeight(500)
+                    // need219 §2.1：仓名=列表域主文案（非状态词/关键值）→ 明细档 400
+                    .fontWeight(400)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(nameColor)
                     .build();

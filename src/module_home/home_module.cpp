@@ -13,6 +13,7 @@
 #include "home_service.h"
 #include "toast_notice_bridge.h"  // need270：点已关停模块卡片时投递应用级提示
 #include <ui_kit/card.h>
+#include <ui_kit/jelly.h>  // need301③ 统计卡果冻时间线（手写缝）
 
 #include <eui/dsl.h>
 
@@ -24,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 #include <functional>
 #include <memory>
 #include <string>
@@ -83,6 +85,13 @@ float homeGridCardWidth(float availableW, float gap, int cols) {
     return (availableW - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols);
 }
 
+// need301③：统计卡 hover 集（todo plate.hoverCards / schedule 同款集成员语义）。
+// drawSolidStatCard 为自由函数、home 页进程单实例 → 文件级静态承载，键=卡元素 id。
+std::unordered_set<std::string>& statCardHoverSet() {
+    static std::unordered_set<std::string> set;
+    return set;
+}
+
 // 玻璃统计卡（2026-11-01 重构）：玻璃白半透底 + 16px 圆角 + 20px 内边距 +
 // 指标名 14px（说明并入「笔记 · 今日」）/ 数据 30px 700 一级 两行排版。
 // 五色实底退役（S6.6）：那 5 色不承载状态语义，五个彩色焦点互相抢，反而不聚焦。
@@ -125,12 +134,41 @@ void drawSolidStatCard(eui::Ui& ui,
         std::max(0.0f, (innerH - (labelH + numGap + numberH)) * 0.5f);
     const float numberY = textTop + labelH + numGap;
 
-    components::card(ui, id)
+    // need301③ 统计卡果冻（need297 E1 先例 todo_ui_board.cpp:786-810 手写缝同款）：
+    // CardBuilder 不外露 scale/transform 缝 → 按 components::card::build 等价展开
+    //（bg 的 border/shadow 沿用 CardStyle 默认档，视觉零漂移），果冻只追加
+    // radius/scale 形变目标；命中面 .press 与 onClick 零改动，hover 写集下帧读
+    //（todo plate.hoverCards 同款集成员语义）。
+    const components::CardStyle cardStyle;  // 与 components::card 默认档一致
+    const bool cardHovered = statCardHoverSet().count(id) > 0;
+    const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, cardHovered);
+    ui.stack(id)
         .size(width, height)
-        .radius(corner)
-        .color(bgColor)
-        .padding(pad)
         .content([&] {
+            ui.rect(id + ".bg")
+                .size(width, height)
+                .color(bgColor)
+                .border(cardStyle.border)
+                .shadow(cardStyle.shadow)
+                .radius(pose.radius +
+                        (corner - ui_kit::JellyOptions::kRestRadius))
+                // 动画进行中 zIndex(20) 盖过邻卡（jelly 契约，E1 审计补丁行勿漏）
+                .zIndex(pose.active ? 20 : 0)
+                .transformOrigin(0.5f, 0.5f)
+                .scale(pose.sx, pose.sy)
+                .transition(pose.active
+                                ? core::Transition::make(0.035f,
+                                                         core::Ease::Linear)
+                                : core::Transition::make(0.18f,
+                                                         core::Ease::OutBack))
+                .animate(core::AnimProperty::Radius |
+                         core::AnimProperty::Transform)
+                .build();
+            ui.stack(id + ".content")
+                .position(pad, pad)
+                .size(cw, innerH)
+                .margin(0.0f, 0.0f, pad, pad)
+                .content([&] {
             // 迷你图表（sparkline）：垫在数字行同一带，先于文字 build → 数字压其上。
             // 五张卡的文字位置完全一致，不因有无 spark 而位移（home_probes 组 A 守）。
             // 底留 4px：全零/平线序列是贴着带底画的，贴到卡内底缘会被吃掉看不见。
@@ -216,8 +254,18 @@ void drawSolidStatCard(eui::Ui& ui,
                                              t.colors.textPrimary.b, 0.10f})
                     .radius(corner)
                     .onClick(std::move(onClick))
+                    // need301③：hover 边沿喂果冻时间线（写集，下帧 drawSolidStatCard 读）
+                    .onHover([&id](bool h) {
+                        if (h) {
+                            statCardHoverSet().insert(id);
+                        } else {
+                            statCardHoverSet().erase(id);
+                        }
+                    })
                     .build();
             }
+                })
+                .build();
         })
         .build();
 }

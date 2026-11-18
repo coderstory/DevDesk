@@ -695,7 +695,8 @@ void AgentModule::composeTaskDialog(
                                     const float itemW =
                                         core::TextPrimitive::measureTextWidth(
                                             kTaskTemplates[i].name, "",
-                                            core::theme::scaled(12.0f), 500) +
+                                            // need219 §2.1：按钮 label 渲染默认 400，量宽档位对齐渲染端
+                                            core::theme::scaled(12.0f), 400) +
                                         core::theme::scaled(24.0f);
                                     components::button(
                                         ui, "agent.dialog.task.tpl.item." +
@@ -1280,7 +1281,8 @@ std::vector<ToolChipPlace> layoutToolChips(const ToolInfo& tool, float bodyW) {
     for (std::size_t p = 0; p < tool.params.size(); ++p) {
         const float chipW =
             core::TextPrimitive::measureTextWidth(tool.params[p], "", chipFs,
-                                                  500) +
+                                                  // need219 §2.1：chip 渲染 400，量宽档位对齐（双清零）
+                                                  400) +
             2.0f * chipPadX;
         if (cursorX > 0.0f && cursorX + chipW > bodyW) {
             cursorX = 0.0f;
@@ -1988,7 +1990,8 @@ void AgentModule::renderToolCard(
                                 const float toggleFs = core::theme::scaled(12.0f);
                                 const float toggleW =
                                     core::TextPrimitive::measureTextWidth(
-                                        label, "", toggleFs, 500) +
+                                        // need219 §2.1：toggle 文本渲染 400（下方 .toggle 档），量宽对齐
+                                        label, "", toggleFs, 400) +
                                     core::theme::scaled(16.0f);
                                 inner.rect(cid + ".toggle.bg")
                                     .size(toggleW, toggleH)
@@ -2038,11 +2041,12 @@ void AgentModule::renderToolCard(
                                              core::str::toLowerAscii(label),
                                              queryLower)) {
                                         // need:296 D2：高亮定位逐帧测量走缓存
+                                        // need219 §2.1：chip 文本渲染 400（下 .text 档），子串/整行量宽同档防漂移
                                         const float px = ui_kit::cachedTextWidth(
-                                            label.substr(0, ms), chipFs, 500);
+                                            label.substr(0, ms), chipFs, 400);
                                         const float pw = ui_kit::cachedTextWidth(
                                             label.substr(ms, me - ms), chipFs,
-                                            500);
+                                            400);
                                         inner.rect(chid + ".hl." +
                                                    std::to_string(ms))
                                             .position(
