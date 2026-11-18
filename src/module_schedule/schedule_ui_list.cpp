@@ -798,22 +798,47 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
         const float rightX = padX + innerW * 0.55f;  // 左块 55% / 右块 45%
         const float rightW = innerW * 0.45f;
 
-        ui.stack(id)
-            .position(slot.x, slot.y)
-            .size(cardW, cardH)
-            // 绝对定位脱离流式（池133 同款：column 静默忽略未 ignoreLayout 的 position）
-            .ignoreLayout()
-            .content([&] {
-                // 卡面（L2 glassFill）。§6/§7：hover 只混黑不放大不变形（专业感档），
-                // 按下果冻经命中面 visualStateFrom 驱动（缩至 0.965 回弹）。
-                ui_kit::JellyOptions opt;
-                opt.radius = t.sizes.radiusLarge;
-                opt.hoverRadius = t.sizes.radiusLarge;
-                opt.hoverScale = 1.0f;
-                opt.pressedScale = 0.965f;  // 设计 §7 按下缩放 0.965（默认 0.97）
-                if (interactive) opt.pressedFrom = id + ".hit";
-                ui_kit::jellyCard(ui, id + ".bg", 0.0f, 0.0f, cardW, cardH, t,
-                                  opt, hovered);
+            // 果冻=整卡单位形变（对齐 todo E1-c / home need301③ 手写缝范式，弃
+            // jellyCard 整卡替换）。transform/按下缩放挂卡 stack（渲染变换随子树
+            // 继承，内容/tint/hit 同步缩放，卡内不留固定尺寸层——修「缩放露灰底」）；
+            // zIndex(20) 也挂 stack：dsl.h 兄弟排序按 subtreeMaxZIndex，挂 .bg 会把
+            // 0.94 白玻璃面排到内容之上（hover 时间线 560ms 内整卡蒙白罩）；
+            // radius 形变仍挂 .bg（圆角是卡面属性）。
+            const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, hovered);
+            // 时间线半径基线 12 随卡面 radiusLarge 平移（jelly.h 契约，不平移则
+            // 动画结束圆角跳回基线）
+            const float cardRadius =
+                pose.radius + (t.sizes.radiusLarge - ui_kit::JellyOptions::kRestRadius);
+            const core::Transition jellyTr =
+                pose.active ? core::Transition::make(0.035f, core::Ease::Linear)
+                            : core::Transition::make(0.18f, core::Ease::OutBack);
+            auto cardStack = ui.stack(id)
+                .position(slot.x, slot.y)
+                .size(cardW, cardH)
+                // 绝对定位脱离流式（池133 同款：column 静默忽略未 ignoreLayout 的 position）
+                .ignoreLayout()
+                .transformOrigin(0.5f, 0.5f)  // 果冻坑③：缩放中心=卡中心
+                .scale(pose.sx, pose.sy)      // 坑②：逐轴目标每帧重给
+                .zIndex(pose.active ? 20 : 0)  // 动画期盖邻卡；走完回落 0
+                .transition(jellyTr)
+                .animate(core::AnimProperty::Transform);
+            if (interactive) {
+                // §7 按下果冻 0.965：整卡缩（命中面驱动，源同帧存在）
+                cardStack.visualStateFrom(id + ".hit", 0.965f);
+            }
+            cardStack.content([&] {
+                    // 卡面（L2 glassFill）。§6/§7：hover 只混黑不放大不变形（专业感档）
+                    ui.rect(id + ".bg")
+                        .position(0.0f, 0.0f)
+                        .size(cardW, cardH)
+                        .color(ui_kit::glassFill(t))
+                        .radius(cardRadius)
+                        .border(1.0f, t.colors.borderDefault)
+                        .shadow(components::theme::panelShadow(
+                            ::core::theme::componentTokensWeChat(t)))
+                        .transition(jellyTr)
+                        .animate(core::AnimProperty::Radius)
+                        .build();
 
                 // ---- 头区：（锁）名称 + 特殊态 tag + 类型 chip 右顶 ----
                 const float chipFont = t.sizes.fontSizeSmall - 1.0f;  // 11

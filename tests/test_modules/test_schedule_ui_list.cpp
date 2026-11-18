@@ -21,11 +21,13 @@
 
 #include <eui/dsl.h>
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -714,5 +716,105 @@ REGISTER_TEST(schedule_module_provider_seam_pre_start,
     // 未启动时 onStop = no-op，注册表保留（装配期注册不因启停循环丢失）
     mod.onStop();
     DOCTEST_CHECK(mod.providerRegistry().allItems().size() == 1);
+    return true;
+})
+
+// 防（need334 老板实测两错乱）：①hover 白罩——果冻 zIndex(20) 曾挂 .bg，dsl.h
+// 兄弟排序按 subtreeMaxZIndex 把 0.94 白玻璃面排到内容之上（560ms 时间线内整卡
+// 蒙白）；②缩放露灰底——transform/按下缩放曾只挂 .bg，卡内内容/tint/hit 固定
+// 尺寸错位露出页面灰底。修复后 transform+zIndex 施加在整卡 stack、bg 只管 radius
+// 与玻璃面；hover 染色 = 0.05 黑轻染（非白罩）。
+REGISTER_TEST(schedule_list_card_jelly_layer_and_tint,
+              "schedule 卡果冻：transform/zIndex 在整卡 stack、bg 只管 radius，hover=0.05 黑轻染", {
+    auto opened = openMigrated("jellylayer");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value().db();
+    ScheduleStore store(db);
+    ScheduleProviderRegistry providers;
+    ScheduleListUi listUi(store, providers);
+
+    DOCTEST_CHECK(store.createRule(makeRule("果冻层", 0, 1761000000)).isOk());
+    listUi.reload(1760000000);
+    DOCTEST_REQUIRE_EQ(listUi.assembly().userRows.size(), static_cast<size_t>(1));
+
+    const eui::Screen screen = makeScreen();
+    listUi.setTab(1);
+
+    // 静息帧：z=0、bg 无缩放、tint=0.05 黑轻染且不可见
+    {
+        eui::Ui frame;
+        composeFrame(listUi, frame, screen, "jelly_rest");
+        auto* card = frame.find("schedule.list.user.0");
+        auto* bg = frame.find("schedule.list.user.0.bg");
+        auto* tint = frame.find("schedule.list.user.0.tint");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_REQUIRE(tint != nullptr);
+        DOCTEST_CHECK(card->zIndex == 0);
+        DOCTEST_CHECK(bg->zIndex == 0);
+        DOCTEST_CHECK(std::fabs(bg->transform.scale.x - 1.0f) < 1e-5f);
+        // 染色层=黑 0.05（白罩会是 r=g=b≈1）
+        DOCTEST_CHECK(tint->color.r < 0.01f);
+        DOCTEST_CHECK(tint->color.g < 0.01f);
+        DOCTEST_CHECK(tint->color.b < 0.01f);
+        DOCTEST_CHECK(std::fabs(tint->color.a - 0.05f) < 0.001f);
+        // 玻璃卡面半透（alpha<1），非实心白
+        DOCTEST_CHECK(bg->color.a < 0.999f);
+    }
+
+    // hover 进入帧：时间线 active → z 抬整卡（bg 不抬）；scale 施加在 stack 不在 bg
+    {
+        eui::Ui frame;
+        composeFrame(listUi, frame, screen, "jelly_enter");
+        auto* hit = frame.find("schedule.list.user.0.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onHoverChanged != nullptr);
+        hit->onHoverChanged(true);
+    }
+    {
+        eui::Ui frame;
+        composeFrame(listUi, frame, screen, "jelly_active");
+        auto* card = frame.find("schedule.list.user.0");
+        auto* bg = frame.find("schedule.list.user.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(card->zIndex == 20);  // 动画期整卡盖邻卡
+        DOCTEST_CHECK(bg->zIndex == 0);     // 白玻璃面不再压内容
+    }
+    // 时间线行进中：stack 带形变、bg 恒不缩（卡内无固定尺寸错位层 → 无灰底）
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    {
+        eui::Ui frame;
+        composeFrame(listUi, frame, screen, "jelly_mid");
+        auto* card = frame.find("schedule.list.user.0");
+        auto* bg = frame.find("schedule.list.user.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::fabs(card->transform.scale.x - 1.0f) > 0.005f);
+        DOCTEST_CHECK(std::fabs(bg->transform.scale.x - 1.0f) < 1e-5f);
+        DOCTEST_CHECK(std::fabs(bg->transform.scale.y - 1.0f) < 1e-5f);
+    }
+    // hover 退出：目标回正常态，z 回落
+    {
+        eui::Ui frame;
+        composeFrame(listUi, frame, screen, "jelly_exit_src");
+        auto* hit = frame.find("schedule.list.user.0.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        hit->onHoverChanged(false);
+    }
+    {
+        eui::Ui frame;
+        composeFrame(listUi, frame, screen, "jelly_exit");
+        auto* card = frame.find("schedule.list.user.0");
+        auto* bg = frame.find("schedule.list.user.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(card->zIndex == 0);
+        DOCTEST_CHECK(std::fabs(card->transform.scale.x - 1.0f) < 1e-5f);
+        DOCTEST_CHECK(std::fabs(bg->transform.scale.x - 1.0f) < 1e-5f);
+        // radius 仍在 bg（卡面属性）且随 radiusLarge 平移（静息=12+(14−12)=14，
+        // 不跳回时间线基线 12）
+        DOCTEST_CHECK(bg->radius >= 13.5f);
+    }
     return true;
 })
