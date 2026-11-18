@@ -508,10 +508,10 @@ inline core::Result<void> validateStep(const platform::json::JsonValue& item,
         if (auto r = getString("op", &out->op); r.isFail()) return r;
         if (auto r = getString("other", &out->otherId); r.isFail()) return r;
         if (out->check != "exists" && out->check != "missing" && out->check != "text" &&
-            out->check != "geometry") {
+            out->check != "geometry" && out->check != "disabled") {
             return failStep(index1,
-                            "assert.check 仅支持 exists / missing / text / geometry"
-                            "（相近候选: exists、missing、text、geometry）");
+                            "assert.check 仅支持 exists / missing / text / geometry / disabled"
+                            "（相近候选: exists、missing、text、geometry、disabled）");
         }
         if ((out->check == "exists" || out->check == "missing") && out->id.empty()) {
             return failStep(index1, "assert.check=exists/missing 需要 'id'");

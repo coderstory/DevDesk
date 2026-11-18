@@ -17,6 +17,9 @@
     {"type": "assert", "check": "exists", "id": "todo.ctx.level.0.item.6", "_comment": "菜单末项在场（7 项全量布局）"},
     {"type": "screenshot", "path": "todo-rightclick-menu.png", "_comment": "右键菜单展开证据图"},
     {"type": "key", "name": "Escape", "_comment": "Esc 收菜单"},
+    {"type": "wait", "ms": 400},
+    {"type": "assert", "check": "disabled", "id": "todo.ctx.level.0.item.0",
+     "_comment": "need302 审计 P2：Esc 收菜单显式断言（闭合态=元素留树带 disabled/opacity0 标志，dump 同源判据；missing 误判——元素设计上不出树）"},
     {"type": "click", "id": "app.sidebar.item.Home.hit", "_comment": "离场（顺带证明应用存活）"}
   ]
 }

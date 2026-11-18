@@ -17,6 +17,8 @@
     {"type": "assert", "check": "text", "op": "contains", "text": "need302一次性甲",
      "_comment": "用户列表出现行卡（无 id 全页文本命中，todo-new-task 同款机制；行卡元素 id 动态序号，不锚定）"},
     {"type": "screenshot", "path": "schedule-once-rule-row.png", "_comment": "规则行卡证据图"},
-    {"type": "key", "name": "Escape", "_comment": "收尾：无弹层时 Escape 无副作用，应用存活"}
+    {"type": "click", "id": "app.sidebar.item.Home.hit",
+     "_comment": "need302 审计 P3：显式离场点击（与 todo 场景对齐——命中回读证明应用存活，非靠 Escape 无副作用推断）"},
+    {"type": "wait", "until": "exists", "id": "home.h1", "timeoutMs": 3000}
   ]
 }

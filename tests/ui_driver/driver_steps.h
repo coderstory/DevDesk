@@ -433,6 +433,25 @@ private:
             }
             return;
         }
+        if (step.check == "disabled") {
+            // need302 审计 P2：闭合态判据——常驻构建的弹层收起后元素留树但带
+            // disabled/opacity0 标志（dump 同源），missing 误判；disabled 真锁闭合。
+            const core::dsl::Element* node = el;
+            if (node == nullptr) {
+                const auto it = tree.byId.find(resolvedId);
+                if (it != tree.byId.end()) node = it->second;
+            }
+            if (node != nullptr && node->disabled) {
+                result->passed = true;
+            } else if (node == nullptr) {
+                result->errorReason = "断言失败：元素 '" + step.id + "' 不存在" +
+                                      detail::candidatesSuffixForIds(step.id, tree);
+            } else {
+                result->errorReason = "断言失败：元素 '" + resolvedId +
+                                      "' 未处于 disabled 态（仍可交互——弹层未收起）";
+            }
+            return;
+        }
         if (step.check == "text") {
             TextOp op = TextOp::Contains;
             textOpFromName(step.op, &op);
