@@ -142,7 +142,8 @@ using WecomHttpSender = std::function<core::Result<platform::http::Response>(
 // Receipt.status 稳定串（引擎重试编排/测试断言/schedule_delivery.status 落库依赖）：
 //   "ok"                                         投递成功（errcode 0）
 //   "rate_limited"                               本地令牌桶拒发（未发请求，引擎稍后重试）
-//   "missing_secret"                             keychain 无密钥（未发请求，配置问题）
+//   "missing_secret"                             无密钥 / 密钥解不开（未发请求；status 同一
+//                                                值，detail 分「未配置」「数据异常需重录」两种文案）
 //   "retryable:network_error"                    传输层失败
 //   "retryable:http_5xx"                         服务端 5xx
 //   "retryable:bad_body"                         响应体无合法 errcode（无法判定）

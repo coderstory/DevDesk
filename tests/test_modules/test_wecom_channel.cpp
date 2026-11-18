@@ -3,10 +3,11 @@
 // 每条用例对应一个业务场景并注明防的具体事故；网络经注入缝回放，不触真实 HTTP。
 #include "doctest.h"
 
+#include "core/secrets_store.h"
 #include "module_schedule/channels/wecom.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 #include "platform/utf8.h"
+#include "test_support.h"
 
 #include <cstdint>
 #include <functional>
@@ -33,46 +34,54 @@ Delivery makeDelivery() {
     return d;
 }
 
-// ---- 假 keychain 后端（经官方注入缝 setBackendForTest 安装）----
-struct FakeKeychainBackend {
-    static core::Result<void> store(const std::string&, const std::string&,
-                                    const std::string&) {
-        return core::Result<void>::ok();
+// ---- 凭据夹具（need305：deliver 经 core::secrets_store 直读 app_secrets，
+// keychain 注入缝不再参与）——已 migrate 临时库 + 注册进程级 appDatabase ----
+struct SecretsDbGuard {
+    test_support::TestDb tdb{"devdesk_test_wecom_", "secrets"};
+    test_support::ScopedAppDatabase appDb{tdb.handle()};
+
+    // 预置渠道密钥（经 secrets_store::set 走真 protect 形态入库）。
+    // 返回 bool 由用例端断言：doctest 断言宏在 void 函数里展开成 return 编不过。
+    bool seed(const std::string& account) {
+        return core::secrets_store::set(
+                   tdb.handle(), module::schedule::kWecomKeychainService, account,
+                   kKey)
+            .isOk();
     }
-    static core::Result<std::string> load(const std::string& service,
-                                          const std::string& account) {
-        if (service != module::schedule::kWecomKeychainService) badService = true;
-        accounts.push_back(account);
-        if (failLoad) {
-            return core::Result<std::string>::fail(core::ErrorCode::NotFound,
-                                                   "fake missing");
-        }
-        return core::Result<std::string>::ok(kKey);
+
+    // 直塞存储形态（绕过 protect）：造「有行但解不开」的损坏凭据样本。
+    bool insertRaw(const std::string& account, const std::string& stored) {
+        return tdb.handle()
+            .exec("INSERT OR REPLACE INTO app_secrets(service, account, value, "
+                  "updated_at) VALUES ('" +
+                      std::string(module::schedule::kWecomKeychainService) + "', '" +
+                      account + "', '" + stored + "', 0)")
+            .isOk();
     }
-    static core::Result<void> del(const std::string&, const std::string&) {
-        return core::Result<void>::ok();
-    }
-    static core::Result<std::vector<std::string>> delNotIn(
-        const std::string&, const std::vector<std::string>&) {
-        return core::Result<std::vector<std::string>>::ok({});
-    }
-    static inline bool failLoad = false;
-    static inline std::vector<std::string> accounts;  // 记录渠道读过的 account 名
-    static inline bool badService = false;  // load 收到非约定 service 名（shim 宏不可用于本函数，记账后在用例体断言）
 };
 
-const platform::keychain::Backend kFakeKeychainBackend{
-    &FakeKeychainBackend::store, &FakeKeychainBackend::load,
-    &FakeKeychainBackend::del, &FakeKeychainBackend::delNotIn};
-
-struct KeychainBackendGuard {
-    KeychainBackendGuard() {
-        FakeKeychainBackend::failLoad = false;
-        FakeKeychainBackend::accounts.clear();
-        FakeKeychainBackend::badService = false;
-        platform::keychain::setBackendForTest(&kFakeKeychainBackend);
+// 假凭据保护后端：只有 enc:: 前缀可解，其余按「解不开」上抛（真实现遇到坏形态
+// 的等价物）。need308：deliver 必须把这一态与「没配过」分文案。
+core::Result<std::string> fakeProtectEnc(const std::string& plain) {
+    return core::Result<std::string>::ok("enc::" + plain);
+}
+core::Result<std::string> fakeUnprotectEnc(const std::string& stored) {
+    if (stored.rfind("enc::", 0) != 0) {
+        return core::Result<std::string>::fail(core::ErrorCode::InvalidApiKey,
+                                               "fake: corrupt stored form");
     }
-    ~KeychainBackendGuard() { platform::keychain::setBackendForTest(nullptr); }
+    return core::Result<std::string>::ok(stored.substr(5));
+}
+
+// Backend 必须是 guard 成员：槽位指向它，guard 活着就有效（同 test_secrets_store）。
+struct CorruptSecretBackendGuard {
+    core::secrets_store::Backend table{&fakeProtectEnc, &fakeUnprotectEnc};
+    const core::secrets_store::Backend* prev =
+        core::secrets_store::setBackendForTest(&table);
+    CorruptSecretBackendGuard() = default;  // 声明拷贝 ctor 会抑制隐式默认 ctor
+    ~CorruptSecretBackendGuard() { core::secrets_store::setBackendForTest(prev); }
+    CorruptSecretBackendGuard(const CorruptSecretBackendGuard&) = delete;
+    CorruptSecretBackendGuard& operator=(const CorruptSecretBackendGuard&) = delete;
 };
 
 // ---- 假 HTTP 发送器（捕获 Request + 回放 canned 响应）----
@@ -401,7 +410,8 @@ REGISTER_TEST(wecomProxyModeMapping, "proxy_mode 三态映射（S6a）：follow_
 
 // 防：端点/方法/头拼错、key 泄进 body（key 只允许在 URL 查询串）
 REGISTER_TEST(wecomDeliverSuccessRequestShape, "投递成功路径：POST 官方端点 + ?key、JSON 头、body 含 msgtype 不含 key、errcode 0 → ok", {
-    KeychainBackendGuard keychainGuard;
+    SecretsDbGuard secrets;
+    DOCTEST_REQUIRE(secrets.seed("wecom.7"));
     WecomConfig cfg;
     cfg.channelDbId = 7;
     FakeHttp http;
@@ -422,16 +432,15 @@ REGISTER_TEST(wecomDeliverSuccessRequestShape, "投递成功路径：POST 官方
     DOCTEST_CHECK_EQ(contentType->second, std::string("application/json"));
     DOCTEST_CHECK_NE(req.body.find("\"msgtype\":\"text\""), std::string::npos);
     DOCTEST_CHECK_EQ(req.body.find(kKey), std::string::npos);  // key 不进 body
-    // keychain account 走 secretRef 派生（secretRef 空 → wecom.<channelDbId>）
-    DOCTEST_REQUIRE_EQ(FakeKeychainBackend::accounts.size(), 1u);
-    DOCTEST_CHECK_EQ(FakeKeychainBackend::accounts[0], std::string("wecom.7"));
-    DOCTEST_CHECK(!FakeKeychainBackend::badService);
+    // account 走 secretRef 派生（secretRef 空 → wecom.<channelDbId>）：
+    // URL 恰含 kKey 已证明读到的正是 wecom.7 那一行（库里只有该行存有 kKey）
     return true;
 });
 
 // 防：key 泄进日志（§4.9 硬约束）——detail 是唯一进日志的字段，所有失败路径都不许带 key/URL
 REGISTER_TEST(wecomDeliverKeyNeverInLogStrings, "凭据纪律：网络错/5xx/4xx/errcode 各失败路径的 Receipt.detail 均不含 key 与 ?key=", {
-    KeychainBackendGuard keychainGuard;
+    SecretsDbGuard secrets;
+    DOCTEST_REQUIRE(secrets.seed("wecom.7"));
     WecomConfig cfg;
     cfg.channelDbId = 7;
     FakeHttp http;
@@ -470,14 +479,12 @@ REGISTER_TEST(wecomDeliverKeyNeverInLogStrings, "凭据纪律：网络错/5xx/4x
 
     // key 确实被用于请求（证明上面不是"没读到 key 所以没泄"）
     DOCTEST_CHECK(http.requests.back().url.find(kKey) != std::string::npos);
-    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
 // 防：缺凭据时裸 key 空串打请求——既白耗限频额度又污染远端日志
-REGISTER_TEST(wecomDeliverMissingSecretNoHttp, "缺凭据：keychain 失败 → missing_secret 且不发 HTTP 请求", {
-    KeychainBackendGuard keychainGuard;
-    FakeKeychainBackend::failLoad = true;
+REGISTER_TEST(wecomDeliverMissingSecretNoHttp, "缺凭据：app_secrets 无行 → missing_secret（未配置文案）且不发 HTTP 请求", {
+    SecretsDbGuard secrets;   // 空库：不 seed 任何渠道密钥
     WecomConfig cfg;
     cfg.channelDbId = 7;
     FakeHttp http;
@@ -486,14 +493,42 @@ REGISTER_TEST(wecomDeliverMissingSecretNoHttp, "缺凭据：keychain 失败 → 
     auto receipt = channel->deliver(makeDelivery());
     DOCTEST_REQUIRE(receipt.isOk());
     DOCTEST_CHECK_EQ(receipt.value().status, std::string("missing_secret"));
+    DOCTEST_CHECK_NE(receipt.value().detail.find("请先"), std::string::npos);
+    DOCTEST_CHECK_NE(receipt.value().detail.find("配置群机器人 webhook key"),
+                     std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find("数据异常"), std::string::npos);
     DOCTEST_CHECK_EQ(http.requests.size(), 0u);
-    DOCTEST_CHECK(!FakeKeychainBackend::badService);
+    return true;
+});
+
+// 防：need308 审计 P2①——「密钥解不开」被混报成「没配过」，用户按提示去重配也
+// 修不好（真实原因是数据损坏，必须提示重录）。status 不变（引擎分类不改），
+// detail 必须走「数据异常」文案且与未配置态可分辨。
+REGISTER_TEST(wecomDeliverCorruptSecretDistinctDetail, "缺凭据两态可分：app_secrets 有行但解不开 → missing_secret（数据异常文案）且不发 HTTP", {
+    SecretsDbGuard secrets;
+    CorruptSecretBackendGuard cred;
+    DOCTEST_REQUIRE(secrets.insertRaw("wecom.7", "not-protected-form"));
+    WecomConfig cfg;
+    cfg.channelDbId = 7;
+    FakeHttp http;
+    auto channel = makeChannel(cfg, http);
+
+    auto receipt = channel->deliver(makeDelivery());
+    DOCTEST_REQUIRE(receipt.isOk());
+    DOCTEST_CHECK_EQ(receipt.value().status, std::string("missing_secret"));
+    DOCTEST_CHECK_NE(receipt.value().detail.find("数据异常"), std::string::npos);
+    DOCTEST_CHECK_NE(receipt.value().detail.find("重新录入"), std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find("配置库无渠道密钥"),
+                     std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find(kKey), std::string::npos);
+    DOCTEST_CHECK_EQ(http.requests.size(), 0u);
     return true;
 });
 
 // 防：本地限频失效突穿官方 20 条/分钟（与桶单测互补：验证 deliver 真的在桶后发请求）
 REGISTER_TEST(wecomDeliverRateLimitedNoHttp, "限频端到端：1 分钟内第 19 次投递 → rate_limited 且不发 HTTP", {
-    KeychainBackendGuard keychainGuard;
+    SecretsDbGuard secrets;
+    DOCTEST_REQUIRE(secrets.seed("wecom.7"));
     WecomConfig cfg;
     cfg.channelDbId = 7;
     FakeHttp http;
@@ -509,13 +544,13 @@ REGISTER_TEST(wecomDeliverRateLimitedNoHttp, "限频端到端：1 分钟内第 1
     DOCTEST_REQUIRE(nineteenth.isOk());
     DOCTEST_CHECK_EQ(nineteenth.value().status, std::string("rate_limited"));
     DOCTEST_CHECK_EQ(http.requests.size(), 18u);  // 第 19 条未出网
-    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 
 // 防：只看 HTTP 状态漏判业务错（§4.9 错误判定硬约束）——HTTP 200 但 errcode 失败必须分类
 REGISTER_TEST(wecomDeliverErrcodeStatusStrings, "投递错误判定：必须解析 body errcode——45009/45033/未知码可重试，93000/93001/93004/93017 永久", {
-    KeychainBackendGuard keychainGuard;
+    SecretsDbGuard secrets;
+    DOCTEST_REQUIRE(secrets.seed("wecom.7"));
     WecomConfig cfg;
     cfg.channelDbId = 7;
     FakeHttp http;
@@ -562,7 +597,6 @@ REGISTER_TEST(wecomDeliverErrcodeStatusStrings, "投递错误判定：必须解�
     http.failResult = true;  // 传输层 Result::fail
     auto rNet = channel->deliver(makeDelivery());
     DOCTEST_CHECK_EQ(rNet.value().status, std::string("retryable:network_error"));
-    DOCTEST_CHECK(!FakeKeychainBackend::badService);
     return true;
 });
 

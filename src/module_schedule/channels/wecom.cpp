@@ -340,6 +340,17 @@ core::Result<Receipt> WecomChannel::deliver(const Delivery& d) {
     //    不进日志、不进任何对象字段。
     const std::string account = wecomKeychainAccount(cfg_);
     auto secret = core::secrets_store::get(kWecomKeychainService, account);
+    // secrets_store.h 契约：「解不开」（unprotect/db 错）与「没配过」（NotFound）
+    // 必须可分辨——前者重录可修，后者是未配置；混成一句会把数据损坏报成配置缺失
+    //（审计 P2①）。status 仍为 missing_secret（引擎侧分类不变），只分 detail 文案。
+    if (secret.isFail() && secret.errorCode() != core::ErrorCode::NotFound) {
+        LOG_WARN("企业微信渠道密钥数据异常（account " + account +
+                 "）：请在设置页重新录入群机器人 webhook key");
+        return core::Result<Receipt>::ok(Receipt{
+            "missing_secret",
+            "渠道密钥数据异常（account " + account +
+                "）：请到设置页重新录入群机器人 webhook key"});
+    }
     if (secret.isFail() || secret.value().empty()) {
         LOG_WARN("企业微信渠道密钥缺失（account " + account +
                  "）：请在设置页配置群机器人 webhook key");
