@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 
+#include "core/logging.h"
 #include "module_memory/engine/telemem_config.h"
 #include "platform/http_client.h"
 #include "platform/json.h"
@@ -521,14 +522,39 @@ bool memoryTextMatches(const std::string& stored, const std::string& collected) 
     return trimWhitespace(stored) == trimWhitespace(collected);
 }
 
+// bug334 超时核实（need#334，AF 场4 实锤）：add_memory 超时 ≠ 入库失败——引擎
+// add 走真 LLM 提炼腿，可晚于客户端 10s 界才写库（实测：报 Timeout 但
+// get_memories 已有条目）。超时后以清单按正文精确匹配判定真实状态：
+// 查得到 = 引擎已写库（响应迟到而已）→ 按成功回传 id（卡转 accepted）；
+// 查不到 = 写入确实未落库 → 如实报超时（保持待审可重试）；核实请求自身
+// 失败 = 状态未知 → 原超时 + 未能核实（不虚报成功也不虚报失败）。
+core::Result<std::string> confirmStoredAfterTimeout(
+    const std::string& text, const std::string& timeoutMsg) {
+    const auto found = findMemoryIdByText(text);
+    if (found.isOk()) {
+        if (!found.value().empty()) return found;
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NetworkTimeout,
+            "add 超时且已核实未入库: " + timeoutMsg);
+    }
+    return core::Result<std::string>::fail(
+        core::ErrorCode::NetworkTimeout,
+        timeoutMsg + "（入库状态未能核实: " + found.errorMessage() + "）");
+}
+
 core::Result<std::string> TelememHttpRetriever::addDirect(
     const std::string& text) {
     // 入库非 hook 同步路径，放宽到 10s
     const auto resp =
         callTool("add_memory", buildAddMemoryArgs(text, false), 10000);
     if (resp.isFail()) {
-        return core::Result<std::string>::fail(resp.errorCode(),
-                                               resp.errorMessage());
+        // bug334：超时走核实分支（见 confirmStoredAfterTimeout）；其余错误
+        //（引擎不在/HTTP 4xx）语义即真失败，原文透传不核实。
+        if (resp.errorCode() != core::ErrorCode::NetworkTimeout) {
+            return core::Result<std::string>::fail(resp.errorCode(),
+                                                   resp.errorMessage());
+        }
+        return confirmStoredAfterTimeout(text, resp.errorMessage());
     }
     const auto parsed = parseAddResponse(resp.value());
     if (parsed.isFail()) {
@@ -541,7 +567,16 @@ core::Result<std::string> TelememHttpRetriever::addDirect(
     // telemem 1.10.1 add 只回 {"status":"stored"}（live 定案，无 id）；
     // 撤销链需要引擎条目 id → get_memories 按正文精确匹配回填（匹配不到返回
     // 空串：id 缺失时提案 targetIds 为空，如实进入契约边界记录）。
-    return findMemoryIdByText(text);
+    // bug334：引擎已回 stored = 写库成功；id 回填失败只降级撤销链（id 空串走
+    // 既有契约边界），不得翻转成 add 失败把已入库卡摁回 pending（场4「Timeout
+    // 误报但数据实际入库」根因之一）。
+    const auto backfilled = findMemoryIdByText(text);
+    if (backfilled.isFail()) {
+        LOG_WARN("add 已入库但 id 回填失败（撤销链退化契约边界）: " +
+                 backfilled.errorMessage());
+        return core::Result<std::string>::ok(std::string());
+    }
+    return backfilled;
 }
 
 core::Result<std::string> TelememHttpRetriever::addInferred(

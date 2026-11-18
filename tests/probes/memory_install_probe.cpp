@@ -248,8 +248,21 @@ int cmdCollect(int argc, char* argv[]) {
     const std::uintmax_t faissBefore = dirBytesRecursive(faissDir);
     int accepted = 0;
     int recalled = 0;
+    // bug334：接受循环有界 deadline——真实会话 pending 可达数百卡，逐卡
+    // add+id 回填+检索回验（每卡最坏 10s+10s+8s）无界死等。到点停止接受，
+    // 如实报进度（回验断言只覆盖已接受部分，未跑部分不计失败）。
+    constexpr int kS4DeadlineSec = 180;
+    const auto s4Deadline =
+        std::chrono::steady_clock::now() +
+        std::chrono::seconds(kS4DeadlineSec);
     if (pending.isOk()) {
         for (const auto& p : pending.value()) {
+            if (std::chrono::steady_clock::now() >= s4Deadline) {
+                std::cout << "[probe] S4 " << kS4DeadlineSec
+                          << "s deadline 到点，停止接受（已接受 " << accepted
+                          << "/" << pending.value().size() << "）\n";
+                break;
+            }
             auto acc = panel.acceptProposal(p.id);
             if (!acc.isOk()) {
                 check(false, "acceptProposal(" + p.id + ") 失败: " + acc.errorMessage());
