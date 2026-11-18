@@ -80,6 +80,7 @@ struct FormState {
     bool formAuthFieldOpen_ = false;             // 下拉展开态
     ModelsConfig formModels_;  // 槽位表全行（默认模型 = def 槽位）
     std::vector<std::pair<std::string, std::string>> formEnvRows_;  // env 键值行
+    float formEnvScroll_ = 0.0f;  // env 页滚动偏移（need332⑦ virtualList 视口）
 
     bool deleteConfirmOpen_ = false;
     int64_t deleteTargetId_ = 0;

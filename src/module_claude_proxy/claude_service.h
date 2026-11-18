@@ -94,7 +94,8 @@ public:
 
     // 连通性测试
 
-    core::Result<platform::http::Response> testConnection(const Profile& profile);
+    core::Result<platform::http::Response> testConnection(const Profile& profile,
+                                                          bool* keyMissing = nullptr);
 
     // 导入可用性预检结果：ok=false 时 reason 指明失败步骤
     //（URL 格式 / 连不上 / 凭证被拒 / 接口不存在 / 上游异常），UI 原样展示不静默
@@ -224,9 +225,12 @@ private:
 
     // testConnection 的探测体（testConnection 恒 15s，前置校验传短超时）。
     // keyPlainOverride 非空 = 用明文 key（导入预检的表单态 profile，id=0 无库凭据）。
+    // keyMissing 出参（need332⑧）：库内无保存 key（NotFound）时置 true，行为
+    // 不变（仍发未授权请求），UI 据此优先报「未保存 key」而非等 401 误导。
     core::Result<platform::http::Response> probeProfile(
         const Profile& profile, int timeoutMs,
-        const std::string& keyPlainOverride = std::string());
+        const std::string& keyPlainOverride = std::string(),
+        bool* keyMissing = nullptr);
     static constexpr int kTestConnectionTimeoutMs = 15000;
 
     // 反向同步：读 settings.json 的 env → 对齐到激活 profile（覆盖/缺席清空/守卫键不写也不清）。

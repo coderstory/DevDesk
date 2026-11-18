@@ -195,7 +195,9 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
 
 core::Result<platform::http::Response>
 ClaudeService::probeProfile(const Profile& profile, int timeoutMs,
-                            const std::string& keyPlainOverride) {
+                            const std::string& keyPlainOverride,
+                            bool* keyMissing) {
+    if (keyMissing != nullptr) *keyMissing = false;
     std::string key;
     if (!keyPlainOverride.empty()) {
         // 导入预检：表单明文 key 直用（profile 尚未入库，loadApiKey(0) 必失败）
@@ -206,7 +208,12 @@ ClaudeService::probeProfile(const Profile& profile, int timeoutMs,
         if (keyResult.isOk()) {
             key = keyResult.value();
         } else {
-            LOG_WARN("testConnection: 无法读取 API key (" +
+            // need332⑧：NotFound（没保存 key）带回 UI，文案优先于 401 兜底
+            if (keyMissing != nullptr &&
+                keyResult.errorCode() == core::ErrorCode::NotFound) {
+                *keyMissing = true;
+            }
+            LOG_WARN("probe: 无法读取 API key (" +
                      keyResult.errorMessage() + ")，将发未授权请求");
         }
     }
@@ -236,27 +243,28 @@ ClaudeService::probeProfile(const Profile& profile, int timeoutMs,
     const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
     if (dialect.normalizeBody(req.body)) {
-        LOG_INFO("testConnection: 按上游方言剥掉模型名 [1M] 标记");
+        LOG_INFO("probe: 按上游方言剥掉模型名 [1M] 标记");
     }
     req.timeoutMs = timeoutMs;
 
     auto resp = platform::http::send(req);
     if (resp.isFail()) {
-        LOG_WARN("testConnection 网络失败: " + resp.errorMessage());
+        LOG_WARN("probe 网络失败: " + resp.errorMessage());
         return core::Result<platform::http::Response>::fail(
             resp.errorCode(), resp.errorMessage());
     }
 
-    LOG_INFO("testConnection: " + req.url +
+    LOG_INFO("probe: " + req.url +
              " -> " + std::to_string(resp.value().statusCode) +
              " (" + std::to_string(resp.value().elapsedMs) + "ms)");
     return core::Result<platform::http::Response>::ok(std::move(resp).value());
 }
 
 core::Result<platform::http::Response>
-ClaudeService::testConnection(const Profile& profile) {
+ClaudeService::testConnection(const Profile& profile, bool* keyMissing) {
     // 探测体在 probeProfile（前置校验传短超时）；本方法超时恒为 15000
-    return probeProfile(profile, kTestConnectionTimeoutMs);
+    return probeProfile(profile, kTestConnectionTimeoutMs, std::string(),
+                        keyMissing);
 }
 
 ClaudeService::ImportPrecheckResult

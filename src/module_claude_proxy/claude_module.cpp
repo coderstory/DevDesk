@@ -14,6 +14,8 @@
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "core/database.h"
+#include "core/fs_text.h"
+#include "settings_sync.h"
 #include "core/app_config.h"
 #include "platform/folder_picker.h"
 #include "platform/json.h"
@@ -259,10 +261,48 @@ private:
         return false;
     }
 
+    // 「导入当前配置」（need332④，入口=列表头「导入」钮）：读 ~/.claude/settings.json
+    // 解析托管键预填新建表单（parseImportedEnv 同步纯函数，文件小、UI 线程可承受）。
+    // 文件缺失/解析失败 toast 明确原因不静默；成功后表单停在基础信息页，保存仍走
+    // need185 导入预检（5s 探测）。
+    void importCurrentSettings() {
+        const auto path = settings_sync::defaultPaths().settingsFile;
+        bool readFailed = false;
+        const std::string text = core::readTextFile(path, &readFailed);
+        if (readFailed) {
+            showToast("导入失败", "无法读取 " + path.string(), true);
+            return;
+        }
+        if (text.empty()) {
+            showToast("导入失败",
+                      "未找到 " + path.string() + "（本机尚未配置过 Claude Code？）",
+                      true);
+            return;
+        }
+        auto r = parseImportedEnv(text);
+        if (r.isFail()) {
+            showToast("导入失败", r.errorMessage(), true);
+            return;
+        }
+        openCreateForm(state_.form);
+        applyImportedToForm(state_.form, r.value());
+        std::string extra;
+        if (!r.value().unrecognizedKeys.empty()) {
+            extra = "；未识别键 " +
+                    std::to_string(r.value().unrecognizedKeys.size()) +
+                    " 个原样带入";
+        }
+        showToast("已导入", "从 settings.json 预填 " +
+                                std::to_string(r.value().recognizedSlots) +
+                                " 个模型槽位" + extra,
+                  false);
+    }
+
     // 每帧接线装配：回调显式绑到本模块操作/状态
     ProfileListActions listActions() {
         ProfileListActions a;
         a.onNewProfile = [this] { openCreateForm(state_.form); };
+        a.onImportCurrent = [this] { importCurrentSettings(); };
         a.requestEdit = [this](const Profile& p) {
             openEditForm(state_.form, p);
         };
@@ -561,7 +601,8 @@ private:
         // 同步 HTTP（15s）挪后台线程避免冻 UI；结果经原子标志回 compose 收割
         showToast("测试中", "正在请求 " + p.baseUrl + "/v1/messages，最长 15 秒…", false);
         testThread_ = std::thread([this, p, svc] {
-            auto r = svc->testConnection(p);
+            bool keyMissing = false;   // need332⑧：库内没保存 key（NotFound）带出
+            auto r = svc->testConnection(p, &keyMissing);
             if (r.isFail()) {
                 testResultTitle_ = "连通失败";
                 testResultMsg_ = r.errorMessage();
@@ -574,14 +615,20 @@ private:
                     testResultIsError_ = false;
                 } else {
                     testResultTitle_ = "连通异常";
-                    std::string hint = "（检查 API Key 或 Base URL）";
-                    if (code == 401 || code == 403) {
-                        hint = "（API Key 被上游拒绝）";
-                    } else if (code == 404) {
-                        hint = "（接口不存在或模型不可用，检查 Base URL 与模型配置）";
+                    if (keyMissing) {
+                        // need332⑧：没保存 key 是本地已知事实，优先报它而不是等
+                        // 未授权 401 说「被上游拒绝」误导用户去查上游
+                        testResultMsg_ = "该 Profile 未保存 API Key，请先填写";
+                    } else {
+                        std::string hint = "（检查 API Key 或 Base URL）";
+                        if (code == 401 || code == 403) {
+                            hint = "（API Key 被上游拒绝）";
+                        } else if (code == 404) {
+                            hint = "（接口不存在或模型不可用，检查 Base URL 与模型配置）";
+                        }
+                        testResultMsg_ = "上游返回 HTTP " + std::to_string(code) +
+                                          std::move(hint);
                     }
-                    testResultMsg_ = "上游返回 HTTP " + std::to_string(code) +
-                                      std::move(hint);
                     testResultIsError_ = true;
                 }
             }

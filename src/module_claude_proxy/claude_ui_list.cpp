@@ -309,7 +309,9 @@ void drawProfileCard(eui::Ui& ui,
             y + 30.0f + (core::theme::scaled(16.0f) - 20.0f) * 0.5f,
             nameRowBottom + 2.0f);
         eui::Color chipBg = t.colors.primary;
-        chipBg.a = 0.78f;
+        // need332③：0.78α 实机看不出透明感（老板 2026-11-18 报修），降 0.55
+        //（对齐 todo 拖拽占位线 0.55 档），玻璃卡面透出、悬浮感可感知。
+        chipBg.a = 0.55f;
         ui.rect(id + ".active.chip")
             .position(chipX, chipY)
             .size(kActiveChipW, 20.0f)
@@ -611,6 +613,21 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .textColor(t.colors.textSecondary)
                 .radius(t.sizes.radius)
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
+                .build();
+
+            // 「导入」入口恢复（need332④：98c7c17e 删底部按钮行时连带丢失）：
+            // 读 ~/.claude/settings.json 解析托管键预填新建表单，标题行右对齐
+            // 与「+」同带（原底部行已让位给列表）。
+            components::button(ui, "claude.profiles.import")
+                .position(leftW - 20.0f - kHeadBtnSize - 8.0f - 52.0f, 16.0f)
+                .size(52.0f, kHeadBtnSize)
+                .text("导入")
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(themeTokens, false)
+                .textColor(t.colors.textSecondary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([onImport = actions.onImportCurrent] { onImport(); })
                 .build();
 
             const float cardY0 = kListTopY;

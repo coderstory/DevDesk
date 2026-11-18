@@ -11,6 +11,7 @@
 #include <components/input.h>
 #include <components/tabs.h>
 #include <components/tooltip.h>
+#include <components/virtuallist.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/dialog_shell.h>
 #include <ui_kit/wtab.h>
@@ -170,6 +171,24 @@ bool createProfileFromForm(FormState& f, const FormSubmitHooks& hooks) {
                     false);
     }
     return true;
+}
+
+// 导入预填（need332④）：98c7c17e 删「导入配置」时丢失的表单回填段，按现
+// FormState 直写（无粘贴中间态）。语义：空值不覆盖（openCreateForm 已清空）。
+void applyImportedToForm(FormState& f, const ImportedConfig& imp) {
+    if (!imp.baseUrl.empty()) f.formUrl_ = imp.baseUrl;
+    if (!imp.authToken.empty()) f.formKey_ = imp.authToken;
+    for (const auto& meta : modelSlotTable()) {
+        const ModelSlot& src = imp.models.*meta.slot;
+        (f.formModels_.*meta.slot).model = src.model;
+        (f.formModels_.*meta.slot).name = src.name;
+    }
+    f.formEnvRows_.clear();
+    f.formEnvRows_.assign(imp.extraEnv.begin(), imp.extraEnv.end());
+    f.formEnvScroll_ = 0.0f;
+    if (!imp.authFieldFromEnv.empty()) {
+        f.formAuthField_ = authFieldFromText(imp.authFieldFromEnv);
+    }
 }
 
 void submitForm(FormState& f, const FormSubmitHooks& hooks) {
@@ -345,7 +364,9 @@ void drawFormModelsTab(eui::Ui& ui, float w,
         .color(t.colors.textTertiary).build();
 
     for (size_t i = 0; i < slotTable.size(); ++i) {
-        const float y = 126.0f + static_cast<float>(i) * 52.0f;
+        // 行距 52→48（need332⑥ 顺手）：槽位表现有 6 行，末行底 402，给底部
+        // hint 槽（h−121=419）让出净空——52 档末行底 422 与 hint 压 3px。
+        const float y = 126.0f + static_cast<float>(i) * 48.0f;
         const auto& row = slotTable[i];
         const ModelSlot& slot = f.formModels_.*row.slot;
         const std::string idx = std::to_string(i);
@@ -376,121 +397,109 @@ void drawFormModelsTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // need156 壳迁移：hint 两行自 446/464 上移贴槽位网格（原视觉位压底区细线/
-    // 按钮带；顺带消除网格下 128px 空带——#195 反样本「中间大段空白」）。
-    ui.text("claude.form.slots.hint1.icon")
-        .position(28.0f, 330.0f).size(14.0f, core::theme::scaled(16.0f))
-        .icon(0xF05A).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-        .color(t.colors.textTertiary).build();
-    ui.text("claude.form.slots.hint1")
-        .position(46.0f, 330.0f).size(w - 74.0f, core::theme::scaled(16.0f))
-        .text("显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
-        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-        .color(t.colors.textTertiary).build();
-    ui.text("claude.form.slots.hint2")
-        .position(28.0f, 348.0f).size(w - 56.0f, core::theme::scaled(16.0f))
-        .text("    槽位留空 = 不写入该 env 键，Claude Code 用内置映射")
-        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-        .color(t.colors.textTertiary).build();
+    // need332⑥：两条提示从网格下方（原 330/348）移到弹窗底部 hint 区——画在
+    // drawProfileFormDialog 的底区状态槽（h−121），空闲时显示、报错时让位。
 }
 
-// 环境变量页（键值编辑器）；可见行数上限 5（弹窗高度约束），超出部分仍在状态里全量保存
+// 环境变量页（键值编辑器）；行进 virtualList 滚动视口（need332①⑦）：输入 32 高
+//（原 40 收紧，对齐 #195/#219 全站行密度）+ 8px 行距；行数超视口滚动而非裁切，
+// 原「仅显示前 5 项」上限与溢出提示随之取消（全部行都在视口内可滚达）。
 void drawFormEnvTab(eui::Ui& ui, float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& themeTokens,
                     FormState& f) {
-    constexpr size_t kMaxVisibleRows = 5;
+    constexpr float kRowH = 32.0f;
+    constexpr float kRowGap = 8.0f;
+    constexpr float kRowPitch = kRowH + kRowGap;
 
     ui.text("claude.form.env.label")
-        .position(28.0f, 104.0f).size(348.0f, core::theme::scaled(16.0f))
+        .position(28.0f, 96.0f).size(348.0f, core::theme::scaled(16.0f))
         .text("额外环境变量（原样写入 settings.json env 块）")
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
 
-    const size_t visible =
-        f.formEnvRows_.size() < kMaxVisibleRows ? f.formEnvRows_.size()
-                                                : kMaxVisibleRows;
-    for (size_t i = 0; i < visible; ++i) {
-        const float y = 124.0f + static_cast<float>(i) * 38.0f;
-        const std::string idx = std::to_string(i);
-        components::input(ui, "claude.form.env.row." + idx + ".key")
-            .position(28.0f, y).size(220.0f, 40.0f)
-            .value(f.formEnvRows_[i].first).placeholder("ENV_KEY")
-            .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
-            .onChange([fp = &f, i](const std::string& v) {
-                fp->formEnvRows_[i].first = v;
-            })
-            .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
-            .build();
-        // 变量名识别：已知→hover 说明 tooltip；未知且非空→红边框（仍可导入，解析侧已放开键名校验）
-        if (const char* hint = envVarHint(f.formEnvRows_[i].first)) {
-            components::tooltip(ui, "claude.form.env.row." + idx + ".tip")
-                .source("claude.form.env.row." + idx + ".key.hit")
-                .value(hint)
-                .anchor(138.0f, y + 16.0f)
-                .bounds(w, 420.0f)
-                .theme(themeTokens)
-                .zIndex(60)
-                .build();
-        } else if (!f.formEnvRows_[i].first.empty()) {
-            ui.rect("claude.form.env.row." + idx + ".key.unknown")
-                .position(28.0f, y).size(220.0f, 40.0f)
-                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                .border(1.0f, t.colors.error)
-                .radius(t.sizes.radiusSmall)
-                .build();
-        }
-        components::input(ui, "claude.form.env.row." + idx + ".value")
-            .position(258.0f, y).size(414.0f, 40.0f)
-            .value(f.formEnvRows_[i].second).placeholder("值（字符串）")
-            .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
-            .onChange([fp = &f, i](const std::string& v) {
-                fp->formEnvRows_[i].second = v;
-            })
-            .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
-            .build();
-        // S2.1 Danger Ghost：浅红底（error 20%）+ 红字，无实心红块；hover 红底白字由
-        // ButtonVariant::Danger 默认实现（EUI-NEO button.h）。
-        components::button(ui, "claude.form.env.row." + idx + ".del",
-                           components::ButtonVariant::Danger)
-            .position(700.0f, y).size(32.0f, 40.0f)
-            .icon(0xF00D)  // fa-xmark
-            .fontSize(core::theme::scaled(13.0f))
+    if (!f.formEnvRows_.empty()) {
+        components::virtualList(ui, "claude.form.env.scroll")
+            .position(28.0f, 116.0f)
+            .size(w - 56.0f, 232.0f)   // 视口 ~5.8 行，底部留「添加」按钮带
+            .itemCount(static_cast<int64_t>(f.formEnvRows_.size()))
+            .rowHeight(kRowPitch)
+            .step(kRowPitch)
+            .overscanViewports(1.0f)
             .theme(themeTokens)
-            // UAT6 阴影统一：ButtonStyle 默认已无阴影（EUI-NEO 根修），此处不再
-            // 逐钮覆盖透明阴影（原 workaround 已被根修吸收）。
-            .onClick([fp = &f, i] {
-                if (i < fp->formEnvRows_.size()) {
-                    fp->formEnvRows_.erase(fp->formEnvRows_.begin() +
-                                           static_cast<long>(i));
+            .offset(f.formEnvScroll_)
+            .onChange([fp = &f](float v) { fp->formEnvScroll_ = v; })
+            .row([&](eui::Ui& inner, const std::string& rowId,
+                     int64_t index, float contentWidth,
+                     float rowHeight) {
+                (void)rowId;
+                (void)rowHeight;
+                const auto i = static_cast<size_t>(index);
+                if (i >= f.formEnvRows_.size()) return;
+                const std::string idx = std::to_string(i);
+                components::input(inner, "claude.form.env.row." + idx + ".key")
+                    .position(0.0f, 0.0f).size(220.0f, kRowH)
+                    .value(f.formEnvRows_[i].first).placeholder("ENV_KEY")
+                    .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
+                    .onChange([fp = &f, i](const std::string& v) {
+                        fp->formEnvRows_[i].first = v;
+                    })
+                    .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
+                    .build();
+                // 变量名识别：已知→hover 说明 tooltip；未知且非空→红边框（仍可导入，解析侧已放开键名校验）
+                if (const char* hint = envVarHint(f.formEnvRows_[i].first)) {
+                    components::tooltip(inner, "claude.form.env.row." + idx + ".tip")
+                        .source("claude.form.env.row." + idx + ".key.hit")
+                        .value(hint)
+                        .anchor(110.0f, kRowH * 0.5f)
+                        .bounds(w, 420.0f)
+                        .theme(themeTokens)
+                        .zIndex(60)
+                        .build();
+                } else if (!f.formEnvRows_[i].first.empty()) {
+                    inner.rect("claude.form.env.row." + idx + ".key.unknown")
+                        .position(0.0f, 0.0f).size(220.0f, kRowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .border(1.0f, t.colors.error)
+                        .radius(t.sizes.radiusSmall)
+                        .build();
                 }
+                components::input(inner, "claude.form.env.row." + idx + ".value")
+                    .position(230.0f, 0.0f).size(contentWidth - 274.0f, kRowH)
+                    .value(f.formEnvRows_[i].second).placeholder("值（字符串）")
+                    .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
+                    .onChange([fp = &f, i](const std::string& v) {
+                        fp->formEnvRows_[i].second = v;
+                    })
+                    .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
+                    .build();
+                // S2.1 Danger Ghost：浅红底（error 20%）+ 红字，无实心红块；hover 红底白字由
+                // ButtonVariant::Danger 默认实现（EUI-NEO button.h）。
+                components::button(inner, "claude.form.env.row." + idx + ".del",
+                                   components::ButtonVariant::Danger)
+                    .position(contentWidth - 32.0f, 0.0f).size(32.0f, kRowH)
+                    .icon(0xF00D)  // fa-xmark
+                    .fontSize(core::theme::scaled(13.0f))
+                    .theme(themeTokens)
+                    .onClick([fp = &f, i] {
+                        if (i < fp->formEnvRows_.size()) {
+                            fp->formEnvRows_.erase(fp->formEnvRows_.begin() +
+                                                   static_cast<long>(i));
+                        }
+                    })
+                    .build();
             })
             .build();
     }
 
-    // S3.9 #4：「+ 添加变量」改 Outline 次按钮 32px 高（白底绿边绿字，hover 淡绿底）。
-    // y=320：可见行上限 5 行时末行底 = 124+4×38+40 = 316，原 314 压行 2px（need185 顺手修）。
+    // S3.9 #4：「+ 添加变量」Outline 次按钮 32px 高。y=356：滚动视口 116+232=348
+    // 底 + 8px；再往下 h−121 是状态/错误行带，不冲突。
     components::button(ui, "claude.form.env.add", components::ButtonVariant::Outline)
-        .position(28.0f, 320.0f).size(120.0f, 32.0f)
+        .position(28.0f, 356.0f).size(120.0f, 32.0f)
         .text("+ 添加变量").fontSize(core::theme::scaled(12.0f))
         .theme(themeTokens)
         .onClick([fp = &f] { fp->formEnvRows_.emplace_back(); })
         .build();
-    if (f.formEnvRows_.size() > kMaxVisibleRows) {
-        // S3.9 #6：前置 ℹ 图标（14px 信息蓝）+ 12px 三级灰字（原 11px 过浅）
-        ui.text("claude.form.env.overflow.icon")
-            .position(150.0f, 328.0f).size(14.0f, core::theme::scaled(16.0f))
-            .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.info).build();
-        ui.text("claude.form.env.overflow")
-            .position(168.0f, 328.0f).size(w - 168.0f - 28.0f, core::theme::scaled(32.0f))
-            .text("另有 " + std::to_string(f.formEnvRows_.size() -
-                                           kMaxVisibleRows) +
-                  " 项已保存（保存时全量写入，列表仅显示前 " +
-                  std::to_string(kMaxVisibleRows) + " 项）")
-            .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.textTertiary).build();
-    }
 }
 
 } // namespace
@@ -555,15 +564,22 @@ const float h = 540.0f;
             }
 
             // 预检进度/错误（基础页之外也要看得到：预检期间允许停在模型/env 页）；
-            // h−121：栈内坐标（视觉位 = +17 平移后的原 h−104）
+            // h−121：栈内坐标（视觉位 = +17 平移后的原 h−104）。
+            // need332⑥：模型页空闲时该槽让给页提示（原网格下 hint 两行并入一行）。
             if (f.formTab_ != 0) {
-                const std::string statusLine = f.formPrechecking_
+                std::string statusLine = f.formPrechecking_
                     ? std::string("正在验证可用性（连通性/凭证，最长 5 秒）…")
                     : f.formError_;
+                eui::Color statusColor = f.formPrechecking_ ? t.colors.info
+                                                            : t.colors.errorText;
+                if (statusLine.empty() && f.formTab_ == 1) {
+                    statusLine =
+                        "显示名留空=剥除模型名 [1M]/[200K] 标记；槽位留空=不写入"
+                        "该 env 键（用内置映射）";
+                    statusColor = t.colors.textTertiary;
+                }
                 ui_kit::drawDialogText(ui, "claude.dialog.form.error", w, statusLine,
-                                       12.0f,
-                                       f.formPrechecking_ ? t.colors.info
-                                                          : t.colors.errorText,
+                                       12.0f, statusColor,
                                        {.y = h - 121.0f, .height = 18.0f,
                                         .lineHeight = 18.0f, .skipIfEmpty = true});
             }

@@ -40,6 +40,7 @@ int main(int argc, char* argv[]) {
     std::string shotForm;
     std::string shotDetail;  // bug175/176 详情面板「环境变量」页签截图路径
     std::string formState;   // fail = 预检失败态文案
+    int formTab = -1;        // need332：表单页签（0/1/2），-1 = 默认基础信息
     bool lightTheme = false;
     float fontScale = 1.0f;  // need236：字号档（0.80~1.30）
     for (int i = 1; i < argc; ++i) {
@@ -54,6 +55,8 @@ int main(int argc, char* argv[]) {
             formState = argv[++i];
         } else if (arg == "--light") {
             lightTheme = true;
+        } else if (arg == "--form-tab" && i + 1 < argc) {
+            formTab = std::stoi(argv[++i]);
         } else if (arg == "--font-scale" && i + 1 < argc) {
             // need236：字号档（0.80~1.30，缺省 1.0）。徽标下界钳制需在放大档
             // 验证——100% 档下 chip 顶恰好贴名字行底，容差内区分不出回归。
@@ -250,6 +253,19 @@ int main(int argc, char* argv[]) {
         const auto themeTokens = core::theme::componentTokensWeChat(t);
         module::claude::FormState f;
         module::claude::openCreateForm(f);
+        if (formTab >= 0 && formTab <= 2) f.formTab_ = formTab;
+        if (f.formTab_ == 2 && f.formEnvRows_.empty()) {
+            // need332①⑦：7 行驱动滚动视口（视口 ~5.8 行，第 6/7 行须可滚达）
+            f.formEnvRows_ = {
+                {"ANTHROPIC_SMALL_FAST_MODEL", "claude-3-5-haiku-20241022"},
+                {"HTTP_PROXY", "http://127.0.0.1:7890"},
+                {"API_TIMEOUT_MS", "600000"},
+                {"DISABLE_AUTOUPDATER", "1"},
+                {"CLAUDE_CODE_MAX_OUTPUT_TOKENS", "32000"},
+                {"MAX_THINKING_TOKENS", "12000"},
+                {"ANTHROPIC_LOG", "debug"},
+            };
+        }
         f.formName_ = "生产环境";
         f.formUrl_ = "https://api.anthropic.com";
         f.formKey_ = "sk-ant-test-0001";

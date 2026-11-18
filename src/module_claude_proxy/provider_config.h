@@ -129,8 +129,20 @@ struct ImportedConfig {
     // 命中守卫而跳过的键名——「不写也不清」。mergeReverseSyncEnv
     // 靠它区分「键缺席（清空）」与「跳过（保持 profile 原值）」
     std::vector<std::string> skippedKeys;
+    // 导入预览用：model 非空的槽位数
+    int recognizedSlots = 0;
+    // 导入文本里两个键名的证据：'api_key' / 'bearer' / 'both'（同现）/ ""（无证据）
+    std::string authFieldFromEnv;
 };
 
+// settings.json 导入解析：输入原文（整段 settings.json 取其 env 子对象，或裸 env
+// 对象），纯函数无 IO。校验：env 值必须字符串；键数 ≤64；值 ≤4KB/键；
+// 整体文本 ≤ kMaxImportTextBytes（1MB）。非法输入整体 fail，不部分导入。
+// （need332④ 恢复：98c7c17e 删「导入配置」时一并删除，现读文件导入复用）
+core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
+
+// 导入整体文本上限（1MB）：挡在 JSON 解析之前，避免超大输入进入深拷贝链
+inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 
 // 接管 env 生成：输出写入 settings.json 的 env 块（纯函数）：BASE_URL = 127.0.0.1:<port>、
 // token = 占位符、槽位键（空槽位跳过）、extra_env 归一平铺被压过 ----

@@ -6,6 +6,7 @@
 
 #include "claude_service.h"
 #include "claude_ui_state.h"
+#include "provider_config.h"
 
 #include <components/theme.h>
 #include <core/theme.h>
@@ -35,6 +36,9 @@ void openEditForm(FormState& f, const Profile& p);
 // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）；
 // 失败写 f.formError_ 并返回 false
 bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJson);
+// 导入预填（need332④）：ImportedConfig → 表单字段（URL/key/槽位/env/认证字段）；
+// 只覆盖导入文本带证据的字段，调用前先 openCreateForm 清空（同旧粘贴导入语义）
+void applyImportedToForm(FormState& f, const ImportedConfig& imp);
 void submitForm(FormState& f, const FormSubmitHooks& hooks);
 // 预检通过后的实际建库段（submitForm 新建分支与模块 harvest 共用；成功关表单）
 bool createProfileFromForm(FormState& f, const FormSubmitHooks& hooks);
