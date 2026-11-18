@@ -233,6 +233,13 @@ bool handleDbCorruption(
             std::_Exit(1);
         }
         ::core::registerAppDatabase(&db->db());
+        // need:309 审计 P2② 关闭序摘牌（atexit LIFO，注册点即执行序）：本钩子注册早于
+        // 下方装配段的 armExitHook（stopAll 各模块 onStop 的 join 点）与装配后各退钩子
+        // → 退出时晚于它们、晚于模块静态析构（join 兜底）执行，仍早于 db 静态析构。
+        // 效果：join 收不干净的异常路径（detach 线程等）此后 appDatabase() 读到 nullptr，
+        // 按「未注册」降级，不再拿已析构连接的悬垂指针（atomic 只保可见性不保生命周期）。
+        // 正常路径不变：stopAll 期间库仍注册，onStop 照常读写。
+        std::atexit([] { ::core::unregisterAppDatabase(); });
         // 凭据保护装配（need305 审计 P0 依赖倒置）：core::secrets_store 的保护
         // 缝在此注入平台实现——core 不依赖 platform（AGENTS §六）。
         static const core::secrets_store::Backend kCredentialBackend{

@@ -94,4 +94,12 @@ core::data::SqliteDb* appDatabase() {
     return g_appDatabase.load(std::memory_order_acquire);
 }
 
+void unregisterAppDatabase() {
+    // need:309：只摘牌不 close——连接所有权仍在 Database（main.cpp 静态持有），本调用
+    // 必须排在它析构之前。exchange 仅在真正摘过一次时留痕（幂等 / 测试重置不刷屏）
+    if (g_appDatabase.exchange(nullptr, std::memory_order_acq_rel) != nullptr) {
+        LOG_INFO("数据库退出摘牌：appDatabase() 已置空（此后迟到调用按未注册降级）");
+    }
+}
+
 } // namespace core

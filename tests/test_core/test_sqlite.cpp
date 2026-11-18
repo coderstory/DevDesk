@@ -1,15 +1,21 @@
 #include "doctest.h"
+#include "test_support.h"   // TestEnv（已 migrate 临时库 + 进程级 appDatabase 注册）
 #include "core/database.h"
+#include "core/secrets_store.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <system_error>
 #include <thread>
 #include <type_traits>
+#include <vector>
 
 #if !defined(_WIN32)
 #include <sys/stat.h>
@@ -339,5 +345,81 @@ REGISTER_TEST(sqlite_wal_late_stmt,
     db.reset();
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+    return true;
+})
+
+// need:309 审计 P2②：退出摘牌先于后台 join 的顺序探针。
+// appDatabase() 是裸指针访问器，atomic 只保可见性不保生命周期——关闭序里若连接先析构而
+// 后台线程（telemem 引擎 / wecom 投递，均经 secrets_store → appDatabase）仍在跑，读到就是
+// UAF。修法 = 摘牌（置空访问器）：join 收不干净的异常路径此后按「未注册」降级。
+// 形状按真实关闭序：① 注册态后台线程经 secrets_store 读到真连接 → ② 摘牌（线程仍在跑，
+// 即 join 尚未发生）→ ③ 连接析构 → ④ 线程继续消费：没有摘牌就是拿已析构连接 prepare
+//（本用例直接崩 / ASan 红），有摘牌则拿到明确的「未注册」失败。删掉
+// unregisterAppDatabase() 调用，本用例必红。
+REGISTER_TEST(database_unregister_before_background_join,
+              "Database: 退出摘牌先于后台 join——摘牌+连接析构后迟到消费者按未注册降级（删掉摘牌必红）", {
+    constexpr const char* kSvc = "svc.need309";
+    test_support::TestEnv env("devdesk_test_db_unregister_", "order",
+                              /*registerAppDb=*/true);
+
+    // ① 注册态：后台线程经进程级访问器走真连接（secrets_store 内部再次 appDatabase()）
+    DOCTEST_REQUIRE(core::appDatabase() != nullptr);
+    DOCTEST_REQUIRE(core::secrets_store::set(kSvc, "acct", "v1").isOk());
+
+    std::mutex mu;
+    std::condition_variable cv;
+    bool readDone = false;      // 后台线程已完成注册态读取
+    bool unregistered = false;  // 访问器已摘牌（连接仍活）
+    bool destroyed = false;     // 连接已析构
+    bool liveOk = false;
+    bool postUnregisterNull = false;
+    bool lateDegraded = false;
+
+    std::thread bg([&] {
+        liveOk = core::secrets_store::get(kSvc, "acct").isOk();
+        std::unique_lock<std::mutex> lk(mu);
+        readDone = true;
+        cv.notify_all();
+        cv.wait(lk, [&] { return unregistered; });
+        postUnregisterNull = core::appDatabase() == nullptr;
+        cv.wait(lk, [&] { return destroyed; });
+        lk.unlock();  // 锁外消费：进程级访问器已摘牌、连接已析构
+        // 没有摘牌时这里就是对已析构 SqliteDb 做 prepare → UAF / 段错误
+        const auto late = core::secrets_store::get(kSvc, "acct");
+        lateDegraded = late.isFail() &&
+                       late.errorMessage().find("未注册") != std::string::npos;
+    });
+
+    // 等后台线程确已完成注册态读取（否则 liveOk 测的是摘牌之后的失败）
+    {
+        std::unique_lock<std::mutex> lk(mu);
+        cv.wait(lk, [&] { return readDone; });
+    }
+
+    // ② 摘牌（生产 = main.cpp 的 atexit 钩子；此刻后台线程仍活着 = join 尚未发生）
+    core::unregisterAppDatabase();
+    DOCTEST_CHECK(core::appDatabase() == nullptr);
+    // 幂等：重复摘牌不崩、不复活
+    core::unregisterAppDatabase();
+    DOCTEST_CHECK(core::appDatabase() == nullptr);
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        unregistered = true;
+    }
+    cv.notify_all();
+
+    // ③ 连接析构（生产 = Database 函数局部 static 析构），随后放行迟到消费
+    env.db.reset();
+    DOCTEST_CHECK(core::appDatabase() == nullptr);
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        destroyed = true;
+    }
+    cv.notify_all();
+    bg.join();
+
+    DOCTEST_CHECK(liveOk);
+    DOCTEST_CHECK(postUnregisterNull);
+    DOCTEST_CHECK(lateDegraded);
     return true;
 })

@@ -46,8 +46,13 @@ private:
 core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays);
 
 // 进程级数据库共享访问器：main.cpp 落完 schema 后注册，module_* 经 appDatabase() 拿同一份连接；
-// nullptr = 尚未注册（模块画空态）
+// nullptr = 尚未注册（模块画空态）或已退出摘牌（关闭序末尾，迟到访问按未注册降级）
 void registerAppDatabase(core::data::SqliteDb* db);
 core::data::SqliteDb* appDatabase();
+
+// 退出摘牌（need:309 审计 P2②）：须在后台线程全部 join 之后、Database 析构之前调用。
+// 只摘访问器不动连接——此后 appDatabase() 返回 nullptr，迟到的后台线程/静态析构按
+// 「未注册」降级，不会拿到已析构连接的悬垂指针。幂等。
+void unregisterAppDatabase();
 
 } // namespace core
