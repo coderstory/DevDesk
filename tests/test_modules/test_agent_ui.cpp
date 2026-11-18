@@ -2755,9 +2755,10 @@ REGISTER_TEST(agent_ui_tools_search_filter_matches,
 })
 
 // 防回归三元组：need170 工具弹窗描述·UTF-8 逐码点换行 + 末行省略号（修 bug #7 的
-// 文本面，与渲染同引擎测量）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽
+// 文本面，与渲染同引擎测量）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽。
+// need324 波2 增：CJK 行首禁则拉回（禁则符并入上一行行尾，不落行首）。
 REGISTER_TEST(agent_ui_tools_desc_wrap_ellipsize,
-              "agent_ui: 工具弹窗描述·UTF-8 逐码点换行与末行省略（wrapToolDescLines/ellipsizeToolLine）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽", {
+              "agent_ui: 工具弹窗描述·UTF-8 逐码点换行与末行省略（wrapToolDescLines/ellipsizeToolLine）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽 / 行首禁则拉回（need324）", {
     constexpr float kFs = 13.0f;  // 与实现 descFs 同档（theme::scaled(13)，测试 scale=1）
     // 空文本 → 空集（「（无描述）」兜底在渲染层，不属本函数）
     DOCTEST_CHECK(module::agent::wrapToolDescLines("", 120.0f, kFs).empty());
@@ -2793,6 +2794,26 @@ REGISTER_TEST(agent_ui_tools_desc_wrap_ellipsize,
         }
         DOCTEST_CHECK_MESSAGE(joined == longCjk, "换行不得丢字，拼接实测: " +
                                                      joined);
+    }
+    // need324 波2 红绿判据：mw 取「9 字恰容 + 半字余量」→ 断行点钉在禁则符前——
+    // 旧逻辑禁则符落第 2 行行首（红）；拉回法并入第 1 行行尾（绿，行尾超 mw
+    // ≤1 标点宽）。字体无关确定性：无论该符 advance 是否触发溢出，都归第 1 行
+    //（未触发即自然容纳，触发了即拉回，两条路同归）。表抽样 = 调研 §二最小集
+    // 14 码点代表面（句读/结束括号/省略号）；谓词表本身的钉住在 EUI-NEO
+    // tests/unit/text_kinsoku.cpp（波 1）。
+    {
+        const std::string nine = "一二三四五六七八九";
+        const float w9 =
+            core::TextPrimitive::measureTextWidth(nine, "", kFs, 400);
+        const float mw = w9 + kFs * 0.5f;
+        for (const char* punct : {"，", "。", "、", "；", "：", "！",
+                                  "？", "）", "」", "】", "…"}) {
+            const auto ls =
+                module::agent::wrapToolDescLines(nine + punct + "零", mw, kFs);
+            DOCTEST_REQUIRE(ls.size() == 2);
+            DOCTEST_CHECK_EQ(ls[0], nine + punct);
+            DOCTEST_CHECK_EQ(ls[1], std::string("零"));
+        }
     }
     // 超窄（1px）→ 逐码点一行一字（CJK 与 ASCII 同口径）
     {
