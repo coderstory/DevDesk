@@ -1144,6 +1144,25 @@ REGISTER_TEST(wallpaper_ui_holds_active_state,
     composeFrame(notPlayingUi, kPage1600x1000, notPlaying, {}, state);
     DOCTEST_CHECK_EQ(elementText(notPlayingUi, "wallpaper.holds.summary"),
                      std::string("未播放"));
+    // need310②：非播放态 chip 一律压暗——watcher 喂入的 holds 不代表正在让路，
+    // 与摘要「未播放 / 文件夹不可用」并存时不得出现亮显 chip 造成矛盾读感。
+    for (int i = 0; i < 4; ++i) {
+        const auto* bg = notPlayingUi.find("wallpaper.holds.reason." +
+                                           std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK_MESSAGE(sameColor(bg->color, t.colors.surface),
+                              "非播放态 chip " + std::to_string(i) +
+                                  " 应压暗（不看 systemHolds）");
+    }
+    // need310②：目录缺失折叠摘要用专词「文件夹不可用」（对齐空态卡口径），
+    // 不再并进泛词「未播放」。
+    wp::WallpaperSnapshot missing = idle;
+    missing.availability = wp::Availability::FolderMissing;
+    missing.systemHolds = held;
+    eui::Ui missingUi;
+    composeFrame(missingUi, kPage1600x1000, missing, {}, state);
+    DOCTEST_CHECK_EQ(elementText(missingUi, "wallpaper.holds.summary"),
+                     std::string("文件夹不可用"));
     return true;
 })
 

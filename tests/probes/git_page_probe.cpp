@@ -579,9 +579,13 @@ int main(int argc, char* argv[]) {
                        "过滤「指南」命中说明文档/指南.md（全路径子串）");
                 shot("04_filter_active");
                 typeIntoFilter("指南zzz");
-                expect(ui->find("git.list.empty.message") != nullptr &&
-                           ui->find("git.list.empty.guide") != nullptr,
-                       "无匹配空态主句+引导（与干净空态严格区分）");
+                // need310③：过滤无匹配态用独立基 id（git.list.filter.empty），
+                // 与干净态 git.list.empty 双向互斥锁住，单断言不会双态假阳。
+                expect(ui->find("git.list.filter.empty.message") != nullptr &&
+                           ui->find("git.list.filter.empty.guide") != nullptr,
+                       "无匹配空态主句+引导（独立基 id git.list.filter.empty）");
+                expect(ui->find("git.list.empty.message") == nullptr,
+                       "无匹配态不得复用干净空态基 id git.list.empty");
                 expect(findGroupHeader("未暂存") == nullptr,
                        "过滤无匹配=组头临时隐藏");
                 shot("05_filter_empty");
@@ -617,6 +621,8 @@ int main(int argc, char* argv[]) {
                 pumpUntil([&] { return ui->find("git.list.empty.message") != nullptr; }, 8000);
                 expect(ui->find("git.list.empty.message") != nullptr,
                        "干净仓左卡弱提示「没有未提交变更」（kit 空态档）");
+                expect(ui->find("git.list.filter.empty.message") == nullptr,
+                       "干净空态不得挂过滤空态基 id（双向锁）");
                 expect(ui->find("git.list.empty.guide") == nullptr,
                        "切仓后过滤词清空（干净空态而非无匹配空态）");
                 expect(ui->find("git.right.empty.main") != nullptr &&

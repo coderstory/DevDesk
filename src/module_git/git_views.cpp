@@ -1060,7 +1060,12 @@ void composeListCard(eui::Ui& ui, float x, float y, float w, float h,
             // 空态（§4.8：组头全隐藏 + 弱提示一行）
             opts.message = "没有未提交变更";
         }
-        ui_kit::emptyState(ui, "git.list.empty", opts, x, listY, w, listH, t);
+        // 两种空态基 id 分离（need310③）：过滤无匹配 ≠ 工作区干净。基 id 各自
+        // 独立，探针对 .message/.guide 的单断言不会因两态共用基 id 而假阳。
+        ui_kit::emptyState(ui,
+                           c.filterActive() ? "git.list.filter.empty"
+                                            : "git.list.empty",
+                           opts, x, listY, w, listH, t);
         return;
     }
 

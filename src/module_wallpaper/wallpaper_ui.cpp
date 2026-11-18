@@ -782,9 +782,17 @@ void drawHoldsCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
         const bool playing = snapshot.availability == Availability::Playing;
         std::string summary;
         if (!playing) {
-            summary = snapshot.availability == Availability::FolderUnconfigured
-                          ? "未配置"
-                          : "未播放";
+            // 目录缺失是独立一态：右卡空态卡已用专词（presentation.cpp
+            // FolderMissing「壁纸文件夹找不到了」），折叠摘要同口径给「文件夹不可用」，
+            // 不再并进泛词「未播放」（need310②）。
+            if (snapshot.availability == Availability::FolderMissing) {
+                summary = "文件夹不可用";
+            } else if (snapshot.availability ==
+                       Availability::FolderUnconfigured) {
+                summary = "未配置";
+            } else {
+                summary = "未播放";
+            }
         } else if (snapshot.systemHolds != 0) {
             summary = "让路中";
         } else {
@@ -802,8 +810,11 @@ void drawHoldsCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
                                 20.0f;
             // 激活条件亮显（dim=false = background 底），未激活压暗（dim=true =
             // surface 底）。数据源只有快照 systemHolds，UI 不自己猜状态。
+            // 联动语义（need310②）：亮显只在「播放中且命中让路规则」才成立——
+            // 非播放态 watcher 喂入的 systemHolds 不代表正在让路，chip 一律压暗，
+            // 避免与摘要「未播放 / 文件夹不可用」并存读成矛盾。
             const bool active =
-                holdsReason(snapshot.systemHolds, kHoldChipReasons[i]);
+                playing && holdsReason(snapshot.systemHolds, kHoldChipReasons[i]);
             chip(ui, "wallpaper.holds.reason." + std::to_string(i), chipX,
                  64.0f, chipW, roundFs(26.0f), label, t, false, !active);
             chipX += chipW + 6.0f;
