@@ -14,9 +14,12 @@ namespace ui_kit {
 // 绿族底同调），池127 alpha 0.94/0.80 逐字符保留；浓绿版（kGlassGreenMix 派生式）
 // 随需求撤销一并回退，绿相方案存档见
 // docs/design/2026-11-03-全局参数卡（卡片色相+TAB放大+间距）.md。
+// 2026-11-18 池127 D-10 再提档（老板口径：深色卡片明显更实）：Dark 0.95→0.98——
+// 流体底亮点（实测 p95 亮度≈115）穿卡残差 (1-α)·Δ ≤ 2/255 低于暗景可辨阈，
+// 卡内不再透出移动色块；Light 0.94 实测可接受、不动（评审明断）。
 inline eui::Color glassFill(const core::theme::Tokens& t) {
     const auto& s = t.colors.surface;
-    if (t.isDark) return {s.r, s.g, s.b, 0.95f};
+    if (t.isDark) return {s.r, s.g, s.b, 0.98f};
     return {s.r * 0.97f + 0.001f, s.g * 0.97f + 0.023f, s.b * 0.97f + 0.011f, 0.94f};
 }
 

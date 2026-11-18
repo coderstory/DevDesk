@@ -258,10 +258,12 @@ public:
             std::max(0.0f, kCardY + cardH - kCardPad - contentTop);
 
         // 卡底板（2026-11-06 老板：补半透效果）：cardSurface 基础上降 alpha
-        // （浅色 0.78 / 深色 0.72），让背景透出一点、与窗材质联动；仍保留
-        // radiusLarge + 1px borderDefault + 全站统一轻阴影（cardPanelColored 单源）
+        // （浅色 0.78），让背景透出一点、与窗材质联动；仍保留
+        // radiusLarge + 1px borderDefault + 全站统一轻阴影（cardPanelColored 单源）。
+        // 2026-11-18 池127 D-10：深色 0.72→0.98 对齐 glassFill 提档（流体色块在
+        // 0.72 下穿卡残差 +22/255 肉眼直接可见；半透语言保留在浅色侧）。
         eui::Color aboutSurface = ui_kit::cardSurface(t);
-        aboutSurface.a = t.isDark ? 0.72f : 0.78f;
+        aboutSurface.a = t.isDark ? 0.98f : 0.78f;
         ui_kit::cardPanelColored(ui, "about.card", cardX, kCardY, cardW, cardH,
                                  t.sizes.radiusLarge, t, aboutSurface);
 

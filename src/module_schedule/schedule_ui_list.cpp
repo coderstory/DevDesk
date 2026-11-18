@@ -1155,7 +1155,6 @@ void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
                 .size(contentW, scrollH)
                 .theme(comp)
                 .content([&](eui::Ui& ui, float innerW, float innerH) {
-                    (void)innerH;
                     const float w = std::max(0.0f, innerW);
                     const bool userTab = activeTab_ == 1;
                     ui.column("schedule.list.content")
