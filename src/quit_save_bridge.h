@@ -20,6 +20,12 @@ using DiscardHandler = void (*)();
 // 传 nullptr 对 = 恢复空桩（未装配 = 视为无未保存修改，退出直通）。
 void setHandlers(HasUnsavedHandler hasUnsaved, DiscardHandler discard);
 
+// ②need:300：guard 阻止分支唤起主窗的缝。托盘 Exit 在主窗隐藏/最小化态触发
+// 时，确认弹窗必须画在可见窗上——阻止即先唤起。真实现由 main.cpp 装配段注入
+// app::requestShow；单测注入 fake 计数。未装配 = 不唤起（保守原行为）。
+using ShowMainHandler = void (*)();
+void setShowHandler(ShowMainHandler show);
+
 // app::setQuitGuard 落点（无捕获函数指针）：有未保存修改 → 开确认弹窗并阻止
 // 本次退出（false）；弹窗已开再触发（连点 Exit）继续阻止；否则放行（true）。
 bool guard();

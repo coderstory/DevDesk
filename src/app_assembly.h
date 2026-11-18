@@ -159,4 +159,8 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
 std::string migrationFailMessage(const std::string& dbPath,
                                  const std::string& dataDir);
 
+// 启动打开失败弹窗文案（need:300③）：非损坏（权限/磁盘）打开失败的用户指引；
+// 纯函数便于单测。消费点 main.cpp openAppDatabase quickCheck 判非损坏分支。
+std::string openFailMessage(const std::string& dbPath);
+
 } // namespace app::assembly

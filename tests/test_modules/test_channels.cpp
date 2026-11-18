@@ -564,3 +564,35 @@ REGISTER_TEST(migrationFailMessageContract, "迁移失败弹窗文案（need:291
     DOCTEST_CHECK(msg.find("备份目录") != std::string::npos);
     return true;
 });
+
+REGISTER_TEST(openFailMessageContract, "启动打开失败弹窗文案（need:300③）：含非损坏语义 + 库路径 + 可操作恢复指引", {
+    const std::string msg = ::app::assembly::openFailMessage(
+        "/tmp/x/DevDesk/devdesk.sqlite3");
+    DOCTEST_CHECK(msg.find("无法打开") != std::string::npos);
+    DOCTEST_CHECK(msg.find("不是损坏") != std::string::npos);
+    DOCTEST_CHECK(msg.find("/tmp/x/DevDesk/devdesk.sqlite3") != std::string::npos);
+    DOCTEST_CHECK(msg.find("权限") != std::string::npos);
+    DOCTEST_CHECK(msg.find("移走备份") != std::string::npos);
+    return true;
+});
+
+// need:300② 静态桩（函数指针缝要求无捕获可转换单元）
+static bool ns300DirtyTrue() { return true; }
+static bool ns300DirtyFalse() { return false; }
+static int ns300ShowCalls = 0;
+static void ns300ShowBump() { ++ns300ShowCalls; }
+
+REGISTER_TEST(quitSaveGuardShowsWindowWhenBlocked, "退出 guard 阻止分支唤起主窗（need:300②）：阻止=show 被调且弹窗开，放行=不调", {
+    ::app::quit_save::resetForTest();
+    ns300ShowCalls = 0;
+    ::app::quit_save::setShowHandler(&ns300ShowBump);
+    ::app::quit_save::setHandlers(&ns300DirtyFalse, nullptr);
+    DOCTEST_CHECK(::app::quit_save::guard());  // 无未保存 = 放行，不唤起
+    DOCTEST_CHECK(ns300ShowCalls == 0);
+    ::app::quit_save::setHandlers(&ns300DirtyTrue, nullptr);
+    DOCTEST_CHECK_FALSE(::app::quit_save::guard());  // 有未保存 = 阻止
+    DOCTEST_CHECK(ns300ShowCalls == 1);              // 主窗唤起恰好一次
+    DOCTEST_CHECK(::app::quit_save::dialogOpenForTest());
+    ::app::quit_save::resetForTest();
+    return true;
+});

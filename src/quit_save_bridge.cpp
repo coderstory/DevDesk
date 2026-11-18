@@ -15,6 +15,7 @@ namespace {
 
 HasUnsavedHandler g_hasUnsaved = nullptr;
 DiscardHandler g_discard = nullptr;
+ShowMainHandler g_showMain = nullptr;
 bool g_dialogOpen = false;
 
 }  // namespace
@@ -22,6 +23,10 @@ bool g_dialogOpen = false;
 void setHandlers(HasUnsavedHandler hasUnsaved, DiscardHandler discard) {
     g_hasUnsaved = hasUnsaved;
     g_discard = discard;
+}
+
+void setShowHandler(ShowMainHandler show) {
+    g_showMain = show;
 }
 
 bool guard() {
@@ -33,6 +38,11 @@ bool guard() {
     // 每次退出请求问一次（need272 语义），无缓存——「放弃修改并退出」清 dirty
     // 后二次 requestExit 自然放行。
     g_dialogOpen = true;
+    // ②need:300：阻止 = 弹窗将画在主窗；主窗隐藏/最小化（托盘 Exit 态）时先
+    // 唤起，否则用户看不见确认弹窗也无法响应（应用看似卡死不退出）。
+    if (g_showMain != nullptr) {
+        g_showMain();
+    }
     return false;
 }
 
@@ -97,6 +107,7 @@ bool dialogOpenForTest() {
 void resetForTest() {
     g_hasUnsaved = nullptr;
     g_discard = nullptr;
+    g_showMain = nullptr;
     g_dialogOpen = false;
 }
 

@@ -171,6 +171,11 @@ bool handleDbCorruption(
                 // open 失败 ≠ 一定损坏（权限/磁盘也可能），quick_check 也判坏才走还原流程
                 auto qc = ::core::dbmaint::quickCheckOk(dbPath);
                 if (qc.isFail() || qc.value()) {
+                    // need:300③：非损坏打开失败（权限/磁盘等）也弹用户可见框，
+                    // 不再裸 abort 无声退出（同迁移失败分支口径）。
+                    ::platform::msgbox::show(
+                        "无法打开数据库",
+                        app::assembly::openFailMessage(dbPath.string()), false);
                     LOG_FATAL("无法打开数据库: " + r.errorMessage());
                     std::abort();
                 }
@@ -522,6 +527,7 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
         // 退出丢稿防线（need:291）：guard 查 markdown 未落盘编辑，有 → 开确认弹窗
         // 阻止退出；「放弃修改并退出」先清 dirty 再 requestExit（guard 二次放行）。
         // 无捕获函数指针直引本函数 static（wallpaper 托盘桥同款惯用法）。
+        app::quit_save::setShowHandler(&app::requestShow);  // ②need:300：guard 阻止即唤起主窗
         app::quit_save::setHandlers(
             +[]() -> bool {
                 auto* markdownModule =

@@ -451,4 +451,13 @@ std::string migrationFailMessage(const std::string& dbPath,
            "（会重建空数据库）；历史数据可在数据目录的备份目录中找回。";
 }
 
+std::string openFailMessage(const std::string& dbPath) {
+    // need:300③：非损坏打开失败（权限/磁盘满/被占用）——同 migrationFailMessage
+    // 范式：实际路径 + 可操作指引。
+    return "数据库无法打开（不是损坏，多为权限或磁盘问题），应用即将退出。\n\n"
+           "数据库文件：" + dbPath + "\n\n"
+           "可尝试：检查磁盘剩余空间与该文件的读写权限；确认没有其它程序占用；"
+           "或将上面的数据库文件移走备份后重新启动应用（会重建空数据库）。";
+}
+
 } // namespace app::assembly

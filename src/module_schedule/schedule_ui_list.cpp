@@ -511,9 +511,11 @@ ScheduleListUi::ScheduleListUi(ScheduleStore& store,
     };
     // 弹窗左下「删除」（池140 §5）：收编辑弹窗 → 走既有删除确认链路不变。
     editHost_.requestDelete = [this](int64_t ruleId) {
+        // ①need:300：延一帧——当帧只收编辑弹窗，次帧 compose 头再开删除确认
+        //（同帧一开一关会冻结两壳透明度过渡，确认壳隐形吞弹窗；驱动实测红）。
+        deferredDeleteId_ = ruleId;
         editState_.open = false;
         editState_.saveError.clear();
-        requestDeleteRule(ruleId);
     };
 }
 
@@ -637,7 +639,9 @@ void ScheduleListUi::requestDeleteRule(int64_t ruleId) {
         return;
     }
     pendingDeleteId_ = ruleId;
-    pendingDeleteName_ = rule.value().name;
+    pendingDeleteName_ =
+        rule.value().name.empty() ? "（未命名）" : rule.value().name;
+    std::fprintf(stderr, "[DEBUG-N1] set name='%s'\n", pendingDeleteName_.c_str());
     pendingDeletePurge_ = false;  // 默认软删（§4.4：配置与历史保留）
 }
 
@@ -653,6 +657,8 @@ void ScheduleListUi::confirmPendingDelete() {
 }
 
 void ScheduleListUi::cancelPendingDelete() {
+    std::fprintf(stderr, "[DEBUG-N1] cancelPendingDelete (name=%s)\n",
+                 pendingDeleteName_.c_str());
     pendingDeleteId_ = 0;
     pendingDeleteName_.clear();
     pendingDeletePurge_ = false;
@@ -746,6 +752,12 @@ void ScheduleListUi::resetForTest() {
 }
 
 void ScheduleListUi::compose(eui::Ui& ui, const eui::Screen& screen) {
+    // ①need:300：消费延一帧的删除请求（次帧才开确认弹窗，错开编辑壳同帧收起）。
+    if (deferredDeleteId_ != 0) {
+        const int64_t ruleId = deferredDeleteId_;
+        deferredDeleteId_ = 0;
+        requestDeleteRule(ruleId);
+    }
     const auto& t = core::theme::current();
     const auto comp = core::theme::componentTokensWeChat(t);
     const int64_t nowSec = static_cast<int64_t>(core::time::nowUnix());

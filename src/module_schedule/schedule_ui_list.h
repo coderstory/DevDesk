@@ -132,7 +132,12 @@ public:
 
     // 编辑/删除弹窗状态（无头用例断言面）
     bool editOpen() const { return editState_.open; }
-    bool deleteConfirmOpen() const { return !pendingDeleteName_.empty(); }
+    // ①need:300：确认弹窗开态判据 = 有挂起删除 id。原名非空判据会让「未命名
+    // 规则」永远弹不出确认窗 = UI 上删不掉。
+    bool deleteConfirmOpen() const { return pendingDeleteId_ != 0; }
+    // ①need:300：删除钮当帧只收编辑弹窗，次帧 compose 头消费开确认——同帧
+    // 「一壳 1→0 + 一壳 0→1」会冻结两壳透明度过渡（确认壳 opacity 卡 0 隐形）。
+    int64_t deferredDeleteId_ = 0;
 
     // 测试缝：回默认态（归档折叠 + 清错误文案 + 收抽屉；生产不调用）
     void resetForTest();
