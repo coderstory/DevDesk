@@ -3091,9 +3091,13 @@ REGISTER_TEST(todo_ui_complete_move_fail,
         toggle->onClick();
         frame.refresh();
 
+        // need294 批次C T9：toast 双槽迁移后标题=短短语，错误详情进正文槽
         const auto* toast = frame.ui.find("todo.toast.title");
         DOCTEST_REQUIRE(toast != nullptr);
-        DOCTEST_CHECK(toast->text.find("移入已完成列失败") != std::string::npos);
+        DOCTEST_CHECK(toast->text.find("任务已标记完成") != std::string::npos);
+        const auto* toastBody = frame.ui.find("todo.toast.message");
+        DOCTEST_REQUIRE(toastBody != nullptr);
+        DOCTEST_CHECK(toastBody->text.find("移入已完成列失败") != std::string::npos);
     }
 
     // 诚实的中途态：状态迁移已生效（已完成），卡片仍留原列——但用户已被明确告知

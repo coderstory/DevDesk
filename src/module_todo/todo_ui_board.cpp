@@ -87,7 +87,8 @@ inline eui::Color dueFaceColor(Priority p, const core::theme::Tokens& t,
 }
 
 // ---- H20：动作区按真实控件重算（不再留 560 死值）----
-// 搜索框 240×40 → 逾期 chip 88×28 → 「新建任务」120×32，控件间 2×spacingSmall。
+// 搜索框 240×40 → 逾期 chip 88×28 → 「新建任务」120×40（页头按钮统一 40 档，
+// need294 批次C），控件间 2×spacingSmall。
 // 「+ 列」入口按固定四列设计删除（列模型不可增删）。
 constexpr float kHeaderSearchW = 240.0f;
 constexpr float kHeaderOverdueW = 88.0f;
@@ -198,9 +199,9 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
 
                     // H20：唯一创建入口（列头 + / 空列添加入口已删除），走富创建弹窗
                     components::button(ui, "todo.btn.add")
-                        .size(kHeaderNewTaskW, 32.0f)
+                        .size(kHeaderNewTaskW, 40.0f)
                         .text("新建任务")
-                        .fontSize(t.sizes.fontSizeSmall)
+                        .fontSize(t.sizes.fontSizeBody)
                         .colors(t.colors.primary, t.colors.primaryHover,
                                 t.colors.primaryPressed)
                         .textColor(t.colors.onPrimary)

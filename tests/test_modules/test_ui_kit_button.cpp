@@ -58,9 +58,11 @@ REGISTER_TEST(ui_kit_button_primary_colors,
     return true;
 })
 
-// 场景2（防「次按钮与主按钮等权」）：Secondary bg=hover(#F2F2F2)
+// 场景2（防「次按钮与主按钮等权」）：Secondary bg=surfaceElevated
 // ≠ primary(#07C160) + text=textPrimary(#1A1A1A)。事故：次按钮用主色底/等宽
 // 致操作权重不分（spec §4.1「与主按钮视觉等权」禁止项）。
+// need294 批次C T6：normal 档改钉 surfaceElevated（三态 normal/hover/pressed
+// 分离，原实现三态同为 hover 色致无反馈），断言随之更新。
 REGISTER_TEST(ui_kit_button_secondary_not_primary,
               "ui_kit button: Secondary bg≠primary + text=textPrimary", {
     const auto& t = core::theme::current();
@@ -72,8 +74,8 @@ REGISTER_TEST(ui_kit_button_secondary_not_primary,
 
     const auto* bg = ui.find("btn.s.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = hover（S1.2 #13），不等于 primary #36D399
-    DOCTEST_CHECK(sameColor(bg->color, t.colors.hover));
+    // bg = surfaceElevated（need294 T6 三态分离 normal 档），不等于 primary
+    DOCTEST_CHECK(sameColor(bg->color, t.colors.surfaceElevated));
     DOCTEST_CHECK(!sameColor(bg->color, t.colors.primary));  // 不等于 primary
 
     const auto* txt = ui.find("btn.s.text");

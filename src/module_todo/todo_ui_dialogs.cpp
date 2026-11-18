@@ -950,6 +950,21 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     {.y = 52.0f, .height = 18.0f, .lineHeight = 18.0f});
             }
 
+            // 标题下分隔线 + 底区细线（need294 批次C：与 drawDialogShell 弹窗
+            // 语言归一——shell 头线 borderDefault 在标题带下、底线 borderMuted
+            // 在按钮带上；本弹窗头部有 chips/meta 行，线位随 contentTop/btnY
+            // 让位，均落在内容滚动区之外不重叠）
+            ui.rect("todo.dialog.detail.title.line")
+                .position(0.0f, contentTop - 6.0f)
+                .size(w, 1.0f)
+                .color(t.colors.borderDefault)
+                .build();
+            ui.rect("todo.dialog.detail.footer.line")
+                .position(0.0f, btnY - 6.0f)
+                .size(w, 1.0f)
+                .color(t.colors.borderMuted)
+                .build();
+
             // —— 内容区（UAT6 限高滚动容器）——
             // 视口 = frame 高 − 头部 − 按钮带 − 12 缝（contentTop/viewportH 在
             // frame 高计算处预算，见函数头）；标题/描述/优先级|截止/

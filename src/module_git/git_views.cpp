@@ -327,7 +327,7 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
 
     const float btnW = 160.0f;
     primaryButton(ui, "git.empty.pick", "选择仓库目录",
-                  blockX + (blockW - btnW) * 0.5f, y, btnW, scaled(36.0f), t,
+                  blockX + (blockW - btnW) * 0.5f, y, btnW, scaled(40.0f), t,
                   [&c] { c.beginPickRepo(); }, c.validating());
 }
 

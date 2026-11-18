@@ -197,7 +197,7 @@ public:
         if (!searchQuery_.empty() && service_) {
             auto r = service_->search(searchQuery_);
             if (r.isFail()) {
-                setStatus("搜索失败：" + r.errorMessage(), true);
+                setStatus("搜索失败", r.errorMessage());
                 // 命中集已清空，仍要收口归档自动展开状态（查询失败不保留旧命中表的展开）
                 syncSearchArchiveExpand();
                 clampColumnScrolls(lastColumnViewportH_);
@@ -220,7 +220,7 @@ public:
         if (r.isFail()) {
             // 读取失败不降级成「0 条」：badge 保留上次值并把失败报出去
             LOG_ERROR("Todo: 逾期计数查询失败（badge 保留上次值）: " + r.errorMessage());
-            setStatus("逾期任务查询失败：" + r.errorMessage(), true);
+            setStatus("逾期任务查询失败", r.errorMessage());
             return;
         }
         overdueCount_ = r.value().size();
@@ -228,14 +228,14 @@ public:
 
     void openOverdueDialog() {
         if (!service_) {
-            setStatus("服务未就绪（TodoService 未注册）", true);
+            setStatus("服务未就绪（TodoService 未注册）");
             return;
         }
         auto r = service_->listOverdue();
         if (r.isFail()) {
             // 查询失败不当空结果开弹窗（会让人以为数据丢了）：报错 + 不开，弹窗保持上次内容
             LOG_ERROR("Todo: 逾期弹窗查询失败: " + r.errorMessage());
-            setStatus("逾期任务加载失败：" + r.errorMessage(), true);
+            setStatus("逾期任务加载失败", r.errorMessage());
             return;
         }
         dialogs_.overdue.tasks = std::move(r).value();
@@ -247,7 +247,7 @@ public:
     void retryLoad() {
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
-            setStatus("数据库尚未注册，无法重试", true);
+            setStatus("数据库尚未注册，无法重试");
             return;
         }
         if (!service_) {
@@ -256,7 +256,7 @@ public:
         }
         reloadAll();
         if (!loadError_.empty()) {
-            setStatus("重试仍失败：" + loadError_, true);
+            setStatus("重试仍失败", loadError_);
         }
     }
 
@@ -283,7 +283,7 @@ public:
             auto u = service_->updateTask(created);
             if (u.isFail()) {
                 LOG_ERROR("Todo: 新建任务写标签失败: " + u.errorMessage());
-                setStatus("任务已创建，但写入标签失败：" + u.errorMessage(), true);
+                setStatus("任务已创建，但写入标签失败", u.errorMessage());
             }
         }
         core::event::bus().emit(core::event::kTodoCreated);
@@ -296,7 +296,7 @@ public:
         if (!service_) return false;
         auto r = service_->moveTask(taskId, toColumnId, newPosition);
         if (r.isFail()) {
-            setStatus("移动失败：" + r.errorMessage(), true);
+            setStatus("移动失败", r.errorMessage());
             return false;
         }
         reloadAll();
@@ -308,7 +308,7 @@ public:
         if (!service_) return;
         auto r = service_->completeTask(taskId);
         if (r.isFail()) {
-            setStatus("标记完成失败：" + r.errorMessage(), true);
+            setStatus("标记完成失败", r.errorMessage());
             return;
         }
         // 完成后移到已完成列（kind='done'），追加列尾
@@ -320,7 +320,7 @@ public:
         if (!service_) return;
         auto r = service_->uncompleteTask(taskId);
         if (r.isFail()) {
-            setStatus("取消完成失败：" + r.errorMessage(), true);
+            setStatus("取消完成失败", r.errorMessage());
             return;
         }
         core::event::bus().emit(core::event::kTodoUncompleted);
@@ -333,9 +333,8 @@ public:
         const int64_t targetCol = ui::findColumnByKind(columns_, kind);
         if (targetCol == 0) {
             // 明示而非静默：没有语义列时任务留在原列（异常态，走错误通道）
-            setStatus(std::string{toDone ? "任务已完成" : "已取消完成"} + "（未找到 kind='" +
-                          kind + "' 的列，任务留在原列）",
-                      true);
+            setStatus(toDone ? "任务已完成" : "已取消完成",
+                      "未找到 kind='" + kind + "' 的列，任务留在原列");
             reloadAll();
             return;
         }
@@ -344,10 +343,9 @@ public:
         if (mv.isFail()) {
             LOG_ERROR("Todo: 完成态流转的列迁移失败（kind=" + kind +
                       "）: " + mv.errorMessage());
-            setStatus((toDone ? "任务已标记完成，但移入已完成列失败："
-                              : "已取消完成，但移回待办列失败：") +
-                          mv.errorMessage(),
-                      true);
+            setStatus(toDone ? "任务已标记完成" : "已取消完成",
+                      (toDone ? "移入已完成列失败：" : "移回待办列失败：") +
+                          mv.errorMessage());
             reloadAll();
             return;
         }
@@ -358,7 +356,7 @@ public:
         if (!service_) return;
         auto r = service_->deleteTask(taskId);
         if (r.isFail()) {
-            setStatus("删除失败：" + r.errorMessage(), true);
+            setStatus("删除失败", r.errorMessage());
             return;
         }
         reloadAll();
@@ -370,7 +368,7 @@ public:
         if (!service_) return false;
         auto r = service_->updateTask(task);
         if (r.isFail()) {
-            setStatus("保存失败：" + r.errorMessage(), true);
+            setStatus("保存失败", r.errorMessage());
             return false;
         }
         reloadAll();
@@ -566,26 +564,25 @@ public:
         if (self != nullptr) {
             const Column* taskCol = ui::findColumn(columns_, self->columnId);
             if (taskCol != nullptr && taskCol->kind == "archive") {
-                setStatus("归档任务按归档时间排序，不支持手动移动", true);
+                setStatus("归档任务按归档时间排序，不支持手动移动");
                 return;
             }
         }
         const auto mv = ui::computeKeyboardMove(tasks_, selectedTaskId_, up);
         if (!mv) {
             // 边界 no-op：操作未执行的告示走错误通道（成功类提示已删，绿色勾会误导）
-            setStatus(up ? "已经在最上面了" : "已经在最下面了", true);
+            setStatus(up ? "已经在最上面了" : "已经在最下面了");
             return;
         }
         doMoveTask(selectedTaskId_, mv->columnId, mv->position);
     }
 
-    // 错误/异常反馈走 toast（3.5s 超时自动消失）；subtitle 保持静态说明。
-    // UAT6：成功类操作提示全删（用户真机反馈噪音），toast 仅剩错误通道——
-    // 拖拽/键盘移动失败、完成态流转异常、搜索/逾期查询失败、无选中/无列引导
-    // 都只经 toast 可见，组件与状态成员保留（见 compose 的 drawToast）。
-    void setStatus(const std::string& msg, bool isError = false) {
-        // 正文留空 = 不设正文（组件自带默认正文文案随之保留）
-        toast_.show(msg, "", isError);
+    // 错误/异常反馈走 toast 双槽（3.5s 超时自动消失）：title=短短语、
+    // detail=底层错误详情（可空）。need294 批次C T9：对齐 markdown/memory 的
+    // showToast(标题短语, 错误详情) 双槽范式——错误详情不再挤进标题行。
+    // UAT6 口径不变：成功类提示全删，toast 仅剩错误/异常/边界引导通道。
+    void setStatus(const std::string& title, const std::string& detail = "") {
+        toast_.show(title, detail, true);
     }
 
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
@@ -616,7 +613,7 @@ public:
         const int64_t columnId = ui::findColumnByKind(columns_, "todo");
         if (columnId == 0) {
             LOG_ERROR("Todo: 未找到 kind='todo' 的列，新建任务已中止");
-            setStatus("未找到待办列，无法新建任务", true);
+            setStatus("未找到待办列，无法新建任务");
             return;
         }
         openNewTaskDialog(columnId);
@@ -825,12 +822,12 @@ public:
         auto src = ::core::ServiceLocator::requireService<
             ::core::IMarkdownNotesSource>();
         if (src.isFail()) {
-            setStatus("关联文档需要 Markdown 模块启用", true);
+            setStatus("关联文档需要 Markdown 模块启用");
             return;
         }
         auto notes = src.value()->listNotes();
         if (notes.isFail()) {
-            setStatus("读取笔记列表失败：" + notes.errorMessage(), true);
+            setStatus("读取笔记列表失败", notes.errorMessage());
             return;
         }
         dialogs_.docPickNotes = std::move(notes.value());
@@ -1027,7 +1024,7 @@ public:
         if (!event.modifiers.shortcut()) return false;
         if (service_ == nullptr) return false;
         if (selectedTaskId_ == 0 || ui::findTask(tasks_, selectedTaskId_) == nullptr) {
-            setStatus("先点击卡片选中任务，再用 Ctrl+↑/↓ 移动", true);
+            setStatus("先点击卡片选中任务，再用 Ctrl+↑/↓ 移动");
             return false;
         }
         moveTaskByKeyboard(event.key == eui::InputKey::Up);
@@ -1185,7 +1182,7 @@ private:
         .contextSelectPath = [this](const std::vector<int>& path) {
             onContextSelectPath(path);
         },
-        .warn = [this](const std::string& msg) { setStatus(msg, true); },
+        .warn = [this](const std::string& msg) { setStatus(msg); },
     };
 
     std::unique_ptr<TodoService> service_;

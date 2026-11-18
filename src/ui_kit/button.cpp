@@ -41,10 +41,13 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
             txtColor = t.colors.onPrimary;
             break;
         case ButtonLevel::Secondary:
-            // 次要操作：浅灰底 + 深灰字；hover 走 dividerSecondary（#EDEDED）
-            bgNormal = t.colors.hover;
+            // 次要操作：浅灰底 + 深灰字。need294 批次C T6：三态分离（原
+            // normal/hover/pressed 同为 hover 色，全站空态引导钮无 hover 反馈）
+            // ——与 dialog_shell 副按钮三态对齐：
+            // normal=surfaceElevated / hover=hover / pressed=active
+            bgNormal = t.colors.surfaceElevated;
             bgHover = t.colors.hover;
-            bgPressed = t.colors.hover;
+            bgPressed = t.colors.active;
             txtColor = t.colors.textPrimary;
             break;
         case ButtonLevel::Text:
@@ -56,10 +59,11 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
             txtColor = t.colors.accentText;
             break;
         case ButtonLevel::Danger:
-            // 删除/高危：警示红 + 白字；hover 加深一档（派生）
+            // 删除/高危：警示红 + 白字；hover/pressed 派生深红两档（need294 批次C
+            // T6：原 hover=pressed 同色，按压无反馈）
             bgNormal = t.colors.error;
             bgHover = darkenRed(t.colors.error);
-            bgPressed = darkenRed(t.colors.error);
+            bgPressed = darkenRed(darkenRed(t.colors.error));
             txtColor = t.colors.onPrimary;
             break;
     }
