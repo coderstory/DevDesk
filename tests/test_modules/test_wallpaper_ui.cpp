@@ -1126,6 +1126,24 @@ REGISTER_TEST(wallpaper_ui_holds_active_state,
     composeFrame(batteryUi, kPage1600x1000, batteryOn, {}, state);
     DOCTEST_CHECK_EQ(elementText(batteryUi, "wallpaper.holds.summary"),
                      std::string("电池供电时暂停"));
+
+    // QA-2 D2：未播放/未配置下不得常显「让路中」——watcher 在空态喂入的 holds
+    // 非零，摘要必须回落实态词（仅「播放中且命中让路规则」才显「让路中」）。
+    wp::WallpaperSnapshot unconfigured = idle;
+    unconfigured.availability = wp::Availability::FolderUnconfigured;
+    unconfigured.systemHolds = held;
+    eui::Ui unconfiguredUi;
+    composeFrame(unconfiguredUi, kPage1600x1000, unconfigured, {}, state);
+    DOCTEST_CHECK_EQ(elementText(unconfiguredUi, "wallpaper.holds.summary"),
+                     std::string("未配置"));
+
+    wp::WallpaperSnapshot notPlaying = idle;
+    notPlaying.availability = wp::Availability::NoPlayableVideos;
+    notPlaying.systemHolds = held;
+    eui::Ui notPlayingUi;
+    composeFrame(notPlayingUi, kPage1600x1000, notPlaying, {}, state);
+    DOCTEST_CHECK_EQ(elementText(notPlayingUi, "wallpaper.holds.summary"),
+                     std::string("未播放"));
     return true;
 })
 

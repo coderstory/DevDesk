@@ -776,13 +776,23 @@ void drawHoldsCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
     const float h = roundFs(expanded ? kHoldsExpandedH : kHoldsCollapsedH);
     cardStack(ui, "wallpaper.card.holds", w, h, t, [&] {
         const auto onToggle = [&state] { state.holdsExpanded = !state.holdsExpanded; };
-        // 折叠摘要优先反映实时让路状态（watcher 喂入的 arbiter 快照）。
-        foldTitleRow(ui, "wallpaper.holds", "这些情况会让路",
-                     snapshot.systemHolds != 0
-                         ? std::string("让路中")
-                         : (snapshot.pauseOnBattery ? "电池供电时暂停"
-                                                    : "电池供电时继续"),
-                     expanded, w, t, onToggle);
+        // 折叠摘要反映实时让路状态（watcher 喂入的 arbiter 快照）。仅「播放中且
+        // 命中让路规则」才显「让路中」；空态下 watcher 喂入的 holds 非零不代表
+        // 正在让路，摘要回落实态词，避免误导（QA-2 D2）。
+        const bool playing = snapshot.availability == Availability::Playing;
+        std::string summary;
+        if (!playing) {
+            summary = snapshot.availability == Availability::FolderUnconfigured
+                          ? "未配置"
+                          : "未播放";
+        } else if (snapshot.systemHolds != 0) {
+            summary = "让路中";
+        } else {
+            summary = snapshot.pauseOnBattery ? "电池供电时暂停"
+                                              : "电池供电时继续";
+        }
+        foldTitleRow(ui, "wallpaper.holds", "这些情况会让路", summary, expanded,
+                     w, t, onToggle);
         if (!expanded) return;
         float chipX = kCardPad;
         for (int i = 0; i < 4; ++i) {

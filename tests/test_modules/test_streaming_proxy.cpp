@@ -789,10 +789,12 @@ REGISTER_TEST(streaming_proxy_idle_watchdog_cuts_stalled_upstream,
     MockSseServer upstream;
     DOCTEST_REQUIRE(upstream.start());
 
+    // stall 时长常量化：墙钟上界与它绑死（见下方 elapsed 断言）。
+    const long stallMs = 3000;
     MockScript script;
     script.chunks = makeSseScript(3, false);   // 3 个数据帧，无 [DONE]
     script.stallAfterChunks = 3;
-    script.stallMs = 3000;
+    script.stallMs = stallMs;
     upstream.onMessages(script);
 
     // 阈值 300ms；ScopedEnv 析构还原（fail-fast 早退也不泄漏给后续用例）
@@ -822,12 +824,14 @@ REGISTER_TEST(streaming_proxy_idle_watchdog_cuts_stalled_upstream,
     DOCTEST_CHECK(res.ok);
     DOCTEST_CHECK_EQ(res.status, 200);
     DOCTEST_CHECK(sseOrderOk(res.body, 3));
-    // 看门狗 300ms 触发 → error 帧 + 提前结束（无看门狗要等满 3s 静默）
-    DOCTEST_CHECK(elapsed < 2000);
+    // 语义断言为主：看门狗真触发 → 合成 error 帧（含 idle timeout 文案），且
+    // 不会有上游自然收尾的 [DONE]；看门狗没触发时这些必红（敏感度保证）。
     DOCTEST_CHECK(res.body.find("upstream_stream_error") != std::string::npos);
     DOCTEST_CHECK(res.body.find("idle timeout") != std::string::npos);
-    // 流是被看门狗截断的：不会有上游自然收尾的 [DONE]
     DOCTEST_CHECK(res.body.find("data: [DONE]") == std::string::npos);
+    // 墙钟上界放宽到 stall 本身时长：看门狗 300ms + curl 进度回调 ~1s 粒度 +
+    // CI 慢化 3× 仍在界内；看门狗没触发则要等满 stallMs 自然收尾，必越界红。
+    DOCTEST_CHECK(elapsed < stallMs);
 
     proxy.stop();
     upstream.stop();
