@@ -577,7 +577,7 @@ REGISTER_TEST(memory_collect_f06_wash_torn_marker,
                      std::string("低于下限 [Reques"));
     DOCTEST_CHECK(!w);
 
-    // 断言主体：1000B 正文 + 41B 完整标记，事件级截断切在第 1024 字节恰落在
+    // 断言主体：1000B 正文 + 42B 完整标记，事件级截断切在第 1024 字节恰落在
     // 标记内部撕出 24B 残段（ASCII 无码点回退，与 session_reader truncateUtf8
     // 行为一致）→ 洗后零残段、正文保全
     const std::string full =
@@ -585,7 +585,7 @@ REGISTER_TEST(memory_collect_f06_wash_torn_marker,
     const std::string truncated = full.substr(0, 1024);
     DOCTEST_REQUIRE_EQ(truncated.size(), static_cast<std::size_t>(1024));
     DOCTEST_CHECK_EQ(truncated.substr(1000),
-                     std::string("[Request interrupted by u"));
+                     std::string("[Request interrupted by "));
     w = false;
     const std::string out = pipeline::stripLeakMarkers(truncated, &w);
     DOCTEST_CHECK(w);
