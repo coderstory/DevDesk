@@ -7,6 +7,7 @@
 #include <cstring>
 #include <ctime>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -239,6 +240,17 @@ core::Result<CollectRoundReport> runCollectRound(
     // F-01 跨轮/跨会话已知指纹集（pending + 近期已决）；同轮段间去重另计
     std::unordered_set<std::string> knownFps = loadKnownFingerprints(store);
     std::unordered_set<std::string> roundFps;
+    // BD 批（bug191）单会话轮内预算：出卡数 + 溢出数 + 头/尾样本引用
+    //（头=该会话首个被丢弃段，尾=最后一个；单溢出时头尾合一）
+    struct SessionBudget {
+        int cards = 0;
+        int overflow = 0;
+        std::int64_t headSeq = -1;
+        std::int64_t tailSeq = -1;
+        std::string headFp;
+        std::string tailFp;
+    };
+    std::unordered_map<std::string, SessionBudget> budgets;
     for (const collector::Segment& seg : segments.value()) {
         // 单一管线入口：出机（入库提案）前每段必过闸
         auto gated = gate.process(seg.text);
@@ -290,6 +302,26 @@ core::Result<CollectRoundReport> runCollectRound(
             continue;
         }
         roundFps.insert(fp);
+        // BD 批（bug191）：单轮单会话出卡上限——超限段丢弃（不建卡不排队），
+        // commit 照常记已处理（丢弃=终局不重放，靠样本引用留诊断线索不静默）。
+        // 落点在 F-06 洗 / F-03 低值 / F-01 去重之后：overflow 只数真卡级内容
+        //（噪声与重复另有计数，不占本上限也不虚增 overflow）
+        SessionBudget& budget = budgets[seg.sessionId];
+        if (budget.cards >= kMaxCardsPerSessionRound) {
+            const std::int64_t seq =
+                seg.events.empty()
+                    ? 0
+                    : static_cast<std::int64_t>(seg.events.front().eventSeq);
+            if (budget.headSeq < 0) {
+                budget.headSeq = seq;
+                budget.headFp = fp;
+            }
+            budget.tailSeq = seq;
+            budget.tailFp = fp;
+            ++budget.overflow;
+            ++report.overflowDropped;
+            continue;
+        }
         std::vector<proposals::ProposalEvidence> evidence;
         evidence.reserve(seg.events.size());
         for (const auto& ev : seg.events) {
@@ -325,12 +357,30 @@ core::Result<CollectRoundReport> runCollectRound(
             continue;
         }
         ++report.cardsCreated;
+        ++budgets[seg.sessionId].cards;  // BD 批：预算只数成功落库的卡
         RoundNote n;
         n.blocked = false;
         n.sessionId = seg.sessionId;
         n.text = "采集 · 会话 " + seg.sessionId + " 生成待审新增卡";
         if (onNote) onNote(n);
         report.notes.push_back(std::move(n));
+    }
+    // BD 批（bug191）：溢出样本收集 + 日志留痕（不静默）——每会话头/尾各一条
+    //（同段合一）；行内只有会话名/计数/指纹前 8 位（哈希非正文，脱敏红线不破）
+    for (const auto& kv : budgets) {
+        const SessionBudget& b = kv.second;
+        if (b.overflow == 0) continue;
+        report.overflowSamples.push_back(
+            OverflowSample{kv.first, b.headSeq, b.headFp});
+        if (b.tailSeq != b.headSeq) {
+            report.overflowSamples.push_back(
+                OverflowSample{kv.first, b.tailSeq, b.tailFp});
+        }
+        LOG_WARN("采集限流：会话 " + kv.first + " 本轮溢出丢弃 " +
+                 std::to_string(b.overflow) + " 段（单轮单会话上限 " +
+                 std::to_string(kMaxCardsPerSessionRound) + "，头样本 fp=" +
+                 b.headFp.substr(0, 8) + " 尾样本 fp=" + b.tailFp.substr(0, 8) +
+                 "，样本引用见 CollectRoundReport.overflowSamples）");
     }
     // 记账：处理完才推进水位/事件（拦截段也记已处理——不入提案但不重复扫）
     if (auto c = collector.commit(segments.value()); c.isFail()) {

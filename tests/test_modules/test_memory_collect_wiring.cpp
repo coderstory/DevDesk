@@ -311,6 +311,7 @@ REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(r.value().segments, 2);
     DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);  // 同轮段间去重：只第一张成卡
+    DOCTEST_CHECK_EQ(r.value().dedupSkipped, 1);  // BD 批（bug191）：deduped 计数钉死
     auto pending = store.listPending();
     DOCTEST_REQUIRE(pending.isOk());
     DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
@@ -321,6 +322,7 @@ REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_CHECK_EQ(r2.value().segments, 1);
     DOCTEST_CHECK_EQ(r2.value().cardsCreated, 0);
+    DOCTEST_CHECK_EQ(r2.value().dedupSkipped, 1);  // BD 批（bug191）：跨轮 deduped 计数
     auto pending2 = store.listPending();
     DOCTEST_REQUIRE(pending2.isOk());
     DOCTEST_CHECK_EQ(pending2.value().size(), static_cast<std::size_t>(1));
@@ -328,7 +330,7 @@ REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
 })
 
 REGISTER_TEST(memory_collect_storm_round_cap,
-              "memory: bug191 F-02——单轮上限 50：首轮灌 60+ 段恰出 50 卡，剩余段下轮续产且水位不丢不重", {
+              "memory: bug191 F-02+BD 批——单轮单会话上限 10：60 段首轮 10 卡+溢出 40 计数+头尾样本引用；次轮续产恰 10 卡零溢出；三轮清零；总量守恒（丢弃=有样本留痕的终局）", {
     const auto dir = makeTempDir("storm-cap");
     const auto projects = dir / "projects";
     std::filesystem::create_directories(projects);
@@ -338,7 +340,7 @@ REGISTER_TEST(memory_collect_storm_round_cap,
     auto store = std::move(opened.value());
     collector::Collector collector(dir / "collector.db", projects);
 
-    // 60 条互异长正文（各 >4KB → 一条一段封段），单会话
+    // 60 条互异长正文（各 >1KB → 一条一段封段），单会话
     std::string jsonl;
     for (int i = 0; i < 60; ++i) {
         jsonl += userLine("sess-cap",
@@ -348,23 +350,44 @@ REGISTER_TEST(memory_collect_storm_round_cap,
     }
     writeSession(projects / "sess-cap.jsonl", jsonl);
 
-    int totalCards = 0;
-    for (int roundIdx = 0; roundIdx < 5; ++roundIdx) {
-        auto r = pipeline::runCollectRound(collector, gate, store, {});
-        DOCTEST_REQUIRE(r.isOk());
-        totalCards += r.value().cardsCreated;
-        if (r.value().cardsCreated == 0) break;
-        if (roundIdx == 0) {
-            // 首轮硬顶在单轮上限
-            DOCTEST_CHECK_EQ(r.value().cardsCreated, 50);
-            DOCTEST_CHECK_EQ(r.value().segments, 50);
-        }
-    }
-    // 剩余段下轮续产（续产 >0 张）；总量守恒：续产无丢失无重放
-    DOCTEST_CHECK(totalCards > 50);
+    // 首轮：poll 预算 50 段全消费；单会话出卡上限 10 → 10 卡 + 40 溢出丢弃
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().segments, 50);
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 10);
+    DOCTEST_CHECK_EQ(r.value().overflowDropped, 40);
+    // 溢出不静默：头/尾样本引用（会话 + 首事件序号 + 指纹；零正文零敏感）
+    DOCTEST_REQUIRE_EQ(r.value().overflowSamples.size(),
+                       static_cast<std::size_t>(2));
+    DOCTEST_CHECK_EQ(r.value().overflowSamples[0].sessionId,
+                     std::string("sess-cap"));
+    DOCTEST_CHECK_EQ(r.value().overflowSamples[1].sessionId,
+                     std::string("sess-cap"));
+    // 头在前尾在后（段序单调）；指纹互异非空（可回溯定位被丢弃内容）
+    DOCTEST_CHECK(r.value().overflowSamples[0].firstEventSeq <
+                  r.value().overflowSamples[1].firstEventSeq);
+    DOCTEST_CHECK(!r.value().overflowSamples[0].fingerprint.empty());
+    DOCTEST_CHECK(r.value().overflowSamples[0].fingerprint !=
+                  r.value().overflowSamples[1].fingerprint);
+
+    // 次轮续产：poll 消费剩余 10 段（恰在上限内零溢出——限流不吞正常续产）
+    auto r2 = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_EQ(r2.value().segments, 10);
+    DOCTEST_CHECK_EQ(r2.value().cardsCreated, 10);
+    DOCTEST_CHECK_EQ(r2.value().overflowDropped, 0);
+    DOCTEST_CHECK(r2.value().overflowSamples.empty());
+
+    // 三轮：全消费完毕零段零卡（溢出段 commit 记已处理，终局不重放）
+    auto r3 = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK_EQ(r3.value().segments, 0);
+    DOCTEST_CHECK_EQ(r3.value().cardsCreated, 0);
+
+    // 总量守恒：pending = 首轮 10 + 次轮 10（40 溢出是有样本留痕的终局丢弃）
     auto pending = store.listPending();
     DOCTEST_REQUIRE(pending.isOk());
-    DOCTEST_CHECK_EQ(pending.value().size(), static_cast<std::size_t>(totalCards));
+    DOCTEST_CHECK_EQ(pending.value().size(), static_cast<std::size_t>(20));
     return true;
 })
 
