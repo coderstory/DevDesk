@@ -166,8 +166,9 @@ REGISTER_TEST(ui_kit_empty_state_minimal_text_with_nearby_action,
     // 按钮节点存在（W2b button helper Secondary 级，id="es.action"）
     const auto* btnBg = ui.find("es.action.bg");
     DOCTEST_REQUIRE(btnBg != nullptr);
-    // Secondary bg = hover #F3F4F6（S1.2 #13）
-    DOCTEST_CHECK(sameColor(btnBg->color, t.colors.hover));
+    // Secondary bg = surfaceElevated（need294 批次C T6 三态分离：常态 surfaceElevated
+    // /hover hover/pressed active，与 dialog 副按钮对齐；原 S1.2 #13 钉 hover 已过期）
+    DOCTEST_CHECK(sameColor(btnBg->color, t.colors.surfaceElevated));
     // 按钮高度 = kButtonHeight（40，S1.2 #35 / S2.1）
     DOCTEST_CHECK_EQ(btnBg->height.value, ui_kit::kButtonHeight);
     DOCTEST_CHECK_EQ(btnBg->height.value, 40.0f);

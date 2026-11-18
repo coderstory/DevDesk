@@ -459,6 +459,9 @@ void drawStatusCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
             const auto onNext = actions.next;
             nextOptions.onClick = [onNext] { onNext(); };
         }
+        // need294 白卡专项：横幅卡白底上 Secondary 常态不可辨，opt-in 1px 描边
+        nextOptions.hasBorderColor = true;
+        nextOptions.borderColor = t.colors.borderDefault;
         ui_kit::button(ui, "wallpaper.status.next", "下一个",
                        ui_kit::ButtonLevel::Secondary, actionsX + 96.0f,
                        actionsY, 88.0f, ui_kit::kButtonHeight, t, nextOptions);

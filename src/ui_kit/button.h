@@ -49,6 +49,11 @@ struct ButtonOptions {
     std::function<void()> onClick;          // 点击回调（注入 rect.onClick）
     bool hasTextColorOverride = false;      // 是否使用 textColorOverride
     eui::Color textColorOverride;           // 文字色覆盖（主要给 Text 级）
+    // opt-in 描边（need294 收口 qa 白卡专项）：默认关闭，§4.1「填充按钮禁边框」
+    // 禁令不破；仅 Secondary 常态 surfaceElevated 落白卡不可辨的消费方显式开启
+    //（对齐 dialog_shell 副按钮 1px borderDefault 先例，防手抄副本第二真源）。
+    bool hasBorderColor = false;
+    eui::Color borderColor;
 };
 
 // 渲染单按钮：stack(id) 内含 rect.bg（三态 hover + onClick + radius）+ 居中文字。

@@ -78,11 +78,15 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
         .position(x, y)
         .size(w, h)
         .content([&] {
-            // rect.bg：三态 hover + 点击 + radius；不加 border/shadow（§4.1 禁止项）
+            // rect.bg：三态 hover + 点击 + radius；不加 border/shadow（§4.1 禁止项，
+            // opt-in borderColor 例外——白卡可见性消费方显式开启，见 ButtonOptions 注）
             auto bg = ui.rect(id + ".bg")
                 .size(w, h)
                 .states(bgNormal, bgHover, bgPressed)
                 .radius(t.sizes.radius);
+            if (options.hasBorderColor) {
+                bg.border(1.0f, options.borderColor);
+            }
             if (options.onClick) {
                 bg.onClick(options.onClick);
             }

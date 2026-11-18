@@ -270,15 +270,20 @@ void MemoryModule::composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t,
     }
     if (wizardInline) {
         rightX -= 8.0f + 150.0f;
+        // need294 白卡专项：Secondary 常态 surfaceElevated 落状态带白底不可辨，
+        // opt-in 1px borderDefault 描边（见 ui_kit ButtonOptions 注）
+        ui_kit::ButtonOptions wizardOpts;
+        wizardOpts.onClick = [this] {
+            wizardOpen_ = true;
+            // 向导③步即时检查（need:202 F-04）：本地文件探测一次，
+            // idle 态下刷新 embed* 快照字段（管线态不受影响）
+            TelememEngine::global().refreshEmbedProbe();
+        };
+        wizardOpts.hasBorderColor = true;
+        wizardOpts.borderColor = t.colors.borderDefault;
         ui_kit::button(ui, "memory.eng.wizard", "首次安装向导",
                        ui_kit::ButtonLevel::Secondary, x + rightX, y + btnY,
-                       150.0f, btnH, t,
-                       {[this] {
-                           wizardOpen_ = true;
-                           // 向导③步即时检查（need:202 F-04）：本地文件探测一次，
-                           // idle 态下刷新 embed* 快照字段（管线态不受影响）
-                           TelememEngine::global().refreshEmbedProbe();
-                       }});
+                       150.0f, btnH, t, wizardOpts);
     }
     rightX -= 8.0f + 64.0f;
     ui_kit::button(ui, "memory.eng.detail", "详情",
@@ -459,6 +464,9 @@ void MemoryModule::composeHealthGrid(eui::Ui& ui,
             runOpts.hasTextColorOverride = true;
             runOpts.textColorOverride = t.colors.textDisabled;
         }
+        // need294 白卡专项：同 memory.eng.wizard——健康格白底上 opt-in 描边
+        runOpts.hasBorderColor = true;
+        runOpts.borderColor = t.colors.borderDefault;
         ui_kit::button(ui, "memory.health.h1.run", running ? "评测中…" : "跑评测",
                        ui_kit::ButtonLevel::Secondary,
                        x + cardW - 14.0f - 96.0f, y + core::theme::scaled(66.0f),
