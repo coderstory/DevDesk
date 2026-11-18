@@ -35,7 +35,7 @@ Delivery makeDelivery() {
 }
 
 // ---- 凭据夹具（need305：deliver 经 core::secrets_store 直读 app_secrets，
-// keychain 注入缝不再参与）——已 migrate 临时库 + 注册进程级 appDatabase ----
+// 假后端注入缝不再参与）——已 migrate 临时库 + 注册进程级 appDatabase ----
 struct SecretsDbGuard {
     test_support::TestDb tdb{"devdesk_test_wecom_", "secrets"};
     test_support::ScopedAppDatabase appDb{tdb.handle()};
@@ -44,7 +44,7 @@ struct SecretsDbGuard {
     // 返回 bool 由用例端断言：doctest 断言宏在 void 函数里展开成 return 编不过。
     bool seed(const std::string& account) {
         return core::secrets_store::set(
-                   tdb.handle(), module::schedule::kWecomKeychainService, account,
+                   tdb.handle(), module::schedule::kWecomSecretService, account,
                    kKey)
             .isOk();
     }
@@ -54,14 +54,14 @@ struct SecretsDbGuard {
         return tdb.handle()
             .exec("INSERT OR REPLACE INTO app_secrets(service, account, value, "
                   "updated_at) VALUES ('" +
-                      std::string(module::schedule::kWecomKeychainService) + "', '" +
+                      std::string(module::schedule::kWecomSecretService) + "', '" +
                       account + "', '" + stored + "', 0)")
             .isOk();
     }
 };
 
 // 假凭据保护后端：只有 enc:: 前缀可解，其余按「解不开」上抛（真实现遇到坏形态
-// 的等价物）。need308：deliver 必须把这一态与「没配过」分文案。
+// 的等价物）。need318（原 need308 审计 P2①）：deliver 必须把这一态与「没配过」分文案。
 core::Result<std::string> fakeProtectEnc(const std::string& plain) {
     return core::Result<std::string>::ok("enc::" + plain);
 }
@@ -318,7 +318,7 @@ REGISTER_TEST(wecomPayloadUnknownMsgtypeFails, "载荷组装：未知 msgtype �
     return true;
 });
 
-// 防：secret_ref 契约断——account 派生错导致读错 keychain 条目（拿错 key / 读不到 key）
+// 防：secret_ref 契约断——account 派生错导致读错 app_secrets 条目（拿错 key / 读不到 key）
 REGISTER_TEST(wecomConfigParseDefaultsAndFields, "config_json 解码：空串全默认、全字段解析、secretRef 优先于派生、timeout≤0 兜底", {
     auto def = module::schedule::parseWecomConfig("", 7, "");
     DOCTEST_REQUIRE(def.isOk());
@@ -326,7 +326,7 @@ REGISTER_TEST(wecomConfigParseDefaultsAndFields, "config_json 解码：空串全
     DOCTEST_CHECK_EQ(def.value().proxyMode, std::string("follow_system"));
     DOCTEST_CHECK(def.value().endpoint.empty());
     DOCTEST_CHECK_EQ(def.value().timeoutMs, 10000L);
-    DOCTEST_CHECK_EQ(module::schedule::wecomKeychainAccount(def.value()),
+    DOCTEST_CHECK_EQ(module::schedule::wecomSecretAccount(def.value()),
                      std::string("wecom.7"));  // secretRef 空 → 派生
 
     const std::string full = R"({"msgtype":"markdown","endpoint":"https://example.com/hook","mentions":["@all","zhangsan"],"mentioned_mobile_list":["13800000000"],"proxy_mode":"custom","proxy":"127.0.0.1:7890","timeout":5000,"future_field":1})";
@@ -340,7 +340,7 @@ REGISTER_TEST(wecomConfigParseDefaultsAndFields, "config_json 解码：空串全
     DOCTEST_CHECK_EQ(parsed.value().proxyMode, std::string("custom"));
     DOCTEST_CHECK_EQ(parsed.value().proxyAddr, std::string("127.0.0.1:7890"));
     DOCTEST_CHECK_EQ(parsed.value().timeoutMs, 5000L);
-    DOCTEST_CHECK_EQ(module::schedule::wecomKeychainAccount(parsed.value()),
+    DOCTEST_CHECK_EQ(module::schedule::wecomSecretAccount(parsed.value()),
                      std::string("wecom.9"));  // secretRef 优先
 
     auto zeroTimeout = module::schedule::parseWecomConfig(R"({"timeout":0})", 1, "");
@@ -501,13 +501,17 @@ REGISTER_TEST(wecomDeliverMissingSecretNoHttp, "缺凭据：app_secrets 无行 �
     return true;
 });
 
-// 防：need308 审计 P2①——「密钥解不开」被混报成「没配过」，用户按提示去重配也
+// 防：need318（need308 审计 P2①）——「密钥解不开」被混报成「没配过」，用户按提示去重配也
 // 修不好（真实原因是数据损坏，必须提示重录）。status 不变（引擎分类不改），
 // detail 必须走「数据异常」文案且与未配置态可分辨。
+// 夹具值内嵌 kKey（"corrupt-"+kKey）：证明下方「detail 不含 kKey」不是空断言——
+// 存储形态本身带密钥片段，任何把它拼进 detail 的实现都会立刻红。
 REGISTER_TEST(wecomDeliverCorruptSecretDistinctDetail, "缺凭据两态可分：app_secrets 有行但解不开 → missing_secret（数据异常文案）且不发 HTTP", {
     SecretsDbGuard secrets;
     CorruptSecretBackendGuard cred;
-    DOCTEST_REQUIRE(secrets.insertRaw("wecom.7", "not-protected-form"));
+    const std::string corruptStored = std::string("corrupt-") + kKey;
+    DOCTEST_CHECK_NE(corruptStored.find(kKey), std::string::npos);
+    DOCTEST_REQUIRE(secrets.insertRaw("wecom.7", corruptStored));
     WecomConfig cfg;
     cfg.channelDbId = 7;
     FakeHttp http;
@@ -521,6 +525,47 @@ REGISTER_TEST(wecomDeliverCorruptSecretDistinctDetail, "缺凭据两态可分：
     DOCTEST_CHECK_EQ(receipt.value().detail.find("配置库无渠道密钥"),
                      std::string::npos);
     DOCTEST_CHECK_EQ(receipt.value().detail.find(kKey), std::string::npos);
+    DOCTEST_CHECK_EQ(http.requests.size(), 0u);
+    return true;
+});
+
+// 防：need318（need308 审计 P2①）——库读错（appDatabase 未注册 = Internal）被
+// 固化成「密钥损坏请重录」终态：用户照着重录也修不好，真实原因是瞬时库故障。
+// 不构造 SecretsDbGuard 即未注册库（test_main 启动时全局复位为 nullptr）。
+REGISTER_TEST(wecomDeliverDbReadErrorTransientDetail, "缺凭据三态：appDatabase 未注册（Internal）→ missing_secret（读取库失败瞬时文案），不报重录、不发 HTTP", {
+    WecomConfig cfg;
+    cfg.channelDbId = 7;
+    FakeHttp http;
+    auto channel = makeChannel(cfg, http);
+
+    auto receipt = channel->deliver(makeDelivery());
+    DOCTEST_REQUIRE(receipt.isOk());
+    DOCTEST_CHECK_EQ(receipt.value().status, std::string("missing_secret"));
+    DOCTEST_CHECK_NE(receipt.value().detail.find("读取"), std::string::npos);
+    DOCTEST_CHECK_NE(receipt.value().detail.find("瞬时"), std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find("数据异常"), std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find("重新录入"), std::string::npos);
+    DOCTEST_CHECK_EQ(http.requests.size(), 0u);
+    return true;
+});
+
+// 防：need318——有行但 value 空串被误报「数据异常需重录」。归「未配置」侧的理由：
+// secrets_store::protect 契约空串→空串（不产保护形态），写侧拒存空 key，故空值
+// 等价于「没配过」；报重录会让用户去修一个并不存在的损坏。
+REGISTER_TEST(wecomDeliverEmptyStoredValueUnconfigured, "缺凭据三态：行在但 value 空串 → 归未配置侧（请先配置文案、不报重录）且不发 HTTP", {
+    SecretsDbGuard secrets;
+    DOCTEST_REQUIRE(secrets.insertRaw("wecom.7", ""));
+    WecomConfig cfg;
+    cfg.channelDbId = 7;
+    FakeHttp http;
+    auto channel = makeChannel(cfg, http);
+
+    auto receipt = channel->deliver(makeDelivery());
+    DOCTEST_REQUIRE(receipt.isOk());
+    DOCTEST_CHECK_EQ(receipt.value().status, std::string("missing_secret"));
+    DOCTEST_CHECK_NE(receipt.value().detail.find("请先"), std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find("数据异常"), std::string::npos);
+    DOCTEST_CHECK_EQ(receipt.value().detail.find("重新录入"), std::string::npos);
     DOCTEST_CHECK_EQ(http.requests.size(), 0u);
     return true;
 });

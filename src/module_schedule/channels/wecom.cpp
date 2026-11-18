@@ -25,7 +25,7 @@ std::string truncateUtf8(const std::string& text, std::size_t maxBytes) {
     return text.substr(0, cut);
 }
 
-std::string wecomKeychainAccount(const WecomConfig& cfg) {
+std::string wecomSecretAccount(const WecomConfig& cfg) {
     if (!cfg.secretRef.empty()) return cfg.secretRef;
     return "wecom." + std::to_string(cfg.channelDbId);
 }
@@ -338,18 +338,29 @@ core::Result<Receipt> WecomChannel::deliver(const Delivery& d) {
 
     // 2. 凭据：即时读、用后即弃；key 只存 app_secrets 专表（need305），
     //    不进日志、不进任何对象字段。
-    const std::string account = wecomKeychainAccount(cfg_);
-    auto secret = core::secrets_store::get(kWecomKeychainService, account);
-    // secrets_store.h 契约：「解不开」（unprotect/db 错）与「没配过」（NotFound）
+    const std::string account = wecomSecretAccount(cfg_);
+    auto secret = core::secrets_store::get(kWecomSecretService, account);
+    // secrets_store.h 契约：「解不开」（unprotect）与「没配过」（NotFound）
     // 必须可分辨——前者重录可修，后者是未配置；混成一句会把数据损坏报成配置缺失
-    //（审计 P2①）。status 仍为 missing_secret（引擎侧分类不变），只分 detail 文案。
+    //（need308 审计 P2①）。need318 收窄判据：只有「值形态坏」才提示重录
+    //（store 层对 unprotect 解不开的约定码是 InvalidApiKey，见 test_secrets_store）；
+    // 库读错/prepare/未注册（Internal 等）是瞬时故障，报成损坏重录会让用户白修。
+    // status 仍恒为 missing_secret（引擎侧分类不变），只分 detail 文案。
     if (secret.isFail() && secret.errorCode() != core::ErrorCode::NotFound) {
-        LOG_WARN("企业微信渠道密钥数据异常（account " + account +
-                 "）：请在设置页重新录入群机器人 webhook key");
+        if (secret.errorCode() == core::ErrorCode::InvalidApiKey) {
+            LOG_WARN("企业微信渠道密钥数据异常（account " + account +
+                     "）：请在设置页重新录入群机器人 webhook key");
+            return core::Result<Receipt>::ok(Receipt{
+                "missing_secret",
+                "渠道密钥数据异常（account " + account +
+                    "）：请到设置页重新录入群机器人 webhook key"});
+        }
+        LOG_WARN("企业微信渠道密钥读取失败（account " + account +
+                 "）：配置库暂时不可用（瞬时），本次投递放弃");
         return core::Result<Receipt>::ok(Receipt{
             "missing_secret",
-            "渠道密钥数据异常（account " + account +
-                "）：请到设置页重新录入群机器人 webhook key"});
+            "读取配置库失败（account " + account +
+                "）：配置库暂时不可用（瞬时故障，非密钥问题），请稍后重新触发投递"});
     }
     if (secret.isFail() || secret.value().empty()) {
         LOG_WARN("企业微信渠道密钥缺失（account " + account +

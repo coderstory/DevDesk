@@ -7,8 +7,8 @@
 // （schedule_channel 行 kind=="wecom" → parseWecomConfig → 注册）。
 //
 // 凭据纪律（§4.9 硬约束）：webhook key 只存 DB 专表 app_secrets
-//（need305；service kWecomKeychainService，account 经 schedule_channel.secret_ref，
-//  空则派生 wecom.<channelDbId>；键名沿用旧 keychain 命名），不进日志、
+//（need305；service kWecomSecretService，account 经 schedule_channel.secret_ref，
+//  空则派生 wecom.<channelDbId>），不进日志、
 // 不进任何 struct；deliver 内即时读取、用后即弃。buildWecomUrl 的返回值含
 // key，禁止写进日志/Receipt。
 //
@@ -16,7 +16,7 @@
 // 是纯函数（不注入时间戳/attempt 计数），重试恒产同一正文——重试不得改正文。
 //
 // 并发契约：deliver 任意线程可调（S5 渠道统一契约）；令牌桶非线程安全，
-// 由渠道对象内部互斥量保护；keychain/http 调用自身线程安全（facade 契约）。
+// 由渠道对象内部互斥量保护；secrets_store/http 调用自身线程安全（facade 契约）。
 #pragma once
 
 #include "core/result.h"
@@ -44,7 +44,7 @@ inline constexpr std::size_t kWecomTextMaxBytes = 2048;      // text.content 上
 inline constexpr std::size_t kWecomMarkdownMaxBytes = 4096;  // markdown / markdown_v2 上限
 inline constexpr int kWecomRateCapacity = 18;                // 官方 20 条/分钟，留 2 条余量
 inline constexpr double kWecomRateRefillPerSec = 18.0 / 60.0;
-inline constexpr const char* kWecomKeychainService = "devdesk.schedule";  // app_secrets service（need305，键名沿用旧 keychain 命名）
+inline constexpr const char* kWecomSecretService = "devdesk.schedule";  // app_secrets service（need305）
 
 // ---- 纯函数（可单测，不触 IO/网络/时钟）----
 
@@ -54,7 +54,7 @@ inline constexpr const char* kWecomKeychainService = "devdesk.schedule";  // app
 std::string truncateUtf8(const std::string& text, std::size_t maxBytes);
 
 // 渠道配置（schedule_channel.config_json 的解码结果 + 行级字段）。
-// secretRef = schedule_channel.secret_ref（keychain account 名）；空则由
+// secretRef = schedule_channel.secret_ref（app_secrets account 名）；空则由
 // parseWecomConfig 派生默认 wecom.<channelDbId>。key 本体不进本结构。
 struct WecomConfig {
     std::string msgtype = "text";  // text | markdown | markdown_v2（其余值装配期报错）
@@ -64,7 +64,7 @@ struct WecomConfig {
     std::string proxyMode = "follow_system";  // follow_system|disabled|custom（S6a 三态）
     std::string proxyAddr;          // custom 时必填（"host:port"）
     long timeoutMs = 10000;         // HTTP 超时；≤0 按默认
-    std::string secretRef;          // keychain account（如 wecom.3）；空 = wecom.<channelDbId>
+    std::string secretRef;          // app_secrets account（如 wecom.3）；空 = wecom.<channelDbId>
     std::int64_t channelDbId = 0;   // schedule_channel.id：默认 account 派生与排障定位
 };
 
@@ -85,7 +85,7 @@ std::string buildWecomUrl(const WecomConfig& cfg, const std::string& key);
 
 // app_secrets account：secretRef 非空即原样（经 schedule_channel.secret_ref），
 // 空则 "wecom." + channelDbId。account 名不是秘密，可进日志。
-std::string wecomKeychainAccount(const WecomConfig& cfg);
+std::string wecomSecretAccount(const WecomConfig& cfg);
 
 // 载荷组装（含长度纪律 §4.9）：
 //   text        → content = title 非空 ? title+"\n"+body : body，截 2048 字节；
@@ -142,8 +142,11 @@ using WecomHttpSender = std::function<core::Result<platform::http::Response>(
 // Receipt.status 稳定串（引擎重试编排/测试断言/schedule_delivery.status 落库依赖）：
 //   "ok"                                         投递成功（errcode 0）
 //   "rate_limited"                               本地令牌桶拒发（未发请求，引擎稍后重试）
-//   "missing_secret"                             无密钥 / 密钥解不开（未发请求；status 同一
-//                                                值，detail 分「未配置」「数据异常需重录」两种文案）
+//   "missing_secret"                             无密钥 / 密钥不可用（未发请求）。三态 detail：
+//                                                未配置（NotFound 或 value 空串 → 请先配置）、
+//                                                数据异常需重录（InvalidApiKey = 值形态坏）、
+//                                                读取配置库失败（其余如 Internal = 瞬时故障，
+//                                                不可固化成「损坏重录」终态——need318）
 //   "retryable:network_error"                    传输层失败
 //   "retryable:http_5xx"                         服务端 5xx
 //   "retryable:bad_body"                         响应体无合法 errcode（无法判定）
