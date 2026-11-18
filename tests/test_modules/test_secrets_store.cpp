@@ -1,7 +1,8 @@
 // tests/test_modules/test_secrets_store.cpp
 // app_secrets 薄封装单测（need305）：get/set/erase 往返、protect 落库形态、
 // 覆盖写刷新 updated_at、unprotect 解不开原样上抛、appDatabase 未注册失败路径。
-// protect/unprotect 经平台注入缝换内存假实现——不触 DPAPI/钥匙串，「落库形态」
+// protect/unprotect 经 core::secrets_store 自带注入缝换内存假实现（need305
+// 审计 P0 依赖倒置后缝随接口下沉 core）——不触真实保护实现，「落库形态」
 // 才可断言（enc:: 前缀差异可见，明文直落会被 get 端 fail 暴露）。
 // 注意：Backend 对象必须是 guard 的**成员**（构造函数局部变量在 ctor 返回即销毁，
 // 注入缝槽位会拿到悬垂指针——形态同 test_credential_storage 的 ScopedFakeKc）。
@@ -9,8 +10,6 @@
 #include "test_support.h"
 
 #include "core/secrets_store.h"
-
-#include "platform/credential_protection.h"
 
 #include <ctime>
 #include <string>
@@ -29,13 +28,13 @@ core::Result<std::string> fakeUnprotect(const std::string& stored) {
 }
 
 struct CredentialBackendGuard {
-    platform::credential::Backend table;   // 成员：槽位指向它，guard 活着就有效
-    const platform::credential::Backend* prev = nullptr;
+    core::secrets_store::Backend table;   // 成员：槽位指向它，guard 活着就有效
+    const core::secrets_store::Backend* prev = nullptr;
     CredentialBackendGuard() {
-        table = platform::credential::Backend{&fakeProtect, &fakeUnprotect};
-        prev = platform::credential::setBackendForTest(&table);
+        table = core::secrets_store::Backend{&fakeProtect, &fakeUnprotect};
+        prev = core::secrets_store::setBackendForTest(&table);
     }
-    ~CredentialBackendGuard() { platform::credential::setBackendForTest(prev); }
+    ~CredentialBackendGuard() { core::secrets_store::setBackendForTest(prev); }
     CredentialBackendGuard(const CredentialBackendGuard&) = delete;
     CredentialBackendGuard& operator=(const CredentialBackendGuard&) = delete;
 };

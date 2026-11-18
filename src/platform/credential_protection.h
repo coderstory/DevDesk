@@ -1,5 +1,8 @@
 // src/platform/credential_protection.h
 // 分平台凭据保护：profile 的 API key 进 SQLite 的 claude_profiles.api_key_encrypted 列。
+// 本头是实现侧（need305 审计 P0 依赖倒置）：core::secrets_store 经自己的
+// Backend 缝消费 protect/unprotect，由 main.cpp 启动装配——core 不依赖
+// platform（AGENTS §六）。
 // 2026-11-03 起全平台统一明文口径（DPAPI 已删，不做兼容）：列里就是明文，保密靠文件权限
 // ——macOS/POSIX = 0600，Windows = 数据根 %USERPROFILE% 下 NTFS 默认 ACL（仅本用户/管理员），
 // 见 core/file_perms.h。本头平台无关，实现拆 credential_protection_{win,posix}.cpp，业务零 #ifdef。

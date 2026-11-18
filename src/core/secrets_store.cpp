@@ -6,8 +6,6 @@
 #include "database.h"
 #include "time.h"
 
-#include "platform/credential_protection.h"
-
 namespace core::secrets_store {
 
 core::Result<std::string> get(core::data::SqliteDb& db,
@@ -46,14 +44,14 @@ core::Result<std::string> get(core::data::SqliteDb& db,
             "app_secrets 取 value 列失败: " + stored.errorMessage());
     }
     // unprotect 失败原样上抛：把不可用伪装成「没配过」会静默改变调用方语义
-    return platform::credential::unprotect(stored.value());
+    return unprotect(stored.value());
 }
 
 core::Result<void> set(core::data::SqliteDb& db,
                        const std::string& service,
                        const std::string& account,
                        const std::string& plaintext) {
-    auto protectedR = platform::credential::protect(plaintext);
+    auto protectedR = protect(plaintext);
     if (protectedR.isFail()) {
         return core::Result<void>::fail(protectedR.errorCode(),
                                         "app_secrets 凭据保护失败: " +

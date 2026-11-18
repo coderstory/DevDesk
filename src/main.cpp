@@ -13,6 +13,7 @@
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/router.h"
+#include "core/secrets_store.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/ticker.h"
@@ -46,6 +47,7 @@
 #include "module_mcp/mcp_service.h"
 #include "module_mcp/mcp_tools_builtin.h"
 #include "platform/autostart.h"
+#include "platform/credential_protection.h"
 #include "platform/message_box.h"
 #include "platform/file_open.h"
 #include "platform/tray_icon.h"
@@ -231,6 +233,11 @@ bool handleDbCorruption(
             std::_Exit(1);
         }
         ::core::registerAppDatabase(&db->db());
+        // 凭据保护装配（need305 审计 P0 依赖倒置）：core::secrets_store 的保护
+        // 缝在此注入平台实现——core 不依赖 platform（AGENTS §六）。
+        static const core::secrets_store::Backend kCredentialBackend{
+            &platform::credential::protect, &platform::credential::unprotect};
+        core::secrets_store::installBackend(&kCredentialBackend);
         LOG_INFO("数据库已就绪: " + ::core::paths::sqliteDbFile().string());
         // 调用日志滚动清理：天数读 app_config.logRetentionDays（0=永久跳过）；失败不阻断启动
         const module::settings::SettingsStore settingsStore(
