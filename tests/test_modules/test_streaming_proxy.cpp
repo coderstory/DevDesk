@@ -270,7 +270,7 @@ private:
 };
 
 
-// InMemoryDb 内存库（不触碰 Keychain）；ClaudeService 构造失败即抛，service 恒非空
+// InMemoryDb 内存库；ClaudeService 构造失败即抛，service 恒非空
 struct StreamEnv {
     test_support::InMemoryDb db;
     std::unique_ptr<module::claude::ClaudeService> service;

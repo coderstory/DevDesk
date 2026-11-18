@@ -781,7 +781,7 @@ REGISTER_TEST(schedule_engine_drain_rechecks_disabled_rule,
     return true;
 })
 
-// 防：missing_secret（keychain 未配 key，配置问题）被判永久失败——未配 key 的
+// 防：missing_secret（app_secrets 未配 key，配置问题）被判永久失败——未配 key 的
 // 渠道第一次投递即被停用（§4.9 只允许 93000 类停用；wecom.h 状态表定义
 // missing_secret 为配置问题）。
 REGISTER_TEST(schedule_delivery_missing_secret_no_disable,

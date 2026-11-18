@@ -4305,7 +4305,7 @@ REGISTER_TEST(settings_github_token_db_roundtrip,
 // 「自动推送」开关接线：关掉后**自动**路径不得发起推送，手动按钮不受开关限制。
 // 观察口：仓库 URL 留空时，自动闸一放行就落在本地错误分支（setGithubSyncError
 // 「未配置仓库 URL」）→ 卡片红字行出现即证明「自动推送真被发起」；红字不出现即
-// 证明闸拦住了。该分支不读 keychain、不起线程、不出网，故可作无头判据。
+// 证明闸拦住了。该分支不起线程、不出网，故可作无头判据。
 REGISTER_TEST(settings_github_sync_autopush_switch_gates_auto_path,
               "settings: 关「自动推送」→ dirty 不自动推、手动「立即同步」照常发起", {
     test_support::TestEnv env(kCfgPrefix, "gsautopush", true);
@@ -4631,7 +4631,7 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
     mod->onStart();
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
 
-    // Token 草稿经卡片真输入框注入（不碰 keychain）
+    // Token 草稿经卡片真输入框注入
     eui::Ui ui;
     ui.begin("gsbranch");
     mod->compose(ui, screen);

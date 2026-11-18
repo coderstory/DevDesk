@@ -13,8 +13,7 @@
 //      loadApiKey，均为纯 DB 读），取完**立即删除副本**——key 全程只进内存与
 //      Authorization 头，不落日志/文件/argv；本文件所有输出均不含 key 与请求头。
 //   3. 业务数据全部落在 DEVDESK_DATA_ROOT 指向的临时数据根（进程内 setenv，用完删），
-//      不碰用户真实库；不枚举/不清钥匙串（ClaudeService 用独立测试命名空间，且从不
-//      调 cleanupOrphanKeychainEntries）。
+//      不碰用户真实库（ClaudeService 用独立测试命名空间，不读写任何用户凭据通道）。
 //   4. 禁绑 127.0.0.1:8888（DevDesk 代理口）与 15721；G1 的拒绝连接目标用 127.0.0.1:1。
 //
 // 入口：bash scripts/run-agent-live.sh [场景名 ...]；全部场景通过 exit 0，否则 1。
@@ -68,7 +67,6 @@ static void devdeskUnsetEnv(const char* key) { unsetenv(key); }
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_tools.h"
 #include "platform/http_client.h"
-#include "platform/keychain.h"
 
 #include <eui/app.h>
 

@@ -59,20 +59,20 @@ std::string readLlmKeyFromClaudeSettings();
 // ── need256→need305：提炼 key 的 UI 配置通道（DB 专表 app_secrets）──
 // 键名 (service, account) 迁入 app_secrets 主键；value 经分平台保护
 //（core::secrets_store），不进 dump（决策#11）。键名空间独立，与 claude /
-// 订阅渠道互不重叠。2026-11 一期切换：旧 keychain 条目（devdesk.memory）
-// 不自动迁移，视为「未配置」由 UI 引导重录（二期迁移器另议）。
+// 订阅渠道互不重叠。历史条目（devdesk.memory）不自动迁移，视为「未配置」
+// 由 UI 引导重录。
 inline constexpr const char* kLlmSecretService = "memory.llm";
 inline constexpr const char* kLlmSecretAccount = "default";
 
 // 掩码（纯函数）：前 3 + "****" + 后 4；不足 8 字符一律 "****"；空入空出。
 std::string maskLlmKey(const std::string& key);
 
-// 存/取/清（模块层薄封装，落 app_secrets；函数名保留旧称以零改动调用方）。
+// 存/取/清（模块层薄封装，落 app_secrets）。
 // 存：空 key 拒存；读：未存/失败回空（内容红线——失败原因不打日志）；清：
-// 条目不存在也算成功（幂等，同旧 keychain 删除语义）。
-bool saveLlmKeyToKeychain(const std::string& key);
-std::string readLlmKeyFromKeychain();
-bool clearLlmKeyFromKeychain();
+// 条目不存在也算成功（幂等删除语义）。
+bool saveLlmKeyToStore(const std::string& key);
+std::string readLlmKeyFromStore();
+bool clearLlmKeyFromStore();
 
 // 引擎取 key 统一出口：DB 通道优先（记忆页配置），回落 Claude settings（既有通道）。
 std::string readLlmKey();

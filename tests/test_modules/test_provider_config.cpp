@@ -17,7 +17,6 @@
 #include "core/database.h"
 #include "core/schema.h"
 #include "core/sqlite_db.h"
-#include "platform/keychain.h"
 #include "env_var_hints.h"
 #include "provider_config.h"
 

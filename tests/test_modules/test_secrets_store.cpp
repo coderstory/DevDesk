@@ -90,7 +90,7 @@ REGISTER_TEST(secrets_store_erase_and_unprotect_propagation,
     CredentialBackendGuard cred;
     auto& db = tdb.handle();
 
-    // erase：幂等（条目不存在也算成功，同旧 keychain 删除语义）
+    // erase：幂等（条目不存在也算成功）
     DOCTEST_CHECK(core::secrets_store::set(db, "svc.a", "acct", "plain-1").isOk());
     DOCTEST_CHECK(core::secrets_store::erase(db, "svc.a", "acct").isOk());
     DOCTEST_CHECK(core::secrets_store::erase(db, "svc.a", "acct").isOk());

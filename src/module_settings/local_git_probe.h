@@ -10,7 +10,7 @@ namespace module::settings {
 
 // 测试注入：强制探测结果（-1 = 不覆盖走真探测；0 = 不可用；1 = 可用）。
 // 场景 14「本地 git 不可用」在真机上造不出来——开发机 git 恒可用，只能注入。
-// 与 keychain.h 的 setBackendForTest 同款：仅测试调用，用完复位。
+// 与 credential_protection.h 的 setBackendForTest 同款：仅测试调用，用完复位。
 inline int& localGitProbeOverrideForTest() {
     static int v = -1;
     return v;

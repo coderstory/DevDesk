@@ -2,7 +2,7 @@
 // GitHub Sync 配置模型 + 持久化（settings 模块内部）。
 // 配置存储在 app_config 表中，键前缀 "github_sync:"。
 // Token 存在本机专属表 github_sync_state（行 key="token"，value = credential::protect
-// 后形态；不进 dump，见 schema.h）。存储零钥匙串触达。
+// 后形态；不进 dump，见 schema.h）。
 #pragma once
 
 #include <cstdlib>

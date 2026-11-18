@@ -41,7 +41,7 @@ macOS（arm64）+ Windows 11 **都必须是原生可用的一等公民**，不�
 **平台差异一律拆文件 + CMake 按平台选源。业务代码里禁止 `#ifdef _WIN32` / `__APPLE__`。**
 改任何平台相关代码，都要同时想两头；只按当前开发机验证等于没验证。
 
-已知平台不对称红（非回归，别当 bug 修）：macOS FileWatcher 轮询兜底 ×2、keychain 空账号语义 ×1。
+已知平台不对称红（非回归，别当 bug 修）：macOS FileWatcher 轮询兜底 ×2。
 
 ## 四、代码检索纪律（codegraph 优先）
 
@@ -81,7 +81,7 @@ main → module_*（Router 页面模块 + 独立子窗）
            ↓
        core（Result / paths / sqlite_db / logging / theme / router）
            ↓
-       platform（http_client / http_server / keychain / json）
+       platform（http_client / http_server / credential_protection / json）
            ↓
        EUI-NEO（submodule）
 ```

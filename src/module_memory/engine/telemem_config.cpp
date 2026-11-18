@@ -115,24 +115,24 @@ std::string maskLlmKey(const std::string& key) {
     return key.substr(0, 3) + "****" + key.substr(key.size() - 4);
 }
 
-bool saveLlmKeyToKeychain(const std::string& key) {
+bool saveLlmKeyToStore(const std::string& key) {
     if (key.empty()) return false;  // 空 key 无意义，拒存
     return core::secrets_store::set(kLlmSecretService, kLlmSecretAccount, key)
         .isOk();
 }
 
-std::string readLlmKeyFromKeychain() {
+std::string readLlmKeyFromStore() {
     const auto r = core::secrets_store::get(kLlmSecretService, kLlmSecretAccount);
     return r.isOk() ? r.value() : std::string{};
 }
 
-bool clearLlmKeyFromKeychain() {
+bool clearLlmKeyFromStore() {
     return core::secrets_store::erase(kLlmSecretService, kLlmSecretAccount)
         .isOk();
 }
 
 std::string readLlmKey() {
-    std::string key = readLlmKeyFromKeychain();
+    std::string key = readLlmKeyFromStore();
     if (!key.empty()) return key;
     return readLlmKeyFromClaudeSettings();
 }

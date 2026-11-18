@@ -318,18 +318,18 @@ REGISTER_TEST(memory_llm_key_db_channel,
     DOCTEST_CHECK_EQ(maskLlmKey("short"), std::string("****"));
     DOCTEST_CHECK_EQ(maskLlmKey(""), std::string());
     // 空串拒存（红线：空 key 无意义）
-    DOCTEST_CHECK_FALSE(saveLlmKeyToKeychain(""));
+    DOCTEST_CHECK_FALSE(saveLlmKeyToStore(""));
     // app_secrets 真库 roundtrip（独立键名空间 memory.llm/default，不碰
     // claude profile / 订阅渠道条目；测毕必清）
-    DOCTEST_CHECK(saveLlmKeyToKeychain(kFake));
-    DOCTEST_CHECK_EQ(readLlmKeyFromKeychain(), kFake);
+    DOCTEST_CHECK(saveLlmKeyToStore(kFake));
+    DOCTEST_CHECK_EQ(readLlmKeyFromStore(), kFake);
     // 引擎统一出口：DB 通道优先——即便本机 settings.json 也有 key，取 DB 值
     DOCTEST_CHECK_EQ(readLlmKey(), kFake);
     // 清除幂等（含条目不存在态）+ 回落 Claude settings 通道（等值断言，
     // 不依赖本机是否配置过 settings key）
-    DOCTEST_CHECK(clearLlmKeyFromKeychain());
-    DOCTEST_CHECK(clearLlmKeyFromKeychain());
-    DOCTEST_CHECK_EQ(readLlmKeyFromKeychain(), std::string());
+    DOCTEST_CHECK(clearLlmKeyFromStore());
+    DOCTEST_CHECK(clearLlmKeyFromStore());
+    DOCTEST_CHECK_EQ(readLlmKeyFromStore(), std::string());
     DOCTEST_CHECK_EQ(readLlmKey(), readLlmKeyFromClaudeSettings());
     return true;
 })

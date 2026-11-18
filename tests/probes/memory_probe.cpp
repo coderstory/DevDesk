@@ -517,7 +517,7 @@ int main(int argc, char* argv[]) {
         A.exists("memory.cfg.data.clear");
         A.exists("memory.cfg.trig.s1");
         A.textHas("memory.cfg.data.path", dataDir.generic_string());
-        // need256：提炼 key 卡两态（掩码态经测试缝直驱，probe 不触真钥匙串）+
+        // need256：提炼 key 卡两态（掩码态经测试缝直驱）+
         // 卡底不溢出组 0 体（clue 134 同族断言；130% 档由 --fs 重跑覆盖）
         if (auto* mem2 =
                 dynamic_cast<module::memory::MemoryModule*>(mod.get())) {

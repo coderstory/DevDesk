@@ -1,8 +1,7 @@
 // tests/test_modules/test_claude_service.cpp
 // ClaudeService 单测：Profile CRUD / 凭据两段写补偿 / settings.json 反向同步 / 代理前置校验。
 // 跨文件前提：
-//   - 凭据本体只落 claude_profiles.api_key_encrypted（need305 后运行时三处通道
-//     统一收口 app_secrets），platform::keychain 已不是凭据来源，生产侧零触达。
+//   - 凭据本体只落 claude_profiles.api_key_encrypted 列（need305 起唯一来源）。
 //   - sidecar（托管键表）是 app_config 表的一行而非文件，故 setSettingsSyncPaths 的 db 必须是已 migrate 的连接。
 //   - 数据库走临时文件（temp_directory_path），不碰生产数据。
 #include "doctest.h"
@@ -406,7 +405,7 @@ REGISTER_TEST(claude_service_update_profile,
     return true;
 })
 
-REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
+REGISTER_TEST(claude_service_update_db_fail_restores_credential_columns,
               "claude_service: updateProfile DB 写失败按旧值回写凭据三列", {
     test_support::TestDb tdb(kDbPrefix, "updcomp");
     module::claude::ClaudeService svc(tdb.handle());
@@ -510,8 +509,8 @@ struct ScopedFailUnprotect {
     ScopedFailUnprotect& operator=(const ScopedFailUnprotect&) = delete;
 };
 
-// Windows 凭据后端（Credential Manager/DPAPI）不经 platform::credential::
-// unprotect 缝（keychain_win.cpp 零引用，2026-11-03 CI 首跑实证）——依赖
+// Windows 凭据后端（DPAPI）不经 platform::credential::unprotect 缝
+//（2026-11-03 CI 首跑实证）——依赖
 // ScopedFailUnprotect 的「解不开」分支在 Windows 上无法注入。文件作用域
 // 运行时守卫：REGISTER_TEST 宏参内嵌 #if 指令是未定义行为（-Werror 拦）。
 inline bool credentialSeamWired() {

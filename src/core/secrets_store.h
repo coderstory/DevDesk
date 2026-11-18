@@ -1,7 +1,7 @@
 // src/core/secrets_store.h
-// 应用密钥专表 app_secrets（need305）薄封装：运行时三处原经平台 keychain 的
-// 通道（memory.llm / devdesk.schedule）统一改走本表，键名 (service, account)
-// 沿旧 keychain 命名空间一一对应。value 恒为分平台保护形态
+// 应用密钥专表 app_secrets（need305）薄封装：运行时三处密钥通道
+//（memory.llm / devdesk.schedule）统一走本表，键名 (service, account)
+// 与调用方常量一一对应。value 恒为分平台保护形态
 //（经下方保护后端缝的产物，非明文）；写侧 protect / 读侧
 // unprotect 失败原样上抛，不静默回落——「解不开」与「没配过」必须可分辨
 //（同 profile_repository 已验证形态）。本表不随 dump 上 git 远端
@@ -81,7 +81,7 @@ core::Result<void> set(core::data::SqliteDb& db,
                        const std::string& account,
                        const std::string& plaintext);
 
-// 删（条目不存在也算成功，幂等——同 keychain 删除语义）
+// 删（条目不存在也算成功，幂等删除语义）
 core::Result<void> erase(core::data::SqliteDb& db,
                          const std::string& service,
                          const std::string& account);

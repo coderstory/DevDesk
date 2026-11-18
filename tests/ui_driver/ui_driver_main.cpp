@@ -145,8 +145,8 @@ bool assembleApp(::core::Router& router,
     // 驱动此前缺这一步：种子启用 claude_proxy（等价「开启后重启」）时页面
     // 恒现「服务未就绪（ClaudeService 未注册）」红字 + 「Claude 服务未装配」
     // toast——walkthrough D1 误报的根因。真机不受影响（preStart 恒先于
-    // onStart）；这里补齐使驱动装配面 = 真机装配面。keychain 用测试服务名，
-    // 构造不触 ~/.claude/settings.json（接管链仅在 startProxy 时经
+    // onStart）；这里补齐使驱动装配面 = 真机装配面。构造不触
+    // ~/.claude/settings.json（接管链仅在 startProxy 时经
     // setSettingsSyncPaths + syncTakeOver，驱动不起代理）。
     if (g_driverSvc == nullptr) {
         g_driverSvc = std::make_unique<::module::claude::ClaudeService>(

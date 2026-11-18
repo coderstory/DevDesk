@@ -15,11 +15,9 @@
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 #include "provider_config.h"
 #include "settings_sync.h"
 
-#include <algorithm>
 #include <atomic>
 #include <barrier>
 #include <filesystem>
@@ -96,99 +94,6 @@ std::string topLevelString(const std::filesystem::path& f, const char* key) {
     return obj.get(key).asString();
 }
 
-
-// 假 Keychain 注入缝（tests/test_platform/test_keychain.cpp 的 CountingKeychain 同款）。
-// 走真门面的端到端用例里 createProfile 会向**系统钥匙串**写测试密钥，而清理只在函数尾部
-// deleteSecret——中间任一 DOCTEST_REQUIRE 失败就残留一条真实条目。装上假后端后该用例对
-// 真钥匙串零读写，且「写了几条」本身变成可断言的。
-// 不要因为某个用例「不查 keychain」就省掉它：污染发生在 createProfile 内部。
-struct FakeKeychain {
-    std::map<std::string, std::string> data;
-
-    static std::string keyOf(const std::string& service,
-                             const std::string& account) {
-        return service + '\x1f' + account;
-    }
-    void store(const std::string& service, const std::string& account,
-               const std::string& secret) {
-        data[keyOf(service, account)] = secret;
-    }
-    std::string load(const std::string& service,
-                     const std::string& account) const {
-        const auto it = data.find(keyOf(service, account));
-        return it == data.end() ? std::string() : it->second;
-    }
-    void remove(const std::string& service, const std::string& account) {
-        data.erase(keyOf(service, account));
-    }
-    size_t count() const { return data.size(); }
-};
-
-FakeKeychain* g_fakeKeychain = nullptr;
-
-core::Result<void> fakeStoreSecret(const std::string& service,
-                                   const std::string& account,
-                                   const std::string& secret) {
-    g_fakeKeychain->store(service, account, secret);
-    return core::Result<void>::ok();
-}
-
-core::Result<std::string> fakeLoadSecret(const std::string& service,
-                                         const std::string& account) {
-    if (g_fakeKeychain->load(service, account).empty()) {
-        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
-                                               "Keychain item not found");
-    }
-    return core::Result<std::string>::ok(g_fakeKeychain->load(service, account));
-}
-
-core::Result<void> fakeDeleteSecret(const std::string& service,
-                                    const std::string& account) {
-    g_fakeKeychain->remove(service, account);
-    return core::Result<void>::ok();   // 不存在也 Ok（幂等，同真实实现）
-}
-
-core::Result<std::vector<std::string>> fakeDeleteSecretsNotIn(
-    const std::string& service, const std::vector<std::string>& keepAccounts) {
-    const std::string prefix = service + '\x1f';
-    std::vector<std::string> removed;
-    for (auto it = g_fakeKeychain->data.begin();
-         it != g_fakeKeychain->data.end();) {
-        if (it->first.compare(0, prefix.size(), prefix) == 0) {
-            const std::string account = it->first.substr(prefix.size());
-            if (std::find(keepAccounts.begin(), keepAccounts.end(), account) ==
-                keepAccounts.end()) {
-                removed.push_back(account);
-                it = g_fakeKeychain->data.erase(it);
-                continue;
-            }
-        }
-        ++it;
-    }
-    return core::Result<std::vector<std::string>>::ok(std::move(removed));
-}
-
-// RAII：安装假后端，析构恢复真实后端——用例 fail-fast（return false）或抛异常
-// 都不会把假后端泄漏给后续用例
-struct ScopedFakeKeychain {
-    FakeKeychain fake;
-    platform::keychain::Backend table;
-    const platform::keychain::Backend* prev;
-
-    ScopedFakeKeychain() {
-        g_fakeKeychain = &fake;
-        table = platform::keychain::Backend{
-            &fakeStoreSecret, &fakeLoadSecret, &fakeDeleteSecret,
-            &fakeDeleteSecretsNotIn};
-        prev = platform::keychain::setBackendForTest(&table);
-    }
-    ~ScopedFakeKeychain() {
-        platform::keychain::setBackendForTest(prev);
-        g_fakeKeychain = nullptr;
-    }
-    ScopedFakeKeychain(const ScopedFakeKeychain&) = delete;
-    ScopedFakeKeychain& operator=(const ScopedFakeKeychain&) = delete;
-};
 
 } // namespace
 

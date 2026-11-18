@@ -1149,13 +1149,13 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .color(t.colors.borderMuted)
                 .build();
             by += core::theme::scaled(17.0f);
-            // need256：提炼 API key 卡（钥匙串通道）。两态——未配置=引导+输入行；
-            // 已配置=掩码+修改/清除。密钥原文只存在于输入框瞬时值与钥匙串，
+            // need256：提炼 API key 卡（app_secrets 通道）。两态——未配置=引导+输入行；
+            // 已配置=掩码+修改/清除。密钥原文只存在于输入框瞬时值与数据库，
             // 模块态只存掩码（telemem_config.h 密钥红线）。
             ui.text("memory.cfg.key.subtitle")
                 .position(x + 16.0f, by)
                 .size(320.0f, core::theme::scaled(18.0f))
-                .text("提炼 API key（本机钥匙串）")
+                .text("提炼 API key（本机数据库）")
                 .fontSize(core::theme::scaled(12.5f))
                 .lineHeight(core::theme::scaled(18.0f))
                 .fontWeight(600)
@@ -1168,7 +1168,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                     .position(x + 16.0f, by)
                     .size(innerW, core::theme::scaled(18.0f))
                     .text(llmKeyMask_.empty()
-                              ? "尚未配置——粘贴 API key，仅存本机钥匙串，不写配置与日志。"
+                              ? "尚未配置——粘贴 API key，仅存本机数据库，不写配置与日志。"
                               : "粘贴新的 API key，保存后替换现有 key。")
                     .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(core::theme::scaled(18.0f))
@@ -1225,7 +1225,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             ui.text("memory.cfg.key.note")
                 .position(x + 16.0f, by)
                 .size(innerW, core::theme::scaled(16.0f))
-                .text("key 仅存本机钥匙串，引擎启动时注入子进程环境；不出现在配置文件与日志。")
+                .text("key 仅存本机数据库，引擎启动时注入子进程环境；不出现在配置文件与日志。")
                 .fontSize(core::theme::scaled(11.5f))
                 .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textTertiary)

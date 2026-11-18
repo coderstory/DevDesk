@@ -1,9 +1,8 @@
 // tests/test_modules/test_credential_storage.cpp
-// 凭据落库回归网：api_key_encrypted 列往返一致 + Keychain 非凭据源（不读不写）。
+// 凭据落库回归网：api_key_encrypted 列往返一致 + 导出面不泄露凭据形态。
 // 跨文件前提：
-//   - 凭据的唯一源是 claude_profiles.api_key_encrypted 列，Keychain 已不是凭据源，
-//     整条创建/更新路径不得产生任何 Keychain 条目。
-//   - 全程装内存假 Keychain 后端，不碰真实系统钥匙串。
+//   - 凭据的唯一源是 claude_profiles.api_key_encrypted 列（need305），
+//     整条创建/更新路径只动这一列。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -13,91 +12,12 @@
 #include "core/sqlite_db.h"
 #include "platform/credential_protection.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 
-#include <map>
 #include <string>
-#include <vector>
 
 namespace {
 
 constexpr const char* kCredPrefix = "devdesk_test_cred_";
-constexpr const char* kSvc = "DevDeskTestCredentialStorage";
-
-// 内存假 Keychain 后端（结构自足，不依赖 test_claude_service 的那份）
-struct FakeKc {
-    std::map<std::string, std::string> data;
-    static std::string key(const std::string& service, const std::string& account) {
-        return service + '\x1f' + account;
-    }
-    void put(const std::string& s, const std::string& a, const std::string& v) {
-        data[key(s, a)] = v;
-    }
-    bool has(const std::string& s, const std::string& a) const {
-        return data.count(key(s, a)) != 0;
-    }
-    size_t size() const { return data.size(); }
-};
-
-FakeKc* g_kc = nullptr;
-
-core::Result<void> kcStore(const std::string& s, const std::string& a,
-                           const std::string& v) {
-    g_kc->put(s, a, v);
-    return core::Result<void>::ok();
-}
-core::Result<std::string> kcLoad(const std::string& s, const std::string& a) {
-    auto it = g_kc->data.find(FakeKc::key(s, a));
-    if (it == g_kc->data.end()) {
-        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
-                                               "Keychain item not found");
-    }
-    return core::Result<std::string>::ok(it->second);
-}
-core::Result<void> kcDelete(const std::string& s, const std::string& a) {
-    g_kc->data.erase(FakeKc::key(s, a));
-    return core::Result<void>::ok();
-}
-core::Result<std::vector<std::string>> kcDeleteNotIn(
-    const std::string& service, const std::vector<std::string>& keepAccounts) {
-    std::vector<std::string> removed;
-    const std::string prefix = service + '\x1f';
-    for (auto it = g_kc->data.begin(); it != g_kc->data.end();) {
-        if (it->first.compare(0, prefix.size(), prefix) == 0) {
-            const std::string account = it->first.substr(prefix.size());
-            bool keep = false;
-            for (const auto& k : keepAccounts) {
-                if (k == account) { keep = true; break; }
-            }
-            // claude: 之外的 account 一律保留、不计数（deletableOrphanAccount 三平台统一判据）
-            if (!keep && platform::keychain::deletableOrphanAccount(account)) {
-                removed.push_back(account);
-                it = g_kc->data.erase(it);
-                continue;
-            }
-        }
-        ++it;
-    }
-    return core::Result<std::vector<std::string>>::ok(std::move(removed));
-}
-
-struct ScopedFakeKc {
-    FakeKc fake;
-    platform::keychain::Backend table;
-    const platform::keychain::Backend* prev;
-    ScopedFakeKc() {
-        g_kc = &fake;
-        table = platform::keychain::Backend{&kcStore, &kcLoad, &kcDelete,
-                                            &kcDeleteNotIn};
-        prev = platform::keychain::setBackendForTest(&table);
-    }
-    ~ScopedFakeKc() {
-        platform::keychain::setBackendForTest(prev);
-        g_kc = nullptr;
-    }
-    ScopedFakeKc(const ScopedFakeKc&) = delete;
-    ScopedFakeKc& operator=(const ScopedFakeKc&) = delete;
-};
 
 } // namespace
 
@@ -139,37 +59,6 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     DOCTEST_CHECK(hint.find("***") != std::string::npos);
     DOCTEST_CHECK(hint.find(key) == std::string::npos);
     DOCTEST_CHECK_EQ(check.size(), static_cast<size_t>(64));
-    return true;
-})
-
-REGISTER_TEST(credential_legacy_keychain_not_read_nor_written,
-              "credential: 旧 Keychain 既不读也不写（迁库后 Keychain 非凭据源）", {
-    test_support::TestDb tdb(kCredPrefix, "legacy");
-    ScopedFakeKc kc;
-    module::claude::ClaudeService svc(tdb.handle());
-
-    const std::string dbKey = "sk-ant-db-authoritative-01";
-    auto created = svc.createProfile("甲", "https://a.example.com", dbKey, "m");
-    DOCTEST_REQUIRE(created.isOk());
-    const int64_t id = created.value().id;
-
-    DOCTEST_CHECK_EQ(kc.fake.size(), static_cast<size_t>(0));
-
-    // 旧 account 约定是 claude:<id>。往里塞一个**不同的值**：若实现仍读 Keychain，
-    // loadApiKey 会返回这个陈旧值而不是库里那个
-    kc.fake.put(kSvc, "claude:" + std::to_string(id), "sk-ant-STALE-keychain-99");
-    auto key = svc.loadApiKey(id);
-    DOCTEST_REQUIRE(key.isOk());
-    DOCTEST_CHECK_EQ(key.value(), dbKey);
-
-    // 更新密钥同样只动库：Keychain 里仍只有那条陈旧值，条目数不增
-    module::claude::Profile p = created.value();
-    p.apiKeyPlain = "sk-ant-db-authoritative-02";
-    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
-    DOCTEST_CHECK_EQ(kc.fake.size(), static_cast<size_t>(1));
-    auto changed = svc.loadApiKey(id);
-    DOCTEST_REQUIRE(changed.isOk());
-    DOCTEST_CHECK_EQ(changed.value(), std::string("sk-ant-db-authoritative-02"));
     return true;
 })
 

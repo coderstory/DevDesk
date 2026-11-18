@@ -45,7 +45,7 @@ public:
     // 测试/探针缝：审核视图滚动偏移直驱（bug190 探针要把视口滚到渐进加载
     // 尾行才能点「再显示 50 条」——按钮内容位深在 50 卡 × 244px ≈ 12k px）
     void setReviewScrollForTest(float v) { reviewScroll_ = v; }
-    // 测试/探针缝：提炼 key 卡两态直驱（probe 不触真钥匙串；喂非空掩码即收敛
+    // 测试/探针缝：提炼 key 卡两态直驱（喂非空掩码即收敛
     // 输入行——onStart 的 refreshLlmKeyState 会对未配置态置 editing，缝必须可逆）
     void setLlmKeyMaskForTest(const std::string& mask) {
         llmKeyMask_ = mask;
@@ -99,7 +99,7 @@ private:
     void showToast(const std::string& title, const std::string& body,
                    bool error = false);
 
-    // need256：提炼 API key 配置卡（钥匙串存储；模块态只存掩码，原文即刻丢弃）
+    // need256：提炼 API key 配置卡（app_secrets 存储；模块态只存掩码，原文即刻丢弃）
     void refreshLlmKeyState();
     void saveConfiguredLlmKey();
     void clearConfiguredLlmKey();

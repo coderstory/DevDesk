@@ -7,7 +7,7 @@
 //     content 含中文说明（错误回喂 LLM 自我纠正）；Result::fail 只留给编程不变量破坏。
 //   - 注册表清理由 ToolEnv 析构做（RAII）：断言 fail-fast 早退也不会把工具残留在进程级
 //     ToolRegistry 里。
-//   - 凭据存在 app_config 库的加密列，删 Keychain 条目造不出空 key，须用
+//   - 凭据存在 claude_profiles.api_key_encrypted 列，造空 key 须用
 //     test_support::clearStoredCredential。
 #include "doctest.h"
 #include "test_support.h"
@@ -30,7 +30,7 @@
 
 namespace {
 
-// Keychain service：测试专用命名空间，不污染生产数据（同 test_claude_service.cpp）
+// 测试库前缀：每用例独立临时库，不污染生产数据（同 test_claude_service.cpp）
 constexpr const char* kDbPrefix = "devdesk_test_claude_tools_";
 
 // 从进程级注册表按名取工具并执行（走与 AgentLoop 相同的 find→execute 路径）
@@ -45,7 +45,7 @@ core::Result<core::ToolResult> runToolName(const std::string& name,
 }
 
 // 一次性环境：临时已 migrate 库（TestDb）+ 真实 ClaudeService + 真实 ClaudeTools。
-// 析构顺序：~ToolEnv 体先 unregisterAll（注册表清干净）+ 清 Keychain 条目 →
+// 析构顺序：~ToolEnv 体先 unregisterAll（注册表清干净）→
 // tools_ 析构 → svc_ 析构 → tdb 析构（删库文件）。
 struct ToolEnv {
     test_support::TestDb tdb;

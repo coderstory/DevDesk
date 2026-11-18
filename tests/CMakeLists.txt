@@ -43,7 +43,6 @@ add_executable(devdesk_tests
     # S6a：Request.proxyMode 三模式 → curl 代理参数映射（纯函数缝 resolveProxy）
     test_platform/test_http_proxy.cpp
     test_platform/test_http_server.cpp
-    test_platform/test_keychain.cpp
     test_platform/test_credential_protection.cpp
     test_platform/test_json.cpp
     test_platform/test_github_api.cpp

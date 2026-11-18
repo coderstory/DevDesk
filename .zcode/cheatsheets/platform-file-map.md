@@ -46,7 +46,6 @@
 | file_watcher | ✅ | **—** | ✅ | ⚠ 无 posix 兜底（已知红：macOS 轮询 ×2 在此族） |
 | folder_picker | ✅ | ✅ | ✅ | |
 | http_client_ca | — | ✅ | ✅ | |
-| keychain | ✅ | ✅ | ✅ | 已知红：keychain 空账号语义 ×1 在此族 |
 | message_box | ✅ | ✅ | ✅ | |
 | notification | ✅(.mm) | ✅ | ✅ | 唯一 Objective-C++ 文件 |
 | process_host | — | ✅ | ✅ | |

@@ -12,7 +12,6 @@
 #include "core/router.h"
 #include "module_markdown/md_note_git.h"  // MdHeadlessEnv 关自动 git 提交（测试总闸）
 #include "platform/json.h"
-#include "platform/keychain.h"
 // 键盘事件类型 —— 此 "core/" 是 EUI-NEO 的目录，与本仓库 src/core 同名
 #include "core/input/input_types.h"
 
@@ -32,28 +31,6 @@
 #include <utility>
 
 namespace test_support {
-
-// 0) keychain 测试统一门控（need304，老板令 2026-11-18：默认任何测试运行零钥匙串触达）。
-// 根因：macOS adhoc 签名每次重建 cdhash 变化，测试进程一触达 Security.framework
-// 就弹系统授权框。门控判据 = **真触达**：直呼 platform::keychain::*（现码全量在
-// test_keychain.cpp）或经 cleanupProfileKey 收尾清理的用例才放；经 setBackendForTest
-// 注入假 backend / 平台钩子注入 / Windows 文件实现的用例零真触达，不门控
-// （审计 P1：门控过宽 = claude_proxy 等模块默认回归覆盖被无谓摘掉）。
-// 默认（未设 DEVDESK_KEYCHAIN_TESTS=1）走 DOCTEST_SKIP：[SKIP] 原因行可见 +
-// runner Total 行单独计 Skipped——跳≠过可审计（审计 P2：原早退 return true 是假绿）。
-// env 开关保留作逃生口：Windows 文件实现可安全真跑，不做恒 SKIP 摘覆盖。
-inline bool keychainTestsEnabled() {
-    const char* v = std::getenv("DEVDESK_KEYCHAIN_TESTS");
-    return v != nullptr && std::string(v) == "1";
-}
-
-#define KEYCHAIN_TEST_GATE(caseName)                                     \
-    do {                                                                 \
-        if (!test_support::keychainTestsEnabled()) {                     \
-            DOCTEST_SKIP("触达真钥匙串，默认跳过；开启真跑："             \
-                         "DEVDESK_KEYCHAIN_TESTS=1");                     \
-        }                                                                \
-    } while (0)
 
 // 1) 环境变量作用域
 // 空值 = 删除：Windows 走 _putenv_s，POSIX 走 unsetenv ——「未设置」与「空串」
@@ -569,33 +546,12 @@ inline std::filesystem::path tempConfigFile(const std::string& prefix,
 }
 
 // 把某 profile 的凭据清空（造「该 profile 没存过 API Key」的形态）。凭据存
-// claude_profiles.api_key_encrypted 列，清 Keychain 对它无效。
+// claude_profiles.api_key_encrypted 列，这是唯一的清空入口。
 inline bool clearStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
     return db.exec("UPDATE claude_profiles SET api_key_encrypted = '', "
                    "api_key_hint = '', api_key_check = '' WHERE id = " +
                    std::to_string(profileId))
         .isOk();
-}
-
-// 删某个 service 下某 profile 的 Keychain 条目；service 由调用方传自身的测试常量。
-// 门控判据同 KEYCHAIN_TEST_GATE（need304），形态不同：这是嵌在未门控用例里的收尾
-// 清理，不能 SKIP（会把整用例摘掉）——默认静默 no-op（每进程只报一次），跳过即
-// 无害（最坏残留一个测试条目）；清理性 no-op 不构成用例假绿，故只在首调时出声。
-inline void cleanupProfileKey(const char* service, int64_t profileId) {
-    if (!keychainTestsEnabled()) {
-        // 单线程前提：runner（test_main.cpp）顺序执行用例，warned 无竞争
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            std::fprintf(stderr,
-                         "[keychain-skip] cleanupProfileKey 全部 no-op（测试收尾"
-                         "清理不触达钥匙串）；开启真跑：DEVDESK_KEYCHAIN_TESTS=1\n");
-        }
-        return;
-    }
-    // 有意忽略删除结果：失败仅残留测试密钥，不影响断言（need295）
-    (void)platform::keychain::deleteSecret(service,
-                                           "claude:" + std::to_string(profileId));
 }
 
 // 头名大小写不敏感取头 / 计数（转发后头名拼写由方言层决定，可能与客户端不同）。

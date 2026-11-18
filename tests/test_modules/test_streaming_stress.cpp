@@ -322,7 +322,7 @@ private:
         std::make_shared<std::atomic<size_t>>(0);
 };
 
-// 代理环境：ProxyRouter + InMemoryDb 内存库，不触碰 Keychain
+// 代理环境：ProxyRouter + InMemoryDb 内存库
 
 struct StressEnv {
     test_support::InMemoryDb db;

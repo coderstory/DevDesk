@@ -1260,7 +1260,6 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
     DOCTEST_CHECK_EQ(g_agentStarts, 1);
 
     upstream.stop();
-    test_support::cleanupProfileKey("DevDeskTestClaudeService", p.value().id);
     return true;
 })
 

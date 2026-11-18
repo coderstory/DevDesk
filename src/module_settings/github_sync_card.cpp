@@ -113,6 +113,8 @@ std::string disclosureLabelFor(const std::string& tableName) {
     // 只翻译 defaultSkipTables() 会出现的表；未知表名原样返回，不编造标签。
     if (tableName == "claude_call_logs") return "调用日志";
     if (tableName == "claude_run_settings") return "运行设置";
+    // 应用密钥专表（need305）：运行时密钥随 skip 清单整表不上传（决策#11）
+    if (tableName == "app_secrets") return "应用密钥";
     // token 就存在 github_sync_state（列 token）；该表在 skip 清单内 → 标签里把
     // 「Token」明写出来，即「token 不上云」这条口径与实现绑定（改 skip 清单会经
     // 防漂移用例提醒）。

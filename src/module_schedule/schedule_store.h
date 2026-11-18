@@ -3,8 +3,8 @@
 // 经 core::data::SqliteDb 引用访问数据库。本层只做行读写与幂等守卫（唯一索引命中、
 // 软删隔离）；时刻计算、重试编排、渠道选择归 core::schedule 与引擎层。
 //
-// 凭据契约：渠道 key 只存 platform::keychain（service devdesk.schedule），本层
-// 只接触 secret_ref（keychain account 名）——API 上没有 key 入参、库里没有 key 列。
+// 凭据契约：渠道 key 只存 app_secrets 专表（service devdesk.schedule），本层
+// 只接触 secret_ref（app_secrets account 名）——API 上没有 key 入参、库里没有 key 列。
 #pragma once
 
 #include "core/result.h"
@@ -77,7 +77,7 @@ struct DeliveryRecord {
 };
 
 // 渠道配置行（schedule_channel）。kind ∈ fullscreen/toast/os/silent/wecom（§4.9）。
-// secretRef 是 keychain account 名（如 wecom.<channel_id>），key 本身不落库。
+// secretRef 是 app_secrets account 名（如 wecom.<channel_id>），key 本身不落库。
 struct ChannelRecord {
     int64_t id = 0;
     std::string kind;

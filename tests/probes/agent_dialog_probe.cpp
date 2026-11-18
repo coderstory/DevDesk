@@ -166,7 +166,7 @@ int main(int argc, char* argv[]) {
                             std::nullopt);
         (void)store.appendMessage(
             runId, 1, "assistant",
-            R"([{"type":"text","text":"今日完成：全量回归 1301 用例，5 失败均为已知 keychain/DPAPI 环境问题；模块隔离守卫通过。"}])",
+            R"([{"type":"text","text":"今日完成：全量回归 1301 用例，0 失败；模块隔离守卫通过。"}])",
             std::nullopt);
         (void)store.finishRun(runId, "failed", 1, std::nullopt, std::nullopt,
                         std::string("LLM 配置不可用：没有激活的 Claude profile，"

@@ -75,7 +75,7 @@ main → 13 个 Router 页面（枚举见「项目概况」）
             ↓
        core (Result / paths / sqlite_db / logging / theme / router)
             ↓
-       platform (http_client / http_server / keychain / credential_protection / json)
+       platform (http_client / http_server / credential_protection / json)
             ↓
          EUI-NEO
 ```
@@ -103,7 +103,7 @@ main → 13 个 Router 页面（枚举见「项目概况」）
 遇到问题 → 判断是否通用（拖拽 / 文件拖入 / macOS 27 / 字体 / IME / DPI 等），通用 = 上游应修 → submodule 内写 patch、编译 DevDesk 验证 → 推 fork 或发起到上游 → 移除 hack，复用新能力。
 
 - **适合修上游**：通用 UI 能力缺失（drop target / file drop / tree）、macOS 27+ 适配（Liquid Glass / Metal / OpenGL fallback）、跨平台一致性（IME / 字体 fallback / DPI）、API 设计改进、性能 / 编译时间 / 二进制大小。
-- **DevDesk 自己解决**：业务逻辑（Markdown 解析、Todo CRUD、Claude 切换）、应用级拖拽（卡片跨列是业务，EUI-NEO 给基础 onDrag 就够）、设计 token / 配色、第三方集成（Keychain / SQLite / libcurl）。
+- **DevDesk 自己解决**：业务逻辑（Markdown 解析、Todo CRUD、Claude 切换）、应用级拖拽（卡片跨列是业务，EUI-NEO 给基础 onDrag 就够）、设计 token / 配色、第三方集成（SQLite / libcurl）。
 - **PR 准备**：`examples/` 或 `apps/` 加 demo；不破坏现有 API；更新 `docs/`；过 EUI-NEO 自身编译；commit message 写明需求来源（"DevDesk 需要 X 功能"）；大改动先开 issue。仓库约定：主分支 `main`，前缀 `feat:` `fix:` `refactor:` `docs:`。
 
 **详见**：[[docs/EUI-NEO-CAPABILITIES.md]] 各 ❌ 项的"应对"——优先"提交 PR"而非"自造 hack"。

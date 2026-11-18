@@ -24,7 +24,6 @@ if(WIN32)
     target_sources(devdesk_platform PRIVATE
         exec_capture_win.cpp
         folder_picker_win.cpp           # IFileDialog COM 目录选择（FOS_PICKFOLDERS）
-        keychain_win.cpp
         credential_protection_win.cpp  # DPAPI 密文入库（不得降级明文）
         file_open_win.cpp
         system_theme_win.cpp
@@ -54,7 +53,6 @@ elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         exec_capture_posix.cpp
         folder_picker_macos.cpp         # osascript choose folder（免 ObjC 链接）
-        keychain_macos.cpp
         credential_protection_posix.cpp  # macOS 与 Linux 同实现，共用 _posix
         file_open_macos.cpp
         system_theme_macos.cpp
@@ -77,7 +75,6 @@ else()
     target_sources(devdesk_platform PRIVATE
         exec_capture_posix.cpp
         folder_picker_posix.cpp         # 无 GUI 环境 stub（NotImplemented）
-        keychain_posix.cpp
         credential_protection_posix.cpp
         file_open_posix.cpp
         system_theme_posix.cpp
@@ -148,8 +145,8 @@ target_link_libraries(devdesk_platform PUBLIC libgit2package)
 target_include_directories(devdesk_platform PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/libgit2/include)
 
-# macOS Security.framework (Keychain) + CoreFoundation（APPLE 分支系统深浅检测
-# 实现读 NSGlobalDomain AppleInterfaceStyle 用；两者都只在 APPLE 分支链接）
+# macOS CoreFoundation（APPLE 分支系统深浅检测读 NSGlobalDomain AppleInterfaceStyle，
+# 以及 file_watcher_macos.cpp 的 CF 路径转换；只在 APPLE 分支链接）
 # CoreServices：file_watcher_macos.cpp 的 FSEvents（FSEventStreamCreate 等）
 # UniformTypeIdentifiers：file_association_macos.mm 的 UTType 类反查（12+ 路径）
 if(APPLE)
@@ -160,7 +157,6 @@ if(APPLE)
     #（旧 UTTypeCreatePreferredIdentifierForTag 自 12.0 弃用，-Werror 下编译不过）。
     find_library(UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK UniformTypeIdentifiers REQUIRED)
     target_link_libraries(devdesk_platform PUBLIC
-        "-framework Security"
         "-framework CoreFoundation"
         "-framework CoreServices"
         "-framework UniformTypeIdentifiers"

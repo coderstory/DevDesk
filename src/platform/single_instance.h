@@ -1,6 +1,6 @@
 // src/platform/single_instance.h
 // 单实例互斥 + 二次运行唤起首个实例窗口 +（Windows）文件路径跨实例送达
-// 头文件平台无关；实现按平台拆文件（与 keychain / tray_icon 同一模式）
+// 头文件平台无关；实现按平台拆文件（与 credential_protection / tray_icon 同一模式）
 #pragma once
 
 #include <cstdint>

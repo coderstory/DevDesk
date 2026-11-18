@@ -27,7 +27,7 @@ int64_t retryDelaySec(int attempt, int64_t suggestedSec) {
 // S5 对齐点①：真实 Receipt 只有 {status, detail} 两个稳定串字段
 // （channel_registry.h，渠道实现与测试断言共用同一套 status 词汇，见 wecom.h 状态表）。
 // 分类（§4.9）：ok/queued = 成功；retryable:* 与 rate_limited = 可重试；
-// missing_secret = 配置缺失（keychain 无密钥，wecom.h 状态表），终态 dropped
+// missing_secret = 配置缺失（app_secrets 无密钥，wecom.h 状态表），终态 dropped
 // 但不停用不重试——§4.9 只允许 93000 类永久失败停用渠道；其余 = 永久失败。
 ReceiptClass classifyReceipt(const module::schedule::Receipt& receipt) {
     const std::string& s = receipt.status;
@@ -263,7 +263,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
             return core::Result<RetryOutcome>::ok(std::move(out));
 
         case ReceiptClass::kConfigMissing:
-            // 配置缺失（keychain 无密钥）：终态 dropped、不停用、不重试；降级本地
+            // 配置缺失（app_secrets 无密钥）：终态 dropped、不停用、不重试；降级本地
             // 提示引导补配置（每次触发提示一次，同 §4.9 降级模式）。
             rec.status = "dropped";
             rec.error = receipt.detail.empty() ? "渠道未配置密钥" : receipt.detail;

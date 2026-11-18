@@ -2,7 +2,7 @@
 // ProxyRouter 单测：转发 / 鉴权 / 方言推断 / 伪头剥离 / 错误 JSON。
 // 跨文件前提：
 //   - 上游用 platform::http::Server 或裸 httplib 起本地 mock；数据库走临时文件。
-//   - 凭据存 claude_profiles.api_key_encrypted 列，不在 Keychain；清 Keychain 对它无效。
+//   - 凭据存 claude_profiles.api_key_encrypted 列（need305 唯一来源）；清空列即造无 key 态。
 //   - 无激活 profile 与「取 key 失败」统一报 503 no_active_profile。
 //   - 方言由 baseUrl host 推断；默认方言不改 body、不加会话头。
 #include "doctest.h"
@@ -13,7 +13,6 @@
 #include "platform/http_client.h"
 #include "platform/http_server.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 #include "proxy_router.h"
 #include "test_support.h"
 #include "upstream_dialect.h"
@@ -332,7 +331,7 @@ REGISTER_TEST(proxy_router_no_active_profile,
 })
 
 REGISTER_TEST(proxy_router_missing_api_key,
-              "proxy_router: Keychain 缺 key 缓冲/流式统一 503 no_active_profile", {
+              "proxy_router: 缺 key 缓冲/流式统一 503 no_active_profile", {
     test_support::TestDb tdb(kDbPrefix, "nokey");
     module::claude::ClaudeService svc(tdb.handle());
 

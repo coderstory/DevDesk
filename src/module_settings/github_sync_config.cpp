@@ -210,7 +210,7 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
 
 core::Result<void> GithubSyncStore::saveToken(const std::string& token) {
     // 测试模式不落库：注入 token 由环境变量提供，写进去只会污染被测库的状态
-    //（与旧钥匙串时代的防污染口径一致，门本身零成本）。
+    //（测试态防污染口径，门本身零成本）。
     if (githubTestModeEnabled()) return core::Result<void>::ok();
     if (db_ == nullptr) {
         return core::Result<void>::fail(

@@ -326,9 +326,9 @@ int cmdMcpServe(int argc, char* argv[]) {
 
 }  // namespace
 
-// need256 E2E：假 key 走真实钥匙串通道 → 引擎 Running（启动透传生效）→
+// need256 E2E：假 key 走真实 app_secrets 通道 → 引擎 Running（启动透传生效）→
 // add_memory(infer=true) 真实出机 → 云端 401 fail-closed 文案可见（bug254
-// 口径：真因透传）。key 值只进内存/钥匙串，绝不打印（密钥红线，出参过脱敏）。
+// 口径：真因透传）。key 值只进内存/app_secrets，绝不打印（密钥红线，出参过脱敏）。
 int cmdKeyE2e(int argc, char* argv[]) {
     int timeoutSec = 900;
     for (int i = 2; i < argc; ++i) {
@@ -337,14 +337,14 @@ int cmdKeyE2e(int argc, char* argv[]) {
         }
     }
     const std::string kFakeKey = "sk-e2e-fake-need256";
-    if (!engine::saveLlmKeyToKeychain(kFakeKey)) {
-        std::cout << "[probe] FAIL 假 key 存钥匙串失败\n";
+    if (!engine::saveLlmKeyToStore(kFakeKey)) {
+        std::cout << "[probe] FAIL 假 key 存 app_secrets 失败\n";
         g_fail++;
         return finish();
     }
-    std::cout << "[probe] 假 key 已存钥匙串（devdesk.memory/llm-key，值不打印）\n";
-    struct KeyGuard {  // 出口保证：测毕必清（真钥匙串不残留测试凭据）
-        ~KeyGuard() { engine::clearLlmKeyFromKeychain(); }
+    std::cout << "[probe] 假 key 已存 app_secrets（memory.llm/default，值不打印）\n";
+    struct KeyGuard {  // 出口保证：测毕必清（临时库不残留测试凭据）
+        ~KeyGuard() { engine::clearLlmKeyFromStore(); }
     } guard;
     auto& eng = engine::TelememEngine::global();
     eng.startAsync();
@@ -362,7 +362,7 @@ int cmdKeyE2e(int argc, char* argv[]) {
         }
         if (snap.state == engine::TelememEngine::State::Running) {
             running = true;
-            std::cout << "[probe] PASS 引擎 Running（钥匙串 key 启动透传生效）\n";
+            std::cout << "[probe] PASS 引擎 Running（app_secrets key 启动透传生效）\n";
             break;
         }
         if (snap.state == engine::TelememEngine::State::Failed) {

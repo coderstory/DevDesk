@@ -401,7 +401,7 @@ REGISTER_TEST(schedule_store_archive_once_rule,
 })
 
 REGISTER_TEST(schedule_store_channel_secret_ref,
-              "渠道 CRUD：secret_ref 只存 keychain account 名、config_json 往返（防：key 明文落库/配置丢字段）", {
+              "渠道 CRUD：secret_ref 只存 app_secrets account 名、config_json 往返（防：key 明文落库/配置丢字段）", {
     auto opened = openMigrated("channel");
     DOCTEST_REQUIRE(opened.isOk());
     auto& db = opened.value().db();
