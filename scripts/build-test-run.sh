@@ -702,7 +702,7 @@ if [ "$RUN_TEST" = "1" ]; then
   # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（以下 grep 均仅显示用）
   FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20) || true
   if [ -n "$FAIL_LINES" ]; then echo "$FAIL_LINES"; fi
-  echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed):" | tr '\n' ' ' || true
+  echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed|Skipped):" | tr '\n' ' ' || true
   echo ""
   if [ "$TEST_RC" -ne 0 ]; then
     if [ "$TEST_RC" -eq 2 ]; then

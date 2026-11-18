@@ -35,10 +35,13 @@ namespace test_support {
 
 // 0) keychain 测试统一门控（need304，老板令 2026-11-18：默认任何测试运行零钥匙串触达）。
 // 根因：macOS adhoc 签名每次重建 cdhash 变化，测试进程一触达 Security.framework
-// 就弹系统授权框。触达**真**钥匙串（直呼 storeSecret/loadSecret/deleteSecret 或经
-// cleanupProfileKey）的用例，体首行放 KEYCHAIN_TEST_GATE；经 setBackendForTest 注入
-// 假 backend 的用例零真触达，不门控。默认（未设 DEVDESK_KEYCHAIN_TESTS=1）打 stderr
-// 横幅后早退——跳≠过，横幅必须可见；开启后全链真跑不变。
+// 就弹系统授权框。门控判据 = **真触达**：直呼 platform::keychain::*（现码全量在
+// test_keychain.cpp）或经 cleanupProfileKey 收尾清理的用例才放；经 setBackendForTest
+// 注入假 backend / 平台钩子注入 / Windows 文件实现的用例零真触达，不门控
+// （审计 P1：门控过宽 = claude_proxy 等模块默认回归覆盖被无谓摘掉）。
+// 默认（未设 DEVDESK_KEYCHAIN_TESTS=1）走 DOCTEST_SKIP：[SKIP] 原因行可见 +
+// runner Total 行单独计 Skipped——跳≠过可审计（审计 P2：原早退 return true 是假绿）。
+// env 开关保留作逃生口：Windows 文件实现可安全真跑，不做恒 SKIP 摘覆盖。
 inline bool keychainTestsEnabled() {
     const char* v = std::getenv("DEVDESK_KEYCHAIN_TESTS");
     return v != nullptr && std::string(v) == "1";
@@ -47,11 +50,8 @@ inline bool keychainTestsEnabled() {
 #define KEYCHAIN_TEST_GATE(caseName)                                     \
     do {                                                                 \
         if (!test_support::keychainTestsEnabled()) {                     \
-            std::fprintf(stderr,                                         \
-                         "[keychain-skip] %s : 触达真钥匙串，默认跳过；"  \
-                         "开启真跑：DEVDESK_KEYCHAIN_TESTS=1\n",          \
-                         caseName);                                      \
-            return true;                                                 \
+            DOCTEST_SKIP("触达真钥匙串，默认跳过；开启真跑："             \
+                         "DEVDESK_KEYCHAIN_TESTS=1");                     \
         }                                                                \
     } while (0)
 
@@ -578,11 +578,12 @@ inline bool clearStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
 }
 
 // 删某个 service 下某 profile 的 Keychain 条目；service 由调用方传自身的测试常量。
-// 门控同 KEYCHAIN_TEST_GATE（need304）：默认静默 no-op（每进程只报一次），不触达真
-// 钥匙串——调用方是测试收尾清理，跳过即无害（最坏残留一个测试条目）；清理性 no-op
-// 不构成用例假绿，故不逐用例横幅，只在首调时出声。
+// 门控判据同 KEYCHAIN_TEST_GATE（need304），形态不同：这是嵌在未门控用例里的收尾
+// 清理，不能 SKIP（会把整用例摘掉）——默认静默 no-op（每进程只报一次），跳过即
+// 无害（最坏残留一个测试条目）；清理性 no-op 不构成用例假绿，故只在首调时出声。
 inline void cleanupProfileKey(const char* service, int64_t profileId) {
     if (!keychainTestsEnabled()) {
+        // 单线程前提：runner（test_main.cpp）顺序执行用例，warned 无竞争
         static bool warned = false;
         if (!warned) {
             warned = true;

@@ -273,7 +273,6 @@ REGISTER_TEST(provider_config_official_keys_derived_from_hints,
 // ClaudeService 读写往返 + model 列同步
 REGISTER_TEST(provider_config_service_roundtrip,
               "claude_service: models_config/extra_env 读写往返", {
-    KEYCHAIN_TEST_GATE("provider_config_service_roundtrip");
     test_support::TestDb tdb(kDbPrefix, "svc_roundtrip");
     module::claude::ClaudeService svc(tdb.handle());
 
