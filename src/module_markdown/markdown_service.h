@@ -111,6 +111,11 @@ public:
 // 路径安全校验：拒绝绝对路径、盘符、.. 逃逸、反斜杠（create 内部同规则兜底）。
     static bool isSafeNewNotePath(const std::string& name);
 
+// E1-d（need297 批次E）：新建/重命名名的前置预检（Windows 保留设备名 + 单段长度）。
+// 返回空串 = 通过；非空 = 用户可读错误文案。只查名字本身，路径结构合法性仍归
+// isSafeNewNotePath（两者串行调用，互不替代）。规则来源见实现处注释。
+    static std::string noteNamePolicyError(const std::string& relPath);
+
 
 // 一级子目录清单（磁盘实时枚举，含空目录；返回目录名，按字母序）。
     core::Result<std::vector<std::string>> listTopFolders() const;

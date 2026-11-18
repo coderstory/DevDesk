@@ -869,6 +869,31 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 const float chipY = 18.0f;
                 const float toggleW = 104.0f;
                 const float deleteW = 76.0f;
+                const float archiveW = 64.0f;
+                // E1-a（need297 批次E）：「归档」chip = 显式归档入口（拖拽之外的第
+                // 三条归档路径）。先落表单再归档（编辑改动不被丢弃，同 toggle chip
+                // 口径）；归档后关详情（归档列详情只读，留在编辑态没有意义）
+                components::button(ui, "todo.dialog.detail.archive")
+                    .position(w - ui_kit::kDialogBodyInsetX - toggleW - 8.0f -
+                                  deleteW - 8.0f - archiveW, chipY)
+                    .size(archiveW, 28.0f)
+                    .icon(0xF187)   // fa-box-archive
+                    .text("归档")
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .colors(t.colors.background, t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textSecondary)
+                    .iconColor(t.colors.textSecondary)
+                    .radius(t.sizes.radiusSmall)   // 胶囊（同删除 chip）
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([&d, &host] {
+                        const int64_t taskId = d.detail.taskId;
+                        if (!d.detail.save(host)) return;  // 落表单失败保持弹窗
+                        host.archiveTask(taskId);
+                        d.popups.close(Popup::Detail);
+                        d.detail.discardArmed = false;
+                    })
+                    .build();
                 components::button(ui, "todo.dialog.detail.delete")
                     .position(w - ui_kit::kDialogBodyInsetX - toggleW - 8.0f - deleteW,
                               chipY)

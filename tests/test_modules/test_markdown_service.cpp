@@ -1227,3 +1227,22 @@ REGISTER_TEST(md_write_atomic_no_tmp_leftover,
     fs::remove_all(dir, ec);
     return true;
 })
+
+// E1-d（need297 批次E）：文件名前置预检表驱动——Windows 保留设备名（大小写/带扩展
+// 名/中间段/目录段）拒绝；普通名与保留词超集放行；255 字节段放行、256 拒。
+REGISTER_TEST(md_note_name_policy_reserved_and_length,
+              "markdown_service: noteNamePolicyError 保留名与长度表驱动", {
+    using module::markdown::MarkdownService;
+    for (const char* bad : {"CON", "con.md", "Con.TXT", "a/NUL/b.md", "COM1",
+                             "lpt9/笔记.md", "aux", "工作/COM3", "NUL.md.bak"}) {
+        DOCTEST_CHECK(!MarkdownService::noteNamePolicyError(bad).empty());
+    }
+    for (const char* ok : {"报告.md", "COM10", "CONSOLE.md", "conda.md",
+                            "工作/周报"}) {
+        DOCTEST_CHECK(MarkdownService::noteNamePolicyError(ok).empty());
+    }
+    // 长度边界（字节口径）：255 放行 / 256 拒
+    DOCTEST_CHECK(MarkdownService::noteNamePolicyError(std::string(255, 'a')).empty());
+    DOCTEST_CHECK(!MarkdownService::noteNamePolicyError(std::string(256, 'a')).empty());
+    return true;
+})

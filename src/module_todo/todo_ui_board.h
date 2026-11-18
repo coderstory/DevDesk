@@ -27,6 +27,10 @@ struct BoardPlate {
     // 拖拽命中优先吃这两条向量——归档折叠窄条与展开宽列都按真实宽度命中
     std::vector<float> columnX;
     std::vector<float> columnWidth;
+    // 卡 hover 集（E1-c 果冻，need297 批次E）：写 = bg.onHover（指针事件驱动），
+    // 读 = drawCard 每帧。板面是模块常驻成员（非每帧重建），失效 id 残留无害；
+    // schedule_ui_list hoveredCardIds_ 同款模式
+    std::unordered_set<std::string> hoverCards;
 };
 
 // 看板 → 模块的回写通道（模块构造期绑定一次）；回调体写在模块侧，读模块当下状态，不是当帧快照

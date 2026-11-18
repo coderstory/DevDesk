@@ -1304,6 +1304,51 @@ bool MarkdownService::isSafeNewNotePath(const std::string& name) {
     return true;
 }
 
+// E1-d（need297 批次E）预检规则表（双平台中立，macOS/Windows 都拦）：
+// 保留名全表 = Microsoft Learn「Naming Files, Paths, and Namespaces」保留设备名
+// （CON/PRN/AUX/NUL + COM0-9/LPT0-9；Win11 文档含 0 号段，取保守超集，macOS 无副作用）。
+// 判定按每段首个 '.' 之前的主名（stem）——"CON.txt" 在 Windows 同样保留。
+// 长度上限取 255 字节/段：NTFS 单段 = 255 UTF-16 码元、APFS/ext4 = 255 字节，而任意
+// 字符串的 UTF-8 字节数 ≥ UTF-16 码元数恒成立 → 255 字节是跨平台最严公分母。
+// 64 字先例（notes_mcp_tools kMaxTopicChars）是 MCP topic 字段预算（日期前缀与 .md
+// 由路由另计），非文件系统推导，不采。
+std::string MarkdownService::noteNamePolicyError(const std::string& relPath) {
+    static const char* const kReserved[] = {
+        "CON", "PRN", "AUX", "NUL",
+        "COM0", "COM1", "COM2", "COM3", "COM4",
+        "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT0", "LPT1", "LPT2", "LPT3", "LPT4",
+        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+    constexpr std::size_t kMaxSegmentBytes = 255;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t slash = relPath.find('/', start);
+        const std::string seg = relPath.substr(
+            start, slash == std::string::npos ? std::string::npos : slash - start);
+        if (!seg.empty()) {
+            if (seg.size() > kMaxSegmentBytes) {
+                return "名称过长：每段最长 255 字节";
+            }
+            const std::size_t dot = seg.find('.');
+            const std::string stem = seg.substr(0, dot);
+            std::string upper = stem;
+            for (char& c : upper) {
+                if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+            }
+            for (const char* r : kReserved) {
+                if (upper == r) {
+                    return "「" + stem + "」是 Windows 保留设备名，"
+                           "不能用作文件或文件夹名";
+                }
+            }
+        }
+        if (slash == std::string::npos) break;
+        start = slash + 1;
+    }
+    return "";
+}
+
 
 core::Result<std::vector<std::string>> MarkdownService::listTopFolders() const {
     std::vector<std::string> out;

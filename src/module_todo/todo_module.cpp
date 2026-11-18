@@ -292,6 +292,15 @@ public:
     }
 
     // 返回是否成功（成功静默；失败自己报错误 toast，调用方无需再提示）
+    // E1-a（need297 批次E）：详情「归档」chip = 移入归档列（archived_at 由 doMoveTask
+    // 按目标列 kind 置 now，与拖拽归档同一落库路径）；归档列缺失不动作。位置给 0
+    //（归档列视图按归档时间排序，position 不参与展示序）
+    bool doArchiveTask(int64_t taskId) {
+        const int64_t archId = archiveColId();
+        if (archId == 0) return false;
+        return doMoveTask(taskId, archId, 0);
+    }
+
     bool doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
         if (!service_) return false;
         auto r = service_->moveTask(taskId, toColumnId, newPosition);
@@ -1162,6 +1171,7 @@ private:
         },
         .completeTask = [this](int64_t taskId) { doCompleteTask(taskId); },
         .uncompleteTask = [this](int64_t taskId) { doUncompleteTask(taskId); },
+        .archiveTask = [this](int64_t taskId) { doArchiveTask(taskId); },
         .openDocPicker = [this] { openDocPickerForDetail(); },
         .openLinkedDoc = [this](const std::string& relPath) {
             openLinkedDoc(relPath);

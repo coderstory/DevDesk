@@ -340,6 +340,7 @@ void MarkdownModule::openFileContextMenu(const std::string& relPath, const eui::
 
 void MarkdownModule::openDirContextMenu(const std::string& relPath, const eui::PointerEvent& ev) {
     dirCtxPath_ = relPath;
+    dirCtxRoot_ = relPath.empty();  // E1-b：根组行（路径 ""）也持合法菜单
     const core::MenuAnchor anchor = menuAnchorForPointerInPage(ev);
     ctxMenuX_ = anchor.x;
     ctxMenuY_ = anchor.y;
@@ -391,16 +392,22 @@ void MarkdownModule::drawFolderContextMenu(eui::Ui& ui,
         dirCtxOpen_ = false;
         return;
     }
-    if (dirCtxPath_.empty()) {
+    // E1-b（need297 批次E）：根组行右键（dirCtxPath_="" 且 dirCtxRoot_）= 合法菜单，
+    // 仅「新建子目录」——根不能重命名/删除，新建子笔记走树顶既有按钮；非根且路径
+    // 空 = 无右键目标，强制置关（不 build 则无 dismiss 层，点击外部无处关闭）
+    if (dirCtxPath_.empty() && !dirCtxRoot_) {
         dirCtxOpen_ = false;
         return;
     }
+    const bool rootCtx = dirCtxPath_.empty();
     components::contextMenu(ui, "md.dir.ctx")
         .open(dirCtxOpen_)
         .screen(screen.width, screen.height)
         .position(ctxMenuX_, ctxMenuY_)
         .autoWidth()  // 宽度按最宽项自适应
-        .items({"新建子目录", "新建子笔记", "重命名", "删除"})
+        .items(rootCtx ? std::vector<std::string>{"新建子目录"}
+                       : std::vector<std::string>{"新建子目录", "新建子笔记",
+                                                  "重命名", "删除"})
         .theme(wcTheme)
         .onSelect([this](int index) {
             if (index == 0) {
@@ -642,6 +649,11 @@ void MarkdownModule::commitRenameNote() {
             "名称不合法：不支持绝对路径、盘符（如 C:）或 ..，请用相对路径";
         return;  // 弹窗保持打开让用户改
     }
+    if (const std::string policyErr = MarkdownService::noteNamePolicyError(target);
+        !policyErr.empty()) {
+        renameError_ = policyErr;  // E1-d：保留名/长度预检（弹窗保持打开让用户改）
+        return;
+    }
     // 扩展名只在 service 层规范化，且是追加而非替换 ——
     // 索引/树/搜索只认 .md，替换会静默丢用户敲进去的字符。
     auto r = service_->rename(renameTargetPath_, target);
@@ -804,6 +816,11 @@ void MarkdownModule::commitRenameFolder() {
     if (!MarkdownService::isSafeNewNotePath(target)) {
         dirRenameError_ =
             "名称不合法：不支持绝对路径、盘符（如 C:）或 ..";
+        return;
+    }
+    if (const std::string policyErr = MarkdownService::noteNamePolicyError(target);
+        !policyErr.empty()) {
+        dirRenameError_ = policyErr;  // E1-d：保留名/长度预检（弹窗保持打开让用户改）
         return;
     }
     const std::string oldPath = dirRenameTargetPath_;

@@ -5596,3 +5596,70 @@ REGISTER_TEST(todo_ui_dialog_frame_containment,
     mod->onStop();
     return true;
 })
+
+// E1-a（need297 批次E）：详情头部「归档」chip 存在性 + 动作链（点击 → 任务落归档列、
+// archivedAt 置位）；归档列任务详情只读 → 头部 chips（含归档 chip）不渲染。
+REGISTER_TEST(todo_ui_detail_archive_chip,
+              "todo_ui: 详情归档 chip 存在性与落库链（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(!cols.value().empty());
+    auto t = env.svc->createTask(cols.value()[0].id, "待归档任务");
+    DOCTEST_REQUIRE(t.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 点卡片打开详情弹窗（act.cardClicked = openDetailDialog，不走菜单索引序）
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+        frame.refresh();
+    }
+    // 详情开 →「归档」chip 在 → 点击（显式归档动作链入口）
+    {
+        Frame frame(mod.get());
+        // 点击目标 = chip 的 .bg（button 组件 onClick 挂在内层 rect 上）
+        const auto* chip = frame.ui.find("todo.dialog.detail.archive.bg");
+        DOCTEST_REQUIRE(chip != nullptr);
+        DOCTEST_REQUIRE(chip->onClick != nullptr);
+        chip->onClick();
+        frame.refresh();
+    }
+    // 落库验证：任务进归档列 + archivedAt 置位（与拖拽归档同一落库路径）
+    {
+        Frame frame(mod.get());
+        int64_t archId = 0;
+        for (const auto& c : cols.value()) {
+            if (c.kind == "archive") archId = c.id;
+        }
+        DOCTEST_REQUIRE(archId != 0);
+        auto archived = env.svc->listTasks(archId);
+        DOCTEST_REQUIRE(archived.isOk());
+        DOCTEST_CHECK_EQ(archived.value().size(), static_cast<size_t>(1));
+        DOCTEST_CHECK(archived.value()[0].archivedAt.has_value());
+
+        // 归档列缺省折叠（H20 口径，colState 缺省 expanded=false）→ 点窄态条展开
+        // → 归档卡渲染 → 点开只读详情 → 头部 chips（含归档 chip）不渲染
+        const auto* expand = frame.ui.find("todo.col.3.expand.bg");
+        DOCTEST_REQUIRE(expand != nullptr);
+        DOCTEST_REQUIRE(expand->onClick != nullptr);
+        expand->onClick();
+        frame.refresh();
+        const auto* archCard = frame.ui.find("todo.col.3.card.0.bg");
+        DOCTEST_REQUIRE(archCard != nullptr);
+        DOCTEST_REQUIRE(archCard->onClick != nullptr);
+        archCard->onClick();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.archive") == nullptr);
+    }
+
+    mod->onStop();
+    return true;
+})

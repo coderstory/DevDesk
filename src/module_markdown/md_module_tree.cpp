@@ -746,6 +746,11 @@ void MarkdownModule::commitNewNote(eui::Ui& ui) {
             "笔记名不合法：不支持绝对路径、盘符（如 C:）或 ..，请用相对路径";
         return;
     }
+    if (const std::string policyErr = MarkdownService::noteNamePolicyError(relPath);
+        !policyErr.empty()) {
+        newNoteError_ = policyErr;  // E1-d：保留名/长度预检（内嵌红字，弹窗保持打开）
+        return;
+    }
 
     // 无扩展名时补 .md（与 MarkdownService::create 一致）
     relPath = withMdExtension(relPath);
@@ -872,6 +877,11 @@ void MarkdownModule::commitNewFolder() {
                  newFolderParentDir_);
     }
     const std::string relPath = parent.empty() ? name : parent + "/" + name;
+    if (const std::string policyErr = MarkdownService::noteNamePolicyError(relPath);
+        !policyErr.empty()) {
+        newFolderError_ = policyErr;  // E1-d：保留名/长度预检（内嵌红字，弹窗保持打开）
+        return;
+    }
 
     auto r = service_->createFolder(relPath);
     if (r.isFail()) {

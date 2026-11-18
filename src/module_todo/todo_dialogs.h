@@ -78,6 +78,9 @@ struct DialogHost {
     std::function<void(int64_t, int64_t, int)> moveTask;
     std::function<void(int64_t)> completeTask;
     std::function<void(int64_t)> uncompleteTask;
+    // E1-a（need297 批次E）：详情头部「归档」chip 落库通道（= doMoveTask 到归档列，
+    // archived_at 由 doMoveTask 按目标列 kind 置位；归档列 id 在模块侧解析）
+    std::function<void(int64_t)> archiveTask;
     // UAT6.2 H31 关联文档三通道：打开选择器（模块侧取笔记清单）、跳转打开关联
     // 文档（模块侧导航 Markdown 页 + open: 负载）、存在性判定（文档灰态用）
     std::function<void()> openDocPicker;

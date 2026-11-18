@@ -14,6 +14,7 @@
 #include <ui_kit/card.h>
 #include <ui_kit/glass.h>
 #include <ui_kit/empty_state.h>
+#include <ui_kit/jelly.h>  // jellyFrame（E1-c 卡果冻 hover 时间线，need297 批次E）
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
@@ -776,6 +777,11 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         t.sizes.spacingLarge * 2.0f +
         plate.columnX[static_cast<size_t>(colIndex)] +
         plate.columnWidth[static_cast<size_t>(colIndex)] * 0.5f;
+    // E1-c（need297 批次E）卡果冻：hover 时间线走 jellyFrame 缝，不走 jellyCard 整卡
+    // 替换——本卡 bg 自带 onClick/onContextMenu/onPress/onDrag/自定义涂色，命中面与
+    // 拖拽行为不动，果冻只追加 radius/scale 形变目标（schedule 卡同源消费）
+    const bool cardHovered = plate.hoverCards.count(id) > 0;
+    const ui_kit::JellyPose pose = ui_kit::jellyFrame(id, cardHovered);
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
@@ -784,7 +790,13 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .border(1.0f, overdueTint ? t.colors.error
                                   : (dueTodayTint ? t.colors.warning
                                                   : t.colors.borderDefault))
-        .radius(t.sizes.radius)
+        .radius(pose.radius + (t.sizes.radius - ui_kit::JellyOptions::kRestRadius))
+        .transformOrigin(0.5f, 0.5f)
+        .scale(pose.sx, pose.sy)
+        .transition(pose.active
+                        ? core::Transition::make(0.035f, core::Ease::Linear)
+                        : core::Transition::make(0.18f, core::Ease::OutBack))
+        .animate(core::AnimProperty::Radius | core::AnimProperty::Transform)
         .opacity(finalCardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
         .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex, menuAnchorX](
@@ -803,6 +815,14 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .onRelease([cb = v.act.cardReleased](
                        const eui::PointerEvent& ev, const eui::Rect&) {
             cb(ev.x, ev.y, ev.action == eui::PointerAction::Release);
+        })
+        // E1-c：hover 边沿喂果冻时间线（写 plate.hoverCards，下帧 drawCard 读）
+        .onHover([&plate, id](bool h) {
+            if (h) {
+                plate.hoverCards.insert(id);
+            } else {
+                plate.hoverCards.erase(id);
+            }
         })
         .build();
 

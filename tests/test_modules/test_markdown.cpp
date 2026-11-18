@@ -9125,3 +9125,49 @@ REGISTER_TEST(md_folder_row_h29_h27,
 // 规则。原文备份见 git 历史 eebed0b9（本文件上一版），按需取回改写。
 // marker_bucket 断言（有序/任务列表 marker 末桶位）不属查看器专属，是
 // MarkdownBuilder 渲染核几何断言——批 2 迁移时须还原到本文档内保留。
+
+// E1-b（need297 批次E）：根组行右键 → 目录菜单弹出且仅「新建子目录」一项（根不能
+// 重命名/删除，新建子笔记走树顶既有按钮）；对照组：普通文件夹行菜单仍 4 项。
+REGISTER_TEST(md_root_group_context_menu,
+              "markdown_module: 根组行右键菜单仅新建子目录（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "rootctx", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "根下笔记.md", "# x\n"));
+    DOCTEST_REQUIRE(fs::create_directories(env.dir / "甲夹"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame hf("mdfocus");
+    auto frame = [&] { hf.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    eui::PointerEvent pe;
+    eui::Rect rect;
+    // 行序 = md_tree emit：根组行(0) → 根文件(1) → 子目录(2)。行 0 = 根组行
+    const auto* rootRow = hf.ui->find("md.tree.node.0.row");
+    DOCTEST_REQUIRE(rootRow != nullptr);
+    DOCTEST_REQUIRE(rootRow->onContextMenu != nullptr);
+    rootRow->onContextMenu(pe, rect);
+    frame();
+    const auto* item0 = hf.ui->find("md.dir.ctx.level.0.item.0");
+    DOCTEST_REQUIRE(item0 != nullptr);
+    const auto* label0 = hf.ui->find("md.dir.ctx.level.0.label.0");
+    DOCTEST_REQUIRE(label0 != nullptr);
+    DOCTEST_CHECK_EQ(label0->text, std::string("新建子目录"));
+    DOCTEST_CHECK(hf.ui->find("md.dir.ctx.level.0.item.1") == nullptr);
+
+    // 对照：普通文件夹行 → 菜单 4 项（新建子目录/新建子笔记/重命名/删除）
+    const auto* folderRow = hf.ui->find("md.tree.node.2.row");
+    DOCTEST_REQUIRE(folderRow != nullptr);
+    DOCTEST_REQUIRE(folderRow->onContextMenu != nullptr);
+    folderRow->onContextMenu(pe, rect);
+    frame();
+    DOCTEST_CHECK(hf.ui->find("md.dir.ctx.level.0.item.3") != nullptr);
+
+    mod->onStop();
+    return true;
+})

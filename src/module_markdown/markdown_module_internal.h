@@ -1075,6 +1075,7 @@ private:
     std::string renameError_;        // 弹窗内嵌红字错误行
     // H27：目录行右键菜单 + 删除确认 + 重命名（位置复用 ctxMenuX_/Y_）
     bool dirCtxOpen_ = false;
+    bool dirCtxRoot_ = false;           // E1-b（need297 批次E）：右键目标 = 根组行（路径空但菜单合法）
     std::string dirCtxPath_;            // 右键目标目录（POSIX 相对路径）
     bool dirDeleteConfirmOpen_ = false;
     std::string dirDeleteTargetPath_;   // 待删目录（确认弹窗展示 + 删除目标）
