@@ -54,7 +54,7 @@ core::Result<std::string> realUnprotect(const std::string& stored) {
     input.pbData = reinterpret_cast<BYTE*>(blob.data());
     input.cbData = static_cast<DWORD>(blob.size());
     DATA_BLOB output{};
-    // 用户级解密、禁弹 UI（口径同 keychain_win）
+    // 用户级解密、禁弹 UI——app_secrets 旧版 DPAPI 密文救回臂的解密口径
     if (!CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr,
                             CRYPTPROTECT_UI_FORBIDDEN, &output)) {
         return core::Result<std::string>::fail(
