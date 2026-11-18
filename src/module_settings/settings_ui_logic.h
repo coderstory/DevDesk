@@ -117,15 +117,16 @@ inline constexpr float kModulesCardHeight = 310.0f;
 inline constexpr float kModulesCardHeightWallpaper = 310.0f;
 // 模块插拔卡几何见下方 roundFs 之后的 modules* 派生函数（B6/F-69-3）。
 // 提醒弹窗卡（模块 tab，与 md 关联卡半宽配对，need260 设计 §2.2）：
-// 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y96 盒28
-//（行底 124）+ 下边距 24 = 148（review 260 P2-1：卡底内距统一 24，不再留 16
-// 之下的大片空洞）。
-// 模块 tab 预算（need260 §6）：254（9 格 3 列）+ 16 间距 + max(148, md 卡高)
-// = 418 ≤ 可用 420 零滚动；Win 引导态 md 卡 152 → 422 溢出 2px 由 scrollView 吸收。
-inline constexpr float kReminderCardHeight = 148.0f;
+// 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y108 盒28
+//（行距 16 刻度，行底 136）+ 下边距 16 = 152（#132 D-4：行距由 4 改全站 16，
+// 卡高随之 +4）。
+// 模块 tab 预算（need260 §6）：254（9 格 3 列）+ 16 间距 + max(152, md 卡高)
+// = 422 ≤ 可用 420 + 2px 由 scrollView 吸收（与 Win 引导态 md 卡同档）。
+inline constexpr float kReminderCardHeight = 152.0f;
 // 窄窗（<960）单列堆叠档：说明改 2 行（行高 18、盒 36），开关行下移 16 →
-// 行底 140 + 24 = 164（review 260 P2-2：窄档描述不许单行省略断在语义关键处）。
-inline constexpr float kReminderCardHeightNarrow = 164.0f;
+// 行 y 80/124、行底 152 + 16 = 168（review 260 P2-2：窄档描述不许单行省略断在
+// 语义关键处；行距同 16 刻度）。
+inline constexpr float kReminderCardHeightNarrow = 168.0f;
 // 设置页半宽配对卡窄窗断点：**内容宽** <640（≈ 窗宽 912：侧栏 208 + 页内距 64）
 // 起两卡改单列上下堆叠（各占 100% 宽、行距 16），模块网格同档降 2 列
 //（review 260 P2-2 / P3-2：820 窗内容宽 548 堆叠，1000 窗内容宽 728 并排）。
@@ -303,18 +304,18 @@ inline float proxyCardHeightFor(std::size_t warnLines) {
 
 // MCP 配置卡行几何（drawMcpCard 与 mcpCardHeightFor 单一来源）：端口行 = FormRow
 //（行高 = logFieldHeight），状态行 / 命令行依次从行盒底派生，卡高不写死——85% 档
-// roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。MCP 卡不在 need155 重设计域，
-// 行 y 维持旧「desc 槽」口径（40+16+12=68），不随代理卡带几何走。
+// roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。旧「desc 槽」口径（40+16+12=68）
+// 随 #153 删说明文本退役为死区，D-12 回收：端口行 = 标题带底 38 + 12 = 50。
 inline float mcpPortRowY() {
-    return roundFs(40.0f) + roundFs(16.0f) + roundFs(12.0f);      // 100% = 68
+    return roundFs(16.0f) + roundFs(22.0f) + roundFs(12.0f);      // 100% = 50
 }
 inline float mcpStatusRowHeight() { return roundFs(18.0f); }      // 100% = 18
 inline float mcpCommandRowY() {
     return mcpPortRowY() + logFieldHeight() + mcpStatusRowHeight() +
            roundFs(6.0f);
-}                                                                 // 100% = 128
+}                                                                 // 100% = 110
 inline float mcpCommandRowHeight() { return roundFs(16.0f); }     // 100% = 16
-inline float mcpCardHeightFor() {                                 // 100% = 160
+inline float mcpCardHeightFor() {                                 // 100% = 142
     // 下边距下限 16：85% 档 roundFs(16) = 14，不能直接 roundFs(16)
     return mcpCommandRowY() + mcpCommandRowHeight() +
            std::max(16.0f, roundFs(16.0f));

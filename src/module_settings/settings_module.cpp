@@ -1917,6 +1917,15 @@ private:
             cardY += h + gapY;
         }
         flushLoneHalf();   // 收尾：tab 末尾落单的半宽卡
+        // D-12 滚动兜底：内容高过视口（MCP 卡开启态即此档）时补 16 尾部留白，
+        // 滚到底时末卡底边与固定底栏之间留 16 刻度、不贴死裁切；未超视口不画，
+        // 最小窗四 tab 零滚动判据（content ≤ viewport）不受影响。
+        if (cardY - gapY > cardsH) {
+            ui.rect("settings.cards.tail")
+                .size(contentWidth, roundFs(16.0f))
+                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                .build();
+        }
     }
 
     void drawHeader(eui::Ui& ui, float contentW, float headerH,

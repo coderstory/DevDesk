@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {
+          "themeMode": "light",
+          "enabledModules": [
+            "markdown",
+            "todo",
+            "schedule",
+            "claude_proxy",
+            "agent",
+            "memory",
+            "mcp",
+            "terminal",
+            "git"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Settings.hit",
+      "_comment": "need132/153 设置页取证：进设置页（通用 tab）"
+    },
+    {
+      "type": "wait",
+      "until": "exists",
+      "id": "settings.tabs.1.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 500
+    },
+    {
+      "type": "dump",
+      "path": "probe-general.txt"
+    },
+    {
+      "type": "screenshot",
+      "path": "settings-general.png"
+    },
+    {
+      "type": "click",
+      "id": "settings.tabs.1.hit",
+      "_comment": "切「模块」tab"
+    },
+    {
+      "type": "wait",
+      "until": "exists",
+      "id": "settings.card.reminder.popup.sw.track"
+    },
+    {
+      "type": "wait",
+      "ms": 500
+    },
+    {
+      "type": "dump",
+      "path": "probe-modules.txt"
+    },
+    {
+      "type": "screenshot",
+      "path": "settings-modules.png"
+    }
+  ]
+}

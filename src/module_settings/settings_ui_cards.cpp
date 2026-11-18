@@ -352,15 +352,21 @@ void drawEditorFontCard(const CardDrawArgs& args) {
             .overflow(core::TextOverflow::Ellipsis)
             .clip()
             .build();
+        // D-11（#152 附带）：列宽放不下描述全文（旧省略号截断丢语义）→ 2 行全文
+        // （行高 15 × 2 = 行盒 30，不拖高卡高）。仅列宽 ≥120 启用；820 档通用
+        // 半宽卡列宽只剩 36（3 字/行，2 行反而不成句）→ 回退单行省略原行为。
+        const bool descTwoLine = descW >= roundFs(120.0f);
         ui.text(id + suffix + ".desc")
             .position(descX, rowY)
             .size(std::max(0.0f, descW), rowH)
             .text(desc)
             .fontSize(fs(12.0f))
-            .lineHeight(rowH)
+            .lineHeight(descTwoLine ? roundFs(15.0f) : rowH)
+            .wrap(descTwoLine)
             .color(t.colors.textTertiary)
             .maxWidth(std::max(0.0f, descW))
-            .overflow(core::TextOverflow::Ellipsis)
+            .overflow(descTwoLine ? core::TextOverflow::Clip
+                                  : core::TextOverflow::Ellipsis)
             .clip()
             .build();
         // wswitch 命中元素 = <id>.track（回调断言按此定位）
@@ -752,6 +758,8 @@ void drawProxyCard(const CardDrawArgs& args) {
                         .build();
                     // 说明列兼反馈位（三态：静默提示/红字错误/「端口未变化」，
                     // 机制=MCP 卡先例）；省略号三件套（G2 挤压时说明列先饿）。
+                    // D-8（#153）：静态说明「改后回车或点「应用」；运行中自动重启」
+                    // 与 MCP 端口行重复，按老板令删除——无反馈时空串（列位保留）。
                     const float hintX = cx;
                     const float hintW =
                         std::max(0.0f, inputX - kPortHintGap - hintX);
@@ -759,9 +767,8 @@ void drawProxyCard(const CardDrawArgs& args) {
                     ui.text(id + ".port.hint")
                         .position(hintX, cy + (ch - hintH) * 0.5f)
                         .size(hintW, hintH)
-                        .text(hasFeedback
-                                  ? in.proxyPortFeedback
-                                  : std::string("改后回车或点「应用」；运行中自动重启"))
+                        .text(hasFeedback ? in.proxyPortFeedback
+                                          : std::string())
                         .fontSize(fs(12.0f))
                         .lineHeight(hintH)
                         .color(hasFeedback && in.proxyPortFeedbackError
@@ -883,7 +890,8 @@ void drawMcpCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "MCP 服务");
             // 153 批：desc 说明文本按老板令删除（【本机 127.0.0.1 提供 MCP 工具
-            // 服务…】）；接入命令串（.command 行）非说明文本，保留。
+            // 服务…】），其 40~56 槽位随 D-12 回收（mcpPortRowY 68→50）；接入
+            // 命令串（.command 行）非说明文本，保留。
 
             // 状态三态：running / 停止（无错误）/ 启动失败（lastError 透出）
             const bool running = in.mcpRunning;
@@ -928,8 +936,10 @@ void drawMcpCard(const CardDrawArgs& args) {
                         .radius(t.sizes.radiusSmall)
                         .onClick([f = a.applyMcpPort] { f(); })
                         .build();
-                    // 说明列兼反馈位：静态提示 / 红字错误 / 三级「端口未变化」，
-                    // 直接由卡片状态渲染（setStatus 无页头渲染面，不作反馈通道）
+                    // 说明列兼反馈位：红字错误 / 三级「端口未变化」，直接由卡片状态渲染
+                    //（setStatus 无页头渲染面，不作反馈通道）。
+                    // D-8（#153）：静态说明「改后回车或点「应用」；运行中自动重启」
+                    // 与代理端口行重复，按老板令删除——无反馈时空串（列位保留）。
                     const float hintX = cx;
                     const float hintW =
                         std::max(0.0f, inputX - kPortHintGap - hintX);
@@ -937,9 +947,8 @@ void drawMcpCard(const CardDrawArgs& args) {
                     ui.text(id + ".port.feedback")
                         .position(hintX, cy + (ch - hintH) * 0.5f)
                         .size(hintW, hintH)
-                        .text(hasFeedback
-                                  ? in.mcpPortFeedback
-                                  : std::string("改后回车或点「应用」；运行中自动重启"))
+                        .text(hasFeedback ? in.mcpPortFeedback
+                                          : std::string())
                         .fontSize(fs(12.0f))
                         .lineHeight(hintH)
                         .color(hasFeedback && in.mcpPortFeedbackError
@@ -997,9 +1006,10 @@ void drawMcpCard(const CardDrawArgs& args) {
 // 提醒弹窗卡（模块 tab 半宽配对左卡，need260 设计 §2.2）：上线提醒 + 调度全屏
 // 两个弹窗总开关（均默认关）。全屏置顶提醒窗曾压住主窗标题栏致「无法最小化」
 // （BUG 复盘），默认关 = 无入口不自动弹。
-// 三带格律：标题 y16 / 说明 y40 / 开关行 y64、y96；两开关同一右锚 x = w−72
-//（全 tab 开关右锚单一口径，替换旧「半列右缘/卡右缘」双锚）。B6：行 y/行盒随
-// roundFs 派生，开关 44×24 字面值不缩放（放大档行盒高过开关 → 居中补位）。
+// 三带格律：标题 y16 / 说明 y40 / 开关行 y64、y108（行距 16 刻度）；两开关同一
+// 分栏：label 列 112 + 16 → 开关（#132 D-4 反转 need260「右锚 w−72」——半宽/堆叠
+// 宽卡下右锚让标签与开关脱开成 150~360 纯空白）。B6：行 y/行盒随 roundFs 派生，
+// 开关 44×24 字面值不缩放（放大档行盒高过开关 → 居中补位）。
 void drawReminderCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -1043,9 +1053,13 @@ void drawReminderCard(const CardDrawArgs& args) {
                 cardDesc(ui, id, t, 40.0f, std::max(0.0f, w - 56.0f), 16.0f,
                          "到期与调度事项弹全屏置顶窗，默认关闭");
             }
+            // D-4（#132）：开关列不再钉卡右缘（半宽/堆叠宽卡下标签与开关被 150~360
+            // 纯空白脱开）。改 label 列（112）+ 行内距 16 → 开关列，两行同一内距/
+            // 分栏对齐，行尾余白 = 惰性空间；行距取全站 16 刻度（行盒 28 + 16）。
             const float swW = kAutostartSwitchW;
             const float swH = kAutostartSwitchH;
-            const float swX = w - 28.0f - swW;
+            const float labelW = roundFs(112.0f);
+            const float swX = 28.0f + labelW + roundFs(16.0f);
             const auto drawSwitchRow = [&](const std::string& rowId,
                                            const char* labelText,
                                            float rowYBase,
@@ -1053,9 +1067,7 @@ void drawReminderCard(const CardDrawArgs& args) {
                                            const std::function<void(bool)>& on) {
                 const float rowY = roundFs(rowYBase);
                 const float rowH = roundFs(28.0f);
-                // label 从左轨吃满到开关左缘 −8（窄档省略号兜底，label 不缩挤压开关）
-                const float labelW =
-                    std::max(0.0f, swX - 28.0f - roundFs(8.0f));
+                // label 列定宽（窄档省略号兜底，label 不缩挤压开关）
                 ui.text(rowId + ".label")
                     .position(28.0f, rowY)
                     .size(labelW, rowH)
@@ -1074,12 +1086,12 @@ void drawReminderCard(const CardDrawArgs& args) {
                                 rowY + std::max(0.0f, (rowH - swH) * 0.5f),
                                 swW, swH, t, on);
             };
-            drawSwitchRow(id + ".popup", "上线提醒弹窗",
-                          narrow ? 80.0f : 64.0f,
+            const float row1Y = narrow ? 80.0f : 64.0f;
+            drawSwitchRow(id + ".popup", "上线提醒弹窗", row1Y,
                           in.cfg.releaseReminderPopup,
                           [f = a.applyReminderPopup](bool v) { f(v); });
-            drawSwitchRow(id + ".fs", "调度全屏弹窗",
-                          narrow ? 112.0f : 96.0f,
+            // 行距 16（行盒 28 + 16 = pitch 44）；卡高 = 行 2 底 + 16 下边距
+            drawSwitchRow(id + ".fs", "调度全屏弹窗", row1Y + 44.0f,
                           in.cfg.fullscreenPopup,
                           [f = a.applyFullscreenPopup](bool v) { f(v); });
         })
