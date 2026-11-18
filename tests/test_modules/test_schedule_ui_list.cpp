@@ -16,6 +16,7 @@
 #include "module_schedule/schedule_provider.h"
 #include "module_schedule/schedule_store.h"
 #include "module_schedule/schedule_ui_history.h"
+#include "ui_kit/jelly.h"
 #include "module_schedule/schedule_ui_list.h"
 #include "settings_config.h"
 
@@ -771,6 +772,10 @@ REGISTER_TEST(schedule_list_card_jelly_layer_and_tint,
         DOCTEST_REQUIRE(hit->onHoverChanged != nullptr);
         hit->onHoverChanged(true);
     }
+    // need348：时间线相位点走虚拟时钟（jelly.h 测试缝）确定性给定——真墙钟下
+    // 慢机/CI 的 compose 开销曾把 elapsed 漂进 jellyPose 形变过零窗（base scale
+    // 穿越 1.0、wobble 衰减后落回 ±0.005 内），本机绿 CI 红（CI#44411345024）。
+    ui_kit::jellyVirtualNowMsForTests = 0;  // 进入沿：active 帧起表 t0=0
     {
         eui::Ui frame;
         composeFrame(listUi, frame, screen, "jelly_active");
@@ -781,8 +786,9 @@ REGISTER_TEST(schedule_list_card_jelly_layer_and_tint,
         DOCTEST_CHECK(card->zIndex == 20);  // 动画期整卡盖邻卡
         DOCTEST_CHECK(bg->zIndex == 0);     // 白玻璃面不再压内容
     }
-    // 时间线行进中：stack 带形变、bg 恒不缩（卡内无固定尺寸错位层 → 无灰底）
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    // 时间线行进中：stack 带形变、bg 恒不缩（卡内无固定尺寸错位层 → 无灰底；
+    // 虚拟 elapsed=150 → P2 中段，真形变）
+    ui_kit::jellyVirtualNowMsForTests = 150;
     {
         eui::Ui frame;
         composeFrame(listUi, frame, screen, "jelly_mid");
@@ -794,6 +800,7 @@ REGISTER_TEST(schedule_list_card_jelly_layer_and_tint,
         DOCTEST_CHECK(std::fabs(bg->transform.scale.x - 1.0f) < 1e-5f);
         DOCTEST_CHECK(std::fabs(bg->transform.scale.y - 1.0f) < 1e-5f);
     }
+    ui_kit::jellyVirtualNowMsForTests = -1;  // 退出相位窗外（hovered=false 本就回常态），还原真实时钟
     // hover 退出：目标回正常态，z 回落
     {
         eui::Ui frame;

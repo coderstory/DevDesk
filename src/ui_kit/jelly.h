@@ -107,6 +107,23 @@ inline float jellyWobble(float elapsedMs) {
 
 }  // namespace detail
 
+// ── 测试时钟缝（need348）：jellyFrame 的 now() 统一走 jellyNow ──
+// jellyVirtualNowMsForTests ≥ 0 时返回「纪元 + 虚拟毫秒」（时间线确定性推进，
+// 测试按相位点给定）；负值（默认）= 真实 steady_clock，生产路径零行为差。
+// 背景：行进中断言（sleep 150ms 后 scale≠1）的真值依赖墙钟 elapsed——慢机/CI
+// 的 compose 开销把 elapsed 漂进 jellyPose 形变过零窗（P2/P3 相位 base scale
+// 穿越 1.0，wobble 衰减后落回 ±0.005 内）→ 本机绿 CI 红（CI#44411345024
+// home:1039 / schedule:793 双红复现同因）。仅测试写入，用完置回 -1。
+inline long long jellyVirtualNowMsForTests = -1;
+
+inline std::chrono::steady_clock::time_point jellyNow() {
+    if (jellyVirtualNowMsForTests >= 0) {
+        return std::chrono::steady_clock::time_point(
+            std::chrono::milliseconds(jellyVirtualNowMsForTests));
+    }
+    return std::chrono::steady_clock::now();
+}
+
 // 果冻时间线姿态（纯函数，不碰 clock，可确定性单测）：
 // 输入自 hover 进入沿起算的毫秒数，输出该时刻的缩放/圆角目标与 active 窗口标记。
 // 相位端点约定：t=90 归 P1（压扁端点精确命中基线值）、t=240 归 P2（拉伸端点）。
@@ -159,7 +176,7 @@ inline JellyPose jellyPose(float elapsedMs) {
 inline JellyPose jellyFrame(const std::string& id, bool hovered) {
     detail::JellyAnimState& st = detail::jellyAnimTable()[id];
     if (hovered && !st.wasHovered) {
-        st.t0 = std::chrono::steady_clock::now();
+        st.t0 = jellyNow();
         st.animating = true;
     }
     if (!hovered) st.animating = false;  // 退出中断：目标置常态
@@ -167,7 +184,7 @@ inline JellyPose jellyFrame(const std::string& id, bool hovered) {
     float elapsedMs = -1.0f;
     if (st.animating) {
         elapsedMs = std::chrono::duration<float, std::milli>(
-                        std::chrono::steady_clock::now() - st.t0)
+                        jellyNow() - st.t0)
                         .count();
         if (elapsedMs >= JellyOptions::kTotalMs) {
             st.animating = false;  // 走完 → 正常态

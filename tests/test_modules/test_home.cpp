@@ -22,6 +22,7 @@
 // 跨模块逾期口径一致性用例需要同时问首页与 Todo 两条读取路径
 #include "module_todo/todo_service.h"
 #include "ui_kit/glass.h"
+#include "ui_kit/jelly.h"
 
 #include <eui/dsl.h>
 
@@ -1013,6 +1014,10 @@ REGISTER_TEST(home_stat_card_jelly_whole_stack_layer,
         DOCTEST_REQUIRE(press->onHoverChanged != nullptr);
         press->onHoverChanged(true);
     }
+    // need348：时间线相位点走虚拟时钟（jelly.h 测试缝）确定性给定——真墙钟下
+    // 慢机/CI 的 compose 开销曾把 elapsed 漂进 jellyPose 形变过零窗（base scale
+    // 穿越 1.0、wobble 衰减后落回 ±0.005 内），本机绿 CI 红（CI#44411345024）。
+    ui_kit::jellyVirtualNowMsForTests = 0;  // 进入沿：下帧起表 t0=0
     eui::Ui ui2;
     ui2.begin("home_jelly_active");
     mod->compose(ui2, screen);
@@ -1025,8 +1030,8 @@ REGISTER_TEST(home_stat_card_jelly_whole_stack_layer,
         DOCTEST_CHECK(stack->zIndex == 20);   // 动画期整卡盖邻卡
         DOCTEST_CHECK(bg->zIndex == 0);       // 玻璃面不再压内容
     }
-    // 时间线行进中：stack 缩放、bg 恒 1
-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    // 时间线行进中：stack 缩放、bg 恒 1（虚拟 elapsed=150 → P2 中段，真形变）
+    ui_kit::jellyVirtualNowMsForTests = 150;
     eui::Ui ui3;
     ui3.begin("home_jelly_mid");
     mod->compose(ui3, screen);
@@ -1040,6 +1045,7 @@ REGISTER_TEST(home_stat_card_jelly_whole_stack_layer,
         DOCTEST_CHECK(nearOne(bg->transform.scale.x));
         DOCTEST_CHECK(nearOne(bg->transform.scale.y));
     }
+    ui_kit::jellyVirtualNowMsForTests = -1;  // 退出相位窗外（hovered=false 本就回常态），还原真实时钟
     // hover 退出 → 回落
     {
         auto* press2 = ui2.find(id + ".press");
