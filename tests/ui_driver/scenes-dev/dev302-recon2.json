@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "settings": {"failureStrategy": "keep-going"},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add", "timeoutMs": 4000},
+    {"type": "dump", "path": "dev302-todo-baseline.txt", "_comment": "右键前基线：ctx 菜单闭合态标志对照"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.schedule.list.new.bg", "_comment": "打开新建规则弹窗"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.schedule.edit.name.hit", "_comment": "聚焦名称字段（requestFocus）"},
+    {"type": "type", "text": "need302规则甲"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.name.text", "op": "contains", "text": "need302规则甲", "_comment": "queueText 落字段判据①（迁壳后实测）"},
+    {"type": "click", "id": "app.schedule.edit.kind.3.bg", "_comment": "切「表达式」页签（kind.3=Cron）"},
+    {"type": "wait", "ms": 300},
+    {"type": "click", "id": "app.schedule.edit.cron.expr.hit"},
+    {"type": "type", "text": "0 9 * * *"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.cron.expr.text", "op": "contains", "text": "0 9 * * *", "_comment": "queueText 落字段判据②（cron 表达式字段）"},
+    {"type": "dump", "path": "dev302-sched-cron-dialog.txt", "_comment": "kind.3 态元素树：cron 字段在场证据"},
+    {"type": "click", "id": "app.schedule.edit.dialog.confirm.bg", "_comment": "保存规则"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "dev302-sched-list-after-save.txt", "_comment": "保存后列表元素树：行卡 id 侦察"},
+    {"type": "screenshot", "path": "dev302-sched-after-save.png"}
+  ]
+}

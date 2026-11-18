@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit", "_comment": "need:302 右键原语回归：切待办页"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add", "timeoutMs": 4000},
+    {"type": "click", "id": "todo.btn.add", "_comment": "临时数据根空库，先造一张卡"},
+    {"type": "wait", "until": "exists", "id": "todo.dialog.newtask.input", "timeoutMs": 3000},
+    {"type": "click", "id": "todo.dialog.newtask.input"},
+    {"type": "type", "text": "右键菜单卡"},
+    {"type": "key", "name": "Enter", "_comment": "回车直接创建"},
+    {"type": "wait", "until": "exists", "id": "todo.col.0.card.0.wrap", "timeoutMs": 3000},
+    {"type": "click", "id": "todo.col.0.card.0.wrap", "button": "right",
+     "_comment": "右键原语本体：click+button=right → PointerButton::Right 注入（命中回读: 卡本体 .bg）"},
+    {"type": "wait", "ms": 500},
+    {"type": "assert", "check": "exists", "id": "todo.ctx.level.0.item.0",
+     "_comment": "上下文菜单第一项在场（右键后 ctx.level.0 无 opacity0/disabled = 菜单真开；闭合态对照见 dev302 侦察 dump）"},
+    {"type": "assert", "check": "exists", "id": "todo.ctx.level.0.item.6", "_comment": "菜单末项在场（7 项全量布局）"},
+    {"type": "screenshot", "path": "todo-rightclick-menu.png", "_comment": "右键菜单展开证据图"},
+    {"type": "key", "name": "Escape", "_comment": "Esc 收菜单"},
+    {"type": "click", "id": "app.sidebar.item.Home.hit", "_comment": "离场（顺带证明应用存活）"}
+  ]
+}

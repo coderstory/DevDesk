@@ -134,6 +134,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_engine.cpp
     # bug203/217：引擎卡状态行独立 + 审核卡文本像素预算截断 + 数据根 MSYS 陷阱
     test_modules/test_memory_status_lines.cpp
+    # need298：走查 §1.3 窄窗几何单一来源（阈值/让位宽 compose 与 doctest 同口径）
+    test_modules/test_memory_narrow_width.cpp
     # 脱敏闸（S3-A）：红队夹具直读仓库数据集，DEVDESK_SOURCE_DIR 供定位
     test_modules/test_memory_sanitize.cpp
     # 采集器（S3-B）：临时目录夹具，四道过滤 + 水位幂等
@@ -783,8 +785,11 @@ set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # need244：mcp-claude-install = MCP 详情页「安装到 Claude Code」按钮在场 + 几何。
 #（驱动侧无 disabled 断言能力，「服务未运行 → 置灰 + 提示」由 test_mcp_page 的 doctest 钉）
 # need290：claude-d1-seed-enable = 种子启用 claude_proxy → ClaudeService 装配正常（D1 回归）
+# need302：todo-card-context-menu = click button:"right" 右键原语回归（todo 卡 ctx 菜单）。
+# schedule-rule-once-chain = 定时一次性规则建→存→用户页签行卡（表达式/cron 链路因
+# schedule 弹窗 cron 字段注入竞争挂起，见 need302 池注记，模块侧修复后补链）。
 foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input
-        mcp-claude-install claude-d1-seed-enable)
+        mcp-claude-install claude-d1-seed-enable todo-card-context-menu schedule-rule-once-chain)
     add_test(NAME ui_driver_${_ui_scene}
         COMMAND devdesk_ui_driver
             --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"

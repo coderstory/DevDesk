@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit", "_comment": "dev302 侦察：切待办页"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add", "timeoutMs": 4000},
+    {"type": "click", "id": "todo.btn.add"},
+    {"type": "wait", "until": "exists", "id": "todo.dialog.newtask.input", "timeoutMs": 3000},
+    {"type": "click", "id": "todo.dialog.newtask.input"},
+    {"type": "type", "text": "右键侦察卡"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "exists", "id": "todo.col.0.card.0.wrap", "timeoutMs": 3000},
+    {"type": "click", "id": "todo.col.0.card.0.wrap", "button": "right", "_comment": "dev302 右键原语实测：todo 卡上下文菜单"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "dev302-todo-rightclick.txt", "_comment": "右键后元素树：菜单 id 侦察"},
+    {"type": "screenshot", "path": "dev302-todo-rightclick.png"},
+    {"type": "key", "name": "Escape", "_comment": "关右键菜单"},
+    {"type": "wait", "ms": 300},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit", "_comment": "dev302 切日程页"},
+    {"type": "wait", "ms": 600},
+    {"type": "dump", "path": "dev302-schedule-page.txt", "_comment": "日程页元素树：建规则按钮 id 侦察"},
+    {"type": "screenshot", "path": "dev302-schedule-page.png"}
+  ]
+}

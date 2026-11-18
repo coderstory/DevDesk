@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit", "_comment": "need:302 定时建规则链（可达子集）：一次性规则建→存→行卡"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.schedule.list.new.bg", "_comment": "打开新建规则弹窗"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.schedule.edit.name.hit", "_comment": "requestFocus 聚焦名称字段"},
+    {"type": "type", "text": "need302一次性甲"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.name.text", "op": "equals", "text": "need302一次性甲",
+     "_comment": "queueText 迁壳后落字段判据（严格 equals；recon 实测 name 字段确定性与中英文无关）"},
+    {"type": "click", "id": "app.schedule.edit.dialog.confirm.bg", "_comment": "保存（kind.0 一次性 + 默认时刻）"},
+    {"type": "wait", "ms": 1000, "_comment": "保存落盘 + 弹窗收场过渡"},
+    {"type": "click", "id": "app.schedule.list.tab.1.hit",
+     "_comment": "切「用户定时」页签——严格命中回读：弹窗若未关，此处被 backdrop 截胡即红（弹窗关闭证明）"},
+    {"type": "wait", "ms": 600},
+    {"type": "assert", "check": "text", "op": "contains", "text": "need302一次性甲",
+     "_comment": "用户列表出现行卡（无 id 全页文本命中，todo-new-task 同款机制；行卡元素 id 动态序号，不锚定）"},
+    {"type": "screenshot", "path": "schedule-once-rule-row.png", "_comment": "规则行卡证据图"},
+    {"type": "key", "name": "Escape", "_comment": "收尾：无弹层时 Escape 无副作用，应用存活"}
+  ]
+}

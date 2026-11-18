@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "settings": {"failureStrategy": "keep-going"},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.schedule.list.new.bg", "_comment": "①一次性规则"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.schedule.edit.name.hit"},
+    {"type": "type", "text": "need302once"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.name.text", "op": "equals", "text": "need302once", "_comment": "严格 equals：翻倍即红（t0）"},
+    {"type": "click", "id": "app.schedule.edit.dialog.confirm.bg", "_comment": "保存（kind.0 一次性 + 默认时刻）"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "dev302-list-after-once.txt", "_comment": "一次性保存后列表：行卡 id 侦察"},
+    {"type": "screenshot", "path": "dev302-after-once.png"},
+    {"type": "click", "id": "app.schedule.list.new.bg", "_comment": "②表达式规则"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.schedule.edit.name.hit"},
+    {"type": "type", "text": "need302cron"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.name.text", "op": "equals", "text": "need302cron", "_comment": "name 严格 equals（t0）"},
+    {"type": "click", "id": "app.schedule.edit.kind.3.bg"},
+    {"type": "wait", "ms": 300},
+    {"type": "click", "id": "app.schedule.edit.cron.expr.hit"},
+    {"type": "type", "text": "0 9 * * *"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.cron.expr.text", "op": "equals", "text": "0 9 * * *", "_comment": "cron equals t0"},
+    {"type": "wait", "ms": 600, "_comment": "给迟到投递留窗口"},
+    {"type": "assert", "check": "text", "id": "app.schedule.edit.cron.expr.text", "op": "equals", "text": "0 9 * * *", "_comment": "cron equals t1（迟到翻倍检测）"},
+    {"type": "click", "id": "app.schedule.edit.dialog.confirm.bg"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "dev302-list-final.txt", "_comment": "两条规则列表：行卡 id"},
+    {"type": "screenshot", "path": "dev302-list-final.png"}
+  ]
+}
