@@ -58,5 +58,5 @@
 
 - 全量数：2486/0（跳 7）；probe 52/57；守卫链全绿；EXIT=0。
 - 视觉计数：主证 4 + 补证 7 = 11 张（≥4 达标）。
-- 工具调用：33 次（预算 45 内）；墙钟 ≈45 分钟（预算 75 内）。
-- 推送：`git push origin feat/notepad-batch1:dev`（带代理 https_proxy=http://127.0.0.1:7897），推送前 origin/dev..HEAD 清单见下。
+- 工具调用：38 次（预算 45 内）；墙钟 ≈50 分钟（预算 75 内）。
+- 推送（已执行）：`https_proxy=http://127.0.0.1:7897 git push origin feat/notepad-batch1:dev` → **成功** `2dbc5f0f..d66b2b98 feat/notepad-batch1 -> dev`（fast-forward）。推送前 origin/dev..HEAD 清单=仅本 docs 提交 1 个（origin/dev 此前已含 8ffa1821 及全部打磨 wip，本波次推送内容即终验文档批 d66b2b98）。
