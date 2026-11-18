@@ -535,20 +535,31 @@ int main(int argc, char* argv[]) {
 
     // ---------- C. 用户卡果冻命中面级断言（bug 150 核心）----------
     {
+        const auto* stack = findElement("schedule.list.user.0");
         const auto* c0 = findElement("schedule.list.user.0.bg");
-        if (c0 != nullptr) {
+        if (stack != nullptr && c0 != nullptr) {
             const float baseRadius = c0->radius;
             const float baseScale = c0->transform.scale.x;
-            // 按下果冻接线：bg.visualStateSourceId 指向 .hit、0.965
-            if (c0->visualStateSourceId.empty() ||
-                c0->visualStateSourceId.find(".hit") ==
+            // 按下果冻接线（need334 迁层：果冻挂整卡 stack——渲染变换随子树
+            // 继承，卡内不留固定尺寸层；.bg 只留 radius）：stack 的
+            // visualStateSourceId 指向 .hit、0.965
+            if (stack->visualStateSourceId.empty() ||
+                stack->visualStateSourceId.find(".hit") ==
                     std::string::npos) {
-                std::cerr << "schedule_ui_probe: C FAIL 用户卡 bg 未挂按下果冻"
-                             "（visualStateSource → .hit）\n";
+                std::cerr << "schedule_ui_probe: C FAIL 用户卡 stack 未挂按下"
+                             "果冻（visualStateSource → .hit，need334 整卡口径）\n";
                 passed = false;
-            } else if (std::fabs(c0->pressedScale - 0.965f) > 0.001f) {
+            } else if (std::fabs(stack->pressedScale - 0.965f) > 0.001f) {
                 std::cerr << "schedule_ui_probe: C FAIL pressedScale="
-                          << c0->pressedScale << "（期望 0.965）\n";
+                          << stack->pressedScale << "（期望 0.965）\n";
+                passed = false;
+            }
+            // need334 反向契约：形变只在卡 stack，卡面 .bg scale 恒 1（修
+            // 「缩放露灰底」的防护断言）
+            if (std::fabs(c0->transform.scale.x - 1.0f) > 0.001f) {
+                std::cerr << "schedule_ui_probe: C FAIL 卡面 .bg scale="
+                          << c0->transform.scale.x
+                          << "（need334：.bg scale 恒 1）\n";
                 passed = false;
             }
             // 真实指针进卡（不直调 onHover）：tint 出现 + hover 终态不放大不变形。
