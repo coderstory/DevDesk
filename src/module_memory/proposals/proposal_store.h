@@ -6,7 +6,9 @@
 //     sourceTrust/createdAt/expiresAt/status/decidedAt/appliedAt/baseVersion/undoOf；
 //     result 拆 text/type/projectId 三列存储（字段仍是契约中的一个）。
 //   - 状态机：唯一起点 pending；pending → accepted | rejected | expired 三终态写定
-//     不改；「已撤销」不是状态，是 undoOf 指回的派生徽章。
+//     不改；「已撤销」不是状态，是 undoOf 指回的派生徽章。终稿通道（F-03 波 2
+//     腿 A）例外：auto_accepted 建卡即终态（引擎已由 addInferred 落库，可撤销
+//     不可重接受），pending 兜底卡与常规待审卡同构。
 //   - 幂等：accept/reject 以 id 为幂等键，终态重复操作 = 直接返回成功。
 //   - baseVersion 前置校验：目标记忆当前版本 ≠ baseVersion → 转 expired（证据失效）。
 //   - 代理执行失败 → 提案保持 pending，失败原因进审计（面板可见，重试 = 再接受）。
@@ -47,11 +49,11 @@ struct Proposal {
     std::string resultProjectId;
     std::vector<ProposalEvidence> evidence;
     double confidence = 0.0;
-    std::string source;  // dedupe|conflict|decay|quarantine|inject|collect
+    std::string source;  // dedupe|conflict|decay|quarantine|inject|collect|final_draft
     std::string sourceTrust;  // user_stated|assistant_derived|tool_result|external_doc
     std::int64_t createdAt = 0;
     std::int64_t expiresAt = 0;
-    std::string status;  // pending|accepted|rejected|expired
+    std::string status;  // pending|accepted|rejected|expired|auto_accepted
     std::int64_t decidedAt = -1;
     std::int64_t appliedAt = -1;
     std::int64_t baseVersion = -1;  // add 类（无目标）恒 -1
@@ -120,6 +122,19 @@ public:
                                   const std::string& sourceTrust,
                                   std::int64_t nowSec,
                                   std::int64_t baseVersion = -1);
+
+    // 终稿卡通道（F-03 波 2 腿 A，OQ-2 裁决）：提炼链（infer_batch）产出的
+    // 终稿卡。autoAccepted=true → auto_accepted 终态（引擎已由 addInferred
+    // 落库，此卡 = 台账 + 撤销锚点，不走 executor，撤销链与人工卡同构）；
+    // false → pending 兜底卡（修饰重试耗尽/add 失败/低置信转人审，接受 =
+    // executor addDirect 源文入库）。source 恒 final_draft；kind 恒 add；
+    // confidence 沿用入队值（collect 未评估 0.3）。targetIds = 引擎差分产物
+    // id（撤销锚点，可为空——空则撤销链如实拒绝）。
+    core::Result<Proposal> createFinalDraft(
+        std::vector<std::string> targetIds, const std::string& resultText,
+        const std::string& resultType,
+        const std::vector<ProposalEvidence>& evidence, double confidence,
+        bool autoAccepted, std::int64_t nowSec);
 
     // 接受（含代理执行）：TTL/baseVersion 校验 → executor → accepted + appliedAt。
     // executor 失败 → 保持 pending，错误信息进审计（返回 ok，appliedAt=-1 表达未落库；

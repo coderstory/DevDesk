@@ -361,10 +361,15 @@ int main(int argc, char* argv[]) {
     {
         auto queueR = pipeline::InferQueueStore::open(memDir / "infer_queue.db");
         auto ledgerR = proposals::UsageLedger::open(memDir / "usage_ledger.db");
-        check(queueR.isOk() && ledgerR.isOk(), "S8 提炼队列/账本库打开");
-        if (queueR.isOk() && ledgerR.isOk()) {
+        // 腿 A：终稿卡通道入 S8（独立小库，不动其它 S 段 proposals 断言面）
+        auto draftR =
+            proposals::ProposalStore::open(memDir / "final_draft_probe.db");
+        check(queueR.isOk() && ledgerR.isOk() && draftR.isOk(),
+              "S8 提炼队列/账本/终稿卡库打开");
+        if (queueR.isOk() && ledgerR.isOk() && draftR.isOk()) {
             auto queue = std::move(queueR.value());
             auto ledger = std::move(ledgerR.value());
+            auto drafts = std::move(draftR.value());
             const std::string source =
                 "[踩坑|会话采集] DevDesk 调试中发现 ccache 目录被清空导致全量"
                 "构建耗时 40 分钟，把 CCACHE_DIR 固定到数据目录后解决。";
@@ -374,7 +379,7 @@ int main(int argc, char* argv[]) {
             limits.hardBudgetTokens = 3000000;
             limits.hourlyLimit = 4;
             const auto stepped = pipeline::runInferStep(
-                queue, engine, ledger, limits,
+                queue, engine, drafts, ledger, limits,
                 [](const pipeline::RoundNote&) {});
             check(stepped.isOk() && stepped.value().attempted &&
                       stepped.value().succeeded,

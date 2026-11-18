@@ -522,7 +522,13 @@ void MemoryModule::composeProposalCard(eui::Ui& ui,
 
     // 正文（add/merge = 将生成/合并结果；forget/invalidate = 拟处理原文）
     std::string body;
-    if (unrefinedAdd) {
+    if (p.source == "final_draft" && p.status == "pending") {
+        // F-03 波 2 腿 A 兜底文案（OQ-2）：修饰链未达自动入库线（重试耗尽/
+        // add 失败/低置信）——具体原因见动态流 note 与日志；人审 = 编辑后
+        // 接受（addDirect 源文入库）或拒绝
+        body = "终稿修饰未过自动入库线，待人审：";
+        body += p.resultText;
+    } else if (unrefinedAdd) {
         // 价值摘要如实：未提炼无归纳，给处理建议代替虚假摘要
         body = "原始片段（未经 AI 提炼，建议「编辑后接受」整理成完整记忆）：";
         body += p.resultText;

@@ -259,7 +259,8 @@ void PanelState::collectLoopMain() {
                 limits.hourlyLimit = settings.inferHourlyLimit;
                 gateway::TelememHttpRetriever inferEngine;
                 auto step = pipeline::runInferStep(*inferQueue_, inferEngine,
-                                                   *ledger_, limits, note);
+                                                   *proposalStore_, *ledger_,
+                                                   limits, note);
                 if (step.isFail()) {
                     LOG_WARN("提炼步失败: " + step.errorMessage());
                 } else if (step.value().succeeded ||

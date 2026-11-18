@@ -49,6 +49,17 @@ public:
                                                "本实现不支持提炼入库");
     }
 
+    // E-1 refine 接口位（OQ-4 裁决预留，波 2 不接线）：E-1 拆分「修饰」与
+    // 「入库」后由此实现（text → 终稿文本，不落库，落库通道由卡侧另行选择）；
+    // 当前终稿修饰走 addInferred 云端过桥（infer=true，修饰+落库一体，
+    // infer_batch 消费）。默认 NotImplemented，接线方按需 override。
+    virtual core::Result<std::string> refine(const std::string& text) {
+        (void)text;
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NotImplemented,
+            "E-1 未就绪：当前终稿修饰走 addInferred 云端过桥");
+    }
+
     // 条目正文整条改写（需-3 路②补标通道：update_memory(memory_id, text)，
     // 引擎 required=[memory_id,text] 已核实）。默认 NotImplemented 同上。
     virtual core::Result<void> updateMemoryText(const std::string& memoryId,
