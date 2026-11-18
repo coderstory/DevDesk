@@ -53,6 +53,14 @@ struct DialogShellSpec {
     // 第三动作（可选）：按钮行左缘锚定（x=24，与右锚组同基线），副按钮样式。
     // 低频旁路入口（如未安装向导）专用，禁放主流程动作。
     DialogShellButton thirdAction;
+    // need338：第三动作危险变体（左槽删除类）：底 error 三态 + onPrimary 字，
+    // 与 dangerConfirm 主钮同款视觉；默认 false = 副钮样式。
+    bool dangerThird = false;
+    // need337：内容自然高供给（可选）：给定内容区宽（w−48）返回自然内容高。
+    // 提供时请求高 = 69 + provider + 89（spec.height 不参与），仍过 kDialogMinH
+    // 下限与视口 clamp；内容被压缩（area.h < 自然高）时由调用方 content 内自包
+    // 滚动，内容底 = area.y + area.h = h−89。
+    std::function<float(float contentW)> contentHeightProvider;
     bool dangerConfirm = false;       // 危险变体：confirm 底 error（删除确认类，规范 §3.3）
     std::function<void(bool)> onOpenChange;
 };
