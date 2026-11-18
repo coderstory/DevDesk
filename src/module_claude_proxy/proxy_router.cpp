@@ -440,12 +440,21 @@ void ProxyRouter::handleStreamingRequest(
                               "WHERE id = ?");
                           if (prep.isOk()) {
                               auto& stmt = prep.value();
-                              if (stmt.bind(1, latencyMs).isOk() &&
-                                  stmt.bind(2, streamRowId).isOk()) {
+                              // need295 审计 P2：bind 失败原静默跳过（同文件
+                              // insertCallLogRow 的 bind 失败有 LOG_WARN，此处
+                              // 对齐——否则耗时列恒空无排障线索）
+                              const auto b1 = stmt.bind(1, latencyMs);
+                              const auto b2 =
+                                  b1.isOk() ? stmt.bind(2, streamRowId) : b1;
+                              if (b1.isOk() && b2.isOk()) {
                                   if (auto r = stmt.step(); r.isFail()) {
                                       LOG_WARN("代理：流式耗时回填失败: " +
                                                r.errorMessage());
                                   }
+                              } else {
+                                  LOG_WARN("代理：流式耗时回填 bind 失败: " +
+                                           (b1.isFail() ? b1 : b2)
+                                               .errorMessage());
                               }
                           }
                       }
