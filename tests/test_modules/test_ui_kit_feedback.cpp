@@ -335,12 +335,13 @@ REGISTER_TEST(ui_kit_toast_size_long_wraps_inside_box,
 
 // ── 2026-11-01 toast 统一（R5 / F-09 / F-10 / F-11）──
 
-// 场景：无标题 + 短正文 + 非错误 → 轻反馈走居中微信式轻提示（黑半透底 + 白字），
+// 场景：无标题 + 短正文 + 非错误 → 轻反馈走居中微信式轻提示（need328 绿半透底
+// + 墨绿字；2026-11-18 #351 同步：黑半透/白字旧期望随 need328 配色改版退役），
 // 不再贴右下角当通知式弹。
 // 事故：全站 79 处调用只有 1 处走轻提示，「复制成功」居中黑条、其它成功提示贴
 // 右下角，同一语义两种形态（R5 的核心诉求）。
 REGISTER_TEST(ui_kit_toast_light_form_for_titleless_short,
-              "ui_kit toast: 无标题短正文 → 轻提示形态（黑半透底 + 白字，非通知式）", {
+              "ui_kit toast: 无标题短正文 → 轻提示形态（绿半透底 + 墨绿字，非通知式）", {
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -356,10 +357,13 @@ REGISTER_TEST(ui_kit_toast_light_form_for_titleless_short,
 
     const auto* bg = ui.find("tlight.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x00);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0x00);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x00);
-    DOCTEST_CHECK(std::fabs(bg->color.a - 0.7f) < 0.01f);
+    // need328 绿半透单源：bg=success 令牌压 0.88——与 ui_kit_light_toast_green_
+    // translucent_bg 用例同源比对（本用例走 drawToast 路由，两者共用 drawLightToastPill）
+    const auto& t = core::theme::current();
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), toHexByte(t.colors.success.r));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), toHexByte(t.colors.success.g));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), toHexByte(t.colors.success.b));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 224);  // 0.88 × 255 = 224
     const auto* txt = ui.find("tlight.text");
     DOCTEST_REQUIRE(txt != nullptr);
     DOCTEST_CHECK_EQ(txt->text, std::string("设置已保存"));
