@@ -13,6 +13,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <utility>
 #include <windows.h>
 #include <wincrypt.h>
 
