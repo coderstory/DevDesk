@@ -1,5 +1,5 @@
 // src/module_mcp/mcp_page_module.cpp
-// MCP 菜单页实现：页头固定（标题/副标题/状态行/记忆模块行/区头）→ 工具卡片网格
+// MCP 菜单页实现：页头卡（卡内标题/说明/状态行）+ 记忆模块行 + 区头 → 工具
 //（ui.flow，列宽自适应 340–420）在列表容器内自滚（池144：外壳不滚、内容区唯一
 // 自滚）→ 详情弹窗（components::dialog，关闭 = 按钮 + Esc + backdrop 三通道）→
 // 「试一下」（池146 参数表单校验 + execute 后台线程 + compose 轮询收割，禁 UI
@@ -34,8 +34,8 @@
 #include <platform/http_client.h>  // mcp.health 回环探活（need 219）
 #include <platform/json.h>  // 池146：解析 inputSchema / 组装试跑入参
 
+#include <ui_kit/card.h>    // cardSurface（全站填充卡口径，need143）
 #include <ui_kit/empty_state.h>
-#include <ui_kit/glass.h>  // glassBorder / glassShadowColor（池235：卡底补齐玻璃三件套）
 #include <ui_kit/grid.h>
 #include <ui_kit/materials.h>
 #include <ui_kit/wswitch.h>
@@ -236,13 +236,22 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     //（标题/副标题/状态行/记忆模块行/区头）固定全程可视，工具网格（或空态）是
     // 唯一滚动区、列表容器内自滚。
     const float contentW = std::max(0.0f, screen.width - pad * 2.0f);
-    // 固定区高 = 顶 padding(0) + 五行盒（标题32/副标题20/状态20/记忆行64/区头26，
-    // 全 scaled）+ 5 个 gap；列表区高 = 余高 − 底 padding，下限 scaled(120)（极矮
-    // 窗仍可滚不塌陷）。
-    const float headerH =
-        core::theme::scaled(32.0f) + core::theme::scaled(20.0f) +
-        core::theme::scaled(20.0f) + core::theme::scaled(64.0f) +
-        core::theme::scaled(26.0f) + t.sizes.spacingLarge * 5.0f;
+    // 页头卡几何（2026-11-18 D-6）：全站「大卡 + 卡内标题」体例——标题/说明/状态
+    // 行收进一张填充卡（卡框 = settings_ui_cards.cpp 同款），卡内距 24（need143）。
+    const float headPad = t.sizes.spacingXLarge;  // 24
+    const float headTitleH = core::theme::scaled(22.0f);
+    const float headDescH = core::theme::scaled(16.0f);
+    const float headStatusH = core::theme::scaled(20.0f);
+    const float headInnerW = std::max(0.0f, contentW - headPad * 2.0f);
+    const float headTitleY = headPad;
+    const float headDescY = headTitleY + headTitleH + t.sizes.spacingSmall;
+    const float headStatusY = headDescY + headDescH + t.sizes.spacingSmall * 2.0f;
+    const float headCardH = headStatusY + headStatusH + headPad;
+
+    // 固定区高 = 顶 padding(0) + 页头卡 + 记忆行64 + 区头26（全 scaled）+ 3 个
+    // 16 gap；列表区高 = 余高 − 底 padding，下限 scaled(120)（极矮窗仍可滚不塌陷）。
+    const float headerH = headCardH + core::theme::scaled(64.0f) +
+                          core::theme::scaled(26.0f) + t.sizes.spacingLarge * 3.0f;
     const float listH = std::max(core::theme::scaled(120.0f),
                                  screen.height - headerH -
                                      t.sizes.spacingXLarge);
@@ -255,47 +264,70 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
         .padding(pad, 0.0f, pad, t.sizes.spacingXLarge)
         .gap(t.sizes.spacingLarge)
         .content([&] {
-                    ui.text("mcp.title")
-                        .size(contentW, core::theme::scaled(32.0f))
-                        .text("MCP 服务")
-                        .fontSize(t.sizes.fontSizeTitle)
-                        .fontWeight(600)
-                        .color(t.colors.textPrimary)
-                        .build();
-                    ui.text("mcp.subtitle")
-                        .size(contentW, core::theme::scaled(20.0f))
-                        .text("将 DevDesk 内置能力以标准 MCP 协议（Streamable HTTP）"
-                              "暴露给本机客户端；仅监听回环地址，不对局域网开放。")
-                        .fontSize(core::theme::scaled(12.5f))
-                        .color(t.colors.textTertiary)
-                        .build();
-
-                    // 服务状态行：静态状态点（pulse 动画明确不做）
-                    ui.row("mcp.status")
-                        .size(contentW, core::theme::scaled(20.0f))
-                        .alignItems(eui::Align::CENTER)
-                        .gap(t.sizes.spacingSmall)
+                    // 页头卡（D-6 体例收口）：卡内标题 + 说明 + 状态行，不再浮在
+                    // 流体背景上；卡框与 settings 页同款（填充卡 / 1px borderDefault /
+                    // 3-1 微阴影），不收白玻璃边 + 24 模糊大影。
+                    ui.stack("mcp.head")
+                        .size(contentW, headCardH)
                         .content([&] {
-                            ui.rect("mcp.status.dot")
-                                .size(8.0f, 8.0f)
-                                .radius(t.sizes.radiusSmall)
-                                .color(svc.running ? t.colors.success
-                                                   : t.colors.textDisabled)
+                            ui.rect("mcp.head.bg")
+                                .size(contentW, headCardH)
+                                .color(ui_kit::cardSurface(t))
+                                .radius(t.sizes.radiusLarge)
+                                .shadow(components::theme::shadow(comp, 3.0f, 1.0f,
+                                                                 0.04f, 0.02f))
+                                .border(1.0f, t.colors.borderDefault)
                                 .build();
-                            const std::string statusText =
-                                svc.running
-                                    ? "运行中 · 127.0.0.1:" +
-                                          std::to_string(svc.port)
-                                    : (svc.lastError.empty()
-                                           ? "已停止"
-                                           : "已停止 · " + svc.lastError);
-                            ui.text("mcp.status.text")
-                                .size(std::max(0.0f, contentW - 16.0f),
-                                      core::theme::scaled(20.0f))
-                                .text(statusText)
+                            ui.text("mcp.title")
+                                .position(headPad, headTitleY)
+                                .size(headInnerW, headTitleH)
+                                .text("MCP 服务")
+                                .fontSize(t.sizes.fontSizeLarge)
+                                .lineHeight(headTitleH)
+                                .fontWeight(600)
+                                .color(t.colors.textPrimary)
+                                .build();
+                            ui.text("mcp.subtitle")
+                                .position(headPad, headDescY)
+                                .size(headInnerW, headDescH)
+                                .text("将 DevDesk 内置能力以标准 MCP 协议（Streamable HTTP）"
+                                      "暴露给本机客户端；仅监听回环地址，不对局域网开放。")
                                 .fontSize(core::theme::scaled(12.5f))
-                                .color(svc.running ? t.colors.textSecondary
-                                                   : t.colors.textTertiary)
+                                .color(t.colors.textTertiary)
+                                .maxWidth(headInnerW)
+                                .wrap(false)
+                                .overflow(core::TextOverflow::Ellipsis)
+                                .build();
+
+                            // 服务状态行：静态状态点（pulse 动画明确不做）
+                            ui.row("mcp.status")
+                                .position(headPad, headStatusY)
+                                .size(headInnerW, headStatusH)
+                                .alignItems(eui::Align::CENTER)
+                                .gap(t.sizes.spacingSmall)
+                                .content([&] {
+                                    ui.rect("mcp.status.dot")
+                                        .size(8.0f, 8.0f)
+                                        .radius(t.sizes.radiusSmall)
+                                        .color(svc.running ? t.colors.success
+                                                           : t.colors.textDisabled)
+                                        .build();
+                                    const std::string statusText =
+                                        svc.running
+                                            ? "运行中 · 127.0.0.1:" +
+                                                  std::to_string(svc.port)
+                                            : (svc.lastError.empty()
+                                                   ? "已停止"
+                                                   : "已停止 · " + svc.lastError);
+                                    ui.text("mcp.status.text")
+                                        .size(std::max(0.0f, headInnerW - 16.0f),
+                                              headStatusH)
+                                        .text(statusText)
+                                        .fontSize(core::theme::scaled(12.5f))
+                                        .color(svc.running ? t.colors.textSecondary
+                                                           : t.colors.textTertiary)
+                                        .build();
+                                })
                                 .build();
                         })
                         .build();
@@ -368,15 +400,14 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                             }
                             // 网格：列宽随内容宽自适应（340–420），填满可用宽度，
                             // 不再在右侧留大片空白（2026-11-01 F-13）。
+                            // 卡间距统一 16 档（need156）：行距 = 列距；gridColumns
+                            // 的列宽预留与 flow 同 gap 口径。
                             const auto [cols, cardW] = ui_kit::gridColumns(
-                                listW, 8.0f, kCardMinW, kCardMaxW,
+                                listW, t.sizes.spacingLarge, kCardMinW, kCardMaxW,
                                 kCardMaxCols);
-                            // 卡间距统一档 8px（列表统一规范 §4.3，need224）：EUI flow
-                            // 单 gap 横竖同轴、无 rowGap 能力 → 行包 row 容器（设计 §2 F3
-                            // 路径②）：行内/行间 gap 均 8。
                             listUi.column("mcp.grid")
                                 .width(listW)
-                                .gap(8.0f)
+                                .gap(t.sizes.spacingLarge)
                                 .content([&] {
                                     const int rowCount =
                                         (static_cast<int>(tools.size()) +
@@ -386,7 +417,7 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                                         listUi.row("mcp.grid.row." +
                                                    std::to_string(r))
                                             .size(listW, kCardH)
-                                            .gap(8.0f)
+                                            .gap(t.sizes.spacingLarge)
                                             .content([&] {
                                                 for (int c = 0; c < cols; ++c) {
                                                     const int idx = r * cols + c;
@@ -439,12 +470,9 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
     ui.stack(id)
         .size(cardWidth, kCardH)
         .content([&] {
-            // 玻璃三件套（池235 裁决：补齐 glassBorder + glassShadowColor）。
-            // 规范 §5.2-1 原写「手绘卡面换取色、圆角/描边/阴影参数不变」，§6-C
-            // 又写「→ itemSurface + glassBorder + glassShadowColor」，两处互相
-            // 矛盾；老板 2026-11-08 拍板按 §6-C 补齐——全站玻璃卡只在填色上
-            // 同源、而边缘仍是灰线 + 近乎无影，视觉上会掉出「玻璃」语言掉成
-            // 实色块。此处取 §6-C 口径，§5.2-1 相应措辞已在规范文档修订。
+            // 卡框 = 全站填充卡口径（need143 D-6）：cardSurface + radiusLarge +
+            // 1px borderDefault + 3-1 微阴影。原玻璃三件套（白玻璃边 + 24 模糊
+            // 大影）在大影向下偏移时溢进 16px 行距，视觉上行距 < 列距（need156）。
             ui.rect(id + ".bg")
                 .size(cardWidth, kCardH)
                 // hover 底色 surface→hover 120ms ease-out（§4.6）：目标值每帧
@@ -453,11 +481,8 @@ void McpPageModule::drawToolCard(eui::Ui& ui,
                 .transition(core::Transition::make(0.12f, core::Ease::OutQuad))
                 .animate(core::AnimProperty::Color)
                 .radius(t.sizes.radiusLarge)
-                // 阴影几何与 md 玻璃壳 / agent 摘要卡同款（24 模糊 / 8 偏移），
-                // 色走 glassShadowColor（亮档冷绿黑，纯黑压绿白底会发灰）
-                .shadow(core::Shadow{true, {0.0f, 8.0f}, 24.0f, 0.0f,
-                                     ui_kit::glassShadowColor(t), false})
-                .border(1.0f, ui_kit::glassBorder(t))
+                .shadow(components::theme::shadow(comp, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             // 右轨图标位（§4.4 右上 卡宽−56,16）：primarySoftBg 圆角底 + FA 码点

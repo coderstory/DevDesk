@@ -8,10 +8,13 @@
 #include "doctest.h"
 #include "module_notepad/notepad_session.h"
 #include "platform/json.h"
+#include <components/markdown.h>  // need345 选区缝（displayTextOf/矩形/点反查）
 
+#include <algorithm>  // std::min（need345 码点计数步进）
 #include <string>
 
 using module::notepad::NotepadSession;
+using module::notepad::notepadPreviewSelText;  // need345 选区文本构建单点直驱
 using module::notepad::NotepadToolbarMatrix;
 using module::notepad::notepadToolbarMatrixFor;
 using platform::json::JsonLineCol;
@@ -199,5 +202,152 @@ REGISTER_TEST(notepad_preview_matrix_preview_linkage,
     DOCTEST_CHECK(mm.previewEnabled);  // 预览钮在预览态仍可点（切回编辑）
     DOCTEST_CHECK_FALSE(mm.findToggleEnabled);
     DOCTEST_CHECK_FALSE(mm.fontControlsEnabled);
+    return true;
+})
+// ── need345（池 #345）：md 预览「选中复制+toast」——选区文本构建（整篇显示文本码点域，语义平移自退役查看器 eebed0b9 池 #264）
+// 硬验收：显示域无 markdown 标记符；跨块 '\n' 含在扁平域内（= 旧「多块按阅读序 '\n' 连接」等价）；CJK 码点切片无半字；空选区 = 空串；逆序拖选归一化。
+// session 字段直驱（NotepadSession 开放结构 = 注入缝），与拖选抬起自动复制 / Ctrl+C 同一条 notepadPreviewSelText 通路。
+REGISTER_TEST(notepad_md_sel_text_build,
+              "notepad_preview: need345 预览选区文本——标记剥离 + 跨块 '\n' + CJK 无半字 + 空/逆序/越界钳", {
+    // 码点计数（到字节偏移为止；尾截断序列钳位串尾）
+    auto cpsUpTo = [](const std::string& t, size_t bytes) {
+        size_t n = 0, i = 0;
+        while (i < bytes && i < t.size()) {
+            const unsigned char c = static_cast<unsigned char>(t[i]);
+            i += std::min<size_t>(c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                                  t.size() - i);
+            ++n;
+        }
+        return n;
+    };
+    NotepadSession s = makeSession("/d/a.md");
+    s.editText = "# 标题\n\n中文段落 **加粗** 与 `code` 标记。\n\n- 甲项\n- 乙项\n";
+    // display = 标题\n中文段落 加粗 与 code 标记。\n-甲项\n-乙项（列表 prefix 无空格分隔）
+    const std::string display = components::MarkdownBuilder::displayTextOf(s.editText);
+    DOCTEST_CHECK(display.find("**") == std::string::npos);  // 标记符剥离（显示域）
+    DOCTEST_CHECK(display.find("`") == std::string::npos);
+    DOCTEST_CHECK(display.find("-甲项") != std::string::npos);  // 列表 prefix 进显示域
+
+    auto cpOf = [&](const char* sub) {
+        return cpsUpTo(display, display.find(sub));
+    };
+    const size_t totalCps = cpsUpTo(display, display.size());
+
+    // CJK 码点切片无半字：「文段」= 中文段落 的 [1,3)
+    s.selAnchorCp = cpOf("中文段落") + 1;
+    s.selFocusCp = cpOf("中文段落") + 3;
+    DOCTEST_CHECK_EQ(notepadPreviewSelText(s), std::string("文段"));
+
+    // 跨块尾段（cp 越界钳到显示文本末）：块尾词 + 块间 '\n' + 两个列表项
+    s.selAnchorCp = cpOf("标记");
+    s.selFocusCp = 9999;
+    DOCTEST_CHECK_EQ(notepadPreviewSelText(s), display.substr(display.find("标记")));
+
+    // 全选 [0, 总码点) = 整条显示文本（扁平域身份性 + 钳界）
+    s.selAnchorCp = 0;
+    s.selFocusCp = totalCps;
+    DOCTEST_CHECK_EQ(notepadPreviewSelText(s), display);
+
+    // 逆序拖选（焦点在锚前）归一化到同一阅读序文本
+    s.selAnchorCp = totalCps;
+    s.selFocusCp = 0;
+    DOCTEST_CHECK_EQ(notepadPreviewSelText(s), display);
+
+    // 空选区（锚=焦）= 空串（复制语义：不写剪贴板）
+    s.selAnchorCp = s.selFocusCp = 5;
+    DOCTEST_CHECK_EQ(notepadPreviewSelText(s), std::string());
+    return true;
+})
+
+// ── need345：整篇文档系选区矩形缝（hitRectsForDisplayRangeDoc）零漂移 ─────
+// 硬验收 = 与 displayCpForPoint 同源零漂移（渲染同源）：逐码点取单码点文档系矩形，左缘(+ε)反查必回同一码点；矩形 y 全体落在文档高度内（纵向累计与 estimateHeight/渲染排布一致）；标题/段落/列表/代码块域逐码点覆盖；表格 cell 级角点抽查（旧查看器 hitA 同口径——cell 包围盒近似下单码点往返不适用）。
+REGISTER_TEST(notepad_md_sel_doc_rects_roundtrip,
+              "notepad_preview: need345 文档系选区矩形——displayCpForPoint 往返零漂移 + 高度域内 + 多块型覆盖", {
+    constexpr float kWidth = 420.0f;
+    const components::MarkdownStyle style;
+    // 逐码点往返域：标题/长段落（真实折行）/列表/代码块（无表格）
+    const std::string body =
+        "# CJK 标题\n\n"
+        "正文段落：中文连续排布会真实折行，English words 混排验证最近边界反查，"
+        "这一段刻意写到足够长确保 wrap 发生出现第二行带。\n\n"
+        "- 列表项含词\n\n"
+        "```cpp\nint x = 42; // 注释\n```\n";
+    const std::string display = components::MarkdownBuilder::displayTextOf(body);
+    size_t totalCps = 0, bi = 0;
+    while (bi < display.size()) {
+        const unsigned char c = static_cast<unsigned char>(display[bi]);
+        bi += std::min<size_t>(c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                              display.size() - bi);
+        ++totalCps;
+    }
+    const float docH =
+        components::MarkdownBuilder::estimateHeight(body, kWidth, style);
+    DOCTEST_CHECK(docH > 0.0f);
+
+    int roundtripped = 0;
+    for (size_t cp = 0; cp < totalCps; ++cp) {
+        const auto rects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+            body, kWidth, style, cp, cp + 1);
+        if (rects.empty()) continue;
+        const auto& r = rects.front();
+        // 高度域内（文档系 y；尾块后 yAcc 多计一个 blockGap，放行一个 gap 余量）
+        DOCTEST_CHECK(r.y >= 0.0f);
+        DOCTEST_CHECK(r.y + r.h <= docH + style.blockGap + 0.5f);
+        // 左缘(+ε)反查回同一码点：矩形与点反查同一条布局/纵向计账通路
+        const auto hit = components::MarkdownBuilder::displayCpForPoint(
+            body, kWidth, style, r.x + 0.5f, r.y + r.h * 0.5f);
+        DOCTEST_CHECK_MESSAGE(
+            hit.ok && hit.cp == cp,
+            "doc 左缘往返 cp=" + std::to_string(cp) +
+                " hit=" + std::to_string(hit.cp) +
+                " y=" + std::to_string(r.y));
+        ++roundtripped;
+    }
+    DOCTEST_CHECK(roundtripped > 40);  // 标题+长段落+列表+代码块逐码点覆盖量
+
+    // 代码块子文档单独覆盖（虚拟行近似域非空 + 左缘往返首码点）
+    const std::string codeDoc = "```cpp\nint x = 42;\n```";
+    const std::string codeDisp = components::MarkdownBuilder::displayTextOf(codeDoc);
+    const auto codeRects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        codeDoc, kWidth, style, 0, codeDisp.size());
+    DOCTEST_CHECK(!codeRects.empty());
+    const auto codeHit = components::MarkdownBuilder::displayCpForPoint(
+        codeDoc, kWidth, style, codeRects.front().x + 0.5f,
+        codeRects.front().y + codeRects.front().h * 0.5f);
+    DOCTEST_CHECK(codeHit.ok && codeHit.cp == 0);
+
+    // 表格域（cell 级近似）：矩形非空 + 首行上缘反查落 cp0（旧查看器 hitA 同口径）
+    const std::string tblDoc = "| 甲 | 乙 |\n| --- | --- |\n| 丙 | 丁 |";
+    const std::string tblDisp = components::MarkdownBuilder::displayTextOf(tblDoc);
+    const auto tblRects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        tblDoc, kWidth, style, 0, tblDisp.size());
+    DOCTEST_CHECK(!tblRects.empty());
+    const auto tblHit = components::MarkdownBuilder::displayCpForPoint(
+        tblDoc, kWidth, style, 1.0f, tblRects.front().y + 1.0f);
+    DOCTEST_CHECK(tblHit.ok);
+    DOCTEST_CHECK(tblHit.cp == 0);
+
+    // 整篇全选矩形铺满各块（#350 期望校准：缝内 mergeAdjacentRectsOnSameLine
+    // 会把全选矩形按行/段合并，条数必然少于单码点计数——旧「量 ≥ 计数」在缝修
+    // 后必红；改为逐码点单矩形被某条全选矩形同行包含：y 相等且 x 区间被含）。
+    const auto allRects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+        body, kWidth, style, 0, totalCps);
+    for (size_t cp = 0; cp < totalCps; ++cp) {
+        const auto rects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+            body, kWidth, style, cp, cp + 1);
+        if (rects.empty()) continue;
+        const auto& r = rects.front();
+        bool covered = false;
+        for (const auto& ar : allRects) {
+            const float dy = ar.y > r.y ? ar.y - r.y : r.y - ar.y;
+            if (dy < 0.5f && ar.x <= r.x + 0.5f &&
+                ar.x + ar.w >= r.x + r.w - 0.5f) {
+                covered = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(covered,
+                              "全选矩形未覆盖 cp=" + std::to_string(cp));
+    }
     return true;
 })

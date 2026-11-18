@@ -531,7 +531,7 @@ private:
     // 几何经 TextColumnGeometry 回传给调用方。
     struct TextColumnGeometry {
         float x = 0.0f;  // 文本列左缘
-        float y = 0.0f;  // 文本列顶缘（16 顶距 + 24 chip 行 + 8 间距）
+        float y = 0.0f;  // 文本列顶缘（8 顶距 + 24 chip 行 + 8 间距，bug#164 打回#1）
         float w = 0.0f;  // 文本列宽
         float h = 0.0f;  // 文本列高（已扣状态栏与底部间距，钳 >= 0）
     };
@@ -571,8 +571,12 @@ private:
             float colW = midW - kTextColumnInsetX * 2.0f;
             // TODO(面包屑)：展示 currentPath_ 路径（§3.2.4 补充项，签认可划）。
             // 数据链待核——审计未覆盖路径读取链，暂不硬做。
-            drawTagBar(ui, colX, topInset + 16.0f, colW, t, componentTheme);
-            const float colY = topInset + 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
+            drawTagBar(ui, colX, topInset + 8.0f, colW, t, componentTheme);
+            // bug#164（打回#1 修正）：chip 栏含内置「添加标签」输入（md.tags.add
+            // 120×24，§3.3.4，无标签也恒绘制）——带高不可随标签数收缩，仅顶距可
+            // 收敛：16→8 对齐 kTextColumnInsetX 横向留白（W2 MD-02 编辑区留白最小
+            // 化同源）。输入顶链 = 8 顶距 + 24 chip 行 + 8 间距 = 40。
+            const float colY = topInset + 40.0f;
             const float colH = std::max(0.0f, bodyH - colY - 22.0f - 8.0f);
 
             body(TextColumnGeometry{colX, colY, colW, colH});

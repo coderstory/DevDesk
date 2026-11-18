@@ -15,6 +15,7 @@
 #include <ui_kit/text_metrics.h>  // need:296 D2：估宽缓存归一
 #include <components/theme.h>      // panelShadow（need219 §5.2-2 弹窗内卡描边阴影统一）
 #include <core/component_theme.h>  // componentTokensWeChat（panelShadow 入参）
+#include <core/render/text_kinsoku.h>  // need324 波2：CJK 行首禁则谓词（EUI-NEO 波1 共享头）
 
 #include <cstddef>
 #include <core/str_util.h>      // toLowerAscii（搜索不区分大小写折叠）
@@ -1217,13 +1218,18 @@ std::size_t utf8CodepointLen(const std::string& s, std::size_t i) {
 }
 
 // 按码点贪心换行：与渲染同引擎测量（measureTextWidth，内部带缓存），CJK 逐字断行。
-// 返回各行原文切片；渲染逐行走 wrap(false) 文本节点，与测量天然一致。
+// need324 波2：断行成立时即将起行的码点 ∈ 行首禁则集（EUI-NEO text_kinsoku.h 共享
+// 谓词，与 text_layout/text_measure/markdown 三落点同表同拉回法）→ 并入本行行尾，
+// 行尾允许超 maxWidth ≤1 标点宽；连续拉回钳 ≤2 次防极端溢出（「。。。。」超出
+// 放行换行），换行即复位。返回各行原文切片；渲染逐行走 wrap(false) 文本节点，
+// 与测量天然一致。
 std::vector<std::string> wrapToolDescLines(const std::string& text, float maxWidth,
                                            float fontSize) {
     std::vector<std::string> lines;
     if (text.empty()) return lines;
     std::string line;
     std::size_t i = 0;
+    int linePullCount = 0;
     while (i < text.size()) {
         const std::size_t len = utf8CodepointLen(text, i);
         const std::string cp =
@@ -1231,8 +1237,15 @@ std::vector<std::string> wrapToolDescLines(const std::string& text, float maxWid
         if (!line.empty() &&
             core::TextPrimitive::measureTextWidth(line + cp, "", fontSize,
                                                   400) > maxWidth) {
-            lines.push_back(std::move(line));
-            line.clear();
+            const unsigned int nextCp = core::text_detail::decodeUtf8At(text, i);
+            if (linePullCount < 2 &&
+                core::text_detail::isProhibitedLineStart(nextCp)) {
+                ++linePullCount;
+            } else {
+                lines.push_back(std::move(line));
+                line.clear();
+                linePullCount = 0;
+            }
         }
         line += cp;
         i += len;

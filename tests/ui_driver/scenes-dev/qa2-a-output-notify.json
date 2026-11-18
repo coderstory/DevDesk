@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1500, "_comment": "空闲稳定窗口（bug249② 采样位）"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump"},
+    {"type": "screenshot", "path": "qa2-A0-idle.png"},
+    {"type": "type", "text": "Write-Output ('qa249'+'A-marker')", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "qa249A-marker", "timeoutMs": 20000, "skipExit": 77,
+     "_comment": "面A①：零点击零移动，单行输出自动上屏（typed 串不含连续 marker，排除回显假绿）"},
+    {"type": "screenshot", "path": "qa2-A1-single.png"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump"},
+    {"type": "type", "text": "1..20 | ForEach-Object { 'qa249MB' + '-' + $_ }", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "qa249MB-20", "timeoutMs": 25000, "skipExit": 77,
+     "_comment": "面A②：20 行突发输出自动上屏（末行 marker 证明读到第 20 行）"},
+    {"type": "screenshot", "path": "qa2-A2-multiline.png"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump"}
+  ]
+}

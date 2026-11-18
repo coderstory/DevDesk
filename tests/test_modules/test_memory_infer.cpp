@@ -1,7 +1,11 @@
 // tests/test_modules/test_memory_infer.cpp
 // 池3 G-1 控耗接线单测：infer 闸（硬档恰等越线 / 每小时节流）+ 暂存队列 +
 // addInferred 契约 + llm_attempt 计数（token/金额聚合不受影响）。
-// 红绿自查口径：删 infer_batch 闸分支 → 硬档/节流用例必红。
+// F-03 波 2 腿 A（池 #333）：队列出队闭环（attempts/状态流转——只进不出
+// 回归红队）+ OQ-2 终稿分流三形态（成功 auto_accepted / 失败·低置信兜底）。
+// 红绿自查口径：删 infer_batch 闸分支 → 硬档/节流用例必红；删重试耗尽
+// 出队分支 → drain/exhaust 用例必红（旧实现深度恒不减）；删低置信前置
+// 分流 → lowconf 用例必红（引擎被出机）。
 // 纪律：DOCTEST_CHECK 失败即 return false，只可用于 REGISTER_TEST 函数体，
 // 夹具成员函数内不得使用。
 #include "doctest.h"
@@ -14,6 +18,7 @@
 #include "module_memory/gateway/telemem_client.h"
 #include "module_memory/pipeline/infer_batch.h"
 #include "module_memory/pipeline/infer_queue.h"
+#include "module_memory/proposals/proposal_store.h"
 #include "module_memory/proposals/usage_ledger.h"
 
 using namespace module::memory;
@@ -69,6 +74,7 @@ public:
 struct StepFixture {
     std::filesystem::path dir;
     InferQueueStore queue;
+    proposals::ProposalStore store;  // 腿 A：终稿卡通道
     proposals::UsageLedger ledger;
     InferFakeEngine engine;
     std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
@@ -76,6 +82,7 @@ struct StepFixture {
     explicit StepFixture(const std::string& tag)
         : dir(tmpDir(tag)),
           queue(InferQueueStore::open(dir / "infer_queue.db").value()),
+          store(proposals::ProposalStore::open(dir / "proposals.db").value()),
           ledger(proposals::UsageLedger::open(dir / "usage_ledger.db").value()) {}
 
     core::Result<pipeline::InferStepReport> step(long long hardBudget,
@@ -83,7 +90,7 @@ struct StepFixture {
         InferLimits limits;
         limits.hardBudgetTokens = hardBudget;
         limits.hourlyLimit = hourly;
-        return pipeline::runInferStep(queue, engine, ledger, limits,
+        return pipeline::runInferStep(queue, engine, store, ledger, limits,
                                       [](const pipeline::RoundNote&) {});
     }
 };
@@ -251,7 +258,7 @@ REGISTER_TEST(memory_infer_attempt_rows_isolated_from_budget,
 namespace {
 
 // 假引擎（路②）：listAll 按调用次序出第一/第二份脚本清单（add 前快照 / 补标
-// 差分）；updateMemoryText 记录调用。addInferred 恒成功。
+// 差分）；updateMemoryText 记录。addInferred 恒成功。
 class TagFakeEngine : public gateway::IMemoryRetriever {
 public:
     std::vector<gateway::MemoryListItem> firstList;
@@ -301,6 +308,7 @@ public:
 struct TagFixture {
     std::filesystem::path dir;
     InferQueueStore queue;
+    proposals::ProposalStore store;  // 腿 A：终稿卡通道
     proposals::UsageLedger ledger;
     TagFakeEngine engine;
     std::int64_t now = static_cast<std::int64_t>(std::time(nullptr));
@@ -308,13 +316,14 @@ struct TagFixture {
     explicit TagFixture(const std::string& tag)
         : dir(tmpDir(tag)),
           queue(InferQueueStore::open(dir / "infer_queue.db").value()),
+          store(proposals::ProposalStore::open(dir / "proposals.db").value()),
           ledger(proposals::UsageLedger::open(dir / "usage_ledger.db").value()) {}
 
     core::Result<pipeline::InferStepReport> step() {
         InferLimits limits;
         limits.hardBudgetTokens = 3000000;
         limits.hourlyLimit = 10;
-        return pipeline::runInferStep(queue, engine, ledger, limits,
+        return pipeline::runInferStep(queue, engine, store, ledger, limits,
                                       [](const pipeline::RoundNote&) {});
     }
 };
@@ -404,9 +413,10 @@ REGISTER_TEST(memory_infer_route2_skip_states,
 })
 
 REGISTER_TEST(memory_infer_route2_zero_product_visible,
-              "memory: 需-3 路②零产物上浮（bug239）——add ok 但清单差分零新增 → productMissing + 动态流 note，照常出队不静默", {
+              "memory: 需-3 路②零产物上浮（bug239）——add ok 但清单差分零新增 → productMissing + 兜底卡 + note，照常出队不静默", {
     // bug239 真机形态复现钉：add 回包 ok（异常被引擎兜成 200）→ 记账出队，
-    // 但清单差分零新增。旧实现三查全绿、产物静默缺失；修复后必须显式上浮。
+    // 但清单差分零新增。旧实现三查全绿、产物静默缺失；腿 A 后转兜底人审
+    //（OQ-2：零新增 = add 失败形态）。
     TagFixture f("zero-product");
     DOCTEST_CHECK(f.queue.enqueue("s1", 1, "[踩坑|会话采集] 源段正文", f.now)
                       .isOk());
@@ -418,7 +428,7 @@ REGISTER_TEST(memory_infer_route2_zero_product_visible,
     pipeline::RoundNote noted;
     int noteCount = 0;
     const auto stepped = pipeline::runInferStep(
-        f.queue, f.engine, f.ledger, limits,
+        f.queue, f.engine, f.store, f.ledger, limits,
         [&noted, &noteCount](const pipeline::RoundNote& n) {
             noted = n;
             ++noteCount;
@@ -432,5 +442,157 @@ REGISTER_TEST(memory_infer_route2_zero_product_visible,
     DOCTEST_CHECK(noted.text.find("零新增") != std::string::npos);
     DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);   // 照常出队（重试无意义）
     DOCTEST_CHECK(f.ledger.monthTokens(f.now).value() > 0);
+    // 腿 A：零新增落兜底 pending 终稿卡（OQ-2 分流）
+    auto pendingCards = f.store.listPending();
+    DOCTEST_REQUIRE(pendingCards.isOk());
+    DOCTEST_REQUIRE_EQ(pendingCards.value().size(),
+                       static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(pendingCards.value()[0].source,
+                     std::string("final_draft"));
+    DOCTEST_CHECK_EQ(pendingCards.value()[0].status, std::string("pending"));
+    return true;
+})
+
+// ── F-03 波 2 腿 A（池 #333）：队列出队闭环 + OQ-2 终稿分流三形态 ──
+
+REGISTER_TEST(memory_infer_queue_failure_accounting,
+              "memory: 腿 A 失败记账——recordFailure 累计 attempts 并留最近原因；入队缺省置信 0.3", {
+    StepFixture f("recfail");
+    DOCTEST_CHECK(f.queue.enqueue("s1", 1, "甲", f.now).isOk());
+    auto a1 = f.queue.recordFailure(1, "第一次失败原因");
+    DOCTEST_REQUIRE(a1.isOk());
+    DOCTEST_CHECK_EQ(a1.value(), 1);
+    auto a2 = f.queue.recordFailure(1, "第二次失败原因");
+    DOCTEST_REQUIRE(a2.isOk());
+    DOCTEST_CHECK_EQ(a2.value(), 2);
+    auto batch = f.queue.listBatch(1);
+    DOCTEST_REQUIRE(batch.isOk());
+    DOCTEST_REQUIRE_EQ(batch.value().size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(batch.value()[0].attempts, 2);
+    DOCTEST_CHECK_EQ(batch.value()[0].lastError,
+                     std::string("第二次失败原因"));
+    DOCTEST_CHECK_EQ(batch.value()[0].confidence, 0.3);  // collect 既有值缺省
+    return true;
+})
+
+REGISTER_TEST(memory_infer_final_draft_auto_accepted,
+              "memory: 腿 A OQ-2 成功形态——修饰成功 → 差分产物回填 targetIds → auto_accepted 终稿卡（撤销锚点）", {
+    TagFixture f("auto");
+    DOCTEST_CHECK(f.queue.enqueue("s1", 7, "[踩坑|会话采集] 源段正文", f.now)
+                      .isOk());
+    f.engine.firstList = {};  // add 前快照：空库
+    f.engine.secondList = {
+        gateway::MemoryListItem{"uuid-9", "[踩坑|会话采集] 云端终稿", 0}};
+    auto stepped = f.step();
+    DOCTEST_REQUIRE(stepped.isOk());
+    DOCTEST_CHECK(stepped.value().succeeded);
+    DOCTEST_CHECK(stepped.value().autoAccepted);
+    DOCTEST_CHECK(stepped.value().fallbackPending == false);
+    DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);
+    // 终稿卡：auto_accepted 终态 + 产物 id 回填（撤销链锚点）+ 提炼正文
+    auto decided = f.store.listRecentDecided(10);
+    DOCTEST_REQUIRE(decided.isOk());
+    DOCTEST_REQUIRE_EQ(decided.value().size(), static_cast<std::size_t>(1));
+    const auto& card = decided.value()[0];
+    DOCTEST_CHECK_EQ(card.status, std::string("auto_accepted"));
+    DOCTEST_CHECK_EQ(card.source, std::string("final_draft"));
+    DOCTEST_CHECK_EQ(card.kind, std::string("add"));
+    DOCTEST_REQUIRE_EQ(card.targetIds.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(card.targetIds[0], std::string("uuid-9"));
+    DOCTEST_CHECK_EQ(card.resultText,
+                     std::string("[踩坑|会话采集] 云端终稿"));
+    DOCTEST_CHECK(card.decidedAt > 0);
+    DOCTEST_CHECK(card.appliedAt > 0);
+    // 不进待审（已入库）；进入「已处理」可撤销视图
+    auto pendingCards = f.store.listPending();
+    DOCTEST_REQUIRE(pendingCards.isOk());
+    DOCTEST_CHECK(pendingCards.value().empty());
+    return true;
+})
+
+REGISTER_TEST(memory_infer_final_draft_low_confidence_fallback,
+              "memory: 腿 A OQ-2 低置信形态——入队置信 <0.3 不出机（零引擎调用零记账），直接兜底 pending 卡", {
+    TagFixture f("lowconf");
+    DOCTEST_CHECK(f.queue.enqueue("s1", 7, "低置信源段", f.now, 0.2).isOk());
+    auto stepped = f.step();
+    DOCTEST_REQUIRE(stepped.isOk());
+    DOCTEST_CHECK(stepped.value().attempted == false);  // 零云端出机
+    DOCTEST_CHECK(stepped.value().fallbackPending);
+    DOCTEST_CHECK(stepped.value().fallbackReason.find("置信") !=
+                  std::string::npos);
+    DOCTEST_CHECK_EQ(f.engine.listCalls, 0);  // 快照也不取（前置分流）
+    DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);  // 出队落兜底卡
+    auto pendingCards = f.store.listPending();
+    DOCTEST_REQUIRE(pendingCards.isOk());
+    DOCTEST_REQUIRE_EQ(pendingCards.value().size(),
+                       static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(pendingCards.value()[0].source,
+                     std::string("final_draft"));
+    DOCTEST_CHECK_EQ(pendingCards.value()[0].resultText,
+                     std::string("低置信源段"));
+    // 账面零消耗（不出机不记 attempt / token）
+    DOCTEST_CHECK_EQ(f.ledger.hourAttempts(f.now).value(), 0);
+    DOCTEST_CHECK_EQ(f.ledger.monthTokens(f.now).value(), 0);
+    return true;
+})
+
+REGISTER_TEST(memory_infer_final_draft_retry_exhausted_fallback,
+              "memory: 腿 A OQ-2 失败形态——重试耗尽出队落兜底卡（原因入 reason 与 note），未耗尽留队", {
+    StepFixture f("exhaust");
+    f.engine.fail = true;  // 云端持续 429
+    DOCTEST_CHECK(f.queue.enqueue("s1", 7, "会耗尽的源段", f.now).isOk());
+    pipeline::RoundNote noted;
+    int noteCount = 0;
+    InferLimits limits;
+    limits.hardBudgetTokens = 3000000;
+    limits.hourlyLimit = 0;  // 关节流：纯看条目级 attempts 上限
+    for (int i = 0; i < 5; ++i) {
+        auto s = pipeline::runInferStep(
+            f.queue, f.engine, f.store, f.ledger, limits,
+            [&noted, &noteCount](const pipeline::RoundNote& n) {
+                noted = n;
+                ++noteCount;
+            });
+        DOCTEST_REQUIRE(s.isOk());
+        if (i < 4) {
+            DOCTEST_CHECK(s.value().fallbackPending == false);  // 未耗尽留队
+            DOCTEST_CHECK_EQ(f.queue.depth().value(), 1);
+        }
+    }
+    DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);  // 耗尽出队（闭环）
+    auto pendingCards = f.store.listPending();
+    DOCTEST_REQUIRE(pendingCards.isOk());
+    DOCTEST_REQUIRE_EQ(pendingCards.value().size(),
+                       static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(pendingCards.value()[0].source,
+                     std::string("final_draft"));
+    // 耗尽 note 上浮（每步失败都有 note，最后一条 = 耗尽兜底）
+    DOCTEST_CHECK(noteCount >= 5);
+    DOCTEST_CHECK(noted.text.find("重试耗尽") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(memory_infer_queue_drains_under_persistent_failure,
+              "memory: 腿 A 只进不出回归红队——持续云端失败下队列必排空（3 条 × 5 次耗尽全部出队落兜底）", {
+    StepFixture f("drain");
+    f.engine.fail = true;  // 云端持续失败（旧实现：队首永久滞留，深度恒 3）
+    DOCTEST_CHECK(f.queue.enqueue("s1", 1, "段甲", f.now).isOk());
+    DOCTEST_CHECK(f.queue.enqueue("s1", 2, "段乙", f.now).isOk());
+    DOCTEST_CHECK(f.queue.enqueue("s2", 1, "段丙", f.now).isOk());
+    for (int i = 0; i < 15 && f.queue.depth().value() > 0; ++i) {
+        auto s = f.step(3000000, 0);
+        DOCTEST_REQUIRE(s.isOk());
+    }
+    DOCTEST_CHECK_EQ(f.queue.depth().value(), 0);  // 出队闭环：队列排空
+    auto pendingCards = f.store.listPending();
+    DOCTEST_REQUIRE(pendingCards.isOk());
+    DOCTEST_REQUIRE_EQ(pendingCards.value().size(),
+                       static_cast<std::size_t>(3));  // 全部落兜底卡
+    for (const auto& p : pendingCards.value()) {
+        DOCTEST_CHECK_EQ(p.source, std::string("final_draft"));
+        DOCTEST_CHECK_EQ(p.status, std::string("pending"));
+    }
+    // 失败也全额吃小时预算（attempts 口径不变）
+    DOCTEST_CHECK_EQ(f.ledger.hourAttempts(f.now).value(), 15);
     return true;
 })

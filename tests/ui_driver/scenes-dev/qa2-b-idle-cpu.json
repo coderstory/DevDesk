@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1500},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump"},
+    {"type": "screenshot", "path": "qa2-B0-idle-start.png"},
+    {"type": "wait", "ms": 90000, "_comment": "面B：wait-ms 是模拟帧（dt=1/60），90000ms≈5400 帧≈10s 墙钟（driver_steps.h:358）；外部 CPU 采样本段"},
+    {"type": "assert", "check": "missing", "id": "app.term.framepump"},
+    {"type": "screenshot", "path": "qa2-B1-idle-end.png"}
+  ]
+}

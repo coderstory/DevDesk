@@ -1,9 +1,10 @@
 // src/ui_kit/light_toast.cpp — 微信式轻提示实现（spec §4.10）。
-// 黑半透明 bg（语义常量，wechat 无槽位）+ 白字（wechat.onPrimary）+ 圆角 6 +
-// 居中 + 1.5s 自动消失。既有通知式 toast 保留不动；新反馈点调本 helper。
+// need328（2026-11-18 老板验收回调）：改「绿半透底 + 墨绿描边 + 墨绿字」，
+// 几何/时序（居中、1.5s、宽估算、36 高、圆角 6）不动。既有通知式 toast
+// 保留不动；新反馈点调本 helper。
 //
-// 模式仿 W2b button.cpp（学其 stack 包 rect.bg + text 的层级模式 + 颜色走
-// wechat 令牌）。色值纪律见 light_toast.h 文件头注释。
+// 色值纪律见 light_toast.h 文件头注释（D-03 语义常量 + 例外说明，两档口径）。
+// 模式仿 W2b button.cpp（学其 stack 包 rect.bg + text 的层级模式 + 颜色走 token）。
 #include <ui_kit/light_toast.h>
 
 #include <algorithm>
@@ -58,11 +59,11 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
 }
 
 void drawLightToastPill(eui::Ui& ui, const std::string& id,
-                         const std::string& message, float cx, float cy,
-                         const core::theme::Tokens& t) {
+                        const std::string& message, float cx, float cy,
+                        const core::theme::Tokens& t) {
     if (message.empty()) return;
 
-    // 几何：居中于 (cx, cy)
+    // 几何：居中于 (cx, cy)——need328 只改配色，几何不动
     const float estW = std::max(kLightToastMinWidth,
                                 static_cast<float>(message.size()) * kLightToastCharWidthEstimate
                                 + kLightToastPadX * 2.0f);
@@ -74,21 +75,24 @@ void drawLightToastPill(eui::Ui& ui, const std::string& id,
         .position(bgX, bgY)
         .size(estW, kLightToastHeight)
         .content([&] {
-            // 黑半透明 bg（§4.10）：wechat 无对应槽位，用语义常量（见 header 注释）
+            // 绿半透 bg（need328）：success 令牌压 alpha（两档色值见 .h 文件头）
+            eui::Color fill = t.colors.success;
+            fill.a = kLightToastGreenAlpha;
             ui.rect(id + ".bg")
                 .size(estW, kLightToastHeight)
-                .color(eui::Color{0.0f, 0.0f, 0.0f, kLightToastBgAlpha})
+                .color(fill)
+                .border(kLightToastBorderWidth, kLightToastInk)
                 .radius(t.sizes.radiusSmall)
                 .build();
 
-            // 白字（§4.10）：wechat.onPrimary=#FFFFFF（主色上的前景色，黑底白字同义）
+            // 墨绿字（need328）：绿底白字 ~1.9:1 不达标，沿用 need261 深墨裁决
             ui.text(id + ".text")
                 .size(estW, kLightToastHeight)
                 .text(message)
                 .fontSize(core::theme::scaled(kLightToastFontSize))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.onPrimary)
+                .color(kLightToastInk)
                 .build();
         })
         .build();

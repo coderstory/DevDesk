@@ -5,12 +5,16 @@
 #include "core/theme.h"
 #include "platform/terminal/terminal_backend.h"
 #include "terminal_fullscreen_bridge.h"
+#include <core/platform/platform.h>  // core::platform::requestUiUpdate（bug249 输出唤醒出口）
 
 namespace terminal {
 
 TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
     backend_ = injectedBackend != nullptr ? injectedBackend : platform::terminalBackendMac();
     controller_.setBackend(backend_);
+    // bug249：reader 线程产出新输出/子进程退出 → 请求一帧（非 UI 线程安全路径；
+    // 常驻 onFrame 泵因此可摘，空闲终端零出帧）
+    controller_.setOutputWake([] { core::platform::requestUiUpdate(); });
     // need250：载入持久化设置并铺到新会话参数（db 未就绪/键缺失 → 默认值）
     settings_ = loadTerminalSettings(::core::appDatabase());
     controller_.setNewSessionOptions(settings_.shell, settings_.workDir, settings_.scrollback);

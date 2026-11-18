@@ -246,15 +246,21 @@ void toolsEntryButton(::eui::Ui& ui, const std::string& id, int toolCount,
 // 新增、zIndex 需另行透传、文案 id 变为 button 逐态契约，升级时一并处理）。
 void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
                     float w, float h, const std::string& label, float fontSize,
+                    const ::core::Color& labelColor,
                     const components::theme::ThemeColorTokens& tokens,
                     bool enabled, std::function<void()> onClick,
                     std::function<void(bool)> onHover, int zIndex) {
     const ::core::Color base = tokens.primary;
     const ::core::Color hover = components::theme::buttonHover(tokens, base);
     const ::core::Color pressed = components::theme::buttonPressed(tokens, base);
-    const ::core::Color textColor =
-        enabled ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f}
-                : ::core::Color{0.94f, 0.97f, 1.0f, 0.40f};
+    // need261 review P1-1：绿主色底（#36D399/#07C160）上白标签仅 1.78/2.38:1，
+    // 标签统一走 onAccent 深墨（8.4/6.8:1）；WCAG 对禁用控件豁免对比度。
+    // debt309 N4：禁用态填充同步 40%（与标签同口径）——只降标签时满饱和
+    // mint 底视觉仍像可点。
+    ::core::Color textColor = labelColor;
+    if (!enabled) textColor.a = 0.40f;
+    const ::core::Color fillBase =
+        enabled ? base : components::theme::withOpacity(base, 0.40f);
     // 根 stack 保留 `<id>` 语义（可点 + 带文案）并承载 zIndex：命中面压在上面时
     // 靠它把整组抬到命中面之上（同 components::button 的「外层 stack 抬层级」口径）
     ui.stack(id)
@@ -264,7 +270,7 @@ void textActionChip(::eui::Ui& ui, const std::string& id, float x, float y,
         .content([&] {
             auto bg = ui.rect(id + ".bg")
                           .size(w, h)
-                          .states(base, hover, pressed)
+                          .states(fillBase, hover, pressed)
                           .radius(tokens.metrics.radius.overlay)
                           .disabled(!enabled)
                           .onClick(onClick);
@@ -601,6 +607,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .size(kNewTaskBtnW, 40.0f)
                             .text("+ 新建任务")
                             .theme(themeTokens)
+                            // need261 review P3-1：同页主按钮标签统一 onAccent
+                            // 深墨（框架 primary 默认白标签在绿底仅 1.78:1）
+                            .textColor(t.colors.onAccent)
                             .disabled(store_ == nullptr)
                             .onClick([this] { openNewTaskDialog(); })
                             .build();
@@ -714,7 +723,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     for (const auto& task : tasks_) {
                         const std::string id =
                             "agent.task." + std::to_string(task.id);
-                        std::string status = "—";
+                        std::string status = "未运行";
                         eui::Color statusColor = t.colors.textTertiary;
                         auto it = latestRuns_.find(task.id);
                         if (it != latestRuns_.end()) {
@@ -775,10 +784,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             ui_kit::cachedTextWidth(status, stSmall.fontSize,
                                                     600);
                         const float pillW = pillTextW + core::theme::scaled(30.0f);
-                        // need261 §2.2 行1 inline：药丸永远紧贴标题实宽 +8（不再
-                        // 钉卡右缘）；标题实宽封顶 = 卡内可用 − 8 − 药丸宽，超长
-                        // 单行省略（挤压顺序：标题最先饿→药丸定宽不缩）
-                        const float inlineGap = core::theme::scaled(8.0f);
+                        // need261 §2.2 行1 inline：药丸永远紧贴标题实宽 +16（不再
+                        // 钉卡右缘）；标题实宽封顶 = 卡内可用 − 16 − 药丸宽，超长
+                        // 单行省略（挤压顺序：标题最先饿→药丸定宽不缩）。间距
+                        // 8→16：debt309 N5，截断省略号贴药丸 8px 偏紧。
+                        const float inlineGap = core::theme::scaled(16.0f);
                         const float titleMeasuredW =
                             ui_kit::cachedTextWidth(task.name, stTitle.fontSize,
                                                     600);
@@ -793,7 +803,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const float triggerRowY =
                             statusRowY + stSmall.lineHeight + rowGap;
                         const float actionsX = cardW - 14.0f - kTaskActionsW;
-                        // need261 §3 hover 碰撞守卫：标题实宽+8+药丸宽 触到操作组
+                        // need261 §3 hover 碰撞守卫：标题实宽+16+药丸宽 触到操作组
                         // 左缘 −8 时，hover 期间药丸隐退（回退现行为）、标题收窄
                         // 至 卡右−14−156−8−12；非 hover / 无碰撞不动
                         const float pillHoverFadeEdge =
@@ -804,7 +814,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const float titleHoverMaxW =
                             std::max(0.0f, pillHoverFadeEdge - 12.0f);
                         const bool pillHidden = hovered && pillCollides;
-                        // need261 §2.2 行1：药丸 inline x = 12 + 标题实宽(截断后) + 8
+                        // need261 §2.2 行1：药丸 inline x = 12 + 标题实宽(截断后) + 16
                         const float pillX = cardPad + titleW + inlineGap;
                         // need261 §2.2 行3：启动钮迁左轨（x=12、y=行3顶 76），
                         // 尺寸 56×32 / 文案 / disabled 语义全不动
@@ -1066,9 +1076,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .color(t.colors.textSecondary)
                                     .build();
 
+                                // need261 review P3-2：未运行过不再进元信息链（药丸已表达「未运行」），
+                                // 避免同卡两处重复同一状态；只保留触发方式
                                 const std::string lastRunText =
                                     it == latestRuns_.end()
-                                        ? std::string("未运行过")
+                                        ? std::string()
                                         : "最近运行 " + relativeTimeText(
                                                             it->second.startedAt, nowSec);
                                 // 链尾（废除右对齐）：触发后间距 10，吃剩余宽到
@@ -1077,7 +1089,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     badgeX + triggerW + core::theme::scaled(10.0f);
                                 const float lastRunW = std::max(
                                     0.0f, cardW - cardPad - lastRunX);
-                                if (lastRunW > 0.0f) {
+                                if (lastRunW > 0.0f && !lastRunText.empty()) {
                                     inner.text(id + ".lastrun")
                                         .position(lastRunX, statusRowY)
                                         .size(lastRunW, stSmall.lineHeight)
@@ -1102,7 +1114,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     triggerRowY, runW,
                                     core::theme::scaled(32.0f),
                                     runStarted ? "运行中…" : "启动",
-                                    core::theme::scaled(12.0f), themeTokens,
+                                    core::theme::scaled(12.0f), t.colors.onAccent, themeTokens,
                                     loop_ != nullptr && !runStarted,
                                     [this, taskId = task.id] {
                                         startTask(taskId);

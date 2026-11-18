@@ -1,0 +1,474 @@
+{
+ "version": 1,
+ "settings": {
+  "defaultWaitTimeoutMs": 15000
+ },
+ "steps": [
+  {
+   "type": "click",
+   "id": "app.sidebar.item.Terminal.hit"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "app.term.cursor",
+   "timeoutMs": 25000
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "nonempty",
+   "timeoutMs": 60000
+  },
+  {
+   "type": "wait",
+   "ms": 1500
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r01')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r01",
+   "timeoutMs": 20000,
+   "_comment": "round 1 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r02')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r02",
+   "timeoutMs": 20000,
+   "_comment": "round 2 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r03')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r03",
+   "timeoutMs": 20000,
+   "_comment": "round 3 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r04')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r04",
+   "timeoutMs": 20000,
+   "_comment": "round 4 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r05')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r05",
+   "timeoutMs": 20000,
+   "_comment": "round 5 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r06')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r06",
+   "timeoutMs": 20000,
+   "_comment": "round 6 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r07')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r07",
+   "timeoutMs": 20000,
+   "_comment": "round 7 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r08')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r08",
+   "timeoutMs": 20000,
+   "_comment": "round 8 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r09')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r09",
+   "timeoutMs": 20000,
+   "_comment": "round 9 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r10')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r10",
+   "timeoutMs": 20000,
+   "_comment": "round 10 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r11')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r11",
+   "timeoutMs": 20000,
+   "_comment": "round 11 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r12')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r12",
+   "timeoutMs": 20000,
+   "_comment": "round 12 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r13')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r13",
+   "timeoutMs": 20000,
+   "_comment": "round 13 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r14')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r14",
+   "timeoutMs": 20000,
+   "_comment": "round 14 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r15')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r15",
+   "timeoutMs": 20000,
+   "_comment": "round 15 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r16')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r16",
+   "timeoutMs": 20000,
+   "_comment": "round 16 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r17')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r17",
+   "timeoutMs": 20000,
+   "_comment": "round 17 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r18')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r18",
+   "timeoutMs": 20000,
+   "_comment": "round 18 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r19')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r19",
+   "timeoutMs": 20000,
+   "_comment": "round 19 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r20')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r20",
+   "timeoutMs": 20000,
+   "_comment": "round 20 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r21')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r21",
+   "timeoutMs": 20000,
+   "_comment": "round 21 latency sample"
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248T'+'-r22')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248T-r22",
+   "timeoutMs": 20000,
+   "_comment": "round 22 latency sample"
+  },
+  {
+   "type": "screenshot",
+   "path": "qa248-after-rounds.png"
+  },
+  {
+   "type": "type",
+   "text": "1..200 | ForEach-Object { 'qa248L' + '-' + $_ }",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248L-200",
+   "timeoutMs": 30000
+  },
+  {
+   "type": "wait",
+   "ms": 600
+  },
+  {
+   "type": "screenshot",
+   "path": "qa248-bold-200lines.png"
+  },
+  {
+   "type": "type",
+   "text": "claude --version",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "Claude Code",
+   "timeoutMs": 40000
+  },
+  {
+   "type": "screenshot",
+   "path": "qa248-claude-version.png"
+  }
+ ]
+}

@@ -1,0 +1,83 @@
+{
+ "version": 1,
+ "settings": {
+  "defaultWaitTimeoutMs": 15000
+ },
+ "steps": [
+  {
+   "type": "click",
+   "id": "app.sidebar.item.Terminal.hit"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "app.term.cursor",
+   "timeoutMs": 25000
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "nonempty",
+   "timeoutMs": 60000
+  },
+  {
+   "type": "wait",
+   "ms": 800
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248S'+'-r01')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248S-r01",
+   "timeoutMs": 20000
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248S'+'-r02')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248S-r02",
+   "timeoutMs": 20000
+  },
+  {
+   "type": "type",
+   "text": "Write-Output ('qa248S'+'-r03')",
+   "id": "app.term.input"
+  },
+  {
+   "type": "key",
+   "name": "Enter",
+   "id": "app.term.input"
+  },
+  {
+   "type": "wait",
+   "until": "text",
+   "op": "contains",
+   "text": "qa248S-r03",
+   "timeoutMs": 20000
+  },
+  {
+   "type": "screenshot",
+   "path": "qa248-smoke.png"
+  }
+ ]
+}

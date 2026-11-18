@@ -149,6 +149,9 @@ struct CardDrawArgs {
     float screenH = 0.0f;         // 页面逻辑高（同上）
     const SettingsCardsIn& in;
     const SettingsCardActions& a;
+    // 窄窗（内容宽 < kHalfPairStackBreakpoint）：半宽卡已改全宽单列堆叠，
+    // 说明文案可容 2 行、模块网格降 2 列（review 260 P2-2 / P3-2）
+    bool narrow = false;
 };
 
 // 6 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）

@@ -5,7 +5,10 @@
 #include "module_terminal/module_terminal.h"
 #include "module_terminal/terminal_session_controller.h"
 
+#include <chrono>
 #include <cstring>
+#include <functional>
+#include <thread>
 
 namespace {
 
@@ -47,6 +50,15 @@ public:
     int scrollbackCount() override { return scrollbackN; }
     bool scrollbackLine(int, std::string&) override { return false; }
     bool selectionText(int, int, int, int, std::string&) override { return false; }
+    // bug249 输出/退出唤醒缝：与平台后端同形状（reader 线程调一次 → 宿主出这一帧）
+    std::function<void()> notify_;
+    int notifyCalls = 0;
+    void setOutputNotify(std::function<void()> notify) override { notify_ = std::move(notify); }
+    bool supportsOutputNotify() const override { return true; }
+    void emitOutput() {  // 模拟 reader 线程：新输出/子进程退出后唤醒一次
+        notifyCalls++;
+        if (notify_) notify_();
+    }
 };
 
 class FakeBackend : public platform::TerminalBackend {
@@ -299,5 +311,74 @@ REGISTER_TEST(moduleTerminalNoSessionAtStart,
     DOCTEST_CHECK(m.sessionCount() == 1); // 幂等：不重复建
     m.onStop();
     DOCTEST_CHECK(m.sessionCount() == 0); // 停用清空
+    return true;
+})
+
+// bug249/bug305（2026-11-18）：出帧策略。有 Running 会话之前用常驻 onFrame 泵兜底
+// （EUI 契约 onFrame 每帧置 composeRequested → 空闲也 60fps 空转）；平台提供输出通知
+// 路径后必须按需出帧（泵不挂）。无 Running 会话（含 exit 收割后）零帧。
+REGISTER_TEST(terminalFramePumpPolicy,
+              "terminal frames: 有输出通知路径不挂常驻泵；无 Running 会话零帧（bug249/305）", {
+    DOCTEST_CHECK(terminal::needsFramePump(false, false) == false); // 空态零帧
+    DOCTEST_CHECK(terminal::needsFramePump(false, true) == false);  // 空态零帧（有通知）
+    DOCTEST_CHECK(terminal::needsFramePump(true, false) == true);   // 无通知路径→兜底泵
+    DOCTEST_CHECK(terminal::needsFramePump(true, true) == false);   // 按需出帧：泵必须不挂
+    return true;
+})
+
+// 唤醒链路：reader 输出/退出 → 唤醒出口（生产=core::platform::requestUiUpdate）；
+// idle 反复 pollAll 不请求帧（空闲零出帧）；退出收割后 state=Exited 且无 Running。
+REGISTER_TEST(controllerOutputWakeExit,
+              "terminal controller: 输出/退出唤醒一次；idle 零请求；exit 后无 Running", {
+    FakeBackend backend;
+    terminal::SessionController c;
+    int wakes = 0;
+    c.setBackend(&backend);
+    c.setOutputWake([&wakes] { wakes++; });
+    c.startSession();
+    DOCTEST_CHECK(c.outputNotifyAvailable());
+    // idle（会话 Running、后端无新输出）：反复 pollAll 不产生任何帧请求
+    for (int i = 0; i < 5; i++) c.pollAll();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    c.pollAll();
+    DOCTEST_CHECK(wakes == 0);
+    // reader 产出新输出：每批一次唤醒，消费（pollAll）后不续帧
+    backend.last->emitOutput();
+    DOCTEST_CHECK(wakes == 1);
+    c.pollAll();
+    DOCTEST_CHECK(wakes == 1);
+    DOCTEST_CHECK(backend.last->notifyCalls == 1);
+    // 子进程退出：后端 exited + 唤醒一次 → pollAll 迁移 Exited → 无 Running → 无泵
+    backend.last->exitedValue = true;
+    backend.last->emitOutput();
+    c.pollAll();
+    DOCTEST_CHECK(c.at(0)->state == terminal::SessionState::Exited);
+    bool anyRunning = false;
+    for (int i = 0; i < c.count(); i++) {
+        if (c.at(i)->state == terminal::SessionState::Running) anyRunning = true;
+    }
+    DOCTEST_CHECK(anyRunning == false);
+    DOCTEST_CHECK(terminal::needsFramePump(anyRunning, c.outputNotifyAvailable()) == false);
+    DOCTEST_CHECK(terminal::needsIdleTick(anyRunning, c.outputNotifyAvailable()) == false);
+    return true;
+})
+
+// bug305/306（2026-11-18）：Running 期间的低频自唤醒（有通知路径时）。它是「光标闪烁
+// 相位」与「子进程退出巡检」的唯一帧源（ConPTY 退出不断管道，pollAll 靠这一帧发现退
+// 出），且必须 ≤2fps——不得回到 60fps 常驻出帧（bug249 验收口径）。
+REGISTER_TEST(terminalIdleTickPolicy,
+              "terminal frames: Running+通知路径挂低频自唤醒（≤2fps），退出后零帧（bug305/306）",
+              {
+    DOCTEST_CHECK(terminal::needsIdleTick(false, true) == false);  // 空态/退出后零帧
+    DOCTEST_CHECK(terminal::needsIdleTick(false, false) == false); // 空态零帧
+    DOCTEST_CHECK(terminal::needsIdleTick(true, true) == true);    // 通知路径→低频帧
+    DOCTEST_CHECK(terminal::needsIdleTick(true, false) == false);  // 无通知路径走常驻泵
+    // 帧率硬上限：≤2fps（1000/550 ≈ 1.8 帧/s；60fps 的 16ms 档必须不成立）
+    DOCTEST_CHECK(terminal::kIdleFrameTickMs >= 500);
+    DOCTEST_CHECK(terminal::kIdleFrameTickMs <= 1000);
+    // 两路永不并存：Running 时必有（且只有）一路帧源，否则闪烁/退出巡检断供
+    DOCTEST_CHECK(!(terminal::needsFramePump(true, true) && terminal::needsIdleTick(true, true)));
+    DOCTEST_CHECK((terminal::needsFramePump(true, false) || terminal::needsIdleTick(true, false)) ==
+                  true);
     return true;
 })

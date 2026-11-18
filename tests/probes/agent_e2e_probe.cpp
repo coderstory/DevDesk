@@ -431,7 +431,13 @@ int main(int argc, char* argv[]) {
                       << "\n";
         } else {
             module::todo::NewTaskAttributes attrs;
-            attrs.dueAt = core::time::nowUnix() - 3600;  // 1 小时前 = 逾期
+            // bug326：逾期口径 2026-11-16 起为自然日（a46442e1/need272——
+            // listOverdue 绑「今天本地零点」，todo_service.cpp:885）——now-3600
+            // 在本地 01:00 后仍属今天，恒不逾期（旧按秒口径种子残留，F1 红
+            // 根因）。种子改落昨天 23:59:59 本地，任何时刻跑都严格逾期。
+            attrs.dueAt = static_cast<int64_t>(core::time::localMidnightUnix(
+                              static_cast<std::time_t>(core::time::nowUnix()))) -
+                          1;
             auto task = todoSvc.createTask(todoCol->id,
                                            std::string(kTodoMarker) + "（缴费）",
                                            attrs);
@@ -878,6 +884,35 @@ int main(int argc, char* argv[]) {
                 *bgScale = bg->transform.scale.x;
                 return true;
             };
+            // G4 结构腿 settled 终态读（#182 V 批实证）：果冻动画飞行中做定值
+            // 断言会读到过冲相位（radius 10.3-11.5 / scale 1.035），同帧像素
+            // 终态断言全绿佐证。判据 = 连续两采样（150ms 间隔）差 < 0.002——
+            // AnimatedValue::tick 完成时把 current_ 精确 snap 到 target
+            // （animation.h tick 完成分支），收敛后采样逐位相等；3s 超时 =
+            // 未收敛，按末次采样断言如实红（未收敛本身就是回归信号）。
+            auto settleRead = [&](float* outOpacity, float* outRadius,
+                                  float* outScale) {
+                float prevO = -1e9f, prevR = -1e9f, prevS = -1e9f;
+                const bool converged = pumpUntil(3000, [&]() {
+                    float o = 0.0f, r = 0.0f, s = 0.0f;
+                    if (!readPair(hoverCardId, &o, &r, &s)) return false;
+                    *outOpacity = o;
+                    *outRadius = r;
+                    *outScale = s;
+                    const bool stable = std::fabs(o - prevO) < 0.002f &&
+                                        std::fabs(r - prevR) < 0.002f &&
+                                        std::fabs(s - prevS) < 0.002f;
+                    prevO = o;
+                    prevR = r;
+                    prevS = s;
+                    return stable;
+                });
+                if (!converged) {
+                    std::cerr << "agent_e2e_probe: G4 动画 3s 未收敛（按末次采样"
+                                 "断言）o=" << *outOpacity << " r=" << *outRadius
+                              << " s=" << *outScale << "\n";
+                }
+            };
             const core::KeyModifiers noModsG;
             // 像素通道（B2 方法论双保险）：形变/显隐都是局部变化，区域均值会被同色区
             // 稀释，所以按「逐像素通道差 >4 的计数」判。三态各拍一帧留到最后比对。
@@ -931,8 +966,11 @@ int main(int argc, char* argv[]) {
             // 像素腿角部采样坐标 = 本腿实测首卡几何（页面 reflow 后 stale G1 坐标会采错区）
             const float g4CornerX = card.hit != nullptr ? card.hit->frame.x : firstCardX;
             const float g4CornerY = card.hit != nullptr ? card.hit->frame.y : firstCardY;
-            grabGray(&fNormal);
+            // settled 终态读（settleRead 注释）：G3 移出后的复位动画未必在
+            // 8×60ms 内走完，未收敛时常态定值断言同样会假红
             float beforeOpacity = -1, beforeRadius = -1, beforeScale = -1;
+            settleRead(&beforeOpacity, &beforeRadius, &beforeScale);
+            grabGray(&fNormal);
             if (!readPair(hoverCardId, &beforeOpacity, &beforeRadius, &beforeScale)) {
                 std::cerr << "agent_e2e_probe: G4 FAIL 卡/操作组元素缺失 "
                           << hoverCardId << "\n";
@@ -955,9 +993,11 @@ int main(int argc, char* argv[]) {
                                          card.hit->frame.y + card.hit->frame.height -
                                              20.0f,
                                          core::PointerButtons{}, noModsG);
-                for (int i = 0; i < 24; ++i) composeFrame();  // 盖过 0.18s OutBack
-                grabGray(&fHover);
+                // settled 终态读（settleRead 注释）：原 24 帧纯泵无真实时钟，
+                // 果冻动画仍在飞行（V 批实测读到过冲相位）→ 轮询收敛后再断言
                 float hovOpacity = -1, hovRadius = -1, hovScale = -1;
+                settleRead(&hovOpacity, &hovRadius, &hovScale);
+                grabGray(&fHover);
                 if (!readPair(hoverCardId, &hovOpacity, &hovRadius, &hovScale)) {
                     std::cerr << "agent_e2e_probe: G4 FAIL hover 后元素消失\n";
                     g4 = false;
@@ -988,8 +1028,11 @@ int main(int argc, char* argv[]) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(60));
                     composeFrame();
                 }
-                grabGray(&fOut);
+                // settled 终态读（settleRead 注释）：复位果冻动画收敛后再读，
+                // 像素通道 ③（fOut 与 fNormal 逐像素一致）同步受益
                 float outOpacity = -1, outRadius = -1, outScale = -1;
+                settleRead(&outOpacity, &outRadius, &outScale);
+                grabGray(&fOut);
                 if (!readPair(hoverCardId, &outOpacity, &outRadius, &outScale)) {
                     std::cerr << "agent_e2e_probe: G4 FAIL 移出后元素消失\n";
                     g4 = false;
@@ -1018,8 +1061,10 @@ int main(int argc, char* argv[]) {
                         window, delBtn->frame.x + delBtn->frame.width * 0.5f,
                         delBtn->frame.y + delBtn->frame.height * 0.5f,
                         core::PointerButtons{}, noModsG);
-                    for (int i = 0; i < 24; ++i) composeFrame();
+                    // settled 终态读（settleRead 注释）：从移出态重入，hover
+                    // 动画重启，纯泵帧同样会读到飞行相位
                     float btnOpacity = -1, btnRadius = -1, btnScale = -1;
+                    settleRead(&btnOpacity, &btnRadius, &btnScale);
                     if (!readPair(hoverCardId, &btnOpacity, &btnRadius, &btnScale)) {
                         std::cerr << "agent_e2e_probe: G4 FAIL 按钮 hover 后元素消失\n";
                         g4 = false;

@@ -45,6 +45,34 @@ inline bool rectWithinWindow(const core::LayoutRect& r, float windowW, float win
            r.x + r.width <= windowW && r.y + r.height <= windowH;
 }
 
+// 滚动容器内子元素的 frame 是内容坐标（EUI 用 render transform 平移：
+// runtime_state_bindings.h scrollTransformForElement），命中/几何断言须换算成窗口
+// 坐标，否则偏移后按 id 点击会算出内容坐标点（need171：侧栏滚到底后「关于」点击点
+// 落在窗高之外）。逐级祖先累减 scrollContentSourceId 所指滚动根的 scrollOffset
+//（dump 的 scroll=offset/max 同源，驱动侧唯一实时口径）。
+inline core::LayoutRect effectiveFrame(const TreeView& tree,
+                                       const core::dsl::Element& el) {
+    core::LayoutRect r = el.frame;
+    std::string cur = el.id;
+    for (int guard = 0; guard < 64; ++guard) {
+        const auto p = tree.parentOf.find(cur);
+        if (p == tree.parentOf.end()) break;
+        cur = p->second;
+        const auto parent = tree.byId.find(cur);
+        if (parent == tree.byId.end()) continue;
+        const std::string& sourceId = parent->second->scrollContentSourceId;
+        if (sourceId.empty()) continue;
+        const auto src = tree.byId.find(sourceId);
+        if (src == tree.byId.end()) continue;
+        if (parent->second->scrollHorizontal) {
+            r.x -= src->second->scrollOffset;
+        } else {
+            r.y -= src->second->scrollOffset;
+        }
+    }
+    return r;
+}
+
 // 两矩形相交（边相切 = 不相交；复用 probe_harness::detail::framesIntersect 同一口径）
 inline bool rectIntersectsRect(const core::LayoutRect& a, const core::LayoutRect& b) {
     return a.x < b.x + b.width && b.x < a.x + a.width &&

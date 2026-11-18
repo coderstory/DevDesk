@@ -799,8 +799,11 @@ set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # 行卡→编辑弹窗停用→「已停用」tag（C-13 tzId 缺陷回归哨）。
 # need325（A-4）：todo-keyboard-move = Shortcut+↑/↓ 组合键移动选中卡（位置真锁）。
 foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input
-        mcp-claude-install claude-d1-seed-enable todo-card-context-menu schedule-rule-once-chain
-        schedule-cron-edit-chain schedule-resident-enable-chain todo-keyboard-move)
+        mcp-claude-install claude-d1-seed-enable todo-card-context-menu
+        schedule-rule-once-chain schedule-cron-edit-chain schedule-new-save
+        schedule-resident-enable-chain todo-keyboard-move)
+    # schedule-new-save：bug#325 回归（保存按钮曾悬垂捕获宿主每帧栈上 FireContext →
+    # 点击时 bad_alloc 崩溃）；断言保存成功后用户空态消失。
     add_test(NAME ui_driver_${_ui_scene}
         COMMAND devdesk_ui_driver
             --script "${CMAKE_CURRENT_SOURCE_DIR}/ui_driver/scenes/${_ui_scene}.json"

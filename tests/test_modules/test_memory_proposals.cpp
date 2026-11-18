@@ -611,3 +611,123 @@ REGISTER_TEST(memory_proposal_accept_executor_error_out,
     DOCTEST_CHECK(failed2.value().appliedAt < 0);
     return true;
 })
+
+// ── F-03 波 2 腿 A（池 #333）：终稿卡通道 + auto_accepted 状态机 ──
+
+REGISTER_TEST(memory_final_draft_auto_accepted_state,
+              "memory: 终稿卡 auto_accepted——建卡即终态（引擎已落库不走 executor）、不进待审、进已处理、计数独立桶", {
+    auto opened = ProposalStore::open(tmpDb("fdauto"));
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    const std::int64_t now = 1769472000;
+    auto card = store.createFinalDraft({std::string("uuid-a1")},
+                                       "云端提炼的终稿正文", "", {}, 0.3,
+                                       true, now);
+    DOCTEST_REQUIRE(card.isOk());
+    DOCTEST_CHECK_EQ(card.value().status, std::string("auto_accepted"));
+    DOCTEST_CHECK_EQ(card.value().source, std::string("final_draft"));
+    DOCTEST_CHECK_EQ(card.value().kind, std::string("add"));
+    DOCTEST_REQUIRE_EQ(card.value().targetIds.size(),
+                       static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(card.value().targetIds[0], std::string("uuid-a1"));
+    DOCTEST_CHECK_EQ(card.value().decidedAt, now);
+    DOCTEST_CHECK_EQ(card.value().appliedAt, now);
+    // 不进待审（已入库）；进「已处理」视图
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_CHECK(pending.value().empty());
+    auto recent = store.listRecentDecided(10);
+    DOCTEST_REQUIRE(recent.isOk());
+    DOCTEST_REQUIRE_EQ(recent.value().size(), static_cast<std::size_t>(1));
+    // 计数口径：auto_accepted 独立桶（memory.stats 取数口）
+    auto counts = store.countByStatus();
+    DOCTEST_REQUIRE(counts.isOk());
+    bool seen = false;
+    for (const auto& kv : counts.value()) {
+        if (kv.first == "auto_accepted") {
+            seen = true;
+            DOCTEST_CHECK_EQ(kv.second, static_cast<std::int64_t>(1));
+        }
+    }
+    DOCTEST_CHECK(seen);
+    // 终态幂等：auto 卡再 accept = no-op（不重执行不重落库）
+    FakeEngine engine;
+    auto dup = store.accept(card.value().id, now + 5,
+                            [](const std::string&) {
+                                return core::Result<std::int64_t>::ok(0);
+                            },
+                            engineExecutor(engine));
+    DOCTEST_REQUIRE(dup.isOk());
+    DOCTEST_CHECK_EQ(dup.value().status, std::string("auto_accepted"));
+    DOCTEST_CHECK(engine.calls.empty());
+    return true;
+})
+
+REGISTER_TEST(memory_final_draft_undo_chain,
+              "memory: 终稿卡撤销链——auto_accepted 可撤销（invalidate 逆动作、引擎 remove、原卡写定不改）", {
+    auto opened = ProposalStore::open(tmpDb("fdundo"));
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    const std::int64_t now = 1769472000;
+    auto card = store.createFinalDraft({std::string("uuid-b2")}, "待撤销终稿",
+                                       "", {}, 0.3, true, now);
+    DOCTEST_REQUIRE(card.isOk());
+    FakeEngine engine;
+    auto vok = [](const std::string&) {
+        return core::Result<std::int64_t>::ok(5);
+    };
+    auto undo = store.createUndo(card.value().id, now + 10, vok);
+    DOCTEST_REQUIRE(undo.isOk());
+    DOCTEST_CHECK_EQ(undo.value().undoOf, card.value().id);
+    DOCTEST_CHECK_EQ(undo.value().kind, std::string("invalidate"));
+    DOCTEST_CHECK_EQ(undo.value().status, std::string("pending"));
+    DOCTEST_REQUIRE_EQ(undo.value().targetIds.size(),
+                       static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(undo.value().targetIds[0], std::string("uuid-b2"));
+    // 接受撤销 = 引擎 remove（delete 通道）；原卡 auto_accepted 写定不改
+    auto undone = store.accept(undo.value().id, now + 20, vok,
+                               engineExecutor(engine));
+    DOCTEST_REQUIRE(undone.isOk());
+    DOCTEST_CHECK_EQ(undone.value().status, std::string("accepted"));
+    DOCTEST_CHECK_EQ(engine.calls.back(), std::string("mark:uuid-b2:1"));
+    DOCTEST_CHECK(store.isUndone(card.value().id));
+    auto original = store.get(card.value().id);
+    DOCTEST_REQUIRE(original.isOk());
+    DOCTEST_CHECK_EQ(original.value().status, std::string("auto_accepted"));
+    return true;
+})
+
+REGISTER_TEST(memory_final_draft_fallback_pending_accept,
+              "memory: 终稿兜底卡——pending 待人审（decidedAt/appliedAt 未落定），接受 = addDirect 源文入库", {
+    auto opened = ProposalStore::open(tmpDb("fdfallback"));
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    const std::int64_t now = 1769472000;
+    auto card = store.createFinalDraft({}, "修饰失败的原文", "", {}, 0.3,
+                                       false, now);
+    DOCTEST_REQUIRE(card.isOk());
+    DOCTEST_CHECK_EQ(card.value().status, std::string("pending"));
+    DOCTEST_CHECK(card.value().decidedAt < 0);
+    DOCTEST_CHECK(card.value().appliedAt < 0);
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
+    // 兜底不进「已处理」（listRecentDecided 以 status != pending 过滤）
+    auto recent = store.listRecentDecided(10);
+    DOCTEST_REQUIRE(recent.isOk());
+    DOCTEST_CHECK(recent.value().empty());
+    // 人审接受 = executor addDirect 源文入库 + 引擎 id 回填（撤销链闭合）
+    FakeEngine engine;
+    auto accepted = store.accept(
+        card.value().id, now + 10,
+        [](const std::string&) { return core::Result<std::int64_t>::ok(0); },
+        engineExecutor(engine));
+    DOCTEST_REQUIRE(accepted.isOk());
+    DOCTEST_CHECK_EQ(accepted.value().status, std::string("accepted"));
+    DOCTEST_CHECK_EQ(engine.calls.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(engine.calls[0], std::string("add:修饰失败的原文"));
+    DOCTEST_REQUIRE_EQ(accepted.value().targetIds.size(),
+                       static_cast<std::size_t>(1));
+    return true;
+})
+

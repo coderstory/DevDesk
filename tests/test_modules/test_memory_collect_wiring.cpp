@@ -5,6 +5,7 @@
 // 水位幂等（二轮零重产）；decay 清单缝 UUID 形态（F3 live 定案）。
 #include "doctest.h"
 
+#include "memory_f06_gate_fixtures.h"
 #include "module_memory/collector/collector.h"
 #include "module_memory/memory_module.h"
 #include "module_memory/memory_module_internal.h"
@@ -311,6 +312,7 @@ REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(r.value().segments, 2);
     DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);  // 同轮段间去重：只第一张成卡
+    DOCTEST_CHECK_EQ(r.value().dedupSkipped, 1);  // BD 批（bug191）：deduped 计数钉死
     auto pending = store.listPending();
     DOCTEST_REQUIRE(pending.isOk());
     DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
@@ -321,6 +323,7 @@ REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_CHECK_EQ(r2.value().segments, 1);
     DOCTEST_CHECK_EQ(r2.value().cardsCreated, 0);
+    DOCTEST_CHECK_EQ(r2.value().dedupSkipped, 1);  // BD 批（bug191）：跨轮 deduped 计数
     auto pending2 = store.listPending();
     DOCTEST_REQUIRE(pending2.isOk());
     DOCTEST_CHECK_EQ(pending2.value().size(), static_cast<std::size_t>(1));
@@ -328,7 +331,7 @@ REGISTER_TEST(memory_collect_storm_fingerprint_dedup,
 })
 
 REGISTER_TEST(memory_collect_storm_round_cap,
-              "memory: bug191 F-02——单轮上限 50：首轮灌 60+ 段恰出 50 卡，剩余段下轮续产且水位不丢不重", {
+              "memory: bug191 F-02+BD 批——单轮单会话上限 10：60 段首轮 10 卡+溢出 40 计数+头尾样本引用；次轮续产恰 10 卡零溢出；三轮清零；总量守恒（丢弃=有样本留痕的终局）", {
     const auto dir = makeTempDir("storm-cap");
     const auto projects = dir / "projects";
     std::filesystem::create_directories(projects);
@@ -338,7 +341,7 @@ REGISTER_TEST(memory_collect_storm_round_cap,
     auto store = std::move(opened.value());
     collector::Collector collector(dir / "collector.db", projects);
 
-    // 60 条互异长正文（各 >4KB → 一条一段封段），单会话
+    // 60 条互异长正文（各 >1KB → 一条一段封段），单会话
     std::string jsonl;
     for (int i = 0; i < 60; ++i) {
         jsonl += userLine("sess-cap",
@@ -348,23 +351,44 @@ REGISTER_TEST(memory_collect_storm_round_cap,
     }
     writeSession(projects / "sess-cap.jsonl", jsonl);
 
-    int totalCards = 0;
-    for (int roundIdx = 0; roundIdx < 5; ++roundIdx) {
-        auto r = pipeline::runCollectRound(collector, gate, store, {});
-        DOCTEST_REQUIRE(r.isOk());
-        totalCards += r.value().cardsCreated;
-        if (r.value().cardsCreated == 0) break;
-        if (roundIdx == 0) {
-            // 首轮硬顶在单轮上限
-            DOCTEST_CHECK_EQ(r.value().cardsCreated, 50);
-            DOCTEST_CHECK_EQ(r.value().segments, 50);
-        }
-    }
-    // 剩余段下轮续产（续产 >0 张）；总量守恒：续产无丢失无重放
-    DOCTEST_CHECK(totalCards > 50);
+    // 首轮：poll 预算 50 段全消费；单会话出卡上限 10 → 10 卡 + 40 溢出丢弃
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().segments, 50);
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 10);
+    DOCTEST_CHECK_EQ(r.value().overflowDropped, 40);
+    // 溢出不静默：头/尾样本引用（会话 + 首事件序号 + 指纹；零正文零敏感）
+    DOCTEST_REQUIRE_EQ(r.value().overflowSamples.size(),
+                       static_cast<std::size_t>(2));
+    DOCTEST_CHECK_EQ(r.value().overflowSamples[0].sessionId,
+                     std::string("sess-cap"));
+    DOCTEST_CHECK_EQ(r.value().overflowSamples[1].sessionId,
+                     std::string("sess-cap"));
+    // 头在前尾在后（段序单调）；指纹互异非空（可回溯定位被丢弃内容）
+    DOCTEST_CHECK(r.value().overflowSamples[0].firstEventSeq <
+                  r.value().overflowSamples[1].firstEventSeq);
+    DOCTEST_CHECK(!r.value().overflowSamples[0].fingerprint.empty());
+    DOCTEST_CHECK(r.value().overflowSamples[0].fingerprint !=
+                  r.value().overflowSamples[1].fingerprint);
+
+    // 次轮续产：poll 消费剩余 10 段（恰在上限内零溢出——限流不吞正常续产）
+    auto r2 = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_EQ(r2.value().segments, 10);
+    DOCTEST_CHECK_EQ(r2.value().cardsCreated, 10);
+    DOCTEST_CHECK_EQ(r2.value().overflowDropped, 0);
+    DOCTEST_CHECK(r2.value().overflowSamples.empty());
+
+    // 三轮：全消费完毕零段零卡（溢出段 commit 记已处理，终局不重放）
+    auto r3 = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK_EQ(r3.value().segments, 0);
+    DOCTEST_CHECK_EQ(r3.value().cardsCreated, 0);
+
+    // 总量守恒：pending = 首轮 10 + 次轮 10（40 溢出是有样本留痕的终局丢弃）
     auto pending = store.listPending();
     DOCTEST_REQUIRE(pending.isOk());
-    DOCTEST_CHECK_EQ(pending.value().size(), static_cast<std::size_t>(totalCards));
+    DOCTEST_CHECK_EQ(pending.value().size(), static_cast<std::size_t>(20));
     return true;
 })
 
@@ -514,5 +538,169 @@ REGISTER_TEST(memory_config_scroll_tail_group_reachable_when_expanded,
         maxOffset > maxOffsetF,
         "全展 maxOffset " + std::to_string(maxOffset) + " 未大于全折叠 " +
             std::to_string(maxOffsetF) + "（供高未随折叠态重算）");
+    return true;
+})
+
+// ── F-06 L2 段级洗（need333 记忆波 1，判据=scheme-card §1 P3/P4 + 实测形态扩）──
+
+REGISTER_TEST(memory_collect_f06_wash_redteam_and_control,
+              "memory: F-06 L2 红队/对照——P3 中断段擦除/P4 前缀剥标记零残留；对照集逐字节恒等零误洗", {
+    // 微型锚（判据钉死：独占行删保两侧 / 行尾后缀擦保正文 / 变体整段擦 /
+    // P4 前缀剥留正文 / 干净正文不动）
+    bool w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "前面\n[Request interrupted by user]\n后面", &w),
+                     std::string("前面\n后面"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "顾问 ID本身就存了把[Request interrupted by user]", &w),
+                     std::string("顾问 ID本身就存了把"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(
+        pipeline::stripLeakMarkers(
+            "工具被打断\n[Request interrupted by user for tool use]\n继续", &w),
+        std::string("工具被打断\n继续"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "第一行\n[tool_error] Exit code 2\n第三行", &w),
+                     std::string("第一行\nExit code 2\n第三行"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers("干净正文不动", &w),
+                     std::string("干净正文不动"));
+    DOCTEST_CHECK(!w);
+
+    // P4 残留检查：输出任一行不得再以 [tool_error] 前缀开头
+    const auto hasToolErrLinePrefix = [](const std::string& t) {
+        std::size_t p = 0;
+        while (p <= t.size()) {
+            if (t.compare(p, 13, "[tool_error] ") == 0) return true;
+            const std::size_t nl = t.find('\n', p);
+            if (nl == std::string::npos) break;
+            p = nl + 1;
+        }
+        return false;
+    };
+    // 红队 21 条（实测样本：P3 命中 5 形态 + P4 行级承载 17 条 - P1/P2 重叠）
+    int washed = 0;
+    for (const auto& s : devdesk::testfix::f06::kWash) {
+        bool hit = false;
+        const std::string out = pipeline::stripLeakMarkers(s.text, &hit);
+        if (!hit) {
+            DOCTEST_CHECK_MESSAGE(false, std::string("红队应命中洗: ") + s.id);
+        } else {
+            ++washed;
+        }
+        DOCTEST_CHECK_MESSAGE(!out.empty(), std::string("洗后非空: ") + s.id);
+        DOCTEST_CHECK_MESSAGE(
+            out.find("[Request interrupted by user") == std::string::npos,
+            std::string("P3 中断标记零残留: ") + s.id);
+        DOCTEST_CHECK_MESSAGE(!hasToolErrLinePrefix(out),
+                              std::string("P4 前缀零残留: ") + s.id);
+    }
+    DOCTEST_CHECK_EQ(washed, 21);
+    // 对照 157 条（无任何 F-06 标记的实质样本）：零误洗 = 逐字节恒等
+    int identity = 0;
+    const int controlN = static_cast<int>(
+        sizeof(devdesk::testfix::f06::kControl) /
+        sizeof(devdesk::testfix::f06::kControl[0]));
+    for (const auto& s : devdesk::testfix::f06::kControl) {
+        bool hit = true;  // 反证置位：对照集不得命中
+        const std::string out = pipeline::stripLeakMarkers(s.text, &hit);
+        if (!hit && out == s.text) {
+            ++identity;
+        } else {
+            DOCTEST_CHECK_MESSAGE(false,
+                                  std::string("对照误洗/误改: ") + s.id);
+        }
+    }
+    DOCTEST_CHECK_EQ(identity, controlN);  // 0 误杀硬指标
+    return true;
+})
+
+// pool:bug:346（BI 审查 P2）：1024B 事件截断 × F-06 洗链交互——session_reader ③
+// 截断可把 [Request interrupted by user 从中撕开（残段=真前缀，find 不命中→
+// 洗不掉入卡）；洗链对行尾被撕开前缀兜底擦除。
+REGISTER_TEST(memory_collect_f06_wash_torn_marker,
+              "memory: F-06 洗链×1024B 截断——被撕开的中断标记残段洗后零残留", {
+    // 撕开形态微锚：独占尾行整段丢 / 行尾残段保正文 / 词中撕开
+    bool w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "正文段落\n[Request interru", &w),
+                     std::string("正文段落"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "前面有文字[Request interrupted by us", &w),
+                     std::string("前面有文字"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "词中撕开[Request inter", &w),
+                     std::string("词中撕开"));
+    DOCTEST_CHECK(w);
+    w = false;
+    // 阈值下限负例：裸 '[' 与 <8B 碎前缀不算残段（零误洗契约不破）
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers("结尾是裸开括号 [", &w),
+                     std::string("结尾是裸开括号 ["));
+    DOCTEST_CHECK(!w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers("低于下限 [Reques", &w),
+                     std::string("低于下限 [Reques"));
+    DOCTEST_CHECK(!w);
+
+    // 断言主体：1000B 正文 + 42B 完整标记，事件级截断切在第 1024 字节恰落在
+    // 标记内部撕出 24B 残段（ASCII 无码点回退，与 session_reader truncateUtf8
+    // 行为一致）→ 洗后零残段、正文保全
+    const std::string full =
+        std::string(1000, 'x') + "[Request interrupted by user for tool use]";
+    const std::string truncated = full.substr(0, 1024);
+    DOCTEST_REQUIRE_EQ(truncated.size(), static_cast<std::size_t>(1024));
+    DOCTEST_CHECK_EQ(truncated.substr(1000),
+                     std::string("[Request interrupted by "));
+    w = false;
+    const std::string out = pipeline::stripLeakMarkers(truncated, &w);
+    DOCTEST_CHECK(w);
+    DOCTEST_CHECK_EQ(out, std::string(1000, 'x'));
+    DOCTEST_CHECK(out.find("[Request") == std::string::npos);  // 零残段
+    return true;
+})
+
+REGISTER_TEST(memory_collect_f06_wash_in_round,
+              "memory: F-06 L2 接线——管线轮内洗：中断标记不入卡、两侧正文保留、report.washed 计数", {
+    const auto dir = makeTempDir("f06-round");
+    const auto projects = dir / "projects";
+    std::filesystem::create_directories(projects);
+    sanitize::SanitizeGate gate;
+    auto opened = proposals::ProposalStore::open(dir / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    collector::Collector collector(dir / "collector.db", projects);
+
+    // pool:bug:349 夹具双修（出生即红，非产品回归）：①换行必须以 \n 转义进
+    // JSON——collector 按 getline 逐行读 jsonl，真实换行把首行截成坏行 →
+    // 0 事件 0 卡；②解析后 body 须 ≤kMaxEventBytes(1024B)（session_reader ③
+    // 单事件截断）——原 12 rep 时标记在截断点之后永远洗不到。9 rep+标记+尾段
+    // =969B，极短段门槛（≥50 有效字符）照过
+    const std::string bodyJson =
+        prose("F-06 管线内洗验证正文段落，语义完整足够长以照常越过极短段门槛成卡。", 9) +
+        "\\n[Request interrupted by user]\\n后续两侧正文照常保留在卡内不可丢弃。";
+    writeSession(projects / "sess-f06.jsonl",
+                 userLine("sess-f06", bodyJson) + "\n");
+
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);
+    DOCTEST_CHECK_EQ(r.value().washed, 1);
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK(pending.value()[0].resultText.find(
+                      "[Request interrupted by user") == std::string::npos);
+    DOCTEST_CHECK(pending.value()[0].resultText.find("后续两侧正文照常保留") !=
+                  std::string::npos);
     return true;
 })

@@ -105,8 +105,15 @@ stopProc() { # $1=msys pid $2=port；Windows 清理只按 PID（msys kill 优先
              # debt268 P3-8：兜底 taskkill 前校验进程身份（映像名/命令行含
              # llama-server/telemem 才杀）——端口兜底只证明「占了本测专用端口」，
              # 证明不了「是我们的引擎」；校验不过/查询失败一律不杀，只留日志。
-  [ -n "$1" ] && kill "$1" 2>/dev/null
-  if [ -n "$2" ] && [ "$E2E_OS" = "win" ] && portBusy "$2"; then
+             # bug239 端口隔离：兜底仅在「本测引擎进程此前活着」时执行——本进程
+             # 已死（如端口被占绑定失败早退）时，占用者必是外部实例（老板 telemem
+             # 同名也能过身份校验），绝不兜底 taskkill。
+  local own_alive=0
+  if [ -n "$1" ]; then
+    kill -0 "$1" 2>/dev/null && own_alive=1
+    kill "$1" 2>/dev/null
+  fi
+  if [ "$own_alive" = 1 ] && [ -n "$2" ] && [ "$E2E_OS" = "win" ] && portBusy "$2"; then
     local wpid ident
     wpid="$(winPidByPort "$2")"
     if [ -n "$wpid" ]; then
@@ -152,7 +159,16 @@ portBusy() {
 }
 for p in "$LLAMA_PORT" "$TELEMEM_PORT"; do
   if portBusy "$p"; then
-    fail "端口 $p 已被占用（上次运行残留？先清场再跑）"
+    # bug239 端口隔离（拒跑档）：占用即拒跑——旧版只记 FAIL 仍继续起引擎，本测
+    # 引擎绑不上端口、探针/hook 全打到占用方实例（AU 轮2 实证互劫污染）；且
+    # EXIT trap 的 stopProc 端口兜底会 taskkill 占用方（telemem 同名即过身份
+    # 校验）。端口参数化不可行：probe/hook 二进制硬编码 kTelememPort=8421
+    # （src 本批禁改）→ 落地「探测即拒跑」。拒跑前清空端口变量，防 trap
+    # 兜底误杀占用方（exit 2 = 拒跑，区别于 1 = 用例红）。
+    log "拒跑：端口 $p 已被占用（老板实例在线或上次残留）。引擎端口在 probe/hook 二进制内硬编码（8421/11435）不可参数化，为防互劫污染与清场误杀占用方本轮拒跑（netstat -ano / lsof -i:$p 自查占用方）"
+    LLAMA_PORT=""
+    TELEMEM_PORT=""
+    exit 2
   fi
 done
 

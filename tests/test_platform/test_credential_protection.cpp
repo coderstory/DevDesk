@@ -1,12 +1,26 @@
 // tests/test_platform/test_credential_protection.cpp
 // 分平台凭据保护：protect / unprotect 往返 +「本平台列里存的到底是什么形态」的契约。
-// 2026-11-03 起全平台统一明文口径（保密靠文件权限 / NTFS ACL）；唯一不支持形态是
-// 旧版 Windows DPAPI 密文（dpapi: 前缀），两平台都必须 fail 并提示重填。
+// 2026-11-03 起全平台统一明文口径（保密靠文件权限 / NTFS ACL）；旧版 Windows DPAPI 密文
+// （dpapi: 前缀 / bug #126 裸 hex 残角）：Windows 只读迁移尝试本机解密，解不开与
+// POSIX 侧一律 fail 并提示重填——不把密文当 API Key 发出去（会变成难查的 401）。
 #include "doctest.h"
 
 #include "platform/credential_protection.h"
 
 #include <string>
+
+#if defined(_WIN32)
+// bug #126 夹具需真实 CryptProtectData（平台 API；测试侧平台条件是 test_platform 既有惯例，
+// 与业务代码零 #ifdef 约束不冲突）。
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincrypt.h>
+#endif
 
 REGISTER_TEST(credential_protect_unprotect_roundtrip,
               "credential: protect/unprotect 往返（含空串与长串）", {
@@ -83,5 +97,94 @@ REGISTER_TEST(
     DOCTEST_CHECK(r.isFail());
     // 明文平台没有「形态」概念：dpapi: 前缀之外的任何非空串都是合法明文
     DOCTEST_CHECK(platform::credential::unprotect("whatever-legacy-value").isOk());
+    return true;
+})
+
+#if defined(_WIN32)
+// bug #126 夹具一：裸 hex 往返——CryptProtectData 产物转小写 hex 落列（旧版形态，无 dpapi: 前缀），
+// isDpapiBlob 三重判据必须认出，realUnprotect 本机解密回原明文（只读迁移，旧数据免重填）。
+REGISTER_TEST(credential_bare_hex_dpapi_roundtrip,
+              "credential: 裸 hex DPAPI blob（无前缀）→ 认出且本机解密回明文（bug #126）", {
+    const std::string key = "sk-ant-bare-hex-roundtrip-0123456789abcdef";
+    DATA_BLOB in{};
+    in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(key.data()));
+    in.cbData = static_cast<DWORD>(key.size());
+    DATA_BLOB out{};
+    DOCTEST_REQUIRE(CryptProtectData(&in, nullptr, nullptr, nullptr, nullptr,
+                                     CRYPTPROTECT_UI_FORBIDDEN, &out));
+    const std::string blob(reinterpret_cast<const char*>(out.pbData), out.cbData);
+    LocalFree(out.pbData);
+    // 夹具自检：真实 DPAPI blob 定长头就 60 字节，必过长度关
+    DOCTEST_REQUIRE(blob.size() >= 60);
+
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    std::string stored;
+    stored.reserve(blob.size() * 2);
+    for (const unsigned char b : blob) {
+        stored += kHexDigits[b >> 4];
+        stored += kHexDigits[b & 0x0F];
+    }
+    DOCTEST_CHECK(stored.rfind("dpapi:", 0) != 0);   // 裸 hex：确实无前缀
+    DOCTEST_CHECK(platform::credential::isDpapiBlob(stored));
+
+    auto r = platform::credential::unprotect(stored);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value(), key);
+    return true;
+})
+
+// bug #126 夹具二：截断篡改 → 失败臂。截到 70 字节（magic 与 ≥60 字节关都完好，
+// isDpapiBlob 照样认出）但 blob 结构已破坏 → CryptUnprotectData 必败 → fail 带
+// 「重新填写」可执行文案；透传原 blob 当明文的实现会 ok 返回密文，被 isFail 断言挡下。
+REGISTER_TEST(credential_bare_hex_dpapi_tampered_refill_error,
+              "credential: 裸 hex 截断篡改 → fail 带「重新填写」可执行文案（bug #126）", {
+    const std::string key = "sk-ant-tamper-arm-0123456789";
+    DATA_BLOB in{};
+    in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(key.data()));
+    in.cbData = static_cast<DWORD>(key.size());
+    DATA_BLOB out{};
+    DOCTEST_REQUIRE(CryptProtectData(&in, nullptr, nullptr, nullptr, nullptr,
+                                     CRYPTPROTECT_UI_FORBIDDEN, &out));
+    std::string blob(reinterpret_cast<const char*>(out.pbData), out.cbData);
+    LocalFree(out.pbData);
+    DOCTEST_REQUIRE(blob.size() >= 70);
+    blob.resize(70);   // 截断：判据三关全过，CryptUnprotectData 结构校验必败
+
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    std::string stored;
+    stored.reserve(blob.size() * 2);
+    for (const unsigned char b : blob) {
+        stored += kHexDigits[b >> 4];
+        stored += kHexDigits[b & 0x0F];
+    }
+    DOCTEST_CHECK(platform::credential::isDpapiBlob(stored));
+    auto r = platform::credential::unprotect(stored);
+    DOCTEST_REQUIRE(r.isFail());
+    DOCTEST_CHECK(r.errorMessage().find("重新填写") != std::string::npos);
+    return true;
+})
+#endif  // _WIN32
+
+// bug #126 夹具三：防误杀——16/32 字符短 hex 明文 key 不得被当 DPAPI 密文（三重判据的
+// 长度关一票否决）；长 hex 但首字节非 magic 同样放行（magic 关兜底）。全平台生效。
+REGISTER_TEST(credential_short_hex_plaintext_no_false_positive,
+              "credential: 短 hex 明文 key 零误杀——不识别为 DPAPI、unprotect 原样返回（bug #126）", {
+    const std::string short16 = "0123456789abcdef";
+    const std::string short32 = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6";
+    DOCTEST_CHECK(!platform::credential::isDpapiBlob(short16));
+    DOCTEST_CHECK(!platform::credential::isDpapiBlob(short32));
+    auto a = platform::credential::unprotect(short16);
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value(), short16);
+    auto b = platform::credential::unprotect(short32);
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_CHECK_EQ(b.value(), short32);
+
+    // 200 个 'a'（=100 字节 0xAA）：过长度关与 hex 关，死在 magic 关 → 仍按明文放行
+    const std::string longNonMagic(200, 'a');
+    DOCTEST_CHECK(!platform::credential::isDpapiBlob(longNonMagic));
+    auto c = platform::credential::unprotect(longNonMagic);
+    DOCTEST_REQUIRE(c.isOk());
+    DOCTEST_CHECK_EQ(c.value(), longNonMagic);
     return true;
 })

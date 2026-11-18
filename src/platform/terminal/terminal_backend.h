@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -62,6 +63,11 @@ public:
     // 选区矩形→文本（所见即所得，核心 Selection.text；行列=当前视口系）
     virtual bool selectionText(int rowStart, int colStart, int rowEnd, int colEnd,
                                std::string& out) = 0;
+    // 按需出帧唤醒（bug249/bug305）：后端在**非 UI 线程**产出新输出或子进程退出后
+    // 调一次通知，宿主主循环据此只出这一帧——替代常驻 onFrame 泵（空闲零出帧）。
+    // 默认空实现 = 该平台暂无通知路径（页面保留常驻泵兜底）。
+    virtual void setOutputNotify(std::function<void()> notify) { (void)notify; }
+    virtual bool supportsOutputNotify() const { return false; }
 };
 
 // 平台后端。macOS=Swift/Corta 桥；Windows=ConPTY 桥（available() 动态探测 1809+，

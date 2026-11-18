@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 5000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 6000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1500},
+    {"type": "type", "text": "echo QA258", "id": "app.term.input"},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "qa-258-typed-a.txt"},
+    {"type": "screenshot", "path": "qa-258-03-typed-a.png"},
+    {"type": "wait", "ms": 900},
+    {"type": "dump", "path": "qa-258-typed-b.txt"},
+    {"type": "type", "text": "0123456789", "id": "app.term.input"},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "qa-258-typed-c.txt"},
+    {"type": "screenshot", "path": "qa-258-04-typed-c.png"},
+    {"type": "wait", "ms": 900},
+    {"type": "dump", "path": "qa-258-typed-d.txt"},
+    {"type": "screenshot", "path": "qa-258-05-typed-d.png"}
+  ]
+}

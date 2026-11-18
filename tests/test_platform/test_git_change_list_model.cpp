@@ -448,6 +448,55 @@ REGISTER_TEST(gitChangeListModelHeaderCountWithExpandedChildren, "组头计数�
     return true;
 })
 
+REGISTER_TEST(gitChangeListModelLazyChildCountTruth, "bug#292 D4：lazy 嵌套目录枚举前=0（不显）；枚举后父目录子树计数如实（1→2）；收起不回退计数（组头/目录计数不随展开位跳变）", {
+    StatusSnapshot snap;
+    snap.entries = {
+        entryOf("top.txt", StatusKind::Modified, false),
+        entryOf("0_untracked/", StatusKind::Untracked, false),
+    };
+    GitChangeListModel model;
+    model.rebuild(snap, ChangeViewMode::Tree);
+    WalkResult r;
+    r.ok = true;
+    r.entries = {
+        {"inner1.txt", "0_untracked/inner1.txt", EntryKind::File},
+        {"nested", "0_untracked/nested", EntryKind::Directory},
+    };
+    model.applyUntrackedChildren("0_untracked", r);
+    // 枚举前：组头=top.txt+inner1.txt=2；0_untracked 子树=inner1 1 + 嵌套未枚举 0
+    DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Unstaged)->childCount,
+                     static_cast<size_t>(2));
+    const ChangeListRow* dir = findRow(model.rows(), ChangeListRow::Kind::Dir, "0_untracked");
+    DOCTEST_CHECK(dir != nullptr);
+    if (dir != nullptr) DOCTEST_CHECK_EQ(dir->childCount, static_cast<size_t>(1));
+    const ChangeListRow* lazy =
+        findRow(model.rows(), ChangeListRow::Kind::Dir, "0_untracked/nested");
+    DOCTEST_CHECK(lazy != nullptr);
+    if (lazy != nullptr) {
+        DOCTEST_CHECK(lazy->lazy);
+        DOCTEST_CHECK_EQ(lazy->childCount, static_cast<size_t>(0));  // 不显
+    }
+    // 展开并枚举嵌套 → 组头计入新枚举文件（设计 §4.3）；父目录子树计数如实=2
+    model.setExpanded("0_untracked/nested", true);
+    WalkResult rr;
+    rr.ok = true;
+    rr.entries = {{"nested_file.txt", "0_untracked/nested/nested_file.txt", EntryKind::File}};
+    model.applyUntrackedChildren("0_untracked/nested", rr);
+    DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Unstaged)->childCount,
+                     static_cast<size_t>(3));
+    dir = findRow(model.rows(), ChangeListRow::Kind::Dir, "0_untracked");
+    DOCTEST_CHECK(dir != nullptr);
+    if (dir != nullptr) DOCTEST_CHECK_EQ(dir->childCount, static_cast<size_t>(2));
+    // 收起：已枚举事实不变 → 组头/父目录计数不回退（bug#292 D4 无理由跳变）
+    model.setExpanded("0_untracked/nested", false);
+    DOCTEST_CHECK_EQ(headerOf(model.rows(), ChangeListRow::Group::Unstaged)->childCount,
+                     static_cast<size_t>(3));
+    dir = findRow(model.rows(), ChangeListRow::Kind::Dir, "0_untracked");
+    DOCTEST_CHECK(dir != nullptr);
+    if (dir != nullptr) DOCTEST_CHECK_EQ(dir->childCount, static_cast<size_t>(2));
+    return true;
+})
+
 REGISTER_TEST(gitChangeListModelRefreshKeepsBitmaps, "刷新重建保位图/缓存（F-09）：展开/组折叠/lazy 缓存跨 rebuild 保留；条目消失=行消失", {
     StatusSnapshot snap;
     snap.entries = {

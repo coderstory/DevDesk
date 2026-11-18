@@ -3,15 +3,20 @@
 
 #include <algorithm>
 #include <ratio>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
+#include <thread>
 #include <unordered_map> // bug248：textWidth 缓存
 #include <utility>
 #include <vector>
 #include "core/logging.h"
 #include "core/router.h"  // bug245：指针窗口坐标→页面坐标经 Router 页面原点换算
 #include "core/platform/ime_bridge.h" // eui_ime_trace_log（ImeTrace 段1 与 EUI/win 段2/3 同落 ime-trace.log）
+#include <core/platform/platform.h>   // bug305/306：requestUiUpdate（低频自唤醒泵）
 #include "core/render/text.h"
 #include "core/component_theme.h"
 #include "core/theme.h"
@@ -131,6 +136,51 @@ TermPerfUi& termPerfUi() {
 // bug248 估宽缓存已归一至 ui_kit::cachedTextWidth（need:296 D2；bug267 字族入键
 // 防御随归一带入 helper），本文件直调、显式传 weight=400（与原实现同口径）。
 
+} // namespace
+
+namespace {
+// bug305/bug306：低频自唤醒泵（有输出通知路径时使用；替代 0 常驻 onFrame 泵的空档）。
+// 问题面：拆掉常驻泵后终端空闲零帧——①子进程退出（ConPTY 不断管道）没有任何帧去
+// 巡检；②光标闪烁相位只在 compose 时按 steady_clock 算，无帧即不闪。这一路按
+// kIdleFrameTickMs 节拍 requestUiUpdate 恰好唤醒一帧，覆盖两者，且**绝不**回到
+// 60fps 常驻出帧（bug249 验收口径）；无 Running 会话即置闲，退出后零帧。
+// 线程语义照 app_sidebar.cpp FluidPump（bug#194 先例）：compose 线程写 active、
+// 泵线程只判读，跨线程不碰 controller 状态。
+struct IdleFrameTick {
+    std::mutex m;
+    std::condition_variable cv;
+    std::atomic<bool> active{false}; // compose 写、泵线程读
+    std::atomic<bool> stop{false};
+    std::thread t;
+    IdleFrameTick() : t([this] { run(); }) {}
+    ~IdleFrameTick() {
+        stop.store(true);
+        cv.notify_all();
+        t.join();
+    }
+    void run() {
+        std::unique_lock<std::mutex> lk(m);
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (!active.load(std::memory_order_relaxed)) {
+                cv.wait(lk, [this] { return active.load(std::memory_order_relaxed) || stop.load(); });
+                continue;
+            }
+            if (cv.wait_for(lk, std::chrono::milliseconds(kIdleFrameTickMs)) ==
+                std::cv_status::timeout) {
+                if (active.load(std::memory_order_relaxed) && !stop.load())
+                    ::core::platform::requestUiUpdate(); // 置 ui+frame 双旗标 + postEmptyEvent
+            }
+        }
+    }
+    void setActive(bool a) {
+        if (active.exchange(a) == a) return; // compose 每帧都调：值不变零 notify
+        cv.notify_all();
+    }
+};
+IdleFrameTick& idleFrameTick() {
+    static IdleFrameTick p;
+    return p;
+}
 } // namespace
 
 GridLayout TerminalPage::compose(
@@ -883,10 +933,11 @@ GridLayout TerminalPage::compose(
                     });
             }
 
-            // 层 8：按需出帧泵（bug249）：任一会话 Running 期间挂 1×1 onFrame 元素——
-            // EUI 契约 onFrame 每帧置 composeRequested/animating（runtime_update.h），
-            // reader 新输出因此自动重组上屏，无需点击唤醒；无 Running 会话不挂 →
-            // 空闲零空转。回调体空，重组由下一帧 compose（含 pollAll）完成。
+            // 层 8：出帧兜底泵（bug249，2026-11-18 改按需出帧）：平台有输出通知路径
+            // （reader 新输出/退出 → requestUiUpdate，只出这一帧）时**不挂**——常驻
+            // onFrame 每帧置 composeRequested/animating（runtime_update.h），空闲终端
+            // 会持续 60fps 空转（bug249 ② / bug305）。无通知路径的平台（mac 桥本批
+            // 未接）保留 1×1 泵兜底。无 Running 会话一律不挂（exit 后零帧）。
             bool anyRunning = false;
             for (int i = 0; i < sessionCount; i++) {
                 const Session* s = controller.at(i);
@@ -895,13 +946,17 @@ GridLayout TerminalPage::compose(
                     break;
                 }
             }
-            if (anyRunning) {
+            if (needsFramePump(anyRunning, controller.outputNotifyAvailable())) {
                 ui.rect("term.framepump")
                     .position(0.0f, 0.0f)
                     .size(1.0f, 1.0f)
                     .color(kTransparent)
                     .onFrame([](float) {});
             }
+            // bug305/306：有通知路径时改挂低频自唤醒（550ms 一帧）——Running 期间才挂，
+            // 覆盖「退出巡检（ConPTY 不给 EOF）」与「光标闪烁相位」，退出后置闲零帧。
+            idleFrameTick().setActive(
+                needsIdleTick(anyRunning, controller.outputNotifyAvailable()));
 
             // 层 9：终端设置面板（need250 页内模态；设计 §2/§4）。scrim α0.35 盖整页面区
             // 含 TAB 栏；点 scrim 不关（无 onClick = 纯 hit 隔离）；关闭通道 Esc（module

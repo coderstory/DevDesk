@@ -72,7 +72,7 @@ void drawToast(eui::Ui& ui, const eui::Screen& screen, const std::string& id,
                const components::theme::ThemeColorTokens& tokens,
                const ToastOptions& options) {
     // —— 轻反馈分支（2026-11-01 F-10/R5）——
-    // 无标题 + 非错误 + 单行短正文 → 居中微信式轻提示（黑底白字）；
+    // 无标题 + 非错误 + 单行短正文 → 居中微信式轻提示（need328：绿半透底+墨绿描边）；
     // 带标题的（重要反馈）与错误仍走右下通知式。此前全站 79 处调用只有 1 处
     // （Claude 复制）走轻提示，「复制成功」居中、其它成功提示贴右下角，同一语义
     // 两种形态。

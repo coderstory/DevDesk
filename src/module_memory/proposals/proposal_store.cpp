@@ -281,6 +281,75 @@ core::Result<Proposal> ProposalStore::create(
     return core::Result<Proposal>::ok(std::move(p));
 }
 
+core::Result<Proposal> ProposalStore::createFinalDraft(
+    std::vector<std::string> targetIds, const std::string& resultText,
+    const std::string& resultType,
+    const std::vector<ProposalEvidence>& evidence, double confidence,
+    bool autoAccepted, std::int64_t nowSec) {
+    Proposal p;
+    p.id = nextId(nowSec);
+    p.kind = "add";
+    p.targetIds = std::move(targetIds);
+    p.resultText = resultText;
+    p.resultType = resultType;  // bug184 口径：未提炼不虚标类型（留空）
+    p.resultProjectId = "devdesk";
+    p.evidence = evidence;
+    p.confidence = confidence;
+    p.source = "final_draft";
+    p.sourceTrust = "assistant_derived";
+    p.createdAt = nowSec;
+    p.expiresAt = nowSec + kProposalTtlDays * 86400;
+    p.status = autoAccepted ? "auto_accepted" : "pending";
+    p.baseVersion = -1;
+    // 终态时间：auto 落 now；pending 兜底卡绑 -1（rowToProposal 对 NULL 读 -1，
+    // 两种写法读值等价；listRecentDecided 以 status != 'pending' 过滤，-1 行
+    // 不会混进「已处理」）
+    p.decidedAt = autoAccepted ? nowSec : -1;
+    p.appliedAt = autoAccepted ? nowSec : -1;
+
+    auto stmt = db_->prepare(
+        "INSERT INTO memory_proposals(id, schema_version, kind, target_ids, "
+        "result_text, result_type, result_project_id, evidence, confidence, "
+        "source, source_trust, created_at, expires_at, status, decided_at, "
+        "applied_at, base_version, undo_of) VALUES(?,1,?,?,?,?,?,?,?,?,?,?,?, "
+        "?, ?, ?, -1, '')");
+    if (stmt.isFail()) {
+        return core::Result<Proposal>::fail(stmt.errorCode(),
+                                            stmt.errorMessage());
+    }
+    if (!stmt.value().bind(1, p.id).isOk() ||
+        !stmt.value().bind(2, p.kind).isOk() ||
+        !stmt.value().bind(3, idsToJson(p.targetIds)).isOk() ||
+        !stmt.value().bind(4, p.resultText).isOk() ||
+        !stmt.value().bind(5, p.resultType).isOk() ||
+        !stmt.value().bind(6, p.resultProjectId).isOk() ||
+        !stmt.value().bind(7, evidenceToJson(p.evidence)).isOk() ||
+        !stmt.value().bind(8, p.confidence).isOk() ||
+        !stmt.value().bind(9, p.source).isOk() ||
+        !stmt.value().bind(10, p.sourceTrust).isOk() ||
+        !stmt.value().bind(11, p.createdAt).isOk() ||
+        !stmt.value().bind(12, p.expiresAt).isOk() ||
+        !stmt.value().bind(13, p.status).isOk() ||
+        !stmt.value().bind(14, p.decidedAt).isOk() ||
+        !stmt.value().bind(15, p.appliedAt).isOk()) {
+        return core::Result<Proposal>::fail(core::ErrorCode::Internal,
+                                            "终稿卡写入绑定失败");
+    }
+    auto step = stmt.value().step();
+    if (step.isFail()) {
+        return core::Result<Proposal>::fail(step.errorCode(),
+                                            step.errorMessage());
+    }
+    if (auto a = audit(p.id, nowSec, "created",
+                       "kind=add source=final_draft " +
+                           (autoAccepted ? std::string("auto_accepted")
+                                         : std::string("fallback_pending")));
+        a.isFail()) {
+        LOG_WARN("提案审计写入失败（不阻断建卡）: " + a.errorMessage());
+    }
+    return core::Result<Proposal>::ok(std::move(p));
+}
+
 core::Result<Proposal> ProposalStore::get(const std::string& id) const {
     auto stmt = db_->prepare(std::string(kSelectCols) + "WHERE id = ?");
     if (stmt.isFail()) {
@@ -655,8 +724,10 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
         }
     }
 
-    // 原提案必须已接受（撤销只对已生效的动作有意义）
-    if (original.value().status != "accepted") {
+    // 原提案必须已接受（撤销只对已生效的动作有意义）；终稿通道 auto_accepted
+    // 同为已生效（引擎已由 addInferred 落库，F-03 波 2 腿 A 撤销链保留）
+    const std::string& originalStatus = original.value().status;
+    if (originalStatus != "accepted" && originalStatus != "auto_accepted") {
         return core::Result<Proposal>::fail(
             core::ErrorCode::ValidationError,
             "仅已接受的提案可撤销，当前: " + original.value().status);

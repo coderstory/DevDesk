@@ -10,10 +10,43 @@ namespace {
 
 using platform::json::JsonValue;
 
-// ② 注入块标记：正文携带即整条丢弃（system-reminder 形态由 Claude Code 包裹）
+// ② 注入/系统块标记：正文携带即整条丢弃（need333 F-06 L1，判据=
+// evidence/20261118-f06-gate scheme-card §1）：system-reminder 原有形态 +
+// P2 local-command 命令回显族（标签字面特异，子串即判）+ P1 task-notification
+// 系统通知块（行首对齐 + 其后 3 行内子标签结构确认——正文讨论标签字样不误杀）
 bool containsInjectionMarker(const std::string& text) {
-    return text.find("<system-reminder") != std::string::npos ||
-           text.find("system-reminder:") != std::string::npos;
+    if (text.find("<system-reminder") != std::string::npos ||
+        text.find("system-reminder:") != std::string::npos) {
+        return true;
+    }
+    static const char* kCommandTags[] = {
+        "<local-command-caveat>", "<command-name>", "<command-message>",
+        "<command-args>", "<local-command-stdout>"};
+    for (const char* tag : kCommandTags) {
+        if (text.find(tag) != std::string::npos) return true;
+    }
+    // P1 结构确认：行首 <task-notification 后 3 行内出现子标签栈任一
+    static const char* kTaskSubs[] = {"<task-id>", "<tool-use-id>",
+                                      "<output-file>", "<summary>",
+                                      "<result>"};
+    std::size_t pos = 0;
+    while ((pos = text.find("<task-notification", pos)) !=
+           std::string::npos) {
+        if (pos == 0 || text[pos - 1] == '\n') {
+            std::size_t nl = pos;
+            for (int i = 0; i < 4 && nl != std::string::npos; ++i) {
+                nl = text.find('\n', nl + 1);
+            }
+            const std::size_t windowEnd =
+                nl == std::string::npos ? text.size() : nl;
+            for (const char* sub : kTaskSubs) {
+                const std::size_t hit = text.find(sub, pos);
+                if (hit != std::string::npos && hit < windowEnd) return true;
+            }
+        }
+        ++pos;
+    }
+    return false;
 }
 
 // 消息体抽取：content 为字符串直接用；为数组时按块类型走①

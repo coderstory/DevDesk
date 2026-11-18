@@ -53,6 +53,14 @@ std::string f1(float v) {
     return buf;
 }
 
+/// 瞬态 hover 显隐层（EUI components::tooltip 等）：hoverOpacityFrom 驱动，
+/// 常态（未悬停）渲染期 opacity ×= hoverHiddenOpacity（tooltip 默认 0），静态
+/// Element.opacity 恒 1 → 静态扫描须按「常态隐没」排除，否则悬停层误报遮挡
+/// （bug#331）。hoverHiddenOpacity > 0.5 的常态半可见层不豁免（仍参与判定）。
+bool hoverHiddenNormally(const core::dsl::Element& e) {
+    return !e.hoverOpacitySourceId.empty() && e.hoverHiddenOpacity <= 0.5f;
+}
+
 void walk(const core::dsl::Element& node, const std::string& parentId,
           std::unordered_map<std::string, std::string>& parentOf,
           std::unordered_map<std::string, const core::dsl::Element*>& byId,
@@ -240,7 +248,9 @@ bool noOcclusion(core::dsl::Ui& ui, const std::string& keyTextId,
                          isAncestorChain(overlay->id, parentOf, text->id);
     const Box textBox = boxOf(*text);
     const Box overlayBox = boxOf(*overlay);
-    if (overlay->opacity <= 0.5f) return true;  // 隐没态不判
+    if (overlay->opacity <= 0.5f || hoverHiddenNormally(*overlay)) {
+        return true;  // 静态隐没态 / hover 瞬态层常态不判（bug#331）
+    }
     if (!occludedPure(textBox, chainZUpper(byId, parentOf, text->id),
                       overlayBox, chainZUpper(byId, parentOf, overlay->id),
                       related)) {
@@ -282,7 +292,10 @@ std::vector<Violation> scanOccluders(core::dsl::Ui& ui, const std::string& rootI
         const auto it = byId.find(id);
         if (it == byId.end()) continue;
         const core::dsl::Element* e = it->second;
-        if (e->zIndex > 0 && e->opacity > 0.5f) candidates.push_back(e);
+        if (e->zIndex > 0 && e->opacity > 0.5f &&
+            !hoverHiddenNormally(*e)) {
+            candidates.push_back(e);  // hover 瞬态层常态隐没不入候选（bug#331）
+        }
     }
     for (const core::dsl::Element* text : leaves) {
         if (text->text.empty()) continue;  // 只守关键文本

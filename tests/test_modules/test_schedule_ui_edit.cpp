@@ -472,9 +472,11 @@ REGISTER_TEST(scheduleEditEnableSwitchAfterName, "schedule 编辑弹窗：启用
     // 定点断言锚 stack 根节点（绝对坐标；.track/.thumb 子节点坐标 stack 相对）
     const auto* sw = ui.find("schedule.edit.enabled");
     DOCTEST_REQUIRE(sw != nullptr);
-    // 名称行（label y=96 + input 116..152）之后 → 开关行 label y=168、switch y=170
-    DOCTEST_CHECK(floatEq(sw->x, 84.0f));       // x0(24)+60 缩进列
-    DOCTEST_CHECK(floatEq(sw->y, 170.0f));
+    // 名称行（label 相对锚 y=40 + input 60..96）之后 → 开关行 label y=112、
+    // switch y=114（need337 scrollView 架构：内容 y 相对滚动锚 56 记账，绝对
+    // 摆位 170 = 56+114 不变；need348 合并把本机绝对记账换算为远端相对记账）
+    DOCTEST_CHECK(floatEq(sw->x, 84.0f));       // x0(24)+60 缩进列（x 维维持绝对）
+    DOCTEST_CHECK(floatEq(sw->y, 114.0f));
     const auto* track = ui.find("schedule.edit.enabled.track");
     DOCTEST_REQUIRE(track != nullptr);
     const auto* thumb = ui.find("schedule.edit.enabled.thumb");

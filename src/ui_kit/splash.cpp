@@ -294,4 +294,14 @@ void drawSplashOverlay(eui::Ui& ui, const eui::Screen& screen) {
     app::requestUpdate();
 }
 
+void skipStartupSplash() {
+    SplashState& state = splashState();
+    if (!state.active) return;  // 幂等：未启动/已结束时空操作
+    state.active = false;
+    // bug307：托盘态启动（viewer-only .md / --minimized）主窗不出场，splash 是
+    // 主窗启动动画——留着 active 会挂在「启动 splash 开始」永不结束（主窗托盘态
+    // 不 compose，收尾无帧可触发）。跳过即闭：首显主窗时直接画主界面。
+    LOG_INFO("启动 splash 跳过（托盘态启动：主窗隐藏不播，首显直接主界面）");
+}
+
 } // namespace ui_kit

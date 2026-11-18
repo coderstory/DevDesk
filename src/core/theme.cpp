@@ -27,6 +27,7 @@ namespace {
         c.primaryText = eui::Color("#36D399");
         c.accentText = eui::Color("#36D399");  // 深底 9.22:1，与 primary 同值
         c.onPrimary = eui::Color("#FFFFFF");
+        c.onAccent = eui::Color("#06251A");  // on #36D399 = 8.4:1（need261 P1-1）
         c.textPrimary = eui::Color("#FAF9F5");
         c.textSecondary = eui::Color("#C9C5BD");
         c.textTertiary = eui::Color("#9A948A");
@@ -90,6 +91,7 @@ namespace {
         c.primaryText = eui::Color("#157E4E");  // ~4.99:1 on #F5FAF7 ≥ WCAG AA 4.5:1（审计 F3.4 裁决）
         c.accentText = eui::Color("#0C7E58");   // #0F9D6E 加深档：on #F5FAF7 ≥ 4.5（#0F9D6E 本身仅 3.31）
         c.onPrimary = eui::Color("#FFFFFF");
+        c.onAccent = eui::Color("#06251A");  // on #07C160 = 6.8:1（need261 P1-1）
         c.textPrimary = eui::Color("#1F2937");
         c.textSecondary = eui::Color("#4B5563");
         c.textTertiary = eui::Color("#6B7280");
@@ -205,6 +207,9 @@ namespace {
         }
         // accentText 随 accent 走 primaryText 档（浅色各 accent 档均 ≥4.5:1 on #FAFAF9）
         c.accentText = c.primaryText;
+        // onAccent 的深墨档只对微信绿成立（绿底亮度高）；非 Clay accent 主色
+        // 回到各自 onPrimary（白字/深字已达标）
+        c.onAccent = c.onPrimary;
     }
 
     // 全局字号缩放（默认 1.0）；setDark/setLight 重建 token 后统一施加

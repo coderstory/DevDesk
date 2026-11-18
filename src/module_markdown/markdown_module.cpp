@@ -45,6 +45,38 @@ private:
     MarkdownService& service_;
 };
 
+// 页头布局度量（标题/模式 Tab/右操作组）。
+// 宽档（内容宽 ≥696）保持历史几何不变：右操作组行宽 304（控件实宽 280）+
+// 模式 Tab 下限 216 + 标题下限 160 + 16 弹性间距。
+// 紧凑档（内容宽 <696）：本仓最小窗 1000 逻辑 → 内容宽 ≈716，该档只在更窄的
+// 截图/调试尺寸出现；820 档内容宽 536，宽档三项相加 680 溢出 144 → 「新建笔记」
+// 右缘被窗口裁切（bug312）。紧凑档收窄大纲开关与主按钮（文案 4 字 56px，96 宽
+// 仍留 20px 内距），压低模式 Tab 与标题下限，把溢出整段回收。
+struct HeaderLayout {
+    float titleW;        // md.title 列宽
+    float segW;          // md.mode 行宽
+    float actionsRowW;   // md.actions 行宽（flex 槽）
+    float actionsInnerW; // 右操作组控件实宽（END 对齐后决定首项 x）
+    float toggleW;       // 大纲开关宽
+    float newBtnW;       // 「新建笔记」按钮宽
+};
+
+inline HeaderLayout headerLayout(float contentW, const core::theme::Tokens& t) {
+    const bool compact = contentW < 696.0f;
+    const float helpW = 24.0f;
+    const float toggleW = compact ? core::theme::scaled(96.0f) : 112.0f;
+    const float newBtnW = compact ? core::theme::scaled(96.0f) : 136.0f;
+    const float innerW = helpW + toggleW + newBtnW + t.sizes.spacingSmall * 2.0f;
+    const float rowW = compact ? innerW : 304.0f;
+    const float segW = std::min(core::theme::scaled(264.0f),
+                                std::max(core::theme::scaled(compact ? 168.0f : 216.0f),
+                                         contentW - rowW - 200.0f - 16.0f));
+    const float titleW = std::min(core::theme::scaled(240.0f),
+                                  std::max(compact ? core::theme::scaled(136.0f) : 160.0f,
+                                           contentW - segW - rowW - 16.0f));
+    return {titleW, segW, rowW, innerW, toggleW, newBtnW};
+}
+
 } // namespace
 
 // 测试缝实现（声明与理由见 markdown_module_test_seam.h）。唯一消费方是
@@ -249,10 +281,11 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     // stack，画进 md.root 列闭包会占流内槽位把 body 下压 48px（bug149）。
     // 锚点静态推算（bug163 修正，旧算两处漂移）——①坐标空间：本 tooltip 挂
     // compose 根作用域，x/y 是窗口坐标，而 md.root 有左 pad，content 坐标须
-    // +pad 才是窗口 x（tab 带/把手同口径）；②行内偏移：md.actions 行（宽
-    // 304）justify END 实装 help 24 + gap 4(spacingSmall) + 大纲 112 + gap 4 +
-    // 新建 136（旧算 124 已漂移）= 280，左余 24 → help 中心 = 行内 x 36。行
-    // 起点窗口 x = pad + (contentW - 304)，故锚点 x = pad + contentW - 268。
+    // +pad 才是窗口 x（tab 带/把手同口径）；②行内偏移：md.actions 行 justify
+    // END，首项（help 24）x = 行起点 + (行宽 − 控件实宽)，行起点窗口 x =
+    // pad + (contentW − 行宽) → help 中心 = pad + contentW − 控件实宽 + 12
+    // （宽档 = pad + contentW − 280 + 12 = 旧值 −268；紧凑档行宽=控件实宽，
+    // 公式同源不漂移）。
     // bounds 取窗口口径：右限 = screen.width - pad - 560 - 12，气泡 560 宽
     // clamp 右贴后指针尖（anchorX - tooltipX）恰落按钮中心正下方；y 向
     // topLimit 44 把气泡钉页头正下。面板宽 560——本句 4 组快捷键（约 19 全角
@@ -262,7 +295,8 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
         .theme(componentTheme)
         .source("md.help.icon.bg")
         .value("快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层")
-        .anchor(pad + contentW - 304.0f + 36.0f, ui_kit::kHeaderH * 0.5f)
+        .anchor(pad + contentW - headerLayout(contentW, t).actionsInnerW + 12.0f,
+                ui_kit::kHeaderH * 0.5f)
         .bounds(screen.width - pad, screen.height)
         .minWidth(560.0f)
         .maxWidth(560.0f)
@@ -342,17 +376,14 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
         .size(contentW, ui_kit::kHeaderH)
         .alignItems(eui::Align::CENTER)
         .content([&] {
-            const float actionsW = 304.0f;   // 右操作组控件定宽（按钮 112/136 字面）
-            // B6/F-69-2：标题列与模式 Tab 段随字号派生；两者都按可用宽收口
-            // （放大档三列相加可超内容宽 → 必须先夹，否则 Tab/按钮被推出页面右缘）。
-            const float segW = std::min(core::theme::scaled(264.0f),
-                                        std::max(216.0f, contentW - actionsW -
-                                                             200.0f - 16.0f));
+            // 页头三段宽随内容宽收口（宽档下限 216/160 + 右操作组 304，1000 档
+            // 几何不变；紧凑档见 headerLayout 注释——bug312「新建笔记」820 档右缘裁切）
+            const HeaderLayout hl = headerLayout(contentW, t);
+            const float actionsW = hl.actionsRowW;
+            const float segW = hl.segW;
             // 2026-10-25 用户拍板：标题列按内容收紧（原 contentW−actionsW−segW 拉满，
             // 模式 Tab 被推到最右、中间 ~400px 空隙）；Tab 左聚跟标题，spacer 推 actions 靠右
-            const float kTitleColW =
-                std::min(core::theme::scaled(240.0f),
-                         std::max(160.0f, contentW - segW - actionsW - 16.0f));
+            const float kTitleColW = hl.titleW;
             ui.column("md.title")
                 .size(kTitleColW, ui_kit::kHeaderH)
                 .gap(2.0f)
@@ -437,7 +468,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                         .build();
 
                     components::toggleSwitch(ui, "md.outline.toggle")
-                        .size(112.0f, 36.0f)
+                        .size(hl.toggleW, 36.0f)
                         .checked(outlineOpen_)
                         .text("大纲")
                         .fontSize(t.sizes.fontSizeSmall)
@@ -449,7 +480,7 @@ void MarkdownModule::drawHeader(eui::Ui& ui,
                     // 用 componentTokensWeChat 给 button 组件绿底；row 布局定位不受 ui_kit::button position 干扰。
                     const auto wechatTheme = core::theme::componentTokensWeChat(t);
                     components::button(ui, "md.btn.new")
-                        .size(136.0f, 40.0f)
+                        .size(hl.newBtnW, 40.0f)
                         .text("新建笔记")
                         .fontSize(t.sizes.fontSizeBody)
                         .theme(wechatTheme, true)

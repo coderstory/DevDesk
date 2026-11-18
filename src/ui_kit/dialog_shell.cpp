@@ -75,8 +75,15 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
     // clamp 优先、可低于最小下限。框架内部另有 −48 一档 clamp，比这里更松不生效。
     const float w =
         std::min(dialogWidthPx(spec.width), std::max(0.0f, screen.width - 96.0f));
+    // need337：内容自然高供给（可选）——壳随内容：请求高 = 69 + provider(w−48)
+    // + 89；无 provider 维持请求高语义（spec.height）。两者同过下限抬升 + 视口
+    // clamp（下行不变）。
+    const float requestedH = spec.contentHeightProvider
+        ? kDialogHeaderH + spec.contentHeightProvider(w - kDialogBodyInsetX) +
+              kDialogFooterH + kDialogContentBottomGap
+        : spec.height;
     const float h = std::min(
-        std::max(spec.height, spec.compact ? 200.0f : kDialogMinH),
+        std::max(requestedH, spec.compact ? 200.0f : kDialogMinH),
         std::max(0.0f, screen.height - 96.0f));
 
     auto builder = components::dialog(ui, spec.id);
@@ -136,7 +143,7 @@ void drawDialogShell(eui::Ui& ui, const eui::Screen& screen, const DialogShellSp
             if (!spec.thirdAction.label.empty()) {
                 const float bw = shellButtonWidth(spec.thirdAction.label, t);
                 buildShellButton(ui, spec.id + ".third", kDialogInsetX, rowY, bw,
-                                 spec.thirdAction, false, false, t);
+                                 spec.thirdAction, spec.dangerThird, false, t);
             }
             // 内容区（唯一内滚区）：y=69 至细线上隙 16（底 = h−89 → 高 = h−158，
             // 规范 §3.2/§3.4）。此前漏减呼吸隙，内容区底顶到细线。

@@ -102,7 +102,8 @@ bool overlayAttached(const Box& trigger, const Box& overlay,
 
 // ── ⑤ z 序遮挡（L1 近似，可单测的纯几何核） ────────────────────────────────
 /// 判据：keyText 与 overlay 几何相交 + 非祖先关系 + overlay 可见（opacity 代理，
-/// 在 ui 层判定，纯核不收）+ overlay 子树 z 上界 ≥ keyText 上界 → 遮挡病发。
+/// 在 ui 层判定，纯核不收；hover 瞬态层按 hoverHiddenOpacity 常态隐没排除，
+/// bug#331）+ overlay 子树 z 上界 ≥ keyText 上界 → 遮挡病发。
 /// 已知局限（L1）：等值 z 且 overlay 在 DOM 序靠前时理论上漏报；等值 z 时弹层
 /// 恒后 compose（DOM 序靠后 = 绘制在上），故常态覆盖本仓已知病形。产品侧提供
 /// 精确绘制层信息后升级判据，接口不变。

@@ -309,6 +309,10 @@ struct SessionShared {
     // 冻结、可见 cell 恒 0、进程不退；晚于首输出则正常——早版装机未触雷只因用户
     // 进页晚于 pwsh 冷启动）。pending resize 由 reader 门控到首输出后再发。
     std::atomic<bool> firstOutput{false};
+    // bug249 按需出帧：reader 产出新输出/子进程退出 → 经此唤醒宿主（只出这一帧）。
+    // 加锁拷贝后调用：controller 装配瞬间与 reader 首输出天然竞态。
+    std::mutex notifyMutex;
+    std::function<void()> notify;
 };
 
 // 文件级事件原语（DoneEvent 移出类：worker 与 reader/writer 线程共享）
@@ -353,6 +357,15 @@ void readerTask(ShutdownTask& t) {
     std::string reply;
     auto* shared = t.shared.get();
     auto* vterm = t.vterm.get();
+    // bug249：产出唤醒（非 UI 线程 → requestUiUpdate）；一批输出一帧，空闲零帧
+    auto wake = [shared] {
+        std::function<void()> f;
+        {
+            std::lock_guard<std::mutex> lock(shared->notifyMutex);
+            f = shared->notify;
+        }
+        if (f) f();
+    };
     // ---- TermPerf 诊断（bug248 临时，删诊断时整块移除）：只累加计数，每 5s 一条
     static std::atomic<uint64_t> perfBytes{0};
     static std::atomic<uint64_t> perfFeedNs{0};
@@ -491,6 +504,7 @@ void readerTask(ShutdownTask& t) {
                 shared->wqCv.notify_one();
                 reply.clear();
             }
+            wake(); // bug249：新内容已进 vterm → 请求一帧上屏
         }
     }
     // 退出码收割（有界 kHarvestWaitMs ≤ worker 兜底窗口，P1-3；拿不到=约定 0）。
@@ -503,6 +517,7 @@ void readerTask(ShutdownTask& t) {
     }
     shared->exitCode.store(int32_t(code), std::memory_order_relaxed);
     shared->exited.store(true, std::memory_order_relaxed); // 坑⑦：断裂=会话结束，宿主不崩
+    wake(); // bug305：退出也要唤醒一帧——pollAll 靠它迁移 Exited 并摘泵
     // P1-3：先置 retired 再 set done——worker 见 done 即可见 retired（DoneEvent 内
     // mutex 建 happens-before），join 分支由此可达，join 后才析构 task
     t.readerRetired.store(true, std::memory_order_relaxed);
@@ -733,7 +748,28 @@ public:
         std::thread(shutdownTaskWorker, t).detach();
     }
 
+    void setOutputNotify(std::function<void()> notify) override {
+        std::lock_guard<std::mutex> lock(shared_->notifyMutex);
+        shared_->notify = std::move(notify);
+    }
+    bool supportsOutputNotify() const override { return true; }
+
+    // bug305 根因：ConPTY 在子进程退出时**不保证**输出管道断裂（实测 pwsh `exit` 后
+    // 25s+ 无 EOF，reader 永远阻塞在 ReadFile → exited 标志永不置真 → 会话卡 Running、
+    // 覆盖卡不出现）。进程句柄才是权威判据：UI 线程 pollAll 每次巡检一次（零阻塞），
+    // 进程已终止即就地收割退出码并置 exited。句柄关闭只在 terminate 之后的 shutdown
+    // worker 内发生，而 terminate/exited 同在 UI 线程 → 无并发关句柄面。
     bool exited(int32_t* exitCode) override {
+        if (!shared_->exited.load(std::memory_order_relaxed) &&
+            !terminated_.load(std::memory_order_relaxed)) {
+            const HANDLE h = task_->hProcess;
+            if (h != nullptr && WaitForSingleObject(h, 0) == WAIT_OBJECT_0) {
+                DWORD code = 0;
+                if (GetExitCodeProcess(h, &code) != FALSE)
+                    shared_->exitCode.store(int32_t(code), std::memory_order_relaxed);
+                shared_->exited.store(true, std::memory_order_relaxed);
+            }
+        }
         if (!shared_->exited.load(std::memory_order_relaxed)) return false;
         if (exitCode != nullptr) *exitCode = shared_->exitCode.load(std::memory_order_relaxed);
         return true;

@@ -3,7 +3,10 @@
 // 四道过滤契约（feasibility §4.2，逐条对齐，偏离即契约变更）：
 //   ① 角色过滤：只取 user/assistant 正文；工具结果仅在 is_error 时保留 200 字节摘要，
 //     thinking/tool_use 块一律丢弃；
-//   ② 注入块剔除：正文含 <system-reminder 标记 → 整条丢弃（不能当项目记忆）；
+//   ② 注入/系统块剔除：正文含注入标记 → 整条丢弃（不能当项目记忆）。
+//     标记族（need333 F-06 L1，判据=scheme-card §1）：<system-reminder 原有 +
+//     P2 local-command 命令回显族标签 + P1 task-notification 系统通知块
+//    （行首对齐 + 3 行内子标签结构确认）；
 //   ③ 单事件截断：上限 kMaxEventBytes 字节，UTF-8 码点边界安全截断；
 //   ④ 段级跳过：整段没有 user 正文时跳过（在 SegmentAssembler，不在本单元）。
 // event_seq = 该行在会话文件中的 0 基行号，文件内单调，跨尾读稳定——采集幂等的唯一键。

@@ -477,23 +477,21 @@ REGISTER_TEST(mcp_card_port_feedback_four_states_and_persist_gate,
     clickApply("mcp_fb_a2");
     DOCTEST_CHECK(feedbackText("mcp_fb_v2").find("端口无效") != std::string::npos);
     DOCTEST_CHECK_EQ(store.load().mcpPort, 8931);
-    // ③ 输入变化 → 清错回静态提示
+    // ③ 输入变化 → 清错；D-8：静态提示文本已删除（空串 = 无残留说明）
     typeDraft("mcp_fb_t3", "9");
-    DOCTEST_CHECK(feedbackText("mcp_fb_v3").find("改后回车或点「应用」") !=
-                  std::string::npos);
+    DOCTEST_CHECK(feedbackText("mcp_fb_v3").empty());
     // ④ 合法且未变化（draft=当前端口 8931）→ 三级字「端口未变化」
     typeDraft("mcp_fb_t4", "8931");
     clickApply("mcp_fb_a4");
     DOCTEST_CHECK(feedbackText("mcp_fb_v4").find("端口未变化") != std::string::npos);
     DOCTEST_CHECK_EQ(store.load().mcpPort, 8931);
-    // ⑤ 合法且变化 → 落库 + 反馈回静态提示 + 桥 applyPort 收到新端口
+    // ⑤ 合法且变化 → 落库 + 反馈清空 + 桥 applyPort 收到新端口
     app::mcp::setHandlers(&mcpRecStart, &mcpRecStop, &mcpRecApplyPort,
                           &mcpRecStatus);
     g_mcpBridge.running = true;  // 运行中改端口 = 桥内重启
     typeDraft("mcp_fb_t5", "9000");
     clickApply("mcp_fb_a5");
-    DOCTEST_CHECK(feedbackText("mcp_fb_v5").find("改后回车或点「应用」") !=
-                  std::string::npos);
+    DOCTEST_CHECK(feedbackText("mcp_fb_v5").empty());
     DOCTEST_CHECK_EQ(store.load().mcpPort, 9000);
     DOCTEST_CHECK_EQ(g_mcpBridge.applyCalls, 1);
     DOCTEST_CHECK_EQ(g_mcpBridge.lastApplyPort, 9000);
@@ -555,7 +553,7 @@ REGISTER_TEST(mcp_card_command_port_source_running_vs_configured,
 })
 
 REGISTER_TEST(mcp_card_geometry_derived_rows_three_scales,
-              "mcp: 85/100/130% 三档行盒不重叠、下边距 ≥16；100% 锚定 68/128/160", {
+              "mcp: 85/100/130% 三档行盒不重叠、下边距 ≥16；100% 锚定 50/110/142", {
     using namespace module::settings;
     // 卡高 = 行几何求和（不写死 160）；下边距下限 16：85% 档 roundFs(16)=14 必须
     // 被 std::max(16.0f, roundFs(16.0f)) 抬回 16
@@ -574,9 +572,10 @@ REGISTER_TEST(mcp_card_geometry_derived_rows_three_scales,
         // 下边距 ≥16（卡内边距契约）
         DOCTEST_CHECK(cardH - (cmdY + cmdH) >= 16.0f);
         if (percent == 100) {
-            DOCTEST_CHECK(std::fabs(portY - 68.0f) < 0.01f);
-            DOCTEST_CHECK(std::fabs(cmdY - 128.0f) < 0.01f);
-            DOCTEST_CHECK(std::fabs(cardH - 160.0f) < 0.01f);
+            // D-12：desc 死区回收（端口行 68→50），卡高 160→142
+            DOCTEST_CHECK(std::fabs(portY - 50.0f) < 0.01f);
+            DOCTEST_CHECK(std::fabs(cmdY - 110.0f) < 0.01f);
+            DOCTEST_CHECK(std::fabs(cardH - 142.0f) < 0.01f);
         }
     }
     ::core::theme::setFontScale(1.0f);

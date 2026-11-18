@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -162,6 +164,80 @@ bool isNoiseEcho(const std::string& text) {
 
 }  // namespace
 
+// F-06 L2 段级洗（need333 记忆波 1，判据=scheme-card §1 P3/P4，P3 口径按实测
+// 4 形态扩）：P4 "[tool_error] " 行前缀剥（保留行内其余正文）；P3 擦除行内
+// "[Request interrupted by user…]" 括号段（含 for tool use 变体，覆盖独占行/
+// 行尾后缀/拼接形态），洗后空行整行丢。未命中行原样保留（对照集零误洗 =
+// 逐字节恒等）。
+std::string stripLeakMarkers(const std::string& body, bool* washed) {
+    constexpr std::string_view kInterrupt = "[Request interrupted by user";
+    constexpr std::string_view kToolErrPrefix = "[tool_error] ";
+    // pool:bug:346（BI 审查 P2）：1024B 事件截断（session_reader ③）可把中断
+    // 标记从中撕开，残段是 kInterrupt 真前缀 find 不命中→入卡。撕裂只发生在
+    // 被截断文本尾部，行尾=真前缀即残段；≥8B「[Request」词根起判（正文裸
+    // '[' 等碎前缀不误洗，对照集零误洗契约不破）。返回残段字节数，0=非残段
+    const auto tornTailLen = [&kInterrupt](const std::string& l)
+                             -> std::size_t {
+        constexpr std::size_t kTornMin = 8;  // "[Request" 完整词根
+        std::size_t maxLen = kInterrupt.size() - 1;
+        if (maxLen > l.size()) maxLen = l.size();
+        for (std::size_t len = maxLen; len >= kTornMin; --len) {
+            if (l.compare(l.size() - len, len, kInterrupt, 0, len) == 0) {
+                return len;
+            }
+        }
+        return 0;
+    };
+    if (washed != nullptr) *washed = false;
+    std::string out;
+    out.reserve(body.size());
+    std::size_t pos = 0;
+    while (pos <= body.size()) {
+        const std::size_t nl = body.find('\n', pos);
+        const std::size_t end =
+            nl == std::string::npos ? body.size() : nl;
+        std::string line(body, pos, end - pos);
+        bool changed = false;
+        if (line.rfind(kToolErrPrefix, 0) == 0) {  // P4：剥前缀留正文
+            line.erase(0, kToolErrPrefix.size());
+            changed = true;
+        }
+        std::size_t hit = 0;  // P3：擦中断标记括号段
+        while ((hit = line.find(kInterrupt, hit)) != std::string::npos) {
+            const std::size_t close = line.find(']', hit);
+            line.erase(hit, (close == std::string::npos ? line.size()
+                                                         : close + 1) -
+                                hit);
+            changed = true;
+        }
+        // pool:bug:346：截断撕开残段兜底（完整命中含无']'尾已由上方循环处理）
+        if (const std::size_t torn = tornTailLen(line); torn != 0) {
+            line.erase(line.size() - torn);
+            changed = true;
+        }
+        if (changed) {
+            if (washed != nullptr) *washed = true;
+            // 洗后空行整行丢（P3 独占行形态：删该行，保留两侧正文）
+            if (line.find_first_not_of(" \t\r") != std::string::npos) {
+                out += line;
+                if (nl != std::string::npos) out.push_back('\n');
+            } else if (nl == std::string::npos && !out.empty() &&
+                       out.back() == '\n') {
+                // pool:bug:349：被丢的是末行时，前行携带的分隔 '\n' 遗成尾悬行
+                //（:556 红根因——洗后应零残段零悬行）；中间行不回收（分隔语义
+                // 归下一行）
+                out.pop_back();
+            }
+        } else {
+            out += line;
+            if (nl != std::string::npos) out.push_back('\n');
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return out;
+}
+
 core::Result<CollectRoundReport> runCollectRound(
     collector::Collector& collector, const sanitize::SanitizeGate& gate,
     proposals::ProposalStore& store,
@@ -191,6 +267,17 @@ core::Result<CollectRoundReport> runCollectRound(
     // F-01 跨轮/跨会话已知指纹集（pending + 近期已决）；同轮段间去重另计
     std::unordered_set<std::string> knownFps = loadKnownFingerprints(store);
     std::unordered_set<std::string> roundFps;
+    // BD 批（bug191）单会话轮内预算：出卡数 + 溢出数 + 头/尾样本引用
+    //（头=该会话首个被丢弃段，尾=最后一个；单溢出时头尾合一）
+    struct SessionBudget {
+        int cards = 0;
+        int overflow = 0;
+        std::int64_t headSeq = -1;
+        std::int64_t tailSeq = -1;
+        std::string headFp;
+        std::string tailFp;
+    };
+    std::unordered_map<std::string, SessionBudget> budgets;
     for (const collector::Segment& seg : segments.value()) {
         // 单一管线入口：出机（入库提案）前每段必过闸
         auto gated = gate.process(seg.text);
@@ -219,7 +306,13 @@ core::Result<CollectRoundReport> runCollectRound(
             report.notes.push_back(std::move(n));
             continue;
         }
-        const std::string& body = gated.value().text;
+        // F-06 L2 段级洗（need333 记忆波 1）：脱敏闸后、低值过滤前剥泄漏标记
+        //（P3 中断行删 / P4 tool_error 前缀剥）；卡面与指纹走洗后正文，evidence
+        // 回溯链仍取 seg.text 原文（丢的是脏形态，不是知识本身）
+        bool leakWashed = false;
+        const std::string body =
+            stripLeakMarkers(gated.value().text, &leakWashed);
+        if (leakWashed) ++report.washed;
         // F-03 低价值过滤：①指令回声噪声 ②极短段（有效字符 <50）。跳过段
         // 记已处理（不入提案不重扫）；不产 note（风暴量级下动态流不刷屏），
         // 计数走 report 供观测。③纯 tool_error 段由 collector 出段闸保证
@@ -236,6 +329,26 @@ core::Result<CollectRoundReport> runCollectRound(
             continue;
         }
         roundFps.insert(fp);
+        // BD 批（bug191）：单轮单会话出卡上限——超限段丢弃（不建卡不排队），
+        // commit 照常记已处理（丢弃=终局不重放，靠样本引用留诊断线索不静默）。
+        // 落点在 F-06 洗 / F-03 低值 / F-01 去重之后：overflow 只数真卡级内容
+        //（噪声与重复另有计数，不占本上限也不虚增 overflow）
+        SessionBudget& budget = budgets[seg.sessionId];
+        if (budget.cards >= kMaxCardsPerSessionRound) {
+            const std::int64_t seq =
+                seg.events.empty()
+                    ? 0
+                    : static_cast<std::int64_t>(seg.events.front().eventSeq);
+            if (budget.headSeq < 0) {
+                budget.headSeq = seq;
+                budget.headFp = fp;
+            }
+            budget.tailSeq = seq;
+            budget.tailFp = fp;
+            ++budget.overflow;
+            ++report.overflowDropped;
+            continue;
+        }
         std::vector<proposals::ProposalEvidence> evidence;
         evidence.reserve(seg.events.size());
         for (const auto& ev : seg.events) {
@@ -271,12 +384,30 @@ core::Result<CollectRoundReport> runCollectRound(
             continue;
         }
         ++report.cardsCreated;
+        ++budgets[seg.sessionId].cards;  // BD 批：预算只数成功落库的卡
         RoundNote n;
         n.blocked = false;
         n.sessionId = seg.sessionId;
         n.text = "采集 · 会话 " + seg.sessionId + " 生成待审新增卡";
         if (onNote) onNote(n);
         report.notes.push_back(std::move(n));
+    }
+    // BD 批（bug191）：溢出样本收集 + 日志留痕（不静默）——每会话头/尾各一条
+    //（同段合一）；行内只有会话名/计数/指纹前 8 位（哈希非正文，脱敏红线不破）
+    for (const auto& kv : budgets) {
+        const SessionBudget& b = kv.second;
+        if (b.overflow == 0) continue;
+        report.overflowSamples.push_back(
+            OverflowSample{kv.first, b.headSeq, b.headFp});
+        if (b.tailSeq != b.headSeq) {
+            report.overflowSamples.push_back(
+                OverflowSample{kv.first, b.tailSeq, b.tailFp});
+        }
+        LOG_WARN("采集限流：会话 " + kv.first + " 本轮溢出丢弃 " +
+                 std::to_string(b.overflow) + " 段（单轮单会话上限 " +
+                 std::to_string(kMaxCardsPerSessionRound) + "，头样本 fp=" +
+                 b.headFp.substr(0, 8) + " 尾样本 fp=" + b.tailFp.substr(0, 8) +
+                 "，样本引用见 CollectRoundReport.overflowSamples）");
     }
     // 记账：处理完才推进水位/事件（拦截段也记已处理——不入提案但不重复扫）
     if (auto c = collector.commit(segments.value()); c.isFail()) {

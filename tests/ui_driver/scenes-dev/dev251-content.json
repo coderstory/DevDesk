@@ -1,0 +1,38 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 8000},
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "bug251 内容迁移：真控制台跑（工具 shell 网格不渲染）"},
+  {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 20000},
+  {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000, "_comment": "shell 首屏"},
+  {"type": "wait", "ms": 1200},
+
+  {"type": "type", "text": "echo M0MARK", "id": "app.term.input", "_comment": "TAB0 专属 marker"},
+  {"type": "key", "name": "Enter", "id": "app.term.input"},
+  {"type": "wait", "until": "text", "op": "contains", "text": "M0MARK", "timeoutMs": 20000, "skipExit": 77,
+   "_comment": "超时=本环境输入链不可用（77 跳过，网格内容断言不成立）"},
+  {"type": "screenshot", "path": "dev251-04-content-tab0.png"},
+
+  {"type": "click", "id": "app.term.act.new.bg", "_comment": "新建 TAB1（激活）"},
+  {"type": "wait", "until": "exists", "id": "app.term.tab.1.bg", "timeoutMs": 5000},
+  {"type": "wait", "ms": 1500, "_comment": "新会话 shell 起 + 稳定窗"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar"},
+  {"type": "type", "text": "echo M1MARK", "id": "app.term.input"},
+  {"type": "key", "name": "Enter", "id": "app.term.input"},
+  {"type": "wait", "until": "text", "op": "contains", "text": "M1MARK", "timeoutMs": 20000},
+  {"type": "screenshot", "path": "dev251-05-content-tab1.png"},
+
+  {"type": "click", "id": "app.term.tab.0.bg", "_comment": "切回 TAB0：页面内容应显示 M0MARK"},
+  {"type": "wait", "ms": 400, "_comment": "2-3 帧推进"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.0.bar", "_comment": "激活高亮迁移"},
+  {"type": "wait", "until": "text", "op": "contains", "text": "M0MARK", "timeoutMs": 8000,
+   "_comment": "内容迁移：网格必须是 TAB0 缓冲区（含 M0MARK）"},
+  {"type": "screenshot", "path": "dev251-06-content-back-tab0.png"},
+
+  {"type": "click", "id": "app.term.tab.1.bg"},
+  {"type": "wait", "ms": 400},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar"},
+  {"type": "wait", "until": "text", "op": "contains", "text": "M1MARK", "timeoutMs": 8000},
+  {"type": "screenshot", "path": "dev251-07-content-back-tab1.png"}
+ ]
+}

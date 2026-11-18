@@ -141,6 +141,9 @@ struct EditDialogState {
     std::string saveError;
     // need297 E2-a：打开沿已自动聚焦名称框（防每帧重发抢走用户焦点）；关窗复位
     bool focusSeeded = false;
+    // need337：上帧内容层底部（面板绝对 y，content lambda 尾回写）。供下帧壳高
+    // provider 与滚动量高（帧间自收敛；0 = 未实测，壳高回退 640 档）。
+    float contentBottom = 0.0f;
 };
 
 // 编辑弹窗绘制（关闭态也常驻构建，EUI 内建收起过渡依赖节点存在）。元素 id 以

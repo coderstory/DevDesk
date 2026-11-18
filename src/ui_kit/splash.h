@@ -57,6 +57,12 @@ bool splashCrossfadeActive();
 // 驱动淡化推进。由 app_sidebar compose 尾部调用（drawWindowRing 之后，最顶层）。
 void drawSplashOverlay(eui::Ui& ui, const eui::Screen& screen);
 
+// 托盘态启动跳过（bug307）：viewer-only（.md argv）/--minimized 冷启动主窗直落托盘
+// （首帧后不再 compose），splash 若照常启动会挂在「启动 splash 开始」永不结束——
+// 收尾只能由主窗帧触发。compose 首帧消费启动旗标处调用：splash 不启动、不计时、
+// 不打开始日志，托盘点「显示主窗口」首帧直接画主界面。已结束时幂等空操作。
+void skipStartupSplash();
+
 // 测试缝：置 true 后 drawSplashIfNeeded 恒返 false，不启动计时/动画/日志/requestUpdate——
 // 无头单测与 probe 生命周期远短于 splash 总长，不缝则主界面永不绘制。只有测试基建可调，
 // 生产不得触碰。用 header inline（局部 static）而非分线符号，避免 probe 链接拉入

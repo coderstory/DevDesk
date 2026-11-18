@@ -710,6 +710,14 @@ if [ "$RUN_TEST" = "1" ]; then
   # 红变绿是最危险的形态。现在：退出码非 0 一律红；grep 只作数字/文案提取，不参与红绿判定。
   TEST_RC=0
   TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || TEST_RC=$?
+  # QA 诊断钩子（need#214）：DEVDESK_TEST_FULL_LOG=<path> 落完整测试输出。FAIL 摘要行
+  # 只匹配 [FAIL]/^FAIL \[，用例体宏走 cerr 的 "FAIL [file:line]" 行（被进度点前缀化）
+  # 与 runner 批量输出的 "       assert:/exception:" 细节行都被滤掉；而门禁保护路径又
+  # 拦 agent 直跑 $TEST_BIN（下方「要看完整输出跑: $TEST_BIN」提示对 agent 会话不可达
+  # ——self-contradiction，本钩子闭合它）。默认关；不参与红绿判定。
+  if [ -n "${DEVDESK_TEST_FULL_LOG:-}" ]; then
+    printf '%s\n' "$TEST_OUT" > "$DEVDESK_TEST_FULL_LOG" || true
+  fi
   # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（以下 grep 均仅显示用）
   FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20) || true
   if [ -n "$FAIL_LINES" ]; then echo "$FAIL_LINES"; fi
@@ -831,7 +839,7 @@ if [ "$RUN_TEST" = "1" ]; then
       # 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——名字精确匹配 + rc=77
       # 双验才黄牌放行；这两个探针因其它成因跳过（rc≠77）仍按红，不静默。
       PROBE_FIT_FAM_VERIFIED=0
-      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe)$'; then
+      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
         # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe /
         # home_probes 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。
         # LastTest.log 不收录 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——
@@ -840,16 +848,33 @@ if [ "$RUN_TEST" = "1" ]; then
         # pip / mcpserve 起真 HTTP 服务，不能进守卫链自动跑），argless 登记即退 77
         # （tests/probes/memory_install_probe.cpp:331 + tests/CMakeLists.txt:576/583）；
         # 漏名单会让完整档恒报「必须人工查」，收口/发版档假红。
+        # 终端 ConPTY 家族对（need#214 CG 批 2026-11-18 收编）：terminal_conpty_win_probe
+        # 与 ui_driver_terminal-input 在无控制台宿主（agent 工具 shell / ctest 管道上下文）
+        # 下按 77 诚实跳过——ConPTY 输入回显链要求宿主有真控制台；真控制台形态实测
+        # 全绿（start 新控制台窗跑 conpty 探针 3/3 PASS，evidence/20261118-cg-wincompat/
+        # terminal-console.log）。主会话（真终端宿主）跑应不跳过直接过；子代理会话全
+        # 完整档必遇此对跳过——漏名单=收口档在 agent 会话恒红假阳性。
         PROBE_FIT_FAM_VERIFIED=1
-        for _fitprobe in b1_material_probe home_probes memory_install_probe; do
+        for _fitprobe in b1_material_probe home_probes memory_install_probe terminal_conpty_win_probe ui_driver_terminal-input; do
           echo "$PROBE_SKIPPED_NAMES" | grep -qx "$_fitprobe" || continue
           _fitrc=0
-          "$BUILD_DIR/tests/$_fitprobe$EXE_SUFFIX" >/dev/null 2>&1 || _fitrc=$?
+          if [ "${_fitprobe#ui_driver_}" != "$_fitprobe" ]; then
+            # ui_driver_ 前缀的家族成员是 ctest 场景名而非可执行名（可执行恒为
+            # devdesk_ui_driver）——按注册形态（tests/CMakeLists.txt add_test）复跑：
+            # --script 场景 json + --out-dir/--report-json 落 build/tests/ui-drive-shots。
+            "$BUILD_DIR/tests/devdesk_ui_driver$EXE_SUFFIX" \
+              --script "tests/ui_driver/scenes/${_fitprobe#ui_driver_}.json" \
+              --out-dir "$BUILD_DIR_ABS/tests/ui-drive-shots" \
+              --report-json "$BUILD_DIR_ABS/tests/ui-drive-shots/${_fitprobe#ui_driver_}-verify-report.json" \
+              >/dev/null 2>&1 || _fitrc=$?
+          else
+            "$BUILD_DIR/tests/$_fitprobe$EXE_SUFFIX" >/dev/null 2>&1 || _fitrc=$?
+          fi
           [ "$_fitrc" -eq 77 ] || PROBE_FIT_FAM_VERIFIED=0
         done
         unset _fitprobe _fitrc
       fi
-      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$|memory_install_probe$)' || true)"
+      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$|memory_install_probe$|terminal_conpty_win_probe$|ui_driver_terminal-input$)' || true)"
       # 双验失败必须单独判红（bug234，code-reviewer 复审 P1）：上面 rc=77 复跑把
       # PROBE_FIT_FAM_VERIFIED 置 0 的语义是「名字在名单里，但跳过成因不是设计内
       # 的那个」——例如探针产物缺失 rc=127、或该探针因其它 bug 退其它码。此时
@@ -858,13 +883,13 @@ if [ "$RUN_TEST" = "1" ]; then
       # 把假红换成静默假绿，与 :820 注释「rc≠77 仍按红，不静默」正相反。
       # 故本判据必须排在家族放行之前，且只对「名单内探针确实被跳过」时生效。
       PROBE_FIT_FAM_HAS_MEMBER=0
-      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe)$'; then
+      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
         PROBE_FIT_FAM_HAS_MEMBER=1
       fi
       if [ "$PROBE_FIT_FAM_HAS_MEMBER" = "1" ] && [ "$PROBE_FIT_FAM_VERIFIED" != "1" ]; then
         echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——名单内探针的跳过成因不是设计内那一个（复跑退出码非 77），必须人工查"
-        echo "   名单内探针（b1_material_probe / home_probes / memory_install_probe）被跳过时"
-        echo "   必须是其设计内成因（小屏钳窗 / argless 手动驱动）才放行；退出码非 77 说明"
+        echo "   名单内探针（b1_material_probe / home_probes / memory_install_probe / terminal_conpty_win_probe / ui_driver_terminal-input）被跳过时"
+        echo "   必须是其设计内成因（小屏钳窗 / argless 手动驱动 / 无控制台宿主 ConPTY 回显不可验）才放行；退出码非 77 说明"
         echo "   探针产物缺失、崩溃或该探针自身出了新问题——不是能力门控，不能黄牌放行。"
         echo "──── 跳过清单 ────"
         echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
@@ -873,7 +898,7 @@ if [ "$RUN_TEST" = "1" ]; then
       fi
       if [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
         if [ "$PROBE_FIT_FAM_VERIFIED" = "1" ]; then
-          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知环境/驱动跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；memory_install_probe：归 QA 显式子命令驱动，argless 即退 77——均已复跑单探针验证退出码 77）——设计内跳过，不判红"
+          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知环境/驱动跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；memory_install_probe：归 QA 显式子命令驱动，argless 即退 77；terminal_conpty_win_probe/ui_driver_terminal-input：无控制台宿主下 ConPTY 回显链不可验，真控制台实测全绿——均已复跑单探针验证退出码 77）——设计内跳过，不判红"
           echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
         else
           echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红"

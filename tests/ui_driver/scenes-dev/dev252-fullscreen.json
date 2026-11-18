@@ -1,0 +1,31 @@
+{
+ "version": 1,
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "bug252：进终端页"},
+  {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 4000},
+  {"type": "wait", "ms": 400},
+  {"type": "click", "id": "app.term.act.new.bg", "_comment": "第二 TAB（用于激活条/关闭钮可见性对照）"},
+  {"type": "wait", "until": "exists", "id": "app.term.tab.1.bg", "timeoutMs": 5000},
+  {"type": "wait", "ms": 250},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar", "_comment": "基线：全屏前激活条在"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.close.icon", "_comment": "基线：全屏前激活 TAB 关闭钮在"},
+
+  {"type": "click", "id": "app.term.act.fs.bg", "_comment": "bug252 触发点：进全屏"},
+  {"type": "wait", "until": "exists", "id": "app.term.act.fs.icon", "timeoutMs": 4000},
+  {"type": "wait", "ms": 300, "_comment": "2-3 帧，排除转场帧假象"},
+
+  {"type": "assert", "check": "missing", "id": "app.sidebar.nav", "_comment": "侧栏 0 宽：导航容器不可达"},
+  {"type": "assert", "check": "missing", "id": "app.sidebar.item.Terminal.hit", "_comment": "侧栏 0 宽：条目命中区消失"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar", "_comment": "全屏态 TAB 激活条保留"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.close.icon", "_comment": "全屏态激活 TAB 关闭钮保留"},
+  {"type": "dump", "path": "dev252-fullscreen.txt", "_comment": "全屏几何：端终全宽 + 无 app.sidebar.* 行"},
+  {"type": "screenshot", "path": "dev252-01-fullscreen.png"},
+
+  {"type": "click", "id": "app.term.act.fs.bg", "_comment": "退全屏"},
+  {"type": "wait", "ms": 300},
+  {"type": "assert", "check": "exists", "id": "app.sidebar.nav", "_comment": "侧栏还原"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.bar"},
+  {"type": "assert", "check": "exists", "id": "app.term.tab.1.close.icon"},
+  {"type": "screenshot", "path": "dev252-02-restored.png"}
+ ]
+}

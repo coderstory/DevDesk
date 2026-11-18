@@ -4858,11 +4858,13 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     DOCTEST_CHECK_EQ(edInput->frame.x - edCol->frame.x, kInsetNow);
     DOCTEST_CHECK(kInsetNow < kInsetBefore);          // 8 < 16
     DOCTEST_CHECK(edInput->frame.width > 720.0f);     // 写作列钳已去掉
-    // 池130/池164：tab 带压编辑列顶后，input y 偏移 = kNoteTabBandH + 16 顶距 +
-    // 24 chip 行 + 8 间距。带高随全站 wtab 小档（kWtabSmallHeight，池167 放大
-    // 后自动跟随）、带下浮空缝已删（F4），不写死字面。
+    // 池130/池164 + bug#164 打回#1：tab 带压编辑列顶后，input y 偏移 = kNoteTabBandH
+    // + 8 顶距 + 24 chip 行 + 8 间距。chip 栏含「添加标签」输入（md.tags.add 120×24，
+    // §3.3.4）无标签也恒绘制——带高不随标签数收缩，仅顶距 16→8 收敛（对齐
+    // kTextColumnInsetX 横向留白，W2 MD-02 留白最小化同源）。带高随全站 wtab 小档
+    //（kWtabSmallHeight，池167 放大后自动跟随）、带下浮空缝已删（F4），不写死字面。
     DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y,
-                     ui_kit::kWtabSmallHeight + 48.0f);
+                     ui_kit::kWtabSmallHeight + 40.0f);
     const float edX = edInput->frame.x;
     const float edY = edInput->frame.y;
     const float edW = edInput->frame.width;

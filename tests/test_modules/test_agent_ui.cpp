@@ -2762,9 +2762,10 @@ REGISTER_TEST(agent_ui_tools_search_filter_matches,
 })
 
 // 防回归三元组：need170 工具弹窗描述·UTF-8 逐码点换行 + 末行省略号（修 bug #7 的
-// 文本面，与渲染同引擎测量）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽
+// 文本面，与渲染同引擎测量）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽。
+// need324 波2 增：CJK 行首禁则拉回（禁则符并入上一行行尾，不落行首）。
 REGISTER_TEST(agent_ui_tools_desc_wrap_ellipsize,
-              "agent_ui: 工具弹窗描述·UTF-8 逐码点换行与末行省略（wrapToolDescLines/ellipsizeToolLine）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽", {
+              "agent_ui: 工具弹窗描述·UTF-8 逐码点换行与末行省略（wrapToolDescLines/ellipsizeToolLine）——多行无丢字 / 不劈码点 / 超窄逐码点 / 省略号不超宽 / 行首禁则拉回（need324）", {
     constexpr float kFs = 13.0f;  // 与实现 descFs 同档（theme::scaled(13)，测试 scale=1）
     // 空文本 → 空集（「（无描述）」兜底在渲染层，不属本函数）
     DOCTEST_CHECK(module::agent::wrapToolDescLines("", 120.0f, kFs).empty());
@@ -2800,6 +2801,26 @@ REGISTER_TEST(agent_ui_tools_desc_wrap_ellipsize,
         }
         DOCTEST_CHECK_MESSAGE(joined == longCjk, "换行不得丢字，拼接实测: " +
                                                      joined);
+    }
+    // need324 波2 红绿判据：mw 取「9 字恰容 + 半字余量」→ 断行点钉在禁则符前——
+    // 旧逻辑禁则符落第 2 行行首（红）；拉回法并入第 1 行行尾（绿，行尾超 mw
+    // ≤1 标点宽）。字体无关确定性：无论该符 advance 是否触发溢出，都归第 1 行
+    //（未触发即自然容纳，触发了即拉回，两条路同归）。表抽样 = 调研 §二最小集
+    // 14 码点代表面（句读/结束括号/省略号）；谓词表本身的钉住在 EUI-NEO
+    // tests/unit/text_kinsoku.cpp（波 1）。
+    {
+        const std::string nine = "一二三四五六七八九";
+        const float w9 =
+            core::TextPrimitive::measureTextWidth(nine, "", kFs, 400);
+        const float mw = w9 + kFs * 0.5f;
+        for (const char* punct : {"，", "。", "、", "；", "：", "！",
+                                  "？", "）", "」", "】", "…"}) {
+            const auto ls =
+                module::agent::wrapToolDescLines(nine + punct + "零", mw, kFs);
+            DOCTEST_REQUIRE(ls.size() == 2);
+            DOCTEST_CHECK_EQ(ls[0], nine + punct);
+            DOCTEST_CHECK_EQ(ls[1], std::string("零"));
+        }
     }
     // 超窄（1px）→ 逐码点一行一字（CJK 与 ASCII 同口径）
     {
@@ -2991,8 +3012,9 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
                           "槽位下拉展开挤动了破坏性开关行");
 
     // ⑥ 超长任务名（need261 新口径）：不再永久让位 hover 操作组——标题按
-    // 「卡内可用 − 8 − 药丸宽」封顶单行省略、不出卡；hover 期碰撞守卫收窄
-    //（无头不模拟 hover，判据在 compose：pillCollides → titleHoverMaxW）
+    // 「卡内可用 − 16 − 药丸宽」封顶单行省略、不出卡；hover 期碰撞守卫收窄
+    //（无头不模拟 hover，判据在 compose：pillCollides → titleHoverMaxW；
+    // 间距 8→16 = debt309 N5）
     DOCTEST_REQUIRE(clickId(ui2c, "agent.dialog.task.cancel.bg"));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_geo3");
@@ -3003,14 +3025,14 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
                                 longRow != nullptr,
                             "超长任务名的行/标题/详情 chip 缺失");
     DOCTEST_CHECK(longTitle->frame.width > 0.0f);
-    // 标题封顶上界 = 卡宽 − 左轨 24 − 间距 8 − 药丸最小宽 30（药丸 = 文字实宽
-    // + 30 框，恒 ≥30）：超长名必须被截断，不得吃满卡宽
+    // 标题封顶上界 = 卡宽 − 左轨 24 − 间距 16（debt309 N5）− 药丸最小宽 30
+    //（药丸 = 文字实宽 + 30 框，恒 ≥30）：超长名必须被截断，不得吃满卡宽
     DOCTEST_CHECK_MESSAGE(
         longTitle->frame.width <=
-            longRow->frame.width - 24.0f - 8.0f - 30.0f + 0.5f,
+            longRow->frame.width - 24.0f - 16.0f - 30.0f + 0.5f,
         "超长任务名未按 inline 药丸口径封顶：标题宽 " +
             std::to_string(longTitle->frame.width) + " 上界 " +
-            std::to_string(longRow->frame.width - 62.0f));
+            std::to_string(longRow->frame.width - 70.0f));
     DOCTEST_CHECK_MESSAGE(frameContained(*longRow, *longTitle),
                           "标题越出任务卡");
     DOCTEST_CHECK_MESSAGE(frameContained(*longRow, *detailChip),
@@ -6392,7 +6414,7 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     const DotCase dotCases[] = {
         {failTid, core::theme::current().colors.error, "失败"},
         {okTid, core::theme::current().colors.success, "成功"},
-        {idleTid, core::theme::current().colors.textTertiary, "—"},
+        {idleTid, core::theme::current().colors.textTertiary, "未运行"},
     };
     for (const auto& dc : dotCases) {
         const auto* dot = ui.find("agent.task." + dc.tid + ".status.dot");
@@ -6477,16 +6499,20 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     DOCTEST_CHECK_MESSAGE(row2->frame.y + row2->frame.height <= row3->frame.y + 0.5f,
                           "行 2 与行 3 未纵向分离");
     DOCTEST_CHECK_MESSAGE(frameContained(*card, *row3), "行 3 越出卡底");
-    // need261：行 2 链（触发 → 最近运行，间距 10，废除右对齐）
-    const auto* lastrunEl = ui.find("agent.task." + idleTid + ".lastrun");
+    // need261：行 2 链（触发 → 最近运行，间距 10，废除右对齐）。
+    // 链尾断言用有运行记录的任务（okTid）：.lastrun 仅在 lastRunText 非空时渲染
+    //（agent_module.cpp:1116 empty 跳建），无运行任务不建元素——链几何意图
+    // 用有数据任务验，idle 卡按设计无链尾。
+    const auto* row2Chain = ui.find("agent.task." + okTid + ".trigger");
+    const auto* lastrunEl = ui.find("agent.task." + okTid + ".lastrun");
     DOCTEST_REQUIRE_MESSAGE(lastrunEl != nullptr, "行 2 链尾 .lastrun 缺失");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(lastrunEl->frame.x - (row2->frame.x + row2->frame.width), 10.0f),
+        nearPx(lastrunEl->frame.x - (row2Chain->frame.x + row2Chain->frame.width), 10.0f),
         "最近运行应链尾跟触发文案（间距 10，x 差实测 " +
-            std::to_string(lastrunEl->frame.x - row2->frame.x -
-                           row2->frame.width) + "）");
+            std::to_string(lastrunEl->frame.x - row2Chain->frame.x -
+                           row2Chain->frame.width) + "）");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(lastrunEl->frame.y - row2->frame.y, 0.0f),
+        nearPx(lastrunEl->frame.y - row2Chain->frame.y, 0.0f),
         "最近运行应与触发文案同带（行 2）");
     // 网格化后同排同列：四张卡两两不重叠（flow 换行不能压卡）
     const std::string cardIds[] = {okTid, failTid, idleTid, offTid};
@@ -6526,13 +6552,14 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
                           "启动钮应行 3 顶 y=76，实测 y=" +
                               std::to_string(runBgS->frame.y - card->frame.y));
     DOCTEST_CHECK_FALSE(runBgS->disabled);
-    // need261：状态药丸 inline 跟标题（pill 左缘 = 标题右缘 + 8，右缘不越
-    // 卡内容右缘；废除右锚钉卡缘）
+    // need261：状态药丸 inline 跟标题（pill 左缘 = 标题右缘 + 16，右缘不越
+    // 卡内容右缘；废除右锚钉卡缘）。间距 8→16：debt309 N5（F4 批已改实现，
+    // 此处同步断言）。
     const auto* pillBgS = ui.find("agent.task." + idleTid + ".pill.bg");
     DOCTEST_REQUIRE_MESSAGE(pillBgS != nullptr, "行 1 缺状态药丸 .pill.bg");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(pillBgS->frame.x - (row1->frame.x + row1->frame.width), 8.0f),
-        "药丸应 inline 跟标题（间距 8，x 差实测 " +
+        nearPx(pillBgS->frame.x - (row1->frame.x + row1->frame.width), 16.0f),
+        "药丸应 inline 跟标题（间距 16，x 差实测 " +
             std::to_string(pillBgS->frame.x - row1->frame.x -
                            row1->frame.width) + "）");
     DOCTEST_CHECK_MESSAGE(

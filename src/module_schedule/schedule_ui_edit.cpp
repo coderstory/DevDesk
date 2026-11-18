@@ -16,6 +16,7 @@
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/input.h>
+#include <components/scrollview.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -524,6 +525,29 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
         };
     shell.cancel = {"取消", doCancel};
     shell.confirm = {"保存", doSave};
+    // need338：删除钉壳底区行左端（壳 thirdAction 左槽 + dangerThird 危险变
+    // 体），几何随壳 clamp 后真实 h——旧手工钮按本函数 h=640 常量偏移，小视口
+    // 壳钳高下命中区溢出到 backdrop（点背景=误触删除链，即 #338 症状）。仅编
+    // 辑既有规则出现；点击链路不变：requestDelete(ruleId) → 宿主延帧开确认
+    // 弹窗（need300 deferredDeleteId_ 机制原样保留）。
+    if (st.ruleId != 0 && host.requestDelete) {
+        shell.thirdAction = {
+            "删除", [&st, &host] { host.requestDelete(st.ruleId); }};
+        shell.dangerThird = true;
+    }
+    // need337：壳高随内容自适应（AW 方案）：provider 供自然内容高（上帧
+    // contentBottom 实测、帧间自收敛），请求高 = 69 + 高 + 89；上限仍 640 档
+    //（h−158 = 头 69 + 底 73 + 隙 16 投影为内容高上限），小视口由壳视口
+    // clamp，内容被压缩时 content 内自包滚动（见下方 scrollView）。首帧未实测
+    //（contentBottom=0）回退 640 档；spec.height 此时仅作无 provider 语义的
+    // 兜底字段。
+    shell.contentHeightProvider = [&st, h](float) {
+        const float cap = h - (ui_kit::kDialogHeaderH + ui_kit::kDialogFooterH +
+                               ui_kit::kDialogContentBottomGap);
+        return st.contentBottom > 0.0f
+            ? std::min(st.contentBottom - ui_kit::kDialogHeaderH, cap)
+            : cap;
+    };
     shell.onOpenChange = [&st](bool v) { st.open = v; };
     // need297 E2-a：打开沿自动聚焦名称框（requestFocus 帧末按元素 id 消费，
     // 本帧树中无该元素则丢弃）。只发一次——每帧重发会抢走用户移到其它输入框
@@ -562,6 +586,24 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .onClick([&st, &host] { host.requestDelete(st.ruleId); })
                     .build();
             }
+
+        // need337：内容层包滚动区（同模块先例 schedule.list.scroll）：锚
+        //（0, 56）页签行起（头线下 4px），底 = area.y + area.h = panelH−89
+        //（panelH = 壳 clamp 后真实高，非本函数 640 常量）。滚动区占全宽，内容
+        // x 维持面板绝对坐标；y 维改为相对锚（页签 0、fy 40 = 旧 56/96 − 56）。
+        // 量高走上帧 contentBottom 实测（contentHeightProvider），不做 scratch
+        // 重放——content 体沿用外层 ui 引用（实构图与滚动区为同一 Ui 实例，元素
+        // 挂当前 open 容器 = 本滚动列，与既有壳 content 契约同构）。滚动条覆盖
+        // 式不占内容宽（字段宽不随滚动条出现回缩）。
+        const float viewTop = 56.0f;
+        components::scrollView(ui, "schedule.edit.scroll")
+            .position(0.0f, viewTop)
+            .size(area.w + ui_kit::kDialogBodyInsetX, area.y + area.h - viewTop)
+            .theme(themeTokens)
+            .scrollbarOverlay(true)
+            .contentHeightProvider(
+                [&st](float, float) { return std::max(0.0f, st.contentBottom - 56.0f); })
+            .content([&](eui::Ui&, float, float) {
             // 每帧按当前表单重算：校验红字 + 预览缓存同一真源（nextFire 迭代）
             st.form.errorText.clear();
             {
@@ -574,7 +616,8 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
             const auto touch = [&st] { st.saveError.clear(); };
 
-            // 类型页签（六 kind）；y=56 压在壳头区分隔线（52）下 4px
+            // 类型页签（六 kind）；y=0 相对滚动锚 56 = 面板绝对 56（压壳头区
+            // 分隔线 52 下 4px，原语义不变）
             const struct { core::schedule::RuleKind kind; const char* label; } kTabs[6] = {
                 {core::schedule::RuleKind::Once, "一次性"},
                 {core::schedule::RuleKind::Interval, "间隔"},
@@ -587,7 +630,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             const float tabW = (innerW - tabGap * 5.0f) / 6.0f;
             for (int i = 0; i < 6; ++i) {
                 drawKindTab(ui, "schedule.edit.kind." + std::to_string(i),
-                            x0 + static_cast<float>(i) * (tabW + tabGap), 56.0f, tabW, 30.0f,
+                            x0 + static_cast<float>(i) * (tabW + tabGap), 0.0f, tabW, 30.0f,
                             kTabs[i].label, st.form.kind == kTabs[i].kind, t,
                             [&st, touch, k = kTabs[i].kind] {
                                 st.form.kind = k;
@@ -595,7 +638,7 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                             });
             }
 
-            float fy = 96.0f;
+            float fy = 40.0f;  // = 96−56：相对滚动锚（need337）
             drawLabel(ui, "schedule.edit.name.label", x0, fy, "名称", t);
             components::input(ui, "schedule.edit.name")
                 .position(x0, fy + 20.0f)
@@ -951,6 +994,18 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
                     .build();
             }
             fy += 120.0f;
+
+            // need337：内容底回写 + 滚动列定高锚（masonry spacer 惯例：定位子
+            // 项不参与列 wrap，以显式 spacer 定高 = 本帧真实内容底）。删除钮已
+            // 迁壳 thirdAction 左槽 + dangerThird（need338，见上方 spec 装配处），
+            // 本层不再手工画。
+            st.contentBottom = viewTop + fy;  // 面板绝对底（壳高 provider 按 −69、
+                                              // 滚动量高按 −56 消费，两处同源）
+            ui.stack("schedule.edit.scroll.spacer")
+                .size(innerW, fy)  // fy = 滚动列相对底 = spacer 高（定位子项不参与 wrap）
+                .build();
+            })
+            .build();
         });
 }
 

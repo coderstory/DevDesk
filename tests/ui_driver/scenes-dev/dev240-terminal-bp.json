@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 15000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "until": "exists", "id": "app.term.cursor", "timeoutMs": 25000},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 60000},
+    {"type": "wait", "ms": 1000},
+
+    {"type": "type", "text": "C:/Tools/Python/3.13/python.exe D:/project/gui/DevDesk/tests/ui_driver/scenes-dev/dev240-bp-probe.py", "id": "app.term.input"},
+    {"type": "key", "name": "Enter", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "BP-PROBE-READY", "timeoutMs": 20000,
+     "_comment": "探针就绪且已发 ESC[?2004h（TUI 同条件）"},
+    {"type": "wait", "ms": 500},
+
+    {"type": "type", "text": "a", "id": "app.term.input", "_comment": "单字符：修复后 PTY 收到 0x61"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "RX %61", "timeoutMs": 8000,
+     "_comment": "bug240③ 绿判据：单键作为裸字节到达（未被 ESC[200~/201~ 包裹）"},
+    {"type": "screenshot", "path": "dev240-bp-01-char.png"},
+
+    {"type": "key", "name": "Up", "id": "app.term.input", "_comment": "方向键：修复后 PTY 收到 ESC[A"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "RX %1b%5b%41", "timeoutMs": 8000,
+     "_comment": "方向键作为 VT 序列裸到达（被包裹则出现 PASTE 行，此步红）"},
+
+    {"type": "type", "text": "b", "id": "app.term.input"},
+    {"type": "wait", "until": "text", "op": "contains", "text": "RX %62", "timeoutMs": 8000},
+    {"type": "screenshot", "path": "dev240-bp-02-keys.png"}
+  ]
+}

@@ -14,17 +14,26 @@ namespace ui_kit {
 // 绿族底同调），池127 alpha 0.94/0.80 逐字符保留；浓绿版（kGlassGreenMix 派生式）
 // 随需求撤销一并回退，绿相方案存档见
 // docs/design/2026-11-03-全局参数卡（卡片色相+TAB放大+间距）.md。
+// 2026-11-18 池127 D-10 再提档（老板口径：深色卡片明显更实）：Dark 0.95→0.98——
+// 流体底亮点（实测 p95 亮度≈115）穿卡残差 (1-α)·Δ ≤ 2/255 低于暗景可辨阈，
+// 卡内不再透出移动色块；Light 0.94 实测可接受、不动（评审明断）。
 inline eui::Color glassFill(const core::theme::Tokens& t) {
     const auto& s = t.colors.surface;
-    if (t.isDark) return {s.r, s.g, s.b, 0.95f};
+    if (t.isDark) return {s.r, s.g, s.b, 0.98f};
     return {s.r * 0.97f + 0.001f, s.g * 0.97f + 0.023f, s.b * 0.97f + 0.011f, 0.94f};
 }
 
 // L1 面板层（看板列 / 大面积底板）：比卡更透一档，让卡浮在面板上形成两层深度
 // 2026-11-03 池127 上调至 0.80/0.78（原 0.55），容器提实但保持与 L2 卡 0.14/0.17 的层差
+// 2026-11-18 bug#323 dark 再提档 0.78→0.97：D 批像素实测 todo 看板 dark L1 仍
+// +9±5 绿透（背景流体穿板可见，evidence/20261118-wave1-visual/review.md）；按
+// 最坏 +14 反解流体差 Δ≈64/255，(1-α)·Δ≤2/255（D-10 L2 卡同判据）需 α≥0.969。
+// 与 L2 卡 0.98 留 0.01 名义层差（暗景两层区分改由高光边/冷阴影承载）。波及面
+// 全部为 dark L1 底板：todo 看板列 todo_ui_board.cpp:371、agent 任务列表面板
+// agent_module.cpp:686（经 containerSurface）——同口径受益非回归。Light 不动。
 inline eui::Color glassPanelFill(const core::theme::Tokens& t) {
     const auto& s = t.colors.surface;
-    if (t.isDark) return {s.r, s.g, s.b, 0.78f};
+    if (t.isDark) return {s.r, s.g, s.b, 0.97f};
     return {s.r * 0.97f + 0.001f, s.g * 0.97f + 0.023f, s.b * 0.97f + 0.011f, 0.80f};
 }
 

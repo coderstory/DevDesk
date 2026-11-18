@@ -15,6 +15,7 @@
 #include <ui_kit/empty_state.h>  // need:297 E2-b：空态统一 kit 标准形态
 #include <ui_kit/wtab.h>  // need:296 D3：视图切换 Tab 换块面式统一组件
 #include <core/component_theme.h>
+#include <core/render/text.h>
 
 #include <algorithm>
 #include <chrono>
@@ -32,7 +33,7 @@ using core::theme::scaled;
 using core::theme::Tokens;
 
 // ---- 设计 §1/§4/§5 尺寸常量（字面量基准，经 scaled() 随全局字号缩放）----
-constexpr float kTopBarH = 48.0f;
+constexpr float kTopBarH = 38.4f;              // need339 0.8 档（原 48，仅顶栏卡域）
 constexpr float kPageMargin = 12.0f;          // §1 页边距 12（双侧 24）
 constexpr float kCardGap = 12.0f;             // §1 两卡间 gap 12 显式常量
 constexpr float kNarrowBreakpoint = 1200.0f;  // §9：<1200 左卡 280/缩进 12/搜索 240
@@ -116,6 +117,39 @@ std::pair<std::string, bool> ellipsisFit(const std::string& text, float fontSize
     return {text.substr(0, keep) + "…", true};
 }
 
+// 顶栏路径专用的实测截断（bug#292 D1）：上一版 ellipsisFit 按 0.62em/列估算，
+// 对 12px ASCII 路径高估约 35%（实测 ~0.46em）——480 盒只画到 ~345 就出省略号，
+// 盒内白留 ~135。此处用渲染同引擎 measureTextWidth 二分定截断点（≤log2(码点)次
+// 测量，路径短；CJK/任意 UTF-8 按码点边界，禁切半字符）。
+std::pair<std::string, bool> ellipsisFitMeasured(const std::string& text,
+                                                 float fontSize, float budgetW) {
+    constexpr float kWeight = 400.0f;
+    const std::string ell = "…";
+    if (core::TextPrimitive::measureTextWidth(text, {}, fontSize, kWeight) <= budgetW) {
+        return {text, false};
+    }
+    std::vector<size_t> cuts{0};
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char ch = static_cast<unsigned char>(text[i]);
+        i += (ch < 0x80) ? 1 : ((ch & 0xE0) == 0xC0) ? 2 : ((ch & 0xF0) == 0xE0) ? 3 : 4;
+        if (i <= text.size()) cuts.push_back(i);
+    }
+    size_t lo = 0;
+    size_t hi = cuts.size() - 1;
+    while (lo < hi) {
+        const size_t mid = (lo + hi + 1) / 2;
+        const float w = core::TextPrimitive::measureTextWidth(text.substr(0, cuts[mid]) + ell,
+                                                              {}, fontSize, kWeight);
+        if (w <= budgetW) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if (lo == 0) return {ell, true};
+    return {text.substr(0, cuts[lo]) + ell, true};
+}
+
 // 骨架 pulse（UI-A §8：opacity 0.45↔1、1.2s ease-in-out alternate infinite；
 // 三角波+半余弦缓动近似，全骨架同相位）
 float skeletonPulseOpacity() {
@@ -139,10 +173,12 @@ void hitRect(eui::Ui& ui, const std::string& id, float x, float y, float w,
     hit.build();
 }
 
-// 次按钮（§5.1：高 32、底 surfaceElevated、radius 6、无边框无阴影）
+// 次按钮（§5.1：高 32、底 surfaceElevated、radius 6、无边框无阴影；
+// fontSizePx 可覆盖：need339 顶栏 0.8 档传 11.2，其余调用点维持默认 14）
 void secondaryButton(eui::Ui& ui, const std::string& id, const std::string& label,
                      float x, float y, float w, float h, const Tokens& t,
-                     const std::function<void()>& onClick) {
+                     const std::function<void()>& onClick,
+                     float fontSizePx = scaled(14.0f)) {
     ui.stack(id)
         .position(x, y)
         .size(w, h)
@@ -155,7 +191,7 @@ void secondaryButton(eui::Ui& ui, const std::string& id, const std::string& labe
             ui.text(id + ".text")
                 .size(w, h)
                 .text(label)
-                .fontSize(scaled(14.0f))
+                .fontSize(fontSizePx)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textPrimary)
@@ -245,7 +281,15 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
 
     const float blockW = std::min(420.0f, w);
     const float blockX = (w - blockW) * 0.5f;
-    float y = h * 0.32f;
+    // bug#292 D5：整页空态垂直居中——块高=标题→副文案间距28+副文案→按钮间距30+
+    // （错误条 barH+16）+按钮36 = 94；原 h*0.32 起排使下方留白约为上方 1.8 倍
+    const float errH = c.emptyError()
+                           ? (c.emptyError()->detail.empty() ? scaled(44.0f)
+                                                             : scaled(64.0f)) +
+                                 scaled(16.0f)
+                           : 0.0f;
+    const float blockH = scaled(28.0f) + scaled(30.0f) + errH + scaled(36.0f);
+    float y = (h - blockH) * 0.5f;
 
     ui.text("git.empty.title")
         .position(blockX, y)
@@ -310,15 +354,17 @@ void composeEmptyPage(eui::Ui& ui, const eui::Screen& screen,
 // 切换仓库按钮右缘（need:299 §3.1：下拉右缘=按钮右缘对齐；按钮组=右锚两枚次钮）
 float switchButtonRightEdge(float w) {
     const float cardW = w - kPageMargin * 2.0f;
-    const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
-    return kPageMargin + cardW - scaled(12.0f) - refreshW - scaled(12.0f);
+    const float refreshW = textWidthEstimate("↻ 刷新", scaled(11.2f)) + scaled(24.0f);
+    // 右距 9.6 = composeTopBar inner（need339 0.8 同步）；末项 12 = 钮间 gap 不缩
+    return kPageMargin + cardW - scaled(9.6f) - refreshW - scaled(12.0f);
 }
 
 void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
                    const Tokens& t) {
     (void)narrow;  // 搜索框删除后窄窗档只剩路径宽度自适应（§9）
     // bug#297（老板令「一个圆角一个直角」）：顶栏改卡片形态与下方两卡同语言——
-    // 白卡+1px 边+radius 16+页边 12；卡内距 scaled(12) 与两卡内容列统一对齐
+    // 白卡+1px 边+radius 16+页边 12；need339 0.8 档卡内距 9.6（下方两卡仍 12，
+    // bug#297 内容列网格暂偏 2.4，是否跟随待设计拍板）
     const float cardX = kPageMargin;
     const float cardW = w - kPageMargin * 2.0f;
     ui.rect("git.top.bg")
@@ -329,56 +375,73 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
         .border(1.0f, t.colors.borderDefault)
         .build();
 
-    const float inner = scaled(12.0f);  // bug#297：三卡统一卡内距（内容列对齐网格）
+    const float inner = scaled(9.6f);   // need339 0.8 档：12→9.6（原三卡统一卡内距）
     float x = cardX + inner;
-    // 折叠展开钮（§3：仅左栏折叠时显示，为顶栏第一个元素 32×32）
+    // 折叠展开钮（§3：仅左栏折叠时显示；need339 0.8 档 25.6×25.6，原 32×32）
     if (c.listCollapsed()) {
-        const float btnY = kPageMargin + (kTopBarH - scaled(32.0f)) * 0.5f;
+        const float btnY = kPageMargin + (kTopBarH - scaled(25.6f)) * 0.5f;
         ui.stack("git.top.expand")
             .position(x, btnY)
-            .size(scaled(32.0f), scaled(32.0f))
+            .size(scaled(25.6f), scaled(25.6f))
             .content([&] {
                 ui.text("git.top.expand.glyph")
-                    .size(scaled(32.0f), scaled(32.0f))
+                    .size(scaled(25.6f), scaled(25.6f))
                     .icon(kGlyphList)
-                    .fontSize(scaled(14.0f))
+                    .fontSize(scaled(11.2f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textSecondary)
                     .build();
             })
             .build();
-        hitRect(ui, "git.top.expand.hit", x, btnY, scaled(32.0f), scaled(32.0f),
+        hitRect(ui, "git.top.expand.hit", x, btnY, scaled(25.6f), scaled(25.6f),
                 [&c] { c.toggleListCollapsed(); });
-        x += scaled(32.0f) + scaled(8.0f);
+        x += scaled(25.6f) + scaled(8.0f);
     }
 
     const std::string name = c.repoDisplayName();
-    const float nameW = textWidthEstimate(name, scaled(15.0f));
+    // bug#292 D2：估算式 textWidthEstimate 对 CJK 高估约 29%（3 字节 ×0.43em vs
+    // 实测 ~1.0em/字）——「示例仓库」盒宽 101 而墨宽 60，把仓名↔路径可见间距
+    // 撑到 ~58px。顶栏仓名改用渲染同引擎实测宽（§3 gap 12 才对得上）。
+    const float nameW =
+        core::TextPrimitive::measureTextWidth(name, {}, scaled(12.0f), 600);
     ui.text("git.top.name")
         .position(x, kPageMargin)
-        .size(nameW + scaled(8.0f), kTopBarH)
+        .size(nameW, kTopBarH)
         .text(name)
-        .fontSize(scaled(15.0f))
+        .fontSize(scaled(12.0f))
         .fontWeight(600)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary)
         .build();
 
+    // 仓名↔路径分隔「·」（§3：flex gap 12 + 分隔符；D2 原缺分隔符且间距超规）
+    x += nameW + scaled(12.0f);
+    const float sepW =
+        core::TextPrimitive::measureTextWidth("·", {}, scaled(9.6f), 400);
+    ui.text("git.top.sep")
+        .position(x, kPageMargin)
+        .size(sepW, kTopBarH)
+        .text("·")
+        .fontSize(scaled(9.6f))
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary)
+        .build();
+    x += sepW + scaled(12.0f);
+
     // 完整路径（need:299：搜索框删除后空间富余，max 360→480；单行省略号+tooltip
     // 全路径——§3 禁硬裁切，ellipsisFit 码点预算截断）
-    x += nameW + scaled(8.0f) + scaled(12.0f);
     const float switchRight = switchButtonRightEdge(w);
     const float pathMaxW = scaled(480.0f);
     const float pathW = std::min(
         pathMaxW, std::max(scaled(40.0f), switchRight - scaled(12.0f) - x));
     const auto [shownPath, pathTruncated] =
-        ellipsisFit(c.repoPathUtf8(), scaled(12.0f), pathW);
+        ellipsisFitMeasured(c.repoPathUtf8(), scaled(9.6f), pathW);
     ui.text("git.top.path")
         .position(x, kPageMargin)
         .size(pathW, kTopBarH)
         .text(shownPath)
-        .fontSize(scaled(12.0f))
+        .fontSize(scaled(9.6f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary)
         .build();
@@ -395,25 +458,25 @@ void composeTopBar(eui::Ui& ui, float w, bool narrow, GitPageController& c,
             .build();
     }
 
-    // 右侧按钮组：[切换仓库 ▾] [↻ 刷新]（次按钮 32px 高；卡内右距=inner 统一网格；
+    // 右侧按钮组：[切换仓库 ▾] [↻ 刷新]（need339 0.8 档 25.6 高，原 32；卡内右距=inner；
     // 切换仓库=下拉触发器 need:299 §3.1，原「迁移空态页」动线由下拉「浏览目录…」承接）
-    const float btnH = scaled(32.0f);
+    const float btnH = scaled(25.6f);
     const float btnY = kPageMargin + (kTopBarH - btnH) * 0.5f;
     const float switchW =
-        textWidthEstimate("切换仓库", scaled(14.0f)) + scaled(24.0f) + scaled(14.0f);
-    const float refreshW = textWidthEstimate("↻ 刷新", scaled(14.0f)) + scaled(24.0f);
+        textWidthEstimate("切换仓库", scaled(11.2f)) + scaled(24.0f) + scaled(14.0f);
+    const float refreshW = textWidthEstimate("↻ 刷新", scaled(11.2f)) + scaled(24.0f);
     const float refreshX = cardX + cardW - inner - refreshW;
     const float switchX = refreshX - scaled(12.0f) - switchW;
     secondaryButton(ui, "git.top.refresh", "↻ 刷新", refreshX, btnY, refreshW, btnH,
-                    t, [&c] { c.refresh(); });
+                    t, [&c] { c.refresh(); }, scaled(11.2f));
     secondaryButton(ui, "git.top.switch", "切换仓库", switchX, btnY, switchW, btnH,
-                    t, [&c] { c.toggleRepoDropdown(); });
-    // 文案右侧 fa-angle-down 12px textSecondary（§3；纯装饰 pointer 穿透，命中归按钮）
+                    t, [&c] { c.toggleRepoDropdown(); }, scaled(11.2f));
+    // 文案右侧 fa-angle-down（need339 0.8 档 9.6px，原 12；槽宽 14 不缩，纯装饰穿透）
     ui.text("git.top.switch.caret")
         .position(switchX + switchW - scaled(16.0f), btnY)
         .size(scaled(14.0f), btnH)
         .icon(kGlyphCaretDown)
-        .fontSize(scaled(12.0f))
+        .fontSize(scaled(9.6f))
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textSecondary)

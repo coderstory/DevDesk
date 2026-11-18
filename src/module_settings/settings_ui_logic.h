@@ -117,11 +117,23 @@ inline constexpr float kModulesCardHeight = 310.0f;
 inline constexpr float kModulesCardHeightWallpaper = 310.0f;
 // 模块插拔卡几何见下方 roundFs 之后的 modules* 派生函数（B6/F-69-3）。
 // 提醒弹窗卡（模块 tab，与 md 关联卡半宽配对，need260 设计 §2.2）：
-// 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y96 盒28
-//（行底 124）+ 下边距 16 = 140，三带格律与模块卡/通用配对卡同源。
-// 模块 tab 预算（need260 §6）：310 + 8 间距 + max(140, md 卡高) —— 默认 402 ≤
-// 可用 420 零滚动；Win 引导态 md 卡 152 → 414 仍在预算内。
-inline constexpr float kReminderCardHeight = 140.0f;
+// 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y108 盒28
+//（行距 16 刻度，行底 136）+ 下边距 16 = 152（#132 D-4：行距由 4 改全站 16，
+// 卡高随之 +4）。
+// 模块 tab 预算（need260 §6）：240（9 格 3 列，debt309 N3 底距 38→24）+ 16 间距
+// + max(152, md 卡高) = 408 ≤ 可用 420（余 12 零滚动；与 Win 引导态 md 卡同档）。
+inline constexpr float kReminderCardHeight = 152.0f;
+// 窄窗（<960）单列堆叠档：说明改 2 行（行高 18、盒 36），开关行下移 16 →
+// 行 y 80/124、行底 152 + 16 = 168（review 260 P2-2：窄档描述不许单行省略断在
+// 语义关键处；行距同 16 刻度）。
+inline constexpr float kReminderCardHeightNarrow = 168.0f;
+// 设置页半宽配对卡窄窗断点：**内容宽** <640（≈ 窗宽 912：侧栏 208 + 页内距 64）
+// 起两卡改单列上下堆叠（各占 100% 宽、行距 16），模块网格同档降 2 列
+//（review 260 P2-2 / P3-2：820 窗内容宽 548 堆叠，1000 窗内容宽 728 并排）。
+inline constexpr float kHalfPairStackBreakpoint = 640.0f;
+inline bool settingsCardsNarrow(float contentW) {
+    return contentW < kHalfPairStackBreakpoint;
+}
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + H28 间距令牌恢复）：
 // 卡高由最坏行序决定——H28 后（100% 档，设计系统 v1.0 令牌 4/8/12/16）：
@@ -157,12 +169,15 @@ inline bool modulesCardSingleColumn() {
 }
 // 列数派生：>1.15 档降单列；其余档 cells>8 时 3 列（池151：MCP 归位后 9 格 2 列
 // 撑 5 行，模块卡 366+16+92=474>420 破模块 tab 零滚动 → 3×3 恰 3 行），其余两列。
-inline int modulesCardCols(int cells) {
+// 窄窗（review 260 P3-2）：<960 档固定 2 列（3 列格宽 230 会把模块名截成
+// 「Claude 配置…」），9 格撑 5 行 → 卡高 450，窄窗允许出滚动。
+inline int modulesCardCols(int cells, bool narrow = false) {
     if (modulesCardSingleColumn()) return 1;
+    if (narrow) return 2;
     return cells > 8 ? 3 : 2;
 }
-inline int modulesCardRows(int cells) {
-    const int cols = modulesCardCols(cells);
+inline int modulesCardRows(int cells, bool narrow = false) {
+    const int cols = modulesCardCols(cells, narrow);
     return (cells + cols - 1) / cols;
 }
 // 开关格数 = 常规 8（kToggleable 表行数；2026-11-07 MCP 开关从模块卡标题行
@@ -173,15 +188,23 @@ inline int kModuleToggleCellCount(bool wallpaperSupported) {
 inline float modulesGridTopY() { return roundFs(68.0f); }   // 100% = 68
 inline float modulesNameH() { return roundFs(18.0f); }      // 100% = 18
 inline float modulesRowDescDy() { return modulesNameH() + roundFs(2.0f); }
-inline float modulesRowDescH() { return roundFs(16.0f); }   // 100% = 16
-inline float modulesRowPitch() { return roundFs(56.0f); }   // 100% = 56
-// 100% 档：8 格（壁纸不支持）两列 4 行 = 310（对齐 kModulesCardHeight）；
-// 9 格（含壁纸格）3 列 3 行 = 68 + 2×56 + (18+2+16) + 38 = 254。
-inline float modulesCardHeightFor(int cells) {
-    const float cellH = modulesNameH() + roundFs(2.0f) + modulesRowDescH();
+inline float modulesRowDescH(bool narrow = false) {
+    return roundFs(narrow ? 36.0f : 16.0f);   // 窄窗 2 行（行高 18×2）
+}
+inline float modulesRowPitch(bool narrow = false) {
+    return roundFs(narrow ? 72.0f : 56.0f);   // 窄窗 = 18+2+36 内容 + 16 行距
+}
+// 100% 档：8 格（壁纸不支持）两列 4 行 = 68 + 3×56 + (18+2+16) + 24 = 296；9 格
+//（含壁纸格）3 列 3 行 = 68 + 2×56 + (18+2+16) + 24 = 240；窄窗 9 格 2 列 5 行
+// = 68 + 4×72 + (18+2+36) + 24 = 436。debt309 N3：卡底内距 38 → 24 刻度
+//（review2 N3：38 比 24 刻度多 14；kModulesCardHeight=310 为 N3 前历史参考锚）。
+inline float modulesCardHeightFor(int cells, bool narrow = false) {
+    const float cellH = modulesNameH() + roundFs(2.0f) +
+                        modulesRowDescH(narrow);
     return modulesGridTopY() +
-           static_cast<float>(modulesCardRows(cells) - 1) * modulesRowPitch() +
-           cellH + roundFs(38.0f);
+           static_cast<float>(modulesCardRows(cells, narrow) - 1) *
+               modulesRowPitch(narrow) +
+           cellH + roundFs(24.0f);
 }
 
 // 下拉贴近窗体底边向下展开可能被裁剪，用同一套几何预判、出界则置 openUp 向上；弹层三项必须与 EUI-NEO dropdown 实际渲染一致（主题覆写 metrics 时需同步）。
@@ -282,18 +305,18 @@ inline float proxyCardHeightFor(std::size_t warnLines) {
 
 // MCP 配置卡行几何（drawMcpCard 与 mcpCardHeightFor 单一来源）：端口行 = FormRow
 //（行高 = logFieldHeight），状态行 / 命令行依次从行盒底派生，卡高不写死——85% 档
-// roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。MCP 卡不在 need155 重设计域，
-// 行 y 维持旧「desc 槽」口径（40+16+12=68），不随代理卡带几何走。
+// roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。旧「desc 槽」口径（40+16+12=68）
+// 随 #153 删说明文本退役为死区，D-12 回收：端口行 = 标题带底 38 + 12 = 50。
 inline float mcpPortRowY() {
-    return roundFs(40.0f) + roundFs(16.0f) + roundFs(12.0f);      // 100% = 68
+    return roundFs(16.0f) + roundFs(22.0f) + roundFs(12.0f);      // 100% = 50
 }
 inline float mcpStatusRowHeight() { return roundFs(18.0f); }      // 100% = 18
 inline float mcpCommandRowY() {
     return mcpPortRowY() + logFieldHeight() + mcpStatusRowHeight() +
            roundFs(6.0f);
-}                                                                 // 100% = 128
+}                                                                 // 100% = 110
 inline float mcpCommandRowHeight() { return roundFs(16.0f); }     // 100% = 16
-inline float mcpCardHeightFor() {                                 // 100% = 160
+inline float mcpCardHeightFor() {                                 // 100% = 142
     // 下边距下限 16：85% 档 roundFs(16) = 14，不能直接 roundFs(16)
     return mcpCommandRowY() + mcpCommandRowHeight() +
            std::max(16.0f, roundFs(16.0f));

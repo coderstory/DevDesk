@@ -50,9 +50,15 @@ std::string notepadAssocMacGuideText(const std::string& failingSummary);
 // 卡高（100% 档基准，运行期 roundFs 包裹）：标题带 y16 盒22 + 说明带 y40 盒16
 // + 状态带 y64 盒20（带底 84）+ 下边距 24 = 108。标题「记事本文件关联」19/600
 // 正式标题带；开关钉标题行右缘（x = w−72，全 tab 开关右锚单一口径）。
-// 零滚动预算（need260 §6）：配对行高 = max(提醒 140, 本卡 108) = 140 →
-// 模块 tab 310+8+140 = 402 ≤ 420 零滚动（本卡默认态不掌行高）。
+// 零滚动预算（need260 §6）：配对行高 = max(提醒 148, 本卡 108) = 148 →
+// 模块 tab 254+16+148 = 418 ≤ 420 零滚动（本卡默认态不掌行高）。
 inline constexpr float kNotepadAssocCardHeight = 108.0f;
+// review 260 P2-1：状态带缺失（None 态）时不留状态带占位——标题带 16+22、
+// 说明带 40+16，内容底 56 + 下边距 24 = 80（旧 108 让卡底多出 28px 空洞）。
+inline constexpr float kNotepadAssocCardHeightNoStatus = 80.0f;
+// 窄窗（<640 内容宽）单列堆叠档：说明改 2 行（行高 18、盒 36），其下各带整体下移 20
+// → 无状态 56+20+24 = 100 / 有状态 108+16 = 124 / 引导档 +16（review 260 P2-2）。
+inline constexpr float kNotepadAssocNarrowHintExtra = 20.0f;
 // 未生效引导带：引导文案 y88（Win 单行盒16 / mac 多行盒32+），Windows 另有
 // 一键按钮 y108 盒28（字面值不随字号缩放、主导卡高）。
 // 文字档（macOS 文字指引）行底 120 + 下边距 20 = 140；按钮档行底 136 + 16 = 152。
@@ -66,12 +72,18 @@ inline constexpr float kNotepadAssocGuideLineH = 16.0f;
 // notepadAssocMacGuideLineCount，600 最小窗/130% 字号档指引超两行，盒高随行数
 // 派生防静默裁切——承接 md 卡 review P2-1）；参考几何（100% 档两行）= 140 不变。
 inline float notepadAssocCardHeight(bool guide, bool oneClickButton,
-                                    int textGuideLines = 2) {
-    if (!guide) return kNotepadAssocCardHeight;
-    if (oneClickButton) return kNotepadAssocCardHeightBtnGuide;
+                                    int textGuideLines = 2,
+                                    bool hasStatus = true, bool narrow = false) {
+    const float narrowExtra = narrow ? kNotepadAssocNarrowHintExtra : 0.0f;
+    if (!guide) {
+        return (hasStatus ? kNotepadAssocCardHeight
+                          : kNotepadAssocCardHeightNoStatus) +
+               narrowExtra;
+    }
+    if (oneClickButton) return kNotepadAssocCardHeightBtnGuide + narrowExtra;
     const int lines = textGuideLines < 2 ? 2 : textGuideLines;
     return kNotepadAssocCardHeightTextGuide +
-           static_cast<float>(lines - 2) * kNotepadAssocGuideLineH;
+           static_cast<float>(lines - 2) * kNotepadAssocGuideLineH + narrowExtra;
 }
 
 } // namespace module::settings

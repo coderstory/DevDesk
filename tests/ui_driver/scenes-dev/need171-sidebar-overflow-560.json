@@ -1,0 +1,120 @@
+{
+ "version": 1,
+ "settings": {
+  "window": {
+   "width": 1000,
+   "height": 560
+  },
+  "seed": {
+   "config": {
+    "config.json:": {
+     "themeMode": "dark",
+     "enabledModules": [
+      "markdown",
+      "git",
+      "todo",
+      "schedule",
+      "claude_proxy",
+      "agent",
+      "memory",
+      "wallpaper",
+      "mcp",
+      "terminal"
+     ]
+    }
+   }
+  }
+ },
+ "steps": [
+  {
+   "type": "dump",
+   "path": "green-1000x560-0.txt",
+   "_comment": "初始态：nav viewport/content/scroll 上限（滚前末尾入口在视口外属预期）"
+  },
+  {
+   "type": "scroll",
+   "id": "app.sidebar.nav",
+   "dx": 0,
+   "dy": -60
+  },
+  {
+   "type": "wait",
+   "ms": 300
+  },
+  {
+   "type": "scroll",
+   "id": "app.sidebar.nav",
+   "dx": 0,
+   "dy": -60
+  },
+  {
+   "type": "wait",
+   "ms": 300
+  },
+  {
+   "type": "scroll",
+   "id": "app.sidebar.nav",
+   "dx": 0,
+   "dy": -60
+  },
+  {
+   "type": "wait",
+   "ms": 300
+  },
+  {
+   "type": "scroll",
+   "id": "app.sidebar.nav",
+   "dx": 0,
+   "dy": -60
+  },
+  {
+   "type": "wait",
+   "ms": 300
+  },
+  {
+   "type": "scroll",
+   "id": "app.sidebar.nav",
+   "dx": 0,
+   "dy": -60
+  },
+  {
+   "type": "wait",
+   "ms": 300
+  },
+  {
+   "type": "dump",
+   "path": "green-1000x560-max.txt",
+   "_comment": "滚到 max：scroll=offset/max 相等且 max=content−viewport"
+  },
+  {
+   "type": "assert",
+   "check": "geometry",
+   "id": "app.sidebar.item.About.hit",
+   "op": "within-window",
+   "_comment": "max 处末尾入口（关于）落在窗口视觉可达区"
+  },
+  {
+   "type": "click",
+   "id": "app.sidebar.item.About.hit",
+   "_comment": "滚到底点末尾入口（命中回读=About.hit）"
+  },
+  {
+   "type": "wait",
+   "until": "exists",
+   "id": "about.title",
+   "timeoutMs": 3000
+  },
+  {
+   "type": "wait",
+   "ms": 1500
+  },
+  {
+   "type": "screenshot",
+   "path": "green-1000x560-max.png"
+  },
+  {
+   "type": "dump",
+   "path": "green-1000x560-after.txt"
+  }
+ ]
+}

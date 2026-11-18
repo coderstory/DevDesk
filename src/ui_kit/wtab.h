@@ -17,9 +17,11 @@
 
 namespace ui_kit {
 
-// Tab 常量：2026-11-03 池167 全站放大档，主文字 15px（scaled() 自动随档）。
-constexpr float kWtabFontSize = 15.0f;         // 页面级 Tab 字号
-constexpr float kWtabSmallFontSize = 14.0f;    // 弹窗级小 Tab 字号
+// Tab 常量：2026-11-03 池167 全站放大档；2026-11-18 池339 老板装机实测回调：
+// 字号 18→14.4（-20% 档；高度 40 不动）。scaled() 自动随缩放档；宽度侧
+// （settings/wallpaper 量宽、wtabRow 文字宽）均以本常量为参，改值即自适应。
+constexpr float kWtabFontSize = 14.4f;         // 页面级 Tab 字号
+constexpr float kWtabSmallFontSize = 11.2f;    // 弹窗级小 Tab 字号（2026-11-18 老板裁决：14.0→11.2，恢复 1.286 历史比例与 0.8 档语言统一）
 
 // 2026-11-01 统一：Tab 高度此前有 32 / 36 / 40 三档并存（memory 36、settings/md/
 // wallpaper/release-config/claude-detail 40、claude-form 32），同一个组件在不同页面

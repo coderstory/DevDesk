@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "settings": {
+    "defaultWaitTimeoutMs": 15000
+  },
+  "steps": [
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Terminal.hit"
+    },
+    {
+      "type": "wait",
+      "until": "exists",
+      "id": "app.term.cursor",
+      "timeoutMs": 25000
+    },
+    {
+      "type": "wait",
+      "until": "text",
+      "op": "nonempty",
+      "timeoutMs": 60000
+    },
+    {
+      "type": "wait",
+      "ms": 25000,
+      "_comment": "≈2.9s 墙钟：等 pwsh/PSReadLine 完全就绪"
+    },
+    {
+      "type": "assert",
+      "check": "missing",
+      "id": "app.term.framepump"
+    },
+    {
+      "type": "type",
+      "text": "Write-Output ('qa249'+'C-pre')",
+      "id": "app.term.input"
+    },
+    {
+      "type": "key",
+      "name": "Enter",
+      "id": "app.term.input"
+    },
+    {
+      "type": "wait",
+      "until": "text",
+      "op": "contains",
+      "text": "qa249C-pre",
+      "timeoutMs": 20000,
+      "skipExit": 77,
+      "_comment": "Enter 通道自检：命令能执行"
+    },
+    {
+      "type": "assert",
+      "check": "missing",
+      "id": "app.term.framepump"
+    },
+    {
+      "type": "type",
+      "text": "exit",
+      "id": "app.term.input"
+    },
+    {
+      "type": "key",
+      "name": "Enter",
+      "id": "app.term.input"
+    },
+    {
+      "type": "wait",
+      "until": "exists",
+      "id": "term.overlay.card",
+      "timeoutMs": 25000,
+      "skipExit": 77
+    },
+    {
+      "type": "assert",
+      "check": "text",
+      "op": "contains",
+      "id": "term.overlay.title",
+      "text": "会话已结束",
+      "_comment": "状态迁移实据"
+    },
+    {
+      "type": "assert",
+      "check": "missing",
+      "id": "app.term.framepump"
+    },
+    {
+      "type": "screenshot",
+      "path": "qa2-C1-exited.png"
+    },
+    {
+      "type": "wait",
+      "ms": 90000,
+      "_comment": "退出态静置≈10s 墙钟"
+    },
+    {
+      "type": "assert",
+      "check": "missing",
+      "id": "app.term.framepump"
+    },
+    {
+      "type": "assert",
+      "check": "text",
+      "op": "contains",
+      "id": "term.overlay.title",
+      "text": "会话已结束"
+    },
+    {
+      "type": "screenshot",
+      "path": "qa2-C2-exited-10s.png"
+    }
+  ]
+}

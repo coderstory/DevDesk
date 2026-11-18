@@ -607,7 +607,7 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
         expectNode("schedule.edit.enabled", &passed);  // 表单首行「启用」开关
-        expectNode("schedule.edit.delete", &passed);   // 编辑态底区左端危险删除钮（need294 迁壳）
+        expectNode("schedule.edit.dialog.third", &passed);   // 编辑态底区左端危险删除钮（need294 迁壳 → need338 壳 thirdAction 左槽）
         expectNode("schedule.edit.dialog.confirm", &passed);  // 壳底区主钮=保存
         expectNode("schedule.edit.dialog.cancel", &passed);
         shot(shotEdit);
@@ -629,7 +629,7 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
         expectNode("schedule.edit.enabled", &passed);
-        expectNoNode("schedule.edit.delete", &passed);
+        expectNoNode("schedule.edit.dialog.third", &passed);
         if (const auto* cancel = findElement("schedule.edit.dialog.cancel")) {
             clickElement(*cancel);
             settleFrames(15);
@@ -720,7 +720,7 @@ int main(int argc, char* argv[]) {
     if (const auto* card = findElement("schedule.list.user.0")) {
         clickElement(*card);
         settleFrames(15);
-        const auto* del = findElement("schedule.edit.delete");
+        const auto* del = findElement("schedule.edit.dialog.third");
         if (del == nullptr) {
             std::cerr << "schedule_ui_probe: F FAIL 编辑弹窗无删除钮\n";
             passed = false;
@@ -754,7 +754,7 @@ int main(int argc, char* argv[]) {
         clickElement(*card);
         settleFrames(15);
     }
-    if (const auto* del = findElement("schedule.edit.delete")) {
+    if (const auto* del = findElement("schedule.edit.dialog.third")) {
         clickElement(*del);
         settleFrames(15);
     }
