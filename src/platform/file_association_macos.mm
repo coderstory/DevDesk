@@ -36,7 +36,7 @@
 #import <UniformTypeIdentifiers/UTTagClass.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h> // UTType 类反查（11.0+；C API 12.0 起弃用）
 
-#include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag（<11 保守路径）/ LSCopyDefaultApplicationURLForURL / LSSetDefaultRoleHandlerForContentType
+#include <CoreServices/CoreServices.h> // UTTypeCreatePreferredIdentifierForTag（<11 保守路径）/ LSSet·LSCopyDefaultRoleHandlerForContentType
 #include <dispatch/dispatch.h> // NSWorkspace completionHandler → 同步 Result 桥接（group+超时）
 #include <sys/sysctl.h>
 
@@ -185,50 +185,43 @@ CFURLRef probeFileUrl(const std::string& extNoDot) {
     return url; // caller release
 }
 
-// app URL → bundle id（查询回读侧）
-core::Result<std::string> bundleIdForAppUrl(CFURLRef appUrl) {
-    CFBundleRef const bundle = CFBundleCreate(kCFAllocatorDefault, appUrl);
-    if (bundle == nullptr) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               "默认应用 URL 非 bundle，无法判属");
-    }
-    const std::string id = cfToStdString(CFBundleGetIdentifier(bundle));
-    CFRelease(bundle);
-    if (id.empty()) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               "默认应用 bundle identifier 为空");
-    }
-    return core::Result<std::string>::ok(id);
-}
-
-// 查询单扩展当前生效默认：LSCopyDefaultApplicationURLForURL（10.10+，12 上
-// 不弃用，与 NSWorkspace URLForApplicationToOpenURL 同结果语义）。
-// fail = 查询失败/无归属（调用方落 Unknown，绝不映射 Others）
+// 查询单扩展当前生效默认：LSCopyDefaultRoleHandlerForContentType 按内容类型查，
+// 与写入侧同源（12+ NSWorkspace toOpenContentTypeOfFileAtURL / 11 LSSet 均
+// 按 contentType 写）。need331（2026-11-18 darwin27 本机实测）：旧路径
+// LSCopyDefaultApplicationURLForURL 对不存在的探针文件返回 nil（旧「文件无需
+// 存在、按扩展名判归属」行为已消失；文件真实存在才答得出），OS 弹窗写入的
+// UTI 级 handler 查不到 → 回读永假 = 设置页永显「未关联」。UTI 级查询同源
+// 可靠（实测 ROLE net.daringfireball.markdown → 本应用）。
+// fail = 查询失败/无 handler（调用方落 Unknown，绝不映射 Others）
 core::Result<std::string> queryCurrentDefaultBundleId(const std::string& extWithDot) {
     const std::string ext = extensionWithoutDot(extWithDot);
     if (ext.empty()) {
         return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                                "扩展名为空，无法查询");
     }
-    CFURLRef const docUrl = probeFileUrl(ext);
-    CFErrorRef err = nullptr;
-    CFURLRef const appUrl = LSCopyDefaultApplicationURLForURL(docUrl, kLSRolesAll, &err);
-    CFRelease(docUrl);
-    if (appUrl == nullptr) {
-        std::string msg = "LaunchServices 查询默认应用失败（无生效 handler）: " + extWithDot;
-        if (err != nullptr) {
-            CFStringRef const desc = CFErrorCopyFailureReason(err);
-            if (desc != nullptr) {
-                msg += ": " + cfToStdString(desc);
-                CFRelease(desc);
-            }
-            CFRelease(err);
-        }
-        return core::Result<std::string>::fail(core::ErrorCode::Internal, msg);
+    const core::Result<std::string> uti = contentTypeForExtension(ext);
+    if (uti.isFail()) {
+        return uti;
     }
-    const core::Result<std::string> out = bundleIdForAppUrl(appUrl);
-    CFRelease(appUrl);
-    return out;
+    CFStringRef const utiCf = cfStringFromStdString(uti.value());
+    CFStringRef const handler =
+        utiCf != nullptr
+            ? LSCopyDefaultRoleHandlerForContentType(utiCf, kLSRolesAll)
+            : nullptr;
+    if (utiCf != nullptr) CFRelease(utiCf);
+    if (handler == nullptr) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "LaunchServices 查询默认应用失败（无生效 handler）: " + extWithDot);
+    }
+    const std::string id = cfToStdString(handler);
+    CFRelease(handler);
+    if (id.empty()) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "默认应用 bundle identifier 为空: " + extWithDot);
+    }
+    return core::Result<std::string>::ok(id);
 }
 
 // 写后刷新（win SHChangeNotify must-call 的 mac 同位步骤）：mac 无关联变更广播
