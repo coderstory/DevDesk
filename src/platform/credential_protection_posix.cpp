@@ -13,8 +13,10 @@ core::Result<std::string> realUnprotect(const std::string& stored) {
     // 双机同步：库里可能是 Windows 写入的 DPAPI 密文，本机解不了。
     // 明确报错而不是把密文当 API Key 发出去（那会变成难查的 401）。
     if (isDpapiBlob(stored)) {
+        // need318：解不开约定 InvalidApiKey（与 secrets_store 测试约定一致）——
+        // 下游 wecom 据此走「数据异常请重录」而非「瞬时故障」
         return core::Result<std::string>::fail(
-            core::ErrorCode::Internal,
+            core::ErrorCode::InvalidApiKey,
             "该 Profile 的 API Key 是 Windows 机器用 DPAPI 加密的，本机无法解密；"
             "请在本机重新填写 API Key");
     }

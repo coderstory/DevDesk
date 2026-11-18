@@ -16,8 +16,10 @@ core::Result<std::string> realUnprotect(const std::string& stored) {
     // 旧版 Windows DPAPI 密文：已不再支持本机解密，明确报错让用户重填，
     // 不静默回落空串（否则「密钥不可用」伪装成「没配过密钥」）。
     if (isDpapiBlob(stored)) {
+        // need318：解不开约定 InvalidApiKey（与 secrets_store 测试约定一致）——
+        // 下游 wecom 据此走「数据异常请重录」而非「瞬时故障」
         return core::Result<std::string>::fail(
-            core::ErrorCode::Internal,
+            core::ErrorCode::InvalidApiKey,
             "该 Key 是旧版 Windows DPAPI 密文，已不再支持本机解密；请重新填写 API Key");
     }
     return core::Result<std::string>::ok(stored);
