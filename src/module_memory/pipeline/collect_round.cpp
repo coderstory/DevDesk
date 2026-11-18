@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
@@ -162,6 +163,53 @@ bool isNoiseEcho(const std::string& text) {
 
 }  // namespace
 
+// F-06 L2 段级洗（need333 记忆波 1，判据=scheme-card §1 P3/P4，P3 口径按实测
+// 4 形态扩）：P4 "[tool_error] " 行前缀剥（保留行内其余正文）；P3 擦除行内
+// "[Request interrupted by user…]" 括号段（含 for tool use 变体，覆盖独占行/
+// 行尾后缀/拼接形态），洗后空行整行丢。未命中行原样保留（对照集零误洗 =
+// 逐字节恒等）。
+std::string stripLeakMarkers(const std::string& body, bool* washed) {
+    constexpr std::string_view kInterrupt = "[Request interrupted by user";
+    constexpr std::string_view kToolErrPrefix = "[tool_error] ";
+    if (washed != nullptr) *washed = false;
+    std::string out;
+    out.reserve(body.size());
+    std::size_t pos = 0;
+    while (pos <= body.size()) {
+        const std::size_t nl = body.find('\n', pos);
+        const std::size_t end =
+            nl == std::string::npos ? body.size() : nl;
+        std::string line(body, pos, end - pos);
+        bool changed = false;
+        if (line.rfind(kToolErrPrefix, 0) == 0) {  // P4：剥前缀留正文
+            line.erase(0, kToolErrPrefix.size());
+            changed = true;
+        }
+        std::size_t hit = 0;  // P3：擦中断标记括号段
+        while ((hit = line.find(kInterrupt, hit)) != std::string::npos) {
+            const std::size_t close = line.find(']', hit);
+            line.erase(hit, (close == std::string::npos ? line.size()
+                                                         : close + 1) -
+                                hit);
+            changed = true;
+        }
+        if (changed) {
+            if (washed != nullptr) *washed = true;
+            // 洗后空行整行丢（P3 独占行形态：删该行，保留两侧正文）
+            if (line.find_first_not_of(" \t\r") != std::string::npos) {
+                out += line;
+                if (nl != std::string::npos) out.push_back('\n');
+            }
+        } else {
+            out += line;
+            if (nl != std::string::npos) out.push_back('\n');
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return out;
+}
+
 core::Result<CollectRoundReport> runCollectRound(
     collector::Collector& collector, const sanitize::SanitizeGate& gate,
     proposals::ProposalStore& store,
@@ -219,7 +267,13 @@ core::Result<CollectRoundReport> runCollectRound(
             report.notes.push_back(std::move(n));
             continue;
         }
-        const std::string& body = gated.value().text;
+        // F-06 L2 段级洗（need333 记忆波 1）：脱敏闸后、低值过滤前剥泄漏标记
+        //（P3 中断行删 / P4 tool_error 前缀剥）；卡面与指纹走洗后正文，evidence
+        // 回溯链仍取 seg.text 原文（丢的是脏形态，不是知识本身）
+        bool leakWashed = false;
+        const std::string body =
+            stripLeakMarkers(gated.value().text, &leakWashed);
+        if (leakWashed) ++report.washed;
         // F-03 低价值过滤：①指令回声噪声 ②极短段（有效字符 <50）。跳过段
         // 记已处理（不入提案不重扫）；不产 note（风暴量级下动态流不刷屏），
         // 计数走 report 供观测。③纯 tool_error 段由 collector 出段闸保证

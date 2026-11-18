@@ -32,6 +32,7 @@ struct CollectRoundReport {
     int segments = 0;          // 本轮出段数（含被拦截的；≤kMaxSegmentsPerPoll）
     int cardsCreated = 0;      // 新增 pending 卡数
     int blocked = 0;           // 拦截段数（命中命中集 + fail-closed Error）
+    int washed = 0;            // F-06 L2 段级洗命中数（P3 中断行删/P4 前缀剥）
     int dedupSkipped = 0;      // F-01 指纹命中跳过（不建卡不排队）
     int lowValueSkipped = 0;   // F-03 噪声回声/极短段跳过
     int expiredSwept = 0;      // F-04 本轮 TTL 沉降的 pending 数
@@ -41,6 +42,14 @@ struct CollectRoundReport {
 // 极短段阈值（bug191 F-03② 拍板 2026-11-05）：有效字符 <50 拒。
 // 有效字符 = CJK 表意文字计 1 + ASCII 字母数字计 0.5（与卡面截断同宽窄口径）
 inline constexpr int kMinEffectiveUnits = 50;
+
+// F-06 L2 段级洗（need333 记忆波 1，判据=evidence/20261118-f06-gate
+// scheme-card §1 P3/P4，P3 口径按实测 4 形态扩）：P3 擦除行内
+// "[Request interrupted by user…]" 括号段（含 for tool use 变体；洗后空行
+// 整行丢，保两侧正文）；P4 session_reader 自产 "[tool_error] " 行前缀剥
+//（保留行内其余正文）。纯函数（红队/对照单测钉契约，先例=sanitize scanText）。
+// *washed 出参：命中任一标记置 true（调用方计数 report.washed，F-08 对账）。
+std::string stripLeakMarkers(const std::string& body, bool* washed);
 
 // 单轮采集（同步、可重入；宿主循环与测试直驱同一实现）。
 // onNote 可空（测试直驱时用返回值断言即可）。

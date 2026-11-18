@@ -3,6 +3,7 @@
 // 全部用临时目录夹具，不碰真实 ~/.claude。
 #include "doctest.h"
 
+#include "memory_f06_gate_fixtures.h"
 #include "module_memory/collector/collector.h"
 #include "module_memory/collector/session_reader.h"
 
@@ -206,5 +207,77 @@ REGISTER_TEST(memory_collector_embedding_budget_segments,
         DOCTEST_CHECK((last & 0xC0) != 0xC0);
     }
     DOCTEST_CHECK(c.commit(segs.value()).isOk());
+    return true;
+})
+
+// ── F-06 L1 红队/对照（need333 记忆波 1）────────────────────────────
+// 样本=AF 单会话 195 条提案全文抽取夹具（memory_f06_gate_fixtures.h）：
+// 红队 17 条（P1 task-notification ×14 + P2 local-command 族 ×3）→ 整条拒；
+// 对照 157 条（无任何 F-06 标记的实质样本，AF 112 实质族的 P4-free 超集）→
+// 零误拒（0 误杀硬指标）。
+
+namespace {
+
+std::string jsonEscapeText(const std::string& s) {
+    static const char* kHex = "0123456789abcdef";
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (const char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                // 控制符（实测样本含 ESC ANSI 码）→ \u00XX（yyjson 支持）
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    out += "\\u00";
+                    out += kHex[(static_cast<unsigned char>(c) >> 4) & 0xF];
+                    out += kHex[static_cast<unsigned char>(c) & 0xF];
+                } else {
+                    out.push_back(c);
+                }
+        }
+    }
+    return out;
+}
+
+std::string f06UserLine(const std::string& text) {
+    return "{\"type\":\"user\",\"sessionId\":\"f06\",\"message\":{\"role\":"
+           "\"user\",\"content\":\"" + jsonEscapeText(text) + "\"}}";
+}
+
+}  // namespace
+
+REGISTER_TEST(memory_session_reader_f06_leak_gate,
+              "memory: F-06 L1 红队/对照——P1/P2 系统块标记族整条拒；无标记实质样本零误拒", {
+    int rejected = 0;
+    for (const auto& s : devdesk::testfix::f06::kReject) {
+        const auto ev = parseSessionLine(f06UserLine(s.text), 0);
+        DOCTEST_REQUIRE(ev.isOk());
+        if (ev.value().empty()) {
+            ++rejected;
+        } else {
+            DOCTEST_CHECK_MESSAGE(false,
+                                  std::string("P1/P2 应整条拒: ") + s.id);
+        }
+    }
+    DOCTEST_CHECK_EQ(rejected, 17);  // P1×14 + P2×3（scheme-card §1）
+    int kept = 0;
+    const int controlN = static_cast<int>(
+        sizeof(devdesk::testfix::f06::kControl) /
+        sizeof(devdesk::testfix::f06::kControl[0]));
+    for (const auto& s : devdesk::testfix::f06::kControl) {
+        const auto ev = parseSessionLine(f06UserLine(s.text), 0);
+        DOCTEST_REQUIRE(ev.isOk());
+        // 零误拒 = 事件保留且为 narrative（超 1024B 截断属 ③ 契约，不算拒）
+        if (ev.value().size() == 1 && ev.value()[0].narrative) {
+            ++kept;
+        } else {
+            DOCTEST_CHECK_MESSAGE(false, std::string("对照误拒: ") + s.id);
+        }
+    }
+    DOCTEST_CHECK_EQ(kept, controlN);
     return true;
 })

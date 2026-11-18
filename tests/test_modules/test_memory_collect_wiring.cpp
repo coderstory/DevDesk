@@ -5,6 +5,7 @@
 // 水位幂等（二轮零重产）；decay 清单缝 UUID 形态（F3 live 定案）。
 #include "doctest.h"
 
+#include "memory_f06_gate_fixtures.h"
 #include "module_memory/collector/collector.h"
 #include "module_memory/memory_module.h"
 #include "module_memory/pipeline/collect_round.h"
@@ -439,5 +440,116 @@ REGISTER_TEST(memory_collect_storm_confidence_and_ttl_sweep,
     DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK(pending.value()[0].confidence > 0.0);
     DOCTEST_CHECK(pending.value()[0].confidence < 0.5);
+    return true;
+})
+
+// ── F-06 L2 段级洗（need333 记忆波 1，判据=scheme-card §1 P3/P4 + 实测形态扩）──
+
+REGISTER_TEST(memory_collect_f06_wash_redteam_and_control,
+              "memory: F-06 L2 红队/对照——P3 中断段擦除/P4 前缀剥标记零残留；对照集逐字节恒等零误洗", {
+    // 微型锚（判据钉死：独占行删保两侧 / 行尾后缀擦保正文 / 变体整段擦 /
+    // P4 前缀剥留正文 / 干净正文不动）
+    bool w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "前面\n[Request interrupted by user]\n后面", &w),
+                     std::string("前面\n后面"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "顾问 ID本身就存了把[Request interrupted by user]", &w),
+                     std::string("顾问 ID本身就存了把"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(
+        pipeline::stripLeakMarkers(
+            "工具被打断\n[Request interrupted by user for tool use]\n继续", &w),
+        std::string("工具被打断\n继续"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers(
+                         "第一行\n[tool_error] Exit code 2\n第三行", &w),
+                     std::string("第一行\nExit code 2\n第三行"));
+    DOCTEST_CHECK(w);
+    w = false;
+    DOCTEST_CHECK_EQ(pipeline::stripLeakMarkers("干净正文不动", &w),
+                     std::string("干净正文不动"));
+    DOCTEST_CHECK(!w);
+
+    // P4 残留检查：输出任一行不得再以 [tool_error] 前缀开头
+    const auto hasToolErrLinePrefix = [](const std::string& t) {
+        std::size_t p = 0;
+        while (p <= t.size()) {
+            if (t.compare(p, 12, "[tool_error] ") == 0) return true;
+            const std::size_t nl = t.find('\n', p);
+            if (nl == std::string::npos) break;
+            p = nl + 1;
+        }
+        return false;
+    };
+    // 红队 21 条（实测样本：P3 命中 5 形态 + P4 行级承载 17 条 - P1/P2 重叠）
+    int washed = 0;
+    for (const auto& s : devdesk::testfix::f06::kWash) {
+        bool hit = false;
+        const std::string out = pipeline::stripLeakMarkers(s.text, &hit);
+        if (!hit) {
+            DOCTEST_CHECK_MESSAGE(false, std::string("红队应命中洗: ") + s.id);
+        } else {
+            ++washed;
+        }
+        DOCTEST_CHECK_MESSAGE(!out.empty(), std::string("洗后非空: ") + s.id);
+        DOCTEST_CHECK_MESSAGE(
+            out.find("[Request interrupted by user") == std::string::npos,
+            std::string("P3 中断标记零残留: ") + s.id);
+        DOCTEST_CHECK_MESSAGE(!hasToolErrLinePrefix(out),
+                              std::string("P4 前缀零残留: ") + s.id);
+    }
+    DOCTEST_CHECK_EQ(washed, 21);
+    // 对照 157 条（无任何 F-06 标记的实质样本）：零误洗 = 逐字节恒等
+    int identity = 0;
+    const int controlN = static_cast<int>(
+        sizeof(devdesk::testfix::f06::kControl) /
+        sizeof(devdesk::testfix::f06::kControl[0]));
+    for (const auto& s : devdesk::testfix::f06::kControl) {
+        bool hit = true;  // 反证置位：对照集不得命中
+        const std::string out = pipeline::stripLeakMarkers(s.text, &hit);
+        if (!hit && out == s.text) {
+            ++identity;
+        } else {
+            DOCTEST_CHECK_MESSAGE(false,
+                                  std::string("对照误洗/误改: ") + s.id);
+        }
+    }
+    DOCTEST_CHECK_EQ(identity, controlN);  // 0 误杀硬指标
+    return true;
+})
+
+REGISTER_TEST(memory_collect_f06_wash_in_round,
+              "memory: F-06 L2 接线——管线轮内洗：中断标记不入卡、两侧正文保留、report.washed 计数", {
+    const auto dir = makeTempDir("f06-round");
+    const auto projects = dir / "projects";
+    std::filesystem::create_directories(projects);
+    sanitize::SanitizeGate gate;
+    auto opened = proposals::ProposalStore::open(dir / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto store = std::move(opened.value());
+    collector::Collector collector(dir / "collector.db", projects);
+
+    const std::string body =
+        prose("F-06 管线内洗验证正文段落，语义完整足够长以照常越过极短段门槛成卡。", 12) +
+        "\n[Request interrupted by user]\n后续两侧正文照常保留在卡内不可丢弃。";
+    writeSession(projects / "sess-f06.jsonl",
+                 userLine("sess-f06", body) + "\n");
+
+    auto r = pipeline::runCollectRound(collector, gate, store, {});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().cardsCreated, 1);
+    DOCTEST_CHECK_EQ(r.value().washed, 1);
+    auto pending = store.listPending();
+    DOCTEST_REQUIRE(pending.isOk());
+    DOCTEST_REQUIRE_EQ(pending.value().size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK(pending.value()[0].resultText.find(
+                      "[Request interrupted by user") == std::string::npos);
+    DOCTEST_CHECK(pending.value()[0].resultText.find("后续两侧正文照常保留") !=
+                  std::string::npos);
     return true;
 })
