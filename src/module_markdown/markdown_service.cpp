@@ -1331,7 +1331,10 @@ std::string MarkdownService::noteNamePolicyError(const std::string& relPath) {
                 return "名称过长：每段最长 255 字节";
             }
             const std::size_t dot = seg.find('.');
-            const std::string stem = seg.substr(0, dot);
+            // need297 审计 P3：Windows 段规范化剥尾随空格后命中保留名
+            //（"CON " 实际同 CON）——stem 判定前先剥段尾空格，前置拦截
+            std::string stem = seg.substr(0, dot);
+            while (!stem.empty() && stem.back() == ' ') stem.pop_back();
             std::string upper = stem;
             for (char& c : upper) {
                 if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');

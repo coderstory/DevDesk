@@ -791,6 +791,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
                                   : (dueTodayTint ? t.colors.warning
                                                   : t.colors.borderDefault))
         .radius(pose.radius + (t.sizes.radius - ui_kit::JellyOptions::kRestRadius))
+        // need297 审计 P2：动画进行中 zIndex(20) 盖过邻卡（jellyCard 契约
+        // jelly.h:241-243；手写缝漏抄此行——缩放越出布局矩形会被后绘邻卡裁切）
+        .zIndex(pose.active ? 20 : 0)
         .transformOrigin(0.5f, 0.5f)
         .scale(pose.sx, pose.sy)
         .transition(pose.active
