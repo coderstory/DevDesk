@@ -216,9 +216,10 @@ GridLayout TerminalPage::compose(
     float sepX = 0.0f, gearX = 0.0f, midX = 0.0f, rightX = 0.0f;
     {
         // 从右缘向左排（两态一致）：新建（right）→ 全屏切换 32 图标钮（mid）→ 设置 → 分隔线
+        constexpr float kNewSlotGap = 4.0f;  // need342：新建钮左侧槽位距——老板 2026-11-18 实测偏大，自 kActionGap 8 收窄至 4（仅此槽位，动作组其余间距不动）
         float x = screen.width - kRightPad;
         rightX = x - newBtnW;
-        x = rightX - kActionGap;
+        x = rightX - kNewSlotGap;
         midX = x - 32.0f;
         x = midX - kActionGap;
         gearX = x - 32.0f;
