@@ -296,8 +296,8 @@ struct MigratedStreamEnv {
         : env("hprobe72_", tag, false) {
         service = std::make_unique<module::claude::ClaudeService>(
             env.db->db(), kStreamTestKeychainService);
-        // FK 前提：日志行引用 profile_id
-        env.db->db().exec(
+        // FK 前提：日志行引用 profile_id（造数失败会被用例断言抓，有意忽略，need295）
+        (void)env.db->db().exec(
             "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
             "api_key_check, model, created_at, updated_at) "
             "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'm', 0, 0)");

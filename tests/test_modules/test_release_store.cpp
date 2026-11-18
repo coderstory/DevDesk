@@ -787,7 +787,8 @@ REGISTER_TEST(release_store_transaction_exception_guard_rolls_back,
     // 事务内先写一行再抛：异常逃逸后这次的部分写入必须被 ROLLBACK 掉
     bool threw = false;
     try {
-        db.transaction([&]() -> core::Result<void> {
+        // 有意忽略 transaction 返回值：本用例钉的是异常路径，DB 态由后续断言核（need295）
+        (void)db.transaction([&]() -> core::Result<void> {
             auto ins = db.exec(
                 "INSERT INTO release_task (plan_date, status) "
                 "VALUES ('2026-11-26', 'draft')");

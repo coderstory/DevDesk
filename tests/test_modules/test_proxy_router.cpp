@@ -213,7 +213,8 @@ REGISTER_TEST(proxy_router_forward_200,
 
 
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -252,7 +253,8 @@ REGISTER_TEST(proxy_router_upstream_401,
 
 
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -289,7 +291,8 @@ REGISTER_TEST(proxy_router_upstream_404,
 
 
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -314,7 +317,8 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
     DOCTEST_CHECK(r.body.find("upstream_unreachable") != std::string::npos);
 
 
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -337,7 +341,8 @@ REGISTER_TEST(proxy_router_no_active_profile,
     DOCTEST_CHECK(r.body.find("no_active_profile") != std::string::npos);
 
 
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -430,7 +435,8 @@ REGISTER_TEST(proxy_router_end_to_end,
     svc.stopProxy();
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -537,7 +543,8 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
                      R"({"model":"deepseek-v4-flash","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})");
 
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -600,7 +607,8 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     DOCTEST_CHECK_EQ(headerValueCI(seen, "x-devdesk-keep"), std::string("yes"));
 
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -683,7 +691,8 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     svc.stopProxy();
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -741,7 +750,8 @@ REGISTER_TEST(proxy_router_writes_call_log_row,
     DOCTEST_CHECK_EQ(rows.value()[0].getString("m").value(), std::string("POST"));
 
     upstream.stop();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })

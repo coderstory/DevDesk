@@ -764,7 +764,12 @@ public:
 
     void applyGithubSyncEnabled(bool on) {
         githubSyncCfg_.enabled = on;
-        if (githubSyncStore_) githubSyncStore_->save(githubSyncCfg_);
+        if (githubSyncStore_) {
+            if (auto sr = githubSyncStore_->save(githubSyncCfg_); sr.isFail()) {
+                // 落盘失败=重启后开关回跳，必须留痕（need295）
+                LOG_WARN("Settings: GitHub Sync 开关落盘失败: " + sr.errorMessage());
+            }
+        }
         setStatus(on ? "GitHub 同步已启用" : "GitHub 同步已禁用");
         LOG_INFO("Settings: GitHub Sync " + std::string(on ? "启用" : "关闭"));
         if (on) maybeStartFirstGithubSync();

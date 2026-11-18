@@ -277,7 +277,10 @@ void GitPageController::validateAsync(const std::string& repoPathUtf8,
             if (code == core::ErrorCode::Ok) {
                 if (fromMemory) {
                     // 恢复成功：刷新记忆（路径可能已规范化）
-                    GitRepoStore::save(GitRepoMemory{path, recentRepos_});
+                    if (auto saved = GitRepoStore::save(GitRepoMemory{path, recentRepos_});
+                        saved.isFail()) {
+                        LOG_WARN("GitPage: 记忆仓刷新失败: " + saved.errorMessage());
+                    }
                 }
                 openRepo(path);
                 return;

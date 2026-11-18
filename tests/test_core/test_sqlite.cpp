@@ -109,7 +109,7 @@ REGISTER_TEST(sqlite_transaction_serializes_concurrent_writers,
     auto tx = db.transaction([&]() -> core::Result<void> {
         auto p = db.prepare("INSERT INTO t (who) VALUES ('tx')");
         if (p.isFail()) return core::Result<void>::fail(p.errorCode(), p.errorMessage());
-        p.value().step();
+        (void)p.value().step();  // 步进结果有意忽略：本用例就是要该事务回滚（need295）
         fnInside.store(true);
         // 给 worker 充分的穿插机会：锁范围收窄的话这里就能插进来
         std::this_thread::sleep_for(std::chrono::milliseconds(150));

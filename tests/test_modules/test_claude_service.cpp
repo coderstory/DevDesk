@@ -357,7 +357,7 @@ REGISTER_TEST(claude_service_load_api_key,
     auto prep = tdb.handle().prepare(
         "SELECT api_key_hint, api_key_check FROM claude_profiles WHERE id = ?");
     DOCTEST_REQUIRE(prep.isOk());
-    prep.value().bind(1, id);
+    DOCTEST_REQUIRE(prep.value().bind(1, id).isOk());
     auto rows = prep.value().fetchAll();
     DOCTEST_REQUIRE(rows.isOk());
     DOCTEST_CHECK_EQ(rows.value().size(), 1u);

@@ -556,8 +556,9 @@ inline bool clearStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
 
 // 删某个 service 下某 profile 的 Keychain 条目；service 由调用方传自身的测试常量
 inline void cleanupProfileKey(const char* service, int64_t profileId) {
-    platform::keychain::deleteSecret(service,
-                                     "claude:" + std::to_string(profileId));
+    // 有意忽略删除结果：失败仅残留测试密钥，不影响断言（need295）
+    (void)platform::keychain::deleteSecret(service,
+                                           "claude:" + std::to_string(profileId));
 }
 
 // 头名大小写不敏感取头 / 计数（转发后头名拼写由方言层决定，可能与客户端不同）。

@@ -442,7 +442,11 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
         auto stmt = db_->prepare(
             "UPDATE memory_proposals SET status='expired' WHERE id=?");
         if (stmt.isOk()) {
-            if (stmt.value().bind(1, id).isOk()) stmt.value().step();
+            if (stmt.value().bind(1, id).isOk()) {
+                if (auto s = stmt.value().step(); s.isFail()) {
+                    LOG_WARN("提案过期状态落库失败（不阻断）: " + s.errorMessage());
+                }
+            }
         }
         if (auto a = audit(id, nowSec, "expired", "ttl"); a.isFail()) {
             return core::Result<Proposal>::fail(a.errorCode(),
@@ -459,7 +463,12 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
             auto stmt = db_->prepare(
                 "UPDATE memory_proposals SET status='expired' WHERE id=?");
             if (stmt.isOk()) {
-                if (stmt.value().bind(1, id).isOk()) stmt.value().step();
+                if (stmt.value().bind(1, id).isOk()) {
+                    if (auto s = stmt.value().step(); s.isFail()) {
+                        LOG_WARN("提案过期状态落库失败（不阻断）: " +
+                                 s.errorMessage());
+                    }
+                }
             }
             if (auto a = audit(id, nowSec, "expired", "target_changed");
                 a.isFail()) {
@@ -507,7 +516,9 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
         if (stmt.isOk()) {
             if (stmt.value().bind(1, idsToJson(p.targetIds)).isOk() &&
                 stmt.value().bind(2, id).isOk()) {
-                stmt.value().step();
+                if (auto s = stmt.value().step(); s.isFail()) {
+                    LOG_WARN("提案 engine id 回填失败（不阻断）: " + s.errorMessage());
+                }
             }
         }
         if (auto a = audit(id, nowSec, "engine_id", applied.value());
@@ -628,7 +639,10 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
                 if (upd.value().bind(1, nowSec + kProposalTtlDays * 86400)
                             .isOk() &&
                     upd.value().bind(2, existing.id).isOk()) {
-                    upd.value().step();
+                    if (auto s = upd.value().step(); s.isFail()) {
+                        LOG_WARN("提案 TTL 刷新落库失败（不阻断）: " +
+                                 s.errorMessage());
+                    }
                 }
             }
             if (auto a = audit(existing.id, nowSec, "undo_refreshed",

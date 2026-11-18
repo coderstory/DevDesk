@@ -404,10 +404,14 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                 return out;
             }
         };
-        static_cast<::module::schedule::ScheduleModule*>(schedule.get())
-            ->providerRegistry()
-            .registerProvider(
-                std::make_unique<ReleaseScheduleProviderAdapter>());
+        if (auto reg = static_cast<::module::schedule::ScheduleModule*>(schedule.get())
+                           ->providerRegistry()
+                           .registerProvider(
+                               std::make_unique<ReleaseScheduleProviderAdapter>());
+            reg.isFail()) {
+            // 注册失败=日程页缺 release 分组条目，降级可用，留痕即可（need295）
+            LOG_WARN("release 日程 provider 注册失败: " + reg.errorMessage());
+        }
 
         auto gated = app::assembly::buildGatedEntries(
             gatingConfigSnapshot(), ::app::registry::kModuleRegistry,

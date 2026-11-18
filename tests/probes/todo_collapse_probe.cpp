@@ -63,7 +63,8 @@ int main(int argc, char* argv[]) {
     test_support::TestDb tdb("todocollapse_", "probe");
     test_support::ScopedAppDatabase scopedDb(tdb.handle());
     module::todo::TodoService svc(tdb.handle());
-    tdb.handle().exec("DELETE FROM todo_tasks");
+    // 造数结果有意忽略：失败会在探针画面/断言面暴露（need295）
+    (void)tdb.handle().exec("DELETE FROM todo_tasks");
     int64_t col0Id = 0;
     {
         auto cols = svc.listColumns();
@@ -77,7 +78,11 @@ int main(int argc, char* argv[]) {
         return 3;
     }
     for (const char* title : {"折叠前任务A", "折叠前任务B", "折叠前任务C"}) {
-        svc.createTask(col0Id, title);
+        if (svc.createTask(col0Id, title).isFail()) {
+            std::cerr << "todo_collapse_probe: 种子任务失败\n";
+            probe::terminateWindowBackend();
+            return 3;
+        }
     }
 
     // ---- Start module ----

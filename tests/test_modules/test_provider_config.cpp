@@ -320,8 +320,8 @@ REGISTER_TEST(provider_config_service_roundtrip,
         DOCTEST_CHECK(r.isFail());
     }
 
-    // 清理 keychain 条目
-    platform::keychain::deleteSecret(
+    // 清理 keychain 条目（有意忽略结果：失败仅残留测试条目，need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(id));
     return true;
 })

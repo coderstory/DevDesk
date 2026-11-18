@@ -68,7 +68,7 @@ int main(int argc, char* argv[]) {
     // 先构造 service 让 H20 固定四列迁移跑完，再按 kind 取列 id。自定义列会在
     // 模块 onStart 时被再次迁移归并，故直接使用固定四列（列序 = position 序）
     module::todo::TodoService svc(tdb.handle());
-    tdb.handle().exec("DELETE FROM todo_tasks");
+    (void)tdb.handle().exec("DELETE FROM todo_tasks");  // 造数清理，有意忽略（need295）
     int64_t col0Id = 0;
     int64_t col1Id = 0;
     int64_t col2Id = 0;
@@ -451,8 +451,8 @@ int main(int argc, char* argv[]) {
                 core::queuePointerMotion(window, sx + 3.0f, sy + 3.0f,
                                          held, noMods);
                 probe::pollOnce(window, runtime);
-                // 外部删除 + 触发重载
-                svc.deleteTask(newId);
+                // 外部删除 + 触发重载（删除结果有意忽略：卡消失由画面断言核，need295）
+                (void)svc.deleteTask(newId);
                 core::event::bus().emit(core::event::kDbImported);
                 composeFrame();  // compose → reloadAll → guard 复位 DragState
                 // release 在已删除卡的原坐标附近（卡不在树中，EU-NEO 收不到回调或回调无副作用）
@@ -696,16 +696,16 @@ int main(int argc, char* argv[]) {
     // ==================== R5: 极窄多列（6 列）→ 拖拽不崩、落库正确 ====================
     {
         // 删库重建：6 列各 1 卡
-        tdb.handle().exec("DELETE FROM todo_tasks");
-        tdb.handle().exec("DELETE FROM todo_columns");
+        (void)tdb.handle().exec("DELETE FROM todo_tasks");  // 造数清理，有意忽略（need295）
+        (void)tdb.handle().exec("DELETE FROM todo_columns");
         int64_t newCol0Id = -1;
         for (int i = 0; i < 6; ++i) {
             auto col =
                 svc.createColumn("列" + std::to_string(i + 1));
             if (col.isOk()) {
                 if (i == 0) newCol0Id = col.value().id;
-                svc.createTask(col.value().id,
-                                "窄列卡" + std::to_string(i + 1));
+                (void)svc.createTask(col.value().id,
+                                "窄列卡" + std::to_string(i + 1));  // 造数，有意忽略（need295）
             }
         }
         // 不重启模块：onStart 会重跑固定四列迁移，把 6 个自定义列归并回四列；

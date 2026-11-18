@@ -582,7 +582,9 @@ void shutdownTaskWorker(std::shared_ptr<ShutdownTask> t) {
     const bool alive = t->hProcess != nullptr &&
                        GetExitCodeProcess(t->hProcess, &liveCode) != FALSE &&
                        liveCode == STILL_ACTIVE;
-    if (alive) process_host::terminateTree(t->pid); // 坑②：taskkill /T /F 树杀（先例，有界+探活兜底）
+    // 坑②：taskkill /T /F 树杀（先例，有界+探活兜底）；关闭路径无处反馈，杀失败由
+    // 下方排空超时兜底（need295）
+    if (alive) (void)process_host::terminateTree(t->pid);
 
     // 坑②排空：优先让 reader 自然读到管道断裂退出。P1-3：等待上界=kCloseWaitMs
     // （对齐 reader 全链上界，原 2s+1s=3s < reader 收割 5s → task 先析构、reader

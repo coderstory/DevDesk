@@ -504,7 +504,9 @@ void PanelState::setSanitizeEnabled(bool on) {
     }
     auto s = loadPanelSettings();
     s.sanitizeEnabled = on;
-    savePanelSettings(s);
+    if (auto sr = savePanelSettings(s); sr.isFail()) {
+        LOG_WARN("面板设置落盘失败（sanitize）: " + sr.errorMessage());
+    }
     refresh(true);
 }
 
@@ -512,7 +514,9 @@ void PanelState::setRecallThresholdPct(int pct) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         snap_.settings.recallThresholdPct = pct;
-        savePanelSettings(snap_.settings);
+        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+            LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
+        }
     }
     refresh(true);
 }
@@ -521,7 +525,9 @@ void PanelState::setTwoWordBaseline(int n) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         snap_.settings.twoWordBaseline = n;
-        savePanelSettings(snap_.settings);
+        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+            LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
+        }
     }
     refresh(true);
 }
@@ -540,7 +546,9 @@ void PanelState::setUsageAlertThresholds(long long dayTokens,
         snap_.settings.usageDayAlertTokens = dayTokens;
         snap_.settings.usageSoftBudgetTokens = softTokens;
         snap_.settings.usageHardBudgetTokens = hardTokens;
-        savePanelSettings(snap_.settings);
+        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+            LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
+        }
     }
     refresh(true);
 }
@@ -551,7 +559,9 @@ void PanelState::markLlmImported(const std::string& profileName) {
         snap_.settings.llmImportedAtSec =
             static_cast<std::int64_t>(std::time(nullptr));
         snap_.settings.llmProfileName = profileName;
-        savePanelSettings(snap_.settings);
+        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+            LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
+        }
     }
     refresh(true);
 }

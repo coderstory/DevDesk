@@ -229,11 +229,12 @@ bool seedScratchProfile(module::claude::ClaudeService& svc,
         return false;
     }
     auto& stmt = prep.value();
-    stmt.bind(1, cred.keyEnc);
-    stmt.bind(2, cred.keyCheck);
-    stmt.bind(3, cred.keyHint);
-    stmt.bind(4, cred.modelsConfig);
-    stmt.bind(5, id);
+    if (stmt.bind(1, cred.keyEnc).isFail() || stmt.bind(2, cred.keyCheck).isFail() ||
+        stmt.bind(3, cred.keyHint).isFail() || stmt.bind(4, cred.modelsConfig).isFail() ||
+        stmt.bind(5, id).isFail()) {
+        std::cerr << "agent_e2e_probe: 凭据覆盖 bind 失败\n";
+        return false;
+    }
     if (stmt.step().isFail()) {
         std::cerr << "agent_e2e_probe: 凭据覆盖 step 失败\n";
         return false;

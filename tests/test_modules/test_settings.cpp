@@ -4319,7 +4319,8 @@ REGISTER_TEST(settings_github_sync_autopush_switch_gates_auto_path,
         module::settings::GithubSyncConfig cfg;
         cfg.enabled = true;
         cfg.autoPush = autoPush;   // repoUrl 留空
-        module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
+        // 有意忽略：造数失败会被用例断言抓（need295）
+        (void)module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
 
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
@@ -4373,7 +4374,8 @@ REGISTER_TEST(settings_github_sync_dirty_from_write_events,
         module::settings::GithubSyncConfig cfg;
         cfg.enabled = true;
         cfg.autoPush = true;   // 自动闸开着：dirty 一置位就发起推送 → 红字可见
-        module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
+        // 有意忽略：造数失败会被用例断言抓（need295）
+        (void)module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
 
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
@@ -4429,8 +4431,9 @@ REGISTER_TEST(settings_github_sync_exit_push_keeps_unsynced_notice_when_autopush
         cfg.enabled = true;
         cfg.autoPush = false;   // repoUrl 留空：走推送路径会立刻本地报错 → 红字可见
         module::settings::GithubSyncStore store(::core::appDatabase());
-        store.save(cfg);
-        store.clearUnsyncedNotice();
+        // 有意忽略：造数失败会被用例断言抓（need295）
+        (void)store.save(cfg);
+        (void)store.clearUnsyncedNotice();
 
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();

@@ -469,7 +469,7 @@ std::string scF(Ctx& c) {
     auto t = makeTask(*c.store, "live-f",
                       "依次调用 app.stats 和 md.list_tags，然后回复 OK。", 6, false);
     std::atomic<bool> cancel{false};
-    std::thread runner([&] { c.loop->run(t, cancel); });
+    std::thread runner([&] { (void)c.loop->run(t, cancel); });  // 并发闸场景只看锁行为（need295）
     std::string ev;
     if (!waitUntil([&] { return c.store->hasRunningRun().valueOr(false); }, 30000)) {
         ev = "30s 内未观察到 running run";
@@ -564,7 +564,7 @@ std::string scC(Ctx& c) {
         auto r = c.store->listRuns(t.id, 10);
         return r.isOk() && !r.value().empty();
     }, 85000, 1000);   // 最长等一个分钟翻转 + tick 余量
-    c.store->setTaskEnabled(t.id, false);   // 两条路径都立即停，防每分钟触发干扰后续场景
+    (void)c.store->setTaskEnabled(t.id, false);   // 立即停防每分钟触发干扰；失败由 run 断言暴露（need295）
     if (!fired) return "85s 内 cron 未触发";
     auto row = c.store->listRuns(t.id, 10);
     if (row.isFail() || row.value().empty()) return "run 行丢失";
@@ -772,10 +772,10 @@ int main(int argc, char** argv) {
                          p1.errorMessage().c_str(), p2.errorMessage().c_str());
             return 2;
         }
-        // todo 列（工具的 todo.move 需要真实列 id）
-        c.todo->createColumn("待办");
-        c.todo->createColumn("进行中");
-        c.todo->createColumn("已完成");
+        // todo 列（工具的 todo.move 需要真实列 id）；造数失败由后续场景断言暴露（need295）
+        (void)c.todo->createColumn("待办");
+        (void)c.todo->createColumn("进行中");
+        (void)c.todo->createColumn("已完成");
 
         // 工具注册（与各模块 onStart 同一入口）
         c.todoTools = std::make_unique<module::todo::TodoTools>(*c.todo);
@@ -785,9 +785,9 @@ int main(int argc, char** argv) {
         c.claudeTools = std::make_unique<module::claude::ClaudeTools>(*c.claude);
         c.claudeTools->registerAll();
         c.readSettingsTool = module::settings::makeAppReadSettingsTool(&c.appDb->db());
-        core::ToolRegistry::instance().registerTool(c.readSettingsTool);
+        (void)core::ToolRegistry::instance().registerTool(c.readSettingsTool);  // 注册失败由场景断言暴露（need295）
         c.statsTool = module::agent::makeAppStatsTool(c.appDb->db());
-        core::ToolRegistry::instance().registerTool(c.statsTool);
+        (void)core::ToolRegistry::instance().registerTool(c.statsTool);
 
         // AgentLoop + DirectLlmClient（真 HttpFn = platform::http，经捕获缝）+ Scheduler
         c.src = std::make_unique<SnapshotSource>();

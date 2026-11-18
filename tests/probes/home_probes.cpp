@@ -94,12 +94,13 @@ int main(int argc, char* argv[]) {
         const int64_t dayStart = module::home::startOfDayEpoch(
             static_cast<std::time_t>(now));
         auto& sq = env.db->db();
-        sq.exec(
+        // 造数结果有意忽略：失败会在探针断言面暴露（need295）
+        (void)sq.exec(
             "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
             "api_key_check, model, created_at, updated_at) "
             "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'm', " +
             std::to_string(now) + ", " + std::to_string(now) + ")");
-        sq.exec(
+        (void)sq.exec(
             "INSERT INTO claude_call_logs (profile_id, method, path, "
             "status_code, latency_ms, output_tokens, started_at) VALUES "
             "(1, 'POST', '/v1/messages', 200, 2000, 400, " +

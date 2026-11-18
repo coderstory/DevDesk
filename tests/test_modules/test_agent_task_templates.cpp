@@ -60,9 +60,10 @@ struct AgentToolRegistration {
     AgentToolRegistration() : tdb("agenttpl", "reg") {
         const auto before = registeredToolNames();
         module::agent::registerAgentBuiltinTools();
-        core::ToolRegistry::instance().registerTool(
+        // 有意忽略 registerTool 结果：注册失败会在用例的 DOCTEST_REQUIRE 断言面暴露（need295）
+        (void)core::ToolRegistry::instance().registerTool(
             std::make_shared<module::agent::NotifyTool>());
-        core::ToolRegistry::instance().registerTool(module::agent::makeAppNowTool());
+        (void)core::ToolRegistry::instance().registerTool(module::agent::makeAppNowTool());
         // 预设批新工具：全部走生产工厂真注册（批次类先注册自家工具；store 挂
         // 临时库，注册阶段不触执行路径）
         todoSvc = std::make_unique<module::todo::TodoService>(tdb.handle());
@@ -74,19 +75,19 @@ struct AgentToolRegistration {
         claudeTools->registerAll();
         scheduleStore =
             std::make_unique<module::schedule::ScheduleStore>(tdb.handle());
-        core::ToolRegistry::instance().registerTool(
+        (void)core::ToolRegistry::instance().registerTool(
             module::schedule::makeScheduleRunsTool(*scheduleStore));
         agentStore =
             std::make_unique<module::agent::AgentStore>(tdb.handle());
-        core::ToolRegistry::instance().registerTool(
+        (void)core::ToolRegistry::instance().registerTool(
             module::agent::makeAgentRunsTool(*agentStore));
         // memory 两工具路径注入（注册阶段不触文件系统，占位路径即可）
-        core::ToolRegistry::instance().registerTool(
+        (void)core::ToolRegistry::instance().registerTool(
             module::memory::makeMemoryStatsTool("contract-tpl/proposals.db",
                                                 "contract-tpl/usage_ledger.db"));
-        core::ToolRegistry::instance().registerTool(
+        (void)core::ToolRegistry::instance().registerTool(
             module::memory::makeMemoryHealthTool());
-        core::ToolRegistry::instance().registerTool(
+        (void)core::ToolRegistry::instance().registerTool(
             module::mcp::makeMcpHealthTool());
         const auto after = registeredToolNames();
         for (const auto& n : after) {

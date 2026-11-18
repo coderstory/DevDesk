@@ -202,24 +202,25 @@ int main(int argc, char* argv[]) {
             seedRun(1200, "missed", "");
         }
         if (channelId != 0 && !emptyHistory) {
+            // 造数结果有意忽略：失败会在探针画面/断言面暴露（need295）
             module::schedule::DeliveryRecord d1;
             d1.runId = okRun;
             d1.channelId = channelId;
             d1.attempt = 0;
             d1.status = "success";
-            store.insertDelivery(d1);
+            (void)store.insertDelivery(d1);
             module::schedule::DeliveryRecord d2;
             d2.runId = failRun;
             d2.channelId = channelId;
             d2.attempt = 0;
             d2.status = "failed";
-            store.insertDelivery(d2);
+            (void)store.insertDelivery(d2);
             module::schedule::DeliveryRecord d3;
             d3.runId = failRun;
             d3.channelId = channelId;
             d3.attempt = 1;
             d3.status = "failed";
-            store.insertDelivery(d3);
+            (void)store.insertDelivery(d3);
         }
     }
 

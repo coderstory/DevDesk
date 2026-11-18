@@ -727,7 +727,8 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
         DOCTEST_CHECK(!svc.isClaudeCodeManaged());
     }
 
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -798,9 +799,10 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     }
 
     svc.stopProxy();  // sidecar 损坏 → 还原报错并保留文件，不崩
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(a.value().id));
-    platform::keychain::deleteSecret(
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })
@@ -914,7 +916,8 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
         DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     }
 
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -971,7 +974,8 @@ REGISTER_TEST(sync_switch_off_no_write,
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
     DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
@@ -1282,9 +1286,10 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     }
 
     svc.stopProxy();
-    platform::keychain::deleteSecret(
+    // 测试收尾清理，有意忽略结果（need295）
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(a.value().id));
-    platform::keychain::deleteSecret(
+    (void)platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })

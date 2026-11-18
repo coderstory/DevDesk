@@ -141,7 +141,10 @@ int main(int argc, char* argv[]) {
         backend.kind = ServiceKind::Backend;
         backend.defaultBranch = "main";
         backend.sort = 1;
-        store.upsertService(backend);
+        if (store.upsertService(backend).isFail()) {
+            std::cerr << "layout_guard_probe: 种子服务失败\n";
+            return 2;
+        }
         const char* dates[3] = {"2026-11-03", "2026-11-04", "2026-11-05"};
         const TaskStatus statuses[3] = {TaskStatus::Running, TaskStatus::Pending,
                                         TaskStatus::Draft};
@@ -164,7 +167,10 @@ int main(int argc, char* argv[]) {
             svc.kind = ServiceKind::Backend;
             svc.defaultBranch = "main";
             svc.branch = "main";
-            store.addTaskEnv(env, {svc});
+            if (store.addTaskEnv(env, {svc}).isFail()) {
+                std::cerr << "layout_guard_probe: 种子任务环境失败\n";
+                return 2;
+            }
         }
     }
 

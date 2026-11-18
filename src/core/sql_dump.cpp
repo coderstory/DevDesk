@@ -346,13 +346,21 @@ core::Result<void> importFromString(
             }
         }
     }
-    db.exec("PRAGMA foreign_keys = OFF;");
+    if (auto fkOff = db.exec("PRAGMA foreign_keys = OFF;"); fkOff.isFail()) {
+        // 关失败会让后续 INSERT 被 FK 拒、事务整体报错，warn 留排障线索（need295）
+        LOG_WARN("sql_dump: PRAGMA foreign_keys=OFF 失败：" + fkOff.errorMessage());
+    }
 
     auto result = db.transaction([&]() -> core::Result<void> {
         return db.exec(stripTransactionShell(sql));
     });
 
-    db.exec(std::string("PRAGMA foreign_keys = ") + (fkWas ? "ON;" : "OFF;"));
+    if (auto fkBack = db.exec(std::string("PRAGMA foreign_keys = ") +
+                              (fkWas ? "ON;" : "OFF;"));
+        fkBack.isFail()) {
+        // 恢复失败会让库停留在 FK=OFF，静默放大后续写风险，必须留痕（need295）
+        LOG_WARN("sql_dump: PRAGMA foreign_keys 恢复失败：" + fkBack.errorMessage());
+    }
     return result;
 }
 

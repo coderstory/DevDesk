@@ -41,7 +41,8 @@ REGISTER_TEST(keychain_store_load, "keychain: store and load", {
     const std::string account = "test_account";
     const std::string secret = "sk-ant-test-secret-12345";
 
-    platform::keychain::deleteSecret(service, account);
+    // 有意忽略：预清理失败=残留旧条目，后续 store 覆盖即可（need295）
+    (void)platform::keychain::deleteSecret(service, account);
 
     auto store = platform::keychain::storeSecret(service, account, secret);
     DOCTEST_REQUIRE(store.isOk());
@@ -135,9 +136,10 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
     DOCTEST_REQUIRE(other.isOk());
     DOCTEST_CHECK_EQ(other.value(), std::string("dark"));
 
-    platform::keychain::deleteSecret(service, "claude:1");
-    platform::keychain::deleteSecret(service, "claude:2");
-    platform::keychain::deleteSecret(service, "notes:theme");
+    // 有意忽略：断言已完成的收尾清理，失败仅残留测试条目（need295）
+    (void)platform::keychain::deleteSecret(service, "claude:1");
+    (void)platform::keychain::deleteSecret(service, "claude:2");
+    (void)platform::keychain::deleteSecret(service, "notes:theme");
     return true;
 })
 
@@ -320,8 +322,9 @@ REGISTER_TEST(keychain_account_names_do_not_fold,
     const std::string colon = "claude:1";
     const std::string slash = "claude/1";   // 旧规则下与 claude:1 同文件
 
-    platform::keychain::deleteSecret(service, colon);
-    platform::keychain::deleteSecret(service, slash);
+    // 预清理，有意忽略：失败由下方 store/exists 断言暴露（need295）
+    (void)platform::keychain::deleteSecret(service, colon);
+    (void)platform::keychain::deleteSecret(service, slash);
 
     DOCTEST_REQUIRE(
         platform::keychain::storeSecret(service, colon, "sk-colon").isOk());
@@ -345,8 +348,9 @@ REGISTER_TEST(keychain_account_names_do_not_fold,
     DOCTEST_REQUIRE(s.isOk());
     DOCTEST_CHECK_EQ(s.value(), std::string("sk-slash"));
 
-    platform::keychain::deleteSecret(service, colon);
-    platform::keychain::deleteSecret(service, slash);
+    // 收尾清理，有意忽略：失败仅残留测试条目（need295）
+    (void)platform::keychain::deleteSecret(service, colon);
+    (void)platform::keychain::deleteSecret(service, slash);
     return true;
 })
 
@@ -359,7 +363,8 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
     const std::string service = "DevDeskTestKeychainLegacy";
     const std::string account = "legacy:probe";   // 旧规则名 = legacy_probe
 
-    platform::keychain::deleteSecret(service, account);
+    // 预清理，有意忽略：失败由下方 store/读回断言暴露（need295）
+    (void)platform::keychain::deleteSecret(service, account);
 
     // 用新编码写一份合法密文（DPAPI 只能同机同用户解，密文必须真造，不能手写假
     // 密文），再在磁盘上改名成旧规则的名字，模拟升级前留下的文件

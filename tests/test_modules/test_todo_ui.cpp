@@ -2609,7 +2609,8 @@ REGISTER_TEST(todo_ui_success_ops_silent_no_toast,
     // 需要先清掉前一个模块的选中记录，否则 mod2 的 restoreViewState 会恢复选中
     {
         if (auto* db = ::core::appDatabase(); db != nullptr) {
-            ::core::appconfig::erase(*db, "todo_view_state");
+            // 有意忽略：预清理失败=残留旧视图态，restore 差异会被下方断言抓住（need295）
+            (void)::core::appconfig::erase(*db, "todo_view_state");
         }
         std::unique_ptr<::core::Module> mod2(create_todo_module());
         mod2->onStart();

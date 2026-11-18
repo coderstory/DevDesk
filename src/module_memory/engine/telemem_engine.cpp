@@ -137,8 +137,9 @@ TelememEngine& TelememEngine::global() {
 
 TelememEngine::~TelememEngine() {
     stopRequested_.store(true);
-    terminateTree(telememPid_.load());
-    terminateTree(llamaPid_.load());
+    // 析构兜底终止：失败无处反馈，进程随应用退出收尾（need295）
+    (void)terminateTree(telememPid_.load());
+    (void)terminateTree(llamaPid_.load());
     if (worker_.joinable()) worker_.join();
 }
 
@@ -180,8 +181,11 @@ void TelememEngine::startAsync() {
 void TelememEngine::stopAsync() {
     stopRequested_.store(true);
     setState(State::Stopped, "引擎已停止（检索与新提炼均不可用，可一键重启）");
-    terminateTree(telememPid_.exchange(0));
-    terminateTree(llamaPid_.exchange(0));
+    // 终止失败=进程仍存活但 UI 已报停，必须留痕（need295）
+    if (auto t1 = terminateTree(telememPid_.exchange(0)); t1.isFail())
+        LOG_WARN("记忆引擎：telemem 进程终止失败——" + t1.errorMessage());
+    if (auto t2 = terminateTree(llamaPid_.exchange(0)); t2.isFail())
+        LOG_WARN("记忆引擎：llama 进程终止失败——" + t2.errorMessage());
     LOG_INFO("记忆引擎：已请求停止");
 }
 
@@ -378,7 +382,8 @@ void TelememEngine::runPipeline() {
                 if (!waitUntilHealthy(kEmbedServerPort, "/health", nullptr,
                                       stopRequested_, &healthErr) &&
                     !stopRequested_.load()) {
-                    terminateTree(llamaPid_.exchange(0));
+                    if (auto t = terminateTree(llamaPid_.exchange(0)); t.isFail())
+                        LOG_WARN("记忆引擎：llama 进程终止失败——" + t.errorMessage());
                     std::lock_guard<std::mutex> lock(mu_);
                     snap_.llamaMissing = true;
                     snap_.embedReady = false;
@@ -440,8 +445,10 @@ void TelememEngine::runPipeline() {
     std::string healthErr;
     if (!waitUntilHealthy(kTelememPort, "/mcp", kTelememProbeBody,
                           stopRequested_, &healthErr)) {
-        terminateTree(telememPid_.exchange(0));
-        terminateTree(llamaPid_.exchange(0));
+        if (auto t1 = terminateTree(telememPid_.exchange(0)); t1.isFail())
+            LOG_WARN("记忆引擎：telemem 进程终止失败——" + t1.errorMessage());
+        if (auto t2 = terminateTree(llamaPid_.exchange(0)); t2.isFail())
+            LOG_WARN("记忆引擎：llama 进程终止失败——" + t2.errorMessage());
         if (stopRequested_.load()) {
             setState(State::Stopped, "引擎已停止");
         } else {

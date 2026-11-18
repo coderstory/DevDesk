@@ -455,7 +455,8 @@ private:
 
         // 记录本次所选目录（下次打开默认定位到它）
         if (auto* db = ::core::appDatabase()) {
-            core::appconfig::set(*db, kClaudeRunLastDirKey, workingDir);
+            // 纯便利记忆：失败=下次从头选目录，不值得弹窗打扰（need295）
+            (void)core::appconfig::set(*db, kClaudeRunLastDirKey, workingDir);
         }
 
         std::string hint;

@@ -620,9 +620,10 @@ REGISTER_TEST(todo_svc_list_all_tasks,
     int64_t c1 = list.value()[0].id;
     int64_t c2 = list.value()[1].id;
 
-    env.svc->createTask(c1, "c1-t1");
-    env.svc->createTask(c1, "c1-t2");
-    env.svc->createTask(c2, "c2-t1");
+    // 有意忽略 createTask 结果：造数失败会被下方 listAllTasks 计数断言抓住（need295）
+    (void)env.svc->createTask(c1, "c1-t1");
+    (void)env.svc->createTask(c1, "c1-t2");
+    (void)env.svc->createTask(c2, "c2-t1");
 
     auto all = env.svc->listAllTasks();
     DOCTEST_REQUIRE(all.isOk());

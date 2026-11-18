@@ -108,9 +108,9 @@ REGISTER_TEST(channelsRegistryDispatchOrderAndReach, "schedule 渠道注册表�
     RecordingChannel* aRaw = a.get();
     RecordingChannel* bRaw = b.get();
     RecordingChannel* cRaw = c.get();
-    registry.registerChannel(std::move(a));
-    registry.registerChannel(std::move(b));
-    registry.registerChannel(std::move(c));
+    (void)registry.registerChannel(std::move(a));
+    (void)registry.registerChannel(std::move(b));
+    (void)registry.registerChannel(std::move(c));
 
     Delivery d = makeDelivery();
     auto report = registry.deliver({"c", "b", "a"}, d);
@@ -135,7 +135,7 @@ REGISTER_TEST(channelsRegistryEmptyIds, "schedule 渠道注册表：空 channel_
     registry.resetForTest();
     auto a = std::make_unique<RecordingChannel>("a");
     RecordingChannel* aRaw = a.get();
-    registry.registerChannel(std::move(a));
+    (void)registry.registerChannel(std::move(a));
 
     auto report = registry.deliver({}, makeDelivery());
     DOCTEST_CHECK(report.isOk());
@@ -152,7 +152,7 @@ REGISTER_TEST(channelsRegistryUnknownIdIsolated, "schedule 渠道注册表：未
     registry.resetForTest();
     auto a = std::make_unique<RecordingChannel>("a");
     RecordingChannel* aRaw = a.get();
-    registry.registerChannel(std::move(a));
+    (void)registry.registerChannel(std::move(a));
 
     auto report = registry.deliver({"ghost", "a"}, makeDelivery());
     DOCTEST_CHECK(report.isOk());
@@ -171,10 +171,10 @@ REGISTER_TEST(channelsRegistryUnknownIdIsolated, "schedule 渠道注册表：未
 REGISTER_TEST(channelsRegistryPerChannelFailure, "schedule 渠道注册表：单渠道失败不短路分发链", {
     module::schedule::ChannelRegistry registry;
     registry.resetForTest();
-    registry.registerChannel(std::make_unique<FailingChannel>());
+    (void)registry.registerChannel(std::make_unique<FailingChannel>());
     auto a = std::make_unique<RecordingChannel>("a");
     RecordingChannel* aRaw = a.get();
-    registry.registerChannel(std::move(a));
+    (void)registry.registerChannel(std::move(a));
 
     auto report = registry.deliver({"failing", "a"}, makeDelivery());
     DOCTEST_CHECK(report.isOk());
@@ -206,7 +206,7 @@ REGISTER_TEST(channelsDeliveryFieldPassthrough, "schedule 分发：Delivery 全�
     registry.resetForTest();
     auto a = std::make_unique<RecordingChannel>("a");
     RecordingChannel* aRaw = a.get();
-    registry.registerChannel(std::move(a));
+    (void)registry.registerChannel(std::move(a));
 
     Delivery d = makeDelivery();
     auto report = registry.deliver({"a"}, d);
@@ -273,7 +273,7 @@ REGISTER_TEST(channelsToastMainThreadMarshaling, "schedule toast 渠道：delive
     };
     auto channel = module::schedule::makeToastChannelForTest(sink);
     module::schedule::ChannelRegistry registry;
-    registry.registerChannel(std::move(channel));
+    (void)registry.registerChannel(std::move(channel));
 
     Delivery first = makeDelivery();
     first.title = "第一条";
@@ -316,7 +316,7 @@ REGISTER_TEST(channelsFullscreenAggregateCooldownRepop, "schedule 全屏渠道�
                  const std::function<void()>& onClosed) { probe.updater(items, onClosed); },
         nowFn);
     module::schedule::ChannelRegistry registry;
-    registry.registerChannel(std::move(channel));
+    (void)registry.registerChannel(std::move(channel));
 
     // 首 tick 补弹 + 聚合：flush 前到达的两条投递合并为一次开窗
     Delivery a = makeDelivery();
@@ -325,8 +325,9 @@ REGISTER_TEST(channelsFullscreenAggregateCooldownRepop, "schedule 全屏渠道�
     Delivery b = makeDelivery();
     b.title = "B";
     b.dedupeKey = "k2";
-    registry.deliver({module::schedule::kChannelFullscreen}, a);
-    registry.deliver({module::schedule::kChannelFullscreen}, b);
+    // 投递结果由下方 probe 断言覆盖（need295）
+    (void)registry.deliver({module::schedule::kChannelFullscreen}, a);
+    (void)registry.deliver({module::schedule::kChannelFullscreen}, b);
     registry.flushAllToMainThread();
     DOCTEST_CHECK_EQ(probe.calls, 1);
     DOCTEST_CHECK_EQ(probe.snapshots[0].size(), 2u);
@@ -335,7 +336,7 @@ REGISTER_TEST(channelsFullscreenAggregateCooldownRepop, "schedule 全屏渠道�
     Delivery c = makeDelivery();
     c.title = "C";
     c.dedupeKey = "k3";
-    registry.deliver({module::schedule::kChannelFullscreen}, c);
+    (void)registry.deliver({module::schedule::kChannelFullscreen}, c);
     registry.flushAllToMainThread();
     DOCTEST_CHECK_EQ(probe.calls, 2);
     DOCTEST_CHECK_EQ(probe.snapshots[1].size(), 3u);
@@ -346,7 +347,7 @@ REGISTER_TEST(channelsFullscreenAggregateCooldownRepop, "schedule 全屏渠道�
     Delivery d = makeDelivery();
     d.title = "D";
     d.dedupeKey = "k4";
-    registry.deliver({module::schedule::kChannelFullscreen}, d);
+    (void)registry.deliver({module::schedule::kChannelFullscreen}, d);
     now = 1100;  // 关窗后 100s，冷却中
     registry.flushAllToMainThread();
     DOCTEST_CHECK_EQ(probe.calls, 2);
@@ -378,7 +379,7 @@ REGISTER_TEST(channelsFullscreenDedupeKeyMerge, "schedule 全屏渠道：同 ded
                  const std::function<void()>& onClosed) { probe.updater(items, onClosed); },
         [&now] { return now; });
     module::schedule::ChannelRegistry registry;
-    registry.registerChannel(std::move(channel));
+    (void)registry.registerChannel(std::move(channel));
 
     Delivery a = makeDelivery();
     a.title = "第一版";
@@ -386,8 +387,9 @@ REGISTER_TEST(channelsFullscreenDedupeKeyMerge, "schedule 全屏渠道：同 ded
     Delivery a2 = makeDelivery();
     a2.title = "第二版";
     a2.dedupeKey = "k1";  // 同键：后到覆盖
-    registry.deliver({module::schedule::kChannelFullscreen}, a);
-    registry.deliver({module::schedule::kChannelFullscreen}, a2);
+    // 投递结果由下方 probe 断言覆盖（need295）
+    (void)registry.deliver({module::schedule::kChannelFullscreen}, a);
+    (void)registry.deliver({module::schedule::kChannelFullscreen}, a2);
     registry.flushAllToMainThread();
     DOCTEST_CHECK_EQ(probe.calls, 1);
     DOCTEST_CHECK_EQ(probe.items.size(), 1u);
@@ -415,7 +417,7 @@ REGISTER_TEST(channelsFullscreenPopupGate, "schedule 全屏渠道：弹窗总开
                  const std::function<void()>& onClosed) { probe.updater(items, onClosed); },
         nowFn, /*respectGlobalGate=*/true);
     module::schedule::ChannelRegistry registry;
-    registry.registerChannel(std::move(channel));
+    (void)registry.registerChannel(std::move(channel));
 
     // 关：deliver 回 ok（环境类抑制不回 fail）但 updater 不被调
     auto r = registry.deliver({module::schedule::kChannelFullscreen},
@@ -432,7 +434,7 @@ REGISTER_TEST(channelsFullscreenPopupGate, "schedule 全屏渠道：弹窗总开
                  const std::function<void()>& onClosed) { probe.updater(items, onClosed); },
         nowFn, /*respectGlobalGate=*/true);
     module::schedule::ChannelRegistry registry2;
-    registry2.registerChannel(std::move(channel2));
+    (void)registry2.registerChannel(std::move(channel2));
     auto r2 = registry2.deliver({module::schedule::kChannelFullscreen},
                                 makeDelivery());
     DOCTEST_CHECK(r2.isOk());
@@ -478,7 +480,7 @@ REGISTER_TEST(channelsToastDefaultSinkViaBridge, "schedule toast 渠道：默认
     {
         auto channel = module::schedule::makeBuiltinChannel(module::schedule::kChannelToast);
         module::schedule::ChannelRegistry registry;
-        registry.registerChannel(std::move(channel));
+        (void)registry.registerChannel(std::move(channel));
         auto r = registry.deliver({module::schedule::kChannelToast}, makeDelivery());
         DOCTEST_CHECK(r.isOk());
         registry.flushAllToMainThread();
@@ -495,7 +497,7 @@ REGISTER_TEST(channelsToastDefaultSinkViaBridge, "schedule toast 渠道：默认
     {
         auto channel = module::schedule::makeBuiltinChannel(module::schedule::kChannelToast);
         module::schedule::ChannelRegistry registry;
-        registry.registerChannel(std::move(channel));
+        (void)registry.registerChannel(std::move(channel));
         Delivery d = makeDelivery();
         d.title = "桥转发";
         auto r = registry.deliver({module::schedule::kChannelToast}, d);

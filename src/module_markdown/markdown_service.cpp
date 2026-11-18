@@ -352,11 +352,16 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "prepare insert: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, relPathPosix);
-            stmt.bind(2, title);
-            stmt.bind(3, static_cast<int64_t>(fileSize));
-            stmt.bind(4, static_cast<int64_t>(mtimeSec));
-            stmt.bind(5, static_cast<int64_t>(mtimeSec));
+            if (auto b = stmt.bind(1, relPathPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind insert index: " + b.errorMessage());
+            if (auto b = stmt.bind(2, title); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind insert index: " + b.errorMessage());
+            if (auto b = stmt.bind(3, static_cast<int64_t>(fileSize)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind insert index: " + b.errorMessage());
+            if (auto b = stmt.bind(4, static_cast<int64_t>(mtimeSec)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind insert index: " + b.errorMessage());
+            if (auto b = stmt.bind(5, static_cast<int64_t>(mtimeSec)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind insert index: " + b.errorMessage());
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(),
@@ -373,10 +378,14 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "prepare update: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, title);
-            stmt.bind(2, static_cast<int64_t>(fileSize));
-            stmt.bind(3, static_cast<int64_t>(mtimeSec));
-            stmt.bind(4, relPathPosix);
+            if (auto b = stmt.bind(1, title); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update index: " + b.errorMessage());
+            if (auto b = stmt.bind(2, static_cast<int64_t>(fileSize)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update index: " + b.errorMessage());
+            if (auto b = stmt.bind(3, static_cast<int64_t>(mtimeSec)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update index: " + b.errorMessage());
+            if (auto b = stmt.bind(4, relPathPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update index: " + b.errorMessage());
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(),
@@ -393,7 +402,8 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "prepare fts delete: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, relPathPosix);
+            if (auto b = stmt.bind(1, relPathPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind fts delete: " + b.errorMessage());
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(),
@@ -409,9 +419,12 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "prepare fts: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, relPathPosix);
-            stmt.bind(2, title);
-            stmt.bind(3, content);
+            if (auto b = stmt.bind(1, relPathPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind fts: " + b.errorMessage());
+            if (auto b = stmt.bind(2, title); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind fts: " + b.errorMessage());
+            if (auto b = stmt.bind(3, content); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind fts: " + b.errorMessage());
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(),
@@ -435,10 +448,11 @@ core::Result<void> MarkdownService::deleteFromIndex(
                 "DELETE FROM markdown_index WHERE path = ?");
             if (prep.isFail()) {
                 return core::Result<void>::fail(prep.errorCode(),
-                    "prepare delete index: " + prep.errorMessage());
+                        "prepare delete index: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, relPathPosix);
+            if (auto b = stmt.bind(1, relPathPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind delete index: " + b.errorMessage());
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(),
@@ -450,10 +464,11 @@ core::Result<void> MarkdownService::deleteFromIndex(
                 "DELETE FROM markdown_fts WHERE path = ?");
             if (prep.isFail()) {
                 return core::Result<void>::fail(prep.errorCode(),
-                    "prepare delete fts: " + prep.errorMessage());
+                        "prepare delete fts: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, relPathPosix);
+            if (auto b = stmt.bind(1, relPathPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind delete fts: " + b.errorMessage());
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(),
@@ -809,11 +824,16 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
                     "prepare rename index: " + prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, newPosix);
-            stmt.bind(2, title);
-            stmt.bind(3, static_cast<int64_t>(fileSize));
-            stmt.bind(4, mtime);
-            stmt.bind(5, oldPosix);
+            if (auto b = stmt.bind(1, newPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind rename index: " + b.errorMessage());
+            if (auto b = stmt.bind(2, title); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind rename index: " + b.errorMessage());
+            if (auto b = stmt.bind(3, static_cast<int64_t>(fileSize)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind rename index: " + b.errorMessage());
+            if (auto b = stmt.bind(4, mtime); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind rename index: " + b.errorMessage());
+            if (auto b = stmt.bind(5, oldPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind rename index: " + b.errorMessage());
             auto step = stmt.step();
             if (step.isFail()) {
                 return core::Result<void>::fail(step.errorCode(),
@@ -827,7 +847,9 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
                 return core::Result<void>::fail(prep.errorCode(),
                     "prepare rename fts delete: " + prep.errorMessage());
             }
-            prep.value().bind(1, oldPosix);
+            if (auto b = prep.value().bind(1, oldPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(),
+                    "bind rename fts delete: " + b.errorMessage());
             auto step = prep.value().step();
             if (step.isFail()) {
                 return core::Result<void>::fail(step.errorCode(),
@@ -841,9 +863,15 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
                 return core::Result<void>::fail(prep.errorCode(),
                     "prepare rename fts insert: " + prep.errorMessage());
             }
-            prep.value().bind(1, newPosix);
-            prep.value().bind(2, title);
-            prep.value().bind(3, content);
+            if (auto b = prep.value().bind(1, newPosix); b.isFail())
+                return core::Result<void>::fail(b.errorCode(),
+                    "bind rename fts insert: " + b.errorMessage());
+            if (auto b = prep.value().bind(2, title); b.isFail())
+                return core::Result<void>::fail(b.errorCode(),
+                    "bind rename fts insert: " + b.errorMessage());
+            if (auto b = prep.value().bind(3, content); b.isFail())
+                return core::Result<void>::fail(b.errorCode(),
+                    "bind rename fts insert: " + b.errorMessage());
             auto step = prep.value().step();
             if (step.isFail()) {
                 return core::Result<void>::fail(step.errorCode(),
@@ -1061,7 +1089,9 @@ core::Result<void> MarkdownService::setTags(
                     return core::Result<void>::fail(prep.errorCode(),
                         "prepare setTags insert tag: " + prep.errorMessage());
                 }
-                prep.value().bind(1, name);
+                if (auto b = prep.value().bind(1, name); b.isFail())
+                    return core::Result<void>::fail(b.errorCode(),
+                        "bind setTags insert tag: " + b.errorMessage());
                 auto step = prep.value().step();
                 if (step.isFail()) {
                     return core::Result<void>::fail(step.errorCode(),
@@ -1076,7 +1106,9 @@ core::Result<void> MarkdownService::setTags(
                     return core::Result<void>::fail(prep.errorCode(),
                         "prepare setTags select tag: " + prep.errorMessage());
                 }
-                prep.value().bind(1, name);
+                if (auto b = prep.value().bind(1, name); b.isFail())
+                    return core::Result<void>::fail(b.errorCode(),
+                        "bind setTags select tag: " + b.errorMessage());
                 auto step = prep.value().step();
                 if (step.isFail() || !step.value()) {
                     return core::Result<void>::fail(core::ErrorCode::Internal,
@@ -1097,8 +1129,12 @@ core::Result<void> MarkdownService::setTags(
                     return core::Result<void>::fail(prep.errorCode(),
                         "prepare setTags link: " + prep.errorMessage());
                 }
-                prep.value().bind(1, noteId);
-                prep.value().bind(2, tagId);
+                if (auto b = prep.value().bind(1, noteId); b.isFail())
+                    return core::Result<void>::fail(b.errorCode(),
+                        "bind setTags link: " + b.errorMessage());
+                if (auto b = prep.value().bind(2, tagId); b.isFail())
+                    return core::Result<void>::fail(b.errorCode(),
+                        "bind setTags link: " + b.errorMessage());
                 auto step = prep.value().step();
                 if (step.isFail()) {
                     return core::Result<void>::fail(step.errorCode(),

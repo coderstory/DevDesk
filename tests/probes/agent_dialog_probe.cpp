@@ -160,14 +160,15 @@ int main(int argc, char* argv[]) {
             return 3;
         }
         runId = r.value();
-        store.appendMessage(runId, 0, "user",
+        // 造数结果有意忽略：落库失败会在场景断言面暴露（need295）
+        (void)store.appendMessage(runId, 0, "user",
                             R"([{"type":"text","text":"帮我整理今天的进展"}])",
                             std::nullopt);
-        store.appendMessage(
+        (void)store.appendMessage(
             runId, 1, "assistant",
             R"([{"type":"text","text":"今日完成：全量回归 1301 用例，5 失败均为已知 keychain/DPAPI 环境问题；模块隔离守卫通过。"}])",
             std::nullopt);
-        store.finishRun(runId, "failed", 1, std::nullopt, std::nullopt,
+        (void)store.finishRun(runId, "failed", 1, std::nullopt, std::nullopt,
                         std::string("LLM 配置不可用：没有激活的 Claude profile，"
                                     "请在 DevDesk 的 Claude 页选中 Profile 并点击"
                                     "「启用」"));

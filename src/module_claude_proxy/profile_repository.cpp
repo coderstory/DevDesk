@@ -76,11 +76,16 @@ core::Result<void> writeCredentialColumns(core::data::SqliteDb& db,
         return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    stmt.bind(1, stored);
-    stmt.bind(2, hint);
-    stmt.bind(3, check);
-    stmt.bind(4, static_cast<int64_t>(nowUnix()));
-    stmt.bind(5, profileId);
+    if (auto b = stmt.bind(1, stored); b.isFail())
+        return core::Result<void>::fail(b.errorCode(), "bind credential: " + b.errorMessage());
+    if (auto b = stmt.bind(2, hint); b.isFail())
+        return core::Result<void>::fail(b.errorCode(), "bind credential: " + b.errorMessage());
+    if (auto b = stmt.bind(3, check); b.isFail())
+        return core::Result<void>::fail(b.errorCode(), "bind credential: " + b.errorMessage());
+    if (auto b = stmt.bind(4, static_cast<int64_t>(nowUnix())); b.isFail())
+        return core::Result<void>::fail(b.errorCode(), "bind credential: " + b.errorMessage());
+    if (auto b = stmt.bind(5, profileId); b.isFail())
+        return core::Result<void>::fail(b.errorCode(), "bind credential: " + b.errorMessage());
     auto stepR = stmt.step();
     if (stepR.isFail()) {
         return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
@@ -331,15 +336,24 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    stmt.bind(1, cleanedName);
-    stmt.bind(2, cleanedUrl);
-    stmt.bind(3, hint);
-    stmt.bind(4, check);
-    stmt.bind(5, protectedKey.value());  // 凭据本体（分平台形态）
-    stmt.bind(6, cleanedModel);
-    stmt.bind(7, cleanedAuthField);  // 认证字段（写侧已规范化）
-    stmt.bind(8, static_cast<int64_t>(now));
-    stmt.bind(9, static_cast<int64_t>(now));
+    if (auto b = stmt.bind(1, cleanedName); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(2, cleanedUrl); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(3, hint); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(4, check); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(5, protectedKey.value()); b.isFail())  // 凭据本体（分平台形态）
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(6, cleanedModel); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(7, cleanedAuthField); b.isFail())  // 认证字段（写侧已规范化）
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(8, static_cast<int64_t>(now)); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
+    if (auto b = stmt.bind(9, static_cast<int64_t>(now)); b.isFail())
+        return core::Result<Profile>::fail(b.errorCode(), "bind create profile: " + b.errorMessage());
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -460,14 +474,22 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
                                                 prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, cleanedName);
-            stmt.bind(2, cleanedUrl);
-            stmt.bind(3, cleanedModel);
-            stmt.bind(4, profile.modelsConfigJson);
-            stmt.bind(5, profile.extraEnvJson);
-            stmt.bind(6, cleanedAuthField);
-            stmt.bind(7, static_cast<int64_t>(now));
-            stmt.bind(8, profile.id);
+            if (auto b = stmt.bind(1, cleanedName); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(2, cleanedUrl); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(3, cleanedModel); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(4, profile.modelsConfigJson); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(5, profile.extraEnvJson); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(6, cleanedAuthField); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(7, static_cast<int64_t>(now)); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+            if (auto b = stmt.bind(8, profile.id); b.isFail())
+                return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
             auto step = stmt.step();
             if (step.isFail()) {
                 std::string msg = step.errorMessage();
@@ -495,14 +517,22 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
         }
         auto& stmt = prep.value();
-        stmt.bind(1, cleanedName);
-        stmt.bind(2, cleanedUrl);
-        stmt.bind(3, cleanedModel);
-        stmt.bind(4, profile.modelsConfigJson);
-        stmt.bind(5, profile.extraEnvJson);
-        stmt.bind(6, cleanedAuthField);
-        stmt.bind(7, static_cast<int64_t>(now));
-        stmt.bind(8, profile.id);
+        if (auto b = stmt.bind(1, cleanedName); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(2, cleanedUrl); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(3, cleanedModel); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(4, profile.modelsConfigJson); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(5, profile.extraEnvJson); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(6, cleanedAuthField); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(7, static_cast<int64_t>(now)); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
+        if (auto b = stmt.bind(8, profile.id); b.isFail())
+            return core::Result<void>::fail(b.errorCode(), "bind update profile: " + b.errorMessage());
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -551,7 +581,9 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
         }
         auto& stmt = prep.value();
-        stmt.bind(1, id);
+        if (auto b = stmt.bind(1, id); b.isFail())
+            return core::Result<void>::fail(b.errorCode(),
+                                            "bind delete profile: " + b.errorMessage());
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             return core::Result<void>::fail(stepR.errorCode(),
@@ -657,11 +689,17 @@ core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
             continue;
         }
         auto& stmt = up.value();
-        stmt.bind(1, protectedR.value());
-        stmt.bind(2, hint);
-        stmt.bind(3, check);
-        stmt.bind(4, static_cast<int64_t>(nowUnix()));
-        stmt.bind(5, id);
+        bool bindOk = true;
+        if (auto b = stmt.bind(1, protectedR.value()); b.isFail()) bindOk = false;
+        else if (auto b = stmt.bind(2, hint); b.isFail()) bindOk = false;
+        else if (auto b = stmt.bind(3, check); b.isFail()) bindOk = false;
+        else if (auto b = stmt.bind(4, static_cast<int64_t>(nowUnix())); b.isFail()) bindOk = false;
+        else if (auto b = stmt.bind(5, id); b.isFail()) bindOk = false;
+        if (!bindOk) {
+            LOG_WARN("凭据回填：id=" + std::to_string(id) +
+                     " UPDATE 参数绑定失败（跳过）");
+            continue;
+        }
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             LOG_WARN("凭据回填：id=" + std::to_string(id) +
@@ -746,8 +784,12 @@ core::Result<void> ProfileRepository::activateProfile(int64_t id) {
             return core::Result<void>::fail(s.errorCode(), s.errorMessage());
         }
         auto& stmt = s.value();
-        stmt.bind(1, static_cast<int64_t>(nowUnix()));
-        stmt.bind(2, id);
+        if (auto b = stmt.bind(1, static_cast<int64_t>(nowUnix())); b.isFail())
+            return core::Result<void>::fail(b.errorCode(),
+                                            "bind activate profile: " + b.errorMessage());
+        if (auto b = stmt.bind(2, id); b.isFail())
+            return core::Result<void>::fail(b.errorCode(),
+                                            "bind activate profile: " + b.errorMessage());
         auto sStep = stmt.step();
         if (sStep.isFail()) {
             return core::Result<void>::fail(sStep.errorCode(), sStep.errorMessage());

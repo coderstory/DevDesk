@@ -683,7 +683,12 @@ void AgentModule::testRunDialog() {
             auto row = store_->getTask(tempTaskId);
             if (row.isOk()) {
                 AgentTask t = taskFromRow(row.value());
-                loop_->run(t, raw->cancel);
+                auto runResult = loop_->run(t, raw->cancel);
+                if (runResult.isFail()) {
+                    LOG_WARN("Agent: 试运行执行失败（id=" +
+                             std::to_string(tempTaskId) + "）: " +
+                             runResult.errorMessage());
+                }
             }
             // 清理临时任务（级联删 runs / messages）
             auto del = store_->deleteTask(tempTaskId);
@@ -695,7 +700,12 @@ void AgentModule::testRunDialog() {
             ::core::platform::requestUiUpdate();
         });
     } catch (const std::system_error& e) {
-        store_->deleteTask(tempTaskId);
+        // 异常路径清理：删除失败留痕，不留孤儿临时任务行（need295）
+        auto del = store_->deleteTask(tempTaskId);
+        if (del.isFail()) {
+            LOG_WARN("Agent: 试运行异常清理删除临时任务失败（id=" +
+                     std::to_string(tempTaskId) + "）: " + del.errorMessage());
+        }
         editError_ = "试运行启动失败：" + std::string(e.what());
         LOG_ERROR(std::string("Agent: 试运行线程创建失败: ") + e.what());
         return;

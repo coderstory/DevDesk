@@ -126,24 +126,32 @@ int64_t ProxyRouter::insertCallLogRow(const Profile& profile,
         return 0;
     }
     auto& stmt = prep.value();
-    stmt.bind(1, static_cast<int64_t>(profile.id));
-    stmt.bind(2, method);
-    stmt.bind(3, path);
-    // status_code = 0 表示上游不可达（无响应码）：落 NULL，与真实状态码区分。
-    if (statusCode > 0) {
-        stmt.bind(4, static_cast<int64_t>(statusCode));
-    } else {
-        stmt.bind(4, nullptr);
+    // bind 失败仅可能是编程错误（索引/类型），聚合一次告警；真实 IO 错误由 fetchAll 兜底（need295）
+    auto bindAll = [&]() -> core::Result<void> {
+        if (auto b = stmt.bind(1, static_cast<int64_t>(profile.id)); b.isFail()) return b;
+        if (auto b = stmt.bind(2, method); b.isFail()) return b;
+        if (auto b = stmt.bind(3, path); b.isFail()) return b;
+        // status_code = 0 表示上游不可达（无响应码）：落 NULL，与真实状态码区分。
+        if (statusCode > 0) {
+            if (auto b = stmt.bind(4, static_cast<int64_t>(statusCode)); b.isFail()) return b;
+        } else {
+            if (auto b = stmt.bind(4, nullptr); b.isFail()) return b;
+        }
+        if (auto b = stmt.bind(5, latencyMs); b.isFail()) return b;
+        if (auto b = stmt.bind(6, requestBytes); b.isFail()) return b;
+        if (auto b = stmt.bind(7, responseBytes); b.isFail()) return b;
+        if (error.empty()) {
+            if (auto b = stmt.bind(8, nullptr); b.isFail()) return b;
+        } else {
+            if (auto b = stmt.bind(8, error); b.isFail()) return b;
+        }
+        if (auto b = stmt.bind(9, static_cast<int64_t>(std::time(nullptr))); b.isFail()) return b;
+        return core::Result<void>::ok();
+    };
+    if (auto b = bindAll(); b.isFail()) {
+        LOG_WARN("代理：调用日志 bind 失败: " + b.errorMessage());
+        return 0;
     }
-    stmt.bind(5, latencyMs);
-    stmt.bind(6, requestBytes);
-    stmt.bind(7, responseBytes);
-    if (error.empty()) {
-        stmt.bind(8, nullptr);
-    } else {
-        stmt.bind(8, error);
-    }
-    stmt.bind(9, static_cast<int64_t>(std::time(nullptr)));
     auto rows = stmt.fetchAll();
     if (rows.isFail() || rows.value().empty()) {
         LOG_WARN(std::string("代理：调用日志插入失败") +
@@ -171,19 +179,24 @@ void ProxyRouter::updateCallLogUsage(int64_t rowId, int64_t inputTokens,
     }
     auto& stmt = prep.value();
     // -1 = 该项没拿到 → NULL（与真实 0 区分），见 streaming_proxy.h:52 口径。
-    const auto bindMaybeNull = [&stmt](int idx, int64_t v) {
+    const auto bindMaybeNull = [&stmt](int idx, int64_t v) -> core::Result<void> {
         if (v < 0) {
-            stmt.bind(idx, nullptr);
-        } else {
-            stmt.bind(idx, v);
+            return stmt.bind(idx, nullptr);
         }
+        return stmt.bind(idx, v);
     };
-    bindMaybeNull(1, inputTokens);
-    bindMaybeNull(2, outputTokens);
-    bindMaybeNull(3, cacheReadTokens);
-    bindMaybeNull(4, cacheWriteTokens);
-    bindMaybeNull(5, firstEventMs);
-    stmt.bind(6, rowId);
+    if (auto b = bindMaybeNull(1, inputTokens); b.isFail())
+        { LOG_WARN("代理：用量回填 bind 失败: " + b.errorMessage()); return; }
+    if (auto b = bindMaybeNull(2, outputTokens); b.isFail())
+        { LOG_WARN("代理：用量回填 bind 失败: " + b.errorMessage()); return; }
+    if (auto b = bindMaybeNull(3, cacheReadTokens); b.isFail())
+        { LOG_WARN("代理：用量回填 bind 失败: " + b.errorMessage()); return; }
+    if (auto b = bindMaybeNull(4, cacheWriteTokens); b.isFail())
+        { LOG_WARN("代理：用量回填 bind 失败: " + b.errorMessage()); return; }
+    if (auto b = bindMaybeNull(5, firstEventMs); b.isFail())
+        { LOG_WARN("代理：用量回填 bind 失败: " + b.errorMessage()); return; }
+    if (auto b = stmt.bind(6, rowId); b.isFail())
+        { LOG_WARN("代理：用量回填 bind 失败: " + b.errorMessage()); return; }
     auto stepR = stmt.step();
     if (stepR.isFail()) {
         LOG_WARN("代理：用量回填失败: " + stepR.errorMessage());
@@ -427,11 +440,12 @@ void ProxyRouter::handleStreamingRequest(
                               "WHERE id = ?");
                           if (prep.isOk()) {
                               auto& stmt = prep.value();
-                              stmt.bind(1, latencyMs);
-                              stmt.bind(2, streamRowId);
-                              if (auto r = stmt.step(); r.isFail()) {
-                                  LOG_WARN("代理：流式耗时回填失败: " +
-                                           r.errorMessage());
+                              if (stmt.bind(1, latencyMs).isOk() &&
+                                  stmt.bind(2, streamRowId).isOk()) {
+                                  if (auto r = stmt.step(); r.isFail()) {
+                                      LOG_WARN("代理：流式耗时回填失败: " +
+                                               r.errorMessage());
+                                  }
                               }
                           }
                       }

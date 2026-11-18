@@ -70,8 +70,9 @@ inline const char* errorCodeToString(ErrorCode code) {
     return "Unknown";
 }
 
+// [[nodiscard]]：丢弃 Result 零编译告警=错误吞没面根因（need295）
 template<typename T>
-class Result {
+class [[nodiscard]] Result {
 public:
     static Result ok(T value) {
         Result r;
@@ -132,7 +133,7 @@ private:
 
 // void 特化
 template<>
-class Result<void> {
+class [[nodiscard]] Result<void> {
 public:
     static Result ok() {
         Result r;
