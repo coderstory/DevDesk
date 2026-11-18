@@ -54,7 +54,7 @@ void MarkdownModule::drawOutlinePanel(eui::Ui& ui,
                 .text("大纲")
                 .fontSize(t.sizes.fontSizeBody)
                 .lineHeight(core::theme::scaled(24.0f))
-                .fontWeight(700)
+                .fontWeight(600)  // 面板标题档 600（need322 字重豁免名单：700→600 随迁）
                 .color(t.colors.textPrimary)
                 .build();
             components::button(ui, "md.outline.panel.close")

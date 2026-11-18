@@ -49,7 +49,7 @@ struct DialogTextOptions {
     float width = 0.0f;        // > 0 = 直接用此宽（覆盖 inset；详情弹窗标签行现状）
     float height = 28.0f;      // 文本元素高
     float lineHeight = 28.0f;
-    bool bold = false;         // fontWeight(700)
+    bool bold = false;         // fontWeight(600)（need322 弹窗标题档）
     bool wrap = false;         // .wrap()（仅在正文行现状出现过）
     bool skipIfEmpty = false;  // 空串 = 不绘制（校验错误行）
 };
@@ -63,7 +63,7 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
 // 同一类控件三个规格。定死为唯一来源。
 inline constexpr float kDialogTitleFontSize = 20.0f;
 
-// 标题行（宽 w-56、高 28、行高 28、700 字重）
+// 标题行（宽 w-56、高 28、行高 28、600 字重）
 struct DialogTitleOptions {
     float x = kDialogInsetX;
     float y = 16.0f;  // 规格 §三.4：标题上缘距弹窗顶 ≤16px（原 24）

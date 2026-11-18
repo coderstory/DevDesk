@@ -38,7 +38,7 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
         .fontSize(core::theme::scaled(fontSize))
         .lineHeight(options.lineHeight);
     if (options.bold) {
-        builder.fontWeight(700);
+        builder.fontWeight(600);  // 弹窗标题档 600（need322 字重豁免名单：700→600 随迁）
     }
     if (options.wrap) {
         builder.wrap();
@@ -55,7 +55,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
     textOptions.inset = options.inset;
     textOptions.height = options.height;
     textOptions.lineHeight = options.lineHeight;
-    textOptions.bold = true;  // 标题一律 700
+    textOptions.bold = true;  // 标题一律 600（need322：弹窗标题档 700→600 随迁）
     drawDialogText(ui, id, dialogWidth, text, fontSize, color, textOptions);
 }
 

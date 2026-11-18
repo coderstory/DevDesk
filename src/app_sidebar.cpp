@@ -416,7 +416,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             .size(160.0f, h)
             .text("DevDesk")
             .fontSize(t.sizes.fontSizeBody)
-            .fontWeight(700)
+            .fontWeight(700)  // 老板 2026-11-18 裁决豁免：品牌字保留 700
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textPrimary)
             .build();
@@ -469,7 +469,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
                 .size(160.0f, h)
                 .text("DevDesk")
                 .fontSize(t.sizes.fontSizeBody)
-                .fontWeight(700)
+                .fontWeight(700)  // 老板 2026-11-18 裁决豁免：品牌字保留 700
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textPrimary)
                 .build();

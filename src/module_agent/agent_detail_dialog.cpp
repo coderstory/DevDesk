@@ -180,7 +180,7 @@ void AgentModule::composeTaskDetailDialog(
                 .text(taskRow ? taskRow->name : std::string("任务详情"))
                 .fontSize(core::theme::scaled(20.0f))
                 .lineHeight(core::theme::scaled(26.0f))
-                .fontWeight(700)
+                .fontWeight(600)  // 弹窗标题档 600（need322 字重豁免名单：700→600 随迁）
                 .wrap(false)
                 .maxWidth(std::max(0.0f, headerRightX - x0))
                 .color(t.colors.textPrimary)

@@ -971,7 +971,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
             .lineHeight(core::theme::scaled(kCardTitleLineH))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .color(t.colors.success)
-            .fontWeight(700)
+            .fontWeight(700)  // 老板 2026-11-18 裁决豁免：完成角标保留 700
             .opacity(finalCardOpacity)
             .build();
     }

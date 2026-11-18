@@ -2445,7 +2445,7 @@ void drawValidationDialog(eui::Ui& ui, const eui::Screen& screen,
             .text("校验未通过")
             .fontSize(t.sizes.fontSizeLarge)
             .lineHeight(core::theme::scaled(26.0f))
-            .fontWeight(700)
+            .fontWeight(600)  // 弹窗标题档 600（need322 字重豁免名单：700→600 随迁）
             .color(t.colors.textPrimary)
             .build();
         ui.text("release.detail.validation.hint")

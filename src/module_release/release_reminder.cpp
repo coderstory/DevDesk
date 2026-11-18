@@ -894,7 +894,7 @@ void composeReminderWindow(eui::Ui& ui, const eui::Screen& screen,
         .size(titleWidth, core::theme::scaled(40.0f))
         .text("上线提醒")
         .fontSize(tokens.sizes.fontSizeTitle)
-        .fontWeight(700)
+        .fontWeight(600)  // 弹窗标题档 600（need322 字重豁免名单：700→600 随迁）
         .color(tokens.colors.textPrimary)
         .build();
 

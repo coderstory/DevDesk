@@ -208,7 +208,7 @@ void drawSplashTree(eui::Ui& ui, const eui::Screen& screen, float elapsed,
         .size(280.0f, kLogoH)
         .text("DevDesk")
         .fontSize(core::theme::scaled(44.0f))
-        .fontWeight(700)
+        .fontWeight(700)  // 老板 2026-11-18 裁决豁免：品牌字保留 700
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary)
         .opacity(opacity)
