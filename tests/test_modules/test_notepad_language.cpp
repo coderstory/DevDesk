@@ -25,7 +25,7 @@ const struct {
     {"index.js", "js"},       {"app.ts", "js"},         {"main.go", "go"},
     {"lib.rs", "rust"},       {"run.sh", "shell"},      {"run.bash", "shell"},
     {"Main.java", "java"},    {"pkg.json", "json"},     {"readme.md", ""},
-    {"notes.markdown", ""},
+    {"notes.markdown", ""},   {"query.sql", "sql"},
 };
 
 }  // namespace
@@ -70,8 +70,14 @@ REGISTER_TEST(notepad_language_provider_none_vs_json,
         DOCTEST_CHECK(r.byteEnd > r.byteStart);
     }
 
+    // need375：.sql 已入映射（"SELECT" 关键字 + 大小写不敏感命中）
+    const std::string_view langSql = languageForExtension("query.SQL");
+    DOCTEST_CHECK_EQ(std::string(langSql), "sql");
+    const auto sqlRuns = highlightLine("select id from t;", 0, 0, langSql);
+    DOCTEST_CHECK(!sqlRuns.empty());
+
     // LangSpec 未覆盖语言名（防御面）→ 空
-    const auto unknown = highlightLine("SELECT 1", 0, 0, "sql");
+    const auto unknown = highlightLine("SELECT 1", 0, 0, "cobol");
     DOCTEST_CHECK(unknown.empty());
     return true;
 })

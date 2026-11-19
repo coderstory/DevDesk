@@ -26,6 +26,7 @@ constexpr LangMapping kLangMappings[] = {
     {".sh", "shell"}, {".bash", "shell"},
     {".java", "java"},
     {".json", "json"},
+    {".sql", "sql"},  // need375：SQL 高亮（词法在 ui_kit md_keyword_highlight）
     // .md/.markdown 不在表内 → None：LangSpec 无 Markdown 词法（待办，见头文件注记）
 };
 

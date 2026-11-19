@@ -29,7 +29,7 @@ bool ieq(std::string_view a, std::string_view lower) {
     return true;
 }
 
-enum class Lang { None, Cpp, Python, Js, Go, Rust, Shell, Java, Json };
+enum class Lang { None, Cpp, Python, Js, Go, Rust, Shell, Java, Json, Sql };
 
 Lang langOf(std::string_view lang) {
     if (ieq(lang, "cpp") || ieq(lang, "c++") || ieq(lang, "cc") ||
@@ -58,6 +58,11 @@ Lang langOf(std::string_view lang) {
     }
     if (ieq(lang, "json")) {
         return Lang::Json;
+    }
+    // need375：SQL（含 md 围栏常见方言别名；词法面共用基础 SQL 集）
+    if (ieq(lang, "sql") || ieq(lang, "sqlite") || ieq(lang, "mysql") ||
+        ieq(lang, "postgres") || ieq(lang, "postgresql") || ieq(lang, "plsql")) {
+        return Lang::Sql;
     }
     return Lang::None;
 }
@@ -166,6 +171,37 @@ const std::unordered_set<std::string_view>& jsonKeywords() {
     return kw;
 }
 
+// SQL 关键字 + 常用类型/函数词（小写存表；SQL 大小写不敏感 → 查表前先折叠，
+// need375）。语句关键字 + JOIN/集合谓词 + 常见标量类型，够一般 .sql 着色用。
+const std::unordered_set<std::string_view>& sqlKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        // 语句 / 子句
+        "select", "from", "where", "group", "by", "having", "order", "limit",
+        "offset", "insert", "into", "values", "update", "set", "delete",
+        "create", "drop", "alter", "add", "column", "table", "view", "index",
+        "trigger", "schema", "database", "if", "exists", "not", "default",
+        "primary", "key", "foreign", "references", "unique", "check",
+        "constraint", "auto_increment", "as", "distinct", "all", "and", "or",
+        "in", "is", "null", "like", "ilike", "between", "escape", "union",
+        "intersect", "except", "with", "recursive", "case", "when", "then",
+        "else", "end", "join", "inner", "left", "right", "full", "outer",
+        "cross", "on", "using", "natural", "asc", "desc", "returning",
+        "conflict", "do", "nothing", "begin", "commit", "rollback",
+        "transaction", "grant", "revoke", "explain", "analyze", "vacuum",
+        "pragma", "attach", "detach", "reindex", "cast", "collate", "over",
+        "partition", "window", "filter", "within", "qualify", "top",
+        // 常用类型
+        "int", "integer", "smallint", "bigint", "decimal", "numeric", "real",
+        "float", "double", "precision", "char", "varchar", "nvarchar", "text",
+        "clob", "blob", "boolean", "bool", "date", "time", "datetime",
+        "timestamp", "interval", "uuid", "json", "jsonb", "serial", "bigserial",
+        // 判定用保留字
+        "true", "false", "unknown", "current_date", "current_time",
+        "current_timestamp", "current_user", "session_user", "localtimestamp",
+    };
+    return kw;
+}
+
 // 按 Lang 取对应关键字表（None 返回空集）
 const std::unordered_set<std::string_view>& keywordsOf(Lang lang) {
     switch (lang) {
@@ -177,11 +213,22 @@ const std::unordered_set<std::string_view>& keywordsOf(Lang lang) {
     case Lang::Shell:  return shellKeywords();
     case Lang::Java:   return javaKeywords();
     case Lang::Json:   return jsonKeywords();
+    case Lang::Sql:    return sqlKeywords();
     default: {
         static const std::unordered_set<std::string_view> empty;
         return empty;
     }
     }
+}
+
+// 关键字命中（need375：SQL 大小写不敏感 → 折叠后查小写表；其余语言精确匹配）
+bool isKeyword(Lang lang, std::string_view w) {
+    if (lang == Lang::Sql) {
+        std::string lowered(w);
+        for (char& c : lowered) c = toLowerAscii(c);
+        return keywordsOf(lang).count(lowered) > 0;
+    }
+    return keywordsOf(lang).count(w) > 0;
 }
 
 // 语言特性开关（注释 / 反引号串）
@@ -190,11 +237,11 @@ bool hasLineComment(Lang lang) {
            lang == Lang::Go || lang == Lang::Rust || lang == Lang::Java;
 }
 bool hasBlockComment(Lang lang) {
-    return lang == Lang::Cpp || lang == Lang::Js ||
-           lang == Lang::Go || lang == Lang::Rust || lang == Lang::Java;
+    return lang == Lang::Cpp || lang == Lang::Js || lang == Lang::Go ||
+           lang == Lang::Rust || lang == Lang::Java || lang == Lang::Sql;
 }
 bool hasBacktickString(Lang lang) {
-    return lang == Lang::Js || lang == Lang::Go;
+    return lang == Lang::Js || lang == Lang::Go || lang == Lang::Sql;
 }
 
 // Python 字符串字面量前缀（r/b/u/f 及两两组合，≤2 字符且后随引号才算）
@@ -326,6 +373,10 @@ private:
         }
         size_t j = pos + 1;
         while (j < b) {
+            if (lang_ == Lang::Sql && s_[j] == q && j + 1 < b && s_[j + 1] == q) {
+                j += 2;  // SQL '' 双写转义（need375）：不闭合串
+                continue;
+            }
             if (s_[j] == '\\') {
                 j += 2;
                 continue;
@@ -419,6 +470,12 @@ private:
                 push(i, b, c_.codeComment);
                 return;
             }
+            // SQL 行注释 `--`（need375）：到行尾；`-` 单字符（负号/减法）不受影响
+            if (lang_ == Lang::Sql && ch == '-' && i + 1 < b && s_[i + 1] == '-') {
+                flushDef(i);
+                push(i, b, c_.codeComment);
+                return;
+            }
             if (lang_ == Lang::Cpp && ch == '#') {
                 // 预处理指令词（#include/#define…）按关键字色；裸 #（lambda 捕获等）回默认。
                 size_t j = i + 1;
@@ -486,7 +543,7 @@ private:
                     }
                     // 未闭合：前缀+引号整体落默认，逐字续扫（j 不动，按普通标识符消费前缀）。
                 }
-                const bool keyword = keywordsOf(lang_).count(w) > 0;
+                const bool keyword = isKeyword(lang_, w);
                 if (keyword) {
                     flushDef(i);
                     push(i, j, c_.codeKeyword);
