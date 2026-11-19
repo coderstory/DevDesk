@@ -431,6 +431,10 @@ void drawModulesCard(const CardDrawArgs& args) {
     static const ModuleMeta kToggleable[] = {
         {kModuleIdMarkdown, "Markdown",
          "本地文件存储 + SQLite FTS5 全文搜索"},
+        // 池#371：git/终端开关补位（门控键、持久化、即时生效桥此前均齐备，
+        // 独缺模块卡格——登记表 kModuleRegistry 已有 gatingKey 行）
+        {kModuleIdGit, "Git",
+         "Git 仓库状态与变更 diff 查看（只读）"},
         {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
         {kModuleIdSchedule, "定时",
          "定时调度任务，到点自动触发动作与通知"},
@@ -442,16 +446,19 @@ void drawModulesCard(const CardDrawArgs& args) {
          "telemem 记忆引擎面板（引擎未安装时仅显示引导，无后台成本）"},
         // 池151：MCP 开关从标题行归位常规格（第 8 格）
         {kModuleIdMcp, "MCP", "MCP 服务器接入配置与管理"},
+        // 池#371：终端开关（与 git 格同批补位）
+        {kModuleIdTerminal, "终端",
+         "内嵌本地终端，支持历史回看与搜索定位"},
         // 上线：一个开关控制「任务」+「基础配置」两个子页（多页模块共用门控键）
         {kModuleIdRelease, "上线",
          "任务执行与基础配置（两个子页同开同关）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
-    // 壁纸末格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格；
-    // schedule 加入后开关格恒 7，壁纸格 = 第 8 格、4 行满行的末列）：
+    // 壁纸末格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格）：
     // 可见性判据与整卡时代同源 platform::wallpaper::supported()——不支持时整格
-    // 不建（网格自然回落 7 格 4 行，卡高注册表同判据两档同值 310），末格按格机制自然流。
+    // 不建（网格自然回落常规格数，卡高注册表同判据同源），末格按格机制自然流。
     // 元素根 id 保留 settings.card.wallpaper.*（探针/测试锚不换）。
+    // 池#371 后常规格 = 10（git/终端补位），壁纸格恒为末格。
     static const ModuleMeta kWallpaperToggle = {
         kModuleIdWallpaper, "壁纸",
         "动态桌面壁纸（视频 / 图片），开启后随 DevDesk 启动"};

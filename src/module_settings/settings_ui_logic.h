@@ -168,9 +168,10 @@ inline bool modulesCardSingleColumn() {
     return ::core::theme::fontScale() > 1.15f;
 }
 // 列数派生：>1.15 档降单列；其余档 cells>8 时 3 列（池151：MCP 归位后 9 格 2 列
-// 撑 5 行，模块卡 366+16+92=474>420 破模块 tab 零滚动 → 3×3 恰 3 行），其余两列。
+// 撑 5 行，模块卡 366+16+92=474>420 破模块 tab 零滚动 → 3 列收行数；池#371 后
+// 10/11 格 3 列 4 行 = 296，零滚动仍成立），其余两列。
 // 窄窗（review 260 P3-2）：<960 档固定 2 列（3 列格宽 230 会把模块名截成
-// 「Claude 配置…」），9 格撑 5 行 → 卡高 450，窄窗允许出滚动。
+// 「Claude 配置…」），11 格撑 6 行 → 卡高 508，窄窗允许出滚动。
 inline int modulesCardCols(int cells, bool narrow = false) {
     if (modulesCardSingleColumn()) return 1;
     if (narrow) return 2;
@@ -180,10 +181,9 @@ inline int modulesCardRows(int cells, bool narrow = false) {
     const int cols = modulesCardCols(cells, narrow);
     return (cells + cols - 1) / cols;
 }
-// 开关格数 = 常规 8（kToggleable 表行数；2026-11-07 MCP 开关从模块卡标题行
-// 归位常规格，池151）+ 壁纸格
+// 开关格数 = 常规 10（kToggleable 表行数；池#371 git/终端开关补位 8→10）+ 壁纸格
 inline int kModuleToggleCellCount(bool wallpaperSupported) {
-    return 8 + (wallpaperSupported ? 1 : 0);
+    return 10 + (wallpaperSupported ? 1 : 0);
 }
 inline float modulesGridTopY() { return roundFs(68.0f); }   // 100% = 68
 inline float modulesNameH() { return roundFs(18.0f); }      // 100% = 18
@@ -194,9 +194,10 @@ inline float modulesRowDescH(bool narrow = false) {
 inline float modulesRowPitch(bool narrow = false) {
     return roundFs(narrow ? 72.0f : 56.0f);   // 窄窗 = 18+2+36 内容 + 16 行距
 }
-// 100% 档：8 格（壁纸不支持）两列 4 行 = 68 + 3×56 + (18+2+16) + 24 = 296；9 格
-//（含壁纸格）3 列 3 行 = 68 + 2×56 + (18+2+16) + 24 = 240；窄窗 9 格 2 列 5 行
-// = 68 + 4×72 + (18+2+36) + 24 = 436。debt309 N3：卡底内距 38 → 24 刻度
+// 100% 档（池#371 后）：10 格（壁纸不支持）3 列 4 行（末行 1 格走 orphanLast 全
+// 行宽）= 68 + 3×56 + (18+2+16) + 24 = 296；11 格（含壁纸格）3 列 4 行同 296；
+// 窄窗 11 格 2 列 6 行 = 68 + 5×72 + (18+2+36) + 24 = 508（窄窗允许出滚动）。
+// debt309 N3：卡底内距 38 → 24 刻度
 //（review2 N3：38 比 24 刻度多 14；kModulesCardHeight=310 为 N3 前历史参考锚）。
 inline float modulesCardHeightFor(int cells, bool narrow = false) {
     const float cellH = modulesNameH() + roundFs(2.0f) +

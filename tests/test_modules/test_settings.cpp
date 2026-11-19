@@ -1848,7 +1848,8 @@ REGISTER_TEST(settings_module_toggle_records_exemption_and_survives_reload,
     return true;
 })
 
-REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（7 行模块开关）", {
+REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（格阵开关）", {
+    namespace ms = module::settings;
     test_support::TestEnv env(kCfgPrefix, "modcard", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "modcard_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -1867,18 +1868,25 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
-    // 桌宠已摘除；schedule 补进第 2 格后开关序: sw.0=markdown/sw.1=todo/
-    // sw.2=定时/sw.3=claude/sw.4=agent
-    DOCTEST_CHECK(ui.find("settings.card.modules.sw.3") != nullptr);
-    const auto* agentName = ui.find("settings.card.modules.name.4");
-    DOCTEST_REQUIRE(agentName != nullptr);
-    DOCTEST_CHECK(agentName->text == "智能体");
+    // 池#371 git/终端补位后格序随表漂移（sw.0=markdown 起）：按 name 文本定位
+    // agent 格（test_mcp_settings 同款防漂移写法），不钉死格位。
+    int agentCell = -1;
+    for (int i = 0; i < ms::kModuleToggleCellCount(true); ++i) {
+        const auto* n = ui.find("settings.card.modules.name." +
+                                std::to_string(i));
+        if (n != nullptr && n->text == "智能体") {
+            agentCell = i;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(agentCell >= 0);
     // agent 行开关默认**不**勾选（默认清单不含 kModuleIdAgent）。track 色 =
-    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行（sw.4）
-    // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，
-    // 逐分量比）
+    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行同主题下色必
+    // 不同，抓「回退成默认勾选」的回归（Color 无 operator==，逐分量比）
     const auto* mdTrack = ui.find("settings.card.modules.sw.0.track");
-    const auto* agentTrack = ui.find("settings.card.modules.sw.4.track");
+    const auto* agentTrack =
+        ui.find("settings.card.modules.sw." + std::to_string(agentCell) +
+                ".track");
     DOCTEST_REQUIRE(mdTrack != nullptr);
     DOCTEST_REQUIRE(agentTrack != nullptr);
     DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
