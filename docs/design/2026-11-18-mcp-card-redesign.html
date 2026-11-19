@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<!-- demo 仅视觉校准用，不是实现蓝图。自包含单文件：无框架、无外部依赖、浏览器直开。
+     参数来源：docs/design/2026-11-18-mcp-card-redesign.md（色值=src/core/theme.cpp S1 令牌表）。
+     支持 ?theme=dark URL 参数；右上角按钮可切换 light/dark；拖窗至 720px 验证不破版。 -->
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP 卡片布局重设计 · demo</title>
+<style>
+  :root, html[data-theme="light"] {
+    --bg: #F5FAF7;            /* background */
+    --surface: #FFFFFF;       /* 卡面 itemSurface */
+    --hover: #EEF6F1;         /* 卡 hover 底 */
+    --primary: #07C160;       /* 图标字色 */
+    --primary-soft: #E8F8EE;  /* 图标底 / chip「内置」底 */
+    --primary-text: #157E4E;  /* chip 字色 / hover 箭头色（浅底深档 ≥4.5:1） */
+    --text-1: #1F2937;        /* 标题 */
+    --text-3: #6B7280;        /* 状态词 / 描述 / textTertiary */
+    --text-off: #6B7280;      /* 未启用状态点 textDisabled */
+    --success: #10B981;       /* 可用状态点 */
+    --border: #E5E7EB;        /* 卡描边 glassBorder */
+    --border-muted: #F3F4F6;  /* chip「服务」底 */
+    --glass-shadow: rgba(23,58,44,0.10);
+    --toggle-off: #E5E7EB;
+  }
+  html[data-theme="dark"] {
+    --bg: #1A1816;
+    --surface: #232120;
+    --hover: #353231;
+    --primary: #36D399;
+    --primary-soft: #0D3326;
+    --primary-text: #36D399;
+    --text-1: #FAF9F5;
+    --text-3: #9A948A;
+    --text-off: #908A82;
+    --success: #34D399;
+    --border: #3A3735;
+    --border-muted: #2A2826;
+    --glass-shadow: rgba(0,0,0,0.28);
+    --toggle-off: #3A3735;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-1);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 14px;
+    padding: 32px;
+    transition: background-color 150ms ease-out;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+  /* ── 页头（外壳固定区示意） ── */
+  .page-title { font-size: 18px; font-weight: 600; height: 32px; line-height: 32px; }
+  .page-sub   { font-size: 12px; color: var(--text-3); height: 20px; line-height: 20px; margin-top: 4px; }
+  .head-row { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; }
+  .svc-line { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); height: 20px; }
+  .dot { width: 8px; height: 8px; border-radius: 4px; flex: none; }
+  .dot.on  { background: var(--success); }
+  .dot.off { background: var(--text-off); }
+
+  .theme-btn {
+    height: 32px; padding: 0 14px; border-radius: 6px;
+    background: var(--surface); color: var(--text-1);
+    border: 1px solid var(--border); font-size: 12px; cursor: pointer;
+    transition: background-color 120ms ease-out;
+  }
+  .theme-btn:hover { background: var(--hover); }
+  .theme-btn:active { transform: scale(0.97); }
+
+  .sec-head { font-size: 12px; color: var(--text-3); height: 26px; line-height: 26px; margin: 16px 0 8px; }
+
+  /* ── 工具卡网格：列宽 340–420、列/行距 8（对齐 ui_kit::gridColumns 区间） ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 420px));
+    gap: 8px;
+  }
+
+  /* ── 工具卡：96 高，文本列全左（x=16），右轨仅图标/操作位 ── */
+  .card {
+    position: relative; height: 96px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px var(--glass-shadow);
+    cursor: pointer; overflow: hidden;
+    transition: background-color 120ms ease-out,
+                transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .card:hover  { background: var(--hover); }
+  .card:active { transform: scale(0.97); }
+  .card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+  /* 文本列：宽 = 100% − 84（左 16 + 右轨 56 + 列距 12） */
+  .c-title {
+    position: absolute; left: 16px; top: 16px; height: 22px; line-height: 22px;
+    width: calc(100% - 84px);
+    font-size: 14px; font-weight: 600; color: var(--text-1);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .c-status {
+    position: absolute; left: 16px; top: 42px; height: 18px;
+    display: flex; align-items: center;
+  }
+  .c-status .dot { margin-right: 6px; }
+  .c-status .st-word { font-size: 11px; font-weight: 600; color: var(--text-3); margin-right: 12px; }
+  .chip {
+    width: 40px; height: 18px; border-radius: 999px; margin-right: 6px;
+    font-size: 11px; font-weight: 400; line-height: 18px; text-align: center;
+    color: var(--primary-text); flex: none;
+  }
+  .chip.builtin { background: var(--primary-soft); }
+  .chip.svc     { background: var(--border-muted); margin-right: 0; }
+  .c-desc {
+    position: absolute; left: 16px; top: 64px; height: 16px; line-height: 16px;
+    width: calc(100% - 84px);
+    font-size: 12px; font-weight: 400; color: var(--text-3);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* 右轨：图标 40×40 右上 + hover 箭头 16×16 右下（零文本） */
+  .c-icon {
+    position: absolute; right: 16px; top: 16px; width: 40px; height: 40px;
+    border-radius: 10px; background: var(--primary-soft);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--primary);
+  }
+  .c-arrow {
+    position: absolute; right: 16px; top: 64px; width: 16px; height: 16px;
+    color: var(--primary-text); opacity: 0;
+    transition: opacity 120ms ease-out;
+  }
+  .card:hover .c-arrow { opacity: 1; }
+
+  /* 禁用样例（预留态）：不响应交互，0.7 灰化 */
+  .card.disabled { pointer-events: none; cursor: default; opacity: 0.7; box-shadow: none; }
+
+  /* ── 记忆模块行（64 高行卡，参数钉口径） ── */
+  .mem-row {
+    position: relative; height: 64px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 8px 24px var(--glass-shadow);
+  }
+  .mem-icon {
+    position: absolute; left: 12px; top: 12px; width: 40px; height: 40px;
+    border-radius: 10px; background: var(--primary-soft); color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mem-title { position: absolute; left: 64px; top: 12px; height: 18px; line-height: 18px; font-size: 14px; font-weight: 600; }
+  .mem-desc  { position: absolute; left: 64px; top: 34px; height: 16px; line-height: 16px; font-size: 12px; color: var(--text-3);
+               width: calc(100% - 64px - 56px - 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .switch { position: absolute; right: 12px; top: 20px; width: 44px; height: 24px; border-radius: 999px;
+            background: var(--primary); border: none; cursor: pointer; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 22px; width: 20px; height: 20px;
+                   border-radius: 999px; background: #FFFFFF; }
+  .switch.off { background: var(--toggle-off); }
+  .switch.off::after { left: 2px; }
+
+  /* ── 空态样例 ── */
+  .empty { padding: 16px 16px; }
+  .empty .e-main { font-size: 12px; color: var(--text-3); height: 18px; line-height: 18px; }
+  .empty .e-hint { font-size: 12px; color: var(--text-3); height: 18px; line-height: 18px; margin-top: 4px; opacity: 0.8; }
+
+  svg { display: block; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card, .c-arrow, .theme-btn { transition: none; }
+    .card:active, .theme-btn:active { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="page-title">MCP</div>
+  <div class="page-sub">本机工具以 MCP 协议对外提供，供支持 MCP 的客户端调用</div>
+  <div class="head-row">
+    <div class="svc-line"><span class="dot on"></span>服务运行中 · 端口 8636</div>
+    <button class="theme-btn" id="themeBtn" type="button">切换深色</button>
+  </div>
+
+  <div class="sec-head">工具</div>
+  <div class="grid">
+
+    <!-- 1 长描述 + 双 chips -->
+    <div class="card" tabindex="0" role="button" aria-label="web_fetch 详情">
+      <div class="c-title mono">web_fetch</div>
+      <div class="c-status"><span class="dot on"></span><span class="st-word">可用</span><span class="chip builtin">内置</span><span class="chip svc">服务</span></div>
+      <div class="c-desc">抓取网页内容并转换为 Markdown 文本，支持超时与重定向参数配置</div>
+      <div class="c-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2"/><ellipse cx="8" cy="8" rx="2.8" ry="6.2"/><line x1="1.8" y1="8" x2="14.2" y2="8"/></svg></div>
+      <svg class="c-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>
+    </div>
+
+    <!-- 2 短描述 -->
+    <div class="card" tabindex="0" role="button" aria-label="memory_search 详情">
+      <div class="c-title mono">memory_search</div>
+      <div class="c-status"><span class="dot on"></span><span class="st-word">可用</span><span class="chip builtin">内置</span><span class="chip svc">服务</span></div>
+      <div class="c-desc">检索本机长期记忆</div>
+      <div class="c-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5 L14 4.5 V11.5 L8 14.5 L2 11.5 V4.5 Z"/><path d="M2 4.5 L8 7.5 L14 4.5"/><line x1="8" y1="7.5" x2="8" y2="14.5"/></svg></div>
+      <svg class="c-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>
+    </div>
+
+    <!-- 3 超长 mono 名（省略号边界） -->
+    <div class="card" tabindex="0" role="button" aria-label="schedule 工具详情">
+      <div class="c-title mono">schedule_create_task_with_cron_expression</div>
+      <div class="c-status"><span class="dot on"></span><span class="st-word">可用</span><span class="chip builtin">内置</span><span class="chip svc">服务</span></div>
+      <div class="c-desc">按 cron 表达式创建定时任务</div>
+      <div class="c-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5 L14 4.5 V11.5 L8 14.5 L2 11.5 V4.5 Z"/><path d="M2 4.5 L8 7.5 L14 4.5"/><line x1="8" y1="7.5" x2="8" y2="14.5"/></svg></div>
+      <svg class="c-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>
+    </div>
+
+    <!-- 4 未启用态（服务断开：点灰 + 词「未启用」，卡仍可点） -->
+    <div class="card" tabindex="0" role="button" aria-label="server_info 详情">
+      <div class="c-title mono">server_info</div>
+      <div class="c-status"><span class="dot off"></span><span class="st-word">未启用</span><span class="chip builtin">内置</span><span class="chip svc">服务</span></div>
+      <div class="c-desc">返回服务运行状态与工具清单</div>
+      <div class="c-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.5" width="12" height="4.6" rx="1.4"/><rect x="2" y="8.9" width="12" height="4.6" rx="1.4"/><circle cx="4.6" cy="4.8" r="0.4" fill="currentColor"/><circle cx="4.6" cy="11.2" r="0.4" fill="currentColor"/></svg></div>
+      <svg class="c-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>
+    </div>
+
+    <!-- 5 短名短文 -->
+    <div class="card" tabindex="0" role="button" aria-label="fs_read 详情">
+      <div class="c-title mono">fs_read</div>
+      <div class="c-status"><span class="dot on"></span><span class="st-word">可用</span><span class="chip builtin">内置</span><span class="chip svc">服务</span></div>
+      <div class="c-desc">读取文件</div>
+      <div class="c-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5 L14 4.5 V11.5 L8 14.5 L2 11.5 V4.5 Z"/><path d="M2 4.5 L8 7.5 L14 4.5"/><line x1="8" y1="7.5" x2="8" y2="14.5"/></svg></div>
+      <svg class="c-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>
+    </div>
+
+    <!-- 6 禁用样例（预留态：不响应交互，0.7 灰化） -->
+    <div class="card disabled" aria-disabled="true">
+      <div class="c-title mono">tool_disabled_sample</div>
+      <div class="c-status"><span class="dot off"></span><span class="st-word">未启用</span><span class="chip builtin">内置</span><span class="chip svc">服务</span></div>
+      <div class="c-desc">禁用态样例：不响应悬停与按压</div>
+      <div class="c-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.5 L14 4.5 V11.5 L8 14.5 L2 11.5 V4.5 Z"/><path d="M2 4.5 L8 7.5 L14 4.5"/><line x1="8" y1="7.5" x2="8" y2="14.5"/></svg></div>
+      <svg class="c-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>
+    </div>
+  </div>
+
+  <div class="sec-head">记忆模块</div>
+  <div class="mem-row">
+    <div class="mem-icon"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2"/><path d="M5 8.2 L7 10.2 L11 6"/></svg></div>
+    <div class="mem-title">记忆</div>
+    <div class="mem-desc">将本机长期记忆以 memory_search 工具开放给 MCP 客户端查询</div>
+    <button class="switch" type="button" aria-label="记忆模块开关" onclick="this.classList.toggle('off')"></button>
+  </div>
+
+  <div class="sec-head">空态样例</div>
+  <div class="empty">
+    <div class="e-main">暂无 MCP 工具</div>
+    <div class="e-hint">启动 MCP 服务后，可用工具在此列出</div>
+  </div>
+
+<script>
+  // 双主题：URL 参数 ?theme=dark 供截图验证；按钮手动切换。
+  (function () {
+    var root = document.documentElement;
+    var btn = document.getElementById('themeBtn');
+    var q = new URLSearchParams(location.search).get('theme');
+    if (q === 'dark' || q === 'light') root.setAttribute('data-theme', q);
+    function sync() { btn.textContent = root.getAttribute('data-theme') === 'dark' ? '切换浅色' : '切换深色'; }
+    btn.addEventListener('click', function () {
+      root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+      sync();
+    });
+    sync();
+  })();
+</script>
+</body>
+</html>
