@@ -717,7 +717,13 @@ void drawStepRow(eui::Ui& ui, const std::string& id, float x, float y, float wid
     const bool showDragHandle = row.config && configurable;
     const float nameX = dotX + kStepDot +
                         (showDragHandle ? kDragHandleW + kDragHandleGap : 10.0f);
-    const float nameRight = viewX - (showView ? 8.0f : 0.0f) - skipW;
+    // 名称/状态区右界 = 行尾控件组左缘（行右缘向左：8 + [跳过□ 76] + 8 +
+    // [填写/查看 56]）。原式 `viewX - 8 - skipW` 把 skipW 减了两次（viewX 内已
+    // 让位过跳过框），未完成配置行状态字整体左移 76px、与按钮间留死缝；且
+    // !showView 分支不减右内距会压到跳过框（#359）。
+    const float nameRight = rowX + rowW - 8.0f
+                          - (showSkip ? skipW + 8.0f : 0.0f)
+                          - (showView ? kViewButtonW + 8.0f : 0.0f);
     const float statusW = 88.0f;
     const float nameW = std::max(0.0f, nameRight - statusW - 8.0f - nameX);
 
