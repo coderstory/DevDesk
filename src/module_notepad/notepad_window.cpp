@@ -782,9 +782,9 @@ void drawFontPopupItem(NotepadSession& s, eui::Ui& inner,
 }
 
 // F-09 字体下拉触发器（设计稿 §4.2 ddFont 规格：h28 r6 surface 底 1px 边框
-// 13px + chevron；x=240 = 打开/保存/另存为三钮之后 8px）。预览态禁用（§4.6 字体禁用）。
+// 13px + chevron；x 由调用方游标给定（need374 宽度自适应）。预览态禁用（§4.6 字体禁用）。
 void drawFontTrigger(NotepadSession& s, eui::Ui& ui,
-                     const core::theme::Tokens& t, bool enabled) {
+                     const core::theme::Tokens& t, bool enabled, float x) {
     const std::string base(kNotepadDdFontId);
     constexpr float kW = 160.0f;
     constexpr float kH = 28.0f;
@@ -795,7 +795,7 @@ void drawFontTrigger(NotepadSession& s, eui::Ui& ui,
         ps.scroll = 0.0f;
     }
     ui.stack(base)
-        .position(240.0f, 8.0f)
+        .position(x, 8.0f)
         .size(kW, kH)
         .disabled(!enabled)
         .content([&] {
@@ -837,7 +837,8 @@ void drawFontTrigger(NotepadSession& s, eui::Ui& ui,
 // P2-4（need289 走查）：开时先铺全窗透明点击层（点击弹层外任意处收起不改值，
 // 设计稿 §5.2）+ Esc 收起请求位消费（键路由 Ui 态不可达 → session 置位）。
 void drawFontPopup(NotepadSession& s, eui::Ui& ui,
-                   const core::theme::Tokens& t, float w, float h) {
+                   const core::theme::Tokens& t, float w, float h,
+                   float triggerX) {
     const std::string base(kNotepadDdFontId);
     FontPopupState& ps = ui.state<FontPopupState>(base + ".state");
     if (s.pendingPopupDismiss) {  // Esc 收起请求（键路由置位，本处单点消费）
@@ -870,7 +871,7 @@ void drawFontPopup(NotepadSession& s, eui::Ui& ui,
         })
         .build();
     ui.stack(base + ".popup")
-        .position(240.0f, 8.0f + 28.0f + 6.0f)
+        .position(triggerX, 8.0f + 28.0f + 6.0f)  // need374：随触发器游标位
         .size(kW, kH)
         .content([&] {
             ui.rect(base + ".popup.bg")
@@ -1194,49 +1195,64 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
     const bool editable = !errorState && !s.readonly && !s.binarySuspect;
     // 按扩展名的按钮矩阵 + 预览态工具条联动（F-11/F-13，设计稿 §4.6；纯函数）
     const NotepadToolbarMatrix matrix = notepadToolbarMatrixFor(s);
-    toolbarButton(ui, kNotepadBtnOpenId, "打开", 16.0f, t, true, [&s] {
+    // need374 工具条宽度自适应：固定 x 全改游标式依序排布（控件有则占位、
+    // 无则收紧，不留位空洞——原 P3-7 让位逻辑的泛化）。窄窗 <900 收起
+    // 「字体族+字号步进」组（与状态栏 T1 档隐编码/行尾同阈值同口径）；≥900
+    // 各控件位与旧固定布局逐位一致（16/88/160/240/408/492/564/636）。
+    constexpr float kTbGap = 8.0f;      // 控件间距（原布局 72=64+8 同源）
+    constexpr float kTbBtnW = 64.0f;    // toolbarButton 钮宽
+    const bool showFontGroup = w >= 900.0f;
+    float tbX = 16.0f;
+    toolbarButton(ui, kNotepadBtnOpenId, "打开", tbX, t, true, [&s] {
         notepadOpenViaDialog(s);
     });
-    toolbarButton(ui, kNotepadBtnSaveId, "保存", 88.0f, t, editable, [&s] {
+    tbX += kTbBtnW + kTbGap;
+    toolbarButton(ui, kNotepadBtnSaveId, "保存", tbX, t, editable, [&s] {
         notepadSaveSession(s);
     });
+    tbX += kTbBtnW + kTbGap;
     // F-04 另存为（need289 修复棒 1；设计稿 §4.2 btnSaveAs，保存钮右侧 8px）：
     // readonly/binary/错误窗禁用（禁用矩阵与保存钮同 editable 口径，§7.2）
-    toolbarButton(ui, kNotepadBtnSaveAsId, "另存为", 160.0f, t, editable, [&s] {
+    toolbarButton(ui, kNotepadBtnSaveAsId, "另存为", tbX, t, editable, [&s] {
         notepadSaveSessionAs(s);
     });
+    tbX += kTbBtnW + kTbGap;
     // ── 批 3 文档语义组（设计稿 §4.2）：字体下拉 + 字号步进 + 格式化/预览（棒 B）──
-    drawFontTrigger(s, ui, t, matrix.fontControlsEnabled);
-    {
-        constexpr float kStepperX = 408.0f;  // 触发器 240+160 之后 8px
-        const bool canStep = !errorState && matrix.fontControlsEnabled;
-        barButton(ui, kNotepadStepperFontMinusId, "A-", kStepperX, 10.0f,
-                  24.0f, 24.0f, t, canStep && s.editorFontSize > 10, [&s] {
-                      notepadStepFontSize(s, -1);
-                  });
-        char fsBuf[16];
-        std::snprintf(fsBuf, sizeof fsBuf, "%d", s.editorFontSize);
-        ui.text("notepad.stepperFont.val")
-            .position(kStepperX + 24.0f, 8.0f)
-            .size(28.0f, 28.0f)
-            .text(fsBuf)
-            .fontSize(13.0f)
-            .lineHeight(28.0f)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.textPrimary)
-            .build();
-        barButton(ui, kNotepadStepperFontPlusId, "A+", kStepperX + 52.0f,
-                  10.0f, 24.0f, 24.0f, t,
-                  canStep && s.editorFontSize < 32, [&s] {
-                      notepadStepFontSize(s, 1);
-                  });
+    const float fontTriggerX = tbX + kTbGap;  // 旧布局 240（另存为 224 后 16px）；
+    // 弹层面板与触发器同位（compose 尾共用）
+    if (showFontGroup) {
+        drawFontTrigger(s, ui, t, matrix.fontControlsEnabled, fontTriggerX);
+        {
+            const float stepperX = fontTriggerX + 160.0f + kTbGap;  // 旧布局 408
+            const bool canStep = !errorState && matrix.fontControlsEnabled;
+            barButton(ui, kNotepadStepperFontMinusId, "A-", stepperX, 10.0f,
+                      24.0f, 24.0f, t, canStep && s.editorFontSize > 10, [&s] {
+                          notepadStepFontSize(s, -1);
+                      });
+            char fsBuf[16];
+            std::snprintf(fsBuf, sizeof fsBuf, "%d", s.editorFontSize);
+            ui.text("notepad.stepperFont.val")
+                .position(stepperX + 24.0f, 8.0f)
+                .size(28.0f, 28.0f)
+                .text(fsBuf)
+                .fontSize(13.0f)
+                .lineHeight(28.0f)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(t.colors.textPrimary)
+                .build();
+            barButton(ui, kNotepadStepperFontPlusId, "A+", stepperX + 52.0f,
+                      10.0f, 24.0f, 24.0f, t,
+                      canStep && s.editorFontSize < 32, [&s] {
+                          notepadStepFontSize(s, 1);
+                      });
+            tbX = stepperX + 76.0f + kTbGap;  // A+ 460+24 之后 8px
+        }
     }
     // F-11 格式化钮（仅 .json 扩展显示；readonly/binary/预览态禁用）。tooltip
     // 固定副文案 = D-4 键序重排轻量明示（settings_ui_cards.cpp:618 同款写法）。
     if (matrix.showFormat) {
-        constexpr float kFormatX = 492.0f;  // A+ 步进钮 460+24 之后 8px
-        toolbarButton(ui, kNotepadBtnFormatId, "格式化", kFormatX, t,
+        toolbarButton(ui, kNotepadBtnFormatId, "格式化", tbX, t,
                       matrix.formatEnabled, [&s, &ui] {
                           notepadFormatJson(
                               s, ui.state<InputState>(kNotepadEditorInputId));
@@ -1245,33 +1261,28 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             .theme(componentTheme)
             .source(kNotepadBtnFormatId)
             .value("对象键将按字典序重排（语义等值，字节序会变）")
-            .anchor(kFormatX + 32.0f, 8.0f + 28.0f)
+            .anchor(tbX + 32.0f, 8.0f + 28.0f)
             .bounds(w, h)
             .minWidth(200.0f)
             .maxWidth(320.0f)
             .build();
+        tbX += kTbBtnW + kTbGap;
     }
     // F-13 预览钮（仅 .md/.markdown 扩展显示；大文件禁用 = 1MB 级渲染成本
     // 未证，PRD F-16 降级口径）。预览态钮面切「编辑」= 点击切回。
     if (matrix.showPreview) {
-        constexpr float kPreviewX = 564.0f;
         toolbarButton(ui, kNotepadBtnPreviewId, s.previewOn ? "编辑" : "预览",
-                      kPreviewX, t, matrix.previewEnabled, [&s] {
+                      tbX, t, matrix.previewEnabled, [&s] {
                           notepadTogglePreview(s);
                       });
+        tbX += kTbBtnW + kTbGap;
     }
     // F-19 自动换行钮（toggle 选中态高亮；largeFile 强制关 + 钮禁用 =
-    // 大文件模式口径）。x 让位逻辑（P3-7 走查）：.md 预览钮占 564 → 636；
-    // .json 无预览钮 → 紧跟格式化钮 564（不留预览位空洞）；无文档钮 → 492。
-    {
-        const float wrapX = matrix.showPreview ? 636.0f
-                            : matrix.showFormat ? 564.0f
-                                                : 492.0f;
-        toolbarButton(ui, kNotepadBtnWrapId, "换行", wrapX, t,
-                      !errorState && !s.largeFile, [&s] {
-                          notepadToggleWrap(s);
-                      }, s.wrapOn);
-    }
+    // 大文件模式口径）。
+    toolbarButton(ui, kNotepadBtnWrapId, "换行", tbX, t,
+                  !errorState && !s.largeFile, [&s] {
+                      notepadToggleWrap(s);
+                  }, s.wrapOn);
 
     // ── 提示条 32（只读降级 / 大文件模式；错误态文本直接占编辑区，不叠提示条）──
     if (showPrompt) {
@@ -1539,7 +1550,7 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
 
     // ── 字体下拉弹层（z 序最上：工具条触发器 + 全窗遮罩点击层 + 内滚面板；
     // 开时遮编辑区）──
-    drawFontPopup(s, ui, t, w, h);
+    drawFontPopup(s, ui, t, w, h, fontTriggerX);  // need374：面板随触发器游标位
 
     // ── 会话内轻提示（聚焦/保存反馈；自管 1.5s 窗口，多窗互不覆盖）──
     if (!s.toastMessage.empty() && std::chrono::steady_clock::now() < s.toastUntil) {
