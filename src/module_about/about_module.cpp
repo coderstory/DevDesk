@@ -207,6 +207,9 @@ public:
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1，列宽不随字号变）
         constexpr float kCardMaxW = 880.0f;    // 卡宽上限（2026-11-06 老板：760→880）
         constexpr float kCardPad = 16.0f;      // 卡内边距（基线卡片内边距档）
+        // need357（老板「关于里的卡片内容，增加一点左边距」）：卡内容在 kCardPad
+        // 之外再左缩进 8px（仅左缘；标题/滚动区/行内容统一右移，右缘不动）。
+        constexpr float kContentLeftInset = 8.0f;
         // 2026-11-06 老板：卡再大一点 + 下移一点。kCardY 24→48（下移 24）；
         // 宽上限 760→880（更大）。
         constexpr float kCardY = 48.0f;
@@ -252,7 +255,8 @@ public:
         contentH += kGroupGap * static_cast<float>(std::size(groups) - 1);
         const float cardH = std::min(contentH + kCardPad * 2.0f,
                                      std::max(0.0f, footerY - kCardY - 24.0f));
-        const float innerW = std::max(0.0f, cardW - kCardPad * 2.0f);
+        const float innerW =
+            std::max(0.0f, cardW - kCardPad * 2.0f - kContentLeftInset);
         const float contentTop = kCardY + kCardPad + kTitleH + kGroupGap;
         const float viewportH =
             std::max(0.0f, kCardY + cardH - kCardPad - contentTop);
@@ -270,7 +274,7 @@ public:
         // 页标题（卡内 y=卡Y+16 → 标题整体由 0 下移至 40；与 agent.title 同款：
         // fontSizeTitle 24/600（need219 §2.1 两档制，原 700 越档）、32 行高）
         ui.text("about.title")
-            .position(cardX + kCardPad, kCardY + kCardPad)
+            .position(cardX + kCardPad + kContentLeftInset, kCardY + kCardPad)
             .size(innerW, kTitleH)
             .text("关于")
             .fontSize(t.sizes.fontSizeTitle)
@@ -284,7 +288,7 @@ public:
         // 原点，ID 保持 about.info.*。
         const float valueX = kLabelW + 16.0f;
         components::scrollView(ui, "about.info.scroll")
-            .position(cardX + kCardPad, contentTop)
+            .position(cardX + kCardPad + kContentLeftInset, contentTop)
             .size(innerW, viewportH)
             .gap(0.0f)
             .step(kRowH)
