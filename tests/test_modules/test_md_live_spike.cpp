@@ -36,7 +36,9 @@ using module::markdown::kEditorInputId;
 #include <components/scrollview.h>
 #include <core/dsl.h>
 #include <core/dsl_runtime.h>
+#include <core/render/text.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -63,6 +65,17 @@ constexpr int kLineStride = 4;    // 含行尾 '\n'
 
 bool nearEq(float a, float b, float eps = 0.5f) {
     return std::fabs(a - b) <= eps;
+}
+
+// need378：caret 垂直底部对齐文本底（EUI-NEO 9afc364）——caret.y = 行顶 +
+// (自然行高 − 钳制行高)。用与 input 组件同源的公开度量 API 现算，字体/平台
+// 度量变化时断言自动跟随；度量缺失（无头/字体缺失）回退旧口径 offset=0。
+float spikeCaretYOffset() {
+    const core::TextPrimitive::FontLineMetrics m =
+        core::TextPrimitive::measureFontLineMetrics("Segoe UI", 20.0f);
+    if (!(m.ascent > 0.0f || m.descent < 0.0f)) return 0.0f;
+    const float natural = m.ascent - m.descent;
+    return natural - std::min(natural, kLineH);
 }
 
 // 合成等宽文本：count 行、每行 3 字节、无尾换行（measureLines 按 '\n' 切 → 恰好 count 行）
@@ -482,8 +495,9 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
 })
 
 // V4a：封顶块 + followCaret=false → 首帧跳位成立；同帧归零（R5）消除。
-// 首帧几何探针用 caret 元素：frame.y = inset + cursorLine×lineH − verticalScroll。换文本时
-// focused → 光标落到新文本末尾 → cursorLine 固定为末行，故 caret.y 直接读出残余 verticalScroll。
+// 首帧几何探针用 caret 元素：frame.y = inset + cursorLine×lineH + caretOff − verticalScroll
+// （caretOff 为 need378 底对齐偏移，恒定量不影响残余读数）。换文本时 focused → 光标落到
+// 新文本末尾 → cursorLine 固定为末行，故 caret.y 直接读出残余 verticalScroll。
 REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
               "mdspike V4a: 封顶块换文本首帧跳位 + R5 同帧归零消除", {
     test_support::HeadlessFrame env(kPage);
@@ -491,7 +505,8 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     const std::string t2 = spikeLines(kLines, "B");
     const float capH = 300.0f;                     // 封顶块：内容 720 > 视口 284
     const float lastLineY = kInset
-        + static_cast<float>(kLines - 1) * kLineH;  // 光标在末行时的 caret.y（scroll=0）
+        + static_cast<float>(kLines - 1) * kLineH;  // 光标在末行时的行顶（scroll=0）
+    const float caretOff = spikeCaretYOffset();    // need378：caret 底对齐偏移
 
     auto frameWith = [&](Ui& ui, const std::string& text) {
         ui.column("spike.root").content([&] {
@@ -515,7 +530,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     env.frame([&](Ui& ui) { frameWith(ui, t1); });
     const Element* caret = env.ui->find("live.input.cursor");
     DOCTEST_REQUIRE(caret != nullptr);
-    DOCTEST_CHECK(nearEq(caret->frame.y, lastLineY));                 // 未滚动基准
+    DOCTEST_CHECK(nearEq(caret->frame.y, lastLineY + caretOff));      // 未滚动基准
 
     // 用户在封顶块内滚一格（内部滚动同时把 followCaret 置 false）
     const Element* hit = env.ui->find(kInputHit);
@@ -533,12 +548,14 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     }
 
     env.frame([&](Ui& ui) { frameWith(ui, t1); });                  // 同文本：残余生效
-    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y,
+                         lastLineY + caretOff - residual));
 
     // ① 换文本（t1→t2）且 followCaret 仍 false → 首帧带着残余 → 一帧跳位成立
     env.frame([&](Ui& ui) { frameWith(ui, t2); });
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t2);
-    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y,
+                         lastLineY + caretOff - residual));
 
     // ② 缓解：切块帧（t2→t3）compose 前把 verticalScroll 归零（模块在 compose 回调内先归零再画
     //    input）→ 新块首帧无跳位；与 ① 同为真·换文本帧，唯一差别是这一行归零
@@ -550,7 +567,8 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     }
     env.frame([&](Ui& ui) { frameWith(ui, t3); });
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t3);
-    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y,
+                         lastLineY + caretOff));
     DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
 
     // ③ 打字路径自愈：followCaret=true 时框架同帧按光标重算滚动
@@ -562,7 +580,8 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     }
     env.frame([&](Ui& ui) { frameWith(ui, t3); });
     DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
-    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, kInset));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y,
+                         kInset + caretOff));
     return true;
 })
 
@@ -573,6 +592,7 @@ REGISTER_TEST(mdspike_v4b_fit_height_has_no_residual,
     const std::string t1 = spikeLines(kLines, "A");
     const std::string t2 = spikeLines(kLines, "B");
     const float lastLineY = kInset + static_cast<float>(kLines - 1) * kLineH;
+    const float caretOff = spikeCaretYOffset();    // need378：caret 底对齐偏移
 
     auto frameWith = [&](Ui& ui, const std::string& text) {
         ui.column("spike.root").content([&] {
@@ -592,12 +612,14 @@ REGISTER_TEST(mdspike_v4b_fit_height_has_no_residual,
     }
     env.frame([&](Ui& ui) { frameWith(ui, t1); });
     DOCTEST_REQUIRE(env.ui->find("live.input.cursor") != nullptr);
-    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y,
+                         lastLineY + caretOff));
 
     // 换文本（无任何缓解）→ 首帧无跳位
     env.frame([&](Ui& ui) { frameWith(ui, t2); });
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t2);
     DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
-    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y,
+                         lastLineY + caretOff));
     return true;
 })
