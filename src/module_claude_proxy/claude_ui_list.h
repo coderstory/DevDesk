@@ -64,10 +64,12 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
                             const std::vector<Profile>& profiles,
                             const ProfileListActions& actions);
 
-// 切换 Profile 二次确认弹窗（UAT6）：点非选中卡先弹确认，确定后才改 selectedId_
+// 切换 Profile 二次确认弹窗（UAT6；池#370 改道）：双击卡片先弹确认，确定后走
+// requestSetActive 激活（单击已改直选详情，不经本弹窗）
 void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& themeTokens,
-                              ProfileListState& st);
+                              ProfileListState& st,
+                              const std::function<void(int64_t)>& requestSetActive);
 
 } // namespace module::claude

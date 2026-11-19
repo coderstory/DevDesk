@@ -38,19 +38,22 @@ struct ProfileListState {
     std::chrono::steady_clock::time_point lastRefreshPost_{};  // 节流窗口起点
     static constexpr int64_t kRefreshIntervalMs = 200;
 
-    // 选中态（0 = 跟随激活 profile）
+    // 选中态（0 = 跟随激活 profile）。池#370：单击=仅切详情展示（selectedId_ 即时落）
     int64_t selectedId_ = 0;
+    // 双击检测（池#370）：上次单击的 profile id 与时刻；同卡 500ms 内再点 = 双击触发切换
+    int64_t lastClickId_ = 0;
+    std::chrono::steady_clock::time_point lastClickTime_{};
     // Profile 列表滚动位置
     float profilesScrollOffset_ = 0.0f;
     // 引导条一次性标记（会话内代理从未启动过才显示；内存态）
     bool proxyEverSeen_ = false;
     // S3.4 引导条手动关闭（用户点 × 收起）
     bool guideDismissed_ = false;
-    // 切换 Profile 二次确认弹窗（UAT6）：点非选中卡先弹窗，确定后才切 selectedId_
+    // 切换 Profile 二次确认弹窗（UAT6；池#370 改道）：双击卡片先弹窗，确认才执行激活
     bool switchConfirmOpen_ = false;
     int64_t switchTargetId_ = 0;
     std::string switchTargetName_;
-    bool switchBypassConfirm_ = false;  // 测试缝：true 时直接切不弹窗（全量测试回归门控）
+    bool switchBypassConfirm_ = false;  // 测试缝：true 时双击直接激活不弹窗（全量测试回归门控）
     // 列表右键菜单：目标 profile id（0 = 无）+ 锚点（页面坐标）+ 开合标志
     int64_t ctxProfileId_ = 0;
     float ctxMenuX_ = 0.0f;

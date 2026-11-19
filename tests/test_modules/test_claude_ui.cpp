@@ -3040,14 +3040,16 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     return true;
 })
 
-// UAT6 切换 Profile 二次确认弹窗：点卡弹窗 → 取消 = 不变 → 确认 = 切换；点已选卡无弹窗
+// 池#370：单击=直选切详情（不经弹窗），双击=切换确认弹窗，确认后激活落库
 REGISTER_TEST(claude_profile_switch_confirm_dialog,
-              "claude_module: 切换 Profile 二次确认弹窗", {
+              "claude_module: 双击切换确认弹窗（池#370 单击直选）", {
     TestEnv env;
     auto a = env.svc->createProfile("A", "https://a.example.com", "sk-a", "");
     DOCTEST_REQUIRE(a.isOk());
     auto b = env.svc->createProfile("B", "https://b.example.com", "sk-b", "");
     DOCTEST_REQUIRE(b.isOk());
+    const int64_t idA = a.value().id;
+    const int64_t idB = b.value().id;
 
     auto mod = mkmod(false);  // 不 bypass——真走弹窗路径
     mod->onStart();
@@ -3065,7 +3067,7 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点卡 A → 弹窗出现；卡 A accent 未出现（确认前不切）
+    // 单击卡 A：立即选中（accent 直落 A；旧行为是先弹确认窗——池#370 断言点）
     {
         eui::Ui ui;
         compose(ui, "dlg_clickA");
@@ -3073,11 +3075,24 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     }
     {
         eui::Ui ui;
-        compose(ui, "dlg_open");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 对话框节点常驻（组件无条件创建），开/关由 open 态控
-        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);  // 确认前不渲染 accent
+        compose(ui, "dlg_selectedA");
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点取消 → 弹窗关闭；卡 A accent 仍未出现（选择未变）
+    // 双击卡 B（同卡 500ms 内两击）：弹切换确认窗；第一击已选中 B
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_dblB");
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));  // 第一击：单击语义选中 B
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));  // 第二击：双击 → 弹窗
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_dblB_open");
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 对话框节点常驻（组件无条件创建），开/关由 open 态控
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") != nullptr);
+    }
+    // 点取消 → 弹窗关闭；激活未变（仍 A），选中仍在 B
     {
         eui::Ui ui;
         compose(ui, "dlg_cancel");
@@ -3085,44 +3100,18 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     }
     {
         eui::Ui ui;
-        compose(ui, "dlg_closed");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，取消后 open 态为 false
-        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
-    }
-    // 再点卡 A + 确认 → accent 落到卡 A
-    {
-        eui::Ui ui;
-        compose(ui, "dlg_clickA2");
-        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+        compose(ui, "dlg_cancelled");
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") != nullptr);
     }
     {
-        eui::Ui ui;
-        compose(ui, "dlg_confirmA");
-        DOCTEST_CHECK(click(ui, "claude.dialog.switch.confirm.bg"));
+        auto act = env.svc->getActiveProfile();
+        DOCTEST_CHECK(act.isOk() && act.value().id == idA);
     }
+    // 再双击卡 B + 确认 → 激活落库为 B
     {
         eui::Ui ui;
-        compose(ui, "dlg_confirmed");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，确认后 open 态回 false
-        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
-    }
-    // 点已选卡 A（selectedId_==idA）→ 无弹窗、accent 不变
-    {
-        eui::Ui ui;
-        compose(ui, "dlg_sameA");
-        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "dlg_noop");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，点已选卡不弹窗
-        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
-    }
-    // 点卡 B + 确认 → accent 移到卡 B
-    {
-        eui::Ui ui;
-        compose(ui, "dlg_clickB");
+        compose(ui, "dlg_dblB2");
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
         DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
     }
     {
@@ -3130,11 +3119,10 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         compose(ui, "dlg_confirmB");
         DOCTEST_CHECK(click(ui, "claude.dialog.switch.confirm.bg"));
     }
+    // 激活断言走 DB（列表重排 is_active DESC 依赖异步刷新落地，帧级 accent 断言会 flake）
     {
-        eui::Ui ui;
-        compose(ui, "dlg_onB");
-        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.accent") != nullptr);
+        auto act = env.svc->getActiveProfile();
+        DOCTEST_CHECK(act.isOk() && act.value().id == idB);
     }
 
     mod->onStop();

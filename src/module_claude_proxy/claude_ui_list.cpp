@@ -20,6 +20,7 @@
 #include <core/ui_geometry.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 
@@ -145,7 +146,12 @@ std::string profileSubtitle(const Profile& p) {
     return host;
 }
 
-// Profile 卡片（点击选中，选中/激活高亮）。st 为引用：点击回调写回选中态，须指向存活到下一帧的模块状态成员
+// 双击窗口（池#370）：同卡两次单击间隔在此内 = 双击。500ms 取 Windows
+// 默认双击时间档；不读系统 SPI_GETDOUBLECLICKTIME——跨机一致性优先于系统联动。
+constexpr std::chrono::milliseconds kDblClickWindow{500};
+
+// Profile 卡片（池#370：单击=选中切详情，双击=切换激活。st 为引用：点击回调写回
+// 模块状态，须指向存活到下一帧的对象；requestSetActive = 双击切换的激活动作）
 void drawProfileCard(eui::Ui& ui,
                      const std::string& id,
                      float y,
@@ -154,7 +160,8 @@ void drawProfileCard(eui::Ui& ui,
                      const Profile& p,
                      ProfileListState& st,
                      int64_t selectedId,
-                     bool isActive) {
+                     bool isActive,
+                     const std::function<void(int64_t)>& requestSetActive) {
     // 2026-11-01 item 重设计：行高 56→60、头像 40→32、名称与副信息两行、
     // 右侧「使用中」标记填掉原先的大片空白（旧版行右侧 60% 是空的）。
     // bug174：标记改悬浮半透明徽标，不再占名字布局位（见函数尾 showActiveChip）。
@@ -185,15 +192,29 @@ void drawProfileCard(eui::Ui& ui,
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color)
         .radius(t.sizes.radiusSmall)
-        .onClick([sp = &st, pid = p.id, pname = p.name, sel = selectedId] {
-            if (pid == sel) return;  // 已选卡（含跟随激活态）无操作
-            if (sp->switchBypassConfirm_) {       // 测试缝直走
-                sp->selectedId_ = pid;
+        .onClick([sp = &st, pid = p.id, pname = p.name, isActive,
+                  activate = requestSetActive] {
+            // 池#370 双击检测：双击必须先记再判（首击是双击的前半），判完立即
+            // 清 lastClickId_ 防三连击把第三击又当一次双击。
+            const auto now = std::chrono::steady_clock::now();
+            const bool isDouble =
+                sp->lastClickId_ == pid &&
+                (now - sp->lastClickTime_) < kDblClickWindow;
+            sp->lastClickId_ = isDouble ? 0 : pid;
+            sp->lastClickTime_ = now;
+            if (isDouble) {
+                if (isActive) return;  // 已激活卡双击无操作（本就是当前配置）
+                if (sp->switchBypassConfirm_) {  // 测试缝直走
+                    activate(pid);
+                    return;
+                }
+                sp->switchTargetId_ = pid;
+                sp->switchTargetName_ = pname;
+                sp->switchConfirmOpen_ = true;
                 return;
             }
-            sp->switchTargetId_ = pid;
-            sp->switchTargetName_ = pname;
-            sp->switchConfirmOpen_ = true;
+            // 单击=仅切详情展示（不再弹确认；原 UAT6 选中确认由双击路径接管）
+            sp->selectedId_ = pid;
         })
         .build();
 
@@ -732,7 +753,8 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                             st, effSelectedId,
                                             st.cachedHasActive_ &&
                                                 st.cachedActive_.id ==
-                                                    profiles[idx].id);
+                                                    profiles[idx].id,
+                                            actions.requestSetActive);
                                     })
                                     .build();
                             })
@@ -744,13 +766,14 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
         .build();
 }
 
-// 切换 Profile 二次确认弹窗（UAT6）
-// 点非选中卡不直接切——先弹确认：取消=关闭不动，确认=走现有切换路径并关窗。
-// 点已选卡维持现状无操作（drawProfileCard onClick 已 return 跳过）。
+// 切换 Profile 二次确认弹窗（UAT6；池#370 改道）
+// 双击卡片不直接激活——先弹确认：取消=关闭不动，确认=走激活动作（requestSetActive，
+// 含 selectedId_ 跟随 + dataDirty + toast）并关窗。单击已改为直选详情，不经本弹窗。
 void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& themeTokens,
-                              ProfileListState& st) {
+                              ProfileListState& st,
+                              const std::function<void(int64_t)>& requestSetActive) {
     // need156：壳改走标准弹窗壳；156 低于壳最小 240 抬到下限（规范 §3.4）。
     constexpr float h = 240.0f;
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
@@ -761,9 +784,9 @@ void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
     shell.open = st.switchConfirmOpen_;
     shell.title = "切换 Profile";
     shell.cancel = {"取消", [sp = &st] { sp->switchConfirmOpen_ = false; }};
-    shell.confirm = {"确认切换", [sp = &st] {
-        sp->selectedId_ = sp->switchTargetId_;
+    shell.confirm = {"确认切换", [sp = &st, activate = requestSetActive] {
         sp->switchConfirmOpen_ = false;
+        activate(sp->switchTargetId_);
     }};
     shell.onOpenChange = [sp = &st](bool v) { sp->switchConfirmOpen_ = v; };
 

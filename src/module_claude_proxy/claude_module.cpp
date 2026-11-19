@@ -164,8 +164,8 @@ public:
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
-        drawSwitchConfirmDialog(ui, screen, t, themeTokens,
-                                  state_.list);
+        drawSwitchConfirmDialog(ui, screen, t, themeTokens, state_.list,
+                                [this](int64_t id) { doSetActive(id); });
         harvestTestResult();
         harvestImportPrecheck();
         drawToast(ui, screen, themeTokens);
@@ -774,7 +774,7 @@ extern "C" ::core::Module* create_claude_module() {
     return new module::claude::ClaudeModule();
 }
 
-// 测试缝：关掉切换确认弹窗，让全量回归测试直走选中路径
+// 测试缝：关掉切换确认弹窗，让全量回归测试双击直走激活路径（池#370 后语义）
 extern "C" void claude_test_bypass_switch_confirm(::core::Module* mod) {
     auto* m = dynamic_cast<module::claude::ClaudeModule*>(mod);
     if (!m) return;
