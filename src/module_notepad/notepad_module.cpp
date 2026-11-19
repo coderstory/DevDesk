@@ -143,7 +143,14 @@ void openNotepadWindow(const std::string& path) {
         .ignoreClearColorOverride(true)
         .windowEffect(core::platform::WindowEffect::None)
         .titlebarExtendContent(false)
-        .onWindowCreated([raw](core::window::Handle h) { raw->handle = h; })
+        // bug373：开窗即 restore+前置（requestWindowFocus：Win 端 iconic 先
+        // SW_RESTORE、前台锁抢不到则闪任务栏引导；macOS deminiaturize+激活）。
+        // 主窗最小化/后台时双击文件开编辑器，新窗必须顶到用户眼前，而不是
+        // 跟随进程驻留在后台/最小化态。查重命中路径同款（本文件上方聚焦分支）。
+        .onWindowCreated([raw](core::window::Handle h) {
+            raw->handle = h;
+            core::window::requestWindowFocus(h);
+        })
         .onWindowDestroyed([raw](core::window::Handle) {
             notepadSessionWindowDestroyed(raw);  // 注销防悬垂 + 几何记忆落库
         })
