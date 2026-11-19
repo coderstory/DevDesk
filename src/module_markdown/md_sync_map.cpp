@@ -39,6 +39,8 @@ void MdSyncMap::rebuild(const std::string& text,
     gap_ = blockGap;
     n_ = blocks.size();
     ++rebuildCount_;
+    // 真重算 = 估计高全量换代，帧级覆盖（若在）随之失效；缓存命中早退不动它。
+    overrideActive_ = false;
 
     firstLine_.assign(n_, 0);
     lineCount_.assign(n_, 1);
@@ -159,6 +161,42 @@ double MdSyncMap::editorLineForPreviewY(float previewY) const {
     if (frac > 1.0) frac = 1.0;
     return static_cast<double>(firstLine_[k]) +
            frac * static_cast<double>(lineCount_[k]);
+}
+
+// ─── 池369：帧级高度覆盖（实时态活动块贴合高）──────────────────────────
+
+void MdSyncMap::restoreOverrideBase() {
+    if (!overrideActive_) return;
+    if (overrideK_ < n_) {
+        height_[overrideK_] = overrideBaseH_;
+    }
+    overrideActive_ = false;
+}
+
+void MdSyncMap::recomputeTopY() {
+    for (size_t k = 0; k < n_; ++k) {
+        topY_[k] = k == 0
+                       ? 0.0f
+                       : topY_[k - 1] + height_[k - 1] + gap_;
+    }
+}
+
+void MdSyncMap::overrideBlockHeight(size_t k, float h) {
+    if (k >= n_ || !(h > 0.0f)) return;
+    if (overrideActive_ && overrideK_ == k && height_[k] == h) return;  // 幂等
+    // 先复位旧覆盖（可能落在另一块上），再上新覆盖；base 取「当前估计高」。
+    restoreOverrideBase();
+    overrideK_ = k;
+    overrideBaseH_ = height_[k];
+    overrideActive_ = true;
+    height_[k] = h;
+    recomputeTopY();
+}
+
+void MdSyncMap::clearBlockOverride() {
+    if (!overrideActive_) return;
+    restoreOverrideBase();
+    recomputeTopY();
 }
 
 } // namespace module::markdown

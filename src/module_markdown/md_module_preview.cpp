@@ -204,20 +204,41 @@ void MarkdownModule::drawPreviewColumn(eui::Ui& ui,
             .offset(scrollOffset)
             .contentKey("md.preview.scroll." + currentPath_ + "." +
                         std::to_string(previewTextHash_));
+        // 池369：滚动总高供给缝（bug259-C 同款）——几何表同源供高，跳过
+        // scrollview 整篇 scratch 测量 pass（长文档每次键变更全量建元 + layout，
+        // 秒级卡顿主根因之一）。高度缓存职责由 provider 接管，contentKey 仅余
+        // MeasureCache state id 语义。
+        scroll.contentHeightProvider(
+            [this, style](float contentWidth, float /*viewportHeight*/) {
+                rebuildSyncMap(contentWidth, style);
+                return syncMap_.totalHeight();
+            });
         if (mode_ == ViewMode::Preview) {
             // 仅预览态允许手动滚动（滚轮写回 previewOffset_）
             scroll.onChange([this](float v) { previewOffset_ = v; });
         }
         scroll.content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-                (void)viewportHeight;
                 lastPvContentWidth_ = contentWidth;  // 供同步滚动 estimateHeight 用
+                // 池369：视口裁剪（bug259-C 查看器同款口径）——只建视口附近块
+                //（上 1 屏 / 下 2 屏余量，向下滚动是主阅读方向多留防快滚露白）。
+                // 几何 = 同源估计表（渲染核 absY 定位），屏外块本就不可见，
+                // 渲染结果不变。scrollOffset 用本帧回写值（滚轮事件先于 compose 落账）。
+                const float cullVh = std::max(viewportHeight, 480.0f);
+                const float cullTop = scrollOffset - cullVh;
+                const float cullBottom = scrollOffset + cullVh * 2.0f;
+                BlockFlowHooks hooks;
+                hooks.blockVisible = [this, cullTop, cullBottom](size_t k) {
+                    const float top = syncMap_.blockTopY(k);
+                    return top + syncMap_.blockHeight(k) >= cullTop &&
+                           top <= cullBottom;
+                };
                 // 逐块渲染与实时态共用 drawBlockFlow；点击定位要写模块 Ui，
-                // 故闭包捕获外层 ui。预览/双栏态注入点传空实现。
+                // 故闭包捕获外层 ui。裁剪注入点见上（blockVisible）。
                 drawBlockFlow(inner, contentWidth, t, style, "md.preview",
                               [this, &ui](size_t k, float y) {
                                   handlePreviewBlockClick(ui, k, y);
                               },
-                              {});
+                              hooks);
             })
             .build();
         // 直写实例 offset（绕开 .offset() 的 init-only 守卫）：
@@ -597,22 +618,15 @@ void MarkdownModule::drawLiveColumn(eui::Ui& ui,
             BlockFlowHooks hooks;
             // 单块高度上限：贴合高超过视口 0.7 倍时封顶（封顶后 input 内部滚动，
             // 外层滚轮在该块成死区）。liveInputCapped_ 供 over 探针区分预期与回归。
-            hooks.wrapHeight = [this, &live, viewportH = g.h](
-                                   size_t k, const MdBlock& b,
-                                   float geometryHeight,
-                                   float contentWidth) {
+            // 池369：贴合高改由 applyLiveGeometryOverride 每帧统一计算（几何表
+            // 覆盖同值同源），钩只读结果——原钩内独立计算与几何表合一，杜绝漂移。
+            hooks.wrapHeight = [this, &live](size_t k, const MdBlock& b,
+                                             float geometryHeight,
+                                             float contentWidth) {
+                (void)b;
+                (void)contentWidth;
                 if (k != live.activeBlock) return geometryHeight;
-                const float fit =
-                    liveFitHeight(b, liveBlockText(b), contentWidth);
-                const float h = mdLiveCappedInputHeight(fit, viewportH);
-                liveInputCapped_ = h < fit;
-                if (liveInputCapped_) {
-                    LOG_DEBUG("[live] input cap fit=" +
-                              std::to_string(fit) + " h=" + std::to_string(h) +
-                              " viewport=" + std::to_string(viewportH) +
-                              " stableId=" + std::to_string(b.stableId));
-                }
-                return h;
+                return liveActiveWrapH_;
             };
             hooks.drawContent = [this, &live, &style](
                                     eui::Ui& inner, size_t k,
@@ -641,12 +655,21 @@ void MarkdownModule::drawLiveColumn(eui::Ui& ui,
                 .step(56.0f)
                 .theme(componentTheme)
                 .offset(liveScrollY_)
-                // contentKey 不用：实态点击切块会换 key → scrollView 视为全新内容 → 滚动归零。
-                // 若用 contentKey 带 activeBlockStableId，cache 只在点击帧 miss；不带则
-                // cache 永久返回旧活动块高度、maxOffset 永误。空字符串走每帧实量，O(blocks)
-                // 成本可忽略（rebuildSyncMap 同文零成本、仅 estimateHeight 逐块重付）。
-                // 规则性注释：实时模式点击不得重建编辑器子树 / id 必须稳定，否则滚动重置。
-                .onChange([this](float v) {
+            // contentKey 不用：实态点击切块会换 key → scrollView 视为全新内容 → 滚动归零。
+            // 若用 contentKey 带 activeBlockStableId，cache 只在点击帧 miss；不带则
+            // cache 永久返回旧活动块高度、maxOffset 永误。
+            // 池369修正（原「每帧实量 O(blocks) 可忽略」假设被实测推翻——60KB 文档
+            // 实量 = 整篇 scratch 建元 + layout，单帧 5-13s）：滚动总高改几何表供给
+            //（bug259-C 同款供给缝），同源估计 + 活动块贴合覆盖，总高与真实排版一致。
+            // 规则性注释：实时模式点击不得重建编辑器子树 / id 必须稳定，否则滚动重置。
+            .contentHeightProvider(
+                [this, style, capVh = g.h](float contentWidth,
+                                           float /*viewportHeight*/) {
+                    rebuildSyncMap(contentWidth, style);
+                    applyLiveGeometryOverride(contentWidth, capVh);
+                    return syncMap_.totalHeight();
+                })
+            .onChange([this](float v) {
                     // 程序化来源（跟随落地 echo）：只记账、不关跟随
                     if (liveProgrammaticScroll_) {
                         liveProgrammaticScroll_ = false;
@@ -659,9 +682,24 @@ void MarkdownModule::drawLiveColumn(eui::Ui& ui,
                     LOG_DEBUG("[live] follow: wheel disarmed");
                 })
                 .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-                    (void)viewportHeight;
                     // 跟随判据的排版宽（滞后一帧，窗口缩放时才变）
                     liveContentWidth_ = contentWidth;
+                    // 池369：几何覆盖先于建元（渲染核绝对定位流读表在先；
+                    // provider 已同参算过一次，此处幂等重算 = 宽度键定版对齐）。
+                    rebuildSyncMap(contentWidth, style);
+                    applyLiveGeometryOverride(contentWidth, g.h);
+                    // 池369：视口裁剪（bug259-C 查看器同款口径）——只建视口附近
+                    // 块；活动块恒建（input 滚出视口也不拆：焦点/打字/跟随依赖）。
+                    // liveScrollY_ 用本帧推送值（滚轮事件先于 compose 落账）。
+                    const float cullVh = std::max(viewportHeight, 480.0f);
+                    const float cullTop = liveScrollY_ - cullVh;
+                    const float cullBottom = liveScrollY_ + cullVh * 2.0f;
+                    hooks.blockVisible = [this, cullTop, cullBottom](size_t k) {
+                        if (k == liveActiveBlock_) return true;
+                        const float top = syncMap_.blockTopY(k);
+                        return top + syncMap_.blockHeight(k) >= cullTop &&
+                               top <= cullBottom;
+                    };
                     drawBlockFlow(inner, contentWidth, t, style, "md.live",
                                   [this, &ui](size_t k, float y) {
                                       handleLiveBlockClick(ui, k, y);
@@ -781,6 +819,31 @@ float MarkdownModule::liveFitHeight(const MdBlock& b, const std::string& blockTe
                                                    fontSize, kLiveInputInset,
                                                    lineCount)};
     return liveHeight_.height;
+}
+
+float MarkdownModule::applyLiveGeometryOverride(float contentWidth,
+                                                float capViewportH) {
+    liveActiveWrapH_ = 0.0f;
+    const std::vector<MdBlock>& bs = blockModel_.blocks();
+    if (liveActiveBlock_ >= bs.size()) {
+        syncMap_.clearBlockOverride();   // 无活动块：清残留覆盖（几何回估计）
+        return 0.0f;
+    }
+    const MdBlock& b = bs[liveActiveBlock_];
+    const float fit = liveFitHeight(b, liveBlockText(b), contentWidth);
+    const float h = mdLiveCappedInputHeight(fit, capViewportH);
+    liveInputCapped_ = h < fit;
+    if (liveInputCapped_) {
+        LOG_DEBUG("[live] input cap fit=" + std::to_string(fit) + " h=" +
+                  std::to_string(h) + " viewport=" +
+                  std::to_string(capViewportH) +
+                  " stableId=" + std::to_string(b.stableId));
+    }
+    liveActiveWrapH_ = h;
+    // 池369：几何表覆盖 = 贴合（含封顶）高——绝对定位裁剪流下活动块与其后
+    // 块的间距与流式布局逐项一致（估计高 ≠ 贴合高时不重叠/不留缝）。
+    syncMap_.overrideBlockHeight(liveActiveBlock_, h);
+    return h;
 }
 
 void MarkdownModule::syncDocumentFromLiveInput(const std::string& blockText) {
@@ -1151,6 +1214,11 @@ float MarkdownModule::computeSyncOffset(eui::Ui& ui,
 void MarkdownModule::rebuildSyncMap(float width, const components::MarkdownStyle& style) {
     if (blockModel_.text() != editorText_) {
         blockModel_.update(editorText_);  // 防御：理论不可达（同预览路径）
+    }
+    // 池369：实时态的活动块贴合覆盖只属于实时帧——非实时帧进任何 rebuild 路径
+    //（含缓存命中的零操作早退）都先复位，防泄漏进双栏/预览几何（那里块高=估计）。
+    if (mode_ != ViewMode::Live) {
+        syncMap_.clearBlockOverride();
     }
     syncMap_.rebuild(
         editorText_, blockModel_.blocks(), editorTextRev_, width,

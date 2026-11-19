@@ -695,6 +695,12 @@ private:
     float liveFitHeight(const MdBlock& b, const std::string& blockText,
                         float contentWidth) ;
 
+    // 池369（实时态视口裁剪）：计算活动块贴合高（含 0.7 视口封顶）并覆盖几何表
+    //（overrideBlockHeight；渲染核 wrapHeight 同值同源），返回该贴合高（无活动
+    // 块 = 0 且清覆盖）。provider 与 content 两端同参各调一次，幂等。同帧副作用：
+    // 更新 liveInputCapped_ / liveActiveWrapH_（wrapHeight 钩读后者）。
+    float applyLiveGeometryOverride(float contentWidth, float capViewportH) ;
+
     // 上行链路：活动块局部文本 → 拼回整篇 → 唯一文档写点。
     // 分块器保证块区间连续覆盖，拼回 ≡ 编辑态对同一处的同一编辑。
     void syncDocumentFromLiveInput(const std::string& blockText) ;
@@ -1140,6 +1146,9 @@ private:
     // 本帧活动块是否命中高度封顶（0.7×视口高）；
     // over 探针凭它区分「封顶块内滚动（预期）」与「贴合失败（回归）」。
     bool liveInputCapped_ = false;
+    // 池369：本帧活动块输入贴合（含封顶）高——applyLiveGeometryOverride 写、
+    // 实时态 wrapHeight 钩读（几何表覆盖值 = 本值，同源）。
+    float liveActiveWrapH_ = 0.0f;
     bool syncPreviewOnEnter_ = false;  // 刚切入预览态 → 对齐编辑器位置
     float lastPvContentWidth_ = 0.0f;  // 预览内容宽（estimateHeight 用，滞后一帧）
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）

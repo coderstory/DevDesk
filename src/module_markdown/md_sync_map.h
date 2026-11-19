@@ -55,6 +55,15 @@ public:
     // 间隙前块末行 = 后块首行。
     double editorLineForPreviewY(float previewY) const;
 
+    // 池369（实时态视口裁剪）：把块 k 的高度覆盖为指定值（实时态活动块用输入
+    // 贴合高，与渲染核 wrapHeight 同值同源），后续块 topY / totalHeight 随之平移——
+    // 绝对定位裁剪流（wrap.y = blockTopY(k)）下活动块与后续块的间距才与流式布局
+    // 逐项一致（贴合高 ≠ 估计高时不重叠/不留缝）。幂等：同 k 同值零操作。
+    // 覆盖是「帧级」状态：真 rebuild（估计全量重算）自动失效；非实时帧由调用方
+    // clearBlockOverride() 复位（实时覆盖不得泄漏进双栏/预览几何）。
+    void overrideBlockHeight(size_t k, float height);
+    void clearBlockOverride();
+
     // 诊断（测试缓存/增量行为）：rebuild 实际重算次数 / heightFn 调用次数
     uint64_t rebuildCount() const { return rebuildCount_; }
     uint64_t heightComputes() const { return heightComputes_; }
@@ -89,6 +98,14 @@ private:
 
     uint64_t rebuildCount_ = 0;
     uint64_t heightComputes_ = 0;
+
+    // 池369 覆盖态（见 overrideBlockHeight 注释）：k 越界时 overrideActive_ 恒 false
+    bool overrideActive_ = false;
+    size_t overrideK_ = 0;
+    float overrideBaseH_ = 0.0f;
+
+    void restoreOverrideBase();
+    void recomputeTopY();
 };
 
 } // namespace module::markdown

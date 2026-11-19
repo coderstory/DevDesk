@@ -4924,7 +4924,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
 //   ② 形态（md_module_blockflow_hook_source_guard）：注入点在位 + 两条路径分别传入 +
 //      drawBlockFlow 本体不再含活动块特判符号。
 REGISTER_TEST(md_module_blockflow_hook_contrast,
-              "markdown_module: 块流注入点对照（md_live 活动块特判 / 预览态空实现，MD-03）", {
+              "markdown_module: 块流注入点对照（md_live 活动块特判 / 预览态仅裁剪钩，MD-03）", {
     const std::string text = "# T\n\npara one\npara two\npara three\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "bflowhook", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -4956,7 +4956,8 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     frame();
     DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
 
-    // ① 预览态：注入点是空实现 → 零特判（逐块都走默认路径）
+    // ① 预览态：注入点只挂裁剪钩（blockVisible，小文档全可见 = 恒 true）→
+    // 零视图特判（逐块都走默认路径）
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 编辑 → 实时
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 实时 → 双栏
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 双栏 → 预览
@@ -5367,7 +5368,7 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK(coreBody.find("deps.syncMap.blockHeight(k)") != std::string::npos);
     DOCTEST_CHECK(coreBody.find("components::markdown(") != std::string::npos);
 
-    // (3) 两条调用路径分别传入：预览态传空实现、实时态传自己的特判
+    // (3) 两条调用路径分别传入：预览态只挂裁剪钩、实时态传自己的特判
     constexpr size_t kNameLen = sizeof("drawBlockFlow") - 1;
     std::vector<std::string> calls;
     for (size_t at = src.find("drawBlockFlow("); at != std::string::npos;
@@ -5384,10 +5385,11 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     for (const std::string& call : calls) {
         if (call.find("\"md.preview\"") != std::string::npos) {
             sawPreview = true;
-            DOCTEST_CHECK_MESSAGE(call.find("hooks") == std::string::npos,
-                                  "预览态必须传空实现（不得带视图态特判）");
-            DOCTEST_CHECK_MESSAGE(call.find("{}") != std::string::npos,
-                                  "预览态的注入点是空实现 {}");
+            // 池369：预览态传裁剪 hooks（blockVisible 性能缝，非视图态特判）——
+            // 视图态特判（wrapHeight/drawContent/afterHitOverlay）仍禁入预览
+            // 路径，由 (3b) 的 drawPreviewColumn 函数体扫描钉死。
+            DOCTEST_CHECK_MESSAGE(call.find("hooks") != std::string::npos,
+                                  "预览态必须传裁剪 hooks（池369 视口裁剪缝）");
         } else if (call.find("\"md.live\"") != std::string::npos) {
             sawLive = true;
             DOCTEST_CHECK_MESSAGE(call.find("hooks") != std::string::npos,
@@ -5401,6 +5403,19 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     }
     DOCTEST_CHECK(sawPreview);
     DOCTEST_CHECK(sawLive);
+
+    // (3b) 池369：预览路径只挂裁剪钩——drawPreviewColumn 体内禁入视图态特判
+    // 符号（实时态的贴合高覆盖/输入块绘制只属于 drawLiveColumn）。
+    std::string previewBody =
+        mdFunctionBody(src, "MarkdownModule::drawPreviewColumn(");
+    DOCTEST_CHECK_MESSAGE(!previewBody.empty(),
+                          "取不到 drawPreviewColumn 函数体（签名被改？）");
+    for (const char* bad : {"hooks.wrapHeight", "hooks.drawContent",
+                            "hooks.afterHitOverlay", "drawLiveInputBlock",
+                            "liveFitHeight", "applyLiveGeometryOverride"}) {
+        DOCTEST_CHECK_MESSAGE(previewBody.find(bad) == std::string::npos,
+                              std::string("预览路径混入视图态特判：") + bad);
+    }
     return true;
 })
 

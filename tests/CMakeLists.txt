@@ -109,6 +109,8 @@ add_executable(devdesk_tests
     test_modules/test_md_live_spike.cpp
     test_modules/test_md_preview_highlight.cpp
     test_modules/test_md_sync_map.cpp
+    # 池369（P1）：md 模式 tab 切换冻结量化探针（编辑/实时/双栏/预览）
+    test_modules/test_md_mode_switch_perf.cpp
     test_modules/test_todo_service.cpp
     test_modules/test_todo_tools.cpp
     # UAT6.2 H31：todo 卡片关联 md 文档（置值/解除/失联灰态/迁移幂等/正面图标/
