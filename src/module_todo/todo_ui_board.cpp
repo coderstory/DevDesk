@@ -53,8 +53,10 @@ constexpr float kCardDoneBadgeW = 16.0f;  // 完成角标宽（旧 24，右缘�
 // 真机 0.5.0 实测卡面全白、优先级色丢失。surface 白底向优先级色混 kTodoTintAlpha
 // 恢复轻微彩色半透质感（量级 0.10-0.15，可调）。色源按用户指定板：
 // 高=error #EF4444 / 中=warning #F59E0B / 低=success #10B981；None 档无 tint 保持纯白。
-// 与左侧 3px 色条（priorityColor 表）并存：色条 = 硬标识，浅染 = 卡面氛围；
-// 两色源独立（色条 Low 走 primary 薄荷绿 #36D399，浅染 Low 走 success 祖母绿 #10B981）。
+// 与左侧 3px 色条（priorityColor 表）原为「硬标识 + 氛围」双载体——need368
+//（老板令 2026-11-19「删除todo卡片左侧的加粗竖线」）色条已删，优先级信息
+// 仅由卡面浅染承载；浅染 Low 走 success 祖母绿 #10B981（原色条 Low 走
+// primary 薄荷绿 #36D399 的独立色源随之退役）。
 constexpr float kTodoTintAlpha = 0.12f;
 
 // 归档折叠竖条的 hover / focus 态：回调写、compose 读（同 app_sidebar 关闭钮先例）。
@@ -854,17 +856,10 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         })
         .build();
 
-    // S3.3 #2 / S6.5：优先级色条（白底左侧 3px 色条替代整卡涂色）
-    eui::Color barColor = priorityColor(task.priority, t);
-    ui.rect(id + ".priobar")
-        .position(0.0f, y)
-        .size(3.0f, kCardHeight)
-        .color(barColor)
-        .opacity(finalCardOpacity)
-        .build();
+    // need368：3px 优先级色条（白底左侧竖线）按老板令删除；优先级信息仍由
+    // 卡面浅染（dueFaceColor/priorityTintBg）承载。
 
-
-    // 卡内文本居中（S3.3：选中/逾期竖线已由优先级色条替代）；chip 行先算后画（自适应宽与绘制共用同一清单），chipX 保持卡内相对坐标
+    // 卡内文本居中（need368 后左缘无竖线，卡面浅染承载优先级）；chip 行先算后画（自适应宽与绘制共用同一清单），chipX 保持卡内相对坐标
     struct PendingChip {
         std::string id;
         float w;
@@ -1039,8 +1034,8 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
-            // S3.3：副本匹配新卡风——白底 + 3px 优先级色条 + Sm 阴影（同 drawCard）；
-            // H16：副本底同真卡走优先级浅染（cardFaceColor）
+            // S3.3：副本匹配新卡风——白底 + Sm 阴影（同 drawCard；need368 优先级
+            // 色条已删）；H16：副本底同真卡走优先级浅染（cardFaceColor）
                     const auto ghostComponentTheme = core::theme::componentTokensWeChat(t);
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
@@ -1049,12 +1044,6 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .shadow(components::theme::shadow(ghostComponentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
                         .border(1.0f, t.colors.borderDefault)
                         .radius(8.0f)
-                        .build();
-                    eui::Color ghostBarColor = priorityColor(task->priority, t);
-                    ui.rect("todo.dragghost.priobar")
-                        .position(0.0f, 0.0f)
-                        .size(3.0f, kCardHeight)
-                        .color(ghostBarColor)
                         .build();
                     // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）。
                     // 省略号三件套同真卡；序号徽章已移除，真卡与副本标题宽度一致（同 kCardPadX，

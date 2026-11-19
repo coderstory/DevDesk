@@ -3395,33 +3395,11 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         DOCTEST_CHECK(frame.ui.find(cid + ".overduebar") == nullptr);
     }
 
-    // 判据 c：左 3px 优先级色条存在且颜色正确
-    // priorityColor 色表（W3-B3）：None=textTertiary Low=primary Medium=warning High=error
-    const eui::Color kExpectBarColor[4] = {
-        t.colors.textTertiary,  // None 中性灰
-        t.colors.primary,       // Low 绿 #36D399
-        t.colors.warning,       // Medium 橙 #F59E0B（W3-B3 从 info 蓝改为 warning 橙）
-        t.colors.error,         // High 红 #EF4444
-    };
+    // 判据 c：need368（老板令 2026-11-19「删除todo卡片左侧的加粗竖线」）——
+    // 左缘 3px 优先级色条已删；优先级信息仅由卡面浅染承载（判据 a/e 覆盖浅染色）。
     for (int i = 0; i < 4; ++i) {
         const std::string cid = "todo.col.4.card." + std::to_string(i);
-        const auto* bar = frame.ui.find(cid + ".priobar");
-        DOCTEST_REQUIRE(bar != nullptr);
-        // 色条 3px 宽、卡高
-        DOCTEST_CHECK_EQ(bar->frame.width, 3.0f);
-        DOCTEST_CHECK_EQ(bar->frame.height, module::todo::ui::kCardHeight);
-        // 颜色与优先级色表一致
-        DOCTEST_CHECK(colorNear(bar->color, kExpectBarColor[i]));
-    }
-    // 判据 c'：四档色条颜色两两不同
-    for (int i = 0; i < 4; ++i) {
-        const std::string ci = "todo.col.4.card." + std::to_string(i);
-        const auto* bi = frame.ui.find(ci + ".priobar");
-        for (int j = i + 1; j < 4; ++j) {
-            const std::string cj = "todo.col.4.card." + std::to_string(j);
-            const auto* bj = frame.ui.find(cj + ".priobar");
-            DOCTEST_CHECK(!colorNear(bi->color, bj->color, 0.01f));
-        }
+        DOCTEST_CHECK(frame.ui.find(cid + ".priobar") == nullptr);
     }
 
     // 判据 d：选中态——点击卡后色条仍存在、卡面仍浅染（H16：无 selbar、无旧底色 tint 回归）
@@ -3440,8 +3418,8 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         // 选中态卡面仍为 High→error 浅染（不再走 primarySoftBg + priority tint）；H15 cardSurface 基底
         DOCTEST_CHECK(colorNear(selBg->color,
                                 eui::mixColor(ui_kit::cardSurface(t), t.colors.error, 0.12f)));
-        // 优先级色条仍在
-        DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.priobar") != nullptr);
+        // need368：优先级色条已删
+        DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.priobar") == nullptr);
         // 旧选中左竖线已退役
         DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.selbar") == nullptr);
     }
