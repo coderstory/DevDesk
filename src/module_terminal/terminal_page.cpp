@@ -386,10 +386,66 @@ GridLayout TerminalPage::compose(
             };
             SessionController* ctrl = &controller;
 
+            // 层 4 前置：IME 锚位（bug363 根因）。Runtime::updateImeCursorRect 只
+            // 消费「聚焦元素」的 imeRect；bug245 时代的独立锚元素（term.ime.anchor，
+            // 无 focusable、从不获焦）是死线——终端聚焦的是本交互层，锚位必须挂在
+            // 这里。偏移口径：imeRect 是 element.frame 之上的偏移
+            //（runtime_geometry.h imeCursorPixelRect：frame+imeRect 再过变换），
+            // term.input frame=(0, gridTop)，光标 cell 页面坐标
+            // (ix, gridTop+visRow*cellH) → 偏移 (ix, visRow*cellH)。锚不可见
+            //（无会话/光标滚出视口）时落 (0,0)=网格左上角。
+            float imeAnchorX = 0.0f;
+            float imeAnchorY = 0.0f;
+            if (act != nullptr && !frame.cells.empty() && layout.rows > 0 &&
+                layout.cols > 0) {
+                const int startLine =
+                    std::max(0, totalLines - layout.rows - act->scrollOffset);
+                const int visRow = (sb + frame.cursorRow) - startLine;
+                if (visRow >= 0 && visRow < layout.rows && frame.cursorCol < frame.cols) {
+                    const int frameRow = visRow + startLine - sb;
+                    const platform::TerminalCell* row =
+                        frameRow >= 0 && frameRow < frame.rows
+                            ? &frame.cells[static_cast<size_t>(frameRow) * frame.cols]
+                            : nullptr;
+                    imeAnchorX = cellXOf(row, frame.cols, frame.cursorCol, cellW);
+                    imeAnchorY = static_cast<float>(visRow) * cellH;
+                    // ImeTrace 段1（bug245 临时诊断，≤30 条；锚改挂 term.input 后
+                    // 数值=相对网格偏移，与段2/3 同落 ime-trace.log 对齐阅读）
+                    {
+                        static int imeTraceN = 0;
+                        static int imeTraceFrame = 0;
+                        static int lastCr = -1;
+                        static int lastCc = -1;
+                        static int lastSb = -1;
+                        ++imeTraceFrame;
+                        const bool changed = frame.cursorRow != lastCr ||
+                                             frame.cursorCol != lastCc ||
+                                             act->scrollOffset != lastSb;
+                        if (imeTraceN < 30 && (changed || imeTraceFrame % 120 == 0)) {
+                            ++imeTraceN;
+                            lastCr = frame.cursorRow;
+                            lastCc = frame.cursorCol;
+                            lastSb = act->scrollOffset;
+                            char line[192];
+                            std::snprintf(line, sizeof(line),
+                                          "ImeTrace: src ix=%.1f iy=%.1f cellW=%.2f cellH=%.2f "
+                                          "cursorRow=%d cursorCol=%d scrollOffset=%d",
+                                          static_cast<double>(imeAnchorX),
+                                          static_cast<double>(imeAnchorY),
+                                          static_cast<double>(cellW), static_cast<double>(cellH),
+                                          frame.cursorRow, frame.cursorCol, act->scrollOffset);
+                            eui_ime_trace_log(line);
+                        }
+                    }
+                }
+            }
+
             // 层 2：交互层（IBeam 文本光标，bug243 现象 1；拖选/滚轮/键盘/IME）
             ui.rect("term.input")
                 .size(screen.width, bodyH)
                 .margin(0.0f, gridTop, 0.0f, 0.0f)
+                // IME 锚位（bug363）：挂获焦元素本尊，见上方层 4 前置注释
+                .imeRect(imeAnchorX, imeAnchorY, cellW, cellH)
                 .color(Color{0, 0, 0, 0.01f})
                 .onPress([this, toPage, rowOf, colOf](const eui::PointerEvent& e,
                                                      const eui::Rect&) {
@@ -509,7 +565,7 @@ GridLayout TerminalPage::compose(
             }
 
             // 层 3.5：光标（Running 且光标在可视区；块/线 + 闪烁 1100ms 阶跃，need250 §4.2⑦。
-            // 静态锚位不变的是 IME imeRect 元素——term.ime.anchor 独立于本块）
+            // 光标闪烁不碰 IME 锚位——锚已并入 term.input.imeRect（bug363，独立锚元素已退役））
             if (act != nullptr && act->state == SessionState::Running && !frame.cells.empty() &&
                 frame.cols > 0 && layout.rows > 0) {
                 const int visRow = (sb + frame.cursorRow) -
@@ -540,55 +596,9 @@ GridLayout TerminalPage::compose(
                 }
             }
 
-            // 层 4：IME 锚定：光标 cell 可视坐标上报 imeRect（真实度量，bug245）
-            if (act != nullptr && !frame.cells.empty() && layout.rows > 0 && frame.cols > 0) {
-                const int startLine = std::max(0, totalLines - layout.rows - act->scrollOffset);
-                const int visRow = (sb + frame.cursorRow) - startLine;
-                if (visRow >= 0 && visRow < layout.rows && frame.cursorCol < frame.cols) {
-                    const int frameRow = visRow + startLine - sb;
-                    const platform::TerminalCell* row =
-                        frameRow >= 0 && frameRow < frame.rows
-                            ? &frame.cells[static_cast<size_t>(frameRow) * frame.cols]
-                            : nullptr;
-                    const float ix = cellXOf(row, frame.cols, frame.cursorCol, cellW);
-                    const float iy = gridTop + static_cast<float>(visRow) * cellH;
-                    // ImeTrace 段1（bug245 临时诊断，≤30 条；光标变位或每 120 帧一条，
-                    // 与段2/3 同落 ime-trace.log 对齐阅读）
-                    {
-                        static int imeTraceN = 0;
-                        static int imeTraceFrame = 0;
-                        static int lastCr = -1;
-                        static int lastCc = -1;
-                        static int lastSb = -1;
-                        ++imeTraceFrame;
-                        const bool changed = frame.cursorRow != lastCr ||
-                                             frame.cursorCol != lastCc ||
-                                             act->scrollOffset != lastSb;
-                        if (imeTraceN < 30 && (changed || imeTraceFrame % 120 == 0)) {
-                            ++imeTraceN;
-                            lastCr = frame.cursorRow;
-                            lastCc = frame.cursorCol;
-                            lastSb = act->scrollOffset;
-                            char line[192];
-                            std::snprintf(line, sizeof(line),
-                                          "ImeTrace: src ix=%.1f iy=%.1f cellW=%.2f cellH=%.2f "
-                                          "cursorRow=%d cursorCol=%d scrollOffset=%d",
-                                          static_cast<double>(ix), static_cast<double>(iy),
-                                          static_cast<double>(cellW), static_cast<double>(cellH),
-                                          frame.cursorRow, frame.cursorCol, act->scrollOffset);
-                            eui_ime_trace_log(line);
-                        }
-                    }
-                    // P1-2：imeRect 是 element.frame 之上的偏移（runtime_geometry.h
-                    // 最终矩形=frame+imeRect 再过变换），position 已把坐标编进 frame
-                    // ——再传 (ix,iy) 即双计，候选窗飞出光标区。偏移恒 (0,0,cellW,cellH)
-                    ui.rect("term.ime.anchor")
-                        .position(ix, iy)
-                        .size(cellW, cellH)
-                        .color(kTransparent)
-                        .imeRect(0.0f, 0.0f, cellW, cellH);
-                }
-            }
+            // （层 4：IME 锚定已并入 term.input 的 .imeRect——bug363：独立锚元素
+            // 从不获焦，updateImeCursorRect 只认聚焦元素，等于死线；计算与
+            // ImeTrace 段1随迁至 term.input 前，见「层 4 前置」块。）
 
             // 层 4（池#364）：终端域滚动条——回看 affordance。范围裁决：bug188
             // 「滚动条视觉全无」覆盖侧栏/设置面板等既定域，终端网格是回看操作域、
