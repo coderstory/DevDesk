@@ -618,7 +618,9 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
         qst.cursor = static_cast<int>(f.query.size());
         qst.selectionStart = 0;
         qst.selectionEnd = static_cast<int>(f.query.size());
-        ui.requestFocus(kNotepadSearchQueryInputId);
+        // need376：聚焦目标 = input 组件可聚焦元素 <id>.hit（requestFocus 按
+        // 元素 id 解析，传组件根 id 静默落空 → 开条后仍须手点输入框）
+        ui.requestFocus(std::string(kNotepadSearchQueryInputId) + ".hit");
     }
 
     // 行 1：查询输入（Enter/Shift+Enter/Esc 经 passthrough 先于内置处理消费）
@@ -1373,10 +1375,11 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             });
         }
         editor.build();
-        // P2-3：关条焦点回收消费（notepadFindClose 置位；开条播种聚焦的对称面）
+        // P2-3：关条焦点回收消费（notepadFindClose 置位；开条播种聚焦的对称面）。
+        // need376：同款 .hit 修正——聚焦可聚焦元素而非组件根 id
         if (s.find.pendingFocusEditor && !s.find.visible) {
             s.find.pendingFocusEditor = false;
-            ui.requestFocus(kNotepadEditorInputId);
+            ui.requestFocus(std::string(kNotepadEditorInputId) + ".hit");
         }
         }
     }
