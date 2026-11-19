@@ -33,7 +33,16 @@
       "zcode-site@zcode-plugins-official": true,
       "autoresearch@zcode-plugins-official": false,
       "zcode-auto-resume@local-auto-resume": false,
-      "devflow@dev-zcode-plugins": true
-    }
+      "devflow@dev-zcode-plugins": true,
+      "visualize@zcode-plugins-official": true,
+      "design@zcode-plugins-official": true,
+      "computer-use@zcode-plugins-official": true,
+      "image-generation@zcode-plugins-official": true,
+      "video-generation@zcode-plugins-official": true,
+      "github@zcode-plugins-official": true,
+      "jev-decisions@zcode-plugins-official": true,
+      "frontend-design@claude-plugins-official": true
+    },
+    "visualizeDefaultOffMigrated": true
   }
 }

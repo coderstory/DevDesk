@@ -123,3 +123,25 @@ UAT62-screenshots/
 # 仓内二进制钉死；放包/校验契约见 third_party/conpty/README.md）
 !third_party/conpty/conpty.dll
 !third_party/conpty/OpenConsole.exe
+
+# ── 大清扫 2026-11-19（老板令：未提交变更越积越多）─────────────
+# pool.db SQLite 共享内存件（池 MCP 打开期间的运行时产物，随 -wal/-journal 同族）
+docs/pool/pool.db-shm
+# 池运行态与已退役生成物（2026-11-05 令生成物=本机投影 + need#302 快照面整体退役）
+docs/pool/pool-state.json
+docs/pool/pool-dashboard.html
+docs/pool/pool-snapshot.json
+# 构建变体目录（与 build-release/build-coverage 同族）
+build-san/
+# 探针/驱动截图产物目录（与 UAT62-screenshots 同族）
+md_probe_shots/
+ui-drive-shots/
+# opencode 适配遗支产物（该线 2026-11-18 已判不入 dev，根目录残留件）
+.opencode/
+opencode.json
+# devflow 插件运行态（工单分发状态，本机留存）
+.devflow/
+# devflow 会话交接卡（草稿性质同 .scratch；置于 !.zcode/** 否定之后故生效）
+.zcode/handoff/
+# spike POC 草稿区（归其线处置：正式入库或删；本机留存不丢）
+tests/spike/
