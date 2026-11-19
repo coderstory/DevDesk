@@ -238,6 +238,11 @@ GridLayout TerminalPage::compose(
         selecting_ = false;
         hasSelection_ = false;
         scrollRemainder_ = 0.0f;
+        // 池#365：搜索命中行号锚在旧会话行号空间，切会话作废（查询保留续搜）
+        search_.matchLine = -1;
+        search_.matchOrdinal = 0;
+        search_.matchCount = 0;
+        search_.searched = false;
         // bug267-P3a：切会话清 resize 去抖态——pendingSince_ 锚在旧会话的 resize 帧，
         // 新会话若复用旧计时器，wantsResize() 直接视为已超时 → 去抖窗口缩水成 0ms，
         // ConPTY resize 退化回逐帧抖动（bug248 去抖本意失效）。清掉后下方 pending
@@ -251,6 +256,12 @@ GridLayout TerminalPage::compose(
         // 关 TAB 后索引左移/越界，hover 记忆指向错 TAB（P3-6）：瞬态直接清除
         hoveredTabIndex_ = -1;
         hoveredCloseIndex_ = -1;
+        // 池#365：关的可能就是激活 TAB（activeIndex 原地顶移、上块不触发）——
+        // 会话已换，搜索命中态同口径作废
+        search_.matchLine = -1;
+        search_.matchOrdinal = 0;
+        search_.matchCount = 0;
+        search_.searched = false;
         // bug267-P3a：关会话同口径——激活索引可能不变但会话已换（关掉的就是激活 TAB
         // 时 activeIndex 原地顶移），旧 pendingSince_ 同样造成 0ms 去抖窗口
         clearPendingResize();
