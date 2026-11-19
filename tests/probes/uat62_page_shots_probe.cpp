@@ -418,7 +418,7 @@ int main(int argc, char* argv[]) {
                     }
                 return n > 0 ? sum / n : -1.0;
             };
-            const int sx = static_cast<int>(220.0f / w * pw);
+            const int sx = static_cast<int>(200.0f / w * pw)  // need372：侧栏展开宽;
             std::cerr << "DBGBAND page=" << kSlugs[i]
                       << " sidebar=" << bandMean(4, sx, 8, ph - 8)
                       << " page=" << bandMean(sx + 4, pw - 4, 8, ph - 8)

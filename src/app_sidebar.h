@@ -12,8 +12,10 @@
 
 namespace app {
 
-// 宽度 token：展开 220（2026-11-01 重构 208→220：图标+文字并置不再挤），折叠 72 = 图标 28 + 余量
-constexpr float kSidebarWidthExpanded = 220.0f;
+// 宽度 token：展开 200（need372 老板 2026-11-19「缩小一点：右侧空白很多 + 右侧
+// 布局自带左边距」220→200；2026-11-01 曾 208→220 防图标+文字并置拥挤，本档
+// 图标 28 + 内边距 12 + 最长菜单文字余量仍足），折叠 72 = 图标 28 + 余量
+constexpr float kSidebarWidthExpanded = 200.0f;
 constexpr float kSidebarWidthCollapsed = 72.0f;
 
 // ---- 自绘标题栏（UAT3 D-R3-1，仅本文件实现）----

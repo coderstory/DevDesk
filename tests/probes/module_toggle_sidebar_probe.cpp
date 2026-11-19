@@ -459,13 +459,13 @@ int main(int argc, char* argv[]) {
                       "§6 热区应 48/44（绘制区外扩 4px，dd0f28db）");
                 check(hot->onClick != nullptr, "§6 点击回调应在热区");
             }
-            // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 220→72。
+            // 真点击（Press/Release 成对排队 → 下一帧消费）→ 侧栏 200→72。
             // 点击热区中心（回调已迁热区）
             if (hot != nullptr) {
                 clickElement(*hot);
                 composeFrame();
                 check(nearEq(app::sidebarWidth(), 72.0f),
-                      "§6 真点击后侧栏应折叠（220→72）");
+                      "§6 真点击后侧栏应折叠（200→72）");
                 const auto* folded =
                     ui != nullptr ? ui->find("app.sidebar.toggle") : nullptr;
                 const float expFoldX =
@@ -480,8 +480,8 @@ int main(int argc, char* argv[]) {
                     clickElement(*foldedHot);
                     composeFrame();
                 }
-                check(nearEq(app::sidebarWidth(), 220.0f),
-                      "§6 再点击应展开（72→220）");
+                check(nearEq(app::sidebarWidth(), 200.0f),
+                      "§6 再点击应展开（72→200）");
             }
         }
 

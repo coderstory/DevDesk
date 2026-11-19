@@ -166,7 +166,7 @@ void resetCaseGlobals() {
     ::app::clearAppNotice();
     // 11) 侧边栏折叠态（app_sidebar.h）：进程内单值。sidebar 用例
     // setSidebarCollapsed(true) 翻折叠态后 fail-fast 提前返回时，残留折叠态让后续拿
-    // sidebarWidth()/drawSidebar 做布局断言（展开宽 208）的用例翻车。走独立复位接口，
+    // sidebarWidth()/drawSidebar 做布局断言（展开宽 200）的用例翻车。走独立复位接口，
     // 不经生产写路径 setSidebarCollapsed（persist=true 会带出落库副作用）。
     ::app::resetSidebarGlobals();
     // 12) 退出接线已挂门（app_assembly.h）：armExitHook 的幂等记账位是进程级的——
