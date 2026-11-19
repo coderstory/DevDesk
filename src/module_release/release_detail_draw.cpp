@@ -2527,8 +2527,13 @@ void drawConfigEditor(eui::Ui& ui, const eui::Screen& screen,
     const bool readOnly = isReadOnly(state.displayStatus);
     const bool editable = !readOnly && !cfg->skipped;
 
-    const float panelW = screen.width;
-    const float panelH = screen.height;
+    // 弹窗组件（components/dialog.h build）把面板钳到「视口 − overlay 边距」：
+    // 全屏请求实际得到 (screen−48) 的面板。内容坐标系以钳后面板为准；按全屏
+    // 假设排布会把底排 保存/取消 与字数行顶出面板底缘、悬到 backdrop 上
+    //（#360「按钮跑外面了」）。同文件 drawValidationDialog 同口径。
+    const float margin = themeTokens.metrics.spacing.overlay;
+    const float panelW = std::max(0.0f, screen.width - margin);
+    const float panelH = std::max(0.0f, screen.height - margin);
     const float inset = 24.0f;
     const float titleH = 28.0f;
     const float hintH = editable ? 0.0f : 30.0f;
