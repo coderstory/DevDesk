@@ -114,6 +114,11 @@ const Tokens& current();
 void setDark();
 void setLight();
 
+// need356：Windows 屏幕素质补偿因子（平台拆分实现：theme_deepen_win.cpp=加深档、
+// theme_deepen_posix.cpp=恒 1.0，mac 复用 posix 不动）。token 重建时全部颜色
+// RGB 统一乘该因子（alpha 不动）；调档只改 theme_deepen_win.cpp 一处常量。
+float colorDeepenFactor();
+
 // 全局字号缩放（1.0 = 原始尺寸）：作用于 SizeTokens 全部 fontSize* 字段；
 // 硬编码字面量不在 token 重建范围内，须经 scaled() 包裹才随档位缩放
 void setFontScale(float scale);

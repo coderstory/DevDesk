@@ -241,11 +241,60 @@ namespace {
         sz.fontSizeWeChat *= s;
     }
 
-    // 按当前 isDark + g_fontScale 重建全局 token（单一来源，避免缩放叠加）
+    // need356：Windows 笔记本屏幕偏淡 → 全部颜色 token 统一加深（RGB 乘因子、
+    // alpha 不动）。posix 档因子恒 1.0 = 零变化（mac 不动，老板令仅 Windows 生效）。
+    // 落点集中本函数：setDark/setLight/rebuild 三条 token 重建路径统一在末段施加；
+    // 调档只改 theme_deepen_win.cpp 一处常量。
+    void applyColorDeepen(Tokens& t) {
+        const float f = colorDeepenFactor();
+        if (f >= 1.0f) return;
+        auto& c = t.colors;
+        const auto d = [f](eui::Color v) {
+            return eui::Color(v.r * f, v.g * f, v.b * f, v.a);
+        };
+        c.background = d(c.background);
+        c.surface = d(c.surface);
+        c.surfaceElevated = d(c.surfaceElevated);
+        c.hover = d(c.hover);
+        c.active = d(c.active);
+        c.primary = d(c.primary);
+        c.primaryHover = d(c.primaryHover);
+        c.primaryPressed = d(c.primaryPressed);
+        c.primarySoftBg = d(c.primarySoftBg);
+        c.primaryText = d(c.primaryText);
+        c.accentText = d(c.accentText);
+        c.onPrimary = d(c.onPrimary);
+        c.onAccent = d(c.onAccent);
+        c.textPrimary = d(c.textPrimary);
+        c.textSecondary = d(c.textSecondary);
+        c.textTertiary = d(c.textTertiary);
+        c.textDisabled = d(c.textDisabled);
+        c.borderDefault = d(c.borderDefault);
+        c.borderMuted = d(c.borderMuted);
+        c.success = d(c.success);
+        c.warning = d(c.warning);
+        c.error = d(c.error);
+        c.errorText = d(c.errorText);
+        c.successText = d(c.successText);
+        c.warningText = d(c.warningText);
+        c.titlebarCloseHover = d(c.titlebarCloseHover);
+        c.titlebarClosePressed = d(c.titlebarClosePressed);
+        c.titlebarMinimizeHover = d(c.titlebarMinimizeHover);
+        c.titlebarMinimizePressed = d(c.titlebarMinimizePressed);
+        c.info = d(c.info);
+        c.sidebarBg = d(c.sidebarBg);
+        c.purple = d(c.purple);
+        c.pink = d(c.pink);
+        c.blue = d(c.blue);
+    }
+
+    // 按当前 isDark + g_fontScale 重建全局 token（单一来源，避免缩放叠加；
+    // 末段统一加深 need356）
     void rebuild() {
         g_current = g_current.isDark ? darkTokens() : lightTokens();
         applyAccentPrimary(g_current, g_accent);
         applyFontScale(g_current);
+        applyColorDeepen(g_current);
     }
 
     ChangeHandler g_changeHandler;
@@ -267,6 +316,7 @@ void setDark() {
     g_current = darkTokens();
     applyAccentPrimary(g_current, g_accent);
     applyFontScale(g_current);
+    applyColorDeepen(g_current);
     notifyThemeChanged(true);
 }
 
@@ -274,6 +324,7 @@ void setLight() {
     g_current = lightTokens();
     applyAccentPrimary(g_current, g_accent);
     applyFontScale(g_current);
+    applyColorDeepen(g_current);
     notifyThemeChanged(false);
 }
 

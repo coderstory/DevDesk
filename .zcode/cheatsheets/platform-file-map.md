@@ -13,6 +13,7 @@
 | paths | ✅ | ✅ | ✅ |
 | time | — | ✅ | ✅ |
 | window_layout | ✅ | ✅ | ✅ |
+| theme_deepen | — | ✅ | ✅ |（need356：Windows 颜色加深因子，posix 恒 1.0）
 
 ## module_memory/engine/
 

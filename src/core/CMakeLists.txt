@@ -32,6 +32,7 @@ if(WIN32)
         window_layout_win.cpp
         file_perms_win.cpp              # Windows 无需 POSIX 权限位（DPAPI 保护内容）
         platform_info_win.cpp
+        theme_deepen_win.cpp            # need356：屏幕偏淡全局加深因子（posix 档恒 1.0）
     )
 elseif(APPLE)
     target_sources(devdesk_core PRIVATE
@@ -41,6 +42,7 @@ elseif(APPLE)
         window_layout_macos.cpp
         file_perms_posix.cpp            # 与 Linux 同实现（chmod 0600），共用 _posix
         platform_info_posix.cpp
+        theme_deepen_posix.cpp          # need356：mac 不加深（因子恒 1.0）
     )
 else()
     target_sources(devdesk_core PRIVATE
@@ -50,6 +52,7 @@ else()
         window_layout_posix.cpp
         file_perms_posix.cpp
         platform_info_posix.cpp
+        theme_deepen_posix.cpp          # need356：不加深（因子恒 1.0）
     )
 endif()
 
