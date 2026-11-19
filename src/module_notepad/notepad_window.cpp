@@ -913,14 +913,18 @@ void drawPreviewSlot(
     // 滚动偏移留存（Ui 态与窗同寿）；contentKey = 文本修订 → 预览态禁编辑，
     // 度量缓存稳定（textRevision 变化才会重测）。
     float& scroll = ui.state<float>(std::string(kNotepadPreviewId) + ".scroll");
+    // bug382：预览视口高（与 scrollView .size 同式）——传给 markdown 组件做
+    // 视口裁剪：滚动/调窗/全局帧泵每帧全文档重建元素树是预览卡顿根因，
+    // 裁剪后窗口外块只留包装几何（显式高不变），content 不再生成。
+    const float viewportH = h - editorTop - kStatusH;
     components::scrollView(ui, kNotepadPreviewId)
         .position(0.0f, editorTop)
-        .size(w, h - editorTop - kStatusH)
+        .size(w, viewportH)
         .theme(componentTheme)
         .offset(scroll)
         .onChange([&scroll](float v) { scroll = v; })
         .contentKey(std::to_string(st.textRevision))
-        .content([&s, &style](eui::Ui& inner, float innerW, float) {
+        .content([&s, &style, &scroll, viewportH](eui::Ui& inner, float innerW, float) {
             if (s.editText.empty()) {
                 inner.text(kNotepadPreviewEmptyId)
                     .position(0.0f, 40.0f)
@@ -952,6 +956,7 @@ void drawPreviewSlot(
                     .width(innerW)
                     .wrapContentHeight()
                     .style(style)
+                    .visibleRange(scroll, scroll + viewportH)  // bug382 视口裁剪
                     .build();
                 // 选区矩形（info 蓝低透明，旧查看器 selAlpha 同档）：文档系 y
                 // 直接叠层（hitRectsForDisplayRangeDoc，need345 EUI-NEO 新缝）；
