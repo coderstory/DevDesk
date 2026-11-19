@@ -604,6 +604,16 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             .contentHeightProvider(
                 [&st](float, float) { return std::max(0.0f, st.contentBottom - 56.0f); })
             .content([&](eui::Ui&, float, float) {
+            // #367 修正：scrollView 的内容容器是流式 Column——显式 .position 的
+            // 子项在列布局中坐标被无视（layoutColumn 只认 ignoreLayout 覆盖子
+            // 项），整表单被按流式左堆、六个类型页签竖叠＝「布局 100% 错乱」。
+            // 修正＝包一层 Stack（layoutStack 认 x/y）承载全部定位子项；层高用
+            // 上帧 contentBottom 自收敛（与两处量高 provider 同源），原 spacer
+            // 定高锚由本层显式高取代。
+            ui.stack("schedule.edit.scroll.fields")
+                .size(area.w + ui_kit::kDialogBodyInsetX,
+                      std::max(0.0f, st.contentBottom - viewTop))
+                .content([&] {
             // 每帧按当前表单重算：校验红字 + 预览缓存同一真源（nextFire 迭代）
             st.form.errorText.clear();
             {
@@ -995,14 +1005,11 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
             fy += 120.0f;
 
-            // need337：内容底回写 + 滚动列定高锚（masonry spacer 惯例：定位子
-            // 项不参与列 wrap，以显式 spacer 定高 = 本帧真实内容底）。删除钮已
-            // 迁壳 thirdAction 左槽 + dangerThird（need338，见上方 spec 装配处），
-            // 本层不再手工画。
-            st.contentBottom = viewTop + fy;  // 面板绝对底（壳高 provider 按 −69、
-                                              // 滚动量高按 −56 消费，两处同源）
-            ui.stack("schedule.edit.scroll.spacer")
-                .size(innerW, fy)  // fy = 滚动列相对底 = spacer 高（定位子项不参与 wrap）
+            // need337：内容底回写（面板绝对底）——壳高 provider 按 −69、滚动
+            // 量高与 fields 层高按 −56 消费，三处同源自收敛。删除钮已迁壳
+            // thirdAction 左槽 + dangerThird（need338，见上方 spec 装配处）。
+            st.contentBottom = viewTop + fy;
+            })
                 .build();
             })
             .build();
