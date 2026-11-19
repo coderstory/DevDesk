@@ -144,7 +144,9 @@ NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s) {
     NotepadToolbarMatrix m;
     const bool errorState = !s.loadError.empty();
     const bool editable = !errorState && !s.readonly && !s.binarySuspect;
-    m.showFormat = !errorState && notepadSessionHasExtension(s, ".json");
+    // need380：格式化面扩 .sql（SQL 格式化器 notepad_sql_format；.json 原口径）
+    m.showFormat = !errorState && (notepadSessionHasExtension(s, ".json") ||
+                                   notepadSessionHasExtension(s, ".sql"));
     m.showPreview = !errorState && (notepadSessionHasExtension(s, ".md") ||
                                     notepadSessionHasExtension(s, ".markdown"));
     m.formatEnabled = editable && !s.previewOn;

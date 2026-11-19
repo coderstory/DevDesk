@@ -187,7 +187,7 @@ bool notepadSessionHasExtension(const NotepadSession& s, std::string_view lowerE
 // 工具条联动矩阵（compose 消费 + 测试直测）。editable 口径 = compose 同款
 //（!loadError && !readonly && !binarySuspect），由本函数内部推导，调用方不再传。
 struct NotepadToolbarMatrix {
-    bool showFormat = false;         // 仅 .json 扩展（F-11）
+    bool showFormat = false;         // .json / .sql 扩展（F-11 + need380 SQL）
     bool showPreview = false;        // 仅 .md/.markdown 扩展（F-13）
     bool formatEnabled = false;      // 可编辑且非预览态（readonly/binary/预览禁用）
     bool previewEnabled = false;     // 大文件禁用（1MB 级渲染成本未证，PRD F-16 降级）

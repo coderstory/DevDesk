@@ -11,6 +11,8 @@ add_library(devdesk_module_notepad STATIC
     notepad_language.cpp
     # 未保存保护纯决策层（need263 批 4 F-05：三选映射/veto 裁决/quit guard 扫描）
     notepad_protect.cpp
+    # SQL 格式化纯函数引擎（need380 最小范围：关键字规范化 + 缩进）
+    notepad_sql_format.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_notepad)

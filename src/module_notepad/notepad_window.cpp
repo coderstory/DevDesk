@@ -35,6 +35,7 @@
 #include "notepad_protect.h"  // 三选动作→后续动作映射（关窗/退出两语境共用）
 #include "notepad_module.h"
 #include "notepad_prefs.h"  // notepadSaveEditorPrefs（F-09/F-10 写穿透）
+#include "notepad_sql_format.h"  // formatSqlText（need380 SQL 格式化引擎）
 #include "ui_kit/light_toast.h"
 
 namespace module::notepad {
@@ -475,10 +476,24 @@ void notepadFormatJson(NotepadSession& s,
     sessionToast(s, "JSON 已格式化（对象键已按字典序重排）");
 }
 
+// need380 SQL 格式化（最小范围：关键字规范化 + 缩进）：formatSqlText 纯函数
+// 引擎 + notepadCommitText 同款单撤销提交（与 JSON 格式化同构）。格式化改写
+// 整篇布局 → 光标落文档头；输出与原文相同 = 不入撤销栈只 toast 明示。
+void notepadFormatSql(NotepadSession& s,
+                      components::input_detail::InputModel::InputState& st) {
+    const std::string formatted = formatSqlText(st.text);
+    if (formatted == st.text) {
+        sessionToast(s, "SQL 已是规范格式，无需格式化");
+        app::requestUpdate();
+        return;
+    }
+    notepadCommitText(s, st, formatted, 0, 0, 0);
+    sessionToast(s, "SQL 已格式化（关键字大写 + 缩进重排）");
+}
+
 // F-13 预览切换：整页编辑⇄预览替换编辑区槽位；InputState 与 session 镜像
 // 不动 → 切回光标/编辑滚动保留。
-void notepadTogglePreview(NotepadSession& s) {
-    s.previewOn = !s.previewOn;
+void notepadTogglePreview(NotepadSession& s) {    s.previewOn = !s.previewOn;
     app::requestUpdate();
 }
 
@@ -1249,18 +1264,26 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             tbX = stepperX + 76.0f + kTbGap;  // A+ 460+24 之后 8px
         }
     }
-    // F-11 格式化钮（仅 .json 扩展显示；readonly/binary/预览态禁用）。tooltip
-    // 固定副文案 = D-4 键序重排轻量明示（settings_ui_cards.cpp:618 同款写法）。
+    // F-11/need380 格式化钮（.json = JSON 美化；.sql = SQL 关键字规范化+缩进；
+    // readonly/binary/预览态禁用）。tooltip 固定副文案 = D-4 轻量明示
+    //（settings_ui_cards.cpp:618 同款写法）。
     if (matrix.showFormat) {
+        const bool isSqlFormat = notepadSessionHasExtension(s, ".sql");
         toolbarButton(ui, kNotepadBtnFormatId, "格式化", tbX, t,
-                      matrix.formatEnabled, [&s, &ui] {
-                          notepadFormatJson(
-                              s, ui.state<InputState>(kNotepadEditorInputId));
+                      matrix.formatEnabled, [&s, &ui, isSqlFormat] {
+                          if (isSqlFormat) {
+                              notepadFormatSql(
+                                  s, ui.state<InputState>(kNotepadEditorInputId));
+                          } else {
+                              notepadFormatJson(
+                                  s, ui.state<InputState>(kNotepadEditorInputId));
+                          }
                       });
         components::tooltip(ui, std::string(kNotepadBtnFormatId) + ".tooltip")
             .theme(componentTheme)
             .source(kNotepadBtnFormatId)
-            .value("对象键将按字典序重排（语义等值，字节序会变）")
+            .value(isSqlFormat ? "SQL 关键字将统一大写并重排缩进（语义等值）"
+                               : "对象键将按字典序重排（语义等值，字节序会变）")
             .anchor(tbX + 32.0f, 8.0f + 28.0f)
             .bounds(w, h)
             .minWidth(200.0f)
@@ -1343,12 +1366,16 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             s.language = std::string(languageForExtension(s.path));
         }
         // M+Shift+F 待消费（键路由置位，InputState 直写单点在 compose）；
-        // 按键与帧间状态可能漂移，§4.6 预览禁用 + 只读面再核一遍
+        // 按键与帧间状态可能漂移，§4.6 预览禁用 + 只读面再核一遍。
+        // need380：按扩展名分派（.json → JSON 美化；.sql → SQL 规范化）
         if (s.pendingFormatJson) {
             s.pendingFormatJson = false;
-            if (!s.previewOn && !s.readonly && !s.binarySuspect &&
-                notepadSessionHasExtension(s, ".json")) {
-                notepadFormatJson(s, st);
+            if (!s.previewOn && !s.readonly && !s.binarySuspect) {
+                if (notepadSessionHasExtension(s, ".json")) {
+                    notepadFormatJson(s, st);
+                } else if (notepadSessionHasExtension(s, ".sql")) {
+                    notepadFormatSql(s, st);
+                }
             }
         }
         if (s.previewOn) {
