@@ -120,8 +120,9 @@ inline constexpr float kModulesCardHeightWallpaper = 310.0f;
 // 标题带 y16 盒22 + 说明带 y40 盒16 + 开关行 1 y64 盒28 + 开关行 2 y108 盒28
 //（行距 16 刻度，行底 136）+ 下边距 16 = 152（#132 D-4：行距由 4 改全站 16，
 // 卡高随之 +4）。
-// 模块 tab 预算（need260 §6）：240（9 格 3 列，debt309 N3 底距 38→24）+ 16 间距
-// + max(152, md 卡高) = 408 ≤ 可用 420（余 12 零滚动；与 Win 引导态 md 卡同档）。
+// 模块 tab 预算（池#371 修后）：240（10/11 格 4 列 3 行）+ 16 间距
+// + max(提醒 152, 记事本关联卡 80；Win 一键引导态 152) = 408 ≤ 可用 424
+//（池167 tab 40 + gap 12 后 cardsH = 424，余 16 零滚动，各态同值）。
 inline constexpr float kReminderCardHeight = 152.0f;
 // 窄窗（<960）单列堆叠档：说明改 2 行（行高 18、盒 36），开关行下移 16 →
 // 行 y 80/124、行底 152 + 16 = 168（review 260 P2-2：窄档描述不许单行省略断在
@@ -167,15 +168,15 @@ inline float roundFs(float base) {
 inline bool modulesCardSingleColumn() {
     return ::core::theme::fontScale() > 1.15f;
 }
-// 列数派生：>1.15 档降单列；其余档 cells>8 时 3 列（池151：MCP 归位后 9 格 2 列
-// 撑 5 行，模块卡 366+16+92=474>420 破模块 tab 零滚动 → 3 列收行数；池#371 后
-// 10/11 格 3 列 4 行 = 296，零滚动仍成立），其余两列。
-// 窄窗（review 260 P3-2）：<960 档固定 2 列（3 列格宽 230 会把模块名截成
+// 列数派生：>1.15 档降单列；其余档 cells>8 时 4 列（池151 起 3 列收行数；池#371
+// git/终端补位后 10/11 格 3 列 4 行 = 296 → 模块 tab 296+16+152 = 464 > 424 破
+// 零滚动 → 4 列收 3 行 = 240 复约），其余两列。
+// 窄窗（review 260 P3-2）：<960 档固定 2 列（多列格宽把模块名截成
 // 「Claude 配置…」），11 格撑 6 行 → 卡高 508，窄窗允许出滚动。
 inline int modulesCardCols(int cells, bool narrow = false) {
     if (modulesCardSingleColumn()) return 1;
     if (narrow) return 2;
-    return cells > 8 ? 3 : 2;
+    return cells > 8 ? 4 : 2;
 }
 inline int modulesCardRows(int cells, bool narrow = false) {
     const int cols = modulesCardCols(cells, narrow);
@@ -194,9 +195,10 @@ inline float modulesRowDescH(bool narrow = false) {
 inline float modulesRowPitch(bool narrow = false) {
     return roundFs(narrow ? 72.0f : 56.0f);   // 窄窗 = 18+2+36 内容 + 16 行距
 }
-// 100% 档（池#371 后）：10 格（壁纸不支持）3 列 4 行（末行 1 格走 orphanLast 全
-// 行宽）= 68 + 3×56 + (18+2+16) + 24 = 296；11 格（含壁纸格）3 列 4 行同 296；
-// 窄窗 11 格 2 列 6 行 = 68 + 5×72 + (18+2+36) + 24 = 508（窄窗允许出滚动）。
+// 100% 档（池#371 修）：10/11 格 4 列 3 行 = 68 + 2×56 + (18+2+16) + 24 = 240
+//（模块 tab 240 + 16 间距 + max(提醒 152, 记事本关联 80) = 408 ≤ 可用 424，
+// 零滚动复约）；窄窗 11 格 2 列 6 行 = 68 + 5×72 + (18+2+36) + 24 = 508
+//（窄窗允许出滚动）。
 // debt309 N3：卡底内距 38 → 24 刻度
 //（review2 N3：38 比 24 刻度多 14；kModulesCardHeight=310 为 N3 前历史参考锚）。
 inline float modulesCardHeightFor(int cells, bool narrow = false) {

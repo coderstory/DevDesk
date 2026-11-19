@@ -388,7 +388,7 @@ REGISTER_TEST(wallpaper_settings_card_toggle_persists,
 // 点 track 回调带对模块 id。2026-10-27 用户真机拍板：独立全宽卡废除。
 // 防：卡高没跟 roundFs 派生 → 130% 档开关被裁 / 开关尺寸漂移 / 格错行错列。
 REGISTER_TEST(wallpaper_card_geometry,
-              "wallpaper: 壁纸末格（插拔卡内）85/100/130% 几何——末行右列、44×24 开关右贴格、行底留边≥16、回调带 id", {
+              "wallpaper: 壁纸末格（插拔卡内）85/100/130% 几何——末行（列随列数派生）、44×24 开关右贴格、行底留边≥16、回调带 id", {
     namespace ms = module::settings;
     if (!::platform::wallpaper::supported()) {
         return true;   // 不支持平台无壁纸格（可见性用例已断言整格不建）
@@ -439,7 +439,7 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(track != nullptr);
 
-        // 壁纸恒末格：列数与生产同源（modulesCardCols；池151 起 9 格 3 列、
+        // 壁纸恒末格：列数与生产同源（modulesCardCols；池#371 修后常规 4 列、
         // >1.15 档降单列），末格行/列同源派生
         const int cols = ms::modulesCardCols(ms::kModuleToggleCellCount(true));
         const int cells = ms::kModuleToggleCellCount(true);
@@ -450,14 +450,16 @@ REGISTER_TEST(wallpaper_card_geometry,
             name->frame.y -
             (ms::modulesGridTopY() + lastRow * ms::modulesRowPitch())) < 0.5f);
         // 格宽/列 x 与生产同式（settings_ui_cards.cpp drawModulesCard）：2 列走
-        // columnX 单一来源，1/3 列等分 + gap 16 直算
+        // columnX 单一来源，1/≥3 列等分 + gap 16 直算
         float cellW = 0.0f;
         float cell2X = 0.0f;
         ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
         if (cols == 1) {
             cellW = w - 56.0f;   // 单列档格宽 = 卡内可用宽
-        } else if (cols == 3) {
-            cellW = ((w - 56.0f) - 2.0f * 16.0f) / 3.0f;
+        } else if (cols >= 3) {
+            cellW = ((w - 56.0f) -
+                     static_cast<float>(cols - 1) * 16.0f) /
+                    static_cast<float>(cols);
         }
         const float cellX =
             cols == 2 ? (lastCol == 0 ? 0.0f : cell2X)

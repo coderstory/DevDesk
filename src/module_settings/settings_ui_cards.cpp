@@ -482,10 +482,12 @@ void drawModulesCard(const CardDrawArgs& args) {
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关格（B6/F-69-3：列数/格高内容派生）：≤1.15 档两列（行主序，
-            // 0/1 同行异列）；>1.15 档降单列——放大后两列格宽放不下 name/desc。
-            // 窄窗（review 260 P3-2）：<960 档 3 列降 2 列 + 描述 2 行 + 超长
-            // tooltip（3 列格宽 230 把模块名截成「Claude 配置…」）。
+            // 开关格（B6/F-69-3：列数/格高内容派生）：≤1.15 档常规 4 列（池#371
+            // 修：10/11 格 4 列 3 行收行数，保模块 tab 零滚动；≤8 格回两列，
+            // 行主序 0/1 同行异列）；>1.15 档降单列——放大后多列格宽放不下
+            // name/desc。
+            // 窄窗（review 260 P3-2）：<960 档降 2 列 + 描述 2 行 + 超长
+            // tooltip（多列格宽把模块名截成「Claude 配置…」）。
             // 开关控件几何沿用 44×24（UAT3 由 80×32 收敛口径），在格内垂直居中。
             // 格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
             const bool narrow = args.narrow;
@@ -502,8 +504,11 @@ void drawModulesCard(const CardDrawArgs& args) {
             ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
             if (gridCols == 1) {
                 cellW = w - 56.0f;
-            } else if (gridCols == 3) {
-                cellW = ((w - 56.0f) - 2.0f * 16.0f) / 3.0f;
+            } else if (gridCols >= 3) {
+                // ≥3 列等分 + gap 16 直算（池#371 修起常规 4 列）
+                cellW = ((w - 56.0f) -
+                         static_cast<float>(gridCols - 1) * 16.0f) /
+                        static_cast<float>(gridCols);
             }
             for (int i = 0; i < cellCount; ++i) {
                 const bool isWallpaper = wallpaperCell && i >= kToggleCount;
@@ -511,7 +516,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                     isWallpaper ? kWallpaperToggle : kToggleable[i];
                 const int col = i % gridCols;   // 行主序
                 const int row = i / gridCols;
-                // 2 列沿用 columnX 单一来源；1/3 列等分 + gap 16 直算
+                // 2 列沿用 columnX 单一来源；1/≥3 列等分 + gap 16 直算
                 const float cellX =
                     28.0f + (gridCols == 2 ? (col == 0 ? 0.0f : cell2X)
                                            : static_cast<float>(col) *

@@ -2402,21 +2402,24 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                       heightOf("settings.card.modules.name.0"),
                       ms::modulesNameH());
             if (err.empty() && !ms::modulesCardSingleColumn())
-                // UAT3 多列分栏：同行异列 x 差 = 格宽+16。池151 起列数与生产
-                // 同源（modulesCardCols）：9 格 3 列等分 + gap16，其余两列走
-                // columnX。>1.15 档降单列，该判据在单列档缺席。
+                // UAT3 多列分栏：同行异列 x 差 = 格宽+16。列数与生产同源
+                //（modulesCardCols）：>2 列等分 + gap16（池#371 修后常规 4 列），
+                // 两列走 columnX。>1.15 档降单列，该判据在单列档缺席。
                 err = pin("modules 同行异列 x 差（格宽+16）",
                           xOf("settings.card.modules.name.1") -
                               xOf("settings.card.modules.name.0"),
                           [&] {
                               const float contentW =
                                   widthOf("settings.card.modules") - 56.0f;
-                              if (ms::modulesCardCols(
-                                      ms::kModuleToggleCellCount(platform::
-                                                                     wallpaper::
-                                                                         supported())) ==
-                                  3) {
-                                  return (contentW - 2.0f * 16.0f) / 3.0f +
+                              const int cols = ms::modulesCardCols(
+                                  ms::kModuleToggleCellCount(platform::
+                                                                 wallpaper::
+                                                                     supported()));
+                              if (cols >= 3) {
+                                  return (contentW -
+                                          static_cast<float>(cols - 1) *
+                                              16.0f) /
+                                             static_cast<float>(cols) +
                                          16.0f;
                               }
                               float cellW = 0.0f;
@@ -2427,7 +2430,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           }());
             if (err.empty()) {
                 // B6/F-69-3：次行距 rowPitch。次行格 = 行主序下一行首格
-                // name.<cols>（2 列→name.2；池151 起 9 格 3 列→name.3；
+                // name.<cols>（2 列→name.2；池#371 修后 4 列→name.4；
                 // >1.15 档降单列隔两格→name.2 距 2×rowPitch）。
                 const int colsN =
                     ms::modulesCardCols(
@@ -2458,7 +2461,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             // 壁纸末格（模块卡内末行）：格几何随常规格机制派生——
             // 行 y = roundFs(68) + row×roundFs(56)、开关行内偏移 +6（字面）。
             if (err.empty() && platform::wallpaper::supported()) {
-                // 池151：列数与生产同源（9 格 3 列时末行 row = (cells-1)/cols）
+                // 列数与生产同源（末行 row = (cells-1)/cols，池#371 修后 4 列）
                 const int cols = ms::modulesCardCols(
                     ms::kModuleToggleCellCount(true));
                 const int cells = ms::kModuleToggleCellCount(true);
@@ -3713,9 +3716,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
     DOCTEST_CHECK(ms::kAppearanceCardHeight > ms::kEditorFontCardHeight);
     // 模块卡：B6/F-69-3 起卡高改内容派生（modulesCardHeightFor，>1.15 档两列降单列），
-    // 常量 310 仅留作 N3 前历史参考锚。池151 起 MCP 归位常规格：9 格（含壁纸）
-    // 3 列 3 行派生值 240（debt309 N3：底距 38→24，原 254），8 格（无壁纸）
-    // 两列 4 行 296。
+    // 常量 310 仅留作 N3 前历史参考锚。池#371 修后 10/11 格 4 列 3 行
+    //（4 列收行数保模块 tab 零滚动：240+16+152=408 ≤ 424）派生值 240（debt309
+    // N3：底距 38→24，原 254）。
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 310.0f);
     DOCTEST_CHECK_EQ(ms::modulesCardHeightFor(ms::kModuleToggleCellCount(true)),
                      240.0f);
@@ -4956,9 +4959,10 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
 //      <id>.scroll 滚动条元素（scrollview.h scrollable 分支）——
 //      "settings.cards.scroll.scroll" 必须查无（生产同一条判定路径，不是旁路估算）；
 //   ② 内容列实测高 ≤ 视口高（belt：frame 级双保险）。
-// 期望内容高（100% / 85%，含卡间距 16）：通用 338/296（无警告代理卡）、模块
-// 198+128+48+16×2=406/约 345（F-10 无标题单行卡进模块 tab，见注册表注释）、
-// 日志 372/375（FillRemainder 恰好填满）、同步 372/316。
+// 期望内容高（100% 档）：通用 342（无警告代理卡、MCP 关档实测）、模块
+// 240+16+152=408（池#371 修：4 列 3 行卡 + 提醒|记事本关联配对行）、日志
+// FillRemainder 恰好填满（= 可用高）、同步 420；可用高 cardsH = 600−140−20−16
+// = 424（池167 tab 40 + tab 内容距 12 后）。85% 档整体随 roundFs 收缩。
 REGISTER_TEST(settings_min_window_tabs_zero_scroll,
               "settings: 最小窗 1000×640 四 tab 零滚动（100%/85% 档，headless）", {
     struct FontScaleGuard {
@@ -4994,7 +4998,7 @@ REGISTER_TEST(settings_min_window_tabs_zero_scroll,
                 bar == nullptr,
                 std::string("最小窗 ") + tierNames[ti] + " 档 tab " +
                     module::settings::kSettingTabLabels[tab] +
-                    " 出现页级滚动条（内容高 > 可用高 372/375，零滚动收口被回退？）");
+                    " 出现页级滚动条（内容高 > 可用高 424，零滚动收口被回退？）");
             const auto* content = ui.find("settings.cards.scroll.content");
             const auto* viewport = ui.find("settings.cards.scroll");
             DOCTEST_REQUIRE(content != nullptr);
