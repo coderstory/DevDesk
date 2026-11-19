@@ -66,18 +66,20 @@ ReplaceAllResult replaceAll(const std::string& text, const std::string& query,
                             const std::string& repl, const FindOptions& opts);
 
 // 命中层 ∪ 语法层合并（tech 卡 §四）：在命中边界切分语法段、命中段覆盖为
-// 单一合成色（styled-runs 仅 color 一维，两层无法叠绘 → 预合成由调用方给色）。
+// 单一合成色（styled-runs 预合成由调用方给色 + need377 bold 位）。
 //   base        语法层 runs（全文档字节坐标，mdKeywordHighlight 平移后产物）
 //   hits        命中层（全文档字节坐标）
 //   currentHit  当前命中（nullptr = 无当前命中，全部用 hitColor）
 //   lineText / lineStartByte  本行显示文本与行首字节（限定合并域
 //               [lineStartByte, lineStartByte+lineText.size())，跨行命中裁剪）
-// 返回 runs：全文档坐标、行内裁剪、按 start 升序、相邻同色合并、互不重叠。
+//   hitBold     命中段是否加粗（need377：TextRun.bold faux-bold 渲染位）
+// 返回 runs：全文档坐标、行内裁剪、按 start 升序、相邻同样式合并、互不重叠。
 std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
                                     const std::vector<FindHit>& hits,
                                     const FindHit* currentHit,
                                     const std::string& lineText,
                                     size_t lineStartByte, eui::Color hitColor,
-                                    eui::Color currentHitColor);
+                                    eui::Color currentHitColor,
+                                    bool hitBold = false);
 
 }  // namespace module::notepad

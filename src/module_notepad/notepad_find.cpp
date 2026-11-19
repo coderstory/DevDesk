@@ -129,7 +129,8 @@ std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
                                     const FindHit* currentHit,
                                     const std::string& lineText,
                                     size_t lineStartByte, eui::Color hitColor,
-                                    eui::Color currentHitColor) {
+                                    eui::Color currentHitColor,
+                                    bool hitBold) {
     std::vector<eui::TextRun> out;
     const size_t lineStart = lineStartByte;
     const size_t lineEnd = lineStartByte + lineText.size();
@@ -140,6 +141,7 @@ std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
         size_t start;
         size_t end;
         eui::Color color;
+        bool bold;
     };
     std::vector<Overlay> overlays;
     overlays.reserve(hits.size());
@@ -150,7 +152,8 @@ std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
             currentHit->end == hit.end;
         overlays.push_back({std::max(hit.start, lineStart),
                             std::min(hit.end, lineEnd),
-                            isCurrent ? currentHitColor : hitColor});
+                            isCurrent ? currentHitColor : hitColor,
+                            hitBold});
     }
 
     // 切点集合：行界 + 全部层段边界 → 任意切出的段要么整体在某层段内，要么整体不在
@@ -190,28 +193,32 @@ std::vector<eui::TextRun> mergeRuns(const std::vector<eui::TextRun>& base,
             }
         }
         eui::Color color{};
+        bool bold = false;
         bool hasColor = false;
         if (ov != nullptr) {
             color = ov->color;
+            bold = ov->bold;
             hasColor = true;
         } else {
             for (const eui::TextRun& run : base) {
                 if (static_cast<size_t>(run.byteStart) <= a &&
                     a < static_cast<size_t>(run.byteEnd)) {
                     color = run.color;
+                    bold = run.bold;
                     hasColor = true;
                     break;
                 }
             }
         }
         if (!hasColor) continue;  // 语法层未覆盖 = 默认正文色，不产 run
-        // 相邻同色合并（如 "aaaa" 找 "aa" 产生的相邻命中段）
+        // 相邻同样式合并（如 "aaaa" 找 "aa" 产生的相邻命中段）
         if (!out.empty() && out.back().byteEnd == static_cast<int>(a) &&
             out.back().color.r == color.r && out.back().color.g == color.g &&
-            out.back().color.b == color.b && out.back().color.a == color.a) {
+            out.back().color.b == color.b && out.back().color.a == color.a &&
+            out.back().bold == bold) {
             out.back().byteEnd = static_cast<int>(b);
         } else {
-            out.push_back({static_cast<int>(a), static_cast<int>(b), color});
+            out.push_back({static_cast<int>(a), static_cast<int>(b), color, bold});
         }
     }
     return out;

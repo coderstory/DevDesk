@@ -261,9 +261,16 @@ float notepadTitleEstWidth(const std::string& title) {
     return width + 20.0f;
 }
 
-// 命中层合成色（设计稿 §4.5 落地值）：普通命中 = warning@26%/22%；
-// 当前命中 = warning 打底再叠 primary@38%/30%，styled-runs 仅 color 一维
-// → 标准 over 合成预折算成单色（tech 卡 §四「预合成」）。
+// 命中层合成色（need377 改版）：命中词着**文字色**（styled-runs 是字形色，
+// 原设计稿 §4.5 的 warning@22%/26% 半透明观感 = 老板口中的「淡粉色」）。
+// 加深 = 提高不透明度到接近实色；当前命中再叠 primary（colorOver 预合成）。
+// 独立常量单点（波末验收可调，勿散落复制）。
+constexpr float kFindHitAlphaDark = 0.95f;    // 普通命中文字不透明度（暗）
+constexpr float kFindHitAlphaLight = 0.92f;   // 普通命中文字不透明度（浅）
+constexpr float kFindCurHitOverlayDark = 0.45f;   // 当前命中 primary 叠加强度（暗）
+constexpr float kFindCurHitOverlayLight = 0.40f;  // 当前命中 primary 叠加强度（浅）
+constexpr bool kFindHitBold = true;  // need377：命中词加粗（TextRun.bold faux-bold）
+
 eui::Color colorOver(eui::Color bottom, eui::Color top) {
     const float outA = top.a + bottom.a * (1.0f - top.a);
     if (outA <= 0.0f) return eui::Color{0.0f, 0.0f, 0.0f, 0.0f};
@@ -584,7 +591,7 @@ std::vector<eui::TextRun> notepadEditorLineRuns(
     const FindHit* current =
         s.find.cur < s.find.hits.size() ? &s.find.hits[s.find.cur] : nullptr;
     return mergeRuns(base, s.find.hits, current, displayText, lineStart, hitBg,
-                     curBg);
+                     curBg, kFindHitBold);
 }
 
 // 查找条浮层（设计稿 §4.5：锚编辑区右上 top 12 / right 16，surfaceElevated +
@@ -1338,12 +1345,13 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             notepadFindTick(s, st);
         }
         if (!s.previewOn) {
-        // 命中层合成色（设计稿 §4.5 落地值，随主题明暗取档）
+        // 命中层合成色（need377：kFindHit* 常量档，随主题明暗取档）
         const eui::Color hitBg = components::theme::withAlpha(
-            t.colors.warning, t.isDark ? 0.26f : 0.22f);
+            t.colors.warning, t.isDark ? kFindHitAlphaDark : kFindHitAlphaLight);
         const eui::Color curHitBg =
             colorOver(hitBg, components::theme::withAlpha(
-                                 t.colors.primary, t.isDark ? 0.38f : 0.30f));
+                                 t.colors.primary, t.isDark ? kFindCurHitOverlayDark
+                                                             : kFindCurHitOverlayLight));
         auto editor = components::input(ui, kNotepadEditorInputId)
                           .position(0.0f, editorTop)
                           .size(w, h - editorTop - kStatusH)
