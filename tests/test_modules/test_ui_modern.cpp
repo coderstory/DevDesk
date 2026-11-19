@@ -1034,9 +1034,11 @@ REGISTER_TEST(uiAboutLayout,
     const float availW = screen.width - 2.0f * kPagePad;
     const float cardW = std::min(kCardMaxW, availW);
     const float cardX = kPagePad + (availW - cardW) * 0.5f;
-    const float labelX = cardX + kCardPad;  // 滚动区原点 x = 卡X+16
+    // need357：滚动区原点 x = 卡X+16+8（kContentLeftInset），行内 label 绝对定位随滚动区原点
+    const float labelX = cardX + kCardPad + 8.0f;
     const float valueX = labelX + kLabelW + 16.0f;
-    const float innerW = cardW - 2.0f * kCardPad;
+    // need357：模块内容左内缩 kContentLeftInset=8 → innerW = 卡宽−32−8（标题与分隔线同宽）
+    const float innerW = cardW - 2.0f * kCardPad - 8.0f;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1064,7 +1066,8 @@ REGISTER_TEST(uiAboutLayout,
         // 页标题（卡内 y = 卡Y+16 → 标题整体由 0 下移至 40）
         const auto* title = ui.find("about.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX + kCardPad),
+        // need357：模块 kContentLeftInset=8（左边距档）→ 标题 x = 卡X+卡内距+8
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX + kCardPad + 8.0f),
                               px("about.title.x", title));
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kCardY + kCardPad),
                               px("about.title.y", title));
@@ -1164,7 +1167,7 @@ REGISTER_TEST(uiAboutLayout,
         const float narrowCardW = std::min(kCardMaxW, narrowAvail);
         DOCTEST_CHECK_MESSAGE(
             nearPx(v->frame.width,
-                   narrowCardW - 2.0f * kCardPad - kLabelW - 16.0f),
+                   narrowCardW - 2.0f * kCardPad - 8.0f - kLabelW - 16.0f),  // need357：内容左内缩 8
             px("about.narrow.value", v));
         DOCTEST_CHECK(v->frame.x + v->frame.width <= narrowScreen.width);
     }
