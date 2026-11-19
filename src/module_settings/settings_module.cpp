@@ -780,6 +780,17 @@ public:
         if (on) maybeStartFirstGithubSync();
     }
 
+    // 配置字段（仓库URL/分支/自动推送）改后落盘（池 358）：此前只有启用开关
+    // 切换才顺带全量 save，单独改字段只改内存 → 重启丢配置。与 applyGithubSyncEnabled
+    // 同一口径：落盘失败只 WARN 留痕（need295），不打断输入。
+    void saveGithubSyncCfg(const char* what) {
+        if (!githubSyncStore_) return;
+        if (auto sr = githubSyncStore_->save(githubSyncCfg_); sr.isFail()) {
+            LOG_WARN(std::string("Settings: GitHub Sync 配置落盘失败（") + what +
+                     "）: " + sr.errorMessage());
+        }
+    }
+
     // 首次方向：启用开关打开且配置齐全时跑一次首次同步
     //（先校验连通性，过了才判方向：远端有数据 → 拉取覆盖；没有 → 首次上传）。
     // 只跑一次：成功后落 first_sync_done，repoUrl/branch 变更即清除（换仓 = 重新判定方向）。
@@ -1667,12 +1678,14 @@ private:
         a.applyGithubSyncEnabled = [this](bool on) { applyGithubSyncEnabled(on); };
         a.applyGithubSyncRepoUrl = [this](const std::string& url) {
             githubSyncCfg_.repoUrl = url;
+            saveGithubSyncCfg("repoUrl");   // 池 358：改后即落盘（重启不丢）
             clearGithubSyncFirstSyncFlag("repoUrl");
             githubSyncLocalGitProbeDirty_ = true;   // 配置变更 → 探测失效
             maybeWarnNoLocalGit();
         };
         a.applyGithubSyncBranch = [this](const std::string& branch) {
             githubSyncCfg_.branch = branch;
+            saveGithubSyncCfg("branch");
             clearGithubSyncFirstSyncFlag("branch");
             githubSyncLocalGitProbeDirty_ = true;
             maybeWarnNoLocalGit();
@@ -1684,6 +1697,7 @@ private:
         };
         a.applyGithubSyncAutoPush = [this](bool on) {
             githubSyncCfg_.autoPush = on;
+            saveGithubSyncCfg("autoPush");
         };
         a.githubSyncPush = [this] { githubSyncPush(); };
         a.githubSyncPull = [this] { githubSyncPull(); };

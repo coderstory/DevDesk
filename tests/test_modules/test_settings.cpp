@@ -35,6 +35,7 @@
 #include <eui/detail/dsl_app_impl.h>
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
+#include <components/input_model.h>  // InputState（池358：同步卡配置输入框 state 断言）
 
 #include <ui_kit/card.h>      // cardSurface：B5 白卡底色（H15 alpha 0.92）单一来源
 #include <ui_kit/columns.h>  // 双列几何单一来源（UAT3 多列分栏几何断言）
@@ -4606,6 +4607,86 @@ REGISTER_TEST(settings_log_tail_level_filter_empty, "settings: log_tail_level �
     auto rG = filterLogTailByLevel(garbage, Level::Error);
     DOCTEST_CHECK_EQ(rG.size(), 3u);
 
+    return true;
+})
+
+// 池 358：同步卡「仓库 URL / 分支 / 自动推送」改后必须落库。此前只有启用开关切换
+// 才顺带全量 save（applyGithubSyncEnabled），单独改这三个字段只改内存 → 重启丢
+// 配置（老板实测：仓库 URL 之类的配置不能持久化保存）。链路全真：输入 onTextInput
+// / 开关 onClick → 卡片回调 → GithubSyncStore（app_config 表）；「重启」= 第二个
+// 模块实例（onStart → load）compose 后读输入 state 回显。
+REGISTER_TEST(settings_github_sync_config_fields_persist,
+              "github_sync: 仓库URL/分支/自动推送改后落库并重启读回（池358）", {
+    test_support::TestEnv env(kCfgPrefix, "gspersist", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gspersist_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+
+    // 预置启用开（三字段否则被锁灰）；URL/分支/自动推送留默认 → 改动可观察
+    module::settings::GithubSyncStore store(::core::appDatabase());
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+
+    // ── 改值（真 UI 链）：URL/分支走输入 onTextInput，自动推送点开关 ──
+    eui::Ui ui;
+    ui.begin("gspersist");
+    mod->compose(ui, screen);
+    ui.end();
+    auto* urlInput = ui.find("settings.card.github_sync.url.input.hit");
+    DOCTEST_REQUIRE(urlInput != nullptr);
+    DOCTEST_REQUIRE(urlInput->onTextInput != nullptr);
+    eui::TextInputEvent urlEvt;
+    urlEvt.text = "https://github.com/devdesk-test/persist-repo.git";
+    urlInput->onTextInput(urlEvt);
+
+    auto* branchInput = ui.find("settings.card.github_sync.branch.input.hit");
+    DOCTEST_REQUIRE(branchInput != nullptr);
+    DOCTEST_REQUIRE(branchInput->onTextInput != nullptr);
+    // 分支输入预填默认 main：先清 state（等价用户全选删除后再输入）
+    auto& branchState = ui.state<components::input_detail::InputModel::InputState>(
+        "settings.card.github_sync.branch.input");
+    branchState.text.clear();
+    branchState.cursor = branchState.selectionStart = branchState.selectionEnd = 0;
+    eui::TextInputEvent branchEvt;
+    branchEvt.text = "persist-branch";
+    branchInput->onTextInput(branchEvt);
+
+    auto* autoTrack = ui.find("settings.card.github_sync.autopush.sw.track");
+    DOCTEST_REQUIRE(autoTrack != nullptr);
+    DOCTEST_REQUIRE(autoTrack->onClick != nullptr);
+    autoTrack->onClick();   // 默认开 → 关
+
+    // ── 落库断言（写链）：不依赖启用开关/同步按钮，改完库里即有 ──
+    auto saved = store.load();
+    DOCTEST_CHECK_EQ(saved.repoUrl,
+                     "https://github.com/devdesk-test/persist-repo.git");
+    DOCTEST_CHECK_EQ(saved.branch, "persist-branch");
+    DOCTEST_CHECK_FALSE(saved.autoPush);
+    DOCTEST_CHECK(saved.enabled);
+
+    // ── 重启读回（读链）：新模块实例 onStart → load → 输入回显落库值 ──
+    mod->onStop();
+    std::unique_ptr<::core::Module> mod2(create_settings_module());
+    mod2->onStart();
+    DOCTEST_REQUIRE(clickSettingsTab(*mod2, screen, 3));
+    eui::Ui ui2;
+    ui2.begin("gspersist_reboot");
+    mod2->compose(ui2, screen);
+    DOCTEST_CHECK_EQ(
+        ui2.state<components::input_detail::InputModel::InputState>(
+            "settings.card.github_sync.url.input").text,
+        "https://github.com/devdesk-test/persist-repo.git");
+    DOCTEST_CHECK_EQ(
+        ui2.state<components::input_detail::InputModel::InputState>(
+            "settings.card.github_sync.branch.input").text,
+        "persist-branch");
+    ui2.end();
+    mod2->onStop();
     return true;
 })
 
