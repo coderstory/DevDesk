@@ -5,6 +5,7 @@ add_library(devdesk_module_terminal STATIC
     terminal_session_controller.cpp
     terminal_keyencoder.cpp
     terminal_metrics.cpp
+    terminal_search.cpp
     terminal_settings.cpp
 )
 

@@ -17,6 +17,7 @@
 #include "terminal_fullscreen_bridge.h"
 #include "terminal_grid_widget.h"
 #include "terminal_metrics.h"
+#include "terminal_search.h"
 #include "terminal_session_controller.h"
 #include "terminal_settings.h"
 
@@ -99,6 +100,8 @@ private:
     float panelScroll_ = 0.0f;       // 面板内容区滚动偏移（超高内滚）
     std::function<void(bool)> onPanelResult_;  // bug278④ 面板结果通道（完成/×）
     int lastActiveIndex_ = -2;       // 会话切换侦测（清选区/滚动余量）
+    // 池#365：终端历史搜索态（成员级存活——搜索条闭包跨帧引用）
+    TerminalSearchState search_;
     // 拖选（可视网格行列）
     bool selecting_ = false;
     bool hasSelection_ = false;

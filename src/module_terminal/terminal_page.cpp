@@ -109,6 +109,7 @@ constexpr uint32_t kFaXmark = 0xF00D;
 // 设置钮用 sliders（0xF1DE）不用 gear（0xF013）——FA gear 在 16px 下形似「光芒小圆」
 // 与亮暗切换图标混淆（老板 2026-11-05 实测，fontTools 实证字体含 sliders 字形）
 constexpr uint32_t kFaSliders = 0xF1DE;
+constexpr uint32_t kFaSearch = 0xF002;  // fa-magnifying-glass（池#365 历史搜索钮）
 constexpr uint32_t kFaExpand = 0xF065;
 constexpr uint32_t kFaCompress = 0xF066;
 constexpr uint32_t kFaPlus = 0xF067;
@@ -260,16 +261,18 @@ GridLayout TerminalPage::compose(
     const float gridTop = kToolbarH;
     const float bodyH = std::max(0.0f, screen.height - gridTop);
 
-    // ---- 右动作组几何（顺序写死 §4.2：分隔线→设置→全屏切换→新建；进/退全屏同槽位
-    // 纯图标钮位置不换——老板 2026-11-05 裁决，设计 §4.2「两套视觉/退出胶囊」作废）
+    // ---- 右动作组几何（顺序写死 §4.2：分隔线→搜索→设置→全屏切换→新建；进/退全屏同槽位
+    // 纯图标钮位置不换——老板 2026-11-05 裁决，设计 §4.2「两套视觉/退出胶囊」作废。
+    // 搜索钮（池#365）插在设置钮左侧）
     const bool narrowWindow = screen.width < 720.0f;
     const float titleFs = core::theme::scaled(14.0f);
     const float detailFs = core::theme::scaled(12.0f);
     const float newLabelW = ui_kit::cachedTextWidth("新建", titleFs, 400);
     const float newBtnW = narrowWindow ? 32.0f : 12.0f + 14.0f + 6.0f + newLabelW + 12.0f;
-    float sepX = 0.0f, gearX = 0.0f, midX = 0.0f, rightX = 0.0f;
+    float sepX = 0.0f, gearX = 0.0f, midX = 0.0f, rightX = 0.0f, searchX = 0.0f;
     {
-        // 从右缘向左排（两态一致）：新建（right）→ 全屏切换 32 图标钮（mid）→ 设置 → 分隔线
+        // 从右缘向左排（两态一致）：新建（right）→ 全屏切换 32 图标钮（mid）→ 设置 →
+        // 搜索（池#365）→ 分隔线
         constexpr float kNewSlotGap = 4.0f;  // need342：新建钮左侧槽位距——老板 2026-11-18 实测偏大，自 kActionGap 8 收窄至 4（仅此槽位，动作组其余间距不动）
         float x = screen.width - kRightPad;
         rightX = x - newBtnW;
@@ -278,6 +281,8 @@ GridLayout TerminalPage::compose(
         x = midX - kActionGap;
         gearX = x - 32.0f;
         x = gearX - kActionGap;
+        searchX = x - 32.0f;
+        x = searchX - kActionGap;
         sepX = x - 1.0f;
     }
     const float tabAreaX = 8.0f;
@@ -309,6 +314,58 @@ GridLayout TerminalPage::compose(
     const platform::TerminalFrame emptyFrame;
     const platform::TerminalFrame& frame = act ? act->frame : emptyFrame;
     const int totalLines = sb + frame.rows;
+
+    // 池#365：搜索步进消费——必须在 grid_.compose **之前**（本帧网格即按新偏移
+    // 组行，命中行同帧滚入视口 + 高亮带行号同口径）。onEnter 只置 pendingStep，
+    // 此处用本帧现值扫描（事件期旧捕获的 totalLines 在 scrollback 增长后已过期，
+    // P3-2 同款坑）。起点行 = 上次命中 +1（无上次命中 → 当前视口顶行），扫到尾
+    // 回绕首处；居中写 Session.scrollOffset（复用池#364 滚动链路）。
+    // viewRows 预算与 grid_.compose 同式（availH=bodyH；rows/cols 量化差异 ≤1 行
+    // 只影响居中偏置，不影响命中正确性）。
+    if (search_.open && search_.pendingStep) {
+        search_.pendingStep = false;
+        search_.searched = true;
+        if (search_.query.empty()) {
+            search_.matchLine = -1;
+            search_.matchOrdinal = 0;
+            search_.matchCount = 0;
+        } else {
+            const auto matches = collectMatchLines(
+                search_.query, totalLines, sb,
+                [&controller](int idx, std::string& out) {
+                    return controller.activeScrollbackLine(idx, out);
+                },
+                frame);
+            search_.matchCount = static_cast<int>(matches.size());
+            if (matches.empty()) {
+                search_.matchLine = -1;
+                search_.matchOrdinal = 0;
+            } else {
+                const int viewRows =
+                    std::max(1, static_cast<int>(bodyH / cellH));
+                const int startLine = std::max(
+                    0, totalLines - viewRows - (act ? act->scrollOffset : 0));
+                const int fromLine = search_.matchLine >= 0
+                    ? search_.matchLine + 1
+                    : startLine;
+                int chosen = matches[0];   // 回绕兜底 = 首处命中
+                int chosenIdx = 0;
+                for (int mi = 0; mi < static_cast<int>(matches.size()); ++mi) {
+                    if (matches[static_cast<size_t>(mi)] >= fromLine) {
+                        chosen = matches[static_cast<size_t>(mi)];
+                        chosenIdx = mi;
+                        break;
+                    }
+                }
+                search_.matchLine = chosen;
+                search_.matchOrdinal = chosenIdx + 1;
+                if (act != nullptr) {
+                    act->scrollOffset = scrollOffsetToCenter(
+                        chosen, totalLines, viewRows, sb);
+                }
+            }
+        }
+    }
 
     ui.stack("term.root")
         .size(screen.width, screen.height)
@@ -600,6 +657,23 @@ GridLayout TerminalPage::compose(
             // 从不获焦，updateImeCursorRect 只认聚焦元素，等于死线；计算与
             // ImeTrace 段1随迁至 term.input 前，见「层 4 前置」块。）
 
+            // 层 3.6（池#365）：搜索命中行高亮带（当前命中可见时；带色比选区轻一档，
+            // 与选区叠加不冲突）。行号 → 可视行换算与选区/光标同口径（startLine 式）。
+            if (search_.open && search_.matchLine >= 0 && act != nullptr &&
+                layout.rows > 0) {
+                const int startLine = std::max(
+                    0, totalLines - layout.rows - act->scrollOffset);
+                const int v = search_.matchLine - startLine;
+                if (v >= 0 && v < layout.rows) {
+                    ui.rect("term.search.hit")
+                        .position(0.0f, gridTop + static_cast<float>(v) * cellH)
+                        .size(screen.width, cellH)
+                        .color(Color{t.colors.primary.r, t.colors.primary.g,
+                                     t.colors.primary.b, t.isDark ? 0.22f : 0.14f})
+                        .build();
+                }
+            }
+
             // 层 4（池#364）：终端域滚动条——回看 affordance。范围裁决：bug188
             // 「滚动条视觉全无」覆盖侧栏/设置面板等既定域，终端网格是回看操作域、
             // 滚动条保留（老板 2026-11-19 报缺）。语义换算：scrollState 偏移=距顶
@@ -659,6 +733,23 @@ GridLayout TerminalPage::compose(
                     .icon(kFaSliders)
                     .fontSize(core::theme::scaled(16.0f))
                     .color(t.colors.textSecondary)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center);
+
+                // 搜索钮（池#365）：切换终端历史搜索条（同 gear 钮 32×32 圆角三态）
+                ui.rect("term.act.search.bg")
+                    .position(searchX, (kToolbarH - 32.0f) * 0.5f)
+                    .size(32.0f, 32.0f)
+                    .radius(6.0f)
+                    .states(search_.open ? t.colors.primarySoftBg : kTransparent,
+                            t.colors.hover, t.colors.primarySoftBg)
+                    .onClick([this]() { search_.open = !search_.open; });
+                ui.text("term.act.search.icon")
+                    .position(searchX, (kToolbarH - 32.0f) * 0.5f)
+                    .size(32.0f, 32.0f)
+                    .icon(kFaSearch)
+                    .fontSize(core::theme::scaled(16.0f))
+                    .color(search_.open ? t.colors.primaryText : t.colors.textSecondary)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center);
 
@@ -1011,6 +1102,18 @@ GridLayout TerminalPage::compose(
             // 覆盖「退出巡检（ConPTY 不给 EOF）」与「光标闪烁相位」，退出后置闲零帧。
             idleFrameTick().setActive(
                 needsIdleTick(anyRunning, controller.outputNotifyAvailable()));
+
+            // 层 8.5（池#365）：历史搜索条（右上悬浮，盖网格顶不占布局；设置面板
+            //（层 9）之后绘制盖其上）。关闭清命中态、保留查询（重开续搜）。
+            drawTerminalSearchBar(ui, screen.width, gridTop, t, search_,
+                                  [this]() {
+                                      search_.open = false;
+                                      search_.matchLine = -1;
+                                      search_.matchOrdinal = 0;
+                                      search_.matchCount = 0;
+                                      search_.searched = false;
+                                      search_.pendingStep = false;
+                                  });
 
             // 层 9：终端设置面板（need250 页内模态；设计 §2/§4）。scrim α0.35 盖整页面区
             // 含 TAB 栏；点 scrim 不关（无 onClick = 纯 hit 隔离）；关闭通道 Esc（module

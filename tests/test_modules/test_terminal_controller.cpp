@@ -3,8 +3,10 @@
 // 多会话建/切/关路由语义。
 #include "doctest.h"
 #include "module_terminal/module_terminal.h"
+#include "module_terminal/terminal_search.h"
 #include "module_terminal/terminal_session_controller.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <functional>
@@ -380,5 +382,78 @@ REGISTER_TEST(terminalIdleTickPolicy,
     DOCTEST_CHECK(!(terminal::needsFramePump(true, true) && terminal::needsIdleTick(true, true)));
     DOCTEST_CHECK((terminal::needsFramePump(true, false) || terminal::needsIdleTick(true, false)) ==
                   true);
+    return true;
+})
+
+// ── 池#365：终端历史搜索纯函数 ─────────────────────────────────────────
+namespace {
+// ASCII 行 → cells 网格（行间按最长行补空格对齐，防 cols 越行读越界）
+platform::TerminalFrame frameFromLines(const std::vector<std::string>& lines) {
+    platform::TerminalFrame f;
+    size_t cols = 0;
+    for (const auto& l : lines) cols = std::max(cols, l.size());
+    f.rows = static_cast<int>(lines.size());
+    f.cols = static_cast<int>(cols);
+    for (const auto& l : lines) {
+        for (size_t i = 0; i < cols; ++i) {
+            platform::TerminalCell c;
+            c.cp = i < l.size() ? static_cast<uint32_t>(
+                                      static_cast<unsigned char>(l[i]))
+                                : static_cast<uint32_t>(' ');
+            f.cells.push_back(c);
+        }
+    }
+    return f;
+}
+} // namespace
+
+REGISTER_TEST(terminalSearchCollectMatches,
+              "terminal search: collectMatchLines 历史行+屏上行/大小写不敏感/空查询（池#365）",
+              {
+    using terminal::collectMatchLines;
+    const std::vector<std::string> sb = {"hello world", "foo bar", "Hello again"};
+    auto scrollbackLine = [&sb](int idx, std::string& out) {
+        if (idx < 0 || idx >= static_cast<int>(sb.size())) return false;
+        out = sb[static_cast<size_t>(idx)];
+        return true;
+    };
+    const platform::TerminalFrame frame =
+        frameFromLines({"tail line", "FOO tail"});
+    const int sbCount = 3;
+    const int total = sbCount + 2;  // 全局行号空间：0..2 历史 + 3..4 屏上
+
+    // 历史行 + 大小写不敏感（hello / Hello 同命中）
+    auto m1 = collectMatchLines("hello", total, sbCount, scrollbackLine, frame);
+    DOCTEST_REQUIRE(m1.size() == 2);
+    DOCTEST_CHECK(m1[0] == 0 && m1[1] == 2);
+    // 历史小写 / 屏上大写同命中
+    auto m2 = collectMatchLines("foo", total, sbCount, scrollbackLine, frame);
+    DOCTEST_REQUIRE(m2.size() == 2);
+    DOCTEST_CHECK(m2[0] == 1 && m2[1] == 4);
+    // 屏上行内容来自 frame cells（rowSliceText 拼串）
+    auto m3 = collectMatchLines("tail", total, sbCount, scrollbackLine, frame);
+    DOCTEST_REQUIRE(m3.size() == 2);
+    DOCTEST_CHECK(m3[0] == 3 && m3[1] == 4);
+    // 空查询 / 无命中 → 空
+    DOCTEST_CHECK(collectMatchLines("", total, sbCount, scrollbackLine, frame).empty());
+    DOCTEST_CHECK(collectMatchLines("zzz", total, sbCount, scrollbackLine, frame).empty());
+    // 历史行取不到（false）→ 空串参与，不中断整表扫描
+    auto none = [](int, std::string&) { return false; };
+    DOCTEST_CHECK(
+        collectMatchLines("foo", 3, 3, none, platform::TerminalFrame{}).empty());
+    return true;
+})
+
+REGISTER_TEST(terminalSearchScrollCenter,
+              "terminal search: scrollOffsetToCenter 居中跳转与两端钳制（池#365）", {
+    using terminal::scrollOffsetToCenter;
+    // 100 行总量、视口 10 行、maxOffset=90：命中 50 → 顶行 45 → 偏移 45（居中）
+    DOCTEST_CHECK_EQ(scrollOffsetToCenter(50, 100, 10, 90), 45);
+    // 底部命中 → 负偏移钳 0（贴底）
+    DOCTEST_CHECK_EQ(scrollOffsetToCenter(99, 100, 10, 90), 0);
+    // 顶部命中 → 钳 maxOffset（滚到最老）
+    DOCTEST_CHECK_EQ(scrollOffsetToCenter(0, 100, 10, 90), 90);
+    // 无溢出（视口 ≥ 总量）→ 恒 0
+    DOCTEST_CHECK_EQ(scrollOffsetToCenter(3, 5, 10, 0), 0);
     return true;
 })
