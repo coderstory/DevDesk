@@ -141,8 +141,6 @@ struct ReleaseDetailUiState {
     // F-23：提醒「去处理」的落点请求；宿主在打开任务详情前写入，详情页
     // 消费（发布态滚动定位当前步）后立即清空，不跨重读残留。
     std::string pendingAnchor;
-    // 页头「···」菜单展开态（Draft=作废 / Pending·Running=校验+作废）。
-    bool menuOpen = false;
 
     // 强确认门（need192 §6）：完成类动作先弹 420 逐字确认，确认才落态（二次确认
     // 前不写库契约不变）。gateApply 暂存落态动作，输入 trim 后逐字匹配「确认」才

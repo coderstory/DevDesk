@@ -1857,13 +1857,34 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
                         ui_kit::ButtonLevel::Secondary, 72.0f,
                         [&state] { runValidation(state); });
         }
-        placeButton("release.detail.menu", "···", ui_kit::ButtonLevel::Text, 40.0f,
-                    [&state] { state.menuOpen = !state.menuOpen; });
+        if (publish) {
+            // 菜单裁撤（#361）：原「···」菜单内的「校验」升为直显次钮（编辑态
+            // 本就直显，两态对齐）。
+            placeButton("release.detail.validate", "校验",
+                        ui_kit::ButtonLevel::Secondary, 72.0f,
+                        [&state] { runValidation(state); });
+        }
+        // 作废任务直显（#361 老板令：不进菜单）。危险态 = Text 级 + 错误红字
+        //（同服务卡「移除」钮范式）；点击仍只开二次确认，不直接写库。
+        {
+            const float voidW = 88.0f;
+            right -= voidW;
+            ui_kit::ButtonOptions voidOptions;
+            voidOptions.onClick = [&state] {
+                state.confirm = ReleaseDetailConfirm::VoidTask;
+            };
+            voidOptions.hasTextColorOverride = true;
+            voidOptions.textColorOverride = t.colors.errorText;
+            ui_kit::button(ui, "release.detail.void", "作废任务",
+                           ui_kit::ButtonLevel::Text, right, 0.0f, voidW, headerH, t,
+                           voidOptions);
+            right -= 8.0f;
+        }
     }
 
     // —— 反馈进度（发布态 / 归档态：迷你进度条 + n/n；编辑态不显示）——
-    // 113-4：进度条与计数贴合成组，整组右对齐贴近「···」菜单（原计数右留 16px
-    // slack、条与计数间只有对齐盒缝，进度条孤悬、四组元素分组关系不清）。
+    // 113-4：进度条与计数贴合成组，整组右对齐贴近「作废任务」钮（原计数右留
+    // 16px slack、条与计数间只有对齐盒缝，进度条孤悬、四组元素分组关系不清）。
     if (publish || readOnly) {
         const Progress progress = taskProgress(state.task, state.envs, state.services,
                                                state.configs, state.steps);
@@ -1905,51 +1926,10 @@ void drawPageHeader(eui::Ui& ui, float width, const Tokens& t,
             .build();
     }
 
-    // 「···」菜单浮层（页头固定壳坐标系内，绝对定位）。
-    if (state.menuOpen && (publish || status == TaskStatus::Draft)) {
-        const float menuW = 148.0f;
-        const float itemH = 32.0f;
-        const bool draft = status == TaskStatus::Draft;
-        const int itemCount = draft ? 1 : 2;
-        const float panelH = static_cast<float>(itemCount) * itemH + 8.0f;
-        const float panelX = width - menuW - 8.0f;
-        const float panelY = headerH + 4.0f;
-        ui.rect("release.detail.menu.panel")
-            .position(panelX, panelY)
-            .size(menuW, panelH)
-            .color(ui_kit::itemSurface(t))
-            .border(1.0f, t.colors.borderDefault)
-            .radius(6.0f)
-            .shadow(8.0f, 2.0f, eui::Color{0.0f, 0.0f, 0.0f, 0.10f})
-            .build();
-        float itemY = panelY + 4.0f;
-        const auto menuItem = [&](const std::string& text, bool danger,
-                                  const std::function<void()>& onClick) {
-            ui_kit::ButtonOptions options;
-            options.onClick = [onClick, &state] {
-                state.menuOpen = false;
-                onClick();
-            };
-            if (danger) {
-                options.hasTextColorOverride = true;
-                options.textColorOverride = t.colors.errorText;
-            }
-            ui_kit::button(ui, "release.detail.menu.item." + text, text,
-                           ui_kit::ButtonLevel::Text, panelX + 4.0f, itemY,
-                           menuW - 8.0f, itemH, t, options);
-            itemY += itemH;
-        };
-        if (!draft) {
-            menuItem("校验", false, [&state] { runValidation(state); });
-        }
-        menuItem("作废任务", true,
-                 [&state] { state.confirm = ReleaseDetailConfirm::VoidTask; });
-    }
 }
 
 // 模式徽标（F-11 几何断言值）：发布中 = 页头唯一绿染（primarySoftBg），
 // 其余中性灰；已作废字降级。
-
 float drawModeBadge(eui::Ui& ui, const std::string& id, float x, float y,
                     TaskStatus status, const Tokens& t) {
     const char* label = "准备中";

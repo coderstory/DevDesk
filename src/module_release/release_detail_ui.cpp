@@ -125,7 +125,6 @@ void loadDetail(ReleaseStore& store, ReleaseDetailUiState& state) {
         state.editorText.clear();
         state.branchEditServiceId = 0;
         state.branchEditText.clear();
-        state.menuOpen = false;
         state.gateTitle.clear();
         state.gateSubject.clear();
         state.gateImpact.clear();

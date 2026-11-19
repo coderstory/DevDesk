@@ -123,10 +123,6 @@ public:
     bool onKeyEvent(const eui::KeyEvent& key) override {
         if (!key.isDown() || key.key != eui::InputKey::Escape) return false;
         if (!openTaskId_) return false;
-        if (detailState_.menuOpen) {
-            detailState_.menuOpen = false;
-            return true;
-        }
         if (detailState_.editorOpen) {
             detailState_.editorOpen = false;
             return true;

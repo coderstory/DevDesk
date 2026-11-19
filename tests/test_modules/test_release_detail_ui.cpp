@@ -1228,8 +1228,8 @@ REGISTER_TEST(release_detail_submit_gate_requires_prereq_numbers,
 })
 
 REGISTER_TEST(release_detail_header_primary_action_matrix,
-              "页头主动作唯一: Draft=提交+校验次钮+菜单作废 / Pending=下一步+撤回次钮 / "
-              "Running 无撤回 / Done 无按钮 / Voided=恢复"
+              "页头主动作唯一: Draft=提交+校验次钮+作废直显钮 / Pending=下一步+撤回+校验+"
+              "作废直显 / Running 无撤回 / Done 无按钮 / Voided=恢复"
               "（防：主动作漂移 / 撤回入口漏隐藏 / 恢复入口丢失）", {
     ThemeGuard guard;
     test_support::TestDb tdb("releasedetail", "headermatrix");
@@ -1255,21 +1255,22 @@ REGISTER_TEST(release_detail_header_primary_action_matrix,
         frame.refresh(store, state, actions);
     };
 
-    // Draft：提交主按钮 + 校验次按钮 + 菜单（作废）；无下一步/撤回/恢复
+    // Draft：提交主按钮 + 校验次按钮 + 作废直显钮（#361 菜单裁撤）；无下一步/撤回/恢复
     probe(rel::TaskStatus::Draft);
     DOCTEST_CHECK(frame.ui.find("release.detail.submit") != nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.validate") != nullptr);
-    DOCTEST_CHECK(frame.ui.find("release.detail.menu") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.void") != nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.next") == nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.withdraw") == nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.restore") == nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.publish") == nullptr);
 
-    // Pending：下一步主按钮 + 撤回次按钮 + 菜单；无提交/恢复；发布中徽标出现
+    // Pending：下一步主按钮 + 撤回/校验次按钮 + 作废直显钮；无提交/恢复；发布中徽标出现
     probe(rel::TaskStatus::Pending);
     DOCTEST_CHECK(frame.ui.find("release.detail.next") != nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.withdraw") != nullptr);
-    DOCTEST_CHECK(frame.ui.find("release.detail.menu") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.validate") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("release.detail.void") != nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.submit") == nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.restore") == nullptr);
     DOCTEST_CHECK(frame.ui.find("release.detail.modebadge.publish") != nullptr);
