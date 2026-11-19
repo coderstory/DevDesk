@@ -88,14 +88,14 @@ namespace {
         c.primaryHover = eui::Color("#06AD56");
         c.primaryPressed = eui::Color("#059048");
         c.primarySoftBg = eui::Color("#E8F8EE");
-        c.primaryText = eui::Color("#157E4E");  // ~4.99:1 on #F5FAF7 ≥ WCAG AA 4.5:1（审计 F3.4 裁决）
-        c.accentText = eui::Color("#0C7E58");   // #0F9D6E 加深档：on #F5FAF7 ≥ 4.5（#0F9D6E 本身仅 3.31）
+        c.primaryText = eui::Color("#157A4E");  // need356：#157E4E G 道加深 4——Win 加深档 primarySoftBg 对 4.42<4.5 回退；现 bg/psbg = 5.07/4.86(mac)、4.83/4.63(win)
+        c.accentText = eui::Color("#0C7A58");   // need356：#0C7E58 G 道加深 4——Win 加深档 primarySoftBg 对 4.41<4.5 回退；现 bg/psbg = 5.05/4.85(mac)、4.81/4.62(win)
         c.onPrimary = eui::Color("#FFFFFF");
         c.onAccent = eui::Color("#06251A");  // on #07C160 = 6.8:1（need261 P1-1）
         c.textPrimary = eui::Color("#1F2937");
         c.textSecondary = eui::Color("#4B5563");
-        c.textTertiary = eui::Color("#6B7280");
-        c.textDisabled = eui::Color("#6B7280");  // 4.83:1 on #FFF（旧 #9CA3AF 仅 2.54:1）
+        c.textTertiary = eui::Color("#6B6D80");  // need356：#6B7280 G 道加深 5——Win 加深档 background 对 4.38<4.5 回退；现 bg/surf/psbg = 4.83/5.09/4.63(mac)、4.60/4.85/4.42(win)
+        c.textDisabled = eui::Color("#6B6D80");  // 随 textTertiary 同值同移（旧 #9CA3AF 仅 2.54:1 on #FFF）
         c.borderDefault = eui::Color("#E5E7EB");
         c.borderMuted = eui::Color("#F3F4F6");
         c.success = eui::Color("#10B981");

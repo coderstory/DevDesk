@@ -56,33 +56,40 @@ double deltaE76(const eui::Color& a, const eui::Color& b) {
 // float [0,1] → 0-255 字节值（用于 hex 精确比对）
 int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
 
+// need356：Windows 加深档平台差异——期望字节按加深因子现算（posix 因子恒 1.0 =
+// 钉设计原值不变）；设计定稿值仍是唯一权威，此处只施加平台加深变换。
+int deepened(int byte) {
+    return toHexByte(static_cast<float>(byte) / 255.0f *
+                     core::theme::colorDeepenFactor());
+}
+
 } // namespace
 
 // 三个强调色浅/深档 hex 精确等于设计定稿值（设计即代码，防将来误调）
 REGISTER_TEST(theme_accent_exact_hex, "theme accent: exact hex values for all six slots", {
     core::theme::setLight();
     const auto& l = core::theme::current().colors;
-    DOCTEST_CHECK_EQ(toHexByte(l.purple.r), 0x71);
-    DOCTEST_CHECK_EQ(toHexByte(l.purple.g), 0x63);
-    DOCTEST_CHECK_EQ(toHexByte(l.purple.b), 0x9B);
-    DOCTEST_CHECK_EQ(toHexByte(l.pink.r), 0xC0);
-    DOCTEST_CHECK_EQ(toHexByte(l.pink.g), 0x5E);
-    DOCTEST_CHECK_EQ(toHexByte(l.pink.b), 0x86);
-    DOCTEST_CHECK_EQ(toHexByte(l.blue.r), 0x12);
-    DOCTEST_CHECK_EQ(toHexByte(l.blue.g), 0xB7);
-    DOCTEST_CHECK_EQ(toHexByte(l.blue.b), 0xF5);
+    DOCTEST_CHECK_EQ(toHexByte(l.purple.r), deepened(0x71));
+    DOCTEST_CHECK_EQ(toHexByte(l.purple.g), deepened(0x63));
+    DOCTEST_CHECK_EQ(toHexByte(l.purple.b), deepened(0x9B));
+    DOCTEST_CHECK_EQ(toHexByte(l.pink.r), deepened(0xC0));
+    DOCTEST_CHECK_EQ(toHexByte(l.pink.g), deepened(0x5E));
+    DOCTEST_CHECK_EQ(toHexByte(l.pink.b), deepened(0x86));
+    DOCTEST_CHECK_EQ(toHexByte(l.blue.r), deepened(0x12));
+    DOCTEST_CHECK_EQ(toHexByte(l.blue.g), deepened(0xB7));
+    DOCTEST_CHECK_EQ(toHexByte(l.blue.b), deepened(0xF5));
 
     core::theme::setDark();
     const auto& d = core::theme::current().colors;
-    DOCTEST_CHECK_EQ(toHexByte(d.purple.r), 0xA1);
-    DOCTEST_CHECK_EQ(toHexByte(d.purple.g), 0x8F);
-    DOCTEST_CHECK_EQ(toHexByte(d.purple.b), 0xC8);
-    DOCTEST_CHECK_EQ(toHexByte(d.pink.r), 0xDE);
-    DOCTEST_CHECK_EQ(toHexByte(d.pink.g), 0x8F);
-    DOCTEST_CHECK_EQ(toHexByte(d.pink.b), 0xB4);
-    DOCTEST_CHECK_EQ(toHexByte(d.blue.r), 0x12);
-    DOCTEST_CHECK_EQ(toHexByte(d.blue.g), 0xB7);
-    DOCTEST_CHECK_EQ(toHexByte(d.blue.b), 0xF5);
+    DOCTEST_CHECK_EQ(toHexByte(d.purple.r), deepened(0xA1));
+    DOCTEST_CHECK_EQ(toHexByte(d.purple.g), deepened(0x8F));
+    DOCTEST_CHECK_EQ(toHexByte(d.purple.b), deepened(0xC8));
+    DOCTEST_CHECK_EQ(toHexByte(d.pink.r), deepened(0xDE));
+    DOCTEST_CHECK_EQ(toHexByte(d.pink.g), deepened(0x8F));
+    DOCTEST_CHECK_EQ(toHexByte(d.pink.b), deepened(0xB4));
+    DOCTEST_CHECK_EQ(toHexByte(d.blue.r), deepened(0x12));
+    DOCTEST_CHECK_EQ(toHexByte(d.blue.g), deepened(0xB7));
+    DOCTEST_CHECK_EQ(toHexByte(d.blue.b), deepened(0xF5));
 
     core::theme::setDark();
     return true;
@@ -162,13 +169,13 @@ REGISTER_TEST(theme_accent_select_preserve, "theme accent: setDark/setLight pres
     core::theme::setDark();
     core::theme::setAccent(core::theme::Accent::Purple);
     // 深色 Purple primary = #A18FC8 → R=0xA1
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0xA1);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), deepened(0xA1));
     core::theme::setLight();
     // 浅色 Purple primary = #71639B → R=0x71
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0x71);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), deepened(0x71));
     core::theme::setDark();
     // 回到深色 purple → R=0xA1
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0xA1);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), deepened(0xA1));
     core::theme::setAccent(core::theme::Accent::Clay);
     return true;
 })
@@ -178,16 +185,16 @@ REGISTER_TEST(theme_accent_select_values, "theme accent: non-Clay primary differ
     core::theme::setLight();
     core::theme::setAccent(core::theme::Accent::Blue);
     // 浅色 Blue primary = #12B7F5（亮色档也是蓝）
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0x12);
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.g), 0xB7);
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.b), 0xF5);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), deepened(0x12));
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.g), deepened(0xB7));
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.b), deepened(0xF5));
 
     core::theme::setDark();
     core::theme::setAccent(core::theme::Accent::Blue);
     // 深色 Blue primary 同值 #12B7F5，但 primarySoftBg/primaryText 不同
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0x12);
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.g), 0xB7);
-    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.b), 0xF5);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), deepened(0x12));
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.g), deepened(0xB7));
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.b), deepened(0xF5));
 
     core::theme::setAccent(core::theme::Accent::Clay);
     return true;
@@ -198,12 +205,12 @@ REGISTER_TEST(theme_accent_select_pink_light, "theme accent: Pink light exact he
     core::theme::setLight();
     core::theme::setAccent(core::theme::Accent::Pink);
     const auto& c = core::theme::current().colors;
-    DOCTEST_CHECK_EQ(toHexByte(c.primary.r), 0xB4);
-    DOCTEST_CHECK_EQ(toHexByte(c.primary.g), 0x56);
-    DOCTEST_CHECK_EQ(toHexByte(c.primary.b), 0x7C);
-    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.r), 0x90);
-    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.g), 0x45);
-    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.b), 0x63);
+    DOCTEST_CHECK_EQ(toHexByte(c.primary.r), deepened(0xB4));
+    DOCTEST_CHECK_EQ(toHexByte(c.primary.g), deepened(0x56));
+    DOCTEST_CHECK_EQ(toHexByte(c.primary.b), deepened(0x7C));
+    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.r), deepened(0x90));
+    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.g), deepened(0x45));
+    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.b), deepened(0x63));
     core::theme::setAccent(core::theme::Accent::Clay);
     return true;
 })

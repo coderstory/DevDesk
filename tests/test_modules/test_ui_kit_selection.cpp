@@ -25,6 +25,13 @@ namespace {
 // float [0,1] → 0-255 字节值（hex 精确比对，同 test_theme_accents / test_ui_kit_button 口径）
 int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
 
+// need356：Windows 加深档平台差异——期望字节按加深因子现算（posix 因子恒 1.0 =
+// 钉设计原值不变），同 test_theme_accents.cpp 口径
+int deepened(int byte) {
+    return toHexByte(static_cast<float>(byte) / 255.0f *
+                     core::theme::colorDeepenFactor());
+}
+
 // 浮点近似比较（同 test_app_sidebar.cpp:72 口径，epsilon=0.01）
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 // 浮点颜色近似比较（±0.01 容差，深浅模式自适应）
@@ -83,9 +90,9 @@ REGISTER_TEST(ui_kit_wtab_active_colors,
     const auto* txt = ui.find("tab.a.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // active text = textPrimary #1A1A1A（深灰，非 textSecondary 灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x36);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xD3);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x99);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), deepened(0x36));
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), deepened(0xD3));
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), deepened(0x99));
 
     // S2.2 wtab active bg = primarySoftBg #E6FBF2 + radius 8
     const auto* bg = ui.find("tab.a.bg");
@@ -150,9 +157,9 @@ REGISTER_TEST(ui_kit_wswitch_on_track_green,
     const auto* track = ui.find("sw.on.track");
     DOCTEST_REQUIRE(track != nullptr);
     // track = primary #07C160
-    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0x36);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xD3);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0x99);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.r), deepened(0x36));
+    DOCTEST_CHECK_EQ(toHexByte(track->color.g), deepened(0xD3));
+    DOCTEST_CHECK_EQ(toHexByte(track->color.b), deepened(0x99));
 
     const auto* thumb = ui.find("sw.on.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);

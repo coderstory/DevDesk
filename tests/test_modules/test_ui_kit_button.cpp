@@ -22,6 +22,12 @@ namespace {
 
 // float [0,1] → 0-255 字节值（hex 精确比对，同 test_theme_accents 口径）
 int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
+// need356：Windows 加深档平台差异——期望字节按加深因子现算（posix 因子恒 1.0 =
+// 钉设计原值不变），同 test_theme_accents.cpp 口径
+int deepened(int byte) {
+    return toHexByte(static_cast<float>(byte) / 255.0f *
+                     core::theme::colorDeepenFactor());
+}
 // 浮点颜色近似比较（±0.01 容差，深浅模式自适应）
 auto sameColor = [](const eui::Color& x, const eui::Color& y) {
     return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
@@ -45,16 +51,16 @@ REGISTER_TEST(ui_kit_button_primary_colors,
     const auto* bg = ui.find("btn.p.bg");
     DOCTEST_REQUIRE(bg != nullptr);
     // bg 走 .states() 的 normal 态 = primary #36D399（S1.2 #1）
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x36);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xD3);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x99);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), deepened(0x36));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), deepened(0xD3));
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), deepened(0x99));
 
     const auto* txt = ui.find("btn.p.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // text 走 textColor = onPrimary（#FFFFFF）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0xFF);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), deepened(0xFF));
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), deepened(0xFF));
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), deepened(0xFF));
     return true;
 })
 
@@ -141,9 +147,9 @@ REGISTER_TEST(ui_kit_button_danger_red,
     const auto* txt = ui.find("btn.d.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // Danger 文字 = onPrimary 白（红底白字）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0xFF);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), deepened(0xFF));
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), deepened(0xFF));
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), deepened(0xFF));
     return true;
 })
 
