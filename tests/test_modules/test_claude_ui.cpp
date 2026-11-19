@@ -3044,7 +3044,12 @@ REGISTER_TEST(claude_profile_selection_check_badge,
 REGISTER_TEST(claude_profile_switch_confirm_dialog,
               "claude_module: 双击切换确认弹窗（池#370 单击直选）", {
     TestEnv env;
-    auto a = env.svc->createProfile("A", "https://a.example.com", "sk-a", "");
+    // 前置对齐真实 UI 语义：表单首建 Profile 走 activateIfNoneActive=true
+    //（claude_ui_form.cpp 同款）——A 即首个且唯一 Profile，创建即激活。
+    // 服务默认 false（纯服务调用不隐含激活），漏掉该前置会让「取消后激活
+    // 仍 A」断言在 NoActiveProfile 上假红（池#370 复盘）。
+    auto a = env.svc->createProfile("A", "https://a.example.com", "sk-a", "",
+                                    /*activateIfNoneActive=*/true);
     DOCTEST_REQUIRE(a.isOk());
     auto b = env.svc->createProfile("B", "https://b.example.com", "sk-b", "");
     DOCTEST_REQUIRE(b.isOk());
@@ -3060,11 +3065,13 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    // 初帧：无选中 → 两卡都无 accent
+    // 初帧：A 已激活（上方 createProfile 前置）→ selectedId_=0 按契约回落激活
+    // profile（claude_ui_list.cpp：缺此回落首帧列表裸白）→ 卡 0（A，is_active
+    // DESC 首位）accent 在；B 未选未激活无 accent。
     {
         eui::Ui ui;
         compose(ui, "dlg_init");
-        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
     // 单击卡 A：立即选中（accent 直落 A；旧行为是先弹确认窗——池#370 断言点）
