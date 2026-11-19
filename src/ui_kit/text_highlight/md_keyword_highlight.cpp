@@ -5,6 +5,7 @@
 #include "md_keyword_highlight.h"
 
 #include <cctype>
+#include <string>
 #include <unordered_set>
 #include <utility>
 

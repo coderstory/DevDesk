@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <ratio>
 #include <string>
 #include <vector>
 
