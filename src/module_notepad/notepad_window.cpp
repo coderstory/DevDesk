@@ -1055,20 +1055,24 @@ void drawProtectDialog(NotepadSession& s, eui::Ui& ui, float w, float h,
             if (!open) raw->protectOpen = false;
         })
         .content([&] {
+            // need381：字号调正常档（老板「字太大」）——标题 heading(24)→
+            // subtitle(20)+600 字重（对齐全站弹窗 kDialogTitleFontSize=20 统一
+            // 档），正文 input(17)→label(14)。
             ui.text(std::string(kNotepadProtectDialogId) + ".title")
                 .position(inset, 16.0f)
-                .size(contentWidth, m.typography.heading + m.typography.lineGapLoose)
+                .size(contentWidth, m.typography.subtitle + m.typography.lineGapLoose)
                 .text("未保存的更改")
-                .fontSize(m.typography.heading)
-                .lineHeight(m.typography.heading + m.typography.lineGapLoose)
+                .fontSize(m.typography.subtitle)
+                .fontWeight(600)
+                .lineHeight(m.typography.subtitle + m.typography.lineGapLoose)
                 .color(style.title)
                 .build();
             ui.text(std::string(kNotepadProtectDialogId) + ".message")
-                .position(inset, 56.0f)
+                .position(inset, 52.0f)
                 .size(contentWidth, 64.0f)
                 .text("“" + s.title + "”有未保存的更改，关闭前要保存吗？")
-                .fontSize(m.typography.input)
-                .lineHeight(m.typography.input + m.typography.lineGapComfortable)
+                .fontSize(m.typography.label)
+                .lineHeight(m.typography.label + m.typography.lineGapComfortable)
                 .maxWidth(contentWidth)
                 .wrap(true)
                 .color(style.message)
@@ -1084,7 +1088,7 @@ void drawProtectDialog(NotepadSession& s, eui::Ui& ui, float w, float h,
                         .theme(tokens, false)
                         .size(btnW, h)
                         .text("不保存")
-                        .fontSize(m.typography.body)
+                        .fontSize(m.typography.option)
                         .colors(style.secondary, style.secondaryHover,
                                 style.secondaryPressed)
                         .textColor(tokens.error)
@@ -1112,7 +1116,7 @@ void drawProtectDialog(NotepadSession& s, eui::Ui& ui, float w, float h,
                         .theme(tokens, false)
                         .size(btnW, h)
                         .text("取消")
-                        .fontSize(m.typography.body)
+                        .fontSize(m.typography.option)
                         .colors(style.secondary, style.secondaryHover,
                                 style.secondaryPressed)
                         .textColor(style.title)
@@ -1129,7 +1133,7 @@ void drawProtectDialog(NotepadSession& s, eui::Ui& ui, float w, float h,
                         .theme(tokens, true)
                         .size(btnW, h)
                         .text("保存")
-                        .fontSize(m.typography.body)
+                        .fontSize(m.typography.option)
                         .colors(style.primary, style.primaryHover,
                                 style.primaryPressed)
                         .radius(m.radius.popup)
