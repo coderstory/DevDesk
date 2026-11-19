@@ -92,6 +92,12 @@ constexpr float kTaskCardPad = 12.0f;
 constexpr float kTaskCardInset = 10.0f;
 constexpr float kTaskCardGap = 8.0f;
 constexpr float kTaskCardH = 120.0f;   // 三行：22 + 18 + 18 + 行距 11×2 + 上下 pad 12×2
+// need366（老板「智能体里的卡片是不透明的」）：任务卡半透档，对照 About 卡
+// 既有基准（about_module.cpp 同值）——浅色 0.78 让窗材质透出；深色维持
+// 0.98 不翻（2026-11-18 池127 D-10 裁决「深色卡片明显更实」）。
+// 只调本页卡面 alpha，全局材质基线（glassFill/materials.h）不动。
+constexpr float kTaskCardAlphaLight = 0.78f;
+constexpr float kTaskCardAlphaDark = 0.98f;
 // hover 操作组（F-66-4）：五个 28×28 图标钮，间距 4 → 组宽 156。
 // 组右缘必须 = 卡右缘 −14（探针 G2 断言），故 actionsX = cardW −14 − kTaskActionsW
 constexpr float kTaskIconBtn = 28.0f;
@@ -846,10 +852,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 // 后台推进不中断。
                         // ⚠️ states() 只改颜色改不了圆角，圆角/缩放必须每帧
                         // compose 出新值，动画只把上一帧的值平滑过去。
-                                const eui::Color cardSurfaceColor =
+                                // need366：卡面 alpha 统一钳到本页半透档
+                                //（hover/pressed 的 RGB 加深保留，alpha 抬升不再
+                                // 透传为实底）。基色仍走 glassFill 三态材质族。
+                                eui::Color cardSurfaceColor =
                                     pressed ? ui_kit::itemSurfacePressed(t)
                                             : (hovered ? ui_kit::itemSurfaceHover(t)
                                                        : ui_kit::itemSurface(t));
+                                cardSurfaceColor.a = t.isDark ? kTaskCardAlphaDark
+                                                              : kTaskCardAlphaLight;
                                 auto cardBg = inner.rect(id + ".bg")
                                     .size(cardW, cardH)
                                     .states(cardSurfaceColor, cardSurfaceColor,
