@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -36,15 +37,41 @@ REGISTER_TEST(terminal_workdir_resolve,
 // 端到端（need328 验收：目录真实落盘）：真 spawn → 会话内 pwd 写文件 → 回读比对。
 // 两分支各一次：非空目录落之、空 → $HOME。纯进程判据，无 UI 点击。
 namespace {
-// 轮询回读 pwd 输出（≤5s；shell 执行异步，读到非空即止）
-std::string pollPwdOut(const std::string& path) {
-    for (int i = 0; i < 50; i++) {
+// sanitizer 独立档整机慢化 2-10×（家族先例 ci-asan-wallclock-flakes：窗口型用例
+// 专爆）→ 轮询窗口 ×5 加宽；常规档窗口不变防拖慢。CI ASan 档 flake（need348）
+// 实证：usleep 被提前打断时迭代计数预算会坍缩（174ms 即挂），故预算按墙钟
+// deadline 计——打断只烧掉一次睡眠，窗宽不受影响。
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#define TERMINAL_WD_TEST_SANITIZED 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define TERMINAL_WD_TEST_SANITIZED 1
+#endif
+
+// 状态驱动轮询：读到期望值即过（断言条件满足，不空等）；轮询上限 = 墙钟
+// deadline（耐心非阈值，禁缩短等待）。超时返回最后读到的非空内容供断言
+// 输出诊断；从未写出则返回空。
+std::string pollPwdOut(const std::string& path, const std::string& expected) {
+#if defined(TERMINAL_WD_TEST_SANITIZED)
+    constexpr int kPollBudgetMs = 25000; // sanitize 慢化档：5s × 5
+#else
+    constexpr int kPollBudgetMs = 5000;
+#endif
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(kPollBudgetMs);
+    std::string last;
+    while (std::chrono::steady_clock::now() < deadline) {
         usleep(100000);
         std::ifstream f(path);
         std::string line;
-        if (f && std::getline(f, line) && !line.empty()) return line;
+        if (f && std::getline(f, line) && !line.empty()) {
+            if (line == expected) return line;
+            last = line; // 非期望内容：继续等（禁提前死），留给断言做诊断
+        }
     }
-    return "";
+    return last;
 }
 } // namespace
 
@@ -61,7 +88,7 @@ REGISTER_TEST(terminal_workdir_e2e_spawn_chdir,
         DOCTEST_REQUIRE(s != nullptr);
         DOCTEST_REQUIRE(s->write(reinterpret_cast<const uint8_t*>(cmd),
                                  static_cast<int32_t>(std::strlen(cmd)), false));
-        std::string got = pollPwdOut(wd + "/pwd.out");
+        std::string got = pollPwdOut(wd + "/pwd.out", wd);
         DOCTEST_REQUIRE_EQ(got, wd);
         s->stop();
     }
@@ -76,7 +103,7 @@ REGISTER_TEST(terminal_workdir_e2e_spawn_chdir,
         DOCTEST_REQUIRE(s != nullptr);
         DOCTEST_REQUIRE(s->write(reinterpret_cast<const uint8_t*>(cmd),
                                  static_cast<int32_t>(std::strlen(cmd)), false));
-        std::string got = pollPwdOut(wd + "/pwd.out");
+        std::string got = pollPwdOut(wd + "/pwd.out", homeCanon);
         DOCTEST_REQUIRE_EQ(got, homeCanon);
         s->stop();
     }
@@ -107,7 +134,7 @@ REGISTER_TEST(terminal_workdir_e2e_bash_bare_name,
         DOCTEST_REQUIRE(h->write(reinterpret_cast<const uint8_t*>(cmd),
                                  static_cast<int32_t>(std::strlen(cmd)), false)
                             .isOk());
-        std::string got = pollPwdOut(wd + "/pwd-bash.out");
+        std::string got = pollPwdOut(wd + "/pwd-bash.out", wd);
         DOCTEST_REQUIRE_EQ(got, wd);
         h->terminate();
     }
@@ -121,7 +148,7 @@ REGISTER_TEST(terminal_workdir_e2e_bash_bare_name,
         DOCTEST_REQUIRE(h->write(reinterpret_cast<const uint8_t*>(cmd),
                                  static_cast<int32_t>(std::strlen(cmd)), false)
                             .isOk());
-        std::string got = pollPwdOut(wd + "/pwd-bash.out");
+        std::string got = pollPwdOut(wd + "/pwd-bash.out", homeCanon);
         DOCTEST_REQUIRE_EQ(got, homeCanon);
         h->terminate();
     }
