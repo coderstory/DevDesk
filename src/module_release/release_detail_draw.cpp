@@ -482,6 +482,8 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                     .onCancel([&store, &state]() { saveTask(store, state); })
                     .build();
                 if (!checked && !gateOpen) {
+                    // 提示字叠在输入框容器内（右对齐）：须垂直居中，否则顶格贴
+                    // 行顶、与 32px 输入框错位（#362）。
                     ui.text(id + ".gate")
                         .position(inputX, y)
                         .size(std::max(0.0f, inputW - 120.0f), rowH)
@@ -489,6 +491,7 @@ void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state,
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .lineHeight(rowH)
                         .horizontalAlign(eui::HorizontalAlign::Right)
+                        .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textTertiary)
                         .build();
                 }
