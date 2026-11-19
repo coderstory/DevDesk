@@ -24,6 +24,7 @@
 #include "terminal_keyencoder.h"
 #include <components/dropdown.h>
 #include <components/input.h>
+#include <components/scroll.h>
 #include <components/scrollview.h>
 #include <components/segmented.h>
 #include <components/stepper.h>
@@ -101,6 +102,9 @@ constexpr float kTabMinWNarrow = 100.0f; // 设计 §8：<720 窄窗档 TAB min 
 constexpr float kTabTitleMaxW = 120.0f;
 constexpr float kActionGap = 8.0f;
 constexpr float kRightPad = 12.0f;
+// 滚轮档位→行数（池#364）：ScrollEvent.y 是 GLFW/EUI-NEO 档位语义（win 鼠标一档
+// ±1.0，mac 触控板为精确小数增量），终端惯例一档 3 行；对齐 EUI-NEO 滚动族与 TAB 横滚。
+constexpr float kWheelLinesPerNotch = 3.0f;
 constexpr uint32_t kFaXmark = 0xF00D;
 // 设置钮用 sliders（0xF1DE）不用 gear（0xF013）——FA gear 在 16px 下形似「光芒小圆」
 // 与亮暗切换图标混淆（老板 2026-11-05 实测，fontTools 实证字体含 sliders 字形）
@@ -414,15 +418,18 @@ GridLayout TerminalPage::compose(
                     selHCol_ = colOf(lx);
                     hasSelection_ = !(selARow_ == selHRow_ && selACol_ == selHCol_);
                 })
-                .onScroll([this, ctrl, cellHV](const core::ScrollEvent& e) {
+                .onScroll([this, ctrl](const core::ScrollEvent& e) {
                     Session* s = ctrl->active();
                     if (s == nullptr) return;
-                    scrollRemainder_ += static_cast<float>(e.y);
-                    const int lines = static_cast<int>(scrollRemainder_ / cellHV);
+                    // 池#364 根因：y 是档位不是像素。旧码按像素除 cellH（win 一档 1px、
+                    // ~cellH 档才滚 1 行=等效不可滚）且「offset -= lines」与 EUI-NEO 全仓
+                    // 口径（y>0=向上看更早）反向。档位累积换行、余数保留（触控板小数增量）。
+                    scrollRemainder_ += static_cast<float>(e.y) * kWheelLinesPerNotch;
+                    const int lines = static_cast<int>(scrollRemainder_);
                     if (lines == 0) return;
-                    scrollRemainder_ -= static_cast<float>(lines) * cellHV;
+                    scrollRemainder_ -= static_cast<float>(lines);
                     const int maxOffset = ctrl->activeScrollbackCount();
-                    s->scrollOffset = std::clamp(s->scrollOffset - lines, 0, maxOffset);
+                    s->scrollOffset = std::clamp(s->scrollOffset + lines, 0, maxOffset);
                     // 滚动即清选区：选区行列锚在拖选时可视网格上（终端惯例）
                     hasSelection_ = false;
                     selecting_ = false;
@@ -581,6 +588,43 @@ GridLayout TerminalPage::compose(
                         .color(kTransparent)
                         .imeRect(0.0f, 0.0f, cellW, cellH);
                 }
+            }
+
+            // 层 4（池#364）：终端域滚动条——回看 affordance。范围裁决：bug188
+            // 「滚动条视觉全无」覆盖侧栏/设置面板等既定域，终端网格是回看操作域、
+            // 滚动条保留（老板 2026-11-19 报缺）。语义换算：scrollState 偏移=距顶
+            // 像素，网格回滚 scrollOffset=距底行数；viewport=可视行×cellH、
+            // content=总行×cellH（与网格 start 同口径，含 0 钳制）。压在 term.input
+            // 之上（后序即上层）：滚轮命中条区走 scrollState（step=3 行/档，与网格
+            // 层同速），命中网格走 term.input onScroll；thumb 拖拽经 onChange 回写
+            // 会话回滚偏移。无溢出（总行≤可视行）不建条。
+            if (act != nullptr && layout.rows > 0 && totalLines > layout.rows) {
+                const float viewportPx = static_cast<float>(layout.rows) * cellH;
+                const float contentPx = static_cast<float>(totalLines) * cellH;
+                const float maxEui = std::max(0.0f, contentPx - viewportPx);
+                const float euiOffset =
+                    std::clamp(static_cast<float>(totalLines - layout.rows -
+                                                  act->scrollOffset) *
+                                   cellH,
+                               0.0f, maxEui);
+                const int sbCount = sb;
+                const float barW = core::theme::componentTokens(t).metrics.control.scrollbar;
+                SessionController* ctrlBar = &controller;
+                components::scroll(ui, "term.grid.scroll")
+                    .position(screen.width - barW, gridTop)
+                    .size(barW, bodyH)
+                    .viewport(viewportPx)
+                    .content(contentPx)
+                    .offset(euiOffset)
+                    .step(cellH * kWheelLinesPerNotch)
+                    .theme(core::theme::componentTokens(t))
+                    .onChange([ctrlBar, maxEui, cellH, sbCount](float v) {
+                        Session* s = ctrlBar->active();
+                        if (s == nullptr) return;
+                        s->scrollOffset = std::clamp(
+                            static_cast<int>((maxEui - v) / cellH + 0.5f), 0, sbCount);
+                    })
+                    .build();
             }
 
             // 层 5：TAB 栏带 44px（全屏保留）
