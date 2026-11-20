@@ -143,5 +143,3 @@ opencode.json
 .devflow/
 # devflow 会话交接卡（草稿性质同 .scratch；置于 !.zcode/** 否定之后故生效）
 .zcode/handoff/
-# spike POC 草稿区（归其线处置：正式入库或删；本机留存不丢）
-tests/spike/
