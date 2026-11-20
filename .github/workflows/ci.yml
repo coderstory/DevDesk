@@ -41,6 +41,12 @@ jobs:
           path: DevDesk
           submodules: recursive
 
+      # bug355：gitlink 不锁版本（AGENTS §一 2026-11-09 契约）——checkout 只按
+      # gitlink 检出，会停在 fork/main 最新之前的祖先，业务代码引用新 API 即红。
+      # 检出后强制追 fork/main 最新。
+      - name: EUI-NEO 取 fork/main 最新（不锁版本，AGENTS §一）
+        run: git -C DevDesk submodule update --init --remote -- EUI-NEO
+
       - name: 切到镜像上最新的 Xcode
         run: |
           ls -d /Applications/Xcode*.app 2>/dev/null || true
@@ -127,6 +133,10 @@ jobs:
         with:
           path: DevDesk
           submodules: recursive
+
+      # 同 macOS job（bug355）：gitlink 不锁版本，检出后强制追 fork/main 最新
+      - name: EUI-NEO 取 fork/main 最新（不锁版本，AGENTS §一）
+        run: git -C DevDesk submodule update --init --remote -- EUI-NEO
 
       - uses: msys2/setup-msys2@v2
         with:
