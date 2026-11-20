@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <system_error>
 
+#include "core/paths.h"
+
 namespace module::wallpaper::folder_policy {
 
 namespace {
@@ -31,9 +33,12 @@ std::string normalizeFolderPath(const std::string& rawPath) {
     const std::filesystem::path absolute = std::filesystem::absolute(path, ec);
     if (!ec) path = absolute;
     path = path.lexically_normal();
-    std::string text = path.make_preferred().string();
+    // 归一化结果会持久化并最终喂 mpv JSON 命令（要求 UTF-8）；path::string() 在 Windows
+    // 按 ACP 转换，中文壁纸目录会变成乱码（bug362）
+    std::string text = core::paths::toUtf8(path.make_preferred());
     // 去掉末尾分隔符；盘符根（"D:\"）与 POSIX 根（"/"）必须保留，否则变成空串。
-    const std::string root = path.root_path().make_preferred().string();
+    // root 必须与 text 同一编码口径，否则非 ASCII 根的字节长度对不上（32 位比较失效）
+    const std::string root = core::paths::toUtf8(path.root_path().make_preferred());
     while (text.size() > root.size() &&
            (text.back() == '/' || text.back() == '\\')) {
         text.pop_back();

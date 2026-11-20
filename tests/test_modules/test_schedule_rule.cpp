@@ -13,6 +13,7 @@
 
 #include "core/schedule_rule.h"
 #include "core/time.h"
+#include "core/user_message.h"
 
 namespace {
 using core::schedule::FireContext;
@@ -476,5 +477,39 @@ REGISTER_TEST(schedule_dst_fall_dedupe, "schedule: DST 秋季回拨重复墙钟�
     const auto all = mf(s, unixOf(2026, 11, 1, 0, 0), unixOf(2026, 11, 1, 23, 59), 10, c);
     DOCTEST_CHECK(all.size() == 1);
     DOCTEST_CHECK(all[0] == firstOcc);
+    return true;
+})
+
+// bug361：用户可见文案层——定时规则错误不得回显内部字段名（calendar.workdays_only 之类），
+// 否则用户完全不知道改哪里；技术细节只留在 LOG_WARN。
+// 防：内部字段名再次泄漏到 pageError_ / showToast（全仓 errorMessage() 直出 UI）
+REGISTER_TEST(schedule_user_message_known_field_is_human,
+              "schedule: user_message 已知字段翻译成人话（不回显内部名）", {
+    const std::string hint = core::user_message::scheduleFieldHint("once.at_local");
+    DOCTEST_CHECK_MESSAGE(!hint.empty(), "已知字段的提示文案不得为空");
+    DOCTEST_CHECK_MESSAGE(hint.find("once.at") == std::string::npos,
+                          "提示文案不得回显内部字段名: " + hint);
+    DOCTEST_CHECK_MESSAGE(hint.find("2026-11-21 09:30") != std::string::npos,
+                          "once 时间提示应给出可照抄的格式样例: " + hint);
+    // 接线实证：真正的解析失败路径返回的 errorMessage 已是人话（非裸字段名）
+    const auto r = parseRuleSpec(RuleKind::Once, R"({"at": "x"})");
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_MESSAGE(r.errorMessage().find("once.at") == std::string::npos,
+                          "解析失败的 errorMessage 泄漏内部字段名: " + r.errorMessage());
+    DOCTEST_CHECK_MESSAGE(r.errorMessage().find("执行时间格式不对") != std::string::npos,
+                          "解析失败应走 user_message 人话文案: " + r.errorMessage());
+    return true;
+})
+
+// 未知字段必须有兜底话术且不回显字段名（新增字段忘配映射时不至于把内部名暴露给用户）
+REGISTER_TEST(schedule_user_message_unknown_field_falls_back,
+              "schedule: user_message 未知字段走兜底话术（不回显字段名）", {
+    const std::string hint = core::user_message::scheduleFieldHint("calendar.does_not_exist");
+    DOCTEST_CHECK_MESSAGE(!hint.empty(), "兜底话术不得为空");
+    DOCTEST_CHECK_MESSAGE(hint.find("does_not_exist") == std::string::npos,
+                          "兜底话术不得回显字段名: " + hint);
+    DOCTEST_CHECK_MESSAGE(hint.find("calendar.") == std::string::npos,
+                          "兜底话术不得回显内部命名空间: " + hint);
+    DOCTEST_CHECK_EQ(hint, std::string("规则配置有误，请检查后重试"));
     return true;
 })

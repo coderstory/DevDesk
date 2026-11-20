@@ -45,6 +45,8 @@ struct ProfileListActions {
     std::function<void(const Profile&)> requestCopyConfig;
     std::function<void(int64_t, const std::string&)> requestDelete;  // 删除
     std::function<void(int64_t)> requestSetActive;                // 设为当前
+    // bug369：错误态「重试」= 再次标脏触发后台重查（只给可恢复类错误挂按钮）
+    std::function<void()> onRetryLoad;
 };
 
 // st 为引用：卡片点击/滚动回调写回模块状态，须指向存活到下一帧的对象。

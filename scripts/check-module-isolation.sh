@@ -8,10 +8,11 @@
 # 该候选退化成裸相对路径并误命中 → 报「找不到仓库根」→ 全量必红。
 #
 # 断言（本守卫的全部契约）：
-#   A. src/module_settings/settings_module.cpp 不得触碰兄弟模块头（零 include `module_pet/`、零 PetConfigStore 等符号引用、零兄弟模块命名空间）。
-#      桥头 module_pet_bridge.h 已于 2026-10-13 随桌宠整模块摘除一并删除，本组断言随之移除。
-#   B. src/module_settings/CMakeLists.txt 的**非注释行**不得出现
-#      devdesk_module_pet / devdesk_module_claude_proxy（解释性注释里允许提及）。
+#   A. 全模块互斥：遍历 src/module_*（动态枚举目录）两两组合，任何模块的 .h/.cpp/.mm
+#      都不得 include 兄弟模块头（`"module_x/` 与 `<module_x/` 两种形态）。
+#      模块名全部由目录名推导，新增/删除模块自动纳入，无需改本脚本。
+#   B. src/module_settings/CMakeLists.txt 的**非注释行**不得 link 兄弟模块库
+#      devdesk_module_claude_proxy（解释性注释里允许提及）。
 #   C. module_agent 消费 todo/markdown 工具走 core::ToolRegistry 按名调用
 #      （todo_tools.h 头注的设计契约），所以 module_agent/* 不得 include 兄弟模块
 #      头；反向 todo/markdown/claude_proxy/**settings** 的工具集与模块文件
@@ -19,8 +20,11 @@
 #      markdown_module / claude_module / settings_module）不得引用 module_agent/
 #      ——注册方不回依赖消费方。两侧判据都按「include 路径形态」= 带斜杠后缀匹配，
 #      注释里不带斜杠的模块名不算违规。
-#   D. module_home 隔离组断言已随中立桥摘除一并移除：home 侧自此零跨模块依赖、
-#      库自洽，链接序断言依据消失。
+#   D. 平台宏守卫：src/module_*/、src/ui_kit/、src/app_*.{h,cpp} 零
+#      `#ifdef _WIN32` / `#if defined(_WIN32)` / `#ifdef __APPLE__` /
+#      `#if defined(__APPLE__)`。平台拆分文件（*_win.cpp / *_macos.* / *_posix.cpp /
+#      *_stub.cpp / *.mm / 任意 platform/ 子目录）放行——平台差异一律拆文件 + CMake
+#      按平台选源，业务代码不写条件编译。
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
 #
@@ -156,15 +160,35 @@ if [ "$SELF_TEST" -eq 1 ]; then
     #     注释里**故意提到兄弟模块裸名**（判据按 include 路径形态 = 带斜杠后缀匹配，
     #     不是按子串，裸名不误报）。
     new_tree benign_style
-    printf '%s
-' '// 说明：本模块不依赖 module_pet。' \n        >> "$TMP/benign_style/src/module_settings/settings_module.cpp"
+    printf '%s\n' '// 说明：本模块不依赖 module_todo。' \
+        >> "$TMP/benign_style/src/module_settings/settings_module.cpp"
     assert_green benign_style "写法不同但合规：注释含裸模块名"
+
+    # 12) 全模块互斥（A 段）：任一模块 include 兄弟模块头都必须红。
+    #     选 wallpaper→todo 这条边：两者毫无既有耦合，命中只可能来自 A 段。
+    new_tree cross_module_include
+    printf '%s\n' '#include "module_todo/todo_tools.h"' \
+        >> "$TMP/cross_module_include/src/module_wallpaper/wallpaper_module.cpp"
+    assert_red cross_module_include "module_wallpaper include 兄弟模块头（A 全模块互斥）"
+
+    # 13) 平台宏守卫（D 段）：业务模块里出现平台条件编译必须红。
+    new_tree platform_macro_in_module
+    printf '%s\n' '#ifdef _WIN32' \
+        >> "$TMP/platform_macro_in_module/src/module_todo/todo_service.cpp"
+    assert_red platform_macro_in_module "module_todo 内出现 #ifdef _WIN32（D 平台宏守卫）"
+
+    # 14) D 段白名单反向证据：平台拆分目录里的同名宏必须放行
+    #     （真实仓库 src/module_wallpaper/platform/mpv_controller.cpp:603 即此形态）。
+    new_tree platform_macro_whitelisted
+    printf '%s\n' '#if defined(_WIN32)' \
+        >> "$TMP/platform_macro_whitelisted/src/module_wallpaper/platform/mpv_controller.cpp"
+    assert_green platform_macro_whitelisted "platform/ 子目录内平台宏放行（D 白名单）"
 
     if [ "$fail" -ne 0 ]; then
         echo "❌ --self-test 失败：守卫不能自证有效" >&2
         exit 1
     fi
-    echo "✅ --self-test 通过：好树绿 / 2 棵坏树各红 / 反向树绿 —— 非恒真"
+    echo "✅ --self-test 通过：好树绿 / 3 棵坏树各红 / 2 棵合规树绿 —— 非恒真"
     exit 0
 fi
 
@@ -213,6 +237,33 @@ check_at_least_once_fixed() {
     fi
 }
 
+# A：全模块互斥——src/module_* 两两遍历，任何模块不得 include 兄弟模块头。
+# 模块清单由目录动态枚举（新增模块自动纳入，无需改脚本）；判据是 include 路径形态
+# （`"module_x/` 与 `<module_x/`），注释里不带斜杠的裸模块名不算违规。
+MODULE_DIRS=()
+for d in "$ROOT"/src/module_*/; do
+    [ -d "$d" ] || { echo "环境错误：目录不存在: $d" >&2; exit 2; }
+    MODULE_DIRS+=("$(basename "$d")")
+done
+[ "${#MODULE_DIRS[@]}" -gt 0 ] || { echo "环境错误：$ROOT/src 下无 module_* 目录" >&2; exit 2; }
+
+for own in "${MODULE_DIRS[@]}"; do
+    own_files=()
+    while IFS= read -r f; do
+        own_files+=("$f")
+    done < <(find "$ROOT/src/$own" -type f \( -name '*.h' -o -name '*.cpp' -o -name '*.mm' \) 2>/dev/null)
+    for other in "${MODULE_DIRS[@]}"; do
+        [ "$own" = "$other" ] && continue
+        for f in "${own_files[@]+"${own_files[@]}"}"; do
+            hits="$(grep -nF -e "\"$other/" -e "<$other/" "$f" || true)"
+            [ -n "$hits" ] || continue
+            while IFS= read -r line; do
+                report "$(rel "$f"):$line"
+            done <<< "$hits"
+        done
+    done
+done
+
 # B：settings CMakeLists.txt 的**非注释行**不得 link 兄弟模块库（注释行允许提及）
 CMK_HITS="$(awk -v f="$(rel "$CMK")" '
     /^[ \t]*#/ { next }                       # 注释行允许提及目标名
@@ -255,10 +306,42 @@ for tool_file in "$ROOT/src/module_todo/todo_tools.h" \
     check_absent_fixed "$tool_file" 'module_agent/'
 done
 
+# D：平台宏守卫——业务代码零平台条件编译（平台差异一律拆文件 + CMake 按平台选源）。
+# 平台拆分文件放行：*_win.cpp / *_macos.* / *_posix.cpp / *_stub.cpp / *.mm /
+# 任意 platform/ 子目录（如 src/module_wallpaper/platform/* 全部是平台拆分实现）。
+PLATFORM_MACRO_RE='^[[:space:]]*#[[:space:]]*(ifdef[[:space:]]+(_WIN32|__APPLE__)|if[[:space:]]+defined[[:space:]]*\(?[[:space:]]*(_WIN32|__APPLE__))'
+is_platform_file() {
+    case "$1" in
+        */platform/*) return 0 ;;
+    esac
+    case "${1##*/}" in
+        *_win.cpp|*_macos.*|*_posix.cpp|*_stub.cpp|*.mm) return 0 ;;
+    esac
+    return 1
+}
+PLATFORM_SCAN_PATHS=()
+while IFS= read -r d; do
+    [ -d "$d" ] && PLATFORM_SCAN_PATHS+=("$d")
+done < <(find "$ROOT/src" -maxdepth 1 -type d -name 'module_*')
+[ -d "$ROOT/src/ui_kit" ] && PLATFORM_SCAN_PATHS+=("$ROOT/src/ui_kit")
+for f in "$ROOT"/src/app_*.h "$ROOT"/src/app_*.cpp; do
+    [ -f "$f" ] && PLATFORM_SCAN_PATHS+=("$f")
+done
+
+while IFS= read -r f; do
+    is_platform_file "$f" && continue
+    hits="$(grep -nE "$PLATFORM_MACRO_RE" "$f" || true)"
+    [ -n "$hits" ] || continue
+    while IFS= read -r line; do
+        report "$(rel "$f"):$line"
+    done <<< "$hits"
+done < <(find "${PLATFORM_SCAN_PATHS[@]+"${PLATFORM_SCAN_PATHS[@]}"}" -type f \
+             \( -name '*.h' -o -name '*.cpp' -o -name '*.mm' \) 2>/dev/null)
+
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "❌ 模块隔离守卫失败：$VIOLATIONS 处违规（上方 文件:行:命中行）" >&2
     exit 1
 fi
 
-echo "✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）"
+echo "✅ 模块隔离守卫通过（module_* 全模块互斥；settings CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖；业务代码零平台宏）"
 exit 0

@@ -5,6 +5,7 @@
 #include "core/logging.h"
 #include "core/markdown_notes_source.h"
 #include "core/module_interface.h"
+#include "core/platform_info.h"
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
@@ -1033,7 +1034,8 @@ public:
         if (!event.modifiers.shortcut()) return false;
         if (service_ == nullptr) return false;
         if (selectedTaskId_ == 0 || ui::findTask(tasks_, selectedTaskId_) == nullptr) {
-            setStatus("先点击卡片选中任务，再用 Ctrl+↑/↓ 移动");
+            setStatus("先点击卡片选中任务，再用 " +
+                      ::core::platform_info::shortcutModifierLabel() + "+↑/↓ 移动");
             return false;
         }
         moveTaskByKeyboard(event.key == eui::InputKey::Up);

@@ -6,6 +6,7 @@
 #include "markdown_module_internal.h"
 
 #include "core/mcp_tool.h"
+#include "core/platform_info.h"
 #include "notes_mcp_tools.h"
 
 #include <utility>
@@ -294,7 +295,10 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     components::tooltip(ui, "md.help.icon.tooltip")
         .theme(componentTheme)
         .source("md.help.icon.bg")
-        .value("快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层")
+        .value("快捷键：" + core::platform_info::shortcutModifierLabel() +
+               "+Shift+P 切换视图、" + core::platform_info::shortcutModifierLabel() +
+               "+N 新建笔记、" + core::platform_info::shortcutModifierLabel() +
+               "+S 保存、Esc 关浮层")
         .anchor(pad + contentW - headerLayout(contentW, t).actionsInnerW + 12.0f,
                 ui_kit::kHeaderH * 0.5f)
         .bounds(screen.width - pad, screen.height)

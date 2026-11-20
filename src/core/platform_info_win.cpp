@@ -8,6 +8,8 @@ namespace core::platform_info {
 
 std::string osName() { return "Windows"; }
 
+std::string shortcutModifierLabel() { return "Ctrl"; }
+
 std::string archName() {
 #if defined(_M_X64) || defined(_M_AMD64)
     return "x86_64";

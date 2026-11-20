@@ -1,6 +1,7 @@
 #include "sqlite_db.h"
 #include "file_perms.h"
 #include "logging.h"
+#include "paths.h"
 
 #include <cstddef>
 #include <cstring>
@@ -262,7 +263,9 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     sqlite3* handle = nullptr;
     // FULLMUTEX 兜底：macOS libsqlite3 是 THREADSAFE=2，裸 open 连接内部零自锁；但 recursive_mutex
     // 必须留——FULLMUTEX 只锁单次 API 调用，盖不住 transaction 的整段与跨调用配对
-    int rc = sqlite3_open_v2(file.string().c_str(), &handle,
+    // 必须走 toUtf8：sqlite3_open_v2 要求 UTF-8 文件名，path::string() 在 Windows 按 ACP
+    // 转换，中文用户名（%USERPROFILE%\DevDesk）会打开乱码路径或 CANTOPEN（bug362）
+    int rc = sqlite3_open_v2(core::paths::toUtf8(file).c_str(), &handle,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
     if (rc != SQLITE_OK) {
         std::string err = handle ? sqlite3_errmsg(handle) : "unknown";

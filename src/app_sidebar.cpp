@@ -165,6 +165,20 @@ std::optional<std::chrono::steady_clock::time_point> g_toggleParticleStart;
 // 两态同公式，offset 保持）。测试预置口 setNavScrollOffsetForTests
 float g_navScrollOffset = 0.0f;
 
+// bug368 方案 C（设计 §3.2）：当前项自动滚入的沿触发闩。路由切换（page 变化）、
+// 窗口高变化（viewport/content 变化）、分组收展（行数变化）同处一个几何签名，
+// 签名与页面任一变化才执行一次滚入——否则用户手动滚走后每帧都会被拉回当前项。
+::core::PageId g_navAutoScrollPage = ::core::PageId::Home;
+std::string g_navAutoScrollSig;
+// 测试缝 setNavScrollOffsetForTests 预置 offset 的那一帧跳过自动滚入（只更新闩），
+// 否则「预置滚到底」场景会被当前项滚入改成顶部——测试专用，生产路径永不置位。
+bool g_navAutoScrollSuspend = false;
+// chevron 交互态（hover 变色 / 按压缩放，设计 §8）
+bool g_chevronUpHovered = false;
+bool g_chevronDownHovered = false;
+bool g_chevronUpPressed = false;
+bool g_chevronDownPressed = false;
+
 // 可见态门控查询（compose 每帧顶层调用，铁律防线）：最小化（iconic）或藏托盘
 //（hidden）→ false。原生查询收在 platform::window_visibility（Windows =
 // IsIconic/IsWindowVisible；macOS = GLFW_ICONIFIED/GLFW_VISIBLE），业务层零平台
@@ -231,12 +245,21 @@ void resetSidebarGlobals() {
     g_toggleFocused = false;
     g_toggleParticleStart.reset();
     g_navScrollOffset = 0.0f;  // §11 导航滚动 offset 回厂（测试隔离）
+    g_navAutoScrollPage = ::core::PageId::Home;
+    g_navAutoScrollSig.clear();
+    g_navAutoScrollSuspend = false;
+    g_chevronUpHovered = false;
+    g_chevronDownHovered = false;
+    g_chevronUpPressed = false;
+    g_chevronDownPressed = false;
 }
 
 // 测试缝：预置导航滚动 offset（无头测试驱动「滚到底」场景）；写入值在下一次
-// compose 按 [0, contentH−viewportH] clamp（§11.2 收敛语义）
+// compose 按 [0, contentH−viewportH] clamp（§11.2 收敛语义）。预置帧跳过自动
+// 滚入（bug368：见 g_navAutoScrollSuspend 说明），否则当前项会把预置值拉回。
 void setNavScrollOffsetForTests(float offset) {
     g_navScrollOffset = std::max(0.0f, offset);
+    g_navAutoScrollSuspend = true;
 }
 
 bool sidebarGroupExpanded(::core::PageId parent) {
@@ -666,7 +689,6 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // 行规划（§11.1）：先把全部导航行规划成表（规划/绘制同源，contentH 与
             // 行几何零漂移），再在滚动画布上按表绘制；溢出即滚，不再越线不画。
             struct NavRowPlan {
-                bool divider = false;  // 组间分割线占位（1px + gap）
                 bool groupHeader = false;
                 ::core::Module* module = nullptr;  // 导航项（groupHeader 时为空）
                 const ::app::registry::ModuleEntry* entry = nullptr;  // 父项元数据
@@ -681,29 +703,21 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 return page == ::core::PageId::Settings ||
                        page == ::core::PageId::About;
             };
+            // bug368 方案 C（设计 §3.1/§3.3）：navPlan 只规划业务行；系统组（Settings/
+            // About）移出滚动流，作为独立底部锚定块（footer），永远可见不随滚。
             std::vector<NavRowPlan> navPlan;
+            std::vector<::core::Module*> systemModules;  // 系统组底块行（注册序）
             float contentH = 0.0f;
-            bool navHasDivider = false;
             {
-                bool dividerPlanned = false;
-                bool sawWork = false;
                 std::set<::core::PageId> plannedGroups;
                 const auto* currentEntry = registryEntry(router->currentPage());
                 for (auto* m : router->modules()) {
                     if (!m) continue;
                     const ::core::PageId page = m->pageId();
-                    const bool isSystem = isSystemGroup(page);
-                    // work → system 首次切换时规划组间 divider（仅当两组都非空：
-                    // sawWork && isSystem；注册表恒有两组，实际恒规划）
-                    if (!dividerPlanned && sawWork && isSystem) {
-                        NavRowPlan d;
-                        d.divider = true;
-                        navPlan.push_back(d);
-                        contentH += 1.0f + gap;
-                        dividerPlanned = true;
-                        navHasDivider = true;
+                    if (isSystemGroup(page)) {
+                        systemModules.push_back(m);
+                        continue;  // 系统组不进滚动流（锚底块独立绘制）
                     }
-                    if (!isSystem) sawWork = true;
                     // 有父级声明的模块 → 先规划父项（同组只规划一次）再规划子项；
                     // 无父级 → 原平铺路径。展开态唯一判定 = sidebarGroupExpanded
                     //（与 toggleSidebarGroup 同一状态源，默认折叠）
@@ -744,21 +758,76 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             }
             contentH = std::max(0.0f, contentH - gap);  // 末尾行距不入内容高
 
-            // §11.2 滚动区几何（两态×三档同公式）：viewport = navStart → H−zone；
-            // §11.2 offset 收敛：窗高/档位/分组收展变化后 clamp 到
-            // [0, contentH−viewportH]，无动画
-            const float viewportH =
-                std::max(0.0f, availH - toggleZoneH - navStart);
-            const float navMaxOffset =
-                std::max(0.0f, contentH - viewportH);
+            // bug368 方案 C（设计 §3.3 / §4.2）：四段式锚定——品牌（固定顶）→ 工作
+            // 导航（唯一内滚区）→ 系统组底块（固定底）→ 折叠钮预留区（固定底）。
+            // 工作视口 = availH − navStart − footerZoneH − toggleZoneH（801 档 490）；
+            // footerZoneH = 8 呼吸 + 1 线 + 8 + 设置 40 + 4 + 关于 40 + 8 = 109，
+            // 极紧档 itemH 36 → 99（设计 §4.2「极紧档减 10」）。无系统组项（模块
+            // 全关的极端装配 / 桩 Router）不预留底块高度，空白不占版面（设计 §7
+            // 「空 = 不画」同一口径）。
+            const float footerZoneH =
+                systemModules.empty() ? 0.0f : (itemH >= 40.0f ? 109.0f : 99.0f);
+            const float footerTop =
+                std::max(navStart, availH - toggleZoneH - footerZoneH);
+            const float viewportH = std::max(0.0f, footerTop - navStart);
+            const float navMaxOffset = std::max(0.0f, contentH - viewportH);
+
+            // 当前项自动滚入（设计 §3.2）：路由切换 / 窗口高变化 / 分组收展后执行一次
+            //（几何签名变化沿），规则见下；无动画，clamp [0, contentH−viewportH]。
+            // 签名不变 = 用户手动滚动/chevron 点击的帧，不再拉回当前项。
+            const auto* currentRowEntry = registryEntry(router->currentPage());
+            float currentRowTop = -1.0f;
+            float currentRowBottom = -1.0f;
+            {
+                float y = 0.0f;
+                for (const auto& plan : navPlan) {
+                    if (plan.groupHeader) {
+                        if (currentRowEntry != nullptr &&
+                            currentRowEntry->parent.has_value() &&
+                            *currentRowEntry->parent == plan.entry->page) {
+                            currentRowTop = y;
+                            currentRowBottom = y + itemH;
+                        }
+                        y += itemH + gap;
+                    } else {
+                        if (plan.module != nullptr &&
+                            plan.module->pageId() == router->currentPage()) {
+                            currentRowTop = y;
+                            currentRowBottom = y + itemH;
+                        }
+                        y += itemH + gap;
+                    }
+                }
+            }
+            const std::string navGeomSig =
+                std::string(::core::pageIdToString(router->currentPage())) + "." +
+                std::to_string(static_cast<int>(contentH)) + "." +
+                std::to_string(static_cast<int>(viewportH)) + "." +
+                std::to_string(navPlan.size());
+            const bool navGeomChanged = navGeomSig != g_navAutoScrollSig ||
+                                        g_navAutoScrollPage != router->currentPage();
+            g_navAutoScrollSig = navGeomSig;
+            g_navAutoScrollPage = router->currentPage();
+            if (currentRowTop >= 0.0f && navGeomChanged && !g_navAutoScrollSuspend) {
+                constexpr float kAutoScrollBuffer = 4.0f;
+                if (currentRowTop - kAutoScrollBuffer < g_navScrollOffset) {
+                    g_navScrollOffset = currentRowTop - kAutoScrollBuffer;
+                }
+                if (currentRowBottom + kAutoScrollBuffer >
+                    g_navScrollOffset + viewportH) {
+                    g_navScrollOffset =
+                        currentRowBottom + kAutoScrollBuffer - viewportH;
+                }
+            }
+            g_navAutoScrollSuspend = false;
             g_navScrollOffset =
                 std::clamp(g_navScrollOffset, 0.0f, navMaxOffset);
-            // contentKey：行数/档位/有无 divider 任一变化即重测（MeasureCache 缓存
+            // contentKey：行数/档位/系统组有无任一变化即重测（MeasureCache 缓存
             // 其余帧的测量，避免每帧空跑一遍绘制）
             const std::string navContentKey =
                 "sidebar.nav." + std::to_string(navPlan.size()) + "." +
                 std::to_string(static_cast<int>(itemH)) + "." +
-                (navHasDivider ? "d" : "n");
+                (systemModules.empty() ? "n" : "s");
 
             // 分组父项行：与导航项同几何；不可导航，点击只切换展开/收起。
             // 折叠侧栏下父项同样只画居中图标，子项按展开态继续列出。
@@ -934,14 +1003,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .content([&] {
                             float y = 0.0f;
                             for (const auto& plan : navPlan) {
-                                if (plan.divider) {
-                                    inner.rect("app.sidebar.groupdiv")
-                                        .position(padX, y)
-                                        .size(innerW - padX * 2.0f, 1.0f)
-                                        .color(t.colors.borderDefault)
-                                        .build();
-                                    y += 1.0f + gap;
-                                } else if (plan.groupHeader) {
+                                if (plan.groupHeader) {
                                     renderGroupHeader(inner, y, plan);
                                     y += itemH + gap;
                                 } else {
@@ -954,6 +1016,110 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .build();
                 })
                 .build();
+
+            // 系统组底块（bug368 方案 C，设计 §5.2）：设置/关于锚底，不参与滚动，
+            // 任何窗口高下常驻。原「业务→系统」组间 divider 移作本块上沿分隔线
+            // （8px 呼吸 + 1px 线 + 8px）。行几何与导航项同源（同 renderNavItem），
+            // 折叠态 hit x=16/w=40、图标居中自动生效。
+            if (!systemModules.empty()) {
+                ui.rect("app.sidebar.groupdiv")
+                    .position(padX, footerTop + 8.0f)
+                    .size(collapsed ? 40.0f : kWidth - padX * 2.0f, 1.0f)
+                    .color(t.colors.borderDefault)
+                    .build();
+                float rowY = footerTop + 17.0f;  // 分隔线下 8px 起
+                for (auto* m : systemModules) {
+                    renderNavItem(ui, rowY, m, 0.0f);
+                    rowY += itemH + gap;
+                }
+            }
+
+            // 栅边 chevron（设计 §3.2 B2）：溢出提示，不引入滚动条视觉（bug188
+            // 裁决保持）。落在行右缘 184 之外的 16px 栅边（折叠态 28..44），浮在
+            // 滚动区之上、不参与滚动。显示条件：上 offset>0.5 / 下 offset<max−0.5；
+            // 隐藏时 hitTestMode None（不可误点）+ opacity 0。单击滚 0.8×视口高。
+            {
+                const bool showUp = g_navScrollOffset > 0.5f;
+                const bool showDown = g_navScrollOffset < navMaxOffset - 0.5f;
+                constexpr float kChevronHitW = 16.0f;
+                constexpr float kChevronHitH = 24.0f;
+                constexpr float kChevronGlyph = 12.0f;
+                const float chevronGlyphX = collapsed ? 30.0f : 186.0f;
+                const float chevronHitX = collapsed ? 28.0f : 184.0f;
+                auto drawChevron = [&](const std::string& id, float hitY,
+                                       unsigned glyph, bool visible, bool hovered,
+                                       bool pressed,
+                                       std::function<void()> click) {
+                    const float scale = pressed ? 0.92f : 1.0f;
+                    const core::Transition tr = core::Transition::make(
+                        pressed || hovered ? 0.10f : 0.20f,
+                        hovered ? core::Ease::OutCubic : core::Ease::OutBack);
+                    ui.rect(id + ".hit")
+                        .position(chevronHitX, hitY)
+                        .size(kChevronHitW, kChevronHitH)
+                        .states(kTransparent,
+                                t.colors.primarySoftBg,
+                                t.colors.primarySoftBg)
+                        .radius(6.0f)
+                        .opacity(visible ? 1.0f : 0.0f)
+                        .hitTestMode(visible ? core::dsl::HitTestMode::Layout
+                                             : core::dsl::HitTestMode::None)
+                        .onHover([id](bool h) {
+                            if (id.find("up") != std::string::npos) {
+                                g_chevronUpHovered = h;
+                            } else {
+                                g_chevronDownHovered = h;
+                            }
+                        })
+                        .onPress([id](const auto&, const auto&) {
+                            if (id.find("up") != std::string::npos) {
+                                g_chevronUpPressed = true;
+                            } else {
+                                g_chevronDownPressed = true;
+                            }
+                        })
+                        .onRelease([id](const auto&, const auto&) {
+                            if (id.find("up") != std::string::npos) {
+                                g_chevronUpPressed = false;
+                            } else {
+                                g_chevronDownPressed = false;
+                            }
+                        })
+                        .onClick(std::move(click))
+                        .build();
+                    ui.text(id + ".glyph")
+                        .position(chevronGlyphX, hitY + 6.0f)
+                        .size(kChevronGlyph, kChevronGlyph)
+                        .icon(eui::utf8(glyph))
+                        .fontSize(kChevronGlyph)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(hovered ? t.colors.primaryHover
+                                       : t.colors.textTertiary)
+                        .opacity(visible ? 1.0f : 0.0f)
+                        .transformOrigin(0.5f, 0.5f)
+                        .scale(scale)
+                        .transition(tr)
+                        .animate(core::AnimProperty::TextColor |
+                                 core::AnimProperty::Opacity |
+                                 core::AnimProperty::Transform)
+                        .build();
+                };
+                const float viewportBottom = navStart + viewportH;
+                drawChevron(
+                    "app.sidebar.chevron.up", navStart - 2.0f, 0xF077, showUp,
+                    g_chevronUpHovered, g_chevronUpPressed, [viewportH] {
+                        g_navScrollOffset = std::max(
+                            0.0f, g_navScrollOffset - 0.8f * viewportH);
+                    });
+                drawChevron(
+                    "app.sidebar.chevron.down", viewportBottom - 22.0f, 0xF078,
+                    showDown, g_chevronDownHovered, g_chevronDownPressed,
+                    [viewportH, navMaxOffset] {
+                        g_navScrollOffset = std::min(
+                            navMaxOffset, g_navScrollOffset + 0.8f * viewportH);
+                    });
+            }
 
             // 折叠开关（底部固定）：need172 v2（设计文档 §10.2）+ v3（§2/§3）——直径
             // 按档 40/36 正圆，预留区 56/52 内垂直居中（toggleY = H−zone+4，上

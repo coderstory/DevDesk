@@ -74,6 +74,17 @@ bool writeRawConfig(const std::string& json) {
 
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
+// 子树按 id 搜节点：Element 本身没有 find()（只有 Ui::find 走全局索引），判
+// 「某节点在不在某子树内」只能递归 children。
+bool subtreeHasId(const ::core::dsl::Element* node, const std::string& id) {
+    if (node == nullptr) return false;
+    if (node->id == id) return true;
+    for (const auto& child : node->children) {
+        if (subtreeHasId(child.get(), id)) return true;
+    }
+    return false;
+}
+
 // 动态背景（UAT6 主窗活体流质）测试共用的装配：桩 Router + 可见态钉住。
 // headless 下平台可见查询按「可见」降级（EnumWindows 无命中），用例按钉住值
 // 锁语义，不随测试运行平台漂移。
@@ -331,9 +342,12 @@ REGISTER_TEST(sidebar_collapsed_compose,
     // 首行贴视口顶（offset=0）→ 画布 y=0，侧栏坐标仍 32+56+28=116
     DOCTEST_CHECK(floatEq(firstHit->y, 0.0f));
 
-    // 折叠态不渲染 label（模块名只走 tooltip）
+    // 折叠态不渲染 label（模块名无可视文本承载）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label") == nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.item.Markdown.label") == nullptr);
+    // bug369（路线 B：删文档臆造描述，不实现 tooltip）：折叠态确无 tooltip 节点。
+    // 此断言钉住「文档 = 实现」的一致性——将来真做 tooltip，这里先红，迫使同步改文档。
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Home.tip") == nullptr);
 
     // 图标在 72 内水平居中：(72 - 28) / 2
     const auto* icon = ui.find("app.sidebar.item.Home.icon");
@@ -866,20 +880,37 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
         DOCTEST_CHECK(floatEq(label->textColor.g, t.colors.primaryText.g));
     }
 
-    // 组间 divider 在 Home 之下（画布 y=44 = itemH40 + gap4；侧栏坐标 44+navStart116=160）
+    // bug368 方案 C（设计 §3.1/§5.2）：系统组移出滚动流，锚底独立成块。
+    // 本用例 screen.height 未补 kExpectedBodyTop，侧栏局部高 = 1000 − 30(mac) = 970：
+    // footerTop = 970 − 56(toggleZone) − 109(footerZone) = 805；分隔线 footerTop+8；
+    // 设置行 footerTop+17、关于行 +44；全部以 nav 视口底（= footerTop）为锚做相对断言。
+    // 本用例未调 ui.layout → 读 builder 几何（y/height.value），frame 全是 0
+    const auto* w3Nav = ui.find("app.sidebar.nav");
+    DOCTEST_REQUIRE(w3Nav != nullptr);
+    const float footerTop = w3Nav->y + w3Nav->height.value;
+
     const auto* groupdiv = ui.find("app.sidebar.groupdiv");
     DOCTEST_REQUIRE(groupdiv != nullptr);
-    DOCTEST_CHECK(floatEq(groupdiv->y, 44.0f));
+    DOCTEST_CHECK(floatEq(groupdiv->y, footerTop + 8.0f));
+    DOCTEST_CHECK(floatEq(groupdiv->x, 16.0f));
+    DOCTEST_CHECK(floatEq(groupdiv->width.value, 168.0f));  // 200 − 32
+    DOCTEST_CHECK(floatEq(groupdiv->height.value, 1.0f));
 
-    // Settings（system 组）在 divider 之下（画布 y=49 = 44 + divider1 + gap4）
+    // Settings / About 不再在滚动画布坐标系里，而是侧栏局部坐标（锚底块）
     const auto* settingsHit = ui.find("app.sidebar.item.Settings.hit");
     DOCTEST_REQUIRE(settingsHit != nullptr);
-    DOCTEST_CHECK(floatEq(settingsHit->y, 49.0f));
+    DOCTEST_CHECK(floatEq(settingsHit->y, footerTop + 17.0f));
 
-    // About 在 Settings 之下（画布 y=93 = 49 + itemH40 + gap4）
     const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
     DOCTEST_REQUIRE(aboutHit != nullptr);
-    DOCTEST_CHECK(floatEq(aboutHit->y, 93.0f));
+    DOCTEST_CHECK(floatEq(aboutHit->y, footerTop + 61.0f));  // 17 + 40 + 4
+    // 关于行底不侵入折叠钮预留区（底呼吸 8 + 让位 4）
+    const auto* w3Toggle = ui.find("app.sidebar.toggle");
+    DOCTEST_REQUIRE(w3Toggle != nullptr);
+    DOCTEST_CHECK(aboutHit->y + 40.0f <= w3Toggle->y - 4.0f + 0.01f);
+
+    // 系统组任一行都不在滚动区视口内
+    DOCTEST_CHECK(settingsHit->y >= footerTop);
 
     // Settings/About 是 inactive，不应有 SelectionBar（W3：active 才叠 SelectionBar）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Settings.sel.bg") == nullptr);
@@ -1519,9 +1550,10 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
     router.registerModule(&about);
     test_support::ScopedAppRouter scoped(&router);
 
-    // ① H=680 紧凑档：logo 56 → 块加高、起点 96（95cba613）；viewportH =
-    //   680−52−96 = 532（dd0f28db 区 52），contentH = 12×44+1 = 529
-    //   → 未溢出（余 3px），滚动条零绘制（§11.3 非溢出零绘制；最小窗承诺保持）
+    // ① H=680 紧凑档：logo 56 → 块加高、起点 96（95cba613）；bug368 方案 C 后
+    //   视口 = footerTop − navStart = (680−52−109) − 96 = 423，工作区 contentH =
+    //    10×44−4 = 436（9 平铺 + Release 分组头；系统组移出滚动流）
+    //   → 溢出 13，滚动组件出现（bug188：零宽不可见）
     {
         eui::Ui ui;
         ui.begin("scroll_680_collapsed");
@@ -1534,11 +1566,11 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         const auto* nav = ui.find("app.sidebar.nav");
         DOCTEST_REQUIRE(nav != nullptr);
         DOCTEST_CHECK(floatEq(nav->y, 96.0f));  // navStart（紧凑档，logo 56 块加高）
-        DOCTEST_CHECK(floatEq(nav->frame.height, 532.0f));  // 680−52−96
-        DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll") == nullptr);
+        DOCTEST_CHECK(floatEq(nav->frame.height, 423.0f));  // 519 − 96
+        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 436.0f - 423.0f));
     }
-    // ④ 展开 ReleaseGroup（+2 子行）→ 14 行 contentH = 14×44+1 = 617 > 532
-    //   → 滚动组件出现（bug188：零宽不可见）、offset 下界 = 85
+    // ④ 展开 ReleaseGroup（+2 子行）→ 12 行 contentH = 12×44−4 = 524 > 423
+    //   → 滚动组件出现（bug188：零宽不可见）、offset 下界 = 101
     app::toggleSidebarGroup(::core::PageId::ReleaseGroup);
     {
         eui::Ui ui;
@@ -1559,9 +1591,10 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         DOCTEST_REQUIRE(thumb != nullptr);
         DOCTEST_CHECK(floatEq(sb->frame.width, 0.0f));
         DOCTEST_CHECK(floatEq(thumb->frame.width, 0.0f));
-        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 617.0f - 532.0f));
+        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 524.0f - 423.0f));
     }
-    // ④ 收起 → contentKey 重测 12 行 → 滚动条即时消失、offset clamp 回 0
+    // ④ 收起 → contentKey 重测 10 行 → maxOffset 回 13（bug368 后分组收起仍溢出
+    //   13px：系统组不再吃滚动流，但视口同时减了 109）；offset 仍 0（当前页 Home 在顶部）
     app::toggleSidebarGroup(::core::PageId::ReleaseGroup);
     {
         eui::Ui ui;
@@ -1572,14 +1605,14 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         app::compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        DOCTEST_CHECK(ui.find("app.sidebar.nav.scroll") == nullptr);
         const auto* nav = ui.find("app.sidebar.nav");
         DOCTEST_REQUIRE(nav != nullptr);
         DOCTEST_CHECK(floatEq(nav->scrollOffset, 0.0f));
-        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 0.0f));
+        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 436.0f - 423.0f));
     }
-    // ② H=560 极紧收起态：contentH = 12×38+1 = 457，viewportH = 560−52−80 = 428
-    //   （dd0f28db 区 52）→ 溢出；offset 预置超界值 → clamp 到 29（§11.2）
+    // ② H=560 极紧收起态：工作区 contentH = 10×38−2 = 378，
+    //   footerZoneH 99 → viewportH = (560−52−99) − 80 = 329 → 溢出 49；
+    //   offset 预置超界值 → clamp 到 49（§11.2；预置帧跳过自动滚入保持该值）
     app::setNavScrollOffsetForTests(9999.0f);
     {
         eui::Ui ui;
@@ -1593,7 +1626,7 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         const auto* nav = ui.find("app.sidebar.nav");
         DOCTEST_REQUIRE(nav != nullptr);
         DOCTEST_CHECK(floatEq(nav->y, 80.0f));  // navStart（极紧档）
-        DOCTEST_CHECK(floatEq(nav->frame.height, 428.0f));  // 560−52−80
+        DOCTEST_CHECK(floatEq(nav->frame.height, 329.0f));  // footerTop 409 − 80
         // bug188：滚动条零宽（视觉全无），滚动能力保留（offset/maxOffset 下方断言）
         const auto* sb = ui.find("app.sidebar.nav.scroll");
         const auto* thumb = ui.find("app.sidebar.nav.scroll.thumb");
@@ -1601,13 +1634,16 @@ REGISTER_TEST(sidebar_nav_scroll_overflow_matrix,
         DOCTEST_REQUIRE(thumb != nullptr);
         DOCTEST_CHECK(floatEq(sb->frame.width, 0.0f));
         DOCTEST_CHECK(floatEq(thumb->frame.width, 0.0f));
-        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 457.0f - 428.0f));
-        DOCTEST_CHECK(floatEq(nav->scrollOffset, 29.0f));  // clamp 收敛
-        // 滚到底最后一行（About，画布 y 421..457）完整可见：
-        // 视口内 392..428 ⊆ [0,428]，且内容底 457 不进按钮预留区（H−52=508）
+        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 378.0f - 329.0f));
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, 49.0f));  // clamp 收敛
+        // 滚到底最后一条工作行（ReleaseGroup 父项，画布 y 342..378）完整可见
+        const auto* lastWorkHit = ui.find("app.sidebar.item.ReleaseGroup.hit");
+        DOCTEST_REQUIRE(lastWorkHit != nullptr);
+        DOCTEST_CHECK(floatEq(lastWorkHit->y + 36.0f, 378.0f));  // 内容底=末行底
+        // 设置/关于在锚底块里，不随滚动、不被视口裁剪
         const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
         DOCTEST_REQUIRE(aboutHit != nullptr);
-        DOCTEST_CHECK(floatEq(aboutHit->y + 36.0f, 457.0f));  // 内容底=末行底
+        DOCTEST_CHECK(aboutHit->y >= nav->y + nav->frame.height);
     }
     app::setNavScrollOffsetForTests(0.0f);  // offset 复位（进程级态）
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
@@ -1657,6 +1693,358 @@ REGISTER_TEST(sidebar_fullscreen_hidden_zero_width,
 
     // 复位（测试隔离）：桥拆回默认桩 + 进程级旗标/折叠态回厂
     app::terminal_fullscreen::setHandler(nullptr);
+    app::resetSidebarGlobals();
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
+// bug368 方案 C（设计 docs/design/2026-11-21-sidebar-clipping-fix.md §3.1/§5.2）：
+// 系统组（设置/关于）锚底成独立块——不在滚动区节点树内，且任何窗口高下常驻可见。
+REGISTER_TEST(sidebar_system_group_anchored_bottom,
+              "sidebar: 系统组锚底——设置/关于不入滚动画布、恒在视口之下且不越折叠钮", {
+    app::setCustomTitlebarMode(false);
+    app::resetSidebarGlobals();
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    RecordingModule mcp(::core::PageId::Mcp, "MCP");
+    RecordingModule settings(::core::PageId::Settings, "设置");
+    RecordingModule about(::core::PageId::About, "关于");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&md);
+    router.registerModule(&mcp);
+    router.registerModule(&settings);
+    router.registerModule(&about);
+    test_support::ScopedAppRouter scoped(&router);
+
+    // 三档各验一次：正常 801 / 紧凑 700 / 极紧 660（设计 §11 验证清单 #1）
+    const float kHeights[3] = {801.0f, 700.0f, 660.0f};
+    for (float h : kHeights) {
+        app::resetSidebarGlobals();  // 每档从干净态起（当前页 Home = 顶部）
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = h + kExpectedBodyTop;
+        eui::Ui ui;
+        ui.begin("sidebar_anchored_" + std::to_string(static_cast<int>(h)));
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* nav = ui.find("app.sidebar.nav");
+        const auto* navCanvas = ui.find("app.sidebar.nav.canvas");
+        const auto* settingsHit = ui.find("app.sidebar.item.Settings.hit");
+        const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
+        const auto* groupdiv = ui.find("app.sidebar.groupdiv");
+        const auto* toggle = ui.find("app.sidebar.toggle");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_REQUIRE(navCanvas != nullptr);
+        DOCTEST_REQUIRE(settingsHit != nullptr);
+        DOCTEST_REQUIRE(aboutHit != nullptr);
+        DOCTEST_REQUIRE(groupdiv != nullptr);
+        DOCTEST_REQUIRE(toggle != nullptr);
+
+        // ① 系统行不在滚动画布子树内（锚底块画在 sidebar 上、不经 scrollView content）
+        DOCTEST_CHECK(
+            !subtreeHasId(navCanvas, "app.sidebar.item.Settings.hit"));
+        DOCTEST_CHECK(!subtreeHasId(navCanvas, "app.sidebar.item.About.hit"));
+
+        // ② 系统行整体在导航视口之下（不参与滚动，永不进裁剪域）
+        DOCTEST_CHECK(settingsHit->y >= nav->y + nav->frame.height);
+        DOCTEST_CHECK(aboutHit->y > settingsHit->y);
+
+        // ③ 任何窗口高下设置/关于都完整可见：关于行底不碰折叠钮预留区上缘
+        DOCTEST_CHECK(aboutHit->y + 40.0f <= toggle->y + 0.01f);
+
+        // ④ 分隔线在导航视口底与设置行之间，行宽 = 行 hit 宽（收起态 168）
+        DOCTEST_CHECK(groupdiv->y >= nav->y + nav->frame.height);
+        DOCTEST_CHECK(groupdiv->y < settingsHit->y);
+        DOCTEST_CHECK(floatEq(groupdiv->x, settingsHit->x));
+        DOCTEST_CHECK(floatEq(groupdiv->width.value, settingsHit->width.value));
+    }
+
+    // ⑤ 折叠态 72（设计 §5.4）：垂直几何完全不变（footerZone 仍 109），行 hit
+    //    x=16/w=40、分隔线 x=16/w=40、图标居中——系统组同样锚底
+    app::resetSidebarGlobals();
+    app::setSidebarCollapsed(true);
+    {
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 801.0f + kExpectedBodyTop;
+        eui::Ui ui;
+        ui.begin("sidebar_anchored_collapsed");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* nav = ui.find("app.sidebar.nav");
+        const auto* settingsHit = ui.find("app.sidebar.item.Settings.hit");
+        const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
+        const auto* groupdiv = ui.find("app.sidebar.groupdiv");
+        const auto* toggle = ui.find("app.sidebar.toggle");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_REQUIRE(settingsHit != nullptr);
+        DOCTEST_REQUIRE(aboutHit != nullptr);
+        DOCTEST_REQUIRE(groupdiv != nullptr);
+        DOCTEST_REQUIRE(toggle != nullptr);
+
+        // 折叠 72：行 hit x=16 w=40（与展开态同左缘、窄 40）；图标水平居中
+        DOCTEST_CHECK(floatEq(settingsHit->x, 16.0f));
+        DOCTEST_CHECK(floatEq(settingsHit->width.value, 40.0f));
+        DOCTEST_CHECK(floatEq(groupdiv->x, 16.0f));
+        DOCTEST_CHECK(floatEq(groupdiv->width.value, 40.0f));
+        const auto* setIcon = ui.find("app.sidebar.item.Settings.icon");
+        DOCTEST_REQUIRE(setIcon != nullptr);
+        DOCTEST_CHECK(floatEq(setIcon->x, 22.0f));  // (72 − 28) / 2
+        // 折叠态不画 label
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Settings.label") == nullptr);
+
+        // 垂直锚定与展开态同公式：footerTop = 801 − 56 − 109 = 636
+        const float footerTop = nav->y + nav->frame.height;
+        DOCTEST_CHECK(floatEq(footerTop, 636.0f));
+        DOCTEST_CHECK(floatEq(settingsHit->y, footerTop + 17.0f));
+        DOCTEST_CHECK(floatEq(aboutHit->y, footerTop + 61.0f));
+        DOCTEST_CHECK(aboutHit->y + 40.0f <= toggle->y + 0.01f);
+        // chevron 折叠态落 28..44（设计 §5.4）
+        const auto* downHit = ui.find("app.sidebar.chevron.down.hit");
+        DOCTEST_REQUIRE(downHit != nullptr);
+        DOCTEST_CHECK(floatEq(downHit->x, 28.0f));
+        DOCTEST_CHECK(floatEq(downHit->width.value, 16.0f));
+    }
+
+    app::resetSidebarGlobals();
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
+// bug368 方案 C（设计 §3.2 B2）：chevron 可见性跟随 offset——顶态上箭头隐藏、
+// 有下溢出时下箭头显示；滚到底后两者互换；maxOffset=0 时双隐藏。
+REGISTER_TEST(sidebar_chevron_visibility_follows_offset,
+              "sidebar: chevron 可见性跟随 offset（顶态上隐/有溢出下显/到底互换/max=0 双隐）", {
+    app::setCustomTitlebarMode(false);
+    app::resetSidebarGlobals();
+    // 9 平铺 + Release 父项 = 10 行 → 801 档视口 490、contentH 436：不溢出。
+    // 造溢出：注册 14 个业务页，contentH = 14×44−4 = 612 > 490 → maxOffset = 122。
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    RecordingModule git(::core::PageId::Git, "Git");
+    RecordingModule todo(::core::PageId::Todo, "待办");
+    RecordingModule schedule(::core::PageId::Schedule, "定时");
+    RecordingModule proxy(::core::PageId::ClaudeProxy, "Claude");
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    RecordingModule memory(::core::PageId::Memory, "记忆");
+    RecordingModule wallpaper(::core::PageId::Wallpaper, "壁纸");
+    RecordingModule mcp(::core::PageId::Mcp, "MCP");
+    RecordingModule terminal(::core::PageId::Terminal, "终端");
+    RecordingModule releaseTasks(::core::PageId::ReleaseTasks, "任务");
+    RecordingModule releaseConfig(::core::PageId::ReleaseConfig, "基础配置");
+    RecordingModule settings(::core::PageId::Settings, "设置");
+    RecordingModule about(::core::PageId::About, "关于");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&md);
+    router.registerModule(&git);
+    router.registerModule(&todo);
+    router.registerModule(&schedule);
+    router.registerModule(&proxy);
+    router.registerModule(&agent);
+    router.registerModule(&memory);
+    router.registerModule(&wallpaper);
+    router.registerModule(&mcp);
+    router.registerModule(&terminal);
+    router.registerModule(&releaseTasks);
+    router.registerModule(&releaseConfig);
+    router.registerModule(&settings);
+    router.registerModule(&about);
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 801.0f + kExpectedBodyTop;
+
+    // 顶态（offset=0）：上隐、下显
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_chevron_top");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(nav->scrollMaxOffset > 0.0f);  // 前提：确实有下溢出
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, 0.0f));
+
+        const auto* upHit = ui.find("app.sidebar.chevron.up.hit");
+        const auto* downHit = ui.find("app.sidebar.chevron.down.hit");
+        DOCTEST_REQUIRE(upHit != nullptr);
+        DOCTEST_REQUIRE(downHit != nullptr);
+        // 上箭头隐藏 = opacity 0 + 不可命中；下箭头可见 = opacity 1 + 可命中
+        DOCTEST_CHECK(floatEq(upHit->opacity, 0.0f));
+        DOCTEST_CHECK(upHit->hitTestMode == ::core::dsl::HitTestMode::None);
+        DOCTEST_CHECK(floatEq(downHit->opacity, 1.0f));
+        DOCTEST_CHECK(downHit->hitTestMode == ::core::dsl::HitTestMode::Layout);
+        DOCTEST_CHECK(downHit->onClick != nullptr);
+    }
+
+    // 滚到底：上显、下隐（点击下箭头一次 = 0.8×490 = 392 > maxOffset 122 → 到底）
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_chevron_click");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* downHit = ui.find("app.sidebar.chevron.down.hit");
+        DOCTEST_REQUIRE(downHit != nullptr);
+        DOCTEST_REQUIRE(downHit->onClick != nullptr);
+        downHit->onClick();  // 真用户路径：单击只改 offset，下一帧生效
+    }
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_chevron_bottom");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, nav->scrollMaxOffset));  // clamp 到底
+
+        const auto* upHit = ui.find("app.sidebar.chevron.up.hit");
+        const auto* downHit = ui.find("app.sidebar.chevron.down.hit");
+        DOCTEST_REQUIRE(upHit != nullptr);
+        DOCTEST_REQUIRE(downHit != nullptr);
+        DOCTEST_CHECK(floatEq(upHit->opacity, 1.0f));
+        DOCTEST_CHECK(upHit->hitTestMode == ::core::dsl::HitTestMode::Layout);
+        DOCTEST_CHECK(floatEq(downHit->opacity, 0.0f));
+        DOCTEST_CHECK(downHit->hitTestMode == ::core::dsl::HitTestMode::None);
+    }
+
+    // 无溢出（1600×1000 → 视口 689 > 内容 612）：双箭头隐藏（设计 §3.3「宽窗退化纯 A」）
+    app::resetSidebarGlobals();
+    {
+        eui::Screen tall;
+        tall.width = 1600.0f;
+        tall.height = 1000.0f + kExpectedBodyTop;
+        eui::Ui ui;
+        ui.begin("sidebar_chevron_no_overflow");
+        app::compose(ui, tall);
+        ui.end();
+        ui.layout(tall.width, tall.height);
+
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(floatEq(nav->scrollMaxOffset, 0.0f));
+        const auto* upHit = ui.find("app.sidebar.chevron.up.hit");
+        const auto* downHit = ui.find("app.sidebar.chevron.down.hit");
+        DOCTEST_REQUIRE(upHit != nullptr);
+        DOCTEST_REQUIRE(downHit != nullptr);
+        DOCTEST_CHECK(floatEq(upHit->opacity, 0.0f));
+        DOCTEST_CHECK(floatEq(downHit->opacity, 0.0f));
+    }
+
+    app::resetSidebarGlobals();
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
+// bug368 方案 C（设计 §3.2「自动滚入」）：路由切到视口外的行时自动滚入（上下各
+// 4px 缓冲、无动画、clamp）；路由不动时用户手动滚走不被拉回。
+REGISTER_TEST(sidebar_nav_auto_scroll_into_view,
+              "sidebar: 当前项自动滚入——深链末项滚入视口、同页保持用户 offset", {
+    app::setCustomTitlebarMode(false);
+    app::resetSidebarGlobals();
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    RecordingModule git(::core::PageId::Git, "Git");
+    RecordingModule todo(::core::PageId::Todo, "待办");
+    RecordingModule schedule(::core::PageId::Schedule, "定时");
+    RecordingModule proxy(::core::PageId::ClaudeProxy, "Claude");
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    RecordingModule memory(::core::PageId::Memory, "记忆");
+    RecordingModule wallpaper(::core::PageId::Wallpaper, "壁纸");
+    RecordingModule mcp(::core::PageId::Mcp, "MCP");
+    RecordingModule terminal(::core::PageId::Terminal, "终端");
+    RecordingModule settings(::core::PageId::Settings, "设置");
+    RecordingModule about(::core::PageId::About, "关于");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&md);
+    router.registerModule(&git);
+    router.registerModule(&todo);
+    router.registerModule(&schedule);
+    router.registerModule(&proxy);
+    router.registerModule(&agent);
+    router.registerModule(&memory);
+    router.registerModule(&wallpaper);
+    router.registerModule(&mcp);
+    router.registerModule(&terminal);
+    router.registerModule(&settings);
+    router.registerModule(&about);
+    test_support::ScopedAppRouter scoped(&router);
+
+    // 矮窗（600 极紧档）造溢出：11 行工作区内容 11×38−2 = 416，
+    // footerZoneH 99 → 视口 = (600−52−99) − 80 = 369 → maxOffset = 47
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 600.0f + kExpectedBodyTop;
+
+    // ① 当前页 = 终端（第 11 行，画布 y 380..416）→ 自动滚入到底：
+    //   rowBottom 416 + 4 − 视口 369 = 51 → clamp 到 maxOffset 47
+    router.navigateTo(::core::PageId::Terminal);
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_autoscroll_deep");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(nav->scrollMaxOffset > 0.0f);
+        DOCTEST_CHECK(nav->scrollOffset > 0.0f);  // 首帧即滚入，无闪烁
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, nav->scrollMaxOffset));
+        // 末项完整入视口（±4px 缓冲被 clamp 吞掉不越界）
+        const auto* termHit = ui.find("app.sidebar.item.Terminal.hit");
+        DOCTEST_REQUIRE(termHit != nullptr);
+        DOCTEST_CHECK(termHit->y + 36.0f -
+                          nav->scrollOffset <= nav->frame.height + 0.01f);
+    }
+
+    // ② 同页、用户手动滚到顶 → 不被拉回（几何签名未变）
+    app::setNavScrollOffsetForTests(0.0f);  // 预置帧跳过自动滚入
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_autoscroll_manual");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, 0.0f));
+    }
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_autoscroll_manual2");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, 0.0f));  // 下一帧仍不被拉回
+    }
+
+    // ③ 回首页（第 1 行）→ 路由切换触发滚回顶部（rowTop 0 − 4 < offset → 置 0 后 clamp）
+    router.navigateTo(::core::PageId::Home);
+    {
+        eui::Ui ui;
+        ui.begin("sidebar_autoscroll_back_top");
+        app::compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* nav = ui.find("app.sidebar.nav");
+        DOCTEST_REQUIRE(nav != nullptr);
+        DOCTEST_CHECK(floatEq(nav->scrollOffset, 0.0f));
+    }
+
     app::resetSidebarGlobals();
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;

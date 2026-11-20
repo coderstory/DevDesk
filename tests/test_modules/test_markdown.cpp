@@ -10,6 +10,7 @@
 #include "test_support.h"
 #include "../frame_env.h"   // headless 帧驱动三合一 HeadlessFrame
 #include "core/app_config.h"
+#include "core/platform_info.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
@@ -496,8 +497,13 @@ REGISTER_TEST(md_help_button_spec,
                   std::string::npos);
     const auto* tipText = ui.find("md.help.icon.tooltip.text");
     DOCTEST_REQUIRE(tipText != nullptr);
+    // 修饰键显示名平台化（core::platform_info::shortcutModifierLabel）：macOS ⌘ / Win Ctrl
     DOCTEST_CHECK(tipText->text ==
-                  "快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层");
+                  "快捷键：" + core::platform_info::shortcutModifierLabel() +
+                      "+Shift+P 切换视图、" +
+                      core::platform_info::shortcutModifierLabel() + "+N 新建笔记、" +
+                      core::platform_info::shortcutModifierLabel() +
+                      "+S 保存、Esc 关浮层");
 
     mod->onStop();
     return true;

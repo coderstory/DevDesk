@@ -3,12 +3,14 @@
 
 #include "claude_ui_logic.h"
 #include "core/component_theme.h"
+#include "core/user_message.h"  // bug369：错误态人话文案层
 #include "provider_config.h"
 #include "settings_sync.h"
 
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/button.h>  // bug369：错误态「重试」就近按钮
 #include <ui_kit/dialog_shell.h>
 #include <ui_kit/materials.h>
 #include <components/scrollview.h>
@@ -658,15 +660,42 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             const float listBottom = bodyH - kListBottomGap;
 
             if (!profilesError.empty()) {
+                // bug369：原文案直接把内部 errorMessage()（含「ClaudeService 未注册」
+                // 类名）贴给用户，且错误块里没有任何出路。现在过 user_message 层
+                // 换人话，并按错误性质给恢复路径：
+                //   服务未装配（需重启）→ 说明重启指引，不给假「重试」（重试必然再失败）
+                //   查询失败（库/IO）→ 就近「重试」按钮 + 引导句
+                const bool needsRestart =
+                    core::user_message::claudeErrorNeedsRestart(profilesError);
+                const float errH = core::theme::scaled(60.0f);
                 ui.text("claude.profiles.error")
                     .position(20.0f, cardY0 + 20.0f)
-                    .size(leftW - 40.0f, core::theme::scaled(60.0f))
-                    .text("Profile 列表加载失败：" + profilesError)
+                    .size(leftW - 40.0f, errH)
+                    .text(core::user_message::claudeProfileErrorText(profilesError))
                     .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(core::theme::scaled(20.0f))
-                    .wrap(true)  // 长错误原因必须换行读全（P0-C1：单行截断丢自查线索）
+                    .wrap(true)
                     .color(t.colors.errorText)
                     .build();
+                ui.text("claude.profiles.error.guide")
+                    .position(20.0f, cardY0 + 20.0f + errH + 4.0f)
+                    .size(leftW - 40.0f, core::theme::scaled(18.0f))
+                    .text(core::user_message::claudeProfileErrorGuide(profilesError))
+                    .fontSize(core::theme::scaled(11.0f))
+                    .lineHeight(core::theme::scaled(16.0f))
+                    .wrap(true)
+                    .color(t.colors.textTertiary)
+                    .build();
+                // 重启类不给重试：服务未装配在会话内不可恢复，按钮只会骗人。
+                if (!needsRestart && actions.onRetryLoad) {
+                    ui_kit::ButtonOptions retryOpts;
+                    retryOpts.onClick = actions.onRetryLoad;
+                    ui_kit::button(ui, "claude.profiles.error.retry", "重试",
+                                   ui_kit::ButtonLevel::Secondary, 20.0f,
+                                   cardY0 + 20.0f + errH + core::theme::scaled(46.0f),
+                                   core::theme::scaled(88.0f), core::theme::scaled(30.0f), t,
+                                   retryOpts);
+                }
             } else if (profiles.empty()) {
                 ui.text("claude.profiles.empty")
                     .position(20.0f, cardY0 + 20.0f)

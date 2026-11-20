@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "core/logging.h"
+#include "core/paths.h"
 
 namespace module::wallpaper {
 
@@ -120,7 +121,9 @@ ImageScanResult scanImageLibrary(const std::filesystem::path& folder, int minPix
             ++result.excludedByContainment;
             continue;
         }
-        result.files.push_back(path.string());
+        // 清单最终喂 mpv JSON 命令（要求 UTF-8）；path::string() 在 Windows 按 ACP 转换，
+        // 非 ASCII 文件名（中文壁纸目录）会变成 mpv 打不开的乱码路径（bug362）
+        result.files.push_back(core::paths::toUtf8(path));
     }
 
     if (iterateEc) {

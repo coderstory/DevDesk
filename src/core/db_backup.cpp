@@ -2,6 +2,7 @@
 #include "db_backup.h"
 #include "file_perms.h"
 #include "logging.h"
+#include "paths.h"
 #include "time.h"
 
 #include <algorithm>
@@ -29,7 +30,9 @@ std::string sqliteErr(sqlite3* db, const char* what) {
 // flags 不带 CREATE：检查与备份源绝不能顺手造出新库
 core::Result<sqlite3*> openRaw(const fs::path& file, int flags) {
     sqlite3* handle = nullptr;
-    const int rc = sqlite3_open_v2(file.string().c_str(), &handle, flags, nullptr);
+    // 必须走 toUtf8：sqlite3_open_v2 要求 UTF-8 文件名，path::string() 在 Windows 按 ACP
+    // 转换，中文用户名会打开乱码路径或 CANTOPEN（bug362）
+    const int rc = sqlite3_open_v2(core::paths::toUtf8(file).c_str(), &handle, flags, nullptr);
     if (rc != SQLITE_OK) {
         const std::string msg = handle ? sqlite3_errmsg(handle) : "sqlite3_open_v2 失败";
         if (handle) sqlite3_close(handle);

@@ -541,6 +541,15 @@ void drawModulesCard(const CardDrawArgs& args) {
                 const std::string descId = cellId + (isWallpaper
                                                          ? ".rowdesc"
                                                          : ".rowdesc" + suffix);
+                // bug372：开关锚改用模块 id（.sw.<moduleId>.track），不再用格序
+                // ——kToggleable 插行（池#371 git/终端补位）会让 sw.<n> 指到隔壁
+                // 格，探针/场景按旧序号点到别的模块。name/rowdesc 维持格序：
+                // 它们是格阵几何锚（测试按 cell i 量 x/y/行距），按身份寻址反而
+                // 要把表序重数一遍，且几何断言本就与模块身份无关。
+                const std::string switchId =
+                    cellId + ".sw" +
+                    (isWallpaper ? std::string()
+                                 : "." + std::string(meta.moduleId));
                 ui.text(nameId)
                     .position(cellX, rowY)
                     .size(textW, nameH)
@@ -600,8 +609,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                 // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
                 // UAT3：80×32 显示过大 → 44×24（agent_module 详情弹窗同款）；
                 // 格视觉块 = name 18 + 2 + desc 16 = 36 高，24 开关居中偏移 +6。
-                ui_kit::wswitch(ui, cellId + (isWallpaper ? ".sw"
-                                                           : ".sw" + suffix),
+                ui_kit::wswitch(ui, switchId,
                     moduleEnabled(in.cfg, meta.moduleId),
                     cellX + effCellW - switchW, rowY + 6.0f, switchW, switchH, t,
                     [f = a.applyModuleEnabled,

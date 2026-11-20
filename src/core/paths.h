@@ -69,4 +69,15 @@ std::filesystem::path sqlDumpFile();
 // 确保所有目录存在
 void ensureDirectoriesExist();
 
+// fs::path → UTF-8 std::string（跨平台统一口径，bug362）。
+// 用途：喂给要求 UTF-8 的 C API（sqlite3_open_v2 / libcurl / mpv JSON 命令等）。
+// Windows：u8string() 产出 UTF-8 字节；POSIX：narrow 已是 UTF-8。
+// ❌ 禁止直接 path::string() 喂上述 C API —— Windows ACP 转换会破坏非 ASCII 路径。
+inline std::string toUtf8(const std::filesystem::path& path) {
+    // C++20 的 u8string() 是 std::u8string（char8_t），不能直接 .c_str() 当 const char*，
+    // 必须逐字节搬进 std::string
+    const auto u8 = path.u8string();
+    return std::string(u8.begin(), u8.end());
+}
+
 } // namespace core::paths

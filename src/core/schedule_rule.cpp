@@ -17,7 +17,9 @@
 #include <system_error>
 #include <utility>
 
+#include "logging.h"
 #include "time.h"
+#include "user_message.h"
 #include "yyjson.h"
 
 namespace core::schedule {
@@ -246,14 +248,18 @@ Result<RuleSpec> parseOnce(yyjson_val* obj) {
     s.kind = RuleKind::Once;
     if (hasAt) {
         if (!getInt(obj, "at", s.atUnix, err)) {
-            return Result<RuleSpec>::fail(ErrorCode::ValidationError, "once.at 非法：" + err);
+            LOG_WARN("schedule_rule: once.at 解析失败: " + err);
+            return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                          core::user_message::scheduleFieldHint("once.at"));
         }
         s.hasAt = true;
         return Result<RuleSpec>::ok(std::move(s));
     }
     std::string text;
     if (!getStr(obj, "at_local", text, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "once.at_local 非法：" + err);
+        LOG_WARN("schedule_rule: once.at_local 解析失败: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("once.at_local"));
     }
     // "YYYY-MM-DD HH:MM" 或 "YYYY-MM-DDTHH:MM"
     const size_t sep = text.find(' ');
@@ -286,7 +292,9 @@ Result<RuleSpec> parseOnce(yyjson_val* obj) {
 Result<RuleSpec> parseInterval(yyjson_val* obj) {
     std::string err;
     if (!checkKeys(obj, {"every_sec", "anchor", "window"}, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "interval 规则" + err);
+        LOG_WARN("schedule_rule: interval 规则校验失败: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("interval"));
     }
     RuleSpec s;
     s.kind = RuleKind::Interval;
@@ -314,14 +322,18 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     std::string err;
     if (!checkKeys(obj, {"unit", "interval", "weekdays", "month_day", "nth_weekday",
                          "last_workday", "time", "anchor_date", "workdays_only"}, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "calendar 规则" + err);
+        LOG_WARN("schedule_rule: calendar 规则校验失败: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("calendar"));
     }
     RuleSpec s;
     s.kind = RuleKind::Calendar;
     CalendarSpec& c = s.calendar;
     std::string unitText;
     if (!getStr(obj, "unit", unitText, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "calendar.unit " + err);
+        LOG_WARN("schedule_rule: calendar.unit 解析失败: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("calendar.unit"));
     }
     if (unitText == "day") c.unit = CalendarSpec::Unit::Day;
     else if (unitText == "week") c.unit = CalendarSpec::Unit::Week;
@@ -341,7 +353,10 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     }
     if (hasKey(obj, "workdays_only")) {
         if (!getBool(obj, "workdays_only", c.workdaysOnly, err)) {
-            return Result<RuleSpec>::fail(ErrorCode::ValidationError, "calendar.workdays_only " + err);
+            LOG_WARN("schedule_rule: calendar.workdays_only 解析失败: " + err);
+            return Result<RuleSpec>::fail(
+                ErrorCode::ValidationError,
+                core::user_message::scheduleFieldHint("calendar.workdays_only"));
         }
     }
     if (hasKey(obj, "weekdays")) {

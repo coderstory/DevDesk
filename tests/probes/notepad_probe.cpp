@@ -329,8 +329,12 @@ int main(int argc, char* argv[]) {
             composeSession(s);
             if (ui->find(module::notepad::kNotepadSearchBarId) != nullptr)
                 passed = fail("P2-3: Esc 后查找条仍在场");
-            if (passed && !ui->isFocused(module::notepad::kNotepadEditorInputId))
-                passed = fail("P2-3: 关条后焦点未回归编辑器（isFocused 编辑 input 为假）");
+            // need376：聚焦目标是组件的可聚焦元素 `<id>.hit`，不是组件根 id——
+            // 实现侧（notepad_window.cpp:1432）已是 `requestFocus(kNotepadEditorInputId + ".hit")`，
+            // 本断言必须同形，否则恒假（bug373）。
+            if (passed &&
+                !ui->isFocused(std::string(module::notepad::kNotepadEditorInputId) + ".hit"))
+                passed = fail("P2-3: 关条后焦点未回归编辑器（isFocused 编辑 input.hit 为假）");
         }
     }
 
