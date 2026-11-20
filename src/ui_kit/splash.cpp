@@ -112,10 +112,18 @@ float splashOpacity(float elapsed) {
 
 // splash 全元素树（全遮盖期与交叉淡化盖顶共用一份；overlayPhase 只换 bg 元素
 // 命名域供 frame dump 辨认阶段）。opacity 驱动全部元素的淡入/淡出。
+// 池352：整树包一层根 stack 并给显式 z1500——窗口边框 ring 抬到 z1400（压全部
+// 内容效果层）后，splash「盖顶须盖住边框」契约不能再靠 z 平局 DOM 序，改由本层
+// 显式压过 ring；全遮盖期（0~0.9s）主界面未构图，z 不参与语义。
 void drawSplashTree(eui::Ui& ui, const eui::Screen& screen, float elapsed,
                     float opacity, bool overlayPhase) {
     const auto& t = ::core::theme::current();
 
+    ui.stack(overlayPhase ? "splash.overlay.root" : "splash.root")
+        .position(0.0f, 0.0f)
+        .size(screen.width, screen.height)
+        .zIndex(1500)
+        .content([&] {
     // 全屏微绿底（sidebarBg，light #F0FDF7 / dark #0F1F18），与侧栏同源，
     // 与主界面基调呼应。交叉淡化盖顶期以 splash.overlay.* 命名域落树。
     ui.rect(overlayPhase ? "splash.overlay.bg" : "splash.bg")
@@ -243,6 +251,8 @@ void drawSplashTree(eui::Ui& ui, const eui::Screen& screen, float elapsed,
         .color(t.colors.primaryPressed)
         .radius(kBarH * 0.5f)
         .opacity(opacity)
+        .build();
+        })
         .build();
 }
 

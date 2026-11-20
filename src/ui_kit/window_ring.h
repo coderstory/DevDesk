@@ -23,6 +23,19 @@ namespace ui_kit {
 constexpr float kWindowRingInset = 1.0f;
 constexpr float kWindowRingBorder = 1.0f;
 
+// z 档位（池352）：恒压全部内容效果层。EUI 根层兄弟按子树 max zIndex 排序
+//（EUI core/dsl.h rebuildOrderedElements：stable_sort subtreeMaxZIndex 升序），
+// ring 此前 z0——body 子树只要任一元素 z>0（Settings 常驻卡 z30/40、页内弹窗
+// 1000~1300、页内 toast 1100、jelly 动画中 20），整棵内容子树就在 paint 序里
+// 抬到 ring 之上：侧边栏底色/终端大卡同帧直画盖掉边缘黑线；且翻转帧过后若
+// 边缘列不在后续脏矩形内，线被持久抹掉（真机「侧边栏盖左缘+终端卡盖右缘」）。
+// 取 1400 = 严格高于内容侧已知最高档 1300（release 确认弹窗）。黑线恒黑不透，
+// 盖在 toast(1100)/quit 弹窗(1200) 遮罩上视觉无差（黑叠黑），两层 z 契约不动；
+// splash 盖顶（须盖住边框）改由 splash 侧显式 z1500 保持（splash.cpp）。
+// ring 非交互（无 onClick/hover → interactive=false，命中谓词恒不匹配，
+// runtime_input.h hitTestInteractive），抬 z 不截胡任何点击。
+constexpr int kWindowRingZIndex = 1400;
+
 // 圆角半径（老板 2026-11-04「黑框需要考虑窗体的圆角」；2026-11-06 调弧贴合）：
 // 平台差异由调用方以 cornerRadiusLogical 传入（业务层禁 #ifdef，见 AGENTS.md §三；
 // app_sidebar.cpp 按平台算好传进来）：
@@ -59,6 +72,7 @@ inline void drawWindowRing(eui::Ui& ui, float w, float h,
         .position(x0, y0)
         .size(w0, h0)
         .radius(windowBorderRadius(cornerRadiusLogical))
+        .zIndex(kWindowRingZIndex)
         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
         .border(kWindowRingBorder, eui::Color{0.0f, 0.0f, 0.0f, 1.0f})
         .build();
