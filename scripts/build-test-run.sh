@@ -1203,6 +1203,16 @@ if [ "$INSTALL" = "1" ]; then
     echo "✅ 特征串后置验：已装二进制命中 ${HITS} 行「${VERIFY_APP_STR}」"
   fi
   echo "✅ 已安装：${INSTALL_DIR}（版本 ${APP_VERSION}，二进制与 $BUILD_DIR/DevDesk 逐字节一致）"
+
+  # ⑨ Dock 瓦片缓存刷新（池 bug353，2026-11-20 实证定案）：历次图标修复改对了文件，
+  #    但 Dock 的图标瓦片缓存不随文件失效——Dock 栏一直显示旧图标；killall Dock 让
+  #    Dock 自动重启并按新文件重 raster 瓦片，实测当次恢复（截图判读链见池 bug353
+  #    detail）。失败不阻断装机退出码，只留一行日志。
+  if killall Dock >/dev/null 2>&1; then
+    echo "✅ Dock 已重启（图标瓦片缓存刷新，池 bug353）"
+  else
+    echo "⚠ killall Dock 未成功（Dock 未在跑？）——瓦片缓存未刷新；不阻断装机（池 bug353）" >&2
+  fi
 fi
 
 # 4. 启动 app

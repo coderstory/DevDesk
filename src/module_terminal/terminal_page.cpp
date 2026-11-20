@@ -386,11 +386,18 @@ GridLayout TerminalPage::compose(
                 .size(screen.width, screen.height)
                 .color(ui_kit::glassFill(t));
 
-            // 层 0.5：网格底（文字区实色，可读性优先 §3 层2b）
+            // 层 0.5：网格底（bug354：need219 C 段卡片统一半透，2026-11-20 老板验收
+            // 否决原「文字区实色可读性优先 §3 层2b」）。term.bg 的 glassFill 是卡面唯一
+            // 半透来源且全页铺满，这里任何 α>0 的叠底都把净透过率压到单卡口径之下
+            // （dark 0.98⊕0.98≈0.9996、light 0.94⊕0.94≈0.9964——读感退回实心板，且与
+            // TAB 栏带出现材质断层），故整层透明，网格区直接承接 term.bg 半透卡面＝与
+            // home/git 等模块卡片同材质。文字可读性由 glassFill 近实体 alpha 承担（dark
+            // 0.98 透出残差 ≤2/255，markdown 编辑区同判据）。节点保留＝不动布局/层级
+            // （#352 同文件棒域），仅颜色退役。
             ui.rect("term.gridbg")
                 .position(0.0f, gridTop)
                 .size(screen.width, bodyH)
-                .color(t.isDark ? t.colors.background : t.colors.surface);
+                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f});
 
             // 层 0.6：TAB 栏带/网格区分割线
             ui.rect("term.divider")
