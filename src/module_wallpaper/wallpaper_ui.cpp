@@ -33,7 +33,7 @@
 // 几何（100% 档；字号档走 roundFs，卡片高度同步缩放）：
 //   页面左右 32、底部 32、页头 40、Tab 40、区块间距 16；卡内 20；卡圆角 12；
 //   页标题 24/700、卡标题 15/600、正文 14、说明 12；按钮 40 高（ui_kit 口径）。
-//   折叠态：速度+音频 56；展开 150。让路 56；展开 192。首屏（1000×640 页区
+//   折叠态：速度+音频 56；展开 222（速度/音频行 150 + 视频缓存行 56）。让路 56；展开 192。首屏（1000×640 页区
 //   792×600）任何来源/页签都不出现纵向滚动条——承诺只限默认字号档：130% 档
 //   内容高 ≈521 > 456 必滚动，由单测钉成显式口径（wallpaper_ui_fontscale_130）。
 #include "wallpaper_ui.h"
@@ -79,7 +79,9 @@ constexpr float kStatusCardH = 104.0f;
 constexpr float kStatusCardHoldsH = 140.0f;  // 系统让路时多一行原因 chip
 constexpr float kPairCardH = 148.0f;          // 模式 / 间隔
 constexpr float kEffectsCollapsedH = 56.0f;
-constexpr float kEffectsExpandedH = 150.0f;
+constexpr float kEffectsPairH = 150.0f;      // 速度/音频行（展开态）
+constexpr float kEffectsExpandedH = 222.0f;  // = 150 + 间距 16 + 视频缓存行 56
+constexpr float kCacheRowH = 56.0f;          // 视频缓存到内存行（need:311）
 constexpr float kHoldsCollapsedH = 56.0f;
 constexpr float kHoldsExpandedH = 192.0f;
 constexpr float kEmptyCardH = 180.0f;
@@ -850,6 +852,46 @@ void drawHoldsCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
     });
 }
 
+// 视频缓存到内存（need:311）：效果组第三行，整组展开时出现、收起时隐藏——
+// 不新增首屏常驻行（1000×640 首屏零滚动承诺不破）。复用让路卡「标题 + 说明 +
+// 右侧开关」行模式；文案固定，不拼状态。
+void drawCacheCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
+                   const Tokens& t, const UiActions& actions) {
+    const float h = roundFs(kCacheRowH);
+    ui.stack("wallpaper.card.cache")
+        .position(0.0f, roundFs(kEffectsPairH + kCardGap))
+        .size(w, h)
+        .content([&] {
+            ui_kit::cardFrame(ui, "wallpaper.card.cache", w, h, t);
+            ui.text("wallpaper.cache.title")
+                .position(kCardPad, 10.0f)
+                .size(std::max(0.0f, w - kCardPad * 2.0f - 60.0f), roundFs(20.0f))
+                .text("视频缓存到内存")
+                .fontSize(fs(14.0f))
+                .lineHeight(roundFs(20.0f))
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text("wallpaper.cache.sub")
+                .position(kCardPad, 30.0f)
+                .size(std::max(0.0f, w - kCardPad * 2.0f - 60.0f), roundFs(16.0f))
+                .text("开关即时生效；超过 512MB 的视频仍直接读取。")
+                .fontSize(fs(12.0f))
+                .lineHeight(roundFs(16.0f))
+                .maxWidth(std::max(0.0f, w - kCardPad * 2.0f - 60.0f))
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .color(t.colors.textTertiary)
+                .build();
+            const auto onVideoMemCache = actions.setVideoMemCache;
+            ui_kit::wswitch(ui, "wallpaper.cache", snapshot.videoMemCache,
+                            w - kCardPad - 44.0f, 16.0f, 44.0f, 24.0f, t,
+                            [onVideoMemCache](bool on) {
+                                if (onVideoMemCache) onVideoMemCache(on);
+                            });
+        })
+        .build();
+}
+
 void drawPlayPage(eui::Ui& ui, float contentW, const WallpaperSnapshot& snapshot,
                   WallpaperKind kind, const Tokens& t, const UiActions& actions,
                   UiState& state) {
@@ -870,16 +912,21 @@ void drawPlayPage(eui::Ui& ui, float contentW, const WallpaperSnapshot& snapshot
 
         // 图片模式隐藏速度 + 音频整行（需求 §7.3）。
         if (kind == WallpaperKind::Video) {
-            const float effectsH = roundFs(state.effectsExpanded
-                                               ? kEffectsExpandedH
-                                               : kEffectsCollapsedH);
+            const bool effectsExpanded = state.effectsExpanded;
+            const float effectsH = roundFs(effectsExpanded ? kEffectsExpandedH
+                                                           : kEffectsCollapsedH);
+            const float pairH = roundFs(effectsExpanded ? kEffectsPairH
+                                                        : kEffectsCollapsedH);
             ui.stack("wallpaper.play.effects")
                 .size(contentW, effectsH)
                 .content([&] {
-                    drawSpeedCard(ui, 0.0f, colW, effectsH, snapshot, t, state,
+                    drawSpeedCard(ui, 0.0f, colW, pairH, snapshot, t, state,
                                   actions);
-                    drawAudioCard(ui, colW + kCardGap, colW, effectsH,
+                    drawAudioCard(ui, colW + kCardGap, colW, pairH,
                                   snapshot, t, state, actions);
+                    if (effectsExpanded) {
+                        drawCacheCard(ui, contentW, snapshot, t, actions);
+                    }
                 })
                 .build();
         }
@@ -1327,7 +1374,8 @@ void composeWallpaperUi(eui::Ui& ui, const eui::Screen& screen,
                 (state.effectsExpanded ? ".e" : ".E") +
                 (state.holdsExpanded ? ".h" : ".H") +
                 (snapshot.scanning ? ".s" : ".S") +
-                (snapshot.systemHolds != 0 ? ".r" : ".R") + ".f" +
+                (snapshot.systemHolds != 0 ? ".r" : ".R") +
+                (snapshot.videoMemCache ? ".c" : ".C") + ".f" +
                 std::to_string(::core::theme::fontScale());
 
             components::scrollView(ui, "wallpaper.scroll")

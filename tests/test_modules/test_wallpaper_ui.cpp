@@ -576,6 +576,8 @@ REGISTER_TEST(wallpaper_ui_fold_groups,
     DOCTEST_CHECK(ui.find("wallpaper.speed.slider") == nullptr);
     DOCTEST_CHECK(ui.find("wallpaper.audio.slider") == nullptr);
     DOCTEST_CHECK(ui.find("wallpaper.holds.reason.0") == nullptr);
+    // need:311：收起态不建缓存行（首屏常驻行数不变）。
+    DOCTEST_CHECK(ui.find("wallpaper.card.cache") == nullptr);
 
     DOCTEST_CHECK(fireClick(ui, "wallpaper.speed.title"));
     eui::Ui expandedUi;
@@ -590,6 +592,16 @@ REGISTER_TEST(wallpaper_ui_fold_groups,
     DOCTEST_CHECK(expandedUi.find("wallpaper.speed.slider") != nullptr);
     DOCTEST_CHECK(expandedUi.find("wallpaper.audio.slider") != nullptr);
     DOCTEST_CHECK(expandedUi.find("wallpaper.audio.mute.track") != nullptr);
+    // need:311：效果组展开多出「视频缓存到内存」行（组高 222 = 150 + 16 + 56）。
+    DOCTEST_CHECK_EQ(expandedUi.find("wallpaper.play.effects")->frame.height,
+                     222.0f);
+    DOCTEST_REQUIRE(expandedUi.find("wallpaper.card.cache") != nullptr);
+    DOCTEST_CHECK_EQ(expandedUi.find("wallpaper.card.cache")->frame.height, 56.0f);
+    DOCTEST_CHECK_EQ(expandedUi.find("wallpaper.card.cache")->frame.y,
+                     expandedUi.find("wallpaper.card.speed")->frame.y +
+                         expandedUi.find("wallpaper.card.speed")->frame.height +
+                         16.0f);
+    DOCTEST_CHECK(expandedUi.find("wallpaper.cache.track") != nullptr);
     DOCTEST_CHECK_EQ(
         expandedUi.find("wallpaper.card.holds")->frame.height, 56.0f);
 
@@ -1191,5 +1203,61 @@ REGISTER_TEST(wallpaper_ui_fontscale_130_scroll,
     DOCTEST_REQUIRE(effects != nullptr);
     DOCTEST_CHECK_EQ(effects->frame.height, 73.0f);  // round(56 × 1.3)
     ::core::theme::setFontScale(1.0f);  // 恢复默认档：不污染同进程后续用例
+    return true;
+})
+
+// 防（need:311 F1/F6）：缓存开关行——效果组展开时出现且绑定快照布尔；点击回调带
+// 新值；图片来源不出现该行（图片不缓存）；默认关。删掉 UI 行或接线断掉本用例即红。
+REGISTER_TEST(wallpaper_ui_video_mem_cache_row,
+              "wallpaper_ui: 视频缓存到内存行（展开态出现/开关绑快照/点击回调/图片来源无）", {
+    wp::UiState state;
+    state.effectsExpanded = true;
+    bool lastToggle = true;
+    wp::UiActions actions;
+    actions.setVideoMemCache = [&lastToggle](bool on) { lastToggle = on; };
+
+    const wp::WallpaperSnapshot snapshot = makeSnapshot(
+        wp::WallpaperKind::Video, wp::Availability::Playing,
+        wp::PlayMode::LoopList);
+    DOCTEST_CHECK_FALSE(snapshot.videoMemCache);  // 默认关（D1）
+
+    eui::Ui ui;
+    composeFrame(ui, kPage1600x1000, snapshot, actions, state);
+    DOCTEST_REQUIRE(ui.find("wallpaper.card.cache") != nullptr);
+    DOCTEST_CHECK_EQ(elementText(ui, "wallpaper.cache.title"),
+                     std::string("视频缓存到内存"));
+    DOCTEST_REQUIRE(ui.find("wallpaper.cache.track") != nullptr);
+    // 关态滑块贴左：thumb.x 相对轨道 = padding。
+    DOCTEST_REQUIRE(ui.find("wallpaper.cache.thumb") != nullptr);
+    const auto* trackOff = ui.find("wallpaper.cache.track");
+    const auto* thumbOff = ui.find("wallpaper.cache.thumb");
+    DOCTEST_CHECK_EQ(thumbOff->frame.x - trackOff->frame.x, 2.0f);
+    DOCTEST_CHECK_EQ(ui.find("wallpaper.cache.disabled"), nullptr);
+
+    // 点击轨道 → 回调拿到 true。
+    DOCTEST_CHECK(fireClick(ui, "wallpaper.cache.track"));
+    DOCTEST_CHECK(lastToggle);
+
+    // 快照开态：轨道变绿、滑块贴右。
+    wp::WallpaperSnapshot onSnapshot = snapshot;
+    onSnapshot.videoMemCache = true;
+    eui::Ui onUi;
+    composeFrame(onUi, kPage1600x1000, onSnapshot, actions, state);
+    DOCTEST_REQUIRE(onUi.find("wallpaper.cache.thumb") != nullptr);
+    const auto* trackOn = onUi.find("wallpaper.cache.track");
+    const auto* thumbOn = onUi.find("wallpaper.cache.thumb");
+    DOCTEST_CHECK(thumbOn->frame.x > thumbOff->frame.x);
+    DOCTEST_CHECK(sameColor(trackOn->color, ::core::theme::current().colors.primary));
+
+    // 图片来源：整行不存在（即便组展开）。
+    const wp::WallpaperSnapshot image = makeSnapshot(
+        wp::WallpaperKind::Image, wp::Availability::Playing,
+        wp::PlayMode::LoopList);
+    wp::UiState imageState;
+    imageState.effectsExpanded = true;
+    eui::Ui imageUi;
+    composeFrame(imageUi, kPage1600x1000, image, actions, imageState);
+    DOCTEST_CHECK(imageUi.find("wallpaper.card.cache") == nullptr);
+    DOCTEST_CHECK(imageUi.find("wallpaper.cache.track") == nullptr);
     return true;
 })
