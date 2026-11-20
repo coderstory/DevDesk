@@ -16,6 +16,7 @@
 #include "module_memory/memory_module.h"  // 需-9：用量告警每帧判定驱动（M3 同款）
 #include "platform/window_visibility.h"  // 主窗可见态（平台接口隔离，业务层零 Win32）
 #include "quit_save_bridge.h"  // 退出丢稿确认弹窗（need:291）主窗 compose 尾部绘制
+#include "wallpaper_delete_bridge.h"  // 壁纸素材删除确认弹窗 + 结果 drain（need356）
 #include "settings_config.h"
 #include <components/scrollview.h>  // need186 §11：导航滚动区（EUI 全站 scrollView idiom）
 #include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
@@ -1330,6 +1331,11 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 按送达序逐路径走 OS 打开漏斗（main 注入的 handleAppleEventOpenFile 同一漏斗）。
     // 取走即清（consumePendingMinimizedStartup 同款形态），每帧调用空队列零开销。
     app::assembly::drainPendingSecondInstanceFiles();
+    // 壁纸删除结果 drain（need356 F-04）：worker 线程只入队，主线程在此逐条投
+    // toast（showAppNotice 非线程安全，禁 worker 直调）。空队列零开销。
+    for (auto& notice : app::wallpaper_delete::takeResults()) {
+        showAppNotice(notice.first, notice.second);
+    }
     // 窗体记忆记账（UAT6）：每帧记录还原态客户区逻辑尺寸 + 最大化标志（退出落盘的
     // 数据源）。须在 splash 早退之前——splash 帧也是主窗帧，启动即最大化的会话靠它
     // 记下最大化态（尺寸则由 main.cpp 的播种兜底）。最大化帧不记尺寸（保留还原态）
@@ -1456,6 +1462,8 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 未开 = 零开销早退。splash 只在启动 1.2s 内存在，退出确认发生在其后，
     // 两者无共存窗口。
     app::quit_save::drawConfirmDialog(ui, screen);
+    // 壁纸素材删除确认弹窗（need356 F-02）：同 #156 危险变体壳，z=1200 盖过页内 overlay。
+    app::wallpaper_delete::drawDialog(ui, screen);
     ui_kit::drawSplashOverlay(ui, screen);
 }
 

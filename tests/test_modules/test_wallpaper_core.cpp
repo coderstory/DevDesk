@@ -311,6 +311,44 @@ REGISTER_TEST(wallpaper_core_rotation, "wallpaper core: rotation 三模式/洗�
     return true;
 })
 
+// 防：删除失败回滚（need356 F-04）用不上定位 API / focusPath 定位错项 / 洗牌袋不失效
+// 导致下一拍跳到删除前清单洗出的旧项。
+REGISTER_TEST(wallpaper_rotation_focus_path_restores_previous,
+              "wallpaper core: rotation focusPath 回滚定位/路径不存在/洗牌袋失效", {
+    using Clock = wp::RotationClock;
+    const Clock::time_point base = Clock::time_point(std::chrono::seconds(30000));
+
+    // 列表循环：切到 b 后回滚定位回 a，计时按新起点重排。
+    wp::RotationController list(11);
+    list.setItems({"a", "b", "c"});
+    list.setMode(wp::PlayMode::LoopList);
+    DOCTEST_CHECK_EQ(list.start(base).value(), std::string("a"));
+    DOCTEST_CHECK_EQ(list.advanceNow(base).value(), std::string("b"));
+    DOCTEST_CHECK(list.focusPath("a", base + std::chrono::seconds(10)));
+    DOCTEST_CHECK_EQ(list.currentPath().value(), std::string("a"));
+    // 重排后剩余 = 完整间隔（不是接着 b 的剩余）
+    DOCTEST_CHECK_EQ(list.secondsUntilNextRotation(base + std::chrono::seconds(10)), 300);
+
+    // 路径不存在 → false，当前项不变（调用方放弃回滚）。
+    DOCTEST_CHECK_FALSE(list.focusPath("zzz", base + std::chrono::seconds(20)));
+    DOCTEST_CHECK_EQ(list.currentPath().value(), std::string("a"));
+
+    // 洗牌：focusPath 必须清空洗牌袋——否则下一拍会因空袋重洗出已抽过的项。
+    wp::RotationController shuffle(42);
+    shuffle.setItems({"a", "b", "c"});
+    shuffle.setMode(wp::PlayMode::Shuffle);
+    DOCTEST_CHECK(shuffle.start(base).has_value());
+    DOCTEST_CHECK(shuffle.focusPath("c", base + std::chrono::seconds(10)));
+    DOCTEST_CHECK_EQ(shuffle.currentPath().value(), std::string("c"));
+    // 回滚后推进：不得返回 c 自己（袋已失效重洗，且当前项不在新袋）
+    for (int index = 0; index < 2; ++index) {
+        const auto next = shuffle.advanceNow(base + std::chrono::seconds(10));
+        DOCTEST_REQUIRE(next.has_value());
+        DOCTEST_CHECK(*next != std::string("c"));
+    }
+    return true;
+})
+
 // 防：图片进混合池后破坏既有选择模型——列表循环跨类型按字典序轮转 / LoopSingle 到点
 // 必须停在图片项（tick 不产生装载）、手动 next 才跨过图片 / 洗牌一轮不重复 /
 // 空视频纯图片清单与普通清单同语义。

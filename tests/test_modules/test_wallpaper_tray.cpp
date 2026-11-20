@@ -226,3 +226,78 @@ REGISTER_TEST(wallpaper_tray_yield_pause_semantics,
     DOCTEST_CHECK(!service.isRunning());
     return true;
 });
+
+// ---- need356 F-01：删除项形态 ----
+
+// 防：canDelete=true 时删除项没插进 {4} / 分隔线或尾部项错位（styled 下标映射全错）。
+REGISTER_TEST(wallpaper_tray_spec_delete_item_when_can_delete,
+              "wallpaper tray: canDelete = 8 项，{4} 删除项 fa-trash + {5} 分隔线 + {6}/{7}",
+              {
+    const auto spec =
+        core::tray::trayMenuSpec(true, false, true, false);
+    DOCTEST_REQUIRE_EQ(spec.size(), static_cast<std::size_t>(8));
+    // 前四项维持不动的既有组
+    DOCTEST_CHECK_EQ(spec[0].text, std::string("下一张"));
+    DOCTEST_CHECK(spec[0].action == Action::WallpaperNext);
+    DOCTEST_CHECK(spec[1].action == Action::WallpaperTogglePause);
+    DOCTEST_CHECK(spec[2].action == Action::WallpaperStop);
+    DOCTEST_CHECK(spec[3].action == Action::NavigateWallpaper);
+    // {4} 删除项：fa-trash 0xF1F8 + 删除动作（视频文案缺省）
+    DOCTEST_CHECK_EQ(spec[4].text, std::string("删除当前视频…"));
+    DOCTEST_CHECK_EQ(spec[4].iconCodepoint, 0xF1F8);
+    DOCTEST_CHECK(spec[4].action == Action::WallpaperDeleteCurrent);
+    // {5} 分隔线，{6}/{7} 显示/退出
+    DOCTEST_CHECK_EQ(spec[5].text, std::string("-"));
+    DOCTEST_CHECK(spec[5].action == Action::None);
+    DOCTEST_CHECK(spec[6].action == Action::ShowMainWindow);
+    DOCTEST_CHECK(spec[7].action == Action::Exit);
+    return true;
+});
+
+// 防：图片/视频文案分派错（图片被说成「视频」）。
+REGISTER_TEST(wallpaper_tray_spec_delete_text_dispatch_video_vs_image,
+              "wallpaper tray: 删除项文案按 currentIsImage 分派 视频/图片", {
+    const auto video = core::tray::trayMenuSpec(true, false, true, false);
+    DOCTEST_REQUIRE_EQ(video.size(), static_cast<std::size_t>(8));
+    DOCTEST_CHECK_EQ(video[4].text, std::string("删除当前视频…"));
+    DOCTEST_CHECK_EQ(video[4].iconCodepoint, 0xF1F8);
+    const auto image = core::tray::trayMenuSpec(true, false, true, true);
+    DOCTEST_REQUIRE_EQ(image.size(), static_cast<std::size_t>(8));
+    DOCTEST_CHECK_EQ(image[4].text, std::string("删除当前图片…"));
+    DOCTEST_CHECK_EQ(image[4].iconCodepoint, 0xF1F8);
+    DOCTEST_CHECK(image[4].action == Action::WallpaperDeleteCurrent);
+    return true;
+});
+
+// 防：canDelete=false 时删除项仍占位（退出/显示项被挤到错误下标 = 既有菜单回归）。
+REGISTER_TEST(wallpaper_tray_spec_delete_hidden_when_no_current,
+              "wallpaper tray: canDelete=false 维持 7 项，无删除项", {
+    const auto spec = core::tray::trayMenuSpec(true, false, false, true);
+    DOCTEST_REQUIRE_EQ(spec.size(), static_cast<std::size_t>(7));
+    // currentIsImage=true 也不得在无删除能力时插项
+    DOCTEST_CHECK_EQ(spec[4].text, std::string("-"));
+    DOCTEST_CHECK(spec[4].action == Action::None);
+    DOCTEST_CHECK(spec[5].action == Action::ShowMainWindow);
+    DOCTEST_CHECK(spec[6].action == Action::Exit);
+    for (const auto& item : spec) {
+        DOCTEST_CHECK(item.action != Action::WallpaperDeleteCurrent);
+    }
+    return true;
+});
+
+// 防：桥状态漏承 canDelete/currentItemIsImage（托盘永远看不到删除项）。
+REGISTER_TEST(wallpaper_tray_bridge_carries_can_delete_state,
+              "wallpaper tray: 桥状态承 canDelete/currentItemIsImage 两字段", {
+    app::tray::WallpaperTrayState state{};
+    // 缺省值必须为 false（新字段零初始化语义，位置式聚合初始化不炸）
+    DOCTEST_CHECK_FALSE(state.canDelete);
+    DOCTEST_CHECK_FALSE(state.currentItemIsImage);
+    state.canDelete = true;
+    state.currentItemIsImage = true;
+    DOCTEST_CHECK(state.canDelete);
+    DOCTEST_CHECK(state.currentItemIsImage);
+    // 桥命令枚举承 DeleteCurrent（编译期 + 值断言）
+    DOCTEST_CHECK(app::tray::WallpaperTrayCommand::DeleteCurrent !=
+                  app::tray::WallpaperTrayCommand::Stop);
+    return true;
+});

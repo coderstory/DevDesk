@@ -10,6 +10,7 @@ enum class WallpaperTrayCommand {
     TogglePause,  // → service.toggleManualPause（只切手动位；系统让路不因此解除）
     Next,         // → service.next
     Stop,         // → service.stop（幂等；恢复 = 设置页重拨壁纸模块开关）
+    DeleteCurrent, // → service.requestDeleteCurrent（need356：由确认弹窗主钮触发）
 };
 
 // present 语义 = 壁纸模块实例已装配（平台能力通过）；实例在但服务已 stop 时仍为
@@ -20,6 +21,10 @@ struct WallpaperTrayState {
     bool present = false;
     bool manualPaused = false;  // 播放/暂停文案口径，与壁纸页暂停钮同源
     bool running = false;       // 服务运行中快照；未 start / 已 stop = false
+    // need356 F-01：当前可删除（availability==Playing 且池非空）→ 托盘出现删除项。
+    bool canDelete = false;
+    // 当前轮换项是图片（决定删除项文案：删除当前图片…/删除当前视频…）。
+    bool currentItemIsImage = false;
 };
 
 using WallpaperTrayStateProvider = WallpaperTrayState (*)(void);

@@ -12,6 +12,7 @@
 #include "core/logging.h"
 #include "module_wallpaper/core/availability.h"
 #include "module_wallpaper/core/folder_policy.h"
+#include "module_wallpaper/core/importer.h"  // makeSignature（need356 删除前算墓碑签名）
 #include "module_wallpaper/core/presentation.h"
 #include "module_wallpaper/platform/image_probe.h"
 #include "module_wallpaper/platform/importer_macos.h"
@@ -42,7 +43,9 @@ WallpaperService::WallpaperService()
       rotation_(static_cast<std::uint32_t>(
           std::random_device{}() ^
           static_cast<unsigned>(
-              std::chrono::steady_clock::now().time_since_epoch().count()))) {}
+              std::chrono::steady_clock::now().time_since_epoch().count()))),
+      // 删除动作默认直连平台能力；测试注入假 mover（need356）。
+      trashMover_(&platform::file_trash::moveToTrash) {}
 
 WallpaperService::~WallpaperService() {
     stop();
@@ -100,7 +103,9 @@ void WallpaperService::start() {
             player_ = createMpvPlayer();
         }
         applySettingsToPlayerLocked();
-        if (!testPlayerInjected_) {
+        // 宿主启动条件：生产装配（未注入播放器）走真宿主；测试显式注入假宿主时也
+        // 启动（只记 show/hide 次数，不碰桌面）。都没有 = 无宿主可用。
+        if (!testPlayerInjected_ || testHostInjected_) {
             std::string error;
             if (host_ != nullptr && host_->start(&error)) {
                 hostStarted_ = true;
@@ -157,7 +162,12 @@ void WallpaperService::start() {
 void WallpaperService::stop() {
     {
         std::lock_guard<std::mutex> lock(mu_);
-        if (!started_ && !scanThread_.joinable() && !tickThread_.joinable()) return;
+        // 早退必须覆盖全部线程成员：漏一个就可能在析构时留下 joinable thread
+        // 触发 terminate（bug358）。
+        if (!started_ && !scanThread_.joinable() && !tickThread_.joinable() &&
+            !importThread_.joinable() && !deleteThread_.joinable()) {
+            return;
+        }
         // 固定顺序（契约 §9.6）：保存续播 → player.stop → host.stop → join 服务线程。
         if (started_) saveResumeLocked();
         started_ = false;
@@ -183,6 +193,8 @@ void WallpaperService::stop() {
     // 取消在候选之间生效（runHanamiImport 逐候选检查），退出至多等一个文件拷完。
     importCancel_.store(true);
     if (importThread_.joinable()) importThread_.join();
+    // 删除线程（need356）：移废纸篓可能秒级（跨卷/大文件），stop() 返回前必须收尸。
+    if (deleteThread_.joinable()) deleteThread_.join();
     LOG_INFO("壁纸服务已停止");
 }
 
@@ -215,6 +227,13 @@ WallpaperSnapshot WallpaperService::snapshot() const {
     out.rotationProgress = rotation_.progress(now);
     out.poolCount = static_cast<int>(rotation_.itemCount());
     out.currentItemImage = currentItemImage_;
+    // need356：弹窗展示用；仅在可播态给值（空态残留下标不得冒充「当前项」）。
+    out.currentItemFileName.clear();
+    if (out.availability == Availability::Playing) {
+        if (const std::optional<std::string> current = rotation_.currentPath()) {
+            out.currentItemFileName = std::filesystem::path(*current).filename().string();
+        }
+    }
 
     presentation::StatusInput status;
     status.kind = out.kind;
@@ -401,7 +420,231 @@ void WallpaperService::next() {
     if (path.has_value()) loadItemLocked(*path, now);
 }
 
-// ---------------- 从花見导入 ----------------
+// ---------------- 删除当前素材（need356 F-03~F-06）----------------
+
+namespace {
+platform::file_trash::TrashFailure toTrashFailure(int outcome) {
+    switch (static_cast<WallpaperService::DeleteCurrentOutcome>(outcome)) {
+        case WallpaperService::DeleteCurrentOutcome::NotFound:
+            return platform::file_trash::TrashFailure::NotFound;
+        case WallpaperService::DeleteCurrentOutcome::PermissionDenied:
+            return platform::file_trash::TrashFailure::PermissionDenied;
+        case WallpaperService::DeleteCurrentOutcome::TrashUnavailable:
+            return platform::file_trash::TrashFailure::TrashUnavailable;
+        case WallpaperService::DeleteCurrentOutcome::Busy:
+            return platform::file_trash::TrashFailure::Busy;
+        case WallpaperService::DeleteCurrentOutcome::Deleted:
+        case WallpaperService::DeleteCurrentOutcome::NoCurrent:
+            break;
+    }
+    return platform::file_trash::TrashFailure::None;
+}
+
+// platform 五档失败 → 服务 outcome（档名一一对应，Deleted/NoCurrent 不经此路）。
+WallpaperService::DeleteCurrentOutcome deleteOutcomeFromTrash(
+    platform::file_trash::TrashFailure failure) {
+    switch (failure) {
+        case platform::file_trash::TrashFailure::NotFound:
+            return WallpaperService::DeleteCurrentOutcome::NotFound;
+        case platform::file_trash::TrashFailure::PermissionDenied:
+            return WallpaperService::DeleteCurrentOutcome::PermissionDenied;
+        case platform::file_trash::TrashFailure::TrashUnavailable:
+            return WallpaperService::DeleteCurrentOutcome::TrashUnavailable;
+        case platform::file_trash::TrashFailure::Busy:
+            return WallpaperService::DeleteCurrentOutcome::Busy;
+        case platform::file_trash::TrashFailure::None:
+            break;
+    }
+    return WallpaperService::DeleteCurrentOutcome::Deleted;
+}
+}  // namespace
+
+void WallpaperService::setTrashMoverForTest(TrashMover mover) {
+    std::lock_guard<std::mutex> lock(mu_);
+    trashMover_ = std::move(mover);
+}
+
+void WallpaperService::setDeleteResultHandler(DeleteResultHandler handler) {
+    std::lock_guard<std::mutex> lock(mu_);
+    deleteResultHandler_ = std::move(handler);
+}
+
+bool WallpaperService::waitDeleteIdleForTest(int timeoutMs) {
+    if (!deleteThread_.joinable()) return true;
+    // 有界等待：轮询结果位（线程函数退出时必然已写该位）。
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (lastDeleteOutcome_.load(std::memory_order_acquire) >= 0) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return false;
+}
+
+WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem() {
+    std::string fileName;
+    return deleteCurrentItem(&fileName);
+}
+
+WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
+    std::string* outFileName) {
+    std::string path;
+    int poolCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        // P0：无当前可删项 → 静默 NoCurrent（不投失败 toast）。
+        if (!started_ || snapshot_.availability != Availability::Playing) {
+            return DeleteCurrentOutcome::NoCurrent;
+        }
+        const std::optional<std::string> current = rotation_.currentPath();
+        if (!current.has_value()) {
+            return DeleteCurrentOutcome::NoCurrent;
+        }
+        path = *current;
+        poolCount = static_cast<int>(rotation_.itemCount());
+    }
+    const std::string fileName = std::filesystem::path(path).filename().string();
+    if (outFileName != nullptr) *outFileName = fileName;
+
+    // P1：锁外算墓碑签名（移走后源文件不存在，stat 不到大小；签名只用文件名+字节大小）。
+    long long byteSize = 0;
+    {
+        std::error_code sizeError;
+        const auto size = std::filesystem::file_size(path, sizeError);
+        if (sizeError) {
+            // 弹窗期间文件被外部删掉/移走：当作 NotFound（不回滚，原项本身已不在）。
+            return DeleteCurrentOutcome::NotFound;
+        }
+        byteSize = static_cast<long long>(size);
+    }
+    const std::string signature = importer::makeSignature(fileName, byteSize);
+
+    // P2：先切走/停播，释放播放器对文件的独占（Windows 上移废纸篓成功的前提）。
+    const RotationClock::time_point now = nowLocked();
+    const bool keepPlaying = poolCount >= 2;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        // P0→P2 之间存在释放锁的窗口，tick 线程（250ms 一拍）或用户「下一个」可能已经
+        // 把当前项推走。此时按 P0 记下的 path 继续删 = 删错文件（用户确认的是 A，
+        // 实际删 B），且失败回滚会把已进废纸篓的路径重新装载。故在锁内复核一次：
+        // 当前项已不是 path 就放弃本次删除（静默 NoCurrent，宁可不删也不能删错）。
+        const std::optional<std::string> stillCurrent = rotation_.currentPath();
+        if (!stillCurrent.has_value() || *stillCurrent != path) {
+            return DeleteCurrentOutcome::NoCurrent;
+        }
+        if (keepPlaying) {
+            const std::optional<std::string> next = rotation_.advanceNow(now);
+            if (next.has_value()) {
+                loadItemLocked(*next, now);
+            }
+        } else {
+            stopPlaybackLocked();  // 内含 rotation_.setItems({}) + 停播放器 + 藏宿主
+            snapshot_.availability = Availability::NoPlayableVideos;
+        }
+    }
+
+    // P3：锁外移废纸篓（注入假 mover 时测试不碰真实废纸篓）。
+    // mover 为空（未装配/被测试清空）按「废纸篓不可用」处理——不得默认成功冒充删除。
+    platform::file_trash::TrashOutcome outcome;
+    if (trashMover_) {
+        outcome = trashMover_(path);
+    } else {
+        outcome.failure = platform::file_trash::TrashFailure::TrashUnavailable;
+    }
+
+    if (outcome.ok()) {
+        // P4a 成功：写墓碑（best effort，锁外，忽略返回值）→ 重扫刷新计数（F-05）。
+        importer::recordDeletedSignature(signature);
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            requestScanLocked();
+        }
+        return DeleteCurrentOutcome::Deleted;
+    }
+
+    // P4b 失败：回滚原项（不切下一个，F-04）。
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (keepPlaying) {
+            if (rotation_.focusPath(path, now)) {
+                loadItemLocked(path, now);
+            }
+        } else {
+            // 池==1：P2 走过 stopPlaybackLocked()，它把宿主藏了（桌面壁纸消失）。
+            // 回滚只装回播放器不够——必须把宿主重新 show 出来，否则用户看到的是
+            // 「状态卡写着正在播放、桌面却一片空」。show 失败只记日志：此时已是失败
+            // 回滚路径，不能再叠一层错误。
+            rotation_.setItems({path});
+            rotation_.start(now);
+            snapshot_.availability = Availability::Playing;
+            if (hostStarted_ && host_ != nullptr) {
+                std::string hostError;
+                if (!host_->show(&hostError)) {
+                    LOG_WARN("壁纸: 删除失败回滚时重显宿主失败: " + hostError);
+                }
+            }
+            loadItemLocked(path, now);
+        }
+    }
+    return deleteOutcomeFromTrash(outcome.failure);
+}
+
+void WallpaperService::requestDeleteCurrent() {
+    // 前置门（bug358）：服务已停时不必建线程——stop 已置 started_=false，此时
+    // deleteCurrentItem 会立刻返回 NoCurrent，白造一个 joinable 线程对象（析构时会
+    // 触发 terminate）。锁范围仅覆盖读 started_，不嵌套后续 CAS。
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!started_) return;
+    }
+    // 防重入用原子位，**不在主线程 join**：deleteCurrentItem 含 PerformOperations
+    // （跨卷/大文件秒级），主线程 join 会冻结窗口（托盘与弹窗全停摆）。已在删 =
+    // 忽略本次请求（连点两次确认不该排两条删除）。线程对象留在 deleteThread_，
+    // 由 stop() 收尸——那是退出路径，允许等。
+    bool expected = false;
+    if (!deleteInProgress_.compare_exchange_strong(expected, true)) {
+        return;
+    }
+    lastDeleteOutcome_.store(-1);
+
+    // 先回收上一条线程对象：`deleteThread_ = std::thread(...)` 在成员仍 joinable 时
+    // 会直接 std::terminate（CRITICAL，不是异常）。此处 CAS 已保证上一条**已跑完**
+    // （deleteInProgress_ 在此线程末尾才置 false），join 立即返回、不阻塞主线程。
+    if (deleteThread_.joinable()) deleteThread_.join();
+
+    try {
+        deleteThread_ = std::thread([this] {
+            std::string fileName;
+            const DeleteCurrentOutcome outcome = deleteCurrentItem(&fileName);
+            // 结果回主线程：NoCurrent 静默（不投 toast）；其余经注入的结果出口。
+            if (outcome != DeleteCurrentOutcome::NoCurrent) {
+                DeleteResultHandler handler;
+                {
+                    std::lock_guard<std::mutex> lock(mu_);
+                    handler = deleteResultHandler_;
+                }
+                if (handler) {
+                    const bool ok = outcome == DeleteCurrentOutcome::Deleted;
+                    // failureKind 用 platform::file_trash::TrashFailure 整数值（桥的纯映射口径）。
+                    const int failureKind =
+                        static_cast<int>(toTrashFailure(static_cast<int>(outcome)));
+                    handler(ok, fileName, failureKind);
+                }
+            }
+            // 完成位最后写：waitDeleteIdleForTest 见到它 = 结果已交给出口。
+            lastDeleteOutcome_.store(static_cast<int>(outcome),
+                                     std::memory_order_release);
+            deleteInProgress_.store(false, std::memory_order_release);
+        });
+    } catch (const std::system_error& error) {
+        LOG_ERROR(std::string("壁纸: 删除线程创建失败: ") + error.what());
+        lastDeleteOutcome_.store(static_cast<int>(DeleteCurrentOutcome::Busy),
+                                 std::memory_order_relaxed);
+        deleteInProgress_.store(false, std::memory_order_release);
+    }
+}
+
+
 
 bool WallpaperService::hanamiImportAvailable() {
     // 能力查询走平台缝（importer_macos 真 / importer_stub false），业务层零平台宏。
@@ -490,6 +733,12 @@ void WallpaperService::setPlayerForTest(std::unique_ptr<PlayerBackend> player) {
     player_->setVolume(settings_.volume);
     player_->setMute(settings_.muted);
     player_->pause(arbiter_.held());
+}
+
+void WallpaperService::setHostForTest(std::unique_ptr<WallpaperHost> host) {
+    std::lock_guard<std::mutex> lock(mu_);
+    testHostInjected_ = true;
+    host_ = std::move(host);
 }
 
 void WallpaperService::setClockForTest(Clock clock) {

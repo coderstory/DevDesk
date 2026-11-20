@@ -36,6 +36,7 @@
 #include "module_wallpaper/platform/player_backend.h"
 #include "module_wallpaper/platform/wallpaper_host.h"
 #include "module_wallpaper/platform/yield_watchers.h"
+#include "platform/file_trash.h"  // 移废纸篓平台能力（need356 B1）
 
 namespace module::wallpaper {
 
@@ -77,6 +78,9 @@ struct WallpaperSnapshot {
     // 当前装载的轮换项是图片（仅 Video 来源的混合池置位；Image 来源沿用单张/轮播语义）。
     // 为真时 mpv 对该 item 无 pause/seek 语义，UI 停用暂停控件、倒计时照常。
     bool currentItemImage = false;
+    // 纯追加字段（need356 删除确认弹窗）：当前轮换项的文件名（空 = 无当前项）。
+    // 仅供弹窗展示；删除执行时服务重新取当前项，不信任本快照。
+    std::string currentItemFileName;
     // ── 纯追加字段（从花見导入批次）──
     // 导入进行中：UI 置灰按钮防重入。
     bool importing = false;
@@ -129,6 +133,28 @@ public:
     void toggleManualPause();
     void next();
 
+    // ---- 删除当前素材（need356 F-03~F-06）----
+    // outcome 直通托盘桥的 toast 分档；NoCurrent = 无当前项（静默，不投失败提示）。
+    enum class DeleteCurrentOutcome {
+        Deleted,
+        NoCurrent,
+        NotFound,
+        PermissionDenied,
+        TrashUnavailable,
+        Busy,
+    };
+    // 阻塞（文件 stat + 移废纸篓 IO）。调用方不得持 mu_；生产由 requestDeleteCurrent()
+    // 的后台线程调用，headless 测试直接调用（无并发，确定性）。
+    // 顺序：先切走/停播（释放播放器对文件的独占）→ 再移废纸篓；失败回滚原项。
+    DeleteCurrentOutcome deleteCurrentItem();
+    // UI 线程入口：起 deleteThread_ 异步跑 deleteCurrentItem（结果经桥结果队列回主线程）。
+    void requestDeleteCurrent();
+    // 删除结果出口（need356 F-04）：worker 以本回调把 (ok, fileName, failureKind) 交给
+    // app 层桥的结果队列（main.cpp 注入 &app::wallpaper_delete::postResult）。
+    // 本模块不直连 app 层头/符号：保持 devdesk_module_wallpaper 可独立链接。
+    using DeleteResultHandler = std::function<void(bool, const std::string&, int)>;
+    void setDeleteResultHandler(DeleteResultHandler handler);
+
     // ---- 测试缝（仅测试用，生产代码不得调用）----
     // 扫描器/玩家/时钟必须在 start() **之前**注入：扫描线程无锁读取 scanner/clock，
     // start 后再替换属数据竞争（本批不为测试缝加锁）。
@@ -140,6 +166,9 @@ public:
     void setVideoScannerForTest(VideoScanner scanner);
     void setImageScannerForTest(ImageScanner scanner);
     void setPlayerForTest(std::unique_ptr<PlayerBackend> player);
+    // 注入假宿主（记录 show/hide）：仅用于验证「池==1 删除失败回滚要重显宿主」。
+    // 注入后 start() 也会启动它（testHostInjected_），生产装配不受影响。
+    void setHostForTest(std::unique_ptr<WallpaperHost> host);
     void setClockForTest(Clock clock);
     void setSettingsPathForTest(std::string path);
     // 注入假让路 watcher（替代 createYieldWatchers 的平台实现）。必须在 start() 之前
@@ -147,6 +176,11 @@ public:
     void setYieldWatchersForTest(std::unique_ptr<YieldWatchers> watchers);
     // 注入一个系统让路原因（等价于 watcher 事件回调；用于不注入 watcher 的老用例）。
     void setSystemHoldForTest(HoldReason reason, bool active);
+    // 注入假 trash mover（默认 = platform::file_trash::moveToTrash）。
+    using TrashMover = std::function<platform::file_trash::TrashOutcome(const std::string&)>;
+    void setTrashMoverForTest(TrashMover mover);
+    // join 删除线程（有界等待）；超时返回 false 由调用方断言。
+    bool waitDeleteIdleForTest(int timeoutMs);
 
 private:
     RotationClock::time_point nowLocked() const;
@@ -171,7 +205,8 @@ private:
     void stopPlaybackLocked();
 
     void loadItemLocked(const std::string& path, RotationClock::time_point now);
-    void applyHoldDecisionLocked(RotationClock::time_point now);
+    // deleteCurrentItem 的内部形态：顺带交出实际删除的项文件名（供结果 toast）。
+    DeleteCurrentOutcome deleteCurrentItem(std::string* outFileName);    void applyHoldDecisionLocked(RotationClock::time_point now);
     float playerPositionLocked();
     void applySettingsToPlayerLocked();
     void ensurePlayerStartedLocked();
@@ -186,6 +221,7 @@ private:
     bool hostStarted_ = false;      // 真实宿主线程已建立
     bool playerRunning_ = false;    // mpv 进程已启动（stopPlayback 后置 false）
     bool testPlayerInjected_ = false;  // 注入测试播放器 = 无桌面装配
+    bool testHostInjected_ = false;    // 注入假宿主：start() 也启动它（只记 show/hide）
 
     VideoScanner videoScanner_;
     ImageScanner imageScanner_;
@@ -218,6 +254,18 @@ private:
     // 从花見导入线程：join 在 stop() 里（与扫描/计时线程同纪律）。
     std::thread importThread_;
     std::atomic<bool> importCancel_{false};
+
+    // 删除线程（need356）：同上纪律，stop() 一并 join。
+    std::thread deleteThread_;
+    // 默认 = platform::file_trash::moveToTrash；测试注入假 mover（不碰真实废纸篓）。
+    TrashMover trashMover_;
+    // 最近一次删除的 outcome（requestDeleteCurrent 的异步线程写、waitDeleteIdleForTest 读）。
+    std::atomic<int> lastDeleteOutcome_{-1};
+    // 删除进行中闩（防重入）：主线程只做 CAS 不做 join——删除含秒级 IO，
+    // 主线程 join 会冻结窗口。线程本身由 stop() 收尸。
+    std::atomic<bool> deleteInProgress_{false};
+    // 删除结果出口（见 setDeleteResultHandler）；空 = 结果不可见（headless 直调用例）。
+    DeleteResultHandler deleteResultHandler_;
 };
 
 } // namespace module::wallpaper

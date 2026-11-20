@@ -11,10 +11,16 @@
 //
 // 口径（照搬已实跑验证的参考实现，仅把身份判据换成名字+大小）：
 //   * 墓碑：已删素材的身份签名记库，导入时命中即跳过——否则「删一次、导一次全回来」。
-//   * 墓碑读失败一律当「没删过」：坏库不得拦导入。写失败只丢一条墓碑，代价是素材多导一次。
+//     写入有两道：删除当下直接写（F-06），以及每轮导入开头的废纸篓回填（兜历史删除）。
+//   * 导入台账（need356 F-07/F-08）：只记「曾经导入成功」的签名。每轮导入开头对账——
+//     台账里有、目标文件夹已找不到同名的 → 补墓碑并删台账行。这是唯一覆盖
+//     「用 Finder 删掉且随后清空废纸篓」的路径（墓碑回填看不见已清空的废纸篓）。
+//   * 读失败一律当「没删过 / 台账为空」：坏库不得拦导入。写失败只丢一条墓碑，
+//     代价是素材多导一次。
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace module::wallpaper::importer {
 
@@ -91,6 +97,21 @@ inline std::string makeSignature(const std::string& fileName, long long byteSize
     return out;
 }
 
+// 签名 → 文件名（'\x1f' 之前部分）。对账要拿文件名去目标目录探存在性，
+// 而签名里还挂着大小；无分隔符时整体当文件名（容错，老库/手改行不得让对账崩），
+// 空签名返回空串（调用方据此跳过该行）。
+inline std::string signatureFileName(const std::string& signature) {
+    const std::string::size_type sep = signature.find('\x1f');
+    if (sep == std::string::npos) return signature;
+    return signature.substr(0, sep);
+}
+
+// 对账判定：台账条目对应的目标文件已消失才补墓碑（纯函数，供平台层循环调用）。
+// 目标还在 = 用户没删它，补墓碑会让真实素材永远导不回来。
+inline bool shouldTombstoneOnReconcile(bool targetExists) {
+    return !targetExists;
+}
+
 // 墓碑台账接口。实现见 platform/importer_macos.cpp（SQLite）。
 class TombstoneLedger {
 public:
@@ -100,6 +121,21 @@ public:
     virtual bool contains(const std::string& signature) = 0;
     // 写：失败返回 false。墓碑缺一条只意味着素材多导一次，不阻断导入。
     virtual bool insert(const std::string& signature, double deletedAtEpoch) = 0;
+};
+
+// 导入台账：只记「曾经导入成功」的签名（need356 F-07），供下一轮对账补墓碑（F-08）。
+// 与墓碑并列而非继承：墓碑的语义是「已删」，台账的语义是「搬进来过」，
+// 两者生命周期相反（补墓碑即删台账行），混一个接口会让调用方误用。
+class ImportLedger {
+public:
+    virtual ~ImportLedger() = default;
+
+    // INSERT OR IGNORE 语义：重复登记同一签名是 no-op 不是错误。
+    virtual bool insert(const std::string& signature, double importedAtEpoch) = 0;
+    // 对账补墓碑后删行（一次性）。
+    virtual bool remove(const std::string& signature) = 0;
+    // 读全部签名。任何错误一律返回空 = 当空台账（坏库不得拦导入）。
+    virtual std::vector<std::string> all() = 0;
 };
 
 } // namespace module::wallpaper::importer
