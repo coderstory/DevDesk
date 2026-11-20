@@ -543,7 +543,10 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                 ::module::wallpaper::WallpaperService& service =
                     wallpaperModule->service();
                 const auto snapshot = service.snapshot();
-                if (snapshot.availability !=
+                // 与托盘 provider 同口径：扫描中不给删（重扫窗口里 availability 与
+                // poolCount 都还是旧值，放行会让确认后按旧池推进 + 叠出二次扫描）。
+                if (snapshot.scanning ||
+                    snapshot.availability !=
                         ::module::wallpaper::Availability::Playing ||
                     snapshot.poolCount <= 0) {
                     return {};

@@ -219,10 +219,13 @@ Attempt runOnStaThread(const std::wstring& widePath) {
 // 可恢复，实际已丢。PRD 非目标 1 与 R5 明写「绝不降级为直删」，故先判卷能力：
 // 不支持回收站的卷直接如实拒绝，交上层提示「系统废纸篓当前不可用」。
 //
-// 判据只用两项确定信息，不查 SHQueryRecycleBinW（空回收站时它的返回语义含混，
-// 可能把正常 NTFS 盘误判成不支持）：
-//   ① 驱动器类型：REMOTE/CDROM/NO_ROOT_DIR/UNKNOWN 一律拒；FIXED/REMOVABLE 放行；
-//   ② 文件系统：FAT/FAT32/exFAT 无回收站语义，拒。
+// 判据只用确定信息（不查 SHQueryRecycleBinW：空回收站时返回值含混，会把正常 NTFS
+// 盘误判成不支持）：
+//   ① 驱动器类型：只放行 FIXED/REMOVABLE，其余（REMOTE/CDROM/UNKNOWN）拒；
+//   ② 文件系统：FAT/FAT32/exFAT 无回收站语义，拒；**查不到也拒**（fail-closed）。
+// fail-closed 而不是 fail-open 的理由：Fail-open 的代价是「静默永久删除用户素材」，
+// fail-closed 的代价只是「本该能删的盘报不可用、用户去资源管理器手动删」——两者
+// 严重性差一个量级（PRD R5 明写绝不降级为直删）。
 bool volumeSupportsRecycleBin(const std::wstring& widePath) {
     // UNC（\\server\share\...）没有「盘符根」，回收站不适用。
     if (widePath.rfind(L"\\\\", 0) == 0) return false;
@@ -233,13 +236,14 @@ bool volumeSupportsRecycleBin(const std::wstring& widePath) {
     if (driveType != DRIVE_FIXED && driveType != DRIVE_REMOVABLE) return false;
 
     wchar_t fsName[MAX_PATH] = {0};
-    if (::GetVolumeInformationW(root, nullptr, 0, nullptr, nullptr, nullptr, fsName,
-                                MAX_PATH)) {
-        // lstrcmpiW = 大小写无关比较（kernel32，无需额外头）
-        if (::lstrcmpiW(fsName, L"FAT") == 0 || ::lstrcmpiW(fsName, L"FAT32") == 0 ||
-            ::lstrcmpiW(fsName, L"exFAT") == 0) {
-            return false;
-        }
+    if (!::GetVolumeInformationW(root, nullptr, 0, nullptr, nullptr, nullptr, fsName,
+                                 MAX_PATH)) {
+        return false;  // 取不到卷信息：无法确认支持回收站 → 保守拒（见函数头）
+    }
+    // lstrcmpiW = 大小写无关比较（kernel32，无需额外头）
+    if (::lstrcmpiW(fsName, L"FAT") == 0 || ::lstrcmpiW(fsName, L"FAT32") == 0 ||
+        ::lstrcmpiW(fsName, L"exFAT") == 0) {
+        return false;
     }
     return true;
 }

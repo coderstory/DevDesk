@@ -349,6 +349,35 @@ REGISTER_TEST(wallpaper_rotation_focus_path_restores_previous,
     return true;
 })
 
+// 防：删除成功后已删项仍留在轮换清单里被 tick/「下一个」重新装载（桌面黑屏）。
+// dropItem 必须真把它摘掉，且下标不越界、清单空时退出运行态。
+REGISTER_TEST(wallpaper_rotation_drop_item_after_delete,
+              "wallpaper core: rotation dropItem 摘掉已删项且不越界", {
+    using Clock = wp::RotationClock;
+    const Clock::time_point base = Clock::time_point(std::chrono::seconds(40000));
+
+    wp::RotationController list(7);
+    list.setItems({"a", "b", "c"});
+    list.setMode(wp::PlayMode::LoopList);
+    DOCTEST_REQUIRE_EQ(list.start(base).value(), std::string("a"));
+    DOCTEST_CHECK(list.dropItem("a"));
+    DOCTEST_CHECK_EQ(list.itemCount(), static_cast<std::size_t>(2));
+    // 之后无论怎么推进都不许再出现 a（这是本用例的核心：已删项不得被 tick 重装）
+    for (int index = 0; index < 4; ++index) {
+        const auto next = list.advanceNow(base + std::chrono::seconds(10));
+        DOCTEST_REQUIRE(next.has_value());
+        DOCTEST_CHECK(*next != std::string("a"));
+    }
+    // 幂等：已摘掉的再摘返回 false，不崩
+    DOCTEST_CHECK_FALSE(list.dropItem("a"));
+    // 摘空 → 退出运行态
+    DOCTEST_CHECK(list.dropItem("b"));
+    DOCTEST_CHECK(list.dropItem("c"));
+    DOCTEST_CHECK_EQ(list.itemCount(), static_cast<std::size_t>(0));
+    DOCTEST_CHECK_FALSE(list.isRunning());
+    return true;
+})
+
 // 防：图片进混合池后破坏既有选择模型——列表循环跨类型按字典序轮转 / LoopSingle 到点
 // 必须停在图片项（tick 不产生装载）、手动 next 才跨过图片 / 洗牌一轮不重复 /
 // 空视频纯图片清单与普通清单同语义。

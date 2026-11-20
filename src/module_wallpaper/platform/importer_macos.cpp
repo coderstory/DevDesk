@@ -57,23 +57,42 @@ constexpr const char* kSchemaSql =
     "CREATE TABLE IF NOT EXISTS imported_signature ("
     "signature TEXT PRIMARY KEY, imported_at REAL NOT NULL);";
 
-// 打开 + 建表；任一失败返回 nullptr（调用方决定是否当坏库重来一次）。
-std::unique_ptr<core::data::SqliteDb> openAndEnsureSchema(const fs::path& path) {
+// 打开 + 建表。出参 corrupt=true 表示「库内容确实是坏的」（可安全删库重建）。
+// 其它失败（BUSY/权限/IO）一律 corrupt=false——**删库是最后手段，只能在确认坏库时做**。
+std::unique_ptr<core::data::SqliteDb> openAndEnsureSchema(const fs::path& path,
+                                                          bool* corrupt) {
+    if (corrupt != nullptr) *corrupt = false;
     auto opened = core::data::SqliteDb::open(path);
-    if (opened.isFail()) return nullptr;
+    if (opened.isFail()) {
+        // open 失败：CANTOPEN/BUSY/PERM 都不是坏库；坏库在 open 阶段通常仍能成功
+        // （sqlite 只读文件头，非库文件也当空库打开）。这里只把 CanNotOpen 且
+        // 文件存在的情形当可疑，但保守起见不删——交给建表那一步判定。
+        return nullptr;
+    }
     auto db = std::make_unique<core::data::SqliteDb>(std::move(opened.value()));
-    if (db->exec(kSchemaSql).isFail()) return nullptr;  // 内容不是 sqlite 库 / 表结构被毁
+    auto schema = db->exec(kSchemaSql);
+    if (schema.isFail()) {
+        // 只有「内容不是数据库 / 库已损坏」才允许删库重建。SQLITE_BUSY 走
+        // DatabaseOpenFailed、权限走 FilePermissionDenied、磁盘满走 FileWriteFailed
+        // ——这些都是暂时/环境问题，删库会把健康的墓碑与台账一起扔进垃圾桶
+        // （删除线程与导入线程并发写同库，BUSY 本就是高发场景）。
+        const core::ErrorCode code = schema.errorCode();
+        if (corrupt != nullptr) {
+            *corrupt = code == core::ErrorCode::DatabaseCorrupted ||
+                       code == core::ErrorCode::Internal;  // SQLITE_ERROR = 非库文件/表结构坏
+        }
+        return nullptr;
+    }
     return db;
 }
 
 // 打开并确保两张表存在（墓碑 + 导入台账同库同表空间）。
-// 坏库降级：删文件重建一次（墓碑/台账历史可弃，永不拦导入或删除）。
+// 坏库降级：**仅确认损坏时**删文件重建一次（墓碑/台账历史可弃，永不拦导入或删除）。
 //
-// **建表失败也算坏库**：文件内容是乱码时 sqlite3_open_v2 仍会成功（它只读文件头，
-// 非库文件也能以「空库」打开），真正暴露损坏的是建表/查询。只在 open 失败时删库
-// 会让乱码库永远返回 nullptr——每次导入静默丢掉全部墓碑与台账（实测 bug，probe
-// wallpaper_import_ledger_probe 的原始断言就撞在这上面）。故 open 与建表两步任一步
-// 失败都走同一条「删文件 + 重试一次」路径。
+// **建表失败也算坏库（但只限真损坏）**：文件内容是乱码时 sqlite3_open_v2 仍会成功
+// （它只读文件头，非库文件也能以「空库」打开），真正暴露损坏的是建表/查询。只在
+// open 失败时删库会让乱码库永远返回 nullptr——每次导入静默丢掉全部墓碑与台账
+// （实测 bug，probe 原始断言就撞在这上面）。
 // WAL 伴生文件一并删：残留 -wal 会把旧内容重放进新建的空库。
 //
 // 并发：删除钩子（服务线程）与导入线程各开短连接写同一库文件；SqliteDb::open 内部
@@ -84,13 +103,15 @@ std::unique_ptr<core::data::SqliteDb> openOrCreate(const std::string& databasePa
     const fs::path path(databasePath);
     fs::create_directories(path.parent_path(), ec);
 
-    if (auto db = openAndEnsureSchema(path)) return db;
+    bool corrupt = false;
+    if (auto db = openAndEnsureSchema(path, &corrupt)) return db;
+    if (!corrupt) return nullptr;  // BUSY / 权限 / IO：当空台账，绝不删库
 
-    // 坏库：删主文件与 WAL 伴生件后重来一次（仍失败 = 目录不可写等真故障）。
+    // 确认坏库：删主文件与 WAL 伴生件后重来一次（仍失败 = 目录不可写等真故障）。
     fs::remove(path, ec);
     fs::remove(fs::path(path.string() + "-wal"), ec);
     fs::remove(fs::path(path.string() + "-shm"), ec);
-    return openAndEnsureSchema(path);
+    return openAndEnsureSchema(path, nullptr);
 }
 
 // SQLite 墓碑台账。连接每次操作现开现关——调用点（导入路径）分钟级一次，
@@ -335,7 +356,12 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
         for (const std::string& signature : importLedger.all()) {
             const std::string name = signatureFileName(signature);
             if (name.empty()) continue;
-            const bool targetExists = fs::exists(destination / name, ec);
+            std::error_code existsEc;
+            const bool targetExists = fs::exists(destination / name, existsEc);
+            // 探存在性失败（EACCES / IO）时不能当「不存在」：那会给仍然存在的素材
+            // 补墓碑，而墓碑只有「目标已存在」分支能解，等于把用户存量素材永久锁死
+            // 且无任何提示。未知即保守跳过本轮该条（下轮再判）。
+            if (existsEc) continue;
             if (shouldTombstoneOnReconcile(targetExists)) {
                 // 两步写各自 best effort：补墓碑失败会下一轮再补（台账行留着），
                 // 删台账行失败只意味着下一轮重复补一次墓碑（INSERT OR IGNORE 幂等）。

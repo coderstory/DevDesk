@@ -490,10 +490,14 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
     std::string* outFileName) {
     std::string path;
     int poolCount = 0;
+    TrashMover moverCopy;
     {
         std::lock_guard<std::mutex> lock(mu_);
         // P0：无当前可删项 → 静默 NoCurrent（不投失败 toast）。
-        if (!started_ || snapshot_.availability != Availability::Playing) {
+        // scanning 一并拦：这是最终防线上的一致口径（与托盘/弹窗 provider 同判据），
+        // 重扫窗口里 availability 与 rotation_ 都是旧值，此时推进轮换会删错项。
+        if (!started_ || snapshot_.scanning ||
+            snapshot_.availability != Availability::Playing) {
             return DeleteCurrentOutcome::NoCurrent;
         }
         const std::optional<std::string> current = rotation_.currentPath();
@@ -502,6 +506,8 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
         }
         path = *current;
         poolCount = static_cast<int>(rotation_.itemCount());
+        // mover 拷到局部：setter 持 mu_ 写、P3 锁外读，直读成员是数据竞争。
+        moverCopy = trashMover_;
     }
     const std::string fileName = std::filesystem::path(path).filename().string();
     if (outFileName != nullptr) *outFileName = fileName;
@@ -512,8 +518,15 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
         std::error_code sizeError;
         const auto size = std::filesystem::file_size(path, sizeError);
         if (sizeError) {
-            // 弹窗期间文件被外部删掉/移走：当作 NotFound（不回滚，原项本身已不在）。
-            return DeleteCurrentOutcome::NotFound;
+            // 区分两种失败，别一律报「已被移动」：
+            //   ① 文件确实没了（ENOENT）→ NotFound（弹窗期间被外部删掉/移走）；
+            //   ② 其它（EACCES/IO）→ PermissionDenied（文案是「没有权限」，
+            //      误导成「被移动」会让用户白找一遍）。
+            if (sizeError == std::errc::no_such_file_or_directory ||
+                sizeError == std::errc::not_a_directory) {
+                return DeleteCurrentOutcome::NotFound;
+            }
+            return DeleteCurrentOutcome::PermissionDenied;
         }
         byteSize = static_cast<long long>(size);
     }
@@ -544,10 +557,11 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
     }
 
     // P3：锁外移废纸篓（注入假 mover 时测试不碰真实废纸篓）。
-    // mover 为空（未装配/被测试清空）按「废纸篓不可用」处理——不得默认成功冒充删除。
+    // mover 在 P0 锁内已拷到局部（moverCopy）——std::function 的写侧持 mu_，
+    // 锁外直读成员是数据竞争。
     platform::file_trash::TrashOutcome outcome;
-    if (trashMover_) {
-        outcome = trashMover_(path);
+    if (moverCopy) {
+        outcome = moverCopy(path);
     } else {
         outcome.failure = platform::file_trash::TrashFailure::TrashUnavailable;
     }
@@ -557,6 +571,9 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
         importer::recordDeletedSignature(signature);
         {
             std::lock_guard<std::mutex> lock(mu_);
+            // 立即从轮换清单剔除：重扫是异步的（毫秒级但非同步），中间 250ms tick
+            // 或用户「下一个」可能把刚删掉的路径重新装载回来（桌面黑屏）。
+            rotation_.dropItem(path);
             requestScanLocked();
         }
         return DeleteCurrentOutcome::Deleted;
@@ -565,9 +582,13 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
     // P4b 失败：回滚原项（不切下一个，F-04）。
     {
         std::lock_guard<std::mutex> lock(mu_);
+        // 重取时间点：P3 移废纸篓是秒级 IO（跨卷/大文件），用 P2 时刻的 now 会把
+        // nextFireAt_ 算成已过期 → 回滚成功瞬间立刻触发下一次轮换，用户看不到
+        // 「停在原项」。
+        const RotationClock::time_point rollbackNow = nowLocked();
         if (keepPlaying) {
-            if (rotation_.focusPath(path, now)) {
-                loadItemLocked(path, now);
+            if (rotation_.focusPath(path, rollbackNow)) {
+                loadItemLocked(path, rollbackNow);
             }
         } else {
             // 池==1：P2 走过 stopPlaybackLocked()，它把宿主藏了（桌面壁纸消失）。
@@ -575,7 +596,7 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
             // 「状态卡写着正在播放、桌面却一片空」。show 失败只记日志：此时已是失败
             // 回滚路径，不能再叠一层错误。
             rotation_.setItems({path});
-            rotation_.start(now);
+            rotation_.start(rollbackNow);
             snapshot_.availability = Availability::Playing;
             if (hostStarted_ && host_ != nullptr) {
                 std::string hostError;
@@ -583,7 +604,7 @@ WallpaperService::DeleteCurrentOutcome WallpaperService::deleteCurrentItem(
                     LOG_WARN("壁纸: 删除失败回滚时重显宿主失败: " + hostError);
                 }
             }
-            loadItemLocked(path, now);
+            loadItemLocked(path, rollbackNow);
         }
     }
     return deleteOutcomeFromTrash(outcome.failure);
