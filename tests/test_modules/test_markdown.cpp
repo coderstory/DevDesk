@@ -5248,9 +5248,83 @@ REGISTER_TEST(md_layout_word_spacing_round11,
     const float wordGap = rectB[0].x - (rectA[0].x + rectA[0].w);
     DOCTEST_CHECK_MESSAGE(wordGap > 0.5f,
                           "词间距塌缩 gap=" + std::to_string(wordGap));
+    // bug399 round12 P2-4 断言锁：词间距上界——空白已含在段文本/段宽与测量内，
+    // 布局不得在其上再补 4px preGap（否则「有空白仍补 4」= 双倍间距回退）。
+    // 空格自然宽用空格码点自身矩形宽自校准（不依赖字体常量）。
+    const auto rectSpace = components::MarkdownBuilder::hitRectsForDisplayRange(
+        doc, kWidth, style, bBeg - 1, bBeg);  // "beta" 前的空格（ASCII：字节=码点）
+    DOCTEST_REQUIRE_MESSAGE(!rectSpace.empty(),
+                            "空格码点无矩形：词距上界自校准基准缺失");
+    DOCTEST_CHECK(rectSpace[0].w > 0.0f);
+    DOCTEST_CHECK_MESSAGE(
+        wordGap <= rectSpace[0].w + 1.0f,
+        "词间距超空格自宽（疑似有空白仍补 4px 双倍间距回退）gap=" +
+            std::to_string(wordGap) + " space=" +
+            std::to_string(rectSpace[0].w));
     // 混排词后 CJK 起点仍在 beta 右侧（词序几何单调）
     DOCTEST_CHECK(rectC[0].x >= rectB[0].x + rectB[0].w - 0.5f);
     DOCTEST_CHECK(rectB[0].y == rectA[0].y);   // 同行（不折行）
+    return true;
+})
+
+// bug399 round12 P1-1 回归锁：硬换行（行尾双空格 → md4c MD_TEXT_BR）之后的
+// 矩形与 cp 反查。布局对 "\n" 只推进游标、不入段表；反查链若不主动消费显示流里
+// 的换行字节，换行后全部段 aligned=false → 整段高亮/选区矩形全丢、点击 cp 停在
+// 换行前。（注：`<br>` 在 HTML 开启的方言里走 Html run 原样文本，非 BR 事件；
+// 硬换行触发源是行尾双空格/反斜杠。）
+REGISTER_TEST(md_layout_hard_break_rects_and_cp_round12,
+              "markdown: 硬换行双空格后段矩形非空 + cp 反查落点正确（round12 P1-1）", {
+    constexpr float kWidth = 400.0f;
+    const components::MarkdownStyle style;
+    const std::string doc =
+        "甲行硬换行  \n乙行紧随其后  \n丙行结尾\n";
+    const std::string display = components::MarkdownBuilder::displayTextOf(doc);
+    // display 字节位置 → 码点位置（反查域 = 码点）
+    const auto cpOfByte = [&display](std::size_t byteIdx) {
+        std::size_t cps = 0;
+        std::size_t i = 0;
+        while (i < byteIdx && i < display.size()) {
+            const unsigned char c = static_cast<unsigned char>(display[i]);
+            i += std::min<std::size_t>(
+                c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1,
+                display.size() - i);
+            ++cps;
+        }
+        return cps;
+    };
+    const std::size_t nl1 = display.find('\n');
+    const std::size_t nl2 = display.find('\n', nl1 + 1);
+    DOCTEST_REQUIRE_MESSAGE(nl1 != std::string::npos,
+                            "显示流缺第一处硬换行（<br> 未落 \\n）");
+    DOCTEST_REQUIRE(nl2 != std::string::npos);
+    const std::size_t line1End = cpOfByte(nl1);
+    const std::size_t line2Begin = line1End + 1;  // 换行占 1 码点
+    const std::size_t line2End = cpOfByte(nl2);
+    DOCTEST_CHECK(line2Begin < line2End);
+
+    // 换行前后各取一整行区间：矩形必须非空（修复前换行后为空）
+    const auto rectLine1 = components::MarkdownBuilder::hitRectsForDisplayRange(
+        doc, kWidth, style, 0, line1End);
+    const auto rectLine2 = components::MarkdownBuilder::hitRectsForDisplayRange(
+        doc, kWidth, style, line2Begin, line2End);
+    DOCTEST_REQUIRE_MESSAGE(!rectLine1.empty(), "硬换行前一行无矩形");
+    DOCTEST_REQUIRE_MESSAGE(!rectLine2.empty(),
+                            "硬换行后一行无矩形（反查链未消费流内 \\n）");
+    DOCTEST_CHECK(rectLine2.front().y > rectLine1.front().y + 0.5f);  // 另起一行
+
+    // 换行后逐码点：单码点矩形非空 + 左缘(+ε)反查回同一 cp
+    for (std::size_t cp = line2Begin; cp < line2End; ++cp) {
+        const auto rects = components::MarkdownBuilder::hitRectsForDisplayRange(
+            doc, kWidth, style, cp, cp + 1);
+        DOCTEST_REQUIRE_MESSAGE(!rects.empty(),
+                                "硬换行后 cp=" + std::to_string(cp) + " 无矩形");
+        const auto hit = components::MarkdownBuilder::displayCpForPoint(
+            doc, kWidth, style, rects.front().x + 0.5f,
+            rects.front().y + rects.front().h * 0.5f);
+        DOCTEST_CHECK_MESSAGE(hit.ok && hit.cp == cp,
+                              "硬换行后反查错位 cp=" + std::to_string(cp) +
+                                  " hit=" + std::to_string(hit.cp));
+    }
     return true;
 })
 

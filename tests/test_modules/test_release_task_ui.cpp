@@ -15,6 +15,7 @@
 #include <eui/dsl.h>
 
 #include <core/time.h>
+#include <core/platform/platform.h>  // consumeUiUpdate：帧泵自续帧断言（round12 P1-2）
 
 #include <cmath>
 #include <cstddef>
@@ -236,6 +237,78 @@ REGISTER_TEST(release_task_list_pager_first_page_and_append,
                   DOCTEST_CHECK(gated.advanceLoad());  // 第 6 帧完成追加
                   DOCTEST_CHECK_FALSE(gated.loading());
                   DOCTEST_CHECK_EQ(gated.visible(), std::size_t{20});
+                  return true;
+              })
+
+// bug399 round12 P1-2：requestUiUpdate 单发只产 1 次 compose（消费即清），
+// framesLeft 只在 compose 里递减——泵未清空却不再要帧，触底后鼠标静止时剩余帧
+// 无来源 →「加载中…」永挂、下一页永不追加。回归锁 = 未完成拍必须自续帧。
+REGISTER_TEST(release_task_pager_self_sustains_frames,
+              "release 任务列表 pager：帧泵未清空时每拍自续帧（防静止时加载永挂）", {
+                  using namespace module::release;
+                  (void)::core::platform::consumeUiUpdate();
+                  ReleaseTaskPager pager;
+                  pager.reset(25);
+                  DOCTEST_CHECK(pager.requestLoad());
+                  DOCTEST_CHECK_FALSE(pager.advanceLoad());  // 第 1 拍未完成
+                  DOCTEST_CHECK_MESSAGE(
+                      ::core::platform::consumeUiUpdate(),
+                      "泵未清空却无待处理帧：静止时剩余 5 拍无来源");
+                  for (int frame = 0; frame < 4; ++frame) {
+                      DOCTEST_CHECK_FALSE(pager.advanceLoad());
+                  }
+                  DOCTEST_CHECK(pager.advanceLoad());  // 第 6 拍完成追加
+                  DOCTEST_CHECK_EQ(pager.visible(), std::size_t{20});
+                  return true;
+              })
+
+// bug399 round12 P1-2（真实 compose 路径，cache 泵）：触底 → 之后完全静止
+// （不再有滚动/鼠标输入），只按「有无待处理 UI 帧」驱动 compose；修复前第一拍后
+// 即无帧可续 → 循环退出、第二页不追加。
+REGISTER_TEST(release_task_list_scroll_bottom_idle_appends_next_page,
+              "release 任务列表：触底后静止仍按自续帧追加下一页（防加载永挂）", {
+                  test_support::TestEnv tdb("releaselist", "idleappend",
+                                            /*registerAppDb=*/true);
+                  rel::ReleaseStore store(tdb.handle());
+                  for (int day = 1; day <= 25; ++day) {
+                      char date[11] = {};
+                      std::snprintf(date, sizeof(date), "2026-11-%02d", day);
+                      DOCTEST_REQUIRE(
+                          store.createTask(makeStoreTask(date, rel::TaskStatus::Draft))
+                              .isOk());
+                  }
+                  const eui::Screen screen = testScreen();
+                  eui::Ui ui;
+                  rel::ReleaseNewTaskDialogState dialog;
+                  const rel::ReleaseListActions actions;
+                  auto composeOnce = [&] {
+                      composeStore(ui, screen, store, dialog, actions);
+                  };
+                  composeOnce();  // 骨架帧
+                  composeOnce();  // 首屏装填（10 条）
+                  DOCTEST_REQUIRE(ui.find("release.tasks.card.11") == nullptr);
+
+                  // 触底：直接派发滚动回调（与 app 帧末 Runtime::consumePendingScrollOffsets
+// 下发的是同一回调；单测无 Runtime）→ requestLoad（置 loading + 首个帧请求）
+                  const auto* scroll = ui.find("release.tasks.scroll");
+                  DOCTEST_REQUIRE(scroll != nullptr);
+                  DOCTEST_REQUIRE(scroll->onScrollOffsetChanged != nullptr);
+                  scroll->onScrollOffsetChanged(1000000.0f);
+                  composeOnce();
+                  // 之后用户完全静止：只有「存在待处理 UI 帧」才继续 compose，
+                  // 模拟真实 app 主循环（无输入时靠帧请求唤醒）。
+                  bool stalled = false;
+                  for (int frame = 0; frame < 16; ++frame) {
+                      if (ui.find("release.tasks.card.11") != nullptr) break;
+                      if (!::core::platform::consumeUiUpdate()) {
+                          stalled = true;
+                          break;
+                      }
+                      composeOnce();
+                  }
+                  DOCTEST_CHECK_MESSAGE(
+                      !stalled && ui.find("release.tasks.card.11") != nullptr,
+                      "触底后静止未追加下一页（泵剩余帧无来源，加载永挂）");
                   return true;
               })
 

@@ -757,7 +757,14 @@ bool ReleaseTaskPager::requestLoad() {
 bool ReleaseTaskPager::advanceLoad() {
     if (!loading_) return false;
     --framesLeft_;
-    if (framesLeft_ > 0) return false;
+    if (framesLeft_ > 0) {
+        // bug399 round12 P1-2：泵未清空必须自续一帧。触底 requestLoad 的
+        // requestUiUpdate 单发只产 1 次 compose（消费即清），而 framesLeft 只在
+        // compose 的 advance 里递减；若不自续，鼠标静止且位移不再跨 256px 重排
+        // 步长时剩余帧无来源 → 「加载中…」永挂、下一页不追加。
+        ::core::platform::requestUiUpdate();
+        return false;
+    }
     loading_ = false;
     framesLeft_ = 0;
     return loadMore();
@@ -1046,7 +1053,12 @@ void composeReleaseListPage(eui::Ui& ui, const eui::Screen& screen,
     // 帧泵：首屏 1 帧延迟装填（本帧画骨架，下一帧装数据——D4 裁决）；追加 6 帧。
     const auto pump = [&]() {
         if (!cache.loading) return;
-        if (--cache.framesLeft > 0) return;
+        if (--cache.framesLeft > 0) {
+            // bug399 round12 P1-2：泵未清空自续帧（requestLoad 的单发 requestUiUpdate
+            // 只驱动 1 次 compose，剩余帧无来源 → 触底后静止时「加载中…」永挂）。
+            ::core::platform::requestUiUpdate();
+            return;
+        }
         cache.loading = false;
         cache.framesLeft = 0;
         if (!cache.loaded) {
