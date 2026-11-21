@@ -9,6 +9,7 @@
 
 #include <core/component_theme.h>
 #include <core/logging.h>
+#include <core/platform/platform.h>  // requestUiUpdate（触底加载置位后立即要帧）
 #include <core/theme.h>
 #include <core/time.h>
 
@@ -934,6 +935,9 @@ void composeReleaseListPage(eui::Ui& ui, const eui::Screen& screen,
         paging.requestLoad = [&st] {
             if (st.pager.loading() || !st.pager.hasMore()) return;
             st.pager.requestLoad();
+            // bug399 round10 P1-1：滚动重排按位移步长（256px）节流，<256px 的触底不再
+            // 自动重排——加载占位/下一页必须显式要一帧才画得出来。
+            ::core::platform::requestUiUpdate();
         };
         paging.advance = [&st] { st.pager.advanceLoad(); };
 
@@ -1121,6 +1125,9 @@ void composeReleaseListPage(eui::Ui& ui, const eui::Screen& screen,
                                  if (cache.cards.size() >= cache.total) return;
                                  cache.loading = true;
                                  cache.framesLeft = 6;  // ≈100ms：让「加载中…」占位可见
+                                 // bug399 round10 P1-1：显式要帧（<256px 触底不触发节流
+                                 // 重排，否则占位与下一页要等用户再动才出现）。
+                                 ::core::platform::requestUiUpdate();
                              };
                              paging.retry = [&cache] {
                                  cache.failed = false;

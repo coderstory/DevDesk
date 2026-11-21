@@ -29,6 +29,7 @@
 #include "module_notepad/notepad_module.h"
 #include "module_notepad/notepad_protect.h"  // G 段：veto 裁决/quit guard 决策面
 #include "module_notepad/notepad_session.h"  // notepadComposeSession（生产 compose 单点）
+#include "core/component_theme.h"  // Q 段：MarkdownStyle 口径（与预览同源 token）
 
 #include <chrono>
 #include <cmath>
@@ -1601,11 +1602,15 @@ int main(int argc, char* argv[]) {
                 }
                 if (i == 3) restoreMaxOff = maxOff;
             }
-            // P1-A 段表体积回归锁：每条新布局的平均段数。未合并时 CJK 单码点成段，
-            // 段数可达数百；合并后应趋近 run 数（每段落几个视觉 run），avg ≤ 64。
+            // P1-A 段表体积回归锁：比值口径（bug399 round10 修正——旧 avgSegs ≤ 64
+            // 判据对「回退合并」不敏感：每段几个视觉 run 时 ~20 段/条仍绿）。合并生效
+            // = 每条布局段数 ≤ run 数 × 2（同 run 同行多码点已并成一段，折行最多按
+            // 行再分；回退成对合并即 8× 以上）。
             const double avgSegs =
                 baseColdLayouts > 0 ? static_cast<double>(baseColdSegs) / baseColdLayouts : 0.0;
-            if (baseColdLayouts <= 0 || avgSegs > 64.0) p1aOk = false;
+            const double segPerRun =
+                baseColdRuns > 0 ? static_cast<double>(baseColdSegs) / baseColdRuns : 0.0;
+            if (baseColdLayouts <= 0 || baseColdRuns <= 0 || segPerRun > 2.0) p1aOk = false;
             if (baseMaxOff <= 0.0) {
                 passed = fail("P: 预览不可滚动（夹具/窗档不满足复现前件）");
             } else if (std::fabs(restoreMaxOff - baseMaxOff) > 1.0) {
@@ -1613,8 +1618,8 @@ int main(int argc, char* argv[]) {
                               std::to_string(baseMaxOff) + " restore=" +
                               std::to_string(restoreMaxOff) + "）= 跨档几何污染");
             } else if (!p1aOk) {
-                passed = fail("P1-A: 段合并未生效（冷布局 avgSegs=" +
-                              std::to_string(avgSegs) + " > 64/条；coldSegs=" +
+                passed = fail("P1-A: 段合并未生效（冷布局 segs/run=" +
+                              std::to_string(segPerRun) + " > 2；coldSegs=" +
                               std::to_string(baseColdSegs) + " coldRuns=" +
                               std::to_string(baseColdRuns) + "）");
             } else if (!p1bOk) {
@@ -1622,8 +1627,185 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "P: PASS — 尺寸档 maxOffset 往返稳定 base=" << baseMaxOff
                           << " restore=" << restoreMaxOff << "；冷布局 avgSegs="
-                          << avgSegs << "/条（segs=" << baseColdSegs
+                          << avgSegs << "/条，segs/run=" << segPerRun << "（segs=" << baseColdSegs
                           << " runs=" << baseColdRuns << "）；稳态 parse 全命中\n";
+            }
+        }
+    }
+
+    // ── Q. bug399 round10：段间空隙均匀性（P0 段合并未吸收 gap 的视觉回归锁）──
+    // 修前：布局级合并只累加 segmentWidth 不吸收 gap → 合并段声明宽比游标推进窄
+    // 4px/次 → 渲染期 CJK 两字一组、组间 8px 字距抖动（round4-scrolled.png）。
+    // 像素 ink 断言对位移不敏感拦不住这类回归，故直接在渲染元素树取证：
+    //  ①正文行每个 .seg. 元素声明宽 = measure(整段文本) + (码点数-1)×4（gap 已并入
+    //    宽度累计；修前成对合并段恒缺 4px → 红；回退合并则单码点成段亦合规，
+    //    故配 P 段 segs/run 比值锁）；
+    //  ②同行相邻 .seg. 元素间隙 ∈ {0, 4}±0.6，出现 8px 成组模式 → 红。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("Q: 定位不到仓库根（bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& qs =
+                *module::notepad::detail::sessionRegistry().back();
+            qs.previewOn = true;
+            const float qw = 1000.0f;
+            const float qh = 640.0f;
+            runtime.compose(qs.pageId, qw, qh,
+                            [&](eui::Ui& u, const eui::Screen& screen) {
+                                ui = &u;
+                                module::notepad::notepadComposeSession(qs, u, screen);
+                            });
+            struct QSeg {
+                float x = 0.0f;
+                float y = 0.0f;
+                float w = 0.0f;
+                float h = 0.0f;
+                std::string text;
+            };
+            std::vector<QSeg> qsegs;
+            std::function<void(const core::dsl::Element&)> walk =
+                [&](const core::dsl::Element& el) {
+                    const std::string marker = ".seg.";
+                    const std::size_t at = el.id.rfind(marker);
+                    if (at != std::string::npos) {
+                        const std::string tail = el.id.substr(at + marker.size());
+                        const bool digits =
+                            !tail.empty() && std::all_of(tail.begin(), tail.end(), [](char c) {
+                                return c >= '0' && c <= '9';
+                            });
+                        if (digits) {
+                            // .seg.N 是定位 stack，文本串在子元素 .seg.N.text 上；
+                            // chip（行内代码/引用胶囊）宽含 12px 内衬，量宽口径不同 → 排除。
+                            std::string segText;
+                            bool chip = false;
+                            for (const auto& child : el.children) {
+                                const std::string& cid = child->id;
+                                if (cid.size() >= 5 &&
+                                    cid.compare(cid.size() - 5, 5, ".text") == 0) {
+                                    segText = child->text;
+                                } else if (cid.size() >= 3 &&
+                                           cid.compare(cid.size() - 3, 3, ".bg") == 0) {
+                                    chip = true;
+                                }
+                            }
+                            if (!chip && !segText.empty()) {
+                                qsegs.push_back({el.frame.x, el.frame.y, el.frame.width,
+                                                 el.frame.height, segText});
+                            }
+                        }
+                    }
+                    for (const auto& child : el.children) walk(*child);
+                };
+            for (const auto& root : ui->roots()) walk(*root);
+
+            const components::MarkdownStyle qStyle(
+                core::theme::componentTokensWeChat(core::theme::current()));
+            auto cpCount = [](const std::string& t) {
+                std::size_t n = 0;
+                for (std::size_t i = 0; i < t.size();) {
+                    const unsigned char c = static_cast<unsigned char>(t[i]);
+                    i += c >= 0xF0U ? 4 : c >= 0xE0U ? 3 : c >= 0xC0U ? 2 : 1;
+                    ++n;
+                }
+                return n;
+            };
+            // 只取正文行：行高 == bodyLineHeight（排除标题/代码等异字号族）
+            std::vector<const QSeg*> body;
+            for (const QSeg& seg : qsegs) {
+                if (std::fabs(seg.h - qStyle.bodyLineHeight) <= 0.6f) body.push_back(&seg);
+            }
+            if (body.empty()) {
+                passed = fail("Q: 预览首屏无正文 .seg. 元素（元素数=" +
+                              std::to_string(qsegs.size()) + "）= 取证前提不成立");
+            } else {
+                std::unordered_map<int, std::vector<const QSeg*>> byLine;
+                for (const QSeg* seg : body) {
+                    byLine[static_cast<int>(std::lround(seg->y))].push_back(seg);
+                }
+                std::vector<const QSeg*>* best = nullptr;
+                long long bestCps = -1;
+                for (auto& kv : byLine) {
+                    long long sum = 0;
+                    for (const QSeg* seg : kv.second) sum += static_cast<long long>(cpCount(seg->text));
+                    if (sum > bestCps) {
+                        bestCps = sum;
+                        best = &kv.second;
+                    }
+                }
+                std::sort(best->begin(), best->end(),
+                          [](const QSeg* a, const QSeg* b) { return a->x < b->x; });
+                // ①段盒宽必须容得下自己画的文本（delta = w - measure >= 0）：修前成对
+                //   合并的声明宽 = Σ part measure（不含 gap）却在游标上占了 Σ+gap，盒
+                //   比分配窄 → 字被压成组；上界 = (码点数-1)×4（每码点最多吸收一个
+                //   gap）+ 1 浮点余量，防重复吸收。
+                std::vector<std::string> badWidth;
+                int badWidthCount = 0;
+                long long bodyCps = 0;
+                for (const QSeg* seg : body) {
+                    const std::size_t cps = cpCount(seg->text);
+                    bodyCps += static_cast<long long>(cps);
+                    const float measured = components::detail::measureMarkdownTextWidth(
+                        seg->text, qStyle.fontFamily, qStyle.bodySize, 400);
+                    const float delta = seg->w - measured;
+                    const float upper =
+                        (cps > 1 ? static_cast<float>(cps - 1) * 4.0f : 0.0f) + 1.0f;
+                    if (delta < -0.6f || delta > upper) {
+                        ++badWidthCount;
+                        if (badWidth.size() < 5) {
+                            badWidth.push_back("w=" + std::to_string(seg->w) + " m=" +
+                                               std::to_string(measured) + " delta=" +
+                                               std::to_string(delta) + " cps=" +
+                                               std::to_string(cps));
+                        }
+                    }
+                }
+                // ②合并生效度：正文段数 / 码点数 <= 0.25（成对合并 = 0.5、逐码点 = 1）
+                const double segPerCp = bodyCps > 0
+                    ? static_cast<double>(body.size()) / static_cast<double>(bodyCps) : 1.0;
+                // ②同行相邻段间隙均匀性
+                std::string gapBad;
+                for (std::size_t i = 0; i + 1 < best->size(); ++i) {
+                    const float gap = (*best)[i + 1]->x - ((*best)[i]->x + (*best)[i]->w);
+                    const bool okZero = std::fabs(gap) <= 0.6f;
+                    const bool okGap = std::fabs(gap - 4.0f) <= 0.6f;
+                    if (!okZero && !okGap && gapBad.empty()) {
+                        gapBad = "段#" + std::to_string(i) + " 间隙=" + std::to_string(gap) +
+                                 "px（应为 0 或 4；8px 成组=合并段宽未吸收 gap）";
+                    }
+                }
+                std::cerr << "Q 采样行 y=" << std::lround((*best)[0]->y) << " 段数="
+                          << best->size() << " 码点=" << bestCps << "：";
+                for (std::size_t i = 0; i < best->size() && i < 8; ++i) {
+                    std::cerr << " [" << (*best)[i]->x << "," << (*best)[i]->w << "]";
+                }
+                std::cerr << "\n";
+                if (badWidthCount > 0) {
+                    std::string detail;
+                    for (const std::string& d : badWidth) detail += " " + d;
+                    passed = fail("Q: 段盒宽不容文本 / 越界（" +
+                                  std::to_string(badWidthCount) + " 处）:" + detail);
+                } else if (!gapBad.empty()) {
+                    passed = fail("Q: " + gapBad);
+                } else if (segPerCp > 0.25) {
+                    passed = fail("Q: 段合并未生效（段数/码点数=" +
+                                  std::to_string(segPerCp) + " > 0.25）");
+                } else {
+                    std::cerr << "Q: PASS — 段盒宽含 gap（n=" << body.size()
+                              << "，段数/码点数=" << segPerCp
+                              << "），同行段间隙均匀（采样行段数=" << best->size()
+                              << "）\n";
+                }
             }
         }
     }
