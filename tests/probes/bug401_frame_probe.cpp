@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -146,7 +147,16 @@ int main() {
         if (std::string(kSlugs[i]) == "markdown") mdMod = mods[i].get();
     }
     if (mdMod != nullptr) {
-        module::markdown::mdSetPollIntervalMsForTest(mdMod, 1);
+        // 默认 1ms（与 bug401 基线同一口径，把同步链压进可测帧）；bug402/403 起
+        // 比对/rescan 在后台线程，1ms 只是「后台巡检多久一轮」，可 BUG401_POLL_MS
+        // 覆盖成真机周期（5000）看稳态帧。
+        int64_t pollMs = 1;
+        if (const char* env = std::getenv("BUG401_POLL_MS")) {
+            const long long v = std::atoll(env);
+            if (v > 0) pollMs = v;
+        }
+        module::markdown::mdSetPollIntervalMsForTest(mdMod, pollMs);
+        std::cout << "BUG401 poll_ms=" << pollMs << "\n";
     }
     const int todoSeeded = seedTodos(mdEnv, 60);
 
@@ -202,6 +212,34 @@ int main() {
         const double ms = composeOnce(runtime, window, w, h);
         std::cout << "MEM_REFRESH_FRAME frame=" << ms << " (sleep1100)"
                   << " total=" << msSince(t0) << "\n";
+    }
+
+    // bug402/403 语义验证：外部新增/删除笔记 → watcher 后台线程增量同步索引
+    //（比对/rescan 已不在 UI 帧里跑），索引必须跟随磁盘且不靠帧驱动。
+    {
+        auto indexCount = [&](const char* path) -> std::string {
+            auto prep = mdEnv.db->db().prepare(
+                "SELECT COUNT(*) AS n FROM markdown_index WHERE path = ?");
+            if (prep.isFail()) return "prepare-fail";
+            auto& stmt = prep.value();
+            if (stmt.bind(1, std::string(path)).isFail()) return "bind-fail";
+            auto rows = stmt.fetchAll();
+            if (rows.isFail() || rows.value().empty()) return "fetch-fail";
+            auto v = rows.value()[0].getInt64("n");
+            return v.isOk() ? std::to_string(v.value()) : "read-fail";
+        };
+        {
+            std::ofstream f(mdEnv.dir / "external-late.md", std::ios::binary);
+            f << "# 外部新增后到\n\n后台链路的语义验证。\n";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::cout << "WATCH_ADD_INDEX count=" << indexCount("external-late.md")
+                  << " (expect 1)\n";
+        std::error_code rec;
+        std::filesystem::remove(mdEnv.dir / "external-late.md", rec);
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::cout << "WATCH_DEL_INDEX count=" << indexCount("external-late.md")
+                  << " (expect 0)\n";
     }
 
     router.stopAll();

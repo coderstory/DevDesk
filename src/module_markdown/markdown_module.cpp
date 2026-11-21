@@ -85,7 +85,9 @@ inline HeaderLayout headerLayout(float contentW, const core::theme::Tokens& t) {
 // static_cast 安全 —— 该缝不对外承诺接受任意 core::Module*。
 void mdSetPollIntervalMsForTest(::core::Module* mod, int64_t ms) {
     if (mod == nullptr || ms <= 0) return;
-    static_cast<MarkdownModule*>(mod)->pollIntervalMs_ = ms;
+    // bug402/403：周期现在同时驱动 UI 节流与后台巡检线程（service 可能未建，
+    // 模块侧记住值，onStart 建 service 后回灌）
+    static_cast<MarkdownModule*>(mod)->setPollIntervalMs(ms);
 }
 
 
@@ -117,6 +119,8 @@ void MarkdownModule::onStart()  {
     if (!service_) {
         service_ = std::make_unique<MarkdownService>(*db,
                                                      ::core::paths::markdownDir());
+        // 测试缝可能先于 onStart 设过周期（probe/test 均在 startAll 前注入）
+        service_->setPollIntervalMsForTest(pollIntervalMs_);
     }
     markdownTools_ = std::make_unique<MarkdownTools>(*service_);
     markdownTools_->registerAll();

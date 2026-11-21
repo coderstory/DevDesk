@@ -883,10 +883,14 @@ private:
 
     void saveEditor() ;
 
-    // 文件变化自动感知（5 秒轮询）
+    // 文件变化自动感知：索引同步在 MarkdownService 后台线程（bug402/403），
+    // 本帧入口只消费「有变化」标记 + 节流做当前笔记外部修改检测。
 
-    // 每 5 秒一次（compose 每帧调用，steady_clock 节流）
+    // compose 每帧调用；有变化则 refreshList，节流到点才 checkCurrentNoteOnDisk
     void pollDiskChangesIfDue() ;
+
+    // 测试缝入口（markdown_module_test_seam.h）：同时改 UI 节流与后台巡检周期
+    void setPollIntervalMs(int64_t ms) ;
 
     void checkCurrentNoteOnDisk() ;
 

@@ -180,26 +180,29 @@ void MarkdownModule::drawNewFolderDialog(eui::Ui& ui,
     });
 }
 
+void MarkdownModule::setPollIntervalMs(int64_t ms) {
+    if (ms <= 0) return;
+    pollIntervalMs_ = ms;
+    if (service_) service_->setPollIntervalMsForTest(ms);
+}
+
 void MarkdownModule::pollDiskChangesIfDue() {
     if (!service_) return;
+
+    // bug402/403：磁盘比对 + rescan 已整体挪到 MarkdownService 后台巡检线程，
+    // 本帧只消费「索引有变化」标记 → 刷列表（用户路径零遍历，稳态帧零成本）。
+    if (service_->consumeIndexDirty()) {
+        listError_.clear();
+        refreshList();
+        checkCurrentNoteOnDisk();  // watcher 事件后即时外部修改检测（stat 级）
+    }
+
+    // 当前笔记的外部修改 / 删除检测：stat 级，保留节流周期
     const auto now = std::chrono::steady_clock::now();
     const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                              now - lastPollAt_).count();
-    if (!service_->hasWatchCredit() && sinceMs < pollIntervalMs_) return;
+    if (sinceMs < pollIntervalMs_) return;
     lastPollAt_ = now;
-
-    // 1) 目录级轻量比对：有差异才做全量 rescan
-    auto changed = service_->pollChanged();
-    if (changed.isOk() && changed.value()) {
-        auto r = service_->rescan();
-        if (r.isOk()) {
-            listError_.clear();
-            refreshList();
-        } else {
-            LOG_WARN("自动重扫失败: " + r.errorMessage());
-        }
-    }
-    // 2) 当前笔记的外部修改 / 删除检测
     checkCurrentNoteOnDisk();
 }
 

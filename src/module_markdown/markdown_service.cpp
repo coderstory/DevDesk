@@ -116,11 +116,76 @@ MarkdownService::MarkdownService(core::data::SqliteDb& db,
         LOG_WARN("Markdown 文件监听启动失败，退回 mtime/size 轮询: " +
                  r.errorMessage());
     }
+    // bug402/403：比对 + rescan 的后台巡检线程（UI 帧只消费 indexDirty）
+    poller_ = std::thread([this] { pollerLoop(); });
 }
 
 MarkdownService::~MarkdownService() {
-    // 先 join watcher 线程，保证回调不再触碰任何成员
+    // 先停后台巡检线程（join），再 join watcher 线程，保证回调不再触碰任何成员
+    {
+        std::lock_guard<std::mutex> lock(pollerMu_);
+        pollerStop_ = true;
+    }
+    pollerCv_.notify_all();
+    if (poller_.joinable()) poller_.join();
     if (watcher_) watcher_->stop();
+}
+
+bool MarkdownService::consumeIndexDirty() {
+    return indexDirty_.exchange(false);
+}
+
+void MarkdownService::setPollIntervalMsForTest(int64_t ms) {
+    if (ms <= 0) return;
+    {
+        std::lock_guard<std::mutex> lock(pollerMu_);
+        pollIntervalMs_ = ms;
+    }
+    pollerCv_.notify_all();  // 立即按新周期重排（测试缝 1ms/1h 双向都要生效）
+}
+
+void MarkdownService::pollerLoop() {
+    std::unique_lock<std::mutex> lock(pollerMu_);
+    while (true) {
+        pollerCv_.wait_for(lock,
+                           std::chrono::milliseconds(pollIntervalMs_));
+        if (pollerStop_) break;
+        lock.unlock();
+        pollPass();
+        lock.lock();
+    }
+}
+
+void MarkdownService::pollPass() {
+    // 1) watcher 增量同步失败需要全量收敛（onWatchEvent 只置原子，不动 DB）
+    if (forceRescan_.exchange(false)) {
+        if (auto full = rescan(); full.isFail()) {
+            LOG_WARN("watcher 触发的全量重扫失败: " + full.errorMessage());
+        } else {
+            indexDirty_.store(true);
+        }
+    }
+    // 2) 磁盘 vs 索引周期比对（watcher credit 不在这里消费：留着给 pollChanged/
+    //   hasWatchCredit 的显式消费者；本轮结果由 compareDiskChanges 自己判）
+    //   watcher 健康 → 降频兜底核对（每 kVerifyEveryPasses 轮一次，≈60s）：
+    //   正常变化由 watcher 增量同步即时入索引，稳态不做全树遍历；watcher 掉线/
+    //   stub 平台 → 每轮比对（5s 语义与原实现一致）。
+    if (watcherActive()) {
+        if (++passesSinceVerify_ < kVerifyEveryPasses) return;
+        passesSinceVerify_ = 0;
+    }
+    auto changed = compareDiskChanges();
+    if (changed.isFail()) {
+        LOG_WARN("磁盘比对失败: " + changed.errorMessage());
+        return;
+    }
+    if (!changed.value()) return;
+    auto r = rescan();
+    if (r.isOk()) {
+        indexDirty_.store(true);
+    } else {
+        LOG_WARN("自动重扫失败: " + r.errorMessage());
+    }
 }
 
 bool MarkdownService::watcherActive() const {
@@ -163,7 +228,11 @@ void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events)
             break;
         }
     }
-    if (indexRelevant) watcherFired_.store(true);
+    if (indexRelevant) {
+        watcherFired_.store(true);
+        // UI 帧凭这个标记刷新列表（bug402/403：帧内不再 rescan，仅 refreshList）
+        indexDirty_.store(true);
+    }
 
     // 2) 即刻尽力同步索引（watcher 线程）。UI 持有 rescanMu_ 时跳过
     //（那轮 rescan 以磁盘为准收敛，下轮 pollChanged 仍会刷新）。
@@ -195,15 +264,18 @@ void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events)
             ? syncOneToIndex(absPath, relPosix, /*force=*/true)
             : deleteFromIndex(relPosix);
         if (one.isFail()) {
-            // 本轮放弃，标记已置，下轮 rescan 修正
+            // 本轮放弃，标记已置，下一轮后台轮询 rescan 修正
             LOG_WARN("watcher 事件同步失败 " + ev.relativePath + ": " +
                      one.errorMessage());
+            forceRescan_.store(true);
         }
     }
     if (needFullRescan) {
         auto full = rescanLocked();
         if (full.isFail()) {
             LOG_WARN("watcher 触发的全量重扫失败: " + full.errorMessage());
+        } else {
+            indexDirty_.store(true);
         }
     }
 }
@@ -1234,7 +1306,12 @@ core::Result<bool> MarkdownService::pollChanged() {
         return core::Result<bool>::ok(true);
     }
 
-    // mtime/size 比对：stub 平台 / watcher 掉线的兜底主路径
+    return compareDiskChanges();
+}
+
+core::Result<bool> MarkdownService::compareDiskChanges() {
+    // mtime/size 比对：stub 平台 / watcher 掉线的兜底主路径（bug402/403 起只在
+    // 后台巡检线程跑，不再进 UI 帧）
     std::map<std::string, std::pair<int64_t, int64_t>> disk;
     std::error_code ec;
     if (fs::exists(notesDir_, ec)) {
