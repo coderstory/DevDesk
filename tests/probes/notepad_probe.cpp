@@ -1027,7 +1027,7 @@ int main(int argc, char* argv[]) {
                           << " frameInk=" << frameInk << "\n";
                 return ink;
             };
-            const int inkTop = jOk ? captureInk("evidence/bug399/round2-scroll0.png", module::notepad::kNotepadPreviewId) : -1;
+            const int inkTop = jOk ? captureInk("evidence/bug399/round4-scroll0.png", module::notepad::kNotepadPreviewId) : -1;
             if (jOk && inkTop < 0) jOk = fail("J: scroll=0 对照帧读取失败");
             else if (jOk && inkTop <= 200)
                 jOk = fail("J: scroll=0 对照帧内容区无文字像素（ink=" +
@@ -1051,12 +1051,15 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            const int inkBottom = jOk ? captureInk("evidence/bug399/round2-scrolled.png", module::notepad::kNotepadPreviewId) : -1;
+            const int inkBottom = jOk ? captureInk("evidence/bug399/round4-scrolled.png", module::notepad::kNotepadPreviewId) : -1;
             if (inkBottom >= 0 && inkBottom <= 200)
                 std::cerr << "J: 已知红记录 — 滚到底后内容区无文字像素（像素级白板）"
                           << "\n";
-            // bug399 第二轮：已知红只记录（根因未修，未收口）——像素白板复现
-            // （scroll=0 ink≈3.1e4 → 滚动后 ink=0 / 全帧仅剩 chrome），不置 passed。
+            // bug399 round4 判据：滚动后内容区文字像素必须与 scroll=0 同量级
+            // （根因 = 滚动内容列与 markdown 根同 id，instances_ 同 key 被洗回 0）。
+            if (jOk && inkBottom <= 200)
+                jOk = fail("J: 滚到底后内容区无文字像素（ink=" + std::to_string(inkBottom) +
+                           "）= 像素级白板");
             // 判据：滚到底后文档末块的 .text 子树必须已建（裁剪跟随滚动）。修前
             // 裁剪冻结 → 末块在 overscan 外只剩包装 → 缺件 = 白板。
             {

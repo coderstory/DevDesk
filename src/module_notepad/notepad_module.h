@@ -60,7 +60,11 @@ inline constexpr const char* kNotepadProtectBtnCancelId =
 inline constexpr const char* kNotepadBtnFormatId = "notepad.btnFormat";
 inline constexpr const char* kNotepadBtnPreviewId = "notepad.btnPreview";
 inline constexpr const char* kNotepadPreviewId = "notepad.preview";
-inline constexpr const char* kNotepadPreviewContentId = "notepad.preview.content";
+// bug399：id 必须与 scrollView 内容列 id（kNotepadPreviewId + ".content" =
+// "notepad.preview.content"）区分。两者同 id 时 instances_ 同一 key 被两遍写：
+// markdown 根（无 scrollContentSourceId）随后把内容列的滚动 translate 洗回 0，
+// 文本按未位移坐标出顶点被裁 → 滚后白板（记事本子窗无流质帧泵暴露）。
+inline constexpr const char* kNotepadPreviewContentId = "notepad.preview.md";
 inline constexpr const char* kNotepadPreviewEmptyId = "notepad.preview.empty";
 
 // OS 送达 / 窗内打开的唯一开窗入口：扩展名已由漏斗判定，本函数只负责
