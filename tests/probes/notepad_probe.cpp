@@ -24,6 +24,8 @@
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（openWindow=入队不建窗）
 
 #include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
+#include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
+#include <components/scrollview.h>  // bug399 round3 差分实验：普通 scrollView+text
 #include "module_notepad/notepad_module.h"
 #include "module_notepad/notepad_protect.h"  // G 段：veto 裁决/quit guard 决策面
 #include "module_notepad/notepad_session.h"  // notepadComposeSession（生产 compose 单点）
@@ -995,7 +997,7 @@ int main(int argc, char* argv[]) {
             // render 跑满 retained 层稳定门槛（否则探针冷层单遍捕获整层空白=
             // 假证据）。主内容区取预览元素逻辑框，按 framebuffer/scale 换像素。
             probe::FrameCapture frameCap(window);
-            auto captureInk = [&](const std::string& path) -> int {
+            auto captureInk = [&](const std::string& path, const std::string& id) -> int {
                 // 元素运行时实例（frame/transform/text 实例）由 update 建，
                 // 不 poll 直接 render 会读到空实例 = 整帧不画（假空白）。
                 for (int i = 0; i < 4; ++i) probe::pollOnce(window, runtime);
@@ -1012,8 +1014,7 @@ int main(int argc, char* argv[]) {
                     std::cerr << "J: 写 PNG 失败: " << path << "\n";
                     return -1;
                 }
-                const core::dsl::Element* cur =
-                    ui->find(module::notepad::kNotepadPreviewId);
+                const core::dsl::Element* cur = ui->find(id);
                 if (cur == nullptr) return -1;
                 const int ink = countInkPixels(rgba, iw, ih, frameCap.scale(),
                                                cur->frame.x, cur->frame.y,
@@ -1026,7 +1027,7 @@ int main(int argc, char* argv[]) {
                           << " frameInk=" << frameInk << "\n";
                 return ink;
             };
-            const int inkTop = jOk ? captureInk("evidence/bug399/round2-scroll0.png") : -1;
+            const int inkTop = jOk ? captureInk("evidence/bug399/round2-scroll0.png", module::notepad::kNotepadPreviewId) : -1;
             if (jOk && inkTop < 0) jOk = fail("J: scroll=0 对照帧读取失败");
             else if (jOk && inkTop <= 200)
                 jOk = fail("J: scroll=0 对照帧内容区无文字像素（ink=" +
@@ -1050,7 +1051,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            const int inkBottom = jOk ? captureInk("evidence/bug399/round2-scrolled.png") : -1;
+            const int inkBottom = jOk ? captureInk("evidence/bug399/round2-scrolled.png", module::notepad::kNotepadPreviewId) : -1;
             if (inkBottom >= 0 && inkBottom <= 200)
                 std::cerr << "J: 已知红记录 — 滚到底后内容区无文字像素（像素级白板）"
                           << "\n";
@@ -1091,6 +1092,88 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+    }
+
+    // ── K. bug399 round3 差分实验：普通 scrollView + ui.text，无流质帧泵 ──
+    // 目的：判定「render-only 滚动下文本不落像素」是 EUI 通用缺陷还是 notepad 预览
+    // 特有。同套 no-pump 循环（仅 composeRequested 重排；本用例不开
+    // composeOnScrollOffsetChange = 纯 render-only 滚动）+ 真实滚轮注入，滚后读像素。
+    {
+        const std::string diffId = "diff.scroll";
+        float diffOffset = 0.0f;
+        core::dsl::Ui* kUi = nullptr;
+        int kComposes = 0;
+        auto kCompose = [&] {
+            runtime.compose("diff", 720.0f, 480.0f, [&](eui::Ui& u, const eui::Screen&) {
+                kUi = &u;
+                components::scrollView(u, diffId)
+                    .position(0.0f, 0.0f)
+                    .size(720.0f, 480.0f)
+                    .offset(diffOffset)
+                    .onChange([&diffOffset](float v) { diffOffset = v; })
+                    .contentKey("v1")
+                    .content([&diffId](eui::Ui& inner, float innerW, float) {
+                        for (int i = 0; i < 40; ++i) {
+                            inner.text(diffId + ".t" + std::to_string(i))
+                                .width(innerW)
+                                .height(24.0f)
+                                .text("diff line " + std::to_string(i))
+                                .fontSize(15.0f)
+                                .build();
+                        }
+                    })
+                    .build();
+            });
+            ++kComposes;
+        };
+        auto kFrame = [&] {
+            probe::pollOnce(window, runtime);
+            if (runtime.composeRequested()) {
+                kCompose();
+                probe::pollOnce(window, runtime);
+            }
+        };
+        auto kCapture = [&](const std::string& path) -> int {
+            for (int i = 0; i < 4; ++i) probe::pollOnce(window, runtime);
+            probe::FrameCapture capture(window);
+            std::vector<unsigned char> rgba;
+            int iw = 0;
+            int ih = 0;
+            if (!capture.ok() || !capture.readFrame(runtime, rgba, iw, ih, 24)) return -1;
+            probe::writeRgbaToPng(path, rgba.data(), iw, ih);
+            const core::dsl::Element* sc = kUi != nullptr ? kUi->find(diffId) : nullptr;
+            if (sc == nullptr) return -1;
+            return countInkPixels(rgba, iw, ih, capture.scale(), sc->frame.x, sc->frame.y,
+                                  sc->frame.width, sc->frame.height);
+        };
+        kCompose();
+        kCompose();
+        const core::dsl::Element* sc = kUi->find(diffId);
+        const float kMax = sc != nullptr ? sc->scrollMaxOffset : 0.0f;
+        const int kInk0 = kCapture("evidence/bug399/round3-diff-scroll0.png");
+        if (sc != nullptr && kMax > 0.0f) {
+            const float kcx = sc->frame.x + sc->frame.width * 0.5f;
+            const float kcy = sc->frame.y + sc->frame.height * 0.5f;
+            for (int i = 0; i < 8; ++i) {
+                core::queuePointerMotion(window, kcx, kcy, {}, {});
+                probe::pollOnce(window, runtime);
+                probe::queueScroll(window, runtime, 0.0, -20.0);
+                probe::pollOnce(window, runtime);
+                for (int f = 0; f < 40; ++f) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                    kFrame();
+                }
+            }
+        }
+        const int kInk1 = kCapture("evidence/bug399/round3-diff-scrolled.png");
+        std::cerr << "K 差分: maxOffset=" << kMax << " scroll0 ink=" << kInk0
+                  << " scrolled ink=" << kInk1 << " composes=" << kComposes
+                  << "\n";
+        std::cerr << (kInk1 > 200 ? "K 结论: 普通 scrollView+text 滚后仍有像素 = 缺陷是"
+                                  " notepad 预览特有（对比元素/实例差异）"
+                                : "K 结论: 普通 scrollView+text 滚后也归零 = render-only"
+                                  " 滚动的文本链通用缺陷（EUI 侧）")
+                  << "\n";
     }
 
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
