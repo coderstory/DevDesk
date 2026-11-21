@@ -38,8 +38,7 @@ core::Result<RecallEvalStore> RecallEvalStore::open(
     const std::filesystem::path& dbFile) {
     auto db = core::data::SqliteDb::open(dbFile);
     if (db.isFail()) {
-        return core::Result<RecallEvalStore>::fail(db.errorCode(),
-                                                   db.errorMessage());
+        return core::propagate<RecallEvalStore>(db);
     }
     const auto applied = db.value().applySchema(
         "CREATE TABLE IF NOT EXISTS recall_eval ("
@@ -47,8 +46,7 @@ core::Result<RecallEvalStore> RecallEvalStore::open(
         " ts INTEGER NOT NULL, recall_pct INTEGER NOT NULL,"
         " hits INTEGER NOT NULL, queries INTEGER NOT NULL)");
     if (applied.isFail()) {
-        return core::Result<RecallEvalStore>::fail(applied.errorCode(),
-                                                   applied.errorMessage());
+        return core::propagate<RecallEvalStore>(applied);
     }
     RecallEvalStore store;
     store.db_ = std::make_shared<core::data::SqliteDb>(std::move(db.value()));
@@ -60,7 +58,7 @@ core::Result<void> RecallEvalStore::save(const RecallResult& result) {
         "INSERT INTO recall_eval(ts, recall_pct, hits, queries) "
         "VALUES(?, ?, ?, ?)");
     if (stmt.isFail()) {
-        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<void>(stmt);
     }
     if (!stmt.value().bind(1, result.ts).isOk() ||
         !stmt.value()
@@ -74,7 +72,7 @@ core::Result<void> RecallEvalStore::save(const RecallResult& result) {
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }

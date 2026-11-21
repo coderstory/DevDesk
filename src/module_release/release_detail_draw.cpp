@@ -370,28 +370,6 @@ bool prereqGateOpen(const ReleaseDetailUiState& state, PrereqKey key) {
     return !trimmed(prereqValue(state, key)).empty();
 }
 
-// ASCII 大小写不敏感子串（中文按字节原样比较）。用于把 dueItems 的条目对回卡片。
-
-bool containsAsciiCaseInsensitive(const std::string& haystack, const std::string& needle) {
-    if (needle.empty()) return true;
-    if (needle.size() > haystack.size()) return false;
-    for (std::size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
-        bool match = true;
-        for (std::size_t j = 0; j < needle.size(); ++j) {
-            unsigned char a = static_cast<unsigned char>(haystack[i + j]);
-            unsigned char b = static_cast<unsigned char>(needle[j]);
-            if (a >= 'A' && a <= 'Z') a = static_cast<unsigned char>(a - 'A' + 'a');
-            if (b >= 'A' && b <= 'Z') b = static_cast<unsigned char>(b - 'A' + 'a');
-            if (a != b) {
-                match = false;
-                break;
-            }
-        }
-        if (match) return true;
-    }
-    return false;
-}
-
 // 前置区（F-12 单据式表单流，编辑态专属）：一行一单据，label 定宽 + 输入 +
 // 行尾勾；「填」是主体、「勾」是收尾。单号未填 → 勾禁用 + 提示（既有门禁）。
 // 到期提示不逐行常驻（设计 §5.2）：由已完成聚合 / 提醒引擎 / 轨道到期承载。

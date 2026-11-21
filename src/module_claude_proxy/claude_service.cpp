@@ -164,7 +164,7 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
 
     auto p = getProfile(id);
     if (p.isFail()) {
-        return core::Result<void>::fail(p.errorCode(), p.errorMessage());
+        return core::propagate<void>(p);
     }
 
     // 反向同步必须早于 activateProfile（否则 syncTakeOver 会把自己写的托管值当
@@ -186,11 +186,6 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
         (void)syncTakeOver();
     }
     return result;
-}
-
-core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
-    // 整方法在 ProfileRepository（纯行 + 凭据列操作，副本不激活，无策略尾）
-    return profileRepository_.duplicateProfile(srcId);
 }
 
 core::Result<platform::http::Response>
@@ -381,174 +376,6 @@ void ClaudeService::setConfiguredProxyPort(int port) {
     proxyRuntime_.setConfiguredProxyPort(port);
 }
 
-void ClaudeService::setTerminalLauncher(
-    std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
-        launcher) {
-    if (launcher) terminalLauncher_ = std::move(launcher);
-}
-
-core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint,
-                                           const std::string& workingDir) {
-    if (hint != nullptr) hint->clear();
-    if (id == 0) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError,
-            "profile.id 不能为 0");
-    }
-
-    // 顺序 1：profile 必须存在（标题/baseUrl/认证/模型都取自它）
-    auto prof = getProfile(id);
-    if (prof.isFail()) {
-        return core::Result<void>::fail(prof.errorCode(), prof.errorMessage());
-    }
-    const Profile& p = prof.value();
-
-    // 顺序 2：读密钥（直连形态，密钥带进临时 settings）。失败 → 中止，不落盘、不开窗。
-    auto key = loadApiKey(id);
-    if (key.isFail()) {
-        return core::Result<void>::fail(key.errorCode(),
-            "读取 API Key 失败，未打开会话: " + key.errorMessage());
-    }
-
-    // 顺序 3：buildDirectEnv（规则见 provider_config.h）→ 序列化 {"env":{...}} →
-    // 落盘 run-settings/。零全局改动：不启代理、不切激活、不碰 ~/.claude/settings.json。
-    const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
-                                    p.modelsConfigJson, p.extraEnvJson);
-    platform::json::JsonObject envObj;
-    for (const auto& [k, v] : env) {
-        envObj.set(k, platform::json::makeString(v));
-    }
-    platform::json::JsonObject root;
-    root.set("env", platform::json::JsonValue(std::move(envObj)));
-    auto text = platform::json::stringify(platform::json::JsonValue(std::move(root)));
-    if (text.isFail()) {
-        return core::Result<void>::fail(text.errorCode(),
-            "序列化临时 settings 失败: " + text.errorMessage());
-    }
-
-    const std::filesystem::path dir = core::paths::appDataDir() / "run-settings";
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
-    if (ec) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-            "创建 run-settings 目录失败: " + dir.string() + "（" + ec.message() + "）");
-    }
-    // per-launch 24h 清扫：兜底上次崩溃/强杀留下的孤儿文件
-    platform::terminal::sweepStaleRunSettingsFiles(dir);
-
-    const auto writtenAt = nowUnix();
-    // 键用毫秒而非秒：run_key 有 UNIQUE 约束，同一秒内连开两次会撞键；撞键只能
-    // 让该次会话失败（补偿路径拿的是调用点算出的键，换键重试会删不掉、留假记录）。
-    const auto writtenAtMs =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch())
-            .count();
-    const std::string runKey = "run-" + std::to_string(id) + "-" +
-                               std::to_string(writtenAtMs);
-    const std::filesystem::path file = dir / (runKey + ".json");
-
-    // DB 记录先行：DB 行是真值，文件是临时载体（会话可能被强杀、文件会被清扫）。
-    // settings_json 含明文 API key，经分平台保护入库。
-    auto record = recordRunSettings(runKey, id, p.name, writtenAt, file.string(),
-                                    text.value());
-    if (record.isFail()) {
-        return core::Result<void>::fail(record.errorCode(),
-            "记录直连会话 settings 失败，未打开会话: " + record.errorMessage());
-    }
-
-    auto wrote = core::atomicWriteFile(file, text.value(), "临时 settings");
-    if (wrote.isFail()) {
-        // 文件没落地 → 撤掉这条记录（不留指向不存在文件的记录）
-        forgetRunSettings(runKey);
-        return core::Result<void>::fail(wrote.errorCode(),
-            "写临时 settings 失败，未打开会话: " + wrote.errorMessage());
-    }
-    // 权限收紧：临时 settings 含明文 API key，atomicWriteFile 不设权限 → umask 022
-    // 下落成 0644，同机其他用户可直读。收紧失败即删掉已落盘的明文文件并按失败返回。
-    if (auto permR = core::fileperms::restrictToOwnerOnly(file); permR.isFail()) {
-        std::error_code rmEc;
-        std::filesystem::remove(file, rmEc);
-        forgetRunSettings(runKey);
-        return core::Result<void>::fail(permR.errorCode(),
-            "临时 settings 权限收紧失败，已删除该文件且未打开会话: " +
-                permR.errorMessage());
-    }
-
-    // 顺序 4：claude --settings <临时文件>，分离式启动（DevDesk 不持有会话句柄）。
-    platform::terminal::LaunchSpec spec;
-    spec.title = p.name + " · Claude Code";
-    spec.workingDir = workingDir.empty()
-        ? platform::terminal::homeDir()
-        : workingDir;
-    spec.program = "claude";
-    spec.args = {"--settings", file.string()};
-
-    auto launched = terminalLauncher_(spec);
-    if (launched.isFail()) {
-        // 会话没起来 → 替它做掉「退出后自删」（best-effort），不留孤儿等 24h 清扫
-        std::error_code rmEc;
-        std::filesystem::remove(file, rmEc);
-        forgetRunSettings(runKey);
-        return launched;
-    }
-
-    // wt 缺失 → 平台层已退化传统控制台，补一句非致命提示。文案中性：「传统控制台」不说没装。
-    if (hint != nullptr && platform::terminal::windowsTerminalMissing()) {
-        *hint = "未检测到 Windows Terminal，已用系统默认终端打开会话";
-    }
-    LOG_INFO("已直连打开 Claude Code 会话（profile id=" + std::to_string(id) +
-             "，临时 settings=" + file.string() + "）");
-    return core::Result<void>::ok();
-}
-
-core::Result<void> ClaudeService::recordRunSettings(
-    const std::string& runKey, int64_t profileId,
-    const std::string& profileName, std::time_t writtenAt,
-    const std::string& filePath, const std::string& settingsJson) const {
-    // 含明文 API key → 走分平台保护再入库
-    auto protectedJson =
-        platform::credential::protect(settingsJson);
-    if (protectedJson.isFail()) {
-        return core::Result<void>::fail(protectedJson.errorCode(),
-            "临时 settings 凭据保护失败: " + protectedJson.errorMessage());
-    }
-    auto prep = db_.prepare(
-        "INSERT INTO claude_run_settings (run_key, profile_id, profile_name, "
-        "written_at, file_path, settings_json) VALUES (?, ?, ?, ?, ?, ?)");
-    if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    if (auto b = prep.value().bind(1, runKey); b.isFail()) return b;
-    if (auto b = prep.value().bind(2, profileId); b.isFail()) return b;
-    if (auto b = prep.value().bind(3, profileName); b.isFail()) return b;
-    if (auto b = prep.value().bind(4, static_cast<int64_t>(writtenAt)); b.isFail()) return b;
-    if (auto b = prep.value().bind(5, filePath); b.isFail()) return b;
-    if (auto b = prep.value().bind(6, protectedJson.value()); b.isFail()) return b;
-    auto stepped = prep.value().step();
-    if (stepped.isFail()) {
-        return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
-    }
-    return core::Result<void>::ok();
-}
-
-void ClaudeService::forgetRunSettings(const std::string& runKey) const {
-    // 键走绑定参数而非拼进 SQL 文本
-    auto prep = db_.prepare("DELETE FROM claude_run_settings WHERE run_key = ?");
-    if (prep.isFail()) {
-        LOG_WARN("recordRunSettings 补偿删除失败（prepare）: " +
-                 prep.errorMessage());
-        return;
-    }
-    if (auto b = prep.value().bind(1, runKey); b.isFail()) {
-        LOG_WARN("recordRunSettings 补偿删除失败（bind）: " + b.errorMessage());
-        return;
-    }
-    auto stepped = prep.value().step();
-    if (stepped.isFail()) {
-        LOG_WARN("recordRunSettings 补偿删除失败（留下一条指向不存在文件的记录）: " +
-                 stepped.errorMessage());
-    }
-}
-
 // 在途流式上游登记：状态与实现在 ProxyRuntime，门面转发。
 void ClaudeService::registerActiveStream(
     const std::shared_ptr<platform::http::StreamingResponse>& stream) {
@@ -680,8 +507,7 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
                 merged.extraEnvChanged || keyWrite) {
                 auto u = updateProfile(upd);
                 if (u.isFail()) {
-                    return core::Result<void>::fail(u.errorCode(),
-                                                    u.errorMessage());
+                    return core::propagate<void>(u);
                 }
             }
             return core::Result<void>::ok();

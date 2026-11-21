@@ -119,8 +119,6 @@ public:
 
     // 待执行队列上限（§4.7 队列满 skip 记 suppressed，不静默丢弃）。
     static constexpr std::size_t kMaxPendingFires = 128;
-    // 同一规则同 tick 最多新触发 1 个（1Hz 泵下每秒自然摊平；突发补跑走 missedFires）。
-    static constexpr int kMaxFiresPerRulePerTick = 1;
     // 全局投递桶上限（调研 §10.5：目标 18 条/分钟，官方 20 留 2 条余量）。
     static constexpr int kGlobalDeliveryCapacity = 18;
     static constexpr double kGlobalDeliveryRefillPerSec = 18.0 / 60.0;

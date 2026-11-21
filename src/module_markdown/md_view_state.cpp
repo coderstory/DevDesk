@@ -77,11 +77,11 @@ core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
     }
     platform::json::JsonObject obj = parsed.value().asObject();
 
-    if (obj.has(kKeyLastPath) && obj.get(kKeyLastPath).isString()) {
-        st.lastPath = obj.get(kKeyLastPath).asString();
+    if (auto v = platform::json::getIfString(obj, kKeyLastPath)) {
+        st.lastPath = *v;
     }
-    if (obj.has(kKeyMode) && obj.get(kKeyMode).isNumber()) {
-        st.mode = static_cast<int>(obj.get(kKeyMode).asInt());
+    if (auto v = platform::json::getIfInt(obj, kKeyMode)) {
+        st.mode = static_cast<int>(*v);
     }
     if (obj.has(kKeyCollapsedDirs) && obj.get(kKeyCollapsedDirs).isArray()) {
         platform::json::JsonValue arr = obj.get(kKeyCollapsedDirs);
@@ -90,12 +90,11 @@ core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
             if (item.isString()) st.collapsedDirs.push_back(item.asString());
         }
     }
-    if (obj.has(kKeySelectedDir) && obj.get(kKeySelectedDir).isString()) {
-        st.selectedDir = obj.get(kKeySelectedDir).asString();
+    if (auto v = platform::json::getIfString(obj, kKeySelectedDir)) {
+        st.selectedDir = *v;
     }
-    if (obj.has(kKeyTreePanelCollapsed) &&
-        obj.get(kKeyTreePanelCollapsed).isBool()) {
-        st.treePanelCollapsed = obj.get(kKeyTreePanelCollapsed).asBool();
+    if (auto v = platform::json::getIfBool(obj, kKeyTreePanelCollapsed)) {
+        st.treePanelCollapsed = *v;
     }
     return core::Result<MarkdownViewState>::ok(sanitized(st));
 }

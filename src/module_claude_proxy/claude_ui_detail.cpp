@@ -33,12 +33,12 @@ namespace module::claude {
 
 namespace {
 
-// 详情面板动作区几何（单一来源）：动作块 = 61（分隔线/按钮行 36/副提示/分隔线）；
-// 其上 20 间距、其下 24 呼吸 → 预留 85。由 drawDetailActions 绘制推出，改绘制须同步。
-constexpr float kActionBlockH = 65.0f;
+// 详情面板动作区几何（单一来源）：动作块 = 45（按钮行 40 + 分隔线 actY+44）；
+// 其上 20 间距、其下 24 呼吸 → 预留 69。由 drawDetailActions 绘制推出，改绘制须同步。
+constexpr float kActionBlockH = 45.0f;
 constexpr float kActTopGap = 20.0f;     // 内容框底 → actY
-constexpr float kActBottomPad = 24.0f;  // actY+65 → 面板底
-constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 89
+constexpr float kActBottomPad = 24.0f;  // actY+45 → 面板底
+constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 69
 
 // 复制按钮 toast 单实例状态（onClick 设，drawDetailBasic 每帧查并渲染）
 std::string g_copyToastMsg;
@@ -531,8 +531,8 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     return ey;
 }
 
-// 操作按钮组（测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
-// drawDetailPanel 锚定给出；绘制高 = 65 被 kActionBlockH 引用，改几何须同步。
+// 操作按钮组（测试连通/编辑）+ 分隔线。actY 由
+// drawDetailPanel 锚定给出；绘制高 = 45 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                        const core::theme::Tokens& t,
                        const DetailView& v, const DetailActions& a) {
@@ -544,14 +544,13 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
     const float actGap = 8.0f;
-    // 3 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 2 个 gap。
-    const float actW = (w - actGap * 2.0f) / 3.0f;
+    // 2 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 1 个 gap。
+    const float actW = (w - actGap) / 2.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
         .size(w, 40.0f)
         .gap(actGap)
         .content([&] {
-            const int64_t shownId = shown ? shown->id : 0;
             const Profile shownCopy = shown
                 ? *shown : Profile{};
 
@@ -593,55 +592,12 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 运行（Filled 主按钮：绿底白字）
-            components::button(ui, "claude.act.run")
-                .size(actW, 40.0f)
-                .text("运行")
-                .fontSize(core::theme::scaled(14.0f))
-                .colors(t.colors.primary,
-                        t.colors.primaryHover,
-                        t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius)
-                .onClick([f = a.run, warn = a.warn, shownId] {
-                    if (shownId == 0) {
-                        warn("运行失败", "请先选择 Profile");
-                        return;
-                    }
-                    f(shownId);
-                })
-                .build();
         })
-        .build();
-
-    // S3.4 「运行」tooltip 区分语义。bug177 同族修正：不传 anchor 即默认 (0,0)
-    // （TooltipBuilder 无 auto-position），气泡钉死 overlay 左上。锚取「运行」
-    // 钮（三连钮第 3 颗）中心：x = x0 + 2*(actW+actGap) + actW/2，y = actY+20；
-    // bounds 高取 actY+54 使 bottomLimit=actY——气泡恒走锚上方（wantedY =
-    // actY-20，气泡底恰贴按钮顶），不被 44 topLimit 语义误钳。
-    components::tooltip(ui, "claude.act.run.tooltip")
-        .theme(core::theme::componentTokensWeChat(t))
-        .source("claude.act.run")
-        .value("以该 Profile 直接打开 Claude Code 会话（不改全局设置）")
-        .anchor(x0 + 2.0f * (actW + actGap) + actW * 0.5f, actY + 20.0f)
-        .bounds(w, actY + 54.0f)
-        .minWidth(280.0f)
-        .maxWidth(320.0f)
-        .build();
-
-    // §5「运行」副提示
-    ui.text("claude.act.run.hint")
-        .position(x0, actY + 44.0f)
-        .size(w, core::theme::scaled(16.0f))
-        .text("以该 Profile 直接打开 Claude Code（不改当前设置）")
-        .fontSize(core::theme::scaled(11.0f))
-        .lineHeight(core::theme::scaled(16.0f))
-        .color(t.colors.textTertiary)
         .build();
 
     // 分隔线
     ui.rect("claude.divider")
-        .position(x0, actY + 64.0f)
+        .position(x0, actY + 44.0f)
         .size(w, 1.0f)
         .color(t.colors.hover)
         .radius(t.sizes.radius)

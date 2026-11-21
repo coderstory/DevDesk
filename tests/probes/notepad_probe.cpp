@@ -23,6 +23,7 @@
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（openWindow=入队不建窗）
 
+#include <ratio>
 #include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
 #include <components/scrollview.h>  // bug399 round3 差分实验：普通 scrollView+text
 #include <components/markdown.h>  // bug399 round7：仪表分解 + A/B 基准

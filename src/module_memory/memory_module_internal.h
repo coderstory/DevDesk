@@ -50,13 +50,9 @@ inline constexpr float kTitleH = 32.0f;
 inline constexpr float kTabH = ui_kit::kWtabHeight;
 inline constexpr float kCardGap = 8.0f;  // need219 §4.3：卡间距统一 8px 档（原 16）
 
-// need189（2026-11-08）：主控台三段带高单一来源——原来 64/132/104 三个字面量
-// 在 memory_module.cpp 与 memory_module_panels.cpp 各写一遍，改高度必两边同步。
-// 健康格 118 = 内容底 110（条带 y98+12）+ 8 档底距；消耗带 86 = 数字行底 78 + 8。
-// 底距统一 8（原 22 / 26 空腹），临界窗高随之下降（444→412·fs 口径见 evidence）。
+// need189（2026-11-08）：主控台带高单一来源。need:380 B-4 后健康格/消耗带已移除，
+// 仅余引擎状态带。
 inline constexpr float kEngineBandH = 64.0f;
-inline constexpr float kHealthGridH = 118.0f;
-inline constexpr float kUsageBandH = 86.0f;
 
 inline constexpr int kViewConsole = 0;
 inline constexpr int kViewReview = 1;
@@ -66,20 +62,6 @@ inline constexpr int kViewConfig = 2;
 // 阈值/让位宽度全部收拢为纯函数，compose 与 doctest 共用同一口径
 // （bug217 行盒预算截断同族做法）；断言不重叠/换行/省略的几何单测
 // 在 tests/test_modules/test_memory_narrow_width.cpp。
-
-// M1 健康格② 状态行：右端「跑评测」96×28 同带，让位 96+8；其余格全宽。
-inline float healthStatusRowW(float cardW, bool reserveRunBtn) {
-    return reserveRunBtn ? cardW - 28.0f - 96.0f - 8.0f : cardW - 28.0f;
-}
-
-// M3 健康四格 2×2 断点（#181 §8）：内容区 <880 收两列。
-inline constexpr float kHealthGridNarrowW = 880.0f;
-inline int healthGridCols(float w) { return w < kHealthGridNarrowW ? 2 : 4; }
-inline float healthGridCardW(float w) {
-    return (w - static_cast<float>(healthGridCols(w) - 1) * kCardGap) /
-           static_cast<float>(healthGridCols(w));
-}
-inline int healthGridRows(float w) { return healthGridCols(w) == 2 ? 2 : 1; }
 
 // M4 引擎状态带警示短语可用宽：右端按钮组（启停 120 + 详情 64，向导内联时
 // +150+8）左缘 −8；短语 x=310（状态词 212+90 之后）。
@@ -120,12 +102,6 @@ inline float groupSumW(float w) { return w - 340.0f; }
 // M13 提案卡右端摘要：窄窗档 190→120（佐证先饿，#195 §7）。
 inline constexpr float kProposalMetaNarrowW = 560.0f;
 inline float proposalMetaW(float w) { return w < kProposalMetaNarrowW ? 120.0f : 190.0f; }
-
-// M18 消耗带标题宽：320 定宽收至右锚预算档词（x+w−240）左缘。
-inline float usageTitleW(float w) {
-    const float budget = w - 256.0f;
-    return budget < 320.0f ? (budget > 0.0f ? budget : 0.0f) : 320.0f;
-}
 
 // M16 审核 chips 估宽（wrap 判定与绘制两处同一来源）：CJK 首字节 12 /
 // ASCII 6 / 四字节首字节（emoji 等）双宽 24，续字节不计；base = 内边距档

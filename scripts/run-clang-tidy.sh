@@ -17,7 +17,7 @@
 #      -DDEVDESK_BUILD_PROBES=OFF（probe 可执行是测试专用产物，不进 tidy 范围）。
 #   3. 从 compile_commands.json 圈定本仓库 src/ 与 tests/ 的 .cpp：EUI-NEO 是 add_subdirectory
 #      进来的，其翻译单元同样会进数据库，但不属本票对象（框架问题归 EUI-NEO 仓库）。
-#   4. 跑检查集 bugprone-*,cert-*,clang-analyzer-*（--use-color），末尾按检查名汇总命中数。
+#   4. 跑检查集 bugprone-*,cert-*,clang-analyzer-*,misc-include-cleaner（--use-color），末尾按检查名汇总命中数。
 #
 # 退出码：0 = clang-tidy 正常跑完（有无 warning 都是 0 —— clang-tidy 自身语义）；
 #         1 = configure / 编译数据库 / 源清单环节失败（环境问题，真实红）；
@@ -39,7 +39,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-CHECKS="bugprone-*,cert-*,clang-analyzer-*"
+CHECKS="bugprone-*,cert-*,clang-analyzer-*,misc-include-cleaner"
 TIDY_BUILD_DIR="${DEVDESK_TIDY_BUILD_DIR:-build-tidy}"
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
 
@@ -164,9 +164,9 @@ TIDY_RC=0
 TIDY_RC="${PIPESTATUS[0]}"
 
 echo "── 检查命中汇总（按检查名计数，Top 20）──"
-grep -oE '\[(bugprone|cert|clang-analyzer)-[A-Za-z0-9._-]+\]' "$TIDY_LOG" \
+grep -oE '\[(bugprone|cert|clang-analyzer|misc)-[A-Za-z0-9._-]+\]' "$TIDY_LOG" \
   | sort | uniq -c | sort -rn | head -20 || true
-TOTAL_HITS="$(grep -cE '\[(bugprone|cert|clang-analyzer)-[A-Za-z0-9._-]+\]' "$TIDY_LOG" || true)"
+TOTAL_HITS="$(grep -cE '\[(bugprone|cert|clang-analyzer|misc)-[A-Za-z0-9._-]+\]' "$TIDY_LOG" || true)"
 echo "── 命中合计: ${TOTAL_HITS:-0} 条（完整明细见上方输出）──"
 rm -f "$TIDY_LOG"
 

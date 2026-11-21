@@ -221,14 +221,14 @@ core::Result<bool> setAsDefaultFor(const AssocConfig& config) {
         legacyOwned = true;
     }
     if (core::Result<void> w = writeRegistration(config); w.isFail()) {
-        return core::Result<bool>::fail(w.errorCode(), w.errorMessage());
+        return core::propagate<bool>(w);
     }
     if (legacyOwned) {
         // 旧 ProgId 树清理：扩展名默认值已被本次写入重写为新 ProgId，仅剩
         // 孤儿 ProgId 树可删（幂等：不存在 = FILE_NOT_FOUND ok）
         if (core::Result<void> r = deleteProgIdTree(kLegacyMdProgId);
             r.isFail()) {
-            return core::Result<bool>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<bool>(r);
         }
     }
     // 官方 must-call：登记后必发关联变更广播（spy 缝在此断言整批恰一次）

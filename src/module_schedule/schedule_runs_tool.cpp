@@ -5,6 +5,7 @@
 
 #include "core/time.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <algorithm>
 #include <optional>
@@ -23,57 +24,18 @@ constexpr int kDefaultLimit = 20;
 constexpr int kMaxLimit = 200;
 constexpr double kDefaultSinceHours = 24.0;
 
-Result<ToolResult> toolError(const std::string& message) {
-    pj::JsonObject err;
-    err.set("error", pj::makeString(message));
-    auto text = pj::stringify(pj::JsonValue(std::move(err)));
-    if (text.isFail()) {
-        return Result<ToolResult>::fail(core::ErrorCode::Internal,
-                                        "工具错误消息序列化失败: " +
-                                            text.errorMessage());
-    }
-    return Result<ToolResult>::ok(ToolResult{true, text.value()});
-}
+using platform::tool_kit::toolError;
 
 // 参数解析：空串视为 {}（LLM 的 input 可能为空对象省略）；其余必须解析成 object
-Result<pj::JsonObject> parseArgs(const ToolArgs& args) {
-    if (args.json.empty()) {
-        return Result<pj::JsonObject>::ok(pj::JsonObject());
-    }
-    auto v = pj::parse(args.json);
-    if (v.isFail() || !v.value().isObject()) {
-        return Result<pj::JsonObject>::fail(core::ErrorCode::ValidationError,
-                                            "参数不是合法 JSON 对象");
-    }
-    return Result<pj::JsonObject>::ok(v.value().asObject());
-}
+using platform::tool_kit::parseArgs;
 
-std::string strField(const pj::JsonObject& obj, const char* key) {
-    pj::JsonValue v = obj.get(key);
-    return v.isString() ? v.asString() : std::string();
-}
+using platform::tool_kit::strField;
 
-std::optional<int64_t> intField(const pj::JsonObject& obj, const char* key) {
-    pj::JsonValue v = obj.get(key);
-    if (!v.isNumber()) return std::nullopt;
-    return std::optional<int64_t>(v.asInt());
-}
+using platform::tool_kit::intField;
 
 // JSON 数组组装：platform::json 无通用数组追加 API，逐元素 stringify 后文本
 // 拼接，再 parse 校验（todo_tools 同款口径）
-Result<std::string> arrayOfJsonTexts(const std::vector<std::string>& items) {
-    std::string out = "[";
-    for (size_t i = 0; i < items.size(); ++i) {
-        if (i > 0) out += ",";
-        out += items[i];
-    }
-    out += "]";
-    if (pj::parse(out).isFail()) {
-        return Result<std::string>::fail(core::ErrorCode::Internal,
-                                         "结果数组组装校验失败");
-    }
-    return Result<std::string>::ok(out);
-}
+using platform::tool_kit::arrayOfJsonTexts;
 
 class ScheduleRunsTool : public core::ITool {
 public:

@@ -84,10 +84,6 @@ public:
     core::Result<Profile> getActiveProfile();
     core::Result<void> setActiveProfile(int64_t id);
 
-    // 复制 Profile：名称加「副本」后缀（重名递增避让）；API key 一并复制（源缺 → fail）；
-    // 副本不激活；二段补写失败 → best-effort 删副本回滚。
-    core::Result<Profile> duplicateProfile(int64_t srcId);
-
     // 用当前激活 profile 重写 settings.json；通道未注入/开关关 →
     // no-op 成功。本入口不做前置校验，调用方必须先过 validateProxyPreconditions。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
@@ -158,18 +154,6 @@ public:
     bool isProxyRunning() const;
     int proxyPort() const;            // 0 if not running
 
-    // 用该 Profile 生成临时 settings 直连，打开新的 Claude Code 会话
-    // 不启代理、不切激活、不碰 ~/.claude/settings.json（零全局副作用）；密钥临时明文落盘。
-    // id 为 0/不存在/读密钥失败/落盘失败 → fail；hint：非致命提示出参。
-    // workingDir：claude 进程工作目录；空串 = 略过（回退 homeDir() 默认值）。
-    core::Result<void> runProfile(int64_t id, std::string* hint = nullptr,
-                                  const std::string& workingDir = "");
-
-    // 终端启动注入点（默认 = platform::terminal::launch）；测试注入假实现断言参数。
-    void setTerminalLauncher(
-        std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
-            launcher);
-
     // 配置端口
     // 设置页「代理端口」的运行时镜像（端口经单例桥接）；setter 钳制到
     // [kMinProxyPort, kMaxProxyPort]。状态在 ProxyRuntime。
@@ -237,19 +221,6 @@ private:
     // 由 setActiveProfile 在置位事务之前调用；文件不存在/空/无 env → no-op，解析失败 → fail。
     core::Result<void> syncCaptureActiveProfile();
 
-    // 直连会话 settings 的 DB 记录
-    // 写入顺序：recordRunSettings → 落文件 → chmod 0600 → 启动会话，任一步失败都
-    // forgetRunSettings 撤行。settingsJson 含明文 API key，入库前分平台保护。
-    core::Result<void> recordRunSettings(const std::string& runKey,
-                                         int64_t profileId,
-                                         const std::string& profileName,
-                                         std::time_t writtenAt,
-                                         const std::string& filePath,
-                                         const std::string& settingsJson) const;
-
-    // 撤掉一次未成行的记录；幂等（行不存在即成功）。失败只记日志，不盖过原始错误。
-    void forgetRunSettings(const std::string& runKey) const;
-
     // setActiveProfile 的服务内互斥锁：方法体有 DB 事务 + 接管 + warnings_ 内存态。
     // 只护这一个写方法，其余纯读随 SqliteDb recursive_mutex 串行化、保持无锁。
     std::mutex switchMutex_;
@@ -265,9 +236,6 @@ private:
     // ~ProxyRuntime 内 stop() 即停机序列。
     ProxyRuntime proxyRuntime_;
 
-    // 默认 = platform::terminal::launch；测试经 setTerminalLauncher 注入假实现。
-    std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
-        terminalLauncher_ = &platform::terminal::launch;
 };
 
 } // namespace module::claude

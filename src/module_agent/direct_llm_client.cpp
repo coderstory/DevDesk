@@ -238,8 +238,7 @@ core::Result<core::LlmResponse> DirectLlmClient::send(
     }
     auto messagesArr = parseJoinedArray(messageTexts, "messages");
     if (messagesArr.isFail()) {
-        return core::Result<core::LlmResponse>::fail(messagesArr.errorCode(),
-                                                     messagesArr.errorMessage());
+        return core::propagate<core::LlmResponse>(messagesArr);
     }
 
     platform::json::JsonObject body;
@@ -290,8 +289,7 @@ core::Result<core::LlmResponse> DirectLlmClient::send(
     // 5. 发送：测试经 HttpFn 注入，生产走 platform::http::send
     auto resp = http_ ? http_(req) : platform::http::send(req);
     if (resp.isFail()) {
-        return core::Result<core::LlmResponse>::fail(resp.errorCode(),
-                                                     resp.errorMessage());
+        return core::propagate<core::LlmResponse>(resp);
     }
 
     // 6. 非 200 → HttpError，带状态码 + body 前 200 字节（按字节截，不保证 UTF-8 边界）

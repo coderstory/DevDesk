@@ -331,8 +331,7 @@ core::Result<Profile> ProxyRouter::resolveProfile() {
     // 默认路径：SQLite 取 active profile → 凭据列取明文 key
     auto activeR = service_.getActiveProfile();
     if (activeR.isFail()) {
-        return core::Result<Profile>::fail(activeR.errorCode(),
-                                          activeR.errorMessage());
+        return core::propagate<Profile>(activeR);
     }
     Profile profile = std::move(activeR).value();
 

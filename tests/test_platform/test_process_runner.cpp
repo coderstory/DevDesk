@@ -89,9 +89,5 @@ REGISTER_TEST(pr_grandchild_writer_grace,
 
 #else
 
-REGISTER_TEST(pr_win_placeholder, "process_runner win 侧用例另行登记", {
-    DOCTEST_CHECK(true);
-    return true;
-})
 
 #endif

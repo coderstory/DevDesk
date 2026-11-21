@@ -43,10 +43,6 @@ bool commandPresent(const JsonValue& upsArray, const std::string& cmd) {
 
 }  // namespace
 
-std::string buildHookCommand(const std::string& exePath) {
-    return "\"" + exePath + "\" memory hook";
-}
-
 core::Result<std::string> applyHookEntry(const std::string& settingsJson,
                                          const std::string& hookCommand,
                                          bool* changed) {
@@ -89,8 +85,7 @@ core::Result<std::string> applyHookEntry(const std::string& settingsJson,
 
     const auto out = platform::json::stringify(JsonValue(root), true);
     if (out.isFail()) {
-        return core::Result<std::string>::fail(out.errorCode(),
-                                               out.errorMessage());
+        return core::propagate<std::string>(out);
     }
     if (changed != nullptr) *changed = true;
     return core::Result<std::string>::ok(out.value());
@@ -162,8 +157,7 @@ core::Result<std::string> removeHookEntry(const std::string& settingsJson,
     root.set("hooks", JsonValue(hooks));
     const auto out = platform::json::stringify(JsonValue(root), true);
     if (out.isFail()) {
-        return core::Result<std::string>::fail(out.errorCode(),
-                                               out.errorMessage());
+        return core::propagate<std::string>(out);
     }
     if (changed != nullptr) *changed = true;
     return core::Result<std::string>::ok(out.value());
@@ -177,7 +171,7 @@ core::Result<void> installHookFile(const std::filesystem::path& settingsFile,
     auto next = applyHookEntry(current.empty() ? std::string("{}") : current,
                                hookCommand, &changed);
     if (next.isFail()) {
-        return core::Result<void>::fail(next.errorCode(), next.errorMessage());
+        return core::propagate<void>(next);
     }
     if (!changed) return core::Result<void>::ok();
     return core::atomicWriteFile(settingsFile, next.value(),
@@ -193,7 +187,7 @@ core::Result<void> restoreHookFile(const std::filesystem::path& settingsFile,
     bool changed = false;
     auto next = removeHookEntry(current, hookCommand, &changed);
     if (next.isFail()) {
-        return core::Result<void>::fail(next.errorCode(), next.errorMessage());
+        return core::propagate<void>(next);
     }
     if (!changed) return core::Result<void>::ok();
     return core::atomicWriteFile(settingsFile, next.value(),

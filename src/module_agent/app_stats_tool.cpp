@@ -3,6 +3,7 @@
 #include "app_stats_tool.h"
 
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <string>
 #include <utility>
@@ -18,17 +19,7 @@ using core::ToolResult;
 namespace pj = platform::json;
 
 // 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
-Result<ToolResult> toolError(const std::string& message) {
-    pj::JsonObject err;
-    err.set("error", pj::makeString(message));
-    auto text = pj::stringify(pj::JsonValue(std::move(err)));
-    if (text.isFail()) {
-        return Result<ToolResult>::fail(core::ErrorCode::Internal,
-                                        "工具错误消息序列化失败: " +
-                                            text.errorMessage());
-    }
-    return Result<ToolResult>::ok(ToolResult{true, text.value()});
-}
+using platform::tool_kit::toolError;
 
 class AppStatsTool : public core::ITool {
 public:
@@ -75,19 +66,16 @@ private:
         auto prep = db_.prepare(std::string("SELECT COUNT(*) AS n FROM ") +
                                 table);
         if (prep.isFail()) {
-            return Result<int64_t>::fail(prep.errorCode(),
-                                         prep.errorMessage());
+            return propagate<int64_t>(prep);
         }
         auto& stmt = prep.value();
         auto step = stmt.step();
         if (step.isFail()) {
-            return Result<int64_t>::fail(step.errorCode(),
-                                         step.errorMessage());
+            return propagate<int64_t>(step);
         }
         auto row = stmt.currentRow();
         if (row.isFail()) {
-            return Result<int64_t>::fail(row.errorCode(),
-                                         row.errorMessage());
+            return propagate<int64_t>(row);
         }
         const auto& r = row.value();
         if (r.values.empty() ||

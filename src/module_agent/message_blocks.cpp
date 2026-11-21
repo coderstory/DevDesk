@@ -9,6 +9,7 @@
 #include "core/theme.h"
 
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 namespace module::agent {
 
@@ -16,10 +17,7 @@ namespace {
 
 namespace pj = platform::json;
 
-std::string strField(const pj::JsonObject& obj, const char* key) {
-    pj::JsonValue v = obj.get(key);
-    return v.isString() ? v.asString() : std::string();
-}
+using platform::tool_kit::strField;
 
 // 未知/异常块：stringify 保留原文，失败再退空串
 std::string rawOf(const pj::JsonValue& blockValue) {

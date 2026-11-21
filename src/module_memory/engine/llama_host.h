@@ -33,9 +33,6 @@ LlamaLocate locateLlamaServerBetween(const std::filesystem::path& assetsDir,
 // 便捷包装：包内序用 bundledAssetsDir()。找不到 exePath 为空（面板显引导，不静默起进程）。
 LlamaLocate locateLlamaServerDetailed(const std::filesystem::path& dataDir);
 
-// 旧签名薄包装（兼容既有调用方）
-std::filesystem::path locateLlamaServer(const std::filesystem::path& dataDir);
-
 // 模型定位结果：source = "pkg"/"dataroot"/""
 struct EmbedModelLocate {
     std::filesystem::path modelPath;

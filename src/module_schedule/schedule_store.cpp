@@ -20,9 +20,9 @@ int64_t nowUnix() { return static_cast<int64_t>(core::time::nowUnix()); }
 // 上次语句（INSERT/UPDATE/DELETE）改动的行数；本连接随后只跑 SELECT，changes() 不被重置。
 core::Result<int64_t> changesCount(core::data::SqliteDb& db) {
     auto prep = db.prepare("SELECT changes() AS v");
-    if (prep.isFail()) return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<int64_t>(prep);
     auto rows = prep.value().fetchAll();
-    if (rows.isFail()) return core::Result<int64_t>::fail(rows.errorCode(), rows.errorMessage());
+    if (rows.isFail()) return core::propagate<int64_t>(rows);
     if (rows.value().empty()) return core::Result<int64_t>::ok(0);
     return rows.value()[0].getInt64("v");
 }
@@ -30,9 +30,9 @@ core::Result<int64_t> changesCount(core::data::SqliteDb& db) {
 // 本次插入行的 rowid（须紧跟 INSERT 之后调用）。
 core::Result<int64_t> lastInsertId(core::data::SqliteDb& db) {
     auto prep = db.prepare("SELECT last_insert_rowid() AS v");
-    if (prep.isFail()) return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<int64_t>(prep);
     auto rows = prep.value().fetchAll();
-    if (rows.isFail()) return core::Result<int64_t>::fail(rows.errorCode(), rows.errorMessage());
+    if (rows.isFail()) return core::propagate<int64_t>(rows);
     if (rows.value().empty()) return core::Result<int64_t>::ok(0);
     return rows.value()[0].getInt64("v");
 }
@@ -92,7 +92,7 @@ core::Result<std::optional<int64_t>> readOptInt(const core::data::SqlRow& row,
     if (row.isNull(col)) return core::Result<std::optional<int64_t>>::ok(std::nullopt);
     auto v = row.getInt64(col);
     if (v.isFail())
-        return core::Result<std::optional<int64_t>>::fail(v.errorCode(), v.errorMessage());
+        return core::propagate<std::optional<int64_t>>(v);
     return core::Result<std::optional<int64_t>>::ok(v.value());
 }
 
@@ -101,22 +101,22 @@ core::Result<std::optional<int64_t>> readOptInt(const core::data::SqlRow& row,
     do {                                                                       \
         auto _r = row.getString(col);                                          \
         if (_r.isFail())                                                       \
-            return core::Result<RuleRecord>::fail(_r.errorCode(), _r.errorMessage()); \
+            return core::propagate<RuleRecord>(_r); \
         target = _r.value();                                                   \
     } while (0)
 
 core::Result<RuleRecord> ruleFromRow(const core::data::SqlRow& row) {
     RuleRecord r;
     auto id = row.getInt64("id");
-    if (id.isFail()) return core::Result<RuleRecord>::fail(id.errorCode(), id.errorMessage());
+    if (id.isFail()) return core::propagate<RuleRecord>(id);
     r.id = id.value();
     READ_TEXT(r.name, "name");
     auto enabled = row.getInt64("enabled");
     if (enabled.isFail())
-        return core::Result<RuleRecord>::fail(enabled.errorCode(), enabled.errorMessage());
+        return core::propagate<RuleRecord>(enabled);
     r.enabled = enabled.value() != 0;
     auto paused = readOptInt(row, "paused_until");
-    if (paused.isFail()) return core::Result<RuleRecord>::fail(paused.errorCode(), paused.errorMessage());
+    if (paused.isFail()) return core::propagate<RuleRecord>(paused);
     r.pausedUntil = paused.value();
     READ_TEXT(r.kind, "kind");
     READ_TEXT(r.specJson, "spec_json");
@@ -125,42 +125,42 @@ core::Result<RuleRecord> ruleFromRow(const core::data::SqlRow& row) {
     READ_TEXT(r.actionJson, "action_json");
     auto idsText = row.getString("channel_ids");
     if (idsText.isFail())
-        return core::Result<RuleRecord>::fail(idsText.errorCode(), idsText.errorMessage());
+        return core::propagate<RuleRecord>(idsText);
     auto ids = decodeIds(idsText.value());
-    if (ids.isFail()) return core::Result<RuleRecord>::fail(ids.errorCode(), ids.errorMessage());
+    if (ids.isFail()) return core::propagate<RuleRecord>(ids);
     r.channelIds = std::move(ids.value());
     READ_TEXT(r.missedPolicy, "missed_policy");
     READ_TEXT(r.conflictPolicy, "conflict_policy");
     auto maxRuns = row.getInt64("max_runs");
     if (maxRuns.isFail())
-        return core::Result<RuleRecord>::fail(maxRuns.errorCode(), maxRuns.errorMessage());
+        return core::propagate<RuleRecord>(maxRuns);
     r.maxRuns = maxRuns.value();
     auto next = readOptInt(row, "next_fire_at");
-    if (next.isFail()) return core::Result<RuleRecord>::fail(next.errorCode(), next.errorMessage());
+    if (next.isFail()) return core::propagate<RuleRecord>(next);
     r.nextFireAt = next.value();
     auto last = readOptInt(row, "last_fire_at");
-    if (last.isFail()) return core::Result<RuleRecord>::fail(last.errorCode(), last.errorMessage());
+    if (last.isFail()) return core::propagate<RuleRecord>(last);
     r.lastFireAt = last.value();
     auto eval = readOptInt(row, "last_eval_at");
-    if (eval.isFail()) return core::Result<RuleRecord>::fail(eval.errorCode(), eval.errorMessage());
+    if (eval.isFail()) return core::propagate<RuleRecord>(eval);
     r.lastEvalAt = eval.value();
     auto count = row.getInt64("run_count");
     if (count.isFail())
-        return core::Result<RuleRecord>::fail(count.errorCode(), count.errorMessage());
+        return core::propagate<RuleRecord>(count);
     r.runCount = count.value();
     auto archived = readOptInt(row, "archived_at");
-    if (archived.isFail()) return core::Result<RuleRecord>::fail(archived.errorCode(), archived.errorMessage());
+    if (archived.isFail()) return core::propagate<RuleRecord>(archived);
     r.archivedAt = archived.value();
     auto deleted = readOptInt(row, "deleted_at");
-    if (deleted.isFail()) return core::Result<RuleRecord>::fail(deleted.errorCode(), deleted.errorMessage());
+    if (deleted.isFail()) return core::propagate<RuleRecord>(deleted);
     r.deletedAt = deleted.value();
     auto created = row.getInt64("created_at");
     if (created.isFail())
-        return core::Result<RuleRecord>::fail(created.errorCode(), created.errorMessage());
+        return core::propagate<RuleRecord>(created);
     r.createdAt = created.value();
     auto updated = row.getInt64("updated_at");
     if (updated.isFail())
-        return core::Result<RuleRecord>::fail(updated.errorCode(), updated.errorMessage());
+        return core::propagate<RuleRecord>(updated);
     r.updatedAt = updated.value();
     return core::Result<RuleRecord>::ok(std::move(r));
 }
@@ -171,37 +171,37 @@ core::Result<RuleRecord> ruleFromRow(const core::data::SqlRow& row) {
     do {                                                                       \
         auto _r = row.getString(col);                                          \
         if (_r.isFail())                                                       \
-            return core::Result<RunRecord>::fail(_r.errorCode(), _r.errorMessage()); \
+            return core::propagate<RunRecord>(_r); \
         target = _r.value();                                                   \
     } while (0)
 
 core::Result<RunRecord> runFromRow(const core::data::SqlRow& row) {
     RunRecord r;
     auto id = row.getInt64("id");
-    if (id.isFail()) return core::Result<RunRecord>::fail(id.errorCode(), id.errorMessage());
+    if (id.isFail()) return core::propagate<RunRecord>(id);
     r.id = id.value();
     READ_TEXT(r.origin, "origin");
     READ_TEXT(r.originKey, "origin_key");
     auto ruleId = readOptInt(row, "rule_id");
-    if (ruleId.isFail()) return core::Result<RunRecord>::fail(ruleId.errorCode(), ruleId.errorMessage());
+    if (ruleId.isFail()) return core::propagate<RunRecord>(ruleId);
     r.ruleId = ruleId.value();
     auto planned = row.getInt64("planned_at");
     if (planned.isFail())
-        return core::Result<RunRecord>::fail(planned.errorCode(), planned.errorMessage());
+        return core::propagate<RunRecord>(planned);
     r.plannedAt = planned.value();
     auto started = readOptInt(row, "started_at");
-    if (started.isFail()) return core::Result<RunRecord>::fail(started.errorCode(), started.errorMessage());
+    if (started.isFail()) return core::propagate<RunRecord>(started);
     r.startedAt = started.value();
     auto ended = readOptInt(row, "ended_at");
-    if (ended.isFail()) return core::Result<RunRecord>::fail(ended.errorCode(), ended.errorMessage());
+    if (ended.isFail()) return core::propagate<RunRecord>(ended);
     r.endedAt = ended.value();
     READ_TEXT(r.status, "status");
     auto attempt = row.getInt64("attempt");
     if (attempt.isFail())
-        return core::Result<RunRecord>::fail(attempt.errorCode(), attempt.errorMessage());
+        return core::propagate<RunRecord>(attempt);
     r.attempt = static_cast<int>(attempt.value());
     auto duration = readOptInt(row, "duration_ms");
-    if (duration.isFail()) return core::Result<RunRecord>::fail(duration.errorCode(), duration.errorMessage());
+    if (duration.isFail()) return core::propagate<RunRecord>(duration);
     r.durationMs = duration.value();
     READ_TEXT(r.resultSummary, "result_summary");
     READ_TEXT(r.error, "error");
@@ -214,43 +214,43 @@ core::Result<RunRecord> runFromRow(const core::data::SqlRow& row) {
     do {                                                                       \
         auto _r = row.getString(col);                                          \
         if (_r.isFail())                                                       \
-            return core::Result<DeliveryRecord>::fail(_r.errorCode(), _r.errorMessage()); \
+            return core::propagate<DeliveryRecord>(_r); \
         target = _r.value();                                                   \
     } while (0)
 
 core::Result<DeliveryRecord> deliveryFromRow(const core::data::SqlRow& row) {
     DeliveryRecord d;
     auto id = row.getInt64("id");
-    if (id.isFail()) return core::Result<DeliveryRecord>::fail(id.errorCode(), id.errorMessage());
+    if (id.isFail()) return core::propagate<DeliveryRecord>(id);
     d.id = id.value();
     auto runId = row.getInt64("run_id");
     if (runId.isFail())
-        return core::Result<DeliveryRecord>::fail(runId.errorCode(), runId.errorMessage());
+        return core::propagate<DeliveryRecord>(runId);
     d.runId = runId.value();
     auto channelId = row.getInt64("channel_id");
     if (channelId.isFail())
-        return core::Result<DeliveryRecord>::fail(channelId.errorCode(), channelId.errorMessage());
+        return core::propagate<DeliveryRecord>(channelId);
     d.channelId = channelId.value();
     auto attempt = row.getInt64("attempt");
     if (attempt.isFail())
-        return core::Result<DeliveryRecord>::fail(attempt.errorCode(), attempt.errorMessage());
+        return core::propagate<DeliveryRecord>(attempt);
     d.attempt = static_cast<int>(attempt.value());
     READ_TEXT(d.status, "status");
     auto code = readOptInt(row, "response_code");
-    if (code.isFail()) return core::Result<DeliveryRecord>::fail(code.errorCode(), code.errorMessage());
+    if (code.isFail()) return core::propagate<DeliveryRecord>(code);
     d.responseCode = code.value();
     auto errcode = readOptInt(row, "remote_errcode");
     if (errcode.isFail())
-        return core::Result<DeliveryRecord>::fail(errcode.errorCode(), errcode.errorMessage());
+        return core::propagate<DeliveryRecord>(errcode);
     d.remoteErrcode = errcode.value();
     READ_TEXT(d.error, "error");
     auto retryAt = readOptInt(row, "next_retry_at");
     if (retryAt.isFail())
-        return core::Result<DeliveryRecord>::fail(retryAt.errorCode(), retryAt.errorMessage());
+        return core::propagate<DeliveryRecord>(retryAt);
     d.nextRetryAt = retryAt.value();
     auto created = row.getInt64("created_at");
     if (created.isFail())
-        return core::Result<DeliveryRecord>::fail(created.errorCode(), created.errorMessage());
+        return core::propagate<DeliveryRecord>(created);
     d.createdAt = created.value();
     return core::Result<DeliveryRecord>::ok(std::move(d));
 }
@@ -260,35 +260,35 @@ core::Result<DeliveryRecord> deliveryFromRow(const core::data::SqlRow& row) {
 core::Result<ChannelRecord> channelFromRow(const core::data::SqlRow& row) {
     ChannelRecord c;
     auto id = row.getInt64("id");
-    if (id.isFail()) return core::Result<ChannelRecord>::fail(id.errorCode(), id.errorMessage());
+    if (id.isFail()) return core::propagate<ChannelRecord>(id);
     c.id = id.value();
     auto kind = row.getString("kind");
     if (kind.isFail())
-        return core::Result<ChannelRecord>::fail(kind.errorCode(), kind.errorMessage());
+        return core::propagate<ChannelRecord>(kind);
     c.kind = kind.value();
     auto name = row.getString("name");
     if (name.isFail())
-        return core::Result<ChannelRecord>::fail(name.errorCode(), name.errorMessage());
+        return core::propagate<ChannelRecord>(name);
     c.name = name.value();
     auto enabled = row.getInt64("enabled");
     if (enabled.isFail())
-        return core::Result<ChannelRecord>::fail(enabled.errorCode(), enabled.errorMessage());
+        return core::propagate<ChannelRecord>(enabled);
     c.enabled = enabled.value() != 0;
     auto config = row.getString("config_json");
     if (config.isFail())
-        return core::Result<ChannelRecord>::fail(config.errorCode(), config.errorMessage());
+        return core::propagate<ChannelRecord>(config);
     c.configJson = config.value();
     auto ref = row.getString("secret_ref");
     if (ref.isFail())
-        return core::Result<ChannelRecord>::fail(ref.errorCode(), ref.errorMessage());
+        return core::propagate<ChannelRecord>(ref);
     c.secretRef = ref.value();
     auto created = row.getInt64("created_at");
     if (created.isFail())
-        return core::Result<ChannelRecord>::fail(created.errorCode(), created.errorMessage());
+        return core::propagate<ChannelRecord>(created);
     c.createdAt = created.value();
     auto updated = row.getInt64("updated_at");
     if (updated.isFail())
-        return core::Result<ChannelRecord>::fail(updated.errorCode(), updated.errorMessage());
+        return core::propagate<ChannelRecord>(updated);
     c.updatedAt = updated.value();
     return core::Result<ChannelRecord>::ok(std::move(c));
 }
@@ -323,33 +323,33 @@ core::Result<RuleRecord> ScheduleStore::createRule(const RuleRecord& rule) {
         "action_kind, action_json, channel_ids, missed_policy, conflict_policy, max_runs, "
         "next_fire_at, last_fire_at, last_eval_at, run_count, archived_at, deleted_at, "
         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    if (prep.isFail()) return core::Result<RuleRecord>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<RuleRecord>(prep);
     auto& stmt = prep.value();
     int i = 1;
-    if (auto r = stmt.bind(i++, rule.name); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, static_cast<std::int64_t>(rule.enabled ? 1 : 0)); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, rule.pausedUntil); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.kind); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.specJson); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.tzId); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.actionKind); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.actionJson); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, encodeIds(rule.channelIds)); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.missedPolicy); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.conflictPolicy); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.maxRuns); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, rule.nextFireAt); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, rule.lastFireAt); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, rule.lastEvalAt); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, rule.runCount); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, rule.archivedAt); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, rule.deletedAt); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, now); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, now); r.isFail()) return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
+    if (auto r = stmt.bind(i++, rule.name); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, static_cast<std::int64_t>(rule.enabled ? 1 : 0)); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, rule.pausedUntil); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.kind); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.specJson); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.tzId); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.actionKind); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.actionJson); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, encodeIds(rule.channelIds)); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.missedPolicy); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.conflictPolicy); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.maxRuns); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, rule.nextFireAt); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, rule.lastFireAt); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, rule.lastEvalAt); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, rule.runCount); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, rule.archivedAt); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, rule.deletedAt); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, now); r.isFail()) return core::propagate<RuleRecord>(r);
+    if (auto r = stmt.bind(i++, now); r.isFail()) return core::propagate<RuleRecord>(r);
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<RuleRecord>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<RuleRecord>(step);
     auto newId = lastInsertId(db_);
-    if (newId.isFail()) return core::Result<RuleRecord>::fail(newId.errorCode(), newId.errorMessage());
+    if (newId.isFail()) return core::propagate<RuleRecord>(newId);
     auto created = getRule(newId.value());
     if (created.isFail()) return created;
     return created;
@@ -358,12 +358,12 @@ core::Result<RuleRecord> ScheduleStore::createRule(const RuleRecord& rule) {
 core::Result<RuleRecord> ScheduleStore::getRule(int64_t id) {
     auto prep = db_.prepare(std::string("SELECT ") + kRuleCols +
                             " FROM schedule_rule WHERE id = ? AND deleted_at IS NULL");
-    if (prep.isFail()) return core::Result<RuleRecord>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<RuleRecord>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail())
-        return core::Result<RuleRecord>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<RuleRecord>(r);
     auto rows = stmt.fetchAll();
-    if (rows.isFail()) return core::Result<RuleRecord>::fail(rows.errorCode(), rows.errorMessage());
+    if (rows.isFail()) return core::propagate<RuleRecord>(rows);
     if (rows.value().empty()) {
         return core::Result<RuleRecord>::fail(core::ErrorCode::NotFound,
                                               "规则不存在或已删除: " + std::to_string(id));
@@ -375,16 +375,16 @@ core::Result<std::vector<RuleRecord>> ScheduleStore::listRules() {
     auto prep = db_.prepare(std::string("SELECT ") + kRuleCols +
                             " FROM schedule_rule WHERE deleted_at IS NULL ORDER BY id ASC");
     if (prep.isFail())
-        return core::Result<std::vector<RuleRecord>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<RuleRecord>>(prep);
     auto rows = prep.value().fetchAll();
     if (rows.isFail())
-        return core::Result<std::vector<RuleRecord>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<RuleRecord>>(rows);
     std::vector<RuleRecord> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
         auto r = ruleFromRow(row);
         if (r.isFail())
-            return core::Result<std::vector<RuleRecord>>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<std::vector<RuleRecord>>(r);
         out.push_back(std::move(r.value()));
     }
     return core::Result<std::vector<RuleRecord>>::ok(std::move(out));
@@ -400,7 +400,7 @@ core::Result<void> ScheduleStore::updateRule(const RuleRecord& rule) {
         "missed_policy = ?, conflict_policy = ?, max_runs = ?, next_fire_at = ?, "
         "last_fire_at = ?, last_eval_at = ?, run_count = ?, "
         "updated_at = ? WHERE id = ? AND deleted_at IS NULL");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     int i = 1;
     if (auto r = stmt.bind(i++, rule.name); r.isFail()) return r;
@@ -422,9 +422,9 @@ core::Result<void> ScheduleStore::updateRule(const RuleRecord& rule) {
     if (auto r = stmt.bind(i++, now); r.isFail()) return r;
     if (auto r = stmt.bind(i++, rule.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "规则不存在或已删除: " + std::to_string(rule.id));
@@ -437,15 +437,15 @@ core::Result<void> ScheduleStore::deleteRule(int64_t id) {
     auto prep = db_.prepare(
         "UPDATE schedule_rule SET deleted_at = ?, updated_at = ? "
         "WHERE id = ? AND deleted_at IS NULL");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, now); r.isFail()) return r;
     if (auto r = stmt.bind(2, now); r.isFail()) return r;
     if (auto r = stmt.bind(3, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "规则不存在或已删除: " + std::to_string(id));
@@ -455,13 +455,13 @@ core::Result<void> ScheduleStore::deleteRule(int64_t id) {
 
 core::Result<void> ScheduleStore::purgeRule(int64_t id) {
     auto prep = db_.prepare("DELETE FROM schedule_rule WHERE id = ?");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "规则不存在: " + std::to_string(id));
@@ -475,15 +475,15 @@ core::Result<void> ScheduleStore::archiveRule(int64_t id) {
     auto prep = db_.prepare(
         "UPDATE schedule_rule SET archived_at = ?, enabled = 0, updated_at = ? "
         "WHERE id = ? AND deleted_at IS NULL AND archived_at IS NULL");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, now); r.isFail()) return r;
     if (auto r = stmt.bind(2, now); r.isFail()) return r;
     if (auto r = stmt.bind(3, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "规则不存在、已删除或已归档: " + std::to_string(id));
@@ -500,21 +500,21 @@ core::Result<std::optional<RunRecord>> ScheduleStore::findRun(const std::string&
                             " FROM schedule_run WHERE origin = ? AND origin_key = ? "
                             "AND planned_at = ? LIMIT 1");
     if (prep.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, origin); r.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(r);
     if (auto r = stmt.bind(2, originKey); r.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(r);
     if (auto r = stmt.bind(3, plannedAt); r.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(r);
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(rows);
     if (rows.value().empty()) return core::Result<std::optional<RunRecord>>::ok(std::nullopt);
     auto r = runFromRow(rows.value()[0]);
     if (r.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(r);
     return core::Result<std::optional<RunRecord>>::ok(std::move(r.value()));
 }
 
@@ -524,24 +524,24 @@ core::Result<RunRecord> ScheduleStore::insertRun(const RunRecord& run) {
         "ended_at, status, attempt, duration_ms, result_summary, error) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(origin, origin_key, planned_at) DO NOTHING");
-    if (prep.isFail()) return core::Result<RunRecord>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<RunRecord>(prep);
     auto& stmt = prep.value();
     int i = 1;
-    if (auto r = stmt.bind(i++, run.origin); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, run.originKey); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, run.ruleId); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, run.plannedAt); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, run.startedAt); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, run.endedAt); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, run.status); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, static_cast<int64_t>(run.attempt)); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, run.durationMs); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, run.resultSummary); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, run.error); r.isFail()) return core::Result<RunRecord>::fail(r.errorCode(), r.errorMessage());
+    if (auto r = stmt.bind(i++, run.origin); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = stmt.bind(i++, run.originKey); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, run.ruleId); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = stmt.bind(i++, run.plannedAt); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, run.startedAt); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, run.endedAt); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = stmt.bind(i++, run.status); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = stmt.bind(i++, static_cast<int64_t>(run.attempt)); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, run.durationMs); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = stmt.bind(i++, run.resultSummary); r.isFail()) return core::propagate<RunRecord>(r);
+    if (auto r = stmt.bind(i++, run.error); r.isFail()) return core::propagate<RunRecord>(r);
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<RunRecord>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<RunRecord>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<RunRecord>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<RunRecord>(changed);
     if (changed.value() == 0) {
         // 唯一索引命中：已有同键行（重启重复补跑 / 并发重复入队）。返回错误让
         // 调用方走「已处理过」分支，绝不产生第二行。
@@ -566,7 +566,7 @@ core::Result<void> ScheduleStore::updateRun(const RunRecord& run) {
         "UPDATE schedule_run SET origin = ?, origin_key = ?, rule_id = ?, planned_at = ?, "
         "started_at = ?, ended_at = ?, status = ?, attempt = ?, duration_ms = ?, "
         "result_summary = ?, error = ? WHERE id = ?");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     int i = 1;
     if (auto r = stmt.bind(i++, run.origin); r.isFail()) return r;
@@ -582,9 +582,9 @@ core::Result<void> ScheduleStore::updateRun(const RunRecord& run) {
     if (auto r = stmt.bind(i++, run.error); r.isFail()) return r;
     if (auto r = stmt.bind(i++, run.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "运行记录不存在: " + std::to_string(run.id));
@@ -596,23 +596,19 @@ core::Result<std::optional<RunRecord>> ScheduleStore::getRun(int64_t id) {
     auto prep = db_.prepare(std::string("SELECT ") + kRunCols +
                             " FROM schedule_run WHERE id = ? LIMIT 1");
     if (prep.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(prep.errorCode(),
-                                                            prep.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(),
-                                                            r.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(r);
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<std::optional<RunRecord>>::fail(rows.errorCode(),
-                                                            rows.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(rows);
     if (rows.value().empty()) {
         return core::Result<std::optional<RunRecord>>::ok(std::nullopt);
     }
     auto r = runFromRow(rows.value().front());
     if (r.isFail()) {
-        return core::Result<std::optional<RunRecord>>::fail(r.errorCode(),
-                                                            r.errorMessage());
+        return core::propagate<std::optional<RunRecord>>(r);
     }
     return core::Result<std::optional<RunRecord>>::ok(
         std::optional<RunRecord>(std::move(r.value())));
@@ -623,21 +619,21 @@ core::Result<std::vector<RunRecord>> ScheduleStore::listRunsByRule(int64_t ruleI
                             " FROM schedule_run WHERE rule_id = ? "
                             "ORDER BY planned_at DESC, id DESC LIMIT ?");
     if (prep.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, ruleId); r.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(r);
     if (auto r = stmt.bind(2, static_cast<int64_t>(limit)); r.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(r);
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(rows);
     std::vector<RunRecord> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
         auto r = runFromRow(row);
         if (r.isFail())
-            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<std::vector<RunRecord>>(r);
         out.push_back(std::move(r.value()));
     }
     return core::Result<std::vector<RunRecord>>::ok(std::move(out));
@@ -654,42 +650,35 @@ core::Result<std::vector<RunRecord>> ScheduleStore::listRuns(
     sql += " ORDER BY planned_at DESC, id DESC LIMIT ?";
     auto prep = db_.prepare(sql);
     if (prep.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(prep.errorCode(),
-                                                          prep.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(prep);
     auto& stmt = prep.value();
     int idx = 1;
     if (!status.empty()) {
         if (auto r = stmt.bind(idx, status); r.isFail())
-            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return core::propagate<std::vector<RunRecord>>(r);
         ++idx;
     }
     if (sinceSec > 0) {
         if (auto r = stmt.bind(idx, sinceSec); r.isFail())
-            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return core::propagate<std::vector<RunRecord>>(r);
         ++idx;
     }
     if (ruleId.has_value()) {
         if (auto r = stmt.bind(idx, ruleId.value()); r.isFail())
-            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return core::propagate<std::vector<RunRecord>>(r);
         ++idx;
     }
     if (auto r = stmt.bind(idx, static_cast<int64_t>(limit)); r.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
-                                                          r.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(r);
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<std::vector<RunRecord>>::fail(rows.errorCode(),
-                                                          rows.errorMessage());
+        return core::propagate<std::vector<RunRecord>>(rows);
     std::vector<RunRecord> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
         auto r = runFromRow(row);
         if (r.isFail())
-            return core::Result<std::vector<RunRecord>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return core::propagate<std::vector<RunRecord>>(r);
         out.push_back(std::move(r.value()));
     }
     return core::Result<std::vector<RunRecord>>::ok(std::move(out));
@@ -703,24 +692,24 @@ core::Result<DeliveryRecord> ScheduleStore::insertDelivery(const DeliveryRecord&
         "INSERT INTO schedule_delivery (run_id, channel_id, attempt, status, response_code, "
         "remote_errcode, error, next_retry_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (prep.isFail())
-        return core::Result<DeliveryRecord>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<DeliveryRecord>(prep);
     auto& stmt = prep.value();
     int i = 1;
-    if (auto r = stmt.bind(i++, delivery.runId); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, delivery.channelId); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, static_cast<int64_t>(delivery.attempt)); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, delivery.status); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, delivery.responseCode); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, delivery.remoteErrcode); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, delivery.error); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = bindOptInt(stmt, i++, delivery.nextRetryAt); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(i++, now); r.isFail()) return core::Result<DeliveryRecord>::fail(r.errorCode(), r.errorMessage());
+    if (auto r = stmt.bind(i++, delivery.runId); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = stmt.bind(i++, delivery.channelId); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = stmt.bind(i++, static_cast<int64_t>(delivery.attempt)); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = stmt.bind(i++, delivery.status); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, delivery.responseCode); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, delivery.remoteErrcode); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = stmt.bind(i++, delivery.error); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = bindOptInt(stmt, i++, delivery.nextRetryAt); r.isFail()) return core::propagate<DeliveryRecord>(r);
+    if (auto r = stmt.bind(i++, now); r.isFail()) return core::propagate<DeliveryRecord>(r);
     auto step = stmt.step();
     if (step.isFail())
-        return core::Result<DeliveryRecord>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<DeliveryRecord>(step);
     auto newId = lastInsertId(db_);
     if (newId.isFail())
-        return core::Result<DeliveryRecord>::fail(newId.errorCode(), newId.errorMessage());
+        return core::propagate<DeliveryRecord>(newId);
     DeliveryRecord out = delivery;
     out.id = newId.value();
     out.createdAt = now;
@@ -731,7 +720,7 @@ core::Result<void> ScheduleStore::updateDelivery(const DeliveryRecord& delivery)
     auto prep = db_.prepare(
         "UPDATE schedule_delivery SET run_id = ?, channel_id = ?, attempt = ?, status = ?, "
         "response_code = ?, remote_errcode = ?, error = ?, next_retry_at = ? WHERE id = ?");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     int i = 1;
     if (auto r = stmt.bind(i++, delivery.runId); r.isFail()) return r;
@@ -744,9 +733,9 @@ core::Result<void> ScheduleStore::updateDelivery(const DeliveryRecord& delivery)
     if (auto r = bindOptInt(stmt, i++, delivery.nextRetryAt); r.isFail()) return r;
     if (auto r = stmt.bind(i++, delivery.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "投递记录不存在: " + std::to_string(delivery.id));
@@ -759,19 +748,19 @@ core::Result<std::vector<DeliveryRecord>> ScheduleStore::listDeliveriesByRun(int
                             " FROM schedule_delivery WHERE run_id = ? "
                             "ORDER BY attempt ASC, id ASC");
     if (prep.isFail())
-        return core::Result<std::vector<DeliveryRecord>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<DeliveryRecord>>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, runId); r.isFail())
-        return core::Result<std::vector<DeliveryRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<DeliveryRecord>>(r);
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<std::vector<DeliveryRecord>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<DeliveryRecord>>(rows);
     std::vector<DeliveryRecord> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
         auto d = deliveryFromRow(row);
         if (d.isFail())
-            return core::Result<std::vector<DeliveryRecord>>::fail(d.errorCode(), d.errorMessage());
+            return core::propagate<std::vector<DeliveryRecord>>(d);
         out.push_back(std::move(d.value()));
     }
     return core::Result<std::vector<DeliveryRecord>>::ok(std::move(out));
@@ -785,21 +774,21 @@ core::Result<ChannelRecord> ScheduleStore::createChannel(const ChannelRecord& ch
         "INSERT INTO schedule_channel (kind, name, enabled, config_json, secret_ref, "
         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
     if (prep.isFail())
-        return core::Result<ChannelRecord>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<ChannelRecord>(prep);
     auto& stmt = prep.value();
-    if (auto r = stmt.bind(1, channel.kind); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(2, channel.name); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(3, static_cast<std::int64_t>(channel.enabled ? 1 : 0)); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(4, channel.configJson); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(5, channel.secretRef); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(6, now); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
-    if (auto r = stmt.bind(7, now); r.isFail()) return core::Result<ChannelRecord>::fail(r.errorCode(), r.errorMessage());
+    if (auto r = stmt.bind(1, channel.kind); r.isFail()) return core::propagate<ChannelRecord>(r);
+    if (auto r = stmt.bind(2, channel.name); r.isFail()) return core::propagate<ChannelRecord>(r);
+    if (auto r = stmt.bind(3, static_cast<std::int64_t>(channel.enabled ? 1 : 0)); r.isFail()) return core::propagate<ChannelRecord>(r);
+    if (auto r = stmt.bind(4, channel.configJson); r.isFail()) return core::propagate<ChannelRecord>(r);
+    if (auto r = stmt.bind(5, channel.secretRef); r.isFail()) return core::propagate<ChannelRecord>(r);
+    if (auto r = stmt.bind(6, now); r.isFail()) return core::propagate<ChannelRecord>(r);
+    if (auto r = stmt.bind(7, now); r.isFail()) return core::propagate<ChannelRecord>(r);
     auto step = stmt.step();
     if (step.isFail())
-        return core::Result<ChannelRecord>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<ChannelRecord>(step);
     auto newId = lastInsertId(db_);
     if (newId.isFail())
-        return core::Result<ChannelRecord>::fail(newId.errorCode(), newId.errorMessage());
+        return core::propagate<ChannelRecord>(newId);
     ChannelRecord out = channel;
     out.id = newId.value();
     out.createdAt = now;
@@ -811,17 +800,17 @@ core::Result<std::optional<ChannelRecord>> ScheduleStore::getChannel(int64_t id)
     auto prep = db_.prepare(std::string("SELECT ") + kChannelCols +
                             " FROM schedule_channel WHERE id = ?");
     if (prep.isFail())
-        return core::Result<std::optional<ChannelRecord>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::optional<ChannelRecord>>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail())
-        return core::Result<std::optional<ChannelRecord>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::optional<ChannelRecord>>(r);
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<std::optional<ChannelRecord>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::optional<ChannelRecord>>(rows);
     if (rows.value().empty()) return core::Result<std::optional<ChannelRecord>>::ok(std::nullopt);
     auto c = channelFromRow(rows.value()[0]);
     if (c.isFail())
-        return core::Result<std::optional<ChannelRecord>>::fail(c.errorCode(), c.errorMessage());
+        return core::propagate<std::optional<ChannelRecord>>(c);
     return core::Result<std::optional<ChannelRecord>>::ok(std::move(c.value()));
 }
 
@@ -829,16 +818,16 @@ core::Result<std::vector<ChannelRecord>> ScheduleStore::listChannels() {
     auto prep = db_.prepare(std::string("SELECT ") + kChannelCols +
                             " FROM schedule_channel ORDER BY id ASC");
     if (prep.isFail())
-        return core::Result<std::vector<ChannelRecord>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<ChannelRecord>>(prep);
     auto rows = prep.value().fetchAll();
     if (rows.isFail())
-        return core::Result<std::vector<ChannelRecord>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<ChannelRecord>>(rows);
     std::vector<ChannelRecord> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
         auto c = channelFromRow(row);
         if (c.isFail())
-            return core::Result<std::vector<ChannelRecord>>::fail(c.errorCode(), c.errorMessage());
+            return core::propagate<std::vector<ChannelRecord>>(c);
         out.push_back(std::move(c.value()));
     }
     return core::Result<std::vector<ChannelRecord>>::ok(std::move(out));
@@ -849,7 +838,7 @@ core::Result<void> ScheduleStore::updateChannel(const ChannelRecord& channel) {
     auto prep = db_.prepare(
         "UPDATE schedule_channel SET kind = ?, name = ?, enabled = ?, config_json = ?, "
         "secret_ref = ?, updated_at = ? WHERE id = ?");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, channel.kind); r.isFail()) return r;
     if (auto r = stmt.bind(2, channel.name); r.isFail()) return r;
@@ -859,9 +848,9 @@ core::Result<void> ScheduleStore::updateChannel(const ChannelRecord& channel) {
     if (auto r = stmt.bind(6, now); r.isFail()) return r;
     if (auto r = stmt.bind(7, channel.id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "渠道不存在: " + std::to_string(channel.id));
@@ -871,13 +860,13 @@ core::Result<void> ScheduleStore::updateChannel(const ChannelRecord& channel) {
 
 core::Result<void> ScheduleStore::deleteChannel(int64_t id) {
     auto prep = db_.prepare("DELETE FROM schedule_channel WHERE id = ?");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     auto changed = changesCount(db_);
-    if (changed.isFail()) return core::Result<void>::fail(changed.errorCode(), changed.errorMessage());
+    if (changed.isFail()) return core::propagate<void>(changed);
     if (changed.value() == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound,
                                         "渠道不存在: " + std::to_string(id));

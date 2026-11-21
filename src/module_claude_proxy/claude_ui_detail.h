@@ -45,7 +45,6 @@ struct DetailActions {
     std::function<void(const std::string& title, const std::string& msg)> warn;
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
-    std::function<void(int64_t id)> run;                             // 运行
     // 模型配置 pane 的「1M」开关落库：入参 = profile id + 槽位表下标（表序）+ 目标状态。
     // 只有可用行（支持 1M 且 base 非空）会触发（其余置灰不挂 onChange）。
     std::function<void(int64_t profileId, std::size_t slotIndex, bool on)> setOneM;

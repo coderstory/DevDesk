@@ -123,9 +123,6 @@ public:
     // 带原因的主动取消：readChunk 返回 Error + reason（消费方据此区分断开与主动中止）。
     void cancelWithReason(const std::string& reason);
 
-    // 当前队列深度（测试/调试用）
-    size_t queueDepth() const;
-
     // 当前生产者是否被背压阻塞（queue >= 100）
     bool isPaused() const;
 

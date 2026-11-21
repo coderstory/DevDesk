@@ -16,6 +16,9 @@ env:
   CCACHE_MAXSIZE: 1G
   # 让构建输出实时刷到 CI 日志（默认被脚本吞掉，看起来像卡死）
   DEVDESK_BUILD_VERBOSE: "1"
+  # 对齐 ci.yml：Release 不编 probe 二进制（12 个 probe 纯编译链接零运行，runner
+  # 无 GUI 会话用不上）—— 0 → build-test-run.sh 传 -DDEVDESK_BUILD_PROBES=OFF。
+  DEVDESK_BUILD_PROBES: "0"
 
 jobs:
   macos:
@@ -28,6 +31,12 @@ jobs:
           path: DevDesk
           fetch-depth: 0          # 汇总提交信息要用完整历史
           submodules: recursive
+
+      # bug355：gitlink 不锁版本（AGENTS §一 2026-11-09 契约）——checkout 只按
+      # gitlink 检出，会停在 fork/main 最新之前的祖先，业务代码引用新 API 即红。
+      # 检出后强制追 fork/main 最新。
+      - name: EUI-NEO 取 fork/main 最新（不锁版本，AGENTS §一）
+        run: git -C DevDesk submodule update --init --remote -- EUI-NEO
 
       - name: 切到镜像上最新的 Xcode
         run: |
@@ -75,6 +84,10 @@ jobs:
           path: DevDesk
           fetch-depth: 0
           submodules: recursive
+
+      # 同 macOS job（bug355）：gitlink 不锁版本，检出后强制追 fork/main 最新
+      - name: EUI-NEO 取 fork/main 最新（不锁版本，AGENTS §一）
+        run: git -C DevDesk submodule update --init --remote -- EUI-NEO
 
       - uses: msys2/setup-msys2@v2
         with:

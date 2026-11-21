@@ -1164,8 +1164,7 @@ void drawLogCard(const CardDrawArgs& args) {
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "日志");
 
             // 档位标签（0 = 永久）；存的是原始天数 int，清理任务按值读取
-            static const char* kRetentionLabels[] = {
-                "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
+            static const char* kRetentionLabels[] = {"永久保留", "30 天", "365 天"};
             // 左列：日志保留
             ui_kit::formRow(ui, id, "日志保留", innerX, row1Y, colW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {

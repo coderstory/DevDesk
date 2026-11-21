@@ -587,11 +587,11 @@ void ScheduleEngine::finishFire(int64_t ruleId, int64_t firedAt, bool onceKind,
 
 core::Result<void> ScheduleEngine::recomputeNextFire(int64_t ruleId, int64_t nowUnix) {
     auto got = store_.getRule(ruleId);
-    if (got.isFail()) return core::Result<void>::fail(got.errorCode(), got.errorMessage());
+    if (got.isFail()) return core::propagate<void>(got);
     RuleRecord rule = got.value();
     auto parsed = core::schedule::parseRuleSpec(kindFromString(rule.kind), rule.specJson);
     if (parsed.isFail()) {
-        return core::Result<void>::fail(parsed.errorCode(), parsed.errorMessage());
+        return core::propagate<void>(parsed);
     }
     std::tm localNow{};
     core::time::localTime(static_cast<std::time_t>(nowUnix), &localNow);
@@ -609,7 +609,7 @@ core::Result<void> ScheduleEngine::recomputeNextFire(int64_t ruleId, int64_t now
 
 core::Result<void> ScheduleEngine::rerunNow(int64_t ruleId, int64_t nowUnix) {
     auto got = store_.getRule(ruleId);
-    if (got.isFail()) return core::Result<void>::fail(got.errorCode(), got.errorMessage());
+    if (got.isFail()) return core::propagate<void>(got);
     const RuleRecord& rule = got.value();
     if (!rule.enabled || rule.archivedAt.has_value()) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,

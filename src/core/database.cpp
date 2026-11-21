@@ -25,7 +25,7 @@ Database& Database::operator=(Database&& other) noexcept {
 core::Result<Database> Database::open(const std::filesystem::path& path) {
     auto dbResult = core::data::SqliteDb::open(path);
     if (dbResult.isFail()) {
-        return core::Result<Database>::fail(dbResult.errorCode(), dbResult.errorMessage());
+        return core::propagate<Database>(dbResult);
     }
 
     // Result::value() 返回 T&（lvalue ref），std::move 转 xvalue 触发 move ctor
@@ -34,7 +34,7 @@ core::Result<Database> Database::open(const std::filesystem::path& path) {
     // open = connect + schema + 版本升级（unified entry）；migrate 幂等，二次调无副作用
     auto m = inst.migrate();
     if (m.isFail()) {
-        return core::Result<Database>::fail(m.errorCode(), m.errorMessage());
+        return core::propagate<Database>(m);
     }
     return core::Result<Database>::ok(std::move(inst));
 }
@@ -66,15 +66,15 @@ core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays)
     auto prep = db.prepare(
         "DELETE FROM claude_call_logs WHERE started_at < ?");
     if (prep.isFail()) {
-        return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<int64_t>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, cutoff); b.isFail()) {
-        return core::Result<int64_t>::fail(b.errorCode(), b.errorMessage());
+        return core::propagate<int64_t>(b);
     }
     auto step = stmt.step();
     if (step.isFail()) {
-        return core::Result<int64_t>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<int64_t>(step);
     }
     return core::Result<int64_t>::ok(
         static_cast<int64_t>(sqlite3_changes(db.handle())));

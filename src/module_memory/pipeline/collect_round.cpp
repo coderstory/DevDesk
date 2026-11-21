@@ -245,8 +245,7 @@ core::Result<CollectRoundReport> runCollectRound(
     InferQueueStore* inferQueue) {
     auto segments = collector.pollOnce();
     if (segments.isFail()) {
-        return core::Result<CollectRoundReport>::fail(segments.errorCode(),
-                                                      segments.errorMessage());
+        return core::propagate<CollectRoundReport>(segments);
     }
     CollectRoundReport report;
     report.segments = static_cast<int>(segments.value().size());
@@ -411,8 +410,7 @@ core::Result<CollectRoundReport> runCollectRound(
     }
     // 记账：处理完才推进水位/事件（拦截段也记已处理——不入提案但不重复扫）
     if (auto c = collector.commit(segments.value()); c.isFail()) {
-        return core::Result<CollectRoundReport>::fail(c.errorCode(),
-                                                      c.errorMessage());
+        return core::propagate<CollectRoundReport>(c);
     }
     return core::Result<CollectRoundReport>::ok(std::move(report));
 }
@@ -424,8 +422,7 @@ core::Result<int> runDecayScan(proposals::ProposalStore& store,
     auto created = proposals::Curator::proposeForget(
         store, memories, idleThresholdDays, nowSec());
     if (created.isFail()) {
-        return core::Result<int>::fail(created.errorCode(),
-                                       created.errorMessage());
+        return core::propagate<int>(created);
     }
     if (onNote && !created.value().empty()) {
         RoundNote n;

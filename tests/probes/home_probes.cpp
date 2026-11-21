@@ -82,12 +82,10 @@ int main(int argc, char* argv[]) {
     auto cfg = test_support::tempConfigFile("pfx_", "cfg");
     test_support::ScopedConfigPath scopedCfg(cfg);
 
-    // 数据底座（组 D/E/F 前提）：已 migrate 的临时库注册为进程级 appDatabase。
-    // null 则 statsError、API 分布全零 → 分布图走空态分支不建图，组 D 结构前提失效。
-    // 种子 = 1 条 profile（claude_call_logs FK）+ 今日 2 条**带用量**的调用：
-    // 纵轴 = 每小时 output_tokens 合计，output_tokens 为 0 的行合计 0（= 没数据）
-    // → 依然走空态、组 D 结构前提失效。两条落在 9 时与 17 时 → 去头去尾后恰
-    // 9 根柱（9..17 闭区间）。
+    // 数据底座（统计卡数据前提）：已 migrate 的临时库注册为进程级 appDatabase。
+    // null 则 statsError → 统计卡走失败态，组 A/L 结构前提失效。
+    // 种子 = 1 条 profile（claude_call_logs FK）+ 今日 2 条**带用量**的调用（9 时
+    // 400 / 17 时 600）：喂 Token 速率卡「最近一次成功调用」与调用数统计。
     test_support::TestEnv env("hprobe_", "home", true);  // 注册为 appDatabase
     {
         const int64_t now = static_cast<int64_t>(std::time(nullptr));
@@ -144,7 +142,7 @@ int main(int argc, char* argv[]) {
 
     settleFrames(2);  // 首帧构建树（结构 diff 计入 paint 预算，组 B 前消化）
 
-    // 「种子在场」的中途落图（--screenshot-seeded <路径>）：统计卡 / 图表种子全画着。
+    // 「种子在场」的中途落图（--screenshot-seeded <路径>）：统计卡种子全画着。
     // 未给该开关 = 立刻返回（零开销）。
     probe::captureSeedIfRequested(args, window, runtime, &passed);
 
@@ -289,67 +287,44 @@ int main(int argc, char* argv[]) {
     // 组 D/E 前：API 分布卡当前帧
     composeFrame();
 
-    // 组 D：类 4(a) barChart 几何（P1）
-    // plot 区总高 = grid.3.y - grid.0.y（barchart.h 四条横线 y = plotY + k·H/3
-    // → grid.0 在 plotY、grid.3 在 bottomY）；不量 bar 高度，因为 bar 有 0.16s
-    // 帧过渡。种子的非零用量 → 非空态 → 去头去尾后 9 根柱（9..17）正常建图。
-    // UAT6 零滚动收口后卡高 220（kHomeChartH）→ wrap 156 → plot 44 ≥ 36 仍过；
-    // 回归成卡高 <212 → plot <36 → 红。
+    // 组 D（C-2 need380 wave5-c）：今日 token 图表卡已砍——barChart 结构反向断言
+    //（查有即红）；统计行吃余高：图表缺席后弹性基准以上余高全部摊给统计行
+    //（home_module statsGrow），home.stats 高 = 视口高 − 非统计固定件（页头 40 +
+    // 列 gap 2×20 + 操作行 44+16 底边距 + 0.5 防浮点余量）。旧判据（plot 区高
+    // ≥36）随卡下线。
     {
-        const core::dsl::Element* grid0 =
-            ui != nullptr ? ui->find("home.api.chart.bars.grid.0") : nullptr;
-        const core::dsl::Element* grid3 =
-            ui != nullptr ? ui->find("home.api.chart.bars.grid.3") : nullptr;
-        if (grid0 == nullptr || grid3 == nullptr) {
-            std::cerr << "home_probes: 类4(a) 结构缺失 (grid.0="
-                      << (grid0 != nullptr ? "ok" : "null")
-                      << ", grid.3=" << (grid3 != nullptr ? "ok" : "null")
-                      << ")——barChart 未构建（种子落空或走空态分支）\n";
+        if (ui != nullptr && ui->find("home.api.chart.bars.grid.0") != nullptr) {
+            std::cerr << "home_probes: 组 D FAIL——今日 token 图表卡已砍（C-2），"
+                         "barChart 结构仍在场\n";
+            passed = false;
+        }
+        const core::dsl::Element* stats =
+            ui != nullptr ? ui->find("home.stats") : nullptr;
+        if (stats == nullptr) {
+            std::cerr << "home_probes: 组 D 结构缺失 home.stats\n";
             passed = false;
         } else {
-            const float plotH = grid3->frame.y - grid0->frame.y;
-            if (plotH < 35.5f) {
-                std::cerr << "home_probes: 类4(a) FAIL——bar 面板 plot 区总高 "
-                          << plotH << "px < 36（审计修 260 卡高回退？）\n";
+            const float expectStatsH =
+                h - (40.0f + 2.0f * 20.0f + 44.0f + 16.0f + 0.5f);
+            if (std::fabs(stats->frame.height - expectStatsH) > 1.0f) {
+                std::cerr << "home_probes: 组 D FAIL——统计行未吃满余高：高 "
+                          << stats->frame.height << " 期望 " << expectStatsH
+                          << "（图表卡回涨或余高分配回退？）\n";
                 passed = false;
             }
         }
     }
 
-    // 组 E：类 5(a) API 卡对称（P3）
-    // title/wrap 相对卡 content（inset 16）以 (0,·) 定位 → 左右间隙各 16，
-    // |左 - 右| ≤ 2px。content 已含 inset，再叠一层 position(16,..) → 左 32 右 0。
+    // 组 E（C-2 need380 wave5-c）：图表卡缺席的另一半——home.api.chart 全家
+    //（card/title/wrap）查有即红。旧判据（卡内 title/wrap 左右对称）随卡下线。
     {
-        const core::dsl::Element* card =
-            ui != nullptr ? ui->find("home.api.chart") : nullptr;
-        const core::dsl::Element* title =
-            ui != nullptr ? ui->find("home.api.chart.title") : nullptr;
-        const core::dsl::Element* wrap =
-            ui != nullptr ? ui->find("home.api.chart.wrap") : nullptr;
-        if (card == nullptr || title == nullptr || wrap == nullptr) {
-            std::cerr << "home_probes: 类5(a) 结构缺失 (card="
-                      << (card != nullptr ? "ok" : "null")
-                      << ", title=" << (title != nullptr ? "ok" : "null")
-                      << ", wrap=" << (wrap != nullptr ? "ok" : "null")
-                      << ")\n";
-            passed = false;
-        } else {
-            const float cardRight = card->frame.x + card->frame.width;
-            const auto checkSymmetric = [&](const char* name,
-                                            const core::dsl::Element& el) {
-                const float leftGap = el.frame.x - card->frame.x;
-                const float rightGap =
-                    cardRight - (el.frame.x + el.frame.width);
-                if (std::fabs(leftGap - rightGap) > 2.0f) {
-                    std::cerr << "home_probes: 类5(a) FAIL——" << name
-                              << " 左右间隙差 " << (leftGap - rightGap)
-                              << "px（左 " << leftGap << " 右 " << rightGap
-                              << "；content 已含 inset，不应二次偏移）\n";
-                    passed = false;
-                }
-            };
-            checkSymmetric("title", *title);
-            checkSymmetric("wrap", *wrap);
+        for (const char* elId :
+             {"home.api.chart", "home.api.chart.title", "home.api.chart.wrap"}) {
+            if (ui != nullptr && ui->find(elId) != nullptr) {
+                std::cerr << "home_probes: 组 E FAIL——'" << elId
+                          << "' 图表卡结构已砍（C-2）却仍在场\n";
+                passed = false;
+            }
         }
     }
 
@@ -422,23 +397,23 @@ int main(int argc, char* argv[]) {
     // UAT6 最小窗零滚动收口（用户：「首页出现滚动条完全没必要」）：本组 compose
     // 的 screen 是**页区高**口径——Windows 自绘壳 1000×640 窗 = 页高 600（标题条
     // 40，app_sidebar.cpp bodyTop），macOS 系统标题栏 = 页高 640；真实最紧档是
-    // 600。首页内容 = 页头 40 + 统计行 144×档 + gap 20×3 + 图表卡 220
-    // （kHomeChartH 260→220）+ 快捷按钮行 44+16 底边距 = 100% 档 476：600/640
-    // 档**零滚动**（滚动条元素不渲染）；内容超出只发生在 115%/130% 字号档或低于
-    // 真实最小页高的退化矮窗——那才是滚动吸收机制要守的行为，故新加 460 守护档
-    // 让机制仍被真实验证。五档（screen 高 = 页区高口径）：
+    // 600。C-2（need380 wave5-c）图表卡已砍后，100% 字号档弹性基准 = 页头 40 +
+    // 统计行 96 + 列 gap 2×20 + 操作行 44+16 底边距 = 236；基准以上余高**全部**
+    // 摊给统计行（statsGrow）→ 各档视口 ≥236 时内容正好贴合视口、**零滚动**；
+    // 内容超出只发生在低于弹性基准 236 的退化矮窗——那才是滚动吸收机制要守的
+    // 行为，故守护档取 200。五档（screen 高 = 页区高口径）：
     //   · 845（合成档，旧设计最小窗值，专测历史刀口档位）；
     //   · 778 旧 Windows@125% 有效下限（现高于 640 设计下限，普通深矮窗保留覆盖）；
     //   · 640 设计最小窗 = macOS 真实页高（无自绘壳；Windows 真实页高 600）；
     //   · 600 Windows 自绘壳真实最小页高（640−40 标题条）= 最紧真实档，零滚动契约档；
-    //   · 460 守护性深档（< 真实最小页高 600）：内容高 476 > 视口，滚动吸收不丢内容。
+    //   · 200 守护性深档（< 弹性基准 236）：内容 236 > 视口，滚动吸收不丢内容。
     // 判据（每档一致）：
     //   K(a) 整页滚动容器在场（矮窗可见性依赖它吸收溢出）
-    //   K(b) 既有内容一条不少（stats / chart / actions / root）
+    //   K(b) 既有内容一条不少（stats / actions / root）且图表卡缺席（C-2 反向断言）
     //   K(c) 快捷按钮行仍在滚动内容盒内（滚到底够得着 = 没丢内容）
     //   K(e) 快捷按钮行距内容盒底 ≥ 16（防贴边底边距）
     //   K(d) 滚动条渲染契约：≥600 档不得出现（home.scroll.scroll 查无 = 零滚动），
-    //        460 守护档必须在场（滚动吸收机制没被零滚动收口顺手拆掉）
+    //        200 守护档必须在场（滚动吸收机制没被零滚动收口顺手拆掉）
     {
         struct Tier {
             float height;
@@ -449,7 +424,7 @@ int main(int argc, char* argv[]) {
             {778.0f, "1000×778 旧 Windows@125% 有效下限档（现高于 640 设计下限，普通深矮窗）"},
             {640.0f, "1000×640 设计最小窗 = macOS 真实页高（Windows 实页高 600）；零滚动档"},
             {600.0f, "1000×600 Windows 自绘壳真实最小页高（640−40 标题条）；零滚动契约档"},
-            {460.0f, "1000×460 守护性深档（< 真实最小页高 600；内容高 476 > 视口，滚动吸收不丢内容）"},
+            {200.0f, "1000×200 守护性深档（< 弹性基准 236；内容 236 > 视口，滚动吸收不丢内容）"},
         };
         for (const Tier& tier : tiers) {
             eui::Screen tierScreen;
@@ -474,13 +449,13 @@ int main(int argc, char* argv[]) {
                 tierUi.find("home.scroll.scroll");
             const char* ok = "ok";
             const char* no = "null";
-            if (pageScroll == nullptr || stats == nullptr || chart == nullptr ||
+            if (pageScroll == nullptr || stats == nullptr || chart != nullptr ||
                 acts == nullptr || root == nullptr) {
                 std::cerr << "home_probes: 组 K(a/b) FAIL（" << tier.label
-                          << "）——结构缺失 (scrollContent="
+                          << "）——结构不符 (scrollContent="
                           << (pageScroll != nullptr ? ok : no)
                           << ", stats=" << (stats != nullptr ? ok : no)
-                          << ", chart=" << (chart != nullptr ? ok : no)
+                          << ", chart=" << (chart != nullptr ? "在场(应缺席)" : no)
                           << ", acts=" << (acts != nullptr ? ok : no)
                           << ", root=" << (root != nullptr ? ok : no) << ")\n";
                 passed = false;
@@ -513,12 +488,13 @@ int main(int argc, char* argv[]) {
                 if (scrollbar != nullptr) {
                     std::cerr << "home_probes: 组 K(d) FAIL（" << tier.label
                               << "）——页高 ≥ 真实最小页高 600 仍出滚动条"
-                                 "（内容高 476 ≤ 视口应零滚动；图表卡高度回涨？）\n";
+                                 "（弹性基准 236 ≤ 视口、余高全归统计行，应零滚动；"
+                                 "统计行没吃满余高？）\n";
                     passed = false;
                 }
             } else if (scrollbar == nullptr) {
                 std::cerr << "home_probes: 组 K(d) FAIL（" << tier.label
-                          << "）——低于真实最小页高却无滚动条（内容高 476 > 视口，"
+                          << "）——低于弹性基准 236 却无滚动条（内容 236 > 视口，"
                              "home.scroll 吸收机制被拆掉？）\n";
                 passed = false;
             }
@@ -578,285 +554,34 @@ int main(int argc, char* argv[]) {
         (void)allFailedShown;
     }
 
-    // 组 M（B7 D2）：点标题行 → 折叠态卡高 64×字号缩放、标题改短且垂直居中；
-    // 再点一次恢复展开态（不留副作用给收尾截图）。
+    // 组 M（C-2 need380 wave5-c）：图表卡随折叠能力整体下线——headhit 查有即红
+    //（旧判据：点标题折叠 64×字号缩放/标题短文案居中/再点恢复，随卡下线；
+    // --shot-collapsed 折叠态落图开关一并移除）。
     {
-        auto clickCenter = [&](const core::dsl::Element& el) {
-            const float cx = el.frame.x + el.frame.width * 0.5f;
-            const float cy = el.frame.y + el.frame.height * 0.5f;
-            core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
-                                     core::PointerAction::Press, {});
-            core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
-                                     core::PointerAction::Release, {});
-        };
-        const auto* headHit =
-            ui != nullptr ? ui->find("home.api.chart.headhit") : nullptr;
-        const auto* chartExpanded =
-            ui != nullptr ? ui->find("home.api.chart") : nullptr;
-        if (headHit == nullptr || chartExpanded == nullptr) {
-            std::cerr << "home_probes: 组 M 结构缺失（headhit/chart）\n";
+        if (ui != nullptr && ui->find("home.api.chart.headhit") != nullptr) {
+            std::cerr << "home_probes: 组 M FAIL——图表卡 headhit 已砍（C-2），"
+                         "折叠命中区仍在场\n";
             passed = false;
-        } else {
-            const float expandedH = chartExpanded->frame.height;
-            clickCenter(*headHit);
-            composeFrame();
-            composeFrame();
-            const auto* chart =
-                ui != nullptr ? ui->find("home.api.chart") : nullptr;
-            const auto* title =
-                ui != nullptr ? ui->find("home.api.chart.title") : nullptr;
-            const float expectH = 64.0f * core::theme::fontScale();
-            if (chart == nullptr || title == nullptr) {
-                std::cerr << "home_probes: 组 M 折叠后结构缺失\n";
-                passed = false;
-            } else {
-                if (std::fabs(chart->frame.height - expectH) > 0.5f) {
-                    std::cerr << "home_probes: 组 M FAIL——折叠态卡高 "
-                              << chart->frame.height << " 期望 " << expectH
-                              << "（kHomeChartCollapsedH 64×字号缩放）\n";
-                    passed = false;
-                }
-                if (title->text != "今日 Token 分布") {
-                    std::cerr << "home_probes: 组 M FAIL——折叠态标题「"
-                              << title->text << "」，应短文案「今日 Token 分布」\n";
-                    passed = false;
-                }
-                // 垂直居中：标题盒中心 = 卡内容区中心（卡上下各 16 内边距）
-                const float titleCenter = title->frame.y + title->frame.height * 0.5f;
-                const float contentCenter =
-                    chart->frame.y + chart->frame.height * 0.5f;
-                if (std::fabs(titleCenter - contentCenter) > 1.0f) {
-                    std::cerr << "home_probes: 组 M FAIL——折叠态标题中心 "
-                              << titleCenter << " 与卡中心 " << contentCenter
-                              << " 偏差 > 1px（应垂直居中）\n";
-                    passed = false;
-                }
-                if (chart->frame.height >= expandedH) {
-                    std::cerr << "home_probes: 组 M FAIL——折叠态卡高未低于展开态（"
-                              << chart->frame.height << " >= " << expandedH
-                              << "）\n";
-                    passed = false;
-                }
-            }
-            // 折叠态落图（B7 D2 目视判据：上下留白相等 / 文案不截断）。
-            // 收 argv 里的 --shot-collapsed <路径>；不给 = 零开销。
-            for (int ai = 1; ai < argc; ++ai) {
-                if (std::string(argv[ai]) == "--shot-collapsed" &&
-                    ai + 1 < argc) {
-                    probe::captureFramePng(window, runtime, argv[ai + 1]);
-                }
-            }
-            // 恢复展开态：再点一次标题行（折叠态 headhit 仍在同位置）
-            const auto* headHitAgain =
-                ui != nullptr ? ui->find("home.api.chart.headhit") : nullptr;
-            if (headHitAgain != nullptr) {
-                clickCenter(*headHitAgain);
-                composeFrame();
-                composeFrame();
-                const auto* restored =
-                    ui != nullptr ? ui->find("home.api.chart") : nullptr;
-                if (restored != nullptr &&
-                    std::fabs(restored->frame.height - expandedH) > 0.5f) {
-                    std::cerr << "home_probes: 组 M FAIL——再点后卡高未恢复（"
-                              << restored->frame.height << " vs " << expandedH
-                              << "）\n";
-                    passed = false;
-                }
-            } else {
-                std::cerr << "home_probes: 组 M 折叠态 headhit 丢失（无法恢复）\n";
-                passed = false;
-            }
         }
     }
 
-    // 组 N（池72/池73 防复发）
-    //   N1 有数据时图表必须真有柱体：种子（9 时 400 / 17 时 600）→ 去头去尾 9 根柱，
-    //      bar.0 与 bar.8 高度 > 1px（1px 是零值底线，等于没画）。旧诊断口径是
-    //      「结构缺失/plot 区高」，只要不撞空态分支就绿——挡不住「有数据走空态」。
-    //   N2 「切换 Claude Profile」按钮图标不是缺字形方块：像素通道采样图标盒，
-    //      判据 = 「满行占比」（字形包围盒内宽度 > 85% 的行 / 总行数）。
-    //      ⚠ 不用 G3 的 ink/green 判据——实测缺字形的实心方块 ink=96.9%、
-    //      green=61.3%，真实字形（0xF007 fa-user）ink=99.3%、green=43.9%，
-    //      两者都满足「有墨迹且非绿主导」，判据不区分（本组实测过，会假绿）。
-    //      换成形状分布：实心方块是矩形，65% 的行顶满包围盒宽；真实字形笔画
-    //      收放，满行只占 32%。阈值 55%。
+    // 组 N（池72/池73 防复发 → C-2 need380 wave5-c 改反向判据）
+    //   N1 今日 token 图表卡（bars.bar.* / empty.*）查有即红——C-2 砍卡，小时
+    //      分布入口收敛到 Claude 页（种子数据仍喂统计卡，前置种子保留）。
+    //   N2 「切换 Claude Profile」快捷按钮（home.act.claude / .icon）查有即红——
+    //      C-2 砍按钮（与 Claude 页右键「设为当前」重复）；旧像素字形判据
+    //     （满行占比防缺字形方块）随按钮下线。
     {
-        composeFrame();
-        // ---- N1 有数据必有柱 ----
-        const core::dsl::Element* bar0 =
-            ui != nullptr ? ui->find("home.api.chart.bars.bar.0") : nullptr;
-        const core::dsl::Element* bar8 =
-            ui != nullptr ? ui->find("home.api.chart.bars.bar.8") : nullptr;
-        const core::dsl::Element* emptyTitle =
-            ui != nullptr ? ui->find("home.api.chart.empty.title") : nullptr;
-        if (emptyTitle != nullptr) {
-            std::cerr << "home_probes: 组 N1 FAIL——种子有 token 却走了空态分支"
-                         "（图表不画图）\n";
-            passed = false;
-        } else if (bar0 == nullptr || bar8 == nullptr) {
-            std::cerr << "home_probes: 组 N1 FAIL——柱体元素缺失 (bar.0="
-                      << (bar0 != nullptr ? "ok" : "null")
-                      << ", bar.8=" << (bar8 != nullptr ? "ok" : "null")
-                      << ")——有数据仍不画图\n";
-            passed = false;
-        } else if (bar0->frame.height <= 1.5f || bar8->frame.height <= 1.5f) {
-            std::cerr << "home_probes: 组 N1 FAIL——有数据但柱高塌成零底线 (bar.0="
-                      << bar0->frame.height << ", bar.8=" << bar8->frame.height
-                      << ")\n";
-            passed = false;
-        } else {
-            std::cout << "home_probes: 组 N1 PASS 柱高 bar.0="
-                      << bar0->frame.height << " bar.8=" << bar8->frame.height
-                      << "\n";
-        }
-
-        // ---- N2 图标字形存在性（形状分布判据）----
-        const core::dsl::Element* iconEl =
-            ui != nullptr ? ui->find("home.act.claude.icon") : nullptr;
-        if (iconEl == nullptr) {
-            std::cerr << "home_probes: 组 N2 图标元素缺失 home.act.claude.icon"
-                         "（结构判据跳过像素）\n";
-            passed = false;
-        } else if (iconEl->fontFamily != "Icon" || iconEl->text.empty()) {
-            std::cerr << "home_probes: 组 N2 FAIL——图标未绑定 Icon 字体 (family="
-                      << iconEl->fontFamily << ", text.len="
-                      << iconEl->text.size() << ")\n";
-            passed = false;
-        } else {
-            probe::FrameCapture glyphCapture(window);
-            std::vector<unsigned char> rgba;
-            int imgW = 0, imgH = 0;
-            if (!glyphCapture.ok()) {
-                std::cerr << "home_probes: 组 N2 FrameCapture 不可用: "
-                          << glyphCapture.error() << "（像素判据跳过）\n";
-            } else if (!glyphCapture.readFrame(runtime, rgba, imgW, imgH)) {
-                std::cerr << "home_probes: 组 N2 读帧失败（像素判据跳过）\n";
-            } else {
-                const float pxScale = glyphCapture.scale();
-                // frame 是内容绝对坐标，滚动位移只作用在绘制变换
-                //（scrollTransformForElement），不在 frame 上——采样坐标 = 内容 y
-                // − 当前滚动偏移。页面默认在顶部（偏移 0）；小屏/高 DPI 下窗口被系统
-                // 钳制、图标落在视口外时，先滚到底再采样（setScrollOffset 帧末消费并
-                // clamp 到 maxOffset），采样完滚回顶部还原页面状态。
-                float scrollY = 0.0f;
-                int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-                auto measureIconBox = [&]() -> bool {
-                    const core::dsl::Element* el =
-                        ui != nullptr ? ui->find("home.act.claude.icon") : nullptr;
-                    if (el == nullptr) return false;
-                    const float viewY = el->frame.y - scrollY;
-                    x0 = static_cast<int>(std::lround(el->frame.x * pxScale));
-                    y0 = static_cast<int>(std::lround(viewY * pxScale));
-                    x1 = static_cast<int>(std::lround(
-                        (el->frame.x + el->frame.width) * pxScale));
-                    y1 = static_cast<int>(std::lround(
-                        (viewY + el->frame.height) * pxScale));
-                    return true;
-                };
-                bool boxOk = measureIconBox();
-                if (boxOk && (y0 < 0 || y1 > imgH)) {
-                    const core::dsl::Element* scrollEl =
-                        ui != nullptr ? ui->find("home.scroll") : nullptr;
-                    const float maxOffset =
-                        scrollEl != nullptr ? scrollEl->scrollMaxOffset : 0.0f;
-                    if (maxOffset > 0.0f) {
-                        ui->setScrollOffset("home.scroll", maxOffset);
-                        settleFrames(3);
-                        scrollY = maxOffset;
-                        boxOk = measureIconBox();
-                        if (boxOk) {
-                            glyphCapture.readFrame(runtime, rgba, imgW, imgH);
-                        }
-                    }
-                }
-                if (!boxOk) {
-                    std::cerr << "home_probes: 组 N2 重排后图标元素丢失"
-                                 "（像素判据无法进行）\n";
-                    passed = false;
-                } else if (x0 < 0 || y0 < 0 || x1 > imgW || y1 > imgH ||
-                           x1 <= x0 || y1 <= y0) {
-                    // 区分「窗口被系统钳小」与「真布局 bug」：前者是显示器装不下请求的
-                    // 逻辑窗高（帧高/scale < 请求高），属环境不可用 → 77，不是红。
-                    const float actualLogicalH =
-                        pxScale > 0.0f ? static_cast<float>(imgH) / pxScale : 0.0f;
-                    if (static_cast<float>(h) > actualLogicalH + 1.0f) {
-                        std::cerr << "home_probes: 组 N2 环境不支持——请求 "
-                                  << args.windowW << "x" << h
-                                  << "，系统把窗口钳到 " << imgW << "x" << imgH
-                                  << "px（逻辑高≈" << actualLogicalH
-                                  << "，显示器装不下）；像素判据跳过，返回 77\n";
-                        envSkipped = true;
-                    } else {
-                        std::cerr << "home_probes: 组 N2 采样越界 (" << x0 << ","
-                                  << y0 << ")-(" << x1 << "," << y1 << ")"
-                                  << " img=" << imgW << "x" << imgH
-                                  << " scrollY=" << scrollY << "\n";
-                        passed = false;
-                    }
-                } else {
-                    // 字形笔画色 = 主题 primary 绿：g 明显高于 r/b（按钮 ghost 态图标色）
-                    std::vector<std::pair<int, int>> glyphPx;
-                    for (int y = y0; y < y1; ++y) {
-                        for (int x = x0; x < x1; ++x) {
-                            const std::size_t at =
-                                (static_cast<std::size_t>(y) * imgW + x) * 4u;
-                            const int r = rgba[at], g = rgba[at + 1],
-                                      b = rgba[at + 2];
-                            if (g > 90 && g > r + 30 && g > b + 20) {
-                                glyphPx.emplace_back(x, y);
-                            }
-                        }
-                    }
-                    if (glyphPx.empty()) {
-                        std::cerr << "home_probes: 组 N2 FAIL——图标区无笔画像素"
-                                     "（缺字形/未渲染）\n";
-                        passed = false;
-                    } else {
-                        int minX = glyphPx[0].first, maxX = glyphPx[0].first;
-                        int minY = glyphPx[0].second, maxY = glyphPx[0].second;
-                        for (const auto& p : glyphPx) {
-                            minX = std::min(minX, p.first);
-                            maxX = std::max(maxX, p.first);
-                            minY = std::min(minY, p.second);
-                            maxY = std::max(maxY, p.second);
-                        }
-                        const int bboxW = maxX - minX + 1;
-                        int rows = 0, fullRows = 0;
-                        for (int y = minY; y <= maxY; ++y) {
-                            int cnt = 0;
-                            for (const auto& p : glyphPx) {
-                                if (p.second == y) ++cnt;
-                            }
-                            if (cnt == 0) continue;
-                            ++rows;
-                            if (static_cast<float>(cnt) >
-                                static_cast<float>(bboxW) * 0.85f) {
-                                ++fullRows;
-                            }
-                        }
-                        const float fullRatio =
-                            rows > 0 ? static_cast<float>(fullRows) /
-                                           static_cast<float>(rows)
-                                     : 1.0f;
-                        std::cout << "home_probes: 组 N2 字形 包围盒=" << bboxW
-                                  << "x" << (maxY - minY + 1) << " 满行占比="
-                                  << fullRatio * 100.0f << "%\n";
-                        if (fullRatio > 0.55f) {
-                            std::cerr << "home_probes: 组 N2 FAIL——图标是实心方块"
-                                         "（满行占比 "
-                                      << fullRatio * 100.0f
-                                      << "% > 55%，缺字形 fallback）\n";
-                            passed = false;
-                        }
-                    }
-                }
-                // 采样期间为看图标滚过页尾：滚回顶部，收尾截图仍是首页常态
-                if (scrollY > 0.0f) {
-                    ui->setScrollOffset("home.scroll", 0.0f);
-                    settleFrames(2);
-                }
+        for (const char* elId :
+             {"home.api.chart.bars.bar.0", "home.api.chart.empty.title",
+             "home.act.claude", "home.act.claude.icon"}) {
+            if (ui != nullptr && ui->find(elId) != nullptr) {
+                std::cerr << "home_probes: 组 N FAIL——'" << elId
+                          << "' 已砍结构（C-2）仍出现在元素树\n";
+                passed = false;
             }
         }
+        composeFrame();  // 反向断言后照常落一帧：后续收尾截图仍是首页常态
     }
 
     // 退出前落一张「当前状态图」（--screenshot <路径>）

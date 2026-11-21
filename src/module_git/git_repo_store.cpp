@@ -53,8 +53,8 @@ GitRepoMemory GitRepoStore::load() {
         return out;
     }
     const auto obj = parsed.value().asObject();
-    if (obj.has(kKeyRepoPath) && obj.get(kKeyRepoPath).isString()) {
-        out.lastRepoPath = obj.get(kKeyRepoPath).asString();
+    if (auto v = platform::json::getIfString(obj, kKeyRepoPath)) {
+        out.lastRepoPath = *v;
     }
     if (obj.has(kKeyRecentRepos) && obj.get(kKeyRecentRepos).isArray()) {
         const auto arr = obj.get(kKeyRecentRepos);

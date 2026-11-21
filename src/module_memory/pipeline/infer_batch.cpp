@@ -111,8 +111,7 @@ core::Result<InferStepReport> runInferStep(
     }
     auto batch = queue.listBatch(1);
     if (batch.isFail()) {
-        return core::Result<InferStepReport>::fail(batch.errorCode(),
-                                                   batch.errorMessage());
+        return core::propagate<InferStepReport>(batch);
     }
     if (batch.value().empty()) {
         return core::Result<InferStepReport>::ok(report);
@@ -131,12 +130,10 @@ core::Result<InferStepReport> runInferStep(
         auto card = store.createFinalDraft({}, entry.text, "", {ev},
                                            entry.confidence, false, now);
         if (card.isFail()) {
-            return core::Result<InferStepReport>::fail(card.errorCode(),
-                                                       card.errorMessage());
+            return core::propagate<InferStepReport>(card);
         }
         if (auto rm = queue.remove(entry.id); rm.isFail()) {
-            return core::Result<InferStepReport>::fail(rm.errorCode(),
-                                                       rm.errorMessage());
+            return core::propagate<InferStepReport>(rm);
         }
         if (onNote) {
             onNote(RoundNote{false, entry.sessionId,
@@ -146,8 +143,7 @@ core::Result<InferStepReport> runInferStep(
     }
     // attempts 口径：出机前记账，成败都算——失败重试受同一小时上限约束
     if (auto a = ledger.recordAttempt(now); a.isFail()) {
-        return core::Result<InferStepReport>::fail(a.errorCode(),
-                                                   a.errorMessage());
+        return core::propagate<InferStepReport>(a);
     }
     report.attempted = true;
     // 差分快照无条件取（腿 A：终稿卡 targetIds 的差分来源——撤销链锚点，
@@ -173,8 +169,7 @@ core::Result<InferStepReport> runInferStep(
     if (r.isFail()) {
         auto attempts = queue.recordFailure(entry.id, r.errorMessage());
         if (attempts.isFail()) {
-            return core::Result<InferStepReport>::fail(attempts.errorCode(),
-                                                       attempts.errorMessage());
+            return core::propagate<InferStepReport>(attempts);
         }
         if (attempts.value() >= kInferMaxAttempts) {
             // OQ-2：重试耗尽 → 出队落兜底（不再无限滞留——「只进不出」根因
@@ -187,12 +182,10 @@ core::Result<InferStepReport> runInferStep(
             auto card = store.createFinalDraft({}, entry.text, "", {ev},
                                                entry.confidence, false, now);
             if (card.isFail()) {
-                return core::Result<InferStepReport>::fail(card.errorCode(),
-                                                           card.errorMessage());
+                return core::propagate<InferStepReport>(card);
             }
             if (auto rm = queue.remove(entry.id); rm.isFail()) {
-                return core::Result<InferStepReport>::fail(rm.errorCode(),
-                                                           rm.errorMessage());
+                return core::propagate<InferStepReport>(rm);
             }
             LOG_WARN("提炼重试耗尽转人审兜底: " + report.fallbackReason);
             if (onNote) {
@@ -220,16 +213,13 @@ core::Result<InferStepReport> runInferStep(
     const long long tokens =
         static_cast<long long>(proposals::countCodePoints(entry.text));
     if (auto in = ledger.record("llm_input", tokens, now); in.isFail()) {
-        return core::Result<InferStepReport>::fail(in.errorCode(),
-                                                   in.errorMessage());
+        return core::propagate<InferStepReport>(in);
     }
     if (auto out = ledger.record("llm_output", tokens, now); out.isFail()) {
-        return core::Result<InferStepReport>::fail(out.errorCode(),
-                                                   out.errorMessage());
+        return core::propagate<InferStepReport>(out);
     }
     if (auto rm = queue.remove(entry.id); rm.isFail()) {
-        return core::Result<InferStepReport>::fail(rm.errorCode(),
-                                                   rm.errorMessage());
+        return core::propagate<InferStepReport>(rm);
     }
     report.succeeded = true;  // 云端 add 成功且已出队（含下列零产物形态）
     if (freshItems == 0) {
@@ -244,8 +234,7 @@ core::Result<InferStepReport> runInferStep(
         auto card = store.createFinalDraft({}, entry.text, "", {ev},
                                            entry.confidence, false, now);
         if (card.isFail()) {
-            return core::Result<InferStepReport>::fail(card.errorCode(),
-                                                       card.errorMessage());
+            return core::propagate<InferStepReport>(card);
         }
         LOG_WARN("提炼零产物：add 成功但引擎清单无新增（云端异常被吞或去重合并）");
         if (onNote) {
@@ -268,8 +257,7 @@ core::Result<InferStepReport> runInferStep(
     if (card.isFail()) {
         // 引擎已有产物但卡落库失败（台账/撤销锚点丢失）——如实红不静默；
         // 队列条目已删，下轮不重放（避免引擎重复入库）
-        return core::Result<InferStepReport>::fail(card.errorCode(),
-                                                   card.errorMessage());
+        return core::propagate<InferStepReport>(card);
     }
     report.autoAccepted = true;
     if (onNote) {

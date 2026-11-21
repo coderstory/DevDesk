@@ -48,7 +48,6 @@ constexpr float kRowBlockH = 44.0f;          // 横排行高
 constexpr float kRowBlockHNarrow = 68.0f;    // 堆叠行高（label 行 20 + 4 + 控件行 44）
 constexpr float kControlH = 32.0f;
 constexpr float kGroupHeadH = 20.0f;
-constexpr float kHintH = 20.0f;              // 行下微字/警示行高
 constexpr uint32_t kCursorBlinkMs = 1100;    // 光标闪烁周期（阶跃，§4.2⑦）
 
 // 字体/shell 选项表（值表来自平台文件；标签首项 = 默认语义）。静态单例：dropdown
@@ -651,7 +650,6 @@ GridLayout TerminalPage::compose(
                                          std::min(frame.cursorRow, frame.rows - 1)) *
                                      frame.cols];
                     const bool blinkOn =
-                        !settings.cursorBlink ||
                         (std::chrono::duration_cast<std::chrono::milliseconds>(
                              std::chrono::steady_clock::now().time_since_epoch())
                              .count() /
@@ -659,8 +657,8 @@ GridLayout TerminalPage::compose(
                             2 ==
                             0;
                     if (blinkOn) {
-                        const float curW =
-                            settings.cursorStyle == TerminalCursorStyle::Bar ? 2.0f : cellW;
+                        // C-4（need380）：光标样式/闪烁 UI 已砍，恒块形+恒闪烁
+                        const float curW = cellW;
                         ui.rect("term.cursor")
                             .position(cellXOf(crow, frame.cols, frame.cursorCol, cellW),
                                       gridTop + static_cast<float>(visRow) * cellH)
@@ -1143,23 +1141,16 @@ GridLayout TerminalPage::compose(
                 const float rowH = narrowPanel ? kRowBlockHNarrow : kRowBlockH;
                 const float innerW = cardW - 2.0f * kPanelPad;
                 const float controlX = kLabelW + kLabelGap;
-                const float controlW = innerW - kLabelW - kLabelGap;
                 const auto ctlY = [&](float ry) {
                     return narrowPanel ? ry + 24.0f : ry + (kRowBlockH - kControlH) * 0.5f;
                 };
 
-                const bool workDirInvalid =
-                    !settings.workDir.empty() && !workDirUsableForSpawn(settings.workDir);
-                const bool scrollbackHeavy = settings.scrollback > kScrollbackWarnThreshold;
-
-                // 行画布高（error/hint 行参与布局，§4.2⑤⑥）
+                // 行画布高。C-4（need380）：启动目录/回滚行数/光标三行已砍（§4.2⑤⑥⑦
+                // 移除），会话组只剩默认 shell 一行。
                 float canvasH = 12.0f + kGroupHeadH + 8.0f;          // 分组头「外观」
                 canvasH += rowH + 8.0f + rowH + 8.0f + rowH;         // 字体/字号/配色
                 canvasH += 12.0f + kGroupHeadH + 8.0f;               // 分组头「会话」
-                canvasH += rowH + 8.0f +                             // 默认 shell
-                           rowH + (workDirInvalid ? kHintH : 0.0f) + 8.0f +  // 启动目录(+错误行)
-                           rowH + (scrollbackHeavy ? kHintH : 0.0f) + 8.0f + // 回滚(+警示行)
-                           rowH;                                             // 光标
+                canvasH += rowH;                                     // 默认 shell
 
                 const float titleBlock = kPanelPad + 28.0f + 12.0f;
                 const float footerBlock = 12.0f + 1.0f + 12.0f + 32.0f + kPanelPad;
@@ -1396,136 +1387,9 @@ GridLayout TerminalPage::compose(
                                             })
                                             .build();
                                     });
-                                y += rowH + 8.0f;
-
-                                // ⑤ 启动目录（仅新会话；无效 → 红边+行下红字，不阻断；
-                                // 浏览 = 原生目录对话框，选中回填）
-                                drawRowBase(inner, "term.set.row.wdir", y, "启动目录");
-                                const float inputW = controlW - 64.0f - 8.0f;
-                                const float wdirCtlY = ctlY(y);
-                                inner.stack("term.set.row.wdir.slot")
-                                    .position(controlX, wdirCtlY)
-                                    .size(inputW, kControlH)
-                                    .content([&] {
-                                        components::input(inner, "term.set.row.wdir.input")
-                                            .size(inputW, kControlH)
-                                            .theme(ct)
-                                            .value(settings.workDir)
-                                            .placeholder("默认（用户主目录）")
-                                            .fontSize(core::theme::scaled(13.0f))
-                                            .onChange([sp](const std::string& txt) {
-                                                sp->workDir = txt;
-                                            })
-                                            .build();
-                                    });
-                                // 浏览钮（设计 §4.2 input+浏览钮）：接平台原生目录对话框；
-                                // 取消/失败静默不动（pickFolder 返回 fail，不打扰输入）
-                                const float browseW = 64.0f;
-                                const float browseX = controlX + inputW + 8.0f;
-                                inner.rect("term.set.row.wdir.browse")
-                                    .position(browseX, wdirCtlY)
-                                    .size(browseW, kControlH)
-                                    .radius(6.0f)
-                                    .states(kTransparent, t.colors.hover, t.colors.hover)
-                                    .onClick([sp, startDir = settings.workDir]() {
-                                        auto picked = platform::folderpicker::pickFolder(
-                                            "选择启动目录", startDir);
-                                        if (picked.isOk()) {
-                                            sp->workDir = picked.value();
-                                        }
-                                    });
-                                inner.text("term.set.row.wdir.browse.label")
-                                    .position(browseX, wdirCtlY)
-                                    .size(browseW, kControlH)
-                                    .text("浏览")
-                                    .fontSize(core::theme::scaled(13.0f))
-                                    .color(t.colors.textSecondary)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .verticalAlign(eui::VerticalAlign::Center);
-                                if (workDirInvalid) {
-                                    inner.rect("term.set.row.wdir.errborder")
-                                        .position(controlX - 1.0f, wdirCtlY - 1.0f)
-                                        .size(inputW + 2.0f, kControlH + 2.0f)
-                                        .color(kTransparent)
-                                        .border(1.0f, t.colors.error);
-                                    inner.text("term.set.row.wdir.errtext")
-                                        .position(controlX, y + kRowBlockH + 2.0f)
-                                        .size(innerW - controlX, kHintH)
-                                        .text("目录不存在")
-                                        .fontSize(core::theme::scaled(13.0f))
-                                        .color(t.colors.errorText);
-                                }
-                                y += rowH + (workDirInvalid ? kHintH : 0.0f) + 8.0f;
-
-                                // ⑥ 回滚行数（即时改上限裁最旧；>50000 行下微字）
-                                drawRowBase(inner, "term.set.row.sb", y, "回滚行数");
-                                inner.stack("term.set.row.sb.slot")
-                                    .position(controlX, ctlY(y))
-                                    .size(140.0f, kControlH)
-                                    .content([&] {
-                                        components::stepper(inner, "term.set.row.sb.step")
-                                            .size(140.0f, kControlH)
-                                            .theme(ct)
-                                            .min(kScrollbackMin)
-                                            .max(kScrollbackMax)
-                                            .step(100)
-                                            .value(settings.scrollback)
-                                            .onChange([sp](long long v) {
-                                                sp->scrollback =
-                                                    clampedScrollback(static_cast<int>(v));
-                                            })
-                                            .build();
-                                    });
-                                if (scrollbackHeavy) {
-                                    inner.text("term.set.row.sb.hint")
-                                        .position(controlX, y + kRowBlockH + 2.0f)
-                                        .size(innerW - controlX, kHintH)
-                                        .text("较大回滚占用内存")
-                                        .fontSize(core::theme::scaled(12.0f))
-                                        .color(t.colors.textSecondary);
-                                }
-                                y += rowH + (scrollbackHeavy ? kHintH : 0.0f) + 8.0f;
-
-                                // ⑦ 光标样式（即时）：块/线 segmented + 闪烁 switch
-                                drawRowBase(inner, "term.set.row.cursor", y, "光标");
-                                const float curCtlY = ctlY(y);
-                                inner.stack("term.set.row.cursor.style.slot")
-                                    .position(controlX, curCtlY)
-                                    .size(120.0f, kControlH)
-                                    .content([&] {
-                                        components::segmented(inner, "term.set.row.cursor.style")
-                                            .size(120.0f, kControlH)
-                                            .theme(ct)
-                                            .items(std::vector<std::string>{"块", "线"})
-                                            .selected(settings.cursorStyle ==
-                                                              TerminalCursorStyle::Bar
-                                                          ? 1
-                                                          : 0)
-                                            .onChange([sp](int idx) {
-                                                sp->cursorStyle = idx == 1
-                                                                      ? TerminalCursorStyle::Bar
-                                                                      : TerminalCursorStyle::Block;
-                                            })
-                                            .build();
-                                    });
-                                const float blinkLabelW =
-                                    ui_kit::cachedTextWidth("闪烁", core::theme::scaled(12.0f), 400) + 6.0f;
-                                inner.text("term.set.row.cursor.blink.label")
-                                    .position(controlX + 136.0f, curCtlY)
-                                    .size(blinkLabelW, kControlH)
-                                    .text("闪烁")
-                                    .fontSize(core::theme::scaled(12.0f))
-                                    .color(t.colors.textSecondary)
-                                    .verticalAlign(eui::VerticalAlign::Center);
-                                components::toggleSwitch(inner, "term.set.row.cursor.blink.sw")
-                                    .position(controlX + 136.0f + blinkLabelW + 8.0f, curCtlY)
-                                    .size(44.0f, 24.0f)
-                                    .checked(settings.cursorBlink)
-                                    .theme(ct)
-                                    .onChange([sp](bool v) {
-                                        sp->cursorBlink = v;
-                                    })
-                                    .build();
+                                // C-4（need380）：会话组末行（默认 shell）——启动目录/
+                                // 回滚行数/光标三行已砍（§4.2⑤⑥⑦）
+                                y += rowH;
                             });
                     })
                     .build();

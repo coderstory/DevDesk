@@ -73,17 +73,6 @@ struct ChipColors {
 
 enum class PrereqKey { Pretest, Cab, Nacos, Db, Announce };
 
-struct PrereqView {
-    PrereqKey key = PrereqKey::Pretest;
-    std::string title;
-    std::string checkLabel;
-    bool checked = false;
-    std::string value;
-    bool gateOpen = true;
-    std::string dueText;
-    bool overdue = false;
-};
-
 struct StepRowView {
     std::string id;
     std::string label;
@@ -225,7 +214,6 @@ std::string prereqValue(const ReleaseDetailUiState& state, PrereqKey key);
 void setPrereqValue(ReleaseDetailUiState& state, PrereqKey key, const std::string& value);
 bool prereqChecked(const ReleaseDetailUiState& state, PrereqKey key);
 bool prereqGateOpen(const ReleaseDetailUiState& state, PrereqKey key);
-bool containsAsciiCaseInsensitive(const std::string& haystack, const std::string& needle);
 void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state, bool readOnly, int nowMinute, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens, ReleaseStore& store);
 float serviceCardHeight(const ReleaseDetailUiState& state, const TaskService& svc);
 float envCardHeight(const ReleaseDetailUiState& state, const TaskEnv& env);

@@ -568,8 +568,8 @@ REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 统
     DOCTEST_CHECK(ui.find("home.stat.todo") != nullptr);
     DOCTEST_CHECK(ui.find("home.stat.overdue") != nullptr);
     DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
-    // 图表卡同样恒显示（读历史行，模块关停不影响可读性）
-    DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
+    // 图表卡已砍（C-2 need380 wave5-c：小时分布收敛到 Claude 页）——查有即红
+    DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
     // 快捷按钮是**动作入口**：目标模块关了点了也执行不了，仍随注册态隐退
     DOCTEST_CHECK(ui.find("home.act.newnote") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
@@ -614,7 +614,7 @@ REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 
     return true;
 })
 
-REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状等价（5 卡 + 3 按钮）", {
+REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状等价（5 卡 + 2 按钮，C-2 后）", {
     ::core::Router router;
     StubModule home(::core::PageId::Home, "home");
     StubModule markdown(::core::PageId::Markdown, "markdown");
@@ -639,16 +639,18 @@ REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状
 
     for (const char* id : {"home.stat.tokens", "home.stat.notes", "home.stat.todo",
                            "home.stat.overdue", "home.stat.api",
-                           "home.act.newnote", "home.act.newtodo", "home.act.claude"}) {
+                           "home.act.newnote", "home.act.newtodo"}) {
         DOCTEST_CHECK(ui.find(id) != nullptr);
     }
+    // C-2（need380 wave5-c）：「切换 Claude Profile」快捷按钮已砍——查有即红
+    DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
     DOCTEST_CHECK(ui.find("home.stats.alloff") == nullptr);
     return true;
 })
 
 // G4 补缺（docs/superpowers/plans/2026-10-19-ui-test-gap-map.md）：home.actions 与
 // 模块注册态的**联动**——既有用例只断按钮在场/缺席，这里钉三档收缩几何：
-//   ① 全注册：三按钮等宽（UAT2 覆盖 W9 不等宽：权重全 1.0），行宽 = contentW；
+//   ① 全注册：两按钮等宽（C-2 后只剩 newnote/newtodo：权重全 1.0），行宽 = contentW；
 //   ② 只剩 markdown：幸存按钮独占整行（宽 = ①行宽 = contentW，权重归一）；
 //   ③ 全关：home.actions 整行元素不存在（不是空行占位）。
 // contentW 两次 compose 间不变（同 screen 尺寸同代码路径），①②可互推。
@@ -659,7 +661,7 @@ REGISTER_TEST(gating_home_actions_row_collapse,
     screen.height = 1000.0f;
     float rowW = 0.0f;  // ① 行宽（= contentW，跨档复算用）
 
-    // ① 全注册：三按钮等宽（UAT2 覆盖 W9 不等宽：权重全 1.0）
+    // ① 全注册：两按钮等宽（C-2 后按钮 3→2，等宽判据保留）
     {
         ::core::Router router;
         StubModule home(::core::PageId::Home, "home");
@@ -685,19 +687,17 @@ REGISTER_TEST(gating_home_actions_row_collapse,
         DOCTEST_REQUIRE(row != nullptr);
         const auto* note = ui.find("home.act.newnote");
         const auto* td = ui.find("home.act.newtodo");
-        const auto* cl = ui.find("home.act.claude");
         DOCTEST_REQUIRE(note != nullptr);
         DOCTEST_REQUIRE(td != nullptr);
-        DOCTEST_REQUIRE(cl != nullptr);
+        DOCTEST_REQUIRE(ui.find("home.act.claude") == nullptr);  // C-2 已砍
         rowW = row->frame.width;  // = contentW
         DOCTEST_CHECK(rowW > 0.0f);
-        // UAT2 覆盖 W9：三按钮等宽（权重全 1.0），newnote == newtodo == claude
+        // UAT2 覆盖 W9：两按钮等宽（权重全 1.0），newnote == newtodo
         DOCTEST_CHECK(std::fabs(td->frame.width - note->frame.width) < 0.5f);
-        DOCTEST_CHECK(std::fabs(cl->frame.width - note->frame.width) < 0.5f);
-        // 行宽 = 三按钮宽 + 2×16 gap
+        // 行宽 = 两按钮宽 + 1×16 gap
         DOCTEST_CHECK(std::fabs(row->frame.width -
                                 (note->frame.width + td->frame.width +
-                                 cl->frame.width + 32.0f)) < 1.0f);
+                                 16.0f)) < 1.0f);
     }
 
     // ② 只剩 markdown：newnote 独占整行，兄弟按钮消失

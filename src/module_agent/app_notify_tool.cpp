@@ -3,6 +3,7 @@
 #include "app_notify_tool.h"
 
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 #include "platform/notification.h"
 #include "task_draft_parse.h"
 
@@ -19,17 +20,7 @@ using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
 
-Result<ToolResult> toolError(const std::string& message) {
-    pj::JsonObject err;
-    err.set("error", pj::makeString(message));
-    auto text = pj::stringify(pj::JsonValue(std::move(err)));
-    if (text.isFail()) {
-        return Result<ToolResult>::fail(core::ErrorCode::Internal,
-                                        "工具错误消息序列化失败: " +
-                                            text.errorMessage());
-    }
-    return Result<ToolResult>::ok(ToolResult{true, text.value()});
-}
+using platform::tool_kit::toolError;
 
 Result<ToolResult> toolJson(pj::JsonObject object) {
     auto text = pj::stringify(pj::JsonValue(std::move(object)));
@@ -42,17 +33,7 @@ Result<ToolResult> toolJson(pj::JsonObject object) {
 }
 
 // 参数：空串视为 {}（与 todo/agent 其它工具同口径）；其余必须解析成 object。
-Result<pj::JsonObject> parseArgs(const ToolArgs& args) {
-    if (args.json.empty()) {
-        return Result<pj::JsonObject>::ok(pj::JsonObject());
-    }
-    auto parsed = pj::parse(args.json);
-    if (parsed.isFail() || !parsed.value().isObject()) {
-        return Result<pj::JsonObject>::fail(core::ErrorCode::ValidationError,
-                                            "参数不是合法 JSON 对象");
-    }
-    return Result<pj::JsonObject>::ok(parsed.value().asObject());
-}
+using platform::tool_kit::parseArgs;
 
 // 必填字符串：缺失 / 非字符串 / trim 后为空都回 isError，不进入平台后端。
 Result<std::string> requiredString(const pj::JsonObject& args, const char* key,

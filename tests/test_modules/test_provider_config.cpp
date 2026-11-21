@@ -685,30 +685,6 @@ REGISTER_TEST(provider_config_reverse_merge_no_change,
     return true;
 })
 
-// 副本命名
-REGISTER_TEST(provider_config_copyname,
-              "provider_config: makeCopyName 副本命名与避让（copyname）", {
-    using module::claude::makeCopyName;
-    using Names = std::vector<std::string>;
-
-    DOCTEST_CHECK_EQ(makeCopyName("官方中转", {}), std::string("官方中转 副本"));
-    DOCTEST_CHECK_EQ(makeCopyName("官方中转", Names({"官方中转 副本"})),
-                     std::string("官方中转 副本 2"));
-    DOCTEST_CHECK_EQ(
-        makeCopyName("官方中转", Names({"官方中转 副本", "官方中转 副本 2"})),
-        std::string("官方中转 副本 3"));
-    DOCTEST_CHECK_EQ(makeCopyName("", {}), std::string(" 副本"));  // 空名
-
-    // 100 次上限：占满 100 个候选 → 空串（调用方按命名失败处理）；退一个则仍可用
-    Names full;
-    full.push_back("X 副本");
-    for (int i = 2; i <= 100; ++i) full.push_back("X 副本 " + std::to_string(i));
-    DOCTEST_CHECK_EQ(makeCopyName("X", full), std::string(""));
-    Names nearly(full.begin(), full.end() - 1);
-    DOCTEST_CHECK_EQ(makeCopyName("X", nearly), std::string("X 副本 100"));
-    return true;
-})
-
 // 以下三条遍历 modelSlotTable() 断言派生面：新增槽位（表加一行）无需改用例即自动进入覆盖，
 // 多写、少写、串槽三种漏改都会红。勿改成手抄键名清单——那会让新槽位静默漏测。
 

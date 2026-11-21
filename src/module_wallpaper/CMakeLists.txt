@@ -27,6 +27,8 @@ add_library(devdesk_module_wallpaper STATIC
     core/video_library.h
     core/image_library.cpp
     core/image_library.h
+    core/library_scan.cpp              # 图片/视频库公共扫描主循环（need:380 批C）
+    core/library_scan.h
     core/presentation.cpp
     core/presentation.h
     core/folder_policy.cpp

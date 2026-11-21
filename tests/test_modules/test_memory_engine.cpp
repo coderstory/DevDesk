@@ -84,10 +84,6 @@ struct InstallRunnerStub {
             return core::Result<platform::ProcessResult>::ok(r);
         };
     }
-
-    int totalCalls() const {
-        return venvImportCalls + versionProbeCalls + pipInstallCalls;
-    }
 };
 
 // RAII：接管 systemProcessRunner，析构还原（不污染同进程后续用例）
@@ -508,15 +504,18 @@ REGISTER_TEST(memory_ui_skeleton_console,
         DOCTEST_CHECK_MESSAGE(ui.find(id) != nullptr,
                               std::string("缺 Tab 锚点: ") + id);
     }
-    // U1 起引擎卡收进 eng.root 栈、启停钮合并为单 toggle、健康四格接真账面
-    // need:181 分层后：向导钮移详情弹窗（引导态直出），运行明细收折叠区
-    //（默认收起，组头在场），消耗卡降为 104px 消耗带
+    // U1 起引擎卡收进 eng.root 栈、启停钮合并为单 toggle
+    // need:380 B-4 主控台收敛：健康四格/消耗带/运行明细折叠区移除，
+    // 观察面只剩引擎卡（状态点 + 详情弹窗入口，跑评测在详情弹窗内）
     for (const char* id : {"memory.eng.card", "memory.eng.state",
-                           "memory.eng.detail.bg", "memory.eng.toggle.bg",
-                           "memory.health.card0", "memory.health.h2.value",
-                           "memory.usage.bar", "memory.details.head"}) {
+                           "memory.eng.detail.bg", "memory.eng.toggle.bg"}) {
         DOCTEST_CHECK_MESSAGE(ui.find(id) != nullptr,
                               std::string("缺主控台锚点: ") + id);
+    }
+    for (const char* id : {"memory.health.card0", "memory.health.h2.value",
+                           "memory.usage.bar", "memory.details.head"}) {
+        DOCTEST_CHECK_MESSAGE(ui.find(id) == nullptr,
+                              std::string("收敛后不应再渲染: ") + id);
     }
     return true;
 })

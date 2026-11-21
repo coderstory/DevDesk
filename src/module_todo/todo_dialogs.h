@@ -213,12 +213,6 @@ struct ContextMenuState {
         this->cardIndex = cardIndex;
         this->anchorX = anchorX;
     }
-    void openColumn(const Column& col, int colIndex) {
-        taskId = 0;
-        columnId = col.id;
-        columnIndex = colIndex;
-        cardIndex = -1;
-    }
 };
 
 // 数据源 listOverdue()（模块打开弹窗时刷新；行点击 = 关本弹窗并打开该任务详情）

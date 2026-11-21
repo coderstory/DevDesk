@@ -125,10 +125,11 @@ std::vector<std::string> toolRefsIn(const std::string& goal) {
 
 } // namespace
 
-// 表形：恰好 13 张（原 4 + 预设批 P-01..P-09）、名称互不相同、触发类型都是 kTriggerKeys 合法键
+// 表形：恰好 4 张（need:380 B-2 减法：晨检组合入口 + 三张差异化代表）、名称互不相同、
+// 触发类型都是 kTriggerKeys 合法键
 REGISTER_TEST(agent_task_tpl_table_shape,
-              "出厂任务模板：13 张、名称唯一、触发类型合法", {
-    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 13);
+              "出厂任务模板：4 张、名称唯一、触发类型合法", {
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 4);
     std::set<std::string> names;
     for (int i = 0; i < module::agent::kTaskTemplateCount; ++i) {
         const auto& tpl = module::agent::kTaskTemplates[i];
@@ -172,32 +173,11 @@ REGISTER_TEST(agent_task_tpl_daily_report,
     return true;
 })
 
-// 模板二：发版 Changelog——手动触发（manual 型 cron 必须留空），按最近两个 tag 区间出草稿
-REGISTER_TEST(agent_task_tpl_release_changelog,
-              "出厂模板·发版 Changelog：manual + cron 留空；工具引用全在注册清单", {
-    AgentToolRegistration tools;
-    const auto& tpl = module::agent::kTaskTemplates[1];
-    DOCTEST_CHECK_EQ(tpl.name, std::string("发版 Changelog"));
-    DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
-                          "提示词为空");
-    DOCTEST_CHECK_EQ(tpl.triggerType, std::string("manual"));
-    DOCTEST_CHECK_EQ(tpl.cron, std::string(""));
-
-    const auto refs = toolRefsIn(tpl.goal);
-    DOCTEST_CHECK_MESSAGE(!refs.empty(), "提示词未引用任何工具");
-    const auto registered = registeredToolNames();
-    for (const auto& r : refs) {
-        DOCTEST_CHECK_MESSAGE(registered.count(r) > 0,
-                              "提示词引用了未注册工具: " + r);
-    }
-    return true;
-})
-
-// 模板三：测试环境巡检——每天 9:00 定时，bash.run curl 探测 + 异常 app.notify 置顶提醒
+// 模板二：测试环境巡检——每天 9:00 定时，bash.run curl 探测 + 异常 app.notify 置顶提醒
 REGISTER_TEST(agent_task_tpl_env_inspect,
               "出厂模板·测试环境巡检：cron 钉 0 9 * * * 且合法；工具引用全在注册清单", {
     AgentToolRegistration tools;
-    const auto& tpl = module::agent::kTaskTemplates[2];
+    const auto& tpl = module::agent::kTaskTemplates[1];
     DOCTEST_CHECK_EQ(tpl.name, std::string("测试环境巡检"));
     DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
                           "提示词为空");
@@ -215,32 +195,17 @@ REGISTER_TEST(agent_task_tpl_env_inspect,
     return true;
 })
 
-// 模板四：变更雷达晨报——工作日 9:00 定时，git.status + git.log 巡查登记仓库三类风险
-REGISTER_TEST(agent_task_tpl_change_radar,
-              "出厂模板·变更雷达晨报：cron 钉 0 9 * * 1-5 且合法；git.status/git.log 锚点；工具引用全在注册清单", {
+// 模板三：Profile 可用性巡检——每天 9:00 定时，claude.test_connection 逐档检测
+REGISTER_TEST(agent_task_tpl_profile_inspect,
+              "出厂模板·Profile 可用性巡检：cron 钉 0 9 * * * 且合法；工具引用全在注册清单", {
     AgentToolRegistration tools;
-    // 先钉表长再取下标：红态（表变短）在此 fail-fast 停住，不越界摸 kTaskTemplates[3]
-    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 13);
-    const auto& tpl = module::agent::kTaskTemplates[3];
-    DOCTEST_CHECK_EQ(tpl.name, std::string("变更雷达晨报"));
+    const auto& tpl = module::agent::kTaskTemplates[2];
+    DOCTEST_CHECK_EQ(tpl.name, std::string("Profile 可用性巡检"));
     DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
                           "提示词为空");
     DOCTEST_CHECK_EQ(tpl.triggerType, std::string("schedule"));
-    DOCTEST_CHECK_EQ(tpl.cron, std::string("0 9 * * 1-5"));
+    DOCTEST_CHECK_EQ(tpl.cron, std::string("0 9 * * *"));
     DOCTEST_CHECK(module::agent::parseCron(tpl.cron).isOk());
-
-    // 提示词锚点（防臆造）：巡查动作锚已注册的 git.status / git.log（git.log 无
-    // since 参数，近 24h 靠 n=50 拉取后按提交时间筛——文案与工具实参面一致）；
-    // 仓库清单占位语必须在场——模板不自动探测仓库布局（需-6 边界口径）
-    const std::string goal(tpl.goal);
-    DOCTEST_CHECK_MESSAGE(goal.find("git.status") != std::string::npos,
-                          "提示词缺少 git.status 锚点");
-    DOCTEST_CHECK_MESSAGE(goal.find("git.log") != std::string::npos,
-                          "提示词缺少 git.log 锚点");
-    DOCTEST_CHECK_MESSAGE(goal.find("仓库根路径列表") != std::string::npos,
-                          "提示词缺少仓库清单占位语");
-    DOCTEST_CHECK_MESSAGE(goal.find("用户首次使用时补全") != std::string::npos,
-                          "提示词缺少占位补全说明");
 
     const auto refs = toolRefsIn(tpl.goal);
     DOCTEST_CHECK_MESSAGE(!refs.empty(), "提示词未引用任何工具");
@@ -252,38 +217,21 @@ REGISTER_TEST(agent_task_tpl_change_radar,
     return true;
 })
 
-// 预设批（need 219 P-01..P-09，下标 4..12）：九张逐张过闸——字段完整、cron 合法、
-// 工具引用全在注册清单；P-09 一键系统晨检另钉锚点（五类检查工具全引用 + 单条通知
-// 口径 + 全正常不通知 + cron 钉 09:00）
-REGISTER_TEST(agent_task_tpl_preset_batch,
-              "出厂模板·预设批 P-01..P-09：cron 合法、工具引用全在注册清单、晨检锚点", {
+// 模板四：一键系统晨检——五类检查工具全引用（智能体报错 / MCP 连通等覆盖面收敛于此）
+// + 单条通知口径 + 全正常不通知 + cron 钉 09:00
+REGISTER_TEST(agent_task_tpl_morning_check,
+              "出厂模板·一键系统晨检：cron 钉 0 9 * * *、五类工具锚点、单条通知口径", {
     AgentToolRegistration tools;
-    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 13);
-    const auto registered = registeredToolNames();
-    for (int i = 4; i < module::agent::kTaskTemplateCount; ++i) {
-        const auto& tpl = module::agent::kTaskTemplates[i];
-        DOCTEST_CHECK_MESSAGE(tpl.name != nullptr && tpl.name[0] != '\0',
-                              "预设批模板名为空");
-        DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
-                              std::string("预设批提示词为空: ") + tpl.name);
-        if (std::string(tpl.triggerType) == "schedule") {
-            DOCTEST_CHECK_MESSAGE(module::agent::parseCron(tpl.cron).isOk(),
-                                  std::string("cron 非法: ") + tpl.cron);
-        } else {
-            DOCTEST_CHECK_EQ(tpl.cron, std::string(""));
-        }
-        const auto refs = toolRefsIn(tpl.goal);
-        DOCTEST_CHECK_MESSAGE(!refs.empty(),
-                              std::string("提示词未引用任何工具: ") + tpl.name);
-        for (const auto& r : refs) {
-            DOCTEST_CHECK_MESSAGE(registered.count(r) > 0,
-                                  "提示词引用了未注册工具: " + r);
-        }
-    }
-    // P-09（下标 12）锚点
-    DOCTEST_CHECK_EQ(module::agent::kTaskTemplates[12].cron,
-                     std::string("0 9 * * *"));
-    const std::string p9(module::agent::kTaskTemplates[12].goal);
+    DOCTEST_REQUIRE_EQ(module::agent::kTaskTemplateCount, 4);
+    const auto& tpl = module::agent::kTaskTemplates[3];
+    DOCTEST_CHECK_EQ(tpl.name, std::string("一键系统晨检"));
+    DOCTEST_CHECK_MESSAGE(tpl.goal != nullptr && tpl.goal[0] != '\0',
+                          "提示词为空");
+    DOCTEST_CHECK_EQ(tpl.triggerType, std::string("schedule"));
+    DOCTEST_CHECK_EQ(tpl.cron, std::string("0 9 * * *"));
+    DOCTEST_CHECK(module::agent::parseCron(tpl.cron).isOk());
+
+    const std::string p9(tpl.goal);
     for (const char* toolName : {"memory.health", "mcp.health", "schedule.runs",
                                  "agent.runs", "todo.list", "app.notify",
                                  "fs.write"}) {
@@ -294,5 +242,13 @@ REGISTER_TEST(agent_task_tpl_preset_batch,
                           "晨检提示词缺少单条通知口径");
     DOCTEST_CHECK_MESSAGE(p9.find("不发通知") != std::string::npos,
                           "晨检提示词缺少全正常不通知口径");
+
+    const auto refs = toolRefsIn(tpl.goal);
+    DOCTEST_CHECK_MESSAGE(!refs.empty(), "提示词未引用任何工具");
+    const auto registered = registeredToolNames();
+    for (const auto& r : refs) {
+        DOCTEST_CHECK_MESSAGE(registered.count(r) > 0,
+                              "提示词引用了未注册工具: " + r);
+    }
     return true;
 })

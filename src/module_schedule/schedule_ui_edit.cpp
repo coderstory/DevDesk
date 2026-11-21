@@ -273,14 +273,14 @@ core::Result<std::vector<int64_t>> previewNextFires(const EditFormState& form,
                                                     const core::schedule::FireContext& ctx) {
     const auto spec = validateAndParse(form);
     if (spec.isFail()) {
-        return core::Result<std::vector<int64_t>>::fail(spec.errorCode(), spec.errorMessage());
+        return core::propagate<std::vector<int64_t>>(spec);
     }
     std::vector<int64_t> out;
     int64_t cursor = afterUnix;
     for (int i = 0; i < 5; ++i) {
         const auto next = core::schedule::nextFire(spec.value(), cursor, ctx);
         if (next.isFail()) {
-            return core::Result<std::vector<int64_t>>::fail(next.errorCode(), next.errorMessage());
+            return core::propagate<std::vector<int64_t>>(next);
         }
         if (!next.value().has_value()) break;  // 无下次时刻（一次性已过/event/resident）
         out.push_back(*next.value());
@@ -293,11 +293,11 @@ core::Result<RuleRecord> buildRuleRecord(const EditFormState& form,
                                          const core::schedule::FireContext& ctx) {
     const auto spec = validateAndParse(form);
     if (spec.isFail()) {
-        return core::Result<RuleRecord>::fail(spec.errorCode(), spec.errorMessage());
+        return core::propagate<RuleRecord>(spec);
     }
     const auto specJson = buildSpecJson(form);
     if (specJson.isFail()) {
-        return core::Result<RuleRecord>::fail(specJson.errorCode(), specJson.errorMessage());
+        return core::propagate<RuleRecord>(specJson);
     }
     RuleRecord rec;
     rec.name = form.name;
@@ -311,7 +311,7 @@ core::Result<RuleRecord> buildRuleRecord(const EditFormState& form,
     // §4.4 编辑语义：保存载荷构建期重算 next_fire_at（事务落库由宿主模块包）
     const auto next = core::schedule::nextFire(spec.value(), ctx.nowUnix, ctx);
     if (next.isFail()) {
-        return core::Result<RuleRecord>::fail(next.errorCode(), next.errorMessage());
+        return core::propagate<RuleRecord>(next);
     }
     rec.nextFireAt = next.value();
     return core::Result<RuleRecord>::ok(rec);
@@ -320,11 +320,11 @@ core::Result<RuleRecord> buildRuleRecord(const EditFormState& form,
 core::Result<EditFormState> formFromRecord(const RuleRecord& rec) {
     const auto kind = kindFromText(rec.kind);
     if (kind.isFail()) {
-        return core::Result<EditFormState>::fail(kind.errorCode(), kind.errorMessage());
+        return core::propagate<EditFormState>(kind);
     }
     const auto spec = core::schedule::parseRuleSpec(kind.value(), rec.specJson);
     if (spec.isFail()) {
-        return core::Result<EditFormState>::fail(spec.errorCode(), spec.errorMessage());
+        return core::propagate<EditFormState>(spec);
     }
     EditFormState f;
     f.kind = kind.value();
@@ -626,23 +626,43 @@ void drawEditDialog(eui::Ui& ui, const eui::Screen& screen, const core::theme::T
             }
             const auto touch = [&st] { st.saveError.clear(); };
 
-            // 类型页签（六 kind）；y=0 相对滚动锚 56 = 面板绝对 56（压壳头区
-            // 分隔线 52 下 4px，原语义不变）
-            const struct { core::schedule::RuleKind kind; const char* label; } kTabs[6] = {
-                {core::schedule::RuleKind::Once, "一次性"},
-                {core::schedule::RuleKind::Interval, "间隔"},
-                {core::schedule::RuleKind::Calendar, "周期"},
-                {core::schedule::RuleKind::Cron, "表达式"},
-                {core::schedule::RuleKind::Event, "事件"},
-                {core::schedule::RuleKind::Resident, "常驻"},
+            // 类型页签；y=0 相对滚动锚 56 = 面板绝对 56（压壳头区分隔线 52 下
+            // 4px，原语义不变）。need:380 wave5-d B-1 入口收敛：新建只放三类
+            //（一次性/间隔/表达式）——「周期」语义被 cron 覆盖、「事件/常驻」
+            // 无承接场景，不再出现在新建入口。引擎六分支与存量规则不动：编辑
+            // 存量 calendar/event/resident 规则时追加当前 kind 页签（改参照
+            // 常；切走后页签消失、不可切回被收敛 kind）。
+            static constexpr core::schedule::RuleKind kKinds[6] = {
+                core::schedule::RuleKind::Once,     core::schedule::RuleKind::Interval,
+                core::schedule::RuleKind::Calendar, core::schedule::RuleKind::Cron,
+                core::schedule::RuleKind::Event,    core::schedule::RuleKind::Resident,
             };
+            static constexpr const char* kKindLabels[6] = {
+                "一次性", "间隔", "周期", "表达式", "事件", "常驻",
+            };
+            auto kindLabel = [](core::schedule::RuleKind k) -> const char* {
+                for (int i = 0; i < 6; ++i) {
+                    if (kKinds[i] == k) return kKindLabels[i];
+                }
+                return "";
+            };
+            std::vector<core::schedule::RuleKind> tabs;
+            for (const int allowed : {0, 1, 3}) tabs.push_back(kKinds[allowed]);
+            const bool legacyKind = std::none_of(tabs.begin(), tabs.end(),
+                                                 [&st](core::schedule::RuleKind k) {
+                                                     return st.form.kind == k;
+                                                 });
+            if (legacyKind) tabs.push_back(st.form.kind);  // 存量规则编辑保底展示
+            const size_t tabCount = tabs.size();
             const float tabGap = 6.0f;
-            const float tabW = (innerW - tabGap * 5.0f) / 6.0f;
-            for (int i = 0; i < 6; ++i) {
+            const float tabW =
+                (innerW - tabGap * static_cast<float>(tabCount - 1)) /
+                static_cast<float>(tabCount);
+            for (size_t i = 0; i < tabCount; ++i) {
                 drawKindTab(ui, "schedule.edit.kind." + std::to_string(i),
                             x0 + static_cast<float>(i) * (tabW + tabGap), 0.0f, tabW, 30.0f,
-                            kTabs[i].label, st.form.kind == kTabs[i].kind, t,
-                            [&st, touch, k = kTabs[i].kind] {
+                            kindLabel(tabs[i]), st.form.kind == tabs[i], t,
+                            [&st, touch, k = tabs[i]] {
                                 st.form.kind = k;
                                 touch();
                             });

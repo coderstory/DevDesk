@@ -144,13 +144,11 @@ core::Result<ProposalStore> ProposalStore::open(
     const std::filesystem::path& dbFile) {
     auto db = core::data::SqliteDb::open(dbFile);
     if (db.isFail()) {
-        return core::Result<ProposalStore>::fail(db.errorCode(),
-                                                 db.errorMessage());
+        return core::propagate<ProposalStore>(db);
     }
     auto applied = db.value().applySchema(kSchema);
     if (applied.isFail()) {
-        return core::Result<ProposalStore>::fail(applied.errorCode(),
-                                                 applied.errorMessage());
+        return core::propagate<ProposalStore>(applied);
     }
     // 必有种子行（CHECK(id=1)）；seq 只增
     auto seq = db.value().prepare(
@@ -159,8 +157,7 @@ core::Result<ProposalStore> ProposalStore::open(
     if (seq.isOk()) {
         auto step = seq.value().step();
         if (step.isFail()) {
-            return core::Result<ProposalStore>::fail(step.errorCode(),
-                                                     step.errorMessage());
+            return core::propagate<ProposalStore>(step);
         }
     }
     ProposalStore store;
@@ -203,7 +200,7 @@ core::Result<void> ProposalStore::audit(const std::string& proposalId,
         "INSERT INTO memory_proposal_audit(proposal_id, at, action, detail) "
         "VALUES(?, ?, ?, ?)");
     if (stmt.isFail()) {
-        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<void>(stmt);
     }
     if (!stmt.value().bind(1, proposalId).isOk() ||
         !stmt.value().bind(2, nowSec).isOk() ||
@@ -214,7 +211,7 @@ core::Result<void> ProposalStore::audit(const std::string& proposalId,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }
@@ -248,8 +245,7 @@ core::Result<Proposal> ProposalStore::create(
         "applied_at, base_version, undo_of) VALUES(?,1,?,?,?,?,?,?,?,?,?,?,?, "
         "?, NULL, NULL, ?, '')");
     if (stmt.isFail()) {
-        return core::Result<Proposal>::fail(stmt.errorCode(),
-                                            stmt.errorMessage());
+        return core::propagate<Proposal>(stmt);
     }
     p.baseVersion = baseVersion;
     if (!stmt.value().bind(1, p.id).isOk() ||
@@ -271,8 +267,7 @@ core::Result<Proposal> ProposalStore::create(
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<Proposal>::fail(step.errorCode(),
-                                            step.errorMessage());
+        return core::propagate<Proposal>(step);
     }
     if (auto a = audit(p.id, nowSec, "created",
                        "kind=" + kind + " source=" + source); a.isFail()) {
@@ -314,8 +309,7 @@ core::Result<Proposal> ProposalStore::createFinalDraft(
         "applied_at, base_version, undo_of) VALUES(?,1,?,?,?,?,?,?,?,?,?,?,?, "
         "?, ?, ?, -1, '')");
     if (stmt.isFail()) {
-        return core::Result<Proposal>::fail(stmt.errorCode(),
-                                            stmt.errorMessage());
+        return core::propagate<Proposal>(stmt);
     }
     if (!stmt.value().bind(1, p.id).isOk() ||
         !stmt.value().bind(2, p.kind).isOk() ||
@@ -337,8 +331,7 @@ core::Result<Proposal> ProposalStore::createFinalDraft(
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<Proposal>::fail(step.errorCode(),
-                                            step.errorMessage());
+        return core::propagate<Proposal>(step);
     }
     if (auto a = audit(p.id, nowSec, "created",
                        "kind=add source=final_draft " +
@@ -353,8 +346,7 @@ core::Result<Proposal> ProposalStore::createFinalDraft(
 core::Result<Proposal> ProposalStore::get(const std::string& id) const {
     auto stmt = db_->prepare(std::string(kSelectCols) + "WHERE id = ?");
     if (stmt.isFail()) {
-        return core::Result<Proposal>::fail(stmt.errorCode(),
-                                            stmt.errorMessage());
+        return core::propagate<Proposal>(stmt);
     }
     if (!stmt.value().bind(1, id).isOk()) {
         return core::Result<Proposal>::fail(core::ErrorCode::Internal,
@@ -362,8 +354,7 @@ core::Result<Proposal> ProposalStore::get(const std::string& id) const {
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<Proposal>::fail(step.errorCode(),
-                                            step.errorMessage());
+        return core::propagate<Proposal>(step);
     }
     if (!step.value()) {
         return core::Result<Proposal>::fail(core::ErrorCode::NotFound,
@@ -371,8 +362,7 @@ core::Result<Proposal> ProposalStore::get(const std::string& id) const {
     }
     const auto row = stmt.value().currentRow();
     if (row.isFail()) {
-        return core::Result<Proposal>::fail(row.errorCode(),
-                                            row.errorMessage());
+        return core::propagate<Proposal>(row);
     }
     return core::Result<Proposal>::ok(rowToProposal(row.value()));
 }
@@ -381,21 +371,18 @@ core::Result<std::vector<Proposal>> ProposalStore::listPending() const {
     auto stmt = db_->prepare(std::string(kSelectCols) +
                              "WHERE status = 'pending' ORDER BY created_at");
     if (stmt.isFail()) {
-        return core::Result<std::vector<Proposal>>::fail(stmt.errorCode(),
-                                                         stmt.errorMessage());
+        return core::propagate<std::vector<Proposal>>(stmt);
     }
     std::vector<Proposal> out;
     for (;;) {
         auto step = stmt.value().step();
         if (step.isFail()) {
-            return core::Result<std::vector<Proposal>>::fail(step.errorCode(),
-                                                             step.errorMessage());
+            return core::propagate<std::vector<Proposal>>(step);
         }
         if (!step.value()) break;
         const auto row = stmt.value().currentRow();
         if (row.isFail()) {
-            return core::Result<std::vector<Proposal>>::fail(row.errorCode(),
-                                                             row.errorMessage());
+            return core::propagate<std::vector<Proposal>>(row);
         }
         out.push_back(rowToProposal(row.value()));
     }
@@ -444,21 +431,18 @@ core::Result<std::vector<Proposal>> ProposalStore::listRecentDecided(
                              "ORDER BY decided_at DESC, created_at DESC LIMIT " +
                              std::to_string(limit > 0 ? limit : 1));
     if (stmt.isFail()) {
-        return core::Result<std::vector<Proposal>>::fail(stmt.errorCode(),
-                                                         stmt.errorMessage());
+        return core::propagate<std::vector<Proposal>>(stmt);
     }
     std::vector<Proposal> out;
     for (;;) {
         auto step = stmt.value().step();
         if (step.isFail()) {
-            return core::Result<std::vector<Proposal>>::fail(step.errorCode(),
-                                                             step.errorMessage());
+            return core::propagate<std::vector<Proposal>>(step);
         }
         if (!step.value()) break;
         const auto row = stmt.value().currentRow();
         if (row.isFail()) {
-            return core::Result<std::vector<Proposal>>::fail(row.errorCode(),
-                                                             row.errorMessage());
+            return core::propagate<std::vector<Proposal>>(row);
         }
         out.push_back(rowToProposal(row.value()));
     }
@@ -470,8 +454,7 @@ core::Result<void> ProposalStore::updateResultText(const std::string& id,
                                                    std::int64_t nowSec) {
     auto current = get(id);
     if (current.isFail()) {
-        return core::Result<void>::fail(current.errorCode(),
-                                        current.errorMessage());
+        return core::propagate<void>(current);
     }
     if (current.value().status != "pending") {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
@@ -480,7 +463,7 @@ core::Result<void> ProposalStore::updateResultText(const std::string& id,
     auto stmt = db_->prepare(
         "UPDATE memory_proposals SET result_text=? WHERE id=?");
     if (stmt.isFail()) {
-        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<void>(stmt);
     }
     if (!stmt.value().bind(1, text).isOk() ||
         !stmt.value().bind(2, id).isOk()) {
@@ -489,7 +472,7 @@ core::Result<void> ProposalStore::updateResultText(const std::string& id,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return audit(id, nowSec, "edited", "result_text_updated");
 }
@@ -518,8 +501,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
             }
         }
         if (auto a = audit(id, nowSec, "expired", "ttl"); a.isFail()) {
-            return core::Result<Proposal>::fail(a.errorCode(),
-                                                a.errorMessage());
+            return core::propagate<Proposal>(a);
         }
         p.status = "expired";
         return core::Result<Proposal>::ok(std::move(p));
@@ -541,8 +523,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
             }
             if (auto a = audit(id, nowSec, "expired", "target_changed");
                 a.isFail()) {
-                return core::Result<Proposal>::fail(a.errorCode(),
-                                                    a.errorMessage());
+                return core::propagate<Proposal>(a);
             }
             p.status = "expired";
             return core::Result<Proposal>::ok(std::move(p));
@@ -554,8 +535,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
     if (!p.undoOf.empty() && p.targetIds.empty()) {
         if (auto a = audit(id, nowSec, "apply_rejected",
                            "undo_without_target_ids"); a.isFail()) {
-            return core::Result<Proposal>::fail(a.errorCode(),
-                                                a.errorMessage());
+            return core::propagate<Proposal>(a);
         }
         return core::Result<Proposal>::fail(
             core::ErrorCode::ValidationError,
@@ -568,8 +548,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
         if (executorError != nullptr) *executorError = applied.errorMessage();
         if (auto a = audit(id, nowSec, "apply_failed",
                            applied.errorMessage()); a.isFail()) {
-            return core::Result<Proposal>::fail(a.errorCode(),
-                                                a.errorMessage());
+            return core::propagate<Proposal>(a);
         }
         return core::Result<Proposal>::ok(std::move(p));  // 保持 pending
     }
@@ -592,8 +571,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
         }
         if (auto a = audit(id, nowSec, "engine_id", applied.value());
             a.isFail()) {
-            return core::Result<Proposal>::fail(a.errorCode(),
-                                                a.errorMessage());
+            return core::propagate<Proposal>(a);
         }
     }
 
@@ -601,8 +579,7 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
         "UPDATE memory_proposals SET status='accepted', decided_at=?, "
         "applied_at=? WHERE id=?");
     if (stmt.isFail()) {
-        return core::Result<Proposal>::fail(stmt.errorCode(),
-                                            stmt.errorMessage());
+        return core::propagate<Proposal>(stmt);
     }
     if (!stmt.value().bind(1, nowSec).isOk() ||
         !stmt.value().bind(2, nowSec).isOk() ||
@@ -612,11 +589,10 @@ core::Result<Proposal> ProposalStore::accept(const std::string& id,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<Proposal>::fail(step.errorCode(),
-                                            step.errorMessage());
+        return core::propagate<Proposal>(step);
     }
     if (auto a = audit(id, nowSec, "accepted", ""); a.isFail()) {
-        return core::Result<Proposal>::fail(a.errorCode(), a.errorMessage());
+        return core::propagate<Proposal>(a);
     }
     return get(id);
 }
@@ -631,8 +607,7 @@ core::Result<Proposal> ProposalStore::reject(const std::string& id,
         "UPDATE memory_proposals SET status='rejected', decided_at=? "
         "WHERE id=?");
     if (stmt.isFail()) {
-        return core::Result<Proposal>::fail(stmt.errorCode(),
-                                            stmt.errorMessage());
+        return core::propagate<Proposal>(stmt);
     }
     if (!stmt.value().bind(1, nowSec).isOk() ||
         !stmt.value().bind(2, id).isOk()) {
@@ -641,11 +616,10 @@ core::Result<Proposal> ProposalStore::reject(const std::string& id,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<Proposal>::fail(step.errorCode(),
-                                            step.errorMessage());
+        return core::propagate<Proposal>(step);
     }
     if (auto a = audit(id, nowSec, "rejected", ""); a.isFail()) {
-        return core::Result<Proposal>::fail(a.errorCode(), a.errorMessage());
+        return core::propagate<Proposal>(a);
     }
     return get(id);
 }
@@ -681,8 +655,7 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
     auto stmt = db_->prepare(std::string(kSelectCols) +
                              "WHERE undo_of = ? AND status = 'pending'");
     if (stmt.isFail()) {
-        return core::Result<Proposal>::fail(stmt.errorCode(),
-                                            stmt.errorMessage());
+        return core::propagate<Proposal>(stmt);
     }
     if (!stmt.value().bind(1, originalId).isOk()) {
         return core::Result<Proposal>::fail(core::ErrorCode::Internal,
@@ -691,14 +664,12 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
     {
         auto step = stmt.value().step();
         if (step.isFail()) {
-            return core::Result<Proposal>::fail(step.errorCode(),
-                                                step.errorMessage());
+            return core::propagate<Proposal>(step);
         }
         if (step.value()) {
             const auto row = stmt.value().currentRow();
             if (row.isFail()) {
-                return core::Result<Proposal>::fail(row.errorCode(),
-                                                    row.errorMessage());
+                return core::propagate<Proposal>(row);
             }
             Proposal existing = rowToProposal(row.value());
             // 刷新 TTL（复用不新建；B4 §1.2 不变量）
@@ -716,8 +687,7 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
             }
             if (auto a = audit(existing.id, nowSec, "undo_refreshed",
                                originalId); a.isFail()) {
-                return core::Result<Proposal>::fail(a.errorCode(),
-                                                    a.errorMessage());
+                return core::propagate<Proposal>(a);
             }
             existing.expiresAt = nowSec + kProposalTtlDays * 86400;
             return core::Result<Proposal>::ok(std::move(existing));
@@ -766,8 +736,7 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
         "applied_at, base_version, undo_of) VALUES(?,1,?,?,?,?,?,?,?,?,?,?,?, "
         "'pending', NULL, NULL, ?, ?)");
     if (ins.isFail()) {
-        return core::Result<Proposal>::fail(ins.errorCode(),
-                                            ins.errorMessage());
+        return core::propagate<Proposal>(ins);
     }
     if (!ins.value().bind(1, undo.id).isOk() ||
         !ins.value().bind(2, undo.kind).isOk() ||
@@ -789,12 +758,11 @@ core::Result<Proposal> ProposalStore::createUndo(const std::string& originalId,
     auto step = ins.value().step();
     if (step.isFail()) {
         // 同一 undoOf 未决唯一索引冲突（并发产出）→ 回读既有卡
-        return core::Result<Proposal>::fail(step.errorCode(),
-                                            step.errorMessage());
+        return core::propagate<Proposal>(step);
     }
     if (auto a = audit(undo.id, nowSec, "created",
                        "undo_of=" + originalId); a.isFail()) {
-        return core::Result<Proposal>::fail(a.errorCode(), a.errorMessage());
+        return core::propagate<Proposal>(a);
     }
     return core::Result<Proposal>::ok(std::move(undo));
 }
@@ -804,7 +772,7 @@ core::Result<int> ProposalStore::expireSweep(std::int64_t nowSec) {
         "UPDATE memory_proposals SET status='expired' WHERE "
         "status='pending' AND expires_at < ?");
     if (stmt.isFail()) {
-        return core::Result<int>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<int>(stmt);
     }
     if (!stmt.value().bind(1, nowSec).isOk()) {
         return core::Result<int>::fail(core::ErrorCode::Internal,
@@ -812,7 +780,7 @@ core::Result<int> ProposalStore::expireSweep(std::int64_t nowSec) {
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<int>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<int>(step);
     }
     auto cnt = db_->prepare(
         "SELECT COUNT(*) AS v FROM memory_proposals WHERE status='expired'");

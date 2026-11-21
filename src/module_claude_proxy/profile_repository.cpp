@@ -71,7 +71,7 @@ core::Result<void> writeCredentialColumns(core::data::SqliteDb& db,
         "UPDATE claude_profiles SET api_key_encrypted = ?, api_key_hint = ?, "
         "api_key_check = ?, updated_at = ? WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, stored); b.isFail())
@@ -86,7 +86,7 @@ core::Result<void> writeCredentialColumns(core::data::SqliteDb& db,
         return core::Result<void>::fail(b.errorCode(), "bind credential: " + b.errorMessage());
     auto stepR = stmt.step();
     if (stepR.isFail()) {
-        return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
+        return core::propagate<void>(stepR);
     }
     return core::Result<void>::ok();
 }
@@ -137,8 +137,7 @@ core::Result<void> TwoPhaseKeyWrite::writeKey(const std::string& newKey) {
         auto prot = platform::credential::protect(newKey);
         if (prot.isFail()) {
             // 段一在落任何字节之前就失败：旧值完好，无需补偿
-            return core::Result<void>::fail(prot.errorCode(),
-                                            prot.errorMessage());
+            return core::propagate<void>(prot);
         }
         stored = prot.value();
         hint = makeApiKeyHint(newKey);
@@ -188,7 +187,7 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     Profile p;
     auto id = row.getInt64("id");
     if (id.isFail()) {
-        return core::Result<Profile>::fail(id.errorCode(), id.errorMessage());
+        return core::propagate<Profile>(id);
     }
     p.id = id.value();
 
@@ -264,15 +263,15 @@ core::Result<Profile> ProfileRepository::getProfile(int64_t id) {
         "created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<Profile>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, id); b.isFail()) {
-        return core::Result<Profile>::fail(b.errorCode(), b.errorMessage());
+        return core::propagate<Profile>(b);
     }
     auto stepR = stmt.step();
     if (stepR.isFail()) {
-        return core::Result<Profile>::fail(stepR.errorCode(), stepR.errorMessage());
+        return core::propagate<Profile>(stepR);
     }
     if (!stepR.value()) {
         return core::Result<Profile>::fail(core::ErrorCode::ProfileNotFound,
@@ -281,7 +280,7 @@ core::Result<Profile> ProfileRepository::getProfile(int64_t id) {
 
     auto row = stmt.currentRow();
     if (row.isFail()) {
-        return core::Result<Profile>::fail(row.errorCode(), row.errorMessage());
+        return core::propagate<Profile>(row);
     }
     return rowToProfile(row.value());
 }
@@ -329,7 +328,7 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
         " updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
-        return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<Profile>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, cleanedName); b.isFail())
@@ -369,11 +368,11 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
 
     auto idRow = stmt.currentRow();
     if (idRow.isFail()) {
-        return core::Result<Profile>::fail(idRow.errorCode(), idRow.errorMessage());
+        return core::propagate<Profile>(idRow);
     }
     auto idVal = idRow.value().getInt64("id");
     if (idVal.isFail()) {
-        return core::Result<Profile>::fail(idVal.errorCode(), idVal.errorMessage());
+        return core::propagate<Profile>(idVal);
     }
     const int64_t newId = idVal.value();
 
@@ -414,7 +413,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
     // 前置存在性校验（行不存在 → NotFound，避免 UPDATE 静默 0 行）
     auto old = getProfile(profile.id);
     if (old.isFail()) {
-        return core::Result<void>::fail(old.errorCode(), old.errorMessage());
+        return core::propagate<void>(old);
     }
 
     const std::string cleanedUrl = stripTrailingSlash(trim(profile.baseUrl));
@@ -466,8 +465,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
                 "updated_at = ? "
                 "WHERE id = ?");
             if (prep.isFail()) {
-                return core::Result<void>::fail(prep.errorCode(),
-                                                prep.errorMessage());
+                return core::propagate<void>(prep);
             }
             auto& stmt = prep.value();
             if (auto b = stmt.bind(1, cleanedName); b.isFail())
@@ -499,8 +497,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
             return core::Result<void>::ok();
         });
         if (stepR.isFail()) {
-            return core::Result<void>::fail(stepR.errorCode(),
-                                            stepR.errorMessage());
+            return core::propagate<void>(stepR);
         }
     } else {
         auto prep = db_.prepare(
@@ -510,7 +507,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
             "auth_field = ?, "
             "updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
-            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            return core::propagate<void>(prep);
         }
         auto& stmt = prep.value();
         if (auto b = stmt.bind(1, cleanedName); b.isFail())
@@ -554,7 +551,7 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
 
     auto p = getProfile(id);
     if (p.isFail()) {
-        return core::Result<void>::fail(p.errorCode(), p.errorMessage());
+        return core::propagate<void>(p);
     }
     const bool wasActiveVal = p.value().isActive;
     if (wasActive) *wasActive = wasActiveVal;
@@ -574,7 +571,7 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
     auto delRow = keyTx.writeDb([&]() -> core::Result<void> {
         auto prep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
         if (prep.isFail()) {
-            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            return core::propagate<void>(prep);
         }
         auto& stmt = prep.value();
         if (auto b = stmt.bind(1, id); b.isFail())
@@ -582,13 +579,12 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
                                             "bind delete profile: " + b.errorMessage());
         auto stepR = stmt.step();
         if (stepR.isFail()) {
-            return core::Result<void>::fail(stepR.errorCode(),
-                                            stepR.errorMessage());
+            return core::propagate<void>(stepR);
         }
         return core::Result<void>::ok();
     });
     if (delRow.isFail()) {
-        return core::Result<void>::fail(delRow.errorCode(), delRow.errorMessage());
+        return core::propagate<void>(delRow);
     }
 
     LOG_INFO("已删除 Claude profile id=" + std::to_string(id));
@@ -600,7 +596,7 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
 core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
     auto p = getProfile(profileId);
     if (p.isFail()) {
-        return core::Result<std::string>::fail(p.errorCode(), p.errorMessage());
+        return core::propagate<std::string>(p);
     }
     const std::string stored = readStoredCredential(db_, profileId);
     if (stored.empty()) {
@@ -621,11 +617,11 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
         "created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
-        return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<Profile>(prep);
     }
     auto stepR = prep.value().step();
     if (stepR.isFail()) {
-        return core::Result<Profile>::fail(stepR.errorCode(), stepR.errorMessage());
+        return core::propagate<Profile>(stepR);
     }
     if (!stepR.value()) {
         // 错误 message 带可操作指引——503 的 JSON body 原样透传此文案（proxy_router 唯一出口）
@@ -635,7 +631,7 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
     }
     auto row = prep.value().currentRow();
     if (row.isFail()) {
-        return core::Result<Profile>::fail(row.errorCode(), row.errorMessage());
+        return core::propagate<Profile>(row);
     }
     return rowToProfile(row.value());
 }
@@ -646,17 +642,17 @@ core::Result<void> ProfileRepository::activateProfile(int64_t id) {
         auto c = db_.prepare("UPDATE claude_profiles SET is_active = 0 "
                             "WHERE is_active = 1");
         if (c.isFail()) {
-            return core::Result<void>::fail(c.errorCode(), c.errorMessage());
+            return core::propagate<void>(c);
         }
         auto cStep = c.value().step();
         if (cStep.isFail()) {
-            return core::Result<void>::fail(cStep.errorCode(), cStep.errorMessage());
+            return core::propagate<void>(cStep);
         }
 
         auto s = db_.prepare("UPDATE claude_profiles SET is_active = 1, "
                             "updated_at = ? WHERE id = ?");
         if (s.isFail()) {
-            return core::Result<void>::fail(s.errorCode(), s.errorMessage());
+            return core::propagate<void>(s);
         }
         auto& stmt = s.value();
         if (auto b = stmt.bind(1, static_cast<int64_t>(nowUnix())); b.isFail())
@@ -667,98 +663,10 @@ core::Result<void> ProfileRepository::activateProfile(int64_t id) {
                                             "bind activate profile: " + b.errorMessage());
         auto sStep = stmt.step();
         if (sStep.isFail()) {
-            return core::Result<void>::fail(sStep.errorCode(), sStep.errorMessage());
+            return core::propagate<void>(sStep);
         }
         return core::Result<void>::ok();
     });
-}
-
-// Profile 复制
-
-core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
-    auto srcR = getProfile(srcId);
-    if (srcR.isFail()) {
-        return core::Result<Profile>::fail(srcR.errorCode(),
-                                          srcR.errorMessage());
-    }
-    const Profile src = std::move(srcR).value();
-
-    // 副本命名：name + " 副本"，重名递增避让 UNIQUE 约束；100 次仍冲突 → fail 且不建行
-    auto listR = listProfiles();
-    if (listR.isFail()) {
-        return core::Result<Profile>::fail(listR.errorCode(),
-                                           listR.errorMessage());
-    }
-    std::vector<std::string> names;
-    names.reserve(listR.value().size());
-    for (const auto& p : listR.value()) names.push_back(p.name);
-    const std::string copyName = makeCopyName(src.name, names);
-    if (copyName.empty()) {
-        return core::Result<Profile>::fail(
-            core::ErrorCode::ProfileAlreadyExists,
-            "副本命名连续 100 次冲突，请先重命名或删除部分 Profile");
-    }
-
-    // 源 key 缺失 → fail：不建无 key 的副本。列空 →「密钥缺失」+ 恢复提示；读失败 → 原样透传错误码（读不了 ≠ 没有）
-    auto keyR = loadApiKey(srcId);
-    if (keyR.isFail()) {
-        if (keyR.errorCode() == core::ErrorCode::NotFound) {
-            return core::Result<Profile>::fail(
-                core::ErrorCode::InvalidApiKey,
-                "源 Profile 的密钥缺失（该 Profile 未保存 API Key），无法建副本；"
-                "编辑该 Profile 重新填一次 API Key 即可");
-        }
-        return core::Result<Profile>::fail(
-            keyR.errorCode(),
-            "读取源 Profile 密钥失败：" + keyR.errorMessage());
-    }
-    if (keyR.value().empty()) {
-        // protect 理论上不会把空串存成非空，但真发生了要如实报
-        return core::Result<Profile>::fail(
-            core::ErrorCode::InvalidApiKey,
-            "源 Profile 的密钥为空串，无法建副本；"
-            "编辑该 Profile 重新填一次 API Key 即可");
-    }
-
-    // 凭据三列随 createProfile 一并写入；副本不激活
-    const std::string defModel =
-        effectiveModelsConfig(src.modelsConfigJson).def.model;
-    auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
-                                  src.authField);
-    if (createdR.isFail()) {
-        return core::Result<Profile>::fail(createdR.errorCode(),
-                                           createdR.errorMessage());
-    }
-    const int64_t newId = createdR.value().id;
-    Profile out = createdR.value();
-
-    // 二段补写 models_config / extra_env（createProfile 只带得走 default 模型名）；不得静默丢字段
-    if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty()) {
-        Profile upd = out;
-        upd.modelsConfigJson = src.modelsConfigJson;
-        upd.extraEnvJson = src.extraEnvJson;
-        upd.model = defModel;
-        auto u = updateProfile(upd);
-        if (u.isFail()) {
-            // 回滚：deleteProfile 先清凭据再删行
-            auto rb = deleteProfile(newId);
-            if (rb.isOk()) {
-                return core::Result<Profile>::fail(
-                    u.errorCode(), "复制失败（已回滚）: " + u.errorMessage());
-            }
-            LOG_ERROR("复制回滚失败，存在不完整副本 id=" + std::to_string(newId) +
-                      ": " + rb.errorMessage());
-            return core::Result<Profile>::fail(u.errorCode(),
-                "复制失败: " + u.errorMessage() + "；已创建不完整副本 id=" +
-                std::to_string(newId) + "，请手动删除");
-        }
-        out = std::move(upd);
-    }
-
-    LOG_INFO("已复制 Claude profile id=" + std::to_string(newId) +
-             " name=" + copyName + "（源 id=" + std::to_string(srcId) +
-             "，副本未激活）");
-    return core::Result<Profile>::ok(std::move(out));
 }
 
 } // namespace module::claude

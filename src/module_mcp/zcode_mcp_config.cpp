@@ -3,7 +3,8 @@
 // 本质差异只有两处：两级键 mcp.servers、安装三分判定（同址幂等/异址冲突）。
 #include "zcode_mcp_config.h"
 
-#include "core/atomic_write.h"
+#include "mcp_config_common.h"
+
 #include "core/fs_text.h"
 #include "platform/json.h"
 
@@ -77,12 +78,6 @@ bool serverPresent(const pj::JsonObject& root, std::string* urlOut) {
 
 } // namespace
 
-std::filesystem::path backupFile(const std::filesystem::path& file) {
-    std::filesystem::path bak = file;
-    bak += ".bak-devdesk";
-    return bak;
-}
-
 ConfigState readConfigState(const std::filesystem::path& file) {
     ConfigState st;
     std::error_code ec;
@@ -111,14 +106,12 @@ core::Result<std::string> applyServerEntry(const std::string& jsonText,
     if (changed != nullptr) *changed = false;
     auto rootResult = parseRoot(jsonText);
     if (rootResult.isFail()) {
-        return core::Result<std::string>::fail(rootResult.errorCode(),
-                                              rootResult.errorMessage());
+        return core::propagate<std::string>(rootResult);
     }
     pj::JsonObject root = rootResult.value();
     const auto guard = ensureHierarchyIfPresent(root);
     if (guard.isFail()) {
-        return core::Result<std::string>::fail(guard.errorCode(),
-                                               guard.errorMessage());
+        return core::propagate<std::string>(guard);
     }
 
     std::string existingUrl;
@@ -153,7 +146,7 @@ core::Result<std::string> applyServerEntry(const std::string& jsonText,
     // 与原文件同档：两空格缩进（YYJSON_WRITE_PRETTY_TWO_SPACES）
     const auto out = pj::stringify(pj::JsonValue(root), true);
     if (out.isFail()) {
-        return core::Result<std::string>::fail(out.errorCode(), out.errorMessage());
+        return core::propagate<std::string>(out);
     }
     if (changed != nullptr) *changed = true;
     return core::Result<std::string>::ok(out.value());
@@ -164,14 +157,12 @@ core::Result<std::string> removeServerEntry(const std::string& jsonText,
     if (changed != nullptr) *changed = false;
     auto rootResult = parseRoot(jsonText);
     if (rootResult.isFail()) {
-        return core::Result<std::string>::fail(rootResult.errorCode(),
-                                              rootResult.errorMessage());
+        return core::propagate<std::string>(rootResult);
     }
     pj::JsonObject root = rootResult.value();
     const auto guard = ensureHierarchyIfPresent(root);
     if (guard.isFail()) {
-        return core::Result<std::string>::fail(guard.errorCode(),
-                                               guard.errorMessage());
+        return core::propagate<std::string>(guard);
     }
     const pj::JsonValue mcpVal = root.get("mcp");
     if (!mcpVal.isObject()) {
@@ -194,68 +185,33 @@ core::Result<std::string> removeServerEntry(const std::string& jsonText,
 
     const auto out = pj::stringify(pj::JsonValue(root), true);
     if (out.isFail()) {
-        return core::Result<std::string>::fail(out.errorCode(), out.errorMessage());
+        return core::propagate<std::string>(out);
     }
     if (changed != nullptr) *changed = true;
     return core::Result<std::string>::ok(out.value());
 }
 
-namespace {
-
-// 读-改-写公共编排（cc::rewriteExisting 同构）。文件必须已存在（绝不新建）；
-// 有改动才备份 + 原子写。
-core::Result<void> rewriteExisting(const std::filesystem::path& file,
-                                   const std::function<core::Result<std::string>(
-                                       const std::string&, bool*)>& mutate,
-                                   const char* label) {
-    std::error_code ec;
-    if (!std::filesystem::exists(file, ec) || ec) {
-        return core::Result<void>::fail(
-            core::ErrorCode::FileNotFound,
-            "未检测到 ZCode 配置 " + file.string() + "（不自动创建）");
-    }
-    bool readFailed = false;
-    const std::string current = core::readTextFile(file, &readFailed);
-    if (readFailed) {
-        return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
-                                       "读取 " + file.string() + " 失败");
-    }
-    bool changed = false;
-    auto next = mutate(current, &changed);
-    if (next.isFail()) {
-        return core::Result<void>::fail(next.errorCode(), next.errorMessage());
-    }
-    if (!changed) return core::Result<void>::ok();  // 幂等：一字节不动
-
-    // 备份原文件（失败即整体失败，目标文件保持原内容）
-    const auto bakResult = core::atomicWriteFile(backupFile(file), current,
-                                                 "ZCode 配置备份");
-    if (bakResult.isFail()) {
-        return core::Result<void>::fail(bakResult.errorCode(),
-                                       bakResult.errorMessage());
-    }
-    return core::atomicWriteFile(file, next.value(), label);
+std::filesystem::path backupFile(const std::filesystem::path& file) {
+    return config_common::backupFile(file);
 }
-
-} // namespace
 
 core::Result<void> installServerFile(const std::filesystem::path& file,
                                      const std::string& url) {
-    return rewriteExisting(
+    return config_common::rewriteExisting(
         file,
         [&url](const std::string& text, bool* changed) {
             return applyServerEntry(text, url, changed);
         },
-        "ZCode MCP 配置");
+        "ZCode MCP 配置", "ZCode");
 }
 
 core::Result<void> removeServerFile(const std::filesystem::path& file) {
-    return rewriteExisting(
+    return config_common::rewriteExisting(
         file,
         [](const std::string& text, bool* changed) {
             return removeServerEntry(text, changed);
         },
-        "ZCode MCP 配置还原");
+        "ZCode MCP 配置还原", "ZCode");
 }
 
 } // namespace module::mcp::zc

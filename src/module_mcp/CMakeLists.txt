@@ -15,6 +15,7 @@ add_library(devdesk_module_mcp STATIC
     html_to_markdown.cpp
     claude_mcp_config.cpp
     zcode_mcp_config.cpp
+    mcp_config_common.cpp              # 读-改-写编排（claude/zcode 产品名参数化，need:380 批C）
     mcp_page_module.cpp
 )
 

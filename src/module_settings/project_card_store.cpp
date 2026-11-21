@@ -24,8 +24,7 @@ core::Result<ProjectCard> cardFromRow(const core::data::SqlRow& row) {
     ProjectCard card;
     auto name = row.getString("name");
     if (name.isFail()) {
-        return core::Result<ProjectCard>::fail(name.errorCode(),
-                                               name.errorMessage());
+        return core::propagate<ProjectCard>(name);
     }
     card.name = name.value();
     // NOT NULL DEFAULT '' 列：getString 恒成功；防御式逐列传递错误码。
@@ -39,20 +38,17 @@ core::Result<ProjectCard> cardFromRow(const core::data::SqlRow& row) {
              {&card.keyModules, "key_modules"}}) {
         auto v = row.getString(col);
         if (v.isFail()) {
-            return core::Result<ProjectCard>::fail(v.errorCode(),
-                                                   v.errorMessage());
+            return core::propagate<ProjectCard>(v);
         }
         *field = v.value();
     }
     auto created = row.getInt64("created_at");
     if (created.isFail()) {
-        return core::Result<ProjectCard>::fail(created.errorCode(),
-                                               created.errorMessage());
+        return core::propagate<ProjectCard>(created);
     }
     auto updated = row.getInt64("updated_at");
     if (updated.isFail()) {
-        return core::Result<ProjectCard>::fail(updated.errorCode(),
-                                               updated.errorMessage());
+        return core::propagate<ProjectCard>(updated);
     }
     card.createdAt = created.value();
     card.updatedAt = updated.value();
@@ -70,13 +66,11 @@ core::Result<std::vector<ProjectCard>> listProjectCards(
     auto prep = db.prepare(std::string("SELECT ") + kSelectColumns +
                            " FROM project_cards ORDER BY name");
     if (prep.isFail()) {
-        return core::Result<std::vector<ProjectCard>>::fail(prep.errorCode(),
-                                                            prep.errorMessage());
+        return core::propagate<std::vector<ProjectCard>>(prep);
     }
     auto rows = prep.value().fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<ProjectCard>>::fail(rows.errorCode(),
-                                                            rows.errorMessage());
+        return core::propagate<std::vector<ProjectCard>>(rows);
     }
     std::vector<ProjectCard> cards;
     cards.reserve(rows.value().size());
@@ -95,23 +89,20 @@ core::Result<ProjectCard> getProjectCard(core::data::SqliteDb& db,
                                          const std::string& name) {
     auto normalized = normalizeName(name);
     if (normalized.isFail()) {
-        return core::Result<ProjectCard>::fail(normalized.errorCode(),
-                                               normalized.errorMessage());
+        return core::propagate<ProjectCard>(normalized);
     }
     auto prep = db.prepare(std::string("SELECT ") + kSelectColumns +
                            " FROM project_cards WHERE name = ?");
     if (prep.isFail()) {
-        return core::Result<ProjectCard>::fail(prep.errorCode(),
-                                               prep.errorMessage());
+        return core::propagate<ProjectCard>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, normalized.value()); b.isFail()) {
-        return core::Result<ProjectCard>::fail(b.errorCode(), b.errorMessage());
+        return core::propagate<ProjectCard>(b);
     }
     auto first = stmt.step();
     if (first.isFail()) {
-        return core::Result<ProjectCard>::fail(first.errorCode(),
-                                               first.errorMessage());
+        return core::propagate<ProjectCard>(first);
     }
     if (!first.value()) {
         return core::Result<ProjectCard>::fail(
@@ -120,8 +111,7 @@ core::Result<ProjectCard> getProjectCard(core::data::SqliteDb& db,
     }
     auto row = stmt.currentRow();
     if (row.isFail()) {
-        return core::Result<ProjectCard>::fail(row.errorCode(),
-                                               row.errorMessage());
+        return core::propagate<ProjectCard>(row);
     }
     return cardFromRow(row.value());
 }
@@ -130,8 +120,7 @@ core::Result<void> upsertProjectCard(core::data::SqliteDb& db,
                                      const ProjectCard& card) {
     auto normalized = normalizeName(card.name);
     if (normalized.isFail()) {
-        return core::Result<void>::fail(normalized.errorCode(),
-                                        normalized.errorMessage());
+        return core::propagate<void>(normalized);
     }
     const int64_t now = static_cast<int64_t>(core::time::nowUnix());
     // ON CONFLICT 不回写 created_at：建卡时刻一次写定；updated_at 恒随保存刷新。
@@ -146,7 +135,7 @@ core::Result<void> upsertProjectCard(core::data::SqliteDb& db,
         "test_db_url = excluded.test_db_url, "
         "key_modules = excluded.key_modules, updated_at = excluded.updated_at");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, normalized.value()); b.isFail()) return b;
@@ -160,7 +149,7 @@ core::Result<void> upsertProjectCard(core::data::SqliteDb& db,
     if (auto b = stmt.bind(9, now); b.isFail()) return b;
     auto step = stmt.step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }
@@ -171,18 +160,17 @@ core::Result<void> deleteProjectCard(core::data::SqliteDb& db,
     // 能给出明确反馈。
     auto exists = getProjectCard(db, name);
     if (exists.isFail()) {
-        return core::Result<void>::fail(exists.errorCode(),
-                                        exists.errorMessage());
+        return core::propagate<void>(exists);
     }
     auto prep = db.prepare("DELETE FROM project_cards WHERE name = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, exists.value().name); b.isFail()) return b;
     auto step = stmt.step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }

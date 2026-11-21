@@ -39,8 +39,8 @@ inline int fontScalePercentFromRatio(float ratio) {
 }
 
 // 日志保留档位（天；0 = 永久）
-inline constexpr int kRetentionPresets[] = {0, 7, 30, 90, 180, 365};
-inline constexpr int kRetentionPresetCount = 6;
+inline constexpr int kRetentionPresets[] = {0, 30, 365};
+inline constexpr int kRetentionPresetCount = 3;
 
 // 窗口效果档位（与 settings_config 的三档字符串一一对应）
 inline constexpr const char* kWindowEffectPresets[] = {
@@ -57,15 +57,10 @@ inline constexpr int kThemeModePresetCount = 3;
 inline constexpr const char* kThemeModePresetLabels[] = {"跟随系统", "浅色",
                                                          "深色"};
 
-// 强调色四档（与 settings_config 的 "clay"/"purple"/"pink"/"blue" 一一对应）
-inline constexpr const char* kAccentPresetValues[] = {"clay", "purple", "pink", "blue"};
-inline constexpr int kAccentPresetCount = 4;
 
 // 编辑器字号档位（px；15 = fontSizeBody token 基准）
 inline constexpr int kEditorFontPresets[] = {13, 15, 17, 20};
 inline constexpr int kEditorFontPresetCount = 4;
-inline constexpr const char* kEditorFontPresetLabels[] = {
-    "小 13px", "标准 15px", "大 17px", "特大 20px"};
 
 // 日志级别四档（与 settings_config 的 kLogLevel* 一一对应；裸大写词对齐 levelToString）
 inline constexpr const char* kLogLevelPresets[] = {
@@ -226,10 +221,6 @@ inline float hintRowBelowY(float rowY) {
 }
 // ── 开机自启动行（编辑器字号卡内第二段，UAT6；几何与卡高同源推导见
 // kEditorFontCardHeight 注释）──
-// 行 y = hint 行底（hintH 恒 roundFs(16)）+ 行距 6：100% = 110+16+6 = 132。
-inline float autostartRowBelowY(float hintY) {
-    return hintY + roundFs(16.0f) + roundFs(6.0f);
-}
 // 行盒高：roundFs(30)（85% 档 26 仍包住 44×24 字面开关——开关是字面值不随字号缩放）
 inline float autostartRowHeight() { return roundFs(30.0f); }
 // 开关尺寸（§4.4 微信开关口径，与模块插拔卡/同步卡同款字面值）
@@ -240,9 +231,6 @@ inline constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（c
 inline constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
 inline constexpr float kWindowBottomMargin = 16.0f;    // 窗口底边安全留白，越界 = 有裁剪风险
 
-// 下拉文案宽度：EUI-NEO text 默认不折行、超宽画出控件右缘，故保守估算 + 截断；chrome 常量对齐 components/dropdown.h 内部取数。
-inline constexpr float kDropdownFieldChrome = 62.0f;  // 12 + 2 + 48
-inline constexpr float kDropdownItemChrome = 36.0f;   // 6 × 2 + 24
 // 估算口径：ASCII 0.62em / 全角 1.0em（偏保守，宁可早截）。
 inline constexpr float kAsciiWidthEm = 0.62f;
 inline constexpr float kFullWidthEm = 1.0f;

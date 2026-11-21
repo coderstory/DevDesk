@@ -326,7 +326,7 @@ core::Result<void> Scheduler::tickNow() {
     reapDone();
     auto tasks = store_.listTasks();
     if (tasks.isFail())
-        return core::Result<void>::fail(tasks.errorCode(), tasks.errorMessage());
+        return core::propagate<void>(tasks);
     const int64_t nowSec = now_ ? now_() : systemNowSec();
     const int64_t minute = nowSec / 60;
     std::tm local{};
@@ -461,7 +461,7 @@ core::Result<void> Scheduler::tickNow() {
 
 core::Result<void> Scheduler::dispatchRun(int64_t taskId) {
     auto row = store_.getTask(taskId);
-    if (row.isFail()) return core::Result<void>::fail(row.errorCode(), row.errorMessage());
+    if (row.isFail()) return core::propagate<void>(row);
     AgentTask task = taskFromRow(row.value());
     auto run = std::make_unique<ActiveRun>();
     run->taskId = taskId;

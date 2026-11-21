@@ -441,7 +441,6 @@ target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/libgit2/include
 )
 
-# 确保 doctest.h 可被 #include "doctest.h" 找到
 
 target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_home
@@ -461,7 +460,6 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_schedule
 )
 
-# 确保 doctest.h 可被 #include "doctest.h" 找到
 
 add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
 
@@ -577,6 +575,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_config_common.cpp"
+
             "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
     elseif(_probe_name STREQUAL "layout_guard_probe")
         # 池 #221：布局病守卫 kit——kit 实现随本目标一起编（layout_guard_kit.h
@@ -785,6 +785,7 @@ add_executable(devdesk_ui_driver
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp
+    "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_config_common.cpp"
     ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
 target_include_directories(devdesk_ui_driver PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -914,6 +915,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)  # 2026-11-05：保持 UNIX（github_sync_
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp
+        "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_config_common.cpp"
         ${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp)
     target_include_directories(github_sync_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src

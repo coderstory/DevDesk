@@ -9,6 +9,7 @@
 #include "module_memory/proposals/proposal_store.h"
 #include "module_memory/proposals/usage_ledger.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <string>
 #include <utility>
@@ -21,17 +22,7 @@ using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
 
-Result<ToolResult> toolError(const std::string& message) {
-    pj::JsonObject err;
-    err.set("error", pj::makeString(message));
-    auto text = pj::stringify(pj::JsonValue(std::move(err)));
-    if (text.isFail()) {
-        return Result<ToolResult>::fail(core::ErrorCode::Internal,
-                                        "工具错误消息序列化失败: " +
-                                            text.errorMessage());
-    }
-    return Result<ToolResult>::ok(ToolResult{true, text.value()});
-}
+using platform::tool_kit::toolError;
 
 const char* engineStateName(engine::TelememEngine::State s) {
     switch (s) {

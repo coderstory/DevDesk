@@ -48,16 +48,6 @@ std::string formatRelativeTime(int64_t modifiedAt, std::time_t now) {
     return buf;
 }
 
-std::string formatTodayCn(std::time_t now) {
-    static const char* kWeekdays[] = {"星期日", "星期一", "星期二", "星期三",
-                                      "星期四", "星期五", "星期六"};
-    std::tm local{};
-    core::time::localTime(now, &local);
-    return std::to_string(local.tm_year + 1900) + " 年 " +
-           std::to_string(local.tm_mon + 1) + " 月 " +
-           std::to_string(local.tm_mday) + " 日 · " + kWeekdays[local.tm_wday];
-}
-
 std::string formatTokenCount(int64_t tokens) {
     if (tokens < 1000) return std::to_string(tokens);
     char buf[32];
@@ -88,17 +78,17 @@ core::Result<int64_t> HomeService::countBySql(
     const char* sql, std::optional<int64_t> boundValue) {
     auto prep = db_.prepare(sql);
     if (prep.isFail()) {
-        return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<int64_t>(prep);
     }
     auto& stmt = prep.value();
     if (boundValue.has_value()) {
         if (auto b = stmt.bind(1, *boundValue); b.isFail()) {
-            return core::Result<int64_t>::fail(b.errorCode(), b.errorMessage());
+            return core::propagate<int64_t>(b);
         }
     }
     auto step = stmt.step();
     if (step.isFail()) {
-        return core::Result<int64_t>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<int64_t>(step);
     }
     if (!step.value()) {
         return core::Result<int64_t>::fail(core::ErrorCode::Internal,
@@ -106,11 +96,11 @@ core::Result<int64_t> HomeService::countBySql(
     }
     auto row = stmt.currentRow();
     if (row.isFail()) {
-        return core::Result<int64_t>::fail(row.errorCode(), row.errorMessage());
+        return core::propagate<int64_t>(row);
     }
     auto n = row.value().getInt64("n");
     if (n.isFail()) {
-        return core::Result<int64_t>::fail(n.errorCode(), n.errorMessage());
+        return core::propagate<int64_t>(n);
     }
     return core::Result<int64_t>::ok(n.value());
 }
@@ -120,18 +110,15 @@ core::Result<std::vector<RecentNote>> HomeService::queryRecentNotes(int limit) {
         "SELECT path, title, modified_at FROM markdown_index "
         "ORDER BY modified_at DESC, id DESC LIMIT ?");
     if (prep.isFail()) {
-        return core::Result<std::vector<RecentNote>>::fail(prep.errorCode(),
-                                                           prep.errorMessage());
+        return core::propagate<std::vector<RecentNote>>(prep);
     }
     auto& stmt = prep.value();
     if (auto b = stmt.bind(1, static_cast<int64_t>(limit)); b.isFail()) {
-        return core::Result<std::vector<RecentNote>>::fail(b.errorCode(),
-                                                           b.errorMessage());
+        return core::propagate<std::vector<RecentNote>>(b);
     }
     auto rows = stmt.fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<RecentNote>>::fail(rows.errorCode(),
-                                                           rows.errorMessage());
+        return core::propagate<std::vector<RecentNote>>(rows);
     }
     std::vector<RecentNote> out;
     out.reserve(rows.value().size());
@@ -167,8 +154,7 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
         "SELECT COUNT(*) AS n FROM markdown_index WHERE modified_at >= ?",
         todayStart);
     if (todayNotes.isFail()) {
-        return core::Result<DashboardStats>::fail(todayNotes.errorCode(),
-                                                  todayNotes.errorMessage());
+        return core::propagate<DashboardStats>(todayNotes);
     }
     // 待办任务口径 = 「待办列 + 进行中列」里未完成的任务数，不是全部未完成任务。
     // 只认列 kind（'todo'/'doing'）：schema.h 契约禁止按标题匹配（改名即静默失效），
@@ -178,8 +164,7 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
         "ON c.id = t.column_id WHERE t.completed_at IS NULL "
         "AND c.kind IN ('todo','doing')");
     if (pendingTodos.isFail()) {
-        return core::Result<DashboardStats>::fail(pendingTodos.errorCode(),
-                                                  pendingTodos.errorMessage());
+        return core::propagate<DashboardStats>(pendingTodos);
     }
     const std::string overdueCountSql =
         std::string("SELECT COUNT(*) AS n FROM todo_tasks WHERE ") +
@@ -187,20 +172,17 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     // 自然日口径（2026-11-16 老板令，与 TodoService::listOverdue 同源）：绑今天零点
     auto overdueTodos = countBySql(overdueCountSql.c_str(), todayStart);
     if (overdueTodos.isFail()) {
-        return core::Result<DashboardStats>::fail(overdueTodos.errorCode(),
-                                                  overdueTodos.errorMessage());
+        return core::propagate<DashboardStats>(overdueTodos);
     }
     auto todayApiCalls = countBySql(
         "SELECT COUNT(*) AS n FROM claude_call_logs WHERE started_at >= ?",
         todayStart);
     if (todayApiCalls.isFail()) {
-        return core::Result<DashboardStats>::fail(todayApiCalls.errorCode(),
-                                                  todayApiCalls.errorMessage());
+        return core::propagate<DashboardStats>(todayApiCalls);
     }
     auto recentNotes = queryRecentNotes(recentNoteLimit);
     if (recentNotes.isFail()) {
-        return core::Result<DashboardStats>::fail(recentNotes.errorCode(),
-                                                  recentNotes.errorMessage());
+        return core::propagate<DashboardStats>(recentNotes);
     }
 
     DashboardStats stats;
@@ -210,59 +192,6 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     stats.todayApiCalls = todayApiCalls.value();
     stats.recentNotes = std::move(recentNotes).value();
     return core::Result<DashboardStats>::ok(std::move(stats));
-}
-
-core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
-    int hours) {
-    if (hours <= 0) hours = 24;
-    const std::time_t now = std::time(nullptr);
-    const int64_t dayStart = startOfDayEpoch(now);
-    const int64_t dayEnd = dayStart + 86400;
-    // 小时下标 = (started_at - 本地零点) / 3600，越界落点按 [0, hours) 过滤；
-    // COALESCE：全未采集行 SUM 返回 NULL，与「0 token」同义。
-    auto prep = db_.prepare(
-        "SELECT (started_at - ?) / 3600 AS h, "
-        "COALESCE(SUM(output_tokens), 0) AS n "
-        "FROM claude_call_logs "
-        "WHERE started_at >= ? AND started_at < ? GROUP BY h");
-    if (prep.isFail()) {
-        return core::Result<std::vector<int64_t>>::fail(prep.errorCode(),
-                                                        prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    if (auto b = stmt.bind(1, dayStart); b.isFail()) {
-        return core::Result<std::vector<int64_t>>::fail(b.errorCode(),
-                                                        b.errorMessage());
-    }
-    if (auto b = stmt.bind(2, dayStart); b.isFail()) {
-        return core::Result<std::vector<int64_t>>::fail(b.errorCode(),
-                                                        b.errorMessage());
-    }
-    if (auto b = stmt.bind(3, dayEnd); b.isFail()) {
-        return core::Result<std::vector<int64_t>>::fail(b.errorCode(),
-                                                        b.errorMessage());
-    }
-    auto rows = stmt.fetchAll();
-    if (rows.isFail()) {
-        return core::Result<std::vector<int64_t>>::fail(rows.errorCode(),
-                                                        rows.errorMessage());
-    }
-    // 恒返回恰 hours 个点（无调用的小时补 0），序列恒非空。
-    std::vector<int64_t> series(static_cast<size_t>(hours), 0);
-    for (const auto& row : rows.value()) {
-        auto hRaw = row.getInt64("h");
-        auto nRaw = row.getInt64("n");
-        if (hRaw.isFail() || nRaw.isFail()) {
-            return core::Result<std::vector<int64_t>>::fail(
-                hRaw.isFail() ? hRaw.errorCode() : nRaw.errorCode(),
-                hRaw.isFail() ? hRaw.errorMessage() : nRaw.errorMessage());
-        }
-        const int64_t idx = hRaw.value();
-        if (idx >= 0 && idx < hours) {
-            series[static_cast<size_t>(idx)] = nRaw.value();
-        }
-    }
-    return core::Result<std::vector<int64_t>>::ok(std::move(series));
 }
 
 core::Result<LastCallRate> HomeService::getLastCallRate() {
@@ -275,13 +204,11 @@ core::Result<LastCallRate> HomeService::getLastCallRate() {
         "AND COALESCE(output_tokens, 0) > 0 "
         "ORDER BY started_at DESC, id DESC LIMIT 1");
     if (prep.isFail()) {
-        return core::Result<LastCallRate>::fail(prep.errorCode(),
-                                                prep.errorMessage());
+        return core::propagate<LastCallRate>(prep);
     }
     auto step = prep.value().step();
     if (step.isFail()) {
-        return core::Result<LastCallRate>::fail(step.errorCode(),
-                                                step.errorMessage());
+        return core::propagate<LastCallRate>(step);
     }
     LastCallRate out;
     if (!step.value()) {
@@ -290,8 +217,7 @@ core::Result<LastCallRate> HomeService::getLastCallRate() {
     auto& stmt = prep.value();
     auto row = stmt.currentRow();
     if (row.isFail()) {
-        return core::Result<LastCallRate>::fail(row.errorCode(),
-                                                row.errorMessage());
+        return core::propagate<LastCallRate>(row);
     }
     auto sc = row.value().getInt64("status_code");
     auto ot = row.value().getInt64("output_tokens");
@@ -299,8 +225,7 @@ core::Result<LastCallRate> HomeService::getLastCallRate() {
     auto sa = row.value().getInt64("started_at");
     if (sc.isFail() || ot.isFail() || lm.isFail()) {
         const auto& e = sc.isFail() ? sc : (ot.isFail() ? ot : lm);
-        return core::Result<LastCallRate>::fail(e.errorCode(),
-                                                e.errorMessage());
+        return core::propagate<LastCallRate>(e);
     }
     out.outputTokens = ot.value();
     out.latencyMs = lm.value();
@@ -310,20 +235,6 @@ core::Result<LastCallRate> HomeService::getLastCallRate() {
                                         out.outputTokens, out.latencyMs,
                                         out.tps);
     return core::Result<LastCallRate>::ok(out);
-}
-
-HourRange hourlyDataRange(const std::vector<int64_t>& hourly) {
-    HourRange r;
-    for (size_t i = 0; i < hourly.size(); ++i) {
-        if (hourly[i] > 0) {
-            if (!r.hasData) {
-                r.hasData = true;
-                r.first = i;
-            }
-            r.last = i;
-        }
-    }
-    return r;
 }
 
 } // namespace module::home

@@ -306,7 +306,6 @@ private:
         a.requestEdit = [this](const Profile& p) {
             openEditForm(state_.form, p);
         };
-        a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
         a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.requestDelete = [this](int64_t id, const std::string& name) {
             state_.form.deleteTargetId_ = id;
@@ -349,7 +348,6 @@ private:
         a.edit = [this](const Profile& p) {
             openEditForm(state_.form, p);
         };
-        a.run = [this](int64_t id) { doRun(id); };
         a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {
             doSetOneM(id, slotIdx, on);
         };
@@ -460,72 +458,6 @@ private:
                   std::string("「") + table[slotIdx].label + "」的 1M 上下文标记已" +
                       (on ? "开启" : "关闭"),
                   false);
-    }
-
-    // app_config 键名：上次 claude 运行所选的工作目录
-    static constexpr const char* kClaudeRunLastDirKey = "claude.run.lastDir";
-
-    // 直连：生成临时 settings + claude --settings 打开新会话（零全局改动）。
-    // 运行前先弹出目录选择对话框（原生模态框），所选目录作为 claude 进程工作目录；
-    // 用户取消 = 静默返回，不弹 toast、不启动会话。
-    void doRun(int64_t id) {
-        ClaudeService* svc = ClaudeService::global();
-        if (svc == nullptr) {
-            showToast("运行失败", "服务未就绪（ClaudeService 未注册）", true);
-            return;
-        }
-        if (id == 0) {
-            showToast("运行失败", "请先选择 Profile", true);
-            return;
-        }
-
-        // 读上次所选目录作为对话框初始定位
-        std::string lastDir;
-        if (auto* db = ::core::appDatabase()) {
-            auto saved = core::appconfig::get(*db, kClaudeRunLastDirKey);
-            if (saved.isOk()) lastDir = saved.value();
-        }
-
-        // 弹出目录选择（走注入缝：生产 = 平台原生对话框，测试经 setPickerForTest 替换）
-        auto chosen = platform::folderpicker::pickerSlot()("选择工作目录", lastDir);
-        if (chosen.isFail()) {
-            // 用户取消：静默返回，不启动、不弹 toast
-            return;
-        }
-        const std::string& workingDir = chosen.value();
-
-        // 记录本次所选目录（下次打开默认定位到它）
-        if (auto* db = ::core::appDatabase()) {
-            // 纯便利记忆：失败=下次从头选目录，不值得弹窗打扰（need295）
-            (void)core::appconfig::set(*db, kClaudeRunLastDirKey, workingDir);
-        }
-
-        std::string hint;
-        auto r = svc->runProfile(id, &hint, workingDir);
-        if (r.isFail()) {
-            showToast("运行失败", r.errorMessage(), true);
-            return;
-        }
-        const std::string head = hint.empty()
-            ? std::string("已用该 Profile 直连打开 Claude Code 会话"
-                          "（临时配置会话结束后自动删除，未改动任何全局配置）。")
-            : (hint + std::string("。"));
-        showToast("已启动", head, false);
-        state_.list.dataDirty_ = true;   // 下帧重查列表
-    }
-
-    // 建副本但不激活
-    void doDuplicate(int64_t id) {
-        ClaudeService* svc = ClaudeService::global();
-        if (!svc) return;
-        state_.list.dataDirty_ = true;   // 写操作标脏
-        auto r = svc->duplicateProfile(id);
-        if (r.isFail()) {
-            showToast("建副本失败", r.errorMessage(), true);
-            return;
-        }
-        showToast("已建副本",
-                  "已创建副本「" + r.value().name + "」（未激活）", false);
     }
 
     // 当前 profile → settings.json 形态 JSON → 系统剪贴板。占位 = 脱敏 hint，

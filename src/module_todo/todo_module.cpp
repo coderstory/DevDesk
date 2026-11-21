@@ -30,6 +30,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <optional>
@@ -49,6 +50,11 @@ constexpr float kArchiveCollapseMs = 200.0f;
 constexpr int64_t kArchiveHoverExpandMs = 300;
 // 拖离/取消且本次为自动展开 → 200ms 后收回（设计 §5.3；延迟避免手抖回弹）
 constexpr int64_t kArchiveAutoCollapseDelayMs = 200;
+
+// C-1（need380）：启动归档 toast 的回看窗口秒数——清扫在启动迁移序跑（远早于本模块
+// onStart），窗口须覆盖「迁移→模块启动」的启动耗时；偏大只增加误报面（窗口内既有
+// 手动归档），偏小则漏报。正常启动 <2s，120s 覆盖慢盘冷启动。
+constexpr int64_t kAutoArchiveToastSlackSec = 120;
 
 // 壁钟毫秒（steady_clock 单调钟，不受系统时间调整影响）。与 H13 71ce7d4c 同源：
 // 进度一律由「起始壁钟 + 已过毫秒」反算，不依赖 EUI onFrame 的 dt 累积
@@ -112,6 +118,30 @@ public:
         restoreViewState();
         LOG_INFO("Todo 模块启动（" + std::to_string(columns_.size()) + " 列 / " +
                  std::to_string(tasks_.size()) + " 任务）");
+        // C-1（need380 wave5-c）：冷启动自动归档的感知补偿，规则本体不动
+        //（core::schema::archiveDoneTasksBeforeToday，启动迁移序先于本模块跑）。
+        // 清扫单事务内把命中任务的 archived_at 统一置为迁移时刻，本模块启动晚于
+        // 迁移，只能事后窗口计数。
+        // shortcut: ±120s 窗口计数，升级触发 = 窗口内混入手动归档致误报 → core 清扫上报条数
+        if (!autoArchiveToastShown_) {
+            autoArchiveToastShown_ = true;
+            const auto bootFloor = static_cast<int64_t>(std::time(nullptr)) -
+                                   kAutoArchiveToastSlackSec;
+            const int64_t archId = archiveColId();
+            int archivedNow = 0;
+            for (const auto& task : tasks_) {
+                if (task.columnId == archId && task.archivedAt.has_value() &&
+                    task.archivedAt.value() >= bootFloor) {
+                    ++archivedNow;
+                }
+            }
+            if (archivedNow > 0) {
+                toast_.show("自动归档",
+                            std::to_string(archivedNow) +
+                                " 条已完成任务已自动归档，可在归档列查看",
+                            ui_kit::ToastLevel::Info);
+            }
+        }
     }
 
     // H20：切页回来不补播离开时中断的归档折叠动画——直接落目标态（首帧同口径）；
@@ -1228,6 +1258,9 @@ private:
     int64_t selectedTaskId_ = 0;
 
     ui_kit::ToastState toast_;
+
+    // C-1（need380）：启动归档 toast 每会话一次（onStart 重入被 started_ 挡，本位兜底）
+    bool autoArchiveToastShown_ = false;
 
     std::string searchQuery_;
     std::unordered_set<int64_t> searchMatchIds_;

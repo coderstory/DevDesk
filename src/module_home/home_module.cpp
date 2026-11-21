@@ -17,9 +17,9 @@
 
 #include <eui/dsl.h>
 
+#include <components/linechart.h>
 #include <components/button.h>
 #include <components/card.h>
-#include <components/linechart.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
 
@@ -36,28 +36,12 @@ namespace module::home {
 
 namespace {
 
-// 首页「今日 token 图表卡」基准高度 220：弹性基准 baseContentH 由 compose 从
-// 令牌派生（内容刚好填满页高），高于基准的余高 18% 给统计行、其余给图表卡；
-// 图表卡缺席时余高全给统计行。装不下时由外层 home.scroll 滚动吸收。
-constexpr float kHomeChartH = 220.0f;
-
-// 折叠态高度：只留卡片内边距 + 标题行，图表区整个收起。B7 起 56→64（56 时标题顶
-// 对齐、下方留 18px 空，卡片看着被压扁）；随字号缩放走 scaled()。
-constexpr float kHomeChartCollapsedH = 64.0f;
-
-// 折叠态跨会话持久化的配置键（core::appconfig 纯文本键值）
-constexpr const char* kChartCollapsedKey = "home.chart_collapsed";
-
-// 基准以上余高分给统计行的比例（S4 弹性规则）：统计行适度增高，其余全部留给
-// 图表卡吸收——避免统计卡被拉成巨块、图表仍停在 220。
-constexpr float kHomeStatGrowRatio = 0.0f;  // 2026-11-01 重构 0.18→0：统计卡恒 96，余高全归图表卡
+// C-2（need380 wave5-c）：今日 token 图表卡（kHomeChartH/kHomeChartCollapsedH/
+// kChartCollapsedKey/kHomeStatGrowRatio 及其几何派生）随卡片一起移除。
 
 // 快捷按钮行距窗口底边框的最小留白（2026-10-27 真机反馈贴边）：计进 baseContentH，
 // 否则恰好装满的窗口会因这 16px 被滚动条吞掉——两处必须同改。
 constexpr float kHomeActionsBottomMargin = 16.0f;
-
-// 图表内部几何自适应：wrap = 卡高−64（基准档 156）、plot 高 = wrap−112（44，
-// home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 
 // 卡片网格（need268，2026-11-16 拍板「整页卡片网格 + 响应式列数」）：
 // dashboard 惯例是卡片宽恒等、列数随窗宽变——模块关停后幸存卡不跟着拉成巨卡。
@@ -65,9 +49,6 @@ constexpr float kHomeActionsBottomMargin = 16.0f;
 //   · cols 由可用宽反推，上限为元数据表行数（5）；
 //   · cardW 用「按列数均分」的精确值，保证一行正好排满不留参差。
 // 卡片自身宽度固定，行内换行交给 EUI flow（core/layout.h layoutFlow）。
-//
-// minCardW 取 180 而非更宽松的值：最小窗（1000 逻辑宽，contentW=936）必须仍能
-// 5 列单行——否则统计区变两行，会挤掉图表卡的纵向弹性（H18 双档契约）。
 constexpr float kHomeCardMinW = 180.0f;
 constexpr int kHomeCardMaxCols = 5;
 
@@ -306,7 +287,9 @@ constexpr HomeStatCard kStatCards[] = {
 };
 
 // 快捷按钮：kind = 行身份，module = 归属模块，target + navPayload = 点击负载。
-enum class ActionKind { NewNote, NewTodo, SwitchClaude };
+// C-2（need380）：「切换 Claude Profile」快捷按钮已砍——与 Claude 页右键
+// 「设为当前」重复，入口收敛到 Claude 页。
+enum class ActionKind { NewNote, NewTodo };
 struct HomeActionButton {
     ActionKind kind;
     ::core::PageId module;
@@ -318,10 +301,6 @@ struct HomeActionButton {
 constexpr HomeActionButton kActionButtons[] = {
     {ActionKind::NewNote,    ::core::PageId::Markdown,    "+ 新建笔记",         0,     ::core::PageId::Markdown,    "action:new_note"},
     {ActionKind::NewTodo,    ::core::PageId::Todo,        "+ 新建任务",         0,     ::core::PageId::Todo,        "action:new_task"},
-    // 图标 0xF007 = fa-user（账号/Profile）：0xF46D 在本仓 FA7 字体里渲染成实心方块
-    // （池73，字形存在性由 home_probes 组 N 机器校验 ink 判据）。0xF007 与页头刷新
-    // 按钮的 0xF021 不撞形。
-    {ActionKind::SwitchClaude, ::core::PageId::ClaudeProxy, "切换 Claude Profile", 0xF007, ::core::PageId::ClaudeProxy, ""},
 };
 
 // 元素 id 由 kind 唯一决定（单测锁定这些 id，行序重排不飘）。
@@ -340,7 +319,6 @@ const char* actionButtonElementId(ActionKind kind) {
     switch (kind) {
         case ActionKind::NewNote: return "home.act.newnote";
         case ActionKind::NewTodo: return "home.act.newtodo";
-        case ActionKind::SwitchClaude: return "home.act.claude";
     }
     return "home.act.unknown";
 }
@@ -363,11 +341,6 @@ public:
             return;
         }
         service_ = std::make_unique<HomeService>(*db);
-        // 图表卡折叠态：跨会话记住（读失败按展开档，不阻断启动）
-        if (auto v = ::core::appconfig::get(*db, kChartCollapsedKey);
-            v.isOk() && v.value() == "1") {
-            chartCollapsed_ = true;
-        }
         refreshStats();
     }
 
@@ -452,9 +425,8 @@ public:
             // 与平台标题条无关：上下内边距 + 页头 40 + 统计块 + 间隙 + 图表卡 + 操作行。
             // 窗口高于基准才伸展；低于基准由外层滚动吸收（不压缩）。
             const bool hasStats = statCount > 0;
-            // need270：图表卡同样恒显示——小时用量分布读的是 claude_call_logs 历史行，
-            // 关停 Claude 模块不等于「今天没用过 token」。无数据时图表自身走空态分支。
-            const bool hasChart = true;
+            // C-2（need380 wave5-c）：今日 token 图表卡已砍——小时分布与 Claude 页
+            // 调用记录同源重复，入口收敛到 Claude 页。
             int actCount = 0;
             for (const auto& btn : kActionButtons) {
                 if (moduleRegistered(btn.module)) ++actCount;
@@ -472,30 +444,17 @@ public:
                 hasStats ? (statBaseH * static_cast<float>(statRows) +
                             cardGap * static_cast<float>(statRows - 1))
                          : 32.0f;
-            const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
-            // 图表卡基准高：折叠态只留标题行，基准随之收缩（否则底部留出一整块空白）。
-            // 折叠高随字号缩放（B7 D2）：字号放大后标题行更高，固定 64 会截断。
-            const float chartBaseH =
-                hasChart ? (chartCollapsed_
-                                ? kHomeChartCollapsedH * core::theme::fontScale()
-                                : kHomeChartH)
-                         : 0.0f;
+            const int childCount = 2 + (hasActions ? 1 : 0);
             const float baseContentH =
                 40.0f + statsBlockH +   // 上下内边距 0（批L 顶格+贴底），左右 pad 不占高
                 gap * static_cast<float>(childCount - 1) +
-                chartBaseH +
                 (hasActions ? 44.0f + kHomeActionsBottomMargin : 0.0f);
             // 顶距 32→0（批L）：高度向内边距为 0，基准里旧 32 顶距已不存在
             // 0.5px 余量：防浮点求和越过视口触发本不该出现的滚动条。
             const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
-            // 余高去向：统计行分 18%，图表卡吸收其余；图表卡缺席时统计行全吃。
-            // 折叠态不参与伸展：多出的高度留白，不把统计卡拉成巨块。
+            // 余高去向：图表卡已砍（C-2 need380），统计行全吃。
             // 网格化后统计区可能多行，增量按行均摊——单卡高度不随窗宽飘。
-            const float statsGrowTotalH =
-                hasStats ? ((hasChart && !chartCollapsed_)
-                                ? extraH * kHomeStatGrowRatio
-                                : (hasChart ? 0.0f : extraH))
-                         : 0.0f;
+            const float statsGrowTotalH = hasStats ? extraH : 0.0f;
             const float statsGrowH =
                 (hasStats && statRows > 0)
                     ? statsGrowTotalH / static_cast<float>(statRows)
@@ -715,283 +674,7 @@ public:
                     .build();
                 }
 
-                // 今日 Token 用量分布：纵轴 = 该小时 output_tokens 合计；x 轴只画「第一个有数据的小时」
-                // ..「最后一个」闭区间；整天无数据 → 空态。
-                // 不用 components::barChart：它把纵值硬编码成 [0,1] 百分比语义，喂 token 合计会被夹成满格，
-                // 故模块内自绘柱体（元素 id 沿用 home.api.chart.bars.*，probe/单测不失效）；无悬停 tooltip，用柱顶数值标签。
-                if (hasChart) {
-                    const auto tokenSeries =
-                        service_ ? service_->getTodayHourlyTokenTotals(24)
-                                 : core::Result<std::vector<int64_t>>::fail(
-                                       core::ErrorCode::Internal,
-                                       "服务未就绪");
-                    std::vector<int64_t> hourly;
-                    if (ok && tokenSeries.isOk()) {
-                        hourly = tokenSeries.value();
-                    }
-                    if (hourly.empty()) hourly.assign(24, 0);
-                    // 去头去尾（纯函数）：闭区间两端都是「有 token 的小时」；全零 → 空态。
-                    const module::home::HourRange range =
-                        module::home::hourlyDataRange(hourly);
-                    const size_t barCount =
-                        range.hasData ? range.last - range.first + 1 : 0;
-                    int64_t peak = 0;
-                    for (size_t i = 0; i < barCount; ++i) {
-                        peak = std::max(peak, hourly[range.first + i]);
-                    }
-                    // H18 纵向弹性：图表卡吸收基准以上的余高（扣掉统计行已分走的增量），
-                    // 基准档（内容刚好填满）为 220；矮于基准才由外层滚动吸收。
-                    // 折叠态：只留标题行高度（kHomeChartCollapsedH × 字号缩放），不参与伸展。
-                    const float chartCardH =
-                        chartCollapsed_
-                            ? kHomeChartCollapsedH * core::theme::fontScale()
-                            : kHomeChartH + extraH - statsGrowH;
-                    const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 基准档 156
-                    components::card(ui, "home.api.chart")
-                        .size(contentW, chartCardH)
-                        .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡 + H10 描边
-                        .color(ui_kit::cardSurface(t))  // H15 轻微半透（kCardGlassAlpha）
-                        .radius(t.sizes.radius)
-                        .border(1.0f, t.colors.borderDefault)
-                        .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
-                        .content([&] {
-                            // 标题保持满内容宽（home_probes 类5(a) 要求左右间隙对称）；
-                            // 折叠箭头叠在右端，标题文案远短于内容宽，窄窗也不会压字。
-                            // 折叠态（B7 D2）：标题改短 + 垂直居中；展开态保留全称顶对齐。
-                            // 折叠时卡内只剩标题一行，用整个内容盒高做居中盒 → 上下留白相等。
-                            const float titleLineH =
-                                core::theme::scaled(22.0f);
-                            const float titleY = chartCollapsed_ ? 0.0f : 16.0f;
-                            const float titleBoxH =
-                                chartCollapsed_
-                                    ? std::max(titleLineH,
-                                               chartCardH -
-                                                   t.sizes.spacingLarge * 2.0f)
-                                    : titleLineH;
-                            ui.text("home.api.chart.title")
-                                .position(0.0f, titleY)
-                                .size(contentW - 32.0f, titleBoxH)
-                                .text(chartCollapsed_
-                                          ? "今日 Token 分布"
-                                          : "今日 Token 用量分布（每小时输出 token 合计）")
-                                .fontSize(t.sizes.fontSizeLarge - 1.0f)
-                                .lineHeight(titleLineH)
-                                .fontWeight(600)
-                                .verticalAlign(chartCollapsed_
-                                                   ? eui::VerticalAlign::Center
-                                                   : eui::VerticalAlign::Top)
-                                .color(t.colors.textPrimary)
-                                .build();
-                            // 折叠箭头：chevron-down 展开 / chevron-right 收起
-                            // （走 Icon 字体：几何符号在正文字体里会退化成小点）
-                            // 折叠态与居中后的标题同带（盒心对齐）。
-                            // need344 光学对齐：图标字体 glyph 按基线定位（text.cpp:661
-                            // yOffset=ascent-bitmap_top×scale），FA chevron 墨水中心只悬在
-                            // 基线上方 ≈0.2~0.4em，而 CJK 标题墨水中心 ≈基线上方 0.42em×字号
-                            // ——同一基线下图标墨水比标题视觉中心低 1~3px，几何对半观感仍偏下
-                            // （老板目检 2026-11-18）。上移 2px×字号缩放修正；如复测仍偏，
-                            // 只调这一个常量。
-                            constexpr float kChevronOpticalY = -2.0f;
-                            const float chevronY =
-                                (chartCollapsed_
-                                     ? (titleBoxH - titleLineH) * 0.5f
-                                     : 16.0f) +
-                                kChevronOpticalY * core::theme::fontScale();
-                            ui.text("home.api.chart.toggle")
-                                .position(contentW - 32.0f - 20.0f, chevronY)
-                                .size(20.0f, titleLineH)
-                                .icon(chartCollapsed_ ? 0xF054 : 0xF078)
-                                .fontSize(core::theme::scaled(12.0f))
-                                .lineHeight(titleLineH)
-                                .horizontalAlign(eui::HorizontalAlign::Center)
-                                .color(t.colors.textSecondary)
-                                .build();
-                            // 标题行命中区：透明覆盖层，点整行切折叠态（鼠标手势提示可点）
-                            ui.rect("home.api.chart.headhit")
-                                .position(0.0f, 8.0f)
-                                .size(contentW - 32.0f, 34.0f)
-                                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                                .radius(t.sizes.radiusSmall)
-                                .cursor(eui::CursorShape::Hand)
-                                .onClick([this] { toggleChartCollapsed(); })
-                                .build();
-                            // 折叠态：图表区整块不建（免白跑一遍柱体几何）
-                            if (!chartCollapsed_) {
-                            // 图表区：自绘柱体包一层定位 stack（沿用 wrap id，probe 按它量左右对称）。
-                            ui.stack("home.api.chart.wrap")
-                                .position(0.0f, 48.0f)
-                                .size(contentW - 32.0f, chartWrapH)
-                                .content([&] {
-                                    const float wrapW = contentW - 32.0f;
-                                    if (!range.hasData) {
-                                        // S2.8 空状态：图标 + 标题 + 说明（垂直居中排列，无按钮）
-                                        const float iconH = 48.0f;
-                                        const float gap = 8.0f;
-                                        const float titleH = 22.0f;
-                                        const float descH = 18.0f;
-                                        const float totalH = iconH + gap + titleH + gap + descH;
-                                        const float startY = (chartWrapH - totalH) * 0.5f;
-                                        float cy = startY;
-
-                                        // 图标盒 48：字形 32 + 显式 lineHeight 48 + 垂直居中
-                                        //（与 wallpaper 空态图标同款写法；只给 fontSize=盒高
-                                        // 时字形贴着默认行高落，容易顶出盒外）
-                                        ui.text("home.api.chart.empty.icon")
-                                            .position((wrapW - iconH) * 0.5f, cy)
-                                            .size(iconH, iconH)
-                                            .icon(0xF201)  // fa-line-chart
-                                            .fontSize(iconH * 2.0f / 3.0f)
-                                            .lineHeight(iconH)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .verticalAlign(eui::VerticalAlign::Center)
-                                            // 灰 @50%：绿白底上再压淡绿等于看不见（原 primary@40%）
-                                            .color(components::theme::withOpacity(
-                                                t.colors.textTertiary, 0.50f))
-                                            .build();
-                                        cy += iconH + gap;
-
-                                        ui.text("home.api.chart.empty.title")
-                                            .position(0.0f, cy)
-                                            .size(wrapW, titleH)
-                                            .text("今日暂无 API 调用")
-                                            .fontSize(t.sizes.fontSizeWeChat)  // 16px
-                                            .lineHeight(titleH)
-                                            .fontWeight(600)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .color(t.colors.textSecondary)
-                                            .build();
-                                        cy += titleH + gap;
-
-                                        ui.text("home.api.chart.empty.desc")
-                                            .position(0.0f, cy)
-                                            .size(wrapW, descH)
-                                            .text("启动 Claude 代理后将展示用量统计")
-                                            .fontSize(t.sizes.fontSizeSmall)  // 12px
-                                            .lineHeight(descH)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .color(t.colors.textTertiary)
-                                            .build();
-                                    } else {
-                                        // 柱体容器（id 沿用组件根 id：probe 与单测按 home.api.chart.bars.* 定位）。
-                                        ui.stack("home.api.chart.bars")
-                                            .position(0.0f, 0.0f)
-                                            .size(wrapW, chartWrapH)
-                                            .content([&] {
-                                        // 自绘几何：常量逐项取自 barchart.h（改这里 = 改图表观感）。
-                                        const float plotX = 32.0f;
-                                        // 池110：顶留白/x 轴标签带随 wrap 高度按比例伸缩，
-                                        //（barchart.h 固定 plotY=70 只适用 236 高卡；高窗下全部
-                                        // 余高灌进 plotH → 柱体满格无上留白、标签贴卡底）。
-                                        // 钳制下限保基准档 ≈ 旧值，1200x600 最小窗不回退。
-                                        const float plotY = std::clamp(
-                                            chartWrapH * 0.30f, 56.0f, 160.0f);
-                                        const float plotW =
-                                            std::max(1.0f, wrapW - 64.0f);
-                                        const float labelY =
-                                            chartWrapH -
-                                            std::clamp(chartWrapH * 0.06f, 12.0f,
-                                                       40.0f) -
-                                            16.0f;
-                                        const float plotH =
-                                            std::max(40.0f, labelY - 20.0f - plotY);
-                                        const float bottomY = plotY + plotH;
-                                        const float slotW =
-                                            plotW / static_cast<float>(barCount);
-                                        const float barW = std::min(
-                                            32.0f,
-                                            std::max(18.0f, slotW * 0.54f));
-                                        // chromeless：网格线用主题描边色的低透明版，无第二底、无边框。
-                                        components::theme::ThemeColorTokens
-                                            chartTokens =
-                                                core::theme::componentTokensWeChat(t);
-                                        for (int line = 0; line < 4; ++line) {
-                                            ui.rect("home.api.chart.bars.grid." +
-                                                    std::to_string(line))
-                                                .x(plotX)
-                                                .y(plotY + static_cast<float>(
-                                                               line) *
-                                                               plotH / 3.0f)
-                                                .size(plotW, 1.0f)
-                                                .color(components::theme::
-                                                           withOpacity(
-                                                               chartTokens.border,
-                                                               0.36f))
-                                                .build();
-                                        }
-                                        for (size_t i = 0; i < barCount; ++i) {
-                                            const int64_t v =
-                                                hourly[range.first + i];
-                                            // 柱高按区间峰值归一；0 token 的小时只剩 1px 底线，不画假柱。
-                                            const float ratio =
-                                                peak > 0
-                                                    ? static_cast<float>(v) /
-                                                          static_cast<float>(
-                                                              peak)
-                                                    : 0.0f;
-                                            const float barH =
-                                                std::max(1.0f, ratio * plotH);
-                                            const float bx =
-                                                plotX +
-                                                static_cast<float>(i) * slotW +
-                                                (slotW - barW) * 0.5f;
-                                            const float by = bottomY - barH;
-                                            ui.rect(
-                                                "home.api.chart.bars.bar." +
-                                                std::to_string(i))
-                                                .x(bx)
-                                                .y(by)
-                                                .size(barW, barH)
-                                                // 色取 barchart.h 默认 palette[0]
-                                                .color(components::theme::color(
-                                                    0.22f, 0.50f, 0.88f))
-                                                .radius(std::min(
-                                                    t.sizes.radius,
-                                                    barW * 0.34f))
-                                                .build();
-                                            // 柱顶数值 = 该小时 token 合计
-                                            ui.text(
-                                                "home.api.chart.bars.val." +
-                                                std::to_string(i))
-                                                .x(bx - 12.0f)
-                                                .y(by - 14.0f)
-                                                .size(barW + 24.0f,
-                                                      core::theme::scaled(14.0f))
-                                                .text(formatTokenCount(v))
-                                                .fontSize(core::theme::scaled(10.0f))
-                                                .lineHeight(core::theme::scaled(14.0f))
-                                                .horizontalAlign(
-                                                    eui::HorizontalAlign::Center)
-                                                .color(t.colors.textSecondary)
-                                                .build();
-                                            // x 轴小时标签：去头去尾后第 i 根对应真实小时 range.first + i。
-                                            ui.text(
-                                                "home.api.chart.bars.label." +
-                                                std::to_string(i))
-                                                .x(bx - 12.0f)
-                                                .y(labelY)
-                                                .size(barW + 24.0f,
-                                                      core::theme::scaled(16.0f))
-                                                .text(std::to_string(
-                                                          range.first + i) +
-                                                      "时")
-                                                .fontSize(core::theme::scaled(10.0f))
-                                                .lineHeight(core::theme::scaled(16.0f))
-                                                .horizontalAlign(
-                                                    eui::HorizontalAlign::Center)
-                                                .color(t.colors.textTertiary)
-                                                .build();
-                                        }
-                                            })
-                                            .build();
-                                    }
-                                })
-                                .build();
-                            }
-                        })
-                        .build();
-                }
-
-                // 快捷操作按钮组（S3.1#3/#6）：主次分层——新建笔记=Filled 44px / 新建任务=Outline 44px / 切换 Profile=Ghost 44px。
+                // 快捷操作按钮组（S3.1#3/#6）：新建笔记=Filled 44px / 新建任务=Outline 44px。
                 if (actCount > 0) {
                 const float actGap = t.sizes.spacingLarge; // 16
                 ui.row("home.actions")
@@ -1025,12 +708,6 @@ public:
                                                components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
                                     .border(1.0f, t.colors.primary)
                                     .textColor(t.colors.primary);
-                            } else {
-                                // Ghost: 透明 bg + accentText（primary 浅绿压浅底仅 1.92:1）
-                                builder.colors(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
-                                               t.colors.primarySoftBg,
-                                               t.colors.primarySoftBg)
-                                    .textColor(t.colors.accentText);
                             }
                             if (btn.iconCodepoint != 0) {
                                 builder.icon(btn.iconCodepoint)
@@ -1084,20 +761,6 @@ private:
     std::string statsError_;
     LastCallRate lastRate_;
     std::string lastRateError_;   // 非空 = 最近速率查询失败（卡显示「加载失败」）
-    // 「今日 Token 用量分布」图表卡折叠态（持久化在 app_config）
-    bool chartCollapsed_ = false;
-
-    void toggleChartCollapsed() {
-        chartCollapsed_ = !chartCollapsed_;
-        if (auto* db = ::core::appDatabase(); db != nullptr) {
-            auto r = ::core::appconfig::set(*db, kChartCollapsedKey,
-                                            chartCollapsed_ ? "1" : "0");
-            if (r.isFail()) {
-                LOG_WARN("Home: 图表卡折叠态持久化失败（不影响本次会话）: " +
-                         r.errorMessage());
-            }
-        }
-    }
     // 上一拍看到的活跃流数（只有 Token 卡的 timer 回调写它）：1→0 那一拍 = 流式刚结束 → 重查
     int prevActiveStreams_ = 0;
 };

@@ -28,7 +28,7 @@ std::string modelsSummary(const Profile& p) {
 
 std::string buildProfileExportJson(const Profile& p,
                                    const std::string& keyPlaceholder) {
-    // env 域：与 runProfile 的临时 settings 同一条 env 管线，仅凭据换成占位值、
+    // env 域：buildDirectEnv 直连管线同源复用，仅凭据换成占位值、
     // 不落盘只进剪贴板。
     const auto env = buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField,
                                     p.modelsConfigJson, p.extraEnvJson);

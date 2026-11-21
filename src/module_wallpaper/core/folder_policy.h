@@ -18,8 +18,4 @@ std::string normalizeFolderPath(const std::string& rawPath);
 // 选择结果是否可接受：必须是已存在的目录。路径为空/不存在/是文件 → false。
 bool isAcceptableFolder(const std::string& normalizedPath);
 
-// 是否应把「选目录」当主行动：未配置 / 目录不在 / 扫到 0 条都为 true；
-// 只有 Playing 不需要（需求 §9.5）。
-bool shouldRequestFolderSelection(const std::string& folderPath, Availability availability);
-
 } // namespace module::wallpaper::folder_policy

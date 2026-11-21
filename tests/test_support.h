@@ -644,12 +644,6 @@ inline bool seedConfigJsonRows(core::data::SqliteDb* db,
 //
 // **必须当场读回校验**：预置失败必须在写入点当场报出来（false），由调用方
 // fail-fast，绝不带着没落地的配置往下跑断言——否则只会在下游症状上变红。
-inline bool seedAppConfigRow(const char* key, const std::string& text) {
-    auto* db = ::core::appDatabase();
-    if (db == nullptr) return false;
-    return writeRawConfigRow(db, key, text) && readRawConfigRow(db, key) == text;
-}
-
 // 同上，但输入是一整份 config.json 文本（按顶层键分发进该命名空间的各行）。
 // 校验 = 该命名空间下**至少一行**落库且读得回（整份替换语义已清过旧行，空清单
 // 就是预置没生效）。

@@ -88,8 +88,8 @@ core::Result<TodoViewState> TodoViewStateStore::loadChecked() const {
             }
         }
     }
-    if (obj.has(kKeySelectedTask) && obj.get(kKeySelectedTask).isNumber()) {
-        st.selectedTaskId = obj.get(kKeySelectedTask).asInt();
+    if (auto v = platform::json::getIfInt(obj, kKeySelectedTask)) {
+        st.selectedTaskId = *v;
     }
     return core::Result<TodoViewState>::ok(sanitized(st));
 }

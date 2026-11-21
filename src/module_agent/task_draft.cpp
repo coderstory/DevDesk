@@ -280,8 +280,7 @@ core::Result<std::string> requestTaskDraft(core::LlmEndpoint& llm,
         buildTaskDraftSystemPrompt(now, registeredToolNames());
     auto resp = llm.send(messages, "", systemPrompt, modelSlot);
     if (resp.isFail()) {
-        return core::Result<std::string>::fail(resp.errorCode(),
-                                              resp.errorMessage());
+        return core::propagate<std::string>(resp);
     }
     // Text 块按序拼接；Plain 块（contentJson 非标准 blocks 数组时的原文回落）
     // 一并计入 —— 某些网关会把纯文本回灌成非数组形态，只认 Text 会误判成空回复

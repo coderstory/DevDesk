@@ -1,7 +1,7 @@
 #!/bin/sh
 # devflow setup 生成的项目门禁（模板：填充占位符后落盘主宿主目录；跳过的 A/B 选项对应分支先裁掉）
 # 占位符填法：BUILD_ENTRY 标记 → 构建入口 case 放行模式（单入口如 *bash\ scripts/build.sh*；多入口逐 pattern 通配交替如 *cmd1*|*cmd2*；空格以 \ 转义）；BUILD_FORBIDDEN_PATTERNS / PROTECTED_PATTERNS 标记 → case 通配交替，如 *cmake\ -B*|*cmake\ --build*；MERGE_FORBIDDEN_PATTERNS 同为 case 通配交替（由禁合并源分支名按 devflow-setup SKILL §2 问项 H 规则生成，未配置填哨兵 *__DEVFLOW_NO_MATCH__*）
-# devflow 用户值（setup 填写，重跑 converge 从本行自动提取；缺失则按询问项重新确认）: BUILD_ENTRY=*build-test-run.sh* ;; BUILD_FORBIDDEN_PATTERNS=*cmake\ -B*|*cmake\ --build* ;; PROTECTED_PATTERNS=*/build/*|*/build-release/*|*/analysis/*|*/pr-bodies/*|*/splash-delivery/*|*/devdesk-agent-m1-sdd-archive/*|*/eui-neo-zpatch-copy/*|*eui-neo-dropdown-popup-z.patch*|*pr-push-eui-neo.sh* ;; MERGE_FORBIDDEN_PATTERNS=*__DEVFLOW_NO_MATCH__*
+# devflow 用户值（setup 填写，重跑 converge 从本行自动提取；缺失则按询问项重新确认）: BUILD_ENTRY=*build-test-run.sh* ;; BUILD_FORBIDDEN_PATTERNS=*cmake\ -B*|*cmake\ --build* ;; PROTECTED_PATTERNS=*/build/*|*/build-release/*|*eui-neo-dropdown-popup-z.patch* ;; MERGE_FORBIDDEN_PATTERNS=*__DEVFLOW_NO_MATCH__*
 # 用法: pre-tool-use.sh <bash-gate|path-gate>；退出码 2 = 阻断
 input=$(cat)
 mode="${1:-}"
@@ -73,7 +73,7 @@ case "$mode" in
     # 命令串含插件工具/测试路径引用时放行保护路径字面量（POOL_DB 传参/手动调试合法）；臂序=禁止绕过→禁合并→豁免→保护路径
     case "$scan" in
       *devflow/tools/*|*devflow/tests/*) ;;
-      */build/*|*/build-release/*|*/analysis/*|*/pr-bodies/*|*/splash-delivery/*|*/devdesk-agent-m1-sdd-archive/*|*/eui-neo-zpatch-copy/*|*eui-neo-dropdown-popup-z.patch*|*pr-push-eui-neo.sh*)
+      */build/*|*/build-release/*|*eui-neo-dropdown-popup-z.patch*)
         block "保护路径（bash 侧禁直连）：构建产物目录与归档面禁直接操作；构建一律 bash scripts/build-test-run.sh（AGENTS.md §五/§七）" ;;
     esac
     ;;
@@ -86,7 +86,7 @@ case "$mode" in
         esac ;;
     esac
     case "$fp" in
-      */build/*|*/build-release/*|*/analysis/*|*/pr-bodies/*|*/splash-delivery/*|*/devdesk-agent-m1-sdd-archive/*|*/eui-neo-zpatch-copy/*|*eui-neo-dropdown-popup-z.patch*|*pr-push-eui-neo.sh*)
+      */build/*|*/build-release/*|*eui-neo-dropdown-popup-z.patch*)
         block "保护路径（只读 / 归档）：构建产物目录不可直接写入（一律 bash scripts/build-test-run.sh，AGENTS.md §五）；归档原件已备份仓库外，勿在仓库内重建（AGENTS.md §七）" ;;
     esac
     ;;

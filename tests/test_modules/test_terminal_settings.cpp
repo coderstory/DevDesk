@@ -29,11 +29,6 @@ REGISTER_TEST(terminalSettingsClamp,
     DOCTEST_CHECK_EQ(clampedFontSize(25), kFontSizeMax);
     DOCTEST_CHECK_EQ(clampedFontSize(-3), kFontSizeMin);
 
-    DOCTEST_CHECK_EQ(clampedScrollback(50), kScrollbackMin);
-    DOCTEST_CHECK_EQ(clampedScrollback(100), 100);
-    DOCTEST_CHECK_EQ(clampedScrollback(12345), 12345);
-    DOCTEST_CHECK_EQ(clampedScrollback(100000), 100000);
-    DOCTEST_CHECK_EQ(clampedScrollback(1000000), kScrollbackMax);
     return true;
 })
 
@@ -60,23 +55,19 @@ REGISTER_TEST(terminalSettingsSanitize,
     s.fontFamily = "Comic Sans MS"; // 枚举外
     s.shell = "fish";               // 枚举外
     s.fontSize = 99;
-    s.scrollback = 1;
     const TerminalSettings out = sanitizedTerminalSettings(s);
     DOCTEST_CHECK(out.fontFamily.empty());
     DOCTEST_CHECK(out.shell.empty());
     DOCTEST_CHECK_EQ(out.fontSize, kFontSizeMax);
-    DOCTEST_CHECK_EQ(out.scrollback, kScrollbackMin);
 
     TerminalSettings ok;
     ok.fontFamily = terminalFontOptionValues().back(); // 表内合法值
     ok.shell = terminalShellOptionValues().back();
     ok.fontSize = 20;
-    ok.scrollback = 50000;
     const TerminalSettings out2 = sanitizedTerminalSettings(ok);
     DOCTEST_CHECK_EQ(out2.fontFamily, terminalFontOptionValues().back());
     DOCTEST_CHECK_EQ(out2.shell, terminalShellOptionValues().back());
     DOCTEST_CHECK_EQ(out2.fontSize, 20);
-    DOCTEST_CHECK_EQ(out2.scrollback, 50000);
     return true;
 })
 
@@ -117,10 +108,6 @@ REGISTER_TEST(terminalSettingsRoundtrip,
     s.colorMode = TerminalColorMode::Independent;
     s.colorPalette = TerminalColorPalette::Dark;
     s.shell = terminalShellOptionValues()[1];
-    s.workDir = test_temp::tempPath("terminal_settings_rt_dir").string();
-    s.scrollback = 50000;
-    s.cursorStyle = TerminalCursorStyle::Bar;
-    s.cursorBlink = false;
     DOCTEST_CHECK(saveTerminalSettings(&db, s).isOk());
 
     // 重新 load = 模拟重启
@@ -130,10 +117,6 @@ REGISTER_TEST(terminalSettingsRoundtrip,
     DOCTEST_CHECK(loaded.colorMode == TerminalColorMode::Independent);
     DOCTEST_CHECK(loaded.colorPalette == TerminalColorPalette::Dark);
     DOCTEST_CHECK_EQ(loaded.shell, s.shell);
-    DOCTEST_CHECK_EQ(loaded.workDir, s.workDir);
-    DOCTEST_CHECK_EQ(loaded.scrollback, 50000);
-    DOCTEST_CHECK(loaded.cursorStyle == TerminalCursorStyle::Bar);
-    DOCTEST_CHECK(!loaded.cursorBlink);
     return true;
 })
 
@@ -150,25 +133,20 @@ REGISTER_TEST(terminalSettingsFallbacks,
     core::data::SqliteDb& db = env.handle();
     const TerminalSettings d2 = loadTerminalSettings(&db);
     DOCTEST_CHECK_EQ(d2.fontSize, kFontSizeDefault);
-    DOCTEST_CHECK_EQ(d2.scrollback, kScrollbackDefault);
     DOCTEST_CHECK(d2.colorMode == TerminalColorMode::FollowApp);
-    DOCTEST_CHECK(d2.cursorBlink);
 
     // 损坏 JSON → 默认值
     writeGarbageRow(db, "terminal_settings");
     const TerminalSettings d3 = loadTerminalSettings(&db);
     DOCTEST_CHECK_EQ(d3.fontSize, kFontSizeDefault);
-    DOCTEST_CHECK_EQ(d3.scrollback, kScrollbackDefault);
 
     // 落库值恒 sanitize：写入越界值 → 读回已收敛
     TerminalSettings bad;
     bad.fontSize = 99;
-    bad.scrollback = 7;
     bad.shell = "nope";
     DOCTEST_CHECK(saveTerminalSettings(&db, bad).isOk());
     const TerminalSettings back = loadTerminalSettings(&db);
     DOCTEST_CHECK_EQ(back.fontSize, kFontSizeMax);
-    DOCTEST_CHECK_EQ(back.scrollback, kScrollbackMin);
     DOCTEST_CHECK(back.shell.empty());
     return true;
 })

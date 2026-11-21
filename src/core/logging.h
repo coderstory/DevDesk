@@ -32,7 +32,6 @@ inline const char* levelToString(Level l) {
 
 } // namespace core::log
 
-#define LOG_TRACE(msg) ::core::log::logMessage(::core::log::Level::Trace, msg, __FILE__, __LINE__)
 #define LOG_DEBUG(msg) ::core::log::logMessage(::core::log::Level::Debug, msg, __FILE__, __LINE__)
 #define LOG_INFO(msg)  ::core::log::logMessage(::core::log::Level::Info,  msg, __FILE__, __LINE__)
 #define LOG_WARN(msg)  ::core::log::logMessage(::core::log::Level::Warn,  msg, __FILE__, __LINE__)

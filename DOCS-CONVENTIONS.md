@@ -20,3 +20,4 @@
 | skill（流程类） | devflow 插件供给（`ask` / `req-analysis` / `tech-solution` / `consolidate` / `devflow-setup`）；自建 skill 才放 `.agents/skills/` | 长期 |
 | hooks 配置 | `.zcode/config.json`（项目门禁）；白名单与激活 hook 在插件 | 长期，改动须报备用户 |
 | 归档 / 产物（只读） | 原 `analysis/`、`pr-bodies/` 等已于 2026-10-29 废弃归档至工作区外备份（见迁移记录），仓库内不再保留，见 AGENTS.md §五 | 冻结 |
+| 历史文档（审计报告 / ADR / 旧计划） | `docs/reports/`、`docs/adr/`、`docs/superpowers/plans/` | 冻结；其中的代码路径以 git log 为准，不作现行结构依据 |

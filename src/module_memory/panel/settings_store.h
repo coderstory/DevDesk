@@ -21,11 +21,15 @@ struct MemoryPanelSettings {
     std::int64_t llmImportedAtSec = 0;  // 0 = 未从网关 profile 导入
     std::string llmProfileName;         // 导入时的激活 profile 名（纯回显，无凭据）
     bool mcpSearchEnabled = true;  // memory_search MCP 工具注册开关（旧文件缺键 = true）
-    // 需-9 用量告警：阈值（token 估算口径；月档与消耗卡预算同一套数）+ 节流闸。
-    // 闸随设置落盘 = 重启不重复轰炸；armed=false 表示越线未解除（跨日不重响）。
-    long long usageDayAlertTokens = 500000;      // 日档阈值；≤0 = 关闭
-    long long usageSoftBudgetTokens = 2000000;   // 月档·软档；≤0 = 关闭
-    long long usageHardBudgetTokens = 3000000;   // 月档·硬档；≤0 = 关闭
+    // 需-9 / need:380 B-5：用量告警三档阈值收敛为「单开关 + 内部值」——UI 只留
+    // 开/关（usageAlertsEnabled），阈值不再有滑条入口；存量自定义值原键保留、
+    // 开关开时继续生效（不丢用户配置）。默认值取原滑条量程的合理中位：
+    // 日 100 万（程 5 万~200 万）· 月软 300 万（程 50 万~500 万）· 月硬 500 万
+    // （程 100 万~1000 万）。月档与消耗卡预算同一套数。
+    bool usageAlertsEnabled = true;              // UI 单开关；false = 只静默不告警
+    long long usageDayAlertTokens = 1000000;     // 日档阈值；≤0 = 关闭
+    long long usageSoftBudgetTokens = 3000000;   // 月档·软档；≤0 = 关闭
+    long long usageHardBudgetTokens = 5000000;   // 月档·硬档；≤0 = 关闭
     // G-1 提炼节流（spec 控耗 2「每小时云端调用上限可配置，默认保守值」）：
     // 默认 4 次/小时（OQ-2 保守取值：月硬档 3M token ≈ 全月约 375 次提炼的量级约束）
     int inferHourlyLimit = 4;                    // ≤0 = 关闭节流

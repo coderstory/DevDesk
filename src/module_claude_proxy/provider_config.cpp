@@ -151,8 +151,7 @@ core::Result<ModelsConfig> parseModelsConfig(const std::string& json) {
     }
     auto parsed = platform::json::parse(json);
     if (parsed.isFail()) {
-        return core::Result<ModelsConfig>::fail(parsed.errorCode(),
-                                                parsed.errorMessage());
+        return core::propagate<ModelsConfig>(parsed);
     }
     if (!parsed.value().isObject()) {
         return core::Result<ModelsConfig>::fail(
@@ -260,8 +259,7 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
 
     auto parsed = platform::json::parse(text);
     if (parsed.isFail()) {
-        return core::Result<ImportedConfig>::fail(parsed.errorCode(),
-                                                  parsed.errorMessage());
+        return core::propagate<ImportedConfig>(parsed);
     }
     if (!parsed.value().isObject()) {
         return core::Result<ImportedConfig>::fail(
@@ -763,16 +761,6 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
         }
     }
     return out;
-}
-
-std::string makeCopyName(const std::string& baseName,
-                         const std::vector<std::string>& existingNames) {
-    for (int i = 1; i <= 100; ++i) {
-        std::string candidate = baseName + " 副本";
-        if (i > 1) candidate += " " + std::to_string(i);
-        if (!containsKey(existingNames, candidate)) return candidate;
-    }
-    return {};  // 100 次仍冲突：调用方按命名失败处理
 }
 
 } // namespace module::claude

@@ -55,9 +55,4 @@ bool isAcceptableFolder(const std::string& normalizedPath) {
     return std::filesystem::is_directory(status);
 }
 
-bool shouldRequestFolderSelection(const std::string& folderPath, Availability availability) {
-    if (!isFolderConfigured(folderPath)) return true;
-    return availability != Availability::Playing;
-}
-
 } // namespace module::wallpaper::folder_policy

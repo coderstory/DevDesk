@@ -686,10 +686,6 @@ private:
     // 块源码文本（块区间连续覆盖文档）
     std::string liveBlockText(const MdBlock& b) const ;
 
-    // 活动块 stableId（渲染键 / contentKey 用；无块 → -1）。
-    // stableId 按内容身份继承，比下标更适合当缓存键。
-    int liveActiveBlockStableId() const ;
-
     // 活动块内容贴合高度：测量与 input 内部排版同源（公式值 +1px 余量
     // ⇒ maxVerticalScroll == 0）；备忘键避免整块 shaping 逐帧重付。
     float liveFitHeight(const MdBlock& b, const std::string& blockText,

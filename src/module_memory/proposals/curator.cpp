@@ -29,8 +29,7 @@ core::Result<std::vector<std::string>> Curator::proposeForget(
     std::int64_t nowSec) {
     auto all = memories();
     if (all.isFail()) {
-        return core::Result<std::vector<std::string>>::fail(all.errorCode(),
-                                                            all.errorMessage());
+        return core::propagate<std::vector<std::string>>(all);
     }
     const std::int64_t thresholdSec =
         static_cast<std::int64_t>(idleThresholdDays) * 86400;
@@ -92,8 +91,7 @@ core::Result<std::string> executeProposal(
         // 1.10.1 唯一真实生效通道是 delete_memory）
         const auto r = engine.setMemoryForgotten(p.targetIds[0], true);
         if (r.isFail()) {
-            return core::Result<std::string>::fail(r.errorCode(),
-                                                   r.errorMessage());
+            return core::propagate<std::string>(r);
         }
         return core::Result<std::string>::ok(std::string());
     }
@@ -102,8 +100,7 @@ core::Result<std::string> executeProposal(
         // 真实通道；search 无标记过滤缝，打标记不生效——live 定案）
         const auto r = engine.setMemoryForgotten(p.targetIds[0], true);
         if (r.isFail()) {
-            return core::Result<std::string>::fail(r.errorCode(),
-                                                   r.errorMessage());
+            return core::propagate<std::string>(r);
         }
         return core::Result<std::string>::ok(std::string());
     }

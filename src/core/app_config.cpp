@@ -24,7 +24,7 @@ Result<void> set(core::data::SqliteDb& db, const std::string& key,
                  const std::string& value) {
     auto prep = db.prepare(kSetSql);
     if (prep.isFail()) {
-        return Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return propagate<void>(prep);
     }
     if (auto b = prep.value().bind(1, key); b.isFail()) return b;
     if (auto b = prep.value().bind(2, value); b.isFail()) return b;
@@ -33,7 +33,7 @@ Result<void> set(core::data::SqliteDb& db, const std::string& key,
     }
     auto stepped = prep.value().step();
     if (stepped.isFail()) {
-        return Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+        return propagate<void>(stepped);
     }
     return Result<void>::ok();
 }
@@ -46,7 +46,7 @@ Result<void> setMany(core::data::SqliteDb& db,
         const auto now = static_cast<int64_t>(nowUnix());
         auto prep = db.prepare(kSetSql);
         if (prep.isFail()) {
-            return Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            return propagate<void>(prep);
         }
         for (const auto& e : entries) {
             if (auto b = prep.value().bind(1, e.key); b.isFail()) return b;
@@ -54,13 +54,12 @@ Result<void> setMany(core::data::SqliteDb& db,
             if (auto b = prep.value().bind(3, now); b.isFail()) return b;
             auto stepped = prep.value().step();
             if (stepped.isFail()) {
-                return Result<void>::fail(stepped.errorCode(),
-                                          stepped.errorMessage());
+                return propagate<void>(stepped);
             }
             // 复位后才能安全地绑下一行（复用同一条语句，免每行一次 prepare）
             auto reset = prep.value().reset();
             if (reset.isFail()) {
-                return Result<void>::fail(reset.errorCode(), reset.errorMessage());
+                return propagate<void>(reset);
             }
         }
         return Result<void>::ok();
@@ -70,14 +69,14 @@ Result<void> setMany(core::data::SqliteDb& db,
 Result<std::string> get(core::data::SqliteDb& db, const std::string& key) {
     auto prep = db.prepare("SELECT value FROM app_config WHERE key = ?");
     if (prep.isFail()) {
-        return Result<std::string>::fail(prep.errorCode(), prep.errorMessage());
+        return propagate<std::string>(prep);
     }
     if (auto b = prep.value().bind(1, key); b.isFail()) {
-        return Result<std::string>::fail(b.errorCode(), b.errorMessage());
+        return propagate<std::string>(b);
     }
     auto stepped = prep.value().step();
     if (stepped.isFail()) {
-        return Result<std::string>::fail(stepped.errorCode(), stepped.errorMessage());
+        return propagate<std::string>(stepped);
     }
     if (!stepped.value()) {
         // 键不存在 ≠ 值为空串：前者是「没配过」，后者是合法配置值
@@ -86,7 +85,7 @@ Result<std::string> get(core::data::SqliteDb& db, const std::string& key) {
     }
     auto row = prep.value().currentRow();
     if (row.isFail()) {
-        return Result<std::string>::fail(row.errorCode(), row.errorMessage());
+        return propagate<std::string>(row);
     }
     return row.value().getString("value");
 }
@@ -94,14 +93,14 @@ Result<std::string> get(core::data::SqliteDb& db, const std::string& key) {
 Result<bool> has(core::data::SqliteDb& db, const std::string& key) {
     auto prep = db.prepare("SELECT 1 FROM app_config WHERE key = ?");
     if (prep.isFail()) {
-        return Result<bool>::fail(prep.errorCode(), prep.errorMessage());
+        return propagate<bool>(prep);
     }
     if (auto b = prep.value().bind(1, key); b.isFail()) {
-        return Result<bool>::fail(b.errorCode(), b.errorMessage());
+        return propagate<bool>(b);
     }
     auto stepped = prep.value().step();
     if (stepped.isFail()) {
-        return Result<bool>::fail(stepped.errorCode(), stepped.errorMessage());
+        return propagate<bool>(stepped);
     }
     return Result<bool>::ok(stepped.value());
 }
@@ -109,12 +108,12 @@ Result<bool> has(core::data::SqliteDb& db, const std::string& key) {
 Result<void> erase(core::data::SqliteDb& db, const std::string& key) {
     auto prep = db.prepare("DELETE FROM app_config WHERE key = ?");
     if (prep.isFail()) {
-        return Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return propagate<void>(prep);
     }
     if (auto b = prep.value().bind(1, key); b.isFail()) return b;
     auto stepped = prep.value().step();
     if (stepped.isFail()) {
-        return Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+        return propagate<void>(stepped);
     }
     return Result<void>::ok();
 }
@@ -125,8 +124,7 @@ Result<std::vector<Entry>> listWithPrefix(core::data::SqliteDb& db,
         "SELECT key, value, updated_at FROM app_config "
         "WHERE key LIKE ? ESCAPE '\\' ORDER BY key");
     if (prep.isFail()) {
-        return Result<std::vector<Entry>>::fail(prep.errorCode(),
-                                                prep.errorMessage());
+        return propagate<std::vector<Entry>>(prep);
     }
     // LIKE 元字符（% / _ / \）在键名里无语义，不转义会变成通配符匹配到别人的行
     std::string pattern;
@@ -137,12 +135,11 @@ Result<std::vector<Entry>> listWithPrefix(core::data::SqliteDb& db,
     }
     pattern += "%";
     if (auto b = prep.value().bind(1, pattern); b.isFail()) {
-        return Result<std::vector<Entry>>::fail(b.errorCode(), b.errorMessage());
+        return propagate<std::vector<Entry>>(b);
     }
     auto rows = prep.value().fetchAll();
     if (rows.isFail()) {
-        return Result<std::vector<Entry>>::fail(rows.errorCode(),
-                                                rows.errorMessage());
+        return propagate<std::vector<Entry>>(rows);
     }
     std::vector<Entry> out;
     out.reserve(rows.value().size());
@@ -180,7 +177,7 @@ Result<void> eraseWithPrefixExcept(core::data::SqliteDb& db,
         }
         auto prep = db.prepare(sql);
         if (prep.isFail()) {
-            return Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            return propagate<void>(prep);
         }
         if (auto b = prep.value().bind(1, pattern); b.isFail()) return b;
         for (size_t i = 0; i < keep.size(); ++i) {
@@ -191,7 +188,7 @@ Result<void> eraseWithPrefixExcept(core::data::SqliteDb& db,
         }
         auto stepped = prep.value().step();
         if (stepped.isFail()) {
-            return Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+            return propagate<void>(stepped);
         }
         return Result<void>::ok();
     });

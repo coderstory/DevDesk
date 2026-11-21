@@ -851,8 +851,8 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
         return;
     }
     const std::vector<components::ContextMenuItem> items = {
-        {"编辑"}, {"建副本"}, {"复制配置"}, {"删除"}, {"设为当前"}};
-    // 回调不捕获 self 指针（profiles 是 compose 局部副本，点击发生在下帧 → 悬垂）：按值拷贝 Profile 与五个闭包
+        {"编辑"}, {"复制配置"}, {"删除"}, {"设为当前"}};
+    // 回调不捕获 self 指针（profiles 是 compose 局部副本，点击发生在下帧 → 悬垂）：按值拷贝 Profile 与四个闭包
     components::contextMenu(ui, "claude.list.ctx")
         .open(st.ctxMenuOpen_)
         .screen(screen.width, screen.height)
@@ -862,7 +862,6 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
         .theme(themeTokens)
         .onSelect([&st,
                    onEdit = actions.requestEdit,
-                   onDup = actions.requestDuplicate,
                    onCopyCfg = actions.requestCopyConfig,
                    onDel = actions.requestDelete,
                    onSet = actions.requestSetActive,
@@ -870,10 +869,9 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
             st.ctxMenuOpen_ = false;
             switch (index) {
                 case 0: onEdit(p); break;
-                case 1: onDup(p.id); break;
-                case 2: onCopyCfg(p); break;
-                case 3: onDel(p.id, p.name); break;
-                case 4: onSet(p.id); break;
+                case 1: onCopyCfg(p); break;
+                case 2: onDel(p.id, p.name); break;
+                case 3: onSet(p.id); break;
                 default: break;
             }
         })

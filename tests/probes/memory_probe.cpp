@@ -226,6 +226,25 @@ int main(int argc, char* argv[]) {
         }
     };
 
+    // need:181 分层后通用点击助手：折叠组头/详情按钮/向导入口都走这里
+    auto clickEl = [&](const char* id) {
+        const auto* el = A.elem(id);
+        if (el == nullptr) {
+            std::cerr << "memory_probe: FAIL——'" << id << "' 缺失\n";
+            A.passed = false;
+            return;
+        }
+        const float cx = el->frame.x + el->frame.width * 0.5f;
+        const float cyT = el->frame.y + el->frame.height * 0.5f;
+        core::queuePointerMotion(window, cx, cyT, core::PointerButtons{},
+                                 core::KeyModifiers{});
+        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
+                                 core::PointerAction::Press, {});
+        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
+                                 core::PointerAction::Release, {});
+        for (int i = 0; i < 6; ++i) composeFrame();
+    };
+
     // ── 组 A：主控台四格真数值（种子在场）──
     composeFrame();
     composeFrame();
@@ -262,14 +281,25 @@ int main(int argc, char* argv[]) {
             std::cout << "DBG toggle.text=MISSING" << NL;
         }
     }
-    A.textEq("memory.health.h2.value", "3/5 条");       // 注入预算环文本
-    A.textEq("memory.health.h2.chars", "214/500 字");
-    A.textEq("memory.health.h1.value", "71");           // 触发线评测读数
-    A.textHas("memory.health.h1.chip", "低于升级线");    // 71 < 85 黄标
-    A.textEq("memory.health.h0.chiptext", "强制开启 · 已锁定");
-    A.exists("memory.health.h3.value");                 // 存储概览格
-    A.textHas("memory.usage.nums", "今日");
+    // need:380 B-4 主控台收敛：健康四格 / 消耗带 / 运行明细折叠区不再渲染
+    for (const char* id : {"memory.health.card0", "memory.health.h1.value",
+                           "memory.health.h3.value", "memory.usage.nums",
+                           "memory.details.head"}) {
+        if (A.elem(id) != nullptr) {
+            std::cerr << "memory_probe: FAIL——主控台收敛后仍渲染 " << id
+                      << "\n";
+            A.passed = false;
+        }
+    }
     A.textHas("memory.tabs.0.text", "主控台");  // wtab 文本节点契约 <id>.text
+    // 「跑评测」并入引擎详情弹窗：点详情 → 弹窗开 + 种子评测 71% 读数 + 按钮在场
+    clickEl("memory.eng.detail.bg");
+    composeFrame();
+    A.exists("memory.dialog.engine");
+    A.textHas("memory.dialog.engine.eval.v", "71");  // 触发线读数（种子 71%）
+    A.exists("memory.dialog.engine.eval.run");       // 跑评测按钮（弹窗内）
+    clickEl("memory.dialog.engine.cancel");          // 关弹窗回主控台
+    A.exists("memory.console.scroll");
     for (int i = 0; i < 8; ++i) composeFrame();  // 过渡动画收敛后落图
     shoot("memory-console.png", &A.passed);
 
@@ -277,24 +307,6 @@ int main(int argc, char* argv[]) {
     // interactive 整面盖住 TAB 行吞点击）。隔帧成对口径（schedule_ui_probe
     // 同款）：队列逐帧消费，Press/Release 隔帧；同时断言 TAB 中心命中目标 =
     // TAB hit 面而非滚动根。──
-    // need:181 分层后通用点击助手：折叠组头/详情按钮/向导入口都走这里
-    auto clickEl = [&](const char* id) {
-        const auto* el = A.elem(id);
-        if (el == nullptr) {
-            std::cerr << "memory_probe: FAIL——'" << id << "' 缺失\n";
-            A.passed = false;
-            return;
-        }
-        const float cx = el->frame.x + el->frame.width * 0.5f;
-        const float cyT = el->frame.y + el->frame.height * 0.5f;
-        core::queuePointerMotion(window, cx, cyT, core::PointerButtons{},
-                                 core::KeyModifiers{});
-        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
-                                 core::PointerAction::Press, {});
-        core::queuePointerButton(window, cx, cyT, core::PointerButton::Left,
-                                 core::PointerAction::Release, {});
-        for (int i = 0; i < 6; ++i) composeFrame();
-    };
     auto clickTab = [&](int idx, const char* hitId) {
         const auto* tab = A.elem("memory.tabs." + std::to_string(idx));
         if (tab == nullptr) {
@@ -625,7 +637,7 @@ int main(int argc, char* argv[]) {
         };
         const CardCheck checks[2] = {
             {"memory.cfg.grp3.body", "memory.cfg.data.clear", "安全隐私组"},
-            {"memory.cfg.grp2.body", "memory.cfg.usage.warn", "用量组"},
+            {"memory.cfg.grp2.body", "memory.cfg.usage.hint", "用量组"},
         };
         for (const auto& c : checks) {
             const auto* card = A.elem(c.card);

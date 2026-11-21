@@ -767,20 +767,6 @@ struct TmpDir {
     }
 };
 
-// 小工具工厂：给定 schemaJson 的 JSON 字符串，造一个最小 ITool
-class MiniTool : public core::ITool {
-public:
-    std::string name_, schema_;
-    bool destructive_ = false;
-    core::Result<core::ToolResult> result_;
-    std::string name() const override { return name_; }
-    std::string schemaJson() const override { return schema_; }
-    bool isDestructive() const override { return destructive_; }
-    core::Result<core::ToolResult> execute(const core::ToolArgs&) override {
-        return result_;
-    }
-};
-
 } // namespace
 
 // ========================================================================

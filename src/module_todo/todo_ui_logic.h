@@ -32,8 +32,6 @@ constexpr float kColumnHeaderHeight = 56.0f;
 // 序号徽章（每列独立 1..n，纯渲染期计算）。正圆 24px，卡左缘 12px 内缩、8px gap 接标题
 constexpr float kCardOrdinalBadgeSize = 24.0f;
 constexpr float kCardOrdinalBadgeGap = 8.0f;
-// 徽章 + 间距占用的水平宽度（标题等右侧内容的减量）
-constexpr float kCardOrdinalBadgeHoriz = kCardOrdinalBadgeSize + kCardOrdinalBadgeGap;
 
 // 列内容区水平内边距（16px 网格）。卡左缘 = 列内容左缘 + 本常量，卡宽/占位条宽同源
 constexpr float kColumnContentInset = 16.0f;
@@ -706,7 +704,5 @@ inline constexpr ColorPreset kColorPresets[] = {
     {"dusty-blue",  "雾蓝"},
     {"rose-red",    "玫瑰红"},
 };
-inline constexpr int kColorPresetCount =
-    static_cast<int>(sizeof(kColorPresets) / sizeof(kColorPresets[0]));
 
 } // namespace module::todo::ui

@@ -40,7 +40,6 @@ struct ProfileListActions {
     std::function<void()> onImportCurrent;   // 「导入」：读 ~/.claude/settings.json 预填新建表单（need332④）
     // 右键菜单动作：菜单是这些动作的唯一 UI 入口
     std::function<void(const Profile&)> requestEdit;              // 编辑
-    std::function<void(int64_t)> requestDuplicate;                // 建副本
     // 复制配置：入参带 Profile（序列化需要 baseUrl/authField/槽位/extra_env）；右键菜单是唯一入口
     std::function<void(const Profile&)> requestCopyConfig;
     std::function<void(int64_t, const std::string&)> requestDelete;  // 删除

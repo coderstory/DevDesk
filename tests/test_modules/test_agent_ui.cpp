@@ -459,7 +459,7 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
     // 常驻元素
     DOCTEST_CHECK(ui2.find("agent.dialog.task.cancel") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.save") != nullptr);
-    // W4 C1：上一步/测试按钮条件渲染——step 0 不渲染 prev，测试仅末步渲染
+    // W4 C1：上一步按钮条件渲染——step 0 不渲染 prev（need:380 B-3：测试试运行按钮已砍）
     DOCTEST_CHECK(ui2.find("agent.dialog.task.prev") == nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.test") == nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.close") != nullptr);
