@@ -1401,6 +1401,106 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ── N. bug399 round8：滚动重排按位移步长节流验证（composeOnScrollOffsetChange）──
+    // ①单格滚轮 compose 次数：修前惯性每帧 tick 都置重排（8 帧 → ~8 次），修后
+    //    位移 ~600px / 步长 256 → ~2 次；②惯性期重排总耗时与主线程占用率对比；
+    // ③视觉平移由渲染期 transform 逐帧生效（J 段像素断言守）。夹具/窗档同 L。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("N: 定位不到仓库根（tests/ui_driver/fixtures/bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& ns =
+                *module::notepad::detail::sessionRegistry().back();
+            ns.previewOn = true;
+            const float nw = 900.0f;
+            const float nh = 640.0f;
+            int nCompCount = 0;
+            double nCompMs = 0.0;
+            double nCompMaxMs = 0.0;
+            auto timedN = [&] {
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(ns.pageId, nw, nh,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(ns, u, screen);
+                                });
+                const double ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - t0).count();
+                ++nCompCount;
+                nCompMs += ms;
+                nCompMaxMs = std::max(nCompMaxMs, ms);
+            };
+            timedN();
+            timedN();  // 首帧建树 + 布局稳态（不计入滚动期统计）
+            const double nFirstMs = nCompMs;
+            nCompCount = 0;
+            nCompMs = 0.0;
+            nCompMaxMs = 0.0;
+            const core::dsl::Element* nsc = ui->find(module::notepad::kNotepadPreviewId);
+            std::string perEvent;
+            int scrollComposes = 0;
+            const auto nT0 = std::chrono::steady_clock::now();
+            if (nsc != nullptr) {
+                const float cx = nsc->frame.x + nsc->frame.width * 0.5f;
+                const float cy = nsc->frame.y + nsc->frame.height * 0.5f;
+                for (int i = 0; i < 8; ++i) {
+                    const int before = nCompCount;
+                    core::queuePointerMotion(window, cx, cy, {}, {});
+                    probe::pollOnce(window, runtime);
+                    probe::queueScroll(window, runtime, 0.0, -20.0);
+                    probe::pollOnce(window, runtime);
+                    for (int f = 0; f < 8; ++f) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                        probe::pollOnce(window, runtime);
+                        if (runtime.composeRequested()) {
+                            timedN();
+                            probe::pollOnce(window, runtime);
+                        }
+                    }
+                    perEvent += (i == 0 ? "" : "/") + std::to_string(nCompCount - before);
+                }
+                scrollComposes = nCompCount;
+                // 滚轮停止后残余惯性继续推进位移，直到不再请求重排（节流后可能
+                // 再跨 1-2 个步长）；收尾期计入总次数但不进「每格」判据。
+                for (int f = 0; f < 120; ++f) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                    probe::pollOnce(window, runtime);
+                    if (!runtime.composeRequested()) break;
+                    timedN();
+                    probe::pollOnce(window, runtime);
+                }
+            }
+            const double nWallMs = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - nT0).count();
+            std::cerr << "N 节流: 首帧=" << nFirstMs << "ms 滚动期compose次数=" << scrollComposes
+                      << "（每格=" << perEvent << "）含收尾总次数=" << nCompCount
+                      << " 重排均值=" << (nCompCount > 0 ? nCompMs / nCompCount : 0.0)
+                      << "ms 最大=" << nCompMaxMs << "ms 总重排=" << nCompMs
+                      << "ms 墙钟=" << nWallMs << "ms 主线程占用率="
+                      << (nWallMs > 0.0 ? (nCompMs / nWallMs * 100.0) : 0.0) << "%\n";
+            if (nsc == nullptr) {
+                passed = fail("N: 预览不可滚动（夹具/窗档不满足复现前件）");
+            } else if (scrollComposes > 32) {
+                passed = fail("N: 滚动期重排未按位移步长节流（8 格 compose " +
+                              std::to_string(scrollComposes) + " 次 > 32 = 修前红判据）");
+            } else {
+                std::cerr << "N: PASS — 8 格滚轮滚动期重排 " << scrollComposes
+                          << " 次（修前每帧一次），视觉位移不受影响（J 像素断言）\n";
+            }
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
     probe::captureIfRequested(args, window, runtime, &passed);
 
