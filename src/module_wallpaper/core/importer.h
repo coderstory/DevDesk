@@ -131,11 +131,17 @@ public:
     virtual ~ImportLedger() = default;
 
     // INSERT OR IGNORE 语义：重复登记同一签名是 no-op 不是错误。
-    virtual bool insert(const std::string& signature, double importedAtEpoch) = 0;
+    // folder = 登记时所在的目标目录（归一化后的路径）：对账要按目录过滤。
+    virtual bool insert(const std::string& signature, double importedAtEpoch,
+                        const std::string& folder) = 0;
     // 对账补墓碑后删行（一次性）。
     virtual bool remove(const std::string& signature) = 0;
-    // 读全部签名。任何错误一律返回空 = 当空台账（坏库不得拦导入）。
-    virtual std::vector<std::string> all() = 0;
+    // 读**指定目录**登记过的签名。必须按目录过滤：台账是全局单库，对账拿签名里的
+    // 文件名去「当前」目标目录探存在性——不过滤的话，用户把壁纸目录从 A 换成 B
+    // 后，下一轮导入会把 A 的全部历史条目当「已删除」批量补墓碑（文件其实还在 A，
+    // 而墓碑只能从「目标已存在」分支解除，切回 A 前它们被挡住）。
+    // 任何错误一律返回空 = 当空台账（坏库不得拦导入）。
+    virtual std::vector<std::string> allForFolder(const std::string& folder) = 0;
 };
 
 } // namespace module::wallpaper::importer

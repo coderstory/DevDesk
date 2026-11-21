@@ -31,6 +31,7 @@
 
 #include "core/paths.h"
 #include "core/sqlite_db.h"
+#include "module_wallpaper/core/folder_policy.h"  // normalizeFolderPath（台账目录键）
 
 namespace module::wallpaper::importer {
 namespace {
@@ -51,11 +52,14 @@ bool signatureOf(const fs::path& path, std::string* signature) {
 }
 
 // 两张表同库同表空间（墓碑 + 导入台账）：一次 open 建齐，缺一张即视为坏库。
+// imported_signature.folder = 登记时所在目标目录，对账按目录过滤（否则切目录会
+// 把旧目录全部条目误判成「已删除」）。
 constexpr const char* kSchemaSql =
     "CREATE TABLE IF NOT EXISTS deleted_video_signature ("
     "signature TEXT PRIMARY KEY, deleted_at REAL NOT NULL);"
     "CREATE TABLE IF NOT EXISTS imported_signature ("
-    "signature TEXT PRIMARY KEY, imported_at REAL NOT NULL);";
+    "signature TEXT PRIMARY KEY, imported_at REAL NOT NULL,"
+    "folder TEXT NOT NULL DEFAULT '');";
 
 // 打开 + 建表。出参 corrupt=true 表示「库内容确实是坏的」（可安全删库重建）。
 // 其它失败（BUSY/权限/IO）一律 corrupt=false——**删库是最后手段，只能在确认坏库时做**。
@@ -82,6 +86,15 @@ std::unique_ptr<core::data::SqliteDb> openAndEnsureSchema(const fs::path& path,
                        code == core::ErrorCode::Internal;  // SQLITE_ERROR = 非库文件/表结构坏
         }
         return nullptr;
+    }
+    // 老库迁移：need356 追加的 folder 列在旧版库里不存在（CREATE TABLE IF NOT EXISTS
+    // 不会补列）。ALTER 失败说明列已存在（重复执行）或库异常——都不影响既有功能，
+    // 只是老行 folder 为空串 → 对账按目录过滤时看不到它们（等价「不参与对账」），
+    // 下一轮重新导入会以新 folder 登记。忽略返回值即可（不拦导入）。
+    if (auto alters = db->exec(
+            "ALTER TABLE imported_signature ADD COLUMN folder TEXT NOT NULL DEFAULT ''");
+        alters.isFail()) {
+        // 仅日志：列已存在的报错是常态（每次 open 都会跑这条）。
     }
     return db;
 }
@@ -158,17 +171,19 @@ public:
     explicit SqliteImportLedger(std::string databasePath)
         : databasePath_(std::move(databasePath)) {}
 
-    bool insert(const std::string& signature, double importedAtEpoch) override {
+    bool insert(const std::string& signature, double importedAtEpoch,
+                const std::string& folder) override {
         if (signature.empty()) return false;
         auto db = openOrCreate(databasePath_);
         if (db == nullptr) return false;
         auto statement = db->prepare(
-            "INSERT OR IGNORE INTO imported_signature (signature, imported_at) "
-            "VALUES (?1, ?2)");
+            "INSERT OR IGNORE INTO imported_signature (signature, imported_at, folder) "
+            "VALUES (?1, ?2, ?3)");
         if (statement.isFail()) return false;
         core::data::Statement& handle = statement.value();
         if (handle.bind(1, signature).isFail()) return false;
         if (handle.bind(2, importedAtEpoch).isFail()) return false;
+        if (handle.bind(3, folder).isFail()) return false;
         return handle.step().isOk();
     }
 
@@ -184,12 +199,16 @@ public:
         return handle.step().isOk();
     }
 
-    std::vector<std::string> all() override {
+    std::vector<std::string> allForFolder(const std::string& folder) override {
         std::vector<std::string> out;
         auto db = openOrCreate(databasePath_);
         if (db == nullptr) return out;  // 读静默：坏库当空台账
-        auto statement = db->prepare("SELECT signature FROM imported_signature");
+        // 只取当前目录登记的行：台账是全局单库，别的目录的历史行不能拿来对本目录
+        // 做「目标已消失」判定（否则切目录会把旧目录全部条目批量补墓碑）。
+        auto statement = db->prepare(
+            "SELECT signature FROM imported_signature WHERE folder = ?1");
         if (statement.isFail()) return out;
+        if (statement.value().bind(1, folder).isFail()) return out;
         auto rows = statement.value().fetchAll();
         if (rows.isFail()) return out;
         for (const core::data::SqlRow& row : rows.value()) {
@@ -346,6 +365,10 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
 
     SqliteLedger ledger(defaultTombstoneDatabasePath());
     SqliteImportLedger importLedger(defaultTombstoneDatabasePath());
+    // 台账目录键（归一化）：登记与对账都用它——台账是全局单库，必须按目录分区，
+    // 否则用户把壁纸目录从 A 换成 B 后，A 的历史行会被当「目标已消失」批量补墓碑。
+    const std::string folderKey =
+        folder_policy::normalizeFolderPath(destination.string());
 
     // ① 台账对账（need356 F-08）：台账记着「导入成功过」，但目标文件夹已找不到同名文件
     // → 用户删了它（可能是 Finder 删 + 清空废纸篓，废纸篓回填看不见）→ 补墓碑并删台账行。
@@ -353,7 +376,8 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
     // 读不到台账 = 空台账，跳过整步（坏库不得拦导入）。
     {
         if (cancel != nullptr && cancel->load()) return report;
-        for (const std::string& signature : importLedger.all()) {
+        // 只对账**本目录**登记过的条目（folderKey 见上方说明）。
+        for (const std::string& signature : importLedger.allForFolder(folderKey)) {
             const std::string name = signatureFileName(signature);
             if (name.empty()) continue;
             std::error_code existsEc;
@@ -447,7 +471,8 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
                 // F-07：拷贝成功即刻登记台账（逐条即时，不攒到收尾——中途取消也要保住
                 // 已导入的那些，否则下一轮它们会被当「目标已存在」跳过而台账永远缺行）。
                 const bool recorded = importLedger.insert(
-                    facts.signature, static_cast<double>(std::time(nullptr)));
+                    facts.signature, static_cast<double>(std::time(nullptr)),
+                    folderKey);
                 (void)recorded;  // 台账写失败不阻断导入、不改摘要数字
             } else {
                 ++report.failedCopy;

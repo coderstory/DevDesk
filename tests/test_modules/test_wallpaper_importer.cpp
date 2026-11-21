@@ -10,6 +10,7 @@
 #include "module_wallpaper/core/presentation.h"
 
 #include <cstddef>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -262,33 +263,44 @@ REGISTER_TEST(wallpaper_importer_reconcile_decides_missing_target,
 
 namespace {
 
-// 内存台账：语义对齐 SqliteImportLedger（insert = INSERT OR IGNORE，remove 幂等）。
+// 内存台账：语义对齐 SqliteImportLedger（insert = INSERT OR IGNORE，remove 幂等，
+// 读取按 directory 过滤——台账全局单库，对账只认本目录的登记行）。
 class FakeImportLedger final : public module::wallpaper::importer::ImportLedger {
 public:
-    bool insert(const std::string& signature, double) override {
+    bool insert(const std::string& signature, double,
+                const std::string& folder) override {
         if (signature.empty()) return false;
         signatures_.insert(signature);  // 重复插入 = no-op 且不报错（同 INSERT OR IGNORE）
+        folders_[signature] = folder;
         return true;
     }
     bool remove(const std::string& signature) override {
         signatures_.erase(signature);
+        folders_.erase(signature);
         return true;
     }
-    std::vector<std::string> all() override {
-        return std::vector<std::string>(signatures_.begin(), signatures_.end());
+    std::vector<std::string> allForFolder(const std::string& folder) override {
+        std::vector<std::string> out;
+        for (const auto& sig : signatures_) {
+            auto it = folders_.find(sig);
+            if (it != folders_.end() && it->second == folder) out.push_back(sig);
+        }
+        return out;
     }
     std::size_t size() const { return signatures_.size(); }
 
 private:
     std::set<std::string> signatures_;
+    std::map<std::string, std::string> folders_;
 };
 
 // 模拟 runHanamiImport 第①步：台账 → 签名拆名 → 问「目标还在吗」→ 消失则补墓碑并删行。
 // 返回本轮补的墓碑（= 平台层会写进墓碑库的那些签名）。
 std::vector<std::string> reconcileFake(FakeImportLedger& ledger,
+                                       const std::string& folder,
                                        const std::set<std::string>& targetNames) {
     std::vector<std::string> tombstoned;
-    for (const std::string& signature : ledger.all()) {
+    for (const std::string& signature : ledger.allForFolder(folder)) {
         const std::string name = module::wallpaper::importer::signatureFileName(signature);
         if (name.empty()) continue;
         const bool targetExists = targetNames.count(name) != 0;
@@ -304,34 +316,42 @@ std::vector<std::string> reconcileFake(FakeImportLedger& ledger,
 
 REGISTER_TEST(wallpaper_importer_ledger_record_and_remove_contract,
               "wallpaper importer: 台账契约——登记幂等、对账只补消失项且补后不留行", {
+    const std::string dirA = "/videos/a";
+    const std::string dirB = "/videos/b";
     const std::string kept = wp::importer::makeSignature("kept.mp4", 10);
     const std::string gone = wp::importer::makeSignature("gone.mp4", 20);
 
     FakeImportLedger ledger;
-    DOCTEST_CHECK(ledger.insert(kept, 1.0));
-    DOCTEST_CHECK(ledger.insert(gone, 2.0));
+    DOCTEST_CHECK(ledger.insert(kept, 1.0, dirA));
+    DOCTEST_CHECK(ledger.insert(gone, 2.0, dirA));
     DOCTEST_CHECK_EQ(ledger.size(), 2u);
 
     // F-07：同一签名重复登记不产生重复行（INSERT OR IGNORE 语义）。
-    DOCTEST_CHECK(ledger.insert(kept, 3.0));
+    DOCTEST_CHECK(ledger.insert(kept, 3.0, dirA));
     DOCTEST_CHECK_EQ(ledger.size(), 2u);
     // 空签名不入账。
-    DOCTEST_CHECK_FALSE(ledger.insert(std::string(), 1.0));
+    DOCTEST_CHECK_FALSE(ledger.insert(std::string(), 1.0, dirA));
     DOCTEST_CHECK_EQ(ledger.size(), 2u);
 
     // F-08：目标目录只剩 kept.mp4 → 只补 gone 的墓碑，kept 行原样保留。
-    const std::vector<std::string> seeded = reconcileFake(ledger, {"kept.mp4"});
+    const std::vector<std::string> seeded = reconcileFake(ledger, dirA, {"kept.mp4"});
     DOCTEST_CHECK_EQ(seeded.size(), 1u);
     if (!seeded.empty()) DOCTEST_CHECK_EQ(seeded.front(), gone);
     DOCTEST_CHECK_EQ(ledger.size(), 1u);   // 补过墓碑的行已移除
-    DOCTEST_CHECK_EQ(ledger.all().front(), kept);
+    DOCTEST_CHECK_EQ(ledger.allForFolder(dirA).front(), kept);
 
     // 再对账一次：没有可补项（幂等，不重复补）。
-    DOCTEST_CHECK_EQ(reconcileFake(ledger, {"kept.mp4"}).size(), 0u);
+    DOCTEST_CHECK_EQ(reconcileFake(ledger, dirA, {"kept.mp4"}).size(), 0u);
     DOCTEST_CHECK_EQ(ledger.size(), 1u);
 
+    // **切目录不误判**（台账目录维度）：dirA 的行拿到 dirB 对账时看不见——
+    // 否则切目录会把旧目录全部条目当「已删除」批量补墓碑，文件其实还在。
+    DOCTEST_CHECK_EQ(ledger.allForFolder(dirB).size(), 0u);
+    DOCTEST_CHECK_EQ(reconcileFake(ledger, dirB, {}).size(), 0u);
+    DOCTEST_CHECK_EQ(ledger.size(), 1u);  // dirA 的那条毫发无损
+
     // 目标全消失（用户删空）→ 余下那条也补墓碑（F-08 全空目录情形）。
-    DOCTEST_CHECK_EQ(reconcileFake(ledger, {}).size(), 1u);
+    DOCTEST_CHECK_EQ(reconcileFake(ledger, dirA, {}).size(), 1u);
     DOCTEST_CHECK_EQ(ledger.size(), 0u);
     return true;
 })

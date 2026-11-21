@@ -587,6 +587,17 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp")
+    elseif(_probe_name STREQUAL "wallpaper_delete_dialog_probe")
+        # 真渲删除确认弹窗（need356 F-02 实物证据）：弹窗本体在 app 级桥缝
+        # wallpaper_delete_bridge.cpp（不在 module_* 链接集）。probe 侧自给
+        # app::dslAppConfig / app::compose 空桩（同 agent_dialog_probe），
+        # 故不拖 app_sidebar.cpp / app_assembly.cpp。
+        add_executable(${_probe_name} "${_probe_source}"
+            "${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp")
     else()
         # mcp_service_bridge.cpp：probe 全体链 devdesk_module_settings，settings 引用
         # app::mcp::* 桥符号后缝必须单独编进来（与 module_toggle_bridge.cpp 同款理由）
@@ -679,6 +690,17 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # 建一个探针同等要求的隐藏窗，建不出来且错误码属「平台/能力不可用」才跳）。
     # 本行只负责告诉 ctest「77 = 跳过」，不负责判定；少这一行 77 会被当失败。
     set_tests_properties(${_probe_name} PROPERTIES SKIP_RETURN_CODE 77)
+    # need356 F-02 删除确认弹窗实物证据：带 --shot-* 的变体落两张真渲染 PNG
+    #（视频态 / 图片态），路径指向仓库 evidence/ 目录（可提交的证据物）。
+    # 默认那条不带参数只跑结构断言（零落盘），这条负责「开关真能出图」。
+    if(_probe_name STREQUAL "wallpaper_delete_dialog_probe")
+        add_test(NAME ${_probe_name}_shots
+            COMMAND ${_probe_name}
+                --shot-video "${CMAKE_SOURCE_DIR}/evidence/2026-11-21-need356/delete-dialog-video.png"
+                --shot-image "${CMAKE_SOURCE_DIR}/evidence/2026-11-21-need356/delete-dialog-image.png")
+        set_tests_properties(${_probe_name}_shots PROPERTIES LABELS "probe")
+        set_tests_properties(${_probe_name}_shots PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
     # --screenshot 变体：默认那条不带参数走的是「零开销不写文件」路径，光靠它证
     # 不了开关本身能落图。补一条带参的（落图留在构建目录，build/ 已 gitignore）。
     if(_probe_name STREQUAL "screenshot_probe")
