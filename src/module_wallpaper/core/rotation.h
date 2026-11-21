@@ -50,6 +50,15 @@ public:
     // 用户「下一个」：任何模式都推进（单循环也换到清单下一条）。
     std::optional<std::string> advanceNow(RotationClock::time_point now);
 
+    // 回滚：把当前项定位回指定路径（need356 F-04：删除失败时把刚切走的那一项装回来）。
+    // items_ 里找不到 → false（调用方放弃回滚）；找到则置当前下标、清空洗牌袋
+    //（旧袋按删除前的清单洗出，继续用会跳项）、按新起点重排计时。
+    bool focusPath(const std::string& path, RotationClock::time_point now);
+
+    // 从清单剔除指定路径（need356 删除成功：重扫是异步的，中间 250ms tick 或用户
+    // 「下一个」可能把已删路径重新装载回来）。幂等；路径不在清单返回 false。
+    bool dropItem(const std::string& path);
+
     // 距下次轮换秒数；不轮换（未运行 / 单循环 / 条目 <= 1）返回 -1。
     int secondsUntilNextRotation(RotationClock::time_point now) const;
     // 0..1；不轮换时为 0。暂停时冻结在暂停那一刻的值。

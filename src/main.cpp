@@ -57,6 +57,7 @@
 #include "notepad_assoc_logic.h"        // F-18 决策矩阵（纯函数，单测锁定）
 #include "settings_config.h"
 #include "wallpaper_tray_bridge.h"
+#include "wallpaper_delete_bridge.h"  // 壁纸素材删除确认弹窗（need356 F-02）
 
 #include <components/styledmenu.h>
 
@@ -484,11 +485,23 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                     static_cast<::module::wallpaper::WallpaperModule*>(
                         wallpaper.get());
                 if (wallpaperModule == nullptr) {
-                    return {false, false, false};
+                    return {false, false, false, false, false};
                 }
                 const auto snapshot = wallpaperModule->service().snapshot();
+                // PRD §6.1：扫描中必须隐藏删除项——重扫期间 availability 仍是上一次的
+                // Playing、poolCount 仍是旧值，只看这两项会让「扫描中」这个态漏网
+                // （此时按旧池推进轮换会删错项 + 叠出二次扫描）。
+                const bool canDelete =
+                    !snapshot.scanning &&
+                    snapshot.availability ==
+                        ::module::wallpaper::Availability::Playing &&
+                    snapshot.poolCount > 0;
+                const bool currentItemIsImage =
+                    snapshot.currentItemImage ||
+                    snapshot.kind == ::module::wallpaper::WallpaperKind::Image;
                 return {true, snapshot.manualPaused,
-                        wallpaperModule->service().isRunning()};
+                        wallpaperModule->service().isRunning(), canDelete,
+                        currentItemIsImage};
             },
             +[](app::tray::WallpaperTrayCommand command) {
                 auto* wallpaperModule =
@@ -509,8 +522,59 @@ void toastNoticeShowImpl(const std::string& title, const std::string& body) {
                     case app::tray::WallpaperTrayCommand::Stop:
                         service.stop();
                         break;
+                    case app::tray::WallpaperTrayCommand::DeleteCurrent:
+                        service.requestDeleteCurrent();
+                        break;
                 }
             });
+
+        // 壁纸删除确认弹窗桥（need356 F-02）：托盘删除项 → openConfirm（先弹确认）；
+        // 确认主钮 → DeleteCurrent 命令（经上面的托盘桥 handler 进 service）。
+        // 目标快照只供弹窗展示文件名，执行时服务重新取当前项。
+        app::wallpaper_delete::setShowHandler(&app::requestShow);
+        app::wallpaper_delete::setHandlers(
+            +[]() -> app::wallpaper_delete::DeleteTarget {
+                auto* wallpaperModule =
+                    static_cast<::module::wallpaper::WallpaperModule*>(
+                        wallpaper.get());
+                if (wallpaperModule == nullptr) {
+                    return {};
+                }
+                ::module::wallpaper::WallpaperService& service =
+                    wallpaperModule->service();
+                const auto snapshot = service.snapshot();
+                // 与托盘 provider 同口径：扫描中不给删（重扫窗口里 availability 与
+                // poolCount 都还是旧值，放行会让确认后按旧池推进 + 叠出二次扫描）。
+                if (snapshot.scanning ||
+                    snapshot.availability !=
+                        ::module::wallpaper::Availability::Playing ||
+                    snapshot.poolCount <= 0) {
+                    return {};
+                }
+                const bool image = snapshot.currentItemImage ||
+                                   snapshot.kind ==
+                                       ::module::wallpaper::WallpaperKind::Image;
+                return {true, snapshot.currentItemFileName, image};
+            },
+            +[]() {
+                auto* wallpaperModule =
+                    static_cast<::module::wallpaper::WallpaperModule*>(
+                        wallpaper.get());
+                if (wallpaperModule == nullptr) {
+                    return;
+                }
+                wallpaperModule->service().requestDeleteCurrent();
+            });
+        // 删除结果回主线程：worker 经此缝入桥结果队列，主窗 compose 每帧 drain → toast。
+        {
+            auto* wallpaperModule =
+                static_cast<::module::wallpaper::WallpaperModule*>(
+                    wallpaper.get());
+            if (wallpaperModule != nullptr) {
+                wallpaperModule->service().setDeleteResultHandler(
+                    &app::wallpaper_delete::postResult);
+            }
+        }
 
         // MCP 装配段：注册内置工具（一次，常驻注册表）+ 注入桥 + 按开关启动。
         // 启动失败只 LOG_ERROR 不弹窗（启动期与代理自启同口径）。
@@ -759,7 +823,9 @@ std::vector<::core::tray::TrayMenuSpecItem> currentTraySpec() {
         module::settings::moduleEnabled(
             gatingConfigSnapshot(), module::settings::kModuleIdWallpaper);
     return ::core::tray::trayMenuSpec(wallpaperGroupOn,
-                                      wallpaperTray.manualPaused);
+                                      wallpaperTray.manualPaused,
+                                      wallpaperTray.canDelete,
+                                      wallpaperTray.currentItemIsImage);
 }
 
 // 托盘菜单唯一数据源 trayMenuSpec；动作→页面映射在 app_assembly（pageForTrayAction）
@@ -783,6 +849,10 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
         case Action::WallpaperStop:
             app::tray::dispatchWallpaperTrayCommand(
                 app::tray::WallpaperTrayCommand::Stop);
+            break;
+        case Action::WallpaperDeleteCurrent:
+            // 先弹确认，不直接删（确认主钮才走 DeleteCurrent 命令）。
+            app::wallpaper_delete::openConfirm();
             break;
         case Action::Exit:
             app::requestExit();

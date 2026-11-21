@@ -13,4 +13,8 @@ std::string osName();
 // 系统架构名："x86_64" / "arm64" / "未知架构"
 std::string archName();
 
+// 快捷键修饰键显示名：macOS = "⌘"，Windows / Linux = "Ctrl"。界面快捷键文案唯一来源
+// （与 EUI-NEO KeyModifiers::shortcut() 的按键语义同口径，见 input_types.h）。
+std::string shortcutModifierLabel();
+
 } // namespace core::platform_info

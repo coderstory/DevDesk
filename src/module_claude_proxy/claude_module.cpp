@@ -314,6 +314,13 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.requestSetActive = [this](int64_t id) { doSetActive(id); };
+        // bug369：错误态「重试」只做重查，不碰任何写态。标脏 + 把节流窗口起点
+        // 归零，下一帧 refreshDataCache 立即发后台刷新（否则最多再等 200ms）。
+        // 不清 cachedProfilesError_：清掉会先闪一帧「暂无 Profile」假空态。
+        a.onRetryLoad = [this] {
+            state_.list.dataDirty_ = true;
+            state_.list.lastRefreshPost_ = {};
+        };
         return a;
     }
 

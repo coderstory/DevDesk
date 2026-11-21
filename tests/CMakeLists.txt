@@ -10,6 +10,9 @@ add_executable(devdesk_tests
     # 退出丢稿防线桥（need:291）：app_sidebar.cpp（本目标直编）引用
     # app::quit_save::drawConfirmDialog；test_channels.cpp 引用 guard 符号
     ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
+    # 壁纸删除确认弹窗桥（need356 F-02）：app_sidebar.cpp 同款直编引用
+    # app::wallpaper_delete::*；test_wallpaper_delete.cpp 直测桥与文案映射
+    ${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp
     # 调度通知渠道层（波 S5）：渠道注册表 + 四个内置渠道，随测试二进制直编
     #（src/module_schedule 模块装配由宿主波注册，这里只覆盖渠道层）
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channel_registry.cpp
@@ -47,6 +50,8 @@ add_executable(devdesk_tests
     test_platform/test_json.cpp
     test_platform/test_github_api.cpp
     test_platform/test_utf8.cpp
+    # bug362：paths::toUtf8（fs::path → UTF-8）跨平台字节口径
+    test_platform/test_paths_utf8.cpp
     test_platform/test_file_open.cpp
     test_platform/test_terminal_launch.cpp
     # debt246：ConPTY v2 redist 三级查找顺序判定（terminal_conpty_lookup.h 纯函数，全平台编译）
@@ -82,6 +87,8 @@ add_executable(devdesk_tests
     test_platform/test_file_association.cpp
     # .md 文件关联 mac 版本映射（F-09）：纯逻辑（11=LS/12+=NSWorkspace），win 可编译运行
     test_platform/test_file_association_api_map.cpp
+    # 移入废纸篓平台能力（need356 B1）：POSIX 兜底诚实降级 + 签名编译期守卫
+    test_platform/test_file_trash.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_md_folder_tree.cpp
@@ -265,6 +272,8 @@ add_executable(devdesk_tests
     test_modules/test_wallpaper_ui.cpp
     # P5 尾托盘壁纸组：spec 形状/打开页映射/托盘桥/让路态暂停语义
     test_modules/test_wallpaper_tray.cpp
+    # need356 B3 删除链路：托盘 spec 8 项形态、确认弹窗桥、服务删除（注入假 mover）
+    test_modules/test_wallpaper_delete.cpp
     # macOS 平台层纯逻辑：图片四铺法几何 / 全屏覆盖率聚合 / 图片尺寸头解码
     test_modules/test_wallpaper_macos_platform.cpp
     # 从花見导入纯逻辑：文件名+字节大小签名（\x1f 歧义消除）+ 去重判定矩阵
@@ -563,6 +572,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp"
@@ -573,6 +583,17 @@ foreach(_probe_source ${_devdesk_probe_sources})
         # 为纯声明，layout_guard_kit.cpp 无 main，见上方 continue() 说明）
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_CURRENT_SOURCE_DIR}/probes/layout_guard_kit.cpp"
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp")
+    elseif(_probe_name STREQUAL "wallpaper_delete_dialog_probe")
+        # 真渲删除确认弹窗（need356 F-02 实物证据）：弹窗本体在 app 级桥缝
+        # wallpaper_delete_bridge.cpp（不在 module_* 链接集）。probe 侧自给
+        # app::dslAppConfig / app::compose 空桩（同 agent_dialog_probe），
+        # 故不拖 app_sidebar.cpp / app_assembly.cpp。
+        add_executable(${_probe_name} "${_probe_source}"
+            "${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
@@ -669,6 +690,17 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # 建一个探针同等要求的隐藏窗，建不出来且错误码属「平台/能力不可用」才跳）。
     # 本行只负责告诉 ctest「77 = 跳过」，不负责判定；少这一行 77 会被当失败。
     set_tests_properties(${_probe_name} PROPERTIES SKIP_RETURN_CODE 77)
+    # need356 F-02 删除确认弹窗实物证据：带 --shot-* 的变体落两张真渲染 PNG
+    #（视频态 / 图片态），路径指向仓库 evidence/ 目录（可提交的证据物）。
+    # 默认那条不带参数只跑结构断言（零落盘），这条负责「开关真能出图」。
+    if(_probe_name STREQUAL "wallpaper_delete_dialog_probe")
+        add_test(NAME ${_probe_name}_shots
+            COMMAND ${_probe_name}
+                --shot-video "${CMAKE_SOURCE_DIR}/evidence/2026-11-21-need356/delete-dialog-video.png"
+                --shot-image "${CMAKE_SOURCE_DIR}/evidence/2026-11-21-need356/delete-dialog-image.png")
+        set_tests_properties(${_probe_name}_shots PROPERTIES LABELS "probe")
+        set_tests_properties(${_probe_name}_shots PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
     # --screenshot 变体：默认那条不带参数走的是「零开销不写文件」路径，光靠它证
     # 不了开关本身能落图。补一条带参的（落图留在构建目录，build/ 已 gitignore）。
     if(_probe_name STREQUAL "screenshot_probe")
@@ -748,6 +780,7 @@ add_executable(devdesk_ui_driver
     ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
@@ -828,6 +861,19 @@ set_tests_properties(memory_e2e_probe PROPERTIES LABELS "live")
 # 默认门禁（BUG-7 裁决，docs/plans/probe-residue-incident.md）。目标照编、
 # SKIP_RETURN_CODE 77 登记不变；可执行仍可单独跑/带 live 标签跑。
 set_tests_properties(agent_e2e_probe PROPERTIES LABELS "live")
+
+# need356 B1/B2 两个真环境 probe 同样挪出 probe 默认门禁：它们**有真实副作用**——
+# wallpaper_trash_macos_probe 往真实 ~/.Trash 写一个文件（RAII 会删，但不该让日常门禁去动
+# 用户废纸篓），wallpaper_import_ledger_macos_probe 写真数据根下的 deleted-videos.sqlite
+# （整库备份/还原，任何失败路径都可能残留）。目标照编、SKIP_RETURN_CODE 77 登记不变；
+# 显式验收：cd build && ctest -L live -R wallpaper_trash_macos_probe。
+# 两个文件名带 _macos_probe 后缀 → GLOB 循环里非 APPLE 平台直接不编不登记（同
+# wallpaper_service_macos_probe 的平台门），故本段必须包在 APPLE 判断内，否则
+# set_tests_properties 指向不存在的测试名会让 configure 报错。
+if(APPLE)
+    set_tests_properties(wallpaper_trash_macos_probe PROPERTIES LABELS "live")
+    set_tests_properties(wallpaper_import_ledger_macos_probe PROPERTIES LABELS "live")
+endif()
 endif()
 
 # ==================== GitHub Sync 真机验收（**默认不构建**）====================
@@ -863,6 +909,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)  # 2026-11-05：保持 UNIX（github_sync_
         ${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp

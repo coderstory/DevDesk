@@ -152,6 +152,36 @@ std::optional<std::string> RotationController::advanceNow(RotationClock::time_po
     return advance(AdvanceReason::UserRequested, now);
 }
 
+bool RotationController::focusPath(const std::string& path, RotationClock::time_point now) {
+    for (std::size_t index = 0; index < items_.size(); ++index) {
+        if (items_[index] != path) continue;
+        currentIndex_ = index;
+        bag_.clear();  // 洗牌袋按删除前的清单洗出，继续用会跳项
+        reschedule(now);
+        return true;
+    }
+    return false;
+}
+
+bool RotationController::dropItem(const std::string& path) {
+    for (std::size_t index = 0; index < items_.size(); ++index) {
+        if (items_[index] != path) continue;
+        items_.erase(items_.begin() + static_cast<std::ptrdiff_t>(index));
+        // 洗牌袋里记的是旧下标，删掉一项后全部错位 → 直接清空重洗。
+        bag_.clear();
+        // 删的是当前项之前/本身：下标前移，避免越界或跳到无关项。
+        if (index < currentIndex_) {
+            --currentIndex_;
+        } else if (currentIndex_ >= items_.size()) {
+            currentIndex_ = items_.empty() ? 0 : items_.size() - 1;
+        }
+        // 清单空了没有可播项：退出运行态（下次扫描回来由 start 重新起一轮）。
+        if (items_.empty()) running_ = false;
+        return true;
+    }
+    return false;
+}
+
 int RotationController::secondsUntilNextRotation(RotationClock::time_point now) const {
     if (!running_ || mode_ == PlayMode::LoopSingle || items_.size() <= 1) return -1;
     const std::chrono::milliseconds remaining = remainingLocked(now);

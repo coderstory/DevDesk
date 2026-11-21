@@ -5,7 +5,7 @@
 // 桩可开关模块。两条路径：
 //
 //   点击路径 = 真 settings 模块实例 + 真卡片 compose，真点 agent 开关
-//         （settings.card.modules.sw.4.track 命中区中心，坐标取 compose 后的 DOM
+//         （settings.card.modules.sw.agent.track 命中区中心，坐标取 compose 后的 DOM
 //         frame）→ settings 模块 applyModuleEnabled（persist + onModuleToggled）
 //         → app::toggle 桥 → 本 probe 注入的 handler（形态同生产接线）→ 侧边栏
 //         当帧反映 + 当前页=Agent 时回首页 redirect。覆盖「redirect 发生在点击
@@ -232,10 +232,10 @@ int main(int argc, char* argv[]) {
         composeFrame();
         // wswitch（§4.4）clickable 元素 id = <id>.track（W4 改动：toggleSwitch→wswitch）
         const auto* agentSwitch =
-            ui != nullptr ? ui->find("settings.card.modules.sw.4.track")
+            ui != nullptr ? ui->find("settings.card.modules.sw.agent.track")
                           : nullptr;
         check(agentSwitch != nullptr,
-              "§0 settings.card.modules.sw.4.track（agent 开关）应存在");
+              "§0 settings.card.modules.sw.agent.track（agent 开关）应存在");
         if (agentSwitch != nullptr) {
             // —— 真点击 on：侧边栏条目当帧出现
             clickElement(*agentSwitch);
@@ -245,7 +245,7 @@ int main(int argc, char* argv[]) {
                   "§0 真点击 on：Agent 条目应当帧出现");
             // —— 真点击 off：侧边栏条目当帧消失
             const auto* switchAgain =
-                ui != nullptr ? ui->find("settings.card.modules.sw.4.track")
+                ui != nullptr ? ui->find("settings.card.modules.sw.agent.track")
                               : nullptr;
             if (switchAgain != nullptr) {
                 clickElement(*switchAgain);
@@ -298,15 +298,11 @@ int main(int argc, char* argv[]) {
     }
     const float homeY = homeHit->frame.y;
 
-    // 2) on → 下一帧条目出现，y = 前一条目下一格 + 组间 divider（W3 §4.8）。
-    // 注册序 = home, settings, agent；registerModule 按 PageId 序插入，故 Agent(4)
-    // 在 Settings(10) 之前，侧边栏序 Home, Agent, [groupdiv], Settings。
-    // Agent(work) → Settings(system) 间画 groupdiv（1px + gap），间距按 need171
-    // 档位：正常/紧凑档 = itemH40+gap4+1+gap4 = 49；极紧档 = itemH36+gap2+1+gap2
-    // = 41（B6：窗口高驱动分档，探针窗 700 逻辑即落极紧档）。
-    const float bodyH = static_cast<float>(args.windowH) - 40.0f;  // 自绘标题栏
-    const float strideWithDivider =
-        bodyH < 680.0f ? 41.0f : 49.0f;
+    // 2) on → 下一帧条目出现。bug368 方案 C：系统组（Settings/About）已移出滚动
+    //    流、锚底独立成块，不再与 Agent 同坐标系——原「Agent 下一格 + groupdiv」
+    //    断言退役。保留两条不依赖坐标系的契约：
+    //    ① Agent 行出现在导航视口内（y 在视口域 [nav 顶, nav 底)）；
+    //    ② Settings 行在导航视口之下（锚底块，不随滚动）。
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     composeFrame();
@@ -314,15 +310,18 @@ int main(int argc, char* argv[]) {
                                          : nullptr;
     const auto* settingsHit =
         ui != nullptr ? ui->find("app.sidebar.item.Settings.hit") : nullptr;
+    const auto* navView =
+        ui != nullptr ? ui->find("app.sidebar.nav") : nullptr;
     check(agentHit != nullptr, "on 后：Agent 条目应出现");
-    check(settingsHit != nullptr, "on 后：Settings 条目应存在（y 锚）");
-    if (agentHit != nullptr && settingsHit != nullptr) {
-        check(nearEq(settingsHit->frame.y,
-                     agentHit->frame.y + strideWithDivider),
-              "Settings 条目 y=" + std::to_string(settingsHit->frame.y) +
-                  " 期望 " +
-                  std::to_string(agentHit->frame.y + strideWithDivider) +
-                  "（Agent 下一格 + 组间 divider——Agent(work) 在 Settings(system) 之前）");
+    check(settingsHit != nullptr, "on 后：Settings 条目应存在（锚底块）");
+    check(navView != nullptr, "导航视口应存在");    if (agentHit != nullptr && settingsHit != nullptr && navView != nullptr) {
+        check(agentHit->frame.y >= navView->frame.y &&
+                  agentHit->frame.y < navView->frame.y + navView->frame.height,
+              "Agent 行应在导航视口内（y=" +
+                  std::to_string(agentHit->frame.y) + "）");
+        check(settingsHit->frame.y >= navView->frame.y + navView->frame.height,
+              "Settings 行应在导航视口之下（bug368 锚底：y=" +
+                  std::to_string(settingsHit->frame.y) + "）");
         check(ui->find("app.sidebar.item.Agent.label") != nullptr,
               "展开态 Agent label 应存在");
     }
@@ -426,8 +425,9 @@ int main(int argc, char* argv[]) {
         // 不能按 args.windowH−40 推——窗口被工作区钳制后请求值 ≠ 实际值
         //（probe_harness bug183/185 口径），本机 1000 请求钳到 ~726 实际即落紧凑档。
         const auto* sidebarRoot = ui != nullptr ? ui->find("app.sidebar") : nullptr;
-        const float availHActual =
-            sidebarRoot != nullptr ? sidebarRoot->frame.height : bodyH;
+        const float availHActual = sidebarRoot != nullptr
+                                       ? sidebarRoot->frame.height
+                                       : static_cast<float>(args.windowH) - 40.0f;
         const bool tierNormal = availHActual >= 712.0f;
         // 2026-11-06 老板三轮实测定稿（bug146，dd0f28db）：正常档 32→36→40、
         // 紧凑/极紧 28→36；预留区 56/52（随钮 +4）。
@@ -590,10 +590,18 @@ int main(int argc, char* argv[]) {
             const float toggleTop = toggle7->frame.y;
             const bool overflow =
                 canvas->frame.height > navView->frame.height + 0.5f;
-            check(std::fabs(viewBottom - (toggleTop - 4.0f)) <= 0.5f,
-                  "§7 §11.2 区位契约：viewport 底 " +
-                      std::to_string(viewBottom) + " 应 = 按钮顶 " +
-                      std::to_string(toggleTop) + " − 4");
+            // bug368 方案 C：视口底不再贴按钮顶 − 4，改为贴系统组锚底块顶
+            // （footerTop = availH − toggleZone − footerZone）；视口底与按钮顶之间
+            // 隔着 footerZone 109（设置/关于 + 呼吸 + 分隔线）。契约改为
+            // 「viewport 底 ≤ 按钮顶」——分层顺序成立即可，间距由 footer 承载。
+            check(viewBottom <= toggleTop + 0.5f,
+                  "§7 区位契约：viewport 底 " + std::to_string(viewBottom) +
+                      " 不得越过按钮顶 " + std::to_string(toggleTop));
+            const auto* settingsRow7 =
+                ui->find("app.sidebar.item.Settings.hit");
+            check(settingsRow7 != nullptr &&
+                      settingsRow7->frame.y >= viewBottom - 0.5f,
+                  "§7 系统组锚底：Settings 行应在导航视口之下");
             const core::dsl::Element* last = nullptr;
             float lastBottom = -1.0f;
             for (const auto& root : ui->roots()) {

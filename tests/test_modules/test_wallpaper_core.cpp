@@ -311,6 +311,84 @@ REGISTER_TEST(wallpaper_core_rotation, "wallpaper core: rotation 三模式/洗�
     return true;
 })
 
+// 防：删除失败回滚（need356 F-04）用不上定位 API / focusPath 定位错项 / 洗牌袋不失效
+// 导致下一拍跳到删除前清单洗出的旧项。
+REGISTER_TEST(wallpaper_rotation_focus_path_restores_previous,
+              "wallpaper core: rotation focusPath 回滚定位/路径不存在/洗牌袋失效", {
+    using Clock = wp::RotationClock;
+    const Clock::time_point base = Clock::time_point(std::chrono::seconds(30000));
+
+    // 列表循环：切到 b 后回滚定位回 a，计时按新起点重排。
+    wp::RotationController list(11);
+    list.setItems({"a", "b", "c"});
+    list.setMode(wp::PlayMode::LoopList);
+    DOCTEST_CHECK_EQ(list.start(base).value(), std::string("a"));
+    DOCTEST_CHECK_EQ(list.advanceNow(base).value(), std::string("b"));
+    DOCTEST_CHECK(list.focusPath("a", base + std::chrono::seconds(10)));
+    DOCTEST_CHECK_EQ(list.currentPath().value(), std::string("a"));
+    // 重排后剩余 = 完整间隔（不是接着 b 的剩余）
+    DOCTEST_CHECK_EQ(list.secondsUntilNextRotation(base + std::chrono::seconds(10)), 300);
+
+    // 路径不存在 → false，当前项不变（调用方放弃回滚）。
+    DOCTEST_CHECK_FALSE(list.focusPath("zzz", base + std::chrono::seconds(20)));
+    DOCTEST_CHECK_EQ(list.currentPath().value(), std::string("a"));
+
+    // 洗牌：focusPath 必须清空洗牌袋（下一拍重新洗一轮，而不是接着旧袋游标走）。
+    // ⚠ 不断言「下一拍不会是 c」：洗牌模式重新洗后 c 排在最前是合法结果，且
+    // std::shuffle 的序列依赖标准库实现（macOS libc++ 与 Windows MinGW libstdc++
+    // 结果不同）——按具体项断言会变成平台相关的假绿/假红（CI 44857988863 实证：
+    // 同一用例 macOS 绿、Windows 红）。真正要锁的是「袋被重建」这个契约：
+    // 回滚后连推 items 数那么多拍，各项恰好抽到一次。
+    wp::RotationController shuffle(42);
+    shuffle.setItems({"a", "b", "c"});
+    shuffle.setMode(wp::PlayMode::Shuffle);
+    DOCTEST_CHECK(shuffle.start(base).has_value());
+    DOCTEST_CHECK(shuffle.focusPath("c", base + std::chrono::seconds(10)));
+    DOCTEST_CHECK_EQ(shuffle.currentPath().value(), std::string("c"));
+    // 袋已重建：接下来 3 拍必须把 {a,b,c} 各抽到恰好一次（任何重复/遗漏都说明
+    // 旧袋残留或重建失败）。
+    std::set<std::string> drawn;
+    for (int index = 0; index < 3; ++index) {
+        const auto next = shuffle.advanceNow(base + std::chrono::seconds(10));
+        DOCTEST_REQUIRE(next.has_value());
+        drawn.insert(*next);
+    }
+    DOCTEST_CHECK_EQ(drawn.size(), static_cast<std::size_t>(3));
+    DOCTEST_CHECK_EQ(drawn.count("a"), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(drawn.count("b"), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(drawn.count("c"), static_cast<std::size_t>(1));
+    return true;
+})
+
+// 防：删除成功后已删项仍留在轮换清单里被 tick/「下一个」重新装载（桌面黑屏）。
+// dropItem 必须真把它摘掉，且下标不越界、清单空时退出运行态。
+REGISTER_TEST(wallpaper_rotation_drop_item_after_delete,
+              "wallpaper core: rotation dropItem 摘掉已删项且不越界", {
+    using Clock = wp::RotationClock;
+    const Clock::time_point base = Clock::time_point(std::chrono::seconds(40000));
+
+    wp::RotationController list(7);
+    list.setItems({"a", "b", "c"});
+    list.setMode(wp::PlayMode::LoopList);
+    DOCTEST_REQUIRE_EQ(list.start(base).value(), std::string("a"));
+    DOCTEST_CHECK(list.dropItem("a"));
+    DOCTEST_CHECK_EQ(list.itemCount(), static_cast<std::size_t>(2));
+    // 之后无论怎么推进都不许再出现 a（这是本用例的核心：已删项不得被 tick 重装）
+    for (int index = 0; index < 4; ++index) {
+        const auto next = list.advanceNow(base + std::chrono::seconds(10));
+        DOCTEST_REQUIRE(next.has_value());
+        DOCTEST_CHECK(*next != std::string("a"));
+    }
+    // 幂等：已摘掉的再摘返回 false，不崩
+    DOCTEST_CHECK_FALSE(list.dropItem("a"));
+    // 摘空 → 退出运行态
+    DOCTEST_CHECK(list.dropItem("b"));
+    DOCTEST_CHECK(list.dropItem("c"));
+    DOCTEST_CHECK_EQ(list.itemCount(), static_cast<std::size_t>(0));
+    DOCTEST_CHECK_FALSE(list.isRunning());
+    return true;
+})
+
 // 防：图片进混合池后破坏既有选择模型——列表循环跨类型按字典序轮转 / LoopSingle 到点
 // 必须停在图片项（tick 不产生装载）、手动 next 才跨过图片 / 洗牌一轮不重复 /
 // 空视频纯图片清单与普通清单同语义。

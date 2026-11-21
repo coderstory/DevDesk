@@ -9,6 +9,8 @@
 #include "test_support.h"
 
 #include "claude_service.h"
+#include "claude_ui_list.h"    // bug369：错误态直调绘制入口（重试按钮断言）
+#include "claude_ui_state.h"   // ProfileListState（错误态用例状态桩）
 #include "claude_ui_form.h"   // need185：FormState / submitForm / createProfileFromForm
 #include "claude_ui_logic.h"
 #include "core/app_config.h"
@@ -20,6 +22,7 @@
 #include "core/component_theme.h"   // componentTokensWeChat：Danger 按钮底色的实际令牌源
 #include "core/theme.h"
 #include "core/time.h"
+#include "core/user_message.h"  // bug369：错误态人话文案层
 #include "platform/http_server.h"
 #include "platform/terminal_launch.h"
 #include "platform/folder_picker.h"
@@ -107,6 +110,66 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 } // namespace
 
+// bug369：错误态文案不得泄漏内部类名，恢复路径按错误性质分叉。
+REGISTER_TEST(claude_error_message_no_internal_class_name,
+              "claude_message: 错误态人话文案不含 ClaudeService 内部类名", {
+    // 服务未装配：说清「需要重启」，不得出现 ClaudeService
+    const std::string notReady = "服务未就绪（ClaudeService 未注册）";
+    const std::string text = core::user_message::claudeProfileErrorText(notReady);
+    DOCTEST_CHECK(text.find("ClaudeService") == std::string::npos);
+    DOCTEST_CHECK(text.find("重启") != std::string::npos);
+    DOCTEST_CHECK(core::user_message::claudeErrorNeedsRestart(notReady));
+    const std::string guide = core::user_message::claudeProfileErrorGuide(notReady);
+    DOCTEST_CHECK(guide.find("ClaudeService") == std::string::npos);
+    DOCTEST_CHECK(guide.find("重新打开") != std::string::npos);
+
+    // 可恢复类（库/IO 失败）：不要求重启，给「重试」指引
+    const std::string ioErr = "unable to open database file";
+    const std::string ioText = core::user_message::claudeProfileErrorText(ioErr);
+    DOCTEST_CHECK(ioText.find("ClaudeService") == std::string::npos);
+    DOCTEST_CHECK(ioText.find("重试") != std::string::npos);
+    DOCTEST_CHECK_FALSE(core::user_message::claudeErrorNeedsRestart(ioErr));
+
+    // 未知串兜底：同样不得原样回显内部类名
+    const std::string weird = "ClaudeService exploded";
+    DOCTEST_CHECK(
+        core::user_message::claudeProfileErrorText(weird).find("ClaudeService") ==
+        std::string::npos);
+    return true;
+})
+
+// bug369：可恢复类错误的错误块必须就近给「重试」按钮，点击走 onRetryLoad。
+REGISTER_TEST(claude_error_state_retry_button_present,
+              "claude_message: 可恢复错误态渲染重试按钮并接线", {
+    const auto& t = core::theme::current();
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
+    module::claude::ProfileListState st;
+    module::claude::ProfileListActions actions;
+    bool retried = false;
+    actions.onRetryLoad = [&retried] { retried = true; };
+
+    eui::Ui ui;
+    ui.begin("claude_err_retry");
+    module::claude::drawProfileListPanel(
+        ui, 320.0f, 600.0f, t, themeTokens, st,
+        std::vector<module::claude::Profile>{},
+        std::string("unable to open database file"), actions);
+    ui.end();
+
+    const auto* msg = ui.find("claude.profiles.error");
+    DOCTEST_REQUIRE(msg != nullptr);
+    DOCTEST_CHECK(msg->text.find("ClaudeService") == std::string::npos);
+    DOCTEST_CHECK(ui.find("claude.profiles.error.guide") != nullptr);
+    const auto* retry = ui.find("claude.profiles.error.retry");
+    DOCTEST_REQUIRE(retry != nullptr);
+    const auto* retryBg = ui.find("claude.profiles.error.retry.bg");
+    DOCTEST_REQUIRE(retryBg != nullptr);
+    DOCTEST_REQUIRE(retryBg->onClick != nullptr);
+    retryBg->onClick();
+    DOCTEST_CHECK(retried);
+    return true;
+})
+
 REGISTER_TEST(claude_module_compose_null_service,
               "claude_module: compose 无服务不崩（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);   // 干净起点
@@ -129,8 +192,15 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
     DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
     // 无服务时显示错误态（不静默吞错显示假空态）
-    DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
+    DOCTEST_REQUIRE(ui.find("claude.profiles.error") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
+    // bug369：错误块文案不泄漏内部类名，并给出重启指引；重启类不挂假「重试」
+    DOCTEST_CHECK(ui.find("claude.profiles.error")->text.find("ClaudeService") ==
+                  std::string::npos);
+    DOCTEST_CHECK(ui.find("claude.profiles.error")->text.find("重启") !=
+                  std::string::npos);
+    DOCTEST_REQUIRE(ui.find("claude.profiles.error.guide") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.error.retry") == nullptr);
 
     // 活门控死页缓解：无服务时补「未装配」toast（回退成静默即红）
     {

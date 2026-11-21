@@ -18,6 +18,15 @@ std::string defaultTombstoneDatabasePath() {
     return std::string();
 }
 
+bool recordDeletedSignature(const std::string&) {
+    // 花見导入只在 macOS 有消费方（PRD 非目标 9）：其它平台删除照常成功，仅不写墓碑。
+    return false;
+}
+
+bool removeTombstoneSignature(const std::string&) {
+    return false;
+}
+
 SourceDirectoryStatus probeHanamiSourceDirectory(const std::string&) {
     return {};  // stub 平台无花見来源（available=false 把门），无可读/无权限两态
 }

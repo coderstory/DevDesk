@@ -11,6 +11,14 @@ std::string osName() {
 #endif
 }
 
+std::string shortcutModifierLabel() {
+#if defined(__APPLE__)
+    return "⌘";
+#else
+    return "Ctrl";
+#endif
+}
+
 std::string archName() {
 #if defined(__x86_64__)
     return "x86_64";

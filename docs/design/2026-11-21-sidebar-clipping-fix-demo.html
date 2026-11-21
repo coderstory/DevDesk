@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevDesk 侧边栏裁切修复 · 方案对比 demo</title>
+<!--
+  本文件为 UI 设计视觉校准 demo，不是实现蓝图。
+  - 只用于核对：区块锚定关系 / 滚动模型 / 边缘提示 / 精确 px 参数在两档窗口下的表现。
+  - 逻辑像素坐标严格按 1438×801 窗口建模（标题条 30 → 侧栏可用高 availH = 771），
+    外层按容器宽度等比缩放，因此任意窗口下比例一致、参数不失真。
+  - 无框架、无外部依赖，浏览器直开。
+-->
+<style>
+  :root{
+    --bg:#F5FAF7; --surface:#FFFFFF; --sidebar:#EBF6EF; --hover:#EEF6F1;
+    --soft:#E8F8EE; --primary:#07C160; --primary-hover:#06AD56;
+    --primary-text:#157A4E; --text-2:#4B5563; --text-3:#6B6D80;
+    --border:#E5E7EB; --text-1:#1F2937;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:#F0F4F1; color:var(--text-1);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1500px;margin:0 auto;padding:24px clamp(12px,3vw,32px) 48px}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  .sub{font-size:13px;color:var(--text-2);margin:0 0 20px;line-height:1.6}
+  .sub code{background:#fff;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:12px}
+
+  .bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}
+  .seg{display:inline-flex;background:#fff;border:1px solid var(--border);border-radius:10px;padding:3px;gap:2px}
+  .seg button{
+    appearance:none;border:0;background:transparent;border-radius:7px;
+    font:inherit;font-size:13px;color:var(--text-2);padding:6px 14px;cursor:pointer;
+    transition:background .12s ease,color .12s ease,transform .1s ease;
+  }
+  .seg button:hover{background:var(--hover);color:var(--text-1)}
+  .seg button:active{transform:scale(.97)}
+  .seg button[aria-pressed="true"]{background:var(--soft);color:var(--primary-text);font-weight:600}
+  .seg button:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+  .chk{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--text-2);cursor:pointer;
+       background:#fff;border:1px solid var(--border);border-radius:10px;padding:7px 12px;user-select:none}
+  .chk input{accent-color:var(--primary);width:14px;height:14px;margin:0}
+  .bar .label{font-size:12px;color:var(--text-3);margin-right:-4px}
+
+  .caption{
+    display:flex;gap:10px;align-items:flex-start;
+    background:#fff;border:1px solid var(--border);border-left:3px solid var(--primary);
+    border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.6;color:var(--text-2);
+    margin:0 0 16px;
+  }
+  .caption b{color:var(--text-1);font-weight:600}
+
+  .stage{position:relative;width:100%;overflow:hidden;border-radius:12px}
+  .canvas{
+    position:absolute;top:0;left:0;width:1438px;height:801px;transform-origin:top left;
+    background:var(--surface);border:1px solid #D8E2DB;border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;
+    box-shadow:0 1px 2px rgba(16,32,24,.06);
+  }
+
+  /* ---- 标题条 ---- */
+  .titlebar{
+    height:30px;flex:0 0 30px;display:flex;align-items:center;gap:8px;
+    padding:0 12px;background:#FBFDFB;border-bottom:1px solid #EDF2EE;
+  }
+  .tl{display:flex;gap:6px}
+  .tl i{width:10px;height:10px;border-radius:50%;display:block}
+  .tl i:nth-child(1){background:#FF5F57}.tl i:nth-child(2){background:#FEBC2E}.tl i:nth-child(3){background:#28C840}
+  .titlebar span{font-size:12px;color:var(--text-2);margin-left:6px}
+
+  .body{flex:1;display:flex;min-height:0}
+
+  /* ---- 侧边栏 ---- */
+  #sidebar{position:relative;flex:0 0 200px;height:100%;background:var(--sidebar);
+           border-right:1px solid var(--border);overflow:hidden}
+  #brand{position:absolute;left:0;top:32px;width:200px;height:56px;display:flex;
+         align-items:center;justify-content:center}
+  .logo{width:48px;height:48px;border-radius:12px;background:var(--primary);position:relative}
+  .logo::before,.logo::after{content:"";position:absolute;background:#EAFBF1;border-radius:1px}
+  .logo::before{left:12px;top:16px;width:10px;height:16px;clip-path:polygon(0 0,100% 50%,0 100%)}
+  .logo::after{left:22px;top:22px;width:9px;height:2px}
+
+  .navscroll{position:absolute;left:0;width:200px;overflow-y:auto;overflow-x:hidden;
+             scrollbar-width:none;-ms-overflow-style:none;overscroll-behavior:contain}
+  .navscroll::-webkit-scrollbar{display:none;width:0;height:0}
+  .canvasinner{position:relative;width:100%}
+
+  .row{position:absolute;border-radius:6px;display:flex;align-items:center;cursor:pointer;
+       transition:background .12s ease}
+  .row:hover{background:var(--hover)}
+  .row.pressed{background:var(--soft)}
+  .row.active:hover{background:transparent}
+  .row .accent{position:absolute;width:3px;border-radius:1.5px;background:var(--primary)}
+  .row .card{position:absolute;inset:0;border-radius:6px;background:var(--surface);
+             border:1px solid var(--border)}
+  .row .ic{position:absolute;display:flex;align-items:center;justify-content:center;color:var(--text-2)}
+  .row.active .ic{color:var(--primary-text)}
+  .row .lb{position:absolute;display:flex;align-items:center;font-size:16px;color:var(--text-2);
+           white-space:nowrap;overflow:hidden}
+  .row.active .lb{color:var(--primary-text);font-weight:600}
+  .row .chev{position:absolute;display:flex;align-items:center;justify-content:center;color:var(--text-3)}
+  .divider{position:absolute;height:1px;background:var(--border)}
+
+  .footer{position:absolute;left:0;width:200px}
+
+  #toggle{position:absolute;border-radius:50%;border:1px solid var(--border);background:transparent;
+          display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer;
+          box-shadow:0 1px 4px rgba(26,26,26,.08);
+          transition:transform .15s cubic-bezier(.33,1,.68,1),background .15s ease,border-color .15s ease,color .15s ease}
+  #toggle:hover{background:var(--soft);border-color:var(--primary-hover);color:var(--primary);transform:scale(1.09)}
+  #toggle:active{transform:scale(.9);box-shadow:none;border-color:var(--primary)}
+
+  .edge{position:absolute;width:16px;height:24px;display:flex;align-items:center;justify-content:center;
+        color:var(--text-3);cursor:pointer;border-radius:6px;opacity:0;pointer-events:none;
+        transition:opacity .15s ease,color .12s ease,background .12s ease}
+  .edge.show{opacity:1;pointer-events:auto}
+  .edge:hover{color:var(--primary-hover);background:var(--soft)}
+  .edge:active{transform:scale(.92)}
+
+  /* ---- 主区（背景上下文，非本设计主体） ---- */
+  .main{flex:1;min-width:0;background:var(--bg);padding:20px 24px 16px;display:flex;flex-direction:column;gap:12px}
+  .mhead{display:flex;align-items:center;justify-content:space-between}
+  .mhead h2{font-size:20px;font-weight:600;margin:0}
+  .mhead .btn{font-size:13px;color:var(--primary-text);background:var(--soft);border-radius:8px;padding:7px 16px}
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+  .card2{background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center}
+  .card2 .k{font-size:12px;color:var(--text-3);margin-bottom:6px}
+  .card2 .v{font-size:22px;font-weight:600;color:var(--text-1)}
+  .bigcard{flex:1;background:#fff;border:1px solid var(--border);border-radius:10px;
+           display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+  .bigcard .a{font-size:13px;color:var(--text-2)}
+  .bigcard .b{font-size:12px;color:var(--text-3)}
+
+  /* ---- 标注层 ---- */
+  .anno-layer{position:absolute;inset:0;pointer-events:none}
+  .anno-line{position:absolute;border-top:1px dashed rgba(180,60,60,.55);height:0}
+  .anno-tag{position:absolute;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+            background:rgba(255,255,255,.92);border:1px solid rgba(180,60,60,.35);color:#9B2C2C;
+            border-radius:4px;padding:1px 5px;white-space:nowrap}
+
+  /* ---- 读数 ---- */
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:18px}
+  .m{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+  .m .k{font-size:11px;color:var(--text-3);margin-bottom:4px}
+  .m .v{font:600 17px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text-1)}
+  .m .n{font-size:11px;color:var(--text-3);margin-top:2px}
+  .notes{margin:20px 0 0;padding:0;list-style:none;display:grid;gap:6px}
+  .notes li{font-size:12px;color:var(--text-2);line-height:1.6;padding-left:14px;position:relative}
+  .notes li::before{content:"";position:absolute;left:0;top:8px;width:5px;height:5px;border-radius:50%;background:var(--primary)}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>DevDesk 侧边栏：设置 / 关于 不可达（池 bug#368 · P0）</h1>
+  <p class="sub">
+    建模 1438×801 窗口（标题条 30 → 侧栏可用高 <code>availH = 771</code>，展开宽 <code>200</code>，折叠 <code>72</code>）。
+    外层按容器宽度等比缩放，拖窗口即可验证。当前项可点、滚轮可滚、chevron 可点。
+  </p>
+
+  <div class="bar">
+    <span class="label">方案</span>
+    <div class="seg" id="modes" role="group" aria-label="方案切换">
+      <button data-mode="current" aria-pressed="true">当前</button>
+      <button data-mode="a" aria-pressed="false">A 锚底</button>
+      <button data-mode="b" aria-pressed="false">B 提示</button>
+      <button data-mode="c" aria-pressed="false">C 组合</button>
+    </div>
+    <span class="label">窗口高</span>
+    <div class="seg" id="heights" role="group" aria-label="窗口高度">
+      <button data-h="801" aria-pressed="true">801 正常档</button>
+      <button data-h="720" aria-pressed="false">720 紧凑档</button>
+      <button data-h="660" aria-pressed="false">660 极紧档</button>
+      <button data-h="1000" aria-pressed="false">1000 宽窗</button>
+    </div>
+    <label class="chk"><input type="checkbox" id="many"> 20 项压力</label>
+    <label class="chk"><input type="checkbox" id="fold"> 折叠 72px</label>
+    <label class="chk"><input type="checkbox" id="annoChk" checked> 显示标注</label>
+  </div>
+
+  <p class="caption" id="caption"></p>
+
+  <div class="stage" id="stage">
+    <div class="canvas" id="canvas">
+      <div class="titlebar"><div class="tl"><i></i><i></i><i></i></div><span>DevDesk</span></div>
+      <div class="body">
+        <div id="sidebar">
+          <div id="brand"><div class="logo"></div></div>
+          <div class="navscroll" id="navscroll"><div class="canvasinner" id="canvasinner"></div></div>
+          <div class="footer" id="footer" style="display:none"></div>
+          <div class="edge" id="edgeUp" title="向上滚动">▲</div>
+          <div class="edge" id="edgeDown" title="向下滚动">▼</div>
+          <div id="toggle" title="折叠 / 展开侧边栏"></div>
+        </div>
+        <div class="main">
+          <div class="mhead"><h2>工作台</h2><div class="btn">刷新</div></div>
+          <div class="cards">
+            <div class="card2"><div class="k">Token 速率</div><div class="v">––</div></div>
+            <div class="card2"><div class="k">今日笔记</div><div class="v">0</div></div>
+            <div class="card2"><div class="k">待办任务</div><div class="v">0</div></div>
+            <div class="card2"><div class="k">逾期任务</div><div class="v">0</div></div>
+            <div class="card2"><div class="k">API 调用</div><div class="v">0</div></div>
+          </div>
+          <div class="bigcard">
+            <div class="a">今日暂无 API 调用</div>
+            <div class="b">启动 Claude 代理后将展示用量统计</div>
+          </div>
+        </div>
+      </div>
+      <div class="anno-layer" id="annoLayer"></div>
+    </div>
+  </div>
+
+  <div class="metrics" id="metrics"></div>
+
+  <ul class="notes">
+    <li>滚动条视觉在本 demo 中按 bug188 裁决置零；B / C 的「还有更多」提示走右侧 16px 栅边里的 12×12 chevron，不产生 thumb / track。</li>
+    <li>系统组高度固定 109 = 8 呼吸 + 1 分隔线 + 8 + 40 + 4 + 40 + 8；与折叠钮预留区 56 之间留 12。</li>
+    <li>自动滚入缓冲上下各 4px、无动画；chevron 单击滚动 0.8 × 视口高（801 档 = 392px）。</li>
+  </ul>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const WIN_W = 1438, WIN_H = 801, TITLE = 30;
+  const C = {
+    soft:"#E8F8EE", surface:"#FFFFFF", border:"#E5E7EB",
+    text2:"#4B5563", text3:"#6B6D80", primary:"#07C160", primaryText:"#157A4E"
+  };
+
+  const ICONS = {
+    home:'M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z',
+    note:'M5 4h9l5 5v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM14 4v5h5',
+    branch:'M7 4v10M7 20a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM17 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM14 7l-7 7',
+    check:'M4 12.5l5 5L20 6.5',
+    clock:'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2',
+    refresh:'M20 12a8 8 0 1 1-2.6-5.9M20 3v5h-5',
+    robot:'M6 8h12a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 4v4M9 13h.01M15 13h.01',
+    brain:'M9 5a3 3 0 0 0-3 3 3 3 0 0 0-1 5.8V17a3 3 0 0 0 4.5 2.6M15 5a3 3 0 0 1 3 3 3 3 0 0 1 1 5.8V17a3 3 0 0 1-4.5 2.6M12 5v15',
+    image:'M4 5h16v14H4zM8.5 11a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM5 17l5-5 4 4 2-2 3 3',
+    plug:'M9 3v6M15 3v6M6 9h12v2a6 6 0 0 1-12 0zM12 17v4',
+    terminal:'M4 5h16v14H4zM8 10l2.5 2.5L8 15M13.5 15H17',
+    rocket:'M12 3c3.5 2.8 5 6.2 5 9.5L12 18l-5-5.5C7 9.2 8.5 5.8 12 3zM12 11.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM9 18l-2 3M15 18l2 3',
+    gear:'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1',
+    info:'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 11v6M12 8h.01',
+    tasks:'M4 7h16M4 12h16M4 17h10',
+    chart:'M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-7'
+  };
+  function svg(name, size){
+    const s = size || 16;
+    return '<svg viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" '+
+           'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="'+ICONS[name]+'"/></svg>';
+  }
+
+  const BUSINESS = [
+    {id:'Home',label:'首页',icon:'home'},
+    {id:'Markdown',label:'笔记',icon:'note'},
+    {id:'Git',label:'Git',icon:'branch'},
+    {id:'Todo',label:'待办',icon:'check'},
+    {id:'Schedule',label:'定时',icon:'clock'},
+    {id:'ClaudeProxy',label:'Claude',icon:'refresh'},
+    {id:'Agent',label:'智能体',icon:'robot'},
+    {id:'Memory',label:'记忆',icon:'brain'},
+    {id:'Wallpaper',label:'壁纸',icon:'image'},
+    {id:'Mcp',label:'MCP',icon:'plug'},
+    {id:'Terminal',label:'终端',icon:'terminal'}
+  ];
+  const EXTRA = [
+    {id:'Dashboard',label:'数据看板',icon:'chart'},
+    {id:'Logs',label:'运行日志',icon:'note'},
+    {id:'Plugins',label:'插件',icon:'plug'},
+    {id:'Backup',label:'备份恢复',icon:'refresh'},
+    {id:'Shortcuts',label:'快捷键',icon:'tasks'},
+    {id:'Help',label:'帮助中心',icon:'info'}
+  ];
+  const GROUP = {id:'ReleaseGroup',label:'上线',icon:'rocket',
+    children:[{id:'ReleaseTasks',label:'任务',icon:'tasks'},{id:'ReleaseConfig',label:'基础配置',icon:'gear'}]};
+  const SYSTEM = [{id:'Settings',label:'设置',icon:'gear'},{id:'About',label:'关于',icon:'info'}];
+
+  const S = {mode:'current', collapsed:false, many:false, h:801, gexp:false, active:'Home', scrollTop:0};
+
+  // 可选深链：?mode=c&h=720&many=1&fold=1 —— 便于评审直接跳到某一态截图
+  (function applyQuery(){
+    const q = new URLSearchParams(location.search);
+    if (q.has('mode')){
+      const m = q.get('mode');
+      if (['current','a','b','c'].indexOf(m) >= 0) S.mode = m;
+    }
+    if (['720','660','1000'].indexOf(q.get('h')) >= 0) S.h = parseInt(q.get('h'), 10);
+    if (q.get('many') === '1') S.many = true;
+    if (q.get('fold') === '1') S.collapsed = true;
+    if (q.get('group') === '1') S.gexp = true;
+    if (q.get('active')) S.active = q.get('active');
+    if (q.get('scroll')) S.scrollTop = Math.max(0, parseInt(q.get('scroll'), 10) || 0);
+    if (S.mode !== 'current'){
+      const mb = document.querySelector('#modes button[data-mode="'+S.mode+'"]');
+      [...document.querySelectorAll('#modes button')].forEach(x => x.setAttribute('aria-pressed', String(x === mb)));
+    }
+    const hb = document.querySelector('#heights button[data-h="'+S.h+'"]');
+    if (hb) [...document.querySelectorAll('#heights button')].forEach(x => x.setAttribute('aria-pressed', String(x === hb)));
+    document.getElementById('many').checked = S.many;
+    document.getElementById('fold').checked = S.collapsed;
+  })();
+
+  const el = {
+    sidebar:document.getElementById('sidebar'),
+    brand:document.getElementById('brand'),
+    nav:document.getElementById('navscroll'),
+    inner:document.getElementById('canvasinner'),
+    footer:document.getElementById('footer'),
+    toggle:document.getElementById('toggle'),
+    edgeUp:document.getElementById('edgeUp'),
+    edgeDown:document.getElementById('edgeDown'),
+    anno:document.getElementById('annoLayer'),
+    caption:document.getElementById('caption'),
+    metrics:document.getElementById('metrics'),
+    canvas:document.getElementById('canvas'),
+    stage:document.getElementById('stage')
+  };
+
+  const CAPTIONS = {
+    current:'<b>当前：</b>业务项与系统组同处一个滚动流，滚动条视觉全隐（bug188）且无当前项自动滚入。801 档下「关于」只剩一条残边；实证截图为更矮窗口时整行不可达 —— 用户没有任何「还有更多」的知觉。',
+    a:'<b>方案 A：</b>系统组（设置 / 关于）脱离滚动流、固定锚底。规范 §14.4 达成，但工作区自身仍溢出且无提示：1438×801 下「上线」行被裁 34px，缺陷只是从系统组转移到工作区尾部。',
+    b:'<b>方案 B：</b>保持单一滚动流，加右侧栅边 chevron + 当前项自动滚入。溢出可达性解决，但系统组仍需滚到底才可见 —— 与规范「设置独立在底部」冲突。',
+    c:'<b>方案 C（推荐）：</b>A 锚底 + B2 边缘提示与自动滚入。系统组常驻底部，工作区溢出由 chevron 与自动滚入兜住；1600×1000 档溢出为 0 时 chevron 自动隐藏，退化为干净的 A。'
+  };
+
+  function tier(availH){
+    if (availH < 680) return {name:'极紧', topPad:12, brandNavGap:12, gap:2, itemH:36, toggle:36, toggleZone:52, footer:99};
+    if (availH < 712) return {name:'紧凑', topPad:16, brandNavGap:16, gap:4, itemH:40, toggle:36, toggleZone:52, footer:109};
+    return {name:'正常', topPad:32, brandNavGap:28, gap:4, itemH:40, toggle:40, toggleZone:56, footer:109};
+  }
+
+  function buildPlan(){
+    const rows = [];
+    const list = BUSINESS.concat(S.many ? EXTRA : []);
+    list.forEach(it => rows.push({type:'row', item:it, indent:0}));
+    rows.push({type:'group', item:GROUP});
+    if (S.gexp) GROUP.children.forEach(it => rows.push({type:'row', item:it, indent:16}));
+    return rows;
+  }
+
+  function render(){
+    const availH = S.h - TITLE;
+    const t = tier(availH);
+    const collapsed = S.collapsed;
+    const W = collapsed ? 72 : 200;
+    const padX = 16, iconW = 28, itemInset = 12;
+    const navStart = t.topPad + 56 + t.brandNavGap;
+    const step = t.itemH + t.gap;
+    const hasFooter = (S.mode === 'a' || S.mode === 'c');
+    const hasHints = (S.mode === 'b' || S.mode === 'c');
+    const footerTop = availH - t.toggleZone - t.footer;
+
+    // 侧栏宽度 / 品牌
+    el.sidebar.style.flexBasis = W + 'px';
+    el.brand.style.width = W + 'px';
+    el.brand.style.top = t.topPad + 'px';
+    const logo = 48;
+    el.brand.querySelector('.logo').style.width = logo + 'px';
+    el.brand.querySelector('.logo').style.height = logo + 'px';
+
+    // 导航滚动区
+    const viewportBottom = hasFooter ? footerTop : (availH - t.toggleZone);
+    const viewportH = Math.max(0, viewportBottom - navStart);
+    el.nav.style.top = navStart + 'px';
+    el.nav.style.width = W + 'px';
+    el.nav.style.height = viewportH + 'px';
+
+    // 行规划
+    const plan = buildPlan();
+    const children = [];
+    let y = 0;
+    const positions = {};
+    plan.forEach(p => {
+      if (p.type === 'group'){
+        positions[p.item.id] = {y:y, h:t.itemH};
+        children.push(rowHtml({
+          id:p.item.id, label:p.item.label, icon:p.item.icon,
+          y:y, h:t.itemH, W:W, padX:padX, iconW:iconW, itemInset:itemInset,
+          indent:0, collapsed:collapsed,
+          active:S.active === p.item.id ||
+                 (S.active.indexOf('Release') === 0),
+          isGroup:true, expanded:S.gexp
+        }));
+        y += step;
+      } else {
+        positions[p.item.id] = {y:y, h:t.itemH};
+        children.push(rowHtml({
+          id:p.item.id, label:p.item.label, icon:p.item.icon,
+          y:y, h:t.itemH, W:W, padX:padX, iconW:iconW, itemInset:itemInset,
+          indent:p.indent, collapsed:collapsed, active:S.active === p.item.id
+        }));
+        y += step;
+      }
+    });
+    // 分隔线：当前 / B 走滚动流，A / C 归系统组
+    if (!hasFooter){
+      children.push('<div class="divider" style="left:'+padX+'px;top:'+y+'px;width:'+(W-padX*2)+'px"></div>');
+      y += 1 + t.gap;
+      SYSTEM.forEach(it => {
+        positions[it.id] = {y:y, h:t.itemH};
+        children.push(rowHtml({
+          id:it.id, label:it.label, icon:it.icon,
+          y:y, h:t.itemH, W:W, padX:padX, iconW:iconW, itemInset:itemInset,
+          indent:0, collapsed:collapsed, active:S.active === it.id
+        }));
+        y += step;
+      });
+    }
+    const contentH = Math.max(0, y - t.gap);
+    el.inner.style.height = contentH + 'px';
+    el.inner.innerHTML = children.join('');
+    el.nav.scrollTop = Math.min(S.scrollTop, Math.max(0, contentH - viewportH));
+
+    // 系统组底块
+    if (hasFooter){
+      el.footer.style.display = 'block';
+      el.footer.style.top = footerTop + 'px';
+      el.footer.style.height = t.footer + 'px';
+      el.footer.style.width = W + 'px';
+      const fw = W - padX * 2;
+      let fy = 8;
+      let html = '<div class="divider" style="left:'+padX+'px;top:'+fy+'px;width:'+fw+'px"></div>';
+      fy += 1 + 8;
+      SYSTEM.forEach(it => {
+        positions[it.id] = {y:footerTop + fy, h:t.itemH};
+        html += rowHtml({
+          id:it.id, label:it.label, icon:it.icon,
+          y:fy, h:t.itemH, W:W, padX:padX, iconW:iconW, itemInset:itemInset,
+          indent:0, collapsed:collapsed, active:S.active === it.id
+        });
+        fy += step;
+      });
+      el.footer.innerHTML = html;
+      el.footer.style.setProperty('--footer-h', t.footer + 'px');
+    } else {
+      el.footer.style.display = 'none';
+      el.footer.innerHTML = '';
+    }
+
+    // 折叠钮
+    el.toggle.style.width = t.toggle + 'px';
+    el.toggle.style.height = t.toggle + 'px';
+    el.toggle.style.left = (collapsed ? (W - t.toggle)/2 : padX + 8) + 'px';
+    el.toggle.style.top = (availH - t.toggleZone + 4) + 'px';
+    // 折叠钮字形：展开态「◀ 收起」、折叠态「▶ 展开」（与实现档 fa-angles-left/right 同义）
+    const ts = Math.round(t.toggle * 0.5);
+    el.toggle.innerHTML = '<svg viewBox="0 0 24 24" width="'+ts+'" height="'+ts+'" fill="none" '+
+      'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+
+      '<path d="M'+(collapsed?'9 6l6 6-6 6':'15 6l-6 6 6 6')+'"/></svg>';
+
+    // chevron
+    const maxOffset = Math.max(0, contentH - viewportH);
+    [el.edgeUp, el.edgeDown].forEach(e => { e.style.display = hasHints ? 'flex' : 'none'; });
+    if (hasHints){
+      // 命中盒 16×24；12px 字形在盒内居中 → 展开态字形 x=186（右距 2），折叠态字形居中 x=30
+      const boxX = collapsed ? Math.round((W - 16) / 2) : W - 16;
+      el.edgeUp.style.left = boxX + 'px';
+      el.edgeUp.style.top = (navStart - 2) + 'px';
+      el.edgeDown.style.left = boxX + 'px';
+      el.edgeDown.style.top = (viewportBottom - 22) + 'px';
+      el.edgeUp.innerHTML = '<span style="font-size:12px;line-height:1">▲</span>';
+      el.edgeDown.innerHTML = '<span style="font-size:12px;line-height:1">▼</span>';
+    }
+    refreshHints(contentH, viewportH);
+
+    // 点击接线
+    el.inner.querySelectorAll('[data-id]').forEach(n => {
+      wireRow(n, positions, contentH, viewportH, hasHints);
+    });
+    el.footer.querySelectorAll('[data-id]').forEach(n => {
+      wireRow(n, positions, contentH, viewportH, hasHints);
+    });
+
+    // 标注 + 读数
+    drawAnno(navStart, viewportH, footerTop, hasFooter, t, availH, contentH, W);
+    renderMetrics({
+      name:t.name, navStart:navStart, viewportH:viewportH, contentH:contentH,
+      overflow:Math.max(0, contentH - viewportH), footerTop:hasFooter ? footerTop : null,
+      footerH:t.footer, toggleY:availH - t.toggleZone, collapsed:collapsed
+    });
+    el.caption.innerHTML = CAPTIONS[S.mode];
+  }
+
+  function rowHtml(o){
+    const rowW = o.W - o.padX * 2 - o.indent;
+    const x = o.padX + o.indent;
+    const inner = o.collapsed
+      ? '<div class="ic" style="left:'+((o.W - 28)/2 - x)+'px;top:0;width:28px;height:'+o.h+'px">'+svg(o.icon)+'</div>'
+      : '<div class="ic" style="left:'+(o.itemInset)+'px;top:0;width:'+o.iconW+'px;height:'+o.h+'px">'+svg(o.icon)+'</div>'+
+        '<div class="lb" style="left:'+(o.itemInset + o.iconW)+'px;top:0;width:'+(rowW - o.itemInset - o.iconW - (o.isGroup?22:0))+'px;height:'+o.h+'px">'+o.label+'</div>';
+    const groupChev = (o.isGroup && !o.collapsed)
+      ? '<div class="chev" style="right:6px;top:0;width:14px;height:'+o.h+'px;font-size:11px">'+(o.expanded?'▴':'▾')+'</div>'
+      : '';
+    const card = o.active
+      ? '<div class="card"></div><div class="accent" style="left:'+(o.collapsed?-6:-10)+'px;top:'+((o.h-18)/2)+'px;height:18px"></div>'
+      : '';
+    return '<div class="row'+(o.active?' active':'')+'" data-id="'+o.id+'" '+
+      'style="left:'+x+'px;top:'+o.y+'px;width:'+rowW+'px;height:'+o.h+'px">'+
+      card + inner + groupChev + '</div>';
+  }
+
+  function wireRow(node, positions, contentH, viewportH, autoScroll){
+    node.addEventListener('mousedown', () => node.classList.add('pressed'));
+    node.addEventListener('mouseup', () => node.classList.remove('pressed'));
+    node.addEventListener('mouseleave', () => node.classList.remove('pressed'));
+    node.addEventListener('click', () => {
+      const id = node.getAttribute('data-id');
+      if (id === GROUP.id){ S.gexp = !S.gexp; S.scrollTop = el.nav.scrollTop; render(); return; }
+      S.active = id;
+      S.scrollTop = el.nav.scrollTop;
+      render();
+      if (autoScroll){
+        const p = positions[id];
+        if (p) ensureVisible(p.y, p.h);
+      }
+    });
+  }
+
+  function ensureVisible(rowTop, rowH){
+    const vh = el.nav.clientHeight;
+    const max = Math.max(0, parseInt(el.inner.style.height || '0', 10) - vh);
+    let off = el.nav.scrollTop;
+    if (rowTop - 4 < off) off = Math.max(0, rowTop - 4);
+    else if (rowTop + rowH + 4 > off + vh) off = Math.min(max, rowTop + rowH + 4 - vh);
+    el.nav.scrollTop = off;
+    S.scrollTop = off;
+    setTimeout(refreshHintsSoft, 0);
+  }
+
+  function refreshHints(contentH, viewportH){
+    if (S.mode !== 'b' && S.mode !== 'c'){ return; }
+    const off = el.nav.scrollTop;
+    const view = Math.min(viewportH, parseInt(el.nav.style.height || '0', 10));
+    const max = Math.max(0, contentH - view);
+    el.edgeUp.classList.toggle('show', off > 0.5);
+    el.edgeDown.classList.toggle('show', off < max - 0.5);
+  }
+  function refreshHintsSoft(){
+    const vh = el.nav.clientHeight;
+    const contentH = parseInt(el.inner.style.height || '0', 10);
+    refreshHints(contentH, vh);
+  }
+
+  function drawAnno(navStart, viewportH, footerTop, hasFooter, t, availH, contentH, W){
+    if (!document.getElementById('annoChk').checked){ el.anno.innerHTML = ''; return; }
+    const vb = navStart + viewportH;
+    const parts = [];
+    parts.push('<div class="anno-line" style="left:0;top:'+vb+'px;width:'+W+'px"></div>');
+    parts.push('<div class="anno-tag" style="left:'+(W+8)+'px;top:'+(vb-9)+'px">工作视口底 '+vim(vb)+'</div>');
+    if (hasFooter){
+      parts.push('<div class="anno-line" style="left:0;top:'+footerTop+'px;width:'+W+'px"></div>');
+      parts.push('<div class="anno-tag" style="left:'+(W+8)+'px;top:'+(footerTop+2)+'px">系统组锚底 '+t.footer+'px</div>');
+    }
+    if (contentH > viewportH + 0.5 && (S.mode === 'current' || S.mode === 'a')){
+      parts.push('<div class="anno-tag" style="left:'+(W+8)+'px;top:'+(vb+10)+'px;border-color:rgba(180,60,60,.6);background:rgba(255,244,244,.95)">被裁 '+Math.round(contentH - viewportH)+'px · 无提示</div>');
+    }
+    el.anno.innerHTML = parts.join('');
+  }
+  function vim(v){ return Math.round(v); }
+
+  function renderMetrics(m){
+    const cards = [
+      {k:'档位 / availH', v:m.name, n:(S.h - TITLE) + 'px · 折叠 ' + (m.collapsed?72:200)},
+      {k:'导航起点 navStart', v:m.navStart, n:'topPad + 56 + gap'},
+      {k:'工作视口', v:m.viewportH, n:'内滚区高度'},
+      {k:'内容高', v:m.contentH, n:'行表规划值'},
+      {k:'溢出', v:m.overflow, n:m.overflow > 0 ? '需要滚动' : '无需滚动'},
+      {k:'系统组顶', v:m.footerTop === null ? '—' : m.footerTop, n:m.footerTop === null ? '在滚动流内' : '高 ' + m.footerH + 'px'},
+      {k:'折叠钮顶', v:m.toggleY, n:'预留区 56/52'}
+    ];
+    el.metrics.innerHTML = cards.map(c =>
+      '<div class="m"><div class="k">'+c.k+'</div><div class="v">'+c.v+'</div><div class="n">'+c.n+'</div></div>'
+    ).join('');
+  }
+
+  // ---- 交互接线 ----
+  document.getElementById('modes').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]');
+    if (!b) return;
+    S.mode = b.dataset.mode;
+    [...e.currentTarget.querySelectorAll('button')].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    el.nav.scrollTop = 0; S.scrollTop = 0;
+    render();
+  });
+  document.getElementById('heights').addEventListener('click', e => {
+    const b = e.target.closest('button[data-h]');
+    if (!b) return;
+    S.h = parseInt(b.dataset.h, 10);
+    [...e.currentTarget.querySelectorAll('button')].forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    el.nav.scrollTop = 0; S.scrollTop = 0;
+    fit(); render();
+
+  // 深链 ?active=<id>：B / C 下首帧完成后自动滚入（对应规格 §3.2 规则），便于评审直接核对
+  (function deepAutoScroll(){
+    const q = new URLSearchParams(location.search);
+    if (!q.get('active')) return;
+    if (S.mode !== 'b' && S.mode !== 'c') return;
+    const node = el.inner.querySelector('[data-id="'+q.get('active')+'"]') ||
+                 el.footer.querySelector('[data-id="'+q.get('active')+'"]');
+    if (!node) return;
+    if (node.parentElement === el.inner){
+      ensureVisible(parseFloat(node.style.top) || 0, parseFloat(node.style.height) || 40);
+    }
+  })();
+  });
+  document.getElementById('many').addEventListener('change', e => { S.many = e.target.checked; el.nav.scrollTop=0; S.scrollTop=0; render(); });
+  document.getElementById('fold').addEventListener('change', e => { S.collapsed = e.target.checked; el.nav.scrollTop=0; S.scrollTop=0; render(); });
+  document.getElementById('annoChk').addEventListener('change', render);
+  el.nav.addEventListener('scroll', () => { S.scrollTop = el.nav.scrollTop; refreshHintsSoft(); });
+  el.edgeUp.addEventListener('click', () => { el.nav.scrollTop = Math.max(0, el.nav.scrollTop - el.nav.clientHeight * 0.8); });
+  el.edgeDown.addEventListener('click', () => { el.nav.scrollTop = el.nav.scrollTop + el.nav.clientHeight * 0.8; });
+  el.toggle.addEventListener('click', () => { S.collapsed = !S.collapsed; document.getElementById('fold').checked = S.collapsed; render(); });
+
+  // ---- 等比缩放 ----
+  function fit(){
+    const s = el.stage.clientWidth / WIN_W;
+    el.canvas.style.height = S.h + 'px';   // 深链/切换窗口高时同步画布实际高
+    el.canvas.style.transform = 'scale(' + s + ')';
+    el.stage.style.height = Math.round(S.h * s) + 'px';
+  }
+  new ResizeObserver(fit).observe(el.stage);
+  window.addEventListener('resize', fit);
+
+  fit(); render();
+
+  // 深链 ?active=<id>：B / C 下首帧完成后自动滚入（对应规格 §3.2 规则），便于评审直接核对
+  (function deepAutoScroll(){
+    const q = new URLSearchParams(location.search);
+    if (!q.get('active')) return;
+    if (S.mode !== 'b' && S.mode !== 'c') return;
+    const node = el.inner.querySelector('[data-id="'+q.get('active')+'"]') ||
+                 el.footer.querySelector('[data-id="'+q.get('active')+'"]');
+    if (!node) return;
+    if (node.parentElement === el.inner){
+      ensureVisible(parseFloat(node.style.top) || 0, parseFloat(node.style.height) || 40);
+    }
+  })();
+})();
+</script>
+</body>
+</html>

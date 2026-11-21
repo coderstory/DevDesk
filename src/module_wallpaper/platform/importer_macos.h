@@ -46,8 +46,19 @@ ImportReport runHanamiImport(const std::string& destinationFolder,
                              const std::atomic<bool>* cancel = nullptr);
 
 // 墓碑库的默认落点（DevDesk 数据根下，随应用数据一起备份）。
-// 墓碑写入只有一条路径：每次导入开头把 ~/.Trash 顶层的 mp4 幂等回填进库
-// （DevDesk 壁纸 UI 无删除入口，删除走 Finder→废纸篓，回填即删除钩子）。
+// 墓碑写入有三道（need356 新增前两道）：① 应用内删除当下直接写（recordDeletedSignature）；
+// ② 每轮导入开头的台账对账（台账里有、目标文件夹已消失 → 补墓碑）；
+// ③ 每轮导入开头把 ~/.Trash 顶层的 mp4 幂等回填（兜住本功能上线前的历史删除）。
+// ②③之外的写入不再有——不做墓碑管理 UI。
 std::string defaultTombstoneDatabasePath();
+
+// F-06：删除成功后立刻按「文件名 + 字节大小」写墓碑。best effort——失败不改变删除
+// 结果与 toast（库损坏/只读时用户照常删得掉，代价只是该素材可能回流一次）。
+// signature 由调用方在移入废纸篓**之前**算好（移走后 stat 不到大小）。
+bool recordDeletedSignature(const std::string& signature);
+
+// F-09：文件回到目标文件夹（从废纸篓拖回 / 重新放入）即解除墓碑，
+// 否则用户恢复的素材会被判「已删过跳过」。同样 best effort。
+bool removeTombstoneSignature(const std::string& signature);
 
 } // namespace module::wallpaper::importer

@@ -460,6 +460,9 @@ REGISTER_TEST(release_sidebar_existing_eight_order_and_shifted_down,
         previous = item;
     }
 
+    // bug368 方案 C：系统组锚底后，设置/关于不在滚动画布坐标系里（y 是侧栏局部
+    // 坐标），work 组行仍是画布坐标——两者不可用数值相减比较。相对顺序契约改由
+    // 「work 组内部顺序不变」+「系统组在导航视口之下锚底」两条断言承载。
     const auto* wallpaperHit = ui.find("app.sidebar.item.Wallpaper.hit");
     DOCTEST_REQUIRE(wallpaperHit != nullptr);
     const auto* groupHit = ui.find("app.sidebar.item.ReleaseGroup.hit");
@@ -469,13 +472,19 @@ REGISTER_TEST(release_sidebar_existing_eight_order_and_shifted_down,
     const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
     DOCTEST_REQUIRE(aboutHit != nullptr);
 
-    // 父项插在 Wallpaper 与 Settings 之间（组折叠：父项占一行，子项不占高）
+    // 父项插在 Wallpaper 之后：工作流内恰占一格步距（kNavItemH 40 + gap 4 = 44）
     DOCTEST_CHECK(groupHit->y > wallpaperHit->y);
-    DOCTEST_CHECK(groupHit->y < settingsHit->y);
-    // 父项恰好占一个常规项步距（kNavItemH 40 + gap 4 = 44）→ Settings/About 相对
-    // 旧布局整体下移这 44；父项到 Settings 还隔着组间 divider（1 + gap 4 = 5）
     DOCTEST_CHECK(floatEq(groupHit->y - wallpaperHit->y, 44.0f));
-    DOCTEST_CHECK(floatEq(settingsHit->y - groupHit->y, 49.0f));
+
+    // 系统组在锚底块：设置/关于在导航视口底之下（不参与滚动），彼此步进 44。
+    // 1600×1000：footerTop = 1000 − 56 − 109 = 835；设置 852、关于 896（行宽 40 高）
+    const auto* nav = ui.find("app.sidebar.nav");
+    DOCTEST_REQUIRE(nav != nullptr);
+    // 本用例未调 ui.layout → 视口底用 builder 几何（y + height.value）
+    const float navBottom = nav->y + nav->height.value;
+    DOCTEST_CHECK(settingsHit->y >= navBottom);
+    // 设置行 = footerTop + 17（8 呼吸 + 1 线 + 8），footerTop = 视口底
+    DOCTEST_CHECK(floatEq(settingsHit->y - navBottom, 17.0f));
     DOCTEST_CHECK(floatEq(aboutHit->y - settingsHit->y, 44.0f));
 
     resetSidebarTestState();

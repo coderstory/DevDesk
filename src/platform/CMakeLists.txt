@@ -46,6 +46,7 @@ if(WIN32)
                                            # job 红）且交叉编译守卫受编集合对不上磁盘（校验②红）
         file_association_win.cpp        # .md 文件关联：HKCU ProgId 登记写/查/清（F-06，注入缝见 file_association.h）
         open_settings_win.cpp           # 系统默认应用设置页一键直达：ms-settings:defaultapps（F-10 引导）
+        file_trash_win.cpp              # 移入回收站：IFileOperation + 自建 STA 线程（need356，含 initguid.h）
     )
     # ConPTY 后端的 libvterm 转译层（目标定义在根 CMakeLists，platform 之前）
     target_link_libraries(devdesk_platform PRIVATE devdesk_terminal_vterm)
@@ -70,6 +71,7 @@ elseif(APPLE)
         window_visibility_macos.cpp     # 主窗可见态：当前 GLFW 上下文窗口的 ICONIFIED/VISIBLE（无句柄 fail-open）
         file_association_macos.mm      # .md 文件关联：LS/NSWorkspace 双路径（F-09，版本分支收敛单文件；ObjC++ 落点偏差见文件头）
         open_settings_macos.cpp         # 无按类型默认页直达：恒 false，UI 走文字指引（F-10）
+        file_trash_macos.mm             # 移入废纸篓：NSFileManager trashItemAtURL:（need356，ARC）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -94,6 +96,7 @@ else()
         # 保持 POSIX/UNIX 构建链路可链接。
         window_visibility_macos.cpp
         open_settings_posix.cpp         # POSIX 兜底：恒不支持（F-10）
+        file_trash_posix.cpp            # 移入废纸篓兜底：诚实 TrashUnavailable，不直删（need356）
     )
 endif()
 
@@ -111,8 +114,10 @@ target_include_directories(devdesk_platform PUBLIC
 if(WIN32)
     # version：terminal_backend_win.cpp 的 conptyFileVersion（GetFileVersionInfoW/
     #   VerQueryValueW，debt246 redist 版本日志）；ole32：file_association_win.cpp
-    #   的 COM 初始化/实例创建（objbase.h，F-06）——紧跟同列，别在别处再声明
-    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version ole32)
+    #   的 COM 初始化/实例创建（objbase.h，F-06）；uuid：file_trash_win.cpp 的
+    #   CLSID_FileOperation / IID_IFileOperationProgressSink 作 MinGW64 保底导出口
+    #   （initguid.h 已在本 TU 定义，两者互为冗余，need356）
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version ole32 uuid)
 endif()
 
 target_link_libraries(devdesk_platform
@@ -140,6 +145,13 @@ target_compile_definitions(devdesk_platform PUBLIC
 # INTERFACE 一并传递）。泄漏面为零：该 target 的接口 include 只有 INSTALL_INTERFACE，
 # git2.h 仍只在平台 .cpp 出现。
 target_link_libraries(devdesk_platform PUBLIC libgit2package)
+# GIT_STATIC：v1.9.7 之后 libgit2 改了导出宏判据——旧版以 `#if __GNUC__ >= 4` 优先，
+# MinGW 走普通 extern；新版改成 `#if defined(_WIN32) && !defined(GIT_STATIC)` 优先，
+# 于是 MinGW（也是 _WIN32）被当成 DLL 消费方，头里全变 __declspec(dllimport)，
+# 而我们 BUILD_SHARED_LIBS=OFF 链的是静态库 → 整片 undefined reference to __imp_git_*。
+# 本项目恒静态链，故恒定义 GIT_STATIC（PUBLIC：定义须跟着 target 传播，
+# 否则任何间接 include git2.h 的 TU 会重新掉回 dllimport）。
+target_compile_definitions(devdesk_platform PUBLIC GIT_STATIC)
 # libgit2package 不外发构建期 include（只有 INSTALL_INTERFACE；实测编译行无该路径）——
 # 显式补，出界即编译错
 target_include_directories(devdesk_platform PRIVATE
@@ -164,10 +176,10 @@ if(APPLE)
         ${UNIFORM_TYPE_IDENTIFIERS_FRAMEWORK}
     )
 
-    # notification_macos.mm / file_association_macos.mm 单独开 ARC：只影响该源文件，
-    # 不给整个 target 打开（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
-    set_source_files_properties(notification_macos.mm file_association_macos.mm PROPERTIES
-        COMPILE_OPTIONS "-fobjc-arc")
+    # notification_macos.mm / file_association_macos.mm / file_trash_macos.mm 单独开 ARC：
+    # 只影响该源文件，不给整个 target 打开（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
+    set_source_files_properties(notification_macos.mm file_association_macos.mm file_trash_macos.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
 # CommandLineToArgvW / file_association_win.cpp SHChangeNotify）+ Advapi32（system_theme_win.cpp

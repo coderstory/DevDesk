@@ -319,10 +319,18 @@ size_t streamHeaderCb(char* buffer, size_t size, size_t nitems, void* userp) {
             const size_t sp2 = line.find(' ', sp1 + 1);
             if (sp2 != std::string::npos) {
                 const std::string codeStr = line.substr(sp1 + 1, sp2 - sp1 - 1);
+                // 手写十进制解析：本仓铁律不碰异常；此处还在 libcurl 的 C 回调里，
+                // 异常越过 C 边界是 UB（bug361）。非纯数字 / 超 4 位一律当解析失败。
                 int code = 0;
-                try {
-                    code = std::stoi(codeStr);
-                } catch (...) {
+                bool numeric = !codeStr.empty() && codeStr.size() <= 4;
+                for (const char c : codeStr) {
+                    if (c < '0' || c > '9') {
+                        numeric = false;
+                        break;
+                    }
+                    code = code * 10 + (c - '0');
+                }
+                if (!numeric) {
                     code = 0;
                 }
                 if (code > 0) {

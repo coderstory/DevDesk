@@ -298,22 +298,9 @@ REGISTER_TEST(mcp_card_modules_card_toggle_off_by_default_and_hit_wiring,
     eui::Ui ui;
     composeFrame(*mod, ui, screen, "mcp_toggle_1");
     ui.layout(screen.width, screen.height);  // frame 断言必须真 layout
-    // 池151：MCP 开关从标题行归位模块格阵常规格，格节点 = name/rowdesc/sw.<i>。
-    // 不钉死格位（kToggleable 表序随模块增删漂移）：按格数上界扫 name 文本定位
-    // MCP 格（上界 kModuleToggleCellCount(true)，壁纸格节点根独立不干扰），
-    // 格位再挪本用例不红。
-    int mcpCell = -1;
-    for (int i = 0; i < module::settings::kModuleToggleCellCount(true); ++i) {
-        const auto* n = ui.find("settings.card.modules.name." +
-                                std::to_string(i));
-        if (n != nullptr && n->text == "MCP") {
-            mcpCell = i;
-            break;
-        }
-    }
-    DOCTEST_REQUIRE(mcpCell >= 0);
-    const auto* track = ui.find("settings.card.modules.sw." +
-                                std::to_string(mcpCell) + ".track");
+    // 池151：MCP 开关从标题行归位模块格阵常规格。bug372：格节点 sw 段改
+    // 模块 id（.sw.<moduleId>.track），表序增删不再影响定位，直接按 id 取。
+    const auto* track = ui.find("settings.card.modules.sw.mcp.track");
     DOCTEST_REQUIRE(track != nullptr);
     DOCTEST_REQUIRE(track->onClick != nullptr);
     // 标题行不再让位右半镜像（池151 起开关归位常规格，标题恢复全内容宽 w−56）

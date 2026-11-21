@@ -726,7 +726,8 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     frame("modtab");
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
+    // bug372：开关锚 = 模块 id（.sw.<moduleId>.track），不随 kToggleable 格序漂移
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.markdown") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.proxy") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance") == nullptr);
@@ -1812,19 +1813,10 @@ REGISTER_TEST(settings_module_toggle_records_exemption_and_survives_reload,
         ui.begin("bug246e2e_off");
         mod->compose(ui, screen);
         ui.end();
-        // 按格内 name 文案定位「上线」格（release = 迁移表 v1 模块，用户可关）
-        int releaseCell = -1;
-        for (int i = 0; i < ms::kModuleToggleCellCount(true); ++i) {
-            const auto* n = ui.find("settings.card.modules.name." +
-                                    std::to_string(i));
-            if (n != nullptr && n->text == "上线") {
-                releaseCell = i;
-                break;
-            }
-        }
-        DOCTEST_REQUIRE(releaseCell >= 0);
-        const auto* track = ui.find("settings.card.modules.sw." +
-                                    std::to_string(releaseCell) + ".track");
+        // bug372：开关锚 = 模块 id（release = 迁移表 v1 模块，用户可关），
+        // 免去「按文案扫格序再拼序号」的绕路
+        const auto* track =
+            ui.find("settings.card.modules.sw.release.track");
         DOCTEST_REQUIRE(track != nullptr);
         DOCTEST_REQUIRE(track->onClick != nullptr);
         track->onClick();   // on → off（真走 applyModuleEnabled → persist）
@@ -1865,28 +1857,15 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
-    // 池#371 git/终端补位后格序随表漂移（sw.0=markdown 起）：按 name 文本定位
-    // agent 格（test_mcp_settings 同款防漂移写法），不钉死格位。
-    int agentCell = -1;
-    for (int i = 0; i < ms::kModuleToggleCellCount(true); ++i) {
-        const auto* n = ui.find("settings.card.modules.name." +
-                                std::to_string(i));
-        if (n != nullptr && n->text == "智能体") {
-            agentCell = i;
-            break;
-        }
-    }
-    DOCTEST_REQUIRE(agentCell >= 0);
+    // bug372：开关锚 = 模块 id（.sw.<moduleId>），表序增减不再影响断言
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.markdown") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.git") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.todo") != nullptr);
     // agent 行开关默认**不**勾选（默认清单不含 kModuleIdAgent）。track 色 =
-    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行同主题下色必
+    // checked ? on : off——默认开的 markdown 行与 agent 行同主题下色必
     // 不同，抓「回退成默认勾选」的回归（Color 无 operator==，逐分量比）
-    const auto* mdTrack = ui.find("settings.card.modules.sw.0.track");
-    const auto* agentTrack =
-        ui.find("settings.card.modules.sw." + std::to_string(agentCell) +
-                ".track");
+    const auto* mdTrack = ui.find("settings.card.modules.sw.markdown.track");
+    const auto* agentTrack = ui.find("settings.card.modules.sw.agent.track");
     DOCTEST_REQUIRE(mdTrack != nullptr);
     DOCTEST_REQUIRE(agentTrack != nullptr);
     DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
