@@ -51,6 +51,22 @@ wp::WallpaperSnapshot waitForPlaying(wp::WallpaperService& service, int timeoutM
     return service.snapshot();
 }
 
+// 等快照满足任意条件（有界）；超时返回最后一次快照由调用方断言。
+// 删除成功后服务会异步重扫，固定时点快照会撞重扫中途（CI 44860597358 实证）。
+wp::WallpaperSnapshot waitForSnapshot(
+    wp::WallpaperService& service,
+    const std::function<bool(const wp::WallpaperSnapshot&)>& predicate,
+    int timeoutMs = 4000) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        wp::WallpaperSnapshot snapshot = service.snapshot();
+        if (predicate(snapshot)) return snapshot;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return service.snapshot();
+}
+
 std::string lastLoadedPath(const wp::NullPlayerBackend& player) {
     std::string last;
     for (const wp::NullPlayerBackend::Call& call : player.calls()) {
@@ -218,10 +234,12 @@ REGISTER_TEST(wallpaper_delete_service_switches_then_trashes,
     // 便于断言「切走的是 a」。真实计数刷新归 F-05 真机）。
     wp::WallpaperService service;
     service.setSettingsPathForTest((dir.path / "wallpaper" / "settings.json").string());
+    // 真探测（见下方单文件场景说明）：成功路径重扫时不能把已删项捞回。
     service.setVideoScannerForTest([a, b](const std::string&) {
         wp::VideoScanResult result;
         result.status = wp::LibraryScanStatus::Ok;
-        result.files = {a, b};
+        if (fs::exists(a)) result.files.push_back(a);
+        if (fs::exists(b)) result.files.push_back(b);
         return result;
     });
     service.setImageScannerForTest([](const std::string&, int) {
@@ -231,9 +249,12 @@ REGISTER_TEST(wallpaper_delete_service_switches_then_trashes,
 
     std::atomic<int> trashCalls{0};
     std::string trashedPath;
+    // 真删源文件：成功路径会重扫，不删的话被删项会被重新扫回池（池计数/构成失真）。
     service.setTrashMoverForTest([&](const std::string& path) {
         ++trashCalls;
         trashedPath = path;
+        std::error_code ignored;
+        fs::remove(path, ignored);
         return trash::TrashOutcome{};
     });
 
@@ -255,8 +276,12 @@ REGISTER_TEST(wallpaper_delete_service_switches_then_trashes,
     // 再移废纸篓：mover 收到的是原当前项路径
     DOCTEST_CHECK_EQ(trashCalls.load(), 1);
     DOCTEST_CHECK_EQ(fs::path(trashedPath).filename().string(), std::string("a.mp4"));
-    // 成功后仍可播（池未空）
-    DOCTEST_CHECK(service.snapshot().availability == wp::Availability::Playing);
+    // 成功后仍可播（池未空）。等稳定态：成功路径会异步重扫，固定快照会撞扫描中。
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+    DOCTEST_CHECK(snapshot.availability == wp::Availability::Playing);
+    DOCTEST_CHECK_EQ(snapshot.poolCount, 1);  // a 已真删 → 只剩 b
     service.stop();
     return true;
 });
@@ -275,17 +300,27 @@ REGISTER_TEST(wallpaper_delete_service_single_item_enters_empty,
 
     wp::WallpaperService service;
     service.setSettingsPathForTest((dir.path / "wallpaper" / "settings.json").string());
+    // 假扫描器必须反映真实目录：成功路径会重扫，恒返回 {a} 会把已删项永远捞回来
+    //（poolCount 卡在 1，稳定态永不达成 → 用例超时红）。真删 + 真探测才与生产同构。
     service.setVideoScannerForTest([a](const std::string&) {
         wp::VideoScanResult result;
         result.status = wp::LibraryScanStatus::Ok;
-        result.files = {a};
+        if (fs::exists(a)) result.files = {a};
         return result;
     });
     service.setImageScannerForTest([](const std::string&, int) {
         return wp::ImageScanResult{};
     });
     service.setPlayerForTest(std::move(player));
-    service.setTrashMoverForTest([](const std::string&) { return trash::TrashOutcome{}; });
+    // 假 mover 必须**真把文件删掉**：成功路径会 requestScanLocked() 重扫，若源文件
+    // 还在（TempDir 里 only.mp4 未删），重扫会把它重新扫进池 → poolCount 回到 1，
+    // 断言就随扫描时序抖动（macOS 侥幸绿 / Windows 红，CI 44860597358 实证）。
+    // 真实废纸篓语义 = 源路径消失，故这里等价模拟。
+    service.setTrashMoverForTest([a](const std::string&) {
+        std::error_code ignored;
+        fs::remove(a, ignored);
+        return trash::TrashOutcome{};
+    });
 
     service.start();
     std::string error;
@@ -298,7 +333,12 @@ REGISTER_TEST(wallpaper_delete_service_single_item_enters_empty,
     playerRaw->clearCalls();
     const auto outcome = service.deleteCurrentItem();
     DOCTEST_CHECK(outcome == wp::WallpaperService::DeleteCurrentOutcome::Deleted);
-    snapshot = service.snapshot();
+    // 成功路径会异步重扫（F-05 计数同步）→ 等稳定态再断言，不用固定时点快照
+    //（CI 44860597358：固定快照在 Windows 上撞到重扫中途，macOS 恰好没撞上）。
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::NoPlayableVideos &&
+               s.poolCount == 0;
+    });
     DOCTEST_CHECK(snapshot.availability == wp::Availability::NoPlayableVideos);
     DOCTEST_CHECK_EQ(snapshot.poolCount, 0);
     // 停播已发出
@@ -328,10 +368,12 @@ REGISTER_TEST(wallpaper_delete_single_item_failure_reshows_host,
 
     wp::WallpaperService service;
     service.setSettingsPathForTest((dir.path / "wallpaper" / "settings.json").string());
+    // 假扫描器必须反映真实目录：成功路径会重扫，恒返回 {a} 会把已删项永远捞回来
+    //（poolCount 卡在 1，稳定态永不达成 → 用例超时红）。真删 + 真探测才与生产同构。
     service.setVideoScannerForTest([a](const std::string&) {
         wp::VideoScanResult result;
         result.status = wp::LibraryScanStatus::Ok;
-        result.files = {a};
+        if (fs::exists(a)) result.files = {a};
         return result;
     });
     service.setImageScannerForTest([](const std::string&, int) {
@@ -377,10 +419,12 @@ REGISTER_TEST(wallpaper_delete_service_failure_rolls_back,
 
     wp::WallpaperService service;
     service.setSettingsPathForTest((dir.path / "wallpaper" / "settings.json").string());
+    // 真探测（见下方单文件场景说明）：成功路径重扫时不能把已删项捞回。
     service.setVideoScannerForTest([a, b](const std::string&) {
         wp::VideoScanResult result;
         result.status = wp::LibraryScanStatus::Ok;
-        result.files = {a, b};
+        if (fs::exists(a)) result.files.push_back(a);
+        if (fs::exists(b)) result.files.push_back(b);
         return result;
     });
     service.setImageScannerForTest([](const std::string&, int) {
@@ -507,17 +551,24 @@ REGISTER_TEST(wallpaper_delete_service_request_posts_result,
 
     wp::WallpaperService service;
     service.setSettingsPathForTest((dir.path / "wallpaper" / "settings.json").string());
+    // 假扫描器必须反映真实目录：成功路径会重扫，恒返回 {a} 会把已删项永远捞回来
+    //（poolCount 卡在 1，稳定态永不达成 → 用例超时红）。真删 + 真探测才与生产同构。
     service.setVideoScannerForTest([a](const std::string&) {
         wp::VideoScanResult result;
         result.status = wp::LibraryScanStatus::Ok;
-        result.files = {a};
+        if (fs::exists(a)) result.files = {a};
         return result;
     });
     service.setImageScannerForTest([](const std::string&, int) {
         return wp::ImageScanResult{};
     });
     service.setPlayerForTest(std::make_unique<wp::NullPlayerBackend>());
-    service.setTrashMoverForTest([](const std::string&) { return trash::TrashOutcome{}; });
+    // 成功路径的假 mover 必须真删源文件：否则重扫会把项捞回（见同型说明）。
+    service.setTrashMoverForTest([a](const std::string&) {
+        std::error_code ignored;
+        fs::remove(a, ignored);
+        return trash::TrashOutcome{};
+    });
 
     std::atomic<int> handlerCalls{0};
     std::atomic<bool> handlerOk{false};
@@ -555,10 +606,12 @@ REGISTER_TEST(wallpaper_delete_request_after_stop_does_not_crash,
 
     wp::WallpaperService service;
     service.setSettingsPathForTest((dir.path / "wallpaper" / "settings.json").string());
+    // 假扫描器必须反映真实目录：成功路径会重扫，恒返回 {a} 会把已删项永远捞回来
+    //（poolCount 卡在 1，稳定态永不达成 → 用例超时红）。真删 + 真探测才与生产同构。
     service.setVideoScannerForTest([a](const std::string&) {
         wp::VideoScanResult result;
         result.status = wp::LibraryScanStatus::Ok;
-        result.files = {a};
+        if (fs::exists(a)) result.files = {a};
         return result;
     });
     service.setImageScannerForTest([](const std::string&, int) {
