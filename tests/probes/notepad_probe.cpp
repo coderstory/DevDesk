@@ -1814,6 +1814,494 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ── O. bug399 round13：窗口档⇄最大化档 3 次完整往返（老板点名场景①）──
+    // 老板装机实测「最小化/最大化窗口会卡顿、最大化后上下滚动距离很短」。P 段只
+    // 做过单轮几何仪表；本段把「窗口档⇄最大化档」扩成 3 次完整往返（每轮
+    // base→max→base），每腿记录：切换冷 compose 耗时、settle 后像素 ink（无白板）、
+    // maxOffset 与 docH-vpH 同式一致性、markdown 解析缓存命中（不再整篇重测）。
+    // 判据：①每腿冷 compose < 2000ms（无多秒级卡顿），且首见宽度之后的重访腿
+    // < 1000ms（缓存复用生效）；②每腿 ink > 200（切换后不白板）；③
+    // |maxOffset-(docH-vpH)| <= 1（滚动上限与估高同源，P 段实测恒等式）；
+    // ④同档往返 maxOffset/docH 漂移 <= 1px（几何不跨档污染）；⑤每腿 parse
+    // 增量 miss = 0（全命中，不再整篇重测）。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(
+                    p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("O: 定位不到仓库根（bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& os =
+                *module::notepad::detail::sessionRegistry().back();
+            os.previewOn = true;
+            // 「窗口档」= 实际窗口逻辑尺寸的 84%，「最大化档」= 实际窗口逻辑尺寸
+            // （探针窗不可缩放，framebuffer 即上限；两档都落在可截图像素区内）。
+            const auto [winW, winH] = probe::windowLogicalSize(window);
+            const float maxW = winW > 200.0f ? winW : 900.0f;
+            const float maxH = winH > 200.0f ? winH : 640.0f;
+            const float baseW = static_cast<float>(std::lround(maxW * 0.84f));
+            const float baseH = static_cast<float>(std::lround(maxH * 0.84f));
+            struct OLeg {
+                const char* tag;
+                float w;
+                float h;
+            };
+            const OLeg legs[] = {
+                {"base", baseW, baseH}, {"max", maxW, maxH},
+                {"base", baseW, baseH}, {"max", maxW, maxH},
+                {"base", baseW, baseH}, {"max", maxW, maxH},
+                {"base", baseW, baseH},  // 收尾回窗口档（3 次完整往返）
+            };
+            probe::FrameCapture oCap(window);
+            auto oCompose = [&](float cw, float ch) {
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(os.pageId, cw, ch,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(os, u, screen);
+                                });
+                return std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - t0).count();
+            };
+            auto oInk = [&](const std::string& pngPath) -> int {
+                // retained 层几何 resize 稳定门槛 16 帧（probe_harness readFrame 注），
+                // 换档后必须先跑满再读，否则冷层整层空白 = 假证据。
+                for (int i = 0; i < 4; ++i) probe::pollOnce(window, runtime);
+                std::vector<unsigned char> rgba;
+                int iw = 0;
+                int ih = 0;
+                if (!oCap.ok() || !oCap.readFrame(runtime, rgba, iw, ih, 18)) return -1;
+                const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+                if (sc == nullptr) return -1;
+                const int ink = countInkPixels(rgba, iw, ih, oCap.scale(), sc->frame.x,
+                                               sc->frame.y, sc->frame.width,
+                                               sc->frame.height);
+                if (!pngPath.empty() &&
+                    !probe::writeRgbaToPng(pngPath, rgba.data(), iw, ih))
+                    return -1;
+                return ink;
+            };
+            double refMaxOff[2] = {-1.0, -1.0};  // [base, max] 同档基准
+            double refDocH[2] = {-1.0, -1.0};
+            bool oOk = true;
+            std::string oDetail;
+            for (std::size_t i = 0; i < sizeof(legs) / sizeof(legs[0]); ++i) {
+                const OLeg& lg = legs[i];
+                const bool isMax = lg.h == maxH;
+                const auto before = components::detail::markdownPerfStats();
+                const double coldMs = oCompose(lg.w, lg.h);
+                const double warmMs = oCompose(lg.w, lg.h);
+                const auto& pf = components::detail::markdownPerfStats();
+                const long long parseMiss = pf.parseMisses - before.parseMisses;
+                const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+                const core::dsl::Element* wrap = ui->find(
+                    std::string(module::notepad::kNotepadPreviewContentId) + ".wrap");
+                const float vpH = sc != nullptr ? sc->frame.height : 0.0f;
+                const float maxOff = sc != nullptr ? sc->scrollMaxOffset : 0.0f;
+                const float docH = wrap != nullptr ? wrap->frame.height : 0.0f;
+                const std::string png =
+                    i == 0 ? std::string("evidence/bug399/round13-o-base.png")
+                    : i == 1 ? std::string("evidence/bug399/round13-o-max.png")
+                             : std::string();
+                const int ink = oInk(png);
+                std::cerr << "O " << i << "-" << lg.tag << " " << lg.w << "x" << lg.h
+                          << ": cold=" << coldMs << "ms warm=" << warmMs
+                          << "ms | docH=" << docH << " vp=" << vpH
+                          << " maxOffset=" << maxOff << " | ink=" << ink
+                          << " parseMiss=" << parseMiss << "\n";
+                if (!oOk) continue;
+                if (maxOff <= 0.0f) {
+                    oOk = false;
+                    oDetail = "预览不可滚动（maxOffset=" + std::to_string(maxOff) + "）";
+                } else if (coldMs >= 2000.0) {
+                    oOk = false;
+                    oDetail = std::string("切档 compose 出现多秒级卡顿 ") +
+                              std::to_string(coldMs) + "ms";
+                } else if (i >= 2 && coldMs >= 1000.0) {
+                    oOk = false;
+                    oDetail = std::string("重访档未复用布局缓存（cold=") +
+                              std::to_string(coldMs) + "ms）";
+                } else if (ink <= 200) {
+                    oOk = false;
+                    oDetail = "换档后内容区无文字像素（ink=" + std::to_string(ink) +
+                              "）= 像素级白板";
+                } else if (std::fabs(maxOff - (docH - vpH)) > 1.0f) {
+                    oOk = false;
+                    oDetail = "maxOffset 与估高不同源（maxOffset=" + std::to_string(maxOff) +
+                              " docH-vp=" + std::to_string(docH - vpH) + "）";
+                } else if (parseMiss != 0) {
+                    oOk = false;
+                    oDetail = "markdown 解析未命中缓存（miss=" +
+                              std::to_string(parseMiss) + "）= 整篇重测";
+                } else {
+                    const int si = isMax ? 1 : 0;
+                    if (refMaxOff[si] < 0.0) {
+                        refMaxOff[si] = maxOff;
+                        refDocH[si] = docH;
+                    } else if (std::fabs(maxOff - refMaxOff[si]) > 1.0 ||
+                               std::fabs(docH - refDocH[si]) > 1.0) {
+                        oOk = false;
+                        oDetail = std::string("同档往返漂移 maxOffset=") +
+                                  std::to_string(maxOff) + "/" +
+                                  std::to_string(refMaxOff[si]) + " docH=" +
+                                  std::to_string(docH) + "/" +
+                                  std::to_string(refDocH[si]);
+                    }
+                }
+            }
+            if (!oOk) passed = fail("O: " + oDetail);
+            else
+                std::cerr << "O: PASS — 窗口档⇄最大化档 3 次往返（7 腿）耗时/ink/估高一致/"
+                             "换档缓存复用 全绿；base="
+                          << baseW << "x" << baseH << " max=" << maxW << "x" << maxH
+                          << " refMaxOff(base/max)=" << refMaxOff[0] << "/"
+                          << refMaxOff[1] << "\n";
+        }
+    }
+
+    // ── R. bug399 round13：快速甩滚（惯性）路径（老板点名场景②）──
+    // 真实惯性链：滚轮事件 → Runtime::applyRuntimeScroll（runtime_update.h:526）
+    // → addScrollImpulse 累加冲量 → updateScrollMotion（:549）逐帧衰减位移。本段
+    // 连发 6 次小位移（dy=-4 → 位移 4×wheelStep，触控板甩滚时序，每发只推进一帧
+    // 不等待沉降）把冲量累到 scrollInertiaMaxVelocity（7200 → 总位移 600px），
+    // 运动途中按 update 计数取 3 帧 ink（不出现全空白 = overscan 兜底），记惯性
+    // settle 时长（固定 dt=1/60 的模拟时长）、期间 compose 次数与主线程占用估算；
+    // settle 后断言视口内块 .text 在位（内容跟随到位）。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(
+                    p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("R: 定位不到仓库根（bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& rs =
+                *module::notepad::detail::sessionRegistry().back();
+            rs.previewOn = true;
+            const float rw = 720.0f;
+            const float rh = 480.0f;
+            auto composeR = [&] {
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(rs.pageId, rw, rh,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(rs, u, screen);
+                                });
+                return std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - t0).count();
+            };
+            composeR();
+            composeR();
+            const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+            if (sc == nullptr || sc->scrollMaxOffset <= 0.0f) {
+                passed = fail("R: 预览不可滚动（夹具/窗档不满足复现前件）");
+            } else {
+                const float cx = sc->frame.x + sc->frame.width * 0.5f;
+                const float cy = sc->frame.y + sc->frame.height * 0.5f;
+                core::queuePointerMotion(window, cx, cy, {}, {});
+                probe::pollOnce(window, runtime);
+                // 连发小位移冲量（6×dy=-4 → 位移 4×48=192/发，冲量 192×12=2304/发，
+                // 累积到上限 7200；单发不等待沉降 = 甩滚时序）。
+                for (int i = 0; i < 6; ++i) {
+                    probe::queueScroll(window, runtime, 0.0, -4.0);
+                    probe::pollOnce(window, runtime);
+                }
+                // 视口矩形快照：运动中会有节流重排（元素树重建），ui->find 的
+                // 裸指针随即失效——矩形在滚动期不变，先固化再采样。
+                const float vpX = sc->frame.x;
+                const float vpY = sc->frame.y;
+                const float vpW = sc->frame.width;
+                const float vpH0 = sc->frame.height;
+                probe::FrameCapture rCap(window);
+                int settleUpdates = 0;
+                int motionComposes = 0;
+                double motionCompMs = 0.0;
+                double wallCompMs = 0.0;
+                bool motionSeen = false;
+                bool settled = false;
+                int inkSamples[3] = {-1, -1, -1};
+                const int sampleAt[3] = {3, 12, 24};
+                const auto tLoop0 = std::chrono::steady_clock::now();
+                for (int f = 0; f < 240; ++f) {
+                    const auto tUpd0 = std::chrono::steady_clock::now();
+                    probe::pollOnce(window, runtime);
+                    const bool anim = runtime.isAnimating();
+                    if (anim) motionSeen = true;
+                    if (runtime.composeRequested()) {
+                        motionCompMs += composeR();
+                        ++motionComposes;
+                    }
+                    wallCompMs += std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - tUpd0).count();
+                    ++settleUpdates;
+                    for (int k = 0; k < 3; ++k) {
+                        if (inkSamples[k] >= 0 || settleUpdates != sampleAt[k]) continue;
+                        std::vector<unsigned char> rgba;
+                        int iw = 0;
+                        int ih = 0;
+                        if (rCap.ok() && rCap.readFrame(runtime, rgba, iw, ih, 18)) {
+                            inkSamples[k] = countInkPixels(
+                                rgba, iw, ih, rCap.scale(), vpX, vpY, vpW, vpH0);
+                        }
+                    }
+                    if (!anim && f > 2) {
+                        settled = true;
+                        break;
+                    }
+                }
+                const double loopWallMs = std::chrono::duration<double, std::milli>(
+                                              std::chrono::steady_clock::now() - tLoop0).count();
+                const double settleSimMs = settleUpdates * 1000.0 / 60.0;
+                // settle 后再 compose 两帧（刷新裁剪范围）并读末态几何 / 视口块
+                composeR();
+                composeR();
+                const core::dsl::Element* sc2 = ui->find(module::notepad::kNotepadPreviewId);
+                const float off = sc2 != nullptr ? sc2->scrollOffset : 0.0f;
+                const float vpH = sc2 != nullptr ? sc2->frame.height : 0.0f;
+                int settledInk = -1;
+                {
+                    std::vector<unsigned char> rgba;
+                    int iw = 0;
+                    int ih = 0;
+                    if (rCap.ok() && rCap.readFrame(runtime, rgba, iw, ih, 18)) {
+                        settledInk = countInkPixels(rgba, iw, ih, rCap.scale(), sc2->frame.x,
+                                                    sc2->frame.y, sc2->frame.width,
+                                                    sc2->frame.height);
+                        probe::writeRgbaToPng("evidence/bug399/round13-r-settled.png",
+                                             rgba.data(), iw, ih);
+                    }
+                }
+                int inView = 0;
+                int inViewWithText = 0;
+                for (int i = 0; i < 4000; ++i) {
+                    const core::dsl::Element* blk = ui->find(
+                        std::string(module::notepad::kNotepadPreviewContentId) + ".block." +
+                        std::to_string(i));
+                    if (blk == nullptr) continue;
+                    const float by = blk->frame.y;
+                    const float bh = blk->frame.height;
+                    if (by + bh < off || by > off + vpH) continue;
+                    ++inView;
+                    if (ui->find(std::string(module::notepad::kNotepadPreviewContentId) +
+                                 ".block." + std::to_string(i) + ".text") != nullptr)
+                        ++inViewWithText;
+                }
+                std::cerr << "R 惯性: settleUpdates=" << settleUpdates
+                          << "（模拟 " << settleSimMs << "ms）motionSeen=" << motionSeen
+                          << " settled=" << settled << " | 运动 ink 采样[3,12,24]="
+                          << inkSamples[0] << "/" << inkSamples[1] << "/" << inkSamples[2]
+                          << " | 运动期 compose=" << motionComposes
+                          << " 次 " << motionCompMs << "ms | 主线程占用≈"
+                          << (wallCompMs > 0.0 ? motionCompMs / wallCompMs * 100.0 : 0.0)
+                          << "%（帧循环墙钟 " << loopWallMs << "ms）\n";
+                std::cerr << "R settle 末态: offset=" << off << " vp=" << vpH
+                          << " ink=" << settledInk << " 视口内块=" << inView
+                          << " 带 .text=" << inViewWithText << "\n";
+                if (!motionSeen) {
+                    passed = fail("R: 惯性未启动（连发冲量后无 animating 帧）");
+                } else if (!settled) {
+                    passed = fail("R: 惯性 240 帧内未沉降（settle 检测失效或冲量未衰减）");
+                } else if (inkSamples[0] <= 200 || inkSamples[1] <= 200 ||
+                           inkSamples[2] <= 200) {
+                    passed = fail("R: 甩滚运动中内容区出现空白帧（ink=" +
+                                  std::to_string(inkSamples[0]) + "/" +
+                                  std::to_string(inkSamples[1]) + "/" +
+                                  std::to_string(inkSamples[2]) + "）= overscan 兜底失效");
+                } else if (settledInk <= 200) {
+                    passed = fail("R: 惯性沉降后内容区无文字像素（ink=" +
+                                  std::to_string(settledInk) + "）= 像素级白板");
+                } else if (off <= 1.0f) {
+                    passed = fail("R: 惯性未产生实际位移（settle offset=" +
+                                  std::to_string(off) + "）");
+                } else if (inView <= 0 || inViewWithText != inView) {
+                    passed = fail("R: 沉降后视口内块 .text 缺件（视口块=" +
+                                  std::to_string(inView) + " 带 text=" +
+                                  std::to_string(inViewWithText) + "）= 裁剪未跟随");
+                } else if (motionComposes > 16) {
+                    passed = fail("R: 惯性期重排未节流（compose=" +
+                                  std::to_string(motionComposes) + " 次 > 16）");
+                } else {
+                    std::cerr << "R: PASS — 甩滚惯性 " << settleSimMs
+                              << "ms 内 3 帧无空白（overscan 兜底），运动期重排 "
+                              << motionComposes << " 次，沉降后视口块内容在位\n";
+                }
+            }
+        }
+    }
+
+    // ── S. bug399 round13：搜索定位（F-06 编辑态查找流；老板点名场景③）──
+    // 播种 find query（session.find 直驱，等价键路由开条后输入）→ 门控下帧
+    // findAll 重算（命中数 + 耗时）→ pendingJump 逐跳（下一处/上一处/环绕）
+    // → cursor/选区落点 = 命中区间、followCaret 编辑器滚动跟随。断言：命中数 > 0、
+    // 每次跳转 cur/cursor/选区与 FindHit 一致、远离跳转滚动下移且环绕回顶、
+    // 单跳 compose 不出现秒级。产品现状（只记录不改）：预览态 findToggleEnabled =
+    // !previewOn（notepad_session.cpp:154，PRD §4.6）→ 预览内无查找入口，本段
+    // 验证的是编辑态 F-06 流；预览内搜索定位当前是产品禁用项。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(
+                    p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("S: 定位不到仓库根（bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& ss =
+                *module::notepad::detail::sessionRegistry().back();
+            ss.previewOn = false;
+            using InputState = components::input_detail::InputModel::InputState;
+            composeSession(ss);
+            composeSession(ss);
+            InputState& st = ui->state<InputState>(module::notepad::kNotepadEditorInputId);
+            st.cursor = 0;
+            st.selectionStart = 0;
+            st.selectionEnd = 0;
+            st.verticalScroll = 0.0f;
+            st.hasPreferredCursorX = false;
+            composeSession(ss);
+            ss.find.visible = true;
+            ss.find.query = "git";
+            const auto tFind0 = std::chrono::steady_clock::now();
+            composeSession(ss);  // 门控生效：findAll 重算 + 命中层重建
+            const double findMs = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - tFind0).count();
+            const size_t n = ss.find.hits.size();
+            std::cerr << "S findAll: hits=" << n << " 耗时=" << findMs
+                      << "ms（含命中层重建）\n";
+            std::cerr << "S 产品现状: 预览态 findToggleEnabled=!previewOn"
+                         "（notepad_session.cpp:154 / PRD §4.6）→ 预览内无查找入口，"
+                         "仅编辑态 F-06 有搜索定位\n";
+            if (n == 0) {
+                passed = fail("S: 查找无命中（query=git）——夹具或 findAll 链异常");
+            } else {
+                // 锚定第 0 处（真实流里「输入即重算」当前项 = 光标之后首个命中）
+                st.cursor = static_cast<int>(ss.find.hits[0].start);
+                st.selectionStart = static_cast<int>(ss.find.hits[0].start);
+                st.selectionEnd = static_cast<int>(ss.find.hits[0].end);
+                composeSession(ss);
+                const float scrollAtFirst = st.verticalScroll;
+                auto expectNext = [&](size_t fromByte) {
+                    for (size_t i = 0; i < n; ++i)
+                        if (ss.find.hits[i].start > fromByte) return i;
+                    return static_cast<size_t>(0);
+                };
+                auto expectPrev = [&](size_t fromByte) {
+                    for (size_t i = n; i > 0; --i)
+                        if (ss.find.hits[i - 1].start < fromByte) return i - 1;
+                    return n - 1;
+                };
+                bool sOk = true;
+                std::string sDetail;
+                std::string trace;
+                double maxJumpMs = 0.0;
+                auto doJump = [&](int dir, const char* tag) {
+                    const size_t from =
+                        ss.find.cur < n ? ss.find.hits[ss.find.cur].start : 0;
+                    const size_t expect = dir > 0 ? expectNext(from) : expectPrev(from);
+                    ss.find.pendingJump = dir;
+                    const auto t0 = std::chrono::steady_clock::now();
+                    composeSession(ss);
+                    const double jumpMs = std::chrono::duration<double, std::milli>(
+                                              std::chrono::steady_clock::now() - t0).count();
+                    if (jumpMs > maxJumpMs) maxJumpMs = jumpMs;
+                    const size_t wantStart = ss.find.hits[expect].start;
+                    const size_t wantEnd = ss.find.hits[expect].end;
+                    const bool curOk = ss.find.cur == expect;
+                    const bool cursorOk = st.cursor == static_cast<int>(wantStart);
+                    const bool selOk = st.selectionStart == static_cast<int>(wantStart) &&
+                                       st.selectionEnd == static_cast<int>(wantEnd);
+                    trace += std::string(" ") + tag + "(cur=" + std::to_string(ss.find.cur) +
+                             " cursor=" + std::to_string(st.cursor) +
+                             " scroll=" + std::to_string(st.verticalScroll) +
+                             " " + std::to_string(jumpMs) + "ms)";
+                    if (!sOk) return;
+                    if (!curOk) {
+                        sOk = false;
+                        sDetail = std::string(tag) + " 当前命中下标错（got=" +
+                                  std::to_string(ss.find.cur) + " want=" +
+                                  std::to_string(expect) + "）";
+                    } else if (!cursorOk) {
+                        sOk = false;
+                        sDetail = std::string(tag) + " 光标未落到命中起点（got=" +
+                                  std::to_string(st.cursor) + " want=" +
+                                  std::to_string(wantStart) + "）";
+                    } else if (!selOk) {
+                        sOk = false;
+                        sDetail = std::string(tag) + " 选区未覆盖命中区间（got=" +
+                                  std::to_string(st.selectionStart) + ".." +
+                                  std::to_string(st.selectionEnd) + " want=" +
+                                  std::to_string(wantStart) + ".." +
+                                  std::to_string(wantEnd) + "）";
+                    } else if (jumpMs > 1000.0) {
+                        sOk = false;
+                        sDetail = std::string(tag) + " 单跳出现秒级耗时 " +
+                                  std::to_string(jumpMs) + "ms";
+                    }
+                };
+                doJump(1, "next1");
+                if (sOk) doJump(1, "next2");
+                if (sOk) doJump(1, "next3");
+                if (sOk) doJump(-1, "prev1");
+                if (sOk) doJump(-1, "prev2");
+                if (sOk) doJump(-1, "prev3");
+                float scrollFar = 0.0f;
+                if (sOk) {
+                    doJump(-1, "wrapPrev");  // 第 0 处再上一处 → 环绕到末处（远端）
+                    scrollFar = st.verticalScroll;
+                    if (sOk && !(scrollFar > scrollAtFirst + 100.0f)) {
+                        sOk = false;
+                        sDetail = "环绕到末处未把编辑器滚到远端（scroll=" +
+                                  std::to_string(scrollFar) + " 起点=" +
+                                  std::to_string(scrollAtFirst) + "）";
+                    }
+                }
+                if (sOk) {
+                    const float scrollFarBefore = st.verticalScroll;
+                    doJump(1, "wrapNext");  // 末处再下一处 → 环绕回第 0 处
+                    if (sOk && std::fabs(st.verticalScroll - scrollAtFirst) > 2.0f) {
+                        sOk = false;
+                        sDetail = "环绕回第 0 处未滚回起点（scroll=" +
+                                  std::to_string(st.verticalScroll) + " 起点=" +
+                                  std::to_string(scrollAtFirst) + "，末处=" +
+                                  std::to_string(scrollFarBefore) + "）";
+                    }
+                }
+                std::cerr << "S 逐跳:" << trace << "\n";
+                if (!sOk) passed = fail("S: " + sDetail);
+                else
+                    std::cerr << "S: PASS — 编辑态查找 hits=" << n << " findAll "
+                              << findMs << "ms；8 跳（3 next/3 prev/2 环绕）"
+                              << " cur·cursor·选区全对，环绕远端滚动 "
+                              << scrollFar << "→回顶 " << st.verticalScroll
+                              << "；单跳最大 " << maxJumpMs << "ms（无秒级）\n";
+            }
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
     probe::captureIfRequested(args, window, runtime, &passed);
 
