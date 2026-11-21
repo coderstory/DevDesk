@@ -28,11 +28,13 @@
 #include "module_notepad/notepad_protect.h"  // G 段：veto 裁决/quit guard 决策面
 #include "module_notepad/notepad_session.h"  // notepadComposeSession（生产 compose 单点）
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>  // istreambuf_iterator（G3 落盘内容核对）
 #include <string>
+#include <thread>  // J 段惯性收尾帧间短 sleep（实机节奏）
 
 // app:: 层桩（probe 不建应用级 UI；同 markdown_probe 口径）
 namespace app {
@@ -899,6 +901,123 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ── J. bug399：预览滚动后底部大片区空白（裁剪范围冻结在末次 compose 的滚动值）──
+    // 复现：老板真机 2026-11-21 — 打开 3.5KB/43 行 md → 预览 → 滚到底，出现大片
+    // 白板、底部内容不再显示。根因：EUI 滚轮不置 composeRequested（
+    // runtime_update.h setScrollOffset 仅当滚动 owner 带 composeOnScrollOffsetChange
+    // 才置位），notepad 预览 scrollView 未开该标志且 onChange 只回写偏移 →
+    // visibleRange（bug382 视口裁剪）冻结在末次 compose 的 scroll 值，滚出 ≥1200px
+    // overscan 后新暴露区只剩空包装元素。本段按**应用主循环语义**驱动
+    // （dsl_app_impl.h:617-634：仅首帧/尺寸变/composeRequested 才 compose）——
+    // 探针常规的逐帧无条件 compose 会把该缺陷掩盖成假绿。夹具 =
+    // tests/ui_driver/fixtures/bug399-invoice-prd.md（老板复现文件原样副本）。
+    {  // J 段独立于前段 passed：HEAD 已有 P2-3 无关红（见汇报），不因它跳过本段
+        bool jOk = true;
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(
+                    p / "tests/ui_driver/fixtures/bug399-invoice-prd.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            jOk = fail("J: 定位不到仓库根（tests/ui_driver/fixtures/bug399-invoice-prd.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-invoice-prd.md").string());
+            module::notepad::NotepadSession& ps =
+                *module::notepad::detail::sessionRegistry().back();
+            ps.previewOn = true;
+            // 记事本最小窗档（模块规格 720×480 的最小高，取 900×480 组合）：
+            // 预览视口比默认 640 档更矮 = 更早暴露裁剪冻结（真实可达尺寸，非合成）。
+            const float jw = 720.0f;
+            const float jh = 480.0f;
+            int composeCount = 0;
+            auto composeApp = [&] {
+                runtime.compose(ps.pageId, jw, jh,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(ps, u, screen);
+                                });
+                ++composeCount;
+            };
+            auto appFrame = [&] {  // 应用主循环一帧：update → 按需 compose
+                probe::pollOnce(window, runtime);
+                if (runtime.composeRequested()) {
+                    composeApp();
+                    probe::pollOnce(window, runtime);
+                }
+            };
+            composeApp();
+            composeApp();  // 首帧建树 + 布局稳态
+            const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+            const float vpH = sc != nullptr ? sc->frame.height : 0.0f;
+            const float maxOff = sc != nullptr ? sc->scrollMaxOffset : 0.0f;
+            const core::dsl::Element* wrap =
+                ui->find(std::string(module::notepad::kNotepadPreviewContentId) + ".wrap");
+            const float docH = wrap != nullptr ? wrap->frame.height : 0.0f;
+            if (sc == nullptr || maxOff <= 0.0f) {
+                jOk = fail("J: 预览不可滚动（maxOffset=" + std::to_string(maxOff) +
+                              "）——夹具/窗高不满足复现前件");
+            }
+            // 滚轮注入（驱动 execScroll 同款时序）：指针 motion 独立成帧落地 →
+            // 注入 scroll → 惯性收尾帧带真实短 sleep（实机节奏）。事件数取 8 轮
+            // （单轮 -20 约 600px，远超 maxOffset）——到底后溢出冲量自行归零，
+            // 不依赖回读（element->scrollOffset 是 compose 输入值，无重排不回写）。
+            if (jOk) {
+                const float cx = sc->frame.x + sc->frame.width * 0.5f;
+                const float cy = sc->frame.y + sc->frame.height * 0.5f;
+                for (int i = 0; i < 8; ++i) {
+                    core::queuePointerMotion(window, cx, cy, {}, {});
+                    probe::pollOnce(window, runtime);
+                    probe::queueScroll(window, runtime, 0.0, -20.0);
+                    probe::pollOnce(window, runtime);
+                    for (int f = 0; f < 40; ++f) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                        appFrame();
+                    }
+                }
+            }
+            // 判据：滚到底后文档末块的 .text 子树必须已建（裁剪跟随滚动）。修前
+            // 裁剪冻结 → 末块在 overscan 外只剩包装 → 缺件 = 白板。
+            if (jOk) {
+                int lastIdx = -1;
+                float lastY = 0.0f;
+                float lastH = 0.0f;
+                for (int i = 0; i < 2000; ++i) {
+                    const core::dsl::Element* blk = ui->find(
+                        std::string(module::notepad::kNotepadPreviewContentId) +
+                        ".block." + std::to_string(i));
+                    if (blk == nullptr) continue;
+                    lastIdx = i;
+                    lastY = blk->frame.y;
+                    lastH = blk->frame.height;
+                }
+                std::cerr << "J 诊断: viewportH=" << vpH << " docH=" << docH
+                          << " maxOffset=" << maxOff
+                          << " lastBlock=" << lastIdx << " y=" << lastY
+                          << " h=" << lastH
+                          << " 滚动期 compose=" << (composeCount - 2) << "\n";
+                if (lastIdx < 0) {
+                    jOk = fail("J: 整篇块包装都不在场（visibleRange 契约破坏）");
+                } else if (ui->find(std::string(module::notepad::kNotepadPreviewContentId) +
+                                   ".block." + std::to_string(lastIdx) + ".text") == nullptr) {
+                    jOk = fail("J: 滚到底后末块 block." + std::to_string(lastIdx) +
+                               " 无 .text 内容（裁剪范围未随滚动重排 = bug399 白板）");
+                }
+                if (jOk) {
+                    std::cerr << "J: PASS — bug399 滚动裁剪跟随滚动（末块 .text 已建）"
+                              << "\n";
+                } else {
+                    passed = false;
+                }
+            }
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
     probe::captureIfRequested(args, window, runtime, &passed);
 
@@ -914,6 +1033,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "notepad_probe: PASS（" << args.windowW << "x" << args.windowH
-              << "，7 session：正常/只读/错误占位 + 查找条键盘流（含关条焦点回归）+ 按钮矩阵/预览切换 + 换行钮 + 未保存保护链 + 另存为钮矩阵/M+Shift+S 守卫/三快捷键接线 + 弹层收起/统计缓存/提示条可关/换行钮让位）\n";
+              << "，8 session（含 J bug399 预览滚动）：正常/只读/错误占位 + 查找条键盘流（含关条焦点回归）+ 按钮矩阵/预览切换 + 换行钮 + 未保存保护链 + 另存为钮矩阵/M+Shift+S 守卫/三快捷键接线 + 弹层收起/统计缓存/提示条可关/换行钮让位）\n";
     return 0;
 }

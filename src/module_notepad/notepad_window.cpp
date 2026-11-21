@@ -949,6 +949,10 @@ void drawPreviewSlot(
         .offset(scroll)
         .onChange([&scroll](float v) { scroll = v; })
         .contentKey(std::to_string(st.textRevision))
+        // bug399：裁剪型内容必须随滚动重排——visibleRange（bug382）用 scroll
+        // 生成裁剪范围，而滚轮本身不触发重排（EUI 语义），不开该标志时范围
+        // 冻结在末次 compose 值，滚出 overscan 后新暴露区空白（真机实测）。
+        .composeOnScrollOffsetChange()
         .content([&s, &style, &scroll, viewportH](eui::Ui& inner, float innerW, float) {
             if (s.editText.empty()) {
                 inner.text(kNotepadPreviewEmptyId)
