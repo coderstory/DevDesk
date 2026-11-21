@@ -47,8 +47,12 @@
 // 来自本可执行编译的 src/app_sidebar.cpp，不桩）
 namespace app {
 const app::DslAppConfig& dslAppConfig() {
+    // focusOnShow(false)：驱动窗**不抢前台焦点**（need376 老板投诉「跑测试时窗口
+    // 一个个弹出来打断打字」）。全量档 13 个 ui_driver 场景串行跑，每个都抢一次
+    // 焦点就是连续 13 次打断。窗口仍可见——截图/几何/命中断言全靠真渲染与真窗口
+    //（glReadPixels 要真后备缓冲），只是不夺取当前应用的键盘焦点。
     static const DslAppConfig config =
-        DslAppConfig{}.title("devdesk_ui_driver");
+        DslAppConfig{}.title("devdesk_ui_driver").focusOnShow(false);
     return config;
 }
 }  // namespace app
