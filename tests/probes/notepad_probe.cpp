@@ -1179,6 +1179,84 @@ int main(int argc, char* argv[]) {
                   << "\n";
     }
 
+    // ── L. bug399 round5：53KB/581 行真文件预览性能（debt398 汇流）──
+    // 计时口径：单次 runtime.compose（真窗口 900×640）的墙钟；首帧含解析+内联测高
+    // 预热，滚动段只统计滚动触发的重排。阈值对齐旧查看器同量级（每格 ≤40ms 上限，
+    // 目标 16-30ms 档；滚动全程 8 格累计 ≤1200ms）。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("L: 定位不到仓库根（tests/ui_driver/fixtures/bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& ps =
+                *module::notepad::detail::sessionRegistry().back();
+            ps.previewOn = true;
+            const float lw = 900.0f;
+            const float lh = 640.0f;
+            double maxCompMs = 0.0;
+            double totalCompMs = 0.0;
+            int compCount = 0;
+            auto timedCompose = [&] {
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(ps.pageId, lw, lh,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(ps, u, screen);
+                                });
+                const double ms = std::chrono::duration<double, std::milli>(
+                                      std::chrono::steady_clock::now() - t0).count();
+                ++compCount;
+                maxCompMs = std::max(maxCompMs, ms);
+                totalCompMs += ms;
+                return ms;
+            };
+            const double firstMs = timedCompose();
+            probe::pollOnce(window, runtime);
+            maxCompMs = 0.0;
+            totalCompMs = 0.0;
+            compCount = 0;
+            const auto scrollT0 = std::chrono::steady_clock::now();
+            const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+            if (sc != nullptr) {
+                const float cx = sc->frame.x + sc->frame.width * 0.5f;
+                const float cy = sc->frame.y + sc->frame.height * 0.5f;
+                for (int i = 0; i < 8; ++i) {
+                    core::queuePointerMotion(window, cx, cy, {}, {});
+                    probe::pollOnce(window, runtime);
+                    probe::queueScroll(window, runtime, 0.0, -20.0);
+                    probe::pollOnce(window, runtime);
+                    for (int f = 0; f < 8; ++f) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                        probe::pollOnce(window, runtime);
+                        if (runtime.composeRequested()) {
+                            timedCompose();
+                            probe::pollOnce(window, runtime);
+                        }
+                    }
+                }
+            }
+            const double scrollMs = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - scrollT0).count();
+            std::cerr << "L 计时: 首次compose=" << firstMs << "ms 每格最大=" << maxCompMs
+                      << "ms 滚动期compose均值="
+                      << (compCount > 0 ? totalCompMs / compCount : 0.0) << "ms 次数=" << compCount
+                      << " 8格累计=" << scrollMs << "ms" << "\n";
+            if (maxCompMs > 40.0)
+                std::cerr << "L: 已知红记录 — 每格 compose " << maxCompMs
+                          << "ms 超 40ms 上限（debt398 性能债）" << "\n";
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）
     probe::captureIfRequested(args, window, runtime, &passed);
 

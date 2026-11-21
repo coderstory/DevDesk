@@ -2,6 +2,7 @@
 //（need:273 批 1）。三段式版面（设计稿 §1.2）：工具条 44 / 提示条 32 条件 /
 // 编辑区 flex / 状态栏 28。查找条 / 预览 / 字体下拉 / 格式化 = 批 2/3 面，
 // 本批工具条只落「打开 / 保存」两钮（无新建钮 = N-14 硬约束）。
+#include <chrono>
 #include "notepad_session.h"
 
 #include <algorithm>
@@ -942,6 +943,31 @@ void drawPreviewSlot(
     // 视口裁剪：滚动/调窗/全局帧泵每帧全文档重建元素树是预览卡顿根因，
     // 裁剪后窗口外块只留包装几何（显式高不变），content 不再生成。
     const float viewportH = h - editorTop - kStatusH;
+
+    // bug399 round5 / debt398：整篇估高缓存 + 供高通道（旧查看器几何表同架构）。
+    // 键 = 文本修订 + 渲染宽（0.5px 量化）+ 样式指纹（主题/字号缩放/度量）；命中即
+    // 复用，wrap 高与 scrollView contentHeightProvider 同源共用 → 每格滚轮的重排
+    // 不再全文档跑 O(blocks) estimateHeight，也不再走 scrollView scratch 测量 pass。
+    auto previewDocHeight = [&s, &style, rev = st.textRevision](float innerW) -> float {
+        const float widthKey = std::round(innerW * 2.0f) * 0.5f;
+        const std::string styleKey =
+            core::theme::currentThemeName() + "|" + std::to_string(core::theme::fontScale()) +
+            "|" + std::to_string(style.bodySize) + "|" + std::to_string(style.blockGap);
+        for (auto& entry : s.previewDocHs) {
+            if (entry.height > 0.0f && entry.rev == rev &&
+                std::fabs(entry.width - widthKey) < 0.6f && entry.styleKey == styleKey) {
+                return entry.height;
+            }
+        }
+        const float height =
+            components::MarkdownBuilder::estimateHeight(s.editText, widthKey, style);
+        auto& slot = s.previewDocHs[static_cast<std::size_t>(s.previewDocHNext) %
+                                    s.previewDocHs.size()];
+        s.previewDocHNext = (s.previewDocHNext + 1) %
+                            static_cast<int>(s.previewDocHs.size());
+        slot = {rev, widthKey, styleKey, height};
+        return height;
+    };
     components::scrollView(ui, kNotepadPreviewId)
         .position(0.0f, editorTop)
         .size(w, viewportH)
@@ -950,10 +976,15 @@ void drawPreviewSlot(
         .onChange([&scroll](float v) { scroll = v; })
         .contentKey(std::to_string(st.textRevision))
         .composeOnScrollOffsetChange()
+        // bug399 round5：跳过 scrollView scratch 测量 pass（长文档逐帧全量构建
+        // + layout 是 bug259-C 主根因）；宽度变化时才重算，命中走会话缓存。
+        .contentHeightProvider([&previewDocHeight](float contentWidth, float) {
+            return previewDocHeight(contentWidth);
+        })
         // bug399：裁剪型内容必须随滚动重排——visibleRange（bug382）用 scroll
         // 生成裁剪范围，而滚轮本身不触发重排（EUI 语义），不开该标志时范围
         // 冻结在末次 compose 值，滚出 overscan 后新暴露区空白（真机实测）。
-        .content([&s, &style, &scroll, viewportH](eui::Ui& inner, float innerW, float) {
+        .content([&s, &style, &scroll, viewportH, &previewDocHeight](eui::Ui& inner, float innerW, float) {
             if (s.editText.empty()) {
                 inner.text(kNotepadPreviewEmptyId)
                     .position(0.0f, 40.0f)
@@ -973,8 +1004,7 @@ void drawPreviewSlot(
             // 三件）。高 = estimateHeight（渲染同源估算，displayCpForPoint 的
             // 纵向排布同式）——旧查看器逐块 hit 缝（mdDrawBlockFlowCore）的
             // 整篇等价形态（块流核 module_markdown 私有，隔离禁依赖，见 §注）。
-            const float docH = components::MarkdownBuilder::estimateHeight(
-                s.editText, innerW, style);
+            const float docH = previewDocHeight(innerW);  // bug399 round5：会话级缓存
             const std::string wrapId = std::string(kNotepadPreviewContentId) + ".wrap";
             auto wrap = inner.stack(wrapId)
                 .width(innerW)

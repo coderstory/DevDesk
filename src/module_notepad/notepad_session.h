@@ -4,6 +4,7 @@
 // compose 闭包捕获的裸指针与窗口同寿，无悬垂。
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -71,6 +72,19 @@ struct NotepadSession {
     bool selHasText = false;   // 非空选区（拖选中实时高亮 + 抬起后保留）
     components::MarkdownStyle selPreviewStyle{};  // compose 帧样式快照（见上注）
     float selPreviewWidth = 0.0f;                 // 同上：渲染宽快照
+
+    // bug399 round5 / debt398：预览整篇估高缓存（键 = 文本修订 + 渲染宽 + 样式指纹）。
+    // 整篇 estimateHeight 是 O(blocks)，不缓存时每格滚轮重排都全文档重算 = 主线程冻结；
+    // wrap 高与 scrollView contentHeightProvider 共用同一缓存值（旧查看器几何表同架构）。
+    struct PreviewDocHCache {
+        unsigned long long rev = 0;
+        float width = -1.0f;
+        std::string styleKey;
+        float height = 0.0f;
+    };
+    // 多档宽（滚动条扣减前后两档常态，900/876 等）各一条；容量 4 轮转替换。
+    std::array<PreviewDocHCache, 4> previewDocHs{};
+    int previewDocHNext = 0;
 
     // ── 编码 / 行尾（notepad_encoding 探测结果）──
     NotepadEncodingProbe enc{};
