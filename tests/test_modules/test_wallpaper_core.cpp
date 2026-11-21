@@ -333,19 +333,30 @@ REGISTER_TEST(wallpaper_rotation_focus_path_restores_previous,
     DOCTEST_CHECK_FALSE(list.focusPath("zzz", base + std::chrono::seconds(20)));
     DOCTEST_CHECK_EQ(list.currentPath().value(), std::string("a"));
 
-    // 洗牌：focusPath 必须清空洗牌袋——否则下一拍会因空袋重洗出已抽过的项。
+    // 洗牌：focusPath 必须清空洗牌袋（下一拍重新洗一轮，而不是接着旧袋游标走）。
+    // ⚠ 不断言「下一拍不会是 c」：洗牌模式重新洗后 c 排在最前是合法结果，且
+    // std::shuffle 的序列依赖标准库实现（macOS libc++ 与 Windows MinGW libstdc++
+    // 结果不同）——按具体项断言会变成平台相关的假绿/假红（CI 44857988863 实证：
+    // 同一用例 macOS 绿、Windows 红）。真正要锁的是「袋被重建」这个契约：
+    // 回滚后连推 items 数那么多拍，各项恰好抽到一次。
     wp::RotationController shuffle(42);
     shuffle.setItems({"a", "b", "c"});
     shuffle.setMode(wp::PlayMode::Shuffle);
     DOCTEST_CHECK(shuffle.start(base).has_value());
     DOCTEST_CHECK(shuffle.focusPath("c", base + std::chrono::seconds(10)));
     DOCTEST_CHECK_EQ(shuffle.currentPath().value(), std::string("c"));
-    // 回滚后推进：不得返回 c 自己（袋已失效重洗，且当前项不在新袋）
-    for (int index = 0; index < 2; ++index) {
+    // 袋已重建：接下来 3 拍必须把 {a,b,c} 各抽到恰好一次（任何重复/遗漏都说明
+    // 旧袋残留或重建失败）。
+    std::set<std::string> drawn;
+    for (int index = 0; index < 3; ++index) {
         const auto next = shuffle.advanceNow(base + std::chrono::seconds(10));
         DOCTEST_REQUIRE(next.has_value());
-        DOCTEST_CHECK(*next != std::string("c"));
+        drawn.insert(*next);
     }
+    DOCTEST_CHECK_EQ(drawn.size(), static_cast<std::size_t>(3));
+    DOCTEST_CHECK_EQ(drawn.count("a"), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(drawn.count("b"), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(drawn.count("c"), static_cast<std::size_t>(1));
     return true;
 })
 

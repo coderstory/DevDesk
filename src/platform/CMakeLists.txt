@@ -145,6 +145,13 @@ target_compile_definitions(devdesk_platform PUBLIC
 # INTERFACE 一并传递）。泄漏面为零：该 target 的接口 include 只有 INSTALL_INTERFACE，
 # git2.h 仍只在平台 .cpp 出现。
 target_link_libraries(devdesk_platform PUBLIC libgit2package)
+# GIT_STATIC：v1.9.7 之后 libgit2 改了导出宏判据——旧版以 `#if __GNUC__ >= 4` 优先，
+# MinGW 走普通 extern；新版改成 `#if defined(_WIN32) && !defined(GIT_STATIC)` 优先，
+# 于是 MinGW（也是 _WIN32）被当成 DLL 消费方，头里全变 __declspec(dllimport)，
+# 而我们 BUILD_SHARED_LIBS=OFF 链的是静态库 → 整片 undefined reference to __imp_git_*。
+# 本项目恒静态链，故恒定义 GIT_STATIC（PUBLIC：定义须跟着 target 传播，
+# 否则任何间接 include git2.h 的 TU 会重新掉回 dllimport）。
+target_compile_definitions(devdesk_platform PUBLIC GIT_STATIC)
 # libgit2package 不外发构建期 include（只有 INSTALL_INTERFACE；实测编译行无该路径）——
 # 显式补，出界即编译错
 target_include_directories(devdesk_platform PRIVATE
