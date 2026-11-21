@@ -26,6 +26,7 @@
 #include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
 #include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
 #include <components/scrollview.h>  // bug399 round3 差分实验：普通 scrollView+text
+#include <components/markdown.h>  // bug399 round7：仪表分解 + A/B 基准
 #include "module_notepad/notepad_module.h"
 #include "module_notepad/notepad_protect.h"  // G 段：veto 裁决/quit guard 决策面
 #include "module_notepad/notepad_session.h"  // notepadComposeSession（生产 compose 单点）
@@ -1254,6 +1255,149 @@ int main(int argc, char* argv[]) {
             if (maxCompMs > 40.0)
                 std::cerr << "L: 已知红记录 — 每格 compose " << maxCompMs
                           << "ms 超 40ms 上限（debt398 性能债）" << "\n";
+        }
+    }
+
+    // ── M. bug399 round7：性能仪表分解 + A/B 基准（debt398 汇流）──
+    // 每帧 compose 的 markdown 内部构成（parse 查找/解析、inline 键构造/查找/
+    // 布局、build 走查、裁剪块数、kind 计数）与旧查看器组件级形态（整篇
+    // components::markdown，无 scrollView/裁剪/估高包装）的 compose 基准。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            std::cerr << "M: 定位不到夹具（跳过仪表段）\n";
+        } else {
+            const std::string fixturePath =
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string();
+            const auto dump = [](const char* tag, double totalMs,
+                                 const components::detail::MarkdownPerfStats& b) {
+                const components::detail::MarkdownPerfStats& p =
+                    components::detail::markdownPerfStats();
+                std::cerr << "M " << tag << ": compose=" << totalMs
+                          << "ms | md build=" << (p.buildMs - b.buildMs)
+                          << "ms calls=" << (p.buildCalls - b.buildCalls)
+                          << " blocks=" << (p.blocksVisited - b.blocksVisited)
+                          << " culled=" << (p.blocksCulled - b.blocksCulled)
+                          << " | parse hit=" << (p.parseHits - b.parseHits)
+                          << " miss=" << (p.parseMisses - b.parseMisses)
+                          << " lookup=" << (p.parseLookupMs - b.parseLookupMs)
+                          << " build=" << (p.parseBuildMs - b.parseBuildMs)
+                          << "ms | inline key=" << (p.inlineKeyMs - b.inlineKeyMs)
+                          << "ms lookup=" << (p.inlineLookupMs - b.inlineLookupMs)
+                          << "ms layout=" << (p.inlineLayoutMs - b.inlineLayoutMs)
+                          << "ms hit=" << (p.inlineHits - b.inlineHits)
+                          << " miss=" << (p.inlineMisses - b.inlineMisses)
+                          << " | kinds h=" << (p.kindHeading - b.kindHeading)
+                          << " p=" << (p.kindParagraph - b.kindParagraph)
+                          << " li=" << (p.kindListItem - b.kindListItem)
+                          << " code=" << (p.kindCode - b.kindCode)
+                          << " html=" << (p.kindHtml - b.kindHtml)
+                          << " div=" << (p.kindDivider - b.kindDivider)
+                          << " tr=" << (p.kindTableRow - b.kindTableRow)
+                          << " | caches doc=" << p.docCacheEntries
+                          << " inline=" << p.inlineCacheEntries << "/" << p.inlineCacheBytes
+                          << "B\n";
+            };
+            module::notepad::openNotepadWindow(fixturePath);
+            module::notepad::NotepadSession& ms =
+                *module::notepad::detail::sessionRegistry().back();
+            ms.previewOn = true;
+            const float mw = 900.0f;
+            const float mh = 640.0f;
+            auto timedM = [&] {
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(ms.pageId, mw, mh,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(ms, u, screen);
+                                });
+                return std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - t0).count();
+            };
+            {
+                const auto before = components::detail::markdownPerfStats();
+                const double firstMs = timedM();
+                probe::pollOnce(window, runtime);
+                dump("首帧", firstMs, before);
+            }
+            const core::dsl::Element* msc = ui->find(module::notepad::kNotepadPreviewId);
+            if (msc != nullptr) {
+                const float cx = msc->frame.x + msc->frame.width * 0.5f;
+                const float cy = msc->frame.y + msc->frame.height * 0.5f;
+                for (int i = 0; i < 4; ++i) {
+                    core::queuePointerMotion(window, cx, cy, {}, {});
+                    probe::pollOnce(window, runtime);
+                    probe::queueScroll(window, runtime, 0.0, -20.0);
+                    probe::pollOnce(window, runtime);
+                    for (int f = 0; f < 8; ++f) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                        probe::pollOnce(window, runtime);
+                        if (runtime.composeRequested()) {
+                            const auto before = components::detail::markdownPerfStats();
+                            const double ms = timedM();
+                            probe::pollOnce(window, runtime);
+                            const std::string tag = "滚格" + std::to_string(i);
+                            dump(tag.c_str(), ms, before);
+                        }
+                    }
+                }
+            }
+            // A/B：旧查看器组件级形态（整篇、无 scrollView 包装/裁剪/估高缓存）
+            std::ifstream mIn(fixturePath, std::ios::binary);
+            const std::string mText((std::istreambuf_iterator<char>(mIn)),
+                                    std::istreambuf_iterator<char>());
+            const components::MarkdownStyle mStyle;
+            {
+                const auto before = components::detail::markdownPerfStats();
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(ms.pageId, mw, mh,
+                                [&](eui::Ui& u, const eui::Screen&) {
+                                    components::markdown(u, "bug399.ab.md")
+                                        .markdown(mText)
+                                        .width(880.0f)
+                                        .style(mStyle)
+                                        .build();
+                                });
+                const double abMs = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - t0).count();
+                dump("A/B整篇无裁剪(冷)", abMs, before);
+            }
+            // 热缓存复跑：旧查看器稳态量级（布局缓存命中后仍全篇构建无裁剪）
+            {
+                const auto before = components::detail::markdownPerfStats();
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(ms.pageId, mw, mh,
+                                [&](eui::Ui& u, const eui::Screen&) {
+                                    components::markdown(u, "bug399.ab.md")
+                                        .markdown(mText)
+                                        .width(880.0f)
+                                        .style(mStyle)
+                                        .build();
+                                });
+                const double abMs = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - t0).count();
+                dump("A/B整篇无裁剪(热)", abMs, before);
+            }
+            // 搜索链路等价量：预览态查找条按 §4.6 禁用，命中高亮唯一入口 =
+            // 选区反查 hitRectsForDisplayRangeDoc（同链路）
+            {
+                const std::string dt = components::MarkdownBuilder::displayTextOf(mText);
+                const auto t0 = std::chrono::steady_clock::now();
+                const auto rects = components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+                    mText, 880.0f, mStyle, 0, dt.size());
+                const double qMs = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - t0).count();
+                std::cerr << "M 搜索链路: displayCp=" << dt.size() << " rects=" << rects.size()
+                          << " 全篇区间反查=" << qMs << "ms\n";
+            }
         }
     }
 
