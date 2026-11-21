@@ -5205,6 +5205,55 @@ REGISTER_TEST(md_module_blockflow_range_rect_poc,
     return true;
 })
 
+// bug399 round11 / debt398 回归锁：段合并链的词间空白不得丢失。
+// 旧实现 splitMarkdownTextForLayout 丢弃全部空白 → 词段盒贴合（词间距视觉塌缩）
+// 且合并段文本与显示流失配（aligned=false → 含空格行不出高亮矩形）。本用例锁
+// 两件事：①切分 = 显示流严格切分（空白随词段保留）②混排（中英+空格）词间矩形
+// 非空且间距 > 0（不塌缩）、横向不重叠。
+REGISTER_TEST(md_layout_word_spacing_round11,
+              "markdown: 段合并词间空白保留——混排词间距/矩形回归（round11）", {
+    const std::string mixed = "alpha beta 中文 gamma";
+    const auto parts = components::detail::splitMarkdownTextForLayout(mixed);
+    std::string joined;
+    for (const std::string& part : parts) joined += part;
+    DOCTEST_CHECK_EQ(joined, mixed);   // 无空白丢失（严格切分）
+    bool sawWordSpace = false;
+    for (const std::string& part : parts) {
+        if (part == "alpha " || part == "beta ") sawWordSpace = true;
+    }
+    DOCTEST_CHECK(sawWordSpace);       // 词间空白随前一词段保留
+
+    const float kWidth = 400.0f;
+    const components::MarkdownStyle style;
+    const std::string doc = mixed + "\n";
+    const std::string display =
+        components::MarkdownBuilder::displayTextOf(doc);
+    const std::size_t aBeg = display.find("alpha");
+    const std::size_t bBeg = display.find("beta");
+    const std::size_t cBeg = display.find("中文");
+    DOCTEST_REQUIRE(aBeg != std::string::npos);
+    DOCTEST_REQUIRE(bBeg != std::string::npos);
+    DOCTEST_REQUIRE(cBeg != std::string::npos);
+    const auto rectA = components::MarkdownBuilder::hitRectsForDisplayRange(
+        doc, kWidth, style, aBeg, aBeg + 5);
+    const auto rectB = components::MarkdownBuilder::hitRectsForDisplayRange(
+        doc, kWidth, style, bBeg, bBeg + 4);
+    const auto rectC = components::MarkdownBuilder::hitRectsForDisplayRange(
+        doc, kWidth, style, cBeg, cBeg + 2);
+    DOCTEST_REQUIRE_MESSAGE(!rectA.empty(), "alpha 无矩形");
+    DOCTEST_REQUIRE_MESSAGE(!rectB.empty(), "beta 无矩形（含空格行对齐失配回归）");
+    DOCTEST_REQUIRE_MESSAGE(!rectC.empty(), "中文 无矩形（CJK 段反查回归）");
+    DOCTEST_CHECK(rectA[0].w > 0.0f && rectB[0].w > 0.0f && rectC[0].w > 0.0f);
+    // 词间空白不塌缩：前后词矩形不重叠且间距 > 0.5px（自然空格宽，无叠加 gap）
+    const float wordGap = rectB[0].x - (rectA[0].x + rectA[0].w);
+    DOCTEST_CHECK_MESSAGE(wordGap > 0.5f,
+                          "词间距塌缩 gap=" + std::to_string(wordGap));
+    // 混排词后 CJK 起点仍在 beta 右侧（词序几何单调）
+    DOCTEST_CHECK(rectC[0].x >= rectB[0].x + rectB[0].w - 0.5f);
+    DOCTEST_CHECK(rectB[0].y == rectA[0].y);   // 同行（不折行）
+    return true;
+})
+
 // 源码守卫（只读断言）
 // 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
 // __FILE__（ccache 会把绝对路径相对化）；定位 / 取体失败一律大声失败，不静默绿。
