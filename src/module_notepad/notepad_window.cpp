@@ -356,10 +356,13 @@ void notepadFindTick(NotepadSession& s,
     }
     if (!f.visible) return;
     const bool queryChanged = f.query != f.appliedQuery;
-    const bool textChanged = f.hitsRevision != st.textRevision;
+    // need400：文本域切换（预览显示域 ↔ 编辑源域）必须重算——hits 字节区
+    // 间属于哪个域由 hitsPreview 标记（跨域复用会错位）
+    const bool textChanged = f.hitsRevision != st.textRevision || f.hitsPreview;
     if (!queryChanged && !textChanged) return;
     f.appliedQuery = f.query;
     f.hitsRevision = st.textRevision;
+    f.hitsPreview = false;
     if (f.appliedQuery.empty()) {
         // 空关键词清高亮（F-06）
         if (!f.hits.empty()) {
@@ -375,6 +378,81 @@ void notepadFindTick(NotepadSession& s,
             ? f.hits[f.cur].start
             : static_cast<size_t>(st.cursor < 0 ? 0 : st.cursor);
     f.hits = findAll(st.text, f.appliedQuery,
+                     FindOptions{f.caseSensitive, f.wholeWord});
+    f.cur = kFindNoHit;
+    for (size_t i = 0; i < f.hits.size(); ++i) {
+        if (f.hits[i].start >= anchor) {
+            f.cur = i;
+            break;
+        }
+    }
+    if (f.cur == kFindNoHit && !f.hits.empty()) f.cur = f.hits.size() - 1;
+    ++st.styleRevision;  // 命中层缓存失效
+}
+
+// need400：预览态查找显示文本缓存（域 = displayTextOf，textRevision 键控；
+// 预览禁编辑 → 修订稳定，查找条开着时每帧复用同一显示文本）。
+const std::string& notepadFindPreviewDisplay(NotepadSession& s,
+                                             unsigned long long rev) {
+    if (s.findPreviewRev != rev) {
+        s.findPreviewDisplay =
+            components::MarkdownBuilder::displayTextOf(s.editText);
+        s.findPreviewRev = rev;
+    }
+    return s.findPreviewDisplay;
+}
+
+// 预览态查找 tick（compose 预览分支调用，need400）：命中域 = 显示文本（用户
+// 所见即所搜）；跳转只请求预览滚动（pendingPreviewScroll 由 drawPreviewSlot
+// 换算矩形落点），InputState 光标/选区不动——预览禁编辑。重算门控与编辑态
+// notepadFindTick 同构（输入即重算 + 文本修订重算），域切换由 hitsPreview 标记
+// 强制重算。
+void notepadPreviewFindTick(NotepadSession& s,
+                            components::input_detail::InputModel::InputState& st) {
+    NotepadSession::NotepadFindState& f = s.find;
+    if (f.styleDirty) {
+        f.styleDirty = false;
+        ++st.styleRevision;
+    }
+    if (!f.visible) return;
+    // 待跳转：相邻命中（环绕语义与编辑态一致；无当前命中 → 首/末命中）
+    if (f.pendingJump != 0) {
+        const int dir = f.pendingJump;
+        f.pendingJump = 0;
+        if (!f.hits.empty()) {
+            size_t idx = kFindNoHit;
+            if (f.cur >= f.hits.size()) {
+                idx = dir > 0 ? 0 : f.hits.size() - 1;
+            } else {
+                const size_t from = f.hits[f.cur].start;
+                idx = dir > 0 ? nextFrom(f.hits, from) : prevFrom(f.hits, from);
+            }
+            if (idx != kFindNoHit) {
+                f.cur = idx;
+                f.pendingPreviewScroll = true;
+                ++st.styleRevision;  // 当前命中色变化（切回编辑时缓存同步失效）
+            }
+        }
+    }
+    const bool queryChanged = f.query != f.appliedQuery;
+    const bool domainChanged = !f.hitsPreview || f.hitsRevision != st.textRevision;
+    if (!queryChanged && !domainChanged) return;
+    const std::string& display = notepadFindPreviewDisplay(s, st.textRevision);
+    f.appliedQuery = f.query;
+    f.hitsRevision = st.textRevision;
+    f.hitsPreview = true;
+    if (f.appliedQuery.empty()) {
+        // 空关键词清高亮（F-06）
+        if (!f.hits.empty()) {
+            f.hits.clear();
+            f.cur = kFindNoHit;
+            ++st.styleRevision;
+        }
+        return;
+    }
+    // 当前序号尽量邻近（与编辑态同口径：锚之后首个命中，无则末命中）
+    const size_t anchor = f.cur < f.hits.size() ? f.hits[f.cur].start : 0;
+    f.hits = findAll(display, f.appliedQuery,
                      FindOptions{f.caseSensitive, f.wholeWord});
     f.cur = kFindNoHit;
     for (size_t i = 0; i < f.hits.size(); ++i) {
@@ -623,6 +701,8 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
     const float barH = f.replaceOpen ? 74.0f : 40.0f;
     const float bx = w - 16.0f - barW;
     const float by = editorTop + 12.0f;
+    // need400：预览态只读——替换面（展开/替换/全部替换）禁用，查找面照常
+    const bool canReplace = editable && !s.previewOn;
 
     ui.rect(kNotepadSearchBarId)
         .position(bx, by)
@@ -706,7 +786,7 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
                   app::requestUpdate();
               });
     barButton(ui, kNotepadSearchReplaceToggleId, f.replaceOpen ? "−" : "＋",
-              bx + 358.0f, by + 8.0f, 24.0f, 24.0f, t, true, [&s] {
+              bx + 358.0f, by + 8.0f, 24.0f, 24.0f, t, canReplace, [&s] {
                   s.find.replaceOpen = !s.find.replaceOpen;
                   app::requestUpdate();
               });
@@ -732,12 +812,12 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
             })
             .build();
         barButton(ui, kNotepadBtnReplaceOneId, "替换", bx + 234.0f, by + 42.0f,
-                  64.0f, 24.0f, t, editable, [&s, &ui] {
+                  64.0f, 24.0f, t, canReplace, [&s, &ui] {
                       notepadReplaceOne(
                           s, ui.state<InputState>(kNotepadEditorInputId));
                   });
         barButton(ui, kNotepadBtnReplaceAllId, "全部替换", bx + 302.0f,
-                  by + 42.0f, 88.0f, 24.0f, t, editable, [&s, &ui] {
+                  by + 42.0f, 88.0f, 24.0f, t, canReplace, [&s, &ui] {
                       notepadReplaceAll(
                           s, ui.state<InputState>(kNotepadEditorInputId));
                   });
@@ -984,7 +1064,7 @@ void drawPreviewSlot(
         // bug399：裁剪型内容必须随滚动重排——visibleRange（bug382）用 scroll
         // 生成裁剪范围，而滚轮本身不触发重排（EUI 语义），不开该标志时范围
         // 冻结在末次 compose 值，滚出 overscan 后新暴露区空白（真机实测）。
-        .content([&s, &style, &scroll, viewportH, &previewDocHeight](eui::Ui& inner, float innerW, float) {
+        .content([&s, &st, &style, &scroll, viewportH, &previewDocHeight](eui::Ui& inner, float innerW, float) {
             if (s.editText.empty()) {
                 inner.text(kNotepadPreviewEmptyId)
                     .position(0.0f, 40.0f)
@@ -1036,6 +1116,68 @@ void drawPreviewSlot(
                                 .size(r.w, r.h)
                                 .color(components::theme::withAlpha(t.colors.info, selAlpha))
                                 .build();
+                        }
+                    }
+                }
+                // need400：查找命中高亮层（独立于选区，不触发「选中即复制」；
+                // 半透明 tint 叠在文字上，不消费命中、不挡 hit 层）。命中是显示
+                // 文本字节区间 → 码点域反查矩形；hits 升序不重叠 → 线性累计换算。
+                if (s.find.visible && !s.find.hits.empty()) {
+                    const std::string& fdisp =
+                        notepadFindPreviewDisplay(s, st.textRevision);
+                    const auto& th = core::theme::current();
+                    const eui::Color hitFill = components::theme::withAlpha(
+                        th.colors.warning, th.isDark ? 0.30f : 0.26f);
+                    const eui::Color curFill = colorOver(
+                        hitFill, components::theme::withAlpha(th.colors.primary, 0.45f));
+                    size_t byteCur = 0;
+                    size_t cpCur = 0;
+                    size_t rid = 0;
+                    for (size_t hi = 0; hi < s.find.hits.size(); ++hi) {
+                        const FindHit& hit = s.find.hits[hi];
+                        if (hit.start < byteCur || hit.end > fdisp.size()) continue;
+                        cpCur += notepadUtf8Length(
+                            fdisp.substr(byteCur, hit.start - byteCur));
+                        byteCur = hit.start;
+                        const size_t cp0 = cpCur;
+                        const size_t cp1 =
+                            cpCur + notepadUtf8Length(
+                                        fdisp.substr(hit.start, hit.end - hit.start));
+                        const auto rects =
+                            components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+                                s.editText, innerW, style, cp0, cp1);
+                        const eui::Color fill =
+                            hi == s.find.cur ? curFill : hitFill;
+                        for (const auto& r : rects) {
+                            inner.rect(wrapId + ".find." + std::to_string(rid++))
+                                .position(r.x, r.y)
+                                .size(r.w, r.h)
+                                .color(fill)
+                                .build();
+                        }
+                    }
+                }
+                // need400：待跳转滚动落点（命中置于视口上部 12px，旧查看器
+                // computeSyncOffset 口径）；本帧改 offset 下帧生效，requestUpdate 兜底。
+                if (s.find.pendingPreviewScroll) {
+                    s.find.pendingPreviewScroll = false;
+                    if (s.find.visible && s.find.cur < s.find.hits.size()) {
+                        const std::string& fdisp =
+                            notepadFindPreviewDisplay(s, st.textRevision);
+                        const FindHit& hit = s.find.hits[s.find.cur];
+                        if (hit.end <= fdisp.size()) {
+                            const size_t cp0 =
+                                notepadUtf8Length(fdisp.substr(0, hit.start));
+                            const size_t cp1 =
+                                cp0 + notepadUtf8Length(
+                                          fdisp.substr(hit.start, hit.end - hit.start));
+                            const auto rects =
+                                components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+                                    s.editText, innerW, style, cp0, cp1);
+                            if (!rects.empty()) {
+                                scroll = std::max(0.0f, rects.front().y - 12.0f);
+                                app::requestUpdate();
+                            }
                         }
                     }
                 }
@@ -1413,8 +1555,10 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             }
         }
         if (s.previewOn) {
-            // 预览槽位整页替换编辑器（InputState 不动 → 切回光标/滚动保留）；
-            // 查找态 tick 冻结（§4.6 查找禁用，切回编辑恢复）
+            // 预览槽位整页替换编辑器（InputState 不动 → 切回光标/滚动保留）。
+            // need400：预览态查找 tick 走显示文本域（命中/跳转只驱动预览滚动，
+            // 不落编辑器光标/选区——预览禁编辑）
+            notepadPreviewFindTick(s, st);
             drawPreviewSlot(s, ui, w, h, editorTop, st, componentTheme);
         } else {
             // 查找态 tick：待跳转消费 + 输入即重算 + 文本编辑重算（见函数注）
@@ -1603,9 +1747,9 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
         }
     }
 
-    // ── 查找条浮层（z 序最上，锚编辑区右上；错误态无编辑器不渲染；预览态
-    // 查找禁用不渲染——恢复后条内状态原样保留）──
-    if (s.find.visible && !errorState && !s.previewOn) {
+    // ── 查找条浮层（z 序最上，锚编辑区右上；错误态无编辑器不渲染；need400
+    // 预览态同样渲染——查找/跳转作用于预览显示域，替换面禁用）──
+    if (s.find.visible && !errorState) {
         drawSearchBar(s, ui, w, editorTop, t, componentTheme, editable);
     }
 
@@ -1659,7 +1803,12 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
         return;
     }
     if (shortcut && key.key == eui::InputKey::H) {
-        notepadFindOpenReplace(s);  // M+H 替换条直开（PRD 流程 D3）
+        // need400：预览态只读无替换语义 → 退化为普通查找条
+        if (s.previewOn) {
+            notepadFindToggle(s);
+        } else {
+            notepadFindOpenReplace(s);  // M+H 替换条直开（PRD 流程 D3）
+        }
         return;
     }
     if (shortcut && key.key == eui::InputKey::P) {
@@ -1681,10 +1830,9 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
         return;
     }
     if (shortcut && key.key == eui::InputKey::F) {
-        if (!s.previewOn) {
-            notepadFindToggle(s);  // M+F 开/关查找条（再唤起保留词全选，F-06）
-        }
-        return;  // 预览态查找禁用（设计稿 §4.6 联动矩阵）
+        // need400：预览态同样开条（命中域 = 显示文本，notepadPreviewFindTick）
+        notepadFindToggle(s);  // M+F 开/关查找条（再唤起保留词全选，F-06）
+        return;
     }
     if (shortcut && key.key == eui::InputKey::Equal) {
         notepadStepFontSize(s, 1);  // M+= 放大（F-10；Shift+Equal 同分支兼容）
@@ -1697,7 +1845,7 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
     // 查找条开着时的 Enter / Shift+Enter / Esc 兜底通路：查找输入聚焦时由
     // input onKeyEvent 先消费（input.h:240 passthrough，已处理键不冒泡到
     // 窗口级——runtime_input.h:323 仅 !handled 才调窗级处理器），未聚焦走这里。
-    if (s.find.visible && s.loadError.empty() && !s.previewOn) {
+    if (s.find.visible && s.loadError.empty()) {
         if (key.key == eui::InputKey::Enter) {
             s.find.pendingJump = key.modifiers.shift ? -1 : 1;  // 单调跳转（环绕）
             app::requestUpdate();

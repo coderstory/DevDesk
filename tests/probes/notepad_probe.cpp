@@ -428,7 +428,7 @@ int main(int argc, char* argv[]) {
             st.selectionStart = 6;
             st.selectionEnd = 6;
         }
-        ms.find.visible = true;  // 条开着切预览 → 预览态不渲染（§4.6 查找禁用）
+        ms.find.visible = true;  // 条开着切预览 → need400：条照常渲染（显示域查找）
         ms.previewOn = true;
         composeSession(ms);
         composeSession(ms);
@@ -436,8 +436,8 @@ int main(int argc, char* argv[]) {
             passed = fail("预览态 notepad.preview 滚动槽位不在场");
         if (passed && ui->find(module::notepad::kNotepadEditorInputId) != nullptr)
             passed = fail("预览态编辑 input 未让位（槽位未替换）");
-        if (passed && ui->find(module::notepad::kNotepadSearchBarId) != nullptr)
-            passed = fail("预览态查找条不应渲染（§4.6 查找禁用）");
+        if (passed && ui->find(module::notepad::kNotepadSearchBarId) == nullptr)
+            passed = fail("预览态查找条未渲染（need400：预览态查找可用）");
         if (passed) {
             const core::dsl::Element* minus =
                 ui->find(module::notepad::kNotepadStepperFontMinusId);
@@ -2151,9 +2151,8 @@ int main(int argc, char* argv[]) {
     // findAll 重算（命中数 + 耗时）→ pendingJump 逐跳（下一处/上一处/环绕）
     // → cursor/选区落点 = 命中区间、followCaret 编辑器滚动跟随。断言：命中数 > 0、
     // 每次跳转 cur/cursor/选区与 FindHit 一致、远离跳转滚动下移且环绕回顶、
-    // 单跳 compose 不出现秒级。产品现状（只记录不改）：预览态 findToggleEnabled =
-    // !previewOn（notepad_session.cpp:154，PRD §4.6）→ 预览内无查找入口，本段
-    // 验证的是编辑态 F-06 流；预览内搜索定位当前是产品禁用项。
+    // 单跳 compose 不出现秒级。本段只验编辑态 F-06 流；预览态搜索定位见 S2
+    // （need400 已翻转 §4.6 旧禁用口径）。
     {
         std::filesystem::path repoRoot;
         for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
@@ -2192,9 +2191,8 @@ int main(int argc, char* argv[]) {
             const size_t n = ss.find.hits.size();
             std::cerr << "S findAll: hits=" << n << " 耗时=" << findMs
                       << "ms（含命中层重建）\n";
-            std::cerr << "S 产品现状: 预览态 findToggleEnabled=!previewOn"
-                         "（notepad_session.cpp:154 / PRD §4.6）→ 预览内无查找入口，"
-                         "仅编辑态 F-06 有搜索定位\n";
+            std::cerr << "S 覆盖范围: 编辑态 F-06 查找流（预览态见 S2，need400）"
+                         "\n";
             if (n == 0) {
                 passed = fail("S: 查找无命中（query=git）——夹具或 findAll 链异常");
             } else {
@@ -2299,6 +2297,116 @@ int main(int argc, char* argv[]) {
                               << scrollFar << "→回顶 " << st.verticalScroll
                               << "；单跳最大 " << maxJumpMs << "ms（无秒级）\n";
             }
+        }
+    }
+
+    // ── S2. need400：预览态查找（显示文本域命中 + 高亮矩形 + 跳转滚动）──
+    // 老板 2026-11-21 令「预览也能搜索」，翻转 §4.6 旧禁用口径。断言：预览条
+    // 渲染、命中域 = 显示文本（hitsPreview）、高亮矩形在场、逐跳 cur 落点 +
+    // 预览 scroll 下移/环绕回顶、编辑器光标不动（预览禁编辑）、单跳无秒级。
+    {
+        if (module::notepad::detail::sessionRegistry().empty()) {
+            passed = fail("S2: 会话注册表为空（前序 S 段异常）");
+        } else {
+            module::notepad::NotepadSession& ps =
+                *module::notepad::detail::sessionRegistry().back();
+            using InputState = components::input_detail::InputModel::InputState;
+            ps.previewOn = true;
+            ps.find.visible = true;
+            ps.find.query = "git";
+            composeSession(ps);
+            composeSession(ps);
+            const int cursorBefore =
+                ui->state<InputState>(module::notepad::kNotepadEditorInputId).cursor;
+            const size_t pn = ps.find.hits.size();
+            const bool domainOk = ps.find.hitsPreview;
+            const bool barOk =
+                ui->find(module::notepad::kNotepadSearchBarId) != nullptr;
+            const bool rectOk =
+                ui->find(std::string(module::notepad::kNotepadPreviewContentId) +
+                         ".wrap.find.0") != nullptr;
+            ui->state<float>(std::string(module::notepad::kNotepadPreviewId) +
+                             ".scroll") = 0.0f;
+            composeSession(ps);
+            std::cerr << "S2 预览查找: hits=" << pn << " 显示域=" << domainOk
+                      << " 条=" << barOk << " 高亮矩形=" << rectOk << "\n";
+            bool s2Ok = true;
+            std::string s2Detail;
+            if (pn == 0) {
+                s2Ok = false;
+                s2Detail = "预览态查找无命中（query=git，显示域）";
+            } else if (!domainOk) {
+                s2Ok = false;
+                s2Detail = "命中集未标记为预览显示域（hitsPreview=false）";
+            } else if (!barOk) {
+                s2Ok = false;
+                s2Detail = "预览态查找条未渲染";
+            } else if (!rectOk) {
+                s2Ok = false;
+                s2Detail = "预览态命中高亮矩形（.wrap.find.0）不在场";
+            }
+            float scrollFar = 0.0f;
+            float scrollBack = 0.0f;
+            double maxJumpMs = 0.0;
+            if (s2Ok) {
+                ps.find.cur = 0;
+                ps.find.pendingJump = -1;  // 第 0 处上一处 → 环绕末处（远端）
+                const auto t0 = std::chrono::steady_clock::now();
+                composeSession(ps);
+                maxJumpMs = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - t0).count();
+                composeSession(ps);  // offset 下帧生效
+                const core::dsl::Element* sc2 =
+                    ui->find(module::notepad::kNotepadPreviewId);
+                scrollFar = sc2 != nullptr ? sc2->scrollOffset : -1.0f;
+                if (ps.find.cur != pn - 1) {
+                    s2Ok = false;
+                    s2Detail = "环绕跳转未落到末处命中（cur=" +
+                               std::to_string(ps.find.cur) + " want=" +
+                               std::to_string(pn - 1) + "）";
+                } else if (!(scrollFar > 100.0f)) {
+                    s2Ok = false;
+                    s2Detail = "末处命中未把预览滚到远端（scroll=" +
+                               std::to_string(scrollFar) + "）";
+                }
+            }
+            if (s2Ok) {
+                ps.find.pendingJump = 1;  // 末处下一处 → 环绕回第 0 处
+                composeSession(ps);
+                composeSession(ps);
+                const core::dsl::Element* sc3 =
+                    ui->find(module::notepad::kNotepadPreviewId);
+                scrollBack = sc3 != nullptr ? sc3->scrollOffset : -1.0f;
+                if (ps.find.cur != static_cast<size_t>(0)) {
+                    s2Ok = false;
+                    s2Detail = "回绕跳转未落回首处（cur=" +
+                               std::to_string(ps.find.cur) + "）";
+                } else if (!(scrollBack < 2.0f)) {
+                    s2Ok = false;
+                    s2Detail = "回绕回首处未滚回顶部（scroll=" +
+                               std::to_string(scrollBack) + "）";
+                } else if (maxJumpMs > 1000.0) {
+                    s2Ok = false;
+                    s2Detail = "预览单跳出现秒级耗时 " +
+                               std::to_string(maxJumpMs) + "ms";
+                }
+            }
+            const int cursorAfter =
+                ui->state<InputState>(module::notepad::kNotepadEditorInputId).cursor;
+            if (s2Ok && cursorAfter != cursorBefore) {
+                s2Ok = false;
+                s2Detail = "预览查找改动了编辑器光标（before=" +
+                           std::to_string(cursorBefore) + " after=" +
+                           std::to_string(cursorAfter) + "）= 预览禁编辑被破坏";
+            }
+            std::cerr << "S2 逐跳: 末处 scroll=" << scrollFar << " → 回顶 scroll="
+                      << scrollBack << " 单跳最大 " << maxJumpMs << "ms\n";
+            if (!s2Ok) passed = fail("S2: " + s2Detail);
+            else
+                std::cerr << "S2: PASS — 预览态查找 hits=" << pn
+                          << "（显示域，高亮矩形在场）；环绕跳转 scroll "
+                          << scrollFar << "→回顶 " << scrollBack
+                          << "；光标不动；单跳最大 " << maxJumpMs << "ms\n";
         }
     }
 

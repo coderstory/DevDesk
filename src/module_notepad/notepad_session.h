@@ -86,6 +86,11 @@ struct NotepadSession {
     std::array<PreviewDocHCache, 4> previewDocHs{};
     int previewDocHNext = 0;
 
+    // need400：预览查找显示文本缓存（MarkdownBuilder::displayTextOf 结果；
+    // 以 InputState.textRevision 失效——预览禁编辑，查找条开着时逐帧复用）
+    std::string findPreviewDisplay;
+    unsigned long long findPreviewRev = ~0ull;
+
     // ── 编码 / 行尾（notepad_encoding 探测结果）──
     NotepadEncodingProbe enc{};
     NotepadEol eolMode = NotepadEol::Lf;
@@ -125,6 +130,10 @@ struct NotepadSession {
         size_t cur = kFindNoHit;          // 当前命中下标（kFindNoHit = 无）
         unsigned long long hitsRevision = 0;  // hits 对应的 InputState.textRevision
         bool styleDirty = false;          // 开关条后命中层缓存失效待消费（compose bump styleRevision）
+        bool hitsPreview = false;         // 命中集所属文本域：true = 预览显示文本
+                                          // （need400；预览↔编辑切换强制重算）
+        bool pendingPreviewScroll = false;  // 预览态待滚动定位（跳转消费后置位，
+                                          // drawPreviewSlot 换算矩形 y → scroll）
         bool pendingSeed = false;         // 开条后首帧播种输入框（键路由置位，compose 消费）
         int pendingJump = 0;              // 待跳转 +1/-1（键路由置位，compose 消费——
                                           // 键事件处理器无 Ui 访问权，InputState 直写单点在 compose）
@@ -205,7 +214,7 @@ struct NotepadToolbarMatrix {
     bool showPreview = false;        // 仅 .md/.markdown 扩展（F-13）
     bool formatEnabled = false;      // 可编辑且非预览态（readonly/binary/预览禁用）
     bool previewEnabled = false;     // 大文件禁用（1MB 级渲染成本未证，PRD F-16 降级）
-    bool findToggleEnabled = true;   // 预览态 M+F 禁用（§4.6 查找禁用）
+    bool findToggleEnabled = true;   // need400：错误态外恒可用（预览查找走显示域）
     bool fontControlsEnabled = true; // 预览态字体下拉/A± 禁用（§4.6）
 };
 NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s);
