@@ -29,7 +29,10 @@
 #include "module_notepad/notepad_session.h"  // notepadComposeSession（生产 compose 单点）
 
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <unordered_map>
 #include <fstream>
 #include <iostream>
 #include <iterator>  // istreambuf_iterator（G3 落盘内容核对）
@@ -51,6 +54,31 @@ namespace {
 bool fail(const std::string& what) {
     std::cerr << "notepad_probe: FAIL — " << what << "\n";
     return false;
+}
+
+// bug399 round2 像素判据：统计矩形内「与主色不同的像素数」（文字墨迹簇）。
+// 主色 = 矩形内量化众数（背景），任通道差值 > 12 计为内容像素；读帧一律 16
+// 遍（probe_harness readFrame 注：retained 几何层需 kRetainedLayerResizeStableFrames=16
+// 帧稳定门槛，未达门槛整层不画——探针冷层单遍捕获会假空白）。
+int countInkPixels(const std::vector<unsigned char>& rgba, int width, int height,
+                   float scale, float rx, float ry, float rw, float rh) {
+    const int x0 = std::max(0, static_cast<int>(rx * scale));
+    const int y0 = std::max(0, static_cast<int>(ry * scale));
+    const int x1 = std::min(width, static_cast<int>((rx + rw) * scale));
+    const int y1 = std::min(height, static_cast<int>((ry + rh) * scale));
+    if (x1 - x0 <= 4 || y1 - y0 <= 4 || width <= 0 || height <= 0) return -1;
+    int ink = 0;
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            const std::size_t i = (static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                                   static_cast<std::size_t>(x)) * 4u;
+            const int luma = (static_cast<int>(rgba[i]) * 299 +
+                              static_cast<int>(rgba[i + 1]) * 587 +
+                              static_cast<int>(rgba[i + 2]) * 114) / 1000;
+            if (luma > 140) ++ink;
+        }
+    }
+    return ink;
 }
 
 // 临时夹具目录（固定名 + 每次重建；探针进程独占，无并发共享）
@@ -963,6 +991,47 @@ int main(int argc, char* argv[]) {
                 jOk = fail("J: 预览不可滚动（maxOffset=" + std::to_string(maxOff) +
                               "）——夹具/窗高不满足复现前件");
             }
+            // 像素证据链（bug399 round2）：scroll=0 对照帧 + 滚到底帧。各 16 遍
+            // render 跑满 retained 层稳定门槛（否则探针冷层单遍捕获整层空白=
+            // 假证据）。主内容区取预览元素逻辑框，按 framebuffer/scale 换像素。
+            probe::FrameCapture frameCap(window);
+            auto captureInk = [&](const std::string& path) -> int {
+                // 元素运行时实例（frame/transform/text 实例）由 update 建，
+                // 不 poll 直接 render 会读到空实例 = 整帧不画（假空白）。
+                for (int i = 0; i < 4; ++i) probe::pollOnce(window, runtime);
+                std::vector<unsigned char> rgba;
+                int iw = 0;
+                int ih = 0;
+                if (!frameCap.ok() || !frameCap.readFrame(runtime, rgba, iw, ih, 24)) {
+                    std::cerr << "J: 读帧失败（"
+                              << (frameCap.ok() ? "readFrame" : frameCap.error()) << "）"
+                              << "\n";
+                    return -1;
+                }
+                if (!probe::writeRgbaToPng(path, rgba.data(), iw, ih)) {
+                    std::cerr << "J: 写 PNG 失败: " << path << "\n";
+                    return -1;
+                }
+                const core::dsl::Element* cur =
+                    ui->find(module::notepad::kNotepadPreviewId);
+                if (cur == nullptr) return -1;
+                const int ink = countInkPixels(rgba, iw, ih, frameCap.scale(),
+                                               cur->frame.x, cur->frame.y,
+                                               cur->frame.width, cur->frame.height);
+                const int frameInk = countInkPixels(
+                    rgba, iw, ih, frameCap.scale(), 0.0f, 0.0f,
+                    static_cast<float>(iw) / frameCap.scale(),
+                    static_cast<float>(ih) / frameCap.scale());
+                std::cerr << "J 像素: " << path << " ink=" << ink
+                          << " frameInk=" << frameInk << "\n";
+                return ink;
+            };
+            const int inkTop = jOk ? captureInk("evidence/bug399/round2-scroll0.png") : -1;
+            if (jOk && inkTop < 0) jOk = fail("J: scroll=0 对照帧读取失败");
+            else if (jOk && inkTop <= 200)
+                jOk = fail("J: scroll=0 对照帧内容区无文字像素（ink=" +
+                           std::to_string(inkTop) + "）= 绘制链本身不落像素，先查渲染侧");
+
             // 滚轮注入（驱动 execScroll 同款时序）：指针 motion 独立成帧落地 →
             // 注入 scroll → 惯性收尾帧带真实短 sleep（实机节奏）。事件数取 8 轮
             // （单轮 -20 约 600px，远超 maxOffset）——到底后溢出冲量自行归零，
@@ -981,9 +1050,15 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
+            const int inkBottom = jOk ? captureInk("evidence/bug399/round2-scrolled.png") : -1;
+            if (inkBottom >= 0 && inkBottom <= 200)
+                std::cerr << "J: 已知红记录 — 滚到底后内容区无文字像素（像素级白板）"
+                          << "\n";
+            // bug399 第二轮：已知红只记录（根因未修，未收口）——像素白板复现
+            // （scroll=0 ink≈3.1e4 → 滚动后 ink=0 / 全帧仅剩 chrome），不置 passed。
             // 判据：滚到底后文档末块的 .text 子树必须已建（裁剪跟随滚动）。修前
             // 裁剪冻结 → 末块在 overscan 外只剩包装 → 缺件 = 白板。
-            if (jOk) {
+            {
                 int lastIdx = -1;
                 float lastY = 0.0f;
                 float lastH = 0.0f;
