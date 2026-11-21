@@ -24,7 +24,6 @@
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（openWindow=入队不建窗）
 
 #include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
-#include <components/input.h>  // 编辑 InputState 直读（光标/选区断言）
 #include <components/scrollview.h>  // bug399 round3 差分实验：普通 scrollView+text
 #include <components/markdown.h>  // bug399 round7：仪表分解 + A/B 基准
 #include "module_notepad/notepad_module.h"
@@ -1053,9 +1052,9 @@ int main(int argc, char* argv[]) {
                 }
             }
             const int inkBottom = jOk ? captureInk("evidence/bug399/round4-scrolled.png", module::notepad::kNotepadPreviewId) : -1;
-            if (inkBottom >= 0 && inkBottom <= 200)
-                std::cerr << "J: 已知红记录 — 滚到底后内容区无文字像素（像素级白板）"
-                          << "\n";
+            // bug399 round9 / debt398 P2②：白板根因已修（kNotepadPreviewContentId
+            // 改名不再与 markdown 根同 id），此处不再打印「已知红记录」误导行；
+            // 失败统一走下方 fail()。
             // bug399 round4 判据：滚动后内容区文字像素必须与 scroll=0 同量级
             // （根因 = 滚动内容列与 markdown 根同 id，instances_ 同 key 被洗回 0）。
             if (jOk && inkBottom <= 200)
@@ -1497,6 +1496,134 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cerr << "N: PASS — 8 格滚轮滚动期重排 " << scrollComposes
                           << " 次（修前每帧一次），视觉位移不受影响（J 像素断言）\n";
+            }
+        }
+    }
+
+    // ── P. bug399 round9：尺寸切换族仪表 + P1-A/P1-B 修复回归锁（debt398）──
+    // 老板装机实测：「最小化最大化窗口会卡顿」「最大化后很难滚动，上下滚动距离很短」。
+    // 同会话按档切逻辑宽高（base 900×640 / small 720×480 / max 1600×1000 / restore），
+    // 每档冷+稳态各 compose 一次，读 docH/maxOffset/viewport/滚轮步长 + markdown 缓存
+    // 命中率 + 段表体积。判据：①restore 后 maxOffset 回 base（几何不跨档污染）；
+    // ②稳态 warm compose parse miss=0（P1-B 解析缓存全命中）；③段表 perEnt 体积
+    // 受控（P1-A 段合并生效，修前未合并 ~KB 级/条）。
+    {
+        std::filesystem::path repoRoot;
+        for (std::filesystem::path p = std::filesystem::current_path(); !p.empty();
+             p = p.parent_path()) {
+            if (std::filesystem::exists(p / "tests/ui_driver/fixtures/bug399-git-redesign.md")) {
+                repoRoot = p;
+                break;
+            }
+            if (!p.has_parent_path()) break;
+        }
+        if (repoRoot.empty()) {
+            passed = fail("P: 定位不到仓库根（bug399-git-redesign.md）");
+        } else {
+            module::notepad::openNotepadWindow(
+                (repoRoot / "tests/ui_driver/fixtures/bug399-git-redesign.md").string());
+            module::notepad::NotepadSession& ps =
+                *module::notepad::detail::sessionRegistry().back();
+            ps.previewOn = true;
+            struct SizeStep {
+                const char* tag;
+                float w;
+                float h;
+            };
+            const SizeStep steps[] = {
+                {"base-1000x640", 1000.0f, 640.0f},
+                {"small-760x480", 760.0f, 480.0f},
+                {"max-1600x1000", 1600.0f, 1000.0f},
+                {"restore-1000x640", 1000.0f, 640.0f},
+            };
+            auto timedP = [&](float w, float h) {
+                const auto t0 = std::chrono::steady_clock::now();
+                runtime.compose(ps.pageId, w, h,
+                                [&](eui::Ui& u, const eui::Screen& screen) {
+                                    ui = &u;
+                                    module::notepad::notepadComposeSession(ps, u, screen);
+                                });
+                return std::chrono::duration<double, std::milli>(
+                           std::chrono::steady_clock::now() - t0).count();
+            };
+            auto readGeom = [&](float& docH, float& maxOff, float& vpH, float& step) {
+                const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+                const core::dsl::Element* wrap = ui->find(
+                    std::string(module::notepad::kNotepadPreviewContentId) + ".wrap");
+                docH = wrap != nullptr ? wrap->frame.height : 0.0f;
+                maxOff = sc != nullptr ? sc->scrollMaxOffset : 0.0f;
+                vpH = sc != nullptr ? sc->frame.height : 0.0f;
+                step = sc != nullptr ? sc->scrollStep : 0.0f;
+            };
+            double baseMaxOff = -1.0;
+            double restoreMaxOff = -1.0;
+            long long baseColdLayouts = 0;
+            long long baseColdSegs = 0;
+            long long baseColdRuns = 0;
+            bool p1aOk = true;
+            bool p1bOk = true;
+            for (std::size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); ++i) {
+                const SizeStep& st = steps[i];
+                const auto beforeCold = components::detail::markdownPerfStats();
+                const double coldMs = timedP(st.w, st.h);  // 宽度可能变 → 重新测量
+                const auto afterCold = components::detail::markdownPerfStats();
+                const long long coldLayouts =
+                    afterCold.inlineLayoutBuilds - beforeCold.inlineLayoutBuilds;
+                const long long coldSegs =
+                    afterCold.inlineSegmentsBuilt - beforeCold.inlineSegmentsBuilt;
+                const long long coldRuns =
+                    afterCold.inlineRunsBuilt - beforeCold.inlineRunsBuilt;
+                const auto beforeWarm = components::detail::markdownPerfStats();
+                const double warmMs = timedP(st.w, st.h);  // 稳态帧
+                const auto& pf = components::detail::markdownPerfStats();
+                float docH = 0.0f, maxOff = 0.0f, vpH = 0.0f, step = 0.0f;
+                readGeom(docH, maxOff, vpH, step);
+                const long long warmParseMiss = pf.parseMisses - beforeWarm.parseMisses;
+                if (warmParseMiss != 0) p1bOk = false;
+                std::cerr << "P " << st.tag << ": cold=" << coldMs << "ms warm=" << warmMs
+                          << "ms | docH=" << docH << " vp=" << vpH << " maxOffset=" << maxOff
+                          << " wheelStep=" << step
+                          << " | parse hit=" << (pf.parseHits - beforeWarm.parseHits)
+                          << " miss=" << warmParseMiss
+                          << " tooLarge=" << (pf.docTooLarge - beforeWarm.docTooLarge)
+                          << " docBytes=" << pf.lastDocBytes
+                          << " | inline hit=" << (pf.inlineHits - beforeWarm.inlineHits)
+                          << " miss=" << (pf.inlineMisses - beforeWarm.inlineMisses)
+                          << " coldLayouts=" << coldLayouts << " coldSegs=" << coldSegs
+                          << " coldRuns=" << coldRuns
+                          << " segEnt=" << pf.inlineCacheEntries
+                          << " segBytes=" << pf.inlineCacheBytes << "\n";
+                if (i == 0) {
+                    baseMaxOff = maxOff;
+                    baseColdLayouts = coldLayouts;
+                    baseColdSegs = coldSegs;
+                    baseColdRuns = coldRuns;
+                }
+                if (i == 3) restoreMaxOff = maxOff;
+            }
+            // P1-A 段表体积回归锁：每条新布局的平均段数。未合并时 CJK 单码点成段，
+            // 段数可达数百；合并后应趋近 run 数（每段落几个视觉 run），avg ≤ 64。
+            const double avgSegs =
+                baseColdLayouts > 0 ? static_cast<double>(baseColdSegs) / baseColdLayouts : 0.0;
+            if (baseColdLayouts <= 0 || avgSegs > 64.0) p1aOk = false;
+            if (baseMaxOff <= 0.0) {
+                passed = fail("P: 预览不可滚动（夹具/窗档不满足复现前件）");
+            } else if (std::fabs(restoreMaxOff - baseMaxOff) > 1.0) {
+                passed = fail("P: 尺寸档往返后 maxOffset 漂移（base=" +
+                              std::to_string(baseMaxOff) + " restore=" +
+                              std::to_string(restoreMaxOff) + "）= 跨档几何污染");
+            } else if (!p1aOk) {
+                passed = fail("P1-A: 段合并未生效（冷布局 avgSegs=" +
+                              std::to_string(avgSegs) + " > 64/条；coldSegs=" +
+                              std::to_string(baseColdSegs) + " coldRuns=" +
+                              std::to_string(baseColdRuns) + "）");
+            } else if (!p1bOk) {
+                passed = fail("P1-B: 稳态 compose 仍解析缓存 miss（应全命中）");
+            } else {
+                std::cerr << "P: PASS — 尺寸档 maxOffset 往返稳定 base=" << baseMaxOff
+                          << " restore=" << restoreMaxOff << "；冷布局 avgSegs="
+                          << avgSegs << "/条（segs=" << baseColdSegs
+                          << " runs=" << baseColdRuns << "）；稳态 parse 全命中\n";
             }
         }
     }
