@@ -1567,10 +1567,20 @@ int main(int argc, char* argv[]) {
             long long baseColdRuns = 0;
             bool p1aOk = true;
             bool p1bOk = true;
+            // debt398：分段测高使首帧 0 段精测（布局测量分散到补测帧）→ P1-A
+            // 冷布局比值取「冷帧 + 本档预热收敛」整档增量为准。
             for (std::size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); ++i) {
                 const SizeStep& st = steps[i];
                 const auto beforeCold = components::detail::markdownPerfStats();
                 const double coldMs = timedP(st.w, st.h);  // 宽度可能变 → 重新测量
+                const auto beforeWarm = components::detail::markdownPerfStats();
+                const double warmMs = timedP(st.w, st.h);  // 稳态帧
+                // debt398：段表渐进总高 → 本档预热收敛再读几何（既有
+                // 「restore maxOffset 回 base ≤1px」断言按精确几何比较）。
+                if (i + 1 < sizeof(steps) / sizeof(steps[0])) {
+                    module::notepad::notepadPreviewWarmForTest(ps);
+                    timedP(st.w, st.h);
+                }
                 const auto afterCold = components::detail::markdownPerfStats();
                 const long long coldLayouts =
                     afterCold.inlineLayoutBuilds - beforeCold.inlineLayoutBuilds;
@@ -1578,8 +1588,6 @@ int main(int argc, char* argv[]) {
                     afterCold.inlineSegmentsBuilt - beforeCold.inlineSegmentsBuilt;
                 const long long coldRuns =
                     afterCold.inlineRunsBuilt - beforeCold.inlineRunsBuilt;
-                const auto beforeWarm = components::detail::markdownPerfStats();
-                const double warmMs = timedP(st.w, st.h);  // 稳态帧
                 const auto& pf = components::detail::markdownPerfStats();
                 float docH = 0.0f, maxOff = 0.0f, vpH = 0.0f, step = 0.0f;
                 readGeom(docH, maxOff, vpH, step);
@@ -1900,6 +1908,12 @@ int main(int argc, char* argv[]) {
                 const auto before = components::detail::markdownPerfStats();
                 const double coldMs = oCompose(lg.w, lg.h);
                 const double warmMs = oCompose(lg.w, lg.h);
+                // debt398：段表渐进总高 → 本腿预热收敛再取几何（既有
+                // 「同档往返 docH 漂移 ≤1px」断言按精确几何比较，不放松）。
+                if (i + 1 < sizeof(legs) / sizeof(legs[0])) {
+                    module::notepad::notepadPreviewWarmForTest(os);
+                    oCompose(lg.w, lg.h);
+                }
                 const auto& pf = components::detail::markdownPerfStats();
                 const long long parseMiss = pf.parseMisses - before.parseMisses;
                 const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
@@ -2009,6 +2023,10 @@ int main(int argc, char* argv[]) {
             };
             composeR();
             composeR();
+            // debt398：段表渐进总高 → 本段先预热收敛（R 段验收滚动/惯性行为，
+            // 总高收敛由 T 段验收；不预热则屏外未测段仍是近似空包装）。
+            module::notepad::notepadPreviewWarmForTest(rs);
+            composeR();
             const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
             if (sc == nullptr || sc->scrollMaxOffset <= 0.0f) {
                 passed = fail("R: 预览不可滚动（夹具/窗档不满足复现前件）");
@@ -2111,6 +2129,50 @@ int main(int argc, char* argv[]) {
                           << " 次 " << motionCompMs << "ms | 主线程占用≈"
                           << (wallCompMs > 0.0 ? motionCompMs / wallCompMs * 100.0 : 0.0)
                           << "%（帧循环墙钟 " << loopWallMs << "ms）\n";
+                {
+                    int blocks = 0;
+                    float maxBot = 0.0f;
+                    float minY = 1e9f;
+                    for (int i = 0; i < 4000; ++i) {
+                        const core::dsl::Element* blk = ui->find(
+                            std::string(module::notepad::kNotepadPreviewContentId) + ".block." +
+                            std::to_string(i));
+                        if (blk == nullptr) continue;
+                        ++blocks;
+                        maxBot = std::max(maxBot, blk->frame.y + blk->frame.height);
+                        minY = std::min(minY, blk->frame.y);
+                    }
+                    const core::dsl::Element* wp = ui->find(
+                        std::string(module::notepad::kNotepadPreviewContentId) + ".wrap");
+                    int nearN = 0;
+                    std::string nearIds;
+                    for (int i = 0; i < 4000; ++i) {
+                        const core::dsl::Element* blk = ui->find(
+                            std::string(module::notepad::kNotepadPreviewContentId) + ".block." +
+                            std::to_string(i));
+                        if (blk == nullptr) continue;
+                        if (blk->frame.y > 10500.0f && blk->frame.y < 13200.0f) {
+                            ++nearN;
+                            if (nearIds.size() < 160)
+                                nearIds += " #" + std::to_string(i) + "@" +
+                                           std::to_string(blk->frame.y) + "h" +
+                                           std::to_string(blk->frame.height) +
+                                           (ui->find(std::string(module::notepad::kNotepadPreviewContentId) +
+                                                     ".block." + std::to_string(i) + ".text") != nullptr
+                                                ? "T" : "-");
+                        }
+                    }
+                    std::cerr << "R near: n=" << nearN << nearIds << "\n";
+                    std::cerr << "R diag: blocks=" << blocks << " minY=" << minY
+                              << " maxBot=" << maxBot << " wrapH="
+                              << (wp != nullptr ? wp->frame.height : -1.0f)
+                              << " pendings=" << rs.previewSegPendings
+                              << " segH="
+                              << (rs.previewSegActive != nullptr ? rs.previewSegActive->total : -1.0f)
+                              << " scrollState="
+                              << ui->state<float>(std::string(module::notepad::kNotepadPreviewId) + ".scroll")
+                              << "\n";
+                }
                 std::cerr << "R settle 末态: offset=" << off << " vp=" << vpH
                           << " ink=" << settledInk << " 视口内块=" << inView
                           << " 带 .text=" << inViewWithText << "\n";
@@ -2408,6 +2470,184 @@ int main(int argc, char* argv[]) {
                           << scrollFar << "→回顶 " << scrollBack
                           << "；光标不动；单跳最大 " << maxJumpMs << "ms\n";
         }
+    }
+
+    // ── T. debt398：分段测高异步化验收（首帧出画 + 总高渐进收敛）──
+    // 老板四令：①首帧 ≤50ms（修前同步整篇 670-1086ms）；②总高近似→精确收敛
+    // （~1s，终值 = estimateHeight ≤1px）；③补测期单帧 ≤50ms；④首帧后即出内容
+    // 像素；⑤textRevision 变更后段表重入并再收敛。独立生成的唯一文档（解析
+    // 与 inline 布局缓存全冷，不受前序场景污染）。
+    {
+        const std::string token = std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        std::string big;
+        big.reserve(70000);
+        for (int i = 0; i < 240; ++i) {
+            big += "## Section " + std::to_string(i) + " debt398-" + token + "\n\n";
+            big += "段落 " + std::to_string(i) +
+                   "：分段测高首帧只精测可见段，屏外段按近似高先出画，后台每帧补测，"
+                   "滚动条在约一秒内收敛到精确总高。\n\n";
+            if (i % 20 == 0)
+                big += "```cpp\nint value = " + std::to_string(i) +
+                       ";\nreturn value * 2;\n```\n\n";
+            if (i % 15 == 0)
+                big += "| key | value |\n|---|---|\n| a | " + std::to_string(i) +
+                       " |\n| b | " + std::to_string(i * 2) + " |\n\n";
+            if (i % 10 == 0)
+                big += "- 列表项一 " + std::to_string(i) + "\n- 列表项二 " +
+                       std::to_string(i) + "\n\n";
+        }
+        const std::string tPath = (dir / ("debt398-" + token + ".md")).string();
+        {
+            std::ofstream tf(tPath, std::ios::binary);
+            tf << big;
+        }
+        auto timedComposeT = [&](module::notepad::NotepadSession& s) -> double {
+            const auto t0 = std::chrono::steady_clock::now();
+            runtime.compose(s.pageId, w, h, [&](eui::Ui& u, const eui::Screen& screen) {
+                ui = &u;
+                module::notepad::notepadComposeSession(s, u, screen);
+            });
+            return std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - t0).count();
+        };
+        auto readDocH = [&]() -> float {
+            const core::dsl::Element* wrapEl = ui->find(
+                std::string(module::notepad::kNotepadPreviewContentId) + ".wrap");
+            return wrapEl != nullptr ? wrapEl->frame.height : -1.0f;
+        };
+        module::notepad::openNotepadWindow(tPath);
+        module::notepad::NotepadSession& ts =
+            *module::notepad::detail::sessionRegistry().back();
+        ts.previewOn = true;
+        bool tOk = true;
+        std::string tDetail;
+
+        // ①首帧耗时（近似总高立即返回，0 段精测）
+        const double firstMs = timedComposeT(ts);
+        const float approxH = readDocH();
+        // ④次帧起即出内容像素（帧首补测已测段，组件自行精测出画）
+        double maxFrameMs = timedComposeT(ts);
+        for (int i = 0; i < 4; ++i) probe::pollOnce(window, runtime);
+        probe::FrameCapture tCap(window);
+        int firstInk = -1;
+        {
+            std::vector<unsigned char> rgba;
+            int iw = 0;
+            int ih = 0;
+            if (tCap.ok() && tCap.readFrame(runtime, rgba, iw, ih, 24)) {
+                const core::dsl::Element* sc =
+                    ui->find(module::notepad::kNotepadPreviewId);
+                if (sc != nullptr) {
+                    firstInk = countInkPixels(rgba, iw, ih, tCap.scale(), sc->frame.x,
+                                              sc->frame.y, sc->frame.width, sc->frame.height);
+                }
+            }
+        }
+        // ②③总高收敛时间线 + 逐帧耗时 + maxOffset 同源一致性
+        double maxDevMs = 0.0;
+        int convFrames = 0;
+        float lastDocH = approxH;
+        const auto tConv0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 800; ++i) {
+            const double ms = timedComposeT(ts);
+            if (ms > maxFrameMs) maxFrameMs = ms;
+            ++convFrames;
+            const core::dsl::Element* sc = ui->find(module::notepad::kNotepadPreviewId);
+            lastDocH = readDocH();
+            if (sc != nullptr && lastDocH >= 0.0f) {
+                const double dev = std::fabs(sc->scrollMaxOffset -
+                                             (lastDocH - sc->frame.height));
+                if (dev > maxDevMs) maxDevMs = dev;
+            }
+            if (ts.previewSegPendings == 0) break;
+        }
+        const double convMs = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - tConv0).count();
+        const float exactH =
+            ts.previewSegActive != nullptr
+                ? components::MarkdownBuilder::estimateHeight(
+                      ts.editText, ts.previewSegActive->width, ts.selPreviewStyle)
+                : -1.0f;
+        std::cerr << "T 首帧: compose=" << firstMs << "ms approxDocH=" << approxH
+                  << " ink=" << firstInk << " | 收敛: " << convFrames
+                  << " 帧/" << convMs << "ms docH=" << lastDocH
+                  << " exact=" << exactH << " | 单帧最大=" << maxFrameMs
+                  << "ms maxOffset-偏差最大=" << maxDevMs << "px\n";
+        if (firstMs > 50.0) {
+            tOk = false;
+            tDetail = "首帧 compose " + std::to_string(firstMs) + "ms > 50ms";
+        } else if (firstInk <= 200) {
+            tOk = false;
+            tDetail = "首帧后内容区无文字像素（ink=" + std::to_string(firstInk) + "）";
+        } else if (ts.previewSegPendings != 0) {
+            tOk = false;
+            tDetail = "800 帧内段表未收敛（pendings=" +
+                      std::to_string(ts.previewSegPendings) + "）";
+        } else if (convMs > 1500.0) {
+            tOk = false;
+            tDetail = "总高收敛 " + std::to_string(convMs) + "ms > 1500ms";
+        } else if (maxFrameMs > 50.0) {
+            tOk = false;
+            tDetail = "补测期出现 >50ms 阻塞帧 " + std::to_string(maxFrameMs) + "ms";
+        } else if (exactH <= 0.0f || std::fabs(lastDocH - exactH) > 1.0f) {
+            tOk = false;
+            tDetail = "收敛总高 != 精确估高（docH=" + std::to_string(lastDocH) +
+                      " exact=" + std::to_string(exactH) + "）";
+        } else if (maxDevMs > 1.0) {
+            tOk = false;
+            tDetail = "maxOffset 与 docH 不同源（偏差 " + std::to_string(maxDevMs) +
+                      "px > 1）";
+        }
+
+        // ⑤textRevision 变更 → 新段表重入并再收敛
+        if (tOk) {
+            using InputState = components::input_detail::InputModel::InputState;
+            InputState& tst = ui->state<InputState>(module::notepad::kNotepadEditorInputId);
+            ts.editText += "\n\n## Appended " + token + "\n\n追加段落文本（修订重入）。\n";
+            ++tst.textRevision;
+            const double revFirstMs = timedComposeT(ts);
+            double revMaxMs = revFirstMs;
+            int revFrames = 0;
+            const auto tRev0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < 800; ++i) {
+                const double ms = timedComposeT(ts);
+                if (ms > revMaxMs) revMaxMs = ms;
+                ++revFrames;
+                if (ts.previewSegPendings == 0) break;
+            }
+            const double revMs = std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - tRev0).count();
+            const float docH2 = readDocH();
+            const float exactH2 =
+                ts.previewSegActive != nullptr
+                    ? components::MarkdownBuilder::estimateHeight(
+                          ts.editText, ts.previewSegActive->width, ts.selPreviewStyle)
+                    : -1.0f;
+            std::cerr << "T 修订重入: 首帧=" << revFirstMs << "ms 收敛=" << revFrames
+                      << " 帧/" << revMs << "ms docH=" << docH2
+                      << " exact=" << exactH2 << " 单帧最大=" << revMaxMs << "ms\n";
+            if (revFirstMs > 50.0 || revMaxMs > 50.0) {
+                tOk = false;
+                tDetail = "修订重入出现 >50ms 帧（首帧=" + std::to_string(revFirstMs) +
+                          " 最大=" + std::to_string(revMaxMs) + "）";
+            } else if (ts.previewSegPendings != 0) {
+                tOk = false;
+                tDetail = "修订重入后段表未收敛（pendings=" +
+                          std::to_string(ts.previewSegPendings) + "）";
+            } else if (revMs > 1500.0) {
+                tOk = false;
+                tDetail = "修订重入收敛 " + std::to_string(revMs) + "ms > 1500ms";
+            } else if (exactH2 <= 0.0f || std::fabs(docH2 - exactH2) > 1.0f) {
+                tOk = false;
+                tDetail = "修订重入总高 != 精确估高（docH=" + std::to_string(docH2) +
+                          " exact=" + std::to_string(exactH2) + "）";
+            }
+        }
+        if (!tOk) passed = fail("T: " + tDetail);
+        else
+            std::cerr << "T: PASS — 首帧出画 ≤50ms、总高渐进收敛 ~1s 内到精确值、"
+                         "补测期无 >50ms 阻塞帧、修订重入正常\n";
     }
 
     // --screenshot 落图（未传 = 零开销；传了失败 → 非零退出码）

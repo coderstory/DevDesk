@@ -86,6 +86,28 @@ struct NotepadSession {
     std::array<PreviewDocHCache, 4> previewDocHs{};
     int previewDocHNext = 0;
 
+    // debt398：分段测高段表（预览总高异步化）。键口径同 previewDocHs（修订 +
+    // 0.5px 宽 + 样式指纹）；段 = 连续块区间（EUI blockSegmentBoundaries，不切
+    // 表格行组）。首帧只出近似总高 + 可见段由 markdown 组件自行精测，屏外段每
+    // 帧预算补测 → 总高/滚动条渐进收敛；全部测完写回 previewDocHs 精确缓存。
+    struct PreviewSegTable {
+        unsigned long long rev = 0;
+        float width = -1.0f;
+        std::string styleKey;
+        std::vector<std::size_t> bounds;    // 段边界（含首 0 与末 n）
+        std::vector<float> heights;         // 段高（measured=1 精确 / 0 近似）
+        std::vector<unsigned char> measured;
+        float total = 0.0f;                 // Σ段高 + 段间 gap（= 整篇估高口径）
+        int pending = 0;                    // 未测段数
+        bool converged = false;             // 已写回精确总高缓存（只写一次）
+        bool usable = false;
+    };
+    std::array<PreviewSegTable, 4> previewSegTables{};  // 多档宽轮转（同 previewDocHs）
+    int previewSegNext = 0;
+    PreviewSegTable* previewSegActive = nullptr;  // 本帧 provider 命中的段表（hint 用）
+    float previewSegLastDocH = 0.0f;  // 本帧 provider 最后返回的总高（wrap 高同源）
+    int previewSegPendings = 0;                   // 活动段表未测段数（测试观察缝）
+
     // need400：预览查找显示文本缓存（MarkdownBuilder::displayTextOf 结果；
     // 以 InputState.textRevision 失效——预览禁编辑，查找条开着时逐帧复用）
     std::string findPreviewDisplay;
@@ -234,5 +256,10 @@ void notepadOpenViaDialog(NotepadSession& s);
 // 符；空选区 = 空串）。实现单点在 notepad_window.cpp——拖选抬起自动复制与
 // Ctrl+C 兼容通道同一条构建通路（测试直驱本函数，session 字段可直接注入）。
 std::string notepadPreviewSelText(const NotepadSession& s);
+
+// debt398 测试缝：同步把活动段表（provider 命中的宽度档）全部段精测到底。
+// O/P 段腿前预热用——渐进中间值不得污染既有「同档 docH 漂移 ≤1px」断言。
+// 返回本次实际测量段数（0 = 无活动段表）。
+int notepadPreviewWarmForTest(NotepadSession& s);
 
 }  // namespace module::notepad

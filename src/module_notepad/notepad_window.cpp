@@ -1002,6 +1002,188 @@ void drawFontPopup(NotepadSession& s, eui::Ui& ui,
         .build();
 }
 
+// ── debt398 分段测高（预览总高异步化）──────────────────────────────
+// 段 = 连续块区间（不切表格行组）；首帧只出近似总高，可见带块由 markdown 组件
+// 自行精测（它出内容本来就要测），屏外未测段只建包装几何（blockHeightHint），
+// 每帧预算补测 → 总高/滚动条渐进收敛（老板令：先出画，1 秒内刷出滚动条）。
+constexpr std::size_t kPreviewSegBlocks = 12;  // 目标每段块数 = 补测步长
+constexpr double kPreviewSegBudgetMs = 12.0;   // 单帧补测预算（<16ms 帧预算口径）
+
+float previewSegWidthKey(float innerW) {
+    return std::round(innerW * 2.0f) * 0.5f;
+}
+
+std::string previewSegStyleKey(const components::MarkdownStyle& style) {
+    return core::theme::currentThemeName() + "|" + std::to_string(core::theme::fontScale()) +
+           "|" + std::to_string(style.bodySize) + "|" + std::to_string(style.blockGap);
+}
+
+NotepadSession::PreviewSegTable* previewSegFind(NotepadSession& s, unsigned long long rev,
+                                                float widthKey,
+                                                const std::string& styleKey) {
+    for (auto& table : s.previewSegTables) {
+        if (table.usable && table.rev == rev && std::fabs(table.width - widthKey) < 0.6f &&
+            table.styleKey == styleKey) {
+            return &table;
+        }
+    }
+    return nullptr;
+}
+
+std::size_t previewSegIndexOf(const NotepadSession::PreviewSegTable& table,
+                              std::size_t block) {
+    if (table.bounds.size() < 2) return 0;
+    const auto it = std::upper_bound(table.bounds.begin(), table.bounds.end(), block);
+    if (it == table.bounds.begin()) return 0;
+    return static_cast<std::size_t>((it - table.bounds.begin()) - 1);
+}
+
+// 未测段块近似高 = 段高均摊（去掉段内 gap 后按块数均分）；<1px 兜底。
+float previewSegBlockApprox(const NotepadSession::PreviewSegTable& table, std::size_t seg,
+                            const components::MarkdownStyle& style) {
+    if (seg + 1 >= table.bounds.size()) return 0.0f;
+    const std::size_t count = table.bounds[seg + 1] - table.bounds[seg];
+    if (count == 0) return 0.0f;
+    const float gaps = style.blockGap * static_cast<float>(count - 1);
+    return std::max(1.0f, (table.heights[seg] - gaps) / static_cast<float>(count));
+}
+
+// 段表初始化（不测量）：段高优先复用同 rev 旧宽度段表（按宽度比缩放 = 切宽度
+// 旧段复用），无旧表则粗估（块数 × 正文行高 + 段内 gap）。
+NotepadSession::PreviewSegTable& previewSegInit(NotepadSession& s, unsigned long long rev,
+                                                float widthKey, const std::string& styleKey,
+                                                const components::MarkdownStyle& style) {
+    auto& slot = s.previewSegTables[static_cast<std::size_t>(s.previewSegNext) %
+                                    s.previewSegTables.size()];
+    s.previewSegNext = (s.previewSegNext + 1) % static_cast<int>(s.previewSegTables.size());
+    slot = NotepadSession::PreviewSegTable{};
+    slot.rev = rev;
+    slot.width = widthKey;
+    slot.styleKey = styleKey;
+    slot.bounds =
+        components::MarkdownBuilder::blockSegmentBoundaries(s.editText, kPreviewSegBlocks);
+
+    const NotepadSession::PreviewSegTable* source = nullptr;
+    float scale = 1.0f;
+    for (const auto& table : s.previewSegTables) {
+        if (&table == &slot || !table.usable || table.rev != rev) continue;
+        if (table.bounds.size() != slot.bounds.size()) continue;
+        source = &table;
+        scale = (table.width > 1.0f && widthKey > 1.0f) ? table.width / widthKey : 1.0f;
+        break;
+    }
+    const std::size_t segCount = slot.bounds.size() > 1 ? slot.bounds.size() - 1 : 0;
+    slot.heights.assign(segCount, 0.0f);
+    slot.measured.assign(segCount, 0);
+    float total = 0.0f;
+    for (std::size_t i = 0; i < segCount; ++i) {
+        const std::size_t count = slot.bounds[i + 1] - slot.bounds[i];
+        float h = 0.0f;
+        if (source != nullptr) {
+            h = source->heights[i] * scale;
+        } else {
+            h = static_cast<float>(count) * style.bodyLineHeight +
+                style.blockGap * static_cast<float>(count > 0 ? count - 1 : 0);
+        }
+        slot.heights[i] = h;
+        total += h;
+    }
+    if (segCount > 1) total += style.blockGap * static_cast<float>(segCount - 1);
+    slot.total = total;
+    slot.pending = static_cast<int>(segCount);
+    slot.usable = true;
+    return slot;
+}
+
+void previewSegRecount(NotepadSession::PreviewSegTable& table,
+                       const components::MarkdownStyle& style) {
+    float total = 0.0f;
+    for (const float h : table.heights) total += h;
+    if (table.heights.size() > 1) {
+        total += style.blockGap * static_cast<float>(table.heights.size() - 1);
+    }
+    table.total = total;
+}
+
+// 可见带段范围：按当前段高累加（未测段用近似高，误差随补测收敛）。
+void previewSegBand(const NotepadSession::PreviewSegTable& table, float scroll,
+                    float viewportH, const components::MarkdownStyle& style,
+                    std::size_t* lo, std::size_t* hi) {
+    *lo = 0;
+    *hi = 0;
+    const std::size_t segCount = table.heights.size();
+    if (segCount == 0) return;
+    float y = 0.0f;
+    bool loSet = false;
+    for (std::size_t i = 0; i < segCount; ++i) {
+        const float top = y;
+        const float bottom = y + table.heights[i];
+        if (!loSet && bottom >= scroll) {
+            *lo = i;
+            loSet = true;
+        }
+        if (top <= scroll + viewportH) *hi = i;
+        y = bottom + style.blockGap;
+    }
+    if (!loSet) *lo = segCount - 1;
+    if (*hi < *lo) *hi = *lo;
+}
+
+// 单段精测（区间高与 estimateHeight 同可加口径，见 EUI 缝注）。
+void previewSegMeasure(NotepadSession& s, NotepadSession::PreviewSegTable& table,
+                       std::size_t seg, const components::MarkdownStyle& style) {
+    if (seg >= table.heights.size() || table.measured[seg]) return;
+    table.heights[seg] = components::MarkdownBuilder::estimateHeightRange(
+        s.editText, table.bounds[seg], table.bounds[seg + 1], table.width, style);
+    table.measured[seg] = 1;
+    if (table.pending > 0) --table.pending;
+    previewSegRecount(table, style);
+}
+
+// 收敛回写：精确总高写 previewDocHs（稳态 provider 快路径，键口径同旧缓存）。
+void previewSegNoteConverged(NotepadSession& s, NotepadSession::PreviewSegTable& table) {
+    if (table.pending > 0 || table.converged) return;
+    table.converged = true;
+    auto& slot = s.previewDocHs[static_cast<std::size_t>(s.previewDocHNext) %
+                                s.previewDocHs.size()];
+    s.previewDocHNext = (s.previewDocHNext + 1) % static_cast<int>(s.previewDocHs.size());
+    slot = {table.rev, table.width, table.styleKey, table.total};
+}
+
+// 后台补测一帧：可见带段优先，再文档序；单帧预算 kPreviewSegBudgetMs，
+// 未完 → requestUpdate 自驱下一帧（子窗无帧泵，空闲帧需自驱）。
+void previewSegPump(NotepadSession& s, const components::MarkdownStyle& style, float scroll,
+                    float viewportH) {
+    NotepadSession::PreviewSegTable* table = s.previewSegActive;
+    if (table == nullptr || !table->usable) {
+        s.previewSegPendings = 0;
+        return;
+    }
+    if (table->pending > 0) {
+        std::size_t lo = 0;
+        std::size_t hi = 0;
+        previewSegBand(*table, scroll, viewportH, style, &lo, &hi);
+        std::vector<std::size_t> order;
+        order.reserve(table->heights.size());
+        for (std::size_t i = lo; i <= hi && i < table->heights.size(); ++i) {
+            if (!table->measured[i]) order.push_back(i);
+        }
+        for (std::size_t i = 0; i < table->heights.size(); ++i) {
+            if (!table->measured[i] && (i < lo || i > hi)) order.push_back(i);
+        }
+        const auto started = std::chrono::steady_clock::now();
+        for (const std::size_t seg : order) {
+            const double elapsed = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - started).count();
+            if (elapsed >= kPreviewSegBudgetMs) break;
+            previewSegMeasure(s, *table, seg, style);
+        }
+    }
+    previewSegNoteConverged(s, *table);
+    s.previewSegPendings = table->pending;
+    if (table->pending > 0) app::requestUpdate();
+}
+
 // F-13 预览槽位（设计稿 §4.6：编辑区同槽位整页替换）：components::markdown
 // 整篇渲染（EUI 组件层合法依赖；块流核是 module_markdown 私有，隔离禁依赖，
 // tech 卡 §六）+ scrollView 纵滚。MarkdownStyle 本地 inline 构建（不碰
@@ -1023,30 +1205,41 @@ void drawPreviewSlot(
     // 视口裁剪：滚动/调窗/全局帧泵每帧全文档重建元素树是预览卡顿根因，
     // 裁剪后窗口外块只留包装几何（显式高不变），content 不再生成。
     const float viewportH = h - editorTop - kStatusH;
+    // debt398：帧首补测上一帧宽度档的段表（provider 本帧同宽直接命中，内容按
+    // 已测段出画；宽度/修订变了就不动旧表，等本帧 provider 重建）。
+    if (s.previewSegActive != nullptr && s.previewSegActive->usable &&
+        s.previewSegActive->rev == st.textRevision && s.selPreviewWidth > 1.0f &&
+        std::fabs(s.previewSegActive->width - previewSegWidthKey(s.selPreviewWidth)) < 0.6f) {
+        if (s.previewSegActive->pending > 0) previewSegPump(s, style, scroll, viewportH);
+        // 总高收敛中可能先增后减：偏移按上一帧已知总高夹紧（防状态越界留白）。
+        const float lastMax = std::max(0.0f, s.previewSegActive->total - viewportH);
+        if (scroll > lastMax) scroll = lastMax;
+    }
 
-    // bug399 round5 / debt398：整篇估高缓存 + 供高通道（旧查看器几何表同架构）。
-    // 键 = 文本修订 + 渲染宽（0.5px 量化）+ 样式指纹（主题/字号缩放/度量）；命中即
-    // 复用，wrap 高与 scrollView contentHeightProvider 同源共用 → 每格滚轮的重排
-    // 不再全文档跑 O(blocks) estimateHeight，也不再走 scrollView scratch 测量 pass。
+    // debt398：分段测高（预览总高异步化）。首帧只出近似总高（段表初始化，0 段
+    // 精测），可见带块由 markdown 组件自行精测出内容；屏外未测段只建包装几何，
+    // 后台每帧预算补测 → 总高/滚动条渐进收敛。收敛后走 previewDocHs 精确缓存。
     auto previewDocHeight = [&s, &style, rev = st.textRevision](float innerW) -> float {
-        const float widthKey = std::round(innerW * 2.0f) * 0.5f;
-        const std::string styleKey =
-            core::theme::currentThemeName() + "|" + std::to_string(core::theme::fontScale()) +
-            "|" + std::to_string(style.bodySize) + "|" + std::to_string(style.blockGap);
-        for (auto& entry : s.previewDocHs) {
+        const float widthKey = previewSegWidthKey(innerW);
+        const std::string styleKey = previewSegStyleKey(style);
+        for (const auto& entry : s.previewDocHs) {
             if (entry.height > 0.0f && entry.rev == rev &&
                 std::fabs(entry.width - widthKey) < 0.6f && entry.styleKey == styleKey) {
+                s.previewSegActive = previewSegFind(s, rev, widthKey, styleKey);
+                s.previewSegPendings =
+                    s.previewSegActive != nullptr ? s.previewSegActive->pending : 0;
+                s.previewSegLastDocH = entry.height;
                 return entry.height;
             }
         }
-        const float height =
-            components::MarkdownBuilder::estimateHeight(s.editText, widthKey, style);
-        auto& slot = s.previewDocHs[static_cast<std::size_t>(s.previewDocHNext) %
-                                    s.previewDocHs.size()];
-        s.previewDocHNext = (s.previewDocHNext + 1) %
-                            static_cast<int>(s.previewDocHs.size());
-        slot = {rev, widthKey, styleKey, height};
-        return height;
+        NotepadSession::PreviewSegTable* table = previewSegFind(s, rev, widthKey, styleKey);
+        if (table == nullptr) {
+            table = &previewSegInit(s, rev, widthKey, styleKey, style);
+        }
+        s.previewSegActive = table;
+        s.previewSegPendings = table->pending;
+        s.previewSegLastDocH = table->total;
+        return table->total;
     };
     components::scrollView(ui, kNotepadPreviewId)
         .position(0.0f, editorTop)
@@ -1080,11 +1273,23 @@ void drawPreviewSlot(
             }
             // need345 反查宽度快照（内容系 = hit 层局部系，见 session 选区字段注）
             s.selPreviewWidth = innerW;
+            // debt398：已测段由组件精测出内容；未测段 hint 近似高（只建包装几何，
+            // 帧首补测逐帧推进）。hint 与 docH 同源本帧段表（窗口内无跨帧漂移）。
+            const float widthKey = previewSegWidthKey(innerW);
+            NotepadSession::PreviewSegTable* segs = s.previewSegActive;
+            const bool hintOk = segs != nullptr && segs->usable &&
+                                std::fabs(segs->width - widthKey) < 0.6f;
+            auto hintFor = [segs, hintOk, &style](std::size_t block) -> float {
+                if (!hintOk || segs->bounds.size() < 2) return 0.0f;
+                const std::size_t seg = previewSegIndexOf(*segs, block);
+                if (seg >= segs->measured.size() || segs->measured[seg]) return 0.0f;
+                return previewSegBlockApprox(*segs, seg, style);
+            };
             // 整篇包裹 stack：md 文本 + 选区矩形叠层 + 透明 hit 覆盖层（拖选
             // 三件）。高 = estimateHeight（渲染同源估算，displayCpForPoint 的
             // 纵向排布同式）——旧查看器逐块 hit 缝（mdDrawBlockFlowCore）的
             // 整篇等价形态（块流核 module_markdown 私有，隔离禁依赖，见 §注）。
-            const float docH = previewDocHeight(innerW);  // bug399 round5：会话级缓存
+            const float docH = hintOk ? segs->total : s.previewSegLastDocH;
             const std::string wrapId = std::string(kNotepadPreviewContentId) + ".wrap";
             auto wrap = inner.stack(wrapId)
                 .width(innerW)
@@ -1096,6 +1301,7 @@ void drawPreviewSlot(
                     .wrapContentHeight()
                     .style(style)
                     .visibleRange(scroll, scroll + viewportH)  // bug382 视口裁剪
+                    .blockHeightHint(hintFor)                 // debt398 未测段近似高
                     .build();
                 // 选区矩形（info 蓝低透明，旧查看器 selAlpha 同档）：文档系 y
                 // 直接叠层（hitRectsForDisplayRangeDoc，need345 EUI-NEO 新缝）；
@@ -1204,6 +1410,22 @@ void drawPreviewSlot(
 }
 
 }  // namespace
+
+// debt398 测试缝（声明见 notepad_session.h）：同步把活动段表全部段精测到底。
+int notepadPreviewWarmForTest(NotepadSession& s) {
+    NotepadSession::PreviewSegTable* table = s.previewSegActive;
+    if (table == nullptr || !table->usable) return 0;
+    const components::MarkdownStyle style = s.selPreviewStyle;
+    int measured = 0;
+    for (std::size_t seg = 0; seg < table->heights.size(); ++seg) {
+        if (table->measured[seg]) continue;
+        previewSegMeasure(s, *table, seg, style);
+        ++measured;
+    }
+    previewSegNoteConverged(s, *table);
+    s.previewSegPendings = table->pending;
+    return measured;
+}
 
 // need345：预览选区文本构建单点（声明见 notepad_session.h）——整篇显示文本
 // 码点域切片：跨块 '\n' 已含在扁平域内（= 旧查看器「多块按阅读序 '\n' 连接」
