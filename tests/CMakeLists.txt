@@ -565,7 +565,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
        _probe_name STREQUAL "bug142_click_chain_probe" OR
        _probe_name STREQUAL "need331_assoc_card_probe" OR
        _probe_name STREQUAL "ring_occlusion_probe" OR
-       _probe_name STREQUAL "release_probe")
+       _probe_name STREQUAL "release_probe" OR
+       _probe_name STREQUAL "bug401_frame_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
