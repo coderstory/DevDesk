@@ -12,7 +12,6 @@ add_library(devdesk_module_release STATIC
     release_detail_draw.cpp
     release_dialogs.cpp
     release_reminder.cpp
-    release_view_state.cpp
     release_module.cpp
 )
 

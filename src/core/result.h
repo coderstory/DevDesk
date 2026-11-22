@@ -157,4 +157,11 @@ private:
     std::string message_;
 };
 
+// 错误透传（need:380 批C）：等价 Result<U>::fail(e.errorCode(), e.errorMessage())，
+// U 与 T 的值语义不同但错误态共享；unqualified 调用经 ADL 命中。
+template <class U, class T>
+[[nodiscard]] Result<U> propagate(const Result<T>& e) {
+    return Result<U>::fail(e.errorCode(), e.errorMessage());
+}
+
 } // namespace core

@@ -38,21 +38,21 @@ std::string jsonString(const std::string& v) {
 core::Result<std::string> stateGet(core::data::SqliteDb& db,
                                    const std::string& key) {
     auto stmt = db.prepare("SELECT value FROM github_sync_state WHERE key = ?");
-    if (stmt.isFail()) return core::Result<std::string>::fail(stmt.errorCode(), stmt.errorMessage());
+    if (stmt.isFail()) return core::propagate<std::string>(stmt);
     auto& st = stmt.value();
     if (auto b = st.bind(1, key); b.isFail()) {
-        return core::Result<std::string>::fail(b.errorCode(), b.errorMessage());
+        return core::propagate<std::string>(b);
     }
     auto stepped = st.step();
     if (stepped.isFail()) {
-        return core::Result<std::string>::fail(stepped.errorCode(), stepped.errorMessage());
+        return core::propagate<std::string>(stepped);
     }
     if (!stepped.value()) return core::Result<std::string>::ok(std::string());  // 缺行 = 空
     auto row = st.currentRow();
-    if (row.isFail()) return core::Result<std::string>::fail(row.errorCode(), row.errorMessage());
+    if (row.isFail()) return core::propagate<std::string>(row);
     auto value = row.value().getString("value");
     if (value.isFail()) {
-        return core::Result<std::string>::fail(value.errorCode(), value.errorMessage());
+        return core::propagate<std::string>(value);
     }
     return core::Result<std::string>::ok(value.value());
 }
@@ -62,22 +62,22 @@ core::Result<void> stateSet(core::data::SqliteDb& db, const std::string& key,
     auto stmt = db.prepare(
         "INSERT INTO github_sync_state(key, value) VALUES(?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value");
-    if (stmt.isFail()) return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+    if (stmt.isFail()) return core::propagate<void>(stmt);
     auto& st = stmt.value();
     if (auto b = st.bind(1, key); b.isFail()) return b;
     if (auto b = st.bind(2, value); b.isFail()) return b;
     auto stepped = st.step();
-    if (stepped.isFail()) return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+    if (stepped.isFail()) return core::propagate<void>(stepped);
     return core::Result<void>::ok();
 }
 
 core::Result<void> stateErase(core::data::SqliteDb& db, const std::string& key) {
     auto stmt = db.prepare("DELETE FROM github_sync_state WHERE key = ?");
-    if (stmt.isFail()) return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+    if (stmt.isFail()) return core::propagate<void>(stmt);
     auto& st = stmt.value();
     if (auto b = st.bind(1, key); b.isFail()) return b;
     auto stepped = st.step();
-    if (stepped.isFail()) return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+    if (stepped.isFail()) return core::propagate<void>(stepped);
     return core::Result<void>::ok();
 }
 
@@ -189,8 +189,7 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
         std::vector<std::string> drop;
         auto rows = core::appconfig::listWithPrefix(*db_, "github_sync:");
         if (rows.isFail()) {
-            return core::Result<void>::fail(rows.errorCode(),
-                                            rows.errorMessage());
+            return core::propagate<void>(rows);
         }
         for (const auto& e : rows.value()) {
             const bool isConfigKey = e.key == kKeyEnabled ||
@@ -218,8 +217,7 @@ core::Result<void> GithubSyncStore::saveToken(const std::string& token) {
             "应用数据库未就绪，GitHub Sync Token 未保存");
     }
     auto stored = platform::credential::protect(token);
-    if (stored.isFail()) return core::Result<void>::fail(stored.errorCode(),
-                                                         stored.errorMessage());
+    if (stored.isFail()) return core::propagate<void>(stored);
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
     return stateSet(*db_, kStateToken, stored.value());
 }
@@ -283,8 +281,7 @@ core::Result<std::string> GithubSyncStore::loadToken() {
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
     auto stored = stateGet(*db_, kStateToken);
     if (stored.isFail()) {
-        return core::Result<std::string>::fail(stored.errorCode(),
-                                               stored.errorMessage());
+        return core::propagate<std::string>(stored);
     }
     // 缺行 / 空值 = 未保存过 → fail(NotFound)（「没配过」与「读了空串」必须可分辨）
     if (stored.value().empty()) {

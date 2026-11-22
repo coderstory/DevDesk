@@ -321,12 +321,6 @@ AgentModule::~AgentModule() {
     for (auto& item : notifySends_) {
         if (item->thread.joinable()) item->thread.join();
     }
-    // 试运行线程兜底收尾
-    if (dryRun_) {
-        dryRun_->cancel.store(true);
-        if (dryRun_->thread.joinable()) dryRun_->thread.join();
-        dryRun_.reset();
-    }
 }
 
 void AgentModule::onStart() {
@@ -441,13 +435,6 @@ void AgentModule::onStop() {
         if (draftJob_->thread.joinable()) draftJob_->thread.join();
         draftJob_.reset();
     }
-    // 试运行线程收尾：取消 + join（必须在 loop_/llm_ reset 之前——线程持有引用）
-    if (dryRun_) {
-        dryRun_->cancel.store(true);
-        if (dryRun_->thread.joinable()) dryRun_->thread.join();
-        dryRun_.reset();
-    }
-    testRunResult_.clear();
     // OS 通知发送线程收尾：等在飞的 send 结束（一次性，最坏 ≈ 后端阻塞上限），
     // 不留线程越过本函数——unique_ptr 析构遇 joinable thread 会 terminate
     {

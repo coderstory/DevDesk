@@ -56,10 +56,12 @@ MemoryPanelSettings loadPanelSettings() {
                              : 0;
     s.llmProfileName = getStr("llmProfileName");
     s.mcpSearchEnabled = getBool("mcpSearchEnabled", true);
-    // 需-9 用量告警（旧文件缺键 = 全默认：三档阈值常量 + 闸全武装零击发）
-    s.usageDayAlertTokens = getInt64("usageDayAlertTokens", 500000);
-    s.usageSoftBudgetTokens = getInt64("usageSoftBudgetTokens", 2000000);
-    s.usageHardBudgetTokens = getInt64("usageHardBudgetTokens", 3000000);
+    // 需-9 / need:380 B-5 用量告警（旧文件缺键 = 默认开 + 中位阈值；旧键阈值原样
+    // 读入继续生效 = 存量自定义值的迁移路径）
+    s.usageAlertsEnabled = getBool("usageAlertsEnabled", true);
+    s.usageDayAlertTokens = getInt64("usageDayAlertTokens", 1000000);
+    s.usageSoftBudgetTokens = getInt64("usageSoftBudgetTokens", 3000000);
+    s.usageHardBudgetTokens = getInt64("usageHardBudgetTokens", 5000000);
     s.inferHourlyLimit = getInt("inferHourlyLimit", 4);
     s.usageDayGate.armed = getBool("usageAlertDayArmed", true);
     s.usageDayGate.lastFireDay = getInt64("usageAlertDayLastDay", 0);
@@ -82,6 +84,8 @@ core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
     obj.set("llmProfileName", platform::json::JsonValue(settings.llmProfileName));
     obj.set("mcpSearchEnabled",
             platform::json::JsonValue(settings.mcpSearchEnabled));
+    obj.set("usageAlertsEnabled",
+            platform::json::JsonValue(settings.usageAlertsEnabled));
     obj.set("usageDayAlertTokens",
             platform::json::JsonValue(settings.usageDayAlertTokens));
     obj.set("usageSoftBudgetTokens",

@@ -267,7 +267,7 @@ core::Result<AssocState> overallState(const AssocConfig& config) {
 core::Result<bool> setAsDefaultFor(const AssocConfig& config) {
     const core::Result<std::pair<std::string, CFURLRef>> self = selfIdentity();
     if (self.isFail()) {
-        return core::Result<bool>::fail(self.errorCode(), self.errorMessage());
+        return core::propagate<bool>(self);
     }
     const std::string anchor = resolveAnchor(config);
     if (anchor.empty()) {
@@ -285,7 +285,7 @@ core::Result<bool> setAsDefaultFor(const AssocConfig& config) {
             contentTypeForExtension(extensionWithoutDot(ext));
         if (uti.isFail()) {
             CFRelease(self.value().second);
-            return core::Result<bool>::fail(uti.errorCode(), uti.errorMessage());
+            return core::propagate<bool>(uti);
         }
         targets.push_back({ext, uti.value()});
     }
@@ -371,7 +371,7 @@ core::Result<bool> setAsDefaultFor(const AssocConfig& config) {
     }
     CFRelease(self.value().second);
     if (written.isFail()) {
-        return core::Result<bool>::fail(written.errorCode(), written.errorMessage());
+        return core::propagate<bool>(written);
     }
 
     // 写后必刷（win SHChangeNotify 同位口径，整批恰一次，spy 缝在此断言）

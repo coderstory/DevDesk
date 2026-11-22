@@ -61,11 +61,11 @@
   - **C 段**：`src/module_agent/*.{h,cpp}` 不得 include `module_home|markdown|todo|claude_proxy|settings`；反向查 12 个指定工具文件不得引用 `module_agent/`（**agent 一个中心点的双向对**）
   - A 段（settings 不碰 pet）/ D 段（home）已随桌宠摘除标注"已移除"
 - **无任何全模块遍历**：`grep -n "for .* in .*module_\|src/module_\*"` 零结果；模块名全为硬编码字面量
-- **脚本残留死引用**：`module_pet` / `module_pet_bridge` 仍在注释与列表里（`src/module_pet` 不存在，注释自己写"2026-10-13 已摘除"）
+- **脚本残留死引用**：`module_pet`（已退役模块）/ `module_pet_bridge` 仍在注释与列表里（`src/module_pet` 不存在，注释自己写"2026-10-13 已摘除"）
 - **完全无断言的模块（11 个）**：wallpaper(9,552) / memory(12,676) / release(12,635) / schedule(7,542) / mcp(5,106) / git(4,856) / notepad(3,838) / terminal(3,538) / home / about / todo
 - **影响**：AGENTS.md §六「module_* 之间禁止互相依赖」是全仓硬约束，守卫只覆盖 agent 一个中心 + settings→claude 一条边。11 个模块（>60,000 行 = 全模块 53%）**可任意互相 include 而守卫恒绿**。这是"守卫绿 ≠ 合规"的系统性盲区，也直接削弱 §五 守卫链的公信力。
 - **补充实测**：主会话正则扫全仓 `#include`（排除同模块）→ 当前**未发现**违规，代码是干净的；但**无机制防未来违规**。
-- **修法**：改为**动态枚举 `src/module_*`**，对每模块断言"不得 include 任何 `module_<其他>/`"（N×(N−1) 全覆盖），保留 B/C 作额外语义断言；清掉 module_pet 死引用。
+- **修法**：改为**动态枚举 `src/module_*`**，对每模块断言"不得 include 任何 `module_<其他>/`"（N×(N−1) 全覆盖），保留 B/C 作额外语义断言；清掉 module_pet（已退役模块）死引用。
 
 > 对照：其余守卫覆盖是**真实全仓**的（主会话逐个实跑）——
 > `check-std-includes` 扫 936 文件全绿、`check-no-keychain` 零引用、`check-no-glass` 无调用、`check-toolguard-braces` tests 全扫。问题只在模块隔离这一个。

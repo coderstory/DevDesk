@@ -112,7 +112,7 @@ core::Result<DiffResult> buildDiff(git_repository* repo, DiffBasis basis,
     if (basis != DiffBasis::IndexToWorkdir) {
         auto head = resolveHeadTree(repo);
         if (head.isFail()) {
-            return core::Result<DiffResult>::fail(head.errorCode(), head.errorMessage());
+            return core::propagate<DiffResult>(head);
         }
         tree = head.valueOr(nullptr);
         treeOwned = tree != nullptr;

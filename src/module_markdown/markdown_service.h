@@ -220,8 +220,6 @@ private:
 // 从索引 + FTS 删除
     core::Result<void> deleteFromIndex(const std::string& relPathPosix);
 
-// 把 NoteMeta 从 SqlRow 还原
-    static NoteMeta rowToNote(const core::data::SqlRow& row);
 };
 
 } // namespace module::markdown

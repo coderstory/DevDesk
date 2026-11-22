@@ -120,8 +120,7 @@ core::Result<module::schedule::Receipt> deliverViaRegistry(
     const module::schedule::Delivery& delivery) {
     auto got = store.getChannel(channelId);
     if (got.isFail()) {
-        return core::Result<module::schedule::Receipt>::fail(got.errorCode(),
-                                                             got.errorMessage());
+        return core::propagate<module::schedule::Receipt>(got);
     }
     if (!got.value().has_value()) {
         return core::Result<module::schedule::Receipt>::fail(
@@ -138,8 +137,7 @@ core::Result<module::schedule::Receipt> deliverViaRegistry(
     const std::string kind = got.value()->kind;
     auto report = channels.deliver(std::vector<std::string>{kind}, delivery);
     if (report.isFail()) {
-        return core::Result<module::schedule::Receipt>::fail(report.errorCode(),
-                                                             report.errorMessage());
+        return core::propagate<module::schedule::Receipt>(report);
     }
     const auto& entries = report.value().entries;
     if (entries.empty()) {
@@ -154,8 +152,7 @@ core::Result<module::schedule::Receipt> localAlertViaRegistry(
     ChannelRegistry& channels, const module::schedule::Delivery& delivery) {
     auto report = channels.deliver(std::vector<std::string>{kChannelToast}, delivery);
     if (report.isFail()) {
-        return core::Result<module::schedule::Receipt>::fail(report.errorCode(),
-                                                             report.errorMessage());
+        return core::propagate<module::schedule::Receipt>(report);
     }
     const auto& entries = report.value().entries;
     if (entries.empty()) {
@@ -208,7 +205,7 @@ core::Result<RetryOutcome> ActionRunner::dispatchOnce(int64_t channelId,
     auto inserted = store_.insertDelivery(rec);
     if (inserted.isFail()) {
         --httpInFlight_[channelId];
-        return core::Result<RetryOutcome>::fail(inserted.errorCode(), inserted.errorMessage());
+        return core::propagate<RetryOutcome>(inserted);
     }
     rec = inserted.value();
 

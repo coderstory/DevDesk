@@ -237,4 +237,12 @@ main → 13 个 Router 页面（枚举见「项目概况」）
 
 ### Issue tracker
 
-Issues 与待办统一走 `docs/pool/` 池库（pool MCP 工具，见 devflow 插件 `pool-usage` skill；`.agents/skills/` 仅保留项目特有 `devdesk-discipline`）。角色词汇以 devflow 插件七角色为准。已退役机制（历史备注）：TODO.md、`.scratch/` 本地 markdown 机制、`docs/agents/` 英文模板目录均已于 2026-10-31 清理。
+Issues 与 spec 作为 GitHub issues 记在 `coderstory/DevDesk`，一律用 `gh` CLI 操作。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+默认五角色标签：`needs-triage` / `needs-info` / `ready-for-agent` / `ready-for-human` / `wontfix`。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context：一份根目录 `GLOSSARY.md` ＋ `docs/adr/`。See `docs/agents/domain.md`.

@@ -39,13 +39,11 @@ core::Result<CollectorStore> CollectorStore::open(
     const std::filesystem::path& dbFile) {
     auto db = core::data::SqliteDb::open(dbFile);
     if (db.isFail()) {
-        return core::Result<CollectorStore>::fail(db.errorCode(),
-                                                  db.errorMessage());
+        return core::propagate<CollectorStore>(db);
     }
     auto applied = db.value().applySchema(kSchema);
     if (applied.isFail()) {
-        return core::Result<CollectorStore>::fail(applied.errorCode(),
-                                                  applied.errorMessage());
+        return core::propagate<CollectorStore>(applied);
     }
     CollectorStore store;
     store.db_ =
@@ -85,8 +83,7 @@ bool CollectorStore::isProcessed(const std::string& sessionId,
 core::Result<std::int64_t> CollectorStore::processedCount() const {
     auto stmt = db_->prepare("SELECT COUNT(*) AS v FROM processed_events");
     if (stmt.isFail()) {
-        return core::Result<std::int64_t>::fail(stmt.errorCode(),
-                                                stmt.errorMessage());
+        return core::propagate<std::int64_t>(stmt);
     }
     auto step = stmt.value().step();
     if (!step.isOk() || !step.value()) return core::Result<std::int64_t>::ok(0);
@@ -99,7 +96,7 @@ core::Result<int> CollectorStore::sessionCount() const {
     auto stmt = db_->prepare(
         "SELECT COUNT(DISTINCT session_id) AS v FROM collector_watermark");
     if (stmt.isFail()) {
-        return core::Result<int>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<int>(stmt);
     }
     auto step = stmt.value().step();
     if (!step.isOk() || !step.value()) return core::Result<int>::ok(0);
@@ -117,7 +114,7 @@ core::Result<void> CollectorStore::setOffset(const std::string& sessionId,
         "VALUES(?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
         "byte_offset = excluded.byte_offset, line_count = excluded.line_count");
     if (stmt.isFail()) {
-        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<void>(stmt);
     }
     if (!stmt.value().bind(1, sessionId).isOk() ||
         !stmt.value().bind(2, offset).isOk() ||
@@ -127,7 +124,7 @@ core::Result<void> CollectorStore::setOffset(const std::string& sessionId,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }
@@ -192,8 +189,7 @@ core::Result<std::vector<Segment>> Collector::readSessionFile(
     }
     auto opened = CollectorStore::open(dbFile_);
     if (opened.isFail()) {
-        return core::Result<std::vector<Segment>>::fail(opened.errorCode(),
-                                                        opened.errorMessage());
+        return core::propagate<std::vector<Segment>>(opened);
     }
     CollectorStore& store = opened.value();
 
@@ -271,8 +267,7 @@ core::Result<std::vector<Segment>> Collector::readSessionFile(
     // 水位推进到实际读到的位置（未消费整文件时也安全：下轮续读）
     if (consumedFrom != wmOffset) {
         if (auto r = store.setOffset(sessionId, consumedFrom, lineNo); r.isFail()) {
-            return core::Result<std::vector<Segment>>::fail(r.errorCode(),
-                                                            r.errorMessage());
+            return core::propagate<std::vector<Segment>>(r);
         }
     }
     return core::Result<std::vector<Segment>>::ok(std::move(segments));
@@ -321,8 +316,7 @@ core::Result<std::vector<Segment>> Collector::pollOnce() {
 core::Result<void> Collector::commit(const std::vector<Segment>& segments) {
     auto opened = CollectorStore::open(dbFile_);
     if (opened.isFail()) {
-        return core::Result<void>::fail(opened.errorCode(),
-                                        opened.errorMessage());
+        return core::propagate<void>(opened);
     }
     CollectorStore& store = opened.value();
     for (const Segment& seg : segments) {

@@ -506,14 +506,14 @@ REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
     module::settings::SettingsConfig cfg;
     cfg.darkTheme = false;               // 浅色
     cfg.fontScalePercent = 115;          // 大
-    cfg.logRetentionDays = 90;
+    cfg.logRetentionDays = 365;
     auto saved = store.save(cfg);
     DOCTEST_REQUIRE(saved.isOk());
 
     const auto loaded = store.load();
     DOCTEST_CHECK_FALSE(loaded.darkTheme);
     DOCTEST_CHECK_EQ(loaded.fontScalePercent, 115);
-    DOCTEST_CHECK_EQ(loaded.logRetentionDays, 90);
+    DOCTEST_CHECK_EQ(loaded.logRetentionDays, 365);
     removeQuietly(path);
     return true;
 })
@@ -532,6 +532,31 @@ REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retent
 
     const auto loaded = store.load();
     DOCTEST_CHECK_EQ(loaded.logRetentionDays, 0);
+    removeQuietly(path);
+    return true;
+})
+
+// need380 C-5 存量迁移：旧 6 档值加载时归一到新 3 档（7/90→30、180→365，0/30/365 原样）
+REGISTER_TEST(settings_log_retention_legacy_snap,
+              "settings: 旧日志档位加载迁移 7/90→30、180→365、其余原样（need380 C-5）", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "lret1", true);
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "lret");
+    removeQuietly(path);
+    module::settings::SettingsStore store(::core::appDatabase());
+
+    struct Case { int legacy; int want; };
+    for (const auto& c : {Case{7, 30}, Case{90, 30}, Case{180, 365},
+                          Case{0, 0}, Case{30, 30}, Case{365, 365}}) {
+        // 旧版本落库的存量值等价于直写该天数（save 只钳制不归一）→ 写旧值、读新值
+        module::settings::SettingsConfig cfg;
+        cfg.logRetentionDays = c.legacy;
+        DOCTEST_REQUIRE(store.save(cfg).isOk());
+        auto loaded = store.load();
+        DOCTEST_CHECK_MESSAGE(loaded.logRetentionDays == c.want,
+            "legacy=" + std::to_string(c.legacy) + " want=" +
+            std::to_string(c.want) + " got=" +
+            std::to_string(loaded.logRetentionDays));
+    }
     removeQuietly(path);
     return true;
 })
@@ -1285,8 +1310,8 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     mod->compose(ui, screen);
     ui.end();
 
-    // 点下拉第 3 项（「30 天」）——直接调用元素的 onClick（无头等价点击）
-    const auto* item = ui.find("settings.card.log.dd.item.2");
+    // 点下拉第 2 项（「30 天」；need380 C-5 后档位表 = 永久/30/365）——直接调用元素的 onClick（无头等价点击）
+    const auto* item = ui.find("settings.card.log.dd.item.1");
     DOCTEST_REQUIRE(item != nullptr);
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
@@ -3709,9 +3734,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kFontPresets[0], 85);
     DOCTEST_CHECK_EQ(ms::kFontPresets[3], 130);
     DOCTEST_CHECK(std::string(ms::kFontPresetLabels[2]) == "大 115%");
-    DOCTEST_CHECK_EQ(ms::kRetentionPresetCount, 6);
+    DOCTEST_CHECK_EQ(ms::kRetentionPresetCount, 3);
     DOCTEST_CHECK_EQ(ms::kRetentionPresets[0], 0);
-    DOCTEST_CHECK_EQ(ms::kRetentionPresets[5], 365);
+    DOCTEST_CHECK_EQ(ms::kRetentionPresets[2], 365);
     DOCTEST_CHECK_EQ(ms::kWindowEffectPresetCount, 3);
     DOCTEST_CHECK(std::string(ms::kWindowEffectPresets[2]) ==
                   ms::kWindowEffectFrosted);
@@ -3730,9 +3755,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::nearestIndex(86, ms::kFontPresets, ms::kFontPresetCount), 0);
     DOCTEST_CHECK_EQ(ms::nearestIndex(0, ms::kFontPresets, ms::kFontPresetCount), 0);
     DOCTEST_CHECK_EQ(ms::nearestIndex(999, ms::kFontPresets, ms::kFontPresetCount), 3);
-    DOCTEST_CHECK_EQ(ms::nearestIndex(90, ms::kRetentionPresets, ms::kRetentionPresetCount), 3);  // 恰好命中 90
-    DOCTEST_CHECK_EQ(ms::nearestIndex(91, ms::kRetentionPresets, ms::kRetentionPresetCount), 3);  // 90 更近（1 vs 89）
-    DOCTEST_CHECK_EQ(ms::nearestIndex(20, ms::kRetentionPresets, ms::kRetentionPresetCount), 2);  // 30 更近（10 vs 13）
+    DOCTEST_CHECK_EQ(ms::nearestIndex(90, ms::kRetentionPresets, ms::kRetentionPresetCount), 1);  // 90 → 30 更近（60 vs 275）
+    DOCTEST_CHECK_EQ(ms::nearestIndex(20, ms::kRetentionPresets, ms::kRetentionPresetCount), 1);  // 20 → 30 更近
+    DOCTEST_CHECK_EQ(ms::nearestIndex(400, ms::kRetentionPresets, ms::kRetentionPresetCount), 2); // 400 → 365 更近
     DOCTEST_CHECK_EQ(ms::nearestIndex(15, ms::kEditorFontPresets, ms::kEditorFontPresetCount), 1);
 
     // 5) fs：非 token 字号跟随全局缩放（同一来源 core::theme::fontScale）

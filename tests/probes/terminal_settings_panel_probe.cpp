@@ -118,8 +118,13 @@ int main(int argc, char* argv[]) {
     // ③「对新会话生效」整行删除：行内微字元素不得存在（老板令 2026-11-16）
     check(uiPtr->find("term.set.row.shell.hint") == nullptr,
           "③ shell 行「对新会话生效」微字元素应不存在（整行删除）");
-    check(uiPtr->find("term.set.row.wdir.hint") == nullptr,
-          "③ 启动目录行「对新会话生效」微字元素应不存在（整行删除）");
+    // C-4（need380）：启动目录/回滚行数/光标行已整行砍除（连同 hint/label）
+    check(uiPtr->find("term.set.row.wdir.label") == nullptr,
+          "C-4 启动目录行应不存在");
+    check(uiPtr->find("term.set.row.sb.label") == nullptr,
+          "C-4 回滚行数行应不存在");
+    check(uiPtr->find("term.set.row.cursor.label") == nullptr,
+          "C-4 光标行应不存在");
 
     // ① PRD 几何守卫：分组头 / 行 / label 定宽 / 控件对齐
     const core::dsl::Element* g1 = uiPtr->find("term.set.g1");
@@ -138,11 +143,9 @@ int main(int argc, char* argv[]) {
         check(approxEq(labelCy, slotCy, 1.0f),
               "①② 行 label 与控件盒垂直中心对齐 delta≤1px（PRD 行高 44 居中）");
     }
-    // ③ 删行后布局不塌：shell / 启动目录行仍在原槽位（label 定宽 128、行存在）
+    // ③ 删行后布局不塌：shell 行（会话组唯一行）仍在原槽位
     const core::dsl::Element* shellLabel = uiPtr->find("term.set.row.shell.label");
-    const core::dsl::Element* wdirLabel = uiPtr->find("term.set.row.wdir.label");
-    check(shellLabel != nullptr && wdirLabel != nullptr,
-          "③ 删除提示行后 shell/启动目录行不塌（label 仍在）");
+    check(shellLabel != nullptr, "③ shell 行不塌（label 仍在）");
     if (shellLabel != nullptr && fontLabel != nullptr) {
         check(approxEq(shellLabel->frame.width, 128.0f, 0.5f),
               "③ shell 行 label 仍定宽 128（布局口径不变）");
@@ -161,48 +164,33 @@ int main(int argc, char* argv[]) {
               "① 完成钮高 32、右缘钉卡内边距（PRD §4.1 底部行）");
     }
 
-    // segmented（「tab」候选）盒级几何记录：盒中心对齐控件行
-    const core::dsl::Element* segCursor = uiPtr->find("term.set.row.cursor.style");
-    if (segCursor != nullptr) {
-        std::cout << "INFO segmented(cursor) frame=(" << segCursor->frame.x << ","
-                  << segCursor->frame.y << "," << segCursor->frame.width << ","
-                  << segCursor->frame.height << ")\n";
-        const core::dsl::Element* segLabel =
-            uiPtr->find("term.set.row.cursor.style.label.0");
-        if (segLabel != nullptr) {
-            const float segCy = segCursor->frame.y + segCursor->frame.height * 0.5f;
-            const float labCy = segLabel->frame.y + segLabel->frame.height * 0.5f;
-            std::cout << "INFO segmented label.0 box center delta="
-                      << (labCy - segCy) << " (盒级；墨迹级归框架侧)\n";
-        }
-    }
-
-    // ④ 控件改动（草稿态）不触发落库回调：点「块|线」第二段（cursorStyle→Bar）
-    const core::dsl::Element* segHit = uiPtr->find("term.set.row.cursor.style.hit.1");
+    // ④ 控件改动（草稿态）不触发落库回调：点配色「跟随应用|独立」第二段
+    //（C-4（need380）：原用光标行分段做草稿交互载体，该行已砍，换配色分段同流程）
+    const core::dsl::Element* segHit = uiPtr->find("term.set.row.palette.mode.hit.1");
     if (segHit != nullptr) {
         probe::click(window, runtime,
                      static_cast<double>(segHit->frame.x + segHit->frame.width * 0.5f),
                      static_cast<double>(segHit->frame.y + segHit->frame.height * 0.5f));
     }
-    check(terminal::loadTerminalSettings(&db).cursorStyle ==
-                  terminal::TerminalCursorStyle::Block,
+    check(terminal::loadTerminalSettings(&db).colorMode ==
+                  terminal::TerminalColorMode::FollowApp,
           "④ 草稿态改动不落库（库仍为上次完成值）");
-    check(settings.cursorStyle == terminal::TerminalCursorStyle::Bar,
-          "④ 草稿态改动本身可见（live preview：cursorStyle=Bar 已进草稿）");
+    check(settings.colorMode == terminal::TerminalColorMode::Independent,
+          "④ 草稿态改动本身可见（live preview：Independent 已进草稿）");
 
     // ── B. 恢复默认（老板场景）：只改草稿，不得落库 ──
-    // 先点击一个会改值的控件已有 Bar；再点恢复默认 → 草稿回默认
+    // 先点击一个会改值的控件已有 Independent；再点恢复默认 → 草稿回默认
     const core::dsl::Element* resetNow = uiPtr->find("term.set.reset");
     if (resetNow != nullptr) {
         probe::click(window, runtime,
                      static_cast<double>(resetNow->frame.x + resetNow->frame.width * 0.5f),
                      static_cast<double>(resetNow->frame.y + resetNow->frame.height * 0.5f));
     }
-    check(terminal::loadTerminalSettings(&db).cursorStyle ==
-                  terminal::TerminalCursorStyle::Block,
+    check(terminal::loadTerminalSettings(&db).colorMode ==
+                  terminal::TerminalColorMode::FollowApp,
           "④ 恢复默认不落库（库仍为上次完成值；改前红=即落库）");
-    check(settings.cursorStyle == terminal::TerminalCursorStyle::Block,
-          "④ 恢复默认把草稿回默认（Block）");
+    check(settings.colorMode == terminal::TerminalColorMode::FollowApp,
+          "④ 恢复默认把草稿回默认（跟随应用）");
 
     // ── C. 完成 = 唯一落库时机 ──
     const core::dsl::Element* doneNow = uiPtr->find("term.set.done");
@@ -214,8 +202,8 @@ int main(int argc, char* argv[]) {
     check(commitCalls == 1 && page.settingsOpen() == false,
           "④ 完成触发恰好一次提交且面板关闭");
     const terminal::TerminalSettings savedAfterDone = terminal::loadTerminalSettings(&db);
-    check(savedAfterDone.cursorStyle == terminal::TerminalCursorStyle::Block,
-          "④ 完成后落库值=草稿值（恢复默认经完成落库=Block）");
+    check(savedAfterDone.colorMode == terminal::TerminalColorMode::FollowApp,
+          "④ 完成后落库值=草稿值（恢复默认经完成落库=跟随应用）");
 
     // ── D. 取消（×）= 丢弃草稿回滚快照，库不动 ──
     page.openSettings();
@@ -229,14 +217,14 @@ int main(int argc, char* argv[]) {
                                                [](const std::string&) {},
                                                settings);
                               });
-    const core::dsl::Element* segHit2 = uiPtr->find("term.set.row.cursor.style.hit.1");
+    const core::dsl::Element* segHit2 = uiPtr->find("term.set.row.palette.mode.hit.1");
     if (segHit2 != nullptr) {
         probe::click(window, runtime,
                      static_cast<double>(segHit2->frame.x + segHit2->frame.width * 0.5f),
                      static_cast<double>(segHit2->frame.y + segHit2->frame.height * 0.5f));
     }
-    check(settings.cursorStyle == terminal::TerminalCursorStyle::Bar,
-          "④ 重新编辑草稿生效（Bar）");
+    check(settings.colorMode == terminal::TerminalColorMode::Independent,
+          "④ 重新编辑草稿生效（Independent）");
     const core::dsl::Element* closeNow = uiPtr->find("term.set.close.bg");
     if (closeNow != nullptr) {
         probe::click(window, runtime,
@@ -244,10 +232,10 @@ int main(int argc, char* argv[]) {
                      static_cast<double>(closeNow->frame.y + closeNow->frame.height * 0.5f));
     }
     check(cancelCalls == 1, "④ × 触发取消通道");
-    check(settings.cursorStyle == terminal::TerminalCursorStyle::Block,
+    check(settings.colorMode == terminal::TerminalColorMode::FollowApp,
           "④ 取消后草稿回滚快照（丢弃）");
     const terminal::TerminalSettings savedAfterCancel = terminal::loadTerminalSettings(&db);
-    check(savedAfterCancel.cursorStyle == terminal::TerminalCursorStyle::Block,
+    check(savedAfterCancel.colorMode == terminal::TerminalColorMode::FollowApp,
           "④ 取消不改库（库值保持上次完成值）");
 
     probe::terminateWindowBackend();

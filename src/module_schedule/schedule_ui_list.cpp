@@ -560,7 +560,7 @@ core::Result<void> ScheduleListUi::setRuleEnabled(int64_t ruleId, bool enabled) 
     updated.enabled = enabled;
     const auto saved = store_.updateRule(updated);
     if (saved.isFail()) {
-        return core::Result<void>::fail(saved.errorCode(), saved.errorMessage());
+        return core::propagate<void>(saved);
     }
     return core::Result<void>::ok();
 }

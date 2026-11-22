@@ -65,8 +65,6 @@ private:
     // 视图内部件
     void composeEngineCard(eui::Ui& ui, const core::theme::Tokens& t, float x,
                            float w, float y);
-    float composeHealthGrid(eui::Ui& ui, const core::theme::Tokens& t, float x,
-                            float w, float y);  // 返回实占高（2×2 断点 need298 M3）
     void composeProposalCard(eui::Ui& ui, const core::theme::Tokens& t,
                              float x, float w, float y,
                              const panel::PanelSnapshot& snap,
@@ -144,7 +142,6 @@ private:
 
     // need:181 三 TAB 分层状态：主控台「运行明细」折叠区（默认收起，L3）/
     // 引擎详情弹窗（L3）/ 配置页三折叠组（0 提炼端点 1 触发线 2 用量告警）
-    bool consoleDetailsOpen_ = false;
     bool engineDetailOpen_ = false;
     std::array<bool, 3> cfgOpen_ = {};
     // need:183：审核筛选同类收进下拉（类型/来源），开合态显式托管

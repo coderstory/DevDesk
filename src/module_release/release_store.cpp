@@ -119,12 +119,12 @@ core::Result<TaskStatus> taskStatusFromText(const std::string& text) {
 
 template <typename U>
 core::Result<void> failVoid(const core::Result<U>& err) {
-    return core::Result<void>::fail(err.errorCode(), err.errorMessage());
+    return core::propagate<void>(err);
 }
 
 template <typename T, typename U>
 core::Result<T> failAs(const core::Result<U>& err) {
-    return core::Result<T>::fail(err.errorCode(), err.errorMessage());
+    return core::propagate<T>(err);
 }
 
 // 跑完 RETURNING 语句：返回「是否至少返回一行」（INSERT 恒真，UPDATE/DELETE 即行存在性）。

@@ -38,6 +38,14 @@ constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 // 默认模块清单迁移标记：键缺失 = 旧版本配置（见 kModuleDefaultsVersion）
 constexpr const char* kKeyModuleDefaultsVersion = "moduleDefaultsVersion";
+
+// need380 C-5：日志保留 6 档砍 3 档（永久/30/365）的存量迁移映射——
+// 7/90 天（短期观察）→ 30；180 天（长期归档）→ 365；其余原样。load 时归一，幂等。
+static int normalizeLegacyLogRetention(int days) {
+    if (days == 7 || days == 90) return 30;
+    if (days == 180) return 365;
+    return days;
+}
 // 用户显式关闭的默认模块（自校验豁免集，见 kModuleDefaultsVersion 注释）
 constexpr const char* kKeyUserDisabledModules = "userDisabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
@@ -486,6 +494,8 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             cfg.logRetentionDays = static_cast<int>(v.value().asInt());
         }
     }
+    // need380 C-5：加载处一次性归一到新 3 档（不丢用户原意图）
+    cfg.logRetentionDays = normalizeLegacyLogRetention(cfg.logRetentionDays);
     if (auto raw = readRow(kKeyEditorFontSize); raw.isOk()) {
         auto v = parseRow(configKey(kKeyEditorFontSize), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(

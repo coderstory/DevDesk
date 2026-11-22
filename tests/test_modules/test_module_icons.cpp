@@ -72,12 +72,6 @@ REGISTER_TEST(module_icons_fa_codepoints,
 
 namespace {
 
-struct PageIconProbe {
-    ::core::Module* (*factory)();
-    const char* elId;
-    unsigned int codepoint;  // FA7 Free-Solid
-};
-
 bool checkPageIcon(::core::Module* (*factory)(), const char* elId,
                    unsigned int codepoint) {
     std::unique_ptr<::core::Module> mod(factory());
@@ -114,8 +108,7 @@ REGISTER_TEST(module_icons_page_emoji_replaced,
         if (ui.find("home.btn.settings") != nullptr) return false;
         if (ui.find("home.btn.settings.icon") != nullptr) return false;
     }
-    // 池73：0xF46D 在 FA7 里是实心方块字形，已换 0xF007 fa-user（home_module.cpp:240）
-    if (!checkPageIcon(create_home_module, "home.act.claude.icon", 0xF007)) return false;
+    // C-2（need380）：「切换 Claude Profile」快捷按钮已砍，其图标锚点随之移除。
     if (!checkPageIcon(create_claude_module, "claude.btn.proxy.icon", 0xF04B)) return false;
     // H14: guide 图标门控确定性——test 进程直接 compose 时 proxyEverSeen_/guideDismissed_
     // 默认值与真实进程（经 onStart 演化）状态不同，门控不可靠。显式重置后保锚点命中。

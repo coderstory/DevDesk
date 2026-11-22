@@ -94,9 +94,8 @@ public:
     void setSanitizeEnabled(bool on);  // off = 旁路 + 审计行（UI 已做二次确认）
     void setRecallThresholdPct(int pct);
     void setTwoWordBaseline(int n);
-    // 需-9 用量告警阈值（月档软/硬 = 消耗卡预算同一套数，不另起一套）
-    void setUsageAlertThresholds(long long dayTokens, long long softTokens,
-                                 long long hardTokens);
+    // need:380 B-5 用量告警单开关（阈值不再有 UI 入口，原键值继续生效）
+    void setUsageAlertsEnabled(bool on);
     void markLlmImported(const std::string& profileName);
 
     // ── 审核操作（真接 ProposalStore；返回值供 toast）──

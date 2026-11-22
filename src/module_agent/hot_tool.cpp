@@ -15,6 +15,7 @@
 #include "core/time.h"
 #include "platform/http_client.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 namespace module::agent {
 
@@ -184,13 +185,11 @@ Result<ToolResult> successResult(const SourceSpec& spec, int64_t fetchedAtEpoch,
                                  bool stale, int64_t ageSeconds) {
     auto itemsText = itemsArrayText(items);
     if (itemsText.isFail()) {
-        return Result<ToolResult>::fail(itemsText.errorCode(),
-                                        itemsText.errorMessage());
+        return propagate<ToolResult>(itemsText);
     }
     auto itemsValue = parseArrayText(itemsText.value());
     if (itemsValue.isFail()) {
-        return Result<ToolResult>::fail(itemsValue.errorCode(),
-                                        itemsValue.errorMessage());
+        return propagate<ToolResult>(itemsValue);
     }
 
     pj::JsonObject out;
@@ -222,13 +221,11 @@ Result<ToolResult> failureResult(const std::string& message,
                                  std::optional<int64_t> retryAfterSec) {
     auto attemptsText = attemptsArrayText(attempts);
     if (attemptsText.isFail()) {
-        return Result<ToolResult>::fail(attemptsText.errorCode(),
-                                        attemptsText.errorMessage());
+        return propagate<ToolResult>(attemptsText);
     }
     auto attemptsValue = parseArrayText(attemptsText.value());
     if (attemptsValue.isFail()) {
-        return Result<ToolResult>::fail(attemptsValue.errorCode(),
-                                        attemptsValue.errorMessage());
+        return propagate<ToolResult>(attemptsValue);
     }
 
     pj::JsonObject out;
@@ -242,17 +239,7 @@ Result<ToolResult> failureResult(const std::string& message,
 }
 
 // 参数：空串视为 {}（与 todo/agent 其它工具同口径）；其余必须解析成 object。
-Result<pj::JsonObject> parseArgs(const ToolArgs& args) {
-    if (args.json.empty()) {
-        return Result<pj::JsonObject>::ok(pj::JsonObject());
-    }
-    auto parsed = pj::parse(args.json);
-    if (parsed.isFail() || !parsed.value().isObject()) {
-        return Result<pj::JsonObject>::fail(core::ErrorCode::ValidationError,
-                                            "参数不是合法 JSON 对象");
-    }
-    return Result<pj::JsonObject>::ok(parsed.value().asObject());
-}
+using platform::tool_kit::parseArgs;
 
 // 单源响应分类：网络错误 / 非 200 / 超 1MB / 结构错误 / 空列表都算失败，
 // 让调用方记录 attempts 并切下一源；5xx 不做同源重试（v1）。

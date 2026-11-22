@@ -139,15 +139,13 @@ core::Result<WecomConfig> parseWecomConfig(const std::string& configJson,
         } else if (key == "mentions" || key == "mentioned_list") {
             auto items = readStringArray(v);
             if (items.isFail()) {
-                return core::Result<WecomConfig>::fail(items.errorCode(),
-                                                       items.errorMessage());
+                return core::propagate<WecomConfig>(items);
             }
             cfg.mentionUsers = items.value();
         } else if (key == "mentioned_mobile_list") {
             auto items = readStringArray(v);
             if (items.isFail()) {
-                return core::Result<WecomConfig>::fail(items.errorCode(),
-                                                       items.errorMessage());
+                return core::propagate<WecomConfig>(items);
             }
             cfg.mentionMobiles = items.value();
         }
@@ -162,8 +160,7 @@ core::Result<WecomConfig> parseWecomConfig(const std::string& configJson,
     // proxy_mode 值非法在装配期报错（resolveWecomProxyMode 是唯一真源）
     auto proxyCheck = resolveWecomProxyMode(cfg);
     if (proxyCheck.isFail()) {
-        return core::Result<WecomConfig>::fail(proxyCheck.errorCode(),
-                                               proxyCheck.errorMessage());
+        return core::propagate<WecomConfig>(proxyCheck);
     }
     return core::Result<WecomConfig>::ok(std::move(cfg));
 }
@@ -218,8 +215,7 @@ core::Result<WecomPayload> buildWecomPayload(const WecomConfig& cfg,
     auto json = platform::json::stringify(
         platform::json::JsonValue(std::move(root)));
     if (json.isFail()) {
-        return core::Result<WecomPayload>::fail(json.errorCode(),
-                                                json.errorMessage());
+        return core::propagate<WecomPayload>(json);
     }
     payload.json = json.value();
     return core::Result<WecomPayload>::ok(std::move(payload));
@@ -375,15 +371,13 @@ core::Result<Receipt> WecomChannel::deliver(const Delivery& d) {
     // 3. 载荷（纯函数：截断 + 组装；失败 = 配置非法，按 S5 契约返回 fail）
     auto payload = buildWecomPayload(cfg_, d);
     if (payload.isFail()) {
-        return core::Result<Receipt>::fail(payload.errorCode(),
-                                           payload.errorMessage());
+        return core::propagate<Receipt>(payload);
     }
 
     // 4. 请求。URL 含 key：本函数之外的任何日志/Receipt 不得携带它。
     auto proxyMode = resolveWecomProxyMode(cfg_);
     if (proxyMode.isFail()) {
-        return core::Result<Receipt>::fail(proxyMode.errorCode(),
-                                           proxyMode.errorMessage());
+        return core::propagate<Receipt>(proxyMode);
     }
     platform::http::Request req;
     req.method = "POST";

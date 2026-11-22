@@ -195,6 +195,7 @@ REGISTER_TEST(usage_alert_settings_round_trip,
     DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(seed).isOk());
     // 改动三档阈值 + 击发态闸 → 落盘 → 重读全等
     MemoryPanelSettings s;
+    s.usageAlertsEnabled = false;  // need:380 B-5 开关随设置往返
     s.usageDayAlertTokens = 123456;
     s.usageSoftBudgetTokens = 2345678;
     s.usageHardBudgetTokens = 3456789;
@@ -206,6 +207,7 @@ REGISTER_TEST(usage_alert_settings_round_trip,
     s.usageHardGate.lastFireDay = 20261028;
     DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(s).isOk());
     auto back = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_FALSE(back.usageAlertsEnabled);
     DOCTEST_CHECK_EQ(back.usageDayAlertTokens, 123456);
     DOCTEST_CHECK_EQ(back.usageSoftBudgetTokens, 2345678);
     DOCTEST_CHECK_EQ(back.usageHardBudgetTokens, 3456789);
@@ -215,14 +217,16 @@ REGISTER_TEST(usage_alert_settings_round_trip,
     DOCTEST_CHECK_EQ(back.usageSoftGate.lastFireDay, 20261029);
     DOCTEST_CHECK_FALSE(back.usageHardGate.armed);
     DOCTEST_CHECK_EQ(back.usageHardGate.lastFireDay, 20261028);
-    // 旧文件（无新键）→ 全默认（50 万 / 200 万 / 300 万，闸全武装）
+    // 旧文件（无新键）→ 全默认（开关开 + 中位 100 万 / 300 万 / 500 万，闸全武装）；
+    // need:380 B-5 迁移口径：旧文件已自定义的阈值键原样读入继续生效（上行往返已证）
     MemoryPanelSettings legacy;
     legacy.sanitizeEnabled = false;  // 只带旧键
     DOCTEST_REQUIRE(module::memory::panel::savePanelSettings(legacy).isOk());
     auto dflt = module::memory::panel::loadPanelSettings();
-    DOCTEST_CHECK_EQ(dflt.usageDayAlertTokens, 500000);
-    DOCTEST_CHECK_EQ(dflt.usageSoftBudgetTokens, 2000000);
-    DOCTEST_CHECK_EQ(dflt.usageHardBudgetTokens, 3000000);
+    DOCTEST_CHECK_EQ(dflt.usageDayAlertTokens, 1000000);
+    DOCTEST_CHECK_EQ(dflt.usageSoftBudgetTokens, 3000000);
+    DOCTEST_CHECK_EQ(dflt.usageHardBudgetTokens, 5000000);
+    DOCTEST_CHECK_TRUE(dflt.usageAlertsEnabled);
     DOCTEST_CHECK_TRUE(dflt.usageDayGate.armed);
     DOCTEST_CHECK_EQ(dflt.usageDayGate.lastFireDay, 0);
     DOCTEST_CHECK_TRUE(dflt.usageSoftGate.armed);

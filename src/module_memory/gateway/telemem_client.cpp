@@ -166,8 +166,7 @@ core::Result<std::string> ensureSessionId() {
     rpc.set("params", platform::json::JsonValue(params));
     const auto body = platform::json::stringify(platform::json::JsonValue(rpc));
     if (body.isFail()) {
-        return core::Result<std::string>::fail(body.errorCode(),
-                                               body.errorMessage());
+        return core::propagate<std::string>(body);
     }
     platform::http::Request req;
     req.method = "POST";
@@ -178,8 +177,7 @@ core::Result<std::string> ensureSessionId() {
     req.timeoutMs = 5000;
     const auto resp = platform::http::send(req);
     if (resp.isFail()) {
-        return core::Result<std::string>::fail(resp.errorCode(),
-                                               resp.errorMessage());
+        return core::propagate<std::string>(resp);
     }
     if (resp.value().statusCode != 200) {
         return core::Result<std::string>::fail(
@@ -211,14 +209,12 @@ core::Result<std::string> callTool(const std::string& tool,
     rpc.set("params", platform::json::JsonValue(params));
     const auto body = platform::json::stringify(platform::json::JsonValue(rpc));
     if (body.isFail()) {
-        return core::Result<std::string>::fail(body.errorCode(),
-                                               body.errorMessage());
+        return core::propagate<std::string>(body);
     }
     for (int attempt = 0; attempt < 2; ++attempt) {
         const auto sid = ensureSessionId();
         if (sid.isFail()) {
-            return core::Result<std::string>::fail(sid.errorCode(),
-                                                   sid.errorMessage());
+            return core::propagate<std::string>(sid);
         }
         platform::http::Request req;
         req.method = "POST";
@@ -241,8 +237,7 @@ core::Result<std::string> callTool(const std::string& tool,
         if (resp.isFail()) {
             LOG_WARN("telemem " + tool + " 传输失败: " + resp.errorMessage() +
                      "（耗时 " + std::to_string(elapsedMs) + "ms）");
-            return core::Result<std::string>::fail(resp.errorCode(),
-                                                   resp.errorMessage());
+            return core::propagate<std::string>(resp);
         }
         if (resp.value().statusCode == 404 && attempt == 0) {
             invalidateSessionId();  // 引擎重启/会话过期：重取一次
@@ -306,8 +301,7 @@ core::Result<std::vector<MemoryHit>> parseSearchResponse(
     const std::string& httpBody) {
     auto result = parseJsonRpcResult(httpBody);
     if (result.isFail()) {
-        return core::Result<std::vector<MemoryHit>>::fail(result.errorCode(),
-                                                          result.errorMessage());
+        return core::propagate<std::vector<MemoryHit>>(result);
     }
     std::vector<MemoryHit> hits;
     const JsonValue content = result.value().asObject().get("content");
@@ -346,8 +340,7 @@ core::Result<std::vector<MemoryHit>> parseSearchResponse(
 core::Result<std::string> parseAddResponse(const std::string& httpBody) {
     auto result = parseJsonRpcResult(httpBody);
     if (result.isFail()) {
-        return core::Result<std::string>::fail(result.errorCode(),
-                                               result.errorMessage());
+        return core::propagate<std::string>(result);
     }
     // 引擎侧新条目 id 尽力提取（telemem add 返回 stored 状态，无 id → 空串）
     std::string id;
@@ -456,8 +449,7 @@ core::Result<std::vector<MemoryListItem>> parseListResponse(
 core::Result<std::int64_t> parseGetMemoryResponse(const std::string& httpBody) {
     auto result = parseJsonRpcResult(httpBody);
     if (result.isFail()) {
-        return core::Result<std::int64_t>::fail(result.errorCode(),
-                                                result.errorMessage());
+        return core::propagate<std::int64_t>(result);
     }
     const JsonValue content = result.value().asObject().get("content");
     if (!content.isArray() || content.size() == 0 || !content[0].isObject()) {
@@ -509,8 +501,7 @@ core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
              platform::json::makeDouble(kSearchSimilarityThreshold));
     const auto resp = callTool("search_memories", std::move(args), timeoutMs);
     if (resp.isFail()) {
-        return core::Result<std::vector<MemoryHit>>::fail(resp.errorCode(),
-                                                          resp.errorMessage());
+        return core::propagate<std::vector<MemoryHit>>(resp);
     }
     return parseSearchResponse(resp.value());
 }
@@ -522,13 +513,11 @@ core::Result<std::string> findMemoryIdByText(const std::string& text) {
     args.set("limit", platform::json::makeInt(200));
     const auto resp = callTool("get_memories", std::move(args), 10000);
     if (resp.isFail()) {
-        return core::Result<std::string>::fail(resp.errorCode(),
-                                               resp.errorMessage());
+        return core::propagate<std::string>(resp);
     }
     auto items = parseListResponse(resp.value());
     if (items.isFail()) {
-        return core::Result<std::string>::fail(items.errorCode(),
-                                               items.errorMessage());
+        return core::propagate<std::string>(items);
     }
     for (const MemoryListItem& item : items.value()) {
         if (memoryTextMatches(item.text, text)) {
@@ -621,15 +610,13 @@ core::Result<std::string> TelememHttpRetriever::addDirect(
         // bug334：超时走核实分支（见 confirmStoredAfterTimeout）；其余错误
         //（引擎不在/HTTP 4xx）语义即真失败，原文透传不核实。
         if (resp.errorCode() != core::ErrorCode::NetworkTimeout) {
-            return core::Result<std::string>::fail(resp.errorCode(),
-                                                   resp.errorMessage());
+            return core::propagate<std::string>(resp);
         }
         return confirmStoredAfterTimeout(text, resp.errorMessage());
     }
     const auto parsed = parseAddResponse(resp.value());
     if (parsed.isFail()) {
-        return core::Result<std::string>::fail(parsed.errorCode(),
-                                               parsed.errorMessage());
+        return core::propagate<std::string>(parsed);
     }
     if (!parsed.value().empty()) {
         return parsed;  // 引擎侧直接回了 id（未来版本形态）
@@ -685,8 +672,7 @@ core::Result<std::string> TelememHttpRetriever::addInferred(
             return confirmInferredAfterTimeout(*this, beforeIds,
                                                resp.errorMessage());
         }
-        return core::Result<std::string>::fail(resp.errorCode(),
-                                               resp.errorMessage());
+        return core::propagate<std::string>(resp);
     }
     auto parsed = parseAddResponse(resp.value());
     if (parsed.isFail()) {
@@ -704,12 +690,11 @@ core::Result<void> TelememHttpRetriever::updateMemoryText(
     const auto resp =
         callTool("update_memory", buildUpdateMemoryArgs(memoryId, text), 10000);
     if (resp.isFail()) {
-        return core::Result<void>::fail(resp.errorCode(), resp.errorMessage());
+        return core::propagate<void>(resp);
     }
     const auto parsed = parseAddResponse(resp.value());
     if (parsed.isFail()) {
-        return core::Result<void>::fail(parsed.errorCode(),
-                                        parsed.errorMessage());
+        return core::propagate<void>(parsed);
     }
     return core::Result<void>::ok();
 }
@@ -733,12 +718,11 @@ core::Result<void> TelememHttpRetriever::setMemoryForgotten(
     args.set("memory_id", platform::json::makeString(memoryId));
     const auto resp = callTool("delete_memory", std::move(args), 10000);
     if (resp.isFail()) {
-        return core::Result<void>::fail(resp.errorCode(), resp.errorMessage());
+        return core::propagate<void>(resp);
     }
     const auto parsed = parseAddResponse(resp.value());
     if (parsed.isFail()) {
-        return core::Result<void>::fail(parsed.errorCode(),
-                                        parsed.errorMessage());
+        return core::propagate<void>(parsed);
     }
     return core::Result<void>::ok();
 }
@@ -761,8 +745,7 @@ core::Result<std::int64_t> TelememHttpRetriever::getMemoryVersion(
     args.set("memory_id", platform::json::makeString(memoryId));
     const auto resp = callTool("get_memory", std::move(args), 10000);
     if (resp.isFail()) {
-        return core::Result<std::int64_t>::fail(resp.errorCode(),
-                                                resp.errorMessage());
+        return core::propagate<std::int64_t>(resp);
     }
     return parseGetMemoryResponse(resp.value());
 }

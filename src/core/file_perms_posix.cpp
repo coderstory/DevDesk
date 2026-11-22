@@ -40,7 +40,7 @@ core::Result<int> restrictSqliteStoreFiles(const std::filesystem::path& dbFile) 
         const bool exists = std::filesystem::exists(p, ec) && !ec;
         if (!exists) continue;
         auto r = restrictToOwnerOnly(p);
-        if (r.isFail()) return core::Result<int>::fail(r.errorCode(), r.errorMessage());
+        if (r.isFail()) return core::propagate<int>(r);
         ++tightened;
     }
     return core::Result<int>::ok(tightened);

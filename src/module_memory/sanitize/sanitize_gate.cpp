@@ -783,8 +783,7 @@ core::Result<SanitizeResult> sanitizeText(const std::string& utf8Text) {
     SanitizeResult r;
     auto scanned = scanText(utf8Text);
     if (scanned.isFail()) {
-        return core::Result<SanitizeResult>::fail(scanned.errorCode(),
-                                                  scanned.errorMessage());
+        return core::propagate<SanitizeResult>(scanned);
     }
     r.hits = std::move(scanned.value());
     r.text = utf8Text;

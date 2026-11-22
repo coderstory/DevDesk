@@ -5,6 +5,7 @@ add_library(devdesk_platform STATIC
     http_client.cpp
     http_server.cpp
     json.cpp
+    tool_kit.cpp                        # LLM 工具执行器五件套公共脚手架（need:380 批C）
     github_api.cpp                      # GitHub Contents API 客户端（libcurl，不依赖外部 git）
     utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
     autostart.h                         # 开机自启动抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
@@ -66,6 +67,7 @@ elseif(APPLE)
         notification_macos.mm          # UNUserNotificationCenter（ARC，见下方编译选项）
         autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
         process_runner_macos.cpp        # 进程执行器：posix_spawn + 管道全捕获（UAT6）
+        process_runner_common.cpp       # 排空+收尸 poll 主循环（macos/posix 共用，need:380 批C）
         process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
         wallpaper_capability_macos.cpp  # 壁纸宿主能力：AVFoundation + 桌面层窗口，恒 true
         window_visibility_macos.cpp     # 主窗可见态：当前 GLFW 上下文窗口的 ICONIFIED/VISIBLE（无句柄 fail-open）
@@ -89,6 +91,7 @@ else()
         notification_posix.cpp         # 无原生通知后端：诚实 NotImplemented
         autostart_posix.cpp            # 开机自启动兜底：恒不支持（UAT6）
         process_runner_posix.cpp        # 进程执行器：fork/exec + 管道全捕获（UAT6）
+        process_runner_common.cpp       # 排空+收尸 poll 主循环（macos/posix 共用，need:380 批C）
         process_host_posix.cpp          # 常驻子进程托管：fork/setsid + 组杀（memcpp S2）
         wallpaper_capability_posix.cpp  # 壁纸宿主能力：无原生实现，恒 false
         # 主窗可见态：非 Win/macOS 桌面复用同一 GLFW 查询实现（只依赖 GLFW C

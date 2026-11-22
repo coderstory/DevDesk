@@ -304,7 +304,7 @@ REGISTER_TEST(assembly_exit_hook_armed_idempotent,
 })
 
 REGISTER_TEST(assembly_dispatch_and_tray_mapping,
-              "assembly: dispatchFileOpen（D-D 清单→记事本窗 / 未注册→Home / 查重聚焦）/ pageForTrayAction", {
+              "assembly: dispatchFileOpen（.md→笔记页 / D-D 清单→记事本窗 / 未注册→Home）/ pageForTrayAction", {
     test_support::ScopedAppRouter scoped;
 
     // 1. 扩展名判据（need:273 批 1：dispatchPageForFile 已随 OS 漏斗改造退役，
@@ -331,6 +331,10 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK(core::notepad::isNotepadExtension("a.TXT"));
     // 反向锁：大小写不敏感不等于「任意后缀都命中」
     DOCTEST_CHECK(!core::notepad::isNotepadExtension("a.PNG"));
+    // need:380 C-3：md 判据独立成源（分发改道用），清单扩展名照旧全命中
+    DOCTEST_CHECK(core::notepad::isMarkdownExtension("a.md"));
+    DOCTEST_CHECK(core::notepad::isMarkdownExtension("README.MD"));
+    DOCTEST_CHECK(!core::notepad::isMarkdownExtension("a.json"));
 
     // 2. 托盘动作 → 页面（非导航动作无映射）
     DOCTEST_CHECK(trayPageIs(Action::NavigateHome, ::core::PageId::Home));
@@ -348,9 +352,10 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::ClaudeProxy)), std::string("Claude"));
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::Settings)), std::string("设置"));
 
-    // 4~7. dispatchFileOpen 新漏斗语义（need:273 批 1 重写，2026-11-17；旧断言
-    //原文 = git 历史 365e6d52）：D-D 清单扩展 → openNotepadWindow（session 计数
-    // +1、Router 原地、无 "open:" 负载、不经笔记目录拷贝）；未注册 → Home。
+    // 4~7. dispatchFileOpen 漏斗语义（need:273 批 1；need:380 wave5-d C-3 修订，
+    // .md 改道主窗笔记页）：.md/.markdown → navigateTo(Markdown) + "open:" 负载
+    //（目录内直相对化、目录外拷贝进笔记目录）；D-D 其余清单扩展 →
+    // openNotepadWindow（session 计数 +1、Router 原地）；未注册 → Home。
     module::notepad::resetNotepadSessionsForTest();
     const std::filesystem::path notesDir =
         test_support::makeTempDir(kNotesDirPrefix, "tray");
@@ -370,48 +375,84 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
                                     app::assembly::PreStartHook{});
     DOCTEST_REQUIRE(router.isRegistered(::core::PageId::Markdown));
 
-    // ① .md → 记事本窗 +1；主窗原地、不走 "open:" 内嵌通道、不拷贝笔记目录
-    //   （notesDir 仍只有刚建的一个文件——拷贝语义已随 R-1 废止）
-    const auto pageBefore = router.currentPage();
+    // ① .md → 主窗笔记页承接（C-3）：navigateTo(Markdown) + "open:<相对路径>"
+    //   负载；目录内文件直相对化不拷贝（notesDir 仍只有刚建的一个文件）；记事
+    //   本窗不建
     app::assembly::dispatchFileOpen(&router, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(router.currentPage(), pageBefore);
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Markdown);
     DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
-                     std::string());
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(1));
-    // pageId = notepad.<全局递增序号>（v5：窗口内部唯一标识；序号跨用例单调，
-    // 只锁前缀不锁具体值）
-    DOCTEST_CHECK(module::notepad::notepadSessionPageIdForTest(0)
-                      .rfind("notepad.", 0) == 0);
-    // 同文件再送达 → 查重命中聚焦，计数不变（v5/F-20①；无窗测试进程聚焦为空操作）
+                     std::string("open:note.md"));
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(0));
+    // 同文件再送达 → 同负载再投（笔记页承接无窗查重问题），窗计数不动
     app::assembly::dispatchFileOpen(&router, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(1));
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
+                     std::string("open:note.md"));
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(0));
 
-    // ①b. .markdown / 大写扩展名（OS 关联送达大小写不敏感；文件不在盘上也照建
-    //     session——错误占位在窗内呈现，路由语义与文件存在性无关）
+    // ①b. .markdown / 大写扩展名（OS 关联送达大小写不敏感）；文件不在盘上 →
+    //     装载失败兜底落笔记页（无负载），窗计数不动
     app::assembly::dispatchFileOpen(&router, (notesDir / "b.markdown").string(),
                                     notesDir);
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
+                     std::string());
+    // 大写扩展名同通道承接（OS 送达大小写不敏感）：文件在盘上才走 open 负载
+    //（不在盘上 = ①b 兜底无负载；README.MD 造盘后相对路径保留原大小写）
+    {
+        std::ofstream f(notesDir / "README.MD", std::ios::trunc);
+        f << "# 大写扩展名\n";
+    }
     app::assembly::dispatchFileOpen(&router, (notesDir / "README.MD").string(),
                                     notesDir);
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
+                     std::string("open:README.MD"));
     app::assembly::dispatchFileOpen(&router, "c.Markdown", notesDir);
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(4));
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Markdown),
+                     std::string());
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(0));
 
-    // ② D-D 其余档全量进记事本窗（不再是 Claude 页/笔记页）：.json/.txt/.yaml/
-    //    .log/.py 各 +1，Router 原地不动
+    // ①c. 目录外 .md → 拷贝进笔记目录再 open（captureFileIntoNotesDir 既有语义）
+    const std::filesystem::path outsideDir =
+        test_support::makeTempDir(kNotesDirPrefix, "outside");
+    {
+        std::ofstream f(outsideDir / "outside.md", std::ios::trunc);
+        f << "外部文件\n";
+    }
+    app::assembly::dispatchFileOpen(&router, (outsideDir / "outside.md").string(),
+                                    notesDir);
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK(router.consumePendingPayload(::core::PageId::Markdown)
+                      .rfind("open:", 0) == 0);
+    std::size_t notesDirEntries = 0;
+    for (auto it = std::filesystem::directory_iterator(notesDir, ec);
+         it != std::filesystem::directory_iterator(); ++it) {
+        ++notesDirEntries;
+    }
+    DOCTEST_CHECK_EQ(notesDirEntries, size_t(3));  // note.md + README.MD（①b 造盘）+ 拷入的 outside.md
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(0));
+
+    // ② D-D 其余档全量进记事本窗：.json/.txt/.yaml/.log/.py 各 +1，Router 原地
+    const auto pageBefore = router.currentPage();
     for (const char* name :
          {"d.json", "e.txt", "f.yaml", "g.log", "h.py"}) {
         app::assembly::dispatchFileOpen(&router, (notesDir / name).string(),
                                         notesDir);
     }
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(9));
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(5));
     DOCTEST_CHECK_EQ(router.currentPage(), pageBefore);
+    // pageId = notepad.<全局递增序号>（v5：窗口内部唯一标识；序号跨用例单调，
+    // 只锁前缀不锁具体值）
+    DOCTEST_CHECK(module::notepad::notepadSessionPageIdForTest(0)
+                      .rfind("notepad.", 0) == 0);
 
     // ③ 未注册扩展名 → navigateTo(Home)（F-01 口径不变），窗计数不动
     app::assembly::dispatchFileOpen(&router, (notesDir / "a.bin").string(), notesDir);
     DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Home);
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(9));
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(5));
 
-    // ④ 笔记模块被关（未注册）→ 记事本窗照开（独立窗不依赖 Router 注册态），
-    //    Router 原地不动且不往关掉的模块投递负载；用新文件隔离查重分支
+    // ④ 笔记模块被关（未注册）→ .md 兜底记事本窗照开（打开能力不因模块门控
+    //    丢失；独立窗不依赖 Router 注册态），Router 原地不动且不往关掉的模块
+    //    投递负载
     ::core::Router gatedRouter;
     StubModules gatedMods;
     app::assembly::assembleAndStart(gatedRouter, allToolsOffConfig(),
@@ -422,14 +463,15 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(gatedRouter.currentPage(), gatedBefore);
     DOCTEST_CHECK_EQ(gatedRouter.consumePendingPayload(::core::PageId::Markdown),
                      std::string());
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(10));
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(6));
 
     // ⑤ 空路径 / 空 Router → 原地不动、不崩（OS 漏斗约定调用方必须持有 Router）
     const auto pageBefore5 = router.currentPage();
     app::assembly::dispatchFileOpen(&router, "", notesDir);
     DOCTEST_CHECK_EQ(router.currentPage(), pageBefore5);
     app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
-    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(10));
+    DOCTEST_CHECK_EQ(module::notepad::notepadSessionCountForTest(), size_t(6));
+    std::filesystem::remove_all(outsideDir, ec);
 
     module::notepad::resetNotepadSessionsForTest();
     // 用例卫生：本用例开窗分支向 EUI-NEO 进程级窗口请求队列入过队（session
@@ -463,6 +505,8 @@ REGISTER_TEST(assembly_capture_open_file_from_argv,
     captureOpenFileFromArgv({"devdesk.exe", "note.md"});
     DOCTEST_CHECK_EQ(pendingOpenFilePath(), std::string("note.md"));
     DOCTEST_CHECK(core::notepad::isNotepadExtension(pendingOpenFilePath()));
+    // need:380 C-3：argv .md 分组语义 = 主窗笔记页承接（漏斗分发改道）
+    DOCTEST_CHECK(core::notepad::isMarkdownExtension(pendingOpenFilePath()));
 
     // 4. 幂等：重复调用只捕获一次（第二次的路径不覆盖已捕获值）
     captureOpenFileFromArgv({"devdesk.exe", "other.md"});
@@ -529,21 +573,21 @@ REGISTER_TEST(assembly_arm_tray_if_viewer_only_launch,
     using app::assembly::resetArgvCaptureForTest;
     using app::assembly::resetMinimizedFlagForTest;
 
-    // 1. .md argv → 置旗标；取走一次即清（compose 首帧一次性）
+    // 1. .md argv → 不置旗标（need:380 C-3：.md 改主窗笔记页承接，主窗不得
+    //    保持托盘态；旧「.md 置旗标」断言随路由改道失效）
     resetArgvCaptureForTest();
     resetMinimizedFlagForTest();
     captureOpenFileFromArgv({"devdesk.exe", "note.md"});
     armTrayIfViewerOnlyLaunch();
-    DOCTEST_CHECK(consumePendingMinimizedStartup());
     DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
 
-    // 2. .markdown 同判（大小写不敏感，isNotepadExtension 单一真源语义）
+    // 2. .markdown 同判（大小写不敏感，isMarkdownExtension 单一真源语义）
     resetArgvCaptureForTest();
     resetMinimizedFlagForTest();
     pendingOpenFilePath().clear();
     captureOpenFileFromArgv({"devdesk.exe", "README.MARKDOWN"});
     armTrayIfViewerOnlyLaunch();
-    DOCTEST_CHECK(consumePendingMinimizedStartup());
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
 
     // 3. .txt 同置（need:273：D-D 清单全量进记事本窗 = 纯记事本送达，不再走
     //    主窗内嵌页——「.txt 不置」旧断言已随漏斗改造失效）
@@ -604,6 +648,11 @@ REGISTER_TEST(assembly_arm_tray_odoc_cold_start,
     // 3. 非清单扩展（.png）→ helper no-op
     resetMinimizedFlagForTest();
     armTrayForNotepadAssociation("/tmp/photo.png", "odoc");
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 3b. .md（need:380 C-3：主窗笔记页承接）→ helper no-op，主窗不藏
+    resetMinimizedFlagForTest();
+    armTrayForNotepadAssociation("/tmp/note.md", "odoc");
     DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
 
     // 收尾：不留进程级状态
@@ -1432,18 +1481,18 @@ REGISTER_TEST(si_paths_queue_drain_order,
     return true;
 })
 
-// ── bug270 唤醒裁决（need:273 批 1 判据换轨）：纯记事本扩展送达 = 关联启动
-//   （只开记事本窗，不唤主窗）；含未注册扩展才需要主窗承接。判据纯函数，
-//   不驱动 requestShow 副作用 ──
+// ── bug270 唤醒裁决（need:273 批 1 判据换轨；need:380 C-3 修订）：.md → 主窗
+//   笔记页承接 = 需要主窗；纯记事本扩展送达 = 关联启动（只开记事本窗，不唤
+//   主窗）；含未注册扩展才需要主窗承接。判据纯函数，不驱动 requestShow 副作用 ──
 REGISTER_TEST(si_paths_wake_decision_md_only,
-              "app_assembly: 第二实例唤醒裁决——纯记事本扩展不唤主窗，含未注册扩展需要主窗", {
+              "app_assembly: 第二实例唤醒裁决——md 送达需要主窗（C-3），纯记事本扩展不唤主窗", {
     using app::assembly::secondInstancePathsNeedMainWindow;
     DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({}));
-    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"a.md"}));
-    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"a.md", "b.MARKDOWN"}));
+    DOCTEST_CHECK_TRUE(secondInstancePathsNeedMainWindow({"a.md"}));
+    DOCTEST_CHECK_TRUE(secondInstancePathsNeedMainWindow({"a.md", "b.MARKDOWN"}));
     // .txt/.json 全量进记事本窗（D-D 清单）——旧「.txt/.json 唤主窗」断言已失效
-    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"a.md", "b.txt"}));
+    DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"b.txt"}));
     DOCTEST_CHECK_FALSE(secondInstancePathsNeedMainWindow({"notes.json"}));
-    DOCTEST_CHECK(secondInstancePathsNeedMainWindow({"a.md", "b.png"}));
+    DOCTEST_CHECK(secondInstancePathsNeedMainWindow({"b.png"}));
     return true;
 })

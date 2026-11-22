@@ -19,17 +19,11 @@ constexpr const char* kKeyFontSize = "fontSize";
 constexpr const char* kKeyColorMode = "colorMode";
 constexpr const char* kKeyColorPalette = "colorPalette";
 constexpr const char* kKeyShell = "shell";
-constexpr const char* kKeyWorkDir = "workDir";
-constexpr const char* kKeyScrollback = "scrollback";
-constexpr const char* kKeyCursorStyle = "cursorStyle";
-constexpr const char* kKeyCursorBlink = "cursorBlink";
 
 constexpr const char* kColorModeFollow = "followApp";
 constexpr const char* kColorModeIndependent = "independent";
 constexpr const char* kPaletteLight = "light";
 constexpr const char* kPaletteDark = "dark";
-constexpr const char* kCursorBlock = "block";
-constexpr const char* kCursorBar = "bar";
 
 bool contains(const std::vector<std::string>& values, const std::string& v) {
     return std::find(values.begin(), values.end(), v) != values.end();
@@ -39,10 +33,6 @@ bool contains(const std::vector<std::string>& values, const std::string& v) {
 
 int clampedFontSize(int value) {
     return std::clamp(value, kFontSizeMin, kFontSizeMax);
-}
-
-int clampedScrollback(int value) {
-    return std::clamp(value, kScrollbackMin, kScrollbackMax);
 }
 
 bool gridPaletteDark(bool appDark, TerminalColorMode mode, TerminalColorPalette palette) {
@@ -68,10 +58,6 @@ TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
     out.fontSize = clampedFontSize(settings.fontSize);
     out.colorMode = settings.colorMode;
     out.colorPalette = settings.colorPalette;
-    out.workDir = settings.workDir; // workDir 不在此校验存在性（开新会话时才回退，§4.2⑤）
-    out.scrollback = clampedScrollback(settings.scrollback);
-    out.cursorStyle = settings.cursorStyle;
-    out.cursorBlink = settings.cursorBlink;
     return out;
 }
 
@@ -89,30 +75,20 @@ TerminalSettings loadTerminalSettings(core::data::SqliteDb* db) {
     }
     const platform::json::JsonObject obj = parsed.value().asObject();
     TerminalSettings s;
-    if (obj.has(kKeyFontFamily) && obj.get(kKeyFontFamily).isString())
-        s.fontFamily = obj.get(kKeyFontFamily).asString();
-    if (obj.has(kKeyFontSize) && obj.get(kKeyFontSize).isNumber())
-        s.fontSize = static_cast<int>(obj.get(kKeyFontSize).asInt());
-    if (obj.has(kKeyColorMode) && obj.get(kKeyColorMode).isString()) {
-        const std::string m = obj.get(kKeyColorMode).asString();
-        if (m == kColorModeIndependent) s.colorMode = TerminalColorMode::Independent;
+    if (auto v = platform::json::getIfString(obj, kKeyFontFamily))
+        s.fontFamily = *v;
+    if (auto v = platform::json::getIfInt(obj, kKeyFontSize))
+        s.fontSize = static_cast<int>(*v);
+    if (auto v = platform::json::getIfString(obj, kKeyColorMode)) {
+        if (*v == kColorModeIndependent) s.colorMode = TerminalColorMode::Independent;
     }
-    if (obj.has(kKeyColorPalette) && obj.get(kKeyColorPalette).isString()) {
-        const std::string p = obj.get(kKeyColorPalette).asString();
-        if (p == kPaletteDark) s.colorPalette = TerminalColorPalette::Dark;
+    if (auto v = platform::json::getIfString(obj, kKeyColorPalette)) {
+        if (*v == kPaletteDark) s.colorPalette = TerminalColorPalette::Dark;
     }
-    if (obj.has(kKeyShell) && obj.get(kKeyShell).isString())
-        s.shell = obj.get(kKeyShell).asString();
-    if (obj.has(kKeyWorkDir) && obj.get(kKeyWorkDir).isString())
-        s.workDir = obj.get(kKeyWorkDir).asString();
-    if (obj.has(kKeyScrollback) && obj.get(kKeyScrollback).isNumber())
-        s.scrollback = static_cast<int>(obj.get(kKeyScrollback).asInt());
-    if (obj.has(kKeyCursorStyle) && obj.get(kKeyCursorStyle).isString()) {
-        const std::string c = obj.get(kKeyCursorStyle).asString();
-        if (c == kCursorBar) s.cursorStyle = TerminalCursorStyle::Bar;
-    }
-    if (obj.has(kKeyCursorBlink) && obj.get(kKeyCursorBlink).isBool())
-        s.cursorBlink = obj.get(kKeyCursorBlink).asBool();
+    if (auto v = platform::json::getIfString(obj, kKeyShell))
+        s.shell = *v;
+    // C-4（need380）：workDir/scrollback/cursorStyle/cursorBlink 旧键不再读取
+    //（行为固定默认；旧 JSON 里残留键在下次 save 整体重写时消失 = 一次性归一）。
     return sanitizedTerminalSettings(s);
 }
 
@@ -135,12 +111,6 @@ core::Result<void> saveTerminalSettings(core::data::SqliteDb* db,
                                   s.colorPalette == TerminalColorPalette::Dark ? kPaletteDark
                                                                                : kPaletteLight));
     obj.set(kKeyShell, platform::json::makeString(s.shell));
-    obj.set(kKeyWorkDir, platform::json::makeString(s.workDir));
-    obj.set(kKeyScrollback, platform::json::makeInt(s.scrollback));
-    obj.set(kKeyCursorStyle, platform::json::makeString(
-                                 s.cursorStyle == TerminalCursorStyle::Bar ? kCursorBar
-                                                                           : kCursorBlock));
-    obj.set(kKeyCursorBlink, platform::json::makeBool(s.cursorBlink));
     auto text = platform::json::stringify(platform::json::JsonValue(obj), /*pretty=*/false);
     if (text.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::Internal,

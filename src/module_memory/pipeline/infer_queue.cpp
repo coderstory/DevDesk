@@ -30,13 +30,11 @@ core::Result<InferQueueStore> InferQueueStore::open(
     const std::filesystem::path& dbFile) {
     auto db = core::data::SqliteDb::open(dbFile);
     if (db.isFail()) {
-        return core::Result<InferQueueStore>::fail(db.errorCode(),
-                                                   db.errorMessage());
+        return core::propagate<InferQueueStore>(db);
     }
     auto applied = db.value().applySchema(kSchema);
     if (applied.isFail()) {
-        return core::Result<InferQueueStore>::fail(applied.errorCode(),
-                                                   applied.errorMessage());
+        return core::propagate<InferQueueStore>(applied);
     }
     // 腿 A 老库补列：applySchema 对已存在表是 no-op，波 2 之前的库缺
     // confidence/attempts/last_error。ALTER 失败的唯一现实原因是列已存在
@@ -67,7 +65,7 @@ core::Result<void> InferQueueStore::enqueue(const std::string& sessionId,
         "INSERT OR IGNORE INTO infer_queue(session_id, start_seq, text, "
         "created_at, confidence) VALUES(?, ?, ?, ?, ?)");
     if (stmt.isFail()) {
-        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<void>(stmt);
     }
     if (!stmt.value().bind(1, sessionId).isOk() ||
         !stmt.value().bind(2, startSeq).isOk() ||
@@ -79,7 +77,7 @@ core::Result<void> InferQueueStore::enqueue(const std::string& sessionId,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }
@@ -90,8 +88,7 @@ core::Result<std::vector<InferQueueStore::Entry>> InferQueueStore::listBatch(
         "SELECT id, session_id, start_seq, text, attempts, last_error, "
         "confidence FROM infer_queue ORDER BY id LIMIT ?");
     if (stmt.isFail()) {
-        return core::Result<std::vector<Entry>>::fail(stmt.errorCode(),
-                                                      stmt.errorMessage());
+        return core::propagate<std::vector<Entry>>(stmt);
     }
     if (!stmt.value().bind(1, static_cast<std::int64_t>(limit)).isOk()) {
         return core::Result<std::vector<Entry>>::fail(core::ErrorCode::Internal,
@@ -101,14 +98,12 @@ core::Result<std::vector<InferQueueStore::Entry>> InferQueueStore::listBatch(
     for (;;) {
         auto step = stmt.value().step();
         if (step.isFail()) {
-            return core::Result<std::vector<Entry>>::fail(step.errorCode(),
-                                                          step.errorMessage());
+            return core::propagate<std::vector<Entry>>(step);
         }
         if (!step.value()) break;
         auto row = stmt.value().currentRow();
         if (row.isFail()) {
-            return core::Result<std::vector<Entry>>::fail(row.errorCode(),
-                                                          row.errorMessage());
+            return core::propagate<std::vector<Entry>>(row);
         }
         Entry e;
         e.id = row.value().getInt64("id").valueOr(0);
@@ -128,7 +123,7 @@ core::Result<std::vector<InferQueueStore::Entry>> InferQueueStore::listBatch(
 core::Result<int> InferQueueStore::depth() const {
     auto stmt = db_->prepare("SELECT COUNT(*) AS v FROM infer_queue");
     if (stmt.isFail()) {
-        return core::Result<int>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<int>(stmt);
     }
     auto step = stmt.value().step();
     if (step.isFail() || !step.value()) {
@@ -146,7 +141,7 @@ core::Result<int> InferQueueStore::recordFailure(std::int64_t id,
         "UPDATE infer_queue SET attempts = attempts + 1, last_error = ? "
         "WHERE id = ?");
     if (upd.isFail()) {
-        return core::Result<int>::fail(upd.errorCode(), upd.errorMessage());
+        return core::propagate<int>(upd);
     }
     const std::string brief = error.size() > 200 ? error.substr(0, 200) : error;
     if (!upd.value().bind(1, brief).isOk() ||
@@ -155,11 +150,11 @@ core::Result<int> InferQueueStore::recordFailure(std::int64_t id,
                                        "提炼队列失败记账绑定失败");
     }
     if (auto s = upd.value().step(); s.isFail()) {
-        return core::Result<int>::fail(s.errorCode(), s.errorMessage());
+        return core::propagate<int>(s);
     }
     auto q = db_->prepare("SELECT attempts FROM infer_queue WHERE id = ?");
     if (q.isFail()) {
-        return core::Result<int>::fail(q.errorCode(), q.errorMessage());
+        return core::propagate<int>(q);
     }
     if (!q.value().bind(1, id).isOk()) {
         return core::Result<int>::fail(core::ErrorCode::Internal,
@@ -173,7 +168,7 @@ core::Result<int> InferQueueStore::recordFailure(std::int64_t id,
     }
     auto row = q.value().currentRow();
     if (row.isFail()) {
-        return core::Result<int>::fail(row.errorCode(), row.errorMessage());
+        return core::propagate<int>(row);
     }
     return core::Result<int>::ok(
         static_cast<int>(row.value().getInt64("attempts").valueOr(0)));
@@ -182,7 +177,7 @@ core::Result<int> InferQueueStore::recordFailure(std::int64_t id,
 core::Result<void> InferQueueStore::remove(std::int64_t id) {
     auto stmt = db_->prepare("DELETE FROM infer_queue WHERE id = ?");
     if (stmt.isFail()) {
-        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+        return core::propagate<void>(stmt);
     }
     if (!stmt.value().bind(1, id).isOk()) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
@@ -190,7 +185,7 @@ core::Result<void> InferQueueStore::remove(std::int64_t id) {
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+        return core::propagate<void>(step);
     }
     return core::Result<void>::ok();
 }

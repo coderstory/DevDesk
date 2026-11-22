@@ -43,11 +43,11 @@ int64_t TodoService::nowEpochSeconds() {
 core::Result<int> TodoService::nextColumnPosition() {
     auto prep = db_.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS next FROM todo_columns");
     if (prep.isFail()) {
-        return core::Result<int>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<int>(prep);
     }
     auto rows = prep.value().fetchAll();
     if (rows.isFail()) {
-        return core::Result<int>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<int>(rows);
     }
     if (rows.value().empty()) {
         return core::Result<int>::ok(0);
@@ -59,15 +59,15 @@ core::Result<int> TodoService::nextTaskPosition(int64_t columnId) {
     auto prep = db_.prepare(
         "SELECT COALESCE(MAX(position), -1) + 1 AS next FROM todo_tasks WHERE column_id = ?");
     if (prep.isFail()) {
-        return core::Result<int>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<int>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, columnId); r.isFail()) {
-        return core::Result<int>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<int>(r);
     }
     auto rows = stmt.fetchAll();
     if (rows.isFail()) {
-        return core::Result<int>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<int>(rows);
     }
     if (rows.value().empty()) {
         return core::Result<int>::ok(0);
@@ -78,15 +78,15 @@ core::Result<int> TodoService::nextTaskPosition(int64_t columnId) {
 core::Result<Column> TodoService::parseColumnRow(const core::data::SqlRow& row) {
     auto idResult = row.getInt64("id");
     if (idResult.isFail()) {
-        return core::Result<Column>::fail(idResult.errorCode(), idResult.errorMessage());
+        return core::propagate<Column>(idResult);
     }
     auto titleResult = row.getString("title");
     if (titleResult.isFail()) {
-        return core::Result<Column>::fail(titleResult.errorCode(), titleResult.errorMessage());
+        return core::propagate<Column>(titleResult);
     }
     auto posResult = row.getInt64("position");
     if (posResult.isFail()) {
-        return core::Result<Column>::fail(posResult.errorCode(), posResult.errorMessage());
+        return core::propagate<Column>(posResult);
     }
     Column c;
     c.id = idResult.value();
@@ -111,23 +111,23 @@ core::Result<Column> TodoService::parseColumnRow(const core::data::SqlRow& row) 
 core::Result<Task> TodoService::parseTaskRow(const core::data::SqlRow& row) {
     auto idResult = row.getInt64("id");
     if (idResult.isFail()) {
-        return core::Result<Task>::fail(idResult.errorCode(), idResult.errorMessage());
+        return core::propagate<Task>(idResult);
     }
     auto columnIdResult = row.getInt64("column_id");
     if (columnIdResult.isFail()) {
-        return core::Result<Task>::fail(columnIdResult.errorCode(), columnIdResult.errorMessage());
+        return core::propagate<Task>(columnIdResult);
     }
     auto titleResult = row.getString("title");
     if (titleResult.isFail()) {
-        return core::Result<Task>::fail(titleResult.errorCode(), titleResult.errorMessage());
+        return core::propagate<Task>(titleResult);
     }
     auto posResult = row.getInt64("position");
     if (posResult.isFail()) {
-        return core::Result<Task>::fail(posResult.errorCode(), posResult.errorMessage());
+        return core::propagate<Task>(posResult);
     }
     auto priorityResult = row.getInt64("priority");
     if (priorityResult.isFail()) {
-        return core::Result<Task>::fail(priorityResult.errorCode(), priorityResult.errorMessage());
+        return core::propagate<Task>(priorityResult);
     }
 
     Task t;
@@ -219,11 +219,11 @@ core::Result<std::vector<Column>> TodoService::listColumns() {
         "SELECT id, title, position, color, kind FROM todo_columns "
         "ORDER BY position ASC, id ASC");
     if (prep.isFail()) {
-        return core::Result<std::vector<Column>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<Column>>(prep);
     }
     auto rows = prep.value().fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<Column>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<Column>>(rows);
     }
     std::vector<Column> out;
     out.reserve(rows.value().size());
@@ -241,7 +241,7 @@ core::Result<std::vector<Column>> TodoService::listColumns() {
 core::Result<Column> TodoService::createColumn(const std::string& title) {
     auto nextPosResult = nextColumnPosition();
     if (nextPosResult.isFail()) {
-        return core::Result<Column>::fail(nextPosResult.errorCode(), nextPosResult.errorMessage());
+        return core::propagate<Column>(nextPosResult);
     }
     int pos = nextPosResult.value();
     const int64_t now = nowEpochSeconds();
@@ -252,21 +252,21 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
         "INSERT INTO todo_columns (title, position, color, created_at) "
         "VALUES (?, ?, NULL, ?) RETURNING id");
     if (prep.isFail()) {
-        return core::Result<Column>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<Column>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, title); r.isFail()) {
-        return core::Result<Column>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Column>(r);
     }
     if (auto r = stmt.bind(2, static_cast<int64_t>(pos)); r.isFail()) {
-        return core::Result<Column>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Column>(r);
     }
     if (auto r = stmt.bind(3, now); r.isFail()) {
-        return core::Result<Column>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Column>(r);
     }
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<Column>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<Column>(stepResult);
     }
     if (!stepResult.value()) {
         // RETURNING 理论上必返回一行；防御式处理（DONE 意味着异常路径）
@@ -275,11 +275,11 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     }
     auto idRow = stmt.currentRow();
     if (idRow.isFail()) {
-        return core::Result<Column>::fail(idRow.errorCode(), idRow.errorMessage());
+        return core::propagate<Column>(idRow);
     }
     auto idVal = idRow.value().getInt64("id");
     if (idVal.isFail()) {
-        return core::Result<Column>::fail(idVal.errorCode(), idVal.errorMessage());
+        return core::propagate<Column>(idVal);
     }
 
     // drain 到 DONE 释放 in-progress 语句：不 drain 则同连接事务 COMMIT 会撞
@@ -306,14 +306,14 @@ core::Result<void> TodoService::renameColumn(int64_t id, const std::string& titl
 
     auto prep = db_.prepare("UPDATE todo_columns SET title = ? WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, title); r.isFail()) return r;
     if (auto r = stmt.bind(2, id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     // 头文件承诺「id 不存在 → NotFound」：UPDATE 影响 0 行即目标行不存在
     if (sqlite3_changes(db_.handle()) == 0) {
@@ -326,7 +326,7 @@ core::Result<void> TodoService::setColumnColor(int64_t id,
                                                 const std::optional<std::string>& color) {
     auto prep = db_.prepare("UPDATE todo_columns SET color = ? WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (color.has_value()) {
@@ -337,7 +337,7 @@ core::Result<void> TodoService::setColumnColor(int64_t id,
     if (auto r = stmt.bind(2, id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     return core::Result<void>::ok();
 }
@@ -345,13 +345,13 @@ core::Result<void> TodoService::setColumnColor(int64_t id,
 core::Result<void> TodoService::deleteColumn(int64_t id) {
     auto prep = db_.prepare("DELETE FROM todo_columns WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     return core::Result<void>::ok();
 }
@@ -363,14 +363,14 @@ core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) 
         for (size_t i = 0; i < ids.size(); ++i) {
             auto onePrep = db_.prepare("UPDATE todo_columns SET position = ? WHERE id = ?");
             if (onePrep.isFail()) {
-                return core::Result<void>::fail(onePrep.errorCode(), onePrep.errorMessage());
+                return core::propagate<void>(onePrep);
             }
             auto& oneStmt = onePrep.value();
             if (auto r = oneStmt.bind(1, static_cast<int64_t>(i)); r.isFail()) return r;
             if (auto r = oneStmt.bind(2, ids[i]); r.isFail()) return r;
             auto s = oneStmt.step();
             if (s.isFail()) {
-                return core::Result<void>::fail(s.errorCode(), s.errorMessage());
+                return core::propagate<void>(s);
             }
         }
         return core::Result<void>::ok();
@@ -383,15 +383,15 @@ core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
         "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
         "FROM todo_tasks WHERE column_id = ? ORDER BY position ASC");
     if (prep.isFail()) {
-        return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<Task>>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, columnId); r.isFail()) {
-        return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<Task>>(r);
     }
     auto rows = stmt.fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<Task>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<Task>>(rows);
     }
     std::vector<Task> out;
     out.reserve(rows.value().size());
@@ -411,11 +411,11 @@ core::Result<std::vector<Task>> TodoService::listAllTasks() {
         "SELECT id, column_id, title, description, priority, due_at, tags, doc_path, position, completed_at, archived_at "
         "FROM todo_tasks ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
-        return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<Task>>(prep);
     }
     auto rows = prep.value().fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<Task>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<Task>>(rows);
     }
     std::vector<Task> out;
     out.reserve(rows.value().size());
@@ -439,7 +439,7 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
                                            const NewTaskAttributes& attrs) {
     auto nextPosResult = nextTaskPosition(columnId);
     if (nextPosResult.isFail()) {
-        return core::Result<Task>::fail(nextPosResult.errorCode(), nextPosResult.errorMessage());
+        return core::propagate<Task>(nextPosResult);
     }
     int pos = nextPosResult.value();
     const int64_t now = nowEpochSeconds();
@@ -450,50 +450,50 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
         "(column_id, title, description, priority, due_at, tags, position, completed_at, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, '[]', ?, NULL, ?, ?) RETURNING id");
     if (prep.isFail()) {
-        return core::Result<Task>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<Task>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, columnId); r.isFail()) {
-        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Task>(r);
     }
     if (auto r = stmt.bind(2, title); r.isFail()) {
-        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Task>(r);
     }
     // description / priority / due_at 与标题同一条 INSERT：属性在这条语句里要么全落要么全不落，
     // 不存在「标题已入库、属性还在等第二次写」的中间态（票面 01 要消灭的正是它）
     if (attrs.description.has_value()) {
         if (auto r = stmt.bind(3, attrs.description.value()); r.isFail()) {
-            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<Task>(r);
         }
     } else {
         if (auto r = stmt.bind(3, nullptr); r.isFail()) {
-            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<Task>(r);
         }
     }
     if (auto r = stmt.bind(4, static_cast<int64_t>(attrs.priority)); r.isFail()) {
-        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Task>(r);
     }
     if (attrs.dueAt.has_value()) {
         if (auto r = stmt.bind(5, attrs.dueAt.value()); r.isFail()) {
-            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<Task>(r);
         }
     } else {
         if (auto r = stmt.bind(5, nullptr); r.isFail()) {
-            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+            return core::propagate<Task>(r);
         }
     }
     if (auto r = stmt.bind(6, static_cast<int64_t>(pos)); r.isFail()) {
-        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Task>(r);
     }
     if (auto r = stmt.bind(7, now); r.isFail()) {
-        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Task>(r);
     }
     if (auto r = stmt.bind(8, now); r.isFail()) {
-        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<Task>(r);
     }
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<Task>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<Task>(stepResult);
     }
     if (!stepResult.value()) {
         // RETURNING 理论上必返回一行；防御式处理（DONE 意味着异常路径）
@@ -502,11 +502,11 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     }
     auto idRow = stmt.currentRow();
     if (idRow.isFail()) {
-        return core::Result<Task>::fail(idRow.errorCode(), idRow.errorMessage());
+        return core::propagate<Task>(idRow);
     }
     auto idVal = idRow.value().getInt64("id");
     if (idVal.isFail()) {
-        return core::Result<Task>::fail(idVal.errorCode(), idVal.errorMessage());
+        return core::propagate<Task>(idVal);
     }
 
     // 同 createColumn：drain 到 DONE 关闭 in-progress 窗口
@@ -540,7 +540,7 @@ core::Result<void> TodoService::updateTask(const Task& task) {
         "due_at = ?, tags = ?, doc_path = ?, completed_at = ?, updated_at = ? "
         "WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, task.title); r.isFail()) return r;
@@ -566,7 +566,7 @@ core::Result<void> TodoService::updateTask(const Task& task) {
     if (auto r = stmt.bind(9, task.id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     return core::Result<void>::ok();
 }
@@ -574,13 +574,13 @@ core::Result<void> TodoService::updateTask(const Task& task) {
 core::Result<void> TodoService::deleteTask(int64_t id) {
     auto prep = db_.prepare("DELETE FROM todo_tasks WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     return core::Result<void>::ok();
 }
@@ -589,13 +589,13 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
     auto txResult = db_.transaction([&]() -> core::Result<void> {
         auto prep1 = db_.prepare("SELECT column_id, position FROM todo_tasks WHERE id = ?");
         if (prep1.isFail()) {
-            return core::Result<void>::fail(prep1.errorCode(), prep1.errorMessage());
+            return core::propagate<void>(prep1);
         }
         auto& stmt1 = prep1.value();
         if (auto r = stmt1.bind(1, taskId); r.isFail()) return r;
         auto rows1 = stmt1.fetchAll();
         if (rows1.isFail()) {
-            return core::Result<void>::fail(rows1.errorCode(), rows1.errorMessage());
+            return core::propagate<void>(rows1);
         }
         if (rows1.value().empty()) {
             return core::Result<void>::fail(core::ErrorCode::NotFound, "task not found");
@@ -607,14 +607,14 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
         auto prep2 = db_.prepare(
             "UPDATE todo_tasks SET column_id = ?, position = -1 WHERE id = ?");
         if (prep2.isFail()) {
-            return core::Result<void>::fail(prep2.errorCode(), prep2.errorMessage());
+            return core::propagate<void>(prep2);
         }
         auto& stmt2 = prep2.value();
         if (auto r = stmt2.bind(1, toColumnId); r.isFail()) return r;
         if (auto r = stmt2.bind(2, taskId); r.isFail()) return r;
         auto step2 = stmt2.step();
         if (step2.isFail()) {
-            return core::Result<void>::fail(step2.errorCode(), step2.errorMessage());
+            return core::propagate<void>(step2);
         }
 
         // 老列 position > oldPos 的下移 1 位（T 已在新列，不影响）
@@ -623,14 +623,14 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
                 "UPDATE todo_tasks SET position = position - 1 "
                 "WHERE column_id = ? AND position > ?");
             if (prep3.isFail()) {
-                return core::Result<void>::fail(prep3.errorCode(), prep3.errorMessage());
+                return core::propagate<void>(prep3);
             }
             auto& stmt3 = prep3.value();
             if (auto r = stmt3.bind(1, fromColumnId); r.isFail()) return r;
             if (auto r = stmt3.bind(2, static_cast<int64_t>(oldPos)); r.isFail()) return r;
             auto step3 = stmt3.step();
             if (step3.isFail()) {
-                return core::Result<void>::fail(step3.errorCode(), step3.errorMessage());
+                return core::propagate<void>(step3);
             }
         }
 
@@ -639,7 +639,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             "UPDATE todo_tasks SET position = position + 1 "
             "WHERE column_id = ? AND position >= ? AND id != ?");
         if (prep4.isFail()) {
-            return core::Result<void>::fail(prep4.errorCode(), prep4.errorMessage());
+            return core::propagate<void>(prep4);
         }
         auto& stmt4 = prep4.value();
         if (auto r = stmt4.bind(1, toColumnId); r.isFail()) return r;
@@ -647,32 +647,32 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
         if (auto r = stmt4.bind(3, taskId); r.isFail()) return r;
         auto step4 = stmt4.step();
         if (step4.isFail()) {
-            return core::Result<void>::fail(step4.errorCode(), step4.errorMessage());
+            return core::propagate<void>(step4);
         }
 
         auto prep5 = db_.prepare("UPDATE todo_tasks SET position = ? WHERE id = ?");
         if (prep5.isFail()) {
-            return core::Result<void>::fail(prep5.errorCode(), prep5.errorMessage());
+            return core::propagate<void>(prep5);
         }
         auto& stmt5 = prep5.value();
         if (auto r = stmt5.bind(1, static_cast<int64_t>(newPosition)); r.isFail()) return r;
         if (auto r = stmt5.bind(2, taskId); r.isFail()) return r;
         auto step5 = stmt5.step();
         if (step5.isFail()) {
-            return core::Result<void>::fail(step5.errorCode(), step5.errorMessage());
+            return core::propagate<void>(step5);
         }
 
         const int64_t now = nowEpochSeconds();
         auto prep6 = db_.prepare("UPDATE todo_tasks SET updated_at = ? WHERE id = ?");
         if (prep6.isFail()) {
-            return core::Result<void>::fail(prep6.errorCode(), prep6.errorMessage());
+            return core::propagate<void>(prep6);
         }
         auto& stmt6 = prep6.value();
         if (auto r = stmt6.bind(1, now); r.isFail()) return r;
         if (auto r = stmt6.bind(2, taskId); r.isFail()) return r;
         auto step6 = stmt6.step();
         if (step6.isFail()) {
-            return core::Result<void>::fail(step6.errorCode(), step6.errorMessage());
+            return core::propagate<void>(step6);
         }
 
         // 归档时间戳：进归档列置 now，出归档列置 NULL，其它列间移动留 NULL。
@@ -680,7 +680,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
         // 但保留在其它列上的卡不应该因 archived_at 残留而被误判只读。
         auto prepKind = db_.prepare("SELECT kind FROM todo_columns WHERE id = ?");
         if (prepKind.isFail()) {
-            return core::Result<void>::fail(prepKind.errorCode(), prepKind.errorMessage());
+            return core::propagate<void>(prepKind);
         }
         auto& stmtKind = prepKind.value();
         if (auto r = stmtKind.bind(1, toColumnId); r.isFail()) return r;
@@ -693,25 +693,25 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
         if (targetKind == "archive") {
             auto prepA = db_.prepare("UPDATE todo_tasks SET archived_at = ? WHERE id = ?");
             if (prepA.isFail()) {
-                return core::Result<void>::fail(prepA.errorCode(), prepA.errorMessage());
+                return core::propagate<void>(prepA);
             }
             auto& stmtA = prepA.value();
             if (auto r = stmtA.bind(1, now); r.isFail()) return r;
             if (auto r = stmtA.bind(2, taskId); r.isFail()) return r;
             auto stepA = stmtA.step();
             if (stepA.isFail()) {
-                return core::Result<void>::fail(stepA.errorCode(), stepA.errorMessage());
+                return core::propagate<void>(stepA);
             }
         } else {
             auto prepA = db_.prepare("UPDATE todo_tasks SET archived_at = NULL WHERE id = ?");
             if (prepA.isFail()) {
-                return core::Result<void>::fail(prepA.errorCode(), prepA.errorMessage());
+                return core::propagate<void>(prepA);
             }
             auto& stmtA = prepA.value();
             if (auto r = stmtA.bind(1, taskId); r.isFail()) return r;
             auto stepA = stmtA.step();
             if (stepA.isFail()) {
-                return core::Result<void>::fail(stepA.errorCode(), stepA.errorMessage());
+                return core::propagate<void>(stepA);
             }
         }
 
@@ -727,8 +727,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             auto prepSrcKind =
                 db_.prepare("SELECT kind FROM todo_columns WHERE id = ?");
             if (prepSrcKind.isFail()) {
-                return core::Result<void>::fail(prepSrcKind.errorCode(),
-                                                prepSrcKind.errorMessage());
+                return core::propagate<void>(prepSrcKind);
             }
             auto& stmtSrcKind = prepSrcKind.value();
             if (auto r = stmtSrcKind.bind(1, fromColumnId); r.isFail()) return r;
@@ -740,8 +739,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
                 LOG_ERROR("moveTask 查询来源列 kind 失败 taskId=" +
                           std::to_string(taskId) + ": " +
                           srcKindRows.errorMessage());
-                return core::Result<void>::fail(srcKindRows.errorCode(),
-                                                srcKindRows.errorMessage());
+                return core::propagate<void>(srcKindRows);
             }
             if (!srcKindRows.value().empty()) {
                 auto k = srcKindRows.value()[0].getString("kind");
@@ -753,14 +751,14 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             // ① 进入 done 置 now（⑤ 归档 → done 保留原值：不进入本分支）
             auto prepC = db_.prepare("UPDATE todo_tasks SET completed_at = ? WHERE id = ?");
             if (prepC.isFail()) {
-                return core::Result<void>::fail(prepC.errorCode(), prepC.errorMessage());
+                return core::propagate<void>(prepC);
             }
             auto& stmtC = prepC.value();
             if (auto r = stmtC.bind(1, now); r.isFail()) return r;
             if (auto r = stmtC.bind(2, taskId); r.isFail()) return r;
             auto stepC = stmtC.step();
             if (stepC.isFail()) {
-                return core::Result<void>::fail(stepC.errorCode(), stepC.errorMessage());
+                return core::propagate<void>(stepC);
             }
         }
         if (fromColumnId != toColumnId) {
@@ -771,13 +769,13 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             if (leaveDone || leaveArchive) {
                 auto prepC = db_.prepare("UPDATE todo_tasks SET completed_at = NULL WHERE id = ?");
                 if (prepC.isFail()) {
-                    return core::Result<void>::fail(prepC.errorCode(), prepC.errorMessage());
+                    return core::propagate<void>(prepC);
                 }
                 auto& stmtC = prepC.value();
                 if (auto r = stmtC.bind(1, taskId); r.isFail()) return r;
                 auto stepC = stmtC.step();
                 if (stepC.isFail()) {
-                    return core::Result<void>::fail(stepC.errorCode(), stepC.errorMessage());
+                    return core::propagate<void>(stepC);
                 }
             }
         }
@@ -793,7 +791,7 @@ core::Result<void> TodoService::completeTask(int64_t id) {
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET completed_at = ?, updated_at = ? WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, now); r.isFail()) return r;
@@ -801,7 +799,7 @@ core::Result<void> TodoService::completeTask(int64_t id) {
     if (auto r = stmt.bind(3, id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     return core::Result<void>::ok();
 }
@@ -812,14 +810,14 @@ core::Result<void> TodoService::uncompleteTask(int64_t id) {
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET completed_at = NULL, updated_at = ? WHERE id = ?");
     if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<void>(prep);
     }
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, now); r.isFail()) return r;
     if (auto r = stmt.bind(2, id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
-        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+        return core::propagate<void>(stepResult);
     }
     return core::Result<void>::ok();
 }
@@ -836,23 +834,23 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
         "   OR (tags IS NOT NULL AND tags LIKE ? ESCAPE '\\') "
         "ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
-        return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<Task>>(prep);
     }
     auto& stmt = prep.value();
     const std::string like = "%" + escapeLikePattern(query) + "%";
     if (auto r = stmt.bind(1, like); r.isFail()) {
-        return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<Task>>(r);
     }
     if (auto r = stmt.bind(2, like); r.isFail()) {
-        return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<Task>>(r);
     }
     // 标签也参与匹配：tags 列为 JSON 数组串，LIKE 子串匹配沿用现有 SQL 口径
     if (auto r = stmt.bind(3, like); r.isFail()) {
-        return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<Task>>(r);
     }
     auto rows = stmt.fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<Task>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<Task>>(rows);
     }
     std::vector<Task> out;
     out.reserve(rows.value().size());
@@ -878,18 +876,18 @@ core::Result<std::vector<Task>> TodoService::listOverdue() {
         core::overdue::kWhereSql + " ORDER BY due_at ASC";
     auto prep = db_.prepare(sql);
     if (prep.isFail()) {
-        return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::vector<Task>>(prep);
     }
     auto& stmt = prep.value();
     // 自然日口径（2026-11-16 老板令）：绑今天本地零点而非 now——当天截止不算逾期
     const int64_t todayStart = static_cast<int64_t>(
         core::time::localMidnightUnix(static_cast<std::time_t>(now)));
     if (auto r = stmt.bind(1, todayStart); r.isFail()) {
-        return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::vector<Task>>(r);
     }
     auto rows = stmt.fetchAll();
     if (rows.isFail()) {
-        return core::Result<std::vector<Task>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::vector<Task>>(rows);
     }
     std::vector<Task> out;
     out.reserve(rows.value().size());

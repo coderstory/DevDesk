@@ -13,18 +13,17 @@
 │ Layer 0: Application Entry                                     │
 │   src/main.cpp                                                │
 │   - 初始化 paths / logging / sqlite                           │
-│   - 注册 5 个页面模块到 Router + 直启桌宠子窗（startPetWindow） │
+│   - 注册页面模块到 Router（清单见 src/app_registry.h）         │
 │   - 启动 EUI-NEO 事件循环                                     │
 └────────────────┬────────────────────────────────────────────┘
                  ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 1: Feature Modules（6 个独立模块）                       │
-│   src/module_home/         - 首页仪表盘                       │
-│   src/module_markdown/     - Markdown 笔记本                   │
-│   src/module_todo/         - Todo 看板                         │
-│   src/module_claude_proxy/ - Claude 切换器                    │
-│   src/module_settings/     - 设置页                           │
-│   src/module_pet/          - 桌宠（非 Router 页面模块，独立子窗）│
+│ Layer 1: Feature Modules（Router 页面模块，src/module_*）      │
+│   模块清单以 src/app_registry.h kModuleRegistry 为准           │
+│   （2026-11-22 实录）：home / markdown / git / todo /          │
+│   schedule / claude_proxy / agent / memory / wallpaper         │
+│   （平台能力不支持时不注册）/ mcp / terminal / release 分组     │
+│   （任务 + 基础配置两子页）/ settings / about                  │
 │   每个模块一个 static lib                                    │
 └────────────────┬────────────────────────────────────────────┘
                  ↓

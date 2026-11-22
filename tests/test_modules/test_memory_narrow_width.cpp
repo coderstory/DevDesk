@@ -19,44 +19,6 @@ namespace {
 bool approx(float a, float b) { return a - b < 0.5f && b - a < 0.5f; }
 }  // namespace
 
-// ── M1 健康格② 状态行让位「跑评测」96×28 ──
-
-REGISTER_TEST(memory_narrow_health_status_row_clears_run_button,
-              "memory need298 M1: 状态行宽让位跑评测钮，同带不叠印",
-              {
-    // 让位后：右缘 = 卡右 14 − 96 − 8，与按钮左缘间距恰 8
-    for (float cardW : {150.0f, 214.0f, 300.0f}) {
-        const float rowW = memory::healthStatusRowW(cardW, true);
-        const float rowRight = 14.0f + rowW;
-        const float btnLeft = cardW - 14.0f - 96.0f;
-        DOCTEST_CHECK_MESSAGE(rowRight + 8.0f <= btnLeft + 0.5f,
-                              "状态行右缘 + 8 隙不得越按钮左缘 cardW=" +
-                                  std::to_string(cardW));
-        DOCTEST_CHECK_MESSAGE(rowW > 0.0f, "状态行宽须为正 cardW=" +
-                                               std::to_string(cardW));
-    }
-    DOCTEST_CHECK(approx(memory::healthStatusRowW(214.0f, false), 186.0f));
-    return true;
-});
-
-// ── M3 健康四格 2×2 断点（#181 §8：<880 收两列）──
-
-REGISTER_TEST(memory_narrow_health_grid_breakpoint_2x2,
-              "memory need298 M3: 内容区 <880 收 2×2，格宽回升超 200",
-              {
-    DOCTEST_CHECK(memory::healthGridCols(880.0f) == 4);
-    DOCTEST_CHECK(memory::healthGridCols(879.0f) == 2);
-    DOCTEST_CHECK(memory::healthGridRows(880.0f) == 1);
-    DOCTEST_CHECK(memory::healthGridRows(879.0f) == 2);
-    // 挤压场景：880 宽 4 列格宽 ≈214；窄窗 460 收 2 列后 ≈226（>200 不再挤压）
-    DOCTEST_CHECK(approx(memory::healthGridCardW(880.0f), 214.0f));
-    DOCTEST_CHECK(memory::healthGridCardW(460.0f) > 200.0f);
-    // 实占高供 composeConsole 推进 cy：2×2 态两行
-    const float cardH = core::theme::scaled(memory::kHealthGridH);
-    DOCTEST_CHECK(cardH * 2.0f + memory::kCardGap > cardH);
-    return true;
-});
-
 // ── M4 引擎状态带警示短语不越右端按钮组 ──
 
 REGISTER_TEST(memory_narrow_engine_band_warn_clears_button_group,
@@ -189,19 +151,3 @@ REGISTER_TEST(memory_narrow_chip_width_four_byte_wide,
     return true;
 });
 
-// ── M18 消耗带标题不越预算档词 ──
-
-REGISTER_TEST(memory_narrow_usage_title_clears_phase_word,
-              "memory need298 M18: 标题宽收至预算档词（x+w−240）左缘，负宽钳 0",
-              {
-    DOCTEST_CHECK(approx(memory::usageTitleW(1200.0f), 320.0f));
-    DOCTEST_CHECK(approx(memory::usageTitleW(560.0f), 304.0f));
-    for (float w : {300.0f, 560.0f, 1200.0f}) {
-        const float titleRight = 16.0f + memory::usageTitleW(w);
-        DOCTEST_CHECK_MESSAGE(titleRight <= w - 240.0f + 0.5f,
-                              "标题右缘不得越预算档词左缘 w=" +
-                                  std::to_string(w));
-    }
-    DOCTEST_CHECK(approx(memory::usageTitleW(200.0f), 0.0f));
-    return true;
-});

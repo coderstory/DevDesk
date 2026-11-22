@@ -501,14 +501,6 @@ void AgentModule::composeTaskDialog(
         return true;  // step 3 执行与安全
     };
 
-    // 试运行结果收割：dryRun_ done 后才 join + 显结果（线程安全：只用原子 done 作同步点）
-    if (dryRun_ && dryRun_->done.load(std::memory_order_acquire)) {
-        if (dryRun_->thread.joinable()) dryRun_->thread.join();
-        // run 结局从最后一次 agent_run 行判定（completed/failed/limited/cancelled）
-        testRunResult_ = "已完成试运行，查看执行记录页确认结果";
-        dryRun_.reset();
-    }
-
     // 触发提示文案（仅 step 1 用；与旧版同源）
     std::string triggerHint;
     if (isSchedule) {
@@ -939,9 +931,9 @@ void AgentModule::composeTaskDialog(
                                  "系统提示词（发给 AI 的环境上下文，可编辑）",
                                  x0, sysY, kContentW, 16.0f, t.colors.textSecondary);
                     // 弹性填充到内容区底：底栏带顶 = h − kContentY（底栏按钮起始 Y）；
-                    // 内容区下沿留 12px，再避让锚在底栏顶上方 18px 的试运行结果行 → 共让 24px
+                    // 内容区下沿留 12px
                     const float kStepSysMinH =
-                        (h - kContentY - 24.0f) - (sysY + 20.0f);
+                        (h - kContentY - 12.0f) - (sysY + 20.0f);
                     components::input(ui, "agent.dialog.task.sysprompt")
                         .position(x0, sysY + 20.0f)
                         .size(kContentW, kStepSysMinH)
@@ -1087,19 +1079,10 @@ void AgentModule::composeTaskDialog(
                 }
             }
 
-            // ====== 试运行结果行（W4 C1：移除去全局错误行，出错标节点不弹全局错误） ======
-            // 锚内容区底缘内侧（底栏上方 18px），新竖向案内容区与底栏间无过渡带
-            ui_kit::drawDialogText(
-                ui, "agent.dialog.task.test.result", w, testRunResult_,
-                t.sizes.fontSizeSmall, t.colors.success,
-                {.x = x0, .y = h - kContentY - 18.0f, .width = kContentW, .height = 14.0f,
-                 .lineHeight = 14.0f, .skipIfEmpty = true});
-
-            // ====== 底部按钮区（W4 C1 重做：40px 高、8px 间距、居中文字；按钮顺序从右到左：下一步 Filled 最右 → 上一步 Outline → 测试 Outline → 取消 Ghost 最左） ======
+            // ====== 底部按钮区（W4 C1 重做：40px 高、8px 间距、居中文字；按钮顺序从右到左：下一步 Filled 最右 → 上一步 Outline → 取消 Ghost 最左） ======
             const float btnY = h - kContentY + 6.0f;  // 底栏带高 44：32 钮上下各留 6
             const float btnH = 32.0f;  // bug179④：40 过大，收到与行控件一致的 32
             const float bw = 88.0f;
-            const float testW = 104.0f;
             const float kBtnGap = 8.0f;
             const float rightEdge = w - kVertContentPad;   // 与内容区共用右留 16px
 
@@ -1154,33 +1137,6 @@ void AgentModule::composeTaskDialog(
                     .onClick([this] { currentStep_ = std::max(0, currentStep_ - 1); })
                     .build();
                 xCursor -= bw + kBtnGap;
-            }
-
-            // 测试（Outline）—— 仅最后一步渲染
-            if (isLastStep) {
-                const bool testDisabled = !canNext || dryRun_ != nullptr;
-                const std::string testLabel = dryRun_ ? "测试中…" : "测试试运行";
-                const float testX = xCursor - testW;
-                components::button(ui, "agent.dialog.task.test")
-                    .position(testX, btnY)
-                    .size(testW, btnH)
-                    .text(testLabel)
-                    .fontSize(core::theme::scaled(14.0f))
-                    .colors(testDisabled ? t.colors.background
-                                         : t.colors.background,
-                            testDisabled ? t.colors.hover
-                                         : t.colors.primary,
-                            testDisabled ? t.colors.primarySoftBg
-                                         : t.colors.primarySoftBg)
-                    .textColor(testDisabled ? t.colors.textTertiary
-                                            : t.colors.primary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, testDisabled ? t.colors.borderDefault
-                                               : t.colors.primary)
-                    .onClick(testDisabled ? std::function<void()>{}
-                                         : std::function<void()>{[this] { testRunDialog(); }})
-                    .build();
-                xCursor -= testW + kBtnGap;
             }
 
             // 取消（Ghost，最左）

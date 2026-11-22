@@ -378,15 +378,13 @@ core::Result<std::vector<RunHistoryItem>> loadHistory(ScheduleStore& store, int6
                                                       int limit) {
     const auto runs = store.listRunsByRule(ruleId, limit);
     if (runs.isFail()) {
-        return core::Result<std::vector<RunHistoryItem>>::fail(runs.errorCode(),
-                                                               runs.errorMessage());
+        return core::propagate<std::vector<RunHistoryItem>>(runs);
     }
     std::vector<DeliveryRecord> deliveries;
     for (const auto& r : runs.value()) {
         const auto ds = store.listDeliveriesByRun(r.id);
         if (ds.isFail()) {
-            return core::Result<std::vector<RunHistoryItem>>::fail(ds.errorCode(),
-                                                                   ds.errorMessage());
+            return core::propagate<std::vector<RunHistoryItem>>(ds);
         }
         deliveries.insert(deliveries.end(), ds.value().begin(), ds.value().end());
     }

@@ -413,6 +413,8 @@ void PanelState::pollUsageAlerts() {
     lastAlertPollSec_ = now;
     // 直读盘而非 snap_ 缓存：记忆页不可见时 refresh 不跑，阈值改动也要即时生效
     auto settings = loadPanelSettings();
+    // need:380 B-5：单开关关闭 = 静默（闸态原样保留，重开即恢复判定）
+    if (!settings.usageAlertsEnabled) return;
     const proposals::UsageAlertGate dayBefore = settings.usageDayGate;
     const proposals::UsageAlertGate softBefore = settings.usageSoftGate;
     const proposals::UsageAlertGate hardBefore = settings.usageHardGate;
@@ -533,20 +535,10 @@ void PanelState::setTwoWordBaseline(int n) {
     refresh(true);
 }
 
-void PanelState::setUsageAlertThresholds(long long dayTokens,
-                                         long long softTokens,
-                                         long long hardTokens) {
+void PanelState::setUsageAlertsEnabled(bool on) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        // 值未变 no-op：滑条拖动每 tick 都回调，去重后拖动才落盘/立刷
-        if (snap_.settings.usageDayAlertTokens == dayTokens &&
-            snap_.settings.usageSoftBudgetTokens == softTokens &&
-            snap_.settings.usageHardBudgetTokens == hardTokens) {
-            return;
-        }
-        snap_.settings.usageDayAlertTokens = dayTokens;
-        snap_.settings.usageSoftBudgetTokens = softTokens;
-        snap_.settings.usageHardBudgetTokens = hardTokens;
+        snap_.settings.usageAlertsEnabled = on;
         if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
             LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
         }
@@ -573,8 +565,7 @@ core::Result<void> PanelState::acceptProposal(const std::string& id) {
     }
     auto current = proposalStore_->get(id);
     if (current.isFail()) {
-        return core::Result<void>::fail(current.errorCode(),
-                                        current.errorMessage());
+        return core::propagate<void>(current);
     }
     std::string executorError;
     auto decided = proposalStore_->accept(
@@ -582,8 +573,7 @@ core::Result<void> PanelState::acceptProposal(const std::string& id) {
         realTargetVersion(current.value().baseVersion), makeExecutor(),
         &executorError);
     if (decided.isFail()) {
-        return core::Result<void>::fail(decided.errorCode(),
-                                        decided.errorMessage());
+        return core::propagate<void>(decided);
     }
     if (decided.value().appliedAt <= 0) {
         // 代理执行失败：保持待审 + 失败原因进审计（面板可见，重试 = 再接受）。
@@ -608,7 +598,7 @@ core::Result<void> PanelState::rejectProposal(const std::string& id) {
     auto r = proposalStore_->reject(id,
                                     static_cast<std::int64_t>(std::time(nullptr)));
     if (r.isFail()) {
-        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<void>(r);
     }
     refresh(true);
     return core::Result<void>::ok();
@@ -622,7 +612,7 @@ core::Result<void> PanelState::editThenAccept(const std::string& id,
     auto upd = proposalStore_->updateResultText(
         id, newText, static_cast<std::int64_t>(std::time(nullptr)));
     if (upd.isFail()) {
-        return core::Result<void>::fail(upd.errorCode(), upd.errorMessage());
+        return core::propagate<void>(upd);
     }
     return acceptProposal(id);
 }
@@ -637,8 +627,7 @@ core::Result<std::string> PanelState::createUndoCard(
         originalId, static_cast<std::int64_t>(std::time(nullptr)),
         realTargetVersion(-1));
     if (undo.isFail()) {
-        return core::Result<std::string>::fail(undo.errorCode(),
-                                               undo.errorMessage());
+        return core::propagate<std::string>(undo);
     }
     refresh(true);
     return core::Result<std::string>::ok(undo.value().id);
@@ -747,15 +736,13 @@ core::Result<std::string> PanelState::exportAllToJson() {
 
     auto text = platform::json::stringify(platform::json::JsonValue(root), true);
     if (text.isFail()) {
-        return core::Result<std::string>::fail(text.errorCode(),
-                                               text.errorMessage());
+        return core::propagate<std::string>(text);
     }
     // 落用户选定目录（原生目录选择对话框；取消 = fail 原样上抛）
     auto dir =
         platform::folderpicker::pickFolder("选择记忆导出目录", dbDir().string());
     if (dir.isFail()) {
-        return core::Result<std::string>::fail(dir.errorCode(),
-                                               dir.errorMessage());
+        return core::propagate<std::string>(dir);
     }
     char stamp[24];
     std::time_t t = std::time(nullptr);

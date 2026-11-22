@@ -325,7 +325,7 @@ core::Result<void> exportToFile(
 
     auto sql = exportToString(db, skipTables);
     if (sql.isFail()) {
-        return core::Result<void>::fail(sql.errorCode(), sql.errorMessage());
+        return core::propagate<void>(sql);
     }
     return core::atomicWriteFile(file, sql.value(), "SQL dump");
 }

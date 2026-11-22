@@ -16,6 +16,7 @@
 #include "module_agent/agent_store.h"
 #include "module_agent/message_blocks.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 #include "platform/utf8.h"
 
 namespace module::agent {
@@ -72,10 +73,7 @@ std::string joinBlockArray(const std::vector<std::string>& blockTexts) {
     return text;
 }
 
-std::string strField(const platform::json::JsonObject& obj, const char* key) {
-    platform::json::JsonValue v = obj.get(key);
-    return v.isString() ? v.asString() : std::string();
-}
+using platform::tool_kit::strField;
 
 // 工具 contentJson → tool_result text：字符串原样、其他形状 stringify、解析失败原文。
 // 先 UTF-8 归一（非法字节 stringify 放行、parse 拒绝 → abort），再按 kMaxToolResultBytes 截断

@@ -302,7 +302,6 @@ void AgentModule::openNewTaskDialog() {
     editCronTemplateOpen_ = false;
     editCronTemplateIdx_ = -1;
     currentStep_ = 0;
-    testRunResult_.clear();
     refreshCronPreview();
     refreshOncePreview();
 }
@@ -317,13 +316,6 @@ void AgentModule::closeTaskDialog() {
     editCronTemplateOpen_ = false;
     editCronTemplateIdx_ = -1;
     closeDraftDialog();   // 子弹窗随外层一起退（在途结果一并作废）
-    // 试运行线程仍在飞：请求取消 + join 回收（不 detach，不留悬垂线程）
-    if (dryRun_) {
-        dryRun_->cancel.store(true);
-        if (dryRun_->thread.joinable()) dryRun_->thread.join();
-        dryRun_.reset();
-    }
-    testRunResult_.clear();
 }
 
 // 出厂模板一键套用：覆盖表单草稿四件（名称/目标/触发类型/cron）。走 setEditCronDraft
@@ -498,7 +490,6 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editCronTemplateOpen_ = false;
     editCronTemplateIdx_ = -1;
     currentStep_ = 0;
-    testRunResult_.clear();
     refreshCronPreview();
     refreshOncePreview();
 }
@@ -603,114 +594,6 @@ void AgentModule::saveTaskDialog() {
     }
     closeTaskDialog();
     tasksDirty_ = true;
-}
-
-// 试运行：不落正式任务列表——用当前表单建临时任务 → 起一次 run → 跑完即删。
-// 线程借 ActiveRun 模式（cancel/done 原子 + reap join）；完成结果经 dryRun_.done 回收。
-void AgentModule::testRunDialog() {
-    if (dryRun_ != nullptr || store_ == nullptr || loop_ == nullptr) return;
-    const std::string goal = trimCopy(editGoal_);
-    if (goal.empty()) {
-        editError_ = "请先填写任务目标"; currentStep_ = 2; return;
-    }
-    const std::string triggerType = kTriggerKeys[editTriggerIdx_];
-    std::string triggerConfig;
-    // 构建 triggerConfig（与 saveTaskDialog 同源）
-    if (triggerType == std::string("schedule")) {
-        const std::string cron = trimCopy(editCron_);
-        auto expr = parseCron(cron);
-        if (expr.isFail()) {
-            editError_ = "cron 表达式非法：" + expr.errorMessage(); currentStep_ = 1; return;
-        }
-        TriggerConfig cfg;
-        cfg.cron = cron;
-        if (editMaxRuns_ > 0) cfg.maxRuns = editMaxRuns_;
-        auto encoded = encodeTriggerConfig(cfg);
-        if (encoded.isFail()) {
-            editError_ = "试运行失败：" + encoded.errorMessage(); return;
-        }
-        triggerConfig = encoded.value();
-    } else if (triggerType == std::string("event")) {
-        TriggerConfig cfg;
-        for (int i = 0; i < kEventCount; ++i)
-            if (editEvents_[i]) cfg.events.push_back(kEventNames[i]);
-        if (cfg.events.empty()) {
-            editError_ = "事件触发需至少勾选一个事件"; currentStep_ = 1; return;
-        }
-        if (editMaxRuns_ > 0) cfg.maxRuns = editMaxRuns_;
-        auto encoded = encodeTriggerConfig(cfg);
-        if (encoded.isFail()) {
-            editError_ = "试运行失败：" + encoded.errorMessage(); return;
-        }
-        triggerConfig = encoded.value();
-    } else if (triggerType == std::string("once")) {
-        auto parsed = parseOnceAtLocalText(editOnceAtText_);
-        if (parsed.isFail()) {
-            editError_ = parsed.errorMessage(); currentStep_ = 1; return;
-        }
-        if (parsed.value() <= static_cast<int64_t>(core::time::nowUnix())) {
-            editError_ = "闹钟时间必须晚于当前时间"; currentStep_ = 1; return;
-        }
-        TriggerConfig cfg;
-        cfg.onceAt = parsed.value();
-        auto encoded = encodeTriggerConfig(cfg);
-        if (encoded.isFail()) {
-            editError_ = "试运行失败：" + encoded.errorMessage(); return;
-        }
-        triggerConfig = encoded.value();
-    }
-    const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
-    const std::string name = [&] {
-        const std::string trimmed = trimCopy(editName_);
-        return trimmed.empty() ? deriveTaskName(goal) : trimmed;
-    }();
-    // 建临时任务
-    auto created = store_->createTask(name + "（试运行）", goal, triggerType,
-                                      editSlot_, iter, editDestructive_,
-                                      triggerConfig, editSystemPrompt_);
-    if (created.isFail()) {
-        editError_ = "试运行失败：" + created.errorMessage();
-        return;
-    }
-    int64_t tempTaskId = created.value();
-    editError_.clear();
-    testRunResult_.clear();
-    // 起线程：走 loop_->run 直通（不经过 startTask 的 tasks_ 缓存依赖）
-    auto run = std::make_unique<ActiveRun>();
-    run->taskId = tempTaskId;
-    try {
-        run->thread = std::thread([this, raw = run.get(), tempTaskId] {
-            auto row = store_->getTask(tempTaskId);
-            if (row.isOk()) {
-                AgentTask t = taskFromRow(row.value());
-                auto runResult = loop_->run(t, raw->cancel);
-                if (runResult.isFail()) {
-                    LOG_WARN("Agent: 试运行执行失败（id=" +
-                             std::to_string(tempTaskId) + "）: " +
-                             runResult.errorMessage());
-                }
-            }
-            // 清理临时任务（级联删 runs / messages）
-            auto del = store_->deleteTask(tempTaskId);
-            if (del.isFail()) {
-                LOG_WARN("Agent: 试运行后删除临时任务失败（id=" +
-                         std::to_string(tempTaskId) + "）: " + del.errorMessage());
-            }
-            raw->done.store(true, std::memory_order_release);
-            ::core::platform::requestUiUpdate();
-        });
-    } catch (const std::system_error& e) {
-        // 异常路径清理：删除失败留痕，不留孤儿临时任务行（need295）
-        auto del = store_->deleteTask(tempTaskId);
-        if (del.isFail()) {
-            LOG_WARN("Agent: 试运行异常清理删除临时任务失败（id=" +
-                     std::to_string(tempTaskId) + "）: " + del.errorMessage());
-        }
-        editError_ = "试运行启动失败：" + std::string(e.what());
-        LOG_ERROR(std::string("Agent: 试运行线程创建失败: ") + e.what());
-        return;
-    }
-    dryRun_ = std::move(run);
 }
 
 // 启用/禁用取反（独立于任务弹窗，不碰其它列）。失败 → 页内错误行，不静默

@@ -1298,8 +1298,8 @@ int main(int argc, char* argv[]) {
             probe::queueText(window, runtime, kGoalF4);
             composeFrame();
         }
-        // Step 3「执行与安全」：测试试运行按钮仅末步渲染，作为到位判据
-        if (stepOk) stepOk = nextStep("agent.dialog.task.test");
+        // Step 3「执行与安全」：步内专属高危开关渲染即到位（need:380 B-3 试运行按钮已砍）
+        if (stepOk) stepOk = nextStep("agent.dialog.task.destructive");
         // 构图①：任务创建弹窗（末步填写完成态）
         if (!args.screenshotPath.empty()) {
             if (!probe::captureFramePng(window, runtime, args.screenshotPath)) {

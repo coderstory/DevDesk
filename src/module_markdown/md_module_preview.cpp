@@ -791,13 +791,6 @@ std::string MarkdownModule::liveBlockText(const MdBlock& b) const {
     return blockModel_.text().substr(b.start, b.end - b.start);
 }
 
-int MarkdownModule::liveActiveBlockStableId() const {
-    const std::vector<MdBlock>& bs = blockModel_.blocks();
-    return liveActiveBlock_ < bs.size()
-               ? bs[liveActiveBlock_].stableId
-               : -1;
-}
-
 float MarkdownModule::liveFitHeight(const MdBlock& b, const std::string& blockText,
                     float contentWidth) {
     const float fontSize = mdEditorFontSize();

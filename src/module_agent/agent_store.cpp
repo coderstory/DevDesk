@@ -110,16 +110,16 @@ Result<int64_t> AgentStore::createTask(const std::string& name, const std::strin
         " max_iterations, allow_destructive, enabled, system_prompt, created_at,"
         " updated_at)"
         " VALUES(?,?,?,?,?,?,?,1,?,?,?)");
-    if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<int64_t>(st);
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto& s = st.value();
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0),
                       systemPrompt, now, now);
-    if (ok.isFail()) return Result<int64_t>::fail(ok.errorCode(), ok.errorMessage());
+    if (ok.isFail()) return propagate<int64_t>(ok);
     auto step = s.step();
-    if (step.isFail()) return Result<int64_t>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<int64_t>(step);
     return Result<int64_t>::ok(
         static_cast<int64_t>(sqlite3_last_insert_rowid(db_.handle())));
 }
@@ -129,18 +129,18 @@ Result<std::vector<AgentTaskRow>> AgentStore::listTasks() {
     auto st = db_.prepare(std::string("SELECT ") + kTaskColumns +
                           " FROM agent_tasks ORDER BY id");
     if (st.isFail()) {
-        return Result<std::vector<AgentTaskRow>>::fail(st.errorCode(), st.errorMessage());
+        return propagate<std::vector<AgentTaskRow>>(st);
     }
     auto rows = st.value().fetchAll();
     if (rows.isFail()) {
-        return Result<std::vector<AgentTaskRow>>::fail(rows.errorCode(), rows.errorMessage());
+        return propagate<std::vector<AgentTaskRow>>(rows);
     }
     std::vector<AgentTaskRow> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
         auto t = taskRowFrom(row);
         if (t.isFail()) {
-            return Result<std::vector<AgentTaskRow>>::fail(t.errorCode(), t.errorMessage());
+            return propagate<std::vector<AgentTaskRow>>(t);
         }
         out.push_back(std::move(t.value()));
     }
@@ -151,32 +151,32 @@ Result<AgentTaskRow> AgentStore::getTask(int64_t id) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(std::string("SELECT ") + kTaskColumns +
                           " FROM agent_tasks WHERE id=?");
-    if (st.isFail()) return Result<AgentTaskRow>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<AgentTaskRow>(st);
     auto& s = st.value();
     if (auto r = s.bind(1, id); r.isFail()) {
-        return Result<AgentTaskRow>::fail(r.errorCode(), r.errorMessage());
+        return propagate<AgentTaskRow>(r);
     }
     auto has = s.step();
-    if (has.isFail()) return Result<AgentTaskRow>::fail(has.errorCode(), has.errorMessage());
+    if (has.isFail()) return propagate<AgentTaskRow>(has);
     if (!has.value()) {
         return Result<AgentTaskRow>::fail(ErrorCode::NotFound,
                                           "任务不存在：id=" + std::to_string(id));
     }
     auto row = s.currentRow();
-    if (row.isFail()) return Result<AgentTaskRow>::fail(row.errorCode(), row.errorMessage());
+    if (row.isFail()) return propagate<AgentTaskRow>(row);
     return taskRowFrom(row.value());
 }
 
 Result<int64_t> AgentStore::startRun(int64_t taskId) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare("INSERT INTO agent_runs(task_id,status,started_at) VALUES(?,?,?)");
-    if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<int64_t>(st);
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto& s = st.value();
     auto ok = bindAll(s, taskId, std::string("running"), now);
-    if (ok.isFail()) return Result<int64_t>::fail(ok.errorCode(), ok.errorMessage());
+    if (ok.isFail()) return propagate<int64_t>(ok);
     auto step = s.step();
-    if (step.isFail()) return Result<int64_t>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<int64_t>(step);
     return Result<int64_t>::ok(
         static_cast<int64_t>(sqlite3_last_insert_rowid(db_.handle())));
 }
@@ -186,14 +186,14 @@ Result<int64_t> AgentStore::startRunExclusive(int64_t taskId) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "SELECT 1 FROM agent_runs WHERE task_id=? AND status='running' LIMIT 1");
-    if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<int64_t>(st);
     auto& s = st.value();
     if (auto r = s.bind(1, taskId); r.isFail()) {
-        return Result<int64_t>::fail(r.errorCode(), r.errorMessage());
+        return propagate<int64_t>(r);
     }
     auto running = s.step();
     if (running.isFail()) {
-        return Result<int64_t>::fail(running.errorCode(), running.errorMessage());
+        return propagate<int64_t>(running);
     }
     if (running.value()) {
         return Result<int64_t>::fail(ErrorCode::AlreadyExists, "任务已在运行");
@@ -214,16 +214,16 @@ Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
         "UPDATE agent_tasks SET name=?,goal=?,trigger_type=?,trigger_config=?,"
         "model_slot=?,max_iterations=?,allow_destructive=?,system_prompt=?,"
         "updated_at=? WHERE id=?");
-    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<void>(st);
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0),
                       systemPrompt, now, id);
-    if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
+    if (ok.isFail()) return propagate<void>(ok);
     auto step = s.step();
-    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<void>(step);
     // id 不存在 → fail(NotFound)，不静默 no-op；持锁覆盖 step + sqlite3_changes，计数不被并发插队
     if (sqlite3_changes(db_.handle()) == 0) {
         return Result<void>::fail(ErrorCode::NotFound,
@@ -236,13 +236,13 @@ Result<void> AgentStore::setTaskEnabled(int64_t id, bool enabled) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "UPDATE agent_tasks SET enabled=?,updated_at=? WHERE id=?");
-    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<void>(st);
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto ok = bindAll(s, static_cast<int64_t>(enabled ? 1 : 0), now, id);
-    if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
+    if (ok.isFail()) return propagate<void>(ok);
     auto step = s.step();
-    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<void>(step);
     // 同 updateTask：id 不存在 → fail(NotFound)
     if (sqlite3_changes(db_.handle()) == 0) {
         return Result<void>::fail(ErrorCode::NotFound,
@@ -261,39 +261,39 @@ Result<void> AgentStore::deleteTask(int64_t id) {
             "DELETE FROM agent_messages WHERE run_id IN"
             " (SELECT id FROM agent_runs WHERE task_id=?)");
         if (msgStmt.isFail()) {
-            return Result<void>::fail(msgStmt.errorCode(), msgStmt.errorMessage());
+            return propagate<void>(msgStmt);
         }
         auto okMsg = bindAll(msgStmt.value(), id);
         if (okMsg.isFail()) {
-            return Result<void>::fail(okMsg.errorCode(), okMsg.errorMessage());
+            return propagate<void>(okMsg);
         }
         auto stepMsg = msgStmt.value().step();
         if (stepMsg.isFail()) {
-            return Result<void>::fail(stepMsg.errorCode(), stepMsg.errorMessage());
+            return propagate<void>(stepMsg);
         }
         auto runStmt = db_.prepare("DELETE FROM agent_runs WHERE task_id=?");
         if (runStmt.isFail()) {
-            return Result<void>::fail(runStmt.errorCode(), runStmt.errorMessage());
+            return propagate<void>(runStmt);
         }
         auto okRun = bindAll(runStmt.value(), id);
         if (okRun.isFail()) {
-            return Result<void>::fail(okRun.errorCode(), okRun.errorMessage());
+            return propagate<void>(okRun);
         }
         auto stepRun = runStmt.value().step();
         if (stepRun.isFail()) {
-            return Result<void>::fail(stepRun.errorCode(), stepRun.errorMessage());
+            return propagate<void>(stepRun);
         }
         auto taskStmt = db_.prepare("DELETE FROM agent_tasks WHERE id=?");
         if (taskStmt.isFail()) {
-            return Result<void>::fail(taskStmt.errorCode(), taskStmt.errorMessage());
+            return propagate<void>(taskStmt);
         }
         auto okTask = bindAll(taskStmt.value(), id);
         if (okTask.isFail()) {
-            return Result<void>::fail(okTask.errorCode(), okTask.errorMessage());
+            return propagate<void>(okTask);
         }
         auto stepTask = taskStmt.value().step();
         if (stepTask.isFail()) {
-            return Result<void>::fail(stepTask.errorCode(), stepTask.errorMessage());
+            return propagate<void>(stepTask);
         }
         // 同 setTaskEnabled：id 不存在 → fail(NotFound)，事务回滚保证三表零变化
         if (sqlite3_changes(db_.handle()) == 0) {
@@ -313,38 +313,38 @@ Result<void> AgentStore::finishRun(int64_t runId, const std::string& status,
     auto st = db_.prepare(
         "UPDATE agent_runs SET status=?,ended_at=?,iterations=?,input_tokens=?,"
         "output_tokens=?,error=? WHERE id=?");
-    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<void>(st);
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     // optional 逐个绑定，nullopt → bind nullptr 表 NULL
     if (auto r = s.bind(1, status); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(2, now); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(3, static_cast<int64_t>(iterations)); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = inputTokens.has_value() ? s.bind(4, *inputTokens)
                                          : s.bind(4, nullptr);
         r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = outputTokens.has_value() ? s.bind(5, *outputTokens)
                                           : s.bind(5, nullptr);
         r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = error.has_value() ? s.bind(6, *error) : s.bind(6, nullptr);
         r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(7, runId); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     auto step = s.step();
-    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<void>(step);
     return Result<void>::ok();
 }
 
@@ -355,31 +355,31 @@ Result<void> AgentStore::appendMessage(int64_t runId, int64_t seq, const std::st
     auto st = db_.prepare(
         "INSERT INTO agent_messages(run_id,seq,role,content_json,tool_call_id,created_at)"
         " VALUES(?,?,?,?,?,?)");
-    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<void>(st);
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     if (auto r = s.bind(1, runId); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(2, seq); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(3, role); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(4, contentJson); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = toolCallId.has_value() ? s.bind(5, *toolCallId)
                                         : s.bind(5, nullptr);
         r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     if (auto r = s.bind(6, now); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     auto step = s.step();
-    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<void>(step);
     return Result<void>::ok();
 }
 
@@ -389,15 +389,15 @@ Result<std::vector<AgentMessageRow>> AgentStore::listMessages(int64_t runId) {
         "SELECT seq,role,content_json,tool_call_id,created_at"
         " FROM agent_messages WHERE run_id=? ORDER BY seq");
     if (st.isFail()) {
-        return Result<std::vector<AgentMessageRow>>::fail(st.errorCode(), st.errorMessage());
+        return propagate<std::vector<AgentMessageRow>>(st);
     }
     auto& s = st.value();
     if (auto r = s.bind(1, runId); r.isFail()) {
-        return Result<std::vector<AgentMessageRow>>::fail(r.errorCode(), r.errorMessage());
+        return propagate<std::vector<AgentMessageRow>>(r);
     }
     auto rows = s.fetchAll();
     if (rows.isFail()) {
-        return Result<std::vector<AgentMessageRow>>::fail(rows.errorCode(), rows.errorMessage());
+        return propagate<std::vector<AgentMessageRow>>(rows);
     }
     std::vector<AgentMessageRow> out;
     out.reserve(rows.value().size());
@@ -437,17 +437,17 @@ Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit)
         "output_tokens,error FROM agent_runs WHERE task_id=?"
         " ORDER BY started_at DESC, id DESC LIMIT ?");
     if (st.isFail()) {
-        return Result<std::vector<AgentRunRow>>::fail(st.errorCode(), st.errorMessage());
+        return propagate<std::vector<AgentRunRow>>(st);
     }
     auto& s = st.value();
     // LIMIT 以 int64 绑定（bind 只有 int64 整型重载）
     auto ok = bindAll(s, taskId, static_cast<int64_t>(limit));
     if (ok.isFail()) {
-        return Result<std::vector<AgentRunRow>>::fail(ok.errorCode(), ok.errorMessage());
+        return propagate<std::vector<AgentRunRow>>(ok);
     }
     auto rows = s.fetchAll();
     if (rows.isFail()) {
-        return Result<std::vector<AgentRunRow>>::fail(rows.errorCode(), rows.errorMessage());
+        return propagate<std::vector<AgentRunRow>>(rows);
     }
     std::vector<AgentRunRow> out;
     out.reserve(rows.value().size());
@@ -535,47 +535,40 @@ Result<std::vector<AgentRunInfoRow>> AgentStore::listRunsFiltered(
     sql += " ORDER BY r.started_at DESC, r.id DESC LIMIT ?";
     auto st = db_.prepare(sql);
     if (st.isFail()) {
-        return Result<std::vector<AgentRunInfoRow>>::fail(st.errorCode(),
-                                                          st.errorMessage());
+        return propagate<std::vector<AgentRunInfoRow>>(st);
     }
     auto& s = st.value();
     int idx = 1;
     if (!status.empty()) {
         if (auto r = s.bind(idx, status); r.isFail()) {
-            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return propagate<std::vector<AgentRunInfoRow>>(r);
         }
         ++idx;
     }
     if (sinceSec > 0) {
         if (auto r = s.bind(idx, sinceSec); r.isFail()) {
-            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return propagate<std::vector<AgentRunInfoRow>>(r);
         }
         ++idx;
     }
     if (taskId > 0) {
         if (auto r = s.bind(idx, taskId); r.isFail()) {
-            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return propagate<std::vector<AgentRunInfoRow>>(r);
         }
         ++idx;
     }
     if (!triggerType.empty()) {
         if (auto r = s.bind(idx, triggerType); r.isFail()) {
-            return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+            return propagate<std::vector<AgentRunInfoRow>>(r);
         }
         ++idx;
     }
     if (auto r = s.bind(idx, static_cast<int64_t>(limit)); r.isFail()) {
-        return Result<std::vector<AgentRunInfoRow>>::fail(r.errorCode(),
-                                                          r.errorMessage());
+        return propagate<std::vector<AgentRunInfoRow>>(r);
     }
     auto rows = s.fetchAll();
     if (rows.isFail()) {
-        return Result<std::vector<AgentRunInfoRow>>::fail(rows.errorCode(),
-                                                          rows.errorMessage());
+        return propagate<std::vector<AgentRunInfoRow>>(rows);
     }
     std::vector<AgentRunInfoRow> out;
     out.reserve(rows.value().size());
@@ -630,11 +623,11 @@ Result<bool> AgentStore::hasRunningRun() {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare("SELECT 1 FROM agent_runs WHERE status='running' LIMIT 1");
     if (st.isFail()) {
-        return Result<bool>::fail(st.errorCode(), st.errorMessage());
+        return propagate<bool>(st);
     }
     auto step = st.value().step();
     if (step.isFail()) {
-        return Result<bool>::fail(step.errorCode(), step.errorMessage());
+        return propagate<bool>(step);
     }
     return Result<bool>::ok(step.value());
 }
@@ -658,19 +651,16 @@ Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries(
         "          ELSE 0 END) AS limited_runs_7d"
         " FROM agent_runs GROUP BY task_id ORDER BY task_id");
     if (st.isFail()) {
-        return Result<std::vector<AgentTaskRunSummary>>::fail(st.errorCode(),
-                                                              st.errorMessage());
+        return propagate<std::vector<AgentTaskRunSummary>>(st);
     }
     // 三个窗口占位绑同一值（?1 复用 = 一处绑定；sqlite 参数序号从 1 起）
     auto& s0 = st.value();
     if (auto r = s0.bind(1, windowStartSec); r.isFail()) {
-        return Result<std::vector<AgentTaskRunSummary>>::fail(r.errorCode(),
-                                                              r.errorMessage());
+        return propagate<std::vector<AgentTaskRunSummary>>(r);
     }
     auto rows = s0.fetchAll();
     if (rows.isFail()) {
-        return Result<std::vector<AgentTaskRunSummary>>::fail(rows.errorCode(),
-                                                              rows.errorMessage());
+        return propagate<std::vector<AgentTaskRunSummary>>(rows);
     }
     std::vector<AgentTaskRunSummary> out;
     out.reserve(rows.value().size());
@@ -717,14 +707,14 @@ Result<void> AgentStore::sweepStaleRuns() {
     auto st = db_.prepare(
         "UPDATE agent_runs SET status='failed', ended_at=?,"
         " error='应用异常退出（悬挂 run）' WHERE status='running'");
-    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    if (st.isFail()) return propagate<void>(st);
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     if (auto r = s.bind(1, now); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
+        return propagate<void>(r);
     }
     auto step = s.step();
-    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return propagate<void>(step);
     return Result<void>::ok();
 }
 

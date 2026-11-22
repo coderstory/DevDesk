@@ -238,3 +238,19 @@ jobs:
             DevDesk/build-coverage/coverage-summary.txt
             DevDesk/build-coverage/coverage-report.txt
           if-no-files-found: ignore
+
+      # jscpd 重复代码基线（need380 批D-wave1）：npx jscpd@5（v5 为 Rust 原生二进制
+      # 经 npm 分发，runner 自带 node 可用），min-tokens 50 扫 src/，console+html 双报告。
+      # 首轮只出基线不定门 —— 后续对照基线再议阈值，届时才转 blocking。
+      - name: jscpd 重复代码基线（报告模式，非阻塞）
+        continue-on-error: true
+        working-directory: DevDesk
+        run: npx jscpd@5 src --min-tokens 50 --reporters console,html --output jscpd-report
+
+      - name: 上传 jscpd 报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-jscpd-report
+          path: DevDesk/jscpd-report
+          if-no-files-found: ignore

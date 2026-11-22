@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -85,6 +86,25 @@ public:
 private:
     void* data_ = nullptr;
 };
+
+// get-or-default 族（need:380 批C）：has+isX+asX 取值阶梯收敛为一次取值；缺失/型不符 → nullopt
+inline std::optional<std::string> getIfString(const JsonObject& obj, const std::string& key) {
+    JsonValue v = obj.get(key);
+    if (!v.isString()) return std::nullopt;
+    return v.asString();
+}
+
+inline std::optional<int64_t> getIfInt(const JsonObject& obj, const std::string& key) {
+    JsonValue v = obj.get(key);
+    if (!v.isNumber()) return std::nullopt;
+    return v.asInt();
+}
+
+inline std::optional<bool> getIfBool(const JsonObject& obj, const std::string& key) {
+    JsonValue v = obj.get(key);
+    if (!v.isBool()) return std::nullopt;
+    return v.asBool();
+}
 
 // 解析错误详情（yyjson 原生 err.pos/msg 透出；消费方由 jsonLineColForPos 换行列）
 struct ParseDiag {

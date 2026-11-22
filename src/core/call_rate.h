@@ -32,7 +32,5 @@ inline std::string formatTps(double value) {
     return buf;
 }
 
-// 「无速率」占位文案（明细列用；首页卡走空态另有一套）
-inline constexpr const char* kNoRate = "—";
 
 } // namespace core::call_rate

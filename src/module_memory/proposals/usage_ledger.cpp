@@ -94,13 +94,11 @@ core::Result<UsageLedger> UsageLedger::open(
     const std::filesystem::path& dbFile) {
     auto db = core::data::SqliteDb::open(dbFile);
     if (db.isFail()) {
-        return core::Result<UsageLedger>::fail(db.errorCode(),
-                                               db.errorMessage());
+        return core::propagate<UsageLedger>(db);
     }
     auto applied = db.value().applySchema(kSchema);
     if (applied.isFail()) {
-        return core::Result<UsageLedger>::fail(applied.errorCode(),
-                                               applied.errorMessage());
+        return core::propagate<UsageLedger>(applied);
     }
     UsageLedger ledger;
     ledger.db_ = std::make_shared<core::data::SqliteDb>(std::move(db.value()));
@@ -116,8 +114,7 @@ core::Result<long long> UsageLedger::record(const std::string& kind,
         "INSERT INTO usage_ledger(ts, kind, tokens, cost_milli_yuan) "
         "VALUES(?, ?, ?, ?)");
     if (stmt.isFail()) {
-        return core::Result<long long>::fail(stmt.errorCode(),
-                                             stmt.errorMessage());
+        return core::propagate<long long>(stmt);
     }
     if (!stmt.value().bind(1, nowSec).isOk() ||
         !stmt.value().bind(2, kind).isOk() ||
@@ -128,8 +125,7 @@ core::Result<long long> UsageLedger::record(const std::string& kind,
     }
     auto step = stmt.value().step();
     if (step.isFail()) {
-        return core::Result<long long>::fail(step.errorCode(),
-                                             step.errorMessage());
+        return core::propagate<long long>(step);
     }
     return core::Result<long long>::ok(cost);
 }
@@ -171,13 +167,11 @@ core::Result<void> UsageLedger::recordInjection(int items, int chars,
                                                 std::int64_t nowSec) {
     auto itemsRow = record(kKindInjectItems, items, nowSec);
     if (itemsRow.isFail()) {
-        return core::Result<void>::fail(itemsRow.errorCode(),
-                                        itemsRow.errorMessage());
+        return core::propagate<void>(itemsRow);
     }
     auto charsRow = record(kKindInjectChars, chars, nowSec);
     if (charsRow.isFail()) {
-        return core::Result<void>::fail(charsRow.errorCode(),
-                                        charsRow.errorMessage());
+        return core::propagate<void>(charsRow);
     }
     return core::Result<void>::ok();
 }
@@ -185,7 +179,7 @@ core::Result<void> UsageLedger::recordInjection(int items, int chars,
 core::Result<void> UsageLedger::recordAttempt(std::int64_t nowSec) {
     auto row = record(kKindLlmAttempt, 0, nowSec);
     if (row.isFail()) {
-        return core::Result<void>::fail(row.errorCode(), row.errorMessage());
+        return core::propagate<void>(row);
     }
     return core::Result<void>::ok();
 }
@@ -195,8 +189,7 @@ core::Result<long long> UsageLedger::hourAttempts(std::int64_t nowSec) const {
     auto stmt = db_->prepare(
         "SELECT COUNT(*) AS v FROM usage_ledger WHERE ts >= ? AND kind = ?");
     if (stmt.isFail()) {
-        return core::Result<long long>::fail(stmt.errorCode(),
-                                             stmt.errorMessage());
+        return core::propagate<long long>(stmt);
     }
     if (!stmt.value().bind(1, hourStart(nowSec)).isOk() ||
         !stmt.value().bind(2, std::string(kKindLlmAttempt)).isOk()) {
@@ -216,8 +209,7 @@ core::Result<long long> UsageLedger::todayInjectItems(
     std::int64_t nowSec) const {
     auto stmt = db_->prepare(kInjectSql);
     if (stmt.isFail()) {
-        return core::Result<long long>::fail(stmt.errorCode(),
-                                             stmt.errorMessage());
+        return core::propagate<long long>(stmt);
     }
     if (!stmt.value().bind(1, dayStart(nowSec)).isOk() ||
         !stmt.value().bind(2, std::string(kKindInjectItems)).isOk()) {
@@ -237,8 +229,7 @@ core::Result<long long> UsageLedger::todayInjectChars(
     std::int64_t nowSec) const {
     auto stmt = db_->prepare(kInjectSql);
     if (stmt.isFail()) {
-        return core::Result<long long>::fail(stmt.errorCode(),
-                                             stmt.errorMessage());
+        return core::propagate<long long>(stmt);
     }
     if (!stmt.value().bind(1, dayStart(nowSec)).isOk() ||
         !stmt.value().bind(2, std::string(kKindInjectChars)).isOk()) {
@@ -259,8 +250,7 @@ core::Result<std::vector<LedgerRow>> UsageLedger::recentRows(int limit) const {
         "SELECT ts, kind, tokens, cost_milli_yuan FROM usage_ledger "
         "ORDER BY ts DESC, id DESC LIMIT ?");
     if (stmt.isFail()) {
-        return core::Result<std::vector<LedgerRow>>::fail(stmt.errorCode(),
-                                                          stmt.errorMessage());
+        return core::propagate<std::vector<LedgerRow>>(stmt);
     }
     if (!stmt.value().bind(1, static_cast<std::int64_t>(limit)).isOk()) {
         return core::Result<std::vector<LedgerRow>>::fail(

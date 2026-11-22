@@ -485,10 +485,11 @@ REGISTER_TEST(home_glass_stat_cards,
     return true;
 })
 
-// 「最近一次调用速率」/「每小时 token 合计」是「手算值与查询值必须相等」的数值断言：
-// 把速率算成累计/实时值、把分布图退回百分比或按绝对小时号取下标，本用例就红。
-REGISTER_TEST(home_last_rate_and_hourly_tokens,
-              "HomeService: 最近一次成功调用速率 + 逐时 token 合计（手算对照）",
+// 「最近一次调用速率」是「手算值与查询值必须相等」的数值断言：把速率算成累计/
+// 实时值、把「最近一次」算成首条或任意成功调用，本用例就红。
+// （逐时 token 合计/去头去尾随今日 token 图表卡一起删除——C-2 need380。）
+REGISTER_TEST(home_last_rate,
+              "HomeService: 最近一次成功调用速率（手算对照）",
               {
     test_support::TestEnv env(kDbPrefix, "rate_tokens", true);  // 注册 appDatabase
     DOCTEST_REQUIRE(env.ready);
@@ -512,14 +513,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         // NULL（未采集）≠ 0 个 token，也不算「成功调用」（status NULL）
         DOCTEST_CHECK_FALSE(lr.value().hasValue);
 
-        auto series = svc.getTodayHourlyTokenTotals(24);
-        DOCTEST_REQUIRE(series.isOk());
-        int64_t total = 0;
-        for (const int64_t v : series.value()) total += v;
-        DOCTEST_CHECK_EQ(total, static_cast<int64_t>(0));
-        DOCTEST_CHECK_FALSE(module::home::hourlyDataRange(series.value()).hasData);
-
-        // UI 空态：数字「--」+ 副标题「暂无成功调用」+ 分布图空态（不画空轴）
+        // UI 空态：数字「--」+ 副标题「暂无成功调用」（B7 D1 后不拼副题，见下）
         std::unique_ptr<::core::Module> mod(create_home_module());
         mod->onStart();
         // 4000 宽窗：卡片足够宽，「指标名 · badge」合并不触发丢 badge 分支，
@@ -539,8 +533,8 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         const auto* todoBadge = ui.find("home.stat.todo.label");
         DOCTEST_REQUIRE(todoBadge != nullptr);
         DOCTEST_CHECK_EQ(todoBadge->text, std::string("待办任务"));
-        DOCTEST_CHECK(ui.find("home.api.chart.empty.title") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
+        // C-2（need380）：今日 token 图表卡已砍（小时分布收敛到 Claude 页）
+        DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
         mod->onStop();
     }
 
@@ -562,9 +556,9 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
 
     // 阶段 C：补齐三维（成功 / 非 2xx / 昨天）→ 手算值对照
     //   2 时  200 / 1200ms / out  60  → 速率 50.0
-    //   3 时  500 /  100ms / out NULL → 非 2xx + 无用量：速率与合计都不参与
+    //   3 时  500 /  100ms / out NULL → 非 2xx：速率不参与
     //   5 时  200 / 2400ms / out 240  → 速率 100.0（最近一次成功调用）
-    //   昨天  200 / 1000ms / out 777  → 日界外：不进逐时合计、也不是「最近」
+    //   昨天  200 / 1000ms / out 777  → 日界外：不是「最近」
     DOCTEST_REQUIRE(sq.exec(
         "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
         "latency_ms, output_tokens, started_at) VALUES "
@@ -588,23 +582,6 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_CHECK(std::fabs(lr.value().tps - 100.0) < 1e-9);
         DOCTEST_CHECK_EQ(core::call_rate::formatTps(lr.value().tps),
                          std::string("100.0"));
-
-        // ③ 手算：2 时 60 / 4 时 120（阶段 B 那条，latency=0 不影响合计）
-        //        / 5 时 240；昨天 777 不进；区间 [2, 5] → 4 根柱
-        auto series = svc.getTodayHourlyTokenTotals(24);
-        DOCTEST_REQUIRE(series.isOk());
-        DOCTEST_CHECK_EQ(series.value().size(), 24u);
-        int64_t total = 0;
-        for (const int64_t v : series.value()) total += v;
-        DOCTEST_CHECK_EQ(total, static_cast<int64_t>(420));  // 60+120+240
-        DOCTEST_CHECK_EQ(series.value()[2], 60);
-        DOCTEST_CHECK_EQ(series.value()[3], 0);   // 非 2xx + NULL 用量
-        DOCTEST_CHECK_EQ(series.value()[4], 120);
-        DOCTEST_CHECK_EQ(series.value()[5], 240);
-        const auto range = module::home::hourlyDataRange(series.value());
-        DOCTEST_CHECK(range.hasData);
-        DOCTEST_CHECK_EQ(range.first, static_cast<size_t>(2));
-        DOCTEST_CHECK_EQ(range.last, static_cast<size_t>(5));  // 昨天 777 不扩尾
 
         // 单源口径（core/call_rate.h）边界：非 2xx / 0 token / 0 耗时都无速率
         double tps = 0.0;
@@ -652,11 +629,10 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     }
     return true;
 })
-// H18 首页纵向弹性双档（真实页高）：600 档 = 最小窗 1000×640 减标题条（窗高封顶
-// 已废止 → fs=1）；960 档 = 1600×1000 减标题条。弹性基准 = 内容刚好填满页高（全部令牌派生），
-// 余高 18% 给统计行、其余归图表卡；底部仅留 0.5px 防浮点越界出滚条。
+// C-2（need380）后 H18 契约改写：图表卡已砍，余高全归统计行。双档（600/960）
+// 只锁「统计行吸收余高、内容填满页高、卡内两行不重叠」的关系断言（不再写死卡高）。
 REGISTER_TEST(home_stat_chart_dual_tier,
-              "home_module: H18 统计卡/图表卡纵向弹性双档（页高 600 / 960）", {
+              "home_module: H18 统计卡纵向弹性双档（页高 600 / 960；图表卡已砍）", {
     core::proxy_stats::resetForTest();
     core::theme::setLight();
     // 字号档是进程级全局态：用户档固定 100%（窗高封顶已废止 → 600 档 fs=1）
@@ -678,25 +654,17 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         ui.end();
         ui.layout(screen.width, screen.height);
         const auto* stat = ui.find("home.stat.notes");
-        const auto* chart = ui.find("home.api.chart");
         const auto* number = ui.find("home.stat.notes.number");
         const auto* label = ui.find("home.stat.notes.label");
         const auto* root = ui.find("home.root");
         DOCTEST_REQUIRE(stat != nullptr);
-        DOCTEST_REQUIRE(chart != nullptr);
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
-        // 基准 = 页头40+统计96+gap×3(60)+图220+操作44+底边距16 = 476（统计卡
-        // 瘦身 144→96；操作行底边距 kHomeActionsBottomMargin 计入基准）；
-        // 余高 600−476−0.5=123.5 全归图表卡（kHomeStatGrowRatio 2026-11-01 归零：
-        // 统计卡恒 96，拉高只是留白涨，数据字号并不跟着涨）
-        DOCTEST_CHECK_MESSAGE(std::fabs(stat->frame.height - 96.0f) < 0.5f,
-            "600 档统计卡高应恒为 96，实际 " + std::to_string(stat->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - (220.0f + 123.5f)) < 0.5f,
-            "600 档图表卡高应为 343.5，实际 " +
-                std::to_string(chart->frame.height));
+        // 图表卡已砍：600 档余高全归统计行（stat 高 > 基准 96）
+        DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
+        DOCTEST_CHECK_MESSAGE(stat->frame.height > 96.0f,
+            "600 档统计卡应吸收余高（>96），实际 " + std::to_string(stat->frame.height));
         // 卡内两行随卡高派生：仍在卡内、label 与 number 不重叠
         const float cardTop = stat->frame.y;
         const float cardBottom = cardTop + stat->frame.height;
@@ -727,21 +695,16 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         ui.end();
         ui.layout(screen.width, screen.height);
         const auto* stat = ui.find("home.stat.notes");
-        const auto* chart = ui.find("home.api.chart");
         const auto* number = ui.find("home.stat.notes.number");
         const auto* label = ui.find("home.stat.notes.label");
         const auto* root = ui.find("home.root");
         DOCTEST_REQUIRE(stat != nullptr);
-        DOCTEST_REQUIRE(chart != nullptr);
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
-        DOCTEST_CHECK_MESSAGE(std::fabs(stat->frame.height - 96.0f) < 0.5f,
-            "960 档统计卡高应恒为 96，实际 " + std::to_string(stat->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - (220.0f + 483.5f)) < 0.5f,
-            "960 档图表卡高应为 703.5，实际 " +
-                std::to_string(chart->frame.height));
+        DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
+        DOCTEST_CHECK_MESSAGE(stat->frame.height > 96.0f,
+            "960 档统计卡应吸收余高（>96），实际 " + std::to_string(stat->frame.height));
         // 卡高增长后卡内两行仍居中分布、在卡内且不重叠
         const float cardTop = stat->frame.y;
         const float cardBottom = cardTop + stat->frame.height;
@@ -764,11 +727,10 @@ REGISTER_TEST(home_stat_chart_dual_tier,
     return true;
 })
 
-// need270 契约变更：图表卡读取 claude_call_logs 历史行，与 Claude 模块注册态无关
-// → 模块关停后图表卡**仍在场**（此前是整卡隐退、余高让给统计行）。本用例锁定新
-// 契约：关停 ClaudeProxy 时图表卡照旧渲染，且统计区高度不被余高撑大。
+// C-2（need380）改写：今日 token 图表卡已砍（原 need270「与 Claude 注册态解耦」
+// 随卡片移除失去对象）。本用例锁定：无图表卡 + 5 张统计卡恒在场 + 页底无死区。
 REGISTER_TEST(home_no_chart_extra_to_stats,
-              "home_module: ClaudeProxy 关闭时图表卡仍在场（need270 解耦）", {
+              "home_module: 图表卡已砍且 5 统计卡恒在场（C-2 need380）", {
     core::theme::setFontScale(1.0f);
     core::theme::setWindowHeight(960.0f);  // 窗高不封顶 → fs=1
 
@@ -789,9 +751,9 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    // 图表卡恒在场（与 Claude 模块是否注册无关）
-    DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
-    // 5 张统计卡也恒在场
+    // 图表卡已砍
+    DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
+    // 5 张统计卡恒在场
     for (const char* id : {"home.stat.tokens", "home.stat.notes", "home.stat.todo",
                            "home.stat.overdue", "home.stat.api"}) {
         DOCTEST_CHECK(ui.find(id) != nullptr);
@@ -800,10 +762,9 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     const auto* root = ui.find("home.root");
     DOCTEST_REQUIRE(stat != nullptr);
     DOCTEST_REQUIRE(root != nullptr);
-    // 统计卡恒 96（kHomeStatGrowRatio=0，余高归图表卡）——不再被余高撑成巨块
-    DOCTEST_CHECK_MESSAGE(std::fabs(stat->frame.height - 96.0f) < 0.5f,
-        "统计卡应恒为 96（余高归图表卡），实际 " +
-            std::to_string(stat->frame.height));
+    // 余高全归统计行（图表卡已砍）
+    DOCTEST_CHECK_MESSAGE(stat->frame.height > 96.0f,
+        "统计卡应吸收余高（>96），实际 " + std::to_string(stat->frame.height));
     const float bottomMargin =
         screen.height - (root->frame.y + root->frame.height);
     DOCTEST_CHECK_MESSAGE(
@@ -894,84 +855,7 @@ REGISTER_TEST(home_todo_overdue_consistency,
     return true;
 })
 
-// 趋势卡折叠（2026-10-31 反馈）：点标题行切换，折叠态只留标题行，图表区不建。
-REGISTER_TEST(home_chart_card_collapsible,
-              "home_module: 趋势卡折叠——点标题行收起/展开（跨帧保持）", {
-    core::proxy_stats::resetForTest();
-    core::theme::setLight();
-    core::theme::setFontScale(1.0f);
-    core::theme::setWindowHeight(960.0f);
-
-    std::unique_ptr<::core::Module> mod(create_home_module());
-    eui::Ui ui;
-    const eui::Screen screen{1600.0f, 960.0f};
-    auto frame = [&](const char* id) {
-        ui.begin(id);
-        mod->compose(ui, screen);
-        ui.end();
-        ui.layout(screen.width, screen.height);
-    };
-
-    // 展开档：吸收余高、图表区在、箭头朝下
-    frame("home_collapse_expanded");
-    const auto* chartOpen = ui.find("home.api.chart");
-    DOCTEST_REQUIRE(chartOpen != nullptr);
-    DOCTEST_CHECK_MESSAGE(chartOpen->frame.height > 300.0f,
-                          "展开档图表卡应吸收余高，实际 " +
-                              std::to_string(chartOpen->frame.height));
-    DOCTEST_CHECK(ui.find("home.api.chart.wrap") != nullptr);
-    const auto* arrowOpen = ui.find("home.api.chart.toggle");
-    DOCTEST_REQUIRE(arrowOpen != nullptr);
-    DOCTEST_CHECK_EQ(arrowOpen->fontFamily, std::string("Icon"));
-    DOCTEST_CHECK_EQ(arrowOpen->text, eui::utf8(0xF078));  // chevron-down
-
-    // 点标题行 → 折叠：卡高收到 56、图表区整块不建、箭头朝右
-    const auto* hit = ui.find("home.api.chart.headhit");
-    DOCTEST_REQUIRE(hit != nullptr);
-    DOCTEST_REQUIRE(hit->onClick != nullptr);
-    hit->onClick();
-    frame("home_collapse_collapsed");
-    const auto* chartShut = ui.find("home.api.chart");
-    DOCTEST_REQUIRE(chartShut != nullptr);
-    // B7 D2：折叠档卡高 56→64（且随字号缩放，本档 fs=1）
-    DOCTEST_CHECK_MESSAGE(
-        std::fabs(chartShut->frame.height -
-                  64.0f * core::theme::fontScale()) < 0.5f,
-        "折叠档卡高应为 64 × 字号缩放，实际 " +
-            std::to_string(chartShut->frame.height));
-    // 折叠态标题改短且垂直居中
-    {
-        const auto* shutTitle = ui.find("home.api.chart.title");
-        DOCTEST_REQUIRE(shutTitle != nullptr);
-        DOCTEST_CHECK_EQ(shutTitle->text, std::string("今日 Token 分布"));
-        const float titleMid =
-            shutTitle->frame.y + shutTitle->frame.height * 0.5f;
-        const float cardMid =
-            chartShut->frame.y + chartShut->frame.height * 0.5f;
-        DOCTEST_CHECK_MESSAGE(std::fabs(titleMid - cardMid) < 1.0f,
-                              "折叠态标题应垂直居中（标题心 " +
-                                  std::to_string(titleMid) + " vs 卡心 " +
-                                  std::to_string(cardMid) + "）");
-    }
-    DOCTEST_CHECK(ui.find("home.api.chart.wrap") == nullptr);
-    const auto* arrowShut = ui.find("home.api.chart.toggle");
-    DOCTEST_REQUIRE(arrowShut != nullptr);
-    DOCTEST_CHECK_EQ(arrowShut->text, eui::utf8(0xF054));  // chevron-right
-
-    // 再点一次 → 恢复展开
-    const auto* hit2 = ui.find("home.api.chart.headhit");
-    DOCTEST_REQUIRE(hit2 != nullptr);
-    DOCTEST_REQUIRE(hit2->onClick != nullptr);
-    hit2->onClick();
-    frame("home_collapse_restored");
-    DOCTEST_CHECK(ui.find("home.api.chart.wrap") != nullptr);
-    const auto* chartBack = ui.find("home.api.chart");
-    DOCTEST_REQUIRE(chartBack != nullptr);
-    DOCTEST_CHECK(chartBack->frame.height > 300.0f);
-
-    mod->onStop();
-    return true;
-})
+// C-2（need380）：趋势卡折叠用例随图表卡整卡移除（折叠功能不复存在）。
 
 // 防（need338，need334 同根因迁 home 统计卡）：jelly zIndex(20)/scale 曾挂 .bg，
 // .content（图表/文字/命中层）是 .bg 兄弟 → 560ms 内玻璃面盖内容 + bg 独缩错位露灰底。

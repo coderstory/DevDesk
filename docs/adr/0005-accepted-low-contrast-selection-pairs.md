@@ -13,7 +13,7 @@ W3.5 修复轮 H10 引入对比度门禁断言（WCAG 2.1 相对亮度公式，�
 
 ## 5 对位置（抄自组件状态字典——单一真相源）
 
-5 对 `#36D399 on #E6FBF2` 的权威定义位置在 DevDesk 组件样式注册表 `src/core/devdesk_theme.h`（`reg.set(...)`，`WidgetStyleEntry{bg, text, border, radius, font, height}`），逐条如下：
+5 对 `#36D399 on #E6FBF2` 的权威定义位置当时在 DevDesk 组件样式注册表 `src/core/devdesk_theme.h`（`reg.set(...)`，`WidgetStyleEntry{bg, text, border, radius, font, height}`）。**2026-11-22 注**：该文件已随 1e6804a6 死符号链清理删除，注册表结构随之摘除，现行主题 = `src/core/theme.h`（token 值源）+ `src/core/component_theme.h`（EUI 桥）；下表行号仅历史存档，代码路径以 git log 为准。逐条如下：
 
 | # | 组件·状态 | 位置 | bg | text | border | 三要素 |
 |---|-----------|------|----|------|--------|--------|

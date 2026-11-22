@@ -301,7 +301,7 @@ REGISTER_TEST(uiModernTodoMenuAnchor,
 
 // claude profile 列表右键菜单
 REGISTER_TEST(uiModernClaudeProfileCtxMenu,
-              "uiModern claude_module: 列表右键菜单五项（编辑/建副本/复制配置/删除/设为当前）", {
+              "uiModern claude_module: 列表右键菜单四项（编辑/复制配置/删除/设为当前）", {
     ClaudeEnv env;
     auto a = env.svc->createProfile("官方", "https://api.anthropic.com",
                                     "sk-ant-aaaa-1111", "claude-sonnet-4-5");
@@ -330,7 +330,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
     }
 
-    // 右键 profile.1（中转）→ 菜单打开，五项 + 锚点 = 指针坐标（无 Router →
+    // 右键 profile.1（中转）→ 菜单打开，四项 + 锚点 = 指针坐标（无 Router →
     // 页面原点 0，dpi=1 → (400, 300) 原样）
     {
         compose();
@@ -344,7 +344,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(menu != nullptr);
         DOCTEST_CHECK_EQ(menu->x, 400.0f);
         DOCTEST_CHECK_EQ(menu->y, 300.0f);
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 4; ++i) {
             DOCTEST_CHECK(ui.find("claude.list.ctx.level.0.item." +
                                   std::to_string(i)) != nullptr);
         }
@@ -352,17 +352,14 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         const auto* l1 = ui.find("claude.list.ctx.level.0.label.1");
         const auto* l2 = ui.find("claude.list.ctx.level.0.label.2");
         const auto* l3 = ui.find("claude.list.ctx.level.0.label.3");
-        const auto* l4 = ui.find("claude.list.ctx.level.0.label.4");
         DOCTEST_REQUIRE(l0 != nullptr);
         DOCTEST_REQUIRE(l1 != nullptr);
         DOCTEST_REQUIRE(l2 != nullptr);
         DOCTEST_REQUIRE(l3 != nullptr);
-        DOCTEST_REQUIRE(l4 != nullptr);
         DOCTEST_CHECK_EQ(l0->text, std::string("编辑"));
-        DOCTEST_CHECK_EQ(l1->text, std::string("建副本"));
-        DOCTEST_CHECK_EQ(l2->text, std::string("复制配置"));
-        DOCTEST_CHECK_EQ(l3->text, std::string("删除"));
-        DOCTEST_CHECK_EQ(l4->text, std::string("设为当前"));
+        DOCTEST_CHECK_EQ(l1->text, std::string("复制配置"));
+        DOCTEST_CHECK_EQ(l2->text, std::string("删除"));
+        DOCTEST_CHECK_EQ(l3->text, std::string("设为当前"));
     }
 
     // 点「复制配置」→ 派发 requestCopyConfig → doCopyConfig
@@ -370,7 +367,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
     // 安全 no-op；故只钉派发的可见面 = toast，剪贴板真写以真机验收为准，
     // 不写假绿断言）
     {
-        auto* item = ui.find("claude.list.ctx.level.0.item.2");
+        auto* item = ui.find("claude.list.ctx.level.0.item.1");
         DOCTEST_REQUIRE(item != nullptr);
         item->onClick();
         compose();
@@ -392,7 +389,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         compose();
         ui.find("claude.profile.1.wrap")->onContextMenu(pe, rect);
         compose();
-        auto* item = ui.find("claude.list.ctx.level.0.item.4");
+        auto* item = ui.find("claude.list.ctx.level.0.item.3");
         DOCTEST_REQUIRE(item != nullptr);
         item->onClick();
         // 菜单已关（onSelect 置关；常驻构建但 opacity 收起）
@@ -425,7 +422,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(wrap != nullptr);
         wrap->onContextMenu(pe, rect);
         compose();
-        auto* item = ui.find("claude.list.ctx.level.0.item.3");
+        auto* item = ui.find("claude.list.ctx.level.0.item.2");
         DOCTEST_REQUIRE(item != nullptr);
         item->onClick();
         compose();
@@ -730,182 +727,6 @@ REGISTER_TEST(uiModernTodoCardContainer,
     DOCTEST_CHECK(bg->onRelease != nullptr);
 
     mod->onStop();
-    return true;
-})
-
-REGISTER_TEST(uiModernHomeApiBarChart,
-              "uiModern: Home Token 分布（每小时 token 合计 + 去头去尾 + 最近速率卡）", {
-    test_support::TestEnv env("devdesk_test_uimodern_home_", "apichart",
-                              true);  // 注册 appDatabase：全零走空态不画假条，
-                                      // 需真实数据才能断言柱子
-    DOCTEST_REQUIRE(env.ready);
-    // 种子（纵轴 = 每小时 output_tokens 合计）：
-    //   1 个 profile（FK 依赖）
-    //   · 9 时  output 100 / 2000ms  → 速率 50.0
-    //   · 12 时 output 300 / 1000ms  → 速率 300.0
-    //   · 17 时 output 600 / 4000ms  → 速率 150.0（最近一次「成功」调用）
-    //   · 6 时  output_tokens=0      → 不贡献总量、不扩 x 轴区间（去头）
-    //   · 20 时 status=500（output NULL）→ 非 2xx，不参与速率、不扩区间（去尾）
-    //   · 昨天 2 条（整天过滤掉）
-    // 手算：逐时合计 = {9:100, 12:300, 17:600}，其余 0；
-    //       去头去尾区间 = [9, 17]（闭区间，9 根柱），峰值 = 600
-    const int64_t dayStart = module::home::startOfDayEpoch(std::time(nullptr));
-    DOCTEST_CHECK(env.db->db().exec(
-        "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-        " api_key_check, model, is_active, created_at, "
-        " updated_at) VALUES ('测试', 'https://api.anthropic.com', "
-        " 'sk-', 'CHECK', 'claude-sonnet-4-5', 1, "
-        " 1000, 1000)").isOk());
-    const std::string sql =
-        "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
-        " latency_ms, output_tokens, request_bytes, response_bytes, error, "
-        " started_at) VALUES "
-        "(1, 'POST', '/v1/messages', 200, 2000, 100, 100, 200, '', " +
-        std::to_string(dayStart + 3600 * 9) + "), "
-        "(1, 'POST', '/v1/messages', 200, 1000, 300, 100, 200, '', " +
-        std::to_string(dayStart + 3600 * 12) + "), "
-        "(1, 'POST', '/v1/messages', 200, 4000, 600, 100, 200, '', " +
-        std::to_string(dayStart + 3600 * 17) + "), "
-        "(1, 'POST', '/v1/messages', 200, 500, 0, 100, 200, '', " +
-        std::to_string(dayStart + 3600 * 6) + "), "
-        "(1, 'POST', '/v1/messages', 500, 500, NULL, 100, 200, 'boom', " +
-        std::to_string(dayStart + 3600 * 20) + "), "
-        "(1, 'GET', '/v1/models', 200, 5, NULL, 20, 40, '', " +
-        std::to_string(dayStart - 3600) + "), "
-        "(1, 'GET', '/v1/models', 200, 5, NULL, 20, 40, '', " +
-        std::to_string(dayStart - 7200) + ")";
-    DOCTEST_CHECK(env.db->db().exec(sql).isOk());
-
-    // 服务层：24 点恒非空、逐时 token 合计 == 手算值、日界过滤（昨天不进）
-    {
-        module::home::HomeService svc(env.db->db());
-        auto series = svc.getTodayHourlyTokenTotals(24);
-        DOCTEST_REQUIRE(series.isOk());
-        DOCTEST_CHECK_EQ(series.value().size(), 24u);
-        int64_t total = 0;
-        for (const int64_t v : series.value()) total += v;
-        DOCTEST_CHECK_EQ(total, 1000);            // 100 + 300 + 600
-        DOCTEST_CHECK_EQ(series.value()[9], 100);
-        DOCTEST_CHECK_EQ(series.value()[12], 300);
-        DOCTEST_CHECK_EQ(series.value()[17], 600);
-        DOCTEST_CHECK_EQ(series.value()[6], 0);   // 0 token 行不贡献
-        DOCTEST_CHECK_EQ(series.value()[20], 0);  // 非 2xx 行不贡献
-        DOCTEST_CHECK_EQ(series.value()[13], 0);  // 区间内的空小时
-    }
-
-    // 纯函数：去头去尾 → 只画 [9, 17]
-    {
-        std::vector<int64_t> hourly(24, 0);
-        hourly[9] = 100;
-        hourly[17] = 600;
-        const auto r = module::home::hourlyDataRange(hourly);
-        DOCTEST_CHECK(r.hasData);
-        DOCTEST_CHECK_EQ(r.first, static_cast<size_t>(9));
-        DOCTEST_CHECK_EQ(r.last, static_cast<size_t>(17));
-        // 整天无数据 → 空态（不画空轴）
-        const std::vector<int64_t> empty(24, 0);
-        DOCTEST_CHECK(!module::home::hourlyDataRange(empty).hasData);
-        // 头尾相接（只有 1 个小时有数据）→ first == last
-        std::vector<int64_t> one(24, 0);
-        one[3] = 7;
-        const auto r1 = module::home::hourlyDataRange(one);
-        DOCTEST_CHECK(r1.hasData);
-        DOCTEST_CHECK_EQ(r1.first, static_cast<size_t>(3));
-        DOCTEST_CHECK_EQ(r1.last, static_cast<size_t>(3));
-    }
-
-    // 服务层：最近一次成功调用 = 17 时那条 → 600 / 4s = 150.0 tok/s
-    //（20 时的 500 行更晚但不是成功调用 → 不参与；6 时 output 0 → 不参与）
-    {
-        module::home::HomeService svc(env.db->db());
-        auto lr = svc.getLastCallRate();
-        DOCTEST_REQUIRE(lr.isOk());
-        DOCTEST_CHECK(lr.value().hasValue);
-        DOCTEST_CHECK_EQ(lr.value().outputTokens, static_cast<int64_t>(600));
-        DOCTEST_CHECK_EQ(lr.value().latencyMs, static_cast<int64_t>(4000));
-        DOCTEST_CHECK(std::fabs(lr.value().tps - 150.0) < 0.001);
-        DOCTEST_CHECK_EQ(core::call_rate::formatTps(lr.value().tps),
-                         std::string("150.0"));
-    }
-
-    // UI 接线 + 数值断言：去头去尾后的柱数/标签/相对柱高 + ① 的卡片数字
-    {
-        std::unique_ptr<::core::Module> mod(create_home_module());
-        mod->onStart();  // 挂真实服务（否则 stats 未加载 → 空态）
-        eui::Screen screen{1200.0f, 720.0f};
-        eui::Ui ui;
-        ui.begin("home_api_chart");
-        mod->compose(ui, screen);
-        ui.end();
-        ui.layout(screen.width, screen.height);  // 元素 frame 需 layout 后才有值
-        DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart.bars") != nullptr);
-        // 去头去尾：9 根柱（9..17 闭区间），第 10 根起不存在（回退成 24 根
-        // 或「按小时号绝对下标」都会让下面这条红）
-        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.8") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.9") == nullptr);
-        // x 轴首尾小时标签 = 9 时 / 17 时
-        const auto textOf = [](eui::Ui& u, const std::string& id) {
-            const auto* el = u.find(id);
-            return el != nullptr ? el->text : std::string();
-        };
-        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.label.0"),
-                         std::string("9时"));
-        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.label.8"),
-                         std::string("17时"));
-        // 柱顶数值 = 该小时 token 合计（不再是百分比）
-        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.0"),
-                         std::string("100"));
-        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.3"),
-                         std::string("300"));
-        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
-                         std::string("600"));
-        // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0；批L 顶距后垂直内边距 0）：
-        // baseContentH = 页头40 + 统计96（5694df44 瘦身 144→96）+ gap×3(60) + 图220 + 操作44 + 快捷底边距16 = 476；
-        // extraH = 720 − 476 − 0.5 = 243.5；statsGrow = 0（2026-11-01 重构：余高全归图表卡）；
-        // chartH = 220 + 243.5 = 463.5 → wrap = 463.5 − 64 = 399.5。
-        // 池 110 比例式几何：plotY = clamp(wrap×0.30, 56, 160) = 119.85；
-        // labelY = wrap − clamp(wrap×0.06, 12, 40) − 16 = 359.53；
-        // plotH = max(40, labelY − 20 − plotY) = 219.68（旧常量式 287.5 已废）。
-        // 峰值柱（600）= plot，100/600 柱 = plot/6，300/600 柱 = plot/2。
-        constexpr float kElasticPlotH = 219.68f;
-        const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
-        const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
-        const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
-        DOCTEST_REQUIRE(bar0 != nullptr);
-        DOCTEST_REQUIRE(bar3 != nullptr);
-        DOCTEST_REQUIRE(bar8 != nullptr);
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar8->frame.height - kElasticPlotH) < 0.5f,
-            "bar8 h=" + std::to_string(bar8->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - kElasticPlotH / 6.0f) < 0.5f,
-            "bar0 h=" + std::to_string(bar0->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - kElasticPlotH / 2.0f) < 0.5f,
-            "bar3 h=" + std::to_string(bar3->frame.height));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - kElasticPlotH / 6.0f) < 0.5f,
-            "bar0 h=" + std::to_string(bar0->frame.height) + " y=" +
-                std::to_string(bar0->frame.y));
-        DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - kElasticPlotH / 2.0f) < 0.5f,
-            "bar3 h=" + std::to_string(bar3->frame.height) + " y=" +
-                std::to_string(bar3->frame.y));
-        // 柱高对齐基线：三根柱底沿相等（y + height 同值）
-        DOCTEST_CHECK(std::fabs((bar0->frame.y + bar0->frame.height) -
-                                (bar8->frame.y + bar8->frame.height)) < 0.5f);
-        // 卡片数字 = 最近一次成功调用的速率（150.0），副标题不再写「累计」
-        DOCTEST_CHECK_EQ(textOf(ui, "home.stat.tokens.number"),
-                         std::string("150.0"));
-        // 5694df44 起 badge 并入 label 同行；窄卡超宽时丢 badge（弱信息，
-        // 文案全量在 home 域宽窗用例守），这里钉「不冒充累计」
-        DOCTEST_CHECK(textOf(ui, "home.stat.tokens.label").find("累计") ==
-                      std::string::npos);
-        mod->onStop();
-    }
     return true;
 })
 

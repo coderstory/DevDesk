@@ -304,7 +304,7 @@ std::string activeWindowEffectTier() {
 core::Result<void> mcpStartImpl(int port) {
     auto r = module::mcp::globalMcpService().start(port);
     if (r.isFail()) {
-        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<void>(r);
     }
     return core::Result<void>::ok();
 }
@@ -315,7 +315,7 @@ void mcpStopImpl() { module::mcp::globalMcpService().stop(); }
 core::Result<void> mcpApplyPortImpl(int port) {
     auto r = module::mcp::globalMcpService().restart(port);
     if (r.isFail()) {
-        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<void>(r);
     }
     return core::Result<void>::ok();
 }

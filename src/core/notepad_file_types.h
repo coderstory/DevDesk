@@ -29,10 +29,11 @@ inline char notepadAsciiLower(char c) {
     return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
 }
 
-// 路径是否为记事本可接管的扩展名（大小写不敏感后缀匹配；APFS/NTFS 默认
-// 不敏感卷上 OS 送达同 casing，残余的异 casing 送达同样命中）。空后缀不命中。
-inline bool isNotepadExtension(const std::string& path) {
-    for (const std::string_view ext : notepadExtensions()) {
+// 后缀匹配公共实现（大小写不敏感；APFS/NTFS 默认不敏感卷上 OS 送达同 casing，
+// 残余的异 casing 送达同样命中）。空后缀不命中。
+inline bool matchesAnyExtension(
+    const std::string& path, const std::vector<std::string_view>& extensions) {
+    for (const std::string_view ext : extensions) {
         const size_t n = ext.size();
         if (path.size() < n) continue;
         const size_t offset = path.size() - n;
@@ -47,6 +48,24 @@ inline bool isNotepadExtension(const std::string& path) {
         if (hit) return true;
     }
     return false;
+}
+
+// 路径是否为记事本可接管的扩展名。空后缀不命中。
+inline bool isNotepadExtension(const std::string& path) {
+    return matchesAnyExtension(path, notepadExtensions());
+}
+
+// 笔记模块（markdown）承接扩展名（need:380 wave5-d C-3）：OS 双击 .md 送达
+// 改走主窗笔记页（Router "open:" 负载），不再进独立记事本窗。两元素仍保留在
+// notepadExtensions() 关联注册清单内——OS 关联登记面不变，双击才仍进 DevDesk，
+// 只是进程内分发目标改向。消费方 = app_assembly 漏斗（分发 / 唤醒 / 托盘裁决）。
+inline const std::vector<std::string_view>& markdownExtensions() {
+    static const std::vector<std::string_view> kMdExtensions = {".md", ".markdown"};
+    return kMdExtensions;
+}
+
+inline bool isMarkdownExtension(const std::string& path) {
+    return matchesAnyExtension(path, markdownExtensions());
 }
 
 }  // namespace core::notepad

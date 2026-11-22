@@ -214,9 +214,4 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
                                      const std::string& curModelsConfigJson,
                                      const std::string& curExtraEnvJson);
 
-// 副本命名：base + " 副本"；重名递增 base + " 副本 N"（N 从 2 起）；
-// 100 次仍冲突 → 空串（调用方按命名失败处理）
-std::string makeCopyName(const std::string& baseName,
-                         const std::vector<std::string>& existingNames);
-
 } // namespace module::claude

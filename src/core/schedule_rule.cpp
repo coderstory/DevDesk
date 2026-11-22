@@ -732,13 +732,13 @@ Result<std::optional<int64_t>> nextFire(const RuleSpec& spec, int64_t afterUnix,
                                         const FireContext& ctx) {
     auto zone = checkZone(ctx);
     if (zone.isFail()) {
-        return Result<std::optional<int64_t>>::fail(zone.errorCode(), zone.errorMessage());
+        return propagate<std::optional<int64_t>>(zone);
     }
     switch (spec.kind) {
         case RuleKind::Once: {
             int64_t u = 0;
             auto r = onceFireUnix(spec, u);
-            if (r.isFail()) return Result<std::optional<int64_t>>::fail(r.errorCode(), r.errorMessage());
+            if (r.isFail()) return propagate<std::optional<int64_t>>(r);
             if (u > afterUnix) return Result<std::optional<int64_t>>::ok(std::optional<int64_t>(u));
             return Result<std::optional<int64_t>>::ok(std::optional<int64_t>());
         }
@@ -780,7 +780,7 @@ Result<std::vector<int64_t>> missedFires(const RuleSpec& spec, int64_t fromUnix,
                                          int64_t toUnix, int cap, const FireContext& ctx) {
     auto zone = checkZone(ctx);
     if (zone.isFail()) {
-        return Result<std::vector<int64_t>>::fail(zone.errorCode(), zone.errorMessage());
+        return propagate<std::vector<int64_t>>(zone);
     }
     if (cap < 1) {
         return Result<std::vector<int64_t>>::fail(ErrorCode::ValidationError, "cap 必须 ≥1");
@@ -794,7 +794,7 @@ Result<std::vector<int64_t>> missedFires(const RuleSpec& spec, int64_t fromUnix,
         case RuleKind::Once: {
             int64_t u = 0;
             auto r = onceFireUnix(spec, u);
-            if (r.isFail()) return Result<std::vector<int64_t>>::fail(r.errorCode(), r.errorMessage());
+            if (r.isFail()) return propagate<std::vector<int64_t>>(r);
             if (u >= fromUnix && u <= toUnix) out.push_back(u);
             break;
         }
@@ -861,7 +861,7 @@ Result<std::vector<int64_t>> missedFires(const RuleSpec& spec, int64_t fromUnix,
             int64_t t = fromUnix - 1;
             while (static_cast<int>(out.size()) < cap) {
                 auto r = cronNextFireInternal(spec, t);
-                if (r.isFail()) return Result<std::vector<int64_t>>::fail(r.errorCode(), r.errorMessage());
+                if (r.isFail()) return propagate<std::vector<int64_t>>(r);
                 if (!r.value().has_value()) break;
                 const int64_t f = *r.value();
                 if (f > toUnix) break;

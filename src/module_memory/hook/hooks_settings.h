@@ -17,9 +17,6 @@
 
 namespace module::memory::hook {
 
-// 注入 Claude Code 的 hook 命令行："<exe>" memory hook（exe 带引号防路径空格）
-std::string buildHookCommand(const std::string& exePath);
-
 // 在 settings JSON 文本上安装/摘除（纯函数，单测钉）。changed 出参可空。
 // 安装形态：hooks.UserPromptSubmit[].hooks[] 追加
 //   {"type":"command","command":<cmd>,"timeout":10}

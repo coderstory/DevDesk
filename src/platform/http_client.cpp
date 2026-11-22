@@ -143,8 +143,7 @@ core::Result<Response> send(const Request& req) {
     // 代理决策（S6a）：Custom 空地址在句柄创建前即报错，无需清理。
     const auto proxyDecision = resolveProxy(req.proxyMode, req.proxy);
     if (proxyDecision.isFail()) {
-        return core::Result<Response>::fail(proxyDecision.errorCode(),
-                                            proxyDecision.errorMessage());
+        return core::propagate<Response>(proxyDecision);
     }
 
     Response resp;
@@ -460,12 +459,6 @@ void StreamingResponse::cancelWithReason(const std::string& reason) {
     }
     // 唤醒所有等待者。不要在这里调 curl_easy_pause——跨线程暂停会阻止 callback 再被调，挂死到超时。
     impl_->queueCv.notify_all();
-}
-
-size_t StreamingResponse::queueDepth() const {
-    if (!impl_) return 0;
-    std::lock_guard<std::mutex> lock(impl_->queueMutex);
-    return impl_->queue.size();
 }
 
 bool StreamingResponse::isPaused() const {

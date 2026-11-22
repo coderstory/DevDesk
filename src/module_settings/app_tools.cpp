@@ -8,6 +8,7 @@
 
 #include "core/app_config.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <fstream>
 #include <string>
@@ -23,18 +24,7 @@ using core::ToolResult;
 namespace pj = platform::json;
 
 // 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
-Result<ToolResult> toolError(const std::string& message) {
-    pj::JsonObject err;
-    err.set("error", pj::makeString(message));
-    auto text = pj::stringify(pj::JsonValue(std::move(err)));
-    if (text.isFail()) {
-        // 自有字面量 + 一个字符串字段的序列化失败 = 编程不变量破坏
-        return Result<ToolResult>::fail(core::ErrorCode::Internal,
-                                        "工具错误消息序列化失败: " +
-                                            text.errorMessage());
-    }
-    return Result<ToolResult>::ok(ToolResult{true, text.value()});
-}
+using platform::tool_kit::toolError;
 
 Result<ToolResult> toolOk(const std::string& contentJson) {
     return Result<ToolResult>::ok(ToolResult{false, contentJson});

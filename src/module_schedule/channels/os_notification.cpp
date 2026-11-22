@@ -35,8 +35,7 @@ public:
 
         auto result = platform::notify::send(notification);
         if (result.isFail()) {
-            return core::Result<Receipt>::fail(result.errorCode(),
-                                               result.errorMessage());
+            return core::propagate<Receipt>(result);
         }
         const auto& receipt = result.value();
         return core::Result<Receipt>::ok(Receipt{

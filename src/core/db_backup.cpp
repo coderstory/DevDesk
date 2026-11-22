@@ -87,8 +87,7 @@ core::Result<bool> quickCheckOk(const fs::path& dbFile, bool readOnlyOpen) {
     }
     auto opened = openRaw(dbFile, readOnlyOpen ? SQLITE_OPEN_READONLY
                                               : SQLITE_OPEN_READWRITE);
-    if (opened.isFail()) return core::Result<bool>::fail(opened.errorCode(),
-                                                         opened.errorMessage());
+    if (opened.isFail()) return core::propagate<bool>(opened);
     sqlite3* handle = opened.value();
     auto r = quickCheckOnHandle(handle);
     sqlite3_close(handle);
@@ -197,12 +196,12 @@ core::Result<fs::path> createBackup(const fs::path& dbFile, int keepBackups) {
     fs::remove(dest, rmEc);
 
     auto src = openRaw(dbFile, SQLITE_OPEN_READWRITE);
-    if (src.isFail()) return core::Result<fs::path>::fail(src.errorCode(), src.errorMessage());
+    if (src.isFail()) return core::propagate<fs::path>(src);
     auto dst = openRaw(dest, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
     if (dst.isFail()) {
         sqlite3_close(src.value());
         fs::remove(dest, rmEc);
-        return core::Result<fs::path>::fail(dst.errorCode(), dst.errorMessage());
+        return core::propagate<fs::path>(dst);
     }
 
     sqlite3_backup* bk = sqlite3_backup_init(dst.value(), "main", src.value(), "main");
@@ -283,7 +282,7 @@ core::Result<std::optional<fs::path>> performStartupBackupOnce(
     }
     auto r = createBackup(dbFile, 5);
     if (r.isFail()) {
-        return core::Result<std::optional<fs::path>>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<std::optional<fs::path>>(r);
     }
     return core::Result<std::optional<fs::path>>::ok(std::move(r.value()));
 }

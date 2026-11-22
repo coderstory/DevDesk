@@ -92,10 +92,6 @@ LlamaLocate locateLlamaServerDetailed(const std::filesystem::path& dataDir) {
     return locateLlamaServerBetween(bundledAssetsDir(), dataDir);
 }
 
-std::filesystem::path locateLlamaServer(const std::filesystem::path& dataDir) {
-    return locateLlamaServerDetailed(dataDir).exePath;
-}
-
 EmbedModelLocate locateEmbedModelBetween(
     const std::filesystem::path& assetsDir, const std::filesystem::path& dataDir) {
     // 1) exe 同级随包 assets（assets 序优先；数据根文件不动）

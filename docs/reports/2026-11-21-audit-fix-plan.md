@@ -110,7 +110,7 @@ if (FAILED(flagHr)) {
 
 ### 验证
 
-Windows 真机 probe（`tests/probes/wallpaper_trash_probe.cpp` 已在计划里）：临时文件 → `moveToTrash` → 断言回收站里能找到该项。若今条件不具备，至少加静态断言 + 代码注释说明"标志位失败即失败"。
+Windows 真机 probe（计划里的 `tests/probes/wallpaper_trash_probe.cpp` 未落地；仓内现行 `tests/probes/wallpaper_trash_macos_probe.cpp` 为 macOS 版）：临时文件 → `moveToTrash` → 断言回收站里能找到该项。若今条件不具备，至少加静态断言 + 代码注释说明"标志位失败即失败"。
 
 ---
 
@@ -118,7 +118,7 @@ Windows 真机 probe（`tests/probes/wallpaper_trash_probe.cpp` 已在计划里�
 
 ### 现状
 
-`scripts/check-module-isolation.sh` 名为"模块隔离"，实际只断言 2 组点对点关系（settings→claude 一条边、agent 一个中心点），11 个模块（>60% 代码）无任何约束。且残留 `module_pet` 死引用。
+`scripts/check-module-isolation.sh` 名为"模块隔离"，实际只断言 2 组点对点关系（settings→claude 一条边、agent 一个中心点），11 个模块（>60% 代码）无任何约束。且残留 `module_pet`（已退役模块）死引用。
 
 ### 修法：改为动态全枚举
 
@@ -149,7 +149,7 @@ done
 
 ### 配套三条
 
-1. **删死引用**：清掉 `module_pet` / `module_pet_bridge` 相关断言与注释（`src/module_pet` 已不存在）。
+1. **删死引用**：清掉 `module_pet`（已退役模块）/ `module_pet_bridge` 相关断言与注释（`src/module_pet` 已不存在）。
 2. **补 `--self-test` 坏树**：加一棵 `cross_module_include` 坏树（在 `module_wallpaper` 里插一行 `#include "module_todo/..."`），断言恰好红。
 3. **补平台宏守卫**（子代理 P2 提议，一并做）：`src/module_*/`、`src/ui_kit/`、`src/app_*.cpp` 零 `#ifdef _WIN32|__APPLE__`，白名单只放 `*_win.cpp|*_macos.*|*_posix.cpp|*_stub.cpp|*_mm`。
 
@@ -316,7 +316,7 @@ inline constexpr int kZSplash        = 1500;  // 启动 splash（必须盖住一
 ### 截图重建方案
 
 仓内 `tests/ui_driver/` 已有场景驱动与截图能力。建议：
-1. 建 `tests/scenarios/screenshots.json`：列出要拍的页面与视口尺寸
+1. 建 `tests/scenarios/screenshots.json`（tests/scenarios/ 目录当前不存在，随本项创建）：列出要拍的页面与视口尺寸
 2. 脚本跑完输出到 `docs/screenshots/` 并覆盖旧的
 3. 在 CI 的 release 档跑一次自动更新（或手动触发）
 

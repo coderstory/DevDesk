@@ -311,7 +311,7 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
     ui_kit::DialogShellSpec shell;
     shell.id = "memory.dialog.engine";
     shell.width = ui_kit::DialogWidth::Standard;
-    shell.height = 320.0f;
+    shell.height = 372.0f;
     shell.open = true;
     shell.title = "telemem 记忆引擎";
     shell.cancel = {"关闭", [this] { engineDetailOpen_ = false; }};
@@ -381,6 +381,48 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                               area.w - 90.0f - core::theme::scaled(12.5f),
                               core::theme::scaled(12.5f)),
             false);
+        ry += core::theme::scaled(28.0f);
+        // need:380 B-4：「跑评测」自主控台健康格并入详情弹窗（能力保留、入口收敛）。
+        // 触发线读数一行（未评测 / 当前 pct% 达标或低于升级线）+ 右侧 96×28 按钮；
+        // 引擎非 Running 或评测中禁用（IMP-114-5 同口径）。
+        const int pct = snap.lastEval.recallPct;
+        const int threshold = snap.settings.recallThresholdPct;
+        const bool hasEval = pct >= 0;
+        const bool below = hasEval && pct < threshold;
+        const std::string evalLine =
+            !hasEval
+                ? "未评测 · 跑一轮出数"
+                : ("当前 " + std::to_string(pct) + "%（升级线 " +
+                   std::to_string(threshold) + "%）· " +
+                   (below ? "低于升级线" : "达标"));
+        row("memory.dialog.engine.eval", ry, "触发线", evalLine,
+            below);
+        const bool running = panel_.evalRunning();
+        const bool clickable =
+            !running && es.state == TelememEngine::State::Running;
+        ui_kit::ButtonOptions runOpts;
+        if (clickable) {
+            runOpts.onClick = [this] {
+                auto r = panel_.startEvalAsync();
+                if (r.isFail()) {
+                    showToast("评测未启动", r.errorMessage(), true);
+                } else {
+                    showToast("评测已启动",
+                              "冻结 15 查询转测引擎检索（本机 embedding，零 API 费）");
+                }
+            };
+        } else {
+            runOpts.hasTextColorOverride = true;
+            runOpts.textColorOverride = t.colors.textDisabled;
+        }
+        runOpts.hasBorderColor = true;
+        runOpts.borderColor = t.colors.borderDefault;
+        ui_kit::button(ui, "memory.dialog.engine.eval.run",
+                       running ? "评测中…" : "跑评测",
+                       ui_kit::ButtonLevel::Secondary,
+                       area.x + area.w - 96.0f - 14.0f,
+                       ry - core::theme::scaled(4.0f), 96.0f, 28.0f, t,
+                       runOpts);
         // 未安装态「首次安装向导」已上移至壳 thirdAction 左槽（矩阵 M17，见上方 spec）。
     });
 }

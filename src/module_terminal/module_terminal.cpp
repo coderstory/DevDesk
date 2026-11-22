@@ -15,9 +15,10 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
     // bug249：reader 线程产出新输出/子进程退出 → 请求一帧（非 UI 线程安全路径；
     // 常驻 onFrame 泵因此可摘，空闲终端零出帧）
     controller_.setOutputWake([] { core::platform::requestUiUpdate(); });
-    // need250：载入持久化设置并铺到新会话参数（db 未就绪/键缺失 → 默认值）
+    // need250：载入持久化设置并铺到新会话参数（db 未就绪/键缺失 → 默认值）。
+    // C-4（need380）：目录/回滚 UI 已砍，固定默认（空=主目录 / 1000 行）
     settings_ = loadTerminalSettings(::core::appDatabase());
-    controller_.setNewSessionOptions(settings_.shell, settings_.workDir, settings_.scrollback);
+    controller_.setNewSessionOptions(settings_.shell, "", kScrollbackDefault);
     // bug278④：面板结果通道装配（完成/× 由页面转发到 finishSettingsPanel）
     page_.setPanelResultHandler([this](bool commit) { finishSettingsPanel(commit); });
 }
@@ -114,8 +115,7 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
 // 快照（草稿丢弃，live preview 的改动下一帧随 settings_ 还原）。
 void TerminalModule::finishSettingsPanel(bool commit) {
     if (commit) {
-        controller_.setNewSessionOptions(settings_.shell, settings_.workDir,
-                                         settings_.scrollback);
+        controller_.setNewSessionOptions(settings_.shell, "", kScrollbackDefault);
         auto r = saveTerminalSettings(::core::appDatabase(), settings_);
         if (r.isFail()) LOG_WARN("Terminal: 设置保存失败: " + r.errorMessage());
     } else {

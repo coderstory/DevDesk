@@ -108,13 +108,6 @@ inline double numberAsDouble(const platform::json::JsonValue& v) {
     return static_cast<double>(v.asInt());
 }
 
-inline std::string trimSpaces(const std::string& s) {
-    std::size_t b = s.find_first_not_of(" \t\r\n");
-    if (b == std::string::npos) return {};
-    std::size_t e = s.find_last_not_of(" \t\r\n");
-    return s.substr(b, e - b + 1);
-}
-
 inline std::string candidatesSuffix(const std::string& value,
                                     const std::vector<std::string>& vocab) {
     const std::vector<std::string> hits = nearCandidates(value, vocab);

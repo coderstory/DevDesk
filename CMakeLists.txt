@@ -486,15 +486,6 @@ target_include_directories(DevDesk PRIVATE
 
 
 # 安装 / 拷贝资源
-# fonts/ 不入 git（.gitignore 按文件名忽略，下载前目录可能不存在/为空），
-# 必须守卫，否则新克隆/新 worktree 的 POST_BUILD 拷贝直接失败
-if(EXISTS "${CMAKE_SOURCE_DIR}/fonts")
-    add_custom_command(TARGET DevDesk POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/fonts" "$<TARGET_FILE_DIR:DevDesk>/fonts"
-        COMMENT "Copying fonts to build directory"
-    )
-endif()
 
 # 托盘图标（assets/tray-icon-template.png，2026-09-30 Bug A 修；macOS 侧
 # template 蒙版，Windows 侧品牌 .ico tray-icon-win.ico —— 路径由

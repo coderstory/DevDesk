@@ -83,16 +83,16 @@ std::vector<MigrationColumn> agentMessagesColumns() {
 core::Result<bool> tableExists(core::data::SqliteDb& db, const std::string& table) {
     auto prep = db.prepare(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?");
-    if (prep.isFail()) return core::Result<bool>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<bool>(prep);
     auto& stmt = prep.value();
     auto b = stmt.bind(1, table);
-    if (b.isFail()) return core::Result<bool>::fail(b.errorCode(), b.errorMessage());
+    if (b.isFail()) return core::propagate<bool>(b);
     auto s = stmt.step();
-    if (s.isFail()) return core::Result<bool>::fail(s.errorCode(), s.errorMessage());
+    if (s.isFail()) return core::propagate<bool>(s);
     auto row = stmt.currentRow();
-    if (row.isFail()) return core::Result<bool>::fail(row.errorCode(), row.errorMessage());
+    if (row.isFail()) return core::propagate<bool>(row);
     auto n = row.value().getInt64("COUNT(*)");
-    if (n.isFail()) return core::Result<bool>::fail(n.errorCode(), n.errorMessage());
+    if (n.isFail()) return core::propagate<bool>(n);
     return core::Result<bool>::ok(n.value() > 0);
 }
 
@@ -101,10 +101,10 @@ core::Result<std::set<std::string>> existingColumns(core::data::SqliteDb& db,
                                                       const std::string& table) {
     auto prep = db.prepare("PRAGMA table_info(" + table + ")");
     if (prep.isFail())
-        return core::Result<std::set<std::string>>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<std::set<std::string>>(prep);
     auto rows = prep.value().fetchAll();
     if (rows.isFail())
-        return core::Result<std::set<std::string>>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<std::set<std::string>>(rows);
     std::set<std::string> names;
     for (const auto& row : rows.value()) {
         auto name = row.getString("name");
@@ -123,7 +123,7 @@ core::Result<void> ensureTableColumns(
     // 1) 表名白名单校验
     auto tableName = migrationTableName(table);
     if (tableName.isFail()) {
-        return core::Result<void>::fail(tableName.errorCode(), tableName.errorMessage());
+        return core::propagate<void>(tableName);
     }
 
     // 2) 全部列的列名/列定义白名单校验——先整体解析，后统一执行（all-or-nothing）
@@ -136,22 +136,22 @@ core::Result<void> ensureTableColumns(
     for (const auto column : expected) {
         auto name = migrationColumnName(column);
         if (name.isFail()) {
-            return core::Result<void>::fail(name.errorCode(), name.errorMessage());
+            return core::propagate<void>(name);
         }
         auto ddl = migrationColumnDdl(column);
         if (ddl.isFail()) {
-            return core::Result<void>::fail(ddl.errorCode(), ddl.errorMessage());
+            return core::propagate<void>(ddl);
         }
         resolved.push_back({name.value(), ddl.value()});
     }
 
     auto exists = tableExists(db, tableName.value());
-    if (exists.isFail()) return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
+    if (exists.isFail()) return core::propagate<void>(exists);
     if (!exists.value()) return core::Result<void>::ok(); // 表不存在，applySchema 会建
 
     auto existing = existingColumns(db, tableName.value());
     if (existing.isFail())
-        return core::Result<void>::fail(existing.errorCode(), existing.errorMessage());
+        return core::propagate<void>(existing);
     const auto& cols = existing.value();
 
     for (const auto& [name, def] : resolved) {
@@ -184,12 +184,12 @@ constexpr size_t kFixedColumnCount =
 // 标量查询（SQL 必须把唯一结果列别名成 v）；无行按 0。
 core::Result<int64_t> queryScalarInt(core::data::SqliteDb& db, const std::string& sql) {
     auto prep = db.prepare(sql);
-    if (prep.isFail()) return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<int64_t>(prep);
     auto rows = prep.value().fetchAll();
-    if (rows.isFail()) return core::Result<int64_t>::fail(rows.errorCode(), rows.errorMessage());
+    if (rows.isFail()) return core::propagate<int64_t>(rows);
     if (rows.value().empty()) return core::Result<int64_t>::ok(0);
     auto value = rows.value()[0].getInt64("v");
-    if (value.isFail()) return core::Result<int64_t>::fail(value.errorCode(), value.errorMessage());
+    if (value.isFail()) return core::propagate<int64_t>(value);
     return core::Result<int64_t>::ok(value.value());
 }
 
@@ -197,16 +197,16 @@ core::Result<int64_t> queryScalarInt(core::data::SqliteDb& db, const std::string
 core::Result<int64_t> queryScalarInt1(core::data::SqliteDb& db, const std::string& sql,
                                       int64_t bindValue) {
     auto prep = db.prepare(sql);
-    if (prep.isFail()) return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<int64_t>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, bindValue); r.isFail()) {
-        return core::Result<int64_t>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<int64_t>(r);
     }
     auto rows = stmt.fetchAll();
-    if (rows.isFail()) return core::Result<int64_t>::fail(rows.errorCode(), rows.errorMessage());
+    if (rows.isFail()) return core::propagate<int64_t>(rows);
     if (rows.value().empty()) return core::Result<int64_t>::ok(0);
     auto value = rows.value()[0].getInt64("v");
-    if (value.isFail()) return core::Result<int64_t>::fail(value.errorCode(), value.errorMessage());
+    if (value.isFail()) return core::propagate<int64_t>(value);
     return core::Result<int64_t>::ok(value.value());
 }
 
@@ -221,20 +221,20 @@ core::Result<KindColumnHit> findKindColumn(core::data::SqliteDb& db, const std::
         "SELECT id, position FROM todo_columns WHERE kind = ? "
         "ORDER BY position ASC, id ASC LIMIT 1");
     if (prep.isFail())
-        return core::Result<KindColumnHit>::fail(prep.errorCode(), prep.errorMessage());
+        return core::propagate<KindColumnHit>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, kind); r.isFail()) {
-        return core::Result<KindColumnHit>::fail(r.errorCode(), r.errorMessage());
+        return core::propagate<KindColumnHit>(r);
     }
     auto rows = stmt.fetchAll();
     if (rows.isFail())
-        return core::Result<KindColumnHit>::fail(rows.errorCode(), rows.errorMessage());
+        return core::propagate<KindColumnHit>(rows);
     KindColumnHit hit;
     if (rows.value().empty()) return core::Result<KindColumnHit>::ok(hit);
     auto id = rows.value()[0].getInt64("id");
-    if (id.isFail()) return core::Result<KindColumnHit>::fail(id.errorCode(), id.errorMessage());
+    if (id.isFail()) return core::propagate<KindColumnHit>(id);
     auto pos = rows.value()[0].getInt64("position");
-    if (pos.isFail()) return core::Result<KindColumnHit>::fail(pos.errorCode(), pos.errorMessage());
+    if (pos.isFail()) return core::propagate<KindColumnHit>(pos);
     hit.id = id.value();
     hit.position = pos.value();
     return core::Result<KindColumnHit>::ok(hit);
@@ -248,10 +248,10 @@ core::Result<bool> fixedColumnsNeedMigration(core::data::SqliteDb& db) {
     {
         auto prep = db.prepare("PRAGMA table_info(todo_columns)");
         if (prep.isFail())
-            return core::Result<bool>::fail(prep.errorCode(), prep.errorMessage());
+            return core::propagate<bool>(prep);
         auto cols = prep.value().fetchAll();
         if (cols.isFail())
-            return core::Result<bool>::fail(cols.errorCode(), cols.errorMessage());
+            return core::propagate<bool>(cols);
         for (const auto& col : cols.value()) {
             auto name = col.getString("name");
             if (name.isOk() && name.value() == "kind") {
@@ -280,7 +280,7 @@ core::Result<bool> fixedColumnsNeedMigration(core::data::SqliteDb& db) {
         "AS v";
     auto problems = queryScalarInt(db, kProbeSql);
     if (problems.isFail())
-        return core::Result<bool>::fail(problems.errorCode(), problems.errorMessage());
+        return core::propagate<bool>(problems);
     return core::Result<bool>::ok(problems.value() > 0);
 }
 
@@ -323,7 +323,7 @@ core::Result<void> insertFixedColumn(core::data::SqliteDb& db, const FixedColumn
     auto prep = db.prepare(
         "INSERT INTO todo_columns (title, position, color, created_at, kind) "
         "VALUES (?, ?, ?, ?, ?)");
-    if (prep.isFail()) return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    if (prep.isFail()) return core::propagate<void>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, seed.title); r.isFail()) return r;
     if (auto r = stmt.bind(2, static_cast<int64_t>(position)); r.isFail()) return r;
@@ -331,7 +331,7 @@ core::Result<void> insertFixedColumn(core::data::SqliteDb& db, const FixedColumn
     if (auto r = stmt.bind(4, static_cast<int64_t>(std::time(nullptr))); r.isFail()) return r;
     if (auto r = stmt.bind(5, seed.kind); r.isFail()) return r;
     auto step = stmt.step();
-    if (step.isFail()) return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    if (step.isFail()) return core::propagate<void>(step);
     return core::Result<void>::ok();
 }
 
@@ -390,10 +390,10 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
         {
             auto prep = db.prepare("PRAGMA table_info(todo_columns)");
             if (prep.isFail())
-                return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+                return core::propagate<void>(prep);
             auto cols = prep.value().fetchAll();
             if (cols.isFail())
-                return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+                return core::propagate<void>(cols);
             for (const auto& col : cols.value()) {
                 auto name = col.getString("name");
                 if (name.isOk() && name.value() == "kind") {
@@ -410,10 +410,10 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
         // 1) 迁移前快照：列数 / 任务数（日志与数据守恒校验用）
         auto beforeCols = queryScalarInt(db, "SELECT COUNT(*) AS v FROM todo_columns");
         if (beforeCols.isFail())
-            return core::Result<void>::fail(beforeCols.errorCode(), beforeCols.errorMessage());
+            return core::propagate<void>(beforeCols);
         auto beforeTasks = queryScalarInt(db, "SELECT COUNT(*) AS v FROM todo_tasks");
         if (beforeTasks.isFail())
-            return core::Result<void>::fail(beforeTasks.errorCode(), beforeTasks.errorMessage());
+            return core::propagate<void>(beforeTasks);
 
         bool changed = false;
 
@@ -426,10 +426,10 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
                 "UPDATE todo_columns SET kind = 'doing' "
                 "WHERE kind IS NULL AND title = '进行中'");
             if (prep.isFail())
-                return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+                return core::propagate<void>(prep);
             auto step = prep.value().step();
             if (step.isFail())
-                return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+                return core::propagate<void>(step);
             if (sqlite3_changes(db.handle()) > 0) changed = true;
         }
 
@@ -440,14 +440,14 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
         for (size_t i = 0; i < kFixedColumnCount; ++i) {
             auto hit = findKindColumn(db, kFixedColumnSeeds[i].kind);
             if (hit.isFail())
-                return core::Result<void>::fail(hit.errorCode(), hit.errorMessage());
+                return core::propagate<void>(hit);
             if (hit.value().id == 0) {
                 auto inserted = insertFixedColumn(db, kFixedColumnSeeds[i],
                                                   static_cast<int>(i));
                 if (inserted.isFail()) return inserted;
                 hit = findKindColumn(db, kFixedColumnSeeds[i].kind);
                 if (hit.isFail())
-                    return core::Result<void>::fail(hit.errorCode(), hit.errorMessage());
+                    return core::propagate<void>(hit);
                 ++createdColumns;
             }
             fixedIds[i] = hit.value().id;
@@ -467,14 +467,14 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
             auto prep = db.prepare(
                 "SELECT id, kind FROM todo_columns ORDER BY position ASC, id ASC");
             if (prep.isFail())
-                return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+                return core::propagate<void>(prep);
             auto cols = prep.value().fetchAll();
             if (cols.isFail())
-                return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+                return core::propagate<void>(cols);
             for (const auto& col : cols.value()) {
                 auto idResult = col.getInt64("id");
                 if (idResult.isFail())
-                    return core::Result<void>::fail(idResult.errorCode(), idResult.errorMessage());
+                    return core::propagate<void>(idResult);
                 const int64_t id = idResult.value();
                 bool isFixed = false;
                 for (size_t i = 0; i < kFixedColumnCount; ++i) {
@@ -511,31 +511,31 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
                 "SELECT COALESCE(MAX(position), -1) AS v FROM todo_tasks WHERE column_id = ?",
                 targetId);
             if (maxPos.isFail())
-                return core::Result<void>::fail(maxPos.errorCode(), maxPos.errorMessage());
+                return core::propagate<void>(maxPos);
             {
                 auto prep = db.prepare(
                     "UPDATE todo_tasks SET column_id = ?, position = position + ? "
                     "WHERE column_id = ?");
                 if (prep.isFail())
-                    return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+                    return core::propagate<void>(prep);
                 auto& stmt = prep.value();
                 if (auto r = stmt.bind(1, targetId); r.isFail()) return r;
                 if (auto r = stmt.bind(2, maxPos.value() + 1); r.isFail()) return r;
                 if (auto r = stmt.bind(3, extra.id); r.isFail()) return r;
                 auto step = stmt.step();
                 if (step.isFail())
-                    return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+                    return core::propagate<void>(step);
             }
             {
                 // 该列任务已全部搬到目标列 → 删列不再触发任何任务级联删除
                 auto prep = db.prepare("DELETE FROM todo_columns WHERE id = ?");
                 if (prep.isFail())
-                    return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+                    return core::propagate<void>(prep);
                 auto& stmt = prep.value();
                 if (auto r = stmt.bind(1, extra.id); r.isFail()) return r;
                 auto step = stmt.step();
                 if (step.isFail())
-                    return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+                    return core::propagate<void>(step);
             }
             ++mergedColumns;
         }
@@ -547,20 +547,20 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
             auto pos = queryScalarInt1(
                 db, "SELECT position AS v FROM todo_columns WHERE id = ?", fixedIds[i]);
             if (pos.isFail())
-                return core::Result<void>::fail(pos.errorCode(), pos.errorMessage());
+                return core::propagate<void>(pos);
             if (pos.value() != static_cast<int64_t>(i)) positionsDirty = true;
         }
         if (positionsDirty) {
             for (size_t i = 0; i < kFixedColumnCount; ++i) {
                 auto prep = db.prepare("UPDATE todo_columns SET position = ? WHERE id = ?");
                 if (prep.isFail())
-                    return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+                    return core::propagate<void>(prep);
                 auto& stmt = prep.value();
                 if (auto r = stmt.bind(1, static_cast<int64_t>(i)); r.isFail()) return r;
                 if (auto r = stmt.bind(2, fixedIds[i]); r.isFail()) return r;
                 auto step = stmt.step();
                 if (step.isFail())
-                    return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+                    return core::propagate<void>(step);
             }
             changed = true;
         }
@@ -569,10 +569,10 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
         //    不等 = 有任务被 CASCADE 连带删除；返回失败让整段 ROLLBACK，绝不带数据损失提交。
         auto afterCols = queryScalarInt(db, "SELECT COUNT(*) AS v FROM todo_columns");
         if (afterCols.isFail())
-            return core::Result<void>::fail(afterCols.errorCode(), afterCols.errorMessage());
+            return core::propagate<void>(afterCols);
         auto afterTasks = queryScalarInt(db, "SELECT COUNT(*) AS v FROM todo_tasks");
         if (afterTasks.isFail())
-            return core::Result<void>::fail(afterTasks.errorCode(), afterTasks.errorMessage());
+            return core::propagate<void>(afterTasks);
 
         if (afterTasks.value() != beforeTasks.value()) {
             LOG_ERROR("Todo 固定四列迁移任务数不守恒（前 " +
@@ -612,14 +612,14 @@ core::Result<void> migrateDropDeprecatedClaudeConfig(core::data::SqliteDb& db) {
     // → 直接 no-op。幂等：先查存在性再动 DDL，重复调用不再命中。
     auto table = tableExists(db, "claude_shared_configs");
     if (table.isFail())
-        return core::Result<void>::fail(table.errorCode(), table.errorMessage());
+        return core::propagate<void>(table);
     if (table.value()) {
         auto drop = db.exec("DROP TABLE IF EXISTS claude_shared_configs");
         if (drop.isFail()) return drop;
     }
     auto cols = existingColumns(db, "claude_profiles");
     if (cols.isFail())
-        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+        return core::propagate<void>(cols);
     const char* deprecatedCols[] = {
         "shared_config_id",
         "dialect_override",
@@ -652,11 +652,11 @@ core::Result<void> migrateTodoDocLinkColumn(core::data::SqliteDb& db) {
     // 不做任何行级回填——文档关联只能由用户显式建立。
     auto exists = tableExists(db, "todo_tasks");
     if (exists.isFail())
-        return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
+        return core::propagate<void>(exists);
     if (!exists.value()) return core::Result<void>::ok();
     auto cols = existingColumns(db, "todo_tasks");
     if (cols.isFail())
-        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+        return core::propagate<void>(cols);
     if (cols.value().count("doc_path") > 0) return core::Result<void>::ok();
     auto alter = db.exec(
         "ALTER TABLE todo_tasks ADD COLUMN doc_path TEXT NOT NULL DEFAULT ''");
@@ -669,11 +669,11 @@ core::Result<void> migrateProjectCardColumns(core::data::SqliteDb& db) {
     // 一致（漏列/改默认值 = 迁移漂移）；name 是主键不参与补列。
     auto exists = tableExists(db, "project_cards");
     if (exists.isFail())
-        return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
+        return core::propagate<void>(exists);
     if (!exists.value()) return core::Result<void>::ok();
     auto cols = existingColumns(db, "project_cards");
     if (cols.isFail())
-        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+        return core::propagate<void>(cols);
     struct ColumnDdl {
         const char* name;
         const char* ddl;
@@ -704,10 +704,10 @@ core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
 
     auto doneHit = findKindColumn(db, "done");
     if (doneHit.isFail())
-        return core::Result<void>::fail(doneHit.errorCode(), doneHit.errorMessage());
+        return core::propagate<void>(doneHit);
     auto archHit = findKindColumn(db, "archive");
     if (archHit.isFail())
-        return core::Result<void>::fail(archHit.errorCode(), archHit.errorMessage());
+        return core::propagate<void>(archHit);
     if (doneHit.value().id == 0 || archHit.value().id == 0) {
         return core::Result<void>::ok();  // 缺列 = 无归档目标，零操作（不失败）
     }
@@ -721,7 +721,7 @@ core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
             "SELECT COALESCE(MAX(position), -1) AS v FROM todo_tasks WHERE column_id = ?",
             archiveId);
         if (maxPos.isFail())
-            return core::Result<void>::fail(maxPos.errorCode(), maxPos.errorMessage());
+            return core::propagate<void>(maxPos);
         int64_t nextPos = maxPos.value() + 1;
 
         auto prep = db.prepare(
@@ -729,25 +729,24 @@ core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
             "AND (completed_at IS NULL OR completed_at < ?) "
             "ORDER BY position ASC, id ASC");
         if (prep.isFail())
-            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            return core::propagate<void>(prep);
         auto& stmt = prep.value();
         if (auto r = stmt.bind(1, doneId); r.isFail()) return r;
         if (auto r = stmt.bind(2, midnight); r.isFail()) return r;
         auto rows = stmt.fetchAll();
         if (rows.isFail())
-            return core::Result<void>::fail(rows.errorCode(), rows.errorMessage());
+            return core::propagate<void>(rows);
 
         for (const auto& row : rows.value()) {
             auto id = row.getInt64("id");
             if (id.isFail())
-                return core::Result<void>::fail(id.errorCode(), id.errorMessage());
+                return core::propagate<void>(id);
             // 逐行 prepare（Statement 换绑须先 reset，逐行 prepare 免去 reset 步）
             auto moveStmt = db.prepare(
                 "UPDATE todo_tasks SET column_id = ?, position = ?, archived_at = ?, "
                 "updated_at = ? WHERE id = ?");
             if (moveStmt.isFail())
-                return core::Result<void>::fail(moveStmt.errorCode(),
-                                                moveStmt.errorMessage());
+                return core::propagate<void>(moveStmt);
             auto& mv = moveStmt.value();
             if (auto r = mv.bind(1, archiveId); r.isFail()) return r;
             if (auto r = mv.bind(2, nextPos); r.isFail()) return r;
@@ -756,7 +755,7 @@ core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
             if (auto r = mv.bind(5, id.value()); r.isFail()) return r;
             auto step = mv.step();
             if (step.isFail())
-                return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+                return core::propagate<void>(step);
             ++nextPos;
         }
         return core::Result<void>::ok();

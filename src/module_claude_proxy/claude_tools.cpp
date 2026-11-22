@@ -5,6 +5,7 @@
 
 #include "core/logging.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <optional>
 #include <string>
@@ -22,35 +23,14 @@ namespace pj = platform::json;
 // 结果组装辅助
 
 // 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
-Result<ToolResult> toolError(const std::string& message) {
-    pj::JsonObject err;
-    err.set("error", pj::makeString(message));
-    auto text = pj::stringify(pj::JsonValue(std::move(err)));
-    if (text.isFail()) {
-        // 自有字面量 + 一个字符串字段的序列化失败 = 编程不变量破坏
-        return Result<ToolResult>::fail(core::ErrorCode::Internal,
-                                        "工具错误消息序列化失败: " +
-                                            text.errorMessage());
-    }
-    return Result<ToolResult>::ok(ToolResult{true, text.value()});
-}
+using platform::tool_kit::toolError;
 
 Result<ToolResult> toolOk(const std::string& contentJson) {
     return Result<ToolResult>::ok(ToolResult{false, contentJson});
 }
 
 // 参数解析：空串视为 {}；其余必须解析成 object。失败 = 参数非法（工具级错误）
-Result<pj::JsonObject> parseArgs(const ToolArgs& args) {
-    if (args.json.empty()) {
-        return Result<pj::JsonObject>::ok(pj::JsonObject());
-    }
-    auto v = pj::parse(args.json);
-    if (v.isFail() || !v.value().isObject()) {
-        return Result<pj::JsonObject>::fail(core::ErrorCode::ValidationError,
-                                            "参数不是合法 JSON 对象");
-    }
-    return Result<pj::JsonObject>::ok(v.value().asObject());
-}
+using platform::tool_kit::parseArgs;
 
 // 结果对象 → contentJson 文本（三处共用；序列化失败 = 工具级错误）
 Result<std::string> stringifyObj(pj::JsonObject obj) {

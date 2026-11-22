@@ -705,8 +705,7 @@ core::Result<std::string> MarkdownService::read(const fs::path& relPath) {
     const std::string relPosix = toPosix(relPath);
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
-        return core::Result<std::string>::fail(resolved.errorCode(),
-                                               resolved.errorMessage());
+        return core::propagate<std::string>(resolved);
     }
     const auto absPath = resolved.value();
     std::ifstream ifs(absPath);
@@ -725,8 +724,7 @@ core::Result<void> MarkdownService::write(const fs::path& relPath,
     const std::string relPosix = toPosix(relPath);
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
-        return core::Result<void>::fail(resolved.errorCode(),
-                                        resolved.errorMessage());
+        return core::propagate<void>(resolved);
     }
     const auto absPath = resolved.value();
 
@@ -767,8 +765,7 @@ core::Result<void> MarkdownService::create(const fs::path& relPath) {
     const std::string relPosix = toPosix(norm);
     const auto resolved = resolve(norm);
     if (resolved.isFail()) {
-        return core::Result<void>::fail(resolved.errorCode(),
-                                        resolved.errorMessage());
+        return core::propagate<void>(resolved);
     }
     const auto absPath = resolved.value();
 
@@ -810,8 +807,7 @@ core::Result<void> MarkdownService::remove(const fs::path& relPath) {
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
         // 越界路径拒绝删（否则是目录外任意文件删除缺口）
-        return core::Result<void>::fail(resolved.errorCode(),
-                                        resolved.errorMessage());
+        return core::propagate<void>(resolved);
     }
     const auto absPath = resolved.value();
 
@@ -842,13 +838,11 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
     std::error_code ec;
     const auto resolvedOld = resolve(oldRelPath);
     if (resolvedOld.isFail()) {
-        return core::Result<std::string>::fail(resolvedOld.errorCode(),
-                                               resolvedOld.errorMessage());
+        return core::propagate<std::string>(resolvedOld);
     }
     const auto resolvedNew = resolve(norm);
     if (resolvedNew.isFail()) {
-        return core::Result<std::string>::fail(resolvedNew.errorCode(),
-                                               resolvedNew.errorMessage());
+        return core::propagate<std::string>(resolvedNew);
     }
     const auto absOld = resolvedOld.value();
     const auto absNew = resolvedNew.value();
@@ -1294,11 +1288,6 @@ core::Result<std::vector<NoteMeta>> MarkdownService::notesWithTag(
     return core::Result<std::vector<NoteMeta>>::ok(std::move(out));
 }
 
-NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
-    return rowToNoteImpl(row);
-}
-
-
 core::Result<bool> MarkdownService::pollChanged() {
     // Credit 语义：watcher 报过事件 → 本次必返 true（消费该 credit），即使
     // (mtime,size) 比对失明也强制调用方跑一轮 rescan + UI 刷新。
@@ -1360,8 +1349,7 @@ core::Result<bool> MarkdownService::compareDiskChanges() {
 core::Result<int64_t> MarkdownService::fileMtime(const fs::path& relPath) const {
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
-        return core::Result<int64_t>::fail(resolved.errorCode(),
-                                           resolved.errorMessage());
+        return core::propagate<int64_t>(resolved);
     }
     const auto absPath = resolved.value();
     const int64_t mtime = fileMtimeEpoch(absPath);
@@ -1500,8 +1488,7 @@ core::Result<void> MarkdownService::createFolder(const std::string& name) {
 core::Result<int64_t> MarkdownService::folderNoteCount(const fs::path& relPath) const {
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
-        return core::Result<int64_t>::fail(resolved.errorCode(),
-                                           resolved.errorMessage());
+        return core::propagate<int64_t>(resolved);
     }
     const auto absPath = resolved.value();
     std::error_code ec;
@@ -1562,8 +1549,7 @@ core::Result<std::string> MarkdownService::renameFolder(
     }
     const auto resolvedOld = resolve(oldRelPath);
     if (resolvedOld.isFail()) {
-        return core::Result<std::string>::fail(resolvedOld.errorCode(),
-                                               resolvedOld.errorMessage());
+        return core::propagate<std::string>(resolvedOld);
     }
     const auto absOld = resolvedOld.value();
     std::error_code ec;
@@ -1599,8 +1585,7 @@ core::Result<void> MarkdownService::deleteFolder(const fs::path& relPath) {
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
         // 越界路径拒绝删（与 remove 同口径：否则是目录外任意删除缺口）
-        return core::Result<void>::fail(resolved.errorCode(),
-                                        resolved.errorMessage());
+        return core::propagate<void>(resolved);
     }
     const auto absPath = resolved.value();
     std::error_code ec;
@@ -1611,8 +1596,7 @@ core::Result<void> MarkdownService::deleteFolder(const fs::path& relPath) {
     // 契约：递归判定任意层级 .md；非空拒绝且不删（删除误放行缺口）
     auto count = folderNoteCount(relPath);
     if (count.isFail()) {
-        return core::Result<void>::fail(count.errorCode(),
-                                        count.errorMessage());
+        return core::propagate<void>(count);
     }
     if (count.value() != 0) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,

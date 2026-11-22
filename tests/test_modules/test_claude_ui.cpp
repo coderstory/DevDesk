@@ -186,10 +186,8 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);
-    // 删除 / 建副本 / 复制配置三键不在动作行（入口只剩列表右键菜单，业务逻辑同源保留）
+    // 删除 / 复制配置不在动作行（删除走确认弹层、复制配置走列表右键菜单）
     DOCTEST_CHECK(ui.find("claude.act.del") == nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
     DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
     // 无服务时显示错误态（不静默吞错显示假空态）
     DOCTEST_REQUIRE(ui.find("claude.profiles.error") != nullptr);
@@ -212,12 +210,10 @@ REGISTER_TEST(claude_module_compose_null_service,
         DOCTEST_CHECK(warnMsg->text.find("重启") != std::string::npos);
     }
 
-    // 无选中 + 无服务：动作行只剩 3 键——「未选中提示」通道由右键菜单的 warn 覆盖
+    // 无选中 + 无服务：动作行只剩 2 键——「未选中提示」通道由右键菜单的 warn 覆盖
     {
         DOCTEST_CHECK(ui.find("claude.act.del.bg") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.dup.bg") == nullptr);
         DOCTEST_CHECK(ui.find("claude.act.copyconfig.bg") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
     }
 
     mod->onStop();
@@ -229,7 +225,7 @@ REGISTER_TEST(claude_module_compose_null_service,
 // n−1 个间隙；多扣一个 gap 会让末键右缘短一整个 gap。
 
 REGISTER_TEST(claude_module_actions_row_alignment,
-              "claude_module: 3 键均分——末键（运行）右缘对齐分隔线（headless layout）", {
+              "claude_module: 2 键均分——末键（编辑）右缘对齐分隔线（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     auto mod = mkmod();
     eui::Screen screen;
@@ -243,17 +239,17 @@ REGISTER_TEST(claude_module_actions_row_alignment,
 
     const auto* divider = ui.find("claude.act.divider");
     const auto* row = ui.find("claude.detail.actions");
-    const auto* run = ui.find("claude.act.run.bg");
+    const auto* lastBtn = ui.find("claude.act.edit.bg");
     DOCTEST_REQUIRE(divider != nullptr);
     DOCTEST_REQUIRE(row != nullptr);
-    DOCTEST_REQUIRE(run != nullptr);
+    DOCTEST_REQUIRE(lastBtn != nullptr);
     const float dividerRight = divider->frame.x + divider->frame.width;
-    const float runRight = run->frame.x + run->frame.width;
-    DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
-    DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
-        // 单键宽 = (行宽 − 2×gap) / 3（gap=8）
-    const float expect = (row->frame.width - 8.0f * 2.0f) / 3.0f;
-    DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
+    const float lastRight = lastBtn->frame.x + lastBtn->frame.width;
+    DOCTEST_CHECK(lastRight >= dividerRight - 0.5f);
+    DOCTEST_CHECK(lastRight <= dividerRight + 0.5f);
+        // 单键宽 = (行宽 − gap) / 2（gap=8）
+    const float expect = (row->frame.width - 8.0f) / 2.0f;
+    DOCTEST_CHECK(std::fabs(lastBtn->frame.width - expect) < 0.01f);
     DOCTEST_CHECK(std::fabs(ui.find("claude.act.test.bg")->frame.width - expect) <
                   0.01f);
 
@@ -443,10 +439,8 @@ REGISTER_TEST(claude_module_compose_with_data,
 
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);
-    // 删除 / 建副本 / 复制配置三键不在动作行（入口只剩列表右键菜单）
+    // 删除 / 复制配置不在动作行（复制配置走列表右键菜单）
     DOCTEST_CHECK(ui.find("claude.act.del") == nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
     DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
 
@@ -1223,7 +1217,7 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
         wrap->onContextMenu(pe, rect);
     }
     frame("esc2b");
-    DOCTEST_CHECK(click(ui, "claude.list.ctx.level.0.item.3"));
+    DOCTEST_CHECK(click(ui, "claude.list.ctx.level.0.item.2"));
     frame("esc3");
     DOCTEST_REQUIRE(ui.find("claude.dialog.delete.panel") != nullptr);
     DOCTEST_CHECK_EQ(ui.find("claude.dialog.delete.panel")->opacity, 1.0f);
@@ -1310,120 +1304,6 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     }
     DOCTEST_CHECK(updated);
     DOCTEST_CHECK(hasName(cardNames(), "官方"));
-
-    mod->onStop();
-    return true;
-})
-
-// 详情页「复制」→ 建副本、不激活、选中态不变
-// 卡片列表走后台刷新 → 新卡片用有界轮询；toast / 选中态同帧即定。
-REGISTER_TEST(claude_module_duplicate_profile_ui,
-              "claude_module: 复制键建副本不激活且选中态不变（headless）", {
-    TestEnv env;
-    auto a = env.svc->createProfile("官方", "https://api.anthropic.com",
-                                    "sk-ant-aaaa-1111", "claude-sonnet-4-5");
-    DOCTEST_REQUIRE(a.isOk());
-    auto b = env.svc->createProfile("中转", "https://relay.example.com",
-                                    "sk-ant-bbbb-2222", "claude-opus-4-5");
-    DOCTEST_REQUIRE(b.isOk());
-    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
-
-    auto mod = mkmod();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    auto compose = [&](eui::Ui& ui) {
-        ui.begin("claude_dup");
-        mod->compose(ui, screen);
-        ui.end();
-    };
-    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
-        const auto* node = ui.find(id);
-        if (node == nullptr || node->onClick == nullptr) {
-            std::cerr << "missing clickable: " << id << std::endl;
-            return false;
-        }
-        node->onClick();
-        return true;
-    };
-
-    // 详情动作行不再有「建副本」键（入口只剩右键菜单）。列表序 = is_active DESC,
-    // name ASC → index 1 =「中转」，选中它
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
-        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
-    }
-    // 右键菜单「建副本」（item.1）→ 复制源 = 选中项
-    auto dupViaCtxMenu = [&](const char* tag) -> bool {
-        eui::Ui ui;
-        compose(ui);
-        const auto* nameV = ui.find("claude.field.name.value");
-        if (nameV == nullptr) return false;
-        DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
-        const auto* wrap = ui.find("claude.profile.1.wrap");
-        if (wrap == nullptr || wrap->onContextMenu == nullptr) return false;
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        pe.x = 400;
-        pe.y = 300;
-        wrap->onContextMenu(pe, rect);
-        eui::Ui ui2;
-        ui2.begin(tag);
-        mod->compose(ui2, screen);
-        ui2.end();
-        const auto* item = ui2.find("claude.list.ctx.level.0.item.1");
-        if (item == nullptr || item->onClick == nullptr) return false;
-        item->onClick();
-        return true;
-    };
-    DOCTEST_REQUIRE(dupViaCtxMenu("claude_dup_ctx"));
-    {
-        eui::Ui ui;
-        compose(ui);
-        const auto* msg = ui.find("claude.toast.message");
-        DOCTEST_REQUIRE(msg != nullptr);
-        DOCTEST_CHECK(msg->text.find("中转 副本") != std::string::npos);
-        DOCTEST_CHECK(msg->text.find("未激活") != std::string::npos);
-        const auto* nameV = ui.find("claude.field.name.value");
-        DOCTEST_REQUIRE(nameV != nullptr);
-        DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
-    }
-    int64_t copyId = 0;
-    {
-        auto list = env.svc->listProfiles();
-        DOCTEST_REQUIRE(list.isOk());
-        DOCTEST_REQUIRE_EQ(list.value().size(), static_cast<size_t>(3));
-        for (const auto& p : list.value()) {
-            if (p.name == "中转 副本") copyId = p.id;
-        }
-        DOCTEST_REQUIRE(copyId != 0);
-        auto got = env.svc->getProfile(copyId);
-        DOCTEST_REQUIRE(got.isOk());
-        DOCTEST_CHECK_EQ(got.value().baseUrl,
-                         std::string("https://relay.example.com"));
-        DOCTEST_CHECK(!got.value().isActive);
-        auto key = env.svc->loadApiKey(copyId);
-        DOCTEST_REQUIRE(key.isOk());
-        DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-bbbb-2222"));
-        auto gotA = env.svc->getProfile(a.value().id);
-        DOCTEST_REQUIRE(gotA.isOk());
-        DOCTEST_CHECK(gotA.value().isActive);
-    }
-    // UI 层：新卡片出现（后台刷新 → 有界轮询），激活徽标仍在 index 0
-    bool sawCopy = false;
-    for (int i = 0; i < 250 && !sawCopy; ++i) {
-        eui::Ui ui;
-        compose(ui);
-        const auto* n = ui.find("claude.profile.2.name");
-        if (n != nullptr && n->text == "中转 副本") {
-            sawCopy = true;
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-    }
-    DOCTEST_CHECK(sawCopy);
 
     mod->onStop();
     return true;
@@ -1855,125 +1735,6 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
     return true;
 })
 
-static std::string s_claudeRunPickerDir;  // 假 picker 目标目录（函数指针缝，不能捕获）
-
-REGISTER_TEST(claude_module_run_button_headless,
-              "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 收到 --settings 参数", {
-    TestEnv env;
-    test_support::DataRootEnv root(kDbPrefix, "run");
-    // doRun 先弹原生目录选择框：注入假 picker 防真弹窗阻塞套件。
-    // RAII 保证断言失败提前退出也复位，stub 不泄漏进后续用例
-    struct PickerStub {
-        PickerStub(const std::string& d) {
-            s_claudeRunPickerDir = d;
-            platform::folderpicker::setPickerForTest(
-                [](const std::string&, const std::string&) {
-                    return core::Result<std::string>::ok(s_claudeRunPickerDir);
-                });
-        }
-        ~PickerStub() { platform::folderpicker::setPickerForTest(nullptr); }
-    } pickerStub(root.dir);
-    auto mod = mkmod();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    auto compose = [&](eui::Ui& ui) {
-        ui.begin("claude_run");
-        mod->compose(ui, screen);
-        ui.end();
-    };
-    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
-        const auto* node = ui.find(id);
-        if (node == nullptr || node->onClick == nullptr) {
-            std::cerr << "missing clickable: " << id << std::endl;
-            return false;
-        }
-        node->onClick();
-        return true;
-    };
-        // DB 查询在后台线程 + 200ms 节流 → 「变更可见」最多晚一帧，有界轮询等可见
-    // 有界轮询等可见（同本文件「compose 缓存等价」用例的 composeUntil）
-    auto composeUntil = [&](auto&& pred) -> bool {
-        for (int i = 0; i < 200; ++i) {
-            eui::Ui ui;
-            compose(ui);
-            if (pred(ui)) return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        return false;
-    };
-
-    int launchCalls = 0;
-    platform::terminal::LaunchSpec got;
-    env.svc->setTerminalLauncher([&](const platform::terminal::LaunchSpec& s) {
-        ++launchCalls;
-        got = s;
-        return core::Result<void>::ok();
-    });
-    // runProfile 直连形态不启代理：isProxyRunning 全程恒 false（零全局改动）
-
-    // 第 7 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.run.hint") != nullptr);   // 副提示（D-1）
-        DOCTEST_CHECK(click(ui, "claude.act.run.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        const auto* msg = ui.find("claude.toast.message");
-        DOCTEST_REQUIRE(msg != nullptr);
-        DOCTEST_CHECK(msg->text.find("请先选择 Profile") != std::string::npos);
-        DOCTEST_CHECK_EQ(launchCalls, 0);          // 无选中不开会话
-        DOCTEST_CHECK(!env.svc->isProxyRunning()); // 也没起代理
-    }
-
-    // 有 profile 且选中 → 点击后假 launch 被调用一次、参数含 --settings <路径>
-    auto a = env.svc->createProfile("运行目标", "https://run.example.com",
-                                    "sk-ant-run-ui-0001", "");
-    DOCTEST_REQUIRE(a.isOk());
-    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
-    // 外部直写 service 绕过模块的缓存帧 → 打脏（onPageEnter 语义），并轮询等
-    // 列表可见：否则 profile 列表仍是空的、选不中卡片
-    mod->onPageEnter();
-    {
-        DOCTEST_CHECK(composeUntil([&](eui::Ui& ui) {
-            if (ui.find("claude.profile.0.bg") == nullptr) return false;
-            return click(ui, "claude.profile.0.bg");   // 选中
-        }));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.run.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK_EQ(launchCalls, 1);
-        DOCTEST_CHECK_EQ(got.title, std::string("运行目标 · Claude Code"));
-        DOCTEST_CHECK_EQ(got.program, std::string("claude"));
-        // D-1：argv 含 --settings + run-settings/ 下的路径（断言参数，不真起进程）
-        DOCTEST_REQUIRE_EQ(got.args.size(), static_cast<size_t>(2));
-        DOCTEST_CHECK_EQ(got.args[0], std::string("--settings"));
-        const std::filesystem::path settingsFile(got.args[1]);
-        DOCTEST_CHECK_EQ(settingsFile.parent_path().string(),
-                         (std::filesystem::path(root.dir) / "run-settings").string());
-        DOCTEST_CHECK(std::filesystem::exists(settingsFile));   // 落盘成功
-        DOCTEST_CHECK(!env.svc->isProxyRunning());              // 直连不启代理
-        const auto* msg = ui.find("claude.toast.message");
-        DOCTEST_REQUIRE(msg != nullptr);
-        // 直连语义提示（D-1：临时配置生命周期、零全局改动）
-        DOCTEST_CHECK(msg->text.find("全局配置") != std::string::npos);
-        std::error_code rmEc;
-        std::filesystem::remove(settingsFile, rmEc);
-    }
-    return true;
-})
-
 REGISTER_TEST(claude_ui_logic_pure_functions,
               "claude_ui_logic: 纯函数等价断言（模型摘要）", {
     using module::claude::modelsSummary;
@@ -2032,16 +1793,15 @@ REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
     };
 
         // 库空（shown 为 null）：三键节点一律不在动作行，
-    // 3 键仍在（防误渲染提示）
+    // 2 键仍在（防误渲染提示）
     {
         eui::Ui ui;
         compose(ui);
-        for (const char* k : {"claude.act.del", "claude.act.dup",
+        for (const char* k : {"claude.act.del",
                               "claude.act.copyconfig"}) {
             DOCTEST_CHECK(ui.find(std::string(k) + ".bg") == nullptr);
         }
         DOCTEST_CHECK(ui.find("claude.act.test.bg") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
     }
 
     auto a = env.svc->createProfile("导出源", "https://cfg.example.com",
@@ -2063,20 +1823,19 @@ REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
     }
     DOCTEST_CHECK(cardReady);
 
-    // 动作行只剩 3 键（顺序：测试连通/编辑/运行），且窄行下
+    // 动作行只剩 2 键（顺序：测试连通/编辑），且窄行下
     {
         eui::Ui ui;
         compose(ui);
-        for (const char* k : {"claude.act.test",
-                              "claude.act.edit", "claude.act.run"}) {
+        for (const char* k : {"claude.act.test", "claude.act.edit"}) {
             DOCTEST_CHECK(ui.find(std::string(k) + ".bg") != nullptr);
         }
-        for (const char* k : {"claude.act.del", "claude.act.dup",
+        for (const char* k : {"claude.act.del",
                               "claude.act.copyconfig"}) {
             DOCTEST_CHECK(ui.find(std::string(k) + ".bg") == nullptr);
         }
     }
-    // 右键菜单 → 「复制配置」（item.2）→ 真派发：toast「已复制配置」
+    // 右键菜单 → 「复制配置」（item.1）→ 真派发：toast「已复制配置」
     //（headless 下 setClipboardText 经 GLFW 未 init 早退 = 安全 no-op，不写真
     // 剪贴板；剪贴板真写以真机验收）
     {
@@ -2092,7 +1851,7 @@ REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
         wrap->onContextMenu(pe, rect);
         eui::Ui ui2;
         compose(ui2);
-        DOCTEST_CHECK(click(ui2, "claude.list.ctx.level.0.item.2"));
+        DOCTEST_CHECK(click(ui2, "claude.list.ctx.level.0.item.1"));
     }
     {
         eui::Ui ui;
@@ -2150,7 +1909,7 @@ bool click(eui::Ui& ui, const std::string& id) { return clickById(ui, id); }
 }  // namespace
 
 REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
-              "claude_module: 动作行 3 键 actW 等分几何（macOS 真实尺寸）", {
+              "claude_module: 动作行 2 键 actW 等分几何（macOS 真实尺寸）", {
     TestEnv env;
     auto a = env.svc->createProfile("几何源", "https://geo.example.com",
                                     "sk-ant-geo-0001", "m");
@@ -2164,17 +1923,17 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_copycfg_geom", kW, kH);
     const auto* row = ui.find("claude.detail.actions");
-    const auto* run = ui.find("claude.act.run.bg");
+    const auto* lastBtn = ui.find("claude.act.edit.bg");
     DOCTEST_REQUIRE(row != nullptr);
-    DOCTEST_REQUIRE(run != nullptr);
+    DOCTEST_REQUIRE(lastBtn != nullptr);
     const float w0 = row->frame.width;
-    // 动作行 3 键，末键（运行）右缘对齐断言据此定宽
-    const float expect = (w0 - 8.0f * 2.0f) / 3.0f;
-    DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
+    // 动作行 2 键，末键（编辑）右缘对齐断言据此定宽
+    const float expect = (w0 - 8.0f) / 2.0f;
+    DOCTEST_CHECK(std::fabs(lastBtn->frame.width - expect) < 0.01f);
     // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
     const float rowRight = row->frame.x + row->frame.width;
-    const float runRight = run->frame.x + run->frame.width;
-    DOCTEST_CHECK(std::fabs(rowRight - runRight) < 0.5f);
+    const float lastRight = lastBtn->frame.x + lastBtn->frame.width;
+    DOCTEST_CHECK(std::fabs(rowRight - lastRight) < 0.5f);
     mod->onStop();
     return true;
 })
@@ -2214,9 +1973,8 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
                     std::to_string(btn->frame.y + btn->frame.height) +
                     " panel bottom=" + std::to_string(leftBottom));
         }
-        // 右列动作区三钮 + 副提示 + 分隔线完整可见
-        for (const char* id : {"claude.act.test", "claude.act.edit",
-                               "claude.act.run"}) {
+        // 右列动作区两钮 + 分隔线完整可见
+        for (const char* id : {"claude.act.test", "claude.act.edit"}) {
             const auto* btn = ui.find(id);
             DOCTEST_REQUIRE(btn != nullptr);
             DOCTEST_CHECK_MESSAGE(
@@ -2225,12 +1983,8 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
                     std::to_string(btn->frame.y + btn->frame.height) +
                     " panel bottom=" + std::to_string(rightBottom));
         }
-        const auto* hint = ui.find("claude.act.run.hint");
         const auto* divider = ui.find("claude.act.divider");
-        DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_REQUIRE(divider != nullptr);
-        DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
-                      rightBottom + 0.5f);
         DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
                       rightBottom + 0.5f);
         // H17 面板底不得越出页面区（越出即被 app.page 裁掉；修复前实证红：
@@ -2264,8 +2018,7 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
                     std::to_string(btn->frame.y + btn->frame.height) +
                     " panel bottom=" + std::to_string(leftBottom));
         }
-        for (const char* id : {"claude.act.test", "claude.act.edit",
-                               "claude.act.run"}) {
+        for (const char* id : {"claude.act.test", "claude.act.edit"}) {
             const auto* btn = ui.find(id);
             DOCTEST_REQUIRE(btn != nullptr);
             DOCTEST_CHECK_MESSAGE(
@@ -2274,12 +2027,8 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
                     std::to_string(btn->frame.y + btn->frame.height) +
                     " panel bottom=" + std::to_string(rightBottom));
         }
-        const auto* hint = ui.find("claude.act.run.hint");
         const auto* divider = ui.find("claude.act.divider");
-        DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_REQUIRE(divider != nullptr);
-        DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
-                      rightBottom + 0.5f);
         DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
                       rightBottom + 0.5f);
         DOCTEST_CHECK_MESSAGE(leftBottom <= 1000.0f + 0.5f,
@@ -3414,7 +3163,7 @@ REGISTER_TEST(claude_ui_dialog_frame_containment,
         wrap->onContextMenu(pe, rect);
         frame();
     }
-    DOCTEST_CHECK(click("claude.list.ctx.level.0.item.3"));
+    DOCTEST_CHECK(click("claude.list.ctx.level.0.item.2"));
     DOCTEST_CHECK(check("claude.dialog.delete.panel", "claude.dialog.delete.title", "P5 删除确认"));
     click("claude.dialog.delete.backdrop");   // 取消不删
 
@@ -3484,7 +3233,7 @@ REGISTER_TEST(claude_module_ui_set_active_captures_settings,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.list.ctx.level.0.item.4"));
+        DOCTEST_CHECK(click(ui, "claude.list.ctx.level.0.item.3"));
     }
     {
         auto gotA = env.svc->getProfile(a.value().id);

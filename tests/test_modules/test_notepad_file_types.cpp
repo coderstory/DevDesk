@@ -87,3 +87,26 @@ REGISTER_TEST(notepad_file_types_ascii_lower, "notepad_file_types: ASCII 折叠�
     DOCTEST_CHECK_EQ(np::notepadAsciiLower('-'), '-');
     return true;
 })
+
+// need:380 wave5-d C-3：笔记模块承接判据。.md/.markdown → 笔记页（漏斗分发
+// 改道），同时仍保留在关联注册清单内（OS 双击才仍进 DevDesk）。
+REGISTER_TEST(notepad_file_types_markdown_c3, "notepad_file_types: markdown 承接判据（C-3）", {
+    DOCTEST_CHECK_TRUE(np::isMarkdownExtension("a.md"));
+    DOCTEST_CHECK_TRUE(np::isMarkdownExtension("a.markdown"));
+    DOCTEST_CHECK_TRUE(np::isMarkdownExtension("README.MD"));
+    DOCTEST_CHECK_TRUE(np::isMarkdownExtension("NOTES.Markdown"));
+    DOCTEST_CHECK_TRUE(np::isMarkdownExtension("/x/y/note.md"));
+    DOCTEST_CHECK_TRUE(np::isMarkdownExtension(".md"));
+    // 边界：非 md 扩展名 / 误命中防护 / 空串
+    DOCTEST_CHECK_FALSE(np::isMarkdownExtension("a.mdx"));
+    DOCTEST_CHECK_FALSE(np::isMarkdownExtension("a.txt"));
+    DOCTEST_CHECK_FALSE(np::isMarkdownExtension("a.json"));
+    DOCTEST_CHECK_FALSE(np::isMarkdownExtension(""));
+    // 关联注册清单仍含 md 两项（OS 关联登记面不变）
+    bool mdInList = false;
+    for (const std::string_view ext : np::notepadExtensions()) {
+        if (ext == ".md" || ext == ".markdown") mdInList = true;
+    }
+    DOCTEST_CHECK(mdInList);
+    return true;
+})

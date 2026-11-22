@@ -21,17 +21,13 @@ enum class TerminalColorMode {
 
 enum class TerminalColorPalette { Light, Dark };
 
-enum class TerminalCursorStyle { Block, Bar };
-
 // 设计契约值（§4.2/§4.3）
 constexpr int kFontSizeMin = 10;
 constexpr int kFontSizeMax = 24;
 constexpr int kFontSizeDefault = 13;
-constexpr int kScrollbackMin = 100;
-constexpr int kScrollbackMax = 100000;
+// C-4（need380 wave5-c）：启动目录/回滚行数/光标样式/闪烁 四项 UI 已砍，行为固定
+// 默认（workDir=""=主目录、scrollback=1000、块形+闪烁）；会话链只余 shell 一项可配。
 constexpr int kScrollbackDefault = 1000;
-// 回滚行数超大值警示阈值（行下微字「较大回滚占用内存」）
-constexpr int kScrollbackWarnThreshold = 50000;
 
 struct TerminalSettings {
     std::string fontFamily = "";  // "" = 内置等宽（v2 字体栈方案 A）
@@ -39,16 +35,11 @@ struct TerminalSettings {
     TerminalColorMode colorMode = TerminalColorMode::FollowApp;
     TerminalColorPalette colorPalette = TerminalColorPalette::Light;
     std::string shell = "";       // "" = 平台默认（win=pwsh 链 / mac=zsh 链）
-    std::string workDir = "";     // "" = 用户主目录
-    int scrollback = kScrollbackDefault;
-    TerminalCursorStyle cursorStyle = TerminalCursorStyle::Block;
-    bool cursorBlink = true;
 };
 
 // ---- 纯函数（doctest 直测） ----
 
 int clampedFontSize(int value);
-int clampedScrollback(int value);
 
 // 网格 ANSI 表取哪套：跟随应用=随主题；独立=锁所选色板。供 grid compose 的
 // darkTheme 参数（ansiIndexedColor 双表选择），渲染零新面。

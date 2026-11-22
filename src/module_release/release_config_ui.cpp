@@ -1170,7 +1170,7 @@ void composeReleaseConfigPage(eui::Ui& ui, const eui::Screen& screen,
     actions.upsertService = [&store](const ServiceDef& service) -> core::Result<void> {
         const auto result = store.upsertService(service);
         if (result.isFail()) {
-            return core::Result<void>::fail(result.errorCode(), result.errorMessage());
+            return core::propagate<void>(result);
         }
         return core::Result<void>::ok();
     };
@@ -1180,7 +1180,7 @@ void composeReleaseConfigPage(eui::Ui& ui, const eui::Screen& screen,
     actions.upsertEnv = [&store](const EnvDef& env) -> core::Result<void> {
         const auto result = store.upsertEnv(env);
         if (result.isFail()) {
-            return core::Result<void>::fail(result.errorCode(), result.errorMessage());
+            return core::propagate<void>(result);
         }
         return core::Result<void>::ok();
     };

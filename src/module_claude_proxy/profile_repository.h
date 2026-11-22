@@ -90,8 +90,6 @@ public:
     // 回写三列，行保留可重试）。wasActive（可空出参）回填被删行 is_active。
     core::Result<void> deleteProfile(int64_t id, bool* wasActive = nullptr);
 
-    // 复制 Profile：名称加「副本」后缀（重名递增避让，100 次冲突 → fail）；API key 一并复制（源缺失 → fail）；副本不激活；二段补写失败 best-effort 回滚
-    core::Result<Profile> duplicateProfile(int64_t srcId);
 
     // 取明文 API key（仅发请求时调用，用完即丢弃）。列空 → fail(NotFound)；解不开 → fail(原错误码)——「解不开」与「没配过」必须可分辨
     core::Result<std::string> loadApiKey(int64_t profileId);

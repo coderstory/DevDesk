@@ -12,7 +12,7 @@
     {"type": "assert", "check": "text", "id": "app.schedule.edit.name.text", "op": "equals",
      "text": "need325常驻甲",
      "_comment": "落字严格锁：C-13 的 tzId 乱码/注入翻倍一旦复发此处先红"},
-    {"type": "click", "id": "app.schedule.edit.kind.5.bg", "_comment": "kind.5 = 常驻"},
+    {"type": "click", "id": "app.schedule.edit.kind.0.bg", "_comment": "B-1 收敛后常驻不可新建（存量引擎保留）——建存链改走一次性档 kind.0"},
     {"type": "wait", "ms": 400},
     {"type": "click", "id": "app.schedule.edit.dialog.confirm.bg", "_comment": "保存"},
     {"type": "wait", "ms": 1000, "_comment": "保存落盘 + 弹窗收场过渡"},
