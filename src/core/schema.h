@@ -510,6 +510,13 @@ inline constexpr const char* kSql = R"(
         ON claude_call_logs(started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_call_logs_profile
         ON claude_call_logs(profile_id, started_at DESC);
+    -- home「最近一次成功调用」倒序取 1 行（need401 #412）：谓词列无索引时 SQLite 要
+    -- 按 started_at 倒扫逐行过滤（20 万行 84ms）。部分索引只收成功行（谓词与
+    -- home_service.cpp getLastCallRate 的 WHERE 必须逐字一致，planner 靠蕴含匹配命中），
+    -- 命中的行按 started_at DESC 有序 → LIMIT 1 退化为一次索引定位。
+    CREATE INDEX IF NOT EXISTS idx_call_logs_success_rate
+        ON claude_call_logs(started_at DESC)
+        WHERE status_code BETWEEN 200 AND 299 AND output_tokens > 0;
 
     -- agent：run 按任务倒序取最近 / 消息按 run 内序回放
     CREATE INDEX IF NOT EXISTS idx_agent_runs_task

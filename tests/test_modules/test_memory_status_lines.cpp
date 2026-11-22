@@ -188,6 +188,42 @@ REGISTER_TEST(memory_data_root_msys_form_trap,
 
 // ── 附：提案库大表全量加载回归（listPending 无截断，1629 真库口径） ──
 
+// need401 #411：面板路径的窗口上限——limit 截断取最早 N 条（created_at ASC），
+// 缺省仍全量（下面那条 bug217 用例钉的就是缺省语义）。
+REGISTER_TEST(memory_list_pending_window_limit,
+              "memory need401-411: listPending(limit) 窗口截断取最早 N 条，缺省全量", {
+    const auto tmp = std::filesystem::temp_directory_path() /
+                     ("mem-listpending-window-" +
+                      std::to_string(std::chrono::steady_clock::now()
+                                         .time_since_epoch()
+                                         .count()));
+    std::filesystem::create_directories(tmp);
+    auto opened = proposals::ProposalStore::open(tmp / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& store = opened.value();
+    const std::int64_t now = 1793766937;
+    constexpr int kCount = 250;
+    constexpr int kWindow = 200;
+    int created = 0;
+    for (int i = 0; i < kCount; ++i) {
+        auto r = store.create("add", {}, "提案正文 " + std::to_string(i), "", "",
+                              {}, 0.5, "collect", "assistant_derived", now + i);
+        if (r.isOk()) ++created;
+    }
+    DOCTEST_CHECK_EQ(created, kCount);
+    auto windowed = store.listPending(kWindow);
+    DOCTEST_REQUIRE(windowed.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(windowed.value().size()), kWindow);
+    DOCTEST_CHECK_EQ(windowed.value().front().resultText,
+                     std::string("提案正文 0"));  // 窗口 = 最早 200 条
+    auto full = store.listPending();
+    DOCTEST_REQUIRE(full.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(full.value().size()), kCount);
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    return true;
+})
+
 REGISTER_TEST(memory_list_pending_full_load_2000,
               "memory bug217 前置: listPending 全量加载 2000 条 pending 不截断", {
     const auto tmp = std::filesystem::temp_directory_path() /

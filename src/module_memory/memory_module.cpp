@@ -121,7 +121,8 @@ void MemoryModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     const auto snap = panel_.snapshot();
     char reviewLabel[48];
     std::snprintf(reviewLabel, sizeof(reviewLabel), "记忆审核 (%d)",
-                  static_cast<int>(snap.pending.size()));
+                  std::max(snap.pendingTotal,
+                           static_cast<int>(snap.pending.size())));  // need401 #411：徽章报真实总数（pending 只装窗口）
     const char* tabLabels[kViewConfig + 1] = {"主控台", reviewLabel, "配置"};
     // need298 M9：TAB 宽按文字实宽自适应（wallpaper_tabs 同法 +32；估宽统一
     // 入口 cachedTextWidth，字重取选中态 600 最宽档），待审数 4 位不再裁字。

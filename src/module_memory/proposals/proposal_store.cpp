@@ -367,9 +367,15 @@ core::Result<Proposal> ProposalStore::get(const std::string& id) const {
     return core::Result<Proposal>::ok(rowToProposal(row.value()));
 }
 
-core::Result<std::vector<Proposal>> ProposalStore::listPending() const {
-    auto stmt = db_->prepare(std::string(kSelectCols) +
-                             "WHERE status = 'pending' ORDER BY created_at");
+core::Result<std::vector<Proposal>> ProposalStore::listPending(int limit) const {
+    // need401 #411：面板 1s 刷新必须带上限——1630 条待审时全量拉行+解码占满主线程
+    // 1s 档帧（实测 2000 条 135ms）。limit < 0 = 全量（采集管线/策展/导出路径）。
+    std::string sql = std::string(kSelectCols) +
+                      "WHERE status = 'pending' ORDER BY created_at";
+    if (limit >= 0) {
+        sql += " LIMIT " + std::to_string(limit);
+    }
+    auto stmt = db_->prepare(sql);
     if (stmt.isFail()) {
         return core::propagate<std::vector<Proposal>>(stmt);
     }

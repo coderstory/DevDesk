@@ -163,7 +163,9 @@ public:
     core::Result<int> expireSweep(std::int64_t nowSec);
 
     core::Result<Proposal> get(const std::string& id) const;
-    core::Result<std::vector<Proposal>> listPending() const;
+    // limit < 0 = 全量（缺省：采集管线/策展/导出）；面板刷新传窗口上限
+    //（need401 #411：待审无上限 × 每秒拉行解码 = 主线程 1s 档卡顿）
+    core::Result<std::vector<Proposal>> listPending(int limit = -1) const;
 
     // 按 status 分组计数（GROUP BY 一条 SQL；memory.stats 工具取数口，need 219
     // F-03。1630 pending 量级下即时返回，不拉行）

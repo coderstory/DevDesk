@@ -315,8 +315,21 @@ void PanelState::refresh(bool force) {
         next = snap_;  // 携带 settings/engine/gate/stores 态
     }
     if (proposalStore_.has_value()) {
-        if (auto pend = proposalStore_->listPending(); pend.isOk()) {
+        // need401 #411：待审只取窗口上限内的最早 N 条（created_at ASC），真实总数走
+        // countByStatus 的单条 GROUP BY。无上限时 1s 刷新在提案风暴下逐秒拉行解码
+        // 全部待审（1630 条实测 135ms），并把全量拷进每帧均拷贝的 snap_。
+        constexpr int kPendingWindow = 200;
+        next.pendingTotal = 0;
+        if (auto cnt = proposalStore_->countByStatus(); cnt.isOk()) {
+            for (const auto& kv : cnt.value()) {
+                if (kv.first == "pending") next.pendingTotal = static_cast<int>(kv.second);
+            }
+        }
+        if (auto pend = proposalStore_->listPending(kPendingWindow); pend.isOk()) {
             next.pending = std::move(pend.value());
+        }
+        if (next.pendingTotal < static_cast<int>(next.pending.size())) {
+            next.pendingTotal = static_cast<int>(next.pending.size());
         }
         if (auto dec = proposalStore_->listRecentDecided(20); dec.isOk()) {
             next.decided = std::move(dec.value());

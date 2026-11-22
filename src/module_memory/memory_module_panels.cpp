@@ -572,22 +572,37 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
             cy += core::theme::scaled(176.0f) + 8.0f;  // need219 §4.3：审核卡间距 8px
             ++shown;
         }
-        if (matched > shown) {
+        // need401 #411：数据层只装窗口上限（panel_state.cpp kPendingWindow=200）内
+        // 最早的一批待审；「还有 N 条」按真实总数（pendingTotal）报，窗口外的部分
+        // 靠处理/拒绝后的刷新自动补入。
+        const int pendingTrue = std::max(snap.pendingTotal, matched);
+        if (pendingTrue > shown) {
             // 渐进加载尾行：如实报剩余量 + 按需增长（每批 kReviewShowLimit）
             ui.text("memory.rv.more.note")
                 .position(x + 16.0f, cy + core::theme::scaled(6.0f))  // need298 M15：与右侧按钮同中心线（34 高钮 vs 22 高行）
                 .size(w - 190.0f, core::theme::scaled(22.0f))
                 .text("已显示前 " + std::to_string(shown) + " 条 · 还有 " +
-                      std::to_string(matched - shown) +
+                      std::to_string(pendingTrue - shown) +
                       " 条待审（也可用上方筛选缩小范围）")
                 .fontSize(core::theme::scaled(12.0f))
                 .lineHeight(core::theme::scaled(22.0f))
                 .color(t.colors.textTertiary)
                 .build();
-            ui_kit::button(ui, "memory.rv.more", "再显示 50 条",
-                           ui_kit::ButtonLevel::Secondary, x + w - 150.0f, cy,
-                           134.0f, 34.0f, t,
-                           {[this] { reviewShowLimit_ += kReviewShowLimit; }});
+            if (matched > shown) {
+                ui_kit::button(ui, "memory.rv.more", "再显示 50 条",
+                               ui_kit::ButtonLevel::Secondary, x + w - 150.0f,
+                               cy, 134.0f, 34.0f, t,
+                               {[this] { reviewShowLimit_ += kReviewShowLimit; }});
+            } else {
+                ui.text("memory.rv.window.note")
+                    .position(x + w - 250.0f, cy + core::theme::scaled(6.0f))
+                    .size(234.0f, core::theme::scaled(22.0f))
+                    .text("已到列表窗口上限，处理后自动补入")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(22.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
+            }
             cy += 44.0f + 12.0f;
         }
         if (shown == 0) {

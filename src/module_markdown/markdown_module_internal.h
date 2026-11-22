@@ -1154,6 +1154,9 @@ private:
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）
 
     std::set<std::string> collapsedDirs_;             // 已收起的一级目录（内存态）
+    // 左栏列表滚动偏移（need401 #410）：虚拟化窗口按它选可见行；滚动事件回写，
+    // 列表与搜索列表共用同一滚动容器（md.tree.scroll）。
+    float treeScrollOffset_ = 0.0f;
     // 目录树面板折叠态（UAT3 D-R3-3）：true = 完全收起（宽 0，编辑区左上角浮展开钮）。
     // 纯 UI 态（先例 ViewMode/selectedDir），跨会话经 md_view_state 持久化（仍存 bool）。
     bool treePanelCollapsed_ = false;

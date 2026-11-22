@@ -50,6 +50,7 @@ struct PanelSnapshot {
     std::vector<proposals::Proposal> decided;  // 最近已决（已处理视图）
     std::vector<bool> decidedUndone;           // 与 decided 对齐（isUndone 派生徽章）
     int proposalTotal = 0;
+    int pendingTotal = 0;  // 真实待审总数（pending 只装窗口上限内最早 N 条，need401 #411）
 
     long long todayTokens = 0;
     long long monthTokens = 0;
