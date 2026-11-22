@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {
+          "themeMode": "dark",
+          "enabledModules": [
+            "markdown",
+            "todo",
+            "schedule",
+            "claude_proxy",
+            "agent",
+            "memory",
+            "mcp",
+            "terminal",
+            "git"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Settings.hit",
+     "_comment": "H批 F4③+②：设置·模块 tab @820x640（dark）"},
+    {"type": "wait", "until": "exists", "id": "settings.tabs.1.hit"},
+    {"type": "click", "id": "settings.tabs.1.hit"},
+    {"type": "wait", "until": "exists", "id": "app.settings.card.reminder.popup.sw.track"},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "h2-260-820-top.txt"},
+    {"type": "screenshot", "path": "h2-260-820-top.png"},
+    {"type": "scroll", "id": "app.settings.cards.scroll", "dx": 0, "dy": -1200,
+     "_comment": "滚到底：模块卡底内距 24 + 卡底圆角收口（debt309 ③）取证"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "h2-260-820-bottom.txt"},
+    {"type": "screenshot", "path": "h2-260-820-bottom.png"}
+  ]
+}

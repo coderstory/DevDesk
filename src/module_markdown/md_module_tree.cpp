@@ -5,9 +5,34 @@
 
 #include "markdown_module_internal.h"
 
+#include <algorithm>
 #include <utility>  // std::move / std::pair（check-std-includes：不靠传递包含）
 
 namespace module::markdown {
+
+namespace {
+
+// need401 #410：定高行列表的可见窗口（视口 + 上下各 3 行缓冲）。module_* 之间
+// 不可互相依赖，故不能直接用 todo 看板的 virtualCardRange（todo_ui_logic.h），
+// 此处按同一算法本地实现。
+constexpr size_t kTreeVirtualBuffer = 3;
+
+std::pair<size_t, size_t> visibleTreeRowRange(size_t count, float scrollOffset,
+                                              float viewportH, float pitch) {
+    if (count == 0 || !(pitch > 0.0f)) return {0, 0};
+    const float offset = std::max(0.0f, scrollOffset);
+    const size_t visibleFirst = static_cast<size_t>(offset / pitch);
+    const size_t first =
+        visibleFirst > kTreeVirtualBuffer ? visibleFirst - kTreeVirtualBuffer : 0;
+    // 可视区末行（含）→ +1；再补下缓冲
+    size_t last =
+        static_cast<size_t>((offset + std::max(0.0f, viewportH)) / pitch) + 1 +
+        kTreeVirtualBuffer;
+    last = std::min(last, count);
+    return {std::min(first, last), last};
+}
+
+} // namespace
 
 void MarkdownModule::drawTreeHandle(eui::Ui& ui,
                     float pad,
@@ -414,33 +439,57 @@ void MarkdownModule::drawNoteList(eui::Ui& ui,
                   const core::theme::Tokens& t,
                   const components::theme::ThemeColorTokens& componentTheme) {
     const float rowW = sideW - 16.0f;
-    // contentKey 用逐条路径组合 hash：同数量替换内容也触发重建
-    size_t listKey = 0;
-    for (const auto& n : notes_) {
-        listKey = listKey * 1315423911u +
-                  std::hash<std::string>{}(noteDisplayPath(n));
-    }
+    constexpr float kRowGap = 4.0f;
+    const float pitch = kTreeRowHeight + kRowGap;
+    const size_t count = notes_.size();
+    // need401 #410：只建可见窗口内的行（原逐条建满 N 行 = N 次 measure/layout，
+    // 1200 笔记稳态 214ms → 目标 ≤50ms）。内容总高改由 contentHeightProvider
+    // 精确供给（同款跳过整篇 scratch 测量），因此原「每帧对全量 path 做 hash 拼
+    // contentKey」也一并去掉——contentKey 在 provider 存在时只剩测量缓存 id 语义。
     components::scrollView(ui, "md.tree.scroll")
         .position(8.0f, listY)
         .size(sideW - 16.0f, listH)
-        .gap(4.0f)  // UAT2 F批：行间留白 0→4
+        .gap(kRowGap)  // UAT2 F批：行间留白 0→4
         .step(40.0f)
         .theme(componentTheme)
-        .contentKey("md.tree.scroll." + std::to_string(listKey))
+        .offset(treeScrollOffset_)
+        // 裁剪型内容必须 opt-in：滚轮只改运行时偏移，不开则窗口冻结在末次 compose。
+        .composeOnScrollOffsetChange()
+        .onChange([this](float v) { treeScrollOffset_ = v; })
+        .contentHeightProvider([count, pitch](float, float) {
+            return count == 0 ? 0.0f
+                              : static_cast<float>(count) * pitch - kRowGap;
+        })
         .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-            (void)viewportHeight;
             const float w = std::min(contentWidth, rowW);
-            for (size_t i = 0; i < notes_.size(); ++i) {
+            const auto range = visibleTreeRowRange(count, treeScrollOffset_,
+                                                   viewportHeight, pitch);
+            // 占位：唯一参与流式布局的子元素，撑出全量总高（滚动范围不随本帧
+            // 构建多少行变化）；行按绝对槽位 overlay 落位（todo 看板同款）。
+            if (count > 0) {
+                inner.stack("md.tree.vspacer")
+                    .size(contentWidth, static_cast<float>(count) * pitch - kRowGap)
+                    .build();
+            }
+            for (size_t i = range.first; i < range.second; ++i) {
                 const NoteMeta& n = notes_[i];
                 const std::string path = noteDisplayPath(n);
                 const std::string id = "md.tree.item." + std::to_string(i);
-                drawFileTreeItem(inner, id, w, t, 0xF15C, noteDisplayName(n),
-                                 path == currentPath_, 0.0f,
-                                 [this, path] { openNote(path); },
-                                 [this, path](const eui::PointerEvent& ev,
-                                              const eui::Rect&) {
-                                     openFileContextMenu(path, ev);
-                                 }, searchQuery_);
+                inner.stack(id + ".slot")
+                    .position(0.0f, static_cast<float>(i) * pitch)
+                    .ignoreLayout()
+                    .size(w, kTreeRowHeight)
+                    .content([&] {
+                        drawFileTreeItem(inner, id, w, t, 0xF15C,
+                                         noteDisplayName(n),
+                                         path == currentPath_, 0.0f,
+                                         [this, path] { openNote(path); },
+                                         [this, path](const eui::PointerEvent& ev,
+                                                      const eui::Rect&) {
+                                             openFileContextMenu(path, ev);
+                                         }, searchQuery_);
+                    })
+                    .build();
             }
         })
         .build();
@@ -455,26 +504,42 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
     const std::vector<MdTreeRow> rows = buildTreeRows(notes_, allFolders_,
                                                       collapsedDirs_);
     const float rowW = sideW - 16.0f;
-    // contentKey：行内容（类型 + 名字 + 路径）组合 hash，内容变即重建
-    size_t treeKey = 0;
-    for (const auto& r : rows) {
-        treeKey = treeKey * 1315423911u +
-                  std::hash<std::string>{}(r.name + "\x1f" + r.relPath) +
-                  (r.isFolder ? 1u : 0u) + static_cast<size_t>(r.depth);
-    }
+    constexpr float kRowGap = 4.0f;
+    const float pitch = kTreeRowHeight + kRowGap;
+    const size_t count = rows.size();
+    // need401 #410：树列表与搜索列表同款虚拟化（只建可见窗口行 + 精确内容高
+    // provider；原逐行建满 + 每帧全量行 hash 是 1200 笔记 214ms 的构成项）。
     components::scrollView(ui, "md.tree.scroll")
         .position(8.0f, listY)
         .size(sideW - 16.0f, listH)
-        .gap(4.0f)  // UAT2 F批：行间留白 0→4
+        .gap(kRowGap)  // UAT2 F批：行间留白 0→4
         .step(40.0f)
         .theme(componentTheme)
-        .contentKey("md.tree.scroll." + std::to_string(treeKey))
+        .offset(treeScrollOffset_)
+        .composeOnScrollOffsetChange()  // 裁剪型内容必须 opt-in（滚轮 → 重排窗口）
+        .onChange([this](float v) { treeScrollOffset_ = v; })
+        .contentHeightProvider([count, pitch](float, float) {
+            return count == 0 ? 0.0f
+                              : static_cast<float>(count) * pitch - kRowGap;
+        })
         .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-            (void)viewportHeight;
             const float w = std::min(contentWidth, rowW);
-            for (size_t i = 0; i < rows.size(); ++i) {
+            const auto range = visibleTreeRowRange(count, treeScrollOffset_,
+                                                   viewportHeight, pitch);
+            // 占位撑全量总高；行按绝对槽位 overlay（下方原行体缩进保持不动）
+            if (count > 0) {
+                inner.stack("md.tree.vspacer")
+                    .size(contentWidth, static_cast<float>(count) * pitch - kRowGap)
+                    .build();
+            }
+            for (size_t i = range.first; i < range.second; ++i) {
                 const MdTreeRow& r = rows[i];
                 const std::string id = "md.tree.node." + std::to_string(i);
+                inner.stack(id + ".slot")
+                    .position(0.0f, static_cast<float>(i) * pitch)
+                    .ignoreLayout()
+                    .size(w, kTreeRowHeight)
+                    .content([&] {
                 if (r.isFolder) {
                     // 目录行：行体点击 = 选中目录，箭头命中区 = 收起/展开
                     //（命中取最上层兄弟，故命中区须叠在行体之上）。缩进每级 16px。
@@ -575,6 +640,8 @@ void MarkdownModule::drawTreeList(eui::Ui& ui,
                                          openFileContextMenu(path, ev);
                                      });
                 }
+                    })
+                    .build();
             }
         })
         .build();

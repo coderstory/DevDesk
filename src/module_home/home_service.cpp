@@ -197,11 +197,13 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
 core::Result<LastCallRate> HomeService::getLastCallRate() {
     // 「成功」谓词与 core/call_rate.h 的 isSuccessful 同口径（2xx 且 output_tokens > 0），
     // 两处必须一起改；按 started_at 倒序。
+    // 不包 COALESCE：NULL 比较的结果同为 false，包住反而让部分索引
+    // idx_call_logs_success_rate（schema.h，谓词逐字相同）不可用 → 全表倒扫（need401 #412）。
     auto prep = db_.prepare(
         "SELECT status_code, output_tokens, latency_ms, started_at "
         "FROM claude_call_logs "
-        "WHERE COALESCE(status_code, 0) BETWEEN 200 AND 299 "
-        "AND COALESCE(output_tokens, 0) > 0 "
+        "WHERE status_code BETWEEN 200 AND 299 "
+        "AND output_tokens > 0 "
         "ORDER BY started_at DESC, id DESC LIMIT 1");
     if (prep.isFail()) {
         return core::propagate<LastCallRate>(prep);

@@ -31,7 +31,7 @@ struct ProfileListState {
     Profile cachedActive_;
     bool cachedHasActive_ = false;
     bool dataDirty_ = true;
-    bool dataLoaded_ = false;   // 快照是否装载过（冷启动兜底判据，见 refreshDataCache）
+    bool dataLoaded_ = false;   // 快照是否装载过；false = 首帧骨架态（bug404：装填走后台不阻塞 compose）
     // shared_future = 结果共享状态（worker 发布 → 唤醒 → 渲染线程收割）；async future 留作 join 句柄。在途判据 = refreshFuture_.valid()
     std::shared_future<DataRefresh> refreshFuture_;
     std::future<void> refreshWorker_;
@@ -102,7 +102,7 @@ struct ClaudeUiState {
 // 唯一跑在后台线程的 DB 入口（static 语义：不碰模块成员）
 DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles);
 
-// 落快照（只在渲染线程调：onStart 首次装载 + compose 收割/兜底）
+// 落快照（只在渲染线程调：onStart 首次装载 + compose 收割）
 void applyDataRefresh(ProfileListState& st, DataRefresh r);
 
 // 收割：后台结果就绪才搬（wait_for(0) 不阻塞；未就绪快照沿用上次值）
@@ -111,7 +111,8 @@ void harvestDataRefresh(ProfileListState& st);
 // 节流：失败重试 / 连续写操作标脏时按窗口合并
 bool refreshDue(const ProfileListState& st);
 
-// compose 每帧调：只发意图 + 搬快照，零 IO（脏 = 进页/写操作后重查）
+// compose 每帧调：只发意图 + 搬快照，零 IO（脏 = 进页/写操作后重查；
+// 未装载同样走后台，首帧读空快照 → 列表骨架态）
 void refreshDataCache(ProfileListState& st, ClaudeService* svc);
 
 } // namespace module::claude

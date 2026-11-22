@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark", "enabledModules": ["markdown","todo","schedule","memory","terminal"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-todo-820.txt"},
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-md-820.txt"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-settings01-820.txt"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-schedule-820.txt"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-memory-820.txt"}
+  ]
+}

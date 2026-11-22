@@ -151,7 +151,8 @@ NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s) {
                                     notepadSessionHasExtension(s, ".markdown"));
     m.formatEnabled = editable && !s.previewOn;
     m.previewEnabled = !s.largeFile;
-    m.findToggleEnabled = !s.previewOn;
+    // need400：预览态查找可用（命中域 = 预览显示文本，见 notepadPreviewFindTick）
+    m.findToggleEnabled = !errorState;
     // P2-1（need289 走查）：错误占位窗字体面禁用（设计稿 §7.2 联动矩阵——
     // A± 原已守，触发器漏）
     m.fontControlsEnabled = !s.previewOn && !errorState;

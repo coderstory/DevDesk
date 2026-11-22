@@ -6,7 +6,6 @@ add_library(devdesk_module_markdown STATIC
     md_module_menu_poll.cpp
     markdown_service.cpp
     markdown_tools.cpp
-    notes_mcp_tools.cpp
 
     md_keyboard.cpp
     md_line_scanner.cpp

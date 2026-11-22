@@ -83,6 +83,8 @@ struct BoardView {
     // archiveT/archiveExpanded 为准（同一模块状态源填入，仅口径不同）。构造后赋值。
     std::vector<float> columnCollapseT;
     std::vector<bool> columnExpanded;
+    // 池405：db 导入后的后台重载在途 → 板出骨架（首帧不等全量重查），数据到位下一帧整板刷新
+    bool loading = false;
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 新建任务；H20 起「+ 列」入口删除）

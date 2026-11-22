@@ -356,10 +356,13 @@ void notepadFindTick(NotepadSession& s,
     }
     if (!f.visible) return;
     const bool queryChanged = f.query != f.appliedQuery;
-    const bool textChanged = f.hitsRevision != st.textRevision;
+    // need400：文本域切换（预览显示域 ↔ 编辑源域）必须重算——hits 字节区
+    // 间属于哪个域由 hitsPreview 标记（跨域复用会错位）
+    const bool textChanged = f.hitsRevision != st.textRevision || f.hitsPreview;
     if (!queryChanged && !textChanged) return;
     f.appliedQuery = f.query;
     f.hitsRevision = st.textRevision;
+    f.hitsPreview = false;
     if (f.appliedQuery.empty()) {
         // 空关键词清高亮（F-06）
         if (!f.hits.empty()) {
@@ -375,6 +378,81 @@ void notepadFindTick(NotepadSession& s,
             ? f.hits[f.cur].start
             : static_cast<size_t>(st.cursor < 0 ? 0 : st.cursor);
     f.hits = findAll(st.text, f.appliedQuery,
+                     FindOptions{f.caseSensitive, f.wholeWord});
+    f.cur = kFindNoHit;
+    for (size_t i = 0; i < f.hits.size(); ++i) {
+        if (f.hits[i].start >= anchor) {
+            f.cur = i;
+            break;
+        }
+    }
+    if (f.cur == kFindNoHit && !f.hits.empty()) f.cur = f.hits.size() - 1;
+    ++st.styleRevision;  // 命中层缓存失效
+}
+
+// need400：预览态查找显示文本缓存（域 = displayTextOf，textRevision 键控；
+// 预览禁编辑 → 修订稳定，查找条开着时每帧复用同一显示文本）。
+const std::string& notepadFindPreviewDisplay(NotepadSession& s,
+                                             unsigned long long rev) {
+    if (s.findPreviewRev != rev) {
+        s.findPreviewDisplay =
+            components::MarkdownBuilder::displayTextOf(s.editText);
+        s.findPreviewRev = rev;
+    }
+    return s.findPreviewDisplay;
+}
+
+// 预览态查找 tick（compose 预览分支调用，need400）：命中域 = 显示文本（用户
+// 所见即所搜）；跳转只请求预览滚动（pendingPreviewScroll 由 drawPreviewSlot
+// 换算矩形落点），InputState 光标/选区不动——预览禁编辑。重算门控与编辑态
+// notepadFindTick 同构（输入即重算 + 文本修订重算），域切换由 hitsPreview 标记
+// 强制重算。
+void notepadPreviewFindTick(NotepadSession& s,
+                            components::input_detail::InputModel::InputState& st) {
+    NotepadSession::NotepadFindState& f = s.find;
+    if (f.styleDirty) {
+        f.styleDirty = false;
+        ++st.styleRevision;
+    }
+    if (!f.visible) return;
+    // 待跳转：相邻命中（环绕语义与编辑态一致；无当前命中 → 首/末命中）
+    if (f.pendingJump != 0) {
+        const int dir = f.pendingJump;
+        f.pendingJump = 0;
+        if (!f.hits.empty()) {
+            size_t idx = kFindNoHit;
+            if (f.cur >= f.hits.size()) {
+                idx = dir > 0 ? 0 : f.hits.size() - 1;
+            } else {
+                const size_t from = f.hits[f.cur].start;
+                idx = dir > 0 ? nextFrom(f.hits, from) : prevFrom(f.hits, from);
+            }
+            if (idx != kFindNoHit) {
+                f.cur = idx;
+                f.pendingPreviewScroll = true;
+                ++st.styleRevision;  // 当前命中色变化（切回编辑时缓存同步失效）
+            }
+        }
+    }
+    const bool queryChanged = f.query != f.appliedQuery;
+    const bool domainChanged = !f.hitsPreview || f.hitsRevision != st.textRevision;
+    if (!queryChanged && !domainChanged) return;
+    const std::string& display = notepadFindPreviewDisplay(s, st.textRevision);
+    f.appliedQuery = f.query;
+    f.hitsRevision = st.textRevision;
+    f.hitsPreview = true;
+    if (f.appliedQuery.empty()) {
+        // 空关键词清高亮（F-06）
+        if (!f.hits.empty()) {
+            f.hits.clear();
+            f.cur = kFindNoHit;
+            ++st.styleRevision;
+        }
+        return;
+    }
+    // 当前序号尽量邻近（与编辑态同口径：锚之后首个命中，无则末命中）
+    const size_t anchor = f.cur < f.hits.size() ? f.hits[f.cur].start : 0;
+    f.hits = findAll(display, f.appliedQuery,
                      FindOptions{f.caseSensitive, f.wholeWord});
     f.cur = kFindNoHit;
     for (size_t i = 0; i < f.hits.size(); ++i) {
@@ -623,6 +701,8 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
     const float barH = f.replaceOpen ? 74.0f : 40.0f;
     const float bx = w - 16.0f - barW;
     const float by = editorTop + 12.0f;
+    // need400：预览态只读——替换面（展开/替换/全部替换）禁用，查找面照常
+    const bool canReplace = editable && !s.previewOn;
 
     ui.rect(kNotepadSearchBarId)
         .position(bx, by)
@@ -706,7 +786,7 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
                   app::requestUpdate();
               });
     barButton(ui, kNotepadSearchReplaceToggleId, f.replaceOpen ? "−" : "＋",
-              bx + 358.0f, by + 8.0f, 24.0f, 24.0f, t, true, [&s] {
+              bx + 358.0f, by + 8.0f, 24.0f, 24.0f, t, canReplace, [&s] {
                   s.find.replaceOpen = !s.find.replaceOpen;
                   app::requestUpdate();
               });
@@ -732,12 +812,12 @@ void drawSearchBar(NotepadSession& s, eui::Ui& ui, float w, float editorTop,
             })
             .build();
         barButton(ui, kNotepadBtnReplaceOneId, "替换", bx + 234.0f, by + 42.0f,
-                  64.0f, 24.0f, t, editable, [&s, &ui] {
+                  64.0f, 24.0f, t, canReplace, [&s, &ui] {
                       notepadReplaceOne(
                           s, ui.state<InputState>(kNotepadEditorInputId));
                   });
         barButton(ui, kNotepadBtnReplaceAllId, "全部替换", bx + 302.0f,
-                  by + 42.0f, 88.0f, 24.0f, t, editable, [&s, &ui] {
+                  by + 42.0f, 88.0f, 24.0f, t, canReplace, [&s, &ui] {
                       notepadReplaceAll(
                           s, ui.state<InputState>(kNotepadEditorInputId));
                   });
@@ -922,6 +1002,188 @@ void drawFontPopup(NotepadSession& s, eui::Ui& ui,
         .build();
 }
 
+// ── debt398 分段测高（预览总高异步化）──────────────────────────────
+// 段 = 连续块区间（不切表格行组）；首帧只出近似总高，可见带块由 markdown 组件
+// 自行精测（它出内容本来就要测），屏外未测段只建包装几何（blockHeightHint），
+// 每帧预算补测 → 总高/滚动条渐进收敛（老板令：先出画，1 秒内刷出滚动条）。
+constexpr std::size_t kPreviewSegBlocks = 12;  // 目标每段块数 = 补测步长
+constexpr double kPreviewSegBudgetMs = 12.0;   // 单帧补测预算（<16ms 帧预算口径）
+
+float previewSegWidthKey(float innerW) {
+    return std::round(innerW * 2.0f) * 0.5f;
+}
+
+std::string previewSegStyleKey(const components::MarkdownStyle& style) {
+    return core::theme::currentThemeName() + "|" + std::to_string(core::theme::fontScale()) +
+           "|" + std::to_string(style.bodySize) + "|" + std::to_string(style.blockGap);
+}
+
+NotepadSession::PreviewSegTable* previewSegFind(NotepadSession& s, unsigned long long rev,
+                                                float widthKey,
+                                                const std::string& styleKey) {
+    for (auto& table : s.previewSegTables) {
+        if (table.usable && table.rev == rev && std::fabs(table.width - widthKey) < 0.6f &&
+            table.styleKey == styleKey) {
+            return &table;
+        }
+    }
+    return nullptr;
+}
+
+std::size_t previewSegIndexOf(const NotepadSession::PreviewSegTable& table,
+                              std::size_t block) {
+    if (table.bounds.size() < 2) return 0;
+    const auto it = std::upper_bound(table.bounds.begin(), table.bounds.end(), block);
+    if (it == table.bounds.begin()) return 0;
+    return static_cast<std::size_t>((it - table.bounds.begin()) - 1);
+}
+
+// 未测段块近似高 = 段高均摊（去掉段内 gap 后按块数均分）；<1px 兜底。
+float previewSegBlockApprox(const NotepadSession::PreviewSegTable& table, std::size_t seg,
+                            const components::MarkdownStyle& style) {
+    if (seg + 1 >= table.bounds.size()) return 0.0f;
+    const std::size_t count = table.bounds[seg + 1] - table.bounds[seg];
+    if (count == 0) return 0.0f;
+    const float gaps = style.blockGap * static_cast<float>(count - 1);
+    return std::max(1.0f, (table.heights[seg] - gaps) / static_cast<float>(count));
+}
+
+// 段表初始化（不测量）：段高优先复用同 rev 旧宽度段表（按宽度比缩放 = 切宽度
+// 旧段复用），无旧表则粗估（块数 × 正文行高 + 段内 gap）。
+NotepadSession::PreviewSegTable& previewSegInit(NotepadSession& s, unsigned long long rev,
+                                                float widthKey, const std::string& styleKey,
+                                                const components::MarkdownStyle& style) {
+    auto& slot = s.previewSegTables[static_cast<std::size_t>(s.previewSegNext) %
+                                    s.previewSegTables.size()];
+    s.previewSegNext = (s.previewSegNext + 1) % static_cast<int>(s.previewSegTables.size());
+    slot = NotepadSession::PreviewSegTable{};
+    slot.rev = rev;
+    slot.width = widthKey;
+    slot.styleKey = styleKey;
+    slot.bounds =
+        components::MarkdownBuilder::blockSegmentBoundaries(s.editText, kPreviewSegBlocks);
+
+    const NotepadSession::PreviewSegTable* source = nullptr;
+    float scale = 1.0f;
+    for (const auto& table : s.previewSegTables) {
+        if (&table == &slot || !table.usable || table.rev != rev) continue;
+        if (table.bounds.size() != slot.bounds.size()) continue;
+        source = &table;
+        scale = (table.width > 1.0f && widthKey > 1.0f) ? table.width / widthKey : 1.0f;
+        break;
+    }
+    const std::size_t segCount = slot.bounds.size() > 1 ? slot.bounds.size() - 1 : 0;
+    slot.heights.assign(segCount, 0.0f);
+    slot.measured.assign(segCount, 0);
+    float total = 0.0f;
+    for (std::size_t i = 0; i < segCount; ++i) {
+        const std::size_t count = slot.bounds[i + 1] - slot.bounds[i];
+        float h = 0.0f;
+        if (source != nullptr) {
+            h = source->heights[i] * scale;
+        } else {
+            h = static_cast<float>(count) * style.bodyLineHeight +
+                style.blockGap * static_cast<float>(count > 0 ? count - 1 : 0);
+        }
+        slot.heights[i] = h;
+        total += h;
+    }
+    if (segCount > 1) total += style.blockGap * static_cast<float>(segCount - 1);
+    slot.total = total;
+    slot.pending = static_cast<int>(segCount);
+    slot.usable = true;
+    return slot;
+}
+
+void previewSegRecount(NotepadSession::PreviewSegTable& table,
+                       const components::MarkdownStyle& style) {
+    float total = 0.0f;
+    for (const float h : table.heights) total += h;
+    if (table.heights.size() > 1) {
+        total += style.blockGap * static_cast<float>(table.heights.size() - 1);
+    }
+    table.total = total;
+}
+
+// 可见带段范围：按当前段高累加（未测段用近似高，误差随补测收敛）。
+void previewSegBand(const NotepadSession::PreviewSegTable& table, float scroll,
+                    float viewportH, const components::MarkdownStyle& style,
+                    std::size_t* lo, std::size_t* hi) {
+    *lo = 0;
+    *hi = 0;
+    const std::size_t segCount = table.heights.size();
+    if (segCount == 0) return;
+    float y = 0.0f;
+    bool loSet = false;
+    for (std::size_t i = 0; i < segCount; ++i) {
+        const float top = y;
+        const float bottom = y + table.heights[i];
+        if (!loSet && bottom >= scroll) {
+            *lo = i;
+            loSet = true;
+        }
+        if (top <= scroll + viewportH) *hi = i;
+        y = bottom + style.blockGap;
+    }
+    if (!loSet) *lo = segCount - 1;
+    if (*hi < *lo) *hi = *lo;
+}
+
+// 单段精测（区间高与 estimateHeight 同可加口径，见 EUI 缝注）。
+void previewSegMeasure(NotepadSession& s, NotepadSession::PreviewSegTable& table,
+                       std::size_t seg, const components::MarkdownStyle& style) {
+    if (seg >= table.heights.size() || table.measured[seg]) return;
+    table.heights[seg] = components::MarkdownBuilder::estimateHeightRange(
+        s.editText, table.bounds[seg], table.bounds[seg + 1], table.width, style);
+    table.measured[seg] = 1;
+    if (table.pending > 0) --table.pending;
+    previewSegRecount(table, style);
+}
+
+// 收敛回写：精确总高写 previewDocHs（稳态 provider 快路径，键口径同旧缓存）。
+void previewSegNoteConverged(NotepadSession& s, NotepadSession::PreviewSegTable& table) {
+    if (table.pending > 0 || table.converged) return;
+    table.converged = true;
+    auto& slot = s.previewDocHs[static_cast<std::size_t>(s.previewDocHNext) %
+                                s.previewDocHs.size()];
+    s.previewDocHNext = (s.previewDocHNext + 1) % static_cast<int>(s.previewDocHs.size());
+    slot = {table.rev, table.width, table.styleKey, table.total};
+}
+
+// 后台补测一帧：可见带段优先，再文档序；单帧预算 kPreviewSegBudgetMs，
+// 未完 → requestUpdate 自驱下一帧（子窗无帧泵，空闲帧需自驱）。
+void previewSegPump(NotepadSession& s, const components::MarkdownStyle& style, float scroll,
+                    float viewportH) {
+    NotepadSession::PreviewSegTable* table = s.previewSegActive;
+    if (table == nullptr || !table->usable) {
+        s.previewSegPendings = 0;
+        return;
+    }
+    if (table->pending > 0) {
+        std::size_t lo = 0;
+        std::size_t hi = 0;
+        previewSegBand(*table, scroll, viewportH, style, &lo, &hi);
+        std::vector<std::size_t> order;
+        order.reserve(table->heights.size());
+        for (std::size_t i = lo; i <= hi && i < table->heights.size(); ++i) {
+            if (!table->measured[i]) order.push_back(i);
+        }
+        for (std::size_t i = 0; i < table->heights.size(); ++i) {
+            if (!table->measured[i] && (i < lo || i > hi)) order.push_back(i);
+        }
+        const auto started = std::chrono::steady_clock::now();
+        for (const std::size_t seg : order) {
+            const double elapsed = std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - started).count();
+            if (elapsed >= kPreviewSegBudgetMs) break;
+            previewSegMeasure(s, *table, seg, style);
+        }
+    }
+    previewSegNoteConverged(s, *table);
+    s.previewSegPendings = table->pending;
+    if (table->pending > 0) app::requestUpdate();
+}
+
 // F-13 预览槽位（设计稿 §4.6：编辑区同槽位整页替换）：components::markdown
 // 整篇渲染（EUI 组件层合法依赖；块流核是 module_markdown 私有，隔离禁依赖，
 // tech 卡 §六）+ scrollView 纵滚。MarkdownStyle 本地 inline 构建（不碰
@@ -943,30 +1205,41 @@ void drawPreviewSlot(
     // 视口裁剪：滚动/调窗/全局帧泵每帧全文档重建元素树是预览卡顿根因，
     // 裁剪后窗口外块只留包装几何（显式高不变），content 不再生成。
     const float viewportH = h - editorTop - kStatusH;
+    // debt398：帧首补测上一帧宽度档的段表（provider 本帧同宽直接命中，内容按
+    // 已测段出画；宽度/修订变了就不动旧表，等本帧 provider 重建）。
+    if (s.previewSegActive != nullptr && s.previewSegActive->usable &&
+        s.previewSegActive->rev == st.textRevision && s.selPreviewWidth > 1.0f &&
+        std::fabs(s.previewSegActive->width - previewSegWidthKey(s.selPreviewWidth)) < 0.6f) {
+        if (s.previewSegActive->pending > 0) previewSegPump(s, style, scroll, viewportH);
+        // 总高收敛中可能先增后减：偏移按上一帧已知总高夹紧（防状态越界留白）。
+        const float lastMax = std::max(0.0f, s.previewSegActive->total - viewportH);
+        if (scroll > lastMax) scroll = lastMax;
+    }
 
-    // bug399 round5 / debt398：整篇估高缓存 + 供高通道（旧查看器几何表同架构）。
-    // 键 = 文本修订 + 渲染宽（0.5px 量化）+ 样式指纹（主题/字号缩放/度量）；命中即
-    // 复用，wrap 高与 scrollView contentHeightProvider 同源共用 → 每格滚轮的重排
-    // 不再全文档跑 O(blocks) estimateHeight，也不再走 scrollView scratch 测量 pass。
+    // debt398：分段测高（预览总高异步化）。首帧只出近似总高（段表初始化，0 段
+    // 精测），可见带块由 markdown 组件自行精测出内容；屏外未测段只建包装几何，
+    // 后台每帧预算补测 → 总高/滚动条渐进收敛。收敛后走 previewDocHs 精确缓存。
     auto previewDocHeight = [&s, &style, rev = st.textRevision](float innerW) -> float {
-        const float widthKey = std::round(innerW * 2.0f) * 0.5f;
-        const std::string styleKey =
-            core::theme::currentThemeName() + "|" + std::to_string(core::theme::fontScale()) +
-            "|" + std::to_string(style.bodySize) + "|" + std::to_string(style.blockGap);
-        for (auto& entry : s.previewDocHs) {
+        const float widthKey = previewSegWidthKey(innerW);
+        const std::string styleKey = previewSegStyleKey(style);
+        for (const auto& entry : s.previewDocHs) {
             if (entry.height > 0.0f && entry.rev == rev &&
                 std::fabs(entry.width - widthKey) < 0.6f && entry.styleKey == styleKey) {
+                s.previewSegActive = previewSegFind(s, rev, widthKey, styleKey);
+                s.previewSegPendings =
+                    s.previewSegActive != nullptr ? s.previewSegActive->pending : 0;
+                s.previewSegLastDocH = entry.height;
                 return entry.height;
             }
         }
-        const float height =
-            components::MarkdownBuilder::estimateHeight(s.editText, widthKey, style);
-        auto& slot = s.previewDocHs[static_cast<std::size_t>(s.previewDocHNext) %
-                                    s.previewDocHs.size()];
-        s.previewDocHNext = (s.previewDocHNext + 1) %
-                            static_cast<int>(s.previewDocHs.size());
-        slot = {rev, widthKey, styleKey, height};
-        return height;
+        NotepadSession::PreviewSegTable* table = previewSegFind(s, rev, widthKey, styleKey);
+        if (table == nullptr) {
+            table = &previewSegInit(s, rev, widthKey, styleKey, style);
+        }
+        s.previewSegActive = table;
+        s.previewSegPendings = table->pending;
+        s.previewSegLastDocH = table->total;
+        return table->total;
     };
     components::scrollView(ui, kNotepadPreviewId)
         .position(0.0f, editorTop)
@@ -984,7 +1257,7 @@ void drawPreviewSlot(
         // bug399：裁剪型内容必须随滚动重排——visibleRange（bug382）用 scroll
         // 生成裁剪范围，而滚轮本身不触发重排（EUI 语义），不开该标志时范围
         // 冻结在末次 compose 值，滚出 overscan 后新暴露区空白（真机实测）。
-        .content([&s, &style, &scroll, viewportH, &previewDocHeight](eui::Ui& inner, float innerW, float) {
+        .content([&s, &st, &style, &scroll, viewportH, &previewDocHeight](eui::Ui& inner, float innerW, float) {
             if (s.editText.empty()) {
                 inner.text(kNotepadPreviewEmptyId)
                     .position(0.0f, 40.0f)
@@ -1000,11 +1273,23 @@ void drawPreviewSlot(
             }
             // need345 反查宽度快照（内容系 = hit 层局部系，见 session 选区字段注）
             s.selPreviewWidth = innerW;
+            // debt398：已测段由组件精测出内容；未测段 hint 近似高（只建包装几何，
+            // 帧首补测逐帧推进）。hint 与 docH 同源本帧段表（窗口内无跨帧漂移）。
+            const float widthKey = previewSegWidthKey(innerW);
+            NotepadSession::PreviewSegTable* segs = s.previewSegActive;
+            const bool hintOk = segs != nullptr && segs->usable &&
+                                std::fabs(segs->width - widthKey) < 0.6f;
+            auto hintFor = [segs, hintOk, &style](std::size_t block) -> float {
+                if (!hintOk || segs->bounds.size() < 2) return 0.0f;
+                const std::size_t seg = previewSegIndexOf(*segs, block);
+                if (seg >= segs->measured.size() || segs->measured[seg]) return 0.0f;
+                return previewSegBlockApprox(*segs, seg, style);
+            };
             // 整篇包裹 stack：md 文本 + 选区矩形叠层 + 透明 hit 覆盖层（拖选
             // 三件）。高 = estimateHeight（渲染同源估算，displayCpForPoint 的
             // 纵向排布同式）——旧查看器逐块 hit 缝（mdDrawBlockFlowCore）的
             // 整篇等价形态（块流核 module_markdown 私有，隔离禁依赖，见 §注）。
-            const float docH = previewDocHeight(innerW);  // bug399 round5：会话级缓存
+            const float docH = hintOk ? segs->total : s.previewSegLastDocH;
             const std::string wrapId = std::string(kNotepadPreviewContentId) + ".wrap";
             auto wrap = inner.stack(wrapId)
                 .width(innerW)
@@ -1016,6 +1301,7 @@ void drawPreviewSlot(
                     .wrapContentHeight()
                     .style(style)
                     .visibleRange(scroll, scroll + viewportH)  // bug382 视口裁剪
+                    .blockHeightHint(hintFor)                 // debt398 未测段近似高
                     .build();
                 // 选区矩形（info 蓝低透明，旧查看器 selAlpha 同档）：文档系 y
                 // 直接叠层（hitRectsForDisplayRangeDoc，need345 EUI-NEO 新缝）；
@@ -1036,6 +1322,68 @@ void drawPreviewSlot(
                                 .size(r.w, r.h)
                                 .color(components::theme::withAlpha(t.colors.info, selAlpha))
                                 .build();
+                        }
+                    }
+                }
+                // need400：查找命中高亮层（独立于选区，不触发「选中即复制」；
+                // 半透明 tint 叠在文字上，不消费命中、不挡 hit 层）。命中是显示
+                // 文本字节区间 → 码点域反查矩形；hits 升序不重叠 → 线性累计换算。
+                if (s.find.visible && !s.find.hits.empty()) {
+                    const std::string& fdisp =
+                        notepadFindPreviewDisplay(s, st.textRevision);
+                    const auto& th = core::theme::current();
+                    const eui::Color hitFill = components::theme::withAlpha(
+                        th.colors.warning, th.isDark ? 0.30f : 0.26f);
+                    const eui::Color curFill = colorOver(
+                        hitFill, components::theme::withAlpha(th.colors.primary, 0.45f));
+                    size_t byteCur = 0;
+                    size_t cpCur = 0;
+                    size_t rid = 0;
+                    for (size_t hi = 0; hi < s.find.hits.size(); ++hi) {
+                        const FindHit& hit = s.find.hits[hi];
+                        if (hit.start < byteCur || hit.end > fdisp.size()) continue;
+                        cpCur += notepadUtf8Length(
+                            fdisp.substr(byteCur, hit.start - byteCur));
+                        byteCur = hit.start;
+                        const size_t cp0 = cpCur;
+                        const size_t cp1 =
+                            cpCur + notepadUtf8Length(
+                                        fdisp.substr(hit.start, hit.end - hit.start));
+                        const auto rects =
+                            components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+                                s.editText, innerW, style, cp0, cp1);
+                        const eui::Color fill =
+                            hi == s.find.cur ? curFill : hitFill;
+                        for (const auto& r : rects) {
+                            inner.rect(wrapId + ".find." + std::to_string(rid++))
+                                .position(r.x, r.y)
+                                .size(r.w, r.h)
+                                .color(fill)
+                                .build();
+                        }
+                    }
+                }
+                // need400：待跳转滚动落点（命中置于视口上部 12px，旧查看器
+                // computeSyncOffset 口径）；本帧改 offset 下帧生效，requestUpdate 兜底。
+                if (s.find.pendingPreviewScroll) {
+                    s.find.pendingPreviewScroll = false;
+                    if (s.find.visible && s.find.cur < s.find.hits.size()) {
+                        const std::string& fdisp =
+                            notepadFindPreviewDisplay(s, st.textRevision);
+                        const FindHit& hit = s.find.hits[s.find.cur];
+                        if (hit.end <= fdisp.size()) {
+                            const size_t cp0 =
+                                notepadUtf8Length(fdisp.substr(0, hit.start));
+                            const size_t cp1 =
+                                cp0 + notepadUtf8Length(
+                                          fdisp.substr(hit.start, hit.end - hit.start));
+                            const auto rects =
+                                components::MarkdownBuilder::hitRectsForDisplayRangeDoc(
+                                    s.editText, innerW, style, cp0, cp1);
+                            if (!rects.empty()) {
+                                scroll = std::max(0.0f, rects.front().y - 12.0f);
+                                app::requestUpdate();
+                            }
                         }
                     }
                 }
@@ -1062,6 +1410,22 @@ void drawPreviewSlot(
 }
 
 }  // namespace
+
+// debt398 测试缝（声明见 notepad_session.h）：同步把活动段表全部段精测到底。
+int notepadPreviewWarmForTest(NotepadSession& s) {
+    NotepadSession::PreviewSegTable* table = s.previewSegActive;
+    if (table == nullptr || !table->usable) return 0;
+    const components::MarkdownStyle style = s.selPreviewStyle;
+    int measured = 0;
+    for (std::size_t seg = 0; seg < table->heights.size(); ++seg) {
+        if (table->measured[seg]) continue;
+        previewSegMeasure(s, *table, seg, style);
+        ++measured;
+    }
+    previewSegNoteConverged(s, *table);
+    s.previewSegPendings = table->pending;
+    return measured;
+}
 
 // need345：预览选区文本构建单点（声明见 notepad_session.h）——整篇显示文本
 // 码点域切片：跨块 '\n' 已含在扁平域内（= 旧查看器「多块按阅读序 '\n' 连接」
@@ -1413,8 +1777,10 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
             }
         }
         if (s.previewOn) {
-            // 预览槽位整页替换编辑器（InputState 不动 → 切回光标/滚动保留）；
-            // 查找态 tick 冻结（§4.6 查找禁用，切回编辑恢复）
+            // 预览槽位整页替换编辑器（InputState 不动 → 切回光标/滚动保留）。
+            // need400：预览态查找 tick 走显示文本域（命中/跳转只驱动预览滚动，
+            // 不落编辑器光标/选区——预览禁编辑）
+            notepadPreviewFindTick(s, st);
             drawPreviewSlot(s, ui, w, h, editorTop, st, componentTheme);
         } else {
             // 查找态 tick：待跳转消费 + 输入即重算 + 文本编辑重算（见函数注）
@@ -1603,9 +1969,9 @@ void notepadComposeSession(NotepadSession& s, eui::Ui& ui,
         }
     }
 
-    // ── 查找条浮层（z 序最上，锚编辑区右上；错误态无编辑器不渲染；预览态
-    // 查找禁用不渲染——恢复后条内状态原样保留）──
-    if (s.find.visible && !errorState && !s.previewOn) {
+    // ── 查找条浮层（z 序最上，锚编辑区右上；错误态无编辑器不渲染；need400
+    // 预览态同样渲染——查找/跳转作用于预览显示域，替换面禁用）──
+    if (s.find.visible && !errorState) {
         drawSearchBar(s, ui, w, editorTop, t, componentTheme, editable);
     }
 
@@ -1659,7 +2025,12 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
         return;
     }
     if (shortcut && key.key == eui::InputKey::H) {
-        notepadFindOpenReplace(s);  // M+H 替换条直开（PRD 流程 D3）
+        // need400：预览态只读无替换语义 → 退化为普通查找条
+        if (s.previewOn) {
+            notepadFindToggle(s);
+        } else {
+            notepadFindOpenReplace(s);  // M+H 替换条直开（PRD 流程 D3）
+        }
         return;
     }
     if (shortcut && key.key == eui::InputKey::P) {
@@ -1681,10 +2052,9 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
         return;
     }
     if (shortcut && key.key == eui::InputKey::F) {
-        if (!s.previewOn) {
-            notepadFindToggle(s);  // M+F 开/关查找条（再唤起保留词全选，F-06）
-        }
-        return;  // 预览态查找禁用（设计稿 §4.6 联动矩阵）
+        // need400：预览态同样开条（命中域 = 显示文本，notepadPreviewFindTick）
+        notepadFindToggle(s);  // M+F 开/关查找条（再唤起保留词全选，F-06）
+        return;
     }
     if (shortcut && key.key == eui::InputKey::Equal) {
         notepadStepFontSize(s, 1);  // M+= 放大（F-10；Shift+Equal 同分支兼容）
@@ -1697,7 +2067,7 @@ void notepadHandleKeySession(NotepadSession& s, const eui::KeyEvent& key) {
     // 查找条开着时的 Enter / Shift+Enter / Esc 兜底通路：查找输入聚焦时由
     // input onKeyEvent 先消费（input.h:240 passthrough，已处理键不冒泡到
     // 窗口级——runtime_input.h:323 仅 !handled 才调窗级处理器），未聚焦走这里。
-    if (s.find.visible && s.loadError.empty() && !s.previewOn) {
+    if (s.find.visible && s.loadError.empty()) {
         if (key.key == eui::InputKey::Enter) {
             s.find.pendingJump = key.modifiers.shift ? -1 : 1;  // 单调跳转（环绕）
             app::requestUpdate();

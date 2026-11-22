@@ -128,6 +128,8 @@ REGISTER_TEST(schema_creates_all_tables,
             "idx_claude_active",
             "idx_call_logs_started",
             "idx_call_logs_profile",
+            // 成功调用倒序取 1 行的部分索引（need401 #412，谓词与 getLastCallRate 一致）
+            "idx_call_logs_success_rate",
             "idx_agent_runs_task",
             "idx_agent_messages_run",
             // agent_runs 按 status 的部分索引：只收 running 行（轮询 + 启动清扫）

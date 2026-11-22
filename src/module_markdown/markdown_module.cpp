@@ -7,7 +7,7 @@
 
 #include "core/mcp_tool.h"
 #include "core/platform_info.h"
-#include "notes_mcp_tools.h"
+#include "platform/tool_kit.h"
 
 #include <utility>
 
@@ -85,7 +85,9 @@ inline HeaderLayout headerLayout(float contentW, const core::theme::Tokens& t) {
 // static_cast 安全 —— 该缝不对外承诺接受任意 core::Module*。
 void mdSetPollIntervalMsForTest(::core::Module* mod, int64_t ms) {
     if (mod == nullptr || ms <= 0) return;
-    static_cast<MarkdownModule*>(mod)->pollIntervalMs_ = ms;
+    // bug402/403：周期现在同时驱动 UI 节流与后台巡检线程（service 可能未建，
+    // 模块侧记住值，onStart 建 service 后回灌）
+    static_cast<MarkdownModule*>(mod)->setPollIntervalMs(ms);
 }
 
 
@@ -117,6 +119,8 @@ void MarkdownModule::onStart()  {
     if (!service_) {
         service_ = std::make_unique<MarkdownService>(*db,
                                                      ::core::paths::markdownDir());
+        // 测试缝可能先于 onStart 设过周期（probe/test 均在 startAll 前注入）
+        service_->setPollIntervalMsForTest(pollIntervalMs_);
     }
     markdownTools_ = std::make_unique<MarkdownTools>(*service_);
     markdownTools_->registerAll();
@@ -144,14 +148,11 @@ void MarkdownModule::onStart()  {
     }
     noteGit_->start();
 
-    // 需-7 笔记 MCP 三工具（notes_search / notes_read / notes_write）：注册进
-    // 全局 MCP 注册表（onStart 注册 / onStop 注销，markdown_tools 同款生命周期；
-    // markdown 模块关闭即随行注销）。失败只 LOG_ERROR 不阻断启动。
-    if (auto reg = mcp::registerNotesMcpTools(core::mcp::globalMcpTools(),
-                                              *service_, noteGit_);
-        reg.isFail()) {
-        LOG_ERROR("notes MCP 工具注册失败（不阻断启动）: " + reg.errorMessage());
-    }
+    // need394（F-2，OP-1=B 移除）：md.* 五工具以 md_* 名进 MCP 对外面（后端
+    // 零重写），notes_* 三工具注册已下线（md_* 为正名面，重叠不双开）；
+    // onStart 注册 / onStop 注销，随 markdown 模块开关插拔。
+    ::platform::tool_kit::registerToolsAsMcp(
+        ::core::mcp::globalMcpTools(), markdownTools_->tools());
 
     LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
 }
@@ -162,12 +163,13 @@ void MarkdownModule::onStop()  {
     dbImportHandlersEnabled_.store(false, std::memory_order_release);
     dbImportedSub_ = {};
     if (markdownTools_) {
+        // need394：MCP md_* 五工具先整批注销（adapter shared 持有实例，在途
+        // execute 由注册表 + shared_ptr 保活；service_ 跨 stop/start 存续不悬垂）
+        ::platform::tool_kit::unregisterToolsAsMcp(
+            ::core::mcp::globalMcpTools(), markdownTools_->tools());
         markdownTools_->unregisterAll();
         markdownTools_.reset();
     }
-    // 需-7：MCP notes 三工具先注销再放 noteGit（write 工具 shared 持有 git 链，
-    // 在途 execute 由注册表 + shared_ptr 保活；service_ 跨 stop/start 存续不悬垂）
-    mcp::unregisterNotesMcpTools(core::mcp::globalMcpTools());
     // 退出前落盘：无退出拦截 API，只能同步有限重试 + 日志兜底。
     // 退出时冲突未决（toast 随页面消失、没有让用户选择的时机）：只能按「保留本地」
     // 落盘 —— 未保存的键入不可恢复，外部版本可从笔记 git 历史 / 远端找回，所以这个

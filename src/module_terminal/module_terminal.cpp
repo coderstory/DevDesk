@@ -29,7 +29,9 @@ std::string TerminalModule::shortName() const { return "终端"; }
 std::string TerminalModule::iconGlyph() const { return "\xEF\x84\xA0"; }  // U+F120 fa-terminal
 
 void TerminalModule::ensureBackend() {
-    if (controller_.empty()) controller_.startSession();
+    // bug406：后台建会话——进页帧不被 ConPTY 创建（实测 14.4ms）阻塞；会话以 Starting
+    // 占位（页面骨架），成功/失败由 compose → pollAll 收割。Starting 也是会话，幂等不变。
+    if (controller_.empty()) controller_.startSessionAsync();
 }
 
 void TerminalModule::onPageEnter() { ensureBackend(); }

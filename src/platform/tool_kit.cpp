@@ -1,5 +1,9 @@
 #include "platform/tool_kit.h"
+
 #include <utility>
+
+#include "core/logging.h"
+#include "platform/utf8.h"
 
 namespace pj = platform::json;
 
@@ -57,6 +61,74 @@ core::Result<std::string> arrayOfJsonTexts(
                                                "结果数组组装校验失败");
     }
     return core::Result<std::string>::ok(out);
+}
+
+std::string mcpToolName(const std::string& agentToolName) {
+    std::string out = agentToolName;
+    for (char& c : out) {
+        if (c == '.' || c == '-') c = '_';
+    }
+    return out;
+}
+
+McpToolAdapter::McpToolAdapter(std::shared_ptr<core::ITool> tool,
+                               std::string mcpName)
+    : tool_(std::move(tool)), mcpName_(std::move(mcpName)) {
+    // schemaJson 形状（core/tool.h 契约）= {"name","description","input_schema"}：
+    // 拆出后两项直接用；拆失败（空/非法）退化到空参数 schema，不让单个坏工具
+    // 拖垮整页 tools/list。
+    auto parsed = platform::json::parse(tool_->schemaJson());
+    if (parsed.isOk() && parsed.value().isObject()) {
+        const platform::json::JsonObject schema = parsed.value().asObject();
+        const platform::json::JsonValue desc = schema.get("description");
+        if (desc.isString()) description_ = desc.asString();
+        const platform::json::JsonValue in = schema.get("input_schema");
+        if (in.isObject()) {
+            auto text = platform::json::stringify(in);
+            if (text.isOk()) inputSchema_ = text.value();
+        }
+    }
+    if (inputSchema_.empty()) {
+        inputSchema_ = R"({"type":"object","properties":{}})";
+    }
+}
+
+core::Result<core::mcp::ToolResult> McpToolAdapter::execute(
+    const std::string& argumentsJson) {
+    auto r = tool_->execute(core::ToolArgs{argumentsJson});
+    if (r.isFail()) {
+        return core::Result<core::mcp::ToolResult>::fail(r.errorCode(),
+                                                         r.errorMessage());
+    }
+    // contentJson 原样当文本透传（结构由宿主侧解析）；先 UTF-8 归一，防
+    // 非法字节把 MCP 响应 JSON 写成坏串（utf8.h 头注：工具边界的既有做法）。
+    return core::Result<core::mcp::ToolResult>::ok(core::mcp::ToolResult{
+        r.value().isError,
+        platform::utf8::sanitize(r.value().contentJson)});
+}
+
+void registerToolsAsMcp(
+    core::mcp::McpToolRegistry& registry,
+    const std::vector<std::shared_ptr<core::ITool>>& tools) {
+    for (const auto& tool : tools) {
+        if (tool == nullptr) continue;
+        const std::string name = mcpToolName(tool->name());
+        auto r = registry.registerTool(
+            std::make_shared<McpToolAdapter>(tool, name));
+        if (r.isFail()) {
+            LOG_ERROR("MCP 对外注册失败（不阻断启动）: " + name + " — " +
+                      r.errorMessage());
+        }
+    }
+}
+
+void unregisterToolsAsMcp(
+    core::mcp::McpToolRegistry& registry,
+    const std::vector<std::shared_ptr<core::ITool>>& tools) {
+    for (const auto& tool : tools) {
+        if (tool == nullptr) continue;
+        registry.unregisterTool(mcpToolName(tool->name()));
+    }
 }
 
 }  // namespace platform::tool_kit

@@ -1,0 +1,1 @@
+{"version":1,"steps":[{"type":"click","id":"app.sidebar.item.Memory.hit"},{"type":"wait","until":"exists","id":"app.sidebar.item.Memory.hit","_comment":"占位等待导航"},{"type":"wait","ms":500},{"type":"dump","path":"memory-recon-dump.txt"},{"type":"screenshot","path":"memory-recon.png"}]}

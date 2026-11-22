@@ -24,6 +24,12 @@ public:
     // 全部从注册表注销（对未注册的名字是 no-op，可安全重复调用）
     void unregisterAll();
 
+    // need394：MCP 对外面整批复用这一批实例（platform::tool_kit::
+    // registerToolsAsMcp 取用），不另建一套后端
+    const std::vector<std::shared_ptr<core::ITool>>& tools() const {
+        return tools_;
+    }
+
 private:
     std::vector<std::shared_ptr<core::ITool>> tools_;
 };

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "light",
+                          "enabledModules": ["markdown", "todo", "claude_proxy", "agent", "terminal"]}
+      }
+    },
+    "defaultWaitTimeoutMs": 10000
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Agent.hit", "_comment": "agent 任务不跨驱动进程持久化，重建"},
+    {"type": "wait", "until": "exists", "id": "agent.empty.action.bg", "timeoutMs": 8000},
+    {"type": "click", "id": "agent.empty.action.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "视觉判读批L取证任务三", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "打开详情弹窗取证三", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.1.hit", "timeoutMs": 8000},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "agent.task.1.hit"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.detail.panel", "timeoutMs": 5000},
+    {"type": "wait", "ms": 400},
+    {"type": "click", "id": "agent.dialog.detail.nav.item.1.bg", "_comment": "170: 详情弹窗内页签（可用工具弹窗化）"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "l3-agent-tools-dump.txt"},
+    {"type": "screenshot", "path": "l3-agent-tools.png"},
+    {"type": "click", "id": "agent.dialog.detail.close", "_comment": "关详情弹窗"},
+
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "278④: palette 持久值≠默认后测 reset 取消通道"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 6000},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.term.act.gear.bg"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "click", "id": "app.term.set.row.palette.mode.hit.1", "_comment": "切「独立」（非默认）"},
+    {"type": "wait", "ms": 300},
+    {"type": "click", "id": "app.term.set.done", "_comment": "done 落库「独立」"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.term.act.gear.bg", "_comment": "重开：确认库值=独立"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "l3-term-open1-dump.txt"},
+    {"type": "click", "id": "app.term.set.reset", "_comment": "reset 恢复默认（草稿，不应落库）"},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "l3-term-reset-dump.txt"},
+    {"type": "click", "id": "app.term.set.close.bg", "_comment": "× 取消：不点 done"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.term.act.gear.bg", "_comment": "重开裁决：indicator 回「独立」=绿；停在默认=红"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "l3-term-open2-dump.txt"}
+  ]
+}

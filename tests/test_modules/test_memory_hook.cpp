@@ -400,6 +400,22 @@ REGISTER_TEST(memory_gateway_add_error_envelope_fail,
     return true;
 })
 
+REGISTER_TEST(memory_gateway_add_sse_envelope_no_event_prefix,
+              "memory: add 缝解析（bug239）——SSE 帧无 event: 前缀 / CRLF / 空 data 心跳 → 剥首个非空 data 载荷再解析", {
+    const std::string payload =
+        R"({"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"{\"status\":\"stored\"}"}]}})";
+    // 无 event: 前缀（修复前原样体进 JSON 解析器 → 「响应非 JSON」）
+    auto bare = parseAddResponse("data: " + payload + "\n\n");
+    DOCTEST_REQUIRE(bare.isOk());
+    DOCTEST_CHECK(bare.value().empty());
+    // CRLF + 空 data 心跳后再来真帧
+    auto keepalive = parseAddResponse("event: message\r\ndata:\r\n\r\ndata: " +
+                                      payload + "\r\n");
+    DOCTEST_REQUIRE(keepalive.isOk());
+    DOCTEST_CHECK(keepalive.value().empty());
+    return true;
+})
+
 // ── 需-3 前缀文法与分组渲染（细则 §1/§4，解析契约单测落点）──
 
 REGISTER_TEST(memory_hook_prefix_parse_contract,

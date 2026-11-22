@@ -9,11 +9,13 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/mcp_tool.h"
 #include "core/module_interface.h"
 #include "core/tool.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_tools.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <memory>
 #include <string>
@@ -624,5 +626,56 @@ REGISTER_TEST(todo_tools_schema_spot_check_and_registry,
     env.tools->unregisterAll();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isFail());
     env.tools->unregisterAll();
+    return true;
+})
+
+// need394 F-1（D-1 命名下划线）：6 件 todo.* 经 tool_kit::McpToolAdapter 以
+// todo_* 名进 MCP 对外面——后端与智能体面同一份实现（描述/schema 同源、执行零
+// 语义漂移）；点号原名不得漏进对外面
+REGISTER_TEST(todo_tools_mcp_registration,
+              "need394: 6 件 todo_* 进 MCP 对外面，描述/schema 同源，空参与目标不存在走 isError", {
+    ToolEnv env("mcp");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+
+    core::mcp::McpToolRegistry mcp;
+    platform::tool_kit::registerToolsAsMcp(mcp, env.tools->tools());
+    DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 6);
+
+    const char* names[] = {"todo_list",       "todo_create", "todo_update",
+                           "todo_move",       "todo_complete", "todo_delete"};
+    for (const char* n : names) {
+        const std::string name(n);
+        auto found = mcp.find(name);
+        DOCTEST_REQUIRE_MESSAGE(found.isOk(), name);
+        const auto& tool = found.value();
+        DOCTEST_CHECK_EQ(tool->name(), name);
+        // 描述/schema 从智能体面 schemaJson 拆出（非手写副本）
+        DOCTEST_CHECK(!tool->description().empty());
+        DOCTEST_CHECK(tool->inputSchemaJson().find("\"type\":\"object\"") !=
+                      std::string::npos);
+        // 点号原名不进对外面（D-1：对外全下划线）
+        DOCTEST_CHECK(mcp.find("todo." + name.substr(5)).isFail());
+    }
+    DOCTEST_CHECK(mcp.find("todo_list").value()->description().find("待办任务") !=
+                  std::string::npos);
+
+    // 空参调用：todo_list → {"tasks":[...]}（与智能体面同形）
+    {
+        auto r = mcp.find("todo_list").value()->execute("{}");
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK_FALSE(r.value().isError);
+        DOCTEST_CHECK(r.value().text.find("\"tasks\"") != std::string::npos);
+    }
+    // 业务失败仍走 Result ok + isError（MCP 面零语义漂移）
+    {
+        auto r = mcp.find("todo_delete").value()->execute(R"({"id":999999})");
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(r.value().isError);
+    }
+
+    // 整批注销后离场（模块 onStop 同口径）
+    platform::tool_kit::unregisterToolsAsMcp(mcp, env.tools->tools());
+    DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 0);
     return true;
 })

@@ -86,6 +86,33 @@ struct NotepadSession {
     std::array<PreviewDocHCache, 4> previewDocHs{};
     int previewDocHNext = 0;
 
+    // debt398：分段测高段表（预览总高异步化）。键口径同 previewDocHs（修订 +
+    // 0.5px 宽 + 样式指纹）；段 = 连续块区间（EUI blockSegmentBoundaries，不切
+    // 表格行组）。首帧只出近似总高 + 可见段由 markdown 组件自行精测，屏外段每
+    // 帧预算补测 → 总高/滚动条渐进收敛；全部测完写回 previewDocHs 精确缓存。
+    struct PreviewSegTable {
+        unsigned long long rev = 0;
+        float width = -1.0f;
+        std::string styleKey;
+        std::vector<std::size_t> bounds;    // 段边界（含首 0 与末 n）
+        std::vector<float> heights;         // 段高（measured=1 精确 / 0 近似）
+        std::vector<unsigned char> measured;
+        float total = 0.0f;                 // Σ段高 + 段间 gap（= 整篇估高口径）
+        int pending = 0;                    // 未测段数
+        bool converged = false;             // 已写回精确总高缓存（只写一次）
+        bool usable = false;
+    };
+    std::array<PreviewSegTable, 4> previewSegTables{};  // 多档宽轮转（同 previewDocHs）
+    int previewSegNext = 0;
+    PreviewSegTable* previewSegActive = nullptr;  // 本帧 provider 命中的段表（hint 用）
+    float previewSegLastDocH = 0.0f;  // 本帧 provider 最后返回的总高（wrap 高同源）
+    int previewSegPendings = 0;                   // 活动段表未测段数（测试观察缝）
+
+    // need400：预览查找显示文本缓存（MarkdownBuilder::displayTextOf 结果；
+    // 以 InputState.textRevision 失效——预览禁编辑，查找条开着时逐帧复用）
+    std::string findPreviewDisplay;
+    unsigned long long findPreviewRev = ~0ull;
+
     // ── 编码 / 行尾（notepad_encoding 探测结果）──
     NotepadEncodingProbe enc{};
     NotepadEol eolMode = NotepadEol::Lf;
@@ -125,6 +152,10 @@ struct NotepadSession {
         size_t cur = kFindNoHit;          // 当前命中下标（kFindNoHit = 无）
         unsigned long long hitsRevision = 0;  // hits 对应的 InputState.textRevision
         bool styleDirty = false;          // 开关条后命中层缓存失效待消费（compose bump styleRevision）
+        bool hitsPreview = false;         // 命中集所属文本域：true = 预览显示文本
+                                          // （need400；预览↔编辑切换强制重算）
+        bool pendingPreviewScroll = false;  // 预览态待滚动定位（跳转消费后置位，
+                                          // drawPreviewSlot 换算矩形 y → scroll）
         bool pendingSeed = false;         // 开条后首帧播种输入框（键路由置位，compose 消费）
         int pendingJump = 0;              // 待跳转 +1/-1（键路由置位，compose 消费——
                                           // 键事件处理器无 Ui 访问权，InputState 直写单点在 compose）
@@ -205,7 +236,7 @@ struct NotepadToolbarMatrix {
     bool showPreview = false;        // 仅 .md/.markdown 扩展（F-13）
     bool formatEnabled = false;      // 可编辑且非预览态（readonly/binary/预览禁用）
     bool previewEnabled = false;     // 大文件禁用（1MB 级渲染成本未证，PRD F-16 降级）
-    bool findToggleEnabled = true;   // 预览态 M+F 禁用（§4.6 查找禁用）
+    bool findToggleEnabled = true;   // need400：错误态外恒可用（预览查找走显示域）
     bool fontControlsEnabled = true; // 预览态字体下拉/A± 禁用（§4.6）
 };
 NotepadToolbarMatrix notepadToolbarMatrixFor(const NotepadSession& s);
@@ -225,5 +256,10 @@ void notepadOpenViaDialog(NotepadSession& s);
 // 符；空选区 = 空串）。实现单点在 notepad_window.cpp——拖选抬起自动复制与
 // Ctrl+C 兼容通道同一条构建通路（测试直驱本函数，session 字段可直接注入）。
 std::string notepadPreviewSelText(const NotepadSession& s);
+
+// debt398 测试缝：同步把活动段表（provider 命中的宽度档）全部段精测到底。
+// O/P 段腿前预热用——渐进中间值不得污染既有「同档 docH 漂移 ≤1px」断言。
+// 返回本次实际测量段数（0 = 无活动段表）。
+int notepadPreviewWarmForTest(NotepadSession& s);
 
 }  // namespace module::notepad

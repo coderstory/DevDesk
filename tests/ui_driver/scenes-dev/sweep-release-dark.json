@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {
+          "themeMode": "dark",
+          "enabledModules": [
+            "release"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "type": "click",
+      "id": "app.sidebar.item.ReleaseGroup.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 600
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.ReleaseTasks.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-release-tasks-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.ReleaseConfig.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-release-config-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.About.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 600
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-about-01.png"
+    }
+  ]
+}

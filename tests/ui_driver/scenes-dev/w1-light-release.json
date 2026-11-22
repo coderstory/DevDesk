@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "light", "enabledModules": ["release"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.ReleaseGroup.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.sidebar.item.About.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "screenshot", "path": "w1-about.png"}
+  ]
+}

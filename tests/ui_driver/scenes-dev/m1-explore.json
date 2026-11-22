@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 8000},
+  "steps": [
+    {"type": "wait", "ms": 2000},
+    {"type": "dump", "path": "m1-sidebar.txt", "_comment": "基线侧栏（#142 对照组：默认字号下各 label 高）"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 10000},
+    {"type": "wait", "ms": 3000, "_comment": "主控台引导态文案 settle（#203/#202/#114①⑤）"},
+    {"type": "dump", "path": "m1-memory.txt"},
+    {"type": "screenshot", "path": "m1-memory.png"},
+    {"type": "click", "id": "app.memory.eng.wizard", "_comment": "#202③ 首次安装向导步骤数"},
+    {"type": "wait", "ms": 1200},
+    {"type": "dump", "path": "m1-wizard.txt"},
+    {"type": "screenshot", "path": "m1-wizard.png"},
+    {"type": "key", "name": "Escape"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "dump", "path": "m1-schedule.txt"},
+    {"type": "screenshot", "path": "m1-schedule.png"},
+    {"type": "click", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "wait", "ms": 1000},
+    {"type": "dump", "path": "m1-agent.txt"},
+    {"type": "screenshot", "path": "m1-agent.png"},
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "wait", "ms": 1000},
+    {"type": "dump", "path": "m1-md.txt"},
+    {"type": "screenshot", "path": "m1-md.png"}
+  ]
+}

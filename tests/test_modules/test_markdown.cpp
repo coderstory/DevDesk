@@ -614,12 +614,20 @@ REGISTER_TEST(md_module_poll_seam_is_live,
     DOCTEST_CHECK_MESSAGE(phantomRows() == 1,
                           "周期 1 小时仍发生了轮询（缝没生效，导入用例的假红根因还在）");
 
-    // ② 周期 1ms：下一帧必到期 → rescan 以磁盘为准 → 幽灵行被剪掉
+    // ② 周期 1ms：后台巡检线程跑一轮 compare → 有差异 → rescan 以磁盘为准剪掉
+    // 幽灵行。bug402/403 起巡检实体在 MarkdownService 后台线程（不进 UI 帧），
+    // 观察侧按有界等待写（≤2s 收敛），不再假设「下一帧内完成」。
     module::markdown::mdSetPollIntervalMsForTest(mod.get(), 1);
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));   // 越过 1ms 节流门
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        while (phantomRows() != 0 &&
+               std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
     frame("ps3");
     DOCTEST_CHECK_MESSAGE(phantomRows() == 0,
-                          "周期 1ms 未触发轮询 rescan（缝没生效）");
+                          "周期 1ms 未触发后台轮询 rescan（缝没生效）");
 
     mod->onStop();
     return true;
@@ -1611,17 +1619,18 @@ REGISTER_TEST(md_module_new_folder_parent,
 
     // 上级目录 = 路径，不是候选列表下标
     // 存下标、提交时用同一下标重新推导目录时，弹窗开着期间目录清单一变（外部新建
-    // 目录 / 5 秒轮询刷新），同一��标就落到另一个目录。这里复刻真实机制：保持弹窗
-    // 打开，磁盘上出现一个排序在「工作」之前的目录，并让 5 秒轮询把清单刷进来
-    //（空目录不在 pollChanged 的比对范围内，所以另写一个 .md 文件作为轮询信号——
-    // 这也是外部改动的真实形态），然后提交 —— 落点必须仍是用户选的「工作」。
+    // 目录 / 后台轮询刷新），同一下标就落到另一个目录。这里复刻真实机制：保持弹窗
+    // 打开，磁盘上出现一个排序在「工作」之前的目录，再触发一轮外部刷新
+    //（空目录不在磁盘比对的范围内，所以另写一个 .md 文件当刷新信号——watcher
+    // 事件/后台比对都会点亮 indexDirty；这也是外部改动的真实形态），然后提交 ——
+    // 落点必须仍是用户选的「工作」。
     {
         std::error_code dec;
         fs::create_directories(env.dir / "aaa", dec);
         DOCTEST_REQUIRE(!dec);
         DOCTEST_REQUIRE(writeTextFile(env.dir / "poll_signal.md", "# s\n"));
         std::this_thread::sleep_for(std::chrono::milliseconds(5200));
-        frame("np10");  // 本帧 pollDiskChangesIfDue → rescan → refreshList（候选列表变了）
+        frame("np10");  // 本帧 pollDiskChangesIfDue 消费 indexDirty → refreshList（候选列表变了）
     }
     const auto* input2 = ui.find("md.dialog.newfolder.input.hit");
     DOCTEST_REQUIRE(input2 != nullptr);

@@ -19,11 +19,11 @@ void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
     float cy = oy;
 
     // 面板库故障（可读错误，不留白）
-    if (!snap.storesOk) {
+    if (!snap->storesOk) {
         ui.text("memory.stores.error")
             .position(x, cy)
             .size(w, core::theme::scaled(22.0f))
-            .text("面板数据通道异常：" + snap.storesError)
+            .text("面板数据通道异常：" + snap->storesError)
             .fontSize(core::theme::scaled(12.5f))
             .lineHeight(core::theme::scaled(22.0f))
             .color(t.colors.errorText)
@@ -493,7 +493,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                 !batchSel_.empty() &&
                 std::all_of(batchSel_.begin(), batchSel_.end(),
                             [&](const std::string& id) {
-                                for (const auto& p : snap.pending) {
+                                for (const auto& p : snap->pending) {
                                     if (p.id == id) return batchableKind(p.kind);
                                 }
                                 return false;
@@ -562,36 +562,51 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
     if (filterState_ == 0) {
         int shown = 0;
         int matched = 0;
-        for (const auto& p : snap.pending) {
+        for (const auto& p : snap->pending) {
             if (!kindMatches(filterType_, p.kind)) continue;
             if (!srcMatches(filterSrc_, p.source)) continue;
             ++matched;
             if (shown >= reviewShowLimit_) continue;
-            composeProposalCard(ui, t, x, w, cy, snap, p,
+            composeProposalCard(ui, t, x, w, cy, *snap, p,
                                 batchableKind(p.kind));
             cy += core::theme::scaled(176.0f) + 8.0f;  // need219 §4.3：审核卡间距 8px
             ++shown;
         }
-        if (matched > shown) {
+        // need401 #411：数据层只装窗口上限（panel_state.cpp kPendingWindow=200）内
+        // 最早的一批待审；「还有 N 条」按真实总数（pendingTotal）报，窗口外的部分
+        // 靠处理/拒绝后的刷新自动补入。
+        const int pendingTrue = std::max(snap->pendingTotal, matched);
+        if (pendingTrue > shown) {
             // 渐进加载尾行：如实报剩余量 + 按需增长（每批 kReviewShowLimit）
             ui.text("memory.rv.more.note")
                 .position(x + 16.0f, cy + core::theme::scaled(6.0f))  // need298 M15：与右侧按钮同中心线（34 高钮 vs 22 高行）
                 .size(w - 190.0f, core::theme::scaled(22.0f))
                 .text("已显示前 " + std::to_string(shown) + " 条 · 还有 " +
-                      std::to_string(matched - shown) +
+                      std::to_string(pendingTrue - shown) +
                       " 条待审（也可用上方筛选缩小范围）")
                 .fontSize(core::theme::scaled(12.0f))
                 .lineHeight(core::theme::scaled(22.0f))
                 .color(t.colors.textTertiary)
                 .build();
-            ui_kit::button(ui, "memory.rv.more", "再显示 50 条",
-                           ui_kit::ButtonLevel::Secondary, x + w - 150.0f, cy,
-                           134.0f, 34.0f, t,
-                           {[this] { reviewShowLimit_ += kReviewShowLimit; }});
+            if (matched > shown) {
+                ui_kit::button(ui, "memory.rv.more", "再显示 50 条",
+                               ui_kit::ButtonLevel::Secondary, x + w - 150.0f,
+                               cy, 134.0f, 34.0f, t,
+                               {[this] { reviewShowLimit_ += kReviewShowLimit; }});
+            } else {
+                ui.text("memory.rv.window.note")
+                    .position(x + w - 250.0f, cy + core::theme::scaled(6.0f))
+                    .size(234.0f, core::theme::scaled(22.0f))
+                    .text("已到列表窗口上限，处理后自动补入")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(22.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
+            }
             cy += 44.0f + 12.0f;
         }
         if (shown == 0) {
-            const bool totallyEmpty = snap.pending.empty();
+            const bool totallyEmpty = snap->pending.empty();
             // 2026-11-01 R3：空态统一走 ui_kit::emptyState，不再外套大白卡
             // （原为 150px 高的卡包两行字，形态与其余页面不一致）。
             ui_kit::EmptyStateOptions opts;
@@ -604,13 +619,13 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
         }
     } else {
         int idx = 0;
-        for (std::size_t i = 0; i < snap.decided.size(); ++i) {
-            const auto& p = snap.decided[i];
+        for (std::size_t i = 0; i < snap->decided.size(); ++i) {
+            const auto& p = snap->decided[i];
             if (!kindMatches(filterType_, p.kind)) continue;
             if (!srcMatches(filterSrc_, p.source)) continue;
             const bool undone =
-                i < snap.decidedUndone.size() && snap.decidedUndone[i];
-            composeDecidedCard(ui, t, x, w, cy, snap, p, undone);
+                i < snap->decidedUndone.size() && snap->decidedUndone[i];
+            composeDecidedCard(ui, t, x, w, cy, *snap, p, undone);
             cy += 92.0f + 8.0f;  // need219 §4.3：已裁决卡间距 8px
             ++idx;
         }
@@ -721,7 +736,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 组 0：提炼端点（LLM 一键导入 + 向量化端点并入同组；未导入 = warning
     // 摘要前置到组头，异常在 L1 可见）──
     {
-        const bool imported = snap.settings.llmImportedAtSec > 0;
+        const bool imported = snap->settings.llmImportedAtSec > 0;
         groupHead(0, "提炼端点",
                   imported ? "已导入 · 智谱端点" : "未导入——提炼不可用",
                   !imported);
@@ -787,7 +802,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .text(std::string("端点 ") + engine::kLlmBaseUrl + " · 模型 " +
                       engine::kLlmModel +
                       " · 凭据 Claude 设置（网关托管，运行时注入引擎，不写配置与日志）" +
-                      (imported ? " · 来源 profile " + snap.settings.llmProfileName
+                      (imported ? " · 来源 profile " + snap->settings.llmProfileName
                                 : " · 尚未导入（展开组后点击按钮绑定）"))
                 .fontSize(core::theme::scaled(11.5f))
                 .lineHeight(core::theme::scaled(16.0f))
@@ -795,7 +810,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
                 .build();
             by += core::theme::scaled(44.0f);
             warnBar("memory.cfg.llm.warn", by,
-                    snap.gateEnabled ? "对话内容将发送至该端点（已过脱敏）"
+                    snap->gateEnabled ? "对话内容将发送至该端点（已过脱敏）"
                                      : "对话内容将发送至该端点（当前未经脱敏）");
             by += core::theme::scaled(38.0f);
             ui.rect("memory.cfg.grp0.sep")
@@ -926,8 +941,8 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     {
         groupHead(1, "触发线",
                   "升级线 " +
-                      std::to_string(snap.settings.recallThresholdPct) + "% · 基线 " +
-                      std::to_string(snap.settings.twoWordBaseline) + " 次",
+                      std::to_string(snap->settings.recallThresholdPct) + "% · 基线 " +
+                      std::to_string(snap->settings.twoWordBaseline) + " 次",
                   false);
         if (cfgOpen_[1]) {
             const float bodyH = core::theme::scaled(220.0f);
@@ -944,7 +959,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             by += core::theme::scaled(28.0f);
             // 滑条 1：升级阈值（60~95）
             {
-                const int pct = snap.settings.recallThresholdPct;
+                const int pct = snap->settings.recallThresholdPct;
                 ui.text("memory.cfg.trig.s1.label")
                     .position(x + 16.0f, by)
                     .size(90.0f, core::theme::scaled(18.0f))
@@ -990,7 +1005,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             by += core::theme::scaled(58.0f);
             // 滑条 2：两字词基线（2~10）
             {
-                const int base = snap.settings.twoWordBaseline;
+                const int base = snap->settings.twoWordBaseline;
                 ui.text("memory.cfg.trig.s2.label")
                     .position(x + 16.0f, by)
                     .size(220.0f, core::theme::scaled(18.0f))
@@ -1077,13 +1092,13 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // 存量自定义值在 panel_settings.json 原键读入继续生效，默认取量程合理中位）──
     {
         groupHead(2, "用量告警",
-                  snap.settings.usageAlertsEnabled ? "开" : "关", false);
+                  snap->settings.usageAlertsEnabled ? "开" : "关", false);
         if (cfgOpen_[2]) {
             const float bodyH = core::theme::scaled(64.0f);
             groupBody(2, bodyH);
             float by = cy + 16.0f;
             ui_kit::wswitch(ui, "memory.cfg.usage.switch",
-                            snap.settings.usageAlertsEnabled, x + 16.0f, by,
+                            snap->settings.usageAlertsEnabled, x + 16.0f, by,
                             44.0f, 24.0f, t,
                             [this](bool on) {
                                 panel_.setUsageAlertsEnabled(on);
@@ -1107,13 +1122,13 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
     // ── 安全与隐私（常显组 ~200px，need:181 §4.3）：脱敏开关 + 数据目录 +
     // 导出/清除；脱敏关闭态 warn 条常驻组内（安全关键不进折叠）──
     {
-        const bool gateOn = snap.gateEnabled;
+        const bool gateOn = snap->gateEnabled;
         const float bodyH =
             core::theme::scaled(gateOn ? 184.0f : 218.0f);
         groupBody(3, bodyH);
         float by = cy + 16.0f;
         // 脱敏行：switch + 状态词 + 一句说明；关闭走红色二次确认（现有 maskModal）
-        ui_kit::wswitch(ui, "memory.cfg.mask.switch", snap.gateEnabled,
+        ui_kit::wswitch(ui, "memory.cfg.mask.switch", snap->gateEnabled,
                         x + 16.0f, by, 44.0f, 24.0f, t,
                         [this](bool on) {
                             if (!on) {
@@ -1165,7 +1180,7 @@ void MemoryModule::composeConfig(eui::Ui& ui, const core::theme::Tokens& t,
             .position(x + 26.0f, by + core::theme::scaled(4.0f))
             .size(innerW - 20.0f, core::theme::scaled(20.0f))
             .text(engine::memoryDataDir().generic_string() + "  ·  " +
-                  formatBytes(snap.storageBytes))
+                  formatBytes(snap->storageBytes))
             .fontSize(core::theme::scaled(12.0f))
             .lineHeight(core::theme::scaled(20.0f))
             .color(t.colors.textSecondary)

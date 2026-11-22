@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 25000},
+ "steps": [
+  {"type": "wait", "ms": 9000, "_comment": "注入窗口：bash 侧把真实 memory db 拷进驱动临时数据根"},
+  {"type": "click", "id": "app.sidebar.item.Memory.hit", "_comment": "190/201: 真实 1629 条数据 Memory 页"},
+  {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 25000},
+  {"type": "wait", "ms": 5000, "_comment": "稳态 5s；compose 卡死则到此不返（步骤超时=红证据）"},
+  {"type": "dump", "path": "rm190-real.txt"},
+  {"type": "screenshot", "path": "rm190-real.png"},
+  {"type": "click", "id": "app.sidebar.item.Home.hit", "_comment": "263: 回 home dwell 收 fluid-fps 帧"},
+  {"type": "wait", "ms": 9000},
+  {"type": "dump", "path": "rm190-home2.txt"},
+  {"type": "screenshot", "path": "rm190-home2.png"}
+ ]
+}

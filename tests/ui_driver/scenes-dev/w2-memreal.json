@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "settings": {
+    "failureStrategy": "keep-going",
+    "defaultWaitTimeoutMs": 15000
+  },
+  "steps": [
+    {"type": "wait", "ms": 45000, "_comment": "注入窗：外部把复原 pending 的真库复本（proposals/collector/history/infer_queue）cp 进本根 memory/——M 批方法改 status 列版"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit"},
+    {"type": "wait", "ms": 3000},
+    {"type": "click", "id": "app.memory.tabs.1.hit", "_comment": "审核 TAB（qa160：tabs.1=review）"},
+    {"type": "wait", "ms": 3000},
+    {"type": "dump", "path": "w2-review.txt", "_comment": "#217：1629 pending → 50 张渐进卡流布局判读"},
+    {"type": "screenshot", "path": "w2-review.png"},
+    {"type": "click", "id": "memory.rv.evtoggle.prop_20261104_000002", "_comment": "#234：查看全文入口（首张卡，created_at 序第一条）→ 提案全文弹窗"},
+    {"type": "wait", "ms": 1500},
+    {"type": "dump", "path": "w2-after-toggle.txt"},
+    {"type": "screenshot", "path": "w2-after-toggle.png"}
+  ]
+}

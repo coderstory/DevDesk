@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "settings": {
+    "defaultWaitTimeoutMs": 9000,
+    "seed": {"config": {"config.json:": {"enabledModules": ["home","markdown","git","todo","schedule","claude_proxy","memory","mcp","terminal","release","settings","about"]}}}
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit", "_comment": "创建有效笔记供 notes_read 真调用"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "md.tree.new.bg"},
+    {"type": "wait", "until": "exists", "id": "md.dialog.new.input.hit", "timeoutMs": 5000},
+    {"type": "type", "id": "md.dialog.new.input.hit", "text": "k-beta"},
+    {"type": "click", "id": "md.dialog.new.confirm.bg"},
+    {"type": "wait", "ms": 700},
+
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit"},
+    {"type": "wait", "ms": 800},
+    {"type": "click", "id": "app.mcp.card.notes_read.hit"},
+    {"type": "wait", "until": "exists", "id": "app.mcp.dialog.detail.btn.try.bg", "timeoutMs": 6000},
+    {"type": "type", "id": "app.mcp.dialog.detail.param.path.input.hit", "text": "k-beta.md"},
+    {"type": "click", "id": "app.mcp.dialog.detail.btn.try.bg", "_comment": "notes_read 真调用（有效参数）"},
+    {"type": "wait", "ms": 1800},
+    {"type": "dump", "path": "k6-mcpvalid.txt"},
+    {"type": "screenshot", "path": "k6-mcpvalid.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Settings.hit", "_comment": "#155 假 token 触发同步错误→查看详情弹窗"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.settings.tabs.3.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "type", "id": "app.settings.card.github_sync.token.input.hit", "text": "ghp_kfake1234567890"},
+    {"type": "wait", "ms": 600},
+    {"type": "dump", "path": "k6-synctoken.txt"},
+    {"type": "click", "id": "app.settings.card.github_sync.btn.test.bg", "force": true},
+    {"type": "wait", "ms": 4000},
+    {"type": "dump", "path": "k6-synctest.txt"},
+    {"type": "screenshot", "path": "k6-synctest.png"},
+    {"type": "click", "id": "app.settings.card.github_sync.error.detail", "force": true, "_comment": "查看详情 → 弹窗"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k6-syndialog.txt"},
+    {"type": "screenshot", "path": "k6-syndialog.png"}
+  ]
+}

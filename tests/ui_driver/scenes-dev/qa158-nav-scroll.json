@@ -1,0 +1,12 @@
+{"version":1,"steps":[
+ {"type":"dump","path":"nav-0.txt"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"nav-1.txt"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"nav-2.txt"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"nav-3.txt"}
+]}

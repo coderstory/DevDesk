@@ -18,6 +18,7 @@
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iterator>
 #include <optional>
@@ -231,8 +232,88 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
         .build();
 }
 
+namespace {
+
+// 骨架 pulse（UI-A §8：opacity 0.45↔1、1.2s ease-in-out；与 git_views skeleton 同相位口径）
+float skeletonPulseOpacity() {
+    using namespace std::chrono;
+    const double t =
+        duration<double>(steady_clock::now().time_since_epoch()).count();
+    const double phase = std::fmod(t, 1.2) / 1.2;
+    const double tri = phase < 0.5 ? phase * 2.0 : 2.0 - phase * 2.0;
+    const double eased = 0.5 - 0.5 * std::cos(tri * 3.14159265358979323846);
+    return static_cast<float>(0.45 + 0.55 * eased);
+}
+
+// 骨架砖：底 borderMuted + pulse；onFrame 空体让骨架在屏期间持续出帧驱动 pulse
+void skeletonBrick(eui::Ui& ui, const std::string& id, float x, float y, float w,
+                   float h, const core::theme::Tokens& t, float radius) {
+    ui.rect(id)
+        .position(x, y)
+        .size(w, h)
+        .color(t.colors.borderMuted)
+        .radius(radius)
+        .opacity(skeletonPulseOpacity())
+        .onFrame([](float) {})
+        .build();
+}
+
+// 后台重载骨架板（池405）：列模型固定四列，取 boardColumnWidths 等宽口径；列头 + 卡砖占位。
+// 几何同步写进 plate，拖拽命中换算拿到与真板一致的口径
+void drawSkeletonBoard(eui::Ui& ui, float contentW, float bodyH,
+                       const core::theme::Tokens& t, BoardPlate& plate) {
+    const float colGap = t.sizes.spacingLarge;
+    const BoardColumnWidths widths = boardColumnWidths(contentW, colGap, 4, -1, 1.0f);
+    plate.height = bodyH;
+    plate.columnX.assign(4, 0.0f);
+    plate.columnWidth.assign(4, widths.normal);
+    float cursorX = 0.0f;
+    for (size_t ci = 0; ci < 4; ++ci) {
+        plate.columnX[ci] = cursorX;
+        cursorX += widths.normal + colGap;
+    }
+    const float brickW = std::max(0.0f, widths.normal - kColumnContentInset * 2.0f);
+    ui.row("todo.skeleton")
+        .size(contentW, bodyH)
+        .gap(colGap)
+        .content([&] {
+            for (size_t ci = 0; ci < 4; ++ci) {
+                const std::string id = "todo.skeleton.col." + std::to_string(ci);
+                ui.stack(id)
+                    .size(widths.normal, bodyH)
+                    .content([&] {
+                        ui.rect(id + ".bg")
+                            .size(widths.normal, bodyH)
+                            .color(ui_kit::glassPanelFill(t))
+                            .radius(kColumnRadius)
+                            .build();
+                        skeletonBrick(ui, id + ".head", kColumnContentInset,
+                                      kColumnHeaderHeight * 0.5f - 8.0f, brickW, 16.0f,
+                                      t, 4.0f);
+                        for (int row = 0; row < 3; ++row) {
+                            const float y = kColumnHeaderHeight +
+                                static_cast<float>(row) * (kCardHeight + kCardGap);
+                            if (y + kCardHeight > bodyH) break;
+                            skeletonBrick(ui, id + ".card." + std::to_string(row),
+                                          kColumnContentInset, y, brickW, kCardHeight,
+                                          t, t.sizes.radius);
+                        }
+                    })
+                    .build();
+            }
+        })
+        .build();
+}
+
+} // namespace
+
 void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                const core::theme::Tokens& t, const BoardView& v, BoardPlate& plate) {
+    // 后台重载在途（池405）：板先出骨架，数据到位下一帧整板替换——不在 UI 线程同步全量重查
+    if (v.loading) {
+        drawSkeletonBoard(ui, contentW, bodyH, t, plate);
+        return;
+    }
     // 错误态（服务未就绪/读取失败）：与空态区分，给文案 + 重试按钮
     if (!v.hasService || !v.loadError.empty()) {
         const std::string msg = !v.hasService

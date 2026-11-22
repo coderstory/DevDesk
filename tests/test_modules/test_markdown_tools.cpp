@@ -14,11 +14,13 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/mcp_tool.h"
 #include "core/module_interface.h"
 #include "core/tool.h"
 #include "module_markdown/markdown_service.h"
 #include "module_markdown/markdown_tools.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 #include <filesystem>
 #include <fstream>
@@ -328,5 +330,52 @@ REGISTER_TEST(md_create_list_tags_delete_roundtrip,
     auto escape = runTool("md.delete", R"({"path":"../../etc/passwd"})");
     DOCTEST_REQUIRE(escape.isOk());
     DOCTEST_CHECK(escape.value().isError);                   // resolve 拒绝越界
+    return true;
+})
+
+// need394 F-2（OP-1=B 移除）：md.* 5 件以 md_* 名进 MCP 对外面；notes_* 三工具
+// 注册已从仓内删除（notes_mcp_tools.cpp 退役），对外面不得再见 notes_* 名
+REGISTER_TEST(markdown_tools_mcp_registration,
+              "need394: 5 件 md_* 进 MCP 对外面，notes_* 不再注册，空参与越界走 isError", {
+    ToolEnv env("mcp");
+    env.tools->registerAll();
+
+    core::mcp::McpToolRegistry mcp;
+    platform::tool_kit::registerToolsAsMcp(mcp, env.tools->tools());
+    DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 5);
+
+    const char* names[] = {"md_search", "md_read", "md_create",
+                           "md_delete", "md_list_tags"};
+    for (const char* n : names) {
+        const std::string name(n);
+        auto found = mcp.find(name);
+        DOCTEST_REQUIRE_MESSAGE(found.isOk(), name);
+        DOCTEST_CHECK_EQ(found.value()->name(), name);
+        DOCTEST_CHECK(!found.value()->description().empty());
+        DOCTEST_CHECK(found.value()->inputSchemaJson().find("\"type\":\"object\"") !=
+                      std::string::npos);
+    }
+    // 移除断言：对外面不存在 notes_* 与点号原名
+    const char* retired[] = {"notes_search", "notes_read", "notes_write",
+                             "md.search", "md.read"};
+    for (const char* n : retired) {
+        DOCTEST_CHECK_MESSAGE(mcp.find(n).isFail(), n);
+    }
+
+    // 空参调用：md_list_tags 无入参（G8 空参工具语义）
+    {
+        auto r = mcp.find("md_list_tags").value()->execute("{}");
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK_FALSE(r.value().isError);
+    }
+    // 参数错误：md_read 缺 path → isError（软失败不扰 MCP 基础设施层）
+    {
+        auto r = mcp.find("md_read").value()->execute("{}");
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(r.value().isError);
+    }
+
+    platform::tool_kit::unregisterToolsAsMcp(mcp, env.tools->tools());
+    DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 0);
     return true;
 })

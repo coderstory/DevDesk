@@ -1,6 +1,7 @@
 // src/module_memory/panel/panel_state.h
 // 记忆面板数据中枢：三视图共享的取数/操作面。纪律：
-//   - compose 只读 snapshot()（锁内拷贝，非阻塞）；refresh() 节流（≥1s），
+//   - compose 只读 snapshot()（共享只读指针，无变化帧零拷贝）；refresh() 每帧只
+//     更新 live 面，提案/账本查询在后台线程 1s 节拍跑、主线程一帧发布；
 //     不在 UI 线程做长活（评测在自有后台线程）；
 //   - 全部库文件落 engine::memoryDataDir()（随 DEVDESK_DATA_ROOT 隔离）；
 //   - 密钥/记忆正文不进日志；提案正文只进 UI 与自家库。
@@ -8,6 +9,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -50,6 +52,7 @@ struct PanelSnapshot {
     std::vector<proposals::Proposal> decided;  // 最近已决（已处理视图）
     std::vector<bool> decidedUndone;           // 与 decided 对齐（isUndone 派生徽章）
     int proposalTotal = 0;
+    int pendingTotal = 0;  // 真实待审总数（pending 只装窗口上限内最早 N 条，need401 #411）
 
     long long todayTokens = 0;
     long long monthTokens = 0;
@@ -88,7 +91,8 @@ public:
     // 击发 → toast 桥（应用级）+ platform::notify（带 level）双出口，闸状态即落盘
     void pollUsageAlerts();
 
-    PanelSnapshot snapshot() const;  // 锁内拷贝
+    // 共享只读快照：首帧/无变化帧零拷贝（刷新线程一帧发布一次）；调用方只读
+    std::shared_ptr<const PanelSnapshot> snapshot() const;
 
     // ── 设置写入口（改内存 + 落盘 + 联动刷新）──
     void setSanitizeEnabled(bool on);  // off = 旁路 + 审计行（UI 已做二次确认）
@@ -123,6 +127,17 @@ private:
     void rebuildFeedLocked();
     std::int64_t dirSizeBytes() const;
 
+    // 数据面重建（提案/账本/采集/评测/体积/动态流）：查询全在锁外执行，
+    // 后台线程与 force 主线程共用同一实现（共享 store 连接靠 SQLite FULLMUTEX）。
+    void fillDataSnapshot(PanelSnapshot& next);
+    // 后台查询循环（1s 节拍）：结果落 fresh_，由 refresh() 下一帧发布
+    void syncQueryLoop();
+    void queryLoopMain();
+    // 发布（mu_ 内）：接手数据面对象 + 当前 live 面 → pub_；next 空 = 仅 live 面
+    // 变化（引擎起停/评测结果），复用上帧数据面重发一份
+    void publishLocked(std::shared_ptr<PanelSnapshot> next);
+    bool liveStateChangedLocked() const;  // 发布门：steady 帧返回 false → 零拷贝
+
     // ── F1 背景采集循环（引擎 Running 期间自驱）──
     // 状态同步：refresh 每帧调（引擎起→起循环；引擎停→通知停并回收句柄）。
     // 线程内自检引擎态：页未打开也随引擎停而停。反重构警告：循环与面板共用
@@ -131,7 +146,25 @@ private:
     void collectLoopMain();
 
     mutable std::mutex mu_;
-    PanelSnapshot snap_;
+    // live 面（每帧便宜更新）：数据面由查询线程重建并整体换指针，避免每帧全量拷贝
+    struct LiveState {
+        MemoryPanelSettings settings;
+        bool gateEnabled = true;
+        bool storesOk = false;
+        std::string storesError;
+        std::string lastEvalError;
+        RecallResult lastEval;
+        std::int64_t storageBytes = -1;
+        engine::TelememEngine::Snapshot engine;
+    };
+    LiveState live_;
+    std::shared_ptr<PanelSnapshot> fresh_;        // 后台算好的数据面（mu_）
+    std::shared_ptr<const PanelSnapshot> pub_;    // 已发布只读快照（mu_）
+    std::thread queryThread_;
+    std::atomic<bool> queryStop_{false};
+    std::atomic<bool> needPublish_{false};  // 评测线程结果落地 → 下一帧必发
+    std::atomic<std::int64_t> lastPokeSec_{0};  // 最近一次 refresh（页在用）；闲置 3s 查询线程自停
+    bool dataBuilt_ = false;  // 首个数据面已发布（否则每帧都走同步构建会 1s 空白）
 
     sanitize::SanitizeGate gate_;
     std::optional<proposals::ProposalStore> proposalStore_;
@@ -140,7 +173,6 @@ private:
     std::optional<pipeline::InferQueueStore> inferQueue_;
     std::optional<RecallEvalStore> evalStore_;
 
-    std::int64_t lastRefreshSec_ = 0;
     std::int64_t lastSizeCheckSec_ = 0;
     std::int64_t lastAlertPollSec_ = 0;  // 需-9：判定节流（5s 一档，SQLite 读数轻查）
 

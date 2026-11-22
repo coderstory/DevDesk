@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>池台账全景 · need#291 的完整一生</title>
+<!-- v4 浅色动态演示版（2026-11-19 老板反馈：不要深色；文案极简+动效优先，全文收进点击钻取层）。
+     数据=2026-11-19 池台账实读快照（完整）。零外链单文件；prefers-reduced-motion 兜底；键盘可达。 -->
+<style>
+:root{
+  --bg:#F4F5FB; --bg2:#EDEFF8;
+  --panel:rgba(255,255,255,.66);
+  --ink:#1B1D33; --ink2:#454A75; --ink3:#676C94;
+  --blue:#4C51E0; --blue2:#3838C0; --violet:#8B5CF6;
+  --teal:#0E9F6E; --amber:#D97706; --amber2:#B45309; --red:#E5484D; --green:#10B981;
+  --line:rgba(27,29,51,.10); --glow:rgba(76,81,224,.24);
+  --c-need:#4C51E0; --c-doc:#0E9F6E; --c-clue:#D97706; --c-bug:#E5484D; --c-evid:#10B981; --c-state:#7C5CE0; --c-stage:#8B5CF6;
+  --r-lg:18px; --r-md:12px; --r-full:999px;
+  --sh:0 8px 32px rgba(27,29,51,.10);
+  --f:"Segoe UI","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;
+  --fm:"Cascadia Code","Cascadia Mono",ui-monospace,Consolas,monospace;
+  --eo:cubic-bezier(.22,.8,.24,1); --jelly:cubic-bezier(.34,1.56,.64,1);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f);font-size:16px;line-height:1.65;overflow-x:hidden}
+:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+::selection{background:rgba(76,81,224,.18)}
+/* 动态背景（浅色 aurora） */
+.bgfx{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.bgfx .b1,.bgfx .b2,.bgfx .b3{position:absolute;border-radius:50%;filter:blur(100px)}
+.bgfx .b1{width:52vw;height:52vw;left:-14vw;top:-18vw;background:#6366F1;opacity:.26;animation:au1 34s ease-in-out infinite alternate}
+.bgfx .b2{width:40vw;height:40vw;right:-12vw;top:16vh;background:#8B5CF6;opacity:.18;animation:au2 40s ease-in-out infinite alternate}
+.bgfx .b3{width:42vw;height:42vw;left:24vw;bottom:-18vw;background:#38BDF8;opacity:.16;animation:au3 30s ease-in-out infinite alternate}
+@keyframes au1{to{transform:translate3d(7vw,5vw,0) scale(1.08)}}
+@keyframes au2{to{transform:translate3d(-6vw,7vw,0) scale(1.06)}}
+@keyframes au3{to{transform:translate3d(5vw,-6vw,0) scale(1.09)}}
+.bgfx .grid{position:absolute;inset:0;background-image:linear-gradient(rgba(27,29,51,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(27,29,51,.045) 1px,transparent 1px);background-size:46px 46px;mask-image:radial-gradient(70% 60% at 50% 30%,#000 30%,transparent 100%);-webkit-mask-image:radial-gradient(70% 60% at 50% 30%,#000 30%,transparent 100%)}
+.bgfx .fd{position:absolute;width:4px;height:4px;border-radius:50%;background:#7C89E8;box-shadow:0 0 8px 2px rgba(99,102,241,.35);opacity:.55;animation:fdy 9s ease-in-out infinite alternate}
+@keyframes fdy{from{transform:translateY(0)}to{transform:translateY(-26px)}}
+/* 导航+进度 */
+.progress{position:fixed;top:0;left:0;right:0;height:3px;z-index:60}
+.progress i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--violet));box-shadow:0 0 12px var(--glow)}
+.nav{position:sticky;top:0;z-index:50;height:56px;display:flex;align-items:center;gap:18px;padding:0 clamp(14px,3vw,30px);background:rgba(248,249,252,.82);backdrop-filter:blur(18px) saturate(1.6);-webkit-backdrop-filter:blur(18px) saturate(1.6);border-bottom:1px solid rgba(27,29,51,.08)}
+@supports not (backdrop-filter:blur(1px)){.nav{background:#F8F9FC}}
+.brand{font-size:15.5px;font-weight:800;white-space:nowrap;color:var(--ink)}
+.brand small{font-weight:600;color:var(--ink3);font-size:11.5px;margin-left:8px}
+.nav nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.nav nav::-webkit-scrollbar{display:none}
+.nav nav a{flex-shrink:0;font-size:13px;font-weight:700;color:var(--ink2);text-decoration:none;padding:6px 13px;border-radius:var(--r-full);transition:all .2s}
+.nav nav a:hover{color:var(--blue);background:rgba(76,81,224,.10)}
+.nav nav a.cur{color:#fff;background:linear-gradient(135deg,var(--blue),var(--violet));box-shadow:0 4px 14px var(--glow)}
+.nav .clock{margin-left:auto;font-family:var(--fm);font-size:12px;color:var(--ink3);white-space:nowrap}
+.wrap{max-width:1240px;margin:0 auto;padding:clamp(20px,3.6vw,40px) clamp(14px,3vw,30px) 90px}
+.tile{position:relative;background:var(--panel);backdrop-filter:blur(18px) saturate(1.6);-webkit-backdrop-filter:blur(18px) saturate(1.6);border:1px solid rgba(255,255,255,.9);box-shadow:var(--sh),inset 0 1px 0 rgba(255,255,255,.9);border-radius:var(--r-lg);padding:clamp(16px,2.4vw,26px)}
+@supports not (backdrop-filter:blur(1px)){.tile{background:#FFFFFF}}
+.rv{opacity:0;transform:translateY(24px);transition:opacity .6s var(--eo),transform .6s var(--eo);transition-delay:var(--d,0s)}
+.rv.in{opacity:1;transform:none}
+/* hero */
+.hero{margin-top:14px;text-align:center}
+.kick2{font-size:12px;font-weight:800;letter-spacing:.32em;color:var(--blue);margin:0}
+.hero h1{margin:12px 0 0;font-size:clamp(26px,4vw,44px);font-weight:800;letter-spacing:-.02em;line-height:1.25;background:linear-gradient(90deg,#1B1D33,#4C51E0 55%,#8B5CF6);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lede{margin:12px auto 0;max-width:34em;color:var(--ink2);font-size:clamp(14px,1.4vw,17px)}
+.hstats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:26px}
+.hp{display:flex;flex-direction:column;align-items:center;gap:2px;padding:16px 8px 12px;border-radius:16px;background:rgba(255,255,255,.7);border:1px solid rgba(27,29,51,.08);cursor:pointer;transition:all .25s var(--jelly);font:inherit;color:inherit}
+.hp:hover{transform:translateY(-5px);border-color:rgba(76,81,224,.5);box-shadow:0 12px 30px rgba(27,29,51,.12),0 0 22px var(--glow)}
+.hp b{font-size:clamp(26px,3vw,42px);font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.hp span{font-size:12px;color:var(--ink2);font-weight:700}
+.hp.k-need b{color:var(--c-need)} .hp.k-doc b{color:var(--c-doc)} .hp.k-clue b{color:var(--c-clue)} .hp.k-bug b{color:var(--c-bug)} .hp.k-evid b{color:var(--c-evid)}
+.cue{margin:26px 0 0;color:var(--ink3);font-size:20px;line-height:1;animation:cue 1700ms ease-in-out infinite}
+@keyframes cue{0%,100%{transform:translateY(0);opacity:.5}50%{transform:translateY(8px);opacity:1}}
+/* 章节 */
+.sec{margin-top:clamp(42px,7vw,74px);scroll-margin-top:66px}
+.sec .head{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:16px}
+.sec .head h2{margin:0;font-size:clamp(19px,2vw,26px);font-weight:800;letter-spacing:-.01em;color:var(--ink)}
+.sec .head h2 small{font-size:11px;font-weight:800;letter-spacing:.24em;color:var(--blue);display:block;margin-bottom:6px}
+.sec .head p{margin:0;font-size:13.5px;color:var(--ink2)}
+/* 播放器 */
+.pl-head{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.pl-head h3{margin:0;font-size:17px;font-weight:800}
+.pl-read{font-family:var(--fm);font-size:12px;color:var(--ink3)}
+.pl-read b{color:var(--blue)}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(27,29,51,.12);background:rgba(255,255,255,.8);border-radius:var(--r-full);padding:8px 18px;font:700 14px var(--f);color:var(--ink);cursor:pointer;box-shadow:0 1px 2px rgba(27,29,51,.05);transition:all .22s var(--jelly)}
+.btn:hover{transform:translateY(-2px);border-color:rgba(76,81,224,.55);box-shadow:0 8px 22px rgba(27,29,51,.12)}
+.btn.pri{background:linear-gradient(135deg,var(--blue),var(--violet));border-color:transparent;color:#fff;box-shadow:0 4px 16px var(--glow)}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.sm{padding:5px 13px;font-size:12.5px}
+.sts{display:flex;align-items:center;gap:10px;margin:18px 0 2px}
+.orb{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:var(--r-full);font-size:13.5px;font-weight:800;color:var(--ink3);background:rgba(255,255,255,.8);border:1px solid rgba(27,29,51,.10);transition:all .45s var(--eo);white-space:nowrap}
+.orb i{width:10px;height:10px;border-radius:50%;background:#C7CBEB;transition:all .45s}
+.orb.on{color:var(--blue2);background:#EEF0FD;border-color:rgba(76,81,224,.55);box-shadow:0 4px 18px var(--glow);transform:scale(1.07)}
+.orb.on i{background:var(--blue);box-shadow:0 0 10px 2px var(--glow);animation:orbp 1.8s ease-in-out infinite}
+.orb.back{color:var(--amber2);border-color:rgba(217,119,6,.6);background:#FDF3E3}
+.orb.back i{background:var(--amber);box-shadow:0 0 10px 2px rgba(217,119,6,.4)}
+@keyframes orbp{0%,100%{box-shadow:0 0 5px 1px var(--glow)}50%{box-shadow:0 0 13px 4px var(--glow)}}
+.beam{flex:1;min-width:24px;height:2px;border-radius:99px;background:rgba(27,29,51,.10);transition:background .5s}
+.beam.lit{background:linear-gradient(90deg,rgba(76,81,224,.2),#6C8CFF,rgba(76,81,224,.2));background-size:200% 100%;animation:beamflow 1.6s linear infinite}
+@keyframes beamflow{from{background-position:200% 0}to{background-position:0 0}}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:var(--r-full);background:rgba(255,255,255,.8);border:1px solid rgba(27,29,51,.10);padding:4px 12px;font-size:12px;font-weight:700;color:var(--ink2);white-space:nowrap}
+#stFlash{color:var(--amber2);border-color:rgba(217,119,6,.55);box-shadow:0 0 12px rgba(217,119,6,.2)}
+.trackwrap{overflow-x:auto;padding:8px 2px 4px;scrollbar-width:thin}
+.track{position:relative;height:52px;min-width:840px}
+.track .rail{position:absolute;left:6px;right:6px;top:26px;height:3px;border-radius:99px;background:rgba(27,29,51,.12)}
+.track .fill{position:absolute;left:6px;top:26px;height:3px;border-radius:99px;width:0;background:linear-gradient(90deg,var(--blue),var(--violet),var(--blue));background-size:200% 100%;box-shadow:0 0 10px var(--glow);animation:beamflow 2.2s linear infinite;transition:width .5s var(--eo)}
+.dot{position:absolute;top:18px;width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #C7CBEB;transform:translateX(-50%);cursor:pointer;padding:0;transition:border-color .25s,box-shadow .25s,transform .25s var(--jelly)}
+.dot:hover{transform:translateX(-50%) scale(1.3)}
+.dot.on{border-color:var(--kc);background:var(--kc)}
+.dot.k-status{--kc:var(--c-need)} .dot.k-prog{--kc:var(--c-stage)} .dot.k-doc{--kc:var(--c-doc)} .dot.k-clue{--kc:var(--c-clue)} .dot.k-bug{--kc:var(--c-bug)} .dot.k-commit{--kc:var(--c-evid)}
+.dot.cur{transform:translateX(-50%) scale(1.45);box-shadow:0 0 0 5px rgba(76,81,224,.16),0 0 16px rgba(76,81,224,.35)}
+.pl-grid{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:14px}
+.feed{height:400px;overflow-y:auto;border:1px solid rgba(27,29,51,.10);border-radius:var(--r-md);background:rgba(255,255,255,.55);padding:10px;scrollbar-width:thin}
+.ev{margin:0 0 8px}
+.ev button{display:grid;grid-template-columns:78px auto 1fr;gap:10px;align-items:baseline;width:100%;text-align:left;background:rgba(255,255,255,.85);border:1px solid rgba(27,29,51,.08);border-left:3px solid var(--kcol,#4C51E0);border-radius:10px;padding:9px 12px;font:inherit;color:inherit;cursor:pointer;opacity:.5;transition:opacity .3s,box-shadow .3s,border-color .3s}
+.ev.now button{opacity:1;border-color:rgba(76,81,224,.4);box-shadow:0 6px 18px rgba(27,29,51,.08),0 0 12px var(--glow)}
+.ev button:hover{border-color:var(--blue);opacity:1}
+.ev .et{font-family:var(--fm);font-size:11px;color:var(--ink3);white-space:nowrap}
+.ev .kb{font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:99px;color:#fff;background:var(--kcol);white-space:nowrap;justify-self:start}
+.ev.k-status button{--kcol:var(--c-need)} .ev.k-prog button{--kcol:var(--c-stage)} .ev.k-doc button{--kcol:var(--c-doc)} .ev.k-clue button{--kcol:var(--c-clue)} .ev.k-bug button{--kcol:var(--c-bug)} .ev.k-commit button{--kcol:var(--c-evid)}
+.ev .es{font-size:13.5px;font-weight:700}
+.ev .ea{grid-column:1 / -1;font-size:11px;color:var(--ink3);margin-top:-2px}
+.ev.pop{animation:slidein .42s var(--eo)}
+@keyframes slidein{from{opacity:0;transform:translateX(30px)}to{opacity:.5;transform:none}}
+.ev.now.pop{animation:slideinnow .42s var(--eo)}
+@keyframes slideinnow{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+.endb{margin-top:10px;border:1px solid rgba(217,119,6,.4);border-left:4px solid var(--amber);background:#FEF6E7;border-radius:var(--r-md);padding:12px 14px;font-size:13px;color:var(--ink2)}
+.endb b{color:var(--amber2)}
+.endb a{color:var(--blue);text-decoration:none;font-weight:800}
+.poolside{display:flex;flex-direction:column;gap:12px}
+.cnt-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.cnt{border:1px solid rgba(27,29,51,.08);border-radius:var(--r-md);background:rgba(255,255,255,.75);padding:10px 6px;text-align:center;transition:all .3s}
+.cnt.glow{box-shadow:0 0 16px var(--glow);border-color:rgba(76,81,224,.45)}
+.cnt b{display:block;font-size:clamp(20px,2vw,30px);font-weight:800;font-variant-numeric:tabular-nums}
+.cnt span{font-size:11px;color:var(--ink3);font-weight:700}
+.cnt.need b{color:var(--c-need)} .cnt.doc b{color:var(--c-doc)} .cnt.clue b{color:var(--c-clue)} .cnt.bug b{color:var(--c-bug)} .cnt.commit b{color:var(--c-evid)}
+.arts{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;flex:1;align-content:start;overflow-y:auto;max-height:252px;border:1px dashed rgba(27,29,51,.14);border-radius:var(--r-md);padding:10px;scrollbar-width:thin}
+.art{display:flex;align-items:center;gap:8px;border:1px solid rgba(27,29,51,.08);border-radius:10px;background:rgba(255,255,255,.85);padding:6px 10px;font-size:11.5px;font-weight:700;color:var(--ink2);opacity:0;transform:scale(.8);transition:all .35s var(--jelly)}
+.art.in{opacity:1;transform:none}
+.art:hover{color:var(--ink);border-color:rgba(76,81,224,.45)}
+.art i{width:8px;height:8px;border-radius:50%;flex-shrink:0;box-shadow:0 0 6px currentColor}
+.art.t-need i{background:var(--c-need)} .art.t-doc i{background:var(--c-doc)} .art.t-clue i{background:var(--c-clue)} .art.t-bug i{background:var(--c-bug)} .art.t-evid i{background:var(--c-evid)}
+.art button{margin-left:auto;background:none;border:0;font:700 10.5px var(--f);color:var(--blue);cursor:pointer;padding:2px 6px;border-radius:6px}
+.art button:hover{background:rgba(76,81,224,.12)}
+.pl-hint{margin:12px 2px 0;font-size:11.5px;color:var(--ink3)}
+.pl-hint b{color:var(--ink2)}
+/* 时序图 */
+.seqbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+.seqbar .lg{font-size:11.5px;color:var(--ink3)}
+.seqbar .lg b{color:var(--ink2)}
+.seq-scroll{overflow-x:auto;border:1px solid rgba(27,29,51,.10);border-radius:var(--r-lg);background:rgba(255,255,255,.6);padding:16px 12px 14px;scrollbar-width:thin}
+.seq{position:relative;min-width:1080px}
+.seq-head{display:grid;gap:6px;margin-bottom:6px}
+.seq-actor{justify-self:center;align-self:center;background:rgba(255,255,255,.92);border:1px solid rgba(27,29,51,.10);border-radius:var(--r-md);padding:6px 13px;font-size:12px;font-weight:800;white-space:nowrap;color:var(--ink2);box-shadow:0 1px 3px rgba(27,29,51,.05)}
+.seq-actor.a-boss{border-color:rgba(76,81,224,.5);color:var(--blue2);box-shadow:0 2px 10px var(--glow)}
+.seq-body{position:relative;padding:4px 0 6px}
+.seq-line{position:absolute;top:0;bottom:0;width:0;border-left:1.5px dashed rgba(27,29,51,.18)}
+.seq-row{position:relative;min-height:48px;transition:opacity .4s}
+.seq-row.past{opacity:.35}
+.seq-msg{position:absolute;top:12px;height:26px;border:0;border-bottom:2px solid var(--blue);background:transparent;padding:0 2px;cursor:pointer;min-width:60px}
+.seq-msg .mt{position:absolute;top:-13px;left:0;font-family:var(--fm);font-size:10px;color:var(--ink3);white-space:nowrap}
+.seq-msg .mx{position:absolute;bottom:3px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:11.5px;font-weight:700;color:var(--ink);background:#fff;padding:1px 8px;border-radius:7px;border:1px solid rgba(27,29,51,.06);transition:all .2s}
+.seq-msg:hover .mx{background:#E9EAFD;color:var(--blue2)}
+.seq-row.now .seq-msg .mx{background:linear-gradient(135deg,var(--blue),var(--violet));color:#fff;border-color:transparent;box-shadow:0 4px 16px var(--glow)}
+.seq-msg.to-r::after{content:"";position:absolute;right:-3px;bottom:-7px;border-left:9px solid var(--blue);border-top:5px solid transparent;border-bottom:5px solid transparent}
+.seq-msg.to-l::after{content:"";position:absolute;left:-3px;bottom:-7px;border-right:9px solid var(--blue);border-top:5px solid transparent;border-bottom:5px solid transparent}
+.seq-note{position:absolute;top:6px;transform:translateX(-50%);max-width:250px;background:rgba(255,255,255,.95);border:1.5px dashed var(--ink3);border-radius:var(--r-md);padding:6px 10px;font-size:11px;color:var(--ink2);text-align:center}
+.seq-gate{display:flex;align-items:center;gap:12px;width:100%;margin:12px 0;padding:9px 16px;border:1.5px solid rgba(76,81,224,.6);background:rgba(76,81,224,.06);border-radius:var(--r-md);cursor:pointer;font:inherit;transition:all .22s}
+.seq-gate:hover{box-shadow:0 6px 22px var(--glow);transform:translateY(-1px)}
+.seq-gate.now{animation:gateflash 1.1s ease}
+@keyframes gateflash{0%,100%{box-shadow:0 0 0 rgba(76,81,224,0)}45%{box-shadow:0 0 26px 6px var(--glow)}}
+.seq-gate .gc{font-weight:800;color:#fff;background:linear-gradient(135deg,var(--blue),var(--violet));border-radius:7px;padding:2px 10px;font-size:11.5px;letter-spacing:.05em;flex-shrink:0}
+.seq-gate .gnm{font-weight:800;color:var(--blue2);font-size:13px}
+.seq-gate .gx{font-family:var(--fm);font-size:11px;color:var(--ink3)}
+.seq-gate .gh{margin-left:auto;font-size:11.5px;color:var(--blue);font-weight:700;flex-shrink:0}
+.seq-gate.loop{border-style:dashed;border-color:rgba(217,119,6,.65);background:#FEF6E7}
+.seq-gate.loop .gc{background:linear-gradient(135deg,#F59E0B,#F97316)}
+.seq-gate.loop .gnm{color:var(--amber2)}
+/* 门禁卡 */
+.gategrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+.gcard{cursor:pointer;display:flex;flex-direction:column;gap:8px;padding:18px 20px;transition:all .24s var(--jelly)}
+.gcard:hover{transform:translateY(-5px);box-shadow:0 16px 36px rgba(27,29,51,.14),0 0 22px var(--glow);border-color:rgba(76,81,224,.5)}
+.gcard .gtop{display:flex;align-items:center;gap:10px}
+.gcard .gc{font-weight:800;color:#fff;background:linear-gradient(135deg,var(--blue),var(--violet));border-radius:8px;padding:2px 10px;font-size:12px;letter-spacing:.05em}
+.gcard.loopc .gc{background:linear-gradient(135deg,#F59E0B,#F97316)}
+.gcard h4{margin:0;font-size:15px;font-weight:800}
+.gcard .what{font-size:12.5px;color:var(--ink2);margin:0}
+.gcard .hard{font-size:11px;font-weight:800;color:var(--red);border:1px solid rgba(229,72,77,.4);background:rgba(229,72,77,.06);border-radius:99px;padding:2px 10px;align-self:flex-start}
+.gcard .hard.soft{color:var(--teal);border-color:rgba(14,159,110,.4);background:rgba(14,159,110,.06)}
+.gcard .go{margin-top:auto;font-size:12px;font-weight:800;color:var(--blue)}
+/* 关系图 */
+.fbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.fbtn{border:1px solid rgba(27,29,51,.10);background:rgba(255,255,255,.8);border-radius:var(--r-full);padding:6px 14px;font:700 12px var(--f);color:var(--ink2);cursor:pointer;transition:all .2s}
+.fbtn:hover{color:var(--blue)}
+.fbtn.on{background:linear-gradient(135deg,var(--blue),var(--violet));border-color:transparent;color:#fff;box-shadow:0 4px 14px var(--glow)}
+.graphwrap{border:1px solid rgba(27,29,51,.10);border-radius:var(--r-lg);background:rgba(255,255,255,.6);padding:10px;overflow-x:auto}
+#gsvg{width:100%;height:auto;display:block;min-width:980px}
+#gsvg .gn{cursor:pointer;opacity:0;transform:scale(.86);transform-box:fill-box;transform-origin:center;transition:opacity .5s var(--eo),transform .5s var(--jelly)}
+#gsvg.drawn .gn{opacity:1;transform:none}
+#gsvg .gn rect{fill:rgba(255,255,255,.96);stroke-width:1.6}
+#gsvg .gn text{fill:var(--ink);font-weight:700;font-size:13px}
+#gsvg .gn .sub{fill:var(--ink3);font-weight:600;font-size:10.5px}
+#gsvg .gn:hover rect{filter:drop-shadow(0 4px 10px rgba(27,29,51,.18))}
+#gsvg .gn.dim{opacity:.13!important}
+#gsvg .ge{fill:none;stroke:#A9AECB;stroke-width:1.5;opacity:0;transition:opacity .5s,stroke-dashoffset .8s ease}
+#gsvg .ge:not(.dash){stroke-dasharray:1 1;stroke-dashoffset:1}
+#gsvg.drawn .ge{opacity:1;stroke-dashoffset:0}
+#gsvg.drawn .ge.dash{opacity:.75}
+#gsvg .ge.dash{stroke-dasharray:5 5;stroke:var(--c-clue)}
+#gsvg .ge.dim{opacity:.06!important}
+#gsvg .gd{cursor:pointer;opacity:0;transform:scale(.5);transform-box:fill-box;transform-origin:center;transition:opacity .5s,transform .5s var(--jelly)}
+#gsvg.drawn .gd{opacity:1;transform:none}
+#gsvg .gd polygon{fill:var(--ink);stroke:#fff;stroke-width:1.2}
+#gsvg .gd text{fill:#fff;font-size:9.5px;font-weight:800}
+#gsvg .gd:hover polygon{fill:var(--blue)}
+#gsvg .gd.dim{opacity:.13!important}
+#gsvg .gn:focus-visible,#gsvg .gd:focus-visible{outline:none}
+#gsvg .gn:focus-visible rect{stroke-width:3.4;filter:drop-shadow(0 4px 12px rgba(76,81,224,.45))}
+#gsvg .gd:focus-visible polygon{fill:var(--blue)}
+#gsvg .colt{fill:var(--ink3);font-size:11px;font-weight:800;letter-spacing:.2em}
+.glegend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:11.5px;color:var(--ink3)}
+.glegend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px;box-shadow:0 0 6px currentColor}
+/* 终态 */
+.endgrid{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
+.statebox{border:1px solid rgba(217,119,6,.45);background:#FEF6E7}
+.statebox h3{margin:0 0 6px;font-size:18px;color:var(--amber2)}
+.statebox p{margin:0;font-size:13.5px;color:var(--ink2)}
+.statebox .lnks{margin-top:14px}
+.lnks{display:flex;flex-wrap:wrap;gap:8px}
+.metabox p{margin:0 0 8px;font-size:12.5px;color:var(--ink3)}
+.metabox p b{color:var(--ink2)}
+/* 弹层 */
+.ov{position:fixed;inset:0;z-index:100;background:rgba(27,29,51,.35);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);opacity:0;visibility:hidden;transition:opacity .22s,visibility .22s;display:flex;align-items:flex-end;justify-content:center}
+.ov.open{opacity:1;visibility:visible}
+.sheet{width:min(920px,96vw);max-height:88vh;background:rgba(250,251,253,.97);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);border:1px solid rgba(255,255,255,.95);border-radius:22px 22px 0 0;box-shadow:0 -18px 60px rgba(27,29,51,.25);display:flex;flex-direction:column;transform:translateY(30px);transition:transform .28s var(--eo)}
+.ov.open .sheet{transform:none}
+.sheet-head{display:flex;align-items:flex-start;gap:14px;padding:18px 24px 12px;border-bottom:1px solid rgba(27,29,51,.08)}
+.sheet-head .sk{font-size:10.5px;font-weight:800;letter-spacing:.22em;color:var(--blue);margin:0}
+.sheet-head h3{margin:4px 0 0;font-size:17px;font-weight:800;line-height:1.4;color:var(--ink)}
+.sheet-x{margin-left:auto;flex-shrink:0;width:34px;height:34px;border-radius:50%;border:1px solid rgba(27,29,51,.12);background:rgba(255,255,255,.9);font:700 17px/1 var(--f);color:var(--ink2);cursor:pointer}
+.sheet-x:hover{background:rgba(76,81,224,.12);color:var(--blue)}
+.sheet-body{padding:16px 24px 20px;overflow:auto;scrollbar-width:thin}
+.sheet-body .seq{min-width:640px}
+.sheet-foot{padding:10px 24px 16px;border-top:1px solid rgba(27,29,51,.08);font-size:11.5px;color:var(--ink3)}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 14px;margin:0 0 14px;font-size:13px}
+.kv dt{color:var(--ink3);font-weight:700;margin:0}
+.kv dd{margin:0;font-weight:600;color:var(--ink)}
+.fact{white-space:pre-wrap;font-size:13px;line-height:1.85;color:var(--ink2);background:rgba(255,255,255,.85);border:1px solid rgba(27,29,51,.08);border-radius:var(--r-md);padding:14px 16px;margin:0 0 12px}
+.gsec{margin:16px 0 8px;font-size:11.5px;font-weight:800;letter-spacing:.2em;color:var(--ink3)}
+.proof{border:1px solid rgba(14,159,110,.35);border-left:4px solid var(--teal);background:rgba(14,159,110,.05);border-radius:var(--r-md);padding:12px 16px;font-size:13px;color:var(--ink2);white-space:pre-wrap}
+.rowbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:rgba(255,255,255,.9);border:1px solid rgba(27,29,51,.08);border-radius:10px;padding:10px 12px;margin:6px 0;font:inherit;color:var(--ink);cursor:pointer;transition:all .18s}
+.rowbtn:hover{border-color:rgba(76,81,224,.5);background:#F5F6FE}
+.rowbtn .arw{margin-left:auto;color:var(--ink3);flex-shrink:0}
+.mono2{font-family:var(--fm);font-size:11px;color:var(--ink3)}
+.kchip{flex-shrink:0;font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:99px;color:#fff;white-space:nowrap}
+.kchip.need{background:var(--c-need)} .kchip.doc{background:var(--c-doc)} .kchip.clue{background:var(--c-clue)} .kchip.bug{background:var(--c-bug)}
+/* 响应式 */
+@media (max-width:980px){
+  .hero .hstats{grid-template-columns:repeat(3,1fr)}
+  .pl-grid{grid-template-columns:1fr}
+  .feed{height:330px}
+  .endgrid{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .nav .clock{display:none}
+  .hero .hstats{grid-template-columns:repeat(2,1fr)}
+  .ev button{grid-template-columns:70px 1fr}
+  .ev .es{grid-column:1 / -1}
+}
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}
+}
+@media print{
+  @page{margin:12mm}
+  .bgfx,.nav,.progress,.ov,.fbar,.cue{display:none!important}
+  body{background:#fff}
+  .tile,.gcard,.hp,.cnt,.ev button,.rowbtn{background:#fff!important;border:1px solid #B9C0D8!important;box-shadow:none!important}
+  .hero h1{color:#16324F;-webkit-text-fill-color:#16324F}
+  .rv{opacity:1!important;transform:none!important}
+  .feed,.arts{height:auto;max-height:none;overflow:visible}
+  .art{opacity:1!important;transform:none!important}
+  .ev button{opacity:1!important}
+}
+</style>
+</head>
+<body>
+
+<div class="bgfx" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i><i class="grid"></i></div>
+<div class="progress" aria-hidden="true"><i id="pfill"></i></div>
+
+<nav class="nav">
+  <span class="brand">池台账全景<small>need#291 · 快照 2026-11-19</small></span>
+  <nav aria-label="章节导航">
+    <a href="#flow" data-spy="flow">全流程演示</a>
+    <a href="#seq" data-spy="seq">主时序</a>
+    <a href="#gates" data-spy="gates">门禁</a>
+    <a href="#graph" data-spy="graph">关系图</a>
+    <a href="#end" data-spy="end">终态</a>
+  </nav>
+  <span class="clock" id="clock">--:--:--</span>
+</nav>
+
+<main class="wrap">
+
+  <header class="hero">
+    <p class="kick2">DEVFLOW POOL · LIVE DEMO</p>
+    <h1>一条需求的完整一生</h1>
+    <p class="lede">need#291 Git 管理器整体重设计：从老板一句打回，到待验收。动画自动播放，点击任意元素看详情。</p>
+    <div class="hstats">
+      <button class="hp k-need rv" data-ref="need" style="--d:.05s"><b id="hNeed">0</b><span>需求（+3 衍生）</span></button>
+      <button class="hp k-doc rv" data-ref="docs:list" style="--d:.12s"><b id="hDoc">0</b><span>文档链</span></button>
+      <button class="hp k-clue rv" data-ref="clues:list" style="--d:.19s"><b id="hClue">0</b><span>线索</span></button>
+      <button class="hp k-bug rv" data-ref="bugs:list" style="--d:.26s"><b id="hBug">0</b><span>关联缺陷</span></button>
+      <button class="hp k-evid rv" data-ref="commit" style="--d:.33s"><b id="hCommit">0</b><span>提交</span></button>
+    </div>
+    <p class="cue" aria-hidden="true">↓</p>
+  </header>
+
+  <section class="sec" id="flow">
+    <div class="head rv">
+      <h2><small>LIFECYCLE PLAYER</small>全流程演示：池是随时间长出来的</h2>
+      <p>播放头扫过 27 个事件，状态泳道随流转切换（注意 14:33 的「⟲ 回正」倒退），右侧构成面板随事件涨数。</p>
+    </div>
+    <div class="tile player rv" style="--d:.1s">
+      <div class="pl-head">
+        <h3>need#291 · 11-16 → 11-18</h3>
+        <span class="pl-read">事件 <b id="plNo">0</b> / <b id="plTotal">--</b> · <span id="plTime">--</span></span>
+        <button class="btn pri sm" id="btnPlay">▶ 播放</button>
+        <button class="btn sm" id="btnSpd">速度 ×1</button>
+        <button class="btn sm" id="btnReset">↺ 重置</button>
+      </div>
+      <div class="sts" id="sts" aria-label="池状态泳道">
+        <span class="orb on"><i></i>在池</span><span class="beam"></span>
+        <span class="orb"><i></i>排产</span><span class="beam"></span>
+        <span class="orb"><i></i>进行中</span><span class="beam"></span>
+        <span class="orb"><i></i>待验收</span>
+        <span class="chip" id="stFlash" style="display:none">⟲ 回正</span>
+      </div>
+      <div class="trackwrap"><div class="track" id="track" aria-label="事件轨道，点击节点跳转"></div></div>
+      <div class="pl-grid">
+        <div class="feed" id="feed" aria-live="polite"></div>
+        <div class="poolside">
+          <div class="cnt-row">
+            <div class="cnt need"><b id="cNeed">0</b><span>需求</span></div>
+            <div class="cnt doc"><b id="cDoc">0</b><span>文档</span></div>
+            <div class="cnt clue"><b id="cClue">0</b><span>线索</span></div>
+            <div class="cnt bug"><b id="cBug">0</b><span>缺陷</span></div>
+            <div class="cnt commit"><b id="cCommit">0</b><span>提交</span></div>
+          </div>
+          <div class="arts" id="arts" aria-label="池构成，随事件落卡"></div>
+        </div>
+      </div>
+      <p class="pl-hint">图例：● 状态(蓝) ● 进展(紫) ● 文档(青) ● 线索(琥珀) ● 缺陷(红) ● 提交(绿) ｜ <b>事件卡可点击</b>看台账原文；终态构成 = 需求 4 / 文档 4 / 线索 10 / 缺陷 5 / 提交 1。</p>
+    </div>
+  </section>
+
+  <section class="sec" id="seq">
+    <div class="head rv">
+      <h2><small>MAIN SEQUENCE</small>主时序图：全链 33 步，门禁折叠成带</h2>
+      <p>点「▶ 演示」逐步点亮；点门禁带展开二级时序；点消息箭头看该步详情。</p>
+    </div>
+    <div class="seqbar rv" style="--d:.08s">
+      <button class="btn pri sm" id="btnSeqPlay">▶ 演示模式</button>
+      <span class="lg"><b>─▶</b> 消息（可点） ｜ <b>▣ G#</b> 门禁带（二级时序） ｜ <b>⟲ 虚线</b> 修复波循环</span>
+    </div>
+    <div class="seq-scroll rv" style="--d:.14s"><div id="seqMain"></div></div>
+  </section>
+
+  <section class="sec" id="gates">
+    <div class="head rv">
+      <h2><small>GATES</small>六道门禁 + 一个循环</h2>
+      <p>拦在动作之前，不拦在总结里。点卡片展开二级时序与实证。</p>
+    </div>
+    <div class="gategrid" id="gateCards"></div>
+  </section>
+
+  <section class="sec" id="graph">
+    <div class="head rv">
+      <h2><small>FLOW GRAPH</small>关系图：池中内容怎么流动</h2>
+      <p>八列环节：反馈 → 需求池 → 决策 → 文档 → 线索池 → 实现 → 交付 → 验收。边自动绘制，点节点/菱形钻取。</p>
+    </div>
+    <div class="fbar rv" id="fbar" style="--d:.06s">
+      <button class="fbtn on" data-f="all">全部</button>
+      <button class="fbtn" data-f="need">需求·状态</button>
+      <button class="fbtn" data-f="doc">文档</button>
+      <button class="fbtn" data-f="clue">线索</button>
+      <button class="fbtn" data-f="bug">缺陷</button>
+      <button class="fbtn" data-f="evid">交付证据</button>
+      <button class="fbtn" data-f="stage">环节</button>
+    </div>
+    <div class="graphwrap rv" style="--d:.12s"><svg id="gsvg" viewBox="0 0 1708 560" aria-label="池内容在流程环节间的流动关系图"></svg></div>
+    <div class="glegend rv" style="--d:.18s">
+      <span><i style="background:var(--c-need);color:var(--c-need)"></i>需求/状态</span>
+      <span><i style="background:var(--c-doc);color:var(--c-doc)"></i>文档</span>
+      <span><i style="background:var(--c-clue);color:var(--c-clue)"></i>线索</span>
+      <span><i style="background:var(--c-bug);color:var(--c-bug)"></i>缺陷</span>
+      <span><i style="background:var(--c-evid);color:var(--c-evid)"></i>证据</span>
+      <span><i style="background:var(--c-stage);color:var(--c-stage)"></i>环节</span>
+      <span>── 流转 ｜ <b style="color:var(--c-clue)">- - 随产随落</b> ｜ ◆ 门禁</span>
+    </div>
+  </section>
+
+  <section class="sec" id="end">
+    <div class="head rv"><h2><small>SNAPSHOT</small>终态</h2></div>
+    <div class="endgrid">
+      <div class="tile statebox rv" style="--d:.06s">
+        <h3>待验收 · blocker ③档记档不硬关</h3>
+        <p>重设计主体（F-01~F-12 全量重梳验收）未构成；11-18 修复波仅覆盖老板上报五缺陷。判定见 evidence/20261118-accept-sweep3/verdicts.md。</p>
+        <div class="lnks">
+          <button class="btn sm" data-ref="need">需求全文</button>
+          <button class="btn sm" data-ref="state">终态详情</button>
+          <button class="btn sm" data-ref="accept">验收轴</button>
+        </div>
+      </div>
+      <div class="tile metabox rv" style="--d:.14s">
+        <p><b>口径</b>：数据=2026-11-19 池台账实读快照；全文照录进点击层。</p>
+        <p><b>衍生</b>：#298/299/300 为记忆口径（页内已标注）。</p>
+        <p><b>验证</b>：单文件零外链，内联 script 过 node --check。</p>
+        <div class="lnks"><button class="btn sm" data-ref="meta">口径详情</button></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="ov" id="ov" aria-hidden="true">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shTitle">
+    <div class="sheet-head">
+      <div>
+        <p class="sk" id="shKick">DETAIL</p>
+        <h3 id="shTitle">—</h3>
+      </div>
+      <button class="sheet-x" id="shX" aria-label="关闭弹层">×</button>
+    </div>
+    <div class="sheet-body" id="shBody"></div>
+    <div class="sheet-foot" id="shFoot"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+var $ = function (s, r) { return (r || document).querySelector(s); };
+var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+var RM = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+var esc = function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+};
+
+var NEED = {
+  id: 291, pool: 'need', pri: 'P1', status: '待验收', stage: '测试中', owner: 'developer',
+  created: '2026-11-17 13:15:30', updated: '2026-11-18 18:44:39', by: 'developer',
+  title: 'Git 管理器整体重设计：老板令「整个功能逻辑都不对，没有哪个 UI 功能完全正常」——UI+功能逻辑全量重梳',
+  detail: 'PRD 已落 doc 台账：slug=2026-11-17-git-manager-redesign（id=23, v1）——骨架+功能矩阵 F-01~F-12（初值全待方案）+决策点 D1~D7 一次列全（变更区形态 D1=树/平铺双态切换默认分组树；左栏目录树去留 D2=推荐整列砍掉两栏化【影响全文件预览能力收窄，需老板明示】；untracked 目录条目交互 D3=推荐 filesystem 懒枚举展开、数据面不递归硬约束保留；布局收敛 D4=推荐两栏主态；diff 动线 D5=推荐点条目即 diff 常驻、内容预览降次视图；staged/unstaged/untracked 分组 D6=推荐两组头+untracked 并入未暂存带 U 徽标；搜索适配 D7=保留仅改定位目标）。老板原话逐字四条入 PRD §1；现状核对（git log 交付链 8ecf04e6→b2c69429→beb247f7 + 三病根代码级定位）入 §2；联网检索（VS Code 树/平铺双态 vscode#225620、GitHub Desktop 仅平铺 desktop#20624）入 §2.4 带来源。待办：①老板裁决 D1~D7（可单轮按推荐放行）→ ui-ux-designer 设计文档+HTML demo；②researcher 调研 slug=2026-11-17-git-redesign-research 落库后并入修订（2026-11-17 doc_get 实查未落库）。技术侧待确认两处（大仓折叠阈值/懒枚举转圈时机）留技术方案 POC。',
+  blocker: '重设计主体未交付：PRD 决策点 D1~D7 待老板裁决 + researcher 调研未落库（2026-11-17 doc_get 实查）；11-18 git-ui-fix 波仅修复老板上报五缺陷（bug280/290/292/294/296）不构成 F-01~F-12 全量重梳验收——本批 ③档记 blocker 不硬关（evidence/20261118-accept-sweep3/verdicts.md）'
+};
+
+var DOCS = [
+  { id: 24, type: '调研', slug: '2026-11-17-git-redesign-research', v: 1, by: 'researcher', time: '11-17 13:32',
+    title: '竞品调研：成熟客户端变更区组织范式',
+    sum: '五客户端变更区范式一手调研（GitHub Desktop 源码级 / VSCode 官方文档 / IntelliJ / Fork release notes / Sourcetree），支撑 D1~D7 推荐与单链压缩设计。三并发之一，与 PM PRD 并行落库。' },
+  { id: 23, type: 'PRD', slug: '2026-11-17-git-manager-redesign', v: 2, by: 'product-manager', time: '11-17 13:38',
+    title: 'PRD：Git 管理器整体重设计（只读 v2）',
+    sum: '骨架 + 功能矩阵 F-01~F-12（初值全待方案）+ 决策点 D1~D7 一次列全；老板原话逐字四条入 §1；现状核对与三病根代码级定位入 §2；v2 随调研并入修订。' },
+  { id: 25, type: '技术方案', slug: '2026-11-17-git-manager-redesign-tech', v: 2, by: 'developer', time: '11-17 14:43',
+    title: '技术方案卡：两栏重构+变更树派生模型+lazy 展开',
+    sum: '新模型 git_change_list_model 取代 changes_model+tree_model；D3-A POC 通过（复用 walkChildren 单层枚举链）；树组件=module_git 自实现不进 EUI-NEO；platform/git 零改动；§4 文件域=变更清单依据。' },
+  { id: 26, type: '审计', slug: '2026-11-17-git-manager-redesign-tech-audit', v: 1, by: 'ZCode主会话', time: '11-17 14:41',
+    title: '审计：tech 方案卡（developer 面，可发布）',
+    sum: '独立审计门产物（非实现者自审）：tech 方案卡 developer 面审查，结论=可发布，放行进入开工门禁。' }
+];
+
+var CLUES = [
+  { id: 192, grp: 'r', by: 'researcher', time: '11-17 13:32', subject: 'git-ui-parity-github-desktop', short: 'GitHub Desktop 变更区=纯平铺+Filter（源码级）',
+    fact: 'GitHub Desktop（现版 development 分支，源码级）变更区=纯平铺+Filter：filter-changes-list.tsx 单组 createListItems→identifier:\'changed-files\'，items=files.map(f=>({text:[f.path]})) 平铺数组；Filter 输入框 placeholder:\'Filter\'+check-all 勾选框；无树组件/无 tree 切换/无 Staged-Unstaged 分节，staging=每行 inclusion checkbox（onIncludeChanged）；app/src/ui/changes 与 app/src/ui/history 两目录均无 tree 命名文件；changes.tsx 仅渲染 diff-container（DiffHeader+SeamlessDiffSwitcher，import \'../diff/diff-header\'、\'../diff/seamless-diff-switcher\'）=选中文件同窗右侧出 diff；untracked=workingDirectory.files 普通成员无特殊化；release 3.0.0/3.1.0/3.2.0 notes 均无变更树记载。',
+    src: 'raw.githubusercontent.com/desktop/desktop/development app/src/ui/changes/{filter-changes-list,changes,sidebar}.tsx + api.github.com 目录列表 + releases tag 3.0.0/3.1.0/3.2.0（一手源码+官方 release notes）' },
+  { id: 193, grp: 'r', by: 'researcher', time: '11-17 13:32', subject: 'git-ui-parity-vscode', short: 'VSCode SCM flat/tree 双态切换 + U 徽标混列',
+    fact: 'VSCode 官方文档：SCM 变更列表支持 flat/tree 双形态——"You can view the list of changes in either a flat or tree structure. Toggle this with the More Actions (...) > View & Sort > View as Tree/List option"；点变更即开 diff——"Select a file in the Source Control view to open its diff"；untracked 无独立区，U/M/D 徽标混列 Changes；树视图支持整文件夹操作——"When you\'re using the tree view, you can stage entire folders by staging the folder itself"。scm.viewMode 设置名仅见检索摘要，官方页未直引，待验证。',
+    src: 'code.visualstudio.com/docs/sourcecontrol/overview + /staging-commits（官方文档精读）' },
+  { id: 194, grp: 'r', by: 'researcher', time: '11-17 13:32', subject: 'git-ui-parity-jetbrains', short: 'IntelliJ changelist 分组 + Group By Directory',
+    fact: 'IntelliJ IDEA Commit 工具窗：文件按 changelist 分组，unversioned 归专有节点——"You can also select files under the Unversioned Files node"；diff=Ctrl+D 或 double-click 开 Diff Viewer，可编辑器 tab 或独立窗（Options→Show on Double-Click: Diff/Source；Advanced Settings→Open Diff as Editor Tab）；View Options 齿轮→Group By→Directory 目录树分组（YouTrack 官方文章 SUPPORT-A-3874 + IJPL-245597，2022.3 起 Group by 与 View Options 合并单图标；ChangesViewTreeStateStrategy 类名佐证树状态机，IJPL-251055）；changelist 定义："A changelist is a set of local changes that have not yet been committed"。',
+    src: 'jetbrains.com/help/idea/commit-and-push-changes.html + managing-changelists.html（官方精读）+ youtrack.jetbrains.com SUPPORT-A-3874/IJPL-245597/IJPL-251055（官方 tracker，检索摘要级）' },
+  { id: 195, grp: 'r', by: 'researcher', time: '11-17 13:32', subject: 'git-ui-parity-fork-sourcetree', short: 'Fork 1.0.29 起树形态；Sourcetree File Status',
+    fact: 'Fork：变更列表树形态自 1.0.29（2016-11-04）——官方 release notes 原文 "Show changed files as a tree"；1.0.42（2017-03-31）"Sort files by type (directories first) then by name"。Sourcetree：File Status 视图="file browser and commit preparation area"（CMD+1），staging 动作 CMD+SHIFT+-（Unstage）/CMD+SHIFT+=（Add untracked），External diff + 空格 Quick Look；staged/unstaged 双节平铺+filter 为二手口径（Kapeli cheat sheet/检索），待验证。两客户端均无独立全量目录树、无 untracked 独立 tab。',
+    src: 'git-fork.com/releasenotes（官方精读）+ kapeli.com Sourcetree cheat sheet（二手）+ product-downloads.atlassian.com Sourcetree_4.2.11.html（官方主机，扫描）' },
+  { id: 196, grp: 'r', by: 'researcher', time: '11-17 13:32', subject: 'git-ui-tree-feasibility', short: 'EUI-NEO 无现成树组件：virtualList 自实现 ~150 行',
+    fact: 'EUI-NEO 无现成 tree 组件：docs/EUI-NEO-CAPABILITIES.md:35「tree 组件|文件树需自实现|用 virtualList+字符图标+状态机」、:618「文件树 UI|⚠️需自实现|virtualList+▶/▼字符+状态机(~150行)」；现成能力：virtualList（itemCount+rowHeight+overscan，:114）、checkbox（.checked/.bind/.onChange，:80）、input 过滤（.placeholder，:79）。→ 变更树视图落地条件=自实现：对已变更文件路径集派生行模型（平铺数组+depth+展开位图）+virtualList 渲染，无需全量目录 IO，与 F-09 untracked 不递归防 hang 约束正交（树节点仅从变更路径派生；untracked 目录按需 lazy 展开是方案空间，推测级未实证）。',
+    src: 'D:\\project\\gui\\DevDesk\\docs\\EUI-NEO-CAPABILITIES.md 精读（grep 定位 :35/:618/:114/:80/:79）' },
+  { id: 197, grp: 'u', by: 'ui-ux-designer', time: '11-17 14:15', subject: 'git-ui-design-291', short: '设计产物落盘；U 徽标灰→绿档；G1~G12 先验矩阵',
+    fact: 'need291 UI 设计产物落盘（2026-11-17）：设计文档 docs/design/2026-11-17-git管理器重设计.md + demo docs/design/2026-11-17-git管理器重设计-demo.html（自包含单文件，全部内联 script 过 node --check）。参数级修订 1 处：U 徽标由前身 spec §3.2 灰 #666666 升绿档 --st-added #157E4E/#E6FBF2——前提变化= D6-A 并组后独立「未跟踪」组头消失，灰档与可交互文件行不可区分，违背 PRD 目标 2 可达性；业界 U=绿（VSCode）。demo 层先验矩阵 G1~G12 已钉住（文件选择→diff/树平铺切换选中保持/组头折叠/untracked lazy 展开+>500 截断/内容 tab/左栏折叠/搜索定位/空态/错误态/刷新），交互断言全过。',
+    src: 'D:\\project\\gui\\DevDesk\\docs\\design\\2026-11-17-git管理器重设计.md §2.2/§10 + demo evaluate 断言实测' },
+  { id: 198, grp: 'd', by: 'developer', time: '11-17 14:28', subject: 'git-poc-291-lazy-enum', short: 'POC：lazy 枚举 ~1.6µs/条目，D3-A 成立',
+    fact: 'need291 技术方案 POC 结果（2026-11-17，Windows/NTFS 实测）：①untracked 目录 lazy 单层枚举（std::filesystem::directory_iterator）线性 ~1.6µs/条目——500 条 0.81ms / 3000 条 5.1ms / 10000 条 16.2ms（3 遍取最优）；全量递归对照 DevDesk/build 一层 36 条 0.15ms vs 递归 26530 条 3721ms → D3-A 成立（展开任一层 <20ms，≤500 截断亚毫秒），F-09 不递归硬约束反向证实。归并口径=复用 GitTreeModel::walkChildren（src/module_git/git_tree_model.h:92：单层枚举+isIgnored 过滤+.git 跳过+symlink 叶化+Subrepo 检测现成），结果过滤 StatusKind::Untracked 文件行+子目录行续 lazy。②折叠阈值 200 维持：virtualList 只物化可视槽（EUI-NEO/components/virtuallist.h:96-113）渲染成本 O(可视)与行数无关，>200 收起是 UX 渐进披露（200 行≈8.7 屏@28px 行高 648px 视口）；断言设计=201 条两组头默认折叠、199 条默认展开（doctest 纯模型可测）。③转圈 1000ms 维持：单层枚举常态 <20ms 到不了 1s，阈值只兜慢盘（网络盘/杀软/OneDrive 占位）；同款先例 validateSpinnerDue（src/module_git/git_page_controller.h:110「超过 1s 才显旋转圈」）+NN/g 1s 流界限（nngroup.com/articles/response-times-3-important-limits）。',
+    src: '实测 C++ std::filesystem POC（temp poc291 已删）+ codegraph 代码锚点 + nngroup.com/articles/response-times-3-important-limits' },
+  { id: 199, grp: 'd', by: 'developer·T1', time: '11-17 15:11', subject: 'git-compact-folders-precedent', short: '单链压缩业界先例（VSCode Compact Folders）',
+    fact: '单链压缩业界先例证实（2026-11-17 联网检索，need291 T1 模型分片）：VSCode Explorer「Compact Folders」=把只含单一子文件夹的目录合并为单个树节点显示（src/components/ 一条），v1.41 引入；且 SCM 变更树视图同样适用该合并（microsoft/vscode#219988：用户反馈 explorer.compactFolders 在 Source Control 视图不生效，佐证 SCM 树默认压缩）——设计文档 §4.4「唯一子目录链自动合并显示 a/b/c/」与业界一致。来源：code.visualstudio.com 设置文档+stackoverflow.com/questions/59415299+github.com/microsoft/vscode/issues/219988。',
+    src: 'WebSearch: stackoverflow.com/questions/59415299 + github.com/microsoft/vscode/issues/219988 + kindacode.com/article/vs-code-prevent-single-child-folders-from-being-merged' },
+  { id: 200, grp: 'd', by: 'developer·T2', time: '11-17 15:19', subject: 'git291-view-shard-api-consumption', short: '视图分片 API 消费契约（假设名，后被 #201 纠正）',
+    fact: 'need291 视图/控制器分片（四文件）编码完成，对 git_change_list_model.{h,cpp}（并行代理产出）的 API 消费契约：①类型 ViewMode{Tree,Flat}、ChangeListRow（Kind::GroupHeader/Dir/File/Loading/Truncate/Error × Group::Staged/Unstaged，含 name/relPath/dirRel/status/oldPath/childCount/remainCount/errorText，方案卡 §3 原样）；②方法 rebuild(snapshot, ViewMode)、reset()、rows()（返回行序列）、setExpanded(dirRel,bool)/isExpanded(dirRel)（tracked 树位图+untracked 展开共用位图口径）、markLoading(dirRel)、applyUntrackedChildren(dirRel, vector<TreeRow>)、markLoadFailed(dirRel,msg)、setGroupCollapsed(Group,bool)/isGroupCollapsed(Group)（含 >200 默认注入模型内做）。消费点：git_page_controller.cpp（composePump④ listRows_=listModel_.rows() 物化；applyStatusSnapshot→rebuild；setViewMode/toggleGroup/toggleDir/toggleUntrackedDir 转发；requestUntrackedChildren worker 链）+ git_views.cpp:512（isGroupCollapsed 组头箭头）。控制器本地自担：requestedUntrackedDirs_ 防重入集、rowHasFile（jumpToHit ∈变更判定扫 listRows_）、hasFile 类模型 API 未消费。statusBadgeLetter 消费点 git_views.cpp（drawBadge）——须由 git_change_list_model.h 或 git_fs_walk.h 之一导出（原 git_tree_model.h 导出，随类删除迁移）。git_fs_walk.h 消费契约：自由函数 WalkResult walkChildren(Repo*, const fs::path& workdir, const string& dirRelUtf8) + TreeRow/TreeRowKind/WalkResult 类型（controller 搜索 walk+untracked lazy 双消费点）。若模型实际签名有出入，合并时按本线索机械改 controller/views 对应行。',
+    src: 'D:\\project\\gui\\DevDesk\\src\\module_git\\git_page_controller.{h,cpp} + git_views.cpp 实码消费点' },
+  { id: 201, grp: 'd', by: 'developer', time: '11-17 16:24', subject: 'git291-model-contract-final', short: '合并轮契约定案（c4628169 实码口径，纠正 #200 假设名）',
+    fact: 'need291 合并轮定案（2026-11-17，commit c4628169）：GitChangeListModel（src/module_git/git_change_list_model.h）实际契约——①枚举名 ChangeViewMode{Tree,Flat}（非 ViewMode）；②lazy API=markUntrackedLoading/markUntrackedFailed/applyUntrackedChildren(dirRel, const fs_walk::WalkResult&)/pendingUntrackedDirs/requestRetry；③fs_walk 类型=FsEntry/EntryKind/WalkResult（module::git::fs_walk 命名空间，非 TreeRow）；④tracked 派生目录默认展开（设计 §7 N2「≤50 条全展开」）、显式折叠记忆走 collapsedTree_/collapsedFlat_，untracked lazy 目录默认收起走 expanded 位图——isExpanded 按 isLazyTarget 分流双默认态；⑤组头行 name=「已暂存 (N)」模型烘焙（视图 :533 直绘）；⑥hasFile(relPath)=双桶+lazy 缓存全量成员判定（controller rowHasFile 消费，折叠组下刷新保选中 F-09）；⑦untracked 多段目录条目整链挂最近派生祖先（无则根），parentOf 直挂=孤儿行 bug 已修；⑧「右栏显示 diff」判据=rightTab()==Diff && !searchContentView()（GitPageController::RightTab 类内嵌套枚举，rightShowsDiff 已退役）。下游 qa/审计按此契约查，勿按 clue#200 假设名（ViewMode/markLoading/vector<TreeRow>）复查。',
+    src: 'D:\\project\\gui\\DevDesk\\src\\module_git\\git_change_list_model.{h,cpp} + git_page_controller.cpp 定向 202 用例全绿实测' }
+];
+var CLUE_GRP = {
+  r: { who: 'researcher', label: '竞品调研 ×5', ids: [192, 193, 194, 195, 196] },
+  u: { who: 'ui-ux-designer', label: '设计修订 ×1', ids: [197] },
+  d: { who: 'developer（含 T1/T2 分片）', label: 'POC 与契约 ×4', ids: [198, 199, 200, 201] }
+};
+
+var BUGS = [
+  { id: 280, st: '关闭 · 已验收', pri: 'P1', owner: 'bug-fixer', time: '11-16 18:25 → 11-18 10:31',
+    title: '「仅修改」tab 文件名/内容/diff 全空白错乱；未跟踪被拆成独立 tab',
+    link: 'need#291 重设计的直接导火索',
+    detail: '用户反馈（2026-11-16），Git 管理器（只读 v1，远端 8ecf04e6 + need14 收口）两项：\n1.【UI 缺陷】「仅修改」tab 显示错乱：文件名都没显示，内容区和 diff 区都空白。可能方向：①三栏（树/变更列表/diff）布局尺寸计算错，列宽/行高演成 0；②虚拟列表未渲染或数据未加载（控制器未收到 changes/diff）；③Windows 特有（字体度量/缩放 1.354 下布局错位），Mac 端未在 Windows 验证。\n2.【设计质疑】「未跟踪」为什么是单独 tab？用户预期：未跟踪应是「仅修改」里的一个类型（状态标记），而不是平行 tab。待核现分类模型（staged/unstaged/untracked 口径）与设计文档是否如此约定；若确为设计分叉，需改分组或改标注。\n\n定位线索：src/module_git/git_page_controller.cpp（diff/requestDiff）、git_diff_model.h（DiffRow/placeholder/untracked 合成）、变更列表与 tab 定义待查（git_page_controller / git 页 UI）。已证：untracked diff 为模型层合成（≤1MiB 全增行 / >1MiB 占位），不走 GIT_DIFF_INCLUDE_UNTRACKED_CONTENT。' },
+  { id: 269, st: '待验收 · 测试中', pri: 'P1', owner: 'zcode', time: '11-13 12:15 → 11-16 18:50',
+    title: 'libgit2 vendored 子模块 Windows 构建失败（CMP0077 OLD 覆盖 BUILD_TESTS=ON，headertest -Werror 撞 _WIN32_WINNT 重定义）',
+    link: 'git 管理器 v1 构建链前置（非本波五缺陷口径）',
+    detail: '复现：origin/dev 8ecf04e6（git 管理器只读 v1，libgit2 v1.9.7 submodule）后首次 Windows Debug 构建 → CMake Error at CMakeLists.txt:195（libgit2 目录空/需 submodule init）；init 后编译报 third_party/libgit2/tests/headertest/headertest.c 失败：_WIN32_WINNT redefined [-Werror]（libgit2 cmake/DefaultCFlags.cmake:158 加 -D_WIN32_WINNT=0x0600，DevDesk 顶层 CMakeLists:28 add_compile_definitions 0x0A00）。根因：libgit2 CMakeLists cmake_minimum_required(3.5.1) → 其 policy scope CMP0077 为 OLD，option(BUILD_TESTS ... ON) 无视父级 set(BUILD_TESTS OFF) 并写 cache=ON，于是 Windows 上编 headertest（-Werror）。Mac 端无 WIN32 分支所以未暴露。修复：DevDesk CMakeLists 在 add_subdirectory(third_party/libgit2) 前加 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)（2026-11-13 本机实测构建成功 847 目标全过）。待办：Mac 端/CI 复核；确认 BUILD_TESTS cache 强制不影响 DevDesk 自有测试目标。' },
+  { id: 290, st: '待验收', pri: '—', owner: 'bug-fixer', time: '11-17',
+    title: 'git-ui-fix 波三并发之一（台账字段本页未实读）',
+    link: '与 need#291 调研 + PRD 同波并发',
+    detail: '进展流水 #814 记录（11-17 13:30）：bug290（三并发之一）已验收：commit 395f3bd4 未推、装机 13:27 PID 21616、池态待验收。完整台账字段本页未实读，仅引用级。' },
+  { id: '292/294/296', st: '待验收（波次）', pri: '—', owner: 'bug-fixer', time: '11-18',
+    title: 'git-ui-fix 修复波成员 ×3（引用级）',
+    link: '验收打回修复波（末轮=顶栏卡片化 2a03c1d7）',
+    detail: 'need#291 blocker 字段引用：11-18 git-ui-fix 波修复老板上报五缺陷（bug280/290/292/294/296）。bug292/294/296 完整台账未实读，仅 blocker 引用级记录。' },
+  { id: '298/299/300', st: '衍生（记忆口径）', pri: '—', owner: '—', time: '11-18+',
+    title: '验收期口头翻案衍生：#298 作废 · #299 扩充设计在飞 · #300 删全仓搜索',
+    link: '口头令可推翻当日已拍板裁决',
+    detail: '#298（全仓搜索相关设计）作废；#299 扩充版设计在飞：树重做 + 过滤输入框 + 仓历史快选 + 长名/边界；#300 删全仓搜索（D7 验收期翻案：先「按推荐」保留搜索，验收期老板令删）。来源=跨会话记忆索引，非本页实读。' }
+];
+
+var STATUSLOG = [
+  { id: 1383, time: '11-17 13:15:30', from: '—', to: '在池', short: '入池', reason: '入池' },
+  { id: 1386, time: '11-17 13:19:52', from: '在池', to: '排产', short: '老板令三子任务并发', reason: '老板开工令（2026-11-17）：「继续修」+「使用三个子任务并发」——置排产，按老板令三子任务并发（bug290 修复 + 本条调研 + 本条 PRD）。' },
+  { id: 1387, time: '11-17 13:21:32', from: '排产', to: '进行中', short: 'PM 接手', reason: '（PM 置进行中，出 PRD）' },
+  { id: 1389, time: '11-17 14:29:52', from: '进行中', to: '待验收', short: '方案卡+POC 完成', reason: '技术方案卡+POC 完成：方案卡 doc id=25；D3-A POC 通过（复用 walkChildren 单层枚举链）；树组件裁决建议=module_git 自实现不进 EUI-NEO；新模型 git_change_list_model 取代 changes_model+tree_model，platform/git 零改动。R1~R4 上报待 ui/主会话定稿。' },
+  { id: 1390, time: '11-17 14:33:03', from: '待验收', to: '进行中', short: '状态回正（⟲ 倒退）', reason: '状态回正：设计拍板只是阶段门（UI 先验），流程未收口（tech 卡已落库 doc id=25 待审计、实现/测试/收口未做）——从待验收回进行中续跑。' },
+  { id: 1391, time: '11-17 16:28:27', from: '进行中', to: '待验收', short: '三并发波收口完成', reason: '三并发波+合并验证收口完成（老板令「三个子任务并发」汇总编译模式）：commit c4628169（26 文件 +4352/−1533，含旧模型退役），主会话复跑 --dev --filter file:git 全绿（Total 202 / Failed 0），装机完成（PID 12160），旧文件残引清零（仅注释级历史锚），缺口 A~G 全处置（API 对齐/statusBadgeLetter 迁移/U 绿档/删旧/用例去重/防御位接收）。待老板真机验收新版 Git 页：两栏布局/树平铺切换/两组头/未跟踪目录展开/点条目即 diff/内容次视图。UI 画面级探针与全量档留 QA 收口。' }
+];
+
+var PROGRESS = [
+  { id: 811, time: '11-17 13:19', by: 'ZCode主会话', short: '老板开工令·三子任务并发', note: '老板开工令（2026-11-17）：「继续修」+「使用三个子任务并发」——置排产，按老板令三子任务并发（bug290 修复 + 本条调研 + 本条 PRD）。' },
+  { id: 814, time: '11-17 13:30', by: 'ZCode主会话', short: '主会话物理验收 PRD 落盘', note: '主会话物理验收：PRD 落盘核对过（doc id=23 全文、矩阵/决策点/状态集齐）；一处事实性瑕疵——§10「bug#281 已修（9650c187）」提交号误标（9650c187 实为 bug286/bug282 提交），随调研并入修订时订正，不打回。bug290（三并发之一）已验收：commit 395f3bd4 未推、装机 13:27 PID 21616、池态待验收。researcher 在飞。' },
+  { id: 815, time: '11-17 13:42', by: 'ZCode主会话', short: '老板裁决 D1~D7「按推荐」', note: '老板裁决（2026-11-17 13:4x）：「按推荐」——D1~D7 全部按推荐默认放行（D1-C 树/平铺双态切换默认分组树；D2-A 左栏目录树整列砍；D3-A untracked 目录可展开【POC 前置，不过退 B】；D4-A 两栏主态 320px 可折叠；D5-A 点条目即 diff 常驻；D6-A 两组头+U 徽标；D7-A 搜索保留改定位）。下一步：ui-ux-designer 设计文档+HTML demo（老板看图拍板，UI 先验硬门禁）→ 通过后技术方案。' },
+  { id: 816, time: '11-17 14:15', by: 'ui-ux-designer', short: '设计文档+demo 产物落盘', note: 'ui-ux-designer 产物落盘：设计文档 docs/design/2026-11-17-git管理器重设计.md（页面级构图三问+全参数表+全交互规格+八节点四态状态表+动效表+自适应表+先验矩阵 G1~G12+待裁决 2 项）+ demo docs/design/2026-11-17-git管理器重设计-demo.html（自包含单文件零依赖，两栏主态/树平铺切换/两组头+U徽标/untracked 展开/点行出 diff/内容次视图/空态/错误态全覆盖，内联 script 过 node --check，浏览器直开或 http://127.0.0.1:8123/）。D1~D7 基线零偏离；新决策点仅 2 处技术阈值（>200 组头收起、转圈 >1s），已在文档 §12 列待裁决。状态保持进行中，等老板看图拍板 demo。' },
+  { id: 817, time: '11-17 14:16', by: 'ZCode主会话', short: 'ui 交付验收·U 徽标升绿档', note: 'ui-ux-designer 交付并验收：设计文档 docs/design/2026-11-17-git管理器重设计.md（全参数+全交互规格+G1~G12 先验矩阵）+ 自包含 demo docs/design/2026-11-17-git管理器重设计-demo.html（老板浏览器内实测发现 JS 语法错→已修，主会话 node --check 复验全过）。1 处参数级修订=U 徽标灰升绿档（文档 §2.2 依据）；待裁决 2 处技术阈值（组头收起阈值/转圈时机）归技术方案 POC。当前等老板浏览器看图拍板 → 过则进技术方案（POC：untracked lazy 枚举）。' },
+  { id: 818, time: '11-17 14:18', by: 'ZCode主会话', short: 'UI 先验硬门禁通过', note: 'UI 先验硬门禁通过：老板看图拍板（2026-11-17 「我看了，没啥大问题」）——设计文档+demo 验收过，UI 先验验证清单存在性核对元。进入技术方案环节（developer 方案卡+POC：untracked lazy 枚举、大仓折叠阈值、转圈时机）。' },
+  { id: 819, time: '11-17 14:29', by: 'developer', short: '技术方案卡+POC 完成', note: '技术方案卡+POC 完成：方案卡 doc id=25；D3-A POC 通过（复用 walkChildren 单层枚举链）；树组件裁决建议=module_git 自实现不进 EUI-NEO；新模型 git_change_list_model 取代 changes_model+tree_model，platform/git 零改动。R1~R4 上报待 ui/主会话定稿。' },
+  { id: 820, time: '11-17 14:53', by: 'developer', short: '【变更清单】10 项+演绎 2 项', note: '【变更清单】（依据方案卡 §4 文件域，开工已核实现状，无清单缺口）：①新增 src/module_git/git_fs_walk.{h,cpp}（walkChildren+TreeRow/WalkResult/TreeRowKind+statusBadgeLetter 自 git_tree_model 迁出，语义零变）；②新增 src/module_git/git_change_list_model.{h,cpp}（§3 行模型：树/平铺双态+两组头+untracked lazy+>500 截断+>200 默认折叠）；③新增 tests/test_platform/test_git_change_list_model.cpp（契约钉死+git_status_model 三条 build/groupHeader 用例迁入+git_tree_model 的 walkChildren 用例迁挂）；④迁移 tests/test_platform/test_git_status_model.cpp（GitChangesModel 用例迁出，gitColors 徽标断言保留）；⑤重构 git_views.cpp（三栏→两栏：左卡变更列表 320 可折叠+右卡 diff 主区头部 44px tab）；⑥重构 git_page_controller.{h,cpp}（删 tree_/mode_/setTreeMode/toggleDir/selectTreeFile；加 listModel_/listCollapsed_/rightTab_/toggleUntrackedDir/jumpToHit 双通道锚）；⑦删除 git_changes_model.{h,cpp}+git_tree_model.{h,cpp}；⑧微调 git_module.cpp（无需实质改动，接线签名不变）+module_git/CMakeLists.txt+tests/CMakeLists.txt；⑨git_colors.{h,cpp} untracked 升绿档（卡 §4 尾段清单内）；⑩回归改造：test_git_diff_model.cpp（目录占位分支退役）、test_git_search.cpp（jumpToHit 双通道）、test_git_refresh.cpp（tree API 用例改挂新动线）。platform/git/** 零改动。演绎 2 项（不破约束）：a.设计 §3 顶栏分支 chip 无数据源（platform/git 无 branch 查询接口）→省略，随终报上报；b.空仓特判文案（§5.7「这是一个空仓库」需 repo 元数据查询）→统一「工作区很干净」空态（PRD N2 空仓=无变更空态同口径）。开工：先 git_fs_walk+测试红→模型绿→controller/views→删除+回归。' },
+  { id: 822, time: '11-17 15:11', by: 'developer·T3', short: 'T3 测试面迁移分片完成', note: 'T3 测试面迁移分片完成（编码落盘，未构建未提交——汇总编译模式）：五测试文件改造完毕——①test_git_status_model.cpp 三用例改挂 GitChangeListModel（分桶/组内去重跨组不去重 D6-A/组头「已暂存(N)·未暂存(N)」文案/R 行 oldPath 双侧各一行/组内字节序），真仓四态用例改断言快照条目（platform 层保留）；②test_git_tree_model.cpp 缩为 git_fs_walk::walkChildren 两直测（语义零变），旧 GitTreeModel 类四用例删除并在头注标注迁移去向（→test_git_change_list_model.cpp）；③test_git_diff_model.cpp 目录占位文案断言改钉退役（负向断言，替代值不契约化）；④test_git_search.cpp ∉变更通道补 rightShowsDiff 断言 + 新增 ∈变更→diff 锚定 diffHighlightLine()==newNo 用例（P1-2 对偶）；⑤test_git_refresh.cpp 迁 setViewMode/viewMode/listModel()/toggleDir + selectChange 动线 + 新增 F-09 保选中/展开位图/组折叠位图回归。API 命名已对齐 T1 在途控制器实码（diffHighlightLine/setViewMode/listModel/toggleDir/setExpanded/isExpanded 已证）；未证项=模型头 rebuild 返回值（按 rows() 惯例写）/setGroupCollapsed 签名/GroupHeader.name 文案/组头计数语义/ViewMode 定义层级，见 T3 终报遗留清单。' },
+  { id: 823, time: '11-17 15:12', by: 'ZCode主会话', short: '三并发波进展汇总', note: '三并发波进展（老板令「三个子任务并发」，汇总编译模式）：T3 测试面分片回单并验收（五测试文件落盘：status_model 改挂新模型等价断言/tree_model 304→115 行改挂 fs_walk+旧类用例删/diff_model 目录占位负向退役/search 增∈变更 diff 锚定用例/refresh 增位图保持用例；契约缺口 6 项已列待合并验证裁决）。T1 模型层与 T2 视图控制器仍在飞。波齐后合并验证子任务统一编译+删旧文件+定向测试+squash commit+装机。' },
+  { id: 824, time: '11-17 15:18', by: 'developer·T1', short: 'T1 模型层分片完成', note: 'T1 模型层分片完成（汇总编译模式，零构建零commit）：新增 git_change_list_model.{h,cpp}（行模型：双组分桶 D6-A/树派生+单链压缩 clue#199/平铺聚合/双展开位图/组折叠 200 阈值 POC②/untracked lazy 状态机+>500 截断，header 131 行+cpp 516 行）、git_fs_walk.{h,cpp}（walkChildren 自 git_tree_model.cpp:258-328 逐行迁出语义零变，返回类型改 FsEntry 自包含，109+44 行）、tests/test_platform/test_git_change_list_model.cpp（12 用例=卡 §5 族全量+原 GitChangesModel 三用例等价改挂+真仓全链，584 行）；CMake 两处注册（module 源 :7-8、测试 :62）。全部 CRLF。红绿验证归波后合并验证子任务。契约偏差 8 条见 T1 终报（statusBadgeLetter 未 re-home 防链接冲突、FsEntry 类型替换需 test_git_tree_model 改挂适配等）。' },
+  { id: 825, time: '11-17 15:20', by: 'ZCode主会话', short: 'T1 分片回单并验收', note: 'T1 模型层分片回单并验收：四新文件落盘（模型 131+516 行、fs_walk 44+109 行、新测试 584 行 12 用例）+CMake 双处注册。契约偏差 8 项已列（statusBadgeLetter re-home、TreeRow→fs_walk::FsEntry 类型替换、Subrepo 转 Dir、两份位图等）待合并验证裁决——其中 FsEntry 类型替换与 T3 的同名迁出假设冲突，合并任务必改。T2 视图控制器仍在飞。' },
+  { id: 826, time: '11-17 16:24', by: 'ZCode主会话', short: '合并验证子任务收口', note: '合并验证子任务收口（2026-11-17）：缺口A~G 全处置——A=API 机械对齐（ChangeViewMode/fs_walk::限定/FsEntry/rightShowsDiff→rightTab+searchContentView 判据/GitPageController::RightTab）；B=statusBadgeLetter 迁 git_change_list_model.{h,cpp} 导出；C=git_colors untracked 绿档 primaryText(#157E4E)+primary 12% tint（≈#E6FBF2，addedBg 同式）；D=git_tree_model/git_changes_model 已删+CMake 移除+全仓残引清零（仅注释级历史锚）；E=去重裁决：RenameBothGroups 删（status 版更强留），分桶/真仓/组头计数按层或按形态互补双留；F/G 照单接收。合并轮另修模型三缺陷：tracked 派生目录默认展开+显式折叠记忆（设计 N2 ≤50 全展开，T1 实现偏离已纠正）；多段 untracked 目录条目挂最近派生祖先/根（原 parentOf 直挂成孤儿行违设计「整链一节点」）；组头文案烘焙「已暂存 (N)」（视图注释既定契约）；compressChain 嵌套压缩丢中间段（lastSegment(only.path)→only.display）；rowHasFile 改模型 hasFile 全量成员判定（折叠组下选中刷新保持，F-09）。diff 目录占位文案退役（卡 F-05 既定）。验证：build-test-run.sh --dev --filter file:git 全绿 Total 202 Passed 199 Failed 0；模块隔离守卫绿（经 MSYS2 bash 跑——Git for Windows bash 全局崩 add_item fatal，已报环境异常）。commit c4628169 feat(git) 单提交（26 文件 +4352/-1533，含设计文档+demo+pool 台账）。装机完成：install-win-debug.sh 快路径 strip 副本 81.4MB→%LOCALAPPDATA%\\Programs\\DevDesk\\，manifest 生成，新实例 PID 12160 启动于 16:19:49（脚本重启段产物，PowerShell Path 验证=装机目录）。' },
+  { id: 827, time: '11-17 16:28', by: 'ZCode主会话', short: '三并发波+合并验证收口完成', note: '三并发波+合并验证收口完成（老板令「三个子任务并发」汇总编译模式）：commit c4628169（26 文件 +4352/−1533，含旧模型退役），主会话复跑 --dev --filter file:git 全绿（Total 202 / Failed 0），装机完成（PID 12160），旧文件残引清零（仅注释级历史锚），缺口 A~G 全处置（API 对齐/statusBadgeLetter 迁移/U 绿档/删旧/用例去重/防御位接收）。待老板真机验收新版 Git 页：两栏布局/树平铺切换/两组头/未跟踪目录展开/点条目即 diff/内容次视图。UI 画面级探针与全量档留 QA 收口。' }
+];
+
+var EV = [
+  { t: '11-16 18:25', k: 'bug', a: 'bug-fixer', s: 'bug280 入池 · 打回导火索', add: { bug: 1 }, ref: 'bug:280' },
+  { t: '11-17 13:15', k: 'status', a: '主会话', s: 'need#291 入池 · 在池', st: 0, add: { need: 1 }, ref: 'st:1383' },
+  { t: '11-17 13:19', k: 'status', a: '主会话', s: '在池 → 排产（老板令）', st: 1, ref: 'st:1386' },
+  { t: '11-17 13:19', k: 'prog', a: '主会话', s: '三子任务并发开工', ref: 'prog:811' },
+  { t: '11-17 13:21', k: 'status', a: 'PM', s: '排产 → 进行中 · PM 接手', st: 2, ref: 'st:1387' },
+  { t: '11-17 13:27', k: 'doc', a: 'PM', s: 'PRD doc#23 落库', add: { doc: 1 }, ref: 'doc:23' },
+  { t: '11-17 13:30', k: 'prog', a: '主会话', s: 'PRD 物理验收 · bug290 已修', add: { bug: 1 }, ref: 'prog:814' },
+  { t: '11-17 13:32', k: 'clue', a: 'researcher', s: '竞品调研 ×5 + doc#24', add: { doc: 1, clue: 5 }, ref: 'clues:r' },
+  { t: '11-17 13:38', k: 'doc', a: 'PM', s: 'PRD v2 修订' },
+  { t: '11-17 13:42', k: 'prog', a: '老板', s: '裁决「按推荐」×7', ref: 'prog:815' },
+  { t: '11-17 14:15', k: 'clue', a: 'ui-ux-designer', s: '设计文档+demo 落盘', add: { clue: 1 }, ref: 'clue:197' },
+  { t: '11-17 14:18', k: 'prog', a: '老板', s: 'UI 先验过「没啥大问题」', ref: 'prog:818' },
+  { t: '11-17 14:28', k: 'clue', a: 'developer', s: 'POC：lazy 枚举 1.6µs/条', add: { clue: 1 }, ref: 'clue:198' },
+  { t: '11-17 14:29', k: 'doc', a: 'developer', s: 'tech doc#25 · 转待验收', st: 3, add: { doc: 1 }, ref: 'doc:25' },
+  { t: '11-17 14:33', k: 'status', a: '主会话', s: '⟲ 回正：待验收→进行中', st: 2, back: true, ref: 'st:1390' },
+  { t: '11-17 14:41', k: 'doc', a: 'ZCode主会话', s: '审计 doc#26「可发布」', add: { doc: 1 }, ref: 'doc:26' },
+  { t: '11-17 14:43', k: 'doc', a: 'developer', s: 'tech v2 回填' },
+  { t: '11-17 14:53', k: 'prog', a: 'developer', s: '变更清单 10 项', ref: 'prog:820' },
+  { t: '11-17 15:11', k: 'clue', a: 'developer·T1', s: 'clue#199 压缩先例', add: { clue: 1 }, ref: 'clue:199' },
+  { t: '11-17 15:11', k: 'prog', a: 'developer·T3', s: 'T3 测试面回单', ref: 'prog:822' },
+  { t: '11-17 15:18', k: 'prog', a: 'developer·T1', s: 'T1 模型层回单', ref: 'prog:824' },
+  { t: '11-17 15:19', k: 'clue', a: 'developer·T2', s: 'clue#200 视图契约', add: { clue: 1 }, ref: 'clue:200' },
+  { t: '11-17 16:19', k: 'prog', a: '主会话', s: '装机 PID 12160', ref: 'install' },
+  { t: '11-17 16:24', k: 'clue', a: 'developer', s: 'commit c4628169 · 202 绿', add: { clue: 1, commit: 1 }, ref: 'commit' },
+  { t: '11-17 16:28', k: 'status', a: '主会话', s: '转待验收（收口）', st: 3, ref: 'st:1391' },
+  { t: '11-18', k: 'bug', a: 'bug-fixer', s: '修复波 bug292/294/296', add: { bug: 3 }, ref: 'bugs:wave' },
+  { t: '11-18 18:44', k: 'status', a: '主会话', s: '当前态：待验收 · ③档', add: { need: 3 }, ref: 'state' }
+];
+
+var ARTS = [
+  { at: 0, t: 'bug', l: 'bug280 · 导火索', ref: 'bug:280' },
+  { at: 1, t: 'need', l: 'need#291 · 在池', ref: 'need' },
+  { at: 5, t: 'doc', l: 'doc#23 PRD', ref: 'doc:23' },
+  { at: 7, t: 'doc', l: 'doc#24 调研', ref: 'doc:24' },
+  { at: 7, t: 'clue', l: 'clue#192–196 ×5', ref: 'clues:r' },
+  { at: 10, t: 'clue', l: 'clue#197 设计修订', ref: 'clue:197' },
+  { at: 12, t: 'clue', l: 'clue#198 POC', ref: 'clue:198' },
+  { at: 13, t: 'doc', l: 'doc#25 tech', ref: 'doc:25' },
+  { at: 15, t: 'doc', l: 'doc#26 audit', ref: 'doc:26' },
+  { at: 18, t: 'clue', l: 'clue#199 先例', ref: 'clue:199' },
+  { at: 21, t: 'clue', l: 'clue#200 契约', ref: 'clue:200' },
+  { at: 22, t: 'evid', l: '装机 PID 12160', ref: 'install' },
+  { at: 23, t: 'evid', l: 'commit c4628169', ref: 'commit' },
+  { at: 23, t: 'clue', l: 'clue#201 定案', ref: 'clue:201' },
+  { at: 25, t: 'bug', l: '修复波 ×3', ref: 'bugs:wave' },
+  { at: 26, t: 'need', l: '衍生 #298/299/300', ref: 'derive' }
+];
+
+var SEQ_MAIN = {
+  ps: ['老板', '主会话', '池·台账', 'PM', 'researcher', 'ui-ux设计', 'developer', '审计', 'bug-fixer', 'qa'],
+  steps: [
+    { f: 0, t: 1, s: '「整个功能逻辑都不对」', tag: '11-16', d: '老板打回 Git 管理器（只读 v1）；bug280 同批上报——重设计导火索。', ref: 'bug:280' },
+    { gate: 'G1', label: '入库门禁 · 登记三律', x: '×1' },
+    { f: 1, t: 2, s: 'pool_add · need#291 入池', tag: '13:15', d: 'P1 · need 池。发言≠授权：登记后才可排产。', ref: 'need' },
+    { f: 0, t: 1, s: '开工令「继续修」+「三个子任务并发」', tag: '13:19', d: 'bug290 修复 + 调研 + PRD 三并发。', ref: 'st:1386' },
+    { f: 1, t: 2, s: '置排产', tag: '13:19', d: 'status_log #1386。' },
+    { gate: 'G2', label: '派发门禁 · 简报四件套+白名单', x: '×5' },
+    { f: 1, t: 3, s: '派发 PRD 简报（G2✓）', d: '四件套：①首行池号+通道 ②冒号段头 ③预算段 ④验收段，缺一逐条拦。' },
+    { f: 3, t: 2, s: 'PRD 落库 doc#23 v2', tag: '13:21', d: 'F-01~F-12 + D1~D7；老板原话逐字入 §1。', ref: 'doc:23' },
+    { f: 1, t: 0, s: '提请裁决 D1~D7' },
+    { f: 0, t: 1, s: '「按推荐」全放行', tag: '13:42', d: 'D1 双态树 / D2 砍左栏 / D3 懒枚举 / D4 两栏 / D5 点行即 diff / D6 两组头+U / D7 搜索保留。', ref: 'prog:815' },
+    { f: 1, t: 5, s: '派发设计简报（G2✓）' },
+    { f: 5, t: 2, s: '设计+demo 落盘 · clue#197', tag: '14:15', d: '自包含 demo，内联 script 过 node --check；U 徽标灰→绿。', ref: 'clue:197' },
+    { gate: 'G6', label: 'UI 先验门（G6·a）· 看图拍板', x: '×1' },
+    { f: 0, t: 1, s: '看 demo「没啥大问题」', tag: '14:18', d: 'UI 先验硬门禁过，设计基线冻结。', ref: 'prog:818' },
+    { f: 4, t: 2, s: '竞品调研 5 clues + doc#24', tag: '13:32', d: '三并发之一，全部一手源码/官方文档。', ref: 'clues:r' },
+    { f: 1, t: 6, s: '派发技术方案简报（G2✓）' },
+    { f: 6, t: 2, s: 'POC + tech doc#25 v2', tag: '14:29', d: 'lazy 枚举 ~1.6µs/条 → D3-A 成立。', ref: 'doc:25' },
+    { gate: 'G5', label: '审计门 · 独立审计', x: '×1' },
+    { f: 7, t: 2, s: 'audit doc#26「可发布」', tag: '14:41', d: '非实现者自审，放行开工。', ref: 'doc:26' },
+    { gate: 'G3', label: '开工门禁 · 变更清单+自检', x: '×1' },
+    { f: 6, t: 1, s: '【变更清单】10 项', tag: '14:53', d: '新增/迁移/删除/回归全列；演绎 2 项显式上报。', ref: 'prog:820' },
+    { f: 1, t: 6, s: '三并发派发 T1/T2/T3（G2✓×3）', tag: '15:11', d: '汇总编译模式：分片只编码，波后统一编译。' },
+    { f: 6, t: 2, s: '分片回单 · clue#199/200', tag: '15:11', d: 'T1 模型 / T2 视图 / T3 测试面；随产随落。', ref: 'clues:d' },
+    { gate: 'G4', label: '构建门禁 · 脚本唯一入口', x: '×1' },
+    { f: 1, t: 2, s: '合并验证 + commit + 装机', tag: '16:19', d: '202 用例全绿；commit c4628169（26 文件 +4352/−1533）；装机 PID 12160。', ref: 'commit' },
+    { f: 1, t: 2, s: '转待验收', tag: '16:28', d: '主链收口；全量档留 QA。', ref: 'st:1391' },
+    { gate: 'G6', label: '验收门禁 · 真机+证据物', x: '×1' },
+    { f: 0, t: 1, s: '真机验收：打回+口头翻案', d: '四轮修复链落地；翻案：#300 删搜索 / #299 扩充在飞。', ref: 'accept' },
+    { gate: 'LOOP', label: '修复波循环 ×N', x: '' },
+    { f: 8, t: 2, s: 'bug-fixer 修复波', d: 'bug290/292/294/296 + 顶栏卡片化；修后再装机再验收。', ref: 'bugs:wave' },
+    { note: true, f: 9, s: 'UI 探针与全量档留 QA 收口' },
+    { note: true, f: 2, s: '当前态：待验收 · ③档不硬关', ref: 'state' }
+  ]
+};
+
+var GATES = {
+  G1: {
+    code: 'G1', name: '入库门禁 · 登记三律', what: '反馈/结论先入池再动手，发言≠授权', hard: '硬拦',
+    intro: '三律：①反馈即登记（ask 分诊入池）②分析前先落条目/线索 ③结论随产随落（clue_add 即时）。硬拦点=PreToolUse hook：未登记就改代码直接阻断。S 级小 bug 例外：先入库再直修。',
+    ps: ['老板', '主会话·ask', 'hook', '池·台账'],
+    steps: [
+      { f: 0, t: 1, s: '原话反馈（逐字入池）', d: '口头描述即权威规格，禁转述失真。' },
+      { note: true, f: 1, s: 'ask 分诊：S/M/L → 三池分流' },
+      { f: 1, t: 3, s: 'pool_add 先落条目', d: '先分析=断链。' },
+      { f: 1, t: 3, s: 'clue_add 线索即时' },
+      { f: 2, t: 1, s: '未登记直接改码 ✗' },
+      { f: 1, t: 2, s: '❌ 硬拦（登记即放行）', d: '被拦=登记即放行，不是 bug。' }
+    ],
+    proof: '实证：need#291 于 11-17 13:15:30 入池（#1383）→ 13:19:52 排产（#1386），先登记后动手；bug280 于 11-16 18:25 已在案。'
+  },
+  G2: {
+    code: 'G2', name: '派发门禁 · 简报四件套+白名单', what: '四件套缺一逐条拦；角色限 8 具名白名单', hard: '硬拦',
+    intro: '派发简报四件套：①首行池号+通道标记 ②冒号段头 ③预算段 ④验收段——缺一逐条拦。子任务限 8 具名角色（白名单硬拦）；终报≠文件落盘，主会话须物理复核（doc 版本/mtime）。',
+    ps: ['主会话', 'hook', '子任务·角色', '池·台账'],
+    steps: [
+      { f: 0, t: 1, s: '提交派发简报' },
+      { f: 1, t: 0, s: '四件套逐条检查（缺一拦）' },
+      { f: 1, t: 2, s: '白名单校验（8 角色硬拦）' },
+      { f: 2, t: 3, s: '首行回池号锚' },
+      { f: 2, t: 0, s: '终报（≠落盘，须物理复核）' },
+      { f: 0, t: 3, s: '回单记档 dev_progress' }
+    ],
+    proof: '实证：need#291 全程 5 次派发全过检；#822/#824/#825 分片回单全部带池号锚与遗留清单。'
+  },
+  G3: {
+    code: 'G3', name: '开工门禁 · 变更清单+方案自检', what: '先出【变更清单】，仅清单内修改', hard: '硬拦',
+    intro: '检索先行（codegraph 优先）→ 变更清单（文件/位置/目的）→ 主会话核对无缺口才开工 → 方案自检对照需求逐项。禁改需求无关代码；发现缺陷仅记录不顺手修。',
+    ps: ['developer', 'codegraph', '主会话', '池·台账'],
+    steps: [
+      { f: 0, t: 1, s: '检索先行（符号/调用链）' },
+      { f: 0, t: 2, s: '【变更清单】' },
+      { f: 2, t: 0, s: '清单核对（缺口=不开工）' },
+      { note: true, f: 0, s: '方案自检：对照需求逐项' },
+      { f: 0, t: 3, s: '仅清单内修改（越界=拦）' },
+      { f: 0, t: 2, s: '演绎项显式上报' }
+    ],
+    proof: '实证：#820 变更清单 10 项+演绎 2 项；合并轮缺口 A~G 全处置；platform/git/** 零改动兑现。'
+  },
+  G4: {
+    code: 'G4', name: '构建门禁 · 脚本唯一入口', what: '一律 build-test-run.sh；手敲 cmake 硬阻断', hard: '硬拦',
+    intro: '脚本封装手敲必漏的约定：submodule 定位、ccache、OPENSSL、发布形态守卫、模块隔离守卫、并行度封顶。开发内循环 --dev 定向；全量只在阶段节点跑。',
+    ps: ['主会话', 'build 脚本', '守卫链', 'doctest'],
+    steps: [
+      { f: 0, t: 1, s: 'bash build-test-run.sh --dev --filter' },
+      { f: 0, t: 1, s: '手敲 cmake ✗' },
+      { f: 1, t: 0, s: '❌ 硬阻断（PreToolUse）' },
+      { f: 1, t: 2, s: '模块隔离守卫' },
+      { f: 2, t: 1, s: '0 违规绿（不静默绿）' },
+      { f: 1, t: 3, s: '定向 filter 跑测试' },
+      { f: 3, t: 0, s: 'Total 202 / Failed 0 → 绿' }
+    ],
+    proof: '实证：合并轮 16:24 --dev --filter file:git 全绿 Total 202 / Failed 0；模块隔离守卫绿。'
+  },
+  G5: {
+    code: 'G5', name: '审计门 · 独立审计', what: '产物完成后强制独立审计，非实现者自审', hard: '放行门',
+    intro: '审计员只读、出分级清单，通过才放行编码/发布，不代修。产物独立审计门与选面权威在 devflow ask skill（不只审代码）。',
+    ps: ['developer', '主会话', '审计·独立', '池·台账'],
+    steps: [
+      { f: 0, t: 3, s: '方案卡落库 doc#25' },
+      { f: 1, t: 2, s: '派发独立审计（三面）' },
+      { note: true, f: 2, s: '只读审查 · 分级清单（不代修）' },
+      { f: 2, t: 3, s: 'audit doc#26 落库' },
+      { f: 2, t: 0, s: '「可发布」放行 / ❌ 打回' }
+    ],
+    proof: '实证：doc#26（11-17 14:41）结论=developer 面可发布 → 14:53 变更清单随即开工。'
+  },
+  G6: {
+    code: 'G6', name: '验收门禁 · 先验+真机+证据物', what: '老板=终验不是首测；完成=证据物实操实证', hard: '终门',
+    intro: '两段式：a) UI 先验门——demo 看图拍板（8123 通道）才冻结基线；b) 真机验收——装机版是唯一反馈通道，单测/探针绿=假测试不算验收；红=bug 入池打回；证据物归档 evidence/。',
+    ps: ['ui-ux设计', '老板', '主会话', 'qa', '池·台账'],
+    steps: [
+      { f: 0, t: 1, s: 'demo 看图（127.0.0.1:8123）' },
+      { f: 1, t: 2, s: '「没啥大问题」→ 先验过', d: 'UI 先验硬门禁（14:18）。' },
+      { note: true, f: 2, s: 'install-win-debug.sh 装机（唯一反馈通道）' },
+      { f: 1, t: 2, s: '真机实测 · 原话逐字入池' },
+      { f: 1, t: 4, s: '绿=关闭 ｜ 红=bug 打回' },
+      { f: 3, t: 4, s: '证据物归档 + 判读表' },
+      { f: 1, t: 2, s: '验收期口头令翻案（#300/#299）', d: '口头令可推翻当日已拍板裁决。' }
+    ],
+    proof: '实证：14:18 先验过；11-18 真机打回修复波；D7 翻案（#300 删搜索）；blocker ③档（verdicts.md）。'
+  },
+  LOOP: {
+    code: '⟲', name: '修复波循环 ×N', what: '打回→bug 入池→修复→装机→再验收', hard: '循环',
+    intro: '真机验收不是终点而是循环入口：打回原话逐字入 bug 池，bug-fixer 修复后再装机再验收，直至绿。修复与重设计主体分开批次。',
+    ps: ['老板', 'bug-fixer', '主会话', '池·台账'],
+    steps: [
+      { f: 0, t: 3, s: '打回原话逐字入 bug 池' },
+      { f: 1, t: 3, s: '修复（S 级主会话直修）' },
+      { f: 2, t: 3, s: '再装机' },
+      { f: 0, t: 2, s: '再验收 → 绿关闭 / 红续环' },
+      { f: 3, t: 2, s: '衍生新需求入池（#299/#300）' }
+    ],
+    proof: '实证：11-17 装机 → 11-18 修复波（五缺陷，末轮顶栏卡片化 2a03c1d7）→ 衍生在飞。'
+  }
+};
+
+var GN = [
+  { id: 'n1', c: 0, r: 0, l1: '老板原话反馈', l2: '11-16「功能逻辑都不对」', ty: 'stage', ref: 'quote' },
+  { id: 'n2', c: 0, r: 1, l1: 'bug280 · 已关闭', l2: 'tab 空白错乱', ty: 'bug', ref: 'bug:280' },
+  { id: 'n3', c: 1, r: 0, l1: 'need#291', l2: '在池→待验收 · P1', ty: 'need', ref: 'need' },
+  { id: 'n4', c: 2, r: 0, l1: 'D1~D7 裁决', l2: '「按推荐」全放行', ty: 'stage', ref: 'decision' },
+  { id: 'n5', c: 3, r: 0, l1: 'doc#23 PRD', l2: 'PM · 13:38', ty: 'doc', ref: 'doc:23' },
+  { id: 'n6', c: 3, r: 1, l1: 'doc#24 调研', l2: 'researcher · 13:32', ty: 'doc', ref: 'doc:24' },
+  { id: 'n7', c: 3, r: 2, l1: '设计文档+demo', l2: 'ui设计 · 14:15', ty: 'doc', ref: 'design' },
+  { id: 'n8', c: 3, r: 3, l1: 'doc#25 tech', l2: 'developer · 14:43', ty: 'doc', ref: 'doc:25' },
+  { id: 'n9', c: 3, r: 4, l1: 'doc#26 审计', l2: '主会话 · 14:41', ty: 'doc', ref: 'doc:26' },
+  { id: 'n10', c: 4, r: 0, l1: '线索 researcher×5', l2: '#192–196', ty: 'clue', ref: 'clues:r' },
+  { id: 'n11', c: 4, r: 1, l1: '线索 ui×1', l2: '#197', ty: 'clue', ref: 'clues:u' },
+  { id: 'n12', c: 4, r: 2, l1: '线索 developer×4', l2: '#198–201', ty: 'clue', ref: 'clues:d' },
+  { id: 'n13', c: 5, r: 0, l1: '变更清单', l2: '10 项+演绎 2', ty: 'stage', ref: 'cl' },
+  { id: 'n14', c: 5, r: 1, l1: 'T1/T2/T3 分片', l2: '三并发', ty: 'stage', ref: 'shards' },
+  { id: 'n15', c: 5, r: 2, l1: 'commit c4628169', l2: '+4352/−1533', ty: 'evid', ref: 'commit' },
+  { id: 'n16', c: 6, r: 0, l1: '202 用例全绿', l2: 'Total 202/0', ty: 'evid', ref: 'test' },
+  { id: 'n17', c: 6, r: 1, l1: '装机 PID 12160', l2: 'debug 装机', ty: 'evid', ref: 'install' },
+  { id: 'n18', c: 7, r: 0, l1: '老板真机验收', l2: '装机版=唯一通道', ty: 'stage', ref: 'accept' },
+  { id: 'n19', c: 7, r: 1, l1: '修复波 bug×4', l2: '290/292/294/296', ty: 'bug', ref: 'bugs:wave' },
+  { id: 'n20', c: 7, r: 2, l1: '衍生 #299/#300', l2: '扩充·删搜索', ty: 'need', ref: 'derive' },
+  { id: 'n21', c: 7, r: 3, l1: '当前态', l2: '待验收·③档', ty: 'state', ref: 'state' }
+];
+var GE = [
+  { a: 'n1', b: 'n3', g: 'G1' },
+  { a: 'n2', b: 'n3' },
+  { a: 'n3', b: 'n5', g: 'G2' },
+  { a: 'n5', b: 'n4' },
+  { a: 'n4', b: 'n7', g: 'G2' },
+  { a: 'n3', b: 'n6' },
+  { a: 'n6', b: 'n8' },
+  { a: 'n7', b: 'n8' },
+  { a: 'n5', b: 'n8' },
+  { a: 'n8', b: 'n12', dash: true },
+  { a: 'n8', b: 'n9', g: 'G5' },
+  { a: 'n9', b: 'n13', g: 'G3' },
+  { a: 'n13', b: 'n14', g: 'G2' },
+  { a: 'n14', b: 'n15' },
+  { a: 'n14', b: 'n12', dash: true },
+  { a: 'n5', b: 'n10', dash: true },
+  { a: 'n7', b: 'n11', dash: true },
+  { a: 'n15', b: 'n16', g: 'G4' },
+  { a: 'n15', b: 'n17' },
+  { a: 'n17', b: 'n21' },
+  { a: 'n21', b: 'n18', g: 'G6' },
+  { a: 'n18', b: 'n19' },
+  { a: 'n19', b: 'n21', loop: true },
+  { a: 'n18', b: 'n20' }
+];
+var GCOL_TITLE = ['反馈', '需求池', '决策', '文档', '线索池', '实现', '交付', '验收'];
+
+/* ===== 播放器 ===== */
+var pl = { idx: -1, playing: false, speed: 1, timer: null, started: false };
+var ST_EL, BEAMS, stFlashTimer = null;
+var feedIdx = -2;
+
+function buildTrack() {
+  var tr = $('#track');
+  var html = '<i class="rail"></i><i class="fill" id="trFill"></i>';
+  var n = EV.length;
+  EV.forEach(function (e, i) {
+    var x = 6 + (i / (n - 1)) * (100 - 12);
+    html += '<button class="dot k-' + e.k + '" style="left:' + x.toFixed(3) + '%" data-i="' + i + '" title="' + esc(e.t + ' · ' + e.s) + '" aria-label="事件' + (i + 1) + '：' + esc(e.s) + '"></button>';
+  });
+  tr.innerHTML = html;
+  $$('#track .dot').forEach(function (d) {
+    d.addEventListener('click', function () { jumpTo(+d.dataset.i); });
+  });
+  ST_EL = $$('#sts .orb');
+  BEAMS = $$('#sts .beam');
+}
+
+function cntUp(el, to) {
+  var from = +el.textContent || 0;
+  if (RM || from === to) { el.textContent = to; return; }
+  var t0 = performance.now(), dur = 480;
+  (function step(t) {
+    var p = Math.min(1, (t - t0) / dur);
+    el.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+    if (p < 1) requestAnimationFrame(step);
+  })(t0);
+}
+
+function evCard(e, i, now) {
+  var ref = e.ref ? ' data-ref="' + e.ref + '"' : '';
+  return '<div class="ev k-' + e.k + (now ? ' now' : '') + ' pop" id="ev' + i + '"><button' + ref + '><span class="et">' + esc(e.t) + '</span><span class="kb">' + ({ status: '状态', prog: '进展', doc: '文档', clue: '线索', bug: '缺陷', commit: '提交' }[e.k] || e.k) + '</span><span class="es">' + esc(e.s) + '</span><span class="ea">' + esc(e.a) + '</span></button></div>';
+}
+
+function applyIdx(i, silent) {
+  pl.idx = i;
+  var e = EV[i];
+  var counts = { need: 0, doc: 0, clue: 0, bug: 0, commit: 0 };
+  var fd = $('#feed');
+  if (i === feedIdx + 1 && fd.children.length === i) {
+    var prev = $('#ev' + feedIdx);
+    if (prev) prev.classList.remove('now');
+    var wrap = document.createElement('div');
+    wrap.innerHTML = evCard(EV[i], i, true);
+    fd.appendChild(wrap.firstChild);
+    if (i === EV.length - 1) feedEnd();
+  } else {
+    var feedHTML = '';
+    for (var j = 0; j <= i; j++) feedHTML += evCard(EV[j], j, j === i);
+    fd.innerHTML = feedHTML;
+    if (i === EV.length - 1) feedEnd();
+  }
+  feedIdx = i;
+  for (var k2 = 0; k2 <= i; k2++) {
+    var evk = EV[k2];
+    if (evk.add) Object.keys(evk.add).forEach(function (kk) { counts[kk] += evk.add[kk]; });
+  }
+  cntUp($('#cNeed'), counts.need); cntUp($('#cDoc'), counts.doc); cntUp($('#cClue'), counts.clue);
+  cntUp($('#cBug'), counts.bug); cntUp($('#cCommit'), counts.commit);
+  $$('#track .dot').forEach(function (d) {
+    var di = +d.dataset.i;
+    d.classList.toggle('on', di <= i);
+    d.classList.toggle('cur', di === i);
+  });
+  $('#trFill').style.width = (6 + (i / (EV.length - 1)) * (100 - 12)) + '%';
+  $('#plNo').textContent = i + 1;
+  $('#plTime').textContent = e.t;
+  var st = typeof e.st === 'number' ? e.st : (function () {
+    var s = 0;
+    for (var j2 = 0; j2 <= i; j2++) if (typeof EV[j2].st === 'number') s = EV[j2].st;
+    return s;
+  })();
+  ST_EL.forEach(function (el, k) {
+    el.classList.toggle('on', k === st);
+    el.classList.remove('back');
+  });
+  BEAMS.forEach(function (b, k) { b.classList.toggle('lit', st > k); });
+  if (e.back) {
+    var fl = $('#stFlash');
+    fl.style.display = '';
+    if (ST_EL[st]) ST_EL[st].classList.add('back');
+    if (stFlashTimer) clearTimeout(stFlashTimer);
+    if (!RM) stFlashTimer = setTimeout(function () { fl.style.display = 'none'; }, 2200);
+  }
+  ARTS.forEach(function (a, ai) {
+    var el = $('#art' + ai);
+    if (el) el.classList.toggle('in', a.at <= i);
+  });
+  var fd2 = $('#feed');
+  fd2.scrollTop = fd2.scrollHeight;
+}
+
+function feedEnd() {
+  var fd = $('#feed');
+  if ($('#endCard')) return;
+  var d = document.createElement('div');
+  d.id = 'endCard';
+  d.className = 'endb';
+  d.innerHTML = '<b>终点快照（11-18 18:44）：</b>待验收 · blocker ③档记档不硬关。终态构成 = 需求 4 / 文档 4 / 线索 10 / 缺陷 5 / 提交 1。续看 <a href="#graph">关系图</a> · <a href="#gates">门禁</a>';
+  fd.appendChild(d);
+}
+
+function step() {
+  if (!pl.playing) return;
+  if (pl.idx >= EV.length - 1) { pause(); return; }
+  applyIdx(pl.idx + 1);
+  pl.timer = setTimeout(step, 1500 / pl.speed);
+}
+function play() {
+  if (pl.playing) return;
+  if (pl.idx >= EV.length - 1) applyIdx(0);
+  pl.playing = true;
+  $('#btnPlay').textContent = '⏸ 暂停';
+  pl.timer = setTimeout(step, 500);
+}
+function pause() {
+  pl.playing = false;
+  if (pl.timer) clearTimeout(pl.timer);
+  $('#btnPlay').textContent = '▶ 播放';
+}
+function jumpTo(i) {
+  if (pl.timer) clearTimeout(pl.timer);
+  applyIdx(i);
+  if (pl.playing) pl.timer = setTimeout(step, 1500 / pl.speed);
+}
+
+function initPlayer() {
+  buildTrack();
+  $('#plTotal').textContent = EV.length;
+  $('#arts').innerHTML = ARTS.map(function (a, i) {
+    return '<div class="art t-' + a.t + '" id="art' + i + '"><i></i><span>' + esc(a.l) + '</span><button data-ref="' + a.ref + '">详情</button></div>';
+  }).join('');
+  $('#btnPlay').addEventListener('click', function () { pl.playing ? pause() : play(); });
+  $('#btnReset').addEventListener('click', function () { pause(); applyIdx(RM ? EV.length - 1 : 0); $('#btnPlay').focus(); });
+  $('#btnSpd').addEventListener('click', function () {
+    pl.speed = pl.speed === 1 ? 2 : (pl.speed === 2 ? 4 : 1);
+    this.textContent = '速度 ×' + pl.speed;
+  });
+  window.addEventListener('beforeprint', function () {
+    if (pl.idx < EV.length - 1) applyIdx(EV.length - 1, true);
+  });
+  if (RM) {
+    applyIdx(EV.length - 1);
+    $('#btnPlay').disabled = true;
+    $('#btnPlay').textContent = '动画已按系统偏好停用';
+    return;
+  }
+  applyIdx(0);
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (en.isIntersecting && !pl.started) {
+          pl.started = true;
+          setTimeout(play, 500);
+          io.disconnect();
+        }
+      });
+    }, { threshold: 0.3 });
+    io.observe($('#flow'));
+  } else {
+    setTimeout(play, 700);
+  }
+}
+
+/* ===== 时序图 ===== */
+function renderSeq(host, seq) {
+  var n = seq.ps.length;
+  var h = '<div class="seq-head" style="grid-template-columns:repeat(' + n + ',1fr)">';
+  seq.ps.forEach(function (p) {
+    h += '<div class="seq-actor' + (p === '老板' ? ' a-boss' : '') + '">' + esc(p) + '</div>';
+  });
+  h += '</div><div class="seq-body">';
+  for (var i = 0; i < n; i++) {
+    h += '<i class="seq-line" style="left:' + ((i + 0.5) / n * 100).toFixed(3) + '%"></i>';
+  }
+  seq.steps.forEach(function (st) {
+    if (st.gate) {
+      h += '<button class="seq-gate' + (st.gate === 'LOOP' ? ' loop' : '') + '" data-gate="' + st.gate + '"><span class="gc">' + esc(st.gate === 'LOOP' ? '⟲ LOOP' : '▣ ' + st.gate) + '</span><span class="gnm">' + esc(st.label) + '</span>' + (st.x ? '<span class="gx">' + esc(st.x) + '</span>' : '') + '<span class="gh">二级时序 ▸</span></button>';
+      return;
+    }
+    if (st.note) {
+      var cx = ((st.f + 0.5) / n * 100).toFixed(3);
+      h += '<div class="seq-row"><div class="seq-note" style="left:' + cx + '%">' + (st.tag ? '<b class="mono2">' + esc(st.tag) + '</b><br>' : '') + esc(st.s) + '</div></div>';
+      return;
+    }
+    var a = Math.min(st.f, st.t), b = Math.max(st.f, st.t);
+    var l = (a + 0.5) / n * 100, w = (b - a) / n * 100;
+    h += '<div class="seq-row"><button class="seq-msg ' + (st.f < st.t ? 'to-r' : 'to-l') + '" style="left:' + l.toFixed(3) + '%;width:' + w.toFixed(3) + '%" data-step="' + st.__i + '">' +
+      (st.tag ? '<span class="mt">' + esc(st.tag) + '</span>' : '') + '<span class="mx">' + esc(st.s) + '</span></button></div>';
+  });
+  h += '</div>';
+  host.innerHTML = h;
+}
+
+function initMainSeq() {
+  SEQ_MAIN.steps.forEach(function (st, i) { st.__i = i; });
+  renderSeq($('#seqMain'), SEQ_MAIN);
+  $('#seqMain').addEventListener('click', function (e) {
+    var g = e.target.closest('.seq-gate');
+    if (g) { openGate(g.dataset.gate); return; }
+    var m = e.target.closest('.seq-msg');
+    if (m) {
+      var st = SEQ_MAIN.steps[+m.dataset.step];
+      if (!st) return;
+      openSheet('主时序 · 第 ' + (st.__i + 1) + ' 步', esc(st.s),
+        '<dl class="kv"><div><dt>发起 → 接收</dt><dd>' + esc(SEQ_MAIN.ps[st.f]) + ' → ' + esc(SEQ_MAIN.ps[st.t]) + '</dd></div>' +
+        (st.tag ? '<div><dt>时点</dt><dd>' + esc(st.tag) + '</dd></div>' : '') + '</dl>' +
+        (st.d ? '<p class="fact">' + esc(st.d) + '</p>' : '') +
+        (st.ref ? '<div class="lnks"><button class="btn sm pri" data-ref="' + st.ref + '">关联台账 ▸</button></div>' : ''),
+        '主时序共 ' + SEQ_MAIN.steps.length + ' 步（含 8 条门禁/循环带）。', m);
+    }
+  });
+}
+
+/* 演示模式 */
+var seqTimer = null, seqIdx = 0;
+function seqRows() { return $$('#seqMain .seq-gate, #seqMain .seq-row'); }
+function seqStep() {
+  var rows = seqRows();
+  if (seqIdx >= rows.length) { stopSeq(true); return; }
+  rows.forEach(function (r, i) {
+    r.classList.toggle('now', i === seqIdx);
+    r.classList.toggle('past', i < seqIdx);
+  });
+  var cur = rows[seqIdx];
+  if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', behavior: RM ? 'auto' : 'smooth' });
+  seqIdx++;
+  seqTimer = setTimeout(seqStep, 620);
+}
+function stopSeq(done) {
+  if (seqTimer) clearTimeout(seqTimer);
+  seqTimer = null; seqIdx = 0;
+  seqRows().forEach(function (r) { r.classList.remove('now', 'past'); });
+  var b = $('#btnSeqPlay');
+  b.textContent = '▶ 演示模式';
+  b.setAttribute('aria-pressed', 'false');
+}
+function initSeqPlay() {
+  var b = $('#btnSeqPlay');
+  b.addEventListener('click', function () {
+    if (seqTimer) { stopSeq(false); return; }
+    b.textContent = '⏹ 停止';
+    b.setAttribute('aria-pressed', 'true');
+    seqIdx = 0;
+    seqStep();
+  });
+}
+
+/* ===== 门禁卡 ===== */
+function initGateCards() {
+  $('#gateCards').innerHTML = Object.keys(GATES).map(function (k) {
+    var g = GATES[k];
+    return '<button class="tile gcard rv' + (k === 'LOOP' ? ' loopc' : '') + '" style="--d:' + (Object.keys(GATES).indexOf(k) * 0.06) + 's" data-gate="' + k + '"><span class="gtop"><span class="gc">' + (k === 'LOOP' ? '⟲ LOOP' : '▣ ' + g.code) + '</span><h4>' + esc(g.name) + '</h4></span><p class="what">' + esc(g.what) + '</p><span class="hard' + (g.hard === '放行门' ? ' soft' : '') + '">' + esc(g.hard) + '</span><span class="go">展开二级时序 ▸</span></button>';
+  }).join('');
+  $('#gateCards').addEventListener('click', function (e) {
+    var c = e.target.closest('.gcard');
+    if (c) openGate(c.dataset.gate);
+  });
+}
+
+/* ===== 关系图 ===== */
+function initGraph() {
+  var NW = 158, NH = 58, GX = 56, MX = 26, MY = 66;
+  GN.forEach(function (nd) {
+    nd.x = MX + nd.c * (NW + GX);
+    nd.y = MY + nd.r * (NH + 26);
+  });
+  var W = MX * 2 + 8 * NW + 7 * GX + 250;
+  var H = 560;
+  var svg = $('#gsvg');
+  var byId = {};
+  GN.forEach(function (nd) { byId[nd.id] = nd; });
+  var TYPES = { need: 'var(--c-need)', doc: 'var(--c-doc)', clue: 'var(--c-clue)', bug: 'var(--c-bug)', evid: 'var(--c-evid)', state: 'var(--c-state)', stage: 'var(--c-stage)' };
+  var h = '<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#A9AECB"/></marker></defs>';
+  GCOL_TITLE.forEach(function (t, i) {
+    h += '<text class="colt" x="' + (MX + i * (NW + GX) + NW / 2) + '" y="34" text-anchor="middle">' + esc(t) + '</text>';
+  });
+  var ei = 0;
+  GE.forEach(function (e) {
+    var A = byId[e.a], B = byId[e.b];
+    var x1 = A.x + NW, y1 = A.y + NH / 2, x2 = B.x, y2 = B.y + NH / 2;
+    var d;
+    if (e.loop) {
+      d = 'M ' + (A.x + NW / 2) + ' ' + (A.y + NH) + ' C ' + (A.x + NW / 2) + ' ' + (A.y + NH + 86) + ', ' + (B.x + NW / 2) + ' ' + (B.y + NH + 86) + ', ' + (B.x + NW / 2) + ' ' + (B.y + NH);
+    } else if (A.c >= B.c) {
+      d = 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + 60) + ' ' + (y1 + 60) + ', ' + (x2 + NW + 60) + ' ' + (y2 + 60) + ', ' + (x2 + NW) + ' ' + y2;
+    } else {
+      d = 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + 46) + ' ' + y1 + ', ' + (x2 - 46) + ' ' + y2 + ', ' + x2 + ' ' + y2;
+    }
+    h += '<path class="ge' + (e.dash ? ' dash' : '') + '" pathLength="1" d="' + d + '"' + (e.loop || A.c >= B.c ? '' : ' marker-end="url(#arr)"') + ' data-a="' + e.a + '" data-b="' + e.b + '" style="transition-delay:' + (ei * 55) + 'ms"/>';
+    ei++;
+  });
+  GE.forEach(function (e) {
+    if (!e.g) return;
+    var A = byId[e.a], B = byId[e.b];
+    var mx = (A.x + NW + B.x) / 2, my = (A.y + B.y) / 2 + NH / 2;
+    if (A.c >= B.c) { mx = (A.x + B.x + NW) / 2; my = Math.max(A.y, B.y) + NH + 46; }
+    h += '<g class="gd" data-gate="' + e.g + '" transform="translate(' + mx.toFixed(1) + ',' + my.toFixed(1) + ')" tabindex="0" role="button" aria-label="门禁 ' + e.g + '"><polygon points="0,-14 14,0 0,14 -14,0"/><text y="3.5" text-anchor="middle">' + e.g + '</text><title>' + esc(GATES[e.g] ? GATES[e.g].name : e.g) + ' · 点击或回车展开</title></g>';
+  });
+  GN.forEach(function (nd, ni) {
+    h += '<g class="gn" data-node="' + nd.id + '" tabindex="0" role="button" aria-label="' + esc(nd.l1) + '" style="transition-delay:' + (220 + ni * 40) + 'ms">' +
+      '<rect x="' + nd.x + '" y="' + nd.y + '" width="' + NW + '" height="' + NH + '" rx="13" style="stroke:' + TYPES[nd.ty] + '"/>' +
+      '<text x="' + (nd.x + NW / 2) + '" y="' + (nd.y + 25) + '" text-anchor="middle">' + esc(nd.l1) + '</text>' +
+      '<text class="sub" x="' + (nd.x + NW / 2) + '" y="' + (nd.y + 43) + '" text-anchor="middle">' + esc(nd.l2) + '</text>' +
+      '<title>' + esc(nd.l1 + ' · ' + nd.l2) + '</title></g>';
+  });
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.innerHTML = h;
+  function act(t) {
+    if (t.classList.contains('gd')) { openGate(t.dataset.gate); return; }
+    var nd = byId[t.dataset.node];
+    if (nd) openRef(nd.ref, t);
+  }
+  svg.addEventListener('click', function (e) {
+    var t = e.target.closest('.gd,.gn');
+    if (t) act(t);
+  });
+  svg.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    var t = e.target && e.target.closest ? e.target.closest('.gd,.gn') : null;
+    if (!t) return;
+    e.preventDefault();
+    act(t);
+  });
+  if ('IntersectionObserver' in window && !RM) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (en.isIntersecting) { svg.classList.add('drawn'); io.disconnect(); }
+      });
+    }, { threshold: 0.25 });
+    io.observe(svg);
+  } else {
+    svg.classList.add('drawn');
+  }
+  $$('#fbar .fbtn').forEach(function (b) {
+    b.addEventListener('click', function () {
+      $$('#fbar .fbtn').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      var f = b.dataset.f;
+      var groups = { all: null, need: ['need', 'state'], doc: ['doc'], clue: ['clue'], bug: ['bug'], evid: ['evid'], stage: ['stage'] };
+      var ok = groups[f];
+      GN.forEach(function (nd) { nd.keep = !ok || ok.indexOf(nd.ty) > -1; });
+      $$('#gsvg .gn').forEach(function (g2) {
+        var nd = byId[g2.dataset.node];
+        g2.classList.toggle('dim', ok && !nd.keep);
+      });
+      $$('#gsvg .ge').forEach(function (p) {
+        var A = byId[p.dataset.a], B = byId[p.dataset.b];
+        p.classList.toggle('dim', ok && !(A.keep && B.keep));
+      });
+      $$('#gsvg .gd').forEach(function (g3) { g3.classList.toggle('dim', !!ok); });
+    });
+  });
+}
+
+/* ===== 弹层 ===== */
+var ov = $('#ov'), lastTrig = null;
+function openSheet(kick, title, bodyHTML, foot, trig) {
+  lastTrig = trig || null;
+  $('#shKick').textContent = kick;
+  $('#shTitle').innerHTML = title;
+  $('#shBody').innerHTML = bodyHTML;
+  $('#shFoot').innerHTML = foot || '';
+  ov.classList.add('open');
+  ov.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  $('#shBody').scrollTop = 0;
+  setTimeout(function () { $('#shX').focus(); }, 180);
+}
+function closeSheet() {
+  ov.classList.remove('open');
+  ov.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  if (lastTrig && document.contains(lastTrig)) { try { lastTrig.focus(); } catch (err) {} }
+}
+$('#shX').addEventListener('click', closeSheet);
+ov.addEventListener('click', function (e) { if (e.target === ov) closeSheet(); });
+document.addEventListener('keydown', function (e) {
+  if (!ov.classList.contains('open')) return;
+  if (e.key === 'Escape') { closeSheet(); return; }
+  if (e.key === 'Tab') {
+    var focusables = $$('.sheet button, .sheet a[href], .sheet [tabindex]:not([tabindex="-1"])', ov)
+      .filter(function (x) { return x.offsetParent !== null; });
+    if (!focusables.length) { e.preventDefault(); $('#shX').focus(); return; }
+    var first = focusables[0], last = focusables[focusables.length - 1];
+    var out = !ov.contains(document.activeElement);
+    if (e.shiftKey && (document.activeElement === first || out)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || out)) { e.preventDefault(); first.focus(); }
+  }
+});
+
+function openGate(g) {
+  var G = GATES[g];
+  if (!G) return;
+  G.steps.forEach(function (st, i) { st.__i = i; });
+  var body = '<p style="font-size:14px;margin:0 0 6px"><b style="color:' + (g === 'LOOP' ? 'var(--amber2)' : 'var(--blue2)') + '">' + esc(G.hard) + '</b> · ' + esc(G.what) + '</p><p class="fact">' + esc(G.intro) + '</p><p class="gsec">二级时序</p><div class="seq-scroll"><div id="gsSeq"></div></div><p class="mono2" style="margin:8px 2px 0">点击消息箭头，下方展开该步细节</p><div id="gsDet" aria-live="polite"></div><p class="gsec">实证</p><div class="proof">' + esc(G.proof) + '</div>';
+  openSheet('GATE · ' + (g === 'LOOP' ? '循环' : G.code), esc(g === 'LOOP' ? '⟲ ' : '▣ ') + esc(G.name), body,
+    '本二级时序含 ' + G.steps.length + ' 步，消息可点击。', null);
+  renderSeq($('#gsSeq'), { ps: G.ps, steps: G.steps });
+  $('#gsSeq').addEventListener('click', function (e) {
+    var m = e.target.closest('.seq-msg');
+    if (!m) return;
+    var st = G.steps[+m.dataset.step];
+    if (!st) return;
+    var det = $('#gsDet');
+    if (det) {
+      det.innerHTML = '<div class="proof" style="border-color:rgba(76,81,224,.4);border-left-color:var(--blue)"><b>' + esc(G.ps[st.f]) + (st.f === st.t ? '' : ' → ' + esc(G.ps[st.t])) + '：' + esc(st.s) + '</b>' + (st.d ? '<br><br>' + esc(st.d) : '') + '</div>';
+      if (det.scrollIntoView) det.scrollIntoView({ block: 'nearest', behavior: RM ? 'auto' : 'smooth' });
+    }
+    $$('#gsSeq .seq-msg').forEach(function (x) { x.style.borderColor = ''; });
+    m.style.borderColor = 'var(--blue)';
+  });
+}
+
+function docRow(d) {
+  return '<button class="rowbtn" data-ref="doc:' + d.id + '"><span class="kchip doc">' + esc(d.type) + '</span><span style="font-weight:700;font-size:13.5px">' + esc(d.title) + '</span><span class="mono2">v' + d.v + ' · ' + esc(d.time) + '</span><span class="arw">▸</span></button>';
+}
+
+function openRef(ref, trig) {
+  var p = ref.split(':');
+  var kind = p[0], id = p[1];
+  var docById = {}; DOCS.forEach(function (d) { docById[d.id] = d; });
+  var cl = {}; CLUES.forEach(function (c) { cl[c.id] = c; });
+  var pg = {}; PROGRESS.forEach(function (x) { pg[x.id] = x; });
+  var stl = {}; STATUSLOG.forEach(function (x) { stl[x.id] = x; });
+  var bg = {}; BUGS.forEach(function (x) { bg[x.id] = x; });
+
+  if (kind === 'need') {
+    openSheet('POOL · need#291', esc(NEED.title),
+      '<dl class="kv"><div><dt>状态</dt><dd>' + NEED.status + '（' + NEED.stage + '）· ' + NEED.pri + ' · owner ' + NEED.owner + '</dd></div><div><dt>时间</dt><dd>' + NEED.created + ' → ' + NEED.updated + '</dd></div><div><dt>交付</dt><dd>commit c4628169 · 202 用例全绿 · 装机 PID 12160</dd></div></dl>' +
+      '<p class="gsec">detail 全文（照录）</p><p class="fact">' + esc(NEED.detail) + '</p>' +
+      '<p class="gsec">blocker（照录）</p><p class="fact" style="border-color:rgba(229,72,77,.4)">' + esc(NEED.blocker) + '</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="docs:list">文档链</button><button class="btn sm" data-ref="clues:list">线索</button><button class="btn sm" data-ref="bugs:list">缺陷</button></div>',
+      '来源：pool_fetch / pool_trace 实读（2026-11-19）。', trig);
+  } else if (kind === 'docs' && id === 'list') {
+    openSheet('DOCS · 文档链 ×4', '调研 → PRD → 技术方案 → 独立审计',
+      DOCS.map(docRow).join(''), '来源：doc_list 元数据（2026-11-19）。', trig);
+  } else if (kind === 'doc') {
+    var d = docById[+id];
+    openSheet('DOC · #' + d.id + ' ' + d.type, esc(d.title),
+      '<dl class="kv"><div><dt>slug</dt><dd>' + d.slug + '</dd></div><div><dt>版本/作者</dt><dd>v' + d.v + ' · ' + d.by + ' · ' + d.time + '</dd></div></dl><p class="fact">' + esc(d.sum) + '</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="need">需求本体</button><button class="btn sm" data-ref="gate:G5">审计门</button></div>',
+      'doc_get 全文本页未读，摘要为池内字段+台账交叉整理。', trig);
+  } else if (kind === 'clue') {
+    var c = cl[+id];
+    openSheet('CLUE · #' + c.id, esc(c.subject),
+      '<dl class="kv"><div><dt>产出者</dt><dd>' + c.by + ' · ' + c.time + '</dd></div><div><dt>状态</dt><dd>open</dd></div></dl>' +
+      '<p class="gsec">fact 全文（照录）</p><p class="fact">' + esc(c.fact) + '</p><p class="gsec">source</p><p class="fact">' + esc(c.src) + '</p>',
+      '来源：clue_fetch 实读（2026-11-19）。', trig);
+  } else if (kind === 'clues') {
+    if (id === 'list') {
+      openSheet('CLUES · 线索池 ×10', '按产出角色分组',
+        ['r', 'u', 'd'].map(function (gk) {
+          var g = CLUE_GRP[gk];
+          return '<button class="rowbtn" data-ref="clues:' + gk + '"><span class="kchip clue">' + g.ids.length + ' 条</span><span style="font-weight:700;font-size:13.5px">' + esc(g.who) + ' · ' + esc(g.label) + '</span><span class="arw">▸</span></button>';
+        }).join(''), '来源：clue_fetch 实读（2026-11-19）。', trig);
+    } else {
+      var g2 = CLUE_GRP[id];
+      openSheet('CLUES · ' + esc(g2.who), esc(g2.label),
+        g2.ids.map(function (cid) {
+          var c2 = cl[cid];
+          return '<button class="rowbtn" data-ref="clue:' + c2.id + '"><span class="kchip clue">#' + c2.id + '</span><span style="font-weight:600;font-size:13px">' + esc(c2.short) + '</span><span class="arw">▸</span></button>';
+        }).join(''), '点击行看 fact 全文与 source。', trig);
+    }
+  } else if (kind === 'bug') {
+    var b = bg[+id];
+    openSheet('BUG · #' + b.id, esc(b.title),
+      '<dl class="kv"><div><dt>状态</dt><dd>' + b.st + ' · ' + b.pri + ' · ' + b.owner + '</dd></div><div><dt>时间</dt><dd>' + b.time + '</dd></div><div><dt>关联</dt><dd>' + b.link + '</dd></div></dl><p class="fact">' + esc(b.detail) + '</p>',
+      '来源：pool_search / pool_fetch 实读（2026-11-19）。', trig);
+  } else if (kind === 'bugs' && id === 'list') {
+    openSheet('BUGS · 缺陷关联', '直接关联 5 · 前置 1 · 衍生 3（记忆）',
+      '<button class="rowbtn" data-ref="bug:280"><span class="kchip bug">bug280</span><span style="font-weight:600;font-size:13px">导火索 · 已关闭</span><span class="arw">▸</span></button>' +
+      '<button class="rowbtn" data-ref="bugs:wave"><span class="kchip bug">修复波</span><span style="font-weight:600;font-size:13px">bug290/292/294/296</span><span class="arw">▸</span></button>' +
+      '<button class="rowbtn" data-ref="bug:269"><span class="kchip bug">bug269</span><span style="font-weight:600;font-size:13px">构建前置 · 待验收</span><span class="arw">▸</span></button>' +
+      '<button class="rowbtn" data-ref="derive"><span class="kchip bug">衍生</span><span style="font-weight:600;font-size:13px">#298/299/300（记忆口径）</span><span class="arw">▸</span></button>',
+      'hero 统计「缺陷 5」=bug280/290/292/294/296。', trig);
+  } else if (ref === 'bugs:wave') {
+    openSheet('BUG WAVE · git-ui-fix', '修复波：bug290/292/294/296 + 顶栏卡片化',
+      '<dl class="kv"><div><dt>bug290</dt><dd>三并发之一 · commit 395f3bd4 · 装机 13:27 PID 21616（#814 引用级）</dd></div><div><dt>bug292/294/296</dt><dd>引用级（blocker 提及，台账未实读）</dd></div><div><dt>末轮</dt><dd>顶栏卡片化 commit 2a03c1d7</dd></div></dl>' +
+      '<div class="lnks"><button class="btn sm" data-ref="bug:280">bug280</button><button class="btn sm" data-ref="derive">衍生</button></div>',
+      '修复波与重设计主体分开批次。', trig);
+  } else if (ref === 'derive') {
+    openSheet('DERIVED · 记忆口径', '#298 作废 · #299 扩充在飞 · #300 删全仓搜索',
+      '<p class="fact">#298（全仓搜索相关设计）作废；#299 扩充版设计在飞：树重做+过滤输入框+仓历史快选+长名/边界；#300 删全仓搜索——D7「保留仅改定位」被验收期口头令推翻。</p>' +
+      '<p class="mono2">来源=跨会话记忆索引（非本页实读）；口头令可推翻当日已拍板裁决。</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="gate:G6">验收门</button></div>', 'D7 验收期翻案实证。', trig);
+  } else if (kind === 'st') {
+    var s2 = stl[+id];
+    openSheet('STATUS · #' + s2.id, esc(s2.from) + ' → ' + esc(s2.to),
+      '<dl class="kv"><div><dt>时间</dt><dd>' + s2.time + '</dd></div></dl><p class="gsec">reason 全文（照录）</p><p class="fact">' + esc(s2.reason) + '</p>',
+      '来源：pool_trace 实读（2026-11-19）。', trig);
+  } else if (kind === 'prog') {
+    var pr = pg[+id];
+    openSheet('PROGRESS · #' + pr.id, esc(pr.short),
+      '<dl class="kv"><div><dt>时间</dt><dd>' + pr.time + ' · ' + pr.by + '</dd></div></dl><p class="gsec">note 全文（照录）</p><p class="fact">' + esc(pr.note) + '</p>',
+      '来源：pool_trace 实读（2026-11-19）。', trig);
+  } else if (ref === 'quote') {
+    openSheet('VOICE · 老板原话', '四句原话驱动全程',
+      '<p class="fact">① 「整个功能逻辑都不对，没有哪个 UI 功能完全正常」（11-16，导火索）\n② 「继续修」+「使用三个子任务并发」（13:19 开工令）\n③ 「按推荐」（13:42，D1~D7 全放行）\n④ 「我看了，没啥大问题」（14:18，UI 先验过）</p>' +
+      '<p class="mono2">口径：口头描述即权威规格；原话逐字入池；验收期口头令可即时翻案。</p>',
+      '来源：status_log #1386 / dev_progress #815 / #818 / bug280。', trig);
+  } else if (ref === 'decision') {
+    openSheet('DECISION · D1~D7', '「按推荐」全放行（13:42）',
+      '<p class="fact">D1 变更区=树/平铺双态，默认分组树\nD2 左栏目录树=整列砍，两栏化\nD3 untracked=懒枚举展开（不递归）\nD4 布局=两栏主态\nD5 diff=点条目即 diff 常驻\nD6 分组=两组头+U 徽标\nD7 搜索=保留仅改定位【验收期被 #300 翻案】</p>',
+      '来源：need#291 detail + dev_progress #815。', trig);
+  } else if (ref === 'design') {
+    openSheet('DESIGN · UI 先验产物', '设计文档 + 自包含 demo（14:15）',
+      '<dl class="kv"><div><dt>设计</dt><dd>docs/design/2026-11-17-git管理器重设计.md</dd></div><div><dt>demo</dt><dd>同名 -demo.html（内联 script 过 node --check）</dd></div><div><dt>先验矩阵</dt><dd>G1~G12 断言全过</dd></div><div><dt>修订</dt><dd>U 徽标灰→绿档</dd></div></dl>' +
+      '<div class="lnks"><button class="btn sm" data-ref="clue:197">clue#197</button><button class="btn sm" data-ref="gate:G6">验收门</button></div>',
+      '来源：dev_progress #816/#817 + clue#197。', trig);
+  } else if (ref === 'cl') {
+    openSheet('CHANGE LIST · #820', '【变更清单】10 项 + 演绎 2 项',
+      '<p class="fact">① git_fs_walk.{h,cpp} 新增\n② git_change_list_model.{h,cpp} 新增\n③ 新测试 584 行 12 用例\n④ test_git_status_model 迁移\n⑤ git_views.cpp 三栏→两栏\n⑥ git_page_controller 重构\n⑦ 旧模型两对删除\n⑧ CMake 注册\n⑨ untracked 升绿档\n⑩ 三测试文件回归改造\n——platform/git/** 零改动\n演绎 2 项：分支 chip 无数据源→省略上报；空仓文案统一。</p>',
+      '来源：dev_progress #820（条目化节选）。', trig);
+  } else if (ref === 'shards') {
+    openSheet('SHARDS · 三并发分片', 'T1 模型 / T2 视图 / T3 测试（汇总编译）',
+      '<p class="fact">分片只编码不构建，波后合并验证统一编译+删旧+定向测试+squash+装机。\n\nT1：模型+fs_walk+584 行测试（#824）\nT2：视图控制器四文件（clue#200）\nT3：五测试文件迁移（#822）\n合并轮：缺口 A~G 全处置（#826）</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="prog:824">#824</button><button class="btn sm" data-ref="prog:822">#822</button><button class="btn sm" data-ref="prog:826">#826</button></div>',
+      '三并发=老板令。', trig);
+  } else if (ref === 'commit') {
+    openSheet('EVIDENCE · commit', 'c4628169 · feat(git) 单提交',
+      '<dl class="kv"><div><dt>规模</dt><dd>26 文件 +4352/−1533</dd></div><div><dt>测试</dt><dd>Total 202 / Passed 199 / Failed 0</dd></div><div><dt>守卫</dt><dd>模块隔离绿</dd></div><div><dt>旧码</dt><dd>旧两模型已删，残引清零</dd></div></dl>' +
+      '<p class="fact">合并轮另修模型三缺陷：默认展开+折叠记忆；untracked 整链挂祖先（孤儿行修复）；嵌套压缩丢段。</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="prog:826">#826 全文</button><button class="btn sm" data-ref="clue:201">clue#201</button><button class="btn sm" data-ref="gate:G4">构建门</button></div>',
+      '照录 #826：差值 3 条口径未展开，以运行输出为准。', trig);
+  } else if (ref === 'test') {
+    openSheet('EVIDENCE · test', '定向测试全绿',
+      '<p class="fact">build-test-run.sh --dev --filter file:git\n→ Total 202 / Passed 199 / Failed 0（16:24）\n模块隔离守卫：退出码 0 绿</p>' +
+      '<p class="mono2">成本纪律：--dev 定向（改什么测什么）；全量只在阶段节点跑。</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="gate:G4">构建门</button></div>', '照录 #826/#827。', trig);
+  } else if (ref === 'install') {
+    openSheet('EVIDENCE · install', '装机 PID 12160（16:19:49）',
+      '<p class="fact">install-win-debug.sh 快路径：strip 副本 81.4MB → %LOCALAPPDATA%\\Programs\\DevDesk\\，manifest 生成，PID 12160。\n装机版=老板唯一反馈通道（不走 Release/打包）。</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="gate:G6">验收门</button></div>', '照录 #826。', trig);
+  } else if (ref === 'accept') {
+    openSheet('ACCEPTANCE · 真机验收', '打回 + 口头翻案',
+      '<p class="fact">· 四轮修复链落地（bug290/292/294/296 + 顶栏卡片化）\n· 翻案：#300 删搜索（推翻 D7）；#298 作废；#299 扩充在飞\n· 当前：待验收 · ③档不硬关（verdicts.md）</p>' +
+      '<div class="lnks"><button class="btn sm" data-ref="bugs:wave">修复波</button><button class="btn sm" data-ref="derive">衍生</button><button class="btn sm" data-ref="gate:G6">验收门</button></div>',
+      '老板=终验不是首测；原话逐字入池。', trig);
+  } else if (ref === 'state') {
+    openSheet('STATE · 终态', '待验收 · ③档记档不硬关',
+      '<p class="fact" style="border-color:rgba(229,72,77,.4)">' + esc(NEED.blocker) + '</p>' +
+      '<p class="fact">终态构成：需求 4 / 文档 4 / 线索 10 / 缺陷 5 / 提交 1。③档=有 blocker 记档但不硬关。</p>',
+      '快照 2026-11-19（pool_trace 实读）。', trig);
+  } else if (ref === 'meta') {
+    openSheet('META · 口径', '数据与工程口径',
+      '<p class="fact">数据=2026-11-19 池台账实读快照（pool_fetch/pool_trace/clue_fetch/doc_list）；detail/fact/reason/note 均照录。\n文档只取元数据+要点（doc_get 全文未读）。\nbug292/294/296 仅引用级；衍生 #298/299/300=记忆口径。\n门禁来源=devflow 插件 hook（0.38.12+）+项目 AGENTS.md+会话纪律。\n测试数字以运行输出 Total: 为准。</p>',
+      'v4 浅色动态演示版（2026-11-19：浅色底+动画优先+文案极简，全文收进点击钻取层）。', trig);
+  } else {
+    openSheet('REF', esc(ref), '<p class="mono2">该引用暂无展开。</p>', '', trig);
+  }
+}
+
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-ref]');
+  if (!b || b.closest('#gsvg')) return;
+  var ref = b.getAttribute('data-ref');
+  if (/^gate:(G[1-6]|LOOP)$/.test(ref)) { openGate(ref.slice(5)); return; }
+  openRef(ref, b);
+});
+
+/* ===== 入场 / 导航 ===== */
+function initReveal() {
+  if (!('IntersectionObserver' in window) || RM) {
+    $$('.rv').forEach(function (x) { x.classList.add('in'); });
+    return;
+  }
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+  }, { threshold: 0.16 });
+  $$('.rv').forEach(function (x) { io.observe(x); });
+}
+function initHero() {
+  [['#hNeed', 1], ['#hDoc', 4], ['#hClue', 10], ['#hBug', 5], ['#hCommit', 1]].forEach(function (pr, i) {
+    setTimeout(function () { cntUp($(pr[0]), pr[1]); }, 250 + i * 130);
+  });
+}
+function initNav() {
+  var ids = ['flow', 'seq', 'gates', 'graph', 'end'];
+  function onScroll() {
+    var h = document.documentElement;
+    var p = h.scrollTop / Math.max(1, h.scrollHeight - h.clientHeight);
+    $('#pfill').style.width = (p * 100).toFixed(2) + '%';
+    var cur = ids[0];
+    ids.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && el.getBoundingClientRect().top < 120) cur = id;
+    });
+    $$('.nav nav a').forEach(function (a) { a.classList.toggle('cur', a.dataset.spy === cur); });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+  var tick = function () {
+    var d = new Date();
+    $('#clock').textContent = [d.getHours(), d.getMinutes(), d.getSeconds()].map(function (x) { return (x < 10 ? '0' : '') + x; }).join(':');
+  };
+  tick(); setInterval(tick, 1000);
+}
+function initDots() {
+  var b = $('.bgfx');
+  if (!b) return;
+  for (var i = 0; i < 14; i++) {
+    var d = document.createElement('i');
+    d.className = 'fd';
+    d.style.left = (3 + Math.random() * 94).toFixed(1) + '%';
+    d.style.top = (6 + Math.random() * 88).toFixed(1) + '%';
+    d.style.animationDelay = (Math.random() * 8).toFixed(1) + 's';
+    d.style.animationDuration = (7 + Math.random() * 7).toFixed(1) + 's';
+    b.appendChild(d);
+  }
+}
+
+initDots();
+initHero();
+initPlayer();
+initMainSeq();
+initSeqPlay();
+initGateCards();
+initGraph();
+initReveal();
+initNav();
+</script>
+</body>
+</html>

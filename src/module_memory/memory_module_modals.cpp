@@ -135,7 +135,7 @@ void MemoryModule::composeClearModal(eui::Ui& ui, const eui::Screen& screen,
             .size(area.w, core::theme::scaled(64.0f))
             .wrap()
             .text("将删除本机面板库全部 " +
-                  std::to_string(snap.proposalTotal) +
+                  std::to_string(snap->proposalTotal) +
                   " 条提案记录与全部消耗账面，操作不可恢复。"
                   "如确定，请在下方输入「清除」二字。")
             .fontSize(core::theme::scaled(13.0f))
@@ -161,7 +161,7 @@ void MemoryModule::composeWizardModal(eui::Ui& ui, const eui::Screen& screen,
     if (!wizardOpen_) return;
     panel_.refresh(true);  // 向导打开期间快步刷新，步骤文案跟着引擎状态走
     const auto snap = panel_.snapshot();
-    const auto es = snap.engine;
+    const auto es = snap->engine;
     const auto state = es.state;
     const bool installing = state == TelememEngine::State::Preparing;
     const bool canStart = !installing && state != TelememEngine::State::Running;
@@ -305,7 +305,7 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
                                             const components::theme::ThemeColorTokens& ct) {
     if (!engineDetailOpen_) return;
     const auto snap = panel_.snapshot();
-    const auto es = snap.engine;
+    const auto es = snap->engine;
     // need156：壳改走标准弹窗壳；「关闭」归底区 .cancel，内容区自 area.y=69 起
     //（原 y=56 基线整体 +13 平移，行距不变）。
     ui_kit::DialogShellSpec shell;
@@ -385,8 +385,8 @@ void MemoryModule::composeEngineDetailModal(eui::Ui& ui, const eui::Screen& scre
         // need:380 B-4：「跑评测」自主控台健康格并入详情弹窗（能力保留、入口收敛）。
         // 触发线读数一行（未评测 / 当前 pct% 达标或低于升级线）+ 右侧 96×28 按钮；
         // 引擎非 Running 或评测中禁用（IMP-114-5 同口径）。
-        const int pct = snap.lastEval.recallPct;
-        const int threshold = snap.settings.recallThresholdPct;
+        const int pct = snap->lastEval.recallPct;
+        const int threshold = snap->settings.recallThresholdPct;
         const bool hasEval = pct >= 0;
         const bool below = hasEval && pct < threshold;
         const std::string evalLine =

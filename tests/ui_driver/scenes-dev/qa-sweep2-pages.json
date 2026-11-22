@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 12000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit", "_comment": "137: 定时调度页入口唯一性"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "sweep2-schedule-dump.txt"},
+    {"type": "screenshot", "path": "sweep2-schedule.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Settings.hit", "_comment": "151: 设置字号死项是否已移除"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "sweep2-settings-dump.txt"},
+    {"type": "screenshot", "path": "sweep2-settings.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Memory.hit", "_comment": "159: 记忆页顶部启动引擎入口是否已删"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "sweep2-memory-dump.txt"},
+    {"type": "screenshot", "path": "sweep2-memory.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "262/250: 齿轮打开终端设置弹窗"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 6000},
+    {"type": "wait", "ms": 800},
+    {"type": "click", "id": "app.term.act.gear.bg"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "sweep2-term-settings-dump.txt"},
+    {"type": "screenshot", "path": "sweep2-term-settings.png"}
+  ]
+}

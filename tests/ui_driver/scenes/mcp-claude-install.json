@@ -30,51 +30,36 @@
       "id": "mcp.grid"
     },
     {
-      "type": "click",
-      "id": "mcp.card.notes_read.hit",
-      "_comment": "真点击开工具详情弹窗"
-    },
-    {
-      "type": "wait",
-      "until": "exists",
-      "id": "mcp.dialog.detail.btn.claude.bg"
+      "type": "assert",
+      "check": "exists",
+      "id": "mcp.head.host.claude.btn.bg",
+      "_comment": "need394：安装/卸载入口在页头固定区（详情弹窗已无安装行）"
     },
     {
       "type": "assert",
       "check": "exists",
-      "id": "mcp.dialog.detail.btn.claude.bg",
-      "_comment": "need244：安装钮在详情页操作行"
-    },
-    {
-      "type": "assert",
-      "check": "exists",
-      "id": "mcp.dialog.detail.btn.try.bg"
-    },
-    {
-      "type": "assert",
-      "check": "exists",
-      "id": "mcp.dialog.detail.btn.close.bg"
+      "id": "mcp.head.host.zcode.btn.bg"
     },
     {
       "type": "assert",
       "check": "geometry",
-      "id": "mcp.dialog.detail.btn.claude.bg",
+      "id": "mcp.head.host.claude.btn.bg",
       "op": "within-window",
-      "_comment": "安装钮不越窗口"
+      "_comment": "宿主安装钮不越窗口"
     },
     {
       "type": "wait",
       "ms": 400,
-      "_comment": "等弹窗淡入动画收敛再落图"
+      "_comment": "等页头首帧动画收敛再落图"
     },
     {
       "type": "screenshot",
-      "path": "need244-detail-claude-btn.png"
+      "path": "need394-head-host-install.png"
     },
     {
       "type": "dump",
-      "path": "need244-detail-dump.txt",
-      "_comment": "当帧元素树（含安装钮/提示槽几何）"
+      "path": "need394-head-host-dump.txt",
+      "_comment": "当帧元素树（含两宿主行/按钮/提示槽几何）"
     }
   ]
 }

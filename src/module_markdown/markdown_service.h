@@ -8,10 +8,13 @@
 #include "platform/file_watcher.h"
 
 #include <atomic>
+#include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace module::markdown {
@@ -34,7 +37,7 @@ struct TagCount {
 class MarkdownService {
 public:
     MarkdownService(core::data::SqliteDb& db, const std::filesystem::path& notesDir);
-// 析构先 stop watcher（join 后台线程），保证回调不再触碰已销毁成员
+// 析构先停后台轮询线程、再 stop watcher（都 join 后台线程），保证回调不再触碰已销毁成员
     ~MarkdownService();
 
     MarkdownService(const MarkdownService&) = delete;
@@ -42,6 +45,13 @@ public:
 
 // 扫描 notesDir 同步到索引 / FTS（新文件插入、删除清理、mtime/size 变化更新）
     core::Result<void> rescan();
+
+// bug402/403：索引在后台线程跟着磁盘走；UI 帧只消费「有变化」标记刷新列表。
+// exchange 语义：返回 true 后标记清零。
+    bool consumeIndexDirty();
+
+// 设定后台轮询周期（毫秒，<=0 忽略）；测试缝见 markdown_module_test_seam.h。
+    void setPollIntervalMsForTest(int64_t ms);
 
 // 列出所有笔记（按 modified_at DESC）
     core::Result<std::vector<NoteMeta>> listAll();
@@ -164,11 +174,34 @@ private:
 // watcher 有事件但模块层尚未消费（pollChanged 读取后清除）；仅「索引/目录树
 // 相关」批置位（见 hasWatchCredit 契约）。
     std::atomic<bool> watcherFired_{false};
-// 串行化 rescan：watcher 线程与 UI 线程（模块 5s tick）可能并发进入
+// 串行化 rescan：watcher 线程与后台轮询线程可能并发进入
     std::mutex rescanMu_;
+
+// bug402/403：磁盘比对 + rescan 从 UI 帧挪到本线程（稳态帧零遍历）。
+// watcher 已增量同步索引 → credit 只点亮 UI；比对仍周期跑（watcher 掉线兜底
+// + 幽灵索引行剪枝），但全程在后台。
+    std::thread poller_;
+    std::mutex pollerMu_;
+    std::condition_variable pollerCv_;
+    bool pollerStop_ = false;
+    int64_t pollIntervalMs_ = 5000;
+    std::atomic<bool> indexDirty_{false};
+// watcher 事件增量同步失败 → 交给后台轮询线程跑全量收敛
+    std::atomic<bool> forceRescan_{false};
+// watcher 健康时全量磁盘比对的降频倍数：每 N 轮巡检做一次（5s × 12 ≈ 60s）。
+// 事件变化由 watcher 增量同步即时覆盖；周期比对只做兜底核对 → 稳态零遍历。
+    static constexpr int kVerifyEveryPasses = 12;
+    int passesSinceVerify_ = 0;  // 仅巡检线程读写
 
 // FileWatcher 回调（后台线程）：置标记 + 尽力即刻同步
     void onWatchEvent(std::vector<platform::FileWatchEvent> events);
+
+// 后台轮询线程：周期到点跑 pollPass；周期可被 setPollIntervalMsForTest 唤醒改写
+    void pollerLoop();
+// 一次后台巡检：事件 dirty 收割 + （必要时）全量 rescan + 磁盘/索引比对
+    void pollPass();
+// 轻量磁盘比对（只比 mtime/size，不读内容/不写索引）；不碰 watcher credit
+    core::Result<bool> compareDiskChanges();
 
 // rescan 实体（调用方须已持有 rescanMu_）
     core::Result<void> rescanLocked();

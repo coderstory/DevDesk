@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "light",
+                          "enabledModules": ["markdown","todo","schedule","memory","terminal"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-markdown.png"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-schedule.png"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-memory.png"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-settings-01.png"}
+  ]
+}

@@ -186,13 +186,13 @@ REGISTER_TEST(notepad_preview_matrix_disable,
 })
 
 REGISTER_TEST(notepad_preview_matrix_preview_linkage,
-              "notepad_preview: 预览态工具条联动（格式化/查找/字体禁用）", {
+              "notepad_preview: 预览态工具条联动（格式化/字体禁用、查找可用 need400）", {
     NotepadSession s = makeSession("/d/a.json");
     s.previewOn = true;
     const NotepadToolbarMatrix m = notepadToolbarMatrixFor(s);
     DOCTEST_CHECK(m.showFormat);  // 钮仍在场
     DOCTEST_CHECK_FALSE(m.formatEnabled);  // 预览态禁用（§4.6）
-    DOCTEST_CHECK_FALSE(m.findToggleEnabled);
+    DOCTEST_CHECK(m.findToggleEnabled);  // need400：预览态查找可用（显示文本域）
     DOCTEST_CHECK_FALSE(m.fontControlsEnabled);
 
     NotepadSession md = makeSession("/d/a.md");
@@ -200,7 +200,7 @@ REGISTER_TEST(notepad_preview_matrix_preview_linkage,
     const NotepadToolbarMatrix mm = notepadToolbarMatrixFor(md);
     DOCTEST_CHECK(mm.showPreview);
     DOCTEST_CHECK(mm.previewEnabled);  // 预览钮在预览态仍可点（切回编辑）
-    DOCTEST_CHECK_FALSE(mm.findToggleEnabled);
+    DOCTEST_CHECK(mm.findToggleEnabled);  // need400：预览态查找可用（显示文本域）
     DOCTEST_CHECK_FALSE(mm.fontControlsEnabled);
     return true;
 })

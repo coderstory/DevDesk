@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark"}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-markdown.txt"},
+    {"type": "click", "id": "app.sidebar.item.Git.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-git.txt"},
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-todo.txt"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-schedule.txt"},
+    {"type": "click", "id": "app.sidebar.item.ClaudeProxy.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-claudeproxy.txt"},
+    {"type": "click", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-agent.txt"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-memory.txt"},
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-mcp.txt"},
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-terminal.txt"},
+    {"type": "click", "id": "app.sidebar.item.ReleaseGroup.hit"},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "probe-releasegroup.txt"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-settings.txt"},
+    {"type": "click", "id": "app.sidebar.item.About.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe-about.txt"}
+  ]
+}

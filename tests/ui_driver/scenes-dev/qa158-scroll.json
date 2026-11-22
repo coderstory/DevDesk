@@ -1,0 +1,18 @@
+{"version":1,"steps":[
+ {"type":"click","id":"app.sidebar.item.Memory.hit"},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"scroll-0-before.txt"},
+ {"type":"screenshot","path":"scroll-0-before.png"},
+ {"type":"scroll","id":"app.memory.console.scroll","dx":0,"dy":-2},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"scroll-1-down.txt"},
+ {"type":"screenshot","path":"scroll-1-down.png"},
+ {"type":"scroll","id":"app.memory.console.scroll","dx":0,"dy":-3},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"scroll-2-down.txt"},
+ {"type":"screenshot","path":"scroll-2-down.png"},
+ {"type":"scroll","id":"app.memory.console.scroll","dx":0,"dy":3},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"scroll-3-up.txt"},
+ {"type":"screenshot","path":"scroll-3-up.png"}
+]}

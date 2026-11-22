@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["markdown", "todo", "claude_proxy", "agent"]}
+      }
+    },
+    "failureStrategy": "keep-going",
+    "defaultWaitTimeoutMs": 12000
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Agent.hit",
+     "_comment": "W批 #169：seed agent（m6 失误补正）→ 建任务 → 两波 hover（按钮间移动/移出）"},
+    {"type": "wait", "until": "exists", "id": "agent.empty.action.bg"},
+    {"type": "click", "id": "agent.empty.action.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "hover状态机验证任务", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "验证悬浮菜单显隐", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.1.title"},
+    {"type": "wait", "ms": 1200, "_comment": "入场动画走完再取样"},
+    {"type": "dump", "path": "w1-00-baseline.txt", "_comment": "无 hover 基线：actions 应 disabled"},
+    {"type": "scroll", "id": "agent.task.1.hit", "dx": 0, "dy": 0.01,
+     "_comment": "纯指针移动到卡中心（scroll 0/0 = 定位+40 settle 帧）→ .hit 槽位0"},
+    {"type": "dump", "path": "w1-01-card.txt", "_comment": "hover 进卡：actions 应非 disabled"},
+    {"type": "scroll", "id": "agent.task.1.run.bg", "dx": 0, "dy": 0.01,
+     "_comment": "移到启动按钮（槽位6）——老板症状「从启动按钮移出去就不显示」的起点"},
+    {"type": "dump", "path": "w1-02-run.txt"},
+    {"type": "scroll", "id": "agent.task.1.hit", "dx": 0, "dy": 0.01,
+     "_comment": "波1a：从启动按钮移回卡身——菜单不应消失"},
+    {"type": "dump", "path": "w1-03-run-to-card.txt"},
+    {"type": "scroll", "id": "agent.task.1.detail.bg", "dx": 0, "dy": 0.01,
+     "_comment": "波1b：卡→按钮1（缝隙穿越，派发序 hazard）"},
+    {"type": "dump", "path": "w1-04-btn-detail.txt"},
+    {"type": "scroll", "id": "agent.task.1.edit.bg", "dx": 0, "dy": 0.01,
+     "_comment": "波1c：按钮间移动（老板症状2）"},
+    {"type": "dump", "path": "w1-05-btn-edit.txt"},
+    {"type": "scroll", "id": "agent.task.1.toggle.bg", "dx": 0, "dy": 0.01},
+    {"type": "dump", "path": "w1-06-btn-toggle.txt"},
+    {"type": "scroll", "id": "agent.task.1.delete.bg", "dx": 0, "dy": 0.01},
+    {"type": "dump", "path": "w1-07-btn-delete.txt"},
+    {"type": "scroll", "id": "agent.task.1.run.bg", "dx": 0, "dy": 0.01,
+     "_comment": "波1d：按钮→启动钮（跨域保持）"},
+    {"type": "dump", "path": "w1-08-btn-to-run.txt"},
+    {"type": "scroll", "id": "app.sidebar.item.Home.hit", "dx": 0, "dy": 0.01,
+     "_comment": "波2：移出整卡到侧栏 Home（40 settle 帧 > 120ms 去抖）→ 菜单应正确隐藏"},
+    {"type": "dump", "path": "w1-09-left.txt"},
+    {"type": "scroll", "id": "agent.task.1.run.bg", "dx": 0, "dy": 0.01,
+     "_comment": "波2b：回到启动钮再整卡移出（老板症状1 完整路径）"},
+    {"type": "dump", "path": "w1-10-run-again.txt"},
+    {"type": "scroll", "id": "app.sidebar.item.Home.hit", "dx": 0, "dy": 0.01},
+    {"type": "dump", "path": "w1-11-left-final.txt"},
+    {"type": "screenshot", "path": "w1-final.png"}
+  ]
+}

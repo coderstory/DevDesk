@@ -390,13 +390,16 @@ int main(int argc, char* argv[]) {
             std::string taggedText;
             if (items.isOk()) {
                 for (const auto& it : items.value()) {
-                    if (it.text.rfind("[踩坑|会话采集] ", 0) == 0) {
+                    // bug239 断言质量：产物必须≠入队原文（补标=提炼改写，非回显）
+                    if (it.text.rfind("[踩坑|会话采集] ", 0) == 0 &&
+                        it.text != source) {
                         tagged = true;
                         taggedText = it.text;
                     }
                 }
             }
-            check(tagged, "S8 清单含补标产物（[踩坑|会话采集] 前缀开头）");
+            check(tagged,
+                  "S8 补标产物为提炼改写（前缀保留且正文≠入队原文）");
             std::cout << "[e2e] S8 产物: " << taggedText << "\n";
             const long long month = ledger.monthTokens(nowSec()).valueOr(0);
             check(month > 0, "S8 计账非零（llm_input+llm_output → monthTokens=" +
