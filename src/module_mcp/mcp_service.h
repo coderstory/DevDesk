@@ -8,6 +8,7 @@
 
 #include "core/mcp_tool.h"
 #include "mcp_http_handler.h"
+#include "mcp_tool_mirror.h"
 #include "mcp_protocol.h"
 #include "mcp_session_store.h"
 
@@ -45,6 +46,9 @@ public:
 
 private:
     core::mcp::McpToolRegistry& tools_;
+    // need381：ITool→IMcpTool 镜像（source=core::ToolRegistry 单例自取）；由
+    // handler 在 handlePost 入口触发 sync。声明顺序 = 构造顺序（mirror_ 依赖 tools_）。
+    ToolMirror mirror_;
     McpSessionStore sessions_;
 
     mutable std::mutex mutex_;

@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "core/logging.h"
+#include "mcp_tool_mirror.h"
 #include "platform/json.h"
 #include "platform/utf8.h"
 
@@ -206,8 +207,10 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
         result.set("protocolVersion", platform::json::makeString(negotiated));
         result.set("capabilities", JsonValue(capabilities));
         result.set("serverInfo", JsonValue(serverInfo));
-        result.set("instructions", platform::json::makeString(
-                                       "本服务运行在本机，提供网页抓取等工具。"));
+        // need381 F-08（D-06 定稿）：39 工具暴露后文案泛化
+        result.set("instructions",
+                   platform::json::makeString(
+                       "本服务运行在本机，提供 DevDesk 内置工具集（待办/日程/终端/git/文件/记忆等）。"));
         return HttpOutcome{200, successResponseText(id, JsonValue(result)),
                            false};
     }
@@ -237,9 +240,17 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
             }
             if (!first) toolsJson += ",";
             first = false;
+            // need381 F-05：ITool 适配器带破坏性 hint（D-02）；内置工具 cast 落空 =
+            // 无 annotations 键（spec 可选省略，现状不变）
+            std::string annotations;
+            if (auto* adapter =
+                    dynamic_cast<const AgentToolAdapter*>(tool.get())) {
+                annotations = adapter->annotationsSuffix();
+            }
             toolsJson += "{\"name\":" + quoteString(tool->name()) +
                          ",\"description\":" + quoteString(tool->description()) +
-                         ",\"inputSchema\":" + schemaText.value() + "}";
+                         ",\"inputSchema\":" + schemaText.value() +
+                         annotations + "}";
         }
         toolsJson += "]";
         auto result = parseFragment("{\"tools\":" + toolsJson + "}");

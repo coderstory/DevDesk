@@ -11,6 +11,7 @@ add_library(devdesk_module_mcp STATIC
     mcp_session_store.cpp
     mcp_protocol.cpp
     mcp_http_handler.cpp
+    mcp_tool_mirror.cpp               # need381：ITool→IMcpTool 适配层（镜像+薄适配器）
     mcp_tools_builtin.cpp
     html_to_markdown.cpp
     claude_mcp_config.cpp

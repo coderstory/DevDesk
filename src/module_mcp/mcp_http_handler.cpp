@@ -83,7 +83,8 @@ void writeEmpty(platform::http::ResponseWriter& writer, int status) {
 
 } // namespace
 
-McpHttpHandler::McpHttpHandler(McpProtocol& protocol) : protocol_(protocol) {}
+McpHttpHandler::McpHttpHandler(McpProtocol& protocol, ToolMirror& mirror)
+    : protocol_(protocol), mirror_(mirror) {}
 
 void McpHttpHandler::registerRoutes(platform::http::Server& server) {
     server.route("POST", "/mcp",
@@ -121,6 +122,8 @@ void McpHttpHandler::handlePost(const platform::http::RequestCtx& ctx,
     }
 
     std::string newSessionId;
+    // need381 F-02：POST 是 tools/list 与 tools/call 唯一入口，分发前惰性同步镜像
+    mirror_.sync();
     const HttpOutcome outcome = protocol_.handlePost(
         ctx.body, headerValue(ctx, "mcp-session-id"),
         headerValue(ctx, "mcp-protocol-version"), newSessionId);

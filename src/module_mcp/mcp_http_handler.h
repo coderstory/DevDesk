@@ -3,6 +3,7 @@
 #pragma once
 
 #include "mcp_protocol.h"
+#include "mcp_tool_mirror.h"
 
 namespace platform::http {
 class Server;
@@ -14,7 +15,7 @@ namespace module::mcp {
 
 class McpHttpHandler {
 public:
-    explicit McpHttpHandler(McpProtocol& protocol);
+    explicit McpHttpHandler(McpProtocol& protocol, ToolMirror& mirror);
 
     // POST/GET/DELETE/OPTIONS "/mcp"
     void registerRoutes(platform::http::Server& server);
@@ -27,6 +28,7 @@ private:
     void handleMethodNotAllowed(platform::http::ResponseWriter& writer);
 
     McpProtocol& protocol_;
+    ToolMirror& mirror_;
 };
 
 } // namespace module::mcp

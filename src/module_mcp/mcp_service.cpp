@@ -21,7 +21,8 @@ constexpr const char* kBindAddress = "127.0.0.1";
 
 } // namespace
 
-McpService::McpService(core::mcp::McpToolRegistry& tools) : tools_(tools) {}
+McpService::McpService(core::mcp::McpToolRegistry& tools)
+    : tools_(tools), mirror_(tools) {}
 
 McpService::~McpService() { stop(); }
 
@@ -35,7 +36,7 @@ core::Result<int> McpService::start(int requestedPort) {
     //（server 最后销毁），失败路径也不会让 server 先于 handler/protocol 消失。
     auto protocol =
         std::make_unique<McpProtocol>(sessions_, tools_, kServerVersion);
-    auto handler = std::make_unique<McpHttpHandler>(*protocol);
+    auto handler = std::make_unique<McpHttpHandler>(*protocol, mirror_);
     auto server =
         std::make_unique<platform::http::Server>(kBindAddress, requestedPort);
     // Host 白名单跟着实际绑定地址走（回环绑定 → 三种回环拼写放行）

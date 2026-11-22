@@ -304,6 +304,9 @@ add_executable(devdesk_tests
     # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
     test_modules/test_mcp_settings.cpp
     test_modules/test_mcp_service.cpp
+    # need381：ITool→IMcpTool 适配层（镜像往返/并发/映射五形态/annotations/坏 schema；
+    # F-01 39 真工具 diff 与 46 断言归 probes/mcp_e2e_probe.cpp）
+    test_modules/test_mcp_tool_mirror.cpp
     # 波 S5：调度通知渠道层（注册表分发/空与未知 id/静默/载荷透传/去重键/主线程封送/全屏聚合冷却）
     test_modules/test_channels.cpp
     # 波 S7b：编辑弹窗纯逻辑（六 kind 往返/锚定日期周几校验/预览 5 次迭代/渠道多选落库/非法 spec 红字）
@@ -578,6 +581,21 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_config_common.cpp"
 
             "${CMAKE_SOURCE_DIR}/src/module_mcp/mcp_page_module.cpp")
+    elseif(_probe_name STREQUAL "mcp_e2e_probe")
+        # need381 MCP e2e：真 onStart 八个业务模块——todo/settings/schedule 的模块
+        # 代码引用 app::openWindow/contentScale/setClearColor/setWindowEffect 等
+        # app 层符号（定义在 app_assembly.cpp/app_sidebar.cpp）→ 必须直编这两源；
+        # quit_save/wallpaper_delete 两桥是 app_sidebar 的引用面（同 devdesk_tests）。
+        # devdesk_module_mcp 走链接（下方白名单分支），不直编其源防重复符号。
+        add_executable(${_probe_name} "${_probe_source}"
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp")
     elseif(_probe_name STREQUAL "layout_guard_probe")
         # 池 #221：布局病守卫 kit——kit 实现随本目标一起编（layout_guard_kit.h
         # 为纯声明，layout_guard_kit.cpp 无 main，见上方 continue() 说明）
@@ -639,7 +657,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # mcp_card_343_probe（need343 卡重排可视基线）：同上真类型
     if(_probe_name STREQUAL "memory_install_probe" OR
        _probe_name STREQUAL "mcp_dialog_probe" OR
-       _probe_name STREQUAL "mcp_card_343_probe")
+       _probe_name STREQUAL "mcp_card_343_probe" OR
+       # mcp_e2e_probe（need381）：真 globalMcpService + ToolMirror 镜像链路
+       _probe_name STREQUAL "mcp_e2e_probe")
         target_link_libraries(${_probe_name} PRIVATE devdesk_module_mcp)
     endif()
     # git_page_probe（need:7 批次二）：fixture 仓用 git2 C API 直建（离线零 CLI）。
