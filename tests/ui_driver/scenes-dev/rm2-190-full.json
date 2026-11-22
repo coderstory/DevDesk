@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 25000},
+ "steps": [
+  {"type": "wait", "ms": 120000, "_comment": "注入窗：bash robocopy 全量 memory/（442M 含 venv）到驱动临时数据根"},
+  {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+  {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 40000, "_comment": "190: 全量引擎路径下 Memory 页 compose（引导态对照 G=144ms）"},
+  {"type": "wait", "ms": 8000, "_comment": "稳态 8s；1629 条全量渲染卡死则步骤超时=红证据"},
+  {"type": "dump", "path": "rm2-190-full.txt"},
+  {"type": "screenshot", "path": "rm2-190-full.png"},
+  {"type": "click", "id": "app.sidebar.item.Home.hit"},
+  {"type": "wait", "ms": 9000, "_comment": "263: home dwell 收 fluid-fps"},
+  {"type": "dump", "path": "rm2-190-home.txt"},
+  {"type": "screenshot", "path": "rm2-190-home.png"}
+ ]
+}

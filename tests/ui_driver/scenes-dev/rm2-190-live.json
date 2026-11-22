@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 25000},
+ "steps": [
+  {"type": "wait", "ms": 90000, "_comment": "注入窗：robocopy 全量 memory/ 到驱动临时数据根"},
+  {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+  {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 40000},
+  {"type": "click", "id": "app.memory.eng.toggle.bg", "_comment": "190: 打开引擎开关（驱动根 app db 全新→默认关；真实根配置未注入是有意隔离）"},
+  {"type": "wait", "ms": 120000, "_comment": "引擎启动观察窗（bash 侧活体取证：yaml 重写/python 子进程/wal）"},
+  {"type": "dump", "path": "rm2-190-live.txt"},
+  {"type": "screenshot", "path": "rm2-190-live.png"},
+  {"type": "wait", "ms": 60000, "_comment": "二次观察窗：引擎连上后条目加载的 compose 面向"},
+  {"type": "dump", "path": "rm2-190-live2.txt"},
+  {"type": "screenshot", "path": "rm2-190-live2.png"}
+ ]
+}

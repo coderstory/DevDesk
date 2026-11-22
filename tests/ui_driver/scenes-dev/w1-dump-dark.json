@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark", "enabledModules": ["markdown","todo","schedule","claude_proxy","memory","mcp","terminal"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-settings01.txt"},
+    {"type": "click", "id": "settings.tabs.1.hit"},
+    {"type": "wait", "until": "exists", "id": "settings.card.reminder.popup.sw.track", "timeoutMs": 6000},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "d-settings02.txt"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-memory.txt"},
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-mcp.txt"},
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-todo.txt"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-schedule.txt"},
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "ms": 900},
+    {"type": "dump", "path": "d-terminal.txt"},
+    {"type": "click", "id": "app.sidebar.item.Home.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-home.txt"}
+  ]
+}

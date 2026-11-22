@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["markdown", "todo", "schedule", "claude_proxy", "agent", "memory", "mcp", "terminal", "git", "release"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.ReleaseGroup.hit"},
+    {"type": "wait", "ms": 800},
+    {"type": "scroll", "id": "app.sidebar.nav", "dy": -800},
+    {"type": "wait", "ms": 900},
+    {"type": "dump", "path": "probe5-nav.txt"},
+    {"type": "click", "point": [110, 460]},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "probe5-rel.txt"}
+  ]
+}

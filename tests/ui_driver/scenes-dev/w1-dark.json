@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["markdown","todo","schedule","claude_proxy","memory","mcp","terminal"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Home.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-home.png"},
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "w1-md-dump.txt"},
+    {"type": "screenshot", "path": "w1-markdown.png"},
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-todo.png"},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-schedule.png"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-memory.png"},
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-mcp.png"},
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit"},
+    {"type": "wait", "ms": 900},
+    {"type": "screenshot", "path": "w1-terminal.png"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "w1-settings-01.png"},
+    {"type": "click", "id": "settings.tabs.1.hit"},
+    {"type": "wait", "until": "exists", "id": "settings.card.reminder.popup.sw.track", "timeoutMs": 6000},
+    {"type": "wait", "ms": 400},
+    {"type": "screenshot", "path": "w1-settings-02.png"}
+  ]
+}

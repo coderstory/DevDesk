@@ -1,0 +1,9 @@
+{"version":1,"steps":[
+ {"type":"click","id":"app.sidebar.item.Settings.hit"},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"set-0.txt"},
+ {"type":"scroll","dx":0,"dy":-20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"set-1.txt"},
+ {"type":"screenshot","path":"set-1.png"}
+]}

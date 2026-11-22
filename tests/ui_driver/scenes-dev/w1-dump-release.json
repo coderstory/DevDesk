@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark", "enabledModules": ["release"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.ReleaseGroup.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.sidebar.item.ReleaseTasks.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "d-reltasks.txt"},
+    {"type": "click", "id": "app.sidebar.item.About.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "dump", "path": "d-about.txt"}
+  ]
+}

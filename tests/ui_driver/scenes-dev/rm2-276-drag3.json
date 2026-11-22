@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 15000},
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+  {"type": "wait", "ms": 1500},
+  {"type": "click", "id": "app.md.tree.node.1.row"},
+  {"type": "wait", "ms": 1200},
+  {"type": "click", "id": "app.md.mode.1.hit"},
+  {"type": "wait", "ms": 1000},
+  {"type": "drag", "from": "app.md.live.blk.1.hit", "to": "app.md.live.blk.2.hit", "steps": 12, "_comment": "276: live 预览块拖选"},
+  {"type": "wait", "ms": 800},
+  {"type": "dump", "path": "rm2-276-drag3.txt"},
+  {"type": "screenshot", "path": "rm2-276-drag3.png"}
+ ]
+}

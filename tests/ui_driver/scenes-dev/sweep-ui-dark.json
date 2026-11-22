@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {
+          "themeMode": "dark",
+          "enabledModules": [
+            "markdown",
+            "todo",
+            "schedule",
+            "claude_proxy",
+            "agent",
+            "memory",
+            "mcp",
+            "terminal",
+            "git"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Home.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-home-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Markdown.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-markdown-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Git.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-git-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Todo.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-todo-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Schedule.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-schedule-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.ClaudeProxy.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 800
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-claudeproxy-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Agent.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-agent-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Memory.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-memory-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Mcp.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 700
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-mcp-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Terminal.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 900
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-terminal-01.png"
+    },
+    {
+      "type": "click",
+      "id": "app.sidebar.item.Settings.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 600
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-settings-01.png"
+    },
+    {
+      "type": "click",
+      "id": "settings.tabs.1.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 600
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-settings-02.png"
+    },
+    {
+      "type": "click",
+      "id": "settings.tabs.2.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 900
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-settings-03.png"
+    },
+    {
+      "type": "click",
+      "id": "settings.tabs.3.hit"
+    },
+    {
+      "type": "wait",
+      "ms": 600
+    },
+    {
+      "type": "screenshot",
+      "path": "sweep-settings-04.png"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 12000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit", "_comment": "K批：md 空态（#180 ButtonButton 检查）"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k-md-empty.txt"},
+    {"type": "screenshot", "path": "k-md-empty.png"},
+
+    {"type": "click", "id": "md.tree.new.bg", "force": true, "_comment": "#130 新建笔记1（icon-only 钮，force 容错命中变体）"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "md.tree.new.bg", "force": true, "_comment": "#130 新建笔记2"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "k-md-2notes.txt"},
+    {"type": "screenshot", "path": "k-md-2notes.png"},
+    {"type": "click", "id": "md.tree.new.bg", "force": true, "_comment": "#130 新建笔记3"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "k-md-3notes.txt"},
+    {"type": "click", "id": "md.note.tab.1.close.bg", "force": true, "_comment": "#130 关闭第2个 tab"},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "k-md-afterclose.txt"},
+    {"type": "screenshot", "path": "k-md-afterclose.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit", "_comment": "#140 定时列表 item 卡"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k-sched.txt"},
+    {"type": "screenshot", "path": "k-sched.png"},
+
+    {"type": "click", "id": "app.sidebar.item.ReleaseConfig.hit", "_comment": "#134 基础设置列表"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k-relcfg.txt"},
+    {"type": "screenshot", "path": "k-relcfg.png"},
+
+    {"type": "click", "id": "app.sidebar.item.ClaudeProxy.hit", "_comment": "#126 同步卡/表单结构侦察"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k-claude.txt"},
+    {"type": "screenshot", "path": "k-claude.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Settings.hit", "_comment": "#155 设置同步 TAB"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k-settings.txt"},
+    {"type": "screenshot", "path": "k-settings.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit", "_comment": "#144/#279 MCP 页结构"},
+    {"type": "wait", "ms": 900},
+    {"type": "dump", "path": "k-mcp.txt"},
+    {"type": "screenshot", "path": "k-mcp.png"}
+  ]
+}

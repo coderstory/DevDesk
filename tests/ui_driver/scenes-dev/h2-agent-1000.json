@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["markdown", "todo", "claude_proxy", "agent"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Agent.hit",
+     "_comment": "H批 F4④⑤：智能体页 @1000x640（dark），双卡：常规标题+超长标题"},
+    {"type": "wait", "until": "exists", "id": "agent.empty.action.bg"},
+    {"type": "click", "id": "agent.empty.action.bg", "_comment": "新建任务一（正常标题）"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "发版巡检-生产库", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "巡检生产库发版状态", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.1.title"},
+    {"type": "click", "id": "agent.page.newTask.bg", "_comment": "新建任务二（超长标题：省略号-药丸间距 ⑤）"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "一个特别特别长的智能体任务名称用来验证标题单行截断省略号与状态药丸跟随", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "长标题卡片观察", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.2.title"},
+    {"type": "wait", "ms": 800, "_comment": "等列表项入场动画走完再截，防截到 opacity 0"},
+    {"type": "dump", "path": "h2-261-1000.txt"},
+    {"type": "screenshot", "path": "h2-261-1000-dark.png"}
+  ]
+}

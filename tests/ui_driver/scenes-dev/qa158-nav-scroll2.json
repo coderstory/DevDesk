@@ -1,0 +1,15 @@
+{"version":1,"steps":[
+ {"type":"click","id":"app.sidebar.item.ReleaseGroup.hit"},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"navE-0.txt"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"navE-1.txt"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":-20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"navE-2.txt"},
+ {"type":"scroll","id":"app.sidebar.nav","dx":0,"dy":20},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"navE-3.txt"},
+ {"type":"screenshot","path":"navE-3.png"}
+]}

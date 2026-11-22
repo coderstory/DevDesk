@@ -1,0 +1,10 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 15000},
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+  {"type": "wait", "ms": 2000, "_comment": "recon：md 页元素树采样（notes 经 DEVDESK_NOTES_DIR 暂存注入）"},
+  {"type": "dump", "path": "rm2-276-recon.txt"},
+  {"type": "screenshot", "path": "rm2-276-recon.png"}
+ ]
+}

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["todo", "agent", "memory", "mcp"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "click", "id": "app.todo.search.hit"},
+    {"type": "wait", "ms": 400},
+    {"type": "type", "text": "巡检", "id": "app.todo.search.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "screenshot", "path": "interact-todo-search.png"},
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "click", "id": "settings.tabs.1.hit"},
+    {"type": "wait", "ms": 600},
+    {"type": "scroll", "id": "app.settings.cards.scroll", "dy": -200},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "interact-settings-post.txt"},
+    {"type": "screenshot", "path": "interact-settings-scrolled.png"},
+    {"type": "click", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "click", "id": "app.agent.empty.action.bg"},
+    {"type": "wait", "ms": 900},
+    {"type": "screenshot", "path": "interact-agent-dialog.png"}
+  ]
+}

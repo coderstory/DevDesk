@@ -1,0 +1,18 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 15000},
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+  {"type": "wait", "ms": 1500},
+  {"type": "click", "id": "app.md.tree.node.1.row"},
+  {"type": "wait", "ms": 1200},
+  {"type": "click", "id": "app.md.mode.1.hit", "_comment": "276: 预览=独立查看器窗（上轮证据）；后续长尾给 bash OS 级拖选窗口"},
+  {"type": "wait", "ms": 60000},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-276-main.txt"},
+  {"type": "screenshot", "path": "rm2-276-main.png"},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-276-main2.txt"},
+  {"type": "screenshot", "path": "rm2-276-main2.png"}
+ ]
+}

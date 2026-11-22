@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 8000},
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Settings.hit"},
+    {"type": "wait", "until": "exists", "id": "app.settings.card.appearance.font.slider.hit", "timeoutMs": 8000},
+    {"type": "dump", "path": "m2-settings-before.txt", "_comment": "缩放前外观卡（pct 文本）"},
+    {"type": "drag", "from": "app.settings.card.appearance.font.slider.hit", "to": "app.settings.card.appearance.font.pct", "steps": 12, "_comment": "真用户路径：拖字号滑条到最大档"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "m2-settings-after.txt"},
+    {"type": "screenshot", "path": "m2-settings-scaled.png"},
+    {"type": "click", "id": "app.sidebar.item.Home.hit"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "dump", "path": "m2-sidebar-scaled.txt", "_comment": "#142：缩放后侧栏——ReleaseGroup/上线 分组 label 高 vs 平级条目 label 高"},
+    {"type": "click", "id": "app.sidebar.item.ReleaseGroup.chevron", "_comment": "#141：展开多级菜单"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "m2-sidebar-expanded.txt"},
+    {"type": "screenshot", "path": "m2-sidebar-expanded.png", "_comment": "#141：展开后 nav 内容底 vs 底部展开/折叠按钮几何"},
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "m2-md-scaled.txt", "_comment": "#163：缩放后 md 编辑器输入区元素几何（vs m1-md）"},
+    {"type": "screenshot", "path": "m2-md-scaled.png"}
+  ]
+}

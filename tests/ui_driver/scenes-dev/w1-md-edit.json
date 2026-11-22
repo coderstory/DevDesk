@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark", "enabledModules": ["markdown"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+    {"type": "wait", "ms": 700},
+    {"type": "click", "id": "app.md.btn.new.bg"},
+    {"type": "wait", "until": "exists", "id": "app.md.dialog.new.input.hit", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "type", "text": "w1note", "id": "app.md.dialog.new.input.hit"},
+    {"type": "wait", "ms": 300},
+    {"type": "click", "id": "app.md.dialog.new.confirm.bg"},
+    {"type": "wait", "ms": 900},
+    {"type": "dump", "path": "w1-md-edit-dump.txt"},
+    {"type": "screenshot", "path": "w1-md-edit.png"}
+  ]
+}

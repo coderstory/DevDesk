@@ -1,0 +1,16 @@
+{"version":1,"steps":[
+ {"type":"click","id":"app.sidebar.item.Memory.hit"},
+ {"type":"wait","ms":400},
+ {"type":"click","point":[1164,398]},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"track-1.txt"},
+ {"type":"screenshot","path":"track-1.png"},
+ {"type":"click","point":[1164,300]},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"track-2.txt"},
+ {"type":"screenshot","path":"track-2.png"},
+ {"type":"drag","from":"app.memory.console.scroll.scroll.thumb","to":"app.memory.details.head"},
+ {"type":"wait","ms":300},
+ {"type":"dump","path":"track-3.txt"},
+ {"type":"screenshot","path":"track-3.png"}
+]}

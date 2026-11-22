@@ -1,0 +1,34 @@
+{
+ "version": 1,
+ "settings": {
+  "seed": {
+   "config": {
+    "config.json:": {
+     "themeMode": "dark",
+     "enabledModules": ["markdown","git","todo","schedule","claude_proxy","agent","memory","wallpaper","mcp","terminal"]
+    }
+   }
+  }
+ },
+ "steps": [
+  {"type": "dump", "path": "sidebar-640-init.txt"},
+  {"type": "screenshot", "path": "sidebar-640-init.png"},
+  {"type": "scroll", "id": "app.sidebar.nav", "dx": 0, "dy": -60},
+  {"type": "wait", "ms": 300},
+  {"type": "scroll", "id": "app.sidebar.nav", "dx": 0, "dy": -60},
+  {"type": "wait", "ms": 300},
+  {"type": "scroll", "id": "app.sidebar.nav", "dx": 0, "dy": -60},
+  {"type": "wait", "ms": 300},
+  {"type": "scroll", "id": "app.sidebar.nav", "dx": 0, "dy": -60},
+  {"type": "wait", "ms": 300},
+  {"type": "scroll", "id": "app.sidebar.nav", "dx": 0, "dy": -60},
+  {"type": "wait", "ms": 300},
+  {"type": "dump", "path": "sidebar-640-max.txt"},
+  {"type": "assert", "check": "geometry", "id": "app.sidebar.item.About.hit", "op": "within-window"},
+  {"type": "click", "id": "app.sidebar.item.About.hit"},
+  {"type": "wait", "until": "exists", "id": "about.title", "timeoutMs": 3000},
+  {"type": "wait", "ms": 1500},
+  {"type": "screenshot", "path": "sidebar-640-max.png"},
+  {"type": "dump", "path": "sidebar-640-after.txt"}
+ ]
+}

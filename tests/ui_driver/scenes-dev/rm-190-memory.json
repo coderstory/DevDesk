@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 20000},
+ "steps": [
+  {"type": "wait", "ms": 1500, "_comment": "home 起帧稳态"},
+  {"type": "dump", "path": "rm190-home.txt"},
+  {"type": "click", "id": "app.sidebar.item.Memory.hit", "_comment": "190/201: 驱动空数据基线（真数据走真app+复制根）"},
+  {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 20000},
+  {"type": "wait", "ms": 3000, "_comment": "稳态 3s；compose 卡死则到此不返（驱动超时退出码=1）"},
+  {"type": "dump", "path": "rm190-memory-empty.txt"},
+  {"type": "screenshot", "path": "rm190-memory-empty.png"}
+ ]
+}

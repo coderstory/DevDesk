@@ -1,0 +1,16 @@
+{"version":1,"steps":[
+ {"type":"click","id":"app.sidebar.item.Memory.hit"},
+ {"type":"wait","ms":400},
+ {"type":"click","id":"app.memory.tabs.1.hit"},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"tab1-dump.txt"},
+ {"type":"screenshot","path":"tab1-review.png"},
+ {"type":"click","id":"app.memory.tabs.2.hit"},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"tab2-dump.txt"},
+ {"type":"screenshot","path":"tab2-config.png"},
+ {"type":"click","id":"app.memory.tabs.0.hit"},
+ {"type":"wait","ms":400},
+ {"type":"dump","path":"tab0-dump.txt"},
+ {"type":"screenshot","path":"tab0-console.png"}
+]}

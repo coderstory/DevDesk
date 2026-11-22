@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 8000, "seed": {"config": {"config.json:": {"themeMode": "dark", "enabledModules": ["home", "markdown", "git", "todo", "schedule", "claude_proxy", "agent", "memory", "mcp", "terminal", "release", "settings", "about"]}}}},
+  "steps": [
+    {"type": "wait", "ms": 2000},
+    {"type": "click", "id": "app.sidebar.item.Agent.hit", "_comment": "#169：智能体页（seed 开 agent 模块）"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "wait", "ms": 1200},
+    {"type": "dump", "path": "m3-agent.txt"},
+    {"type": "screenshot", "path": "m3-agent.png"},
+    {"type": "click", "id": "app.sidebar.item.Markdown.hit", "_comment": "#163：md 编辑器页 vocab"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "m3-md.txt"},
+    {"type": "screenshot", "path": "m3-md.png"},
+    {"type": "key", "name": "Escape"},
+    {"type": "wait", "ms": 400},
+    {"type": "click", "id": "app.sidebar.item.Schedule.hit", "_comment": "#150：定时页基线（含 Escape 关自动弹的编辑器）"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "key", "name": "Escape"},
+    {"type": "wait", "ms": 400},
+    {"type": "dump", "path": "m3-schedule.txt"},
+    {"type": "screenshot", "path": "m3-schedule.png"}
+  ]
+}

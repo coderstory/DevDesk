@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "settings": {"defaultWaitTimeoutMs": 12000},
+  "steps": [
+    {"type": "wait", "ms": 60000, "_comment": "注入窗：外部 robocopy 真库 db（proposals 复原 pending 态+collector/history/infer_queue）进本根 memory/"},
+    {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+    {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 20000},
+    {"type": "wait", "ms": 3000},
+    {"type": "click", "id": "app.memory.tabs.1.hit", "_comment": "#217/#234：审核 TAB（qa160：tabs.1=review）"},
+    {"type": "wait", "ms": 3000},
+    {"type": "dump", "path": "m6-review.txt"},
+    {"type": "screenshot", "path": "m6-review.png"},
+    {"type": "click", "id": "memory.rv.evtoggle", "_comment": "#234：审核卡展开钮（仅翻箭头？）"},
+    {"type": "wait", "ms": 800},
+    {"type": "dump", "path": "m6-review-expanded.txt"},
+    {"type": "screenshot", "path": "m6-review-expanded.png"},
+    {"type": "click", "id": "app.sidebar.item.Agent.hit", "_comment": "#169：页头「可用工具」弹窗（池170）"},
+    {"type": "wait", "until": "text", "op": "nonempty", "timeoutMs": 8000},
+    {"type": "wait", "ms": 800},
+    {"type": "click", "id": "app.agent.page.tools"},
+    {"type": "wait", "ms": 1200},
+    {"type": "dump", "path": "m6-agent-tools.txt"},
+    {"type": "screenshot", "path": "m6-agent-tools.png"}
+  ]
+}

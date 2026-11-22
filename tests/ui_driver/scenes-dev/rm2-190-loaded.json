@@ -1,0 +1,25 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 25000},
+ "steps": [
+  {"type": "wait", "ms": 90000, "_comment": "注入窗"},
+  {"type": "click", "id": "app.sidebar.item.Memory.hit"},
+  {"type": "wait", "until": "exists", "id": "app.memory.tabs.0.hit", "timeoutMs": 40000},
+  {"type": "click", "id": "app.memory.eng.toggle.bg", "_comment": "开引擎；随后长观察链：引擎启动~45s→数据就绪→1629 条 compose；卡死则后续步超时=红"},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-190-l1.txt"},
+  {"type": "screenshot", "path": "rm2-190-l1.png"},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-190-l2.txt"},
+  {"type": "screenshot", "path": "rm2-190-l2.png"},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-190-l3.txt"},
+  {"type": "screenshot", "path": "rm2-190-l3.png"},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-190-l4.txt"},
+  {"type": "screenshot", "path": "rm2-190-l4.png"},
+  {"type": "wait", "ms": 60000},
+  {"type": "dump", "path": "rm2-190-l5.txt"},
+  {"type": "screenshot", "path": "rm2-190-l5.png"}
+ ]
+}

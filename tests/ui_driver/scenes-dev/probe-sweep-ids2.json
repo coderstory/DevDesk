@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "dark",
+                          "enabledModules": ["markdown", "todo", "schedule", "claude_proxy", "agent", "memory", "mcp", "terminal", "git", "release"]}
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Agent.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe2-agent.txt"},
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe2-mcp.txt"},
+    {"type": "click", "id": "app.sidebar.item.ReleaseGroup.hit"},
+    {"type": "wait", "ms": 400},
+    {"type": "click", "id": "app.sidebar.item.ReleaseTasks.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe2-release-tasks.txt"},
+    {"type": "click", "id": "app.sidebar.item.ReleaseConfig.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe2-release-config.txt"},
+    {"type": "scroll", "id": "app.sidebar.nav", "dy": 400},
+    {"type": "wait", "ms": 400},
+    {"type": "click", "id": "app.sidebar.item.About.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "dump", "path": "probe2-about.txt"}
+  ]
+}

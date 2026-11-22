@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 15000},
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+  {"type": "wait", "ms": 1500},
+  {"type": "click", "id": "app.md.tree.node.1.row"},
+  {"type": "wait", "ms": 1200},
+  {"type": "click", "id": "app.md.mode.1.hit", "_comment": "276: 切预览模式"},
+  {"type": "wait", "ms": 1200},
+  {"type": "dump", "path": "rm2-276-preview.txt"},
+  {"type": "drag", "from": "app.md.editor.input.text.1", "to": "app.md.editor.input.text.3", "steps": 12, "_comment": "276: 拖选（预览态若 id 不同本步红，dump1 已留证）"},
+  {"type": "wait", "ms": 800},
+  {"type": "dump", "path": "rm2-276-after-drag.txt"},
+  {"type": "screenshot", "path": "rm2-276-drag.png"}
+ ]
+}

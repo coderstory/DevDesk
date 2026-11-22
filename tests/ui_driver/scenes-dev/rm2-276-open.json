@@ -1,0 +1,12 @@
+{
+ "version": 1,
+ "settings": {"defaultWaitTimeoutMs": 15000},
+ "steps": [
+  {"type": "click", "id": "app.sidebar.item.Markdown.hit"},
+  {"type": "wait", "ms": 1500},
+  {"type": "click", "id": "app.md.tree.node.1.row", "_comment": "276: 打开测试笔记（node.1=rm2-276-拖选测试.md）"},
+  {"type": "wait", "ms": 1500},
+  {"type": "dump", "path": "rm2-276-open.txt"},
+  {"type": "screenshot", "path": "rm2-276-open.png"}
+ ]
+}

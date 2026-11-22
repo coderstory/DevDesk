@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "settings": {
+    "defaultWaitTimeoutMs": 9000,
+    "seed": {"config": {"config.json:": {"enabledModules": ["home","markdown","git","todo","schedule","claude_proxy","memory","mcp","terminal","release","settings","about"]}}}
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.ClaudeProxy.hit", "_comment": "#126 新建 profile + API key"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.claude.profiles.new.bg"},
+    {"type": "wait", "ms": 600},
+    {"type": "dump", "path": "k5-claudeform.txt"},
+    {"type": "type", "id": "app.claude.form.basic.name.hit", "text": "k-prof", "timeoutMs": 4000},
+    {"type": "type", "id": "app.claude.form.basic.url.hit", "text": "https://api.k-test.example/v1", "timeoutMs": 4000},
+    {"type": "type", "id": "app.claude.form.basic.key.hit", "text": "sk-ktest-0123456789abcdef", "timeoutMs": 4000},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "k5-claudefilled.txt"},
+    {"type": "click", "id": "app.claude.act.edit.bg", "force": true, "_comment": "保存动作（若非保存则 dump 揭示）"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k5-claudesaved.txt"},
+    {"type": "screenshot", "path": "k5-claudesaved.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Settings.hit", "_comment": "#155 查看详情弹窗"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.settings.tabs.3.hit"},
+    {"type": "wait", "ms": 500},
+    {"type": "click", "id": "app.settings.card.github_sync.summary.toggle"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "k5-syndetail.txt"},
+    {"type": "screenshot", "path": "k5-syndetail.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Mcp.hit", "_comment": "#145/#146 长参数透传+长输出约束"},
+    {"type": "wait", "ms": 800},
+    {"type": "click", "id": "app.mcp.card.notes_read.hit"},
+    {"type": "wait", "until": "exists", "id": "app.mcp.dialog.detail.btn.try.bg", "timeoutMs": 6000},
+    {"type": "type", "id": "app.mcp.dialog.detail.param.path.input.hit", "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-no-such.md"},
+    {"type": "click", "id": "app.mcp.dialog.detail.btn.try.bg"},
+    {"type": "wait", "ms": 1800},
+    {"type": "dump", "path": "k5-mcplong.txt"},
+    {"type": "screenshot", "path": "k5-mcplong.png"}
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {
+          "themeMode": "dark",
+          "enabledModules": [
+            "markdown",
+            "todo",
+            "schedule",
+            "claude_proxy",
+            "agent",
+            "memory",
+            "mcp",
+            "terminal",
+            "git"
+          ]
+        }
+      }
+    }
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Todo.hit",
+     "_comment": "#323 todo L1 dark 像素复验：三帧采样测流体穿板残差"},
+    {"type": "wait", "until": "exists", "id": "todo.btn.add"},
+    {"type": "click", "id": "todo.btn.add"},
+    {"type": "wait", "until": "exists", "id": "todo.dialog.newtask.input"},
+    {"type": "click", "id": "todo.dialog.newtask.input"},
+    {"type": "type", "text": "像素复验"},
+    {"type": "key", "name": "Enter"},
+    {"type": "wait", "until": "text", "text": "像素复验"},
+    {"type": "dump", "path": "v323-todo-dump.txt"},
+    {"type": "screenshot", "path": "v323-t1.png"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "v323-t2.png"},
+    {"type": "wait", "ms": 700},
+    {"type": "screenshot", "path": "v323-t3.png"}
+  ]
+}

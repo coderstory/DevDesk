@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "settings": {
+    "seed": {
+      "config": {
+        "config.json:": {"themeMode": "light",
+                          "enabledModules": ["markdown", "todo", "claude_proxy", "agent", "terminal"]}
+      }
+    },
+    "defaultWaitTimeoutMs": 10000
+  },
+  "steps": [
+    {"type": "click", "id": "app.sidebar.item.Agent.hit", "_comment": "162/170: 进智能体页（seed 开 agent）"},
+    {"type": "wait", "until": "exists", "id": "agent.empty.action.bg", "timeoutMs": 6000},
+    {"type": "click", "id": "agent.empty.action.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.name.hit"},
+    {"type": "type", "text": "视觉判读批L取证任务", "id": "agent.dialog.task.name.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.2.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.goal.hit"},
+    {"type": "type", "text": "打开详情弹窗取证", "id": "agent.dialog.task.goal.hit"},
+    {"type": "click", "id": "agent.dialog.task.step.3.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.dialog.task.save.bg"},
+    {"type": "click", "id": "agent.dialog.task.save.bg"},
+    {"type": "wait", "until": "exists", "id": "agent.task.1.title"},
+    {"type": "wait", "ms": 800, "_comment": "等入场动画走完"},
+    {"type": "dump", "path": "l2-agent-list-dump.txt"},
+    {"type": "click", "id": "agent.task.1.hit", "_comment": "162: 点任务卡（点击启动）开详情弹窗——卡片 hit 层为正确目标"},
+    {"type": "wait", "ms": 700},
+    {"type": "dump", "path": "l2-agent-detail-dump.txt"},
+    {"type": "screenshot", "path": "l2-agent-detail.png"},
+
+    {"type": "click", "id": "app.sidebar.item.Terminal.hit", "_comment": "278④: reset→×关闭→重开，看值是否提前落库"},
+    {"type": "wait", "until": "exists", "id": "app.term.act.new.bg", "timeoutMs": 6000},
+    {"type": "wait", "ms": 800},
+    {"type": "click", "id": "app.term.act.gear.bg"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "l2-term-open1-dump.txt"},
+    {"type": "click", "id": "app.term.set.reset"},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "l2-term-reset-dump.txt"},
+    {"type": "screenshot", "path": "l2-term-reset.png"},
+    {"type": "click", "id": "app.term.set.close.bg", "_comment": "× = 取消通道：不点 done，应丢弃 reset 草稿"},
+    {"type": "wait", "ms": 600},
+    {"type": "click", "id": "app.term.act.gear.bg", "_comment": "重开弹窗：值应回到 open1（用户原值）"},
+    {"type": "wait", "until": "exists", "id": "app.term.set.card", "timeoutMs": 5000},
+    {"type": "wait", "ms": 300},
+    {"type": "dump", "path": "l2-term-open2-dump.txt"}
+  ]
+}
