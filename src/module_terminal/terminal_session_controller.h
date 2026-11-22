@@ -4,9 +4,12 @@
 // 右邻优先激活（无右邻则左邻）；会话序号进程内递增不复用。
 #pragma once
 
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "platform/terminal/terminal_backend.h"
@@ -15,6 +18,7 @@ namespace terminal {
 
 enum class SessionState {
     Idle,     // 尚未启动（首个会话页面进入时自动 start）
+    Starting, // 后台建会话中（bug406：ConPTY 创建已搬 worker 线程，页面先出骨架）
     Running,
     Exited,   // 子进程已退出，exitCode 有效；最后一帧内容保留展示
     Failed,    // spawn 失败，errorMessage 可达，可重试
@@ -39,6 +43,14 @@ inline bool needsIdleTick(bool anyRunning, bool outputNotifyAvailable) {
     return anyRunning && outputNotifyAvailable;
 }
 
+// Starting 也要有帧（bug406）：后台建会话结果只在帧内 pollAll 收割，没帧会话就永卡
+// Starting、失败态也看不见。但它只进**低频自唤醒档**（结果到达靠 worker 唤醒，低频
+// 帧是兜底）——不能进常驻泵档，否则回到 bug249 的 60fps 空转。
+inline bool needsStartingFrameTick(bool anyStarting, bool anyRunning,
+                                  bool outputNotifyAvailable) {
+    return anyStarting || needsIdleTick(anyRunning, outputNotifyAvailable);
+}
+
 // 单会话全部运行态（页面/网格只经 controller 间接读）
 struct Session {
     std::unique_ptr<platform::TerminalSessionHandle> handle;
@@ -56,6 +68,12 @@ struct Session {
 
 class SessionController {
 public:
+    SessionController() = default;
+    // join 后台建会话 worker；未收割结果里的句柄析构即终止子进程（不留孤儿）
+    ~SessionController();
+    SessionController(const SessionController&) = delete;
+    SessionController& operator=(const SessionController&) = delete;
+
     void setBackend(platform::TerminalBackend* backend);
 
     // 输出/退出唤醒出口（bug249）：页面装 core::platform::requestUiUpdate —— reader
@@ -67,6 +85,10 @@ public:
     // 新建会话追加到序列尾并激活，返回新会话 index。backend 不可用 / spawn 失败
     // 不抛不崩：会话以 Failed 态占位（TAB 圆点红 + 覆盖卡错误详情）。
     int startSession();
+    // bug406：后台建会话——立即返回（会话以 Starting 占位），spawn 在 worker 线程跑，
+    // 结果由 pollAll 收割（成功转 Running，失败转 Failed 带 error）。进页帧不被
+    // ConPTY 创建阻塞（实测 14.4ms）。
+    int startSessionAsync();
     // 关闭第 i 个会话（终止进程，无确认；语义=终止）。激活右邻优先，无右邻则左邻；
     // 关最后一个 → activeIndex=-1（空态）。
     void closeSession(int index);
@@ -101,7 +123,29 @@ public:
                               int scrollbackLimit);
 
 private:
+    struct SpawnRequest {
+        int titleNumber = 0;
+        std::string shell;
+        std::string workDir;
+        int rows = 0;
+        int cols = 0;
+    };
+    struct SpawnOutcome {
+        int titleNumber = 0;
+        std::unique_ptr<platform::TerminalSessionHandle> handle;
+        std::string error;
+    };
+
     int spawnInto_(Session& s);
+    // 慢段（可用性检查 + spawn）：不碰 Session，UI 线程与建会话 worker 都可调
+    core::Result<std::unique_ptr<platform::TerminalSessionHandle>> spawnHandle_(
+        const std::string& shell, const std::string& workDir, int rows, int cols);
+    // 快段：已 spawn 的句柄接入会话（唤醒/回滚上限/状态迁移）。仅 UI 线程调
+    void installHandle_(Session& s, std::unique_ptr<platform::TerminalSessionHandle> handle,
+                        int scrollback);
+    void postSpawn_(SpawnRequest req);
+    void drainSpawnOutcomes_();  // UI 线程（pollAll 首步）
+    void runSpawnLoop_();        // worker 线程
 
     platform::TerminalBackend* backend_ = nullptr;
     std::vector<Session> sessions_;
@@ -112,6 +156,15 @@ private:
     std::string newSessionWorkDir_;
     int newSessionScrollback_ = 1000;
     std::function<void()> outputWake_;  // 空=未装（无唤醒出口，页面走常驻泵兜底）
+
+    // bug406 后台建会话：单 worker 串行队列；结果经 spawnMu_ 与 UI 线程交接（句柄与
+    // 错误只在 UI 线程接入 Session，worker 不改 sessions_）
+    std::thread spawnThread_;
+    std::mutex spawnMu_;
+    std::condition_variable spawnCv_;
+    std::vector<SpawnRequest> spawnQueue_;
+    std::vector<SpawnOutcome> spawnOutcomes_;
+    bool spawnStop_ = false;
 };
 
 } // namespace terminal

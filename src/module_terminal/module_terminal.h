@@ -32,6 +32,8 @@ public:
 
     // 测试缝（bug247 doctest）：当前会话数（只读透传 controller）
     int sessionCount() const { return controller_.count(); }
+    // 测试缝（bug406 doctest）：后台建会话结果要靠 pollAll 收割；生产走 compose → pollAll
+    SessionController& controllerForTest() { return controller_; }
 
 private:
     void ensureBackend();

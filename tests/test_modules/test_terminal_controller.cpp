@@ -7,9 +7,12 @@
 #include "module_terminal/terminal_session_controller.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 namespace {
@@ -455,5 +458,129 @@ REGISTER_TEST(terminalSearchScrollCenter,
     DOCTEST_CHECK_EQ(scrollOffsetToCenter(0, 100, 10, 90), 90);
     // 无溢出（视口 ≥ 总量）→ 恒 0
     DOCTEST_CHECK_EQ(scrollOffsetToCenter(3, 5, 10, 0), 0);
+    return true;
+})
+
+// ── bug406：后台建会话（进页帧不被 ConPTY 创建阻塞）───────────────────
+namespace {
+// spawn 可被闸门挂起的后端：用于断言 onPageEnter / startSessionAsync 在 spawn 完成前
+// 返回（同步实现在此必挂死，即测试自身的红灯）。
+class GateBackend : public platform::TerminalBackend {
+public:
+    std::mutex mu;
+    std::condition_variable cv;
+    bool open = false;  // true=放行 spawn
+    std::atomic<int> spawns{0};
+
+    core::Result<std::unique_ptr<platform::TerminalSessionHandle>> spawn(
+        const std::string&, const platform::TerminalSize&, const std::string&) override {
+        {
+            std::unique_lock<std::mutex> lock(mu);
+            cv.wait(lock, [this] { return open; });
+        }
+        spawns.fetch_add(1);
+        std::unique_ptr<platform::TerminalSessionHandle> h(new FakeHandle());
+        return core::Result<std::unique_ptr<platform::TerminalSessionHandle>>::ok(std::move(h));
+    }
+    void release() {
+        {
+            std::lock_guard<std::mutex> lock(mu);
+            open = true;
+        }
+        cv.notify_all();
+    }
+    bool available() const override { return true; }
+    const char* unavailableReason() const override { return ""; }
+};
+
+// UI 线程等价循环：生产由 compose → pollAll 收割；测试手动驱动（上限防挂死）
+void waitSettled(terminal::SessionController& c, int index) {
+    for (int i = 0; i < 400; i++) {
+        c.pollAll();
+        const terminal::Session* s = c.at(index);
+        if (s != nullptr && s->state != terminal::SessionState::Starting) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+} // namespace
+
+// bug406（池#406，实测进页 14.4ms）：onPageEnter 不能同步建 ConPTY 会话。骨架态 =
+// 会话已占位（Starting，页面出「正在启动终端…」）+ 句柄未接入；就绪后同帧接网格。
+REGISTER_TEST(moduleTerminalEnterAsyncNonBlocking,
+              "terminal module: onPageEnter 不等 spawn（Starting 骨架）；后台就绪转 Running（bug406）", 
+              {
+    GateBackend backend;
+    terminal::TerminalModule m(&backend);
+    m.onPageEnter(); // spawn 被闸门挂住 —— 同步实现会在本行挂死
+    auto& c = m.controllerForTest();
+    DOCTEST_CHECK(m.sessionCount() == 1);  // 占位即计数（骨架可渲染）
+    DOCTEST_CHECK(c.at(0)->titleNumber == 1);
+    DOCTEST_CHECK(c.at(0)->state == terminal::SessionState::Starting);
+    DOCTEST_CHECK(c.at(0)->handle == nullptr); // 句柄尚未接入（同步路径的根本差异）
+    DOCTEST_CHECK(c.at(0)->error.empty());
+
+    backend.release();
+    waitSettled(c, 0);
+    DOCTEST_CHECK(c.at(0)->state == terminal::SessionState::Running);
+    DOCTEST_CHECK(c.at(0)->handle != nullptr);
+
+    // 幂等：Starting / Running 都是「已有会话」，二次进页不新增
+    m.onPageEnter();
+    DOCTEST_CHECK(m.sessionCount() == 1);
+    m.onStop();
+    DOCTEST_CHECK(m.sessionCount() == 0);
+    return true;
+})
+
+// 失败必须可见（不静默）：后台 spawn 失败 → Failed 态 + error 文案（走既有覆盖卡）
+REGISTER_TEST(moduleTerminalEnterAsyncFailVisible,
+              "terminal module: 后台建会话失败 → Failed 带错误文案（不静默，bug406）", {
+    FakeBackend backend;
+    backend.failSpawn = true;
+    terminal::TerminalModule m(&backend);
+    m.onPageEnter();
+    auto& c = m.controllerForTest();
+    DOCTEST_CHECK(c.at(0)->state == terminal::SessionState::Starting); // 先骨架
+    waitSettled(c, 0);
+    DOCTEST_CHECK(c.at(0)->state == terminal::SessionState::Failed);
+    DOCTEST_CHECK(c.at(0)->error.find("注入失败") != std::string::npos);
+    DOCTEST_CHECK(c.at(0)->handle == nullptr);
+    return true;
+})
+
+// 建会话期间被关闭：后台结果丢弃、句柄不接入（不留孤儿进程，不因索引平移错位）
+REGISTER_TEST(controllerAsyncCloseDropsResult,
+              "terminal controller: 建会话中途关闭 → 后台结果丢弃（bug406）", {
+    GateBackend backend;
+    terminal::SessionController c;
+    c.setBackend(&backend);
+    c.startSessionAsync();
+    DOCTEST_CHECK(c.at(0)->state == terminal::SessionState::Starting);
+    c.closeSession(0);
+    DOCTEST_CHECK(c.empty());
+
+    backend.release();
+    for (int i = 0; i < 400 && backend.spawns.load() == 0; i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    DOCTEST_CHECK(backend.spawns.load() == 1);
+    c.pollAll(); // 收割：无同位会话 → 丢弃
+    DOCTEST_CHECK(c.empty());
+    DOCTEST_CHECK(c.activeIndex() == -1);
+    return true;
+})
+
+// Starting 必须有帧源：否则后台结果只能在用户下一次交互时才被收割（失败态不可见）；
+// 且只能走低频档，不能把常驻 60fps 泵拉回来
+REGISTER_TEST(terminalStartingKeepsFrameFlow,
+              "terminal frames: Starting 进低频帧档、不进常驻泵档（bug406）", {
+    // 仅 Starting：通知能力未知也要有帧（worker 唤醒是主路，低频帧兜底）
+    DOCTEST_CHECK(terminal::needsStartingFrameTick(true, false, false) == true);
+    DOCTEST_CHECK(terminal::needsStartingFrameTick(true, false, true) == true);
+    // Starting + Running：沿用原文口径（有通知→低频帧；无通知→常驻泵兜底）
+    DOCTEST_CHECK(terminal::needsStartingFrameTick(true, true, true) == true);
+    // 无 Starting 时口径不变：无 Running → 零帧（空闲/收起零出帧不动）
+    DOCTEST_CHECK(terminal::needsStartingFrameTick(false, false, true) == false);
+    DOCTEST_CHECK(terminal::needsStartingFrameTick(false, false, false) == false);
+    DOCTEST_CHECK(terminal::needsStartingFrameTick(false, true, true) == true);
     return true;
 })

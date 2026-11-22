@@ -2,9 +2,12 @@
 #include "telemem_client.h"
 #include <utility>
 
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 
@@ -24,15 +27,68 @@ using platform::json::JsonValue;
 // MCP 流式 HTTP 的 200 响应体是 SSE 信封；剥出首个 data: 行载荷（与引擎健康探活
 // 同一契约，telemem_engine.cpp 同款实现——这里复制而非共享：engine/ 目录冻结）
 std::string stripSseEnvelope(const std::string& body) {
-    if (body.rfind("event:", 0) != 0) return body;
-    static constexpr const char* kTag = "data: ";
-    const size_t at = body.find(kTag);
-    if (at == std::string::npos) return body;
-    const size_t begin = at + std::strlen(kTag);
-    const size_t end = body.find('\n', begin);
-    return body.substr(begin,
-                       end == std::string::npos ? std::string::npos
-                                                : end - begin);
+    // bug239：旧实现只在首行是 event: 时剥首个 data: 行；telemem 长时工具调用
+    // （infer=true 走 LLM）实测会回「无 event: 前缀」的 SSE 帧或空 data 心跳，
+    // 导致 response body 原样进 JSON 解析器。现按行扫 SSE 字段，取首个非空
+    // data 载荷；首行不是 SSE 字段（{ 开头）则原样返回。
+    std::size_t lineStart = 0;
+    while (lineStart < body.size()) {
+        std::size_t lineEnd = body.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = body.size();
+        std::string line = body.substr(lineStart, lineEnd - lineStart);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line.rfind("data:", 0) == 0) {
+            std::string payload = line.substr(5);
+            if (!payload.empty() && payload[0] == ' ') payload.erase(0, 1);
+            if (!payload.empty()) return payload;
+        } else if (!line.empty() && line.rfind("event:", 0) != 0 &&
+                   line.rfind("id:", 0) != 0 &&
+                   line.rfind("retry:", 0) != 0 && line[0] != ':') {
+            break;  // 首行非 SSE 字段 → 普通 JSON/错误页，原样返回
+        }
+        lineStart = lineEnd + 1;
+    }
+    return body;
+}
+
+// 脱敏：响应体不该带 key（红线要求），但诊断落盘一律先抹 sk-/Bearer 形态
+std::string maskSecrets(const std::string& s) {
+    std::string out = s;
+    for (const char* marker : {"sk-", "Bearer "}) {
+        std::size_t at = 0;
+        while ((at = out.find(marker, at)) != std::string::npos) {
+            std::size_t end = at + std::strlen(marker);
+            while (end < out.size() &&
+                   (std::isalnum(static_cast<unsigned char>(out[end])) ||
+                    out[end] == '-' || out[end] == '_' || out[end] == '.')) {
+                ++end;
+            }
+            out.replace(at, end - at,
+                        std::string(marker) + "<redacted>");
+            at += std::strlen(marker) + 10;
+        }
+    }
+    return out;
+}
+
+// bug239 诊断（一次性）：parse 失败落当前 http body（脱敏，≤8KB），判终局是
+// SSE 残帧 / HTML 错误页 / 空体；同进程后续失败不再覆盖首份现场。
+void dumpUnparsableBodyOnce(const std::string& body) {
+    static std::atomic<bool> done{false};
+    if (done.exchange(true)) return;
+    std::error_code ec;
+    const auto dir = engine::memoryDataDir();
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream f(dir / "infer_body_debug.log",
+                    std::ios::binary | std::ios::trunc);
+    if (!f) return;
+    std::string text = maskSecrets(body);
+    constexpr std::size_t kMax = 8192;
+    if (text.size() > kMax) {
+        text = text.substr(0, kMax) + "\n...(+" +
+               std::to_string(text.size() - kMax) + "B)";
+    }
+    f << text;
 }
 
 std::string lowered(std::string s) {
@@ -92,6 +148,7 @@ std::string headerValue(const platform::http::Response& resp,
 core::Result<JsonValue> parseJsonRpcResult(const std::string& httpBody) {
     const auto parsed = platform::json::parse(stripSseEnvelope(httpBody));
     if (parsed.isFail()) {
+        dumpUnparsableBodyOnce(httpBody);
         return core::Result<JsonValue>::fail(core::ErrorCode::JsonParseError,
                                              "响应非 JSON");
     }

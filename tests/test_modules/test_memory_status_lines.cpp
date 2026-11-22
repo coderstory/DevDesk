@@ -13,13 +13,17 @@
 #include "test_support.h"
 
 #include "module_memory/memory_module_internal.h"
+#include "module_memory/panel/panel_state.h"
 #include "module_memory/proposals/proposal_store.h"
 
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <thread>
 
 namespace engine = module::memory::engine;
+namespace panelns = module::memory::panel;
 namespace proposals = module::memory::proposals;
 
 namespace {
@@ -252,5 +256,75 @@ REGISTER_TEST(memory_list_pending_full_load_2000,
         "listPending 必须全量返回（无隐式 LIMIT，1629 真库口径）");
     std::error_code ec;
     std::filesystem::remove_all(tmp, ec);
+    return true;
+})
+
+// ── need401：快照共享只读指针（无变化帧零拷贝）──
+// 门控口径：稳态帧 refresh() 不重建数据面 → snapshot() 返回同一对象指针
+// （没有每帧全量拷）；后台 1s 节拍产出新数据面后，下一帧必须换指针且数据一致。
+
+namespace {
+
+std::filesystem::path makeSnapTestRoot(const char* tag) {
+    const auto root = std::filesystem::temp_directory_path() /
+                      (std::string(tag) +
+                       std::to_string(std::chrono::steady_clock::now()
+                                          .time_since_epoch()
+                                          .count()));
+    std::filesystem::create_directories(root / "memory");
+    return root;
+}
+
+}  // namespace
+
+REGISTER_TEST(memory_need401_snapshot_zero_copy_steady_frame,
+              "memory need401: 稳态帧快照指针不换（无变化帧零拷贝，非全量拷）", {
+    const auto root = makeSnapTestRoot("mem-snap-zero-copy-");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT", root.string());
+    panelns::PanelState panel;
+    panel.refresh(true);  // 首帧：同步构建数据面并发布
+    const auto first = panel.snapshot();
+    DOCTEST_REQUIRE(first != nullptr);  // 首帧后必可读，调用方零判空
+    DOCTEST_CHECK_EQ(first->pendingTotal, 0);
+    for (int i = 0; i < 3; ++i) {
+        panel.refresh();  // 稳态帧：数据面/ live 面均未变
+        DOCTEST_CHECK_MESSAGE(panel.snapshot().get() == first.get(),
+                              "无变化帧不得重建/拷贝快照（脏门未动）");
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    return true;
+})
+
+REGISTER_TEST(memory_need401_background_query_publishes_next_frame,
+              "memory need401: 提案库写入 → 后台 1s 查询 → 下一帧发布（数据一致）",
+              {
+    const auto root = makeSnapTestRoot("mem-snap-bg-query-");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT", root.string());
+    panelns::PanelState panel;
+    panel.refresh(true);
+    const auto first = panel.snapshot();
+    DOCTEST_REQUIRE(first != nullptr);
+    // 同一库另一连接写入：后台查询线程下轮应看到（跨连接自然可见）
+    auto opened = proposals::ProposalStore::open(root / "memory" / "proposals.db");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto created = opened.value().create("add", {}, "后台查询一致性提案", "", "",
+                                         {}, 0.5, "collect",
+                                         "assistant_derived", 1793766937);
+    DOCTEST_REQUIRE(created.isOk());
+    bool published = false;
+    auto snap = first;
+    for (int i = 0; i < 40 && !published; ++i) {  // ≤4s（1s 节拍 + 抖动）
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        panel.refresh();
+        snap = panel.snapshot();
+        published = snap->pendingTotal >= 1 && !snap->pending.empty() &&
+                    snap->pending.front().resultText == "后台查询一致性提案";
+    }
+    DOCTEST_CHECK_MESSAGE(published, "后台查询结果须在 1s 节拍后的帧里发布");
+    DOCTEST_CHECK_MESSAGE(snap.get() != first.get(),
+                          "有新数据 = 换指针发布（不是原地全量拷）");
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
     return true;
 })

@@ -288,8 +288,16 @@ REGISTER_TEST(todo_ui_db_import_reloads_board,
     DOCTEST_CHECK(frame.ui.find("todo.col.0.card.0.bg") == nullptr);  // 对照：未广播 → 仍旧
 
     ::core::event::bus().emit(::core::event::kDbImported);
+    // 池405：重载已搬后台线程——首帧出骨架，泵帧到装填完成（骨架退场）再断言
     frame.refresh();
-    DOCTEST_CHECK(frame.ui.find("todo.col.0.card.0.bg") != nullptr);  // 广播后重载可见
+    DOCTEST_CHECK(frame.ui.find("todo.skeleton") != nullptr);
+    bool reloaded = false;
+    for (int i = 0; i < 400 && !reloaded; ++i) {
+        frame.refresh();
+        reloaded = frame.ui.find("todo.col.0.card.0.bg") != nullptr;
+        if (!reloaded) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    DOCTEST_CHECK(reloaded);  // 广播后后台重载可见
 
     mod->onStop();
     return true;
@@ -5718,5 +5726,97 @@ REGISTER_TEST(todo_card_jelly_whole_stack_layer,
         DOCTEST_CHECK(wrap->zIndex == 0);
         DOCTEST_CHECK(nearOne(wrap->transform.scale.x));
     }
+    return true;
+})
+
+// 池405（bug401 P2-4）：db 导入后的全量重查搬后台线程——首帧只出骨架、UI 线程不等查询。
+// 判据：导入后新数据已落库，若仍走同步 reloadAll 则同一帧就能画出新卡；出骨架 = 查询在后台。
+REGISTER_TEST(todo_import_reload_async_skeleton,
+              "todo 池405：db 导入首帧出骨架（UI 路径不再同步全量重查）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    const auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int colIndex = -1;
+    int64_t colId = 0;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        if (cols.value()[i].kind == "todo") {
+            colIndex = static_cast<int>(i);
+            colId = cols.value()[i].id;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(colId != 0);
+    DOCTEST_REQUIRE(env.svc->createTask(colId, "导入前任务").isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    const std::string base = "todo.col." + std::to_string(colIndex);
+    {
+        Frame frame(mod.get());
+        DOCTEST_REQUIRE(frame.ui.find(base + ".card.0.title") != nullptr);
+    }
+
+    // 模拟 GitHub Sync 导入覆盖：库里多一条任务，然后广播导入事件
+    DOCTEST_REQUIRE(env.svc->createTask(colId, "导入后新增").isOk());
+    ::core::event::bus().emit(::core::event::kDbImported);
+
+    // 导入后首帧：骨架在场、任何卡都不在（同步重查的话新卡本帧即可见）
+    {
+        Frame frame(mod.get());
+        DOCTEST_CHECK(frame.ui.find("todo.skeleton") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.skeleton.col.0.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find(base + ".card.0.title") == nullptr);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 池405：后台装填到位后整板刷新——骨架退场、列表内容与库一致（不只新增那一条在）
+REGISTER_TEST(todo_import_reload_async_fill,
+              "todo 池405：后台重载装填后列表数据一致（骨架退场、新旧任务都在）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    const auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int colIndex = -1;
+    int64_t colId = 0;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        if (cols.value()[i].kind == "todo") {
+            colIndex = static_cast<int>(i);
+            colId = cols.value()[i].id;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(colId != 0);
+    DOCTEST_REQUIRE(env.svc->createTask(colId, "导入前任务").isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    const std::string base = "todo.col." + std::to_string(colIndex);
+
+    DOCTEST_REQUIRE(env.svc->createTask(colId, "导入后新增").isOk());
+    ::core::event::bus().emit(::core::event::kDbImported);
+
+    // 轮询 compose 直到后台装填完成（事件驱动帧循环靠 worker 主动要帧，测试里手动泵帧）
+    Frame frame(mod.get());
+    std::string newTitle;
+    for (int i = 0; i < 400 && newTitle.empty(); ++i) {
+        frame.refresh();
+        const auto* tail = frame.ui.find(base + ".card.1.title");
+        if (tail != nullptr) {
+            newTitle = tail->text;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_REQUIRE(newTitle == "导入后新增");
+    DOCTEST_CHECK(frame.ui.find("todo.skeleton") == nullptr);
+    const auto* head = frame.ui.find(base + ".card.0.title");
+    DOCTEST_REQUIRE(head != nullptr);
+    DOCTEST_CHECK(head->text == "导入前任务");
+
+    mod->onStop();
     return true;
 })

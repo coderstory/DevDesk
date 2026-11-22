@@ -74,16 +74,12 @@ bool refreshDue(const ProfileListState& st) {
 
 void refreshDataCache(ProfileListState& st, ClaudeService* svc) {
     harvestDataRefresh(st);
-    if (!st.dataLoaded_) {
-        // 冷启动兜底：快照从未装载（服务晚就绪 / 调用方未走 onStart）时本帧同步
-        // 装载一次（首帧必须有快照不得空帧）；失败保持本路径逐帧重试
-        applyDataRefresh(st, runDataRefresh(svc, true));
-        return;
-    }
     if (st.refreshFuture_.valid()) {
         return;   // 上一轮在途：不叠加（脏条件下帧仍成立，意图不丢）
     }
-    const bool wantProfiles = st.dataDirty_;
+    // 未装载过（服务晚就绪 / 调用方未走 onStart）同样只发后台意图：compose 内同步查库
+    // 会整帧阻塞（bug404 实测首帧 46.7ms），首帧由列表骨架态占位，结果唤醒后一帧装填。
+    const bool wantProfiles = st.dataDirty_ || !st.dataLoaded_;
     if (!wantProfiles) {
         return;   // 空闲帧零开销
     }

@@ -50,10 +50,13 @@
 extern "C" ::core::Module* create_claude_module();
 extern "C" void claude_test_bypass_switch_confirm(::core::Module*);
 
-// 测试模块工厂：默认关掉切换确认弹窗（全量回归直走选中；对话框测试用 mkmod(false)）
+// 测试模块工厂：默认关掉切换确认弹窗（全量回归直走选中；对话框测试用 mkmod(false)），
+// 并复刻生产装配序（registerModule 后即 onStart）——bug404 起首刷不再发生在 compose 内，
+// 未走 onStart 的用例首帧只有骨架态。
 static std::unique_ptr<::core::Module> mkmod(bool bypassSwitch = true) {
     auto m = std::unique_ptr<::core::Module>(create_claude_module());
     if (bypassSwitch) claude_test_bypass_switch_confirm(m.get());
+    m->onStart();
     return m;
 }
 
@@ -1304,6 +1307,62 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     }
     DOCTEST_CHECK(updated);
     DOCTEST_CHECK(hasName(cardNames(), "官方"));
+
+    mod->onStop();
+    return true;
+})
+
+// bug404：冷启动（onStart 早于服务装配 / 会话内开模块）首帧不得同步查库——
+// 首帧骨架占位，后台结果唤醒后一帧装填（compose 路径零 IO）。
+// 本条锁两件事：①首帧无卡片、非「暂无 Profile」假空态（同步首刷会让此处直接出卡 → 红）
+// ②后台装填后数据上屏、骨架撤走。
+REGISTER_TEST(claude_bug404_cold_start_skeleton_then_fill,
+              "claude_module: 冷启动首帧骨架态 + 后台装填（compose 不同步查库）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("骨架源", "https://skeleton.example.com",
+                                   "sk-ant-cccc-3333", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    // 不调 onStart：复现冷启动路径（数据已在库里，但模块尚未装载快照）
+    auto mod = std::unique_ptr<::core::Module>(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const std::string& tag) {
+        ui.begin(tag.c_str());
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // ① 首帧 = 骨架态
+    {
+        eui::Ui ui;
+        compose(ui, "bug404_f1");
+        DOCTEST_CHECK(ui.find("claude.profiles.loading") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.name") == nullptr);
+    }
+
+    // ② 有界轮询：后台结果唤醒 → 下一帧装填，卡片上屏且骨架撤走
+    bool filled = false;
+    for (int i = 0; i < 200 && !filled; ++i) {
+        eui::Ui ui;
+        compose(ui, "bug404_p" + std::to_string(i));
+        filled = ui.find("claude.profile.0.name") != nullptr &&
+                 ui.find("claude.profiles.loading") == nullptr;
+        if (!filled) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(filled);
+
+    // ③ 装填内容正确（快照来自后台查询）
+    {
+        eui::Ui ui;
+        compose(ui, "bug404_after");
+        const auto* n = ui.find("claude.profile.0.name");
+        DOCTEST_REQUIRE(n != nullptr);
+        DOCTEST_CHECK_EQ(n->text, std::string("骨架源"));
+    }
 
     mod->onStop();
     return true;
@@ -3141,6 +3200,12 @@ REGISTER_TEST(claude_ui_dialog_frame_containment,
     auto prof = env.svc->createProfile("框内档案", "https://frame.example.com",
                                        "sk-ant-frame-00000001", "m");
     DOCTEST_REQUIRE(prof.isOk());
+    // bug404：首刷改后台装填 → 建档后标脏并等快照上屏再点卡片（首帧 = 骨架态）
+    mod->onPageEnter();
+    for (int i = 0; i < 100 && ui.find("claude.profile.0.bg") == nullptr; ++i) {
+        frame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
 
     // P4 新建 Profile 表单（基础 tab）
     frame();

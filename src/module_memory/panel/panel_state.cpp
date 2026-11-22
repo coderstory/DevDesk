@@ -131,7 +131,10 @@ PanelState::PanelState()
     : gate_([](const std::string& line) {
           // 旁路/过闸审计行：只含计数与长度（SanitizeGate 契约），进日志通道
           LOG_INFO("[memory][sanitize] " + line);
-      }) {}
+      }) {
+    // 首帧前即有可读快照：调用方零判空（need401 快照共享指针契约）
+    pub_ = std::make_shared<PanelSnapshot>();
+}
 
 PanelState::~PanelState() {
     // F1 循环先停再拆成员：线程触碰 proposalStore_ 等 optional，必须先 join
@@ -139,6 +142,8 @@ PanelState::~PanelState() {
         collectStop_.store(true);
         collectThread_.join();
     }
+    queryStop_.store(true);
+    if (queryThread_.joinable()) queryThread_.join();
 }
 
 void PanelState::openStores() {
@@ -161,8 +166,8 @@ void PanelState::openStores() {
     if (ev.isOk()) evalStore_.emplace(std::move(ev.value()));
     else err += "评测库打开失败；";
     std::lock_guard<std::mutex> lk(mu_);
-    snap_.storesOk = err.empty();
-    snap_.storesError = err;
+    live_.storesOk = err.empty();
+    live_.storesError = err;
 }
 
 // ── F1 背景采集循环 ─────────────────────────────────────────────────────────
@@ -246,7 +251,7 @@ void PanelState::collectLoopMain() {
                 LOG_WARN("采集轮失败: " + r.errorMessage());
             } else {
                 if (r.value().blocked > 0 || r.value().cardsCreated > 0) {
-                    lastRefreshSec_ = 0;  // 有产出 → 下帧立刷动态流/审核数
+                    needPublish_.store(true);  // 有产出 → 下帧立刷动态流/审核数
                 }
             }
             // G-1 控耗接线：采集轮后置单步提炼（同线程同生命周期）。硬档暂停/
@@ -265,7 +270,7 @@ void PanelState::collectLoopMain() {
                     LOG_WARN("提炼步失败: " + step.errorMessage());
                 } else if (step.value().succeeded ||
                            step.value().attempted) {
-                    lastRefreshSec_ = 0;  // 有动作 → 下帧立刷动态流/消耗卡
+                    needPublish_.store(true);  // 有动作 → 下帧立刷动态流/消耗卡
                 }
             }
             const auto now = static_cast<std::int64_t>(std::time(nullptr));
@@ -291,33 +296,65 @@ void PanelState::collectLoopMain() {
 }
 
 void PanelState::refresh(bool force) {
-    const auto now = static_cast<std::int64_t>(std::time(nullptr));
+    lastPokeSec_.store(static_cast<std::int64_t>(std::time(nullptr)));
     {
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.settings = loadPanelSettings();
-        snap_.gateEnabled = gate_.enabled();
-        snap_.engine = engine::TelememEngine::global().snapshot();
+        live_.settings = loadPanelSettings();
+        live_.gateEnabled = gate_.enabled();
+        live_.engine = engine::TelememEngine::global().snapshot();
     }
     if (!std::filesystem::exists(dbDir())) {
         // 首跑：目录还没有 = 全零账面（不留白，不建库——等首跑向导）
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.storesOk = true;
+        live_.storesOk = true;
+        // 首帧也要有可读快照（调用方零判空）；稳态帧 live 面未变则不重发
+        if (!pub_ || liveStateChangedLocked()) publishLocked(nullptr);
         return;
     }
     if (!proposalStore_.has_value()) openStores();
     syncCollectLoop();  // F1：每帧同步（不受 1s 节流约束；引擎起停即刻响应）
-    if (!force && now - lastRefreshSec_ < 1) return;
-    lastRefreshSec_ = now;
+    syncQueryLoop();    // 数据面查询线程（1s 节拍；首帧起，此后自驱）
 
-    PanelSnapshot next;
+    std::shared_ptr<PanelSnapshot> next;
+    bool liveOnly = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        next = snap_;  // 携带 settings/engine/gate/stores 态
+        const bool kick = needPublish_.exchange(false);
+        next = force ? nullptr : std::move(fresh_);  // force 必同步重建（后台结果可能缺刚落的账）
+        if (!next && !force) {
+            // 零拷贝门：数据面无新结果 → 只有 live 面变了才重发，否则本帧不拷；
+            // 进页首帧/清库后（!dataBuilt_）落到下面同步构建，避免首个 1s 空白
+            if (dataBuilt_) {
+                if (kick || liveStateChangedLocked()) {
+                    liveOnly = true;
+                } else {
+                    return;
+                }
+            }
+        }
     }
+    if (!next && !liveOnly) {
+        // 同步构建：force（动作后立刷）或进页首帧/清库后（否则首 1s 空白）
+        next = std::make_shared<PanelSnapshot>();
+        fillDataSnapshot(*next);  // 查询在主线程：单次，#411 已限窗
+        std::lock_guard<std::mutex> lk(mu_);
+        fresh_.reset();  // 本次同步结果覆盖后台旧结果
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        dataBuilt_ = true;
+        publishLocked(std::move(next));
+    }
+}
+
+// 数据面重建：提案/账本/采集/评测/体积/动态流。查询全在锁外（后台 1s 节拍或
+// force 主线程），共享 store 连接靠 SQLite FULLMUTEX 串行化。
+void PanelState::fillDataSnapshot(PanelSnapshot& next) {
+    const auto now = static_cast<std::int64_t>(std::time(nullptr));
     if (proposalStore_.has_value()) {
         // need401 #411：待审只取窗口上限内的最早 N 条（created_at ASC），真实总数走
         // countByStatus 的单条 GROUP BY。无上限时 1s 刷新在提案风暴下逐秒拉行解码
-        // 全部待审（1630 条实测 135ms），并把全量拷进每帧均拷贝的 snap_。
+        // 全部待审（1630 条实测 135ms），并把全量拷进每帧均拷贝的快照。
         constexpr int kPendingWindow = 200;
         next.pendingTotal = 0;
         if (auto cnt = proposalStore_->countByStatus(); cnt.isOk()) {
@@ -367,12 +404,19 @@ void PanelState::refresh(bool force) {
     if (evalStore_.has_value()) next.lastEval = evalStore_->last();
 
     // 数据目录体积（60s 一查，递归统计不进每秒档）
-    if (now - lastSizeCheckSec_ >= 60) {
-        lastSizeCheckSec_ = now;
-        next.storageBytes = dirSizeBytes();
-    } else {
+    bool statNow = false;
+    {
         std::lock_guard<std::mutex> lk(mu_);
-        next.storageBytes = snap_.storageBytes;
+        next.storageBytes = live_.storageBytes;
+        if (now - lastSizeCheckSec_ >= 60) {
+            lastSizeCheckSec_ = now;
+            statNow = true;
+        }
+    }
+    if (statNow) {
+        next.storageBytes = dirSizeBytes();
+        std::lock_guard<std::mutex> lk(mu_);
+        live_.storageBytes = next.storageBytes;
     }
 
     // 动态流 = ledger + store 混排（数据源口径见任务书 U1）
@@ -414,9 +458,64 @@ void PanelState::refresh(bool force) {
         if (items.size() > 8) items.resize(8);
         next.feed = std::move(items);
     }
+}
 
-    std::lock_guard<std::mutex> lk(mu_);
-    snap_ = std::move(next);
+void PanelState::syncQueryLoop() {
+    if (queryThread_.joinable()) {
+        if (!queryStop_.load()) return;  // 运行中：自驱
+        queryThread_.join();             // 已自停（闲置/清库）→ 回收句柄
+    }
+    queryStop_.store(false);
+    queryThread_ = std::thread([this]() { queryLoopMain(); });
+}
+
+void PanelState::queryLoopMain() {
+    // 1s 节拍（100ms 分片保证 stop 及时，与采集循环同法）：提案/账本查询不占 UI
+    // 帧；结果落 fresh_，由 refresh() 下一帧发布（后到覆盖，UI 只要最新）
+    for (;;) {
+        for (int i = 0; i < 10; ++i) {
+            if (queryStop_.load()) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        // 页不在用（compose 不再调 refresh）→ 自停，不带走量（空转 CPU 预算）
+        if (static_cast<std::int64_t>(std::time(nullptr)) - lastPokeSec_.load() > 3) {
+            queryStop_.store(true);
+            return;
+        }
+        auto next = std::make_shared<PanelSnapshot>();
+        fillDataSnapshot(*next);
+        std::lock_guard<std::mutex> lk(mu_);
+        fresh_ = std::move(next);
+    }
+}
+
+void PanelState::publishLocked(std::shared_ptr<PanelSnapshot> next) {
+    if (!next) {
+        // 仅 live 面变化（引擎起停/评测结果）：复用上帧数据面重发
+        next = std::make_shared<PanelSnapshot>();
+        if (pub_) *next = *pub_;
+    }
+    next->settings = live_.settings;
+    next->gateEnabled = live_.gateEnabled;
+    next->engine = live_.engine;
+    next->storesOk = live_.storesOk;
+    next->storesError = live_.storesError;
+    next->lastEvalError = live_.lastEvalError;
+    next->lastEval = live_.lastEval;
+    pub_ = std::move(next);
+}
+
+// 发布门（mu_ 内）：只比切换级标量——计数/文案变化归数据面 tick，不逐帧比
+bool PanelState::liveStateChangedLocked() const {
+    if (!pub_) return true;
+    return pub_->gateEnabled != live_.gateEnabled ||
+           pub_->storesOk != live_.storesOk ||
+           pub_->storesError != live_.storesError ||
+           pub_->engine.state != live_.engine.state ||
+           pub_->engine.pythonFound != live_.engine.pythonFound ||
+           pub_->engine.llamaMissing != live_.engine.llamaMissing ||
+           pub_->engine.embedReady != live_.engine.embedReady ||
+           pub_->engine.embedState != live_.engine.embedState;
 }
 
 void PanelState::pollUsageAlerts() {
@@ -424,7 +523,7 @@ void PanelState::pollUsageAlerts() {
     const auto now = static_cast<std::int64_t>(std::time(nullptr));
     if (now - lastAlertPollSec_ < kUsageAlertPollSec) return;
     lastAlertPollSec_ = now;
-    // 直读盘而非 snap_ 缓存：记忆页不可见时 refresh 不跑，阈值改动也要即时生效
+    // 直读盘而非 live_ 缓存：记忆页不可见时 refresh 不跑，阈值改动也要即时生效
     auto settings = loadPanelSettings();
     // need:380 B-5：单开关关闭 = 静默（闸态原样保留，重开即恢复判定）
     if (!settings.usageAlertsEnabled) return;
@@ -457,9 +556,9 @@ void PanelState::pollUsageAlerts() {
             LOG_WARN("[usage-alert] 闸状态落盘失败，下次判定按旧闸重算");
         }
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.settings.usageDayGate = settings.usageDayGate;
-        snap_.settings.usageSoftGate = settings.usageSoftGate;
-        snap_.settings.usageHardGate = settings.usageHardGate;
+        live_.settings.usageDayGate = settings.usageDayGate;
+        live_.settings.usageSoftGate = settings.usageSoftGate;
+        live_.settings.usageHardGate = settings.usageHardGate;
     }
     for (const auto& f : fires) {
         const std::string title = proposals::usageAlertTitle(f.tier);
@@ -505,9 +604,9 @@ std::int64_t PanelState::dirSizeBytes() const {
     return total;
 }
 
-PanelSnapshot PanelState::snapshot() const {
+std::shared_ptr<const PanelSnapshot> PanelState::snapshot() const {
     std::lock_guard<std::mutex> lk(mu_);
-    return snap_;
+    return pub_;  // 只拷指针（无变化帧零拷贝）；快照对象发布后不再改
 }
 
 void PanelState::setSanitizeEnabled(bool on) {
@@ -515,8 +614,8 @@ void PanelState::setSanitizeEnabled(bool on) {
         std::lock_guard<std::mutex> lk(mu_);
         // 闸翻转必须在锁内：采集循环每轮锁内拷贝闸快照（跨线程可见性）
         gate_.setEnabled(on);
-        snap_.settings.sanitizeEnabled = on;
-        snap_.gateEnabled = on;
+        live_.settings.sanitizeEnabled = on;
+        live_.gateEnabled = on;
     }
     auto s = loadPanelSettings();
     s.sanitizeEnabled = on;
@@ -529,8 +628,8 @@ void PanelState::setSanitizeEnabled(bool on) {
 void PanelState::setRecallThresholdPct(int pct) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.settings.recallThresholdPct = pct;
-        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+        live_.settings.recallThresholdPct = pct;
+        if (auto sr = savePanelSettings(live_.settings); sr.isFail()) {
             LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
         }
     }
@@ -540,8 +639,8 @@ void PanelState::setRecallThresholdPct(int pct) {
 void PanelState::setTwoWordBaseline(int n) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.settings.twoWordBaseline = n;
-        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+        live_.settings.twoWordBaseline = n;
+        if (auto sr = savePanelSettings(live_.settings); sr.isFail()) {
             LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
         }
     }
@@ -551,8 +650,8 @@ void PanelState::setTwoWordBaseline(int n) {
 void PanelState::setUsageAlertsEnabled(bool on) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.settings.usageAlertsEnabled = on;
-        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+        live_.settings.usageAlertsEnabled = on;
+        if (auto sr = savePanelSettings(live_.settings); sr.isFail()) {
             LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
         }
     }
@@ -562,10 +661,10 @@ void PanelState::setUsageAlertsEnabled(bool on) {
 void PanelState::markLlmImported(const std::string& profileName) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        snap_.settings.llmImportedAtSec =
+        live_.settings.llmImportedAtSec =
             static_cast<std::int64_t>(std::time(nullptr));
-        snap_.settings.llmProfileName = profileName;
-        if (auto sr = savePanelSettings(snap_.settings); sr.isFail()) {
+        live_.settings.llmProfileName = profileName;
+        if (auto sr = savePanelSettings(live_.settings); sr.isFail()) {
             LOG_WARN("面板设置落盘失败: " + sr.errorMessage());
         }
     }
@@ -675,15 +774,15 @@ core::Result<void> PanelState::startEvalAsync() {
             std::lock_guard<std::mutex> lk(mu_);
             if (result.isOk() && evalStore_.has_value()) {
                 (void)evalStore_->save(result.value());
-                snap_.lastEval = result.value();
-                snap_.lastEvalError.clear();  // F5：成功即清上次失败痕迹
+                live_.lastEval = result.value();
+                live_.lastEvalError.clear();  // F5：成功即清上次失败痕迹
             } else if (result.isFail()) {
                 LOG_WARN("触发线评测失败: " + result.errorMessage());
-                snap_.lastEvalError = result.errorMessage();  // F5：UI 零反馈缺陷修复
+                live_.lastEvalError = result.errorMessage();  // F5：UI 零反馈缺陷修复
             }
         }
         evalRunning_.store(false);
-        lastRefreshSec_ = 0;  // 下一帧强制刷新读数
+        needPublish_.store(true);  // 下一帧强制刷新读数
     }).detach();
     return core::Result<void>::ok();
 }
@@ -780,6 +879,9 @@ core::Result<std::string> PanelState::exportAllToJson() {
 core::Result<void> PanelState::clearAllOwnStores() {
     // 自家库清空：关连接 → 删库文件 → 重建空库。引擎侧无列举/全清缝
     //（telemem 未暴露 delete-all），A 阶段只能清自家账——面板文案如实声明。
+    // 先停后台查询线程：reset 的 optional 与其查询竞争（下面 refresh(true) 重启）
+    queryStop_.store(true);
+    if (queryThread_.joinable()) queryThread_.join();
     proposalStore_.reset();
     ledger_.reset();
     collectorStore_.reset();
@@ -793,10 +895,12 @@ core::Result<void> PanelState::clearAllOwnStores() {
     }
     {
         std::lock_guard<std::mutex> lk(mu_);
-        snap_ = PanelSnapshot();
-        snap_.settings = loadPanelSettings();
-        snap_.gateEnabled = gate_.enabled();
-        snap_.engine = engine::TelememEngine::global().snapshot();
+        live_ = LiveState();
+        live_.settings = loadPanelSettings();
+        live_.gateEnabled = gate_.enabled();
+        live_.engine = engine::TelememEngine::global().snapshot();
+        fresh_.reset();  // 清旧结果，下面 refresh(true) 同步重建并发布
+        dataBuilt_ = false;
     }
     openStores();
     refresh(true);

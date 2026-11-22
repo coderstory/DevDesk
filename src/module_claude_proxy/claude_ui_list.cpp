@@ -696,6 +696,16 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                    core::theme::scaled(88.0f), core::theme::scaled(30.0f), t,
                                    retryOpts);
                 }
+            } else if (profiles.empty() && !st.dataLoaded_) {
+                // bug404：冷启动首帧快照未到 = 加载中（不能显示「暂无 Profile」假空态）
+                ui.text("claude.profiles.loading")
+                    .position(20.0f, cardY0 + 20.0f)
+                    .size(leftW - 40.0f, core::theme::scaled(60.0f))
+                    .text("正在加载 Profile…")
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(20.0f))
+                    .color(t.colors.textTertiary)
+                    .build();
             } else if (profiles.empty()) {
                 ui.text("claude.profiles.empty")
                     .position(20.0f, cardY0 + 20.0f)

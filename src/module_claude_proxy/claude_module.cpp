@@ -186,7 +186,8 @@ public:
             state_.list.dataDirty_ = true;   // 服务未就绪，保持脏
             return;
         }
-        // 首次装载必须同步（onStart 非渲染路径）：compose 恒读快照，异步首刷会闪空帧
+        // 首次装载仍留在 onStart（非渲染路径不占帧预算）；服务晚就绪 / 未走 onStart
+        // 的路径由 compose 骨架态 + 后台装填兜底（bug404），此处不再是首帧非空的前提
         applyDataRefresh(state_.list, runDataRefresh(svc, true));
         // 代理默认不启动：由 main.cpp 按设置门控或用户手动启动
         if (svc->isProxyRunning()) {

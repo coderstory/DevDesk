@@ -143,6 +143,16 @@ int main(int argc, char* argv[]) {
                               el.frame.y + el.frame.height * 0.5f);
     };
 
+    // 池405：kDbImported 的重载已搬后台线程（首帧出骨架）——发事件后泵帧到骨架退场再断言
+    auto reloadViaImport = [&]() {
+        core::event::bus().emit(core::event::kDbImported);
+        for (int i = 0; i < 200; ++i) {
+            composeFrame();
+            if (findEl("todo.skeleton") == nullptr) return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
     // 从 DB 查任务的 (columnId, position)
     auto taskPlace = [&](int64_t taskId) -> std::pair<int64_t, int> {
         auto tasks = svc.listAllTasks();
@@ -422,9 +432,8 @@ int main(int argc, char* argv[]) {
             passed = false;
         } else {
             int64_t newId = tNew.value().id;
-            // 不重启模块（onStart 会重跑固定四列迁移）；用导入事件驱动 reloadAll
-            core::event::bus().emit(core::event::kDbImported);
-            composeFrame();
+            // 不重启模块（onStart 会重跑固定四列迁移）；用导入事件驱动后台重载
+            reloadViaImport();
 
             // 找 col0 末尾卡
             const core::dsl::Element* lastEl = nullptr;
@@ -453,8 +462,8 @@ int main(int argc, char* argv[]) {
                 probe::pollOnce(window, runtime);
                 // 外部删除 + 触发重载（删除结果有意忽略：卡消失由画面断言核，need295）
                 (void)svc.deleteTask(newId);
-                core::event::bus().emit(core::event::kDbImported);
-                composeFrame();  // compose → reloadAll → guard 复位 DragState
+                // 后台重载泵帧到装填完成 → 模块应用结果时复位 DragState
+                reloadViaImport();
                 // release 在已删除卡的原坐标附近（卡不在树中，EU-NEO 收不到回调或回调无副作用）
                 core::queuePointerButton(window, sx + 100.0f, sy,
                                          core::PointerButton::Left,
@@ -709,9 +718,8 @@ int main(int argc, char* argv[]) {
             }
         }
         // 不重启模块：onStart 会重跑固定四列迁移，把 6 个自定义列归并回四列；
-        // 用导入事件驱动 reloadAll，保持 6 列现场
-        core::event::bus().emit(core::event::kDbImported);
-        composeFrame();
+        // 用导入事件驱动后台重载，保持 6 列现场
+        reloadViaImport();
 
         // 取列0的卡和列5的cards区
         const auto* card0 = findEl("todo.col.0.card.0.bg");

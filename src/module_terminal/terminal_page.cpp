@@ -899,11 +899,13 @@ GridLayout TerminalPage::compose(
                                             .size(8.0f, 8.0f)
                                             .radius(4.0f)
                                             .border(s != nullptr &&
-                                                            s->state == SessionState::Idle
+                                                            (s->state == SessionState::Idle ||
+                                                             s->state == SessionState::Starting)
                                                         ? 1.0f
                                                         : 0.0f,
                                                     s != nullptr &&
-                                                            s->state == SessionState::Idle
+                                                            (s->state == SessionState::Idle ||
+                                                             s->state == SessionState::Starting)
                                                         ? t.colors.textTertiary
                                                         : kTransparent)
                                             .color(dotColor);
@@ -986,6 +988,18 @@ GridLayout TerminalPage::compose(
                     .color(t.colors.primaryText)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .onClick([ctrl]() { ctrl->startSession(); });
+            }
+
+            // 层 6.5（bug406）：后台建会话骨架——会话已占位、句柄未就绪，先给一行文案；
+            // 就绪后状态转 Running 本层自然消失，失败转层 7 覆盖卡。
+            if (act != nullptr && act->state == SessionState::Starting) {
+                ui.text("term.starting.text")
+                    .position(0.0f, gridTop + bodyH * 0.5f - 10.0f)
+                    .size(screen.width, 20.0f)
+                    .text("正在启动终端…")
+                    .fontSize(core::theme::scaled(14.0f))
+                    .color(t.colors.textSecondary)
+                    .horizontalAlign(eui::HorizontalAlign::Center);
             }
 
             // 层 7：覆盖卡（激活会话 Exited/Failed，§4.4；语义跟 TAB 走）
@@ -1099,13 +1113,15 @@ GridLayout TerminalPage::compose(
             // onFrame 每帧置 composeRequested/animating（runtime_update.h），空闲终端
             // 会持续 60fps 空转（bug249 ② / bug305）。无通知路径的平台（mac 桥本批
             // 未接）保留 1×1 泵兜底。无 Running 会话一律不挂（exit 后零帧）。
+            // bug406：anyStarting 只进低频帧档（后台建会话结果由 worker 唤醒送达，
+            // 低频帧兜底）；常驻泵档仍只认 Running（不回 bug249 的 60fps 空转）
             bool anyRunning = false;
+            bool anyStarting = false;
             for (int i = 0; i < sessionCount; i++) {
                 const Session* s = controller.at(i);
-                if (s != nullptr && s->state == SessionState::Running) {
-                    anyRunning = true;
-                    break;
-                }
+                if (s == nullptr) continue;
+                if (s->state == SessionState::Running) anyRunning = true;
+                else if (s->state == SessionState::Starting) anyStarting = true;
             }
             if (needsFramePump(anyRunning, controller.outputNotifyAvailable())) {
                 ui.rect("term.framepump")
@@ -1116,8 +1132,9 @@ GridLayout TerminalPage::compose(
             }
             // bug305/306：有通知路径时改挂低频自唤醒（550ms 一帧）——Running 期间才挂，
             // 覆盖「退出巡检（ConPTY 不给 EOF）」与「光标闪烁相位」，退出后置闲零帧。
-            idleFrameTick().setActive(
-                needsIdleTick(anyRunning, controller.outputNotifyAvailable()));
+            // bug406：Starting 也挂低频帧（后台结果收割的兜底；worker 唤醒是主路）。
+            idleFrameTick().setActive(needsStartingFrameTick(
+                anyStarting, anyRunning, controller.outputNotifyAvailable()));
 
             // 层 8.5（池#365）：历史搜索条（右上悬浮，盖网格顶不占布局；设置面板
             //（层 9）之后绘制盖其上）。关闭清命中态、保留查询（重开续搜）。

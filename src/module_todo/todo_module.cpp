@@ -35,6 +35,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -80,6 +82,11 @@ public:
     std::string displayName() const override { return "Todo 看板"; }
     std::string shortName() const override { return "待办"; }
     std::string iconGlyph() const override { return eui::utf8(0xF058); }  // fa-circle-check
+
+    ~TodoModule() override {
+        // 后台重载线程引用 service_（本对象成员）：析构前必须回收，在途结果直接丢弃
+        stopAsyncReload();
+    }
 
     void onStart() override {
         // 重入幂等：double-onStart = no-op（不重跑 attachTools/reloadAll/视图恢复）
@@ -167,6 +174,8 @@ public:
         // 先关原子闸再退订：闸挡在途 handler，退订挡后续 emit。
         dbImportHandlersEnabled_.store(false, std::memory_order_release);
         dbImportedSub_ = {};
+        // 池405：后台重载线程引用 service_（service_ 不随停模块析构），停模块前先回收
+        stopAsyncReload();
         if (viewDirty_) saveViewState();
         // 只注销工具，不 reset service_：agent run 线程可能正执行 todo.* 工具（持 TodoService&），reset = UAF。
         // service_ 交给成员析构（声明序 todoTools_ 在前 → 先析构，引用不悬垂）
@@ -176,23 +185,55 @@ public:
         LOG_INFO("Todo 模块停止");
     }
 
-    void reloadAll() {
-        if (!service_) return;
-        loadError_.clear();
-        auto cols = service_->listColumns();
+    // 池405：查询体（同步 reloadAll 与后台重载共用）。只读 service（sqlite 单连接递归锁兜底），
+    // 不碰任何 UI 成员——后台线程的直接调用点必须只经过这里
+    struct ReloadResult {
+        std::vector<Column> columns;
+        std::vector<Task> tasks;
+        bool columnsOk = false;
+        bool tasksOk = false;
+        std::string error;   // 最近一次失败描述（空 = 全部成功；与原 reloadAll 覆盖口径一致）
+        // 逾期计数同批在后台算（UI 线程收割时不再二次查库）；失败保留上次 badge 值
+        bool overdueOk = false;
+        size_t overdueCount = 0;
+        std::string overdueError;
+    };
+
+    static ReloadResult queryAll(TodoService& svc) {
+        ReloadResult out;
+        auto cols = svc.listColumns();
         if (cols.isOk()) {
-            columns_ = std::move(cols).value();
+            out.columns = std::move(cols).value();
+            out.columnsOk = true;
         } else {
-            loadError_ = "读取列失败: " + cols.errorMessage();
-            LOG_ERROR("Todo: " + loadError_);
+            out.error = "读取列失败: " + cols.errorMessage();
+            LOG_ERROR("Todo: " + out.error);
         }
-        auto all = service_->listAllTasks();
+        auto all = svc.listAllTasks();
         if (all.isOk()) {
-            tasks_ = std::move(all).value();
+            out.tasks = std::move(all).value();
+            out.tasksOk = true;
         } else {
-            loadError_ = "读取任务失败: " + all.errorMessage();
-            LOG_ERROR("Todo: " + loadError_);
+            out.error = "读取任务失败: " + all.errorMessage();
+            LOG_ERROR("Todo: " + out.error);
         }
+        auto overdue = svc.listOverdue();
+        if (overdue.isOk()) {
+            out.overdueOk = true;
+            out.overdueCount = overdue.value().size();
+        } else {
+            out.overdueError = overdue.errorMessage();
+            LOG_ERROR("Todo: 逾期计数查询失败（badge 保留上次值）: " + out.overdueError);
+        }
+        return out;
+    }
+
+    // 装配（UI 线程）：查询失败的域保留旧缓存（原语义），其余剪枝/复位/刷新与旧 reloadAll 逐条一致
+    void applyReloadResult(ReloadResult&& data) {
+        loadError_.clear();
+        if (data.columnsOk) columns_ = std::move(data.columns);
+        if (data.tasksOk) tasks_ = std::move(data.tasks);
+        if (!data.error.empty()) loadError_ = std::move(data.error);
         // 滚动按列 id 记忆；剪掉已不存在列的记录防膨胀（prune 有删除 → 状态待落盘）
         std::vector<int64_t> liveIds;
         liveIds.reserve(columns_.size());
@@ -217,10 +258,67 @@ public:
                 archiveAutoCollapseAtMs_ = steadyNowMs() + kArchiveAutoCollapseDelayMs;
             }
         }
-        refreshOverdueCount();
+        if (data.overdueOk) {
+            overdueCount_ = data.overdueCount;
+        } else {
+            // 读取失败不降级成「0 条」：badge 保留上次值并把失败报出去
+            setStatus("逾期任务查询失败", data.overdueError);
+        }
         if (!searchQuery_.empty()) refreshSearch();
         // 重载/删卡后列内卡数可能减少：按上次视口高钳制，防旧偏移遗留空白列
         clampColumnScrolls(lastColumnViewportH_);
+    }
+
+    void reloadAll() {
+        if (!service_) return;
+        ++reloadStamp_;   // 同步重载越过后台轮次 → 在途后台结果作废（reap 处判）
+        applyReloadResult(queryAll(*service_));
+    }
+
+    // 池405：db 导入触发的全量重查搬 worker（UI 线程只收割）。结果槽单生产单消费：
+    // worker 写槽 → ready(release)，compose 首步 exchange(acquire) 收割
+    void startAsyncReload() {
+        if (!service_) return;
+        if (reloadThread_.joinable()) reloadThread_.join();
+        reloadReady_.store(false, std::memory_order_release);
+        reloadInFlight_.store(true, std::memory_order_release);
+        asyncReloadStamp_ = reloadStamp_;
+        TodoService* svc = service_.get();
+        try {
+            reloadThread_ = std::thread([this, svc] {
+                reloadResult_ = queryAll(*svc);
+                reloadReady_.store(true, std::memory_order_release);
+                // 事件驱动帧循环不主动重绘：完成即要帧（task_draft_job 同款先例）
+                ::core::platform::requestUiUpdate();
+            });
+        } catch (const std::system_error& e) {
+            // 线程创建失败：退回同步重载（宁可卡一帧，不丢刷新）
+            reloadInFlight_.store(false, std::memory_order_release);
+            LOG_ERROR(std::string("Todo: 后台重载线程创建失败，改同步重载: ") + e.what());
+            applyReloadResult(queryAll(*service_));
+        }
+    }
+
+    // 收割后台结果（compose 每帧首步）：ready → join → 装配 → 下一帧整板刷新（骨架退场）
+    void reapAsyncReload() {
+        if (!reloadReady_.exchange(false, std::memory_order_acq_rel)) return;
+        if (reloadThread_.joinable()) reloadThread_.join();
+        reloadInFlight_.store(false, std::memory_order_release);
+        if (asyncReloadStamp_ != reloadStamp_) {
+            // 后台查询期间用户写操作已同步重载过（更新鲜）：丢弃旧快照，不覆盖
+            LOG_INFO("Todo: 后台重载结果已过期（其间有同步重载），丢弃");
+            return;
+        }
+        applyReloadResult(std::move(reloadResult_));
+        LOG_INFO("Todo: 后台重载完成，看板数据已刷新");
+        ::core::platform::requestUiUpdate();
+    }
+
+    // 线程引用 service_（本对象成员）：停模块/析构前必须回收；在途结果直接丢弃
+    void stopAsyncReload() {
+        if (reloadThread_.joinable()) reloadThread_.join();
+        reloadInFlight_.store(false, std::memory_order_release);
+        reloadReady_.store(false, std::memory_order_release);
     }
 
     void refreshSearch() {
@@ -243,18 +341,6 @@ public:
         syncSearchArchiveExpand();
         // 过滤后卡数变少 → 旧偏移可能越过内容底，立即钳制防虚拟窗口越界空白
         clampColumnScrolls(lastColumnViewportH_);
-    }
-
-    void refreshOverdueCount() {
-        if (!service_) return;
-        auto r = service_->listOverdue();
-        if (r.isFail()) {
-            // 读取失败不降级成「0 条」：badge 保留上次值并把失败报出去
-            LOG_ERROR("Todo: 逾期计数查询失败（badge 保留上次值）: " + r.errorMessage());
-            setStatus("逾期任务查询失败", r.errorMessage());
-            return;
-        }
-        overdueCount_ = r.value().size();
     }
 
     void openOverdueDialog() {
@@ -946,10 +1032,17 @@ public:
     }
 
     void compose(eui::Ui& page, const eui::Screen& screen) override {
-        // 库被 GitHub Sync 导入覆盖 → 列/任务缓存指向旧行，重查（导入线程只置标记）。
+        // 库被 GitHub Sync 导入覆盖 → 列/任务缓存指向旧行。池405：全量重查搬后台
+        //（UI 线程只收割），本轮 compose 板出骨架、数据到位下一帧整板刷新。
+        reapAsyncReload();
         if (dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) {
-            reloadAll();
-            LOG_INFO("Todo: 检测到库导入，已重载看板数据");
+            if (reloadInFlight_.load(std::memory_order_acquire)) {
+                // 在途查询可能早于本次导入：信号留回脏标记，下一帧再起一轮
+                dbImportedDirty_.store(true, std::memory_order_release);
+            } else {
+                LOG_INFO("Todo: 检测到库导入，后台重载看板数据");
+                startAsyncReload();
+            }
         }
 
         consumeNavPayload();
@@ -1001,6 +1094,7 @@ public:
             .act = boardActions_,
             .archiveExpanded = archSt.expanded};
         boardView.archiveT = archSt.t;
+        boardView.loading = reloadInFlight_.load(std::memory_order_acquire);
         // need#169：全列折叠进度/目标态按列序装配（归档位同源填充；board 归档路径仍读 archiveT）
         boardView.columnCollapseT.assign(columns_.size(), 1.0f);
         boardView.columnExpanded.assign(columns_.size(), true);
@@ -1235,6 +1329,15 @@ private:
     std::atomic<bool> dbImportedDirty_{false};
     std::atomic<bool> dbImportHandlersEnabled_{false};
     ::core::event::EventBus::Subscription dbImportedSub_;
+    // 池405：db 导入后台重载线程。worker 只读 service 并写 reloadResult_，不碰 UI 成员；
+    // ready(release) → compose 首步 exchange(acquire) 收割。onStop/析构 join。
+    std::thread reloadThread_;
+    std::atomic<bool> reloadInFlight_{false};
+    std::atomic<bool> reloadReady_{false};
+    ReloadResult reloadResult_;
+    // 轮次戳（仅 UI 线程读写）：同步 reloadAll 递增，reap 时若与起点的戳不同 → 丢弃后台旧快照
+    uint64_t reloadStamp_ = 0;
+    uint64_t asyncReloadStamp_ = 0;
     bool started_ = false;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
