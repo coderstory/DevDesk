@@ -97,10 +97,22 @@ private:
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& comp);
 
+    // ── 宿主安装区（need394 F-3：安装/卸载入口从详情弹窗外置到页头固定区）──
+    // 固定区不滚、全程可视：文件内容只在首次进页 / 安装卸载后 / 服务态或端口
+    // 变化时重读（barrier：不逐帧读 105KB 的 ~/.claude.json）。
+    enum class HostKind { Claude, Zcode };
+    void refreshInstallStatesIfNeeded();
+    void drawHostInstallRow(eui::Ui& ui, HostKind kind, float x, float y,
+                            float rowW, const core::theme::Tokens& t,
+                            const components::theme::ThemeColorTokens& comp);
+    bool installStatesLoaded_ = false;
+    bool lastInstallServiceRunning_ = false;
+    int lastInstallPort_ = 0;
+
     // ── 「安装到 Claude Code」（need244）──
     // 三态 = 未装可装 / 已装可卸 / 不可操作（服务未运行或无 ~/.claude.json）。
-    // 状态在详情页每次打开时现读文件（不跨会话缓存、不逐帧读 105KB 大文件），
-    // 安装/卸载后立即重读刷新按钮态；写失败原因留在 ccError_ 供就地红字。
+    // 状态由页头宿主行按需现读（need394：首次进页/服务态变化/安装卸载后；
+    // 不跨会话缓存、不逐帧读 105KB 大文件）；写失败原因留在 ccError_ 供行内红字。
     struct CcButtonState {
         bool filePresent = false;
         bool installed = false;
@@ -109,19 +121,15 @@ private:
     };
     void refreshClaudeInstallState();
     void toggleClaudeInstall();
-    void drawClaudeInstallButton(eui::Ui& ui, float x, float y,
-                                 const CcButtonState& st,
-                                 const core::theme::Tokens& t,
-                                 const components::theme::ThemeColorTokens& comp);
 
     CcButtonState ccState_;
     std::string ccError_;   // 安装/卸载失败原因（成功帧清空）
-    std::string ccNotice_;  // 审计 P1-4：安装成功的「需重启 Claude Code 生效」提示（重开弹窗清）
+    std::string ccNotice_;  // 审计 P1-4：安装成功的「需重启 Claude Code 生效」提示（页头行内，卸载/重装即换）
 
     // ── 「安装到 ZCode」（need279）──
     // 与 Claude 行同构 + 第四态冲突：installed 判据 = mcp.servers.devdesk 存在且
     // url == 当前 live 端点；conflict = 存在但 url ≠ 端点（或缺 url）——置灰且
-    // 无卸载入口（N6：防误删用户条目）。状态在详情页每次打开时现读文件。
+    // 无卸载入口（N6：防误删用户条目）。状态由页头行按需现读。
     struct ZcButtonState {
         bool filePresent = false;
         bool installed = false;
@@ -131,14 +139,10 @@ private:
     };
     void refreshZcodeInstallState();
     void toggleZcodeInstall();
-    void drawZcodeInstallButton(eui::Ui& ui, float x, float y,
-                                const ZcButtonState& st,
-                                const core::theme::Tokens& t,
-                                const components::theme::ThemeColorTokens& comp);
 
     ZcButtonState zcState_;
     std::string zcError_;   // 安装/卸载失败原因（成功帧清空）
-    std::string zcNotice_;  // 安装/卸载成功的「需重启 ZCode 生效」提示（重开弹窗清）
+    std::string zcNotice_;  // 安装/卸载成功的「需重启 ZCode 生效」提示（页头行内）
 
     ::core::mcp::McpToolRegistry* registry_;
 

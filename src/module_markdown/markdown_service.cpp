@@ -1375,7 +1375,7 @@ bool MarkdownService::isSafeNewNotePath(const std::string& name) {
 // 判定按每段首个 '.' 之前的主名（stem）——"CON.txt" 在 Windows 同样保留。
 // 长度上限取 255 字节/段：NTFS 单段 = 255 UTF-16 码元、APFS/ext4 = 255 字节，而任意
 // 字符串的 UTF-8 字节数 ≥ UTF-16 码元数恒成立 → 255 字节是跨平台最严公分母。
-// 64 字先例（notes_mcp_tools kMaxTopicChars）是 MCP topic 字段预算（日期前缀与 .md
+// 64 字先例（MCP topic 字段预算：日期前缀与 .md
 // 由路由另计），非文件系统推导，不采。
 std::string MarkdownService::noteNamePolicyError(const std::string& relPath) {
     static const char* const kReserved[] = {

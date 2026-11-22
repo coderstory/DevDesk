@@ -1011,10 +1011,21 @@ void openDetailOf(McpPageModule& mod, eui::Ui& ui, const eui::Screen& screen,
 
 } // namespace
 
-// 四钮几何（need279 双行）：Claude 行（上）+ ZCode 行（与 try/close 同行）；
-// 同行不重叠（左到右 = claude/zcode, close, try），ZCode 行位于 Claude 行正下方
-REGISTER_TEST(mcp_page_claude_btn_geometry,
-              "mcp_page: 安装钮双行布局——ZCode 行与「试一下」「关闭」同行不重叠，Claude 行居其上", {
+// 设计真值源（need394 设计 §3.1/§3.3）：页头宿主安装区行盒与右锛钮尺寸。
+// 断言引用常量名不写布位魔数（布位迁移不破断言）。
+namespace hostDesign {
+constexpr float kRowH = 36.0f;
+constexpr float kRowGap = 8.0f;
+constexpr float kBtnW = 160.0f;
+constexpr float kBtnH = 32.0f;
+constexpr float kCardH = 248.0f;  // §3.1（含底距 24）
+constexpr float kHeadPad = 24.0f;
+}  // namespace hostDesign
+
+// need394 F-3：安装/卸载入口外置页头固定区——两宿主行镜像（Claude 上 / ZCode
+// 下，行距 8），右锛钮 160×32 右缘对齐卡内边距，页头卡高 248
+REGISTER_TEST(mcp_page_host_rows_geometry,
+              "mcp_page: need394 页头两宿主行镜像——钮 160×32 右锛对齐，行序 Claude 上/ZCode 下，卡高 248", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
@@ -1026,36 +1037,48 @@ REGISTER_TEST(mcp_page_claude_btn_geometry,
     g_bridge.port = 8888;
     CcConfigGuard cfg(true);
     eui::Ui ui;
-    openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_cc_geo");
+    composeFrame(mod, ui, screen, "mcp_host_geo");
 
-    const auto* claude = ui.find("mcp.dialog.detail.btn.claude.bg");
-    const auto* zcode = ui.find("mcp.dialog.detail.btn.zcode.bg");
-    const auto* tryBtn = ui.find("mcp.dialog.detail.btn.try.bg");
-    const auto* close = ui.find("mcp.dialog.detail.btn.close.bg");
+    const auto* claude = ui.find("mcp.head.host.claude.btn.bg");
+    const auto* zcode = ui.find("mcp.head.host.zcode.btn.bg");
     DOCTEST_REQUIRE(claude != nullptr);
     DOCTEST_REQUIRE(zcode != nullptr);
-    DOCTEST_REQUIRE(tryBtn != nullptr);
-    DOCTEST_REQUIRE(close != nullptr);
+    DOCTEST_CHECK_EQ(claude->frame.width, hostDesign::kBtnW);
+    DOCTEST_CHECK_EQ(claude->frame.height, hostDesign::kBtnH);
+    DOCTEST_CHECK_EQ(zcode->frame.width, hostDesign::kBtnW);
+    // 两宿主互为镜像：钮右缘同一垂线（右锛 = 卡右 − 24）
+    const float claudeRight = claude->frame.x + claude->frame.width;
     const float zcodeRight = zcode->frame.x + zcode->frame.width;
-    const float closeRight = close->frame.x + close->frame.width;
-    const float tryRight = tryBtn->frame.x + tryBtn->frame.width;
-    DOCTEST_CHECK_MESSAGE(zcodeRight <= close->frame.x,
-                          "ZCode 安装钮与关闭钮重叠：" + std::to_string(zcodeRight) +
-                              " > " + std::to_string(close->frame.x));
-    DOCTEST_CHECK_MESSAGE(closeRight <= tryBtn->frame.x,
-                          "关闭钮与试一下重叠：" + std::to_string(closeRight) +
-                              " > " + std::to_string(tryBtn->frame.x));
-    // 右缘不越弹窗内边距（frame 是窗口绝对坐标：以 ZCode 钮左缘 + 弹窗宽 600 换算）
-    DOCTEST_CHECK(tryRight <= zcode->frame.x + 600.0f - 20.0f + 0.5f);
-    // ZCode 行与 try/close 同一基线；Claude 行在其正上方（行高 32 + 行距 4）
-    DOCTEST_CHECK(zcode->frame.y == tryBtn->frame.y);
-    DOCTEST_CHECK(claude->frame.y == zcode->frame.y - 36.0f);
+    DOCTEST_CHECK_EQ(claudeRight, zcodeRight);
+    // 行序与行距：Claude 行在 ZCode 行正上方，差值 = 行高 + 行距
+    DOCTEST_CHECK_EQ(zcode->frame.y - claude->frame.y,
+                     hostDesign::kRowH + hostDesign::kRowGap);
+    // 钉位锛链齐备（dot / 宿主名 / 状态词）+ 标签行/分隔线
+    DOCTEST_CHECK_NE(ui.find("mcp.head.host.claude.dot"), nullptr);
+    const auto* claudeName = ui.find("mcp.head.host.claude.name");
+    const auto* zcodeName = ui.find("mcp.head.host.zcode.name");
+    DOCTEST_REQUIRE(claudeName != nullptr);
+    DOCTEST_REQUIRE(zcodeName != nullptr);
+    DOCTEST_CHECK_EQ(claudeName->text, std::string("Claude Code"));
+    DOCTEST_CHECK_EQ(zcodeName->text, std::string("ZCode"));
+    DOCTEST_CHECK_NE(ui.find("mcp.head.host.claude.state"), nullptr);
+    DOCTEST_CHECK_NE(ui.find("mcp.head.host.zcode.state"), nullptr);
+    DOCTEST_CHECK_NE(ui.find("mcp.head.host.label"), nullptr);
+    DOCTEST_CHECK_NE(ui.find("mcp.head.divider"), nullptr);
+    // 页头卡高 248（宿主区进固定区，卡随内容长高）
+    const auto* head = ui.find("mcp.head");
+    DOCTEST_REQUIRE(head != nullptr);
+    DOCTEST_CHECK_EQ(head->frame.height, hostDesign::kCardH);
+    // 钮在卡内（右缘不越卡内边距 24）
+    DOCTEST_CHECK(claudeRight <= head->frame.x + head->frame.width -
+                                       hostDesign::kHeadPad + 0.5f);
     return true;
 })
 
-// 未装 + 服务运行 → 文案「安装到 Claude Code」且可点；点后文件出现条目、文案变卸载
-REGISTER_TEST(mcp_page_claude_install_then_uninstall,
-              "mcp_page: need244 未装=安装文案；点击写盘后立刻变卸载文案，再点恢复", {
+// need394 F-3：未装 + 服务运行 → 页头「安装到 Claude Code」可点；点击写盘后立刻
+// 翻卸载文案 + 待重启 hint，再点恢复（入口已从弹窗迁到页头固定区）
+REGISTER_TEST(mcp_page_host_install_then_uninstall,
+              "mcp_page: need394 页头未装=安装文案；点击写盘后立刻变卸载文案，再点恢复", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
@@ -1067,16 +1090,16 @@ REGISTER_TEST(mcp_page_claude_install_then_uninstall,
     g_bridge.port = 8888;
     CcConfigGuard cfg(true);
     eui::Ui ui;
-    openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_cc_inst");
+    composeFrame(mod, ui, screen, "mcp_cc_inst");
 
-    const auto* label = buttonLabel(ui, "mcp.dialog.detail.btn.claude");
+    const auto* label = buttonLabel(ui, "mcp.head.host.claude.btn");
     DOCTEST_REQUIRE(label != nullptr);
     DOCTEST_CHECK_EQ(label->text, std::string("安装到 Claude Code"));
-    DOCTEST_CHECK_FALSE(ui.find("mcp.dialog.detail.btn.claude.bg")->disabled);
+    DOCTEST_CHECK_FALSE(ui.find("mcp.head.host.claude.btn.bg")->disabled);
 
-    ui.find("mcp.dialog.detail.btn.claude.bg")->onClick();
+    ui.find("mcp.head.host.claude.btn.bg")->onClick();
     composeFrame(mod, ui, screen, "mcp_cc_inst_2");
-    const auto* label2 = buttonLabel(ui, "mcp.dialog.detail.btn.claude");
+    const auto* label2 = buttonLabel(ui, "mcp.head.host.claude.btn");
     DOCTEST_REQUIRE(label2 != nullptr);
     DOCTEST_CHECK_EQ(label2->text, std::string("从 Claude Code 卸载"));
     // 落盘内容：devdesk 条目 = http + 当前端口，其余字段保留
@@ -1087,26 +1110,26 @@ REGISTER_TEST(mcp_page_claude_install_then_uninstall,
     DOCTEST_CHECK(written.find("\"numStartups\"") != std::string::npos);
     // 审计 P1-4：安装成功就地提示「需重启 Claude Code 生效」（写入 ≠ 立即生效）
     {
-        const auto* hint = ui.find("mcp.dialog.detail.claude.hint");
+        const auto* hint = ui.find("mcp.head.host.claude.hint");
         DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_CHECK(hint->text.find("重启 Claude Code") != std::string::npos);
     }
 
-    ui.find("mcp.dialog.detail.btn.claude.bg")->onClick();
+    ui.find("mcp.head.host.claude.btn.bg")->onClick();
     composeFrame(mod, ui, screen, "mcp_cc_inst_3");
-    DOCTEST_CHECK_EQ(buttonLabel(ui, "mcp.dialog.detail.btn.claude")->text,
+    DOCTEST_CHECK_EQ(buttonLabel(ui, "mcp.head.host.claude.btn")->text,
                      std::string("安装到 Claude Code"));
     const std::string after = core::readTextFile(cfg.configFile());
     DOCTEST_CHECK(after.find("\"devdesk\"") == std::string::npos);
     DOCTEST_CHECK(after.find("\"codegraph\"") != std::string::npos);
-    // 审计 P1-4：卸载成功后「待重启」提示清空（hint 槽不再显示过期提示）
-    DOCTEST_CHECK(ui.find("mcp.dialog.detail.claude.hint") == nullptr);
+    // 卸载成功后「待重启」提示清空（hint 槽不再显示过期提示）
+    DOCTEST_CHECK(ui.find("mcp.head.host.claude.hint") == nullptr);
     return true;
 })
 
 // 服务未运行 → 置灰 + 提示；没有 ~/.claude.json → 置灰 + 未检测到，且不创建文件
-REGISTER_TEST(mcp_page_claude_btn_gating,
-              "mcp_page: need244 服务未运行/无 .claude.json → 置灰并给提示，不建文件", {
+REGISTER_TEST(mcp_page_host_btn_gating,
+              "mcp_page: need394 服务未运行/无 .claude.json → 页头钮置灰并给提示，不建文件", {
     core::mcp::McpToolRegistry reg;
     std::shared_ptr<FakeTool> alpha, beta;
     seedTwoTools(reg, alpha, beta);
@@ -1118,11 +1141,13 @@ REGISTER_TEST(mcp_page_claude_btn_gating,
         g_bridge = BridgeState{};  // running=false
         CcConfigGuard cfg(true);
         eui::Ui ui;
-        openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_cc_gate_1");
-        DOCTEST_CHECK(ui.find("mcp.dialog.detail.btn.claude.bg")->disabled);
-        const auto* hint = ui.find("mcp.dialog.detail.claude.hint");
+        composeFrame(mod, ui, screen, "mcp_cc_gate_1");
+        DOCTEST_CHECK(ui.find("mcp.head.host.claude.btn.bg")->disabled);
+        const auto* hint = ui.find("mcp.head.host.claude.hint");
         DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_CHECK(hint->text.find("请先启动 MCP 服务") != std::string::npos);
+        // 两宿主各有一行提示槽（文案随宿主文件存在性而变化，只验在场）
+        DOCTEST_CHECK_NE(ui.find("mcp.head.host.zcode.hint"), nullptr);
     }
     {  // 没有 .claude.json
         McpPageModule mod(reg);
@@ -1132,9 +1157,9 @@ REGISTER_TEST(mcp_page_claude_btn_gating,
         g_bridge.port = 8888;
         CcConfigGuard cfg(false);
         eui::Ui ui;
-        openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_cc_gate_2");
-        DOCTEST_CHECK(ui.find("mcp.dialog.detail.btn.claude.bg")->disabled);
-        const auto* hint = ui.find("mcp.dialog.detail.claude.hint");
+        composeFrame(mod, ui, screen, "mcp_cc_gate_2");
+        DOCTEST_CHECK(ui.find("mcp.head.host.claude.btn.bg")->disabled);
+        const auto* hint = ui.find("mcp.head.host.claude.hint");
         DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_CHECK(hint->text.find("未检测到 Claude Code") != std::string::npos);
         // 禁自动创建
@@ -1175,20 +1200,20 @@ REGISTER_TEST(mcp_page_claude_click_on_real_config_copy,
         f << original;
     }
     eui::Ui ui;
-    openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_cc_real");
+    composeFrame(mod, ui, screen, "mcp_cc_real");
 
-    const auto* label = buttonLabel(ui, "mcp.dialog.detail.btn.claude");
+    const auto* label = buttonLabel(ui, "mcp.head.host.claude.btn");
     DOCTEST_REQUIRE(label != nullptr);
     DOCTEST_CHECK_EQ(label->text, std::string("安装到 Claude Code"));
-    DOCTEST_CHECK_FALSE(ui.find("mcp.dialog.detail.btn.claude.bg")->disabled);
-    DOCTEST_CHECK(ui.find("mcp.dialog.detail.claude.hint") == nullptr);  // 可操作态无提示
+    DOCTEST_CHECK_FALSE(ui.find("mcp.head.host.claude.btn.bg")->disabled);
+    DOCTEST_CHECK(ui.find("mcp.head.host.claude.hint") == nullptr);  // 可操作态无提示
 
-    ui.find("mcp.dialog.detail.btn.claude.bg")->onClick();
+    ui.find("mcp.head.host.claude.btn.bg")->onClick();
     composeFrame(mod, ui, screen, "mcp_cc_real_2");
     const std::string installedText = core::readTextFile(cfg.configFile());
     DOCTEST_CHECK(installedText.find("\"devdesk\"") != std::string::npos);
     DOCTEST_CHECK(installedText.find("http://127.0.0.1:8888/mcp") != std::string::npos);
-    DOCTEST_CHECK_EQ(buttonLabel(ui, "mcp.dialog.detail.btn.claude")->text,
+    DOCTEST_CHECK_EQ(buttonLabel(ui, "mcp.head.host.claude.btn")->text,
                      std::string("从 Claude Code 卸载"));
     // 其余顶层字段与既有 server 全保（真文件 51 个顶层键）
     {
@@ -1207,11 +1232,11 @@ REGISTER_TEST(mcp_page_claude_click_on_real_config_copy,
                     installedText.size(), after.keys().size(), servers.keys().size());
     }
 
-    ui.find("mcp.dialog.detail.btn.claude.bg")->onClick();
+    ui.find("mcp.head.host.claude.btn.bg")->onClick();
     composeFrame(mod, ui, screen, "mcp_cc_real_3");
     const std::string restoredText = core::readTextFile(cfg.configFile());
     DOCTEST_CHECK(restoredText.find("\"devdesk\"") == std::string::npos);
-    DOCTEST_CHECK_EQ(buttonLabel(ui, "mcp.dialog.detail.btn.claude")->text,
+    DOCTEST_CHECK_EQ(buttonLabel(ui, "mcp.head.host.claude.btn")->text,
                      std::string("安装到 Claude Code"));
     {
         const auto before = pjParse(original);
@@ -1226,6 +1251,94 @@ REGISTER_TEST(mcp_page_claude_click_on_real_config_copy,
         std::printf("[click-e2e] after remove: bytes=%zu topKeys=%zu servers=%s\n",
                     restoredText.size(), after.keys().size(),
                     joinKeys(afterServers.keys()).c_str());
+    }
+    return true;
+})
+
+// need394 F-3/D-2：外置=迁移非复制——详情弹窗不再绘制任何安装/卸载/提示槽元素，
+// 弹窗从 516 收缩到 480，结果区回到 86 高，操作行只剩单行 [关闭][试一下]
+REGISTER_TEST(mcp_page_dialog_no_install_rows,
+              "mcp_page: need394 弹窗 600×480——无安装行/提示槽，结果区 86 高，操作行单行", {
+    core::mcp::McpToolRegistry reg;
+    std::shared_ptr<FakeTool> alpha, beta;
+    seedTwoTools(reg, alpha, beta);
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    BridgeGuard bridge;
+    g_bridge = BridgeState{};
+    g_bridge.running = true;
+    g_bridge.port = 8888;
+    CcConfigGuard cfg(true);
+    eui::Ui ui;
+    openDetailOf(mod, ui, screen, "test_alpha_tool", "mcp_dlg_nofix");
+
+    const auto* panel = ui.find("mcp.dialog.detail.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_EQ(panel->frame.width, 600.0f);
+    DOCTEST_CHECK_EQ(panel->frame.height, 480.0f);  // D-2：516→480
+    // 安装行/hint 槽不做任何绘制（迁移非复制）
+    DOCTEST_CHECK(ui.find("mcp.dialog.detail.btn.claude.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("mcp.dialog.detail.btn.zcode.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("mcp.dialog.detail.claude.hint") == nullptr);
+    DOCTEST_CHECK(ui.find("mcp.dialog.detail.zcode.hint") == nullptr);
+    // 结果区：盒高 94（480−318−52−16），滚动区高 86（480−326−52−16）
+    const auto* resultBox = ui.find("mcp.dialog.detail.result.box");
+    DOCTEST_REQUIRE(resultBox != nullptr);
+    DOCTEST_CHECK_EQ(resultBox->frame.height, 94.0f);
+    const auto* scroll = ui.find("mcp.dialog.detail.result.scroll");
+    DOCTEST_REQUIRE(scroll != nullptr);
+    DOCTEST_CHECK_EQ(scroll->frame.height, 86.0f);
+    // 操作行：关闭与试一下同行（h−52），右缘贴弹窗内边距 20
+    const auto* close = ui.find("mcp.dialog.detail.btn.close.bg");
+    const auto* tryBtn = ui.find("mcp.dialog.detail.btn.try.bg");
+    DOCTEST_REQUIRE(close != nullptr);
+    DOCTEST_REQUIRE(tryBtn != nullptr);
+    DOCTEST_CHECK_EQ(close->frame.y, tryBtn->frame.y);
+    DOCTEST_CHECK(close->frame.x + close->frame.width <= tryBtn->frame.x);
+    DOCTEST_CHECK(tryBtn->frame.x + tryBtn->frame.width <=
+                  panel->frame.x + 600.0f - 20.0f + 0.5f);
+    return true;
+})
+
+// need394 F-4：卡片图标族新增 todo_*/md_* 两族（设计 §4.1 具体 FA 码点）——
+// 名族匹配顺序 todo → md_ → memory → fetch/web → server/info → cube 兜底
+REGISTER_TEST(mcp_page_tool_icon_family,
+              "mcp_page: need394 图标族——todo_*=list-check、md_*=file-lines、memory=brain、fetch/web=globe、server/info=server", {
+    core::mcp::McpToolRegistry reg;
+    struct Entry {
+        const char* name;
+        unsigned int glyph;
+    };
+    const Entry entries[] = {
+        {"todo_list", 0xF0AE},          // fa-list-check
+        {"todo_complete", 0xF0AE},
+        {"md_search", 0xF15C},          // fa-file-lines
+        {"md_list_tags", 0xF15C},
+        {"memory_search", 0xF5DC},      // fa-brain
+        {"web_fetch_markdown", 0xF0AC},  // fa-globe
+        {"devdesk_server_info", 0xF233},  // fa-server
+        {"mystery_tool", 0xF1B2},        // fa-cube 兜底
+    };
+    for (const auto& e : entries) {
+        (void)reg.registerTool(std::make_shared<FakeTool>(
+            std::string(e.name), "x", R"({"type":"object","properties":{}})"));
+    }
+    McpPageModule mod(reg);
+    const eui::Screen screen = makeScreen();
+    BridgeGuard bridge;
+    g_bridge = BridgeState{};
+    g_bridge.running = true;
+    g_bridge.port = 8888;
+    CcConfigGuard cfg(true);
+    eui::Ui ui;
+    composeFrame(mod, ui, screen, "mcp_icon_family");
+    for (const auto& e : entries) {
+        const auto* icon =
+            ui.find(std::string("mcp.card.") + e.name + ".icon");
+        DOCTEST_REQUIRE_MESSAGE(icon != nullptr,
+                                std::string("缺图标: ") + e.name);
+        DOCTEST_CHECK_MESSAGE(icon->text == eui::utf8(e.glyph),
+                              std::string("码点不符: ") + e.name);
     }
     return true;
 })

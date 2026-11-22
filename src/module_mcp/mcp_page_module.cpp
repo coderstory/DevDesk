@@ -136,15 +136,23 @@ namespace {
 // 原为定宽 340，1600 窗内只排 3 张（1020px），右侧空 210px。现在列宽随内容宽
 // 自适应：列数按「能放下多少列最小宽」取，卡宽 = (内容宽 - 列间距×(列数-1)) / 列数。
 // 区间锁 340–420：太窄描述挤、太宽一行字飘。
+// 页头卡宿主安装区行盒节奏（need394 设计 §3.1）；卡高 = 248（最后一行为 36 行
+// 盒 + 24 底距）。宿主行/按钮尺寸均设计表直取。
+constexpr float kHostRowH = 36.0f;
+constexpr float kHostRowGap = 8.0f;
+constexpr float kHostLabelH = 18.0f;
+constexpr float kHostBtnW = 160.0f;
+constexpr float kHostBtnH = 32.0f;
+
 constexpr float kCardMinW = 340.0f;
 constexpr float kCardMaxW = 420.0f;
 constexpr int kCardMaxCols = 5;
 // need343「文本全左侧」：卡高 120→96（设计稿 §4.1，消 y=84 以下无信息空带）
 constexpr float kCardH = 96.0f;
 constexpr float kDialogW = 600.0f;
-// need279：480→516（+36 = 按钮行 32 + 行距 4）腾「安装到 ZCode」行——
-// ZCode 行落原 Claude 行位（h-52），Claude 行上移 h-88，结果区底缘随之下收
-constexpr float kDialogH = 516.0f;
+// need394（D-2 外置=迁移）：安装行整块迁到页头后弹窗收缩回 480——need279 的
+// +36（双安装行 32+行距 4）随安装行一并回收，结果区不再为安装行让位
+constexpr float kDialogH = 480.0f;
 
 // 卡内布局常量（need343 设计稿 docs/design/2026-11-18-mcp-card-redesign.md §4
 // 全数值）：单左文本列（名称/状态行/描述一条左缘 x=16）+ 单右图标轨（仅图形
@@ -161,9 +169,21 @@ constexpr float kChipW = 40.0f;          // 标签 chip 宽（§4.3）
 constexpr float kChipH = 18.0f;
 constexpr float kArrowSize = 16.0f;      // hover 箭头纯图标（§4.4）
 
-// 工具卡图标：按名字族派发 FA7 Free-Solid 码点（抓取=globe / 服务信息=server /
-// 其余=cube）；码点均在 EUI-NEO 内置 FA7 整字体覆盖内。
+// 工具卡图标：按名字族派发 FA7 Free-Solid 码点（待办=list-check / 笔记=file-lines /
+// 记忆=brain / 抓取=globe / 服务信息=server / 其余=cube）；匹配顺序=表序
+//（need394 设计 §4.1，同码点跨页统一：todo.* 智能体面 todo_tools 同族图标 /
+// md.* 文件树 md_module_tree / memory 记忆行 mcp_page_module:659）。
+// 码点均在 EUI-NEO 内置 FA7 整字体覆盖内。
 unsigned int toolIconGlyph(const std::string& name) {
+    if (name.find("todo") != std::string::npos) {
+        return 0xF0AE;  // fa-list-check
+    }
+    if (name.find("md_") != std::string::npos) {
+        return 0xF15C;  // fa-file-lines
+    }
+    if (name.find("memory") != std::string::npos) {
+        return 0xF5DC;  // fa-brain
+    }
     if (name.find("fetch") != std::string::npos ||
         name.find("web") != std::string::npos) {
         return 0xF0AC;  // fa-globe
@@ -224,6 +244,9 @@ std::string McpPageModule::iconGlyph() const { return "\xEF\x87\xA6"; }
 
 void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     harvestTryRun();
+    // need394：宿主安装态按需现读（首次进页 / 服务态或端口变化 / 安装卸载后），
+    // 不逐帧读宿 105KB 配置文件（need244 既有约束）
+    refreshInstallStatesIfNeeded();
     const auto& t = core::theme::current();
     const auto comp = core::theme::componentTokensWeChat(t);
     const float pad = t.sizes.spacingLarge * 2.0f;  // 32：页面外边距与他页同档
@@ -232,8 +255,8 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     // 服务状态行数据源：app::mcp 桥只读快照（本页不提供开关，开关在设置页）。
     const app::mcp::LiveStatus svc = app::mcp::status();
 
-    // 池144（口径 = 池140 设计 §2 滚动模型）：整页滚动废除——外壳不滚，页头五行
-    //（标题/副标题/状态行/记忆模块行/区头）固定全程可视，工具网格（或空态）是
+    // 池144（口径 = 池140 设计 §2 滚动模型）：整页滚动废除——外壳不滚，页头六行
+    //（标题/副标题/状态行/宿主安装区/记忆模块行/区头）固定全程可视，工具网格（或空态）是
     // 唯一滚动区、列表容器内自滚。
     const float contentW = std::max(0.0f, screen.width - pad * 2.0f);
     // 页头卡几何（2026-11-18 D-6）：全站「大卡 + 卡内标题」体例——标题/说明/状态
@@ -246,7 +269,18 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     const float headTitleY = headPad;
     const float headDescY = headTitleY + headTitleH + t.sizes.spacingSmall;
     const float headStatusY = headDescY + headDescH + t.sizes.spacingSmall * 2.0f;
-    const float headCardH = headStatusY + headStatusH + headPad;
+    // need394（设计 §3.1）：服务状态行之下新增宿主安装区（分隔线 → 标签行 →
+    // 两宿主行），整卡高 248（D-6 同一张填充卡内，不拆新卡）
+    const float headDividerY =
+        headStatusY + headStatusH + t.sizes.spacingSmall * 3.0f;  // 106
+    const float headLabelY =
+        headDividerY + t.sizes.spacingSmall * 3.0f;  // 118
+    const float headLabelH = core::theme::scaled(kHostLabelH);
+    const float hostRowH = core::theme::scaled(kHostRowH);
+    const float hostRowGap = core::theme::scaled(kHostRowGap);
+    const float hostRow1Y = headLabelY + headLabelH + hostRowGap;  // 144
+    const float hostRow2Y = hostRow1Y + hostRowH + hostRowGap;     // 188
+    const float headCardH = hostRow2Y + hostRowH + headPad;        // 248
 
     // 固定区高 = 顶 padding(0) + 页头卡 + 记忆行64 + 区头26（全 scaled）+ 3 个
     // 16 gap；列表区高 = 余高 − 底 padding，下限 scaled(120)（极矮窗仍可滚不塌陷）。
@@ -329,6 +363,50 @@ void McpPageModule::compose(eui::Ui& ui, const eui::Screen& screen) {
                                         .build();
                                 })
                                 .build();
+
+                            // need394（设计 §3.1/§3.2/§3.3）：宿主安装区。
+                            // 分隔线 → 标签行（D-5 一次性注册语义的唯一常驻文案）
+                            // → 两宿主点态行（与服务状态行同族；右锚 160×32 双态钮）
+                            ui.rect("mcp.head.divider")
+                                .position(headPad, headDividerY)
+                                .size(headInnerW, 1.0f)
+                                .color(t.colors.borderDefault)
+                                .build();
+                            {
+                                const std::string labelText = "宿主安装";
+                                const float labelW = ui_kit::cachedTextWidth(
+                                    labelText, core::theme::scaled(12.0f), 600);
+                                const std::string noteText =
+                                    "一次性注册整个服务，宿主连接后自动发现全部工具";
+                                ui.text("mcp.head.host.label")
+                                    .position(headPad, headLabelY)
+                                    .size(labelW, headLabelH)
+                                    .text(labelText)
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .fontWeight(600)
+                                    .color(t.colors.textSecondary)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .build();
+                                const float noteX = headPad + labelW + 8.0f;
+                                const float noteW =
+                                    std::max(0.0f, headPad + headInnerW - noteX);
+                                ui.text("mcp.head.host.note")
+                                    .position(noteX, headLabelY)
+                                    .size(noteW, headLabelH)
+                                    .text(noteText)
+                                    .fontSize(core::theme::scaled(11.0f))
+                                    .color(t.colors.textTertiary)
+                                    .maxWidth(noteW)
+                                    .wrap(false)
+                                    .overflow(core::TextOverflow::Ellipsis)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .clip()
+                                    .build();
+                            }
+                            drawHostInstallRow(ui, HostKind::Claude, headPad,
+                                               hostRow1Y, headInnerW, t, comp);
+                            drawHostInstallRow(ui, HostKind::Zcode, headPad,
+                                               hostRow2Y, headInnerW, t, comp);
                         })
                         .build();
 
@@ -700,6 +778,148 @@ void McpPageModule::drawMemoryModuleRow(
         .build();
 }
 
+// need394：安装态刷新时机 —— 首次进页 / 服务运行态与端口变化（zcode 的
+// installed/conflict 判定依赖 live 端点，端口变必须重判）/ 每次安装卸载后
+// （toggle 里显式调 refresh）。配置文件最多百 KB 级，但不在帧内重读。
+void McpPageModule::refreshInstallStatesIfNeeded() {
+    const auto live = app::mcp::status();
+    const bool running = live.running && live.port > 0;
+    if (installStatesLoaded_ && running == lastInstallServiceRunning_ &&
+        (live.port < 0 ? 0 : live.port) == lastInstallPort_) {
+        return;
+    }
+    installStatesLoaded_ = true;
+    lastInstallServiceRunning_ = running;
+    lastInstallPort_ = live.port < 0 ? 0 : live.port;
+    refreshClaudeInstallState();
+    refreshZcodeInstallState();
+}
+
+// 宿主行镜像（设计 §3.3）：左锚 dot+宿主名+状态词 → 弹性 hint 槽 → 右锚 160×32
+// 次级灰双态钮。hint 优先级链同原弹窗（设计 §3.4，零语义漂移）；空 hint 不建
+// 元素，弹性区被右锚组自然压回。
+void McpPageModule::drawHostInstallRow(
+    eui::Ui& ui, HostKind kind, float x, float y, float rowW,
+    const core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& comp) {
+    const bool isClaude = kind == HostKind::Claude;
+    const std::string id = isClaude ? "mcp.head.host.claude"
+                                    : "mcp.head.host.zcode";
+    const std::string hostName = isClaude ? "Claude Code" : "ZCode";
+    const std::string uninstallText =
+        isClaude ? "从 Claude Code 卸载" : "从 ZCode 卸载";
+    const std::string installText =
+        isClaude ? "安装到 Claude Code" : "安装到 ZCode";
+    const std::string missingText =
+        isClaude ? "未检测到 Claude Code（~/.claude.json 不存在）"
+                 : "未检测到 ZCode（~/.zcode/cli/config.json 不存在）";
+    // 共同字段显式拆取（两宿主 state 类型不同，三目不可取引用）
+    const bool filePresent =
+        isClaude ? ccState_.filePresent : zcState_.filePresent;
+    const bool installed = isClaude ? ccState_.installed : zcState_.installed;
+    const bool serviceRunning =
+        isClaude ? ccState_.serviceRunning : zcState_.serviceRunning;
+    const bool conflict = !isClaude && zcState_.conflict;
+    const bool actionable = filePresent && serviceRunning && !conflict;
+    const std::string& error = isClaude ? ccError_ : zcError_;
+    const std::string& notice = isClaude ? ccNotice_ : zcNotice_;
+
+    const float rowH = core::theme::scaled(kHostRowH);
+    const float dotY = y + core::theme::scaled(14.0f);
+    const float nameX = x + 8.0f + 6.0f;
+    const float nameW = ui_kit::cachedTextWidth(
+        hostName, core::theme::scaled(13.0f), 600);
+    const std::string stateText =
+        conflict ? "配置冲突" : (installed ? "已安装" : "未安装");
+    const float stateW = ui_kit::cachedTextWidth(
+        stateText, core::theme::scaled(11.0f), 600);
+    const float stateX = nameX + nameW + 6.0f;
+
+    ui.rect(id + ".dot")
+        .position(x, dotY)
+        .size(8.0f, 8.0f)
+        .radius(t.sizes.radiusSmall)
+        .color(conflict ? t.colors.error
+                        : (installed ? t.colors.success : t.colors.textDisabled))
+        .build();
+    ui.text(id + ".name")
+        .position(nameX, y)
+        .size(nameW, rowH)
+        .text(hostName)
+        .fontSize(core::theme::scaled(13.0f))
+        .fontWeight(600)
+        .color(t.colors.textPrimary)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .build();
+    ui.text(id + ".state")
+        .position(stateX, y)
+        .size(stateW, rowH)
+        .text(stateText)
+        .fontSize(core::theme::scaled(11.0f))
+        .fontWeight(600)
+        .color(conflict
+                   ? t.colors.errorText
+                   : (installed ? t.colors.successText
+                                   : t.colors.textDisabled))
+        .verticalAlign(eui::VerticalAlign::Center)
+        .build();
+
+    // hint 优先级链（设计 §3.4）：文件缺失 → 服务未启 → 冲突 → 写/备份失败 → 成功待重启
+    std::string hint;
+    bool hintIsError = false;
+    if (!filePresent) {
+        hint = missingText;
+    } else if (!serviceRunning) {
+        hint = "请先启动 MCP 服务";
+    } else if (conflict) {
+        hint = "ZCode 配置已有同名 devdesk 条目且地址不同，"
+               "请先在 ZCode 配置中移除该条目后再安装";
+        hintIsError = true;
+    } else if (!error.empty()) {
+        hint = error;
+        hintIsError = true;
+    } else if (!notice.empty()) {
+        hint = notice;
+    }
+
+    const float btnW = core::theme::scaled(kHostBtnW);
+    const float btnH = core::theme::scaled(kHostBtnH);
+    const float btnX = x + rowW - btnW;
+    const float hintX = stateX + stateW + 12.0f;
+    const float hintW = std::max(0.0f, btnX - 12.0f - hintX);
+    if (!hint.empty()) {
+        ui.text(id + ".hint")
+            .position(hintX, y)
+            .size(hintW, rowH)
+            .text(hint)
+            .fontSize(core::theme::scaled(11.0f))
+            .color(hintIsError ? t.colors.errorText : t.colors.textTertiary)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .maxWidth(hintW)
+            .wrap(false)
+            .overflow(core::TextOverflow::Ellipsis)
+            .clip()
+            .build();
+    }
+    // 双态钮：未装=安装文案 / 已装=卸载文案；冲突态置灰且不提供卸载入口
+    //（N6 防误删用户条目）；服务未启/文件缺失 → 置灰（D-4，语义文案保留）
+    components::button(ui, id + ".btn")
+        .theme(comp, false)  // 次级灰：主色填充留给弹窗「试一下」
+        .position(btnX, y + (rowH - btnH) * 0.5f)
+        .size(btnW, btnH)
+        .text(installed ? uninstallText : installText)
+        .fontSize(core::theme::scaled(12.0f))
+        .disabled(!actionable)
+        .onClick([this, isClaude] {
+            if (isClaude) {
+                toggleClaudeInstall();
+            } else {
+                toggleZcodeInstall();
+            }
+        })
+        .build();
+}
+
 void McpPageModule::refreshClaudeInstallState() {
     const cc::ConfigState st = cc::readConfigState(core::paths::claudeConfigFile());
     ccState_.filePresent = st.filePresent;
@@ -730,23 +950,6 @@ void McpPageModule::toggleClaudeInstall() {
     }
     refreshClaudeInstallState();  // 立即重读，按钮态与文件同步
     core::platform::requestUiUpdate();
-}
-
-void McpPageModule::drawClaudeInstallButton(
-    eui::Ui& ui, float x, float y, const CcButtonState& st,
-    const core::theme::Tokens& t,
-    const components::theme::ThemeColorTokens& comp) {
-    // 文案三态：未装=安装 / 已装=卸载；不可操作时保留当前语义文案但置灰
-    const std::string label = st.installed ? "从 Claude Code 卸载" : "安装到 Claude Code";
-    components::button(ui, "mcp.dialog.detail.btn.claude")
-        .theme(comp, false)  // 次要操作：与「关闭」同级灰底，不抢「试一下」主色
-        .position(x, y)
-        .size(160.0f, 32.0f)
-        .text(label)
-        .fontSize(core::theme::scaled(12.0f))
-        .disabled(!st.actionable())
-        .onClick([this] { toggleClaudeInstall(); })
-        .build();
 }
 
 // ── 「安装到 ZCode」（need279）：与 Claude 行同构镜像，判定目标为
@@ -791,23 +994,6 @@ void McpPageModule::toggleZcodeInstall() {
     }
     refreshZcodeInstallState();  // 立即重读，按钮态与文件同步
     core::platform::requestUiUpdate();
-}
-
-void McpPageModule::drawZcodeInstallButton(
-    eui::Ui& ui, float x, float y, const ZcButtonState& st,
-    const core::theme::Tokens& t,
-    const components::theme::ThemeColorTokens& comp) {
-    // 文案三态：未装=安装 / 已装=卸载；冲突态置灰且无卸载入口（N6：防误删用户条目）
-    const std::string label = st.installed ? "从 ZCode 卸载" : "安装到 ZCode";
-    components::button(ui, "mcp.dialog.detail.btn.zcode")
-        .theme(comp, false)  // 次要操作：与 Claude 行同级灰底
-        .position(x, y)
-        .size(160.0f, 32.0f)
-        .text(label)
-        .fontSize(core::theme::scaled(12.0f))
-        .disabled(!st.actionable())
-        .onClick([this] { toggleZcodeInstall(); })
-        .build();
 }
 
 void McpPageModule::drawDetailDialog(
@@ -1031,8 +1217,9 @@ void McpPageModule::drawDetailDialog(
             const bool resultEmpty = !running && !hasResult;
             ui.rect("mcp.dialog.detail.result.box")
                 .position(20.0f, 318.0f)
-                // need279：底缘 64→100（Claude 行上移 h-88 让位 ZCode 行）
-                .size(w - 40.0f, h - 318.0f - 100.0f)
+                // need394（D-2）：安装行迁走后结果区不再为两行安装钮让位，
+                // 底缘预留回到操作行一行（32 + 上距 16 + 底距 20）→ 高 94
+                .size(w - 40.0f, h - 318.0f - 52.0f - 16.0f)
                 .radius(t.sizes.radius)
                 .color(t.colors.background)
                 .border(1.0f, t.colors.borderMuted)
@@ -1045,7 +1232,7 @@ void McpPageModule::drawDetailDialog(
             const float resultLineH = core::theme::scaled(17.0f);
             components::scrollView(ui, "mcp.dialog.detail.result.scroll")
                 .position(28.0f, 326.0f)
-                .size(w - 56.0f, h - 326.0f - 100.0f - 16.0f)  // need279 同上
+                .size(w - 56.0f, h - 326.0f - 52.0f - 16.0f)  // need394 D-2 同上
                 .gap(0.0f)
                 .step(resultLineH)
                 .theme(comp)
@@ -1074,82 +1261,9 @@ void McpPageModule::drawDetailDialog(
                 })
                 .build();
 
-            // 操作行（need279 起双行）：Claude 行（h-88）+ ZCode 行（h-52，与
-            // 「关闭/试一下」同行）。「安装到 ZCode」位于 Claude 行正下方；
-            // claude/zcode 钮 20..180、hint 188..396、close 404..476、
-            // try 484..580（w=600，右缘留 20）。
-            const CcButtonState cc = ccState_;
-            drawClaudeInstallButton(ui, 20.0f, h - 88.0f, cc, t, comp);
-            {
-                // Claude 行就地提示槽：无 .claude.json / 服务未运行 / 写失败 /
-                // 安装成功待重启，四选一
-                std::string hint;
-                bool isError = false;
-                if (!cc.filePresent) {
-                    hint = "未检测到 Claude Code（~/.claude.json 不存在）";
-                } else if (!cc.serviceRunning) {
-                    hint = "请先启动 MCP 服务";
-                } else if (!ccError_.empty()) {
-                    hint = ccError_;
-                    isError = true;
-                } else if (!ccNotice_.empty()) {
-                    hint = ccNotice_;
-                }
-                if (!hint.empty()) {
-                    const float hintW = 404.0f - 8.0f - 188.0f;
-                    ui.text("mcp.dialog.detail.claude.hint")
-                        .position(188.0f, h - 88.0f)
-                        .size(hintW, 32.0f)
-                        .text(hint)
-                        .fontSize(core::theme::scaled(11.0f))
-                        .verticalAlign(eui::VerticalAlign::Center)
-                        .color(isError ? t.colors.errorText
-                                       : t.colors.textTertiary)
-                        .maxWidth(hintW)
-                        .overflow(core::TextOverflow::Ellipsis)
-                        .clip()
-                        .build();
-                }
-            }
-            const ZcButtonState zc = zcState_;
-            drawZcodeInstallButton(ui, 20.0f, h - 52.0f, zc, t, comp);
-            {
-                // ZCode 行就地提示槽（优先级：文件 → 服务 → 冲突 → 错误 → 成功提示；
-                // N6 冲突引导较长，两行 wrap + 截断防越盒）
-                std::string hint;
-                bool zcIsError = false;
-                if (!zc.filePresent) {
-                    hint = "未检测到 ZCode（~/.zcode/cli/config.json 不存在）";
-                } else if (!zc.serviceRunning) {
-                    hint = "请先启动 MCP 服务";
-                } else if (zc.conflict) {
-                    hint = "ZCode 配置已有同名 devdesk 条目且地址不同，"
-                           "请先在 ZCode 配置中移除该条目后再安装";
-                    zcIsError = true;
-                } else if (!zcError_.empty()) {
-                    hint = zcError_;
-                    zcIsError = true;
-                } else if (!zcNotice_.empty()) {
-                    hint = zcNotice_;
-                }
-                if (!hint.empty()) {
-                    const float zcHintW = 404.0f - 8.0f - 188.0f;
-                    ui.text("mcp.dialog.detail.zcode.hint")
-                        .position(188.0f, h - 52.0f)
-                        .size(zcHintW, 32.0f)
-                        .text(hint)
-                        .fontSize(core::theme::scaled(11.0f))
-                        .lineHeight(core::theme::scaled(14.0f))
-                        .wrap(true)
-                        .verticalAlign(eui::VerticalAlign::Center)
-                        .color(zcIsError ? t.colors.errorText
-                                         : t.colors.textTertiary)
-                        .maxWidth(zcHintW)
-                        .overflow(core::TextOverflow::Ellipsis)
-                        .clip()
-                        .build();
-                }
-            }
+            // 操作行（need394 D-2）：安装/卸载元素已整块迁到页头固定区，弹窗
+            // 不再绘制任何安装行/hint 槽；只剩单行 [关闭][试一下]
+            //（关闭 404..476、试一下 484..580，w=600，右缘留 20）
             components::button(ui, "mcp.dialog.detail.btn.try")
                 .theme(comp, true)
                 .position(w - 20.0f - 96.0f, h - 52.0f)
@@ -1184,6 +1298,8 @@ bool McpPageModule::onKeyEvent(const eui::KeyEvent& event) {
 }
 
 void McpPageModule::onStart() {
+    // need394：宿主安装态下一帧进页时重读（模块重入 / off→on 后文件可能变）
+    installStatesLoaded_ = false;
     // mcp.health：只读诊断工具（need 219 F-05），注册跟随模块启停；
     // 注册失败只留痕不中断（agent 模块同口径）
     if (!healthRegistered_) {
@@ -1215,15 +1331,8 @@ void McpPageModule::openDetail(const std::string& name) {
     if (found.isFail()) return;  // 工具已被注销：不开空弹窗
     detailTool_ = found.value();
     buildParamSpecs();  // 池146：按当前工具 inputSchema 重建参数表单规格
-    // need244：详情页每次打开都重读 ~/.claude.json（不跨会话缓存），并清上一轮写
-    // 失败原因与「已写入」提示（提示只属于本次点击后的窗口期，重开视为过期）；
-    // need279：ZCode 行同口径（~/.zcode/cli/config.json）
-    ccError_.clear();
-    ccNotice_.clear();
-    refreshClaudeInstallState();
-    zcError_.clear();
-    zcNotice_.clear();
-    refreshZcodeInstallState();
+    // need394：安装态归页头固定区（refreshInstallStatesIfNeeded 按需现读），
+    // 详情弹窗不再读写安装态；不再因开窗清掉页头错误/待重启提示
     // 换工具打开：清上一工具的残留结果（同工具重开保留在途/已完成态）
     if (tryToolName_ != name && !tryRunning()) {
         std::lock_guard<std::mutex> lk(tryMutex_);

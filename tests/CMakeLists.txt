@@ -94,8 +94,8 @@ add_executable(devdesk_tests
     test_modules/test_md_folder_tree.cpp
     test_modules/test_markdown_tools.cpp
     test_modules/test_md_note_git.cpp
-    # 需-7 笔记 MCP 三工具（F-01..F-05）：搜索/读全文/新文件路由写 + git 链白拿验证
-    test_modules/test_notes_mcp_tools.cpp
+    # need394（OP-1=B）：notes_* 三工具 MCP 注册已下线——移除断言与 md_*×5 注册
+    # 断言并入 test_markdown_tools.cpp（原 test_notes_mcp_tools.cpp 退役删除）
     test_modules/test_md_highlight.cpp
     # ui_kit/text_highlight 五类代码词法扫描器（need:10 批次三）
     test_modules/test_text_highlight_lexers.cpp
@@ -827,7 +827,8 @@ add_test(NAME ui_driver_usage_error COMMAND devdesk_ui_driver)
 set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # 正路径场景：真窗 + 临时数据根 + 真 app::compose（截图/dump 落 build/，gitignore）
 # need242：terminal-input = 终端页输入注入（type 聚焦 / key 达 PTY / 拖选+复制）
-# need244：mcp-claude-install = MCP 详情页「安装到 Claude Code」按钮在场 + 几何。
+# need394：mcp-claude-install = MCP 页头宿主安装区两钮在场 + 几何（入口已从
+# 详情弹窗迁出，弹窗无安装行）。
 #（驱动侧无 disabled 断言能力，「服务未运行 → 置灰 + 提示」由 test_mcp_page 的 doctest 钉）
 # need290：claude-d1-seed-enable = 种子启用 claude_proxy → ClaudeService 装配正常（D1 回归）
 # need302：todo-card-context-menu = click button:"right" 右键原语回归（todo 卡 ctx 菜单）。
