@@ -1,5 +1,5 @@
 {
-  "maxConcurrentSubagents": 3,
+  "maxConcurrentSubagents": 5,
   "peakWindowEnabled": true,
   "poolDir": "docs/pool/",
   "setupVersion": "0.39.0",
