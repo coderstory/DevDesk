@@ -23,6 +23,8 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/toast_channel.cpp
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/os_notification.cpp
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/silent_channel.cpp
+    # need#490 自研二维码编码器（纯标准库，纠错 L）：随测试二进制直编
+    ${CMAKE_SOURCE_DIR}/src/module_terminal/web/qr/qr_encode.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -338,6 +340,8 @@ add_executable(devdesk_tests
     # 同构）。2026-11-16 曾因依赖未合入 main 的 feat/system-font-enum 停用；
     # need266 已合入（EUI dadd536 / DevDesk 5d205f9c 指针）→ 恢复（clue 270）。
     unit/system_font_gate.cpp
+    # need#490 二维码编码器：与 evidence/need490-qr-poc/qr.py 参考矩阵逐位对照
+    test_modules/test_qr_encode.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
