@@ -25,6 +25,9 @@ struct RequestCtx {
     std::string path;
     std::map<std::string, std::string> headers;
     std::string body;
+    // 原始查询串（不含 '?'；无查询 = 空）。SSE 流票据走 ?t=<ticket>，
+    // 且票据是明文查询参数——httplib 的 path 不含 query，故单独透传。
+    std::string query;
     std::string clientAddress;
     // 客户端连接是否已断开（由 cpp-httplib 提供，流式写循环用于提前停止上游）
     std::function<bool()> isConnectionClosed;
