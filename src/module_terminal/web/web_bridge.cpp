@@ -7,11 +7,6 @@
 namespace module::terminal::web {
 
 namespace {
-bool isAlive(const std::shared_ptr<StreamSubscriber>& sub) {
-    std::lock_guard<std::mutex> lock(sub->mutex);
-    return !sub->dead;
-}
-
 void markDead(const std::shared_ptr<StreamSubscriber>& sub) {
     std::lock_guard<std::mutex> lock(sub->mutex);
     sub->dead = true;
