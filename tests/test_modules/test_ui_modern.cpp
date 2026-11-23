@@ -312,6 +312,8 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
+    // bug404 后 compose 不再兜底同步装填（首帧骨架态），行数据靠 onStart 首装
+    mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -664,6 +666,8 @@ REGISTER_TEST(uiModernVirtualProfileRows,
         DOCTEST_REQUIRE(p.isOk());
     }
     std::unique_ptr<::core::Module> mod(create_claude_module());
+    // bug404 后 compose 不再兜底同步装填（首帧骨架态），行数据靠 onStart 首装
+    mod->onStart();
     eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;
     auto compose = [&]() {
