@@ -339,7 +339,11 @@ int main() {
             auto& qdb = mdEnv.db->db();
             std::tm lt{};
             const std::time_t nowT = std::time(nullptr);
+#if defined(_WIN32)
             localtime_s(&lt, &nowT);
+#else
+            localtime_r(&nowT, &lt);
+#endif
             lt.tm_hour = 0; lt.tm_min = 0; lt.tm_sec = 0;
             const int64_t dayStart = static_cast<int64_t>(std::mktime(&lt));
             const auto tq = Clock::now();
