@@ -703,7 +703,17 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "$<TARGET_FILE_DIR:${_probe_name}>/assets/Font Awesome 7 Free-Solid-900.otf"
         COMMENT "Copying icon font for ${_probe_name}"
         VERBATIM)
-    add_test(NAME ${_probe_name} COMMAND ${_probe_name})
+    # claude_proxy_e2e_probe（实弹 E2E）带 --db 指向构建目录沙箱路径：探针设计
+    # 需真实库快照副本 + 本机可解密 key + 活上游，无参注册会用法退出（曾把
+    # probe 链打红）。快照不存在 → 探针 77 退出（下方 SKIP_RETURN_CODE 登记
+    # 为 Skipped，实弹禁重跑口径）；操作者把 sqlite3 .backup 快照显式放到该
+    # 路径 = 有意实弹，ctest 即真跑。
+    if(_probe_name STREQUAL "claude_proxy_e2e_probe")
+        add_test(NAME ${_probe_name} COMMAND ${_probe_name}
+            --db "${CMAKE_BINARY_DIR}/claude_proxy_e2e_livefire.db")
+    else()
+        add_test(NAME ${_probe_name} COMMAND ${_probe_name})
+    endif()
     set_tests_properties(${_probe_name} PROPERTIES LABELS "probe")
     # 无显示环境（CI runner 不在 WindowServer / 桌面会话里）→ 探针以
     # probe::kSkipExitCode(77) 退出，这里把它登记成 ctest 的 Skipped 而非
