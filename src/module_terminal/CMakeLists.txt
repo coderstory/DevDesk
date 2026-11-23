@@ -13,6 +13,9 @@ add_library(devdesk_module_terminal STATIC
     web/web_dev_entry.cpp
     web/web_routes.cpp
     web/web_terminal_service.cpp
+    # need#490 W4：网页网格帧编解码 + 会话桥（纯逻辑，无 HTTP 依赖）
+    web/web_grid.cpp
+    web/web_session_bridge.cpp
 )
 
 # 终端设置选项表按平台拆（need250：字体/shell 选项各写死一套，AGENTS §三）

@@ -249,6 +249,37 @@ core::Color ansiIndexedColor(int index, bool darkTheme) {
     return darkTheme ? kDark[index] : kLight[index];
 }
 
+namespace {
+uint32_t rgbaOf(const Color& c) {
+    auto q = [](float v) {
+        const int n = static_cast<int>(v * 255.0f + 0.5f);
+        return static_cast<uint32_t>(std::clamp(n, 0, 255));
+    };
+    return (q(c.r) << 24) | (q(c.g) << 16) | (q(c.b) << 8) | 0xffu;
+}
+} // namespace
+
+CellColor decodeCellColor(uint32_t raw, bool darkTheme, bool isForeground) {
+    const uint32_t kind = raw >> 24;
+    if (kind == 0) {
+        // 默认前景 = 主题默认字色（index 7）；默认背景 = 透明（网页透出页底色）。
+        if (!isForeground) return {0u, true};
+        return {rgbaOf(ansiIndexedColor(7, darkTheme)), true};
+    }
+    if (kind == 1) {
+        return {rgbaOf(ansiIndexedColor(static_cast<int>(raw & 0xff), darkTheme)), false};
+    }
+    if (kind == 2) {
+        const uint32_t r = (raw >> 16) & 0xff;
+        const uint32_t g = (raw >> 8) & 0xff;
+        const uint32_t b = raw & 0xff;
+        return {(r << 24) | (g << 16) | (b << 8) | 0xffu, false};
+    }
+    // 未知 kind：按默认色降级，不引入越界读。
+    if (!isForeground) return {0u, true};
+    return {rgbaOf(ansiIndexedColor(7, darkTheme)), true};
+}
+
 std::vector<RowRun> rowRuns(const platform::TerminalCell* row, int cols, bool darkTheme) {
     std::vector<RowRun> runs;
     constexpr uint32_t kKindShift = 24;

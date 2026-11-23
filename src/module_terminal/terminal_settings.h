@@ -35,6 +35,9 @@ struct TerminalSettings {
     TerminalColorMode colorMode = TerminalColorMode::FollowApp;
     TerminalColorPalette colorPalette = TerminalColorPalette::Light;
     std::string shell = "";       // "" = 平台默认（win=pwsh 链 / mac=zsh 链）
+    // 新会话启动目录（PRD P-14）；"" = 用户主目录。保存前须过 workDirUsableForSpawn，
+    // spawn 时非空不可用 → 启动失败（不静默回退）。
+    std::string startupDir = "";
 };
 
 // ---- 纯函数（doctest 直测） ----
@@ -45,9 +48,13 @@ int clampedFontSize(int value);
 // darkTheme 参数（ansiIndexedColor 双表选择），渲染零新面。
 bool gridPaletteDark(bool appDark, TerminalColorMode mode, TerminalColorPalette palette);
 
-// 新会话 spawn 前的目录有效性：空 = 主目录语义（有效）；非空须存在（无效 = false，
-// 调用方静默回退主目录，设计 §4.2⑤ 容错）。
+// 新会话 spawn 前的目录有效性：空 = 主目录语义（有效）；非空须存在 + 是目录 + 可进入
+//（POSIX access+opendir / Windows GetFileAttributesW+CreateFileW）。调用方据此拒绝保存 /
+// 启动失败，不再静默回退主目录（PRD P-14）。
 bool workDirUsableForSpawn(const std::string& dir);
+
+// 平台缝：目录可进入判定（已假定存在且是目录；空 = false）。POSIX/Win 各一套。
+bool canEnterDirectory(const std::string& dir);
 
 // 越界收敛 + 枚举外值回默认 + 字体/shell 枚举外回空（平台默认语义）。load 与 UI 写入共用。
 TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings);

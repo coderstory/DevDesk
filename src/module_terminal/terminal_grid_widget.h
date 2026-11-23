@@ -36,6 +36,14 @@ float cellSpanOf(const platform::TerminalCell* row, int cols, int colBegin, int 
 // ANSI indexed 0-15 → 设计 §3.3 主题色（darkTheme 选套）；非 indexed/rawValue 透传不在此表。
 core::Color ansiIndexedColor(int index, bool darkTheme);
 
+// cell fg/bg rawValue（kind 高 8 位 + payload）→ 0xRRGGBBAA。桌面渲染与网页帧编码
+// 必须共用本函数，复制即漂移。默认背景 rgba=0（alpha 0 = 网页透出页底色）。
+struct CellColor {
+    uint32_t rgba;
+    bool isDefault;
+};
+CellColor decodeCellColor(uint32_t raw, bool darkTheme, bool isForeground);
+
 // bug244（clue103 行业口径）：框线/块字符程序矢量自绘分类器。true = 该码点走矩形
 // 精确填充（U+2500-257F 单/重/双线族 + 半行线、U+2580-259F 八分/四分/阴影块）；
 // false = 落回字体字形（圆角框线 256D-2570、对角线 2571-2573、虚线族、单双混合族

@@ -8,6 +8,7 @@
 #include "terminal_page.h"
 #include "terminal_session_controller.h"
 #include "terminal_settings.h"
+#include "web/web_session_bridge.h"
 
 namespace terminal {
 
@@ -35,6 +36,10 @@ public:
     // 测试缝（bug406 doctest）：后台建会话结果要靠 pollAll 收割；生产走 compose → pollAll
     SessionController& controllerForTest() { return controller_; }
 
+    // 设置单一真源（技术卡 §3.2 / P-24）：网页 settings.set 与桌面面板「完成」同一入口。
+    // 校验目录 → 写 settings_ → 持久化（失败回滚）→ 新会话参数 → 广播/重绘。
+    core::Result<void> writeSettings(const TerminalSettings& next);
+
 private:
     void ensureBackend();
     // bug278④：设置面板结果通道（完成=true 提交落库+新会话参数生效；×/Esc=false
@@ -50,6 +55,9 @@ private:
     TerminalSettings settings_;
     TerminalSettings panelSnapshot_;   // bug278④：面板打开时刻快照（草稿基线）
     bool panelWasOpen_ = false;        // bug278④：开合沿侦测（开帧打快照）
+    // need#490 W4：网页会话桥（tab/尺寸/退出态/设置单一入口）。settings_ 指针必须在
+    // 本成员之前声明（桥持其地址）。
+    web::WebSessionBridge bridge_;
 };
 
 } // namespace terminal

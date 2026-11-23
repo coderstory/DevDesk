@@ -19,6 +19,8 @@ constexpr const char* kKeyFontSize = "fontSize";
 constexpr const char* kKeyColorMode = "colorMode";
 constexpr const char* kKeyColorPalette = "colorPalette";
 constexpr const char* kKeyShell = "shell";
+// PRD P-14：新键 startupDir；旧 workDir 键不读（C-4 已砍时的历史残留不复活）。
+constexpr const char* kKeyStartupDir = "startupDir";
 
 constexpr const char* kColorModeFollow = "followApp";
 constexpr const char* kColorModeIndependent = "independent";
@@ -43,7 +45,10 @@ bool gridPaletteDark(bool appDark, TerminalColorMode mode, TerminalColorPalette 
 bool workDirUsableForSpawn(const std::string& dir) {
     if (dir.empty()) return true; // 空 = 主目录语义
     std::error_code ec;
-    return std::filesystem::exists(std::filesystem::path(dir), ec) && !ec;
+    const std::filesystem::path p(dir);
+    if (!std::filesystem::exists(p, ec) || ec) return false;
+    if (!std::filesystem::is_directory(p, ec) || ec) return false;
+    return canEnterDirectory(dir);
 }
 
 TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
@@ -55,6 +60,7 @@ TerminalSettings sanitizedTerminalSettings(const TerminalSettings& settings) {
         contains(terminalShellOptionValues(), settings.shell) ? settings.shell : "";
     out.fontFamily = font;
     out.shell = shell;
+    out.startupDir = settings.startupDir;  // 有效性在 writeSettings 入口校验，非 sanitize 职责
     out.fontSize = clampedFontSize(settings.fontSize);
     out.colorMode = settings.colorMode;
     out.colorPalette = settings.colorPalette;
@@ -87,6 +93,8 @@ TerminalSettings loadTerminalSettings(core::data::SqliteDb* db) {
     }
     if (auto v = platform::json::getIfString(obj, kKeyShell))
         s.shell = *v;
+    if (auto v = platform::json::getIfString(obj, kKeyStartupDir))
+        s.startupDir = *v;
     // C-4（need380）：workDir/scrollback/cursorStyle/cursorBlink 旧键不再读取
     //（行为固定默认；旧 JSON 里残留键在下次 save 整体重写时消失 = 一次性归一）。
     return sanitizedTerminalSettings(s);
@@ -111,6 +119,7 @@ core::Result<void> saveTerminalSettings(core::data::SqliteDb* db,
                                   s.colorPalette == TerminalColorPalette::Dark ? kPaletteDark
                                                                                : kPaletteLight));
     obj.set(kKeyShell, platform::json::makeString(s.shell));
+    obj.set(kKeyStartupDir, platform::json::makeString(s.startupDir));
     auto text = platform::json::stringify(platform::json::JsonValue(obj), /*pretty=*/false);
     if (text.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::Internal,

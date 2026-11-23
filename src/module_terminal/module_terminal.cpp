@@ -9,7 +9,14 @@
 
 namespace terminal {
 
-TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
+TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
+    // 设置单一真源经桥收口：网页与桌面「完成」都走 bridge_.writeSettings；重绘用
+    // requestUiUpdate 与 bug249 同一出口。
+    : bridge_(controller_, &settings_,
+              [](const TerminalSettings& s) {
+                  return saveTerminalSettings(::core::appDatabase(), s);
+              },
+              [] { core::platform::requestUiUpdate(); }) {
     backend_ = injectedBackend != nullptr ? injectedBackend : platform::terminalBackendMac();
     controller_.setBackend(backend_);
     // bug249：reader 线程产出新输出/子进程退出 → 请求一帧（非 UI 线程安全路径；
@@ -18,7 +25,7 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend) {
     // need250：载入持久化设置并铺到新会话参数（db 未就绪/键缺失 → 默认值）。
     // C-4（need380）：目录/回滚 UI 已砍，固定默认（空=主目录 / 1000 行）
     settings_ = loadTerminalSettings(::core::appDatabase());
-    controller_.setNewSessionOptions(settings_.shell, "", kScrollbackDefault);
+    controller_.setNewSessionOptions(settings_.shell, settings_.startupDir, kScrollbackDefault);
     // bug278④：面板结果通道装配（完成/× 由页面转发到 finishSettingsPanel）
     page_.setPanelResultHandler([this](bool commit) { finishSettingsPanel(commit); });
 }
@@ -106,6 +113,7 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
     // widget 量化 → resize 激活会话（先 reflow 后 TIOCSWINSZ，核心语义）；
     // 切换会话后尺寸不一致时 page 会重新挂 pending（自动补 resize）
     if (available && page_.wantsResize()) {
+        bridge_.observeDesktopResize(page_.pendingRows(), page_.pendingCols());
         controller_.resizeActive(page_.pendingRows(), page_.pendingCols());
         page_.clearPendingResize();
     }
@@ -117,13 +125,17 @@ void TerminalModule::compose(eui::Ui& ui, const eui::Screen& screen) {
 // 快照（草稿丢弃，live preview 的改动下一帧随 settings_ 还原）。
 void TerminalModule::finishSettingsPanel(bool commit) {
     if (commit) {
-        controller_.setNewSessionOptions(settings_.shell, "", kScrollbackDefault);
-        auto r = saveTerminalSettings(::core::appDatabase(), settings_);
+        // 单一入口：与网页 settings.set 同一条路径（目录校验/回灌/持久化/新会话参数）。
+        auto r = writeSettings(settings_);
         if (r.isFail()) LOG_WARN("Terminal: 设置保存失败: " + r.errorMessage());
     } else {
         settings_ = panelSnapshot_;
     }
     page_.closeSettings();
+}
+
+core::Result<void> TerminalModule::writeSettings(const TerminalSettings& next) {
+    return bridge_.writeSettings(next);
 }
 
 } // namespace terminal

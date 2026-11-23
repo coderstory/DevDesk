@@ -40,11 +40,12 @@ core::Result<std::unique_ptr<platform::TerminalSessionHandle>> SessionController
                                       : "终端不可用");
     }
     // shell/workDir 空 = 后端默认（mac：决策 6 四段链；win：pwsh→powershell→COMSPEC）；
-    // 非空 = 设置面板选值（need250）。目录无效静默回退主目录（设计 §4.2⑤ 容错）
-    std::string workDir = workDirIn;
+    // 非空 = 设置面板/网页选值。PRD P-14：非空不可用目录 → 启动失败（不再静默回退
+    // 主目录，用户须能看见「启动目录无效」而不是悄悄跑在别处）。
+    const std::string& workDir = workDirIn;
     if (!workDir.empty() && !workDirUsableForSpawn(workDir)) {
-        LOG_WARN("Terminal: 启动目录不存在，回退用户主目录: " + workDir);
-        workDir.clear();
+        return HandleResult::fail(core::ErrorCode::ValidationError,
+                                  "启动目录不存在、不是目录或不可进入: " + workDir);
     }
     return backend_->spawn(shell, {rows > 0 ? rows : 24, cols > 0 ? cols : 80}, workDir);
 }
