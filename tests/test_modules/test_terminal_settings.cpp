@@ -8,7 +8,12 @@
 #include "test_support.h"
 
 #include <filesystem>
+#include <fstream>
 #include <string>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -72,17 +77,39 @@ REGISTER_TEST(terminalSettingsSanitize,
 })
 
 REGISTER_TEST(terminalSettingsWorkDir,
-              "terminal settings: 目录有效性（空=主目录语义有效/不存在回退）", {
+              "terminal settings: 目录有效性（空=主目录/不存在/是文件/无权限均拒绝）", {
     using namespace terminal;
     DOCTEST_CHECK(workDirUsableForSpawn("")); // 空 = 主目录语义
     DOCTEST_CHECK(!workDirUsableForSpawn("Z:/definitely/not/exist/devdesk"));
     const std::filesystem::path tmp = test_temp::tempPath("terminal_settings_wdir");
     std::filesystem::create_directories(tmp);
     DOCTEST_CHECK(workDirUsableForSpawn(tmp.string()));
+
+    // 是文件不是目录（P-14：只 exists 不够）
+    const std::filesystem::path file = tmp / "not-a-dir.txt";
+    { std::ofstream out(file); out << "x"; }
+    DOCTEST_CHECK(!workDirUsableForSpawn(file.string()));
+
     std::error_code ec;
     std::filesystem::remove_all(tmp, ec);
     return true;
 })
+
+#if !defined(_WIN32)
+REGISTER_TEST(terminalSettingsWorkDirNoPermission,
+              "terminal settings: 无权限进入的目录拒绝（POSIX access+opendir）", {
+    using namespace terminal;
+    if (::geteuid() == 0) return true;  // root 不受权限位约束
+    const std::filesystem::path dir = test_temp::tempPath("terminal_settings_noperm");
+    std::filesystem::create_directories(dir);
+    std::filesystem::permissions(dir, std::filesystem::perms::none);
+    DOCTEST_CHECK(!workDirUsableForSpawn(dir.string()));
+    std::filesystem::permissions(dir, std::filesystem::perms::owner_all);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return true;
+})
+#endif
 
 REGISTER_TEST(terminalSettingsPlatformTables,
               "terminal settings: 平台选项表（首项恒空=平台默认语义）", {

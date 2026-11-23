@@ -233,6 +233,9 @@ add_executable(devdesk_tests
     test_modules/test_terminal_metrics.cpp
     test_modules/test_terminal_settings.cpp
     test_modules/test_terminal_frame.cpp
+    # need#490 W4 网页网格编解码 + 会话桥（纯逻辑）
+    test_modules/test_terminal_web_grid.cpp
+    test_modules/test_terminal_web_bridge.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
