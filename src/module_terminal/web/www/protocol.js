@@ -46,19 +46,23 @@
     return f;
   }
 
+  var FLAG_FULL = 2;
+
   function encodeFrame(f) {
     var enc = new TextEncoder();
-    var header = new Uint8Array(24);
+    var header = new Uint8Array(26);
     var hv = new DataView(header.buffer);
     header[0] = MAGIC0; header[1] = MAGIC1; header[2] = VERSION;
-    header[3] = f.cursorVisible ? FLAG_CURSOR : 0;
+    header[3] = (f.cursorVisible ? FLAG_CURSOR : 0) | (f.full === false ? 0 : FLAG_FULL);
     hv.setUint16(4, f.rows); hv.setUint16(6, f.cols);
     hv.setUint16(8, f.cursorRow); hv.setUint16(10, f.cursorCol);
     hv.setUint32(12, f.scrollOffset || 0); hv.setUint32(16, f.scrollbackCount || 0);
     hv.setUint32(20, f.generation || 0);
+    hv.setUint16(24, f.rows);
     var parts = [header];
     for (var r = 0; r < f.rows; r++) {
       var row = f.lines[r] || [];
+      var runs = [];
       var c = 0;
       while (c < f.cols) {
         var cell = row[c] || { ch: ' ', w: 1 };
@@ -80,13 +84,17 @@
         dv.setUint16(0, cells); H[2] = width; H[3] = runFlags(cell);
         dv.setUint32(4, hexToU32(cell.fg)); dv.setUint32(8, hexToU32(cell.bg));
         dv.setUint16(12, 0); dv.setUint16(14, tb.length);
-        parts.push(H, tb);
+        runs.push(H, tb);
         c = j;
       }
+      var rh = new Uint8Array(4); var rdv = new DataView(rh.buffer);
+      rdv.setUint16(0, r); rdv.setUint16(2, runs.length / 2);
+      parts.push(rh);
+      for (var k = 0; k < runs.length; k++) parts.push(runs[k]);
     }
-    var len = 0; for (var k = 0; k < parts.length; k++) len += parts[k].length;
+    var len = 0; for (var m = 0; m < parts.length; m++) len += parts[m].length;
     var out = new Uint8Array(len); var o = 0;
-    for (var m = 0; m < parts.length; m++) { out.set(parts[m], o); o += parts[m].length; }
+    for (var q = 0; q < parts.length; q++) { out.set(parts[q], o); o += parts[q].length; }
     return out;
   }
 
@@ -99,12 +107,16 @@
     var rows = dv.getUint16(4), cols = dv.getUint16(6);
     var cursorRow = dv.getUint16(8), cursorCol = dv.getUint16(10);
     var scrollOffset = dv.getUint32(12), scrollbackCount = dv.getUint32(16), generation = dv.getUint32(20);
+    var rowCount = dv.getUint16(24);
     var dec = new TextDecoder();
-    var off = 24, lines = [];
-    for (var r = 0; r < rows; r++) {
+    var off = 26, lines = new Array(rows), indices = [];
+    for (var r = 0; r < rowCount && off + 4 <= buf.length; r++) {
+      var rowIndex = dv.getUint16(off);
+      var runCount = dv.getUint16(off + 2);
+      off += 4;
       var row = new Array(cols);
       var filled = 0;
-      while (filled < cols && off + 16 <= buf.length) {
+      for (var run = 0; run < runCount && off + 16 <= buf.length; run++) {
         var cells = dv.getUint16(off);
         var width = buf[off + 2];
         var rf = buf[off + 3];
@@ -134,10 +146,11 @@
         }
       }
       for (var p = 0; p < cols; p++) if (!row[p]) row[p] = { ch: ' ', w: 1 };
-      lines.push(row);
+      if (rowIndex < rows) { lines[rowIndex] = row; indices.push(rowIndex); }
     }
     return {
       version: VERSION, flags: flags, cursorVisible: !!(flags & FLAG_CURSOR),
+      full: !!(flags & FLAG_FULL), rowIndices: indices,
       rows: rows, cols: cols, cursorRow: cursorRow, cursorCol: cursorCol,
       scrollOffset: scrollOffset, scrollbackCount: scrollbackCount,
       generation: generation, lines: lines
@@ -387,7 +400,7 @@
     this._frameCbs = []; this._stateCbs = []; this._settingsCbs = [];
     this._c2s = null; this._s2c = null;
     this._c2sCounter = 0; this._s2cHigh = 0;
-    this._hid = null; this._ticket = null;
+    this._hid = null; this._ticket = null; this._bindToken = '';
     this._sseAbort = null; this._seq = null;
     this._attempts = 0; this._reconnectTimer = null;
     this._watchdog = null; this._sendChain = Promise.resolve();
@@ -427,7 +440,24 @@
   }
   function outerError(r, payload) {
     var err = { http: r.status, code: (payload && payload.e) || ('http_' + r.status) };
-    if (r.status === 429) err.retryAfter = 60;
+    if (payload) {
+      if (payload.reason) err.reason = payload.reason;
+      if (payload.field) err.field = payload.field;
+      if (typeof payload.retryAfter === 'number') err.retryAfter = payload.retryAfter;
+    }
+    if (err.retryAfter === undefined) {
+      var ra = r.headers && r.headers.get ? r.headers.get('Retry-After') : null;
+      if (ra != null && ra !== '') err.retryAfter = parseInt(ra, 10) || 0;
+    }
+    if (r.status === 429 && !err.retryAfter) err.retryAfter = 60;
+    return err;
+  }
+
+  function innerError(payload, httpStatus) {
+    var err = { code: payload.e || 'server_error', inner: payload.s, http: httpStatus };
+    if (payload.reason) err.reason = payload.reason;
+    if (payload.field) err.field = payload.field;
+    if (typeof payload.retryAfter === 'number') err.retryAfter = payload.retryAfter;
     return err;
   }
 
@@ -457,7 +487,7 @@
           try { errPayload = self._openPayload(r.bytes); } catch (ignored) {}
         }
         if (errPayload && errPayload.e) {
-          throw { code: errPayload.e, inner: errPayload.s, http: r.status };
+          throw innerError(errPayload, r.status);
         }
         throw outerError(r, parseJsonBytes(r.bytes));
       }
@@ -475,9 +505,7 @@
         }
       }
       if (!payload) throw { code: 'bad_response' };
-      if (payload.s >= 400 || payload.e) {
-        throw { code: payload.e || 'server_error', inner: payload.s, http: r.status };
-      }
+      if (payload.s >= 400 || payload.e) throw innerError(payload, r.status);
       return payload.b === undefined ? null : payload.b;
     });
   };
@@ -528,7 +556,10 @@
 
   RealClient.prototype._afterHandshake = function () {
     var self = this;
-    var bindPage = (global.location && /\/bind\/?$/.test(global.location.pathname)) ||
+    var hash = new URLSearchParams(((global.location && global.location.hash) || '').replace(/^#/, ''));
+    this._bindToken = hash.get('b') || hash.get('bind') || '';
+    var bindPage = this._bindToken !== '' ||
+      (global.location && /\/bind\/?$/.test(global.location.pathname)) ||
       /(?:^|[?&#])bind=1(?:&|$)/.test((global.location && (global.location.search + global.location.hash)) || '');
     if (bindPage) return this._beginBind();
     this.status = 'connected';
@@ -543,7 +574,8 @@
     this.status = 'connecting';
     this.view = 'bind';
     this._emitState();
-    return this._req(API.bindClaim, { m: 'bind.claim', b: {} }).then(function (d) {
+    var token = this._bindToken || '';
+    return this._req(API.bindClaim, { m: 'bind.claim', b: { token: token } }).then(function (d) {
       self.status = 'connected';
       self._bindState = d || {};
       self._emitState({ bind: d || {} });
@@ -559,6 +591,9 @@
       if (!d || !d.t) throw { code: 'bad_response' };
       self._ticket = d.t;
       self.bound = true;
+      if (global.history && global.history.replaceState && global.location) {
+        try { global.history.replaceState(null, '', global.location.pathname + global.location.search); } catch (ignored) {}
+      }
       return self._enterTerminal();
     }).catch(function (err) {
       self._emitState({ bindError: err });
@@ -716,6 +751,12 @@
       return;
     }
     if (p.ev === 'revoke') { this.view = 'revoked'; this._emitState(); this._closeStream(); return; }
+    if (p.ev === 'desktop_restart') {
+      this.tabs = [];
+      this.activeId = null;
+      this._emitState({ emptyReason: 'restart' });
+      return;
+    }
     if (p.ev === 'session') {
       this._applyTabs(d || {});
       this._emitState(d && d.reason === 'desktop_restart' ? { emptyReason: 'restart' } : {});
@@ -726,8 +767,22 @@
       if (bytes) {
         try {
           var f = parseFrame(bytes);
+          if (!f.full) {
+            var base = this._lastFrame;
+            if (!base || base.rows !== f.rows || base.cols !== f.cols) {
+              this._requestResync();
+              return;
+            }
+            var merged = base.lines.map(function (row) { return row.slice(); });
+            for (var ri = 0; ri < f.rowIndices.length; ri++) {
+              merged[f.rowIndices[ri]] = f.lines[f.rowIndices[ri]];
+            }
+            f = Object.assign({}, base, { lines: merged, cursorVisible: f.cursorVisible,
+              cursorRow: f.cursorRow, cursorCol: f.cursorCol, scrollOffset: f.scrollOffset,
+              scrollbackCount: f.scrollbackCount, generation: f.generation, full: false });
+          }
           this._lastFrame = f;
-          if (p.ev === 'full') {
+          if (p.ev === 'full' || f.full) {
             this._resyncing = false;
             this._emitState({ resynced: true });
           }
@@ -864,22 +919,19 @@
   };
 
   RealClient.prototype.selectTab = function (id) {
+    var self = this;
     this.activeId = id;
     this._emitState();
-    this._req(API.env, { m: 'select', b: { id: id } }).catch(function () {});
+    this._req(API.env, { m: 'select', b: { id: id } }).then(function (d) {
+      self._applyTabs(d || {});
+      self._emitState();
+    }).catch(function () {});
   };
   RealClient.prototype.newTab = function () {
     var self = this;
     return this._req(API.env, { m: 'new', b: { cols: this.viewport.cols, rows: this.viewport.rows } })
       .then(function (d) { self._applyTabs(d || {}); self._emitState(); })
       .catch(function (err) {
-        if (err && (err.code === 'unknown_message' || err.code === 'bad')) {
-          var id = 't' + Date.now();
-          self.tabs.push({ id: id, title: '终端 ' + (self.tabs.length + 1) });
-          self.activeId = id;
-          self._emitState();
-          return;
-        }
         self._emitState({ opError: err });
         throw err;
       });
@@ -895,14 +947,30 @@
       this.activeId = next ? next.id : null;
     }
     this._emitState();
-    this._req(API.env, { m: 'close', b: { id: id } }).catch(function (err) {
+    this._req(API.env, { m: 'close', b: { id: id } }).then(function (d) {
+      self._applyTabs(d || {});
+      self._emitState();
+    }).catch(function (err) {
       if (err && err.code !== 'unknown_message' && err.code !== 'bad') self._emitState({ opError: err });
     });
   };
   RealClient.prototype.renameTab = function (id, title) {
-    for (var i = 0; i < this.tabs.length; i++) if (this.tabs[i].id === id) this.tabs[i].title = title;
+    var self = this;
+    var oldTitle = null;
+    for (var i = 0; i < this.tabs.length; i++) {
+      if (this.tabs[i].id === id) { oldTitle = this.tabs[i].title; this.tabs[i].title = title; }
+    }
     this._emitState();
-    this._req(API.env, { m: 'rename', b: { id: id, title: title } }).catch(function () {});
+    this._req(API.env, { m: 'rename', b: { id: id, title: title } }).then(function (d) {
+      self._applyTabs(d || {});   // 服务端内存态为准
+      // 服务端回包是命令处理前的快照：仍为旧标题时保留本地乐观值，等下一次 session 快照覆盖
+      if (oldTitle !== null && oldTitle !== title) {
+        for (var j = 0; j < self.tabs.length; j++) {
+          if (self.tabs[j].id === id && self.tabs[j].title === oldTitle) self.tabs[j].title = title;
+        }
+      }
+      self._emitState();
+    }).catch(function () {});
   };
 
   RealClient.prototype.writeSettings = function (patch) {
@@ -921,10 +989,7 @@
       return Object.assign({}, self.settings);
     }).catch(function (err) {
       var mapped = Object.assign({}, err);
-      if (err && err.code === 'settings_failed') {
-        mapped.code = 'settings_failed';
-        if (wire.startupDir !== undefined) mapped.field = 'startupDir';
-      }
+      if (!mapped.field && wire.startupDir !== undefined) mapped.field = 'startupDir';
       throw mapped;
     });
   };
