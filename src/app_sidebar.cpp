@@ -1334,6 +1334,11 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
 
     const auto& t = ::core::theme::current();
 
+    // bug274：半透/磨砂档窗体按档透出桌面（clearColor 单层定标），晕层在该两档
+    // 降透明（×1.5，峰值 0.19→0.285）保持「活体流质」可辨；off 档维持原基线。
+    const float haloBoost =
+        ::core::window_effect_state::current() == "off" ? 1.0f : 1.5f;
+
     constexpr int kHalos = 14;           // B5（2026-11-02）：7→14 小晕，铺满窗口不挤成一坨
     constexpr float kMaxAlpha = 0.19f;   // 单层峰值（2026-11-01 重构 0.11→0.19：0.11 透不出卡面）
     constexpr int kSatsPerHalo = 3;      // 卫星/层（2→3 更细碎，液体感更强）
@@ -1383,9 +1388,9 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
                              std::cos(kSpeedY[j] * phase + kPhase[j]);
         const float r = minDim * kRadiusFrac[j];
         // 内浓外淡：14 层时原式 (1 - 0.13j) 在 j=13 算出负 alpha（圆不可见/渲染异常），
-        // 改每档 0.05 + 下限 0.30（方案 §10.6）。
-        const float alpha =
-            kMaxAlpha * std::max(0.30f, 1.0f - 0.05f * static_cast<float>(j));
+        // 改每档 0.05 + 下限 0.30（方案 §10.6）；bug274 起乘 haloBoost（档位提亮）。
+        const float alpha = kMaxAlpha * haloBoost *
+                            std::max(0.30f, 1.0f - 0.05f * static_cast<float>(j));
         // 浅色档三色轮替：同族不同明度 → 液面深浅流动，而非一整块绿
         //（kLightHalo 已上提至匿名 namespace，与侧栏按钮粒子共用）。
         // 暗色档沿用双色（浅绿压深底会发灰光）。

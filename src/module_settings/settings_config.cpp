@@ -300,23 +300,26 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     return out;
 }
 
-// 两层 alpha 串联叠加（窗口背景色层 + clearColor 层），同值推导会让半透/磨砂档视觉无法区分。
-// UAT2 B 批（半透档"太高"第一轮）：translucent 0.60/0.90 → 0.80/0.85。UAT3 C1 批
-// （round3 用户仍反馈半透透明度太高）：内容 0.80→0.82。UAT6 真机两连（第 4 轮，用户
-// 「win下 半透的透明度太高了 看不清内容」）：内容 0.82→0.85、标题栏 0.85 不动（两值
-// 拉平），壁纸透出率 18%→15%——正文（textPrimary 叠乘后）极端壁纸最坏 WCAG 对比度
-// 两主题 ≥10.6:1（护栏：test_settings settings_window_effect_contrast_guard）。
-// 自绘标题栏（D-R3-1）落地后 Windows 无系统标题栏，标题栏 alpha 只实际作用于 macOS。
+// clearColor 纱（bug274 定标后 = 全窗唯一透出层）。旧口径是「窗口背景色层 × clearColor
+// 纱」两层串联叠加（UAT2 B 批 0.60/0.90→0.80/0.85；UAT3 C1 0.82；UAT6 真机两连
+// 0.82→0.85、标题栏拉平 0.85），用户仍报「半透/磨砂看不见桌面」——bug274 定案根因 =
+// macOS NSWindow backgroundColor 恒叠在 GL 之下，两层把透出压到 0.15×0.15≈2%。本批
+// 砍掉第二层（winbg 退役，见 windowEffectTitleBarAlpha），clearColor 成单层，半透档按
+// 定标桌面透出 25~30% → α=0.72（透出 28%）。对比度护栏复算（test_settings
+// settings_window_effect_contrast_guard）：两主题正文/次要文字最紧 5.79:1 ≥ 4.5。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.85f;
+    if (mode == kWindowEffectTranslucent) return 0.72f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
 
 float windowEffectTitleBarAlpha(const std::string& mode) {
-    // 标题栏层 = 窗口背景色，是透出上限（wallpaper 先穿这层再穿 clearColor 纱）。
-    if (mode == kWindowEffectTranslucent) return 0.85f;
-    if (mode == kWindowEffectFrosted) return 0.65f;
+    // bug274：winbg（NSWindow backgroundColor）层从透出叠加链**退役**——半透/磨砂档
+    // 传 0（macOS 窗口背景全透明，标题栏条带观感改由 GL 纱（半透）或标题栏条材质视图
+    //（磨砂，EUI-NEO BehindWindow）承担，与内容区天然融为一体）；Windows 自绘壳无系统
+    // 标题栏，本值历来 inert。仅 off 档保 1.0（实色档窗口背景 = 主题实色兜底）。
+    if (mode == kWindowEffectTranslucent) return 0.0f;
+    if (mode == kWindowEffectFrosted) return 0.0f;
     return 1.0f;
 }
 
@@ -359,6 +362,12 @@ std::string windowEffectDegradedHint(const std::string& mode,
 }
 
 void applyWindowVisuals(const std::string& mode) {
+    // bug274 定标指纹（装机 --verify-app-str 校验串来源；每进程首调用记一条）
+    static const bool s_bug274Calib = [] {
+        LOG_INFO("窗口效果定标 bug274：半透 clearColor 单层 0.72 / winbg 退役");
+        return true;
+    }();
+    (void)s_bug274Calib;
     // 档位单值先落 core（sidebar/about 的磨砂铺色按档带 alpha 读它；
     // 启动恢复 / 切档 / 主题切换三处都走本漏斗，写这里即全覆盖）
     core::window_effect_state::setCurrent(mode);

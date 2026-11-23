@@ -1319,8 +1319,13 @@ void drawImportNoAccessDialog(eui::Ui& ui, const eui::Screen& screen,
     shell.open = !state.importNoAccessDismissed;
     shell.title = "无法读取花見";
     shell.cancel = {"关闭", [&state] { state.importNoAccessDismissed = true; }};
-    shell.confirm = {"打开系统设置", [&actions] {
-        if (actions.openPrivacySettings) actions.openPrivacySettings();
+    // bug275：弹窗回调在点击帧（compose 帧之后）才被 Runtime::updateInteraction
+    // 调用，禁止引用捕获本函数形参 actions——wallpaper_module.cpp 每帧在栈上
+    // 构造 UiActions，帧返回即销毁，[&actions] = use-after-free（真机两份 .ips：
+    // 点「打开系统设置」必 SIGSEGV）。先拷贝再值捕获，同 onPause/onNext 范式。
+    const auto onOpenSettings = actions.openPrivacySettings;
+    shell.confirm = {"打开系统设置", [onOpenSettings] {
+        if (onOpenSettings) onOpenSettings();
     }};
     shell.onOpenChange = [&state](bool v) {
         if (!v) state.importNoAccessDismissed = true;
@@ -1332,8 +1337,9 @@ void drawImportNoAccessDialog(eui::Ui& ui, const eui::Screen& screen,
             .position(area.x, area.y)
             .size(area.w, 44.0f)
             .wrap()
-            .text("花見可能未安装完整，或未授予「完全磁盘访问权限」。\n"
-                  "安装完整或授权后，重新点击「从花見导入…」即可。")
+            .text("花見可能未安装完整，或「完全磁盘访问权限」未对当前版本生效。\n"
+                  "若列表里已有 DevDesk：先删除（−）再重新添加并重启应用，"
+                  "然后重新点「从花見导入…」。")
             .fontSize(t.sizes.fontSizeBody - 1.0f)
             .lineHeight(22.0f)  // 原 drawDialogText 直传 lineHeight/height（不缩放）
             .color(t.colors.textSecondary)
