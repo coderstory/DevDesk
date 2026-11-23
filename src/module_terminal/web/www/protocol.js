@@ -554,6 +554,18 @@
     });
   };
 
+  RealClient.prototype._loadStatus = function () {
+    var self = this;
+    // /api/status 无需会话票据；bound 决定登录页是否提示「请先在桌面端绑定」。
+    return this._http(API.status, 'GET').then(function (r) {
+      var d = parseJsonBytes(r.bytes);
+      if (!r.ok || !d) return;
+      self.bound = d.bound === true;
+      self.bindState = d.bindState;
+      self._status = d;
+    }).catch(function () {});
+  };
+
   RealClient.prototype._afterHandshake = function () {
     var self = this;
     var hash = new URLSearchParams(((global.location && global.location.hash) || '').replace(/^#/, ''));
@@ -565,6 +577,7 @@
     this.status = 'connected';
     this.view = 'login';
     this._emitState();
+    this._loadStatus().then(function () { self._emitState(); });
     if (isLoopbackHost()) return this.login('').catch(function () {});
     return null;
   };
@@ -615,6 +628,9 @@
 
   RealClient.prototype._applyTabs = function (d) {
     if (!d) return;
+    // 命令回包带 queued：它是命令执行前的快照，直接套用会把新建/关闭/改名回退一格。
+    // 权威状态由执行后的 session 事件推回。
+    if (d.queued) return;
     if (d.tabs) this.tabs = d.tabs.slice();
     else if (d.sessions) {
       this.tabs = d.sessions.map(function (s) {
@@ -751,6 +767,7 @@
       return;
     }
     if (p.ev === 'revoke') { this.view = 'revoked'; this._emitState(); this._closeStream(); return; }
+    if (p.ev === 'exit') { this._emitState({ exit: d || {} }); return; }
     if (p.ev === 'desktop_restart') {
       this.tabs = [];
       this.activeId = null;

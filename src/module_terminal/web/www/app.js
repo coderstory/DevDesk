@@ -28,6 +28,8 @@
   var textLayer = $('text-layer');
   var skeleton = $('skeleton');
   var emptyEl = $('empty');
+  var exitCard = $('exit-card');
+  var exitTitle = $('exit-title');
   var emptyTitle = $('empty-title');
   var btnNewEmpty = $('btn-new-empty');
   var reconnectBar = $('reconnect-bar');
@@ -197,6 +199,13 @@
     if (view === 'bind') applyBindState(s);
     if (view === 'error') connErrorBody.textContent = describeConnError(s.error);
     renderTabs(s);
+    if (exitCard) {
+      exitCard.hidden = !s.exit;
+      if (s.exit) {
+        exitTitle.textContent = '终端已退出' +
+          (s.exit.exitCode !== undefined && s.exit.exitCode !== null ? '（退出码 ' + s.exit.exitCode + '）' : '');
+      }
+    }
     updatePending(s);
     updateConn(s);
     twoStage(s);
@@ -494,6 +503,7 @@
 
   $('btn-new').addEventListener('click', reuseNewTab);
   btnNewEmpty.addEventListener('click', reuseNewTab);
+  $('btn-exit-new').addEventListener('click', reuseNewTab);
   function reuseNewTab() {
     Promise.resolve(client.newTab()).catch(function (err) {
       if (err && (err.code === 'limit_session' || err.http === 409)) showLimit('session');
@@ -797,6 +807,7 @@
   });
   client.onFrame(function (frame) {
     skeleton.hidden = true;
+    exitCard.hidden = true;  // 新帧 = 会话已恢复/重建，收起结束卡
     renderer.setScrollback(client.scrollback || []);
     renderer.setFrame(frame);
   });

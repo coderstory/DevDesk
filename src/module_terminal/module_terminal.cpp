@@ -72,6 +72,10 @@ void TerminalModule::startWebService() {
 
 void TerminalModule::tickWeb() {
     if (!webService_) return;
+    // 会话帧与后台建会话结果只由 pollAll 收割；终端页不可见时 compose 不跑，网页端
+    // 会一直拿到 0x0 空帧（W7 E2E 实测）。这里补一次幂等 pollAll（按 generation 去重），
+    // 页面可见时重复调用无副作用。
+    controller_.pollAll();
     webService_->setActiveSessionCount(controller_.count());
     webService_->tick();
 }

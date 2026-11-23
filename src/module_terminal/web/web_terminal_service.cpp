@@ -580,6 +580,10 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         if (parsedTabs.isOk() && parsedTabs.value().isObject()) {
             out = parsedTabs.value().asObject();
         }
+        // 命令在 UI 线程异步执行，此处的 tabSnapshotJson_ 是**命令前**快照。打 queued
+        // 标让客户端丢弃这份旧列表；真正的新状态由 applyPendingCommands 执行后的
+        // session 事件推回（客户端按事件刷新，不再被旧快照覆盖）。
+        out.set("queued", JsonValue(true));
         if (message == "resize" || message == "new") {
             out.set("rows", JsonValue(appliedRows));
             out.set("cols", JsonValue(appliedCols));
@@ -703,7 +707,15 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         if (!hasBindToken_) return makeInnerError(409, "no_token");
         const auto outcome = confirmBindToken(bindToken_, codeValue.asString(), now);
         if (outcome == ConfirmOutcome::NotClaimed) return makeInnerError(409, "bad_token");
-        if (outcome == ConfirmOutcome::InvalidCode) return makeInnerError(400, "bad_code");
+        if (outcome == ConfirmOutcome::InvalidCode) {
+            // confirmBindToken 在累计第 5 次错码时已把令牌置终态；此时必须当场回
+            // bind_invalid，前端据此立即禁用输入。只回 bad_code 会让用户继续输，
+            // 直到下次 claim 才发现票已作废。
+            if (bindToken_.state == BindTokenState::Terminal) {
+                return makeInnerError(409, "bind_invalid");
+            }
+            return makeInnerError(400, "bad_code");
+        }
         totpSecret_ = bindToken_.secret;
         bound_ = true;
         boundAt_ = now;
@@ -888,6 +900,7 @@ void WebTerminalService::applyPendingCommands() {
         pending.swap(commands_);
         handler = commandHandler_;
     }
+    bool tabsChanged = false;
     for (const auto& command : pending) {
         if (handler) {
             handler(command);
@@ -901,6 +914,10 @@ void WebTerminalService::applyPendingCommands() {
         const std::string op = opValue.asString();
         const auto indexValue = obj.get("index");
         const int index = indexValue.isNumber() ? static_cast<int>(indexValue.asInt()) : -1;
+        if (op == "new" || op == "close" || op == "select" || op == "rename" ||
+            op == "restart") {
+            tabsChanged = true;
+        }
         if (op == "input" && controller_ != nullptr) {
             const auto dataValue = obj.get("data");
             if (!dataValue.isString()) continue;
@@ -936,10 +953,15 @@ void WebTerminalService::applyPendingCommands() {
             if (index >= 0 && titleValue.isString()) tabTitles_[index] = titleValue.asString();
         }
     }
+    std::string snapshot;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         refreshTabSnapshotLocked();
+        snapshot = tabSnapshotJson_;
     }
+    // 命令回包是命令前快照（见 dispatchInner 的 queued 说明）；执行后再推一次
+    // session 事件，客户端以此刷新 tab 列表/标题。
+    if (tabsChanged) publishSessionEvent("session", snapshot, false);
 }
 
 void WebTerminalService::refreshTabSnapshotLocked() {
