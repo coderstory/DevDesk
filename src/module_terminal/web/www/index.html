@@ -1,24 +1,72 @@
 <!doctype html>
-<!-- 网页终端（need#490）——静态骨架原型，mock 数据驱动，可离线打开。
-     真实握手/SSE/加密由后续接线；本页绝不发起网络请求。
+<!-- 网页终端（need#490 W5）——四视图单页：登录 / 绑定 / 终端 / 配置。
+     加密在 crypto.js（纯 JS），协议与 SSE 在 protocol.js，默认装配 RealClient。
      UI 依据 docs/design/2026-11-23-web-terminal-mobile-ui.md。 -->
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <title>DevDesk 网页终端</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <div id="app">
 
+  <!-- ===== 登录页 ===== -->
+  <div id="view-login" class="auth" hidden>
+    <div class="auth-card" id="login-card">
+      <div class="brand"><span class="brand-dot"></span>DevDesk 网页终端</div>
+      <h1>登录网页终端</h1>
+      <p class="auth-desc">输入验证器中的六位数字</p>
+      <div class="code-wrap">
+        <div class="code-row" id="login-cells" aria-hidden="true">
+          <div class="code-cell"></div><div class="code-cell"></div><div class="code-cell"></div>
+          <div class="code-cell"></div><div class="code-cell"></div><div class="code-cell"></div>
+        </div>
+        <input class="code-input" id="login-input" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="6" aria-label="六位验证码" autofocus>
+      </div>
+      <div class="auth-err" id="login-err"></div>
+      <div class="auth-hint" id="login-hint" hidden></div>
+      <button class="btn ghost block" id="login-retry" hidden>重试</button>
+    </div>
+  </div>
+
+  <!-- ===== 绑定页 ===== -->
+  <div id="view-bind" class="auth" hidden>
+    <div class="auth-card" id="bind-card">
+      <div class="brand"><span class="brand-dot"></span>DevDesk 网页终端</div>
+      <h1>绑定验证器</h1>
+      <p class="auth-desc">将验证器条目添加后，输入应用显示的六位码完成绑定。</p>
+      <a class="btn primary block" id="bind-open" href="#" role="button">添加到验证器</a>
+      <p class="platform-hint">iOS 会直接打开验证器应用；Android 会弹出应用选择。返回后在此输码。</p>
+      <div class="banner" id="bind-banner" hidden></div>
+      <div class="code-wrap">
+        <div class="code-row" id="bind-cells" aria-hidden="true">
+          <div class="code-cell"></div><div class="code-cell"></div><div class="code-cell"></div>
+          <div class="code-cell"></div><div class="code-cell"></div><div class="code-cell"></div>
+        </div>
+        <input class="code-input" id="bind-input" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="6" aria-label="六位验证码">
+      </div>
+      <div class="auth-err" id="bind-err"></div>
+      <button class="btn primary block" id="bind-confirm" disabled>完成绑定</button>
+      <div class="bind-dead" id="bind-dead" hidden>
+        <h2 id="bind-dead-title">链接已过期</h2>
+        <p id="bind-dead-body">请在桌面端刷新二维码后重新扫码。</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== 终端主界面 ===== -->
-  <div id="view-terminal" class="term">
+  <div id="view-terminal" class="term" hidden>
     <header class="topbar">
       <div class="tabs" id="tabs" role="tablist" aria-label="终端标签页"></div>
       <button class="iconbtn" id="btn-new" aria-label="新建终端">+</button>
       <span class="vdiv"></span>
+      <button class="iconbtn" id="btn-fs" aria-label="全屏" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></button>
       <button class="iconbtn" id="btn-menu" aria-label="菜单">&#8942;</button>
     </header>
 
@@ -38,19 +86,27 @@
         <i style="width:40%"></i><i style="width:66%"></i><i style="width:82%"></i><i style="width:50%"></i>
       </div>
       <div class="empty" id="empty" hidden>
-        <div class="empty-title">暂无终端</div>
+        <div class="empty-title" id="empty-title">暂无终端</div>
         <button class="btn primary" id="btn-new-empty">新建终端</button>
       </div>
     </div>
 
     <footer class="bottombar">
       <button class="paste" id="btn-paste">粘贴</button>
+      <span class="pending-badge" id="pending-badge" hidden></span>
       <div class="conn"><i class="dot" id="conn-dot"></i><span id="conn-text">已连接</span></div>
     </footer>
+
+    <div class="keybar" id="keybar" hidden>
+      <button class="key" id="key-esc" type="button">Esc</button>
+      <button class="key" id="key-tab" type="button">Tab</button>
+      <button class="key-toggle" id="keybar-toggle" type="button" aria-label="收起键带">&#8964;</button>
+    </div>
 
     <div class="menu-scrim" id="menu-scrim" hidden></div>
     <div class="menu" id="menu" role="menu" hidden>
       <button role="menuitem" data-act="config">配置</button>
+      <button role="menuitem" data-act="fullscreen">全屏</button>
       <div class="sep"></div>
       <button role="menuitem" data-act="logout" class="danger">退出登录</button>
     </div>
@@ -117,7 +173,7 @@
           <input class="inp" id="cfg-dir" placeholder="用户主目录" autocomplete="off" autocapitalize="off" spellcheck="false">
           <button class="clear-btn" id="cfg-dir-clear" hidden>清空</button>
         </div>
-        <span class="err-inline" id="cfg-dir-err" hidden>目录不存在</span>
+        <span class="err-inline" id="cfg-dir-err" hidden>目录不存在，已保留原值</span>
       </div>
     </div>
   </div>
@@ -125,15 +181,23 @@
   <!-- ===== 覆盖层与弹框 ===== -->
   <div class="full-ov" id="ov-handshake">
     <div class="fo-inner">
-      <h2>正在建立安全连接…</h2>
+      <h2>正在建立加密会话…</h2>
       <p>握手完成后才显示终端内容。</p>
+    </div>
+  </div>
+
+  <div class="full-ov" id="ov-conn-error" hidden>
+    <div class="fo-inner">
+      <h2>无法建立加密会话</h2>
+      <p id="conn-error-body">请确认桌面端网页服务已开启，且手机与电脑在同一网络。</p>
+      <button class="btn primary" id="ov-conn-retry">重试</button>
     </div>
   </div>
 
   <div class="full-ov" id="ov-disconnected" hidden>
     <div class="fo-inner">
-      <h2>桌面端已关闭网页服务</h2>
-      <p>服务重新开启后，页面会自动恢复。</p>
+      <h2 id="disc-title">桌面端已关闭网页服务</h2>
+      <p id="disc-body">服务重新开启后，页面会自动恢复。</p>
       <button class="btn primary" id="ov-reconnect">重新连接</button>
     </div>
   </div>
@@ -143,6 +207,17 @@
       <h2>绑定已撤销</h2>
       <p>请在桌面端重新扫码绑定，完成后刷新本页。</p>
       <button class="btn primary" id="ov-refresh">刷新页面</button>
+    </div>
+  </div>
+
+  <div class="full-ov" id="ov-limit" hidden>
+    <div class="fo-inner">
+      <h2 id="limit-title"></h2>
+      <p id="limit-body"></p>
+      <div class="limit-actions">
+        <button class="btn primary" id="limit-primary"></button>
+        <button class="btn ghost" id="limit-secondary" hidden></button>
+      </div>
     </div>
   </div>
 
@@ -159,8 +234,10 @@
   </div>
 
   <div class="toast" id="toast" hidden></div>
+  <div class="selftest" id="selftest" hidden></div>
 </div>
 
+<script src="crypto.js"></script>
 <script src="protocol.js"></script>
 <script src="render.js"></script>
 <script src="app.js"></script>
