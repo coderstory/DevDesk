@@ -1,6 +1,9 @@
 add_executable(devdesk_tests
     test_main.cpp
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
+    # debt419：app_sidebar 拆分后依赖 app_fluid/app_titlebar 的 internal 符号，直编处须同编
+    ${CMAKE_SOURCE_DIR}/src/app_fluid.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_titlebar.cpp
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
     # app::toggle 桥实现缝：settings_module.cpp 引用其符号；probe 同样需要
     #（probe 只链 module_* 库，app_assembly.cpp 不在 probe 链接集）
@@ -590,6 +593,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_fluid.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_titlebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp"
             "${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp"
@@ -610,6 +615,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_fluid.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_titlebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp")
     elseif(_probe_name STREQUAL "layout_guard_probe")
         # 池 #221：布局病守卫 kit——kit 实现随本目标一起编（layout_guard_kit.h
@@ -827,6 +834,8 @@ add_executable(devdesk_ui_driver
     ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_fluid.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_titlebar.cpp
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
     ${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp
@@ -978,6 +987,8 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)  # 2026-11-05：保持 UNIX（github_sync_
         ${CMAKE_SOURCE_DIR}/src/quit_save_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/wallpaper_delete_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
+        ${CMAKE_SOURCE_DIR}/src/app_fluid.cpp
+        ${CMAKE_SOURCE_DIR}/src/app_titlebar.cpp
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/claude_mcp_config.cpp
         ${CMAKE_SOURCE_DIR}/src/module_mcp/zcode_mcp_config.cpp
