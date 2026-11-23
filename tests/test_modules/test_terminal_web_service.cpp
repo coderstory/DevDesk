@@ -231,17 +231,13 @@ REGISTER_TEST(web_settings_startup_dir_validation, "web: 设置唯一入口校�
     return true;
 })
 
-REGISTER_TEST(web_dev_entry_release_gate, "web: 开发测试入口仅 Debug 可用", {
 #ifndef NDEBUG
+REGISTER_TEST(web_dev_entry_available_debug, "web: 开发测试入口仅 Debug 可用", {
     DOCTEST_CHECK(devEntryAvailable());
-#else
-    DOCTEST_CHECK_FALSE(devEntryAvailable());
-#endif
     return true;
 })
 
 REGISTER_TEST(web_dev_entry_autostart, "web: DEVDESK_WEB_AUTOSTART/PORT 构造即开服（debug）", {
-#ifndef NDEBUG
     setEnv("DEVDESK_WEB_AUTOSTART", "1");
     setEnv("DEVDESK_WEB_PORT", "47883");
     {
@@ -253,6 +249,11 @@ REGISTER_TEST(web_dev_entry_autostart, "web: DEVDESK_WEB_AUTOSTART/PORT 构造�
     }
     clearEnv("DEVDESK_WEB_AUTOSTART");
     clearEnv("DEVDESK_WEB_PORT");
-#endif
     return true;
 })
+#else
+REGISTER_TEST(web_dev_entry_absent_release, "web: 开发测试入口在 Release 编译期不可用", {
+    DOCTEST_CHECK_FALSE(devEntryAvailable());
+    return true;
+})
+#endif
