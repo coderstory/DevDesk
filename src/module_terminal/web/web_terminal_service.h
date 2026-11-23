@@ -4,9 +4,11 @@
 // 由 UI 主线程通过 drainCommands() 排出（W4 接线）。
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -20,6 +22,14 @@
 #include "web_bridge.h"
 #include "web_dev_entry.h"
 #include "web_crypto_session.h"
+
+namespace terminal {
+class SessionController;
+namespace web {
+class WebSessionBridge;
+class WebGridEncoder;
+} // namespace web
+} // namespace terminal
 
 namespace platform::http {
 class Server;
@@ -63,7 +73,12 @@ public:
     bool isAllowedOrigin(const std::string& origin) const;
     std::string clientAddressFor(const platform::http::RequestCtx& ctx) const;
 
-    // ---- UI 主线程接线 ----
+    // ---- W4 接线（module_terminal 在 UI 主线程注入；本类不拥有二者）----
+    void setSessionContext(::terminal::SessionController* controller,
+                           ::terminal::web::WebSessionBridge* bridge);
+    // UI 主线程每帧调用：pollStates → 排空命令 → 刷新 tab 快照 → 推网格帧
+    void tick();
+    // W4 事件（Exit/DesktopRestart/Failed）走不可丢控制队列
     void drainCommands();
     void setCommandHandler(std::function<void(const std::string&)> handler);
     void setSettingsPersist(
@@ -79,6 +94,15 @@ public:
     std::size_t pendingCommandCountForTest() const;
     std::vector<std::string> takeCommandsForTest();
     void setSessionActiveForTest(bool active);
+    std::string statusJsonForTest() const;
+    std::string tabSnapshotJsonForTest() const;
+    std::string makeInputCommandForTest(const std::string& text, bool bracketedPaste) const;
+    static std::string settingsErrorReasonForTest(const std::string& dir);
+    int lastRetryAfterForTest() const;
+    // bind.claim 令牌校验（三态错误码）：空串 = 通过；否则 no_token/bad_token/
+    // bind_expired/bind_used/bind_terminal。dispatch 与测试共用，防两处漂移。
+    std::string bindClaimErrorForTest(const std::string& token, bool loopback) const;
+    std::string bindTokenForTest() const;
 
 private:
     core::WebAccessSnapshot snapshotLocked() const;
@@ -97,8 +121,14 @@ private:
                               const std::string& clientAddress, const std::string& hint,
                               int& httpStatus);
     bool enqueueCommand(const std::string& command);
+    void applyPendingCommands();
+    void refreshTabSnapshotLocked();
+    void publishFrame();
+    void publishSessionEvent(const std::string& eventName, const std::string& payloadJson,
+                             bool control);
     std::string settingsJsonLocked() const;
     void broadcastSettingsLocked();
+    std::string takeTabSnapshot() const;
 
     mutable std::mutex mutex_;
     std::unique_ptr<platform::http::Server> server_;
@@ -125,6 +155,20 @@ private:
 
     std::deque<std::string> commands_;
     std::function<void(const std::string&)> commandHandler_;
+    ::terminal::SessionController* controller_ = nullptr;
+    ::terminal::web::WebSessionBridge* sessionBridge_ = nullptr;
+    std::unique_ptr<::terminal::web::WebGridEncoder> gridEncoder_;
+    std::atomic<bool> forceFull_{true};
+    bool gridCursorValid_ = false;
+    int gridLastCursorRow_ = -1;
+    int gridLastCursorCol_ = -1;
+    std::string tabSnapshotJson_ = "{\"tabs\":[],\"activeId\":null}";
+    std::map<int, std::string> tabTitles_;
+    int lastRetryAfter_ = 0;
+    std::map<std::string, std::deque<std::int64_t>> handshakeHits_;
+    std::map<std::string, std::deque<std::int64_t>> loginFailures_;
+    bool bound_ = false;
+    std::int64_t boundAt_ = 0;
     std::function<core::Result<void>(const core::TerminalSettingsPatch&)> settingsPersist_;
 
     struct SettingsState {

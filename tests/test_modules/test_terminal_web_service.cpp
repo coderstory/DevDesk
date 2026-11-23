@@ -2,6 +2,7 @@
 // SSE seq 与队列合并、per-client 限流、Host/Origin 拒绝、debug 启动入口。
 #include "doctest.h"
 
+#include "platform/json.h"
 #include "platform/web_crypto.h"
 
 #include "module_terminal/web/web_bridge.h"
@@ -12,6 +13,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -228,6 +230,89 @@ REGISTER_TEST(web_settings_startup_dir_validation, "web: 设置唯一入口校�
     core::TerminalSettingsPatch good;
     good.startupDir = std::filesystem::temp_directory_path().string();
     DOCTEST_CHECK(service.writeSettings(good).isOk());
+    return true;
+})
+
+REGISTER_TEST(web_status_plaintext_fields, "web: /api/status 回绑定态/设备/时间且无秘密", {
+    WebTerminalService service;
+    auto parsed = platform::json::parse(service.statusJsonForTest());
+    DOCTEST_CHECK(parsed.isOk());
+    const auto obj = parsed.value().asObject();
+    DOCTEST_CHECK(obj.get("bound").isBool());
+    DOCTEST_CHECK_FALSE(obj.get("bound").asBool());
+    DOCTEST_CHECK_EQ(obj.get("deviceName").asString(), std::string());
+    DOCTEST_CHECK_EQ(obj.get("bindTime").asInt(), 0);
+    DOCTEST_CHECK_EQ(obj.get("lastLogin").asInt(), 0);
+    DOCTEST_CHECK_FALSE(obj.has("hid"));
+    DOCTEST_CHECK_FALSE(obj.has("token"));
+    return true;
+})
+
+REGISTER_TEST(web_settings_error_tristate, "web: 启动目录三态 not_exist/not_dir/cannot_enter", {
+    DOCTEST_CHECK_EQ(WebTerminalService::settingsErrorReasonForTest(
+                         "/definitely/not/here/need490"),
+                     std::string("not_exist"));
+    const auto file = std::filesystem::temp_directory_path() / "need490_not_dir_probe";
+    {
+        std::ofstream out(file);
+        out << "x";
+    }
+    DOCTEST_CHECK_EQ(WebTerminalService::settingsErrorReasonForTest(file.string()),
+                     std::string("not_dir"));
+    std::filesystem::remove(file);
+    DOCTEST_CHECK_EQ(WebTerminalService::settingsErrorReasonForTest(
+                         std::filesystem::temp_directory_path().string()),
+                     std::string());
+    return true;
+})
+
+REGISTER_TEST(web_handshake_retry_after, "web: 握手限流暴露剩余秒（不再固定 60）", {
+    WebTerminalService service;
+    const auto now = testNow();
+    for (int i = 0; i < 32; ++i) {
+        DOCTEST_CHECK(service.handshakeRateAllowedForTest("10.9.9.9", now));
+    }
+    DOCTEST_CHECK_FALSE(service.handshakeRateAllowedForTest("10.9.9.9", now));
+    const int retry = service.lastRetryAfterForTest();
+    DOCTEST_CHECK(retry >= 1);
+    DOCTEST_CHECK(retry <= 60);
+    return true;
+})
+
+REGISTER_TEST(web_input_command_contract, "web: /api/input 契约 b.text/b.keys/b.bp", {
+    WebTerminalService service;
+    auto parsed = platform::json::parse(service.makeInputCommandForTest("ab", true));
+    DOCTEST_CHECK(parsed.isOk());
+    const auto obj = parsed.value().asObject();
+    DOCTEST_CHECK_EQ(obj.get("op").asString(), std::string("input"));
+    DOCTEST_CHECK(obj.get("bp").asBool());
+    auto decoded = platform::web_crypto::base64UrlDecode(obj.get("data").asString());
+    DOCTEST_CHECK(decoded.isOk());
+    DOCTEST_CHECK_EQ(std::string(decoded.value().begin(), decoded.value().end()), std::string("ab"));
+    return true;
+})
+
+REGISTER_TEST(web_tab_snapshot_default, "web: 无会话桥时 tab 快照为空且 activeId=null", {
+    WebTerminalService service;
+    auto parsed = platform::json::parse(service.tabSnapshotJsonForTest());
+    DOCTEST_CHECK(parsed.isOk());
+    const auto obj = parsed.value().asObject();
+    DOCTEST_CHECK(obj.get("tabs").isArray());
+    DOCTEST_CHECK_EQ(obj.get("tabs").size(), 0);
+    DOCTEST_CHECK(obj.get("activeId").isNull());
+    return true;
+})
+
+REGISTER_TEST(web_bind_token_validation, "web: bind.claim 令牌校验区分 no_token/bad_token", {
+    WebTerminalService service;
+    DOCTEST_CHECK(service.refreshToken().isOk());
+    const std::string token = service.bindTokenForTest();
+    DOCTEST_CHECK_FALSE(token.empty());
+    DOCTEST_CHECK_EQ(service.bindClaimErrorForTest(token, /*loopback=*/false), std::string());
+    DOCTEST_CHECK_EQ(service.bindClaimErrorForTest(token, /*loopback=*/true), std::string());
+    DOCTEST_CHECK_EQ(service.bindClaimErrorForTest("wrong-token", false), std::string("bad_token"));
+    DOCTEST_CHECK_EQ(service.bindClaimErrorForTest("", false), std::string("no_token"));
+    DOCTEST_CHECK_EQ(service.bindClaimErrorForTest("", true), std::string());
     return true;
 })
 

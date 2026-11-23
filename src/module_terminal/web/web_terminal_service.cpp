@@ -1,5 +1,10 @@
 #include "web_terminal_service.h"
 
+#include "web_grid.h"
+#include "web_session_bridge.h"
+
+#include "module_terminal/terminal_session_controller.h"
+
 #include "platform/http_server.h"
 #include "platform/json.h"
 #include "platform/net_interfaces.h"
@@ -76,8 +81,17 @@ bool canEnterDirectory(const std::string& dir) {
 
 } // namespace
 
+std::string WebTerminalService::settingsErrorReasonForTest(const std::string& dir) {
+    std::error_code ec;
+    if (!std::filesystem::exists(dir, ec) || ec) return "not_exist";
+    if (!std::filesystem::is_directory(dir, ec) || ec) return "not_dir";
+    if (!canEnterDirectory(dir)) return "cannot_enter";
+    return {};
+}
+
 WebTerminalService::WebTerminalService()
-    : devConfig_(readDevEntryConfig()) {
+    : devConfig_(readDevEntryConfig()),
+      gridEncoder_(std::make_unique<::terminal::web::WebGridEncoder>()) {
     cookieKey_ = wc::randomBytes(32);
     if (devConfig_.autostart) {
         if (devConfig_.port > 0) port_ = devConfig_.port;
@@ -159,9 +173,12 @@ core::Result<void> WebTerminalService::revokeBinding() {
 }
 
 core::Result<void> WebTerminalService::writeSettings(const core::TerminalSettingsPatch& patch) {
-    if (patch.startupDir && !patch.startupDir->empty() &&
-        !canEnterDirectory(*patch.startupDir)) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError, "bad_startup_dir");
+    if (patch.startupDir && !patch.startupDir->empty()) {
+        const std::string reason = settingsErrorReasonForTest(*patch.startupDir);
+        if (!reason.empty()) {
+            // message 直接带三态码：not_exist / not_dir / cannot_enter（E-18 前端三文案）
+            return core::Result<void>::fail(core::ErrorCode::ValidationError, reason);
+        }
     }
     SettingsState before;
     {
@@ -202,7 +219,7 @@ core::WebAccessSnapshot WebTerminalService::snapshotLocked() const {
     snap.port = running_ && server_ ? server_->actualPort() : 0;
     snap.addresses = platform::localIpv4Addresses();
     snap.bindState = bindState_;
-    snap.bindTime = bindTime_;
+    snap.bindTime = bound_ ? boundAt_ : 0;
     snap.lastLogin = lastLogin_;
     snap.onlineCount = static_cast<int>(sessions_.size());
     if (hasBindToken_) {
@@ -279,14 +296,35 @@ void WebTerminalService::handleHandshakeGet(const platform::http::RequestCtx& ct
                                             platform::http::ResponseWriter& rw) {
     const auto address = clientAddressFor(ctx);
     const auto now = nowSec();
-    if (!handshakeLimiter_.tryAcquire(address, now)) {
+    const bool allowed = handshakeLimiter_.tryAcquire(address, now);
+    int retryAfter = 60;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& hits = handshakeHits_[address];
+        hits.push_back(now);
+        while (!hits.empty() && hits.front() <= now - kRateWindowSec) hits.pop_front();
+        if (!allowed && !hits.empty()) {
+            retryAfter = static_cast<int>(kRateWindowSec - (now - hits.front()));
+            if (retryAfter < 1) retryAfter = 1;
+        }
+        lastRetryAfter_ = allowed ? 0 : retryAfter;
+    }
+    if (!allowed) {
         logAuthFailure(address, "handshake_rate_limited", now);
-        replyError(rw, 429, "too_many_requests");
+        JsonObject out;
+        out.set("e", JsonValue("too_many_requests"));
+        out.set("retryAfter", JsonValue(retryAfter));
+        rw.setHeader("Retry-After", std::to_string(retryAfter));
+        replyJson(rw, 429, stringifyOr(JsonValue(out), "{\"e\":\"too_many_requests\"}"));
         return;
     }
     auto started = sessions_.beginHandshake(now);
     if (!started.isOk()) {
-        replyError(rw, 409, "too_many_sessions");
+        rw.setHeader("Retry-After", "60");
+        JsonObject out;
+        out.set("e", JsonValue("too_many_sessions"));
+        out.set("retryAfter", JsonValue(60));
+        replyJson(rw, 409, stringifyOr(JsonValue(out), "{\"e\":\"too_many_sessions\"}"));
         return;
     }
     const auto& session = started.value();
@@ -455,13 +493,35 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         return makeInner(200, JsonValue(out));
     }
     if (message == "input" || message == "paste") {
+        // 字段契约（W5 已按 b.text 接）：
+        //   b.text  必填，UTF-8 文本（特殊键已由前端编码成转义序列）
+        //   b.keys  可选，base64url 原始按键字节（优先级高于 text，给二进制键序）
+        //   b.bp    可选，bool=ture 表示 bracketed paste（未自带 200~/201~ 包裹时服务端补）
+        // HTTP 状态：无激活会话 = 200 + 密文内 409；命令队列满 = HTTP 503 + 密文内 503。
         if (!requireTicket()) return makeInnerError(401, "bad_ticket");
-        {
+        bool active = false;
+        if (controller_ != nullptr) {
+            active = controller_ != nullptr && controller_->active() != nullptr;
+        } else {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (activeSessions_ <= 0) return makeInnerError(409, "no_active_session");
+            active = activeSessions_ > 0;
         }
-        // 命令队列满 = HTTP 503（技术卡 §3.1），不是密文内错误
-        if (!enqueueCommand(plaintext)) {
+        if (!active) return makeInnerError(409, "no_active_session");
+        std::string bytes;
+        const auto keysValue = body.get("keys");
+        const auto textValue = body.get("text");
+        if (keysValue.isString()) {
+            auto decoded = wc::base64UrlDecode(keysValue.asString());
+            if (!decoded.isOk()) return makeInnerError(400, "bad_keys");
+            bytes.assign(decoded.value().begin(), decoded.value().end());
+        } else if (textValue.isString()) {
+            bytes = textValue.asString();
+        } else {
+            return makeInnerError(400, "bad_text");
+        }
+        const auto bpValue = body.get("bp");
+        const bool bracketedPaste = bpValue.isBool() && bpValue.asBool();
+        if (!enqueueCommand(makeInputCommandForTest(bytes, bracketedPaste))) {
             httpStatus = 503;
             return makeInnerError(503, "queue_full");
         }
@@ -469,8 +529,61 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
     }
     if (message == "resync") {
         if (!requireTicket()) return makeInnerError(401, "bad_ticket");
-        bridge_.publish("full", "{}");
+        forceFull_.store(true);  // 下一帧 tick 由编码器重置出 full
         return makeInner(200, JsonValue(nullptr));
+    }
+    if (message == "new" || message == "close" || message == "select" ||
+        message == "rename" || message == "restart" || message == "resize") {
+        if (!requireTicket()) return makeInnerError(401, "bad_ticket");
+        if (sessionBridge_ == nullptr) return makeInnerError(503, "no_bridge");
+        const auto indexValue = body.get("index");
+        const auto idValue = body.get("id");
+        int index = -1;
+        if (indexValue.isNumber()) {
+            index = static_cast<int>(indexValue.asInt());
+        } else if (idValue.isNumber()) {
+            index = static_cast<int>(idValue.asInt());
+        } else if (idValue.isString()) {
+            try {
+                index = std::stoi(idValue.asString());
+            } catch (...) {
+                index = -1;
+            }
+        }
+        JsonObject command;
+        command.set("op", JsonValue(message));
+        command.set("index", JsonValue(index));
+        if (message == "rename") {
+            const auto titleValue = body.get("title");
+            command.set("title", JsonValue(titleValue.isString() ? titleValue.asString() : std::string()));
+        }
+        int appliedRows = 0;
+        int appliedCols = 0;
+        if (message == "resize" || message == "new") {
+            const auto rowsValue = body.get("rows");
+            const auto colsValue = body.get("cols");
+            const int rows = rowsValue.isNumber() ? static_cast<int>(rowsValue.asInt()) : 0;
+            const int cols = colsValue.isNumber() ? static_cast<int>(colsValue.asInt()) : 0;
+            const auto clamped = ::terminal::web::clampWebTerminalSize(rows, cols);
+            appliedRows = clamped.rows;
+            appliedCols = clamped.cols;
+            command.set("rows", JsonValue(appliedRows));
+            command.set("cols", JsonValue(appliedCols));
+        }
+        if (!enqueueCommand(stringifyOr(JsonValue(command), "{}"))) {
+            httpStatus = 503;
+            return makeInnerError(503, "queue_full");
+        }
+        JsonObject out;
+        auto parsedTabs = platform::json::parse(tabSnapshotJson_);
+        if (parsedTabs.isOk() && parsedTabs.value().isObject()) {
+            out = parsedTabs.value().asObject();
+        }
+        if (message == "resize" || message == "new") {
+            out.set("rows", JsonValue(appliedRows));
+            out.set("cols", JsonValue(appliedCols));
+        }
+        return makeInner(200, JsonValue(out));
     }
     if (message == "settings.get") {
         if (!requireTicket()) return makeInnerError(401, "bad_ticket");
@@ -495,8 +608,12 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         if (body.has("startupDir")) patch.startupDir = body.get("startupDir").asString();
         auto written = writeSettings(patch);
         if (!written.isOk()) {
-            return makeInnerError(written.errorCode() == core::ErrorCode::ValidationError ? 400 : 500,
-                                  "settings_failed");
+            JsonObject err;
+            err.set("s", JsonValue(400));
+            err.set("e", JsonValue("settings_failed"));
+            err.set("reason", JsonValue(written.errorMessage()));
+            err.set("field", JsonValue("startupDir"));
+            return stringifyOr(JsonValue(err), "{\"s\":400,\"e\":\"settings_failed\"}");
         }
         return makeInner(200, JsonValue(nullptr));
     }
@@ -504,17 +621,35 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         if (!loopback) {
             const auto codeValue = body.get("code");
             if (!codeValue.isString()) return makeInnerError(400, "bad_code");
+            int retryAfter = 0;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                if (loginLockout_.isLocked(clientAddress, now)) return makeInnerError(429, "locked");
+                if (loginLockout_.isLocked(clientAddress, now)) {
+                    auto& hits = loginFailures_[clientAddress];
+                    while (!hits.empty() && hits.front() <= now - kRateWindowSec) hits.pop_front();
+                    retryAfter = hits.empty() ? 60
+                                              : static_cast<int>(kRateWindowSec - (now - hits.front()));
+                    if (retryAfter < 1) retryAfter = 1;
+                }
+            }
+            if (retryAfter > 0) {
+                JsonObject out;
+                out.set("s", JsonValue(429));
+                out.set("e", JsonValue("locked"));
+                out.set("retryAfter", JsonValue(retryAfter));
+                return stringifyOr(JsonValue(out), "{\"s\":429,\"e\":\"locked\"}");
             }
             if (totpSecret_.empty() || !verifyTotp(totpSecret_, codeValue.asString(), now)) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 loginLockout_.recordFailure(clientAddress, now);
+                auto& hits = loginFailures_[clientAddress];
+                hits.push_back(now);
+                while (!hits.empty() && hits.front() <= now - kRateWindowSec) hits.pop_front();
                 return makeInnerError(401, "bad_code");
             }
             std::lock_guard<std::mutex> lock(mutex_);
             loginLockout_.recordSuccess(clientAddress);
+            loginFailures_.erase(clientAddress);
         }
         std::lock_guard<std::mutex> lock(mutex_);
         auto issued = tickets_.issue(cookieKey_, now);
@@ -541,10 +676,19 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         return makeInner(200, JsonValue(nullptr));
     }
     if (message == "bind.claim") {
+        // 契约：b.token = URL #b= 片段带来的 base64url 绑定令牌（前端读 location.hash）。
+        // 回环可省略（桌面自测）；非回环必须带。错误码区分三态：no_token / bad_token /
+        // bind_expired / bind_used / bind_terminal（PRD P-22 / app.js dirMsgs 同款映射）。
+        const auto tokenValue = body.get("token");
+        const std::string presented = tokenValue.isString() ? tokenValue.asString() : std::string();
+        const std::string claimError = bindClaimErrorForTest(presented, loopback);
+        if (!claimError.empty()) {
+            const bool transport = claimError == "no_token" || claimError == "bad_token";
+            return makeInnerError(transport ? 400 : 409, claimError);
+        }
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!hasBindToken_) return makeInnerError(409, "no_token");
         auto claim = claimBindToken(bindToken_, now);
-        if (!claim.isOk()) return makeInnerError(409, "bad_token");
+        if (!claim.isOk()) return makeInnerError(409, "bind_terminal");
         totpSecret_ = bindToken_.secret;
         JsonObject out;
         out.set("secret", JsonValue(claim.value().secret));
@@ -560,6 +704,8 @@ std::string WebTerminalService::dispatchInner(const std::shared_ptr<CryptoSessio
         if (outcome == ConfirmOutcome::NotClaimed) return makeInnerError(409, "bad_token");
         if (outcome == ConfirmOutcome::InvalidCode) return makeInnerError(400, "bad_code");
         totpSecret_ = bindToken_.secret;
+        bound_ = true;
+        boundAt_ = now;
         auto issued = tickets_.issue(cookieKey_, now);
         if (!issued.isOk()) return makeInnerError(409, "too_many_tickets");
         lastLogin_ = now;
@@ -612,7 +758,8 @@ void WebTerminalService::handleStream(const platform::http::RequestCtx& ctx,
         replyError(rw, 503, "too_many_streams");
         return;
     }
-    bridge_.publish("full", "{}");
+    forceFull_.store(true);
+    if (sessionBridge_ != nullptr) sessionBridge_->addSubscriber();
     rw.setStatus(200);
     rw.setHeader("Content-Type", "text/event-stream");
     rw.setHeader("Cache-Control", "no-store");
@@ -630,20 +777,35 @@ void WebTerminalService::handleStream(const platform::http::RequestCtx& ctx,
         },
         [this, sub, ticket](bool) {
             bridge_.unsubscribe(sub);
+            if (sessionBridge_ != nullptr) sessionBridge_->removeSubscriber();
             sessions_.finishStreamTicket(ticket, nowSec());
         });
 }
 
 void WebTerminalService::handleStatus(const platform::http::RequestCtx&,
                                       platform::http::ResponseWriter& rw) {
+    replyJson(rw, 200, statusJsonForTest());
+}
+
+std::string WebTerminalService::statusJsonForTest() const {
     auto snap = snapshot();
-    // 状态接口只回非秘密字段；hid/密钥/票据绝不出现在明文
+    // 状态接口只回非秘密字段；hid/密钥/票据/绑定令牌绝不出现在明文
     JsonObject obj;
     obj.set("running", JsonValue(snap.running));
     obj.set("port", JsonValue(snap.port));
     obj.set("online", JsonValue(snap.onlineCount));
     obj.set("bindState", JsonValue(static_cast<int>(snap.bindState)));
-    replyJson(rw, 200, stringifyOr(JsonValue(obj), "{}"));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        obj.set("bound", JsonValue(bound_));
+        // 设备名无注册来源：绑定后回固定展示名，未绑定回空串（前端按空串隐藏）
+        obj.set("deviceName", JsonValue(bound_ ? std::string("DevDesk 桌面端") : std::string()));
+        obj.set("bindTime", JsonValue(boundAt_));
+        obj.set("lastLogin", JsonValue(lastLogin_));
+        const auto remaining = hasBindToken_ ? bindToken_.expireAt - nowSec() : 0;
+        obj.set("tokenRemainingSec", JsonValue(remaining > 0 ? static_cast<int>(remaining) : 0));
+    }
+    return stringifyOr(JsonValue(obj), "{}");
 }
 
 bool WebTerminalService::enqueueCommand(const std::string& command) {
@@ -653,7 +815,71 @@ bool WebTerminalService::enqueueCommand(const std::string& command) {
     return true;
 }
 
-void WebTerminalService::drainCommands() {
+void WebTerminalService::setSessionContext(::terminal::SessionController* controller,
+                                           ::terminal::web::WebSessionBridge* bridge) {
+    controller_ = controller;
+    sessionBridge_ = bridge;
+    if (sessionBridge_ != nullptr) {
+        sessionBridge_->setListener([this](const ::terminal::web::WebEvent& ev) {
+            switch (ev.type) {
+                case ::terminal::web::WebEventType::Tabs: {
+                    std::string snapshot;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        refreshTabSnapshotLocked();
+                        snapshot = tabSnapshotJson_;
+                    }
+                    publishSessionEvent("session", snapshot, false);
+                    break;
+                }
+                case ::terminal::web::WebEventType::Exit: {
+                    JsonObject out;
+                    out.set("tabIndex", JsonValue(ev.tabIndex));
+                    out.set("exitCode", JsonValue(ev.exitCode));
+                    publishSessionEvent("exit", stringifyOr(JsonValue(out), "{}"), true);
+                    break;
+                }
+                case ::terminal::web::WebEventType::Failed: {
+                    JsonObject out;
+                    out.set("tabIndex", JsonValue(ev.tabIndex));
+                    out.set("reason", JsonValue(ev.reason));
+                    publishSessionEvent("exit", stringifyOr(JsonValue(out), "{}"), true);
+                    break;
+                }
+                case ::terminal::web::WebEventType::Settings: {
+                    std::string json;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        json = settingsJsonLocked();
+                    }
+                    publishSessionEvent("settings", json, false);
+                    break;
+                }
+                case ::terminal::web::WebEventType::DesktopRestart: {
+                    publishSessionEvent("desktop_restart", "{\"reason\":\"desktop_restart\"}", true);
+                    break;
+                }
+            }
+        });
+    }
+    forceFull_.store(true);
+    publishSessionEvent("session", takeTabSnapshot(), false);
+}
+
+void WebTerminalService::tick() {
+    if (sessionBridge_ == nullptr || controller_ == nullptr) return;
+    sessionBridge_->pollStates();
+    applyPendingCommands();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        refreshTabSnapshotLocked();
+    }
+    publishFrame();
+}
+
+void WebTerminalService::drainCommands() { applyPendingCommands(); }
+
+void WebTerminalService::applyPendingCommands() {
     std::deque<std::string> pending;
     std::function<void(const std::string&)> handler;
     {
@@ -661,8 +887,123 @@ void WebTerminalService::drainCommands() {
         pending.swap(commands_);
         handler = commandHandler_;
     }
-    if (!handler) return;
-    for (const auto& command : pending) handler(command);
+    for (const auto& command : pending) {
+        if (handler) {
+            handler(command);
+            continue;
+        }
+        auto parsed = platform::json::parse(command);
+        if (!parsed.isOk() || !parsed.value().isObject()) continue;
+        const auto obj = parsed.value().asObject();
+        const auto opValue = obj.get("op");
+        if (!opValue.isString()) continue;
+        const std::string op = opValue.asString();
+        const auto indexValue = obj.get("index");
+        const int index = indexValue.isNumber() ? static_cast<int>(indexValue.asInt()) : -1;
+        if (op == "input" && controller_ != nullptr) {
+            const auto dataValue = obj.get("data");
+            if (!dataValue.isString()) continue;
+            auto bytes = wc::base64UrlDecode(dataValue.asString());
+            if (!bytes.isOk()) continue;
+            const auto pasteValue = obj.get("bp");
+            const bool paste = pasteValue.isBool() && pasteValue.asBool();
+            if (!bytes.value().empty()) {
+                controller_->writeToActive(bytes.value().data(),
+                                           static_cast<int32_t>(bytes.value().size()), paste);
+            }
+        } else if (op == "resize" && sessionBridge_ != nullptr) {
+            const auto rowsValue = obj.get("rows");
+            const auto colsValue = obj.get("cols");
+            sessionBridge_->webResize(rowsValue.isNumber() ? static_cast<int>(rowsValue.asInt()) : 0,
+                                      colsValue.isNumber() ? static_cast<int>(colsValue.asInt()) : 0);
+        } else if (op == "new" && sessionBridge_ != nullptr) {
+            sessionBridge_->createTab();
+            const auto rowsValue = obj.get("rows");
+            const auto colsValue = obj.get("cols");
+            if (rowsValue.isNumber() && colsValue.isNumber()) {
+                sessionBridge_->webResize(static_cast<int>(rowsValue.asInt()),
+                                          static_cast<int>(colsValue.asInt()));
+            }
+        } else if (op == "close" && sessionBridge_ != nullptr) {
+            sessionBridge_->closeTab(index);
+        } else if (op == "select" && sessionBridge_ != nullptr) {
+            sessionBridge_->activateTab(index);
+        } else if (op == "restart" && sessionBridge_ != nullptr) {
+            sessionBridge_->restartTab(index);
+        } else if (op == "rename") {
+            const auto titleValue = obj.get("title");
+            if (index >= 0 && titleValue.isString()) tabTitles_[index] = titleValue.asString();
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        refreshTabSnapshotLocked();
+    }
+}
+
+void WebTerminalService::refreshTabSnapshotLocked() {
+    tabSnapshotJson_ = takeTabSnapshot();
+}
+
+std::string WebTerminalService::takeTabSnapshot() const {
+    std::vector<::terminal::web::WebTab> tabs;
+    if (sessionBridge_ != nullptr) tabs = sessionBridge_->tabs();
+    auto array = platform::json::makeArray();
+    int activeIndex = -1;
+    for (const auto& tab : tabs) {
+        JsonObject item;
+        item.set("id", JsonValue(std::to_string(tab.index)));
+        item.set("index", JsonValue(tab.index));
+        auto titleIt = tabTitles_.find(tab.index);
+        item.set("title", JsonValue(titleIt != tabTitles_.end() ? titleIt->second : tab.title));
+        item.set("active", JsonValue(tab.active));
+        item.set("state", JsonValue(tab.state));
+        item.set("exitCode", JsonValue(tab.exitCode));
+        if (tab.active) activeIndex = tab.index;
+        array.append(JsonValue(item));
+    }
+    JsonObject root;
+    root.set("tabs", array);
+    if (activeIndex >= 0) {
+        root.set("activeId", JsonValue(std::to_string(activeIndex)));
+    } else {
+        root.set("activeId", JsonValue(nullptr));
+    }
+    return stringifyOr(JsonValue(root), "{\"tabs\":[],\"activeId\":null}");
+}
+
+void WebTerminalService::publishSessionEvent(const std::string& eventName,
+                                             const std::string& payloadJson, bool control) {
+    bridge_.publish(eventName, payloadJson, control);
+}
+
+void WebTerminalService::publishFrame() {
+    if (sessionBridge_ == nullptr || controller_ == nullptr || gridEncoder_ == nullptr) return;
+    if (bridge_.subscriberCount() == 0) return;
+    const ::terminal::Session* session = controller_->active();
+    if (session == nullptr) return;
+    if (forceFull_.exchange(false)) {
+        gridEncoder_->reset();
+        gridCursorValid_ = false;
+    }
+    bool dark = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dark = settings_.palette == "dark";
+    }
+    auto frame = gridEncoder_->encode(session->frame, session->lastGeneration,
+                                      session->scrollOffset, controller_->activeScrollbackCount(),
+                                      true, dark);
+    const bool cursorMoved = !gridCursorValid_ ||
+                             frame.header.cursorRow != gridLastCursorRow_ ||
+                             frame.header.cursorCol != gridLastCursorCol_;
+    if (frame.rows.empty() && !cursorMoved) return;
+    gridCursorValid_ = true;
+    gridLastCursorRow_ = frame.header.cursorRow;
+    gridLastCursorCol_ = frame.header.cursorCol;
+    const auto bytes = ::terminal::web::encodeWebFrame(frame);
+    const std::string b64 = wc::base64UrlEncode(bytes);
+    bridge_.publish(frame.header.full ? "full" : "rows", "{\"f\":\"" + b64 + "\"}");
 }
 
 void WebTerminalService::setCommandHandler(std::function<void(const std::string&)> handler) {
@@ -683,7 +1024,39 @@ void WebTerminalService::setActiveSessionCount(int count) {
 
 bool WebTerminalService::handshakeRateAllowedForTest(const std::string& address,
                                                      std::int64_t now) {
-    return handshakeLimiter_.tryAcquire(address, now);
+    const bool allowed = handshakeLimiter_.tryAcquire(address, now);
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& hits = handshakeHits_[address];
+    hits.push_back(now);
+    while (!hits.empty() && hits.front() <= now - kRateWindowSec) hits.pop_front();
+    if (!allowed && !hits.empty()) {
+        lastRetryAfter_ = static_cast<int>(kRateWindowSec - (now - hits.front()));
+        if (lastRetryAfter_ < 1) lastRetryAfter_ = 1;
+    } else {
+        lastRetryAfter_ = 0;
+    }
+    return allowed;
+}
+
+std::string WebTerminalService::bindClaimErrorForTest(const std::string& token,
+                                                     bool loopback) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!hasBindToken_) return "no_token";
+    if (token.empty()) {
+        if (!loopback) return "no_token";
+    } else if (!wc::constantTimeEquals(token, bindToken_.token)) {
+        return "bad_token";
+    }
+    const auto now = nowSec();
+    if (bindToken_.state == BindTokenState::Terminal) {
+        if (bindToken_.terminal == BindTokenTerminal::Used) return "bind_used";
+        if (bindToken_.terminal == BindTokenTerminal::Expired || now > bindToken_.expireAt) {
+            return "bind_expired";
+        }
+        return "bind_terminal";
+    }
+    if (now > bindToken_.expireAt) return "bind_expired";
+    return {};
 }
 
 int WebTerminalService::actualPortForTest() const {
@@ -703,6 +1076,30 @@ std::vector<std::string> WebTerminalService::takeCommandsForTest() {
     return out;
 }
 
+std::string WebTerminalService::makeInputCommandForTest(const std::string& bytes,
+                                                       bool bracketedPaste) const {
+    JsonObject command;
+    command.set("op", JsonValue("input"));
+    command.set("data", JsonValue(wc::base64UrlEncode(
+                            std::vector<std::uint8_t>(bytes.begin(), bytes.end()))));
+    command.set("bp", JsonValue(bracketedPaste));
+    return stringifyOr(JsonValue(command), "{}");
+}
+
+std::string WebTerminalService::bindTokenForTest() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return hasBindToken_ ? bindToken_.token : std::string();
+}
+
+std::string WebTerminalService::tabSnapshotJsonForTest() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return tabSnapshotJson_;
+}
+
+int WebTerminalService::lastRetryAfterForTest() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return lastRetryAfter_;
+}
 void WebTerminalService::setSessionActiveForTest(bool active) {
     std::lock_guard<std::mutex> lock(mutex_);
     activeSessions_ = active ? 1 : 0;
