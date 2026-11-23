@@ -7,6 +7,7 @@ add_library(devdesk_module_terminal STATIC
     terminal_metrics.cpp
     terminal_search.cpp
     terminal_settings.cpp
+    web/web_auth.cpp
 )
 
 # 终端设置选项表按平台拆（need250：字体/shell 选项各写死一套，AGENTS §三）
