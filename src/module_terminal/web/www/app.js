@@ -247,8 +247,9 @@
     if (s.opError && s.opError.code === 'limit_session') showLimit('session');
     if (s.sendError) showToast('发送失败，请重试');
     if (s.queueFull) showToast('待发送队列已满，请稍后再输入');
-    if (s.error && s.error.http === 429 && s.view === 'error') showLimit('hs', s.error.retryAfter);
-    if (s.error && s.error.http === 503) showLimit('sse');
+    if (s.error && (s.error.http === 429 || s.error.code === 'too_many_requests')) showLimit('hs', s.error.retryAfter);
+    if (s.error && s.error.code === 'too_many_sessions') showLimit('session');
+    if (s.error && (s.error.http === 503 || s.error.code === 'too_many_streams')) showLimit('sse');
   }
 
   /* ---------- 登录页 ---------- */
@@ -294,7 +295,12 @@
       clearCode(loginInput, loginCells);
     } else if (code === 'locked' || err.http === 429) {
       startLock(err.retryAfter || 60);
-    } else if (code === 'limit_ticket' || code === 'ticket_full') {
+    } else if (code === 'too_many_streams') {
+      showLimit('sse');
+    } else if (code === 'bad_ticket') {
+      setLoginErr('登录已过期，请重新验证');
+      clearCode(loginInput, loginCells);
+    } else if (code === 'limit_ticket' || code === 'ticket_full' || code === 'too_many_tickets') {
       setLoginErr('登录设备数已达上限');
       loginHint.hidden = false;
       loginHint.textContent = '请先退出不用的设备';
@@ -339,6 +345,7 @@
     if (code === 'bind_invalid') return 'invalid';
     if (code === 'bind_expired' || code === 'token_expired') return 'expired';
     if (code === 'bind_used' || code === 'token_used' || code === 'bind_terminal') return 'used';
+    if (code === 'no_token' || code === 'bad_token') return 'expired';
     return '';
   }
   function applyBindState(s) {
@@ -395,7 +402,7 @@
       if (c === 'bad_code' || c === 'invalid_code') {
         bindErr.textContent = '验证码错误，请重试';
         clearCode(bindInput, bindCells);
-      } else if (c === 'limit_ticket' || c === 'ticket_full') {
+      } else if (c === 'limit_ticket' || c === 'ticket_full' || c === 'too_many_tickets') {
         bindErr.textContent = '登录设备数已达上限';
       } else {
         bindErr.textContent = '网络错误，请重试';
@@ -658,11 +665,12 @@
     not_exist: '目录不存在，已保留原值',
     not_dir: '不是目录，已保留原值',
     cannot_enter: '无法进入，已保留原值',
-    not_allowed: '无法进入，已保留原值'
+    not_allowed: '无法进入，已保留原值',
+    unknown: '目录不存在或无法进入，已保留原值'
   };
 
   function applySettings(s) {
-    cfgFont.value = s.font;
+    cfgFont.value = s.fontFamily || s.font || 'builtin';
     cfgSize.value = s.fontSize;
     cfgSizeVal.textContent = s.fontSize;
     var segs = cfgMode.querySelectorAll('span');
@@ -692,8 +700,8 @@
     }).catch(function (err) {
       if (spin) spin.hidden = true;
       if (err && err.field === 'startupDir') {
-        var reason = err.reason || 'not_exist';
-        cfgDirErr.textContent = dirMsgs[reason] || dirMsgs.not_exist;
+        var reason = err.reason || 'unknown';
+        cfgDirErr.textContent = dirMsgs[reason] || dirMsgs.unknown;
         cfgDirErr.hidden = false;
         cfgDir.style.borderColor = '#EF4444';
         cfgDir.value = client.settings.startupDir || '';
@@ -712,7 +720,7 @@
     setView(state.view === 'terminal' ? 'terminal' : state.view || 'terminal');
   }
   $('cfg-back').addEventListener('click', closeConfig);
-  cfgFont.addEventListener('change', function () { saveSetting({ font: cfgFont.value }); });
+  cfgFont.addEventListener('change', function () { saveSetting({ fontFamily: cfgFont.value }); });
   cfgSize.addEventListener('input', function () {
     cfgSizeVal.textContent = cfgSize.value;
     renderer.setFontSize(parseInt(cfgSize.value, 10));
