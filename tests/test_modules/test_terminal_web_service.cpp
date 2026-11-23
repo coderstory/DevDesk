@@ -8,7 +8,10 @@
 #include "module_terminal/web/web_bridge.h"
 #include "module_terminal/web/web_crypto_session.h"
 #include "module_terminal/web/web_dev_entry.h"
+#include "module_terminal/web/web_session_bridge.h"
 #include "module_terminal/web/web_terminal_service.h"
+#include "module_terminal/terminal_session_controller.h"
+#include "module_terminal/terminal_settings.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -342,3 +345,36 @@ REGISTER_TEST(web_dev_entry_absent_release, "web: 开发测试入口在 Release 
     return true;
 })
 #endif
+
+// need#490 W6 接线判据：网页输入/resize/tab 命令进服务端队列后，只有主循环每帧
+// tick() 才排空；未接会话上下文或未 tick 时命令滞留（防「接上了但静默不工作」）。
+REGISTER_TEST(web_terminal_service_tick_drains_commands,
+              "web: tick 未调用命令滞留 / 调用后消费（主循环队列执行依赖）", {
+    clearEnv("DEVDESK_WEB_AUTOSTART");
+    clearEnv("DEVDESK_WEB_PORT");
+    WebTerminalService svc;
+    terminal::TerminalSettings settings;
+    terminal::SessionController controller;
+    terminal::web::WebSessionBridge bridge(
+        controller, &settings,
+        [](const terminal::TerminalSettings&) {
+            return core::Result<void>::ok();
+        });
+    std::vector<std::string> handled;
+    svc.setCommandHandler(
+        [&handled](const std::string& c) { handled.push_back(c); });
+
+    svc.enqueueCommandForTest("{\"op\":\"new\"}");
+    DOCTEST_CHECK_EQ(svc.pendingCommandCountForTest(), std::size_t{1});
+    // 未接会话上下文时 tick 是 no-op：命令必须滞留（不能假装消费）
+    svc.tick();
+    DOCTEST_CHECK_EQ(svc.pendingCommandCountForTest(), std::size_t{1});
+    DOCTEST_CHECK(handled.empty());
+
+    // 接上下文后 tick 排空并交给命令处理器
+    svc.setSessionContext(&controller, &bridge);
+    svc.tick();
+    DOCTEST_CHECK_EQ(svc.pendingCommandCountForTest(), std::size_t{0});
+    DOCTEST_CHECK_EQ(handled.size(), std::size_t{1});
+    return true;
+})
