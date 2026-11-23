@@ -3,6 +3,7 @@
   网页终端移动端 UI demo（need#490）
   demo 仅视觉校准，不是实现蓝图；仅设计验证，非产品实现。
   单文件、零外部依赖、零网络请求。切换器与模拟开关只服务于设计走查，不属于产品界面。
+  已对齐 PRD v4 与技术卡 v3：无手动密钥入口、独立深/浅双色板、长按 500ms 选择模式、粘贴双路径、断线两段式与尺寸钳制。
 -->
 <html lang="zh-CN">
 <head>
@@ -92,8 +93,6 @@ body{display:flex;background:#E8EFEA;font-family:var(--sans);color:var(--text-1)
 .otp.err .cell{border-color:var(--error)}
 .field-label{display:block;font-size:13px;color:var(--text-2);margin:20px 0 8px}
 .note-block{font-size:14px;line-height:22px;color:var(--text-2);margin:0 0 20px}
-.manual-toggle{display:block;margin-top:12px;padding:0;height:auto;font-size:12px}
-.manual-text{font-size:12px;line-height:19px;color:var(--text-3);margin:8px 0 0;background:var(--bg);border-radius:10px;padding:12px}
 
 /* ===== 终端 ===== */
 .term{flex:1;min-height:0;display:flex;flex-direction:column}
@@ -112,7 +111,9 @@ body{display:flex;background:#E8EFEA;font-family:var(--sans);color:var(--text-1)
 .reconnect button{border:0;background:transparent;color:var(--primary-text);font-size:12px;height:28px;padding:0 4px;cursor:pointer}
 .canvas-wrap{flex:1;min-height:0;position:relative;display:flex}
 .canvas{flex:1;min-width:0;overflow:auto;background:var(--term-bg);color:var(--term-fg);padding:8px;font:13px/1.4 var(--mono);-webkit-overflow-scrolling:touch}
-.canvas pre{margin:0;white-space:pre;user-select:text;-webkit-user-select:text}
+.canvas pre{margin:0;white-space:pre;user-select:none;-webkit-user-select:none}
+.canvas.selecting pre{user-select:text;-webkit-user-select:text}
+.sel{background:rgba(54,211,153,.28)}
 .canvas.empty{display:flex;align-items:center;justify-content:center}
 .empty-inner{text-align:center}
 .empty-title{font-size:15px;color:var(--term-fg);margin-bottom:16px}
@@ -149,8 +150,6 @@ body{display:flex;background:#E8EFEA;font-family:var(--sans);color:var(--text-1)
 .menu button:active{background:var(--hover)}
 .menu .sep{height:1px;background:var(--border-muted);margin:4px 0}
 .menu .danger{color:var(--error-text)}
-.toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);z-index:60;background:rgba(15,31,24,.86);color:#fff;font-size:13px;line-height:18px;padding:10px 16px;border-radius:8px;white-space:nowrap;animation:fade .15s ease-out}
-.toast.err{background:var(--error-text)}
 .dialog-scrim{position:absolute;inset:0;z-index:50;background:var(--scrim);animation:fade .16s ease-out}
 .dialog{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:51;width:calc(100% - 32px);max-width:400px;max-height:60vh;overflow:auto;background:var(--surface);border-radius:14px;padding:20px;animation:rise .16s ease-out}
 .dialog h3{font-size:16px;margin:0 0 4px;font-weight:600}
@@ -285,8 +284,6 @@ function bindBody(o){
     ${otp({value:o.value||'', disabled:o.disabled, error:o.error})}
     <div class="err-line${o.mutedErr?' muted':''}">${o.err||''}</div>
     <button class="btn primary block" ${btnDisabled?'disabled':''}>${o.btnText||'完成绑定'}</button>
-    <button class="btn-text manual-toggle">无法打开验证器应用？</button>
-    ${o.manual ? `<p class="manual-text">在桌面端二维码下方查看密钥，在验证器应用中手动添加，然后回到这里输入六位码。</p>` : ''}
   `;
 }
 
@@ -320,6 +317,14 @@ const TERM_LINES = [
   '  <span class="c-dim">（PRD P-07：不自动新建，进入空态）</span>',
   '',
   '<span class="c-blue">&gt;</span> <span class="cursor"></span>'
+].join('\n');
+
+const SELECT_LINES = [
+  '<span class="c-dim">$</span> claude',
+  '<span class="c-blue">&gt;</span> 检查 <span class="sel">tab 关闭后的激活落位逻辑</span>',
+  '  <span class="c-dim">⎿</span> <span class="sel">长按 500ms 后进入选择模式；点空白退出</span>',
+  '',
+  '<span class="c-dim">（演示选区高亮，真实由浏览器原生选择绘制）</span>'
 ].join('\n');
 
 const WIDE_LINES = [
@@ -365,7 +370,7 @@ function term(o){
     <button class="iconbtn" aria-label="菜单">⋮</button>
   </header>`;
 
-  const reconnect = o.reconnect ? `<div class="reconnect"><span>连接中断，正在重连（第 ${o.reconnect} 次）</span>${o.reconnect>=3?'<button>重新连接</button>':''}</div>` : '';
+  const reconnect = o.reconnect ? `<div class="reconnect"><span>连接中断，正在重连（第 ${o.reconnect} 次）</span><button>重新连接</button></div>` : '';
 
   let canvas;
   if(o.skeleton){
@@ -373,7 +378,7 @@ function term(o){
   } else if(o.empty){
     canvas = `<div class="canvas empty"><div class="empty-inner"><div class="empty-title">暂无终端</div><button class="btn primary">新建终端</button></div></div>`;
   } else {
-    canvas = `<div class="canvas"><pre>${o.wide ? WIDE_LINES : TERM_LINES}</pre></div>`;
+    canvas = `<div class="canvas${o.selecting?' selecting':''}"><pre>${o.selecting ? SELECT_LINES : (o.wide ? WIDE_LINES : TERM_LINES)}</pre></div>`;
   }
 
   const wrap = `<div class="canvas-wrap">${canvas}${o.card ? sessionCard(o.card) : ''}</div>`;
@@ -387,9 +392,14 @@ function term(o){
       <button role="menuitem">配置</button><div class="sep"></div><button role="menuitem" class="danger">退出登录</button>
     </div>` : '';
 
-  const toast = o.toast ? `<div class="toast${o.toastErr?' err':''}">${o.toast}</div>` : '';
+  return `<div class="term">${top}${reconnect}${wrap}${bottom}${menu}</div>`;
+}
 
-  return `<div class="term">${top}${reconnect}${wrap}${bottom}${menu}${toast}</div>`;
+function handshakeScreen(fail){
+  return `<div class="full-ov"><div class="fo-inner">
+    <h2>${fail ? '无法建立加密会话' : '正在建立安全连接…'}</h2>
+    ${fail ? '<p>连接未加密，不能进入登录或终端。请检查网络后重试。</p><button class="btn primary">重试</button>' : '<p>握手完成后才显示登录或终端内容。</p>'}
+  </div></div>`;
 }
 
 function fullOverlay(reconnect){
@@ -400,14 +410,19 @@ function fullOverlay(reconnect){
   </div></div>`;
 }
 
-function pasteDialog(fail){
+function pasteDialog(o){
+  o = o || {};
+  const text = o.prefilled
+    ? 'git status\ngit add src/module_terminal\ngit commit -m "fix: tab 同步"'
+    : '';
+  const hint = o.prefilled
+    ? '已从剪贴板预填，可编辑后发送。'
+    : '局域网下浏览器不提供剪贴板读取，请手动粘贴到下方。';
   return `<div class="dialog-scrim"></div><div class="dialog" role="dialog" aria-label="粘贴内容">
     <h3>粘贴内容</h3>
-    <p class="hint" style="margin:4px 0 0">浏览器未授予剪贴板权限，请手动粘贴到下方。</p>
-    <textarea>git status
-git add src/module_terminal
-git commit -m "fix: tab 同步"</textarea>
-    ${fail ? '<div class="err-line">发送失败，请重试</div>' : ''}
+    <p class="hint" style="margin:4px 0 0">${hint}</p>
+    <textarea placeholder="在此粘贴">${text}</textarea>
+    ${o.fail ? '<div class="err-line">发送失败，请重试</div>' : ''}
     <div class="dlg-actions"><button class="btn ghost">取消</button><button class="btn primary">发送</button></div>
   </div>`;
 }
@@ -425,7 +440,7 @@ function config(o){
     cfgRow('字体', `<select class="inp"><option>内置等宽</option><option>系统等宽</option></select>`),
     cfgRow('字号', `<input type="range" min="10" max="24" step="1" value="${rangeVal}"><span class="range-val">${rangeVal}</span>${o.saving?`<span class="spin"></span><span class="save-txt">保存中…</span>`:''}`),
     cfgRow('配色', `<div class="seg"><span class="${mode==='follow'?'on':''}">跟随应用</span><span class="${mode==='independent'?'on':''}">独立</span></div>`),
-    cfgRow('色板', `<select class="inp" ${mode==='follow'?'disabled':''}><option>浅色</option><option>深色</option></select>`),
+    cfgRow('色板', `<select class="inp" ${mode==='follow'?'disabled':''}><option ${o.palette!=='dark'?'selected':''}>浅色</option><option ${o.palette==='dark'?'selected':''}>深色</option></select>`),
     cfgRow('默认 shell', `<select class="inp"><option>默认（zsh）</option><option>/bin/bash</option><option>/bin/sh</option></select>`),
     cfgRow('启动目录', `<input class="inp" value="${o.dir === undefined ? '' : o.dir}" placeholder="用户主目录">${o.dir ? '<button class="clear-btn">清空</button>' : ''}`, o.dirErr ? `<span class="err-inline">目录不存在</span>` : '')
   ].join('');
@@ -499,8 +514,10 @@ const SCREENS = {
   'bind-wrong': {g:'绑定页', n:'码错', html:()=>auth({title:'绑定验证器', sub:'将验证器条目添加后，输入应用显示的六位码完成绑定。', body:bindBody({error:true, err:'验证码错误，请重试'})})},
   'bind-dead': {g:'绑定页', n:'5 次作废', html:()=>auth({title:'绑定验证器', sub:'将验证器条目添加后，输入应用显示的六位码完成绑定。', body:bindBody({disabled:true, dead:true, btnDisabled:true})})},
   'bind-expired': {g:'绑定页', n:'令牌过期', html:()=>auth({title:'链接已过期', sub:'', body:'<p class="note-block">请在桌面端刷新二维码后重新扫码。此页面不再提供绑定入口。</p>'})},
-  'bind-used': {g:'绑定页', n:'令牌已用', html:()=>auth({title:'链接已失效', sub:'', body:'<p class="note-block">此绑定链接已失效，请重新扫码。此页面不再提供绑定入口。</p>'})},
-  'bind-manual': {g:'绑定页', n:'验证器不可用（手输）', html:()=>auth({title:'绑定验证器', sub:'将验证器条目添加后，输入应用显示的六位码完成绑定。', body:bindBody({manual:true})})},
+  'bind-used': {g:'绑定页', n:'令牌已确认', html:()=>auth({title:'链接已失效', sub:'', body:'<p class="note-block">此绑定链接已失效，请重新扫码。此页面不再提供绑定入口。</p>'})},
+
+  'handshake': {g:'加密会话', n:'建立中', html:()=>handshakeScreen(false)},
+  'handshake-fail': {g:'加密会话', n:'握手失败', html:()=>handshakeScreen(true)},
 
   'login-empty': {g:'登录页', n:'空', html:()=>auth({title:'登录网页终端', sub:'输入验证器中的六位数字', body:loginBody({focus:0})})},
   'login-submitting': {g:'登录页', n:'提交中', html:()=>auth({title:'登录网页终端', sub:'输入验证器中的六位数字', body:loginBody({value:'482', disabled:true, mutedErr:true, err:'验证中…', hint:'正在校验，请稍候'})})},
@@ -508,27 +525,28 @@ const SCREENS = {
   'login-locked': {g:'登录页', n:'锁定倒计时', html:()=>auth({title:'登录网页终端', sub:'输入验证器中的六位数字', body:loginBody({disabled:true, err:'尝试次数过多，请 58 秒后再试', hint:'倒计时结束自动恢复'})})},
   'login-unbound': {g:'登录页', n:'未绑定验证器', html:()=>auth({title:'登录网页终端', sub:'输入验证器中的六位数字', body:loginBody({focus:0, mutedErr:true, err:'请先在桌面端完成绑定'})})},
 
-  'term-loading': {g:'终端主界面', n:'加载骨架', html:()=>term({skeleton:true, status:'连接中…', dot:'warn'})},
+  'term-loading': {g:'终端主界面', n:'加载骨架', html:()=>term({skeleton:true, status:'已断开', dot:'err'})},
   'term-normal': {g:'终端主界面', n:'正常', html:()=>term({})},
   'term-multi': {g:'终端主界面', n:'多 tab', html:()=>term({tabs:['终端 1','终端 2','终端 3'], active:1})},
   'term-overflow': {g:'终端主界面', n:'tab 溢出 + 画布横滚', html:()=>term({tabs:['终端 1','终端 2','终端 3','终端 4','终端 5'], active:2, wide:true})},
   'term-menu': {g:'终端主界面', n:'菜单展开', html:()=>term({menu:true})},
   'term-empty': {g:'终端主界面', n:'无 tab 空态', html:()=>term({tabs:[], empty:true})},
-  'term-reconnect': {g:'终端主界面', n:'重连连条', html:()=>term({reconnect:3, status:'连接中…', dot:'warn'})},
+  'term-reconnect': {g:'终端主界面', n:'重连连条', html:()=>term({reconnect:2, status:'重连中', dot:'warn'})},
   'term-closed': {g:'终端主界面', n:'服务关闭覆盖', html:()=>term({}) + fullOverlay(true)},
   'term-revoked': {g:'终端主界面', n:'绑定已撤销覆盖', html:()=>term({}) + fullOverlay(false)},
   'term-exit': {g:'终端主界面', n:'会话退出卡', html:()=>term({card:'exit'})},
   'term-failed': {g:'终端主界面', n:'会话启动失败卡', html:()=>term({card:'fail'})},
+  'term-selecting': {g:'终端主界面', n:'文本选择模式', html:()=>term({selecting:true})},
 
   'cfg-normal': {g:'配置页', n:'六项控件', html:()=>config({})},
   'cfg-saving': {g:'配置页', n:'保存中', html:()=>config({size:18, saving:true})},
   'cfg-failed': {g:'配置页', n:'保存失败回滚', html:()=>config({banner:'保存失败，请重试'})},
   'cfg-baddir': {g:'配置页', n:'启动目录不存在', html:()=>config({dir:'~/不存在的目录', dirErr:true})},
+  'cfg-independent-dark': {g:'配置页', n:'独立深色色板', html:()=>config({mode:'independent', palette:'dark'})},
 
-  'paste-ok': {g:'粘贴', n:'成功', html:()=>term({toast:'已粘贴'})},
-  'paste-empty': {g:'粘贴', n:'空剪贴板', html:()=>term({toast:'剪贴板为空'})},
-  'paste-noperm': {g:'粘贴', n:'无权限手动粘贴框', html:()=>term({}) + pasteDialog(false)},
-  'paste-fail': {g:'粘贴', n:'发送失败', html:()=>term({}) + pasteDialog(true)},
+  'paste-lan': {g:'粘贴', n:'局域网手动框', html:()=>term({}) + pasteDialog()},
+  'paste-prefill': {g:'粘贴', n:'本机剪贴板预填', html:()=>term({}) + pasteDialog({prefilled:true})},
+  'paste-fail': {g:'粘贴', n:'发送失败', html:()=>term({}) + pasteDialog({prefilled:true, fail:true})},
 
   'desk-unbound': {g:'桌面专区（对照）', n:'未绑定', desk:true, html:()=>desk({on:true})},
   'desk-bound': {g:'桌面专区（对照）', n:'已绑定验证器', desk:true, html:()=>desk({on:true, bound:true})},
@@ -537,11 +555,12 @@ const SCREENS = {
 };
 
 const ORDER = [
-  ['绑定页（扫码后）', ['bind-valid','bind-submitting','bind-wrong','bind-dead','bind-expired','bind-used','bind-manual']],
+  ['加密会话', ['handshake','handshake-fail']],
+  ['绑定页（扫码后）', ['bind-valid','bind-submitting','bind-wrong','bind-dead','bind-expired','bind-used']],
   ['登录页', ['login-empty','login-submitting','login-wrong','login-locked','login-unbound']],
-  ['终端主界面', ['term-loading','term-normal','term-multi','term-overflow','term-menu','term-empty','term-reconnect','term-closed','term-revoked','term-exit','term-failed']],
-  ['配置页', ['cfg-normal','cfg-saving','cfg-failed','cfg-baddir']],
-  ['粘贴', ['paste-ok','paste-empty','paste-noperm','paste-fail']],
+  ['终端主界面', ['term-loading','term-normal','term-multi','term-overflow','term-menu','term-empty','term-reconnect','term-closed','term-revoked','term-exit','term-failed','term-selecting']],
+  ['配置页', ['cfg-normal','cfg-saving','cfg-failed','cfg-baddir','cfg-independent-dark']],
+  ['粘贴', ['paste-lan','paste-prefill','paste-fail']],
   ['桌面「网页访问」专区（对照）', ['desk-unbound','desk-bound','desk-port','desk-nolan']]
 ];
 
