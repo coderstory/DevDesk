@@ -215,6 +215,8 @@ void setPrereqValue(ReleaseDetailUiState& state, PrereqKey key, const std::strin
 bool prereqChecked(const ReleaseDetailUiState& state, PrereqKey key);
 bool prereqGateOpen(const ReleaseDetailUiState& state, PrereqKey key);
 void drawPrereqSection(eui::Ui& ui, float width, ReleaseDetailUiState& state, bool readOnly, int nowMinute, const Tokens& t, const components::theme::ThemeColorTokens& themeTokens, ReleaseStore& store);
+float prereqSectionHeight(const ReleaseDetailUiState& state);
+
 float serviceCardHeight(const ReleaseDetailUiState& state, const TaskService& svc);
 float envCardHeight(const ReleaseDetailUiState& state, const TaskEnv& env);
 float envSectionHeight(const ReleaseDetailUiState& state, float width);
