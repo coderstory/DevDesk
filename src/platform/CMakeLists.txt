@@ -8,6 +8,7 @@ add_library(devdesk_platform STATIC
     tool_kit.cpp                        # LLM 工具执行器五件套公共脚手架（need:380 批C）
     github_api.cpp                      # GitHub Contents API 客户端（libcurl，不依赖外部 git）
     utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
+    web_crypto.cpp                      # 网页终端加密原语（need:490 W1，OpenSSL；无平台分支）
     autostart.h                         # 开机自启动抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
     process_runner.h                    # 进程执行器抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
     process_host.h                      # 常驻子进程托管抽象：拉起/树杀/探活（memcpp S2），实现按平台拆
@@ -111,6 +112,13 @@ else()
     target_sources(devdesk_platform PRIVATE http_server_sockopt_posix.cpp)
 endif()
 
+# 本机 IPv4 枚举按平台选源（need:490 W1；接口见 net_interfaces.h）
+if(WIN32)
+    target_sources(devdesk_platform PRIVATE net_interfaces_win.cpp)
+else()
+    target_sources(devdesk_platform PRIVATE net_interfaces_posix.cpp)
+endif()
+
 target_include_directories(devdesk_platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -128,7 +136,8 @@ if(WIN32)
     #   的 COM 初始化/实例创建（objbase.h，F-06）；uuid：file_trash_win.cpp 的
     #   CLSID_FileOperation / IID_IFileOperationProgressSink 作 MinGW64 保底导出口
     #   （initguid.h 已在本 TU 定义，两者互为冗余，need356）
-    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version ole32 uuid)
+    # iphlpapi：net_interfaces_win.cpp 的 GetAdaptersAddresses（need:490 W1）
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi version ole32 uuid iphlpapi)
 endif()
 
 target_link_libraries(devdesk_platform

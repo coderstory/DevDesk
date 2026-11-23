@@ -25,6 +25,8 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/silent_channel.cpp
     # need#490 自研二维码编码器（纯标准库，纠错 L）：随测试二进制直编
     ${CMAKE_SOURCE_DIR}/src/module_terminal/web/qr/qr_encode.cpp
+    # need#490 W1 网页终端加密原语（OpenSSL）：随测试二进制直编，向量断言不靠模块库装配
+    ${CMAKE_SOURCE_DIR}/src/platform/web_crypto.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -342,6 +344,8 @@ add_executable(devdesk_tests
     unit/system_font_gate.cpp
     # need#490 二维码编码器：与 evidence/need490-qr-poc/qr.py 参考矩阵逐位对照
     test_modules/test_qr_encode.cpp
+    test_modules/test_terminal_web_crypto.cpp
+    test_platform/test_net_interfaces.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
