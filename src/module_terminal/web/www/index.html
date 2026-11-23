@@ -1,0 +1,168 @@
+<!doctype html>
+<!-- 网页终端（need#490）——静态骨架原型，mock 数据驱动，可离线打开。
+     真实握手/SSE/加密由后续接线；本页绝不发起网络请求。
+     UI 依据 docs/design/2026-11-23-web-terminal-mobile-ui.md。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>DevDesk 网页终端</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== 终端主界面 ===== -->
+  <div id="view-terminal" class="term">
+    <header class="topbar">
+      <div class="tabs" id="tabs" role="tablist" aria-label="终端标签页"></div>
+      <button class="iconbtn" id="btn-new" aria-label="新建终端">+</button>
+      <span class="vdiv"></span>
+      <button class="iconbtn" id="btn-menu" aria-label="菜单">&#8942;</button>
+    </header>
+
+    <div class="reconnect" id="reconnect-bar" hidden>
+      <span id="reconnect-text">连接中断，正在重连（第 1 次）</span>
+      <button id="btn-reconnect-now">重新连接</button>
+    </div>
+
+    <div class="canvas-wrap" id="canvas-wrap">
+      <div class="canvas-scroll" id="canvas-scroll">
+        <canvas id="term-canvas"></canvas>
+        <pre id="text-layer" aria-hidden="true"></pre>
+      </div>
+      <div class="skeleton" id="skeleton">
+        <i style="width:62%"></i><i style="width:84%"></i><i style="width:46%"></i><i style="width:70%"></i>
+        <i style="width:38%"></i><i style="width:88%"></i><i style="width:54%"></i><i style="width:76%"></i>
+        <i style="width:40%"></i><i style="width:66%"></i><i style="width:82%"></i><i style="width:50%"></i>
+      </div>
+      <div class="empty" id="empty" hidden>
+        <div class="empty-title">暂无终端</div>
+        <button class="btn primary" id="btn-new-empty">新建终端</button>
+      </div>
+    </div>
+
+    <footer class="bottombar">
+      <button class="paste" id="btn-paste">粘贴</button>
+      <div class="conn"><i class="dot" id="conn-dot"></i><span id="conn-text">已连接</span></div>
+    </footer>
+
+    <div class="menu-scrim" id="menu-scrim" hidden></div>
+    <div class="menu" id="menu" role="menu" hidden>
+      <button role="menuitem" data-act="config">配置</button>
+      <div class="sep"></div>
+      <button role="menuitem" data-act="logout" class="danger">退出登录</button>
+    </div>
+  </div>
+
+  <!-- ===== 配置页 ===== -->
+  <div id="view-config" class="page" hidden>
+    <header class="topbar simple">
+      <button class="iconbtn" id="cfg-back" aria-label="返回">&#8249;</button>
+      <div class="page-title">终端配置</div>
+    </header>
+    <div class="cfg-body" id="cfg-body">
+      <div class="banner cfg-banner" id="cfg-banner" hidden>保存失败，请重试</div>
+
+      <div class="cfg-row">
+        <label for="cfg-font">字体</label>
+        <div class="cfg-ctl">
+          <select class="inp" id="cfg-font">
+            <option value="builtin">内置等宽</option>
+            <option value="system">系统等宽</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="cfg-row">
+        <label for="cfg-size">字号</label>
+        <div class="cfg-ctl">
+          <input type="range" id="cfg-size" min="10" max="24" step="1" value="13">
+          <span class="range-val" id="cfg-size-val">13</span>
+          <span class="spin" id="cfg-size-spin" hidden></span>
+        </div>
+      </div>
+
+      <div class="cfg-row">
+        <label>配色</label>
+        <div class="cfg-ctl">
+          <div class="seg" id="cfg-mode">
+            <span data-v="follow">跟随应用</span>
+            <span data-v="independent">独立</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cfg-row">
+        <label for="cfg-palette">色板</label>
+        <div class="cfg-ctl">
+          <select class="inp" id="cfg-palette">
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="cfg-row">
+        <label for="cfg-shell">默认 shell</label>
+        <div class="cfg-ctl">
+          <select class="inp" id="cfg-shell"></select>
+        </div>
+      </div>
+
+      <div class="cfg-row">
+        <label for="cfg-dir">启动目录</label>
+        <div class="cfg-ctl">
+          <input class="inp" id="cfg-dir" placeholder="用户主目录" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button class="clear-btn" id="cfg-dir-clear" hidden>清空</button>
+        </div>
+        <span class="err-inline" id="cfg-dir-err" hidden>目录不存在</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 覆盖层与弹框 ===== -->
+  <div class="full-ov" id="ov-handshake">
+    <div class="fo-inner">
+      <h2>正在建立安全连接…</h2>
+      <p>握手完成后才显示终端内容。</p>
+    </div>
+  </div>
+
+  <div class="full-ov" id="ov-disconnected" hidden>
+    <div class="fo-inner">
+      <h2>桌面端已关闭网页服务</h2>
+      <p>服务重新开启后，页面会自动恢复。</p>
+      <button class="btn primary" id="ov-reconnect">重新连接</button>
+    </div>
+  </div>
+
+  <div class="full-ov" id="ov-revoked" hidden>
+    <div class="fo-inner">
+      <h2>绑定已撤销</h2>
+      <p>请在桌面端重新扫码绑定，完成后刷新本页。</p>
+      <button class="btn primary" id="ov-refresh">刷新页面</button>
+    </div>
+  </div>
+
+  <div class="dialog-scrim" id="paste-scrim" hidden></div>
+  <div class="dialog" id="paste-dialog" hidden role="dialog" aria-label="粘贴内容">
+    <h3>粘贴内容</h3>
+    <p class="hint" id="paste-hint">局域网下浏览器不提供剪贴板读取，请手动粘贴到下方。</p>
+    <textarea id="paste-text" placeholder="在此粘贴" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <div class="err-line" id="paste-err" hidden>发送失败，请重试</div>
+    <div class="dlg-actions">
+      <button class="btn ghost" id="paste-cancel">取消</button>
+      <button class="btn primary" id="paste-send">发送</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script src="protocol.js"></script>
+<script src="render.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
