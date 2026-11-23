@@ -180,6 +180,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 .spin{width:12px;height:12px;flex:0 0 12px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:rot .8s linear infinite}
 .save-txt{font-size:12px;color:var(--text-3);white-space:nowrap}
 .err-inline{flex:0 0 100%;font-size:12px;color:var(--error-text);margin-top:2px;padding-left:100px}
+.inp.bad{border-color:var(--error)}
 .banner-sticky{position:sticky;top:0;z-index:2;margin:12px 0 0}
 
 /* ===== 桌面专区（对照） ===== */
@@ -442,7 +443,7 @@ function config(o){
     cfgRow('配色', `<div class="seg"><span class="${mode==='follow'?'on':''}">跟随应用</span><span class="${mode==='independent'?'on':''}">独立</span></div>`),
     cfgRow('色板', `<select class="inp" ${mode==='follow'?'disabled':''}><option ${o.palette!=='dark'?'selected':''}>浅色</option><option ${o.palette==='dark'?'selected':''}>深色</option></select>`),
     cfgRow('默认 shell', `<select class="inp"><option>默认（zsh）</option><option>/bin/bash</option><option>/bin/sh</option></select>`),
-    cfgRow('启动目录', `<input class="inp" value="${o.dir === undefined ? '' : o.dir}" placeholder="用户主目录">${o.dir ? '<button class="clear-btn">清空</button>' : ''}`, o.dirErr ? `<span class="err-inline">目录不存在</span>` : '')
+    cfgRow('启动目录', `<input class="inp${o.dirErr?' bad':''}" value="${o.dir === undefined ? '' : o.dir}" placeholder="用户主目录">${o.dir ? '<button class="clear-btn">清空</button>' : ''}`, o.dirErr ? `<span class="err-inline">${o.dirErr}</span>` : '')
   ].join('');
   return `<div class="page">
     <header class="topbar simple"><button class="iconbtn" aria-label="返回">‹</button><div class="page-title">终端配置</div></header>
@@ -541,7 +542,9 @@ const SCREENS = {
   'cfg-normal': {g:'配置页', n:'六项控件', html:()=>config({})},
   'cfg-saving': {g:'配置页', n:'保存中', html:()=>config({size:18, saving:true})},
   'cfg-failed': {g:'配置页', n:'保存失败回滚', html:()=>config({banner:'保存失败，请重试'})},
-  'cfg-baddir': {g:'配置页', n:'启动目录不存在', html:()=>config({dir:'~/不存在的目录', dirErr:true})},
+  'cfg-dir-missing': {g:'配置页', n:'启动目录不存在', html:()=>config({dir:'~/dev/DevDesk', dirErr:'目录不存在，已保留原值'})},
+  'cfg-dir-file': {g:'配置页', n:'启动目录是文件', html:()=>config({dir:'~/dev/DevDesk', dirErr:'不是目录，已保留原值'})},
+  'cfg-dir-perm': {g:'配置页', n:'启动目录无权限', html:()=>config({dir:'~/dev/DevDesk', dirErr:'无法进入，已保留原值'})},
   'cfg-independent-dark': {g:'配置页', n:'独立深色色板', html:()=>config({mode:'independent', palette:'dark'})},
 
   'paste-lan': {g:'粘贴', n:'局域网手动框', html:()=>term({}) + pasteDialog()},
@@ -559,7 +562,7 @@ const ORDER = [
   ['绑定页（扫码后）', ['bind-valid','bind-submitting','bind-wrong','bind-dead','bind-expired','bind-used']],
   ['登录页', ['login-empty','login-submitting','login-wrong','login-locked','login-unbound']],
   ['终端主界面', ['term-loading','term-normal','term-multi','term-overflow','term-menu','term-empty','term-reconnect','term-closed','term-revoked','term-exit','term-failed','term-selecting']],
-  ['配置页', ['cfg-normal','cfg-saving','cfg-failed','cfg-baddir','cfg-independent-dark']],
+  ['配置页', ['cfg-normal','cfg-saving','cfg-failed','cfg-dir-missing','cfg-dir-file','cfg-dir-perm','cfg-independent-dark']],
   ['粘贴', ['paste-lan','paste-prefill','paste-fail']],
   ['桌面「网页访问」专区（对照）', ['desk-unbound','desk-bound','desk-port','desk-nolan']]
 ];
