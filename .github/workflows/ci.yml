@@ -92,6 +92,37 @@ jobs:
           path: /tmp/ci.log
           if-no-files-found: ignore
 
+      # need#490 W7：网页终端「真产品首连」E2E。产品以 debug-only 入口自启
+      # （DEVDESK_WEB_AUTOSTART/DEVDESK_WEB_PORT + 独立 DEVDESK_DATA_ROOT），
+      # 覆盖握手→回环登录→出帧→输入回显→杀进程重启→自动重连。
+      # runner 无 GUI 会话时脚本打印 E2E_SKIP_NO_DISPLAY 并退出 0（显式标记，
+      # 不当绿）；Edge 缺失打印 EDGE_MISSING 降级 Chromium。
+      - name: Playwright 浏览器缓存（need#490 W7）
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: playwright-macos-${{ hashFiles('DevDesk/tests/e2e/package-lock.json') }}
+          restore-keys: playwright-macos-
+
+      - name: Playwright 依赖 + 网页终端 E2E
+        working-directory: DevDesk/tests/e2e
+        env:
+          DEVDESK_E2E_ALLOW_SKIP: "1"
+        run: |
+          set +e
+          bash run-e2e.sh 2>&1 | tee /tmp/e2e.log
+          exit ${PIPESTATUS[0]}
+
+      - name: E2E 证据与日志（need#490 W7）
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-terminal-e2e-macos
+          path: |
+            /tmp/e2e.log
+            DevDesk/evidence/need490-w7/*.png
+          if-no-files-found: ignore
+
       # ── ASan/UBSan（07 号票，计划 T5）─────────────────────────────────────
       # AppleClang 一等支持 sanitizer：独立目录 build-san/ 再来一遍 Debug 构建，
       # 全量单测在 sanitizer 下跑绿才算过。flags 靠 CXXFLAGS/LDFLAGS 环境变量注入 ——
@@ -199,6 +230,28 @@ jobs:
           DEVDESK_PROBE_HEADLESS=1 ./build-release/tests/font_metrics_probe.exe \
             --out evidence/font-metrics/font_metrics_windows.json
           cat evidence/font-metrics/font_metrics_windows.json
+
+      # need#490 W7：Windows 侧同一 E2E 入口（GUI 会话缺失时显式 E2E_SKIP_NO_DISPLAY）。
+      - name: Playwright 浏览器缓存（need#490 W7）
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LOCALAPPDATA }}\ms-playwright
+          key: playwright-windows-${{ hashFiles('DevDesk/tests/e2e/package-lock.json') }}
+          restore-keys: playwright-windows-
+
+      - name: Playwright 依赖 + 网页终端 E2E
+        working-directory: DevDesk/tests/e2e
+        env:
+          DEVDESK_E2E_ALLOW_SKIP: "1"
+        run: bash run-e2e.sh
+
+      - name: E2E 证据（need#490 W7）
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-terminal-e2e-windows
+          path: DevDesk/evidence/need490-w7/*.png
+          if-no-files-found: ignore
 
       - name: 上传字体度量 JSON（need132 F-06）
         if: success()

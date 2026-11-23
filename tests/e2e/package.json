@@ -5,6 +5,7 @@
   "description": "need#490 browser capability smoke (Playwright, test chain only, not shipped)",
   "scripts": {
     "smoke": "node smoke.mjs",
+    "e2e": "node web_terminal_e2e.mjs",
     "install-browsers": "playwright install chromium webkit"
   },
   "devDependencies": {

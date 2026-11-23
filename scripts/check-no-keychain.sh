@@ -12,6 +12,8 @@
 # 判据：grep -ri 'keychain' 于 src/ tests/（大小写不敏感）。零白名单——历史口径
 # 注释也必须改写为 DB 表述；真需要提这个词的场景（如本守卫注释自身）只在
 # scripts/ 下，不在受检目录。
+# node_modules 例外：tests/e2e/ 的 npm 依赖（Playwright）是第三方产物，不是本仓
+# 源码，且其内部启动参数含该词；npm ci 后不应把构建门禁卡成红。
 #
 # 本脚本全程绝对路径、不读 ${PWD}、脚本内不 cd（对齐 check-module-isolation.sh）。
 # 退出码：0 通过 / 1 违规（清单到 stdout）/ 2 环境错（仓库根找不到）。
@@ -28,7 +30,7 @@ fi
 
 # 排除构建产物与第三方（tests/ 下无 build，稳妥起见仍显式排除）
 HITS="$(grep -rin --exclude-dir=build --exclude-dir=build-release \
-        --exclude-dir=.git 'keychain' \
+        --exclude-dir=.git --exclude-dir=node_modules 'keychain' \
         "${REPO_ROOT}/src" "${REPO_ROOT}/tests" 2>/dev/null || true)"
 
 if [ -n "${HITS}" ]; then
