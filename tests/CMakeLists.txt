@@ -511,15 +511,20 @@ add_custom_command(TARGET devdesk_tests POST_BUILD
 # devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
 # 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
 # DEVDESK_BUILD_PROBES=OFF（2026-10-03，CI 瘦身）：不生成任何 probe 目标与
-# ctest 注册。CI 无 GUI 会话，6 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，
-# 但 4 个 probe 可执行仍要编译链接——纯浪费。本地默认 ON（真门禁在本地）。
+# ctest 注册。CI runner 无 GUI 会话，UI 探针全走 SKIP_RETURN_CODE 77 —— 白编白跑。
+# 本地默认 ON（真门禁在本地）。
+# DEVDESK_PROBE_SUBSET=headless（debt422）：只注册真无窗可跑的子集
+# （mcp_e2e_probe / word_wrap_poc_probe / devdesk_ui_driver 及其 usage_error 回归），
+# 其余 UI 探针 + 变体 + ui_driver 真窗场景不编不注册 —— 让 CI 真跑 probe 层，
+# 而不是整层跳过。空值（默认）= 全量，注册面与 headless 档引入前逐条一致。
 # （2026-10-03 轻量化：probes/ 从 12 个 .cpp 收到 4 个——删掉的 8 个与无头单测
 #  逐条重复，且其中 2 个还被刻意设计成「当前必红」当 TODO 清单用，红灯混在门禁
 #  里会淹没真信号。留下的 4 个各有独占判据，见 CLAUDE.md「功能开发生命周期」。）
 # devdesk_tests 不引用任何 probes/*.cpp（TIN-10 也把 probes/ 排除在用例核对
 # 外），整段包进开关不影响单测；live 类测试（LABELS "live"）不靠 GLOB 注册、
 # 也不受本开关影响，见下方各自专段。
-option(DEVDESK_BUILD_PROBES "构建 UI probe 可执行（无 GUI 环境如 CI 设 OFF，省 12 个可执行的编译链接时长）" ON)
+option(DEVDESK_BUILD_PROBES "构建 UI probe 可执行（无 GUI 环境设 OFF；CI 走 DEVDESK_PROBE_SUBSET=headless 只编无窗子集）" ON)
+set(DEVDESK_PROBE_SUBSET "" CACHE STRING "probe 子集档（空=全量；headless=CI 可跑子集，见上）")
 if(DEVDESK_BUILD_PROBES)
 file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/probes/*.cpp)
@@ -530,6 +535,15 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # 会把它当 probe 源捡成独立可执行（链接必败），这里跳过；它作为额外源码
     # 编进 layout_guard_probe 目标（见下方 elseif 分支）。
     if(_probe_name STREQUAL "layout_guard_kit")
+        continue()
+    endif()
+    # headless 子集档（debt422）：只编真无窗可跑的探针 —— mcp_e2e_probe 桩掉
+    # openWindow 后真起 8 模块 39 工具（tests/probes/mcp_e2e_probe.cpp:159），
+    # word_wrap_poc_probe 纯 compose 排版（:249），两条都不碰显示会话；其余探针
+    # 一律调 probe::initializeWindowBackend，无显示环境只能 77 跳过，编了纯浪费。
+    if("${DEVDESK_PROBE_SUBSET}" STREQUAL "headless"
+       AND NOT _probe_name STREQUAL "mcp_e2e_probe"
+       AND NOT _probe_name STREQUAL "word_wrap_poc_probe")
         continue()
     endif()
     # 平台专有 probe 按平台选编（平台文件映射同款纪律）：_macos_probe 后缀仅 APPLE
@@ -852,9 +866,16 @@ elseif(MINGW)
     target_link_options(devdesk_ui_driver PRIVATE -mconsole)
 endif()
 # 用法错（无 --script 且无 --dump-ids）必须真红：单独注册一条裸命令回归（无显示
-# 环境下它不碰窗口，恒可跑，不需要 SKIP_RETURN_CODE）
+# 环境下它不碰窗口，恒可跑，不需要 SKIP_RETURN_CODE）。
+# headless 子集档（debt422）把它挂进 probe 标签族：CI 门禁只跑 ctest -L probe，
+# 不挂标签这条恒可跑的驱动入口回归在 CI 永远不执行。SKIP_RETURN_CODE 必须同一行
+# 一起给——scripts/check-probe-skip-gate.sh 对每个 probe 标签行做整行断言。
 add_test(NAME ui_driver_usage_error COMMAND devdesk_ui_driver)
-set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
+if("${DEVDESK_PROBE_SUBSET}" STREQUAL "headless")
+    set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE LABELS "probe" SKIP_RETURN_CODE 77)
+else()
+    set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
+endif()
 # 正路径场景：真窗 + 临时数据根 + 真 app::compose（截图/dump 落 build/，gitignore）
 # need242：terminal-input = 终端页输入注入（type 聚焦 / key 达 PTY / 拖选+复制）
 # need394：mcp-claude-install = MCP 页头宿主安装区两钮在场 + 几何（入口已从
@@ -868,6 +889,8 @@ set_tests_properties(ui_driver_usage_error PROPERTIES WILL_FAIL TRUE)
 # need325（manual-triage A-5/A-6）：schedule-resident-enable-chain = 常驻规则建→存→
 # 行卡→编辑弹窗停用→「已停用」tag（C-13 tzId 缺陷回归哨）。
 # need325（A-4）：todo-keyboard-move = Shortcut+↑/↓ 组合键移动选中卡（位置真锁）。
+# headless 子集档（debt422）不注册这 13 条场景：每条都要真窗，CI runner 只能 77 跳过。
+if(NOT "${DEVDESK_PROBE_SUBSET}" STREQUAL "headless")
 foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move terminal-input
         mcp-claude-install claude-d1-seed-enable todo-card-context-menu
         schedule-rule-once-chain schedule-cron-edit-chain schedule-new-save
@@ -882,18 +905,25 @@ foreach(_ui_scene smoke-navigate todo-new-task settings-toggle todo-drag-move te
     set_tests_properties(ui_driver_${_ui_scene} PROPERTIES LABELS "probe")
     set_tests_properties(ui_driver_${_ui_scene} PROPERTIES SKIP_RETURN_CODE 77)
 endforeach()
+endif()
 
 # memory_e2e_probe 是 live 栈探针：要外部拉起 llama-server + telemem（回环
 # 11435/8421）并注入 DEVDESK_DATA_ROOT 与 --projects <root>，裸 ctest 注册
 # 无法运行——按 github_sync_live / agent_live 同款挪出 probe 门禁；验收
 # runbook 见 docs/superpowers/plans/2026-10-28-memcpp-e2e-verify.md。
-set_tests_properties(memory_e2e_probe PROPERTIES LABELS "live")
+# headless 子集档（debt422）两条目标都不存在——set_tests_properties 指向不存在的
+# 测试名会让 configure 报错，故加 TARGET 守卫（全量档下恒真，行为不变）。
+if(TARGET memory_e2e_probe)
+    set_tests_properties(memory_e2e_probe PROPERTIES LABELS "live")
+endif()
 
 # agent_e2e_probe 是 live 型真窗探针：真调 LLM 网关端到端，单次 1~90s 波动
 # （真网关延迟敏感），冷启动首跑可长挂——按 memory_e2e_probe 先例挪出 probe
 # 默认门禁（BUG-7 裁决，docs/plans/probe-residue-incident.md）。目标照编、
 # SKIP_RETURN_CODE 77 登记不变；可执行仍可单独跑/带 live 标签跑。
-set_tests_properties(agent_e2e_probe PROPERTIES LABELS "live")
+if(TARGET agent_e2e_probe)
+    set_tests_properties(agent_e2e_probe PROPERTIES LABELS "live")
+endif()
 
 # need356 B1/B2 两个真环境 probe 同样挪出 probe 默认门禁：它们**有真实副作用**——
 # wallpaper_trash_macos_probe 往真实 ~/.Trash 写一个文件（RAII 会删，但不该让日常门禁去动
@@ -904,8 +934,12 @@ set_tests_properties(agent_e2e_probe PROPERTIES LABELS "live")
 # wallpaper_service_macos_probe 的平台门），故本段必须包在 APPLE 判断内，否则
 # set_tests_properties 指向不存在的测试名会让 configure 报错。
 if(APPLE)
-    set_tests_properties(wallpaper_trash_macos_probe PROPERTIES LABELS "live")
-    set_tests_properties(wallpaper_import_ledger_macos_probe PROPERTIES LABELS "live")
+    if(TARGET wallpaper_trash_macos_probe)
+        set_tests_properties(wallpaper_trash_macos_probe PROPERTIES LABELS "live")
+    endif()
+    if(TARGET wallpaper_import_ledger_macos_probe)
+        set_tests_properties(wallpaper_import_ledger_macos_probe PROPERTIES LABELS "live")
+    endif()
 endif()
 endif()
 

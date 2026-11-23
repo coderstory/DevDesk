@@ -38,7 +38,9 @@
 #           DEVDESK_INSTALL_DIR 安装目标（仅 --install 用；默认 /Applications/DevDesk.app，
 #           必须是绝对路径）；
 #           DEVDESK_BUILD_PROBES=0 → 不编 probe 目标、probe 门禁段显式跳过
-#           （--probes-on 可单次覆盖，见下）；
+#           （--probes-on 可单次覆盖，见下）；=headless → 只编/只注册 CI 可跑子集
+#           （mcp_e2e_probe / word_wrap_poc_probe / ui_driver_usage_error，debt422），
+#           其余任何值一律全量；
 #           DEVDESK_BUILD_VERBOSE=1 → 构建输出实时流式（默认关，见下）；
 #           DEVDESK_EUI_API_CHECK=1 → 启用 EUI-NEO 版本前置校验（默认 0，见 0b 段）；
 #           ccache 配置已落 ccache.conf（无需环境变量），临时覆盖才 source scripts/ccache-env.sh
@@ -148,10 +150,16 @@ export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-6}"
 # 但 probe 可执行仍在编译链接（CI 日志里成片的 Building ... probe 行）—— 纯浪费。
 # DEVDESK_BUILD_PROBES=0 → configure 传 -DDEVDESK_BUILD_PROBES=OFF，probe 目标与 ctest
 # 注册整体不生成；单测全量与静态守卫照跑（真门禁不动）。
-# 只认 "0" 为 OFF，其余任何值（含空 / 乱值）一律 ON —— 门禁宁多跑不静默少跑。
+# 只认 "0" 为 OFF、只认 "headless" 为子集档，其余任何值（含空 / 乱值）一律全量
+# —— 门禁宁多跑不静默少跑。
+# headless（debt422）：CI 只编 3 条真无窗可跑的探针（mcp_e2e_probe /
+# word_wrap_poc_probe / ui_driver_usage_error），其余 43 条 UI 探针 + 3 变体 +
+# 13 场景不编不注册 —— 让 CI 真的跑起 probe 层，而不是「全 OFF 一条不验」。
+BUILD_PROBE_SUBSET=""
 BUILD_PROBES="${DEVDESK_BUILD_PROBES:-1}"
 case "$BUILD_PROBES" in
   0) BUILD_PROBES_CMAKE="OFF" ;;
+  headless) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON"; BUILD_PROBE_SUBSET="headless" ;;
   *) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON" ;;
 esac
 
@@ -196,8 +204,9 @@ while [ $# -gt 0 ]; do
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
     # --probes-on：在 env 判定（上方 BUILD_PROBES 段）之后覆盖——CI 全局 PROBES=0
-    # 的运行里只为汇交类单编步骤开闸，平时构建不受影响
-    --probes-on) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON" ;;
+    # 的运行里只为汇交类单编步骤开闸，平时构建不受影响。子集档必须同时清空：
+    # 子集档下 font_metrics_probe 之类的目标压根没注册，--target 会报未知目标。
+    --probes-on) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON"; BUILD_PROBE_SUBSET="" ;;
     --target)   shift; BUILD_TARGET="${1:-}" ;;
     --live)     BUILD_LIVE_CMAKE="ON" ;;
     --filter)   shift; FILTER="${1:-}" ;;
@@ -456,6 +465,17 @@ elif [ "$BUILD_PROBES_CMAKE" = "OFF" ] && [ -f "$BUILD_DIR/build.ninja" ]; then
   echo "── probe 开关变化（缓存 无(老目录) → 本次 OFF），补一次 configure ──"
   NEED_CONF_PROBES=1
 fi
+# probe 子集档同一套漂移检测（debt422）：缓存里的 DEVDESK_PROBE_SUBSET 与本次
+# 请求不同 → 补 configure。**不清缓存直接用会两种错位**：子集请求落在全量目录上
+# 白编 53 条探针；全量请求落在子集目录上则 font_metrics_probe 等目标不存在，
+# --target 直接报未知目标（CI 字体汇交步实测形态）。
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+  CACHED_SUBSET="$(grep -m1 "^DEVDESK_PROBE_SUBSET:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r' || true)"
+  if [ "$CACHED_SUBSET" != "$BUILD_PROBE_SUBSET" ]; then
+    echo "── probe 子集开关变化（缓存 ${CACHED_SUBSET:-无} → 本次 ${BUILD_PROBE_SUBSET:-无(全量)}），补一次 configure ──"
+    NEED_CONF_PROBES=1
+  fi
+fi
 NEED_CONF_LIVE=0
 if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
   CACHED_LIVE="$(grep -m1 "^DEVDESK_BUILD_LIVE_TOOLS:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r')"
@@ -470,6 +490,7 @@ if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROB
   CONF_OUT=$(cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DEUI_NEO_DIR="$EUI_DIR" \
     -DDEVDESK_BUILD_PROBES="$BUILD_PROBES_CMAKE" \
+    -DDEVDESK_PROBE_SUBSET="$BUILD_PROBE_SUBSET" \
     -DDEVDESK_BUILD_LIVE_TOOLS="$BUILD_LIVE_CMAKE" \
     "${CCACHE_ARGS[@]}" \
     "${OPENSSL_ARGS[@]}" 2>&1) || {
@@ -798,9 +819,19 @@ if [ "$RUN_TEST" = "1" ]; then
     # probe 的 PROBE_SKIP_NO_DISPLAY 走 stderr，ctest 同样收进 LastTest.log。
     # **在任何可能改写 LastTest.log 的命令之前**捞。
     PROBE_SKIP_REASONS=""
+    # 跳过**起源**分辨（debt422 G1）：LastTest.log 按 `N/M Test: <名>` 分段，段内出现
+    # PROBE_SKIP_NO_DISPLAY 即该探针属「无显示环境」起源（harness 以 77 退出，
+    # tests/probes/probe_harness.h:181）。CI runner 无 GUI 会话是环境事实，这类跳过
+    # 在 GITHUB_ACTIONS 下按环境豁免——否则子集档里任何一条探针因 runner 显示栈差异
+    # 退 77，就会被下面的「混合态」判成判据误判/代码 bug 报红。
+    PROBE_NODISPLAY_NAMES=""
     if [ "$PROBE_SKIPPED" -gt 0 ]; then
       PROBE_SKIP_REASONS=$(cd "$BUILD_DIR" && grep -h "PROBE_SKIP_NO_DISPLAY" \
           Testing/Temporary/LastTest.log 2>/dev/null | sed 's/^/  /' | sort -u | head -5 || true)
+      PROBE_NODISPLAY_NAMES=$(cd "$BUILD_DIR" && awk '
+          /^[0-9]+\/[0-9]+ Test: / { cur=$NF; sub(/\r$/, "", cur) }
+          /PROBE_SKIP_NO_DISPLAY/ && cur != "" { print cur }
+        ' Testing/Temporary/LastTest.log 2>/dev/null | sort -u || true)
     fi
     PROBE_TOTAL=$(echo "$PROBE_OUT" \
         | sed -n 's/.*out of \([0-9][0-9]*\).*/\1/p' | tail -1 || true)
@@ -858,12 +889,27 @@ if [ "$RUN_TEST" = "1" ]; then
       # 跳过项全部落在该家族 = 已知平台不对称，黄牌放行；名单外任何跳过仍按
       # 「判据误判或代码 / 环境异常」报红，必须人工查。
       PROBE_SKIPPED_NAMES="$(echo "$PROBE_OUT" | grep -E '^\s*[0-9]+ - .*\(Skipped\)$' | sed -E 's/^[[:space:]]*[0-9]+ - +//; s/ \(Skipped\)$//' || true)"
+      # 无显示起源豁免（debt422 G1）：跳过项逐个对 LastTest.log 的 PROBE_SKIP_NO_DISPLAY
+      # 标记求交（名字精确匹配）。全部命中 + GITHUB_ACTIONS = runner 无 GUI 会话的环境
+      # 事实 → 环境豁免，不做下面的家族复跑验证、也不判红；本地（无 GITHUB_ACTIONS）
+      # 行为完全不变（本地全跳过由上方分支报红，混合态照旧按家族判）。
+      PROBE_NODISPLAY_SKIPS=0
+      if [ -n "$PROBE_NODISPLAY_NAMES" ]; then
+        PROBE_NODISPLAY_SKIPS=$(echo "$PROBE_SKIPPED_NAMES" \
+            | grep -cxF -f <(echo "$PROBE_NODISPLAY_NAMES") || true)
+        : "${PROBE_NODISPLAY_SKIPS:=0}"
+      fi
+      PROBE_NODISPLAY_EXEMPT=0
+      if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ -n "$PROBE_SKIPPED_NAMES" ] \
+         && [ "$PROBE_NODISPLAY_SKIPS" -ge "$PROBE_SKIPPED" ]; then
+        PROBE_NODISPLAY_EXEMPT=1
+      fi
       # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe / home_probes
       # 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。LastTest.log 不收录
       # 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——名字精确匹配 + rc=77
       # 双验才黄牌放行；这两个探针因其它成因跳过（rc≠77）仍按红，不静默。
       PROBE_FIT_FAM_VERIFIED=0
-      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
+      if [ "$PROBE_NODISPLAY_EXEMPT" != "1" ] && [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
         # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe /
         # home_probes 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。
         # LastTest.log 不收录 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——
@@ -910,7 +956,8 @@ if [ "$RUN_TEST" = "1" ]; then
       if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
         PROBE_FIT_FAM_HAS_MEMBER=1
       fi
-      if [ "$PROBE_FIT_FAM_HAS_MEMBER" = "1" ] && [ "$PROBE_FIT_FAM_VERIFIED" != "1" ]; then
+      if [ "$PROBE_FIT_FAM_HAS_MEMBER" = "1" ] && [ "$PROBE_FIT_FAM_VERIFIED" != "1" ] \
+         && [ "$PROBE_NODISPLAY_EXEMPT" != "1" ]; then
         echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——名单内探针的跳过成因不是设计内那一个（复跑退出码非 77），必须人工查"
         echo "   名单内探针（b1_material_probe / home_probes / memory_install_probe / terminal_conpty_win_probe / ui_driver_terminal-input）被跳过时"
         echo "   必须是其设计内成因（小屏钳窗 / argless 手动驱动 / 无控制台宿主 ConPTY 回显不可验）才放行；退出码非 77 说明"
@@ -920,7 +967,11 @@ if [ "$RUN_TEST" = "1" ]; then
         echo "   （复现: cd $BUILD_DIR && ./tests/<探针名>; echo \$?）"
         exit 1
       fi
-      if [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
+      if [ "$PROBE_NODISPLAY_EXEMPT" = "1" ]; then
+        echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项全部以 PROBE_SKIP_NO_DISPLAY 起源（无显示环境 = CI runner 的环境事实）"
+        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+        echo "   → 环境豁免，本次未验证 UI（有 GUI 会话的机器上跑同一命令即可真跑: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
+      elif [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
         if [ "$PROBE_FIT_FAM_VERIFIED" = "1" ]; then
           echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知环境/驱动跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；memory_install_probe：归 QA 显式子命令驱动，argless 即退 77；terminal_conpty_win_probe/ui_driver_terminal-input：无控制台宿主下 ConPTY 回显链不可验，真控制台实测全绿——均已复跑单探针验证退出码 77）——设计内跳过，不判红"
           echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
