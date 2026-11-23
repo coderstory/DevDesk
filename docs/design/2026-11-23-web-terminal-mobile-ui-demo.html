@@ -403,6 +403,17 @@ function handshakeScreen(fail){
   </div></div>`;
 }
 
+function limitOverlay(o){
+  return `<div class="full-ov"><div class="fo-inner">
+    <h2>${o.title}</h2>
+    ${o.body ? `<p>${o.body}</p>` : ''}
+    <div class="ov-actions">
+      ${o.primary ? `<button class="btn primary block"${o.primaryDisabled?' disabled':''}>${o.primary}</button>` : ''}
+      ${o.secondary ? `<button class="btn ghost block">${o.secondary}</button>` : ''}
+    </div>
+  </div></div>`;
+}
+
 function fullOverlay(reconnect){
   return `<div class="full-ov"><div class="fo-inner">
     <h2>${reconnect ? '桌面端已关闭网页服务' : '绑定已撤销'}</h2>
@@ -539,6 +550,11 @@ const SCREENS = {
   'term-failed': {g:'终端主界面', n:'会话启动失败卡', html:()=>term({card:'fail'})},
   'term-selecting': {g:'终端主界面', n:'文本选择模式', html:()=>term({selecting:true})},
 
+  'limit-sse': {g:'资源上限', n:'SSE 订阅满（503）', html:()=>term({status:'已断开', dot:'err'}) + limitOverlay({title:'连接数已达上限', body:'已在线端不受影响', primary:'重试'})},
+  'limit-handshake': {g:'资源上限', n:'握手超限（429）', html:()=>term({status:'已断开', dot:'err'}) + limitOverlay({title:'连接请求过于频繁，请稍后再试', body:'42 秒后可重试', primary:'重试', primaryDisabled:true})},
+  'limit-sessions': {g:'资源上限', n:'并发会话满（409）', html:()=>term({}) + limitOverlay({title:'会话数已达上限', body:'请关闭一个不用的会话后再试', primary:'关闭一个会话', secondary:'重试'})},
+  'limit-ticket': {g:'资源上限', n:'会话票据满（409）', html:()=>auth({title:'登录网页终端', sub:'输入验证器中的六位数字', body: loginBody({disabled:true, error:true, err:'登录设备数已达上限', hint:'请先退出不用的设备'}) + '<button class="btn ghost block" style="margin-top:16px">重试</button>'})},
+
   'cfg-normal': {g:'配置页', n:'六项控件', html:()=>config({})},
   'cfg-saving': {g:'配置页', n:'保存中', html:()=>config({size:18, saving:true})},
   'cfg-failed': {g:'配置页', n:'保存失败回滚', html:()=>config({banner:'保存失败，请重试'})},
@@ -564,6 +580,7 @@ const ORDER = [
   ['终端主界面', ['term-loading','term-normal','term-multi','term-overflow','term-menu','term-empty','term-reconnect','term-closed','term-revoked','term-exit','term-failed','term-selecting']],
   ['配置页', ['cfg-normal','cfg-saving','cfg-failed','cfg-dir-missing','cfg-dir-file','cfg-dir-perm','cfg-independent-dark']],
   ['粘贴', ['paste-lan','paste-prefill','paste-fail']],
+  ['资源上限', ['limit-sse','limit-handshake','limit-sessions','limit-ticket']],
   ['桌面「网页访问」专区（对照）', ['desk-unbound','desk-bound','desk-port','desk-nolan']]
 ];
 
