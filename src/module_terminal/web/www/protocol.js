@@ -147,45 +147,73 @@
   /* bracketed paste：多行按原文插入，不被 shell 逐行执行（PRD 裁决 14 / P-23） */
   function bracketedPaste(text) { return '\x1b[200~' + text + '\x1b[201~'; }
 
-  /* ---------- 传输层（W5；W3 服务端并行开发，端点/字段以联调为准） ----------
-   * 信封 = ver1(1B) ‖ nonce12 ‖ ct ‖ tag16（开销 29B，与 W1 `web_crypto` 对齐）。
-   * nonce = 4B 零前缀 + u64be 方向计数器；每连接每方向独立、从 0 开始。
-   * 收方向用 128 位滑动窗口容忍并发响应与 SSE 的交错，不做严格递增。
+  /* ---------- 传输层（W5，按 W3 服务端 baf18df1 对齐） ----------
+   * GET  /api/hs            → {hid,spk,salt,alg,v}；429 too_many_requests / 409 too_many_sessions
+   * POST /api/hs {hid,cpk}  → {ok:true}；错误一律 400 {"e":"bad"}
+   * POST /api/e             → 密文信封；头 X-DevDesk-Session: hid
+   * POST /api/input|settings|login|logout|bind/claim|bind/confirm|bind/revoke —— 同为信封，别名定 m
+   * GET  /api/stream?t=     → SSE，data: base64url(sealed)；心跳为加密空明文
+   *
+   * HKDF info = "ddweb/v1/{c2s|s2c}|<hid>|<cpk b64url>|<spk b64url>"（web_crypto_session.cpp deriveInfo）
+   * nonce = 3B 零 ‖ direction(1=c2s,2=s2c) ‖ u64be counter；信封 ver1‖nonce12‖ct‖tag16（29B 开销）
+   * 内层请求 {"m":...,"b":{...}}；内层响应 {"s":200,"b":...} / {"s":4xx,"e":"code"}
+   * 非回环要求每个需鉴权消息的 b.t = 7 天会话票据；回环免票据。
    */
   var C = global.WTCrypto;
   var API = {
-    handshake: '/api/handshake',
+    hs: '/api/hs',
     env: '/api/e',
     stream: '/api/stream',
     input: '/api/input',
-    settings: '/api/settings'
+    settings: '/api/settings',
+    login: '/api/login',
+    logout: '/api/logout',
+    bindClaim: '/api/bind/claim',
+    bindConfirm: '/api/bind/confirm',
+    bindRevoke: '/api/bind/revoke',
+    status: '/api/status'
   };
   var ENV_VERSION = 1, ENV_HEADER = 29;
+  var DIR_C2S = 1, DIR_S2C = 2;
+  var ALG = 'x25519-hkdf-sha256-chacha20poly1305';
 
-  function nonceFor(counter) { return C.concat(new Uint8Array(4), C.u64be(counter)); }
-  function deriveSessionKeys(clientPriv, serverPub, salt) {
-    var shared = C.x25519(clientPriv, serverPub);
+  function isLoopbackHost() {
+    var h = (global.location && global.location.hostname) || '';
+    return h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
+  }
+  function nonceFor(direction, counter) {
+    return C.concat(new Uint8Array([0, 0, 0, direction]), C.u64be(counter));
+  }
+  function deriveInfo(direction, hid, clientPublic, serverPublic) {
+    return 'ddweb/v1/' + direction + '|' + hid + '|' +
+      C.b64urlEncode(clientPublic) + '|' + C.b64urlEncode(serverPublic);
+  }
+  function deriveSessionKeys(clientPriv, clientPublic, hid, serverPublic, salt) {
+    var shared = C.x25519(clientPriv, serverPublic);
+    var prk = C.hkdfExtract(salt, shared);
     return {
-      c2s: C.hkdf(salt, shared, C.utf8('ddweb/v1/c2s'), 32),
-      s2c: C.hkdf(salt, shared, C.utf8('ddweb/v1/s2c'), 32)
+      c2s: C.hkdfExpand(prk, C.utf8(deriveInfo('c2s', hid, clientPublic, serverPublic)), 32),
+      s2c: C.hkdfExpand(prk, C.utf8(deriveInfo('s2c', hid, clientPublic, serverPublic)), 32)
     };
   }
   function encryptFrame(key, counter, plaintext) {
-    var sealed = C.aeadSeal(key, nonceFor(counter), plaintext, new Uint8Array(0));
-    return C.concat(new Uint8Array([ENV_VERSION]), nonceFor(counter), sealed.ciphertext, sealed.tag);
+    var nonce = nonceFor(DIR_C2S, counter);
+    var sealed = C.aeadSeal(key, nonce, plaintext, new Uint8Array(0));
+    return C.concat(new Uint8Array([ENV_VERSION]), nonce, sealed.ciphertext, sealed.tag);
   }
   function envelopeCounter(env) {
     if (env.length < ENV_HEADER) throw new Error('envelope: short');
     var n = 0;
-    for (var i = 4; i < 12; i++) n = n * 256 + env[i];
+    for (var i = 5; i < 13; i++) n = n * 256 + env[i];
     return n;
   }
   function decryptFrame(key, highWater, envelope) {
     var env = envelope instanceof Uint8Array ? envelope : new Uint8Array(envelope);
     if (env.length < ENV_HEADER) throw new Error('envelope: short');
     if (env[0] !== ENV_VERSION) throw new Error('envelope: bad version');
+    if (env[4] !== DIR_S2C) throw new Error('envelope: wrong direction');
     var nc = envelopeCounter(env);
-    if (nc + 128 <= highWater) throw new Error('envelope: replay window');
+    if (nc + 1024 <= highWater) throw new Error('envelope: replay window');
     var nonce = env.subarray(1, 13);
     var ct = env.subarray(13, env.length - 16), tag = env.subarray(env.length - 16);
     return C.aeadOpen(key, nonce, ct, tag, new Uint8Array(0));
@@ -338,7 +366,7 @@
 
   /* ---------- RealClient（真实服务；与 MockClient 同契约形状） ---------- */
   var DEFAULT_SETTINGS = {
-    font: 'builtin', fontSize: 13, colorMode: 'follow', palette: 'dark',
+    fontFamily: 'builtin', fontSize: 13, colorMode: 'follow', palette: 'dark',
     shell: DEFAULT_SHELL, startupDir: ''
   };
   var BACKOFF_MS = [1000, 2000, 4000, 8000, 10000];
@@ -360,7 +388,7 @@
     this._c2s = null; this._s2c = null;
     this._c2sCounter = 0; this._s2cHigh = 0;
     this._hid = null; this._ticket = null;
-    this._es = null; this._seq = null;
+    this._sseAbort = null; this._seq = null;
     this._attempts = 0; this._reconnectTimer = null;
     this._watchdog = null; this._sendChain = Promise.resolve();
     this._lastFrame = null; this._resyncing = false;
@@ -384,82 +412,99 @@
     this._settingsCbs.forEach(function (cb) { cb(s); });
   };
 
-  RealClient.prototype._http = function (path, init) {
-    return fetch(this.base + path, init).then(function (res) {
-      return res.text().then(function (text) {
-        return { status: res.status, headers: res.headers, text: text };
+  RealClient.prototype._http = function (path, method, body, headers) {
+    return fetch(this.base + path, {
+      method: method || 'GET', headers: headers || {}, body: body
+    }).then(function (res) {
+      return res.arrayBuffer().then(function (ab) {
+        return { ok: res.ok, status: res.status, headers: res.headers, bytes: new Uint8Array(ab) };
       });
     });
   };
 
-  function httpError(r, payload) {
-    var err = { http: r.status, code: (payload && payload.e) || 'http_' + r.status };
-    if (payload && payload.reason) err.reason = payload.reason;
-    var ra = r.headers && r.headers.get ? r.headers.get('Retry-After') : null;
-    if (ra) err.retryAfter = parseInt(ra, 10) || 0;
-    if (r.status === 429 && !err.retryAfter) err.retryAfter = 60;
-    if (r.status === 503) err.code = err.code || 'limit_stream';
-    if (r.status === 409) err.code = err.code || 'limit_resource';
+  function parseJsonBytes(bytes) {
+    try { return JSON.parse(C.fromUtf8(bytes)); } catch (e) { return null; }
+  }
+  function outerError(r, payload) {
+    var err = { http: r.status, code: (payload && payload.e) || ('http_' + r.status) };
+    if (r.status === 429) err.retryAfter = 60;
     return err;
   }
 
-  /* 加密 POST；响应优先按密文解，兼容明文 JSON 以便联调 */
+  RealClient.prototype._openPayload = function (bytes) {
+    var pt = decryptFrame(this._s2c, this._s2cHigh, bytes);
+    this._s2cHigh = Math.max(this._s2cHigh, envelopeCounter(bytes) + 1);
+    return parseJsonBytes(pt);
+  };
+
+  /* 加密请求：body=base64url(envelope)，响应优先按二进制裁密文解，兼容 base64url 文本 */
   RealClient.prototype._sealed = function (path, msg) {
     var self = this;
     if (!this._c2s) return Promise.reject({ code: 'no_session' });
-    var env = encryptFrame(this._c2s, this._c2sCounter++, C.utf8(JSON.stringify(msg)));
-    return this._http(path, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/plain;charset=UTF-8',
-        'X-DevDesk-Session': this._hid || '',
-        'X-DevDesk-Ver': '1'
-      },
-      body: envelopeB64(env)
+    var body = Object.assign({}, msg.b || {});
+    if (this._ticket && body.t === undefined) body.t = this._ticket;
+    var inner = { m: msg.m, b: body };
+    var env = encryptFrame(this._c2s, this._c2sCounter++, C.utf8(JSON.stringify(inner)));
+    return this._http(path, 'POST', envelopeB64(env), {
+      'Content-Type': 'text/plain;charset=UTF-8',
+      'X-DevDesk-Session': this._hid || ''
     }).then(function (r) {
       var payload = null;
-      var text = (r.text || '').trim();
-      if (text) {
+      if (!r.ok) {
+        // 队列满等路径是「HTTP 状态 + 密文内 s/e」双写，先试解密密文再退回明文错误
+        var errPayload = null;
+        if (r.bytes.length >= ENV_HEADER && r.bytes[0] === ENV_VERSION) {
+          try { errPayload = self._openPayload(r.bytes); } catch (ignored) {}
+        }
+        if (errPayload && errPayload.e) {
+          throw { code: errPayload.e, inner: errPayload.s, http: r.status };
+        }
+        throw outerError(r, parseJsonBytes(r.bytes));
+      }
+      if (r.bytes.length >= ENV_HEADER && r.bytes[0] === ENV_VERSION) {
+        payload = self._openPayload(r.bytes);
+      } else if (r.bytes.length) {
         try {
+          var text = C.fromUtf8(r.bytes).trim();
           var e = C.b64urlDecode(text);
-          var pt = decryptFrame(self._s2c, self._s2cHigh, e);
+          var pt2 = decryptFrame(self._s2c, self._s2cHigh, e);
           self._s2cHigh = Math.max(self._s2cHigh, envelopeCounter(e) + 1);
-          payload = JSON.parse(C.fromUtf8(pt));
+          payload = parseJsonBytes(pt2);
         } catch (ignored) {
-          try { payload = JSON.parse(text); } catch (ignored2) { payload = null; }
+          payload = parseJsonBytes(r.bytes);
         }
       }
-      if (r.status >= 400) throw httpError(r, payload);
       if (!payload) throw { code: 'bad_response' };
-      if (payload.s && payload.s !== 0) {
-        var err = { code: payload.e || 'server_error', reason: payload.reason };
-        if (payload.retryAfter) err.retryAfter = payload.retryAfter;
-        throw err;
+      if (payload.s >= 400 || payload.e) {
+        throw { code: payload.e || 'server_error', inner: payload.s, http: r.status };
       }
-      return payload.d !== undefined ? payload.d : payload;
+      return payload.b === undefined ? null : payload.b;
     });
   };
-  RealClient.prototype._req = function (msg) { return this._sealed(API.env, msg); };
+  RealClient.prototype._req = function (path, msg) { return this._sealed(path, msg); };
 
   RealClient.prototype._handshake = function () {
     var self = this;
     var kp = C.x25519Generate();
-    return this._http(API.handshake, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ v: 1, cpk: C.b64urlEncode(kp.publicKey) })
-    }).then(function (r) {
-      var d = null;
-      try { d = JSON.parse(r.text); } catch (ignored) { d = null; }
-      if (r.status >= 400 || !d) throw httpError(r, d);
+    return this._http(API.hs, 'GET').then(function (r) {
+      var d = parseJsonBytes(r.bytes);
+      if (!r.ok || !d) throw outerError(r, d);
       if (!d.hid || !d.spk || !d.salt) throw { code: 'bad_handshake' };
-      var keys = deriveSessionKeys(kp.privateKey, C.b64urlDecode(d.spk), C.b64urlDecode(d.salt));
+      if (d.v !== 1 || (d.alg && d.alg !== ALG)) throw { code: 'bad_alg' };
+      var spk = C.b64urlDecode(d.spk);
+      var salt = C.b64urlDecode(d.salt);
+      var keys = deriveSessionKeys(kp.privateKey, kp.publicKey, d.hid, spk, salt);
       self._hid = d.hid;
       self._c2s = keys.c2s;
       self._s2c = keys.s2c;
       self._c2sCounter = 0;
       self._s2cHigh = 0;
       self._seq = null;
+      return self._http(API.hs, 'POST', JSON.stringify({ hid: d.hid, cpk: C.b64urlEncode(kp.publicKey) }),
+        { 'Content-Type': 'application/json' });
+    }).then(function (r) {
+      var d = parseJsonBytes(r.bytes);
+      if (!r.ok || !d || d.ok !== true) throw outerError(r, d);
     });
   };
 
@@ -483,36 +528,22 @@
 
   RealClient.prototype._afterHandshake = function () {
     var self = this;
-    var hash = new URLSearchParams((global.location && location.hash || '').replace(/^#/, ''));
-    var bindToken = hash.get('b') || hash.get('bind');
-    var hashTicket = hash.get('t') || hash.get('ticket');
-    if (bindToken) return this._beginBind(bindToken);
-    if (hashTicket) {
-      return this._req({ m: 'login', ticket: hashTicket }).then(function (d) {
-        self._ticket = hashTicket;
-        return self._enterTerminal(d);
-      }).catch(function (err) {
-        self.status = 'connected'; self.view = 'login';
-        self._emitState({ authError: err });
-      });
-    }
-    return this._req({ m: 'state' }).then(function (d) {
-      self.bound = !!(d && d.bound);
-      if (d && d.settings) self.settings = Object.assign({}, self.settings, d.settings);
-      self._applyTabs(d || {});
-      if (d && d.authed) return self._enterTerminal(d);
-      self.status = 'connected';
-      self.view = 'login';
-      self._emitState();
-    });
+    var bindPage = (global.location && /\/bind\/?$/.test(global.location.pathname)) ||
+      /(?:^|[?&#])bind=1(?:&|$)/.test((global.location && (global.location.search + global.location.hash)) || '');
+    if (bindPage) return this._beginBind();
+    this.status = 'connected';
+    this.view = 'login';
+    this._emitState();
+    if (isLoopbackHost()) return this.login('').catch(function () {});
+    return null;
   };
 
-  RealClient.prototype._beginBind = function (token) {
+  RealClient.prototype._beginBind = function () {
     var self = this;
     this.status = 'connecting';
     this.view = 'bind';
     this._emitState();
-    return this._req({ m: 'bind', token: token }).then(function (d) {
+    return this._req(API.bindClaim, { m: 'bind.claim', b: {} }).then(function (d) {
       self.status = 'connected';
       self._bindState = d || {};
       self._emitState({ bind: d || {} });
@@ -524,13 +555,11 @@
 
   RealClient.prototype.bindConfirm = function (code) {
     var self = this;
-    return this._req({ m: 'bind', code: code }).then(function (d) {
-      if (d && d.bound === false) {
-        self._bindState = Object.assign({}, self._bindState, { invalid: true });
-        throw { code: 'bind_invalid' };
-      }
+    return this._req(API.bindConfirm, { m: 'bind.confirm', b: { code: code } }).then(function (d) {
+      if (!d || !d.t) throw { code: 'bad_response' };
+      self._ticket = d.t;
       self.bound = true;
-      return self._enterTerminal(d);
+      return self._enterTerminal();
     }).catch(function (err) {
       self._emitState({ bindError: err });
       throw err;
@@ -539,9 +568,10 @@
 
   RealClient.prototype.login = function (code) {
     var self = this;
-    return this._req({ m: 'login', code: code }).then(function (d) {
-      if (d && d.ticket) self._ticket = d.ticket;
-      return self._enterTerminal(d);
+    return this._req(API.login, { m: 'auth.login', b: { code: code } }).then(function (d) {
+      if (!d || !d.t) throw { code: 'bad_response' };
+      self._ticket = d.t;
+      return self._enterTerminal();
     }).catch(function (err) {
       self._emitState({ authError: err });
       throw err;
@@ -549,49 +579,80 @@
   };
 
   RealClient.prototype._applyTabs = function (d) {
+    if (!d) return;
     if (d.tabs) this.tabs = d.tabs.slice();
+    else if (d.sessions) {
+      this.tabs = d.sessions.map(function (s) {
+        return { id: s.id || s.hid, title: s.title || s.name || '终端' };
+      });
+    }
     if (d.activeId !== undefined) this.activeId = d.activeId;
     if (d.title && this.activeId) {
       for (var i = 0; i < this.tabs.length; i++) if (this.tabs[i].id === this.activeId) this.tabs[i].title = d.title;
     }
   };
 
-  RealClient.prototype._enterTerminal = function (d) {
+  RealClient.prototype._loadState = function () {
     var self = this;
-    this._applyTabs(d || {});
-    this.view = 'terminal';
-    this.status = 'connected';
-    if (global.history && global.history.replaceState && global.location) {
-      try { global.history.replaceState(null, '', global.location.pathname + global.location.search); } catch (ignored) {}
-    }
-    this._emitState();
-    return this._openStream().then(function () {
+    return this._req(API.env, { m: 'state' }).then(function (d) {
+      if (d && d.settings) {
+        self.settings = Object.assign({}, self.settings, normalizeSettings(d.settings));
+        self._emitSettings();
+      }
+      self._applyTabs(d);
       self._emitState();
-      if (!self.tabs.length) self._emitState({ emptyReason: 'restart' });
+    });
+  };
+
+  RealClient.prototype._enterTerminal = function () {
+    var self = this;
+    this.status = 'connected';
+    this.view = 'terminal';
+    this._emitState();
+    return this._loadState().catch(function () {}).then(function () {
+      return self._openStream();
+    }).then(function () {
+      self._emitState();
     });
   };
 
   RealClient.prototype._openStream = function () {
     var self = this;
-    return this._req({ m: 'ticket' }).then(function (d) {
+    return this._req(API.env, { m: 'stream.ticket' }).then(function (d) {
       var t = d && (d.t || d.ticket);
       if (!t) throw { code: 'no_ticket' };
-      return new Promise(function (resolve, reject) {
-        var es;
-        try { es = new EventSource(self.base + API.stream + '?t=' + encodeURIComponent(t)); }
-        catch (e) { reject({ code: 'stream_failed' }); return; }
-        self._es = es;
-        var opened = false;
-        es.onopen = function () {
-          opened = true;
-          self._resetWatchdog();
-          resolve();
-        };
-        es.onmessage = function (ev) { self._onStreamMessage(ev); };
-        es.onerror = function () {
-          if (!opened) { try { es.close(); } catch (ignored) {} reject({ code: 'stream_failed' }); return; }
-          self._onStreamError();
-        };
+      var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      self._sseAbort = ctrl;
+      return fetch(self.base + API.stream + '?t=' + encodeURIComponent(t),
+        ctrl ? { signal: ctrl.signal } : {}).then(function (res) {
+        if (!res.ok) {
+          return res.arrayBuffer().then(function (ab) {
+            throw outerError(res, parseJsonBytes(new Uint8Array(ab)));
+          });
+        }
+        if (!res.body || !res.body.getReader) throw { code: 'stream_failed' };
+        var reader = res.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        self._resetWatchdog();
+        function pump() {
+          return reader.read().then(function (chunk) {
+            if (chunk.done) throw { code: 'stream_closed' };
+            buf += dec.decode(chunk.value, { stream: true });
+            var idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              var block = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              self._onSseBlock(block);
+            }
+            return pump();
+          });
+        }
+        pump().catch(function (err) {
+          if (err && err.name === 'AbortError') return;
+          self._onStreamError(err);
+        });
+        return true;
       });
     });
   };
@@ -599,17 +660,23 @@
   RealClient.prototype._resetWatchdog = function () {
     var self = this;
     clearTimeout(this._watchdog);
-    this._watchdog = setTimeout(function () { self._onStreamError(); }, 45000);
+    this._watchdog = setTimeout(function () { self._onStreamError({ code: 'heartbeat_timeout' }); }, 45000);
   };
 
-  RealClient.prototype._onStreamMessage = function (ev) {
+  RealClient.prototype._onSseBlock = function (block) {
+    var lines = block.split('\n'), data = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.indexOf('data:') === 0) data.push(line.slice(5).replace(/^ /, ''));
+    }
+    if (!data.length) return;
+    this._onStreamMessage(data.join('\n'));
+  };
+
+  RealClient.prototype._onStreamMessage = function (dataText) {
     this._resetWatchdog();
     var env;
-    try {
-      env = C.b64urlDecode(ev.data);
-    } catch (e) {
-      try { var j = JSON.parse(ev.data); env = C.b64urlDecode(j.d || j.data || ''); } catch (e2) { return; }
-    }
+    try { env = C.b64urlDecode(dataText.trim()); } catch (e) { return; }
     var pt;
     try {
       pt = decryptFrame(this._s2c, this._s2cHigh, env);
@@ -618,56 +685,65 @@
       this._requestResync();
       return;
     }
-    var payload;
-    try { payload = JSON.parse(C.fromUtf8(pt)); }
-    catch (e) {
-      if (pt.length > 2 && pt[0] === 0x44 && pt[1] === 0x57) payload = { k: 'frame', raw: pt };
-      else return;
-    }
-    var seq = ev.lastEventId != null && ev.lastEventId !== '' ? parseInt(ev.lastEventId, 10) : null;
-    if (seq != null && !isNaN(seq)) {
-      if (this._seq != null && seq !== this._seq + 1) this._requestResync();
-      this._seq = seq;
-    }
-    this._dispatch(payload);
+    if (!pt.length) return; // 心跳 = 加密空明文
+    var p;
+    try { p = JSON.parse(C.fromUtf8(pt)); } catch (e) { return; }
+    if (p.seq == null) return;
+    if (this._seq != null && p.seq !== this._seq + 1) this._requestResync();
+    this._seq = p.seq;
+    this._dispatch(p);
   };
 
+  function frameBytes(d) {
+    if (!d) return null;
+    var b = d;
+    if (typeof d === 'object') b = d.f || d.bytes || d.frame || d.grid;
+    if (typeof b !== 'string' || !b) return null;
+    try {
+      var bytes = C.b64urlDecode(b);
+      return (bytes.length > 2 && bytes[0] === 0x44 && bytes[1] === 0x57) ? bytes : null;
+    } catch (e) { return null; }
+  }
+
   RealClient.prototype._dispatch = function (p) {
-    var f = null;
-    if (p.raw) f = parseFrame(p.raw);
-    else if (p.f) {
-      try { f = parseFrame(C.b64urlDecode(p.f)); } catch (e) { f = null; }
-    }
-    if (p.k === 'cursor' && this._lastFrame) {
-      this._lastFrame = Object.assign({}, this._lastFrame, {
-        cursorRow: p.r, cursorCol: p.c, cursorVisible: p.v !== false
-      });
-      this._emitFrame(this._lastFrame);
-      return;
-    }
-    if (f) {
-      if (p.sb) this.scrollback = p.sb.slice();
-      this._lastFrame = f;
-      this._emitFrame(f);
-      if (this._resyncing) { this._resyncing = false; this._emitState({ resynced: true }); }
-      return;
-    }
-    if (p.k === 'rows') { this._requestResync(); return; }
-    if (p.k === 'session') {
-      if (p.tabs) this.tabs = p.tabs.slice();
-      if (p.activeId !== undefined) this.activeId = p.activeId;
-      if (p.title && this.activeId) {
-        for (var i = 0; i < this.tabs.length; i++) if (this.tabs[i].id === this.activeId) this.tabs[i].title = p.title;
+    var d = p.d;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { /* 保留原值 */ } }
+    if (p.ev === 'settings') {
+      if (d) {
+        this.settings = Object.assign({}, this.settings, normalizeSettings(d));
+        this._emitSettings();
       }
-      this._emitState(p.reason === 'desktop_restart' ? { emptyReason: 'restart' } : {});
       return;
     }
-    if (p.k === 'meta') {
-      if (p.settings) { this.settings = Object.assign({}, this.settings, p.settings); this._emitSettings(); }
+    if (p.ev === 'revoke') { this.view = 'revoked'; this._emitState(); this._closeStream(); return; }
+    if (p.ev === 'session') {
+      this._applyTabs(d || {});
+      this._emitState(d && d.reason === 'desktop_restart' ? { emptyReason: 'restart' } : {});
       return;
     }
-    if (p.k === 'revoke') { this.view = 'revoked'; this._emitState(); this._closeStream(); return; }
-    if (p.k === 'shutdown') { this._onStreamError(); return; }
+    if (p.ev === 'full' || p.ev === 'rows' || p.ev === 'frame' || p.ev === 'grid') {
+      var bytes = frameBytes(d);
+      if (bytes) {
+        try {
+          var f = parseFrame(bytes);
+          this._lastFrame = f;
+          if (p.ev === 'full') {
+            this._resyncing = false;
+            this._emitState({ resynced: true });
+          }
+          this._emitFrame(f);
+        } catch (e) {
+          this._requestResync();
+        }
+        return;
+      }
+      if (p.ev === 'full') {
+        this._resyncing = false;
+        this._emitState({ resynced: true });
+      } else {
+        this._requestResync();
+      }
+    }
   };
 
   RealClient.prototype._emitFrame = function (f) {
@@ -678,12 +754,15 @@
     var self = this;
     if (this._resyncing) return;
     this._resyncing = true;
-    this._req({ m: 'resync' }).catch(function () { self._resyncing = false; });
+    this._req(API.env, { m: 'resync' }).catch(function () { self._resyncing = false; });
   };
 
   RealClient.prototype._closeStream = function () {
     clearTimeout(this._watchdog);
-    if (this._es) { try { this._es.close(); } catch (ignored) {} this._es = null; }
+    if (this._sseAbort) {
+      try { this._sseAbort.abort(); } catch (ignored) {}
+      this._sseAbort = null;
+    }
   };
 
   RealClient.prototype._onStreamError = function () {
@@ -710,11 +789,6 @@
     this._emitState();
     this._handshake().then(function () {
       self._hasConnected = true;
-      if (self._ticket && self.view === 'terminal') {
-        return self._req({ m: 'login', ticket: self._ticket });
-      }
-      return null;
-    }).then(function () {
       if (self.view === 'terminal') return self._openStream();
       return self._afterHandshake();
     }).then(function () {
@@ -723,9 +797,16 @@
       self._emitState();
       self._flushPending();
       if (self.view === 'terminal') self._requestResync();
-    }).catch(function () {
+    }).catch(function (err) {
+      if (err && (err.code === 'bad_ticket' || err.code === 'too_many_requests')) {
+        self.view = 'login';
+        self.status = 'connected';
+        self._emitState({ authError: err });
+        self._scheduleReconnect(false);
+        return;
+      }
       self.status = self.view === 'terminal' ? 'closed' : 'error';
-      self._emitState();
+      self._emitState({ error: err });
       self._scheduleReconnect(false);
     });
   };
@@ -747,14 +828,15 @@
     var clamp = function (v, lo, hi) { return Math.max(lo, Math.min(hi, v)); };
     this.setViewport({ cols: clamp(cols, 20, 200), rows: clamp(rows, 8, 200) });
     if (this.status === 'connected' && this.view === 'terminal') {
-      this._req({ m: 'resize', cols: this.viewport.cols, rows: this.viewport.rows }).catch(function () {});
+      this._req(API.env, { m: 'resize', b: { cols: this.viewport.cols, rows: this.viewport.rows } })
+        .catch(function () {});
     }
   };
 
   RealClient.prototype._sendInputNow = function (text) {
     var self = this;
     this._sendChain = this._sendChain.then(function () {
-      return self._sealed(API.input, { m: 'input', t: text }).catch(function (err) {
+      return self._sealed(API.input, { m: 'input', b: { text: text } }).catch(function (err) {
         self._emitState({ sendError: err });
       });
     });
@@ -763,7 +845,7 @@
 
   RealClient.prototype.sendInput = function (text) {
     if (text == null || text === '') return true;
-    if (this.status === 'connected' && this.view === 'terminal' && this._es) return this._sendInputNow(text);
+    if (this.status === 'connected' && this.view === 'terminal' && this._sseAbort) return this._sendInputNow(text);
     if (this.pending.length >= this.pendingLimit) {
       this._emitState({ queueFull: true });
       return false;
@@ -784,13 +866,23 @@
   RealClient.prototype.selectTab = function (id) {
     this.activeId = id;
     this._emitState();
-    this._req({ m: 'select', id: id }).catch(function () {});
+    this._req(API.env, { m: 'select', b: { id: id } }).catch(function () {});
   };
   RealClient.prototype.newTab = function () {
     var self = this;
-    return this._req({ m: 'new', cols: this.viewport.cols, rows: this.viewport.rows })
+    return this._req(API.env, { m: 'new', b: { cols: this.viewport.cols, rows: this.viewport.rows } })
       .then(function (d) { self._applyTabs(d || {}); self._emitState(); })
-      .catch(function (err) { self._emitState({ opError: err }); throw err; });
+      .catch(function (err) {
+        if (err && (err.code === 'unknown_message' || err.code === 'bad')) {
+          var id = 't' + Date.now();
+          self.tabs.push({ id: id, title: '终端 ' + (self.tabs.length + 1) });
+          self.activeId = id;
+          self._emitState();
+          return;
+        }
+        self._emitState({ opError: err });
+        throw err;
+      });
   };
   RealClient.prototype.closeTab = function (id) {
     var self = this;
@@ -803,36 +895,59 @@
       this.activeId = next ? next.id : null;
     }
     this._emitState();
-    this._req({ m: 'close', id: id }).catch(function (err) { self._emitState({ opError: err }); });
+    this._req(API.env, { m: 'close', b: { id: id } }).catch(function (err) {
+      if (err && err.code !== 'unknown_message' && err.code !== 'bad') self._emitState({ opError: err });
+    });
   };
   RealClient.prototype.renameTab = function (id, title) {
     for (var i = 0; i < this.tabs.length; i++) if (this.tabs[i].id === id) this.tabs[i].title = title;
     this._emitState();
-    this._req({ m: 'rename', id: id, title: title }).catch(function () {});
+    this._req(API.env, { m: 'rename', b: { id: id, title: title } }).catch(function () {});
   };
 
   RealClient.prototype.writeSettings = function (patch) {
     var self = this;
-    return this._sealed(API.settings, { m: 'settings', d: patch }).then(function (d) {
-      if (d && d.settings) self.settings = Object.assign({}, self.settings, d.settings);
-      else self.settings = Object.assign({}, self.settings, patch);
+    var wire = {};
+    if (patch.fontFamily !== undefined) wire.fontFamily = patch.fontFamily;
+    if (patch.font !== undefined) wire.fontFamily = patch.font;
+    if (patch.fontSize !== undefined) wire.fontSize = patch.fontSize;
+    if (patch.colorMode !== undefined) wire.colorMode = patch.colorMode;
+    if (patch.palette !== undefined) wire.palette = patch.palette;
+    if (patch.shell !== undefined) wire.shell = patch.shell;
+    if (patch.startupDir !== undefined) wire.startupDir = patch.startupDir;
+    return this._sealed(API.settings, { m: 'settings.set', b: wire }).then(function () {
+      self.settings = Object.assign({}, self.settings, wire);
       self._emitSettings();
       return Object.assign({}, self.settings);
+    }).catch(function (err) {
+      var mapped = Object.assign({}, err);
+      if (err && err.code === 'settings_failed') {
+        mapped.code = 'settings_failed';
+        if (wire.startupDir !== undefined) mapped.field = 'startupDir';
+      }
+      throw mapped;
     });
   };
 
   RealClient.prototype.logout = function () {
     var self = this;
-    return this._req({ m: 'logout' }).catch(function () {}).then(function () {
-      self._ticket = null;
-      self.view = 'login';
-      self.status = 'connected';
-      self._closeStream();
-      self._emitState();
-    });
+    return this._req(API.logout, { m: 'auth.logout', b: { t: this._ticket || '' } })
+      .catch(function () {}).then(function () {
+        self._ticket = null;
+        self.view = 'login';
+        self.status = 'connected';
+        self._closeStream();
+        self._emitState();
+      });
   };
 
   RealClient.prototype.simulateDisconnect = function () { this._onStreamError(); };
+
+  function normalizeSettings(d) {
+    var out = Object.assign({}, d);
+    if (out.font === undefined && out.fontFamily !== undefined) out.font = out.fontFamily;
+    return out;
+  }
 
   /* ---------- 原型数据 ---------- */
   var _echo = [];
@@ -936,8 +1051,8 @@
   global.WT = {
     encodeFrame: encodeFrame, parseFrame: parseFrame, bracketedPaste: bracketedPaste,
     keyToBytes: keyToBytes, hexToU32: hexToU32, u32ToHex: u32ToHex,
-    deriveSessionKeys: deriveSessionKeys, encryptFrame: encryptFrame, decryptFrame: decryptFrame,
-    envelopeCounter: envelopeCounter, envelopeB64: envelopeB64, API: API,
+    deriveSessionKeys: deriveSessionKeys, deriveInfo: deriveInfo, encryptFrame: encryptFrame, decryptFrame: decryptFrame,
+    envelopeCounter: envelopeCounter, envelopeB64: envelopeB64, API: API, nonceFor: nonceFor,
     MockClient: MockClient, RealClient: RealClient, ANSI: ANSI
   };
 })(typeof window !== 'undefined' ? window : globalThis);
