@@ -199,7 +199,7 @@ claude mcp add --transport http devdesk http://127.0.0.1:8931/mcp
 
 <p align="center">
 十三页全功能运行（可插拔模块 9 个：笔记 / 待办 / 定时 / Claude / 智能体 / 记忆 / 壁纸 / MCP / 上线；壁纸默认关闭）<br>
-全量测试 <b>Total 2048 / Failed 0</b>（macOS，2026-10-31；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
+全量测试 <b>历史快照 Total 2048 / Failed 0</b>（macOS，2026-10-31；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
 <sub>Total 与 Passed 的差额是按平台条件 <code>DOCTEST_SKIP</code> 的用例（Windows 专属实现 / soak 门控 / 非活跃平台分支等），不是失败</sub>
 </p>
 

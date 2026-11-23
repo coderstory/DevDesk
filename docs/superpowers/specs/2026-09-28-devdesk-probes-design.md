@@ -6,7 +6,7 @@
 
 ### 1.1 DevDesk 无头 UI 测试（现状缺口）
 
-- `tests/CMakeLists.txt` 单二进制 `devdesk_tests`（tests/CMakeLists.txt:1-60），自制 87 行迷你 doctest（`REGISTER_TEST` + fail-fast，用例总数以运行输出 Total 为准，现 646）；TIN-10 用例登记自检（tests/CMakeLists.txt:62-116）要求磁盘实况 == 登记表，否则 configure 期 FATAL。
+- `tests/CMakeLists.txt` 单二进制 `devdesk_tests`（tests/CMakeLists.txt:1-60），自制 87 行迷你 doctest（`REGISTER_TEST` + fail-fast，用例总数以运行输出 Total 为准，2026-09-28 快照 646）；TIN-10 用例登记自检（tests/CMakeLists.txt:62-116）要求磁盘实况 == 登记表，否则 configure 期 FATAL。
 - 无头模式：`ui.begin(pageId); mod->compose(ui, screen); ui.end(); ui.layout(w,h);` 然后 `ui.find(id)->frame` / 直接调 `onContextMenu(pe, rect)` 触发再重 compose（test_ui_modern.cpp:93-106、test_settings.cpp:724-777）。
 - 无头能断言的：元素存在/几何/frame 边界（如 `settings_log_dropdown_popup_stays_in_window` 断言 popup frame ⊂ 窗、openUp 行为，test_settings.cpp:752-772）。
 - 无头测不到的：真实窗口、Runtime 事件分发（当前是直接调回调，绕开命中/捕获/焦点链）、真实渲染、**交叉 z 序碰撞**（无头只查单一元素 frame，不扫「弹层 vs 非祖先其余元素」的相交判定——§2.2 弹层锚定变体）。

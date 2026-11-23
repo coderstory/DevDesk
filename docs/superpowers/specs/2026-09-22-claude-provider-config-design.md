@@ -325,7 +325,7 @@ std::map<std::string, std::string> buildProxyEnv(
 - migration v3 两列 + Profile struct 两字段 + CRUD SQL 更新（create/update/list/get 补两列读写）
 - `buildProxyEnv()` / `parseImportedEnv()` / displayName 派生函数
 - **测试**：迁移幂等（旧库升级 + 新库直建同 schema）；buildProxyEnv 的槽位跳过/派生/extra_env 冲突优先级/空 profile/**别名映射（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT 值取反）**；parseImportedEnv 的两种形状/非法值/键名校验/别名命中提示
-- **验收**：137 用例基线全绿 + 新用例全绿；旧 profile（models_config 空）读出行为与今天一致
+- **验收**：2026-09-22 快照 137 用例基线全绿 + 新用例全绿（基线以运行输出 Total 为准）；旧 profile（models_config 空）读出行为与今天一致
 
 ### Phase B：代理手动启动（硬性需求 1）
 - `SettingsConfig.claudeProxyAutoStart`（默认 false）+ main.cpp 门控（保 `getClaudeService()` 注册顺序）+ claude_module onStart 去兜底 + 设置页开关 + doRegenerateToken 未运行置灰

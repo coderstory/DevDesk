@@ -218,7 +218,7 @@ DevDesk 设置页对降级的呈现：`app::activeWindowEffect()` 与用户所�
 
 - EUI-NEO：`window_effect.h/_win.cpp/_stub.cpp` + `applyTitleBarAppearance`（`USE_IMMERSIVE_DARK_MODE` + `TEXT_COLOR`，`CAPTION_COLOR` 留 API 不默认用）+ `DslAppConfig::darkTitleBar` + `app::setTitleBarAppearance` 运行时 API。
 - DevDesk：`main.cpp` 按主题接线；设置页主题切换即时生效。
-- **验收**：深/浅主题下截屏对比标题栏；运行时切换无需重启；Win11 以下机器不崩、返回 false 静默降级；DevDesk 137 用例全绿。
+- **验收**：深/浅主题下截屏对比标题栏；运行时切换无需重启；Win11 以下机器不崩、返回 false 静默降级；DevDesk 2026-09-22 快照 137 用例全绿（基线以运行输出 Total 为准）。
 
 ### Phase B — 透明管线与运行时 clearColor（2-4 天）
 

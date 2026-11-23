@@ -26,6 +26,8 @@
 
 ### 2.1 Module 接口与 Router（插拔的底子已经是对的）
 
+> 注：本节装配描述已过时——现行实现见 kModuleRegistry 表驱动（src/app_registry.h）+ app_assembly 门控装配（2026-09-28-r8 起），getRouter 在 src/main.cpp；本节保留原文作历史记录。
+
 - `src/core/module_interface.h:30-62` — `Module` 纯虚接口：`pageId()/displayName()/iconGlyph()/compose()` + 默认空实现的 `onKeyEvent()/onPageEnter()/onStart()/onStop()`。模块是纯被动对象，**没有任何后台线程/定时器**——不注册就不会有任何代码路径碰到它。
 - `src/core/router.cpp:10-12` — `registerModule()` 只是 `modules_.push_back()`；`startAll()`（:64-71）只对已注册模块调 `onStart()`；`compose()`（:53-62）只渲染当前页的已注册模块；侧边栏（main.cpp:296）遍历 `router->modules()` 渲染菜单。
 - 装配在 `src/main.cpp:125-157` `getRouter()`：5 个 `create_*_module()` 工厂 + `registerModule` + `startAll`。
