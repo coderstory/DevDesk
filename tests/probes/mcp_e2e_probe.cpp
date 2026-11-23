@@ -235,7 +235,9 @@ int main() {
     const std::string sessionId = headerValue(init.headers, "Mcp-Session-Id");
     check(!sessionId.empty(), "initialize 下发 Mcp-Session-Id");
 
-    // tools/list：46 = 39 镜像 + 7 内置
+    // tools/list：54 = 39 镜像 + 15 直注（4 常驻内置/直注 + md_*×5 + todo_*×6）。
+    // bug#485 基线对齐：need394 双适配层并存态（notes_*×3 下线，md_*×5 + todo_*×6
+    // 经 tool_kit::registerToolsAsMcp 上线，净 +8）；#478 双适配层收敛裁决后需重数。
     const auto list = postMcp(
         port, R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})",
         sessionId);
@@ -245,8 +247,8 @@ int main() {
                                         : JsonValue();
     const auto tools = result.isObject() ? result.asObject().get("tools")
                                          : JsonValue();
-    check(tools.isArray() && tools.size() == 46,
-          "tools/list 共 46 工具（实际 " +
+    check(tools.isArray() && tools.size() == 54,
+          "tools/list 共 54 工具（实际 " +
               std::to_string(tools.isArray() ? tools.size() : -1) + "）");
 
     // F-01：39 真工具 name/description/inputSchema 逐字段 diff
