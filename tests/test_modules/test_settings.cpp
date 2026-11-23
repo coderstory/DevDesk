@@ -1816,7 +1816,7 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
 // 池 bug246 端到端：用户真的点设置页开关关掉默认模块 → 豁免随 save 落库 → 重启
 // （新模块实例重新 onStart + load）不得被自校验重开。钉的是「用户动作记账」这条链，
 // 不是 SettingsStore 单点语义（那条由 test_module_gating 覆盖）。
-// 选 release 作靶：terminal 没有模块卡开关格（不在 kToggleable 表内），点不到。
+// 选 release 作靶（迁移表 v1 用户可关模块；池#371 起 git/终端也有开关格，链路同构）。
 REGISTER_TEST(settings_module_toggle_records_exemption_and_survives_reload,
               "settings: bug246——点开关关上线(release) → 豁免落库 → 重启不重开", {
     namespace ms = module::settings;
