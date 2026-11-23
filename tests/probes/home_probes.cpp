@@ -118,6 +118,10 @@ int main(int argc, char* argv[]) {
     const std::string pageId = "home";
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
+    // bug395：断言一律按 compose 实际逻辑高（windowLogicalSize 反推，bug183 口径）
+    // ——系统钳窗后实际高 ≠ 请求值 h（见下方 envSkipped 注释），按 h 算绝对高度
+    // 期望必红（组 D 曾因用 h 中招）。
+    float composeH = h;
     bool passed = true;
     // 环境不可用 ≠ 代码 bug（skill 铁律）：显示器装不下请求的逻辑窗高时，系统会钳窗口
     //（实测 1200x1000 请求 → 1625x1065px≈1200x787 逻辑），按请求尺寸布局的页底内容
@@ -131,6 +135,7 @@ int main(int argc, char* argv[]) {
         probe::composeModuleFrame(runtime, window, pageId, w, h,
                                   [&](eui::Ui& u, const eui::Screen& screen) {
                                       ui = &u;
+                                      composeH = screen.height;
                                       mod->compose(u, screen);
                                   });
     };
@@ -289,7 +294,8 @@ int main(int argc, char* argv[]) {
 
     // 组 D（C-2 need380 wave5-c）：今日 token 图表卡已砍——barChart 结构反向断言
     //（查有即红）；统计行吃余高：图表缺席后弹性基准以上余高全部摊给统计行
-    //（home_module statsGrow），home.stats 高 = 视口高 − 非统计固定件（页头 40 +
+    //（home_module statsGrow），home.stats 高 = compose 实际视口高（composeH，
+    // 非 --size 请求值，bug395）− 非统计固定件（页头 40 +
     // 列 gap 2×20 + 操作行 44+16 底边距 + 0.5 防浮点余量）。旧判据（plot 区高
     // ≥36）随卡下线。
     {
@@ -305,7 +311,7 @@ int main(int argc, char* argv[]) {
             passed = false;
         } else {
             const float expectStatsH =
-                h - (40.0f + 2.0f * 20.0f + 44.0f + 16.0f + 0.5f);
+                composeH - (40.0f + 2.0f * 20.0f + 44.0f + 16.0f + 0.5f);
             if (std::fabs(stats->frame.height - expectStatsH) > 1.0f) {
                 std::cerr << "home_probes: 组 D FAIL——统计行未吃满余高：高 "
                           << stats->frame.height << " 期望 " << expectStatsH
