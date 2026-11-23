@@ -1162,12 +1162,12 @@ GridLayout TerminalPage::compose(
                     return narrowPanel ? ry + 24.0f : ry + (kRowBlockH - kControlH) * 0.5f;
                 };
 
-                // 行画布高。C-4（need380）：启动目录/回滚行数/光标三行已砍（§4.2⑤⑥⑦
-                // 移除），会话组只剩默认 shell 一行。
+                // 行画布高。C-4（need380）砍掉回滚行数/光标两行；need#490 W6 恢复
+                // 启动目录行——会话组 = 默认 shell + 启动目录两行。
                 float canvasH = 12.0f + kGroupHeadH + 8.0f;          // 分组头「外观」
                 canvasH += rowH + 8.0f + rowH + 8.0f + rowH;         // 字体/字号/配色
                 canvasH += 12.0f + kGroupHeadH + 8.0f;               // 分组头「会话」
-                canvasH += rowH;                                     // 默认 shell
+                canvasH += rowH + 8.0f + rowH;                       // 默认 shell + 启动目录
 
                 const float titleBlock = kPanelPad + 28.0f + 12.0f;
                 const float footerBlock = 12.0f + 1.0f + 12.0f + 32.0f + kPanelPad;
@@ -1404,8 +1404,46 @@ GridLayout TerminalPage::compose(
                                             })
                                             .build();
                                     });
-                                // C-4（need380）：会话组末行（默认 shell）——启动目录/
-                                // 回滚行数/光标三行已砍（§4.2⑤⑥⑦）
+                                // C-4（need380）：回滚行数/光标两行已砍（§4.2⑥⑦）；
+                                // need#490 W6 恢复启动目录行（空=主目录，保存时校验可进入）
+                                y += rowH + 8.0f;
+
+                                drawRowBase(inner, "term.set.row.startup", y, "启动目录");
+                                const float startupInputW = std::clamp(
+                                    innerW - controlX, 120.0f, 360.0f);
+                                inner.stack("term.set.row.startup.slot")
+                                    .position(controlX, ctlY(y))
+                                    .size(startupInputW, kControlH)
+                                    .content([&] {
+                                        components::input(
+                                            inner, "term.set.row.startup.input")
+                                            .size(startupInputW, kControlH)
+                                            .value(settings.startupDir)
+                                            .placeholder("用户主目录")
+                                            .fontSize(core::theme::scaled(13.0f))
+                                            .theme(ct)
+                                            .onChange([sp](const std::string& v) {
+                                                sp->startupDir = v;
+                                            })
+                                            .build();
+                                    });
+                                const float startupErrX =
+                                    controlX + startupInputW + 8.0f;
+                                const float startupErrW =
+                                    std::max(0.0f, innerW - (startupInputW + 8.0f));
+                                if (!settings.startupDir.empty() &&
+                                    !canEnterDirectory(settings.startupDir) &&
+                                    startupErrW >= 80.0f) {
+                                    inner.text("term.set.row.startup.error")
+                                        .position(startupErrX, ctlY(y))
+                                        .size(startupErrW, kControlH)
+                                        .text("目录不存在或不可进入，完成时保留原值")
+                                        .fontSize(core::theme::scaled(11.0f))
+                                        .color(t.colors.errorText)
+                                        .maxWidth(startupErrW)
+                                        .overflow(core::TextOverflow::Ellipsis)
+                                        .clip();
+                                }
                                 y += rowH;
                             });
                     })

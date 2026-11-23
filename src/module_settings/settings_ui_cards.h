@@ -15,6 +15,7 @@
 
 #include <core/claude_proxy_service.h>
 #include <core/theme.h>
+#include <core/web_terminal_service.h>
 #include <eui/dsl.h>
 
 #include <functional>
@@ -88,6 +89,16 @@ struct SettingsCardsIn {
         platform::file_association::AssocState::Unknown;
     std::vector<platform::file_association::AssocState> notepadExtStates;
     std::string notepadGuideText;              // 未生效摘要（空 = 无摘要兜底文案）
+
+    // 网页访问卡（need#490 W6）：服务指针（null = 未装配，卡显示故障占位）
+    // + compose 每帧取的只读快照 + 端口输入草稿/反馈 + 删除绑定确认态。
+    ::core::IWebTerminalService* webService = nullptr;
+    ::core::WebAccessSnapshot webAccess;
+    std::string webPortDraft;                 // 端口输入草稿（空 = 未编辑）
+    std::string webPortFeedback;              // 非空 = 端口行反馈文案
+    bool webPortFeedbackError = false;        // true = 红字
+    bool webBindingConfirm = false;           // 删除绑定确认行展开
+    bool webStarting = false;                 // 开关进行中（≤2s 文案）
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -136,6 +147,18 @@ struct SettingsCardActions {
     std::function<void()> projectCardSave;     // 保存草稿（upsert；改名 = 删旧名落新名）
     std::function<void()> projectCardDelete;   // 删除选中卡
     std::function<void(const std::string&)> projectCardSelect;  // 点列表行装入表单
+
+    // 网页访问（need#490 W6）：新回调一律追加末尾。
+    std::function<void(bool)> applyWebAccessEnabled;  // 开关（start/stop）
+    std::function<void(const std::string&)> setWebPortDraft;  // 端口输入草稿
+    std::function<void()> applyWebPort;               // 端口提交（1024-65535）
+    std::function<void()> discardWebPortDraft;        // Esc 丢弃端口草稿
+    std::function<void()> refreshWebToken;            // 5 分钟令牌刷新
+    std::function<void()> requestRevokeBinding;       // 展开删除绑定确认
+    std::function<void()> confirmRevokeBinding;       // 确认撤销验证器绑定
+    std::function<void()> cancelRevokeBinding;        // 取消确认
+    std::function<void(const std::string&)> copyWebAddress;  // 复制访问地址
+    std::function<void()> openWebLogDir;              // 打开日志目录（自诊）
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）

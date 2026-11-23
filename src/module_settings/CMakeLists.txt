@@ -9,6 +9,7 @@ add_library(devdesk_module_settings STATIC
     github_sync_card.cpp
     notepad_assoc_logic.cpp
     notepad_assoc_card.cpp
+    web_access_card.cpp
     github_sync_logic.cpp
     git_error_dialog.cpp
     project_card_store.cpp

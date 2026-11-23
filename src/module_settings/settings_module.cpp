@@ -20,6 +20,7 @@
 #include "settings_ui_logic.h"
 #include "notepad_assoc_card.h"   // drawNotepadAssocCard（F-18 开关行卡）
 #include "notepad_assoc_logic.h"  // 状态字四态 / 卡高契约 / 未生效摘要（F-18 判定）
+#include "web_access_card.h"      // drawWebAccessCard（need#490 W6 网页访问专区）
 #include "platform/open_settings.h"  // oneClickAvailable（引导行卡高平台档）
 
 #include "core/claude_proxy_service.h"
@@ -30,12 +31,14 @@
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "core/web_terminal_service.h"
 #include "core/tool.h"
 #include "core/component_theme.h"
 #include "platform/github_api.h"     // platform::github::ApiLogEntry（弹窗日志源；GithubApi 由同步引擎持有）
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
+#include "platform/file_open.h"      // openDirectory（网页访问自诊「打开日志目录」）
 #include "platform/system_theme.h"
 #include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸格可见性 + 插拔卡卡高二值）
 
@@ -97,6 +100,7 @@ enum class CardHeightKind {
     ModulesGrid,  // 模块插拔卡：格数 × 列数派生（modulesCardHeightFor，>1.15 档降单列）
     NotepadAssoc, // 动态高（F-18）：状态字未生效时引导行有无 + 平台档（Win 按钮
                   // 行盒 28 / mac 文字行盒 16）→ compose 按四态算好传 notepadAssocH
+    WebAccess,    // 网页访问卡（need#490 W6）：四态 + 删除确认行派生（webAccessCardHeight）
 };
 
 struct CardSpec {
@@ -130,6 +134,11 @@ const CardSpec kCardSpecs[] = {
     // MCP 配置卡：排在代理卡后；模块关 → 整卡隐藏（不占高度）。
     {kTabGeneral, "settings.card.mcp", kModuleIdMcp, CardHeightKind::McpCard,
      0.0f, false, /*half=*/false, &drawMcpCard, nullptr},
+    // 网页访问卡（need#490 W6）：独立「网页访问」tab 全宽全程显示（服务未装配
+    // 也不隐藏，卡内以「服务未装配」故障占位降级）。独立 tab 而非并入通用 tab：
+    // 卡高 > 四 tab 最小窗零滚动预算，并入会破既有零滚动守卫。
+    {kTabWebAccess, "settings.card.web_access", nullptr, CardHeightKind::WebAccess,
+     0.0f, false, /*half=*/false, &drawWebAccessCard, nullptr},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::ModulesGrid,
      0.0f, false, /*half=*/false, &drawModulesCard, nullptr},
     // 提醒弹窗卡（need260 设计 §7：模块 tab 半宽配对左卡，与 md 关联卡成对，
@@ -1360,6 +1369,13 @@ public:
         mcpRunning_ = mcpLive.running;
         mcpLivePort_ = mcpLive.port;
         mcpLastError_ = mcpLive.lastError;
+        // 网页访问快照（need#490 W6）：服务未装配 → 空快照（卡内故障占位）；
+        // start/stop 失败原因覆盖快照 error 槽（开关回弹 + 红字）。
+        auto* webSvc = webService();
+        webSnapshot_ =
+            webSvc ? webSvc->snapshot() : ::core::WebAccessSnapshot{};
+        if (!webError_.empty()) webSnapshot_.error = webError_;
+        webAccessHeight_ = webAccessCardHeight(webSnapshot_, webBindingConfirm_);
         const auto compTheme = core::theme::componentTokensWeChat(t);
 
         ui.column("settings.root")
@@ -1466,7 +1482,12 @@ public:
                                             pairColW + 0.5f)) +
                                         // 卡间距档签名：卡间 gap 变 → 内容总高变，
                                         // 旧缓存高失真（need224 批3 gapY 16→8）
-                                        ".g8")
+                                        ".g8" +
+                                        // 网页访问卡高（四态/确认行）进签名：状态切换
+                                        // 卡高变 → 旧内容高缓存会裁掉增长部分
+                                        ".w" +
+                                        std::to_string(static_cast<int>(
+                                            webAccessHeight_ + 0.5f)))
                             .offset(cardsScrollOffset_)
                             .onChange([this](float v) {
                                 cardsScrollOffset_ = v;
@@ -1507,6 +1528,89 @@ private:
         auto r =
             ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
         return r.isOk() ? r.value() : nullptr;
+    }
+
+    // ── 网页访问卡（need#490 W6）：服务经 ServiceLocator；未装配 = nullptr，
+    // 卡内按「服务未装配」故障占位降级（不隐藏卡、不崩）。
+    static ::core::IWebTerminalService* webService() {
+        auto r =
+            ::core::ServiceLocator::requireService<::core::IWebTerminalService>();
+        return r.isOk() ? r.value() : nullptr;
+    }
+
+    void setWebPortDraft(const std::string& v) {
+        webPortDraft_ = v;
+        webPortFeedback_.clear();
+        webPortFeedbackError_ = false;
+    }
+
+    void applyWebPort() {
+        int port = 0;
+        bool digits = !webPortDraft_.empty();
+        for (const char c : webPortDraft_) {
+            if (c < '0' || c > '9') {
+                digits = false;
+                break;
+            }
+            port = port * 10 + (c - '0');
+            if (port > 65535) break;
+        }
+        if (!digits || port < 1024 || port > 65535) {
+            webPortFeedback_ = "端口范围 1024–65535";
+            webPortFeedbackError_ = true;
+            return;
+        }
+        auto* svc = webService();
+        if (svc == nullptr) {
+            webPortFeedback_ = "网页服务未装配，端口未保存";
+            webPortFeedbackError_ = true;
+            return;
+        }
+        ::core::TerminalSettingsPatch patch;
+        patch.webPort = port;
+        auto r = svc->writeSettings(patch);
+        if (r.isFail()) {
+            webPortFeedback_ = r.errorMessage();
+            webPortFeedbackError_ = true;
+            return;
+        }
+        webPortDraft_ = std::to_string(port);  // 规范化显示
+        webPortFeedback_.clear();
+        webPortFeedbackError_ = false;
+    }
+
+    void applyWebAccessEnabled(bool on) {
+        auto* svc = webService();
+        webError_.clear();
+        if (svc == nullptr) {
+            webError_ = "网页服务未装配，无法开启";
+            return;
+        }
+        auto r = on ? svc->start() : svc->stop();
+        if (r.isFail()) {
+            // 开关真值来自快照（下一帧 running 仍 false → 自动回弹）+ 红字原因
+            webError_ = r.errorMessage();
+            LOG_WARN("Settings: 网页访问" +
+                     std::string(on ? "开启" : "关闭") + "失败: " +
+                     r.errorMessage());
+        }
+    }
+
+    void refreshWebToken() {
+        auto* svc = webService();
+        if (svc == nullptr) return;
+        auto r = svc->refreshToken();
+        if (r.isFail())
+            LOG_WARN("Settings: 网页绑定令牌刷新失败: " + r.errorMessage());
+    }
+
+    void confirmRevokeBinding() {
+        webBindingConfirm_ = false;
+        auto* svc = webService();
+        if (svc == nullptr) return;
+        auto r = svc->revokeBinding();
+        if (r.isFail())
+            LOG_WARN("Settings: 撤销网页验证器绑定失败: " + r.errorMessage());
     }
 
     // 7 个下拉共用一个「谁打开着」索引（取值语义见 settings_ui_logic.h）。
@@ -1717,6 +1821,27 @@ private:
             projectCardSelect(name);
         };
 
+        // 网页访问（need#490 W6）
+        a.applyWebAccessEnabled = [this](bool on) { applyWebAccessEnabled(on); };
+        a.setWebPortDraft = [this](const std::string& v) { setWebPortDraft(v); };
+        a.applyWebPort = [this] { applyWebPort(); };
+        a.discardWebPortDraft = [this] {
+            webPortDraft_.clear();
+            webPortFeedback_.clear();
+            webPortFeedbackError_ = false;
+        };
+        a.refreshWebToken = [this] { refreshWebToken(); };
+        a.requestRevokeBinding = [this] { webBindingConfirm_ = true; };
+        a.confirmRevokeBinding = [this] { confirmRevokeBinding(); };
+        a.cancelRevokeBinding = [this] { webBindingConfirm_ = false; };
+        a.copyWebAddress = [](const std::string& addr) {
+            ::core::window::setClipboardText(addr);
+        };
+        a.openWebLogDir = [] {
+            (void)::platform::file_open::openDirectory(
+                ::core::paths::logsDir().string());
+        };
+
         return a;
     }
 
@@ -1735,6 +1860,9 @@ private:
         case CardHeightKind::NotepadAssoc:
             // F-10：compose 按状态字四态 + 平台档算好（roundFs 已含）
             return notepadAssocH;
+        case CardHeightKind::WebAccess:
+            // need#490 W6：compose 按快照四态 + 删除确认行算好（roundFs 已含）
+            return webAccessHeight_;
         case CardHeightKind::FillRemainder:
             // UAT6 零滚动收口：日志 tab 在最小窗（1000×640 → 卡区可用高 372）下
             // remain = 372 − roundFs(144) − gap 16 = 212——旧下限 260 > 212 把日志
@@ -1822,6 +1950,14 @@ private:
         in.notepadAssocState = notepadAssocState_;
         in.notepadExtStates = notepadExtStates_;
         in.notepadGuideText = notepadGuideText_;
+        // 网页访问卡（need#490 W6）：服务指针 + 本帧快照 + 输入/确认态
+        in.webService = webService();
+        in.webAccess = webSnapshot_;
+        in.webPortDraft = webPortDraft_;
+        in.webPortFeedback = webPortFeedback_;
+        in.webPortFeedbackError = webPortFeedbackError_;
+        in.webBindingConfirm = webBindingConfirm_;
+        in.webStarting = false;
         const SettingsCardActions a = cardActions();
         // 越界 tab（不可达）回落通用页
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
@@ -2152,6 +2288,15 @@ private:
     bool mcpRunning_ = false;                 // 桥快照
     int mcpLivePort_ = 0;                     // 桥快照：实际监听端口
     std::string mcpLastError_;                // 桥快照：Failed 时非空
+    // 网页访问卡（need#490 W6）：本帧服务快照 + 派生卡高 + 端口草稿/反馈 +
+    // 删除绑定确认态 + start/stop 失败原因（覆盖快照 error 槽）。
+    ::core::WebAccessSnapshot webSnapshot_;
+    float webAccessHeight_ = 0.0f;
+    std::string webPortDraft_;
+    std::string webPortFeedback_;
+    bool webPortFeedbackError_ = false;
+    bool webBindingConfirm_ = false;
+    std::string webError_;
     // 需-11 项目卡：列表快照（刷新点 = onStart/onPageEnter/增删改）+ 表单草稿与
     // 反馈。selectedName 是「装载草稿时的原名」：改名保存删它、删除按钮删它。
     std::vector<ProjectCard> projectCards_;

@@ -4,11 +4,16 @@
 
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/ticker.h"
+#include "core/web_terminal_service.h"
 
 #include "terminal_page.h"
 #include "terminal_session_controller.h"
 #include "terminal_settings.h"
 #include "web/web_session_bridge.h"
+#include "web/web_terminal_service.h"
+
+#include <memory>
 
 namespace terminal {
 
@@ -17,6 +22,7 @@ public:
     // injectedBackend=测试缝（复审 P2：doctest 注入 fake，防构造即接真后端在测试里
     // 真 spawn pwsh）；缺省空指针 → 平台真后端
     explicit TerminalModule(platform::TerminalBackend* injectedBackend = nullptr);
+    ~TerminalModule() override;
 
     core::PageId pageId() const override;
     std::string displayName() const override;
@@ -42,6 +48,11 @@ public:
 
 private:
     void ensureBackend();
+    // need#490 W6/W3 接线：服务实例生命周期 + 每帧 tick（全局 ticker，页面不可见也跑）。
+    void startWebService();
+    void stopWebService();
+    void tickWeb();
+    core::Result<void> persistWebSettings(const core::TerminalSettingsPatch& patch);
     // bug278④：设置面板结果通道（完成=true 提交落库+新会话参数生效；×/Esc=false
     // 丢弃草稿回滚快照）。老板口径 2026-11-16：弹窗内改动只在「完成」落库/生效。
     void finishSettingsPanel(bool commit);
@@ -58,6 +69,9 @@ private:
     // need#490 W4：网页会话桥（tab/尺寸/退出态/设置单一入口）。settings_ 指针必须在
     // 本成员之前声明（桥持其地址）。
     web::WebSessionBridge bridge_;
+    // 网页终端服务（W3）：模块独占持有并注册为 core::IWebTerminalService（设置页消费）。
+    std::unique_ptr<::module::terminal::web::WebTerminalService> webService_;
+    core::ticker::Handle webTickerHandle_ = 0;
 };
 
 } // namespace terminal

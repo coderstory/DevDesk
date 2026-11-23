@@ -661,6 +661,12 @@ foreach(_probe_source ${_devdesk_probe_sources})
             "${CMAKE_SOURCE_DIR}/src/memory_mcp_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/toast_notice_bridge.cpp")
     endif()
+    # web_access_probe（need#490 W6）：二维码矩阵用真实编码器造样；qr_encode.cpp
+    # 只编进 devdesk_tests，不在任何库，须随本探针直编。
+    if(_probe_name STREQUAL "web_access_probe")
+        target_sources(${_probe_name} PRIVATE
+            "${CMAKE_SOURCE_DIR}/src/module_terminal/web/qr/qr_encode.cpp")
+    endif()
     target_include_directories(${_probe_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests

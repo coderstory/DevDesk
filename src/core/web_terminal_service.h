@@ -22,6 +22,7 @@ enum class WebBindState {
 struct WebAccessSnapshot {
     bool running = false;
     int port = 0;                        // 实际监听端口；未运行 = 0
+    int configuredPort = 0;              // 持久化配置端口（未运行时的设置页显示源）
     std::vector<std::string> addresses;  // 可扫码的本机 IPv4（含回环，不含 0.0.0.0）
     WebBindState bindState = WebBindState::Stopped;
     std::int64_t bindTime = 0;           // unix 秒；0 = 未绑定
@@ -41,6 +42,7 @@ struct TerminalSettingsPatch {
     std::optional<std::string> palette;
     std::optional<std::string> shell;
     std::optional<std::string> startupDir;
+    std::optional<int> webPort;  // 网页服务监听端口（1024-65535）
 };
 
 class IWebTerminalService {

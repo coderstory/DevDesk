@@ -2,6 +2,7 @@
 
 #include "core/database.h"
 #include "core/logging.h"
+#include "core/service_locator.h"
 #include "core/theme.h"
 #include "platform/terminal/terminal_backend.h"
 #include "terminal_fullscreen_bridge.h"
@@ -30,6 +31,8 @@ TerminalModule::TerminalModule(platform::TerminalBackend* injectedBackend)
     page_.setPanelResultHandler([this](bool commit) { finishSettingsPanel(commit); });
 }
 
+TerminalModule::~TerminalModule() { stopWebService(); }
+
 core::PageId TerminalModule::pageId() const { return core::PageId::Terminal; }
 std::string TerminalModule::displayName() const { return "终端"; }
 std::string TerminalModule::shortName() const { return "终端"; }
@@ -41,11 +44,80 @@ void TerminalModule::ensureBackend() {
     if (controller_.empty()) controller_.startSessionAsync();
 }
 
+// need#490 W6/W3 接线：服务实例由模块独占（设置页经 ServiceLocator 消费同一实例），
+// UI 主线程每帧 tick 才能排空网页命令队列（input/resize/tab 操作）+ 推网格帧。
+void TerminalModule::startWebService() {
+    if (!webService_)
+        webService_ = std::make_unique<::module::terminal::web::WebTerminalService>();
+    webService_->setSessionContext(&controller_, &bridge_);
+    webService_->setSettingsPersist(
+        [this](const core::TerminalSettingsPatch& patch) {
+            return persistWebSettings(patch);
+        });
+    webService_->setActiveSessionCount(controller_.count());
+    ::core::ServiceLocator::set<::core::IWebTerminalService>(webService_.get());
+    if (webTickerHandle_ == 0) {
+        webTickerHandle_ = ::core::ticker::subscribe(
+            {.name = "terminal.web.tick",
+             .fn =
+                 [](::core::ticker::Now, void* user) {
+                     static_cast<TerminalModule*>(user)->tickWeb();
+                 },
+             .user = this,
+             .firstAt = 0,
+             .intervalSec = 0,  // 每次 pump（主循环每帧）
+             .expireAt = 0});
+    }
+}
+
+void TerminalModule::tickWeb() {
+    if (!webService_) return;
+    webService_->setActiveSessionCount(controller_.count());
+    webService_->tick();
+}
+
+void TerminalModule::stopWebService() {
+    // 顺序不可换：先摘 ticker（此后不再被 pump），再停服务并注销，最后析构。
+    ::core::ticker::unsubscribe(webTickerHandle_);
+    webTickerHandle_ = 0;
+    ::core::ServiceLocator::set<::core::IWebTerminalService>(nullptr);
+    if (webService_) {
+        (void)webService_->stop();
+        webService_.reset();
+    }
+}
+
+core::Result<void> TerminalModule::persistWebSettings(
+    const core::TerminalSettingsPatch& patch) {
+    // 网页 settings.set 与桌面面板「完成」落到同一 store：以库内已存值为基底打补丁，
+    // 避免把打开中的桌面草稿写进库。端口为服务级配置（不进 terminal_settings）。
+    TerminalSettings next = loadTerminalSettings(::core::appDatabase());
+    if (patch.fontFamily) next.fontFamily = *patch.fontFamily;
+    if (patch.fontSize) next.fontSize = *patch.fontSize;
+    if (patch.colorMode) {
+        next.colorMode = *patch.colorMode == "independent"
+                             ? TerminalColorMode::Independent
+                             : TerminalColorMode::FollowApp;
+    }
+    if (patch.palette) {
+        next.colorPalette = *patch.palette == "dark"
+                                ? TerminalColorPalette::Dark
+                                : TerminalColorPalette::Light;
+    }
+    if (patch.shell) next.shell = *patch.shell;
+    if (patch.startupDir) next.startupDir = *patch.startupDir;
+    if (patch.webPort && webService_) webService_->setConfiguredPort(*patch.webPort);
+    return writeSettings(next);
+}
+
 void TerminalModule::onPageEnter() { ensureBackend(); }
 // bug247：开机不建会话——onStart 不再 ensureBackend（应用启动不占 ConPTY 进程/
 // 不出「终端 1」）；首个会话由 onPageEnter 建（ensureBackend 内 empty 检查即幂等）
-void TerminalModule::onStart() {}
+void TerminalModule::onStart() { startWebService(); }
 void TerminalModule::onStop() {
+    // 先停网页服务（摘 ticker → 服务 stop → 注销 ServiceLocator），避免 tick 打在
+    // 随后被销毁的会话/桥对象上。
+    stopWebService();
     // 全会话终止（模块停用=会话生命周期终点）；v2 多会话无单例句柄语义
     while (!controller_.empty()) {
         controller_.closeSession(0);

@@ -85,6 +85,8 @@ public:
         std::function<core::Result<void>(const core::TerminalSettingsPatch&)> handler);
     // 激活会话数由 UI 会话控制器同步；0 → input/paste 返回密文内 409
     void setActiveSessionCount(int count);
+    // 设置页端口编辑（need#490 W6）：仅未运行时改写配置端口（运行中 UI 只读）。
+    void setConfiguredPort(int port);
 
     // ---- 测试缝 ----
     CryptoSessionTable& sessionsForTest() { return sessions_; }
@@ -93,6 +95,8 @@ public:
     int actualPortForTest() const;
     std::size_t pendingCommandCountForTest() const;
     std::vector<std::string> takeCommandsForTest();
+    // 队列消费判据（W6 接线用例）：tick 未调用 → 命令滞留；tick 调用 → 排空。
+    void enqueueCommandForTest(const std::string& command);
     void setSessionActiveForTest(bool active);
     std::string statusJsonForTest() const;
     std::string tabSnapshotJsonForTest() const;

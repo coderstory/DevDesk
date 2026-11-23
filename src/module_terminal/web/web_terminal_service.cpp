@@ -217,6 +217,7 @@ core::WebAccessSnapshot WebTerminalService::snapshotLocked() const {
     core::WebAccessSnapshot snap;
     snap.running = running_;
     snap.port = running_ && server_ ? server_->actualPort() : 0;
+    snap.configuredPort = port_;  // W6 设置页：未运行时显示持久化配置端口
     snap.addresses = platform::localIpv4Addresses();
     snap.bindState = bindState_;
     snap.bindTime = bound_ ? boundAt_ : 0;
@@ -1064,8 +1065,13 @@ int WebTerminalService::actualPortForTest() const {
     return server_ ? server_->actualPort() : 0;
 }
 
-std::size_t WebTerminalService::pendingCommandCountForTest() const {
+void WebTerminalService::setConfiguredPort(int port) {
+    if (port < 1024 || port > 65535) return;
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_) port_ = port;  // 运行中禁改：UI 端口行只读，重启后生效
+}
+
+std::size_t WebTerminalService::pendingCommandCountForTest() const {    std::lock_guard<std::mutex> lock(mutex_);
     return commands_.size();
 }
 
@@ -1074,6 +1080,10 @@ std::vector<std::string> WebTerminalService::takeCommandsForTest() {
     std::vector<std::string> out(commands_.begin(), commands_.end());
     commands_.clear();
     return out;
+}
+
+void WebTerminalService::enqueueCommandForTest(const std::string& command) {
+    (void)enqueueCommand(command);
 }
 
 std::string WebTerminalService::makeInputCommandForTest(const std::string& bytes,
