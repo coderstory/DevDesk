@@ -346,6 +346,8 @@ add_executable(devdesk_tests
     test_modules/test_qr_encode.cpp
     test_modules/test_terminal_web_crypto.cpp
     test_platform/test_net_interfaces.cpp
+    # need#490 W2 鉴权纯逻辑（令牌/TOTP/票据/限流）；符号来自 devdesk_module_terminal + devdesk_platform
+    test_modules/test_terminal_web_auth.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
