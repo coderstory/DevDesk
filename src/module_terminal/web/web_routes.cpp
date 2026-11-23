@@ -2,9 +2,11 @@
 
 #include "platform/http_server.h"
 
+#include "web_assets.h"
 #include "web_terminal_service.h"
 
 #include <string>
+#include <string_view>
 
 namespace module::terminal::web {
 
@@ -20,10 +22,49 @@ void applySecurityHeaders(platform::http::ResponseWriter& rw, bool api) {
                  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:");
 }
 
-std::string placeholderPage() {
-    return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" "
-           "content=\"width=device-width,initial-scale=1\"><title>DevDesk 网页终端</title></head>"
-           "<body><p>DevDesk 网页终端资源待嵌入（W5）。</p></body></html>";
+// If-None-Match 与构建期 ETag 比对（容忍 W/ 弱标记与多值列表）
+bool etagMatches(const platform::http::RequestCtx& ctx, const char* etag) {
+    const auto it = ctx.headers.find("if-none-match");
+    if (it == ctx.headers.end()) return false;
+    std::string_view header = it->second;
+    while (!header.empty()) {
+        const auto comma = header.find(',');
+        std::string_view item = header.substr(0, comma);
+        while (!item.empty() && (item.front() == ' ' || item.front() == '\t')) item.remove_prefix(1);
+        while (!item.empty() && (item.back() == ' ' || item.back() == '\t')) item.remove_suffix(1);
+        if (item.rfind("W/", 0) == 0) item.remove_prefix(2);
+        if (item.size() >= 2 && item.front() == '"' && item.back() == '"') {
+            item.remove_prefix(1);
+            item.remove_suffix(1);
+        }
+        if (item == etag) return true;
+        if (comma == std::string_view::npos) break;
+        header.remove_prefix(comma + 1);
+    }
+    return false;
+}
+
+// 静态资源出口：命中嵌入表才 200；未命中 404 不伪装。HTML 每次回源校验（no-cache），
+// JS/CSS 走 ETag + 1h 缓存（未做文件名指纹，不能 immutable）。
+void serveAsset(const platform::http::RequestCtx& ctx, platform::http::ResponseWriter& rw,
+                std::string_view name, bool isDocument) {
+    const EmbeddedAsset* asset = findEmbeddedAsset(name);
+    if (asset == nullptr) {
+        rw.setStatus(404);
+        rw.setHeader("Content-Type", "text/plain; charset=utf-8");
+        rw.write("asset not found");
+        return;
+    }
+    const std::string quotedEtag = std::string("\"") + asset->etag + "\"";
+    rw.setHeader("ETag", quotedEtag);
+    rw.setHeader("Cache-Control", isDocument ? "no-cache" : "public, max-age=3600");
+    rw.setHeader("Content-Type", asset->mime);
+    if (etagMatches(ctx, asset->etag)) {
+        rw.setStatus(304);
+        return;
+    }
+    rw.setStatus(200);
+    rw.write(std::string(asset->data, asset->size));
 }
 
 // 返回 true = 已写 403，调用方不再进 handler
@@ -68,27 +109,26 @@ void registerWebRoutes(platform::http::Server& server, WebTerminalService& servi
     };
 
     const platform::http::RouteHandler indexHandler =
-        [](const platform::http::RequestCtx&, platform::http::ResponseWriter& rw) {
-            rw.setStatus(200);
-            rw.setHeader("Content-Type", "text/html; charset=utf-8");
-            rw.write(placeholderPage());
-        };
-    const platform::http::RouteHandler assetPlaceholder =
         [](const platform::http::RequestCtx& ctx, platform::http::ResponseWriter& rw) {
-            // 静态资源占位：真实嵌入由 W5 的 embed_assets 提供；未嵌入前一律 404，
-            // 避免把不存在的前端文件伪装成 200 让浏览器报语法错误。
-            rw.setStatus(404);
-            rw.setHeader("Content-Type", "text/plain; charset=utf-8");
-            rw.write(ctx.path == "/assets/" ? "no assets" : "asset not found");
+            serveAsset(ctx, rw, "index.html", /*isDocument=*/true);
+        };
+    // 兼容两种引用形态：index.html 里写的是相对路径（/app.css），/assets/* 留给
+    // 带前缀部署与后续子目录扩展；两者都查同一张嵌入表。
+    const platform::http::RouteHandler assetsHandler =
+        [](const platform::http::RequestCtx& ctx, platform::http::ResponseWriter& rw) {
+            std::string_view name = ctx.path;
+            if (name.rfind("/assets/", 0) == 0) name.remove_prefix(8);
+            while (!name.empty() && name.front() == '/') name.remove_prefix(1);
+            serveAsset(ctx, rw, name, /*isDocument=*/false);
         };
 
     server.route("GET", "/", page(indexHandler));
     server.route("GET", "/index.html", page(indexHandler));
     server.route("GET", "/bind", page(indexHandler));
     server.route("GET", "/login", page(indexHandler));
-    server.route("GET", "/assets/.*", page(assetPlaceholder));
+    server.route("GET", "/assets/.*", page(assetsHandler));
     for (const char* name : {"/app.js", "/app.css", "/protocol.js", "/render.js", "/crypto.js"}) {
-        server.route("GET", name, page(assetPlaceholder));
+        server.route("GET", name, page(assetsHandler));
     }
 
     server.route("GET", "/api/hs", api([&service](const platform::http::RequestCtx& ctx,
