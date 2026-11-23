@@ -17,12 +17,16 @@ env:
   CCACHE_MAXSIZE: 1G
   # 让构建输出实时刷到 CI 日志（默认被脚本吞掉，看起来像卡死）
   DEVDESK_BUILD_VERBOSE: "1"
-  # CI 不编 probe 二进制（2026-10-03）：runner 无 GUI 会话，14 个 UI probe 测试
-  # 全走 SKIP_RETURN_CODE 77 跳过，12 个 probe 可执行的编译链接是纯浪费。
-  # 0 → build-test-run.sh 传 -DDEVDESK_BUILD_PROBES=OFF（probe 目标与 ctest
-  # 注册整体不生成，probe 门禁段与探针跳过登记守卫显式跳过打 ⏭）。
-  # 单测全量与静态守卫照跑；probe 真门禁靠本地（默认 ON）+ headless 断言单测。
-  DEVDESK_BUILD_PROBES: "0"
+  # CI 的 probe 口径（debt422，老板裁决方案①）：runner 无 GUI 会话，UI 探针只能按
+  # 77 跳过——但整层 OFF 等于 CI 一条 probe 都不验（2026-10-03 起的老口径）。
+  # 改走 headless 子集档：-DDEVDESK_BUILD_PROBES=ON + -DDEVDESK_PROBE_SUBSET=headless，
+  # 只编/只注册真无窗可跑的 3 条（mcp_e2e_probe / word_wrap_poc_probe /
+  # ui_driver_usage_error）；当前树 57 个 probe 源、56 个目标里的其余 UI 探针 +
+  # 3 个变体 + 13 个 ui_driver 真窗场景 不编不注册。probe 门禁段因此真跑这三条
+  # （不再整段打 ⏭）；若 runner 显示栈差异仍让某条按 77 跳过，门禁按
+  # PROBE_SKIP_NO_DISPLAY 起源判环境豁免（scripts/build-test-run.sh G1），
+  # 既不判红也不静默。单测全量与静态守卫照跑；全量 probe 真门禁仍在本地（默认全量）。
+  DEVDESK_BUILD_PROBES: "headless"
   # EUI-NEO submodule 统一定位（workflow 全局）：msys2/UCRT64 壳下脚本的
   # git rev-parse 仓库根判定不可靠（2026-11-03 双次实证）；显式指给全部步——
   # 构建/clang-tidy/覆盖率各步都独立跑 build 脚本，逐步 export 会漏（clang-tidy
@@ -97,13 +101,16 @@ jobs:
       # 落 CMAKE_EXE_LINKER_FLAGS —— 只给编译端 flag 链接不进 ASan/UBSan runtime，等于白编。
       # -fno-omit-frame-pointer：留帧指针让 ASan 栈回溯可读；-fno-sanitize-recover=undefined：
       # UBSan 违例直接置红 —— 默认 recover 只打印不失败，会造出「违例刷屏但门禁绿」的假绿。
-      # 只跑本目录单测（脚本 RUN_TEST 段即 devdesk_tests 全量）；probe 仍不编：工作区级
-      # DEVDESK_BUILD_PROBES=0 对本 step 同样生效（probe 目标不生成、门禁段显式打 ⏭）——
-      # probe 是真开窗 UI 用例，sanitizer 下无意义且 runner 无 GUI 会话。
+      # 只跑本目录单测（脚本 RUN_TEST 段即 devdesk_tests 全量）；probe 压回 OFF：全局
+      # headless 子集会把这 3 条 probe 也编进 build-san 并进 probe 门禁——本步只验
+      # doctest 的 sanitizer 清洁度，且 probe 是真开窗 UI 用例（headless 子集里那 3 条
+      # 也不渲染帧，但多一轮编译链接与门禁无意义）。
       # **Windows 位后置**：MinGW 的 ASan 运行时不稳（计划 T5 原话），勿照搬到 windows job，
       # 防后人重复踩坑；决策记录另见 07 号票完成记录。
       - name: ASan/UBSan 构建 + 全量单测
         working-directory: DevDesk
+        env:
+          DEVDESK_BUILD_PROBES: "0"
         run: |
           set +e
           CXXFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" \
@@ -176,8 +183,9 @@ jobs:
       # 字体度量汇交（need132 技术卡 §5 F-06）：Windows 侧 JSON artifact，供与 mac
       # 基线（evidence/font-metrics/font_metrics_macos.json）比对——比对=font_sha256
       # 三文件 + advances_sha256 三档/mono 逐字节相等（收口裁决，记测试清单卡）。
-      # CI 全局 DEVDESK_BUILD_PROBES=0（不编 12 个 probe 省链接），--probes-on 在
-      # 本步重配开闸 probe 目标、--target 只单编 font_metrics_probe（缓存温热零
+      # CI 全局 DEVDESK_BUILD_PROBES=headless（只编 3 条无窗探针），--probes-on 在
+      # 本步重配回全量（同时清子集档——子集档下 font_metrics_probe 压根没注册，
+      # --target 会报未知目标），--target 只单编 font_metrics_probe（缓存温热零
       # 重编；debt205 起收编进脚本，不再手敲 cmake）。DEVDESK_FAST_TEST=1 跳过
       # 3b 守卫链——守卫已在上面「构建 + 测试」步完整跑过，本步非门禁步不重复付费；
       # headless 跑：runner 基础显示驱动 GL 1.1 建不了 3.3 Core 探测窗，度量路径
