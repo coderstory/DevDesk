@@ -399,6 +399,8 @@ add_subdirectory(tests)
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
 # 两者单测复用同一份实现）
 add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
+    # app 壳 TU 拆分（debt419）：流质背景 + 20fps 泵 / 自绘标题栏（原先均在 app_sidebar.cpp）
+    src/app_fluid.cpp src/app_titlebar.cpp
     src/module_toggle_bridge.cpp src/wallpaper_tray_bridge.cpp
     # MCP 桥实现缝（B3）：app_assembly / settings_module 引用 app::mcp::* 符号；
     # 缝本体只依赖 core，不产生 module_mcp 链接边

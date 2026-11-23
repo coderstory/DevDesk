@@ -10,6 +10,8 @@ add_library(devdesk_module_release STATIC
     release_detail_ui.cpp
     release_detail_logic.cpp
     release_detail_draw.cpp
+    release_service_card.cpp  # debt419：服务卡绘制（自 release_detail_draw.cpp 拆出）
+    release_env_card.cpp  # debt419：环境卡 + 前置检查分区（同上）
     release_dialogs.cpp
     release_reminder.cpp
     release_module.cpp
