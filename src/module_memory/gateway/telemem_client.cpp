@@ -10,6 +10,7 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <system_error>
 
 #include "core/logging.h"
 #include "module_memory/engine/telemem_config.h"

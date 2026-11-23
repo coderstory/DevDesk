@@ -168,6 +168,10 @@ void PanelState::openStores() {
     std::lock_guard<std::mutex> lk(mu_);
     live_.storesOk = err.empty();
     live_.storesError = err;
+    // 重开面板取历史读数（recall_eval.h 契约「面板重开取 last()」）：publishLocked
+    // 用 live_.lastEval 覆盖数据面值（e7470e05 帧内后台化引入），live_ 不在开库时
+    // 种子则重启后恒显「未评测」，直到当轮评测完成
+    if (evalStore_.has_value()) live_.lastEval = evalStore_->last();
 }
 
 // ── F1 背景采集循环 ─────────────────────────────────────────────────────────

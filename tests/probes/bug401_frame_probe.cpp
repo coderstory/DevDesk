@@ -38,6 +38,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <ratio>
 #include <string>
 #include <thread>
 #include <vector>
