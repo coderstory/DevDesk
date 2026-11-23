@@ -3,6 +3,8 @@
 #include "core/logging.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <utility>
 
 namespace module::terminal::web {
 

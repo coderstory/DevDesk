@@ -2,6 +2,7 @@
 #include "web_session_bridge.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "core/logging.h"
 
