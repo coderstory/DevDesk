@@ -47,7 +47,7 @@ public:
     // 的口径刻意不同：后者是同日唯一性，前者要跟列表可见条数一致。
     core::Result<int> countTasks();
     // 按状态组计数（列表页 Tab 行右端计数，池 55 F-55-5）：COUNT(*) WHERE
-    // status IN (...)，文本编码走 taskStatusText、参数绑定；statuses 为空 →
+    // status IN (...)，文本编码走 taskStatusDbText、参数绑定；statuses 为空 →
     // ValidationError（空组是调用方 bug，不冒充「0 条」）。计入 voided（口径同
     // countTasks：Tab「已归档」组含已作废，计数必须与可见行一致）。
     core::Result<int> countTasksByStatuses(const std::vector<TaskStatus>& statuses);

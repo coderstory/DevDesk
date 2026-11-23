@@ -600,7 +600,6 @@ std::string MpvController::takeError() {
     return out;
 }
 
-#if defined(_WIN32)
 // 测试注入缝（契约见 mpv_controller.h）：仅允许在控制线程空闲（无在飞命令）时调用；
 // 句柄所有权随即移交，由 shutdownProcess 统一关闭。生产 spawn 路径不经过这里。
 void MpvControllerTestAccess::attachIpcForTest(MpvController& controller, void* pipeClient,
@@ -608,6 +607,5 @@ void MpvControllerTestAccess::attachIpcForTest(MpvController& controller, void* 
     controller.impl_->pipe = static_cast<HANDLE>(pipeClient);
     controller.impl_->process = static_cast<HANDLE>(fakeProcess);
 }
-#endif
 
 } // namespace module::wallpaper

@@ -114,7 +114,7 @@ const char* levelChipText(RemindLevel level) {
     return "待处理";
 }
 
-const char* taskStatusText(TaskStatus status) {
+const char* taskStatusLabelText(TaskStatus status) {
     switch (status) {
         case TaskStatus::Draft: return "配置中";
         case TaskStatus::Pending: return "待执行";
@@ -781,7 +781,7 @@ void drawTaskCardBody(eui::Ui& ui, const std::string& prefix, float x, float y,
     const float headWidth =
         std::max(80.0f, width - kCardInset * 2.0f - chipW - 12.0f);
     std::string head = "上线日 " + group.planDate + "  ·  " +
-                       taskStatusText(group.status);
+                       taskStatusLabelText(group.status);
     const std::string envs = joinText(group.envNames, " / ");
     if (!envs.empty()) head += "  ·  " + envs;
     ui.text(prefix + ".head")

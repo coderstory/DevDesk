@@ -25,6 +25,19 @@
             }
           ]
         }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "CLAUDE_PROJECT_DIR=\"${ZCODE_PROJECT_DIR}\" bash \"${ZCODE_PROJECT_DIR}/.claude/hooks/strategy-guard.sh\"",
+              "timeoutMs": 10000,
+              "statusMessage": "守卫检查：累积标记基线"
+            }
+          ]
+        }
       ]
     }
   },

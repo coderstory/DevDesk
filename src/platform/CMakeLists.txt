@@ -103,6 +103,14 @@ else()
     )
 endif()
 
+# 服务端 socket 绑定选项按平台选源（_win / _posix；语义见 http_server.cpp 的
+# applyExclusiveServerSocketOptions 注释，共享 TU 零平台宏）
+if(WIN32)
+    target_sources(devdesk_platform PRIVATE http_server_sockopt_win.cpp)
+else()
+    target_sources(devdesk_platform PRIVATE http_server_sockopt_posix.cpp)
+endif()
+
 target_include_directories(devdesk_platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}

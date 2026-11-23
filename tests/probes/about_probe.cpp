@@ -70,6 +70,19 @@ int main(int argc, char* argv[]) {
         passed = false;
     }
 
+    // 内容断言（debt420 ⑧）：版本行 / EUI-NEO 行文本非空——版本宏或 rev 宏断链
+    // 会渲出空值，比黑图更隐蔽（此前只断言 ui 非空，零内容覆盖）。
+    if (ui != nullptr) {
+        const auto* ver = ui->find("about.info.value.0.0");
+        const auto* euiRev = ui->find("about.info.value.0.2");
+        if (ver == nullptr || ver->text.empty() || euiRev == nullptr ||
+            euiRev->text.empty()) {
+            std::cerr << "about_probe: FAIL——版本行 / EUI-NEO 行文本为空"
+                         "（版本宏 / rev 宏断链？）\n";
+            passed = false;
+        }
+    }
+
     // --screenshot 落图（未传 = 零开销不写文件；传了失败→passed=false）
     probe::captureIfRequested(args, window, runtime, &passed);
 

@@ -265,6 +265,30 @@ case "$BUILD_DIR" in
 esac
 if [ -d "$BUILD_DIR" ]; then BUILD_DIR_ABS="$(cd "$BUILD_DIR" && pwd)"; fi
 
+# 门禁判读摘要（池 debt420 ⑩）：失败时把既有已知量结构化落 build/gate-summary.json。
+# 字段：exitCode / failedGuard（失败时最后执行到的守卫命令）/ failedDoctest（FAIL 摘要）/
+# probeSkipped。只搬运既有变量，不做四分类推断；成功路径不落盘。无 jq 依赖（脚本/CI
+# 环境不保证有 jq），文本转义只用 sed/awk。
+GATE_FAIL=""
+FAIL_LINES=""
+GATE_SUMMARY_JSON="$BUILD_DIR_ABS/gate-summary.json"
+_gate_json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\r//g' \
+    | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'
+}
+_gate_write_summary() {
+  _rc=$?
+  if [ "$_rc" -eq 0 ]; then return 0; fi
+  mkdir -p "$BUILD_DIR_ABS" 2>/dev/null || true
+  printf '{\n  "exitCode": %s,\n  "failedGuard": "%s",\n  "failedDoctest": "%s",\n  "probeSkipped": %s\n}\n' \
+    "$_rc" "$(_gate_json_escape "$GATE_FAIL")" \
+    "$(_gate_json_escape "$FAIL_LINES")" "${PROBE_SKIPPED:-0}" \
+    > "$GATE_SUMMARY_JSON" 2>/dev/null || true
+  echo "📄 门禁判读摘要: $GATE_SUMMARY_JSON" >&2
+  return 0
+}
+trap '_gate_write_summary' EXIT
+
 # keychain 编译硬禁令（need327 老板令 2026-11-18）：src/tests 零引用，命中即
 # 整个构建不开始（先于一切 cmake/ninja，秒级 grep）。历史：keychain 全链退役
 # （need#317 删五文件+测试+脚手架，#304/#305 三处切 app_secrets），本门防「删了又冒」。
@@ -957,6 +981,9 @@ fi
 if [ "${DEVDESK_FAST_TEST:-0}" = "1" ]; then
   echo "⚠️ 迭代快路径（DEVDESK_FAST_TEST=1）：跳过 3b 守卫链与守卫自检——收口前必须完整跑一次（不带此开关）"
 else
+# 守卫名捕获（供 EXIT 摘要 failedGuard）：只包住 3b 守卫链自身，构建/doctest 阶段
+# 不捕获（否则会把前一段成功的守卫误报成失败者）。捕获失败时 GATE_FAIL 为空。
+trap 'case "$BASH_COMMAND" in "bash scripts/"*".sh"*) GATE_FAIL="$BASH_COMMAND" ;; esac' DEBUG
 
 # 3b-0. 探针跳过登记守卫。probe 在无显示环境以 77 退出（ctest 的跳过约定），
 # tests/CMakeLists.txt 必须给**每个** probe 测试登记 SKIP_RETURN_CODE 77。少一条 = 无显示
@@ -1056,7 +1083,8 @@ done
 # check-eui-neo-version 的自检与其真守卫（0b 段）同门：默认跳过（几十个 TU 的编译探测
 # 太贵），DEVDESK_EUI_API_CHECK=1 时才自检它。
 if [ "${DEVDESK_EUI_API_CHECK:-0}" = "1" ]; then
-  _GUARD_SELF_COUNT=4
+  # 链内 5 道 + check-eui-neo-version = 实际跑 6 道（此前写 4，与实际道数不符）
+  _GUARD_SELF_COUNT=6
   if ! bash scripts/check-eui-neo-version.sh --eui-dir "$EUI_DIR" --self-test; then
     echo "❌ 守卫自检失败：scripts/check-eui-neo-version.sh --self-test —— 同样是守卫自己坏了" >&2
     SELF_TEST_FAIL=1
@@ -1069,6 +1097,8 @@ fi
 echo "✅ 守卫自检全过（${_GUARD_SELF_COUNT} 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
 
 fi  # DEVDESK_FAST_TEST 快路径 else 分支结束
+trap - DEBUG  # 3b 守卫链结束，停止守卫名捕获
+GATE_FAIL=""
 
 # 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）。顺序不可换，
 # 每一步都在补一个曾被漏掉的环节：

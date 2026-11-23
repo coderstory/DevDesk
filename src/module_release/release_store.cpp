@@ -94,7 +94,7 @@ core::Result<StepKind> stepKindFromText(const std::string& text) {
                                         "release_task_step.kind 非法值: " + text);
 }
 
-const char* taskStatusText(TaskStatus status) {
+const char* taskStatusDbText(TaskStatus status) {
     switch (status) {
         case TaskStatus::Draft: return "draft";
         case TaskStatus::Pending: return "pending";
@@ -701,7 +701,7 @@ core::Result<int> ReleaseStore::countTasksByStatuses(
     auto& stmt = prep.value();
     for (std::size_t i = 0; i < statuses.size(); ++i) {
         if (auto r = stmt.bind(static_cast<int>(i) + 1,
-                               std::string(taskStatusText(statuses[i])));
+                               std::string(taskStatusDbText(statuses[i])));
             r.isFail()) {
             return failAs<int>(r);
         }
@@ -757,7 +757,7 @@ core::Result<std::int64_t> ReleaseStore::createTask(const Task& task) {
     if (prep.isFail()) return failAs<std::int64_t>(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, task.planDate); r.isFail()) return failAs<std::int64_t>(r);
-    if (auto r = stmt.bind(2, taskStatusText(task.status)); r.isFail())
+    if (auto r = stmt.bind(2, taskStatusDbText(task.status)); r.isFail())
         return failAs<std::int64_t>(r);
     if (auto r = stmt.bind(3, task.announceText); r.isFail()) return failAs<std::int64_t>(r);
     if (auto r = stmt.bind(4, task.announceSentAt); r.isFail()) return failAs<std::int64_t>(r);
@@ -826,7 +826,7 @@ core::Result<void> ReleaseStore::updateTask(const Task& task) {
     if (prep.isFail()) return failVoid(prep);
     auto& stmt = prep.value();
     if (auto r = stmt.bind(1, task.planDate); r.isFail()) return r;
-    if (auto r = stmt.bind(2, taskStatusText(task.status)); r.isFail()) return r;
+    if (auto r = stmt.bind(2, taskStatusDbText(task.status)); r.isFail()) return r;
     if (auto r = stmt.bind(3, task.announceText); r.isFail()) return r;
     if (auto r = stmt.bind(4, task.announceSentAt); r.isFail()) return r;
     if (auto r = stmt.bind(5, task.pretestNo); r.isFail()) return r;

@@ -77,14 +77,21 @@ void pump(Now now) {
                   entries.end());
     if (entries.empty()) return;
 
-    // 句柄快照：回调内 subscribe/unsubscribe 会改活表，本轮名单保持不变；
-    // 每次调用前按句柄复核活性——自注销/互注销都不会调用到已失效条目。
-    std::vector<Handle> order;
+    // 索引快照 + 直取：稳态下每轮 O(n)（此前每句柄一次 findEntry 是 O(n²)）。
+    // 回调内 subscribe/unsubscribe 会改活表：索引失配（条目被删致左移）时按句柄
+    // 回查兜底；本轮已被回调注销的句柄回查不到 → 跳过，不悬垂。
+    std::vector<std::pair<std::size_t, Handle>> order;
     order.reserve(entries.size());
-    for (const Entry& entry : entries) order.push_back(entry.handle);
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        order.emplace_back(i, entries[i].handle);
+    }
 
-    for (Handle handle : order) {
-        Entry* entry = findEntry(handle);
+    for (const auto& slot : order) {
+        const std::size_t idx = slot.first;
+        const Handle handle = slot.second;
+        Entry* entry = (idx < entries.size() && entries[idx].handle == handle)
+                           ? &entries[idx]
+                           : findEntry(handle);
         if (entry == nullptr) continue;  // 本轮已被回调注销
         if (!entry->sub.fn) continue;    // 空 std::function：跳过
 
@@ -102,11 +109,17 @@ void pump(Now now) {
         entry->lastFired = now;
         TickFn fn = entry->sub.fn;         // 拷贝：erase 会使 entry 失效
         void* user = entry->sub.user;
-        const std::string subName = entry->sub.name;  // 异常报告用：回调可能注销自己
         try {
             fn(now, user);
         } catch (...) {
-            // 契约：回调不得抛异常。吞并并点名订阅，继续本轮的下一订阅。
+            // 契约：回调不得抛异常。异常路径才回查订阅名（正常路径零拷贝）；
+            // 回调可能已注销自己 → 查不到就点名句柄。吞并后继续本轮下一订阅。
+            std::string subName =
+                "句柄 " + std::to_string(static_cast<unsigned long long>(handle)) +
+                "（已注销）";
+            for (const Entry& e : registry()) {
+                if (e.handle == handle) { subName = e.sub.name; break; }
+            }
             LOG_ERROR("Ticker: 订阅 '" + subName + "' 的回调抛出异常，已吞并并继续下一订阅");
         }
     }

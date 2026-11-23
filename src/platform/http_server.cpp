@@ -209,16 +209,9 @@ struct Server::Impl {
 //   wildcard(0.0.0.0)+REUSEADDR 监听同端口时，本服务的 specific bind 会共存
 //   而非报错（BSD 多监听传统语义；连接按最具体地址匹配仍由本服务接走）。
 //   这正是 libuv/Node、Go、Python http.server 在 POSIX 侧的默认姿势。
-void applyExclusiveServerSocketOptions(socket_t sock) {
-#if defined(_WIN32)
-    BOOL exclusive = TRUE;
-    ::setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-                 reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
-#else
-    int reuse = 1;
-    ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-#endif
-}
+// 实现按平台拆（http_server_sockopt_win.cpp / http_server_sockopt_posix.cpp）：
+// 共享 TU 零平台宏，绑定语义见上方注释。
+void applyExclusiveServerSocketOptions(socket_t sock);
 
 // Host 白名单：归一化后存 Impl（空 = 未配置 = 放行），pre-routing 钩子按表匹配
 void Server::setAllowedHosts(std::vector<std::string> hosts) {
