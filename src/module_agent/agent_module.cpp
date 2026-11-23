@@ -533,8 +533,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
         ensureLlm();
     }
 
-    // 数据刷新：脏标记或有 run 在身（每帧跟进）；查询在主线程，量级可控
-    if (store_ != nullptr && (tasksDirty_ || uiPolling_)) {
+    // 数据刷新：脏标记（用户动作/导入）立即刷；轮询态只在装配层 pollRunEnd 未接管本帧时
+    // 才刷（bug418 双刷收敛：生产每条帧 pollRunEnd 先跑并已做节流决策，此处再刷 =
+    // 2×(N+2) 主线程 SQL；无装配层的测试路径 polledThisFrame_ 恒假，保住页内跟进语义）
+    const bool polledThisFrame = polledThisFrame_;
+    polledThisFrame_ = false;
+    if (store_ != nullptr &&
+        (tasksDirty_ || (uiPolling_ && !polledThisFrame))) {
         refreshData();
     }
 

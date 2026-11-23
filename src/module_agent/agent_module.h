@@ -96,6 +96,11 @@ inline constexpr int kCronTemplateCount =
 // 插入 running run 后，观测恢复的最大延迟就等于这个值
 inline constexpr int64_t kRunFallbackIntervalSec = 15;
 
+// 常规轮询最小间隔（秒）：活跃 run 期间装配层每帧调 pollRunEnd，refreshData 一次
+// N+2 条主线程 SQL 且与用户所在页无关。秒级跟进足够，run 终态观测延迟上限即此值；
+// tasksDirty_（用户动作/导入）不受此闸。
+inline constexpr int64_t kRunPollIntervalSec = 1;
+
 class AgentModule : public ::core::Module {
 public:
     // 依赖注入：测试传 fake；生产工厂传空 Deps，onStart 内回退 appDatabase / ServiceLocator
@@ -130,6 +135,10 @@ public:
     void setDialogIterDraft(int iter);
     // 测试缝：兜底轻查询已执行次数（节流断言用——同窗口多帧只允许一次轻查询）
     int64_t runFallbackChecksForTest() const { return runFallbackChecks_; }
+    // 测试缝：refreshData 已执行次数（常规轮询节流 / 双刷收敛断言用）
+    int64_t refreshCountForTest() const { return refreshCount_; }
+    // 测试缝：直接置页内轮询态（无头环境起不了 in-app run，双刷收敛路径需显式构造）
+    void setUiPollingForTest(bool v) { uiPolling_ = v; }
     // 测试缝：库导入脏标记是否已置位（compose 收割后复位）
     bool dbImportedDirtyForTest() const {
         return dbImportedDirty_.load(std::memory_order_acquire);
@@ -453,6 +462,12 @@ private:
     // 真实时刻不可能为 0）；计数供 runFallbackChecksForTest() 节流断言
     int64_t lastRunFallbackSec_ = 0;
     int64_t runFallbackChecks_ = 0;
+    // 常规轮询 1s 闸（bug418）：lastRunPollSec_ = 上次常规刷新时刻（unix 秒，0 = 从未刷过）；
+    // refreshCount_ 供测试断言；polledThisFrame_ = 装配层 pollRunEnd 本帧已接管刷新决策
+    //（页内 compose 同帧不再重查，收敛 2×(N+2) 双刷；被 pollRunEnd 消费后复位）
+    int64_t lastRunPollSec_ = 0;
+    int64_t refreshCount_ = 0;
+    bool polledThisFrame_ = false;
     // 任务级 run 汇总（详情弹窗摘要三卡）：writeVersion + 7d 窗口双键缓存；查询失败显形
     std::map<int64_t, AgentTaskRunSummary> runSummaries_;   // taskId → 聚合
     std::string runSummariesError_;

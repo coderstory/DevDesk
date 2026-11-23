@@ -653,6 +653,7 @@ void AgentModule::pollRunEnd() {
     requestNotificationAuthorizationOnce();
     reapNotifySends();
     if (store_ == nullptr) return;
+    polledThisFrame_ = true;
     bool prevAlive = false;
     for (const auto& [id, st] : prevRunStatuses_) {
         (void)id;
@@ -665,6 +666,16 @@ void AgentModule::pollRunEnd() {
         pollRunEndFallback();
         return;
     }
+    // 1s 闸（bug418）：活跃 run 期间装配层每帧到这里，refreshData 一次 N+2 条主线程 SQL
+    // 且与当前页无关；run 终态跟进允许 ≤1s 延迟。tasksDirty_ = 用户动作反馈，必须立即
+    // 刷（禁节流）。lastRunPollSec_ 记上次刷新时刻，跨秒即恢复；0 = 从未刷过（直通）。
+    const int64_t now = deps_.schedulerNow ? deps_.schedulerNow()
+                                           : core::time::nowUnix();
+    if (!tasksDirty_ && lastRunPollSec_ != 0 &&
+        now - lastRunPollSec_ < kRunPollIntervalSec) {
+        return;
+    }
+    lastRunPollSec_ = now;
     refreshData();
 }
 
@@ -735,6 +746,7 @@ void AgentModule::refreshRunSummaries() {
 
 // 重查任务/最近 run/详情消息；触发：tasksDirty_ 或 uiPolling_。判停：run 线程全 done 且库内无 running
 void AgentModule::refreshData() {
+    ++refreshCount_;
     tasksDirty_ = false;
     refreshRunSummaries();
     tasks_.clear();

@@ -3832,8 +3832,10 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
                                     "manual", "default", 10, false);
     DOCTEST_REQUIRE(taskId.isOk());
 
+    int64_t clockSec = 5000;
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -3855,12 +3857,14 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
                                         std::optional<int64_t>{},
                                         "api broken").isOk());
 
+        clockSec += 1;      // 跨过常规轮询 1s 闸（bug418）：检测帧必须真的刷新
         mod.pollRunEnd();   // 装配层等价路径：轮询检测（不依赖页面 compose）
         const auto first = mod.takeRunEndNotice();
         DOCTEST_CHECK_MESSAGE(!first.has_value(),
                               "failed 迁移入了应用内队列（bug161 去双重被回退？），实测: " +
                                   (first.has_value() ? first->first
                                                      : std::string("<无>")));
+        clockSec += 1;      // 跨闸再刷一帧：无迁移时也不得入应用内队列
         mod.pollRunEnd();
         const auto second = mod.takeRunEndNotice();
         DOCTEST_CHECK_MESSAGE(!second.has_value(),
@@ -3886,8 +3890,10 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
                                     "manual", "default", 10, false);
     DOCTEST_REQUIRE(taskId.isOk());
 
+    int64_t clockSec = 5000;
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
     module::agent::AgentModule mod(deps);
     // bug161：迁移出口 = OS 系统通知 → 兜底可达性改用 spy 断言（后台异步，有界等待）
     platform::notify::resetForTest();
@@ -3912,6 +3918,7 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
                                     std::optional<int64_t>{},
                                     std::optional<int64_t>{},
                                     "fallback probe").isOk());
+    clockSec += 1;   // 跨过常规轮询 1s 闸（bug418）：迁移帧必须真的刷新
     mod.pollRunEnd();
     bool osSent = false;
     for (int i = 0; i < 500 && !osSent; ++i) {
@@ -3962,6 +3969,68 @@ REGISTER_TEST(agent_run_end_fallback_throttle,
     DOCTEST_CHECK_EQ(mod.runFallbackChecksForTest(), 2);
     // 全程无 running run、无迁移 → 不得产生任何通知
     DOCTEST_CHECK(!mod.takeRunEndNotice().has_value());
+
+    mod.onStop();
+    return true;
+})
+
+// bug418：常规轮询 1s 闸 + 双刷收敛。活跃 run 期间装配层每帧 pollRunEnd，refreshData 是
+// N+2 条主线程 SQL；同秒多帧只允许一次，tasksDirty_（用户动作）例外立即刷，跨秒恢复；
+// 装配层本帧刷过后页内 compose 不得同帧再刷（否则 2×(N+2)）。时钟走 schedulerNow 缝冻结。
+REGISTER_TEST(agent_run_poll_throttle,
+              "agent_ui: bug418 常规轮询 1s 闸——同秒只刷一次 / tasksDirty_ 立即刷 / 跨秒恢复 / 同帧双刷收敛", {
+    test_support::TestDb tdb("agentui", "pollthrottle");
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("节流任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    int64_t clockSec = 5000;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    // running 行必须在 onStart 之后种（sweepStaleRuns 会把遗留 running 清成 failed）
+    DOCTEST_REQUIRE(store.startRun(taskId.value()).isOk());
+
+    // 首帧排干 tasksDirty_：常规刷新 + prevRunStatuses_ 捕获 running（此后 prevAlive 恒真
+    // → 后续帧都走常规路径，不再落到兜底那条 15s 闸）
+    mod.pollRunEnd();
+    const int64_t base = mod.refreshCountForTest();
+    DOCTEST_REQUIRE_MESSAGE(base >= 1, "首帧常规刷新未发生");
+
+    // a) 同一秒内多帧：只刷一次
+    mod.pollRunEnd();
+    mod.pollRunEnd();
+    DOCTEST_CHECK_MESSAGE(mod.refreshCountForTest() == base,
+                          "同秒多帧常规轮询突破了 1s 闸");
+
+    // b) tasksDirty_（用户动作）不受闸：立即刷新
+    mod.onPageEnter();
+    mod.pollRunEnd();
+    DOCTEST_CHECK_MESSAGE(mod.refreshCountForTest() == base + 1,
+                          "tasksDirty_ 被 1s 闸节流（用户动作必须立即反馈）");
+
+    // c) 跨秒即恢复
+    clockSec += 1;
+    mod.pollRunEnd();
+    DOCTEST_CHECK_MESSAGE(mod.refreshCountForTest() == base + 2,
+                          "跨过 1s 窗口后轮询未恢复刷新");
+
+    // d) 双刷收敛：装配层 pollRunEnd 本帧已刷，页内 compose 再刷 = 2×(N+2)
+    mod.setUiPollingForTest(true);
+    clockSec += 1;
+    mod.pollRunEnd();
+    const int64_t afterPoll = mod.refreshCountForTest();
+    DOCTEST_CHECK_MESSAGE(afterPoll == base + 3, "跨秒帧装配层未刷新");
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_run_poll_throttle1");
+    DOCTEST_CHECK_MESSAGE(mod.refreshCountForTest() == afterPoll,
+                          "装配层刷新与页内 compose 同帧双刷（bug418 未收敛）");
+    mod.setUiPollingForTest(false);
 
     mod.onStop();
     return true;
@@ -6377,9 +6446,11 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
                         .isOk());
     DOCTEST_REQUIRE(store.setTaskEnabled(offId.value(), false).isOk());
 
+    int64_t clockSec = 5000;
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
     deps.profileSource = &profile;
+    deps.schedulerNow = [&clockSec] { return clockSec; };
     deps.http = [](const platform::http::Request&) {
         platform::http::Response res;
         res.statusCode = 200;
@@ -6610,6 +6681,7 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     DOCTEST_REQUIRE(store.finishRun(runId.value(), "completed", 1, 1, 1,
                                     std::nullopt)
                         .isOk());
+    clockSec += 1;   // 跨过常规轮询 1s 闸（bug418）：终态帧必须真的刷新
     mod.pollRunEnd();
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_listvis3");
