@@ -1,3 +1,5 @@
+include(${CMAKE_CURRENT_SOURCE_DIR}/web_terminal_tests.cmake)
+
 add_executable(devdesk_tests
     test_main.cpp
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
@@ -23,10 +25,8 @@ add_executable(devdesk_tests
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/toast_channel.cpp
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/os_notification.cpp
     ${CMAKE_SOURCE_DIR}/src/module_schedule/channels/silent_channel.cpp
-    # need#490 自研二维码编码器（纯标准库，纠错 L）：随测试二进制直编
-    ${CMAKE_SOURCE_DIR}/src/module_terminal/web/qr/qr_encode.cpp
-    # need#490 W1 网页终端加密原语（OpenSSL）：随测试二进制直编，向量断言不靠模块库装配
-    ${CMAKE_SOURCE_DIR}/src/platform/web_crypto.cpp
+    # need#490 网页终端支撑源（二维码编码器 / 加密原语）随测试二进制直编
+    ${DEVDESK_WEB_TERMINAL_TEST_SUPPORT_SOURCES}
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -234,11 +234,10 @@ add_executable(devdesk_tests
     test_modules/test_terminal_controller.cpp
     test_modules/test_terminal_metrics.cpp
     test_modules/test_terminal_settings.cpp
-    test_modules/test_terminal_web_service.cpp
     test_modules/test_terminal_frame.cpp
+    # need#490 网页终端（服务/网格/协议/加密/鉴权/二维码）用例清单
+    ${DEVDESK_WEB_TERMINAL_TEST_SOURCES}
     # need#490 W4 网页网格编解码 + 会话桥（纯逻辑）
-    test_modules/test_terminal_web_grid.cpp
-    test_modules/test_terminal_web_bridge.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
@@ -347,11 +346,7 @@ add_executable(devdesk_tests
     # need266 已合入（EUI dadd536 / DevDesk 5d205f9c 指针）→ 恢复（clue 270）。
     unit/system_font_gate.cpp
     # need#490 二维码编码器：与 evidence/need490-qr-poc/qr.py 参考矩阵逐位对照
-    test_modules/test_qr_encode.cpp
-    test_modules/test_terminal_web_crypto.cpp
-    test_platform/test_net_interfaces.cpp
     # need#490 W2 鉴权纯逻辑（令牌/TOTP/票据/限流）；符号来自 devdesk_module_terminal + devdesk_platform
-    test_modules/test_terminal_web_auth.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
