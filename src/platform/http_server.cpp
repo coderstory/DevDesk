@@ -38,6 +38,9 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
         rctx.path = req.path;
         rctx.headers = toHeaderMap(req.headers);
         rctx.body = req.body;
+        if (auto q = req.target.find('?'); q != std::string::npos) {
+            rctx.query = req.target.substr(q + 1);
+        }
         rctx.clientAddress = req.remote_addr;
         rctx.isConnectionClosed = req.is_connection_closed;
 
