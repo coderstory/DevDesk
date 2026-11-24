@@ -16,6 +16,29 @@ using platform::json::JsonValue;
 
 constexpr std::size_t kMaxQueryChars = 4000;  // 查询侧截断（同采集单事件上限口径）
 constexpr int kSearchLimit = 8;  // 多取再由预算裁到 ≤5 条（裁掉的仍在库）
+// bug415：词面无重合的命中须在更高相似度下限上复检命中才注入。依据=真引擎
+// 阈值阶梯实测（evidence/20261123-bug415-e2e）：无关短问「今天天气怎么样」与
+// 负例带同分 [0.40,0.42)；近义真提问「改完代码怎么验证」∈[0.48,0.50)；词面
+// 重合的命中不走本档（0.4 主门槛原样不动，非一刀切抬阈值）。
+constexpr double kHookConfirmThreshold = 0.45;
+constexpr int kHookConfirmTimeoutMs = 400;
+
+// 独立门控（不改装配）：任一命中与查询词面重合 → 原样放行；全部不重合 →
+// 确认档复检，返回复检结果（空 = 本轮不注入）。复检失败按「宁不注入」处理
+//（fail-open 契约是不阻断提问，不是强行注入）。
+std::vector<gateway::MemoryHit> gateUnrelatedHits(
+    const std::string& query,
+    const std::vector<gateway::MemoryHit>& hits,
+    gateway::IMemoryRetriever* retriever) {
+    if (hits.empty() || retriever == nullptr) return hits;
+    for (const auto& hit : hits) {
+        if (hasLexicalOverlap(query, hit.text)) return hits;
+    }
+    auto confirmed = retriever->searchWithThreshold(
+        query, kSearchLimit, kHookConfirmTimeoutMs, kHookConfirmThreshold);
+    if (confirmed.isFail()) return {};
+    return confirmed.value();
+}
 
 }  // namespace
 
@@ -48,11 +71,12 @@ HookOutcome runMemoryHook(const std::string& stdinJson,
 
     auto hits = retriever->search(prompt, kSearchLimit, kHookSearchTimeoutMs);
     if (hits.isFail()) return bail();  // 引擎不在/超时：失败开放
+    const auto gated = gateUnrelatedHits(prompt, hits.value(), retriever);
     if (usage) {
         usage("hook_search",
               static_cast<long long>(countChars(prompt)));
     }
-    const std::string context = assembleContext(hits.value());
+    const std::string context = assembleContext(gated);
     if (context.empty()) return bail();
     const std::string out = buildHookOutputJson(context);
     if (out.empty()) return bail();

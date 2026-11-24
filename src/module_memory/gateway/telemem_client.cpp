@@ -552,11 +552,16 @@ core::Result<std::int64_t> parseGetMemoryResponse(const std::string& httpBody) {
 
 core::Result<std::vector<MemoryHit>> TelememHttpRetriever::search(
     const std::string& query, int limit, int timeoutMs) {
+    return searchWithThreshold(query, limit, timeoutMs,
+                               kSearchSimilarityThreshold);
+}
+
+core::Result<std::vector<MemoryHit>> TelememHttpRetriever::searchWithThreshold(
+    const std::string& query, int limit, int timeoutMs, double threshold) {
     platform::json::JsonObject args;
     args.set("query", platform::json::makeString(query));
     args.set("limit", platform::json::makeInt(limit));
-    args.set("threshold",
-             platform::json::makeDouble(kSearchSimilarityThreshold));
+    args.set("threshold", platform::json::makeDouble(threshold));
     const auto resp = callTool("search_memories", std::move(args), timeoutMs);
     if (resp.isFail()) {
         return core::propagate<std::vector<MemoryHit>>(resp);

@@ -36,6 +36,14 @@ public:
     virtual core::Result<std::vector<MemoryHit>> search(const std::string& query,
                                                         int limit,
                                                         int timeoutMs) = 0;
+
+    // 带显式相似度下限的检索（bug415 门控确认档用）。默认忽略 threshold 直接
+    // 转发 search——既有假实现/调用方零改动；TelememHttpRetriever 真实传参。
+    virtual core::Result<std::vector<MemoryHit>> searchWithThreshold(
+        const std::string& query, int limit, int timeoutMs, double threshold) {
+        (void)threshold;
+        return search(query, limit, timeoutMs);
+    }
     // 直存语义入库（infer=false：不调云端提炼）；返回引擎侧新条目 id（缺失空串）
     virtual core::Result<std::string> addDirect(const std::string& text) = 0;
 
@@ -99,6 +107,9 @@ public:
     core::Result<std::vector<MemoryHit>> search(const std::string& query,
                                                 int limit,
                                                 int timeoutMs) override;
+    core::Result<std::vector<MemoryHit>> searchWithThreshold(
+        const std::string& query, int limit, int timeoutMs,
+        double threshold) override;
     core::Result<std::string> addDirect(const std::string& text) override;
     core::Result<std::string> addInferred(const std::string& text) override;
     core::Result<void> updateMemoryText(const std::string& memoryId,

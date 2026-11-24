@@ -32,6 +32,11 @@ public:
     std::vector<MemoryHit> hits;
     bool fail = false;
     std::string lastQuery;
+    // bug415 确认档：searchWithThreshold 的脚本化应答与调用记账
+    std::vector<MemoryHit> confirmHits;
+    bool confirmFail = false;
+    int confirmCalls = 0;
+    double lastConfirmThreshold = 0.0;
     core::Result<std::vector<MemoryHit>> search(const std::string& query,
                                                 int limit, int) override {
         (void)limit;
@@ -41,6 +46,16 @@ public:
                 core::ErrorCode::NetworkUnreachable, "引擎不在");
         }
         return core::Result<std::vector<MemoryHit>>::ok(hits);
+    }
+    core::Result<std::vector<MemoryHit>> searchWithThreshold(
+        const std::string&, int, int, double threshold) override {
+        ++confirmCalls;
+        lastConfirmThreshold = threshold;
+        if (confirmFail) {
+            return core::Result<std::vector<MemoryHit>>::fail(
+                core::ErrorCode::NetworkUnreachable, "确认检索失败");
+        }
+        return core::Result<std::vector<MemoryHit>>::ok(confirmHits);
     }
     core::Result<std::string> addDirect(const std::string&) override {
         return core::Result<std::string>::ok("1");
@@ -59,6 +74,15 @@ public:
 
 const char* kStdinTemplate =
     R"({"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"%s"})";
+
+// bug415 实测命中正文（evidence/20261123-bug415-e2e 真引擎融合段）
+const char* kCcacheCard =
+    "[踩坑|会话采集] telemem-mcp 采集到用户分享的 DevDesk 调试踩坑记录："
+    "ccache 目录被清空导致全量构建耗时 40 分钟，用户将 CCACHE_DIR 固定到"
+    "数据目录后解决了该问题";
+const char* kPortCard =
+    "DevDesk 记忆模块的 telemem 引擎绑定回环端口 8421，本机 embedding 服务"
+    "绑定回环端口 11435";
 
 }  // namespace
 
@@ -589,6 +613,8 @@ REGISTER_TEST(memory_hook_long_prompt_codepoint_truncation,
               "memory: bug255 长提问截断——>4000 字节查询按码点边界截断（字节 substr 劈开多字节 → telemem 400 → 静默零注入）", {
     FakeRetriever ok;
     ok.hits = {MemoryHit{"记忆条目", "1", "2026-11-10", 0.9}};
+    // bug415 门控：查询与正文无词面重合 → 走确认档；本用例只验截断，确认档同答
+    ok.confirmHits = ok.hits;
     std::string cjk = "这是一个用于截断回归测试的中文句子";  // 3 字节/字
     std::string prompt = cjk;
     constexpr std::size_t kQueryCapBytes = 4000;  // 同 hook_command.cpp kMaxQueryChars（匿名空间不可见）
@@ -603,5 +629,79 @@ REGISTER_TEST(memory_hook_long_prompt_codepoint_truncation,
     DOCTEST_CHECK(!ok.lastQuery.empty());
     const auto last = static_cast<unsigned char>(ok.lastQuery.back());
     DOCTEST_CHECK((last & 0xC0) != 0xC0);
+    return true;
+})
+
+REGISTER_TEST(memory_hook_lexical_overlap_rules,
+              "memory: bug415 词面重合判据——CJK 内容二元组/ASCII 词命中，功能词不算重合", {
+    // 负例：天气短问 vs ccache 卡，只可能碰头在功能词上
+    DOCTEST_CHECK(!hasLexicalOverlap("今天天气怎么样", kCcacheCard));
+    // 内容二元组命中（记忆/服务/端口）
+    DOCTEST_CHECK(hasLexicalOverlap("记忆服务监听哪个端口", kPortCard));
+    // 近义真提问与 ccache 卡无词面重合（靠确认档放行，不是词面）
+    DOCTEST_CHECK(!hasLexicalOverlap("改完代码怎么验证", kCcacheCard));
+    // ASCII 词忽略大小写（CCACHE_DIR / ccache）
+    DOCTEST_CHECK(hasLexicalOverlap("ccache 怎么配置", kCcacheCard));
+    DOCTEST_CHECK(hasLexicalOverlap("8421 是哪个端口", kPortCard));
+    // 只共享功能词二元组（今天）→ 不算重合
+    DOCTEST_CHECK(!hasLexicalOverlap("今天怎么样", "我们今天开会"));
+    // 96 字符以下短正文不崩、空串安全
+    DOCTEST_CHECK(!hasLexicalOverlap("", kPortCard));
+    DOCTEST_CHECK(!hasLexicalOverlap("记忆服务", ""));
+    return true;
+})
+
+REGISTER_TEST(memory_hook_unrelated_prompt_no_inject,
+              "memory: bug415 无关提问（天气）无词面重合且确认档空 → stdout 空 + exit 0", {
+    FakeRetriever fake;
+    fake.hits = {MemoryHit{kCcacheCard, "", "", 0.0}};
+    // 确认档（0.45）对天气提问无命中——真引擎实测分带 [0.40,0.42)
+    fake.confirmHits = {};
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), kStdinTemplate, "今天天气怎么样");
+    auto r = runMemoryHook(buf, &fake);
+    DOCTEST_CHECK_EQ(r.exitCode, 0);
+    DOCTEST_CHECK(r.stdoutText.empty());
+    DOCTEST_CHECK_EQ(fake.confirmCalls, 1);
+    DOCTEST_CHECK(fake.lastConfirmThreshold > 0.40);
+    DOCTEST_CHECK(fake.lastConfirmThreshold < 0.48);
+
+    // 确认档检索失败 = 宁不注入（fail-open 不阻断提问）
+    FakeRetriever deadConfirm;
+    deadConfirm.hits = {MemoryHit{kCcacheCard, "", "", 0.0}};
+    deadConfirm.confirmFail = true;
+    auto r2 = runMemoryHook(buf, &deadConfirm);
+    DOCTEST_CHECK_EQ(r2.exitCode, 0);
+    DOCTEST_CHECK(r2.stdoutText.empty());
+    return true;
+})
+
+REGISTER_TEST(memory_hook_semantic_positive_via_confirm,
+              "memory: bug415 近义提问（改完代码怎么验证）无词面重合但确认档命中 → 仍注入", {
+    FakeRetriever fake;
+    fake.hits = {MemoryHit{kCcacheCard, "", "", 0.0}};
+    // 真引擎实测：该提问分带 [0.48,0.50) ≥ 确认档 0.45 → 复检命中
+    fake.confirmHits = fake.hits;
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), kStdinTemplate, "改完代码怎么验证");
+    auto r = runMemoryHook(buf, &fake);
+    DOCTEST_CHECK_EQ(r.exitCode, 0);
+    DOCTEST_CHECK(!r.stdoutText.empty());
+    DOCTEST_CHECK(r.stdoutText.find("以下是长期记忆") != std::string::npos);
+    DOCTEST_CHECK_EQ(fake.confirmCalls, 1);
+    return true;
+})
+
+REGISTER_TEST(memory_hook_lexical_hit_skips_confirm,
+              "memory: bug415 词面重合提问（记忆服务监听哪个端口）直接注入且不发确认检索", {
+    FakeRetriever fake;
+    fake.hits = {MemoryHit{kPortCard, "", "", 0.0}};
+    fake.confirmHits = {};  // 若误发确认检索会得到空 → 注入为空 → 本用例红
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), kStdinTemplate, "记忆服务监听哪个端口");
+    auto r = runMemoryHook(buf, &fake);
+    DOCTEST_CHECK_EQ(r.exitCode, 0);
+    DOCTEST_CHECK(!r.stdoutText.empty());
+    DOCTEST_CHECK_EQ(fake.confirmCalls, 0);
     return true;
 })

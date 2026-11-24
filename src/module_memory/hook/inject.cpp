@@ -92,6 +92,104 @@ std::size_t countChars(const std::string& utf8) {
     return n;
 }
 
+namespace {
+
+bool isCjk(unsigned int cp) { return cp >= 0x4E00u && cp <= 0x9FFFu; }
+
+bool isAsciiAlnum(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+           (c >= 'A' && c <= 'Z');
+}
+
+// 解码 s[i] 起的一个码点（s[i] 是起始字节）；非法序列按 1 字节、cp=0 退化
+std::size_t decodeUtf8(const std::string& s, std::size_t i, unsigned int& cp) {
+    const unsigned char c = static_cast<unsigned char>(s[i]);
+    if (c < 0x80) {
+        cp = c;
+        return 1;
+    }
+    const int extra = (c >= 0xF0) ? 3 : (c >= 0xE0 ? 2 : (c >= 0xC0 ? 1 : 0));
+    if (extra == 0 || i + static_cast<std::size_t>(extra) >= s.size()) {
+        cp = 0;
+        return 1;
+    }
+    unsigned int v = c & (0x3Fu >> extra);  // 0x1F/0x0F/0x07，按续字节数收窄
+    for (int k = 1; k <= extra; ++k) {
+        const unsigned char cc = static_cast<unsigned char>(s[i + k]);
+        if ((cc & 0xC0) != 0x80) {
+            cp = 0;
+            return 1;
+        }
+        v = (v << 6) | (cc & 0x3Fu);
+    }
+    cp = v;
+    return static_cast<std::size_t>(extra + 1);
+}
+
+// 功能词二元组——中文里无处不有，算重合等于没有判据（bug415 实测：
+// 「今天天气怎么样」与无关卡只可能在这些词上碰头）
+const char* kFunctionBigrams[] = {
+    "怎么", "什么", "今天", "我们", "你们", "他们", "可以", "这个", "那个",
+    "一个", "现在", "时候", "因为", "所以", "但是", "如果", "就是", "还是",
+    "已经", "需要", "没有", "不是", "哪个", "哪些", "怎样", "如何", "是否",
+    "一下", "这样", "那样"};
+
+bool isFunctionBigram(const std::string& b) {
+    for (const char* w : kFunctionBigrams) {
+        if (b == w) return true;
+    }
+    return false;
+}
+
+std::string toLowerAscii(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+}  // namespace
+
+bool hasLexicalOverlap(const std::string& query, const std::string& text) {
+    if (query.empty() || text.empty()) return false;
+    // CJK 内容二元组（相邻两个汉字）：查询侧的每个二元组在正文中做一次子串查
+    std::size_t i = 0;
+    bool prevCjk = false;
+    std::size_t prevLen = 0;
+    while (i < query.size()) {
+        unsigned int cp = 0;
+        const std::size_t len = decodeUtf8(query, i, cp);
+        const bool cjk = isCjk(cp);
+        if (cjk && prevCjk) {
+            const std::string bigram = query.substr(i - prevLen, prevLen + len);
+            if (!isFunctionBigram(bigram) &&
+                text.find(bigram) != std::string::npos) {
+                return true;
+            }
+        }
+        prevCjk = cjk;
+        prevLen = len;
+        i += len;
+    }
+    // ASCII 词（≥3 字符）忽略大小写子串查：8421 / ccache / DevDesk 等
+    const std::string lowerText = toLowerAscii(text);
+    std::size_t p = 0;
+    while (p < query.size()) {
+        if (!isAsciiAlnum(query[p])) {
+            ++p;
+            continue;
+        }
+        const std::size_t start = p;
+        while (p < query.size() && isAsciiAlnum(query[p])) ++p;
+        if (p - start >= 3) {
+            const std::string token =
+                toLowerAscii(query.substr(start, p - start));
+            if (lowerText.find(token) != std::string::npos) return true;
+        }
+    }
+    return false;
+}
+
 // 按字数（UTF-8 码点）截断到 ≤maxChars 字，码点边界安全（bug255 配套：
 // telemem 融合段是「多条记忆空格拼接的整串」，单条即可超全预算）
 std::string truncChars(const std::string& utf8, std::size_t maxChars) {
