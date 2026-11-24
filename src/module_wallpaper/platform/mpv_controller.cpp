@@ -310,7 +310,7 @@ bool MpvController::Impl::spawn(std::uintptr_t windowId) {
 
     bool usedDevFallback = false;
     const std::string mpvPath =
-        resolveMpvExecutable(envString(kMpvPathEnvVar), core::paths::executableDir().string(),
+        resolveMpvExecutable(envString(kMpvPathEnvVar), core::paths::executableDir(),
                              kMpvDevFallbackPath, devFallbackAllowed(), &usedDevFallback);
     if (mpvPath.empty()) {
         recordError(

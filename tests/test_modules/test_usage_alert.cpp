@@ -4,9 +4,12 @@
 // 持久化用例走 DEVDESK_DATA_ROOT 隔离根（resetCaseGlobals 出厂已设构建树内
 // test_data），先落 seed 防其它用例写过的 panel_settings.json 串味。
 #include "doctest.h"
+#include "test_support.h"
 
+#include <filesystem>
 #include <string>
 
+#include "core/paths.h"
 #include "module_memory/panel/settings_store.h"
 #include "module_memory/proposals/usage_alert.h"
 
@@ -231,5 +234,27 @@ REGISTER_TEST(usage_alert_settings_round_trip,
     DOCTEST_CHECK_EQ(dflt.usageDayGate.lastFireDay, 0);
     DOCTEST_CHECK_TRUE(dflt.usageSoftGate.armed);
     DOCTEST_CHECK_TRUE(dflt.usageHardGate.armed);
+    return true;
+})
+
+// 防：bug480——settings 文件路径经 path::string()（Windows ACP）喂 fopen，非 ACP 可
+// 表示字符目录下存取全失败。U+1F600 在 ACP=936 不可表示，红在旧写法、绿在 fs::path 直收。
+REGISTER_TEST(memory_panel_settings_non_ascii_path_round_trip,
+              "bug480 非 ACP 可表示字符路径下设置存读往返", {
+    namespace fs = std::filesystem;
+    test_support::TempDir dir("mem_panel_bug480");
+    const fs::path root = dir.path / fs::path(L"mem-\U0001F600");
+    const auto u8 = root.u8string();
+    test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                     std::string(u8.begin(), u8.end()));
+    MemoryPanelSettings s;
+    s.mcpSearchEnabled = false;
+    s.usageDayAlertTokens = 424242;
+    s.llmProfileName = "bug480-emoji-path";
+    DOCTEST_CHECK(module::memory::panel::savePanelSettings(s).isOk());
+    auto back = module::memory::panel::loadPanelSettings();
+    DOCTEST_CHECK_EQ(back.usageDayAlertTokens, 424242);
+    DOCTEST_CHECK_EQ(back.llmProfileName, std::string("bug480-emoji-path"));
+    DOCTEST_CHECK_FALSE(back.mcpSearchEnabled);
     return true;
 })

@@ -23,6 +23,7 @@
 #include <system_error>
 #include <vector>
 
+#include "core/paths.h"
 #include "module_wallpaper/core/model.h"
 
 namespace module::wallpaper {
@@ -39,8 +40,10 @@ inline std::string makeMpvPipeName(std::uint32_t processId, std::uint64_t counte
 
 // 解析可执行文件路径；返回空串 = 未找到（原因由调用方组织中文文案）。
 // devFallbackPath 显式传入（生产传 kMpvDevFallbackPath），保证纯函数可测。
+// 返回值统一 UTF-8（调用方 utf8ToWide 直接转）——禁 candidate.string()：其窄字节
+// 语义随标准库（ACP/UTF-8）漂移，喂宽字符 API 前必须过 toUtf8（bug480）。
 inline std::string resolveMpvExecutable(const std::string& envValue,
-                                        const std::string& executableDir,
+                                        const std::filesystem::path& executableDir,
                                         const std::string& devFallbackPath,
                                         bool allowDevFallback,
                                         bool* usedDevFallback) {
@@ -55,9 +58,9 @@ inline std::string resolveMpvExecutable(const std::string& envValue,
     }
     if (!executableDir.empty()) {
         const std::filesystem::path candidate =
-            std::filesystem::path(executableDir) / "assets" / "mpv" / "mpv.exe";
+            executableDir / "assets" / "mpv" / "mpv.exe";
         if (std::filesystem::is_regular_file(candidate, error) && !error) {
-            return candidate.string();
+            return core::paths::toUtf8(candidate);
         }
     }
     if (allowDevFallback && !devFallbackPath.empty()) {

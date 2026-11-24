@@ -7,6 +7,7 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/paths.h"
 #include "module_wallpaper/platform/mpv_controller.h"
 #include "module_wallpaper/platform/mpv_player.h"
 #include "module_wallpaper/platform/wallpaper_host.h"
@@ -126,6 +127,22 @@ REGISTER_TEST(wallpaper_platform_mpv_path,
     usedDev = true;
     resolved = wp::resolveMpvExecutable("", appDir.string(), devMpv.string(), false, &usedDev);
     DOCTEST_CHECK(resolved.empty());
+    DOCTEST_CHECK_FALSE(usedDev);
+    return true;
+})
+
+// 防：bug480——非 ACP 可表示（emoji）安装目录下 <exeDir>/assets/mpv/mpv.exe 解析：
+// 旧写法 candidate.string() 走 ACP 且喂 utf8ToWide 二次转换，返回值被毁；必须统一 UTF-8。
+REGISTER_TEST(wallpaper_platform_mpv_path_non_ascii_dir,
+              "wallpaper platform: bug480 非 ACP 可表示目录下 mpv 解析返回 UTF-8", {
+    test_support::TempDir dir("wp_bug480");
+    const fs::path appDir = dir.path / fs::path(L"app-\U0001F600");
+    const fs::path bundled = appDir / "assets" / "mpv" / "mpv.exe";
+    makePlaceholderFile(bundled);
+    bool usedDev = true;
+    const std::string resolved = wp::resolveMpvExecutable(
+        "", core::paths::toUtf8(appDir), "", false, &usedDev);
+    DOCTEST_CHECK_EQ(resolved, core::paths::toUtf8(bundled));
     DOCTEST_CHECK_FALSE(usedDev);
     return true;
 })

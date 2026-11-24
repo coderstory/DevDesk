@@ -1,8 +1,8 @@
 // src/module_memory/panel/settings_store.cpp
 #include "settings_store.h"
 
-#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 
 #include "core/logging.h"
@@ -21,13 +21,16 @@ std::filesystem::path settingsFile() {
 
 MemoryPanelSettings loadPanelSettings() {
     MemoryPanelSettings s;
-    FILE* f = std::fopen(settingsFile().string().c_str(), "rb");
-    if (f == nullptr) return s;  // 首跑无文件 = 全默认
+    // ifstream 直收 fs::path：Windows 宽字符路径原生支持。禁 path::string() 喂 fopen
+    //（窄字节被 fopen 按 ACP 解释，非 ASCII 路径打不开，bug480/bug362）
+    std::ifstream f(settingsFile(), std::ios::binary);
+    if (!f.is_open()) return s;  // 首跑无文件 = 全默认
     std::string text;
     char buf[4096];
-    std::size_t n = 0;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
-    std::fclose(f);
+    while (f.good()) {
+        f.read(buf, sizeof(buf));
+        text.append(buf, static_cast<std::size_t>(f.gcount()));
+    }
     auto parsed = platform::json::parse(text);
     if (parsed.isFail() || !parsed.value().isObject()) return s;
     const auto obj = parsed.value().asObject();
@@ -115,19 +118,20 @@ core::Result<void> savePanelSettings(const MemoryPanelSettings& settings) {
     }
     std::error_code ec;
     std::filesystem::create_directories(engine::memoryDataDir(), ec);
-    FILE* f = std::fopen(settingsFile().string().c_str(), "wb");
-    if (f == nullptr) {
+    std::ofstream f(settingsFile(), std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) {
         LOG_WARN("记忆面板设置写入失败（目录不可写）");
         return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
                                         "目录不可写");
     }
-    // 短写 / fclose 冲刷失败（磁盘满最常显形处）都必须报 fail：半截 JSON 下次
+    // 短写 / close 冲刷失败（磁盘满最常显形处）都必须报 fail：半截 JSON 下次
     // load 会整体落默认，mcpSearchEnabled=false 的工具会借机复活
     const std::string& payload = text.value();
-    const std::size_t written =
-        std::fwrite(payload.data(), 1, payload.size(), f);
-    const bool flushed = std::fclose(f) == 0;
-    if (written != payload.size() || !flushed) {
+    f.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    const bool written = !f.fail();  // 短写/写盘失败置 badbit
+    f.close();
+    const bool flushed = !f.fail();  // close 冲刷失败置 failbit
+    if (!written || !flushed) {
         LOG_WARN("记忆面板设置写入不完整（磁盘满/IO）");
         return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
                                         "写入不完整");
