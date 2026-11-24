@@ -236,13 +236,16 @@ bool resolveWallClock(std::tm want, int64_t& out) {
 Result<RuleSpec> parseOnce(yyjson_val* obj) {
     std::string err;
     if (!checkKeys(obj, {"at", "at_local"}, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "once 规则" + err);
+        LOG_WARN("schedule_rule: once 规则存在未知字段: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("once"));
     }
     const bool hasAt = hasKey(obj, "at");
     const bool hasLocal = hasKey(obj, "at_local");
     if (hasAt == hasLocal) {
+        LOG_WARN("schedule_rule: once 规则必须且只能提供 at 或 at_local 之一");
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "once 规则必须且只能提供 at 或 at_local 之一");
+                                      core::user_message::scheduleFieldHint("once"));
     }
     RuleSpec s;
     s.kind = RuleKind::Once;
@@ -266,16 +269,18 @@ Result<RuleSpec> parseOnce(yyjson_val* obj) {
     const size_t tsep = text.find('T');
     const size_t cut = sep != std::string::npos ? sep : tsep;
     if (cut == std::string::npos) {
+        LOG_WARN("schedule_rule: once.at_local 格式非法: " + text);
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "once.at_local 必须为「YYYY-MM-DD HH:MM」或「YYYY-MM-DDTHH:MM」：" + text);
+                                      core::user_message::scheduleFieldHint("once.at_local"));
     }
     const std::string datePart = text.substr(0, cut);
     const std::string timePart = text.substr(cut + 1);
     int year = 0, month = 0, day = 0, hour = 0, minute = 0;
     if (!parseDate(datePart, year, month, day) || !validCivilDate(year, month, day) ||
         !parseTimeOfDay(timePart, hour, minute)) {
+        LOG_WARN("schedule_rule: once.at_local 非法日期或时刻: " + text);
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "once.at_local 非法日期或时刻（YYYY-MM-DD HH:MM，日期须真实存在）：" + text);
+                                      core::user_message::scheduleFieldHint("once.at_local"));
     }
     std::tm local{};
     local.tm_year = year - 1900;
@@ -299,19 +304,22 @@ Result<RuleSpec> parseInterval(yyjson_val* obj) {
     RuleSpec s;
     s.kind = RuleKind::Interval;
     if (!getInt(obj, "every_sec", s.everySec, err) || s.everySec < 1) {
+        LOG_WARN("schedule_rule: interval.every_sec 非法: " + err);
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "interval.every_sec 必须为 ≥1 的整数");
+                                      core::user_message::scheduleFieldHint("interval.every_sec"));
     }
     if (hasKey(obj, "anchor")) {
         if (!getInt(obj, "anchor", s.anchor, err) || s.anchor < 0) {
+            LOG_WARN("schedule_rule: interval.anchor 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "interval.anchor 必须为 ≥0 的整数");
+                                          core::user_message::scheduleFieldHint("interval.anchor"));
         }
     }
     if (hasKey(obj, "window")) {
         if (!getInt(obj, "window", s.windowSec, err) || s.windowSec < 0 || s.windowSec >= s.everySec) {
+            LOG_WARN("schedule_rule: interval.window 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "interval.window 必须为 ≥0 且 < every_sec 的整数");
+                                          core::user_message::scheduleFieldHint("interval.window"));
         }
     }
     return Result<RuleSpec>::ok(std::move(s));
@@ -340,14 +348,16 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     else if (unitText == "month") c.unit = CalendarSpec::Unit::Month;
     else if (unitText == "year") c.unit = CalendarSpec::Unit::Year;
     else {
+        LOG_WARN("schedule_rule: calendar.unit 非法: " + unitText);
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "calendar.unit 必须为 day/week/month/year：" + unitText);
+                                      core::user_message::scheduleFieldHint("calendar.unit"));
     }
     if (hasKey(obj, "interval")) {
         int64_t iv = 0;
         if (!getInt(obj, "interval", iv, err) || iv < 1 || iv > 1000000) {
+            LOG_WARN("schedule_rule: calendar.interval 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.interval 必须为 ≥1 且 ≤1000000 的整数");
+                                          core::user_message::scheduleFieldHint("calendar.interval"));
         }
         c.interval = static_cast<int>(iv);
     }
@@ -362,20 +372,23 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     if (hasKey(obj, "weekdays")) {
         yyjson_val* arr = yyjson_obj_get(obj, "weekdays");
         if (!yyjson_is_arr(arr)) {
+            LOG_WARN("schedule_rule: calendar.weekdays 不是数组");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.weekdays 必须为 0..6 的整数数组");
+                                          core::user_message::scheduleFieldHint("calendar.weekdays"));
         }
         size_t idx = 0, max = 0;
         yyjson_val* v = nullptr;
         yyjson_arr_foreach(arr, idx, max, v) {
             if (!yyjson_is_int(v)) {
+                LOG_WARN("schedule_rule: calendar.weekdays 元素不是整数");
                 return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                              "calendar.weekdays 元素必须为 0..6 的整数");
+                                              core::user_message::scheduleFieldHint("calendar.weekdays"));
             }
             const int d = yyjson_get_int(v);
             if (d < 0 || d > 6) {
+                LOG_WARN("schedule_rule: calendar.weekdays 元素越界: " + std::to_string(d));
                 return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                              "calendar.weekdays 元素必须为 0..6 的整数（0=周日）");
+                                              core::user_message::scheduleFieldHint("calendar.weekdays"));
             }
             c.weekdays[static_cast<size_t>(d)] = true;
         }
@@ -383,8 +396,9 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     if (hasKey(obj, "month_day")) {
         int64_t md = 0;
         if (!getInt(obj, "month_day", md, err) || md < 1 || md > 31) {
+            LOG_WARN("schedule_rule: calendar.month_day 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.month_day 必须为 1..31 的整数");
+                                          core::user_message::scheduleFieldHint("calendar.month_day"));
         }
         c.hasMonthDay = true;
         c.monthDay = static_cast<int>(md);
@@ -392,17 +406,20 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     if (hasKey(obj, "nth_weekday")) {
         yyjson_val* nw = yyjson_obj_get(obj, "nth_weekday");
         if (!yyjson_is_obj(nw)) {
+            LOG_WARN("schedule_rule: calendar.nth_weekday 不是对象");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.nth_weekday 必须为 {\"n\":1..5,\"weekday\":0..6} 对象");
+                                          core::user_message::scheduleFieldHint("calendar.nth_weekday"));
         }
         int64_t n = 0, wd = 0;
         if (!getInt(nw, "n", n, err) || n < 1 || n > 5) {
+            LOG_WARN("schedule_rule: calendar.nth_weekday.n 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.nth_weekday.n 必须为 1..5 的整数");
+                                          core::user_message::scheduleFieldHint("calendar.nth_weekday.n"));
         }
         if (!getInt(nw, "weekday", wd, err) || wd < 0 || wd > 6) {
+            LOG_WARN("schedule_rule: calendar.nth_weekday.weekday 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.nth_weekday.weekday 必须为 0..6 的整数");
+                                          core::user_message::scheduleFieldHint("calendar.nth_weekday.weekday"));
         }
         c.hasNthWeekday = true;
         c.nth = static_cast<int>(n);
@@ -410,64 +427,76 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
     }
     if (hasKey(obj, "last_workday")) {
         if (!getBool(obj, "last_workday", c.lastWorkday, err)) {
-            return Result<RuleSpec>::fail(ErrorCode::ValidationError, "calendar.last_workday " + err);
+            LOG_WARN("schedule_rule: calendar.last_workday 解析失败: " + err);
+            return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                          core::user_message::scheduleFieldHint("calendar.last_workday"));
         }
     }
     std::string timeText;
     if (!getStr(obj, "time", timeText, err) || !parseTimeOfDay(timeText, c.hour, c.minute)) {
+        LOG_WARN("schedule_rule: calendar.time 非法: " + timeText + " " + err);
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "calendar.time 必须为「HH:MM」");
+                                      core::user_message::scheduleFieldHint("calendar.time"));
     }
     const bool isDayWeek = c.unit == CalendarSpec::Unit::Day || c.unit == CalendarSpec::Unit::Week;
     if (isDayWeek) {
         std::string anchorText;
         if (!getStr(obj, "anchor_date", anchorText, err)) {
+            LOG_WARN("schedule_rule: calendar.anchor_date 缺失或类型错误: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar 规则 unit=day/week 必须提供 anchor_date（相位第 0 天/周）");
+                                          core::user_message::scheduleFieldHint("calendar.anchor_date"));
         }
         int y = 0, m = 0, d = 0;
         if (!parseDate(anchorText, y, m, d) || !validCivilDate(y, m, d)) {
+            LOG_WARN("schedule_rule: calendar.anchor_date 非法日期: " + anchorText);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.anchor_date 必须为真实存在的「YYYY-MM-DD」：" + anchorText);
+                                          core::user_message::scheduleFieldHint("calendar.anchor_date"));
         }
         c.anchorDayNum = core::time::daysFromCivil(y, static_cast<unsigned>(m), static_cast<unsigned>(d));
     } else {
         if (hasKey(obj, "anchor_date")) {
+            LOG_WARN("schedule_rule: calendar.anchor_date 仅 unit=day/week 使用");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.anchor_date 仅 unit=day/week 使用");
+                                          "按月 / 年重复时不需要基准日期，请去掉后再试");
         }
     }
     if (c.unit == CalendarSpec::Unit::Week) {
         bool any = false;
         for (bool b : c.weekdays) { if (b) { any = true; break; } }
         if (!any) {
+            LOG_WARN("schedule_rule: calendar unit=week 必须提供非空 weekdays[]");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar 规则 unit=week 必须提供非空 weekdays[]");
+                                          core::user_message::scheduleFieldHint("calendar.weekdays"));
         }
         const int anchorWday = wdayOf(c.anchorDayNum);
         if (!c.weekdays[static_cast<size_t>(anchorWday)]) {
+            LOG_WARN("schedule_rule: calendar.anchor_date 所在星期未命中 weekdays[]");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.anchor_date 所在星期必须命中 weekdays[]（周相位以锚点周为第 0 周）");
+                                          core::user_message::scheduleFieldHint("calendar.anchor_date"));
         }
     }
     if (c.unit != CalendarSpec::Unit::Week && hasKey(obj, "weekdays")) {
+        LOG_WARN("schedule_rule: calendar.weekdays 仅 unit=week 使用");
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "calendar.weekdays 仅 unit=week 使用");
+                                      "星期选择只适用于「按周」的重复周期，请调整周期后再试");
     }
     const bool hasSelector = c.hasMonthDay || c.hasNthWeekday || c.lastWorkday;
     if (c.unit == CalendarSpec::Unit::Month || c.unit == CalendarSpec::Unit::Year) {
         if (!hasSelector) {
+            LOG_WARN("schedule_rule: calendar unit=month/year 缺少 month_day / nth_weekday / last_workday 之一");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar 规则 unit=month/year 必须提供 month_day / nth_weekday / last_workday 之一");
+                                          "按 月 / 年 重复时，请选择一种日期规则：每月几号、第几个星期几、或每月最后一个工作日");
         }
         const int selectors = (c.hasMonthDay ? 1 : 0) + (c.hasNthWeekday ? 1 : 0) + (c.lastWorkday ? 1 : 0);
         if (selectors > 1) {
+            LOG_WARN("schedule_rule: calendar month_day / nth_weekday / last_workday 三者互斥");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "calendar.month_day / nth_weekday / last_workday 三者互斥");
+                                          "「每月几号」「第几个星期几」「每月最后一个工作日」只能选一种，请去掉多余的");
         }
     } else if (hasSelector) {
+        LOG_WARN("schedule_rule: calendar 日期选择器仅 unit=month/year 使用");
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "calendar.month_day / nth_weekday / last_workday 仅 unit=month/year 使用");
+                                      "这些日期规则只适用于按 月 / 年 重复：每月几号、第几个星期几、每月最后一个工作日");
     }
     return Result<RuleSpec>::ok(std::move(s));
 }
@@ -475,18 +504,23 @@ Result<RuleSpec> parseCalendar(yyjson_val* obj) {
 Result<RuleSpec> parseCronKind(yyjson_val* obj) {
     std::string err;
     if (!checkKeys(obj, {"expr"}, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "cron 规则" + err);
+        LOG_WARN("schedule_rule: cron 规则存在未知字段: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("cron"));
     }
     RuleSpec s;
     s.kind = RuleKind::Cron;
     std::string expr;
     if (!getStr(obj, "expr", expr, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "cron.expr " + err);
+        LOG_WARN("schedule_rule: cron.expr 缺失或类型错误: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("cron.expr"));
     }
     auto parsed = core::cron::parseCron(expr);
     if (parsed.isFail()) {
+        LOG_WARN("schedule_rule: cron.expr 非法: " + expr + " — " + parsed.errorMessage());
         return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                      "cron.expr 非法：" + parsed.errorMessage());
+                                      core::user_message::scheduleFieldHint("cron.expr"));
     }
     s.cron = parsed.value();
     return Result<RuleSpec>::ok(std::move(s));
@@ -495,30 +529,35 @@ Result<RuleSpec> parseCronKind(yyjson_val* obj) {
 Result<RuleSpec> parseEvent(yyjson_val* obj) {
     std::string err;
     if (!checkKeys(obj, {"events", "cooldown_sec"}, err)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "event 规则" + err);
+        LOG_WARN("schedule_rule: event 规则存在未知字段: " + err);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint("event"));
     }
     RuleSpec s;
     s.kind = RuleKind::Event;
     if (hasKey(obj, "events")) {
         yyjson_val* arr = yyjson_obj_get(obj, "events");
         if (!yyjson_is_arr(arr)) {
+            LOG_WARN("schedule_rule: event.events 不是数组");
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "event.events 必须为字符串数组");
+                                          core::user_message::scheduleFieldHint("event.events"));
         }
         size_t idx = 0, max = 0;
         yyjson_val* v = nullptr;
         yyjson_arr_foreach(arr, idx, max, v) {
             if (!yyjson_is_str(v)) {
+                LOG_WARN("schedule_rule: event.events 元素不是字符串");
                 return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                              "event.events 元素必须为字符串");
+                                              core::user_message::scheduleFieldHint("event.events"));
             }
             s.events.emplace_back(yyjson_get_str(v), yyjson_get_len(v));
         }
     }
     if (hasKey(obj, "cooldown_sec")) {
         if (!getInt(obj, "cooldown_sec", s.cooldownSec, err) || s.cooldownSec < 0) {
+            LOG_WARN("schedule_rule: event.cooldown_sec 非法: " + err);
             return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                          "event.cooldown_sec 必须为 ≥0 的整数");
+                                          core::user_message::scheduleFieldHint("event.cooldown_sec"));
         }
     }
     return Result<RuleSpec>::ok(std::move(s));
@@ -684,8 +723,9 @@ Result<int64_t> onceFireUnix(const RuleSpec& spec, int64_t& out) {
     }
     std::tm want = spec.atLocal;
     if (!resolveWallClock(want, out)) {
+        LOG_WARN("schedule_rule: once.at_local 时刻在该日不存在（DST 缺口兜底失败）");
         return Result<int64_t>::fail(ErrorCode::ValidationError,
-                                     "once.at_local 时刻在该日不存在（DST 缺口兜底失败）");
+                                     "执行时刻在当天不存在（夏令时跳变），请改选其他时间");
     }
     return Result<int64_t>::ok(out);
 }
@@ -694,11 +734,15 @@ Result<int64_t> onceFireUnix(const RuleSpec& spec, int64_t& out) {
 
 Result<RuleSpec> parseRuleSpec(RuleKind kind, const std::string& specJson) {
     if (specJson.empty()) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "spec_json 为空");
+        LOG_WARN("schedule_rule: spec_json 为空");
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint(""));
     }
     yyjson_doc* doc = yyjson_read(specJson.data(), specJson.size(), 0);
     if (doc == nullptr) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "spec_json 非法 JSON：" + specJson);
+        LOG_WARN("schedule_rule: spec_json 非法 JSON: " + specJson);
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint(""));
     }
     struct DocGuard {
         yyjson_doc* d;
@@ -706,7 +750,9 @@ Result<RuleSpec> parseRuleSpec(RuleKind kind, const std::string& specJson) {
     } guard{doc};
     yyjson_val* root = yyjson_doc_get_root(doc);
     if (root == nullptr || !yyjson_is_obj(root)) {
-        return Result<RuleSpec>::fail(ErrorCode::ValidationError, "spec_json 根必须是 JSON 对象");
+        LOG_WARN("schedule_rule: spec_json 根不是 JSON 对象");
+        return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                      core::user_message::scheduleFieldHint(""));
     }
     switch (kind) {
         case RuleKind::Once: return parseOnce(root);
@@ -719,13 +765,16 @@ Result<RuleSpec> parseRuleSpec(RuleKind kind, const std::string& specJson) {
             s.kind = RuleKind::Resident;
             std::string err;
             if (!checkKeys(root, {}, err)) {
+                LOG_WARN("schedule_rule: resident 规则存在未知字段: " + err);
                 return Result<RuleSpec>::fail(ErrorCode::ValidationError,
-                                              "resident 规则" + err);
+                                              core::user_message::scheduleFieldHint("resident"));
             }
             return Result<RuleSpec>::ok(std::move(s));
         }
     }
-    return Result<RuleSpec>::fail(ErrorCode::ValidationError, "未知规则 kind");
+    LOG_WARN("schedule_rule: 未知规则 kind");
+    return Result<RuleSpec>::fail(ErrorCode::ValidationError,
+                                  "定时规则的类型无法识别，请删除后重新创建该任务");
 }
 
 Result<std::optional<int64_t>> nextFire(const RuleSpec& spec, int64_t afterUnix,
