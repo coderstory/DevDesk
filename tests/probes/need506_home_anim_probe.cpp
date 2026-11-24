@@ -6,7 +6,6 @@
 #include "core/theme.h"
 #include "ui_kit/home_anim.h"
 
-#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -37,6 +36,9 @@ int composeShot(eui::Ui& ui, float w, float h, int tier, float phase) {
             if (tier >= 2) {
                 typer.items = {"部署流水线又绿了.sh", "会议纪要 2026-11-24.md",
                                "need506 方案卡.md", "读我一遍.md"};
+            }            if (tier >= 2) {
+                typer.lastTick = 0.0;
+                typer.tick(0.9);  // 打字中间帧：光标随前缀（垫板特写证据）
             }
             ui_kit::home_anim::drawDotGrid(ui, 0, 0, w - 64, h - 120, phase,
                                            1.0f, t);
@@ -78,11 +80,6 @@ int main(int argc, char* argv[]) {
         return 3;
     }
 
-    const float tag = static_cast<float>(
-        std::chrono::duration<double>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count());
-
     bool passed = true;
     const std::vector<Shot> shots = {
         {1, true, "grid-1600"},
@@ -95,7 +92,7 @@ int main(int argc, char* argv[]) {
         if (!s.dark) core::theme::setLight();
         eui::Ui ui;
         ui.begin("shot_" + std::string(s.tag));
-        composeShot(ui, w, h, s.tier, tag);
+        composeShot(ui, w, h, s.tier, 1.5f);  // 定相：闪烁亮段+波前可辨（截图确定性）
         ui.end();
         ui.layout(w, h);
         // 元素在树判据：按档抽锚（B1 dot.0/ring；B2 far.0；B3 halo.0.0/dot.0）

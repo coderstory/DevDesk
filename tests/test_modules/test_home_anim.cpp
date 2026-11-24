@@ -177,7 +177,7 @@ REGISTER_TEST(home_anim_typer_machine,
             DOCTEST_CHECK(ui_kit::home_anim::truncateTitle(q) == q);  // 池内均不过截断线
             ++qn;
         }
-        DOCTEST_CHECK(qn == 10);
+        DOCTEST_CHECK(qn == 50);  // 池规模=用户令 2026-11-24
         Typer t;
         for (const char* q : ui_kit::home_anim::kQuotePool) t.items.emplace_back(q);
         DOCTEST_CHECK(t.rotating());
@@ -199,11 +199,32 @@ REGISTER_TEST(home_anim_typer_machine,
         Typer t;
         t.items = {"abcdefghijk", "second"};
         t.lastTick = 0.0;
-        t.tick(1.0);
+        // 20fps 泵帧序列：50ms/帧 × 20 帧 = 1s → ≥11 字打完（防「帧距<步长永不推进」回归）
+        for (int f = 1; f <= 20; ++f) t.tick(f * 0.05);
         DOCTEST_CHECK(t.visibleText().size() >= 10);
         DOCTEST_CHECK(t.idx == 0);
         // 减动效直显：staticFull 恒整条（格子6）
         DOCTEST_CHECK(t.staticFull() == "abcdefghijk");
+        // 光标跟随（UAT 第 5 件）：打字中间帧光标 x ∈ (行起点, 整行宽)
+        {
+            const auto& th = ::core::theme::current();
+            Typer t2;
+            t2.items = {"abcdefghijk", "second"};
+            t2.lastTick = 0.0;
+            for (int f = 1; f <= 6; ++f) t2.tick(f * 0.05);  // ~5 字已打出
+            eui::Ui ui;
+            ui.begin("cursorframe");
+            // phase=0.2：闪烁相位亮段（fmod<0.55）→ 光标节点在树
+            ui_kit::home_anim::drawTyper(ui, 400.0f, 200.0f, 800.0f, t2, 0.2f,
+                                         "", false, th);
+            ui.end();
+            ui.layout(800.0f, 400.0f);
+            const auto* cur = ui.find("home.anim.typer.cursor");
+            DOCTEST_REQUIRE(cur != nullptr);
+            // plateW=min(800*0.7+68,560)=560 → 行起点 x = 400-280+34 = 154
+            DOCTEST_CHECK(cur->frame.x > 154.0f);
+            DOCTEST_CHECK(cur->frame.x < 154.0f + 560.0f - 68.0f);
+        }
     }
     return true;
 })

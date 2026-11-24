@@ -58,7 +58,7 @@ bool drawDotGrid(eui::Ui& ui, float x, float y, float w, float h,
 
 // ── 打字机状态机 ──
 constexpr double kTypeMs = 82.0;
-constexpr double kHoldMs = 1700.0;
+constexpr double kHoldMs = 2800.0;  // 用户令 2026-11-24：≈3s 一换
 constexpr double kEraseMs = 26.0;
 constexpr double kGapMs = 320.0;
 
@@ -68,16 +68,13 @@ void Typer::tick(double nowSec) {
     if (dtMs <= 0.0) return;
     const std::string cur = items[static_cast<size_t>(idx)];
     const int len = static_cast<int>(cur.size());  // UTF-8 字节步进 = 码点近似（中英均 3/1 字节，节奏一致）
-    double acc = dtMs;
-    while (acc > 0.0) {
+    accMs += dtMs;  // 帧间残量累积：20fps 帧距 50ms < 82ms 步长 → 跨帧攒够才走一步
+    while (accMs > 0.0) {
         const double stepMs = phase == Phase::Typing ? kTypeMs
                             : phase == Phase::Hold ? kHoldMs
                             : phase == Phase::Erasing ? kEraseMs : kGapMs;
-        if (acc < stepMs) {
-            acc = 0.0;
-            break;
-        }
-        acc -= stepMs;
+        if (accMs < stepMs) break;  // 残量不足一步：留着下帧接着攒
+        accMs -= stepMs;
         if (phase == Phase::Typing) {
             ++shown;
             if (shown >= len) {
@@ -163,8 +160,13 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
         .color(t.colors.primaryText)
         .build();
     if (cursorOn) {
+        // 光标紧跟已打出前缀的实测宽（打/擦相位都随 shown 走；空前缀=行起点）。
+        // 测宽先例 = wtab/settings 的 core::TextPrimitive::measureTextWidth。
+        const float prefixW =
+            core::TextPrimitive::measureTextWidth(text, {}, 28.0f, 600.0f);
         ui.rect("home.anim.typer.cursor")
-            .position(px + 34.0f + plateW - 68.0f - 4.0f, rowY + 6.0f)
+            .position(px + 34.0f + std::min(prefixW, plateW - 68.0f - 6.0f),
+                      rowY + 6.0f)
             .size(3.0f, 28.0f * 1.15f)
             .color(t.colors.primary)
             .radius(2.0f)

@@ -709,7 +709,7 @@ public:
                                 ui, actionButtonElementId(btn.kind));
                             builder.size(actW, 42.0f)  // demo .btn 42px（UAT 对齐）
                                 .text(btn.label)
-                                .fontSize(t.sizes.fontSizeBody)
+                                .fontSize(14.5f)  // demo .btn font-size:14.5px（逐值对齐）
                                 .radius(t.sizes.radius);
                             if (btn.kind == ActionKind::NewNote) {
                                 // Filled: primary bg + white text
@@ -722,12 +722,15 @@ public:
                                 builder.colors(t.colors.surface,
                                                t.colors.primarySoftBg,
                                                components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
-                                    .border(1.0f, t.colors.borderDefault)  // demo .btn.ghost：中性线边框
-                                    .textColor(t.colors.primary);
+                                    .border(1.0f, t.colors.borderDefault)  // demo .btn.ghost：--line #DDEBE3
+                                    .textColor(t.colors.primaryText);  // demo .btn.ghost：--deep #157E4E
                             }
                             if (btn.iconCodepoint != 0) {
+                                // 图标色随款：主钮白字白图标？demo 主钮无图标；ghost 图标=deep
                                 builder.icon(btn.iconCodepoint)
-                                    .iconColor(t.colors.primary);
+                                    .iconColor(btn.kind == ActionKind::NewNote
+                                                   ? t.colors.onPrimary
+                                                   : t.colors.primaryText);
                             }
                             const std::string payload = btn.navPayload;
                             builder
