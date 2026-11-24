@@ -27,7 +27,9 @@
 #include <string>
 #include <vector>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 
 namespace {
@@ -242,9 +244,13 @@ std::string normalizeSourceFile(const char* raw) {
 std::vector<FilterTerm> parseFilterTerms(int argc, char** argv) {
     std::vector<FilterTerm> terms;
     const std::string kFlagPrefix = "--filter=";
+    const std::string kShardPrefix = "--shard=";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i] ? argv[i] : "";
         if (arg == "--log") continue;
+        // --shard=i/N 是分片开关不是过滤词（need505）：不剥会被当词收进 terms，
+        // 每片多一条 (0) 命中的假过滤词
+        if (arg.rfind(kShardPrefix, 0) == 0) continue;
         if (arg.rfind(kFlagPrefix, 0) == 0) arg = arg.substr(kFlagPrefix.size());
         if (arg.empty()) continue;
         size_t start = 0;
@@ -306,6 +312,17 @@ std::string joinFilterTerms(const std::vector<FilterTerm>& terms) {
     return out;
 }
 
+// FNV-1a 64：用例名分桶哈希（need505 --shard=i/N）。选它只因为无状态、跨平台
+// （uint64_t 算术）与跨运行稳定——同一棵源码树重跑分桶不变，脚本汇总按片名可复现。
+std::uint64_t fnv1a64(const std::string& s) {
+    std::uint64_t h = 1469598103934665603ULL;
+    for (unsigned char c : s) {
+        h ^= c;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
 } // namespace
 
 // 用法：devdesk_tests.exe [子串] [--log]
@@ -332,7 +349,51 @@ int main(int argc, char** argv) {
                     [](const FilterTerm& t) { return t.byFile; });
     std::vector<CaseResult> results;
     results.reserve(1024);
+    // --shard=i/N（need505 测试套件并行化）：按用例名 FNV-1a 哈希分桶，N 片 = N 进程
+    // 并行。进程级共享态（ui_kit wtab / core theme tokens）随进程隔离；数据根隔离零
+    // 成本——resetCaseGlobals 的 DEVDESK_DATA_ROOT 走 test_temp::tempPath（pid 唯一化），
+    // 每个分片进程天然各用各的根，脚本无需额外 mkdtemp。
+    int shardIndex = -1, shardCount = 0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i] ? argv[i] : "";
+        constexpr const char* kShardFlag = "--shard=";
+        if (arg.rfind(kShardFlag, 0) != 0) continue;
+        const std::string spec = arg.substr(std::strlen(kShardFlag));
+        const auto slash = spec.find('/');
+        if (slash == std::string::npos) {
+            std::cout << "[ERROR] --shard 需要 i/N 形态（如 --shard=1/6），收到: "
+                      << spec << std::endl;
+            return 2;
+        }
+        // 严格数字解析（审计 2026-11-24 nit）：atoi("abc")=0 会把非数字静默当片 0；
+        // strtol 溢出回 LONG_MAX 不抛（项目禁异常），越界检查兜住。
+        const auto parseNum = [](const std::string& s, int& out) {
+            if (s.empty() ||
+                s.find_first_not_of("0123456789") != std::string::npos) {
+                return false;
+            }
+            out = static_cast<int>(std::strtol(s.c_str(), nullptr, 10));
+            return true;
+        };
+        const std::string idxStr = spec.substr(0, slash);
+        const std::string cntStr = spec.substr(slash + 1);
+        if (!parseNum(idxStr, shardIndex) || !parseNum(cntStr, shardCount)) {
+            std::cout << "[ERROR] --shard 需要 i/N 数字形态（如 --shard=1/6），收到: "
+                      << spec << std::endl;
+            return 2;
+        }
+        if (shardCount < 1 || shardIndex < 0 || shardIndex >= shardCount) {
+            std::cout << "[ERROR] --shard 越界: " << spec
+                      << "（要求 0 <= i < N，N >= 1）" << std::endl;
+            return 2;
+        }
+    }
     for (const auto& t : test_registry::registry()) {
+        if (shardCount > 0 &&
+            fnv1a64(t.name) % static_cast<std::uint64_t>(shardCount) !=
+                static_cast<std::uint64_t>(shardIndex)) {
+            continue;
+        }
         if (!terms.empty() &&
             !matchesAnyTerm(t,
                             anyFileTerm ? normalizeSourceFile(t.file) : std::string(),
@@ -410,6 +471,12 @@ int main(int argc, char** argv) {
     std::cout << "Passed: " << passed << std::endl;
     std::cout << "Failed: " << failed << std::endl;
     std::cout << "Skipped: " << skipped << std::endl;
+    // 分片身份与该片规模（need505）：脚本汇总跨片求和的对照面——单片 Total 打在这，
+    // 片间总和应等于全量串行 Total。
+    if (shardCount > 0) {
+        std::cout << "Shard: " << shardIndex << "/" << shardCount << " -> "
+                  << total << " 例\n";
+    }
     // 过滤词命中可见化：每个词的完整命中数 + 并集总数。「以为跑了其实没跑」
     // （fast lane 漏跑）从机制上可见——哪个词 (0) 一眼可见。无过滤词不打。
     if (!terms.empty()) {
