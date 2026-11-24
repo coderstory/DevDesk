@@ -201,6 +201,9 @@ set(BUILD_TESTS OFF CACHE BOOL "libgit2 Clar 测试：Windows 编译必失败，
 set(BUILD_CLI OFF)
 set(USE_SSH OFF)
 set(USE_HTTPS OFF)
+# 只读本地仓零网络面：HTTPS 关后 NTLM 无可用加密后端（libgit2 v2 ntlmclient 会 FATAL_ERROR）。
+# v1.9.7 硬编码不触发该路径；当前 vendored 版本必须显式关 NTLM，否则 clean configure 直接失败。
+set(USE_AUTH_NTLM OFF)
 set(USE_SHA1 "CollisionDetection")  # bundled sha1dc，不依赖 HTTPS 后端栈
 set(USE_SHA256 "Builtin")
 set(USE_BUNDLED_ZLIB ON)
