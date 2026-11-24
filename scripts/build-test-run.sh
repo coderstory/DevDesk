@@ -884,10 +884,9 @@ if [ "$RUN_TEST" = "1" ]; then
       #   并 exit 1，本分支变成不可达；结果仍是 RED（无假绿），只是诊断文字从「部分跳过」
       #   换成「有失败」。留本分支 = 不赌 ctest 永不改格式（删了等于赌）。
       # 同一条判据对所有探针一视同仁，正常形态是「全跑」「全跳」之外还有第三种：
-      # **能力门控家族的设计内跳过**（wallpaper_*：macOS 壁纸平台层二阶段未落地，
-      # src/platform/wallpaper_capability_macos.cpp 的 supported() 恒 false）——
-      # 跳过项全部落在该家族 = 已知平台不对称，黄牌放行；名单外任何跳过仍按
-      # 「判据误判或代码 / 环境异常」报红，必须人工查。
+      # **已知家族的设计内跳过**——跳过项逐个归属已知家族（名单匹配 + rc=77 复验），
+      # 混合家族（一次跑里跨 ≥2 族）也按逐项归属判定；名单外任何跳过仍按
+      # 「判据误判或代码 / 环境异常」报红，必须人工查。家族清单与各自成因见下方家族制注释。
       PROBE_SKIPPED_NAMES="$(echo "$PROBE_OUT" | grep -E '^\s*[0-9]+ - .*\(Skipped\)$' | sed -E 's/^[[:space:]]*[0-9]+ - +//; s/ \(Skipped\)$//' || true)"
       # 无显示起源豁免（debt422 G1）：跳过项逐个对 LastTest.log 的 PROBE_SKIP_NO_DISPLAY
       # 标记求交（名字精确匹配）。全部命中 + GITHUB_ACTIONS = runner 无 GUI 会话的环境
@@ -904,86 +903,79 @@ if [ "$RUN_TEST" = "1" ]; then
          && [ "$PROBE_NODISPLAY_SKIPS" -ge "$PROBE_SKIPPED" ]; then
         PROBE_NODISPLAY_EXEMPT=1
       fi
-      # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe / home_probes
-      # 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。LastTest.log 不收录
-      # 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——名字精确匹配 + rc=77
-      # 双验才黄牌放行；这两个探针因其它成因跳过（rc≠77）仍按红，不静默。
-      PROBE_FIT_FAM_VERIFIED=0
-      if [ "$PROBE_NODISPLAY_EXEMPT" != "1" ] && [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
-        # 已知小屏环境跳过家族（bug123/183 口径，2026-11-04）：b1_material_probe /
-        # home_probes 的采样几何钉死 1000 逻辑高，装不下的屏上按 77 诚实跳过。
-        # LastTest.log 不收录 77 跳过项的 stdout，原因只能复跑单探针取退出码验证——
-        # 名字精确匹配 + rc=77 双验才黄牌放行；这些探针因其它成因跳过（rc≠77）仍按红。
-        # memory_install_probe（bug233）同族：它归 QA 显式子命令驱动（install 要网络
-        # pip / mcpserve 起真 HTTP 服务，不能进守卫链自动跑），argless 登记即退 77
-        # （tests/probes/memory_install_probe.cpp:331 + tests/CMakeLists.txt:576/583）；
-        # 漏名单会让完整档恒报「必须人工查」，收口/发版档假红。
-        # 终端 ConPTY 家族对（need#214 CG 批 2026-11-18 收编）：terminal_conpty_win_probe
-        # 与 ui_driver_terminal-input 在无控制台宿主（agent 工具 shell / ctest 管道上下文）
-        # 下按 77 诚实跳过——ConPTY 输入回显链要求宿主有真控制台；真控制台形态实测
-        # 全绿（start 新控制台窗跑 conpty 探针 3/3 PASS，evidence/20261118-cg-wincompat/
-        # terminal-console.log）。主会话（真终端宿主）跑应不跳过直接过；子代理会话全
-        # 完整档必遇此对跳过——漏名单=收口档在 agent 会话恒红假阳性。
-        PROBE_FIT_FAM_VERIFIED=1
-        for _fitprobe in b1_material_probe home_probes memory_install_probe terminal_conpty_win_probe ui_driver_terminal-input; do
-          echo "$PROBE_SKIPPED_NAMES" | grep -qx "$_fitprobe" || continue
-          _fitrc=0
-          if [ "${_fitprobe#ui_driver_}" != "$_fitprobe" ]; then
-            # ui_driver_ 前缀的家族成员是 ctest 场景名而非可执行名（可执行恒为
+      # 已知设计内跳过家族（家族制 + 混合家族放行，bug233/need#214 收编、bug6 扩 2026-11-24）：
+      # 跳过项逐个归属下列家族，归属后**逐项复跑验 rc=77**（LastTest.log 不收录 77 跳过
+      # 项的 stdout，原因只能复跑单探针取退出码验证）。混合家族（一次跑里跨 ≥2 族）只要
+      # 每个跳过项都归属已知家族且复跑都验过 = 黄牌放行；名单外任何跳过仍按红（判据误判
+      # 或代码 / 环境异常），归属但 rc≠77 同样红（bug234：名字对、成因错 = 探针产物缺失 /
+      # 崩溃 / 该探针自身出了新问题，不许静默绿）。
+      #   A 墙纸能力门控家族（wallpaper_ 前缀）：macOS 无壁纸宿主能力，探针设计内退 77
+      #     （wallpaper_desktop/image_rotation/rotation/yield 的非 Windows 门 +
+      #     wallpaper_probe 的 platform::wallpaper::supported() 门）。
+      #   B 小屏/驱动/控制台家族（精确名）：b1_material_probe / home_probes（bug123/183
+      #     采样几何钉死 1000 逻辑高，装不下的屏按 77 诚实跳过）、memory_install_probe
+      #     （bug233：归 QA 显式子命令驱动，argless 即退 77）、terminal_conpty_win_probe /
+      #     ui_driver_terminal-input（need#214：无控制台宿主下 ConPTY 回显链不可验，真
+      #     控制台实测全绿）。
+      #   C 实弹未准备家族（精确名）：claude_proxy_e2e_probe——ctest 注册形态带 --db 指
+      #     构建目录实弹快照，快照未准备时设计内退 77（claude_proxy_e2e_probe.cpp 实弹
+      #     环境门），复跑用同款 --db 参数验 rc=77；快照在位会真跑实弹，故本复验只在
+      #     「已观察到跳过」后才发生，不会把实弹跑进门禁。
+      PROBE_UNCLASSIFIED_SKIPS=""
+      PROBE_VERIFY_FAILED=""
+      while IFS= read -r _pname; do
+        [ -n "$_pname" ] || continue
+        _prc=0
+        case $_pname in
+          wallpaper_*)
+            "$BUILD_DIR/tests/$_pname$EXE_SUFFIX" >/dev/null 2>&1 || _prc=$? ;;
+          claude_proxy_e2e_probe)
+            "$BUILD_DIR/tests/claude_proxy_e2e_probe$EXE_SUFFIX" \
+              --db "$BUILD_DIR_ABS/claude_proxy_e2e_livefire.db" >/dev/null 2>&1 || _prc=$? ;;
+          b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe)
+            "$BUILD_DIR/tests/$_pname$EXE_SUFFIX" >/dev/null 2>&1 || _prc=$? ;;
+          ui_driver_terminal-input)
+            # ui_driver_ 前缀家族成员是 ctest 场景名而非可执行名（可执行恒为
             # devdesk_ui_driver）——按注册形态（tests/CMakeLists.txt add_test）复跑：
             # --script 场景 json + --out-dir/--report-json 落 build/tests/ui-drive-shots。
             "$BUILD_DIR/tests/devdesk_ui_driver$EXE_SUFFIX" \
-              --script "tests/ui_driver/scenes/${_fitprobe#ui_driver_}.json" \
+              --script "tests/ui_driver/scenes/${_pname#ui_driver_}.json" \
               --out-dir "$BUILD_DIR_ABS/tests/ui-drive-shots" \
-              --report-json "$BUILD_DIR_ABS/tests/ui-drive-shots/${_fitprobe#ui_driver_}-verify-report.json" \
-              >/dev/null 2>&1 || _fitrc=$?
-          else
-            "$BUILD_DIR/tests/$_fitprobe$EXE_SUFFIX" >/dev/null 2>&1 || _fitrc=$?
-          fi
-          [ "$_fitrc" -eq 77 ] || PROBE_FIT_FAM_VERIFIED=0
-        done
-        unset _fitprobe _fitrc
-      fi
-      PROBE_NON_FAMILY_SKIPS="$(echo "$PROBE_SKIPPED_NAMES" | grep -cvE '^(wallpaper_|b1_material_probe$|home_probes$|memory_install_probe$|terminal_conpty_win_probe$|ui_driver_terminal-input$)' || true)"
-      # 双验失败必须单独判红（bug234，code-reviewer 复审 P1）：上面 rc=77 复跑把
-      # PROBE_FIT_FAM_VERIFIED 置 0 的语义是「名字在名单里，但跳过成因不是设计内
-      # 的那个」——例如探针产物缺失 rc=127、或该探针因其它 bug 退其它码。此时
-      # 若顺流落到下面的 else 黄牌分支，它会用「跳过项全部属已知能力门控家族
-      # （wallpaper_*）」这句**错误的理由**放行（名单里明明有 b1_material 之类），
-      # 把假红换成静默假绿，与 :820 注释「rc≠77 仍按红，不静默」正相反。
-      # 故本判据必须排在家族放行之前，且只对「名单内探针确实被跳过」时生效。
-      PROBE_FIT_FAM_HAS_MEMBER=0
-      if [ -n "$PROBE_SKIPPED_NAMES" ] && echo "$PROBE_SKIPPED_NAMES" | grep -qE '^(b1_material_probe|home_probes|memory_install_probe|terminal_conpty_win_probe|ui_driver_terminal-input)$'; then
-        PROBE_FIT_FAM_HAS_MEMBER=1
-      fi
-      if [ "$PROBE_FIT_FAM_HAS_MEMBER" = "1" ] && [ "$PROBE_FIT_FAM_VERIFIED" != "1" ] \
-         && [ "$PROBE_NODISPLAY_EXEMPT" != "1" ]; then
-        echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——名单内探针的跳过成因不是设计内那一个（复跑退出码非 77），必须人工查"
-        echo "   名单内探针（b1_material_probe / home_probes / memory_install_probe / terminal_conpty_win_probe / ui_driver_terminal-input）被跳过时"
-        echo "   必须是其设计内成因（小屏钳窗 / argless 手动驱动 / 无控制台宿主 ConPTY 回显不可验）才放行；退出码非 77 说明"
-        echo "   探针产物缺失、崩溃或该探针自身出了新问题——不是能力门控，不能黄牌放行。"
-        echo "──── 跳过清单 ────"
-        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
-        echo "   （复现: cd $BUILD_DIR && ./tests/<探针名>; echo \$?）"
-        exit 1
-      fi
+              --report-json "$BUILD_DIR_ABS/tests/ui-drive-shots/${_pname#ui_driver_}-verify-report.json" \
+              >/dev/null 2>&1 || _prc=$? ;;
+          *)
+            PROBE_UNCLASSIFIED_SKIPS="${PROBE_UNCLASSIFIED_SKIPS:+$PROBE_UNCLASSIFIED_SKIPS }$_pname"
+            continue ;;
+        esac
+        [ "$_prc" -eq 77 ] || PROBE_VERIFY_FAILED="${PROBE_VERIFY_FAILED:+$PROBE_VERIFY_FAILED }$_pname(rc=$_prc)"
+      done <<PROBESKIPS
+$PROBE_SKIPPED_NAMES
+PROBESKIPS
       if [ "$PROBE_NODISPLAY_EXEMPT" = "1" ]; then
         echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项全部以 PROBE_SKIP_NO_DISPLAY 起源（无显示环境 = CI runner 的环境事实）"
         echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
         echo "   → 环境豁免，本次未验证 UI（有 GUI 会话的机器上跑同一命令即可真跑: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
-      elif [ -n "$PROBE_SKIPPED_NAMES" ] && [ "${PROBE_NON_FAMILY_SKIPS:-0}" -eq 0 ]; then
-        if [ "$PROBE_FIT_FAM_VERIFIED" = "1" ]; then
-          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项属已知环境/驱动跳过家族（b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；memory_install_probe：归 QA 显式子命令驱动，argless 即退 77；terminal_conpty_win_probe/ui_driver_terminal-input：无控制台宿主下 ConPTY 回显链不可验，真控制台实测全绿——均已复跑单探针验证退出码 77）——设计内跳过，不判红"
-          echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
-        else
-          echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），但跳过项全部属已知能力门控家族（wallpaper_*：macOS 壁纸二阶段未落地）——设计内跳过，不判红"
-          echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
-        fi
-      else
-        echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——判定为判据误判或代码 bug，必须人工查"
+      elif [ -z "${PROBE_UNCLASSIFIED_SKIPS}" ] && [ -z "${PROBE_VERIFY_FAILED}" ] && [ -n "$PROBE_SKIPPED_NAMES" ]; then
+        echo "⚠️  UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}），跳过项逐个归属已知家族且复跑均验 rc=77——设计内跳过，不判红"
+        echo "   （wallpaper_*：macOS 无壁纸宿主能力的能力门控；b1_material_probe/home_probes：屏装不下 1000 逻辑高采样窗；"
+        echo "     memory_install_probe：归 QA 显式子命令驱动，argless 即退 77；terminal_conpty_win_probe/ui_driver_terminal-input："
+        echo "     无控制台宿主下 ConPTY 回显链不可验；claude_proxy_e2e_probe：实弹 DB 快照未准备（--db 副本缺失））"
+        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+      elif [ -n "${PROBE_UNCLASSIFIED_SKIPS}" ]; then
+        echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——跳过项不在任何已知家族名单，判定为判据误判或代码 bug，必须人工查"
+        echo "   名单外跳过项:${PROBE_UNCLASSIFIED_SKIPS}"
         echo "──── 跳过原因 ────"
         echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
-        echo "   （有 GUI 会话的机器上不该出现混合态；复现: cd $BUILD_DIR && ctest -L probe --output-on-failure -V）"
+        echo "   （复现: cd $BUILD_DIR && ctest -L probe --output-on-failure -V）"
+        exit 1
+      else
+        echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——名单内探针的跳过成因不是设计内那一个（复跑退出码非 77），必须人工查"
+        echo "   复验失败项:${PROBE_VERIFY_FAILED}"
+        echo "   名单内探针被跳过时必须是其设计内成因（能力门控 / 小屏钳窗 / argless 手动驱动 / 无控制台宿主 / 实弹未准备，全部按 77）；"
+        echo "   退出码非 77 说明探针产物缺失、崩溃或该探针自身出了新问题——不是设计内跳过，不能黄牌放行。"
+        echo "──── 跳过清单 ────"
+        echo "${PROBE_SKIPPED_NAMES}" | sed 's/^/  · /'
+        echo "   （复现: cd $BUILD_DIR && ./tests/<探针名>; echo \$?）"
         exit 1
       fi
     else
