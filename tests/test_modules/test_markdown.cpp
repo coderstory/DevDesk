@@ -116,6 +116,92 @@ REGISTER_TEST(md_note_tab_truncate_utf8_boundary,
     return true;
 })
 
+
+// need501 §3.5：关闭激活 tab → 激活右移邻 tab（同下标=原右邻；右缘=回退左邻）；
+// 关非激活不动激活；关最后一个清空编辑态。事故：激活迁移语义回退（跳首个 /
+// 选错邻位）。qa need501 收口档补断言（2026-11-24，实现者遗补项④）。
+REGISTER_TEST(md_note_tab_close_activation_migration,
+              "markdown: closeTab activation moves to right neighbor / falls back left / keeps on inactive close / clears last", {
+    test_support::MdHeadlessEnv env("devdesk_md_ui_", "tabclose", "ui_test.db");
+    DOCTEST_REQUIRE(test_support::writeTextFile(env.dir / "a.md", "# 甲\n"));
+    DOCTEST_REQUIRE(test_support::writeTextFile(env.dir / "b.md", "# 乙\n"));
+    DOCTEST_REQUIRE(test_support::writeTextFile(env.dir / "c.md", "# 丙\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 真实链路开三篇：树行点击（node.0 = 根目录组行，文件 = node.1..3）
+    frame("f0");
+    for (int i = 1; i <= 3; ++i) {
+        const auto* row = ui.find("md.tree.node." + std::to_string(i) + ".row");
+        DOCTEST_REQUIRE(row != nullptr);
+        DOCTEST_REQUIRE(row->onClick != nullptr);
+        row->onClick();
+        frame("fopen");
+    }
+    DOCTEST_REQUIRE(ui.find("md.note.tab.2") != nullptr);
+    DOCTEST_CHECK(ui.find("md.note.tab.2.ind") != nullptr);  // 激活 = 最后点开
+
+    // 关右缘激活 c：回退左邻 b（同式 min(idx, size-1)）
+    const auto* closeC = ui.find("md.note.tab.2.close.bg");
+    DOCTEST_REQUIRE(closeC != nullptr);
+    DOCTEST_REQUIRE(closeC->onClick != nullptr);
+    closeC->onClick();
+    frame("f_edge");
+    DOCTEST_CHECK(ui.find("md.note.tab.2") == nullptr);
+    DOCTEST_CHECK(ui.find("md.note.tab.1.ind") != nullptr);  // 激活 = b
+
+    // 重开 c 并把激活移到中间 b：同下标 = 原右邻 c 接棒
+    const auto* rowC = ui.find("md.tree.node.3.row");
+    DOCTEST_REQUIRE(rowC != nullptr);
+    DOCTEST_REQUIRE(rowC->onClick != nullptr);
+    rowC->onClick();
+    frame("f_reopen");
+    const auto* cardB = ui.find("md.note.tab.1.bg");
+    DOCTEST_REQUIRE(cardB != nullptr);
+    DOCTEST_REQUIRE(cardB->onClick != nullptr);
+    cardB->onClick();
+    frame("f_mid");
+    DOCTEST_CHECK(ui.find("md.note.tab.1.ind") != nullptr);  // 激活 = b（中间）
+
+    const auto* closeB = ui.find("md.note.tab.1.close.bg");
+    DOCTEST_REQUIRE(closeB != nullptr);
+    DOCTEST_REQUIRE(closeB->onClick != nullptr);
+    closeB->onClick();
+    frame("f_right");
+    DOCTEST_CHECK(ui.find("md.note.tab.2") == nullptr);      // b 移除
+    DOCTEST_CHECK(ui.find("md.note.tab.1.ind") != nullptr);  // 同下标 = c 接棒
+    DOCTEST_CHECK(ui.find("md.note.tab.0.ind") == nullptr);
+
+    // 关非激活 a：激活 c 不动
+    const auto* closeA = ui.find("md.note.tab.0.close.bg");
+    DOCTEST_REQUIRE(closeA != nullptr);
+    DOCTEST_REQUIRE(closeA->onClick != nullptr);
+    closeA->onClick();
+    frame("f_inactive");
+    DOCTEST_CHECK(ui.find("md.note.tab.0.ind") != nullptr);  // c 重排到 0 仍激活
+
+    // 关最后一个（激活）tab：tab 条与编辑器一并消失
+    const auto* closeLast = ui.find("md.note.tab.0.close.bg");
+    DOCTEST_REQUIRE(closeLast != nullptr);
+    DOCTEST_REQUIRE(closeLast->onClick != nullptr);
+    closeLast->onClick();
+    frame("f_last");
+    DOCTEST_CHECK(ui.find("md.note.tabs") == nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
+    return true;
+})
+
 // 行分类扫描器
 
 using module::markdown::scanHeadings;

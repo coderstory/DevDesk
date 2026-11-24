@@ -316,12 +316,18 @@ REGISTER_TEST(schedule_list_tabs_and_masonry_columns,
     const eui::Screen screen = makeScreen();  // 1200×800：内容宽 1160 → 3 列
     eui::Ui frame;
 
-    // 默认 TAB 0 = 系统定时：用户卡不渲染；选中 TAB 有块面底、未选中无
+    // 默认 TAB 0 = 系统定时：用户卡不渲染。need501 B 契约：bg 常驻透明
+    // （hover 载体，未选 tab 也有 bg——旧"未选中无底"已随统一样式废除），
+    // 指示条只在激活 tab。
     DOCTEST_CHECK_EQ(listUi.activeTab(), 0);
     composeFrame(listUi, frame, screen, "tabs_default");
     DOCTEST_CHECK(frame.find("schedule.list.user.0") == nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.tab.0.bg") != nullptr);
-    DOCTEST_CHECK(frame.find("schedule.list.tab.1.bg") == nullptr);
+    DOCTEST_CHECK(frame.find("schedule.list.tab.0.ind") != nullptr);
+    const auto* scheduleInactiveBg = frame.find("schedule.list.tab.1.bg");
+    DOCTEST_REQUIRE(scheduleInactiveBg != nullptr);
+    DOCTEST_CHECK(scheduleInactiveBg->color.a == 0.0f);  // 常驻透明，非块面
+    DOCTEST_CHECK(frame.find("schedule.list.tab.1.ind") == nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.tab.1.text") != nullptr);
     DOCTEST_CHECK(frame.find("schedule.list.tabcount") != nullptr);
 

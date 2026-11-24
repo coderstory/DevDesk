@@ -18,7 +18,9 @@
 #include <eui/dsl.h>
 #include <eui/types.h>
 
+#include <chrono>
 #include <cmath>
+#include <thread>
 
 namespace {
 
@@ -264,5 +266,44 @@ REGISTER_TEST(ui_kit_selection_unified_metrics,
     DOCTEST_REQUIRE(thumb != nullptr);
     const float thumbD = kSh - 2.0f * ui_kit::kWswitchThumbPadding;
     DOCTEST_CHECK(floatEq(thumb->radius, thumbD / 2.0f));
+    return true;
+})
+
+// 场景4（need501 §10 滑移）：切激活后立即 compose = 插值中间态（指示条仍在
+// 旧位附近、未瞬跳到新位），>kSlideSeconds 后落位到新位。事故：滑移退化成
+// 瞬跳（无中间帧）或中断跳变。墙钟口径：帧间隔 < 160ms 中间态断言才成立，
+// 进程内 compose 正常远小于该值，极端负载假红按 flake 复跑。
+REGISTER_TEST(ui_kit_wtab_slide_interpolation,
+              "ui_kit wtab slide: mid-flight frame stays near old pos, settles after 160ms", {
+    eui::Ui ui;
+    const auto& t = core::theme::current();
+    auto frame = [&](bool tab0Active) {
+        ui.begin(tab0Active ? "sl_f_a" : "sl_f_b");
+        ui_kit::wtab(ui, "sl.0", "甲乙", tab0Active, 0.0f, 0.0f, 80.0f, 36.0f, t);
+        ui_kit::wtab(ui, "sl.1", "丙丁", !tab0Active, 80.0f, 0.0f, 80.0f, 36.0f, t);
+        ui.end();
+    };
+    frame(true);
+    const auto* i0 = ui.find("sl.0.ind");
+    DOCTEST_REQUIRE(i0 != nullptr);
+    // 组内首个激活：无动画初始位（rest），local x = restAbsX - 0
+    const float startX = i0->x;  // .position 相对 stack 的 local x（无窗口无 layout，frame 恒 0）
+
+    // 切激活后立即 compose：elapsed ≪ kSlideSeconds → 指示条未到目标
+    frame(false);
+    DOCTEST_CHECK(ui.find("sl.0.ind") == nullptr);  // 失活即无指示条
+    const auto* i1 = ui.find("sl.1.ind");
+    DOCTEST_REQUIRE(i1 != nullptr);
+    // .x = .position 的 local x（相对所属 stack）；tab1 stack 原点 80 → 绝对 = .x + 80
+    const float midAbsX = i1->x + 80.0f;
+    DOCTEST_CHECK(midAbsX < startX + 20.0f);  // 仍在旧位附近（未瞬跳 80px）
+
+    // 落位帧：> kSlideSeconds(160ms) 后到达新 rest 位
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    frame(false);
+    const auto* i1s = ui.find("sl.1.ind");
+    DOCTEST_REQUIRE(i1s != nullptr);
+    const float endAbsX = i1s->x + 80.0f;
+    DOCTEST_CHECK(endAbsX > startX + 60.0f);  // 目标 ≈ start + 80（tab 右移一位）
     return true;
 })
