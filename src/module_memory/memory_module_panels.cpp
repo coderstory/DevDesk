@@ -4,6 +4,7 @@
 
 #include "memory_module_internal.h"
 
+
 namespace module::memory {
 
 void MemoryModule::composeConsole(eui::Ui& ui, const core::theme::Tokens& t,
@@ -638,6 +639,7 @@ void MemoryModule::composeReview(eui::Ui& ui, const core::theme::Tokens& t,
                                96.0f, t);
         }
     }
+    reviewContentBottom_ = (cy + core::theme::scaled(24.0f)) - oy;
 }
 
 // ── 视图 3：配置 ──

@@ -245,6 +245,61 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < 6; ++i) composeFrame();
     };
 
+    // bug475：130% 档审核长文卡底部操作行落在审核视口外。真实滚轮滚到底（模拟
+    // 用户操作，不走测试缝），按当前滚动位移折算屏幕坐标再点击；同时断言产品侧
+    // maxOffset 足够滚到目标（不可滚 = 真缺陷，探针必须红）。
+    auto clickReviewRow = [&](const char* id) {
+        const auto* vp = A.elem("memory.review.scroll");
+        const auto* el = A.elem(id);
+        if (vp == nullptr || el == nullptr) {
+            std::cerr << "memory_probe: FAIL——'" << id << "' 缺失\n";
+            A.passed = false;
+            return;
+        }
+        const float need = (el->frame.y + el->frame.height - vp->frame.y) -
+                           (vp->frame.height - 8.0f);
+        if (need > 0.0f && vp->scrollMaxOffset + 0.5f < need) {
+            std::cerr << "memory_probe: FAIL——审核列表滚不到 '" << id
+                      << "'（maxOffset=" << vp->scrollMaxOffset << " 需要 "
+                      << need << "）\n";
+            A.passed = false;
+        }
+        const float vcx = vp->frame.x + vp->frame.width * 0.5f;
+        const float vcy = vp->frame.y + vp->frame.height * 0.5f;
+        for (int i = 0; i < 4; ++i) {
+            core::queuePointerMotion(window, vcx, vcy, core::PointerButtons{},
+                                     core::KeyModifiers{});
+            probe::pollOnce(window, runtime);
+            probe::queueScroll(window, runtime, 0.0, -20.0);
+            probe::pollOnce(window, runtime);
+            composeFrame();
+            composeFrame();
+        }
+        const auto* vp2 = A.elem("memory.review.scroll");
+        const auto* el2 = A.elem(id);
+        if (vp2 == nullptr || el2 == nullptr) {
+            std::cerr << "memory_probe: FAIL——滚动后 '" << id << "' 缺失\n";
+            A.passed = false;
+            return;
+        }
+        const float scroll = vp2->scrollOffset;
+        const float px = el2->frame.x + el2->frame.width * 0.5f;
+        const float py = el2->frame.y + el2->frame.height * 0.5f - scroll;
+        if (runtime.hitTestInteractiveAt(px, py, 1.0f) != id) {
+            std::cerr << "memory_probe: FAIL——滚动后 '" << id << "' 不可点（off="
+                      << scroll << " pt=(" << px << "," << py << ")）\n";
+            A.passed = false;
+            return;
+        }
+        core::queuePointerMotion(window, px, py, core::PointerButtons{},
+                                 core::KeyModifiers{});
+        core::queuePointerButton(window, px, py, core::PointerButton::Left,
+                                 core::PointerAction::Press, {});
+        core::queuePointerButton(window, px, py, core::PointerButton::Left,
+                                 core::PointerAction::Release, {});
+        for (int i = 0; i < 6; ++i) composeFrame();
+    };
+
     // ── 组 A：主控台四格真数值（种子在场）──
     composeFrame();
     composeFrame();
@@ -486,7 +541,7 @@ int main(int argc, char* argv[]) {
             shoot("memory-review-longtext.png", &A.passed);
             // need:159 复检（2026-11-09）：长文提案的「提案全文」只读弹窗与
             // 「编辑后接受」弹窗逐环取证（老板抱怨③ 长文本不处理/跑边界）。
-            clickEl(("memory.rv.evtoggle." + longId).c_str());
+            clickReviewRow(("memory.rv.evtoggle." + longId).c_str());
             composeFrame();
             composeFrame();
             A.exists("memory.dialog.fulltext.body");
@@ -494,7 +549,7 @@ int main(int argc, char* argv[]) {
             shoot("memory-review-longtext-fulltext.png", &A.passed);
             clickEl("memory.dialog.fulltext.cancel.bg");
             composeFrame();
-            clickEl(("memory.rv.edit." + longId + ".bg").c_str());
+            clickReviewRow(("memory.rv.edit." + longId + ".bg").c_str());
             composeFrame();
             composeFrame();
             A.exists("memory.dialog.edit.input");
