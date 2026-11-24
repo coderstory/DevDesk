@@ -692,31 +692,39 @@ public:
 
                 // 快捷操作按钮组（S3.1#3/#6）：新建笔记=Filled 44px / 新建任务=Outline 44px。
                 if (actCount > 0) {
-                const float actGap = t.sizes.spacingLarge; // 16
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
                     // 底部留白防贴边（8px 网格）；EUI flow 布局下末子块 margin 计入列内容高。
                     .margin(0.0f, 0.0f, 0.0f, kHomeActionsBottomMargin)
-                    .gap(actGap)
+                    .gap(16.0f)  // demo .btn 行 gap 16（UAT 第⑧件：紧凑左排，非撑满半行）
                     .content([&] {
                         for (const auto& btn : kActionButtons) {
                             if (!moduleRegistered(btn.module)) continue;
+                            // 自适应宽（demo .btn padding 0 22px）：文本实测宽 + 图标位
+                            const float labelW = core::TextPrimitive::measureTextWidth(
+                                btn.label, {}, 14.5f, 600.0f);
                             const float actW =
-                                (contentW -
-                                 actGap * static_cast<float>(actCount - 1)) /
-                                static_cast<float>(actCount);
+                                std::max(96.0f, 22.0f * 2.0f + labelW +
+                                                     (btn.iconCodepoint != 0 ? 22.0f
+                                                                             : 0.0f));
                             auto builder = components::button(
                                 ui, actionButtonElementId(btn.kind));
-                            builder.size(actW, 42.0f)  // demo .btn 42px（UAT 对齐）
+                            builder.size(actW, 42.0f)  // demo .btn height:42
                                 .text(btn.label)
-                                .fontSize(14.5f)  // demo .btn font-size:14.5px（逐值对齐）
-                                .radius(t.sizes.radius);
+                                .fontSize(14.5f)  // demo .btn font-size:14.5
+                                .radius(10.0f);   // demo .btn border-radius:10
                             if (btn.kind == ActionKind::NewNote) {
-                                // Filled: primary bg + white text
+                                // Filled（demo .btn.main）：绿实底白字 + 绿阴影
+                                // （demo 135° 双色渐变 #36D399→#1FA974：components::button
+                                // 无渐变接口——组件近似=平涂 primary；阴影/上浮逐值）
                                 builder.colors(t.colors.primary,
                                                t.colors.primaryHover,
                                                t.colors.primaryPressed)
-                                    .textColor(t.colors.onPrimary);
+                                    .textColor(t.colors.onPrimary)
+                                    .shadow(14.0f, 0.0f, 4.0f,
+                                            components::theme::withOpacity(
+                                                t.colors.primary, 0.28f))  // demo 0 4px 14px rgba(54,211,153,.28)
+                                    .pressScale(0.97f);  // 按压反馈（hover 上浮无 state 绑定 API）
                             } else if (btn.kind == ActionKind::NewTodo) {
                                 // Outline: white bg + green border + green text
                                 builder.colors(t.colors.surface,
