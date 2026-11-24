@@ -19,8 +19,8 @@
 #include "core/tool.h"
 #include "module_markdown/markdown_service.h"
 #include "module_markdown/markdown_tools.h"
+#include "module_mcp/mcp_tool_mirror.h"
 #include "platform/json.h"
-#include "platform/tool_kit.h"
 
 #include <filesystem>
 #include <fstream>
@@ -333,15 +333,17 @@ REGISTER_TEST(md_create_list_tags_delete_roundtrip,
     return true;
 })
 
-// need394 F-2（OP-1=B 移除）：md.* 5 件以 md_* 名进 MCP 对外面；notes_* 三工具
-// 注册已从仓内删除（notes_mcp_tools.cpp 退役），对外面不得再见 notes_* 名
+// debt#416（单一注册源 = ToolMirror 裁决）：原 need394 的 tool_kit::McpToolAdapter
+// 直注注册块已删除，本用例改锁镜像命名规则——md.* 5 件经 ToolMirror 以 md_* 名进
+// MCP 对外面；notes_* 三工具退役后不得再见，点号原名同样不得漏进对外面
 REGISTER_TEST(markdown_tools_mcp_registration,
-              "need394: 5 件 md_* 进 MCP 对外面，notes_* 不再注册，空参与越界走 isError", {
+              "debt416: 5 件 md_* 经 ToolMirror 进 MCP 对外面，notes_* 不再注册，空参与越界走 isError", {
     ToolEnv env("mcp");
     env.tools->registerAll();
 
     core::mcp::McpToolRegistry mcp;
-    platform::tool_kit::registerToolsAsMcp(mcp, env.tools->tools());
+    module::mcp::ToolMirror mirror(mcp);
+    mirror.sync();
     DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 5);
 
     const char* names[] = {"md_search", "md_read", "md_create",
@@ -375,7 +377,9 @@ REGISTER_TEST(markdown_tools_mcp_registration,
         DOCTEST_CHECK(r.value().isError);
     }
 
-    platform::tool_kit::unregisterToolsAsMcp(mcp, env.tools->tools());
+    // 源侧注销 → 下一次 sync 镜像整批消失（模块 onStop 的自愈路径）
+    env.tools->unregisterAll();
+    mirror.sync();
     DOCTEST_CHECK_EQ(static_cast<int>(mcp.size()), 0);
     return true;
 })

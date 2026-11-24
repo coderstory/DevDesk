@@ -46,6 +46,8 @@ private:
 
 // 镜像同步器：源快照 listTools() 与 mirrored_ 集合差 → 增删 adapter。自身单 mutex
 //（与两 registry 同款单锁风格），HTTP worker 多线程并发 sync 安全。
+// 命名契约：对外名 = tool_kit::mcpToolName(源名)，须对源名单射；两个源名撞同一对外名
+// 时后到者被注册表拒注（F-07 仅日志），注销按对外名执行、不区分归属——现存工具集无撞名。
 class ToolMirror {
 public:
     // target = MCP 端注册表（生产 = globalMcpTools()，测试可局部）；source 单例自取
@@ -56,9 +58,10 @@ public:
 private:
     core::mcp::McpToolRegistry& target_;
     // 名字 → 源工具 keep-alive（指针兼作实例指纹：同名新实例靠指针比对注销重建，
-    // 覆盖背靠背 unregister+register 无 POST 间隙）。registerTool fail（F-07 重名/
-    // 非法名）与 schema 非法（F-06）的名字也记入：不重试防每请求刷 WARN；自愈
-    // 路径 = 源工具 unregister/re-register，不依赖服务重启。
+    // 覆盖背靠背 unregister+register 无 POST 间隙）。key 用源侧智能体面名（如
+    // todo.list），注册/注销对外名一律经 tool_kit::mcpToolName 转下划线。registerTool
+    // fail（F-07 重名/非法名）与 schema 非法（F-06）的名字也记入：不重试防每请求刷
+    // WARN；自愈路径 = 源工具 unregister/re-register，不依赖服务重启。
     std::map<std::string, std::shared_ptr<core::ITool>> mirrored_;
     std::mutex mutex_;
 };

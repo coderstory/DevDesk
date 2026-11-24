@@ -1,5 +1,7 @@
 // need#381 ITool→IMcpTool 适配层单测（doc50 §4 落点 1-7、9；落点 8 = F-01 39 真工具
-// diff 与「46 工具」断言归 MCP e2e probe mcp_e2e_probe.cpp，单测只验适配机制本身）。
+// diff 与「43 工具」断言归 MCP e2e probe mcp_e2e_probe.cpp，单测只验适配机制本身）。
+// debt#416 合一后对外名 = tool_kit::mcpToolName(源名)（点号/短横→下划线）：源侧仍用
+// 点号假名，target 侧一律按下划线名查，映射本身即用例覆盖点。
 // target = core::mcp::globalMcpTools() 进程级单例：MirrorFixture 每用例收尾 unregister
 // 本用例注册的全部名字，防跨用例污染（doc50 §4 落点 9）。
 // 注意 shim 语义：CHECK 失败即 return，收尾清理只能靠 RAII，不写尾部清理语句。
@@ -18,6 +20,7 @@
 #include "module_mcp/mcp_session_store.h"
 #include "module_mcp/mcp_tool_mirror.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 
 namespace {
 
@@ -105,7 +108,10 @@ struct MirrorFixture {
     ~MirrorFixture() {
         for (const auto& n : sourceNames) {
             core::ToolRegistry::instance().unregisterTool(n);
-            core::mcp::globalMcpTools().unregisterTool(n);  // sync 镜像条目（幂等）
+            // sync 镜像条目按对外名（下划线）落表，两侧名字不同名时都要清
+            core::mcp::globalMcpTools().unregisterTool(n);  // 幂等
+            core::mcp::globalMcpTools().unregisterTool(
+                platform::tool_kit::mcpToolName(n));
         }
         for (const auto& n : targetNames) {
             core::mcp::globalMcpTools().unregisterTool(n);
@@ -153,13 +159,16 @@ REGISTER_TEST(mcp_tool_mirror_roundtrip,
 
     module::mcp::ToolMirror mirror(core::mcp::globalMcpTools());
     mirror.sync();
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.a").isOk());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.b").isOk());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.c").isOk());
+    // 对外名 = 源名点号转下划线（debt#416 唯一命名规则）
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_a").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_b").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_c").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.a").isFail());
 
-    // 镜像产物确为 AgentToolAdapter，且经镜像 execute 可用
-    auto found = core::mcp::globalMcpTools().find("mirror.rt.b");
+    // 镜像产物确为 AgentToolAdapter（name() 已下划线化），且经镜像 execute 可用
+    auto found = core::mcp::globalMcpTools().find("mirror_rt_b");
     DOCTEST_REQUIRE(found.isOk());
+    DOCTEST_CHECK_EQ(found.value()->name(), std::string("mirror_rt_b"));
     DOCTEST_CHECK(dynamic_cast<const module::mcp::AgentToolAdapter*>(
                       found.value().get()) != nullptr);
     auto executed = found.value()->execute("{}");
@@ -169,14 +178,14 @@ REGISTER_TEST(mcp_tool_mirror_roundtrip,
     // 源注销 → sync → 镜像消失，其余保持
     core::ToolRegistry::instance().unregisterTool("mirror.rt.a");
     mirror.sync();
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.a").isFail());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.b").isOk());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.c").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_a").isFail());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_b").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_c").isOk());
 
     // 源重注册 → sync → 恢复
     DOCTEST_CHECK(fixture.regSource(a).isOk());
     mirror.sync();
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.rt.a").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_rt_a").isOk());
     return true;
 });
 
@@ -194,7 +203,7 @@ REGISTER_TEST(mcp_tool_mirror_concurrency,
     auto worker = [&]() {
         for (int i = 0; i < kRounds; ++i) {
             mirror.sync();
-            auto found = core::mcp::globalMcpTools().find("mirror.concurrent");
+            auto found = core::mcp::globalMcpTools().find("mirror_concurrent");
             if (found.isFail()) {
                 ++failures;
                 continue;
@@ -210,7 +219,7 @@ REGISTER_TEST(mcp_tool_mirror_concurrency,
     t2.join();
     t3.join();
     DOCTEST_CHECK_EQ(failures.load(), 0);
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.concurrent").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_concurrent").isOk());
     return true;
 });
 
@@ -237,7 +246,7 @@ REGISTER_TEST(mcp_tool_mirror_race,
     });
     while (!done.load()) {
         mirror.sync();
-        auto found = core::mcp::globalMcpTools().find("mirror.race");
+        auto found = core::mcp::globalMcpTools().find("mirror_race");
         if (found.isOk()) {
             // keep-alive：即便此刻源已注销，adapter 持源引用不悬垂
             auto r = found.value()->execute("{}");
@@ -248,7 +257,7 @@ REGISTER_TEST(mcp_tool_mirror_race,
     mirror.sync();
     DOCTEST_CHECK_EQ(failures.load(), 0);
     DOCTEST_CHECK(core::ToolRegistry::instance().find("mirror.race").isOk());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.race").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_race").isOk());
     return true;
 });
 
@@ -351,7 +360,7 @@ REGISTER_TEST(mcp_tool_mirror_annotations_branch,
     DOCTEST_REQUIRE(root.isObject());
 
     // 破坏性 → annotations.destructiveHint=true + readOnlyHint=false
-    const auto dest = toolEntryByName(root, "mirror.dest");
+    const auto dest = toolEntryByName(root, "mirror_dest");
     DOCTEST_REQUIRE(dest.isObject());
     DOCTEST_CHECK(dest.asObject().has("annotations"));
     const auto annotations = dest.asObject().get("annotations");
@@ -362,7 +371,7 @@ REGISTER_TEST(mcp_tool_mirror_annotations_branch,
                   !annotations.asObject().get("readOnlyHint").asBool());
 
     // 非破坏镜像 / 原生内置 → 无 annotations 键（spec 可选省略）
-    const auto plain = toolEntryByName(root, "mirror.plain");
+    const auto plain = toolEntryByName(root, "mirror_plain");
     DOCTEST_REQUIRE(plain.isObject());
     DOCTEST_CHECK_FALSE(plain.asObject().has("annotations"));
     const auto stub = toolEntryByName(root, "mirror_stub_builtin");
@@ -392,19 +401,19 @@ REGISTER_TEST(mcp_tool_mirror_bad_schema_skip,
 
     module::mcp::ToolMirror mirror(core::mcp::globalMcpTools());
     mirror.sync();
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.bad1").isFail());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.bad2").isFail());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.bad3").isFail());
-    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror.good").isOk());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_bad1").isFail());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_bad2").isFail());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_bad3").isFail());
+    DOCTEST_CHECK(core::mcp::globalMcpTools().find("mirror_good").isOk());
     return true;
 });
 
-// ---- F-07：重名拒注不重试，原名语义保持 ----
+// ---- F-07：重名拒注不重试，原名语义保持（占位名 = 源名下划线后的对外名） ----
 REGISTER_TEST(mcp_tool_mirror_name_clash_no_retry,
               "ToolMirror: 重名拒注不重试，原名工具语义保持", {
     MirrorFixture fixture;
     DOCTEST_CHECK(
-        fixture.regTarget(std::make_shared<StubMcpTool>("mirror.clash"))
+        fixture.regTarget(std::make_shared<StubMcpTool>("mirror_clash"))
             .isOk());
     DOCTEST_CHECK(
         fixture.regSource(std::make_shared<FakeITool>("mirror.clash", kGoodSchema))
@@ -414,7 +423,7 @@ REGISTER_TEST(mcp_tool_mirror_name_clash_no_retry,
     mirror.sync();
     mirror.sync();  // 第二轮不得重复注册（名字已记入 mirrored_）
 
-    auto found = core::mcp::globalMcpTools().find("mirror.clash");
+    auto found = core::mcp::globalMcpTools().find("mirror_clash");
     DOCTEST_REQUIRE(found.isOk());
     // 原生 stub 保持原位（适配器被拒注丢弃）
     DOCTEST_CHECK(dynamic_cast<const module::mcp::AgentToolAdapter*>(

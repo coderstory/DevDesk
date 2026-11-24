@@ -3,6 +3,7 @@
 - 池条目：need 394（[pool:need:394]）｜日期：2026-11-19｜角色：ui-ux-designer
 - 输入：PRD `2026-11-19-mcp-agent-tools` v2（§9 UI 契约=结构契约）+ 功能矩阵 F-3/F-4
 - **OP-1 终裁（老板 2026-11-19）= 方案 B 立即移除**：对外面 15 件（存量 4 + todo_*×6 + md_*×5）；notes_*×3 的卡片、兼容名、迁移提示、「18 件双轨」口径全部作废，本文档与 demo 一律按 15 件出
+- **2026-11-24 追认（debt#416 裁决 = 选项 1「合一」，单一注册源 = ToolMirror）**：MCP 对外面现为 **43 件**（39 件智能体工具镜像 + 4 件存量直注：devdesk_server_info / web_fetch_markdown / project_info / memory_search），对外名统一「点号/短横 → 下划线」（如 todo.list → todo_list）。下文 15 件口径是 need394 时点快照、保留作历史；todo_*/md_* 镜像后名称不变，网格与区头计数按 43 件读取
 - 硬约束：老板 UI 材料语言（浅色/动画优先/FA 图标禁 emoji/白卡细黑边/禁三层套娃/元素对齐内容列/UI 自适应）；参数一律取项目设计规范（core/theme.cpp 轻色 token）与 ui-style-baseline 同语义档
 - 现状基线（禁重查）：页头卡 mcp_page_module.cpp:232/267-327（D-6 体例）；安装按钮 :741-748/:802-810（160×32 次要灰底）；详情弹窗 drawDetailDialog :813（安装行 :1082/:1115）；工具卡 :445（need343 单左文本列构图）；图标族派发 toolIconGlyph :164
 
@@ -145,7 +146,9 @@ dot 8×8 r4（运行 #10B981/停 #6B6D80）+ 文字 12.5px（运行 #4B5563「�
 
 匹配顺序=表序（todo 先于 md_ 先于 memory 先于现状三档）。全部码点在 EUI-NEO 内置 FA7 整字体覆盖内（现状注释口径 :164-165；list-check 存在性已对 fontawesome.com 核对）。
 
-### 4.2 工具清单（15 件；名称=MCP 对外面注册名，描述复用智能体面原文）
+### 4.2 工具清单（need394 时点快照：15 件；名称=MCP 对外面注册名，描述复用智能体面原文）
+
+> **2026-11-24 追认（debt#416）**：下表是 need394 时点的 15 件快照，保留作历史。裁决「合一」后对外面 = 43 件（39 镜像 + 4 直注）：todo_*/md_* 命名与下表一致，另新增 fs_* / git_* / bash_run / app_* / claude_* / memory_* / schedule_runs / mcp_health / agent_runs 等镜像名；区头计数 chip 与网格按 43 件。
 
 | # | 名称 | 卡片描述（现状 description 原文，单行省略显示） | 图标 |
 |---|---|---|---|
@@ -166,7 +169,7 @@ dot 8×8 r4（运行 #10B981/停 #6B6D80）+ 文字 12.5px（运行 #4B5563「�
 | 15 | md_list_tags | 列出全部标签及各自的笔记数（只读，无入参） | F15C |
 
 - 已知现状（报告非缺陷）：todo_update 描述里的「todo.move」是智能体面原名，PRD 裁决不改工具语义与描述——文案随复用原样透出，指向同义 MCP 名 todo_move
-- 区头计数 chip 显示 15
+- 区头计数 chip（need394 时点 15；debt#416 后按 43）
 
 ---
 

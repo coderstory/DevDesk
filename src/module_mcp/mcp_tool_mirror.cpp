@@ -6,6 +6,7 @@
 
 #include "core/logging.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 #include "platform/utf8.h"
 
 namespace module::mcp {
@@ -76,7 +77,11 @@ AgentToolAdapter::AgentToolAdapter(std::shared_ptr<core::ITool> source)
     }
 }
 
-std::string AgentToolAdapter::name() const { return source_->name(); }
+std::string AgentToolAdapter::name() const {
+    // MCP 对外面唯一命名规则 = 点号/短横换下划线（platform::tool_kit::mcpToolName
+    // 单点实现）；ToolMirror 的注销名必须走同一映射，两处各改一半会留孤儿注册。
+    return platform::tool_kit::mcpToolName(source_->name());
+}
 
 std::string AgentToolAdapter::description() const { return description_; }
 
@@ -118,7 +123,9 @@ void ToolMirror::sync() {
         // POST——settings_module stop/start 是现实触发面）：先注销旧镜像再重建
         // adapter（同名新实例靠指针比对重建，符合 v4 自愈契约）
         if (known == mirrored_.end() || known->second != tool) {
-            if (known != mirrored_.end()) target_.unregisterTool(name);
+            if (known != mirrored_.end()) {
+                target_.unregisterTool(platform::tool_kit::mcpToolName(name));
+            }
             auto adapter = std::make_shared<AgentToolAdapter>(tool);
             if (!adapter->valid()) {
                 // F-06：schema 静态非法，不重试；名字仍入 mirrored_ 防刷日志
@@ -133,7 +140,7 @@ void ToolMirror::sync() {
     // 消失名：注销镜像并移除条目（源侧 unregister/re-register 依此自愈）
     for (const auto& entry : mirrored_) {
         if (next.find(entry.first) == next.end()) {
-            target_.unregisterTool(entry.first);
+            target_.unregisterTool(platform::tool_kit::mcpToolName(entry.first));
         }
     }
     mirrored_ = std::move(next);

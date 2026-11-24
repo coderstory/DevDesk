@@ -1,10 +1,11 @@
-// mcp_e2e_probe.cpp — need#381 ITool→IMcpTool 适配层 E2E（doc50 §4 落点 8 + F-02「46 工具」断言）。
+// mcp_e2e_probe.cpp — ITool→IMcpTool 适配层 E2E（单一注册源 = ToolMirror，debt#416）。
 //
-// 链路：临时数据根 + 临时库 → 8 个业务模块真 onStart（注册 39 个真 ITool）→ 内置 MCP 工具
-// 全量装配（2 内置 + project_info + memory_search + 3 notes = 7 个 IMcpTool）→ 真 McpService
-// （127.0.0.1 随机端口，handlePost 入口触发 ToolMirror 惰性同步）→ platform::http 真请求：
-// initialize → tools/list（46 工具断言）→ F-01 39 真工具 name/description/inputSchema 逐字段
-// diff → F-05 真 7 破坏性工具 annotations 抽查 → tools/call app.now 适配工具往返。
+// 链路：临时数据根 + 临时库 → 8 个业务模块真 onStart（注册 39 个真 ITool）→ 直注 MCP 工具
+// 全量装配（2 内置 + project_info + memory_search = 4 个 IMcpTool，main.cpp 同款）→ 真
+// McpService（127.0.0.1 随机端口，handlePost 入口触发 ToolMirror 惰性同步）→
+// platform::http 真请求：initialize → tools/list（43 = 39 镜像 + 4 直注）→ F-01 39 真工具
+// name（下划线映射）/description/inputSchema 逐字段 diff → F-05 真破坏性工具 annotations
+// 抽查 → tools/call app_now 适配工具往返。
 //
 // 运行：mcp_e2e_probe（无参数；ctest -L probe 可见）
 // 退出码：0 = 全链路通；1 = 断言失败。
@@ -27,6 +28,7 @@
 #include "module_settings/project_info_tool.h"
 #include "platform/http_client.h"
 #include "platform/json.h"
+#include "platform/tool_kit.h"
 #include "test_support.h"  // TestDb / ScopedAppDatabase / setEnvVar
 
 #include "eui/app.h"      // app 窗控声明（空桩签名同源）
@@ -235,9 +237,9 @@ int main() {
     const std::string sessionId = headerValue(init.headers, "Mcp-Session-Id");
     check(!sessionId.empty(), "initialize 下发 Mcp-Session-Id");
 
-    // tools/list：54 = 39 镜像 + 15 直注（4 常驻内置/直注 + md_*×5 + todo_*×6）。
-    // bug#485 基线对齐：need394 双适配层并存态（notes_*×3 下线，md_*×5 + todo_*×6
-    // 经 tool_kit::registerToolsAsMcp 上线，净 +8）；#478 双适配层收敛裁决后需重数。
+    // tools/list：43 = 39 镜像 + 4 直注（devdesk_server_info / web_fetch_markdown /
+    // project_info / memory_search）。debt#416 裁决（单一注册源 = ToolMirror）后
+    // md_*/todo_* 不再直注，经镜像以同一套下划线规则暴露。
     const auto list = postMcp(
         port, R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})",
         sessionId);
@@ -247,26 +249,28 @@ int main() {
                                         : JsonValue();
     const auto tools = result.isObject() ? result.asObject().get("tools")
                                          : JsonValue();
-    check(tools.isArray() && tools.size() == 54,
-          "tools/list 共 54 工具（实际 " +
+    check(tools.isArray() && tools.size() == 43,
+          "tools/list 共 43 工具（实际 " +
               std::to_string(tools.isArray() ? tools.size() : -1) + "）");
 
-    // F-01：39 真工具 name/description/inputSchema 逐字段 diff
+    // F-01：39 真工具 name（对外名 = mcpToolName(源名)）/description/inputSchema 逐字段 diff
     int diffCount = 0;
     int destructiveCount = 0;
     bool checkedNonDestructive = false;
     bool checkedBuiltinNoAnnotations = false;
     for (const auto& tool : realTools) {
         const std::string toolName = tool->name();
+        const std::string mcpName = platform::tool_kit::mcpToolName(toolName);
         const auto schema = parseJson(tool->schemaJson());
         if (!schema.isObject()) {
             std::cout << "[probe]   diff " << toolName << ": schemaJson 非法\n";
             ++diffCount;
             continue;
         }
-        const auto entry = toolEntryByName(root, toolName);
+        const auto entry = toolEntryByName(root, mcpName);
         if (!entry.isObject()) {
-            std::cout << "[probe]   diff " << toolName << ": tools/list 缺失\n";
+            std::cout << "[probe]   diff " << toolName << " (→ " << mcpName
+                      << "): tools/list 缺失\n";
             ++diffCount;
             continue;
         }
@@ -314,12 +318,15 @@ int main() {
     check(destructiveCount == 7,
           "真破坏性工具数 = 7（实际 " + std::to_string(destructiveCount) + "）");
 
-    // 内置（非镜像）工具无 annotations 键：取一个不在真 ITool 名单里的 entry 抽查
+    // 内置（非镜像）工具无 annotations 键：取一个不在镜像名单（源名经下划线映射）里的
+    // entry 抽查
     for (int i = 0; i < tools.size() && !checkedBuiltinNoAnnotations; ++i) {
         const auto entry = tools[i];
         const std::string name = strOrEmpty(entry.asObject().get("name"));
         bool mirrored = false;
-        for (const auto& t : realTools) mirrored |= (t->name() == name);
+        for (const auto& t : realTools) {
+            mirrored |= (platform::tool_kit::mcpToolName(t->name()) == name);
+        }
         if (!mirrored) {
             checkedBuiltinNoAnnotations = true;
             check(!entry.asObject().has("annotations"),
@@ -327,12 +334,12 @@ int main() {
         }
     }
 
-    // tools/call：app.now（纯读快照，无参）经适配层往返
+    // tools/call：app_now（纯读快照，无参）经镜像往返（对外名 = app.now 下划线化）
     const auto call = postMcp(
         port,
-        R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"app.now","arguments":{}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"app_now","arguments":{}}})",
         sessionId);
-    check(call.statusCode == 200, "tools/call app.now 状态 200");
+    check(call.statusCode == 200, "tools/call app_now 状态 200");
     const auto callRoot = parseJson(call.body);
     const auto callResult = callRoot.isObject()
                                 ? callRoot.asObject().get("result")
