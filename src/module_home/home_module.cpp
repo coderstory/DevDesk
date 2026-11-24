@@ -707,7 +707,7 @@ public:
                                 static_cast<float>(actCount);
                             auto builder = components::button(
                                 ui, actionButtonElementId(btn.kind));
-                            builder.size(actW, 44.0f)
+                            builder.size(actW, 42.0f)  // demo .btn 42px（UAT 对齐）
                                 .text(btn.label)
                                 .fontSize(t.sizes.fontSizeBody)
                                 .radius(t.sizes.radius);
@@ -722,7 +722,7 @@ public:
                                 builder.colors(t.colors.surface,
                                                t.colors.primarySoftBg,
                                                components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
-                                    .border(1.0f, t.colors.primary)
+                                    .border(1.0f, t.colors.borderDefault)  // demo .btn.ghost：中性线边框
                                     .textColor(t.colors.primary);
                             }
                             if (btn.iconCodepoint != 0) {
@@ -763,6 +763,12 @@ public:
                             animTyper_.items.push_back(
                                 ui_kit::home_anim::truncateTitle(
                                     stats_.recentNotes[i].title));
+                        }
+                        // 空库/单条 → 轮播内置文案池（need506 用户拍板，UAT 追加令）
+                        if (animTyper_.items.size() < 2) {
+                            for (const char* q : ui_kit::home_anim::kQuotePool) {
+                                animTyper_.items.emplace_back(q);
+                            }
                         }
                         if (!reduced) animTyper_.tick(::home_anim::phaseSeconds());
                         const std::string subtitle =

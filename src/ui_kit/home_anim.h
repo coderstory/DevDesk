@@ -80,6 +80,21 @@ struct Typer {
     bool rotating() const { return items.size() > 1; }
 };
 
+// 空库轮播文案池（10 条，每条 ≤20 字适配 26 截断）。来源 = need506 用户拍板
+//（UAT 追加令 2026-11-24：最近笔记 <2 条时轮播本池，时序参数与标题轮换一致）。
+inline constexpr const char* kQuotePool[10] = {
+    "山高路远，看世界也找自己",
+    "把今天过成想回去的那天",
+    "慢慢来，比较快",
+    "先做起来，路会自己展开",
+    "写下来的想法才算数",
+    "今天也是值得记录的一天",
+    "小步不停，远路也短",
+    "留白处，正适合落笔",
+    "专注一件事，就赢过大半",
+    "记下来，别让灵感溜走",
+};
+
 // 26 字符截断（>26 → 前 25 + "…"）。
 inline std::string truncateTitle(const std::string& title) {
     // 按 code point 数；UTF-8 每码点 1-4 字节

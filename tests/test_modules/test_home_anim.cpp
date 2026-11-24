@@ -169,12 +169,21 @@ REGISTER_TEST(home_anim_typer_machine,
     const std::string cut = truncateTitle(long_);
     DOCTEST_CHECK(cut.back() == char(0xA6) || cut.find("…") != std::string::npos);
     DOCTEST_CHECK(cut.size() < long_.size());
-    // 空列表：占位语直显、不轮换
+    // 空库：模块填文案池后照常轮换（UAT 追加令）；池子 10 条且全部 ≤26 字
     {
+        DOCTEST_CHECK(ui_kit::home_anim::kQuotePool[0] != nullptr);
+        int qn = 0;
+        for (const char* q : ui_kit::home_anim::kQuotePool) {
+            DOCTEST_CHECK(ui_kit::home_anim::truncateTitle(q) == q);  // 池内均不过截断线
+            ++qn;
+        }
+        DOCTEST_CHECK(qn == 10);
         Typer t;
-        t.tick(100.0);
-        DOCTEST_CHECK(t.visibleText().find("最近打开") != std::string::npos);
-        DOCTEST_CHECK_FALSE(t.rotating());
+        for (const char* q : ui_kit::home_anim::kQuotePool) t.items.emplace_back(q);
+        DOCTEST_CHECK(t.rotating());
+        t.lastTick = 0.0;
+        t.tick(1.0);
+        DOCTEST_CHECK(t.visibleText().size() >= 10);  // 池条目照常打字
     }
     // 单条：不轮换不擦除（格子5：5s 后文本不变）
     {

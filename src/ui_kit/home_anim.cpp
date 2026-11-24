@@ -143,7 +143,7 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
         .position(px, py - 26.0f)
         .size(plateW, 18.0f)
         .text("RECENT · 最近打开")
-        .fontSize(12.5f)
+        .fontSize(15.0f)
         .fontWeight(600)
         .color(eui::Color("#6B7280"))
         .build();
@@ -176,7 +176,7 @@ void drawTyper(eui::Ui& ui, float cx, float cy, float maxW, const Typer& typer,
             .position(px, py + plateH + 10.0f)
             .size(plateW, 18.0f)
             .text(subtitle)
-            .fontSize(13.5f)
+            .fontSize(16.0f)
             .color(eui::Color("#6B7280"))
             .build();
     }
