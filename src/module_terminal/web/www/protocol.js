@@ -421,6 +421,7 @@
     this._watchdog = null; this._sendChain = Promise.resolve();
     this._lastFrame = null; this._resyncing = false;
     this._closing = false; this._hasConnected = false;
+    this._sentViewport = null;  // resize 已发去重（防桌面/网页尺寸乒乓，见 resize）
   }
   RealClient.prototype.onFrame = function (cb) { this._frameCbs.push(cb); };
   RealClient.prototype.onState = function (cb) { this._stateCbs.push(cb); };
@@ -709,6 +710,7 @@
 
   RealClient.prototype._openStream = function () {
     var self = this;
+    this._sentViewport = null;  // 重连/重开流：服务端可能已恢复桌面尺寸，首个 applyGrid 需重申
     return this._req(API.env, { m: 'stream.ticket' }).then(function (d) {
       var t = d && (d.t || d.ticket);
       if (!t) throw { code: 'no_ticket' };
@@ -950,8 +952,15 @@
     var clamp = function (v, lo, hi) { return Math.max(lo, Math.min(hi, v)); };
     this.setViewport({ cols: clamp(cols, 20, 200), rows: clamp(rows, 8, 200) });
     if (this.status === 'connected' && this.view === 'terminal') {
-      this._req(API.env, { m: 'resize', b: { cols: this.viewport.cols, rows: this.viewport.rows } })
-        .catch(function () {});
+      // 同尺寸去重：桌面终端页与网页各自量化 PTY 尺寸，双方都「见不一致就 resize」，
+      // 而 full 帧回推会再触发本端 applyGrid——不去重就互相打乒乓（整页闪烁）。
+      // 只在 viewport 变化或重连（_openStream 清空）后重发。
+      var v = this.viewport;
+      if (this._sentViewport && this._sentViewport.cols === v.cols && this._sentViewport.rows === v.rows) return;
+      this._sentViewport = { cols: v.cols, rows: v.rows };
+      var self = this;
+      this._req(API.env, { m: 'resize', b: { cols: v.cols, rows: v.rows } })
+        .catch(function () { self._sentViewport = null; });  // 未送达则允许重发
     }
   };
 
