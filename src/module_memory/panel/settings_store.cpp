@@ -17,6 +17,18 @@ std::filesystem::path settingsFile() {
     return engine::memoryDataDir() / "panel_settings.json";
 }
 
+// bug490 前的出厂默认：savePanelSettings 全量写三键，存量文件里精确等于此值 =
+// 从未自定义（旧滑条时代的中位默认）。迁移只抬这三个精确值，其它值——含 ≤0
+// 的关闭语义——原样保留，不丢用户配置。
+constexpr long long kLegacyUsageDayAlertTokens = 1000000;
+constexpr long long kLegacyUsageSoftBudgetTokens = 3000000;
+constexpr long long kLegacyUsageHardBudgetTokens = 5000000;
+
+long long migrateUsageThreshold(long long v, long long legacyDefault,
+                                long long newDefault) {
+    return v == legacyDefault ? newDefault : v;
+}
+
 }  // namespace
 
 MemoryPanelSettings loadPanelSettings() {
@@ -59,12 +71,19 @@ MemoryPanelSettings loadPanelSettings() {
                              : 0;
     s.llmProfileName = getStr("llmProfileName");
     s.mcpSearchEnabled = getBool("mcpSearchEnabled", true);
-    // 需-9 / need:380 B-5 用量告警（旧文件缺键 = 默认开 + 中位阈值；旧键阈值原样
-    // 读入继续生效 = 存量自定义值的迁移路径）
+    // 需-9 / need:380 B-5 用量告警（旧文件缺键 = 默认开 + 默认阈值；旧键阈值原样
+    // 读入继续生效 = 存量自定义值的迁移路径）。bug490：精确等于旧默认的三键视为
+    // 未自定义、读取时内存态抬到新默认（不改写盘时机），其余值原样保留。
     s.usageAlertsEnabled = getBool("usageAlertsEnabled", true);
-    s.usageDayAlertTokens = getInt64("usageDayAlertTokens", 1000000);
-    s.usageSoftBudgetTokens = getInt64("usageSoftBudgetTokens", 3000000);
-    s.usageHardBudgetTokens = getInt64("usageHardBudgetTokens", 5000000);
+    s.usageDayAlertTokens = migrateUsageThreshold(
+        getInt64("usageDayAlertTokens", kUsageDayAlertTokensDefault),
+        kLegacyUsageDayAlertTokens, kUsageDayAlertTokensDefault);
+    s.usageSoftBudgetTokens = migrateUsageThreshold(
+        getInt64("usageSoftBudgetTokens", kUsageSoftBudgetTokensDefault),
+        kLegacyUsageSoftBudgetTokens, kUsageSoftBudgetTokensDefault);
+    s.usageHardBudgetTokens = migrateUsageThreshold(
+        getInt64("usageHardBudgetTokens", kUsageHardBudgetTokensDefault),
+        kLegacyUsageHardBudgetTokens, kUsageHardBudgetTokensDefault);
     s.inferHourlyLimit = getInt("inferHourlyLimit", 4);
     s.usageDayGate.armed = getBool("usageAlertDayArmed", true);
     s.usageDayGate.lastFireDay = getInt64("usageAlertDayLastDay", 0);

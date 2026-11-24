@@ -12,11 +12,13 @@
 namespace module::memory::proposals {
 
 // 阈值档（token，估算口径；月档与消耗卡预算是同一套数，spec §3.1）。
-// ≤0 = 该档关闭。
+// ≤0 = 该档关闭。下列数值仅纯判定测试/骨架占位：生产调用方由 panel 设置逐档
+// 注入，现行默认日 1000 万 / 月软 5000 万 / 月硬 1 亿（bug490，见 settings_store.h）；
+// 此处保持小量级以免改写既有纯判定用例。
 struct UsageAlertThresholds {
-    long long dayTokens = 500000;       // 日档（默认 50 万/日）
-    long long monthSoftTokens = 2000000;  // 月档·软档（警告级）
-    long long monthHardTokens = 3000000;  // 月档·硬档（严重级）
+    long long dayTokens = 500000;       // 占位：日档
+    long long monthSoftTokens = 2000000;  // 占位：月档·软档（警告级）
+    long long monthHardTokens = 3000000;  // 占位：月档·硬档（严重级）
 };
 
 enum class UsageAlertTier { Day, MonthSoft, MonthHard };

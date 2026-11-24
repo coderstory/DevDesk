@@ -9,8 +9,10 @@ namespace module::memory::engine {
 struct TokenUsageMeter {
     long long todayTokens = 0;       // 今日累计（引擎账面）
     long long monthTokens = 0;       // 本月累计
-    long long softBudgetTokens = 2000000;   // 软档阈值（占位默认，配置页可调后续批次接）
-    long long hardBudgetTokens = 3000000;   // 硬档阈值
+    // bug490：占位默认与 panel 现行默认同档（软 5000 万 / 硬 1 亿）；生产调用方
+    // 按设置注入，本结构不自读配置。
+    long long softBudgetTokens = 50000000;   // 软档阈值
+    long long hardBudgetTokens = 100000000;  // 硬档阈值
 
     enum class Phase { Normal, Soft, Hard };
 
